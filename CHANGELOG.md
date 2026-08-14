@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Versioning
 
-During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each release). The concrete version number is decided when a release tag is created.
+During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each release). The concrete version number is decided when a release tag is created. The first beta is `v0.0.1-beta.1` (2026-08-15 user ruling).
 
-## [beta] - 2026-08-15
+## [v0.0.1-beta.1] - 2026-08-15
 
 First public beta release.
 
