@@ -950,10 +950,10 @@ func TestCodexTransportPoolReuse(t *testing.T) {
 	p := &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"}
 
 	const n = 16
-	burst := func() error {
+	burst := func(k int) error {
 		var wg sync.WaitGroup
-		errs := make(chan error, n)
-		for i := 0; i < n; i++ {
+		errs := make(chan error, k)
+		for i := 0; i < k; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -971,7 +971,7 @@ func TestCodexTransportPoolReuse(t *testing.T) {
 		return nil
 	}
 
-	require.NoError(t, burst())
+	require.NoError(t, burst(n))
 	// 首波断言不取恒等 n：Go 标准库 http.Transport 对同 host 并发拨号会**合法合并**
 	// （池空时首个请求开始拨号，后到请求排队共享该拨号中的连接——waitingDial
 	// 机制）。合并窗口依赖调度时序：24 核本机 16 goroutine 几乎同刻进入 getConn，
@@ -980,12 +980,13 @@ func TestCodexTransportPoolReuse(t *testing.T) {
 	// 不超过并发数（无拨号风暴——共享只减不增）。
 	require.Greater(t, dials.Load(), int64(0), "首波必须发起拨号")
 	require.LessOrEqual(t, dials.Load(), int64(n), "首波拨号数 ≤ 并发数（并发合并合法，无拨号风暴）")
-	// 第二波零新拨号：基线 = 首波后拨号数（首波可能因合并 < n，基线随环境——
-	// 不能硬编码 n）。断言第二波后总数不变 = 连接完整回池复用
-	// （MaxIdleConnsPerHost=2048 生效；SDK 默认 2 会再拨 n-2 条）。
+	// 第二波零新拨号：并发数 = 首波拨号数（≤ 池中 idle 连接数）。**不能继续用
+	// 16 并发**——首波合并后池中只有 first 条连接，16 并发超出池容量必然新拨号
+	// （CI 实测 expected 14, actual 15：池 14 条、16 并发多拨 1 条——正确行为）。
+	// 以 first 并发打池：全部命中 idle → 零新拨号恒成立，无调度窗口依赖。
 	first := dials.Load()
-	require.NoError(t, burst())
-	require.Equal(t, first, dials.Load(), "第二波必须零新拨号——连接池复用（MaxIdleConnsPerHost=2048 生效；SDK 默认 2 会再拨 n-2 条）")
+	require.NoError(t, burst(int(first)))
+	require.Equal(t, first, dials.Load(), "第二波（并发 = 池容量）必须零新拨号——连接池复用（MaxIdleConnsPerHost=2048 生效；SDK 默认 2 会再拨 n-2 条）")
 }
 
 // ---------------------------------------------------------------------------
