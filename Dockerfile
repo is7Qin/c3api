@@ -13,7 +13,13 @@ COPY web/ .
 RUN pnpm build
 
 # ---- Stage 2: Go 构建（前端 dist 复制进 embed 目录） ----
+# C3API_VERSION（默认 "dev"）：版本注入点——-ldflags -X 把版本写进二进制 version
+# 变量（cmd/server/main.go 的 -version 输出，REL spec 2026-08-15）。release 流水线
+# （.github/workflows/release.yml）构建镜像时经 build-args 传 tag 值（如
+# v0.0.1-beta.1）；本地 dev 构建不传 ARG = 默认 "dev"（dev 构建自报版本不被置空——
+# 若无默认值，空 ARG 会注入 "-X main.version=" 空串，语义漂移）。
 FROM golang:1.26-alpine AS gobuild
+ARG C3API_VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -21,7 +27,7 @@ COPY . .
 # 多阶段产物经 COPY --from=web 传递（阶段间是独立容器，不能直接 cp 前阶段路径）
 RUN rm -rf cmd/server/dist && mkdir -p cmd/server/dist
 COPY --from=web /web/dist ./cmd/server/dist
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/server ./cmd/server
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${C3API_VERSION}" -o /out/server ./cmd/server
 
 # ---- Stage 3: 运行时（精简 alpine，非 root） ----
 FROM alpine:3.20

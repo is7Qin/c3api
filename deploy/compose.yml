@@ -8,6 +8,9 @@
 #   #   docker compose -f deploy/compose.yml up -d --build
 #   # 注意：compose v2.24+ 用 -f 时项目目录为 deploy/（.env 在根目录），须显式
 #   #   --env-file .env 才能读到根目录 .env（自动读取仅限 deploy/ 下的 .env）。
+#
+# GHCR 快速上手（预构建镜像，release 流水线发布）：docker pull ghcr.io/is7qin/c3api:beta
+#   （:beta 为浮动 tag = 最新 beta；版本固定用 ghcr.io/is7qin/c3api:v0.0.1-beta.1）
 
 services:
   db:
@@ -28,6 +31,10 @@ services:
       retries: 10
 
   app:
+    # 镜像双形态（REL spec 2026-08-15）：本地开发/自建用 build（下方 build 块；
+    # compose 语义 image+build 并存时 build 优先）；生产用 pull——删除 build 块、
+    # 保留 image 即直接跑 GHCR 预构建镜像（docker compose pull && up -d）。
+    image: ghcr.io/is7qin/c3api:beta
     build:
       context: ..
       dockerfile: Dockerfile

@@ -55,12 +55,24 @@ c3api 处于 **beta**：功能齐全，但破坏性变更自由。
 
 ### 方式 A：Docker Compose（推荐）
 
+**跑预构建镜像（pull）**——生产推荐：删除 `deploy/compose.yml` 里的 `build:` 块后 `up` 直接运行拉取的镜像：
+
+```bash
+cp .env.example .env        # 填写 ADMIN_TOKEN 与 AUTH_JWT_SECRET
+docker compose --env-file .env -f deploy/compose.yml pull
+docker compose --env-file .env -f deploy/compose.yml up -d
+```
+
+**自建镜像（build）**——compose 本地构建（`image` 与 `build` 并存时 `build` 优先）：
+
 ```bash
 cp .env.example .env        # 填写 ADMIN_TOKEN 与 AUTH_JWT_SECRET
 docker compose --env-file .env -f deploy/compose.yml up -d --build
 ```
 
 网关监听 `http://127.0.0.1:18080`——管理台 `/admin`，健康检查 `/healthz`。
+
+预构建镜像发布在 GHCR（`ghcr.io/is7qin/c3api`）：`:beta` 跟随最新 beta 版本，另有版本固定 tag（如 `:v0.0.1-beta.1`）。单独拉取：`docker pull ghcr.io/is7qin/c3api:beta`。
 
 ### 方式 B：本地开发
 

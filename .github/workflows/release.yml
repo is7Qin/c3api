@@ -1,0 +1,125 @@
+name: Release
+
+# tag 触发（v* = semver tag，如 v0.0.1-beta.1）——tag 即发布源，不打 tag 不发布。
+# CI 质量门禁由 ci.yml 对 tag 自动覆盖（同 tag 的 ci.yml 并行跑、互不 gate，
+# REL spec 2026-08-15 P3-F 取舍：发布者打 tag 前本地全绿，beta 期单维护者流程
+# 成立）——本 workflow 不重复 test。
+on:
+  push:
+    tags:
+      - 'v*'
+
+# workflow 级权限（评审 P3-B）：gh release create 需 contents: write（建 Release
+# 页 + 附附件）；GHCR 推送需 packages: write。默认 read 权限下二者都会 403。
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # Job 1: 多平台镜像（linux/amd64 + linux/arm64）推 GHCR。
+  image:
+    name: image (GHCR multi-platform)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4 # build-push 的 context 需要代码（评审 P3-A 补漏）
+      - uses: docker/setup-qemu-action@v4 # 交叉构建 arm64 需 QEMU 模拟
+      - uses: docker/setup-buildx-action@v4
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # 版本 tag（如 v0.0.1-beta.1）+ beta 浮动 tag（compose/README 用户拉最新）。
+          # 评审 P3-D：两平台 dist 一致性来自同源码（各平台 QEMU 下独立构建），
+          # 非 buildx 缓存保证——缓存只保证层缓存。
+          tags: |
+            ghcr.io/is7qin/c3api:${{ github.ref_name }}
+            ghcr.io/is7qin/c3api:beta
+          # 版本注入：tag 值写进二进制 version（Dockerfile ARG C3API_VERSION）。
+          build-args: |
+            C3API_VERSION=${{ github.ref_name }}
+
+  # Job 2: 五平台原生二进制（Release 附件），tar.gz 单格式（windows 同格式）。
+  binaries:
+    name: binaries (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # 单平台失败不拖垮其余平台产物
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod # 显式装齐（评审 P3-A：runner 预装 Go 不保证与 go.mod 匹配）
+      - name: Build and pack
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          bin="c3api"
+          [ "$GOOS" = "windows" ] && bin="c3api.exe"
+          # -trimpath 消除构建机路径泄漏；-X main.version 注入 tag 值（与镜像同源）
+          go build -trimpath -ldflags "-s -w -X main.version=${tag}" -o "$bin" ./cmd/server
+          tar -czf "c3api_${tag}_${GOOS}_${GOARCH}.tar.gz" "$bin"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: c3api-binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: c3api_*.tar.gz
+          if-no-files-found: error
+
+  # Job 3: Release 页——附件 = 五平台 tar.gz + sha256sums.txt；body = CHANGELOG
+  # 对应条目节选（评审 P3-C：找不到条目头显式失败，防空 body）。
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    needs: [image, binaries]
+    steps:
+      - uses: actions/checkout@v4 # CHANGELOG.md 节选需要代码
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: c3api-binaries-*
+          merge-multiple: true
+      - name: Generate sha256sums.txt
+        # 全产物校验和：五平台 tar.gz 全部取齐后统一计算（矩阵各腿只产自身产物，
+        # 单腿无法产出"全产物"校验和——合并点即校验点）。
+        run: sha256sum c3api_*.tar.gz > sha256sums.txt
+      - name: Extract CHANGELOG section
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          # 从 "## [${tag}]" 条目头起、到下一 "## " 头为止（多条目不越界）；
+          # 找不到该条目头 → exit 1 显式失败（防忘更新 CHANGELOG 产生空 body）
+          awk -v tag="## [$tag]" '
+            index($0, tag) == 1 { found = 1; print; next }
+            found && /^## / { exit }
+            found { print }
+            END { exit (found ? 0 : 1) }
+          ' CHANGELOG.md > release-notes.md
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --notes-file release-notes.md \
+            c3api_*.tar.gz sha256sums.txt

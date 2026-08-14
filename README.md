@@ -55,12 +55,24 @@ c3api is in **beta**: feature-complete, but breaking changes are free to happen.
 
 ### Option A: Docker Compose (recommended)
 
+**Run the prebuilt image (pull)** — for production, remove the `build:` block in `deploy/compose.yml` so `up` runs the pulled image instead of building:
+
+```bash
+cp .env.example .env        # fill in ADMIN_TOKEN and AUTH_JWT_SECRET
+docker compose --env-file .env -f deploy/compose.yml pull
+docker compose --env-file .env -f deploy/compose.yml up -d
+```
+
+**Self-build** — compose builds the image locally (`image` and `build` coexist, `build` wins):
+
 ```bash
 cp .env.example .env        # fill in ADMIN_TOKEN and AUTH_JWT_SECRET
 docker compose --env-file .env -f deploy/compose.yml up -d --build
 ```
 
 The gateway listens on `http://127.0.0.1:18080` — admin console at `/admin`, health check at `/healthz`.
+
+Prebuilt images are published to GHCR (`ghcr.io/is7qin/c3api`): `:beta` tracks the latest beta release, and version-pinned tags such as `:v0.0.1-beta.1` are also available. Pull standalone: `docker pull ghcr.io/is7qin/c3api:beta`.
 
 ### Option B: Local development
 

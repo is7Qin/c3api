@@ -46,10 +46,22 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
+// version 是二进制版本注入点（REL spec 2026-08-15）：构建链 -ldflags
+// "-X main.version=..." 注入 tag 值（如 v0.0.1-beta.1）；本地 dev 构建不注入 =
+// "dev"。查询方式：c3api -version——不带入 /healthz（无鉴权端点保持最小面）。
+var version = "dev"
+
 func main() {
 	cfgPath := flag.String("config", "config.toml", "path to TOML config")
 	pprofAddr := flag.String("pprof", "", "listen addr for /debug/pprof (heap/goroutine profile under load)")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	// -version 纯打印退出：不加载配置/不连 DB，任何环境（含容器外裸二进制）可查。
+	if *showVersion {
+		fmt.Printf("c3api %s\n", version)
+		return
+	}
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
