@@ -972,7 +972,15 @@ func TestCodexTransportPoolReuse(t *testing.T) {
 	}
 
 	require.NoError(t, burst())
-	require.Equal(t, int64(n), dials.Load(), "首波并发 = n 条新连接")
+	// 首波断言不取恒等 n：Go 标准库 http.Transport 对同 host 并发拨号会**合法合并**
+	// （池空时首个请求开始拨号，后到请求排队共享该拨号中的连接——waitingDial
+	// 机制）。合并窗口依赖调度时序：24 核本机 16 goroutine 几乎同刻进入 getConn，
+	// 独立拨号 = n 恒成立；4 核 CI runner（2026-08-15 实测 actual 13）后到请求
+	// 看到拨号中即共享——恒等断言是错误假设。改为范围断言：有拨号（>0）、
+	// 不超过并发数（无拨号风暴——共享只减不增）；**核心语义由第二波零新拨号
+	// 捕获**（MaxIdleConnsPerHost=2048 生效、连接完整回池）。
+	require.Greater(t, dials.Load(), int64(0), "首波必须发起拨号")
+	require.LessOrEqual(t, dials.Load(), int64(n), "首波拨号数 ≤ 并发数（并发合并合法，无拨号风暴）")
 	require.NoError(t, burst())
 	require.Equal(t, int64(n), dials.Load(), "第二波必须零新拨号——连接池复用（MaxIdleConnsPerHost=2048 生效；SDK 默认 2 会再拨 n-2 条）")
 }
