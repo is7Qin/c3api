@@ -36,9 +36,12 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          # GHA 缓存：pnpm/go 依赖层跨构建复用（首轮全量、后续命中层缓存）。
+          # 配 Dockerfile --platform=$BUILDPLATFORM 原生构建后 QEMU 模拟面已消，
+          # 缓存再吃掉依赖重下载。
+          cache-from: type=gha, scope=c3api-build
+          cache-to: type=gha, mode=max, scope=c3api-build
           # 版本 tag（如 v0.0.1-beta.1）+ beta 浮动 tag（compose/README 用户拉最新）。
-          # 评审 P3-D：两平台 dist 一致性来自同源码（各平台 QEMU 下独立构建），
-          # 非 buildx 缓存保证——缓存只保证层缓存。
           tags: |
             ghcr.io/is7qin/c3api:${{ github.ref_name }}
             ghcr.io/is7qin/c3api:beta
