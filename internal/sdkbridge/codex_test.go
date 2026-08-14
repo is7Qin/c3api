@@ -977,12 +977,15 @@ func TestCodexTransportPoolReuse(t *testing.T) {
 	// 机制）。合并窗口依赖调度时序：24 核本机 16 goroutine 几乎同刻进入 getConn，
 	// 独立拨号 = n 恒成立；4 核 CI runner（2026-08-15 实测 actual 13）后到请求
 	// 看到拨号中即共享——恒等断言是错误假设。改为范围断言：有拨号（>0）、
-	// 不超过并发数（无拨号风暴——共享只减不增）；**核心语义由第二波零新拨号
-	// 捕获**（MaxIdleConnsPerHost=2048 生效、连接完整回池）。
+	// 不超过并发数（无拨号风暴——共享只减不增）。
 	require.Greater(t, dials.Load(), int64(0), "首波必须发起拨号")
 	require.LessOrEqual(t, dials.Load(), int64(n), "首波拨号数 ≤ 并发数（并发合并合法，无拨号风暴）")
+	// 第二波零新拨号：基线 = 首波后拨号数（首波可能因合并 < n，基线随环境——
+	// 不能硬编码 n）。断言第二波后总数不变 = 连接完整回池复用
+	// （MaxIdleConnsPerHost=2048 生效；SDK 默认 2 会再拨 n-2 条）。
+	first := dials.Load()
 	require.NoError(t, burst())
-	require.Equal(t, int64(n), dials.Load(), "第二波必须零新拨号——连接池复用（MaxIdleConnsPerHost=2048 生效；SDK 默认 2 会再拨 n-2 条）")
+	require.Equal(t, first, dials.Load(), "第二波必须零新拨号——连接池复用（MaxIdleConnsPerHost=2048 生效；SDK 默认 2 会再拨 n-2 条）")
 }
 
 // ---------------------------------------------------------------------------
