@@ -1,44 +1,35 @@
-# c3api 商业授权协议（Commercial License Agreement）
+# c3api Commercial License Agreement
 
-版权人（Licensor）：is7Qin
+Licensor: is7Qin
 
-本商业授权为 c3api（以及同一版权人的其他开源产品，如 codex-sdk）在
-[AGPL-3.0-or-later](./LICENSE) 之外的付费授权选项。**本授权的唯一卖点：闭源部署下
-的 AGPL 义务豁免**——遵守 AGPL 的部署（含商用、托管服务）无需购买，见 LICENSE 与
-README 的许可说明。
+This commercial license is the paid licensing option for c3api (and other open-source products of the same copyright holder, such as codex-sdk) in addition to [AGPL-3.0-or-later](./LICENSE). **The sole selling point of this license: the waiver of AGPL obligations for closed-source deployments** — deployments that comply with the AGPL (including commercial and hosted services) do not require a purchase; see the license notes in LICENSE and the README.
 
-## 1. 授权范围
+## 1. Scope of License
 
-- 被授权方（Licensee）获得在本协议有效期内，以**闭源（不公开源代码/修改）**方式
-  部署、运行、集成 c3api 的非独占、不可转让权利。
-- 覆盖形式：自用、内部工具、SaaS / 托管服务、为第三方客户交付的闭源部署。
-- 覆盖产品：c3api 本体及其随附文档；同一版权人的其他开源产品按本协议另行约定。
+- The Licensee is granted a **non-exclusive, non-transferable** right to deploy, run, and integrate c3api in a **closed-source (without disclosing source code/modifications)** manner for the term of this Agreement.
+- Covered forms: self-use, internal tools, SaaS / hosted services, and closed-source deployments delivered for third-party customers.
+- Covered products: c3api itself and its accompanying documentation; other open-source products of the same copyright holder are subject to separate agreement under this Agreement.
 
-## 2. 豁免范围（AGPL 义务豁免）
+## 2. Waiver Scope (AGPL Obligation Waiver)
 
-在被授权方遵守本协议的条件下，版权人豁免被授权方对 c3api 部署所承担的
-AGPL-3.0 下列义务：
+Provided that the Licensee complies with this Agreement, the Licensor waives the following AGPL-3.0 obligations of the Licensee with respect to the Licensee's deployment of c3api:
 
-- 向部署用户提供对应源代码的义务（AGPL-3.0 §13）；
-- 以相同许可证（AGPL-3.0）分发修改版本的义务。
+- the obligation to provide the corresponding source code to the users of the deployment (AGPL-3.0 §13);
+- the obligation to distribute modified versions under the same license (AGPL-3.0).
 
-豁免**不**包含：被授权方对第三方独立软件的义务；被授权方独立开发的、与 c3api
-无衍生关系的代码不受本协议约束。
+The waiver does **not** cover: the Licensee's obligations with respect to independent third-party software; code independently developed by the Licensee that is not derived from c3api is not governed by this Agreement.
 
-## 3. 费用与期限
+## 3. Fees and Term
 
-- 费用：与被授权方按部署规模（实例数 / 服务终端用户数）或一次性买断方式协商，
-  以双方签署的报价/合同为准。
-- 期限：自费用付清之日起持续有效；被授权方违反本协议（含未按期付费）时，豁免
-  立即终止，并恢复 AGPL-3.0 的全部义务。
+- Fees: negotiated with the Licensee based on deployment scale (number of instances / number of served end users) or as a one-time buyout, as set forth in the quotation/contract signed by both parties.
+- Term: effective continuously from the date the fees are paid in full; if the Licensee breaches this Agreement (including failure to pay on time), the waiver terminates immediately and all AGPL-3.0 obligations are reinstated.
 
-## 4. 其他
+## 4. Miscellaneous
 
-- 本授权不授予商标权；被授权方不得移除产品中的版权声明。
-- 贡献者条款：接受外部代码贡献需签署 CLA（贡献者版权转让协议），保证贡献代码
-  版权归属版权人、可并入本双许可体系。贡献前请在仓库提交 issue 联系。
-- 争议解决：本协议受版权人所在地法律管辖。
+- This license does not grant trademark rights; the Licensee may not remove the copyright notices from the product.
+- **Contributor terms**: accepting external code contributions requires signing a CLA (a contributor copyright assignment agreement), which warrants that the copyright of the contributed code is vested in the Licensor and that it may be incorporated into this dual-license scheme. Please contact us via an issue in the repository before contributing.
+- **Dispute resolution**: this Agreement is governed by the laws of the jurisdiction where the Licensor is located.
 
-## 5. 联系方式
+## 5. Contact
 
-- GitHub：https://github.com/is7Qin/c3api （issue 或 Discussions）
+- GitHub: https://github.com/is7Qin/c3api (issues or Discussions)

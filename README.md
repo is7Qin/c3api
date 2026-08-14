@@ -19,6 +19,14 @@
 
 **c3api** is a self-hosted AI gateway that fronts multiple upstream providers with one unified entry point. It speaks all six request formats — OpenAI Responses API (including its WebSocket variant), Anthropic Messages API, OpenAI Chat Completions API, OpenAI Images API, Codex web search, and an OpenAI-compatible model list — and maps them onto your configured upstream accounts with model routing, quotas, usage accounting, and an embedded admin console.
 
+## Status: Beta
+
+c3api is in **beta**: feature-complete, but breaking changes are free to happen.
+
+- **Not backward-compatible** — database schemas and configuration are **not** backward-compatible across versions, and **no migration path** is provided.
+- **Upgrade = fresh setup** — upgrading from an earlier version means provisioning a brand-new database and re-checking your configuration from scratch.
+- See [CHANGELOG.md](./CHANGELOG.md) for release notes.
+
 ## Features
 
 | | |
@@ -109,6 +117,7 @@ The gateway loads `config.toml` (see `config.example.toml`), overlaid by `C3API_
 
 See `config.example.toml` for the full schema (server, log, admin, auth, db, proxy, upstream, limit, scheduler, usage, billing).
 
+- **Fresh setup only (no migration path)** — schemas and configuration are not backward-compatible between versions: an upgrade means a brand-new database and a re-checked configuration (see [Status: Beta](#status-beta)).
 - **Env-only deployments** (e.g. K8s): pass `-config ""` to skip the config file entirely — the flag defaults to `config.toml`, and a missing file is a startup error.
 - **Config is read once at startup** — changes require a rolling restart (no hot reload).
 - **Invalid config fails fast at startup** with the offending key: non-positive durations/intervals, unknown keys (typos, removed legacy keys), missing required secrets, and placeholder values (`change-me`, `dev-admin-token`, …) are all rejected.
@@ -125,9 +134,11 @@ c3api is open source under the **GNU AGPL v3.0-or-later** (`LICENSE`) — free t
 
 Need **closed-source deployment** (exempt from the AGPL obligations on your deployment)? A commercial license (`LICENSE.commercial`) is available — it waives the AGPL obligations for your deployment.
 
-External code contributions require a CLA (contributor license agreement) so that contributed code can be merged under this dual-license scheme — contact us via GitHub issue before contributing.
+External code contributions require a CLA (contributor license agreement) so that contributed code can be merged under this dual-license scheme — see [CLA.md](./CLA.md) and [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Contact
 
 - GitHub: [is7Qin/c3api](https://github.com/is7Qin/c3api)
 - Issues: open a GitHub issue for bugs, questions, or feature requests
+- Security: report vulnerabilities via [SECURITY.md](./SECURITY.md) (private report)
+- Changelog: [CHANGELOG.md](./CHANGELOG.md)

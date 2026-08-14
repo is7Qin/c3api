@@ -19,6 +19,14 @@
 
 **c3api** 是自托管的 AI 网关，用一个统一入口对接多个上游供应商。它原生支持六种请求格式——OpenAI Responses API（含 WebSocket 变体）、Anthropic Messages API、OpenAI Chat Completions API、OpenAI Images API、Codex 网页搜索与 OpenAI 兼容模型列表——并映射到所配置的上游账号，提供模型路由、配额、用量计费与内嵌管理台。
 
+## 状态：Beta
+
+c3api 处于 **beta**：功能齐全，但破坏性变更自由。
+
+- **不向后兼容**——数据库表结构与配置**不向后兼容**，且**不提供迁移路径**。
+- **升级 = 全新建**——从早期版本升级需全新创建数据库、从零核对配置。
+- 发布说明见 [CHANGELOG.md](./CHANGELOG.md)。
+
 ## 特性
 
 | | |
@@ -108,6 +116,7 @@ cd web && pnpm install && pnpm run dev
 
 完整配置项（server / log / admin / auth / db / proxy / upstream / limit / scheduler / usage / billing）见 `config.example.toml`。
 
+- **仅全新部署（不适配迁移）**——表结构与配置跨版本不向后兼容：升级即全新创建数据库、从零重核对配置（见上方"状态：Beta"说明）。
 - **纯 env 部署**（如 K8s）：传 `-config ""` 完全跳过配置文件——flag 默认 config.toml，无文件即启动失败。
 - **配置仅启动时读取**，变更需滚动重启（无热更新）。
 - **非法配置启动即报错**（含字段名）：duration/间隔 ≤0 或 <1ms、未知键（拼写错误/已移除旧键）、必填密钥缺失、占位符（change-me、dev-admin-token 等）一律拒绝。
@@ -124,9 +133,11 @@ c3api 以 **GNU AGPL v3.0-or-later**（`LICENSE`）开源——可自由使用�
 
 需要**闭源部署**（豁免部署上的 AGPL 义务）？可获取商业授权（`LICENSE.commercial`）——付费获得对部署的 AGPL 义务豁免。
 
-外部代码贡献需签署 CLA（贡献者版权转让协议），以便贡献代码并入本双许可体系——贡献前请通过 GitHub issue 联系。
+外部代码贡献需签署 CLA（贡献者版权转让协议），以便贡献代码并入本双许可体系——详见 [CLA.md](./CLA.md) 与 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ## 联系
 
 - GitHub：[is7Qin/c3api](https://github.com/is7Qin/c3api)
 - 问题：欢迎通过 GitHub issue 提交 bug、咨询或功能建议
+- 安全：漏洞请经 [SECURITY.md](./SECURITY.md) 私有报告
+- 发布说明：[CHANGELOG.md](./CHANGELOG.md)
