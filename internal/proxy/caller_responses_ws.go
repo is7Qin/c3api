@@ -85,8 +85,11 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.cfg.BillingCapture && p.bill != nil {
+		// 余额预检（与 handleFormat 同判据）：快照缺失或 <0 → 402；余额 0 放行
+		// ——临时额度由 FEFO 扣费消化（billing_repo.go:71-76 先扣 temp）；
+		// 负余额持续负债拒绝。预检在 Acquire 前 → 不占用并发槽。
 		bal, ok := p.bill.Balances.BalanceOf(meta.UserID)
-		if (!ok || bal <= 0) && p.bill.Balances.EffectiveMultiplier(meta.UserID, groupID) != 0 {
+		if (!ok || bal < 0) && p.bill.Balances.EffectiveMultiplier(meta.UserID, groupID) != 0 {
 			writeErr(w, errInsufficientBalance)
 			p.recordRejected(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAIResponsesWS, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errInsufficientBalance.msg)
 			return

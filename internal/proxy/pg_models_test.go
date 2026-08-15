@@ -271,7 +271,7 @@ func TestPGModelsBillingDisabledGate(t *testing.T) {
 	require.NoError(t, balances.Reload(context.Background()))
 	bal, ok := balances.BalanceOf(fx.userID)
 	require.True(t, ok, "种子用户必须进余额快照")
-	require.Zero(t, bal, "余额 0：若误走余额预检（bal<=0 且倍率非 0）必 402")
+	require.Zero(t, bal, "余额 0：若误走余额预检（bal<0 且倍率非 0）必 402")
 	bill := &BillingHooks{Balances: balances}
 	p := newPGModelsTestProxy(t, fx.sched, modelsAuth(t, fx.repos), bill)
 

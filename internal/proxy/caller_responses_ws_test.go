@@ -13,14 +13,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
@@ -313,6 +316,53 @@ func TestResponsesWSClientAbortRecordsUsage(t *testing.T) {
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "客户端断开后并发槽必须释放")
+}
+
+// 余额预检（WS 路径，与 handleFormat 同判据）：余额负 → 402（握手前 HTTP
+// 拒绝，零升级零上游命中）——spec 2026-08-15 语义边界表：快照 <0 拒绝。
+func TestResponsesWSInsufficientBalance402(t *testing.T) {
+	var hits atomic.Int64
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(500)
+	}))
+	defer up.Close()
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: -1}}, nil)
+	require.NoError(t, bal.Reload(context.Background()), "快照加载（余额 -1）")
+	store := &captureLogStore{}
+	rec := usage.New(usage.UsageConfig{
+		BatchSize: 100, FlushInterval: time.Hour,
+		QuotaFlushInterval: time.Hour,
+	}, store, nil)
+	writer := &fakeDeductWriter{}
+	f := billing.NewFlusher(billing.FlushConfig{
+		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
+	}, writer, rec, bal, nil)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+
+	// 完整升级请求（upgrade 头齐备）：预检在升级处理前拒绝 → 402 而非握手
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	recw := httptest.NewRecorder()
+	p.HandleResponsesWS(recw, req)
+
+	require.Equal(t, http.StatusPaymentRequired, recw.Code, "body=%s", recw.Body.String())
+	require.Contains(t, recw.Body.String(), "insufficient balance", "402 文案说明余额不足")
+	require.Zero(t, hits.Load(), "预检拒绝不得拨号上游（零升级）")
+	ri, ok := p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Zero(t, ri.Concurrency, "预检在 Acquire 前：不占用并发槽")
+	require.Zero(t, p.rec.Pending(), "预用量拒绝不产生明细 pending")
+
+	require.NoError(t, f.Close(context.Background()))
+	writer.mu.Lock()
+	require.Empty(t, writer.calls, "预用量拒绝不进 billed flusher（无扣费无计费日志）")
+	writer.mu.Unlock()
+	require.NoError(t, rec.Close(context.Background()), "Recorder 手动 flush")
 }
 
 // 非升级请求 → 400 本地拒绝（无记录，同 invalid JSON 语义）。

@@ -640,28 +640,37 @@ func newTestProxyBillingT3Logs(t *testing.T, upstream string, prices *fakePriceL
 }
 
 // TestProxyBillingInsufficientBalance402 余额预检（评审 I-1 无槽位问题）：
-// 快照 ≤0 或缺失 → 402 + 上游零命中，预检在 Acquire 前不占用并发槽。P2a
-// 源头修复：本地预用量拒绝不产生 usage_logs 明细/pending（balance 烧穿后的
-// 402 风暴与 429 同路径，明细即无界积压源）；billed flusher 零调用（spec
-// 2026-08-14：请求路径零统计——拒绝路径统计计数交由离线聚合 worker 兜底，
-// 不再请求路径即时聚合）。
+// 快照 <0 或缺失 → 402 + 上游零命中，预检在 Acquire 前不占用并发槽；余额 0
+// 放行（spec 2026-08-15 语义边界表：临时额度由 FEFO 扣费消化，预检不读临时
+// 额度）。P2a 源头修复：本地预用量拒绝不产生 usage_logs 明细/pending
+// （balance 烧穿后的 402 风暴与 429 同路径，明细即无界积压源）；billed
+// flusher 零调用（spec 2026-08-14：请求路径零统计——拒绝路径统计计数交由
+// 离线聚合 worker 兜底，不再请求路径即时聚合）。
 func TestProxyBillingInsufficientBalance402(t *testing.T) {
 	cases := []struct {
-		name string
-		bal  *billing.Balances
+		name     string
+		bal      *billing.Balances
+		pass     bool   // true = 放行（上游命中）；false = 402 + 上游零命中
+		upStatus int    // 放行用例 200（单次命中完成流，failover 不重试）；拒绝用例 500（不可达）
 	}{
-		{"余额 0", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 0}}, nil)},
-		{"快照缺失", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil)},
+		{"余额 0 放行", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 0}}, nil), true, http.StatusOK},
+		{"余额负", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: -1}}, nil), false, http.StatusInternalServerError},
+		{"快照缺失", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil), false, http.StatusInternalServerError},
 		// 评审 I-1：快照缺失 + 组倍率显式 ×1（非免费）→ 仍 402（免费放行只对
 		// 有效倍率 0 生效；缺失且非免费 = 无余额记录，语义不变）。
-		{"快照缺失 + 组倍率 10000", billing.NewBalances(fakeBalanceLoader{gm: map[int64]int{10: 10000}}, nil)},
+		{"快照缺失 + 组倍率 10000", billing.NewBalances(fakeBalanceLoader{gm: map[int64]int{10: 10000}}, nil), false, http.StatusInternalServerError},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var hits atomic.Int64
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				hits.Add(1)
-				w.WriteHeader(500)
+				if c.upStatus != http.StatusOK {
+					w.WriteHeader(c.upStatus)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"x","object":"chat.completion","created":0,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`))
 			}))
 			defer up.Close()
 			store := &captureLogStore{}
@@ -669,7 +678,7 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 				BatchSize: 100, FlushInterval: time.Hour,
 				QuotaFlushInterval: time.Hour,
 			}, store, nil)
-			require.NoError(t, c.bal.Reload(context.Background()), "快照加载（余额 0 / 空表）")
+			require.NoError(t, c.bal.Reload(context.Background()), "快照加载（余额 0 / 负 / 空表）")
 			writer := &fakeDeductWriter{}
 			f := billing.NewFlusher(billing.FlushConfig{
 				FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
@@ -681,6 +690,13 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 			recw := httptest.NewRecorder()
 			p.HandleChat(recw, req)
 
+			if c.pass {
+				require.Equal(t, http.StatusOK, recw.Code, "余额 0 放行：不得 402，须转发上游成功响应")
+				require.Equal(t, int64(1), hits.Load(), "余额 0 放行：必须命中上游且单次完成")
+				require.NoError(t, f.Close(context.Background()))
+				require.NoError(t, rec.Close(context.Background()), "Recorder 手动 flush")
+				return
+			}
 			require.Equal(t, http.StatusPaymentRequired, recw.Code, "body=%s", recw.Body.String())
 			require.Contains(t, recw.Body.String(), "insufficient balance", "402 文案说明余额不足")
 			require.Zero(t, hits.Load(), "预检拒绝不得转发上游")
