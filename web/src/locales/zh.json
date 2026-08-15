@@ -1001,7 +1001,7 @@
       "emptyDesc": "创建 Key 后即可通过它调用网关",
       "table": {
         "name": "名称",
-        "keyPrefix": "Key 前缀",
+        "keyPrefix": "Key",
         "status": "状态",
         "groupId": "分组 ID",
         "maxConcurrency": "最大并发",

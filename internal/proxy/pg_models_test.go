@@ -28,7 +28,6 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
-	"github.com/is7qin/c3api/pkg/cryptox"
 )
 
 // GET /v1/models 真实 PG 集成（与 pg_responses_special_test.go 同款约定）：
@@ -125,9 +124,9 @@ func modelsPGFixture(t *testing.T) modelsFixture {
 	}
 
 	for _, k := range []*domain.Key{
-		{UserID: u.ID, GroupID: g1.ID, Name: "k-models", KeyHash: cryptox.HashKey("gk-models"), KeyPrefix: "gk-", Status: domain.KeyStatusActive},
-		{UserID: u.ID, GroupID: g2.ID, Name: "k-empty", KeyHash: cryptox.HashKey("gk-empty"), KeyPrefix: "gk-", Status: domain.KeyStatusActive},
-		{UserID: u.ID, GroupID: g3.ID, Name: "k-ghost", KeyHash: cryptox.HashKey("gk-ghost"), KeyPrefix: "gk-", Status: domain.KeyStatusActive},
+		{UserID: u.ID, GroupID: g1.ID, Name: "k-models", KeyRaw: "gk-models", Status: domain.KeyStatusActive},
+		{UserID: u.ID, GroupID: g2.ID, Name: "k-empty", KeyRaw: "gk-empty", Status: domain.KeyStatusActive},
+		{UserID: u.ID, GroupID: g3.ID, Name: "k-ghost", KeyRaw: "gk-ghost", Status: domain.KeyStatusActive},
 	} {
 		_, err := repos.Keys.CreateKey(ctx, k)
 		require.NoError(t, err)

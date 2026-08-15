@@ -19,8 +19,7 @@ func (Key) Fields() []ent.Field {
 		field.Int64("user_id"),
 		field.Int64("group_id"),
 		field.String("name"),
-		field.String("key_hash").Unique(),
-		field.String("key_prefix"),
+		field.String("key_raw").Unique(), // 明文常驻（长期可查看/复制；DB 泄露即明文暴露——自托管权衡）
 		field.Enum("status").Values("active", "disabled").Default("active"),
 		field.Int("max_concurrency").Default(0), // 0 = 不限
 		field.Int64("quota").Default(0),         // 累计 token 上限；0 = 不限（HasQuota 短路）

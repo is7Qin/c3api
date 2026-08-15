@@ -33,8 +33,7 @@ func (r *KeyRepo) CreateKey(ctx context.Context, k *domain.Key) (*domain.Key, er
 		SetUserID(k.UserID).
 		SetGroupID(k.GroupID).
 		SetName(k.Name).
-		SetKeyHash(k.KeyHash).
-		SetKeyPrefix(k.KeyPrefix).
+		SetKeyRaw(k.KeyRaw).
 		SetStatus(key.Status(k.Status)).
 		SetMaxConcurrency(k.MaxConcurrency).
 		SetQuota(k.Quota).
@@ -42,7 +41,7 @@ func (r *KeyRepo) CreateKey(ctx context.Context, k *domain.Key) (*domain.Key, er
 		Save(ctx)
 	if err != nil {
 		if sqlgraph.IsUniqueConstraintError(err) {
-			return nil, fmt.Errorf("%w: key_hash=%q", ErrConflict, k.KeyHash)
+			return nil, fmt.Errorf("%w: key_raw=%q", ErrConflict, k.KeyRaw)
 		}
 		return nil, err
 	}
@@ -68,10 +67,11 @@ func (r *KeyRepo) QuotaUsed(ctx context.Context, id int64) (int64, error) {
 	return int64(v), nil
 }
 
-// GetKeyByHash 按 hash 取 key（鉴权路径：已软删 key 按未找到处理——
-// deleted_at IS NULL 过滤 → 返回 (nil, nil) → 鉴权拒绝）；未找到返回 (nil, nil)。
-func (r *KeyRepo) GetKeyByHash(ctx context.Context, hash string) (*domain.Key, error) {
-	row, err := r.client.Key.Query().Where(key.KeyHashEQ(hash), key.DeletedAtIsNil()).Only(ctx)
+// GetKeyByRaw 按明文取 key（已软删 key 按未找到处理——deleted_at IS NULL
+// 过滤 → 返回 (nil, nil)）；未找到返回 (nil, nil)。生产无调用方（快照
+// LoadKeys 全量供鉴权；测试消费面）。
+func (r *KeyRepo) GetKeyByRaw(ctx context.Context, raw string) (*domain.Key, error) {
+	row, err := r.client.Key.Query().Where(key.KeyRawEQ(raw), key.DeletedAtIsNil()).Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return nil, nil
@@ -112,7 +112,8 @@ func (r *KeyRepo) ListKeysByUser(ctx context.Context, userID int64, q ListQuery)
 	return out, int64(total), nil
 }
 
-// UpdateKey 更新 name/status/max_concurrency/quota（hash 走 RotateKey）。
+// UpdateKey 更新 name/status/max_concurrency/quota（不写 key_raw——明文变更
+// 仅 CreateKey/RotateKey 路径）。
 // quota_used 不写——Recorder 派生计数器（p2-12 核实：service 层无任何路径
 // 意图写该列，全字段写回会覆盖 AddQuotaUsed 增量 → 永久少记、gate 超用
 // 不 429）；ent Save re-SELECT 返回行 → 调用方拿到的 QuotaUsed 反为 DB 新鲜
@@ -130,12 +131,12 @@ func (r *KeyRepo) UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, er
 	return toDomainKey(row), nil
 }
 
-// RotateKey 轮换 key：换 hash/key_prefix（raw 明文仅服务层返回一次）。
-func (r *KeyRepo) RotateKey(ctx context.Context, id int64, newHash, newPrefix string) (*domain.Key, error) {
-	row, err := r.client.Key.UpdateOneID(id).SetKeyHash(newHash).SetKeyPrefix(newPrefix).Save(ctx)
+// RotateKey 轮换 key：换明文单值（旧明文立即失效，新明文入库）。
+func (r *KeyRepo) RotateKey(ctx context.Context, id int64, newRaw string) (*domain.Key, error) {
+	row, err := r.client.Key.UpdateOneID(id).SetKeyRaw(newRaw).Save(ctx)
 	if err != nil {
 		if sqlgraph.IsUniqueConstraintError(err) {
-			return nil, fmt.Errorf("%w: key_hash=%q", ErrConflict, newHash)
+			return nil, fmt.Errorf("%w: key_raw=%q", ErrConflict, newRaw)
 		}
 		return nil, errMissingID(err, id)
 	}
@@ -157,28 +158,28 @@ func (r *KeyRepo) DeleteKey(ctx context.Context, id int64) error {
 }
 
 // DeleteKeysByGroup 软删除组的全部 key（组删除级联——deleted_at 置值，行保留
-// 不破坏 key.group_id 外键），返回本次被软删的 hash 列表（Auth 增量清理用；
-// 已软删 key 过滤——其 hash 此前已从 Auth 移除，重复返回无意义）。
+// 不破坏 key.group_id 外键），返回本次被软删的明文列表（Auth 增量清理用；
+// 已软删 key 过滤——其明文此前已从 Auth 移除，重复返回无意义）。
 func (r *KeyRepo) DeleteKeysByGroup(ctx context.Context, groupID int64) ([]string, error) {
 	rows, err := r.client.Key.Query().
 		Where(key.GroupIDEQ(groupID), key.DeletedAtIsNil()).
-		Select(key.FieldKeyHash).
+		Select(key.FieldKeyRaw).
 		All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	hashes := make([]string, 0, len(rows))
+	raws := make([]string, 0, len(rows))
 	for _, row := range rows {
-		hashes = append(hashes, row.KeyHash)
+		raws = append(raws, row.KeyRaw)
 	}
 	if _, err := r.client.Key.Update().Where(key.GroupIDEQ(groupID)).SetDeletedAt(time.Now()).Save(ctx); err != nil {
 		return nil, err
 	}
-	return hashes, nil
+	return raws, nil
 }
 
-// LoadKeys 构建 Auth 鉴权快照：key_hash → KeyMeta（含归属用户状态/并发/
-// 额度）。热路径数据源（reload 时一次查询；请求路径零 DB）。
+// LoadKeys 构建 Auth 鉴权快照：key_raw（明文）→ KeyMeta（含归属用户状态/
+// 并发/额度）。热路径数据源（reload 时一次查询；请求路径零 DB）。
 //
 // 崩溃修复：旧实现 `WithUser()` eager-load 的 m2o 邻接跳生成
 // `SELECT * FROM users WHERE id IN (全部 key 的归属用户 id)`——key 数
@@ -223,7 +224,7 @@ func (r *KeyRepo) LoadKeys(ctx context.Context) (map[string]domain.KeyMeta, erro
 			if row.Edges.Group != nil {
 				meta.ProtocolConverts = toDomainProtocolConverts(row.Edges.Group.ProtocolConvert)
 			}
-			out[row.KeyHash] = meta
+			out[row.KeyRaw] = meta
 		}
 	}
 	return out, nil

@@ -42,15 +42,9 @@ func (_c *KeyCreate) SetName(v string) *KeyCreate {
 	return _c
 }
 
-// SetKeyHash sets the "key_hash" field.
-func (_c *KeyCreate) SetKeyHash(v string) *KeyCreate {
-	_c.mutation.SetKeyHash(v)
-	return _c
-}
-
-// SetKeyPrefix sets the "key_prefix" field.
-func (_c *KeyCreate) SetKeyPrefix(v string) *KeyCreate {
-	_c.mutation.SetKeyPrefix(v)
+// SetKeyRaw sets the "key_raw" field.
+func (_c *KeyCreate) SetKeyRaw(v string) *KeyCreate {
+	_c.mutation.SetKeyRaw(v)
 	return _c
 }
 
@@ -240,11 +234,8 @@ func (_c *KeyCreate) check() error {
 	if _, ok := _c.mutation.Name(); !ok {
 		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "Key.name"`)}
 	}
-	if _, ok := _c.mutation.KeyHash(); !ok {
-		return &ValidationError{Name: "key_hash", err: errors.New(`ent: missing required field "Key.key_hash"`)}
-	}
-	if _, ok := _c.mutation.KeyPrefix(); !ok {
-		return &ValidationError{Name: "key_prefix", err: errors.New(`ent: missing required field "Key.key_prefix"`)}
+	if _, ok := _c.mutation.KeyRaw(); !ok {
+		return &ValidationError{Name: "key_raw", err: errors.New(`ent: missing required field "Key.key_raw"`)}
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Key.status"`)}
@@ -312,13 +303,9 @@ func (_c *KeyCreate) createSpec() (*Key, *sqlgraph.CreateSpec) {
 		_spec.SetField(key.FieldName, field.TypeString, value)
 		_node.Name = value
 	}
-	if value, ok := _c.mutation.KeyHash(); ok {
-		_spec.SetField(key.FieldKeyHash, field.TypeString, value)
-		_node.KeyHash = value
-	}
-	if value, ok := _c.mutation.KeyPrefix(); ok {
-		_spec.SetField(key.FieldKeyPrefix, field.TypeString, value)
-		_node.KeyPrefix = value
+	if value, ok := _c.mutation.KeyRaw(); ok {
+		_spec.SetField(key.FieldKeyRaw, field.TypeString, value)
+		_node.KeyRaw = value
 	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(key.FieldStatus, field.TypeEnum, value)
@@ -470,27 +457,15 @@ func (u *KeyUpsert) UpdateName() *KeyUpsert {
 	return u
 }
 
-// SetKeyHash sets the "key_hash" field.
-func (u *KeyUpsert) SetKeyHash(v string) *KeyUpsert {
-	u.Set(key.FieldKeyHash, v)
+// SetKeyRaw sets the "key_raw" field.
+func (u *KeyUpsert) SetKeyRaw(v string) *KeyUpsert {
+	u.Set(key.FieldKeyRaw, v)
 	return u
 }
 
-// UpdateKeyHash sets the "key_hash" field to the value that was provided on create.
-func (u *KeyUpsert) UpdateKeyHash() *KeyUpsert {
-	u.SetExcluded(key.FieldKeyHash)
-	return u
-}
-
-// SetKeyPrefix sets the "key_prefix" field.
-func (u *KeyUpsert) SetKeyPrefix(v string) *KeyUpsert {
-	u.Set(key.FieldKeyPrefix, v)
-	return u
-}
-
-// UpdateKeyPrefix sets the "key_prefix" field to the value that was provided on create.
-func (u *KeyUpsert) UpdateKeyPrefix() *KeyUpsert {
-	u.SetExcluded(key.FieldKeyPrefix)
+// UpdateKeyRaw sets the "key_raw" field to the value that was provided on create.
+func (u *KeyUpsert) UpdateKeyRaw() *KeyUpsert {
+	u.SetExcluded(key.FieldKeyRaw)
 	return u
 }
 
@@ -692,31 +667,17 @@ func (u *KeyUpsertOne) UpdateName() *KeyUpsertOne {
 	})
 }
 
-// SetKeyHash sets the "key_hash" field.
-func (u *KeyUpsertOne) SetKeyHash(v string) *KeyUpsertOne {
+// SetKeyRaw sets the "key_raw" field.
+func (u *KeyUpsertOne) SetKeyRaw(v string) *KeyUpsertOne {
 	return u.Update(func(s *KeyUpsert) {
-		s.SetKeyHash(v)
+		s.SetKeyRaw(v)
 	})
 }
 
-// UpdateKeyHash sets the "key_hash" field to the value that was provided on create.
-func (u *KeyUpsertOne) UpdateKeyHash() *KeyUpsertOne {
+// UpdateKeyRaw sets the "key_raw" field to the value that was provided on create.
+func (u *KeyUpsertOne) UpdateKeyRaw() *KeyUpsertOne {
 	return u.Update(func(s *KeyUpsert) {
-		s.UpdateKeyHash()
-	})
-}
-
-// SetKeyPrefix sets the "key_prefix" field.
-func (u *KeyUpsertOne) SetKeyPrefix(v string) *KeyUpsertOne {
-	return u.Update(func(s *KeyUpsert) {
-		s.SetKeyPrefix(v)
-	})
-}
-
-// UpdateKeyPrefix sets the "key_prefix" field to the value that was provided on create.
-func (u *KeyUpsertOne) UpdateKeyPrefix() *KeyUpsertOne {
-	return u.Update(func(s *KeyUpsert) {
-		s.UpdateKeyPrefix()
+		s.UpdateKeyRaw()
 	})
 }
 
@@ -1102,31 +1063,17 @@ func (u *KeyUpsertBulk) UpdateName() *KeyUpsertBulk {
 	})
 }
 
-// SetKeyHash sets the "key_hash" field.
-func (u *KeyUpsertBulk) SetKeyHash(v string) *KeyUpsertBulk {
+// SetKeyRaw sets the "key_raw" field.
+func (u *KeyUpsertBulk) SetKeyRaw(v string) *KeyUpsertBulk {
 	return u.Update(func(s *KeyUpsert) {
-		s.SetKeyHash(v)
+		s.SetKeyRaw(v)
 	})
 }
 
-// UpdateKeyHash sets the "key_hash" field to the value that was provided on create.
-func (u *KeyUpsertBulk) UpdateKeyHash() *KeyUpsertBulk {
+// UpdateKeyRaw sets the "key_raw" field to the value that was provided on create.
+func (u *KeyUpsertBulk) UpdateKeyRaw() *KeyUpsertBulk {
 	return u.Update(func(s *KeyUpsert) {
-		s.UpdateKeyHash()
-	})
-}
-
-// SetKeyPrefix sets the "key_prefix" field.
-func (u *KeyUpsertBulk) SetKeyPrefix(v string) *KeyUpsertBulk {
-	return u.Update(func(s *KeyUpsert) {
-		s.SetKeyPrefix(v)
-	})
-}
-
-// UpdateKeyPrefix sets the "key_prefix" field to the value that was provided on create.
-func (u *KeyUpsertBulk) UpdateKeyPrefix() *KeyUpsertBulk {
-	return u.Update(func(s *KeyUpsert) {
-		s.UpdateKeyPrefix()
+		s.UpdateKeyRaw()
 	})
 }
 

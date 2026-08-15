@@ -100,7 +100,7 @@ func TestKeyOwnership(t *testing.T) {
 	raw, rotated, err := svc.RotateKey(ctx, alice.ID, k.ID)
 	require.NoError(t, err)
 	require.NotEmpty(t, raw)
-	require.NotEqual(t, k.KeyHash, rotated.KeyHash, "轮换后 hash 变化")
+	require.NotEqual(t, k.KeyRaw, rotated.KeyRaw, "轮换后明文变化")
 	require.NoError(t, svc.DeleteKey(ctx, alice.ID, k.ID))
 	_, err = svc.GetKey(ctx, alice.ID, k.ID)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -190,16 +190,16 @@ func TestRotateKeyGetUserFailureNoDestruction(t *testing.T) {
 	require.NoError(t, err)
 	k, _, err := svc.CreateKey(ctx, user.ID, "k", g.ID, 0, 0)
 	require.NoError(t, err)
-	before := k.KeyHash
+	before := k.KeyRaw
 
 	fs.failGetUser = true
 	_, _, err = svc.RotateKey(ctx, user.ID, k.ID)
 	require.Error(t, err, "GetUser 失败 → RotateKey 必须报错（写前预取终止）")
 	got, err := fs.GetKey(ctx, k.ID)
 	require.NoError(t, err)
-	require.Equal(t, before, got.KeyHash, "DB 行未轮换（轮换零发生）")
-	require.Empty(t, keys.deleted, "旧 hash 未失效（Delete 未发生）")
-	require.Empty(t, keys.upserted[1:], "新 hash 未注册")
+	require.Equal(t, before, got.KeyRaw, "DB 行未轮换（轮换零发生）")
+	require.Empty(t, keys.deleted, "旧明文未失效（Delete 未发生）")
+	require.Empty(t, keys.upserted[1:], "新明文未注册")
 }
 
 // TestSetGroupAssignments 替换语义：差集授予/撤销；非法/重复/缺失校验。

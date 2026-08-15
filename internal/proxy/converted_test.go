@@ -23,7 +23,6 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
-	"github.com/is7qin/c3api/pkg/cryptox"
 )
 
 // --- 协议转换路径（W5）接线测试 ---
@@ -156,7 +155,7 @@ func newConvertedTestProxy(t *testing.T, upstream string, tplFormats []domain.Re
 	key := activeKey(1, 1, 10)
 	key.ProtocolConverts = pcs
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		cryptox.HashKey("gk-1"): key,
+		"gk-1": key,
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background())) // 构造不再自载——测试显式首刷（快照注册表单一入口）
 	hc := &http.Client{Transport: http.DefaultTransport}

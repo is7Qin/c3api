@@ -70,14 +70,9 @@ func Name(v string) predicate.Key {
 	return predicate.Key(sql.FieldEQ(FieldName, v))
 }
 
-// KeyHash applies equality check predicate on the "key_hash" field. It's identical to KeyHashEQ.
-func KeyHash(v string) predicate.Key {
-	return predicate.Key(sql.FieldEQ(FieldKeyHash, v))
-}
-
-// KeyPrefix applies equality check predicate on the "key_prefix" field. It's identical to KeyPrefixEQ.
-func KeyPrefix(v string) predicate.Key {
-	return predicate.Key(sql.FieldEQ(FieldKeyPrefix, v))
+// KeyRaw applies equality check predicate on the "key_raw" field. It's identical to KeyRawEQ.
+func KeyRaw(v string) predicate.Key {
+	return predicate.Key(sql.FieldEQ(FieldKeyRaw, v))
 }
 
 // MaxConcurrency applies equality check predicate on the "max_concurrency" field. It's identical to MaxConcurrencyEQ.
@@ -215,134 +210,69 @@ func NameContainsFold(v string) predicate.Key {
 	return predicate.Key(sql.FieldContainsFold(FieldName, v))
 }
 
-// KeyHashEQ applies the EQ predicate on the "key_hash" field.
-func KeyHashEQ(v string) predicate.Key {
-	return predicate.Key(sql.FieldEQ(FieldKeyHash, v))
+// KeyRawEQ applies the EQ predicate on the "key_raw" field.
+func KeyRawEQ(v string) predicate.Key {
+	return predicate.Key(sql.FieldEQ(FieldKeyRaw, v))
 }
 
-// KeyHashNEQ applies the NEQ predicate on the "key_hash" field.
-func KeyHashNEQ(v string) predicate.Key {
-	return predicate.Key(sql.FieldNEQ(FieldKeyHash, v))
+// KeyRawNEQ applies the NEQ predicate on the "key_raw" field.
+func KeyRawNEQ(v string) predicate.Key {
+	return predicate.Key(sql.FieldNEQ(FieldKeyRaw, v))
 }
 
-// KeyHashIn applies the In predicate on the "key_hash" field.
-func KeyHashIn(vs ...string) predicate.Key {
-	return predicate.Key(sql.FieldIn(FieldKeyHash, vs...))
+// KeyRawIn applies the In predicate on the "key_raw" field.
+func KeyRawIn(vs ...string) predicate.Key {
+	return predicate.Key(sql.FieldIn(FieldKeyRaw, vs...))
 }
 
-// KeyHashNotIn applies the NotIn predicate on the "key_hash" field.
-func KeyHashNotIn(vs ...string) predicate.Key {
-	return predicate.Key(sql.FieldNotIn(FieldKeyHash, vs...))
+// KeyRawNotIn applies the NotIn predicate on the "key_raw" field.
+func KeyRawNotIn(vs ...string) predicate.Key {
+	return predicate.Key(sql.FieldNotIn(FieldKeyRaw, vs...))
 }
 
-// KeyHashGT applies the GT predicate on the "key_hash" field.
-func KeyHashGT(v string) predicate.Key {
-	return predicate.Key(sql.FieldGT(FieldKeyHash, v))
+// KeyRawGT applies the GT predicate on the "key_raw" field.
+func KeyRawGT(v string) predicate.Key {
+	return predicate.Key(sql.FieldGT(FieldKeyRaw, v))
 }
 
-// KeyHashGTE applies the GTE predicate on the "key_hash" field.
-func KeyHashGTE(v string) predicate.Key {
-	return predicate.Key(sql.FieldGTE(FieldKeyHash, v))
+// KeyRawGTE applies the GTE predicate on the "key_raw" field.
+func KeyRawGTE(v string) predicate.Key {
+	return predicate.Key(sql.FieldGTE(FieldKeyRaw, v))
 }
 
-// KeyHashLT applies the LT predicate on the "key_hash" field.
-func KeyHashLT(v string) predicate.Key {
-	return predicate.Key(sql.FieldLT(FieldKeyHash, v))
+// KeyRawLT applies the LT predicate on the "key_raw" field.
+func KeyRawLT(v string) predicate.Key {
+	return predicate.Key(sql.FieldLT(FieldKeyRaw, v))
 }
 
-// KeyHashLTE applies the LTE predicate on the "key_hash" field.
-func KeyHashLTE(v string) predicate.Key {
-	return predicate.Key(sql.FieldLTE(FieldKeyHash, v))
+// KeyRawLTE applies the LTE predicate on the "key_raw" field.
+func KeyRawLTE(v string) predicate.Key {
+	return predicate.Key(sql.FieldLTE(FieldKeyRaw, v))
 }
 
-// KeyHashContains applies the Contains predicate on the "key_hash" field.
-func KeyHashContains(v string) predicate.Key {
-	return predicate.Key(sql.FieldContains(FieldKeyHash, v))
+// KeyRawContains applies the Contains predicate on the "key_raw" field.
+func KeyRawContains(v string) predicate.Key {
+	return predicate.Key(sql.FieldContains(FieldKeyRaw, v))
 }
 
-// KeyHashHasPrefix applies the HasPrefix predicate on the "key_hash" field.
-func KeyHashHasPrefix(v string) predicate.Key {
-	return predicate.Key(sql.FieldHasPrefix(FieldKeyHash, v))
+// KeyRawHasPrefix applies the HasPrefix predicate on the "key_raw" field.
+func KeyRawHasPrefix(v string) predicate.Key {
+	return predicate.Key(sql.FieldHasPrefix(FieldKeyRaw, v))
 }
 
-// KeyHashHasSuffix applies the HasSuffix predicate on the "key_hash" field.
-func KeyHashHasSuffix(v string) predicate.Key {
-	return predicate.Key(sql.FieldHasSuffix(FieldKeyHash, v))
+// KeyRawHasSuffix applies the HasSuffix predicate on the "key_raw" field.
+func KeyRawHasSuffix(v string) predicate.Key {
+	return predicate.Key(sql.FieldHasSuffix(FieldKeyRaw, v))
 }
 
-// KeyHashEqualFold applies the EqualFold predicate on the "key_hash" field.
-func KeyHashEqualFold(v string) predicate.Key {
-	return predicate.Key(sql.FieldEqualFold(FieldKeyHash, v))
+// KeyRawEqualFold applies the EqualFold predicate on the "key_raw" field.
+func KeyRawEqualFold(v string) predicate.Key {
+	return predicate.Key(sql.FieldEqualFold(FieldKeyRaw, v))
 }
 
-// KeyHashContainsFold applies the ContainsFold predicate on the "key_hash" field.
-func KeyHashContainsFold(v string) predicate.Key {
-	return predicate.Key(sql.FieldContainsFold(FieldKeyHash, v))
-}
-
-// KeyPrefixEQ applies the EQ predicate on the "key_prefix" field.
-func KeyPrefixEQ(v string) predicate.Key {
-	return predicate.Key(sql.FieldEQ(FieldKeyPrefix, v))
-}
-
-// KeyPrefixNEQ applies the NEQ predicate on the "key_prefix" field.
-func KeyPrefixNEQ(v string) predicate.Key {
-	return predicate.Key(sql.FieldNEQ(FieldKeyPrefix, v))
-}
-
-// KeyPrefixIn applies the In predicate on the "key_prefix" field.
-func KeyPrefixIn(vs ...string) predicate.Key {
-	return predicate.Key(sql.FieldIn(FieldKeyPrefix, vs...))
-}
-
-// KeyPrefixNotIn applies the NotIn predicate on the "key_prefix" field.
-func KeyPrefixNotIn(vs ...string) predicate.Key {
-	return predicate.Key(sql.FieldNotIn(FieldKeyPrefix, vs...))
-}
-
-// KeyPrefixGT applies the GT predicate on the "key_prefix" field.
-func KeyPrefixGT(v string) predicate.Key {
-	return predicate.Key(sql.FieldGT(FieldKeyPrefix, v))
-}
-
-// KeyPrefixGTE applies the GTE predicate on the "key_prefix" field.
-func KeyPrefixGTE(v string) predicate.Key {
-	return predicate.Key(sql.FieldGTE(FieldKeyPrefix, v))
-}
-
-// KeyPrefixLT applies the LT predicate on the "key_prefix" field.
-func KeyPrefixLT(v string) predicate.Key {
-	return predicate.Key(sql.FieldLT(FieldKeyPrefix, v))
-}
-
-// KeyPrefixLTE applies the LTE predicate on the "key_prefix" field.
-func KeyPrefixLTE(v string) predicate.Key {
-	return predicate.Key(sql.FieldLTE(FieldKeyPrefix, v))
-}
-
-// KeyPrefixContains applies the Contains predicate on the "key_prefix" field.
-func KeyPrefixContains(v string) predicate.Key {
-	return predicate.Key(sql.FieldContains(FieldKeyPrefix, v))
-}
-
-// KeyPrefixHasPrefix applies the HasPrefix predicate on the "key_prefix" field.
-func KeyPrefixHasPrefix(v string) predicate.Key {
-	return predicate.Key(sql.FieldHasPrefix(FieldKeyPrefix, v))
-}
-
-// KeyPrefixHasSuffix applies the HasSuffix predicate on the "key_prefix" field.
-func KeyPrefixHasSuffix(v string) predicate.Key {
-	return predicate.Key(sql.FieldHasSuffix(FieldKeyPrefix, v))
-}
-
-// KeyPrefixEqualFold applies the EqualFold predicate on the "key_prefix" field.
-func KeyPrefixEqualFold(v string) predicate.Key {
-	return predicate.Key(sql.FieldEqualFold(FieldKeyPrefix, v))
-}
-
-// KeyPrefixContainsFold applies the ContainsFold predicate on the "key_prefix" field.
-func KeyPrefixContainsFold(v string) predicate.Key {
-	return predicate.Key(sql.FieldContainsFold(FieldKeyPrefix, v))
+// KeyRawContainsFold applies the ContainsFold predicate on the "key_raw" field.
+func KeyRawContainsFold(v string) predicate.Key {
+	return predicate.Key(sql.FieldContainsFold(FieldKeyRaw, v))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.

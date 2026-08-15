@@ -6,22 +6,15 @@ package cryptox
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 )
 
-// HashKey 返回 key 的 SHA-256 十六进制摘要，用于库内比对（不存明文）。
-func HashKey(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
-
-// NewGroupKey 生成分组客户端 key：raw 只返回一次给调用方展示，hash 入库。
-func NewGroupKey() (raw, hash, prefix string) {
+// NewGroupKey 生成分组客户端 key 明文：raw = "gk-" + 32hex（16B 随机，长度 35）。
+// 明文直接落库（唯一约束 + 鉴权等值查——去 hash 列，见 key_raw 设计）。
+func NewGroupKey() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		panic("cryptox: rand read failed: " + err.Error())
 	}
-	raw = "gk-" + hex.EncodeToString(b)
-	return raw, HashKey(raw), raw[:8]
+	return "gk-" + hex.EncodeToString(b)
 }

@@ -27,7 +27,6 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
-	"github.com/is7qin/c3api/pkg/cryptox"
 )
 
 // --- T6：codex 类型 resp HTTP 路径本地 mock 上游测试 ---
@@ -185,7 +184,7 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		cryptox.HashKey("gk-1"): activeKey(1, 1, 10),
+		"gk-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}

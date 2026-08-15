@@ -72,30 +72,16 @@ func (_u *KeyUpdate) SetNillableName(v *string) *KeyUpdate {
 	return _u
 }
 
-// SetKeyHash sets the "key_hash" field.
-func (_u *KeyUpdate) SetKeyHash(v string) *KeyUpdate {
-	_u.mutation.SetKeyHash(v)
+// SetKeyRaw sets the "key_raw" field.
+func (_u *KeyUpdate) SetKeyRaw(v string) *KeyUpdate {
+	_u.mutation.SetKeyRaw(v)
 	return _u
 }
 
-// SetNillableKeyHash sets the "key_hash" field if the given value is not nil.
-func (_u *KeyUpdate) SetNillableKeyHash(v *string) *KeyUpdate {
+// SetNillableKeyRaw sets the "key_raw" field if the given value is not nil.
+func (_u *KeyUpdate) SetNillableKeyRaw(v *string) *KeyUpdate {
 	if v != nil {
-		_u.SetKeyHash(*v)
-	}
-	return _u
-}
-
-// SetKeyPrefix sets the "key_prefix" field.
-func (_u *KeyUpdate) SetKeyPrefix(v string) *KeyUpdate {
-	_u.mutation.SetKeyPrefix(v)
-	return _u
-}
-
-// SetNillableKeyPrefix sets the "key_prefix" field if the given value is not nil.
-func (_u *KeyUpdate) SetNillableKeyPrefix(v *string) *KeyUpdate {
-	if v != nil {
-		_u.SetKeyPrefix(*v)
+		_u.SetKeyRaw(*v)
 	}
 	return _u
 }
@@ -311,11 +297,8 @@ func (_u *KeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(key.FieldName, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.KeyHash(); ok {
-		_spec.SetField(key.FieldKeyHash, field.TypeString, value)
-	}
-	if value, ok := _u.mutation.KeyPrefix(); ok {
-		_spec.SetField(key.FieldKeyPrefix, field.TypeString, value)
+	if value, ok := _u.mutation.KeyRaw(); ok {
+		_spec.SetField(key.FieldKeyRaw, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(key.FieldStatus, field.TypeEnum, value)
@@ -470,30 +453,16 @@ func (_u *KeyUpdateOne) SetNillableName(v *string) *KeyUpdateOne {
 	return _u
 }
 
-// SetKeyHash sets the "key_hash" field.
-func (_u *KeyUpdateOne) SetKeyHash(v string) *KeyUpdateOne {
-	_u.mutation.SetKeyHash(v)
+// SetKeyRaw sets the "key_raw" field.
+func (_u *KeyUpdateOne) SetKeyRaw(v string) *KeyUpdateOne {
+	_u.mutation.SetKeyRaw(v)
 	return _u
 }
 
-// SetNillableKeyHash sets the "key_hash" field if the given value is not nil.
-func (_u *KeyUpdateOne) SetNillableKeyHash(v *string) *KeyUpdateOne {
+// SetNillableKeyRaw sets the "key_raw" field if the given value is not nil.
+func (_u *KeyUpdateOne) SetNillableKeyRaw(v *string) *KeyUpdateOne {
 	if v != nil {
-		_u.SetKeyHash(*v)
-	}
-	return _u
-}
-
-// SetKeyPrefix sets the "key_prefix" field.
-func (_u *KeyUpdateOne) SetKeyPrefix(v string) *KeyUpdateOne {
-	_u.mutation.SetKeyPrefix(v)
-	return _u
-}
-
-// SetNillableKeyPrefix sets the "key_prefix" field if the given value is not nil.
-func (_u *KeyUpdateOne) SetNillableKeyPrefix(v *string) *KeyUpdateOne {
-	if v != nil {
-		_u.SetKeyPrefix(*v)
+		_u.SetKeyRaw(*v)
 	}
 	return _u
 }
@@ -739,11 +708,8 @@ func (_u *KeyUpdateOne) sqlSave(ctx context.Context) (_node *Key, err error) {
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(key.FieldName, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.KeyHash(); ok {
-		_spec.SetField(key.FieldKeyHash, field.TypeString, value)
-	}
-	if value, ok := _u.mutation.KeyPrefix(); ok {
-		_spec.SetField(key.FieldKeyPrefix, field.TypeString, value)
+	if value, ok := _u.mutation.KeyRaw(); ok {
+		_spec.SetField(key.FieldKeyRaw, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(key.FieldStatus, field.TypeEnum, value)

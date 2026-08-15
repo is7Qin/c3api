@@ -54,7 +54,7 @@ func toAPIGroup(g *domain.Group) Group {
 	}
 }
 
-// toAPIKey key 领域对象 → 契约类型（KeyHash 永不下发）。
+// toAPIKey key 领域对象 → 契约类型（明文长期回显——列表/详情/创建/轮换）。
 func toAPIKey(k *domain.Key) Key {
 	st := KeyStatus(k.Status)
 	return Key{
@@ -62,7 +62,7 @@ func toAPIKey(k *domain.Key) Key {
 		UserID:         &k.UserID,
 		GroupID:        &k.GroupID,
 		Name:           &k.Name,
-		KeyPrefix:      &k.KeyPrefix,
+		Key:            &k.KeyRaw,
 		Status:         &st,
 		MaxConcurrency: &k.MaxConcurrency,
 		Quota:          &k.Quota,

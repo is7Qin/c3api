@@ -72,18 +72,18 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-// DeleteKeysByGroup 满足 KeyStore（组删除前置清理；返回被删 hash 列表）。
+// DeleteKeysByGroup 满足 KeyStore（组删除前置清理；返回被删明文列表）。
 func (f *fakeStore) DeleteKeysByGroup(ctx context.Context, groupID int64) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var hashes []string
+	var raws []string
 	for id, k := range f.keys {
 		if k.GroupID == groupID {
-			hashes = append(hashes, k.KeyHash)
+			raws = append(raws, k.KeyRaw)
 			delete(f.keys, id)
 		}
 	}
-	return hashes, nil
+	return raws, nil
 }
 
 var _ service.Store = (*fakeStore)(nil)
@@ -980,7 +980,7 @@ func (f *fakeStore) UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, 
 	return &c, nil
 }
 
-func (f *fakeStore) RotateKey(ctx context.Context, id int64, newHash, newPrefix string) (*domain.Key, error) {
+func (f *fakeStore) RotateKey(ctx context.Context, id int64, newRaw string) (*domain.Key, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	cur, ok := f.keys[id]
@@ -988,8 +988,7 @@ func (f *fakeStore) RotateKey(ctx context.Context, id int64, newHash, newPrefix 
 		return nil, missingErr(id)
 	}
 	c := *cur
-	c.KeyHash = newHash
-	c.KeyPrefix = newPrefix
+	c.KeyRaw = newRaw
 	f.keys[id] = &c // 替换存库条目：旧引用不受影响
 	out := c
 	return &out, nil

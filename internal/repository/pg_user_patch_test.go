@@ -186,7 +186,7 @@ func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "kq", Visibility: domain.GroupVisibilityPublic})
 	require.NoError(t, err)
 	k, err := repos.CreateKey(ctx, &domain.Key{
-		UserID: u.ID, GroupID: g.ID, Name: "kq", KeyHash: "hash-kq", KeyPrefix: "gk-kq",
+		UserID: u.ID, GroupID: g.ID, Name: "kq", KeyRaw: "gk-kq",
 		Status: domain.KeyStatusActive, MaxConcurrency: 2, Quota: 1000, QuotaUsed: 10,
 	})
 	require.NoError(t, err)

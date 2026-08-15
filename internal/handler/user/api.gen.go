@@ -142,7 +142,6 @@ type Key struct {
 	DeletedAt      *time.Time `json:"DeletedAt"`
 	GroupID        *int64     `json:"GroupID,omitempty"`
 	ID             *int64     `json:"ID,omitempty"`
-	KeyPrefix      *string    `json:"KeyPrefix,omitempty"`
 	MaxConcurrency *int       `json:"MaxConcurrency,omitempty"`
 	Name           *string    `json:"Name,omitempty"`
 
@@ -154,6 +153,9 @@ type Key struct {
 	Status    *KeyStatus `json:"Status,omitempty"`
 	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
 	UserID    *int64     `json:"UserID,omitempty"`
+
+	// Key key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡，用户裁决）
+	Key *string `json:"key,omitempty"`
 }
 
 // KeyCreate defines model for KeyCreate.
@@ -183,31 +185,6 @@ type KeyUpdate struct {
 	Name           *string    `json:"name,omitempty"`
 	Quota          *int64     `json:"quota,omitempty"`
 	Status         *KeyStatus `json:"status,omitempty"`
-}
-
-// KeyWithSecret defines model for KeyWithSecret.
-type KeyWithSecret struct {
-	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
-
-	// DeletedAt 软删除时间戳；null = 存活（列表/鉴权过滤已删；GET 单个可查已删项）
-	DeletedAt      *time.Time `json:"DeletedAt"`
-	GroupID        *int64     `json:"GroupID,omitempty"`
-	ID             *int64     `json:"ID,omitempty"`
-	KeyPrefix      *string    `json:"KeyPrefix,omitempty"`
-	MaxConcurrency *int       `json:"MaxConcurrency,omitempty"`
-	Name           *string    `json:"Name,omitempty"`
-
-	// Quota 累计 token 上限；0 = 不限
-	Quota *int64 `json:"Quota,omitempty"`
-
-	// QuotaUsed 已消耗（后扣；无额度 key 恒 0）
-	QuotaUsed *int64     `json:"QuotaUsed,omitempty"`
-	Status    *KeyStatus `json:"Status,omitempty"`
-	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
-	UserID    *int64     `json:"UserID,omitempty"`
-
-	// Key key 明文（创建/轮换响应仅返回一次；之后仅 KeyPrefix 可识别）
-	Key string `json:"key"`
 }
 
 // RedeemRequest defines model for RedeemRequest.
@@ -559,10 +536,10 @@ type ServerInterface interface {
 	// 可选组列表（public 全部 + 已授予 private；只读，key 创建时选组）
 	// (GET /user/groups)
 	GetUserGroups(w http.ResponseWriter, r *http.Request)
-	// 我的 key 列表（分页/排序；KeyHash 永不下发）
+	// 我的 key 列表（分页/排序；key 明文长期可查看/复制）
 	// (GET /user/keys)
 	GetUserKeys(w http.ResponseWriter, r *http.Request, params GetUserKeysParams)
-	// 创建 key（组可选性校验：public 或已授予 private；raw 明文仅本次返回）
+	// 创建 key（组可选性校验：public 或已授予 private；明文长期回显）
 	// (POST /user/keys)
 	PostUserKeys(w http.ResponseWriter, r *http.Request)
 	// 删除 key（仅本人；Auth 快照增量移除——立即失效）
@@ -574,7 +551,7 @@ type ServerInterface interface {
 	// 更新 key（name/status/max_concurrency/quota；仅本人）
 	// (PUT /user/keys/{id})
 	PutUserKeysId(w http.ResponseWriter, r *http.Request, id int64)
-	// 轮换 key（仅本人；新明文仅返回一次，旧 key 立即失效）
+	// 轮换 key（仅本人；新明文生效，旧 key 立即失效）
 	// (POST /user/keys/{id}/rotate)
 	PostUserKeysIdRotate(w http.ResponseWriter, r *http.Request, id int64)
 	// 我的兑换记录（use 快照 + 码的 type/remark 联查；强制 user_id = 当前用户，防越权）
@@ -634,13 +611,13 @@ func (_ Unimplemented) GetUserGroups(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 我的 key 列表（分页/排序；KeyHash 永不下发）
+// 我的 key 列表（分页/排序；key 明文长期可查看/复制）
 // (GET /user/keys)
 func (_ Unimplemented) GetUserKeys(w http.ResponseWriter, r *http.Request, params GetUserKeysParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 创建 key（组可选性校验：public 或已授予 private；raw 明文仅本次返回）
+// 创建 key（组可选性校验：public 或已授予 private；明文长期回显）
 // (POST /user/keys)
 func (_ Unimplemented) PostUserKeys(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -664,7 +641,7 @@ func (_ Unimplemented) PutUserKeysId(w http.ResponseWriter, r *http.Request, id 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 轮换 key（仅本人；新明文仅返回一次，旧 key 立即失效）
+// 轮换 key（仅本人；新明文生效，旧 key 立即失效）
 // (POST /user/keys/{id}/rotate)
 func (_ Unimplemented) PostUserKeysIdRotate(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)

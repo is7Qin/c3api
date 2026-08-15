@@ -21,8 +21,8 @@ var ErrGroupNotEligible = fmt.Errorf("%w: group is private and not granted to us
 
 // CreateKey 用户自建 key（/user/keys POST）：
 // 组可选性校验（public 或已授予 private）→ 用户门禁字段写库前预取（B1-1：
-// GetUser 前置——写后注册退化为纯内存 Upsert 不可失败）→ cryptox 生成
-// raw/hash/prefix → 落库 → Auth 增量纯内存 Upsert。raw 明文仅本次返回。
+// GetUser 前置——写后注册退化为纯内存 Upsert 不可失败）→ cryptox 生成明文
+// → 落库 → Auth 增量纯内存 Upsert。明文长期可查看/复制（列表/详情回显）。
 func (s *Service) CreateKey(ctx context.Context, userID int64, name string, groupID int64, maxConcurrency int, quota int64) (*domain.Key, string, error) {
 	if name == "" || groupID <= 0 || maxConcurrency < 0 || quota < 0 {
 		return nil, "", ErrInvalidInput
@@ -41,15 +41,15 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 		}
 		user = u
 	}
-	raw, hash, prefix := cryptox.NewGroupKey()
+	raw := cryptox.NewGroupKey()
 	created, err := s.store.CreateKey(ctx, &domain.Key{
 		UserID: userID, GroupID: groupID, Name: name,
-		KeyHash: hash, KeyPrefix: prefix,
+		KeyRaw: raw,
 		Status: domain.KeyStatusActive, MaxConcurrency: maxConcurrency,
 		Quota: quota, QuotaUsed: 0,
 	})
 	if err != nil {
-		return nil, "", mapRepoErr(err) // key_hash 唯一冲突 → ErrConflict（409）
+		return nil, "", mapRepoErr(err) // key_raw 唯一冲突 → ErrConflict（409）
 	}
 	s.upsertKeyMetaInMemory(created, user) // 写后注册纯内存（不可失败）
 	// key 创建是 #14 多实例缺口（不进 invalidate）：其余实例鉴权快照需全量
@@ -138,10 +138,10 @@ func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *stri
 	return updated, nil
 }
 
-// RotateKey 轮换自己的 key（/user/keys/{id}/rotate）：新 raw 仅返回一次；
-// 旧 hash 增量移除（立即失效）、新 hash 增量注册。用户门禁字段写库前预取
-// （B1-1：GetUser 前置——Delete 后只剩不可失败的内存 Upsert，失败窗口整体
-// 消失——DB 已轮换只留新 hash 时新 raw 永不蒸发）。
+// RotateKey 轮换自己的 key（/user/keys/{id}/rotate）：新明文落库；旧明文
+// 增量移除（立即失效）、新明文增量注册。用户门禁字段写库前预取（B1-1：
+// GetUser 前置——Delete 后只剩不可失败的内存 Upsert，失败窗口整体消失——
+// DB 已轮换只留新明文时新 raw 永不蒸发）。
 func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (string, *domain.Key, error) {
 	cur, err := s.ownedKey(ctx, userID, keyID)
 	if err != nil {
@@ -156,23 +156,23 @@ func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (string, *
 		}
 		user = u
 	}
-	raw, hash, prefix := cryptox.NewGroupKey()
-	updated, err := s.store.RotateKey(ctx, keyID, hash, prefix)
+	raw := cryptox.NewGroupKey()
+	updated, err := s.store.RotateKey(ctx, keyID, raw)
 	if err != nil {
 		return "", nil, mapRepoErr(err)
 	}
 	if s.keys != nil {
-		s.keys.Delete(cur.KeyHash)
+		s.keys.Delete(cur.KeyRaw)
 		s.upsertKeyMetaInMemory(updated, user) // 写后注册纯内存（不可失败）
 	}
-	s.publish(ctx, notify.Change{Keys: true}) // 轮换 = 旧 hash 失效 + 新 hash 注册 → 全量覆盖
+	s.publish(ctx, notify.Change{Keys: true}) // 轮换 = 旧明文失效 + 新明文注册 → 全量覆盖
 	if s.log != nil {
 		s.log.Info("key rotated", logx.Int64("id", keyID), logx.Int64("user_id", userID))
 	}
 	return raw, updated, nil
 }
 
-// DeleteKey 删除自己的 key（/user/keys/{id} DELETE；Auth 增量移除——旧 hash
+// DeleteKey 删除自己的 key（/user/keys/{id} DELETE；Auth 增量移除——旧明文
 // 立即失效）。
 func (s *Service) DeleteKey(ctx context.Context, userID, keyID int64) error {
 	cur, err := s.ownedKey(ctx, userID, keyID)
@@ -183,9 +183,9 @@ func (s *Service) DeleteKey(ctx context.Context, userID, keyID int64) error {
 		return mapRepoErr(err)
 	}
 	if s.keys != nil {
-		s.keys.Delete(cur.KeyHash)
+		s.keys.Delete(cur.KeyRaw)
 	}
-	s.publish(ctx, notify.Change{Keys: true}) // 删除 → 全实例 auth 快照全量 Reload（旧 hash 立即失效）
+	s.publish(ctx, notify.Change{Keys: true}) // 删除 → 全实例 auth 快照全量 Reload（旧明文立即失效）
 	return nil
 }
 
@@ -228,5 +228,5 @@ func (s *Service) upsertKeyMetaInMemory(k *domain.Key, u *domain.User) {
 		HasQuota: k.HasQuota(), Quota: k.Quota, QuotaUsed: k.QuotaUsed,
 		UserStatus: u.Status, UserMaxConc: u.MaxConcurrency,
 	}
-	s.keys.Upsert(k.KeyHash, meta)
+	s.keys.Upsert(k.KeyRaw, meta)
 }

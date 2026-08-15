@@ -97,13 +97,13 @@ func (s *Service) DeleteGroup(ctx context.Context, id int64) error {
 	if _, err := s.store.GetGroup(ctx, id); err != nil {
 		return mapRepoErr(err)
 	}
-	hashes, err := s.store.DeleteKeysByGroup(ctx, id)
+	raws, err := s.store.DeleteKeysByGroup(ctx, id)
 	if err != nil {
 		return err
 	}
 	if s.keys != nil {
-		for _, h := range hashes {
-			s.keys.Delete(h)
+		for _, raw := range raws {
+			s.keys.Delete(raw)
 		}
 	}
 	if err := s.store.DeleteGroup(ctx, id); err != nil {
@@ -127,13 +127,13 @@ func (s *Service) DeleteGroupsBatch(ctx context.Context, ids []int64) error {
 		if _, err := s.store.GetGroup(ctx, id); err != nil {
 			return mapRepoErr(err) // 404 缺 id
 		}
-		hashes, err := s.store.DeleteKeysByGroup(ctx, id)
+		raws, err := s.store.DeleteKeysByGroup(ctx, id)
 		if err != nil {
 			return err
 		}
 		if s.keys != nil {
-			for _, h := range hashes {
-				s.keys.Delete(h)
+			for _, raw := range raws {
+				s.keys.Delete(raw)
 			}
 		}
 	}

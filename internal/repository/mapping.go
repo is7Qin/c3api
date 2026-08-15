@@ -23,7 +23,7 @@ func toDomainUser(u *ent.User) *domain.User {
 func toDomainKey(k *ent.Key) *domain.Key {
 	return &domain.Key{
 		ID: k.ID, UserID: k.UserID, GroupID: k.GroupID, Name: k.Name,
-		KeyHash: k.KeyHash, KeyPrefix: k.KeyPrefix,
+		KeyRaw: k.KeyRaw,
 		Status: domain.KeyStatus(k.Status), MaxConcurrency: k.MaxConcurrency,
 		Quota: k.Quota, QuotaUsed: k.QuotaUsed,
 		CreatedAt: k.CreatedAt, UpdatedAt: k.UpdatedAt, DeletedAt: k.DeletedAt,

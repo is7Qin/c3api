@@ -19,7 +19,7 @@ import (
 // TestUniqueConflictPG 真实 PG 唯一约束冲突 → repository.ErrConflict（含冲突值
 // 详情；此前裸透传 PG 错误，service/handler 原样透传 → 500 而非 409）。
 // 覆盖：template/group 创建 name 唯一、单/批量改名撞已有 name、key 创建
-// key_hash 唯一（防御——随机 hash 理论不撞，映射保证一致性）。
+// key_raw 唯一（防御——随机明文理论不撞，映射保证一致性）。
 func TestUniqueConflictPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -80,22 +80,22 @@ func TestUniqueConflictPG(t *testing.T) {
 		require.Contains(t, err.Error(), `name="bat-1"`)
 	})
 
-	t.Run("key hash conflict", func(t *testing.T) {
+	t.Run("key raw conflict", func(t *testing.T) {
 		u := seedPGUser(t, repos, "keys-dup@example.com")
 		g := seedPGGroup(t, repos, "keys-dup-g")
 		k1, err := repos.Keys.CreateKey(ctx, &domain.Key{
 			UserID: u.ID, GroupID: g.ID, Name: "k1",
-			KeyHash: "hash-dup", KeyPrefix: "hd",
+			KeyRaw: "gk-dup",
 			Status: domain.KeyStatusActive,
 		})
 		require.NoError(t, err)
 		_, err = repos.Keys.CreateKey(ctx, &domain.Key{
 			UserID: u.ID, GroupID: g.ID, Name: "k2",
-			KeyHash: k1.KeyHash, KeyPrefix: "hd",
+			KeyRaw: k1.KeyRaw,
 			Status: domain.KeyStatusActive,
 		})
-		require.ErrorIs(t, err, repository.ErrConflict, "key_hash 唯一 → ErrConflict（防御）")
-		require.Contains(t, err.Error(), "key_hash", "冲突详情标识冲突列")
+		require.ErrorIs(t, err, repository.ErrConflict, "key_raw 唯一 → ErrConflict（防御）")
+		require.Contains(t, err.Error(), "key_raw", "冲突详情标识冲突列")
 	})
 
 	t.Run("user create email conflict", func(t *testing.T) {

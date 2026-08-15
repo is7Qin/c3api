@@ -359,8 +359,7 @@ type Key struct {
 	UserID         int64
 	GroupID        int64
 	Name           string
-	KeyHash        string
-	KeyPrefix      string
+	KeyRaw         string // 明文常驻（长期可查看/复制；DB 泄露即明文暴露——自托管权衡）
 	Status         KeyStatus
 	MaxConcurrency int
 	Quota          int64 // 累计 token 上限；0 = 不限

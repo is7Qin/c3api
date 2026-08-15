@@ -362,8 +362,8 @@ func (r *Repository) GetKey(ctx context.Context, id int64) (*domain.Key, error) 
 	return r.Keys.GetKey(ctx, id)
 }
 
-func (r *Repository) GetKeyByHash(ctx context.Context, hash string) (*domain.Key, error) {
-	return r.Keys.GetKeyByHash(ctx, hash)
+func (r *Repository) GetKeyByRaw(ctx context.Context, raw string) (*domain.Key, error) {
+	return r.Keys.GetKeyByRaw(ctx, raw)
 }
 
 func (r *Repository) ListKeysByUser(ctx context.Context, userID int64, q ListQuery) ([]*domain.Key, int64, error) {
@@ -374,8 +374,8 @@ func (r *Repository) UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key,
 	return r.Keys.UpdateKey(ctx, k)
 }
 
-func (r *Repository) RotateKey(ctx context.Context, id int64, newHash, newPrefix string) (*domain.Key, error) {
-	return r.Keys.RotateKey(ctx, id, newHash, newPrefix)
+func (r *Repository) RotateKey(ctx context.Context, id int64, newRaw string) (*domain.Key, error) {
+	return r.Keys.RotateKey(ctx, id, newRaw)
 }
 
 func (r *Repository) DeleteKey(ctx context.Context, id int64) error {

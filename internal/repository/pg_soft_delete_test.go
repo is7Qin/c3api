@@ -33,7 +33,7 @@ func TestPGSoftDeleteListFilters(t *testing.T) {
 	acc := seedPGAccount(t, repos, tpl.ID, "sd-live-a")
 	k, err := repos.Keys.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "sd-live-k",
-		KeyHash: "sd-hash-live", KeyPrefix: "sd-", Status: domain.KeyStatusActive,
+		KeyRaw: "sd-live-raw", Status: domain.KeyStatusActive,
 	})
 	require.NoError(t, err)
 	ruleID, err := repos.CreateRule(ctx, domain.Rule{Name: "sd-live-r", Enabled: true, Priority: 1000})
@@ -82,7 +82,7 @@ func TestPGSoftDeleteListFilters(t *testing.T) {
 	require.Empty(t, rules, "已删规则不进列表（规则引擎 Reload 消费同路径）")
 }
 
-// TestPGSoftDeleteUniqueHeld 软删项仍占唯一约束：同名/同 hash 重建 → ErrConflict
+// TestPGSoftDeleteUniqueHeld 软删项仍占唯一约束：同名/同明文重建 → ErrConflict
 //（审计优先：唯一检查不加 deleted_at 过滤，与 DB 约束一致；同名重建走运维 SQL）。
 func TestPGSoftDeleteUniqueHeld(t *testing.T) {
 	repos := newPGRepos(t)
@@ -114,24 +114,24 @@ func TestPGSoftDeleteUniqueHeld(t *testing.T) {
 		require.ErrorIs(t, err, repository.ErrConflict, "软删规则 priority 仍占唯一约束 → 重建 409")
 	})
 
-	t.Run("key hash", func(t *testing.T) {
+	t.Run("key raw", func(t *testing.T) {
 		g := seedPGGroup(t, repos, "sd-uniq-kg")
 		k, err := repos.Keys.CreateKey(ctx, &domain.Key{
 			UserID: u.ID, GroupID: g.ID, Name: "sd-uniq-k",
-			KeyHash: "sd-hash-uniq", KeyPrefix: "sd-", Status: domain.KeyStatusActive,
+			KeyRaw: "sd-uniq-raw", Status: domain.KeyStatusActive,
 		})
 		require.NoError(t, err)
 		require.NoError(t, repos.DeleteKey(ctx, k.ID))
 		_, err = repos.Keys.CreateKey(ctx, &domain.Key{
 			UserID: u.ID, GroupID: g.ID, Name: "sd-uniq-k2",
-			KeyHash: k.KeyHash, KeyPrefix: "sd-", Status: domain.KeyStatusActive,
+			KeyRaw: k.KeyRaw, Status: domain.KeyStatusActive,
 		})
-		require.ErrorIs(t, err, repository.ErrConflict, "软删 key_hash 仍占唯一约束 → 重建 409")
+		require.ErrorIs(t, err, repository.ErrConflict, "软删 key_raw 仍占唯一约束 → 重建 409")
 	})
 }
 
 // TestPGSoftDeleteConsumptionFilters 消费路径过滤已删：LoadKeys（鉴权快照）、
-// GetKeyByHash（鉴权按未找到拒绝）、LoadGroupsAccounts（调度器快照）、
+// GetKeyByRaw（鉴权按未找到拒绝）、LoadGroupsAccounts（调度器快照）、
 // ListRules（规则引擎 Reload 数据源——ListFilters 已锚）。
 func TestPGSoftDeleteConsumptionFilters(t *testing.T) {
 	repos := newPGRepos(t)
@@ -143,14 +143,14 @@ func TestPGSoftDeleteConsumptionFilters(t *testing.T) {
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}), "账号入组（快照断言前提）")
 	k, err := repos.Keys.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "sd-consum-k",
-		KeyHash: "sd-hash-consum", KeyPrefix: "sd-", Status: domain.KeyStatusActive,
+		KeyRaw: "sd-consum-raw", Status: domain.KeyStatusActive,
 	})
 	require.NoError(t, err)
 
 	// 删除前快照含全部
 	m, err := repos.Keys.LoadKeys(ctx)
 	require.NoError(t, err)
-	require.Contains(t, m, k.KeyHash, "活 key 在鉴权快照")
+	require.Contains(t, m, k.KeyRaw, "活 key 在鉴权快照")
 	snap, err := repos.Groups.LoadGroupsAccounts(ctx)
 	require.NoError(t, err)
 	require.Contains(t, snap, g.ID, "活组在调度器快照")
@@ -160,8 +160,8 @@ func TestPGSoftDeleteConsumptionFilters(t *testing.T) {
 	require.NoError(t, repos.DeleteKey(ctx, k.ID))
 	m2, err := repos.Keys.LoadKeys(ctx)
 	require.NoError(t, err)
-	require.NotContains(t, m2, k.KeyHash, "已软删 key 不进鉴权快照（鉴权拒绝）")
-	gone, err := repos.GetKeyByHash(ctx, k.KeyHash)
+	require.NotContains(t, m2, k.KeyRaw, "已软删 key 不进鉴权快照（鉴权拒绝）")
+	gone, err := repos.GetKeyByRaw(ctx, k.KeyRaw)
 	require.NoError(t, err)
 	require.Nil(t, gone, "已软删 key 按未找到处理")
 
@@ -221,19 +221,19 @@ func TestPGSoftDeleteGroupCascade(t *testing.T) {
 	g := seedPGGroup(t, repos, "sd-cascade-g")
 	k1, err := repos.Keys.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "sd-c1",
-		KeyHash: "sd-hash-c1", KeyPrefix: "sd-", Status: domain.KeyStatusActive,
+		KeyRaw: "sd-c1-raw", Status: domain.KeyStatusActive,
 	})
 	require.NoError(t, err)
 	k2, err := repos.Keys.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "sd-c2",
-		KeyHash: "sd-hash-c2", KeyPrefix: "sd-", Status: domain.KeyStatusActive,
+		KeyRaw: "sd-c2-raw", Status: domain.KeyStatusActive,
 	})
 	require.NoError(t, err)
 
-	// 删组前置清理（service.DeleteGroup 调用链）→ 组内 key 软删 + 返回 hash
-	hashes, err := repos.DeleteKeysByGroup(ctx, g.ID)
+	// 删组前置清理（service.DeleteGroup 调用链）→ 组内 key 软删 + 返回明文
+	raws, err := repos.DeleteKeysByGroup(ctx, g.ID)
 	require.NoError(t, err)
-	require.ElementsMatch(t, []string{k1.KeyHash, k2.KeyHash}, hashes, "返回本次被删 hash 列表")
+	require.ElementsMatch(t, []string{k1.KeyRaw, k2.KeyRaw}, raws, "返回本次被删明文列表")
 	for _, k := range []int64{k1.ID, k2.ID} {
 		got, err := repos.GetKey(ctx, k)
 		require.NoError(t, err)
@@ -249,6 +249,6 @@ func TestPGSoftDeleteGroupCascade(t *testing.T) {
 	require.NotContains(t, snap, g.ID)
 	auth, err := repos.Keys.LoadKeys(ctx)
 	require.NoError(t, err)
-	require.NotContains(t, auth, k1.KeyHash)
-	require.NotContains(t, auth, k2.KeyHash)
+	require.NotContains(t, auth, k1.KeyRaw)
+	require.NotContains(t, auth, k2.KeyRaw)
 }

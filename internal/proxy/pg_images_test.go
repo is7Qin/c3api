@@ -32,7 +32,6 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
-	"github.com/is7qin/c3api/pkg/cryptox"
 )
 
 // 真实 PG 集成（与 pg_responses_special_test.go 同款约定）：
@@ -166,7 +165,7 @@ func newPGImagesTestProxy(t *testing.T, sched *scheduler.Scheduler, groupID int6
 		QuotaFlushInterval: time.Hour,
 	}, noopLogStore{}, nil)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		cryptox.HashKey(keyForGroup(groupID)): activeKey(1, 1, groupID),
+		keyForGroup(groupID): activeKey(1, 1, groupID),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}

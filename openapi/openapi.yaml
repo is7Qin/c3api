@@ -977,7 +977,7 @@ paths:
     get:
       operationId: GetUserKeys
       tags: [user]
-      summary: 我的 key 列表（分页/排序；KeyHash 永不下发）
+      summary: 我的 key 列表（分页/排序；key 明文长期可查看/复制）
       parameters:
         - { name: limit, in: query, schema: { type: integer, default: 20 } }
         - { name: offset, in: query, schema: { type: integer, default: 0 } }
@@ -995,7 +995,7 @@ paths:
     post:
       operationId: PostUserKeys
       tags: [user]
-      summary: 创建 key（组可选性校验：public 或已授予 private；raw 明文仅本次返回）
+      summary: 创建 key（组可选性校验：public 或已授予 private；明文长期回显）
       requestBody:
         required: true
         content:
@@ -1003,10 +1003,10 @@ paths:
             schema: { $ref: '#/components/schemas/KeyCreate' }
       responses:
         '200':
-          description: 创建后的 key + 明文
+          description: 创建后的 key（含明文）
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/KeyWithSecret' }
+              schema: { $ref: '#/components/schemas/Key' }
         default:
           $ref: '#/components/responses/Error'
   /user/keys/{id}:
@@ -1059,13 +1059,13 @@ paths:
     post:
       operationId: PostUserKeysIdRotate
       tags: [user]
-      summary: 轮换 key（仅本人；新明文仅返回一次，旧 key 立即失效）
+      summary: 轮换 key（仅本人；新明文生效，旧 key 立即失效）
       responses:
         '200':
-          description: 新 key 明文 + 更新后元数据
+          description: 轮换后的 key（含新明文）
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/KeyWithSecret' }
+              schema: { $ref: '#/components/schemas/Key' }
         default:
           $ref: '#/components/responses/Error'
   /user/usage_logs:
@@ -1667,7 +1667,7 @@ components:
         UserID: { type: integer, format: int64 }
         GroupID: { type: integer, format: int64 }
         Name: { type: string }
-        KeyPrefix: { type: string }
+        key: { type: string, description: key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡，用户裁决） }
         Status: { $ref: '#/components/schemas/KeyStatus' }
         MaxConcurrency: { type: integer }
         Quota: { type: integer, format: int64, description: 累计 token 上限；0 = 不限 }
@@ -1698,13 +1698,6 @@ components:
         rows:
           type: array
           items: { $ref: '#/components/schemas/Key' }
-    KeyWithSecret:
-      allOf:
-        - $ref: '#/components/schemas/Key'
-        - type: object
-          required: [key]
-          properties:
-            key: { type: string, description: key 明文（创建/轮换响应仅返回一次；之后仅 KeyPrefix 可识别） }
     UserRole:
       type: string
       enum: [platform_admin, user]

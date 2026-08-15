@@ -112,14 +112,13 @@ func TestUserKeysLifecycle(t *testing.T) {
 	require.Len(t, groups, 1, "private 未授予不可见: %s", rec.Body.String())
 	require.Equal(t, *pubG.ID, *groups[0].ID)
 
-	// public 组建 key → 200（raw 明文仅本次返回）
+	// public 组建 key → 200（raw 明文长期回显）
 	rec = doUser(http.MethodPost, "/user/keys", `{"name":"k1","group_id":`+itoa(*pubG.ID)+`}`, token)
 	require.Equal(t, http.StatusOK, rec.Code, "create key public: %s", rec.Body.String())
-	var created userapi.KeyWithSecret
+	var created userapi.Key
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 	require.NotEmpty(t, created.Key, "raw 明文必须返回")
-	require.True(t, strings.HasPrefix(created.Key, "gk-"), "key 前缀约定")
-	require.NotNil(t, created.KeyPrefix)
+	require.True(t, strings.HasPrefix(*created.Key, "gk-"), "key 前缀约定")
 	require.Equal(t, int64(0), *created.Quota, "缺省 quota = 0 不限")
 
 	// private 组未授予 → 400（组可选性校验）
@@ -136,15 +135,18 @@ func TestUserKeysLifecycle(t *testing.T) {
 
 	rec = doUser(http.MethodPost, "/user/keys", `{"name":"k2","group_id":`+itoa(*privG.ID)+`}`, token)
 	require.Equal(t, http.StatusOK, rec.Code, "create key granted private: %s", rec.Body.String())
-	var k2 userapi.KeyWithSecret
+	var k2 userapi.Key
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &k2))
 
-	// 列表：2 个
+	// 列表：2 个；行含明文（长期回显契约）
 	rec = doUser(http.MethodGet, "/user/keys", "", token)
 	require.Equal(t, http.StatusOK, rec.Code, "list keys: %s", rec.Body.String())
 	var list userapi.KeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(t, int64(2), list.Total)
+	require.Len(t, list.Rows, 2)
+	require.NotEmpty(t, list.Rows[0].Key, "列表行含明文（长期可查看/复制）")
+	require.Equal(t, created.Key, list.Rows[0].Key, "列表明文与创建返回一致")
 
 	// 更新：max_concurrency/status
 	rec = doUser(http.MethodPut, "/user/keys/"+itoa(*created.ID),
@@ -158,10 +160,9 @@ func TestUserKeysLifecycle(t *testing.T) {
 	// 轮换：新明文 ≠ 旧明文；prefix 变化
 	rec = doUser(http.MethodPost, "/user/keys/"+itoa(*created.ID)+"/rotate", "", token)
 	require.Equal(t, http.StatusOK, rec.Code, "rotate key: %s", rec.Body.String())
-	var rotated userapi.KeyWithSecret
+	var rotated userapi.Key
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rotated))
 	require.NotEqual(t, created.Key, rotated.Key, "轮换后明文必须变化")
-	require.NotEqual(t, created.KeyPrefix, rotated.KeyPrefix, "轮换后 prefix 必须变化")
 
 	// 删除 → 列表剩 1
 	rec = doUser(http.MethodDelete, "/user/keys/"+itoa(*created.ID), "", token)
