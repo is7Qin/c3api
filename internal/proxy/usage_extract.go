@@ -126,7 +126,10 @@ func sniffResponsesCompletedTop(data []byte) (usageTuple, bool) {
 		return usageTuple{}, false
 	}
 	// type 值必须为字符串字面（非字符串值不可能等于字面目标——gjson String()
-	// 对非字符串返原文/空，比较结果同为不命中）
+	// 对非字符串返原文/空，比较结果同为不命中）。病态差异（保守方向，对齐
+	// scanIntValue 惯例）：type 值含 \uXXXX 转义（如 "response.completed"
+	// 解码后与字面相同）——gjson 值 unescape 后比较命中，本实现 bytes.Equal
+	// 字节原样比较不匹配 → ok=false（不误计）
 	if start >= len(data) || data[start] != '"' {
 		return usageTuple{}, false
 	}
@@ -163,17 +166,16 @@ func usageInterval(data []byte, usageKey []byte) ([]byte, bool) {
 // 共用——字段名按协议经参数注入：chat 为 prompt_tokens/completion_tokens/
 // prompt_tokens_details.cached_tokens，responses 为 input_tokens/output_tokens/
 // input_tokens_details.cached_tokens；cache_creation ephemeral 双桶聚合两协议
-// 同构）。crKey 为 nil 时跳过 cr 子区间（Anthropic 无 cached_tokens 语义）。
-// 键名不匹配/缺失 → 0（与 gjson 缺失 = 0 等价）。
+// 同构）。crKey 恒非 nil（调用方按协议注入其 cached_tokens 内嵌路径——评审
+// 认定 nil 分支死代码；Anthropic 不经本 helper，其 cr 由 anthropicStartUsage
+// 直读 cache_read_input_tokens）。键名不匹配/缺失 → 0（与 gjson 缺失 = 0 等价）。
 func usageFieldsFromInterval(raw []byte, itKey, otKey, crKey []byte) usageTuple {
 	var u usageTuple
 	u.it = scanFieldInt64(raw, itKey)
 	u.ot = scanFieldInt64(raw, otKey)
 	u.tt = scanFieldInt64(raw, totalTokensKeyBytes)
-	if crKey != nil {
-		if s, e, ok := scanKeyValue(raw, crKey); ok {
-			u.cr = scanFieldInt64(raw[s:e], cachedTokensKeyBytes)
-		}
+	if s, e, ok := scanKeyValue(raw, crKey); ok {
+		u.cr = scanFieldInt64(raw[s:e], cachedTokensKeyBytes)
 	}
 	if s, e, ok := scanKeyValue(raw, cacheCreationKeyBytes); ok {
 		u.cc = scanFieldInt64(raw[s:e], ephemeral5mKeyBytes) + scanFieldInt64(raw[s:e], ephemeral1hKeyBytes)

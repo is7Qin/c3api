@@ -339,6 +339,7 @@ func TestUsageExtractEquivalence(t *testing.T) {
 		`{"type":"response.completed","response":{"id":"r"}}`,
 		`{"type":"response.completed","response":{"id":"r"},"usage":null}`,
 		`{"id":"x"}`,
+		`{"type":"message","content":[{"type":"output_text","text":"say {\"type\":\"response.completed\"} please"}],"usage":{"input_tokens":10}}`, // 正文含 type 子串的非 completed 帧（sniff 不误命中 → ok=false）
 		`this is not json`,
 	}
 	for _, f := range topFrames {
