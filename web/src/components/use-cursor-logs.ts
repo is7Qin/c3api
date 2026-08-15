@@ -134,7 +134,9 @@ export function useCursorLogs<T>(
           next++
         }
         if (genRef.current !== gen) return
-        setPage(Math.min(next - 1, target))
+        // Math.max(1, …) 防御：chain.length==1（首页在途未 push）时 next-1=0，
+        // 直接 setPage(0) 会让页码按钮组指向空页（实际不可达——组件仅 isLoading=false 后渲染）。
+        setPage(Math.max(1, Math.min(next - 1, target)))
       } catch (e) {
         if (genRef.current !== gen) return
         setIsError(true)
