@@ -61,8 +61,9 @@ func TestAuthInFlightUsersAcquireRelease(t *testing.T) {
 	require.Equal(t, int64(1), got[1], "reload 后新快照继承在途=1")
 }
 
-// activeKeyWithMax 带并发上限的启用态 KeyMeta（UserMaxConc > 0——门禁 user
-// 层计数才生效；activeKey 的 0 = 不限不计数）。
+// activeKeyWithMax 带并发上限的启用态 KeyMeta（UserMaxConc > 0——限流 + 计数；
+// activeKey 的 0 = 不限并发但仍计数——计数与限流解耦，排行数据源，spec
+// 2026-08-15）。
 func activeKeyWithMax(keyID, userID int64, maxConc int) domain.KeyMeta {
 	m := activeKey(keyID, userID, 0)
 	m.UserMaxConc = maxConc
