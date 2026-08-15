@@ -25,8 +25,9 @@ import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 
 type ErrorType = components['schemas']['ErrorType']
-type UsageLog = components['schemas']['UsageLog']
-type ErrLog = components['schemas']['ErrLog']
+// 用户面行类型（无 AccountID/TemplateID——用户级契约已删上游拓扑字段）。
+type UsageLog = components['schemas']['UserUsageLog']
+type ErrLog = components['schemas']['UserErrLog']
 
 // 错误类型全值域（err_logs 完整错误面：拒绝 + 异常双轨）。
 const ERROR_TYPES: ErrorType[] = ['none', '429', '4xx', '5xx', 'network', 'auth', 'no_account', 'abort', 'billing']
@@ -101,7 +102,6 @@ const ERROR_ALL = '__all__'
 
 interface LogFilters {
   group_id: string
-  account_id: string
   model: string
   error_type: string
   status_code: string
@@ -110,7 +110,7 @@ interface LogFilters {
 }
 
 const emptyFilters = (): LogFilters => ({
-  group_id: '', account_id: '', model: '', error_type: '', status_code: '', ...defaultLogRange(),
+  group_id: '', model: '', error_type: '', status_code: '', ...defaultLogRange(),
 })
 
 export default function UserLogs() {
@@ -136,7 +136,6 @@ export default function UserLogs() {
   const { usageParams, errParams } = useMemo(() => {
     const base: MyUsageLogParams = {
       group_id: filters.group_id ? Number(filters.group_id) : undefined,
-      account_id: filters.account_id ? Number(filters.account_id) : undefined,
       model: filters.model || undefined,
       error_type: filters.error_type || undefined,
       from: toRFC3339(filters.from) ?? '',
@@ -177,16 +176,12 @@ export default function UserLogs() {
         </TabsList>
       </Tabs>
 
-      {/* 过滤栏：分组/账号/模型/错误类型（+错误面状态码）+ 时间范围（参数与管理端同构，无 user_id） */}
+      {/* 过滤栏：分组/模型/错误类型（+错误面状态码）+ 时间范围（参数与管理端同构，无 user_id/account_id——用户级契约删该两参数） */}
       <Card className="p-4">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <div className="space-y-1.5">
             <Label htmlFor="user-log-group">{t('user.logs.filter.groupId')}</Label>
             <Input id="user-log-group" type="number" min={0} placeholder="1" value={filters.group_id} onChange={e => set({ group_id: e.target.value })} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="user-log-account">{t('user.logs.filter.accountId')}</Label>
-            <Input id="user-log-account" type="number" min={0} placeholder="1" value={filters.account_id} onChange={e => set({ account_id: e.target.value })} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="user-log-model">{t('user.logs.filter.model')}</Label>

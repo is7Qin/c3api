@@ -31,8 +31,8 @@ func (h *UserAPI) GetUserErrLogs(w http.ResponseWriter, r *http.Request, params 
 	if params.GroupId != nil {
 		lq.GroupID = *params.GroupId
 	}
-	if params.AccountId != nil {
-		lq.AccountID = *params.AccountId
+	if params.KeyId != nil {
+		lq.KeyID = *params.KeyId
 	}
 	if params.Model != nil {
 		lq.Model = *params.Model
@@ -48,7 +48,7 @@ func (h *UserAPI) GetUserErrLogs(w http.ResponseWriter, r *http.Request, params 
 		writeServiceErr(w, err)
 		return
 	}
-	out := make([]ErrLog, 0, len(rows))
+	out := make([]UserErrLog, 0, len(rows))
 	for _, item := range rows { // service.QueryErrLogs 返回 []any（元素为 *domain.UsageLog）
 		l, ok := item.(*domain.UsageLog)
 		if !ok { // 类型不符是内部错误：不能静默丢数据，返回 500
@@ -63,5 +63,5 @@ func (h *UserAPI) GetUserErrLogs(w http.ResponseWriter, r *http.Request, params 
 		next = out[lq.Limit-1].ID
 		out = out[:lq.Limit]
 	}
-	writeJSON(w, http.StatusOK, ErrLogsResponse{Rows: out, NextCursor: next})
+	writeJSON(w, http.StatusOK, UserErrLogsResponse{Rows: out, NextCursor: next})
 }

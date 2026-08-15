@@ -23,10 +23,12 @@ func (s *Service) QueryStats(ctx context.Context, q repository.StatQuery, granul
 		return rows, nil
 	}
 	// day 聚合：按 (日, 各维度) 合并（含 UserID——/user/stats 按用户过滤，
-	// 不同用户的同维度桶不可合并）
+	// 不同用户的同维度桶不可合并）。日界固定 UTC（与 trend SQL date_trunc('day',
+	// bucket_time AT TIME ZONE 'UTC') 同语义——评审 P2-1；本处曾用会话时区本地日
+	// Format，跨本地日界的相邻小时桶（如 23:00/00:00 +0800）被拆成两日，漏合并）。
 	merged := make(map[string]*domain.StatBucket)
 	for _, b := range rows {
-		key := b.BucketTime.Format("2006-01-02") + "|" + itoa(b.GroupID) + "|" + itoa(b.AccountID) + "|" + itoa(b.TemplateID) + "|" + itoa(b.UserID) + "|" + b.Model + "|" + boolStr(b.IsError)
+		key := b.BucketTime.UTC().Format("2006-01-02") + "|" + itoa(b.GroupID) + "|" + itoa(b.AccountID) + "|" + itoa(b.TemplateID) + "|" + itoa(b.UserID) + "|" + b.Model + "|" + boolStr(b.IsError)
 		m, ok := merged[key]
 		if !ok {
 			day := b.BucketTime.Truncate(24 * time.Hour)

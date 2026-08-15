@@ -37,6 +37,9 @@ func (h *AdminAPI) GetErrLogs(w http.ResponseWriter, r *http.Request, params Get
 	if params.UserId != nil {
 		lq.UserID = *params.UserId
 	}
+	if params.KeyId != nil {
+		lq.KeyID = *params.KeyId
+	}
 	if params.Model != nil {
 		lq.Model = *params.Model
 	}

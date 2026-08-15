@@ -39,6 +39,7 @@ export interface UsageLogParams {
   group_id?: number
   account_id?: number
   user_id?: number
+  key_id?: number
   model?: string
   error_type?: string
   from: string
@@ -47,9 +48,9 @@ export interface UsageLogParams {
 export interface ErrLogParams extends UsageLogParams {
   status_code?: number
 }
-// 用户端无 user_id 过滤（服务端强制本人）
-export type MyUsageLogParams = Omit<UsageLogParams, 'user_id'>
-export type MyErrLogParams = Omit<ErrLogParams, 'user_id'>
+// 用户端无 user_id 过滤（服务端强制本人），也无 account_id（用户级契约已删该参数）
+export type MyUsageLogParams = Omit<UsageLogParams, 'user_id' | 'account_id'>
+export type MyErrLogParams = Omit<ErrLogParams, 'user_id' | 'account_id'>
 export interface UserStatParams {
   from?: string
   to?: string
@@ -190,8 +191,8 @@ export class ApiClient {
   updateUserKey = (id: number, b: components['schemas']['KeyUpdate']) => this.request<components['schemas']['Key']>(`/keys/${id}`, { method: 'PUT', body: JSON.stringify(b) })
   deleteUserKey = (id: number) => this.request<components['schemas']['DeletedResponse']>(`/keys/${id}`, { method: 'DELETE' })
   rotateUserKey = (id: number) => this.request<components['schemas']['KeyWithSecret']>(`/keys/${id}/rotate`, { method: 'POST' })
-  getMyUsageLogs = (p: MyUsageLogParams) => this.request<components['schemas']['LogsResponse']>('/usage_logs', { params: toQuery(p) })
-  getMyErrLogs = (p: MyErrLogParams) => this.request<components['schemas']['ErrLogsResponse']>('/err_logs', { params: toQuery(p) })
+  getMyUsageLogs = (p: MyUsageLogParams) => this.request<components['schemas']['UserLogsResponse']>('/usage_logs', { params: toQuery(p) })
+  getMyErrLogs = (p: MyErrLogParams) => this.request<components['schemas']['UserErrLogsResponse']>('/err_logs', { params: toQuery(p) })
   getUserStats = (params?: UserStatParams) => this.request<components['schemas']['StatBucket'][]>('/stats', { params: toQuery(params) })
   redeem = (code: string) => this.request<components['schemas']['RedeemResponse']>('/redemptions', { method: 'POST', body: JSON.stringify({ code }) })
   listUserRedemptions = (p?: { page?: number; page_size?: number; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['RedemptionRecordListResponse']>('/redemptions', { params: toQuery(p) })

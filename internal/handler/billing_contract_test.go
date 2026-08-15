@@ -403,7 +403,7 @@ func TestLogsStatsBillingFields(t *testing.T) {
 	// 用户面 /user/usage_logs 同字段
 	rec = doUser(http.MethodGet, "/user/usage_logs?"+win, "", token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var ul userapi.LogsResponse
+	var ul userapi.UserLogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ul))
 	require.Len(t, ul.Rows, 1)
 	require.Equal(t, int64(500), *ul.Rows[0].Cost, "user log cost 回显")

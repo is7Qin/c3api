@@ -1972,8 +1972,88 @@ export interface components {
             /** Format: date-time */
             CreatedAt?: string;
         };
+        /** @description 用户面用量明细（= UsageLog 删 AccountID/TemplateID——用户无上游账号拓扑概念） */
+        UserUsageLog: {
+            /** Format: int64 */
+            ID?: number;
+            RequestID?: string;
+            /** Format: int64 */
+            GroupID?: number;
+            /**
+             * Format: int64
+             * @description 鉴权归属用户；0 = 无
+             */
+            UserID?: number;
+            /**
+             * Format: int64
+             * @description 鉴权归属 key；0 = 无
+             */
+            KeyID?: number;
+            Model?: string;
+            MappedModel?: string | null;
+            Format?: components["schemas"]["RequestFormat"];
+            ErrorType?: components["schemas"]["ErrorType"];
+            /** Format: int64 */
+            LatencyMS?: number;
+            /**
+             * Format: int64
+             * @description 首 token 时间毫秒（流式首 chunk 采集）；非流式/失败/无首 token 路径 = null
+             */
+            TTFTMS?: number | null;
+            /** Format: int64 */
+            InputTokens?: number;
+            /**
+             * Format: int64
+             * @description 输入单价快照（每 M token 毫分，1 USD = 100
+             */
+            PriceInputMillis?: number | null;
+            /** Format: int64 */
+            OutputTokens?: number;
+            /**
+             * Format: int64
+             * @description 输出单价快照（每 M token 毫分）；null = 未计费路径
+             */
+            PriceOutputMillis?: number | null;
+            /** Format: int64 */
+            TotalTokens?: number;
+            /** Format: int64 */
+            CacheReadTokens?: number;
+            /**
+             * Format: int64
+             * @description 缓存读单价快照（每 M token 毫分）；null = 该请求无缓存读或无缓存价
+             */
+            PriceCacheReadMillis?: number | null;
+            /** Format: int64 */
+            CacheCreationTokens?: number;
+            /**
+             * Format: int64
+             * @description 缓存写单价快照（每 M token 毫分）；null = 该请求无缓存写或无缓存价
+             */
+            PriceCacheCreationMillis?: number | null;
+            /**
+             * Format: int64
+             * @description 计费成本（毫分，1 USD = 100
+             */
+            Cost?: number;
+            /** @description 请求 service_tier 归一化值（priority/flex/fast/auto）；空 = 未计费路径 */
+            BillingTier?: string;
+            /** @description 任一分量超 above 阈值命中分段 */
+            AboveHit?: boolean;
+            /** @description 本次扣费透支（余额不足扣为负余额） */
+            Overdraft?: boolean;
+            /** Format: date-time */
+            CreatedAt?: string;
+        };
         LogsResponse: {
             rows: components["schemas"]["UsageLog"][];
+            /**
+             * Format: int64
+             * @description 下一页游标（本页最后一条 id）；null = 无更多行
+             */
+            next_cursor: number | null;
+        };
+        UserLogsResponse: {
+            rows: components["schemas"]["UserUsageLog"][];
             /**
              * Format: int64
              * @description 下一页游标（本页最后一条 id）；null = 无更多行
@@ -2015,8 +2095,47 @@ export interface components {
             /** Format: date-time */
             CreatedAt?: string;
         };
+        /** @description 用户面错误明细（= ErrLog 删 AccountID/TemplateID——用户无上游账号拓扑概念） */
+        UserErrLog: {
+            /** Format: int64 */
+            ID?: number;
+            RequestID?: string;
+            /** Format: int64 */
+            GroupID?: number;
+            /**
+             * Format: int64
+             * @description 鉴权归属用户；0 = 无
+             */
+            UserID?: number;
+            /**
+             * Format: int64
+             * @description 鉴权归属 key；0 = 无
+             */
+            KeyID?: number;
+            Model?: string;
+            Format?: components["schemas"]["RequestFormat"];
+            /** @description 错误状态码（完整错误面；0 = 连接级） */
+            StatusCode?: number;
+            ErrorType?: components["schemas"]["ErrorType"];
+            /** @description 错误文本（拒绝文案/上游 body，域内截断 500 字符）；null = 无错误文本 */
+            ErrorMessage?: string | null;
+            /** Format: int64 */
+            LatencyMS?: number;
+            /** @description 计费档位（service_tier 归一化：priority/flex/fast/auto）；null = 未计费路径 */
+            BillingTier?: string | null;
+            /** Format: date-time */
+            CreatedAt?: string;
+        };
         ErrLogsResponse: {
             rows: components["schemas"]["ErrLog"][];
+            /**
+             * Format: int64
+             * @description 下一页游标（本页最后一条 id）；null = 无更多行
+             */
+            next_cursor: number | null;
+        };
+        UserErrLogsResponse: {
+            rows: components["schemas"]["UserErrLog"][];
             /**
              * Format: int64
              * @description 下一页游标（本页最后一条 id）；null = 无更多行
@@ -3863,7 +3982,7 @@ export interface operations {
                 limit?: number;
                 cursor?: number;
                 group_id?: number;
-                account_id?: number;
+                key_id?: number;
                 model?: string;
                 error_type?: string;
                 from: string;
@@ -3881,7 +4000,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LogsResponse"];
+                    "application/json": components["schemas"]["UserLogsResponse"];
                 };
             };
             default: components["responses"]["Error"];
@@ -3893,7 +4012,7 @@ export interface operations {
                 limit?: number;
                 cursor?: number;
                 group_id?: number;
-                account_id?: number;
+                key_id?: number;
                 model?: string;
                 status_code?: number;
                 error_type?: string;
@@ -3912,7 +4031,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrLogsResponse"];
+                    "application/json": components["schemas"]["UserErrLogsResponse"];
                 };
             };
             default: components["responses"]["Error"];
@@ -4148,6 +4267,7 @@ export interface operations {
                 group_id?: number;
                 account_id?: number;
                 user_id?: number;
+                key_id?: number;
                 model?: string;
                 error_type?: string;
                 from: string;
@@ -4179,6 +4299,7 @@ export interface operations {
                 group_id?: number;
                 account_id?: number;
                 user_id?: number;
+                key_id?: number;
                 model?: string;
                 status_code?: number;
                 error_type?: string;

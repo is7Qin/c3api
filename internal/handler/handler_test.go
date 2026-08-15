@@ -365,13 +365,13 @@ func TestGetLogsFilters(t *testing.T) {
 	base := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	store.mu.Lock()
 	store.logs = []*domain.UsageLog{
-		{ID: 1, UserID: 7, Model: "gpt-4o", Format: domain.FormatOpenAIChat,
+		{ID: 1, UserID: 7, KeyID: 71, Model: "gpt-4o", Format: domain.FormatOpenAIChat,
 			StatusCode: 200, ErrorType: domain.ErrNone, CreatedAt: base.Add(-2 * time.Hour)},
-		{ID: 2, UserID: 7, Model: "gpt-4o", Format: domain.FormatOpenAIChat,
+		{ID: 2, UserID: 7, KeyID: 72, Model: "gpt-4o", Format: domain.FormatOpenAIChat,
 			StatusCode: 429, ErrorType: domain.Err429, CreatedAt: base.Add(-time.Hour)},
-		{ID: 3, UserID: 8, Model: "o3", Format: domain.FormatOpenAIResponses,
+		{ID: 3, UserID: 8, KeyID: 73, Model: "o3", Format: domain.FormatOpenAIResponses,
 			StatusCode: 402, ErrorType: domain.ErrBilling, CreatedAt: base},
-		{ID: 4, UserID: 7, Model: "o3", Format: domain.FormatOpenAIResponses,
+		{ID: 4, UserID: 7, KeyID: 74, Model: "o3", Format: domain.FormatOpenAIResponses,
 			StatusCode: 429, ErrorType: domain.Err429, CreatedAt: base.Add(time.Hour)},
 	}
 	store.mu.Unlock()
@@ -396,6 +396,15 @@ func TestGetLogsFilters(t *testing.T) {
 	for _, r := range body.Rows {
 		require.Equal(t, ErrorType("429"), *r.ErrorType)
 	}
+
+	// key_id 过滤（管理面 /usage_logs 新增参数；与 user_id 同 AND 谓词）
+	rec = doAdmin(http.MethodGet, "/admin/usage_logs?key_id=72&"+win, "", "")
+	require.Equal(t, http.StatusOK, rec.Code, "key filter: %s", rec.Body.String())
+	body = LogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 1, "key_id=72 → 仅行 2: %s", rec.Body.String())
+	require.Equal(t, int64(2), *body.Rows[0].ID)
+	require.Equal(t, int64(72), *body.Rows[0].KeyID)
 
 	// 时间范围过滤（from 含、to 含——与真实 repo CreatedAtGTE/LTE 一致）
 	rec = doAdmin(http.MethodGet,
@@ -462,6 +471,15 @@ func TestGetLogsFilters(t *testing.T) {
 	require.Equal(t, 402, *ebody.Rows[0].StatusCode)
 	require.Equal(t, ErrorType("billing"), *ebody.Rows[0].ErrorType)
 	require.Equal(t, "o3", *ebody.Rows[0].Model)
+
+	// key_id 过滤（管理面 /err_logs 新增参数）
+	rec = doAdmin(http.MethodGet, "/admin/err_logs?key_id=74&"+win, "", "")
+	require.Equal(t, http.StatusOK, rec.Code, "err key filter: %s", rec.Body.String())
+	ebody = ErrLogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ebody))
+	require.Len(t, ebody.Rows, 1, "key_id=74 → 仅行 4: %s", rec.Body.String())
+	require.Equal(t, int64(4), *ebody.Rows[0].ID)
+	require.Equal(t, int64(74), *ebody.Rows[0].KeyID)
 }
 
 // TestGetUsageLogsLimitClip limit>200 裁剪真实断言（评审 L1）：上节 4 行种子

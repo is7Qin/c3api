@@ -102,42 +102,6 @@ type DeletedResponse struct {
 	Deleted bool `json:"deleted"`
 }
 
-// ErrLog 错误明细审计（err_logs 瘦表：拒绝 + 异常双轨；无 token/价格列）
-type ErrLog struct {
-	AccountID *int64 `json:"AccountID,omitempty"`
-
-	// BillingTier 计费档位（service_tier 归一化：priority/flex/fast/auto）；null = 未计费路径
-	BillingTier *string    `json:"BillingTier"`
-	CreatedAt   *time.Time `json:"CreatedAt,omitempty"`
-
-	// ErrorMessage 错误文本（拒绝文案/上游 body，域内截断 500 字符）；null = 无错误文本
-	ErrorMessage *string        `json:"ErrorMessage"`
-	ErrorType    *ErrorType     `json:"ErrorType,omitempty"`
-	Format       *RequestFormat `json:"Format,omitempty"`
-	GroupID      *int64         `json:"GroupID,omitempty"`
-	ID           *int64         `json:"ID,omitempty"`
-
-	// KeyID 鉴权归属 key；0 = 无
-	KeyID     *int64  `json:"KeyID,omitempty"`
-	LatencyMS *int64  `json:"LatencyMS,omitempty"`
-	Model     *string `json:"Model,omitempty"`
-	RequestID *string `json:"RequestID,omitempty"`
-
-	// StatusCode 错误状态码（完整错误面；0 = 连接级）
-	StatusCode *int   `json:"StatusCode,omitempty"`
-	TemplateID *int64 `json:"TemplateID,omitempty"`
-
-	// UserID 鉴权归属用户；0 = 无
-	UserID *int64 `json:"UserID,omitempty"`
-}
-
-// ErrLogsResponse defines model for ErrLogsResponse.
-type ErrLogsResponse struct {
-	// NextCursor 下一页游标（本页最后一条 id）；null = 无更多行
-	NextCursor *int64   `json:"next_cursor"`
-	Rows       []ErrLog `json:"rows"`
-}
-
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
 	Error string `json:"error"`
@@ -244,13 +208,6 @@ type KeyWithSecret struct {
 
 	// Key key 明文（创建/轮换响应仅返回一次；之后仅 KeyPrefix 可识别）
 	Key string `json:"key"`
-}
-
-// LogsResponse defines model for LogsResponse.
-type LogsResponse struct {
-	// NextCursor 下一页游标（本页最后一条 id）；null = 无更多行
-	NextCursor *int64     `json:"next_cursor"`
-	Rows       []UsageLog `json:"rows"`
 }
 
 // RedeemRequest defines model for RedeemRequest.
@@ -363,11 +320,94 @@ type TempBalancesResponse struct {
 	TotalUsd float64 `json:"total_usd"`
 }
 
-// UsageLog defines model for UsageLog.
-type UsageLog struct {
+// User defines model for User.
+type User struct {
+	// Balance 余额 USD（浮点；内部存储毫分——1 USD = 100
+	Balance        *float64    `json:"Balance,omitempty"`
+	CreatedAt      *time.Time  `json:"CreatedAt,omitempty"`
+	Email          *string     `json:"Email,omitempty"`
+	ID             *int64      `json:"ID,omitempty"`
+	MaxConcurrency *int        `json:"MaxConcurrency,omitempty"`
+	Role           *UserRole   `json:"Role,omitempty"`
+	Status         *UserStatus `json:"Status,omitempty"`
+	UpdatedAt      *time.Time  `json:"UpdatedAt,omitempty"`
+}
+
+// UserAuthChangePassword defines model for UserAuthChangePassword.
+type UserAuthChangePassword struct {
+	// NewPassword 非空且 ≤72 字节（bcrypt 截断限制），非法 400
+	NewPassword string `json:"new_password"`
+	OldPassword string `json:"old_password"`
+}
+
+// UserAuthLogin defines model for UserAuthLogin.
+type UserAuthLogin struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// UserAuthRegister defines model for UserAuthRegister.
+type UserAuthRegister struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// UserAuthResponse defines model for UserAuthResponse.
+type UserAuthResponse struct {
+	Token string `json:"token"`
+	User  User   `json:"user"`
+}
+
+// UserErrLog 用户面错误明细（= ErrLog 删 AccountID/TemplateID——用户无上游账号拓扑概念）
+type UserErrLog struct {
+	// BillingTier 计费档位（service_tier 归一化：priority/flex/fast/auto）；null = 未计费路径
+	BillingTier *string    `json:"BillingTier"`
+	CreatedAt   *time.Time `json:"CreatedAt,omitempty"`
+
+	// ErrorMessage 错误文本（拒绝文案/上游 body，域内截断 500 字符）；null = 无错误文本
+	ErrorMessage *string        `json:"ErrorMessage"`
+	ErrorType    *ErrorType     `json:"ErrorType,omitempty"`
+	Format       *RequestFormat `json:"Format,omitempty"`
+	GroupID      *int64         `json:"GroupID,omitempty"`
+	ID           *int64         `json:"ID,omitempty"`
+
+	// KeyID 鉴权归属 key；0 = 无
+	KeyID     *int64  `json:"KeyID,omitempty"`
+	LatencyMS *int64  `json:"LatencyMS,omitempty"`
+	Model     *string `json:"Model,omitempty"`
+	RequestID *string `json:"RequestID,omitempty"`
+
+	// StatusCode 错误状态码（完整错误面；0 = 连接级）
+	StatusCode *int `json:"StatusCode,omitempty"`
+
+	// UserID 鉴权归属用户；0 = 无
+	UserID *int64 `json:"UserID,omitempty"`
+}
+
+// UserErrLogsResponse defines model for UserErrLogsResponse.
+type UserErrLogsResponse struct {
+	// NextCursor 下一页游标（本页最后一条 id）；null = 无更多行
+	NextCursor *int64       `json:"next_cursor"`
+	Rows       []UserErrLog `json:"rows"`
+}
+
+// UserLogsResponse defines model for UserLogsResponse.
+type UserLogsResponse struct {
+	// NextCursor 下一页游标（本页最后一条 id）；null = 无更多行
+	NextCursor *int64         `json:"next_cursor"`
+	Rows       []UserUsageLog `json:"rows"`
+}
+
+// UserRole defines model for UserRole.
+type UserRole string
+
+// UserStatus defines model for UserStatus.
+type UserStatus string
+
+// UserUsageLog 用户面用量明细（= UsageLog 删 AccountID/TemplateID——用户无上游账号拓扑概念）
+type UserUsageLog struct {
 	// AboveHit 任一分量超 above 阈值命中分段
-	AboveHit  *bool  `json:"AboveHit,omitempty"`
-	AccountID *int64 `json:"AccountID,omitempty"`
+	AboveHit *bool `json:"AboveHit,omitempty"`
 
 	// BillingTier 请求 service_tier 归一化值（priority/flex/fast/auto）；空 = 未计费路径
 	BillingTier         *string `json:"BillingTier,omitempty"`
@@ -408,56 +448,11 @@ type UsageLog struct {
 
 	// TTFTMS 首 token 时间毫秒（流式首 chunk 采集）；非流式/失败/无首 token 路径 = null
 	TTFTMS      *int64 `json:"TTFTMS"`
-	TemplateID  *int64 `json:"TemplateID,omitempty"`
 	TotalTokens *int64 `json:"TotalTokens,omitempty"`
 
 	// UserID 鉴权归属用户；0 = 无
 	UserID *int64 `json:"UserID,omitempty"`
 }
-
-// User defines model for User.
-type User struct {
-	// Balance 余额 USD（浮点；内部存储毫分——1 USD = 100
-	Balance        *float64    `json:"Balance,omitempty"`
-	CreatedAt      *time.Time  `json:"CreatedAt,omitempty"`
-	Email          *string     `json:"Email,omitempty"`
-	ID             *int64      `json:"ID,omitempty"`
-	MaxConcurrency *int        `json:"MaxConcurrency,omitempty"`
-	Role           *UserRole   `json:"Role,omitempty"`
-	Status         *UserStatus `json:"Status,omitempty"`
-	UpdatedAt      *time.Time  `json:"UpdatedAt,omitempty"`
-}
-
-// UserAuthChangePassword defines model for UserAuthChangePassword.
-type UserAuthChangePassword struct {
-	// NewPassword 非空且 ≤72 字节（bcrypt 截断限制），非法 400
-	NewPassword string `json:"new_password"`
-	OldPassword string `json:"old_password"`
-}
-
-// UserAuthLogin defines model for UserAuthLogin.
-type UserAuthLogin struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-// UserAuthRegister defines model for UserAuthRegister.
-type UserAuthRegister struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-// UserAuthResponse defines model for UserAuthResponse.
-type UserAuthResponse struct {
-	Token string `json:"token"`
-	User  User   `json:"user"`
-}
-
-// UserRole defines model for UserRole.
-type UserRole string
-
-// UserStatus defines model for UserStatus.
-type UserStatus string
 
 // Error defines model for Error.
 type Error = ErrorResponse
@@ -467,7 +462,7 @@ type GetUserErrLogsParams struct {
 	Limit      *int      `form:"limit,omitempty" json:"limit,omitempty"`
 	Cursor     *int64    `form:"cursor,omitempty" json:"cursor,omitempty"`
 	GroupId    *int64    `form:"group_id,omitempty" json:"group_id,omitempty"`
-	AccountId  *int64    `form:"account_id,omitempty" json:"account_id,omitempty"`
+	KeyId      *int64    `form:"key_id,omitempty" json:"key_id,omitempty"`
 	Model      *string   `form:"model,omitempty" json:"model,omitempty"`
 	StatusCode *int      `form:"status_code,omitempty" json:"status_code,omitempty"`
 	ErrorType  *string   `form:"error_type,omitempty" json:"error_type,omitempty"`
@@ -517,7 +512,7 @@ type GetUserUsageLogsParams struct {
 	Limit     *int      `form:"limit,omitempty" json:"limit,omitempty"`
 	Cursor    *int64    `form:"cursor,omitempty" json:"cursor,omitempty"`
 	GroupId   *int64    `form:"group_id,omitempty" json:"group_id,omitempty"`
-	AccountId *int64    `form:"account_id,omitempty" json:"account_id,omitempty"`
+	KeyId     *int64    `form:"key_id,omitempty" json:"key_id,omitempty"`
 	Model     *string   `form:"model,omitempty" json:"model,omitempty"`
 	ErrorType *string   `form:"error_type,omitempty" json:"error_type,omitempty"`
 	From      time.Time `form:"from" json:"from"`
@@ -800,11 +795,11 @@ func (siw *ServerInterfaceWrapper) GetUserErrLogs(w http.ResponseWriter, r *http
 		return
 	}
 
-	// ------------- Optional query parameter "account_id" -------------
+	// ------------- Optional query parameter "key_id" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "account_id", r.URL.Query(), &params.AccountId)
+	err = runtime.BindQueryParameter("form", true, false, "key_id", r.URL.Query(), &params.KeyId)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "account_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "key_id", Err: err})
 		return
 	}
 
@@ -1246,11 +1241,11 @@ func (siw *ServerInterfaceWrapper) GetUserUsageLogs(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// ------------- Optional query parameter "account_id" -------------
+	// ------------- Optional query parameter "key_id" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "account_id", r.URL.Query(), &params.AccountId)
+	err = runtime.BindQueryParameter("form", true, false, "key_id", r.URL.Query(), &params.KeyId)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "account_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "key_id", Err: err})
 		return
 	}
 

@@ -73,17 +73,16 @@ func toAPIKey(k *domain.Key) Key {
 	}
 }
 
-// toAPIUsageLog 用量日志领域对象 → 契约类型（/user/usage_logs；err_logs 分表
-// 后无 status_code/error_message 字段）。
-func toAPIUsageLog(l *domain.UsageLog) UsageLog {
+// toAPIUsageLog 用量日志领域对象 → 用户面契约类型（/user/usage_logs；
+// UserUsageLog 无 AccountID/TemplateID——用户无上游账号拓扑概念；err_logs
+// 分表后无 status_code/error_message 字段）。
+func toAPIUsageLog(l *domain.UsageLog) UserUsageLog {
 	f := RequestFormat(l.Format)
 	et := ErrorType(l.ErrorType)
-	return UsageLog{
+	return UserUsageLog{
 		ID:                       &l.ID,
 		RequestID:                &l.RequestID,
 		GroupID:                  &l.GroupID,
-		AccountID:                &l.AccountID,
-		TemplateID:               &l.TemplateID,
 		UserID:                   &l.UserID,
 		KeyID:                    &l.KeyID,
 		Model:                    &l.Model,
@@ -109,17 +108,16 @@ func toAPIUsageLog(l *domain.UsageLog) UsageLog {
 	}
 }
 
-// toAPIErrLog 错误明细领域对象 → 契约类型（/user/err_logs；BillingTier 空 =
-// 未计费路径 → null）。
-func toAPIErrLog(l *domain.UsageLog) ErrLog {
+// toAPIErrLog 错误明细领域对象 → 用户面契约类型（/user/err_logs；
+// UserErrLog 无 AccountID/TemplateID——用户无上游账号拓扑概念；BillingTier
+// 空 = 未计费路径 → null）。
+func toAPIErrLog(l *domain.UsageLog) UserErrLog {
 	f := RequestFormat(l.Format)
 	et := ErrorType(l.ErrorType)
-	e := ErrLog{
+	e := UserErrLog{
 		ID:           &l.ID,
 		RequestID:    &l.RequestID,
 		GroupID:      &l.GroupID,
-		AccountID:    &l.AccountID,
-		TemplateID:   &l.TemplateID,
 		UserID:       &l.UserID,
 		KeyID:        &l.KeyID,
 		Model:        &l.Model,

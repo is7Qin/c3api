@@ -1386,6 +1386,7 @@ type GetErrLogsParams struct {
 	GroupId    *int64    `form:"group_id,omitempty" json:"group_id,omitempty"`
 	AccountId  *int64    `form:"account_id,omitempty" json:"account_id,omitempty"`
 	UserId     *int64    `form:"user_id,omitempty" json:"user_id,omitempty"`
+	KeyId      *int64    `form:"key_id,omitempty" json:"key_id,omitempty"`
 	Model      *string   `form:"model,omitempty" json:"model,omitempty"`
 	StatusCode *int      `form:"status_code,omitempty" json:"status_code,omitempty"`
 	ErrorType  *string   `form:"error_type,omitempty" json:"error_type,omitempty"`
@@ -1562,6 +1563,7 @@ type GetUsageLogsParams struct {
 	GroupId   *int64    `form:"group_id,omitempty" json:"group_id,omitempty"`
 	AccountId *int64    `form:"account_id,omitempty" json:"account_id,omitempty"`
 	UserId    *int64    `form:"user_id,omitempty" json:"user_id,omitempty"`
+	KeyId     *int64    `form:"key_id,omitempty" json:"key_id,omitempty"`
 	Model     *string   `form:"model,omitempty" json:"model,omitempty"`
 	ErrorType *string   `form:"error_type,omitempty" json:"error_type,omitempty"`
 	From      time.Time `form:"from" json:"from"`
@@ -2547,6 +2549,14 @@ func (siw *ServerInterfaceWrapper) GetErrLogs(w http.ResponseWriter, r *http.Req
 	err = runtime.BindQueryParameter("form", true, false, "user_id", r.URL.Query(), &params.UserId)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "user_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "key_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "key_id", r.URL.Query(), &params.KeyId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "key_id", Err: err})
 		return
 	}
 
@@ -4024,6 +4034,14 @@ func (siw *ServerInterfaceWrapper) GetUsageLogs(w http.ResponseWriter, r *http.R
 	err = runtime.BindQueryParameter("form", true, false, "user_id", r.URL.Query(), &params.UserId)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "user_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "key_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "key_id", r.URL.Query(), &params.KeyId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "key_id", Err: err})
 		return
 	}
 

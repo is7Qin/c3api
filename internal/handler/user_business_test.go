@@ -195,13 +195,13 @@ func TestUserUsageLogsOwnOnly(t *testing.T) {
 	tokenA, userA := registerAndGet(t, doUser, "a@example.com")
 	_, userB := registerAndGet(t, doUser, "b@example.com")
 
-	// 直接向 store 灌入两个用户的日志
+	// 直接向 store 灌入两个用户的日志（含 key_id——key_id 过滤传递断言用）
 	base := time.Now().UTC().Truncate(time.Second)
 	store.mu.Lock()
 	store.logs = []*domain.UsageLog{
-		{ID: 1, UserID: userA, RequestID: "r-a1", Model: "gpt-4o", Format: domain.FormatOpenAIChat, CreatedAt: base},
+		{ID: 1, UserID: userA, KeyID: 11, RequestID: "r-a1", Model: "gpt-4o", Format: domain.FormatOpenAIChat, CreatedAt: base},
 		{ID: 2, UserID: userB, RequestID: "r-b1", Model: "gpt-4o", Format: domain.FormatOpenAIChat, CreatedAt: base},
-		{ID: 3, UserID: userA, RequestID: "r-a2", Model: "o3", Format: domain.FormatOpenAIResponses, CreatedAt: base},
+		{ID: 3, UserID: userA, KeyID: 33, RequestID: "r-a2", Model: "o3", Format: domain.FormatOpenAIResponses, CreatedAt: base},
 	}
 	store.mu.Unlock()
 	win := "from=" + base.Add(-time.Hour).Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339)
@@ -212,19 +212,32 @@ func TestUserUsageLogsOwnOnly(t *testing.T) {
 
 	rec = doUser(http.MethodGet, "/user/usage_logs?"+win, "", tokenA)
 	require.Equal(t, http.StatusOK, rec.Code, "user logs: %s", rec.Body.String())
-	var body userapi.LogsResponse
+	var body userapi.UserLogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Rows, 2, "只看到自己的日志: %s", rec.Body.String())
 	for _, r := range body.Rows {
 		require.Equal(t, userA, *r.UserID, "日志必须归属当前用户")
 	}
+	// 用户面响应无上游拓扑字段（UserUsageLog 契约：AccountID/TemplateID 已删）
+	require.NotContains(t, rec.Body.String(), "AccountID", "用户面响应不得含 AccountID")
+	require.NotContains(t, rec.Body.String(), "TemplateID", "用户面响应不得含 TemplateID")
+
+	// key_id 过滤（自己的 key）：key_id=33 → 仅行 3（user_id + key_id 双谓词）
+	rec = doUser(http.MethodGet, "/user/usage_logs?key_id=33&"+win, "", tokenA)
+	require.Equal(t, http.StatusOK, rec.Code, "key filter: %s", rec.Body.String())
+	body = userapi.UserLogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 1, "key_id=33 仅本人 key 33 的行: %s", rec.Body.String())
+	require.Equal(t, int64(3), *body.Rows[0].ID)
+	require.Equal(t, int64(33), *body.Rows[0].KeyID)
+	require.Equal(t, userA, *body.Rows[0].UserID, "他人 key_id 探测仍被 user_id 钳制")
 
 	// 跨页 id 注入尝试（评审 L4）：cursor=3 的谓词窗 id<3 含他人行 2——若
 	// user_id 过滤缺失本页会出现 B 行（行 2 先于行 1），越权钳制在 user_id
 	// 过滤不在 cursor 值（cursor=2 会把 B 行自身排除，断言无法区分）。
 	rec = doUser(http.MethodGet, "/user/usage_logs?limit=1&cursor=3&"+win, "", tokenA)
 	require.Equal(t, http.StatusOK, rec.Code, "cursor injection: %s", rec.Body.String())
-	body = userapi.LogsResponse{}
+	body = userapi.UserLogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Rows, 1, "注入他人 id 游标仅本人行: %s", rec.Body.String())
 	require.Equal(t, int64(1), *body.Rows[0].ID, "cursor=3（谓词窗含 B 行 2）→ 本人行 id=1")
@@ -243,11 +256,11 @@ func TestUserErrLogsOwnOnly(t *testing.T) {
 	store.mu.Lock()
 	msg := "no available account"
 	store.logs = []*domain.UsageLog{
-		{ID: 1, UserID: userA, RequestID: "e-a1", Model: "gpt-4o", Format: domain.FormatOpenAIChat,
+		{ID: 1, UserID: userA, KeyID: 11, RequestID: "e-a1", Model: "gpt-4o", Format: domain.FormatOpenAIChat,
 			StatusCode: 429, ErrorType: domain.Err429, ErrorMessage: &msg, CreatedAt: base},
 		{ID: 2, UserID: userB, RequestID: "e-b1", Model: "gpt-4o", Format: domain.FormatOpenAIChat,
 			StatusCode: 402, ErrorType: domain.ErrBilling, CreatedAt: base},
-		{ID: 3, UserID: userA, RequestID: "e-a2", Model: "o3", Format: domain.FormatOpenAIResponses,
+		{ID: 3, UserID: userA, KeyID: 33, RequestID: "e-a2", Model: "o3", Format: domain.FormatOpenAIResponses,
 			StatusCode: 401, ErrorType: domain.ErrAuth, CreatedAt: base},
 	}
 	store.mu.Unlock()
@@ -260,19 +273,32 @@ func TestUserErrLogsOwnOnly(t *testing.T) {
 
 	rec = doUser(http.MethodGet, "/user/err_logs?"+win, "", tokenA)
 	require.Equal(t, http.StatusOK, rec.Code, "user err logs: %s", rec.Body.String())
-	var body userapi.ErrLogsResponse
+	var body userapi.UserErrLogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Rows, 2, "只看到自己的错误明细: %s", rec.Body.String())
 	for _, r := range body.Rows {
 		require.Equal(t, userA, *r.UserID, "错误明细必须归属当前用户")
 		require.NotNil(t, r.StatusCode, "err_logs 完整错误面含 status_code")
 	}
+	// 用户面响应无上游拓扑字段（UserErrLog 契约：AccountID/TemplateID 已删）
+	require.NotContains(t, rec.Body.String(), "AccountID", "用户面响应不得含 AccountID")
+	require.NotContains(t, rec.Body.String(), "TemplateID", "用户面响应不得含 TemplateID")
+
+	// key_id 过滤（自己的 key）：key_id=33 → 仅行 3（user_id + key_id 双谓词）
+	rec = doUser(http.MethodGet, "/user/err_logs?key_id=33&"+win, "", tokenA)
+	require.Equal(t, http.StatusOK, rec.Code, "key filter: %s", rec.Body.String())
+	body = userapi.UserErrLogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 1, "key_id=33 仅本人 key 33 的行: %s", rec.Body.String())
+	require.Equal(t, int64(3), *body.Rows[0].ID)
+	require.Equal(t, int64(33), *body.Rows[0].KeyID)
+	require.Equal(t, userA, *body.Rows[0].UserID, "他人 key_id 探测仍被 user_id 钳制")
 
 	// 跨页 id 注入尝试（评审 L4）：cursor=3 的谓词窗 id<3 含他人行 2——若
 	// user_id 过滤缺失本页会出现 B 行（行 2 先于行 1）。
 	rec = doUser(http.MethodGet, "/user/err_logs?limit=1&cursor=3&"+win, "", tokenA)
 	require.Equal(t, http.StatusOK, rec.Code, "cursor injection: %s", rec.Body.String())
-	body = userapi.ErrLogsResponse{}
+	body = userapi.UserErrLogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Rows, 1, "注入他人 id 游标仅本人行: %s", rec.Body.String())
 	require.Equal(t, int64(1), *body.Rows[0].ID, "cursor=3（谓词窗含 B 行 2）→ 本人行 id=1")

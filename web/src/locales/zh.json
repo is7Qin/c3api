@@ -1045,7 +1045,6 @@
       },
       "filter": {
         "groupId": "分组 ID",
-        "accountId": "账号 ID",
         "model": "模型",
         "errorType": "错误类型",
         "statusCode": "状态码",

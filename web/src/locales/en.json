@@ -1045,7 +1045,6 @@
       },
       "filter": {
         "groupId": "Group ID",
-        "accountId": "Account ID",
         "model": "Model",
         "errorType": "Error type",
         "statusCode": "Status code",

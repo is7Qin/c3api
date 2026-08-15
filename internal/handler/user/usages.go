@@ -32,8 +32,8 @@ func (h *UserAPI) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, param
 	if params.GroupId != nil {
 		lq.GroupID = *params.GroupId
 	}
-	if params.AccountId != nil {
-		lq.AccountID = *params.AccountId
+	if params.KeyId != nil {
+		lq.KeyID = *params.KeyId
 	}
 	if params.Model != nil {
 		lq.Model = *params.Model
@@ -46,7 +46,7 @@ func (h *UserAPI) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, param
 		writeServiceErr(w, err)
 		return
 	}
-	out := make([]UsageLog, 0, len(rows))
+	out := make([]UserUsageLog, 0, len(rows))
 	for _, item := range rows { // service.QueryUsages 返回 []any（元素为 *domain.UsageLog）
 		l, ok := item.(*domain.UsageLog)
 		if !ok { // 类型不符是内部错误：不能静默丢数据，返回 500
@@ -61,5 +61,5 @@ func (h *UserAPI) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, param
 		next = out[lq.Limit-1].ID
 		out = out[:lq.Limit]
 	}
-	writeJSON(w, http.StatusOK, LogsResponse{Rows: out, NextCursor: next})
+	writeJSON(w, http.StatusOK, UserLogsResponse{Rows: out, NextCursor: next})
 }

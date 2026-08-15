@@ -1077,7 +1077,7 @@ paths:
         - { name: limit, in: query, schema: { type: integer, default: 20, description: 每页行数（上限 200，超限裁剪到 200） } }
         - { name: cursor, in: query, schema: { type: integer, format: int64, description: 游标（上一页 next_cursor，即上页最后一条 id）；缺失或 ≤0 = 首页 } }
         - { name: group_id, in: query, schema: { type: integer, format: int64 } }
-        - { name: account_id, in: query, schema: { type: integer, format: int64 } }
+        - { name: key_id, in: query, schema: { type: integer, format: int64 } }
         - { name: model, in: query, schema: { type: string } }
         - { name: error_type, in: query, schema: { type: string } }
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
@@ -1087,7 +1087,7 @@ paths:
           description: 分页结果（next_cursor 非空表示还有下一页）
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/LogsResponse' }
+              schema: { $ref: '#/components/schemas/UserLogsResponse' }
         default:
           $ref: '#/components/responses/Error'
   /user/err_logs:
@@ -1099,7 +1099,7 @@ paths:
         - { name: limit, in: query, schema: { type: integer, default: 20, description: 每页行数（上限 200，超限裁剪到 200） } }
         - { name: cursor, in: query, schema: { type: integer, format: int64, description: 游标（上一页 next_cursor，即上页最后一条 id）；缺失或 ≤0 = 首页 } }
         - { name: group_id, in: query, schema: { type: integer, format: int64 } }
-        - { name: account_id, in: query, schema: { type: integer, format: int64 } }
+        - { name: key_id, in: query, schema: { type: integer, format: int64 } }
         - { name: model, in: query, schema: { type: string } }
         - { name: status_code, in: query, schema: { type: integer } }
         - { name: error_type, in: query, schema: { type: string } }
@@ -1110,7 +1110,7 @@ paths:
           description: 分页结果（next_cursor 非空表示还有下一页）
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrLogsResponse' }
+              schema: { $ref: '#/components/schemas/UserErrLogsResponse' }
         default:
           $ref: '#/components/responses/Error'
   /user/stats:
@@ -1275,6 +1275,7 @@ paths:
         - { name: group_id, in: query, schema: { type: integer, format: int64 } }
         - { name: account_id, in: query, schema: { type: integer, format: int64 } }
         - { name: user_id, in: query, schema: { type: integer, format: int64, description: 按用户过滤（admin 看全部） } }
+        - { name: key_id, in: query, schema: { type: integer, format: int64, description: 按 key 过滤 } }
         - { name: model, in: query, schema: { type: string } }
         - { name: error_type, in: query, schema: { type: string } }
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
@@ -1298,6 +1299,7 @@ paths:
         - { name: group_id, in: query, schema: { type: integer, format: int64 } }
         - { name: account_id, in: query, schema: { type: integer, format: int64 } }
         - { name: user_id, in: query, schema: { type: integer, format: int64, description: 按用户过滤（admin 看全部） } }
+        - { name: key_id, in: query, schema: { type: integer, format: int64, description: 按 key 过滤 } }
         - { name: model, in: query, schema: { type: string } }
         - { name: status_code, in: query, schema: { type: integer } }
         - { name: error_type, in: query, schema: { type: string } }
@@ -2294,6 +2296,37 @@ components:
         AboveHit: { type: boolean, description: 任一分量超 above 阈值命中分段 }
         Overdraft: { type: boolean, description: 本次扣费透支（余额不足扣为负余额） }
         CreatedAt: { type: string, format: date-time }
+    UserUsageLog:
+      type: object
+      description: 用户面用量明细（= UsageLog 删 AccountID/TemplateID——用户无上游账号拓扑概念）
+      properties:
+        ID: { type: integer, format: int64 }
+        RequestID: { type: string }
+        GroupID: { type: integer, format: int64 }
+        UserID: { type: integer, format: int64, description: 鉴权归属用户；0 = 无 }
+        KeyID: { type: integer, format: int64, description: 鉴权归属 key；0 = 无 }
+        Model: { type: string }
+        MappedModel: { type: string, nullable: true }
+        Format: { $ref: '#/components/schemas/RequestFormat' }
+        # 用户裁决（err_logs 分表）：status_code/error_message 已移入 err_logs
+        #（usage_logs 瘦身 + 纯计费化），本响应不再含该两字段。
+        ErrorType: { $ref: '#/components/schemas/ErrorType' }
+        LatencyMS: { type: integer, format: int64 }
+        TTFTMS: { type: integer, format: int64, nullable: true, description: 首 token 时间毫秒（流式首 chunk 采集）；非流式/失败/无首 token 路径 = null }
+        InputTokens: { type: integer, format: int64 }
+        PriceInputMillis: { type: integer, format: int64, nullable: true, description: 输入单价快照（每 M token 毫分，1 USD = 100,000 毫分；pricing 同款单位）；null = 未计费路径 }
+        OutputTokens: { type: integer, format: int64 }
+        PriceOutputMillis: { type: integer, format: int64, nullable: true, description: 输出单价快照（每 M token 毫分）；null = 未计费路径 }
+        TotalTokens: { type: integer, format: int64 }
+        CacheReadTokens: { type: integer, format: int64 }
+        PriceCacheReadMillis: { type: integer, format: int64, nullable: true, description: 缓存读单价快照（每 M token 毫分）；null = 该请求无缓存读或无缓存价 }
+        CacheCreationTokens: { type: integer, format: int64 }
+        PriceCacheCreationMillis: { type: integer, format: int64, nullable: true, description: 缓存写单价快照（每 M token 毫分）；null = 该请求无缓存写或无缓存价 }
+        Cost: { type: integer, format: int64, description: 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0 }
+        BillingTier: { type: string, description: 请求 service_tier 归一化值（priority/flex/fast/auto）；空 = 未计费路径 }
+        AboveHit: { type: boolean, description: 任一分量超 above 阈值命中分段 }
+        Overdraft: { type: boolean, description: 本次扣费透支（余额不足扣为负余额） }
+        CreatedAt: { type: string, format: date-time }
     LogsResponse:
       type: object
       required: [rows, next_cursor]
@@ -2301,6 +2334,14 @@ components:
         rows:
           type: array
           items: { $ref: '#/components/schemas/UsageLog' }
+        next_cursor: { type: integer, format: int64, nullable: true, description: 下一页游标（本页最后一条 id）；null = 无更多行 }
+    UserLogsResponse:
+      type: object
+      required: [rows, next_cursor]
+      properties:
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/UserUsageLog' }
         next_cursor: { type: integer, format: int64, nullable: true, description: 下一页游标（本页最后一条 id）；null = 无更多行 }
     ErrLog:
       type: object
@@ -2321,6 +2362,23 @@ components:
         LatencyMS: { type: integer, format: int64 }
         BillingTier: { type: string, nullable: true, description: 计费档位（service_tier 归一化：priority/flex/fast/auto）；null = 未计费路径 }
         CreatedAt: { type: string, format: date-time }
+    UserErrLog:
+      type: object
+      description: 用户面错误明细（= ErrLog 删 AccountID/TemplateID——用户无上游账号拓扑概念）
+      properties:
+        ID: { type: integer, format: int64 }
+        RequestID: { type: string }
+        GroupID: { type: integer, format: int64 }
+        UserID: { type: integer, format: int64, description: 鉴权归属用户；0 = 无 }
+        KeyID: { type: integer, format: int64, description: 鉴权归属 key；0 = 无 }
+        Model: { type: string }
+        Format: { $ref: '#/components/schemas/RequestFormat' }
+        StatusCode: { type: integer, description: 错误状态码（完整错误面；0 = 连接级） }
+        ErrorType: { $ref: '#/components/schemas/ErrorType' }
+        ErrorMessage: { type: string, nullable: true, description: 错误文本（拒绝文案/上游 body，域内截断 500 字符）；null = 无错误文本 }
+        LatencyMS: { type: integer, format: int64 }
+        BillingTier: { type: string, nullable: true, description: 计费档位（service_tier 归一化：priority/flex/fast/auto）；null = 未计费路径 }
+        CreatedAt: { type: string, format: date-time }
     ErrLogsResponse:
       type: object
       required: [rows, next_cursor]
@@ -2328,6 +2386,14 @@ components:
         rows:
           type: array
           items: { $ref: '#/components/schemas/ErrLog' }
+        next_cursor: { type: integer, format: int64, nullable: true, description: 下一页游标（本页最后一条 id）；null = 无更多行 }
+    UserErrLogsResponse:
+      type: object
+      required: [rows, next_cursor]
+      properties:
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/UserErrLog' }
         next_cursor: { type: integer, format: int64, nullable: true, description: 下一页游标（本页最后一条 id）；null = 无更多行 }
     StatBucket:
       type: object
