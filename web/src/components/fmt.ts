@@ -55,19 +55,19 @@ export function commaList(items: string[] | undefined, max = 3): { text: string;
 const MILLI_CENTS_PER_USD = 100_000
 function usdText(c?: number | null): string | null {
   if (c == null || c <= 0) return null
-  return `$${(c / MILLI_CENTS_PER_USD).toFixed(4)}`
+  return `$${(c / MILLI_CENTS_PER_USD).toFixed(5)}`
 }
 
-// 计费成本：毫分 → USD 字符串，如 $3.2500 / $0.0004；空值或 0 显示 —。
+// 计费成本：毫分 → USD 字符串，如 $3.25000 / $0.00001（5 位保 1 毫分可见）；空值或 0 显示 —。
 export function formatCost(c?: number | null): string {
   return usdText(c) ?? '—'
 }
 
 // USD 金额直接展示（API 已换算的统计面值，如 /stats、/overview 的 Cost/cost_usd）：
-// $3.2500；空值或 0 显示 —。与 formatCost（毫分语义）并存——两单位各有明确消费面。
+// $3.25000；空值或 0 显示 —。与 formatCost（毫分语义）并存——两单位各有明确消费面。
 export function formatUSD(c?: number | null): string {
   if (c == null || c <= 0) return '—'
-  return `$${c.toFixed(4)}`
+  return `$${c.toFixed(5)}`
 }
 
 // 每百万 token 价格：USD/1M tokens 正常值直接展示（API 边界已换算，内部存储毫分），
