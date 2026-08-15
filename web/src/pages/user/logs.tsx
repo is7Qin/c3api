@@ -263,10 +263,11 @@ export default function UserLogs() {
         <Card className="overflow-hidden">
           <Table containerClassName="max-h-[calc(100vh-16rem)] overflow-y-auto">
             <TableHeader>
-              {/* 列顺序与管理端 logs.tsx 对齐：model→format→statusCode(errors)→errorType→
+              {/* 列顺序与管理端 logs.tsx 对齐：Key→model→format→statusCode(errors)→errorType→
                   errorMessage(errors)→Token(usage)→费用(usage)→耗时→计费档(errors) */}
               <TableRow>
                 <Th>{t('user.logs.table.createdAt')}</Th>
+                <Th className="text-right">{t('logs.table.key')}</Th>
                 <Th>{t('user.logs.table.model')}</Th>
                 <Th>{t('user.logs.table.format')}</Th>
                 {tab === 'errors' && <Th className="text-right">{t('user.logs.table.statusCode')}</Th>}
@@ -283,6 +284,8 @@ export default function UserLogs() {
                 ? (rows as UsageLog[]).map(l => (
                 <TableRow key={l.ID}>
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(l.CreatedAt)}</TableCell>
+                  {/* 鉴权归属 Key（管理端同款）：#KeyID；0 = 无鉴权 */}
+                  <TableCell className="text-right tabular-nums">{l.KeyID ? `#${l.KeyID}` : '—'}</TableCell>
                   {/* 模型链式（管理端同款）：请求模型加粗 + 映射模型缩进灰（有值才显示 ↳） */}
                   <TableCell>
                     <div className="space-y-0.5 text-xs">
@@ -406,6 +409,8 @@ export default function UserLogs() {
                 : (rows as ErrLog[]).map(l => (
                 <TableRow key={l.ID}>
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(l.CreatedAt)}</TableCell>
+                  {/* 鉴权归属 Key（管理端同款）：#KeyID；0 = 无鉴权 */}
+                  <TableCell className="text-right tabular-nums">{l.KeyID ? `#${l.KeyID}` : '—'}</TableCell>
                   {/* 错误面模型无映射链（ErrLog 无 MappedModel）：单行 truncate + title 悬停 */}
                   <TableCell>
                     <div className="max-w-40 truncate text-xs font-medium" title={l.Model}>{l.Model ?? '—'}</div>
