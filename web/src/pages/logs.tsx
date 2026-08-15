@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, ChevronRight, FileText, RotateCcw, SlidersHorizontal } from 'lucide-react'
+import { ArrowDown, ArrowUp, FileText, RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { Badge } from '@/components/ui/badge'
@@ -14,11 +14,13 @@ import { DateRangePicker } from '@/components/date-range-picker'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { LogPagination } from '@/components/log-pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useCursorLogs } from '@/components/use-cursor-logs'
 import { defaultLogRange, formatCost, formatDateTime, toRFC3339 } from '@/components/fmt'
 import { cn } from '@/lib/utils'
 import type { ErrLogParams, UsageLogParams } from '@/lib/api/client'
@@ -100,7 +102,6 @@ const fmtPricePerM = (millis: number): string => {
 const fmtTokens = (n: number): string =>
   n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}K` : String(n)
 
-const LIMITS = [10, 20, 50, 100, 200]
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
 const ERROR_ALL = '__all__'
 
@@ -138,42 +139,21 @@ export default function Logs() {
   const [tab, setTab] = useState<'usage' | 'errors'>('usage')
   const [filters, setFilters] = useState<LogFilters>(emptyFilters)
   const [limit, setLimit] = useState(20)
-  const [cursor, setCursor] = useState<number | null>(null)
-  // 自计页号（游标分页无 total/offset；每次「下一页」+1，过滤/回最新重置为 1）。
-  const [page, setPage] = useState(1)
 
-  // 过滤条件 / 每页条数变化 → 回到第一页（同一事件内同步重置，避免双请求）。
-  const set = (patch: Partial<LogFilters>) => {
-    setFilters(f => ({ ...f, ...patch }))
-    setCursor(null)
-    setPage(1)
-  }
-  const changeLimit = (v: string) => {
-    setLimit(Number(v))
-    setCursor(null)
-    setPage(1)
-  }
-  // Tab 切换：各自独立游标；usage 面错误类型值域收窄为 none/abort，超出值重置。
+  // 过滤条件 / 每页条数变化 → hook 参数键变化自动重置回第 1 页（游标链自持，调用方只传派生值）。
+  const set = (patch: Partial<LogFilters>) => setFilters(f => ({ ...f, ...patch }))
+  const changeLimit = (v: number) => setLimit(v)
+  // Tab 切换：各自独立游标链（hook 按参数变化重置）；usage 面错误类型值域收窄为
+  // none/abort，超出值重置（收窄逻辑属调用方，hook 只收归一后参数）。
   const switchTab = (v: string) => {
     setTab(v as 'usage' | 'errors')
     if (v === 'usage' && filters.error_type && !USAGE_ERROR_TYPES.includes(filters.error_type as ErrorType)) {
       setFilters(f => ({ ...f, error_type: '' }))
     }
-    setCursor(null)
-    setPage(1)
-  }
-  const goNext = () => {
-    if (data?.next_cursor == null) return
-    setCursor(data.next_cursor)
-    setPage(p => p + 1)
-  }
-  const goLatest = () => {
-    setCursor(null)
-    setPage(1)
   }
 
-  // 参数对象随 filter/limit/cursor/tab 派生 → queryKey 变化即触发新查询。
-  // 管理端多 user_id（服务端筛选）；status_code 仅错误面契约支持。
+  // 参数对象随 filter/limit/tab 派生（游标由 hook 注入）。管理端多 user_id（服务端筛选）；
+  // status_code 仅错误面契约支持。
   const { usageParams, errParams } = useMemo(() => {
     const base: UsageLogParams = {
       group_id: filters.group_id ? Number(filters.group_id) : undefined,
@@ -183,7 +163,6 @@ export default function Logs() {
       from: toRFC3339(filters.from) ?? '',
       to: toRFC3339(filters.to) ?? '',
       limit,
-      cursor: cursor ?? undefined,
     }
     return {
       usageParams: base,
@@ -193,12 +172,16 @@ export default function Logs() {
         status_code: filters.status_code && Number.isFinite(Number(filters.status_code)) ? Number(filters.status_code) : undefined,
       } satisfies ErrLogParams,
     }
-  }, [filters, limit, cursor])
+  }, [filters, limit])
 
-  const { data, isLoading, isError, error, isFetching } = useQuery({
-    queryKey: ['logs', tab, tab === 'errors' ? errParams : usageParams],
-    queryFn: () => (tab === 'errors' ? api.getErrLogs(errParams) : api.getUsageLogs(usageParams)),
-  })
+  // 游标链分页：替代 useQuery + 自计页号；fetchPage 注入（hook 不感知 API 层）。
+  const { page, rows, loadedPages, hasNext, isLoading, isFetching, isError, error, goNext, goPrev, goLatest, goToPage } = useCursorLogs<UsageLog | ErrLog>(
+    [tab, usageParams, errParams],
+    (cursor: number | null) =>
+      tab === 'errors'
+        ? api.getErrLogs({ ...errParams, cursor: cursor ?? undefined })
+        : api.getUsageLogs({ ...usageParams, cursor: cursor ?? undefined }),
+  )
 
   // —— 名称映射：日志行只存 ID，组/账号列显示名称（未命中回退 #id）——
   // 全量拉取（上限 1000，超出部分仅影响展示回退数字）；5 分钟缓存避免每页刷新重查。
@@ -221,8 +204,6 @@ export default function Logs() {
     select: data => new Map(data.rows.map(u => [u.ID, u.Email ?? ''])),
     staleTime: 5 * 60 * 1000,
   })
-
-  const rows = data?.rows ?? []
 
   // —— 列可见性（localStorage 持久化）——
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(loadHiddenCols)
@@ -292,7 +273,7 @@ export default function Logs() {
             <DateRangePicker value={{ from: filters.from, to: filters.to }} onChange={v => set(v)} />
           </div>
           <div className="flex items-end">
-            <Button variant="outline" className="w-full" onClick={() => { setFilters(emptyFilters()); setCursor(null); setPage(1) }}>
+            <Button variant="outline" className="w-full" onClick={() => setFilters(emptyFilters())}>
               <RotateCcw /> {t('logs.filter.reset')}
             </Button>
           </div>
@@ -605,36 +586,21 @@ export default function Logs() {
             </TableBody>
           </Table>
         </Card>
-        {/* 分页条：游标分页（无 total/offset）——limit 选择 + 下一页/回到最新；
-            isFetching 时禁用下一页（防连点重复请求） */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm text-muted-foreground">{t('logs.pagination.pageOnly', { page })}</div>
-          <div className="flex items-center gap-2">
-            <Select
-              items={Object.fromEntries(LIMITS.map(n => [String(n), String(n)]))}
-              value={String(limit)}
-              onValueChange={changeLimit}
-            >
-              <SelectTrigger size="sm" aria-label={`${t('list.pageSize')}: ${limit}`}>
-                <span className="text-xs">{t('list.pageSize')}</span>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LIMITS.map(n => <SelectItem key={n} value={String(n)} label={String(n)}>{n}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            {data?.next_cursor != null && (
-              <Button variant="outline" size="sm" disabled={isFetching} onClick={goNext}>
-                <span className="hidden sm:inline">{t('logs.pagination.next')}</span> <ChevronRight />
-              </Button>
-            )}
-            {page > 1 && (
-              <Button variant="outline" size="sm" disabled={isFetching} onClick={goLatest}>
-                <RotateCcw /> <span className="hidden sm:inline">{t('logs.pagination.latest')}</span>
-              </Button>
-            )}
-          </div>
-        </div>
+        {/* 分页底栏：游标链（无 total/offset）——条数 Select + 页码按钮组 + 跳转 + 翻页/回最新；
+            isFetching（翻页/补链中）禁用全部控件，防连点重复请求 */}
+        <LogPagination
+          ns="logs.pagination"
+          page={page}
+          loadedPages={loadedPages}
+          hasNext={hasNext}
+          isFetching={isFetching}
+          limit={limit}
+          onChangeLimit={changeLimit}
+          onGoToPage={goToPage}
+          onGoPrev={goPrev}
+          onGoNext={goNext}
+          onGoLatest={goLatest}
+        />
         </>
       )}
     </div>
