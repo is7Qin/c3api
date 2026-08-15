@@ -55,24 +55,24 @@ c3api 处于 **beta**：功能齐全，但破坏性变更自由。
 
 ### 方式 A：Docker Compose（推荐）
 
-**跑预构建镜像（pull）**——生产推荐：删除 `deploy/compose.yml` 里的 `build:` 块后 `up` 直接运行拉取的镜像：
+**跑预构建镜像（pull）**——生产推荐：删除 `compose.yml` 里的 `build:` 块后 `up` 直接运行拉取的镜像：
 
 ```bash
 cp .env.example .env        # 填写 AUTH_JWT_SECRET（ADMIN_TOKEN 可选——见下文）
-docker compose --env-file .env -f deploy/compose.yml pull
-docker compose --env-file .env -f deploy/compose.yml up -d
+docker compose pull
+docker compose up -d
 ```
 
 **自建镜像（build）**——compose 本地构建（`image` 与 `build` 并存时 `build` 优先）：
 
 ```bash
 cp .env.example .env        # 填写 AUTH_JWT_SECRET（ADMIN_TOKEN 可选——见下文）
-docker compose --env-file .env -f deploy/compose.yml up -d --build
+docker compose up -d --build
 ```
 
 网关监听 `http://127.0.0.1:18080`——管理台 `/admin`，健康检查 `/healthz`。
 
-**首个 admin 用户（bootstrap）**——没有单独的"创建 admin"步骤：**新库上第一个注册的用户**自动成为 `platform_admin`，启动后即可注册并登录管理台（`/admin`），有无 `ADMIN_TOKEN` 均可。之后的注册都是普通 `user` 角色。`ADMIN_TOKEN`（如已设置）仍对 API 客户端（curl/脚本）生效。空库上两个注册恰好并发时，两者可能都成为 admin——如发生，直接在数据库里清理多余账号。
+**首个 admin 用户（bootstrap）**——新库上第一个注册的用户自动成为 `platform_admin`，启动后即可登录管理台（`/admin`）；之后的注册都是普通 `user` 角色。
 
 预构建镜像发布在 GHCR（`ghcr.io/is7qin/c3api`）：`:beta` 跟随最新 beta 版本，另有版本固定 tag（如 `:v0.0.1-beta.1`）。单独拉取：`docker pull ghcr.io/is7qin/c3api:beta`。
 
@@ -137,7 +137,7 @@ cd web && pnpm install && pnpm run dev
 
 ## 部署
 
-- `deploy/compose.yml` — 生产编排：`db`（postgres:18-alpine，目录挂载数据）+ `app`（单容器，非 root、配置只读挂载、健康检查）。
+- `compose.yml` — 生产编排：`db`（postgres:18-alpine，数据挂载在 `deploy/data/pg`）+ `app`（单容器，非 root、配置只读挂载自 `deploy/config.toml`、健康检查）。
 - `Dockerfile` — 三阶段构建（node → go → alpine），产出内嵌 UI 的静态单二进制。
 - 不依赖外部缓存或消息中间件——PostgreSQL 是唯一依赖。
 

@@ -55,24 +55,24 @@ c3api is in **beta**: feature-complete, but breaking changes are free to happen.
 
 ### Option A: Docker Compose (recommended)
 
-**Run the prebuilt image (pull)** — for production, remove the `build:` block in `deploy/compose.yml` so `up` runs the pulled image instead of building:
+**Run the prebuilt image (pull)** — for production, remove the `build:` block in `compose.yml` so `up` runs the pulled image instead of building:
 
 ```bash
 cp .env.example .env        # fill in AUTH_JWT_SECRET (ADMIN_TOKEN optional — see below)
-docker compose --env-file .env -f deploy/compose.yml pull
-docker compose --env-file .env -f deploy/compose.yml up -d
+docker compose pull
+docker compose up -d
 ```
 
 **Self-build** — compose builds the image locally (`image` and `build` coexist, `build` wins):
 
 ```bash
 cp .env.example .env        # fill in AUTH_JWT_SECRET (ADMIN_TOKEN optional — see below)
-docker compose --env-file .env -f deploy/compose.yml up -d --build
+docker compose up -d --build
 ```
 
 The gateway listens on `http://127.0.0.1:18080` — admin console at `/admin`, health check at `/healthz`.
 
-**First admin user (bootstrap)** — there is no separate "create admin" step: the **first user to register** on a fresh database automatically becomes a `platform_admin`, so you can sign up and log into the admin console (`/admin`) right after startup, with or without `ADMIN_TOKEN`. Every later signup gets the regular `user` role. `ADMIN_TOKEN` (if set) keeps working for API clients (curl/scripts). In the narrow window where two signups race on an empty database, both may become admins — clean up the extra account directly in the database if that happens.
+**First admin user (bootstrap)** — the first user to register on a fresh database automatically becomes a `platform_admin` and can sign into the admin console (`/admin`) right after startup; later signups get the regular `user` role.
 
 Prebuilt images are published to GHCR (`ghcr.io/is7qin/c3api`): `:beta` tracks the latest beta release, and version-pinned tags such as `:v0.0.1-beta.1` are also available. Pull standalone: `docker pull ghcr.io/is7qin/c3api:beta`.
 
@@ -138,7 +138,7 @@ See `config.example.toml` for the full schema (server, log, admin, auth, db, pro
 
 ## Deployment
 
-- `deploy/compose.yml` — production stack: one `db` (postgres:18-alpine, bind-mounted data) + one `app` container (non-root, read-only config mount, healthcheck).
+- `compose.yml` — production stack: one `db` (postgres:18-alpine, bind-mounted data under `deploy/data/pg`) + one `app` container (non-root, read-only config mount from `deploy/config.toml`, healthcheck).
 - `Dockerfile` — three-stage build (node → go → alpine), producing a single static binary with the UI embedded.
 - No external caching or message-bus service is required — PostgreSQL is the only dependency.
 

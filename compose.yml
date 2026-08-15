@@ -1,13 +1,11 @@
 # github.com/is7qin/c3api 部署编排：单应用容器（内嵌前端）+ PostgreSQL。
 # volume 全部使用目录挂载（bind mount），数据与配置落盘在宿主，便于备份与升级。
 #
-# 用法：
-#   cp .env.example .env（并填写 ADMIN_TOKEN / AUTH_JWT_SECRET 等，见文件内注释）
-#   docker compose --env-file .env -f deploy/compose.yml up -d --build
+# 用法（compose 在根目录：自动发现 + 自动加载根目录 .env）：
+#   cp .env.example .env（并填写 AUTH_JWT_SECRET 等，见文件内注释）
+#   docker compose up -d --build
 #   # 或临时注入：ADMIN_TOKEN=$(openssl rand -hex 16) AUTH_JWT_SECRET=$(openssl rand -hex 32) \
-#   #   docker compose -f deploy/compose.yml up -d --build
-#   # 注意：compose v2.24+ 用 -f 时项目目录为 deploy/（.env 在根目录），须显式
-#   #   --env-file .env 才能读到根目录 .env（自动读取仅限 deploy/ 下的 .env）。
+#   #   docker compose up -d --build
 #
 # GHCR 快速上手（预构建镜像，release 流水线发布）：docker pull ghcr.io/is7qin/c3api:beta
 #   （:beta 为浮动 tag = 最新 beta；版本固定用 ghcr.io/is7qin/c3api:v0.0.1-beta.1）
@@ -21,9 +19,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-c3api}
       POSTGRES_DB: c3api
     volumes:
-      # 目录挂载：PG 数据落盘宿主 ./data/pg（备份/迁移直接拷目录）。
+      # 目录挂载：PG 数据落盘宿主 ./deploy/data/pg（备份/迁移直接拷目录）。
       # PG 18+ 要求挂载 /var/lib/postgresql（数据在 data 子目录，支持 pg_upgrade --link）
-      - ./data/pg:/var/lib/postgresql
+      - ./deploy/data/pg:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d c3api"]
       interval: 5s
@@ -36,7 +34,7 @@ services:
     # 保留 image 即直接跑 GHCR 预构建镜像（docker compose pull && up -d）。
     image: ghcr.io/is7qin/c3api:beta
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
@@ -61,8 +59,10 @@ services:
     ports:
       - "${PORT:-18080}:18080"
     volumes:
-      # 目录挂载：配置只读注入（改配置重启即生效，不用重建镜像）
-      - ./config.toml:/app/config.toml:ro
+      # 目录挂载：配置只读注入（改配置重启即生效，不用重建镜像）。
+      # 生产配置模板在 deploy/config.toml（挂载源与 compose 分离——根目录
+      # config.toml 是本地开发配置，两者语义不同不混淆）
+      - ./deploy/config.toml:/app/config.toml:ro
     healthcheck:
       # /healthz 为无鉴权存活端点（internal/server/server.go）；基镜像 alpine:3.20
       # 自带 busybox wget（无 curl），非 root 用户可执行。

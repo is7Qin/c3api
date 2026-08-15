@@ -4,6 +4,10 @@ bin/
 *.log
 tools/*/tmp/
 
+# 部署运行时产物（compose 根目录布局：根目录 .env 自动加载；PG 数据落 deploy/data/pg）
+.env
+deploy/data/
+
 # 前端构建产物嵌入目录：仅 .gitkeep 占位入库（go:embed all:dist 需要目录存在）
 cmd/server/dist/*
 !cmd/server/dist/.gitkeep
