@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -118,6 +119,12 @@ func (c *codexHTTPUpstream) body(i int) []byte {
 	defer c.mu.Unlock()
 	return c.bodies[i]
 }
+
+// uuidv7Re UUIDv7 格式（8-4-4-4-12 十六进制，version 位 = 7——SDK NewUUIDv7
+// 产物；client_metadata.turn_id 断言面，META-2）。
+var uuidv7Re = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func isUUIDv7(s string) bool { return uuidv7Re.MatchString(s) }
 
 // codexPATExt 构造 codex-pat 账号扩展（PAT 静态凭据——无 oauth 列）。
 func codexPATExt(accountID int64, pat string) *domain.AccountExt {
@@ -246,6 +253,14 @@ func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	}
 	require.Equal(t, "hi", gjson.GetBytes(upc.bodies[0], "input").String(), "注入不应动其余字段")
 
+	// META-2 伪装身份注入：installation_id（account_ext 持久化——codexOAuthExt
+	// 带 installation 无 session/thread/window 列 → 缺列不注入）+ turn_id 自动
+	// UUIDv7（SDK 恒带面）。
+	cm := gjson.GetBytes(upc.bodies[0], "client_metadata")
+	require.Equal(t, "inst-"+strings.Repeat("0", 32), cm.Get("x-codex-installation-id").String(), "installation_id（ext 持久化）注入")
+	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id UUIDv7 格式（SDK 自动）")
+	require.False(t, cm.Get("session_id").Exists(), "缺列（session/thread/window）不注入")
+
 	// usage 断言（P1-1 非流式：合成体 Raw 顶层解析）
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
@@ -339,6 +354,10 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 		t.Fatalf("客户端已带 stream:true 应原样透传, body = %s", upc.bodies[0])
 	}
 	require.Equal(t, "gpt-4o", gjson.GetBytes(upc.bodies[0], "model").String(), "未映射 → 模型不改写")
+	// 未配置 identity（codexPATExt 无身份列）→ 仍恒带 turn_id（META-1 最小面）
+	cm := gjson.GetBytes(upc.bodies[0], "client_metadata")
+	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "未配置 identity 仍注入自动 turn_id")
+	require.False(t, cm.Get("x-codex-installation-id").Exists(), "未配置不注入静态键")
 
 	// usage 断言（P1-1 流式：fn 嗅探 response.completed 帧顶层 usage）
 	require.NoError(t, p.rec.Close(context.Background()))

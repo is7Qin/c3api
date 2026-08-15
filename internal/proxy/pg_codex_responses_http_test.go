@@ -72,8 +72,8 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
 
-	// 落库数据：codex-pat 模板 + 组 + 账号 + account_ext（PAT——HTTP 面无伪装
-	// 四元组需求）
+	// 落库数据：codex-pat 模板 + 组 + 账号 + account_ext（PAT 凭据 + 伪装身份
+	// 四元组持久化——META-2 断言面：HTTP 面注入 client_metadata）
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 		Name: "codex-tpl", BaseURL: up.URL,
 		CredentialType:   credential.TypeCodexPAT,
@@ -90,6 +90,10 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexPAT, PATKey: strPtrPG("pat-pg-1"),
+		InstallationID: "inst-pg-1",
+		SessionID:      strPtrPG("sess-pg-1"),
+		ThreadID:       strPtrPG("thread-pg-1"),
+		WindowID:       strPtrPG("thread-pg-1:0"),
 	})
 	require.NoError(t, err)
 
@@ -145,6 +149,16 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	if !gjson.GetBytes(upc.body(0), "stream").Bool() {
 		t.Fatalf("非流式 wire 必须 stream:true（SDK 注入）, body = %s", upc.body(0))
 	}
+
+	// META-2：伪装身份注入——上游收到 client_metadata（account_ext 持久化值 →
+	// 快照 → codexIdentityFromExt → SDK 注入）：恒 4 key + turn_id UUIDv7
+	//（spec 2026-08-15 验收面）
+	cm := gjson.GetBytes(upc.body(0), "client_metadata")
+	require.Equal(t, "inst-pg-1", cm.Get("x-codex-installation-id").String(), "installation_id（ext 持久化）注入")
+	require.Equal(t, "sess-pg-1", cm.Get("session_id").String(), "session_id（ext 持久化）注入")
+	require.Equal(t, "thread-pg-1", cm.Get("thread_id").String(), "thread_id（ext 持久化）注入")
+	require.Equal(t, "thread-pg-1:0", cm.Get("x-codex-window-id").String(), "window_id（ext 持久化）注入")
+	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id UUIDv7 格式（SDK 自动生成）")
 
 	// flusher 排空（单事务 DeductAndLog 落库）后断言 usage_logs 行——顶层 usage
 	// 五计数 + cost（10×1e7+20×2e7 = 500 毫分；cache 价 nil → cache 分量 0 成本）

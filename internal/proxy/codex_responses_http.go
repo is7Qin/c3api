@@ -91,7 +91,11 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	// failover 可转移）。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	resp, err := p.codex.Responses(ctx, cred, streamBody)
+	// 伪装身份（META-2——spec 2026-08-15）：复用 WS 路径 codexIdentityFromExt
+	//（account_ext 四元组 + installation——账号存在期间稳定）；HTTP 面经 SDK
+	// client_metadata 注入（键集对齐真实 codex；未配置仍恒带 turn_id）。
+	sess, meta := codexIdentityFromExt(sel.Ext)
+	resp, err := p.codex.Responses(ctx, cred, streamBody, &sess, &meta)
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err
 	}
@@ -142,7 +146,9 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		framesWritten      bool  // 首帧已写出（头已提交；首帧前失败 → HTTP 状态可用）
 		ttft               *int64
 	)
-	err = p.codex.StreamResponses(ctx, cred, streamBody, func(raw []byte) error {
+	// 伪装身份同非流式（META-2——codexIdentityFromExt 复用）。
+	sess, meta := codexIdentityFromExt(sel.Ext)
+	err = p.codex.StreamResponses(ctx, cred, streamBody, &sess, &meta, func(raw []byte) error {
 		if !framesWritten {
 			// 首事件发头（P2-1 帧规格：三件套 + WriteHeader(200) 显式——SDK 载荷
 			// 直写无 sserelay 首帧隐式写头；延至此处保证首帧前失败不吞状态码）。
