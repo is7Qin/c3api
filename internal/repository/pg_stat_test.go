@@ -160,6 +160,11 @@ func TestPGStatsLoadAggRangeEquivalent(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	h := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
+	// fixture 固定历史日：bootstrap 只预建执行当日+明日分区（partition.go:388）
+	// ——显式预建固定日期分区（与既有先例一致 pg_errlog_partition_test.go:130-132）；
+	// usage/err 两张表同时预建（只补 usage 会让同缺口顺延到 err_logs）。
+	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, h, h))
+	require.NoError(t, repos.EnsureErrLogPartitions(ctx, h, h))
 
 	ttft := func(v int64) *int64 { return &v }
 	logs := []*domain.UsageLog{
@@ -236,6 +241,9 @@ func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	h := time.Date(2026, 8, 14, 11, 0, 0, 0, time.UTC)
+	// 固定历史日分区显式预建（bootstrap 只建当日+明日；同 TestPGStatsLoadAggRangeEquivalent）
+	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, h, h))
+	require.NoError(t, repos.EnsureErrLogPartitions(ctx, h, h))
 
 	ttft := func(v int64) *int64 { return &v }
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{
