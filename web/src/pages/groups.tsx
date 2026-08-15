@@ -72,6 +72,16 @@ const formatMultiplier = (m: number | null | undefined, t: TFunction): string =>
   return `×${m.toFixed(1)}`
 }
 
+// 倍率输入归一（创建/编辑共用）：空 = undefined（省略键）；非数字/越界抛错；
+// 正常值返回数字（0 = 免费组，1 = ×1，上限 10）。
+const normalizeMultiplierInput = (v: string, invalidMsg: string): number | undefined => {
+  const m = v.trim()
+  if (m === '') return undefined
+  const n = Number(m)
+  if (!Number.isFinite(n) || n < 0 || n > 10) throw new Error(invalidMsg)
+  return n
+}
+
 // 可见性徽章：public 绿点 / private 灰点（与 StatusBadge 同风格）。
 function VisibilityBadge({ visibility }: { visibility?: GroupVisibility }) {
   const { t } = useTranslation()
@@ -396,14 +406,8 @@ export default function Groups() {
         visibility: createVisibility,
         protocol_convert: createProtocols, // 空数组 = off = 不转换
       }
-      const m = createMultiplier.trim()
-      if (m !== '') {
-        const v = Number(m)
-        if (!Number.isFinite(v) || v < 0 || v > 10) {
-          throw new Error(t('groups.multiplierInvalid'))
-        }
-        body.price_multiplier = v // 正常值直接提交：0 = 免费组，1 = ×1，上限 10；输入为空则省略键（后端按 ×1）
-      }
+      const m = normalizeMultiplierInput(createMultiplier, t('groups.multiplierInvalid'))
+      if (m !== undefined) body.price_multiplier = m // 正常值直接提交；输入为空则省略键（后端按 ×1）
       return api.createGroup(body)
     },
     onSuccess: (_g, name) => {
@@ -426,14 +430,8 @@ export default function Groups() {
   const rename = useMutation({
     mutationFn: () => {
       const body: components['schemas']['GroupCreate'] = { name: editName.trim(), visibility: editVisibility, protocol_convert: editProtocols }
-      const m = editMultiplier.trim()
-      if (m !== '') {
-        const v = Number(m)
-        if (!Number.isFinite(v) || v < 0 || v > 10) {
-          throw new Error(t('groups.multiplierInvalid'))
-        }
-        body.price_multiplier = v // 正常值直接提交：0 = 免费组，1 = ×1，上限 10；输入为空则省略键（后端保持原值）
-      }
+      const m = normalizeMultiplierInput(editMultiplier, t('groups.multiplierInvalid'))
+      if (m !== undefined) body.price_multiplier = m // 正常值直接提交；输入为空则省略键（后端保持原值）
       return api.updateGroup(editTarget!.ID!, body)
     },
     onSuccess: () => {

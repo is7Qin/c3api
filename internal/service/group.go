@@ -76,8 +76,10 @@ func (s *Service) UpdateGroup(ctx context.Context, g *domain.Group) (*domain.Gro
 	if err != nil {
 		return nil, err
 	}
-	g.ProtocolConverts = converts
-	updated, err := s.store.UpdateGroup(ctx, g)
+	// 副本写入：归一结果落在副本上，不原地改调用方入参（当前无实际影响，防未来踩坑）
+	cp := *g
+	cp.ProtocolConverts = converts
+	updated, err := s.store.UpdateGroup(ctx, &cp)
 	if err != nil {
 		return nil, mapRepoErr(err) // 改名撞已有 name → ErrConflict（409）
 	}

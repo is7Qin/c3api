@@ -189,8 +189,8 @@ func TestAccountsIdExt(t *testing.T) {
 }
 
 // TestGroupProtocolConvertAPI 分组 protocol_convert 方向集合：创建/更新
-// roundtrip（多值数组回显）+ 缺省 = 空数组（off）+ PUT 缺省保持原值/显式空
-// 数组清空 + 非法值/同客户端格式冲突 400。
+// roundtrip（多值数组回显）+ 缺省 = 空数组（off）+ PUT 缺省（null/省略）保持
+// 原值/显式空数组清空 + 非法值/同客户端格式冲突 400。
 func TestGroupProtocolConvertAPI(t *testing.T) {
 	_, _, do := newListTestRouter(t)
 
@@ -220,6 +220,13 @@ func TestGroupProtocolConvertAPI(t *testing.T) {
 	require.Equal(t, 200, rec.Code, "update group omit: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
 	require.Equal(t, []GroupProtocolConvert{RespToMess}, *g.ProtocolConvert, "PUT 缺省保持原值")
+
+	// PUT 显式 null = 保持原值（与省略键同语义）
+	rec = do(http.MethodPut, "/admin/groups/"+itoa64(*g.ID),
+		`{"name":"g-multi","protocol_convert":null}`)
+	require.Equal(t, 200, rec.Code, "update group null: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
+	require.Equal(t, []GroupProtocolConvert{RespToMess}, *g.ProtocolConvert, "PUT 显式 null 保持原值")
 
 	// PUT 显式空数组 = 清空既有方向（off）
 	rec = do(http.MethodPut, "/admin/groups/"+itoa64(*g.ID),
