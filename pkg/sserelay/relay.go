@@ -154,9 +154,10 @@ func (c *ctxReader) Read(p []byte) (int, error) {
 func (r *relay) run() error {
 	br := r.br
 	var (
-		frame bytes.Buffer // 当前帧原始字节
-		data  []byte       // 当前帧 data payload（合并）
-		event []byte       // 当前帧 event 字段
+		frame  bytes.Buffer // 当前帧原始字节
+		data   []byte       // 当前帧 data payload（合并）
+		event  []byte       // 当前帧 event 字段
+		inLine bool         // 当前行未结束（上次 ReadSlice 返回 ErrBufferFull ⟹ true；chunk 以 \n 结尾 ⟹ false）
 	)
 	flushFrame := func() error {
 		out := frame.Bytes()
@@ -185,32 +186,41 @@ func (r *relay) run() error {
 		// 空行 = 帧结束
 		line, err := br.ReadSlice('\n')
 		if len(line) > 0 {
-			if len(line) == 2 && line[0] == '\r' && line[1] == '\n' {
-				// 空行（CRLF）
-				frame.Write(line)
-				if err := flushFrame(); err != nil {
-					return err
-				}
-				continue
-			}
-			if len(line) == 1 && line[0] == '\n' {
-				// 空行（LF）
-				frame.Write(line)
-				if err := flushFrame(); err != nil {
-					return err
-				}
-				continue
-			}
 			frame.Write(line)
-			field, value := splitField(line)
-			switch string(field) {
-			case "event":
-				event = append(event[:0], value...)
-			case "data":
-				if len(data) > 0 {
-					data = append(data, '\n')
+			if inLine {
+				// 续片（>8KB 长行）：原始 line 去尾 \n\r 直接并入 data，不经
+				// splitField——续片内容不可按字段解析（可能含冒号）；>8KB
+				// event 行会并入 data，真实上游 event 恒短，已知限制
+				v := line
+				for len(v) > 0 && (v[len(v)-1] == '\n' || v[len(v)-1] == '\r') {
+					v = v[:len(v)-1]
 				}
-				data = append(data, value...)
+				data = append(data, v...)
+			} else if len(line) == 2 && line[0] == '\r' && line[1] == '\n' {
+				// 空行（CRLF）——仅行起始 chunk 才可能是真帧分隔空行
+				// （续片状态下的孤立 \n 是续行终止符，归上支）
+				if err := flushFrame(); err != nil {
+					return err
+				}
+				continue
+			} else if len(line) == 1 && line[0] == '\n' {
+				// 空行（LF）
+				if err := flushFrame(); err != nil {
+					return err
+				}
+				continue
+			} else {
+				// 行起始 chunk：字段提取（注释行 splitField 返回 nil，不进 data）
+				field, value := splitField(line)
+				switch string(field) {
+				case "event":
+					event = append(event[:0], value...)
+				case "data":
+					if len(data) > 0 {
+						data = append(data, '\n')
+					}
+					data = append(data, value...)
+				}
 			}
 		}
 		if err == io.EOF {
@@ -228,11 +238,13 @@ func (r *relay) run() error {
 			return nil
 		}
 		if err == bufio.ErrBufferFull {
-			continue // 长行：继续累积该行剩余部分
+			inLine = true // 行未结束：后续 chunk 为续片
+			continue
 		}
 		if err != nil {
 			return r.normalize(err)
 		}
+		inLine = false // chunk 以 \n 结尾：行结束复位
 		if err := r.checkCancel(); err != nil {
 			return err
 		}

@@ -92,8 +92,115 @@ func TestRelayEOFFlushesLongLineWithoutNewline(t *testing.T) {
 		Observer: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1, "ErrBufferFull+EOF 长行必须派发为末帧")
-	require.NotEmpty(t, got[0].Data)
+	require.Equal(t, long, string(got[0].Data), "长行 Data 必须全量命中（旧实现截断于首 chunk）")
 	require.Equal(t, src, rec.Body.String(), "长行字节必须完整原样转发")
+}
+
+// TestRelayLongLineDataFull spec 2026-08-16 sserelay-lines #1：>8KB 单行 data
+// （响应对象 JSON：output 数组 + 尾部 usage——真实 response.completed 帧形状，
+// usage 位于 8192B 截断区外）。旧实现 Data 在首 chunk 处截断 → usage 提取落空
+// → 计费归零。续片内容含冒号（"usage":{...}）不得被误判为字段行（#2 同场景）。
+func TestRelayLongLineDataFull(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString(`{"type":"response.completed","response":{"id":"r","output":[`)
+	item := `{"type":"function_call","name":"f","arguments":"aaaa"}`
+	for i := 0; i < 400; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(item)
+	}
+	sb.WriteString(`],"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30}}}`)
+	payload := sb.String()
+	require.Greater(t, len(payload), 8192, "usage 必须位于 8192B 截断区外")
+	src := "data: " + payload + "\n\n"
+	var got []Event
+	rec := httptest.NewRecorder()
+	require.NoError(t, relayStream(rec, src, Config{
+		Observer: func(e Event) { got = append(got, e) },
+	}))
+	require.Len(t, got, 1, "长行帧不得拆出多余空帧")
+	require.Equal(t, payload, string(got[0].Data), "Data 必须全量命中（截断 = usage 提取落空 = 计费归零）")
+	require.Equal(t, "response.completed", string(got[0].EventName()), "data-only 长行帧 type 推断不受续片影响")
+	require.Equal(t, src, rec.Body.String(), "原始字节转发零变化")
+}
+
+// TestRelayLongLineColonInContinuation spec #2：续片 chunk 含冒号不得被当作
+// 字段行丢弃——内容判据（按冒号/字段名解析续片）会把 "aaaa:bbb…" chunk 当
+// 新字段行；state-based 判据下续片恒归 data 行。
+func TestRelayLongLineColonInContinuation(t *testing.T) {
+	payload := strings.Repeat("a", 8190) + ":" + strings.Repeat("b", 5000)
+	src := "data: " + payload + "\n\n"
+	var got []Event
+	rec := httptest.NewRecorder()
+	require.NoError(t, relayStream(rec, src, Config{
+		Observer: func(e Event) { got = append(got, e) },
+	}))
+	require.Len(t, got, 1)
+	require.Equal(t, payload, string(got[0].Data), "续片含冒号必须原样并入 data")
+	require.Equal(t, src, rec.Body.String())
+}
+
+// TestRelayCommentLinesNotInData spec #3：注释行回归——": c" 行（非续片状态）
+// 不得出现在 Data 中（splitField 注释行返回 nil；state-based 判据不得改变）。
+func TestRelayCommentLinesNotInData(t *testing.T) {
+	src := ": c\n: not data\ndata: x\n\n"
+	var got []Event
+	rec := httptest.NewRecorder()
+	require.NoError(t, relayStream(rec, src, Config{
+		Observer: func(e Event) { got = append(got, e) },
+	}))
+	require.Len(t, got, 1)
+	require.Equal(t, "x", string(got[0].Data), "注释行不得进入 Data")
+	require.Equal(t, src, rec.Body.String())
+}
+
+// TestRelayLongLineForkPoint8186 spec #4：精确分叉点——payload=8186B 时行总长
+// 8193B（"data: " 6B + 8186B + "\n"）：chunk1 = 8192B（ErrBufferFull、无 \n），
+// chunk2 = 孤立 "\n" 尾 chunk。孤立 \n 是续行终止符而非帧分隔空行——空行
+// flush 必须 gating 于 !inLine，否则尾 chunk 触发一次空帧 flush
+// （flushes=2+空帧）。断言单帧 flush、Data 全量、无多余空帧。
+func TestRelayLongLineForkPoint8186(t *testing.T) {
+	payload := strings.Repeat("x", 8186)
+	src := "data: " + payload + "\n\n"
+	var got []Event
+	rec := httptest.NewRecorder()
+	require.NoError(t, relayStream(rec, src, Config{
+		Observer: func(e Event) { got = append(got, e) },
+	}))
+	require.Len(t, got, 1, "孤立 \n 尾 chunk 不得触发空帧 flush（gating 失效 = flushes=2+空帧）")
+	require.Equal(t, payload, string(got[0].Data))
+	require.Equal(t, src, rec.Body.String())
+}
+
+// TestRelayLongLineCRLF spec #5：CRLF 长行——续片含 \r\n 尾部剥离（Data 不含
+// 行终止符），CRLF 空行正常分帧。
+func TestRelayLongLineCRLF(t *testing.T) {
+	payload := strings.Repeat("x", 10000)
+	src := "data: " + payload + "\r\n\r\n"
+	var got []Event
+	rec := httptest.NewRecorder()
+	require.NoError(t, relayStream(rec, src, Config{
+		Observer: func(e Event) { got = append(got, e) },
+	}))
+	require.Len(t, got, 1)
+	require.Equal(t, payload, string(got[0].Data), "CRLF 行终止符必须剥离")
+	require.Equal(t, src, rec.Body.String())
+}
+
+// TestRelayMultiDataAndLongLineMixed spec #6：多 data 行 + 长行混合——\n 合并
+// 语义逐位不变（"a\n" + 长行 + "\nb"），续片不得插入多余 \n 或丢失边界。
+func TestRelayMultiDataAndLongLineMixed(t *testing.T) {
+	long := strings.Repeat("y", 10000)
+	src := "data: a\n" + "data: " + long + "\n" + "data: b\n\n"
+	var got []Event
+	rec := httptest.NewRecorder()
+	require.NoError(t, relayStream(rec, src, Config{
+		Observer: func(e Event) { got = append(got, e) },
+	}))
+	require.Len(t, got, 1)
+	require.Equal(t, "a\n"+long+"\nb", string(got[0].Data), "\n 合并语义不得被续片破坏")
+	require.Equal(t, src, rec.Body.String())
 }
 
 func TestRelayObserverReceivesTypedEvent(t *testing.T) {
