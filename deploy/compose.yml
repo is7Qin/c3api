@@ -47,6 +47,15 @@ services:
       C3API_ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env (openssl rand -hex 16)}
       C3API_AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?set AUTH_JWT_SECRET in .env (openssl rand -hex 32)}
       C3API_DB_DSN: postgres://postgres:${POSTGRES_PASSWORD:-c3api}@db:5432/c3api?sslmode=disable
+      # 可选 GC 调优（默认关闭——空值 = 不设置 = Go 默认 GOGC=100 无软上限）：
+      # 高并发（50k 并发 A/B 实测，24 核）开启 GOGC=off + GOMEMLIMIT=16GiB 后
+      # QPS +14.5%（25.1k→28.75k/s）、每请求 CPU -27.7%（331→239µs）、
+      # 首字节 -21%（1103→873ms）、p99 首字节 -36%（5785→3705ms）。
+      # 代价：堆常驻 ~13G，GC 频率从 ~2-3s 一次降到 ~10s 一次（GOMEMLIMIT
+      # 触发，64G 机器安全；调大 GOMEMLIMIT 可再降频，换内存占用）。
+      # GOMEMLIMIT 只认纯字节数，勿带 G/GiB 等单位（非数字串启动即 fatal）。
+      GOGC: ${GOGC:-}
+      GOMEMLIMIT: ${GOMEMLIMIT:-}
     ports:
       - "${PORT:-18080}:18080"
     volumes:

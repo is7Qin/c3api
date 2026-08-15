@@ -140,6 +140,21 @@ See `config.example.toml` for the full schema (server, log, admin, auth, db, pro
 - `Dockerfile` — three-stage build (node → go → alpine), producing a single static binary with the UI embedded.
 - No external caching or message-bus service is required — PostgreSQL is the only dependency.
 
+### GC tuning (optional, default off)
+
+Under high concurrency (25k+ concurrent streams) the default Go GC becomes a measurable cost. A/B-tested at 50k concurrency on a 24-core box, `GOGC=off` + `GOMEMLIMIT=17179869184` (16 GiB — plain bytes, the env var rejects unit suffixes like `16G`) measured:
+
+- Throughput **+14.5%** (25.1k → 28.75k req/s)
+- Per-request CPU **-27.7%** (331 → 239 µs)
+- First-byte latency **-21%** (1103 → 873 ms); p99 first-byte **-36%** (5785 → 3705 ms)
+
+Trade-off: the heap grows to the limit (~13 GiB with a 16 GiB cap) and GC fires roughly every ~10 s instead of every ~2-3 s — fine on a 64 GiB box; raise `GOMEMLIMIT` to cut the frequency further at the cost of memory. Set both in `.env` (empty values keep Go defaults):
+
+```env
+GOGC=off
+GOMEMLIMIT=17179869184
+```
+
 ## License
 
 c3api is open source under the **GNU AGPL v3.0-or-later** (`LICENSE`) — free to use, modify, and deploy, **including for commercial and hosted services**, with the single obligation that modifications are contributed back under the same terms. **No purchase is required.**
