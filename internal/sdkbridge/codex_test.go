@@ -615,20 +615,25 @@ func TestCodexIncompleteNotReportedTwice(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // codexRespUpstream responses 端点 SSE mock：步骤按序弹出（耗尽重复最后一步），
-// 记录鉴权头/请求体；200 步 → 逐 events 发 data: 行 + [DONE]。
+// 记录鉴权头/请求体/turn-state 请求头；200 步 → 逐 events 发 data: 行 +
+// [DONE]；步骤 turnState 非空 → 响应头签发 x-codex-turn-state（HOST-2 断言面）。
 type codexRespUpstream struct {
-	mu     sync.Mutex
-	calls  int
-	auths  []string
-	bodies [][]byte
-	steps  []codexRespStep
-	last   codexRespStep
+	mu         sync.Mutex
+	calls      int
+	auths      []string
+	bodies     [][]byte
+	turnStates []string // 每次请求的 x-codex-turn-state 请求头
+	steps      []codexRespStep
+	last       codexRespStep
 }
 
 type codexRespStep struct {
 	status int
 	events []string // SSE data 载荷（status==200 时逐行下发 + [DONE]）
 	body   string   // 非 200 错误体
+	// turnState 响应头签发值（非空 → 200 响应携带 x-codex-turn-state——
+	// HOST-2 mock 上游签发面）。
+	turnState string
 }
 
 func newCodexRespUpstream(t *testing.T, steps ...codexRespStep) (*httptest.Server, *codexRespUpstream) {
@@ -644,6 +649,7 @@ func newCodexRespUpstream(t *testing.T, steps ...codexRespStep) (*httptest.Serve
 		c.calls++
 		c.auths = append(c.auths, r.Header.Get("Authorization"))
 		c.bodies = append(c.bodies, b)
+		c.turnStates = append(c.turnStates, r.Header.Get(codexsdk.HeaderTurnState))
 		step := c.last
 		if len(c.steps) > 0 {
 			step = c.steps[0]
@@ -656,6 +662,9 @@ func newCodexRespUpstream(t *testing.T, steps ...codexRespStep) (*httptest.Serve
 			w.WriteHeader(step.status)
 			_, _ = w.Write([]byte(step.body))
 			return
+		}
+		if step.turnState != "" {
+			w.Header().Set(codexsdk.HeaderTurnState, step.turnState)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		f := w.(http.Flusher)
@@ -686,6 +695,12 @@ func (c *codexRespUpstream) body(i int) []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.bodies[i]
+}
+
+func (c *codexRespUpstream) turnState(i int) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.turnStates[i]
 }
 
 // T6 事件 fixture（对齐 codex-sdk responses_test.go：created/item.done/completed
@@ -724,7 +739,7 @@ func TestCodexResponsesAggregateNonstream(t *testing.T) {
 	a := NewCodex(nil)
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-resp", BaseURL: up.URL + "/v1/responses"}
 
-	resp, err := a.Responses(context.Background(), cred, []byte(`{"model":"gpt-5.6","input":"hi"}`), nil, nil)
+	resp, err := a.Responses(context.Background(), cred, []byte(`{"model":"gpt-5.6","input":"hi"}`), nil, nil, "")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	want := `{"id":"resp_t6","object":"response","status":"completed","output":[` + t6RespItem + `],"usage":` + t6RespUsage + `}`
@@ -756,7 +771,7 @@ func TestCodexResponsesIdentityMetadata(t *testing.T) {
 	sess := &codexsdk.Session{SessionID: "sess-1", ThreadID: "thread-1", WindowID: "thread-1:0"}
 	meta := &codexsdk.CodexMeta{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "thread-1", WindowID: "thread-1:0"}
 
-	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m","input":"hi"}`), sess, meta)
+	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m","input":"hi"}`), sess, meta, "")
 	require.NoError(t, err)
 	cm := gjson.GetBytes(c.body(0), "client_metadata")
 	require.Equal(t, "inst-1", cm.Get("x-codex-installation-id").String(), "installation_id 注入")
@@ -778,7 +793,7 @@ func TestCodexResponsesIdentityPassthroughTurnID(t *testing.T) {
 	a := NewCodex(nil)
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-t", BaseURL: up.URL + "/v1/responses"}
 
-	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m","client_metadata":{"turn_id":"tid-keep"}}`), nil, nil)
+	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m","client_metadata":{"turn_id":"tid-keep"}}`), nil, nil, "")
 	require.NoError(t, err)
 	require.Equal(t, "tid-keep", gjson.GetBytes(c.body(0), "client_metadata.turn_id").String(), "透传优先（不覆盖）")
 }
@@ -791,7 +806,7 @@ func TestCodexStreamResponsesIdentityMetadata(t *testing.T) {
 	a := NewCodex(nil)
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-si", BaseURL: up.URL + "/v1/responses"}
 
-	err := a.StreamResponses(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, &codexsdk.CodexMeta{InstallationID: "inst-s"}, func(raw []byte) error { return nil })
+	err := a.StreamResponses(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, &codexsdk.CodexMeta{InstallationID: "inst-s"}, "", func(raw []byte) error { return nil })
 	require.NoError(t, err)
 	cm := gjson.GetBytes(c.body(0), "client_metadata")
 	require.Equal(t, "inst-s", cm.Get("x-codex-installation-id").String(), "流式路径同样注入")
@@ -809,20 +824,20 @@ func TestCodexResponsesIdentityChangeRebuild(t *testing.T) {
 	meta1 := &codexsdk.CodexMeta{InstallationID: "inst-1"}
 	meta2 := &codexsdk.CodexMeta{InstallationID: "inst-2"}
 
-	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta1)
+	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta1, "")
 	require.NoError(t, err)
 	a.mu.Lock()
 	c1 := a.entries[9].client
 	a.mu.Unlock()
 	require.NotNil(t, c1)
 
-	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta1)
+	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta1, "")
 	require.NoError(t, err)
 	a.mu.Lock()
 	require.Same(t, c1, a.entries[9].client, "同 identity 复用连接池")
 	a.mu.Unlock()
 
-	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta2)
+	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta2, "")
 	require.NoError(t, err)
 	a.mu.Lock()
 	require.NotSame(t, c1, a.entries[9].client, "identity 变化 → 重建客户端")
@@ -838,12 +853,109 @@ func TestCodexStreamResponsesPassthrough(t *testing.T) {
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-s", BaseURL: up.URL + "/v1/responses"}
 
 	var got []string
-	err := a.StreamResponses(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, nil, func(raw []byte) error {
+	err := a.StreamResponses(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, nil, "", func(raw []byte) error {
 		got = append(got, string(raw)) // 测试内立即拷贝（回调外切片失效语义）
 		return nil
 	})
 	require.NoError(t, err)
 	require.Equal(t, []string{t6RespCreated, t6RespItemEv, t6RespDone}, got, "逐载荷透传（[DONE] 不回调）")
+}
+
+// t6RespCallItem 工具调用输出项 fixture（HOST-2 轮继续信号判定面——item.type
+// function_call）。
+const t6RespCallItem = `{"id":"call_1","status":"completed","type":"function_call","name":"shell","arguments":"{}","call_id":"call_1"}`
+
+// TestCodexResponsesTurnStateCarryAndClear turn-state 持有/注入/清除（HOST-2）：
+// 首请求未带 → 上游签发 ts-1 → held 回写；同轮后续请求（客户端未带）自动注入
+// x-codex-turn-state；ClearTurnState 清除后下一请求不再携带（跨轮不回传——
+// 对齐真实 codex 轮级实例 ModelClientSession.new_session + 真实测试
+// turn_state.rs persists_within_turn_and_resets_after）。
+func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
+	up, c := newCodexRespUpstream(t,
+		codexRespStep{status: 200, events: []string{t6RespCreated, `{"type":"output_item.done","item":` + t6RespCallItem + `}`, t6RespDone}, turnState: "ts-1"},
+		codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
+	defer up.Close()
+	a := NewCodex(nil)
+	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-ts", BaseURL: up.URL + "/v1/responses"}
+
+	// 首请求（轮首）：未带 turn-state → 上游签发 ts-1 → held 回写
+	resp, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
+	require.NoError(t, err)
+	require.Equal(t, "ts-1", resp.TurnState, "响应签发值暴露")
+	require.Equal(t, "", c.turnState(0), "轮首请求不带头")
+
+	// 同轮后续请求：客户端未带 → 自动注入 held（ts-1）
+	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
+	require.NoError(t, err)
+	require.Equal(t, "ts-1", c.turnState(1), "同轮续传（注入 held）")
+
+	// 轮结束清除 → 下一请求不再携带（跨轮不回传）
+	a.ClearTurnState(9)
+	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
+	require.NoError(t, err)
+	require.Equal(t, "", c.turnState(2), "清除后跨轮不回传")
+}
+
+// TestCodexResponsesTurnStatePassthrough 透传优先（HOST-2）：客户端自带
+// x-codex-turn-state → 原值透传不覆盖（客户端自管）；held 不介入。
+func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
+	up, c := newCodexRespUpstream(t,
+		codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-up"})
+	defer up.Close()
+	a := NewCodex(nil)
+	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-pt", BaseURL: up.URL + "/v1/responses"}
+
+	// 先构造条目（首调用建 entry——无 held 无客户端值）
+	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
+	require.NoError(t, err)
+	// held 覆盖预置（验证客户端值覆盖 held——不被 held 覆盖）
+	a.mu.Lock()
+	a.entries[9].turnState = "held-old"
+	a.mu.Unlock()
+
+	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "client-ts")
+	require.NoError(t, err)
+	require.Equal(t, "client-ts", c.turnState(1), "客户端自带 → 透传优先（覆盖 held）")
+
+	// 响应签发值 → held 回写（服务端为准——后续未带请求注入新签发值）
+	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
+	require.NoError(t, err)
+	require.Equal(t, "ts-up", c.turnState(2), "签发值回写 held 后续注入")
+}
+
+// TestCodexResponsesTurnStateChangeRebuild turn-state 变化 → 重建 HTTPClient
+//（与 idSig 同语义——构造期 opts 承载的头面变化才能生效；生产路径共享
+// transport 承载连接池，重建不重置连接池）。
+func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
+	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-1"})
+	defer up.Close()
+	a := NewCodex(nil)
+	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-rt", BaseURL: up.URL + "/v1/responses"}
+
+	// 首调用（无 held）：无头客户端
+	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
+	require.NoError(t, err)
+	a.mu.Lock()
+	c1 := a.entries[9].client
+	require.Equal(t, "", a.entries[9].appliedTurnState, "首调用应用空值")
+	a.mu.Unlock()
+
+	// 同值复用（held 已回写 ts-1 → 生效值变化 → 重建——断言客户端非同一实例）
+	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
+	require.NoError(t, err)
+	a.mu.Lock()
+	c2 := a.entries[9].client
+	require.NotSame(t, c1, c2, "生效值空 → ts-1 变化 → 重建客户端")
+	require.Equal(t, "ts-1", a.entries[9].appliedTurnState, "重建后记录应用值")
+	require.NotNil(t, c2)
+	a.mu.Unlock()
+
+	// 同值复用不重建
+	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "ts-1")
+	require.NoError(t, err)
+	a.mu.Lock()
+	require.Same(t, c2, a.entries[9].client, "同生效值复用不重建")
+	a.mu.Unlock()
 }
 
 // searchReqPayload search 端点请求 fixture（opaque——网关零解析断言面）。
@@ -926,7 +1038,7 @@ func TestCodexResponsesEnvelope4xx(t *testing.T) {
 	a := NewCodex(handler.add)
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-4xx", BaseURL: up.URL + "/v1/responses"}
 
-	_, err := a.Responses(context.Background(), cred, []byte(`{}`), nil, nil)
+	_, err := a.Responses(context.Background(), cred, []byte(`{}`), nil, nil, "")
 	require.Error(t, err)
 	var env *EnvelopeError
 	require.True(t, errors.As(err, &env), "信封类型 errors.As 命中: %v", err)
@@ -965,7 +1077,7 @@ func TestCodexResponses401Rotate(t *testing.T) {
 	a := NewCodex(nil)
 	cred := respCred(7, "at-old", "rt-1", srv.URL)
 
-	resp, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil)
+	resp, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
 	require.NoError(t, err)
 	require.Equal(t, `"resp_t6"`, gjson.GetBytes(resp.Raw, "id").Raw, "轮转后应成功聚合")
 	require.Equal(t, 1, rm.callsN(), "refresh 恰一次（单飞）")
@@ -988,7 +1100,7 @@ func TestCodexResponsesFatal(t *testing.T) {
 	a := NewCodex(handler.add)
 	cred := respCred(7, "at-old", "rt-1", srv.URL)
 
-	_, err := a.Responses(context.Background(), cred, []byte(`{}`), nil, nil)
+	_, err := a.Responses(context.Background(), cred, []byte(`{}`), nil, nil, "")
 	require.Error(t, err)
 	var ap *codexsdk.AuthPermanentlyRevokedError
 	require.True(t, errors.As(err, &ap), "fatal 原样透传（errors.As 命中）: %v", err)
@@ -1010,7 +1122,7 @@ func TestCodexStreamResponsesFnError(t *testing.T) {
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-fn", BaseURL: up.URL + "/v1/responses"}
 
 	sentinel := errors.New("client write failed")
-	err := a.StreamResponses(context.Background(), cred, []byte(`{}`), nil, nil, func(raw []byte) error {
+	err := a.StreamResponses(context.Background(), cred, []byte(`{}`), nil, nil, "", func(raw []byte) error {
 		return sentinel
 	})
 	require.ErrorIs(t, err, sentinel, "fn 回调错误原样透传")

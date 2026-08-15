@@ -5,10 +5,13 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
+	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -72,15 +75,64 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 	if stream {
 		return p.streamCodexResponses(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body)
 	}
-	return p.nonstreamCodexResponses(ctx, w, reqID, groupID, start, sel, reqModel, &cred, body)
+	return p.nonstreamCodexResponses(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body)
+}
+
+// clientTurnState 客户端请求自带 x-codex-turn-state（HOST-2 透传优先——客户端
+// 自管，非空覆盖网关 held 注入；空 = 未带 → 网关补"服务端签发过"的空缺）。
+func clientTurnState(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return r.Header.Get(codexsdk.HeaderTurnState)
+}
+
+// --- turn-state 轮边界判定（HOST-2——真实代码实证钉死） ---
+// 真实实例归属：轮级——ModelClientSession.new_session 每轮新建
+// Arc<OnceLock<String>>（core/src/client.rs:498 "fresh turn-scoped streaming
+// session"），值 = 实例生命周期内首次 set 后恒定（握手响应头
+// responses_websocket.rs:538 + 流事件 :742 二次 set 被 OnceLock 忽略）；轮结束
+// = 会话销毁（跨轮不回传）。真实轮结束判定（stream_events_utils.rs:318-328
+// needs_follow_up + turn.rs:150-152）：响应输出项为工具调用 → 轮继续；纯
+// message/reasoning → 轮结束。真实测试套件实证（core/tests/suite/turn_state.rs
+// persists_within_turn_and_resets_after）：completed 响应（含工具调用）后同轮
+// 后续请求仍带 ts，仅跨轮清除——**不在 response.completed 即清**。
+
+// isCodexCallItemType 轮继续信号判定：输出项类型为工具调用型——wire type 族
+// 恒以 "_call" 结尾（function_call/shell_command_call/computer_call/
+// web_search_call/local_shell_call/custom_tool_call 等——对齐真实
+// stream_events_utils.rs needs_follow_up 语义）。
+func isCodexCallItemType(t string) bool { return strings.HasSuffix(t, "_call") }
+
+// codexTurnEndedBody 非流式合成体轮结束判定：output 无工具调用项 → 轮结束
+//（SDK 聚合器成功返回必已收到 response.completed 终态——合成体恒 completed）。
+func codexTurnEndedBody(body []byte) bool {
+	for _, t := range gjson.GetBytes(body, "output.#.type").Array() {
+		if isCodexCallItemType(t.String()) {
+			return false // 含工具调用 → 轮继续（同轮后续请求须续传）
+		}
+	}
+	return true
+}
+
+// sniffCodexTurnCallItem 流式帧轮继续信号嗅探（热路径纪律同 sniffCodexWSDeath：
+// bytes.Contains 零分配预筛——"item":{" 为 item 对象形态（消息正文 JSON 转义
+// 不含该原始子串），命中才最小 gjson 解析 item.type）。
+func sniffCodexTurnCallItem(f []byte) bool {
+	if !bytes.Contains(f, []byte(`"item":{`)) {
+		return false
+	}
+	return isCodexCallItemType(gjson.GetBytes(f, "item.type").String())
 }
 
 // nonstreamCodexResponses 非流式 codex resp（T6 §1）：setModel 改写（P2-2——
 // 与 typed 非流式 SDK 路径 params.Model = sel.Model 等价；短路守卫零分配）→
 // 适配层 Responses → 合成体原样转发（application/json）+ **顶层 usage 提取**
 // （P1-1：合成体无 type 字段——顶层 usage 直接解析；typed 的 SDK 结构体解析
-// 路径不适用——合成体是上游 wire 原样交付）。
-func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWriter, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
+// 路径不适用——合成体是上游 wire 原样交付）。turn-state（HOST-2）：客户端
+// 自带 → 透传优先；未带 → 网关注入 held（上游签发值——同轮回传）；合成体无
+// 工具调用项（轮结束）→ ClearTurnState（跨轮不回传）。
+func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
 		return 0, nil, false, err // 本地 JSON 错误（handleFormat 已过 json.Valid 硬门——防御）
@@ -95,9 +147,14 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	//（account_ext 四元组 + installation——账号存在期间稳定）；HTTP 面经 SDK
 	// client_metadata 注入（键集对齐真实 codex；未配置仍恒带 turn_id）。
 	sess, meta := codexIdentityFromExt(sel.Ext)
-	resp, err := p.codex.Responses(ctx, cred, streamBody, &sess, &meta)
+	resp, err := p.codex.Responses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r))
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err
+	}
+	// 轮结束清除（HOST-2）：合成体成功返回必含 completed 终态——无工具调用项
+	// → 轮结束 → 清除 held（跨轮不回传；适配层已回写本次响应签发值）。
+	if codexTurnEndedBody(resp.Raw) {
+		p.codex.ClearTurnState(sel.AccountID)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -149,11 +206,13 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		img                int64 // resp 检测功能调用计数（spec §6 旁路；respImageDetectOn 门控）——落 CallCount
 		usageTaken         bool  // 首个 completed 帧已取（usage 只读一次）
 		framesWritten      bool  // 首帧已写出（头已提交；首帧前失败 → HTTP 状态可用）
+		turnCallSeen       bool  // 流中轮继续信号（工具调用输出项——HOST-2 轮边界）
 		ttft               *int64
 	)
-	// 伪装身份同非流式（META-2——codexIdentityFromExt 复用）。
+	// 伪装身份同非流式（META-2——codexIdentityFromExt 复用）；turn-state 透传
+	// 优先（HOST-2——客户端自带覆盖 held 注入）。
 	sess, meta := codexIdentityFromExt(sel.Ext)
-	err = p.codex.StreamResponses(ctx, cred, streamBody, &sess, &meta, func(raw []byte) error {
+	err = p.codex.StreamResponses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r), func(raw []byte) error {
 		if !framesWritten {
 			// 首事件发头（P2-1 帧规格：三件套 + WriteHeader(200) 显式——SDK 载荷
 			// 直写无 sserelay 首帧隐式写头；延至此处保证首帧前失败不吞状态码）。
@@ -173,6 +232,11 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 				}
 				usageTaken = true
 			}
+		}
+		// 轮边界嗅探（HOST-2）：工具调用输出项 → 轮继续（同轮后续请求续传
+		// turn-state）；命中后跳过（每响应一次判定足够）。
+		if !turnCallSeen && sniffCodexTurnCallItem(raw) {
+			turnCallSeen = true
 		}
 		if ttft == nil {
 			ms := time.Since(start).Milliseconds()
@@ -199,6 +263,12 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, err)
 		p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, statusOf(err), err.Error())
 		return 0, nil, true, nil
+	}
+	// 轮结束清除（HOST-2）：流正常结束且收到 completed 终态（usageTaken）且无
+	// 工具调用项（!turnCallSeen）→ 轮结束 → 清除 held（跨轮不回传）。错误/断开
+	// 路径不清（轮结束未知——不误清同轮续传值）。
+	if usageTaken && !turnCallSeen {
+		p.codex.ClearTurnState(sel.AccountID)
 	}
 	logCtx := ctx
 	if ttft != nil {

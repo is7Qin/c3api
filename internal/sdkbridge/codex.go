@@ -85,9 +85,21 @@ type codexEntry struct {
 	// idSig 伪装身份签名（META-2：identity 变化 → 重建 HTTPClient——与 cred
 	// sig 同语义：账号配置变更 → 重建；WS 面每请求新鲜 identity，HTTP 面缓存
 	// 客户端以 sig 比对等价对齐——同 identity 复用连接池，变化才重建）。
-	idSig     string
-	expiresAt *time.Time
-	reported  atomic.Bool
+	idSig string
+	// turnState HTTP 面 turn-state 持有（HOST-2——spec 2026-08-15 评审 PASS）：
+	// 上游响应签发值（HTTPResponse.TurnState / SDK 池级捕获值回读），后续请求
+	// 注入 x-codex-turn-state 头（同轮回传对齐真实 codex client.rs:1202——
+	// 轮级实例实证：ModelClientSession.new_session 每轮新建 OnceLock，
+	// responses_websocket.rs:538 握手响应头 + :742 流事件二次 set 一次定值）。
+	// 粒度 = clientFor 缓存一致（账号级——HTTP 面 sig 缓存客户端）；轮结束由
+	// 网关 ClearTurnState 清除（跨轮不回传）。
+	turnState string
+	// appliedTurnState 当前客户端构造期已应用的 turn-state（重建判定：变化 →
+	// 重建 HTTPClient——与 idSig 同语义；生产路径共享 transport 承载连接池，
+	// 重建不重置连接池）。
+	appliedTurnState string
+	expiresAt         *time.Time
+	reported          atomic.Bool
 }
 
 // NewCodex 构造 codex 适配层。failure 为 T1 统一失效回调（适配层构造注册
@@ -104,7 +116,7 @@ func NewCodex(failure FailureHandler) *Codex {
 // 不包装，errors.As 可命中）；RefreshError 可重试不上报。cred.BaseURL = 模板
 // base 派生完整 generations 端点（空 → SDK 内置 DefaultImagesURL）。
 func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredential, p *domain.ImageGenParams) (*domain.ImageResponse, error) {
-	e, err := a.clientFor(cred, nil, nil)
+	e, err := a.clientFor(cred, nil, nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +135,7 @@ func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredentia
 // 错误翻译同 GenerateImage（translateError——信封/fatal 统一回调/refresh 分
 // 类复用；fn 回调错误经 translateError 原样透传——非 SDK 错误不过滤）。
 func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCredential, p *domain.ImageGenParams, fn func(domain.ImageStreamEvent) error) error {
-	e, err := a.clientFor(cred, nil, nil)
+	e, err := a.clientFor(cred, nil, nil, "")
 	if err != nil {
 		return err
 	}
@@ -165,10 +177,17 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 // 内部无条件 stream:true + SSE 事件聚合重组完整响应体；网关以非流式语义消费，
 // 原样转发 + 顶层 usage 提取）。sess/meta 为 HTTP 面伪装身份（META-2——
 // client_metadata 注入键集对齐真实 codex；nil = 未配置——SDK 仍恒带 turn_id，
-// spec META-1）。错误翻译同 GenerateImage（translateError——SDK *HTTPError
-// → 信封；fatal 五类统一回调双源去重；RefreshError/网络原样）。
-func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta) (*codexsdk.HTTPResponse, error) {
-	e, err := a.clientFor(cred, sess, meta)
+// spec META-1）。clientTurnState 为客户端请求自带 x-codex-turn-state（HOST-2
+// 透传优先——客户端自管，非空覆盖 held 注入）；未带 → 注入 held（上游签发值
+// ——同轮回传）。成功响应签发值 → held 回写（非空才覆盖）。错误翻译同
+// GenerateImage（translateError——SDK *HTTPError → 信封；fatal 五类统一回调
+// 双源去重；RefreshError/网络原样）。
+func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string) (*codexsdk.HTTPResponse, error) {
+	ts := clientTurnState
+	if ts == "" {
+		ts = a.turnStateOf(cred.AccountID)
+	}
+	e, err := a.clientFor(cred, sess, meta, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +195,7 @@ func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, p
 	if err != nil {
 		return nil, a.translateError(e, err)
 	}
+	a.captureTurnState(e, resp.TurnState)
 	return resp, nil
 }
 
@@ -188,7 +208,7 @@ func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, p
 // 头）。错误翻译同 Responses（translateError——信封/fatal 统一回调双源去重/
 // RefreshError 分类复用）。
 func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, payload []byte) (*codexsdk.HTTPResponse, error) {
-	e, err := a.clientFor(cred, nil, nil)
+	e, err := a.clientFor(cred, nil, nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -203,16 +223,24 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, payl
 // c.Stream(ctx, payload, fn)（SSE data: 行逐帧交付零拷贝——SDK 回调 raw 指向
 // scanner 复用缓冲，**仅回调执行期间有效**：fn 必须立即消费，不得跨回调保留
 // 切片）。sess/meta 同 Responses（META-2 伪装身份；nil = 未配置——SDK 仍恒带
-// turn_id）。错误翻译同 Responses。fn 返回错误 → SDK 终止读取并原样透传（网
-// 关写出失败/客户端断开路径——translateError 对非 SDK 错误不过滤）。
-func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredential, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, fn func(raw []byte) error) error {
-	e, err := a.clientFor(cred, sess, meta)
+// turn_id）。clientTurnState 同 Responses（HOST-2 透传优先）。流式无
+// HTTPResponse 返回面——签发值回读 SDK 池级捕获（Stream 内部已
+// captureTurnState，http.go:144——2xx 响应头非空才覆盖）→ held 回写。错误翻译
+// 同 Responses。fn 返回错误 → SDK 终止读取并原样透传（网关写出失败/客户端断
+// 开路径——translateError 对非 SDK 错误不过滤）。
+func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredential, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string, fn func(raw []byte) error) error {
+	ts := clientTurnState
+	if ts == "" {
+		ts = a.turnStateOf(cred.AccountID)
+	}
+	e, err := a.clientFor(cred, sess, meta, ts)
 	if err != nil {
 		return err
 	}
 	if err := e.client.Stream(ctx, payload, fn); err != nil {
 		return a.translateError(e, err)
 	}
+	a.captureTurnState(e, e.client.TurnState())
 	return nil
 }
 
@@ -255,12 +283,17 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 // clientFor entryFor + HTTPClient 懒构造（GenerateImage/Stream 面——非 nil
 // 后同账号复用连接池；sig 变更 → entryFor 重建条目）。sess/meta 为 HTTP 面伪
 // 装身份（META-2——SDK 注入点读构造期 opts（http.go injectResponsesClient-
-// Metadata），须随构造下发；nil = 未配置）。NewHTTPClient 为纯构造（无 I/O
-// 无 error）；构造/读取全程持 a.mu——entryFor 每次调用已取锁，无新增竞争
-// （补压测 -race 实证修复：原双检锁锁外读 e.client vs 锁内写，数据竞争；去掉
-// 锁外快路径即消除）。idSig 比对（identitySig）——identity 变化 → 重建客户端
-// （与 cred sig 同语义：账号配置变更 → 重建；同 identity 复用连接池）。
-func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session, meta *codexsdk.CodexMeta) (*codexEntry, error) {
+// Metadata），须随构造下发；nil = 未配置）。turnState 为本次请求生效的
+// turn-state（HOST-2——客户端自带透传优先值或 held 签发值；非空 → 构造期
+// WithHeader 注入 x-codex-turn-state——SDK HTTPClient 无 per-request 头面，
+// 与 idSig 同语义：值变化 → 重建客户端；生产路径共享 transport 承载连接池，
+// 重建不重置连接池（补压测 4e08fbd 连接风暴防护保持））。NewHTTPClient 为纯
+// 构造（无 I/O 无 error）；构造/读取全程持 a.mu——entryFor 每次调用已取锁，
+// 无新增竞争（补压测 -race 实证修复：原双检锁锁外读 e.client vs 锁内写，数
+// 据竞争；去掉锁外快路径即消除）。idSig 比对（identitySig）——identity 变化
+// → 重建客户端（与 cred sig 同语义：账号配置变更 → 重建；同 identity 复用连
+// 接池）。
+func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session, meta *codexsdk.CodexMeta, turnState string) (*codexEntry, error) {
 	e, err := a.entryFor(cred)
 	if err != nil {
 		return nil, err
@@ -272,15 +305,53 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 	if a.transport != nil {
 		opts = append(opts, codexsdk.WithTransport(a.transport))
 	}
+	if turnState != "" {
+		opts = append(opts, codexsdk.WithHeader(codexsdk.HeaderTurnState, turnState))
+	}
 	opts = append(opts, identityOpts(sess, meta)...)
 	sig := identitySig(sess, meta)
 	a.mu.Lock()
-	if e.client == nil || e.idSig != sig {
+	if e.client == nil || e.idSig != sig || e.appliedTurnState != turnState {
 		e.client = codexsdk.NewHTTPClient(e.auth, opts...)
 		e.idSig = sig
+		e.appliedTurnState = turnState
 	}
 	a.mu.Unlock()
 	return e, nil
+}
+
+// turnStateOf 读账号 held turn-state（HOST-2 生效值判定——客户端未自带时注入
+// 面；a.mu 保护与 entryFor 同锁，热路径每请求一次，锁开销可忽略）。
+func (a *Codex) turnStateOf(accountID int64) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if e := a.entries[accountID]; e != nil {
+		return e.turnState
+	}
+	return ""
+}
+
+// captureTurnState 响应签发值 → held 回写（非空才覆盖——对齐 SDK
+// captureTurnState 语义；HTTPResponse.TurnState / 池级捕获值为最近签发值——
+// 响应未再签发时保持旧值，重复回写幂等）。
+func (a *Codex) captureTurnState(e *codexEntry, ts string) {
+	if ts == "" {
+		return
+	}
+	a.mu.Lock()
+	e.turnState = ts
+	a.mu.Unlock()
+}
+
+// ClearTurnState 轮结束清除（HOST-2——网关在响应含轮结束信号时调用：跨轮不得
+// 回传）。条目不存在 = no-op（未构造/失效剔除）。清除后下次请求生效值 ""
+// → 客户端重建（无头）——SDK 池级旧值随重建丢弃，不残留。
+func (a *Codex) ClearTurnState(accountID int64) {
+	a.mu.Lock()
+	if e := a.entries[accountID]; e != nil {
+		e.turnState = ""
+	}
+	a.mu.Unlock()
 }
 
 // identityOpts 伪装身份 → SDK Option（META-2：WithSession/WithCodexMeta——
