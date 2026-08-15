@@ -68,11 +68,13 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 					ms := time.Since(start).Milliseconds()
 					ttft = &ms
 				}
-				// "usage": null 的帧（存在但为 null）不得清零元组：Exists() 对
-				// null 为真。gjson 无 IsNull()，用 Type == gjson.JSON 判定非空
-				// 对象/数组（缺失与显式 null 的 Type 均为 Null）。
-				if len(ev.Event) == 0 && gjson.GetBytes(ev.Data, "usage").Type == gjson.JSON {
-					it, ot, tt, cr, cc = chatStreamUsage(ev.Data)
+				// "usage": null 的帧（存在但为 null）不得清零元组：chatStreamUsage
+				// 内建 usage 存在性判定（值首字节 {/[；缺失与显式 null 均
+				// ok=false → 不更新——与原 gjson Type==JSON 前置检查等价）。
+				if len(ev.Event) == 0 {
+					if t, ok := chatStreamUsage(ev.Data); ok {
+						it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
+					}
 				}
 			},
 		})

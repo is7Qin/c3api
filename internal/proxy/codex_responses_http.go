@@ -102,7 +102,12 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp.Raw)
-	it, ot, tt, cr, cc := responsesTopLevelUsage(resp.Raw)
+	// 顶层 usage（非流式低频路径）：缺失/显式 null → ok=false → 恒 0（与原
+	// gjson 缺失 = 0 等价）。
+	var it, ot, tt, cr, cc int64
+	if t, ok := responsesTopLevelUsage(resp.Raw); ok {
+		it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
+	}
 	var img int64 // resp 检测功能调用计数（spec §6 旁路；respImageDetectOn 门控）——落 CallCount
 	if respImageDetectOn(sel) {
 		img = respImageCountBody(resp.Raw)
@@ -159,8 +164,8 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 			framesWritten = true
 		}
 		if !usageTaken {
-			// 热路径：gjson type 精确判定（防正文含子串帧冻结——P1-1）+ 顶层
-			// usage 解析；首个命中后跳过（终态事件唯一）。
+			// 热路径：字节扫描 type 精确判定（防正文含子串帧冻结——P1-1）+
+			// 顶层 usage 解析（单遍，零分配）；首个命中后跳过（终态事件唯一）。
 			if hit, ok := sniffResponsesCompletedTop(raw); ok {
 				it, ot, tt, cr, cc = hit.it, hit.ot, hit.tt, hit.cr, hit.cc
 				if respImageDetectOn(sel) {

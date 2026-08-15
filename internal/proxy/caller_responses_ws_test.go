@@ -396,16 +396,20 @@ func TestSniffResponsesCompleted(t *testing.T) {
 	require.False(t, ok)
 
 	// 误命中：非 completed 帧内嵌该子串（嵌套 key-value，原始字节可真命中——
-	// 字符串内容里的引号恒被转义，不可能误匹配）→ 预筛命中但解析出零值元组，
-	// 真实 completed 帧恒在流末，最终值由其覆盖（最后帧语义）。
+	// 字符串内容里的引号恒被转义，不可能误匹配）→ 预筛命中但 response.usage
+	// 不存在 → ok=false 不更新（此前值保留）。旧行为解析出零值元组覆盖——
+	// completed 终态唯一且恒在流末，最终值由真实 completed 帧覆盖（最后帧
+	// 语义），实际等价（spec A-1 连带改写）。
 	u, ok = sniffResponsesCompleted([]byte(`{"type":"response.output_text.delta","delta":"hi","meta":{"type":"response.completed"}}`))
-	require.True(t, ok)
-	require.Equal(t, usageTuple{}, u, "误命中帧无 usage → 零值元组")
+	require.False(t, ok)
+	require.Zero(t, u, "ok=false 返回零值元组（调用方不更新）")
 
-	// completed 帧但 usage 缺失 → 零值元组（不阻塞采集）
+	// completed 帧但 usage 缺失（error 终态形状）→ ok=false 不更新（不阻塞
+	// 采集；此前值保留——completed 终态唯一、元组仅此处写入，此前值恒 0，
+	// 与旧行为覆盖 0 等价）。
 	u, ok = sniffResponsesCompleted([]byte(`{"type":"response.completed","response":{"id":"r"}}`))
-	require.True(t, ok)
-	require.Equal(t, usageTuple{}, u)
+	require.False(t, ok)
+	require.Zero(t, u)
 }
 
 // TestRelayClassifyCloseFramePriority I-1 分类单元测试（确定性）：上游关闭帧

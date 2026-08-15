@@ -87,12 +87,17 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				switch target {
 				case domain.FormatOpenAIResponses:
 					if bytes.Equal(ev.EventName(), []byte("response.completed")) {
-						it, ot, tt, cr, cc = responsesCompletedUsage(ev.Data)
+						if t, ok := responsesCompletedUsage(ev.Data); ok {
+							it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
+						}
 					}
 				case domain.FormatAnthropic:
 					switch string(ev.EventName()) {
 					case "message_start":
-						it, cr, cc = anthropicStartUsage(ev.Data)
+						// ot/tt 恒 0（anthropicStartUsage 无对应字段；tt 下游自算）
+						if t, ok := anthropicStartUsage(ev.Data); ok {
+							it, cr, cc = t.it, t.cr, t.cc
+						}
 					case "message_delta":
 						ot = anthropicDeltaOutput(ev.Data)
 					}

@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"bytes"
+	"strconv"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/openai/openai-go"
@@ -30,44 +31,64 @@ func cacheCreationFromRaw(raw string) int64 {
 		gjson.Get(raw, "cache_creation.ephemeral_1h_input_tokens").Int()
 }
 
-// chatStreamUsage 流式 chat usage 帧 → 元组（调用方已用
-// usage.Type == gjson.JSON 判定非空，显式 null 帧不得清零）。
-// cached_tokens 在 prompt_tokens_details 下（评审 I-1：与 SDK
-// CompletionUsage 结构体一致——顶层无该字段，流式/非流式同构）。
-func chatStreamUsage(data []byte) (it, ot, tt, cr, cc int64) {
-	return gjson.GetBytes(data, "usage.prompt_tokens").Int(),
-		gjson.GetBytes(data, "usage.completion_tokens").Int(),
-		gjson.GetBytes(data, "usage.total_tokens").Int(),
-		gjson.GetBytes(data, "usage.prompt_tokens_details.cached_tokens").Int(),
-		gjson.GetBytes(data, "usage.cache_creation.ephemeral_5m_input_tokens").Int() +
-			gjson.GetBytes(data, "usage.cache_creation.ephemeral_1h_input_tokens").Int()
+// chatStreamUsage 流式 chat usage 帧 → 元组 + ok（usage 存在判定内建——调用方
+// 不再前置 gjson 检查；显式 null 帧 ok=false 不清零：usageInterval 值首字节
+// {/[ 判定，null 字面量首字节 n → 不存在）。
+// cached_tokens 在 prompt_tokens_details 下（评审 I-1：与 SDK CompletionUsage
+// 结构体一致——顶层无该字段，流式/非流式同构）。
+func chatStreamUsage(data []byte) (usageTuple, bool) {
+	raw, ok := usageInterval(data, usageKeyBytes)
+	if !ok {
+		return usageTuple{}, false
+	}
+	return usageFieldsFromInterval(raw, promptTokensKeyBytes, completionTokensKeyBytes, promptTokensDetailsKeyBytes), true
 }
 
-// anthropicStartUsage 流式 message_start 帧的 message.usage → (input, cacheRead,
-// cacheCreation)。Anthropic 流式用量在 message_start 的 message.usage 里
-// （评审 M1：前缀 message.usage.*，非顶层）。
-func anthropicStartUsage(data []byte) (it, cr, cc int64) {
-	return gjson.GetBytes(data, "message.usage.input_tokens").Int(),
-		gjson.GetBytes(data, "message.usage.cache_read_input_tokens").Int(),
-		gjson.GetBytes(data, "message.usage.cache_creation_input_tokens").Int()
+// anthropicStartUsage 流式 message_start 帧的 message.usage → 元组 + ok（input/
+// cacheRead/cacheCreation；ot/tt 无对应字段恒 0——调用点下游 tt = it + ot 自算）。
+// Anthropic 流式用量在 message_start 的 message.usage 里（评审 M1：前缀
+// message.usage.*，非顶层）。显式 null / 缺失 → ok=false。
+func anthropicStartUsage(data []byte) (usageTuple, bool) {
+	start, end, ok := scanKeyValue(data, messageKeyBytes)
+	if !ok {
+		return usageTuple{}, false
+	}
+	raw, ok := usageInterval(data[start:end], usageKeyBytes)
+	if !ok {
+		return usageTuple{}, false
+	}
+	return usageTuple{
+		it: scanFieldInt64(raw, inputTokensKeyBytes),
+		cr: scanFieldInt64(raw, cacheReadInputTokensKeyBytes),
+		cc: scanFieldInt64(raw, cacheCreationInputTokensKeyBytes),
+	}, true
 }
 
 // anthropicDeltaOutput 流式 message_delta 帧的 usage.output_tokens
-// （message_delta.usage 不含 input/cache 字段）。
+// （message_delta.usage 不含 input/cache 字段）。单字段统一走字节扫描族
+// （与其余提取同构，消除 gjson 依赖）；缺失/显式 null → 0。
 func anthropicDeltaOutput(data []byte) int64 {
-	return gjson.GetBytes(data, "usage.output_tokens").Int()
+	raw, ok := usageInterval(data, usageKeyBytes)
+	if !ok {
+		return 0
+	}
+	return scanFieldInt64(raw, outputTokensKeyBytes)
 }
 
-// responsesCompletedUsage 流式 response.completed 帧 → 元组（评审 M2：
-// 前缀 response.usage.*；cr 在 input_tokens_details.cached_tokens；
-// cc 走 ephemeral 聚合——Responses 无 cache_creation 对象，恒 0 预期）。
-func responsesCompletedUsage(data []byte) (it, ot, tt, cr, cc int64) {
-	return gjson.GetBytes(data, "response.usage.input_tokens").Int(),
-		gjson.GetBytes(data, "response.usage.output_tokens").Int(),
-		gjson.GetBytes(data, "response.usage.total_tokens").Int(),
-		gjson.GetBytes(data, "response.usage.input_tokens_details.cached_tokens").Int(),
-		gjson.GetBytes(data, "response.usage.cache_creation.ephemeral_5m_input_tokens").Int() +
-			gjson.GetBytes(data, "response.usage.cache_creation.ephemeral_1h_input_tokens").Int()
+// responsesCompletedUsage 流式 response.completed 帧 → 元组 + ok（评审 M2：
+// 前缀 response.usage.*；cr 在 input_tokens_details.cached_tokens；cc 走
+// ephemeral 聚合——Responses 无 cache_creation 对象，恒 0 预期）。显式 null /
+// 缺失 → ok=false（调用方保留此前值）。
+func responsesCompletedUsage(data []byte) (usageTuple, bool) {
+	start, end, ok := scanKeyValue(data, responseKeyBytes)
+	if !ok {
+		return usageTuple{}, false
+	}
+	raw, ok := usageInterval(data[start:end], usageKeyBytes)
+	if !ok {
+		return usageTuple{}, false
+	}
+	return usageFieldsFromInterval(raw, inputTokensKeyBytes, outputTokensKeyBytes, inputTokensDetailsKeyBytes), true
 }
 
 // --- codex resp 顶层 usage 解析（P1-1——T6：SDK 路径的 usage 形状为顶层） ---
@@ -79,29 +100,130 @@ func responsesCompletedUsage(data []byte) (it, ot, tt, cr, cc int64) {
 // 对两路径均不适用（预筛命中但读 0 / 预筛恒不命中——静默归零）——本族是 WS
 // 形状之外的独立路径族（流式 completed 帧 / 合成体共用同一顶层 helper）。
 
-// responsesTopLevelUsage 顶层 usage → 五计数元组（流式 completed 帧与合成体
+// responsesTopLevelUsage 顶层 usage → 元组 + ok（流式 completed 帧与合成体
 // 共用）：input/output/total + input_tokens_details.cached_tokens +
 // cache_creation ephemeral 双桶聚合（与 cacheCreationFromRaw 同口径）。
-func responsesTopLevelUsage(data []byte) (it, ot, tt, cr, cc int64) {
-	return gjson.GetBytes(data, "usage.input_tokens").Int(),
-		gjson.GetBytes(data, "usage.output_tokens").Int(),
-		gjson.GetBytes(data, "usage.total_tokens").Int(),
-		gjson.GetBytes(data, "usage.input_tokens_details.cached_tokens").Int(),
-		gjson.GetBytes(data, "usage.cache_creation.ephemeral_5m_input_tokens").Int() +
-			gjson.GetBytes(data, "usage.cache_creation.ephemeral_1h_input_tokens").Int()
+// 显式 null / 缺失 → ok=false。
+func responsesTopLevelUsage(data []byte) (usageTuple, bool) {
+	raw, ok := usageInterval(data, usageKeyBytes)
+	if !ok {
+		return usageTuple{}, false
+	}
+	return usageFieldsFromInterval(raw, inputTokensKeyBytes, outputTokensKeyBytes, inputTokensDetailsKeyBytes), true
 }
 
-// sniffResponsesCompletedTop 流式 fn 热路径嗅探（P1-1）：gjson **type 精确判
+// sniffResponsesCompletedTop 流式 fn 热路径嗅探（P1-1）：字节扫描 **type 精确判
 // 定** "type"=="response.completed"（SDK 交付载荷无 event: 行——正文含该子串
-// 的消息帧不冻结；WS 路径 bytes.Contains 预筛形状不适用）+ 顶层 usage 解析。
+// 的消息帧不冻结；WS 路径 bytes.Contains 预筛形状不适用）+ 顶层 usage 解析
+// 内联（不再经 responsesTopLevelUsage 二次定位——type 检查与 usage 提取共用
+// usageInterval/usageFieldsFromInterval 提取 helper）。ok 语义不变：type 命中
+// 即 true（usage 缺失 → 零值元组——缺失 = 0，不阻塞采集）。
 // 真实上游 response.completed 恒唯一（终态事件）——调用方取首个命中帧后跳过
 // 后续解析（usage 只读一次；"最后帧覆盖"语义由终态唯一性等价保证）。
 func sniffResponsesCompletedTop(data []byte) (usageTuple, bool) {
-	if gjson.GetBytes(data, "type").String() != "response.completed" {
+	start, end, ok := scanKeyValue(data, typeKeyBytes)
+	if !ok {
 		return usageTuple{}, false
 	}
-	it, ot, tt, cr, cc := responsesTopLevelUsage(data)
-	return usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, true
+	// type 值必须为字符串字面（非字符串值不可能等于字面目标——gjson String()
+	// 对非字符串返原文/空，比较结果同为不命中）
+	if start >= len(data) || data[start] != '"' {
+		return usageTuple{}, false
+	}
+	if !bytes.Equal(data[start+1:end-1], completedTypeBytes) {
+		return usageTuple{}, false
+	}
+	raw, usageOK := usageInterval(data, usageKeyBytes)
+	if !usageOK {
+		return usageTuple{}, true // type 命中但 usage 缺失 → 零值元组（同旧行为）
+	}
+	return usageFieldsFromInterval(raw, inputTokensKeyBytes, outputTokensKeyBytes, inputTokensDetailsKeyBytes), true
+}
+
+// --- 字节扫描 helper（spec 2026-08-15-gc-opt-ab A-1：gjson 多遍扫描 →
+// scanKeyValue 单遍字节扫描；热路径零分配——AllocsPerRun==0 测试钉住） ---
+
+// usageInterval 定位指定键的 usage 值区间：scanKeyValue 单遍定位 + 存在性判定
+// （值首字节 { 或 [ ——对齐 gjson JSON Type 含对象/数组；缺失与显式 null 字面量
+// 首字节 n → 不存在）。调用方据 ok 决定是否更新元组——"显式 null 帧不得清零"
+// 语义由该判定保证（与旧 gjson Type==JSON 前置检查等价）。
+func usageInterval(data []byte, usageKey []byte) ([]byte, bool) {
+	start, end, ok := scanKeyValue(data, usageKey)
+	if !ok {
+		return nil, false
+	}
+	raw := data[start:end]
+	if len(raw) == 0 || raw[0] != '{' && raw[0] != '[' {
+		return nil, false
+	}
+	return raw, true
+}
+
+// usageFieldsFromInterval 从 usage 值区间提取五计数元组（chat/responses 两协议
+// 共用——字段名按协议经参数注入：chat 为 prompt_tokens/completion_tokens/
+// prompt_tokens_details.cached_tokens，responses 为 input_tokens/output_tokens/
+// input_tokens_details.cached_tokens；cache_creation ephemeral 双桶聚合两协议
+// 同构）。crKey 为 nil 时跳过 cr 子区间（Anthropic 无 cached_tokens 语义）。
+// 键名不匹配/缺失 → 0（与 gjson 缺失 = 0 等价）。
+func usageFieldsFromInterval(raw []byte, itKey, otKey, crKey []byte) usageTuple {
+	var u usageTuple
+	u.it = scanFieldInt64(raw, itKey)
+	u.ot = scanFieldInt64(raw, otKey)
+	u.tt = scanFieldInt64(raw, totalTokensKeyBytes)
+	if crKey != nil {
+		if s, e, ok := scanKeyValue(raw, crKey); ok {
+			u.cr = scanFieldInt64(raw[s:e], cachedTokensKeyBytes)
+		}
+	}
+	if s, e, ok := scanKeyValue(raw, cacheCreationKeyBytes); ok {
+		u.cc = scanFieldInt64(raw[s:e], ephemeral5mKeyBytes) + scanFieldInt64(raw[s:e], ephemeral1hKeyBytes)
+	}
+	return u
+}
+
+// scanFieldInt64 定位键值区间并解析 int64（缺失 → 0）。
+func scanFieldInt64(raw []byte, key []byte) int64 {
+	s, e, ok := scanKeyValue(raw, key)
+	if !ok {
+		return 0
+	}
+	return scanIntValue(raw[s:e])
+}
+
+// scanIntValue 值区间 → int64（usage 计数字段专用）。首字节 " 则
+// parseJSONString 剥引号再 ParseInt（gjson Int() 对字符串数字同解析——gjson.go
+// String 分支 parseInt）；数字字面直解；null/缺失 → 0（ParseInt 报错路径兜底）。
+// string([]byte) 转换走编译器免分配优化路径（实测 AllocsPerRun 0——spec A-1）。
+//
+// 与 gjson 的病态差异（均为"保守 0"方向，注释标注——usage 字段恒整数 token
+// 计数，实际影响趋零）：
+//   - float 字面（12.5）：gjson safeInt 截断取 12，本实现 ParseInt 报错 → 0
+//   - 非纯十进制整数（小数点/指数 1e3/超 int64 回绕）：gjson parseInt 无溢出
+//     检查，本实现 ParseInt 报错 → 0
+//   - 字符串数字含 \uXXXX 转义（"12"）：gjson 值 unescape 后解析，本实现
+//     parseJSONString 转义原样保留（同族惯例，对键从不 decodeUnicodeEscapes）
+//     → ParseInt 失败 → 0
+//   - bool 字面：gjson true → 1 / false → 0，本实现非数字字面 → 0
+func scanIntValue(raw []byte) int64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	if raw[0] == '"' {
+		val, _ := parseJSONString(raw, 0)
+		if val == nil {
+			return 0 // 未闭合（json.Valid 前置下不可达，防御性兜底）
+		}
+		n, err := strconv.ParseInt(string(val), 10, 64)
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+	n, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // chatUsageFromResponse 非流式 chat 响应用量：cr 直读 SDK 结构体字段

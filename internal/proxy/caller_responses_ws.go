@@ -535,16 +535,18 @@ func wsCloseStatus(err error) websocket.StatusCode {
 }
 
 // sniffResponsesCompleted 热路径预筛：bytes.Contains 零分配子串预筛
-// response.completed 帧（命中才最小 gjson 解析取 usage，与现有 5 计数同构：
-// input/output/total + cache_read/cache_creation 明细）；流式中间帧零解析。
-// 误命中（内容文本含该子串）→ 解析出零值元组——真实 completed 帧恒在流末，
-// 最终值由其覆盖（最后帧语义）。
+// response.completed 帧（命中才最小字节扫描取 usage——response.usage 前缀
+// 五计数：input/output/total + cache_read/cache_creation 明细）；流式中间帧
+// 零解析。ok 语义 = usage 存在（随 responsesCompletedUsage 签名改写，非"子串
+// 命中"）：误命中帧（内容文本含该子串）与 error 终态（{"type":
+// "response.completed","response":{...,"error":...}} 无 usage）→ ok=false 不
+// 更新——completed 终态唯一、元组仅此处写入（此前值恒 0），与旧行为（覆盖 0）
+// 实际等价，勿误判为行为回归。
 func sniffResponsesCompleted(frame []byte) (usageTuple, bool) {
 	if !bytes.Contains(frame, []byte(`"type":"response.completed"`)) {
 		return usageTuple{}, false
 	}
-	it, ot, tt, cr, cc := responsesCompletedUsage(frame)
-	return usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, true
+	return responsesCompletedUsage(frame)
 }
 
 // isWebSocketUpgrade 升级请求判定（coder/websocket 未导出该检查，与库内
