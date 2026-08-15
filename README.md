@@ -72,7 +72,7 @@ docker compose --env-file .env -f deploy/compose.yml up -d --build
 
 The gateway listens on `http://127.0.0.1:18080` — admin console at `/admin`, health check at `/healthz`.
 
-**First admin user (bootstrap)** — there is no separate "create admin" step: the **first user to register** on a fresh database automatically becomes a `platform_admin`, so you can sign up and log into the admin console (`/admin`) right after startup, with or without `ADMIN_TOKEN`. Every later signup gets the regular `user` role. `ADMIN_TOKEN` (if set) keeps working for API clients (curl/scripts). In the narrow window where two signups race on an empty database, both may become admins — remove the extra account in the admin console if that happens.
+**First admin user (bootstrap)** — there is no separate "create admin" step: the **first user to register** on a fresh database automatically becomes a `platform_admin`, so you can sign up and log into the admin console (`/admin`) right after startup, with or without `ADMIN_TOKEN`. Every later signup gets the regular `user` role. `ADMIN_TOKEN` (if set) keeps working for API clients (curl/scripts). In the narrow window where two signups race on an empty database, both may become admins — clean up the extra account directly in the database if that happens.
 
 Prebuilt images are published to GHCR (`ghcr.io/is7qin/c3api`): `:beta` tracks the latest beta release, and version-pinned tags such as `:v0.0.1-beta.1` are also available. Pull standalone: `docker pull ghcr.io/is7qin/c3api:beta`.
 
