@@ -63,6 +63,7 @@ var (
 	fillTplID    = flag.Int64("fill-template-id", 1, "accounts fill: 模板 ID（setup 创建的第 1 个模板，压测前确认存在）")
 	fillGroupID  = flag.Int64("fill-group-id", 1, "keys/accounts fill: 组 ID（setup 创建的第 1 个组）")
 	fillUpstream = flag.String("fill-upstream", "http://127.0.0.1:9100", "templates fill: base_url（裸根约定）")
+	fillKeysOut = flag.String("fill-keys-out", "", "keys fill: 把创建的 key 明文逐行追加写入此文件（fill 主循环响应解析；压测前 keys.txt 落盘用）")
 )
 
 // keyPool 多 key 模式：每请求随机取一个（-keys 文件行）；空 = 用 -key 单 key。
@@ -542,7 +543,14 @@ func doFillRequest(client *http.Client, m *metrics, rng *rand.Rand, count bool) 
 		time.Sleep(time.Duration(100+rng.IntN(200)) * time.Millisecond)
 		return
 	}
-	_, _ = io.Copy(io.Discard, resp.Body) // 响应体排空，连接回池复用（O3 复核：此路径与 keys 登录子请求均已排空，唯一缺口在 doRequest 非 200 分支，已修）
+	// keys fill：响应体先整体读入（小 JSON，读完即排空、连接可复用）解析 key 明文
+	// 落盘（DB 只存 hash 不可恢复；否则 -fill-keys-out 无效）。其余类型走 Discard。
+	var fillKeyB []byte
+	if *fillKeysOut != "" && *fillType == "keys" {
+		fillKeyB, _ = io.ReadAll(resp.Body)
+	} else {
+		_, _ = io.Copy(io.Discard, resp.Body) // 响应体排空，连接回池复用（O3 复核：此路径与 keys 登录子请求均已排空，唯一缺口在 doRequest 非 200 分支，已修）
+	}
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		if count {
@@ -557,6 +565,18 @@ func doFillRequest(client *http.Client, m *metrics, rng *rand.Rand, count bool) 
 		m.latencyMS.Add(latency)
 		storeLatencySample(m, latency)
 		m.total.Add(1)
+	}
+	if fillKeyB != nil {
+		var kr struct {
+			Key string `json:"key"`
+		}
+		if err := json.Unmarshal(fillKeyB, &kr); err == nil && kr.Key != "" {
+			f, err := os.OpenFile(*fillKeysOut, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+			if err == nil {
+				_, _ = f.WriteString(kr.Key + "\n")
+				_ = f.Close()
+			}
+		}
 	}
 }
 

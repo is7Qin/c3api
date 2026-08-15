@@ -115,15 +115,18 @@ func main() {
 		os.Exit(2)
 	}
 	hc := &http.Client{Timeout: 30 * time.Second}
-	// call 发请求：auth = 完整 "Authorization" 头值（"" = 不带头；登录公开）。
-	call := func(method, path, auth string, body any, out any) {
+	// callNoExit 发请求：auth = 完整 "Authorization" 头值（"" = 不带头；登录公开）。
+	// 非 200 返回 error（不退出）——调用方决定重试/上报；out 解析成功才返回 nil。
+	callNoExit := func(method, path, auth string, body any, out any) error {
 		var rd io.Reader
 		if body != nil {
 			b, _ := json.Marshal(body)
 			rd = bytes.NewReader(b)
 		}
 		req, err := http.NewRequest(method, *addr+path, rd)
-		must(err)
+		if err != nil {
+			return err
+		}
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
 		}
@@ -131,15 +134,24 @@ func main() {
 			req.Header.Set("Content-Type", "application/json")
 		}
 		resp, err := hc.Do(req)
-		must(err)
+		if err != nil {
+			return err
+		}
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != 200 {
-			fmt.Fprintf(os.Stderr, "%s %s → %d: %s\n", method, path, resp.StatusCode, b)
-			os.Exit(1)
+			return fmt.Errorf("%s %s → %d: %s", method, path, resp.StatusCode, b)
 		}
 		if out != nil {
-			must(json.Unmarshal(b, out))
+			return json.Unmarshal(b, out)
+		}
+		return nil
+	}
+	// call 发请求：失败即退出（既有调用点语义不变）。
+	call := func(method, path, auth string, body any, out any) {
+		if err := callNoExit(method, path, auth, body, out); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
 	}
 	admin := func(method, path string, body any, out any) {
@@ -262,7 +274,26 @@ func main() {
 					keyBody["quota"] = v
 				}
 				var kr keyResp
-				call(http.MethodPost, "/user/keys", "Bearer "+lr.Token, keyBody, &kr)
+				// 新建用户快照 NOTIFY 传播窗口：admin 建用户后立即 keys 可能撞
+				// 401（网关内存快照未刷新——RequireJWT 用户状态 fail-closed）。
+				// 重试至多 3 次（间隔 300ms），窗口 ~1s 内必过；压测 fill 场景
+				// 用户是预热建的（慢于快照周期），重试仅覆盖 setup 冷启动。
+				keysCall := func() error {
+					var e error
+					for attempt := 0; attempt < 3; attempt++ {
+						if attempt > 0 {
+							time.Sleep(300 * time.Millisecond)
+						}
+						if e = callNoExit(http.MethodPost, "/user/keys", "Bearer "+lr.Token, keyBody, &kr); e == nil {
+							return nil
+						}
+					}
+					return e
+				}
+				if err := keysCall(); err != nil {
+					fmt.Fprintf(os.Stderr, "keys create failed after retries: %v\n", err)
+					os.Exit(1)
+				}
 				mu.Lock()
 				fmt.Fprintln(keysFile, kr.Key)
 				created++
@@ -293,10 +324,13 @@ func randomModels(rng *rand.Rand) []string {
 	return pickModels(rng, 1+rng.IntN(20))
 }
 
-// randomPricingBody 基础价（prompt/completion，毫分/1M tokens）+ 随机 1-2 个
-// 矩阵字段（priority/flex 单价替换档、above 分段、fast 倍率）。
+// randomPricingBody 基础价（prompt/completion，USD/1M tokens——API 契约
+// float 直发，handler usdToMillis ×1e5 落库毫分）+ 随机 1-2 个矩阵字段
+// （priority/flex 单价替换档、above 分段、fast 倍率）。注意：主价单位 USD
+// 非毫分——旧 int 50000-500000 会被当 $50k-500k/1M，×1e5 落库后单请求扣
+// 巨款余额秒光（402），压测数据全废。
 func randomPricingBody(rng *rand.Rand) map[string]any {
-	prompt := 50000 + rng.Int64N(450001) // 0.5-5 USD/1M tokens
+	prompt := 0.5 + rng.Float64()*4.5 // 0.5-5 USD/1M tokens
 	completion := prompt * 4
 	body := map[string]any{
 		"prompt_price_per_million":     prompt,
@@ -309,7 +343,7 @@ func randomPricingBody(rng *rand.Rand) map[string]any {
 		func() { body["flex_completion_price_per_million"] = completion * 3 / 2 },
 		func() { body["above_threshold"] = 128000 },
 		func() { body["above_prompt_price_per_million"] = prompt / 2 },
-		func() { body["fast_multiplier"] = 10000 + rng.Int64N(50001) }, // ×1.0-6.0
+		func() { body["fast_multiplier"] = 1.0 + rng.Float64()*5.0 }, // ×1.0-6.0（API 契约 float 直发；旧 int 万分数契约已废）
 	}
 	for _, idx := range rng.Perm(len(matrix))[:1+rng.IntN(2)] {
 		matrix[idx]()
