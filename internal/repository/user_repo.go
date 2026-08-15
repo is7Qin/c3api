@@ -206,6 +206,13 @@ func (r *UserRepo) GetUser(ctx context.Context, id int64) (*domain.User, error) 
 	return toDomainUser(row), nil
 }
 
+// CountUsers 用户总数（注册 bootstrap 用：表空 = 首个注册 = platform_admin，
+// 见 service.RegisterUser）。
+func (r *UserRepo) CountUsers(ctx context.Context) (int64, error) {
+	n, err := r.client.User.Query().Count(ctx)
+	return int64(n), err
+}
+
 // GetUserByEmail 按邮箱取用户；未找到返回 (nil, nil)（登录/注册查重用）。
 func (r *UserRepo) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
 	row, err := r.client.User.Query().Where(user.EmailEQ(email)).Only(ctx)

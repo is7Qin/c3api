@@ -117,6 +117,35 @@ func TestRegisterUserAppliesDefaults(t *testing.T) {
 // errTempBalanceInjected 评审 M-2 注入错误（模拟赠品插行失败）。
 var errTempBalanceInjected = errors.New("injected: temp balance insert failed")
 
+// TestRegisterUserBootstrapFirstAdmin 首个注册用户 bootstrap（方案 A，spec
+// 2026-08-15）：空表注册 → role=platform_admin；非空表 → 恒为普通 user；
+// CountUsers 错误传播（注册失败返回该错误）。
+func TestRegisterUserBootstrapFirstAdmin(t *testing.T) {
+	ctx := context.Background()
+
+	// 空表：首个注册 = platform_admin
+	fs := newFakeStore()
+	svc := newSnapshotSvc(fs)
+	u, err := svc.RegisterUser(ctx, "first@example.com", "s3cret-pass")
+	require.NoError(t, err)
+	require.Equal(t, domain.RolePlatformAdmin, u.Role, "空表首个注册 = platform_admin")
+
+	// 非空表：后续注册恒为普通 user（无需额外机制）
+	u, err = svc.RegisterUser(ctx, "second@example.com", "s3cret-pass")
+	require.NoError(t, err)
+	require.Equal(t, domain.RoleUser, u.Role, "非空表注册恒为普通 user")
+
+	// CountUsers 错误传播：注册失败返回该错误（不落到 CreateUser）
+	fs = newFakeStore()
+	fs.countUsersErr = errCountUsersInjected
+	svc = newSnapshotSvc(fs)
+	_, err = svc.RegisterUser(ctx, "err@example.com", "s3cret-pass")
+	require.ErrorIs(t, err, errCountUsersInjected)
+}
+
+// errCountUsersInjected CountUsers 注入错误（bootstrap 错误传播测试）。
+var errCountUsersInjected = errors.New("injected: count users failed")
+
 // TestCreateUserAdminNoDefaults 管理面 CreateUser 不套默认（用户拍板）：
 // 显式 0 → 用户 0（注册默认值 100/500 不影响管理面）。
 func TestCreateUserAdminNoDefaults(t *testing.T) {

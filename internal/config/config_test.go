@@ -15,8 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setenvRequired 注入必填三密钥（admin.token/auth.jwt_secret/db.dsn 校验已内聚到
-// Load——测试调用 Load 前必须先补环境，评审 P2-1）。
+// setenvRequired 注入必填两密钥（auth.jwt_secret/db.dsn 校验已内聚到 Load——
+// 测试调用 Load 前必须先补环境，评审 P2-1；admin.token 已可空，仍注入保持
+// 既有用例语义）。
 func setenvRequired(t *testing.T) {
 	t.Helper()
 	t.Setenv("C3API_ADMIN_TOKEN", "test-admin-token")
@@ -182,16 +183,16 @@ func TestLoadRejectsPlaceholderSecrets(t *testing.T) {
 	}
 }
 
-// TestLoadRequiresSecrets：必填校验（admin.token/auth.jwt_secret/db.dsn 空值 →
-// error；原 main.go:64-66，已内聚到 Load）。
+// TestLoadRequiresSecrets：必填校验（auth.jwt_secret/db.dsn 空值 → error；原
+// main.go:64-66，已内聚到 Load）。admin.token 已可空——空 = 不启用静态 token，
+// 不再报错（spec 2026-08-15）。
 func TestLoadRequiresSecrets(t *testing.T) {
 	for _, tc := range []struct {
 		path string
 		toml string
 	}{
-		{"admin.token", "admin = { token = \"\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"postgres://test\" }"},
-		{"auth.jwt_secret", "admin = { token = \"t\" }\nauth = { jwt_secret = \"\" }\ndb = { dsn = \"postgres://test\" }"},
-		{"db.dsn", "admin = { token = \"t\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"\" }"},
+		{"auth.jwt_secret", "admin = { token = \"\" }\nauth = { jwt_secret = \"\" }\ndb = { dsn = \"postgres://test\" }"},
+		{"db.dsn", "admin = { token = \"\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"\" }"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			_, err := Load(writeConfig(t, tc.toml))
@@ -199,6 +200,9 @@ func TestLoadRequiresSecrets(t *testing.T) {
 			require.ErrorContains(t, err, tc.path)
 		})
 	}
+	// admin.token 空 + 其余必填齐 → 启动成功（空 = 不启用静态 token）
+	_, err := Load(writeConfig(t, "admin = { token = \"\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"postgres://test\" }"))
+	require.NoError(t, err)
 }
 
 // TestLoadRejectsUnknownKeys：ErrorUnused 开启（D-P2-1）——拼写错误键

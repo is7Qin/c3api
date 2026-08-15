@@ -1,7 +1,9 @@
 server = { addr = ":8080", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
-# 敏感项（admin.token / auth.jwt_secret / db.dsn）必填，强制经 env 注入：
-#   export C3API_ADMIN_TOKEN=xxx / C3API_AUTH_JWT_SECRET=xxx / C3API_DB_DSN=xxx
+# 敏感项（auth.jwt_secret / db.dsn）必填，强制经 env 注入：
+#   export C3API_AUTH_JWT_SECRET=xxx / C3API_DB_DSN=xxx
+# admin.token 可选——空 = 不启用静态 token 鉴权，/admin 仅接受 platform_admin
+# JWT（首个注册用户自动成为 platform_admin，注册后即可登录管理面）。
 # 示例不留占位值——占位符（change-me 等）会被 Load 拒绝，防原样部署鉴权绕过。
 admin = { token = "" }
 # JWT 密钥（强制，缺失启动失败；须经 C3API_AUTH_JWT_SECRET 注入）

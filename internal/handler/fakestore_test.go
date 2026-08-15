@@ -803,6 +803,13 @@ func (f *fakeStore) GetUserByEmail(ctx context.Context, email string) (*domain.U
 	return nil, nil
 }
 
+// CountUsers 用户总数（注册 bootstrap：表空 = 首个注册 = platform_admin）。
+func (f *fakeStore) CountUsers(ctx context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return int64(len(f.users)), nil
+}
+
 func (f *fakeStore) ListUsers(ctx context.Context, q repository.ListQuery) ([]*domain.User, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

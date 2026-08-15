@@ -190,7 +190,8 @@ func Load(path string) (*Config, error) {
 //     选择（errlog 无文档化"0=禁用"语义，取 p2-14"全部 duration 字段"立场）；
 //   - 数值字段 ≥1：DefaultMaxConcurrency（silent 全坏面——从"健康地拒绝全流量"
 //     转启动即报错）、DB.MaxConns（puddle 层报 MaxSize 无法归因到 db.max_conns）；
-//   - 必填：admin.token / auth.jwt_secret / db.dsn（自 main.go:64-66 移入内聚）；
+//   - 必填：auth.jwt_secret / db.dsn（自 main.go:64-66 移入内聚；admin.token
+//     已可空——空 = 不启用静态 token 鉴权，/admin 仅接受 platform_admin JWT）；
 //   - 占位密钥精确匹配拒绝（change-me 系列防原样部署鉴权绕过；精确匹配防误杀恰
 //     以 change-me 开头的合法随机值，派生占位由"空值 + 强制 env"形态兜底）。
 //
@@ -238,12 +239,11 @@ func validate(c *Config) error {
 		path  string
 		value string
 	}{
-		{"admin.token", c.Admin.Token},
 		{"auth.jwt_secret", c.Auth.JWTSecret},
 		{"db.dsn", c.DB.DSN},
 	} {
 		if r.value == "" {
-			return fmt.Errorf("%s is required (set in config file or C3API_ADMIN_TOKEN/C3API_AUTH_JWT_SECRET/C3API_DB_DSN)", r.path)
+			return fmt.Errorf("%s is required (set in config file or C3API_AUTH_JWT_SECRET/C3API_DB_DSN)", r.path)
 		}
 	}
 	for _, p := range []struct {

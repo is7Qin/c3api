@@ -314,6 +314,11 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*domain.
 	return r.Users.GetUserByEmail(ctx, email)
 }
 
+// CountUsers 用户总数（注册 bootstrap：表空 = 首个注册 = platform_admin）。
+func (r *Repository) CountUsers(ctx context.Context) (int64, error) {
+	return r.Users.CountUsers(ctx)
+}
+
 func (r *Repository) ListUsers(ctx context.Context, q ListQuery) ([]*domain.User, int64, error) {
 	return r.Users.ListUsers(ctx, q)
 }

@@ -58,7 +58,7 @@ c3api is in **beta**: feature-complete, but breaking changes are free to happen.
 **Run the prebuilt image (pull)** — for production, remove the `build:` block in `deploy/compose.yml` so `up` runs the pulled image instead of building:
 
 ```bash
-cp .env.example .env        # fill in ADMIN_TOKEN and AUTH_JWT_SECRET
+cp .env.example .env        # fill in AUTH_JWT_SECRET (ADMIN_TOKEN optional — see below)
 docker compose --env-file .env -f deploy/compose.yml pull
 docker compose --env-file .env -f deploy/compose.yml up -d
 ```
@@ -66,11 +66,13 @@ docker compose --env-file .env -f deploy/compose.yml up -d
 **Self-build** — compose builds the image locally (`image` and `build` coexist, `build` wins):
 
 ```bash
-cp .env.example .env        # fill in ADMIN_TOKEN and AUTH_JWT_SECRET
+cp .env.example .env        # fill in AUTH_JWT_SECRET (ADMIN_TOKEN optional — see below)
 docker compose --env-file .env -f deploy/compose.yml up -d --build
 ```
 
 The gateway listens on `http://127.0.0.1:18080` — admin console at `/admin`, health check at `/healthz`.
+
+**First admin user (bootstrap)** — there is no separate "create admin" step: the **first user to register** on a fresh database automatically becomes a `platform_admin`, so you can sign up and log into the admin console (`/admin`) right after startup, with or without `ADMIN_TOKEN`. Every later signup gets the regular `user` role. `ADMIN_TOKEN` (if set) keeps working for API clients (curl/scripts). In the narrow window where two signups race on an empty database, both may become admins — remove the extra account in the admin console if that happens.
 
 Prebuilt images are published to GHCR (`ghcr.io/is7qin/c3api`): `:beta` tracks the latest beta release, and version-pinned tags such as `:v0.0.1-beta.1` are also available. Pull standalone: `docker pull ghcr.io/is7qin/c3api:beta`.
 
@@ -123,7 +125,7 @@ The gateway loads `config.toml` (see `config.example.toml`), overlaid by `C3API_
 
 | Variable | Description |
 |---|---|
-| `C3API_ADMIN_TOKEN` | Admin API token (required) |
+| `C3API_ADMIN_TOKEN` | Admin API token (optional; leave empty to disable static-token auth — `/admin` then accepts `platform_admin` JWTs only) |
 | `C3API_AUTH_JWT_SECRET` | JWT signing secret for user auth (required; stable across restarts and instances) |
 | `C3API_DB_DSN` | PostgreSQL DSN |
 

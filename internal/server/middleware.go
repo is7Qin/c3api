@@ -35,11 +35,16 @@ func UserIDFromContext(ctx context.Context) (int64, bool) {
 // adminAuth 管理面鉴权（/admin 组，含 /admin/ops/workers 运维观测）= 静态
 // admin token OR platform_admin JWT（两个都过才拒）。JWT 路径同样做快照用户
 // 状态校验（禁用即拒；评审定夺②）。
+// admin.token 可空（spec 2026-08-15）：空 = 不启用静态 token 鉴权，/admin
+// 仅接受 platform_admin JWT。空守卫使静态路径永不匹配——理由 = 语义显式化
+// + h2/TLS 纵深防御：h1 下 Go textproto 修剪头值两端 OWS，"Bearer 尾空击穿"
+// 不存在（实测见 spec 背景 6）；Go http2 server 不修剪头值，未来启用 h2 后
+// 守卫防击穿。
 func adminAuth(opts Options) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			authz := req.Header.Get("Authorization")
-			if authz == "Bearer "+opts.AdminToken {
+			if opts.AdminToken != "" && authz == "Bearer "+opts.AdminToken {
 				// 静态 admin token 路径不注入 UserID（决策 5：handler 读到 0 = 系统）
 				next.ServeHTTP(w, req)
 				return

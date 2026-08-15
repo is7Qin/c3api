@@ -57,14 +57,22 @@ func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *ht
 func TestUserRegisterLoginMe(t *testing.T) {
 	do, _, _, _ := newTestUserRouter(t)
 
-	// 注册成功（注册即登录：返回 JWT + 用户）
+	// 注册成功（注册即登录：返回 JWT + 用户）。空表首个注册 = platform_admin
+	// （bootstrap，spec 2026-08-15）；后续注册恒为普通 user。
 	rec := do(http.MethodPost, "/user/auth/register", `{"email":"new@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusOK, rec.Code, "register: %s", rec.Body.String())
 	var resp userapi.UserAuthResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.NotEmpty(t, resp.Token, "注册即登录")
 	require.Equal(t, "new@example.com", *resp.User.Email)
-	require.Equal(t, userapi.UserRole("user"), *resp.User.Role)
+	require.Equal(t, userapi.UserRole("platform_admin"), *resp.User.Role, "空表首个注册 = platform_admin")
+
+	// 第二个注册 → 普通 user（bootstrap 之后恒 user）
+	rec = do(http.MethodPost, "/user/auth/register", `{"email":"second@example.com","password":"s3cret-pass"}`, "")
+	require.Equal(t, http.StatusOK, rec.Code, "second register: %s", rec.Body.String())
+	var resp2 userapi.UserAuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp2))
+	require.Equal(t, userapi.UserRole("user"), *resp2.User.Role, "非空表注册恒为普通 user")
 
 	// me（注册返回的 JWT 直接可用）
 	rec = do(http.MethodGet, "/user/auth/me", "", resp.Token)

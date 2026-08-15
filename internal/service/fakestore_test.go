@@ -75,6 +75,8 @@ type fakeStore struct {
 	// codesConflictAlways 模拟 code 唯一冲突恒失败（GenerateCodes 重试 N=5
 	// 终止路径的测试注入）。
 	codesConflictAlways bool
+	// countUsersErr 注入 CountUsers 失败（注册 bootstrap 错误传播测试）。
+	countUsersErr error
 }
 
 // fakeTempRow 临时额度行模拟（domain 无 TempBalance 类型，CreateTempBalance
@@ -707,6 +709,16 @@ func (f *fakeStore) GetUserByEmail(ctx context.Context, email string) (*domain.U
 		}
 	}
 	return nil, nil
+}
+
+// CountUsers 用户总数（注册 bootstrap：表空 = 首个注册 = platform_admin）。
+func (f *fakeStore) CountUsers(ctx context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.countUsersErr != nil {
+		return 0, f.countUsersErr
+	}
+	return int64(len(f.users)), nil
 }
 
 func (f *fakeStore) ListUsers(ctx context.Context, q repository.ListQuery) ([]*domain.User, int64, error) {

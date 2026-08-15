@@ -3,6 +3,8 @@
 # 此处留空即可。配置仅启动时读取，变更需滚动重启（无热更新）。
 server = { addr = ":18080", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "info", output = "stdout" }
+# admin.token 可选——空 = 不启用静态 token，/admin 仅接受 platform_admin JWT
+# （首个注册用户自动成为 platform_admin，注册后即可登录管理面）
 admin = { token = "" }
 # JWT 密钥（强制——缺失启动失败；生产必须经 env C3API_AUTH_JWT_SECRET 注入，
 # 随机生成 = 重启全失效 + 多实例不一致）

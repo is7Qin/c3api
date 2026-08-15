@@ -49,11 +49,25 @@ func (s *Service) RegisterUser(ctx context.Context, email, password string) (*do
 	if err != nil {
 		return nil, err
 	}
+	// 首个注册用户 bootstrap（方案 A，spec 2026-08-15）：users 表空时第一个
+	// 注册用户 = platform_admin（管理面无需静态 token 即可登录）；一旦有人
+	// 注册（n > 0），后续注册恒为普通 user——无需额外机制。
+	// 竞态：表空并发双注册在 READ COMMITTED 下两个 count 均见 0 → 双 admin；
+	// 不引入锁——增量后果 = 抢注窗口从"严格先到"放宽为"同刻并发"（bootstrap
+	// 秒级窗口 + 毫秒竞速才触发，多出的非预期 admin 账号可删）。
+	n, err := s.store.CountUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	role := domain.RoleUser
+	if n == 0 {
+		role = domain.RolePlatformAdmin
+	}
 	// 新用户初始资源：仅公开注册路径套默认；管理面 CreateUser 显式传值
 	// （用户拍板，0 就是 0）。
 	created, err := s.store.CreateUser(ctx, &domain.User{
 		Email: email, PasswordHash: hash,
-		Role: domain.RoleUser, Status: domain.UserStatusActive,
+		Role: role, Status: domain.UserStatusActive,
 		MaxConcurrency: int(s.settingInt("default_user_max_concurrency")),
 		Balance:        s.settingInt("default_user_balance"),
 	})

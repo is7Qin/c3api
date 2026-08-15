@@ -352,7 +352,9 @@ func TestAdminPutUsersPatchSemantics(t *testing.T) {
 	var updated User
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
 	require.Equal(t, 50.0, *updated.Balance, "回显 USD 换算")
-	require.Equal(t, UserRole("user"), *updated.Role, "role 未被 GET 快照写回")
+	// 该用户是共享 store 的首个注册（bootstrap：空表首个 = platform_admin）；
+	// 断言意图 = role 未被 GET 快照写回（保持注册时原值，平台管理员在用户前创建）
+	require.Equal(t, UserRole("platform_admin"), *updated.Role, "role 未被 GET 快照写回")
 	u2, err := store.GetUser(t.Context(), uid)
 	require.NoError(t, err)
 	require.Equal(t, int64(5000000), u2.Balance, "50 USD = 5,000,000 毫分落库")

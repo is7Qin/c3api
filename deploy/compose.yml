@@ -44,7 +44,9 @@ services:
         condition: service_healthy
     environment:
       # 敏感项走环境变量（config.Load 支持 C3API_ADMIN_TOKEN / C3API_DB_DSN / C3API_AUTH_JWT_SECRET 覆盖）
-      C3API_ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env (openssl rand -hex 16)}
+      # admin token 可选（`:-` 空值注入空串 = 不启用静态 token，/admin 仅 platform_admin
+      # JWT；首个注册用户自动成为 admin——无需静态 token 也能登录管理面）
+      C3API_ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       C3API_AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?set AUTH_JWT_SECRET in .env (openssl rand -hex 32)}
       C3API_DB_DSN: postgres://postgres:${POSTGRES_PASSWORD:-c3api}@db:5432/c3api?sslmode=disable
       # 可选 GC 调优（默认关闭——空值 = 不设置 = Go 默认 GOGC=100 无软上限）：

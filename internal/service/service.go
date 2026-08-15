@@ -56,6 +56,8 @@ type UserStore interface {
 	CreateUser(ctx context.Context, u *domain.User) (*domain.User, error)
 	GetUser(ctx context.Context, id int64) (*domain.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
+	// CountUsers 用户总数（注册 bootstrap 用：表空 = 首个注册 = platform_admin）。
+	CountUsers(ctx context.Context) (int64, error)
 	ListUsers(ctx context.Context, q repository.ListQuery) ([]*domain.User, int64, error)
 	UpdateUser(ctx context.Context, p *repository.UserPatch) (*domain.User, error)
 	UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error
