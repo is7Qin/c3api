@@ -73,11 +73,10 @@ type relay struct {
 	pending  int        // 累计写入字节；阈值/timer/结束残余 flush 后归零（首事件 latency flush 不归零，其字节继续计入阈值）
 	lastTick time.Time
 
-	timer        *time.Timer
-	timerArmed   bool // 按需武装：仅当存在待 flush 数据时 timer 才在跑（瞬时短流零 timer 开销）
-	stopFlush    chan struct{} // 关闭后 timer goroutine 与 deadline watcher 退出
-	timerDone    chan struct{}
-	deadlineDone chan struct{} // deadline watcher 退出信号
+	timer      *time.Timer
+	timerArmed bool           // 按需武装：仅当存在待 flush 数据时 timer 才在跑（瞬时短流零 timer 开销）
+	stopFlush  chan struct{}  // 关闭后 timer goroutine 与 deadline watcher 退出
+	wg         sync.WaitGroup // timer/deadline 两 goroutine 汇合（替代 timerDone/deadlineDone chan——纯退出汇合语义，WaitGroup 等价且免每流 2 个 makechan；spec 2026-08-15-gc-opt-ab B-1）
 }
 
 // relayBufio 池化的 bufio 读写器（每流各 8KB；GC 削减 P6：免每流 2×8KB 新建
@@ -110,14 +109,14 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 	rb.br.Reset(&ctxReader{ctx: ctx, r: src})
 	r := &relay{
 		ctx: ctx, cfg: cfg,
-		w:            dst,
-		bw:           rb.bw,
-		br:           rb.br,
-		stopFlush:    make(chan struct{}),
-		timerDone:    make(chan struct{}),
-		deadlineDone: make(chan struct{}),
+		w:         dst,
+		bw:        rb.bw,
+		br:        rb.br,
+		stopFlush: make(chan struct{}),
 	}
 	r.fl, _ = dst.(http.Flusher)
+	// 两 goroutine 启动前 Add——此后 wg.Wait 恒安全（无 Add/Wait 竞态）
+	r.wg.Add(2)
 	r.startFlushTimer()
 	r.startDeadlineWatcher()
 
@@ -326,7 +325,7 @@ func (r *relay) startFlushTimer() {
 	r.timer = time.NewTimer(time.Hour)
 	r.timer.Stop() // 初始未武装（见 armFlushTimerLocked 注释）
 	go func() {
-		defer close(r.timerDone)
+		defer r.wg.Done()
 		for {
 			select {
 			case <-r.ctx.Done():
@@ -346,8 +345,7 @@ func (r *relay) startFlushTimer() {
 func (r *relay) stopFlushTimer() {
 	r.timer.Stop()
 	close(r.stopFlush) // 唤醒阻塞在 select 上的 timer goroutine 与 deadline watcher
-	<-r.timerDone      // 等 timer goroutine 退出后才允许释放 writer
-	<-r.deadlineDone   // 等 deadline watcher 退出（取消联动 goroutine 无泄漏）
+	r.wg.Wait()        // 两 goroutine 全汇合后才允许释放 writer（close 保证两 select 必然唤醒退出；各 goroutine 退出路径唯一——select 任一分支 return 即 Done 恰好一次）
 }
 
 // startDeadlineWatcher 写侧 deadline 与 ctx.Done 联动（C-P2-1 方案 1）：
@@ -362,7 +360,7 @@ func (r *relay) stopFlushTimer() {
 // 影响 keep-alive 复用）。
 func (r *relay) startDeadlineWatcher() {
 	go func() {
-		defer close(r.deadlineDone)
+		defer r.wg.Done()
 		select {
 		case <-r.ctx.Done():
 			// dst 可能被中间件包装（accessLog 的 statusWriter）——
