@@ -46,21 +46,26 @@ const (
 )
 
 // codexHTTPUpstream codex 类型 resp HTTP 路径 mock 上游（/v1/responses 端点）：
-// 记录鉴权头/请求体；步骤按序弹出（耗尽重复最后一步）——200 步 → 逐 events
-// 发 SSE data: 行 + [DONE]；非 200 → JSON 错误体。
+// 记录鉴权头/请求体/turn-state 请求头；步骤按序弹出（耗尽重复最后一步）——
+// 200 步 → 逐 events 发 SSE data: 行 + [DONE]；非 200 → JSON 错误体；步骤
+// turnState 非空 → 200 响应头签发 x-codex-turn-state（HOST-2 断言面）。
 type codexHTTPUpstream struct {
-	mu     sync.Mutex
-	calls  int
-	auths  []string
-	bodies [][]byte
-	steps  []codexHTTPStep
-	last   codexHTTPStep
+	mu         sync.Mutex
+	calls      int
+	auths      []string
+	bodies     [][]byte
+	turnStates []string // 每次请求的 x-codex-turn-state 请求头
+	steps      []codexHTTPStep
+	last       codexHTTPStep
 }
 
 type codexHTTPStep struct {
 	status int
 	events []string // SSE data 载荷（status==200 时逐行下发 + [DONE]）
 	body   string   // 非 200 错误体
+	// turnState 响应头签发值（非空 → 200 响应携带 x-codex-turn-state——
+	// HOST-2 mock 上游签发面）。
+	turnState string
 }
 
 func newCodexHTTPUpstream(t *testing.T, steps ...codexHTTPStep) (*httptest.Server, *codexHTTPUpstream) {
@@ -76,6 +81,7 @@ func newCodexHTTPUpstream(t *testing.T, steps ...codexHTTPStep) (*httptest.Serve
 		c.calls++
 		c.auths = append(c.auths, r.Header.Get("Authorization"))
 		c.bodies = append(c.bodies, b)
+		c.turnStates = append(c.turnStates, r.Header.Get("x-codex-turn-state"))
 		step := c.last
 		if len(c.steps) > 0 {
 			step = c.steps[0]
@@ -88,6 +94,9 @@ func newCodexHTTPUpstream(t *testing.T, steps ...codexHTTPStep) (*httptest.Serve
 			w.WriteHeader(step.status)
 			_, _ = w.Write([]byte(step.body))
 			return
+		}
+		if step.turnState != "" {
+			w.Header().Set("x-codex-turn-state", step.turnState)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		f := w.(http.Flusher)
@@ -118,6 +127,12 @@ func (c *codexHTTPUpstream) body(i int) []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.bodies[i]
+}
+
+func (c *codexHTTPUpstream) turnState(i int) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.turnStates[i]
 }
 
 // uuidv7Re UUIDv7 格式（8-4-4-4-12 十六进制，version 位 = 7——SDK NewUUIDv7
@@ -376,6 +391,139 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "成功路径必须释放并发槽")
+}
+
+// t6RespCallEv 工具调用输出事件 fixture（HOST-2 轮边界判定面——item.type
+// function_call → 轮继续信号）。
+const t6RespCallEv = `{"type":"output_item.done","item":{"id":"call_1","status":"completed","type":"function_call","name":"shell","arguments":"{}","call_id":"call_1"}}`
+
+// postResponsesTS 向网关发 /v1/responses 请求并携带 x-codex-turn-state 头
+//（HOST-2 透传优先断言面；空 = 不带头）。
+func postResponsesTS(t *testing.T, srv *httptest.Server, body, turnState string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/responses", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Content-Type", "application/json")
+	if turnState != "" {
+		req.Header.Set("x-codex-turn-state", turnState)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	return resp
+}
+
+// TestCodexResponsesTurnStateCarryAndClear turn-state 头回传（HOST-2——非流式
+// 路径）：轮首请求未带 → 上游签发 ts-1 → held；同轮后续（响应含工具调用——
+// 轮继续）自动注入 x-codex-turn-state；轮结束（completed 无工具调用）→ 清除
+// → 跨轮不回传。对齐真实 codex 轮级实例语义（client.rs:498 new_session +
+// stream_events_utils.rs needs_follow_up + 真实测试 turn_state.rs）。
+func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
+	up, upc := newCodexHTTPUpstream(t,
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespCallEv, t6RespDone}, turnState: "ts-1"},
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}},
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
+	defer up.Close()
+	store := &captureLogStore{}
+	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
+		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
+		up.URL, nil, nil, store)
+
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+
+	// 轮首：未带 turn-state → 上游不收到头；响应签发 ts-1 + 工具调用（轮继续）
+	resp := postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, string(b), `"type":"function_call"`, "工具调用项透传（轮继续信号）")
+
+	// 同轮后续：自动注入 held（ts-1）；响应无签发（请求已带）→ held 保持
+	resp = postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "")
+	defer resp.Body.Close()
+	b, _ = io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// 轮结束（completed 无工具调用）→ 清除 → 跨轮不回传
+	resp = postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "")
+	defer resp.Body.Close()
+	b, _ = io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	upc.mu.Lock()
+	defer upc.mu.Unlock()
+	require.Equal(t, 3, upc.calls)
+	require.Equal(t, "", upc.turnStates[0], "轮首请求不带头")
+	require.Equal(t, "ts-1", upc.turnStates[1], "同轮续传（注入 held）")
+	require.Equal(t, "", upc.turnStates[2], "轮结束清除——跨轮不回传")
+}
+
+// TestCodexResponsesTurnStateStreamCarryAndClear turn-state 头回传（HOST-2——
+// 流式路径）：与 TestCodexResponsesTurnStateCarryAndClear 同语义序列（轮首无
+// 头 → 同轮续传 → 轮结束清除）。
+func TestCodexResponsesTurnStateStreamCarryAndClear(t *testing.T) {
+	up, upc := newCodexHTTPUpstream(t,
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespCallEv, t6RespDone}, turnState: "ts-1"},
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}},
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
+	defer up.Close()
+	store := &captureLogStore{}
+	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
+		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
+		up.URL, nil, nil, store)
+
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+
+	for i := 0; i < 3; i++ {
+		resp := postResponsesTS(t, srv, `{"model":"gpt-4o","stream":true,"input":"hi"}`, "")
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Contains(t, string(b), "[DONE]")
+	}
+
+	upc.mu.Lock()
+	defer upc.mu.Unlock()
+	require.Equal(t, 3, upc.calls)
+	require.Equal(t, "", upc.turnStates[0], "轮首请求不带头")
+	require.Equal(t, "ts-1", upc.turnStates[1], "同轮续传（注入 held）")
+	require.Equal(t, "", upc.turnStates[2], "轮结束清除——跨轮不回传")
+}
+
+// TestCodexResponsesTurnStatePassthrough 透传优先（HOST-2）：客户端自带
+// x-codex-turn-state → 原值透传不覆盖（客户端自管）；响应签发值回写 held →
+// 后续未带请求注入新签发值。
+func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
+	up, upc := newCodexHTTPUpstream(t,
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespCallEv, t6RespDone}, turnState: "ts-up"})
+	defer up.Close()
+	store := &captureLogStore{}
+	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
+		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
+		up.URL, nil, nil, store)
+
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+
+	// 客户端自带 client-ts → 透传优先（不被网关 held 覆盖）
+	resp := postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "client-ts")
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// 后续未带 → 注入响应签发值（ts-up——服务端为准）
+	resp = postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "")
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	upc.mu.Lock()
+	defer upc.mu.Unlock()
+	require.Equal(t, 2, upc.calls)
+	require.Equal(t, "client-ts", upc.turnStates[0], "客户端自带 → 透传优先不覆盖")
+	require.Equal(t, "ts-up", upc.turnStates[1], "响应签发值回写 held → 后续注入")
 }
 
 // TestCodexResponses401RotateFailover 401 非判死 → SDK 单飞 refresh → 自动重试
