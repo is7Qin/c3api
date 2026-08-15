@@ -213,18 +213,27 @@ func cloneCounters[T any](m map[int64]*T) map[int64]*T {
 	return out
 }
 
-// acquire 抢占门禁槽位（CAS 循环）。返回已 acquire 层级位掩码
-// （1=user、2=key、3=两者；release 按位释放）。两步回滚（评审 I-3）：
-// user 成功 key 失败 → 复原 user 计数再返回失败，防泄漏。
+// acquire 抢占门禁槽位。返回已 acquire 层级位掩码（1=user、2=key、3=两者；
+// release 按位释放——user 位含义 = "user 计数已 +1"，release 按位减恰一次）。
+// user 层计数与限流解耦（spec 2026-08-15：实时并发排行数据源 = users 计数器，
+// 不限并发的用户也计数）——无条件 Add(1)（排行可见），限流条件化：UserMaxConc
+// > 0 时 Load 检查超限 → Add(-1) 回滚 + 429（热路径无 CAS 循环：不限时每请求
+// 1 次原子 Add，限流时 2 次原子操作）。瞬时超限窗口可接受（展示近似，稳态由
+// 回滚保证不超限）：边界竞争多个请求同时观察超限并回滚 → 保守双拒（多拒不放
+// 行），方向安全，同 keyQuota 软门禁先例。
+// 两步回滚（评审 I-3）：user 成功 key 失败 → 复原 user 计数再返回失败，防泄漏。
+// 回滚竞态闭合：计数器为单一原子总量，每个 -1 与同一 goroutine 的 +1 配对
+// （acquire 回滚或 release 按 level 位恰一次）→ 恒非负、N 并发全回滚净 0。
 func (g *concurrencyGate) acquire(meta domain.KeyMeta) (int, bool) {
 	snap := g.store.Load()
 	level := 0
-	if meta.UserMaxConc > 0 {
-		if c, ok := snap.users[meta.UserID]; ok && c != nil {
-			if !casInc(c, meta.UserMaxConc) {
-				return 0, false // user 层超限 → 429（无任何计数占用）
-			}
-			level |= 1
+	if c, ok := snap.users[meta.UserID]; ok && c != nil {
+		c.Add(1) // 无条件计数（排行数据源；不限并发也计数）
+		level |= 1
+		if meta.UserMaxConc > 0 && c.Load() > int64(meta.UserMaxConc) {
+			c.Add(-1) // 回滚计数（稳态不超限）
+			level &^= 1
+			return 0, false // user 层超限 → 429（计数已复原，无占用）
 		}
 	}
 	if meta.KeyMaxConc > 0 {

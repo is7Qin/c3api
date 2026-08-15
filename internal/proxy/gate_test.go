@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -134,6 +135,120 @@ func TestGateUpsertDelete(t *testing.T) {
 	require.False(t, ok, "key 计数移除")
 	_, ok = snap.quotas[1]
 	require.False(t, ok, "额度条目移除")
+}
+
+// UserMaxConc=0（不限并发）路径覆盖（spec 2026-08-15 A-2；修复前 0 路径无
+// 测试）：计数与限流解耦——acquire 无条件计数 +1、level user 位恒置、release
+// 归零、快照遍历（InFlightUsers 同型读法）能读到在途值。
+func TestGateUnlimitedUserCounts(t *testing.T) {
+	g := newConcurrencyGate(nil)
+	meta := domain.KeyMeta{KeyID: 1, UserID: 1} // UserMaxConc=0：不限并发
+	g.upsert(meta)                              // 种子：计数器存在后才参与门禁
+
+	lvl, ok := g.acquire(meta)
+	require.True(t, ok, "不限并发恒放行")
+	require.Equal(t, 1, lvl, "user 计数位恒置（release 按位释放对称）")
+
+	inflight := func() map[int64]int64 { // InFlightUsers 同型读法（遍历 + 原子读）
+		snap := g.store.Load()
+		out := make(map[int64]int64, len(snap.users))
+		for uid, c := range snap.users {
+			if c != nil {
+				out[uid] = c.Load()
+			}
+		}
+		return out
+	}
+	require.Equal(t, int64(1), inflight()[1], "acquire 无条件计数 +1（排行数据源）")
+
+	lvl2, ok2 := g.acquire(meta) // 不限并发：多请求全部放行，计数累加
+	require.True(t, ok2)
+	require.Equal(t, int64(2), inflight()[1])
+
+	g.release(meta, lvl)
+	require.Equal(t, int64(1), inflight()[1], "release 按位减")
+	g.release(meta, lvl2)
+	require.Equal(t, int64(0), inflight()[1], "全部 release 归零")
+}
+
+// 混合并发（spec 2026-08-15 A-2）：不限用户（UserMaxConc=0）与限 8 用户真实
+// goroutine 并发 acquire/release——两用户计数都在且恒非负；超限者 429 且回滚
+// 后计数正确（回滚竞态闭合验证：占满后 N 并发全回滚 → 计数净 0，不误减持锁者）。
+func TestGateMixedUnlimitedLimitedConcurrent(t *testing.T) {
+	g := newConcurrencyGate(nil)
+	unl := domain.KeyMeta{KeyID: 1, UserID: 1}                 // 不限并发
+	lim := domain.KeyMeta{KeyID: 2, UserID: 2, UserMaxConc: 8} // 限 8
+	g.reload(map[string]domain.KeyMeta{"u": unl, "l": lim})
+
+	// 限 8 用户占满 8 槽（持锁不释放）
+	held := make([]int, 0, 8)
+	for i := 0; i < 8; i++ {
+		lvl, ok := g.acquire(lim)
+		require.True(t, ok)
+		held = append(held, lvl)
+	}
+
+	const (
+		nUnl  = 16 // 不限用户并发（全部放行）
+		nOver = 32 // 超限用户并发（占满后全部 429 回滚）
+	)
+
+	// 并发期间计数恒非负监控（acquire/release 交错下任何时刻不为负）
+	done := make(chan struct{})
+	var neg atomic.Bool
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			snap := g.store.Load()
+			for _, uid := range []int64{1, 2} {
+				if c := snap.users[uid]; c != nil && c.Load() < 0 {
+					neg.Store(true)
+				}
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	var unlOK, overOK atomic.Int32
+	for i := 0; i < nUnl; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if lvl, ok := g.acquire(unl); ok {
+				unlOK.Add(1)
+				g.release(unl, lvl)
+			}
+		}()
+	}
+	for i := 0; i < nOver; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if lvl, ok := g.acquire(lim); ok {
+				overOK.Add(1)
+				g.release(lim, lvl)
+			}
+		}()
+	}
+	wg.Wait()
+	close(done)
+
+	require.False(t, neg.Load(), "并发期间计数恒非负")
+	require.Equal(t, int32(nUnl), unlOK.Load(), "不限用户全部放行")
+	require.Zero(t, overOK.Load(), "占满后全部 429（超限不误放行）")
+	require.Equal(t, int64(8), g.store.Load().users[2].Load(),
+		"N 并发全回滚净 0：超限风暴后计数仍 = 8（不误减持锁者）")
+
+	// 释放全部 → 归零
+	for _, lvl := range held {
+		g.release(lim, lvl)
+	}
+	require.Equal(t, int64(0), g.store.Load().users[2].Load())
+	require.Equal(t, int64(0), g.store.Load().users[1].Load())
 }
 
 // 缺 key 的 key 层失败（reload 后无该 key 计数器 → 该层跳过，不误拒）。
