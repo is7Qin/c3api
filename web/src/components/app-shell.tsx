@@ -34,16 +34,19 @@ const userNav = [
   { to: '/user/redemptions', key: 'user.nav.redemptions', icon: Ticket, end: false },
 ]
 
-// platform_admin 专属的管理端菜单组
+// platform_admin 专属的管理端菜单组（排序 = 功能边界，2026-08-15 用户裁决）：
+// 概览独立首位 → 代理配置域（模板/账户/规则——上游资源与转发策略）→ 客户域
+// （用户/分组——下游消费方，与账户不直接相邻）→ 观测域（日志/统计）→ 商业域
+// （兑换码/计费）→ 系统域（设置/运维）。平铺不拆子分组标题。
 const adminNav = [
   { to: '/app/dashboard', key: 'nav.overview', icon: LayoutDashboard },
   { to: '/app/templates', key: 'nav.templates', icon: Boxes },
   { to: '/app/accounts', key: 'nav.accounts', icon: Users },
+  { to: '/app/rules', key: 'nav.rules', icon: ScrollText },
   { to: '/app/users', key: 'nav.users', icon: UserCog },
   { to: '/app/groups', key: 'nav.groups', icon: FolderOpen },
   { to: '/app/logs', key: 'nav.logs', icon: FileText },
   { to: '/app/stats', key: 'nav.stats', icon: BarChart3 },
-  { to: '/app/rules', key: 'nav.rules', icon: ScrollText },
   { to: '/app/redemption-codes', key: 'nav.redemptions', icon: Ticket },
   { to: '/app/pricing', key: 'nav.pricing', icon: Coins },
   { to: '/app/settings', key: 'nav.settings', icon: Settings },
