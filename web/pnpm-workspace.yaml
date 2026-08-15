@@ -1,3 +1,7 @@
 minimumReleaseAgeExclude:
   - lucide-react@1.29.0
   - shadcn@4.16.2
+overrides:
+  # CVE-2026-59870：js-yaml 4.3.0 的 !!omap ReDoS（redocly/openapi-core pin 精确 4.3.0）——
+  # 4.3.1 为 patch 修复版，强制全链升级（dev 构建链，不打包进生产 bundle）。
+  js-yaml: 4.3.1
