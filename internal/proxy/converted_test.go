@@ -129,6 +129,13 @@ func (c *capturedUpstream) srv(t *testing.T) *httptest.Server {
 // 账号同模板），KeyMeta 携带组级 protocol_convert 方向集合（空 = off）。
 func newConvertedTestProxy(t *testing.T, upstream string, tplFormats []domain.RequestFormat, pcs []domain.ProtocolConvert) *Proxy {
 	t.Helper()
+	return newConvertedTestProxyLogs(t, upstream, tplFormats, pcs, noopLogStore{}, 30*time.Second)
+}
+
+// newConvertedTestProxyLogs 同 newConvertedTestProxy，但允许注入 LogInserter
+// （用量断言用捕获实现）与上游流超时（中止路径用例缩短触发）。
+func newConvertedTestProxyLogs(t *testing.T, upstream string, tplFormats []domain.RequestFormat, pcs []domain.ProtocolConvert, logs usage.LogInserter, streamTimeout time.Duration) *Proxy {
+	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: upstream,
 		CredentialType:   credential.TypeAPIKey,
@@ -141,7 +148,7 @@ func newConvertedTestProxy(t *testing.T, upstream string, tplFormats []domain.Re
 	cfg := Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
-		UpstreamStreamTimeout: 30 * time.Second,
+		UpstreamStreamTimeout: streamTimeout,
 		GroupKeyRPM:           0, UsageCapture: true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
@@ -152,7 +159,7 @@ func newConvertedTestProxy(t *testing.T, upstream string, tplFormats []domain.Re
 	require.NoError(t, sched.InvalidateAllSync())
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour,
-	}, noopLogStore{}, nil)
+	}, logs, nil)
 	key := activeKey(1, 1, 10)
 	key.ProtocolConverts = pcs
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
@@ -452,4 +459,95 @@ func TestConvertedRequestConvertFailReleasesSlot(t *testing.T) {
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "转换失败路径释放目标选号并发槽（无泄漏）")
+}
+
+// TestConvertedChatToMessStreamingLogTotalTokens 转换流（chat→anthropic）流式
+// 成功路径 tt 断言（spec 2026-08-16）：message_start（it/cr）+ message_delta
+// （ot）→ usage_logs.TotalTokens = it + ot（修复前恒 0 → 额度恒不扣）。
+func TestConvertedChatToMessStreamingLogTotalTokens(t *testing.T) {
+	up := &capturedUpstream{}
+	srv := up.srv(t)
+	defer srv.Close()
+	store := &captureLogStore{}
+	p := newConvertedTestProxyLogs(t, srv.URL, []domain.RequestFormat{domain.FormatAnthropic}, []domain.ProtocolConvert{domain.ProtocolConvertChatToMess}, store, 30*time.Second)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	req.Header.Set("Authorization", "Bearer gk-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+	require.Equal(t, 200, rec.Code)
+
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	lg := store.logs[0]
+	require.Equal(t, domain.ErrNone, lg.ErrorType)
+	require.Equal(t, int64(10), lg.InputTokens, "it 来自 message_start")
+	require.Equal(t, int64(20), lg.OutputTokens, "ot 来自 message_delta")
+	require.Equal(t, int64(30), lg.TotalTokens, "流式成功 tt = it + ot（native 同式）")
+	require.Equal(t, int64(3), lg.CacheReadTokens, "cr 来自 message_start")
+}
+
+// TestConvertedChatToMessStreamingAbortNoDelta 转换流缺 message_delta 中止路径
+// （message_start 后上游停滞 → UpstreamStreamTimeout → recordStreamAbort）：
+// TotalTokens = it（native 同式——不是 0，delta 处赋值会欠扣残留）。
+func TestConvertedChatToMessStreamingAbortNoDelta(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		fl := w.(http.Flusher)
+		fmt.Fprint(w, `event: message_start`+"\n"+`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":3}}}`+"\n\n")
+		fl.Flush()
+		<-r.Context().Done() // 首帧后停滞 → 超时中止（缺 message_delta）
+	}))
+	defer up.Close()
+	store := &captureLogStore{}
+	p := newConvertedTestProxyLogs(t, up.URL, []domain.RequestFormat{domain.FormatAnthropic}, []domain.ProtocolConvert{domain.ProtocolConvertChatToMess}, store, 100*time.Millisecond)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	req.Header.Set("Authorization", "Bearer gk-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+	require.Equal(t, 200, rec.Code, "流已开始 → 200 已写出")
+
+	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	lg := store.logs[0]
+	require.Equal(t, domain.ErrAbort, lg.ErrorType, "停滞超时 → recordStreamAbort")
+	require.Equal(t, int64(10), lg.InputTokens, "中止前已收到的 message_start 不丢")
+	require.Zero(t, lg.OutputTokens, "缺 message_delta → ot 0")
+	require.Equal(t, int64(10), lg.TotalTokens, "缺 delta 中止 → tt = it（native 同式，非 0）")
+}
+
+// TestConvertedChatToMessNonStreamingLogTotalTokens 转换非流式（chat→anthropic）
+// tt 验证：anthropicUsageFromResponse 自带 tt = it + ot（改动范围外，回归验证）。
+func TestConvertedChatToMessNonStreamingLogTotalTokens(t *testing.T) {
+	up := &capturedUpstream{}
+	srv := up.srv(t)
+	defer srv.Close()
+	store := &captureLogStore{}
+	p := newConvertedTestProxyLogs(t, srv.URL, []domain.RequestFormat{domain.FormatAnthropic}, []domain.ProtocolConvert{domain.ProtocolConvertChatToMess}, store, 30*time.Second)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer gk-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+	require.Equal(t, 200, rec.Code)
+
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	lg := store.logs[0]
+	require.Equal(t, domain.ErrNone, lg.ErrorType)
+	require.Equal(t, int64(3), lg.InputTokens)
+	require.Equal(t, int64(5), lg.OutputTokens)
+	require.Equal(t, int64(8), lg.TotalTokens, "非流式 tt 由 anthropicUsageFromResponse 自带（it + ot）")
 }
