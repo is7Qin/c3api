@@ -110,8 +110,8 @@ function toForm(a: AccountView): FormState {
 }
 
 // PUT 全量替换：重建 AccountCreate（只带契约字段，不带运行时字段）。
-// editing = true 时总是发送 group_ids（含空数组 = 清空）；创建态未选 = 不发送
-// （null = 创建时无分组）。
+// 编辑态总是发送 group_ids（含空数组 = 清空）；创建态仅已选时发送
+// （缺省 = 无分组，语义与 null 一致）。
 function toBody(f: FormState, editing: boolean): AccountCreate {
   const body: AccountCreate = {
     name: f.name.trim(),
@@ -123,7 +123,7 @@ function toBody(f: FormState, editing: boolean): AccountCreate {
     weight: f.weight === '' ? 0 : Number(f.weight),
     max_concurrency: f.max_concurrency === '' ? 8 : Number(f.max_concurrency),
   }
-  if (editing) body.group_ids = f.group_ids
+  if (editing || f.group_ids.length > 0) body.group_ids = f.group_ids
   return body
 }
 
