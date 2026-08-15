@@ -1178,7 +1178,7 @@
 
 ## 计费 Billing
 
-Phase 5 计费链路：请求前**预检**（价格快照缺价 / 余额快照 ≤0 → `402`）→ 请求完成聚合计费（`internal/billing` 纯函数：tier 选价 + above 分段 + fast 倍率 + 价格倍率）→ 内存聚合、周期批量**条件扣费**（毫分直接扣减，零换算）→ 明细落 `usage_logs`（cost/tier/above_hit/overdraft 列）。
+Phase 5 计费链路：请求前**预检**（价格快照缺价 / 余额快照 <0 → `402`；余额 0 放行——临时额度由 FEFO 扣费消化）→ 请求完成聚合计费（`internal/billing` 纯函数：tier 选价 + above 分段 + fast 倍率 + 价格倍率）→ 内存聚合、周期批量**条件扣费**（毫分直接扣减，零换算）→ 明细落 `usage_logs`（cost/tier/above_hit/overdraft 列）。
 
 ### 启用顺序（config.toml）
 
