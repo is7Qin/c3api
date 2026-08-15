@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,6 +82,10 @@ type codexEntry struct {
 	auth      codexsdk.Auth
 	client    *codexsdk.HTTPClient
 	sig       string // 凭据签名（外部凭据变更 → 重建）
+	// idSig 伪装身份签名（META-2：identity 变化 → 重建 HTTPClient——与 cred
+	// sig 同语义：账号配置变更 → 重建；WS 面每请求新鲜 identity，HTTP 面缓存
+	// 客户端以 sig 比对等价对齐——同 identity 复用连接池，变化才重建）。
+	idSig     string
 	expiresAt *time.Time
 	reported  atomic.Bool
 }
@@ -99,7 +104,7 @@ func NewCodex(failure FailureHandler) *Codex {
 // 不包装，errors.As 可命中）；RefreshError 可重试不上报。cred.BaseURL = 模板
 // base 派生完整 generations 端点（空 → SDK 内置 DefaultImagesURL）。
 func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredential, p *domain.ImageGenParams) (*domain.ImageResponse, error) {
-	e, err := a.clientFor(cred)
+	e, err := a.clientFor(cred, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +123,7 @@ func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredentia
 // 错误翻译同 GenerateImage（translateError——信封/fatal 统一回调/refresh 分
 // 类复用；fn 回调错误经 translateError 原样透传——非 SDK 错误不过滤）。
 func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCredential, p *domain.ImageGenParams, fn func(domain.ImageStreamEvent) error) error {
-	e, err := a.clientFor(cred)
+	e, err := a.clientFor(cred, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -158,10 +163,12 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 // Responses 非流式 responses 合成调用（T6 §1）：cred → 缓存取 HTTPClient
 // （clientFor——T2 机制复用）→ c.Responses(ctx, payload)（SDK 合成非流式——
 // 内部无条件 stream:true + SSE 事件聚合重组完整响应体；网关以非流式语义消费，
-// 原样转发 + 顶层 usage 提取）。错误翻译同 GenerateImage（translateError——
-// SDK *HTTPError → 信封；fatal 五类统一回调双源去重；RefreshError/网络原样）。
-func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, payload []byte) (*codexsdk.HTTPResponse, error) {
-	e, err := a.clientFor(cred)
+// 原样转发 + 顶层 usage 提取）。sess/meta 为 HTTP 面伪装身份（META-2——
+// client_metadata 注入键集对齐真实 codex；nil = 未配置——SDK 仍恒带 turn_id，
+// spec META-1）。错误翻译同 GenerateImage（translateError——SDK *HTTPError
+// → 信封；fatal 五类统一回调双源去重；RefreshError/网络原样）。
+func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta) (*codexsdk.HTTPResponse, error) {
+	e, err := a.clientFor(cred, sess, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +188,7 @@ func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, p
 // 头）。错误翻译同 Responses（translateError——信封/fatal 统一回调双源去重/
 // RefreshError 分类复用）。
 func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, payload []byte) (*codexsdk.HTTPResponse, error) {
-	e, err := a.clientFor(cred)
+	e, err := a.clientFor(cred, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -195,10 +202,11 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, payl
 // StreamResponses 流式 responses SSE 透传（T6 §1）：cred → 缓存取 HTTPClient →
 // c.Stream(ctx, payload, fn)（SSE data: 行逐帧交付零拷贝——SDK 回调 raw 指向
 // scanner 复用缓冲，**仅回调执行期间有效**：fn 必须立即消费，不得跨回调保留
-// 切片）。错误翻译同 Responses。fn 返回错误 → SDK 终止读取并原样透传（网关
-// 写出失败/客户端断开路径——translateError 对非 SDK 错误不过滤）。
-func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredential, payload []byte, fn func(raw []byte) error) error {
-	e, err := a.clientFor(cred)
+// 切片）。sess/meta 同 Responses（META-2 伪装身份；nil = 未配置——SDK 仍恒带
+// turn_id）。错误翻译同 Responses。fn 返回错误 → SDK 终止读取并原样透传（网
+// 关写出失败/客户端断开路径——translateError 对非 SDK 错误不过滤）。
+func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredential, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, fn func(raw []byte) error) error {
+	e, err := a.clientFor(cred, sess, meta)
 	if err != nil {
 		return err
 	}
@@ -245,11 +253,14 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 }
 
 // clientFor entryFor + HTTPClient 懒构造（GenerateImage/Stream 面——非 nil
-// 后同账号复用连接池；sig 变更 → entryFor 重建条目）。NewHTTPClient 为纯构
-// 造（无 I/O 无 error）；构造/读取全程持 a.mu——entryFor 每次调用已取锁，
-// 无新增竞争（补压测 -race 实证修复：原双检锁锁外读 e.client vs 锁内写，
-// 数据竞争；去掉锁外快路径即消除）。
-func (a *Codex) clientFor(cred *domain.AccountCredential) (*codexEntry, error) {
+// 后同账号复用连接池；sig 变更 → entryFor 重建条目）。sess/meta 为 HTTP 面伪
+// 装身份（META-2——SDK 注入点读构造期 opts（http.go injectResponsesClient-
+// Metadata），须随构造下发；nil = 未配置）。NewHTTPClient 为纯构造（无 I/O
+// 无 error）；构造/读取全程持 a.mu——entryFor 每次调用已取锁，无新增竞争
+// （补压测 -race 实证修复：原双检锁锁外读 e.client vs 锁内写，数据竞争；去掉
+// 锁外快路径即消除）。idSig 比对（identitySig）——identity 变化 → 重建客户端
+// （与 cred sig 同语义：账号配置变更 → 重建；同 identity 复用连接池）。
+func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session, meta *codexsdk.CodexMeta) (*codexEntry, error) {
 	e, err := a.entryFor(cred)
 	if err != nil {
 		return nil, err
@@ -261,12 +272,70 @@ func (a *Codex) clientFor(cred *domain.AccountCredential) (*codexEntry, error) {
 	if a.transport != nil {
 		opts = append(opts, codexsdk.WithTransport(a.transport))
 	}
+	opts = append(opts, identityOpts(sess, meta)...)
+	sig := identitySig(sess, meta)
 	a.mu.Lock()
-	if e.client == nil {
+	if e.client == nil || e.idSig != sig {
 		e.client = codexsdk.NewHTTPClient(e.auth, opts...)
+		e.idSig = sig
 	}
 	a.mu.Unlock()
 	return e, nil
+}
+
+// identityOpts 伪装身份 → SDK Option（META-2：WithSession/WithCodexMeta——
+// SDK HTTP 面注入键集对齐真实 codex client_metadata()；nil = 未配置 = 现状
+// 零注入面，SDK 仍恒带 turn_id——spec META-1）。
+func identityOpts(sess *codexsdk.Session, meta *codexsdk.CodexMeta) []codexsdk.Option {
+	var opts []codexsdk.Option
+	if sess != nil {
+		opts = append(opts, codexsdk.WithSession(*sess))
+	}
+	if meta != nil {
+		opts = append(opts, codexsdk.WithCodexMeta(*meta))
+	}
+	return opts
+}
+
+// identitySig 伪装身份签名（客户端重建判定——HTTPClient 构造期 opts 承载，
+// 变化必须重建才能生效；与 credSig 同约定：\x00 分隔——身份值为 UUID/URI 字
+// 符集，不含控制字符）。nil 与全空等价（均不注入 → ""）——proxy 恒传
+// codexIdentityFromExt 产物（缺列 = 全空），与测试/未配置路径（nil）同签名，
+// 不引发无谓重建。
+func identitySig(sess *codexsdk.Session, meta *codexsdk.CodexMeta) string {
+	if (meta == nil || *meta == (codexsdk.CodexMeta{})) &&
+		(sess == nil || *sess == (codexsdk.Session{})) {
+		return ""
+	}
+	var b strings.Builder
+	if meta != nil {
+		b.WriteString(meta.InstallationID)
+		b.WriteByte(0)
+		b.WriteString(meta.SessionID)
+		b.WriteByte(0)
+		b.WriteString(meta.ThreadID)
+		b.WriteByte(0)
+		b.WriteString(meta.WindowID)
+		b.WriteByte(0)
+		b.WriteString(meta.Subagent)
+		b.WriteByte(0)
+		b.WriteString(meta.ParentThreadID)
+		b.WriteByte(0)
+		b.WriteString(meta.ParentTurnID)
+		b.WriteByte(0)
+		b.WriteString(meta.TurnMetadata)
+	}
+	b.WriteByte(0x1e) // meta/session 段分隔
+	if sess != nil {
+		b.WriteString(sess.SessionID)
+		b.WriteByte(0)
+		b.WriteString(sess.ThreadID)
+		b.WriteByte(0)
+		b.WriteString(sess.WindowID)
+		b.WriteByte(0)
+		b.WriteString(sess.ClientRequestID)
+	}
+	return b.String()
 }
 
 // Dial 建立到上游的 Responses WebSocket 连接（T4 §2 接线）：cred → Auth 缓存
