@@ -8,6 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each release). The first beta is `v0.0.1-beta.1`; concrete numbers for later releases are decided at tag time.
 
+## [v0.0.1-beta.2] - 2026-08-15
+
+### Added
+
+- HTTP `/responses` metadata alignment with the real codex client: per-request `turn_id` (UUIDv7) plus the static identity key set injected on the HTTP path, with passthrough short-circuit when the request already carries `client_metadata`.
+- `x-codex-turn-state` response-header capture and same-turn replay on the HTTP path (turn-state double-face alignment with real codex behavior).
+- First-user admin bootstrap: the first account to register on a fresh database automatically becomes `platform_admin`; `ADMIN_TOKEN` is now optional.
+- GC optimization batch: zero-allocation single-pass usage extraction and per-stream relay channel merging.
+- GC tuning hooks (`GOGC`/`GOMEMLIMIT`) wired through compose and `.env.example`, with load-test numbers documented (off by default).
+
+### Changed
+
+- codex-sdk updated to latest master (HTTP metadata injection, WS turn-state verification, pre-filter short-circuit).
+- Deployment layout: `compose.yml` moved to the repository root — plain `docker compose up` now works with root `.env` auto-load; `deploy/` holds the production config template and the data directory.
+
+### Fixed
+
+- Deterministic CI: PostgreSQL partition fixtures now explicitly pre-create the fixed-date partitions they write into; the transport pool-reuse test proves 16 in-use connections via a barrier-controlled upstream instead of inferring pool capacity from dial counts.
+- Dependency security: nanoid (CVE) and js-yaml (CVE-2026-59870 `!!omap` ReDoS) upgraded via pnpm overrides.
+- Load-test tooling: NOTIFY snapshot-window 401s on fresh user creation and USD pricing units for key fill.
+
 ## [v0.0.1-beta.1] - 2026-08-15
 
 First public beta release.
