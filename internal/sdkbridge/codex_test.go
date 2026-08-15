@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -760,7 +761,7 @@ func TestCodexResponsesAggregateNonstream(t *testing.T) {
 
 // TestCodexResponsesIdentityMetadata 伪装身份注入（META-2——spec 2026-08-15）：
 // Responses 传 session/meta → 上游请求体 client_metadata 恒 4 key
-//（x-codex-installation-id/session_id/thread_id/x-codex-window-id——CodexMeta
+// （x-codex-installation-id/session_id/thread_id/x-codex-window-id——CodexMeta
 // 与 WithSession 同值双设不冲突）+ turn_id 自动 UUIDv7（payload 未带）+ 条件
 // 键不出现（未配置）+ 其余字段不改写。
 func TestCodexResponsesIdentityMetadata(t *testing.T) {
@@ -814,7 +815,7 @@ func TestCodexStreamResponsesIdentityMetadata(t *testing.T) {
 }
 
 // TestCodexResponsesIdentityChangeRebuild identity 变化 → 重建 HTTPClient
-//（idSig 比对——与 cred sig 同语义：账号配置变更 → 重建；同 identity 复用
+// （idSig 比对——与 cred sig 同语义：账号配置变更 → 重建；同 identity 复用
 // 连接池不重建——构造期 opts 承载的注入面变化才能生效）。
 func TestCodexResponsesIdentityChangeRebuild(t *testing.T) {
 	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
@@ -924,7 +925,7 @@ func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
 }
 
 // TestCodexResponsesTurnStateChangeRebuild turn-state 变化 → 重建 HTTPClient
-//（与 idSig 同语义——构造期 opts 承载的头面变化才能生效；生产路径共享
+// （与 idSig 同语义——构造期 opts 承载的头面变化才能生效；生产路径共享
 // transport 承载连接池，重建不重置连接池）。
 func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-1"})
@@ -1131,22 +1132,54 @@ func TestCodexStreamResponsesFnError(t *testing.T) {
 // TestCodexTransportPoolReuse 补压测修复回归（连接风暴）：SDK 默认 transport
 // MaxIdleConnsPerHost=2 → 高并发爆发后连接被池化丢弃，下波大量重拨（压测
 // profile ~12% CPU 连接风暴）。装配网关同形态 transport
-// （httpx.NewTransport——复用既有构造 helper + MaxIdleConnsPerHost=2048）
-// 后，第二波并发必须零新拨号（池内复用）。走 GenerateImage（Do 排空路径
-// ——响应体完整读到 EOF，连接确定可复用）；resp HTTP / 流式 images 与
-// GenerateImage 共用同一 clientFor 装配的 HTTPClient + transport（T2 机
-// 制——连接池断言同源）。计数 DialContext 包装判定拨号次数。
+// （httpx.NewTransport——复用既有构造 helper + MaxIdleConnsPerHost=2048 +
+// MaxConnsPerHost=2048 生产同源 main.go:347）后，第二波并发必须零新拨号
+// （池内复用）。走 GenerateImage（Do 排空路径——响应体完整读到 EOF，连接
+// 确定可复用）；resp HTTP / 流式 images 与 GenerateImage 共用同一 clientFor
+// 装配的 HTTPClient + transport（T2 机制——连接池断言同源）。计数
+// DialContext 包装判定拨号次数。
+//
+// 屏障式控制（spec 2026-08-15）：gated handler 每波读完请求体后阻塞在该波
+// release gate 上——16 个 handler 同时到达严格推出 16 条已建立、在用连接
+// （HTTP/1.1 无多路复用；波内无连接提前 idle，合并拨号也不可能少于在用连接
+// 数）。Go transport eofc 屏障（transport.go:2316-2320/2418-2423/2451-2458）
+// 保证 GenerateImage 读到 EOF 返回时连接已确定回池——首波放行后 16 条即在
+// 池，第二波零新拨号是确定性断言非调度窗口依赖。
 func TestCodexTransportPoolReuse(t *testing.T) {
-	up, _ := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
-	defer up.Close()
+	const n = 16
+	const waveTimeout = 15 * time.Second
 
 	var dials atomic.Int64
+
+	// gated upstream（HTTP/1.1）：请求体读完 → 到达信号（带缓冲 chan，容量 =
+	// n——评审 §5-①：防控制器未接收时 handler 死锁）→ 阻塞当前波 release
+	// gate（select gate / r.Context().Done()——客户端断开自动退出，handler
+	// 永不永久阻塞）→ 放行后回 200 + okImageResponse。
+	var mu sync.Mutex
+	var curGate, curArrived chan struct{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		mu.Lock()
+		gate, arrived := curGate, curArrived
+		mu.Unlock()
+		arrived <- struct{}{}
+		select {
+		case <-gate:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(okImageResponse))
+	}))
+	t.Cleanup(srv.Close)
+
 	tr := httpx.NewTransport(httpx.TransportConfig{
 		MaxIdleConns:        8192,
 		MaxIdleConnsPerHost: 2048,
+		MaxConnsPerHost:     2048, // 生产同源 main.go:347——上界对齐 MaxIdleConnsPerHost
 		IdleConnTimeout:     90 * time.Second,
 		DialTimeout:         10 * time.Second,
-		ForceHTTP2:          false,
+		ForceHTTP2:          false, // 纯 http:// URL 无 ALPN 恒 HTTP/1.1（评审 §5-④；不动）
 	})
 	tr.Proxy = nil // 测试确定性：不经环境代理
 	baseDial := tr.DialContext
@@ -1154,16 +1187,27 @@ func TestCodexTransportPoolReuse(t *testing.T) {
 		dials.Add(1)
 		return baseDial(ctx, network, addr)
 	}
+	t.Cleanup(tr.CloseIdleConnections) // 防跨测试连接泄漏（spec 验收 6）
 	a := NewCodex(nil)
 	a.SetTransport(tr)
-	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-pool", BaseURL: up.URL + "/images/generations"}
+	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-pool", BaseURL: srv.URL + "/images/generations"}
 	p := &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"}
 
-	const n = 16
-	burst := func(k int) error {
+	// runWave 屏障式一波：启动 n 个 GenerateImage（burst 形态——errs 通道容量
+	// n）→ 等 n 个 handler 到达（释放前）→ close gate 放行 → 等 n 个调用返回
+	// （含错误收集）。到达等待与放行后的完成等待均带 watchdog（评审 §5-②）；
+	// 任一段超时：close gate 放行在途 handler → 回收 goroutine → FailNow（失
+	// 败路径不泄漏）。gate close 后不可复用——每波新建。
+	runWave := func(wave int) {
+		gate := make(chan struct{})
+		arrived := make(chan struct{}, n)
+		mu.Lock()
+		curGate, curArrived = gate, arrived
+		mu.Unlock()
+
 		var wg sync.WaitGroup
-		errs := make(chan error, k)
-		for i := 0; i < k; i++ {
+		errs := make(chan error, n)
+		for i := 0; i < n; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -1171,32 +1215,59 @@ func TestCodexTransportPoolReuse(t *testing.T) {
 				errs <- err
 			}()
 		}
-		wg.Wait()
-		close(errs)
-		for err := range errs {
-			if err != nil {
-				return err
+
+		// 等 n 个 handler 全到达（释放前：n 条连接同时在用——拨号恰 n：每条在
+		// 用连接对应一次拨号，波内无 idle 连接可供他请求抢先复用）
+		got := 0
+		deadline := time.After(waveTimeout)
+		for got < n {
+			select {
+			case <-arrived:
+				got++
+			case <-deadline:
+				close(gate) // 放行在途 handler
+				reclaim := make(chan struct{})
+				go func() {
+					wg.Wait()
+					close(reclaim)
+				}()
+				select { // 回收有界（防在途调用卡死时测试无限挂起）
+				case <-reclaim:
+				case <-time.After(5 * time.Second):
+				}
+				var errMsg string
+				select { // 诊断：已返回调用的错误（非阻塞读取）
+				case e := <-errs:
+					errMsg = fmt.Sprintf("；首个调用错误 %v", e)
+				default:
+				}
+				require.FailNow(t, "", "wave %d: 等 %d 个 handler 到达超时（已到 %d；拨号 %d%s）", wave, n, got, dials.Load(), errMsg)
 			}
 		}
-		return nil
+		require.Equal(t, int64(n), dials.Load(), "wave %d: %d 个 handler 到达时拨号恰为 %d（在用连接数）", wave, n, n)
+
+		close(gate)
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(waveTimeout):
+			require.FailNow(t, "", "wave %d: gate 放行后 %d 个调用回收超时", wave, n)
+		}
+		close(errs)
+		for err := range errs {
+			require.NoError(t, err, "wave %d: GenerateImage 全部成功", wave)
+		}
+		require.Equal(t, int64(n), dials.Load(), "wave %d: 本波零新拨号——连接池复用（MaxIdleConnsPerHost/MaxConnsPerHost=2048 生效；SDK 默认 2 会再拨 n-2 条）", wave)
 	}
 
-	require.NoError(t, burst(n))
-	// 首波断言不取恒等 n：Go 标准库 http.Transport 对同 host 并发拨号会**合法合并**
-	// （池空时首个请求开始拨号，后到请求排队共享该拨号中的连接——waitingDial
-	// 机制）。合并窗口依赖调度时序：24 核本机 16 goroutine 几乎同刻进入 getConn，
-	// 独立拨号 = n 恒成立；4 核 CI runner（2026-08-15 实测 actual 13）后到请求
-	// 看到拨号中即共享——恒等断言是错误假设。改为范围断言：有拨号（>0）、
-	// 不超过并发数（无拨号风暴——共享只减不增）。
-	require.Greater(t, dials.Load(), int64(0), "首波必须发起拨号")
-	require.LessOrEqual(t, dials.Load(), int64(n), "首波拨号数 ≤ 并发数（并发合并合法，无拨号风暴）")
-	// 第二波零新拨号：并发数 = 首波拨号数（≤ 池中 idle 连接数）。**不能继续用
-	// 16 并发**——首波合并后池中只有 first 条连接，16 并发超出池容量必然新拨号
-	// （CI 实测 expected 14, actual 15：池 14 条、16 并发多拨 1 条——正确行为）。
-	// 以 first 并发打池：全部命中 idle → 零新拨号恒成立，无调度窗口依赖。
-	first := dials.Load()
-	require.NoError(t, burst(int(first)))
-	require.Equal(t, first, dials.Load(), "第二波（并发 = 池容量）必须零新拨号——连接池复用（MaxIdleConnsPerHost=2048 生效；SDK 默认 2 会再拨 n-2 条）")
+	// 首波：拨号恰 16（16 条连接全部建立并在用）；放行后经 eofc 屏障全部回池。
+	runWave(1)
+	// 第二波：16 个并发请求全部命中首波 idle 连接——到达时与结束后均零新拨号。
+	runWave(2)
 }
 
 // ---------------------------------------------------------------------------
