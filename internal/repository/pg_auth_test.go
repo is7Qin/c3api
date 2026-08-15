@@ -220,15 +220,19 @@ func TestPGLoadKeysSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.UserStatusDisabled, m2["hash-a"].UserStatus, "用户禁用随快照下发")
 
-	// 组 protocol_convert 变更随快照下发（W5 热路径分支数据源）
+	// 组 protocol_convert 变更随快照下发（W5 热路径分支数据源；多值方向集合）
 	_, err = repos.Groups.UpdateGroup(ctx, &domain.Group{
 		ID: g.ID, Name: g.Name, Visibility: g.Visibility,
-		PriceMultiplier: 10000, ProtocolConvert: domain.ProtocolConvertChatToResp,
+		PriceMultiplier: 10000,
+		ProtocolConverts: []domain.ProtocolConvert{
+			domain.ProtocolConvertChatToResp, domain.ProtocolConvertMessToResp,
+		},
 	})
 	require.NoError(t, err)
 	m3, err := repos.Keys.LoadKeys(ctx)
 	require.NoError(t, err)
-	require.Equal(t, domain.ProtocolConvertChatToResp, m3["hash-a"].ProtocolConvert, "组 protocol_convert 随快照下发")
+	require.Equal(t, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertMessToResp},
+		m3["hash-a"].ProtocolConverts, "组 protocol_convert 随快照下发")
 }
 
 func TestPGGroupAssignments(t *testing.T) {

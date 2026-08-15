@@ -126,8 +126,8 @@ func (c *capturedUpstream) srv(t *testing.T) *httptest.Server {
 }
 
 // newConvertedTestProxy 构造转换路径测试代理：模板支持 tplFormats（组内全部
-// 账号同模板），KeyMeta 携带组级 protocol_convert。
-func newConvertedTestProxy(t *testing.T, upstream string, tplFormats []domain.RequestFormat, pc domain.ProtocolConvert) *Proxy {
+// 账号同模板），KeyMeta 携带组级 protocol_convert 方向集合（空 = off）。
+func newConvertedTestProxy(t *testing.T, upstream string, tplFormats []domain.RequestFormat, pcs []domain.ProtocolConvert) *Proxy {
 	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: upstream,
@@ -154,7 +154,7 @@ func newConvertedTestProxy(t *testing.T, upstream string, tplFormats []domain.Re
 		BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour,
 	}, noopLogStore{}, nil)
 	key := activeKey(1, 1, 10)
-	key.ProtocolConvert = pc
+	key.ProtocolConverts = pcs
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		cryptox.HashKey("gk-1"): key,
 	}}, noopUserLoader{}, nil)
@@ -173,7 +173,7 @@ func TestConvertedChatToRespStreaming(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, domain.ProtocolConvertChatToResp)
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
@@ -203,7 +203,7 @@ func TestConvertedChatToRespNonStreaming(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, domain.ProtocolConvertChatToResp)
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
@@ -232,7 +232,7 @@ func TestConvertedMessToResp(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, domain.ProtocolConvertMessToResp)
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, []domain.ProtocolConvert{domain.ProtocolConvertMessToResp})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"max_tokens":100,"stream":true}`))
@@ -259,7 +259,7 @@ func TestConvertedRespToMess(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatAnthropic}, domain.ProtocolConvertRespToMess)
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatAnthropic}, []domain.ProtocolConvert{domain.ProtocolConvertRespToMess})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi","max_output_tokens":100,"stream":true}`))
@@ -286,7 +286,7 @@ func TestConvertedChatToMess(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatAnthropic}, domain.ProtocolConvertChatToMess)
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatAnthropic}, []domain.ProtocolConvert{domain.ProtocolConvertChatToMess})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
@@ -315,7 +315,7 @@ func TestConvertedChatToRespStreamingDataOnly(t *testing.T) {
 	up := &capturedUpstream{dataOnly: true}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, domain.ProtocolConvertChatToResp)
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
@@ -340,7 +340,7 @@ func TestConvertedDirectForwardZeroConversion(t *testing.T) {
 	defer srv.Close()
 	p := newConvertedTestProxy(t, srv.URL,
 		[]domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses},
-		domain.ProtocolConvertChatToResp)
+		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
@@ -361,7 +361,7 @@ func TestConvertedOff(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, domain.ProtocolConvertOff)
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
@@ -378,7 +378,7 @@ func TestConvertedDirectionMismatch(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIChat}, domain.ProtocolConvertChatToResp)
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIChat}, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi"}`))
@@ -389,13 +389,58 @@ func TestConvertedDirectionMismatch(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code, "chat_to_resp 不影响 resp 请求（方向不匹配不转换）")
 }
 
+// TestConvertedMultiDirection 多值配置：chat_to_resp + mess_to_resp 并存——
+// chat 请求走 chat_to_resp、anthropic 请求走 mess_to_resp（按客户端格式命中，
+// 互不干扰）。
+func TestConvertedMultiDirection(t *testing.T) {
+	up := &capturedUpstream{}
+	srv := up.srv(t)
+	defer srv.Close()
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses},
+		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertMessToResp})
+
+	// chat 请求 → 上游 resp（chat_to_resp 命中）
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	req.Header.Set("Authorization", "Bearer gk-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+	require.Equal(t, 200, rec.Code)
+	path, body, _ := up.last(t)
+	require.Equal(t, "/v1/responses", path, "chat 请求按 chat_to_resp 命中")
+	require.NotNil(t, body["input"], "上游请求体为 resp 形态（messages → input）")
+
+	// anthropic 请求 → 上游 resp（mess_to_resp 命中）
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"max_tokens":100,"stream":true}`))
+	req2.Header.Set("Authorization", "Bearer gk-1")
+	rec2 := httptest.NewRecorder()
+	p.HandleAnthropic(rec2, req2)
+	require.Equal(t, 200, rec2.Code)
+	path2, body2, _ := up.last(t)
+	require.Equal(t, "/v1/responses", path2, "anthropic 请求按 mess_to_resp 命中")
+	require.NotNil(t, body2["input"])
+
+	// resp 请求：无匹配方向 + 模板已支持 resp → 直连零转换（补差语义，不受
+	// chat/mess 方向配置影响）
+	req3 := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
+		`{"model":"gpt-4o","input":"hi"}`))
+	req3.Header.Set("Authorization", "Bearer gk-1")
+	rec3 := httptest.NewRecorder()
+	p.HandleResponses(rec3, req3)
+	require.Equal(t, 200, rec3.Code)
+	path3, body3, _ := up.last(t)
+	require.Equal(t, "/v1/responses", path3, "resp 请求直连零转换")
+	require.Equal(t, "hi", body3["input"], "上游收到 resp 形态请求体（未转换）")
+}
+
 // TestConvertedRequestConvertFailReleasesSlot 请求体转换失败 → 本地 400，且
 // 目标选号已占的并发槽必须释放（防槽位泄漏）。
 func TestConvertedRequestConvertFailReleasesSlot(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, domain.ProtocolConvertChatToResp)
+	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
 	// 顶层数组 JSON 合法（json.Valid 通过）但不可转换 → ConvertRequest 报错
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`[1,2,3]`))

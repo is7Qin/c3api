@@ -65,11 +65,6 @@ func PriceMultiplier(v int) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldPriceMultiplier, v))
 }
 
-// ProtocolConvert applies equality check predicate on the "protocol_convert" field. It's identical to ProtocolConvertEQ.
-func ProtocolConvert(v string) predicate.Group {
-	return predicate.Group(sql.FieldEQ(FieldProtocolConvert, v))
-}
-
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v time.Time) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldUpdatedAt, v))
@@ -208,71 +203,6 @@ func PriceMultiplierLT(v int) predicate.Group {
 // PriceMultiplierLTE applies the LTE predicate on the "price_multiplier" field.
 func PriceMultiplierLTE(v int) predicate.Group {
 	return predicate.Group(sql.FieldLTE(FieldPriceMultiplier, v))
-}
-
-// ProtocolConvertEQ applies the EQ predicate on the "protocol_convert" field.
-func ProtocolConvertEQ(v string) predicate.Group {
-	return predicate.Group(sql.FieldEQ(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertNEQ applies the NEQ predicate on the "protocol_convert" field.
-func ProtocolConvertNEQ(v string) predicate.Group {
-	return predicate.Group(sql.FieldNEQ(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertIn applies the In predicate on the "protocol_convert" field.
-func ProtocolConvertIn(vs ...string) predicate.Group {
-	return predicate.Group(sql.FieldIn(FieldProtocolConvert, vs...))
-}
-
-// ProtocolConvertNotIn applies the NotIn predicate on the "protocol_convert" field.
-func ProtocolConvertNotIn(vs ...string) predicate.Group {
-	return predicate.Group(sql.FieldNotIn(FieldProtocolConvert, vs...))
-}
-
-// ProtocolConvertGT applies the GT predicate on the "protocol_convert" field.
-func ProtocolConvertGT(v string) predicate.Group {
-	return predicate.Group(sql.FieldGT(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertGTE applies the GTE predicate on the "protocol_convert" field.
-func ProtocolConvertGTE(v string) predicate.Group {
-	return predicate.Group(sql.FieldGTE(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertLT applies the LT predicate on the "protocol_convert" field.
-func ProtocolConvertLT(v string) predicate.Group {
-	return predicate.Group(sql.FieldLT(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertLTE applies the LTE predicate on the "protocol_convert" field.
-func ProtocolConvertLTE(v string) predicate.Group {
-	return predicate.Group(sql.FieldLTE(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertContains applies the Contains predicate on the "protocol_convert" field.
-func ProtocolConvertContains(v string) predicate.Group {
-	return predicate.Group(sql.FieldContains(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertHasPrefix applies the HasPrefix predicate on the "protocol_convert" field.
-func ProtocolConvertHasPrefix(v string) predicate.Group {
-	return predicate.Group(sql.FieldHasPrefix(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertHasSuffix applies the HasSuffix predicate on the "protocol_convert" field.
-func ProtocolConvertHasSuffix(v string) predicate.Group {
-	return predicate.Group(sql.FieldHasSuffix(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertEqualFold applies the EqualFold predicate on the "protocol_convert" field.
-func ProtocolConvertEqualFold(v string) predicate.Group {
-	return predicate.Group(sql.FieldEqualFold(FieldProtocolConvert, v))
-}
-
-// ProtocolConvertContainsFold applies the ContainsFold predicate on the "protocol_convert" field.
-func ProtocolConvertContainsFold(v string) predicate.Group {
-	return predicate.Group(sql.FieldContainsFold(FieldProtocolConvert, v))
 }
 
 // UpdatedAtEQ applies the EQ predicate on the "updated_at" field.

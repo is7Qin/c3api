@@ -636,42 +636,83 @@ func TestNewCodexIdentity(t *testing.T) {
 	require.NotEqual(t, id1.SessionID, id2.SessionID)
 }
 
-// TestGroupProtocolConvert 分组 protocol_convert：全枚举 roundtrip + 非法值 400
-// （create/update）。
+// TestGroupProtocolConvert 分组 protocol_convert 方向集合：多方向 roundtrip +
+// off 归一（空/仅 off → 空数组）+ 非法值/重复方向/同客户端格式冲突 400
+// （create/update；显式空数组 = 清空）。
 func TestGroupProtocolConvert(t *testing.T) {
 	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: nil}
 	ctx := context.Background()
 
-	for _, pc := range []domain.ProtocolConvert{
-		domain.ProtocolConvertOff, domain.ProtocolConvertChatToResp,
-		domain.ProtocolConvertMessToResp, domain.ProtocolConvertRespToMess,
-		domain.ProtocolConvertChatToMess,
-	} {
-		g, err := svc.CreateGroup(ctx, "g-"+string(pc), domain.GroupVisibilityPublic, nil, pc)
+	// 多方向 roundtrip（off 元素归一剔除）
+	g, err := svc.CreateGroup(ctx, "g-multi", domain.GroupVisibilityPublic, nil,
+		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertMessToResp, domain.ProtocolConvertOff})
+	require.NoError(t, err)
+	got, err := svc.GetGroup(ctx, g.ID)
+	require.NoError(t, err)
+	require.Equal(t, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertMessToResp},
+		got.ProtocolConverts, "off 归一剔除、多方向落库")
+
+	// off 归一空数组（nil / 仅 off / 空数组 同语义）
+	for _, name := range []string{"g-nil", "g-off", "g-empty"} {
+		var pcs []domain.ProtocolConvert
+		switch name {
+		case "g-off":
+			pcs = []domain.ProtocolConvert{domain.ProtocolConvertOff}
+		case "g-empty":
+			pcs = []domain.ProtocolConvert{}
+		}
+		g0, err := svc.CreateGroup(ctx, name, domain.GroupVisibilityPublic, nil, pcs)
 		require.NoError(t, err)
-		got, err := svc.GetGroup(ctx, g.ID)
+		got0, err := svc.GetGroup(ctx, g0.ID)
 		require.NoError(t, err)
-		require.Equal(t, pc, got.ProtocolConvert, "roundtrip %s", pc)
+		require.Empty(t, got0.ProtocolConverts, "%s → 空数组 = 不转换", name)
 	}
 
 	// 非法值 → 400
-	_, err := svc.CreateGroup(ctx, "bad", domain.GroupVisibilityPublic, nil, domain.ProtocolConvert("chat-to-resp"))
+	_, err = svc.CreateGroup(ctx, "bad", domain.GroupVisibilityPublic, nil,
+		[]domain.ProtocolConvert{domain.ProtocolConvert("chat-to-resp")})
 	require.ErrorIs(t, err, ErrInvalidInput, "连字符命名（chat-to-resp）非法，枚举用下划线")
-	_, err = svc.CreateGroup(ctx, "bad2", domain.GroupVisibilityPublic, nil, domain.ProtocolConvert("bogus"))
+	_, err = svc.CreateGroup(ctx, "bad2", domain.GroupVisibilityPublic, nil,
+		[]domain.ProtocolConvert{domain.ProtocolConvert("bogus")})
 	require.ErrorIs(t, err, ErrInvalidInput)
 
+	// 重复方向 → 400
+	_, err = svc.CreateGroup(ctx, "dup", domain.GroupVisibilityPublic, nil,
+		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertChatToResp})
+	require.ErrorIs(t, err, ErrInvalidInput, "重复方向 → 400")
+
+	// 同客户端格式多方向（chat_to_resp + chat_to_mess）→ 400（语义歧义）
+	_, err = svc.CreateGroup(ctx, "clash", domain.GroupVisibilityPublic, nil,
+		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertChatToMess})
+	require.ErrorIs(t, err, ErrInvalidInput, "同客户端格式多方向 → 400")
+	// 不同客户端格式多方向可并存
+	_, err = svc.CreateGroup(ctx, "ok-mix", domain.GroupVisibilityPublic, nil,
+		[]domain.ProtocolConvert{domain.ProtocolConvertRespToMess, domain.ProtocolConvertChatToResp})
+	require.NoError(t, err, "不同客户端格式多方向合法")
+
 	// Update 非法值 → 400
-	g, err := svc.CreateGroup(ctx, "g-upd", domain.GroupVisibilityPublic, nil, domain.ProtocolConvertOff)
+	g2, err := svc.CreateGroup(ctx, "g-upd", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
-	g.ProtocolConvert = domain.ProtocolConvert("bogus")
-	_, err = svc.UpdateGroup(ctx, g)
+	g2.ProtocolConverts = []domain.ProtocolConvert{domain.ProtocolConvert("bogus")}
+	_, err = svc.UpdateGroup(ctx, g2)
+	require.ErrorIs(t, err, ErrInvalidInput)
+
+	// Update 同客户端格式冲突 → 400
+	g2.ProtocolConverts = []domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertChatToMess}
+	_, err = svc.UpdateGroup(ctx, g2)
 	require.ErrorIs(t, err, ErrInvalidInput)
 
 	// Update 合法值 → 生效
-	g.ProtocolConvert = domain.ProtocolConvertChatToResp
-	updated, err := svc.UpdateGroup(ctx, g)
+	g2.ProtocolConverts = []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}
+	updated, err := svc.UpdateGroup(ctx, g2)
 	require.NoError(t, err)
-	require.Equal(t, domain.ProtocolConvertChatToResp, updated.ProtocolConvert)
+	require.Equal(t, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, updated.ProtocolConverts)
+
+	// Update 显式空数组 = 清空既有方向（off）
+	g2.ProtocolConverts = []domain.ProtocolConvert{}
+	updated2, err := svc.UpdateGroup(ctx, g2)
+	require.NoError(t, err)
+	require.Empty(t, updated2.ProtocolConverts, "显式空数组 → 清空")
 }
 
 // --- helpers ---

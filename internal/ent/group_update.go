@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/group"
@@ -81,16 +82,14 @@ func (_u *GroupUpdate) AddPriceMultiplier(v int) *GroupUpdate {
 }
 
 // SetProtocolConvert sets the "protocol_convert" field.
-func (_u *GroupUpdate) SetProtocolConvert(v string) *GroupUpdate {
+func (_u *GroupUpdate) SetProtocolConvert(v []string) *GroupUpdate {
 	_u.mutation.SetProtocolConvert(v)
 	return _u
 }
 
-// SetNillableProtocolConvert sets the "protocol_convert" field if the given value is not nil.
-func (_u *GroupUpdate) SetNillableProtocolConvert(v *string) *GroupUpdate {
-	if v != nil {
-		_u.SetProtocolConvert(*v)
-	}
+// AppendProtocolConvert appends value to the "protocol_convert" field.
+func (_u *GroupUpdate) AppendProtocolConvert(v []string) *GroupUpdate {
+	_u.mutation.AppendProtocolConvert(v)
 	return _u
 }
 
@@ -318,7 +317,12 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		_spec.AddField(group.FieldPriceMultiplier, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.ProtocolConvert(); ok {
-		_spec.SetField(group.FieldProtocolConvert, field.TypeString, value)
+		_spec.SetField(group.FieldProtocolConvert, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedProtocolConvert(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldProtocolConvert, value)
+		})
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(group.FieldUpdatedAt, field.TypeTime, value)
@@ -537,16 +541,14 @@ func (_u *GroupUpdateOne) AddPriceMultiplier(v int) *GroupUpdateOne {
 }
 
 // SetProtocolConvert sets the "protocol_convert" field.
-func (_u *GroupUpdateOne) SetProtocolConvert(v string) *GroupUpdateOne {
+func (_u *GroupUpdateOne) SetProtocolConvert(v []string) *GroupUpdateOne {
 	_u.mutation.SetProtocolConvert(v)
 	return _u
 }
 
-// SetNillableProtocolConvert sets the "protocol_convert" field if the given value is not nil.
-func (_u *GroupUpdateOne) SetNillableProtocolConvert(v *string) *GroupUpdateOne {
-	if v != nil {
-		_u.SetProtocolConvert(*v)
-	}
+// AppendProtocolConvert appends value to the "protocol_convert" field.
+func (_u *GroupUpdateOne) AppendProtocolConvert(v []string) *GroupUpdateOne {
+	_u.mutation.AppendProtocolConvert(v)
 	return _u
 }
 
@@ -804,7 +806,12 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 		_spec.AddField(group.FieldPriceMultiplier, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.ProtocolConvert(); ok {
-		_spec.SetField(group.FieldProtocolConvert, field.TypeString, value)
+		_spec.SetField(group.FieldProtocolConvert, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedProtocolConvert(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldProtocolConvert, value)
+		})
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(group.FieldUpdatedAt, field.TypeTime, value)

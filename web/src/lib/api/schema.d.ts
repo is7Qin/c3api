@@ -1100,11 +1100,10 @@ export interface components {
         /** @enum {string} */
         GroupVisibility: "public" | "private";
         /**
-         * @description 分组级协议转换（只补差，W5 网关 internal/protoconv 消费）：off = 不转换；chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages
-         * @default off
+         * @description 分组级协议转换方向（只补差，W5 网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
          * @enum {string}
          */
-        GroupProtocolConvert: "off" | "chat_to_resp" | "mess_to_resp" | "resp_to_mess" | "chat_to_mess";
+        GroupProtocolConvert: "chat_to_resp" | "mess_to_resp" | "resp_to_mess" | "chat_to_mess";
         GroupAssignmentsBody: {
             /** @description 替换语义：完整授予列表（未列出即撤销；空数组 = 清空） */
             user_ids: number[];
@@ -1285,7 +1284,8 @@ export interface components {
              * @description 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5）。缺省/null = 不设置（×1）；显式 0 = 免费组；PUT 显式写（含 0）
              */
             price_multiplier?: number | null;
-            protocol_convert?: components["schemas"]["GroupProtocolConvert"];
+            /** @description 协议转换方向集合（多方向并存，按客户端格式命中——chat 请求走 chat_to_*、anthropic 请求走 mess_to_resp、resp 请求走 resp_to_mess）。空数组/缺省 = off = 不转换；同客户端格式多方向（chat_to_resp 与 chat_to_mess 并存）→ 400。PUT 语义：缺省（null/省略）= 保持原值；显式空数组 = 清空既有方向 */
+            protocol_convert?: components["schemas"]["GroupProtocolConvert"][];
         };
         RuleCreate: {
             name: string;
@@ -1346,7 +1346,8 @@ export interface components {
              * @description 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5）
              */
             PriceMultiplier?: number;
-            ProtocolConvert?: components["schemas"]["GroupProtocolConvert"];
+            /** @description 协议转换方向集合（空数组 = off = 不转换；多方向按客户端格式命中） */
+            ProtocolConvert?: components["schemas"]["GroupProtocolConvert"][];
             /** Format: date-time */
             CreatedAt?: string;
             /** Format: date-time */

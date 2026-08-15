@@ -350,7 +350,7 @@
     },
     "createdSuccess": "Group created",
     "newTitle": "New group",
-    "newDesc": "Set the name and visibility; the price multiplier can be adjusted later in edit",
+    "newDesc": "Set name, visibility and protocol conversion; leave the price multiplier empty for ×1",
     "protocolConvertLabel": "Protocol conversion",
     "protocolConvert": {
       "off": "Off",
@@ -366,6 +366,7 @@
       "resp_to_mess": "resp→mess",
       "chat_to_mess": "chat→mess"
     },
+    "protocolConvertHint": "Multiple directions can be selected at once; none selected = off (no conversion)",
     "nameLabel": "Name",
     "namePlaceholder": "e.g. prod-web",
     "visibilityLabel": "Visibility",
@@ -374,6 +375,7 @@
     "free": "Free",
     "multiplierLabel": "Price multiplier",
     "multiplierHint": "0 = free, 1 = ×1, up to ×10; leave empty to keep current",
+    "createMultiplierHint": "0 = free, 1 = ×1, up to ×10; leave empty for ×1 (not set)",
     "multiplierInvalid": "Enter a number between 0 and 10",
     "editTitle": "Edit group # {{id}}",
     "deleteTitle": "Delete group",

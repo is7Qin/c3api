@@ -18,9 +18,14 @@ func (Group) Fields() []ent.Field {
 		field.String("name").Unique(),
 		field.Enum("visibility").Values("public", "private").Default("public"),
 		field.Int("price_multiplier").Default(10000), // 万分数（T3.5 价格倍率）：组默认 ×1；0 = 免费
-		// protocol_convert 分组级协议转换（只补差，W5 消费）：off/chat_to_resp/
-		// mess_to_resp/resp_to_mess/chat_to_mess；枚举校验在 service 层。
-		field.String("protocol_convert").Default("off"),
+		// protocol_convert 分组级协议转换（只补差，W5 消费）：JSON 数组，空数组 =
+		// off = 不转换；多方向并存按客户端格式命中（chat 请求走 chat_to_*、anthropic
+		// 请求走 mess_to_resp、resp 请求走 resp_to_mess）。元素 ∈ 4 方向枚举（off 不
+		// 进数组）；非法方向/同客户端格式冲突（chat_to_resp + chat_to_mess）校验在
+		// service 层。默认空数组（对齐旧单值 .Default("off") 语义——缺省 = off；
+		// 直连 ent 建组的调用方恒有值）。beta 期无迁移：旧单值 string 数据不兼容
+		// （README 已声明升级 = 全新建），不迁移接受。
+		field.JSON("protocol_convert", []string{}).Default([]string{}),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 		field.Time("deleted_at").Optional().Nillable(), // 软删除时间戳（nil = 存活）；null 语义 = 未删除
 		field.Time("created_at").Default(time.Now),

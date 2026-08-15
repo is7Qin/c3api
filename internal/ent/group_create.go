@@ -60,16 +60,8 @@ func (_c *GroupCreate) SetNillablePriceMultiplier(v *int) *GroupCreate {
 }
 
 // SetProtocolConvert sets the "protocol_convert" field.
-func (_c *GroupCreate) SetProtocolConvert(v string) *GroupCreate {
+func (_c *GroupCreate) SetProtocolConvert(v []string) *GroupCreate {
 	_c.mutation.SetProtocolConvert(v)
-	return _c
-}
-
-// SetNillableProtocolConvert sets the "protocol_convert" field if the given value is not nil.
-func (_c *GroupCreate) SetNillableProtocolConvert(v *string) *GroupCreate {
-	if v != nil {
-		_c.SetProtocolConvert(*v)
-	}
 	return _c
 }
 
@@ -294,7 +286,7 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_node.PriceMultiplier = value
 	}
 	if value, ok := _c.mutation.ProtocolConvert(); ok {
-		_spec.SetField(group.FieldProtocolConvert, field.TypeString, value)
+		_spec.SetField(group.FieldProtocolConvert, field.TypeJSON, value)
 		_node.ProtocolConvert = value
 	}
 	if value, ok := _c.mutation.UpdatedAt(); ok {
@@ -452,7 +444,7 @@ func (u *GroupUpsert) AddPriceMultiplier(v int) *GroupUpsert {
 }
 
 // SetProtocolConvert sets the "protocol_convert" field.
-func (u *GroupUpsert) SetProtocolConvert(v string) *GroupUpsert {
+func (u *GroupUpsert) SetProtocolConvert(v []string) *GroupUpsert {
 	u.Set(group.FieldProtocolConvert, v)
 	return u
 }
@@ -603,7 +595,7 @@ func (u *GroupUpsertOne) UpdatePriceMultiplier() *GroupUpsertOne {
 }
 
 // SetProtocolConvert sets the "protocol_convert" field.
-func (u *GroupUpsertOne) SetProtocolConvert(v string) *GroupUpsertOne {
+func (u *GroupUpsertOne) SetProtocolConvert(v []string) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.SetProtocolConvert(v)
 	})
@@ -929,7 +921,7 @@ func (u *GroupUpsertBulk) UpdatePriceMultiplier() *GroupUpsertBulk {
 }
 
 // SetProtocolConvert sets the "protocol_convert" field.
-func (u *GroupUpsertBulk) SetProtocolConvert(v string) *GroupUpsertBulk {
+func (u *GroupUpsertBulk) SetProtocolConvert(v []string) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.SetProtocolConvert(v)
 	})

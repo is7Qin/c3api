@@ -95,16 +95,20 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 }
 
 // toAPIGroup 分组领域对象 → 契约类型（PriceMultiplier 万分数 → 正常值
-// float64，与 balance 毫分↔USD 同构的 API 边界换算）。
+// float64，与 balance 毫分↔USD 同构的 API 边界换算；ProtocolConverts 集合 →
+// 数组，空集合 = 空数组 = off 回显）。
 func toAPIGroup(g *domain.Group) Group {
 	v := GroupVisibility(g.Visibility)
-	pc := GroupProtocolConvert(g.ProtocolConvert)
+	converts := make([]GroupProtocolConvert, 0, len(g.ProtocolConverts))
+	for _, pc := range g.ProtocolConverts {
+		converts = append(converts, GroupProtocolConvert(pc))
+	}
 	return Group{
 		ID:              &g.ID,
 		Name:            &g.Name,
 		Visibility:      &v,
 		PriceMultiplier: ptr(multToNormal(g.PriceMultiplier)),
-		ProtocolConvert: &pc,
+		ProtocolConvert: &converts,
 		CreatedAt:       &g.CreatedAt,
 		UpdatedAt:       &g.UpdatedAt,
 		DeletedAt:       g.DeletedAt, // 软删除时间戳（只读字段，入参不接收）

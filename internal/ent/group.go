@@ -3,6 +3,7 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -24,7 +25,7 @@ type Group struct {
 	// PriceMultiplier holds the value of the "price_multiplier" field.
 	PriceMultiplier int `json:"price_multiplier,omitempty"`
 	// ProtocolConvert holds the value of the "protocol_convert" field.
-	ProtocolConvert string `json:"protocol_convert,omitempty"`
+	ProtocolConvert []string `json:"protocol_convert,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// DeletedAt holds the value of the "deleted_at" field.
@@ -82,9 +83,11 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case group.FieldProtocolConvert:
+			values[i] = new([]byte)
 		case group.FieldID, group.FieldPriceMultiplier:
 			values[i] = new(sql.NullInt64)
-		case group.FieldName, group.FieldVisibility, group.FieldProtocolConvert:
+		case group.FieldName, group.FieldVisibility:
 			values[i] = new(sql.NullString)
 		case group.FieldUpdatedAt, group.FieldDeletedAt, group.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -128,10 +131,12 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 				_m.PriceMultiplier = int(value.Int64)
 			}
 		case group.FieldProtocolConvert:
-			if value, ok := values[i].(*sql.NullString); !ok {
+			if value, ok := values[i].(*[]byte); !ok {
 				return fmt.Errorf("unexpected type %T for field protocol_convert", values[i])
-			} else if value.Valid {
-				_m.ProtocolConvert = value.String
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.ProtocolConvert); err != nil {
+					return fmt.Errorf("unmarshal field protocol_convert: %w", err)
+				}
 			}
 		case group.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -213,7 +218,7 @@ func (_m *Group) String() string {
 	builder.WriteString(fmt.Sprintf("%v", _m.PriceMultiplier))
 	builder.WriteString(", ")
 	builder.WriteString("protocol_convert=")
-	builder.WriteString(_m.ProtocolConvert)
+	builder.WriteString(fmt.Sprintf("%v", _m.ProtocolConvert))
 	builder.WriteString(", ")
 	builder.WriteString("updated_at=")
 	builder.WriteString(_m.UpdatedAt.Format(time.ANSIC))

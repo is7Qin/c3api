@@ -295,22 +295,26 @@ type Group struct {
 	// （PUT 全量替换）。API 边界（handler/convert.go）与正常值 float64 换算
 	// （1.5 ↔ 15000）。
 	PriceMultiplier int
-	// ProtocolConvert 分组级协议转换（只补差，W5 消费）：off 不转换；其余
-	// 值 = 客户端协议 → 模板协议（补差语义，转换器在网关 internal/protoconv）。
-	// 写路径语义：Create 缺省（handler 归一为 off）恒写入；Update 恒写入
-	// （service 校验枚举；非法值 400）。
-	ProtocolConvert ProtocolConvert
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	DeletedAt       *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
+	// ProtocolConverts 分组级协议转换方向集合（只补差，W5 消费；多方向并存按
+	// 客户端格式命中——chat 请求走 chat_to_*、anthropic 请求走 mess_to_resp、
+	// resp 请求走 resp_to_mess）：空集合 = off = 不转换（off 不进数组）。
+	// 写路径语义：Create 缺省（handler 归一为空数组）恒写入；Update 恒写入
+	// （service 校验集合——非法方向/重复方向/同客户端格式多方向 400；显式
+	// 空数组 = 清空）。
+	ProtocolConverts []ProtocolConvert
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	DeletedAt        *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
 }
 
-// ProtocolConvert 分组级协议转换枚举（补差语义：模板已支持客户端协议 → 直接
-// 转发零转换；转换仅在协议不匹配时发生）。
+// ProtocolConvert 分组级协议转换方向枚举（补差语义：模板已支持客户端协议 →
+// 直接转发零转换；转换仅在协议不匹配时发生）。方向 = 客户端协议 → 模板协议；
+// off（不转换）不在枚举内——空集合表达（数组元素 ∈ 4 方向；集合校验在
+// service 层——非法方向/重复/同客户端格式多方向 400）。
 type ProtocolConvert string
 
 const (
-	// ProtocolConvertOff 不转换（默认）。
+	// ProtocolConvertOff 不转换（空数组语义；不进方向数组，service 归一剔除）。
 	ProtocolConvertOff ProtocolConvert = "off"
 	// ProtocolConvertChatToResp 客户端 chat → 模板 resp 协议。
 	ProtocolConvertChatToResp ProtocolConvert = "chat_to_resp"
@@ -324,7 +328,7 @@ const (
 
 func (p ProtocolConvert) Valid() bool {
 	switch p {
-	case ProtocolConvertOff, ProtocolConvertChatToResp, ProtocolConvertMessToResp,
+	case ProtocolConvertChatToResp, ProtocolConvertMessToResp,
 		ProtocolConvertRespToMess, ProtocolConvertChatToMess:
 		return true
 	}
@@ -408,9 +412,11 @@ type KeyMeta struct {
 	HasQuota    bool
 	Quota       int64
 	QuotaUsed   int64 // 快照值（reload 时从 DB 读）；在途扣减走内存计数
-	// ProtocolConvert 组级协议转换快照值（W5）：off = 不转换（热路径分支零
-	// 开销）；其余 = 客户端协议 → 模板协议（补差语义，转换器 internal/protoconv）。
-	ProtocolConvert ProtocolConvert
+	// ProtocolConverts 组级协议转换方向集合快照值（W5）：空 = 不转换（热路径
+	// 分支零开销）；元素 = 客户端协议 → 模板协议（补差语义，转换器
+	// internal/protoconv；多方向按客户端格式命中，同客户端格式多方向已被
+	// 创建/更新校验拒绝）。
+	ProtocolConverts []ProtocolConvert
 }
 
 // UsageLog 用量日志：user_id/key_id 为鉴权归属（context 传递，0 = 无）。

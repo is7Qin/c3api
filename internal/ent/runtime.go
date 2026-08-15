@@ -92,7 +92,7 @@ func init() {
 	// groupDescProtocolConvert is the schema descriptor for protocol_convert field.
 	groupDescProtocolConvert := groupFields[4].Descriptor()
 	// group.DefaultProtocolConvert holds the default value on creation for the protocol_convert field.
-	group.DefaultProtocolConvert = groupDescProtocolConvert.Default.(string)
+	group.DefaultProtocolConvert = groupDescProtocolConvert.Default.([]string)
 	// groupDescUpdatedAt is the schema descriptor for updated_at field.
 	groupDescUpdatedAt := groupFields[5].Descriptor()
 	// group.DefaultUpdatedAt holds the default value on creation for the updated_at field.

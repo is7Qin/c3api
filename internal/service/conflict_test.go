@@ -53,14 +53,14 @@ func TestCreateGroupNameConflict(t *testing.T) {
 	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: nil}
 	ctx := context.Background()
 
-	_, err := svc.CreateGroup(ctx, "dup-g", domain.GroupVisibilityPublic, nil, domain.ProtocolConvertOff)
+	_, err := svc.CreateGroup(ctx, "dup-g", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 
-	_, err = svc.CreateGroup(ctx, "dup-g", domain.GroupVisibilityPrivate, nil, domain.ProtocolConvertOff)
+	_, err = svc.CreateGroup(ctx, "dup-g", domain.GroupVisibilityPrivate, nil, nil)
 	require.ErrorIs(t, err, ErrConflict, "重复 name → ErrConflict（409）")
 	require.Contains(t, err.Error(), `name="dup-g"`, "409 消息含冲突详情")
 
-	g, err := svc.CreateGroup(ctx, "other-g", domain.GroupVisibilityPublic, nil, domain.ProtocolConvertOff)
+	g, err := svc.CreateGroup(ctx, "other-g", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	g.Name = "dup-g"
 	_, err = svc.UpdateGroup(ctx, g)

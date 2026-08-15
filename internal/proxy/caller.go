@@ -35,26 +35,30 @@ type forwardRoute struct {
 	body   []byte
 }
 
-// convertedRoute 组协议转换配置 → （模板协议格式, 转换方向）：仅当配置方向的
-// 客户端协议与本次请求格式一致才返回转换（其余请求格式不受影响）；off → 无。
-// 只补差语义的缺口判定（客户端协议无路由）由调用方负责。
-func convertedRoute(pc domain.ProtocolConvert, client domain.RequestFormat) (domain.RequestFormat, domain.ProtocolConvert, bool) {
-	switch pc {
-	case domain.ProtocolConvertChatToResp:
-		if client == domain.FormatOpenAIChat {
-			return domain.FormatOpenAIResponses, pc, true
-		}
-	case domain.ProtocolConvertMessToResp:
-		if client == domain.FormatAnthropic {
-			return domain.FormatOpenAIResponses, pc, true
-		}
-	case domain.ProtocolConvertRespToMess:
-		if client == domain.FormatOpenAIResponses {
-			return domain.FormatAnthropic, pc, true
-		}
-	case domain.ProtocolConvertChatToMess:
-		if client == domain.FormatOpenAIChat {
-			return domain.FormatAnthropic, pc, true
+// convertedRoute 组协议转换方向集合 → （模板协议格式, 转换方向）：仅当配置方向
+// 的客户端协议与本次请求格式一致才返回转换（其余请求格式不受影响）；空集合
+// （off）→ 无。多方向按客户端格式命中第一个匹配方向——同客户端格式多方向已被
+// 创建/更新校验拒绝（service），至多命中一个。只补差语义的缺口判定（客户端
+// 协议无路由）由调用方负责。
+func convertedRoute(converts []domain.ProtocolConvert, client domain.RequestFormat) (domain.RequestFormat, domain.ProtocolConvert, bool) {
+	for _, pc := range converts {
+		switch pc {
+		case domain.ProtocolConvertChatToResp:
+			if client == domain.FormatOpenAIChat {
+				return domain.FormatOpenAIResponses, pc, true
+			}
+		case domain.ProtocolConvertMessToResp:
+			if client == domain.FormatAnthropic {
+				return domain.FormatOpenAIResponses, pc, true
+			}
+		case domain.ProtocolConvertRespToMess:
+			if client == domain.FormatOpenAIResponses {
+				return domain.FormatAnthropic, pc, true
+			}
+		case domain.ProtocolConvertChatToMess:
+			if client == domain.FormatOpenAIChat {
+				return domain.FormatAnthropic, pc, true
+			}
 		}
 	}
 	return "", "", false
@@ -246,7 +250,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		// 路由（缺口）且组配置了转换方向 → 客户端协议 → 转换 → 模板协议路由。
 		// off（默认）→ 上面的 errors.Is 分支零开销。ErrNoAvailable（有路由但
 		// 全忙）不转换——组有客户端协议模板，按现状 429。
-		if tgt, conv, ok := convertedRoute(meta.ProtocolConvert, format); ok {
+		if tgt, conv, ok := convertedRoute(meta.ProtocolConverts, format); ok {
 			if sel2, err2 := p.sched.Select(groupID, tgt, reqModel); err2 == nil {
 				cb, cerr := protoconv.ConvertRequest(body, conv)
 				if cerr != nil {

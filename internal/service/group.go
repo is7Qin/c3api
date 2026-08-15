@@ -15,18 +15,20 @@ import (
 
 // CreateGroup 创建分组（平台容量池）。priceMultiplier 万分数：nil = 未指定
 // （归一 10000 = ×1，恒写入——API 边界 nullable 可表达显式 0 = 免费组）；
-// 0~100000 显式写入；超界 → 400。protocolConvert：非法枚举 → 400（缺省
-// ProtocolConvertOff 由调用方归一）。创建后 Multipliers()：新组倍率须即刻进
-// 余额倍率快照（缺失 = ×1 计费窗口，评审 M-1 组倍率矩阵——组创建即倍率设定）。
-func (s *Service) CreateGroup(ctx context.Context, name string, visibility domain.GroupVisibility, priceMultiplier *int, protocolConvert domain.ProtocolConvert) (*domain.Group, error) {
+// 0~100000 显式写入；超界 → 400。protocolConverts：转换方向集合（缺省 nil =
+// 不转换）——off 元素归一剔除（空/仅 off → 空数组）；非法方向/重复方向/
+// 同客户端格式多方向 → 400。创建后 Multipliers()：新组倍率须即刻进余额倍率
+// 快照（缺失 = ×1 计费窗口，评审 M-1 组倍率矩阵——组创建即倍率设定）。
+func (s *Service) CreateGroup(ctx context.Context, name string, visibility domain.GroupVisibility, priceMultiplier *int, protocolConverts []domain.ProtocolConvert) (*domain.Group, error) {
 	if name == "" {
 		return nil, ErrInvalidInput
 	}
 	if !visibility.Valid() {
 		visibility = domain.GroupVisibilityPublic
 	}
-	if !protocolConvert.Valid() {
-		return nil, ErrInvalidInput
+	converts, err := normalizeProtocolConverts(protocolConverts)
+	if err != nil {
+		return nil, err
 	}
 	mult := 10000 // 缺省 → ×1（与 DB 默认同值，恒写入）
 	if priceMultiplier != nil {
@@ -35,7 +37,7 @@ func (s *Service) CreateGroup(ctx context.Context, name string, visibility domai
 		}
 		mult = *priceMultiplier
 	}
-	g := &domain.Group{Name: name, Visibility: visibility, PriceMultiplier: mult, ProtocolConvert: protocolConvert}
+	g := &domain.Group{Name: name, Visibility: visibility, PriceMultiplier: mult, ProtocolConverts: converts}
 	created, err := s.store.CreateGroup(ctx, g)
 	if err != nil {
 		return nil, mapRepoErr(err) // name 唯一冲突 → ErrConflict（409）
@@ -70,9 +72,11 @@ func (s *Service) UpdateGroup(ctx context.Context, g *domain.Group) (*domain.Gro
 	if g.PriceMultiplier < 0 || g.PriceMultiplier > 100000 {
 		return nil, ErrInvalidInput
 	}
-	if !g.ProtocolConvert.Valid() {
-		return nil, ErrInvalidInput
+	converts, err := normalizeProtocolConverts(g.ProtocolConverts)
+	if err != nil {
+		return nil, err
 	}
+	g.ProtocolConverts = converts
 	updated, err := s.store.UpdateGroup(ctx, g)
 	if err != nil {
 		return nil, mapRepoErr(err) // 改名撞已有 name → ErrConflict（409）
@@ -152,4 +156,32 @@ func (s *Service) UpdateGroupsBatch(ctx context.Context, ids []int64, p reposito
 		return ErrInvalidInput
 	}
 	return mapRepoErr(s.store.UpdateGroupsBatch(ctx, ids, p))
+}
+
+// normalizeProtocolConverts 校验并归一协议转换方向集合（Create/Update 共用）：
+// off 元素归一剔除（空/仅 off/nil → 空数组 = 不转换）；非法方向/重复方向 →
+// 400；同客户端格式多方向（chat_to_resp 与 chat_to_mess 并存——路由按客户端
+// 格式命中，语义歧义）→ 400。返回去重后的集合（顺序 = 输入遍历序）。
+func normalizeProtocolConverts(pcs []domain.ProtocolConvert) ([]domain.ProtocolConvert, error) {
+	seen := make(map[domain.ProtocolConvert]struct{}, len(pcs))
+	out := make([]domain.ProtocolConvert, 0, len(pcs))
+	for _, pc := range pcs {
+		if pc == domain.ProtocolConvertOff {
+			continue // off 不进数组（不转换 = 空数组表达）
+		}
+		if !pc.Valid() {
+			return nil, ErrInvalidInput
+		}
+		if _, dup := seen[pc]; dup {
+			return nil, ErrInvalidInput
+		}
+		seen[pc] = struct{}{}
+		out = append(out, pc)
+	}
+	if _, hasChatToResp := seen[domain.ProtocolConvertChatToResp]; hasChatToResp {
+		if _, clash := seen[domain.ProtocolConvertChatToMess]; clash {
+			return nil, ErrInvalidInput // chat 客户端格式两方向并存 → 400
+		}
+	}
+	return out, nil
 }

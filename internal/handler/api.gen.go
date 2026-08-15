@@ -53,7 +53,6 @@ const (
 	ChatToMess GroupProtocolConvert = "chat_to_mess"
 	ChatToResp GroupProtocolConvert = "chat_to_resp"
 	MessToResp GroupProtocolConvert = "mess_to_resp"
-	Off        GroupProtocolConvert = "off"
 	RespToMess GroupProtocolConvert = "resp_to_mess"
 )
 
@@ -595,10 +594,10 @@ type Group struct {
 	// PriceMultiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5）
 	PriceMultiplier *float64 `json:"PriceMultiplier,omitempty"`
 
-	// ProtocolConvert 分组级协议转换（只补差，W5 网关 internal/protoconv 消费）：off = 不转换；chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages
-	ProtocolConvert *GroupProtocolConvert `json:"ProtocolConvert,omitempty"`
-	UpdatedAt       *time.Time            `json:"UpdatedAt,omitempty"`
-	Visibility      *GroupVisibility      `json:"Visibility,omitempty"`
+	// ProtocolConvert 协议转换方向集合（空数组 = off = 不转换；多方向按客户端格式命中）
+	ProtocolConvert *[]GroupProtocolConvert `json:"ProtocolConvert,omitempty"`
+	UpdatedAt       *time.Time              `json:"UpdatedAt,omitempty"`
+	Visibility      *GroupVisibility        `json:"Visibility,omitempty"`
 }
 
 // GroupAssignmentsBody defines model for GroupAssignmentsBody.
@@ -624,9 +623,9 @@ type GroupCreate struct {
 	// PriceMultiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5）。缺省/null = 不设置（×1）；显式 0 = 免费组；PUT 显式写（含 0）
 	PriceMultiplier *float64 `json:"price_multiplier"`
 
-	// ProtocolConvert 分组级协议转换（只补差，W5 网关 internal/protoconv 消费）：off = 不转换；chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages
-	ProtocolConvert *GroupProtocolConvert `json:"protocol_convert,omitempty"`
-	Visibility      *GroupVisibility      `json:"visibility,omitempty"`
+	// ProtocolConvert 协议转换方向集合（多方向并存，按客户端格式命中——chat 请求走 chat_to_*、anthropic 请求走 mess_to_resp、resp 请求走 resp_to_mess）。空数组/缺省 = off = 不转换；同客户端格式多方向（chat_to_resp 与 chat_to_mess 并存）→ 400。PUT 语义：缺省（null/省略）= 保持原值；显式空数组 = 清空既有方向
+	ProtocolConvert *[]GroupProtocolConvert `json:"protocol_convert,omitempty"`
+	Visibility      *GroupVisibility        `json:"visibility,omitempty"`
 }
 
 // GroupListResponse defines model for GroupListResponse.
@@ -641,7 +640,7 @@ type GroupPatch struct {
 	Visibility *GroupVisibility `json:"visibility,omitempty"`
 }
 
-// GroupProtocolConvert 分组级协议转换（只补差，W5 网关 internal/protoconv 消费）：off = 不转换；chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages
+// GroupProtocolConvert 分组级协议转换方向（只补差，W5 网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
 type GroupProtocolConvert string
 
 // GroupVisibility defines model for GroupVisibility.

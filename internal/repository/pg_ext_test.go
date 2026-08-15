@@ -282,48 +282,53 @@ func TestGetTemplatesByIDsPG(t *testing.T) {
 	require.Equal(t, a.ID, got[0].ID)
 }
 
-// TestGroupProtocolConvertPG groups.protocol_convert 全枚举 roundtrip + 缺省
-// "off" + 更新生效。
+// TestGroupProtocolConvertPG groups.protocol_convert 方向集合：JSON 数组存取
+// roundtrip（多方向）+ 缺省 = 空数组（off）+ 更新覆盖/显式空数组清空。
 func TestGroupProtocolConvertPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 
-	// off 显式写入（service 层归一缺省为 off；repo 恒写入）
+	// 缺省（nil）→ 空数组（off；repo 恒写入）
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{
 		Name: "g-default", Visibility: domain.GroupVisibilityPublic,
-		PriceMultiplier: 10000, ProtocolConvert: domain.ProtocolConvertOff,
+		PriceMultiplier: 10000,
 	})
 	require.NoError(t, err)
 	got, err := repos.Groups.GetGroup(ctx, g.ID)
 	require.NoError(t, err)
-	require.Equal(t, domain.ProtocolConvertOff, got.ProtocolConvert)
+	require.Empty(t, got.ProtocolConverts, "缺省 = 空数组（off）")
 
-	// 全枚举 roundtrip
-	for _, pc := range []domain.ProtocolConvert{
-		domain.ProtocolConvertOff, domain.ProtocolConvertChatToResp,
-		domain.ProtocolConvertMessToResp, domain.ProtocolConvertRespToMess,
-		domain.ProtocolConvertChatToMess,
-	} {
-		g, err := repos.Groups.CreateGroup(ctx, &domain.Group{
-			Name: "g-" + string(pc), Visibility: domain.GroupVisibilityPublic,
-			PriceMultiplier: 10000, ProtocolConvert: pc,
-		})
-		require.NoError(t, err)
-		got, err := repos.Groups.GetGroup(ctx, g.ID)
-		require.NoError(t, err)
-		require.Equal(t, pc, got.ProtocolConvert, "roundtrip %s", pc)
+	// 四方向 JSON 数组 roundtrip
+	all := []domain.ProtocolConvert{
+		domain.ProtocolConvertChatToResp, domain.ProtocolConvertMessToResp,
+		domain.ProtocolConvertRespToMess, domain.ProtocolConvertChatToMess,
 	}
+	g2, err := repos.Groups.CreateGroup(ctx, &domain.Group{
+		Name: "g-multi", Visibility: domain.GroupVisibilityPublic,
+		PriceMultiplier: 10000, ProtocolConverts: all,
+	})
+	require.NoError(t, err)
+	got2, err := repos.Groups.GetGroup(ctx, g2.ID)
+	require.NoError(t, err)
+	require.Equal(t, all, got2.ProtocolConverts, "多方向 roundtrip（JSON 数组存取）")
 
-	// 更新生效
-	g, err = repos.Groups.GetGroup(ctx, g.ID)
+	// 更新覆盖（单方向）
+	g2.ProtocolConverts = []domain.ProtocolConvert{domain.ProtocolConvertRespToMess}
+	updated, err := repos.Groups.UpdateGroup(ctx, g2)
 	require.NoError(t, err)
-	g.ProtocolConvert = domain.ProtocolConvertRespToMess
-	updated, err := repos.Groups.UpdateGroup(ctx, g)
+	require.Equal(t, []domain.ProtocolConvert{domain.ProtocolConvertRespToMess}, updated.ProtocolConverts)
+	got, err = repos.Groups.GetGroup(ctx, g2.ID)
 	require.NoError(t, err)
-	require.Equal(t, domain.ProtocolConvertRespToMess, updated.ProtocolConvert)
-	got, err = repos.Groups.GetGroup(ctx, g.ID)
+	require.Equal(t, []domain.ProtocolConvert{domain.ProtocolConvertRespToMess}, got.ProtocolConverts, "更新生效")
+
+	// 显式空数组 = 清空既有方向
+	g2.ProtocolConverts = []domain.ProtocolConvert{}
+	updated2, err := repos.Groups.UpdateGroup(ctx, g2)
 	require.NoError(t, err)
-	require.Equal(t, domain.ProtocolConvertRespToMess, got.ProtocolConvert)
+	require.Empty(t, updated2.ProtocolConverts, "显式空数组 = 清空")
+	got, err = repos.Groups.GetGroup(ctx, g2.ID)
+	require.NoError(t, err)
+	require.Empty(t, got.ProtocolConverts)
 }
 
 // ---------------------------------------------------------------------------

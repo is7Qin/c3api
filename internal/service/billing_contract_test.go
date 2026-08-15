@@ -29,20 +29,20 @@ func TestGroupMultiplierValidation(t *testing.T) {
 	// 创建：nil = 未指定 → ×1（service 归一 10000 恒写入）；20000 显式；
 	// 显式 0 = 免费组（T3.5 修正：API 边界 nullable 可表达，service 不再把 0
 	// 当未指定）
-	g, err := svc.CreateGroup(ctx, "g0", domain.GroupVisibilityPublic, nil, domain.ProtocolConvertOff)
+	g, err := svc.CreateGroup(ctx, "g0", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, 10000, g.PriceMultiplier, "nil = 未指定 → ×1")
-	g, err = svc.CreateGroup(ctx, "g1", domain.GroupVisibilityPublic, intPtr(20000), domain.ProtocolConvertOff)
+	g, err = svc.CreateGroup(ctx, "g1", domain.GroupVisibilityPublic, intPtr(20000), nil)
 	require.NoError(t, err)
 	require.Equal(t, 20000, g.PriceMultiplier)
-	g, err = svc.CreateGroup(ctx, "g-free", domain.GroupVisibilityPublic, intPtr(0), domain.ProtocolConvertOff)
+	g, err = svc.CreateGroup(ctx, "g-free", domain.GroupVisibilityPublic, intPtr(0), nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, g.PriceMultiplier, "显式 0 = 免费组（恒写入）")
 
 	// 创建/更新超界 → 400
-	_, err = svc.CreateGroup(ctx, "g2", domain.GroupVisibilityPublic, intPtr(-1), domain.ProtocolConvertOff)
+	_, err = svc.CreateGroup(ctx, "g2", domain.GroupVisibilityPublic, intPtr(-1), nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, err = svc.CreateGroup(ctx, "g3", domain.GroupVisibilityPublic, intPtr(100001), domain.ProtocolConvertOff)
+	_, err = svc.CreateGroup(ctx, "g3", domain.GroupVisibilityPublic, intPtr(100001), nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
 	g.PriceMultiplier = 100001
 	_, err = svc.UpdateGroup(ctx, g)

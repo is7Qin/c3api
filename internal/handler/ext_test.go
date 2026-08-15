@@ -188,36 +188,56 @@ func TestAccountsIdExt(t *testing.T) {
 	require.Equal(t, 404, rec.Code, "父账号缺失 → 404: %s", rec.Body.String())
 }
 
-// TestGroupProtocolConvertAPI 分组 protocol_convert：创建/更新 roundtrip +
-// 非法值 400 + 缺省 off。
+// TestGroupProtocolConvertAPI 分组 protocol_convert 方向集合：创建/更新
+// roundtrip（多值数组回显）+ 缺省 = 空数组（off）+ PUT 缺省保持原值/显式空
+// 数组清空 + 非法值/同客户端格式冲突 400。
 func TestGroupProtocolConvertAPI(t *testing.T) {
 	_, _, do := newListTestRouter(t)
 
-	// 缺省 → off
+	// 缺省 → 空数组（off）
 	rec := do(http.MethodPost, "/admin/groups", `{"name":"g-default"}`)
 	require.Equal(t, 200, rec.Code, "create group: %s", rec.Body.String())
 	var g Group
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
-	require.Equal(t, Off, *g.ProtocolConvert, "缺省 protocol_convert = off")
+	require.Empty(t, *g.ProtocolConvert, "缺省 protocol_convert = 空数组（off）")
 
-	// 显式 chat_to_resp → roundtrip
-	rec = do(http.MethodPost, "/admin/groups", `{"name":"g-c2r","protocol_convert":"chat_to_resp"}`)
-	require.Equal(t, 200, rec.Code, "create group c2r: %s", rec.Body.String())
+	// 显式多方向 → roundtrip（数组形态回显）
+	rec = do(http.MethodPost, "/admin/groups",
+		`{"name":"g-multi","protocol_convert":["chat_to_resp","mess_to_resp"]}`)
+	require.Equal(t, 200, rec.Code, "create group multi: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
-	require.Equal(t, ChatToResp, *g.ProtocolConvert)
+	require.Equal(t, []GroupProtocolConvert{ChatToResp, MessToResp}, *g.ProtocolConvert, "多方向 roundtrip")
 
-	// 更新 resp_to_mess → 生效
+	// 更新换方向（显式数组覆盖）→ 生效
 	rec = do(http.MethodPut, "/admin/groups/"+itoa64(*g.ID),
-		`{"name":"g-c2r","protocol_convert":"resp_to_mess"}`)
+		`{"name":"g-multi","protocol_convert":["resp_to_mess"]}`)
 	require.Equal(t, 200, rec.Code, "update group: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
-	require.Equal(t, RespToMess, *g.ProtocolConvert)
+	require.Equal(t, []GroupProtocolConvert{RespToMess}, *g.ProtocolConvert)
+
+	// PUT 缺省（省略键）= 保持原值
+	rec = do(http.MethodPut, "/admin/groups/"+itoa64(*g.ID), `{"name":"g-multi"}`)
+	require.Equal(t, 200, rec.Code, "update group omit: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
+	require.Equal(t, []GroupProtocolConvert{RespToMess}, *g.ProtocolConvert, "PUT 缺省保持原值")
+
+	// PUT 显式空数组 = 清空既有方向（off）
+	rec = do(http.MethodPut, "/admin/groups/"+itoa64(*g.ID),
+		`{"name":"g-multi","protocol_convert":[]}`)
+	require.Equal(t, 200, rec.Code, "update group clear: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
+	require.Empty(t, *g.ProtocolConvert, "显式空数组 = 清空（off）")
 
 	// 非法值 → 400（连字符命名非法，枚举用下划线）
-	rec = do(http.MethodPost, "/admin/groups", `{"name":"g-bad","protocol_convert":"chat-to-resp"}`)
+	rec = do(http.MethodPost, "/admin/groups", `{"name":"g-bad","protocol_convert":["chat-to-resp"]}`)
 	require.Equal(t, 400, rec.Code, "非法 protocol_convert 必须 400: %s", rec.Body.String())
-	rec = do(http.MethodPut, "/admin/groups/"+itoa64(*g.ID), `{"name":"g-c2r","protocol_convert":"bogus"}`)
+	rec = do(http.MethodPut, "/admin/groups/"+itoa64(*g.ID), `{"name":"g-multi","protocol_convert":["bogus"]}`)
 	require.Equal(t, 400, rec.Code, "非法 protocol_convert 更新必须 400: %s", rec.Body.String())
+
+	// 同客户端格式冲突（chat_to_resp + chat_to_mess）→ 400
+	rec = do(http.MethodPost, "/admin/groups",
+		`{"name":"g-clash","protocol_convert":["chat_to_resp","chat_to_mess"]}`)
+	require.Equal(t, 400, rec.Code, "同客户端格式多方向必须 400: %s", rec.Body.String())
 }
 
 func itoa64(i int64) string {

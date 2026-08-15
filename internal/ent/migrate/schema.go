@@ -140,7 +140,7 @@ var (
 		{Name: "name", Type: field.TypeString, Unique: true},
 		{Name: "visibility", Type: field.TypeEnum, Enums: []string{"public", "private"}, Default: "public"},
 		{Name: "price_multiplier", Type: field.TypeInt, Default: 10000},
-		{Name: "protocol_convert", Type: field.TypeString, Default: "off"},
+		{Name: "protocol_convert", Type: field.TypeJSON},
 		{Name: "updated_at", Type: field.TypeTime},
 		{Name: "deleted_at", Type: field.TypeTime, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},

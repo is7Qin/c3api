@@ -350,7 +350,7 @@
     },
     "createdSuccess": "分组已创建",
     "newTitle": "新建分组",
-    "newDesc": "设置名称与可见性；价格倍率可在编辑中调整",
+    "newDesc": "设置名称、可见性与协议转换；价格倍率留空 = ×1",
     "protocolConvertLabel": "协议转换",
     "protocolConvert": {
       "off": "关闭",
@@ -366,6 +366,7 @@
       "resp_to_mess": "resp→mess",
       "chat_to_mess": "chat→mess"
     },
+    "protocolConvertHint": "多方向可同时勾选；全不勾 = 关闭（不转换）",
     "nameLabel": "名称",
     "namePlaceholder": "如 prod-web",
     "visibilityLabel": "可见性",
@@ -374,6 +375,7 @@
     "free": "免费",
     "multiplierLabel": "价格倍率",
     "multiplierHint": "0 = 免费，1 = ×1，上限 ×10；留空保持原值",
+    "createMultiplierHint": "0 = 免费，1 = ×1，上限 ×10；留空 = ×1（不设置）",
     "multiplierInvalid": "请输入 0-10 之间的数值",
     "editTitle": "编辑分组 # {{id}}",
     "deleteTitle": "删除分组",

@@ -32,11 +32,16 @@ func (h *AdminAPI) PostGroups(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	pc := domain.ProtocolConvertOff // 缺省 = 不转换
+	// protocol_convert 方向集合（缺省 = 空数组 = off = 不转换；非法值/冲突
+	// 校验在 service 层 400）
+	var pcs []domain.ProtocolConvert
 	if in.ProtocolConvert != nil {
-		pc = domain.ProtocolConvert(*in.ProtocolConvert)
+		pcs = make([]domain.ProtocolConvert, 0, len(*in.ProtocolConvert))
+		for _, pc := range *in.ProtocolConvert {
+			pcs = append(pcs, domain.ProtocolConvert(pc))
+		}
 	}
-	g, err := h.svc.CreateGroup(r.Context(), in.Name, visibility, mult, pc)
+	g, err := h.svc.CreateGroup(r.Context(), in.Name, visibility, mult, pcs)
 	if err != nil {
 		writeServiceErr(w, err)
 		return
@@ -99,9 +104,13 @@ func (h *AdminAPI) PutGroupsId(w http.ResponseWriter, r *http.Request, id int64)
 		}
 		g.PriceMultiplier = int(math.Round(*in.PriceMultiplier * 10000))
 	}
-	// protocol_convert 缺省 = 保持原值（读改写路径携带原值自然保留）
+	// protocol_convert 缺省（null/省略）= 保持原值（读改写路径携带原值自然
+	// 保留）；显式数组（含空数组 = 清空既有方向）→ 覆盖。
 	if in.ProtocolConvert != nil {
-		g.ProtocolConvert = domain.ProtocolConvert(*in.ProtocolConvert)
+		g.ProtocolConverts = nil
+		for _, pc := range *in.ProtocolConvert {
+			g.ProtocolConverts = append(g.ProtocolConverts, domain.ProtocolConvert(pc))
+		}
 	}
 	updated, err := h.svc.UpdateGroup(r.Context(), g)
 	if err != nil {

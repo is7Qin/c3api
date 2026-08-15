@@ -34,9 +34,35 @@ func toDomainGroup(g *ent.Group) *domain.Group {
 	return &domain.Group{
 		ID: g.ID, Name: g.Name, Visibility: domain.GroupVisibility(g.Visibility),
 		PriceMultiplier: g.PriceMultiplier,
-		ProtocolConvert: domain.ProtocolConvert(g.ProtocolConvert),
-		CreatedAt:       g.CreatedAt, UpdatedAt: g.UpdatedAt, DeletedAt: g.DeletedAt,
+		ProtocolConverts: toDomainProtocolConverts(g.ProtocolConvert),
+		CreatedAt:        g.CreatedAt, UpdatedAt: g.UpdatedAt, DeletedAt: g.DeletedAt,
 	}
+}
+
+// toDomainProtocolConverts ent JSON 数组（[]string）→ domain 协议转换方向集合
+//（空数组/nil = off = 不转换）。
+func toDomainProtocolConverts(v []string) []domain.ProtocolConvert {
+	if len(v) == 0 {
+		return nil
+	}
+	out := make([]domain.ProtocolConvert, len(v))
+	for i, s := range v {
+		out[i] = domain.ProtocolConvert(s)
+	}
+	return out
+}
+
+// protocolConvertStrings domain 方向集合 → ent JSON 数组（[]string；空集合 →
+// 空数组落库——空数组 = off，与 nil/null 语义区分）。
+func protocolConvertStrings(pcs []domain.ProtocolConvert) []string {
+	if len(pcs) == 0 {
+		return []string{}
+	}
+	out := make([]string, len(pcs))
+	for i, pc := range pcs {
+		out[i] = string(pc)
+	}
+	return out
 }
 
 func toDomainTemplateExt(e *ent.TemplateExt) *domain.TemplateExt {

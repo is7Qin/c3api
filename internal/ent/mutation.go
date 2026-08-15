@@ -4772,30 +4772,31 @@ func (m *FunctionPriceMutation) ResetEdge(name string) error {
 // GroupMutation represents an operation that mutates the Group nodes in the graph.
 type GroupMutation struct {
 	config
-	op                  Op
-	typ                 string
-	id                  *int64
-	name                *string
-	visibility          *group.Visibility
-	price_multiplier    *int
-	addprice_multiplier *int
-	protocol_convert    *string
-	updated_at          *time.Time
-	deleted_at          *time.Time
-	created_at          *time.Time
-	clearedFields       map[string]struct{}
-	accounts            map[int64]struct{}
-	removedaccounts     map[int64]struct{}
-	clearedaccounts     bool
-	keys                map[int64]struct{}
-	removedkeys         map[int64]struct{}
-	clearedkeys         bool
-	assignments         map[int64]struct{}
-	removedassignments  map[int64]struct{}
-	clearedassignments  bool
-	done                bool
-	oldValue            func(context.Context) (*Group, error)
-	predicates          []predicate.Group
+	op                     Op
+	typ                    string
+	id                     *int64
+	name                   *string
+	visibility             *group.Visibility
+	price_multiplier       *int
+	addprice_multiplier    *int
+	protocol_convert       *[]string
+	appendprotocol_convert []string
+	updated_at             *time.Time
+	deleted_at             *time.Time
+	created_at             *time.Time
+	clearedFields          map[string]struct{}
+	accounts               map[int64]struct{}
+	removedaccounts        map[int64]struct{}
+	clearedaccounts        bool
+	keys                   map[int64]struct{}
+	removedkeys            map[int64]struct{}
+	clearedkeys            bool
+	assignments            map[int64]struct{}
+	removedassignments     map[int64]struct{}
+	clearedassignments     bool
+	done                   bool
+	oldValue               func(context.Context) (*Group, error)
+	predicates             []predicate.Group
 }
 
 var _ ent.Mutation = (*GroupMutation)(nil)
@@ -5031,12 +5032,13 @@ func (m *GroupMutation) ResetPriceMultiplier() {
 }
 
 // SetProtocolConvert sets the "protocol_convert" field.
-func (m *GroupMutation) SetProtocolConvert(s string) {
+func (m *GroupMutation) SetProtocolConvert(s []string) {
 	m.protocol_convert = &s
+	m.appendprotocol_convert = nil
 }
 
 // ProtocolConvert returns the value of the "protocol_convert" field in the mutation.
-func (m *GroupMutation) ProtocolConvert() (r string, exists bool) {
+func (m *GroupMutation) ProtocolConvert() (r []string, exists bool) {
 	v := m.protocol_convert
 	if v == nil {
 		return
@@ -5047,7 +5049,7 @@ func (m *GroupMutation) ProtocolConvert() (r string, exists bool) {
 // OldProtocolConvert returns the old "protocol_convert" field's value of the Group entity.
 // If the Group object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *GroupMutation) OldProtocolConvert(ctx context.Context) (v string, err error) {
+func (m *GroupMutation) OldProtocolConvert(ctx context.Context) (v []string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldProtocolConvert is only allowed on UpdateOne operations")
 	}
@@ -5061,9 +5063,23 @@ func (m *GroupMutation) OldProtocolConvert(ctx context.Context) (v string, err e
 	return oldValue.ProtocolConvert, nil
 }
 
+// AppendProtocolConvert adds s to the "protocol_convert" field.
+func (m *GroupMutation) AppendProtocolConvert(s []string) {
+	m.appendprotocol_convert = append(m.appendprotocol_convert, s...)
+}
+
+// AppendedProtocolConvert returns the list of values that were appended to the "protocol_convert" field in this mutation.
+func (m *GroupMutation) AppendedProtocolConvert() ([]string, bool) {
+	if len(m.appendprotocol_convert) == 0 {
+		return nil, false
+	}
+	return m.appendprotocol_convert, true
+}
+
 // ResetProtocolConvert resets all changes to the "protocol_convert" field.
 func (m *GroupMutation) ResetProtocolConvert() {
 	m.protocol_convert = nil
+	m.appendprotocol_convert = nil
 }
 
 // SetUpdatedAt sets the "updated_at" field.
@@ -5481,7 +5497,7 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		m.SetPriceMultiplier(v)
 		return nil
 	case group.FieldProtocolConvert:
-		v, ok := value.(string)
+		v, ok := value.([]string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}

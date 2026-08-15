@@ -221,7 +221,7 @@ func (r *KeyRepo) LoadKeys(ctx context.Context) (map[string]domain.KeyMeta, erro
 			// 组级 protocol_convert 快照（W5 热路径分支数据源；组软删窗口内
 			// 行仍在 → 值照旧，快照一致性由 Reload 收敛）。
 			if row.Edges.Group != nil {
-				meta.ProtocolConvert = domain.ProtocolConvert(row.Edges.Group.ProtocolConvert)
+				meta.ProtocolConverts = toDomainProtocolConverts(row.Edges.Group.ProtocolConvert)
 			}
 			out[row.KeyHash] = meta
 		}

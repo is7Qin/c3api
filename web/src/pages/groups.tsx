@@ -34,8 +34,31 @@ type GroupVisibility = components['schemas']['GroupVisibility']
 type GroupProtocolConvert = components['schemas']['GroupProtocolConvert']
 type GroupAssignmentsBody = components['schemas']['GroupAssignmentsBody']
 
-// 协议转换（W5 网关 internal/protoconv 消费）：五值，缺省 off
-const PROTOCOL_CONVERTS: GroupProtocolConvert[] = ['off', 'chat_to_resp', 'mess_to_resp', 'resp_to_mess', 'chat_to_mess']
+// 协议转换方向（W5 网关 internal/protoconv 消费）：4 方向可多选，全不勾 = off =
+// 不转换（off 不进数组，空勾选表达）
+const PROTOCOL_CONVERTS: GroupProtocolConvert[] = ['chat_to_resp', 'mess_to_resp', 'resp_to_mess', 'chat_to_mess']
+
+// 协议转换多选切换：勾选 = 加入方向集合（同方向去重），取消 = 移除。
+const toggleConvert = (on: boolean, v: GroupProtocolConvert, cur: GroupProtocolConvert[]) =>
+  on ? (cur.includes(v) ? cur : [...cur, v]) : cur.filter(x => x !== v)
+
+// 协议转换多选 checkbox 组（创建/编辑共用）：4 方向勾选，全不勾 = off。
+function ProtocolConvertCheckboxes({ value, onChange }: {
+  value: GroupProtocolConvert[]
+  onChange: (v: GroupProtocolConvert[]) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="space-y-1">
+      {PROTOCOL_CONVERTS.map(v => (
+        <label key={v} className="flex cursor-pointer items-center gap-2.5 rounded-md border px-2 py-1.5 text-sm">
+          <Checkbox checked={value.includes(v)} onCheckedChange={c => onChange(toggleConvert(c === true, v, value))} />
+          {t(`groups.protocolConvert.${v}`)}
+        </label>
+      ))}
+    </div>
+  )
+}
 
 // 授予弹窗行内专属倍率态：mult = 输入框文本（'' = 未填）；cleared = 用户显式点过
 // 「清除为未设置」（提交 null）；勾选留空且未清除 = 省略键（沿用当前值）。
@@ -352,30 +375,49 @@ export default function Groups() {
     })
   }
 
-  // —— 创建（表单：name + visibility + protocol_convert；POST 不设倍率）——
+  // —— 创建（表单：name + visibility + protocol_convert 多选 + price_multiplier；
+  //     倍率留空 = 省略键，后端按 ×1）——
   const [createOpen, setCreateOpen] = useState(false)
   const [createName, setCreateName] = useState('')
   const [createVisibility, setCreateVisibility] = useState<GroupVisibility>('public')
-  const [createProtocol, setCreateProtocol] = useState<GroupProtocolConvert>('off')
+  const [createProtocols, setCreateProtocols] = useState<GroupProtocolConvert[]>([])
+  const [createMultiplier, setCreateMultiplier] = useState('')
   const openCreate = () => {
     setCreateName('')
     setCreateVisibility('public')
-    setCreateProtocol('off')
+    setCreateProtocols([])
+    setCreateMultiplier('')
     setCreateOpen(true)
   }
   const create = useMutation({
-    mutationFn: (n: string) => api.createGroup({ name: n, visibility: createVisibility, protocol_convert: createProtocol }),
+    mutationFn: (n: string) => {
+      const body: components['schemas']['GroupCreate'] = {
+        name: n,
+        visibility: createVisibility,
+        protocol_convert: createProtocols, // 空数组 = off = 不转换
+      }
+      const m = createMultiplier.trim()
+      if (m !== '') {
+        const v = Number(m)
+        if (!Number.isFinite(v) || v < 0 || v > 10) {
+          throw new Error(t('groups.multiplierInvalid'))
+        }
+        body.price_multiplier = v // 正常值直接提交：0 = 免费组，1 = ×1，上限 10；输入为空则省略键（后端按 ×1）
+      }
+      return api.createGroup(body)
+    },
     onSuccess: (_g, name) => {
       qc.invalidateQueries({ queryKey: ['groups'] })
       setCreateOpen(false)
       toast.add({ title: t('groups.createdSuccess'), description: name, type: 'success' })
     },
   })
-  // —— 编辑（name + visibility + protocol_convert；PUT 缺省字段保持原值，此处总是显式提交）——
+  // —— 编辑（name + visibility + protocol_convert 多选；PUT 缺省字段保持原值，
+  //      此处总是显式提交——空数组 = 清空既有方向）——
   const [editTarget, setEditTarget] = useState<Group | null>(null)
   const [editName, setEditName] = useState('')
   const [editVisibility, setEditVisibility] = useState<GroupVisibility>('public')
-  const [editProtocol, setEditProtocol] = useState<GroupProtocolConvert>('off')
+  const [editProtocols, setEditProtocols] = useState<GroupProtocolConvert[]>([])
   // 倍率用字符串态：空 = 不修改（PUT 省略键，后端保持原值）
   const [editMultiplier, setEditMultiplier] = useState('')
   // —— 删除 ——
@@ -383,7 +425,7 @@ export default function Groups() {
 
   const rename = useMutation({
     mutationFn: () => {
-      const body: components['schemas']['GroupCreate'] = { name: editName.trim(), visibility: editVisibility, protocol_convert: editProtocol }
+      const body: components['schemas']['GroupCreate'] = { name: editName.trim(), visibility: editVisibility, protocol_convert: editProtocols }
       const m = editMultiplier.trim()
       if (m !== '') {
         const v = Number(m)
@@ -490,17 +532,21 @@ export default function Groups() {
                     <TableCell><VisibilityBadge visibility={g.Visibility} /></TableCell>
                     <TableCell className="tabular-nums">{formatMultiplier(g.PriceMultiplier, t)}</TableCell>
                     <TableCell>
-                      {g.ProtocolConvert && g.ProtocolConvert !== 'off' ? (
-                        <Badge variant="secondary" className="font-mono text-xs">{t(`groups.protocolConvertShort.${g.ProtocolConvert}`)}</Badge>
+                      {g.ProtocolConvert && g.ProtocolConvert.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {g.ProtocolConvert.map(pc => (
+                            <Badge key={pc} variant="secondary" className="font-mono text-xs">{t(`groups.protocolConvertShort.${pc}`)}</Badge>
+                          ))}
+                        </div>
                       ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
+                        <span className="text-xs text-muted-foreground">{t('groups.protocolConvertShort.off')}</span>
                       )}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{formatDateTime(g.CreatedAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button variant="ghost" size="icon-sm" title={t('groups.assignButton')} onClick={() => openAssign(g)}><UserPlus /></Button>
-                        <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => { setEditTarget(g); setEditName(g.Name ?? ''); setEditVisibility(g.Visibility ?? 'public'); setEditProtocol(g.ProtocolConvert ?? 'off'); setEditMultiplier(g.PriceMultiplier != null ? String(g.PriceMultiplier) : '') }}><Pencil /></Button>
+                        <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => { setEditTarget(g); setEditName(g.Name ?? ''); setEditVisibility(g.Visibility ?? 'public'); setEditProtocols(g.ProtocolConvert ?? []); setEditMultiplier(g.PriceMultiplier != null ? String(g.PriceMultiplier) : '') }}><Pencil /></Button>
                         <Button variant="ghost" size="icon-sm" className="text-destructive" title={t('common.delete')} onClick={() => setDeleting(g)}><Trash2 /></Button>
                       </div>
                     </TableCell>
@@ -546,19 +592,24 @@ export default function Groups() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="grp-create-protocol">{t('groups.protocolConvertLabel')}</Label>
-              <Select
-                items={Object.fromEntries(PROTOCOL_CONVERTS.map(v => [v, t(`groups.protocolConvert.${v}`)]))}
-                value={createProtocol}
-                onValueChange={v => setCreateProtocol(v as GroupProtocolConvert)}
-              >
-                <SelectTrigger id="grp-create-protocol" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {PROTOCOL_CONVERTS.map(v => (
-                    <SelectItem key={v} value={v} label={t(`groups.protocolConvert.${v}`)}>{t(`groups.protocolConvert.${v}`)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>{t('groups.protocolConvertLabel')}</Label>
+              <ProtocolConvertCheckboxes value={createProtocols} onChange={setCreateProtocols} />
+              <p className="text-xs text-muted-foreground">{t('groups.protocolConvertHint')}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="grp-create-multiplier">{t('groups.multiplierLabel')}</Label>
+              <Input
+                id="grp-create-multiplier"
+                type="number"
+                min={0}
+                max={10}
+                step={0.1}
+                value={createMultiplier}
+                placeholder="1"
+                onChange={e => setCreateMultiplier(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && createName.trim() && !create.isPending) create.mutate(createName.trim()) }}
+              />
+              <p className="text-xs text-muted-foreground">{t('groups.createMultiplierHint')}</p>
             </div>
             {create.isError && errMsg(create.error) && (
               <p className="text-sm text-destructive">{errMsg(create.error)}</p>
@@ -599,19 +650,9 @@ export default function Groups() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="grp-edit-protocol">{t('groups.protocolConvertLabel')}</Label>
-              <Select
-                items={Object.fromEntries(PROTOCOL_CONVERTS.map(v => [v, t(`groups.protocolConvert.${v}`)]))}
-                value={editProtocol}
-                onValueChange={v => setEditProtocol(v as GroupProtocolConvert)}
-              >
-                <SelectTrigger id="grp-edit-protocol" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {PROTOCOL_CONVERTS.map(v => (
-                    <SelectItem key={v} value={v} label={t(`groups.protocolConvert.${v}`)}>{t(`groups.protocolConvert.${v}`)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>{t('groups.protocolConvertLabel')}</Label>
+              <ProtocolConvertCheckboxes value={editProtocols} onChange={setEditProtocols} />
+              <p className="text-xs text-muted-foreground">{t('groups.protocolConvertHint')}</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="grp-edit-multiplier">{t('groups.multiplierLabel')}</Label>
