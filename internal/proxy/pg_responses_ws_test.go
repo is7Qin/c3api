@@ -127,3 +127,75 @@ func TestResponsesWSBillingPG(t *testing.T) {
 	require.Equal(t, "none", et)
 	require.Equal(t, "gpt-4o", model)
 }
+
+// TestResponsesWSBillingTierPG resp-ws service_tier 计费落库（真实 PG）：WS 首帧
+// 带 service_tier=fast → usage_logs.billing_tier="fast" + cost 按 fast 倍率
+// （260 ≠ auto 130）——同请求 HTTP 按档计费、WS 恒 auto 的金额错收修复钉死。
+func TestResponsesWSBillingTierPG(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
+	}
+	if strings.Contains(dsn, "?") {
+		dsn += "&search_path=" + wsPGTestSchema
+	} else {
+		dsn += "?search_path=" + wsPGTestSchema
+	}
+	ctx := context.Background()
+	pool, err := repository.OpenPG(ctx, dsn, 5)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	db := stdlib.OpenDBFromPool(pool)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+wsPGTestSchema+` CASCADE; CREATE SCHEMA `+wsPGTestSchema+`;`)
+	require.NoError(t, err)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	require.NoError(t, err)
+	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
+
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
+	require.NoError(t, bal.Reload(ctx), "余额快照加载")
+	rec := usage.New(usage.UsageConfig{
+		BatchSize: 100, FlushInterval: time.Hour,
+		QuotaFlushInterval: time.Hour,
+	}, noopLogStore{}, nil)
+	f := billing.NewFlusher(billing.FlushConfig{
+		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
+	}, repos.Billing, rec, bal, nil)
+	t.Cleanup(func() { _ = f.Close(context.Background()) })
+
+	up := fakeResponsesWS(t, &fakeWSHooks{frameLimit: 1})
+	defer up.Close()
+	tpl := &domain.Template{
+		ID: 1, Name: "t", BaseURL: up.URL,
+		CredentialType:   credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
+		Models:           []string{"gpt-4o"},
+	}
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, noopLogStore{}, &BillingHooks{
+		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		Balances: bal,
+		Flusher:  f,
+	})
+	p.cfg.BillingCapture = true // shouldBill 路由（billed → flusher）
+	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+	defer srv.Close()
+
+	c := dialResponsesWS(t, srv)
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","service_tier":"fast","input":"hi"}`)))
+	for i := 0; i < 4; i++ {
+		_ = readResponsesWSFrame(t, c)
+	}
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	require.NoError(t, f.Close(context.Background()))
+	var cost int64
+	var billingTier string
+	err = db.QueryRowContext(ctx, `SELECT cost, billing_tier
+		FROM usage_logs WHERE format = 'openai-responses-ws' ORDER BY id DESC LIMIT 1`).
+		Scan(&cost, &billingTier)
+	require.NoError(t, err, "usage_logs 必须有 resp-ws fast 档计费行")
+	require.Equal(t, "fast", billingTier, "BillingTier=fast 落库（WS 按档计费）")
+	require.Equal(t, int64(260), cost, "fast ×2.0：130×2 = 260（≠ auto 130）")
+}

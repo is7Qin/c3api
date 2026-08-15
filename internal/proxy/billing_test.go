@@ -580,6 +580,42 @@ func TestProxyBillingDisabledPassthrough(t *testing.T) {
 	require.Zero(t, store.logs[0].Cost)
 }
 
+// TestExtractTier extractTier 纯函数单测（HTTP 与 resp-ws 共用）：auto 兜底
+// （缺失/空/未知值/null）、类型错误（非 string/null → error）、priority/flex/
+// fast 归一化（大小写不敏感、去空格）。
+func TestExtractTier(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want billing.Tier
+		werr bool
+	}{
+		{"缺失 → auto", `{"model":"gpt-4o"}`, billing.TierAuto, false},
+		{"空字符串 → auto", `{"service_tier":""}`, billing.TierAuto, false},
+		{"显式 auto → auto", `{"service_tier":"auto"}`, billing.TierAuto, false},
+		{"未知值 → auto", `{"service_tier":"turbo"}`, billing.TierAuto, false},
+		{"null → auto", `{"service_tier":null}`, billing.TierAuto, false},
+		{"fast", `{"service_tier":"fast"}`, billing.TierFast, false},
+		{"priority", `{"service_tier":"priority"}`, billing.TierPriority, false},
+		{"flex", `{"service_tier":"flex"}`, billing.TierFlex, false},
+		{"大小写不敏感", `{"service_tier":"FAST"}`, billing.TierFast, false},
+		{"去空格", `{"service_tier":" flex "}`, billing.TierFlex, false},
+		{"数字 → 类型错误", `{"service_tier":123}`, billing.TierAuto, true},
+		{"布尔 → 类型错误", `{"service_tier":true}`, billing.TierAuto, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := extractTier([]byte(c.body))
+			if c.werr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, c.want, got)
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // T3：余额预检 402 + shouldBill 路由切换
 // ---------------------------------------------------------------------------

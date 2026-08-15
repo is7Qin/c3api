@@ -153,6 +153,25 @@ func wsTestProxy(t *testing.T, upstream string, format domain.RequestFormat, log
 	return p, srv
 }
 
+// wsTestProxyBilling 构造注入计费钩子（Prices+Balances+TierPolicy）的 resp-ws
+// 测试代理（BillingTier 落库断言用；policy nil = 恒透传）。
+func wsTestProxyBilling(t *testing.T, upstream string, prices *fakePriceLookup, policy func(billing.Tier) billing.TierPolicyMode, logs *captureLogStore) (*Proxy, *httptest.Server) {
+	t.Helper()
+	tpl := &domain.Template{
+		ID: 1, Name: "t", BaseURL: upstream,
+		CredentialType:   credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS}, Models: []string{"gpt-4o"},
+	}
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, logs, &BillingHooks{
+		Prices:     prices,
+		Balances:   billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
+		TierPolicy: policy,
+	})
+	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+	t.Cleanup(srv.Close)
+	return p, srv
+}
+
 // 端到端主流程：WS 握手（beta 头 + 账号鉴权 + 客户端头透传）、双向事件帧 1:1
 // 透传（回声字节一致）、response.completed usage 嗅探计费（5 计数）。
 func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
@@ -573,4 +592,183 @@ func TestResponsesWSConcurrentWriteClose(t *testing.T) {
 	require.Equal(t, int64(8), lg.TotalTokens)
 	require.Equal(t, int64(1), lg.CacheReadTokens)
 	require.Equal(t, int64(3), lg.CacheCreationTokens)
+}
+
+// --- WS service_tier 计费接入（首帧 tier 提取 + 策略 + BillingTier 落库） ---
+
+// TestResponsesWSBillingTierFast service_tier=fast（passthrough 默认）：首帧原样
+// 透传上游（含字段）；BillingTier="fast" 落库，Cost 按 fast 倍率（260 ≠ auto
+// 130）——WS 恒 auto 计费的金额错收修复钉死。
+func TestResponsesWSBillingTierFast(t *testing.T) {
+	hooks := &fakeWSHooks{frameLimit: 1}
+	up := fakeResponsesWS(t, hooks)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","service_tier":"fast","input":"hi"}`)))
+	for i := 0; i < 4; i++ { // created/delta/completed/echo → 关闭
+		_ = readResponsesWSFrame(t, c)
+	}
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	hooks.mu.Lock()
+	require.Len(t, hooks.frames, 1)
+	require.Contains(t, hooks.frames[0], `"service_tier":"fast"`, "passthrough（默认）：首帧原样透传")
+	hooks.mu.Unlock()
+
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	require.Equal(t, "fast", store.logs[0].BillingTier, "WS service_tier=fast → BillingTier=fast 落库")
+	require.Equal(t, int64(260), store.logs[0].Cost, "fast ×2.0：130×2 = 260 毫分（与 HTTP 同价）")
+}
+
+// TestResponsesWSBillingTierAuto 无 service_tier：BillingTier="auto"（与 HTTP
+// 一致，billing_test.go:148 钉死同款语义），Cost 按基础价 130。
+func TestResponsesWSBillingTierAuto(t *testing.T) {
+	up := fakeResponsesWS(t, &fakeWSHooks{frameLimit: 1})
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	for i := 0; i < 4; i++ {
+		_ = readResponsesWSFrame(t, c)
+	}
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	require.Equal(t, "auto", store.logs[0].BillingTier, "WS 无 service_tier → BillingTier=auto")
+	require.Equal(t, int64(130), store.logs[0].Cost, "auto 基础价：130 毫分")
+}
+
+// TestResponsesWSBillingTierStrip strip 策略：首帧改写点（relayResponsesWS）删
+// service_tier 字段（sjson.DeleteBytes 字节级）——上游帧不含该字段；剥离路径
+// 计费照常（tier 已提取 → fast 档 260）。
+func TestResponsesWSBillingTierStrip(t *testing.T) {
+	hooks := &fakeWSHooks{frameLimit: 1}
+	up := fakeResponsesWS(t, hooks)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyStrip }, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","service_tier":"fast","input":"hi"}`)))
+	for i := 0; i < 4; i++ {
+		_ = readResponsesWSFrame(t, c)
+	}
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	hooks.mu.Lock()
+	require.Len(t, hooks.frames, 1)
+	require.NotContains(t, hooks.frames[0], "service_tier", "strip 策略：上游帧不得含 service_tier 字段")
+	require.Contains(t, hooks.frames[0], `"type":"response.create"`, "其余字段原样保留")
+	require.Contains(t, hooks.frames[0], `"input":"hi"`)
+	hooks.mu.Unlock()
+
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	require.Equal(t, "fast", store.logs[0].BillingTier, "剥离路径计费照常（tier 已提取）")
+	require.Equal(t, int64(260), store.logs[0].Cost)
+}
+
+// TestResponsesWSBillingTierReject reject 策略：Select 前拒绝——客户端收到 error
+// 事件帧 + 1000 关闭（同 selectErrorMessage 路径），上游零命中；ErrBilling 走
+// err_logs（usage_logs 无明细），拒绝记录带 tier。
+func TestResponsesWSBillingTierReject(t *testing.T) {
+	hooks := &fakeWSHooks{}
+	up := fakeResponsesWS(t, hooks)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyReject }, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","service_tier":"fast","input":"hi"}`)))
+	frame := readResponsesWSFrame(t, c)
+	var ev struct {
+		Type  string `json:"type"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(frame, &ev))
+	require.Equal(t, "error", ev.Type)
+	require.Equal(t, "service_tier rejected by gateway policy", ev.Error.Message)
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	hooks.mu.Lock()
+	require.Empty(t, hooks.frames, "reject 在 Select 前：不得拨号上游")
+	hooks.mu.Unlock()
+	require.Zero(t, p.rec.Pending(), "预用量拒绝不产生明细 pending")
+
+	// 记录投递与错误帧写出并发：等 enqueue 落地（或已入队）再排空，防 Close
+	// 先置 closed 把投递变丢弃（同 abort 双轨测试的 Eventually 模式）。
+	require.Eventually(t, func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		return len(store.logs) >= 1 || p.errlog.Queued() > 0
+	}, 3*time.Second, 10*time.Millisecond, "reject 必须投递 err_logs")
+	require.NoError(t, p.errlog.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1, "拒绝行走 err_logs（usage_logs 无明细）")
+	require.Equal(t, domain.ErrBilling, store.logs[0].ErrorType)
+	require.Equal(t, http.StatusBadRequest, store.logs[0].StatusCode)
+	require.Equal(t, "fast", store.logs[0].BillingTier, "拒绝记录带 tier（rm 已注入 ctx）")
+}
+
+// TestResponsesWSBillingTierTypeError 类型错误（非 string/null）：400 错误帧 +
+// 无记录（同 HTTP caller.go 类型错误 400 无记录语义；ErrBilling 只用于 reject
+// 路径），不升级。
+func TestResponsesWSBillingTierTypeError(t *testing.T) {
+	hooks := &fakeWSHooks{}
+	up := fakeResponsesWS(t, hooks)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","service_tier":123,"input":"hi"}`)))
+	frame := readResponsesWSFrame(t, c)
+	var ev struct {
+		Type  string `json:"type"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(frame, &ev))
+	require.Equal(t, "error", ev.Type)
+	require.Equal(t, "invalid request body: service_tier must be a string", ev.Error.Message)
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	hooks.mu.Lock()
+	require.Empty(t, hooks.frames, "类型错误不得拨号上游")
+	hooks.mu.Unlock()
+	require.Zero(t, p.rec.Pending(), "类型错误无记录（同 HTTP 400 无记录语义）")
+	require.NoError(t, p.rec.Close(context.Background()))
+	require.NoError(t, p.errlog.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Empty(t, store.logs, "类型错误不产生任何记录（usage_logs + err_logs 均无）")
 }

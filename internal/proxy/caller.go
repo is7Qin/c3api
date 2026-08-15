@@ -99,6 +99,19 @@ type UpstreamCaller interface {
 		start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (code int, respBody []byte, handled bool, err error)
 }
 
+// extractTier 提取并归一化请求体 service_tier（HTTP 与 resp-ws 共用，纯函数）：
+// gjson 顶层读取零分配；类型错误（非 string/null）→ error（HTTP 400 / WS 错误
+// 帧语义，调用方决定写出与拒绝记录）；空/未知 → TierAuto（auto 兜底，无
+// hasTier 返回——TierPolicy 只对 priority/flex/fast 生效，auto 恒透传不策略，
+// hasTier 无独立信息量）。
+func extractTier(body []byte) (billing.Tier, error) {
+	tierVal := gjson.GetBytes(body, "service_tier")
+	if tierVal.Type != gjson.String && tierVal.Type != gjson.Null {
+		return billing.TierAuto, errors.New("service_tier must be a string")
+	}
+	return billing.NormalizeTier(tierVal.String()), nil
+}
+
 // handleFormat 通用转发骨架（从原 HandleXxx 提取，三格式共用）：鉴权 →
 // quota 检查（本地预算快读；预算耗尽触发 DB 复核认领，见 gate.reclaim）→
 // 两级并发门禁 acquire（user → key，失败回滚）→ 限流 →
@@ -207,9 +220,9 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
 			return
 		}
-		tierVal := gjson.GetBytes(body, "service_tier")
-		if tierVal.Type != gjson.String && tierVal.Type != gjson.Null {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: service_tier must be a string"}})
+		tier, err := extractTier(body)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 			return
 		}
 		reqModel = modelVal.String()
@@ -219,7 +232,6 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		// 归一化 tier 补入已入 ctx 的 reqMeta（GC 削减 P6：免第二次 WithValue+
 		// WithContext；非计费路径 hasTier=false → BillingTier 恒空）。
 		if p.bill != nil {
-			tier := billing.NormalizeTier(tierVal.String())
 			rm.tier = tier
 			rm.hasTier = true
 			if (tier == billing.TierPriority || tier == billing.TierFlex || tier == billing.TierFast) && p.bill.TierPolicy != nil {

@@ -18,6 +18,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/aiclient"
@@ -133,6 +134,35 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	}
 	reqModel := gjson.GetBytes(first, "model").String()
 
+	// service_tier 归一化 + 转发策略（首帧读后、Select 前——与 HTTP
+	// handleFormat 的 strip/reject 同位置，均先于选号；codex 分流在后，首帧
+	// 字节在共享点不被改写——strip 标记于此处、执行于 relayResponsesWS 帧改写
+	// 点，codex 路径零变化）。类型错误 → 400 错误帧无记录（同 HTTP，ErrBilling
+	// 只用于 reject）；reject → 错误帧 + ErrBilling 记录，不升级。归一化 tier
+	// 补入已入 ctx 的 reqMeta（HTTP 同机制——logWithCtx 消费链四 buildLog 调用
+	// 点 + 首帧失败路径全自动覆盖）→ BillingTier 恒非空（无显式 tier 落
+	// "auto"）；非计费路径 hasTier=false → 恒空。
+	var stripTier bool
+	if p.bill != nil {
+		tier, err := extractTier(first)
+		if err != nil {
+			wsWriteError(client, "invalid request body: "+err.Error())
+			return
+		}
+		rm.tier = tier
+		rm.hasTier = true
+		if (tier == billing.TierPriority || tier == billing.TierFlex || tier == billing.TierFast) && p.bill.TierPolicy != nil {
+			switch p.bill.TierPolicy(tier) {
+			case billing.TierPolicyStrip:
+				stripTier = true // 标记：共享帧改写点（relayResponsesWS）删除该字段
+			case billing.TierPolicyReject:
+				wsWriteError(client, errServiceTierRejected.msg)
+				p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAIResponsesWS, http.StatusBadRequest, domain.ErrBilling, 0, usageTuple{}, start, errServiceTierRejected.msg)
+				return
+			}
+		}
+	}
+
 	// 选号（含账号并发槽抢占）：格式硬过滤由调度器路由承担（模板
 	// SupportedFormats 含 resp-ws 才建路由）。挂死客户端不占槽（槽在首帧后取）。
 	sel, err := p.sched.Select(groupID, domain.FormatOpenAIResponsesWS, reqModel)
@@ -199,7 +229,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 			} else {
 				up, resp, dialErr := p.clients.ResponsesWSDial(r.Context(), sel.TemplateID, sel.BaseURL, cred, wsPassthroughHeaders(r.Header))
 				if dialErr == nil {
-					handled, fwMsg := p.relayResponsesWS(client, up, r, reqID, groupID, start, sel, reqModel, firstTyp, first)
+					handled, fwMsg := p.relayResponsesWS(client, up, r, reqID, groupID, start, sel, reqModel, firstTyp, first, stripTier)
 					if handled {
 						return
 					}
@@ -268,17 +298,27 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 
 // relayResponsesWS 拨号成功后的编排：首帧模型改写（ModelMapping 语义，与
 // setModel 同构；首帧 = 请求帧非流式中间帧，亦为 W4 图像剥离的帧级预处理点）
-// → 转发首帧 → 双向事件帧 1:1 relay（流式中间帧零解析零拷贝直转）→ 关闭/
-// 错误传播 → usage 记录。返回 (handled, fwMsg)：handled = 请求已处理完毕
-// （成功/客户端断开/流中止已记录）；false = 首帧转发失败（上游未消费请求），
-// fwMsg 为截断错误文本，调用方按连接级错误转移（MarkResult + Release + 重选）。
-func (p *Proxy) relayResponsesWS(client, up *websocket.Conn, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwMsg string) {
+// + strip 策略的 service_tier 删除（共享帧改写点）→ 转发首帧 → 双向事件帧
+// 1:1 relay（流式中间帧零解析零拷贝直转）→ 关闭/错误传播 → usage 记录。
+// stripTier 为 HandleResponsesWS 首帧 tier 策略标记（仅本共享点消费——codex
+// 变体 relayCodexWS 不经此函数，codex 路径帧零静默变化）。返回 (handled,
+// fwMsg)：handled = 请求已处理完毕（成功/客户端断开/流中止已记录）；false =
+// 首帧转发失败（上游未消费请求），fwMsg 为截断错误文本，调用方按连接级错误
+// 转移（MarkResult + Release + 重选）。
+func (p *Proxy) relayResponsesWS(client, up *websocket.Conn, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte, stripTier bool) (handled bool, fwMsg string) {
 	up.SetReadLimit(responsesWSReadLimit)
 	frame := first
 	if sel.Model != "" && sel.Model != reqModel {
 		if nf, err := sjson.SetBytes(first, "model", sel.Model); err == nil {
 			frame = nf
 		} // 改写失败（帧非合法 JSON）→ 原样转发，上游自行校验
+	}
+	if stripTier {
+		// strip 策略：sjson 同库同风格字节级删除（非 map 往返）；字段存在性由
+		// extractTier 非 auto 档保证——缺失/类型错已在 Select 前拒绝。
+		if nf, err := sjson.DeleteBytes(frame, "service_tier"); err == nil {
+			frame = nf
+		}
 	}
 	if err := up.Write(r.Context(), firstTyp, frame); err != nil {
 		_ = up.CloseNow()
