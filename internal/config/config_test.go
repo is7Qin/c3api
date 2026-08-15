@@ -43,7 +43,7 @@ func TestDefaults(t *testing.T) {
 	require.Equal(t, 8, c.Usage.FlushWorkers, "usage flush 并行 worker 默认 8（O1 管道化）")
 	require.Equal(t, "test-admin-token", c.Admin.Token)
 	require.Equal(t, 30*time.Second, c.Scheduler.SyncInterval)
-	require.False(t, c.Billing.Enabled, "计费默认关（opt-in，评审 C-1）")
+	require.True(t, c.Billing.Enabled, "计费默认开（全链默认开启）")
 	require.Equal(t, 1*time.Second, c.Billing.FlushInterval)
 	require.Equal(t, 10*time.Second, c.Billing.BalanceRefreshInterval)
 	require.Equal(t, 8, c.Billing.FlushWorkers, "flush 并行 worker 默认 8（O1）")
@@ -215,7 +215,7 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 }
 
 // TestLoadRejectsLegacyKeys：废弃字段（Cooldown429/BackoffBase/BackoffMax）已
-// 删除（用户裁决 2026-08-13：不向后兼容）——显式写旧键 → ErrorUnused 启动报错。
+// 删除（不向后兼容）——显式写旧键 → ErrorUnused 启动报错。
 func TestLoadRejectsLegacyKeys(t *testing.T) {
 	setenvRequired(t)
 	_, err := Load(writeConfig(t, `scheduler = { cooldown_429 = "1s" }`))

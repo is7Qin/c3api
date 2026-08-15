@@ -26,8 +26,8 @@ upstream = {
   force_http2 = true,
 }
 limit = { group_key_rpm = 0 }
-# cooldown_429 / backoff_base / backoff_max 已移除（2026-08-13 用户裁决：不向后
-# 兼容）——配置含这些键将启动失败；429 冷却与错误退避由规则引擎（种子规则 +
+# cooldown_429 / backoff_base / backoff_max 已移除（不向后兼容）——配置含这些
+# 键将启动失败；429 冷却与错误退避由规则引擎（种子规则 +
 # /admin/rules 自定义规则）接管。
 scheduler = {
   default_max_concurrency = 8,
@@ -61,8 +61,9 @@ usage = {
   #                                    # 聚合统计也分区化——清理 DROP 分区 O(1)，
   #                                    # PG DELETE 不释放空间）
 }
-# 计费（Phase 5）：默认关 opt-in。启用前需先同步价格（POST /admin/pricing/sync），
-# 空价格表 = 全模型 402。启用后：请求前余额预检（快照缺失或 ≤0 → 402）、
+# 计费（Phase 5）：默认开启（与代码/example 默认一致）。首次启动后需先同步
+# 价格（POST /admin/pricing/sync）——空价格表 = 全模型 402。开启后：请求前
+# 余额预检（快照缺失或 ≤0 → 402）、
 # 临时额度 FEFO 优先扣、条件扣费允许透支、优雅停机排空不丢计费。
 # flush_interval：扣费批量落库周期（pending 聚合满或周期到 → 逐 user 小事务
 # 条件扣费；停机排空受 shutdown 预算约束，超时 Warn 截断不阻塞退出）。
@@ -71,4 +72,4 @@ usage = {
 # DeductAndLog 事务，受 DB 连接池余量 db.max_conns 约束，同用户实例内恒串行）。
 # 注：compose 未注入 C3API_BILLING_*（env 覆盖能力存在，可按需注入），开关/参数
 # 经挂载的 config.toml 文件修改生效。
-billing = { enabled = false, flush_interval = "1s", balance_refresh_interval = "10s", flush_workers = 8 }
+billing = { enabled = true, flush_interval = "1s", balance_refresh_interval = "10s", flush_workers = 8 }

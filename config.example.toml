@@ -27,8 +27,8 @@ upstream = {
   force_http2 = true,
 }
 limit = { group_key_rpm = 0 }
-# cooldown_429 / backoff_base / backoff_max 已移除（2026-08-13 用户裁决：不向后
-# 兼容）——配置含这些键将启动失败；429 冷却与错误退避由规则引擎（种子规则 +
+# cooldown_429 / backoff_base / backoff_max 已移除（不向后兼容）——配置含这些
+# 键将启动失败；429 冷却与错误退避由规则引擎（种子规则 +
 # /admin/rules 自定义规则）接管。
 scheduler = {
   default_max_concurrency = 8,
@@ -59,7 +59,7 @@ usage = {
   #                                    # 聚合统计也分区化——清理 DROP 分区 O(1)，
   #                                    # PG DELETE 不释放空间）
 }
-# 计费（Phase 5）：默认开启（2026-08-15 用户裁决）。首次启用前需先同步价格
+# 计费（Phase 5）：默认开启（与代码默认一致）。首次启动后需先同步价格
 # （POST /admin/pricing/sync）——空价格表 = 全模型 402。开启后：请求前余额
 # 预检（快照缺失或 ≤0 → 402）、临时额度 FEFO 优先扣、条件扣费允许透支、
 # 优雅停机排空不丢计费。enabled = false 退回纯代理模式（不计费不扣费）。

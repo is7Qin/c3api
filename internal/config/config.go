@@ -86,7 +86,7 @@ type LimitConfig struct {
 }
 
 // SchedulerConfig 注意：cooldown_429 / backoff_base / backoff_max 已删除
-// （2026-08-13 用户裁决：不向后兼容）——配置含这些旧键将启动报错（ErrorUnused）。
+// （不向后兼容）——配置含这些旧键将启动报错（ErrorUnused）。
 type SchedulerConfig struct {
 	DefaultMaxConcurrency int           `koanf:"default_max_concurrency"`
 	SyncInterval          time.Duration `koanf:"sync_interval"`
@@ -108,14 +108,15 @@ type UsageConfig struct {
 	ErrLogFlushInterval time.Duration `koanf:"errlog_flush_interval"` // 批间隔（默认 500ms）
 	ErrLogRetentionDays int           `koanf:"errlog_retention_days"` // err_logs 分区保留天数（默认 7 天短保留——错误审计；<= 0 = 不删除）
 	// StatsRetentionDays usage_stats 分区保留天数（默认 180 天——聚合统计长保留；
-	// 用户裁决 2026-08-11：usage_stats 也分区化，清理 DROP 分区 O(1)——PG DELETE
-	// 不释放空间；<= 0 = 不删除）。
+	// usage_stats 也分区化，清理 DROP 分区 O(1)——PG DELETE 不释放空间；
+	// <= 0 = 不删除）。
 	StatsRetentionDays int `koanf:"stats_retention_days"`
 }
 
-// BillingConfig 计费（Phase 5 T3）：Enabled 默认关（评审 C-1 opt-in——启用前
-// 需先同步价格：空价格表 = 全模型 402 契约语义；余额预检 + FEFO 条件扣费 +
-// 优雅停机排空全链随之生效）。
+// BillingConfig 计费（Phase 5 T3）：Enabled 默认开（全链默认开启：代码默认 +
+// 模板默认一致；空价格表 = 全模型 402——首次启动需先同步价格（POST
+// /admin/pricing/sync）；余额预检 + FEFO 条件扣费 + 优雅停机排空全链随之生效。
+// 本地开发可用 enabled=false 显式退回纯代理模式）。
 type BillingConfig struct {
 	Enabled                bool          `koanf:"enabled"`
 	FlushInterval          time.Duration `koanf:"flush_interval"`           // 扣费落库周期
@@ -136,7 +137,7 @@ func defaults() *Config {
 		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true},
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
-		Billing:   BillingConfig{Enabled: false, FlushInterval: 1 * time.Second, BalanceRefreshInterval: 10 * time.Second, FlushWorkers: 8},
+		Billing:   BillingConfig{Enabled: true, FlushInterval: 1 * time.Second, BalanceRefreshInterval: 10 * time.Second, FlushWorkers: 8},
 	}
 }
 
