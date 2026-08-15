@@ -397,6 +397,30 @@ func TestGetLogsFilters(t *testing.T) {
 		require.Equal(t, ErrorType("429"), *r.ErrorType)
 	}
 
+	// format 过滤（usage 侧）：openai-chat → 行 1/2（与 model 同 AND 谓词语义）
+	rec = doAdmin(http.MethodGet, "/admin/usage_logs?format=openai-chat&"+win, "", "")
+	require.Equal(t, http.StatusOK, rec.Code, "format filter: %s", rec.Body.String())
+	body = LogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 2, "format=openai-chat → 行 1/2: %s", rec.Body.String())
+	for _, r := range body.Rows {
+		require.Equal(t, RequestFormat("openai-chat"), *r.Format)
+	}
+
+	// format + model 组合过滤：openai-responses + o3 → 行 3/4
+	rec = doAdmin(http.MethodGet, "/admin/usage_logs?format=openai-responses&model=o3&"+win, "", "")
+	require.Equal(t, http.StatusOK, rec.Code, "format+model filter: %s", rec.Body.String())
+	body = LogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 2, "format=openai-responses + model=o3 → 行 3/4: %s", rec.Body.String())
+
+	// 无效 format 值（契约不校验值域）→ 自然查空
+	rec = doAdmin(http.MethodGet, "/admin/usage_logs?format=no-such-format&"+win, "", "")
+	require.Equal(t, http.StatusOK, rec.Code, "invalid format: %s", rec.Body.String())
+	body = LogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Empty(t, body.Rows)
+
 	// key_id 过滤（管理面 /usage_logs 新增参数；与 user_id 同 AND 谓词）
 	rec = doAdmin(http.MethodGet, "/admin/usage_logs?key_id=72&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "key filter: %s", rec.Body.String())
@@ -471,6 +495,16 @@ func TestGetLogsFilters(t *testing.T) {
 	require.Equal(t, 402, *ebody.Rows[0].StatusCode)
 	require.Equal(t, ErrorType("billing"), *ebody.Rows[0].ErrorType)
 	require.Equal(t, "o3", *ebody.Rows[0].Model)
+
+	// err_logs format 过滤：openai-chat → 行 1/2
+	rec = doAdmin(http.MethodGet, "/admin/err_logs?format=openai-chat&"+win, "", "")
+	require.Equal(t, http.StatusOK, rec.Code, "err format filter: %s", rec.Body.String())
+	ebody = ErrLogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ebody))
+	require.Len(t, ebody.Rows, 2, "err format=openai-chat → 行 1/2: %s", rec.Body.String())
+	for _, r := range ebody.Rows {
+		require.Equal(t, RequestFormat("openai-chat"), *r.Format)
+	}
 
 	// key_id 过滤（管理面 /err_logs 新增参数）
 	rec = doAdmin(http.MethodGet, "/admin/err_logs?key_id=74&"+win, "", "")

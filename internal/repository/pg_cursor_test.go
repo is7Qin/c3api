@@ -118,6 +118,79 @@ func TestPGCursorFilterWindowCombined(t *testing.T) {
 	}
 }
 
+// TestPGFormatPredicate format 谓词（UsageQuery.Format / ErrLogQuery.Format）
+// 真实 PG：种子不同 format 行 → 筛选返回正确子集；空串 = 不过滤；与 model
+// 组合 AND；无效值自然查空（与 model 同语义，契约不校验值域）。
+func TestPGFormatPredicate(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	base := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
+
+	// usage_logs：2 chat + 2 responses + 1 images（images 为 usage 侧独有枚举值）
+	chat1 := usageLogFor("fmt-u-chat-1", base)
+	chat2 := usageLogFor("fmt-u-chat-2", base.Add(time.Minute))
+	resp1 := usageLogFor("fmt-u-resp-1", base.Add(2*time.Minute))
+	resp1.Format = domain.FormatOpenAIResponses
+	resp2 := usageLogFor("fmt-u-resp-2", base.Add(3*time.Minute))
+	resp2.Format = domain.FormatOpenAIResponses
+	img1 := usageLogFor("fmt-u-img-1", base.Add(4*time.Minute))
+	img1.Format = domain.FormatOpenAIImages
+	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{chat1, chat2, resp1, resp2, img1}))
+
+	// 空串 = 不过滤（全量）
+	all, err := repos.Usages.QueryUsages(ctx, repository.UsageQuery{Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, all, 5, "空串 format 不过滤")
+
+	// format=openai-chat → 恰 2 行且全部命中
+	chats, err := repos.Usages.QueryUsages(ctx, repository.UsageQuery{Format: "openai-chat", Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, chats, 2, "usage format=openai-chat → 2 行")
+	for _, r := range chats {
+		require.Equal(t, domain.FormatOpenAIChat, r.Format)
+	}
+
+	// format + model 组合（AND 交集）：responses 行均为默认 model "m"
+	resps, err := repos.Usages.QueryUsages(ctx, repository.UsageQuery{Format: "openai-responses", Model: "m", Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, resps, 2, "format+model 组合 → 2 行")
+	for _, r := range resps {
+		require.Equal(t, domain.FormatOpenAIResponses, r.Format)
+		require.Equal(t, "m", r.Model)
+	}
+
+	// 无效 format 值（契约不校验值域）→ 自然查空
+	none, err := repos.Usages.QueryUsages(ctx, repository.UsageQuery{Format: "no-such-format", Limit: 100})
+	require.NoError(t, err)
+	require.Empty(t, none, "无效 format 值自然查空")
+
+	// err_logs：2 chat + 1 responses（errlog 枚举无 openai-images——filter 恒空语义）
+	eChat1 := errLogFor("fmt-e-chat-1", base)
+	eChat2 := errLogFor("fmt-e-chat-2", base.Add(time.Minute))
+	eResp1 := errLogFor("fmt-e-resp-1", base.Add(2*time.Minute))
+	eResp1.Format = domain.FormatOpenAIResponses
+	require.NoError(t, repos.InsertErrLogBatch(ctx, []*domain.UsageLog{eChat1, eChat2, eResp1}))
+
+	// format=openai-responses → 恰 1 行
+	eresps, err := repos.QueryErrLogs(ctx, repository.ErrLogQuery{Format: "openai-responses", Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, eresps, 1, "err format=openai-responses → 1 行")
+	require.Equal(t, "fmt-e-resp-1", eresps[0].RequestID)
+	require.Equal(t, domain.FormatOpenAIResponses, eresps[0].Format)
+
+	// errlog 枚举缺 openai-images：err_logs 侧 filter=openai-images 恒空（语义正确，
+	// search 错误行落该值时 COPY 校验失败，本就不会出现——spec 注记）
+	enone, err := repos.QueryErrLogs(ctx, repository.ErrLogQuery{Format: "openai-images", Limit: 100})
+	require.NoError(t, err)
+	require.Empty(t, enone, "err_logs format=openai-images 恒空（枚举缺该值）")
+
+	// err_logs 空串 = 不过滤
+	eall, err := repos.QueryErrLogs(ctx, repository.ErrLogQuery{Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, eall, 3, "err_logs 空串 format 不过滤")
+}
+
 // TestPGCursorProbeLimitPlusOne limit+1 探测语义：非末页返回 limit+1 行
 // （多取 1 探测行）；末页返回 ≤ limit 行（探测行缺省）；cursor 缺失/≤0 =
 // 首页（无 id 谓词，与 0 等价）。

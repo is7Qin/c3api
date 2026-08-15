@@ -232,6 +232,16 @@ func TestUserUsageLogsOwnOnly(t *testing.T) {
 	require.Equal(t, int64(33), *body.Rows[0].KeyID)
 	require.Equal(t, userA, *body.Rows[0].UserID, "他人 key_id 探测仍被 user_id 钳制")
 
+	// format 过滤（自己的行内筛选）：openai-responses → 仅行 3（user_id + format 双谓词）
+	rec = doUser(http.MethodGet, "/user/usage_logs?format=openai-responses&"+win, "", tokenA)
+	require.Equal(t, http.StatusOK, rec.Code, "user format filter: %s", rec.Body.String())
+	body = userapi.UserLogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 1, "format=openai-responses 仅本人行 3: %s", rec.Body.String())
+	require.Equal(t, int64(3), *body.Rows[0].ID)
+	require.Equal(t, userapi.RequestFormat("openai-responses"), *body.Rows[0].Format)
+	require.Equal(t, userA, *body.Rows[0].UserID, "越权 format 探测仍被 user_id 钳制（他人行 2 同 format 不混入）")
+
 	// 跨页 id 注入尝试（评审 L4）：cursor=3 的谓词窗 id<3 含他人行 2——若
 	// user_id 过滤缺失本页会出现 B 行（行 2 先于行 1），越权钳制在 user_id
 	// 过滤不在 cursor 值（cursor=2 会把 B 行自身排除，断言无法区分）。
@@ -293,6 +303,17 @@ func TestUserErrLogsOwnOnly(t *testing.T) {
 	require.Equal(t, int64(3), *body.Rows[0].ID)
 	require.Equal(t, int64(33), *body.Rows[0].KeyID)
 	require.Equal(t, userA, *body.Rows[0].UserID, "他人 key_id 探测仍被 user_id 钳制")
+
+	// format 过滤（自己的行内筛选）：openai-chat → 仅行 1（他人行 2 同 format 被
+	// user_id 钳制；userA 行 3 为 openai-responses 不混入）
+	rec = doUser(http.MethodGet, "/user/err_logs?format=openai-chat&"+win, "", tokenA)
+	require.Equal(t, http.StatusOK, rec.Code, "user err format filter: %s", rec.Body.String())
+	body = userapi.UserErrLogsResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Rows, 1, "format=openai-chat 仅本人行 1: %s", rec.Body.String())
+	require.Equal(t, int64(1), *body.Rows[0].ID)
+	require.Equal(t, userapi.RequestFormat("openai-chat"), *body.Rows[0].Format)
+	require.Equal(t, userA, *body.Rows[0].UserID)
 
 	// 跨页 id 注入尝试（评审 L4）：cursor=3 的谓词窗 id<3 含他人行 2——若
 	// user_id 过滤缺失本页会出现 B 行（行 2 先于行 1）。

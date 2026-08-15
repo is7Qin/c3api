@@ -1079,6 +1079,7 @@ paths:
         - { name: group_id, in: query, schema: { type: integer, format: int64 } }
         - { name: key_id, in: query, schema: { type: integer, format: int64 } }
         - { name: model, in: query, schema: { type: string } }
+        - { name: format, in: query, schema: { $ref: '#/components/schemas/RequestFormat', description: 按请求格式过滤 } }
         - { name: error_type, in: query, schema: { type: string } }
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
@@ -1101,6 +1102,7 @@ paths:
         - { name: group_id, in: query, schema: { type: integer, format: int64 } }
         - { name: key_id, in: query, schema: { type: integer, format: int64 } }
         - { name: model, in: query, schema: { type: string } }
+        - { name: format, in: query, schema: { $ref: '#/components/schemas/RequestFormat', description: 按请求格式过滤 } }
         - { name: status_code, in: query, schema: { type: integer } }
         - { name: error_type, in: query, schema: { type: string } }
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
@@ -1277,6 +1279,7 @@ paths:
         - { name: user_id, in: query, schema: { type: integer, format: int64, description: 按用户过滤（admin 看全部） } }
         - { name: key_id, in: query, schema: { type: integer, format: int64, description: 按 key 过滤 } }
         - { name: model, in: query, schema: { type: string } }
+        - { name: format, in: query, schema: { $ref: '#/components/schemas/RequestFormat', description: 按请求格式过滤 } }
         - { name: error_type, in: query, schema: { type: string } }
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
@@ -1301,6 +1304,7 @@ paths:
         - { name: user_id, in: query, schema: { type: integer, format: int64, description: 按用户过滤（admin 看全部） } }
         - { name: key_id, in: query, schema: { type: integer, format: int64, description: 按 key 过滤 } }
         - { name: model, in: query, schema: { type: string } }
+        - { name: format, in: query, schema: { $ref: '#/components/schemas/RequestFormat', description: 按请求格式过滤 } }
         - { name: status_code, in: query, schema: { type: integer } }
         - { name: error_type, in: query, schema: { type: string } }
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }

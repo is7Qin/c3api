@@ -346,7 +346,7 @@ func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain
 func (f *fakeStore) QueryUsages(ctx context.Context, q repository.UsageQuery) ([]*domain.UsageLog, error) {
 	return f.queryLogs(logFilter{
 		groupID: q.GroupID, accountID: q.AccountID, userID: q.UserID, keyID: q.KeyID,
-		model: q.Model, errorType: q.ErrorType,
+		model: q.Model, format: q.Format, errorType: q.ErrorType,
 		from: q.From, to: q.To, cursor: q.Cursor, limit: q.Limit,
 	}), nil
 }
@@ -356,7 +356,7 @@ func (f *fakeStore) QueryUsages(ctx context.Context, q repository.UsageQuery) ([
 func (f *fakeStore) QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) ([]*domain.UsageLog, error) {
 	return f.queryLogs(logFilter{
 		groupID: q.GroupID, accountID: q.AccountID, userID: q.UserID, keyID: q.KeyID,
-		model: q.Model, errorType: q.ErrorType, statusCode: q.StatusCode,
+		model: q.Model, format: q.Format, errorType: q.ErrorType, statusCode: q.StatusCode,
 		from: q.From, to: q.To, cursor: q.Cursor, limit: q.Limit,
 	}), nil
 }
@@ -365,7 +365,7 @@ func (f *fakeStore) QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) 
 // ErrLogQuery 语义逐项：0/空 = 不过滤；StatusCode 仅 err_logs 有）。
 type logFilter struct {
 	groupID, accountID, userID, keyID int64
-	model, errorType                  string
+	model, format, errorType          string
 	statusCode                        int
 	from, to                          *time.Time
 	cursor                            int64
@@ -396,6 +396,9 @@ func (f *fakeStore) queryLogs(q logFilter) []*domain.UsageLog {
 			continue
 		}
 		if q.model != "" && l.Model != q.model {
+			continue
+		}
+		if q.format != "" && string(l.Format) != q.format {
 			continue
 		}
 		if q.errorType != "" && string(l.ErrorType) != q.errorType {

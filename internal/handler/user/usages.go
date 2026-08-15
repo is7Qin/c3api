@@ -38,6 +38,9 @@ func (h *UserAPI) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, param
 	if params.Model != nil {
 		lq.Model = *params.Model
 	}
+	if params.Format != nil {
+		lq.Format = string(*params.Format)
+	}
 	if params.ErrorType != nil {
 		lq.ErrorType = *params.ErrorType
 	}

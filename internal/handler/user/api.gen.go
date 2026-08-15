@@ -459,15 +459,16 @@ type Error = ErrorResponse
 
 // GetUserErrLogsParams defines parameters for GetUserErrLogs.
 type GetUserErrLogsParams struct {
-	Limit      *int      `form:"limit,omitempty" json:"limit,omitempty"`
-	Cursor     *int64    `form:"cursor,omitempty" json:"cursor,omitempty"`
-	GroupId    *int64    `form:"group_id,omitempty" json:"group_id,omitempty"`
-	KeyId      *int64    `form:"key_id,omitempty" json:"key_id,omitempty"`
-	Model      *string   `form:"model,omitempty" json:"model,omitempty"`
-	StatusCode *int      `form:"status_code,omitempty" json:"status_code,omitempty"`
-	ErrorType  *string   `form:"error_type,omitempty" json:"error_type,omitempty"`
-	From       time.Time `form:"from" json:"from"`
-	To         time.Time `form:"to" json:"to"`
+	Limit      *int           `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor     *int64         `form:"cursor,omitempty" json:"cursor,omitempty"`
+	GroupId    *int64         `form:"group_id,omitempty" json:"group_id,omitempty"`
+	KeyId      *int64         `form:"key_id,omitempty" json:"key_id,omitempty"`
+	Model      *string        `form:"model,omitempty" json:"model,omitempty"`
+	Format     *RequestFormat `form:"format,omitempty" json:"format,omitempty"`
+	StatusCode *int           `form:"status_code,omitempty" json:"status_code,omitempty"`
+	ErrorType  *string        `form:"error_type,omitempty" json:"error_type,omitempty"`
+	From       time.Time      `form:"from" json:"from"`
+	To         time.Time      `form:"to" json:"to"`
 }
 
 // GetUserKeysParams defines parameters for GetUserKeys.
@@ -509,14 +510,15 @@ type GetUserStatsParamsGranularity string
 
 // GetUserUsageLogsParams defines parameters for GetUserUsageLogs.
 type GetUserUsageLogsParams struct {
-	Limit     *int      `form:"limit,omitempty" json:"limit,omitempty"`
-	Cursor    *int64    `form:"cursor,omitempty" json:"cursor,omitempty"`
-	GroupId   *int64    `form:"group_id,omitempty" json:"group_id,omitempty"`
-	KeyId     *int64    `form:"key_id,omitempty" json:"key_id,omitempty"`
-	Model     *string   `form:"model,omitempty" json:"model,omitempty"`
-	ErrorType *string   `form:"error_type,omitempty" json:"error_type,omitempty"`
-	From      time.Time `form:"from" json:"from"`
-	To        time.Time `form:"to" json:"to"`
+	Limit     *int           `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor    *int64         `form:"cursor,omitempty" json:"cursor,omitempty"`
+	GroupId   *int64         `form:"group_id,omitempty" json:"group_id,omitempty"`
+	KeyId     *int64         `form:"key_id,omitempty" json:"key_id,omitempty"`
+	Model     *string        `form:"model,omitempty" json:"model,omitempty"`
+	Format    *RequestFormat `form:"format,omitempty" json:"format,omitempty"`
+	ErrorType *string        `form:"error_type,omitempty" json:"error_type,omitempty"`
+	From      time.Time      `form:"from" json:"from"`
+	To        time.Time      `form:"to" json:"to"`
 }
 
 // PostUserAuthChangePasswordJSONRequestBody defines body for PostUserAuthChangePassword for application/json ContentType.
@@ -808,6 +810,14 @@ func (siw *ServerInterfaceWrapper) GetUserErrLogs(w http.ResponseWriter, r *http
 	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "format" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "format", r.URL.Query(), &params.Format)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
 		return
 	}
 
@@ -1254,6 +1264,14 @@ func (siw *ServerInterfaceWrapper) GetUserUsageLogs(w http.ResponseWriter, r *ht
 	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "format" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "format", r.URL.Query(), &params.Format)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
 		return
 	}
 

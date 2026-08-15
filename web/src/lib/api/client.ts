@@ -41,6 +41,7 @@ export interface UsageLogParams {
   user_id?: number
   key_id?: number
   model?: string
+  format?: string
   error_type?: string
   from: string
   to: string

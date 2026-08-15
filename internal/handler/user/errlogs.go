@@ -37,6 +37,9 @@ func (h *UserAPI) GetUserErrLogs(w http.ResponseWriter, r *http.Request, params 
 	if params.Model != nil {
 		lq.Model = *params.Model
 	}
+	if params.Format != nil {
+		lq.Format = string(*params.Format)
+	}
 	if params.StatusCode != nil {
 		lq.StatusCode = *params.StatusCode
 	}

@@ -45,6 +45,9 @@ func (h *AdminAPI) GetUsageLogs(w http.ResponseWriter, r *http.Request, params G
 	if params.Model != nil {
 		lq.Model = *params.Model
 	}
+	if params.Format != nil {
+		lq.Format = string(*params.Format)
+	}
 	if params.ErrorType != nil {
 		lq.ErrorType = *params.ErrorType
 	}

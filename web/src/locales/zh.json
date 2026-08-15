@@ -420,9 +420,12 @@
       "errors": "错误日志"
     },
     "filter": {
+      "userId": "用户 ID",
+      "keyId": "密钥 ID",
       "groupId": "分组 ID",
       "accountId": "账号 ID",
       "model": "模型",
+      "format": "格式",
       "errorType": "错误类型",
       "statusCode": "状态码",
       "all": "全部",
@@ -1044,8 +1047,10 @@
         "errors": "错误日志"
       },
       "filter": {
+        "keyId": "密钥 ID",
         "groupId": "分组 ID",
         "model": "模型",
+        "format": "格式",
         "errorType": "错误类型",
         "statusCode": "状态码",
         "all": "全部",

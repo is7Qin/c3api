@@ -27,6 +27,7 @@ type ErrLogQuery struct {
 	UserID     int64 // 0 = 不过滤（/user/errlogs 强制 = 自己）
 	KeyID      int64
 	Model      string
+	Format     string // 空 = 不过滤（无效值自然查空——与 model 同语义，契约不校验值域）
 	StatusCode int // 0 = 不过滤
 	ErrorType  string
 	From       *time.Time
@@ -106,6 +107,9 @@ func (r *ErrLogRepo) QueryErrLogs(ctx context.Context, q ErrLogQuery) ([]*domain
 	}
 	if q.Model != "" {
 		pred = pred.Where(errlog.ModelEQ(q.Model))
+	}
+	if q.Format != "" {
+		pred = pred.Where(errlog.FormatEQ(errlog.Format(q.Format)))
 	}
 	if q.StatusCode > 0 {
 		pred = pred.Where(errlog.StatusCodeEQ(q.StatusCode))

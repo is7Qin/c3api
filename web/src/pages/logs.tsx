@@ -104,6 +104,7 @@ const fmtTokens = (n: number): string =>
 
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
 const ERROR_ALL = '__all__'
+const FORMAT_ALL = '__all__'
 
 // 可隐藏列（时间/请求 ID 始终可见，参考 sub2api 使用明细的列设置模式）；
 // BillingTier/AboveHit/Overdraft 已并入 Tokens 悬停窗（不再独立列）。
@@ -121,9 +122,12 @@ function loadHiddenCols(): Set<string> {
 }
 
 interface LogFilters {
+  user_id: string
+  key_id: string
   group_id: string
   account_id: string
   model: string
+  format: string
   error_type: string
   status_code: string
   from: string
@@ -131,7 +135,7 @@ interface LogFilters {
 }
 
 const emptyFilters = (): LogFilters => ({
-  group_id: '', account_id: '', model: '', error_type: '', status_code: '', ...defaultLogRange(),
+  user_id: '', key_id: '', group_id: '', account_id: '', model: '', format: '', error_type: '', status_code: '', ...defaultLogRange(),
 })
 
 export default function Logs() {
@@ -152,13 +156,16 @@ export default function Logs() {
     }
   }
 
-  // 参数对象随 filter/limit/tab 派生（游标由 hook 注入）。管理端多 user_id（服务端筛选）；
-  // status_code 仅错误面契约支持。
+  // 参数对象随 filter/limit/tab 派生（游标由 hook 注入）。管理端 7 字段全筛
+  // （user/key/group/account 数字输入 + model/format/errorType）+ 错误面 status_code 专属。
   const { usageParams, errParams } = useMemo(() => {
     const base: UsageLogParams = {
+      user_id: filters.user_id ? Number(filters.user_id) : undefined,
+      key_id: filters.key_id ? Number(filters.key_id) : undefined,
       group_id: filters.group_id ? Number(filters.group_id) : undefined,
       account_id: filters.account_id ? Number(filters.account_id) : undefined,
       model: filters.model || undefined,
+      format: filters.format || undefined,
       error_type: filters.error_type || undefined,
       from: toRFC3339(filters.from) ?? '',
       to: toRFC3339(filters.to) ?? '',
@@ -237,6 +244,14 @@ export default function Logs() {
       <Card className="p-4">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <div className="space-y-1.5">
+            <Label htmlFor="log-user">{t('logs.filter.userId')}</Label>
+            <Input id="log-user" type="number" min={0} placeholder="1" value={filters.user_id} onChange={e => set({ user_id: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="log-key">{t('logs.filter.keyId')}</Label>
+            <Input id="log-key" type="number" min={0} placeholder="1" value={filters.key_id} onChange={e => set({ key_id: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
             <Label htmlFor="log-group">{t('logs.filter.groupId')}</Label>
             <Input id="log-group" type="number" min={0} placeholder="1" value={filters.group_id} onChange={e => set({ group_id: e.target.value })} />
           </div>
@@ -247,6 +262,20 @@ export default function Logs() {
           <div className="space-y-1.5">
             <Label htmlFor="log-model">{t('logs.filter.model')}</Label>
             <Input id="log-model" placeholder="gpt-4o" value={filters.model} onChange={e => set({ model: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t('logs.filter.format')}</Label>
+            <Select
+              items={Object.fromEntries([[FORMAT_ALL, t('logs.filter.all')], ...(Object.keys(FORMAT_LABELS) as RequestFormat[]).map(f => [f, FORMAT_LABELS[f]])])}
+              value={filters.format || FORMAT_ALL}
+              onValueChange={v => set({ format: v === FORMAT_ALL ? '' : v })}
+            >
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={FORMAT_ALL} label={t('logs.filter.all')}>{t('logs.filter.all')}</SelectItem>
+                {(Object.keys(FORMAT_LABELS) as RequestFormat[]).map(f => <SelectItem key={f} value={f} label={FORMAT_LABELS[f]}>{FORMAT_LABELS[f]}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1.5">
             <Label>{t('logs.filter.errorType')}</Label>

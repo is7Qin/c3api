@@ -3984,6 +3984,7 @@ export interface operations {
                 group_id?: number;
                 key_id?: number;
                 model?: string;
+                format?: components["schemas"]["RequestFormat"];
                 error_type?: string;
                 from: string;
                 to: string;
@@ -4014,6 +4015,7 @@ export interface operations {
                 group_id?: number;
                 key_id?: number;
                 model?: string;
+                format?: components["schemas"]["RequestFormat"];
                 status_code?: number;
                 error_type?: string;
                 from: string;
@@ -4269,6 +4271,7 @@ export interface operations {
                 user_id?: number;
                 key_id?: number;
                 model?: string;
+                format?: components["schemas"]["RequestFormat"];
                 error_type?: string;
                 from: string;
                 to: string;
@@ -4301,6 +4304,7 @@ export interface operations {
                 user_id?: number;
                 key_id?: number;
                 model?: string;
+                format?: components["schemas"]["RequestFormat"];
                 status_code?: number;
                 error_type?: string;
                 from: string;

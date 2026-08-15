@@ -1381,17 +1381,18 @@ type GetAccountsParamsOrder string
 
 // GetErrLogsParams defines parameters for GetErrLogs.
 type GetErrLogsParams struct {
-	Limit      *int      `form:"limit,omitempty" json:"limit,omitempty"`
-	Cursor     *int64    `form:"cursor,omitempty" json:"cursor,omitempty"`
-	GroupId    *int64    `form:"group_id,omitempty" json:"group_id,omitempty"`
-	AccountId  *int64    `form:"account_id,omitempty" json:"account_id,omitempty"`
-	UserId     *int64    `form:"user_id,omitempty" json:"user_id,omitempty"`
-	KeyId      *int64    `form:"key_id,omitempty" json:"key_id,omitempty"`
-	Model      *string   `form:"model,omitempty" json:"model,omitempty"`
-	StatusCode *int      `form:"status_code,omitempty" json:"status_code,omitempty"`
-	ErrorType  *string   `form:"error_type,omitempty" json:"error_type,omitempty"`
-	From       time.Time `form:"from" json:"from"`
-	To         time.Time `form:"to" json:"to"`
+	Limit      *int           `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor     *int64         `form:"cursor,omitempty" json:"cursor,omitempty"`
+	GroupId    *int64         `form:"group_id,omitempty" json:"group_id,omitempty"`
+	AccountId  *int64         `form:"account_id,omitempty" json:"account_id,omitempty"`
+	UserId     *int64         `form:"user_id,omitempty" json:"user_id,omitempty"`
+	KeyId      *int64         `form:"key_id,omitempty" json:"key_id,omitempty"`
+	Model      *string        `form:"model,omitempty" json:"model,omitempty"`
+	Format     *RequestFormat `form:"format,omitempty" json:"format,omitempty"`
+	StatusCode *int           `form:"status_code,omitempty" json:"status_code,omitempty"`
+	ErrorType  *string        `form:"error_type,omitempty" json:"error_type,omitempty"`
+	From       time.Time      `form:"from" json:"from"`
+	To         time.Time      `form:"to" json:"to"`
 }
 
 // DeleteFunctionPricesModelParams defines parameters for DeleteFunctionPricesModel.
@@ -1558,16 +1559,17 @@ type GetTemplatesParamsOrder string
 
 // GetUsageLogsParams defines parameters for GetUsageLogs.
 type GetUsageLogsParams struct {
-	Limit     *int      `form:"limit,omitempty" json:"limit,omitempty"`
-	Cursor    *int64    `form:"cursor,omitempty" json:"cursor,omitempty"`
-	GroupId   *int64    `form:"group_id,omitempty" json:"group_id,omitempty"`
-	AccountId *int64    `form:"account_id,omitempty" json:"account_id,omitempty"`
-	UserId    *int64    `form:"user_id,omitempty" json:"user_id,omitempty"`
-	KeyId     *int64    `form:"key_id,omitempty" json:"key_id,omitempty"`
-	Model     *string   `form:"model,omitempty" json:"model,omitempty"`
-	ErrorType *string   `form:"error_type,omitempty" json:"error_type,omitempty"`
-	From      time.Time `form:"from" json:"from"`
-	To        time.Time `form:"to" json:"to"`
+	Limit     *int           `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor    *int64         `form:"cursor,omitempty" json:"cursor,omitempty"`
+	GroupId   *int64         `form:"group_id,omitempty" json:"group_id,omitempty"`
+	AccountId *int64         `form:"account_id,omitempty" json:"account_id,omitempty"`
+	UserId    *int64         `form:"user_id,omitempty" json:"user_id,omitempty"`
+	KeyId     *int64         `form:"key_id,omitempty" json:"key_id,omitempty"`
+	Model     *string        `form:"model,omitempty" json:"model,omitempty"`
+	Format    *RequestFormat `form:"format,omitempty" json:"format,omitempty"`
+	ErrorType *string        `form:"error_type,omitempty" json:"error_type,omitempty"`
+	From      time.Time      `form:"from" json:"from"`
+	To        time.Time      `form:"to" json:"to"`
 }
 
 // GetUsersParams defines parameters for GetUsers.
@@ -2565,6 +2567,14 @@ func (siw *ServerInterfaceWrapper) GetErrLogs(w http.ResponseWriter, r *http.Req
 	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "format" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "format", r.URL.Query(), &params.Format)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
 		return
 	}
 
@@ -4050,6 +4060,14 @@ func (siw *ServerInterfaceWrapper) GetUsageLogs(w http.ResponseWriter, r *http.R
 	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "format" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "format", r.URL.Query(), &params.Format)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
 		return
 	}
 

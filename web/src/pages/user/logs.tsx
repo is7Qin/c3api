@@ -99,10 +99,13 @@ const fmtTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}K
 
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
 const ERROR_ALL = '__all__'
+const FORMAT_ALL = '__all__'
 
 interface LogFilters {
+  key_id: string
   group_id: string
   model: string
+  format: string
   error_type: string
   status_code: string
   from: string
@@ -110,7 +113,7 @@ interface LogFilters {
 }
 
 const emptyFilters = (): LogFilters => ({
-  group_id: '', model: '', error_type: '', status_code: '', ...defaultLogRange(),
+  key_id: '', group_id: '', model: '', format: '', error_type: '', status_code: '', ...defaultLogRange(),
 })
 
 export default function UserLogs() {
@@ -135,8 +138,10 @@ export default function UserLogs() {
   // 服务端强制 user_id=当前用户，客户端不传；status_code 仅错误面契约支持。
   const { usageParams, errParams } = useMemo(() => {
     const base: MyUsageLogParams = {
+      key_id: filters.key_id ? Number(filters.key_id) : undefined,
       group_id: filters.group_id ? Number(filters.group_id) : undefined,
       model: filters.model || undefined,
+      format: filters.format || undefined,
       error_type: filters.error_type || undefined,
       from: toRFC3339(filters.from) ?? '',
       to: toRFC3339(filters.to) ?? '',
@@ -180,12 +185,30 @@ export default function UserLogs() {
       <Card className="p-4">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <div className="space-y-1.5">
+            <Label htmlFor="user-log-key">{t('user.logs.filter.keyId')}</Label>
+            <Input id="user-log-key" type="number" min={0} placeholder="1" value={filters.key_id} onChange={e => set({ key_id: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
             <Label htmlFor="user-log-group">{t('user.logs.filter.groupId')}</Label>
             <Input id="user-log-group" type="number" min={0} placeholder="1" value={filters.group_id} onChange={e => set({ group_id: e.target.value })} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="user-log-model">{t('user.logs.filter.model')}</Label>
             <Input id="user-log-model" placeholder="gpt-4o" value={filters.model} onChange={e => set({ model: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t('user.logs.filter.format')}</Label>
+            <Select
+              items={Object.fromEntries([[FORMAT_ALL, t('user.logs.filter.all')], ...Object.keys(FORMAT_LABELS).map(f => [f, FORMAT_LABELS[f]])])}
+              value={filters.format || FORMAT_ALL}
+              onValueChange={v => set({ format: v === FORMAT_ALL ? '' : v })}
+            >
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={FORMAT_ALL} label={t('user.logs.filter.all')}>{t('user.logs.filter.all')}</SelectItem>
+                {Object.keys(FORMAT_LABELS).map(f => <SelectItem key={f} value={f} label={FORMAT_LABELS[f]}>{FORMAT_LABELS[f]}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1.5">
             <Label>{t('user.logs.filter.errorType')}</Label>

@@ -23,6 +23,7 @@ type UsageQuery struct {
 	UserID    int64 // 0 = 不过滤（/user/usages 强制 = 自己）
 	KeyID     int64
 	Model     string
+	Format    string // 空 = 不过滤（无效值自然查空——与 model 同语义，契约不校验值域）
 	ErrorType string // usage_logs = 纯计费明细（仅 cost>0）→ 值域收敛 none/abort（err_logs 分表后）
 	From      *time.Time
 	To        *time.Time
@@ -138,6 +139,9 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 	}
 	if q.Model != "" {
 		pred = pred.Where(usagelog.ModelEQ(q.Model))
+	}
+	if q.Format != "" {
+		pred = pred.Where(usagelog.FormatEQ(usagelog.Format(q.Format)))
 	}
 	if q.ErrorType != "" {
 		pred = pred.Where(usagelog.ErrorTypeEQ(q.ErrorType))
