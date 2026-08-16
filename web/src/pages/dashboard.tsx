@@ -124,7 +124,9 @@ export default function Dashboard() {
     { key: 'users', labelKey: 'dashboard.totalCards.users', value: ov?.resources.users ?? 0, icon: Users },
   ] as const
 
-  if (overviewQ.isError) {
+  // 首次加载失败（无数据）仍整页错误；轮询失败（有数据——isRefetchError）保留
+  // 上一次数据继续渲染 + 顶部警示条（瞬态刷新失败不整页替换，至多一个轮询周期自愈）。
+  if (overviewQ.isError && !overviewQ.isRefetchError) {
     return (
       <Alert variant="destructive">
         <AlertTitle>{t('dashboard.loadFailedTitle')}</AlertTitle>
@@ -139,6 +141,14 @@ export default function Dashboard() {
         <h1 className="text-2xl font-semibold tracking-tight">{t('dashboard.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('dashboard.subtitle')}</p>
       </div>
+
+      {/* 轮询失败警示条：保留上一次数据继续渲染（isRefetchError = 已有数据 + 本次刷新失败） */}
+      {overviewQ.isRefetchError && (
+        <Alert variant="destructive">
+          <AlertTitle>{t('dashboard.loadFailedWarning')}</AlertTitle>
+          <AlertDescription>{(overviewQ.error as Error).message}</AlertDescription>
+        </Alert>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-2 gap-5 xl:grid-cols-4">
@@ -313,7 +323,14 @@ export default function Dashboard() {
                   <CardDescription>{t('dashboard.usersTopDesc')}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {usersTopQ.isError ? (
+                  {/* 轮询失败警示条（有旧数据）：不替换排行数据，保留上次渲染 */}
+                  {usersTopQ.isRefetchError && (
+                    <Alert variant="destructive" className="mb-3">
+                      <AlertTitle>{t('dashboard.loadFailedWarning')}</AlertTitle>
+                      <AlertDescription>{(usersTopQ.error as Error).message}</AlertDescription>
+                    </Alert>
+                  )}
+                  {usersTopQ.isError && !usersTopQ.isRefetchError ? (
                     <Alert variant="destructive">
                       <AlertTitle>{t('dashboard.usersTopLoadFailed')}</AlertTitle>
                       <AlertDescription>{(usersTopQ.error as Error).message}</AlertDescription>

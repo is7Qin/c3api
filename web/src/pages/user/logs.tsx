@@ -22,6 +22,7 @@ import { useCursorLogs } from '@/components/use-cursor-logs'
 import { defaultLogRange, formatCost, formatDateTime, toRFC3339 } from '@/components/fmt'
 import { userApi } from '@/lib/api/client'
 import type { MyErrLogParams, MyUsageLogParams } from '@/lib/api/client'
+import { useDebounced } from '@/lib/use-debounced'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 
@@ -133,6 +134,12 @@ export default function UserLogs() {
   // 过滤条件 / 每页条数变化 → hook 参数键变化自动重置回第 1 页（游标链自持，调用方只传派生值）。
   const set = (patch: Partial<LogFilters>) => setFilters(f => ({ ...f, ...patch }))
   const changeLimit = (v: number) => setLimit(v)
+  // 纯输入防抖字段（key_id/group_id/model/status_code 逐键输入）：输入即时反映在
+  // 受控框，查询参数 300ms 合并后再触发（避免每键一次后端查询——与管理端同频）。
+  const debouncedKey = useDebounced(filters.key_id, 300)
+  const debouncedGroup = useDebounced(filters.group_id, 300)
+  const debouncedModel = useDebounced(filters.model, 300)
+  const debouncedStatus = useDebounced(filters.status_code, 300)
   // Tab 切换：各自独立游标链（hook 按参数变化重置）；usage 面错误类型值域收窄为
   // none/abort，超出值重置（收窄逻辑属调用方，hook 只收归一后参数）。
   const switchTab = (v: string) => {
@@ -144,11 +151,12 @@ export default function UserLogs() {
 
   // 参数对象随 filter/limit/tab 派生（游标由 hook 注入）。
   // 服务端强制 user_id=当前用户，客户端不传；status_code 仅错误面契约支持。
+  // key_id/group_id/model/status_code 走防抖值（useDebounced——300ms 合并逐键输入）。
   const { usageParams, errParams } = useMemo(() => {
     const base: MyUsageLogParams = {
-      key_id: filters.key_id ? Number(filters.key_id) : undefined,
-      group_id: filters.group_id ? Number(filters.group_id) : undefined,
-      model: filters.model || undefined,
+      key_id: debouncedKey ? Number(debouncedKey) : undefined,
+      group_id: debouncedGroup ? Number(debouncedGroup) : undefined,
+      model: debouncedModel || undefined,
       format: filters.format || undefined,
       error_type: filters.error_type || undefined,
       from: toRFC3339(filters.from) ?? '',
@@ -160,10 +168,10 @@ export default function UserLogs() {
       errParams: {
         ...base,
         // Number('e')=NaN 会以 'NaN' 字符串发送 → 服务端 400；isFinite 过滤为 undefined。
-        status_code: filters.status_code && Number.isFinite(Number(filters.status_code)) ? Number(filters.status_code) : undefined,
+        status_code: debouncedStatus && Number.isFinite(Number(debouncedStatus)) ? Number(debouncedStatus) : undefined,
       } satisfies MyErrLogParams,
     }
-  }, [filters, limit])
+  }, [debouncedKey, debouncedGroup, debouncedModel, debouncedStatus, filters, limit])
 
   // 游标链分页：替代 useQuery + 自计页号；fetchPage 注入（hook 不感知 API 层）。
   const { page, rows, loadedPages, hasNext, isLoading, isFetching, isError, error, goNext, goPrev, goLatest, goToPage } = useCursorLogs<UsageLog | ErrLog>(

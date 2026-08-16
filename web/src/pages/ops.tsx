@@ -61,7 +61,16 @@ export default function Ops() {
         </div>
       </div>
 
-      {opsQ.isError ? (
+      {/* 轮询失败警示条（有旧数据——isRefetchError）：瞬态刷新失败不整页替换，
+          保留上一次数据渲染 + 警示（至多一个轮询周期自愈） */}
+      {opsQ.isRefetchError && (
+        <Alert variant="destructive">
+          <AlertTitle>{t('ops.loadFailedWarning')}</AlertTitle>
+          <AlertDescription>{t('ops.loadFailedDesc')}</AlertDescription>
+        </Alert>
+      )}
+
+      {opsQ.isError && !opsQ.isRefetchError ? (
         <Alert variant="destructive">
           <AlertTitle>{t('ops.loadFailedTitle')}</AlertTitle>
           <AlertDescription>{t('ops.loadFailedDesc')}</AlertDescription>

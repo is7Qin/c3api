@@ -82,6 +82,7 @@
     "title": "Overview",
     "subtitle": "Aggregated overview refreshes every 30s; live concurrency every 10s",
     "loadFailedTitle": "Failed to load data",
+    "loadFailedWarning": "Refresh failed — showing the last data",
     "summaryCards": {
       "requests": "Requests today",
       "callCount": "Calls today",
@@ -862,6 +863,8 @@
     "title": "Settings",
     "subtitle": "Global defaults apply immediately; money amounts are entered in USD (1 USD = 100,000 milli-cents)",
     "emptyTitle": "No settings",
+    "otherTitle": "Other settings",
+    "otherDesc": "Settings returned by the server that are not in the known groups yet",
     "groups": {
       "signup": "Signup",
       "defaults": "New user defaults",
@@ -919,6 +922,7 @@
     "snapshotNoScope": "—",
     "loadFailedTitle": "Failed to load ops data",
     "loadFailedDesc": "Check backend service and admin access",
+    "loadFailedWarning": "Refresh failed — showing the last data",
     "noWorkers": "No worker observations",
     "noSnapshots": "No snapshots",
     "boolYes": "Yes",

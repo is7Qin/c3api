@@ -13,7 +13,7 @@ const keys = new Set(Object.keys(flat(zh)))
 // ops.tsx：ops.stats.* 动态 key（模板串）由 defaultValue 兜底，静态 key 一并校验。
 // 正则带标识符边界：排除 setOpt('...') / split(',') 等非 t() 调用的尾缀误匹配；
 // 含 ${ 的模板串为动态 key（defaultValue 兜底），跳过。
-const files = ['src/pages/dashboard.tsx', 'src/pages/logs.tsx', 'src/pages/user/logs.tsx', 'src/pages/pricing.tsx', 'src/pages/templates.tsx', 'src/pages/accounts.tsx', 'src/pages/groups.tsx', 'src/pages/stats.tsx', 'src/pages/user/stats.tsx', 'src/pages/ops.tsx', 'src/pages/user/profile.tsx', 'src/pages/users.tsx']
+const files = ['src/pages/dashboard.tsx', 'src/pages/logs.tsx', 'src/pages/user/logs.tsx', 'src/pages/pricing.tsx', 'src/pages/templates.tsx', 'src/pages/accounts.tsx', 'src/pages/groups.tsx', 'src/pages/stats.tsx', 'src/pages/user/stats.tsx', 'src/pages/ops.tsx', 'src/pages/settings.tsx', 'src/pages/user/profile.tsx', 'src/pages/users.tsx']
 const re = /(?<![A-Za-z0-9_$])t\(['"`]([^'"`]+)['"`]/g
 const problems = []
 for (const f of files) {

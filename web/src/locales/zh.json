@@ -82,6 +82,7 @@
     "title": "总览",
     "subtitle": "聚合总览每 30 秒刷新；实时并发每 10 秒刷新",
     "loadFailedTitle": "数据加载失败",
+    "loadFailedWarning": "刷新失败，正在显示上一次数据",
     "summaryCards": {
       "requests": "今日请求",
       "callCount": "今日调用",
@@ -862,6 +863,8 @@
     "title": "系统设置",
     "subtitle": "全局默认值即时生效；金额按 USD 输入（1 USD = 100,000 毫分）",
     "emptyTitle": "暂无设置项",
+    "otherTitle": "其他设置",
+    "otherDesc": "服务器返回但尚未归入已知分组的设置项",
     "groups": {
       "signup": "注册",
       "defaults": "新用户默认资源",
@@ -919,6 +922,7 @@
     "snapshotNoScope": "—",
     "loadFailedTitle": "运维数据加载失败",
     "loadFailedDesc": "请检查后端服务与 admin 权限",
+    "loadFailedWarning": "刷新失败，正在显示上一次数据",
     "noWorkers": "暂无 worker 观测项",
     "noSnapshots": "暂无快照",
     "boolYes": "是",

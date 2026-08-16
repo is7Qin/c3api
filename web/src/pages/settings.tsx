@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiUnauthorized } from '@/lib/api/client'
 import { Button } from '@/components/ui/button'
-import { Card, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -36,6 +36,8 @@ const GROUPS: { id: string; keys: string[] }[] = [
   { id: 'pricingSync', keys: ['price_source_url', 'price_sync_cron'] },
   { id: 'tierPolicy', keys: ['service_tier_policy_priority', 'service_tier_policy_flex', 'service_tier_policy_fast'] },
 ]
+// 清单内全部键（兜底卡判定用——服务器新增键不在清单内时渲染到「其他设置」）。
+const GROUPED_KEYS = new Set(GROUPS.flatMap(g => g.keys))
 
 // 非负整数（与服务端 strconv.ParseInt 的接受域对齐：普通 number 键直传字符串）。
 const isPlainInt = (v: string) => /^\d+$/.test(v)
@@ -206,6 +208,8 @@ export default function SettingsPage() {
     queryFn: () => api.getSettings(),
   })
   const byKey = new Map((data ?? []).map(s => [s.Key ?? '', s]))
+  // 兜底卡数据：GROUPS 清单外剩余键（服务器新增设置键不静默丢失）。
+  const others = (data ?? []).filter(s => s.Key && !GROUPED_KEYS.has(s.Key))
 
   return (
     // 页面级进入动画（与 users/pricing 等页一致，一次挂载仅播放一次）。
@@ -246,6 +250,19 @@ export default function SettingsPage() {
               </Card>
             )
           })}
+          {/* 兜底卡：GROUPS 清单外剩余键不静默丢失——服务器新增设置键可见（语义表
+              按发布节奏维护，新增键在归组前统一渲染到「其他设置」） */}
+          {others.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('settings.otherTitle')}</CardTitle>
+                <CardDescription>{t('settings.otherDesc')}</CardDescription>
+              </CardHeader>
+              <div className="divide-y divide-border px-(--card-spacing)">
+                {others.map(s => <SettingRow key={s.Key} setting={s} />)}
+              </div>
+            </Card>
+          )}
         </div>
       )}
     </motion.div>

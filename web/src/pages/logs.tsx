@@ -24,6 +24,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCursorLogs } from '@/components/use-cursor-logs'
 import { defaultLogRange, formatCost, formatDateTime, toRFC3339 } from '@/components/fmt'
+import { useDebounced } from '@/lib/use-debounced'
 import { cn } from '@/lib/utils'
 import type { ErrLogParams, UsageLogParams } from '@/lib/api/client'
 import type { components } from '@/lib/api/schema'
@@ -156,16 +157,6 @@ interface FilterState { user: string; key: string; group: string; account: strin
 // 展开态与搜索词同键但值为布尔（原误复用 FilterState，tsc 全项目失败）。
 interface FilterOpenState { user: boolean; key: boolean; group: boolean; account: boolean }
 
-// 输入防抖：服务端搜索只在用户停顿后发起（避免每键一请求）。
-function useDebounced<T>(value: T, ms: number): T {
-  const [v, setV] = useState(value)
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), ms)
-    return () => clearTimeout(t)
-  }, [value, ms])
-  return v
-}
-
 // 搜索型筛选框（base-ui Combobox 受控封装）：value 为字符串 ID（与 filters
 // 直存同构）；label 经 itemToStringLabel 查 id→label 缓存展示——候选刷新后
 // 已选项仍显示名称，不退化 #id。filter 恒真关本地过滤（搜索语义归服务端，
@@ -241,6 +232,10 @@ export default function Logs() {
   // 过滤条件 / 每页条数变化 → hook 参数键变化自动重置回第 1 页（游标链自持，调用方只传派生值）。
   const set = (patch: Partial<LogFilters>) => setFilters(f => ({ ...f, ...patch }))
   const changeLimit = (v: number) => setLimit(v)
+  // 纯输入防抖字段（model/status_code 逐键输入）：输入即时反映在受控框，查询参数
+  // 300ms 合并后再触发（避免每键一次后端查询——与候选搜索同频）。
+  const debouncedModel = useDebounced(filters.model, 300)
+  const debouncedStatus = useDebounced(filters.status_code, 300)
   // Tab 切换：各自独立游标链（hook 按参数变化重置）；usage 面错误类型值域收窄为
   // none/abort，超出值重置（收窄逻辑属调用方，hook 只收归一后参数）。
   const switchTab = (v: string) => {
@@ -252,13 +247,14 @@ export default function Logs() {
 
   // 参数对象随 filter/limit/tab 派生（游标由 hook 注入）。管理端 7 字段全筛
   // （user/key/group/account 数字输入 + model/format/errorType）+ 错误面 status_code 专属。
+  // model/status_code 走防抖值（useDebounced——300ms 合并逐键输入）。
   const { usageParams, errParams } = useMemo(() => {
     const base: UsageLogParams = {
       user_id: filters.user_id ? Number(filters.user_id) : undefined,
       key_id: filters.key_id ? Number(filters.key_id) : undefined,
       group_id: filters.group_id ? Number(filters.group_id) : undefined,
       account_id: filters.account_id ? Number(filters.account_id) : undefined,
-      model: filters.model || undefined,
+      model: debouncedModel || undefined,
       format: filters.format || undefined,
       error_type: filters.error_type || undefined,
       from: toRFC3339(filters.from) ?? '',
@@ -270,10 +266,10 @@ export default function Logs() {
       errParams: {
         ...base,
         // Number('e')=NaN 会以 'NaN' 字符串发送 → 服务端 400；isFinite 过滤为 undefined。
-        status_code: filters.status_code && Number.isFinite(Number(filters.status_code)) ? Number(filters.status_code) : undefined,
+        status_code: debouncedStatus && Number.isFinite(Number(debouncedStatus)) ? Number(debouncedStatus) : undefined,
       } satisfies ErrLogParams,
     }
-  }, [filters, limit])
+  }, [filters, debouncedModel, debouncedStatus, limit])
 
   // 游标链分页：替代 useQuery + 自计页号；fetchPage 注入（hook 不感知 API 层）。
   const { page, rows, loadedPages, hasNext, isLoading, isFetching, isError, error, goNext, goPrev, goLatest, goToPage } = useCursorLogs<UsageLog | ErrLog>(
@@ -309,7 +305,7 @@ export default function Logs() {
   // —— 筛选候选（服务端搜索；打开才查，防抖词驱动；key 携带已选 user/group
   // 关联收窄——同名 key 在已选用户/分组范围内仍可区分）——
   const [search, setSearch] = useState<FilterState>({ user: '', key: '', group: '', account: '' })
-  const debounced = useDebounced(search, 300)
+  const debouncedSearch = useDebounced(search, 300)
   const [filterOpen, setFilterOpen] = useState<FilterOpenState>({ user: false, key: false, group: false, account: false })
   const openFilter = (k: keyof FilterState, open: boolean) => setFilterOpen(p => ({ ...p, [k]: open }))
   const setSearchTerm = (k: keyof FilterState) => (term: string) => setSearch(s => ({ ...s, [k]: term }))
@@ -325,24 +321,24 @@ export default function Logs() {
   }, [qc])
 
   const userCandidates = useQuery({
-    queryKey: ['logs-filter', 'users', { term: debounced.user }],
-    queryFn: () => api.listUsers({ email: debounced.user || undefined, limit: 20 }),
+    queryKey: ['logs-filter', 'users', { term: debouncedSearch.user }],
+    queryFn: () => api.listUsers({ email: debouncedSearch.user || undefined, limit: 20 }),
     enabled: filterOpen.user,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
     select: r => r.rows.map(u => ({ id: u.ID, label: u.Email ?? `#${u.ID}` })),
   })
   const groupCandidates = useQuery({
-    queryKey: ['logs-filter', 'groups', { term: debounced.group }],
-    queryFn: () => api.listGroups({ name: debounced.group || undefined, limit: 20 }),
+    queryKey: ['logs-filter', 'groups', { term: debouncedSearch.group }],
+    queryFn: () => api.listGroups({ name: debouncedSearch.group || undefined, limit: 20 }),
     enabled: filterOpen.group,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
     select: r => r.rows.map(g => ({ id: g.ID, label: g.Name || `#${g.ID}` })),
   })
   const accountCandidates = useQuery({
-    queryKey: ['logs-filter', 'accounts', { term: debounced.account }],
-    queryFn: () => api.listAccounts({ name: debounced.account || undefined, limit: 20 }),
+    queryKey: ['logs-filter', 'accounts', { term: debouncedSearch.account }],
+    queryFn: () => api.listAccounts({ name: debouncedSearch.account || undefined, limit: 20 }),
     enabled: filterOpen.account,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
@@ -350,9 +346,9 @@ export default function Logs() {
   })
   // key 候选：已选 user/group 筛选条件下候选限缩（关联收窄；name 搜索同构）
   const keyCandidates = useQuery({
-    queryKey: ['logs-filter', 'keys', { term: debounced.key, user_id: filters.user_id, group_id: filters.group_id }],
+    queryKey: ['logs-filter', 'keys', { term: debouncedSearch.key, user_id: filters.user_id, group_id: filters.group_id }],
     queryFn: () => api.listKeys({
-      name: debounced.key || undefined,
+      name: debouncedSearch.key || undefined,
       user_id: filters.user_id ? Number(filters.user_id) : undefined,
       group_id: filters.group_id ? Number(filters.group_id) : undefined,
       limit: 20,
