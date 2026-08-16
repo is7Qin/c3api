@@ -7,7 +7,6 @@
 // 与 ILIKE 模糊一致）；selectedValue 受控选中、open 受控展开。
 // 结构参考 ui 仓库 base 版 combobox（输入框直输 + 清除按钮 + 下拉列表），
 // 样式用本项目既有 token（input/select 同款）。参考仓库 v4 cn-* 主题类不适用。
-import * as React from 'react'
 import { Combobox as ComboboxPrimitive } from '@base-ui/react/combobox'
 import { CheckIcon, ChevronDownIcon, XIcon } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'

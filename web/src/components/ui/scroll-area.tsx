@@ -10,7 +10,6 @@
 // Content 部件不可省：它自带内容 ResizeObserver，内容异步加载（viewport 自身
 // 尺寸不变、仅 scrollHeight 增长）时负责触发重新测量——缺它会导致滚动条在
 // 内容加载完成后永不出现（hiddenState 锁定初始值，Scrollbar 直接 return null）。
-import * as React from 'react'
 import { ScrollArea as ScrollAreaPrimitive } from '@base-ui/react/scroll-area'
 import { cn } from '@/lib/utils'
 
