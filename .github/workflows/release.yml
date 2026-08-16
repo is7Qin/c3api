@@ -122,7 +122,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # --prerelease：beta 期发布恒为 Pre-release，不占 GitHub Latest 位
+          # （latest = 正式稳定版语义，beta 不配位）。semver tag 的 -beta 段
+          # 不会自动联动 prerelease 标志，须显式传。
           gh release create "${{ github.ref_name }}" \
             --title "${{ github.ref_name }}" \
             --notes-file release-notes.md \
+            --prerelease \
             c3api_*.tar.gz sha256sums.txt
