@@ -95,8 +95,15 @@ const fmtPricePerM = (millis: number): string => {
   if (usd >= 0.001) return `$${usd.toFixed(4)}/M`
   return `$${usd.toPrecision(2)}/M`
 }
-// token 缩写：≥1000 用 K（1.2K/27.5K），否则原样。
-const fmtTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n))
+// token 缩写：K/M/B 分级（1.2K/27.5K/3.1M），否则原样（与 admin 端同步；
+// 只有 K 时大数值会撑破单元格被裁；阈值留四舍五入余量防 999999→"1000K"）。
+const fmtTokens = (n: number): string => {
+  const trim = (v: number) => `${v.toFixed(1).replace(/\.0$/, '')}`
+  if (n >= 999.95e6) return `${trim(n / 1e9)}B`
+  if (n >= 999.95e3) return `${trim(n / 1e6)}M`
+  if (n >= 1e3) return `${trim(n / 1e3)}K`
+  return String(n)
+}
 
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
 const ERROR_ALL = '__all__'
