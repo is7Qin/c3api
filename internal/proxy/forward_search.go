@@ -51,48 +51,23 @@ var errCodexSearchNotIntegrated = &formatError{status: http.StatusNotImplemented
 //     倍率，applyBilling search 分支）；非 2xx/网络错误 → 不计费（cost=0，错误
 //     行走既有 err_logs 面）
 //
-// 复用面（评审 P3-4 点名）：鉴权/配额/并发门禁/限流序列、Select +
-// handleSelectError、信封分类（statusOf/upstreamBody）、failover 循环（**每轮
-// 按当轮 sel.CredentialType 重新分派**——对齐 caller.go:299-309 P1-1 教训：
+// 复用面（评审 P3-4 点名）：guardPipeline（鉴权/配额/并发门禁/限流序列）、
+// Select + handleSelectError、信封分类（statusOf/upstreamBody）、failoverLoop
+// （**每轮按当轮 sel.CredentialType 重新分派**——searchAttempt 对齐 P1-1 教训：
 // 跨类型换账号复用旧调用器会把健康账号路由到错误凭据路径）、
 // recordRejected/finish/buildLog/MarkResult 全部既有机制零改动。
 func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
-	p.inflight.Add(1) // 优雅停机等在途归零（main waitForInflight 轮询 Inflight()）
-	defer p.inflight.Add(-1)
 	start := time.Now()
 	reqID := newReqID()
-	meta, ok := p.auth.Authenticate(r)
+	r, rm, level, ok := p.guardPipeline(w, r, domain.FormatOpenAISearch, reqID, start, false)
 	if !ok {
-		writeErr(w, errInvalidKey)
-		p.recordRejected(r.Context(), reqID, 0, 0, "", "", domain.FormatOpenAISearch, http.StatusUnauthorized, domain.ErrAuth, 0, usageTuple{}, start, errInvalidKey.msg)
 		return
 	}
-	groupID := meta.GroupID
-	// 请求元数据入 context（user_id/key_id 日志归属；与 handleFormat 同款单键
-	// 单值 + 指针原地补 tier——GC 削减 P6 语义）。
-	rm := &reqMeta{meta: meta}
-	r = r.WithContext(context.WithValue(r.Context(), ctxKeyReqMeta{}, rm))
+	// 门禁释放：先释并发门禁后减 inflight（与现状 defer LIFO 同序）。
+	defer p.inflight.Add(-1)
+	defer p.auth.Release(rm.meta, level)
+	groupID := rm.meta.GroupID
 
-	// quota 检查在并发 acquire 之前（失败无并发槽副作用；同 handleFormat 序列）。
-	if p.auth.QuotaExhausted(meta) {
-		writeErr(w, errQuotaExhausted)
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAISearch, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errQuotaExhausted.msg)
-		return
-	}
-	// 无余额预检（search 无 402 语义——见函数头注释）。
-	acquired, ok := p.auth.Acquire(meta)
-	if !ok {
-		writeErr(w, errConcurrency)
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAISearch, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errConcurrency.msg)
-		return
-	}
-	defer p.auth.Release(meta, acquired)
-
-	if !p.limit.Allow(groupID, time.Now()) {
-		writeErr(w, errRateLimit)
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAISearch, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errRateLimit.msg)
-		return
-	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, p.cfg.MaxBodySize))
 	if err != nil {
 		writeErr(w, errBody)
@@ -118,115 +93,50 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		lastCode   int
-		lastErrMsg string // 最后一次实际尝试的错误文本（耗尽路径 ErrorMessage 用）
-		lastSel    = sel  // 最后一次实际尝试的 Selection；中途 Select 失败返回 nil 时不得解引用 sel
-	)
-	for attempt := 0; attempt < p.cfg.FailoverAttempts; attempt++ {
-		lastSel = sel
-		code, respBody, handled, callErr := p.callSearch(r.Context(), w, r, reqID, groupID, start, sel, reqModel, body)
-		if handled {
-			return // 已处理完毕（成功已记录 / 501 本地拒绝已写出）
-		}
-		lastCode = code
-		if code == http.StatusTooManyRequests {
-			// 429：上游 body message（既有语义；域内截断 500）
-			lastErrMsg = domain.TruncateErrMsg(upstreamErrMsg(respBody))
-			p.sched.MarkResult(sel.AccountID, scheduler.Result429, nil, code, lastErrMsg)
-		} else if code >= 500 || code == 0 {
-			// 首字节前客户端断连（分类正确性同 handleFormat）：r.Context() 已取
-			// 消 → SDK 返回 context.Canceled（statusOf=0）——客户端行为非上游错
-			// 误：不 failover、不 MarkResult/冷却；记 499 + ErrAbort 立即返回。
-			if code == 0 && r.Context().Err() != nil {
-				l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start))
-				msg := "client closed request before upstream response"
-				l.ErrorMessage = &msg
-				p.finish(sel.AccountID, l)
-				return
-			}
-			// 5xx：上游 body message。连接级/凭据错（code==0）：err.Error() 全文
-			// 填 last_error 与耗尽记录（域内截断 500），并附加 Warn（全文留痕）。
-			lastErrMsg = upstreamErrMsg(respBody)
-			if code == 0 && callErr != nil {
-				lastErrMsg = domain.TruncateErrMsg(callErr.Error())
-				if p.log != nil {
-					p.log.Warn("upstream search connection failure",
-						logx.String("request_id", reqID),
-						logx.Int64("account_id", sel.AccountID),
-						logx.String("model", sel.Model),
-						logx.Error(callErr))
-				}
-			} else if lastErrMsg != "" {
-				lastErrMsg = domain.TruncateErrMsg(lastErrMsg)
-			}
-			p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, code, lastErrMsg)
-		} else {
-			// 4xx 确定性错误：透传上游状态码与原始 body，不转移（规格 §5.3）；
-			// **不计费**（cost=0，Err4xx 走 err_logs 面——routeLog 失败行语义）。
-			l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, code, domain.Err4xx, usageTuple{}, start))
-			if em := domain.TruncateErrMsg(string(respBody)); em != "" {
-				l.ErrorMessage = &em
-			}
-			p.finish(sel.AccountID, l)
-			if len(respBody) > 0 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(code)
-				_, _ = w.Write(respBody)
-			} else {
-				writeJSON(w, code, map[string]any{"error": map[string]any{
-					"message": "upstream rejected request", "type": "upstream_error",
-				}})
-			}
-			return
-		}
-		p.sched.Release(sel.AccountID)
-		// 最后一轮不再为不存在的下一次尝试预选（尾部 Select 抢占并发槽泄漏——
-		// 与 handleFormat 同款注释语义）。
-		if attempt+1 >= p.cfg.FailoverAttempts {
-			break
-		}
-		sel, err = p.sched.Select(groupID, domain.FormatOpenAIResponses, reqModel)
-		if err != nil {
-			break
-		}
-	}
-	// 耗尽：请求已完成（上游消费了请求），以最后一次尝试的结果记一条用量；
-	// **不计费**（cost=0，错误行走 err_logs 面）。
-	et := domain.Err5xx
-	switch {
-	case lastCode == http.StatusTooManyRequests:
-		et = domain.Err429
-	case lastCode == 0:
-		et = domain.ErrNetwork
-	}
-	l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, lastSel.Model, domain.FormatOpenAISearch, lastCode, et, usageTuple{}, start))
-	if lastErrMsg != "" {
-		l.ErrorMessage = &lastErrMsg
-	}
-	p.recordLog(l)
-	if lastCode == http.StatusTooManyRequests {
-		w.Header().Set("Retry-After", "1")
-		writeErr(w, errTooMany)
-	} else {
-		writeErr(w, &formatError{status: http.StatusBadGateway, msg: "all upstream attempts failed"})
-	}
+	// failover 循环（共享骨架，见 pipeline.go）：precheck=false（search 无缺价
+	// 预检——现状语义显式关，不给 search 新增 402）；尾部 Select 走主流 resp
+	// 路由面（openai-responses）；耗尽 Retry-After 分支由 httpSink 判 lastCode。
+	p.failoverLoop(w, r, domain.FormatOpenAISearch, domain.FormatOpenAIResponses, reqID, groupID, start, reqModel, body, sel,
+		attemptState{}, p.searchAttempt, p.httpSink, false)
 }
 
-// callSearch 单次 codex search 上游调用（非流式 unary 透传；**四类型分派**——
-// 用户裁决 2026-08-13）：按当轮 sel.CredentialType 路由——
+// searchAttempt HandleSearch 的 attempt 实现（单次 codex search 上游调用，非
+// 流式 unary 透传；**四类型分派**——用户裁决 2026-08-13；无状态单例——search
+// 无 per-request 差异状态）。按当轮 sel.CredentialType 路由——
 //   - codex-oauth/codex-pat → callCodexSearch（适配层 SDK Search——统一 client
 //     形态直接复用；Auth 注入 + fatal 生命周期复用既有 SDK 面）
 //   - api_key/responses-special → callStaticSearch（Bearer upstream key 直连
 //     上游——aiclient 既有静态 key 通道）
 //
-// 分派在 callSearch 内每轮重新执行（P1-1 教训——跨类型换账号按新类型走新路
-// 径，不缓存调用器）。
-func (p *Proxy) callSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
+// 分派每轮重新执行（P1-1 教训——跨类型换账号按新类型走新路径，不缓存调用
+// 器）。差异段（循环不代发）：Warn 文案 "upstream search connection failure"
+// ——与 chat 版保留不统一（gate Minor 2a）。
+type searchAttempt struct{ p *Proxy }
+
+func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, bool, error) {
+	var (
+		code     int
+		respBody []byte
+		handled  bool
+		callErr  error
+	)
 	if isCodexCredentialType(sel.CredentialType) {
-		return p.callCodexSearch(ctx, w, r, reqID, groupID, start, sel, reqModel, body)
+		code, respBody, handled, callErr = a.p.callCodexSearch(ctx, w, r, reqID, groupID, start, sel, reqModel, body)
+	} else {
+		code, respBody, handled, callErr = a.p.callStaticSearch(ctx, w, r, reqID, groupID, start, sel, reqModel, body)
 	}
-	return p.callStaticSearch(ctx, w, r, reqID, groupID, start, sel, reqModel, body)
+	if code == 0 && callErr != nil && ctx.Err() == nil {
+		// Warn 留痕（连接级/凭据错全文——Warn 不截断；循环不代发）。ctx 已取
+		// 消（499 分支）不 Warn——与现状判定顺序一致。
+		if a.p.log != nil {
+			a.p.log.Warn("upstream search connection failure",
+				logx.String("request_id", reqID),
+				logx.Int64("account_id", sel.AccountID),
+				logx.String("model", sel.Model),
+				logx.Error(callErr))
+		}
+	}
+	return code, respBody, handled, callErr
 }
 
 // callCodexSearch codex-oauth/codex-pat 类型 search 调用（SDK 路径）：凭据线

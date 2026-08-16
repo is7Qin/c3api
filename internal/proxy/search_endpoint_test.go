@@ -553,6 +553,33 @@ func TestSearchIndependentSelection(t *testing.T) {
 	require.Len(t, seen, 2, "两次请求各独立选号、命中不同账号（无会话绑定）")
 }
 
+// TestSearchFailoverZeroReleasesSlot 防呆（spec 纵深，与 chat 同款）：直构
+// failover_attempts=0（绕过 validate 的 >=1 下限——测试侧 p.cfg 改写等价直构）
+// 时 failover 循环零次执行，首次 Select 已占并发槽——修复前槽永不释放（组内
+// 账号耗尽后全组 429 死锁，重启才能恢复）；耗尽路径必须补 Release。N=0 时
+// lastCode=0 → ErrNetwork → 502 "all upstream attempts failed"。
+func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
+	up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 500, body: `{}`})
+	defer up.Close()
+	store := &captureLogStore{}
+	p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},
+		up.URL, nil, store)
+	p.cfg.FailoverAttempts = 0 // 直构：绕过 validate 下限
+
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+	resp := postSearch(t, srv, searchReqBody, "")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusBadGateway, resp.StatusCode, "body=%s", string(b))
+	require.Contains(t, string(b), "all upstream attempts failed")
+	require.Equal(t, 0, upc.callsN(), "N=0 循环零次执行：无上游接触")
+	ri, ok := p.sched.Runtime(10)
+	require.True(t, ok)
+	require.Zero(t, ri.Concurrency, "failover_attempts=0 首次选号占槽必须释放（防呆 Release）")
+	require.Zero(t, p.rec.Pending(), "N=0 耗尽路径失败行不产生明细 pending（err_logs 承载）")
+}
+
 // TestSearchSelectFormatUnavailable404 选号失败映射（P3-4）：组内模板不支持
 // openai-responses → ErrFormatUnavailable → 404（handleSelectError 既有语义）；
 // 上游零接触。

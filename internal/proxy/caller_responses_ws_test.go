@@ -459,6 +459,142 @@ func TestAIRouterResponsesWSUpgradeDispatch(t *testing.T) {
 	require.NotEqual(t, http.StatusUpgradeRequired, rec.Code, "非 upgrade 请求不得按 WS 处理")
 }
 
+// TestResponsesWSFailoverZeroReleasesSlot 防呆（spec 纵深，与 chat/search 同
+// 款）：直构 failover_attempts=0（绕过 validate 的 >=1 下限——测试侧 p.cfg 改
+// 写等价直构）时 failover 循环零次执行，首次 Select 已占并发槽——修复前槽永
+// 不释放（组内账号耗尽后全组 429 死锁，重启才能恢复）；耗尽路径必须补
+// Release。N=0 时 lastCode=0 → ErrNetwork 记录 + 固定错误帧文案。
+func TestResponsesWSFailoverZeroReleasesSlot(t *testing.T) {
+	up, hooks := newCodexWSUpstream(t, []int{200}, 0) // 循环不执行——上游不会被拨号
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
+	p.cfg.FailoverAttempts = 0 // 直构：绕过 validate 下限
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	ef := readResponsesWSFrame(t, c)
+	require.Contains(t, string(ef), `"type":"error"`)
+	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+	require.Equal(t, 0, hooks.upgradesN(), "N=0 循环零次执行：无上游拨号")
+	ri, ok := p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Zero(t, ri.Concurrency, "failover_attempts=0 首次选号占槽必须释放（防呆 Release）")
+	require.Zero(t, p.rec.Pending(), "N=0 耗尽路径失败行不产生明细 pending（err_logs 承载）")
+}
+
+// TestResponsesWSDial4xxPassthrough 静态拨号 4xx 透传统一循环分类（行为契约：
+// WS 静态拨号 4xx 从循环内搬入循环统一段——finish + 错误帧，emOr 语义保持）：
+// 4xx 确定性拒绝不转移（错误帧带上游 body message，无 429 冷却）、Err4xx 记录
+// + ErrorMessage 取归一错误文本（上游 body message，非原始 body）、并发槽释放。
+func TestResponsesWSDial4xxPassthrough(t *testing.T) {
+	up, hooks := newCodexWSUpstream(t, []int{403}, 0)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	ef := readResponsesWSFrame(t, c)
+	require.Contains(t, string(ef), `"type":"error"`)
+	require.Contains(t, string(ef), "upstream rejected", "错误帧取归一错误文本（emOr 语义）")
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+	require.Equal(t, 1, hooks.upgradesN(), "4xx 确定性拒绝不转移")
+
+	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
+	ri, ok := p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusActive, ri.Status, "4xx 不 MarkResult（不冷却）")
+	require.Zero(t, ri.Concurrency, "4xx 透传也必须释放并发槽")
+	require.NoError(t, p.rec.Close(context.Background()), "Recorder 手动 flush")
+	require.NoError(t, p.errlog.Close(context.Background()), "errlog 手动 flush（失败行走 err_logs）")
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	lg := store.logs[0]
+	require.Equal(t, domain.Err4xx, lg.ErrorType)
+	require.Equal(t, http.StatusForbidden, lg.StatusCode)
+	require.NotNil(t, lg.ErrorMessage, "错误文本必须落盘")
+	require.Equal(t, "upstream rejected", *lg.ErrorMessage, "ErrorMessage = 归一错误文本（同错误帧）")
+}
+
+// TestResponsesWSDial429Failover 静态拨号 429 → 循环 429 分类（Result429 转移 +
+// MarkResult httpStatus 429）：错误文本经 respBody 回传（归一 msg——纯文本经
+// 骨架"提取为空直取原文"回退不丢）；耗尽记 Err429 + 状态码 429（WS 无
+// Retry-After——固定错误帧文案）。
+func TestResponsesWSDial429Failover(t *testing.T) {
+	up, _ := newCodexWSUpstream(t, []int{429}, 0)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	ef := readResponsesWSFrame(t, c)
+	require.Contains(t, string(ef), `"type":"error"`)
+	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
+	ri, ok := p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.Status429, ri.Status, "429 → Result429 冷却")
+	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
+	require.NoError(t, p.rec.Close(context.Background()), "Recorder 手动 flush")
+	require.NoError(t, p.errlog.Close(context.Background()), "errlog 手动 flush（失败行走 err_logs）")
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	lg := store.logs[0]
+	require.Equal(t, domain.Err429, lg.ErrorType)
+	require.Equal(t, http.StatusTooManyRequests, lg.StatusCode)
+	require.NotNil(t, lg.ErrorMessage, "错误文本必须落盘")
+	require.Equal(t, "upstream rejected", *lg.ErrorMessage, "归一错误文本经直取原文回退不丢")
+}
+
+// TestResponsesWSDial5xxNormalized 修复性声明（WS 静态拨号 5xx 归一 lastCode）：
+// 拨号 5xx → 循环 5xx 分支统一分类——耗尽记录 et=Err5xx + 状态码原样 500 +
+// MarkResult httpStatus 5xx（现状 caller_responses_ws.go default 分支归 0 →
+// ErrNetwork + httpStatus 0——WS 内部与 codex 5xx 分支不一致；统一后对齐 codex
+// 分支与 HTTP 路径，规则 when 匹配面 http_status 恢复真实值）。
+func TestResponsesWSDial5xxNormalized(t *testing.T) {
+	up, _ := newCodexWSUpstream(t, []int{500}, 0) // 非 200 升级 → 500 拒绝 + JSON 错误体
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	ef := readResponsesWSFrame(t, c)
+	require.Contains(t, string(ef), `"type":"error"`)
+	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
+	ri, ok := p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "5xx → ResultError 冷却")
+	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
+	require.NoError(t, p.rec.Close(context.Background()), "Recorder 手动 flush")
+	require.NoError(t, p.errlog.Close(context.Background()), "errlog 手动 flush（失败行走 err_logs）")
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	lg := store.logs[0]
+	require.Equal(t, domain.Err5xx, lg.ErrorType, "5xx 归一：耗尽记 Err5xx（现状误记 ErrNetwork）")
+	require.Equal(t, http.StatusInternalServerError, lg.StatusCode, "5xx 归一：耗尽记录状态码原样 500")
+	require.NotNil(t, lg.ErrorMessage, "错误文本必须落盘")
+	require.Equal(t, "upstream rejected", *lg.ErrorMessage, "错误文本 = 上游 body message")
+}
+
 // --- unit：预筛嗅探逻辑（热路径纪律） ---
 
 func TestSniffResponsesCompleted(t *testing.T) {

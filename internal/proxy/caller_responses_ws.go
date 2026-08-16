@@ -58,59 +58,27 @@ const (
 
 // HandleResponsesWS 处理 resp-ws 升级请求（/v1/responses 带 upgrade 头——
 // 真实客户端无 /ws 后缀，WS 与 POST /v1/responses 同路径，按协议分流）。
-// 与 handleFormat 同构：鉴权 → 额度/余额预检 → 两级并发门禁
-// → 限流 → 升级 → 首帧（= 请求体）→ 模型提取 → 选号 → failover 循环
-// （凭据/拨号/首帧转发）→ 双向 relay（usage 嗅探）→ 记录。差异：
+// 与 handleFormat 同构：guardPipeline（鉴权 → 额度/余额预检 → 两级并发门禁
+// → 限流，见 pipeline.go）→ 升级 → 首帧（= 请求体）→ 模型提取 → 选号 →
+// failoverLoop（wsAttempt + wsSink，precheck=true）→ 双向 relay（usage 嗅探）
+// → 记录。差异段留本文件：
 //   - 无 HTTP body：请求体 = 升级后首个 WS 帧（response.create）
 //   - 选号在首帧之后（模型来自首帧；挂死不占账号槽）
 //   - 本地拒绝在升级后无 HTTP 状态码 → 错误事件帧承载（wsWriteError）
+//   - 门禁覆盖整个长会话：guard 释放 defer 到 relay 结束（同现状语义）
 func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
-	p.inflight.Add(1) // 优雅停机等在途归零（同 handleFormat）
-	defer p.inflight.Add(-1)
 	start := time.Now()
 	reqID := newReqID()
-	meta, ok := p.auth.Authenticate(r)
+	r, rm, level, ok := p.guardPipeline(w, r, domain.FormatOpenAIResponsesWS, reqID, start, true)
 	if !ok {
-		writeErr(w, errInvalidKey)
-		// 评审 I-1：401 鉴权失败转 recordRejected（同 handleFormat——401 也进
-		// err_logs 错误审计，不再走 usage_logs 明细路径）。
-		p.recordRejected(r.Context(), reqID, 0, 0, "", "", domain.FormatOpenAIResponsesWS, http.StatusUnauthorized, domain.ErrAuth, 0, usageTuple{}, start, errInvalidKey.msg)
 		return
 	}
-	groupID := meta.GroupID
-	// 请求元数据入 context（user_id/key_id 日志归属；同 handleFormat 的 rm 指针约定）
-	rm := &reqMeta{meta: meta}
-	r = r.WithContext(context.WithValue(r.Context(), ctxKeyReqMeta{}, rm))
+	// 门禁释放：先释并发门禁后减 inflight（与现状 defer LIFO 同序）；defer 到
+	// relay 会话结束——门禁覆盖整个长会话（同现状语义）。
+	defer p.inflight.Add(-1)
+	defer p.auth.Release(rm.meta, level)
+	groupID := rm.meta.GroupID
 
-	if p.auth.QuotaExhausted(meta) {
-		writeErr(w, errQuotaExhausted)
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAIResponsesWS, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errQuotaExhausted.msg)
-		return
-	}
-	if p.cfg.BillingCapture && p.bill != nil {
-		// 余额预检（与 handleFormat 同判据）：快照缺失或 <0 → 402；余额 0 放行
-		// ——临时额度由 FEFO 扣费消化（billing_repo.go:71-76 先扣 temp）；
-		// 负余额持续负债拒绝。预检在 Acquire 前 → 不占用并发槽。
-		bal, ok := p.bill.Balances.BalanceOf(meta.UserID)
-		if (!ok || bal < 0) && p.bill.Balances.EffectiveMultiplier(meta.UserID, groupID) != 0 {
-			writeErr(w, errInsufficientBalance)
-			p.recordRejected(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAIResponsesWS, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errInsufficientBalance.msg)
-			return
-		}
-	}
-	acquired, ok := p.auth.Acquire(meta)
-	if !ok {
-		writeErr(w, errConcurrency)
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAIResponsesWS, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errConcurrency.msg)
-		return
-	}
-	defer p.auth.Release(meta, acquired)
-	if !p.limit.Allow(groupID, time.Now()) {
-		writeErr(w, errRateLimit)
-		// 架构审查 S5（用户裁决）：组限流 429 也进 err_logs（同 handleFormat）。
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAIResponsesWS, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errRateLimit.msg)
-		return
-	}
 	if !isWebSocketUpgrade(r) {
 		// 本地拒绝（无记录，同 invalid JSON 语义）
 		writeErr(w, errUpgradeRequired)
@@ -174,128 +142,89 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// failover 循环：与 handleFormat 同构（429/5xx/连接级转移，4xx 透传不转移）。
-	// 连接级错误文本落盘（部署故障修复同款）；拨号失败不写 HTTP —— 客户端已
-	// 升级，重试期间客户端在等首帧，耗尽才发错误事件帧。
-	var (
-		lastCode   int
-		lastErrMsg string
-		lastSel    = sel
-	)
-	for attempt := 0; attempt < p.cfg.FailoverAttempts; attempt++ {
-		lastSel = sel
-		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：resp-ws 保留 chat 价预检
-		// 照常执行（评审 P2-3 裁决：纯 image 价模型经 resp 出图会被既有预检
-		// 402——接受，职责边界清晰；共享 helper 只对 images 格式切换）。
-		if err := p.precheckPrice(domain.FormatOpenAIResponsesWS, sel.Model); err != nil {
-			p.sched.Release(sel.AccountID)
-			p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponsesWS, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errNoPrice.msg)
-			wsWriteError(client, errNoPrice.msg)
-			return
-		}
-		if isCodexCredentialType(sel.CredentialType) {
-			// codex 独立 relay 变体（T4 §1）：SDK Dial 路径——快照派生 cred 直供
-			// 适配层（不经 credentialFor 单字符串路径：codex 凭据为复合结构
-			// oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表
-			// 达不了——注册表未注册 codex 类型，见 dialCodexWS 注释），伪装四元
-			// 组 + 头部族剥离 + 心跳单源全部在 dialCodexWS/relayCodexWS
-			//（codex_responses_ws.go）。
-			up, dialErr := p.dialCodexWS(r, sel)
-			if dialErr == nil {
-				handled, fwMsg := p.relayCodexWS(client, up, r, reqID, groupID, start, sel, reqModel, firstTyp, first)
-				if handled {
-					return
-				}
-				// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（同拨号失败）
-				lastCode, lastErrMsg = 0, fwMsg
-				p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, 0, lastErrMsg)
-			} else if stop, code, msg := p.handleCodexDialError(r, reqID, groupID, start, sel, reqModel, client, dialErr); stop {
-				// 501/fatal/4xx 已收尾（错误帧 + 记录）——请求终止不转移
-				return
-			} else {
-				// 429 → Result429 转移（规则引擎 Kind429 冷却分类——与 aiclient
-				// 路径同构）；5xx/RefreshError/网络（code 0）→ ResultError 转移。
-				lastCode, lastErrMsg = code, msg
-				if code == http.StatusTooManyRequests {
-					p.sched.MarkResult(sel.AccountID, scheduler.Result429, nil, code, lastErrMsg)
-				} else {
-					p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, 0, lastErrMsg)
-				}
+	// failover 循环（共享骨架，见 pipeline.go）：precheck=true（resp-ws 保留
+	// chat 价预检照常执行——评审 P2-3 裁决：纯 image 价模型经 resp 出图会被
+	// 既有预检 402，接受，职责边界清晰；共享 helper 只对 images 格式切换）；
+	// 4xx 透传统一走循环分类（finish + wsSink 错误帧，emOr 语义保持）；耗尽
+	// 固定文案由 wsSink 承载（WS 无 Retry-After/429 语义）。codex 拨号分类
+	//（handleCodexDialError 的 stop 分支——501/fatal/4xx 已收尾）留在
+	// wsAttempt 内（不统一 codex 4xx 收尾差异：分类代码位置 + 错误文本来源）。
+	p.failoverLoop(w, r, domain.FormatOpenAIResponsesWS, domain.FormatOpenAIResponsesWS, reqID, groupID, start, reqModel, nil, sel,
+		attemptState{client: client, firstTyp: firstTyp, first: first, stripTier: stripTier},
+		p.wsAttempt, p.wsSink, true)
+}
+
+// wsAttempt HandleResponsesWS 的 attempt 实现（struct 方法 + 接口引用——不用
+// 闭包；无状态单例，per-request 差异（client/首帧/strip 标记）经 attemptState
+// 流入，热路径零新增分配）。差异段：codex 拨号分流（dialCodexWS +
+// handleCodexDialError）与静态拨号（credentialFor + ResponsesWSDial）、relay
+//（relayCodexWS/relayResponsesWS——首帧模型改写 + 双向帧透传 + usage 嗅探）。
+// 错误文本统一经 respBody 回传（msg 归一：上游 body message → dialErr 文本回
+// 退——循环的 upstreamErrMsg gjson 提取吃空时直取原文防丢失）；code==0 恒
+// callErr=nil（WS 不新增 Warn——gate Minor 2b）。
+type wsAttempt struct{ p *Proxy }
+
+func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, bool, error) {
+	p := a.p
+	if isCodexCredentialType(sel.CredentialType) {
+		// codex 独立 relay 变体（T4 §1）：SDK Dial 路径——快照派生 cred 直供
+		// 适配层（不经 credentialFor 单字符串路径：codex 凭据为复合结构
+		// oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表
+		// 达不了——注册表未注册 codex 类型，见 dialCodexWS 注释），伪装四元
+		// 组 + 头部族剥离 + 心跳单源全部在 dialCodexWS/relayCodexWS
+		//（codex_responses_ws.go）。
+		up, dialErr := p.dialCodexWS(r, sel)
+		if dialErr == nil {
+			handled, fwMsg := p.relayCodexWS(st.client, up, r, reqID, groupID, start, sel, reqModel, st.firstTyp, st.first)
+			if handled {
+				return 0, nil, true, nil
 			}
+			// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（同拨号失败）
+			return 0, []byte(fwMsg), false, nil
+		}
+		if stop, code, msg := p.handleCodexDialError(r, reqID, groupID, start, sel, reqModel, st.client, dialErr); stop {
+			// 501/fatal/4xx 已收尾（错误帧 + 记录）——请求终止不转移
+			return 0, nil, true, nil
 		} else {
-			cred, err := p.credentialFor(r.Context(), sel)
-			if err != nil {
-				// 凭据错误按网络错误处理（等价 handleFormat 的 code==0 语义）
-				lastCode, lastErrMsg = 0, domain.TruncateErrMsg(err.Error())
-				p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, 0, lastErrMsg)
-			} else {
-				up, resp, dialErr := p.clients.ResponsesWSDial(r.Context(), sel.TemplateID, sel.BaseURL, cred, wsPassthroughHeaders(r.Header))
-				if dialErr == nil {
-					handled, fwMsg := p.relayResponsesWS(client, up, r, reqID, groupID, start, sel, reqModel, firstTyp, first, stripTier)
-					if handled {
-						return
-					}
-					// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（同拨号失败）
-					lastCode, lastErrMsg = 0, fwMsg
-					p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, 0, lastErrMsg)
-				} else {
-					// 拨号失败分类（与 handleFormat 的 code 分支同构）：
-					// 429 → Result429 转移；4xx → 透传不转移（错误帧 + 记录）；
-					// 其余（5xx/连接级）→ ResultError 转移。
-					code := 0
-					var msg string
-					if resp != nil {
-						code = resp.StatusCode
-						msg = upstreamErrMsg(readUpstreamBody(resp))
-						_ = resp.Body.Close()
-					}
-					if msg == "" {
-						msg = dialErr.Error()
-					}
-					switch {
-					case code == http.StatusTooManyRequests:
-						lastCode, lastErrMsg = code, domain.TruncateErrMsg(msg)
-						p.sched.MarkResult(sel.AccountID, scheduler.Result429, nil, code, lastErrMsg)
-					case code >= 400 && code < 500:
-						// 4xx 确定性拒绝：上游未接受请求，透传错误文本不转移
-						// （同 handleFormat：finish 释放槽 + 计费 + 记录）。
-						l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, code, domain.Err4xx, usageTuple{}, start))
-						if em := domain.TruncateErrMsg(msg); em != "" {
-							l.ErrorMessage = &em
-						}
-						p.finish(sel.AccountID, l)
-						wsWriteError(client, emOr(msg, "upstream rejected request"))
-						return
-					default:
-						lastCode, lastErrMsg = 0, domain.TruncateErrMsg(msg)
-						p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, 0, lastErrMsg)
-					}
-				}
-			}
-		}
-		p.sched.Release(sel.AccountID)
-		if attempt+1 >= p.cfg.FailoverAttempts {
-			break
-		}
-		sel, err = p.sched.Select(groupID, domain.FormatOpenAIResponsesWS, reqModel)
-		if err != nil {
-			break
+			// 429 → Result429 转移；5xx（归一 lastCode 原样）/RefreshError/
+			// 网络（code 0）→ ResultError 转移——分类由循环统一完成。
+			return code, []byte(msg), false, nil
 		}
 	}
-	// 耗尽：最后一次尝试的结果记一条用量（同 handleFormat 耗尽路径）。
-	et := domain.Err5xx
-	switch {
-	case lastCode == http.StatusTooManyRequests:
-		et = domain.Err429
-	case lastCode == 0:
-		et = domain.ErrNetwork
+	cred, err := p.credentialFor(ctx, sel)
+	if err != nil {
+		// 凭据错误按网络错误处理（等价 handleFormat 的 code==0 语义）
+		return 0, []byte(domain.TruncateErrMsg(err.Error())), false, nil
 	}
-	l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, lastSel.Model, lastSel.Format, lastCode, et, usageTuple{}, start))
-	if lastErrMsg != "" {
-		l.ErrorMessage = &lastErrMsg
+	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, cred, wsPassthroughHeaders(r.Header))
+	if dialErr == nil {
+		handled, fwMsg := p.relayResponsesWS(st.client, up, r, reqID, groupID, start, sel, reqModel, st.firstTyp, st.first, st.stripTier)
+		if handled {
+			return 0, nil, true, nil
+		}
+		// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（同拨号失败）
+		return 0, []byte(fwMsg), false, nil
 	}
-	p.recordLog(l)
-	wsWriteError(client, "all upstream attempts failed")
+	// 拨号失败分类（与 handleFormat 的 code 分支同构）：msg 归一 = 上游 body
+	// message，空 → dialErr 文本回退。code 原样回传——5xx 归一（修复性声明：
+	// 现状 default 分支归 0 → 耗尽记 ErrNetwork + MarkResult httpStatus 0；
+	// 统一为 code 原样 → et=Err5xx + httpStatus 5xx，对齐 codex 分支与 HTTP
+	// 路径，规则 when http_status 匹配面恢复真实值）；非 429/4xx/5xx 的异常
+	// 状态（2xx/3xx 未升级拒绝）按现状归连接级 0。
+	code := 0
+	var msg string
+	if resp != nil {
+		code = resp.StatusCode
+		msg = upstreamErrMsg(readUpstreamBody(resp))
+		_ = resp.Body.Close()
+	}
+	if msg == "" {
+		msg = dialErr.Error()
+	}
+	if code < 400 || code >= 600 {
+		code = 0 // 连接级/非标准拒绝（含 2xx/3xx 未升级）→ 现状 default 分支语义
+	}
+	return code, []byte(msg), false, nil
 }
 
 // relayResponsesWS 拨号成功后的编排：首帧模型改写（ModelMapping 语义，与

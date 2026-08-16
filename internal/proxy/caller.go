@@ -114,75 +114,28 @@ func extractTier(body []byte) (billing.Tier, error) {
 	return billing.NormalizeTier(tierVal.String()), nil
 }
 
-// handleFormat 通用转发骨架（从原 HandleXxx 提取，三格式共用）：鉴权 →
-// quota 检查（本地预算快读；预算耗尽触发 DB 复核认领，见 gate.reclaim）→
-// 两级并发门禁 acquire（user → key，失败回滚）→ 限流 →
-// 读体 → json.Valid + scanKeys 单遍顶层提取（stream/model/service_tier）→ 选号 →
-// failover 循环（每轮 credentialFor + caller.Call + code 分支）→ 耗尽记录写出。
-// 门禁热路径全部内存原子（零 DB 零锁——复核仅预算耗尽的 key 触发，额度边缘
-// 低频慢路径）；release 与 quota 扣减在请求结束统一完成。
+// handleFormat 通用转发入口（openai-chat/openai-responses/anthropic/openai-
+// images 四格式共用——从原 HandleXxx 提取）：guardPipeline（鉴权 → reqMeta ctx
+// 注入 → quota → 余额预检 → 两级并发门禁 → 限流，见 pipeline.go）→ 读体 →
+// json.Valid + scanKeys 单遍顶层提取（stream/model/service_tier）→ 选号 →
+// failoverLoop（chatAttempt + httpSink，precheck=true）→ 耗尽记录写出。差异段
+// 留本文件：读请求阶段（multipart 分支/scanKeys 三键/tier 策略）与 convertedRoute
+// 转换补差（chat 专属，不抽象）。门禁热路径全部内存原子（零 DB 零锁——复核仅
+// 预算耗尽的 key 触发，额度边缘低频慢路径）；release 与 quota 扣减在请求结束
+// 统一完成。
 func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter, r *http.Request) {
-	p.inflight.Add(1) // 优雅停机等在途归零（main waitForInflight 轮询 Inflight()）
-	defer p.inflight.Add(-1)
 	start := time.Now()
 	reqID := newReqID()
-	meta, ok := p.auth.Authenticate(r)
+	r, rm, level, ok := p.guardPipeline(w, r, format, reqID, start, true)
 	if !ok {
-		writeErr(w, errInvalidKey)
-		// 评审 I-1：401 鉴权失败转 recordRejected（无效 key 洪水残留向量——
-		// 401 也进 err_logs 错误审计，不再走 usage_logs 明细路径）。
-		p.recordRejected(r.Context(), reqID, 0, 0, "", "", format, http.StatusUnauthorized, domain.ErrAuth, 0, usageTuple{}, start, errInvalidKey.msg)
 		return
 	}
-	groupID := meta.GroupID
-	// 请求元数据入 context（user_id/key_id 日志归属；不改变 Call/buildLog 签名）。
-	// 单键单值 + 指针原地补 tier（GC 削减 P6：计费路径免第二次 WithValue+
-	// WithContext；rm 指针只在请求 goroutine 内被读取/改写，logWithCtx 全程同
-	// goroutine 同步访问——无跨 goroutine 竞态）。
-	rm := &reqMeta{meta: meta}
-	r = r.WithContext(context.WithValue(r.Context(), ctxKeyReqMeta{}, rm))
+	// 门禁释放：先释并发门禁后减 inflight（与现状 defer LIFO 同序——release
+	// 合并两者的展开形态，见 guardPipeline 注释）。
+	defer p.inflight.Add(-1)
+	defer p.auth.Release(rm.meta, level)
+	groupID := rm.meta.GroupID
 
-	// quota 检查在并发 acquire 之前（评审提醒①：失败无并发槽副作用；
-	// 未设置额度 key 短路零成本；预算耗尽 → gate 内 DB 复核认领后再判定）
-	if p.auth.QuotaExhausted(meta) {
-		writeErr(w, errQuotaExhausted)
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errQuotaExhausted.msg)
-		return
-	}
-	// 余额预检（Phase 5 计费；评审 I-1 无槽位问题）：快照读零 DB（滞后 ≤
-	// BalanceRefreshInterval，多实例条件扣 DB 兜底）。快照缺失或 <0 → 402
-	// errInsufficientBalance（不按 0 记账），但免费放行（T3.5，评审 I-1 修复）：
-	// 有效倍率 0 = 免费用户/组 → 缺失/0 余额不 402（与 applyBilling 同一快照
-	// 同一判定；cost 0 只记日志不扣费）。余额 0 放行——临时额度由 FEFO 扣费
-	// 消化（billing_repo.go:71-76 先扣 temp）；负余额持续负债拒绝。快照缺失
-	// 窗口内免费组照常放行；缺失且非免费 → 仍 402（用户不在快照 = 无余额
-	// 记录，语义不变）。
-	// 在 Acquire 前 → 不占用并发槽。
-	if p.cfg.BillingCapture && p.bill != nil {
-		bal, ok := p.bill.Balances.BalanceOf(meta.UserID)
-		if (!ok || bal < 0) && p.bill.Balances.EffectiveMultiplier(meta.UserID, groupID) != 0 {
-			writeErr(w, errInsufficientBalance)
-			p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errInsufficientBalance.msg)
-			return
-		}
-	}
-	// 两级并发门禁（user → key；两步回滚由 gate 内部完成；release 仅释放
-	// 已 acquire 层级——defer 覆盖全部返回路径）
-	acquired, ok := p.auth.Acquire(meta)
-	if !ok {
-		writeErr(w, errConcurrency)
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errConcurrency.msg)
-		return
-	}
-	defer p.auth.Release(meta, acquired)
-
-	if !p.limit.Allow(groupID, time.Now()) {
-		writeErr(w, errRateLimit)
-		// 架构审查 S5（用户裁决）：组限流 429 也进 err_logs（排障限流需要；
-		// 与 401 同属拒绝路径——普通队列风暴采样丢弃兜底）。
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errRateLimit.msg)
-		return
-	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, p.cfg.MaxBodySize))
 	if err != nil {
 		writeErr(w, errBody)
@@ -276,7 +229,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		// 路由（缺口）且组配置了转换方向 → 客户端协议 → 转换 → 模板协议路由。
 		// off（默认）→ 上面的 errors.Is 分支零开销。ErrNoAvailable（有路由但
 		// 全忙）不转换——组有客户端协议模板，按现状 429。
-		if tgt, conv, ok := convertedRoute(meta.ProtocolConverts, format); ok {
+		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
 			if sel2, err2 := p.sched.Select(groupID, tgt, reqModel); err2 == nil {
 				cb, cerr := protoconv.ConvertRequest(body, conv)
 				if cerr != nil {
@@ -300,198 +253,95 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		return
 	}
 
-	// 注册表查找在 failover 循环外（评审 I-3）：格式固定，每轮不重查。
-	caller := route.caller
+	// failover 循环（共享骨架，见 pipeline.go）：precheck=true（chat/resp/
+	// anthropic/images 走缺价预检）；尾部 Select 按 route.format（协议转换命中
+	// 时为模板协议路由）；记录仍按客户端 format（buildLog 参数不变）。差异
+	// 状态按值传入 attemptState（零分配——attempt/sink 为 New 构造单例）。
+	p.failoverLoop(w, r, format, route.format, reqID, groupID, start, reqModel, route.body, sel,
+		attemptState{format: format, routeFormat: route.format, caller: route.caller, stream: stream},
+		p.chatAttempt, p.httpSink, true)
+}
 
+// chatAttempt handleFormat 的 attempt 实现（覆盖 chat/responses/anthropic/
+// images 四格式——共用同一循环骨架；无状态单例，per-request 差异经
+// attemptState 流入）。差异段：codex images 分流（按当轮 sel.CredentialType）、
+// credentialFor、caller.Call、Warn 文案（"upstream connection failure"——两版
+// 本保留不统一，循环不代发）与 SDK 校验错误识别（A-1 "streaming is required"
+// 本地拒绝——chat 专属）。
+type chatAttempt struct{ p *Proxy }
+
+func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, bool, error) {
+	// codex 分流落位（T2 §2，B 的 501 骨架）：images 端点 codex-oauth/
+	// codex-pat 模板选号命中 → codexImagesCaller（GenerateImage 非流式 /
+	// GenerateImageStream 流式 T3 已接——caller 内 stream 分支同签名直赋）。
+	// 适配层未装配（SetCodex nil）→ 501 显式拒绝，不让凭据缺失路径误报
+	// 502/network。caller 每轮自 st.caller 起算 = 天然复位（评审 P1-1）：
+	// 混合类型组 failover 跨类型换账号（codex 失败 → api_key 尝试）时复用旧
+	// codexImagesCaller 会把健康 api_key 账号路由到 Ext=nil 空凭据路径
+	// （502 + 错误率污染 + 无谓失效上报 account 0）。
+	caller := st.caller
+	if st.routeFormat == domain.FormatOpenAIImages && isCodexCredentialType(sel.CredentialType) {
+		caller = a.p.codexImagesFor(r)
+	}
+	// 凭据每轮取（评审 I-3）：尾部 Select 后 Selection 变化，凭据随账号；
+	// 循环外取一次会把旧账号 key 发给新账号上游。codex 类型跳过单字符串
+	// credentialFor（注册表无 codex provider——单字符串契约表达不了复合
+	// 凭据；codexImagesCaller 按 sel.Ext 派生 AccountCredential 直供适配层）。
 	var (
-		lastCode   int
-		lastErrMsg string // 最后一次实际尝试的错误文本（耗尽路径 ErrorMessage 用）
-		lastSel    = sel  // 最后一次实际尝试的 Selection；中途 Select 失败返回 nil 时不得解引用 sel
+		code     int
+		respBody []byte
+		handled  bool
+		callErr  error
 	)
-	// 防呆（spec：failover_attempts=0 直构绕过 validate 下限）：循环零次执行时
-	// 首次 Select 已占并发槽，耗尽路径按此标志补 Release——N>=1 恒 true，不双释放。
-	attempted := false
-	for attempt := 0; attempt < p.cfg.FailoverAttempts; attempt++ {
-		lastSel = sel
-		attempted = true
-		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前
-		// 查价——计费启用时模型无价格 → 释放并发槽 + 402（不按 0 计价），零 DB
-		// （快照读）。images 格式查 GetImagePrice（image_price 表；跳过 chat
-		// 价预检 GetPrice——纯 image 价模型无 pricings 行，chat 预检会先行
-		// 402 误杀，"ImagePrice 定生死"轮不到执行）；其余格式照旧。
-		if err := p.precheckPrice(format, sel.Model); err != nil {
-			p.sched.Release(sel.AccountID)
-			p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errNoPrice.msg)
-			writeErr(w, errNoPrice)
-			return
-		}
-		// codex 分流落位（T2 §2，B 的 501 骨架）：images 端点 codex-oauth/
-		// codex-pat 模板选号命中 → codexImagesCaller（GenerateImage 非流式 /
-		// GenerateImageStream 流式 T3 已接——caller 内 stream 分支同签名直赋）。
-		// 适配层未装配（SetCodex nil）→ 501 显式拒绝，不让凭据缺失路径误报
-		// 502/network。else 复位（评审 P1-1）：混合类型
-		// 组 failover 跨类型换账号（codex 失败 → api_key 尝试）时复用旧
-		// codexImagesCaller 会把健康 api_key 账号路由到 Ext=nil 空凭据路径
-		// （502 + 错误率污染 + 无谓失效上报 account 0）——每轮按当轮
-		// sel.CredentialType 双向赋值。
-		if format == domain.FormatOpenAIImages {
-			if isCodexCredentialType(sel.CredentialType) {
-				caller = p.codexImagesFor(r)
-			} else {
-				caller = route.caller // 复位直连调用器（非 codex 尝试——含 codex→api_key 跨类型换账号）
-			}
-		}
-		// 凭据每轮取（评审 I-3）：尾部 Select 后 Selection 变化，凭据随账号；
-		// 循环外取一次会把旧账号 key 发给新账号上游。codex 类型跳过单字符串
-		// credentialFor（注册表无 codex provider——单字符串契约表达不了复合
-		// 凭据；codexImagesCaller 按 sel.Ext 派生 AccountCredential 直供适配层）。
-		var (
-			code     int
-			respBody []byte
-			handled  bool
-			callErr  error
-		)
-		if isCodexCredentialType(sel.CredentialType) {
-			code, respBody, handled, callErr = caller.Call(r.Context(), w, r, reqID, groupID, start, sel, "", route.body, stream)
-		} else {
-			cred, err := p.credentialFor(r.Context(), sel)
-			if err != nil {
-				code = 0 // 凭据错误按网络错误处理（等价现状 try* 内 false,0,nil → 耗尽 ErrNetwork）
-				callErr = err
-			} else {
-				// err 保留（部署故障修复：错误文本落盘）：code 承载分类（0=连接级/
-				// 凭据错、4xx、429、5xx），callErr 提供 err.Error() 文本——仅错误
-				// 分支消费（成功路径零新增分配）。
-				code, respBody, handled, callErr = caller.Call(r.Context(), w, r, reqID, groupID, start, sel, cred, route.body, stream)
-			}
-		}
-		if handled {
-			return // caller 已处理完毕（成功/客户端断开/流中止已记录；本地拒绝已写出无记录）
-		}
-		lastCode = code
-		if code == http.StatusTooManyRequests {
-			// 429：上游 body message（既有语义；域内截断 500）
-			lastErrMsg = domain.TruncateErrMsg(upstreamErrMsg(respBody))
-			p.sched.MarkResult(sel.AccountID, scheduler.Result429, nil, code, lastErrMsg)
-		} else if code >= 500 || code == 0 {
-			// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
-			// r.Context() 已取消 → SDK 返回 context.Canceled（statusOf=0）。这是
-			// 客户端行为，非上游错误——不 failover、不 MarkResult/冷却（否则
-			// 无辜账号冷却 + failover 空转 + error_type 误记 network）；记
-			// 499（nginx "client closed request" 约定）+ ErrAbort，立即返回。
-			// tokens 必然 0 → cost=0 不计费；客户端已断，不写 HTTP 响应。
-			// 流式路径的流中止/首字节后断连由 caller 内部分类（handled=true），
-			// 到不了这里——本分支只覆盖 SDK 请求阶段（首字节前）的断连。
-			if code == 0 && r.Context().Err() != nil {
-				l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start))
-				msg := "client closed request before upstream response"
-				l.ErrorMessage = &msg
-				p.finish(sel.AccountID, l)
-				return
-			}
-			// 5xx：上游 body message（既有语义）。连接级/凭据错（code==0）：
-			// err.Error() 全文填 last_error 与耗尽记录（域内截断 500），并附加
-			// Warn（request_id/account/model/err 全文——Warn 不截断）——根因
-			// 锁定靠错误文本，两类留痕互补：Warn 全量、落盘 500 字符。
-			// code==0 内 SDK 本地校验错误前置识别（A-1）：独立归 4xx 提前 return，
-			// 不落入本网络分支。
-			lastErrMsg = upstreamErrMsg(respBody)
-			if code == 0 && callErr != nil {
-				sdkErr := callErr.Error()
-				// Warn 留痕：两种子路径（SDK 识别归 4xx / 网络错误）同款——错误
-				// 文本全量、request_id/account/model 字段，识别错误不因识别而丢留痕。
-				if p.log != nil {
-					p.log.Warn("upstream connection failure",
-						logx.String("request_id", reqID),
-						logx.Int64("account_id", sel.AccountID),
-						logx.String("model", sel.Model),
-						logx.Error(callErr))
-				}
-				// SDK 校验错误识别（spec A-1，检测前置）：anthropic-sdk-go
-				// v1.62.0 client.go:316（CalculateNonStreamingTimeout）对
-				// max_tokens 大 + 非流式请求本地拒绝——无网络请求、无状态码
-				// （code=0），此前误归 network（err_logs 记 network + 502 无
-				// 原因文案，可观测性差）。固定文本匹配 strings.Contains 零分配；
-				// 文本为 SDK 硬编码——升级 SDK 若改文案则识别静默失效，须同步
-				// 更新本处与版本标注。
-				if strings.Contains(sdkErr, "streaming is required") {
-					// 确定性错误（重试必同结果，§5.3）：不 failover、不
-					// MarkResult（与 4xx 分支现状一致），记录后提前 return。
-					l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start))
-					em := domain.TruncateErrMsg(sdkErr)
-					l.ErrorMessage = &em
-					p.finish(sel.AccountID, l)
-					// message 用 SDK 原文不加前缀（"streaming is required..." 已
-					// 自明，避免措辞重复）；type 与 4xx 分支通用回退同款（可选）。
-					writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
-						"message": sdkErr, "type": "upstream_error",
-					}})
-					return
-				}
-				lastErrMsg = domain.TruncateErrMsg(sdkErr)
-			} else if lastErrMsg != "" {
-				lastErrMsg = domain.TruncateErrMsg(lastErrMsg)
-			}
-			p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, code, lastErrMsg)
-		} else {
-			// 4xx 确定性错误：透传上游状态码与原始 body，不转移（规格 §5.3）；
-			// body 不可得（连接级错误不会有 4xx 码）才回退网关文案。
-			// 错误文本：上游 body 原文截断 500 落 ErrorMessage（仅错误分支构造，
-			// 成功路径 ErrorMessage 恒空、零分配）。
-			l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, format, code, domain.Err4xx, usageTuple{}, start))
-			if em := domain.TruncateErrMsg(string(respBody)); em != "" {
-				l.ErrorMessage = &em
-			}
-			p.finish(sel.AccountID, l)
-			if len(respBody) > 0 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(code)
-				_, _ = w.Write(respBody)
-			} else {
-				writeJSON(w, code, map[string]any{"error": map[string]any{
-					"message": "upstream rejected request", "type": "upstream_error",
-				}})
-			}
-			return
-		}
-		p.sched.Release(sel.AccountID)
-		// 最后一轮不再为不存在的下一次尝试预选：尾部 Select 会抢占并发槽
-		// （CAS 递增、仅 Release 递减、无回收），耗尽时永不释放 → 永久占槽。
-		if attempt+1 >= p.cfg.FailoverAttempts {
-			break
-		}
-		var selErr error
-		sel, selErr = p.sched.Select(groupID, route.format, reqModel)
-		if selErr != nil {
-			break
-		}
-	}
-	// 耗尽：请求已完成（上游消费了请求），以最后一次尝试的结果记一条用量。
-	// 错误文本：最后一次尝试的 errMsg（连接级 err.Error() / 429/5xx 上游
-	// message，域内截断 500）填 ErrorMessage；成功路径恒空。
-	// 防呆释放：循环零次执行（failover_attempts=0 直构）时首次 Select 的槽从未
-	// 释放——耗尽路径补 Release；N>=1 时 attempted 恒 true（循环尾已释放，不双释放）。
-	if !attempted {
-		p.sched.Release(lastSel.AccountID)
-	}
-	et := domain.Err5xx
-	switch {
-	case lastCode == http.StatusTooManyRequests:
-		et = domain.Err429
-	case lastCode == 0:
-		et = domain.ErrNetwork
-	}
-	l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, lastSel.Model, format, lastCode, et, usageTuple{}, start))
-	if lastErrMsg != "" {
-		l.ErrorMessage = &lastErrMsg
-	}
-	p.recordLog(l)
-	if lastCode == http.StatusTooManyRequests {
-		w.Header().Set("Retry-After", "1")
-		writeErr(w, errTooMany)
+	if isCodexCredentialType(sel.CredentialType) {
+		code, respBody, handled, callErr = caller.Call(ctx, w, r, reqID, groupID, start, sel, "", body, st.stream)
 	} else {
-		writeErr(w, &formatError{status: http.StatusBadGateway, msg: "all upstream attempts failed"})
+		cred, err := a.p.credentialFor(ctx, sel)
+		if err != nil {
+			return 0, nil, false, err // 凭据错误按网络错误处理（等价现状 try* 内 false,0,nil → 耗尽 ErrNetwork）
+		}
+		// err 保留（部署故障修复：错误文本落盘）：code 承载分类（0=连接级/
+		// 凭据错、4xx、429、5xx），callErr 提供 err.Error() 文本——仅错误
+		// 分支消费（成功路径零新增分配）。
+		code, respBody, handled, callErr = caller.Call(ctx, w, r, reqID, groupID, start, sel, cred, body, st.stream)
 	}
+	// code==0 && callErr != nil 的网络错误分类（Warn + 文本提取）在循环内完成；
+	// 本 attempt 只代发 Warn（文案 chat 版）与 SDK 校验错误识别（A-1 提前收尾）。
+	// ctx.Err()==nil 判定与循环 499 分支同序（客户端断连不 Warn、不识别）。
+	if code == 0 && callErr != nil && ctx.Err() == nil {
+		sdkErr := callErr.Error()
+		// Warn 留痕：两种子路径（SDK 识别归 4xx / 网络错误）同款——错误
+		// 文本全量、request_id/account_id/model 字段，识别错误不因识别而丢留痕。
+		if a.p.log != nil {
+			a.p.log.Warn("upstream connection failure",
+				logx.String("request_id", reqID),
+				logx.Int64("account_id", sel.AccountID),
+				logx.String("model", sel.Model),
+				logx.Error(callErr))
+		}
+		// SDK 校验错误识别（spec A-1，检测前置）：anthropic-sdk-go
+		// v1.62.0 client.go:316（CalculateNonStreamingTimeout）对
+		// max_tokens 大 + 非流式请求本地拒绝——无网络请求、无状态码
+		// （code=0），此前误归 network（err_logs 记 network + 502 无
+		// 原因文案，可观测性差）。固定文本匹配 strings.Contains 零分配；
+		// 文本为 SDK 硬编码——升级 SDK 若改文案则识别静默失效，须同步
+		// 更新本处与版本标注。
+		if strings.Contains(sdkErr, "streaming is required") {
+			// 确定性错误（重试必同结果，§5.3）：不 failover、不
+			// MarkResult（与 4xx 分支现状一致），记录后提前 return。
+			l := logWithCtx(ctx, a.p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, st.format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start))
+			em := domain.TruncateErrMsg(sdkErr)
+			l.ErrorMessage = &em
+			a.p.finish(sel.AccountID, l)
+			// message 用 SDK 原文不加前缀（"streaming is required..." 已
+			// 自明，避免措辞重复）；type 与 4xx 分支通用回退同款（可选）。
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+				"message": sdkErr, "type": "upstream_error",
+			}})
+			return 0, nil, true, nil
+		}
+	}
+	return code, respBody, handled, callErr
 }
 
 // precheckPrice 缺价预检（评审 P1-1：预检按格式切换）——images 格式查

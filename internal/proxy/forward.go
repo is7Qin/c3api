@@ -78,6 +78,14 @@ type Proxy struct {
 	// wsHeartbeatInterval resp-ws 心跳间隔 seam（T4：测试缩短 200ms 验证心跳节
 	// 奏；默认 responsesWSHeartbeatInterval——New 构造，生产路径不变）。
 	wsHeartbeatInterval time.Duration
+	// failover 骨架的单例 attempt/sink（D3 管线骨架化）：无状态（per-request
+	// 差异经 attemptState 按值流入——热路径零新增分配，同 callers map 惯例），
+	// New 一次性构造。
+	chatAttempt   upstreamAttempt
+	searchAttempt upstreamAttempt
+	wsAttempt     upstreamAttempt
+	httpSink      pipelineSink
+	wsSink        pipelineSink
 }
 
 // New 构造代理。creds 为凭据注册表（评审 M2：直接参数注入，编译期强制；
@@ -112,6 +120,13 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 	}
 	p.codexImagesGenerations = &codexImagesCaller{p: p}
 	p.codexImagesEdits = &codexImagesCaller{p: p}
+	// failover 骨架单例（D3）：attempt/sink 无状态（差异状态按值经 attemptState
+	// 流入）——init 期一次性分配，per-request 零新增分配。
+	p.chatAttempt = &chatAttempt{p: p}
+	p.searchAttempt = &searchAttempt{p: p}
+	p.wsAttempt = &wsAttempt{p: p}
+	p.httpSink = &httpSink{}
+	p.wsSink = &wsSink{}
 	return p
 }
 

@@ -137,9 +137,11 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		wsWriteError(client, emOr(msg, "upstream rejected request"))
 		return true, 0, ""
 	default:
-		// 5xx（信封）/ 裸 RefreshError / 网络（code 0）：连接级转移（与
-		// aiclient 路径 default 同构——lastCode 0 → 耗尽记 ErrNetwork）。
-		return false, 0, domain.TruncateErrMsg(msg)
+		// 5xx（信封）/ 裸 RefreshError / 网络（code 0）：连接级转移。5xx 归一
+		// （修复性声明）：code 原样回传（现状归 0 → 耗尽记 ErrNetwork +
+		// MarkResult httpStatus 0；统一后 et=Err5xx + httpStatus 5xx——对齐
+		// HTTP 路径与静态拨号分支）。
+		return false, code, domain.TruncateErrMsg(msg)
 	}
 }
 
