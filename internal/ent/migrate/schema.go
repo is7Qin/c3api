@@ -209,8 +209,7 @@ var (
 	KeysColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "name", Type: field.TypeString},
-		{Name: "key_hash", Type: field.TypeString, Unique: true},
-		{Name: "key_prefix", Type: field.TypeString},
+		{Name: "key_raw", Type: field.TypeString, Unique: true},
 		{Name: "status", Type: field.TypeEnum, Enums: []string{"active", "disabled"}, Default: "active"},
 		{Name: "max_concurrency", Type: field.TypeInt, Default: 0},
 		{Name: "quota", Type: field.TypeInt64, Default: 0},
@@ -229,13 +228,13 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "keys_groups_keys",
-				Columns:    []*schema.Column{KeysColumns[11]},
+				Columns:    []*schema.Column{KeysColumns[10]},
 				RefColumns: []*schema.Column{GroupsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "keys_users_keys",
-				Columns:    []*schema.Column{KeysColumns[12]},
+				Columns:    []*schema.Column{KeysColumns[11]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -244,12 +243,12 @@ var (
 			{
 				Name:    "key_user_id_deleted_at",
 				Unique:  false,
-				Columns: []*schema.Column{KeysColumns[12], KeysColumns[9]},
+				Columns: []*schema.Column{KeysColumns[11], KeysColumns[8]},
 			},
 			{
 				Name:    "key_group_id_deleted_at",
 				Unique:  false,
-				Columns: []*schema.Column{KeysColumns[11], KeysColumns[9]},
+				Columns: []*schema.Column{KeysColumns[10], KeysColumns[8]},
 			},
 		},
 	}

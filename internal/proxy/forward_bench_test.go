@@ -20,7 +20,6 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
-	"github.com/is7qin/c3api/pkg/cryptox"
 )
 
 // 转发热路径基准（Task 3）：完整 Proxy + fake 上游 + 固定 body，流式/非流式
@@ -95,7 +94,7 @@ func benchProxy(upstream string) *Proxy {
 		QuotaFlushInterval: time.Hour,
 	}, noopLogStore{}, nil)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		cryptox.HashKey("gk-1"): activeKey(1, 1, 10),
+		"gk-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	if err := auth.Reload(context.Background()); err != nil { // 构造不再自载——显式首刷（快照注册表单一入口）
 		panic(err)

@@ -122,7 +122,7 @@ flowchart LR
 ```
 
 每个决策点：
-- **鉴权**（`internal/proxy/auth.go:127-151`）：`Authorization: Bearer` 或 `x-api-key`（Anthropic 口径）→ `cryptox.HashKey` → 快照查（零 DB）；key 或归属用户禁用 → 401 即时失效。
+- **鉴权**（`internal/proxy/auth.go:127-151`）：`Authorization: Bearer` 或 `x-api-key`（Anthropic 口径）→ 快照按明文等值查（零 DB）；key 或归属用户禁用 → 401 即时失效。
 - **认证双路径**（`internal/server/middleware.go:38-67` adminAuth + `internal/server/server.go:68-79` /admin 组 Handle）：/admin 组 = 静态 admin token `Bearer <AdminToken>` **OR** platform_admin JWT（`JWTIssuer.Verify` + `claims.Role==platform_admin` + 快照用户状态 active 校验；JWT 路径注入 `adminUserIDKey`）；/user 组 = 内部公开分流（`internal/handler/user/router.go:22-40`：register/login 公开，其余 RequireJWT）；AI 组 = key 鉴权（无 JWT）。
 - **配额**：`quotaExhausted`（`internal/proxy/gate.go:267-319`）本地预算两原子读；耗尽才触发 DB 复核认领（`internal/proxy/gate.go:320-374`，慢路径单飞 + 10s 失败退避）；复核公式 `budget = consumed + ceil(remaining_eff/N)`（#37 P1 收敛修正，防复核无限续额）。
 - **余额预检**（`internal/proxy/caller.go:140-147`）：BillingCapture 门控快照读零 DB（滞后 ≤ balance_refresh_interval）；快照缺失/<0 且非免费组 → 402（余额 0 放行——临时额度由 FEFO 扣费消化）；免费组（EffectiveMultiplier==0）放行。

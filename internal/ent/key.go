@@ -25,10 +25,8 @@ type Key struct {
 	GroupID int64 `json:"group_id,omitempty"`
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
-	// KeyHash holds the value of the "key_hash" field.
-	KeyHash string `json:"key_hash,omitempty"`
-	// KeyPrefix holds the value of the "key_prefix" field.
-	KeyPrefix string `json:"key_prefix,omitempty"`
+	// KeyRaw holds the value of the "key_raw" field.
+	KeyRaw string `json:"key_raw,omitempty"`
 	// Status holds the value of the "status" field.
 	Status key.Status `json:"status,omitempty"`
 	// MaxConcurrency holds the value of the "max_concurrency" field.
@@ -89,7 +87,7 @@ func (*Key) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case key.FieldID, key.FieldUserID, key.FieldGroupID, key.FieldMaxConcurrency, key.FieldQuota, key.FieldQuotaUsed:
 			values[i] = new(sql.NullInt64)
-		case key.FieldName, key.FieldKeyHash, key.FieldKeyPrefix, key.FieldStatus:
+		case key.FieldName, key.FieldKeyRaw, key.FieldStatus:
 			values[i] = new(sql.NullString)
 		case key.FieldUpdatedAt, key.FieldDeletedAt, key.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -132,17 +130,11 @@ func (_m *Key) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Name = value.String
 			}
-		case key.FieldKeyHash:
+		case key.FieldKeyRaw:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field key_hash", values[i])
+				return fmt.Errorf("unexpected type %T for field key_raw", values[i])
 			} else if value.Valid {
-				_m.KeyHash = value.String
-			}
-		case key.FieldKeyPrefix:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field key_prefix", values[i])
-			} else if value.Valid {
-				_m.KeyPrefix = value.String
+				_m.KeyRaw = value.String
 			}
 		case key.FieldStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -242,11 +234,8 @@ func (_m *Key) String() string {
 	builder.WriteString("name=")
 	builder.WriteString(_m.Name)
 	builder.WriteString(", ")
-	builder.WriteString("key_hash=")
-	builder.WriteString(_m.KeyHash)
-	builder.WriteString(", ")
-	builder.WriteString("key_prefix=")
-	builder.WriteString(_m.KeyPrefix)
+	builder.WriteString("key_raw=")
+	builder.WriteString(_m.KeyRaw)
 	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Status))

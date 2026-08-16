@@ -36,35 +36,35 @@ func TestCreateKeyGroupEligibility(t *testing.T) {
 	priv, err := fs.CreateGroup(ctx, &domain.Group{Name: "priv", Visibility: domain.GroupVisibilityPrivate})
 	require.NoError(t, err)
 
-	// public → 可建；raw 明文仅创建返回
-	k, raw, err := svc.CreateKey(ctx, user.ID, "k1", pub.ID, 0, 0)
+	// public → 可建；明文落库（k.KeyRaw 即 raw）
+	k, err := svc.CreateKey(ctx, user.ID, "k1", pub.ID, 0, 0)
 	require.NoError(t, err)
-	require.NotEmpty(t, raw)
+	require.NotEmpty(t, k.KeyRaw, "明文落库回显（单返回值 = k.KeyRaw）")
 	require.Equal(t, domain.KeyStatusActive, k.Status)
 	require.Len(t, keys.upserted, 1, "创建后必须增量注册 Auth 快照")
 
 	// private 未授予 → ErrGroupNotEligible
-	_, _, err = svc.CreateKey(ctx, user.ID, "k2", priv.ID, 0, 0)
+	_, err = svc.CreateKey(ctx, user.ID, "k2", priv.ID, 0, 0)
 	require.ErrorIs(t, err, ErrGroupNotEligible)
 	require.ErrorIs(t, err, ErrInvalidInput, "必须映射 400")
 
 	// 组缺失 → ErrNotFound（404）
-	_, _, err = svc.CreateKey(ctx, user.ID, "k3", 99999, 0, 0)
+	_, err = svc.CreateKey(ctx, user.ID, "k3", 99999, 0, 0)
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// 非法参数
-	_, _, err = svc.CreateKey(ctx, user.ID, "", pub.ID, 0, 0)
+	_, err = svc.CreateKey(ctx, user.ID, "", pub.ID, 0, 0)
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, _, err = svc.CreateKey(ctx, user.ID, "k4", pub.ID, -1, 0)
+	_, err = svc.CreateKey(ctx, user.ID, "k4", pub.ID, -1, 0)
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, _, err = svc.CreateKey(ctx, user.ID, "k5", pub.ID, 0, -1)
+	_, err = svc.CreateKey(ctx, user.ID, "k5", pub.ID, 0, -1)
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, _, err = svc.CreateKey(ctx, user.ID, "k6", 0, 0, 0)
+	_, err = svc.CreateKey(ctx, user.ID, "k6", 0, 0, 0)
 	require.ErrorIs(t, err, ErrInvalidInput)
 
 	// 授予后可建
 	require.NoError(t, fs.GrantGroup(ctx, priv.ID, user.ID))
-	_, _, err = svc.CreateKey(ctx, user.ID, "k2", priv.ID, 0, 0)
+	_, err = svc.CreateKey(ctx, user.ID, "k2", priv.ID, 0, 0)
 	require.NoError(t, err, "授予后 private 可建")
 }
 
@@ -80,7 +80,7 @@ func TestKeyOwnership(t *testing.T) {
 	require.NoError(t, err)
 	g, err := fs.CreateGroup(ctx, &domain.Group{Name: "g", Visibility: domain.GroupVisibilityPublic})
 	require.NoError(t, err)
-	k, _, err := svc.CreateKey(ctx, alice.ID, "k", g.ID, 0, 0)
+	k, err := svc.CreateKey(ctx, alice.ID, "k", g.ID, 0, 0)
 	require.NoError(t, err)
 
 	// bob 访问 alice 的 key → 404
@@ -88,7 +88,7 @@ func TestKeyOwnership(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = svc.UpdateKey(ctx, bob.ID, k.ID, nil, nil, nil, nil)
 	require.ErrorIs(t, err, ErrNotFound)
-	_, _, err = svc.RotateKey(ctx, bob.ID, k.ID)
+	_, err = svc.RotateKey(ctx, bob.ID, k.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	err = svc.DeleteKey(ctx, bob.ID, k.ID)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -97,10 +97,10 @@ func TestKeyOwnership(t *testing.T) {
 	updated, err := svc.UpdateKey(ctx, alice.ID, k.ID, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, k.ID, updated.ID)
-	raw, rotated, err := svc.RotateKey(ctx, alice.ID, k.ID)
+	rotated, err := svc.RotateKey(ctx, alice.ID, k.ID)
 	require.NoError(t, err)
-	require.NotEmpty(t, raw)
-	require.NotEqual(t, k.KeyHash, rotated.KeyHash, "轮换后 hash 变化")
+	require.NotEmpty(t, rotated.KeyRaw, "轮换后明文落库（k.KeyRaw 即新 raw）")
+	require.NotEqual(t, k.KeyRaw, rotated.KeyRaw, "轮换后明文变化")
 	require.NoError(t, svc.DeleteKey(ctx, alice.ID, k.ID))
 	_, err = svc.GetKey(ctx, alice.ID, k.ID)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -116,7 +116,7 @@ func TestKeyUpdateFields(t *testing.T) {
 	require.NoError(t, err)
 	g, err := fs.CreateGroup(ctx, &domain.Group{Name: "g", Visibility: domain.GroupVisibilityPublic})
 	require.NoError(t, err)
-	k, _, err := svc.CreateKey(ctx, u.ID, "k", g.ID, 0, 0)
+	k, err := svc.CreateKey(ctx, u.ID, "k", g.ID, 0, 0)
 	require.NoError(t, err)
 
 	empty := ""
@@ -167,7 +167,7 @@ func TestCreateKeyGetUserFailureNoWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	fs.failGetUser = true
-	_, _, err = svc.CreateKey(ctx, user.ID, "k", g.ID, 0, 0)
+	_, err = svc.CreateKey(ctx, user.ID, "k", g.ID, 0, 0)
 	require.Error(t, err, "GetUser 失败 → CreateKey 必须报错（写前预取终止）")
 	rows, _, err := fs.ListKeysByUser(ctx, user.ID, repository.ListQuery{})
 	require.NoError(t, err)
@@ -176,8 +176,8 @@ func TestCreateKeyGetUserFailureNoWrite(t *testing.T) {
 }
 
 // TestRotateKeyGetUserFailureNoDestruction B1-1：GetUser 失败注入 → RotateKey
-// 在写库前终止——DB 行未轮换、旧 hash 未失效、注册面零变化（修复前：先
-// Delete 后 upsert 失败 → DB 已轮换只留新 hash、新 raw 蒸发 → 永久死亡）。
+// 在写库前终止——DB 行未轮换、旧明文未失效、注册面零变化（修复前：先
+// Delete 后 upsert 失败 → DB 已轮换只留新明文、新 raw 蒸发 → 永久死亡）。
 func TestRotateKeyGetUserFailureNoDestruction(t *testing.T) {
 	fs := &getUserFailStore{fakeStore: newFakeStore()}
 	keys := &fakeKeyRegistrar{}
@@ -188,18 +188,18 @@ func TestRotateKeyGetUserFailureNoDestruction(t *testing.T) {
 	require.NoError(t, err)
 	g, err := fs.CreateGroup(ctx, &domain.Group{Name: "g", Visibility: domain.GroupVisibilityPublic})
 	require.NoError(t, err)
-	k, _, err := svc.CreateKey(ctx, user.ID, "k", g.ID, 0, 0)
+	k, err := svc.CreateKey(ctx, user.ID, "k", g.ID, 0, 0)
 	require.NoError(t, err)
-	before := k.KeyHash
+	before := k.KeyRaw
 
 	fs.failGetUser = true
-	_, _, err = svc.RotateKey(ctx, user.ID, k.ID)
+	_, err = svc.RotateKey(ctx, user.ID, k.ID)
 	require.Error(t, err, "GetUser 失败 → RotateKey 必须报错（写前预取终止）")
 	got, err := fs.GetKey(ctx, k.ID)
 	require.NoError(t, err)
-	require.Equal(t, before, got.KeyHash, "DB 行未轮换（轮换零发生）")
-	require.Empty(t, keys.deleted, "旧 hash 未失效（Delete 未发生）")
-	require.Empty(t, keys.upserted[1:], "新 hash 未注册")
+	require.Equal(t, before, got.KeyRaw, "DB 行未轮换（轮换零发生）")
+	require.Empty(t, keys.deleted, "旧明文未失效（Delete 未发生）")
+	require.Empty(t, keys.upserted[1:], "新明文未注册")
 }
 
 // TestSetGroupAssignments 替换语义：差集授予/撤销；非法/重复/缺失校验。

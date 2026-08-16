@@ -624,10 +624,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 我的 key 列表（分页/排序；KeyHash 永不下发） */
+        /** 我的 key 列表（分页/排序；key 明文长期可查看/复制） */
         get: operations["GetUserKeys"];
         put?: never;
-        /** 创建 key（组可选性校验：public 或已授予 private；raw 明文仅本次返回） */
+        /** 创建 key（组可选性校验：public 或已授予 private；明文长期回显） */
         post: operations["PostUserKeys"];
         delete?: never;
         options?: never;
@@ -667,7 +667,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 轮换 key（仅本人；新明文仅返回一次，旧 key 立即失效） */
+        /** 轮换 key（仅本人；新明文生效，旧 key 立即失效） */
         post: operations["PostUserKeysIdRotate"];
         delete?: never;
         options?: never;
@@ -1144,7 +1144,8 @@ export interface components {
             /** Format: int64 */
             GroupID?: number;
             Name?: string;
-            KeyPrefix?: string;
+            /** @description key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡，用户裁决） */
+            key?: string;
             Status?: components["schemas"]["KeyStatus"];
             MaxConcurrency?: number;
             /**
@@ -1190,10 +1191,6 @@ export interface components {
             /** Format: int64 */
             total: number;
             rows: components["schemas"]["Key"][];
-        };
-        KeyWithSecret: components["schemas"]["Key"] & {
-            /** @description key 明文（创建/轮换响应仅返回一次；之后仅 KeyPrefix 可识别） */
-            key: string;
         };
         /** @enum {string} */
         UserRole: "platform_admin" | "user";
@@ -3868,13 +3865,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 创建后的 key + 明文 */
+            /** @description 创建后的 key（含明文） */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["KeyWithSecret"];
+                    "application/json": components["schemas"]["Key"];
                 };
             };
             default: components["responses"]["Error"];
@@ -3964,13 +3961,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 新 key 明文 + 更新后元数据 */
+            /** @description 轮换后的 key（含新明文） */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["KeyWithSecret"];
+                    "application/json": components["schemas"]["Key"];
                 };
             };
             default: components["responses"]["Error"];

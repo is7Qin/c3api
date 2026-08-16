@@ -28,7 +28,6 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
-	"github.com/is7qin/c3api/pkg/cryptox"
 )
 
 // 真实 PG e2e（search 端点 happy path——"真实凭据" = 凭据材料真实落库
@@ -98,7 +97,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	require.NoError(t, sched.InvalidateAllSync())
 
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		cryptox.HashKey("gk-1"): activeKey(1, 1, g.ID),
+		"gk-1": activeKey(1, 1, g.ID),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 

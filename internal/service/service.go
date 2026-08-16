@@ -91,9 +91,9 @@ type KeyStore interface {
 	GetKey(ctx context.Context, id int64) (*domain.Key, error)
 	ListKeysByUser(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.Key, int64, error)
 	UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, error)
-	RotateKey(ctx context.Context, id int64, newHash, newPrefix string) (*domain.Key, error)
+	RotateKey(ctx context.Context, id int64, newRaw string) (*domain.Key, error)
 	DeleteKey(ctx context.Context, id int64) error
-	// DeleteKeysByGroup 组删除前置清理（key.group_id 外键约束；返回被删 hash）。
+	// DeleteKeysByGroup 组删除前置清理（key.group_id 外键约束；返回被删明文）。
 	DeleteKeysByGroup(ctx context.Context, groupID int64) ([]string, error)
 }
 

@@ -7402,8 +7402,7 @@ type KeyMutation struct {
 	typ                string
 	id                 *int64
 	name               *string
-	key_hash           *string
-	key_prefix         *string
+	key_raw            *string
 	status             *key.Status
 	max_concurrency    *int
 	addmax_concurrency *int
@@ -7636,76 +7635,40 @@ func (m *KeyMutation) ResetName() {
 	m.name = nil
 }
 
-// SetKeyHash sets the "key_hash" field.
-func (m *KeyMutation) SetKeyHash(s string) {
-	m.key_hash = &s
+// SetKeyRaw sets the "key_raw" field.
+func (m *KeyMutation) SetKeyRaw(s string) {
+	m.key_raw = &s
 }
 
-// KeyHash returns the value of the "key_hash" field in the mutation.
-func (m *KeyMutation) KeyHash() (r string, exists bool) {
-	v := m.key_hash
+// KeyRaw returns the value of the "key_raw" field in the mutation.
+func (m *KeyMutation) KeyRaw() (r string, exists bool) {
+	v := m.key_raw
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldKeyHash returns the old "key_hash" field's value of the Key entity.
+// OldKeyRaw returns the old "key_raw" field's value of the Key entity.
 // If the Key object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *KeyMutation) OldKeyHash(ctx context.Context) (v string, err error) {
+func (m *KeyMutation) OldKeyRaw(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldKeyHash is only allowed on UpdateOne operations")
+		return v, errors.New("OldKeyRaw is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldKeyHash requires an ID field in the mutation")
+		return v, errors.New("OldKeyRaw requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldKeyHash: %w", err)
+		return v, fmt.Errorf("querying old value for OldKeyRaw: %w", err)
 	}
-	return oldValue.KeyHash, nil
+	return oldValue.KeyRaw, nil
 }
 
-// ResetKeyHash resets all changes to the "key_hash" field.
-func (m *KeyMutation) ResetKeyHash() {
-	m.key_hash = nil
-}
-
-// SetKeyPrefix sets the "key_prefix" field.
-func (m *KeyMutation) SetKeyPrefix(s string) {
-	m.key_prefix = &s
-}
-
-// KeyPrefix returns the value of the "key_prefix" field in the mutation.
-func (m *KeyMutation) KeyPrefix() (r string, exists bool) {
-	v := m.key_prefix
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldKeyPrefix returns the old "key_prefix" field's value of the Key entity.
-// If the Key object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *KeyMutation) OldKeyPrefix(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldKeyPrefix is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldKeyPrefix requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldKeyPrefix: %w", err)
-	}
-	return oldValue.KeyPrefix, nil
-}
-
-// ResetKeyPrefix resets all changes to the "key_prefix" field.
-func (m *KeyMutation) ResetKeyPrefix() {
-	m.key_prefix = nil
+// ResetKeyRaw resets all changes to the "key_raw" field.
+func (m *KeyMutation) ResetKeyRaw() {
+	m.key_raw = nil
 }
 
 // SetStatus sets the "status" field.
@@ -8121,7 +8084,7 @@ func (m *KeyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *KeyMutation) Fields() []string {
-	fields := make([]string, 0, 12)
+	fields := make([]string, 0, 11)
 	if m.user != nil {
 		fields = append(fields, key.FieldUserID)
 	}
@@ -8131,11 +8094,8 @@ func (m *KeyMutation) Fields() []string {
 	if m.name != nil {
 		fields = append(fields, key.FieldName)
 	}
-	if m.key_hash != nil {
-		fields = append(fields, key.FieldKeyHash)
-	}
-	if m.key_prefix != nil {
-		fields = append(fields, key.FieldKeyPrefix)
+	if m.key_raw != nil {
+		fields = append(fields, key.FieldKeyRaw)
 	}
 	if m.status != nil {
 		fields = append(fields, key.FieldStatus)
@@ -8172,10 +8132,8 @@ func (m *KeyMutation) Field(name string) (ent.Value, bool) {
 		return m.GroupID()
 	case key.FieldName:
 		return m.Name()
-	case key.FieldKeyHash:
-		return m.KeyHash()
-	case key.FieldKeyPrefix:
-		return m.KeyPrefix()
+	case key.FieldKeyRaw:
+		return m.KeyRaw()
 	case key.FieldStatus:
 		return m.Status()
 	case key.FieldMaxConcurrency:
@@ -8205,10 +8163,8 @@ func (m *KeyMutation) OldField(ctx context.Context, name string) (ent.Value, err
 		return m.OldGroupID(ctx)
 	case key.FieldName:
 		return m.OldName(ctx)
-	case key.FieldKeyHash:
-		return m.OldKeyHash(ctx)
-	case key.FieldKeyPrefix:
-		return m.OldKeyPrefix(ctx)
+	case key.FieldKeyRaw:
+		return m.OldKeyRaw(ctx)
 	case key.FieldStatus:
 		return m.OldStatus(ctx)
 	case key.FieldMaxConcurrency:
@@ -8253,19 +8209,12 @@ func (m *KeyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetName(v)
 		return nil
-	case key.FieldKeyHash:
+	case key.FieldKeyRaw:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetKeyHash(v)
-		return nil
-	case key.FieldKeyPrefix:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetKeyPrefix(v)
+		m.SetKeyRaw(v)
 		return nil
 	case key.FieldStatus:
 		v, ok := value.(key.Status)
@@ -8422,11 +8371,8 @@ func (m *KeyMutation) ResetField(name string) error {
 	case key.FieldName:
 		m.ResetName()
 		return nil
-	case key.FieldKeyHash:
-		m.ResetKeyHash()
-		return nil
-	case key.FieldKeyPrefix:
-		m.ResetKeyPrefix()
+	case key.FieldKeyRaw:
+		m.ResetKeyRaw()
 		return nil
 	case key.FieldStatus:
 		m.ResetStatus()

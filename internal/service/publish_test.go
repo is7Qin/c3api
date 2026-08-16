@@ -104,9 +104,9 @@ func TestPublishMatrix(t *testing.T) {
 
 		// 创建（quota 门禁字段落库 + Auth 增量注册）→ Keys
 		before := pr.total()
-		created, raw, err := svc.CreateKey(ctx, u.ID, "k1", g.ID, 8, 1000)
+		created, err := svc.CreateKey(ctx, u.ID, "k1", g.ID, 8, 1000)
 		require.NoError(t, err)
-		require.NotEmpty(t, raw)
+		require.NotEmpty(t, created.KeyRaw, "明文落库（k.KeyRaw = raw）")
 		got := pr.last()
 		require.NotNil(t, got)
 		require.True(t, got.Keys, "key 创建 → Keys:true")
@@ -119,7 +119,7 @@ func TestPublishMatrix(t *testing.T) {
 		require.True(t, pr.last().Keys, "key 改额度 → Keys:true")
 
 		// 轮换（旧 hash 失效 + 新 hash 注册）→ Keys
-		_, _, err = svc.RotateKey(ctx, u.ID, created.ID)
+		_, err = svc.RotateKey(ctx, u.ID, created.ID)
 		require.NoError(t, err)
 		require.True(t, pr.last().Keys, "key 轮换 → Keys:true")
 

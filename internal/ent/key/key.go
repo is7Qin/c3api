@@ -21,10 +21,8 @@ const (
 	FieldGroupID = "group_id"
 	// FieldName holds the string denoting the name field in the database.
 	FieldName = "name"
-	// FieldKeyHash holds the string denoting the key_hash field in the database.
-	FieldKeyHash = "key_hash"
-	// FieldKeyPrefix holds the string denoting the key_prefix field in the database.
-	FieldKeyPrefix = "key_prefix"
+	// FieldKeyRaw holds the string denoting the key_raw field in the database.
+	FieldKeyRaw = "key_raw"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
 	// FieldMaxConcurrency holds the string denoting the max_concurrency field in the database.
@@ -67,8 +65,7 @@ var Columns = []string{
 	FieldUserID,
 	FieldGroupID,
 	FieldName,
-	FieldKeyHash,
-	FieldKeyPrefix,
+	FieldKeyRaw,
 	FieldStatus,
 	FieldMaxConcurrency,
 	FieldQuota,
@@ -152,14 +149,9 @@ func ByName(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldName, opts...).ToFunc()
 }
 
-// ByKeyHash orders the results by the key_hash field.
-func ByKeyHash(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKeyHash, opts...).ToFunc()
-}
-
-// ByKeyPrefix orders the results by the key_prefix field.
-func ByKeyPrefix(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKeyPrefix, opts...).ToFunc()
+// ByKeyRaw orders the results by the key_raw field.
+func ByKeyRaw(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldKeyRaw, opts...).ToFunc()
 }
 
 // ByStatus orders the results by the status field.

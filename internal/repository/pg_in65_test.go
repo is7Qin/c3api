@@ -216,8 +216,7 @@ func TestPGLoadKeysChunked(t *testing.T) {
 				SetUserID(users[i].ID).
 				SetGroupID(g.ID).
 				SetName(fmt.Sprintf("load-%d", i)).
-				SetKeyHash(fmt.Sprintf("kh-%d", i)).
-				SetKeyPrefix("sk-").
+				SetKeyRaw(fmt.Sprintf("gk-%d", i)).
 				SetStatus(key.StatusActive).
 				SetMaxConcurrency(4).
 				SetQuota(0).
@@ -234,7 +233,7 @@ func TestPGLoadKeysChunked(t *testing.T) {
 	// 抽查跨块边界的两条：归属用户状态/并发已 eager 填充
 	first, last := keys[0], keys[n-1]
 	for _, k := range []*ent.Key{first, last} {
-		meta, ok := m[k.KeyHash]
+		meta, ok := m[k.KeyRaw]
 		require.True(t, ok)
 		require.Equal(t, k.ID, meta.KeyID)
 		require.Equal(t, k.UserID, meta.UserID)

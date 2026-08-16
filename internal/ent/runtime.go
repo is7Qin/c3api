@@ -124,25 +124,25 @@ func init() {
 	keyFields := schema.Key{}.Fields()
 	_ = keyFields
 	// keyDescMaxConcurrency is the schema descriptor for max_concurrency field.
-	keyDescMaxConcurrency := keyFields[7].Descriptor()
+	keyDescMaxConcurrency := keyFields[6].Descriptor()
 	// key.DefaultMaxConcurrency holds the default value on creation for the max_concurrency field.
 	key.DefaultMaxConcurrency = keyDescMaxConcurrency.Default.(int)
 	// keyDescQuota is the schema descriptor for quota field.
-	keyDescQuota := keyFields[8].Descriptor()
+	keyDescQuota := keyFields[7].Descriptor()
 	// key.DefaultQuota holds the default value on creation for the quota field.
 	key.DefaultQuota = keyDescQuota.Default.(int64)
 	// keyDescQuotaUsed is the schema descriptor for quota_used field.
-	keyDescQuotaUsed := keyFields[9].Descriptor()
+	keyDescQuotaUsed := keyFields[8].Descriptor()
 	// key.DefaultQuotaUsed holds the default value on creation for the quota_used field.
 	key.DefaultQuotaUsed = keyDescQuotaUsed.Default.(int64)
 	// keyDescUpdatedAt is the schema descriptor for updated_at field.
-	keyDescUpdatedAt := keyFields[10].Descriptor()
+	keyDescUpdatedAt := keyFields[9].Descriptor()
 	// key.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	key.DefaultUpdatedAt = keyDescUpdatedAt.Default.(func() time.Time)
 	// key.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	key.UpdateDefaultUpdatedAt = keyDescUpdatedAt.UpdateDefault.(func() time.Time)
 	// keyDescCreatedAt is the schema descriptor for created_at field.
-	keyDescCreatedAt := keyFields[12].Descriptor()
+	keyDescCreatedAt := keyFields[11].Descriptor()
 	// key.DefaultCreatedAt holds the default value on creation for the created_at field.
 	key.DefaultCreatedAt = keyDescCreatedAt.Default.(func() time.Time)
 	pricingFields := schema.Pricing{}.Fields()

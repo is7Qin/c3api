@@ -26,7 +26,6 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
-	"github.com/is7qin/c3api/pkg/cryptox"
 )
 
 // proxyPricing 测试价格行：gpt-4o 基础价 $100/$200 每 1M（1e7/2e7 毫分），
@@ -922,7 +921,7 @@ func TestProxyBillingMultiplierPerGroup(t *testing.T) {
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, w1, rec, bal, nil)
 	p1 := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
-		cryptox.HashKey("gk-1"): activeKey(1, 1, 10),
+		"gk-1": activeKey(1, 1, 10),
 	}, map[int64][]*domain.Account{10: {acc}}, bal, f1, store)
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	r.Header.Set("Authorization", "Bearer gk-1")
@@ -941,7 +940,7 @@ func TestProxyBillingMultiplierPerGroup(t *testing.T) {
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, w2, rec, bal, nil)
 	p2 := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
-		cryptox.HashKey("gk-2"): activeKey(2, 1, 11),
+		"gk-2": activeKey(2, 1, 11),
 	}, map[int64][]*domain.Account{11: {acc}}, bal, f2, store)
 	r2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	r2.Header.Set("Authorization", "Bearer gk-2")

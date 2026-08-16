@@ -18,7 +18,6 @@ import (
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/usage"
-	"github.com/is7qin/c3api/pkg/cryptox"
 )
 
 // blockingUpstream 阻塞式上游：直到 release 通道放行才响应（测并发门禁用）。
@@ -71,7 +70,7 @@ func TestProxyConcurrencyLimit429(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	meta := activeKey(1, 1, 10)
 	meta.KeyMaxConc = 1
-	p.auth.Upsert(cryptox.HashKey("gk-1"), meta)
+	p.auth.Upsert("gk-1", meta)
 
 	rec1 := httptest.NewRecorder()
 	done := make(chan struct{})
@@ -112,7 +111,7 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 		p := newTestProxyTimeoutLogs(t, up.URL, 1, store)
 		meta := activeKey(1, 1, 10)
 		meta.KeyMaxConc = 1
-		p.auth.Upsert(cryptox.HashKey("gk-1"), meta)
+		p.auth.Upsert("gk-1", meta)
 
 		rec1 := httptest.NewRecorder()
 		done := make(chan struct{})
@@ -158,7 +157,7 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 		p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
 		meta := activeKey(1, 1, 10)
 		meta.KeyMaxConc = 1
-		p.auth.Upsert(cryptox.HashKey("gk-1"), meta)
+		p.auth.Upsert("gk-1", meta)
 
 		rec1 := httptest.NewRecorder()
 		done := make(chan struct{})
@@ -192,8 +191,8 @@ func TestProxyUserConcurrencyAcrossKeys(t *testing.T) {
 	meta1.UserMaxConc = 1
 	meta2 := activeKey(2, 1, 10)
 	meta2.UserMaxConc = 1
-	p.auth.Upsert(cryptox.HashKey("gk-1"), meta1)
-	p.auth.Upsert(cryptox.HashKey("gk-2"), meta2)
+	p.auth.Upsert("gk-1", meta1)
+	p.auth.Upsert("gk-2", meta2)
 
 	rec1 := httptest.NewRecorder()
 	done := make(chan struct{})
@@ -223,7 +222,7 @@ func TestProxyQuotaExhaustedAndDeduct(t *testing.T) {
 	meta := activeKey(1, 1, 10)
 	meta.HasQuota = true
 	meta.Quota = 10 // fakeOpenAI 非流式 total_tokens=8
-	p.auth.Upsert(cryptox.HashKey("gk-1"), meta)
+	p.auth.Upsert("gk-1", meta)
 
 	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()
@@ -267,7 +266,7 @@ func TestProxyKeyDisableImmediate(t *testing.T) {
 
 	meta := activeKey(1, 1, 10)
 	meta.KeyStatus = domain.KeyStatusDisabled
-	p.auth.Upsert(cryptox.HashKey("gk-1"), meta)
+	p.auth.Upsert("gk-1", meta)
 
 	rec2 := httptest.NewRecorder()
 	p.HandleChat(rec2, chatReq("gk-1"))
@@ -281,7 +280,7 @@ func TestProxyUserDisableImmediate(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	meta := activeKey(1, 1, 10)
 	meta.UserStatus = domain.UserStatusDisabled
-	p.auth.Upsert(cryptox.HashKey("gk-1"), meta)
+	p.auth.Upsert("gk-1", meta)
 
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, chatReq("gk-1"))
@@ -337,7 +336,7 @@ func TestProxyGateReloadInherits(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	meta := activeKey(1, 1, 10)
 	meta.KeyMaxConc = 2
-	p.auth.Upsert(cryptox.HashKey("gk-1"), meta)
+	p.auth.Upsert("gk-1", meta)
 
 	rec1 := httptest.NewRecorder()
 	done := make(chan struct{})

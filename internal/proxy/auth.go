@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/pkg/cryptox"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -25,7 +24,7 @@ type UserStatusLoader interface {
 	LoadUsers(ctx context.Context) (map[int64]domain.UserStatus, error)
 }
 
-// Auth 鉴权快照：key_hash → KeyMeta（含归属用户门禁字段）+ 用户状态表 +
+// Auth 鉴权快照：key_raw（明文）→ KeyMeta（含归属用户门禁字段）+ 用户状态表 +
 // 两级并发/额度内存计数（gate）。热路径零 DB、零 per-request 锁（RWMutex
 // 读多写少，规格 §10.3）。用户状态变更（禁用/并发/额度调整）走 invalidate
 // 回调 → Reload 全量刷新（评审 I-2），JWT 24h 长时效仅作快照失效后的
@@ -94,17 +93,17 @@ func (a *Auth) logWarn(msg string, err error) {
 }
 
 // Upsert 增量刷新单个 key（key 创建/轮换/更新后调用；门禁计数器同步）。
-func (a *Auth) Upsert(hash string, meta domain.KeyMeta) {
+func (a *Auth) Upsert(raw string, meta domain.KeyMeta) {
 	a.mu.Lock()
-	a.keys[hash] = meta
+	a.keys[raw] = meta
 	a.mu.Unlock()
 	a.gate.upsert(meta)
 }
 
-func (a *Auth) Delete(hash string) {
+func (a *Auth) Delete(raw string) {
 	a.mu.Lock()
-	meta, ok := a.keys[hash]
-	delete(a.keys, hash)
+	meta, ok := a.keys[raw]
+	delete(a.keys, raw)
 	a.mu.Unlock()
 	if ok {
 		a.gate.delete(meta.KeyID)
@@ -124,6 +123,8 @@ func (a *Auth) UserStatus(userID int64) (domain.UserStatus, bool) {
 // OpenAI 客户端发 Authorization: Bearer；Anthropic 官方 SDK / Claude Code
 // 发 x-api-key 头。两者同时提供时以 Authorization 为准。
 // key 或归属用户被禁用 → 快照直接拒绝（401，即时失效）。
+// 快照 map key = 明文，等值直查（零哈希）；meta 无 key 字符串字段——
+// 鉴权失败日志天然不落明文。
 func (a *Auth) Authenticate(r *http.Request) (domain.KeyMeta, bool) {
 	raw := ""
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
@@ -134,9 +135,8 @@ func (a *Auth) Authenticate(r *http.Request) (domain.KeyMeta, bool) {
 	if raw == "" {
 		return domain.KeyMeta{}, false
 	}
-	hash := cryptox.HashKey(raw)
 	a.mu.RLock()
-	meta, ok := a.keys[hash]
+	meta, ok := a.keys[raw]
 	a.mu.RUnlock()
 	if !ok {
 		return domain.KeyMeta{}, false

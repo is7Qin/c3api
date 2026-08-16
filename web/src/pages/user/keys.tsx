@@ -5,10 +5,10 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { KeyRound, Pencil, Plus, RefreshCcw, Trash2 } from 'lucide-react'
+import { Check, Copy, KeyRound, Pencil, Plus, RefreshCcw, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ApiUnauthorized, userApi } from '@/lib/api/client'
-import { KeyBox } from '@/components/key-box'
+import { KeyBox, copyText } from '@/components/key-box'
 import { Pagination } from '@/components/pagination'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -25,7 +25,6 @@ import type { components } from '@/lib/api/schema'
 type Key = components['schemas']['Key']
 type KeyCreate = components['schemas']['KeyCreate']
 type KeyUpdate = components['schemas']['KeyUpdate']
-type KeyWithSecret = components['schemas']['KeyWithSecret']
 type KeyStatus = components['schemas']['KeyStatus']
 
 const STATUSES: KeyStatus[] = ['active', 'disabled']
@@ -61,6 +60,33 @@ function toEditForm(k: Key): EditForm {
 // 数值字段校验：'' 或非负整数（0 = 不限）。
 function validNumber(s: string): boolean {
   return s === '' || (Number.isInteger(Number(s)) && Number(s) >= 0)
+}
+
+// 列表行明文展示：短展示 raw[:8]（title 悬停全文）+ 行内复制按钮（明文长期
+// 可复制——需求核心；复用 KeyBox 同款 copyText）。
+function KeyCell({ raw }: { raw?: string }) {
+  const { t } = useTranslation()
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="flex items-center gap-1.5">
+      <code className="max-w-40 truncate font-mono text-sm" title={raw}>{raw ? raw.slice(0, 8) : '—'}</code>
+      {raw && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title={t('keybox.copy')}
+          onClick={async () => {
+            if (await copyText(raw)) {
+              setCopied(true)
+              setTimeout(() => setCopied(false), 2000)
+            }
+          }}
+        >
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      )}
+    </div>
+  )
 }
 
 export default function UserKeys() {
@@ -99,7 +125,7 @@ export default function UserKeys() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm())
   const [createErr, setCreateErr] = useState<string | null>(null)
-  const [created, setCreated] = useState<KeyWithSecret | null>(null)
+  const [created, setCreated] = useState<Key | null>(null)
 
   const create = useMutation({
     mutationFn: (f: CreateForm) => {
@@ -180,7 +206,7 @@ export default function UserKeys() {
 
   // —— 轮换（confirm → result 两阶段：成功后 KeyBox 展示新明文） ——
   const [rotating, setRotating] = useState<Key | null>(null)
-  const [rotated, setRotated] = useState<KeyWithSecret | null>(null)
+  const [rotated, setRotated] = useState<Key | null>(null)
   const rotate = useMutation({
     mutationFn: (id: number) => userApi.rotateUserKey(id),
     onSuccess: res => {
@@ -249,7 +275,7 @@ export default function UserKeys() {
                   <TableRow key={k.ID}>
                     <TableCell className="tabular-nums">{k.ID}</TableCell>
                     <TableCell className="max-w-40 truncate" title={k.Name}>{k.Name ?? '—'}</TableCell>
-                    <TableCell><code className="font-mono text-sm">{k.KeyPrefix ?? '—'}</code></TableCell>
+                    <TableCell><KeyCell raw={k.key} /></TableCell>
                     <TableCell><StatusBadge status={k.Status} /></TableCell>
                     <TableCell className="tabular-nums">{k.GroupID ?? '—'}</TableCell>
                     <TableCell className="text-right tabular-nums">

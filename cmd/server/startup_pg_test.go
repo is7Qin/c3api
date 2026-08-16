@@ -30,7 +30,6 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/internal/snapshot"
-	"github.com/is7qin/c3api/pkg/cryptox"
 )
 
 // 启动就绪时序（快照注册表）真实 PG 集成基座（与 repository/pricing 包同款
@@ -103,7 +102,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.NoError(t, repos.SetAccountGroups(ctx, acc.ID, []int64{g.ID})) // 成员关系独立写入（CreateAccount 不落 m2m）
 	_, err = repos.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "k-startup",
-		KeyHash: cryptox.HashKey("gk-startup-1"), KeyPrefix: "gk-startup",
+		KeyRaw: "gk-startup-1",
 		Status: domain.KeyStatusActive, MaxConcurrency: 8, Quota: 1_000_000,
 	})
 	require.NoError(t, err)
@@ -222,7 +221,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	require.NoError(t, err)
 	_, err = repos.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "k-timing",
-		KeyHash: cryptox.HashKey("gk-timing-1"), KeyPrefix: "gk-timing",
+		KeyRaw: "gk-timing-1",
 		Status: domain.KeyStatusActive, MaxConcurrency: 8, Quota: 1_000_000,
 	})
 	require.NoError(t, err)

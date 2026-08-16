@@ -1001,7 +1001,7 @@
       "emptyDesc": "Create a key to start calling the gateway",
       "table": {
         "name": "Name",
-        "keyPrefix": "Key prefix",
+        "keyPrefix": "Key",
         "status": "Status",
         "groupId": "Group ID",
         "maxConcurrency": "Max concurrency",
