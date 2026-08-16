@@ -23,12 +23,12 @@ var ErrGroupNotEligible = fmt.Errorf("%w: group is private and not granted to us
 // 组可选性校验（public 或已授予 private）→ 用户门禁字段写库前预取（B1-1：
 // GetUser 前置——写后注册退化为纯内存 Upsert 不可失败）→ cryptox 生成明文
 // → 落库 → Auth 增量纯内存 Upsert。明文长期可查看/复制（列表/详情回显）。
-func (s *Service) CreateKey(ctx context.Context, userID int64, name string, groupID int64, maxConcurrency int, quota int64) (*domain.Key, string, error) {
+func (s *Service) CreateKey(ctx context.Context, userID int64, name string, groupID int64, maxConcurrency int, quota int64) (*domain.Key, error) {
 	if name == "" || groupID <= 0 || maxConcurrency < 0 || quota < 0 {
-		return nil, "", ErrInvalidInput
+		return nil, ErrInvalidInput
 	}
 	if err := s.checkGroupEligible(ctx, userID, groupID); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	// B1-1：用户门禁字段写库前预取（checkGroupEligible 本就在写前做 DB 读，
 	// 前置 GetUser 零成本）——写后 upsertKeyMetaInMemory 不可失败，失败窗口
@@ -37,7 +37,7 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 	if s.keys != nil {
 		u, err := s.store.GetUser(ctx, userID)
 		if err != nil {
-			return nil, "", mapRepoErr(err)
+			return nil, mapRepoErr(err)
 		}
 		user = u
 	}
@@ -49,7 +49,7 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 		Quota: quota, QuotaUsed: 0,
 	})
 	if err != nil {
-		return nil, "", mapRepoErr(err) // key_raw 唯一冲突 → ErrConflict（409）
+		return nil, mapRepoErr(err) // key_raw 唯一冲突 → ErrConflict（409）
 	}
 	s.upsertKeyMetaInMemory(created, user) // 写后注册纯内存（不可失败）
 	// key 创建是 #14 多实例缺口（不进 invalidate）：其余实例鉴权快照需全量
@@ -58,7 +58,7 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 	if s.log != nil {
 		s.log.Info("key created", logx.Int64("id", created.ID), logx.Int64("user_id", userID), logx.String("name", name))
 	}
-	return created, raw, nil
+	return created, nil
 }
 
 // checkGroupEligible 组可选性：组必须存在（缺失 → 404）；private 组须有
@@ -142,24 +142,24 @@ func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *stri
 // 增量移除（立即失效）、新明文增量注册。用户门禁字段写库前预取（B1-1：
 // GetUser 前置——Delete 后只剩不可失败的内存 Upsert，失败窗口整体消失——
 // DB 已轮换只留新明文时新 raw 永不蒸发）。
-func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (string, *domain.Key, error) {
+func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (*domain.Key, error) {
 	cur, err := s.ownedKey(ctx, userID, keyID)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	// B1-1：GetUser 写库前预取（失败 → 轮换零发生，旧 key 原样可用）
 	var user *domain.User
 	if s.keys != nil {
 		u, err := s.store.GetUser(ctx, userID)
 		if err != nil {
-			return "", nil, mapRepoErr(err)
+			return nil, mapRepoErr(err)
 		}
 		user = u
 	}
 	raw := cryptox.NewGroupKey()
 	updated, err := s.store.RotateKey(ctx, keyID, raw)
 	if err != nil {
-		return "", nil, mapRepoErr(err)
+		return nil, mapRepoErr(err)
 	}
 	if s.keys != nil {
 		s.keys.Delete(cur.KeyRaw)
@@ -169,7 +169,7 @@ func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (string, *
 	if s.log != nil {
 		s.log.Info("key rotated", logx.Int64("id", keyID), logx.Int64("user_id", userID))
 	}
-	return raw, updated, nil
+	return updated, nil
 }
 
 // DeleteKey 删除自己的 key（/user/keys/{id} DELETE；Auth 增量移除——旧明文

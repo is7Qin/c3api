@@ -40,7 +40,7 @@ func (h *UserAPI) PostUserKeys(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	k, _, err := h.svc.CreateKey(r.Context(), currentUserID(r), in.Name, in.GroupId,
+	k, err := h.svc.CreateKey(r.Context(), currentUserID(r), in.Name, in.GroupId,
 		deref(in.MaxConcurrency), deref(in.Quota))
 	if err != nil {
 		writeServiceErr(w, err)
@@ -94,7 +94,7 @@ func (h *UserAPI) DeleteUserKeysId(w http.ResponseWriter, r *http.Request, id in
 // PostUserKeysIdRotate 轮换 key（仅本人；新明文生效，旧 key 立即失效，
 // ServerInterface）。
 func (h *UserAPI) PostUserKeysIdRotate(w http.ResponseWriter, r *http.Request, id int64) {
-	_, k, err := h.svc.RotateKey(r.Context(), currentUserID(r), id)
+	k, err := h.svc.RotateKey(r.Context(), currentUserID(r), id)
 	if err != nil {
 		writeServiceErr(w, err)
 		return
