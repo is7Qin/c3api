@@ -69,7 +69,7 @@ var (
 )
 
 // stripServiceTier 删除请求体 service_tier 字段（strip 策略）：sjson 字节级
-// 删除（与 WS 面 relayResponsesWS 同库同风格，非 map 往返——精度/键序/转义
+// 删除（与 WS 面 relayWS 首帧预处理同库同风格，非 map 往返——精度/键序/转义
 // 保真同 setModel）。字段缺失时 sjson 删除不存在键 = 无操作返回原字节（与
 // map 版 delete 缺失键语义一致）。顶层形状守卫同 setModel（sjson DeleteBytes
 // 对标量/数组根无操作返回原字节，map 版报错——调用前 extractTier 已保证

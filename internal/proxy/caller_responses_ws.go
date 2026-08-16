@@ -11,7 +11,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -106,7 +105,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 
 	// service_tier 归一化 + 转发策略（首帧读后、Select 前——与 HTTP
 	// handleFormat 的 strip/reject 同位置，均先于选号；codex 分流在后，首帧
-	// 字节在共享点不被改写——strip 标记于此处、执行于 relayResponsesWS 帧改写
+	// 字节在共享点不被改写——strip 标记于此处、执行于 wsAttempt 首帧预处理
 	// 点，codex 路径零变化）。类型错误 → 400 错误帧无记录（同 HTTP，ErrBilling
 	// 只用于 reject）；reject → 错误帧 + ErrBilling 记录，不升级。归一化 tier
 	// 补入已入 ctx 的 reqMeta（HTTP 同机制——logWithCtx 消费链四 buildLog 调用
@@ -124,7 +123,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		if (tier == billing.TierPriority || tier == billing.TierFlex || tier == billing.TierFast) && p.bill.TierPolicy != nil {
 			switch p.bill.TierPolicy(tier) {
 			case billing.TierPolicyStrip:
-				stripTier = true // 标记：共享帧改写点（relayResponsesWS）删除该字段
+				stripTier = true // 标记：调用方预处理点（wsAttempt）删除该字段
 			case billing.TierPolicyReject:
 				wsWriteError(client, errServiceTierRejected.msg)
 				p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAIResponsesWS, http.StatusBadRequest, domain.ErrBilling, 0, usageTuple{}, start, errServiceTierRejected.msg)
@@ -158,7 +157,8 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 // 闭包；无状态单例，per-request 差异（client/首帧/strip 标记）经 attemptState
 // 流入，热路径零新增分配）。差异段：codex 拨号分流（dialCodexWS +
 // handleCodexDialError）与静态拨号（credentialFor + ResponsesWSDial）、relay
-//（relayCodexWS/relayResponsesWS——首帧模型改写 + 双向帧透传 + usage 嗅探）。
+//（relayWS 合一骨架 + 双传输适配 aiclientTransport/codexTransport——首帧模型
+// 改写 + 双向帧透传 + usage 嗅探 + codex 每帧判死钩子）。
 // 错误文本统一经 respBody 回传（msg 归一：上游 body message → dialErr 文本回
 // 退——循环的 upstreamErrMsg gjson 提取吃空时直取原文防丢失）；code==0 恒
 // callErr=nil（WS 不新增 Warn——gate Minor 2b）。
@@ -171,11 +171,21 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		// 适配层（不经 credentialFor 单字符串路径：codex 凭据为复合结构
 		// oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表
 		// 达不了——注册表未注册 codex 类型，见 dialCodexWS 注释），伪装四元
-		// 组 + 头部族剥离 + 心跳单源全部在 dialCodexWS/relayCodexWS
+		// 组 + 头部族剥离 + 心跳单源全部在 dialCodexWS/codexTransport
 		//（codex_responses_ws.go）。
 		up, dialErr := p.dialCodexWS(r, sel)
 		if dialErr == nil {
-			handled, fwMsg := p.relayCodexWS(st.client, up, r, reqID, groupID, start, sel, reqModel, st.firstTyp, st.first)
+			// frameHook：每帧判死嗅探（T5 §3 唯一跨边界点——读帧成功后、usage
+			// 嗅探与 client.Write 前调用，与现状 codex_responses_ws.go:339-341
+			// 先于 354 的调用序一致）；判死帧照常透传客户端（错误事件属业务
+			// 流），会话随后由上游关闭帧自然收尾。闭包捕获 p/sel——每 relay
+			// 一次分配（与 reqMeta/logCtx 同级），非每帧。
+			frameHook := func(f []byte) {
+				if fatal := sniffCodexWSDeath(f); fatal != nil {
+					p.codex.FatalAuth(sel.AccountID, fatal)
+				}
+			}
+			handled, fwMsg := p.relayWS(st.client, newCodexTransport(up), frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, st.first)
 			if handled {
 				return 0, nil, true, nil
 			}
@@ -198,7 +208,17 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, cred, wsPassthroughHeaders(r.Header))
 	if dialErr == nil {
-		handled, fwMsg := p.relayResponsesWS(st.client, up, r, reqID, groupID, start, sel, reqModel, st.firstTyp, st.first, st.stripTier)
+		// stripTier 删除动作（现状 relay 内部）上移调用方（spec 修订）：与
+		// relayWS 首帧模型改写同点执行——sjson 单字段 splice 可交换、行为
+		// 等价；字段存在性由 extractTier 非 auto 档保证（缺失/类型错已在前
+		// 拒绝）。读限在 aiclientTransport 构造器内应用（现状首行语义）。
+		first := st.first
+		if st.stripTier {
+			if nf, err := sjson.DeleteBytes(first, "service_tier"); err == nil {
+				first = nf
+			}
+		}
+		handled, fwMsg := p.relayWS(st.client, newAiclientTransport(up), nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, first)
 		if handled {
 			return 0, nil, true, nil
 		}
@@ -227,233 +247,34 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	return code, []byte(msg), false, nil
 }
 
-// relayResponsesWS 拨号成功后的编排：首帧模型改写（ModelMapping 语义，与
-// setModel 同构；首帧 = 请求帧非流式中间帧，亦为 W4 图像剥离的帧级预处理点）
-// + strip 策略的 service_tier 删除（共享帧改写点）→ 转发首帧 → 双向事件帧
-// 1:1 relay（流式中间帧零解析零拷贝直转）→ 关闭/错误传播 → usage 记录。
-// stripTier 为 HandleResponsesWS 首帧 tier 策略标记（仅本共享点消费——codex
-// 变体 relayCodexWS 不经此函数，codex 路径帧零静默变化）。返回 (handled,
-// fwMsg)：handled = 请求已处理完毕（成功/客户端断开/流中止已记录）；false =
-// 首帧转发失败（上游未消费请求），fwMsg 为截断错误文本，调用方按连接级错误
-// 转移（MarkResult + Release + 重选）。
-func (p *Proxy) relayResponsesWS(client, up *websocket.Conn, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte, stripTier bool) (handled bool, fwMsg string) {
+// aiclientTransport 上游侧 *websocket.Conn 的 wsRelayTransport 适配（aiclient
+// 路径）：typ 语义逐方法透传（现状 relayResponsesWS 同款——Write/Read 携 typ
+// 原样往返）；构造器执行 SetReadLimit（现状 relayResponsesWS 函数体首行语义
+// ——16MB 读限不能丢，回落库默认 32KB 会拒 response.completed 全量帧）。
+type aiclientTransport struct{ up *websocket.Conn }
+
+// newAiclientTransport 构造适配层并应用读限（现状首行语义——gate 阻断项：
+// 读限不得随重构丢失）。
+func newAiclientTransport(up *websocket.Conn) *aiclientTransport {
 	up.SetReadLimit(responsesWSReadLimit)
-	frame := first
-	if sel.Model != "" && sel.Model != reqModel {
-		if nf, err := sjson.SetBytes(first, "model", sel.Model); err == nil {
-			frame = nf
-		} // 改写失败（帧非合法 JSON）→ 原样转发，上游自行校验
-	}
-	if stripTier {
-		// strip 策略：sjson 同库同风格字节级删除（非 map 往返）；字段存在性由
-		// extractTier 非 auto 档保证——缺失/类型错已在 Select 前拒绝。
-		if nf, err := sjson.DeleteBytes(frame, "service_tier"); err == nil {
-			frame = nf
-		}
-	}
-	if err := up.Write(r.Context(), firstTyp, frame); err != nil {
-		_ = up.CloseNow()
-		return false, domain.TruncateErrMsg(err.Error())
-	}
-
-	// --- 双向 relay：三个方向各自 goroutine，首退者触发取消 ---
-	// 每个 goroutine 退出时把"本侧真实错误"记录到共享变量（仅当退出非取消
-	// 副作用——relayCtx 存活 = 本退出是首因；首因到达 endCh → 编排等上游
-	// 读者退出 → 分类 → 取消对侧 → 等全部退出。
-	//
-	// I-1 竞态（评审裁决"修"）：上游关闭帧与客户端活跃写帧并发时，上游侧
-	// 错误槽 upErr 有两个并发写者——up-loop 的关闭帧（CloseError）与
-	// client-loop 的写失败（net.ErrClosed，库在解码关闭帧后 c.close() 所致）
-	// ——首写生效下 net.ErrClosed 可能先被记录 → 健康上游误判 ResultError
-	// 冷却。修复：关闭帧记录到独立槽 upClose（仅 up-loop 写入、无取消守卫
-	// ——真实帧永不丢），分类时正常关闭帧优先于一切；写失败只归因网络错误
-	// 槽（无关闭帧时才判错）。upLoopDone 保证 upClose 先于分类读取可见
-	// （记录 happens-before 退出 happens-before close(upLoopDone)）。
-	//
-	// 关键细节：客户端循环的阻塞 Read 用 r.Context()（非 relayCtx）——库对
-	// 取消中的阻塞 Read 会直接拆连接（客户端拿不到正常关闭帧）；客户端循环
-	// 的退出由编排的分类关闭帧（Close 握手）自然解除：对端回关闭帧 → Read
-	// 返回关闭错误 → 退出。取消仅用于上游侧（上游已结束/失联，直拆无害）。
-	relayCtx, relayCancel := context.WithCancel(r.Context())
-	defer relayCancel()
-	endCh := make(chan struct{}, 3)
-	var (
-		it, ot, tt, cr, cc        int64
-		img                       int64 // resp 检测功能调用计数（spec §6 旁路；respImageDetectOn 门控）——落 CallCount
-		ttft                      *int64
-		wg                        sync.WaitGroup
-		endMu                     sync.Mutex
-		upClose                   *websocket.CloseError // 上游关闭帧（分类最高权威，仅 up-loop 写入）
-		upErr, clientErr, pingErr error
-	)
-	// setErr 记录单侧退出错误（首写生效；取消副作用不记录）。dst 指针即
-	// 变量地址，单 goroutine 之外只有并发写 upErr 的可能——同语义（上游侧），
-	// 首写即可。
-	setErr := func(dst *error, err error) {
-		if err == nil || relayCtx.Err() != nil {
-			return
-		}
-		endMu.Lock()
-		if *dst == nil {
-			*dst = err
-		}
-		endMu.Unlock()
-	}
-	// recordClose 记录上游关闭帧（仅 CloseError）。不设 relayCtx 守卫：取消
-	// 副作用（ctx.Canceled）本就不是 CloseError，真实关闭帧永远优先于并发写
-	// 失败症状（net.ErrClosed 只进 upErr，首写覆盖不了关闭帧）。
-	recordClose := func(err error) {
-		var ce websocket.CloseError
-		if !errors.As(err, &ce) {
-			return
-		}
-		endMu.Lock()
-		if upClose == nil {
-			c := ce
-			upClose = &c
-		}
-		endMu.Unlock()
-	}
-	exit := func() { // 首退触发：通知编排取消对侧
-		select {
-		case endCh <- struct{}{}:
-		default:
-		}
-		relayCancel()
-	}
-
-	wg.Add(1)
-	go func() { // 客户端 → 上游（客户端帧透传；写失败 = 上游侧问题）
-		defer wg.Done()
-		for {
-			typ, f, err := client.Read(r.Context())
-			if err != nil {
-				setErr(&clientErr, err)
-				exit()
-				return
-			}
-			if err := up.Write(relayCtx, typ, f); err != nil {
-				setErr(&upErr, err)
-				exit()
-				return
-			}
-		}
-	}()
-
-	upLoopDone := make(chan struct{})
-	wg.Add(1)
-	go func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
-		defer wg.Done()
-		defer close(upLoopDone) // 编排等本读者退出后再分类（I-1 记录可见性）
-		for {
-			typ, f, err := up.Read(relayCtx)
-			if err != nil {
-				// 关闭帧 → 独立槽（最高权威）；其余（EOF/网络）→ upErr。
-				// 本 goroutine 是唯一解码者：关闭帧 decode+record 与客户端
-				// 循环的写失败天然并发，槽位分离使两者各归其位、互不覆盖。
-				var ce websocket.CloseError
-				if errors.As(err, &ce) {
-					recordClose(err)
-				} else {
-					setErr(&upErr, err)
-				}
-				exit()
-				return
-			}
-			// 热路径纪律：bytes.Contains 零分配预筛，命中才最小字节扫描取 usage
-			// （usage_extract.go A-1 scanKeyValue 单遍扫描零分配）；流式中间帧
-			// 零解析直转——网关层零分配，库层每帧 io.ReadAll 物化 + flate 属库
-			// 内账目。
-			if u, ok := sniffResponsesCompleted(f); ok {
-				it, ot, tt, cr, cc = u.it, u.ot, u.tt, u.cr, u.cc
-				// 响应检测旁路（spec §6）：completed 帧恒在流末——最终计数由其
-				// 覆盖（最后帧语义）；门控关闭（api_key/strip 开）→ 零额外解析。
-				if respImageDetectOn(sel) {
-					img = respImageCountCompleted(f)
-				}
-			}
-			if ttft == nil {
-				ms := time.Since(start).Milliseconds()
-				ttft = &ms
-			}
-			if err := client.Write(relayCtx, typ, f); err != nil {
-				setErr(&clientErr, err)
-				exit()
-				return
-			}
-		}
-	}()
-
-	wg.Add(1)
-	go func() { // 心跳：向上游周期 Ping（pong 超时 = 上游失联 → 按上游错误收尾）
-		defer wg.Done()
-		ticker := time.NewTicker(p.wsHeartbeatInterval) // seam：测试缩短验证节奏（T4）
-		defer ticker.Stop()
-		for {
-			select {
-			case <-relayCtx.Done():
-				return
-			case <-ticker.C:
-			}
-			pc, pcancel := context.WithTimeout(relayCtx, responsesWSPongTimeout)
-			err := up.Ping(pc)
-			pcancel()
-			if err != nil {
-				setErr(&pingErr, err)
-				exit()
-				return
-			}
-		}
-	}()
-
-	<-endCh
-	// I-1：等上游读者退出再分类——关闭帧的 decode+record 与客户端循环的
-	// 写失败记录并发，关闭帧可能晚于首退到达；upLoopDone 保证 upClose（或
-	// 上游侧真实错误）先于分类读取可见。该等待各路径都快速收敛：关闭帧
-	// 送达 / 首退已 relayCancel（阻塞 Read 立即返回）/ 连接死亡。
-	<-upLoopDone
-
-	// 分类与关闭传播（与 SSE caller 同构；relayClassify 纯函数可单测）：
-	//   ① 上游正常关闭（1000/1001）→ 成功 200 ErrNone + ResultOK
-	//   ② 客户端断开/关闭          → 200 ErrAbort（上游已消费请求；不 MarkResult）
-	//   ③ 上游错误关闭/网络错误/心跳失联 → recordStreamAbort + ResultError
-	// 关闭传播在取消之前：client.Close 握手本身解除客户端循环的阻塞 Read
-	// （对端回关闭帧 → Read 自然返回退出），客户端拿到正常关闭帧。
-	u := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-	logCtx := relayCtx
-	if ttft != nil {
-		logCtx = context.WithValue(relayCtx, ctxKeyTTFT{}, ttft)
-	}
-	// 记录全部先行、关闭帧后发：客户端"感知会话结束"与"用量记录入队"之间有
-	// 竞态窗口——若先发关闭帧，对侧读到后立刻断开/网关停机收尾（rec.Close），
-	// finish 的 Record 落在 Close 之后即丢（无消费者）。先入队再关，任何时序下
-	// 记录不丢（优雅停机"等在途归零"语义）。
-	end, endErr := relayClassify(upClose, upErr, clientErr, pingErr)
-	switch end {
-	case relayEndUpstreamClosed:
-		_ = up.Close(websocket.StatusNormalClosure, "") // 完成关闭握手（上游已发关闭帧）
-		p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
-		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrNone, u, start)))
-		_ = client.Close(websocket.StatusNormalClosure, "")
-	case relayEndClientAbort:
-		// 客户端已死/已关闭，免握手等待
-		_ = client.CloseNow()
-		code := websocket.StatusGoingAway
-		if isNormalWSClose(endErr) {
-			code = wsCloseStatus(endErr)
-		}
-		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
-		_ = up.Close(code, "") // 向上游传播客户端关闭
-	case relayEndUpstreamError:
-		p.recordStreamAbort(logCtx, reqID, groupID, start, sel, reqModel, u, endErr)
-		p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, 0, endErr.Error())
-		_ = client.Close(wsCloseStatus(endErr), "")
-		_ = up.CloseNow() // 上游已死/失联，免握手等待
-	}
-	relayCancel()
-	wg.Wait()
-	return true, ""
+	return &aiclientTransport{up: up}
 }
+
+func (t *aiclientTransport) Write(ctx context.Context, typ websocket.MessageType, frame []byte) error {
+	return t.up.Write(ctx, typ, frame)
+}
+
+func (t *aiclientTransport) Read(ctx context.Context) (websocket.MessageType, []byte, error) {
+	return t.up.Read(ctx)
+}
+
+func (t *aiclientTransport) Ping(ctx context.Context) error { return t.up.Ping(ctx) }
+
+func (t *aiclientTransport) Close(code websocket.StatusCode, reason string) error {
+	return t.up.Close(code, reason)
+}
+
+func (t *aiclientTransport) CloseNow() { t.up.CloseNow() }
 
 // isNormalWSClose 正常结束的关闭帧（1000 正常 / 1001 离开——上游完成流后关闭）。
 func isNormalWSClose(err error) bool {

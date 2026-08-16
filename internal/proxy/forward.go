@@ -678,7 +678,7 @@ func isJSONObjectRoot(body []byte) bool {
 // 短路守卫（GC 削减 P1）：model 已是目标值（gjson 字符串读取）→ 返回原切片
 // 零分配。守卫只对字符串匹配生效；null/数字/缺失/需改写走 sjson 字节级改写
 // 路径（单字段 splice，非 map 全文档往返——>2^53 整数精度无损、键序不变、
-// 无 HTML 转义，与 WS 面 relayResponsesWS 同库同风格；sjson 对缺失路径默认
+// 无 HTML 转义，与 WS 面 relayWS 首帧改写同库同风格；sjson 对缺失路径默认
 // 补字段，与 map 版本一致。等价性核对见分析报告：sel.Model 非空时 null/数字
 // 恒走改写，行为不变）。
 func setModel(body []byte, model string) ([]byte, error) {

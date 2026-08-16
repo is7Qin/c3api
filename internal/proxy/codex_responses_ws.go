@@ -10,13 +10,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -25,13 +23,15 @@ import (
 
 // --- codex 独立 relay 变体（T4 §1：codex-oauth/codex-pat 类型 resp-ws 接线） ---
 // 独立文件族（用户拍板文件边界：codex 相关处理不散落现有 caller/forward 文件，
-// codexsdk import 仅限本文件族 + sdkbridge 扩展）。与 aiclient 路径
-// （relayResponsesWS）同构的编排：双向帧透传 1:1 / usage 嗅探
+// codexsdk import 仅限本文件族 + sdkbridge 扩展）。与 aiclient 路径同构的编
+// 排（合一骨架 relayWS + 传输适配 codexTransport——用户裁决抽 5 方法传输接口
+// wsRelayTransport，见 ws_relay.go）：双向帧透传 1:1 / usage 嗅探
 // （response.completed——sniffResponsesCompleted 复用）/ 关闭分类
 // （relayClassify/recordClose 复用）/ 心跳（30s Ping + 10s pong 超时同款）——
-// 差异只在传输面：上游侧 = *codexsdk.Client 具体类型（Send/Recv/Ping/Close/
-// CloseNow——用户裁决不抽传输接口），服务端 Accept 侧 = 既有 *websocket.Conn
-// 不动。
+// 差异收口在本文件：传输适配层 = *codexsdk.Client 具体类型（Send/Recv/Ping/
+// Close/CloseNow——SDK 具体类型经 codexTransport 适配接口）与每帧判死钩子
+// frameHook（T5 §3，见 wsAttempt 调用点）；服务端 Accept 侧 = 既有
+// *websocket.Conn 不动。
 //
 // 凭据双线分工（P2-B 定死）：relay 线 = 快照（sel.Ext → AccountExt）→
 // AccountCredential 派生直供适配层（不经 credentialFor 单字符串路径——复合
@@ -223,200 +223,33 @@ func codexWSPassthroughHeaders(h http.Header) http.Header {
 	return out
 }
 
-// relayCodexWS 拨号成功后的编排（T4 §1——relayResponsesWS 的 codex 变体，纯函
-// 数/心跳模式/关闭分类全部复用，仅传输面换 SDK 具体类型）：首帧模型改写 →
-// 转发首帧 → 双向事件帧 1:1 relay（流式中间帧零解析直转；SDK Send 关闭白名
-// 单过滤后与 aiclient 直连同字节语义，client_metadata 伪装注入照常）→ 关闭/
-// 错误传播 → usage 记录。返回 (handled, fwMsg) 语义与 relayResponsesWS 相同。
-//
-// 传输面差异（SDK 具体类型，不抽接口）：
-//   - 客户端 → 上游：client.Read 帧 → up.Send（SDK 恒 MessageText——responses
-//     WS 协议全 text 帧，binary 帧降级 text 转发，风险低）
-//   - 上游 → 客户端：up.Recv（SDK 丢弃帧类型）→ client.Write(MessageText)
-//   - 心跳：up.Ping(pc)（30s 间隔 + 10s pong 超时——pong 由本循环的常驻
-//     Recv 处理，SDK Client 并发语义 client.go:273-275 前提满足）
-//   - 关闭：up.Close(status, reason) / up.CloseNow()（SDK 幂等 closeOnce）
-//   - 错误分类：SDK Recv 透传 coder/websocket 错误原样 → errors.As
-//     *CloseError 成立，relayClassify/recordClose 直接复用
-func (p *Proxy) relayCodexWS(client *websocket.Conn, up *codexsdk.Client, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwMsg string) {
-	frame := first
-	if sel.Model != "" && sel.Model != reqModel {
-		if nf, err := sjson.SetBytes(first, "model", sel.Model); err == nil {
-			frame = nf
-		} // 改写失败（帧非合法 JSON）→ 原样转发，上游自行校验
-	}
-	if err := up.Send(r.Context(), frame); err != nil {
-		up.CloseNow()
-		return false, domain.TruncateErrMsg(err.Error())
-	}
+// codexTransport 上游侧 *codexsdk.Client 的 wsRelayTransport 适配（codex 路
+// 径）：typ 语义与现状 relayCodexWS 同款——Send 忽略 typ 恒 text（SDK Send
+// 内部恒 conn.Write MessageText，client.go:499-511）、Recv 丢帧类型 → Read 恒
+// 返回 MessageText（responses WS 协议全 text 帧，binary 帧降级 text 转发，风
+// 险低——现状既有降级语义）；Ping/Close/CloseNow 直通 SDK（Close 幂等
+// closeOnce；pong 由 relay 循环的常驻 Read 处理——SDK Client 并发语义
+// client.go:273-275 前提满足）。错误原样透传（SDK Recv 透传 coder/websocket
+// 错误 → errors.As *CloseError 成立，relayClassify/recordClose 直接复用）。
+type codexTransport struct{ up *codexsdk.Client }
 
-	// --- 双向 relay：三个方向各自 goroutine，首退者触发取消 ---
-	// 结构与 relayResponsesWS 同款（I-1 竞态修复语义原样：upClose 独立槽最高
-	// 权威 / upLoopDone 记录可见性 / 客户端循环用 r.Context() 阻塞读——关闭
-	// 帧自然解除）。
-	relayCtx, relayCancel := context.WithCancel(r.Context())
-	defer relayCancel()
-	endCh := make(chan struct{}, 3)
-	var (
-		it, ot, tt, cr, cc        int64
-		img                       int64 // resp 检测功能调用计数（spec §6 旁路；respImageDetectOn 门控）——落 CallCount
-		ttft                      *int64
-		wg                        sync.WaitGroup
-		endMu                     sync.Mutex
-		upClose                   *websocket.CloseError // 上游关闭帧（分类最高权威，仅 up-loop 写入）
-		upErr, clientErr, pingErr error
-	)
-	setErr := func(dst *error, err error) {
-		if err == nil || relayCtx.Err() != nil {
-			return
-		}
-		endMu.Lock()
-		if *dst == nil {
-			*dst = err
-		}
-		endMu.Unlock()
-	}
-	recordClose := func(err error) {
-		var ce websocket.CloseError
-		if !errors.As(err, &ce) {
-			return
-		}
-		endMu.Lock()
-		if upClose == nil {
-			c := ce
-			upClose = &c
-		}
-		endMu.Unlock()
-	}
-	exit := func() { // 首退触发：通知编排取消对侧
-		select {
-		case endCh <- struct{}{}:
-		default:
-		}
-		relayCancel()
-	}
-
-	wg.Add(1)
-	go func() { // 客户端 → 上游（客户端帧透传；写失败 = 上游侧问题）
-		defer wg.Done()
-		for {
-			_, f, err := client.Read(r.Context())
-			if err != nil {
-				setErr(&clientErr, err)
-				exit()
-				return
-			}
-			// SDK Send 恒 MessageText（帧类型不传递——responses WS 全 text 帧）
-			if err := up.Send(relayCtx, f); err != nil {
-				setErr(&upErr, err)
-				exit()
-				return
-			}
-		}
-	}()
-
-	upLoopDone := make(chan struct{})
-	wg.Add(1)
-	go func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
-		defer wg.Done()
-		defer close(upLoopDone) // 编排等本读者退出后再分类（I-1 记录可见性）
-		for {
-			f, err := up.Recv(relayCtx)
-			if err != nil {
-				var ce websocket.CloseError
-				if errors.As(err, &ce) {
-					recordClose(err)
-				} else {
-					setErr(&upErr, err)
-				}
-				exit()
-				return
-			}
-			// T5 §3 唯一跨边界点：WS 业务判死事件帧（token_invalidated/
-			// token_revoked）→ 适配层 FatalAuth（Auth.Fatal 毒化——不触发
-			// OnAuthFatal——+ 统一失效回调：写 failed_at + StatusDisabled，
-			// 共用 T1 处理函数；双源去重：同一 fatal 再经 errors.As 二次命
-			// 中仍单次上报）。判死帧照常透传客户端（错误事件属业务流），
-			// 会话随后由上游关闭帧自然收尾。
-			if fatal := sniffCodexWSDeath(f); fatal != nil {
-				p.codex.FatalAuth(sel.AccountID, fatal)
-			}
-			// 热路径纪律：bytes.Contains 零分配预筛，命中才最小 gjson 解析；
-			// 流式中间帧零解析直转（与 aiclient 路径同款——SDK Recv 缓冲直写）。
-			if u, ok := sniffResponsesCompleted(f); ok {
-				it, ot, tt, cr, cc = u.it, u.ot, u.tt, u.cr, u.cc
-				if respImageDetectOn(sel) {
-					img = respImageCountCompleted(f)
-				}
-			}
-			if ttft == nil {
-				ms := time.Since(start).Milliseconds()
-				ttft = &ms
-			}
-			if err := client.Write(relayCtx, websocket.MessageText, f); err != nil {
-				setErr(&clientErr, err)
-				exit()
-				return
-			}
-		}
-	}()
-
-	wg.Add(1)
-	go func() { // 心跳：向上游周期 Ping（pong 超时 = 上游失联 → 按上游错误收尾）
-		defer wg.Done()
-		ticker := time.NewTicker(p.wsHeartbeatInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-relayCtx.Done():
-				return
-			case <-ticker.C:
-			}
-			pc, pcancel := context.WithTimeout(relayCtx, responsesWSPongTimeout)
-			err := up.Ping(pc)
-			pcancel()
-			if err != nil {
-				setErr(&pingErr, err)
-				exit()
-				return
-			}
-		}
-	}()
-
-	<-endCh
-	<-upLoopDone
-
-	// 分类与关闭传播（与 relayResponsesWS 同款——relayClassify 纯函数复用）：
-	// ① 上游正常关闭（1000/1001）→ 成功 ② 客户端断开 → abort ③ 上游错误/失
-	// 联 → recordStreamAbort + ResultError。记录先行、关闭帧后发（记录不丢语义）。
-	u := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-	logCtx := relayCtx
-	if ttft != nil {
-		logCtx = context.WithValue(relayCtx, ctxKeyTTFT{}, ttft)
-	}
-	end, endErr := relayClassify(upClose, upErr, clientErr, pingErr)
-	switch end {
-	case relayEndUpstreamClosed:
-		_ = up.Close(websocket.StatusNormalClosure, "") // 完成关闭握手（上游已发关闭帧）
-		p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
-		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrNone, u, start)))
-		_ = client.Close(websocket.StatusNormalClosure, "")
-	case relayEndClientAbort:
-		// 客户端已死/已关闭，免握手等待
-		_ = client.CloseNow()
-		code := websocket.StatusGoingAway
-		if isNormalWSClose(endErr) {
-			code = wsCloseStatus(endErr)
-		}
-		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
-		_ = up.Close(code, "") // 向上游传播客户端关闭
-	case relayEndUpstreamError:
-		p.recordStreamAbort(logCtx, reqID, groupID, start, sel, reqModel, u, endErr)
-		p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, 0, endErr.Error())
-		_ = client.Close(wsCloseStatus(endErr), "")
-		up.CloseNow() // 上游已死/失联，免握手等待
-	}
-	relayCancel()
-	wg.Wait()
-	return true, ""
+func newCodexTransport(up *codexsdk.Client) *codexTransport {
+	return &codexTransport{up: up}
 }
+
+func (t *codexTransport) Write(ctx context.Context, _ websocket.MessageType, frame []byte) error {
+	return t.up.Send(ctx, frame)
+}
+
+func (t *codexTransport) Read(ctx context.Context) (websocket.MessageType, []byte, error) {
+	f, err := t.up.Recv(ctx)
+	return websocket.MessageText, f, err
+}
+
+func (t *codexTransport) Ping(ctx context.Context) error { return t.up.Ping(ctx) }
+
+func (t *codexTransport) Close(code websocket.StatusCode, reason string) error {
+	return t.up.Close(code, reason)
+}
+
+func (t *codexTransport) CloseNow() { t.up.CloseNow() }
