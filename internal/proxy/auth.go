@@ -19,23 +19,24 @@ type KeyLoader interface {
 	LoadKeys(ctx context.Context) (map[string]domain.KeyMeta, error)
 }
 
-// UserStatusLoader 由 repository.UserRepo 实现（RequireJWT 用户状态快照）。
+// UserStatusLoader 由 repository.UserRepo 实现（RequireJWT 用户状态 + adminAuth
+// 快照 role 校验的数据源）。
 type UserStatusLoader interface {
-	LoadUsers(ctx context.Context) (map[int64]domain.UserStatus, error)
+	LoadUsers(ctx context.Context) (map[int64]domain.UserSnapshot, error)
 }
 
-// Auth 鉴权快照：key_raw（明文）→ KeyMeta（含归属用户门禁字段）+ 用户状态表 +
-// 两级并发/额度内存计数（gate）。热路径零 DB、零 per-request 锁（RWMutex
-// 读多写少，规格 §10.3）。用户状态变更（禁用/并发/额度调整）走 invalidate
-// 回调 → Reload 全量刷新（评审 I-2），JWT 24h 长时效仅作快照失效后的
-// 最终兜底。
+// Auth 鉴权快照：key_raw（明文）→ KeyMeta（含归属用户门禁字段）+ 用户快照表
+// （status+role）+ 两级并发/额度内存计数（gate）。热路径零 DB、零 per-request
+// 锁（RWMutex 读多写少，规格 §10.3）。用户变更（禁用/降权/并发/额度调整）
+// 走 invalidate 回调 → Reload 全量刷新（评审 I-2），JWT 24h 长时效仅作快照
+// 失效后的最终兜底。
 type Auth struct {
 	loader KeyLoader
 	users  UserStatusLoader
 	log    *logx.Logger
 	mu     sync.RWMutex
 	keys   map[string]domain.KeyMeta
-	states map[int64]domain.UserStatus
+	states map[int64]domain.UserSnapshot
 	gate   *concurrencyGate
 }
 
@@ -48,7 +49,7 @@ func NewAuth(loader KeyLoader, users UserStatusLoader, log *logx.Logger) *Auth {
 		users:  users,
 		log:    log,
 		keys:   make(map[string]domain.KeyMeta),
-		states: make(map[int64]domain.UserStatus),
+		states: make(map[int64]domain.UserSnapshot),
 		gate:   newConcurrencyGate(log),
 	}
 	// 复核 DB 读自装配：生产 loader（repository.KeyRepo）同时实现 QuotaUsedReader；
@@ -110,9 +111,10 @@ func (a *Auth) Delete(raw string) {
 	}
 }
 
-// UserStatus 用户状态快照（RequireJWT 校验用；用户变更走 invalidate → Reload，
-// 不用 DB 直查）。
-func (a *Auth) UserStatus(userID int64) (domain.UserStatus, bool) {
+// UserSnapshot 用户快照（RequireJWT 状态校验 + adminAuth 快照 role 校验共用；
+// 用户变更走 invalidate → Reload，不用 DB 直查）。单次查找同时取 status+role
+// （热路径零分配）。
+func (a *Auth) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 	a.mu.RLock()
 	s, ok := a.states[userID]
 	a.mu.RUnlock()

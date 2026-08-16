@@ -387,7 +387,9 @@ func main() {
 	})
 	aiRouter := proxy.AIRouter(px)
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
-	userHandler := userapi.Router(svc, iss, auth)
+	// 公开面 bcrypt 节流（F3）：per-IP token 桶（5 rps/IP + burst 10 + 空闲
+	// 10min 过期 + 100k 键空间上限）——防公网并发 login/register 烧 CPU。
+	userHandler := userapi.Router(svc, iss, auth, userapi.NewIPRateLimiter(5, 10, 10*time.Minute, 100_000))
 
 	// /admin/ops/workers 运维观测（spec 2026-08-11，用户裁决并入管理面）：
 	// 独立 Stats 契约不改 worker.Worker——装配侧类型断言聚合（各模块已持

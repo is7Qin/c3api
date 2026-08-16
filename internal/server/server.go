@@ -23,7 +23,7 @@ import (
 type Options struct {
 	AdminToken        string
 	JWTIssuer         *auth.Issuer            // platform_admin JWT 鉴权（/admin 扩展）
-	UserStatus        auth.UserStatusProvider // 用户状态快照（JWT 鉴权路径禁用即拒）
+	UserStatus        auth.UserStatusProvider // 用户快照 status+role（JWT 鉴权路径禁用/降权即拒；nil = JWT 路径全拒）
 	MaxInflight       int64
 	ReadHeaderTimeout time.Duration
 	MaxHeaderBytes    int
@@ -53,8 +53,11 @@ func NewServer(opts Options) *Server {
 	s := &Server{opts: opts}
 
 	r := chi.NewRouter()
-	r.Use(recoverer(opts.Logger))
+	// 顺序：accessLog 最外层、recoverer 内层（F4）——recoverer 的 w 即
+	// statusWriter，已写头判定（headersWritten）与 500 状态回写都经同一包装；
+	// 旧序（recoverer 外层）recoverer 只见裸 writer，无法感知已写头。
 	r.Use(accessLog(opts.Logger))
+	r.Use(recoverer(opts.Logger))
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		var ms runtime.MemStats

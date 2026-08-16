@@ -128,10 +128,10 @@ func (n noopKeyLoader) LoadKeys(ctx context.Context) (map[string]domain.KeyMeta,
 	return n.keys, nil
 }
 
-// noopUserLoader 用户状态快照 helper（NewAuth 签名扩展）。
-type noopUserLoader struct{ users map[int64]domain.UserStatus }
+// noopUserLoader 用户快照 helper（NewAuth 签名扩展；status+role 单次查找）。
+type noopUserLoader struct{ users map[int64]domain.UserSnapshot }
 
-func (n noopUserLoader) LoadUsers(ctx context.Context) (map[int64]domain.UserStatus, error) {
+func (n noopUserLoader) LoadUsers(ctx context.Context) (map[int64]domain.UserSnapshot, error) {
 	return n.users, nil
 }
 

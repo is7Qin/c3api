@@ -13,10 +13,11 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
-// UserStatusProvider 用户状态快照（proxy.Auth 实现；用户变更走 invalidate →
-// Auth.Reload 全量刷新，RequireJWT 不用 DB 直查——评审定夺②）。
+// UserStatusProvider 用户快照（status+role 单次查找；proxy.Auth 实现；用户
+// 变更走 invalidate → Auth.Reload 全量刷新，RequireJWT/adminAuth 不用 DB
+// 直查——评审定夺②）。
 type UserStatusProvider interface {
-	UserStatus(userID int64) (domain.UserStatus, bool)
+	UserSnapshot(userID int64) (domain.UserSnapshot, bool)
 }
 
 type ctxClaimsKey struct{}
@@ -49,8 +50,8 @@ func RequireJWT(iss *Issuer, users UserStatusProvider) func(http.Handler) http.H
 			// 及 Balances.BalanceOf 缺失 → 402 纪律一致。行为变化注记：启动
 			// 首刷失败（DB 挂）时 /user 全拒——/user 端点 DB-backed 反正 500，
 			// 实际影响≈0。
-			st, ok := users.UserStatus(claims.UserID)
-			if !ok || st != domain.UserStatusActive {
+			sn, ok := users.UserSnapshot(claims.UserID)
+			if !ok || sn.Status != domain.UserStatusActive {
 				writeUnauthorized(w)
 				return
 			}

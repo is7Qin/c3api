@@ -323,16 +323,18 @@ func (r *UserRepo) UpdateUserPassword(ctx context.Context, id int64, passwordHas
 	return errMissingID(err, id)
 }
 
-// LoadUsers 全量用户状态快照（Auth 内存表：RequireJWT 用户状态校验，
-// 用户变更走 invalidate → Reload 全量刷新，不用 DB 直查）。
-func (r *UserRepo) LoadUsers(ctx context.Context) (map[int64]domain.UserStatus, error) {
-	rows, err := r.client.User.Query().Select(user.FieldID, user.FieldStatus).All(ctx)
+// LoadUsers 全量用户快照（Auth 内存表：RequireJWT 用户状态校验 + adminAuth
+// 快照 role 覆盖 claims（F1 降权即时生效）；用户变更走 invalidate → Reload
+// 全量刷新，不用 DB 直查）。一次查询带 status+role 两列（快照条目单次查找
+// 零分配）。
+func (r *UserRepo) LoadUsers(ctx context.Context) (map[int64]domain.UserSnapshot, error) {
+	rows, err := r.client.User.Query().Select(user.FieldID, user.FieldStatus, user.FieldRole).All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[int64]domain.UserStatus, len(rows))
+	out := make(map[int64]domain.UserSnapshot, len(rows))
 	for _, row := range rows {
-		out[row.ID] = domain.UserStatus(row.Status)
+		out[row.ID] = domain.UserSnapshot{Status: domain.UserStatus(row.Status), Role: domain.Role(row.Role)}
 	}
 	return out, nil
 }

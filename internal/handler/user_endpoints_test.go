@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -21,16 +22,16 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// fakeUserStatus 快照用户状态 provider（测试替身：直读 fake store 当前状态，
-// 语义等同 Auth 快照在 invalidate 后反映 DB 状态）。
+// fakeUserStatus 快照 provider（测试替身：直读 fake store 当前状态，
+// 语义等同 Auth 快照在 invalidate 后反映 DB 状态；status+role 单次查找）。
 type fakeUserStatus struct{ store *fakeStore }
 
-func (f fakeUserStatus) UserStatus(userID int64) (domain.UserStatus, bool) {
+func (f fakeUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 	u, err := f.store.GetUser(context.Background(), userID)
 	if err != nil {
-		return "", false
+		return domain.UserSnapshot{}, false
 	}
-	return u.Status, true
+	return domain.UserSnapshot{Status: u.Status, Role: u.Role}, true
 }
 
 // newTestUserRouter /user 测试路由（真实 svc + fake store + 真实 Issuer）。
@@ -40,7 +41,7 @@ func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *ht
 	store := newFakeStore()
 	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
 	iss := auth.NewIssuer("test-secret")
-	router := userapi.Router(svc, iss, fakeUserStatus{store: store})
+	router := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil) // nil = 不限速（F3 节流测试见 TestUserPublicRateLimit）
 	do := func(method, path, body, token string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		if token != "" {
@@ -136,6 +137,43 @@ func TestUserLoginDisabled(t *testing.T) {
 	require.NoError(t, err)
 	rec = do(http.MethodGet, "/user/auth/me", "", token)
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "disabled me: %s", rec.Body.String())
+}
+
+// F3：公开面 bcrypt 节流（Router 注入严格桶）——同 IP 超速 429（限流在
+// handler 之前：超速请求不触达 bcrypt）；不同 IP 独立计数；宽桶正常速率
+// 零影响。限流器单元测试见 internal/handler/user/ratelimit_test.go。
+func TestUserPublicRateLimit(t *testing.T) {
+	store := newFakeStore()
+	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	iss := auth.NewIssuer("test-secret")
+	strict := userapi.NewIPRateLimiter(1000, 2, time.Minute, 1000) // burst 2
+	router := userapi.Router(svc, iss, fakeUserStatus{store: store}, strict)
+	login := func(ip string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/user/auth/login", strings.NewReader(`{"email":"x@example.com","password":"wrong"}`))
+		req.RemoteAddr = ip + ":12345"
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	// burst 2：同 IP 第 3 个公开请求 429（前两个 401 = 口令错误但已过节流）
+	require.Equal(t, http.StatusUnauthorized, login("203.0.113.10").Code)
+	require.Equal(t, http.StatusUnauthorized, login("203.0.113.10").Code)
+	require.Equal(t, http.StatusTooManyRequests, login("203.0.113.10").Code, "同 IP 超速 → 429")
+	// 不同 IP 独立计数
+	require.Equal(t, http.StatusUnauthorized, login("203.0.113.11").Code)
+
+	// 正常速率零影响：宽桶下连续公开请求全放行（401 = 口令错误路径照常）
+	wide := userapi.NewIPRateLimiter(1000, 1000, time.Minute, 1000)
+	wideRouter := userapi.Router(svc, iss, fakeUserStatus{store: store}, wide)
+	for i := 0; i < 20; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/user/auth/login", strings.NewReader(`{"email":"x@example.com","password":"wrong"}`))
+		req.RemoteAddr = "203.0.113.12:12345"
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		wideRouter.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusUnauthorized, rec.Code, "宽桶下 #%d 不受限", i+1)
+	}
 }
 
 // --- 管理面 settings ---

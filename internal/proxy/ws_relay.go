@@ -7,6 +7,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // --- resp-ws relay 合一骨架（D2：relayResponsesWS/relayCodexWS 双份并发状态机
@@ -125,10 +127,41 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		}
 		relayCancel()
 	}
+	// relayRecover 三 goroutine 的 panic 收尾（F2 崩溃面：任一 goroutine panic
+	// 未 recover → 杀整个进程）。记录**先于 exit()**（与 setErr→exit 正常路径
+	// 同序，spec 变更 2"错误槽 setErr + 取消对侧"）：编排在 <-upLoopDone 后读
+	// 槽——up-loop 的退出由本 goroutine exit 的取消触发（relayCtx 取消链：
+	// 记录 → exit → 取消 → up-loop 读返回 → close(upLoopDone) → 编排读取），
+	// 记录须 happens-before 取消，否则 client-loop/heartbeat 的槽写入与编排
+	// 读取无同步边（数据竞争）。记录不走 setErr——其 relayCtx 守卫在取消后
+	// 吞掉记录；且 panic 若恰在 setErr/recordClose 临界区内（理论情形——临界
+	// 区无用户代码，仅指针写），recover 后再取 endMu 即重入死锁，故直接 endMu
+	// 首写（首写生效，与 setErr 同语义）。defer 注册序（LIFO）：本函数最后
+	// 注册、最先执行——记录 happens-before 后续的 close(upLoopDone)/wg.Done。
+	relayRecover := func(who string, dst *error) {
+		if rec := recover(); rec != nil {
+			err := fmt.Errorf("ws relay panic: %v", rec)
+			endMu.Lock()
+			if *dst == nil {
+				*dst = err
+			}
+			endMu.Unlock()
+			if p.log != nil {
+				p.log.Error("ws relay panic",
+					logx.String("request_id", reqID),
+					logx.Int64("account_id", sel.AccountID),
+					logx.String("goroutine", who),
+					logx.Any("panic", rec),
+				)
+			}
+			exit()
+		}
+	}
 
 	wg.Add(1)
 	go func() { // 客户端 → 上游（客户端帧透传；写失败 = 上游侧问题）
 		defer wg.Done()
+		defer relayRecover("client-loop", &upErr) // panic 按身份入槽：本 goroutine 故障归上游侧
 		for {
 			typ, f, err := client.Read(r.Context())
 			if err != nil {
@@ -149,6 +182,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	go func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
 		defer wg.Done()
 		defer close(upLoopDone) // 编排等本读者退出后再分类（I-1 记录可见性）
+		defer relayRecover("up-loop", &clientErr) // panic 按身份入槽：本 goroutine 故障归客户端侧
 		for {
 			typ, f, err := up.Read(relayCtx)
 			if err != nil {
@@ -194,6 +228,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	wg.Add(1)
 	go func() { // 心跳：向上游周期 Ping（pong 超时 = 上游失联 → 按上游错误收尾）
 		defer wg.Done()
+		defer relayRecover("heartbeat", &pingErr) // panic 按身份入槽：本 goroutine 故障归心跳错误
 		ticker := time.NewTicker(p.wsHeartbeatInterval) // seam：测试缩短验证节奏（T4）
 		defer ticker.Stop()
 		for {

@@ -41,7 +41,8 @@ func TestAdminAuthEmptyTokenContract(t *testing.T) {
 		// 守卫会等于 "Bearer "+"" ——守卫即此回归点（h2 下真实存在，见 middleware.go 注释）
 		{"empty token: Bearer empty value", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer ", 401},
 		{"empty token: non-bearer scheme", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Basic xyz", 401},
-		{"empty token: platform_admin JWT", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer " + adminTok, 200},
+		// F1：快照 role 覆盖 claims.Role——user 1 快照角色 platform_admin 才放行
+		{"empty token: platform_admin JWT", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{roles: map[int64]domain.Role{1: domain.RolePlatformAdmin}}}, "Bearer " + adminTok, 200},
 		{"empty token: user JWT", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer " + userTok, 401},
 		// 非空 token：旧行为不变
 		{"token set: matching", Options{AdminToken: "tok", JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer tok", 200},

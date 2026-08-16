@@ -43,6 +43,12 @@ type fakeTransport struct {
 	readQueue []fakeRead
 	readBlock chan struct{}
 	pingErr   error
+	// panicWritesFrom 第 N 次 Write 起 panic（F2 注入：relayWS 首帧转发 = 第 1
+	// 次写——必须在 goroutine 内才被 relayRecover 接住，故从第 2 次起注入）。
+	// pingPanic = Ping 恒 panic（心跳 goroutine 注入）。
+	panicWritesFrom int
+	writesSoFar     int
+	pingPanic       bool
 
 	closeCalled chan struct{}
 	closeBlock  chan struct{}
@@ -59,6 +65,10 @@ type fakeRead struct {
 func (f *fakeTransport) Write(_ context.Context, typ websocket.MessageType, frame []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.writesSoFar++
+	if f.panicWritesFrom > 0 && f.writesSoFar >= f.panicWritesFrom {
+		panic("fakeTransport: injected write panic")
+	}
 	f.writes = append(f.writes, append([]byte(nil), frame...))
 	f.writeTyp = append(f.writeTyp, typ)
 	return f.writeErr
@@ -92,7 +102,12 @@ func (f *fakeTransport) Read(ctx context.Context) (websocket.MessageType, []byte
 	}
 }
 
-func (f *fakeTransport) Ping(context.Context) error { return f.pingErr }
+func (f *fakeTransport) Ping(context.Context) error {
+	if f.pingPanic {
+		panic("fakeTransport: injected ping panic")
+	}
+	return f.pingErr
+}
 
 func (f *fakeTransport) Close(code websocket.StatusCode, _ string) error {
 	if f.closeCalled != nil {
@@ -132,8 +147,19 @@ type relayOutcome struct {
 
 func newRelayWSTest(t *testing.T, ft *fakeTransport, frameHook func([]byte), first []byte) (*relayWSTestEnv, *websocket.Conn, *httptest.Server) {
 	t.Helper()
+	return newRelayWSTestHBI(t, ft, frameHook, first, 0)
+}
+
+// newRelayWSTestHBI 同 newRelayWSTest，但允许缩短心跳间隔（hbi > 0 生效；
+// F2 心跳 panic 注入用例：relay 启动前改写 Proxy.wsHeartbeatInterval seam——
+// 先例 TestCodexWSHeartbeatCadence）。
+func newRelayWSTestHBI(t *testing.T, ft *fakeTransport, frameHook func([]byte), first []byte, hbi time.Duration) (*relayWSTestEnv, *websocket.Conn, *httptest.Server) {
+	t.Helper()
 	store := &captureLogStore{}
 	p := newTestProxyFormatLogs(t, "http://127.0.0.1:1", domain.FormatOpenAIResponsesWS, store)
+	if hbi > 0 {
+		p.wsHeartbeatInterval = hbi
+	}
 	sel, err := p.sched.Select(10, domain.FormatOpenAIResponsesWS, "gpt-4o")
 	require.NoError(t, err, "Select 必须成功（真实抢槽——finish 的 Release 与之平衡）")
 	reqID := newReqID()
@@ -366,4 +392,90 @@ func TestRelayWSFrameHookBeforeClientWrite(t *testing.T) {
 	r := <-env.out
 	require.True(t, r.handled, "客户端断开 → abort 收尾")
 	require.NoError(t, env.p.rec.Close(context.Background()))
+}
+
+// --- F2 崩溃面：三 goroutine panic 注入 → recover 收尾不崩进程 ---
+// 注入点在帧循环内（panicWritesFrom=2 的 Write / frameHook / Ping）——任何
+// 路径 panic 都被 relayRecover 接住：连接按对应分类收尾、进程存活（测试能
+// 走到断言即进程未崩）、defer close(upLoopDone)/wg.Done 照常执行。
+
+// client→up goroutine panic（up.Write 第 2 次写注入；首帧转发 = 第 1 次写，
+// 在 goroutine 外不可注入）→ 按身份进 upErr 槽 → 上游错误收尾：客户端 1011
+// + 传输 CloseNow + ResultError 冷却（与上游网络错误同分类，不误伤）。
+func TestRelayWSClientLoopPanic(t *testing.T) {
+	ft := &fakeTransport{panicWritesFrom: 2, readBlock: make(chan struct{})}
+	env, c, _ := newRelayWSTest(t, ft, nil,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`))
+	defer c.CloseNow()
+
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`))) // 触发 client-loop 的 up.Write panic
+	readResponsesWSClose(t, c, websocket.StatusInternalError)               // 1011 内部错误传播
+	r := <-env.out
+	require.True(t, r.handled, "panic 后连接必须收尾（进程存活）")
+	require.True(t, env.ft.closeNow.Load(), "上游错误 → CloseNow 直拆（免握手等待）")
+
+	require.NoError(t, env.p.rec.Close(context.Background()))
+	require.NoError(t, env.p.errlog.Close(context.Background()))
+	env.p.sched.FlushRules()
+	ri, ok := env.p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "panic 视为上游错误 → ResultError 冷却")
+	require.Zero(t, ri.Concurrency, "并发槽必须释放")
+}
+
+// up→client goroutine panic（frameHook 注入——读帧成功后、透传前）→ 按身份
+// 进 clientErr 槽 → 客户端断开收尾：向上游传播 1001 + ErrAbort 记录 + 不
+// 冷却（与客户端断开同分类）。
+func TestRelayWSUpLoopPanic(t *testing.T) {
+	ft := &fakeTransport{readQueue: []fakeRead{
+		{typ: websocket.MessageText, frame: []byte(responsesWSCompletedFrame)},
+	}}
+	env, c, _ := newRelayWSTest(t, ft, func([]byte) { panic("frameHook panic") },
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`))
+	defer c.CloseNow()
+
+	r := <-env.out // 先收 outcome：分类/finish 在编排内完成，之后排空才可见
+	require.True(t, r.handled, "panic 后连接必须收尾（进程存活）")
+	require.Equal(t, websocket.StatusGoingAway, ft.closeCodeN(), "panic 视为客户端断开 → 向上游传播 1001")
+
+	// abort 双轨各一行（放行路径 abort + err_logs 豁免）；usage 恒 0——panic
+	// 注入点在 frameHook（读帧成功后、usage 嗅探前），嗅探未及执行。
+	require.NoError(t, env.p.rec.Close(context.Background()))
+	require.NoError(t, env.p.errlog.Close(context.Background()))
+	env.store.mu.Lock()
+	var lg *domain.UsageLog
+	for _, l := range env.store.logs {
+		if l.ErrorType == domain.ErrAbort {
+			lg = l
+		}
+	}
+	env.store.mu.Unlock()
+	require.NotNil(t, lg, "panic 视为客户端侧错误 → ErrAbort 记录照常产生")
+	require.Zero(t, lg.InputTokens, "panic 先于 usage 嗅探 → 无用量可计（不丢语义不适用）")
+	env.p.sched.FlushRules()
+	ri, ok := env.p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusActive, ri.Status, "客户端侧分类不冷却")
+	require.Zero(t, ri.Concurrency, "并发槽必须释放")
+}
+
+// 心跳 goroutine panic（Ping 注入）→ 按身份进 pingErr 槽 → 上游错误收尾：
+// 客户端 1011 + 传输 CloseNow（与心跳失联同分类）。
+func TestRelayWSHeartbeatPanic(t *testing.T) {
+	ft := &fakeTransport{pingPanic: true, readBlock: make(chan struct{})}
+	env, c, _ := newRelayWSTestHBI(t, ft, nil,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`), 50*time.Millisecond)
+	defer c.CloseNow()
+
+	readResponsesWSClose(t, c, websocket.StatusInternalError) // 心跳 panic → 上游错误 → 1011
+	r := <-env.out
+	require.True(t, r.handled, "panic 后连接必须收尾（进程存活）")
+	require.True(t, env.ft.closeNow.Load(), "上游错误 → CloseNow 直拆")
+	require.NoError(t, env.p.rec.Close(context.Background()))
+	require.NoError(t, env.p.errlog.Close(context.Background()))
+	env.p.sched.FlushRules()
+	ri, ok := env.p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "心跳 panic → ResultError 冷却")
 }

@@ -87,11 +87,13 @@ func TestPGUserCRUD(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "b@example.com", rows[0].Email)
 
-	// LoadUsers 状态快照（Auth RequireJWT 用）
+	// LoadUsers 快照（status+role 单次查找：RequireJWT 状态校验 + adminAuth
+	// 快照 role 覆盖 claims 的数据源）
 	states, err := repos.Users.LoadUsers(ctx)
 	require.NoError(t, err)
 	require.Contains(t, states, u.ID)
-	require.Equal(t, domain.UserStatusDisabled, states[u.ID], "用户禁用后快照反映")
+	require.Equal(t, domain.UserSnapshot{Status: domain.UserStatusDisabled, Role: domain.RolePlatformAdmin},
+		states[u.ID], "用户禁用后快照反映（status+role 一并携带）")
 }
 
 func TestPGKeyLifecycle(t *testing.T) {

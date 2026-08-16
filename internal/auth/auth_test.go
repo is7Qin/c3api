@@ -98,10 +98,10 @@ func TestJWTAlgorithmConfusionRejected(t *testing.T) {
 
 // --- RequireJWT 中间件 ---
 
-type fakeUserStatus struct{ statuses map[int64]domain.UserStatus }
+type fakeUserStatus struct{ snapshots map[int64]domain.UserSnapshot }
 
-func (f fakeUserStatus) UserStatus(userID int64) (domain.UserStatus, bool) {
-	s, ok := f.statuses[userID]
+func (f fakeUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
+	s, ok := f.snapshots[userID]
 	return s, ok
 }
 
@@ -128,7 +128,7 @@ func TestRequireJWTValid(t *testing.T) {
 	iss := NewIssuer("s")
 	token, err := iss.Issue(7, "ok@example.com", string(domain.RoleUser))
 	require.NoError(t, err)
-	mw := RequireJWT(iss, fakeUserStatus{statuses: map[int64]domain.UserStatus{7: domain.UserStatusActive}})
+	mw := RequireJWT(iss, fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{7: {Status: domain.UserStatusActive}}})
 	rec := doReq(t, mw, token)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "ok@example.com", rec.Body.String(), "claims 进入 context")
@@ -159,7 +159,7 @@ func TestRequireJWTRejects(t *testing.T) {
 	})
 	// 评审定夺②：禁用用户在快照中 → 立即拒绝（无需等 JWT 过期）
 	t.Run("disabled user", func(t *testing.T) {
-		mw := RequireJWT(iss, fakeUserStatus{statuses: map[int64]domain.UserStatus{7: domain.UserStatusDisabled}})
+		mw := RequireJWT(iss, fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{7: {Status: domain.UserStatusDisabled}}})
 		rec := doReq(t, mw, token)
 		require.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
@@ -179,9 +179,9 @@ func TestRequireRole(t *testing.T) {
 	// RequireRole 角色声明而非快照路径（快照缺失用例见 TestRequireJWTRejects）
 	mw := func(next http.Handler) http.Handler {
 		// 链序：RequireJWT（验证 + claims 入 ctx）→ RequireRole（角色声明）
-		return RequireJWT(iss, fakeUserStatus{statuses: map[int64]domain.UserStatus{
-			7: domain.UserStatusActive,
-			8: domain.UserStatusActive,
+		return RequireJWT(iss, fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{
+			7: {Status: domain.UserStatusActive},
+			8: {Status: domain.UserStatusActive},
 		}})(RequireRole(domain.RolePlatformAdmin)(next))
 	}
 	rec := doReq(t, mw, token)

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,8 +34,13 @@ func UserIDFromContext(ctx context.Context) (int64, bool) {
 }
 
 // adminAuth 管理面鉴权（/admin 组，含 /admin/ops/workers 运维观测）= 静态
-// admin token OR platform_admin JWT（两个都过才拒）。JWT 路径同样做快照用户
-// 状态校验（禁用即拒；评审定夺②）。
+// admin token OR platform_admin JWT（两个都过才拒）。JWT 路径校验快照
+// status+role（F1）：**快照 role 覆盖 claims.Role**——降权（platform_admin →
+// user）后旧 JWT 立即失效（快照刷新 ≤Reload 周期），claims 24h 长时效不作
+// 角色信任源；快照缺失 → fail-closed 拒绝（启动首刷失败/Reload 失败保留旧
+// 快照/NOTIFY 丢失同纪律）；**opts.UserStatus == nil → JWT 路径整体拒绝**
+// （行为变化：旧实现 nil 提供者放行——无快照角色可校验，fail-closed 语义
+// 一致；生产恒装配无实害）。
 // admin.token 可空（spec 2026-08-15）：空 = 不启用静态 token 鉴权，/admin
 // 仅接受 platform_admin JWT。空守卫使静态路径永不匹配——理由 = 语义显式化
 // + h2/TLS 纵深防御：h1 下 Go textproto 修剪头值两端 OWS，"Bearer 尾空击穿"
@@ -49,16 +55,12 @@ func adminAuth(opts Options) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, req)
 				return
 			}
-			if opts.JWTIssuer != nil && strings.HasPrefix(authz, "Bearer ") {
+			if opts.JWTIssuer != nil && opts.UserStatus != nil && strings.HasPrefix(authz, "Bearer ") {
 				claims, err := opts.JWTIssuer.Verify(strings.TrimPrefix(authz, "Bearer "))
-				if err == nil && claims.Role == string(domain.RolePlatformAdmin) {
-					active := false
-					if opts.UserStatus == nil {
-						active = true
-					} else if st, ok := opts.UserStatus.UserStatus(claims.UserID); ok && st == domain.UserStatusActive {
-						active = true
-					}
-					if active {
+				if err == nil {
+					// 快照 role 覆盖 claims.Role + 快照状态校验（单次查找零分配）
+					if sn, ok := opts.UserStatus.UserSnapshot(claims.UserID); ok &&
+						sn.Role == domain.RolePlatformAdmin && sn.Status == domain.UserStatusActive {
 						// JWT 路径注入 claims.UserID（兑换码 created_by 用，决策 5）
 						ctx := context.WithValue(req.Context(), adminUserIDKey{}, claims.UserID)
 						next.ServeHTTP(w, req.WithContext(ctx))
@@ -120,12 +122,25 @@ func accessLog(log *logx.Logger) func(http.Handler) http.Handler {
 
 type statusWriter struct {
 	http.ResponseWriter
-	status int
+	status         int
+	headersWritten bool
 }
 
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
+	w.headersWritten = true
 	w.ResponseWriter.WriteHeader(code)
+}
+
+// Write 覆写嵌入提升的 Write（Minor 3）：隐式写头（net/http 语义 = 首次 Write
+// 前自动 WriteHeader(200)）必须同步置 headersWritten 标志——否则 SSE 等
+// 隐式写头路径 recoverer 误判"未写头"，仍写 500 body 污染已开始的流。
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if !w.headersWritten {
+		w.status = http.StatusOK
+		w.headersWritten = true
+	}
+	return w.ResponseWriter.Write(b)
 }
 
 // Flush 委托给内层 writer（SSE 事件级冲刷必需）。
@@ -166,7 +181,25 @@ func recoverer(log *logx.Logger) func(http.Handler) http.Handler {
 			defer func() {
 				if rec := recover(); rec != nil {
 					if log != nil {
-						log.Error("panic recovered", logx.Any("panic", rec))
+						// debug.Stack()：panic 定位靠栈——无栈日志只有 message 无法
+						// 溯源（F4；栈在错误路径才物化，热路径零成本）。
+						log.Error("panic recovered",
+							logx.Any("panic", rec),
+							logx.String("stack", string(debug.Stack())),
+							logx.String("path", r.URL.Path),
+						)
+					}
+					// 已写头 → 只记日志 + 关闭连接，不再写 body（500 JSON 会污染
+					// 已开始的流——受益面仅 SSE；WS/Hijack 面字节本就丢弃，行为
+					// 不变，见 spec Minor 6）。关连接 = 对端读到异常截断而非干净
+					// 流尾（SSE 客户端据此感知会话异常而非正常结束）。
+					if sw, ok := w.(*statusWriter); ok && sw.headersWritten {
+						if h, ok := w.(http.Hijacker); ok {
+							if conn, _, err := h.Hijack(); err == nil {
+								_ = conn.Close()
+							}
+						}
+						return
 					}
 					httpface.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 				}

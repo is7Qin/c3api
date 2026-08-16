@@ -14,8 +14,10 @@ import (
 
 // 评审定夺①：JWT 密钥 config 强制（C3API_JWT_SECRET），缺失启动失败——
 // 随机生成 = 重启全失效 + 多实例不一致。
-// 评审定夺②：TTL 24h（用户决策 2026-08-11，原 15min 短时效导致日常使用频繁掉线；
-// 账号禁用/降权的即时生效仍靠内存快照广播，长 TTL 仅弱化快照失效后的最终兜底）。
+// 评审定夺②：TTL 24h（用户决策 2026-08-11，原 15min 短时效导致日常使用频繁掉线）。
+// 降权即时生效 = adminAuth 快照 role 覆盖 claims.Role（见 internal/server/
+// middleware.go adminAuth——快照刷新 ≤Reload 周期即生效）；TTL 只约束 token
+// 本身有效期，快照失效后长 TTL 仍作最终兜底。
 const DefaultTTL = 24 * time.Hour
 
 var (

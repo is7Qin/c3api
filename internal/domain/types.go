@@ -82,6 +82,14 @@ func (s UserStatus) Valid() bool {
 	return false
 }
 
+// UserSnapshot 用户快照条目（Auth 内存表元素：RequireJWT/adminAuth 共用，
+// 单次查找同时取 status+role——降权即时生效的 role 数据源，adminAuth 不再
+// 单独信任 claims.Role）。
+type UserSnapshot struct {
+	Status UserStatus
+	Role   Role
+}
+
 // KeyStatus 客户端 key 状态。
 type KeyStatus string
 
