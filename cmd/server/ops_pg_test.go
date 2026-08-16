@@ -208,8 +208,8 @@ func TestOpsWorkersPG(t *testing.T) {
 	t.Cleanup(cancelStatsAgg)
 	require.NoError(t, statsAgg.Start(saggCtx))
 	require.Eventually(t, func() bool {
-		return statsAgg.Stats().(usage.StatsAggWorkerStats).WatermarkUnixMs > 0
-	}, 3*time.Second, 10*time.Millisecond, "首轮聚合完成（watermark 初始化+推进）")
+		return statsAgg.Stats().(usage.StatsAggWorkerStats).LastDurationMs > 0
+	}, 3*time.Second, 10*time.Millisecond, "首轮聚合轮完成（含耗时观测）")
 	cancelStatsAgg()
 	require.Eventually(t, func() bool {
 		wm1, err1 := repos.Stats.LoadStatsAggWatermark(ctx)
