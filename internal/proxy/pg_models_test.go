@@ -124,9 +124,9 @@ func modelsPGFixture(t *testing.T) modelsFixture {
 	}
 
 	for _, k := range []*domain.Key{
-		{UserID: u.ID, GroupID: g1.ID, Name: "k-models", KeyRaw: "gk-models", Status: domain.KeyStatusActive},
-		{UserID: u.ID, GroupID: g2.ID, Name: "k-empty", KeyRaw: "gk-empty", Status: domain.KeyStatusActive},
-		{UserID: u.ID, GroupID: g3.ID, Name: "k-ghost", KeyRaw: "gk-ghost", Status: domain.KeyStatusActive},
+		{UserID: u.ID, GroupID: g1.ID, Name: "k-models", KeyRaw: "ck-models", Status: domain.KeyStatusActive},
+		{UserID: u.ID, GroupID: g2.ID, Name: "k-empty", KeyRaw: "ck-empty", Status: domain.KeyStatusActive},
+		{UserID: u.ID, GroupID: g3.ID, Name: "k-ghost", KeyRaw: "ck-ghost", Status: domain.KeyStatusActive},
 	} {
 		_, err := repos.Keys.CreateKey(ctx, k)
 		require.NoError(t, err)
@@ -204,7 +204,7 @@ func TestPGModelsListDedupSorted(t *testing.T) {
 	p := newPGModelsTestProxy(t, fx.sched, modelsAuth(t, fx.repos), nil)
 	router := AIRouter(p)
 
-	rec := modelsGET(t, router, "gk-models")
+	rec := modelsGET(t, router, "ck-models")
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 
@@ -222,7 +222,7 @@ func TestPGModelsListDedupSorted(t *testing.T) {
 	require.Equal(t, []string{"claude-3.5-sonnet", "dall-e-3", "gpt-4o"}, ids, "按 id 字典序稳定排序")
 
 	// 排序确定性：同快照两次请求响应逐字节一致。
-	rec2 := modelsGET(t, router, "gk-models")
+	rec2 := modelsGET(t, router, "ck-models")
 	require.Equal(t, http.StatusOK, rec2.Code)
 	require.Equal(t, rec.Body.Bytes(), rec2.Body.Bytes(), "响应确定性：同快照两次请求逐字节一致")
 }
@@ -232,7 +232,7 @@ func TestPGModelsEmptyGroup(t *testing.T) {
 	fx := modelsPGFixture(t)
 	p := newPGModelsTestProxy(t, fx.sched, modelsAuth(t, fx.repos), nil)
 
-	rec := modelsGET(t, AIRouter(p), "gk-empty")
+	rec := modelsGET(t, AIRouter(p), "ck-empty")
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"data":[]`, "空组必须返回空数组（非 null 非 404）")
 	var body modelsResp
@@ -246,7 +246,7 @@ func TestPGModelsUnknownGroup(t *testing.T) {
 	fx := modelsPGFixture(t)
 	p := newPGModelsTestProxy(t, fx.sched, modelsAuth(t, fx.repos), nil)
 
-	rec := modelsGET(t, AIRouter(p), "gk-ghost")
+	rec := modelsGET(t, AIRouter(p), "ck-ghost")
 	require.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
 	require.Contains(t, rec.Body.String(), "group not found")
 }
@@ -274,7 +274,7 @@ func TestPGModelsBillingDisabledGate(t *testing.T) {
 	bill := &BillingHooks{Balances: balances}
 	p := newPGModelsTestProxy(t, fx.sched, modelsAuth(t, fx.repos), bill)
 
-	rec := modelsGET(t, AIRouter(p), "gk-models")
+	rec := modelsGET(t, AIRouter(p), "ck-models")
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 }
 
@@ -286,7 +286,7 @@ func TestPGModelsReloadReflectsChanges(t *testing.T) {
 	ctx := context.Background()
 
 	list := func() []string {
-		rec := modelsGET(t, router, "gk-models")
+		rec := modelsGET(t, router, "ck-models")
 		require.Equal(t, http.StatusOK, rec.Code)
 		var body modelsResp
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))

@@ -191,7 +191,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -216,13 +216,13 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 // i64ptr 测试 int64 指针 helper（FunctionPrice.PricePerCall 构造用）。
 func i64ptr(v int64) *int64 { return &v }
 
-// postSearch 向网关发 /v1/alpha/search 请求（Bearer gk-1 + 可选
+// postSearch 向网关发 /v1/alpha/search 请求（Bearer ck-1 + 可选
 // x-codex-turn-metadata——统一不转发断言面）。
 func postSearch(t *testing.T, srv *httptest.Server, body string, turnMetadata string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/alpha/search", strings.NewReader(body))
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	req.Header.Set("Content-Type", "application/json")
 	if turnMetadata != "" {
 		req.Header.Set("x-codex-turn-metadata", turnMetadata)
@@ -564,7 +564,7 @@ func TestSearchSelectFormatUnavailable404(t *testing.T) {
 	p := newTestProxyFormatLogs(t, up.URL, domain.FormatOpenAIChat, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/alpha/search", strings.NewReader(searchReqBody))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleSearch(rec, req)
 	require.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())

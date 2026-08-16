@@ -109,7 +109,7 @@ func TestProxyBillingNoPrice402(t *testing.T) {
 	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{}}, nil, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -135,7 +135,7 @@ func TestProxyBillingAppliesCost(t *testing.T) {
 	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -166,7 +166,7 @@ func TestProxyBillingTierPriority(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"priority","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -189,7 +189,7 @@ func TestProxyBillingTierFast(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"fast","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -229,7 +229,7 @@ func TestProxyBillingTierPolicyStrip(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"priority","stream":true,"messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -260,7 +260,7 @@ func TestProxyBillingTierPolicyReject(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"priority","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
@@ -304,7 +304,7 @@ func TestProxyBillingTierFastPolicyStrip(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"fast","stream":true,"messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -333,7 +333,7 @@ func TestProxyBillingTierFastPolicyReject(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"fast","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
@@ -376,7 +376,7 @@ func TestProxyBillingTierFastPolicyPassthrough(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"fast","stream":true,"messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -402,7 +402,7 @@ func TestProxyBillingNoPriceDefenseAtFinish(t *testing.T) {
 	}, nil, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String(), "预检通过 → 正常转发")
@@ -446,7 +446,7 @@ func TestProxyBillingPriceSnapshotCache(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -489,7 +489,7 @@ func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -510,7 +510,7 @@ func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
 
 // TestProxyBillingStreamAbortGroupMultiplier 评审 M-1：recordStreamAbort 传
 // groupID → 中止路径组倍率生效（此前硬编码 0 → 组查找恒 miss → 按 ×1 计费，
-// 上浮倍率少收/折扣倍率多收）。组倍率 15000（gk-1 → groupID 10）：
+// 上浮倍率少收/折扣倍率多收）。组倍率 15000（ck-1 → groupID 10）：
 // 190×15000/10000 = 285 毫分，与正常路径一致。
 func TestProxyBillingStreamAbortGroupMultiplier(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -541,7 +541,7 @@ func TestProxyBillingStreamAbortGroupMultiplier(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -565,7 +565,7 @@ func TestProxyBillingDisabledPassthrough(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"priority","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String(), "计费全关：无价格表也不 402")
@@ -721,7 +721,7 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 			p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, c.bal, f, rec)
 
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-			req.Header.Set("Authorization", "Bearer gk-1")
+			req.Header.Set("Authorization", "Bearer ck-1")
 			recw := httptest.NewRecorder()
 			p.HandleChat(recw, req)
 
@@ -769,7 +769,7 @@ func TestProxyBillingRoutesToFlusher(t *testing.T) {
 	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	recw := httptest.NewRecorder()
 	p.HandleChat(recw, req)
 	require.Equal(t, 200, recw.Code, "body=%s", recw.Body.String())
@@ -841,7 +841,7 @@ func TestProxyBillingMultiplierAssignment(t *testing.T) {
 	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	recw := httptest.NewRecorder()
 	p.HandleChat(recw, req)
 	require.Equal(t, 200, recw.Code, "body=%s", recw.Body.String())
@@ -900,8 +900,8 @@ func TestProxyBillingMultiplierPerGroup(t *testing.T) {
 	bal := billing.NewBalances(fakeBalanceLoader{
 		m: map[int64]int64{1: 50000},
 		am: map[billing.AssignmentKey]int{
-			{UserID: 1, GroupID: 10}: 20000, // gk-1 → 组 10：×2
-			{UserID: 1, GroupID: 11}: 5000,  // gk-2 → 组 11：×0.5
+			{UserID: 1, GroupID: 10}: 20000, // ck-1 → 组 10：×2
+			{UserID: 1, GroupID: 11}: 5000,  // ck-2 → 组 11：×0.5
 		},
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()))
@@ -911,7 +911,7 @@ func TestProxyBillingMultiplierPerGroup(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
 	}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
 
-	// 组 10：gk-1 → assignment ×2 → 130×2 = 260
+	// 组 10：ck-1 → assignment ×2 → 130×2 = 260
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
@@ -921,10 +921,10 @@ func TestProxyBillingMultiplierPerGroup(t *testing.T) {
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, w1, rec, bal, nil)
 	p1 := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}, map[int64][]*domain.Account{10: {acc}}, bal, f1, store)
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	r.Header.Set("Authorization", "Bearer gk-1")
+	r.Header.Set("Authorization", "Bearer ck-1")
 	rr := httptest.NewRecorder()
 	p1.HandleChat(rr, r)
 	require.Equal(t, 200, rr.Code, "body=%s", rr.Body.String())
@@ -934,16 +934,16 @@ func TestProxyBillingMultiplierPerGroup(t *testing.T) {
 	require.Equal(t, int64(260), w1.calls[0].cost, "组 10 专属倍率 ×2：130×2 = 260")
 	w1.mu.Unlock()
 
-	// 组 11：gk-2 → assignment ×0.5 → 130×0.5 = 65（同用户不同组互不覆盖）
+	// 组 11：ck-2 → assignment ×0.5 → 130×0.5 = 65（同用户不同组互不覆盖）
 	w2 := &fakeDeductWriter{}
 	f2 := billing.NewFlusher(billing.FlushConfig{
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, w2, rec, bal, nil)
 	p2 := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
-		"gk-2": activeKey(2, 1, 11),
+		"ck-2": activeKey(2, 1, 11),
 	}, map[int64][]*domain.Account{11: {acc}}, bal, f2, store)
 	r2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	r2.Header.Set("Authorization", "Bearer gk-2")
+	r2.Header.Set("Authorization", "Bearer ck-2")
 	rr2 := httptest.NewRecorder()
 	p2.HandleChat(rr2, r2)
 	require.Equal(t, 200, rr2.Code, "body=%s", rr2.Body.String())
@@ -966,7 +966,7 @@ func TestProxyBillingMultiplierGroup(t *testing.T) {
 	}, store, nil)
 	writer := &fakeDeductWriter{}
 	bal := billing.NewBalances(fakeBalanceLoader{
-		m: map[int64]int64{1: 50000}, gm: map[int64]int{10: 15000}, // gk-1 → groupID 10
+		m: map[int64]int64{1: 50000}, gm: map[int64]int{10: 15000}, // ck-1 → groupID 10
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()), "快照加载（余额 50000 + 组倍率 ×1.5）")
 	f := billing.NewFlusher(billing.FlushConfig{
@@ -975,7 +975,7 @@ func TestProxyBillingMultiplierGroup(t *testing.T) {
 	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	recw := httptest.NewRecorder()
 	p.HandleChat(recw, req)
 	require.Equal(t, 200, recw.Code, "body=%s", recw.Body.String())
@@ -1010,7 +1010,7 @@ func TestProxyBillingFreeUserPasses(t *testing.T) {
 	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	recw := httptest.NewRecorder()
 	p.HandleChat(recw, req)
 	require.Equal(t, 200, recw.Code, "body=%s", recw.Body.String(), "免费用户余额 0 不 402")
@@ -1038,7 +1038,7 @@ func TestProxyBillingFreeGroupPasses(t *testing.T) {
 	}, store, nil)
 	writer := &fakeDeductWriter{}
 	bal := billing.NewBalances(fakeBalanceLoader{
-		m: map[int64]int64{1: 0}, gm: map[int64]int{10: 0}, // gk-1 → groupID 10；组免费
+		m: map[int64]int64{1: 0}, gm: map[int64]int{10: 0}, // ck-1 → groupID 10；组免费
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()))
 	f := billing.NewFlusher(billing.FlushConfig{
@@ -1047,7 +1047,7 @@ func TestProxyBillingFreeGroupPasses(t *testing.T) {
 	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	recw := httptest.NewRecorder()
 	p.HandleChat(recw, req)
 	require.Equal(t, 200, recw.Code, "body=%s", recw.Body.String(), "免费组余额 0 不 402")
@@ -1073,7 +1073,7 @@ func TestProxyBillingFreeGroupSnapshotMissing(t *testing.T) {
 		QuotaFlushInterval: time.Hour,
 	}, store, nil)
 	writer := &fakeDeductWriter{}
-	// 余额快照为空（用户 1 不在快照）+ 组免费（gk-1 → groupID 10）。
+	// 余额快照为空（用户 1 不在快照）+ 组免费（ck-1 → groupID 10）。
 	bal := billing.NewBalances(fakeBalanceLoader{
 		m: map[int64]int64{}, gm: map[int64]int{10: 0},
 	}, nil)
@@ -1084,7 +1084,7 @@ func TestProxyBillingFreeGroupSnapshotMissing(t *testing.T) {
 	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	recw := httptest.NewRecorder()
 	p.HandleChat(recw, req)
 	require.Equal(t, 200, recw.Code, "body=%s", recw.Body.String(), "快照缺失窗口内免费组不 402")
@@ -1120,7 +1120,7 @@ func TestProxyBillingNewUserImmediatelyUsable(t *testing.T) {
 
 	req := func() int {
 		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
-		r.Header.Set("Authorization", "Bearer gk-1")
+		r.Header.Set("Authorization", "Bearer ck-1")
 		rr := httptest.NewRecorder()
 		p.HandleChat(rr, r)
 		return rr.Code

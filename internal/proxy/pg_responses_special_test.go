@@ -121,7 +121,7 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 }
 
 // newPGTestProxy 以外部注入的调度器构造测试代理（PG 快照链路）：auth key
-// gk-1 → groupID；计费全关；用量 no-op（本测试只断言凭据路径）。
+// ck-1 → groupID；计费全关；用量 no-op（本测试只断言凭据路径）。
 func newPGTestProxy(t *testing.T, sched *scheduler.Scheduler, groupID int64) *Proxy {
 	t.Helper()
 	cfg := Config{
@@ -135,7 +135,7 @@ func newPGTestProxy(t *testing.T, sched *scheduler.Scheduler, groupID int64) *Pr
 		QuotaFlushInterval: time.Hour,
 	}, noopLogStore{}, nil)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, groupID),
+		"ck-1": activeKey(1, 1, groupID),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background())) // 构造不再自载——测试显式首刷
 	hc := &http.Client{Transport: http.DefaultTransport}

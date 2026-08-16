@@ -263,7 +263,7 @@ func TestProxyResponsesStripImageToolsOnStream(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"m","input":"hi","stream":true,"tools":[{"type":"function","name":"shell","parameters":{"type":"object"}},{"type":"image_generation_tool","namespace":"image_gen"}],"tool_choice":{"type":"image_generation_tool"}}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -290,7 +290,7 @@ func TestProxyResponsesStripImageToolsAllStrippedStream(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"m","input":"hi","stream":true,"tools":[{"type":"image_generation_tool","namespace":"image_gen"}],"tool_choice":{"type":"image_generation_tool"}}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -314,7 +314,7 @@ func TestProxyResponsesStripImageToolsOffStream(t *testing.T) {
 
 	orig := `{"model":"m","input":"hi","stream":true,"tools":[{"type":"image_generation_tool","namespace":"image_gen"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(orig))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -334,7 +334,7 @@ func TestProxyResponsesStripImageToolsOnNonStream(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"m","input":"hi","tools":[{"type":"function","name":"shell","parameters":{"type":"object"}},{"type":"image_generation_tool","namespace":"image_gen"}],"tool_choice":{"type":"image_generation_tool"}}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())

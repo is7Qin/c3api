@@ -104,7 +104,7 @@ func TestPGKeyLifecycle(t *testing.T) {
 
 	k, err := repos.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "k1",
-		KeyRaw: "gk-k1-plain",
+		KeyRaw: "ck-k1-plain",
 		Status: domain.KeyStatusActive, MaxConcurrency: 0,
 		Quota: 100, QuotaUsed: 10,
 	})
@@ -112,12 +112,12 @@ func TestPGKeyLifecycle(t *testing.T) {
 	require.True(t, k.ID > 0)
 
 	// GetKeyByRaw（明文等值回显；未找到 → nil,nil）
-	got, err := repos.GetKeyByRaw(ctx, "gk-k1-plain")
+	got, err := repos.GetKeyByRaw(ctx, "ck-k1-plain")
 	require.NoError(t, err)
 	require.Equal(t, k.ID, got.ID)
-	require.Equal(t, "gk-k1-plain", got.KeyRaw, "明文等值回显")
+	require.Equal(t, "ck-k1-plain", got.KeyRaw, "明文等值回显")
 	require.Equal(t, int64(10), got.QuotaUsed)
-	missing, err := repos.GetKeyByRaw(ctx, "gk-nope")
+	missing, err := repos.GetKeyByRaw(ctx, "ck-nope")
 	require.NoError(t, err)
 	require.Nil(t, missing)
 
@@ -141,9 +141,9 @@ func TestPGKeyLifecycle(t *testing.T) {
 	require.Equal(t, int64(10), updated.QuotaUsed, "返回行 QuotaUsed = DB 新鲜值（快照 15 不落库）")
 
 	// RotateKey（明文换新单参）
-	rotated, err := repos.RotateKey(ctx, k.ID, "gk-k1-new")
+	rotated, err := repos.RotateKey(ctx, k.ID, "ck-k1-new")
 	require.NoError(t, err)
-	require.Equal(t, "gk-k1-new", rotated.KeyRaw)
+	require.Equal(t, "ck-k1-new", rotated.KeyRaw)
 
 	// AddQuotaUsed 增量回写（Recorder 节奏）：基数 10（UpdateKey 未覆盖）→ 15
 	require.NoError(t, repos.Keys.AddQuotaUsed(ctx, map[int64]int64{k.ID: 5, 99999: 3}))
@@ -163,12 +163,12 @@ func TestPGKeyLifecycle(t *testing.T) {
 	// DeleteKeysByGroup（组删除前置清理；返回本次被软删明文——已软删的 k1 过滤）
 	_, err = repos.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "k2",
-		KeyRaw: "gk-k2", Status: domain.KeyStatusActive,
+		KeyRaw: "ck-k2", Status: domain.KeyStatusActive,
 	})
 	require.NoError(t, err)
 	raws, err := repos.DeleteKeysByGroup(ctx, g.ID)
 	require.NoError(t, err)
-	require.ElementsMatch(t, []string{"gk-k2"}, raws)
+	require.ElementsMatch(t, []string{"ck-k2"}, raws)
 	// 级联软删后：组内全部 key 已删（GET 单个可查已删项）
 	got4, err := repos.GetKey(ctx, k.ID)
 	require.NoError(t, err)
@@ -184,12 +184,12 @@ func TestPGLoadKeysSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	// 用户禁用 + key 禁用各一个，验证快照携带状态
 	_, err = repos.CreateKey(ctx, &domain.Key{
-		UserID: u.ID, GroupID: g.ID, Name: "active", KeyRaw: "gk-a",
+		UserID: u.ID, GroupID: g.ID, Name: "active", KeyRaw: "ck-a",
 		Status: domain.KeyStatusActive, MaxConcurrency: 4, Quota: 1000, QuotaUsed: 77,
 	})
 	require.NoError(t, err)
 	_, err = repos.CreateKey(ctx, &domain.Key{
-		UserID: u.ID, GroupID: g.ID, Name: "disabled", KeyRaw: "gk-d",
+		UserID: u.ID, GroupID: g.ID, Name: "disabled", KeyRaw: "ck-d",
 		Status: domain.KeyStatusDisabled,
 	})
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestPGLoadKeysSnapshot(t *testing.T) {
 	m, err := repos.Keys.LoadKeys(ctx)
 	require.NoError(t, err)
 	require.Len(t, m, 2)
-	a, ok := m["gk-a"]
+	a, ok := m["ck-a"]
 	require.True(t, ok)
 	require.Equal(t, u.ID, a.UserID, "KeyMeta 携带 userID")
 	require.Equal(t, g.ID, a.GroupID)
@@ -208,7 +208,7 @@ func TestPGLoadKeysSnapshot(t *testing.T) {
 	require.Equal(t, int64(77), a.QuotaUsed)
 	require.Equal(t, domain.UserStatusActive, a.UserStatus)
 	require.Equal(t, 0, a.UserMaxConc, "用户 max_concurrency 快照")
-	d, ok := m["gk-d"]
+	d, ok := m["ck-d"]
 	require.True(t, ok)
 	require.Equal(t, domain.KeyStatusDisabled, d.KeyStatus)
 	require.False(t, d.HasQuota, "quota=0 → HasQuota false")
@@ -219,7 +219,7 @@ func TestPGLoadKeysSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	m2, err := repos.Keys.LoadKeys(ctx)
 	require.NoError(t, err)
-	require.Equal(t, domain.UserStatusDisabled, m2["gk-a"].UserStatus, "用户禁用随快照下发")
+	require.Equal(t, domain.UserStatusDisabled, m2["ck-a"].UserStatus, "用户禁用随快照下发")
 
 	// 组 protocol_convert 变更随快照下发（W5 热路径分支数据源；多值方向集合）
 	_, err = repos.Groups.UpdateGroup(ctx, &domain.Group{
@@ -233,7 +233,7 @@ func TestPGLoadKeysSnapshot(t *testing.T) {
 	m3, err := repos.Keys.LoadKeys(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertMessToResp},
-		m3["gk-a"].ProtocolConverts, "组 protocol_convert 随快照下发")
+		m3["ck-a"].ProtocolConverts, "组 protocol_convert 随快照下发")
 }
 
 func TestPGGroupAssignments(t *testing.T) {

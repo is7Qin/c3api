@@ -162,7 +162,7 @@ func newConvertedTestProxyLogs(t *testing.T, upstream string, tplFormats []domai
 	key := activeKey(1, 1, 10)
 	key.ProtocolConverts = pcs
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": key,
+		"ck-1": key,
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background())) // 构造不再自载——测试显式首刷（快照注册表单一入口）
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -183,7 +183,7 @@ func TestConvertedChatToRespStreaming(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -213,7 +213,7 @@ func TestConvertedChatToRespNonStreaming(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -242,7 +242,7 @@ func TestConvertedMessToResp(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"max_tokens":100,"stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 
@@ -269,7 +269,7 @@ func TestConvertedRespToMess(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi","max_output_tokens":100,"stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 
@@ -296,7 +296,7 @@ func TestConvertedChatToMess(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -325,7 +325,7 @@ func TestConvertedChatToRespStreamingDataOnly(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -350,7 +350,7 @@ func TestConvertedDirectForwardZeroConversion(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -371,7 +371,7 @@ func TestConvertedOff(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -388,7 +388,7 @@ func TestConvertedDirectionMismatch(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 
@@ -408,7 +408,7 @@ func TestConvertedMultiDirection(t *testing.T) {
 	// chat 请求 → 上游 resp（chat_to_resp 命中）
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code)
@@ -419,7 +419,7 @@ func TestConvertedMultiDirection(t *testing.T) {
 	// anthropic 请求 → 上游 resp（mess_to_resp 命中）
 	req2 := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"max_tokens":100,"stream":true}`))
-	req2.Header.Set("Authorization", "Bearer gk-1")
+	req2.Header.Set("Authorization", "Bearer ck-1")
 	rec2 := httptest.NewRecorder()
 	p.HandleAnthropic(rec2, req2)
 	require.Equal(t, 200, rec2.Code)
@@ -431,7 +431,7 @@ func TestConvertedMultiDirection(t *testing.T) {
 	// chat/mess 方向配置影响）
 	req3 := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi"}`))
-	req3.Header.Set("Authorization", "Bearer gk-1")
+	req3.Header.Set("Authorization", "Bearer ck-1")
 	rec3 := httptest.NewRecorder()
 	p.HandleResponses(rec3, req3)
 	require.Equal(t, 200, rec3.Code)
@@ -450,7 +450,7 @@ func TestConvertedRequestConvertFailReleasesSlot(t *testing.T) {
 
 	// 顶层数组 JSON 合法（json.Valid 通过）但不可转换 → ConvertRequest 报错
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`[1,2,3]`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -472,7 +472,7 @@ func TestConvertedChatToMessStreamingLogTotalTokens(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code)
@@ -507,7 +507,7 @@ func TestConvertedChatToMessStreamingAbortNoDelta(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "流已开始 → 200 已写出")
@@ -535,7 +535,7 @@ func TestConvertedChatToMessNonStreamingLogTotalTokens(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code)

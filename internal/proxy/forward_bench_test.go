@@ -94,7 +94,7 @@ func benchProxy(upstream string) *Proxy {
 		QuotaFlushInterval: time.Hour,
 	}, noopLogStore{}, nil)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	if err := auth.Reload(context.Background()); err != nil { // 构造不再自载——显式首刷（快照注册表单一入口）
 		panic(err)
@@ -120,7 +120,7 @@ func benchForwardChat(b *testing.B, streaming bool) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
-		req.Header.Set("Authorization", "Bearer gk-1")
+		req.Header.Set("Authorization", "Bearer ck-1")
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {

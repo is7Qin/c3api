@@ -193,7 +193,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -228,7 +228,7 @@ func TestImagesCodexGenerationsOK(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"a cat","n":2}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -276,7 +276,7 @@ func TestImagesCodexPATDirect(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -303,7 +303,7 @@ func TestImagesCodexCredPassing(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 			`{"model":"gpt-image-2","prompt":"x"}`))
-		req.Header.Set("Authorization", "Bearer gk-1")
+		req.Header.Set("Authorization", "Bearer ck-1")
 		rec := httptest.NewRecorder()
 		p.HandleImagesGenerations(rec, req)
 		require.Equal(t, 200, rec.Code, "请求 %d body=%s", i, rec.Body.String())
@@ -328,7 +328,7 @@ func TestImagesCodex403Passthrough(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -352,7 +352,7 @@ func TestImagesCodexStreamEnvelope4xx(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"x","stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -375,7 +375,7 @@ func TestImagesCodexFatalFailAndNoRetry(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -393,7 +393,7 @@ func TestImagesCodexFatalFailAndNoRetry(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"x"}`))
-	req2.Header.Set("Authorization", "Bearer gk-1")
+	req2.Header.Set("Authorization", "Bearer ck-1")
 	p.HandleImagesGenerations(rec2, req2)
 	require.Equal(t, 429, rec2.Code, "账号摘除后选号失败（ErrNoAvailable → 429）")
 	require.Equal(t, 1, c.n(), "摘除后不再触达上游")
@@ -428,7 +428,7 @@ func TestImagesCodex401Rotate(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -459,7 +459,7 @@ func TestImagesCodexStreamSSE(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"a cat","stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -513,7 +513,7 @@ func TestImagesCodexAdapterMissing501(t *testing.T) {
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -526,7 +526,7 @@ func TestImagesCodexAdapterMissing501(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	recw := httptest.NewRecorder()
 	p.HandleImagesGenerations(recw, req)
 
@@ -557,7 +557,7 @@ func TestImagesCodexMultipartEdits(t *testing.T) {
 	require.NoError(t, mw.Close())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(buf.Bytes()))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	rec := httptest.NewRecorder()
 	p.HandleImagesEdits(rec, req)
@@ -582,7 +582,7 @@ func TestImagesCodexJSONEdits(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"add hat","images":[{"image_url":"https://example.com/in.png"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesEdits(rec, req)
 
@@ -609,7 +609,7 @@ func TestImagesCodexEmptyRT(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -635,7 +635,7 @@ func TestImagesCodexParamsLocal400(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -696,7 +696,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -714,7 +714,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 			`{"model":"gpt-image-2","prompt":"x"}`))
-		req.Header.Set("Authorization", "Bearer gk-1")
+		req.Header.Set("Authorization", "Bearer ck-1")
 		recw := httptest.NewRecorder()
 		p.HandleImagesGenerations(recw, req)
 		require.Equal(t, 200, recw.Code,

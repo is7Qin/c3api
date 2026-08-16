@@ -119,7 +119,7 @@ func TestUserKeysLifecycle(t *testing.T) {
 	var created userapi.Key
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 	require.NotEmpty(t, created.Key, "raw 明文必须返回")
-	require.True(t, strings.HasPrefix(*created.Key, "gk-"), "key 前缀约定")
+	require.True(t, strings.HasPrefix(*created.Key, "ck-"), "key 前缀约定")
 	require.Equal(t, int64(0), *created.Quota, "缺省 quota = 0 不限")
 
 	// private 组未授予 → 400（组可选性校验）

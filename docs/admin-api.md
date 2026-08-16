@@ -279,7 +279,7 @@
 
 ## 分组 Groups
 
-分组持有客户端 key（`gk-` 前缀），N:M 绑定账号。AI 请求以分组 key 鉴权，请求在组内账号中调度。
+分组持有客户端 key（`ck-` 前缀），N:M 绑定账号。AI 请求以分组 key 鉴权，请求在组内账号中调度。
 
 ### 创建分组
 
@@ -355,7 +355,7 @@
 | `DELETE /admin/groups/{id}` | 删除（先删注册 key 再删 DB） | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id） |
 | `PUT /admin/groups/{id}/assignments` | 设置组的授予用户（替换语义）+ 用户-组专属倍率 | `200`：`{"user_ids": [...], "multipliers": {...}}`；见下方 |
 | `PUT /admin/groups/{id}/accounts` | 绑定账号集合 | 请求体 `{"account_ids": [1, 2, 3]}`；`200`：`{"updated": true}` |
-| `POST /admin/groups/{id}/rotate-key` | 轮换分组 key | `200`：`{"key": "gk-<新明文>"}`（旧 key 立即失效） |
+| `POST /admin/groups/{id}/rotate-key` | 轮换分组 key | `200`：`{"key": "ck-<新明文>"}`（旧 key 立即失效） |
 
 > `setGroupAccounts` 为**全量替换**绑定关系（传空数组清空）。变更即时触发调度器快照重建（invalidate）。
 

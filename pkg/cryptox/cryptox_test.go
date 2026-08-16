@@ -12,7 +12,7 @@ import (
 
 func TestNewGroupKey(t *testing.T) {
 	raw := NewGroupKey()
-	require.Len(t, raw, 35) // gk- + 32 hex
-	require.Equal(t, "gk-", raw[:3])
+	require.Len(t, raw, 35) // ck- + 32 hex
+	require.Equal(t, "ck-", raw[:3])
 	require.NotEqual(t, raw, NewGroupKey(), "两次生成随机性（明文互不相同）")
 }
