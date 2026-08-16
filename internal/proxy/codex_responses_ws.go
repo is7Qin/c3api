@@ -92,7 +92,12 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 			opts = append(opts, codexsdk.WithHeader(k, v))
 		}
 	}
-	return p.codex.Dial(r.Context(), &cred, opts...)
+	// 拨号超时上限同款（黑洞上游不回 101）：超时 → SDK dialStatus(nil)=0 →
+	// DialError{StatusCode:0} → handleCodexDialError 既有 default 分支连接级
+	// 转移（零新分支；wrapped ctx 取消不向上传播，不落 499）。
+	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
+	defer cancel()
+	return p.codex.Dial(ctx, &cred, opts...)
 }
 
 // handleCodexDialError codex WS 拨号失败分类与收尾（T4 §5 错误契约适用；返回

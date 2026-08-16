@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -457,6 +458,106 @@ func TestAIRouterResponsesWSUpgradeDispatch(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Config.Handler.ServeHTTP(rec, req)
 	require.NotEqual(t, http.StatusUpgradeRequired, rec.Code, "非 upgrade 请求不得按 WS 处理")
+}
+
+// blackHoleWSServer 黑洞上游：接受 TCP 连接后挂住不回 101（不写任何字节）——
+// 模拟 accept 后永不回复的升级上游。Hijack 后读连接直到客户端断开才返回
+// （网关拨号超时放弃 → 连接关闭 → 读错误 → 关连接退出），服务端 teardown
+// 不被挂死的 handler 阻塞。coder/websocket 库仅 HTTPClient.Timeout>0 才自包
+// ctx 超时（dial.go:78-84）——测试客户端 Timeout=0 → 网关拨号 wrap 的
+// wsDialTimeout 是唯一 deadline（与生产装配同形）。
+func blackHoleWSServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(io.Discard, conn)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestResponsesWSBlackHoleDialTimeout 黑洞上游握手超时（T3 红绿核心）：上游
+// 接受 TCP 但永不回 101 → 修复前拨号无界等待（failover 循环永久阻塞占死并发
+// 槽）。修复后 wrapped ctx 超时 → 静态路 code=0 → failoverLoop 判定
+// r.Context().Err()==nil（wrapped ctx 取消不向上传播——原 r.Context() 未取消）
+// → 不落 499、按连接级 MarkResult(ResultError) 转移 → 下一轮/耗尽。注入短
+// wsDialTimeout（50ms，FailoverAttempts=2 → 总耗时 ~100ms 级）：超时转移
+// 必须在秒级完成（修复前此用例读帧 5s 超时即红）。
+func TestResponsesWSBlackHoleDialTimeout(t *testing.T) {
+	old := wsDialTimeout
+	wsDialTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { wsDialTimeout = old })
+
+	up := blackHoleWSServer(t)
+	store := &captureLogStore{}
+	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	start := time.Now()
+	ef := readResponsesWSFrame(t, c)
+	require.Contains(t, string(ef), `"type":"error"`)
+	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	require.Less(t, time.Since(start), 5*time.Second, "超时转移必须在秒级完成（修复前此用例挂死）")
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
+	ri, ok := p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "黑洞超时 → ResultError 冷却")
+	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
+	require.NoError(t, p.rec.Close(context.Background()))
+	require.NoError(t, p.errlog.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	lg := store.logs[0]
+	require.Equal(t, domain.ErrNetwork, lg.ErrorType, "code=0 耗尽 → ErrNetwork（非 499/ErrAbort——wrapped ctx 取消不向上传播）")
+	require.Equal(t, 0, lg.StatusCode)
+	require.NotNil(t, lg.ErrorMessage, "错误文本必须落盘")
+	require.Contains(t, *lg.ErrorMessage, "deadline exceeded", "错误文本 = 拨号超时错误原文")
+}
+
+// TestResponsesWSHandshakeUnderShortTimeout 短超时下正常握手零变化（T3 行为
+// 契约）：注入 200ms 拨号超时（远小于默认 15s，仍 >> 本地握手时长）→ 正常上
+// 游完整会话照常（成功记录 + usage 5 计数）——超时上限只咬黑洞上游，正常路径
+// 零影响。
+func TestResponsesWSHandshakeUnderShortTimeout(t *testing.T) {
+	old := wsDialTimeout
+	wsDialTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { wsDialTimeout = old })
+
+	hooks := &fakeWSHooks{frameLimit: 1}
+	up := fakeResponsesWS(t, hooks)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	for i := 0; i < 4; i++ { // created/delta/completed/echo → 关闭
+		_ = readResponsesWSFrame(t, c)
+	}
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	lg := store.logs[0]
+	require.Equal(t, domain.ErrNone, lg.ErrorType)
+	require.Equal(t, http.StatusOK, lg.StatusCode)
+	require.Equal(t, int64(3), lg.InputTokens, "短超时下正常会话 usage 嗅探照常")
+	require.Equal(t, int64(5), lg.OutputTokens)
+	require.Equal(t, int64(8), lg.TotalTokens)
 }
 
 // TestResponsesWSFailoverZeroReleasesSlot 防呆（spec 纵深，与 chat/search 同

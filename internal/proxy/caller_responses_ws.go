@@ -23,6 +23,15 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
+// wsDialTimeout 上游 WS 握手（TCP 连接 + 101 升级往返）等待上限：黑洞上游
+// （接受 TCP 不回 101）此前无界等待——failover 循环内永久阻塞（并发槽占用 +
+// goroutine 泄漏）。超时按连接级错误转移（code=0 → 既有 failover 分类路径；
+// wrapped ctx 取消不向上传播 → 不落 499）。取值 15s 远大于正常握手时长
+// （同区机房往返 << 1s），正常路径零变化；与既有 aiclient.go UpstreamTimeout
+// wrap 同级（每 attempt 一次，非每帧）。var 而非 const：测试缩短注入
+// （黑洞用例，spec gate Minor 3）。
+var wsDialTimeout = 15 * time.Second
+
 // --- resp-ws 通用编排（openai-responses-ws 格式） ---
 // 独立文件（用户拍板文件边界：codex 相关处理不散落现有 caller/forward 文件）。
 // resp-ws = 通用能力：任何模板 supported_formats 含 resp-ws 即可用，1:1 透传。
@@ -206,7 +215,14 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		// 凭据错误按网络错误处理（等价 handleFormat 的 code==0 语义）
 		return 0, []byte(domain.TruncateErrMsg(err.Error())), false, nil
 	}
+	// 拨号超时上限（黑洞上游接受 TCP 不回 101 → 无界等待占死并发槽）：wrapped
+	// ctx 取消不向上传播（原 r.Context() 未取消）→ 超时按连接级错误转移
+	// （code=0 → failoverLoop 既有分类），不落 499；客户端中途取消随
+	// r.Context() 同时取消 → 499 语义不变。每 attempt 一次（与 aiclient
+	// UpstreamTimeout wrap 同级），非每帧。
+	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
 	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, cred, wsPassthroughHeaders(r.Header))
+	cancel()
 	if dialErr == nil {
 		// stripTier 删除动作（现状 relay 内部）上移调用方（spec 修订）：与
 		// relayWS 首帧模型改写同点执行——sjson 单字段 splice 可交换、行为

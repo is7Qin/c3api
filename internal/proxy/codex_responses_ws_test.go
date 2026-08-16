@@ -281,6 +281,49 @@ func dialResponsesWSHeaders(t *testing.T, srv *httptest.Server, h http.Header) *
 	return c
 }
 
+// TestCodexWSBlackHoleDialTimeout codex 拨号同款超时（T3）：黑洞上游永不回
+// 101 → wrapped ctx 超时 → SDK dialStatus(nil)=0（resp=nil 安全返回）→
+// DialError{StatusCode:0} → handleCodexDialError 既有 default 分支连接级转移
+// （零新分支）→ 耗尽错误帧 + ResultError 冷却 + 并发槽释放。
+func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
+	old := wsDialTimeout
+	wsDialTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { wsDialTimeout = old })
+
+	up := blackHoleWSServer(t)
+	store := &captureLogStore{}
+	pat := "sk-pat-10" // 缺 PATKey → 适配层 errCredentialIncomplete 快速失败（测不到超时）
+	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
+		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, InstallationID: "i", PATKey: &pat}}, up.URL, nil, store)
+
+	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+	defer srv.Close()
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	ef := readResponsesWSFrame(t, c)
+	require.Contains(t, string(ef), `"type":"error"`)
+	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
+	ri, ok := p.sched.Runtime(10) // codex 代理账号 ID = 组键 10（newTestCodexWSProxy）
+	require.True(t, ok)
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "黑洞超时 → ResultError 冷却")
+	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
+	require.NoError(t, p.rec.Close(context.Background()))
+	waitStoreLogs(t, store, 1) // errlog 异步落袋（20ms flush；worker 由 helper cleanup 收尾，不手动 Close）
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	lg := store.logs[0]
+	require.Equal(t, domain.ErrNetwork, lg.ErrorType)
+	require.Equal(t, 0, lg.StatusCode)
+	require.NotNil(t, lg.ErrorMessage, "错误文本必须落盘")
+	require.Contains(t, *lg.ErrorMessage, "deadline exceeded", "错误文本 = 拨号超时错误原文")
+}
+
 // TestCodexWSMockRotateRefreshSuccess 端到端主流程（oauth）：升级 401 → SDK
 // 单飞 refresh（真端点 mock）→ 重拨 200 → 完整会话（事件流 + 回声 + 关闭）
 // + usage 嗅探计费（5 计数与 aiclient 路径逐字节一致）+ 伪装四元组握手头断
