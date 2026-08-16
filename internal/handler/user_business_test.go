@@ -146,8 +146,18 @@ func TestUserKeysLifecycle(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(t, int64(2), list.Total)
 	require.Len(t, list.Rows, 2)
-	require.NotEmpty(t, list.Rows[0].Key, "列表行含明文（长期可查看/复制）")
-	require.Equal(t, created.Key, list.Rows[0].Key, "列表明文与创建返回一致")
+	for _, r := range list.Rows {
+		require.NotEmpty(t, r.Key, "列表行含明文（长期可查看/复制）")
+	}
+	// 行序 = 实现细节（fake 无序 / 真实 id desc），按 ID 定位 created 行再断言
+	found := false
+	for i := range list.Rows {
+		if *list.Rows[i].ID == *created.ID {
+			found = true
+			require.Equal(t, created.Key, list.Rows[i].Key, "列表明文与创建返回一致")
+		}
+	}
+	require.True(t, found, "created 行在列表中")
 
 	// 更新：max_concurrency/status
 	rec = doUser(http.MethodPut, "/user/keys/"+itoa(*created.ID),
