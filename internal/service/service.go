@@ -93,6 +93,9 @@ type KeyStore interface {
 	CreateKey(ctx context.Context, k *domain.Key) (*domain.Key, error)
 	GetKey(ctx context.Context, id int64) (*domain.Key, error)
 	ListKeysByUser(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.Key, int64, error)
+	// ListKeys 管理端全量 key 列表（/admin/keys：软删过滤 + UserID/GroupID
+	// 零值不过滤 + 3 键 sort 白名单；脱敏在 handler 转换面——明文字段不下发）。
+	ListKeys(ctx context.Context, q repository.ListQuery) ([]*domain.Key, int64, error)
 	UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, error)
 	RotateKey(ctx context.Context, id int64, newRaw string) (*domain.Key, error)
 	DeleteKey(ctx context.Context, id int64) error
@@ -453,6 +456,9 @@ var listSortFields = map[string][]string{
 	"groups":    {"id", "name", "created_at", "updated_at"},
 	"users":     {"id", "email", "role", "status", "max_concurrency", "created_at", "updated_at"},
 	"keys":      {"id", "name", "status", "max_concurrency", "quota", "quota_used", "created_at", "updated_at"},
+	// 与 repo 层 keyAdminSortFields 白名单一致（双保险；/admin/keys——管理端仅
+	// id/name/created_at 三键，用户端 8 键白名单见上 "keys"）。
+	"admin_keys": {"id", "name", "created_at"},
 	// 与 repo 层 redemptionCodeSortFields 白名单一致（双保险）。
 	"redemption_codes": {"id", "code", "type", "value", "max_uses", "used_count", "status", "created_by", "created_at", "updated_at"},
 	// 与 repo 层 redemptionUseSortFields 白名单一致（双保险；/user/redemptions）。

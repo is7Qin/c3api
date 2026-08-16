@@ -62,6 +62,12 @@ const (
 	Public  GroupVisibility = "public"
 )
 
+// Defines values for KeyStatus.
+const (
+	KeyStatusActive   KeyStatus = "active"
+	KeyStatusDisabled KeyStatus = "disabled"
+)
+
 // Defines values for PricingSource.
 const (
 	PricingSourceLitellm PricingSource = "litellm"
@@ -226,6 +232,12 @@ const (
 	GetImagePriceParamsOrderDesc GetImagePriceParamsOrder = "desc"
 )
 
+// Defines values for GetKeysParamsOrder.
+const (
+	GetKeysParamsOrderAsc  GetKeysParamsOrder = "asc"
+	GetKeysParamsOrderDesc GetKeysParamsOrder = "desc"
+)
+
 // Defines values for GetPricingParamsSource.
 const (
 	GetPricingParamsSourceLitellm GetPricingParamsSource = "litellm"
@@ -247,8 +259,8 @@ const (
 
 // Defines values for GetRedemptionCodesParamsStatus.
 const (
-	Active   GetRedemptionCodesParamsStatus = "active"
-	Disabled GetRedemptionCodesParamsStatus = "disabled"
+	GetRedemptionCodesParamsStatusActive   GetRedemptionCodesParamsStatus = "active"
+	GetRedemptionCodesParamsStatusDisabled GetRedemptionCodesParamsStatus = "disabled"
 )
 
 // Defines values for GetRedemptionCodesParamsOrder.
@@ -277,8 +289,8 @@ const (
 
 // Defines values for GetUsersParamsOrder.
 const (
-	Asc  GetUsersParamsOrder = "asc"
-	Desc GetUsersParamsOrder = "desc"
+	GetUsersParamsOrderAsc  GetUsersParamsOrder = "asc"
+	GetUsersParamsOrderDesc GetUsersParamsOrder = "desc"
 )
 
 // Account defines model for Account.
@@ -407,6 +419,27 @@ type AccountView struct {
 	Concurrency    *int64         `json:"concurrency,omitempty"`
 	ErrCount       *int           `json:"err_count,omitempty"`
 	ErrRate        *float64       `json:"err_rate,omitempty"`
+}
+
+// AdminKey defines model for AdminKey.
+type AdminKey struct {
+	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
+	DeletedAt      *time.Time `json:"DeletedAt"`
+	GroupID        *int64     `json:"GroupID,omitempty"`
+	ID             *int64     `json:"ID,omitempty"`
+	MaxConcurrency *int       `json:"MaxConcurrency,omitempty"`
+	Name           *string    `json:"Name,omitempty"`
+	Quota          *int64     `json:"Quota,omitempty"`
+	QuotaUsed      *int64     `json:"QuotaUsed,omitempty"`
+	Status         *KeyStatus `json:"Status,omitempty"`
+	UpdatedAt      *time.Time `json:"UpdatedAt,omitempty"`
+	UserID         *int64     `json:"UserID,omitempty"`
+}
+
+// AdminKeyListResponse defines model for AdminKeyListResponse.
+type AdminKeyListResponse struct {
+	Rows  []AdminKey `json:"rows"`
+	Total int64      `json:"total"`
 }
 
 // AdminTempBalanceRow defines model for AdminTempBalanceRow.
@@ -685,6 +718,9 @@ type ImagePriceUpsert struct {
 	// OutputImageTokenPricePerMillion image token 输出价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；API 边界 ×1e5 → 毫分/1M）；缺省/null = 清空该分量
 	OutputImageTokenPricePerMillion *float64 `json:"output_image_token_price_per_million"`
 }
+
+// KeyStatus defines model for KeyStatus.
+type KeyStatus string
 
 // LogsResponse defines model for LogsResponse.
 type LogsResponse struct {
@@ -1461,6 +1497,20 @@ type PutImagePriceModelParams struct {
 	Model string `form:"model" json:"model"`
 }
 
+// GetKeysParams defines parameters for GetKeys.
+type GetKeysParams struct {
+	Name    *string             `form:"name,omitempty" json:"name,omitempty"`
+	UserId  *int64              `form:"user_id,omitempty" json:"user_id,omitempty"`
+	GroupId *int64              `form:"group_id,omitempty" json:"group_id,omitempty"`
+	Limit   *int                `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset  *int                `form:"offset,omitempty" json:"offset,omitempty"`
+	Sort    *string             `form:"sort,omitempty" json:"sort,omitempty"`
+	Order   *GetKeysParamsOrder `form:"order,omitempty" json:"order,omitempty"`
+}
+
+// GetKeysParamsOrder defines parameters for GetKeys.
+type GetKeysParamsOrder string
+
 // GetAdminOverviewParams defines parameters for GetAdminOverview.
 type GetAdminOverviewParams struct {
 	Days    *int   `form:"days,omitempty" json:"days,omitempty"`
@@ -1753,6 +1803,9 @@ type ServerInterface interface {
 	// 手动设图片价格（三分量全可选；至少一个非 null——否则 400；upsert 强制 source=manual，可接管 litellm 行）
 	// (PUT /image-price)
 	PutImagePriceModel(w http.ResponseWriter, r *http.Request, params PutImagePriceModelParams)
+	// 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端）
+	// (GET /keys)
+	GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams)
 	// 运维观测（worker 状态 + 快照注册表）
 	// (GET /ops/workers)
 	GetOpsWorkers(w http.ResponseWriter, r *http.Request)
@@ -2014,6 +2067,12 @@ func (_ Unimplemented) GetImagePrice(w http.ResponseWriter, r *http.Request, par
 // 手动设图片价格（三分量全可选；至少一个非 null——否则 400；upsert 强制 source=manual，可接管 litellm 行）
 // (PUT /image-price)
 func (_ Unimplemented) PutImagePriceModel(w http.ResponseWriter, r *http.Request, params PutImagePriceModelParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端）
+// (GET /keys)
+func (_ Unimplemented) GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3138,6 +3197,81 @@ func (siw *ServerInterfaceWrapper) PutImagePriceModel(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutImagePriceModel(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetKeys operation middleware
+func (siw *ServerInterfaceWrapper) GetKeys(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetKeysParams
+
+	// ------------- Optional query parameter "name" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "name", r.URL.Query(), &params.Name)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "user_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "user_id", r.URL.Query(), &params.UserId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "user_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "group_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "group_id", r.URL.Query(), &params.GroupId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "sort" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "sort", r.URL.Query(), &params.Sort)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "order" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "order", r.URL.Query(), &params.Order)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetKeys(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4485,6 +4619,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/image-price", wrapper.PutImagePriceModel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/keys", wrapper.GetKeys)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/ops/workers", wrapper.GetOpsWorkers)

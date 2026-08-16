@@ -20,6 +20,12 @@ import (
 	"github.com/is7qin/c3api/internal/ent/key"
 )
 
+// keyAdminSortFields /admin/keys sort 白名单（spec 2026-08-16 用户规格：仅
+// id/name/created_at 三键）；用户端 keySortFields（8 键）不动。
+var keyAdminSortFields = map[string]string{
+	"id": key.FieldID, "name": key.FieldName, "created_at": key.FieldCreatedAt,
+}
+
 // KeyRepo 客户端 API key（独立表）持久化。
 type KeyRepo struct {
 	client *ent.Client
@@ -79,6 +85,46 @@ func (r *KeyRepo) GetKeyByRaw(ctx context.Context, raw string) (*domain.Key, err
 		return nil, err
 	}
 	return toDomainKey(row), nil
+}
+
+// ListKeys 管理端全量 key 列表（/admin/keys，spec 2026-08-16；与 ListKeysByUser
+// 并存——管理面全量视角 + UserID/GroupID 收窄，用户面行为不变）。三筛选参数
+// （name/user_id/group_id）AND 组合，零值不过滤；软删过滤（count 同谓词——
+// pred 复用，对齐 ListGroups）；sort 白名单 keyAdminSortFields 三键。
+func (r *KeyRepo) ListKeys(ctx context.Context, q ListQuery) ([]*domain.Key, int64, error) {
+	pred := r.client.Key.Query().Where(key.DeletedAtIsNil())
+	if q.Name != "" {
+		pred = pred.Where(key.NameContainsFold(q.Name))
+	}
+	if q.UserID > 0 {
+		pred = pred.Where(key.UserIDEQ(q.UserID))
+	}
+	if q.GroupID > 0 {
+		pred = pred.Where(key.GroupIDEQ(q.GroupID))
+	}
+	total, err := pred.Count(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	order, err := q.sortOrder(keyAdminSortFields)
+	if err != nil {
+		return nil, 0, err
+	}
+	if q.Limit <= 0 {
+		q.Limit = 20
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	rows, err := pred.Order(order).Offset(q.Offset).Limit(q.Limit).All(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]*domain.Key, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toDomainKey(row))
+	}
+	return out, int64(total), nil
 }
 
 func (r *KeyRepo) ListKeysByUser(ctx context.Context, userID int64, q ListQuery) ([]*domain.Key, int64, error) {

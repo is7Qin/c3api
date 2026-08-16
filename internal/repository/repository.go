@@ -370,6 +370,12 @@ func (r *Repository) ListKeysByUser(ctx context.Context, userID int64, q ListQue
 	return r.Keys.ListKeysByUser(ctx, userID, q)
 }
 
+// ListKeys 管理端全量 key 列表（/admin/keys；UserID/GroupID 零值不过滤——
+// 软删过滤 + 3 键 sort 白名单见 KeyRepo.ListKeys）。
+func (r *Repository) ListKeys(ctx context.Context, q ListQuery) ([]*domain.Key, int64, error) {
+	return r.Keys.ListKeys(ctx, q)
+}
+
 func (r *Repository) UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, error) {
 	return r.Keys.UpdateKey(ctx, k)
 }

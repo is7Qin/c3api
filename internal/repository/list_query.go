@@ -35,6 +35,8 @@ type ListQuery struct {
 	Order      string   // asc/desc；空 → desc
 	StatusList []string // 账号专属：多值 status
 	TemplateID int64    // 账号专属：0 = 不过滤
+	UserID     int64    // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
+	GroupID    int64    // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
 }
 
 var ErrInvalidSort = errors.New("invalid sort field")

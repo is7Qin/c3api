@@ -964,6 +964,46 @@ func (f *fakeStore) ListKeysByUser(ctx context.Context, userID int64, q reposito
 	return out, int64(len(out)), nil
 }
 
+// ListKeys 管理端全量 key 列表（/admin/keys：name 模糊 + user_id/group_id
+// 等值 AND 组合 + limit/offset 裁剪；软删过滤——fake 的 DeleteKey 即从 map
+// 移除，无行保留。total 恒为满足筛选全量，不分页裁剪）。
+func (f *fakeStore) ListKeys(ctx context.Context, q repository.ListQuery) ([]*domain.Key, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*domain.Key
+	for _, k := range f.keys {
+		if k.DeletedAt != nil {
+			continue
+		}
+		if q.Name != "" && !strings.Contains(k.Name, q.Name) {
+			continue
+		}
+		if q.UserID > 0 && k.UserID != q.UserID {
+			continue
+		}
+		if q.GroupID > 0 && k.GroupID != q.GroupID {
+			continue
+		}
+		c := *k
+		out = append(out, &c)
+	}
+	total := len(out)
+	if q.Limit <= 0 {
+		q.Limit = 20
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	if q.Offset >= total {
+		out = nil
+	} else if end := q.Offset + q.Limit; end < total {
+		out = out[q.Offset:end]
+	} else {
+		out = out[q.Offset:]
+	}
+	return out, int64(total), nil
+}
+
 func (f *fakeStore) UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

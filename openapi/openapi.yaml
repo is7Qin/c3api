@@ -9,6 +9,7 @@ tags:
   - name: templates
   - name: accounts
   - name: groups
+  - name: keys
   - name: users
   - name: rules
   - name: logs
@@ -542,6 +543,27 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AdminTempBalancesResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /keys:
+    get:
+      operationId: GetKeys
+      tags: [keys]
+      summary: 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端）
+      parameters:
+        - { name: name, in: query, schema: { type: string, description: 名称模糊搜索（ILIKE '%name%'） } }
+        - { name: user_id, in: query, schema: { type: integer, format: int64, description: 按归属用户收窄（keys.user_id 等值）；缺省 = 全部用户 } }
+        - { name: group_id, in: query, schema: { type: integer, format: int64, description: 按归属分组收窄（keys.group_id 等值）；缺省 = 全部分组 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, description: 每页条数（默认 20） } }
+        - { name: offset, in: query, schema: { type: integer, default: 0, description: 偏移（默认 0） } }
+        - { name: sort, in: query, schema: { type: string, description: sort 白名单：id/name/created_at（缺省 id） } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc], description: asc/desc（缺省 desc） } }
+      responses:
+        '200':
+          description: 密钥列表（脱敏——响应不含 key 明文）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminKeyListResponse' }
         default:
           $ref: '#/components/responses/Error'
   /groups/{id}/assignments:
@@ -1698,6 +1720,28 @@ components:
         rows:
           type: array
           items: { $ref: '#/components/schemas/Key' }
+    AdminKey:
+      type: object
+      properties:
+        ID: { type: integer, format: int64 }
+        UserID: { type: integer, format: int64 }
+        GroupID: { type: integer, format: int64 }
+        Name: { type: string }
+        Status: { $ref: '#/components/schemas/KeyStatus' }
+        MaxConcurrency: { type: integer }
+        Quota: { type: integer, format: int64 }
+        QuotaUsed: { type: integer, format: int64 }
+        CreatedAt: { type: string, format: date-time }
+        UpdatedAt: { type: string, format: date-time }
+        DeletedAt: { type: string, format: date-time, nullable: true }
+    AdminKeyListResponse:
+      type: object
+      required: [total, rows]
+      properties:
+        total: { type: integer, format: int64 }
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/AdminKey' }
     UserRole:
       type: string
       enum: [platform_admin, user]

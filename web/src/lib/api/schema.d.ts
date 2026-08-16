@@ -347,6 +347,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端） */
+        get: operations["GetKeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/groups/{id}/assignments": {
         parameters: {
             query?: never;
@@ -1191,6 +1208,32 @@ export interface components {
             /** Format: int64 */
             total: number;
             rows: components["schemas"]["Key"][];
+        };
+        AdminKey: {
+            /** Format: int64 */
+            ID?: number;
+            /** Format: int64 */
+            UserID?: number;
+            /** Format: int64 */
+            GroupID?: number;
+            Name?: string;
+            Status?: components["schemas"]["KeyStatus"];
+            MaxConcurrency?: number;
+            /** Format: int64 */
+            Quota?: number;
+            /** Format: int64 */
+            QuotaUsed?: number;
+            /** Format: date-time */
+            CreatedAt?: string;
+            /** Format: date-time */
+            UpdatedAt?: string;
+            /** Format: date-time */
+            DeletedAt?: string | null;
+        };
+        AdminKeyListResponse: {
+            /** Format: int64 */
+            total: number;
+            rows: components["schemas"]["AdminKey"][];
         };
         /** @enum {string} */
         UserRole: "platform_admin" | "user";
@@ -3221,6 +3264,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminTempBalancesResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetKeys: {
+        parameters: {
+            query?: {
+                name?: string;
+                user_id?: number;
+                group_id?: number;
+                limit?: number;
+                offset?: number;
+                sort?: string;
+                order?: "asc" | "desc";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 密钥列表（脱敏——响应不含 key 明文） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminKeyListResponse"];
                 };
             };
             default: components["responses"]["Error"];
