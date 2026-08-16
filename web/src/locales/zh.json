@@ -429,7 +429,10 @@
       "errorType": "错误类型",
       "statusCode": "状态码",
       "all": "全部",
-      "reset": "重置"
+      "reset": "重置",
+      "searching": "搜索中…",
+      "noMatch": "无匹配结果",
+      "searchHint": "输入关键字搜索"
     },
     "table": {
       "requestId": "请求 ID",

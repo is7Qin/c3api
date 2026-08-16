@@ -8,7 +8,6 @@
     "resolveJsonModule": true,
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
-    "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] },
 
     /* Bundler mode */

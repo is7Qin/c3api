@@ -2,20 +2,22 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, FileText, RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from '@/components/ui/combobox'
 import { DateRangePicker } from '@/components/date-range-picker'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { LogPagination } from '@/components/log-pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -138,6 +140,89 @@ const emptyFilters = (): LogFilters => ({
   user_id: '', key_id: '', group_id: '', account_id: '', model: '', format: '', error_type: '', status_code: '', ...defaultLogRange(),
 })
 
+// —— 筛选候选搜索（user/key/group/account 四筛选器，2026-08-16 改造）——
+// 服务端搜索：输入防抖 300ms 后按词查询候选（≤20 条），无全量拉取——候选
+// 完整性不随实体总量衰减。user/group/account 用端点既有模糊参数（email/name），
+// key 用 /admin/keys 脱敏端点并携带已选 user/group 关联收窄（同名 key 区分度）。
+interface FilterOption { id: number; label: string }
+interface FilterState { user: string; key: string; group: string; account: string }
+
+// 输入防抖：服务端搜索只在用户停顿后发起（避免每键一请求）。
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value)
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms)
+    return () => clearTimeout(t)
+  }, [value, ms])
+  return v
+}
+
+// 搜索型筛选框（base-ui Combobox 受控封装）：value 为字符串 ID（与 filters
+// 直存同构）；label 经 itemToStringLabel 查 id→label 缓存展示——候选刷新后
+// 已选项仍显示名称，不退化 #id。filter 恒真关本地过滤（搜索语义归服务端，
+// 与 ILIKE 模糊一致）；autoComplete="none" 防输入时自动补全干扰。
+function FilterCombobox({
+  id,
+  placeholder,
+  value,
+  onSelect,
+  options,
+  loading,
+  open,
+  onOpenChange,
+  onInputChange,
+}: {
+  id: string
+  placeholder: string
+  value: string
+  onSelect: (v: string) => void
+  options: FilterOption[]
+  loading: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onInputChange: (term: string) => void
+}) {
+  const { t } = useTranslation()
+  // id → label 缓存（候选刷新后已选项仍能显示名称）
+  const labelCache = useRef(new Map<string, string>())
+  if (options.length) for (const o of options) labelCache.current.set(String(o.id), o.label)
+  return (
+    <Combobox
+      // items 必须与 ComboboxItem.value 同源同类型（base-ui 内部按 items 解析索引，
+      // 对象数组 + 字符串 value 会导致选中链路失败）；字符串数组 + 恒真过滤 =
+      // 搜索语义归服务端，本地不过滤。
+      items={options.map(o => String(o.id))}
+      filter={() => true}
+      autoComplete="none"
+      // 受控 API 是 value/onValueChange（selectedValue/onSelectedValueChange 已被
+      // base-ui 1.7 Omit——传错名字会静默退化为非受控，回调永不触发，曾踩坑）
+      value={value || null}
+      onValueChange={v => onSelect(v ?? '')}
+      itemToStringLabel={v => labelCache.current.get(v) ?? v}
+      open={open}
+      onOpenChange={onOpenChange}
+    >
+      <ComboboxInput id={id} placeholder={placeholder} showClear onChange={e => onInputChange(e.target.value)} />
+      <ComboboxContent>
+        {/* base-ui Empty 的 children 由内部 filteredItems 判定（非空 → children=null
+            空壳 div）——渲染条件必须与之一致：仅 options 真为空时渲染；loading
+            期间 keepPreviousData 保留旧候选（options 非空）→ 不渲染 → 无空壳；
+            options 空时 base-ui filteredItems 同空 → children 正常显示 */}
+        {options.length === 0 && (
+          <ComboboxEmpty>{loading ? t('logs.filter.searching') : t('logs.filter.noMatch')}</ComboboxEmpty>
+        )}
+        <ComboboxList>
+          {options.map(o => (
+            <ComboboxItem key={o.id} value={String(o.id)}>
+              <span className="min-w-0 truncate">{o.label}</span>
+            </ComboboxItem>
+          ))}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
+  )
+}
+
 export default function Logs() {
   const { t } = useTranslation()
   const [tab, setTab] = useState<'usage' | 'errors'>('usage')
@@ -212,6 +297,63 @@ export default function Logs() {
     staleTime: 5 * 60 * 1000,
   })
 
+  // —— 筛选候选（服务端搜索；打开才查，防抖词驱动；key 携带已选 user/group
+  // 关联收窄——同名 key 在已选用户/分组范围内仍可区分）——
+  const [search, setSearch] = useState<FilterState>({ user: '', key: '', group: '', account: '' })
+  const debounced = useDebounced(search, 300)
+  const [filterOpen, setFilterOpen] = useState<FilterState>({ user: false, key: false, group: false, account: false })
+  const openFilter = (k: keyof FilterState, open: boolean) => setFilterOpen(p => ({ ...p, [k]: open }))
+  const setSearchTerm = (k: keyof FilterState) => (term: string) => setSearch(s => ({ ...s, [k]: term }))
+  // 挂载预取空条件候选（20 条）：打开筛选器瞬间即有列表，避免 popup 先空后内容
+  // 的闪烁（enabled 打开才查 + 预取缓存命中——queryKey 与打开时一致）
+  const qc = useQueryClient()
+  useEffect(() => {
+    const prefetch = (key: unknown[], fn: () => Promise<unknown>) => void qc.prefetchQuery({ queryKey: key, queryFn: fn, staleTime: 60_000 })
+    prefetch(['logs-filter', 'users', { term: '' }], () => api.listUsers({ limit: 20 }))
+    prefetch(['logs-filter', 'groups', { term: '' }], () => api.listGroups({ limit: 20 }))
+    prefetch(['logs-filter', 'accounts', { term: '' }], () => api.listAccounts({ limit: 20 }))
+    prefetch(['logs-filter', 'keys', { term: '', user_id: '', group_id: '' }], () => api.listKeys({ limit: 20 }))
+  }, [qc])
+
+  const userCandidates = useQuery({
+    queryKey: ['logs-filter', 'users', { term: debounced.user }],
+    queryFn: () => api.listUsers({ email: debounced.user || undefined, limit: 20 }),
+    enabled: filterOpen.user,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+    select: r => r.rows.map(u => ({ id: u.ID, label: u.Email ?? `#${u.ID}` })),
+  })
+  const groupCandidates = useQuery({
+    queryKey: ['logs-filter', 'groups', { term: debounced.group }],
+    queryFn: () => api.listGroups({ name: debounced.group || undefined, limit: 20 }),
+    enabled: filterOpen.group,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+    select: r => r.rows.map(g => ({ id: g.ID, label: g.Name || `#${g.ID}` })),
+  })
+  const accountCandidates = useQuery({
+    queryKey: ['logs-filter', 'accounts', { term: debounced.account }],
+    queryFn: () => api.listAccounts({ name: debounced.account || undefined, limit: 20 }),
+    enabled: filterOpen.account,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+    select: r => r.rows.map(a => ({ id: a.ID, label: a.Name || `#${a.ID}` })),
+  })
+  // key 候选：已选 user/group 筛选条件下候选限缩（关联收窄；name 搜索同构）
+  const keyCandidates = useQuery({
+    queryKey: ['logs-filter', 'keys', { term: debounced.key, user_id: filters.user_id, group_id: filters.group_id }],
+    queryFn: () => api.listKeys({
+      name: debounced.key || undefined,
+      user_id: filters.user_id ? Number(filters.user_id) : undefined,
+      group_id: filters.group_id ? Number(filters.group_id) : undefined,
+      limit: 20,
+    }),
+    enabled: filterOpen.key,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+    select: r => r.rows.map(k => ({ id: k.ID, label: k.Name || `#${k.ID}` })),
+  })
+
   // —— 列可见性（localStorage 持久化）——
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(loadHiddenCols)
   const toggleCol = (key: string) => {
@@ -245,19 +387,59 @@ export default function Logs() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <div className="space-y-1.5">
             <Label htmlFor="log-user">{t('logs.filter.userId')}</Label>
-            <Input id="log-user" type="number" min={0} placeholder="1" value={filters.user_id} onChange={e => set({ user_id: e.target.value })} />
+            <FilterCombobox
+              id="log-user"
+              placeholder={t('logs.filter.searchHint')}
+              value={filters.user_id}
+              onSelect={v => set({ user_id: v })}
+              options={userCandidates.data ?? []}
+              loading={userCandidates.isFetching}
+              open={filterOpen.user}
+              onOpenChange={o => openFilter('user', o)}
+              onInputChange={setSearchTerm('user')}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="log-key">{t('logs.filter.keyId')}</Label>
-            <Input id="log-key" type="number" min={0} placeholder="1" value={filters.key_id} onChange={e => set({ key_id: e.target.value })} />
+            <FilterCombobox
+              id="log-key"
+              placeholder={t('logs.filter.searchHint')}
+              value={filters.key_id}
+              onSelect={v => set({ key_id: v })}
+              options={keyCandidates.data ?? []}
+              loading={keyCandidates.isFetching}
+              open={filterOpen.key}
+              onOpenChange={o => openFilter('key', o)}
+              onInputChange={setSearchTerm('key')}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="log-group">{t('logs.filter.groupId')}</Label>
-            <Input id="log-group" type="number" min={0} placeholder="1" value={filters.group_id} onChange={e => set({ group_id: e.target.value })} />
+            <FilterCombobox
+              id="log-group"
+              placeholder={t('logs.filter.searchHint')}
+              value={filters.group_id}
+              onSelect={v => set({ group_id: v })}
+              options={groupCandidates.data ?? []}
+              loading={groupCandidates.isFetching}
+              open={filterOpen.group}
+              onOpenChange={o => openFilter('group', o)}
+              onInputChange={setSearchTerm('group')}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="log-account">{t('logs.filter.accountId')}</Label>
-            <Input id="log-account" type="number" min={0} placeholder="1" value={filters.account_id} onChange={e => set({ account_id: e.target.value })} />
+            <FilterCombobox
+              id="log-account"
+              placeholder={t('logs.filter.searchHint')}
+              value={filters.account_id}
+              onSelect={v => set({ account_id: v })}
+              options={accountCandidates.data ?? []}
+              loading={accountCandidates.isFetching}
+              open={filterOpen.account}
+              onOpenChange={o => openFilter('account', o)}
+              onInputChange={setSearchTerm('account')}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="log-model">{t('logs.filter.model')}</Label>
@@ -302,7 +484,16 @@ export default function Logs() {
             <DateRangePicker value={{ from: filters.from, to: filters.to }} onChange={v => set(v)} />
           </div>
           <div className="flex items-end">
-            <Button variant="outline" className="w-full" onClick={() => setFilters(emptyFilters())}>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                setFilters(emptyFilters())
+                // 候选搜索词/展开态一并复位（筛选清空后候选不残留旧词）
+                setSearch({ user: '', key: '', group: '', account: '' })
+                setFilterOpen({ user: false, key: false, group: false, account: false })
+              }}
+            >
               <RotateCcw /> {t('logs.filter.reset')}
             </Button>
           </div>
@@ -314,7 +505,7 @@ export default function Logs() {
         <h2 className="text-sm font-medium text-muted-foreground">{t(tab === 'errors' ? 'logs.tab.errors' : 'logs.tab.usage')}</h2>
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="outline" size="sm"><SlidersHorizontal className="size-4" />{t('logs.columnSettings')}</Button>} />
-          <DropdownMenuContent align="end" className="max-h-80 w-48 overflow-y-auto">
+          <DropdownMenuContent align="end" className="max-h-80 w-48">
             <DropdownMenuGroup>
               <DropdownMenuLabel>{t('logs.columnSettings')}</DropdownMenuLabel>
               {(tab === 'errors' ? ERR_HIDDENABLE_COLS : USAGE_HIDDENABLE_COLS).map(key => (
@@ -348,7 +539,11 @@ export default function Logs() {
       ) : (
         <>
         <Card className="overflow-hidden">
-          <Table containerClassName="max-h-[calc(100vh-16rem)] overflow-y-auto">
+          {/* 纵横向滚动均走 ScrollArea 自绘滚动条（深色模式统一观感） */}
+          <ScrollArea className="max-h-[calc(100vh-16rem)]" showHorizontal>
+          {/* overflow-x-visible 覆盖 Table 默认 overflow-x-auto（twMerge）：横向
+              滚动交由 ScrollArea viewport，避免嵌套滚动条 */}
+          <Table containerClassName="overflow-x-visible">
             <TableHeader>
               <TableRow>
                 <Th>{t('logs.table.requestId')}</Th>
@@ -614,6 +809,7 @@ export default function Logs() {
                 ))}
             </TableBody>
           </Table>
+          </ScrollArea>
         </Card>
         {/* 分页底栏：游标链（无 total/offset）——条数 Select + 页码按钮组 + 跳转 + 翻页/回最新；
             isFetching（翻页/补链中）禁用全部控件，防连点重复请求 */}

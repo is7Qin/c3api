@@ -19,6 +19,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -785,7 +786,8 @@ export default function Groups() {
             {assignQuery === '' ? (
               /* 空搜索默认列表：只显示预填充的已授予/已配置用户（∪ 搜索新增勾选）；
                  取消勾选 = 移除（行保留显示未勾选态，提交后消失）；新增只能走搜索 */
-              <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+              <ScrollArea className="max-h-72 pr-1">
+                <div className="space-y-1.5">
                 {assignDefaultIds.length === 0 ? (
                   <p className="py-6 text-center text-sm text-muted-foreground">
                     {t(assignIsPublic ? 'groups.assignPublicSearchHint' : 'groups.assignPrivateSearchHint')}
@@ -805,7 +807,8 @@ export default function Groups() {
                     />
                   ))
                 )}
-              </div>
+                </div>
+              </ScrollArea>
             ) : assignUsers.isLoading ? (
               <div className="space-y-1.5">
                 {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
@@ -816,7 +819,8 @@ export default function Groups() {
               <p className="py-6 text-center text-sm text-muted-foreground">{t('groups.assignEmpty')}</p>
             ) : (
               <>
-                <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                <ScrollArea className="max-h-72 pr-1">
+                  <div className="space-y-1.5">
                   {assignRows.map(u => (
                     <AssignUserRow
                       key={u.ID}
@@ -830,7 +834,8 @@ export default function Groups() {
                       t={t}
                     />
                   ))}
-                </div>
+                  </div>
+                </ScrollArea>
                 <Pagination total={assignTotal} limit={assignLimit} offset={assignOffset} onOffsetChange={setAssignOffset} onLimitChange={l => { setAssignLimit(l); setAssignOffset(0) }} />
               </>
             )}

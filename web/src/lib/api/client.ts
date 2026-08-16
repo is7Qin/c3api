@@ -149,6 +149,9 @@ export class ApiClient {
   getGroupAssignments = (id: number) => this.request<components['schemas']['GroupAssignmentsResponse']>(`/groups/${id}/assignments`)
   getUserGroups = (id: number) => this.request<components['schemas']['UserGroupsResponse']>(`/users/${id}/groups`)
   setUserGroups = (id: number, b: components['schemas']['UserGroupsBody']) => this.request<components['schemas']['UserGroupsResponse']>(`/users/${id}/groups`, { method: 'PUT', body: JSON.stringify(b) })
+  // —— 密钥（管理端脱敏搜索列表——不含 key 明文；/app/logs 筛选候选消费；
+  //     user_id/group_id 关联收窄：已选筛选条件下候选限缩到该用户/分组）——
+  listKeys = (p?: { limit?: number; offset?: number; name?: string; user_id?: number; group_id?: number; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['AdminKeyListResponse']>('/keys', { params: toQuery(p) })
   // —— 设置 ——
   getSettings = () => this.request<components['schemas']['Setting'][]>('/settings')
   updateSetting = (b: components['schemas']['SettingUpdate']) => this.request<components['schemas']['Setting'][]>('/settings', { method: 'PUT', body: JSON.stringify(b) })
@@ -188,10 +191,10 @@ export class ApiClient {
   me = () => this.request<components['schemas']['User']>('/auth/me')
   listUserGroups = () => this.request<components['schemas']['Group'][]>('/groups')
   listUserKeys = (p?: ListParams) => this.request<components['schemas']['KeyListResponse']>('/keys', { params: toQuery(p) })
-  createUserKey = (b: components['schemas']['KeyCreate']) => this.request<components['schemas']['KeyWithSecret']>('/keys', { method: 'POST', body: JSON.stringify(b) })
+  createUserKey = (b: components['schemas']['KeyCreate']) => this.request<components['schemas']['Key']>('/keys', { method: 'POST', body: JSON.stringify(b) })
   updateUserKey = (id: number, b: components['schemas']['KeyUpdate']) => this.request<components['schemas']['Key']>(`/keys/${id}`, { method: 'PUT', body: JSON.stringify(b) })
   deleteUserKey = (id: number) => this.request<components['schemas']['DeletedResponse']>(`/keys/${id}`, { method: 'DELETE' })
-  rotateUserKey = (id: number) => this.request<components['schemas']['KeyWithSecret']>(`/keys/${id}/rotate`, { method: 'POST' })
+  rotateUserKey = (id: number) => this.request<components['schemas']['Key']>(`/keys/${id}/rotate`, { method: 'POST' })
   getMyUsageLogs = (p: MyUsageLogParams) => this.request<components['schemas']['UserLogsResponse']>('/usage_logs', { params: toQuery(p) })
   getMyErrLogs = (p: MyErrLogParams) => this.request<components['schemas']['UserErrLogsResponse']>('/err_logs', { params: toQuery(p) })
   getUserStats = (params?: UserStatParams) => this.request<components['schemas']['StatBucket'][]>('/stats', { params: toQuery(params) })

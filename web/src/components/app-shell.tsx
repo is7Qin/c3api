@@ -20,6 +20,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import AppSidebar from '@/components/app-sidebar'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 // /app 与 /user 共用单一 AppShell：路由切换只换 Outlet 内容，
 // 侧边栏/顶栏不重挂（消除闪烁）。导航由 me().Role 决定：
@@ -94,51 +95,55 @@ export default function AppShell() {
   const crumb = breadcrumbFor(location.pathname)
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* h-screen 锁定视口高度：侧边栏 nav 独立滚动（flex-1 overflow-y-auto），
-          底部用户卡固定左下角不再随页面滚动；main 自身 overflow-auto */}
+      {/* h-screen 锁定视口高度：侧边栏 nav 与 main 各自 ScrollArea 独立滚动（自绘
+          滚动条，深色模式统一观感）；底部用户卡固定左下角 */}
       <AppSidebar navs={navs} userEmail={me?.Email} />
-      <main className="flex flex-1 flex-col overflow-auto">
-        <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4 lg:px-6">
-          {crumb && (
-            <Breadcrumb className="min-w-0 flex-1">
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <Link to={crumb.root} className="text-sm transition-colors hover:text-foreground">
-                    {t(crumb.section)}
-                  </Link>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>{t(crumb.page)}</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          )}
-          <div className="flex shrink-0 items-center justify-end gap-2 lg:gap-3">
-            <span className="text-sm text-muted-foreground">{me?.Email ?? ''}</span>
-            <ModeToggle />
-            <div className="inline-flex items-center gap-1 rounded-md border bg-background p-0.5">
-              {LANGS.map(({ code, label }) => (
-                <Button
-                  key={code}
-                  size="sm"
-                  variant="ghost"
-                  className={cn('h-8 min-w-10 px-2', lang === code && 'bg-secondary text-secondary-foreground')}
-                  onClick={() => setLang(code)}
-                >
-                  {label}
-                </Button>
-              ))}
+      {/* 主内容滚动区：自定义滚动条（scroll-area 自绘 thumb，深色模式统一观感）——
+          header sticky 依赖滚动容器在其内部 */}
+      <main className="flex flex-1 flex-col">
+        <ScrollArea className="flex-1">
+          <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4 lg:px-6">
+            {crumb && (
+              <Breadcrumb className="min-w-0 flex-1">
+                <BreadcrumbList>
+                  <BreadcrumbItem className="hidden md:block">
+                    <Link to={crumb.root} className="text-sm transition-colors hover:text-foreground">
+                      {t(crumb.section)}
+                    </Link>
+                  </BreadcrumbItem>
+                  <BreadcrumbSeparator className="hidden md:block" />
+                  <BreadcrumbItem>
+                    <BreadcrumbPage>{t(crumb.page)}</BreadcrumbPage>
+                  </BreadcrumbItem>
+                </BreadcrumbList>
+              </Breadcrumb>
+            )}
+            <div className="flex shrink-0 items-center justify-end gap-2 lg:gap-3">
+              <span className="text-sm text-muted-foreground">{me?.Email ?? ''}</span>
+              <ModeToggle />
+              <div className="inline-flex items-center gap-1 rounded-md border bg-background p-0.5">
+                {LANGS.map(({ code, label }) => (
+                  <Button
+                    key={code}
+                    size="sm"
+                    variant="ghost"
+                    className={cn('h-8 min-w-10 px-2', lang === code && 'bg-secondary text-secondary-foreground')}
+                    onClick={() => setLang(code)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </header>
+          <div className="@container/main flex flex-col gap-2 px-4 lg:px-6">
+            <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+              <motion.div key={location.pathname} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+                <Outlet />
+              </motion.div>
             </div>
           </div>
-        </header>
-        <div className="@container/main flex flex-1 flex-col gap-2 px-4 lg:px-6">
-          <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-            <motion.div key={location.pathname} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
-              <Outlet />
-            </motion.div>
-          </div>
-        </div>
+        </ScrollArea>
       </main>
     </div>
   )

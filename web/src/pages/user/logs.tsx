@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card'
 import { DateRangePicker } from '@/components/date-range-picker'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { LogPagination } from '@/components/log-pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -259,7 +260,11 @@ export default function UserLogs() {
       ) : (
         <>
         <Card className="overflow-hidden">
-          <Table containerClassName="max-h-[calc(100vh-16rem)] overflow-y-auto">
+          {/* 纵横向滚动均走 ScrollArea 自绘滚动条（深色模式统一观感） */}
+          <ScrollArea className="max-h-[calc(100vh-16rem)]" showHorizontal>
+          {/* overflow-x-visible 覆盖 Table 默认 overflow-x-auto（twMerge）：横向
+              滚动交由 ScrollArea viewport，避免嵌套滚动条 */}
+          <Table containerClassName="overflow-x-visible">
             <TableHeader>
               {/* 列顺序与管理端 logs.tsx 对齐：Key→model→format→statusCode(errors)→errorType→
                   errorMessage(errors)→Token(usage)→费用(usage)→耗时→计费档(errors) */}
@@ -448,6 +453,7 @@ export default function UserLogs() {
                 ))}
             </TableBody>
           </Table>
+          </ScrollArea>
         </Card>
         {/* 分页底栏：游标链（无 total/offset）——条数 Select + 页码按钮组 + 跳转 + 翻页/回最新；
             isFetching（翻页/补链中）禁用全部控件，防连点重复请求 */}

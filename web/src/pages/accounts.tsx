@@ -21,6 +21,7 @@ import { DateTimePicker } from '@/components/ui/date-picker'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -136,7 +137,8 @@ function GroupMultiSelect({ groups, value, onChange, disabled }: {
 }) {
   const toggle = (id: number) => onChange(value.includes(id) ? value.filter(x => x !== id) : [...value, id])
   return (
-    <div className={`max-h-48 space-y-1 overflow-y-auto rounded-lg border p-2 ${disabled ? 'pointer-events-none opacity-50' : ''}`}>
+    <ScrollArea className={`max-h-48 rounded-lg border p-2 ${disabled ? 'pointer-events-none opacity-50' : ''}`}>
+      <div className="space-y-1">
       {groups.map(g => (
         <label key={g.ID} className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted">
           <Checkbox checked={value.includes(g.ID!)} onCheckedChange={() => toggle(g.ID!)} />
@@ -144,7 +146,8 @@ function GroupMultiSelect({ groups, value, onChange, disabled }: {
           <span className="text-xs text-muted-foreground">#{g.ID}</span>
         </label>
       ))}
-    </div>
+      </div>
+    </ScrollArea>
   )
 }
 

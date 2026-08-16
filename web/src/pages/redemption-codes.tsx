@@ -18,6 +18,7 @@ import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DateTimePicker } from '@/components/ui/date-picker'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -407,11 +408,11 @@ export default function RedemptionCodes() {
                 </p>
               )}
               {/* 单框展示所有码（每行一个）：点击全选便于手动复制；超出 max-h 滚动 */}
-              <div className="max-h-48 overflow-auto rounded-lg border bg-muted/40 p-3">
+              <ScrollArea className="max-h-48 rounded-lg border bg-muted/40 p-3">
                 <code className="select-all whitespace-pre font-mono text-sm leading-6">
                   {generated.map(c => c.Code).join('\n')}
                 </code>
-              </div>
+              </ScrollArea>
               <DialogFooter className="sm:justify-between">
                 <Button variant="outline" onClick={copyAllCodes}>
                   {copiedAll ? <Check /> : <Copy />}
@@ -529,7 +530,7 @@ export default function RedemptionCodes() {
           ) : usesRows.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">{t('redemptions.usesEmpty')}</p>
           ) : (
-            <div className="max-h-80 overflow-y-auto rounded-lg border">
+            <ScrollArea className="max-h-80 rounded-lg border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -550,7 +551,7 @@ export default function RedemptionCodes() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
+            </ScrollArea>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setUsesFor(null)}>{t('common.done')}</Button>

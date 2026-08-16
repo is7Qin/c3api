@@ -429,7 +429,10 @@
       "errorType": "Error type",
       "statusCode": "Status code",
       "all": "All",
-      "reset": "Reset"
+      "reset": "Reset",
+      "searching": "Searching…",
+      "noMatch": "No matches",
+      "searchHint": "Type to search"
     },
     "table": {
       "requestId": "Request ID",

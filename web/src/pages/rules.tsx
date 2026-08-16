@@ -16,6 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -430,7 +431,8 @@ export default function Rules() {
             <DialogTitle>{editing ? t('rules.editTitle', { id: editing.ID }) : t('rules.newTitle')}</DialogTitle>
             <DialogDescription>{t('rules.dialogDesc')}</DialogDescription>
           </DialogHeader>
-          <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+          <ScrollArea className="max-h-[70vh] pr-1">
+          <div className="space-y-4">
             {/* 预设模板：一键填充条件 + 动作（name/priority/enabled 保留） */}
             <div className="space-y-2">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('rules.templates.title')}</p>
@@ -584,6 +586,7 @@ export default function Rules() {
               <p className="text-sm text-destructive">{errMsg(save.error)}</p>
             )}
           </div>
+          </ScrollArea>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={save.isPending}>{t('common.cancel')}</Button>
             <Button onClick={submit} disabled={save.isPending || !form.name.trim() || form.priority === ''}>

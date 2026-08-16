@@ -18,6 +18,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -528,7 +529,7 @@ export default function Users() {
           ) : tempRows.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">{t('users.tempBalances.empty')}</p>
           ) : (
-            <div className="max-h-72 overflow-y-auto rounded-md border">
+            <ScrollArea className="max-h-72 rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -551,7 +552,7 @@ export default function Users() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
+            </ScrollArea>
           )}
         </DialogContent>
       </Dialog>
@@ -576,7 +577,8 @@ export default function Users() {
             ) : allGroups.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">{t('users.groups.empty')}</p>
             ) : (
-              <div className={cn('max-h-72 space-y-1.5 overflow-y-auto pr-1', groupsEchoLoading && 'pointer-events-none opacity-50')}>
+              <ScrollArea className={cn('max-h-72 pr-1', groupsEchoLoading && 'pointer-events-none opacity-50')}>
+                <div className="space-y-1.5">
                 {allGroups.map(g => {
                   const isPublic = g.Visibility === 'public'
                   const checked = groupsChecked.includes(g.ID!)
@@ -620,7 +622,8 @@ export default function Users() {
                     </div>
                   )
                 })}
-              </div>
+                </div>
+              </ScrollArea>
             )}
             {saveUserGroups.isError && errMsg(saveUserGroups.error) && (
               <p className="text-sm text-destructive">{errMsg(saveUserGroups.error)}</p>

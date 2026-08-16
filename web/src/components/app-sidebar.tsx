@@ -8,6 +8,7 @@ import { ChevronDown, ChevronsUpDown, CircleUser, LogOut, type LucideIcon } from
 import { useTranslation } from 'react-i18next'
 import { userAuth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,7 +60,9 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
   return (
     <aside className="w-64 border-r border-sidebar-border bg-sidebar text-sidebar-foreground flex flex-col">
       <div className="p-4 font-semibold text-lg">{t('common.appTitle')}</div>
-      <nav className="flex-1 space-y-1 overflow-y-auto p-2">
+      {/* 自定义滚动条（scroll-area：自绘 thumb，深色模式不再刺眼） */}
+      <ScrollArea className="flex-1">
+        <nav className="space-y-1 p-2">
         {navs.map(group => (
           <div key={group.titleKey ?? group.items[0]?.to}>
             {group.titleKey ? (
@@ -82,7 +85,8 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
             )}
           </div>
         ))}
-      </nav>
+        </nav>
+      </ScrollArea>
       <div className="border-t border-sidebar-border p-3">
         <DropdownMenu>
           <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-lg p-2 hover:bg-sidebar-accent focus:bg-sidebar-accent data-popup-open:bg-sidebar-accent focus:outline-none">
