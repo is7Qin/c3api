@@ -146,6 +146,8 @@ const emptyFilters = (): LogFilters => ({
 // key 用 /admin/keys 脱敏端点并携带已选 user/group 关联收窄（同名 key 区分度）。
 interface FilterOption { id: number; label: string }
 interface FilterState { user: string; key: string; group: string; account: string }
+// 展开态与搜索词同键但值为布尔（原误复用 FilterState，tsc 全项目失败）。
+interface FilterOpenState { user: boolean; key: boolean; group: boolean; account: boolean }
 
 // 输入防抖：服务端搜索只在用户停顿后发起（避免每键一请求）。
 function useDebounced<T>(value: T, ms: number): T {
@@ -301,7 +303,7 @@ export default function Logs() {
   // 关联收窄——同名 key 在已选用户/分组范围内仍可区分）——
   const [search, setSearch] = useState<FilterState>({ user: '', key: '', group: '', account: '' })
   const debounced = useDebounced(search, 300)
-  const [filterOpen, setFilterOpen] = useState<FilterState>({ user: false, key: false, group: false, account: false })
+  const [filterOpen, setFilterOpen] = useState<FilterOpenState>({ user: false, key: false, group: false, account: false })
   const openFilter = (k: keyof FilterState, open: boolean) => setFilterOpen(p => ({ ...p, [k]: open }))
   const setSearchTerm = (k: keyof FilterState) => (term: string) => setSearch(s => ({ ...s, [k]: term }))
   // 挂载预取空条件候选（20 条）：打开筛选器瞬间即有列表，避免 popup 先空后内容
