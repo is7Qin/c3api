@@ -393,9 +393,13 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 			// err.Error() 全文填 last_error 与耗尽记录（域内截断 500），并附加
 			// Warn（request_id/account/model/err 全文——Warn 不截断）——根因
 			// 锁定靠错误文本，两类留痕互补：Warn 全量、落盘 500 字符。
+			// code==0 内 SDK 本地校验错误前置识别（A-1）：独立归 4xx 提前 return，
+			// 不落入本网络分支。
 			lastErrMsg = upstreamErrMsg(respBody)
 			if code == 0 && callErr != nil {
-				lastErrMsg = domain.TruncateErrMsg(callErr.Error())
+				sdkErr := callErr.Error()
+				// Warn 留痕：两种子路径（SDK 识别归 4xx / 网络错误）同款——错误
+				// 文本全量、request_id/account/model 字段，识别错误不因识别而丢留痕。
 				if p.log != nil {
 					p.log.Warn("upstream connection failure",
 						logx.String("request_id", reqID),
@@ -403,6 +407,28 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 						logx.String("model", sel.Model),
 						logx.Error(callErr))
 				}
+				// SDK 校验错误识别（spec A-1，检测前置）：anthropic-sdk-go
+				// v1.62.0 client.go:316（CalculateNonStreamingTimeout）对
+				// max_tokens 大 + 非流式请求本地拒绝——无网络请求、无状态码
+				// （code=0），此前误归 network（err_logs 记 network + 502 无
+				// 原因文案，可观测性差）。固定文本匹配 strings.Contains 零分配；
+				// 文本为 SDK 硬编码——升级 SDK 若改文案则识别静默失效，须同步
+				// 更新本处与版本标注。
+				if strings.Contains(sdkErr, "streaming is required") {
+					// 确定性错误（重试必同结果，§5.3）：不 failover、不
+					// MarkResult（与 4xx 分支现状一致），记录后提前 return。
+					l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start))
+					em := domain.TruncateErrMsg(sdkErr)
+					l.ErrorMessage = &em
+					p.finish(sel.AccountID, l)
+					// message 用 SDK 原文不加前缀（"streaming is required..." 已
+					// 自明，避免措辞重复）；type 与 4xx 分支通用回退同款（可选）。
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+						"message": sdkErr, "type": "upstream_error",
+					}})
+					return
+				}
+				lastErrMsg = domain.TruncateErrMsg(sdkErr)
 			} else if lastErrMsg != "" {
 				lastErrMsg = domain.TruncateErrMsg(lastErrMsg)
 			}

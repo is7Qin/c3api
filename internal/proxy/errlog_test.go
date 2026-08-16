@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,13 +32,14 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// newTestProxyWarn 同 newTestProxyTimeoutLogs，但注入 zap 日志（Warn 断言用）。
-func newTestProxyWarn(t *testing.T, upstream string, accountID int64, logs usage.LogInserter, logOut string) *Proxy {
+// newTestProxyWarn 同 newTestProxyFormatLogs，但注入 zap 日志（Warn 断言用）；
+// format 参数指定模板格式（chat/anth 等识别场景按需）。
+func newTestProxyWarn(t *testing.T, upstream string, accountID int64, format domain.RequestFormat, logs usage.LogInserter, logOut string) *Proxy {
 	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: upstream,
 		CredentialType:   credential.TypeAPIKey,
-		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+		SupportedFormats: []domain.RequestFormat{format}, Models: []string{"gpt-4o"},
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: accountID, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "sk-upstream",
@@ -89,7 +91,7 @@ func TestProxyConnErrorLogsErrorMessage(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	logOut := filepath.Join(dir, "warn.log")
-	p := newTestProxyWarn(t, url, 1, store, logOut)
+	p := newTestProxyWarn(t, url, 1, domain.FormatOpenAIChat, store, logOut)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
@@ -336,3 +338,79 @@ func TestProxyClientDisconnectBeforeFirstByte(t *testing.T) {
 	require.Contains(t, *l.ErrorMessage, "client closed request", "断连错误文本落盘")
 	require.Equal(t, l.RequestID, store.logs[1].RequestID, "双轨行 request_id 关联")
 }
+
+// SDK 本地校验错误归 4xx（spec 2026-08-16-anthropic-stream-accept-design A-1）：
+// anthropic 非流式 + max_tokens 大（80000：expectedTime = 1h×80000/128000
+// = 2250s > 10min）→ SDK CalculateNonStreamingTimeout（client.go:316 固定文本）
+// 本地拒绝——无网络请求、无状态码（code=0），此前误归 network（err_logs 记
+// network + 502 无原因文案）。识别归 400 + Err4xx：ErrorMessage = SDK 原文、
+// Warn 留痕保留（不因识别而丢留痕）、不 failover 不 MarkResult（确定性错误
+// §5.3，与 4xx 分支现状一致）、响应文案含原因。
+func TestProxySDKValidationErrorClassified4xx(t *testing.T) {
+	var hits atomic.Int64
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(500)
+	}))
+	defer up.Close()
+	store := &captureLogStore{}
+	dir, err := os.MkdirTemp("", "c3api-errlog-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	logOut := filepath.Join(dir, "warn.log")
+	p := newTestProxyWarn(t, up.URL, 1, domain.FormatAnthropic, store, logOut)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
+		`{"model":"gpt-4o","max_tokens":80000,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-api-key", "ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleAnthropic(rec, req)
+
+	require.Equal(t, 400, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, sdkStreamingRequiredText, resp.Error.Message, "message = SDK 原文不加前缀")
+	require.Equal(t, "upstream_error", resp.Error.Type)
+	require.Zero(t, hits.Load(), "SDK 本地拒绝：无网络请求（上游零命中）")
+
+	// 确定性错误：不 failover、不 MarkResult（账号保持 active、不冷却）
+	ri, ok := p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusActive, ri.Status)
+	require.Nil(t, ri.CooldownUntil)
+	require.Zero(t, ri.Concurrency, "识别路径必须释放并发槽")
+	require.Zero(t, p.rec.Pending(), "失败行不入 usage_logs（分表：err_logs 承载）")
+
+	// err_logs：400 + Err4xx + ErrorMessage = SDK 原文（<500 截断无损）
+	require.NoError(t, p.rec.Close(context.Background()))
+	require.NoError(t, p.errlog.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1, "识别路径记一条 err_logs")
+	l := store.logs[0]
+	require.Equal(t, 400, l.StatusCode, "err_logs status_code=400 而非 0")
+	require.Equal(t, domain.Err4xx, l.ErrorType, "error_type=4xx 而非 network")
+	require.NotNil(t, l.ErrorMessage)
+	require.Equal(t, sdkStreamingRequiredText, *l.ErrorMessage, "ErrorMessage = SDK 原文")
+	require.LessOrEqual(t, len(*l.ErrorMessage), domain.ErrMsgMaxLen)
+
+	// Warn 留痕保留（与 code==0 网络路径同款）：request_id/account/model + 错误全文
+	data, err := os.ReadFile(logOut)
+	require.NoError(t, err)
+	warns := string(data)
+	require.Contains(t, warns, "upstream connection failure")
+	require.Contains(t, warns, sdkStreamingRequiredText, "Warn 含 SDK 错误全文（不截断）")
+	require.Contains(t, warns, "request_id")
+	require.Contains(t, warns, "account_id")
+	require.Contains(t, warns, "model")
+}
+
+// sdkStreamingRequiredText 为 anthropic-sdk-go v1.62.0 client.go:316
+// （CalculateNonStreamingTimeout）硬编码错误文本——升级 SDK 若改文案须同步
+// 本测试与 caller.go 识别点（A-1 版本依赖标注）。
+const sdkStreamingRequiredText = "streaming is required for operations that may take longer than 10 minutes"

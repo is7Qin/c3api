@@ -99,7 +99,7 @@ func TestSkeletonStreamValueBoundaries(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
-			req.Header.Set("Authorization", "Bearer gk-1")
+			req.Header.Set("Authorization", "Bearer ck-1")
 			rec := httptest.NewRecorder()
 			p.HandleChat(rec, req)
 			require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
@@ -120,7 +120,7 @@ func TestSkeletonStreamValueBoundaries(t *testing.T) {
 	} {
 		t.Run("ok-"+tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
-			req.Header.Set("Authorization", "Bearer gk-1")
+			req.Header.Set("Authorization", "Bearer ck-1")
 			rec := httptest.NewRecorder()
 			p.HandleChat(rec, req)
 			require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
@@ -137,7 +137,7 @@ func TestSkeletonModelTierExplicitNull(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":null,"service_tier":null,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
@@ -160,7 +160,7 @@ func TestSkeletonServiceTierNonString400(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
-			req.Header.Set("Authorization", "Bearer gk-1")
+			req.Header.Set("Authorization", "Bearer ck-1")
 			rec := httptest.NewRecorder()
 			p.HandleChat(rec, req)
 			require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
@@ -198,7 +198,7 @@ func TestSkeletonLargeBodyExtraction(t *testing.T) {
 	b64 := strings.Repeat("A", 900<<10) // ~900KB base64（vision data URL 形态）
 	body := `{"model":"gpt-4o","stream":false,"service_tier":"auto","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,` + b64 + `"}}]}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, "MB body 不得误 400/误转流式：%s", rec.Body.String()[:min(200, len(rec.Body.String()))])
