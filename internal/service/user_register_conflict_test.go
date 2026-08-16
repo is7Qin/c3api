@@ -23,7 +23,6 @@ import (
 // （镜像 user_repo.go CreateUser 对 23505 的映射形态）。
 type registerRaceStore struct {
 	*fakeStore
-	mu      sync.Mutex
 	arrived chan struct{} // GetUserByEmail 到达（cap 2，不阻塞）
 	release chan struct{} // 双 pre-check 都到后 close 放行
 }
@@ -43,8 +42,10 @@ func (r *registerRaceStore) GetUserByEmail(ctx context.Context, email string) (*
 }
 
 func (r *registerRaceStore) CreateUser(ctx context.Context, u *domain.User) (*domain.User, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// 锁用内嵌 fakeStore 的 f.mu（与 CountUsers 等读同一把锁——独立锁会造成
+	// 同 map 异锁的 -race 误报）
+	r.fakeStore.mu.Lock()
+	defer r.fakeStore.mu.Unlock()
 	for _, existing := range r.users {
 		if existing.Email == u.Email {
 			return nil, fmt.Errorf("%w: email=%q", repository.ErrConflict, u.Email)

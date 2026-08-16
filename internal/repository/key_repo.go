@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -158,21 +159,40 @@ func (r *KeyRepo) ListKeysByUser(ctx context.Context, userID int64, q ListQuery)
 	return out, int64(total), nil
 }
 
-// UpdateKey 更新 name/status/max_concurrency/quota（不写 key_raw——明文变更
-// 仅 CreateKey/RotateKey 路径）。
+// KeyPatch key 更新补丁（对齐 UserPatch 范式）：显式字段 = 请求显式提供的字段；
+// nil = 不改（仅 Set 非 nil 列——并发两个 PUT 改不同字段各自生效，不再全列
+// 无条件写回覆盖先写者）。
 // quota_used 不写——Recorder 派生计数器（p2-12 核实：service 层无任何路径
 // 意图写该列，全字段写回会覆盖 AddQuotaUsed 增量 → 永久少记、gate 超用
 // 不 429）；ent Save re-SELECT 返回行 → 调用方拿到的 QuotaUsed 反为 DB 新鲜
 // 值，upsertKeyMeta 顺带同步最新。
-func (r *KeyRepo) UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, error) {
-	row, err := r.client.Key.UpdateOneID(k.ID).
-		SetName(k.Name).
-		SetStatus(key.Status(k.Status)).
-		SetMaxConcurrency(k.MaxConcurrency).
-		SetQuota(k.Quota).
-		Save(ctx)
+type KeyPatch struct {
+	ID             int64
+	Name           *string
+	Status         *domain.KeyStatus
+	MaxConcurrency *int
+	Quota          *int64
+}
+
+// UpdateKey 按 patch 更新 name/status/max_concurrency/quota（不写 key_raw——
+// 明文变更仅 CreateKey/RotateKey 路径）；仅 Set 非 nil 列，nil = 该列不动。
+func (r *KeyRepo) UpdateKey(ctx context.Context, p *KeyPatch) (*domain.Key, error) {
+	upd := r.client.Key.UpdateOneID(p.ID)
+	if p.Name != nil {
+		upd.SetName(*p.Name)
+	}
+	if p.Status != nil {
+		upd.SetStatus(key.Status(*p.Status))
+	}
+	if p.MaxConcurrency != nil {
+		upd.SetMaxConcurrency(*p.MaxConcurrency)
+	}
+	if p.Quota != nil {
+		upd.SetQuota(*p.Quota)
+	}
+	row, err := upd.Save(ctx)
 	if err != nil {
-		return nil, errMissingID(err, k.ID)
+		return nil, errMissingID(err, p.ID)
 	}
 	return toDomainKey(row), nil
 }
@@ -206,19 +226,25 @@ func (r *KeyRepo) DeleteKey(ctx context.Context, id int64) error {
 // DeleteKeysByGroup 软删除组的全部 key（组删除级联——deleted_at 置值，行保留
 // 不破坏 key.group_id 外键），返回本次被软删的明文列表（Auth 增量清理用；
 // 已软删 key 过滤——其明文此前已从 Auth 移除，重复返回无意义）。
+// 原子化（F5）：单条原生 SQL UPDATE + RETURNING 合一——SELECT 与 UPDATE 之间
+// 无窗口（并发新建 key 不会落在读-写间隙里被静默软删且明文不在返回列表）；
+// 先例 AddQuotaUsed（r.driver 为 raw SQL 入口，与 ent 构建器同事务连接）。
 func (r *KeyRepo) DeleteKeysByGroup(ctx context.Context, groupID int64) ([]string, error) {
-	rows, err := r.client.Key.Query().
-		Where(key.GroupIDEQ(groupID), key.DeletedAtIsNil()).
-		Select(key.FieldKeyRaw).
-		All(ctx)
-	if err != nil {
-		return nil, err
+	const q = `UPDATE "keys" SET "deleted_at" = now() WHERE "group_id" = $1 AND "deleted_at" IS NULL RETURNING "key_raw"`
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, q, []any{groupID}, rows); err != nil {
+		return nil, fmt.Errorf("delete keys by group %d: %w", groupID, err)
 	}
-	raws := make([]string, 0, len(rows))
-	for _, row := range rows {
-		raws = append(raws, row.KeyRaw)
+	defer rows.Close()
+	var raws []string
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		raws = append(raws, raw)
 	}
-	if _, err := r.client.Key.Update().Where(key.GroupIDEQ(groupID)).SetDeletedAt(time.Now()).Save(ctx); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return raws, nil

@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -382,15 +383,22 @@ func TestBatchUpdateAccounts(t *testing.T) {
 }
 
 type fakeKeyRegistrar struct {
+	mu       sync.Mutex
 	upserted []string
 	deleted  []string
 }
 
 func (k *fakeKeyRegistrar) Upsert(hash string, meta domain.KeyMeta) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	k.upserted = append(k.upserted, hash)
 }
 
-func (k *fakeKeyRegistrar) Delete(hash string) { k.deleted = append(k.deleted, hash) }
+func (k *fakeKeyRegistrar) Delete(hash string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.deleted = append(k.deleted, hash)
+}
 
 func TestBatchDeleteGroupsKeyCleanup(t *testing.T) {
 	fs := newFakeStore()
@@ -407,8 +415,15 @@ func TestBatchDeleteGroupsKeyCleanup(t *testing.T) {
 	require.Greater(t, rec.total(), before, "批量删除成功后必须 invalidate")
 	// Phase 3a：组删除前置清理组内 key（无 key 时无 hash 可清理）
 	require.Empty(t, keys.deleted, "无 key 的组删除不触发 Auth 增量清理")
-	_, err = svc.GetGroup(ctx, g1.ID)
-	require.ErrorIs(t, err, ErrNotFound, "批量删除后分组必须消失")
+	// 软删语义（对齐真实 repo）：GET 单个仍可查已删项（deleted_at 置值）；
+	// 列表过滤软删组
+	got, err := svc.GetGroup(ctx, g1.ID)
+	require.NoError(t, err, "软删组 GET 单个仍可查（管理面详情 200，既有语义）")
+	require.NotNil(t, got.DeletedAt, "批量删除后 deleted_at 置值")
+	rows, total, err := svc.ListGroups(ctx, repository.ListQuery{Limit: 10})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), total, "批量删除后列表过滤软删组")
+	require.Empty(t, rows)
 }
 
 func TestBatchUpdateGroups(t *testing.T) {

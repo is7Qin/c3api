@@ -182,6 +182,12 @@ func TestUserKeysLifecycle(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(t, int64(1), list.Total)
 
+	// 软删 key 不可复活（F2 契约）：删除后 PUT/Rotate → 404
+	rec = doUser(http.MethodPut, "/user/keys/"+itoa(*created.ID), `{"name":"revived"}`, token)
+	require.Equal(t, http.StatusNotFound, rec.Code, "已删 key PUT → 404: %s", rec.Body.String())
+	rec = doUser(http.MethodPost, "/user/keys/"+itoa(*created.ID)+"/rotate", "", token)
+	require.Equal(t, http.StatusNotFound, rec.Code, "已删 key rotate → 404: %s", rec.Body.String())
+
 	// 他人 key 不可见：bob 读 alice 的 key → 404（防越权探测）
 	bobToken, _ := registerAndGet(t, doUser, "bob@example.com")
 	rec = doUser(http.MethodGet, "/user/keys/"+itoa(*k2.ID), "", bobToken)

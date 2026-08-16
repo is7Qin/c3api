@@ -7,6 +7,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -77,6 +78,8 @@ type fakeStore struct {
 	codesConflictAlways bool
 	// countUsersErr 注入 CountUsers 失败（注册 bootstrap 错误传播测试）。
 	countUsersErr error
+	// revokeGroupErr 注入 RevokeGroup 失败（S3-F2 替换中途失败 → 整体回滚测试）。
+	revokeGroupErr error
 }
 
 // fakeTempRow 临时额度行模拟（domain 无 TempBalance 类型，CreateTempBalance
@@ -105,14 +108,17 @@ func newFakeStore() *fakeStore {
 }
 
 // DeleteKeysByGroup 满足 KeyStore（组删除前置清理；返回被删明文列表）。
+// 镜像真实 repo 原子 SQL 语义：只软删未删 key（deleted_at IS NULL）并返回其
+// 明文；已软删 key 不动（其明文此前已从 Auth 移除）。
 func (f *fakeStore) DeleteKeysByGroup(ctx context.Context, groupID int64) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var raws []string
-	for id, k := range f.keys {
-		if k.GroupID == groupID {
+	for _, k := range f.keys {
+		if k.GroupID == groupID && k.DeletedAt == nil {
+			now := time.Now()
+			k.DeletedAt = &now
 			raws = append(raws, k.KeyRaw)
-			delete(f.keys, id)
 		}
 	}
 	return raws, nil
@@ -274,10 +280,13 @@ func (f *fakeStore) ListGroups(ctx context.Context, q repository.ListQuery) ([]*
 	defer f.mu.Unlock()
 	out := make([]*domain.Group, 0, len(f.groups))
 	for _, g := range f.groups {
+		if g.DeletedAt != nil {
+			continue // 软删过滤（真实 repo 同谓词）
+		}
 		c := *g
 		out = append(out, &c)
 	}
-	return out, int64(len(f.groups)), nil
+	return out, int64(len(out)), nil
 }
 
 func (f *fakeStore) UpdateGroup(ctx context.Context, g *domain.Group) (*domain.Group, error) {
@@ -291,13 +300,17 @@ func (f *fakeStore) UpdateGroup(ctx context.Context, g *domain.Group) (*domain.G
 	return &c, nil
 }
 
+// DeleteGroup 软删语义（镜像真实 repo：行保留 + deleted_at 置值；GET 单个仍
+// 可查已删项，列表过滤由 ListGroups 做）。
 func (f *fakeStore) DeleteGroup(ctx context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.groups[id]; !ok {
+	g, ok := f.groups[id]
+	if !ok {
 		return missingErr(id)
 	}
-	delete(f.groups, id)
+	now := time.Now()
+	g.DeletedAt = &now
 	return nil
 }
 
@@ -312,6 +325,25 @@ func (f *fakeStore) GetAccountGroups(ctx context.Context, accountID int64) ([]in
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.accGroups[accountID]), nil
+}
+
+// LoadGroupAccounts 单组账号（F1 删组校验用；镜像真实 repo：已删账号过滤）。
+func (f *fakeStore) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*domain.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*domain.Account
+	for id, gids := range f.accGroups {
+		if !slices.Contains(gids, groupID) {
+			continue
+		}
+		a, ok := f.accs[id]
+		if !ok || a.DeletedAt != nil {
+			continue
+		}
+		c := *a
+		out = append(out, &c)
+	}
+	return out, nil
 }
 
 // --- 批量操作（缺失 id → repository.ErrNotFound 包装，模拟真实事务内存在性检查） ---
@@ -434,7 +466,8 @@ func (f *fakeStore) DeleteGroupsBatch(ctx context.Context, ids []int64) error {
 		}
 	}
 	for _, id := range ids {
-		delete(f.groups, id)
+		now := time.Now()
+		f.groups[id].DeletedAt = &now
 	}
 	return nil
 }
@@ -888,7 +921,7 @@ func (f *fakeStore) ListKeysByUser(ctx context.Context, userID int64, q reposito
 	defer f.mu.Unlock()
 	var out []*domain.Key
 	for _, k := range f.keys {
-		if k.UserID != userID {
+		if k.DeletedAt != nil || k.UserID != userID {
 			continue
 		}
 		if q.Name != "" && !strings.Contains(k.Name, q.Name) {
@@ -901,8 +934,8 @@ func (f *fakeStore) ListKeysByUser(ctx context.Context, userID int64, q reposito
 }
 
 // ListKeys 管理端全量 key 列表（/admin/keys：name 模糊 + user_id/group_id
-// 等值 AND 组合 + limit/offset 裁剪；软删过滤——fake 的 DeleteKey 即从 map
-// 移除，无行保留。total 恒为满足筛选全量，不分页裁剪）。
+// 等值 AND 组合 + limit/offset 裁剪；软删过滤——fake 的 DeleteKey 即置
+// deleted_at，行保留。total 恒为满足筛选全量，不分页裁剪）。
 func (f *fakeStore) ListKeys(ctx context.Context, q repository.ListQuery) ([]*domain.Key, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -940,18 +973,26 @@ func (f *fakeStore) ListKeys(ctx context.Context, q repository.ListQuery) ([]*do
 	return out, int64(total), nil
 }
 
-func (f *fakeStore) UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, error) {
+// UpdateKey patch 语义（S3-F1，镜像真实 repo）：仅应用非 nil 字段，nil = 不动。
+func (f *fakeStore) UpdateKey(ctx context.Context, p *repository.KeyPatch) (*domain.Key, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	cur, ok := f.keys[k.ID]
+	cur, ok := f.keys[p.ID]
 	if !ok {
-		return nil, missingErr(k.ID)
+		return nil, missingErr(p.ID)
 	}
-	cur.Name = k.Name
-	cur.Status = k.Status
-	cur.MaxConcurrency = k.MaxConcurrency
-	cur.Quota = k.Quota
-	cur.QuotaUsed = k.QuotaUsed
+	if p.Name != nil {
+		cur.Name = *p.Name
+	}
+	if p.Status != nil {
+		cur.Status = *p.Status
+	}
+	if p.MaxConcurrency != nil {
+		cur.MaxConcurrency = *p.MaxConcurrency
+	}
+	if p.Quota != nil {
+		cur.Quota = *p.Quota
+	}
 	c := *cur
 	return &c, nil
 }
@@ -970,13 +1011,17 @@ func (f *fakeStore) RotateKey(ctx context.Context, id int64, newRaw string) (*do
 	return &out, nil
 }
 
+// DeleteKey 软删语义（镜像真实 repo：行保留 + deleted_at 置值；GET 单个仍可
+// 查已删项——ownedKey 的软删过滤因此真实可测）。
 func (f *fakeStore) DeleteKey(ctx context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.keys[id]; !ok {
+	k, ok := f.keys[id]
+	if !ok {
 		return missingErr(id)
 	}
-	delete(f.keys, id)
+	now := time.Now()
+	k.DeletedAt = &now
 	return nil
 }
 
@@ -1044,6 +1089,9 @@ func (f *fakeStore) ListGroupsForUser(ctx context.Context, userID int64) ([]*dom
 	defer f.mu.Unlock()
 	var out []*domain.Group
 	for _, g := range f.groups {
+		if g.DeletedAt != nil {
+			continue // 软删组不进可选列表（真实 repo 同谓词）
+		}
 		if g.Visibility == domain.GroupVisibilityPublic {
 			c := *g
 			out = append(out, &c)
@@ -1103,12 +1151,25 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		users:  cloneUserMap(f.users),
 		temps:  slices.Clone(f.temps),
 		nextID: f.nextID,
+		// 授予面（S3-F2：assignment 替换循环入事务；error 注入透传）
+		assign:     cloneAssignMap(f.assign),
+		assignMult: maps.Clone(f.assignMult),
+		revokeErr:  f.revokeGroupErr,
 	}
 	if err := fn(tx); err != nil {
 		return err // 回滚：暂存丢弃
 	}
 	f.codes, f.uses, f.users, f.temps, f.nextID = tx.codes, tx.uses, tx.users, tx.temps, tx.nextID
+	f.assign, f.assignMult = tx.assign, tx.assignMult
 	return nil
+}
+
+func cloneAssignMap(m map[int64][]int64) map[int64][]int64 {
+	out := make(map[int64][]int64, len(m))
+	for k, v := range m {
+		out[k] = slices.Clone(v)
+	}
+	return out
 }
 
 func cloneCodeMap(m map[int64]*domain.RedemptionCode) map[int64]*domain.RedemptionCode {
@@ -1146,6 +1207,11 @@ type fakeTx struct {
 	users  map[int64]*domain.User
 	temps  []*fakeTempRow
 	nextID int64
+	// 授予面（S3-F2）：assign/assignMult 同 fakeStore 语义；revokeErr 注入
+	// 替换中途失败（回滚断言用）。
+	assign     map[int64][]int64
+	assignMult map[[2]int64]*int
+	revokeErr  error
 }
 
 var _ repository.TxStore = (*fakeTx)(nil)
@@ -1235,6 +1301,60 @@ func (t *fakeTx) IncrementUsed(ctx context.Context, codeID int64) (bool, error) 
 	}
 	c.UsedCount++
 	return true, nil
+}
+
+// --- 组授予（S3-F2：tx 面扩展，语义镜像 fakeStore 对应方法） ---
+
+func (t *fakeTx) GrantGroup(ctx context.Context, groupID, userID int64) error {
+	if !slices.Contains(t.assign[groupID], userID) {
+		t.assign[groupID] = append(t.assign[groupID], userID)
+	}
+	return nil
+}
+
+func (t *fakeTx) RevokeGroup(ctx context.Context, groupID, userID int64) error {
+	if t.revokeErr != nil {
+		return t.revokeErr
+	}
+	t.assign[groupID] = slices.DeleteFunc(t.assign[groupID], func(u int64) bool { return u == userID })
+	delete(t.assignMult, [2]int64{groupID, userID}) // 撤销即清除专属倍率（真实 FK 级联同行）
+	return nil
+}
+
+// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（T3.5 修正：
+// 按组——用户在不同组可有不同倍率；nil = 清除为未设置 → 回退组倍率）。
+func (t *fakeTx) SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error {
+	if !slices.Contains(t.assign[groupID], userID) {
+		return missingErr(userID) // 授予行必须已存在（service 先 Grant 再 Set）
+	}
+	t.assignMult[[2]int64{groupID, userID}] = m
+	return nil
+}
+
+func (t *fakeTx) ListAssignmentsByGroup(ctx context.Context, groupID int64) ([]*domain.GroupAssignment, error) {
+	var out []*domain.GroupAssignment
+	for _, u := range t.assign[groupID] {
+		out = append(out, &domain.GroupAssignment{
+			GroupID: groupID, UserID: u,
+			PriceMultiplier: t.assignMult[[2]int64{groupID, u}],
+		})
+	}
+	return out, nil
+}
+
+func (t *fakeTx) ListAssignmentsByUser(ctx context.Context, userID int64) ([]*domain.GroupAssignment, error) {
+	var out []*domain.GroupAssignment
+	for gid, users := range t.assign {
+		for _, u := range users {
+			if u == userID {
+				out = append(out, &domain.GroupAssignment{
+					GroupID: gid, UserID: userID,
+					PriceMultiplier: t.assignMult[[2]int64{gid, userID}],
+				})
+			}
+		}
+	}
+	return out, nil
 }
 
 // --- 模板/账号类型化扩展（TemplateExtStore / AccountExtStore） ---

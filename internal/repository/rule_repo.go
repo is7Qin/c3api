@@ -121,6 +121,9 @@ func checkRuleExist(ctx context.Context, q func() *ent.RuleQuery, ids []int64) e
 	})
 }
 
+// CountRules 规则总数（seedRules 判定"是否全删"用）。不过滤软删 =
+// 防复活语义锚定（F6）：全删后软删行仍被计数 → 不重新 seed；若改过滤，全删
+// 即空表 → 下次启动重新 seed = 用户明确删除的规则复活。
 func (r *RuleRepo) CountRules(ctx context.Context) (int64, error) {
 	n, err := r.client.Rule.Query().Count(ctx)
 	if err != nil {

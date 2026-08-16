@@ -191,8 +191,9 @@ func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 交错：AddQuotaUsed 增量流（Recorder 节奏）+ UpdateKey 携带请求起始陈旧
-	// 快照（QuotaUsed=10——修复前会覆盖增量致永久少记）
+	// 交错：AddQuotaUsed 增量流（Recorder 节奏）+ UpdateKey patch 并发写
+	//（S3-F1 patch 化：patch 无 quota_used 字段——增量不可能被覆盖，比旧
+	// "剥离 SetQuotaUsed" 更强）
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -202,18 +203,19 @@ func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {
 		}
 	}()
 	for i := 0; i < 10; i++ {
-		stale := *k // 请求起始快照（QuotaUsed=10）
-		_, err := repos.UpdateKey(ctx, &stale)
+		name := fmt.Sprintf("kq-%d", i)
+		_, err := repos.UpdateKey(ctx, &repository.KeyPatch{ID: k.ID, Name: &name})
 		require.NoError(t, err)
 	}
 	wg.Wait()
 
 	got, err := repos.GetKey(ctx, k.ID)
 	require.NoError(t, err)
-	require.Equal(t, int64(10+20*5), got.QuotaUsed, "增量不丢：UpdateKey 不再覆盖 quota_used")
+	require.Equal(t, int64(10+20*5), got.QuotaUsed, "增量不丢：patch 无 quota_used 字段，不可能覆盖")
 
 	// 返回行 QuotaUsed = DB 新鲜值（ent Save re-SELECT → upsertKeyMeta 同步最新）
-	updated, err := repos.UpdateKey(ctx, got)
+	name := "kq"
+	updated, err := repos.UpdateKey(ctx, &repository.KeyPatch{ID: k.ID, Name: &name})
 	require.NoError(t, err)
 	require.Equal(t, int64(110), updated.QuotaUsed, "返回行携带 DB 新鲜 quota_used")
 	require.Equal(t, "kq", updated.Name)

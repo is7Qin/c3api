@@ -96,7 +96,9 @@ type KeyStore interface {
 	// ListKeys 管理端全量 key 列表（/admin/keys：软删过滤 + UserID/GroupID
 	// 零值不过滤 + 3 键 sort 白名单；脱敏在 handler 转换面——明文字段不下发）。
 	ListKeys(ctx context.Context, q repository.ListQuery) ([]*domain.Key, int64, error)
-	UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, error)
+	// UpdateKey patch 语义更新（S3-F1）：仅 Set 非 nil 字段，nil = 不改——并发
+	// 两个 PUT 改不同字段各自生效（对齐 UserPatch 范式）。
+	UpdateKey(ctx context.Context, p *repository.KeyPatch) (*domain.Key, error)
 	RotateKey(ctx context.Context, id int64, newRaw string) (*domain.Key, error)
 	DeleteKey(ctx context.Context, id int64) error
 	// DeleteKeysByGroup 组删除前置清理（key.group_id 外键约束；返回被删明文）。
@@ -152,6 +154,9 @@ type GroupStore interface {
 	DeleteGroup(ctx context.Context, id int64) error
 	DeleteGroupsBatch(ctx context.Context, ids []int64) error
 	UpdateGroupsBatch(ctx context.Context, ids []int64, p repository.GroupPatch) error
+	// LoadGroupAccounts 单组账号（删组前组内账号校验：含账号组 → 409 拒绝；
+	// 与调度器 Loader 同一数据源）。
+	LoadGroupAccounts(ctx context.Context, groupID int64) ([]*domain.Account, error)
 }
 
 // TemplateExtStore 模板类型化扩展持久化（template_ext 1:1；W1 数据层 CRUD，

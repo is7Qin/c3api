@@ -10,6 +10,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -69,11 +70,13 @@ func (s *Service) GetUserGroups(ctx context.Context, userID int64) ([]int64, map
 // group_ids = 完整授予组列表（未列出即撤销，空数组 = 清空）。multipliers 仅对
 // group_ids 中的组生效（key 必须 ∈ group_ids，否则 400；null = 清除为未设置 →
 // 回退组倍率；未列出的组 = 撤销，谈不上倍率）。校验：用户存在（404）、组存在
-// （404）、非法/重复 id 与越界倍率（400）；组数上限与 SetGroupAssignments 对齐
-// ≤100。实现按组复用组维度替换核心：对每个目标组读现成员 → 现成员 ∪ {userID}
-// 作为新授予集合（SetAssignmentMultiplier 只传该用户，其他成员不传 = 沿用现倍
-// 率，互不影响）；不在 group_ids 的当前授予组逐个 RevokeGroup（组本身不动，组
-// 内其他用户保留）。返回生效的 group_ids + 各授予组 post-state 倍率。
+// 且未软删（404，F3 逐组同校验）、非法/重复 id 与越界倍率（400）；组数上限与
+// SetGroupAssignments 对齐 ≤100。整个替换循环（含逐组读）包 WithTx（S3-F2）：
+// 逐组读与写同一事务，中途失败整体回滚——不再出现混合授予态。实现按组复用组
+// 维度替换核心：对每个目标组读现成员 → 现成员 ∪ {userID} 作为新授予集合
+// （SetAssignmentMultiplier 只传该用户，其他成员不传 = 沿用现倍率，互不影响）；
+// 不在 group_ids 的当前授予组逐个 RevokeGroup（组本身不动，组内其他用户保留）。
+// 返回生效的 group_ids + 各授予组 post-state 倍率。
 func (s *Service) SetUserGroups(ctx context.Context, userID int64, groupIDs []int64, mults map[int64]*int) ([]int64, map[int64]*int, error) {
 	if _, err := s.store.GetUser(ctx, userID); err != nil {
 		return nil, nil, mapRepoErr(err)
@@ -87,8 +90,8 @@ func (s *Service) SetUserGroups(ctx context.Context, userID int64, groupIDs []in
 			return nil, nil, ErrInvalidInput // 非法 id / 重复
 		}
 		want[gid] = true
-		if _, err := s.store.GetGroup(ctx, gid); err != nil {
-			return nil, nil, mapRepoErr(err)
+		if _, err := s.getGroupLive(ctx, gid); err != nil {
+			return nil, nil, err
 		}
 	}
 	for gid, m := range mults {
@@ -99,57 +102,64 @@ func (s *Service) SetUserGroups(ctx context.Context, userID int64, groupIDs []in
 			return nil, nil, ErrInvalidInput // 万分数 0~100000（API 边界正常值 0~10 换算）
 		}
 	}
-	cur, err := s.store.ListAssignmentsByUser(ctx, userID)
-	if err != nil {
-		return nil, nil, err
-	}
-	oldMult := make(map[int64]*int, len(cur))
-	for _, a := range cur {
-		oldMult[a.GroupID] = a.PriceMultiplier
-	}
-	// 每个目标组做组维度替换：现成员 ∪ {userID}；该用户倍率按 mults 更新
-	// （组内仅该用户有专属倍率，其他成员不传 = 沿用现倍率）
-	for gid := range want {
-		members, err := s.store.ListAssignmentsByGroup(ctx, gid)
+	var post map[int64]*int
+	err := s.store.WithTx(ctx, func(tx repository.TxStore) error {
+		cur, err := tx.ListAssignmentsByUser(ctx, userID)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
-		union := make([]int64, 0, len(members)+1)
-		for _, a := range members {
-			union = append(union, a.UserID)
+		oldMult := make(map[int64]*int, len(cur))
+		for _, a := range cur {
+			oldMult[a.GroupID] = a.PriceMultiplier
 		}
-		if !slices.Contains(union, userID) {
-			union = append(union, userID)
-		}
-		var m map[int64]*int
-		if v, ok := mults[gid]; ok {
-			m = map[int64]*int{userID: v}
-		}
-		if _, err := s.applyGroupAssignments(ctx, gid, union, m, members); err != nil {
-			return nil, nil, err
-		}
-	}
-	// 撤销不在 group_ids 的当前授予组（撤销行 = 该用户在该组的授予删除）
-	for _, a := range cur {
-		if !want[a.GroupID] {
-			if err := s.store.RevokeGroup(ctx, a.GroupID, userID); err != nil {
-				return nil, nil, err
+		// 每个目标组做组维度替换：现成员 ∪ {userID}；该用户倍率按 mults 更新
+		// （组内仅该用户有专属倍率，其他成员不传 = 沿用现倍率）
+		for gid := range want {
+			members, err := tx.ListAssignmentsByGroup(ctx, gid)
+			if err != nil {
+				return err
+			}
+			union := make([]int64, 0, len(members)+1)
+			for _, a := range members {
+				union = append(union, a.UserID)
+			}
+			if !slices.Contains(union, userID) {
+				union = append(union, userID)
+			}
+			var m map[int64]*int
+			if v, ok := mults[gid]; ok {
+				m = map[int64]*int{userID: v}
+			}
+			if _, err := s.applyGroupAssignments(ctx, tx, gid, union, m, members); err != nil {
+				return err
 			}
 		}
+		// 撤销不在 group_ids 的当前授予组（撤销行 = 该用户在该组的授予删除）
+		for _, a := range cur {
+			if !want[a.GroupID] {
+				if err := tx.RevokeGroup(ctx, a.GroupID, userID); err != nil {
+					return err
+				}
+			}
+		}
+		// post-state 倍率：group_ids 全量（未在 mults 的组沿用旧值；新授予未设 → nil）
+		post = make(map[int64]*int, len(groupIDs))
+		for _, gid := range groupIDs {
+			if m, ok := mults[gid]; ok {
+				post[gid] = m
+				continue
+			}
+			post[gid] = oldMult[gid]
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 	s.inv.Multipliers()
 	s.publish(ctx, notify.Change{Multipliers: true}) // 倍率/授予变更跨实例传播（评审 M-1：组维度写路径已有，用户维度写补齐）
 	if s.log != nil {
 		s.log.Info("user groups set", logx.Int64("user_id", userID), logx.Int64("count", int64(len(groupIDs))))
-	}
-	// post-state 倍率：group_ids 全量（未在 mults 的组沿用旧值；新授予未设 → nil）
-	post := make(map[int64]*int, len(groupIDs))
-	for _, gid := range groupIDs {
-		if m, ok := mults[gid]; ok {
-			post[gid] = m
-			continue
-		}
-		post[gid] = oldMult[gid]
 	}
 	return groupIDs, post, nil
 }

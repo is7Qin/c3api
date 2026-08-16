@@ -127,13 +127,14 @@ func TestPGKeyLifecycle(t *testing.T) {
 	require.Equal(t, int64(1), total)
 	require.Equal(t, "k1", rows[0].Name)
 
-	// UpdateKey（status/并发/额度）
-	k.Name = "k1-renamed"
-	k.Status = domain.KeyStatusDisabled
-	k.MaxConcurrency = 2
-	k.Quota = 200
-	k.QuotaUsed = 15 // 陈旧快照——A-P2-5：UpdateKey 剥离 SetQuotaUsed（Recorder 派生计数器）
-	updated, err := repos.UpdateKey(ctx, k)
+	// UpdateKey（patch：status/并发/额度；nil = 不改——S3-F1）
+	name := "k1-renamed"
+	st := domain.KeyStatusDisabled
+	mc := 2
+	q := int64(200)
+	updated, err := repos.UpdateKey(ctx, &repository.KeyPatch{
+		ID: k.ID, Name: &name, Status: &st, MaxConcurrency: &mc, Quota: &q,
+	})
 	require.NoError(t, err)
 	require.Equal(t, domain.KeyStatusDisabled, updated.Status)
 	require.Equal(t, 2, updated.MaxConcurrency)

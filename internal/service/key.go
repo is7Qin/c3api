@@ -61,12 +61,13 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 	return created, nil
 }
 
-// checkGroupEligible 组可选性：组必须存在（缺失 → 404）；private 组须有
-// 授予记录（未授予 → 400，防越权使用专属容量池）。
+// checkGroupEligible 组可选性：组必须存在且未软删（缺失/软删 → 404——F3 软删
+// 组不可建孤儿 key）；private 组须有授予记录（未授予 → 400，防越权使用专属
+// 容量池）。
 func (s *Service) checkGroupEligible(ctx context.Context, userID, groupID int64) error {
-	g, err := s.store.GetGroup(ctx, groupID)
+	g, err := s.getGroupLive(ctx, groupID)
 	if err != nil {
-		return mapRepoErr(err)
+		return err
 	}
 	if g.Visibility == domain.GroupVisibilityPublic {
 		return nil
@@ -108,37 +109,33 @@ func (s *Service) ListKeys(ctx context.Context, userID int64, q repository.ListQ
 }
 
 // UpdateKey 更新自己的 key（name/status/max_concurrency/quota；nil 字段不变）。
+// patch 化（S3-F1）：只把显式字段传给 repo（nil = 不改），不再全行快照写回——
+// 并发两个 PUT 改不同字段各自生效（不再静默覆盖先写者）。全 nil = 无变更，
+// 直接返回当前行（零写库零发布）。
 // 变更后 Auth 增量 Upsert（禁用/额度调整即时生效——评审 I-2 的 key 级路径）。
 func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *string, status *domain.KeyStatus, maxConcurrency *int, quota *int64) (*domain.Key, error) {
 	cur, err := s.ownedKey(ctx, userID, keyID)
 	if err != nil {
 		return nil, err
 	}
-	if name != nil {
-		if *name == "" {
-			return nil, ErrInvalidInput
-		}
-		cur.Name = *name
+	if name != nil && *name == "" {
+		return nil, ErrInvalidInput
 	}
-	if status != nil {
-		if !status.Valid() {
-			return nil, ErrInvalidInput
-		}
-		cur.Status = *status
+	if status != nil && !status.Valid() {
+		return nil, ErrInvalidInput
 	}
-	if maxConcurrency != nil {
-		if *maxConcurrency < 0 {
-			return nil, ErrInvalidInput
-		}
-		cur.MaxConcurrency = *maxConcurrency
+	if maxConcurrency != nil && *maxConcurrency < 0 {
+		return nil, ErrInvalidInput
 	}
-	if quota != nil {
-		if *quota < 0 {
-			return nil, ErrInvalidInput
-		}
-		cur.Quota = *quota
+	if quota != nil && *quota < 0 {
+		return nil, ErrInvalidInput
 	}
-	updated, err := s.store.UpdateKey(ctx, cur)
+	if name == nil && status == nil && maxConcurrency == nil && quota == nil {
+		return cur, nil // 无变更：零写库（对齐"单字段 PUT 只改该字段"的惰性语义）
+	}
+	updated, err := s.store.UpdateKey(ctx, &repository.KeyPatch{
+		ID: keyID, Name: name, Status: status, MaxConcurrency: maxConcurrency, Quota: quota,
+	})
 	if err != nil {
 		return nil, mapRepoErr(err)
 	}
@@ -202,10 +199,16 @@ func (s *Service) DeleteKey(ctx context.Context, userID, keyID int64) error {
 
 // ownedKey 取 key 并校验归属：非本人 key 一律按不存在处理（404，防越权探测
 // 他人 key 存在性）。
+// 软删 key 不可复活（F2）：repo GetKey 不过滤 deleted_at（GET 详情可查已删），
+// 单点过滤覆盖 Get/Update/Rotate/Delete 全路——已删 key 一律 404（删除态不可
+// 变，修复前 UpdateKey/RotateKey 可把已删 key 明文重入鉴权快照复活）。
 func (s *Service) ownedKey(ctx context.Context, userID, keyID int64) (*domain.Key, error) {
 	k, err := s.store.GetKey(ctx, keyID)
 	if err != nil {
 		return nil, mapRepoErr(err)
+	}
+	if k.DeletedAt != nil {
+		return nil, ErrNotFound
 	}
 	if k.UserID != userID {
 		return nil, ErrNotFound

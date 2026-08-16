@@ -146,6 +146,14 @@ type TxStore interface {
 	CreateTempBalance(ctx context.Context, userID int64, amount int64, expiresAt *time.Time, note *string) error
 	CreateUse(ctx context.Context, use *domain.RedemptionUse) error
 	IncrementUsed(ctx context.Context, codeID int64) (bool, error)
+	// 组授予（S3-F2：SetGroupAssignments/SetUserGroups 的替换循环包 WithTx——
+	// 授予/专属倍率/撤销/组内读全部入同一事务，中途失败整体回滚）。
+	GrantGroup(ctx context.Context, groupID, userID int64) error
+	SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error
+	RevokeGroup(ctx context.Context, groupID, userID int64) error
+	ListAssignmentsByGroup(ctx context.Context, groupID int64) ([]*domain.GroupAssignment, error)
+	// ListAssignmentsByUser SetUserGroups 替换循环内读（撤销判定与写同一事务）。
+	ListAssignmentsByUser(ctx context.Context, userID int64) ([]*domain.GroupAssignment, error)
 }
 
 // WithTx 在单事务内执行 fn（评审 I-1）：ent `Tx().Client()` 模式构造 tx 版 Repository
@@ -376,8 +384,8 @@ func (r *Repository) ListKeys(ctx context.Context, q ListQuery) ([]*domain.Key, 
 	return r.Keys.ListKeys(ctx, q)
 }
 
-func (r *Repository) UpdateKey(ctx context.Context, k *domain.Key) (*domain.Key, error) {
-	return r.Keys.UpdateKey(ctx, k)
+func (r *Repository) UpdateKey(ctx context.Context, p *KeyPatch) (*domain.Key, error) {
+	return r.Keys.UpdateKey(ctx, p)
 }
 
 func (r *Repository) RotateKey(ctx context.Context, id int64, newRaw string) (*domain.Key, error) {
@@ -418,6 +426,12 @@ func (r *Repository) ListAssignmentsByGroup(ctx context.Context, groupID int64) 
 
 func (r *Repository) ListGroupsForUser(ctx context.Context, userID int64) ([]*domain.Group, error) {
 	return r.Assignments.ListGroupsForUser(ctx, userID)
+}
+
+// LoadGroupAccounts 单组账号（删组前组内账号校验用——含账号组显式拒绝 409；
+// 与调度器 Loader 同一数据源，已删账号过滤同语义）。
+func (r *Repository) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*domain.Account, error) {
+	return r.Groups.LoadGroupAccounts(ctx, groupID)
 }
 
 // --- settings（Phase 3a） ---
