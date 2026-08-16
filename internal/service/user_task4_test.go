@@ -176,8 +176,8 @@ func TestCreateKeyGetUserFailureNoWrite(t *testing.T) {
 }
 
 // TestRotateKeyGetUserFailureNoDestruction B1-1：GetUser 失败注入 → RotateKey
-// 在写库前终止——DB 行未轮换、旧 hash 未失效、注册面零变化（修复前：先
-// Delete 后 upsert 失败 → DB 已轮换只留新 hash、新 raw 蒸发 → 永久死亡）。
+// 在写库前终止——DB 行未轮换、旧明文未失效、注册面零变化（修复前：先
+// Delete 后 upsert 失败 → DB 已轮换只留新明文、新 raw 蒸发 → 永久死亡）。
 func TestRotateKeyGetUserFailureNoDestruction(t *testing.T) {
 	fs := &getUserFailStore{fakeStore: newFakeStore()}
 	keys := &fakeKeyRegistrar{}
