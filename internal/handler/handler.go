@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -53,7 +54,7 @@ func (h *AdminAPI) Router() http.Handler {
 	return HandlerWithOptions(h, ChiServerOptions{
 		BaseURL: "/admin",
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			writeErr(w, http.StatusBadRequest, err.Error())
+			httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		},
 	})
 }
@@ -81,16 +82,6 @@ func deref[T any](p *T) T {
 // ptr 返回指向 v 的指针（响应契约字段赋值用）。
 func ptr[T any](v T) *T { return &v }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeErr(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]any{"error": msg})
-}
-
 // normalizeIDs 校验批量 ids 1–100 条且去重（返回去重后列表，条数按去重后计）。
 func normalizeIDs(ids []int64) ([]int64, error) {
 	if len(ids) == 0 || len(ids) > 100 {
@@ -106,14 +97,4 @@ func normalizeIDs(ids []int64) ([]int64, error) {
 		out = append(out, id)
 	}
 	return out, nil
-}
-
-// writeBatchServiceErr 批量操作的错误映射：404 需携带缺失 id 信息（service
-// 层把 repo 的 "id=%d missing" 包装进 ErrNotFound），其余走 writeServiceErr。
-func writeBatchServiceErr(w http.ResponseWriter, err error) {
-	if errors.Is(err, service.ErrNotFound) {
-		writeErr(w, http.StatusNotFound, err.Error())
-		return
-	}
-	writeServiceErr(w, err)
 }

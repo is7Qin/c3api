@@ -9,6 +9,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // —— 模板类型化扩展（template_ext 1:1；通用框架——codex 专属账号 ext 见
@@ -19,10 +20,10 @@ import (
 func (h *AdminAPI) GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	e, err := h.svc.GetTemplateExt(r.Context(), id)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPITemplateExt(e))
+	httpface.WriteJSON(w, http.StatusOK, toAPITemplateExt(e))
 }
 
 // PutTemplatesIdExt 幂等写入模板类型化扩展（Create/Update 合一；全列更新含
@@ -33,7 +34,7 @@ func (h *AdminAPI) GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	var in TemplateExt
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	e := &domain.TemplateExt{
@@ -43,10 +44,10 @@ func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 	}
 	saved, err := h.svc.UpsertTemplateExt(r.Context(), e)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPITemplateExt(saved))
+	httpface.WriteJSON(w, http.StatusOK, toAPITemplateExt(saved))
 }
 
 // toAPITemplateExt 模板 ext 领域对象 → 契约类型（template_id 只读，响应带）。

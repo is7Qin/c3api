@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // GET /admin/users-top 实时在途并发排行（spec 2026-08-14）：读门禁快照在途
@@ -25,7 +27,7 @@ func (h *AdminAPI) GetAdminUsersTop(w http.ResponseWriter, r *http.Request, para
 	}
 	key := fmt.Sprintf("ut:%d", top)
 	if v, ok := h.usersTopCache.get(key); ok {
-		writeJSON(w, http.StatusOK, v)
+		httpface.WriteJSON(w, http.StatusOK, v)
 		return
 	}
 	var snap map[int64]int64
@@ -60,7 +62,7 @@ func (h *AdminAPI) GetAdminUsersTop(w http.ResponseWriter, r *http.Request, para
 	}
 	emails, err := h.svc.UserEmails(r.Context(), ids)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]UsersTopEntry, 0, n)
@@ -69,5 +71,5 @@ func (h *AdminAPI) GetAdminUsersTop(w http.ResponseWriter, r *http.Request, para
 	}
 	resp := UsersTopResponse{Users: out, OtherConcurrency: other}
 	h.usersTopCache.set(key, resp)
-	writeJSON(w, http.StatusOK, resp)
+	httpface.WriteJSON(w, http.StatusOK, resp)
 }

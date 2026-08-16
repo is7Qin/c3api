@@ -15,12 +15,15 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
+	serviceerr "github.com/is7qin/c3api/internal/service/errors"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
+// 错误哨兵定义下沉 internal/service/errors（叶子包，单一真相）；别名
+// re-export 保持既有引用同一实例语义。
 var (
-	ErrInvalidCredentials = errors.New("service: invalid email or password")
-	ErrSignupDisabled     = errors.New("service: signup disabled")
+	ErrInvalidCredentials = serviceerr.ErrInvalidCredentials
+	ErrSignupDisabled     = serviceerr.ErrSignupDisabled
 )
 
 // RegisterUser 注册（注册即登录——handler 侧签发 JWT）：

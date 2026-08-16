@@ -21,13 +21,16 @@ import (
 	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
+	serviceerr "github.com/is7qin/c3api/internal/service/errors"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
+// 错误哨兵定义下沉 internal/service/errors（叶子包，单一真相）；此处别名
+// re-export 保持既有引用（errors.Is(err, service.ErrXxx)）同一实例语义。
 var (
-	ErrNotFound     = errors.New("service: not found")
-	ErrInvalidInput = errors.New("service: invalid input")
-	ErrConflict     = errors.New("service: conflict")
+	ErrNotFound     = serviceerr.ErrNotFound
+	ErrInvalidInput = serviceerr.ErrInvalidInput
+	ErrConflict     = serviceerr.ErrConflict
 )
 
 type Store interface {

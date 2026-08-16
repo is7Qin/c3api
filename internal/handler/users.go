@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
@@ -28,14 +29,14 @@ func (h *AdminAPI) GetUsers(w http.ResponseWriter, r *http.Request, params GetUs
 	}
 	rows, total, err := h.svc.ListUsers(r.Context(), q)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]User, 0, len(rows))
 	for _, u := range rows {
 		out = append(out, toAPIUser(u))
 	}
-	writeJSON(w, http.StatusOK, UserListResponse{Total: total, Rows: out})
+	httpface.WriteJSON(w, http.StatusOK, UserListResponse{Total: total, Rows: out})
 }
 
 // PostUsers 创建用户（platform_admin 专属；email 唯一/密码长度校验在
@@ -43,7 +44,7 @@ func (h *AdminAPI) GetUsers(w http.ResponseWriter, r *http.Request, params GetUs
 func (h *AdminAPI) PostUsers(w http.ResponseWriter, r *http.Request) {
 	var in UserCreate
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	role := domain.RoleUser
@@ -57,10 +58,10 @@ func (h *AdminAPI) PostUsers(w http.ResponseWriter, r *http.Request) {
 	u, err := h.svc.CreateUser(r.Context(), in.Email, in.Password, role, status,
 		deref(in.MaxConcurrency), usdToMillis(deref(in.Balance)))
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIUser(u))
+	httpface.WriteJSON(w, http.StatusOK, toAPIUser(u))
 }
 
 // PutUsersId 更新用户（role/status/max_concurrency/balance；变更即时生效——
@@ -72,12 +73,12 @@ func (h *AdminAPI) PostUsers(w http.ResponseWriter, r *http.Request) {
 func (h *AdminAPI) PutUsersId(w http.ResponseWriter, r *http.Request, id int64) {
 	var in UserUpdate
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	u, err := h.svc.GetUser(r.Context(), id)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	patch := &repository.UserPatch{ID: u.ID}
@@ -100,10 +101,10 @@ func (h *AdminAPI) PutUsersId(w http.ResponseWriter, r *http.Request, id int64) 
 	}
 	updated, err := h.svc.UpdateUser(r.Context(), patch)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIUser(updated))
+	httpface.WriteJSON(w, http.StatusOK, toAPIUser(updated))
 }
 
 // GetUsersIdGroups 读取用户被授予的组与各专属倍率（platform_admin；用户视角，
@@ -112,10 +113,10 @@ func (h *AdminAPI) PutUsersId(w http.ResponseWriter, r *http.Request, id int64) 
 func (h *AdminAPI) GetUsersIdGroups(w http.ResponseWriter, r *http.Request, id int64) {
 	ids, mults, err := h.svc.GetUserGroups(r.Context(), id)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, UserGroupsResponse{
+	httpface.WriteJSON(w, http.StatusOK, UserGroupsResponse{
 		GroupIds:    ids,
 		Multipliers: toAPIMultipliers(mults),
 	})
@@ -128,24 +129,24 @@ func (h *AdminAPI) GetUsersIdGroups(w http.ResponseWriter, r *http.Request, id i
 func (h *AdminAPI) PutUsersIdGroups(w http.ResponseWriter, r *http.Request, id int64) {
 	var in UserGroupsBody
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	var mults map[int64]*int
 	if in.Multipliers != nil {
 		m, err := apiMultiplierMap(*in.Multipliers) // map[string]*float64 → map[int64]*int（万分数）
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
+			httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		mults = m
 	}
 	applied, postMults, err := h.svc.SetUserGroups(r.Context(), id, in.GroupIds, mults)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, UserGroupsResponse{
+	httpface.WriteJSON(w, http.StatusOK, UserGroupsResponse{
 		GroupIds:    applied,
 		Multipliers: toAPIMultipliers(postMults),
 	})

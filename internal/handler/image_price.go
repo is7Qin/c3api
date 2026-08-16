@@ -8,13 +8,14 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
 // 图片生成价格管理面（/admin/image-price）：列表 / 手动设价 / 删除手动价
 // （Task A 数据面；images 端点计费价格来源）。PUT/DELETE 的 model 走 query
 // 参数（生成契约签名 params.Model——模型名可含 `/`，同 /pricing 不入路径）；
-// 错误映射走 writeServiceErr（ErrNotFound → 404、ErrConflict → 409、
+// 错误映射走 httpface.WriteServiceErr（ErrNotFound → 404、ErrConflict → 409、
 // ErrInvalidInput → 400——含"至少一价非 nil"校验）。
 // 与 /admin/pricing 同形态同单位（token 价 USD/1M per-million；仅多 per-image
 // USD/张 分量，见换算函数注释）。
@@ -23,7 +24,7 @@ import (
 func (h *AdminAPI) GetImagePrice(w http.ResponseWriter, r *http.Request, params GetImagePriceParams) {
 	q, err := pageToQuery(params.Page, params.PageSize)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	q.Sort = deref(params.Sort)
@@ -35,14 +36,14 @@ func (h *AdminAPI) GetImagePrice(w http.ResponseWriter, r *http.Request, params 
 	}
 	rows, total, err := h.svc.ListImagePrice(r.Context(), q, src, string(deref(params.Provider)), deref(params.Model))
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]ImagePrice, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, toAPIImagePrice(p))
 	}
-	writeJSON(w, http.StatusOK, ImagePriceListResponse{Total: total, Rows: out})
+	httpface.WriteJSON(w, http.StatusOK, ImagePriceListResponse{Total: total, Rows: out})
 }
 
 // PutImagePriceModel 手动设图片价格（API 边界换算——**单位规则与 pricings 相同**）：
@@ -55,7 +56,7 @@ func (h *AdminAPI) GetImagePrice(w http.ResponseWriter, r *http.Request, params 
 func (h *AdminAPI) PutImagePriceModel(w http.ResponseWriter, r *http.Request, params PutImagePriceModelParams) {
 	var in ImagePriceUpsert
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	p, err := h.svc.UpsertManualImagePrice(r.Context(), &repository.ImagePriceManual{
@@ -65,20 +66,20 @@ func (h *AdminAPI) PutImagePriceModel(w http.ResponseWriter, r *http.Request, pa
 		OutputCostPerImageMilli:         usdPerImageToMilliPtr(in.OutputCostPerImage),
 	})
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIImagePrice(p))
+	httpface.WriteJSON(w, http.StatusOK, toAPIImagePrice(p))
 }
 
 // DeleteImagePriceModel 删除手动图片价格：仅 source=manual 可删（litellm 行 →
 // 409、不存在 → 404，service 错误映射），ServerInterface。
 func (h *AdminAPI) DeleteImagePriceModel(w http.ResponseWriter, r *http.Request, params DeleteImagePriceModelParams) {
 	if err := h.svc.DeleteManualImagePrice(r.Context(), params.Model); err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, DeletedResponse{Deleted: true})
+	httpface.WriteJSON(w, http.StatusOK, DeletedResponse{Deleted: true})
 }
 
 // toAPIImagePrice 图片价格领域对象 → 契约类型（API 边界换算：毫分/1M →

@@ -7,6 +7,8 @@ package handler
 import (
 	"net/http"
 	"time"
+
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // GET /admin/ops/workers 运维观测端点（spec 2026-08-11；用户裁决并入管理面）：
@@ -70,7 +72,7 @@ func (h *AdminAPI) GetOpsWorkers(w http.ResponseWriter, r *http.Request) {
 	} else {
 		snaps = []SnapshotState{} // 未装配快照区 → JSON [] 非 null
 	}
-	writeJSON(w, http.StatusOK, WorkersResponse{
+	httpface.WriteJSON(w, http.StatusOK, WorkersResponse{
 		Workers:     ws,
 		Snapshots:   snaps,
 		GeneratedAt: time.Now().UTC(),

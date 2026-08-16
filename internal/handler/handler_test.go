@@ -18,6 +18,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/service"
 )
@@ -49,7 +50,7 @@ func TestAdminFlow(t *testing.T) {
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)
@@ -127,7 +128,7 @@ func TestAdminUpdateTemplateRoundTrip(t *testing.T) {
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)
@@ -189,7 +190,7 @@ func TestParamBindErrorIsErrorResponse(t *testing.T) {
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)
@@ -231,7 +232,7 @@ func TestGetUsageLogs(t *testing.T) {
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)
@@ -257,7 +258,7 @@ func TestGetUsageLogsRequiresFromTo(t *testing.T) {
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)
@@ -283,7 +284,7 @@ func TestGetErrLogsRequiresFromTo(t *testing.T) {
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)
@@ -310,7 +311,7 @@ func TestGetErrLogs(t *testing.T) {
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)
@@ -553,7 +554,7 @@ func newListTestRouter(t *testing.T) (*AdminAPI, http.Handler, func(method, path
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)

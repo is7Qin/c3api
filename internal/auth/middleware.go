@@ -7,10 +7,10 @@ package auth
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // UserStatusProvider 用户状态快照（proxy.Auth 实现；用户变更走 invalidate →
@@ -68,7 +68,7 @@ func RequireRole(roles ...domain.Role) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims, ok := ClaimsFrom(r.Context())
 			if !ok {
-				writeJSONStatus(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			for _, role := range roles {
@@ -77,17 +77,11 @@ func RequireRole(roles ...domain.Role) func(http.Handler) http.Handler {
 					return
 				}
 			}
-			writeJSONStatus(w, http.StatusForbidden, "forbidden")
+			httpface.WriteErr(w, http.StatusForbidden, "forbidden")
 		})
 	}
 }
 
 func writeUnauthorized(w http.ResponseWriter) {
-	writeJSONStatus(w, http.StatusUnauthorized, "unauthorized")
-}
-
-func writeJSONStatus(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write([]byte(`{"error":` + strconv.Quote(msg) + `}`))
+	httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 }

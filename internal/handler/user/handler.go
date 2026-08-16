@@ -9,7 +9,6 @@ package user
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/service"
@@ -47,31 +46,3 @@ func deref[T any](p *T) T {
 
 // ptr 返回指向 v 的指针（构造契约指针字段）。
 func ptr[T any](v T) *T { return &v }
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeErr(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]any{"error": msg})
-}
-
-// writeServiceErr service 错误映射（与 admin 面同语义）。
-func writeServiceErr(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, service.ErrNotFound):
-		writeErr(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, service.ErrInvalidInput):
-		writeErr(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, service.ErrConflict):
-		writeErr(w, http.StatusConflict, err.Error())
-	case errors.Is(err, service.ErrInvalidCredentials):
-		writeErr(w, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, service.ErrSignupDisabled):
-		writeErr(w, http.StatusForbidden, err.Error())
-	default:
-		writeErr(w, http.StatusInternalServerError, "internal error")
-	}
-}

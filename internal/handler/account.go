@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
@@ -37,15 +38,15 @@ func accountFromBody(in AccountCreate) *domain.Account {
 func (h *AdminAPI) PostAccounts(w http.ResponseWriter, r *http.Request) {
 	var in AccountCreate
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	created, err := h.svc.CreateAccount(r.Context(), accountFromBody(in))
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIAccount(created))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(created))
 }
 
 // GetAccounts 账号列表（分页/筛选/排序，含运行时视图，ServerInterface）。
@@ -62,7 +63,7 @@ func (h *AdminAPI) GetAccounts(w http.ResponseWriter, r *http.Request, params Ge
 		sts := strings.Split(*params.Status, ",")
 		for _, s := range sts {
 			if !validAccountStatus(s) {
-				writeErr(w, http.StatusBadRequest, "invalid status "+s)
+				httpface.WriteErr(w, http.StatusBadRequest, "invalid status "+s)
 				return
 			}
 		}
@@ -70,14 +71,14 @@ func (h *AdminAPI) GetAccounts(w http.ResponseWriter, r *http.Request, params Ge
 	}
 	rows, total, err := h.svc.ListAccountViews(r.Context(), q)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]AccountView, 0, len(rows))
 	for _, v := range rows {
 		out = append(out, toAPIAccountView(v))
 	}
-	writeJSON(w, http.StatusOK, AccountListResponse{Total: total, Rows: out})
+	httpface.WriteJSON(w, http.StatusOK, AccountListResponse{Total: total, Rows: out})
 }
 
 // validAccountStatus 校验 status 多值参数（逗号分隔）的枚举值
@@ -96,10 +97,10 @@ func validAccountStatus(s string) bool {
 func (h *AdminAPI) GetAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
 	acc, err := h.svc.GetAccount(r.Context(), id)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIAccount(acc))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
 }
 
 // GetAccountsIdGroups 账号的全部分组 id（编辑回显；账号缺 id → 404，
@@ -107,10 +108,10 @@ func (h *AdminAPI) GetAccountsId(w http.ResponseWriter, r *http.Request, id int6
 func (h *AdminAPI) GetAccountsIdGroups(w http.ResponseWriter, r *http.Request, id int64) {
 	ids, err := h.svc.GetAccountGroups(r.Context(), id)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, AccountGroupsResponse{GroupIds: ids})
+	httpface.WriteJSON(w, http.StatusOK, AccountGroupsResponse{GroupIds: ids})
 }
 
 // PutAccountsId 全量更新账号（ServerInterface；group_ids 缺省 = 分组不变，
@@ -118,26 +119,26 @@ func (h *AdminAPI) GetAccountsIdGroups(w http.ResponseWriter, r *http.Request, i
 func (h *AdminAPI) PutAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
 	var in AccountCreate
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	acc := accountFromBody(in)
 	acc.ID = id
 	updated, err := h.svc.UpdateAccount(r.Context(), acc)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIAccount(updated))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(updated))
 }
 
 // DeleteAccountsId 删除账号（ServerInterface）。
 func (h *AdminAPI) DeleteAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := h.svc.DeleteAccount(r.Context(), id); err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, DeletedResponse{Deleted: true})
+	httpface.WriteJSON(w, http.StatusOK, DeletedResponse{Deleted: true})
 }
 
 // PostAccountsBatchDelete 批量删除账号（事务，全成或全败；删除后调度快照
@@ -145,19 +146,19 @@ func (h *AdminAPI) DeleteAccountsId(w http.ResponseWriter, r *http.Request, id i
 func (h *AdminAPI) PostAccountsBatchDelete(w http.ResponseWriter, r *http.Request) {
 	var in BatchDeleteBody
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	ids, err := normalizeIDs(in.Ids)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := h.svc.DeleteAccountsBatch(r.Context(), ids); err != nil {
-		writeBatchServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, BatchDeleteResponse{Deleted: len(ids)})
+	httpface.WriteJSON(w, http.StatusOK, BatchDeleteResponse{Deleted: len(ids)})
 }
 
 // PostAccountsBatchUpdate 批量更新账号（fields 任意子集；更新后调度快照
@@ -165,24 +166,24 @@ func (h *AdminAPI) PostAccountsBatchDelete(w http.ResponseWriter, r *http.Reques
 func (h *AdminAPI) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
 	var in BatchUpdateAccountsBody
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	ids, err := normalizeIDs(in.Ids)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	p, err := accountPatchFromBody(&in.Fields)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := h.svc.UpdateAccountsBatch(r.Context(), ids, p); err != nil {
-		writeBatchServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, BatchUpdateResponse{Updated: len(ids)})
+	httpface.WriteJSON(w, http.StatusOK, BatchUpdateResponse{Updated: len(ids)})
 }
 
 // accountPatchFromBody 生成类型 fields → repo patch（nil 字段 = 不更新；

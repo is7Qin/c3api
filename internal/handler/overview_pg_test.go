@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/service"
@@ -131,7 +132,7 @@ func overviewPGRouter(t *testing.T, st service.Store, sched service.RuntimeProvi
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)

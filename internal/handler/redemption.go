@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/server"
 	"github.com/is7qin/c3api/internal/service"
@@ -83,14 +84,14 @@ func redemptionValueToAPI(typ domain.RedemptionType, millis int64) float64 {
 func (h *AdminAPI) PostRedemptionCodes(w http.ResponseWriter, r *http.Request) {
 	var in GenerateRequest
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	// 面值边界换算（balance/temp_balance USD → 毫分；concurrency 整数校验）——
 	// 存储恒毫分，service 仍收 int64。
 	value, err := apiRedemptionValueToMillis(domain.RedemptionType(in.Type), in.Value)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	codes, err := h.svc.GenerateCodes(r.Context(), service.GenerateRequest{
@@ -103,14 +104,14 @@ func (h *AdminAPI) PostRedemptionCodes(w http.ResponseWriter, r *http.Request) {
 		Count:             deref(in.Count),
 	}, createdBy(r))
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]RedemptionCode, 0, len(codes))
 	for _, c := range codes {
 		out = append(out, toAPIRedemptionCode(c))
 	}
-	writeJSON(w, http.StatusOK, GenerateResponse{Codes: out})
+	httpface.WriteJSON(w, http.StatusOK, GenerateResponse{Codes: out})
 }
 
 // GetRedemptionCodes 兑换码列表（增强分页范式 + type/status 筛选 + sort 白名单，
@@ -118,7 +119,7 @@ func (h *AdminAPI) PostRedemptionCodes(w http.ResponseWriter, r *http.Request) {
 func (h *AdminAPI) GetRedemptionCodes(w http.ResponseWriter, r *http.Request, params GetRedemptionCodesParams) {
 	q, err := pageToQuery(params.Page, params.PageSize)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	q.Sort = deref(params.Sort)
@@ -135,14 +136,14 @@ func (h *AdminAPI) GetRedemptionCodes(w http.ResponseWriter, r *http.Request, pa
 	}
 	rows, total, err := h.svc.ListCodes(r.Context(), q, typ, st)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]RedemptionCode, 0, len(rows))
 	for _, c := range rows {
 		out = append(out, toAPIRedemptionCode(c))
 	}
-	writeJSON(w, http.StatusOK, RedemptionCodeListResponse{Total: total, Rows: out})
+	httpface.WriteJSON(w, http.StatusOK, RedemptionCodeListResponse{Total: total, Rows: out})
 }
 
 // GetRedemptionCodesIdUses 某码的兑换记录（审计；码缺失 → 404，ServerInterface）。
@@ -150,29 +151,29 @@ func (h *AdminAPI) GetRedemptionCodes(w http.ResponseWriter, r *http.Request, pa
 func (h *AdminAPI) GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Request, id int64) {
 	code, err := h.svc.GetCode(r.Context(), id)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	rows, total, err := h.svc.GetCodeUses(r.Context(), id)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]RedemptionUse, 0, len(rows))
 	for _, u := range rows {
 		out = append(out, toAPIRedemptionUse(code.Type, u))
 	}
-	writeJSON(w, http.StatusOK, RedemptionUseListResponse{Total: total, Rows: out})
+	httpface.WriteJSON(w, http.StatusOK, RedemptionUseListResponse{Total: total, Rows: out})
 }
 
 // PostRedemptionCodesIdDeactivate 单码失效（已失效 no-op 成功；缺失 → 404，
 // ServerInterface）。
 func (h *AdminAPI) PostRedemptionCodesIdDeactivate(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := h.svc.DeactivateCode(r.Context(), id); err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, DeactivateResponse{Deactivated: true})
+	httpface.WriteJSON(w, http.StatusOK, DeactivateResponse{Deactivated: true})
 }
 
 // PostRedemptionCodesBatchDeactivate 批量失效（单事务；已失效 no-op；缺失 id →
@@ -180,20 +181,20 @@ func (h *AdminAPI) PostRedemptionCodesIdDeactivate(w http.ResponseWriter, r *htt
 func (h *AdminAPI) PostRedemptionCodesBatchDeactivate(w http.ResponseWriter, r *http.Request) {
 	var in BatchDeactivateRequest
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	ids, err := normalizeIDs(in.Ids)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	n, err := h.svc.DeactivateCodesBatch(r.Context(), ids)
 	if err != nil {
-		writeBatchServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, BatchDeactivateResponse{Deactivated: int(n)})
+	httpface.WriteJSON(w, http.StatusOK, BatchDeactivateResponse{Deactivated: int(n)})
 }
 
 // toAPIRedemptionCode 兑换码领域对象 → 契约类型（Value 毫分 → 面值换算：按

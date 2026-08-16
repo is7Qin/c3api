@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/is7qin/c3api/internal/auth"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -58,7 +59,7 @@ func NewServer(opts Options) *Server {
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpface.WriteJSON(w, http.StatusOK, map[string]any{
 			"inflight":   s.inflight.Load(),
 			"goroutines": runtime.NumGoroutine(),
 			"heap":       ms.HeapAlloc,

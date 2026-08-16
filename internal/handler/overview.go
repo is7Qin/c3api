@@ -11,6 +11,7 @@ import (
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -33,17 +34,17 @@ func (h *AdminAPI) GetAdminOverview(w http.ResponseWriter, r *http.Request, para
 	utcDay := h.now().UTC().Truncate(24 * time.Hour) // 缓存键与聚合区间同一日界源
 	key := fmt.Sprintf("o:%d:%d:%s", days, groupID, utcDay.Format("2006-01-02"))
 	if v, ok := h.overviewCache.get(key); ok {
-		writeJSON(w, http.StatusOK, v)
+		httpface.WriteJSON(w, http.StatusOK, v)
 		return
 	}
 	data, err := h.svc.Overview(r.Context(), utcDay, days, groupID)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	resp := overviewResponse(data, h.ops.BillingAlerts)
 	h.overviewCache.set(key, resp)
-	writeJSON(w, http.StatusOK, resp)
+	httpface.WriteJSON(w, http.StatusOK, resp)
 }
 
 // overviewResponse 服务端聚合结果 → 契约类型（cost 毫分 /1e5 → USD——API

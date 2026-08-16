@@ -9,6 +9,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // PostUserAuthRegister 注册（signup_enabled 开关检查在 service；注册即登录：
@@ -16,12 +17,12 @@ import (
 func (h *UserAPI) PostUserAuthRegister(w http.ResponseWriter, r *http.Request) {
 	var in UserAuthRegister
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	u, err := h.svc.RegisterUser(r.Context(), in.Email, in.Password)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	h.writeAuthResponse(w, u)
@@ -31,12 +32,12 @@ func (h *UserAPI) PostUserAuthRegister(w http.ResponseWriter, r *http.Request) {
 func (h *UserAPI) PostUserAuthLogin(w http.ResponseWriter, r *http.Request) {
 	var in UserAuthLogin
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	u, err := h.svc.LoginUser(r.Context(), in.Email, in.Password)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	h.writeAuthResponse(w, u)
@@ -46,10 +47,10 @@ func (h *UserAPI) PostUserAuthLogin(w http.ResponseWriter, r *http.Request) {
 func (h *UserAPI) GetUserAuthMe(w http.ResponseWriter, r *http.Request) {
 	u, err := h.svc.GetUserMe(r.Context(), currentUserID(r))
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIUser(u))
+	httpface.WriteJSON(w, http.StatusOK, toAPIUser(u))
 }
 
 // PostUserAuthChangePassword 修改密码：旧密码校验复用登录语义（失败 401 同
@@ -59,23 +60,23 @@ func (h *UserAPI) GetUserAuthMe(w http.ResponseWriter, r *http.Request) {
 func (h *UserAPI) PostUserAuthChangePassword(w http.ResponseWriter, r *http.Request) {
 	var in UserAuthChangePassword
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	if err := h.svc.ChangePassword(r.Context(), currentUserID(r), in.OldPassword, in.NewPassword); err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, ChangePasswordResponse{Updated: true})
+	httpface.WriteJSON(w, http.StatusOK, ChangePasswordResponse{Updated: true})
 }
 
 func (h *UserAPI) writeAuthResponse(w http.ResponseWriter, u *domain.User) {
 	token, err := h.iss.Issue(u.ID, u.Email, string(u.Role))
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "token issuance failed")
+		httpface.WriteErr(w, http.StatusInternalServerError, "token issuance failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, UserAuthResponse{Token: token, User: toAPIUser(u)})
+	httpface.WriteJSON(w, http.StatusOK, UserAuthResponse{Token: token, User: toAPIUser(u)})
 }
 
 // currentUserID 取 RequireJWT 写入 context 的 claims.UserID（JWT 保护端点用）。

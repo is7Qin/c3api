@@ -7,6 +7,7 @@ package user
 import (
 	"net/http"
 
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
 )
@@ -36,19 +37,19 @@ func pageToQuery(page, pageSize *int) (repository.ListQuery, error) {
 func (h *UserAPI) PostUserRedemptions(w http.ResponseWriter, r *http.Request) {
 	var in RedeemRequest
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	apply, err := h.svc.Redeem(r.Context(), in.Code, currentUserID(r))
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	var resp RedeemResponse
 	resp.Applied.Type = RedemptionType(apply.Type)
 	resp.Applied.Value = redemptionValueToAPI(apply.Type, apply.Value)
 	resp.Applied.ResourceExpiresAt = apply.ResourceExpiresAt
-	writeJSON(w, http.StatusOK, resp)
+	httpface.WriteJSON(w, http.StatusOK, resp)
 }
 
 // GetUserRedemptions 我的兑换记录（use 快照 + 码的 type/remark 联查；强制
@@ -56,14 +57,14 @@ func (h *UserAPI) PostUserRedemptions(w http.ResponseWriter, r *http.Request) {
 func (h *UserAPI) GetUserRedemptions(w http.ResponseWriter, r *http.Request, params GetUserRedemptionsParams) {
 	q, err := pageToQuery(params.Page, params.PageSize)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	q.Sort = deref(params.Sort)
 	q.Order = string(deref(params.Order))
 	rows, total, err := h.svc.ListMyRedemptions(r.Context(), currentUserID(r), q)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]RedemptionRecord, 0, len(rows))
@@ -79,5 +80,5 @@ func (h *UserAPI) GetUserRedemptions(w http.ResponseWriter, r *http.Request, par
 			CreatedAt:         rec.CreatedAt,
 		})
 	}
-	writeJSON(w, http.StatusOK, RedemptionRecordListResponse{Total: total, Rows: out})
+	httpface.WriteJSON(w, http.StatusOK, RedemptionRecordListResponse{Total: total, Rows: out})
 }

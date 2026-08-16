@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
@@ -45,12 +46,12 @@ func (h *AdminAPI) GetStats(w http.ResponseWriter, r *http.Request, params GetSt
 	}
 	rows, err := h.svc.QueryStats(r.Context(), sq, granularity)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]StatBucket, 0, len(rows))
 	for _, b := range rows {
 		out = append(out, toAPIStatBucket(b))
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpface.WriteJSON(w, http.StatusOK, out)
 }

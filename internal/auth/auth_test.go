@@ -142,6 +142,10 @@ func TestRequireJWTRejects(t *testing.T) {
 	t.Run("no header", func(t *testing.T) {
 		rec := doReq(t, RequireJWT(iss, fakeUserStatus{}), "")
 		require.Equal(t, http.StatusUnauthorized, rec.Code)
+		// 错误信封统一走 httpface.WriteErr（encoder 编码含尾换行；旧手搓
+		// strconv.Quote 版无尾换行——行为变化，JSON 等价，断言锁定新语义）。
+		require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+		require.Equal(t, "{\"error\":\"unauthorized\"}\n", rec.Body.String())
 	})
 	t.Run("bad token", func(t *testing.T) {
 		rec := doReq(t, RequireJWT(iss, fakeUserStatus{}), "garbage")
@@ -182,6 +186,7 @@ func TestRequireRole(t *testing.T) {
 	}
 	rec := doReq(t, mw, token)
 	require.Equal(t, http.StatusForbidden, rec.Code, "user 角色访问 platform 端点 → 403")
+	require.Equal(t, "{\"error\":\"forbidden\"}\n", rec.Body.String(), "403 信封 encoder 编码含尾换行")
 	rec = doReq(t, mw, adminToken)
 	require.Equal(t, http.StatusOK, rec.Code, "platform_admin 放行")
 }

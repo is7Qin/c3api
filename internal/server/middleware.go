@@ -7,7 +7,6 @@ package server
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -66,7 +66,7 @@ func adminAuth(opts Options) func(http.Handler) http.Handler {
 					}
 				}
 			}
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			httpface.WriteJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		})
 	}
 }
@@ -84,7 +84,7 @@ func inflightLimiter(max int64, c *inflightCounter) func(http.Handler) http.Hand
 			if c.Inc() > max {
 				c.Dec()
 				w.Header().Set("Retry-After", "1")
-				writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "server overloaded"})
+				httpface.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": "server overloaded"})
 				return
 			}
 			defer c.Dec()
@@ -168,16 +168,10 @@ func recoverer(log *logx.Logger) func(http.Handler) http.Handler {
 					if log != nil {
 						log.Error("panic recovered", logx.Any("panic", rec))
 					}
-					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+					httpface.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 				}
 			}()
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }

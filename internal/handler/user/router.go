@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/is7qin/c3api/internal/auth"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -39,7 +40,7 @@ func Router(svc *service.Service, iss *auth.Issuer, users auth.UserStatusProvide
 	return HandlerWithOptions(api, ChiServerOptions{
 		BaseRouter: r,
 		ErrorHandlerFunc: func(w http.ResponseWriter, req *http.Request, err error) {
-			writeErr(w, http.StatusBadRequest, err.Error())
+			httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		},
 	})
 }

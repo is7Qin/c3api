@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // 临时额度管理面（/admin/temp-balances，spec 2026-08-15）：全量视角分页列表
@@ -21,7 +22,7 @@ import (
 func (h *AdminAPI) GetTempBalances(w http.ResponseWriter, r *http.Request, params GetTempBalancesParams) {
 	q, err := pageToQuery(params.Page, params.PageSize)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	if params.Sort == nil {
@@ -42,14 +43,14 @@ func (h *AdminAPI) GetTempBalances(w http.ResponseWriter, r *http.Request, param
 	}
 	rows, total, err := h.svc.ListTempBalances(r.Context(), q, userID)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]AdminTempBalanceRow, 0, len(rows))
 	for _, tb := range rows {
 		out = append(out, toAPIAdminTempBalance(tb))
 	}
-	writeJSON(w, http.StatusOK, AdminTempBalancesResponse{Total: total, Rows: out})
+	httpface.WriteJSON(w, http.StatusOK, AdminTempBalancesResponse{Total: total, Rows: out})
 }
 
 // toAPIAdminTempBalance 临时额度领域对象 → 契约类型（Amount 毫分 → USD /1e5；

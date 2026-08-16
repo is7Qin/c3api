@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
@@ -46,14 +47,14 @@ func (h *UserAPI) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, param
 	}
 	rows, err := h.svc.QueryUsages(r.Context(), lq)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]UserUsageLog, 0, len(rows))
 	for _, item := range rows { // service.QueryUsages 返回 []any（元素为 *domain.UsageLog）
 		l, ok := item.(*domain.UsageLog)
 		if !ok { // 类型不符是内部错误：不能静默丢数据，返回 500
-			writeErr(w, http.StatusInternalServerError, "internal error: unexpected usage log row type")
+			httpface.WriteErr(w, http.StatusInternalServerError, "internal error: unexpected usage log row type")
 			return
 		}
 		out = append(out, toAPIUsageLog(l))
@@ -64,5 +65,5 @@ func (h *UserAPI) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, param
 		next = out[lq.Limit-1].ID
 		out = out[:lq.Limit]
 	}
-	writeJSON(w, http.StatusOK, UserLogsResponse{Rows: out, NextCursor: next})
+	httpface.WriteJSON(w, http.StatusOK, UserLogsResponse{Rows: out, NextCursor: next})
 }

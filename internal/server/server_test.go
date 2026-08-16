@@ -22,6 +22,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
@@ -80,10 +81,10 @@ func TestAdminAuthRequired(t *testing.T) {
 // 触发 chi 重复 Mount panic）。断言 /admin/* 与 /v1/* 分别打到对应 handler。
 func TestAdminAndAIHandlersCoexist(t *testing.T) {
 	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"handler": "admin", "path": r.URL.Path})
+		httpface.WriteJSON(w, http.StatusOK, map[string]any{"handler": "admin", "path": r.URL.Path})
 	})
 	ai := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"handler": "ai", "path": r.URL.Path})
+		httpface.WriteJSON(w, http.StatusOK, map[string]any{"handler": "ai", "path": r.URL.Path})
 	})
 	s := NewServer(Options{AdminToken: "tok", AdminHandler: admin, AIHandler: ai})
 
@@ -211,9 +212,9 @@ func TestAdminAuthTokenOrPlatformJWT(t *testing.T) {
 	require.NoError(t, err)
 	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	s := NewServer(Options{
-		AdminToken: "tok",
-		JWTIssuer:  iss,
-		UserStatus: fakeUserStatus{},
+		AdminToken:   "tok",
+		JWTIssuer:    iss,
+		UserStatus:   fakeUserStatus{},
 		AdminHandler: admin,
 	})
 
@@ -290,9 +291,9 @@ func TestAdminPlatformJWTPartialAdmin(t *testing.T) {
 	tok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin))
 	require.NoError(t, err)
 	s := NewServer(Options{
-		AdminToken: "tok",
-		JWTIssuer:  iss,
-		UserStatus: fakeUserStatus{disabled: map[int64]bool{1: true}},
+		AdminToken:   "tok",
+		JWTIssuer:    iss,
+		UserStatus:   fakeUserStatus{disabled: map[int64]bool{1: true}},
 		AdminHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }),
 	})
 	req := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)

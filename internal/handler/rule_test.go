@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // rulesDo 构造带 admin token 中间件的 /admin 路由，返回请求执行函数（/rules CRUD 往返）。
@@ -23,7 +25,7 @@ func rulesDo(t *testing.T) func(method, path, body string) *httptest.ResponseRec
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Header.Get("Authorization") != "Bearer admin-tok" {
-				writeErr(w, http.StatusUnauthorized, "unauthorized")
+				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			next.ServeHTTP(w, req)

@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
@@ -15,7 +16,7 @@ import (
 // 删除手动价（价格表三件套；search 起，audio/video 等未来 per-unit 端点复用）。
 // 与 /admin/image-price 同形态，仅价格单位不同（USD/次 → 毫分/次，见换算函数
 // 注释）；PUT/DELETE 的 model 走 query 参数（生成契约签名 params.Model——模型名
-// 可含 `/`，同 /pricing 不入路径）；错误映射走 writeServiceErr（ErrNotFound →
+// 可含 `/`，同 /pricing 不入路径）；错误映射走 httpface.WriteServiceErr（ErrNotFound →
 // 404、ErrConflict → 409、ErrInvalidInput → 400——含"price_per_call 必填"校验）。
 
 // GetFunctionPrices 按单元价列表（分页/筛选/排序，对齐 GetImagePrice），
@@ -23,7 +24,7 @@ import (
 func (h *AdminAPI) GetFunctionPrices(w http.ResponseWriter, r *http.Request, params GetFunctionPricesParams) {
 	q, err := pageToQuery(params.Page, params.PageSize)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	q.Sort = deref(params.Sort)
@@ -35,14 +36,14 @@ func (h *AdminAPI) GetFunctionPrices(w http.ResponseWriter, r *http.Request, par
 	}
 	rows, total, err := h.svc.ListFunctionPrice(r.Context(), q, src, string(deref(params.Provider)), deref(params.Model))
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := make([]FunctionPrice, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, toAPIFunctionPrice(p))
 	}
-	writeJSON(w, http.StatusOK, FunctionPriceListResponse{Total: total, Rows: out})
+	httpface.WriteJSON(w, http.StatusOK, FunctionPriceListResponse{Total: total, Rows: out})
 }
 
 // PutFunctionPricesModel 手动设按单元价（API 边界换算：收 USD/次——litellm
@@ -54,7 +55,7 @@ func (h *AdminAPI) GetFunctionPrices(w http.ResponseWriter, r *http.Request, par
 func (h *AdminAPI) PutFunctionPricesModel(w http.ResponseWriter, r *http.Request, params PutFunctionPricesModelParams) {
 	var in FunctionPriceUpsert
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	p, err := h.svc.UpsertManualFunctionPrice(r.Context(), &repository.FunctionPriceManual{
@@ -62,10 +63,10 @@ func (h *AdminAPI) PutFunctionPricesModel(w http.ResponseWriter, r *http.Request
 		PricePerCall: usdPerCallToMilliPtr(in.PricePerCall),
 	})
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIFunctionPrice(p))
+	httpface.WriteJSON(w, http.StatusOK, toAPIFunctionPrice(p))
 }
 
 // DeleteFunctionPricesModel 删除手动按单元价：仅 source=manual 可删（litellm
@@ -73,10 +74,10 @@ func (h *AdminAPI) PutFunctionPricesModel(w http.ResponseWriter, r *http.Request
 // bootstrap 幂等补回），ServerInterface。
 func (h *AdminAPI) DeleteFunctionPricesModel(w http.ResponseWriter, r *http.Request, params DeleteFunctionPricesModelParams) {
 	if err := h.svc.DeleteManualFunctionPrice(r.Context(), params.Model); err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, DeletedResponse{Deleted: true})
+	httpface.WriteJSON(w, http.StatusOK, DeletedResponse{Deleted: true})
 }
 
 // toAPIFunctionPrice 按单元价领域对象 → 契约类型（API 边界换算：毫分/次 →

@@ -9,6 +9,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // —— 账号类型化鉴权扩展（account_ext 1:1；codex 专用——installation_id/
@@ -20,10 +21,10 @@ import (
 func (h *AdminAPI) GetAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	e, err := h.svc.GetAccountExt(r.Context(), id)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIAccountExt(e))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccountExt(e))
 }
 
 // PutAccountsIdExt 幂等写入账号类型化鉴权扩展（Create/Update 合一；全列更新
@@ -34,7 +35,7 @@ func (h *AdminAPI) GetAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	var in AccountExt
 	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	e := &domain.AccountExt{
@@ -52,10 +53,10 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 	}
 	saved, err := h.svc.UpsertAccountExt(r.Context(), e)
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPIAccountExt(saved))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccountExt(saved))
 }
 
 // toAPIAccountExt 账号 ext 领域对象 → 契约类型（account_id 只读，响应带）。

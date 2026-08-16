@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // 我的临时额度（/user/temp-balances，spec 2026-08-15）：仅有效额度（未过期且
@@ -19,7 +20,7 @@ import (
 func (h *UserAPI) GetUserTempBalances(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.svc.ListUserTempBalances(r.Context(), currentUserID(r))
 	if err != nil {
-		writeServiceErr(w, err)
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	// 合计先以毫分整数 Σ 再一次性 /1e5（避免逐行浮点累加误差）。
@@ -29,7 +30,7 @@ func (h *UserAPI) GetUserTempBalances(w http.ResponseWriter, r *http.Request) {
 		totalMillis += tb.Amount
 		out = append(out, toAPITempBalance(tb))
 	}
-	writeJSON(w, http.StatusOK, TempBalancesResponse{
+	httpface.WriteJSON(w, http.StatusOK, TempBalancesResponse{
 		TotalUsd: float64(totalMillis) / 1e5,
 		Rows:     out,
 	})
