@@ -15,7 +15,7 @@ import (
 // GetUserKeys 我的 key 列表（分页/排序；明文长期回显，ServerInterface）。
 func (h *UserAPI) GetUserKeys(w http.ResponseWriter, r *http.Request, params GetUserKeysParams) {
 	q := repository.ListQuery{
-		Limit:  int(deref(params.Limit)),
+		Limit:  httpface.ClampLimit(int(deref(params.Limit))),
 		Offset: int(deref(params.Offset)),
 		Name:   deref(params.Name),
 		Sort:   deref(params.Sort),

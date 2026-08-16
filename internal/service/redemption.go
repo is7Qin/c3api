@@ -154,12 +154,13 @@ func (s *Service) GetCode(ctx context.Context, id int64) (*domain.RedemptionCode
 
 // GetCodeUses 某码的兑换记录（审计，/admin/redemption-codes/{id}/uses）：
 // 码不存在 → 404（mapRepoErr 含详情）。use 快照不存码类型——handler 需先
-// GetCode 取 type 做面值换算。
-func (s *Service) GetCodeUses(ctx context.Context, codeID int64) ([]*domain.RedemptionUse, int64, error) {
+// GetCode 取 type 做面值换算。q 直透 ListCodeUses（limit/offset 缺省归一在
+// repo——≤0→20/<0→0；spec 2026-08-17 补分页参数）。
+func (s *Service) GetCodeUses(ctx context.Context, codeID int64, q repository.ListQuery) ([]*domain.RedemptionUse, int64, error) {
 	if _, err := s.store.GetCode(ctx, codeID); err != nil {
 		return nil, 0, mapRepoErr(err)
 	}
-	return s.store.ListCodeUses(ctx, codeID, repository.ListQuery{})
+	return s.store.ListCodeUses(ctx, codeID, q)
 }
 
 // ListMyRedemptions 我的兑换记录（/user/redemptions）：use 快照 + 码的 type/remark

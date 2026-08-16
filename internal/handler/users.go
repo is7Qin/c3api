@@ -21,7 +21,7 @@ import (
 // ServerInterface）。
 func (h *AdminAPI) GetUsers(w http.ResponseWriter, r *http.Request, params GetUsersParams) {
 	q := repository.ListQuery{
-		Limit:  int(deref(params.Limit)),
+		Limit:  httpface.ClampLimit(int(deref(params.Limit))),
 		Offset: int(deref(params.Offset)),
 		Email:  deref(params.Email),
 		Sort:   deref(params.Sort),

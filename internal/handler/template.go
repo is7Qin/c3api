@@ -62,7 +62,7 @@ func (h *AdminAPI) PostTemplates(w http.ResponseWriter, r *http.Request) {
 // GetTemplates 模板列表（分页/筛选/排序，ServerInterface）。
 func (h *AdminAPI) GetTemplates(w http.ResponseWriter, r *http.Request, params GetTemplatesParams) {
 	q := repository.ListQuery{
-		Limit:  int(deref(params.Limit)),
+		Limit:  httpface.ClampLimit(int(deref(params.Limit))),
 		Offset: int(deref(params.Offset)),
 		Name:   deref(params.Name),
 		Sort:   deref(params.Sort),

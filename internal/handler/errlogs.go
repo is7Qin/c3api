@@ -7,7 +7,6 @@ package handler
 import (
 	"net/http"
 
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
@@ -59,12 +58,7 @@ func (h *AdminAPI) GetErrLogs(w http.ResponseWriter, r *http.Request, params Get
 		return
 	}
 	out := make([]ErrLog, 0, len(rows))
-	for _, item := range rows { // service.QueryErrLogs 返回 []any（元素为 *domain.UsageLog）
-		l, ok := item.(*domain.UsageLog)
-		if !ok { // 类型不符是内部错误：不能静默丢数据，返回 500
-			httpface.WriteErr(w, http.StatusInternalServerError, "internal error: unexpected err log row type")
-			return
-		}
+	for _, l := range rows { // service.QueryErrLogs 直透 []*domain.UsageLog（spec 2026-08-17）
 		out = append(out, toAPIErrLog(l))
 	}
 	// limit+1 探测（与 GetUsageLogs 同语义）：next_cursor = 本页最后一条 id。

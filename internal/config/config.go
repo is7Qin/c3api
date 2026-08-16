@@ -219,6 +219,10 @@ func validate(c *Config) error {
 		{"usage.stats_agg_interval", c.Usage.StatsAggInterval, true},
 		{"billing.flush_interval", c.Billing.FlushInterval, false},
 		{"billing.balance_refresh_interval", c.Billing.BalanceRefreshInterval, false},
+		// upstream 连接池超时：0 = 永不回收 idle 连接 / 无拨号超时（与 fail-fast
+		// 哲学相悖——spec 2026-08-17 补下限；默认 90s/10s 安全不受影响）。
+		{"upstream.idle_conn_timeout", c.Upstream.IdleConnTimeout, false},
+		{"upstream.dial_timeout", c.Upstream.DialTimeout, false},
 	} {
 		if d.allowZero && d.value == 0 {
 			continue
@@ -237,6 +241,9 @@ func validate(c *Config) error {
 		{"scheduler.default_max_concurrency", c.Scheduler.DefaultMaxConcurrency},
 		{"db.max_conns", c.DB.MaxConns},
 		{"proxy.failover_attempts", c.Proxy.FailoverAttempts},
+		// proxy.max_body_size：n<1 经 MaxBytesReader 归一 0 → 全量非空请求 413
+		// （internal/proxy/caller.go 用法；spec 2026-08-17 补下限，启动即拒绝）。
+		{"proxy.max_body_size", int(c.Proxy.MaxBodySize)},
 	} {
 		if n.value < 1 {
 			return fmt.Errorf("%s must be >= 1 (got %d)", n.path, n.value)

@@ -5,6 +5,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -1485,7 +1486,23 @@ func (f *fakeStore) ListCodeUses(ctx context.Context, codeID int64, q repository
 		c := *u
 		out = append(out, &c)
 	}
-	return out, int64(len(out)), nil
+	// 镜像真实 repo 缺省排序（sort=id, order=desc）——offset 翻页需确定性顺序。
+	slices.SortFunc(out, func(a, b *domain.RedemptionUse) int { return cmp.Compare(b.ID, a.ID) })
+	total := len(out)
+	if q.Limit <= 0 {
+		q.Limit = 20
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	if q.Offset >= total {
+		out = nil
+	} else if end := q.Offset + q.Limit; end < total {
+		out = out[q.Offset:end]
+	} else {
+		out = out[q.Offset:]
+	}
+	return out, int64(total), nil
 }
 
 // ListUsesByUser 某用户的兑换记录（/user/redemptions）：use + 码联查（码的

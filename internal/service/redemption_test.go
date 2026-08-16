@@ -199,11 +199,11 @@ func TestGetCodeUses(t *testing.T) {
 	svc, fs, _ := newRedemptionSvc()
 	ctx := context.Background()
 
-	_, _, err := svc.GetCodeUses(ctx, 99999)
+	_, _, err := svc.GetCodeUses(ctx, 99999, repository.ListQuery{})
 	require.ErrorIs(t, err, ErrNotFound, "码不存在 → 404")
 
 	c := genOne(t, svc, GenerateRequest{Type: domain.RedemptionTypeBalance, Value: 100}, 0)
-	uses, total, err := svc.GetCodeUses(ctx, c.ID)
+	uses, total, err := svc.GetCodeUses(ctx, c.ID, repository.ListQuery{})
 	require.NoError(t, err)
 	require.Zero(t, total)
 	require.Empty(t, uses)
@@ -211,13 +211,27 @@ func TestGetCodeUses(t *testing.T) {
 	u := seedUser(t, fs, "uses@example.com", 0, 0)
 	_, err = svc.Redeem(ctx, c.Code, u.ID)
 	require.NoError(t, err)
-	uses, total, err = svc.GetCodeUses(ctx, c.ID)
+	uses, total, err = svc.GetCodeUses(ctx, c.ID, repository.ListQuery{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), total)
 	require.Len(t, uses, 1)
 	require.Equal(t, u.ID, uses[0].UserID)
 	require.Equal(t, int64(100), uses[0].Value, "兑换时的值快照")
 	require.Nil(t, uses[0].ResourceExpiresAt, "balance 码资源无到期 → nil")
+
+	// 分页（spec 2026-08-17 补参数）：25 个不同用户各兑一次 → 25 条；limit/offset
+	// 翻页取全（此前 GetCodeUses 空 query 恒 20 行截断、Total 失真；同一用户
+	// 复兑同一码 → 409 已兑换，见评审 M-1）。
+	gen := genOne(t, svc, GenerateRequest{Type: domain.RedemptionTypeBalance, Value: 100, MaxUses: 100}, 0)
+	for i := 0; i < 25; i++ {
+		u2 := seedUser(t, fs, fmt.Sprintf("p%d@example.com", i), 0, 0)
+		_, err = svc.Redeem(ctx, gen.Code, u2.ID)
+		require.NoError(t, err)
+	}
+	uses, total, err = svc.GetCodeUses(ctx, gen.ID, repository.ListQuery{Limit: 10, Offset: 20})
+	require.NoError(t, err)
+	require.Equal(t, int64(25), total, "Total 恒全量（不随分页裁剪）")
+	require.Len(t, uses, 5, "limit=10&offset=20 → 尾页 5 条（此前恒 20 行不可翻页）")
 }
 
 // TestDeactivateCode 单码失效：缺失 → 404 含详情；已 disabled → no-op 成功。

@@ -145,7 +145,7 @@ func (f *fakeStore) ListTemplates(ctx context.Context, q repository.ListQuery) (
 		c := *t
 		out = append(out, &c)
 	}
-	return out, int64(len(f.tpls)), nil
+	return paginate(out, q), int64(len(out)), nil
 }
 
 func (f *fakeStore) UpdateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
@@ -198,7 +198,7 @@ func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([
 		c := *a
 		out = append(out, &c)
 	}
-	return out, int64(len(f.accs)), nil
+	return paginate(out, q), int64(len(out)), nil
 }
 
 func (f *fakeStore) UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
@@ -254,7 +254,7 @@ func (f *fakeStore) ListGroups(ctx context.Context, q repository.ListQuery) ([]*
 		c := *g
 		out = append(out, &c)
 	}
-	return out, int64(len(out)), nil
+	return paginate(out, q), int64(len(out)), nil
 }
 
 func (f *fakeStore) UpdateGroup(ctx context.Context, g *domain.Group) (*domain.Group, error) {
@@ -855,7 +855,7 @@ func (f *fakeStore) ListUsers(ctx context.Context, q repository.ListQuery) ([]*d
 		c := *u
 		out = append(out, &c)
 	}
-	return out, int64(len(out)), nil
+	return paginate(out, q), int64(len(out)), nil
 }
 
 func (f *fakeStore) UpdateUser(ctx context.Context, p *repository.UserPatch) (*domain.User, error) {
@@ -992,7 +992,27 @@ func (f *fakeStore) ListKeysByUser(ctx context.Context, userID int64, q reposito
 		c := *k
 		out = append(out, &c)
 	}
-	return out, int64(len(out)), nil
+	return paginate(out, q), int64(len(out)), nil
+}
+
+// paginate 测试 fake 的分页裁剪（镜像真实 repo 语义：Limit ≤0 → 20、
+// Offset <0 → 0；total 由调用方用裁剪前全量返回）。
+func paginate[T any](rows []T, q repository.ListQuery) []T {
+	if q.Limit <= 0 {
+		q.Limit = 20
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	total := len(rows)
+	if q.Offset >= total {
+		return nil
+	}
+	end := q.Offset + q.Limit
+	if end > total {
+		end = total
+	}
+	return rows[q.Offset:end]
 }
 
 // ListKeys 管理端全量 key 列表（/admin/keys：name 模糊 + user_id/group_id
@@ -1457,7 +1477,23 @@ func (f *fakeStore) ListCodeUses(ctx context.Context, codeID int64, q repository
 		c := *u
 		out = append(out, &c)
 	}
-	return out, int64(len(out)), nil
+	// 镜像真实 repo 缺省排序（sort=id, order=desc）——offset 翻页需确定性顺序。
+	slices.SortFunc(out, func(a, b *domain.RedemptionUse) int { return cmp.Compare(b.ID, a.ID) })
+	total := len(out)
+	if q.Limit <= 0 {
+		q.Limit = 20
+	}
+	if q.Offset < 0 {
+		q.Offset = 0
+	}
+	if q.Offset >= total {
+		out = nil
+	} else if end := q.Offset + q.Limit; end < total {
+		out = out[q.Offset:end]
+	} else {
+		out = out[q.Offset:]
+	}
+	return out, int64(total), nil
 }
 
 // ListUsesByUser 某用户的兑换记录（/user/redemptions）：use + 码联查（码的

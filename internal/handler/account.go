@@ -52,7 +52,7 @@ func (h *AdminAPI) PostAccounts(w http.ResponseWriter, r *http.Request) {
 // GetAccounts 账号列表（分页/筛选/排序，含运行时视图，ServerInterface）。
 func (h *AdminAPI) GetAccounts(w http.ResponseWriter, r *http.Request, params GetAccountsParams) {
 	q := repository.ListQuery{
-		Limit:      int(deref(params.Limit)),
+		Limit:      httpface.ClampLimit(int(deref(params.Limit))),
 		Offset:     int(deref(params.Offset)),
 		Name:       deref(params.Name),
 		Sort:       deref(params.Sort),

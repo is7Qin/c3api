@@ -581,7 +581,7 @@ func TestGetTemplatesParams(t *testing.T) {
 		"supported_formats":["openai-chat"],"models":["gpt-4o"]}`)
 	require.Equal(t, 200, rec.Code, "create: %s", rec.Body.String())
 
-	rec = do(http.MethodGet, "/admin/templates?limit=5&offset=10&name=openai&sort=name&order=asc", "")
+	rec = do(http.MethodGet, "/admin/templates?limit=5&offset=0&name=openai&sort=name&order=asc", "")
 	require.Equal(t, 200, rec.Code, "list: %s", rec.Body.String())
 	var body TemplateListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))

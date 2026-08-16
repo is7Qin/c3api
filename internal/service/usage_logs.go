@@ -10,34 +10,22 @@ package service
 import (
 	"context"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
 // QueryUsages usage_logs 计费明细分页查询（/usage_logs API；错误行含
 // abort/failover 半异常标记——error_type 过滤保留）。keyset 游标分页：
 // 返回行可能含 limit+1 探测行，next_cursor 组装在 handler。
-func (s *Service) QueryUsages(ctx context.Context, q repository.UsageQuery) ([]any, error) {
-	rows, err := s.store.QueryUsages(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]any, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, r)
-	}
-	return out, nil
+// 返回 []*domain.UsageLog 直透（不再擦除为 []any——spec 2026-08-17 边界收敛，
+// 类型信息保留，handler 断言删除）。
+func (s *Service) QueryUsages(ctx context.Context, q repository.UsageQuery) ([]*domain.UsageLog, error) {
+	return s.store.QueryUsages(ctx, q)
 }
 
 // QueryErrLogs err_logs 错误明细分页查询（/err_logs API：完整错误面——拒绝 +
-// 异常双轨，status_code/error_type 全值）。keyset 游标分页同 QueryUsages。
-func (s *Service) QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) ([]any, error) {
-	rows, err := s.store.QueryErrLogs(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]any, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, r)
-	}
-	return out, nil
+// 异常双轨，status_code/error_type 全值；行类型同为 *domain.UsageLog——
+// err_logs 表复用该领域类型）。keyset 游标分页同 QueryUsages。
+func (s *Service) QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) ([]*domain.UsageLog, error) {
+	return s.store.QueryErrLogs(ctx, q)
 }

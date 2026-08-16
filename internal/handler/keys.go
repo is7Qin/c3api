@@ -23,7 +23,7 @@ import (
 // （20/0），sort/order 缺省（id/desc）与白名单校验在 sortOrder。
 func (h *AdminAPI) GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams) {
 	q := repository.ListQuery{
-		Limit:   int(deref(params.Limit)),
+		Limit:   httpface.ClampLimit(int(deref(params.Limit))),
 		Offset:  int(deref(params.Offset)),
 		Name:    deref(params.Name),
 		UserID:  deref(params.UserId),

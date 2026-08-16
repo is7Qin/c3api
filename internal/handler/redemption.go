@@ -148,13 +148,17 @@ func (h *AdminAPI) GetRedemptionCodes(w http.ResponseWriter, r *http.Request, pa
 
 // GetRedemptionCodesIdUses 某码的兑换记录（审计；码缺失 → 404，ServerInterface）。
 // 面值换算需码的 type（use 行不存类型——与前端 uses 弹窗同构：取码行 Type 换算）。
-func (h *AdminAPI) GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Request, id int64) {
+// limit/offset 直透 ListQuery（缺省归一在 repo——spec 2026-08-17 补分页）。
+func (h *AdminAPI) GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Request, id int64, params GetRedemptionCodesIdUsesParams) {
 	code, err := h.svc.GetCode(r.Context(), id)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	rows, total, err := h.svc.GetCodeUses(r.Context(), id)
+	rows, total, err := h.svc.GetCodeUses(r.Context(), id, repository.ListQuery{
+		Limit:  int(deref(params.Limit)),
+		Offset: int(deref(params.Offset)),
+	})
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return

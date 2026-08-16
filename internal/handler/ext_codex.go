@@ -34,7 +34,7 @@ func (h *AdminAPI) GetAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 // （service 校验）。
 func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	var in AccountExt
-	if err := decode(r, &in); err != nil {
+	if err := decodeLenient(r, &in); err != nil { // ext 专用宽松解码（忽略未知字段，见 ext.go）
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

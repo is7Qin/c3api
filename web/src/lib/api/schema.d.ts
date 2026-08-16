@@ -1248,7 +1248,7 @@ export interface components {
             MaxConcurrency?: number;
             /**
              * Format: double
-             * @description 余额 USD（浮点；内部存储毫分——1 USD = 100
+             * @description 余额 USD（浮点；内部存储毫分——1 USD = 100,000 毫分，API 边界换算）
              */
             Balance?: number;
             /** Format: date-time */
@@ -1285,7 +1285,7 @@ export interface components {
             max_concurrency?: number;
             /**
              * Format: double
-             * @description 余额 USD（浮点，≥ 0；1 USD = 100
+             * @description 余额 USD（浮点，≥ 0；1 USD = 100,000 毫分）
              */
             balance?: number;
         };
@@ -1295,7 +1295,7 @@ export interface components {
             max_concurrency?: number;
             /**
              * Format: double
-             * @description 余额 USD（浮点，≥ 0；1 USD = 100
+             * @description 余额 USD（浮点，≥ 0；1 USD = 100,000 毫分）
              */
             balance?: number;
         };
@@ -1547,7 +1547,7 @@ export interface components {
             id: number;
             /**
              * Format: double
-             * @description 金额 USD（毫分 /1e5；1 USD = 100
+             * @description 金额 USD（毫分 /1e5；1 USD = 100,000 毫分）
              */
             amount_usd: number;
             /**
@@ -1573,7 +1573,7 @@ export interface components {
             user_id: number;
             /**
              * Format: double
-             * @description 金额 USD（毫分 /1e5；1 USD = 100
+             * @description 金额 USD（毫分 /1e5；1 USD = 100,000 毫分）
              */
             amount_usd: number;
             /**
@@ -1639,12 +1639,12 @@ export interface components {
             Model: string;
             /**
              * Format: double
-             * @description USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+             * @description USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）
              */
             PromptPricePerMillion: number;
             /**
              * Format: double
-             * @description USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+             * @description USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）
              */
             CompletionPricePerMillion: number;
             /**
@@ -1666,7 +1666,7 @@ export interface components {
             CacheCreationPricePerMillion?: number | null;
             /**
              * Format: double
-             * @description service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100
+             * @description service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价
              */
             PriorityPromptPricePerMillion?: number | null;
             /** Format: double */
@@ -1677,7 +1677,7 @@ export interface components {
             PriorityCacheCreationPricePerMillion?: number | null;
             /**
              * Format: double
-             * @description service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100
+             * @description service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价
              */
             FlexPromptPricePerMillion?: number | null;
             /** Format: double */
@@ -1698,7 +1698,7 @@ export interface components {
             AboveThreshold?: number | null;
             /**
              * Format: double
-             * @description 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+             * @description 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；nil = 该分量不拆段
              */
             AbovePromptPricePerMillion?: number | null;
             /** Format: double */
@@ -1744,14 +1744,14 @@ export interface components {
         PricingUpsert: {
             /**
              * Format: double
-             * @description USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+             * @description USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）；≥ 0
              */
             prompt_price_per_million: number;
             /** Format: double */
             completion_price_per_million: number;
             /**
              * Format: double
-             * @description 缓存读取价（USD/1M tokens；内部存储毫分——1 USD = 100
+             * @description 缓存读取价（USD/1M tokens；内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省 = 不设缓存价（落库 NULL）
              */
             cache_read_price_per_million?: number | null;
             /**
@@ -1761,7 +1761,7 @@ export interface components {
             cache_creation_price_per_million?: number | null;
             /**
              * Format: double
-             * @description service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100
+             * @description service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）
              */
             priority_prompt_price_per_million?: number | null;
             /** Format: double */
@@ -1772,7 +1772,7 @@ export interface components {
             priority_cache_creation_price_per_million?: number | null;
             /**
              * Format: double
-             * @description service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100
+             * @description service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）
              */
             flex_prompt_price_per_million?: number | null;
             /** Format: double */
@@ -1793,7 +1793,7 @@ export interface components {
             above_threshold?: number | null;
             /**
              * Format: double
-             * @description 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+             * @description 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；缺省/null = 该分量不拆段
              */
             above_prompt_price_per_million?: number | null;
             /** Format: double */
@@ -1851,7 +1851,7 @@ export interface components {
             Model: string;
             /**
              * Format: double
-             * @description image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算，1 USD = 100
+             * @description image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算，1 USD = 100,000 毫分）；null = 无该分量价
              */
             InputImageTokenPricePerMillion?: number | null;
             /**
@@ -1899,7 +1899,7 @@ export interface components {
             Model: string;
             /**
              * Format: double
-             * @description 按单元价（USD/次——litellm 原生口径 input_cost_per_query；内部存储毫分/次，×1e5 换算，1 USD = 100
+             * @description 按单元价（USD/次——litellm 原生口径 input_cost_per_query；内部存储毫分/次，×1e5 换算，1 USD = 100,000 毫分，**与 token 价不同换算系**，计费不走 /1e6 除法）；null = 无按单元价
              */
             PricePerCall?: number | null;
             /** @description litellm_provider（litellm 行才有；manual 行 nil） */
@@ -1972,7 +1972,7 @@ export interface components {
             InputTokens?: number;
             /**
              * Format: int64
-             * @description 输入单价快照（每 M token 毫分，1 USD = 100
+             * @description 输入单价快照（每 M token 毫分，1 USD = 100,000 毫分；pricing 同款单位）；null = 未计费路径
              */
             PriceInputMillis?: number | null;
             /** Format: int64 */
@@ -2000,7 +2000,7 @@ export interface components {
             PriceCacheCreationMillis?: number | null;
             /**
              * Format: int64
-             * @description 计费成本（毫分，1 USD = 100
+             * @description 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0
              */
             Cost?: number;
             /** @description 请求 service_tier 归一化值（priority/flex/fast/auto）；空 = 未计费路径 */
@@ -2044,7 +2044,7 @@ export interface components {
             InputTokens?: number;
             /**
              * Format: int64
-             * @description 输入单价快照（每 M token 毫分，1 USD = 100
+             * @description 输入单价快照（每 M token 毫分，1 USD = 100,000 毫分；pricing 同款单位）；null = 未计费路径
              */
             PriceInputMillis?: number | null;
             /** Format: int64 */
@@ -2072,7 +2072,7 @@ export interface components {
             PriceCacheCreationMillis?: number | null;
             /**
              * Format: int64
-             * @description 计费成本（毫分，1 USD = 100
+             * @description 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0
              */
             Cost?: number;
             /** @description 请求 service_tier 归一化值（priority/flex/fast/auto）；空 = 未计费路径 */
@@ -3474,7 +3474,10 @@ export interface operations {
     };
     GetRedemptionCodesIdUses: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
             header?: never;
             path: {
                 id: number;

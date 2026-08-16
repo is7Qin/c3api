@@ -7,7 +7,6 @@ package handler
 import (
 	"net/http"
 
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
@@ -58,12 +57,7 @@ func (h *AdminAPI) GetUsageLogs(w http.ResponseWriter, r *http.Request, params G
 		return
 	}
 	out := make([]UsageLog, 0, len(rows))
-	for _, item := range rows { // service.QueryUsages 返回 []any（元素为 *domain.UsageLog）
-		l, ok := item.(*domain.UsageLog)
-		if !ok { // 类型不符是内部错误：不能静默丢数据，返回 500
-			httpface.WriteErr(w, http.StatusInternalServerError, "internal error: unexpected usage log row type")
-			return
-		}
+	for _, l := range rows { // service.QueryUsages 直透 []*domain.UsageLog（spec 2026-08-17）
 		out = append(out, toAPIUsageLog(l))
 	}
 	// limit+1 探测（repo 多取 1 行）：行数 > limit = 还有下一页，

@@ -444,7 +444,7 @@ type AdminKeyListResponse struct {
 
 // AdminTempBalanceRow defines model for AdminTempBalanceRow.
 type AdminTempBalanceRow struct {
-	// AmountUsd 金额 USD（毫分 /1e5；1 USD = 100
+	// AmountUsd 金额 USD（毫分 /1e5；1 USD = 100,000 毫分）
 	AmountUsd float64   `json:"amount_usd"`
 	CreatedAt time.Time `json:"created_at"`
 
@@ -569,7 +569,7 @@ type FunctionPrice struct {
 	// Model 模型/功能标识（litellm search 模型名 或 codex-search 固定标识）
 	Model string `json:"Model"`
 
-	// PricePerCall 按单元价（USD/次——litellm 原生口径 input_cost_per_query；内部存储毫分/次，×1e5 换算，1 USD = 100
+	// PricePerCall 按单元价（USD/次——litellm 原生口径 input_cost_per_query；内部存储毫分/次，×1e5 换算，1 USD = 100,000 毫分，**与 token 价不同换算系**，计费不走 /1e6 除法）；null = 无按单元价
 	PricePerCall *float64 `json:"PricePerCall"`
 
 	// Provider litellm_provider（litellm 行才有；manual 行 nil）
@@ -683,7 +683,7 @@ type GroupVisibility string
 type ImagePrice struct {
 	CreatedAt time.Time `json:"CreatedAt"`
 
-	// InputImageTokenPricePerMillion image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算，1 USD = 100
+	// InputImageTokenPricePerMillion image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算，1 USD = 100,000 毫分）；null = 无该分量价
 	InputImageTokenPricePerMillion *float64 `json:"InputImageTokenPricePerMillion"`
 
 	// Model 模型名（与 pricings.model 同口径）
@@ -862,7 +862,7 @@ type Pricing struct {
 	// AbovePriorityPromptPricePerMillion 超阈值分段价（priority 组，azure 形态）；nil = 该档回退基础 above 组
 	AbovePriorityPromptPricePerMillion *float64 `json:"AbovePriorityPromptPricePerMillion"`
 
-	// AbovePromptPricePerMillion 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+	// AbovePromptPricePerMillion 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；nil = 该分量不拆段
 	AbovePromptPricePerMillion *float64 `json:"AbovePromptPricePerMillion"`
 
 	// AboveThreshold 上下文分段阈值（tokens）；nil = 无分段
@@ -874,7 +874,7 @@ type Pricing struct {
 	// CacheReadPricePerMillion 缓存读取价（litellm cache_read_input_token_cost 换算）；nil = 无缓存价
 	CacheReadPricePerMillion *float64 `json:"CacheReadPricePerMillion"`
 
-	// CompletionPricePerMillion USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+	// CompletionPricePerMillion USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）
 	CompletionPricePerMillion float64   `json:"CompletionPricePerMillion"`
 	CreatedAt                 time.Time `json:"CreatedAt"`
 
@@ -884,7 +884,7 @@ type Pricing struct {
 	FlexCacheReadPricePerMillion     *float64 `json:"FlexCacheReadPricePerMillion"`
 	FlexCompletionPricePerMillion    *float64 `json:"FlexCompletionPricePerMillion"`
 
-	// FlexPromptPricePerMillion service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100
+	// FlexPromptPricePerMillion service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价
 	FlexPromptPricePerMillion *float64 `json:"FlexPromptPricePerMillion"`
 
 	// MaxInputTokens litellm 自带上下文窗口；nil = 未知
@@ -898,10 +898,10 @@ type Pricing struct {
 	PriorityCacheReadPricePerMillion     *float64 `json:"PriorityCacheReadPricePerMillion"`
 	PriorityCompletionPricePerMillion    *float64 `json:"PriorityCompletionPricePerMillion"`
 
-	// PriorityPromptPricePerMillion service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100
+	// PriorityPromptPricePerMillion service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价
 	PriorityPromptPricePerMillion *float64 `json:"PriorityPromptPricePerMillion"`
 
-	// PromptPricePerMillion USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+	// PromptPricePerMillion USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）
 	PromptPricePerMillion float64 `json:"PromptPricePerMillion"`
 
 	// Provider litellm_provider（litellm 行才有；manual 行 nil）
@@ -964,7 +964,7 @@ type PricingUpsert struct {
 	// AbovePriorityPromptPricePerMillion 超阈值分段价（priority 组，azure 形态）；缺省/null = 该档回退基础 above 组
 	AbovePriorityPromptPricePerMillion *float64 `json:"above_priority_prompt_price_per_million"`
 
-	// AbovePromptPricePerMillion 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+	// AbovePromptPricePerMillion 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；缺省/null = 该分量不拆段
 	AbovePromptPricePerMillion *float64 `json:"above_prompt_price_per_million"`
 
 	// AboveThreshold 上下文分段阈值（tokens）；缺省/null = 不设（无分段）
@@ -973,7 +973,7 @@ type PricingUpsert struct {
 	// CacheCreationPricePerMillion 缓存写入价；缺省 = 不设缓存价（落库 NULL）
 	CacheCreationPricePerMillion *float64 `json:"cache_creation_price_per_million"`
 
-	// CacheReadPricePerMillion 缓存读取价（USD/1M tokens；内部存储毫分——1 USD = 100
+	// CacheReadPricePerMillion 缓存读取价（USD/1M tokens；内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省 = 不设缓存价（落库 NULL）
 	CacheReadPricePerMillion  *float64 `json:"cache_read_price_per_million"`
 	CompletionPricePerMillion float64  `json:"completion_price_per_million"`
 
@@ -983,16 +983,16 @@ type PricingUpsert struct {
 	FlexCacheReadPricePerMillion     *float64 `json:"flex_cache_read_price_per_million"`
 	FlexCompletionPricePerMillion    *float64 `json:"flex_completion_price_per_million"`
 
-	// FlexPromptPricePerMillion service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100
+	// FlexPromptPricePerMillion service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）
 	FlexPromptPricePerMillion            *float64 `json:"flex_prompt_price_per_million"`
 	PriorityCacheCreationPricePerMillion *float64 `json:"priority_cache_creation_price_per_million"`
 	PriorityCacheReadPricePerMillion     *float64 `json:"priority_cache_read_price_per_million"`
 	PriorityCompletionPricePerMillion    *float64 `json:"priority_completion_price_per_million"`
 
-	// PriorityPromptPricePerMillion service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100
+	// PriorityPromptPricePerMillion service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）
 	PriorityPromptPricePerMillion *float64 `json:"priority_prompt_price_per_million"`
 
-	// PromptPricePerMillion USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100
+	// PromptPricePerMillion USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）；≥ 0
 	PromptPricePerMillion float64 `json:"prompt_price_per_million"`
 }
 
@@ -1261,7 +1261,7 @@ type UsageLog struct {
 	CacheCreationTokens *int64  `json:"CacheCreationTokens,omitempty"`
 	CacheReadTokens     *int64  `json:"CacheReadTokens,omitempty"`
 
-	// Cost 计费成本（毫分，1 USD = 100
+	// Cost 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0
 	Cost        *int64         `json:"Cost,omitempty"`
 	CreatedAt   *time.Time     `json:"CreatedAt,omitempty"`
 	ErrorType   *ErrorType     `json:"ErrorType,omitempty"`
@@ -1286,7 +1286,7 @@ type UsageLog struct {
 	// PriceCacheReadMillis 缓存读单价快照（每 M token 毫分）；null = 该请求无缓存读或无缓存价
 	PriceCacheReadMillis *int64 `json:"PriceCacheReadMillis"`
 
-	// PriceInputMillis 输入单价快照（每 M token 毫分，1 USD = 100
+	// PriceInputMillis 输入单价快照（每 M token 毫分，1 USD = 100,000 毫分；pricing 同款单位）；null = 未计费路径
 	PriceInputMillis *int64 `json:"PriceInputMillis"`
 
 	// PriceOutputMillis 输出单价快照（每 M token 毫分）；null = 未计费路径
@@ -1304,7 +1304,7 @@ type UsageLog struct {
 
 // User defines model for User.
 type User struct {
-	// Balance 余额 USD（浮点；内部存储毫分——1 USD = 100
+	// Balance 余额 USD（浮点；内部存储毫分——1 USD = 100,000 毫分，API 边界换算）
 	Balance        *float64    `json:"Balance,omitempty"`
 	CreatedAt      *time.Time  `json:"CreatedAt,omitempty"`
 	Email          *string     `json:"Email,omitempty"`
@@ -1317,7 +1317,7 @@ type User struct {
 
 // UserCreate defines model for UserCreate.
 type UserCreate struct {
-	// Balance 余额 USD（浮点，≥ 0；1 USD = 100
+	// Balance 余额 USD（浮点，≥ 0；1 USD = 100,000 毫分）
 	Balance *float64 `json:"balance,omitempty"`
 	Email   string   `json:"email"`
 
@@ -1359,7 +1359,7 @@ type UserStatus string
 
 // UserUpdate defines model for UserUpdate.
 type UserUpdate struct {
-	// Balance 余额 USD（浮点，≥ 0；1 USD = 100
+	// Balance 余额 USD（浮点，≥ 0；1 USD = 100,000 毫分）
 	Balance        *float64    `json:"balance,omitempty"`
 	MaxConcurrency *int        `json:"max_concurrency,omitempty"`
 	Role           *UserRole   `json:"role,omitempty"`
@@ -1562,6 +1562,12 @@ type GetRedemptionCodesParamsStatus string
 
 // GetRedemptionCodesParamsOrder defines parameters for GetRedemptionCodes.
 type GetRedemptionCodesParamsOrder string
+
+// GetRedemptionCodesIdUsesParams defines parameters for GetRedemptionCodesIdUses.
+type GetRedemptionCodesIdUsesParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
 
 // ListRulesParams defines parameters for ListRules.
 type ListRulesParams struct {
@@ -1838,7 +1844,7 @@ type ServerInterface interface {
 	PostRedemptionCodesIdDeactivate(w http.ResponseWriter, r *http.Request, id int64)
 	// 某码的兑换记录（审计；码缺失 → 404）
 	// (GET /redemption-codes/{id}/uses)
-	GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Request, id int64)
+	GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Request, id int64, params GetRedemptionCodesIdUsesParams)
 	// 规则列表（enabled 过滤，priority 升序）
 	// (GET /rules)
 	ListRules(w http.ResponseWriter, r *http.Request, params ListRulesParams)
@@ -2138,7 +2144,7 @@ func (_ Unimplemented) PostRedemptionCodesIdDeactivate(w http.ResponseWriter, r 
 
 // 某码的兑换记录（审计；码缺失 → 404）
 // (GET /redemption-codes/{id}/uses)
-func (_ Unimplemented) GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Request, id int64) {
+func (_ Unimplemented) GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Request, id int64, params GetRedemptionCodesIdUsesParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3621,8 +3627,27 @@ func (siw *ServerInterfaceWrapper) GetRedemptionCodesIdUses(w http.ResponseWrite
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRedemptionCodesIdUsesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetRedemptionCodesIdUses(w, r, id)
+		siw.Handler.GetRedemptionCodesIdUses(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

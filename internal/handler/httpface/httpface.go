@@ -2,8 +2,9 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package httpface 管理面/用户面 HTTP 响应书写：WriteJSON/WriteErr/
-// WriteServiceErr（service 错误→HTTP 状态映射表唯一一份）。
+// Package httpface 管理面/用户面 HTTP 边界：响应书写（WriteJSON/WriteErr/
+// WriteServiceErr，service 错误→HTTP 状态映射表唯一一份）+ 请求参数边界
+// （ClampLimit——两面包共享的分页上限钳制）。
 //
 // 依赖仅 internal/service/errors 叶子包（零内部依赖），不反向依赖
 // handler/service/auth/server 任何上层包——依赖图无环。
@@ -28,6 +29,16 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 // WriteErr 写 {"error": msg} JSON 信封。
 func WriteErr(w http.ResponseWriter, status int, msg string) {
 	WriteJSON(w, status, map[string]any{"error": msg})
+}
+
+// ClampLimit 分页 limit 统一钳制（上限 200，与 /usage_logs 同语义）：超限
+// 裁剪到 200；≤0 原样透传（repo 归一下限 ≤0→20）。管理面误操作
+// limit=2147483647 不再全表物化（spec 2026-08-17 边界收敛，6 端点共享）。
+func ClampLimit(l int) int {
+	if l > 200 {
+		return 200
+	}
+	return l
 }
 
 // WriteServiceErr 统一把 service 错误映射为 HTTP 状态（映射表唯一一份）。

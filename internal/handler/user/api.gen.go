@@ -278,7 +278,7 @@ type StatBucket struct {
 
 // TempBalanceRow defines model for TempBalanceRow.
 type TempBalanceRow struct {
-	// AmountUsd 金额 USD（毫分 /1e5；1 USD = 100
+	// AmountUsd 金额 USD（毫分 /1e5；1 USD = 100,000 毫分）
 	AmountUsd float64 `json:"amount_usd"`
 
 	// ExpiresAt 到期时间；null = 永久额度
@@ -299,7 +299,7 @@ type TempBalancesResponse struct {
 
 // User defines model for User.
 type User struct {
-	// Balance 余额 USD（浮点；内部存储毫分——1 USD = 100
+	// Balance 余额 USD（浮点；内部存储毫分——1 USD = 100,000 毫分，API 边界换算）
 	Balance        *float64    `json:"Balance,omitempty"`
 	CreatedAt      *time.Time  `json:"CreatedAt,omitempty"`
 	Email          *string     `json:"Email,omitempty"`
@@ -391,7 +391,7 @@ type UserUsageLog struct {
 	CacheCreationTokens *int64  `json:"CacheCreationTokens,omitempty"`
 	CacheReadTokens     *int64  `json:"CacheReadTokens,omitempty"`
 
-	// Cost 计费成本（毫分，1 USD = 100
+	// Cost 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0
 	Cost        *int64         `json:"Cost,omitempty"`
 	CreatedAt   *time.Time     `json:"CreatedAt,omitempty"`
 	ErrorType   *ErrorType     `json:"ErrorType,omitempty"`
@@ -416,7 +416,7 @@ type UserUsageLog struct {
 	// PriceCacheReadMillis 缓存读单价快照（每 M token 毫分）；null = 该请求无缓存读或无缓存价
 	PriceCacheReadMillis *int64 `json:"PriceCacheReadMillis"`
 
-	// PriceInputMillis 输入单价快照（每 M token 毫分，1 USD = 100
+	// PriceInputMillis 输入单价快照（每 M token 毫分，1 USD = 100,000 毫分；pricing 同款单位）；null = 未计费路径
 	PriceInputMillis *int64 `json:"PriceInputMillis"`
 
 	// PriceOutputMillis 输出单价快照（每 M token 毫分）；null = 未计费路径

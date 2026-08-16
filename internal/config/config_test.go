@@ -84,6 +84,8 @@ func TestLoadRejectsNonPositiveDurations(t *testing.T) {
 		{"usage.errlog_flush_interval"},
 		{"billing.flush_interval"},
 		{"billing.balance_refresh_interval"},
+		{"upstream.idle_conn_timeout"},
+		{"upstream.dial_timeout"},
 	} {
 		sec, key, _ := strings.Cut(tc.path, ".")
 		for _, v := range []string{"0s", "-1s"} {
@@ -140,6 +142,9 @@ func TestLoadRejectsNonPositiveNumeric(t *testing.T) {
 		{"scheduler.default_max_concurrency", `scheduler = { default_max_concurrency = 0 }`},
 		{"db.max_conns", `db = { max_conns = 0 }`},
 		{"proxy.failover_attempts", `proxy = { failover_attempts = 0 }`},
+		// proxy.max_body_size：n<1 经 MaxBytesReader 归一 0 → 全量非空请求 413，
+		// 启动即拒绝（spec 2026-08-17 补下限）。
+		{"proxy.max_body_size", `proxy = { max_body_size = 0 }`},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			_, err := Load(writeConfig(t, tc.toml))

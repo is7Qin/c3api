@@ -9,6 +9,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -65,9 +66,22 @@ func (h *AdminAPI) RoutesMux() http.Handler {
 	return h.Router()
 }
 
+// decode 严格解码（管理面全部 JSON 入参共用）：未知字段 → 错误（拼错字段名
+// 从 200 静默不生效变 400 显式，与 config ErrorUnused fail-fast 哲学一致——
+// spec 2026-08-17 边界收敛）；二次 Decode 拒尾随数据（io.EOF 才算完）。
 func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
-	return dec.Decode(v)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("unexpected trailing data after JSON body")
+		}
+		return err
+	}
+	return nil
 }
 
 // deref 返回指针指向的值；nil 时返回零值。

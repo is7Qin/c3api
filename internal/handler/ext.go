@@ -5,6 +5,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -14,6 +15,15 @@ import (
 
 // —— 模板类型化扩展（template_ext 1:1；通用框架——codex 专属账号 ext 见
 // ext_codex.go） ——
+
+// decodeLenient 宽松解码（ext 端点专用，handler.go 的 decode 已严格化——spec
+// 2026-08-17 边界收敛）：忽略未知字段。ext 契约演进时客户端可能携带已迁移到
+// 别处的凭据列（oauth_token/pat 等一律在 account_ext）——忽略不产生配置
+// （既有契约，TestTemplatesIdExt 锁定，行为不随严格化改变）。
+func decodeLenient(r *http.Request, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	return dec.Decode(v)
+}
 
 // GetTemplatesIdExt 模板类型化扩展（编辑回显；仅生态三类型模板有 ext 行，
 // ServerInterface）。模板缺 id / 无 ext 行 → 404。
@@ -33,7 +43,7 @@ func (h *AdminAPI) GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 // 一律在账号级 account_ext。
 func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	var in TemplateExt
-	if err := decode(r, &in); err != nil {
+	if err := decodeLenient(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

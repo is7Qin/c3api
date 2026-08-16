@@ -9,6 +9,8 @@ package user
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/service"
@@ -30,9 +32,22 @@ func New(svc *service.Service, iss tokenIssuer) *UserAPI {
 	return &UserAPI{svc: svc, iss: iss}
 }
 
+// decode 严格解码（用户面全部 JSON 入参共用，与管理面 handler.decode 同款）：
+// 未知字段 → 错误（拼错字段名从 200 静默不生效变 400 显式——spec 2026-08-17
+// 边界收敛）；二次 Decode 拒尾随数据（io.EOF 才算完）。
 func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
-	return dec.Decode(v)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("unexpected trailing data after JSON body")
+		}
+		return err
+	}
+	return nil
 }
 
 // deref 返回指针指向的值；nil 时返回零值。
