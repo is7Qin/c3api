@@ -5,6 +5,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -71,7 +72,9 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 				// "usage": null 的帧（存在但为 null）不得清零元组：chatStreamUsage
 				// 内建 usage 存在性判定（值首字节 {/[；缺失与显式 null 均
 				// ok=false → 不更新——与原 gjson Type==JSON 前置检查等价）。
-				if len(ev.Event) == 0 {
+				// 热路径预筛：bytes.Contains 零分配子串预筛 "usage" 键帧（同
+				// sniffResponsesCompleted 纪律），误命中回退全量扫描语义不变。
+				if len(ev.Event) == 0 && bytes.Contains(ev.Data, []byte(`"usage"`)) {
 					if t, ok := chatStreamUsage(ev.Data); ok {
 						it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
 					}

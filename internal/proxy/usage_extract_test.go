@@ -5,6 +5,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"testing"
@@ -49,6 +50,14 @@ func TestChatStreamUsage(t *testing.T) {
 	require.True(t, ok)
 	require.Zero(t, u.cr, "显式 null 与缺失等价")
 	require.Zero(t, u.cc)
+
+	// 预筛误命中帧（合法 JSON 内容文本转义后不可能含裸 "usage" 子串；真实
+	// 误命中面 = 值字面恰为 "usage" 的字段）→ needle 命中回退全量扫描 →
+	// 存在性判定兜底 ok=false 不误更新
+	_, ok = chatStreamUsage([]byte(`{"model":"usage","choices":[{"delta":{"content":"hi"}}]}`))
+	require.False(t, ok)
+	_, ok = chatStreamUsage([]byte(`{"id":"x","usage_hint":{"v":1}}`))
+	require.False(t, ok, "嵌套同名键帧同样回退安全")
 }
 
 // —— chat 非流式（SDK UnmarshalJSON → PromptTokensDetails 直读 + RawJSON gjson） ——
@@ -292,6 +301,12 @@ func TestUsageExtractEquivalence(t *testing.T) {
 		want, wantOK := chatStreamUsageRef([]byte(f))
 		require.Equalf(t, want, got, "chat 帧: %s", f)
 		require.Equalf(t, wantOK, ok, "chat ok 帧: %s", f)
+		// 预筛超集属性（E3 核心论证钉住）：ok=true 帧必含 "usage" 子串——
+		// bytes.Contains 预筛永不漏真命中帧（scanKeyValue 先剥引号取键再
+		// 比较裸键，故键存在时原始字节必含引号形态 needle）
+		if wantOK {
+			require.Truef(t, bytes.Contains([]byte(f), []byte(`"usage"`)), "真命中帧必含 needle: %s", f)
+		}
 	}
 
 	anthropicFrames := []string{
@@ -393,6 +408,7 @@ func TestUsageExtractZeroAlloc(t *testing.T) {
 
 	require.Zero(t, testing.AllocsPerRun(100, func() { chatStreamUsage(chat) }))
 	require.Zero(t, testing.AllocsPerRun(100, func() { chatStreamUsage(miss) }), "usage 缺失路径同样零分配")
+	require.Zero(t, testing.AllocsPerRun(100, func() { bytes.Contains(miss, []byte(`"usage"`)) }), "E3 预筛 needle 零分配（inline 字面量编译器静态化）")
 	require.Zero(t, testing.AllocsPerRun(100, func() { anthropicStartUsage(anthropic) }))
 	require.Zero(t, testing.AllocsPerRun(100, func() { anthropicDeltaOutput(delta) }))
 	require.Zero(t, testing.AllocsPerRun(100, func() { responsesCompletedUsage(completed) }))
