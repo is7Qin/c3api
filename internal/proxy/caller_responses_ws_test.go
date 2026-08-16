@@ -624,6 +624,41 @@ func TestResponsesWSDial4xxPassthrough(t *testing.T) {
 	require.Equal(t, "upstream rejected", *lg.ErrorMessage, "ErrorMessage = 归一错误文本（同错误帧）")
 }
 
+// TestResponsesWSDial4xxNoBodyDecoupled B1 分通道验证：静态拨号 4xx 且上游
+// 空 body（SDK DialError 无 body 的等价面）——respBody 只放上游 message（无
+// 则空，不再 dialErr 顶替），dialErr 全文走 callErr 通道：用户帧 = 固定网关
+// 文案（不含 SDK 拨号文本）、ErrorMessage 落盘 = dialErr 全文（帧与落盘文本
+// 来源解耦）。
+func TestResponsesWSDial4xxNoBodyDecoupled(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden) // 空 body 4xx——无上游 message
+	}))
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	ef := readResponsesWSFrame(t, c)
+	require.Contains(t, string(ef), `"type":"error"`)
+	require.Contains(t, string(ef), "upstream rejected request", "无上游 message → 帧固定网关文案")
+	require.NotContains(t, string(ef), "expected handshake", "dialErr 文本不得上用户帧（分通道）")
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	require.NoError(t, p.rec.Close(context.Background()), "Recorder 手动 flush")
+	require.NoError(t, p.errlog.Close(context.Background()), "errlog 手动 flush（失败行走 err_logs）")
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	lg := store.logs[0]
+	require.Equal(t, domain.Err4xx, lg.ErrorType)
+	require.Equal(t, http.StatusForbidden, lg.StatusCode)
+	require.NotNil(t, lg.ErrorMessage, "4xx 空 body 边缘落盘增益（B1' 裁决接受）")
+	require.Contains(t, *lg.ErrorMessage, "but got 403", "落盘含 dialErr 全文（与帧文案解耦）")
+}
+
 // TestResponsesWSDial429Failover 静态拨号 429 → 循环 429 分类（Result429 转移 +
 // MarkResult httpStatus 429）：错误文本经 respBody 回传（归一 msg——纯文本经
 // 骨架"提取为空直取原文"回退不丢）；耗尽记 Err429 + 状态码 429（WS 无

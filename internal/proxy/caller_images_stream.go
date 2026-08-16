@@ -216,7 +216,9 @@ func buildErrorFrame(message string) []byte {
 
 // streamErrMessage 错误帧 message 文案（信封/fatal 文案——T2 提取机制复用：
 // 信封错误实现 RawJSON() 协议，取上游原始 body 的 message 字段——与
-// upstreamErrMsg 同款提取；无 body → err.Error()；域内截断 500）。
+// upstreamErrMsg 同款提取；无 body → 固定网关文案 "upstream connection
+// error"（既有 "upstream X" 族内兄弟——连接级内部文本不上用户帧；Warn 留痕
+// forward.go:555 保全文）。
 func streamErrMessage(err error) string {
 	type rawJSONer interface{ RawJSON() string }
 	if rj, ok := err.(rawJSONer); ok {
@@ -226,5 +228,5 @@ func streamErrMessage(err error) string {
 			}
 		}
 	}
-	return domain.TruncateErrMsg(err.Error())
+	return "upstream connection error"
 }

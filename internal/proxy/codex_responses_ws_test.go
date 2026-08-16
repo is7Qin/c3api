@@ -444,7 +444,8 @@ func TestCodexWSRefreshed401Terminal(t *testing.T) {
 	// 错误事件帧（含 401 文案）+ 关闭
 	ef := readResponsesWSFrame(t, c)
 	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "401")
+	require.Contains(t, string(ef), "upstream rejected request", "4xx 用户帧固定文案（不泄 SDK 内部串）")
+	require.NotContains(t, string(ef), "401", "SDK 拨号错误文本不得上用户帧")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	hooks.mu.Lock()
@@ -481,7 +482,8 @@ func TestCodexWSFatalNoTransfer(t *testing.T) {
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	ef := readResponsesWSFrame(t, c)
 	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "refresh 被拒绝")
+	require.Contains(t, string(ef), "codex authorization failed", "fatal 用户帧固定文案（不泄 SDK 内部机制串）")
+	require.NotContains(t, string(ef), "refresh 被拒绝", "SDK 内部机制串不得上用户帧")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	hooks.mu.Lock()
@@ -510,6 +512,8 @@ func TestCodexWSFatalNoTransfer(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType, "fatal 收尾记 code 0 ErrNetwork")
 	require.Equal(t, 0, store.logs[0].StatusCode)
+	require.NotNil(t, store.logs[0].ErrorMessage, "fatal 原文仍落盘（唯一留痕）")
+	require.Contains(t, *store.logs[0].ErrorMessage, "refresh 被拒绝", "落盘留痕不动——SDK 原文进 ErrorMessage")
 }
 
 // TestCodexWSRefreshErrorFailover 裸 RefreshError（refresh 5xx 耗尽）→ 正常

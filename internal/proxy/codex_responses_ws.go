@@ -49,6 +49,12 @@ var errCodexWSNotIntegrated = errors.New("codex responses unavailable (adapter n
 // 耗尽 502 语义）；不上报失效（避免 account 0 无谓上报——T2 P1-1 同款）。
 var errCodexExtMissing = errors.New("codex account missing account_ext snapshot (config error)")
 
+// codexAuthFailedMsg codex fatal 用户帧固定文案（M3 裁决：fatal 语义 = 授权
+// 失败——复用 "upstream rejected request" 语义不准；不泄 SDK 内部机制串如
+// "refresh 被拒绝"/重试次数）。落盘侧 ErrorMessage 仍写 dialErr 原文
+// （:125-127），此路径无 Warn——落盘是唯一留痕。
+const codexAuthFailedMsg = "codex authorization failed"
+
 // dialCodexWS 组装一次 codex WS Dial（T4 §2——凭当前请求选中账号 cred）：
 //   - 凭据线：sel.Ext 快照 → AccountCredential 派生（relay 线；热路径零 DB）
 //   - WithBaseURL：**完整 responses 端点**（P3-1——SDK client.go:137-144 覆盖
@@ -125,7 +131,9 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, 0, domain.ErrNetwork, usageTuple{}, start))
 		l.ErrorMessage = &msg
 		p.finish(sel.AccountID, l)
-		wsWriteError(client, dialErr.Error())
+		// fatal 用户帧固定文案（不泄 SDK 内部机制串）；:125-127 已落盘 dialErr
+		// 原文——落盘是唯一留痕。
+		wsWriteError(client, codexAuthFailedMsg)
 		return true, 0, ""
 	}
 	code := statusOf(dialErr)
@@ -139,7 +147,9 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 			l.ErrorMessage = &em
 		}
 		p.finish(sel.AccountID, l)
-		wsWriteError(client, emOr(msg, "upstream rejected request"))
+		// 4xx 用户帧固定文案（SDK DialError 无 body——固定文案即上游 message 等
+		// 价面，emOr 回退不可达）；上方 ErrorMessage 仍用 :135 msg 原文落盘。
+		wsWriteError(client, "upstream rejected request")
 		return true, 0, ""
 	default:
 		// 5xx（信封）/ 裸 RefreshError / 网络（code 0）：连接级转移。5xx 归一

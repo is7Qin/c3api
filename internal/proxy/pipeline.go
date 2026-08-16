@@ -129,11 +129,12 @@ type attemptState struct {
 //     已写出无记录）——骨架直接返回（不可转移）；false → respBody/callErr 供
 //     骨架分类
 //   - respBody：4xx 透传原文（chat/search 原始 body；WS 归一错误文本——上游
-//     body message 或 dialErr 文本回退）；code==0 时亦携带错误文本（WS 纯文本
+//     body message，无则空——B1 分通道）；code==0 时亦携带错误文本（WS 纯文本
 //     经骨架"直取原文"回退落盘，防 gjson 提取吃空）
-//   - callErr：仅连接级/凭据错（code==0）时非 nil；Warn 由 attempt 内部代发
-//     （Warn 文案两版本保留不统一——循环不代发；WS code==0 恒 callErr=nil
-//     不新增 Warn）
+//   - callErr：连接级/凭据错（code==0）或 WS 拨号 4xx（dialErr 全文——B1 分
+//     通道：SDK 文本不进 respBody，帧面与落盘面解耦）时非 nil；Warn 由
+//     attempt 内部代发（Warn 文案两版本保留不统一——循环不代发；WS code==0
+//     恒 callErr=nil 不新增 Warn）
 type upstreamAttempt interface {
 	call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (code int, respBody []byte, handled bool, callErr error)
 }
@@ -233,10 +234,18 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			// 4xx 确定性错误：透传上游状态码与原始 body，不转移（规格 §5.3）；
 			// body 不可得（连接级错误不会有 4xx 码）才回退网关文案。
 			// 错误文本：上游 body 原文截断 500 落 ErrorMessage（仅错误分支构造，
-			// 成功路径 ErrorMessage 恒空、零分配）。WS 静态拨号 4xx 也归此
-			// 统一段（finish + 错误帧——emOr 语义由 wsSink 保持）。
+			// 成功路径 ErrorMessage 恒空、零分配）；respBody 空且 callErr 非空 →
+			// 以 callErr 全文回退落盘（B1 分通道的落盘面：WS 拨号 4xx 的 dialErr
+			// 不再顶替进 respBody，改经 err 通道到此处落盘——4xx 空 body 边缘落盘
+			// 增益 B1' 裁决接受、不加守卫；chat/search 4xx 恒有上游 body 且
+			// callErr=nil，该回退不可达，落盘语义零变化）。WS 静态拨号 4xx 也归
+			// 此统一段（finish + 错误帧——emOr 语义由 wsSink 保持）。
 			l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, format, code, domain.Err4xx, usageTuple{}, start))
-			if em := domain.TruncateErrMsg(string(respBody)); em != "" {
+			em := domain.TruncateErrMsg(string(respBody))
+			if em == "" && callErr != nil {
+				em = domain.TruncateErrMsg(callErr.Error())
+			}
+			if em != "" {
 				l.ErrorMessage = &em
 			}
 			p.finish(sel.AccountID, l)

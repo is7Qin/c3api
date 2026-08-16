@@ -168,9 +168,11 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 // handleCodexDialError）与静态拨号（credentialFor + ResponsesWSDial）、relay
 //（relayWS 合一骨架 + 双传输适配 aiclientTransport/codexTransport——首帧模型
 // 改写 + 双向帧透传 + usage 嗅探 + codex 每帧判死钩子）。
-// 错误文本统一经 respBody 回传（msg 归一：上游 body message → dialErr 文本回
-// 退——循环的 upstreamErrMsg gjson 提取吃空时直取原文防丢失）；code==0 恒
-// callErr=nil（WS 不新增 Warn——gate Minor 2b）。
+// 错误文本回传（B1 分通道）：4xx respBody 只放上游 body message（无则空——
+// 帧侧 wsSink emOr 回退固定网关文案），dialErr 全文走 callErr 通道（循环 4xx
+// 分支以 callErr 回退落盘保全文）；0/5xx/429 保持 msg 归一兜底（上游 message
+// → dialErr 文本回退——纯落盘用途，不达用户帧）；code==0 恒 callErr=nil
+// （WS 不新增 Warn——gate Minor 2b）。
 type wsAttempt struct{ p *Proxy }
 
 func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, bool, error) {
@@ -242,17 +244,25 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return 0, []byte(fwMsg), false, nil
 	}
 	// 拨号失败分类（与 handleFormat 的 code 分支同构）：msg 归一 = 上游 body
-	// message，空 → dialErr 文本回退。code 原样回传——5xx 归一（修复性声明：
-	// 现状 default 分支归 0 → 耗尽记 ErrNetwork + MarkResult httpStatus 0；
-	// 统一为 code 原样 → et=Err5xx + httpStatus 5xx，对齐 codex 分支与 HTTP
-	// 路径，规则 when http_status 匹配面恢复真实值）；非 429/4xx/5xx 的异常
-	// 状态（2xx/3xx 未升级拒绝）按现状归连接级 0。
+	// message（B1 分通道——4xx 无则空、dialErr 全文走 callErr；0/5xx/429 保持
+	// 下方 dialErr 文本回退，纯落盘用途）。code 原样回传——5xx 归一（修复性
+	// 声明：现状 default 分支归 0 → 耗尽记 ErrNetwork + MarkResult httpStatus
+	// 0；统一为 code 原样 → et=Err5xx + httpStatus 5xx，对齐 codex 分支与
+	// HTTP 路径，规则 when http_status 匹配面恢复真实值）；非 429/4xx/5xx 的
+	// 异常状态（2xx/3xx 未升级拒绝）按现状归连接级 0。
 	code := 0
 	var msg string
 	if resp != nil {
 		code = resp.StatusCode
 		msg = upstreamErrMsg(readUpstreamBody(resp))
 		_ = resp.Body.Close()
+	}
+	if code >= 400 && code < 500 {
+		// 4xx 分通道（B1）：respBody 只放上游 message（无则空——帧侧由 wsSink
+		// emOr 回退固定网关文案）；dialErr 全文走 callErr 通道（failoverLoop
+		// 4xx 分支以 callErr 回退落盘保全文）——SDK 拨号错误文本不再顶替进用
+		// 户可见面。
+		return code, []byte(msg), false, dialErr
 	}
 	if msg == "" {
 		msg = dialErr.Error()
