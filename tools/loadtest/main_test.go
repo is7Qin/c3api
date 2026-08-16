@@ -91,12 +91,12 @@ func TestDrainSSEFinalLineWithoutNewline(t *testing.T) {
 
 func TestRequestTemplateMatchesNewRequest(t *testing.T) {
 	buildReqTemplate()
-	got := newRequestFromTemplate("gk-test")
-	want := newLoadtestRequest(*addr, "gk-test", *mode)
+	got := newRequestFromTemplate("ck-test")
+	want := newLoadtestRequest(*addr, "ck-test", *mode)
 	require.Equal(t, want.Method, got.Method)
 	require.Equal(t, want.URL.String(), got.URL.String())
 	require.Equal(t, "application/json", got.Header.Get("Content-Type"))
-	require.Equal(t, "Bearer gk-test", got.Header.Get("Authorization"))
+	require.Equal(t, "Bearer ck-test", got.Header.Get("Authorization"))
 	require.Equal(t, int64(len(tmplBody)), got.ContentLength)
 	b, _ := io.ReadAll(got.Body)
 	require.JSONEq(t, `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`, string(b))
@@ -128,16 +128,16 @@ func (b *blockingBody) Read([]byte) (int, error) { <-b.done; return 0, io.EOF }
 func (b *blockingBody) Close() error { close(b.done); return nil }
 
 func TestChatRequestBodyOmitsStream(t *testing.T) {
-	req := newLoadtestRequest("http://example.test", "gk-test", "chat")
+	req := newLoadtestRequest("http://example.test", "ck-test", "chat")
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
 	_, ok := body["stream"]
 	require.False(t, ok)
-	require.Equal(t, "Bearer gk-test", req.Header.Get("Authorization"))
+	require.Equal(t, "Bearer ck-test", req.Header.Get("Authorization"))
 }
 
 func TestStreamRequestBodyEnablesStream(t *testing.T) {
-	req := newLoadtestRequest("http://example.test", "gk-test", "stream")
+	req := newLoadtestRequest("http://example.test", "ck-test", "stream")
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
 	require.Equal(t, true, body["stream"])

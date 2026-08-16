@@ -102,7 +102,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.NoError(t, repos.SetAccountGroups(ctx, acc.ID, []int64{g.ID})) // 成员关系独立写入（CreateAccount 不落 m2m）
 	_, err = repos.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "k-startup",
-		KeyRaw: "gk-startup-1",
+		KeyRaw: "ck-startup-1",
 		Status: domain.KeyStatusActive, MaxConcurrency: 8, Quota: 1_000_000,
 	})
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	// --- 全部快照已加载（不依赖各自 ticker） ---
 	// auth：key 鉴权命中。
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("Authorization", "Bearer gk-startup-1")
+	req.Header.Set("Authorization", "Bearer ck-startup-1")
 	meta, ok := auth.Authenticate(req)
 	require.True(t, ok, "auth 首刷后 key 鉴权立即可用")
 	require.Equal(t, u.ID, meta.UserID)
@@ -221,7 +221,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	require.NoError(t, err)
 	_, err = repos.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "k-timing",
-		KeyRaw: "gk-timing-1",
+		KeyRaw: "ck-timing-1",
 		Status: domain.KeyStatusActive, MaxConcurrency: 8, Quota: 1_000_000,
 	})
 	require.NoError(t, err)

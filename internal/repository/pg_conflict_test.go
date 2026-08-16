@@ -85,7 +85,7 @@ func TestUniqueConflictPG(t *testing.T) {
 		g := seedPGGroup(t, repos, "keys-dup-g")
 		k1, err := repos.Keys.CreateKey(ctx, &domain.Key{
 			UserID: u.ID, GroupID: g.ID, Name: "k1",
-			KeyRaw: "gk-dup",
+			KeyRaw: "ck-dup",
 			Status: domain.KeyStatusActive,
 		})
 		require.NoError(t, err)

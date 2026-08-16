@@ -151,7 +151,7 @@ func setupImagesPG(t *testing.T) (*scheduler.Scheduler, int64, int64, *pgImagesU
 }
 
 // newPGImagesTestProxy 以外部注入的调度器构造测试代理（PG 快照链路；bill
-// 可注入计费钩子——缺价预检断言用）。auth key gk-<groupID> → 组。
+// 可注入计费钩子——缺价预检断言用）。auth key ck-<groupID> → 组。
 func newPGImagesTestProxy(t *testing.T, sched *scheduler.Scheduler, groupID int64, bill *BillingHooks) *Proxy {
 	t.Helper()
 	cfg := Config{
@@ -177,7 +177,7 @@ func newPGImagesTestProxy(t *testing.T, sched *scheduler.Scheduler, groupID int6
 	return New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
 }
 
-func keyForGroup(groupID int64) string { return "gk-" + strconv.FormatInt(groupID, 10) }
+func keyForGroup(groupID int64) string { return "ck-" + strconv.FormatInt(groupID, 10) }
 
 // TestPGImagesTwoTypesTwoEndpoints api_key / responses-special 两类型 ×
 // generations/edits 两端点直连（真实 PG 快照链路：模板 credential_type +

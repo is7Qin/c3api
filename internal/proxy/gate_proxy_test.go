@@ -70,18 +70,18 @@ func TestProxyConcurrencyLimit429(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	meta := activeKey(1, 1, 10)
 	meta.KeyMaxConc = 1
-	p.auth.Upsert("gk-1", meta)
+	p.auth.Upsert("ck-1", meta)
 
 	rec1 := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
-		p.HandleChat(rec1, chatReq("gk-1"))
+		p.HandleChat(rec1, chatReq("ck-1"))
 		close(done)
 	}()
 	waitGateKey(t, p, 1, 1) // 第一请求已占 key 槽
 
 	rec2 := httptest.NewRecorder()
-	p.HandleChat(rec2, chatReq("gk-1"))
+	p.HandleChat(rec2, chatReq("ck-1"))
 	require.Equal(t, http.StatusTooManyRequests, rec2.Code, "body=%s", rec2.Body.String())
 	require.Contains(t, rec2.Body.String(), "concurrency limit exceeded")
 
@@ -92,7 +92,7 @@ func TestProxyConcurrencyLimit429(t *testing.T) {
 
 	// 释放后可恢复
 	rec3 := httptest.NewRecorder()
-	p.HandleChat(rec3, chatReq("gk-1"))
+	p.HandleChat(rec3, chatReq("ck-1"))
 	require.Equal(t, http.StatusOK, rec3.Code, "释放后可恢复: %s", rec3.Body.String())
 	waitGateKey(t, p, 1, 0)
 }
@@ -111,17 +111,17 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 		p := newTestProxyTimeoutLogs(t, up.URL, 1, store)
 		meta := activeKey(1, 1, 10)
 		meta.KeyMaxConc = 1
-		p.auth.Upsert("gk-1", meta)
+		p.auth.Upsert("ck-1", meta)
 
 		rec1 := httptest.NewRecorder()
 		done := make(chan struct{})
-		go func() { p.HandleChat(rec1, chatReq("gk-1")); close(done) }()
+		go func() { p.HandleChat(rec1, chatReq("ck-1")); close(done) }()
 		waitGateKey(t, p, 1, 1) // 第一请求占住唯一并发槽
 
 		const storm = 300 // 风暴：并发超限 429
 		for i := 0; i < storm; i++ {
 			recw := httptest.NewRecorder()
-			p.HandleChat(recw, chatReq("gk-1"))
+			p.HandleChat(recw, chatReq("ck-1"))
 			require.Equal(t, http.StatusTooManyRequests, recw.Code, "body=%s", recw.Body.String())
 		}
 		require.Zero(t, p.rec.Pending(), "429 风暴不产生 Recorder 明细 pending（修复前 300 条全进 pending）")
@@ -157,17 +157,17 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 		p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
 		meta := activeKey(1, 1, 10)
 		meta.KeyMaxConc = 1
-		p.auth.Upsert("gk-1", meta)
+		p.auth.Upsert("ck-1", meta)
 
 		rec1 := httptest.NewRecorder()
 		done := make(chan struct{})
-		go func() { p.HandleChat(rec1, chatReq("gk-1")); close(done) }()
+		go func() { p.HandleChat(rec1, chatReq("ck-1")); close(done) }()
 		waitGateKey(t, p, 1, 1)
 
 		const storm = 300 // 风暴：并发超限 429（UserID>0 → 修复前全部漏斗到 billed flusher）
 		for i := 0; i < storm; i++ {
 			recw := httptest.NewRecorder()
-			p.HandleChat(recw, chatReq("gk-1"))
+			p.HandleChat(recw, chatReq("ck-1"))
 			require.Equal(t, http.StatusTooManyRequests, recw.Code, "body=%s", recw.Body.String())
 		}
 		require.Zero(t, p.rec.Pending(), "429 风暴不产生 Recorder 明细 pending")
@@ -191,20 +191,20 @@ func TestProxyUserConcurrencyAcrossKeys(t *testing.T) {
 	meta1.UserMaxConc = 1
 	meta2 := activeKey(2, 1, 10)
 	meta2.UserMaxConc = 1
-	p.auth.Upsert("gk-1", meta1)
-	p.auth.Upsert("gk-2", meta2)
+	p.auth.Upsert("ck-1", meta1)
+	p.auth.Upsert("ck-2", meta2)
 
 	rec1 := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
-		p.HandleChat(rec1, chatReq("gk-1"))
+		p.HandleChat(rec1, chatReq("ck-1"))
 		close(done)
 	}()
 	waitGateUser(t, p, 1, 1) // 用户槽被第一请求占用（key 级无上限，只看 user）
 
 	// 第二个 key（同用户）→ user 层超限 429
 	rec2 := httptest.NewRecorder()
-	p.HandleChat(rec2, chatReq("gk-2"))
+	p.HandleChat(rec2, chatReq("ck-2"))
 	require.Equal(t, http.StatusTooManyRequests, rec2.Code, "body=%s", rec2.Body.String())
 	require.Contains(t, rec2.Body.String(), "concurrency limit exceeded")
 
@@ -222,16 +222,16 @@ func TestProxyQuotaExhaustedAndDeduct(t *testing.T) {
 	meta := activeKey(1, 1, 10)
 	meta.HasQuota = true
 	meta.Quota = 10 // fakeOpenAI 非流式 total_tokens=8
-	p.auth.Upsert("gk-1", meta)
+	p.auth.Upsert("ck-1", meta)
 
 	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()
-		p.HandleChat(rec, chatReq("gk-1"))
+		p.HandleChat(rec, chatReq("ck-1"))
 		require.Equal(t, http.StatusOK, rec.Code, "第 %d 轮: %s", i+1, rec.Body.String())
 	}
 	// 内存已扣 16 ≥ 10 → 429
 	rec := httptest.NewRecorder()
-	p.HandleChat(rec, chatReq("gk-1"))
+	p.HandleChat(rec, chatReq("ck-1"))
 	require.Equal(t, http.StatusTooManyRequests, rec.Code, "body=%s", rec.Body.String())
 	require.Contains(t, rec.Body.String(), "key quota exhausted")
 	// 429 不计入扣减（检查在 acquire 前，纯读）
@@ -247,7 +247,7 @@ func TestProxyNoQuotaKeyZeroCost(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		rec := httptest.NewRecorder()
-		p.HandleChat(rec, chatReq("gk-1"))
+		p.HandleChat(rec, chatReq("ck-1"))
 		require.Equal(t, http.StatusOK, rec.Code)
 	}
 	snap := p.auth.gate.store.Load()
@@ -261,15 +261,15 @@ func TestProxyKeyDisableImmediate(t *testing.T) {
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 	rec := httptest.NewRecorder()
-	p.HandleChat(rec, chatReq("gk-1"))
+	p.HandleChat(rec, chatReq("ck-1"))
 	require.Equal(t, http.StatusOK, rec.Code, "禁用前正常")
 
 	meta := activeKey(1, 1, 10)
 	meta.KeyStatus = domain.KeyStatusDisabled
-	p.auth.Upsert("gk-1", meta)
+	p.auth.Upsert("ck-1", meta)
 
 	rec2 := httptest.NewRecorder()
-	p.HandleChat(rec2, chatReq("gk-1"))
+	p.HandleChat(rec2, chatReq("ck-1"))
 	require.Equal(t, http.StatusUnauthorized, rec2.Code, "key 禁用即时 401: %s", rec2.Body.String())
 }
 
@@ -280,10 +280,10 @@ func TestProxyUserDisableImmediate(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	meta := activeKey(1, 1, 10)
 	meta.UserStatus = domain.UserStatusDisabled
-	p.auth.Upsert("gk-1", meta)
+	p.auth.Upsert("ck-1", meta)
 
 	rec := httptest.NewRecorder()
-	p.HandleChat(rec, chatReq("gk-1"))
+	p.HandleChat(rec, chatReq("ck-1"))
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "用户禁用即时 401: %s", rec.Body.String())
 }
 
@@ -295,7 +295,7 @@ func TestProxyUsageLogCarriesUserAndKey(t *testing.T) {
 	p := newTestProxyTimeoutLogs(t, up.URL, 1, store)
 
 	rec := httptest.NewRecorder()
-	p.HandleChat(rec, chatReq("gk-1"))
+	p.HandleChat(rec, chatReq("ck-1"))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NoError(t, p.rec.Close(context.Background()))
 
@@ -336,12 +336,12 @@ func TestProxyGateReloadInherits(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	meta := activeKey(1, 1, 10)
 	meta.KeyMaxConc = 2
-	p.auth.Upsert("gk-1", meta)
+	p.auth.Upsert("ck-1", meta)
 
 	rec1 := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
-		p.HandleChat(rec1, chatReq("gk-1"))
+		p.HandleChat(rec1, chatReq("ck-1"))
 		close(done)
 	}()
 	waitGateKey(t, p, 1, 1)

@@ -184,7 +184,7 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -208,12 +208,12 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	return p, store
 }
 
-// postResponses 向网关发 /v1/responses 请求（Bearer gk-1），返回响应。
+// postResponses 向网关发 /v1/responses 请求（Bearer ck-1），返回响应。
 func postResponses(t *testing.T, srv *httptest.Server, body string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/responses", strings.NewReader(body))
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -402,7 +402,7 @@ func postResponsesTS(t *testing.T, srv *httptest.Server, body, turnState string)
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/responses", strings.NewReader(body))
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	req.Header.Set("Content-Type", "application/json")
 	if turnState != "" {
 		req.Header.Set("x-codex-turn-state", turnState)

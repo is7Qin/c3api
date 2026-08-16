@@ -32,7 +32,7 @@ func TestPGAddQuotaUsedBatch(t *testing.T) {
 	mk := func(name string, used int64) *domain.Key {
 		k, err := repos.CreateKey(ctx, &domain.Key{
 			UserID: u.ID, GroupID: g.ID, Name: name,
-			KeyRaw: "gk-" + name,
+			KeyRaw: "ck-" + name,
 			Status: domain.KeyStatusActive, Quota: 1000, QuotaUsed: used,
 		})
 		require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestPGKeyQuotaUsed(t *testing.T) {
 	require.NoError(t, err)
 	k, err := repos.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "rk",
-		KeyRaw: "gk-reclaim",
+		KeyRaw: "ck-reclaim",
 		Status: domain.KeyStatusActive, Quota: 1000, QuotaUsed: 40,
 	})
 	require.NoError(t, err)

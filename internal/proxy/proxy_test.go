@@ -283,7 +283,7 @@ func newTestProxyTplTimeoutRec(t *testing.T, tpl *domain.Template, accountID int
 	}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background())) // 构造不再自载——测试显式首刷（快照注册表单一入口）
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -308,7 +308,7 @@ func TestProxyStreamingChat(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -340,7 +340,7 @@ func TestProxyStreamingChatPreservesRawBytes(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -388,7 +388,7 @@ func TestProxyStreamingChatAppliesModelMapping(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -418,7 +418,7 @@ func TestProxyStreamingSSEFlushesPerEvent(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -459,7 +459,7 @@ func TestProxyAuthXAPIKey(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("x-api-key", "gk-1")
+	req.Header.Set("x-api-key", "ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -495,7 +495,7 @@ func TestProxyFailoverOn429(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 429, rec.Code, "body=%s", rec.Body.String())
@@ -539,7 +539,7 @@ func TestProxyFailoverOn5xx(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 502, rec.Code, "body=%s", rec.Body.String())
@@ -581,7 +581,7 @@ func TestProxyFailoverExhaustedNoLeak(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 429, rec.Code, "body=%s", rec.Body.String())
@@ -606,7 +606,7 @@ func TestProxyFailoverZeroReleasesSlot(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 502, rec.Code, "body=%s", rec.Body.String())
@@ -626,7 +626,7 @@ func TestProxyPassthrough4xx(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 400, rec.Code, "body=%s", rec.Body.String())
@@ -660,7 +660,7 @@ func TestProxyStreamAbortFreesSlot(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -691,7 +691,7 @@ func TestProxyStreamTimeoutMarksUnhealthy(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -721,7 +721,7 @@ func TestProxyChatStreamingPassthrough4xx(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -755,7 +755,7 @@ func TestProxyClientDisconnectFreesSlot(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	p.HandleChat(failingResponseWriter{}, req)
 
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
@@ -780,7 +780,7 @@ func TestProxyUsageCaptureDisabled(t *testing.T) {
 	p := newTestProxyCapture(t, up.URL, 1, false)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code)
@@ -799,7 +799,7 @@ func TestProxyChatFailoverSingleAccountNoPanic(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	require.NotPanics(t, func() { p.HandleChat(rec, req) })
 	require.Equal(t, 429, rec.Code, "body=%s", rec.Body.String())
@@ -819,7 +819,7 @@ func TestProxyChatNonStreamingLogsModel(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
@@ -846,7 +846,7 @@ func TestProxySelectFailLogsModel(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 
@@ -877,7 +877,7 @@ func TestProxyCredentialDispatchUsesRegistry(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
@@ -908,7 +908,7 @@ func TestProxyCredentialUnknownTypeRejectsNoUpstreamCall(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, http.StatusBadGateway, rec.Code, "未知凭据类型按网络错误处理 → 耗尽 502")

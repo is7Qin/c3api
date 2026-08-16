@@ -35,7 +35,7 @@ func TestSkeletonChatBodyNotJSONStreamAndNonStream(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
-			req.Header.Set("Authorization", "Bearer gk-1")
+			req.Header.Set("Authorization", "Bearer ck-1")
 			rec := httptest.NewRecorder()
 			p.HandleChat(rec, req)
 			require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
@@ -66,7 +66,7 @@ func TestSkeletonModelNonString400(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
-			req.Header.Set("Authorization", "Bearer gk-1")
+			req.Header.Set("Authorization", "Bearer ck-1")
 			rec := httptest.NewRecorder()
 			p.HandleChat(rec, req)
 			require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
@@ -87,7 +87,7 @@ func TestSkeletonModelNullLikeMissing(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":null,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())

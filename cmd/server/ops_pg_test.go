@@ -110,7 +110,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.NoError(t, repos.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 	_, err = repos.CreateKey(ctx, &domain.Key{
 		UserID: u.ID, GroupID: g.ID, Name: "k-ops",
-		KeyRaw: "gk-ops-1",
+		KeyRaw: "ck-ops-1",
 		Status: domain.KeyStatusActive, MaxConcurrency: 8, Quota: 1_000_000,
 	})
 	require.NoError(t, err)

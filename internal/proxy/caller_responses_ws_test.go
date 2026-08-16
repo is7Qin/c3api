@@ -117,8 +117,8 @@ func dialResponsesWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	c, _, err := websocket.Dial(context.Background(), u, &websocket.DialOptions{
 		// 网关 key 双载体齐带（auth.go 任一非空即鉴权）：双载体都不得泄漏上游
 		HTTPHeader: http.Header{
-			"Authorization":    {"Bearer gk-1"},
-			"X-Api-Key":        {"gk-1"},
+			"Authorization":    {"Bearer ck-1"},
+			"X-Api-Key":        {"ck-1"},
 			"X-Client-Version": {"codex-1.2.3"},
 		},
 		CompressionMode: websocket.CompressionContextTakeover,
@@ -231,7 +231,7 @@ func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
 	require.Equal(t, "2026-02-06", h.Get("Responses-Websockets"), "上游握手必须带 beta 头（现役唯一）")
 	require.Equal(t, "Bearer sk-upstream", h.Get("Authorization"), "账号鉴权注入")
 	require.Equal(t, "codex-1.2.3", h.Get("X-Client-Version"), "客户端头透传")
-	require.NotEqual(t, "Bearer gk-1", h.Get("Authorization"), "网关 key 不得直通上游")
+	require.NotEqual(t, "Bearer ck-1", h.Get("Authorization"), "网关 key 不得直通上游")
 	require.Empty(t, h.Get("X-Api-Key"), "x-api-key 载体网关 key 不得直通上游（与 Authorization 同列剔除）")
 	// Sec-WebSocket-Key：RFC 6455 要求每个客户端握手必带 key——上游看到的必是
 	// 网关自身拨号生成的 key（coder Dial 总是重新生成并覆写，见 dial.go
@@ -368,7 +368,7 @@ func TestResponsesWSInsufficientBalance402(t *testing.T) {
 
 	// 完整升级请求（upgrade 头齐备）：预检在升级处理前拒绝 → 402 而非握手
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
@@ -399,7 +399,7 @@ func TestResponsesWSRequiresUpgrade400(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses",
 		strings.NewReader(`{"model":"gpt-4o","input":"hi"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponsesWS(rec, req)
 
@@ -453,7 +453,7 @@ func TestAIRouterResponsesWSUpgradeDispatch(t *testing.T) {
 	// 无 upgrade 头 → 既有 HTTP responses 流程（上游非 WS 请求 → Accept 400）
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses",
 		strings.NewReader(`{"model":"gpt-4o","input":"hi"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	srv.Config.Handler.ServeHTTP(rec, req)
 	require.NotEqual(t, http.StatusUpgradeRequired, rec.Code, "非 upgrade 请求不得按 WS 处理")

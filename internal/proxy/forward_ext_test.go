@@ -209,7 +209,7 @@ func newTestProxyFormatLogs(t *testing.T, upstream string, format domain.Request
 		QuotaFlushInterval: time.Hour,
 	}, logs, nil)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background())) // 构造不再自载——测试显式首刷（快照注册表单一入口）
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -230,7 +230,7 @@ func TestProxyResponsesNonStreaming(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 
@@ -252,7 +252,7 @@ func TestProxyResponsesStreaming(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi","stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 
@@ -300,7 +300,7 @@ func TestProxyResponsesStreamingDataOnly(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi","stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 
@@ -333,7 +333,7 @@ func TestProxyAnthropicNonStreaming(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 
@@ -361,7 +361,7 @@ func TestProxyStreamClientAbortStillLogs(t *testing.T) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/v1/responses",
 		strings.NewReader(`{"model":"gpt-4o","input":"hi","stream":true}`))
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	// 读到第一个 SSE 事件后主动断开（模拟 SDK 迭代完/工具退出关闭连接）
@@ -402,7 +402,7 @@ func TestProxyAnthropicStreamClientAbortStillLogs(t *testing.T) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/v1/messages",
 		strings.NewReader(`{"model":"gpt-4o","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	// 读到第一个 SSE 事件后主动断开
@@ -435,7 +435,7 @@ func TestProxyResponsesFailoverExhausted429(t *testing.T) {
 	p := newTestProxyFormat(t, up.URL, domain.FormatOpenAIResponses)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 
@@ -455,7 +455,7 @@ func TestProxyResponsesPassthrough4xx(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 
@@ -476,7 +476,7 @@ func TestProxyResponsesStreamingPassthrough4xx(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"gpt-4o","input":"hi","stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleResponses(rec, req)
 
@@ -499,7 +499,7 @@ func TestProxyAnthropicPassthrough4xx(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 
@@ -520,7 +520,7 @@ func TestProxyAnthropicStreamingPassthrough4xx(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 
@@ -547,7 +547,7 @@ func TestProxyAnthropicStreamingBaseBareRoot(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 
@@ -563,7 +563,7 @@ func TestProxyAnthropicStreaming(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 
@@ -601,7 +601,7 @@ func TestProxyAnthropicStreamingPreservesEventLines(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 
@@ -651,7 +651,7 @@ func TestProxyAnthropicStreamingSSEFraming(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
 		`{"model":"gpt-4o","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleAnthropic(rec, req)
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())

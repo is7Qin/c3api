@@ -103,7 +103,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	require.NoError(t, sched.InvalidateAllSync())
 
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, g.ID),
+		"ck-1": activeKey(1, 1, g.ID),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 

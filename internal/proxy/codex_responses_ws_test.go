@@ -233,7 +233,7 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
-		"gk-1": activeKey(1, 1, 10),
+		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -299,7 +299,7 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	// 客户端带伪装冲突面头（session 头族 + OpenAI-Beta 旧版本）——必须被剔除
 	//（P3-7/P3-8），不能覆盖账号伪装身份；X-Client-Version 正常透传。
 	c := dialResponsesWSHeaders(t, srv, http.Header{
-		"Authorization":       {"Bearer gk-1"},
+		"Authorization":       {"Bearer ck-1"},
 		"X-Client-Version":    {"codex-1.2.3"},
 		"Session-Id":          {"rogue-session"},
 		"Thread-Id":           {"rogue-thread"},
@@ -353,7 +353,7 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	require.Equal(t, *ext.WindowID, h.Get("X-Codex-Window-Id"), "window-id = {thread}:0")
 	require.Equal(t, "responses_websockets="+aiclient.ResponsesWSBetaHeader, h.Get("OpenAI-Beta"), "网关默认 beta（rogue 已剔除）")
 	require.Equal(t, "codex-1.2.3", h.Get("X-Client-Version"), "非冲突面客户端头透传")
-	require.NotEqual(t, "Bearer gk-1", h.Get("Authorization"), "网关 key 不得直通上游")
+	require.NotEqual(t, "Bearer ck-1", h.Get("Authorization"), "网关 key 不得直通上游")
 
 	// 帧内 client_metadata 注入（伪装四元组帧级面——真实 codex 客户端语义）
 	f0 := hooks.frames[0]
@@ -856,7 +856,7 @@ func TestCodexWSPassthroughHeaders(t *testing.T) {
 	h := http.Header{
 		"Connection":          {"upgrade"},
 		"Sec-Websocket-Key":   {"k"},
-		"Authorization":       {"Bearer gk-1"},
+		"Authorization":       {"Bearer ck-1"},
 		"Session-Id":          {"s"},
 		"Thread-Id":           {"t"},
 		"X-Client-Request-Id": {"c"},

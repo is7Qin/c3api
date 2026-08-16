@@ -208,7 +208,7 @@ func fakeResponsesImages(t *testing.T, output string) *httptest.Server {
 func runRespDetectRequest(t *testing.T, srv *httptest.Server) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	srv.Config.Handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
@@ -307,7 +307,7 @@ func TestProxyResponsesImageDetectMultiplier(t *testing.T) {
 		im: map[string]*domain.ImagePrice{"gpt-4o": respImagePriceRow(nil, nil, i64p(5400))},
 	}
 	bal := billing.NewBalances(fakeBalanceLoader{
-		m: map[int64]int64{}, gm: map[int64]int{10: 15000}, // 组 10 ×1.5（gk-1 归属组）
+		m: map[int64]int64{}, gm: map[int64]int{10: 15000}, // 组 10 ×1.5（ck-1 归属组）
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()), "倍率快照加载（EffectiveMultiplier 读 mult 快照）")
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, &BillingHooks{
@@ -362,7 +362,7 @@ func TestProxyResponsesImageDetectStream(t *testing.T) {
 			defer srv.Close()
 
 			req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi","stream":true}`))
-			req.Header.Set("Authorization", "Bearer gk-1")
+			req.Header.Set("Authorization", "Bearer ck-1")
 			rec := httptest.NewRecorder()
 			srv.Config.Handler.ServeHTTP(rec, req)
 			require.Equal(t, http.StatusOK, rec.Code)

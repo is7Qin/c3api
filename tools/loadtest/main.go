@@ -3,7 +3,7 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // loadtest 对网关打压测：固定并发 goroutine 持续请求，支持流式首字节和非流式完整响应延迟。
-// 用法: go run ./tools/loadtest -mode stream -addr http://127.0.0.1:8080 -key gk-xxx -concurrency 10000 -duration 5m -healthz http://127.0.0.1:8080/healthz
+// 用法: go run ./tools/loadtest -mode stream -addr http://127.0.0.1:8080 -key ck-xxx -concurrency 10000 -duration 5m -healthz http://127.0.0.1:8080/healthz
 //
 //	go run ./tools/loadtest -mode fill -fill-type users -admin-token <C3API_ADMIN_TOKEN> -concurrency 2000 -duration 5m
 //
@@ -48,7 +48,7 @@ var (
 	duration    = flag.Duration("duration", 5*time.Minute, "test duration")
 	warmup      = flag.Duration("warmup", 10*time.Second, "untimed connection warm-up before the clock starts")
 	addr        = flag.String("addr", "http://127.0.0.1:8080", "gateway addr")
-	key         = flag.String("key", "gk-", "single gateway key (fallback when -keys is empty)")
+	key         = flag.String("key", "ck-", "single gateway key (fallback when -keys is empty)")
 	keysFile    = flag.String("keys", "", "file with one gateway key per line; pick random per request (multi-key load)")
 	format      = flag.String("format", "chat", "request format: chat, responses or anthropic")
 	healthz     = flag.String("healthz", "", "gateway /healthz url to sample memory")

@@ -142,7 +142,7 @@ func TestImagesGenerationsJSONDirect(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"img-1","prompt":"a cat","n":2}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -174,7 +174,7 @@ func TestImagesEditsJSONDirect(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", strings.NewReader(
 		`{"model":"gpt-image-1","image":"https://example.com/in.png"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesEdits(rec, req)
 
@@ -217,7 +217,7 @@ func TestImagesMultipartHardGateSkippedAndPassthrough(t *testing.T) {
 	ct := mw.FormDataContentType()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
 	p.HandleImagesEdits(rec, req)
@@ -269,7 +269,7 @@ func TestImagesNoImagePrice402(t *testing.T) {
 	}, &captureLogStore{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -296,7 +296,7 @@ func TestImagesPureImageModelNotKilledByChatPrecheck(t *testing.T) {
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -342,7 +342,7 @@ func TestImagesDirectUsageExtractionBilling(t *testing.T) {
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"a cat","n":2}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -374,7 +374,7 @@ func TestImagesNoImagePriceWhenImagePricesNil(t *testing.T) {
 	}, &captureLogStore{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 	require.Equal(t, 200, rec.Code, "ImagePrices 未装配不预检：body=%s", rec.Body.String())
@@ -398,7 +398,7 @@ func TestImagesStreamingSSE(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"img-1","prompt":"cat","stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -439,7 +439,7 @@ func TestImagesStreamDirectBilling(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-1","prompt":"a cat","stream":true}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -482,7 +482,7 @@ func TestImagesCodexNotIntegrated501(t *testing.T) {
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
@@ -518,7 +518,7 @@ func TestImagesCodexPATNotIntegrated501(t *testing.T) {
 	store := &captureLogStore{}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", strings.NewReader(`{"model":"gpt-image-1"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesEdits(rec, req)
 	require.Equal(t, http.StatusNotImplemented, rec.Code, "body=%s", rec.Body.String())
@@ -546,7 +546,7 @@ func TestImagesResponsesSpecialDirect(t *testing.T) {
 	p := newTestProxyTplCapture(t, tpl, 1, true)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer gk-1")
+	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 

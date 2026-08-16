@@ -216,7 +216,7 @@ func TestPGLoadKeysChunked(t *testing.T) {
 				SetUserID(users[i].ID).
 				SetGroupID(g.ID).
 				SetName(fmt.Sprintf("load-%d", i)).
-				SetKeyRaw(fmt.Sprintf("gk-%d", i)).
+				SetKeyRaw(fmt.Sprintf("ck-%d", i)).
 				SetStatus(key.StatusActive).
 				SetMaxConcurrency(4).
 				SetQuota(0).
