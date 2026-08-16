@@ -69,6 +69,8 @@ type ProxyConfig struct {
 	MaxInflight           int64         `koanf:"max_inflight"`
 	UpstreamTimeout       time.Duration `koanf:"upstream_timeout"`
 	UpstreamStreamTimeout time.Duration `koanf:"upstream_stream_timeout"`
+	// FailoverAttempts 总尝试次数（含首次）——>= 1（0 启动即拒绝：failover 循环
+	// 零次执行，首次选号占用的并发槽永不释放，组内账号耗尽后全组 429 死锁）。
 	FailoverAttempts      int           `koanf:"failover_attempts"`
 	UsageCapture          bool          `koanf:"usage_capture"`
 }
@@ -225,12 +227,16 @@ func validate(c *Config) error {
 			return fmt.Errorf("%s must be >= 1ms (got %s)", d.path, d.value)
 		}
 	}
+	// int 下限表——proxy.failover_attempts 语义为"总尝试次数（含首次）"（total
+	// attempts, first attempt counts）：0 会绕过 failover 循环且首次选号占用的
+	// 并发槽永不释放（组内账号耗尽后全组 429 死锁），启动即拒绝。
 	for _, n := range []struct {
 		path  string
 		value int
 	}{
 		{"scheduler.default_max_concurrency", c.Scheduler.DefaultMaxConcurrency},
 		{"db.max_conns", c.DB.MaxConns},
+		{"proxy.failover_attempts", c.Proxy.FailoverAttempts},
 	} {
 		if n.value < 1 {
 			return fmt.Errorf("%s must be >= 1 (got %d)", n.path, n.value)

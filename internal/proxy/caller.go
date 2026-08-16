@@ -296,8 +296,12 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		lastErrMsg string // 最后一次实际尝试的错误文本（耗尽路径 ErrorMessage 用）
 		lastSel    = sel  // 最后一次实际尝试的 Selection；中途 Select 失败返回 nil 时不得解引用 sel
 	)
+	// 防呆（spec：failover_attempts=0 直构绕过 validate 下限）：循环零次执行时
+	// 首次 Select 已占并发槽，耗尽路径按此标志补 Release——N>=1 恒 true，不双释放。
+	attempted := false
 	for attempt := 0; attempt < p.cfg.FailoverAttempts; attempt++ {
 		lastSel = sel
+		attempted = true
 		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前
 		// 查价——计费启用时模型无价格 → 释放并发槽 + 402（不按 0 计价），零 DB
 		// （快照读）。images 格式查 GetImagePrice（image_price 表；跳过 chat
@@ -427,6 +431,11 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	// 耗尽：请求已完成（上游消费了请求），以最后一次尝试的结果记一条用量。
 	// 错误文本：最后一次尝试的 errMsg（连接级 err.Error() / 429/5xx 上游
 	// message，域内截断 500）填 ErrorMessage；成功路径恒空。
+	// 防呆释放：循环零次执行（failover_attempts=0 直构）时首次 Select 的槽从未
+	// 释放——耗尽路径补 Release；N>=1 时 attempted 恒 true（循环尾已释放，不双释放）。
+	if !attempted {
+		p.sched.Release(lastSel.AccountID)
+	}
 	et := domain.Err5xx
 	switch {
 	case lastCode == http.StatusTooManyRequests:

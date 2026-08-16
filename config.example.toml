@@ -16,6 +16,7 @@ proxy = {
   # 启动报错）；同源供 http.Server.ReadTimeout（slowloris 截断，见 main.go）。
   upstream_timeout = "120s",
   upstream_stream_timeout = "30m",
+  # 总尝试次数（含首次）——>= 1，0 会启动失败（拒绝死锁配置）
   failover_attempts = 3,
   usage_capture = true,
 }

@@ -129,7 +129,8 @@ func TestLoadEnvBareNumberFailFast(t *testing.T) {
 
 // TestLoadRejectsNonPositiveNumeric：数值字段下限 ≥1——DefaultMaxConcurrency=0
 // （silent 全坏面：从"健康地拒绝全流量"转启动即报错）、DB.MaxConns=0（puddle 层
-// MaxSize 报错无法归因到 db.max_conns）。
+// MaxSize 报错无法归因到 db.max_conns）、FailoverAttempts=0（failover 循环零次
+// 执行 → 首次选号并发槽永不释放，死锁配置启动即拒绝）。
 func TestLoadRejectsNonPositiveNumeric(t *testing.T) {
 	setenvRequired(t)
 	for _, tc := range []struct {
@@ -138,6 +139,7 @@ func TestLoadRejectsNonPositiveNumeric(t *testing.T) {
 	}{
 		{"scheduler.default_max_concurrency", `scheduler = { default_max_concurrency = 0 }`},
 		{"db.max_conns", `db = { max_conns = 0 }`},
+		{"proxy.failover_attempts", `proxy = { failover_attempts = 0 }`},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			_, err := Load(writeConfig(t, tc.toml))
@@ -145,6 +147,15 @@ func TestLoadRejectsNonPositiveNumeric(t *testing.T) {
 			require.ErrorContains(t, err, tc.path)
 		})
 	}
+}
+
+// TestLoadAcceptsFailoverAttemptsOne：failover_attempts=1（最小合法值，单次尝试
+// 不重试）加载通过——与 0 拒绝成对锁定下限语义。
+func TestLoadAcceptsFailoverAttemptsOne(t *testing.T) {
+	setenvRequired(t)
+	c, err := Load(writeConfig(t, `proxy = { failover_attempts = 1 }`))
+	require.NoError(t, err)
+	require.Equal(t, 1, c.Proxy.FailoverAttempts)
 }
 
 // TestLoadKeepsRetentionZeroSemantics：retention 天数 <=0 = 不删除（文档化惯例，

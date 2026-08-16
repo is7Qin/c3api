@@ -593,6 +593,30 @@ func TestProxyFailoverExhaustedNoLeak(t *testing.T) {
 	require.Zero(t, p.rec.Pending(), "耗尽路径失败行不产生明细 pending（err_logs 承载）")
 }
 
+// 防呆（spec 纵深）：failover_attempts=0 直构（绕过 validate 的 >=1 下限——测试
+// 侧 p.cfg 改写等价直构）时 failover 循环零次执行，首次 Select 已占并发槽——
+// 修复前槽永不释放（组内账号耗尽后全组 429 死锁，重启才能恢复）；耗尽路径必须
+// 补 Release。N=0 时 lastCode=0 → ErrNetwork → 502 "all upstream attempts failed"。
+func TestProxyFailoverZeroReleasesSlot(t *testing.T) {
+	up := fakeOpenAI(t, "500") // 循环体不执行，上游不会被调用——返回码任意
+	defer up.Close()
+	p := newTestProxy(t, up.URL, 1)
+	sched := p.sched
+	p.cfg.FailoverAttempts = 0
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer gk-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+	require.Equal(t, 502, rec.Code, "body=%s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "all upstream attempts failed")
+	ri, ok := sched.Runtime(1)
+	require.True(t, ok)
+	require.Zero(t, ri.Concurrency, "failover_attempts=0 首次选号占槽必须释放（防呆 Release）")
+	require.Zero(t, p.rec.Pending(), "N=0 耗尽路径失败行不产生明细 pending（err_logs 承载）")
+}
+
 // 4xx：确定性错误，透传上游状态码与原始 body、不转移（规格 §5.3），账号不进入冷却。
 func TestProxyPassthrough4xx(t *testing.T) {
 	up := fakeOpenAI(t, "400")
