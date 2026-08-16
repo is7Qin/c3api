@@ -30,10 +30,12 @@ import (
 // 编排语义与 SSE caller 同构：鉴权/门禁/选号/failover/记录复用骨架组件，差异
 // 只在传输面（WS 升级 + 双向事件帧转发 + usage 嗅探 + 心跳）。
 //
-// 热路径纪律（架构定稿 §5）：流式中间帧零解析零拷贝直转；只嗅探
-// response.completed 帧（bytes.Contains 子串预筛 → 命中才最小 gjson 解析）；
-// 首帧（response.create = 请求帧）才做模型改写（ModelMapping 语义，与
-// setModel 同构）——也是 W4 图像剥离的帧级预处理点。
+// 热路径纪律（架构定稿 §5）：流式中间帧零解析直转——账目分层：网关层零解析
+// 零分配（bytes.Contains 子串预筛，命中才字节扫描取 usage——usage_extract.go
+// A-1 scanKeyValue 单遍扫描）；库层（coder/websocket）每帧 io.ReadAll 物化 +
+// permessage-deflate 往返属库内账目，非网关责任。只嗅探 response.completed
+// 帧（预筛命中才最小字节扫描）；首帧（response.create = 请求帧）才做模型改写
+// （ModelMapping 语义，与 setModel 同构）——也是 W4 图像剥离的帧级预处理点。
 
 const (
 	// responsesWSFirstFrameTimeout 升级后首个请求帧（response.create）等待上限：
@@ -429,8 +431,10 @@ func (p *Proxy) relayResponsesWS(client, up *websocket.Conn, r *http.Request, re
 				exit()
 				return
 			}
-			// 热路径纪律：bytes.Contains 零分配预筛，命中才最小 gjson 解析；
-			// 流式中间帧零解析零拷贝直转（Read 缓冲直写，无内容复制）。
+			// 热路径纪律：bytes.Contains 零分配预筛，命中才最小字节扫描取 usage
+			// （usage_extract.go A-1 scanKeyValue 单遍扫描零分配）；流式中间帧
+			// 零解析直转——网关层零分配，库层每帧 io.ReadAll 物化 + flate 属库
+			// 内账目。
 			if u, ok := sniffResponsesCompleted(f); ok {
 				it, ot, tt, cr, cc = u.it, u.ot, u.tt, u.cr, u.cc
 				// 响应检测旁路（spec §6）：completed 帧恒在流末——最终计数由其

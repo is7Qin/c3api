@@ -180,8 +180,17 @@ func buildCompletedFrame(ev *domain.ImageStreamEvent) []byte {
 	buf := bytes.NewBuffer(make([]byte, 0, len(evLine)+b64len+96))
 	buf.WriteString(evLine)
 	buf.WriteString(`{"b64_json":`)
-	b64, _ := json.Marshal(ev.B64JSON)
-	buf.Write(b64)
+	// base64 字符集 A-Za-z0-9+/= 不含 " 与 \ → 免 json.Marshal 转义扫描，直接
+	// 手写引号零分配；nil（B64JSON 为 *string，keepalive 恒 nil）须显式写字面
+	// null 保字节不变（json.Marshal 对 nil 同样产 null）。
+	if ev.B64JSON != nil {
+		b64 := *ev.B64JSON
+		buf.WriteByte('"')
+		buf.WriteString(b64)
+		buf.WriteByte('"')
+	} else {
+		buf.WriteString("null")
+	}
 	if ev.Usage != nil {
 		buf.WriteString(`,"usage":`)
 		u, _ := json.Marshal(ev.Usage)

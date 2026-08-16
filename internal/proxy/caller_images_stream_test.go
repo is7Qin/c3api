@@ -186,6 +186,17 @@ func TestStreamImagePassthrough(t *testing.T) {
 	require.Equal(t, int64(11030), l.Cost, "100×800000/1e6 + 50×3000000/1e6 + 2×5400（ImageCost 口径不变）")
 }
 
+// TestBuildCompletedFrameNilB64JSON completed 帧 B64JSON=nil（*string——keepalive
+// 恒 nil 的防御边界）→ b64_json 字段字节输出字面 null（与 json.Marshal(nil
+// *string) 等价——手写引号改写不得改变字节）；非 nil 路径字节不变（回归锚）。
+func TestBuildCompletedFrameNilB64JSON(t *testing.T) {
+	out := buildCompletedFrame(&domain.ImageStreamEvent{Type: domain.ImageStreamEventCompleted})
+	require.Equal(t, "event: image_generation.completed\ndata: {\"b64_json\":null}\n\n", string(out))
+	b64 := "aGVsbG8="
+	out = buildCompletedFrame(&domain.ImageStreamEvent{Type: domain.ImageStreamEventCompleted, B64JSON: &b64})
+	require.Equal(t, "event: image_generation.completed\ndata: {\"b64_json\":\"aGVsbG8=\"}\n\n", string(out))
+}
+
 // TestStreamImageUsageOnlyLastCompleted usage 仅末事件携带：多张图时计费取
 // 最后一个 completed 的 usage（中间的 usage 不覆盖）。
 func TestStreamImageUsageOnlyLastCompleted(t *testing.T) {
