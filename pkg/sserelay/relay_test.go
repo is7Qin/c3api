@@ -253,6 +253,62 @@ func TestEventNameEmptyWhenUninferrable(t *testing.T) {
 	require.Empty(t, Event{Data: nil}.EventName(), "空载荷")
 }
 
+// TestEventNameAnchorPath 字节锚定路径（spec 2026-08-16-single-pass-parse-design
+// E2）：帧首 `{"type":"` 形态 → 值区间直切片（零拷贝零分配）。
+func TestEventNameAnchorPath(t *testing.T) {
+	e := Event{Data: []byte(`{"type":"response.output_text.delta","delta":"x"}`)}
+	got := e.EventName()
+	require.Equal(t, "response.output_text.delta", string(got))
+	// 锚定命中：返回切片指向输入字节（零拷贝——与旧全量解码本次分配区分）
+	require.Same(t, &e.Data[len(typeAnchorPrefix)], &got[0], "锚定路径零拷贝直切片")
+}
+
+// TestEventNameAnchorEmptyType 空串 type（{"type":""}）→ 空名（与旧
+// t.Type=="" → nil 语义一致）。
+func TestEventNameAnchorEmptyType(t *testing.T) {
+	require.Empty(t, Event{Data: []byte(`{"type":""}`)}.EventName())
+}
+
+// TestEventNameAnchorFallback 锚定不匹配形态 → 回退全量解码，行为逐字节不变：
+// 非首键 type / 冒号后空白 / 前导空白 / type 非字符串 / type 显式 null。
+func TestEventNameAnchorFallback(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		want string
+	}{
+		{"非首键type", `{"a":1,"type":"x"}`, "x"},
+		{"冒号后空白", `{"type" : "x"}`, "x"},
+		{"前导空白", ` {"type":"x"}`, "x"},
+		{"type非字符串", `{"type":123}`, ""},
+		{"type显式null", `{"type":null}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, string(Event{Data: []byte(tc.data)}.EventName()), "data=%s", tc.data)
+		})
+	}
+}
+
+// TestEventNameAnchorEscapedValueRawRetention 值含转义引号：锚定仍命中（\ 跳
+// 过转义目标）→ 返回裸字节（转义保留）——与 eventTypeIs 逐字节比较语义一致；
+// 类型值恒无转义的机器生成形态下等价（比较目标为 ASCII 常量，转义形态必
+// ≠ 目标，宁漏勿错方向）。
+func TestEventNameAnchorEscapedValueRawRetention(t *testing.T) {
+	got := Event{Data: []byte(`{"type":"a\"b"}`)}.EventName()
+	require.Equal(t, `a\"b`, string(got), "锚定命中返回裸字节（\\\" 不物化解码）")
+}
+
+// TestEventNameAnchorZeroAlloc 锚定命中路径零分配（热路径红线；回退路径允许
+// 分配——AllocsPerRun 只断言锚定形态）。
+func TestEventNameAnchorZeroAlloc(t *testing.T) {
+	data := []byte(`{"type":"response.output_text.delta","delta":"x"}`)
+	alloc := testing.AllocsPerRun(100, func() {
+		_ = Event{Data: data}.EventName()
+	})
+	require.Zero(t, alloc, "锚定路径必须零分配（每帧调用——热路径红线）")
+}
+
 func TestRelayFirstEventFlushesImmediately(t *testing.T) {
 	fr := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
 	require.NoError(t, relayStream(fr, "data: {\"a\":1}\n\n", Config{FlushBytes: 4096, FlushInterval: time.Hour}))

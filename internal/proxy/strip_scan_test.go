@@ -237,6 +237,147 @@ func TestScanTools(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// scanKeys / parseStringValue 单元测试
+// （2026-08-16-single-pass-parse-design：多键单遍收集——handleFormat 单遍
+// 提取地基；重复键取首 / 缺键 nil / 嵌套不误定位 / 顶层非对象 false）。
+// ---------------------------------------------------------------------------
+
+func TestScanKeys(t *testing.T) {
+	keys := [][]byte{streamKeyBytes, modelKeyBytes, serviceTierKeyBytes}
+	collect := func(t *testing.T, body string) (vals [3][]byte, ok bool) {
+		t.Helper()
+		ok = scanKeys([]byte(body), keys, vals[:])
+		return vals, ok
+	}
+
+	t.Run("三键任意顺序", func(t *testing.T) {
+		// 键顺序与 keys 参数顺序相反——值按 keys 索引归位。
+		vals, ok := collect(t, `{"service_tier":"fast","stream":true,"model":"gpt-4o","messages":[]}`)
+		require.True(t, ok)
+		require.Equal(t, "true", string(vals[0]), "stream 值区间裸字节")
+		require.Equal(t, `"gpt-4o"`, string(vals[1]), "字符串值区间含引号（去引号归 parseStringValue）")
+		require.Equal(t, `"fast"`, string(vals[2]))
+	})
+
+	t.Run("缺失键", func(t *testing.T) {
+		vals, ok := collect(t, `{"model":"gpt-4o","messages":[]}`)
+		require.True(t, ok)
+		require.Nil(t, vals[0], "stream 缺失 → nil")
+		require.Equal(t, `"gpt-4o"`, string(vals[1]))
+		require.Nil(t, vals[2], "service_tier 缺失 → nil")
+	})
+
+	t.Run("嵌套同名键不误定位", func(t *testing.T) {
+		body := `{"input":{"model":"nested","service_tier":"fast","stream":false},"model":"gpt-4o","stream":true}`
+		vals, ok := collect(t, body)
+		require.True(t, ok)
+		require.Equal(t, "true", string(vals[0]), "嵌套 stream:false 不误定位")
+		require.Equal(t, `"gpt-4o"`, string(vals[1]), "嵌套 model 不误定位")
+		require.Nil(t, vals[2], "嵌套 service_tier 不误定位（顶层无）")
+	})
+
+	t.Run("字符串值区间含引号", func(t *testing.T) {
+		// `"stream":"true"` 值区间 = `"true"`（含引号）——与字面 true 区分
+		// （handleFormat 判定防字符串误判的语义前提）。
+		vals, ok := collect(t, `{"stream":"true","model":null}`)
+		require.True(t, ok)
+		require.Equal(t, `"true"`, string(vals[0]))
+		require.Equal(t, "null", string(vals[1]), "显式 null 字面原样捕获")
+	})
+
+	t.Run("重复键取首", func(t *testing.T) {
+		// 与 gjson 路径查询首次命中语义一致（scanTopLevelKeys 取末次是 map
+		// 语义——不同调用方不同约定）。
+		vals, ok := collect(t, `{"model":"first","model":"second"}`)
+		require.True(t, ok)
+		require.Equal(t, `"first"`, string(vals[1]), "重复键取首次出现")
+	})
+
+	t.Run("顶层非对象", func(t *testing.T) {
+		for _, body := range []string{`[{"model":"x"}]`, `"model"`, `null`, `123`, `[]`} {
+			vals, ok := collect(t, body)
+			require.False(t, ok, "顶层非对象 → ok=false：%s", body)
+			for i := range vals {
+				require.Nil(t, vals[i], "顶层非对象 → 全部缺省：%s", body)
+			}
+		}
+	})
+
+	t.Run("非法结构", func(t *testing.T) {
+		// json.Valid 前置下不可达（防御性兜底）：截断/缺冒号等形态 → ok=false。
+		for _, body := range []string{`{`, `{"model"`, `{"model":`, `{"model":"x`} {
+			vals, ok := collect(t, body)
+			require.False(t, ok, "非法结构 → ok=false：%s", body)
+			for i := range vals {
+				require.Nil(t, vals[i], "非法结构 → 全部缺省：%s", body)
+			}
+		}
+		// 错误点在键收集之后（尾逗号截断）：已收集键保留（调用方忽略 ok——
+		// 生产不可达：json.Valid 前置已 400）。
+		vals, ok := collect(t, `{"model":1,`)
+		require.False(t, ok)
+		require.Equal(t, "1", string(vals[1]))
+	})
+
+	t.Run("空对象", func(t *testing.T) {
+		vals, ok := collect(t, `{}`)
+		require.True(t, ok, "空对象扫描成功（无键可收集）")
+		for i := range vals {
+			require.Nil(t, vals[i])
+		}
+	})
+
+	t.Run("三键齐集即早退", func(t *testing.T) {
+		// 遍历长度断言（大 body 键在前的场景）：三键位于对象前部、其后接
+		// 非法结构——齐集早退 → true（尾随字节未触及）；无早退则继续遍历
+		// 撞上结构非法 → false。task review Important（MB body 实测慢
+		// 20-25%）修复的回归钉。
+		vals, ok := collect(t, `{"stream":true,"model":"gpt-4o","service_tier":"auto",`)
+		require.True(t, ok, "三键齐集早退：尾随非法结构不得被触及")
+		require.Equal(t, "true", string(vals[0]))
+		require.Equal(t, `"gpt-4o"`, string(vals[1]))
+		require.Equal(t, `"auto"`, string(vals[2]))
+	})
+
+	t.Run("缺键不早退", func(t *testing.T) {
+		// 齐集失败（缺键）→ 遍历至对象结束（尾随非法结构 → false）——早退
+		// 只发生在全齐集，缺键路径行为不变。
+		vals, ok := collect(t, `{"stream":true,"model":"gpt-4o",`)
+		require.False(t, ok, "缺 service_tier → 不早退：尾随结构非法 → false")
+		require.Equal(t, "true", string(vals[0]))
+		require.Equal(t, `"gpt-4o"`, string(vals[1]))
+		require.Nil(t, vals[2])
+	})
+}
+
+func TestParseStringValue(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{"缺键", "", "", true}, // gjson Null/缺失同零值语义放行
+		{"null字面", "null", "", true},
+		{"字符串", `"gpt-4o"`, "gpt-4o", true},
+		{"空字符串", `""`, "", true},
+		{"unicode转义", `"g\u002d4o"`, "g-4o", true}, // - 解码 = '-'（gjson String() 同款）
+		{"双反斜杠字面", `"\\u0069"`, `\u0069`, true}, // JSON \\u = 字面反斜杠 + u0069，不解码
+		{"数字", "123", "", false},
+		{"布尔", "true", "", false},
+		{"对象", "{}", "", false},
+		{"数组", "[]", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseStringValue([]byte(tc.raw))
+			require.Equal(t, tc.ok, ok)
+			require.Equal(t, tc.want, string(got))
+		})
+	}
+}
+
 func TestDecodeUnicodeEscapes(t *testing.T) {
 	t.Run("无转义原切片直返", func(t *testing.T) {
 		v := []byte("image_generation_tool")

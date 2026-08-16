@@ -6,10 +6,11 @@
 // → 模板协议请求体（ConvertRequest）、模板协议响应 → 客户端协议响应
 // （ConvertResponse 非流式 JSON / StreamMapper 流式 SSE 事件映射）。
 //
-// 边界（用户拍板）：转换器是网关能力，纯标准库（encoding/json），与 OpenAI/
-// Anthropic SDK 零耦合；四方向分派按 groups.protocol_convert 快照值（off 不
-// 经过本包——热路径分支在 internal/proxy 判定）；WS 帧流转换不做（resp-ws
-// 1:1 透传，W3 范围）。
+// 边界（用户拍板）：转换器是网关能力，标准库实现（encoding/json），与
+// OpenAI/Anthropic SDK 零耦合（缺名帧事件名推断与 sserelay 共用
+// InferEventName——热路径零分配锚定 + 回退全量解码）；四方向分派按
+// groups.protocol_convert 快照值（off 不经过本包——热路径分支在
+// internal/proxy 判定）；WS 帧流转换不做（resp-ws 1:1 透传，W3 范围）。
 package protoconv
 
 import (
@@ -18,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 // ConvertRequest 把客户端协议请求体转换为 dir 指向的模板协议请求体（返回的
@@ -115,7 +117,7 @@ type StreamMapper struct {
 // 透传仅兜底非规范上游。
 func (m *StreamMapper) Map(name string, data []byte) ([]byte, bool) {
 	if name == "" {
-		name = inferEventName(data)
+		name = string(sserelay.InferEventName(data))
 		if name == "" {
 			if len(data) == 0 {
 				return nil, true
@@ -159,19 +161,6 @@ func EncodeFrame(name string, data any) []byte {
 	out = append(out, payload...)
 	out = append(out, '\n', '\n')
 	return out
-}
-
-// inferEventName 缺 event: 名帧的事件名推断：data 为 JSON 对象且含非空
-// 字符串 type 字段时返回该值（resp/messages 流的帧 type 与事件名同值）；
-// 否则返回空（调用方按透传处理）。
-func inferEventName(data []byte) string {
-	var t struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(data, &t) != nil {
-		return ""
-	}
-	return t.Type
 }
 
 // encodeDataFrame 把 data 载荷编码为 data-only SSE 帧（缺名帧透传用）。

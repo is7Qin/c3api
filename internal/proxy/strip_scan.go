@@ -258,6 +258,99 @@ func extractKeys(elem []byte, tv *ToolView) {
 	}
 }
 
+// scanKeys 单遍遍历顶层对象，把 keys 中每个键首次命中的值区间写入 out 对应
+// 位置（out[i] = body 值子切片——真零拷贝；键缺失 → out[i] = nil）。与
+// scanKeyValue 同构并存（同一状态机）；差异：多键一次性收集（handleFormat
+// 4 遍 → 2 遍的前提——json.Valid 全扫 + 本函数单遍）+ 重复键取首次出现
+// （与 gjson 路径查询首次命中语义一致；scanKeyValue 首次命中即返、
+// scanTopLevelKeys 取末次对齐 map 语义——各按调用方语义）。嵌套对象/数组内
+// 同名键不误定位（skipValue 整体跳过）。全部键齐集即早退（剩余对象不再
+// 遍历——大 body 键在前的扫描成本省去；值语义不变：首次命中已定）。顶层
+// 非对象 → 返回 false（out 全部 nil——调用方按全缺键处理，与 gjson 顶层
+// 非对象路径全部 Null 语义等价）；结构非法 → 返回 false（错误点前已收集键
+// 保留——json.Valid 前置下不可达，防御性兜底）。调用方提供 out（长度 ≥
+// len(keys)——栈上数组切片），热路径零分配（无内部 make）。
+func scanKeys(body []byte, keys [][]byte, out [][]byte) bool {
+	missing := len(keys) // 未命中键数：齐集即早退
+	for i := range keys {
+		out[i] = nil
+	}
+	i := skipSpace(body, 0)
+	if i >= len(body) || body[i] != '{' {
+		return false // 顶层非对象：全部缺省（gjson Null 语义）
+	}
+	i++ // '{'
+	for {
+		i = skipSpace(body, i)
+		if i >= len(body) {
+			return false
+		}
+		switch body[i] {
+		case '}':
+			return true // 对象正常结束（未命中键保持 nil）
+		case ',':
+			i++
+		case '"':
+			k, next := parseJSONString(body, i)
+			if next < 0 {
+				return false
+			}
+			j := skipSpace(body, next)
+			if j >= len(body) || body[j] != ':' {
+				return false
+			}
+			j = skipSpace(body, j+1)
+			if j >= len(body) {
+				return false
+			}
+			e := skipValue(body, j)
+			if e < 0 {
+				return false
+			}
+			for ki := range keys {
+				if out[ki] == nil && bytes.Equal(k, keys[ki]) {
+					out[ki] = body[j:e]
+					missing--
+					if missing == 0 {
+						return true // 齐集早退：剩余对象不再遍历
+					}
+				}
+			}
+			i = e
+		default:
+			return false // 结构非法（json.Valid 前置，理论上不可达）
+		}
+	}
+}
+
+// parseStringValue 值区间 → 字符串值（handleFormat 的 model/service_tier 判定
+// 用，与现状 gjson Type/String 语义等价）：字符串形态 → 去引号 + \uXXXX
+// 解码（decodeUnicodeEscapes——无 \u 零分配原切片直返；其余转义形态保留裸
+// 字节，与 strip 扫描族同款比较语义）；字面 null 与缺键（nil 区间）→ 空串
+// 放行（gjson Null/缺失同零值语义）；其余形态（数字/布尔/对象/数组）→
+// ok=false（调用方按 400 处理）。
+func parseStringValue(raw []byte) ([]byte, bool) {
+	if len(raw) == 0 {
+		return nil, true // 缺键 → gjson Null 语义放行
+	}
+	switch raw[0] {
+	case '"':
+		if len(raw) < 2 {
+			return nil, false // 防御性（json.Valid 前置下不可达）
+		}
+		val := raw[1 : len(raw)-1] // 去引号（parseJSONString 同款——值区间恒闭引号收尾）
+		if bytes.Contains(val, backslashUBytes) {
+			val = decodeUnicodeEscapes(val)
+		}
+		return val, true
+	case 'n':
+		if bytes.Equal(raw, nullBytes) {
+			return nil, true // 显式 null → 空串放行
+		}
+	}
+	return nil, false
+}
+
 // scanKeyValue 定位对象顶层键的键值区间 [start, end)（值首字节 → 值末字节
 // 后一位置；嵌套值正确跳过——对象/数组内同名键不误定位）。首次命中即返回
 // （重复键病态，值语义取首/末对计数无实质影响）。顶层非对象/结构非法 →
@@ -518,4 +611,10 @@ var (
 	trueBytes                        = []byte("true")
 	falseBytes                       = []byte("false")
 	nullBytes                        = []byte("null")
+	// handleFormat 单遍提取键（spec 2026-08-16-single-pass-parse-design：scanKeys
+	// 一次提 stream/model/service_tier 三键——值判定与 gjson Type 语义等价）
+	streamKeyBytes      = []byte("stream")
+	modelKeyBytes       = []byte("model")
+	serviceTierKeyBytes = []byte("service_tier")
+	streamModelTierKeys = [][]byte{streamKeyBytes, modelKeyBytes, serviceTierKeyBytes}
 )

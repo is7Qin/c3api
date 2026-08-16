@@ -5,6 +5,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
@@ -99,11 +100,12 @@ type UpstreamCaller interface {
 		start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (code int, respBody []byte, handled bool, err error)
 }
 
-// extractTier 提取并归一化请求体 service_tier（HTTP 与 resp-ws 共用，纯函数）：
-// gjson 顶层读取零分配；类型错误（非 string/null）→ error（HTTP 400 / WS 错误
-// 帧语义，调用方决定写出与拒绝记录）；空/未知 → TierAuto（auto 兜底，无
-// hasTier 返回——TierPolicy 只对 priority/flex/fast 生效，auto 恒透传不策略，
-// hasTier 无独立信息量）。
+// extractTier 提取并归一化请求体 service_tier（resp-ws 专用，纯函数；HTTP 路径
+// 由 handleFormat 的 scanKeys 单遍提取直接判定——同语义不同入口）：gjson 顶层
+// 读取零分配；类型错误（非 string/null）→ error（WS 错误帧语义，调用方决定
+// 写出与拒绝记录）；空/未知 → TierAuto（auto 兜底，无 hasTier 返回——
+// TierPolicy 只对 priority/flex/fast 生效，auto 恒透传不策略，hasTier 无独立
+// 信息量）。
 func extractTier(body []byte) (billing.Tier, error) {
 	tierVal := gjson.GetBytes(body, "service_tier")
 	if tierVal.Type != gjson.String && tierVal.Type != gjson.Null {
@@ -115,7 +117,7 @@ func extractTier(body []byte) (billing.Tier, error) {
 // handleFormat 通用转发骨架（从原 HandleXxx 提取，三格式共用）：鉴权 →
 // quota 检查（本地预算快读；预算耗尽触发 DB 复核认领，见 gate.reclaim）→
 // 两级并发门禁 acquire（user → key，失败回滚）→ 限流 →
-// 读体 → stream 探测（peek unmarshal）+ model 提取（gjson，零分配）→ 选号 →
+// 读体 → json.Valid + scanKeys 单遍顶层提取（stream/model/service_tier）→ 选号 →
 // failover 循环（每轮 credentialFor + caller.Call + code 分支）→ 耗尽记录写出。
 // 门禁热路径全部内存原子（零 DB 零锁——复核仅预算耗尽的 key 触发，额度边缘
 // 低频慢路径）；release 与 quota 扣减在请求结束统一完成。
@@ -202,31 +204,41 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		// "stream": true），故从原始请求体探测 stream 标志决定走流式还是非流式。
 		// model 一并在此提取（评审 I-2：不解析完整 params）；service_tier（Phase 5
 		// 计费）同次提取。GC 削减 P3：json.Valid 单遍校验（零分配）保留 400 语义 +
-		// gjson 顶层提取（Type 校验等价原 Unmarshal 的类型拒绝：stream 非 bool、
-		// model/service_tier 非 string → 400；显式 null 与缺失等同零值语义，与
-		// encoding/json 一致）。400 响应消息文案随校验方式变化（无测试断言原文；
-		// 错误码/无记录/Select 前无并发槽语义逐字不变）。
+		// scanKeys 单遍顶层提取三键（spec 2026-08-16-single-pass-parse-design：
+		// 每 JSON 请求 4 遍全文档扫描 → 2 遍——gjson.ParseBytes 方案经证伪弃用）。
+		// 值判定与现状 gjson Type 校验语义精确等价：stream 非 bool/null、model/
+		// service_tier 非 string/null → 400（显式 null 与缺失等同零值语义，与
+		// encoding/json 一致；字符串形态经 decodeUnicodeEscapes 取值）。400 响应
+		// 消息文案随校验方式变化（无测试断言原文；错误码/无记录/Select 前无
+		// 并发槽语义逐字不变）。
 		if !json.Valid(body) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: invalid JSON"}})
 			return
 		}
-		streamVal := gjson.GetBytes(body, "stream")
-		if streamVal.Type != gjson.True && streamVal.Type != gjson.False && streamVal.Type != gjson.Null {
+		var vals [3][]byte
+		scanKeys(body, streamModelTierKeys, vals[:])
+		streamRaw, modelRaw, tierRaw := vals[0], vals[1], vals[2]
+		switch {
+		case streamRaw == nil || bytes.Equal(streamRaw, falseBytes) || bytes.Equal(streamRaw, nullBytes):
+			stream = false
+		case bytes.Equal(streamRaw, trueBytes):
+			stream = true
+		default:
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: stream must be a boolean"}})
 			return
 		}
-		modelVal := gjson.GetBytes(body, "model")
-		if modelVal.Type != gjson.String && modelVal.Type != gjson.Null {
+		modelVal, ok := parseStringValue(modelRaw)
+		if !ok {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
 			return
 		}
-		tier, err := extractTier(body)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
+		reqModel = string(modelVal)
+		tierVal, ok := parseStringValue(tierRaw)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: service_tier must be a string"}})
 			return
 		}
-		reqModel = modelVal.String()
-		stream = streamVal.Type == gjson.True
+		tier := billing.NormalizeTier(string(tierVal))
 		// service_tier 归一化 + 转发策略（计费启用才处理；auto/空/未知恒透传）：
 		// strip → 转发体删该字段；reject → 直接 400（记 ErrBilling，不转发）。
 		// 归一化 tier 补入已入 ctx 的 reqMeta（GC 削减 P6：免第二次 WithValue+

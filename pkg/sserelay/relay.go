@@ -27,22 +27,55 @@ type Event struct {
 	Data  []byte // 合并后的 data: payload（多行以 \n 连接）
 }
 
-// EventName 返回帧的有效事件名：event: 字段值优先；缺名（data-only）帧从
-// data 的 JSON "type" 字段推断——resp/messages 流帧的 type 与事件名同值
-// （非规范上游缺 event: 行时可用，P3）。仍无 → 空。仅缺名帧触发 JSON
-// 扫描，具名帧零开销（Observer 每帧调用）。返回切片生命周期同 Event
-// （具名帧 = 复用缓冲仅回调内有效；推断值 = 本次分配）。
-func (e Event) EventName() []byte {
-	if len(e.Event) > 0 {
-		return e.Event
+// typeAnchorPrefix `{"type":"` 帧首顶层锚定（data-only 帧的 data 载荷恒为该
+// 形态开头——resp/messages 事件机器生成；type 值恒为无转义 ASCII——值区间
+// 直接字节切片）。锚定后嵌套 `"type":"` 先出现的帧不误判（锚定要求帧首形态）。
+// 与 internal/billing/image_usage.go eventTypePrefix 同款先例（包内自足常量，
+// 避免跨包耦合）。
+const typeAnchorPrefix = `{"type":"`
+
+// InferEventName 从 data-only 帧的 data 载荷推断事件名（顶层 "type" 字符串
+// 值）：帧首 `{"type":"` 锚定命中 → 值区间直接切片返回（零分配——Observer
+// 每帧调用；解码器/反序列化对字符串结果必物化分配，字节直取；照
+// internal/billing/image_usage.go eventTypeIs 先例；值内 \ 转义跳过并以裸
+// 字节返回——类型值恒无转义 ASCII，等价比较语义）。锚定不匹配（非首键/
+// 冒号后空白/前导空白/type 非字符串/null/畸形帧）→ 回退 json.Unmarshal 全量
+// 解码（兼容——行为与旧 EventName 推断一致）。无 type / type 为空串 / 非
+// JSON → nil。返回切片：锚定路径指向输入字节（仅调用期间有效——调用方不得
+// 跨帧保留）；回退路径为本次分配。
+func InferEventName(data []byte) []byte {
+	if bytes.HasPrefix(data, []byte(typeAnchorPrefix)) {
+		i := len(typeAnchorPrefix)
+		for ; i < len(data) && data[i] != '"'; i++ {
+			if data[i] == '\\' {
+				i++ // 跳过转义目标（\" 等——值恒无转义，防御性）
+			}
+		}
+		if i > len(typeAnchorPrefix) && i < len(data) {
+			return data[len(typeAnchorPrefix):i]
+		}
+		return nil
 	}
 	var t struct {
 		Type string `json:"type"`
 	}
-	if json.Unmarshal(e.Data, &t) != nil || t.Type == "" {
+	if json.Unmarshal(data, &t) != nil || t.Type == "" {
 		return nil
 	}
 	return []byte(t.Type)
+}
+
+// EventName 返回帧的有效事件名：event: 字段值优先；缺名（data-only）帧从
+// data 的 JSON "type" 字段推断（InferEventName——resp/messages 流帧的 type
+// 与事件名同值，非规范上游缺 event: 行时可用，P3）。仍无 → 空。仅缺名帧
+// 触发推断，具名帧零开销（Observer 每帧调用）。返回切片生命周期同 Event
+// （具名帧与锚定命中推断值均指向复用缓冲，仅回调内有效；锚定未命中回退
+// 全量解码的推断值为本次分配）。
+func (e Event) EventName() []byte {
+	if len(e.Event) > 0 {
+		return e.Event
+	}
+	return InferEventName(e.Data)
 }
 
 // Observer 在帧（原样或经 Mapper 变换后）写出后调用；不得阻塞 relay，不得

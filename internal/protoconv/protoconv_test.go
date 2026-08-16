@@ -563,6 +563,19 @@ func TestMapDataOnlyFramesInferredMessToResp(t *testing.T) {
 	require.Contains(t, out, `event: response.completed`, "message_stop 推断 → response.completed")
 }
 
+// TestMapDataOnlyFramesInferredFallback 缺名帧 type 非首键（帧首 `{"type":`
+// 锚定不匹配）→ 回退全量解码推断（共享 sserelay.InferEventName 的回退路径在
+// protoconv 侧同样生效——转换流用例零回归）。
+func TestMapDataOnlyFramesInferredFallback(t *testing.T) {
+	out := mapAll(t, domain.ProtocolConvertChatToResp,
+		"", `{"response":{"id":"rsp_1","object":"response","status":"in_progress","model":"m","output":[]},"type":"response.created"}`,
+		"", `{"type":"response.completed","response":{"id":"rsp_1","object":"response","status":"completed","model":"m","output":[],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8}}}`,
+	)
+	require.Contains(t, out, `"delta":{"content":"","role":"assistant"}`, "非首键 type 回退推断 → 角色前导 chunk")
+	require.Contains(t, out, `"usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "completed 推断 → 收尾 chunk 内联用量")
+	require.Contains(t, out, "data: [DONE]", "completed 推断 → [DONE] 收尾")
+}
+
 // TestMapDataOnlyFramesPassthrough 缺名帧无法推断（非 JSON / 无 type 字段）
 // → 原样透传 data 帧保留字节（不静默丢弃，P3）。
 func TestMapDataOnlyFramesPassthrough(t *testing.T) {
