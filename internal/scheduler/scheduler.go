@@ -662,15 +662,30 @@ func (s *Scheduler) FailAccount(accountID int64, reason string) {
 	if !ok {
 		return // 快照外账号（已移除/未知）：无状态可改，不投递回写（同 apply）
 	}
+	// copy-on-write CAS（与 apply 同构）：快照置位对并发转换（apply）串行化——
+	// 本 CAS 先成功 → apply 的 CAS 读到 disabled 早退，不复活；apply 先成功 →
+	// 本 CAS 在 disabled 之上覆盖 disabled，终态确定。disabled 幂等早退：账号
+	// 已 disabled（规则动作先置）时直接返回——新语义：首个置位者写 lastError
+	// 审计，已 disabled 的后续失效上报不重复覆盖审计与回写（终态 disabled 不变，
+	// 仅审计内容与旧"最后写者"语义不同）。cur 恒非 nil（构造即初始化）。
 	now := s.timeNow()
-	st := *a.statePtr()
-	st.status = domain.StatusDisabled
-	if t := domain.TruncateErrMsg(reason); t != "" {
-		st.lastError = &t
+	for {
+		cur := a.state.Load()
+		if cur.status == domain.StatusDisabled {
+			return
+		}
+		st := *cur
+		st.status = domain.StatusDisabled
+		if t := domain.TruncateErrMsg(reason); t != "" {
+			st.lastError = &t
+		}
+		st.lastUsedAt = &now
+		if !a.state.CompareAndSwap(cur, &st) {
+			continue // 并发转换已发生——重读重试（disabled 对双方都是吸收态，必然终止）
+		}
+		s.writeCh <- statusWrite{id: accountID, status: st.status, cooldown: st.cooldownUntil, lastErr: st.lastError, weight: nil}
+		return
 	}
-	st.lastUsedAt = &now
-	a.state.Store(&st)
-	s.writeCh <- statusWrite{id: accountID, status: st.status, cooldown: st.cooldownUntil, lastErr: st.lastError, weight: nil}
 }
 
 // ruleKind 映射 ResultKind → 规则引擎事件类别。
@@ -726,58 +741,97 @@ func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *ti
 	// 重置回 active/unhealthy，账号重新可调度。与 MarkResult 防复活守卫同哲学：
 	// disabled 后规则动作整体失效（含 cooldown/weight，且不投递回写——避免
 	// 旧状态经合并"后写覆盖先写"覆盖 DB 的 disabled）。
-	if a.statePtr().status == domain.StatusDisabled {
-		return
-	}
+	//
+	// copy-on-write CAS：守卫并入转换原子性——读-改-写整体对并发转换
+	// （FailAccount/另一 apply）串行化，disabled 检查后到 Store 之间无窗口；
+	// CAS 失败 = 并发转换已发生，重读重试（disabled 对双方都是吸收态，重试
+	// 必然终止）。cur 恒非 nil（构造即初始化，无 nil 分支）。
 	now := s.timeNow()
-	next := *a.statePtr()
-	if st != nil {
-		next.status = *st
-		switch *st {
-		case domain.Status429:
-			next.errCount++
-			next.lastError = strPtr(errMsgOr("upstream 429 rate limited", errMsg))
-		case domain.StatusUnhealthy:
-			next.errCount++
-			next.lastError = strPtr(errMsgOr("upstream error", errMsg))
-		case domain.StatusActive:
-			next.errCount = 0
-			next.lastError = nil
+	var next accState // CAS 成功后持有（enqueueWrite 用）
+	for {
+		cur := a.state.Load()
+		if cur.status == domain.StatusDisabled {
+			return
 		}
-		// EWMA：α=0.2；仅状态类动作更新（ok=0、429/error=1 的 rateDelta，
-		// 纯 weight 动作不更新——I5）
-		rateDelta := 0.0
-		if *st == domain.Status429 || *st == domain.StatusUnhealthy {
-			rateDelta = 1
+		next = *cur
+		if st != nil {
+			next.status = *st
+			switch *st {
+			case domain.Status429:
+				next.errCount++
+				next.lastError = strPtr(errMsgOr("upstream 429 rate limited", errMsg))
+			case domain.StatusUnhealthy:
+				next.errCount++
+				next.lastError = strPtr(errMsgOr("upstream error", errMsg))
+			case domain.StatusActive:
+				next.errCount = 0
+				next.lastError = nil
+			}
+			// EWMA：α=0.2；仅状态类动作更新（ok=0、429/error=1 的 rateDelta，
+			// 纯 weight 动作不更新——I5）
+			rateDelta := 0.0
+			if *st == domain.Status429 || *st == domain.StatusUnhealthy {
+				rateDelta = 1
+			}
+			old := float64(a.errRate.Load()) / errRateScale
+			rate := 0.2*rateDelta + 0.8*old
+			a.errRate.Store(uint64(rate * errRateScale))
 		}
-		old := float64(a.errRate.Load()) / errRateScale
-		rate := 0.2*rateDelta + 0.8*old
-		a.errRate.Store(uint64(rate * errRateScale))
+		if cooldownUntil != nil {
+			next.cooldownUntil = cooldownUntil
+		}
+		next.lastUsedAt = &now
+		if a.state.CompareAndSwap(cur, &next) {
+			break
+		}
+		// 重读重试：并发转换（FailAccount/另一 apply）已落地，循环顶早退或再转换
 	}
-	if cooldownUntil != nil {
-		next.cooldownUntil = cooldownUntil
-	}
-	next.lastUsedAt = &now
-	a.state.Store(&next)
 	if weight != nil {
+		// acc.Weight 与组路由重建同锁区（C2）：InvalidateGroup 等锁内读
+		// acc.Weight（buildRoutes/newWeightedSeq），锁外写是数据竞态。
+		s.reloadMu.Lock()
 		a.acc.Weight = *weight
 		// weightedSeq 是预生成缓存：权重变更必须重建该组路由序列，
 		// 否则选号仍按旧权重（I1）。
 		// 评审 I-2：多组账号共享实例只重建首个组（a.gid）的路由——其它组的
 		// 路由保留旧权重序列，经 ≤30s 全量同步 / 账号变更组级重载自愈，
 		// 非回归（预生成序列的固有折衷：热路径零计算，代价是弱一致性窗口）。
-		s.rebuildGroup(a.gid)
+		s.rebuildGroupLocked(a.gid)
+		s.reloadMu.Unlock()
+	}
+	// 回写前复查 disabled（gate M1 主修，位置钉扎：weight 锁区之后、紧邻
+	// enqueueWrite）：CAS 成功后本 apply 的 active 回写仍可能晚于 FailAccount
+	// 的 disabled 回写入队（writeback 合并"后写覆盖先写"→ DB 落 active → 重载
+	// 复活）——复查挡住全部实际可达窗口：复查与入队指令相邻，此间 FailAccount
+	// 若完成 CAS+入队，其入队必然晚于本入队 → 通道序 [active, disabled] 合并取
+	// disabled。残余窗口（FailAccount 的 CAS+阻塞入队整体落进复查-入队指令
+	// 间隙）接受——生产事件驱动下复查-入队连续执行，间隙指令级；测试实证
+	// （-race 抢占 apply 于复查-入队之间）该窗口可复现、DB 可短暂落 active，
+	// 属 spec M1b 明示接受的取舍（不引入锁重设计）。注意 ≤30s 全量同步是坏
+	// DB 写的显形机制（重载会把 DB 的 active 拉回内存），不是自愈承诺；真正
+	// 兜底是复查-入队相邻 + 内存终态恒 disabled（失效源持续时下一次失败回调
+	// 经 CAS 再摘除）。
+	if a.statePtr().status == domain.StatusDisabled {
+		return
 	}
 	s.enqueueWrite(aid, next, weight)
 }
 
-// rebuildGroup 重建单组路由（不碰 DB/账号列表）：从 store 中现有账号快照
-// （apply 已更新 acc.Weight）重新 buildRoutes，整体换入快照（原子替换，避免
-// 与 Select 读端并发修改同一 groupSnapshot 的数据竞争）。byID 不变（同一批
-// accountSnapshot 指针）。
+// rebuildGroup 重建单组路由的公开包装（持锁委托 rebuildGroupLocked）。
+// 当前无调用者——apply 在锁区内直调 Locked 变体；InvalidateGroup 不调
+// rebuildGroup（直调 buildRoutes）——保留作 Locked 变体的公开对偶，
+// 防未来调用点误在锁外直调 Locked 变体（acc.Weight 写读同锁纪律）。
 func (s *Scheduler) rebuildGroup(groupID int64) {
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
+	s.rebuildGroupLocked(groupID)
+}
+
+// rebuildGroupLocked 重建单组路由（须持 reloadMu 调用；不碰 DB/账号列表）：
+// 从 store 中现有账号快照（apply 已更新 acc.Weight）重新 buildRoutes，整体
+// 换入快照（原子替换，避免与 Select 读端并发修改同一 groupSnapshot 的数据
+// 竞争）。byID 不变（同一批 accountSnapshot 指针）。
+func (s *Scheduler) rebuildGroupLocked(groupID int64) {
 	m := s.store.groups.Load().(map[int64]*groupSnapshot)
 	gs, ok := m[groupID]
 	if !ok {
