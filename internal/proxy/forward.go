@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
@@ -637,42 +638,65 @@ func readUpstreamBody(resp *http.Response) []byte {
 	return b
 }
 
+// errBodyNotObject 顶层非对象体（仅恶意/畸形输入可达——上游已过 json.Valid
+// 硬门与 gjson 类型门，标量/数组根体才落到改写路径）。map 版由 json.Unmarshal
+// 报同类错；sjson 对顶层标量整体替换为 {}（不报错）——isJSONObjectRoot 守卫
+// 保持旧错误语义（旧版 null 体还会 nil map 赋值 panic，一并修复）。
+var errBodyNotObject = errors.New("body must be a JSON object")
+
+// isJSONObjectRoot O(1) 顶层形状检查（首非空白字节）：sjson 对顶层标量整体
+// 替换为 {}（非报错），与 map 版 Unmarshal 报错语义分歧；数组根一并按非对象
+// 体拒绝（sjson 文案不同，状态同为 400），保持旧错误面。
+func isJSONObjectRoot(body []byte) bool {
+	for _, b := range body {
+		if b > ' ' {
+			return b == '{'
+		}
+	}
+	return false // 空/全空白体：json.Valid 已拒绝，防御性 false
+}
+
 // setModel 把原始请求体里的 "model" 字段改写为调度器选定的上游模型名
 // （ModelMapping 已应用，见 scheduler.Select 的 Selection.Model）。原始转发
 // 必须沿用 SDK 路径 params.Model = sel.Model 的改写语义，否则映射配置在
 // 流式请求上失效（Task 3 迁移发现）。
 // 短路守卫（GC 削减 P1）：model 已是目标值（gjson 字符串读取）→ 返回原切片
-// 零分配。守卫只对字符串匹配生效；null/数字/缺失/需改写走原 map 往返
-// （等价性核对见分析报告：sel.Model 非空时 null/数字恒走改写，行为不变）。
+// 零分配。守卫只对字符串匹配生效；null/数字/缺失/需改写走 sjson 字节级改写
+// 路径（单字段 splice，非 map 全文档往返——>2^53 整数精度无损、键序不变、
+// 无 HTML 转义，与 WS 面 relayResponsesWS 同库同风格；sjson 对缺失路径默认
+// 补字段，与 map 版本一致。等价性核对见分析报告：sel.Model 非空时 null/数字
+// 恒走改写，行为不变）。
 func setModel(body []byte, model string) ([]byte, error) {
 	if gjson.GetBytes(body, "model").String() == model {
 		return body, nil
 	}
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, err
+	if !isJSONObjectRoot(body) {
+		return nil, errBodyNotObject
 	}
-	m["model"] = model
-	return json.Marshal(m)
+	return sjson.SetBytes(body, "model", model)
 }
 
-// setStreamAndModel 单次往返同时改写 stream 与 model（GC 削减 P1b）：两字段
-// 各自短路守卫，无需改写的字段保持原字节；任一篇需改写才做一次
-// unmarshal/marshal。与现状两次往返的最终字节逐位相同（encoding/json 对 map
-// 键排序，单次与两次往返输出一致）。
+// setStreamAndModel 字节级改写 stream 与 model（GC 削减 P1b）：两字段各自
+// 短路守卫，无需改写的字段保持原字节；任一篇需改写才做 sjson 改写（单字段
+// splice，精度/键序/转义保真同 setModel）。sjson 单次调用仅支持单路径，故为
+// 两次 SetBytes 调用（stream、model 顶层路径不相交，次序无关，最终字节一致）；
+// sjson 对缺失路径默认加字段（stream/model 缺失时行为 = map 版本补字段，一
+// 致）。重复键边界：sjson 只改首个出现（map 版本为 last-wins 去重）——上游
+// JSON 合法重复键实际不可达（RFC 8259 SHOULD 唯一，真实 SDK 客户端不产生）。
 func setStreamAndModel(body []byte, stream bool, model string) ([]byte, error) {
 	sc := gjson.GetBytes(body, "stream")
 	streamOK := (stream && sc.Type == gjson.True) || (!stream && sc.Type == gjson.False)
 	if streamOK && gjson.GetBytes(body, "model").String() == model {
 		return body, nil
 	}
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
+	if !isJSONObjectRoot(body) {
+		return nil, errBodyNotObject
+	}
+	var err error
+	if body, err = sjson.SetBytes(body, "stream", stream); err != nil {
 		return nil, err
 	}
-	m["stream"] = stream
-	m["model"] = model
-	return json.Marshal(m)
+	return sjson.SetBytes(body, "model", model)
 }
 
 // credentialFor 从 Selection 取当前凭据值（注册表分发；api_key 类型直读静态 Key）。

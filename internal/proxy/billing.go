@@ -5,8 +5,9 @@
 package proxy
 
 import (
-	"encoding/json"
 	"net/http"
+
+	"github.com/tidwall/sjson"
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
@@ -67,15 +68,17 @@ var (
 	errServiceTierRejected = &formatError{status: http.StatusBadRequest, msg: "service_tier rejected by gateway policy"}
 )
 
-// stripServiceTier 删除请求体 service_tier 字段（strip 策略）：map 重写构造
-// 新 body（与 setStreamFlag/setModel 同构）。
+// stripServiceTier 删除请求体 service_tier 字段（strip 策略）：sjson 字节级
+// 删除（与 WS 面 relayResponsesWS 同库同风格，非 map 往返——精度/键序/转义
+// 保真同 setModel）。字段缺失时 sjson 删除不存在键 = 无操作返回原字节（与
+// map 版 delete 缺失键语义一致）。顶层形状守卫同 setModel（sjson DeleteBytes
+// 对标量/数组根无操作返回原字节，map 版报错——调用前 extractTier 已保证
+// 对象体，仅防御性一致）。
 func stripServiceTier(body []byte) ([]byte, error) {
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, err
+	if !isJSONObjectRoot(body) {
+		return nil, errBodyNotObject
 	}
-	delete(m, "service_tier")
-	return json.Marshal(m)
+	return sjson.DeleteBytes(body, "service_tier")
 }
 
 // applyMultiplier 价格倍率应用（T3.5 用户拍板：整单 round-half-up）：
