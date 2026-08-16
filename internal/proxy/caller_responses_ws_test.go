@@ -115,7 +115,12 @@ func dialResponsesWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	t.Helper()
 	u := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/responses"
 	c, _, err := websocket.Dial(context.Background(), u, &websocket.DialOptions{
-		HTTPHeader:      http.Header{"Authorization": {"Bearer gk-1"}, "X-Client-Version": {"codex-1.2.3"}},
+		// 网关 key 双载体齐带（auth.go 任一非空即鉴权）：双载体都不得泄漏上游
+		HTTPHeader: http.Header{
+			"Authorization":    {"Bearer gk-1"},
+			"X-Api-Key":        {"gk-1"},
+			"X-Client-Version": {"codex-1.2.3"},
+		},
 		CompressionMode: websocket.CompressionContextTakeover,
 	})
 	require.NoError(t, err, "gateway WS 握手必须成功")
@@ -217,7 +222,8 @@ func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	// 握手头断言（上游观测面）：beta 头现役唯一 + 账号鉴权注入 + 客户端头
-	// 透传 + 网关 key 不得泄漏 + hop-by-hop 剔除。
+	// 透传 + 网关 key 不得泄漏（Authorization/x-api-key 双载体）+ hop-by-hop
+	// 剔除。
 	hooks.mu.Lock()
 	defer hooks.mu.Unlock()
 	require.Len(t, hooks.headers, 1)
@@ -226,6 +232,7 @@ func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
 	require.Equal(t, "Bearer sk-upstream", h.Get("Authorization"), "账号鉴权注入")
 	require.Equal(t, "codex-1.2.3", h.Get("X-Client-Version"), "客户端头透传")
 	require.NotEqual(t, "Bearer gk-1", h.Get("Authorization"), "网关 key 不得直通上游")
+	require.Empty(t, h.Get("X-Api-Key"), "x-api-key 载体网关 key 不得直通上游（与 Authorization 同列剔除）")
 	// Sec-WebSocket-Key：RFC 6455 要求每个客户端握手必带 key——上游看到的必是
 	// 网关自身拨号生成的 key（coder Dial 总是重新生成并覆写，见 dial.go
 	// Set("Sec-WebSocket-Key")）；客户端连接级 key 由构造保证不可能直通。

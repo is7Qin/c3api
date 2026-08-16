@@ -612,11 +612,17 @@ func headerHasToken(h http.Header, key, token string) bool {
 	return false
 }
 
-// wsPassthroughHeaders 客户端头透传（WS 握手面）：hop-by-hop 与网关鉴权剔除
-// ——Connection/Upgrade/Sec-WebSocket-*/Host/Content-Length 是连接级头（其中
-// Sec-WebSocket-Protocol 透传会让上游协商网关不支持的子协议 → 握手失败）；
-// Authorization 持网关 key，不得直通上游（账号鉴权由 aiclient 注入）。
-// 其余头（User-Agent、客户端版本、Origin、自定义头）原样透传。
+// wsPassthroughHeaders 客户端头透传（WS 握手面，显式契约）：透传是 WS 面
+// 有意行为——上游依赖客户端特征头（User-Agent/Origin/自定义头）做校验与
+// 路由，SDK 伪装研究完成前此面不动。剔除面 = 连接级 hop-by-hop 头
+// （Connection/Upgrade/Sec-WebSocket-*/Host/Content-Length，其中
+// Sec-WebSocket-Protocol 透传会让上游协商网关不支持的子协议 → 握手失败）
+// + 网关凭据（Authorization/x-api-key 同载网关 key——auth.go 任一非空即鉴权，
+// 不得直通上游；账号鉴权由 aiclient 注入）。codex 面 codexWSPassthroughHeaders
+// 委托本函数（再剔 session 头族 + OpenAI-Beta），本表变更双面自动覆盖。
+// HTTP 面零透传（rawPostCT 只设 Content-Type + 账号鉴权头，客户端原始头不达
+// 上游）同属有意契约——与 WS 面不对称是裁决非遗漏，互引见
+// pkg/aiclient/aiclient.go rawPostCT。其余头原样透传。
 func wsPassthroughHeaders(h http.Header) http.Header {
 	out := make(http.Header, len(h))
 	for k, v := range h {
@@ -624,7 +630,7 @@ func wsPassthroughHeaders(h http.Header) http.Header {
 		case "Connection", "Upgrade",
 			"Sec-Websocket-Key", "Sec-Websocket-Version",
 			"Sec-Websocket-Protocol", "Sec-Websocket-Extensions",
-			"Host", "Content-Length", "Authorization":
+			"Host", "Content-Length", "Authorization", "X-Api-Key":
 			continue
 		}
 		out[k] = v

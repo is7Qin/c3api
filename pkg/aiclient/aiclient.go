@@ -198,6 +198,10 @@ func (f *Factory) rawPost(ctx context.Context, templateID int64, baseURL, path, 
 // rawPostCT rawPost 的 Content-Type 定制变体（Task B images multipart 需要
 // 完整 multipart/form-data Content-Type——含 boundary；contentType 空 →
 // application/json，与 rawPost 逐字节等价）。
+// 零透传为契约：HTTP 面只设 Content-Type 与账号鉴权头（Authorization /
+// anthropic 用 x-api-key 传 key 本身），客户端原始头一律不达上游——与 WS 面
+// 透传的差异是有意边界非遗漏（WS 面契约见 internal/proxy/caller_responses_ws.go
+// wsPassthroughHeaders），SDK 伪装研究完成前此面不动。
 func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path, auth, contentType string, body []byte) (*http.Response, error) {
 	full, err := f.fullURLOf(templateID, baseURL, path)
 	if err != nil {
