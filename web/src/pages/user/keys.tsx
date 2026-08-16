@@ -62,14 +62,14 @@ function validNumber(s: string): boolean {
   return s === '' || (Number.isInteger(Number(s)) && Number(s) >= 0)
 }
 
-// 列表行明文展示：短展示 raw[:8]（title 悬停全文）+ 行内复制按钮（明文长期
-// 可复制——需求核心；复用 KeyBox 同款 copyText）。
+// 列表行明文展示：短展示头 8 尾 4 省略中间（title 悬停全文）+ 行内复制按钮
+// （明文长期可复制——需求核心；复用 KeyBox 同款 copyText）。
 function KeyCell({ raw }: { raw?: string }) {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
   return (
     <div className="flex items-center gap-1.5">
-      <code className="max-w-40 truncate font-mono text-sm" title={raw}>{raw ? raw.slice(0, 8) : '—'}</code>
+      <code className="font-mono text-sm" title={raw}>{raw ? `${raw.slice(0, 8)}…${raw.slice(-4)}` : '—'}</code>
       {raw && (
         <Button
           variant="ghost"

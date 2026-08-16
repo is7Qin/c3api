@@ -1013,7 +1013,7 @@
       "createTitle": "新建 Key",
       "createDesc": "名称与分组必填；额度 0 = 不限",
       "createdTitle": "Key 已创建",
-      "createdDesc": "明文仅显示一次，请立即复制保存",
+      "createdDesc": "Key 明文已创建，可在列表随时查看与复制",
       "editTitle": "编辑 Key #{{id}}",
       "editDesc": "修改 Key 的名称、状态与额度",
       "nameLabel": "名称",
@@ -1034,9 +1034,9 @@
       "rotateConfirm": "确认轮换",
       "rotating": "轮换中…",
       "rotatedTitle": "已轮换",
-      "rotatedDesc": "新 Key 明文仅显示一次",
-      "secretTitle": "Key 明文（仅显示一次）",
-      "secretHint": "请立即复制保存；关闭后无法再次查看",
+      "rotatedDesc": "新 Key 明文已生成，可在列表随时查看与复制",
+      "secretTitle": "Key 明文",
+      "secretHint": "可随时在 Key 列表查看与复制",
       "formInvalid": "请检查表单：名称与分组必填，数字须为非负整数"
     },
     "logs": {

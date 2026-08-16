@@ -1013,7 +1013,7 @@
       "createTitle": "New Key",
       "createDesc": "Name and group are required; quota 0 = unlimited",
       "createdTitle": "Key created",
-      "createdDesc": "The plaintext key is shown only once; copy and save it now",
+      "createdDesc": "Your plaintext key is ready — view and copy it anytime from the key list",
       "editTitle": "Edit key #{{id}}",
       "editDesc": "Update the key's name, status, and limits",
       "nameLabel": "Name",
@@ -1034,9 +1034,9 @@
       "rotateConfirm": "Rotate",
       "rotating": "Rotating…",
       "rotatedTitle": "Key rotated",
-      "rotatedDesc": "The new plaintext key is shown only once",
-      "secretTitle": "Plaintext key (shown once)",
-      "secretHint": "Copy and save it now; it cannot be viewed again after closing",
+      "rotatedDesc": "Your new plaintext key is ready — view and copy it anytime from the key list",
+      "secretTitle": "Plaintext key",
+      "secretHint": "View and copy it anytime from the key list",
       "formInvalid": "Check the form: name and group are required; numbers must be non-negative integers"
     },
     "logs": {
