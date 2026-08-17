@@ -19,6 +19,7 @@ import UserStats from '@/pages/user/stats'
 import UserRedemptions from '@/pages/user/redemptions'
 import UserProfile from '@/pages/user/profile'
 import Forbidden from '@/pages/forbidden'
+import NotFound from '@/pages/not-found'
 import Dashboard from '@/pages/dashboard'
 import Templates from '@/pages/templates'
 import Accounts from '@/pages/accounts'
@@ -40,6 +41,9 @@ const router = createBrowserRouter([
   { path: '/', element: <Home /> },
   { path: '/user/login', element: <UserLogin /> },
   { path: '/user/register', element: <UserRegister /> },
+  // 无匹配路径兜底：自定义 404 页（替代 React Router 默认开发错误页）。
+  // errorElement 兜住渲染期异常（非路由缺失），避免白屏/默认错误面板。
+  { path: '*', element: <NotFound /> },
   // /app 与 /user 共用单一 AppShell：路由切换只换 Outlet，侧边栏/顶栏不重挂
   {
     path: '/',

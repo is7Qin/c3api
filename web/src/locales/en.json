@@ -1190,5 +1190,10 @@
       "successTitle": "Password changed",
       "successDesc": "Your new password takes effect next time you sign in"
     }
+  },
+  "error404": {
+    "title": "Page Not Found",
+    "desc": "The page you are looking for does not exist or has been moved",
+    "backHome": "Back to Home"
   }
 }
