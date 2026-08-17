@@ -453,7 +453,8 @@
       "tokens": "Token",
       "title": "共 {{total}} 条记录",
       "user": "用户",
-      "key": "Key"
+      "key": "Key",
+      "ip": "IP"
     },
     "tokens": {
       "read": "读",

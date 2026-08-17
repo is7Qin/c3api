@@ -295,6 +295,7 @@ export default function UserLogs() {
                 {tab === 'usage' && <Th className="text-right">{t('user.logs.table.cost')}</Th>}
                 <Th className="text-right">{t('user.logs.table.latency')}</Th>
                 {tab === 'errors' && <Th>{t('user.logs.table.billingTier')}</Th>}
+                <Th>{t('logs.table.ip')}</Th>
               </TableRow>
             </TableHeader>
             <TableBody className="[&_td]:py-3">
@@ -422,6 +423,10 @@ export default function UserLogs() {
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </TableCell>
+                  {/* 客户端 IP（CF-Connecting-IP 优先；无则 RemoteAddr）；IPv6 超长 truncate */}
+                  <TableCell className="max-w-36">
+                    <span className="block truncate font-mono text-xs text-muted-foreground" title={l.ClientIP}>{l.ClientIP ?? '—'}</span>
+                  </TableCell>
                 </TableRow>
                 ))
                 : (rows as ErrLog[]).map(l => (
@@ -463,6 +468,10 @@ export default function UserLogs() {
                   {/* 计费档：service_tier 归一化值；null = 未计费路径 */}
                   <TableCell>
                     {l.BillingTier ? <Badge variant="outline">{l.BillingTier}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
+                  </TableCell>
+                  {/* 客户端 IP（CF-Connecting-IP 优先；无则 RemoteAddr）；IPv6 超长 truncate */}
+                  <TableCell className="max-w-36">
+                    <span className="block truncate font-mono text-xs text-muted-foreground" title={l.ClientIP}>{l.ClientIP ?? '—'}</span>
                   </TableCell>
                 </TableRow>
                 ))}

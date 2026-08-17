@@ -568,6 +568,7 @@ export default function Logs() {
                 {tab === 'usage' && isColVisible('cost') && <Th className="text-right">{t('logs.table.cost')}</Th>}
                 {isColVisible('latency') && <Th className="text-right">{t('logs.table.latency')}</Th>}
                 {tab === 'errors' && isColVisible('billingTier') && <Th>{t('logs.table.billingTier')}</Th>}
+                <Th>{t('logs.table.ip')}</Th>
               </TableRow>
             </TableHeader>
             <TableBody className="[&_td]:py-3">
@@ -734,6 +735,10 @@ export default function Logs() {
                     )}
                   </TableCell>
                   )}
+                  {/* 客户端 IP（CF-Connecting-IP 优先；无则 RemoteAddr）；IPv6 超长 truncate */}
+                  <TableCell className="max-w-36">
+                    <span className="block truncate font-mono text-xs text-muted-foreground" title={l.ClientIP}>{l.ClientIP ?? '—'}</span>
+                  </TableCell>
                 </TableRow>
                 ))
                 : (rows as ErrLog[]).map(l => (
@@ -810,6 +815,10 @@ export default function Logs() {
                       {l.BillingTier ? <Badge variant="outline">{l.BillingTier}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
                     </TableCell>
                   )}
+                  {/* 客户端 IP（CF-Connecting-IP 优先；无则 RemoteAddr）；IPv6 超长 truncate */}
+                  <TableCell className="max-w-36">
+                    <span className="block truncate font-mono text-xs text-muted-foreground" title={l.ClientIP}>{l.ClientIP ?? '—'}</span>
+                  </TableCell>
                 </TableRow>
                 ))}
             </TableBody>

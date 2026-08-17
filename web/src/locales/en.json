@@ -453,7 +453,8 @@
       "tokens": "Tokens",
       "title": "{{total}} records",
       "user": "User",
-      "key": "Key"
+      "key": "Key",
+      "ip": "IP"
     },
     "tokens": {
       "read": "R",
