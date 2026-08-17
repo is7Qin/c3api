@@ -251,6 +251,9 @@ func main() {
 	// ruleReload 独立于 invalidate：规则 CRUD 后全量重载（重载会重置窗口计数，
 	// 不能随模板/账号/分组等任意资源变更触发）。
 	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log)
+	// Management-side Codex quota refreshes share the pooled upstream client and
+	// stay outside the relay request path.
+	svc.SetCodexUsageHTTPClient(hc)
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据
 	// （零 DB），首刷统一在构造链完成后执行（见下 ReloadAll——单一启动入口，

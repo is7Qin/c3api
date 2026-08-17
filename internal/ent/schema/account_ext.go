@@ -21,6 +21,7 @@ func (AccountExt) Fields() []ent.Field {
 		field.Int64("id"),
 		field.Int64("account_id"),
 		field.String("credential_type"),
+		field.String("codex_account_id").Optional().Nillable(),
 		// —— 身份四元组连续块（对齐真实 codex 客户端语义；导入时 service
 		// NewCodexIdentity() 自动生成、账号存在期间稳定）——
 		// 账号级唯一身份（真实客户端 ~/.codex/installation_id UUIDv4 永久复用；
@@ -55,6 +56,7 @@ func (AccountExt) Edges() []ent.Edge {
 
 func (AccountExt) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("account_id").Unique(), // 1:1（upsert 冲突列）
+		index.Fields("account_id").Unique(),       // 1:1（upsert 冲突列）
+		index.Fields("codex_account_id").Unique(), // 外部 account_id 去重；NULL 可多行
 	}
 }

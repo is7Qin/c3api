@@ -14,7 +14,9 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // —— 账号类型化鉴权扩展（account_ext 1:1；codex 专用——账号只两种 codex 类型，
@@ -213,7 +215,6 @@ func fillIdentityDefaults(e *domain.AccountExt, cur *domain.AccountExt) {
 // 校验先于落库（B1-2）：window 派生 + 列组校验在 TryInsert 之前——被拒凭据
 // 零残留（400 前不写库；含 NULL window 问题同步消除）；终校验保留（冲突路径
 // 重改 e 后，早校验覆盖不到）。
-// W1 不接线失效/发布。
 func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
 	acc, err := s.store.GetAccount(ctx, e.AccountID)
 	if err != nil {
@@ -227,11 +228,17 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if tpl.CredentialType != e.CredentialType {
 		return nil, ErrInvalidInput // 父行（模板）类型与 ext 行类型必须一致
 	}
-	orig := *e // 首写冲突回退用（丢弃本请求生成的未用身份，回到显式输入）
 	cur, err := s.store.GetAccountExt(ctx, e.AccountID)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, mapRepoErr(err) // 非缺行错误原样上抛（不误判为首次写入）
 	}
+	// The regular credential editor does not send codex_account_id. Preserve
+	// the import-owned identifier unless an administrator explicitly supplies
+	// a value (an empty value clears it).
+	if e.CodexAccountID == nil && cur != nil {
+		e.CodexAccountID = cur.CodexAccountID
+	}
+	orig := *e // 首写冲突回退用（丢弃本请求生成的未用身份，回到显式输入）
 	// 先取存量行再归一（B1-3 方向 2）：存量行上 window-only 反推 ≠ 存量 → 400
 	if err := normalizeCodexIdentity(e, cur); err != nil {
 		return nil, err
@@ -291,5 +298,31 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if err := validateAccountExt(e); err != nil {
 		return nil, err
 	}
-	return s.store.UpsertAccountExt(ctx, e)
+	saved, err := s.store.UpsertAccountExt(ctx, e)
+	if err != nil {
+		return nil, mapRepoErr(err)
+	}
+	s.accountExtChanged(ctx, e.AccountID)
+	return saved, nil
+}
+
+// accountExtChanged makes credential updates visible to the local scheduler
+// and other instances. A full reload is safer than leaving stale credentials
+// when the account-to-group lookup fails.
+func (s *Service) accountExtChanged(ctx context.Context, accountID int64) {
+	groups, err := s.store.GetAccountGroups(ctx, accountID)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("account groups query failed after credential update", logx.Int64("account_id", accountID), logx.Error(err))
+		}
+		if s.inv != nil {
+			s.inv.Templates()
+		}
+		s.publish(ctx, notify.Change{Templates: true, Clients: true})
+		return
+	}
+	if s.inv != nil {
+		s.inv.Accounts(groups, true)
+	}
+	s.publish(ctx, notify.Change{Groups: groups, Clients: true})
 }

@@ -358,6 +358,22 @@ func (f *fakeStore) TryInsertAccountExt(ctx context.Context, e *domain.AccountEx
 	return true, nil
 }
 
+func (f *fakeStore) WriteOAuthRotationIfCurrent(ctx context.Context, accountID int64, expectedRefreshToken, accessToken, refreshToken string, expiresAt *time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.accExts[accountID]
+	if !ok {
+		return false, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)
+	}
+	if e.OAuthRefreshToken == nil || *e.OAuthRefreshToken != expectedRefreshToken {
+		return false, nil
+	}
+	e.OAuthToken = &accessToken
+	e.OAuthRefreshToken = &refreshToken
+	e.OAuthExpiresAt = expiresAt
+	return true, nil
+}
+
 func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -367,6 +383,18 @@ func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain
 	}
 	c := *e
 	return &c, nil
+}
+
+func (f *fakeStore) GetAccountExtByCodexAccountID(ctx context.Context, codexAccountID string) (*domain.AccountExt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, e := range f.accExts {
+		if e.CodexAccountID != nil && *e.CodexAccountID == codexAccountID {
+			c := *e
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: codex_account_id=%s missing", repository.ErrNotFound, codexAccountID)
 }
 
 // QueryUsages 模拟 repo 过滤（R4-M2 防假绿：完整过滤面与真实 repo

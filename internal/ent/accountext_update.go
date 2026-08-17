@@ -57,6 +57,26 @@ func (_u *AccountExtUpdate) SetNillableCredentialType(v *string) *AccountExtUpda
 	return _u
 }
 
+// SetCodexAccountID sets the "codex_account_id" field.
+func (_u *AccountExtUpdate) SetCodexAccountID(v string) *AccountExtUpdate {
+	_u.mutation.SetCodexAccountID(v)
+	return _u
+}
+
+// SetNillableCodexAccountID sets the "codex_account_id" field if the given value is not nil.
+func (_u *AccountExtUpdate) SetNillableCodexAccountID(v *string) *AccountExtUpdate {
+	if v != nil {
+		_u.SetCodexAccountID(*v)
+	}
+	return _u
+}
+
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (_u *AccountExtUpdate) ClearCodexAccountID() *AccountExtUpdate {
+	_u.mutation.ClearCodexAccountID()
+	return _u
+}
+
 // SetInstallationID sets the "installation_id" field.
 func (_u *AccountExtUpdate) SetInstallationID(v string) *AccountExtUpdate {
 	_u.mutation.SetInstallationID(v)
@@ -297,6 +317,12 @@ func (_u *AccountExtUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	if value, ok := _u.mutation.CredentialType(); ok {
 		_spec.SetField(accountext.FieldCredentialType, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.CodexAccountID(); ok {
+		_spec.SetField(accountext.FieldCodexAccountID, field.TypeString, value)
+	}
+	if _u.mutation.CodexAccountIDCleared() {
+		_spec.ClearField(accountext.FieldCodexAccountID, field.TypeString)
+	}
 	if value, ok := _u.mutation.InstallationID(); ok {
 		_spec.SetField(accountext.FieldInstallationID, field.TypeString, value)
 	}
@@ -422,6 +448,26 @@ func (_u *AccountExtUpdateOne) SetNillableCredentialType(v *string) *AccountExtU
 	if v != nil {
 		_u.SetCredentialType(*v)
 	}
+	return _u
+}
+
+// SetCodexAccountID sets the "codex_account_id" field.
+func (_u *AccountExtUpdateOne) SetCodexAccountID(v string) *AccountExtUpdateOne {
+	_u.mutation.SetCodexAccountID(v)
+	return _u
+}
+
+// SetNillableCodexAccountID sets the "codex_account_id" field if the given value is not nil.
+func (_u *AccountExtUpdateOne) SetNillableCodexAccountID(v *string) *AccountExtUpdateOne {
+	if v != nil {
+		_u.SetCodexAccountID(*v)
+	}
+	return _u
+}
+
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (_u *AccountExtUpdateOne) ClearCodexAccountID() *AccountExtUpdateOne {
+	_u.mutation.ClearCodexAccountID()
 	return _u
 }
 
@@ -694,6 +740,12 @@ func (_u *AccountExtUpdateOne) sqlSave(ctx context.Context) (_node *AccountExt, 
 	}
 	if value, ok := _u.mutation.CredentialType(); ok {
 		_spec.SetField(accountext.FieldCredentialType, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CodexAccountID(); ok {
+		_spec.SetField(accountext.FieldCodexAccountID, field.TypeString, value)
+	}
+	if _u.mutation.CodexAccountIDCleared() {
+		_spec.ClearField(accountext.FieldCodexAccountID, field.TypeString)
 	}
 	if value, ok := _u.mutation.InstallationID(); ok {
 		_spec.SetField(accountext.FieldInstallationID, field.TypeString, value)

@@ -21,6 +21,7 @@ import (
 // （模板 base 变更 → 重建——与 aiclient InvalidateAll 同语义）。
 type AccountCredential struct {
 	AccountID         int64
+	CodexAccountID    string
 	OAuthToken        string
 	OAuthRefreshToken string
 	OAuthExpiresAt    *time.Time
@@ -36,6 +37,9 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 		return AccountCredential{}
 	}
 	c := AccountCredential{AccountID: e.AccountID}
+	if e.CodexAccountID != nil {
+		c.CodexAccountID = *e.CodexAccountID
+	}
 	switch e.CredentialType {
 	case credential.TypeCodexOAuth:
 		if e.OAuthToken != nil {

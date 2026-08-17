@@ -112,6 +112,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/import/codex-oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Plus or Codex OAuth account JSON */
+        post: operations["PostAccountsImportCodexOauth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{id}/codex/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** Get cached Codex usage and rate-limit information */
+        get: operations["GetAccountsIdCodexUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{id}/codex/refresh-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh one Codex account's usage and rate-limit information */
+        post: operations["PostAccountsIdCodexRefreshUsage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/codex/refresh-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh usage for multiple Codex accounts */
+        post: operations["PostAccountsCodexRefreshUsage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/batch-delete": {
         parameters: {
             query?: never;
@@ -1072,6 +1144,8 @@ export interface components {
         AccountExt: {
             /** Format: int64 */
             account_id?: number;
+            /** @description External Plus/Codex account identifier used for OAuth imports and usage refreshes */
+            codex_account_id?: string | null;
             /**
              * @description 类型-列组约束（service 校验）：oauth 只允许 oauth_* 列组；pat 只允许 pat_key
              * @enum {string}
@@ -1098,6 +1172,61 @@ export interface components {
             pat_key?: string | null;
             /** @description 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空） */
             email?: string | null;
+        };
+        CodexOAuthImportRequest: {
+            /** Format: int64 */
+            template_id: number;
+            group_ids?: number[];
+            name_prefix?: string;
+            weight?: number;
+            max_concurrency?: number;
+            /** @description OAuth JSON from Plus or Codex. Supports one object, an array, or a credentials/accounts/items/data wrapper. */
+            credentials: unknown;
+        };
+        CodexOAuthImportItem: {
+            /** Format: int64 */
+            index: number;
+            /** @enum {string} */
+            status: "imported" | "updated" | "skipped" | "failed";
+            /** Format: int64 */
+            account_id?: number | null;
+            codex_account_id?: string;
+            email?: string;
+            message?: string;
+        };
+        CodexOAuthImportResponse: {
+            imported: number;
+            updated: number;
+            skipped: number;
+            failed: number;
+            items: components["schemas"]["CodexOAuthImportItem"][];
+        };
+        CodexUsageBatchRequest: {
+            account_ids: number[];
+        };
+        CodexUsageResponse: {
+            /** Format: int64 */
+            account_id: number;
+            codex_account_id: string;
+            email?: string | null;
+            /** Format: date-time */
+            fetched_at: string;
+            /** @description Codex usage JSON payload */
+            usage: unknown;
+            /** @description Codex rate-limit reset credits JSON payload */
+            reset_credits?: unknown;
+            reset_credits_error?: string;
+        };
+        CodexUsageBatchItem: {
+            /** Format: int64 */
+            account_id: number;
+            /** @enum {string} */
+            status: "refreshed" | "failed";
+            usage?: components["schemas"]["CodexUsageResponse"];
+            message?: string;
+        };
+        CodexUsageBatchResponse: {
+            items: components["schemas"]["CodexUsageBatchItem"][];
         };
         TemplateListResponse: {
             /** Format: int64 */
@@ -2745,6 +2874,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Account"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsImportCodexOauth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexOAuthImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-account import result without credential material */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexOAuthImportResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetAccountsIdCodexUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Codex account usage snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexUsageResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsIdCodexRefreshUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refreshed Codex account usage snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexUsageResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsCodexRefreshUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexUsageBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-account refresh result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexUsageBatchResponse"];
                 };
             };
             default: components["responses"]["Error"];

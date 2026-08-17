@@ -1384,6 +1384,13 @@ func (f *fakeStore) GetTemplateExt(ctx context.Context, templateID int64) (*doma
 func (f *fakeStore) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if e.CodexAccountID != nil && strings.TrimSpace(*e.CodexAccountID) != "" {
+		for accountID, existing := range f.accExts {
+			if accountID != e.AccountID && existing.CodexAccountID != nil && *existing.CodexAccountID == *e.CodexAccountID {
+				return nil, fmt.Errorf("%w: codex_account_id=%q", repository.ErrConflict, *e.CodexAccountID)
+			}
+		}
+	}
 	c := *e
 	f.accExts[e.AccountID] = &c
 	return &c, nil
@@ -1397,8 +1404,31 @@ func (f *fakeStore) TryInsertAccountExt(ctx context.Context, e *domain.AccountEx
 	if _, ok := f.accExts[e.AccountID]; ok {
 		return false, nil
 	}
+	if e.CodexAccountID != nil && strings.TrimSpace(*e.CodexAccountID) != "" {
+		for _, existing := range f.accExts {
+			if existing.CodexAccountID != nil && *existing.CodexAccountID == *e.CodexAccountID {
+				return false, fmt.Errorf("%w: codex_account_id=%q", repository.ErrConflict, *e.CodexAccountID)
+			}
+		}
+	}
 	c := *e
 	f.accExts[e.AccountID] = &c
+	return true, nil
+}
+
+func (f *fakeStore) WriteOAuthRotationIfCurrent(ctx context.Context, accountID int64, expectedRefreshToken, accessToken, refreshToken string, expiresAt *time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.accExts[accountID]
+	if !ok {
+		return false, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)
+	}
+	if e.OAuthRefreshToken == nil || *e.OAuthRefreshToken != expectedRefreshToken {
+		return false, nil
+	}
+	e.OAuthToken = &accessToken
+	e.OAuthRefreshToken = &refreshToken
+	e.OAuthExpiresAt = expiresAt
 	return true, nil
 }
 
@@ -1411,6 +1441,18 @@ func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain
 	}
 	c := *e
 	return &c, nil
+}
+
+func (f *fakeStore) GetAccountExtByCodexAccountID(ctx context.Context, codexAccountID string) (*domain.AccountExt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, e := range f.accExts {
+		if e.CodexAccountID != nil && *e.CodexAccountID == codexAccountID {
+			c := *e
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: codex_account_id=%s missing", repository.ErrNotFound, codexAccountID)
 }
 
 // --- 兑换码非事务面（管理端 CRUD 用；错误格式镜像真实 repo） ---

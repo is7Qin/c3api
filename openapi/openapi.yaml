@@ -201,6 +201,72 @@ paths:
               schema: { $ref: '#/components/schemas/AccountListResponse' }
         default:
           $ref: '#/components/responses/Error'
+  /accounts/import/codex-oauth:
+    post:
+      operationId: PostAccountsImportCodexOauth
+      tags: [accounts]
+      summary: Import Plus or Codex OAuth account JSON
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodexOAuthImportRequest' }
+      responses:
+        '200':
+          description: Per-account import result without credential material
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodexOAuthImportResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /accounts/{id}/codex/usage:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      operationId: GetAccountsIdCodexUsage
+      tags: [accounts]
+      summary: Get cached Codex usage and rate-limit information
+      responses:
+        '200':
+          description: Codex account usage snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodexUsageResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /accounts/{id}/codex/refresh-usage:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      operationId: PostAccountsIdCodexRefreshUsage
+      tags: [accounts]
+      summary: Refresh one Codex account's usage and rate-limit information
+      responses:
+        '200':
+          description: Refreshed Codex account usage snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodexUsageResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /accounts/codex/refresh-usage:
+    post:
+      operationId: PostAccountsCodexRefreshUsage
+      tags: [accounts]
+      summary: Refresh usage for multiple Codex accounts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodexUsageBatchRequest' }
+      responses:
+        '200':
+          description: Per-account refresh result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodexUsageBatchResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   /accounts/batch-delete:
     post:
       operationId: PostAccountsBatchDelete
@@ -1574,6 +1640,7 @@ components:
       properties:
         # account_id 只读（响应）；请求体忽略——路径 {id} 为准。
         account_id: { type: integer, format: int64 }
+        codex_account_id: { type: string, nullable: true, description: "External Plus/Codex account identifier used for OAuth imports and usage refreshes" }
         credential_type: { type: string, enum: [codex-oauth, codex-pat], description: 类型-列组约束（service 校验）：oauth 只允许 oauth_* 列组；pat 只允许 pat_key }
         # 身份四元组（真实 codex 客户端语义；首次写入缺省 → service 自动生成
         # （UUIDv4/v7 形状）并持久化，账号存在期间稳定；显式提供 → 采用；
@@ -1589,6 +1656,75 @@ components:
         pat_key: { type: string, nullable: true, description: 凭据：pat }
         # 管理标识（非请求面）
         email: { type: string, nullable: true, description: "管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空）" }
+    CodexOAuthImportRequest:
+      type: object
+      required: [template_id, credentials]
+      properties:
+        template_id: { type: integer, format: int64 }
+        group_ids:
+          type: array
+          items: { type: integer, format: int64 }
+        name_prefix: { type: string }
+        weight: { type: integer, minimum: 1 }
+        max_concurrency: { type: integer, minimum: 1 }
+        credentials:
+          description: OAuth JSON from Plus or Codex. Supports one object, an array, or a credentials/accounts/items/data wrapper.
+    CodexOAuthImportItem:
+      type: object
+      required: [index, status]
+      properties:
+        index: { type: integer, format: int64 }
+        status: { type: string, enum: [imported, updated, skipped, failed] }
+        account_id: { type: integer, format: int64, nullable: true }
+        codex_account_id: { type: string }
+        email: { type: string }
+        message: { type: string }
+    CodexOAuthImportResponse:
+      type: object
+      required: [imported, updated, skipped, failed, items]
+      properties:
+        imported: { type: integer }
+        updated: { type: integer }
+        skipped: { type: integer }
+        failed: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CodexOAuthImportItem' }
+    CodexUsageBatchRequest:
+      type: object
+      required: [account_ids]
+      properties:
+        account_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: integer, format: int64 }
+    CodexUsageResponse:
+      type: object
+      required: [account_id, codex_account_id, fetched_at, usage]
+      properties:
+        account_id: { type: integer, format: int64 }
+        codex_account_id: { type: string }
+        email: { type: string, nullable: true }
+        fetched_at: { type: string, format: date-time }
+        usage: { description: Codex usage JSON payload }
+        reset_credits: { description: Codex rate-limit reset credits JSON payload }
+        reset_credits_error: { type: string }
+    CodexUsageBatchItem:
+      type: object
+      required: [account_id, status]
+      properties:
+        account_id: { type: integer, format: int64 }
+        status: { type: string, enum: [refreshed, failed] }
+        usage: { $ref: '#/components/schemas/CodexUsageResponse' }
+        message: { type: string }
+    CodexUsageBatchResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CodexUsageBatchItem' }
     TemplateListResponse:
       type: object
       required: [total, rows]

@@ -35,6 +35,20 @@ const (
 	AccountStatusUnhealthy AccountStatus = "unhealthy"
 )
 
+// Defines values for CodexOAuthImportItemStatus.
+const (
+	CodexOAuthImportItemStatusFailed   CodexOAuthImportItemStatus = "failed"
+	CodexOAuthImportItemStatusImported CodexOAuthImportItemStatus = "imported"
+	CodexOAuthImportItemStatusSkipped  CodexOAuthImportItemStatus = "skipped"
+	CodexOAuthImportItemStatusUpdated  CodexOAuthImportItemStatus = "updated"
+)
+
+// Defines values for CodexUsageBatchItemStatus.
+const (
+	CodexUsageBatchItemStatusFailed    CodexUsageBatchItemStatus = "failed"
+	CodexUsageBatchItemStatusRefreshed CodexUsageBatchItemStatus = "refreshed"
+)
+
 // Defines values for ErrorType.
 const (
 	Abort     ErrorType = "abort"
@@ -332,6 +346,9 @@ type AccountCreate struct {
 type AccountExt struct {
 	AccountId *int64 `json:"account_id,omitempty"`
 
+	// CodexAccountId External Plus/Codex account identifier used for OAuth imports and usage refreshes
+	CodexAccountId *string `json:"codex_account_id"`
+
 	// CredentialType 类型-列组约束（service 校验）：oauth 只允许 oauth_* 列组；pat 只允许 pat_key
 	CredentialType AccountExtCredentialType `json:"credential_type"`
 
@@ -503,6 +520,75 @@ type BatchUpdateResponse struct {
 type BatchUpdateTemplatesBody struct {
 	Fields TemplatePatch `json:"fields"`
 	Ids    []int64       `json:"ids"`
+}
+
+// CodexOAuthImportItem defines model for CodexOAuthImportItem.
+type CodexOAuthImportItem struct {
+	AccountId      *int64                     `json:"account_id"`
+	CodexAccountId *string                    `json:"codex_account_id,omitempty"`
+	Email          *string                    `json:"email,omitempty"`
+	Index          int64                      `json:"index"`
+	Message        *string                    `json:"message,omitempty"`
+	Status         CodexOAuthImportItemStatus `json:"status"`
+}
+
+// CodexOAuthImportItemStatus defines model for CodexOAuthImportItem.Status.
+type CodexOAuthImportItemStatus string
+
+// CodexOAuthImportRequest defines model for CodexOAuthImportRequest.
+type CodexOAuthImportRequest struct {
+	// Credentials OAuth JSON from Plus or Codex. Supports one object, an array, or a credentials/accounts/items/data wrapper.
+	Credentials    interface{} `json:"credentials"`
+	GroupIds       *[]int64    `json:"group_ids,omitempty"`
+	MaxConcurrency *int        `json:"max_concurrency,omitempty"`
+	NamePrefix     *string     `json:"name_prefix,omitempty"`
+	TemplateId     int64       `json:"template_id"`
+	Weight         *int        `json:"weight,omitempty"`
+}
+
+// CodexOAuthImportResponse defines model for CodexOAuthImportResponse.
+type CodexOAuthImportResponse struct {
+	Failed   int                    `json:"failed"`
+	Imported int                    `json:"imported"`
+	Items    []CodexOAuthImportItem `json:"items"`
+	Skipped  int                    `json:"skipped"`
+	Updated  int                    `json:"updated"`
+}
+
+// CodexUsageBatchItem defines model for CodexUsageBatchItem.
+type CodexUsageBatchItem struct {
+	AccountId int64                     `json:"account_id"`
+	Message   *string                   `json:"message,omitempty"`
+	Status    CodexUsageBatchItemStatus `json:"status"`
+	Usage     *CodexUsageResponse       `json:"usage,omitempty"`
+}
+
+// CodexUsageBatchItemStatus defines model for CodexUsageBatchItem.Status.
+type CodexUsageBatchItemStatus string
+
+// CodexUsageBatchRequest defines model for CodexUsageBatchRequest.
+type CodexUsageBatchRequest struct {
+	AccountIds []int64 `json:"account_ids"`
+}
+
+// CodexUsageBatchResponse defines model for CodexUsageBatchResponse.
+type CodexUsageBatchResponse struct {
+	Items []CodexUsageBatchItem `json:"items"`
+}
+
+// CodexUsageResponse defines model for CodexUsageResponse.
+type CodexUsageResponse struct {
+	AccountId      int64     `json:"account_id"`
+	CodexAccountId string    `json:"codex_account_id"`
+	Email          *string   `json:"email"`
+	FetchedAt      time.Time `json:"fetched_at"`
+
+	// ResetCredits Codex rate-limit reset credits JSON payload
+	ResetCredits      *interface{} `json:"reset_credits,omitempty"`
+	ResetCreditsError *string      `json:"reset_credits_error,omitempty"`
+
+	// Usage Codex usage JSON payload
+	Usage interface{} `json:"usage"`
 }
 
 // DeactivateRequest 单码失效无请求体（保留空 schema 对齐批量端点命名）
@@ -1660,6 +1746,12 @@ type PostAccountsBatchDeleteJSONRequestBody = BatchDeleteBody
 // PostAccountsBatchUpdateJSONRequestBody defines body for PostAccountsBatchUpdate for application/json ContentType.
 type PostAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
 
+// PostAccountsCodexRefreshUsageJSONRequestBody defines body for PostAccountsCodexRefreshUsage for application/json ContentType.
+type PostAccountsCodexRefreshUsageJSONRequestBody = CodexUsageBatchRequest
+
+// PostAccountsImportCodexOauthJSONRequestBody defines body for PostAccountsImportCodexOauth for application/json ContentType.
+type PostAccountsImportCodexOauthJSONRequestBody = CodexOAuthImportRequest
+
 // PutAccountsIdJSONRequestBody defines body for PutAccountsId for application/json ContentType.
 type PutAccountsIdJSONRequestBody = AccountCreate
 
@@ -1749,6 +1841,12 @@ type ServerInterface interface {
 	// 批量更新账号（fields 为任意字段子集）
 	// (POST /accounts/batch-update)
 	PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
+	// Refresh usage for multiple Codex accounts
+	// (POST /accounts/codex/refresh-usage)
+	PostAccountsCodexRefreshUsage(w http.ResponseWriter, r *http.Request)
+	// Import Plus or Codex OAuth account JSON
+	// (POST /accounts/import/codex-oauth)
+	PostAccountsImportCodexOauth(w http.ResponseWriter, r *http.Request)
 
 	// (DELETE /accounts/{id})
 	DeleteAccountsId(w http.ResponseWriter, r *http.Request, id int64)
@@ -1758,6 +1856,12 @@ type ServerInterface interface {
 
 	// (PUT /accounts/{id})
 	PutAccountsId(w http.ResponseWriter, r *http.Request, id int64)
+	// Refresh one Codex account's usage and rate-limit information
+	// (POST /accounts/{id}/codex/refresh-usage)
+	PostAccountsIdCodexRefreshUsage(w http.ResponseWriter, r *http.Request, id int64)
+	// Get cached Codex usage and rate-limit information
+	// (GET /accounts/{id}/codex/usage)
+	GetAccountsIdCodexUsage(w http.ResponseWriter, r *http.Request, id int64)
 	// 读取账号类型化鉴权扩展（编辑回显；仅 codex-oauth/codex-pat 账号有 ext 行）
 	// (GET /accounts/{id}/ext)
 	GetAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64)
@@ -1956,6 +2060,18 @@ func (_ Unimplemented) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// Refresh usage for multiple Codex accounts
+// (POST /accounts/codex/refresh-usage)
+func (_ Unimplemented) PostAccountsCodexRefreshUsage(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Import Plus or Codex OAuth account JSON
+// (POST /accounts/import/codex-oauth)
+func (_ Unimplemented) PostAccountsImportCodexOauth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (DELETE /accounts/{id})
 func (_ Unimplemented) DeleteAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -1968,6 +2084,18 @@ func (_ Unimplemented) GetAccountsId(w http.ResponseWriter, r *http.Request, id 
 
 // (PUT /accounts/{id})
 func (_ Unimplemented) PutAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Refresh one Codex account's usage and rate-limit information
+// (POST /accounts/{id}/codex/refresh-usage)
+func (_ Unimplemented) PostAccountsIdCodexRefreshUsage(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get cached Codex usage and rate-limit information
+// (GET /accounts/{id}/codex/usage)
+func (_ Unimplemented) GetAccountsIdCodexUsage(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2427,6 +2555,34 @@ func (siw *ServerInterfaceWrapper) PostAccountsBatchUpdate(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// PostAccountsCodexRefreshUsage operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsCodexRefreshUsage(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsCodexRefreshUsage(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccountsImportCodexOauth operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsImportCodexOauth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsImportCodexOauth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteAccountsId operation middleware
 func (siw *ServerInterfaceWrapper) DeleteAccountsId(w http.ResponseWriter, r *http.Request) {
 
@@ -2493,6 +2649,56 @@ func (siw *ServerInterfaceWrapper) PutAccountsId(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutAccountsId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccountsIdCodexRefreshUsage operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsIdCodexRefreshUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsIdCodexRefreshUsage(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAccountsIdCodexUsage operation middleware
+func (siw *ServerInterfaceWrapper) GetAccountsIdCodexUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAccountsIdCodexUsage(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4586,6 +4792,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/accounts/batch-update", wrapper.PostAccountsBatchUpdate)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/codex/refresh-usage", wrapper.PostAccountsCodexRefreshUsage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/import/codex-oauth", wrapper.PostAccountsImportCodexOauth)
+	})
+	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/accounts/{id}", wrapper.DeleteAccountsId)
 	})
 	r.Group(func(r chi.Router) {
@@ -4593,6 +4805,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/accounts/{id}", wrapper.PutAccountsId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/{id}/codex/refresh-usage", wrapper.PostAccountsIdCodexRefreshUsage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/accounts/{id}/codex/usage", wrapper.GetAccountsIdCodexUsage)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/accounts/{id}/ext", wrapper.GetAccountsIdExt)

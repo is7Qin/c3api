@@ -65,6 +65,11 @@ func CredentialType(v string) predicate.AccountExt {
 	return predicate.AccountExt(sql.FieldEQ(FieldCredentialType, v))
 }
 
+// CodexAccountID applies equality check predicate on the "codex_account_id" field. It's identical to CodexAccountIDEQ.
+func CodexAccountID(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexAccountID, v))
+}
+
 // InstallationID applies equality check predicate on the "installation_id" field. It's identical to InstallationIDEQ.
 func InstallationID(v string) predicate.AccountExt {
 	return predicate.AccountExt(sql.FieldEQ(FieldInstallationID, v))
@@ -193,6 +198,81 @@ func CredentialTypeEqualFold(v string) predicate.AccountExt {
 // CredentialTypeContainsFold applies the ContainsFold predicate on the "credential_type" field.
 func CredentialTypeContainsFold(v string) predicate.AccountExt {
 	return predicate.AccountExt(sql.FieldContainsFold(FieldCredentialType, v))
+}
+
+// CodexAccountIDEQ applies the EQ predicate on the "codex_account_id" field.
+func CodexAccountIDEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDNEQ applies the NEQ predicate on the "codex_account_id" field.
+func CodexAccountIDNEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNEQ(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDIn applies the In predicate on the "codex_account_id" field.
+func CodexAccountIDIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIn(FieldCodexAccountID, vs...))
+}
+
+// CodexAccountIDNotIn applies the NotIn predicate on the "codex_account_id" field.
+func CodexAccountIDNotIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotIn(FieldCodexAccountID, vs...))
+}
+
+// CodexAccountIDGT applies the GT predicate on the "codex_account_id" field.
+func CodexAccountIDGT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGT(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDGTE applies the GTE predicate on the "codex_account_id" field.
+func CodexAccountIDGTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGTE(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDLT applies the LT predicate on the "codex_account_id" field.
+func CodexAccountIDLT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLT(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDLTE applies the LTE predicate on the "codex_account_id" field.
+func CodexAccountIDLTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLTE(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDContains applies the Contains predicate on the "codex_account_id" field.
+func CodexAccountIDContains(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContains(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDHasPrefix applies the HasPrefix predicate on the "codex_account_id" field.
+func CodexAccountIDHasPrefix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasPrefix(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDHasSuffix applies the HasSuffix predicate on the "codex_account_id" field.
+func CodexAccountIDHasSuffix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasSuffix(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDIsNil applies the IsNil predicate on the "codex_account_id" field.
+func CodexAccountIDIsNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIsNull(FieldCodexAccountID))
+}
+
+// CodexAccountIDNotNil applies the NotNil predicate on the "codex_account_id" field.
+func CodexAccountIDNotNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotNull(FieldCodexAccountID))
+}
+
+// CodexAccountIDEqualFold applies the EqualFold predicate on the "codex_account_id" field.
+func CodexAccountIDEqualFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEqualFold(FieldCodexAccountID, v))
+}
+
+// CodexAccountIDContainsFold applies the ContainsFold predicate on the "codex_account_id" field.
+func CodexAccountIDContainsFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContainsFold(FieldCodexAccountID, v))
 }
 
 // InstallationIDEQ applies the EQ predicate on the "installation_id" field.

@@ -22,6 +22,8 @@ type AccountExt struct {
 	AccountID int64 `json:"account_id,omitempty"`
 	// CredentialType holds the value of the "credential_type" field.
 	CredentialType string `json:"credential_type,omitempty"`
+	// CodexAccountID holds the value of the "codex_account_id" field.
+	CodexAccountID *string `json:"codex_account_id,omitempty"`
 	// InstallationID holds the value of the "installation_id" field.
 	InstallationID string `json:"installation_id,omitempty"`
 	// SessionID holds the value of the "session_id" field.
@@ -73,7 +75,7 @@ func (*AccountExt) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case accountext.FieldID, accountext.FieldAccountID:
 			values[i] = new(sql.NullInt64)
-		case accountext.FieldCredentialType, accountext.FieldInstallationID, accountext.FieldSessionID, accountext.FieldThreadID, accountext.FieldWindowID, accountext.FieldOauthToken, accountext.FieldOauthRefreshToken, accountext.FieldPatKey, accountext.FieldEmail:
+		case accountext.FieldCredentialType, accountext.FieldCodexAccountID, accountext.FieldInstallationID, accountext.FieldSessionID, accountext.FieldThreadID, accountext.FieldWindowID, accountext.FieldOauthToken, accountext.FieldOauthRefreshToken, accountext.FieldPatKey, accountext.FieldEmail:
 			values[i] = new(sql.NullString)
 		case accountext.FieldOauthExpiresAt:
 			values[i] = new(sql.NullTime)
@@ -109,6 +111,13 @@ func (_m *AccountExt) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field credential_type", values[i])
 			} else if value.Valid {
 				_m.CredentialType = value.String
+			}
+		case accountext.FieldCodexAccountID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field codex_account_id", values[i])
+			} else if value.Valid {
+				_m.CodexAccountID = new(string)
+				*_m.CodexAccountID = value.String
 			}
 		case accountext.FieldInstallationID:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -218,6 +227,11 @@ func (_m *AccountExt) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("credential_type=")
 	builder.WriteString(_m.CredentialType)
+	builder.WriteString(", ")
+	if v := _m.CodexAccountID; v != nil {
+		builder.WriteString("codex_account_id=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	builder.WriteString("installation_id=")
 	builder.WriteString(_m.InstallationID)

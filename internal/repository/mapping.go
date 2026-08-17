@@ -77,6 +77,7 @@ func toDomainAccountExt(e *ent.AccountExt) *domain.AccountExt {
 	return &domain.AccountExt{
 		AccountID:         e.AccountID,
 		CredentialType:    credential.Type(e.CredentialType),
+		CodexAccountID:    e.CodexAccountID,
 		InstallationID:    e.InstallationID,
 		SessionID:         e.SessionID,
 		ThreadID:          e.ThreadID,

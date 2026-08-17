@@ -9,9 +9,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -172,7 +174,9 @@ type TemplateExtStore interface {
 type AccountExtStore interface {
 	UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error)
 	TryInsertAccountExt(ctx context.Context, e *domain.AccountExt) (bool, error)
+	WriteOAuthRotationIfCurrent(ctx context.Context, accountID int64, expectedRefreshToken, accessToken, refreshToken string, expiresAt *time.Time) (bool, error)
 	GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error)
+	GetAccountExtByCodexAccountID(ctx context.Context, codexAccountID string) (*domain.AccountExt, error)
 }
 
 // RedemptionStore 兑换码 + 兑换审计持久化（Phase 5 计费前基础设施）。
@@ -314,6 +318,10 @@ type Service struct {
 	// 重载时机 = 同步拉取成功后 + 管理端改价后（对齐 pricing/imagePrice 快照，
 	// 低频无锁）。
 	functionPrice atomic.Pointer[map[string]*domain.FunctionPrice]
+	// Codex usage refreshes are management-plane work and never run on the
+	// relay request path.
+	codexUsageMu sync.Mutex
+	codexUsage   *codexUsageManager
 	// priceFetcher 价格拉取器（pricing.Fetcher 实现）：管理端手动 sync
 	// （SyncPricingNow）与 cron worker 共享同一实例（main 装配注入；nil 时
 	// SyncPricingNow 返回错误——启动配置缺失，不应发生）。
@@ -323,11 +331,33 @@ type Service struct {
 
 func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger) *Service {
 	s := &Service{store: store, sched: sched, inv: invalidate, pub: pub, ruleReload: ruleReload, keys: keys, log: log}
+	s.codexUsage = newCodexUsageManager(s, nil, log)
 	// settings 快照构造时首载（注册表不覆盖 settings——NOTIFY 处理路径
 	// ReloadSettings 保持既有行为）；pricing 快照首载统一由快照注册表
 	// ReloadAll 承担（单一启动入口，消灭"构造即载 + 注册表再刷"双重加载）。
 	s.reloadSettings(context.Background())
 	return s
+}
+
+// SetCodexUsageHTTPClient injects the pooled client used by management-side
+// Codex quota refreshes. A nil client restores the default client.
+func (s *Service) SetCodexUsageHTTPClient(client *http.Client) {
+	s.codexUsageMu.Lock()
+	if s.codexUsage == nil {
+		s.codexUsage = newCodexUsageManager(s, client, s.log)
+	}
+	manager := s.codexUsage
+	s.codexUsageMu.Unlock()
+	manager.setHTTPClient(client)
+}
+
+func (s *Service) getCodexUsageManager() *codexUsageManager {
+	s.codexUsageMu.Lock()
+	defer s.codexUsageMu.Unlock()
+	if s.codexUsage == nil {
+		s.codexUsage = newCodexUsageManager(s, nil, s.log)
+	}
+	return s.codexUsage
 }
 
 // SetLocalDispatcher 注入本地变更分发器（#36 本地实例即时重算）：main 装配序

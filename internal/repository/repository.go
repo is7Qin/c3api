@@ -304,8 +304,16 @@ func (r *Repository) TryInsertAccountExt(ctx context.Context, e *domain.AccountE
 	return r.AccountExts.TryInsertAccountExt(ctx, e)
 }
 
+func (r *Repository) WriteOAuthRotationIfCurrent(ctx context.Context, accountID int64, expectedRefreshToken, accessToken, refreshToken string, expiresAt *time.Time) (bool, error) {
+	return r.AccountExts.WriteOAuthRotationIfCurrent(ctx, accountID, expectedRefreshToken, accessToken, refreshToken, expiresAt)
+}
+
 func (r *Repository) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	return r.AccountExts.GetAccountExt(ctx, accountID)
+}
+
+func (r *Repository) GetAccountExtByCodexAccountID(ctx context.Context, codexAccountID string) (*domain.AccountExt, error) {
+	return r.AccountExts.GetAccountExtByCodexAccountID(ctx, codexAccountID)
 }
 
 // --- 用户（Phase 3a） ---

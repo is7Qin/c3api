@@ -16,6 +16,8 @@ const (
 	FieldAccountID = "account_id"
 	// FieldCredentialType holds the string denoting the credential_type field in the database.
 	FieldCredentialType = "credential_type"
+	// FieldCodexAccountID holds the string denoting the codex_account_id field in the database.
+	FieldCodexAccountID = "codex_account_id"
 	// FieldInstallationID holds the string denoting the installation_id field in the database.
 	FieldInstallationID = "installation_id"
 	// FieldSessionID holds the string denoting the session_id field in the database.
@@ -52,6 +54,7 @@ var Columns = []string{
 	FieldID,
 	FieldAccountID,
 	FieldCredentialType,
+	FieldCodexAccountID,
 	FieldInstallationID,
 	FieldSessionID,
 	FieldThreadID,
@@ -89,6 +92,11 @@ func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
 // ByCredentialType orders the results by the credential_type field.
 func ByCredentialType(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCredentialType, opts...).ToFunc()
+}
+
+// ByCodexAccountID orders the results by the codex_account_id field.
+func ByCodexAccountID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexAccountID, opts...).ToFunc()
 }
 
 // ByInstallationID orders the results by the installation_id field.

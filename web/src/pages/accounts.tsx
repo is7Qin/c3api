@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2 } from 'lucide-react'
+import { Activity, FileJson, Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, RefreshCw, Settings2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
@@ -29,6 +29,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
 import { StatusBadge } from '@/components/status-badge'
+import { AccountPerformanceDialog } from '@/components/account-performance-dialog'
+import { CodexImportDialog, CodexQuotaPopover } from '@/components/codex-account-tools'
 import { formatPercent, toRFC3339, truncate } from '@/components/fmt'
 import type { components } from '@/lib/api/schema'
 
@@ -43,6 +45,7 @@ type Group = components['schemas']['Group']
 const CODE_CREDENTIAL_TYPES: NonNullable<components['schemas']['Template']['CredentialType']>[] = ['codex-oauth', 'codex-pat']
 const isCodexTemplate = (a: AccountView) =>
   a.Template?.CredentialType === 'codex-oauth' || a.Template?.CredentialType === 'codex-pat'
+const isCodexOAuthTemplate = (a: AccountView) => a.Template?.CredentialType === 'codex-oauth'
 
 // RFC3339（API）→ datetime-local 'YYYY-MM-DDTHH:mm'（本地时区；DateTimePicker 值格式，'' = 未设置）
 function toLocalDT(iso: string): string {
@@ -224,9 +227,32 @@ export default function Accounts() {
   })
   const templatesQ = useQuery({ queryKey: ['templates'], queryFn: () => api.listTemplates({ limit: 100 }) })
   const templates = templatesQ.data?.rows ?? []
+  const codexOAuthTemplates = templates.filter(template => template.CredentialType === 'codex-oauth')
   const groupsQ = useQuery({ queryKey: ['groups'], queryFn: () => api.listGroups({ limit: 100 }) })
   const groups = groupsQ.data?.rows ?? []
   const rows = data?.rows ?? []
+
+  const [codexImportOpen, setCodexImportOpen] = useState(false)
+  const [performanceTarget, setPerformanceTarget] = useState<AccountView | null>(null)
+  const codexRefreshBatch = useMutation({
+    mutationFn: (ids: number[]) => api.refreshCodexUsageBatch(ids),
+    onSuccess: result => {
+      let refreshed = 0
+      for (const item of result.items) {
+        if (item.status === 'refreshed' && item.usage) {
+          qc.setQueryData(['codex-usage', item.account_id], item.usage)
+          refreshed++
+        }
+      }
+      const failed = result.items.length - refreshed
+      toast.add({
+        title: t('accounts.codexQuota.batchCompleted'),
+        description: t('accounts.codexQuota.batchCompletedDesc', { refreshed, failed }),
+        type: failed > 0 ? 'warning' : 'success',
+      })
+    },
+    onError: error => toast.add({ title: t('accounts.codexQuota.batchFailed'), description: (error as Error).message, type: 'error' }),
+  })
 
   // 行勾选（跨页保留，筛选/翻页后清空）——
   const [selected, setSelected] = useState<number[]>([])
@@ -536,14 +562,32 @@ export default function Accounts() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t('accounts.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('accounts.subtitle')}</p>
         </div>
-        <Button onClick={openCreate} disabled={templates.length === 0} title={templates.length === 0 ? t('accounts.noTemplate') : undefined}>
-          <Plus /> {t('accounts.new')}
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setCodexImportOpen(true)}
+            disabled={codexOAuthTemplates.length === 0}
+            title={codexOAuthTemplates.length === 0 ? t('accounts.codexImport.noTemplate') : undefined}
+          >
+            <FileJson /> {t('accounts.codexImport.button')}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => codexRefreshBatch.mutate(selected)}
+            disabled={selected.length === 0 || codexRefreshBatch.isPending}
+          >
+            <RefreshCw className={codexRefreshBatch.isPending ? 'animate-spin' : ''} />
+            {t('accounts.codexQuota.refreshSelected')}
+          </Button>
+          <Button onClick={openCreate} disabled={templates.length === 0} title={templates.length === 0 ? t('accounts.noTemplate') : undefined}>
+            <Plus /> {t('accounts.new')}
+          </Button>
+        </div>
       </div>
 
       <ListToolbar
@@ -625,8 +669,8 @@ export default function Accounts() {
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg border bg-card">
-            <Table>
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <Table className="min-w-[1180px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
@@ -645,6 +689,7 @@ export default function Accounts() {
                   <TableHead className="text-right">{t('accounts.table.curConcurrency')}</TableHead>
                   <TableHead className="text-right">{t('accounts.table.errRate')}</TableHead>
                   <TableHead className="text-right">{t('accounts.table.errCount')}</TableHead>
+                  <TableHead>{t('accounts.table.codexQuota')}</TableHead>
                   <TableHead>{t('accounts.table.lastError')}</TableHead>
                   <TableHead className="text-right">{t('accounts.table.actions')}</TableHead>
                 </TableRow>
@@ -664,6 +709,9 @@ export default function Accounts() {
                     <TableCell className="text-right tabular-nums">{a.concurrency ?? 0}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatPercent(a.err_rate)}</TableCell>
                     <TableCell className="text-right tabular-nums">{a.err_count ?? 0}</TableCell>
+                    <TableCell>
+                      {isCodexOAuthTemplate(a) && a.ID ? <CodexQuotaPopover accountID={a.ID} /> : <span className="text-xs text-muted-foreground">-</span>}
+                    </TableCell>
                     <TableCell className="max-w-40">
                       {a.LastError ? (
                         <Tooltip>
@@ -687,6 +735,7 @@ export default function Accounts() {
                         >
                           {a.Status === 'disabled' ? <CircleCheck /> : <Ban />}
                         </Button>
+                        <Button variant="ghost" size="icon-sm" title={t('accounts.performance.button')} onClick={() => setPerformanceTarget(a)}><Activity /></Button>
                         {isCodexTemplate(a) && (
                           <Button variant="ghost" size="icon-sm" title={t('accounts.ext.button')} onClick={() => openExt(a)}><Settings2 /></Button>
                         )}
@@ -704,6 +753,14 @@ export default function Accounts() {
       )}
 
       {/* —— 创建/编辑对话框 —— */}
+      <CodexImportDialog
+        open={codexImportOpen}
+        onOpenChange={setCodexImportOpen}
+        templates={codexOAuthTemplates}
+        groups={groups}
+      />
+      <AccountPerformanceDialog target={performanceTarget} onOpenChange={open => { if (!open) setPerformanceTarget(null) }} />
+
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

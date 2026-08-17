@@ -1513,6 +1513,7 @@ type AccountExtMutation struct {
 	typ                 string
 	id                  *int64
 	credential_type     *string
+	codex_account_id    *string
 	installation_id     *string
 	session_id          *string
 	thread_id           *string
@@ -1704,6 +1705,55 @@ func (m *AccountExtMutation) OldCredentialType(ctx context.Context) (v string, e
 // ResetCredentialType resets all changes to the "credential_type" field.
 func (m *AccountExtMutation) ResetCredentialType() {
 	m.credential_type = nil
+}
+
+// SetCodexAccountID sets the "codex_account_id" field.
+func (m *AccountExtMutation) SetCodexAccountID(s string) {
+	m.codex_account_id = &s
+}
+
+// CodexAccountID returns the value of the "codex_account_id" field in the mutation.
+func (m *AccountExtMutation) CodexAccountID() (r string, exists bool) {
+	v := m.codex_account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCodexAccountID returns the old "codex_account_id" field's value of the AccountExt entity.
+// If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountExtMutation) OldCodexAccountID(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCodexAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCodexAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCodexAccountID: %w", err)
+	}
+	return oldValue.CodexAccountID, nil
+}
+
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (m *AccountExtMutation) ClearCodexAccountID() {
+	m.codex_account_id = nil
+	m.clearedFields[accountext.FieldCodexAccountID] = struct{}{}
+}
+
+// CodexAccountIDCleared returns if the "codex_account_id" field was cleared in this mutation.
+func (m *AccountExtMutation) CodexAccountIDCleared() bool {
+	_, ok := m.clearedFields[accountext.FieldCodexAccountID]
+	return ok
+}
+
+// ResetCodexAccountID resets all changes to the "codex_account_id" field.
+func (m *AccountExtMutation) ResetCodexAccountID() {
+	m.codex_account_id = nil
+	delete(m.clearedFields, accountext.FieldCodexAccountID)
 }
 
 // SetInstallationID sets the "installation_id" field.
@@ -2195,12 +2245,15 @@ func (m *AccountExtMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountExtMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 12)
 	if m.account != nil {
 		fields = append(fields, accountext.FieldAccountID)
 	}
 	if m.credential_type != nil {
 		fields = append(fields, accountext.FieldCredentialType)
+	}
+	if m.codex_account_id != nil {
+		fields = append(fields, accountext.FieldCodexAccountID)
 	}
 	if m.installation_id != nil {
 		fields = append(fields, accountext.FieldInstallationID)
@@ -2241,6 +2294,8 @@ func (m *AccountExtMutation) Field(name string) (ent.Value, bool) {
 		return m.AccountID()
 	case accountext.FieldCredentialType:
 		return m.CredentialType()
+	case accountext.FieldCodexAccountID:
+		return m.CodexAccountID()
 	case accountext.FieldInstallationID:
 		return m.InstallationID()
 	case accountext.FieldSessionID:
@@ -2272,6 +2327,8 @@ func (m *AccountExtMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldAccountID(ctx)
 	case accountext.FieldCredentialType:
 		return m.OldCredentialType(ctx)
+	case accountext.FieldCodexAccountID:
+		return m.OldCodexAccountID(ctx)
 	case accountext.FieldInstallationID:
 		return m.OldInstallationID(ctx)
 	case accountext.FieldSessionID:
@@ -2312,6 +2369,13 @@ func (m *AccountExtMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCredentialType(v)
+		return nil
+	case accountext.FieldCodexAccountID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCodexAccountID(v)
 		return nil
 	case accountext.FieldInstallationID:
 		v, ok := value.(string)
@@ -2409,6 +2473,9 @@ func (m *AccountExtMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *AccountExtMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(accountext.FieldCodexAccountID) {
+		fields = append(fields, accountext.FieldCodexAccountID)
+	}
 	if m.FieldCleared(accountext.FieldSessionID) {
 		fields = append(fields, accountext.FieldSessionID)
 	}
@@ -2447,6 +2514,9 @@ func (m *AccountExtMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *AccountExtMutation) ClearField(name string) error {
 	switch name {
+	case accountext.FieldCodexAccountID:
+		m.ClearCodexAccountID()
+		return nil
 	case accountext.FieldSessionID:
 		m.ClearSessionID()
 		return nil
@@ -2484,6 +2554,9 @@ func (m *AccountExtMutation) ResetField(name string) error {
 		return nil
 	case accountext.FieldCredentialType:
 		m.ResetCredentialType()
+		return nil
+	case accountext.FieldCodexAccountID:
+		m.ResetCodexAccountID()
 		return nil
 	case accountext.FieldInstallationID:
 		m.ResetInstallationID()

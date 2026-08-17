@@ -44,6 +44,7 @@ var (
 	AccountExtsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "credential_type", Type: field.TypeString},
+		{Name: "codex_account_id", Type: field.TypeString, Nullable: true},
 		{Name: "installation_id", Type: field.TypeString},
 		{Name: "session_id", Type: field.TypeString, Nullable: true},
 		{Name: "thread_id", Type: field.TypeString, Nullable: true},
@@ -63,7 +64,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "account_exts_accounts_ext",
-				Columns:    []*schema.Column{AccountExtsColumns[11]},
+				Columns:    []*schema.Column{AccountExtsColumns[12]},
 				RefColumns: []*schema.Column{AccountsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -72,7 +73,12 @@ var (
 			{
 				Name:    "accountext_account_id",
 				Unique:  true,
-				Columns: []*schema.Column{AccountExtsColumns[11]},
+				Columns: []*schema.Column{AccountExtsColumns[12]},
+			},
+			{
+				Name:    "accountext_codex_account_id",
+				Unique:  true,
+				Columns: []*schema.Column{AccountExtsColumns[2]},
 			},
 		},
 	}

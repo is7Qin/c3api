@@ -283,6 +283,7 @@ type TemplateExt struct {
 type AccountExt struct {
 	AccountID         int64
 	CredentialType    credential.Type
+	CodexAccountID    *string    // 外部 Codex account_id；与内部 AccountID 分离
 	InstallationID    string     // 身份：账号级唯一（UUIDv4，必存）
 	SessionID         *string    // 身份：会话级（UUIDv7；恒等 == ThreadID）
 	ThreadID          *string    // 身份：会话级（UUIDv7）

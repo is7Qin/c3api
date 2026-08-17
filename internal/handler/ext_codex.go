@@ -41,6 +41,7 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 	e := &domain.AccountExt{
 		AccountID:         id, // 路径 {id} 为准（请求体 account_id 忽略）
 		CredentialType:    credential.Type(in.CredentialType),
+		CodexAccountID:    in.CodexAccountId,
 		InstallationID:    deref(in.InstallationId), // 缺省 → service 自动生成
 		SessionID:         in.SessionId,
 		ThreadID:          in.ThreadId,
@@ -63,6 +64,7 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 func toAPIAccountExt(e *domain.AccountExt) AccountExt {
 	return AccountExt{
 		AccountId:         &e.AccountID,
+		CodexAccountId:    e.CodexAccountID,
 		CredentialType:    AccountExtCredentialType(e.CredentialType),
 		InstallationId:    ptr(e.InstallationID),
 		SessionId:         e.SessionID,

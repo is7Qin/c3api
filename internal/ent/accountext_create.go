@@ -35,6 +35,20 @@ func (_c *AccountExtCreate) SetCredentialType(v string) *AccountExtCreate {
 	return _c
 }
 
+// SetCodexAccountID sets the "codex_account_id" field.
+func (_c *AccountExtCreate) SetCodexAccountID(v string) *AccountExtCreate {
+	_c.mutation.SetCodexAccountID(v)
+	return _c
+}
+
+// SetNillableCodexAccountID sets the "codex_account_id" field if the given value is not nil.
+func (_c *AccountExtCreate) SetNillableCodexAccountID(v *string) *AccountExtCreate {
+	if v != nil {
+		_c.SetCodexAccountID(*v)
+	}
+	return _c
+}
+
 // SetInstallationID sets the "installation_id" field.
 func (_c *AccountExtCreate) SetInstallationID(v string) *AccountExtCreate {
 	_c.mutation.SetInstallationID(v)
@@ -247,6 +261,10 @@ func (_c *AccountExtCreate) createSpec() (*AccountExt, *sqlgraph.CreateSpec) {
 		_spec.SetField(accountext.FieldCredentialType, field.TypeString, value)
 		_node.CredentialType = value
 	}
+	if value, ok := _c.mutation.CodexAccountID(); ok {
+		_spec.SetField(accountext.FieldCodexAccountID, field.TypeString, value)
+		_node.CodexAccountID = &value
+	}
 	if value, ok := _c.mutation.InstallationID(); ok {
 		_spec.SetField(accountext.FieldInstallationID, field.TypeString, value)
 		_node.InstallationID = value
@@ -373,6 +391,24 @@ func (u *AccountExtUpsert) SetCredentialType(v string) *AccountExtUpsert {
 // UpdateCredentialType sets the "credential_type" field to the value that was provided on create.
 func (u *AccountExtUpsert) UpdateCredentialType() *AccountExtUpsert {
 	u.SetExcluded(accountext.FieldCredentialType)
+	return u
+}
+
+// SetCodexAccountID sets the "codex_account_id" field.
+func (u *AccountExtUpsert) SetCodexAccountID(v string) *AccountExtUpsert {
+	u.Set(accountext.FieldCodexAccountID, v)
+	return u
+}
+
+// UpdateCodexAccountID sets the "codex_account_id" field to the value that was provided on create.
+func (u *AccountExtUpsert) UpdateCodexAccountID() *AccountExtUpsert {
+	u.SetExcluded(accountext.FieldCodexAccountID)
+	return u
+}
+
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (u *AccountExtUpsert) ClearCodexAccountID() *AccountExtUpsert {
+	u.SetNull(accountext.FieldCodexAccountID)
 	return u
 }
 
@@ -605,6 +641,27 @@ func (u *AccountExtUpsertOne) SetCredentialType(v string) *AccountExtUpsertOne {
 func (u *AccountExtUpsertOne) UpdateCredentialType() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
 		s.UpdateCredentialType()
+	})
+}
+
+// SetCodexAccountID sets the "codex_account_id" field.
+func (u *AccountExtUpsertOne) SetCodexAccountID(v string) *AccountExtUpsertOne {
+	return u.Update(func(s *AccountExtUpsert) {
+		s.SetCodexAccountID(v)
+	})
+}
+
+// UpdateCodexAccountID sets the "codex_account_id" field to the value that was provided on create.
+func (u *AccountExtUpsertOne) UpdateCodexAccountID() *AccountExtUpsertOne {
+	return u.Update(func(s *AccountExtUpsert) {
+		s.UpdateCodexAccountID()
+	})
+}
+
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (u *AccountExtUpsertOne) ClearCodexAccountID() *AccountExtUpsertOne {
+	return u.Update(func(s *AccountExtUpsert) {
+		s.ClearCodexAccountID()
 	})
 }
 
@@ -1028,6 +1085,27 @@ func (u *AccountExtUpsertBulk) SetCredentialType(v string) *AccountExtUpsertBulk
 func (u *AccountExtUpsertBulk) UpdateCredentialType() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
 		s.UpdateCredentialType()
+	})
+}
+
+// SetCodexAccountID sets the "codex_account_id" field.
+func (u *AccountExtUpsertBulk) SetCodexAccountID(v string) *AccountExtUpsertBulk {
+	return u.Update(func(s *AccountExtUpsert) {
+		s.SetCodexAccountID(v)
+	})
+}
+
+// UpdateCodexAccountID sets the "codex_account_id" field to the value that was provided on create.
+func (u *AccountExtUpsertBulk) UpdateCodexAccountID() *AccountExtUpsertBulk {
+	return u.Update(func(s *AccountExtUpsert) {
+		s.UpdateCodexAccountID()
+	})
+}
+
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (u *AccountExtUpsertBulk) ClearCodexAccountID() *AccountExtUpsertBulk {
+	return u.Update(func(s *AccountExtUpsert) {
+		s.ClearCodexAccountID()
 	})
 }
 
