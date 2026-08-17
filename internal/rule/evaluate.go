@@ -25,10 +25,11 @@ func ruleWindowSeconds(w domain.RuleWhen) int {
 	return defaultWindowSeconds
 }
 
-// Match 规则 when 与事件（+ 窗口计数）是否匹配：等值/子串/计数阈值/比例。
-// 窗口比例 = t429(或 err) / (ok+err+t429)，仅当 total ≥ CountTotalGE 时参与判定
-// （样本不足不满足，ValidateWhen 已保证比例类必配 CountTotalGE，此处仍防御）。
-func Match(w domain.RuleWhen, ev Event, wc windowSnapshot) bool {
+// matchBasic 规则 when 与事件的非窗口条件维度匹配（Classify 预判与 Match
+// 共用）：kind/http_status/error_message_contains/account/template/group/model。
+// 窗口条件（count_*/ratio_*）依赖历史计数，预判不可得——按"可能命中"保守
+// 处理（不参与判定，worker Match 精确裁决）。
+func matchBasic(w domain.RuleWhen, ev Event) bool {
 	if w.Kind != nil && kindFromString(*w.Kind) != ev.Kind {
 		return false
 	}
@@ -48,6 +49,16 @@ func Match(w domain.RuleWhen, ev Event, wc windowSnapshot) bool {
 		return false
 	}
 	if w.Model != nil && ev.Model != *w.Model {
+		return false
+	}
+	return true
+}
+
+// Match 规则 when 与事件（+ 窗口计数）是否匹配：等值/子串/计数阈值/比例。
+// 窗口比例 = t429(或 err) / (ok+err+t429)，仅当 total ≥ CountTotalGE 时参与判定
+// （样本不足不满足，ValidateWhen 已保证比例类必配 CountTotalGE，此处仍防御）。
+func Match(w domain.RuleWhen, ev Event, wc windowSnapshot) bool {
+	if !matchBasic(w, ev) {
 		return false
 	}
 	if w.Count429GE != nil && wc.t429 < *w.Count429GE {

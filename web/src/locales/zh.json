@@ -619,15 +619,17 @@
     "any": "不限",
     "kind": {
       "429": "429",
-      "ok": "成功",
-      "error": "错误"
+      "4xx": "4xx",
+      "5xx": "5xx",
+      "network": "连接错误",
+      "ok": "成功"
     },
     "whenTitle": "匹配条件（when）",
     "whenHint": "留空 = 不限定；比例匹配需同时填写「总次数 ≥」。",
     "templates": {
       "title": "预设",
       "cooldown429": "429 冷却",
-      "errorBackoff": "错误退避",
+      "5xxBackoff": "5xx 退避",
       "escalate": "频发升级",
       "recover": "成功恢复"
     },
@@ -674,7 +676,8 @@
     "then": {
       "status": "设置状态",
       "cooldown": "冷却时长",
-      "weight": "权重"
+      "weight": "权重",
+      "transmit": "透传上游原文"
     },
     "deleteTitle": "删除规则",
     "deleteDesc": "确定删除规则「{{name}}」？立即生效。"

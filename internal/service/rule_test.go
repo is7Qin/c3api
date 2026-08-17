@@ -56,7 +56,7 @@ func TestReloadRulesSurvivesRequestCancel(t *testing.T) {
 	}
 }
 
-func validWhen() map[string]any { return map[string]any{"kind": "error"} }
+func validWhen() map[string]any { return map[string]any{"kind": "5xx"} }
 func validThen() map[string]any { return map[string]any{"status": "unhealthy", "cooldown": "5s"} }
 
 func TestCreateRule(t *testing.T) {
@@ -68,17 +68,26 @@ func TestCreateRule(t *testing.T) {
 	require.Equal(t, int64(1), got.ID)
 	require.Equal(t, "r1", got.Name)
 	require.True(t, got.Enabled)
-	require.Equal(t, "error", *got.When.Kind)
+	require.Equal(t, "5xx", *got.When.Kind)
 	require.Equal(t, domain.StatusUnhealthy, *got.Then.Status)
 	require.Equal(t, "5s", *got.Then.Cooldown)
 	require.Equal(t, 1, rl.calls, "规则创建后必须触发引擎 Reload")
+
+	// transmit 契约 round-trip（transmit-only 规则——seed-4xx-400 形态）
+	got2, err := svc.CreateRule(context.Background(), RuleInput{
+		Name: "tx", Priority: 20, When: map[string]any{"kind": "4xx", "http_status": 400},
+		Then: map[string]any{"transmit": true},
+	})
+	require.NoError(t, err, "transmit-only 规则通过 ValidateThen（放宽）")
+	require.True(t, got2.Then.Transmit)
+	require.Nil(t, got2.Then.Status)
 }
 
 func TestCreateRuleRejectsUnknownWhenKey(t *testing.T) {
 	svc, _, rl := newRuleSvc()
 	_, err := svc.CreateRule(context.Background(), RuleInput{
 		Name: "r1", Priority: 10,
-		When: map[string]any{"kind": "error", "bogus_key": 1},
+		When: map[string]any{"kind": "5xx", "bogus_key": 1},
 		Then: validThen(),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "when 未知键 → 400 语义")
@@ -147,7 +156,7 @@ func TestUpdateRuleMerge(t *testing.T) {
 	require.Equal(t, "r1-renamed", updated.Name)
 	require.False(t, updated.Enabled, "未提供字段保持原值")
 	require.Equal(t, 10, updated.Priority)
-	require.Equal(t, "error", *updated.When.Kind, "when 未提供保持原值")
+	require.Equal(t, "5xx", *updated.When.Kind, "when 未提供保持原值")
 	require.Equal(t, 2, rl.calls, "规则更新后必须触发引擎 Reload")
 
 	// when 更新：未知键拒绝

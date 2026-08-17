@@ -11,6 +11,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -19,12 +20,15 @@ import (
 // RequireJWT（验证 + 内存快照用户状态校验）。生成路由的 spec 路径自带
 // /user 前缀（与 /admin 的 spec 相对路径不同——/logs 等路径已被管理面占用，
 // 不能同 spec 路径共存），故无 BaseURL。
-func Router(svc *service.Service, iss *auth.Issuer, users auth.UserStatusProvider) http.Handler {
+// rules 为规则引擎（/user/err_logs 行级脱敏用；main 装配注入——非 New，
+// 测试构造零回归；nil = 不脱敏）。
+func Router(svc *service.Service, iss *auth.Issuer, users auth.UserStatusProvider, rules *rule.RuleEngine) http.Handler {
 	publicPaths := map[string]bool{
 		"/user/auth/register": true,
 		"/user/auth/login":    true,
 	}
 	api := New(svc, iss)
+	api.rules = rules
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

@@ -165,7 +165,7 @@ func TestPGStatsTemplateFilterBothEndpoints(t *testing.T) {
 	token, err := iss.Issue(user.ID, user.Email, string(user.Role))
 	require.NoError(t, err)
 	svc := service.New(repos, stubSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
-	ur := userapi.Router(svc, iss, pgUserStatus{repos: repos})
+	ur := userapi.Router(svc, iss, pgUserStatus{repos: repos}, nil)
 	ureq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/user/stats?granularity=hour&template_id=5&from=%s&to=%s",
 		bucket.Format(time.RFC3339), bucket.Add(time.Hour).Format(time.RFC3339)), nil)
 	ureq.Header.Set("Authorization", "Bearer "+token)
@@ -212,7 +212,7 @@ func TestPGUserStatsForcedOwnUser(t *testing.T) {
 
 	iss := auth.NewIssuer("test-secret")
 	svc := service.New(repos, stubSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
-	ur := userapi.Router(svc, iss, pgUserStatus{repos: repos})
+	ur := userapi.Router(svc, iss, pgUserStatus{repos: repos}, nil)
 	tokenA, err := iss.Issue(ua.ID, ua.Email, string(ua.Role))
 	require.NoError(t, err)
 	tokenB, err := iss.Issue(ub.ID, ub.Email, string(ub.Role))

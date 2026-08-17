@@ -40,7 +40,7 @@ func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *ht
 	store := newFakeStore()
 	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
 	iss := auth.NewIssuer("test-secret")
-	router := userapi.Router(svc, iss, fakeUserStatus{store: store})
+	router := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil)
 	do := func(method, path, body, token string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		if token != "" {

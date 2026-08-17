@@ -58,7 +58,10 @@ type ResultKind int
 const (
 	ResultOK ResultKind = iota
 	Result429
+	// ResultError 5xx 与连接级（code==0）事件；kind 分流在 ruleKind
+	// （单点：ResultError+0 → network、ResultError+>0 → 5xx）。
 	ResultError
+	Result4xx
 )
 
 type Selection struct {
@@ -632,7 +635,7 @@ func (s *Scheduler) MarkResult(accountID int64, kind ResultKind, resetAt *time.T
 		AccountID:    accountID,
 		TemplateID:   a.acc.TemplateID,
 		GroupID:      groupIDPtr(a.gid),
-		Kind:         ruleKind(kind),
+		Kind:         ruleKind(kind, httpStatus),
 		HTTPStatus:   hp,
 		ErrorMessage: errMsg,
 		ResetAt:      resetAt,
@@ -688,16 +691,47 @@ func (s *Scheduler) FailAccount(accountID int64, reason string) {
 	}
 }
 
-// ruleKind 映射 ResultKind → 规则引擎事件类别。
-func ruleKind(k ResultKind) rule.Kind {
+// ruleKind 映射 ResultKind + httpStatus → 规则引擎事件类别（单点分流，不拆
+// 调用点）：Result429→429；ResultError + httpStatus==0 → network（连接级——
+// ws_relay 中继失联/心跳错误、caller 各 statusOf(err)==0 调用点全部自动正确，
+// 独立冷却不吃 5xx 10m）；ResultError + httpStatus>0 → 5xx；Result4xx→4xx；
+// ResultOK→ok。唯一调用点 MarkResult 事件构造处（httpStatus 参数在作用域内；
+// failoverLoop 5xx/0 分支的 Classify 按同一谓词分流——防呆 b）。
+func ruleKind(k ResultKind, httpStatus int) rule.Kind {
 	switch k {
 	case Result429:
 		return rule.Kind429
 	case ResultError:
-		return rule.KindError
+		if httpStatus == 0 {
+			return rule.KindNetwork
+		}
+		return rule.Kind5xx
+	case Result4xx:
+		return rule.Kind4xx
 	default:
 		return rule.KindOK
 	}
+}
+
+// Classify 错误事件分类决策（failoverLoop 错误分支调用；对齐 MarkResult 模式
+// 的 scheduler 包装）：快照取 TemplateID/GroupID（对齐 MarkResult——调用方
+// 事件构造无快照访问）后委托规则引擎首中分类。返回 transmit（true = 命中
+// 规则声明透传上游原文——响应/日志原文；false = 归一固定文案）与 punish
+// （true = 命中规则有状态动作，应投递 MarkResult 让 worker 精确应用——含
+// 窗口条件规则的"可能命中"保守判定）。快照未加载/账号快照外 → (false, false)
+// （对齐 MarkResult 早退语义——请求路径不可达；本地拒绝不进本机制）。
+func (s *Scheduler) Classify(ev rule.Event) (transmit bool, punish bool) {
+	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
+	if !ok {
+		return false, false
+	}
+	a, ok := byID[ev.AccountID]
+	if !ok {
+		return false, false
+	}
+	ev.TemplateID = a.acc.TemplateID
+	ev.GroupID = groupIDPtr(a.gid)
+	return s.rule.Classify(ev)
 }
 
 func groupIDPtr(gid int64) *int64 {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/rule"
 )
 
 // redemptionValueToAPI 毫分存储 → 契约面值（与 /admin 兑换码同规则）：
@@ -111,8 +112,9 @@ func toAPIUsageLog(l *domain.UsageLog) UserUsageLog {
 
 // toAPIErrLog 错误明细领域对象 → 用户面契约类型（/user/err_logs；
 // UserErrLog 无 AccountID/TemplateID——用户无上游账号拓扑概念；BillingTier
-// 空 = 未计费路径 → null）。
-func toAPIErrLog(l *domain.UsageLog) UserErrLog {
+// 空 = 未计费路径 → null）。行级脱敏（规则引擎已注入时）：平台问题行
+// error_message 按同一策略替换固定文案——管理面恒原文不动（管理员排障）。
+func (h *UserAPI) toAPIErrLog(l *domain.UsageLog) UserErrLog {
 	f := RequestFormat(l.Format)
 	et := ErrorType(l.ErrorType)
 	e := UserErrLog{
@@ -130,10 +132,70 @@ func toAPIErrLog(l *domain.UsageLog) UserErrLog {
 		LatencyMS:    &l.LatencyMS,
 		CreatedAt:    &l.CreatedAt,
 	}
+	if h.rules != nil {
+		if msg, ok := h.sanitizeErrLog(l); ok {
+			e.ErrorMessage = &msg
+		}
+	}
 	if l.BillingTier != "" {
 		e.BillingTier = &l.BillingTier
 	}
 	return e
+}
+
+// upstreamRejectedMsg 归一固定文案（与 httpSink.writeUpstreamRejection 空
+// body 分支 / wsSink 错误帧同文案——响应归一与日志脱敏一处定义）。
+const upstreamRejectedMsg = "upstream rejected request"
+
+// errTypeKind error_type → 规则事件类别（行级脱敏全函数映射）：Err4xx→4xx、
+// Err429→429、Err5xx→5xx、ErrNetwork→network、ErrAbort→5xx（保守——半异常
+// 行可能含上游文本）；其余 error_type（ErrAuth/ErrBilling/ErrNoAccount/
+// ErrNone 等本地拒绝行）一律无 kind——不参与策略匹配，原样返回（本地拒绝行
+// message 恒网关文案 "invalid gateway key"/"no available account" 等，无泄漏面）。
+func errTypeKind(et domain.ErrorType) (rule.Kind, bool) {
+	switch et {
+	case domain.Err4xx:
+		return rule.Kind4xx, true
+	case domain.Err429:
+		return rule.Kind429, true
+	case domain.Err5xx:
+		return rule.Kind5xx, true
+	case domain.ErrNetwork:
+		return rule.KindNetwork, true
+	case domain.ErrAbort:
+		return rule.Kind5xx, true
+	}
+	return 0, false
+}
+
+// sanitizeErrLog 用户面 err_logs 行级脱敏：行 {kind ← error_type 全函数映射、
+// http_status ← status_code、message ← error_message} 调同一策略（规则引擎
+// Classify）→ transmit=false 行（无规则默认归一 / 命中规则未声明透传）→
+// error_message 替换固定文案。行级脱敏复用同一策略引擎 → 规则改动用户面
+// 同步生效，杜绝"响应归一但用户日志漏原文"的漂移。返回 (替换后文本, 是否替换)。
+func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
+	k, ok := errTypeKind(l.ErrorType)
+	if !ok {
+		return "", false
+	}
+	ev := rule.Event{
+		AccountID: l.AccountID, TemplateID: l.TemplateID,
+		Model: l.Model, Kind: k,
+	}
+	if l.GroupID > 0 {
+		ev.GroupID = &l.GroupID
+	}
+	if l.StatusCode > 0 {
+		ev.HTTPStatus = &l.StatusCode
+	}
+	if l.ErrorMessage != nil {
+		ev.ErrorMessage = *l.ErrorMessage
+	}
+	transmit, _ := h.rules.Classify(ev)
+	if transmit {
+		return "", false
+	}
+	return upstreamRejectedMsg, true
 }
 
 // toAPIStatBucket 统计桶领域对象 → 契约类型（/user/stats；rewrite spec

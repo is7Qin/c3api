@@ -26,8 +26,9 @@ type Rule = components['schemas']['Rule']
 type RuleCreate = components['schemas']['RuleCreate']
 type AccountStatus = components['schemas']['AccountStatus']
 
-// 规则事件类型（spec：ok | 429 | error）。
-const KINDS = ['ok', '429', 'error'] as const
+// 规则事件类型（spec：ok | 429 | 4xx | 5xx | network——error 已拆分为
+// 4xx/5xx/network，连接级独立 network）。
+const KINDS = ['ok', '429', '4xx', '5xx', 'network'] as const
 // then.status 可选值（空 = 不设置状态）。
 const STATUSES: AccountStatus[] = ['active', 'unhealthy', '429', 'disabled']
 
@@ -41,7 +42,7 @@ interface CondRow { field: WhenField; value: string }
 
 interface WhenFieldMeta {
   key: WhenField
-  kinds: readonly string[] // kind 归属：'any' | '429' | 'error' | 'ok'（error_message_contains 联合归属 429|error）
+  kinds: readonly string[] // kind 归属：'any' | '429' | '4xx' | '5xx' | 'network' | 'ok'（error_message_contains 联合归属 4xx|5xx|network）
   input: 'number' | 'text'
   placeholder?: string
   min?: number
@@ -53,7 +54,7 @@ interface WhenFieldMeta {
 // input/min/max/step 决定值输入控件（操作符由字段类型隐含，无操作符选择器）。
 const WHEN_FIELDS: WhenFieldMeta[] = [
   { key: 'http_status', kinds: ['any'], input: 'number', placeholder: '503', min: 100, max: 599 },
-  { key: 'error_message_contains', kinds: ['429', 'error'], input: 'text', placeholder: 'unhealthy' },
+  { key: 'error_message_contains', kinds: ['4xx', '5xx', 'network'], input: 'text', placeholder: 'unhealthy' },
   { key: 'account_id', kinds: ['any'], input: 'number', placeholder: '12' },
   { key: 'template_id', kinds: ['any'], input: 'number', placeholder: '3' },
   { key: 'group_id', kinds: ['any'], input: 'number', placeholder: '1' },
@@ -62,8 +63,10 @@ const WHEN_FIELDS: WhenFieldMeta[] = [
   { key: 'count_total_ge', kinds: ['any'], input: 'number', placeholder: '10', min: 1 },
   { key: 'count_429_ge', kinds: ['429'], input: 'number', placeholder: '3', min: 0 },
   { key: 'ratio_429_ge', kinds: ['429'], input: 'number', placeholder: '0.5', min: 0, max: 1, step: 0.01 },
-  { key: 'count_error_ge', kinds: ['error'], input: 'number', placeholder: '5', min: 0 },
-  { key: 'ratio_error_ge', kinds: ['error'], input: 'number', placeholder: '0.8', min: 0, max: 1, step: 0.01 },
+  // count_error_ge/ratio_error_ge 语义 = 错误事件桶（4xx/5xx/network 并入——
+  // kind=error 不存在于枚举，字段名不再对应 kind）。
+  { key: 'count_error_ge', kinds: ['4xx', '5xx', 'network'], input: 'number', placeholder: '5', min: 0 },
+  { key: 'ratio_error_ge', kinds: ['4xx', '5xx', 'network'], input: 'number', placeholder: '0.8', min: 0, max: 1, step: 0.01 },
   { key: 'count_ok_ge', kinds: ['ok'], input: 'number', placeholder: '1', min: 0 },
 ]
 const MAX_CONDITIONS = 10
@@ -89,6 +92,7 @@ interface ThenForm {
   status: string
   cooldown: string
   weight: string
+  transmit: boolean // true = 透传上游原文（响应/日志）；false = 归一固定文案
 }
 interface WhenForm {
   kind: string
@@ -103,7 +107,7 @@ interface FormState {
 }
 
 const emptyWhen = (): WhenForm => ({ kind: '', rows: [] })
-const emptyThen = (): ThenForm => ({ status: '', cooldown: '', weight: '' })
+const emptyThen = (): ThenForm => ({ status: '', cooldown: '', weight: '', transmit: false })
 const emptyForm = (): FormState => ({ name: '', priority: '', enabled: true, when: emptyWhen(), then: emptyThen() })
 
 // 数字字段：空/NaN → 不发送；其他字符串化。
@@ -131,6 +135,7 @@ function thenToForm(th: Rule['Then']): ThenForm {
   if (typeof th.status === 'string') f.status = th.status
   if (typeof th.cooldown === 'string') f.cooldown = th.cooldown
   if (th.weight !== undefined && th.weight !== null) f.weight = String(th.weight)
+  if (th.transmit === true) f.transmit = true
   return f
 }
 function toForm(r: Rule): FormState {
@@ -170,6 +175,7 @@ function toThen(f: ThenForm): Record<string, unknown> {
   if (f.cooldown) th.cooldown = f.cooldown
   const w = num(f.weight)
   if (w !== undefined) th.weight = w
+  if (f.transmit) th.transmit = true
   return th
 }
 function toBody(f: FormState): RuleCreate {
@@ -183,10 +189,10 @@ interface TemplatePreset {
   then: ThenForm
 }
 const TEMPLATES: TemplatePreset[] = [
-  { id: 'cooldown429', when: { kind: '429' }, then: { status: '429', cooldown: '30s', weight: '' } },
-  { id: 'errorBackoff', when: { kind: 'error' }, then: { status: 'unhealthy', cooldown: '5s', weight: '' } },
-  { id: 'escalate', when: { kind: '429', window_seconds: 60, count_429_ge: 3 }, then: { status: '429', cooldown: '5m', weight: '' } },
-  { id: 'recover', when: { kind: 'ok' }, then: { status: 'active', cooldown: '', weight: '' } },
+  { id: 'cooldown429', when: { kind: '429' }, then: { status: '429', cooldown: '30s', weight: '', transmit: false } },
+  { id: '5xxBackoff', when: { kind: '5xx' }, then: { status: 'unhealthy', cooldown: '5s', weight: '', transmit: false } },
+  { id: 'escalate', when: { kind: '429', window_seconds: 60, count_429_ge: 3 }, then: { status: '429', cooldown: '5m', weight: '', transmit: false } },
+  { id: 'recover', when: { kind: 'ok' }, then: { status: 'active', cooldown: '', weight: '', transmit: false } },
 ]
 
 // —— 摘要渲染 ——
@@ -210,12 +216,13 @@ function WhenSummary({ w, t }: { w: Rule['When']; t: (k: string) => string }) {
   return <span className="block max-w-64 truncate text-xs" title={parts.join(' · ')}>{parts.join(' · ') || '—'}</span>
 }
 
-function ThenSummary({ th }: { th: Rule['Then'] }) {
+function ThenSummary({ th, t }: { th: Rule['Then']; t: (k: string) => string }) {
   if (!th || Object.keys(th).length === 0) return <span className="text-muted-foreground">—</span>
   const parts: string[] = []
   if (typeof th.status === 'string') parts.push(`→${th.status}`)
   if (typeof th.cooldown === 'string') parts.push(`⏱${th.cooldown}`)
   if (typeof th.weight === 'number') parts.push(`w=${th.weight}`)
+  if (th.transmit === true) parts.push(t('rules.then.transmit'))
   return <span className="block max-w-40 truncate text-xs" title={parts.join(' · ')}>{parts.join(' · ') || '—'}</span>
 }
 
@@ -410,7 +417,7 @@ export default function Rules() {
                     </Button>
                   </TableCell>
                   <TableCell><WhenSummary w={r.When} t={t} /></TableCell>
-                  <TableCell><ThenSummary th={r.Then} /></TableCell>
+                  <TableCell><ThenSummary th={r.Then} t={t} /></TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
                       <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(r)}><Pencil /></Button>
@@ -579,6 +586,13 @@ export default function Rules() {
                   <Input id="rl-w" type="number" min={0} max={100} placeholder="0" value={form.then.weight} onChange={e => setThen('weight', e.target.value)} />
                 </div>
               </div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <Checkbox
+                  checked={form.then.transmit}
+                  onCheckedChange={c => setForm(f => ({ ...f, then: { ...f.then, transmit: c === true } }))}
+                />
+                {t('rules.then.transmit')}
+              </label>
               <p className="text-xs text-muted-foreground">{t('rules.thenHint')}</p>
             </div>
 

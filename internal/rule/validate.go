@@ -13,13 +13,14 @@ import (
 
 // ValidateWhen when 语义校验（字段白名单/未知字段由 service 层 JSON 反序列化
 // DisallowUnknownFields 挡下；此处查语义）：
-//   - kind 必须为 ok/429/error 之一
+//   - kind 必须为 ok/429/4xx/5xx/network 之一（error 已删除——4xx 独立、
+//     连接级独立 network，用户裁决）
 //   - kind=ok 与 error_message_contains 不兼容（ok 事件错误信息恒空 → 永不命中）
 //   - 计数阈值 ≥ 0、window_seconds ≥ 1
 //   - 比例 ∈ [0,1] 且必须配 count_total_ge（比例样本下限）
 func ValidateWhen(w domain.RuleWhen) error {
 	if w.Kind != nil && kindFromString(*w.Kind) < 0 {
-		return fmt.Errorf("when.kind must be ok/429/error, got %q", *w.Kind)
+		return fmt.Errorf("when.kind must be ok/429/4xx/5xx/network, got %q", *w.Kind)
 	}
 	// 确定性死配置：ok 事件不带错误信息，contains 恒假 → 规则永不命中。
 	// 其余 kind 交叉组合（如 kind=ok + count_429_ge）为合法观察者语义，放行。
@@ -58,11 +59,12 @@ func ValidateWhen(w domain.RuleWhen) error {
 	return nil
 }
 
-// ValidateThen then 动作校验：至少一个动作；status 合法枚举；
+// ValidateThen then 动作校验：至少一个动作（status/cooldown/weight/transmit——
+// transmit-only 规则如 seed-4xx-400 通过；空 then 拒绝）；status 合法枚举；
 // cooldown 可 time.ParseDuration 解析且 > 0；weight ∈ [0,100]。
 func ValidateThen(t domain.RuleThen) error {
-	if t.Status == nil && t.Cooldown == nil && t.Weight == nil {
-		return fmt.Errorf("then must set at least one of status/cooldown/weight")
+	if t.Status == nil && t.Cooldown == nil && t.Weight == nil && !t.Transmit {
+		return fmt.Errorf("then must set at least one of status/cooldown/weight/transmit")
 	}
 	if t.Status != nil && !validStatus(*t.Status) {
 		return fmt.Errorf("then.status must be active/unhealthy/429/disabled, got %q", *t.Status)

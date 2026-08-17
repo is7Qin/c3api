@@ -20,7 +20,7 @@ func TestPostRulesBatchDelete(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		rec := do(http.MethodPost, "/admin/rules", `{
 			"name":"r`+itoa(int64(i))+`","priority":`+itoa(int64(i*10))+`,
-			"when":{"kind":"error"},"then":{"status":"unhealthy"}}`)
+			"when":{"kind":"5xx"},"then":{"status":"unhealthy"}}`)
 		require.Equal(t, 201, rec.Code, "create rule: %s", rec.Body.String())
 		var created Rule
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))

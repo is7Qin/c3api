@@ -521,17 +521,25 @@ type RuleWhen struct {
 	Model                *string  `json:"model,omitempty"`
 	WindowSeconds        *int     `json:"window_seconds,omitempty"`
 	Count429GE           *int     `json:"count_429_ge,omitempty"`
-	CountErrorGE         *int     `json:"count_error_ge,omitempty"`
-	CountOKGE            *int     `json:"count_ok_ge,omitempty"`
-	CountTotalGE         *int     `json:"count_total_ge,omitempty"`
-	Ratio429GE           *float64 `json:"ratio_429_ge,omitempty"`
-	RatioErrorGE         *float64 `json:"ratio_error_ge,omitempty"`
+	// CountErrorGE 语义 = "错误事件桶"（非 ok 非 429 事件计数——5xx/network/4xx
+	// 并入；kind=error 不存在于枚举，字段名不再对应 kind，保留以兼容存量数据）。
+	CountErrorGE *int `json:"count_error_ge,omitempty"`
+	CountOKGE    *int `json:"count_ok_ge,omitempty"`
+	CountTotalGE *int `json:"count_total_ge,omitempty"`
+	Ratio429GE   *float64 `json:"ratio_429_ge,omitempty"`
+	// RatioErrorGE 同 CountErrorGE：分母为错误事件桶（5xx/network/4xx 并入）。
+	RatioErrorGE *float64 `json:"ratio_error_ge,omitempty"`
 }
 
 type RuleThen struct {
 	Status   *AccountStatus `json:"status,omitempty"`
 	Cooldown *string        `json:"cooldown,omitempty"` // time.ParseDuration 可解析的时长，如 "30s"、"5h"
 	Weight   *int           `json:"weight,omitempty"`   // 0-100
+	// Transmit true = 透传上游原文给客户端（响应原文 + 用户面 err_logs 原文）；
+	// false/缺省 = 归一固定文案（响应归一 502 "upstream rejected request" +
+	// 用户面日志同文案）。Classify 命中规则时决定响应/日志透传——transmit-only
+	// 规则（seed-4xx-400 形态）通过 ValidateThen（"至少一个动作"计入 transmit）。
+	Transmit bool `json:"transmit,omitempty"`
 }
 
 type Rule struct {

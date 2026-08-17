@@ -112,7 +112,9 @@ func (w *windowMap) Add(ev Event) {
 		c.ok++
 	case Kind429:
 		c.t429++
-	case KindError:
+	// 错误事件桶：4xx/5xx/network 全部并入（枚举重构防呆——漏加则
+	// count_error_ge/ratio_error_ge 静默失真；kind=error 已删除）。
+	case Kind4xx, Kind5xx, KindNetwork:
 		c.err++
 	}
 	w.buckets[idx][ev.AccountID] = c

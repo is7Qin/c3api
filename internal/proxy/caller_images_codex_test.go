@@ -317,8 +317,9 @@ func TestImagesCodexCredPassing(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 }
 
-// TestImagesCodex403Passthrough 403 透传（账号无生图权限——HTTPError 信封）：
-// 客户端收到 403 + 上游原始 body；信封不上报回调（透传协议）。
+// TestImagesCodex403Passthrough 403（账号无生图权限——HTTPError 信封）：
+// 无 transmit 规则的 4xx → 归一 502 + 固定文案（泄漏修复——上游原始 body
+// 不透传）；信封不上报回调（透传协议）。
 func TestImagesCodex403Passthrough(t *testing.T) {
 	up, c := newCodexImageUpstream(t, codexUpStep{status: 403, body: `{"detail":"Forbidden"}`})
 	defer up.Close()
@@ -332,8 +333,9 @@ func TestImagesCodex403Passthrough(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
-	require.Equal(t, 403, rec.Code, "403 透传（信封 StatusCode）")
-	require.Contains(t, rec.Body.String(), "Forbidden", "上游原始 body 透传（信封 RawJSON）")
+	require.Equal(t, http.StatusBadGateway, rec.Code, "无规则 4xx → 归一 502（不透传）")
+	require.Contains(t, rec.Body.String(), `"upstream rejected request"`, "归一固定文案")
+	require.NotContains(t, rec.Body.String(), "Forbidden", "上游原始 body 不得透传（泄漏修复）")
 	require.Equal(t, 1, c.n(), "4xx 确定性错误不 failover")
 	require.Zero(t, recorderCalls(recorder), "信封不上报回调")
 	require.NoError(t, p.rec.Close(context.Background()))
@@ -356,8 +358,9 @@ func TestImagesCodexStreamEnvelope4xx(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.HandleImagesGenerations(rec, req)
 
-	require.Equal(t, 403, rec.Code, "流式首事件前 4xx 透传（信封 StatusCode）")
-	require.Contains(t, rec.Body.String(), "no image permission for account", "上游原始 body 透传（信封 RawJSON——非 'codexsdk: upstream HTTP N' 占位）")
+	require.Equal(t, http.StatusBadGateway, rec.Code, "流式首事件前 4xx → 归一 502（不透传）")
+	require.Contains(t, rec.Body.String(), `"upstream rejected request"`, "归一固定文案")
+	require.NotContains(t, rec.Body.String(), "no image permission for account", "上游原始 body 不得透传（泄漏修复）")
 	require.Equal(t, 1, c.n(), "4xx 确定性错误不 failover")
 	require.Zero(t, recorderCalls(recorder), "信封不上报回调")
 	require.NoError(t, p.rec.Close(context.Background()))

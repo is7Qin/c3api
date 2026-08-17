@@ -46,7 +46,7 @@ func newSharedRouters(t *testing.T) (doAdmin, doUser func(method, path, body, to
 
 	// user 路由（真实 Router：公开/RequireJWT 分流）
 	iss := auth.NewIssuer("test-secret")
-	ur := userapi.Router(svc, iss, fakeUserStatus{store: store})
+	ur := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil)
 
 	doAdmin = func(method, path, body, token string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))

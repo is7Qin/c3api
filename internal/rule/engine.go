@@ -22,13 +22,15 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// Kind 事件类别（与 scheduler.ResultKind 的映射由 scheduler 侧完成）。
+// Kind 事件类别（与 scheduler.ResultKind 的映射由 scheduler 侧 ruleKind 单点分流）。
 type Kind int
 
 const (
 	KindOK Kind = iota
 	Kind429
-	KindError
+	Kind4xx
+	Kind5xx
+	KindNetwork // 连接级（code==0）事件——独立类型，不吃 5xx 冷却（用户裁决）
 )
 
 func (k Kind) String() string {
@@ -37,8 +39,12 @@ func (k Kind) String() string {
 		return "ok"
 	case Kind429:
 		return "429"
-	case KindError:
-		return "error"
+	case Kind4xx:
+		return "4xx"
+	case Kind5xx:
+		return "5xx"
+	case KindNetwork:
+		return "network"
 	}
 	return "unknown"
 }
@@ -51,8 +57,12 @@ func kindFromString(s string) Kind {
 		return KindOK
 	case "429":
 		return Kind429
-	case "error":
-		return KindError
+	case "4xx":
+		return Kind4xx
+	case "5xx":
+		return Kind5xx
+	case "network":
+		return KindNetwork
 	}
 	return -1
 }
@@ -181,14 +191,20 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 	return nil
 }
 
-// seedRules 规则表为空时写入等价于旧硬编码状态机的种子规则：
-// 429 → status=429 + cooldown 30s（原 cfg.Cooldown429 默认值）；
-// error → status=unhealthy + cooldown 5s（原 BackoffBase 默认值，指数退避丢弃——
-// 升级惩罚由用户规则用滑动窗口表达）；ok → status=active 无冷却。
+// seedRules 规则表为空时写入种子规则（fresh setup 哲学，用户裁决；kind=error
+// 旧规则不迁移——管理面重建）：
+//
+//	seed-429（p10）      kind=429   → status=429 + cooldown 30s（现状等价）
+//	seed-4xx-400（p15）  kind=4xx + http_status=400 → transmit（400 透传原文，
+//	                       现状等价；其余 4xx 默认归一 502——无规则即归一）
+//	seed-5xx（p20）      kind=5xx   → status=unhealthy + cooldown 10m（用户裁决）
+//	seed-network（p25）  kind=network → status=unhealthy + cooldown 5s
+//	                       （连接级独立类型——原连接级 5s 语义，不吃 10m）
+//	seed-ok（p30）       kind=ok    → status=active 无冷却（恢复）
 //
 // 多实例种子幂等（设计文档 §1.5 / R2）：两实例同时空表启动 → 双双进入本方法，
 // name/priority 唯一约束（ent schema 已有）保证只有一个实例的插入成功；失败方
-// 收到 ErrConflict——忽略继续（各实例插入同一份种子，并集收敛为完整三份，
+// 收到 ErrConflict——忽略继续（各实例插入同一份种子，并集收敛为完整五份，
 // Reload 随后重列规则集）。不做 SELECT 后再插的"先查后写"（查与写之间仍有
 // 竞态窗口，唯一约束兜底才是治本）。
 func (e *RuleEngine) seedRules(ctx context.Context) error {
@@ -206,8 +222,18 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")},
 		},
 		{
-			Name: "seed-error", Enabled: true, Priority: 20,
-			When: domain.RuleWhen{Kind: strPtr("error")},
+			Name: "seed-4xx-400", Enabled: true, Priority: 15,
+			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},
+			Then: domain.RuleThen{Transmit: true},
+		},
+		{
+			Name: "seed-5xx", Enabled: true, Priority: 20,
+			When: domain.RuleWhen{Kind: strPtr("5xx")},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("10m")},
+		},
+		{
+			Name: "seed-network", Enabled: true, Priority: 25,
+			When: domain.RuleWhen{Kind: strPtr("network")},
 			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("5s")},
 		},
 		{
@@ -266,5 +292,29 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 }
 
 func boolPtr(b bool) *bool                                   { return &b }
+func intPtr(v int) *int                                      { return &v }
 func strPtr(s string) *string                                { return &s }
 func statusPtr(s domain.AccountStatus) *domain.AccountStatus { return &s }
+
+// Classify 事件分类决策（错误分支响应/投递决策——scheduler 包装调用，用户面
+// err_logs 行级脱敏亦复用）：遍历 enabled 规则（priority 升序首中），首个
+// "非窗口条件维度"（kind/http_status/message_contains/account/template/group/
+// model）命中者决定结果。窗口条件规则（count_*/ratio_*，ruleNeedsWindow）依赖
+// 历史计数，预判不可得——按"可能命中"保守处理（不参与判定，窗口阈值由 worker
+// Match 精确裁决；prejudge 命中 → punish 保证事件投递，worker 再精确应用）。
+// 返回 transmit（true = 命中规则 then.transmit——透传上游原文）与 punish
+// （true = 命中规则有状态动作 Status/Weight 任一非 nil——应投递 MarkResult）。
+// 无命中 → (false, false)（默认归一，安全默认——不认识的错误不透传）。
+// 零分配：仅读规则集切片（RLock 快照）+ 字符串比较。
+func (e *RuleEngine) Classify(ev Event) (transmit bool, punish bool) {
+	e.rulesMu.RLock()
+	rules := e.rules
+	e.rulesMu.RUnlock()
+	for _, r := range rules {
+		if !matchBasic(r.When, ev) {
+			continue
+		}
+		return r.Then.Transmit, r.Then.Status != nil || r.Then.Weight != nil
+	}
+	return false, false
+}

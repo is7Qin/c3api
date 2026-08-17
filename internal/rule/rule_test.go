@@ -159,6 +159,10 @@ func TestValidateWhen(t *testing.T) {
 	}{
 		{"empty when matches everything", domain.RuleWhen{}, true},
 		{"kind 429", domain.RuleWhen{Kind: strPtr("429")}, true},
+		{"kind 4xx", domain.RuleWhen{Kind: strPtr("4xx")}, true},
+		{"kind 5xx", domain.RuleWhen{Kind: strPtr("5xx")}, true},
+		{"kind network", domain.RuleWhen{Kind: strPtr("network")}, true},
+		{"kind error rejected", domain.RuleWhen{Kind: strPtr("error")}, false},
 		{"bad kind", domain.RuleWhen{Kind: strPtr("banana")}, false},
 		{"kind ok with error_message_contains dead", domain.RuleWhen{Kind: strPtr("ok"), ErrorMessageContains: strPtr("boom")}, false},
 		{"kind ok observer count_429", domain.RuleWhen{Kind: strPtr("ok"), Count429GE: intPtr(3)}, true},
@@ -170,7 +174,7 @@ func TestValidateWhen(t *testing.T) {
 		{"ratio error without total", domain.RuleWhen{RatioErrorGE: f64Ptr(0.5)}, false},
 		{"ratio with total", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)}, true},
 		{"full valid", domain.RuleWhen{
-			Kind: strPtr("error"), CountErrorGE: intPtr(2), WindowSeconds: intPtr(30),
+			Kind: strPtr("5xx"), CountErrorGE: intPtr(2), WindowSeconds: intPtr(30),
 		}, true},
 	}
 	for _, tc := range cases {
@@ -197,6 +201,8 @@ func TestValidateThen(t *testing.T) {
 		{"no action", domain.RuleThen{}, false},
 		{"status only", domain.RuleThen{Status: &status}, true},
 		{"cooldown only", domain.RuleThen{Cooldown: &cooldown}, true},
+		{"transmit only", domain.RuleThen{Transmit: true}, true},
+		{"transmit with cooldown", domain.RuleThen{Transmit: true, Cooldown: &cooldown}, true},
 		{"bad status", domain.RuleThen{Status: statusPtr(domain.AccountStatus("banana"))}, false},
 		{"unparseable cooldown", domain.RuleThen{Cooldown: strPtr("30x")}, false},
 		{"zero cooldown", domain.RuleThen{Cooldown: strPtr("0s")}, false},
@@ -217,7 +223,7 @@ func TestValidateThen(t *testing.T) {
 	}
 }
 
-func intPtr(v int) *int         { return &v }
+// intPtr 由 engine.go 提供（同包）。
 func f64Ptr(v float64) *float64 { return &v }
 func i64Ptr(v int64) *int64     { return &v }
 
@@ -226,9 +232,9 @@ func i64Ptr(v int64) *int64     { return &v }
 func TestWindowAdvanceAndMerge(t *testing.T) {
 	var wm windowMap
 	wm.reset(60*time.Second, true)                                // 10s × 6 完整桶 + 1 当前桶
-	wm.Add(evAt(KindError, 0))                                    // 桶 [0,10)
-	wm.Add(evAt(KindError, 5))                                    // 桶 [0,10)
-	wm.Add(evAt(KindError, 15))                                   // 桶 [10,20)，推进环
+	wm.Add(evAt(Kind5xx, 0))                                      // 桶 [0,10)
+	wm.Add(evAt(Kind5xx, 5))                                      // 桶 [0,10)
+	wm.Add(evAt(Kind5xx, 15))                                     // 桶 [10,20)，推进环
 	wm.Add(Event{AccountID: 2, Kind: Kind429, OccurredAt: at(2)}) // 桶 [0,10)
 
 	// 跨窗合并：20s 窗口含 [0,20) 两桶
@@ -255,10 +261,10 @@ func TestWindowAdvanceAndMerge(t *testing.T) {
 func TestWindowDecay(t *testing.T) {
 	var wm windowMap
 	wm.reset(30*time.Second, true) // 5s × 6 完整桶 + 1 当前桶
-	wm.Add(evAt(KindError, 0))
-	wm.Add(evAt(KindError, 1))
-	wm.Add(evAt(KindError, 2))
-	wm.Add(evAt(KindError, 31))
+	wm.Add(evAt(Kind5xx, 0))
+	wm.Add(evAt(Kind5xx, 1))
+	wm.Add(evAt(Kind5xx, 2))
+	wm.Add(evAt(Kind5xx, 31))
 
 	// 窗口 [1,31]：桶 [0,5) 与窗口部分重叠 → 全计（近似），t=0/1/2 仍未衰减
 	require.Equal(t, windowSnapshot{err: 4}, wm.Snapshot(1, 30, at(31)))
@@ -282,8 +288,8 @@ func TestWindowTrackOK(t *testing.T) {
 func TestWindowCleanup(t *testing.T) {
 	var wm windowMap
 	wm.reset(60*time.Second, true) // retention = 2 × 70s = 140s
-	wm.Add(evAt(KindError, 0))     // aid1 @0
-	wm.Add(Event{AccountID: 2, Kind: KindError, OccurredAt: at(100)})
+	wm.Add(evAt(Kind5xx, 0))       // aid1 @0
+	wm.Add(Event{AccountID: 2, Kind: Kind5xx, OccurredAt: at(100)})
 
 	wm.cleanup(at(141)) // cutoff = 1s：aid1 过期、aid2 新鲜（时间序扫描即停）
 	require.Len(t, wm.lastSeen, 1)
@@ -306,9 +312,9 @@ func TestMatch(t *testing.T) {
 		want bool
 	}{
 		{"empty when matches everything", domain.RuleWhen{}, okEv(KindOK), windowSnapshot{}, true},
-		{"kind match", domain.RuleWhen{Kind: strPtr("error")}, okEv(KindError), windowSnapshot{}, true},
-		{"kind mismatch", domain.RuleWhen{Kind: strPtr("error")}, okEv(KindOK), windowSnapshot{}, false},
-		{"http status nil event", domain.RuleWhen{HTTPStatus: &http500}, okEv(KindError), windowSnapshot{}, false},
+		{"kind match", domain.RuleWhen{Kind: strPtr("5xx")}, okEv(Kind5xx), windowSnapshot{}, true},
+		{"kind mismatch", domain.RuleWhen{Kind: strPtr("5xx")}, okEv(KindOK), windowSnapshot{}, false},
+		{"http status nil event", domain.RuleWhen{HTTPStatus: &http500}, okEv(Kind5xx), windowSnapshot{}, false},
 		{"http status equal", domain.RuleWhen{HTTPStatus: &http429}, Event{HTTPStatus: &http429}, windowSnapshot{}, true},
 		{"message contains", domain.RuleWhen{ErrorMessageContains: strPtr("rate limit")},
 			Event{ErrorMessage: "upstream 429 rate limited"}, windowSnapshot{}, true},
@@ -322,7 +328,7 @@ func TestMatch(t *testing.T) {
 		{"group id ev nil", domain.RuleWhen{GroupID: gid}, okEv(KindOK), windowSnapshot{}, false},
 		{"count 429 below", domain.RuleWhen{Count429GE: intPtr(2)}, okEv(Kind429), windowSnapshot{t429: 1}, false},
 		{"count 429 ok", domain.RuleWhen{Count429GE: intPtr(2)}, okEv(Kind429), windowSnapshot{t429: 2}, true},
-		{"count error ok", domain.RuleWhen{CountErrorGE: intPtr(2)}, okEv(KindError), windowSnapshot{err: 3}, true},
+		{"count error ok", domain.RuleWhen{CountErrorGE: intPtr(2)}, okEv(Kind5xx), windowSnapshot{err: 3}, true},
 		{"count ok below", domain.RuleWhen{CountOKGE: intPtr(2)}, okEv(KindOK), windowSnapshot{ok: 1}, false},
 		{"count total below", domain.RuleWhen{CountTotalGE: intPtr(4)}, okEv(KindOK), windowSnapshot{ok: 2, err: 1}, false},
 		{"ratio below threshold", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)},
@@ -332,7 +338,7 @@ func TestMatch(t *testing.T) {
 		{"ratio total below floor", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)},
 			okEv(Kind429), windowSnapshot{t429: 1, ok: 1}, false},
 		{"ratio error ok", domain.RuleWhen{RatioErrorGE: f64Ptr(0.75), CountTotalGE: intPtr(4)},
-			okEv(KindError), windowSnapshot{err: 3, ok: 1}, true},
+			okEv(Kind5xx), windowSnapshot{err: 3, ok: 1}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -388,7 +394,7 @@ func TestReloadNeedsOKEvents(t *testing.T) {
 	}{
 		{"kind nil", domain.RuleWhen{}, true},
 		{"kind ok", domain.RuleWhen{Kind: strPtr("ok")}, true},
-		{"kind error", domain.RuleWhen{Kind: strPtr("error")}, false},
+		{"kind 5xx", domain.RuleWhen{Kind: strPtr("5xx")}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -406,27 +412,37 @@ func TestSeedRules(t *testing.T) {
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.Reload(context.Background()))
 
-	// 种子 3 条：429/30s、error/unhealthy/5s、ok/active，priority 10/20/30
-	require.Equal(t, int64(3), mustCountAny(t, st))
+	// 种子 5 条（fresh setup 哲学）：429/30s、4xx+400/transmit、5xx/unhealthy/10m、
+	// network/unhealthy/5s、ok/active，priority 10/15/20/25/30
+	require.Equal(t, int64(5), mustCountAny(t, st))
 	require.True(t, e.NeedsOKEvents()) // 种子含 kind=ok 恢复规则（C1）
 
 	rules, err := st.ListRules(context.Background(), nil)
 	require.NoError(t, err)
-	require.Len(t, rules, 3)
-	require.Equal(t, []int{10, 20, 30}, []int{rules[0].Priority, rules[1].Priority, rules[2].Priority})
+	require.Len(t, rules, 5)
+	require.Equal(t, []int{10, 15, 20, 25, 30}, []int{
+		rules[0].Priority, rules[1].Priority, rules[2].Priority, rules[3].Priority, rules[4].Priority,
+	})
 	require.Equal(t, "429", *rules[0].When.Kind)
 	require.Equal(t, domain.Status429, *rules[0].Then.Status)
 	require.Equal(t, "30s", *rules[0].Then.Cooldown)
-	require.Equal(t, "error", *rules[1].When.Kind)
-	require.Equal(t, domain.StatusUnhealthy, *rules[1].Then.Status)
-	require.Equal(t, "5s", *rules[1].Then.Cooldown)
-	require.Equal(t, "ok", *rules[2].When.Kind)
-	require.Equal(t, domain.StatusActive, *rules[2].Then.Status)
-	require.Nil(t, rules[2].Then.Cooldown)
+	require.Equal(t, "4xx", *rules[1].When.Kind)
+	require.Equal(t, 400, *rules[1].When.HTTPStatus)
+	require.True(t, rules[1].Then.Transmit, "seed-4xx-400：400 透传原文（现状等价）")
+	require.False(t, rules[1].Then.Status != nil || rules[1].Then.Cooldown != nil, "transmit-only 种子")
+	require.Equal(t, "5xx", *rules[2].When.Kind)
+	require.Equal(t, domain.StatusUnhealthy, *rules[2].Then.Status)
+	require.Equal(t, "10m", *rules[2].Then.Cooldown, "seed-5xx 冷却 10m（用户裁决）")
+	require.Equal(t, "network", *rules[3].When.Kind)
+	require.Equal(t, domain.StatusUnhealthy, *rules[3].Then.Status)
+	require.Equal(t, "5s", *rules[3].Then.Cooldown, "seed-network 冷却 5s（连接级独立，不吃 10m）")
+	require.Equal(t, "ok", *rules[4].When.Kind)
+	require.Equal(t, domain.StatusActive, *rules[4].Then.Status)
+	require.Nil(t, rules[4].Then.Cooldown)
 
 	// 非空表不重复写种子
 	require.NoError(t, e.Reload(context.Background()))
-	require.Equal(t, int64(3), mustCountAny(t, st))
+	require.Equal(t, int64(5), mustCountAny(t, st))
 }
 
 // mustCountAny 表内规则数（接受唯一约束包装 store；种子幂等测试用）。
@@ -440,17 +456,17 @@ func mustCountAny(t *testing.T, st repository.RuleStore) int64 {
 func TestPriorityHitOrder(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "low", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtr("error")},
+			When: domain.RuleWhen{Kind: strPtr("5xx")},
 			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("5s")}},
 		domain.Rule{Name: "high", Enabled: true, Priority: 20,
-			When: domain.RuleWhen{Kind: strPtr("error")},
+			When: domain.RuleWhen{Kind: strPtr("5xx")},
 			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")}},
 	)
 	var rec recorder
 	e.SetApply(rec.fn)
 
 	// 两规则都命中：priority 低者首中，只执行一次
-	e.HandleEvent(context.Background(), evAt(KindError, 0))
+	e.HandleEvent(context.Background(), evAt(Kind5xx, 0))
 	app := rec.get()
 	require.Len(t, app, 1)
 	require.Equal(t, domain.StatusUnhealthy, *app[0].status)
@@ -464,13 +480,13 @@ func TestPriorityHitOrder(t *testing.T) {
 func TestDisabledRuleNotLoaded(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "off", Enabled: false, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("error")},
+		When: domain.RuleWhen{Kind: strPtr("5xx")},
 		Then: domain.RuleThen{Status: statusPtr(domain.Status429)},
 	})
 	var rec recorder
 	e.SetApply(rec.fn)
 	require.False(t, e.NeedsOKEvents())
-	e.HandleEvent(context.Background(), evAt(KindError, 0))
+	e.HandleEvent(context.Background(), evAt(Kind5xx, 0))
 	require.Empty(t, rec.get())
 }
 
@@ -479,20 +495,20 @@ func TestDisabledRuleNotLoaded(t *testing.T) {
 func TestHitKeepsCountsThenDecays(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "escalate", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("error"), CountErrorGE: intPtr(2), WindowSeconds: intPtr(30)},
+		When: domain.RuleWhen{Kind: strPtr("5xx"), CountErrorGE: intPtr(2), WindowSeconds: intPtr(30)},
 		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
 	})
 	var rec recorder
 	e.SetApply(rec.fn)
 
-	e.HandleEvent(context.Background(), evAt(KindError, 0)) // err=1，未命中
+	e.HandleEvent(context.Background(), evAt(Kind5xx, 0)) // err=1，未命中
 	require.Empty(t, rec.get())
-	e.HandleEvent(context.Background(), evAt(KindError, 1)) // err=2，命中
+	e.HandleEvent(context.Background(), evAt(Kind5xx, 1)) // err=2，命中
 	require.Len(t, rec.get(), 1)
-	e.HandleEvent(context.Background(), evAt(KindError, 2)) // err=3（不清零），再命中
+	e.HandleEvent(context.Background(), evAt(Kind5xx, 2)) // err=3（不清零），再命中
 	require.Len(t, rec.get(), 2)
 
-	e.HandleEvent(context.Background(), evAt(KindError, 36)) // 窗口 [6,36]：仅 +36，err=1 未命中
+	e.HandleEvent(context.Background(), evAt(Kind5xx, 36)) // 窗口 [6,36]：仅 +36，err=1 未命中
 	require.Len(t, rec.get(), 2)
 }
 
@@ -539,10 +555,10 @@ func TestName(t *testing.T) {
 
 func TestEnqueueFullDrops(t *testing.T) {
 	e := New(Config{EventQueueSize: 1}, newFakeRuleStore(), nil)
-	e.Enqueue(evAt(KindError, 0)) // 占满
+	e.Enqueue(evAt(Kind5xx, 0)) // 占满
 	require.Equal(t, uint64(0), e.dropped.Load())
-	e.Enqueue(evAt(KindError, 1)) // 满 → 丢弃
-	e.Enqueue(evAt(KindError, 2))
+	e.Enqueue(evAt(Kind5xx, 1)) // 满 → 丢弃
+	e.Enqueue(evAt(Kind5xx, 2))
 	require.Equal(t, uint64(2), e.dropped.Load())
 	require.Len(t, e.ch, 1)
 }
@@ -556,13 +572,13 @@ func TestStartTwice(t *testing.T) {
 func TestCloseDrainsQueue(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "fail", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("error")},
+		When: domain.RuleWhen{Kind: strPtr("5xx")},
 		Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")},
 	})
 	var rec recorder
 	e.SetApply(rec.fn)
 	// 未 Start：Close 直接排空
-	e.Enqueue(evAt(KindError, 5))
+	e.Enqueue(evAt(Kind5xx, 5))
 	require.NoError(t, e.Close(context.Background()))
 	app := rec.get()
 	require.Len(t, app, 1)
@@ -576,7 +592,7 @@ func TestCloseDrainsQueue(t *testing.T) {
 func TestStartConsumesThenCloseDrains(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "fail", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("error")},
+		When: domain.RuleWhen{Kind: strPtr("5xx")},
 		Then: domain.RuleThen{Status: statusPtr(domain.Status429)},
 	})
 	var rec recorder
@@ -584,12 +600,12 @@ func TestStartConsumesThenCloseDrains(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, e.Start(ctx))
-	e.Enqueue(evAt(KindError, 0))
+	e.Enqueue(evAt(Kind5xx, 0))
 	require.Eventually(t, func() bool { return len(rec.get()) == 1 }, 5*time.Second, 10*time.Millisecond)
 
 	// 取消后：loop 退出，Close 排空剩余
 	cancel()
-	e.Enqueue(evAt(KindError, 1))
+	e.Enqueue(evAt(Kind5xx, 1))
 	closeCtx, closeCancel := context.WithTimeout(context.Background(), time.Second)
 	defer closeCancel()
 	require.NoError(t, e.Close(closeCtx))
@@ -631,7 +647,7 @@ func TestSeedRulesIdempotentConcurrent(t *testing.T) {
 	wg.Wait()
 	require.NoError(t, err1)
 	require.NoError(t, err2, "冲突方不得失败（唯一约束 → 跳过继续，并集收敛）")
-	require.Equal(t, int64(3), mustCountAny(t, st), "种子并集恰 3 条（不双写）")
+	require.Equal(t, int64(5), mustCountAny(t, st), "种子并集恰 5 条（不双写）")
 }
 
 // TestSeedRulesIdempotentRepeat 已种子表重复 Reload 不重写（幂等回归）。
@@ -639,9 +655,9 @@ func TestSeedRulesIdempotentRepeat(t *testing.T) {
 	st := &uniqueRuleStore{newFakeRuleStore()}
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.Reload(context.Background()))
-	require.Equal(t, int64(3), mustCountAny(t, st))
+	require.Equal(t, int64(5), mustCountAny(t, st))
 	require.NoError(t, e.Reload(context.Background()))
-	require.Equal(t, int64(3), mustCountAny(t, st), "重复 Reload 不重写种子")
+	require.Equal(t, int64(5), mustCountAny(t, st), "重复 Reload 不重写种子")
 }
 
 // TestReloadRulesAdapter ReloadRules 与 Reload 同实现（invalidate.RulesReloader
@@ -650,7 +666,7 @@ func TestReloadRulesAdapter(t *testing.T) {
 	st := newFakeRuleStore()
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.ReloadRules(context.Background()))
-	require.Equal(t, int64(3), mustCountAny(t, st), "ReloadRules 空表同样写种子")
+	require.Equal(t, int64(5), mustCountAny(t, st), "ReloadRules 空表同样写种子")
 }
 
 // —— 热点修复 B：Enqueue 丢弃阈值告警（errlog 模式对齐） ——
@@ -669,13 +685,13 @@ func TestEnqueueDropWarnEdge(t *testing.T) {
 
 	// 第一轮风暴（无消费方，队列满 → 92 丢弃 ≥ 50 阈值）→ 恰好一次 Warn
 	for i := 0; i < 100; i++ {
-		e.Enqueue(evAt(KindError, 0))
+		e.Enqueue(evAt(Kind5xx, 0))
 	}
 	require.Equal(t, uint64(92), e.dropped.Load(), "丢弃计数 = 到达 - 队列容量")
 	e.Flush(context.Background()) // 排空队列 → 告警边沿回落
 	// 第二轮风暴 → 再次 Warn
 	for i := 0; i < 100; i++ {
-		e.Enqueue(evAt(KindError, 0))
+		e.Enqueue(evAt(Kind5xx, 0))
 	}
 	require.Equal(t, uint64(184), e.dropped.Load(), "丢弃计数跨风暴累计（只回落边沿，不清计数）")
 	e.Flush(context.Background())
@@ -700,4 +716,123 @@ func newTestRuleLogger(t *testing.T) (*logx.Logger, string) {
 	logger, err := logx.New("warn", out)
 	require.NoError(t, err)
 	return logger, out
+}
+
+// —— Classify（错误分类决策） ——
+
+// TestClassify 分类矩阵：遍历 enabled 规则 priority 升序首中（非窗口条件
+// 维度）；命中 → transmit = 命中规则 then.transmit、punish = 有状态动作；
+// 无命中 → (false, false)（默认归一）。
+func TestClassify(t *testing.T) {
+	http400, http401 := 400, 401
+	e, _ := newTestEngine(t,
+		domain.Rule{Name: "r4xx-401", Enabled: true, Priority: 10,
+			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http401},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("30m")}},
+		domain.Rule{Name: "r4xx-400-transmit", Enabled: true, Priority: 15,
+			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
+			Then: domain.RuleThen{Transmit: true}},
+		domain.Rule{Name: "r5xx", Enabled: true, Priority: 20,
+			When: domain.RuleWhen{Kind: strPtr("5xx")},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+		domain.Rule{Name: "rnet", Enabled: true, Priority: 25,
+			When: domain.RuleWhen{Kind: strPtr("network")},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+	)
+	ev := func(kind Kind, code int, msg string) Event {
+		var hp *int
+		if code > 0 {
+			hp = &code
+		}
+		return Event{AccountID: 1, Kind: kind, HTTPStatus: hp, ErrorMessage: msg}
+	}
+
+	// 无规则 4xx（其他状态码）→ (false, false)（默认归一 502）
+	tx, pu := e.Classify(ev(Kind4xx, 403, "forbidden"))
+	require.False(t, tx)
+	require.False(t, pu)
+
+	// kind=4xx + http=401 → 401 (false, true)（unhealthy 30m——用户案例）
+	tx, pu = e.Classify(ev(Kind4xx, 401, "no balance"))
+	require.False(t, tx, "未声明 transmit → 归一")
+	require.True(t, pu, "有状态动作 → 投递")
+
+	// kind=4xx + http=400 + transmit → 400 (true, false)
+	tx, pu = e.Classify(ev(Kind4xx, 400, "bad request"))
+	require.True(t, tx, "transmit 规则 → 透传")
+	require.False(t, pu, "transmit-only 无状态动作")
+
+	// kind=5xx → 5xx (false, true)
+	tx, pu = e.Classify(ev(Kind5xx, 500, "boom"))
+	require.False(t, tx)
+	require.True(t, pu)
+
+	// kind=network → network (false, true)
+	tx, pu = e.Classify(ev(KindNetwork, 0, "dial tcp: refused"))
+	require.False(t, tx)
+	require.True(t, pu)
+
+	// ok 事件：无 kind=ok 规则 → 无命中
+	tx, pu = e.Classify(ev(KindOK, 200, ""))
+	require.False(t, tx)
+	require.False(t, pu)
+
+	// 429：无 kind=429 规则（r4xx-401 的 http=401 不匹配 429）→ 无命中
+	tx, pu = e.Classify(ev(Kind429, 429, "rate limited"))
+	require.False(t, tx)
+	require.False(t, pu)
+}
+
+// TestClassifyMessageContains message_contains 参与分类（含/不含）。
+func TestClassifyMessageContains(t *testing.T) {
+	e, _ := newTestEngine(t,
+		domain.Rule{Name: "balance", Enabled: true, Priority: 10,
+			When: domain.RuleWhen{Kind: strPtr("4xx"), ErrorMessageContains: strPtr("balance")},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+	)
+	ev := func(msg string) Event {
+		code := 401
+		return Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: &code, ErrorMessage: msg}
+	}
+	_, pu := e.Classify(ev("no balance"))
+	require.True(t, pu, "contains balance → 命中")
+	_, pu = e.Classify(ev("invalid api key"))
+	require.False(t, pu, "不含 balance → 不命中 → 归一")
+}
+
+// TestClassifyWindowRulePossibleHit 窗口条件规则按"可能命中"保守处理：非窗口
+// 维度命中即视为命中（punish=true 保证事件投递，worker 窗口精确裁决）——
+// count_error_ge 规则不得因预判跳过导致事件不投递。
+func TestClassifyWindowRulePossibleHit(t *testing.T) {
+	e, _ := newTestEngine(t,
+		domain.Rule{Name: "escalate", Enabled: true, Priority: 10,
+			When: domain.RuleWhen{Kind: strPtr("4xx"), CountErrorGE: intPtr(5), WindowSeconds: intPtr(60)},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+	)
+	code := 401
+	tx, pu := e.Classify(Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: &code, ErrorMessage: "x"})
+	require.False(t, tx)
+	require.True(t, pu, "窗口规则可能命中 → 保守 punish（投递后 worker 精确判）")
+}
+
+// TestWindowErrBucket4xx5xxNetwork 窗口计数防呆（gate r4）：枚举重构后
+// Kind4xx/Kind5xx/KindNetwork 事件必须进 err 桶——count_error_ge 规则经
+// 完整引擎路径命中（漏加 case 则静默失真）。
+func TestWindowErrBucket4xx5xxNetwork(t *testing.T) {
+	e, _ := newTestEngine(t, domain.Rule{
+		Name: "escalate", Enabled: true, Priority: 10,
+		When: domain.RuleWhen{CountErrorGE: intPtr(3), WindowSeconds: intPtr(30)},
+		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+	})
+	var rec recorder
+	e.SetApply(rec.fn)
+
+	// 1×5xx + 1×4xx + 1×network → err 桶 = 3 → count_error_ge=3 命中
+	//（kind 不限——只测 err 桶计数；漏加 case 则三类事件不进桶，永不命中）
+	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind5xx, OccurredAt: at(0)})
+	require.Empty(t, rec.get())
+	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind4xx, OccurredAt: at(1)})
+	require.Empty(t, rec.get())
+	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: KindNetwork, OccurredAt: at(2)})
+	require.Len(t, rec.get(), 1, "4xx/5xx/network 三类事件全部计入 err 桶（防呆 a）")
 }

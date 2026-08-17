@@ -58,7 +58,7 @@ func newUserTempPGRouter(t *testing.T) (*repository.Repository, func(method, pat
 	require.NoError(t, err)
 	svc := service.New(repos, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
 	iss := auth.NewIssuer("test-secret")
-	router := userapi.Router(svc, iss, pgUserStatus{repos: repos})
+	router := userapi.Router(svc, iss, pgUserStatus{repos: repos}, nil)
 	do := func(method, path, body, token string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		if token != "" {

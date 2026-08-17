@@ -53,7 +53,7 @@ func (h *UserAPI) GetUserErrLogs(w http.ResponseWriter, r *http.Request, params 
 	}
 	out := make([]UserErrLog, 0, len(rows))
 	for _, l := range rows { // service.QueryErrLogs 直透 []*domain.UsageLog（spec 2026-08-17）
-		out = append(out, toAPIErrLog(l))
+		out = append(out, h.toAPIErrLog(l))
 	}
 	// limit+1 探测（与 admin 侧同语义）：next_cursor = 本页最后一条 id。
 	var next *int64

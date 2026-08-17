@@ -619,15 +619,17 @@
     "any": "Any",
     "kind": {
       "429": "429",
-      "ok": "OK",
-      "error": "Error"
+      "4xx": "4xx",
+      "5xx": "5xx",
+      "network": "Network",
+      "ok": "OK"
     },
     "whenTitle": "Match (when)",
     "whenHint": "Leave empty = not restricted. Ratios require a total count.",
     "templates": {
       "title": "Presets",
       "cooldown429": "429 cooldown",
-      "errorBackoff": "Error backoff",
+      "5xxBackoff": "5xx backoff",
       "escalate": "Escalate",
       "recover": "Recovery"
     },
@@ -674,7 +676,8 @@
     "then": {
       "status": "Set status",
       "cooldown": "Cooldown",
-      "weight": "Weight"
+      "weight": "Weight",
+      "transmit": "Pass through upstream text"
     },
     "deleteTitle": "Delete rule",
     "deleteDesc": "Delete rule \"{{name}}\"? It takes effect immediately."

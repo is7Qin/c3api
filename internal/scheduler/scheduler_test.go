@@ -123,6 +123,7 @@ func (f *fakeRuleStore) CountRules(ctx context.Context) (int64, error) {
 var _ repository.RuleStore = (*fakeRuleStore)(nil)
 
 func intPtr(v int) *int { return &v }
+func statusPtr(s domain.AccountStatus) *domain.AccountStatus { return &s }
 
 func tpl(id int64, format domain.RequestFormat, models []string) *domain.Template {
 	return &domain.Template{ID: id, BaseURL: "https://u/v1", CredentialType: credential.TypeAPIKey,
@@ -257,7 +258,7 @@ func TestMarkErrorBackoff(t *testing.T) {
 	s := newSched(t, m)
 
 	// 种子规则：error → unhealthy + cooldown 5s（指数退避已废弃——升级惩罚由规则表达）
-	s.MarkResult(1, ResultError, nil, 0, "")
+	s.MarkResult(1, ResultError, nil, 500, "")
 	s.FlushRules()
 	ri, ok := s.Runtime(1)
 	require.True(t, ok)
@@ -265,7 +266,7 @@ func TestMarkErrorBackoff(t *testing.T) {
 	require.Equal(t, 1, ri.ErrCount)
 	require.NotNil(t, ri.CooldownUntil)
 	require.True(t, ri.CooldownUntil.After(time.Now().Add(4*time.Second)), "seed cooldown 5s applied")
-	s.MarkResult(1, ResultError, nil, 0, "")
+	s.MarkResult(1, ResultError, nil, 500, "")
 	s.FlushRules()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, 2, ri.ErrCount)
@@ -364,7 +365,7 @@ func TestInvalidateGroupByIDRebuild(t *testing.T) {
 	// 被移除账号 1：Runtime 不可见，MarkResult/Release 安全 no-op（无回写）。
 	_, ok = s.Runtime(1)
 	require.False(t, ok, "removed account must not be in byID")
-	s.MarkResult(1, ResultError, nil, 0, "")
+	s.MarkResult(1, ResultError, nil, 500, "")
 	s.FlushRules()
 	s.Release(1)
 
@@ -450,7 +451,7 @@ func TestMarkResultDisabledStaysDisabled(t *testing.T) {
 	ri, _ = s.Runtime(1)
 	require.Equal(t, domain.StatusDisabled, ri.Status, "429 不得把禁用账号改写为 429")
 	require.Nil(t, ri.CooldownUntil, "429 不得给禁用账号设置冷却")
-	s.MarkResult(1, ResultError, nil, 0, "")
+	s.MarkResult(1, ResultError, nil, 500, "")
 	ri, _ = s.Runtime(1)
 	require.Equal(t, domain.StatusDisabled, ri.Status, "错误分支不得改写禁用账号")
 
@@ -475,11 +476,11 @@ func TestWeightActionRebuildsRoutes(t *testing.T) {
 		{ID: 1, TemplateID: 1, Template: tplx, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
 		{ID: 2, TemplateID: 1, Template: tplx, UpstreamKey: "k2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
 	}})
-	// 自定义规则表（非种子）：error → 纯 weight 动作（weight 10）
+	// 自定义规则表（非种子）：5xx → 纯 weight 动作（weight 10）
 	rstore := &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}
 	_, err := rstore.CreateRule(context.Background(), domain.Rule{
 		Name: "throttle", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("error")},
+		When: domain.RuleWhen{Kind: strPtr("5xx")},
 		Then: domain.RuleThen{Weight: intPtr(10)},
 	})
 	require.NoError(t, err)
@@ -492,7 +493,7 @@ func TestWeightActionRebuildsRoutes(t *testing.T) {
 	t.Cleanup(cancel)
 	go s.writebackLoop(ctx)
 
-	s.MarkResult(1, ResultError, nil, 0, "")
+	s.MarkResult(1, ResultError, nil, 500, "")
 	s.FlushRules()
 
 	// 纯 weight 动作：状态/EWMA 不动，快照权重更新
@@ -565,7 +566,7 @@ func TestCloseDrainsWritebacks(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
 	s := newSched(t, m)
 
-	s.MarkResult(1, ResultError, nil, 0, "")
+	s.MarkResult(1, ResultError, nil, 500, "")
 	s.FlushRules()                                    // 事件 → apply → 回写入队
 	require.NoError(t, s.Close(context.Background())) // 排空 pending 回写
 	require.NoError(t, s.Close(context.Background())) // 幂等
@@ -574,7 +575,7 @@ func TestCloseDrainsWritebacks(t *testing.T) {
 	m.mu.Unlock()
 
 	// ctx 已取消：限时路径直接返回（丢弃/尽最大努力），不阻塞。
-	s.MarkResult(1, ResultError, nil, 0, "")
+	s.MarkResult(1, ResultError, nil, 500, "")
 	s.FlushRules()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1032,7 +1033,7 @@ func TestMarkResultLastErrorWriteback(t *testing.T) {
 	m.mu.Lock()
 	m.writes = nil
 	m.mu.Unlock()
-	s.MarkResult(1, ResultError, nil, 0, "")
+	s.MarkResult(1, ResultError, nil, 500, "")
 	s.FlushRules()
 	require.Eventually(t, func() bool {
 		m.mu.Lock()
@@ -1257,4 +1258,104 @@ func TestRequestPathZeroLoaderCalls(t *testing.T) {
 		s.MarkResult(sel.AccountID, ResultOK, nil, 200, "")
 	}
 	require.Equal(t, before, cl.loadsN(), "请求期（Select/MarkResult/Release）零加载器触达——热路径零 DB")
+}
+
+// —— ruleKind 单点分流（gate r3 Major） ——
+
+// TestRuleKindSplit ruleKind(kind, httpStatus) 分流矩阵：ResultError+0 →
+// network（连接级）、ResultError+>0 → 5xx、Result4xx → 4xx、429/OK 回归。
+func TestRuleKindSplit(t *testing.T) {
+	cases := []struct {
+		name string
+		kind ResultKind
+		code int
+		want rule.Kind
+	}{
+		{"ok", ResultOK, 200, rule.KindOK},
+		{"429", Result429, 429, rule.Kind429},
+		{"error 0 → network", ResultError, 0, rule.KindNetwork},
+		{"error 500 → 5xx", ResultError, 500, rule.Kind5xx},
+		{"error 503 → 5xx", ResultError, 503, rule.Kind5xx},
+		{"4xx → 4xx", Result4xx, 401, rule.Kind4xx},
+		{"4xx 400 → 4xx", Result4xx, 400, rule.Kind4xx},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, ruleKind(tc.kind, tc.code))
+		})
+	}
+}
+
+// TestMarkResultNetworkVs5xxSplit 经 MarkResult 全链路：code==0 事件 → network
+// 种子（5s 冷却）命中、code=500 → 5xx 种子（10m）命中——分流在 ruleKind 单点，
+// 调用方零改动（failoverLoop/ws_relay/caller 全部连接级调用点自动正确）。
+func TestMarkResultNetworkVs5xxSplit(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIResponsesWS, []string{"gpt-4o"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {
+		{ID: 1, TemplateID: 1, Template: tplx, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+	}})
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	require.NoError(t, re.Reload(context.Background())) // 空表写种子（含 seed-network 5s / seed-5xx 10m）
+	s := New(testCfg(), m, re, nil)
+	require.NoError(t, s.reload(context.Background()))
+
+	// 连接级（code==0）→ seed-network → unhealthy + 5s 冷却（不吃 5xx 的 10m）
+	s.MarkResult(1, ResultError, nil, 0, "dial tcp: connection refused")
+	s.FlushRules()
+	ri, ok := s.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusUnhealthy, ri.Status)
+	require.NotNil(t, ri.CooldownUntil)
+	d := ri.CooldownUntil.Sub(s.timeNow())
+	require.InDelta(t, 5*time.Second, d, float64(2*time.Second), "seed-network 冷却 5s（连接级独立）")
+
+	// 5xx（code=500）→ seed-5xx → unhealthy + 10m
+	s.MarkResult(1, ResultError, nil, 500, "boom")
+	s.FlushRules()
+	ri, ok = s.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusUnhealthy, ri.Status)
+	require.NotNil(t, ri.CooldownUntil)
+	d = ri.CooldownUntil.Sub(s.timeNow())
+	require.InDelta(t, 10*time.Minute, d, float64(30*time.Second), "seed-5xx 冷却 10m（用户裁决）")
+}
+
+// TestSchedulerClassify scheduler.Classify 包装：快照取 TemplateID/GroupID 后
+// 委托引擎；transmit = 命中规则 then.transmit；快照外账号 → (false, false)。
+func TestSchedulerClassify(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIResponsesWS, []string{"gpt-4o"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {
+		{ID: 1, TemplateID: 1, Template: tplx, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+	}})
+	rstore := &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}
+	http400, http401 := 400, 401
+	_, err := rstore.CreateRule(context.Background(), domain.Rule{
+		Name: "transmit-400", Enabled: true, Priority: 10,
+		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
+		Then: domain.RuleThen{Transmit: true},
+	})
+	require.NoError(t, err)
+	_, err = rstore.CreateRule(context.Background(), domain.Rule{
+		Name: "punish-401", Enabled: true, Priority: 20,
+		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http401},
+		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("30m")},
+	})
+	require.NoError(t, err)
+	re := rule.New(rule.Config{}, rstore, nil)
+	require.NoError(t, re.Reload(context.Background()))
+	s := New(testCfg(), m, re, nil)
+	require.NoError(t, s.reload(context.Background()))
+
+	// 400 → transmit=true（seed 语义同）
+	tx, pu := s.Classify(rule.Event{AccountID: 1, Kind: rule.Kind4xx, HTTPStatus: &http400})
+	require.True(t, tx)
+	require.False(t, pu)
+	// 401 → punish（unhealthy 30m），transmit=false
+	tx, pu = s.Classify(rule.Event{AccountID: 1, Kind: rule.Kind4xx, HTTPStatus: &http401})
+	require.False(t, tx)
+	require.True(t, pu)
+	// 快照外账号 → (false, false)
+	tx, pu = s.Classify(rule.Event{AccountID: 999, Kind: rule.Kind4xx, HTTPStatus: &http401})
+	require.False(t, tx)
+	require.False(t, pu)
 }

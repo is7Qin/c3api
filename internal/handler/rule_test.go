@@ -49,14 +49,14 @@ func TestRulesCRUD(t *testing.T) {
 	// 创建（201）
 	rec := do(http.MethodPost, "/admin/rules", `{
 		"name":"r1","priority":10,"enabled":true,
-		"when":{"kind":"error"},
+		"when":{"kind":"5xx"},
 		"then":{"status":"unhealthy","cooldown":"5s"}}`)
 	require.Equal(t, 201, rec.Code, "create rule: %s", rec.Body.String())
 	var created Rule
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 	require.Equal(t, "r1", created.Name)
 	require.Equal(t, 10, created.Priority)
-	require.Equal(t, "error", created.When["kind"], "when round-trip")
+	require.Equal(t, "5xx", created.When["kind"], "when round-trip")
 	require.Equal(t, "unhealthy", created.Then["status"], "then round-trip")
 
 	// priority 冲突 → 409
@@ -68,14 +68,14 @@ func TestRulesCRUD(t *testing.T) {
 	// when 未知键 → 400
 	rec = do(http.MethodPost, "/admin/rules", `{
 		"name":"r3","priority":20,
-		"when":{"kind":"error","bogus":1},
+		"when":{"kind":"5xx","bogus":1},
 		"then":{"status":"unhealthy"}}`)
 	require.Equal(t, 400, rec.Code, "unknown when key: %s", rec.Body.String())
 
 	// then 无动作 → 400
 	rec = do(http.MethodPost, "/admin/rules", `{
 		"name":"r4","priority":21,
-		"when":{"kind":"error"},"then":{}}`)
+		"when":{"kind":"5xx"},"then":{}}`)
 	require.Equal(t, 400, rec.Code, "empty then: %s", rec.Body.String())
 
 	// 列表：priority 升序 + {total, rows}
@@ -99,7 +99,7 @@ func TestRulesCRUD(t *testing.T) {
 	var updated Rule
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
 	require.Equal(t, "r1-renamed", updated.Name)
-	require.Equal(t, "error", updated.When["kind"], "when 未提供保持原值")
+	require.Equal(t, "5xx", updated.When["kind"], "when 未提供保持原值")
 	require.Equal(t, "5s", updated.Then["cooldown"], "then 未提供保持原值")
 
 	// PUT 404 含 id

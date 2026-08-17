@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
@@ -203,7 +204,15 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			if lastErrMsg == "" && len(respBody) > 0 {
 				lastErrMsg = domain.TruncateErrMsg(string(respBody))
 			}
-			p.sched.MarkResult(sel.AccountID, scheduler.Result429, nil, code, lastErrMsg)
+			// 429 分支统一走 Classify（规则表 = 单一决策源）：seed-429 恒命中
+			// （punish=true → 恒投递，现状等价）；规则删改后按声明裁定投递。
+			_, punish := p.sched.Classify(rule.Event{
+				AccountID: sel.AccountID, Kind: rule.Kind429, HTTPStatus: &code,
+				Model: sel.Model, ErrorMessage: lastErrMsg,
+			})
+			if punish {
+				p.sched.MarkResult(sel.AccountID, scheduler.Result429, nil, code, lastErrMsg)
+			}
 		} else if code >= 500 || code == 0 {
 			// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
 			// r.Context() 已取消 → SDK 返回 context.Canceled（statusOf=0）。这是
@@ -237,7 +246,25 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			} else if len(respBody) > 0 {
 				lastErrMsg = domain.TruncateErrMsg(string(respBody))
 			}
-			p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, code, lastErrMsg)
+			// 5xx/0 分支统一走 Classify（seed-5xx/seed-network 恒命中 → 恒投递，
+			// 行为不变）。防呆 b（gate r4）：分支不拆 ≠ 恒传 Kind5xx——事件 kind
+			// 按同一分流谓词（code==0→network，与 scheduler.ruleKind 一致）计算，
+			// 否则 code==0 事件不命中 seed-network → 不投递 → 连接级冷却整体失效。
+			kind := rule.Kind5xx
+			if code == 0 {
+				kind = rule.KindNetwork
+			}
+			var hp *int
+			if code > 0 {
+				hp = &code
+			}
+			_, punish := p.sched.Classify(rule.Event{
+				AccountID: sel.AccountID, Kind: kind, HTTPStatus: hp,
+				Model: sel.Model, ErrorMessage: lastErrMsg,
+			})
+			if punish {
+				p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, code, lastErrMsg)
+			}
 		} else {
 			// 4xx 确定性错误：透传上游状态码与原始 body，不转移（规格 §5.3）；
 			// body 不可得（连接级错误不会有 4xx 码）才回退网关文案。
@@ -257,7 +284,24 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 				l.ErrorMessage = &em
 			}
 			p.finish(sel.AccountID, l)
-			sink.writeUpstreamRejection(w, st, code, respBody)
+			// 4xx 决策走规则表（单一决策源，零硬编码状态码清单）：transmit=true
+			// 规则命中（seed-4xx-400）→ 现状透传（原始状态码 + body）；否则（无
+			// 规则声明/transmit=false）→ 归一 502 + 固定文案（复用
+			// writeUpstreamRejection 空 body 分支——T7 遗留泄漏修复）。
+			// punish → MarkResult(Result4xx)：用户规则（如 kind=4xx + http=401 +
+			// contains balance → unhealthy 30m）可命中，bug 修复。
+			transmit, punish := p.sched.Classify(rule.Event{
+				AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code,
+				Model: sel.Model, ErrorMessage: em,
+			})
+			if transmit {
+				sink.writeUpstreamRejection(w, st, code, respBody)
+			} else {
+				sink.writeUpstreamRejection(w, st, http.StatusBadGateway, nil)
+			}
+			if punish {
+				p.sched.MarkResult(sel.AccountID, scheduler.Result4xx, nil, code, em)
+			}
 			return
 		}
 		p.sched.Release(sel.AccountID)

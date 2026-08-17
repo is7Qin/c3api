@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -20,6 +21,9 @@ import (
 type UserAPI struct {
 	svc *service.Service
 	iss tokenIssuer
+	// rules 规则引擎（/user/err_logs 行级脱敏用：平台问题行 error_message 按
+	// Classify 判定替换固定文案；main 装配经 Router 注入——nil = 不脱敏）。
+	rules *rule.RuleEngine
 }
 
 // tokenIssuer JWT 签发（*auth.Issuer 实现；测试可注入替身）。
