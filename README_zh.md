@@ -118,6 +118,20 @@ cd web && pnpm install && pnpm run dev
 - **网关无状态、状态在 DB**：共享状态全部在 PostgreSQL，实例间经 `c3api_invalidate` 通道 `NOTIFY` 协调——加实例即扩容。
 - **常驻 worker**：计费扣减、用量/统计落库、错误审计、分区保留、离线聚合、价格同步与规则调度均为长驻 worker，支持优雅停机排空。
 
+## 性能
+
+网关 30 秒 CPU profile（`go tool pprof -http=:8081 <profile.pprof>`）：
+
+![CPU 火焰图](docs/images/pprof-flamegraph.png)
+
+热点集中在 IO 与 GC，而非请求路径逻辑：
+
+- **~23%** `syscall`——网络读写（上游连接、pgx）
+- **~15%** GC——分配密集路径（span 分级 + 对象/span 扫描）
+- **~4%** `selectgo`——并发等待；**~1%** `memmove`——数据拷贝
+
+请求路径本身（JSON 解析、路由、配额/计费）只占 CPU 个位数百分比，吞吐留有富余。GC 调优钩子（`GOGC` / `GOMEMLIMIT`）已接入 compose 栈——见 `.env.example`。
+
 ## 配置
 
 网关加载 `config.toml`（模板见 `config.example.toml`），`C3API_` 前缀环境变量可覆盖（前缀**必须大写**）：

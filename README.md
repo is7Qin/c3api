@@ -119,6 +119,20 @@ Point any OpenAI/Anthropic-compatible SDK at the gateway URL — the request for
 - **Stateless gateway, stateful DB**: all shared state lives in PostgreSQL; instances coordinate through `NOTIFY` on the `c3api_invalidate` channel — scale horizontally by just adding instances.
 - **Persistent workers**: billing deduction, usage/statistics flushing, error-log auditing, partition retention, offline stats aggregation, price sync, and the rule scheduler run as long-lived workers with graceful shutdown draining.
 
+## Performance
+
+A 30 s CPU profile of the gateway (`go tool pprof -http=:8081 <profile.pprof>`):
+
+![CPU flame graph](docs/images/pprof-flamegraph.png)
+
+The hot spots are I/O and garbage collection, not request-path logic:
+
+- **~23%** `syscall` — network reads/writes (upstream connections, pgx)
+- **~15%** GC — allocation-heavy paths (span class sizing + object/span scanning)
+- **~4%** `selectgo` — concurrency wait; **~1%** `memmove` — data copies
+
+The request path itself (JSON parsing, routing, quota/billing) stays a single-digit share of total CPU, leaving headroom for higher throughput. GC tuning hooks (`GOGC` / `GOMEMLIMIT`) are wired through the compose stack — see `.env.example`.
+
 ## Configuration
 
 The gateway loads `config.toml` (see `config.example.toml`), overlaid by `C3API_`-prefixed environment variables (the prefix must be **uppercase**):
