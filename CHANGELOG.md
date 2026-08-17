@@ -12,7 +12,6 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ### Added
 
-- Per-IP rate limiting on the public register/login endpoints (5 rps default, in-memory bucket — a first line of defense against bcrypt CPU exhaustion).
 - Pagination (`limit`/`offset`) for the redemption-code usage audit endpoint — previously silently truncated at 20 rows.
 - Masked admin key listing (`GET /admin/keys`) with name/user/group filters and pagination.
 - WS upgrade handshake timeout (15 s) — a black-hole upstream can no longer pin concurrency slots forever.
