@@ -107,7 +107,12 @@ func accessLog(log *logx.Logger) func(http.Handler) http.Handler {
 			r.Header.Set("X-Request-Id", reqID)
 			sw := &statusWriter{ResponseWriter: w, status: 200}
 			next.ServeHTTP(sw, r)
-			if log != nil {
+			// level 守卫前置：zap 的字段编码短路在调用内，5 字段 []Field 切片已在
+			// 调用点物化逃逸（压测 pprof 实证 accessLog 每请求 ~344B、调用者
+			// ~3.8% newobject；-gcflags=-m=2 实证本文件 Debug 调用点 escape）——
+			// level=info（生产/压测默认）时整段跳过，字段切片分配归零；level 运行
+			// 时恒定（config Load 时 parse），无双读风险。
+			if log != nil && log.DebugEnabled() {
 				log.Debug("http request",
 					logx.String("request_id", reqID),
 					logx.String("method", r.Method),

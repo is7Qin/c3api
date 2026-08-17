@@ -7,13 +7,69 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/pkg/logx"
 )
+
+// newFileLogger creates a logger that writes JSON lines to a fresh temp
+// file and returns the logger plus the file path（复用 pkg/logx/logx_test.go
+// 的 newFileLogger 模式；Windows 下 zap 保持 sink 文件打开，dir 清理 best-effort）。
+func newFileLogger(t *testing.T, level string) (*logx.Logger, string) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "server-test-")
+	require.NoError(t, err)
+	out := filepath.Join(dir, "out.json")
+	logger, err := logx.New(level, out)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return logger, out
+}
+
+// TestAccessLogDebugFields accessLog 的 Debug 字段构造 level 守卫（spec
+// 2026-08-18，评审 M-1 强制条款）：level=debug 时输出 JSON 行含
+// "msg":"http request" 且 5 字段键齐全（request_id/method/path/status/
+// duration）；level=info 时整段跳过（无输出）。可捕获面：发射级别误抬高
+// （如守卫写死放行 debug）→ info 子用例出现输出即失败；字段漏写 → debug
+// 子用例键缺失即失败。不可区分面：守卫整体缺失/级别写错由 zap 自身 level
+// 过滤兜底，输出与正确接线一致，超出本测试声称范围。
+func TestAccessLogDebugFields(t *testing.T) {
+	for _, tc := range []struct {
+		level string
+		want  bool // true = 期望输出 http request 行
+	}{
+		{"debug", true},
+		{"info", false},
+	} {
+		t.Run(tc.level, func(t *testing.T) {
+			logger, out := newFileLogger(t, tc.level)
+			h := accessLog(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			require.NoError(t, logger.Sync())
+
+			b, err := os.ReadFile(out)
+			require.NoError(t, err)
+			line := string(b)
+			if !tc.want {
+				require.NotContains(t, line, "http request")
+				return
+			}
+			require.Contains(t, line, `"msg":"http request"`)
+			for _, key := range []string{"request_id", "method", "path", "status", "duration"} {
+				require.Contains(t, line, `"`+key+`":`)
+			}
+		})
+	}
+}
 
 // TestAdminAuthEmptyTokenContract admin.token 可空语义契约（spec 2026-08-15）：
 // 空 token = 不启用静态路径，/admin 仅接受 platform_admin JWT——任意非空

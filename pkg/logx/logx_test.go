@@ -29,6 +29,22 @@ func newFileLogger(t *testing.T, level string) (*logx.Logger, string) {
 	return logger, out
 }
 
+func TestDebugEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		level string
+		want  bool
+	}{
+		{"debug", true},
+		{"info", false},
+		{"warn", false},
+	} {
+		t.Run(tc.level, func(t *testing.T) {
+			logger, _ := newFileLogger(t, tc.level)
+			require.Equal(t, tc.want, logger.DebugEnabled())
+		})
+	}
+}
+
 func TestLevelFiltering(t *testing.T) {
 	// warn 级别下 Debug 不输出、Warn 输出
 	logger, out := newFileLogger(t, "warn")

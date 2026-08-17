@@ -59,5 +59,12 @@ func (l *Logger) Info(msg string, fields ...Field)  { l.l.Info(msg, fields...) }
 func (l *Logger) Warn(msg string, fields ...Field)  { l.l.Warn(msg, fields...) }
 func (l *Logger) Error(msg string, fields ...Field) { l.l.Error(msg, fields...) }
 
+// DebugEnabled level=debug 是否生效（accessLog 等 Debug 字段构造的 level 守卫
+// ——zap 的字段编码短路在调用内，字段切片已在调用点物化逃逸；热路径先判再
+// 构造，level 恒定无双读风险）。zapcore 不泄露（内部判定）。
+func (l *Logger) DebugEnabled() bool {
+	return l.l.Core().Enabled(zapcore.DebugLevel)
+}
+
 func (l *Logger) With(fields ...Field) *Logger { return &Logger{l: l.l.With(fields...)} }
 func (l *Logger) Sync() error                  { return l.l.Sync() }
