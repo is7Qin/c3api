@@ -521,14 +521,14 @@ type RuleWhen struct {
 	Model                *string  `json:"model,omitempty"`
 	WindowSeconds        *int     `json:"window_seconds,omitempty"`
 	Count429GE           *int     `json:"count_429_ge,omitempty"`
-	// CountErrorGE 语义 = "错误事件桶"（非 ok 非 429 事件计数——5xx/network/4xx
-	// 并入；kind=error 不存在于枚举，字段名不再对应 kind，保留以兼容存量数据）。
-	CountErrorGE *int `json:"count_error_ge,omitempty"`
-	CountOKGE    *int `json:"count_ok_ge,omitempty"`
-	CountTotalGE *int `json:"count_total_ge,omitempty"`
-	Ratio429GE   *float64 `json:"ratio_429_ge,omitempty"`
-	// RatioErrorGE 同 CountErrorGE：分母为错误事件桶（5xx/network/4xx 并入）。
-	RatioErrorGE *float64 `json:"ratio_error_ge,omitempty"`
+	// CountFailureGE 语义 = "失败事件桶"（非 ok 非 429 事件计数——5xx/network/4xx
+	// 并入）。
+	CountFailureGE *int     `json:"count_failure_ge,omitempty"`
+	CountOKGE      *int     `json:"count_ok_ge,omitempty"`
+	CountTotalGE   *int     `json:"count_total_ge,omitempty"`
+	Ratio429GE     *float64 `json:"ratio_429_ge,omitempty"`
+	// RatioFailureGE 同 CountFailureGE：分母为失败事件桶（5xx/network/4xx 并入）。
+	RatioFailureGE *float64 `json:"ratio_failure_ge,omitempty"`
 }
 
 type RuleThen struct {

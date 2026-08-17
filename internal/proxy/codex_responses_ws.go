@@ -117,8 +117,8 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 //     传不转移（与 aiclient 路径 4xx 同构：finish + 错误帧 + 记录）；
 //     Refreshed=true（已轮转重连一次仍失败）→ 4xx 分支天然不再触达同账号，
 //     网关避免双份刷新
-//   - 信封 429 → Result429 转移；信封 5xx / 裸 RefreshError / 网络（code 0）
-//     → ResultError 转移（正常 failover）
+//   - 信封 429 → Kind429 转移；信封 5xx / 裸 RefreshError / 网络（code 0）
+//     → RuleKindOf(code) 转移（正常 failover）
 func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, dialErr error) (stop bool, lastCode int, lastErrMsg string) {
 	if errors.Is(dialErr, errCodexWSNotIntegrated) {
 		p.sched.Release(sel.AccountID)

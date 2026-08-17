@@ -112,7 +112,7 @@ func TestErrClassifyUserCase401Balance(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "ws_abc123", "工作区 ID 不得透传")
 	require.NotContains(t, rec.Body.String(), "example.com", "账单链接不得透传")
 
-	// punish → MarkResult(Result4xx) → 规则命中 → unhealthy + 冷却 30m（bug 修复：
+	// punish → MarkResult(Kind4xx) → 规则命中 → unhealthy + 冷却 30m（bug 修复：
 	// 此前 4xx 不进规则引擎，规则永不触发）
 	p.sched.FlushRules()
 	ri, ok := p.sched.Runtime(1)
@@ -198,9 +198,8 @@ func TestErrClassifyTransmitRulePassthrough(t *testing.T) {
 }
 
 // TestErrClassifyWSRelayNetworkSeed5s ws_relay 中继失联（上游错误关闭）→
-// MarkResult(ResultError, code=0) → ruleKind 单点分流 kind=network →
-// seed-network 命中：unhealthy + 冷却 5s（连接级独立类型——不吃 seed-5xx 的
-// 10m，防呆 b 红绿）。
+// MarkResult(RuleKindOf(0)) → kind=network → seed-network 命中：unhealthy +
+// 冷却 5s（连接级独立类型——不吃 seed-5xx 的 10m，防呆 b 红绿）。
 func TestErrClassifyWSRelayNetworkSeed5s(t *testing.T) {
 	ft := &fakeTransport{readQueue: []fakeRead{
 		{typ: 0, err: errors.New("upstream network error")}, // 网络失联（非 HTTP 状态 → code==0）
@@ -216,7 +215,7 @@ func TestErrClassifyWSRelayNetworkSeed5s(t *testing.T) {
 	env.p.sched.FlushRules()
 	ri, ok := env.p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "连接级失联 → ResultError 冷却")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "连接级失联 → network 冷却")
 	require.NotNil(t, ri.CooldownUntil)
 	require.InDelta(t, 5*time.Second, ri.CooldownUntil.Sub(time.Now()), float64(2*time.Second),
 		"seed-network 冷却 5s（非 seed-5xx 的 10m——连接级独立类型）")

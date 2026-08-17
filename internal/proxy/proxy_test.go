@@ -29,7 +29,7 @@ import (
 
 // --- 假上游：SSE 流式 chat/completions ---
 // failMode: "" = 正常；"429" = 每个非流式请求都返回 429（测 failover）；
-// "500" = 每个非流式请求都返回 500（测 ResultError→502）；
+// "500" = 每个非流式请求都返回 500（测 连接级/5xx 分流→502）；
 // "400" = 每个非流式请求都返回 400（测 4xx 透传、不转移）；
 // "400-stream" = 每个流式请求都返回 400（测流式 4xx 透传）；
 // "abort-stream" = 流式响应发完一部分后 panic 断开连接（chunked 帧未终结 →
@@ -525,7 +525,7 @@ func TestProxyFailoverOn429(t *testing.T) {
 	require.Equal(t, domain.Err429, store.logs[0].ErrorType)
 }
 
-// 5xx：触发 failover 与 MarkResult(ResultError)；全部尝试失败最终回 502（非 429 不设 Retry-After）。
+// 5xx：触发 failover 与 MarkResult(连接级/5xx 分流)；全部尝试失败最终回 502（非 429 不设 Retry-After）。
 func TestProxyFailoverOn5xx(t *testing.T) {
 	up := fakeOpenAI(t, "500")
 	defer up.Close()
@@ -652,7 +652,7 @@ func TestProxyPassthrough4xx(t *testing.T) {
 	require.Equal(t, domain.Err4xx, store.logs[0].ErrorType)
 }
 
-// 流式中止：上游在流中途发非法事件（解码失败）→ ResultError + 释放并发槽 + ErrAbort 记录。
+// 流式中止：上游在流中途发非法事件（解码失败）→ 连接级/5xx 分流 + 释放并发槽 + ErrAbort 记录。
 func TestProxyStreamAbortFreesSlot(t *testing.T) {
 	up := fakeOpenAI(t, "abort-stream")
 	defer up.Close()
@@ -667,13 +667,13 @@ func TestProxyStreamAbortFreesSlot(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "中止记 ResultError")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "中止记 连接级/5xx 分流")
 	require.Zero(t, ri.Concurrency, "中止路径必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "中止路径记 ErrAbort 用量")
 }
 
 // 回归（评审 Critical）：流式上游停滞超过 UpstreamStreamTimeout 必须按上游错误
-// 处理——记 ErrAbort + MarkResult(ResultError) → 账号不健康。此前 sserelay.
+// 处理——记 ErrAbort + MarkResult(连接级/5xx 分流) → 账号不健康。此前 sserelay.
 // normalize 把 ctx 超时折叠为 context.Canceled，tryChat 按 errors.Is(err,
 // context.Canceled) 走了"客户端断开"分支：释放槽位但不 MarkResult、不记用量
 // （账号保持 active、Pending 0），与迁移前 SDK 路径（记 ErrAbort + 不健康）相悖。
@@ -698,7 +698,7 @@ func TestProxyStreamTimeoutMarksUnhealthy(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "停滞超时记 ResultError → 不健康")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "停滞超时记 连接级/5xx 分流 → 不健康")
 	require.Zero(t, ri.Concurrency, "超时中止路径必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "超时中止必须记一条 ErrAbort 用量")
 	require.NoError(t, p.rec.Close(context.Background()))
@@ -744,7 +744,7 @@ func (failingResponseWriter) Header() http.Header         { return http.Header{}
 func (failingResponseWriter) Write(p []byte) (int, error) { return 0, errors.New("client gone") }
 func (failingResponseWriter) WriteHeader(int)             {}
 
-// 客户端断开：SSE 写出失败 → ResultError + 释放并发槽。旧 SDK 路径不记用量；
+// 客户端断开：SSE 写出失败 → 连接级/5xx 分流 + 释放并发槽。旧 SDK 路径不记用量；
 // relay 无法区分"写出失败"与"上游读失败"（两者都是非 ctx 取消的错误），
 // 按控制器语义一律走 recordStreamAbort → 记一条 ErrAbort 用量。
 func TestProxyClientDisconnectFreesSlot(t *testing.T) {
@@ -761,7 +761,7 @@ func TestProxyClientDisconnectFreesSlot(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "客户端断开记 ResultError")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "客户端断开记 连接级/5xx 分流")
 	require.Zero(t, ri.Concurrency, "客户端断开必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "写出失败按上游读失败处理，记 ErrAbort 用量")
 	// 评审 I-1：客户端断开（recordStreamAbort）Model=客户端请求模型

@@ -36,7 +36,7 @@ const STATUSES: AccountStatus[] = ['active', 'unhealthy', '429', 'disabled']
 type WhenField =
   | 'http_status' | 'error_message_contains' | 'account_id' | 'template_id' | 'group_id'
   | 'model' | 'window_seconds' | 'count_total_ge'
-  | 'count_429_ge' | 'ratio_429_ge' | 'count_error_ge' | 'ratio_error_ge' | 'count_ok_ge'
+  | 'count_429_ge' | 'ratio_429_ge' | 'count_failure_ge' | 'ratio_failure_ge' | 'count_ok_ge'
 
 interface CondRow { field: WhenField; value: string }
 
@@ -63,10 +63,9 @@ const WHEN_FIELDS: WhenFieldMeta[] = [
   { key: 'count_total_ge', kinds: ['any'], input: 'number', placeholder: '10', min: 1 },
   { key: 'count_429_ge', kinds: ['429'], input: 'number', placeholder: '3', min: 0 },
   { key: 'ratio_429_ge', kinds: ['429'], input: 'number', placeholder: '0.5', min: 0, max: 1, step: 0.01 },
-  // count_error_ge/ratio_error_ge 语义 = 错误事件桶（4xx/5xx/network 并入——
-  // kind=error 不存在于枚举，字段名不再对应 kind）。
-  { key: 'count_error_ge', kinds: ['4xx', '5xx', 'network'], input: 'number', placeholder: '5', min: 0 },
-  { key: 'ratio_error_ge', kinds: ['4xx', '5xx', 'network'], input: 'number', placeholder: '0.8', min: 0, max: 1, step: 0.01 },
+  // count_failure_ge/ratio_failure_ge 语义 = 失败事件桶（4xx/5xx/network 并入）。
+  { key: 'count_failure_ge', kinds: ['4xx', '5xx', 'network'], input: 'number', placeholder: '5', min: 0 },
+  { key: 'ratio_failure_ge', kinds: ['4xx', '5xx', 'network'], input: 'number', placeholder: '0.8', min: 0, max: 1, step: 0.01 },
   { key: 'count_ok_ge', kinds: ['ok'], input: 'number', placeholder: '1', min: 0 },
 ]
 const MAX_CONDITIONS = 10
@@ -77,7 +76,7 @@ const WHEN_FIELD_LOCALE: Record<WhenField, string> = {
   account_id: 'accountId', template_id: 'templateId', group_id: 'groupId',
   model: 'model', window_seconds: 'windowSeconds', count_total_ge: 'countTotal',
   count_429_ge: 'count429', ratio_429_ge: 'ratio429',
-  count_error_ge: 'countError', ratio_error_ge: 'ratioError', count_ok_ge: 'countOK',
+  count_failure_ge: 'countFailure', ratio_failure_ge: 'ratioFailure', count_ok_ge: 'countOK',
 }
 const whenFieldLabel = (k: WhenField) => `rules.whenFields.${WHEN_FIELD_LOCALE[k]}`
 
@@ -208,11 +207,11 @@ function WhenSummary({ w, t }: { w: Rule['When']; t: (k: string) => string }) {
   if (typeof w.model === 'string') parts.push(w.model)
   if (typeof w.window_seconds === 'number') parts.push(`${w.window_seconds}s`)
   if (typeof w.count_429_ge === 'number') parts.push(`429≥${w.count_429_ge}`)
-  if (typeof w.count_error_ge === 'number') parts.push(`err≥${w.count_error_ge}`)
+  if (typeof w.count_failure_ge === 'number') parts.push(`fail≥${w.count_failure_ge}`)
   if (typeof w.count_ok_ge === 'number') parts.push(`ok≥${w.count_ok_ge}`)
   if (typeof w.count_total_ge === 'number') parts.push(`total≥${w.count_total_ge}`)
   if (typeof w.ratio_429_ge === 'number') parts.push(`429率≥${w.ratio_429_ge}`)
-  if (typeof w.ratio_error_ge === 'number') parts.push(`err率≥${w.ratio_error_ge}`)
+  if (typeof w.ratio_failure_ge === 'number') parts.push(`fail率≥${w.ratio_failure_ge}`)
   return <span className="block max-w-64 truncate text-xs" title={parts.join(' · ')}>{parts.join(' · ') || '—'}</span>
 }
 
@@ -332,7 +331,7 @@ export default function Rules() {
       setWhenErr(t('rules.whenErrOkContains'))
       return
     }
-    if ((when.ratio_429_ge !== undefined || when.ratio_error_ge !== undefined) && when.count_total_ge === undefined) {
+    if ((when.ratio_429_ge !== undefined || when.ratio_failure_ge !== undefined) && when.count_total_ge === undefined) {
       setWhenErr(t('rules.whenErrRatio'))
       return
     }

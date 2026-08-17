@@ -31,10 +31,10 @@ func ValidateWhen(w domain.RuleWhen) error {
 		return fmt.Errorf("when.window_seconds must be >= 1, got %d", *w.WindowSeconds)
 	}
 	for name, v := range map[string]*int{
-		"when.count_429_ge":   w.Count429GE,
-		"when.count_error_ge": w.CountErrorGE,
-		"when.count_ok_ge":    w.CountOKGE,
-		"when.count_total_ge": w.CountTotalGE,
+		"when.count_429_ge":     w.Count429GE,
+		"when.count_failure_ge": w.CountFailureGE,
+		"when.count_ok_ge":      w.CountOKGE,
+		"when.count_total_ge":   w.CountTotalGE,
 	} {
 		if v != nil && *v < 0 {
 			return fmt.Errorf("%s must be >= 0, got %d", name, *v)
@@ -48,12 +48,12 @@ func ValidateWhen(w domain.RuleWhen) error {
 			return fmt.Errorf("when.ratio_429_ge must be in [0,1], got %v", *w.Ratio429GE)
 		}
 	}
-	if w.RatioErrorGE != nil {
+	if w.RatioFailureGE != nil {
 		if w.CountTotalGE == nil {
-			return fmt.Errorf("when.ratio_error_ge requires when.count_total_ge")
+			return fmt.Errorf("when.ratio_failure_ge requires when.count_total_ge")
 		}
-		if *w.RatioErrorGE < 0 || *w.RatioErrorGE > 1 {
-			return fmt.Errorf("when.ratio_error_ge must be in [0,1], got %v", *w.RatioErrorGE)
+		if *w.RatioFailureGE < 0 || *w.RatioFailureGE > 1 {
+			return fmt.Errorf("when.ratio_failure_ge must be in [0,1], got %v", *w.RatioFailureGE)
 		}
 	}
 	return nil

@@ -496,7 +496,7 @@ func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "停滞超时记 ResultError")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "停滞超时记 连接级/5xx 分流")
 	require.Zero(t, ri.Concurrency)
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()

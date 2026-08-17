@@ -643,11 +643,11 @@
       "model": "Model",
       "windowSeconds": "Window (s)",
       "count429": "429 count ≥",
-      "countError": "Error count ≥",
+      "countFailure": "Failure count ≥",
       "countOK": "OK count ≥",
       "countTotal": "Total count ≥",
       "ratio429": "429 ratio ≥",
-      "ratioError": "Error ratio ≥"
+      "ratioFailure": "Failure ratio ≥"
     },
     "addCondition": "Add condition",
     "condOf": "when",
@@ -665,11 +665,11 @@
       "model": "Model",
       "windowSeconds": "Window (s)",
       "count429": "429 count ≥",
-      "countError": "Error count ≥",
+      "countFailure": "Failure count ≥",
       "countOK": "OK count ≥",
       "countTotal": "Total count ≥",
       "ratio429": "429 ratio ≥",
-      "ratioError": "Error ratio ≥"
+      "ratioFailure": "Failure ratio ≥"
     },
     "thenTitle": "Action (then)",
     "thenHint": "At least one action required. Weight range 0-100.",

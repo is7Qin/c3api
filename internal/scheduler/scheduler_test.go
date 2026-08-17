@@ -229,7 +229,7 @@ func TestMark429CooldownAndRecover(t *testing.T) {
 	go s.writebackLoop(ctx)
 
 	// 种子规则：429 → status=429 + cooldown 30s（MarkResult 异步投递，flush 同步处理）
-	s.MarkResult(1, Result429, nil, 0, "")
+	s.MarkResult(1, rule.Kind429, nil, 0, "")
 	s.FlushRules()
 	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrNoAvailable, "in cooldown should be unavailable")
@@ -237,7 +237,7 @@ func TestMark429CooldownAndRecover(t *testing.T) {
 	s.timeNow = func() time.Time { return time.Now().Add(35 * time.Second) }
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err, "available after cooldown")
-	s.MarkResult(sel.AccountID, ResultOK, nil, 0, "")
+	s.MarkResult(sel.AccountID, rule.KindOK, nil, 0, "")
 	s.FlushRules()
 	s.Release(sel.AccountID)
 	// C-M2 语义钉：OK 恢复 active 但残留 cooldownUntil 保留至过期（新 apply 仅
@@ -258,7 +258,7 @@ func TestMarkErrorBackoff(t *testing.T) {
 	s := newSched(t, m)
 
 	// 种子规则：error → unhealthy + cooldown 5s（指数退避已废弃——升级惩罚由规则表达）
-	s.MarkResult(1, ResultError, nil, 500, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	s.FlushRules()
 	ri, ok := s.Runtime(1)
 	require.True(t, ok)
@@ -266,11 +266,11 @@ func TestMarkErrorBackoff(t *testing.T) {
 	require.Equal(t, 1, ri.ErrCount)
 	require.NotNil(t, ri.CooldownUntil)
 	require.True(t, ri.CooldownUntil.After(time.Now().Add(4*time.Second)), "seed cooldown 5s applied")
-	s.MarkResult(1, ResultError, nil, 500, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	s.FlushRules()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, 2, ri.ErrCount)
-	s.MarkResult(1, ResultOK, nil, 0, "")
+	s.MarkResult(1, rule.KindOK, nil, 0, "")
 	s.FlushRules()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, domain.StatusActive, ri.Status, "success resets status")
@@ -356,7 +356,7 @@ func TestInvalidateGroupByIDRebuild(t *testing.T) {
 	require.Equal(t, int64(0), ri.Concurrency, "added account release hits the new snapshot")
 
 	// 新增账号 3 的结果回流必须落新快照并触发回写。
-	s.MarkResult(3, ResultError, nil, 0, "")
+	s.MarkResult(3, rule.KindNetwork, nil, 0, "")
 	s.FlushRules()
 	ri, _ = s.Runtime(3)
 	require.Equal(t, domain.StatusUnhealthy, ri.Status, "markresult hits the new snapshot")
@@ -365,7 +365,7 @@ func TestInvalidateGroupByIDRebuild(t *testing.T) {
 	// 被移除账号 1：Runtime 不可见，MarkResult/Release 安全 no-op（无回写）。
 	_, ok = s.Runtime(1)
 	require.False(t, ok, "removed account must not be in byID")
-	s.MarkResult(1, ResultError, nil, 500, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	s.FlushRules()
 	s.Release(1)
 
@@ -404,7 +404,7 @@ func TestInvalidateGroupShrinkByID(t *testing.T) {
 
 	_, ok = s.Runtime(5)
 	require.False(t, ok, "removed account must not be in byID")
-	s.MarkResult(5, ResultError, nil, 0, "")
+	s.MarkResult(5, rule.KindNetwork, nil, 0, "")
 	s.FlushRules()
 	s.Release(5)
 
@@ -441,17 +441,17 @@ func TestMarkResultDisabledStaysDisabled(t *testing.T) {
 	require.Equal(t, domain.StatusDisabled, ri.Status, "禁用已在快照生效")
 
 	// 在途请求完成：OK 不得把状态重置回 active、不得重置错误计数（守卫同步短路，不投递）
-	s.MarkResult(1, ResultOK, nil, 0, "")
+	s.MarkResult(1, rule.KindOK, nil, 0, "")
 	ri, _ = s.Runtime(1)
 	require.Equal(t, domain.StatusDisabled, ri.Status, "OK 不得复活禁用账号")
 	require.Zero(t, ri.ErrCount, "OK 不得重置禁用账号的错误计数")
 
 	// 防御性：429/错误分支同样不得给禁用账号设置冷却或改写状态
-	s.MarkResult(1, Result429, nil, 0, "")
+	s.MarkResult(1, rule.Kind429, nil, 0, "")
 	ri, _ = s.Runtime(1)
 	require.Equal(t, domain.StatusDisabled, ri.Status, "429 不得把禁用账号改写为 429")
 	require.Nil(t, ri.CooldownUntil, "429 不得给禁用账号设置冷却")
-	s.MarkResult(1, ResultError, nil, 500, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	ri, _ = s.Runtime(1)
 	require.Equal(t, domain.StatusDisabled, ri.Status, "错误分支不得改写禁用账号")
 
@@ -493,7 +493,7 @@ func TestWeightActionRebuildsRoutes(t *testing.T) {
 	t.Cleanup(cancel)
 	go s.writebackLoop(ctx)
 
-	s.MarkResult(1, ResultError, nil, 500, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	s.FlushRules()
 
 	// 纯 weight 动作：状态/EWMA 不动，快照权重更新
@@ -566,7 +566,7 @@ func TestCloseDrainsWritebacks(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
 	s := newSched(t, m)
 
-	s.MarkResult(1, ResultError, nil, 500, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	s.FlushRules()                                    // 事件 → apply → 回写入队
 	require.NoError(t, s.Close(context.Background())) // 排空 pending 回写
 	require.NoError(t, s.Close(context.Background())) // 幂等
@@ -575,7 +575,7 @@ func TestCloseDrainsWritebacks(t *testing.T) {
 	m.mu.Unlock()
 
 	// ctx 已取消：限时路径直接返回（丢弃/尽最大努力），不阻塞。
-	s.MarkResult(1, ResultError, nil, 500, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	s.FlushRules()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -683,7 +683,7 @@ func TestSelectWeightDistribution(t *testing.T) {
 		require.NoError(t, err)
 		counts[sel.AccountID]++
 		s.Release(sel.AccountID)
-		s.MarkResult(sel.AccountID, ResultOK, nil, 0, "")
+		s.MarkResult(sel.AccountID, rule.KindOK, nil, 0, "")
 	}
 	ratio := float64(counts[1]) / float64(counts[2])
 	// 注意：testify 无 InRange，用 InDelta（±0.1 窗口等价于 [1.9, 2.1]）
@@ -698,7 +698,7 @@ func TestSelectSkipsCooldown(t *testing.T) {
 	})
 	require.NoError(t, s.InvalidateAllSync())
 	// 账号 1 进 429 冷却
-	s.MarkResult(1, Result429, nil, 0, "")
+	s.MarkResult(1, rule.Kind429, nil, 0, "")
 	s.FlushRules()
 	for i := 0; i < 50; i++ {
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
@@ -714,7 +714,7 @@ func TestSelectAllCooldownReturnsNoAvailable(t *testing.T) {
 		{ID: 1, TemplateID: 1, Template: tplWith(domain.FormatOpenAIChat, []string{"gpt-4o"}), UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
 	})
 	require.NoError(t, s.InvalidateAllSync())
-	s.MarkResult(1, Result429, nil, 0, "")
+	s.MarkResult(1, rule.Kind429, nil, 0, "")
 	s.FlushRules()
 	done := make(chan error, 1)
 	go func() {
@@ -748,7 +748,7 @@ func TestSelectTierFallback(t *testing.T) {
 	})
 	require.NoError(t, s.InvalidateAllSync())
 	// 账号 1（tier1）进冷却 → 请求 gpt-4o 应回落 tier2（账号 2，Serves 为 false）
-	s.MarkResult(1, Result429, nil, 0, "")
+	s.MarkResult(1, rule.Kind429, nil, 0, "")
 	s.FlushRules()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
@@ -1018,7 +1018,7 @@ func TestMarkResultLastErrorWriteback(t *testing.T) {
 	go s.writebackLoop(ctx)
 
 	// 错误事件带文本：last_error = errMsg（域内截断 500）
-	s.MarkResult(1, ResultError, nil, 0, strings.Repeat("dial", 200)) // 800 字符 → 截 500
+	s.MarkResult(1, rule.KindNetwork, nil, 0, strings.Repeat("dial", 200)) // 800 字符 → 截 500
 	s.FlushRules()
 	require.Eventually(t, func() bool {
 		m.mu.Lock()
@@ -1033,7 +1033,7 @@ func TestMarkResultLastErrorWriteback(t *testing.T) {
 	m.mu.Lock()
 	m.writes = nil
 	m.mu.Unlock()
-	s.MarkResult(1, ResultError, nil, 500, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	s.FlushRules()
 	require.Eventually(t, func() bool {
 		m.mu.Lock()
@@ -1045,7 +1045,7 @@ func TestMarkResultLastErrorWriteback(t *testing.T) {
 	m.mu.Lock()
 	m.writes = nil
 	m.mu.Unlock()
-	s.MarkResult(1, ResultOK, nil, 200, "")
+	s.MarkResult(1, rule.KindOK, nil, 200, "")
 	s.FlushRules()
 	require.Eventually(t, func() bool {
 		m.mu.Lock()
@@ -1235,7 +1235,7 @@ func TestSelectCarriesAccountExt(t *testing.T) {
 	require.Same(t, ext, sel.Ext, "Selection.Ext = 快照账号 Ext（指针复制零拷贝）")
 	require.Equal(t, credential.TypeCodexOAuth, sel.CredentialType)
 	s.Release(sel.AccountID)
-	s.MarkResult(sel.AccountID, ResultOK, nil, 200, "")
+	s.MarkResult(sel.AccountID, rule.KindOK, nil, 200, "")
 }
 
 func intPtrStr(s string) *string { return &s }
@@ -1255,39 +1255,36 @@ func TestRequestPathZeroLoaderCalls(t *testing.T) {
 		sel, err := s.Select(10, domain.FormatOpenAIResponsesWS, "gpt-4o")
 		require.NoError(t, err)
 		s.Release(sel.AccountID)
-		s.MarkResult(sel.AccountID, ResultOK, nil, 200, "")
+		s.MarkResult(sel.AccountID, rule.KindOK, nil, 200, "")
 	}
 	require.Equal(t, before, cl.loadsN(), "请求期（Select/MarkResult/Release）零加载器触达——热路径零 DB")
 }
 
-// —— ruleKind 单点分流（gate r3 Major） ——
+// —— RuleKindOf 单点分流（gate r3/r5） ——
 
-// TestRuleKindSplit ruleKind(kind, httpStatus) 分流矩阵：ResultError+0 →
-// network（连接级）、ResultError+>0 → 5xx、Result4xx → 4xx、429/OK 回归。
-func TestRuleKindSplit(t *testing.T) {
+// TestRuleKindOf RuleKindOf(httpStatus) 分流矩阵：0 → network（连接级）、
+// ≥500 → 5xx、1-499（不可达防御——调用点恒 0/≥500，4xx 走骨架透传不至此）
+// → 5xx。
+func TestRuleKindOf(t *testing.T) {
 	cases := []struct {
 		name string
-		kind ResultKind
 		code int
 		want rule.Kind
 	}{
-		{"ok", ResultOK, 200, rule.KindOK},
-		{"429", Result429, 429, rule.Kind429},
-		{"error 0 → network", ResultError, 0, rule.KindNetwork},
-		{"error 500 → 5xx", ResultError, 500, rule.Kind5xx},
-		{"error 503 → 5xx", ResultError, 503, rule.Kind5xx},
-		{"4xx → 4xx", Result4xx, 401, rule.Kind4xx},
-		{"4xx 400 → 4xx", Result4xx, 400, rule.Kind4xx},
+		{"0 → network", 0, rule.KindNetwork},
+		{"500 → 5xx", 500, rule.Kind5xx},
+		{"503 → 5xx", 503, rule.Kind5xx},
+		{"400 防御 → 5xx", 400, rule.Kind5xx},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, ruleKind(tc.kind, tc.code))
+			require.Equal(t, tc.want, RuleKindOf(tc.code))
 		})
 	}
 }
 
 // TestMarkResultNetworkVs5xxSplit 经 MarkResult 全链路：code==0 事件 → network
-// 种子（5s 冷却）命中、code=500 → 5xx 种子（10m）命中——分流在 ruleKind 单点，
+// 种子（5s 冷却）命中、code=500 → 5xx 种子（10m）命中——分流在 RuleKindOf 单点，
 // 调用方零改动（failoverLoop/ws_relay/caller 全部连接级调用点自动正确）。
 func TestMarkResultNetworkVs5xxSplit(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIResponsesWS, []string{"gpt-4o"})
@@ -1300,7 +1297,7 @@ func TestMarkResultNetworkVs5xxSplit(t *testing.T) {
 	require.NoError(t, s.reload(context.Background()))
 
 	// 连接级（code==0）→ seed-network → unhealthy + 5s 冷却（不吃 5xx 的 10m）
-	s.MarkResult(1, ResultError, nil, 0, "dial tcp: connection refused")
+	s.MarkResult(1, rule.KindNetwork, nil, 0, "dial tcp: connection refused")
 	s.FlushRules()
 	ri, ok := s.Runtime(1)
 	require.True(t, ok)
@@ -1310,7 +1307,7 @@ func TestMarkResultNetworkVs5xxSplit(t *testing.T) {
 	require.InDelta(t, 5*time.Second, d, float64(2*time.Second), "seed-network 冷却 5s（连接级独立）")
 
 	// 5xx（code=500）→ seed-5xx → unhealthy + 10m
-	s.MarkResult(1, ResultError, nil, 500, "boom")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "boom")
 	s.FlushRules()
 	ri, ok = s.Runtime(1)
 	require.True(t, ok)

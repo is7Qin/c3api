@@ -65,8 +65,8 @@ type FailureDeps struct {
 //  2. 调度器状态置 StatusDisabled（快照摘除 + 经既有 loader 持久化 + last_error
 //     审计随回写落库）——复用既有 pickFrom 过滤器（跳 disabled）与 MarkResult
 //     防复活守卫（置位后在途请求结果短路）
-//  3. 失败请求自身不在此链——由 proxy 既有分类路径处理（fatal → MarkResult
-//     ResultError，failover 不重试同一账号；forward.go 语义，T1 不改动）
+//  3. 失败请求自身不在此链——由 proxy 既有分类路径处理（fatal → 连接级
+//     MarkResult 分流，failover 不重试同一账号；forward.go 语义，T1 不改动）
 //
 // DB 写失败不阻断摘除（fail-closed：账号已判死，摘除优先；错误返回供日志）。
 // 返回 DB 写错误（nil = 成功）；调度摘除为 void（快照外账号 no-op）。

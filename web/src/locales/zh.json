@@ -643,11 +643,11 @@
       "model": "模型",
       "windowSeconds": "窗口（秒）",
       "count429": "429 次数 ≥",
-      "countError": "错误次数 ≥",
+      "countFailure": "失败次数 ≥",
       "countOK": "成功次数 ≥",
       "countTotal": "总次数 ≥",
       "ratio429": "429 比例 ≥",
-      "ratioError": "错误比例 ≥"
+      "ratioFailure": "失败比例 ≥"
     },
     "addCondition": "添加条件",
     "condOf": "当",
@@ -665,11 +665,11 @@
       "model": "模型",
       "windowSeconds": "窗口（秒）",
       "count429": "429 次数 ≥",
-      "countError": "错误次数 ≥",
+      "countFailure": "失败次数 ≥",
       "countOK": "成功次数 ≥",
       "countTotal": "总次数 ≥",
       "ratio429": "429 比例 ≥",
-      "ratioError": "错误比例 ≥"
+      "ratioFailure": "失败比例 ≥"
     },
     "thenTitle": "执行动作（then）",
     "thenHint": "至少一个动作；weight 范围 0-100。",

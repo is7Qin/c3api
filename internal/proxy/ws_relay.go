@@ -16,6 +16,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -70,7 +71,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// I-1 竞态（评审裁决"修"）：上游关闭帧与客户端活跃写帧并发时，上游侧
 	// 错误槽 upErr 有两个并发写者——up-loop 的关闭帧（CloseError）与
 	// client-loop 的写失败（net.ErrClosed，库在解码关闭帧后 c.close() 所致）
-	// ——首写生效下 net.ErrClosed 可能先被记录 → 健康上游误判 ResultError
+	// ——首写生效下 net.ErrClosed 可能先被记录 → 健康上游误判连接级错误
 	// 冷却。修复：关闭帧记录到独立槽 upClose（仅 up-loop 写入、无取消守卫
 	// ——真实帧永不丢），分类时正常关闭帧优先于一切；写失败只归因网络错误
 	// 槽（无关闭帧时才判错）。upLoopDone 保证 upClose 先于分类读取可见
@@ -256,9 +257,10 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	<-upLoopDone
 
 	// 分类与关闭传播（与 SSE caller 同构；relayClassify 纯函数可单测）：
-	//   ① 上游正常关闭（1000/1001）→ 成功 200 ErrNone + ResultOK
+	//   ① 上游正常关闭（1000/1001）→ 成功 200 ErrNone + KindOK
 	//   ② 客户端断开/关闭          → 200 ErrAbort（上游已消费请求；不 MarkResult）
-	//   ③ 上游错误关闭/网络错误/心跳失联 → recordStreamAbort + ResultError
+	//   ③ 上游错误关闭/网络错误/心跳失联 → recordStreamAbort + 连接级分流
+	//      （RuleKindOf(0) → network）
 	// 关闭传播在取消之前：client.Close 握手本身解除客户端循环的阻塞 Read
 	// （对端回关闭帧 → Read 自然返回退出），客户端拿到正常关闭帧。
 	u := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
@@ -274,7 +276,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	switch end {
 	case relayEndUpstreamClosed:
 		_ = up.Close(websocket.StatusNormalClosure, "") // 完成关闭握手（上游已发关闭帧）
-		p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
+		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
 		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrNone, u, start)))
 		_ = client.Close(websocket.StatusNormalClosure, "")
 	case relayEndClientAbort:
@@ -288,7 +290,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		_ = up.Close(code, "") // 向上游传播客户端关闭
 	case relayEndUpstreamError:
 		p.recordStreamAbort(logCtx, reqID, groupID, start, sel, reqModel, u, endErr)
-		p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, 0, endErr.Error())
+		p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(0), nil, 0, endErr.Error())
 		_ = client.Close(wsCloseStatus(endErr), "")
 		up.CloseNow() // 上游已死/失联，免握手等待
 	}

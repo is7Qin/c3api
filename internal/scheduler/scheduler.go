@@ -53,17 +53,6 @@ type Loader interface {
 	UpdateAccountStatus(ctx context.Context, accountID int64, status domain.AccountStatus, cooldownUntil *time.Time, lastError *string, weight *int) error
 }
 
-type ResultKind int
-
-const (
-	ResultOK ResultKind = iota
-	Result429
-	// ResultError 5xx 与连接级（code==0）事件；kind 分流在 ruleKind
-	// （单点：ResultError+0 → network、ResultError+>0 → 5xx）。
-	ResultError
-	Result4xx
-)
-
 type Selection struct {
 	AccountID      int64
 	TemplateID     int64
@@ -604,7 +593,9 @@ func (s *Scheduler) Release(accountID int64) {
 
 // MarkResult 请求结果回流：禁用守卫（同步短路）+ 条件投递（C1）→ 规则引擎异步处理。
 // 快照/EWMA/组路由/DB 回写全部由规则命中后的 apply 回调完成（本方法不再触碰状态）。
-func (s *Scheduler) MarkResult(accountID int64, kind ResultKind, resetAt *time.Time, httpStatus int, errMsg string) {
+// kind 直接收 rule.Kind（单一 kind 概念——scheduler 不再有第二套枚举；连接级/
+// 5xx 分流由调用点 RuleKindOf 完成）。
+func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Time, httpStatus int, errMsg string) {
 	// 断言 ok 防御性守卫（同 Release：MarkResult 恒在 Select 成功之后，快照未
 	// 加载时请求路径不可达；防未来调用序变化时 panic）。
 	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
@@ -624,7 +615,7 @@ func (s *Scheduler) MarkResult(accountID int64, kind ResultKind, resetAt *time.T
 	}
 	// 条件投递（C1）：规则表无 kind=nil/ok 规则时 ok 事件不投递
 	// （无恢复规则时成功结果不影响任何状态，省队列与处理开销）。
-	if kind == ResultOK && !s.rule.NeedsOKEvents() {
+	if kind == rule.KindOK && !s.rule.NeedsOKEvents() {
 		return
 	}
 	var hp *int
@@ -635,7 +626,7 @@ func (s *Scheduler) MarkResult(accountID int64, kind ResultKind, resetAt *time.T
 		AccountID:    accountID,
 		TemplateID:   a.acc.TemplateID,
 		GroupID:      groupIDPtr(a.gid),
-		Kind:         ruleKind(kind, httpStatus),
+		Kind:         kind,
 		HTTPStatus:   hp,
 		ErrorMessage: errMsg,
 		ResetAt:      resetAt,
@@ -691,26 +682,16 @@ func (s *Scheduler) FailAccount(accountID int64, reason string) {
 	}
 }
 
-// ruleKind 映射 ResultKind + httpStatus → 规则引擎事件类别（单点分流，不拆
-// 调用点）：Result429→429；ResultError + httpStatus==0 → network（连接级——
-// ws_relay 中继失联/心跳错误、caller 各 statusOf(err)==0 调用点全部自动正确，
-// 独立冷却不吃 5xx 10m）；ResultError + httpStatus>0 → 5xx；Result4xx→4xx；
-// ResultOK→ok。唯一调用点 MarkResult 事件构造处（httpStatus 参数在作用域内；
-// failoverLoop 5xx/0 分支的 Classify 按同一谓词分流——防呆 b）。
-func ruleKind(k ResultKind, httpStatus int) rule.Kind {
-	switch k {
-	case Result429:
-		return rule.Kind429
-	case ResultError:
-		if httpStatus == 0 {
-			return rule.KindNetwork
-		}
-		return rule.Kind5xx
-	case Result4xx:
-		return rule.Kind4xx
-	default:
-		return rule.KindOK
+// RuleKindOf 连接级/5xx 事件分流（单点 helper，分流外移到调用点——9 处
+// 跨包引用：failoverLoop 5xx/0 分支、ws_relay 中继失联/心跳错误、caller 各
+// statusOf(err)==0 调用点）：code==0 → network（独立冷却不吃 5xx 10m）；
+// ≥500 → 5xx；1-499 为不可达防御（调用点恒 0/≥500，4xx 走骨架透传不至此）
+// → 5xx。429/4xx/ok 调用点显式传 rule.Kind429/Kind4xx/KindOK。
+func RuleKindOf(httpStatus int) rule.Kind {
+	if httpStatus == 0 {
+		return rule.KindNetwork
 	}
+	return rule.Kind5xx
 }
 
 // Classify 错误事件分类决策（failoverLoop 错误分支调用；对齐 MarkResult 模式

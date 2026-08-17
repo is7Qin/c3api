@@ -84,8 +84,8 @@ func newReqID() string {
 //   - handled == true → 请求已处理完毕（成功/客户端断开/流中止已记录；本地拒绝
 //     已写出无记录），骨架直接 return（不可转移）
 //   - handled == false → 上游未接受，骨架接手：
-//     code 429 → MarkResult(Result429) + Release + 转移
-//     code >= 500 或 code == 0（连接级/凭据错）→ MarkResult(ResultError) + Release + 转移
+//     code 429 → MarkResult(Kind429) + Release + 转移
+//     code >= 500 或 code == 0（连接级/凭据错）→ MarkResult(RuleKindOf(code)) + Release + 转移
 //     code 4xx（err == nil）→ 骨架 finish(buildLog(Err4xx)) + 透传 respBody
 //     （空 → 网关文案 "upstream rejected request"）
 //   - err 非 nil 仅在错误路径返回（分类由 code 承载）；骨架用它提取错误文本

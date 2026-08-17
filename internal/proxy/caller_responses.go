@@ -16,6 +16,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -107,7 +108,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			// 客户端断开：释放槽位，无法转移。errors.Is(err, context.Canceled) 即
 			// 客户端断开——sserelay.normalize 已区分三类（C-P2-2）：父 ctx 取消 →
 			// Canceled；上游停滞超时（UpstreamStreamTimeout）→ DeadlineExceeded，
-			// 走上游错误分支（recordStreamAbort + ResultError），不得当作客户端断开。
+			// 走上游错误分支（recordStreamAbort + 连接级/5xx 分流），不得当作客户端断开。
 			if errors.Is(err, context.Canceled) {
 				// 客户端断开：上游已消费请求（成功），仍须记录用量，否则
 				// 成功请求丢日志。与上游流中止同语义：200 + ErrAbort，
@@ -116,10 +117,10 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				return 0, nil, true, nil
 			}
 			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, err)
-			p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, statusOf(err), err.Error())
+			p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(statusOf(err)), nil, statusOf(err), err.Error())
 			return 0, nil, true, nil
 		}
-		p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
+		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
 		p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 		return 200, nil, true, nil
 	}
@@ -160,7 +161,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	if respImageDetectOn(sel) {
 		img = respImageCountBody([]byte(resp.RawJSON()))
 	}
-	p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
+	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
 	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 	return 200, nil, true, nil
 }

@@ -207,8 +207,8 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			// 501/fatal/4xx 已收尾（错误帧 + 记录）——请求终止不转移
 			return 0, nil, true, nil
 		} else {
-			// 429 → Result429 转移；5xx（归一 lastCode 原样）/RefreshError/
-			// 网络（code 0）→ ResultError 转移——分类由循环统一完成。
+			// 429 → Kind429 转移；5xx（归一 lastCode 原样）/RefreshError/
+			// 网络（code 0）→ RuleKindOf(code) 转移——分类由循环统一完成。
 			return code, []byte(msg), false, nil
 		}
 	}

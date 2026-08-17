@@ -171,10 +171,10 @@ func TestValidateWhen(t *testing.T) {
 		{"negative count total", domain.RuleWhen{CountTotalGE: intPtr(-2)}, false},
 		{"ratio over 1", domain.RuleWhen{Ratio429GE: f64Ptr(1.5), CountTotalGE: intPtr(4)}, false},
 		{"ratio without total", domain.RuleWhen{Ratio429GE: f64Ptr(0.5)}, false},
-		{"ratio error without total", domain.RuleWhen{RatioErrorGE: f64Ptr(0.5)}, false},
+		{"ratio error without total", domain.RuleWhen{RatioFailureGE: f64Ptr(0.5)}, false},
 		{"ratio with total", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)}, true},
 		{"full valid", domain.RuleWhen{
-			Kind: strPtr("5xx"), CountErrorGE: intPtr(2), WindowSeconds: intPtr(30),
+			Kind: strPtr("5xx"), CountFailureGE: intPtr(2), WindowSeconds: intPtr(30),
 		}, true},
 	}
 	for _, tc := range cases {
@@ -238,19 +238,19 @@ func TestWindowAdvanceAndMerge(t *testing.T) {
 	wm.Add(Event{AccountID: 2, Kind: Kind429, OccurredAt: at(2)}) // 桶 [0,10)
 
 	// 跨窗合并：20s 窗口含 [0,20) 两桶
-	require.Equal(t, windowSnapshot{err: 3}, wm.Snapshot(1, 20, at(15)))
+	require.Equal(t, windowSnapshot{failure: 3}, wm.Snapshot(1, 20, at(15)))
 	// 请求秒数 < 桶内偏移 → 只统计当前桶（t=0/5 在 [0,10)，不在 5s 窗口）
-	require.Equal(t, windowSnapshot{err: 1}, wm.Snapshot(1, 5, at(15)))
+	require.Equal(t, windowSnapshot{failure: 1}, wm.Snapshot(1, 5, at(15)))
 	// 请求秒数超覆盖 → 钳制全环
-	require.Equal(t, windowSnapshot{err: 3}, wm.Snapshot(1, 600, at(15)))
+	require.Equal(t, windowSnapshot{failure: 3}, wm.Snapshot(1, 600, at(15)))
 	// 账号隔离
 	require.Equal(t, windowSnapshot{t429: 1}, wm.Snapshot(2, 60, at(15)))
 
 	// 推进到 25s：三事件仍全在 60s 窗口内
-	require.Equal(t, windowSnapshot{err: 3}, wm.Snapshot(1, 60, at(25)))
+	require.Equal(t, windowSnapshot{failure: 3}, wm.Snapshot(1, 60, at(25)))
 
 	// 推进到 70s：t=0/5（65s/70s 前）滑出 60s 窗口，t=15（55s 前）仍在
-	require.Equal(t, windowSnapshot{err: 1}, wm.Snapshot(1, 60, at(70)))
+	require.Equal(t, windowSnapshot{failure: 1}, wm.Snapshot(1, 60, at(70)))
 
 	// 推进到 81s：t=15（66s 前）滑出
 	require.Equal(t, windowSnapshot{}, wm.Snapshot(1, 60, at(81)))
@@ -267,9 +267,9 @@ func TestWindowDecay(t *testing.T) {
 	wm.Add(evAt(Kind5xx, 31))
 
 	// 窗口 [1,31]：桶 [0,5) 与窗口部分重叠 → 全计（近似），t=0/1/2 仍未衰减
-	require.Equal(t, windowSnapshot{err: 4}, wm.Snapshot(1, 30, at(31)))
+	require.Equal(t, windowSnapshot{failure: 4}, wm.Snapshot(1, 30, at(31)))
 	// 窗口 [6,36]：桶 [0,5) 完全滑出 → 只剩 t=31
-	require.Equal(t, windowSnapshot{err: 1}, wm.Snapshot(1, 30, at(36)))
+	require.Equal(t, windowSnapshot{failure: 1}, wm.Snapshot(1, 30, at(36)))
 }
 
 func TestWindowTrackOK(t *testing.T) {
@@ -294,7 +294,7 @@ func TestWindowCleanup(t *testing.T) {
 	wm.cleanup(at(141)) // cutoff = 1s：aid1 过期、aid2 新鲜（时间序扫描即停）
 	require.Len(t, wm.lastSeen, 1)
 	require.Equal(t, windowSnapshot{}, wm.Snapshot(1, 60, at(141)))
-	require.Equal(t, windowSnapshot{err: 1}, wm.Snapshot(2, 60, at(141)))
+	require.Equal(t, windowSnapshot{failure: 1}, wm.Snapshot(2, 60, at(141)))
 }
 
 // —— 评估 ——
@@ -328,17 +328,17 @@ func TestMatch(t *testing.T) {
 		{"group id ev nil", domain.RuleWhen{GroupID: gid}, okEv(KindOK), windowSnapshot{}, false},
 		{"count 429 below", domain.RuleWhen{Count429GE: intPtr(2)}, okEv(Kind429), windowSnapshot{t429: 1}, false},
 		{"count 429 ok", domain.RuleWhen{Count429GE: intPtr(2)}, okEv(Kind429), windowSnapshot{t429: 2}, true},
-		{"count error ok", domain.RuleWhen{CountErrorGE: intPtr(2)}, okEv(Kind5xx), windowSnapshot{err: 3}, true},
+		{"count failure ok", domain.RuleWhen{CountFailureGE: intPtr(2)}, okEv(Kind5xx), windowSnapshot{failure: 3}, true},
 		{"count ok below", domain.RuleWhen{CountOKGE: intPtr(2)}, okEv(KindOK), windowSnapshot{ok: 1}, false},
-		{"count total below", domain.RuleWhen{CountTotalGE: intPtr(4)}, okEv(KindOK), windowSnapshot{ok: 2, err: 1}, false},
+		{"count total below", domain.RuleWhen{CountTotalGE: intPtr(4)}, okEv(KindOK), windowSnapshot{ok: 2, failure: 1}, false},
 		{"ratio below threshold", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)},
 			okEv(Kind429), windowSnapshot{t429: 1, ok: 3}, false},
 		{"ratio at threshold", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)},
 			okEv(Kind429), windowSnapshot{t429: 2, ok: 2}, true},
 		{"ratio total below floor", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)},
 			okEv(Kind429), windowSnapshot{t429: 1, ok: 1}, false},
-		{"ratio error ok", domain.RuleWhen{RatioErrorGE: f64Ptr(0.75), CountTotalGE: intPtr(4)},
-			okEv(Kind5xx), windowSnapshot{err: 3, ok: 1}, true},
+		{"ratio failure ok", domain.RuleWhen{RatioFailureGE: f64Ptr(0.75), CountTotalGE: intPtr(4)},
+			okEv(Kind5xx), windowSnapshot{failure: 3, ok: 1}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -495,7 +495,7 @@ func TestDisabledRuleNotLoaded(t *testing.T) {
 func TestHitKeepsCountsThenDecays(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "escalate", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("5xx"), CountErrorGE: intPtr(2), WindowSeconds: intPtr(30)},
+		When: domain.RuleWhen{Kind: strPtr("5xx"), CountFailureGE: intPtr(2), WindowSeconds: intPtr(30)},
 		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
 	})
 	var rec recorder
@@ -802,11 +802,11 @@ func TestClassifyMessageContains(t *testing.T) {
 
 // TestClassifyWindowRulePossibleHit 窗口条件规则按"可能命中"保守处理：非窗口
 // 维度命中即视为命中（punish=true 保证事件投递，worker 窗口精确裁决）——
-// count_error_ge 规则不得因预判跳过导致事件不投递。
+// count_failure_ge 规则不得因预判跳过导致事件不投递。
 func TestClassifyWindowRulePossibleHit(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "escalate", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtr("4xx"), CountErrorGE: intPtr(5), WindowSeconds: intPtr(60)},
+			When: domain.RuleWhen{Kind: strPtr("4xx"), CountFailureGE: intPtr(5), WindowSeconds: intPtr(60)},
 			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
 	)
 	code := 401
@@ -816,23 +816,23 @@ func TestClassifyWindowRulePossibleHit(t *testing.T) {
 }
 
 // TestWindowErrBucket4xx5xxNetwork 窗口计数防呆（gate r4）：枚举重构后
-// Kind4xx/Kind5xx/KindNetwork 事件必须进 err 桶——count_error_ge 规则经
+// Kind4xx/Kind5xx/KindNetwork 事件必须进 failure 桶——count_failure_ge 规则经
 // 完整引擎路径命中（漏加 case 则静默失真）。
 func TestWindowErrBucket4xx5xxNetwork(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "escalate", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{CountErrorGE: intPtr(3), WindowSeconds: intPtr(30)},
+		When: domain.RuleWhen{CountFailureGE: intPtr(3), WindowSeconds: intPtr(30)},
 		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
 	})
 	var rec recorder
 	e.SetApply(rec.fn)
 
-	// 1×5xx + 1×4xx + 1×network → err 桶 = 3 → count_error_ge=3 命中
-	//（kind 不限——只测 err 桶计数；漏加 case 则三类事件不进桶，永不命中）
+	// 1×5xx + 1×4xx + 1×network → failure 桶 = 3 → count_failure_ge=3 命中
+	//（kind 不限——只测 failure 桶计数；漏加 case 则三类事件不进桶，永不命中）
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind5xx, OccurredAt: at(0)})
 	require.Empty(t, rec.get())
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind4xx, OccurredAt: at(1)})
 	require.Empty(t, rec.get())
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: KindNetwork, OccurredAt: at(2)})
-	require.Len(t, rec.get(), 1, "4xx/5xx/network 三类事件全部计入 err 桶（防呆 a）")
+	require.Len(t, rec.get(), 1, "4xx/5xx/network 三类事件全部计入 failure 桶（防呆 a）")
 }

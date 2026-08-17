@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -46,7 +47,7 @@ type imageStreamGenerator func(ctx context.Context, cred *domain.AccountCredenti
 //     文案复用 T2 提取机制）
 //   - 响应头已发后失败 → HTTP 状态不可用 → SSE error 帧（event: error +
 //     data {"message": "…"}）+ EOF；计费走 recordStreamAbort（已收集张数
-//     落账，无 completed 则 0 张）+ MarkResult(ResultError)
+//     落账，无 completed 则 0 张）+ MarkResult(连接级/5xx 分流)
 //   - fn 回调错误 → 立即终止并透传（客户端断开/网关中止——写入失败即断连）
 //   - 客户端断开（r.Context().Err() != nil）→ 不 MarkResult（镜像既有结构）
 //   - 0 图成功边界（SDK Data 空 → 无任何事件）→ 网关自行收尾：200 + 记 0
@@ -122,13 +123,13 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		flushWriter(w)
 		// abort 双分支（镜像 caller_responses.go:92-101 既有结构）：客户端断开 →
 		// 释放槽位 + 已收集张数照常计费、不 MarkResult（无法转移）；上游错误 →
-		// recordStreamAbort + ResultError。
+		// recordStreamAbort + 连接级/5xx 分流。
 		if r.Context().Err() != nil {
 			p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
 		p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, u, genErr)
-		p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, statusOf(genErr), genErr.Error())
+		p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(statusOf(genErr)), nil, statusOf(genErr), genErr.Error())
 		return 0, nil, true, nil
 	}
 
@@ -138,7 +139,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		writeSSEHeaders(w)
 		flushWriter(w)
 	}
-	p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
+	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
 	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrNone, u, start)))
 	return http.StatusOK, nil, true, nil
 }

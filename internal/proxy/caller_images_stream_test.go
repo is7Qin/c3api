@@ -250,7 +250,7 @@ func TestStreamImagePreHeaderError(t *testing.T) {
 
 // TestStreamImagePostHeaderError 响应头已发后失败（P2-2）：HTTP 状态不可用 →
 // SSE error 帧（data 含 message——信封文案）+ EOF；计费走 recordStreamAbort
-// （已收集张数落账）+ MarkResult(ResultError)。
+// （已收集张数落账）+ MarkResult(连接级/5xx 分流)。
 func TestStreamImagePostHeaderError(t *testing.T) {
 	p, store := newImageStreamTestProxy(t, nil)
 	r, rec := streamImageReq(t, nil)
@@ -273,7 +273,7 @@ func TestStreamImagePostHeaderError(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "上游错误 MarkResult(ResultError)")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "上游错误 MarkResult(连接级/5xx 分流)")
 }
 
 // TestStreamImageAbortNoCompleted 响应头已发后失败且无 completed：已收集 0 张

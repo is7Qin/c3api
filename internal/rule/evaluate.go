@@ -13,8 +13,8 @@ import (
 
 // ruleNeedsWindow 规则是否依赖窗口计数（含比例——比例分母来自窗口聚合）。
 func ruleNeedsWindow(w domain.RuleWhen) bool {
-	return w.Count429GE != nil || w.CountErrorGE != nil || w.CountOKGE != nil ||
-		w.CountTotalGE != nil || w.Ratio429GE != nil || w.RatioErrorGE != nil
+	return w.Count429GE != nil || w.CountFailureGE != nil || w.CountOKGE != nil ||
+		w.CountTotalGE != nil || w.Ratio429GE != nil || w.RatioFailureGE != nil
 }
 
 // ruleWindowSeconds 规则统计窗口秒数；未配置取默认。
@@ -55,8 +55,9 @@ func matchBasic(w domain.RuleWhen, ev Event) bool {
 }
 
 // Match 规则 when 与事件（+ 窗口计数）是否匹配：等值/子串/计数阈值/比例。
-// 窗口比例 = t429(或 err) / (ok+err+t429)，仅当 total ≥ CountTotalGE 时参与判定
-// （样本不足不满足，ValidateWhen 已保证比例类必配 CountTotalGE，此处仍防御）。
+// 窗口比例 = t429(或 failure) / (ok+failure+t429)，仅当 total ≥ CountTotalGE
+// 时参与判定（样本不足不满足，ValidateWhen 已保证比例类必配 CountTotalGE，
+// 此处仍防御）。
 func Match(w domain.RuleWhen, ev Event, wc windowSnapshot) bool {
 	if !matchBasic(w, ev) {
 		return false
@@ -64,7 +65,7 @@ func Match(w domain.RuleWhen, ev Event, wc windowSnapshot) bool {
 	if w.Count429GE != nil && wc.t429 < *w.Count429GE {
 		return false
 	}
-	if w.CountErrorGE != nil && wc.err < *w.CountErrorGE {
+	if w.CountFailureGE != nil && wc.failure < *w.CountFailureGE {
 		return false
 	}
 	if w.CountOKGE != nil && wc.ok < *w.CountOKGE {
@@ -76,7 +77,7 @@ func Match(w domain.RuleWhen, ev Event, wc windowSnapshot) bool {
 	if w.Ratio429GE != nil && !ratioPass(wc.t429, wc.total(), w.CountTotalGE, *w.Ratio429GE) {
 		return false
 	}
-	if w.RatioErrorGE != nil && !ratioPass(wc.err, wc.total(), w.CountTotalGE, *w.RatioErrorGE) {
+	if w.RatioFailureGE != nil && !ratioPass(wc.failure, wc.total(), w.CountTotalGE, *w.RatioFailureGE) {
 		return false
 	}
 	return true

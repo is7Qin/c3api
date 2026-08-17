@@ -484,7 +484,7 @@ func blackHoleWSServer(t *testing.T) *httptest.Server {
 // 接受 TCP 但永不回 101 → 修复前拨号无界等待（failover 循环永久阻塞占死并发
 // 槽）。修复后 wrapped ctx 超时 → 静态路 code=0 → failoverLoop 判定
 // r.Context().Err()==nil（wrapped ctx 取消不向上传播——原 r.Context() 未取消）
-// → 不落 499、按连接级 MarkResult(ResultError) 转移 → 下一轮/耗尽。注入短
+// → 不落 499、按连接级 MarkResult(连接级/5xx 分流) 转移 → 下一轮/耗尽。注入短
 // wsDialTimeout（50ms，FailoverAttempts=2 → 总耗时 ~100ms 级）：超时转移
 // 必须在秒级完成（修复前此用例读帧 5s 超时即红）。
 func TestResponsesWSBlackHoleDialTimeout(t *testing.T) {
@@ -510,7 +510,7 @@ func TestResponsesWSBlackHoleDialTimeout(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "黑洞超时 → ResultError 冷却")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "黑洞超时 → 连接级/5xx 分流 冷却")
 	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
 	require.NoError(t, p.rec.Close(context.Background()))
 	require.NoError(t, p.errlog.Close(context.Background()))
@@ -659,7 +659,7 @@ func TestResponsesWSDial4xxNoBodyDecoupled(t *testing.T) {
 	require.Contains(t, *lg.ErrorMessage, "but got 403", "落盘含 dialErr 全文（与帧文案解耦）")
 }
 
-// TestResponsesWSDial429Failover 静态拨号 429 → 循环 429 分类（Result429 转移 +
+// TestResponsesWSDial429Failover 静态拨号 429 → 循环 429 分类（Kind429 转移 +
 // MarkResult httpStatus 429）：错误文本经 respBody 回传（归一 msg——纯文本经
 // 骨架"提取为空直取原文"回退不丢）；耗尽记 Err429 + 状态码 429（WS 无
 // Retry-After——固定错误帧文案）。
@@ -681,7 +681,7 @@ func TestResponsesWSDial429Failover(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.Status429, ri.Status, "429 → Result429 冷却")
+	require.Equal(t, domain.Status429, ri.Status, "429 → Kind429 冷却")
 	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
 	require.NoError(t, p.rec.Close(context.Background()), "Recorder 手动 flush")
 	require.NoError(t, p.errlog.Close(context.Background()), "errlog 手动 flush（失败行走 err_logs）")
@@ -718,7 +718,7 @@ func TestResponsesWSDial5xxNormalized(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "5xx → ResultError 冷却")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "5xx → 连接级/5xx 分流 冷却")
 	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
 	require.NoError(t, p.rec.Close(context.Background()), "Recorder 手动 flush")
 	require.NoError(t, p.errlog.Close(context.Background()), "errlog 手动 flush（失败行走 err_logs）")
@@ -763,7 +763,7 @@ func TestSniffResponsesCompleted(t *testing.T) {
 // TestRelayClassifyCloseFramePriority I-1 分类单元测试（确定性）：上游关闭帧
 // 与客户端循环并发写失败（net.ErrClosed）的槽位组合——正常关闭帧恒优先
 // （写失败只归因网络错误，无关闭帧时才判错）；客户端断开恒 abort；错误
-// 关闭帧/失联恒 ResultError。错误槽兜底优先级 upErr > pingErr > upClose
+// 关闭帧/失联恒 连接级/5xx 分流。错误槽兜底优先级 upErr > pingErr > upClose
 // （错误关闭帧）。修复前写失败与关闭帧竞争 upErr 首写，先记录即误判
 // （健康上游被冷却）。
 func TestRelayClassifyCloseFramePriority(t *testing.T) {
@@ -818,7 +818,7 @@ func TestRelayClassifyCloseFramePriority(t *testing.T) {
 // 发 1000 关闭帧（不再读帧）。网关侧 up-loop 解码关闭帧的同时 client-loop
 // 的 up.Write 必然失败（net.ErrClosed）——修复后关闭帧独立槽位 + 分类优先
 // → 恒成功（200 ErrNone + 5 计数 usage）；修复前两错误竞争 upErr 首写，
-// 写失败先记录即误判 ResultError（健康上游被冷却）。
+// 写失败先记录即误判 连接级/5xx 分流（健康上游被冷却）。
 func TestResponsesWSConcurrentWriteClose(t *testing.T) {
 	hooks := &fakeWSHooks{frameLimit: 1}
 	up := fakeResponsesWS(t, hooks)
@@ -854,7 +854,7 @@ func TestResponsesWSConcurrentWriteClose(t *testing.T) {
 		}
 	}
 	require.True(t, seenCompleted, "response.completed 必须完整透传")
-	// 网关必须判成功（1000 关闭帧）——误判 ResultError 时客户端收到 1011
+	// 网关必须判成功（1000 关闭帧）——误判 连接级/5xx 分流 时客户端收到 1011
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 	<-floodDone
 

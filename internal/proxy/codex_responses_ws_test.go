@@ -284,7 +284,7 @@ func dialResponsesWSHeaders(t *testing.T, srv *httptest.Server, h http.Header) *
 // TestCodexWSBlackHoleDialTimeout codex 拨号同款超时（T3）：黑洞上游永不回
 // 101 → wrapped ctx 超时 → SDK dialStatus(nil)=0（resp=nil 安全返回）→
 // DialError{StatusCode:0} → handleCodexDialError 既有 default 分支连接级转移
-// （零新分支）→ 耗尽错误帧 + ResultError 冷却 + 并发槽释放。
+// （零新分支）→ 耗尽错误帧 + 连接级/5xx 分流 冷却 + 并发槽释放。
 func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
 	old := wsDialTimeout
 	wsDialTimeout = 50 * time.Millisecond
@@ -310,7 +310,7 @@ func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(10) // codex 代理账号 ID = 组键 10（newTestCodexWSProxy）
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "黑洞超时 → ResultError 冷却")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "黑洞超时 → 连接级/5xx 分流 冷却")
 	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
 	require.NoError(t, p.rec.Close(context.Background()))
 	waitStoreLogs(t, store, 1) // errlog 异步落袋（20ms flush；worker 由 helper cleanup 收尾，不手动 Close）

@@ -156,8 +156,8 @@ func TestFailAccountMarkResultGuard(t *testing.T) {
 	require.NoError(t, err)
 
 	s.FailAccount(1, "auth permanently revoked")
-	s.MarkResult(1, ResultOK, nil, 200, "")
-	s.MarkResult(1, ResultError, nil, 0, "stale error")
+	s.MarkResult(1, rule.KindOK, nil, 200, "")
+	s.MarkResult(1, rule.KindNetwork, nil, 0, "stale error")
 	s.FlushRules()
 	s.Release(1)
 	drainWrites(t, s)
@@ -174,7 +174,7 @@ func TestFailAccountMarkResultGuard(t *testing.T) {
 
 // TestFailAccountQueuedEventsBeforeFailure 入队在先防复活（P1 评审——探针
 // 确定性复现）：规则事件在失效置位**之前**已入队（MarkResult 时账号仍 active，
-// 守卫放行；ResultError/ResultOK 各一）→ FailAccount 置 disabled → FlushRules
+// 守卫放行；网络/5xx/KindOK 各一）→ FailAccount 置 disabled → FlushRules
 // 处理入队事件 → apply 必须跳过 disabled 快照的状态覆盖——快照与 loader 落库
 // 均保持 disabled + 不可调度（修复前：apply 覆盖为 unhealthy/active，回写合并
 // 后写覆盖先写把 DB 落成 unhealthy/active，账号重新可调度）。
@@ -183,8 +183,8 @@ func TestFailAccountQueuedEventsBeforeFailure(t *testing.T) {
 	s := newSchedLoader(t, pl)
 
 	// 入队在先：error→unhealthy+冷却 / ok→active 两条事件在失效前入队
-	s.MarkResult(1, ResultError, nil, 500, "boom")
-	s.MarkResult(1, ResultOK, nil, 200, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "boom")
+	s.MarkResult(1, rule.KindOK, nil, 200, "")
 	s.FailAccount(1, "auth permanently revoked")
 	s.FlushRules() // 消费入队事件 → apply
 	drainWrites(t, s)

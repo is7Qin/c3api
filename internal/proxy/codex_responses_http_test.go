@@ -599,7 +599,7 @@ func TestCodexResponsesEnvelope4xxPassthrough(t *testing.T) {
 	require.Equal(t, 1, upc.callsN(), "4xx 确定性拒绝不转移")
 }
 
-// TestCodexResponses429Failover 信封 429 → Result429 转移：首账号 429 → 次账号
+// TestCodexResponses429Failover 信封 429 → Kind429 转移：首账号 429 → 次账号
 // 成功（failover 分类不变——statusOf/upstreamBody 复用面）。
 func TestCodexResponses429Failover(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t,
@@ -800,7 +800,7 @@ func selectCodexAccount(t *testing.T, p *Proxy, accountID int64) *scheduler.Sele
 }
 
 // TestCodexResponsesStreamMidstreamWriteError 流中止（fn 写出失败——客户端断开
-// 等价症状但 r.Context() 存活 = 上游侧问题）：recordStreamAbort + ResultError
+// 等价症状但 r.Context() 存活 = 上游侧问题）：recordStreamAbort + 连接级/5xx 分流
 // + 不补发 [DONE]；200 已写出（statusOf(err)=0 归连接级）。
 func TestCodexResponsesStreamMidstreamWriteError(t *testing.T) {
 	up, _ := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
@@ -826,7 +826,7 @@ func TestCodexResponsesStreamMidstreamWriteError(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "上游流中止 → ResultError")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "上游流中止 → 连接级/5xx 分流")
 	require.Zero(t, ri.Concurrency, "收尾释放并发槽")
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()

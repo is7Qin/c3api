@@ -200,7 +200,7 @@ func TestRelayWSFirstFrameWriteFail(t *testing.T) {
 
 // TestRelayWSUpstreamNormalClose 分类路径①：上游正常关闭（1000）→ 成功——
 // completed 帧原样透传客户端 + 1000 关闭帧；ErrNone 200 记录（5 计数 usage）+
-// ResultOK（不冷却）+ 并发槽释放；传输 Close 完成关闭握手（同码）。
+// KindOK（不冷却）+ 并发槽释放；传输 Close 完成关闭握手（同码）。
 func TestRelayWSUpstreamNormalClose(t *testing.T) {
 	ft := &fakeTransport{readQueue: []fakeRead{
 		{typ: websocket.MessageText, frame: []byte(responsesWSCompletedFrame)},
@@ -279,7 +279,7 @@ func TestRelayWSClientAbort(t *testing.T) {
 }
 
 // TestRelayWSUpstreamError 分类路径③：上游网络错误（无关闭帧）→ 错误——记录
-// 先行（ErrAbort + 断前 usage）+ ResultError 冷却（StatusUnhealthy）+ 客户端
+// 先行（ErrAbort + 断前 usage）+ 连接级/5xx 分流 冷却（StatusUnhealthy）+ 客户端
 // 1011 关闭 + 传输 CloseNow 直拆（上游已死免握手）。
 func TestRelayWSUpstreamError(t *testing.T) {
 	ft := &fakeTransport{readQueue: []fakeRead{
@@ -311,7 +311,7 @@ func TestRelayWSUpstreamError(t *testing.T) {
 	env.p.sched.FlushRules()
 	ri, ok := env.p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "上游错误 → ResultError 冷却")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "上游错误 → 连接级/5xx 分流 冷却")
 	require.Zero(t, ri.Concurrency, "并发槽必须释放")
 }
 
@@ -401,7 +401,7 @@ func TestRelayWSFrameHookBeforeClientWrite(t *testing.T) {
 
 // client→up goroutine panic（up.Write 第 2 次写注入；首帧转发 = 第 1 次写，
 // 在 goroutine 外不可注入）→ 按身份进 upErr 槽 → 上游错误收尾：客户端 1011
-// + 传输 CloseNow + ResultError 冷却（与上游网络错误同分类，不误伤）。
+// + 传输 CloseNow + 连接级/5xx 分流 冷却（与上游网络错误同分类，不误伤）。
 func TestRelayWSClientLoopPanic(t *testing.T) {
 	ft := &fakeTransport{panicWritesFrom: 2, readBlock: make(chan struct{})}
 	env, c, _ := newRelayWSTest(t, ft, nil,
@@ -420,7 +420,7 @@ func TestRelayWSClientLoopPanic(t *testing.T) {
 	env.p.sched.FlushRules()
 	ri, ok := env.p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "panic 视为上游错误 → ResultError 冷却")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "panic 视为上游错误 → 连接级/5xx 分流 冷却")
 	require.Zero(t, ri.Concurrency, "并发槽必须释放")
 }
 
@@ -477,5 +477,5 @@ func TestRelayWSHeartbeatPanic(t *testing.T) {
 	env.p.sched.FlushRules()
 	ri, ok := env.p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "心跳 panic → ResultError 冷却")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "心跳 panic → 连接级/5xx 分流 冷却")
 }

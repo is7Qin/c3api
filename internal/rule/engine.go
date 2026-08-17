@@ -22,7 +22,8 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// Kind 事件类别（与 scheduler.ResultKind 的映射由 scheduler 侧 ruleKind 单点分流）。
+// Kind 事件类别（单一 kind 概念；连接级/5xx 分流由 scheduler.RuleKindOf 在
+// 调用点完成——scheduler 不再有第二套枚举）。
 type Kind int
 
 const (

@@ -23,6 +23,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
@@ -117,7 +118,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 		//     429/5xx failover 既有分类
 		//   - fatal（errors.As 五类）→ 适配层已统一回调上报（账号失效标记 +
 		//     FailAccount 快照摘除——failover 不重试同账号）；code 0 → 连接级
-		//     MarkResult(ResultError) + 转移其它账号
+		//     MarkResult(RuleKindOf(0)) + 转移其它账号
 		//   - RefreshError/网络 → code 0 → failover 可重试
 		return statusOf(err), upstreamBody(err), false, err
 	}
@@ -130,7 +131,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(wire)
-	p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
+	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
 	// 计费提取：data 长 = 张数 + usage image_tokens → usageTuple → finish 的
 	// applyImageBilling（GetImagePrice → ImageCost，倍率整单施加）。
 	ii, io, count := billing.ImageUsageFromResponse(wire)

@@ -14,6 +14,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -190,7 +191,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	_, _ = w.Write(resp.Raw)
 	// 2xx → 按次计费落账（call_count=1；price_per_call/cost 由 applyBilling
 	// search 分支按 GetFunctionPrice("codex-search") 结算——无 token 分量）。
-	p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
+	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
 	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }
@@ -232,7 +233,7 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	_, _ = w.Write(data)
 	// 2xx → 按次计费落账（call_count=1；与 codex 路径同款——applyBilling
 	// search 分支结算）。
-	p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
+	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
 	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }

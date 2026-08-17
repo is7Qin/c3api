@@ -12,15 +12,15 @@ import (
 
 // winCounts 单账号单桶计数。
 type winCounts struct {
-	ok, err, t429 int
+	ok, failure, t429 int
 }
 
-// windowSnapshot 近 N 秒聚合计数（total = ok + err + t429）。
+// windowSnapshot 近 N 秒聚合计数（total = ok + failure + t429）。
 type windowSnapshot struct {
-	ok, err, t429 int
+	ok, failure, t429 int
 }
 
-func (s windowSnapshot) total() int { return s.ok + s.err + s.t429 }
+func (s windowSnapshot) total() int { return s.ok + s.failure + s.t429 }
 
 // ringBuckets 桶环完整历史桶数上限：覆盖窗口 = 完整桶数 × 粒度，取到 6 桶即止
 // （60s 窗口 → 10s × 6；固定粒度近似，桶边界误差 ≤ 一个粒度）。
@@ -112,10 +112,10 @@ func (w *windowMap) Add(ev Event) {
 		c.ok++
 	case Kind429:
 		c.t429++
-	// 错误事件桶：4xx/5xx/network 全部并入（枚举重构防呆——漏加则
-	// count_error_ge/ratio_error_ge 静默失真；kind=error 已删除）。
+	// 失败事件桶：4xx/5xx/network 全部并入（枚举重构防呆——漏加则
+	// count_failure_ge/ratio_failure_ge 静默失真）。
 	case Kind4xx, Kind5xx, KindNetwork:
-		c.err++
+		c.failure++
 	}
 	w.buckets[idx][ev.AccountID] = c
 	if last, ok := w.lastSeen[ev.AccountID]; !ok || ev.OccurredAt.After(last) {
@@ -156,7 +156,7 @@ func (w *windowMap) Snapshot(aid int64, seconds int, at time.Time) windowSnapsho
 		}
 		if c, ok := w.buckets[idx][aid]; ok {
 			out.ok += c.ok
-			out.err += c.err
+			out.failure += c.failure
 			out.t429 += c.t429
 		}
 	}

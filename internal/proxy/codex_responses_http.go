@@ -15,6 +15,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
@@ -44,7 +45,7 @@ var errCodexResponsesNotIntegrated = &formatError{status: http.StatusNotImplemen
 //     failover 既有分类（failover 循环按 code 分类）
 //   - fatal（errors.As 五类）→ 适配层已统一回调上报（账号失效标记 +
 //     FailAccount 快照摘除——failover 不重试同账号）；code 0 → 连接级
-//     MarkResult(ResultError) + 转移其它账号（与 images 路径同语义）
+//     MarkResult(RuleKindOf(0)) + 转移其它账号（与 images 路径同语义）
 //   - RefreshError/网络 → code 0 → failover 可重试
 func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, body []byte, stream bool) (int, []byte, bool, error) {
 	// 客户端请求模型（日志口径）：gjson 顶层提取（与 typed 流式路径同款，
@@ -169,7 +170,7 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	if respImageDetectOn(sel) {
 		img = respImageCountBody(resp.Raw)
 	}
-	p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
+	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
 	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 	return http.StatusOK, nil, true, nil
 }
@@ -190,7 +191,7 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 // 断开/超时收尾镜像 caller_responses.go:92-101 双分支：客户端断开
 // （r.Context().Err() != nil）→ 不 MarkResult（finish 200 ErrAbort——上游已消
 // 费请求，token 取断前已收 usage 帧）；上游超时/错误（帧已写出，200 已定型）
-// → recordStreamAbort 语义 + MarkResult(ResultError)。
+// → recordStreamAbort 语义 + 连接级/5xx 分流。
 //
 // usage 嗅探（P1-1）：fn 内 gjson type 精确判定 + 顶层解析（取首个命中帧——
 // completed 终态恒唯一，usage 只读一次）。
@@ -258,10 +259,10 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		if !framesWritten {
 			return statusOf(err), upstreamBody(err), false, err
 		}
-		// 上游停滞/错误（流中止）：200 已写出——recordStreamAbort + ResultError
+		// 上游停滞/错误（流中止）：200 已写出——recordStreamAbort + 连接级/5xx 分流
 		//（caller_responses.go:106-108 同语义）。
 		p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, err)
-		p.sched.MarkResult(sel.AccountID, scheduler.ResultError, nil, statusOf(err), err.Error())
+		p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(statusOf(err)), nil, statusOf(err), err.Error())
 		return 0, nil, true, nil
 	}
 	// 轮结束清除（HOST-2）：流正常结束且收到 completed 终态（usageTaken）且无
@@ -289,7 +290,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 		return 0, nil, true, nil
 	}
-	p.sched.MarkResult(sel.AccountID, scheduler.ResultOK, nil, http.StatusOK, "")
+	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
 	p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 	return http.StatusOK, nil, true, nil
 }

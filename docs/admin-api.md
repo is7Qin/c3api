@@ -777,14 +777,14 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `kind` | string | `ok` / `429` / `error`（nil = 任意事件） |
+| `kind` | string | `ok` / `429` / `4xx` / `5xx` / `network`（nil = 任意事件） |
 | `http_status` | int | 上游状态码等值匹配 |
 | `error_message_contains` | string | 错误消息子串匹配 |
 | `account_id` / `template_id` / `group_id` | int | 维度等值匹配（nil = 不限） |
 | `model` | string | 模型等值匹配 |
 | `window_seconds` | int | 统计窗口（≥1，缺省 60；固定粒度近似，误差 ≤ 一个粒度） |
-| `count_429_ge` / `count_error_ge` / `count_ok_ge` / `count_total_ge` | int | 窗口内计数阈值（≥0） |
-| `ratio_429_ge` / `ratio_error_ge` | float | 窗口内比例阈值（[0,1]，**必须配 `count_total_ge`**） |
+| `count_429_ge` / `count_failure_ge` / `count_ok_ge` / `count_total_ge` | int | 窗口内计数阈值（≥0）；`count_failure_ge` 语义 = 失败事件桶（4xx/5xx/network 并入） |
+| `ratio_429_ge` / `ratio_failure_ge` | float | 窗口内比例阈值（[0,1]，**必须配 `count_total_ge`**）；`ratio_failure_ge` 分母为失败事件桶 |
 
 `then` 字段（至少一个）：
 
@@ -794,7 +794,7 @@
 | `cooldown` | string | 冷却时长（`time.ParseDuration` 可解析且 >0，如 `"30s"`、`"5h"`） |
 | `weight` | int | 权重（0-100，变更立即重建该组选号序列） |
 
-种子规则（规则表为空时启动自动写入）：`429 → status=429 + cooldown 30s`（priority 10）、`error → status=unhealthy + cooldown 5s`（priority 20）、`ok → status=active`（priority 30，无冷却）。删除全部规则后，下次引擎重载（任意规则 CRUD 或重启）会自动重新播种——规则表不会保持真空。
+种子规则（规则表为空时启动自动写入）：`kind=429 → status=429 + cooldown 30s`（priority 10）、`kind=4xx + http_status=400 → transmit`（priority 15，400 透传原文）、`kind=5xx → status=unhealthy + cooldown 10m`（priority 20）、`kind=network → status=unhealthy + cooldown 5s`（priority 25，连接级独立冷却）、`kind=ok → status=active`（priority 30，无冷却）。删除全部规则后，下次引擎重载（任意规则 CRUD 或重启）会自动重新播种——规则表不会保持真空。
 
 ### 事件模型与匹配语义
 
@@ -815,7 +815,7 @@
   "name": "escalate-on-5xx",
   "priority": 40,
   "enabled": true,
-  "when": { "kind": "error", "count_error_ge": 5, "window_seconds": 60 },
+  "when": { "kind": "5xx", "count_failure_ge": 5, "window_seconds": 60 },
   "then": { "status": "unhealthy", "cooldown": "30s" }
 }
 ```

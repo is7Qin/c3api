@@ -658,7 +658,7 @@ func TestImagesCodexParamsLocal400(t *testing.T) {
 // （5xx 可重试）→ failover 换 api_key 账号——调用器必须复位到直连 caller。
 // 评审前泄漏：caller 单向赋值（codex 分支不复位），api_key 尝试被错误路由到
 // codexImagesCaller → sel.Ext=nil → CredentialFromExt 空凭据 → 502 + 健康
-// api_key 账号 MarkResult(ResultError) 错误率污染 + 无谓失效上报（account 0）。
+// api_key 账号 MarkResult(连接级/5xx 分流) 错误率污染 + 无谓失效上报（account 0）。
 //
 // 确定性说明：weightedSeq 构造 shuffle 后 cursor 按序取 seq[1], seq[0],
 // seq[1], seq[0]…——两请求内无论洗牌序，codex 先序至少一次触发 failover 路径
