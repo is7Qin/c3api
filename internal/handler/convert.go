@@ -315,6 +315,7 @@ func toAPIUsageLog(l *domain.UsageLog) UsageLog {
 	return UsageLog{
 		ID:                       &l.ID,
 		RequestID:                &l.RequestID,
+		ClientIP:                 &l.ClientIP,
 		GroupID:                  &l.GroupID,
 		AccountID:                &l.AccountID,
 		TemplateID:               &l.TemplateID,
@@ -352,6 +353,7 @@ func toAPIErrLog(l *domain.UsageLog) ErrLog {
 	e := ErrLog{
 		ID:           &l.ID,
 		RequestID:    &l.RequestID,
+		ClientIP:     &l.ClientIP,
 		GroupID:      &l.GroupID,
 		AccountID:    &l.AccountID,
 		TemplateID:   &l.TemplateID,

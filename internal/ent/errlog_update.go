@@ -42,6 +42,26 @@ func (_u *ErrLogUpdate) SetNillableRequestID(v *string) *ErrLogUpdate {
 	return _u
 }
 
+// SetClientIP sets the "client_ip" field.
+func (_u *ErrLogUpdate) SetClientIP(v string) *ErrLogUpdate {
+	_u.mutation.SetClientIP(v)
+	return _u
+}
+
+// SetNillableClientIP sets the "client_ip" field if the given value is not nil.
+func (_u *ErrLogUpdate) SetNillableClientIP(v *string) *ErrLogUpdate {
+	if v != nil {
+		_u.SetClientIP(*v)
+	}
+	return _u
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (_u *ErrLogUpdate) ClearClientIP() *ErrLogUpdate {
+	_u.mutation.ClearClientIP()
+	return _u
+}
+
 // SetGroupID sets the "group_id" field.
 func (_u *ErrLogUpdate) SetGroupID(v int64) *ErrLogUpdate {
 	_u.mutation.ResetGroupID()
@@ -372,6 +392,12 @@ func (_u *ErrLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.RequestID(); ok {
 		_spec.SetField(errlog.FieldRequestID, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.ClientIP(); ok {
+		_spec.SetField(errlog.FieldClientIP, field.TypeString, value)
+	}
+	if _u.mutation.ClientIPCleared() {
+		_spec.ClearField(errlog.FieldClientIP, field.TypeString)
+	}
 	if value, ok := _u.mutation.GroupID(); ok {
 		_spec.SetField(errlog.FieldGroupID, field.TypeInt64, value)
 	}
@@ -484,6 +510,26 @@ func (_u *ErrLogUpdateOne) SetNillableRequestID(v *string) *ErrLogUpdateOne {
 	if v != nil {
 		_u.SetRequestID(*v)
 	}
+	return _u
+}
+
+// SetClientIP sets the "client_ip" field.
+func (_u *ErrLogUpdateOne) SetClientIP(v string) *ErrLogUpdateOne {
+	_u.mutation.SetClientIP(v)
+	return _u
+}
+
+// SetNillableClientIP sets the "client_ip" field if the given value is not nil.
+func (_u *ErrLogUpdateOne) SetNillableClientIP(v *string) *ErrLogUpdateOne {
+	if v != nil {
+		_u.SetClientIP(*v)
+	}
+	return _u
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (_u *ErrLogUpdateOne) ClearClientIP() *ErrLogUpdateOne {
+	_u.mutation.ClearClientIP()
 	return _u
 }
 
@@ -846,6 +892,12 @@ func (_u *ErrLogUpdateOne) sqlSave(ctx context.Context) (_node *ErrLog, err erro
 	}
 	if value, ok := _u.mutation.RequestID(); ok {
 		_spec.SetField(errlog.FieldRequestID, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ClientIP(); ok {
+		_spec.SetField(errlog.FieldClientIP, field.TypeString, value)
+	}
+	if _u.mutation.ClientIPCleared() {
+		_spec.ClearField(errlog.FieldClientIP, field.TypeString)
 	}
 	if value, ok := _u.mutation.GroupID(); ok {
 		_spec.SetField(errlog.FieldGroupID, field.TypeInt64, value)

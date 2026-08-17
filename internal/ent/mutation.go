@@ -2597,6 +2597,7 @@ type ErrLogMutation struct {
 	typ            string
 	id             *int64
 	request_id     *string
+	client_ip      *string
 	group_id       *int64
 	addgroup_id    *int64
 	account_id     *int64
@@ -2761,6 +2762,55 @@ func (m *ErrLogMutation) OldRequestID(ctx context.Context) (v string, err error)
 // ResetRequestID resets all changes to the "request_id" field.
 func (m *ErrLogMutation) ResetRequestID() {
 	m.request_id = nil
+}
+
+// SetClientIP sets the "client_ip" field.
+func (m *ErrLogMutation) SetClientIP(s string) {
+	m.client_ip = &s
+}
+
+// ClientIP returns the value of the "client_ip" field in the mutation.
+func (m *ErrLogMutation) ClientIP() (r string, exists bool) {
+	v := m.client_ip
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldClientIP returns the old "client_ip" field's value of the ErrLog entity.
+// If the ErrLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ErrLogMutation) OldClientIP(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldClientIP is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldClientIP requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldClientIP: %w", err)
+	}
+	return oldValue.ClientIP, nil
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (m *ErrLogMutation) ClearClientIP() {
+	m.client_ip = nil
+	m.clearedFields[errlog.FieldClientIP] = struct{}{}
+}
+
+// ClientIPCleared returns if the "client_ip" field was cleared in this mutation.
+func (m *ErrLogMutation) ClientIPCleared() bool {
+	_, ok := m.clearedFields[errlog.FieldClientIP]
+	return ok
+}
+
+// ResetClientIP resets all changes to the "client_ip" field.
+func (m *ErrLogMutation) ResetClientIP() {
+	m.client_ip = nil
+	delete(m.clearedFields, errlog.FieldClientIP)
 }
 
 // SetGroupID sets the "group_id" field.
@@ -3501,9 +3551,12 @@ func (m *ErrLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ErrLogMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.request_id != nil {
 		fields = append(fields, errlog.FieldRequestID)
+	}
+	if m.client_ip != nil {
+		fields = append(fields, errlog.FieldClientIP)
 	}
 	if m.group_id != nil {
 		fields = append(fields, errlog.FieldGroupID)
@@ -3554,6 +3607,8 @@ func (m *ErrLogMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case errlog.FieldRequestID:
 		return m.RequestID()
+	case errlog.FieldClientIP:
+		return m.ClientIP()
 	case errlog.FieldGroupID:
 		return m.GroupID()
 	case errlog.FieldAccountID:
@@ -3591,6 +3646,8 @@ func (m *ErrLogMutation) OldField(ctx context.Context, name string) (ent.Value, 
 	switch name {
 	case errlog.FieldRequestID:
 		return m.OldRequestID(ctx)
+	case errlog.FieldClientIP:
+		return m.OldClientIP(ctx)
 	case errlog.FieldGroupID:
 		return m.OldGroupID(ctx)
 	case errlog.FieldAccountID:
@@ -3632,6 +3689,13 @@ func (m *ErrLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRequestID(v)
+		return nil
+	case errlog.FieldClientIP:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetClientIP(v)
 		return nil
 	case errlog.FieldGroupID:
 		v, ok := value.(int64)
@@ -3841,6 +3905,9 @@ func (m *ErrLogMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *ErrLogMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(errlog.FieldClientIP) {
+		fields = append(fields, errlog.FieldClientIP)
+	}
 	if m.FieldCleared(errlog.FieldGroupID) {
 		fields = append(fields, errlog.FieldGroupID)
 	}
@@ -3876,6 +3943,9 @@ func (m *ErrLogMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *ErrLogMutation) ClearField(name string) error {
 	switch name {
+	case errlog.FieldClientIP:
+		m.ClearClientIP()
+		return nil
 	case errlog.FieldGroupID:
 		m.ClearGroupID()
 		return nil
@@ -3907,6 +3977,9 @@ func (m *ErrLogMutation) ResetField(name string) error {
 	switch name {
 	case errlog.FieldRequestID:
 		m.ResetRequestID()
+		return nil
+	case errlog.FieldClientIP:
+		m.ResetClientIP()
 		return nil
 	case errlog.FieldGroupID:
 		m.ResetGroupID()
@@ -17678,6 +17751,7 @@ type UsageLogMutation struct {
 	typ                            string
 	id                             *int64
 	request_id                     *string
+	client_ip                      *string
 	group_id                       *int64
 	addgroup_id                    *int64
 	account_id                     *int64
@@ -17868,6 +17942,55 @@ func (m *UsageLogMutation) OldRequestID(ctx context.Context) (v string, err erro
 // ResetRequestID resets all changes to the "request_id" field.
 func (m *UsageLogMutation) ResetRequestID() {
 	m.request_id = nil
+}
+
+// SetClientIP sets the "client_ip" field.
+func (m *UsageLogMutation) SetClientIP(s string) {
+	m.client_ip = &s
+}
+
+// ClientIP returns the value of the "client_ip" field in the mutation.
+func (m *UsageLogMutation) ClientIP() (r string, exists bool) {
+	v := m.client_ip
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldClientIP returns the old "client_ip" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldClientIP(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldClientIP is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldClientIP requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldClientIP: %w", err)
+	}
+	return oldValue.ClientIP, nil
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (m *UsageLogMutation) ClearClientIP() {
+	m.client_ip = nil
+	m.clearedFields[usagelog.FieldClientIP] = struct{}{}
+}
+
+// ClientIPCleared returns if the "client_ip" field was cleared in this mutation.
+func (m *UsageLogMutation) ClientIPCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldClientIP]
+	return ok
+}
+
+// ResetClientIP resets all changes to the "client_ip" field.
+func (m *UsageLogMutation) ResetClientIP() {
+	m.client_ip = nil
+	delete(m.clearedFields, usagelog.FieldClientIP)
 }
 
 // SetGroupID sets the "group_id" field.
@@ -19436,9 +19559,12 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 28)
+	fields := make([]string, 0, 29)
 	if m.request_id != nil {
 		fields = append(fields, usagelog.FieldRequestID)
+	}
+	if m.client_ip != nil {
+		fields = append(fields, usagelog.FieldClientIP)
 	}
 	if m.group_id != nil {
 		fields = append(fields, usagelog.FieldGroupID)
@@ -19531,6 +19657,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case usagelog.FieldRequestID:
 		return m.RequestID()
+	case usagelog.FieldClientIP:
+		return m.ClientIP()
 	case usagelog.FieldGroupID:
 		return m.GroupID()
 	case usagelog.FieldAccountID:
@@ -19596,6 +19724,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 	switch name {
 	case usagelog.FieldRequestID:
 		return m.OldRequestID(ctx)
+	case usagelog.FieldClientIP:
+		return m.OldClientIP(ctx)
 	case usagelog.FieldGroupID:
 		return m.OldGroupID(ctx)
 	case usagelog.FieldAccountID:
@@ -19665,6 +19795,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRequestID(v)
+		return nil
+	case usagelog.FieldClientIP:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetClientIP(v)
 		return nil
 	case usagelog.FieldGroupID:
 		v, ok := value.(int64)
@@ -20116,6 +20253,9 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *UsageLogMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(usagelog.FieldClientIP) {
+		fields = append(fields, usagelog.FieldClientIP)
+	}
 	if m.FieldCleared(usagelog.FieldGroupID) {
 		fields = append(fields, usagelog.FieldGroupID)
 	}
@@ -20169,6 +20309,9 @@ func (m *UsageLogMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *UsageLogMutation) ClearField(name string) error {
 	switch name {
+	case usagelog.FieldClientIP:
+		m.ClearClientIP()
+		return nil
 	case usagelog.FieldGroupID:
 		m.ClearGroupID()
 		return nil
@@ -20218,6 +20361,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 	switch name {
 	case usagelog.FieldRequestID:
 		m.ResetRequestID()
+		return nil
+	case usagelog.FieldClientIP:
+		m.ResetClientIP()
 		return nil
 	case usagelog.FieldGroupID:
 		m.ResetGroupID()

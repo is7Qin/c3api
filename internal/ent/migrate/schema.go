@@ -80,6 +80,7 @@ var (
 	ErrLogsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "request_id", Type: field.TypeString},
+		{Name: "client_ip", Type: field.TypeString, Nullable: true},
 		{Name: "group_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "account_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "template_id", Type: field.TypeInt64, Nullable: true},
@@ -103,17 +104,17 @@ var (
 			{
 				Name:    "errlog_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{ErrLogsColumns[14]},
+				Columns: []*schema.Column{ErrLogsColumns[15]},
 			},
 			{
 				Name:    "errlog_group_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{ErrLogsColumns[2], ErrLogsColumns[14]},
+				Columns: []*schema.Column{ErrLogsColumns[3], ErrLogsColumns[15]},
 			},
 			{
 				Name:    "errlog_user_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{ErrLogsColumns[5], ErrLogsColumns[14]},
+				Columns: []*schema.Column{ErrLogsColumns[6], ErrLogsColumns[15]},
 			},
 		},
 	}
@@ -469,6 +470,7 @@ var (
 	UsageLogsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "request_id", Type: field.TypeString},
+		{Name: "client_ip", Type: field.TypeString, Nullable: true},
 		{Name: "group_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "account_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "template_id", Type: field.TypeInt64, Nullable: true},
@@ -506,32 +508,32 @@ var (
 			{
 				Name:    "usagelog_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[28]},
+				Columns: []*schema.Column{UsageLogsColumns[29]},
 			},
 			{
 				Name:    "usagelog_group_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[2], UsageLogsColumns[28]},
+				Columns: []*schema.Column{UsageLogsColumns[3], UsageLogsColumns[29]},
 			},
 			{
 				Name:    "usagelog_account_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[3], UsageLogsColumns[28]},
+				Columns: []*schema.Column{UsageLogsColumns[4], UsageLogsColumns[29]},
 			},
 			{
 				Name:    "usagelog_user_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[5], UsageLogsColumns[28]},
+				Columns: []*schema.Column{UsageLogsColumns[6], UsageLogsColumns[29]},
 			},
 			{
 				Name:    "usagelog_key_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[6], UsageLogsColumns[28]},
+				Columns: []*schema.Column{UsageLogsColumns[7], UsageLogsColumns[29]},
 			},
 			{
 				Name:    "usagelog_request_id_created_at",
 				Unique:  true,
-				Columns: []*schema.Column{UsageLogsColumns[1], UsageLogsColumns[28]},
+				Columns: []*schema.Column{UsageLogsColumns[1], UsageLogsColumns[29]},
 			},
 		},
 	}

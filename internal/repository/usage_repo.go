@@ -76,6 +76,11 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 		SetAboveHit(l.AboveHit).
 		SetOverdraft(l.Overdraft).
 		SetCreatedAt(l.CreatedAt)
+	// client_ip（S-E 2026-08-17）：非空才 Set（ent 只落被 Set 的列——空 = NULL
+	// 不写该列，与 COPY 路径 usageLogRowValues 条件赋值一一对应）。
+	if l.ClientIP != "" {
+		c = c.SetClientIP(l.ClientIP)
+	}
 	if l.GroupID > 0 {
 		c = c.SetGroupID(l.GroupID)
 	}
@@ -208,6 +213,9 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 		}
 		if row.BillingTier != nil {
 			l.BillingTier = *row.BillingTier
+		}
+		if row.ClientIP != nil {
+			l.ClientIP = *row.ClientIP
 		}
 		out = append(out, l)
 	}

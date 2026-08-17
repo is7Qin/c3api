@@ -65,6 +65,11 @@ func buildErrLogCreate(client *ent.Client, l *domain.UsageLog) *ent.ErrLogCreate
 		SetErrorType(string(l.ErrorType)).
 		SetLatencyMs(l.LatencyMS).
 		SetCreatedAt(l.CreatedAt)
+	// client_ip（S-E 2026-08-17）：非空才 Set（ent 只落被 Set 的列——拒绝行
+	// 恒带；空 = NULL 不写该列）。
+	if l.ClientIP != "" {
+		c = c.SetClientIP(l.ClientIP)
+	}
 	if l.GroupID > 0 {
 		c = c.SetGroupID(l.GroupID)
 	}
@@ -142,6 +147,9 @@ func (r *ErrLogRepo) QueryErrLogs(ctx context.Context, q ErrLogQuery) ([]*domain
 			ErrorMessage: row.ErrorMessage,
 			LatencyMS:    row.LatencyMs,
 			CreatedAt:    row.CreatedAt,
+		}
+		if row.ClientIP != nil {
+			l.ClientIP = *row.ClientIP
 		}
 		if row.GroupID != nil {
 			l.GroupID = *row.GroupID

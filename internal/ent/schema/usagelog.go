@@ -14,6 +14,11 @@ func (UsageLog) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("id"),
 		field.String("request_id"),
+		// 用户裁决（2026-08-17，S-E）：client_ip 审计列——供应商头识别
+		// （CF-Connecting-IP / True-Client-IP / X-Real-IP 按序）+ RemoteAddr 兜底，
+		// proxy.behind_cdn 开关门控；审计/排障的尽力而为标识，非安全边界。
+		// NULL = Optional 未 Set（空 = 无）。
+		field.String("client_ip").Optional().Nillable(),
 		field.Int64("group_id").Optional().Nillable(),
 		field.Int64("account_id").Optional().Nillable(),
 		field.Int64("template_id").Optional().Nillable(),

@@ -69,6 +69,23 @@ func TestLoadFromTOML(t *testing.T) {
 	require.Equal(t, 500*time.Millisecond, c.Usage.FlushInterval)
 }
 
+// S-E（2026-08-17）：proxy.behind_cdn 可选键——缺省 = false（零伪造面默认；
+// 旧配置不带此键照常加载通过 validate）；显式 true 加载；显式 false 等价缺省。
+func TestBehindCDNDefaultFalseAndExplicit(t *testing.T) {
+	setenvRequired(t)
+	c, err := Load("")
+	require.NoError(t, err)
+	require.False(t, c.Proxy.BehindCDN, "behind_cdn 缺省 = false（完全不读供应商头）")
+
+	c2, err := Load(writeConfig(t, "[proxy]\nbehind_cdn = true\n"))
+	require.NoError(t, err)
+	require.True(t, c2.Proxy.BehindCDN, "显式 true 加载")
+
+	c3, err := Load(writeConfig(t, "[proxy]\nbehind_cdn = false\nusage_capture = false\n"))
+	require.NoError(t, err)
+	require.False(t, c3.Proxy.BehindCDN, "显式 false 等价缺省")
+}
+
 // TestLoadRejectsNonPositiveDurations：8 个 duration 字段 × 0/-1s → error 含字段名
 // （5 处 ticker panic 面 + errlog.go:123 第 6 个 ticker 烧穿面）。
 func TestLoadRejectsNonPositiveDurations(t *testing.T) {

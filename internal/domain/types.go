@@ -448,6 +448,7 @@ type KeyMeta struct {
 type UsageLog struct {
 	ID                       int64
 	RequestID                string
+	ClientIP                 string // 客户端 IP（供应商头按序识别 + RemoteAddr 兜底——proxy.behind_cdn 门控；审计/排障标识，非安全边界；空 = 理论无（提取恒有兜底））
 	GroupID                  int64 // 0 = 无
 	AccountID                int64 // 0 = 无
 	TemplateID               int64 // 0 = 无

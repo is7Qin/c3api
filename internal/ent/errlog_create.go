@@ -28,6 +28,20 @@ func (_c *ErrLogCreate) SetRequestID(v string) *ErrLogCreate {
 	return _c
 }
 
+// SetClientIP sets the "client_ip" field.
+func (_c *ErrLogCreate) SetClientIP(v string) *ErrLogCreate {
+	_c.mutation.SetClientIP(v)
+	return _c
+}
+
+// SetNillableClientIP sets the "client_ip" field if the given value is not nil.
+func (_c *ErrLogCreate) SetNillableClientIP(v *string) *ErrLogCreate {
+	if v != nil {
+		_c.SetClientIP(*v)
+	}
+	return _c
+}
+
 // SetGroupID sets the "group_id" field.
 func (_c *ErrLogCreate) SetGroupID(v int64) *ErrLogCreate {
 	_c.mutation.SetGroupID(v)
@@ -330,6 +344,10 @@ func (_c *ErrLogCreate) createSpec() (*ErrLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(errlog.FieldRequestID, field.TypeString, value)
 		_node.RequestID = value
 	}
+	if value, ok := _c.mutation.ClientIP(); ok {
+		_spec.SetField(errlog.FieldClientIP, field.TypeString, value)
+		_node.ClientIP = &value
+	}
 	if value, ok := _c.mutation.GroupID(); ok {
 		_spec.SetField(errlog.FieldGroupID, field.TypeInt64, value)
 		_node.GroupID = &value
@@ -443,6 +461,24 @@ func (u *ErrLogUpsert) SetRequestID(v string) *ErrLogUpsert {
 // UpdateRequestID sets the "request_id" field to the value that was provided on create.
 func (u *ErrLogUpsert) UpdateRequestID() *ErrLogUpsert {
 	u.SetExcluded(errlog.FieldRequestID)
+	return u
+}
+
+// SetClientIP sets the "client_ip" field.
+func (u *ErrLogUpsert) SetClientIP(v string) *ErrLogUpsert {
+	u.Set(errlog.FieldClientIP, v)
+	return u
+}
+
+// UpdateClientIP sets the "client_ip" field to the value that was provided on create.
+func (u *ErrLogUpsert) UpdateClientIP() *ErrLogUpsert {
+	u.SetExcluded(errlog.FieldClientIP)
+	return u
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (u *ErrLogUpsert) ClearClientIP() *ErrLogUpsert {
+	u.SetNull(errlog.FieldClientIP)
 	return u
 }
 
@@ -745,6 +781,27 @@ func (u *ErrLogUpsertOne) SetRequestID(v string) *ErrLogUpsertOne {
 func (u *ErrLogUpsertOne) UpdateRequestID() *ErrLogUpsertOne {
 	return u.Update(func(s *ErrLogUpsert) {
 		s.UpdateRequestID()
+	})
+}
+
+// SetClientIP sets the "client_ip" field.
+func (u *ErrLogUpsertOne) SetClientIP(v string) *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.SetClientIP(v)
+	})
+}
+
+// UpdateClientIP sets the "client_ip" field to the value that was provided on create.
+func (u *ErrLogUpsertOne) UpdateClientIP() *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.UpdateClientIP()
+	})
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (u *ErrLogUpsertOne) ClearClientIP() *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.ClearClientIP()
 	})
 }
 
@@ -1253,6 +1310,27 @@ func (u *ErrLogUpsertBulk) SetRequestID(v string) *ErrLogUpsertBulk {
 func (u *ErrLogUpsertBulk) UpdateRequestID() *ErrLogUpsertBulk {
 	return u.Update(func(s *ErrLogUpsert) {
 		s.UpdateRequestID()
+	})
+}
+
+// SetClientIP sets the "client_ip" field.
+func (u *ErrLogUpsertBulk) SetClientIP(v string) *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.SetClientIP(v)
+	})
+}
+
+// UpdateClientIP sets the "client_ip" field to the value that was provided on create.
+func (u *ErrLogUpsertBulk) UpdateClientIP() *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.UpdateClientIP()
+	})
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (u *ErrLogUpsertBulk) ClearClientIP() *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.ClearClientIP()
 	})
 }
 

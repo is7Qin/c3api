@@ -82,6 +82,7 @@ func toAPIUsageLog(l *domain.UsageLog) UserUsageLog {
 	return UserUsageLog{
 		ID:                       &l.ID,
 		RequestID:                &l.RequestID,
+		ClientIP:                 &l.ClientIP,
 		GroupID:                  &l.GroupID,
 		UserID:                   &l.UserID,
 		KeyID:                    &l.KeyID,
@@ -117,6 +118,7 @@ func toAPIErrLog(l *domain.UsageLog) UserErrLog {
 	e := UserErrLog{
 		ID:           &l.ID,
 		RequestID:    &l.RequestID,
+		ClientIP:     &l.ClientIP,
 		GroupID:      &l.GroupID,
 		UserID:       &l.UserID,
 		KeyID:        &l.KeyID,

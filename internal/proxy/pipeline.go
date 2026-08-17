@@ -41,6 +41,15 @@ import (
 //     会话结束——门禁覆盖整个长会话（同现状语义）。
 func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, start time.Time, precheckBalance bool) (*http.Request, *reqMeta, int, bool) {
 	p.inflight.Add(1) // 优雅停机等在途归零（main waitForInflight 轮询 Inflight()）
+	// reqMeta 创建 + ctx 注入整体提前到鉴权前（gate M1 方案）：401 及全部拒绝
+	// 路径（401/429/402/限流）ctx 统一带 rm → recordRejected 行自动带 client_ip
+	// （不变量：拒绝行恒有 client_ip）。rm 初始化只填 clientIP（clientIP 提取
+	// 只读 RemoteAddr/请求头，鉴权前安全执行）；鉴权成功后原地补 meta。
+	// Authenticate(r) 只读 Header 不碰 ctx，WithValue 不改 header 无干扰；成功
+	// 路径分配不变（原本就有一个 rm），错误路径多一个 reqMeta 堆分配（非热
+	// 路径，可接受）。
+	rm := &reqMeta{clientIP: clientIP(r, p.cfg.BehindCDN)}
+	r = r.WithContext(context.WithValue(r.Context(), ctxKeyReqMeta{}, rm))
 	meta, ok := p.auth.Authenticate(r)
 	if !ok {
 		p.inflight.Add(-1)
@@ -55,8 +64,7 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 	// 单键单值 + 指针原地补 tier（GC 削减 P6：计费路径免第二次 WithValue+
 	// WithContext；rm 指针只在请求 goroutine 内被读取/改写，logWithCtx 全程同
 	// goroutine 同步访问——无跨 goroutine 竞态）。
-	rm := &reqMeta{meta: meta}
-	r = r.WithContext(context.WithValue(r.Context(), ctxKeyReqMeta{}, rm))
+	rm.meta = meta
 
 	// quota 检查在并发 acquire 之前（评审提醒①：失败无并发槽副作用；
 	// 未设置额度 key 短路零成本；预算耗尽 → gate 内 DB 复核认领后再判定）

@@ -28,6 +28,20 @@ func (_c *UsageLogCreate) SetRequestID(v string) *UsageLogCreate {
 	return _c
 }
 
+// SetClientIP sets the "client_ip" field.
+func (_c *UsageLogCreate) SetClientIP(v string) *UsageLogCreate {
+	_c.mutation.SetClientIP(v)
+	return _c
+}
+
+// SetNillableClientIP sets the "client_ip" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableClientIP(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetClientIP(*v)
+	}
+	return _c
+}
+
 // SetGroupID sets the "group_id" field.
 func (_c *UsageLogCreate) SetGroupID(v int64) *UsageLogCreate {
 	_c.mutation.SetGroupID(v)
@@ -582,6 +596,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldRequestID, field.TypeString, value)
 		_node.RequestID = value
 	}
+	if value, ok := _c.mutation.ClientIP(); ok {
+		_spec.SetField(usagelog.FieldClientIP, field.TypeString, value)
+		_node.ClientIP = &value
+	}
 	if value, ok := _c.mutation.GroupID(); ok {
 		_spec.SetField(usagelog.FieldGroupID, field.TypeInt64, value)
 		_node.GroupID = &value
@@ -751,6 +769,24 @@ func (u *UsageLogUpsert) SetRequestID(v string) *UsageLogUpsert {
 // UpdateRequestID sets the "request_id" field to the value that was provided on create.
 func (u *UsageLogUpsert) UpdateRequestID() *UsageLogUpsert {
 	u.SetExcluded(usagelog.FieldRequestID)
+	return u
+}
+
+// SetClientIP sets the "client_ip" field.
+func (u *UsageLogUpsert) SetClientIP(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldClientIP, v)
+	return u
+}
+
+// UpdateClientIP sets the "client_ip" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateClientIP() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldClientIP)
+	return u
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (u *UsageLogUpsert) ClearClientIP() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldClientIP)
 	return u
 }
 
@@ -1329,6 +1365,27 @@ func (u *UsageLogUpsertOne) SetRequestID(v string) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateRequestID() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateRequestID()
+	})
+}
+
+// SetClientIP sets the "client_ip" field.
+func (u *UsageLogUpsertOne) SetClientIP(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetClientIP(v)
+	})
+}
+
+// UpdateClientIP sets the "client_ip" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateClientIP() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateClientIP()
+	})
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (u *UsageLogUpsertOne) ClearClientIP() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearClientIP()
 	})
 }
 
@@ -2159,6 +2216,27 @@ func (u *UsageLogUpsertBulk) SetRequestID(v string) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateRequestID() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateRequestID()
+	})
+}
+
+// SetClientIP sets the "client_ip" field.
+func (u *UsageLogUpsertBulk) SetClientIP(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetClientIP(v)
+	})
+}
+
+// UpdateClientIP sets the "client_ip" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateClientIP() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateClientIP()
+	})
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (u *UsageLogUpsertBulk) ClearClientIP() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearClientIP()
 	})
 }
 

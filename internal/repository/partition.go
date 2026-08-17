@@ -95,6 +95,10 @@ func partitionedCreateDDL(table, partitionCol string, columnDefs []string) strin
 var usageLogColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('usage_logs_id_seq'::regclass)`,
 	`request_id varchar NOT NULL`,
+	// 用户裁决（2026-08-17，S-E）：client_ip 审计列（紧随 request_id 审计聚集）——
+	// 供应商头识别 + RemoteAddr 兜底（proxy.behind_cdn 门控）；NULL 语义 =
+	// Optional（与 ent schema 一致，未 Set 的列不写）。
+	`client_ip text NULL`,
 	`group_id bigint NULL`,
 	`account_id bigint NULL`,
 	`template_id bigint NULL`,
@@ -155,6 +159,9 @@ var usageLogIndexDDLs = []string{
 var errLogColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('err_logs_id_seq'::regclass)`,
 	`request_id varchar NOT NULL`,
+	// 用户裁决（2026-08-17，S-E）：client_ip 审计列（紧随 request_id）——拒绝行
+	// （401 鉴权失败等）也带（guardPipeline 入口鉴权前提取）；NULL = Optional。
+	`client_ip text NULL`,
 	`group_id bigint NULL`,
 	`account_id bigint NULL`,
 	`template_id bigint NULL`,

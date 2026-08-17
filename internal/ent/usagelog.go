@@ -19,6 +19,8 @@ type UsageLog struct {
 	ID int64 `json:"id,omitempty"`
 	// RequestID holds the value of the "request_id" field.
 	RequestID string `json:"request_id,omitempty"`
+	// ClientIP holds the value of the "client_ip" field.
+	ClientIP *string `json:"client_ip,omitempty"`
 	// GroupID holds the value of the "group_id" field.
 	GroupID *int64 `json:"group_id,omitempty"`
 	// AccountID holds the value of the "account_id" field.
@@ -85,7 +87,7 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case usagelog.FieldID, usagelog.FieldGroupID, usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID, usagelog.FieldKeyID, usagelog.FieldLatencyMs, usagelog.FieldTtftMs, usagelog.FieldInputTokens, usagelog.FieldPriceInputMillis, usagelog.FieldOutputTokens, usagelog.FieldPriceOutputMillis, usagelog.FieldTotalTokens, usagelog.FieldCacheReadTokens, usagelog.FieldPriceCacheReadMillis, usagelog.FieldCacheCreationTokens, usagelog.FieldPriceCacheCreationMillis, usagelog.FieldCallCount, usagelog.FieldPricePerCallMillis, usagelog.FieldCost:
 			values[i] = new(sql.NullInt64)
-		case usagelog.FieldRequestID, usagelog.FieldModel, usagelog.FieldMappedModel, usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldBillingTier:
+		case usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldModel, usagelog.FieldMappedModel, usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldBillingTier:
 			values[i] = new(sql.NullString)
 		case usagelog.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -115,6 +117,13 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field request_id", values[i])
 			} else if value.Valid {
 				_m.RequestID = value.String
+			}
+		case usagelog.FieldClientIP:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field client_ip", values[i])
+			} else if value.Valid {
+				_m.ClientIP = new(string)
+				*_m.ClientIP = value.String
 			}
 		case usagelog.FieldGroupID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -329,6 +338,11 @@ func (_m *UsageLog) String() string {
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
 	builder.WriteString("request_id=")
 	builder.WriteString(_m.RequestID)
+	builder.WriteString(", ")
+	if v := _m.ClientIP; v != nil {
+		builder.WriteString("client_ip=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	if v := _m.GroupID; v != nil {
 		builder.WriteString("group_id=")

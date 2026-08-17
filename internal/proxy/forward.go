@@ -40,6 +40,10 @@ type Config struct {
 	GroupKeyRPM           int
 	UsageCapture          bool
 	BillingCapture        bool // 计费开关（config.Billing.Enabled 映射；shouldBill 路由判定）
+	// BehindCDN 客户端 IP 识别开关（config.proxy.behind_cdn 映射；clientIP
+	// 提取门控——false 完全不读供应商头直取 RemoteAddr，true 按序采信三头）。
+	// 部署前提见 config.go 注释与 clientip.go：源站只对 CDN 暴露。
+	BehindCDN bool
 }
 
 type Proxy struct {
@@ -437,20 +441,23 @@ type ctxKeyReqMeta struct{}
 type ctxKeyTTFT struct{}
 
 type reqMeta struct {
-	meta    domain.KeyMeta
-	tier    billing.Tier
-	hasTier bool
+	meta     domain.KeyMeta
+	tier     billing.Tier
+	hasTier  bool
+	clientIP string // 客户端 IP（guardPipeline 入口鉴权前提取；401 及全部拒绝路径带）
 }
 
 // logWithCtx 从 ctx 读请求元数据填日志归属（user_id/key_id；context 传递
-// ——不改变 Call/buildLog 签名；无 KeyMeta 的路径保持 0）+ service_tier 归一化
-// 值填 BillingTier（计费启用路径；无 tier 的路径保持空）+ TTFT（流式首 chunk
-// 采集；非流式/失败路径无值 → nil）。rm 为指针（handleFormat 原地补 tier，
-// 单次 context 写入；全程请求 goroutine 内同步访问）。
+// ——不改变 Call/buildLog 签名；无 KeyMeta 的路径保持 0）+ 客户端 IP
+// （client_ip——guardPipeline 入口提取，全部日志路径恒带）+ service_tier
+// 归一化值填 BillingTier（计费启用路径；无 tier 的路径保持空）+ TTFT（流式
+// 首 chunk 采集；非流式/失败路径无值 → nil）。rm 为指针（handleFormat 原地补
+// tier，单次 context 写入；全程请求 goroutine 内同步访问）。
 func logWithCtx(ctx context.Context, l *domain.UsageLog) *domain.UsageLog {
 	if rm, ok := ctx.Value(ctxKeyReqMeta{}).(*reqMeta); ok {
 		l.UserID = rm.meta.UserID
 		l.KeyID = rm.meta.KeyID
+		l.ClientIP = rm.clientIP
 		if rm.hasTier {
 			l.BillingTier = rm.tier.String()
 		}

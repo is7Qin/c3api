@@ -42,6 +42,26 @@ func (_u *UsageLogUpdate) SetNillableRequestID(v *string) *UsageLogUpdate {
 	return _u
 }
 
+// SetClientIP sets the "client_ip" field.
+func (_u *UsageLogUpdate) SetClientIP(v string) *UsageLogUpdate {
+	_u.mutation.SetClientIP(v)
+	return _u
+}
+
+// SetNillableClientIP sets the "client_ip" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableClientIP(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetClientIP(*v)
+	}
+	return _u
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (_u *UsageLogUpdate) ClearClientIP() *UsageLogUpdate {
+	_u.mutation.ClearClientIP()
+	return _u
+}
+
 // SetGroupID sets the "group_id" field.
 func (_u *UsageLogUpdate) SetGroupID(v int64) *UsageLogUpdate {
 	_u.mutation.ResetGroupID()
@@ -688,6 +708,12 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.RequestID(); ok {
 		_spec.SetField(usagelog.FieldRequestID, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.ClientIP(); ok {
+		_spec.SetField(usagelog.FieldClientIP, field.TypeString, value)
+	}
+	if _u.mutation.ClientIPCleared() {
+		_spec.ClearField(usagelog.FieldClientIP, field.TypeString)
+	}
 	if value, ok := _u.mutation.GroupID(); ok {
 		_spec.SetField(usagelog.FieldGroupID, field.TypeInt64, value)
 	}
@@ -896,6 +922,26 @@ func (_u *UsageLogUpdateOne) SetNillableRequestID(v *string) *UsageLogUpdateOne 
 	if v != nil {
 		_u.SetRequestID(*v)
 	}
+	return _u
+}
+
+// SetClientIP sets the "client_ip" field.
+func (_u *UsageLogUpdateOne) SetClientIP(v string) *UsageLogUpdateOne {
+	_u.mutation.SetClientIP(v)
+	return _u
+}
+
+// SetNillableClientIP sets the "client_ip" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableClientIP(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetClientIP(*v)
+	}
+	return _u
+}
+
+// ClearClientIP clears the value of the "client_ip" field.
+func (_u *UsageLogUpdateOne) ClearClientIP() *UsageLogUpdateOne {
+	_u.mutation.ClearClientIP()
 	return _u
 }
 
@@ -1574,6 +1620,12 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.RequestID(); ok {
 		_spec.SetField(usagelog.FieldRequestID, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ClientIP(); ok {
+		_spec.SetField(usagelog.FieldClientIP, field.TypeString, value)
+	}
+	if _u.mutation.ClientIPCleared() {
+		_spec.ClearField(usagelog.FieldClientIP, field.TypeString)
 	}
 	if value, ok := _u.mutation.GroupID(); ok {
 		_spec.SetField(usagelog.FieldGroupID, field.TypeInt64, value)

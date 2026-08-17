@@ -2313,6 +2313,7 @@ components:
       properties:
         ID: { type: integer, format: int64 }
         RequestID: { type: string }
+        ClientIP: { type: string, description: 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 }
         GroupID: { type: integer, format: int64 }
         AccountID: { type: integer, format: int64 }
         TemplateID: { type: integer, format: int64 }
@@ -2346,6 +2347,7 @@ components:
       properties:
         ID: { type: integer, format: int64 }
         RequestID: { type: string }
+        ClientIP: { type: string, description: 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 }
         GroupID: { type: integer, format: int64 }
         UserID: { type: integer, format: int64, description: 鉴权归属用户；0 = 无 }
         KeyID: { type: integer, format: int64, description: 鉴权归属 key；0 = 无 }
@@ -2393,6 +2395,7 @@ components:
       properties:
         ID: { type: integer, format: int64 }
         RequestID: { type: string }
+        ClientIP: { type: string, description: 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 }
         GroupID: { type: integer, format: int64 }
         AccountID: { type: integer, format: int64 }
         TemplateID: { type: integer, format: int64 }
@@ -2412,6 +2415,7 @@ components:
       properties:
         ID: { type: integer, format: int64 }
         RequestID: { type: string }
+        ClientIP: { type: string, description: 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 }
         GroupID: { type: integer, format: int64 }
         UserID: { type: integer, format: int64, description: 鉴权归属用户；0 = 无 }
         KeyID: { type: integer, format: int64, description: 鉴权归属 key；0 = 无 }

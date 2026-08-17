@@ -38,7 +38,9 @@ const deductTimeout = 10 * time.Second
 // 单事务 10k 行往返 20 → 5 次（往返实测 0.3ms/次，本地净省 ~4.5ms/事务 ~2%，
 // 负载/远端 DB 上按延迟放大）；服务器侧逐行插入耗时持平（~6.6µs/行）。
 // 统一计费模型重构（spec 2026-08-13）删 6 加 2 后最坏界 28 列 × 2000 =
-// 56,000 参数 < 65,535（仍安全，常量不动；生产 28 列 56,000）。
+// 56,000 参数 < 65,535（仍安全，常量不动；生产 28 列 56,000）。S-E
+// （2026-08-17）加 client_ip 后最坏界 29 列 × 2000 = 58,000 参数 < 65,535
+// （仍安全，常量不动；生产 29 列 58,000）。
 // 仅 ent CreateBulk 回落路径（pool == nil）使用；pgx COPY 路径无参数上限，
 // 整事务一次 COPY 不涉及本常量。
 const usageLogBatchSize = 2000
@@ -374,29 +376,35 @@ func (x *pgxDeductTx) QueryRowScan(ctx context.Context, query string, args []any
 	return x.tx.QueryRow(ctx, query, args...).Scan(dest...)
 }
 
-// usageLogCopyColumns COPY 列清单 = buildUsageLogCreate 设置的列集合（28 列
+// usageLogCopyColumns COPY 列清单 = buildUsageLogCreate 设置的列集合（29 列
 // 全列显式列出——未设置的可选列传 NULL，与 ent 省略列（→NULL）等价；列序
 // 与 usage_logs 分区表列定义一致，5 索引兼容）。COPY 无 65535 参数上限，
 // 整事务一次 COPY（无分片）。统一计费模型（spec 2026-08-13）：原图片 6 列
 // （image tokens/count + 3 价格快照）已删，加 call_count/price_per_call_millis。
+// S-E（2026-08-17）：加 client_ip（紧随 request_id，与分区表列定义一致）。
 var usageLogCopyColumns = []string{
-	usagelog.FieldRequestID, usagelog.FieldGroupID, usagelog.FieldAccountID,
-	usagelog.FieldTemplateID, usagelog.FieldUserID, usagelog.FieldKeyID,
-	usagelog.FieldModel, usagelog.FieldMappedModel, usagelog.FieldFormat,
-	usagelog.FieldErrorType, usagelog.FieldLatencyMs, usagelog.FieldTtftMs,
-	usagelog.FieldInputTokens, usagelog.FieldPriceInputMillis, usagelog.FieldOutputTokens,
-	usagelog.FieldPriceOutputMillis, usagelog.FieldTotalTokens, usagelog.FieldCacheReadTokens,
-	usagelog.FieldPriceCacheReadMillis, usagelog.FieldCacheCreationTokens,
-	usagelog.FieldPriceCacheCreationMillis, usagelog.FieldCallCount,
-	usagelog.FieldPricePerCallMillis, usagelog.FieldCost, usagelog.FieldBillingTier,
-	usagelog.FieldAboveHit, usagelog.FieldOverdraft, usagelog.FieldCreatedAt,
+	usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldGroupID,
+	usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID,
+	usagelog.FieldKeyID, usagelog.FieldModel, usagelog.FieldMappedModel,
+	usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldLatencyMs,
+	usagelog.FieldTtftMs, usagelog.FieldInputTokens, usagelog.FieldPriceInputMillis,
+	usagelog.FieldOutputTokens, usagelog.FieldPriceOutputMillis, usagelog.FieldTotalTokens,
+	usagelog.FieldCacheReadTokens, usagelog.FieldPriceCacheReadMillis,
+	usagelog.FieldCacheCreationTokens, usagelog.FieldPriceCacheCreationMillis,
+	usagelog.FieldCallCount, usagelog.FieldPricePerCallMillis, usagelog.FieldCost,
+	usagelog.FieldBillingTier, usagelog.FieldAboveHit, usagelog.FieldOverdraft,
+	usagelog.FieldCreatedAt,
 }
 
 // usageLogRowValues 单行 COPY 值（与 buildUsageLogCreate 的 Set 条件一一对应：
-// 可选列 >0/非空/非 nil 才赋值，否则 NULL；call_count 恒落（NOT NULL DEFAULT 0））。
+// 可选列 >0/非空/非 nil 才赋值，否则 NULL；call_count 恒落（NOT NULL DEFAULT 0）；
+// client_ip 非空才赋值，否则 NULL）。
 func usageLogRowValues(l *domain.UsageLog) []any {
-	var groupID, accountID, templateID, userID, keyID, mappedModel, billingTier any
+	var groupID, accountID, templateID, userID, keyID, mappedModel, billingTier, clientIP any
 	var ttft, priceIn, priceOut, priceCR, priceCC, pricePerCall any
+	if l.ClientIP != "" {
+		clientIP = l.ClientIP
+	}
 	if l.GroupID > 0 {
 		groupID = l.GroupID
 	}
@@ -437,7 +445,7 @@ func usageLogRowValues(l *domain.UsageLog) []any {
 		pricePerCall = *l.PricePerCallMillis
 	}
 	return []any{
-		l.RequestID, groupID, accountID, templateID, userID, keyID,
+		l.RequestID, clientIP, groupID, accountID, templateID, userID, keyID,
 		l.Model, mappedModel, string(l.Format), string(l.ErrorType), l.LatencyMS, ttft,
 		l.InputTokens, priceIn, l.OutputTokens, priceOut, l.TotalTokens,
 		l.CacheReadTokens, priceCR, l.CacheCreationTokens, priceCC,

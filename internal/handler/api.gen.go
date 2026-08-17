@@ -523,8 +523,11 @@ type ErrLog struct {
 	AccountID *int64 `json:"AccountID,omitempty"`
 
 	// BillingTier 计费档位（service_tier 归一化：priority/flex/fast/auto）；null = 未计费路径
-	BillingTier *string    `json:"BillingTier"`
-	CreatedAt   *time.Time `json:"CreatedAt,omitempty"`
+	BillingTier *string `json:"BillingTier"`
+
+	// ClientIP 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无
+	ClientIP  *string    `json:"ClientIP,omitempty"`
+	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
 
 	// ErrorMessage 错误文本（拒绝文案/上游 body，域内截断 500 字符）；null = 无错误文本
 	ErrorMessage *string        `json:"ErrorMessage"`
@@ -1260,6 +1263,9 @@ type UsageLog struct {
 	BillingTier         *string `json:"BillingTier,omitempty"`
 	CacheCreationTokens *int64  `json:"CacheCreationTokens,omitempty"`
 	CacheReadTokens     *int64  `json:"CacheReadTokens,omitempty"`
+
+	// ClientIP 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无
+	ClientIP *string `json:"ClientIP,omitempty"`
 
 	// Cost 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0
 	Cost        *int64         `json:"Cost,omitempty"`

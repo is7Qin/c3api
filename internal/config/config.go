@@ -73,6 +73,13 @@ type ProxyConfig struct {
 	// 零次执行，首次选号占用的并发槽永不释放，组内账号耗尽后全组 429 死锁）。
 	FailoverAttempts      int           `koanf:"failover_attempts"`
 	UsageCapture          bool          `koanf:"usage_capture"`
+	// BehindCDN 客户端 IP 识别开关（用户裁决 2026-08-17：config 文件键，非 admin
+	// setting）：false（默认）→ 完全不读供应商头（CF-Connecting-IP /
+	// True-Client-IP / X-Real-IP），直取 RemoteAddr（零伪造面，与直连行为一致）；
+	// true → 按序采信三头。部署前提：源站只对 CDN/反向代理暴露（防火墙层封
+	// 直连）——直连时可自填任意值，client_ip 为审计/排障的尽力而为标识，非安全
+	// 边界。可选键，旧配置不带此键照常加载（零值 false）。
+	BehindCDN bool `koanf:"behind_cdn"`
 }
 
 type UpstreamConfig struct {

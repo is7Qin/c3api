@@ -21,6 +21,11 @@ func (ErrLog) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("id"),
 		field.String("request_id"),
+		// 用户裁决（2026-08-17，S-E）：client_ip 审计列——供应商头识别 + RemoteAddr
+		// 兜底（proxy.behind_cdn 开关门控；与 usage_logs 同列同步加）；拒绝行
+		// （401 鉴权失败等）也带（guardPipeline 入口鉴权前提取）。NULL = Optional
+		// 未 Set。
+		field.String("client_ip").Optional().Nillable(),
 		field.Int64("group_id").Optional().Nillable(),
 		field.Int64("account_id").Optional().Nillable(),
 		field.Int64("template_id").Optional().Nillable(),

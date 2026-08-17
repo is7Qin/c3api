@@ -19,6 +19,8 @@ type ErrLog struct {
 	ID int64 `json:"id,omitempty"`
 	// RequestID holds the value of the "request_id" field.
 	RequestID string `json:"request_id,omitempty"`
+	// ClientIP holds the value of the "client_ip" field.
+	ClientIP *string `json:"client_ip,omitempty"`
 	// GroupID holds the value of the "group_id" field.
 	GroupID *int64 `json:"group_id,omitempty"`
 	// AccountID holds the value of the "account_id" field.
@@ -55,7 +57,7 @@ func (*ErrLog) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case errlog.FieldID, errlog.FieldGroupID, errlog.FieldAccountID, errlog.FieldTemplateID, errlog.FieldUserID, errlog.FieldKeyID, errlog.FieldStatusCode, errlog.FieldLatencyMs:
 			values[i] = new(sql.NullInt64)
-		case errlog.FieldRequestID, errlog.FieldModel, errlog.FieldFormat, errlog.FieldErrorType, errlog.FieldErrorMessage, errlog.FieldBillingTier:
+		case errlog.FieldRequestID, errlog.FieldClientIP, errlog.FieldModel, errlog.FieldFormat, errlog.FieldErrorType, errlog.FieldErrorMessage, errlog.FieldBillingTier:
 			values[i] = new(sql.NullString)
 		case errlog.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -85,6 +87,13 @@ func (_m *ErrLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field request_id", values[i])
 			} else if value.Valid {
 				_m.RequestID = value.String
+			}
+		case errlog.FieldClientIP:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field client_ip", values[i])
+			} else if value.Valid {
+				_m.ClientIP = new(string)
+				*_m.ClientIP = value.String
 			}
 		case errlog.FieldGroupID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -209,6 +218,11 @@ func (_m *ErrLog) String() string {
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
 	builder.WriteString("request_id=")
 	builder.WriteString(_m.RequestID)
+	builder.WriteString(", ")
+	if v := _m.ClientIP; v != nil {
+		builder.WriteString("client_ip=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	if v := _m.GroupID; v != nil {
 		builder.WriteString("group_id=")

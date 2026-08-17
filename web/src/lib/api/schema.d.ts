@@ -1941,6 +1941,8 @@ export interface components {
             /** Format: int64 */
             ID?: number;
             RequestID?: string;
+            /** @description 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 */
+            ClientIP?: string;
             /** Format: int64 */
             GroupID?: number;
             /** Format: int64 */
@@ -2017,6 +2019,8 @@ export interface components {
             /** Format: int64 */
             ID?: number;
             RequestID?: string;
+            /** @description 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 */
+            ClientIP?: string;
             /** Format: int64 */
             GroupID?: number;
             /**
@@ -2105,6 +2109,8 @@ export interface components {
             /** Format: int64 */
             ID?: number;
             RequestID?: string;
+            /** @description 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 */
+            ClientIP?: string;
             /** Format: int64 */
             GroupID?: number;
             /** Format: int64 */
@@ -2140,6 +2146,8 @@ export interface components {
             /** Format: int64 */
             ID?: number;
             RequestID?: string;
+            /** @description 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 */
+            ClientIP?: string;
             /** Format: int64 */
             GroupID?: number;
             /**
