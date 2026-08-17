@@ -12,6 +12,7 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ### Added
 
+- Client IP capture in usage and error logs (`client_ip` column on both tables, exposed via the admin/user log APIs): `proxy.behind_cdn` (default false) enables vendor header detection — `CF-Connecting-IP` → `True-Client-IP` → `X-Real-IP` in order, `RemoteAddr` fallback; off = `RemoteAddr` only. Zero-allocation extraction on the request path.
 - Pagination (`limit`/`offset`) for the redemption-code usage audit endpoint — previously silently truncated at 20 rows.
 - Masked admin key listing (`GET /admin/keys`) with name/user/group filters and pagination.
 - WS upgrade handshake timeout (15 s) — a black-hole upstream can no longer pin concurrency slots forever.
