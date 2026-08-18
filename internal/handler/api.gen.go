@@ -531,15 +531,15 @@ type BatchUpdateTemplatesBody struct {
 	Ids    []int64       `json:"ids"`
 }
 
-// CodexCredits 充值余额（金额字符串，如 "12.50"）
+// CodexCredits 充值余额（金额字符串，如 "12.50"；上游空串 → null，非空串占位）
 type CodexCredits struct {
-	Balance string `json:"balance"`
+	Balance *string `json:"balance"`
 }
 
-// CodexRateLimit 主窗口用量（reset_at RFC3339）
+// CodexRateLimit 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01）
 type CodexRateLimit struct {
-	ResetAt     time.Time `json:"reset_at"`
-	UsedPercent int       `json:"used_percent"`
+	ResetAt     *time.Time `json:"reset_at"`
+	UsedPercent int        `json:"used_percent"`
 }
 
 // CodexSpendControl 消费控制额度（金额字符串）
@@ -553,11 +553,11 @@ type CodexSpendControl struct {
 
 // CodexUsageSnapshot 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度）
 type CodexUsageSnapshot struct {
-	// Credits 充值余额（金额字符串，如 "12.50"）
+	// Credits 充值余额（金额字符串，如 "12.50"；上游空串 → null，非空串占位）
 	Credits  *CodexCredits `json:"credits,omitempty"`
 	PlanType *string       `json:"plan_type,omitempty"`
 
-	// RateLimit 主窗口用量（reset_at RFC3339）
+	// RateLimit 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01）
 	RateLimit *CodexRateLimit `json:"rate_limit,omitempty"`
 
 	// SpendControl 消费控制额度（金额字符串）

@@ -58,6 +58,9 @@ type fakeStore struct {
 	// tplExts/accExts 模板/账号类型化扩展（key = 父 id，镜像仓库 1:1 唯一索引）。
 	tplExts map[int64]*domain.TemplateExt
 	accExts map[int64]*domain.AccountExt
+	// accExtErr 注入 GetAccountExt 非 ErrNotFound 故障（per-account；T2-2
+	// store 故障隔离测试——不误标上游问题）。
+	accExtErr map[int64]error
 	// pricingListErr 注入 ListPricing 失败（快照 fail-safe 测试）。
 	pricingListErr error
 	// imageListErr 注入 ListImagePrice 失败（image 快照 fail-safe 测试）。
@@ -104,6 +107,7 @@ func newFakeStore() *fakeStore {
 		imagePrices:    make(map[string]*domain.ImagePrice),
 		functionPrices: make(map[string]*domain.FunctionPrice),
 		tplExts:        make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
+		accExtErr:      make(map[int64]error),
 		nextID: 1,
 	}
 }
@@ -1436,6 +1440,9 @@ func (f *fakeStore) TryInsertAccountExt(ctx context.Context, e *domain.AccountEx
 func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err, ok := f.accExtErr[accountID]; ok {
+		return nil, err // 注入非 ErrNotFound 故障（T2-2 store 故障隔离测试）
+	}
 	e, ok := f.accExts[accountID]
 	if !ok {
 		return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)

@@ -316,15 +316,18 @@ type CodexUsageSnapshot struct {
 	SpendControl *CodexSpendControl `json:"spend_control,omitempty"`  // 消费限额（花了多少）
 }
 
-// CodexRateLimit 主窗口用量（ResetAt = SDK Unix 秒 → time.Time，JSON RFC3339）。
+// CodexRateLimit 主窗口用量（ResetAt = SDK Unix 秒 → time.Time，JSON RFC3339；
+// 指针 + omitempty——上游主窗口省略 reset_at（Unix 0）→ nil → 不出字段，零填充
+// 语义：虚假 0001-01-01T00:00:00Z 不外泄）。
 type CodexRateLimit struct {
-	UsedPercent int       `json:"used_percent"`
-	ResetAt     time.Time `json:"reset_at"`
+	UsedPercent int        `json:"used_percent"`
+	ResetAt     *time.Time `json:"reset_at,omitempty"`
 }
 
-// CodexCredits 充值余额（Balance 金额字符串——如 "12.50"，不解析）。
+// CodexCredits 充值余额（Balance 金额字符串——如 "12.50"，不解析；指针 +
+// omitempty——上游空串 → nil → 不出字段，零填充语义）。
 type CodexCredits struct {
-	Balance string `json:"balance"`
+	Balance *string `json:"balance,omitempty"`
 }
 
 // CodexSpendControl 消费控制额度（Limit/Used/Remaining 金额字符串）。

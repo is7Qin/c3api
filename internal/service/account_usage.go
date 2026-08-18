@@ -9,9 +9,12 @@ import (
 	"errors"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/sdkbridge"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // CodexUsageSnapshotter codex 额度快照数据源（*sdkbridge.Codex 满足——装配侧
@@ -60,8 +63,13 @@ func (s *Service) AccountUsage(ctx context.Context, accountID int64) (*domain.Co
 //
 // 失败语义：repo 聚合失败 → 整批失败（gateway 数据面不可用）；upstream 逐
 // 账号装配失败 → 仅记 upstream_error 标记不整批失败（单账号快照挂不影响
-// 其余账号 gateway 栏返回）。ids 去重/≤100 已由 handler 校验（service 兜底
-// 不再重复——防御性校验由调用方边界承担，对齐既有批量端点惯例）。
+// 其余账号 gateway 栏返回）。批内装配 errgroup 有界并发（8——与 sdkbridge
+// usageFetchSem 容量对齐：上游并发仍由 sdkbridge 恒保 ≤8，此处仅并行化编排
+// 的 DB 往返/调用分发——调度属编排面，缓存/节流仍全在 sdkbridge）；结果按
+// account_ids 顺序组装（goroutine 按 index 写 out，保序）。非 sdkbridge 错误
+// （store 故障——GetAccountExt 面）→ 记日志 + 该账号 null/null（不误标上游
+// 问题，T2-2）。ids 去重/≤100 已由 handler 校验（service 兜底不再重复——
+// 防御性校验由调用方边界承担，对齐既有批量端点惯例）。
 func (s *Service) AccountsUsage(ctx context.Context, ids []int64, from, to time.Time) ([]domain.AccountUsage, error) {
 	aggs, err := s.store.ScanUsageAgg(ctx, ids, from, to)
 	if err != nil {
@@ -75,18 +83,31 @@ func (s *Service) AccountsUsage(ctx context.Context, ids []int64, from, to time.
 		}
 		out = append(out, item)
 	}
+	var g errgroup.Group
+	g.SetLimit(8) // 批内并行度（与 sdkbridge usageFetchSem 语义对齐）
 	for i := range out {
-		snap, err := s.AccountUsage(ctx, out[i].AccountID)
-		switch {
-		case err == nil:
-			out[i].Upstream = snap
-		case errors.Is(err, sdkbridge.ErrAuthExpired):
-			e := domain.UpstreamErrorAuthExpired
-			out[i].UpstreamError = &e
-		default:
-			e := domain.UpstreamErrorUpstreamUnavailable
-			out[i].UpstreamError = &e
-		}
+		i := i
+		g.Go(func() error {
+			snap, err := s.AccountUsage(ctx, out[i].AccountID)
+			switch {
+			case err == nil:
+				out[i].Upstream = snap
+			case errors.Is(err, sdkbridge.ErrAuthExpired):
+				e := domain.UpstreamErrorAuthExpired
+				out[i].UpstreamError = &e
+			case errors.Is(err, sdkbridge.ErrUpstream):
+				e := domain.UpstreamErrorUpstreamUnavailable
+				out[i].UpstreamError = &e
+			default:
+				// 非 sdkbridge 错误（store 故障——GetAccountExt 面）→ 不误标
+				// 上游问题：该账号 null/null（批内其余账号正常）。ctx 取消为
+				// 请求已死信号，不记 Warn（非故障）。
+				if ctx.Err() == nil && s.log != nil {
+					s.log.Warn("accounts usage: account upstream lookup failed", logx.Int64("account_id", out[i].AccountID), logx.Error(err))
+				}
+			}
+			return nil
+		})
 	}
-	return out, nil
+	return out, g.Wait()
 }

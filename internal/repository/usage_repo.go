@@ -42,6 +42,10 @@ type UsageRepo struct {
 	pool *pgxpool.Pool
 }
 
+// usageAggMaxAccountIDs ScanUsageAgg 批量 ids 上限（= handler account_ids
+// ≤100 契约——repo 层防御 handler 之外调用方，N5）。
+const usageAggMaxAccountIDs = 100
+
 func (r *UsageRepo) InsertBatch(ctx context.Context, logs []*domain.UsageLog) error {
 	if len(logs) == 0 {
 		return nil
@@ -242,7 +246,12 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 // 聚合，不拉全行客户端算）；SUM 毫分 int64 原样（USD 换算在 handler 展示
 // 边界）。返回 map[account_id]agg——无记录账号无键（补零由 service 层按 ids
 // 全量组装）。pool 未注入（New 构造）→ 显式错误（与 StatRepo 同纪律）。
+// 数量防御（N5）：>usageAggMaxAccountIDs → 显式错误（防御 handler 之外调用
+// 方——ANY 参数数组规模上限）。
 func (r *UsageRepo) ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error) {
+	if len(accountIDs) > usageAggMaxAccountIDs {
+		return nil, fmt.Errorf("usage repo: ScanUsageAgg: %d account ids exceed limit %d", len(accountIDs), usageAggMaxAccountIDs)
+	}
 	if r.pool == nil {
 		return nil, fmt.Errorf("usage repo: pgx pool not configured (repository.NewWithPG); cannot scan usage agg")
 	}

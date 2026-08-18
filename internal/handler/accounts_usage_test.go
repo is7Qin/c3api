@@ -152,8 +152,12 @@ func TestGetAccountsUsageExplicitRange(t *testing.T) {
 func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 	now := time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC)
 	h, store := newUsageTestHandler(t, now, &hUsageSnap{
-		snaps: map[int64]*domain.CodexUsageSnapshot{2: {PlanType: "chatgpt-plus", Credits: &domain.CodexCredits{Balance: "12.50"}}},
-		errs:  map[int64]error{3: sdkbridge.ErrAuthExpired, 4: sdkbridge.ErrUpstream},
+		snaps: map[int64]*domain.CodexUsageSnapshot{2: {
+			PlanType:  "chatgpt-plus",
+			Credits:   &domain.CodexCredits{Balance: strPtr("12.50")},
+			RateLimit: &domain.CodexRateLimit{UsedPercent: 42}, // ResetAt nil（零值守卫）
+		}},
+		errs: map[int64]error{3: sdkbridge.ErrAuthExpired, 4: sdkbridge.ErrUpstream},
 	})
 	store.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-ok")}
 	store.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-bad")}
@@ -176,8 +180,12 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 	require.NotNil(t, resp.Items[1].Upstream.PlanType)
 	require.Equal(t, "chatgpt-plus", *resp.Items[1].Upstream.PlanType)
 	require.NotNil(t, resp.Items[1].Upstream.Credits)
-	require.Equal(t, "12.50", resp.Items[1].Upstream.Credits.Balance)
+	require.NotNil(t, resp.Items[1].Upstream.Credits.Balance)
+	require.Equal(t, "12.50", *resp.Items[1].Upstream.Credits.Balance)
 	require.Nil(t, resp.Items[1].UpstreamError)
+	// ResetAt nil → 契约层显式 null（非虚假 0001-01-01——T3-1 零值泄漏端到端修复）
+	require.Contains(t, rec.Body.String(), `"reset_at":null`, "nil ResetAt → reset_at null")
+	require.NotContains(t, rec.Body.String(), "0001-01-01", "零值时间戳不外泄")
 
 	// a3 fatal → auth_expired
 	require.Nil(t, resp.Items[2].Upstream)

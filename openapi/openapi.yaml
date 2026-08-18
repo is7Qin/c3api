@@ -1585,17 +1585,17 @@ components:
         spend_control: { $ref: '#/components/schemas/CodexSpendControl' }
     CodexRateLimit:
       type: object
-      required: [used_percent, reset_at]
-      description: 主窗口用量（reset_at RFC3339）
+      required: [used_percent]
+      description: 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01）
       properties:
         used_percent: { type: integer }
-        reset_at: { type: string, format: date-time }
+        reset_at: { type: string, format: date-time, nullable: true }
     CodexCredits:
       type: object
       required: [balance]
-      description: 充值余额（金额字符串，如 "12.50"）
+      description: 充值余额（金额字符串，如 "12.50"；上游空串 → null，非空串占位）
       properties:
-        balance: { type: string }
+        balance: { type: string, nullable: true }
     CodexSpendControl:
       type: object
       required: [limit, used, remaining, used_percent, remaining_percent]

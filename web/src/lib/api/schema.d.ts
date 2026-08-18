@@ -1082,15 +1082,15 @@ export interface components {
             credits?: components["schemas"]["CodexCredits"];
             spend_control?: components["schemas"]["CodexSpendControl"];
         };
-        /** @description 主窗口用量（reset_at RFC3339） */
+        /** @description 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01） */
         CodexRateLimit: {
             used_percent: number;
             /** Format: date-time */
-            reset_at: string;
+            reset_at?: string | null;
         };
-        /** @description 充值余额（金额字符串，如 "12.50"） */
+        /** @description 充值余额（金额字符串，如 "12.50"；上游空串 → null，非空串占位） */
         CodexCredits: {
-            balance: string;
+            balance: string | null;
         };
         /** @description 消费控制额度（金额字符串） */
         CodexSpendControl: {

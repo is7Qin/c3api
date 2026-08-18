@@ -378,16 +378,18 @@ var ErrUpstream = errors.New("codex: usage upstream error")
 // usageFetchSem 快照拉取包级 semaphore（容量 8——所有调用面共享节流：管理面
 // 几百账号懒加载 + 未来路由面共用同一上限，防 OpenAI 429；只限并发不限速率
 // ——速率上限由失败冷却封顶）。
+// 测试勿 t.Parallel（包级状态串扰——测试可调包级 var/共享 semaphore）。
 var usageFetchSem = make(chan struct{}, usageFetchConcurrency)
 
 const usageFetchConcurrency = 8
 
 // usageSnapshotTTL 快照 TTL（5min 慢变量——上游分钟级更新；滚动查看零上游）。
-// var（非 const）——测试注入可调值。
+// var（非 const）——测试注入可调值。测试勿 t.Parallel（包级状态串扰）。
 var usageSnapshotTTL = 5 * time.Minute
 
 // usageCooldown 失败冷却（60s——冷却内直接返回分类错误零上游，封顶重试率
-// ≤1 次/账号/分钟；不缓存错误体，冷却后重试）。
+// ≤1 次/账号/分钟；不缓存错误体，冷却后重试）。测试勿 t.Parallel（包级状态
+// 串扰）。
 var usageCooldown = 60 * time.Second
 
 // GetUsageSnapshot 账号 codex 额度快照（ChatGPT 面 wham/usage）：cred →
@@ -399,12 +401,24 @@ var usageCooldown = 60 * time.Second
 //
 // 错误分类**纯判定零副作用**（gate Major 3——不复用 translateError：其 fatal
 // 分支 reportFatal → evict 删 entry，冷却随 entry 消失）：IsFatal（fatal 五类
-// 穿透信封链）→ ErrAuthExpired；其余（*HTTPError/网络/RefreshError）保守归
-// ErrUpstream。usage 是查询面不是会话面——凭据失效由会话路径上报（防循环），
-// entry 恒保留（fatal 后后续调用仍命中冷却）。
+// 穿透信封链）→ ErrAuthExpired；HTTPError 401（PAT 死 token——SDK 对 PAT 不
+// 判死不轮转原样返回，语义 = 凭据失效）→ ErrAuthExpired；其余（*HTTPError/
+// 网络/RefreshError）保守归 ErrUpstream。usage 是查询面不是会话面——凭据失效
+// 由会话路径上报（防循环），entry 恒保留（fatal 后后续调用仍命中冷却）。
+// 命中路径零分配（T3-4）：先按 accountID 查 entry.usage（map 查 + 锁 + 时间
+// 比较——不计算 credSig 字符串拼接/不重建条目），命中直接返回；未命中才走
+// clientFor（entryFor 签名比对/重建）。
 func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
+	if s, ok := a.snapshotCachedFor(cred.AccountID); ok {
+		return s, nil
+	}
 	e, err := a.clientFor(cred, nil, nil, "")
 	if err != nil {
+		// 入口错误分类（N2）：oauth 缺 rt 凭据不完整（errCredentialIncomplete）
+		// → 凭据失效语义 ErrAuthExpired（不落 default 归 ErrUpstream）。
+		if errors.Is(err, errCredentialIncomplete) {
+			return nil, ErrAuthExpired
+		}
 		return nil, err
 	}
 	if s, ok := a.snapshotCached(e); ok {
@@ -442,8 +456,24 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 	a.mu.Lock()
 	e.usage = s
 	e.usageAt = time.Now()
+	// 成功清冷却态（T3-2——死状态不留：哨兵仅在 usageErrAt 新鲜时被读取，但
+	// 状态机卫生——检查顺序调整不误服旧哨兵）。
+	e.usageErrAt = time.Time{}
+	e.usageErr = nil
 	a.mu.Unlock()
 	return s, nil
+}
+
+// snapshotCachedFor 命中路径零分配快查（T3-4）：按 accountID 查 entry + TTL
+// 判定——命中直接返回缓存实例，不经过 clientFor/credSig（字符串拼接）/
+// entryFor（重建判定）。未命中/无 entry → nil（走完整路径）。
+func (a *Codex) snapshotCachedFor(accountID int64) (*domain.CodexUsageSnapshot, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if e := a.entries[accountID]; e != nil && e.usage != nil && time.Since(e.usageAt) < usageSnapshotTTL {
+		return e.usage, true
+	}
+	return nil, false
 }
 
 // snapshotCached 快照 TTL 命中判定（5min 慢变量；e.usage nil = 未拉取过）。
@@ -479,10 +509,16 @@ func (a *Codex) recordUsageFailure(e *codexEntry, err error) {
 
 // classifyUsageErr 错误分类纯判定（gate Major 3——零副作用不上报不摘除）：
 // IsFatal（fatal 五类穿透信封链——RefreshOAuthError/AuthPermanentlyRevoked-
-// Error/AccountDisabledError/CallbackDeliveryError）→ ErrAuthExpired；其余
-// （*HTTPError/网络/RefreshError 等）保守归 ErrUpstream。
+// Error/AccountDisabledError/CallbackDeliveryError）→ ErrAuthExpired；
+// *HTTPError 401 特判（T3-5——PAT 死 token：SDK 对 PAT 不判死不轮转原样返回
+// HTTPError，语义 = 凭据失效非上游故障）→ ErrAuthExpired；其余（*HTTPError/
+// 网络/RefreshError 等）保守归 ErrUpstream。
 func classifyUsageErr(err error) error {
 	if IsFatal(err) {
+		return ErrAuthExpired
+	}
+	var he *codexsdk.HTTPError
+	if errors.As(err, &he) && he.StatusCode == http.StatusUnauthorized {
 		return ErrAuthExpired
 	}
 	return ErrUpstream
@@ -490,7 +526,8 @@ func classifyUsageErr(err error) error {
 
 // fromSDKUsage codexsdk.UsageStatus → domain.CodexUsageSnapshot 白名单收敛
 // 映射（spec 变更 3——砍四留四：approx_*/瞬时布尔/派生状态/RateLimitReached
-// 一律不进契约；每块 nil → 不出字段；ResetAt Unix 秒 → time.Time）。
+// 一律不进契约；每块 nil → 不出字段；ResetAt Unix 秒 → time.Time；ResetAt 0
+// （上游主窗口省略）→ nil 不出字段；Balance 空串 → nil 不出字段——零填充语义）。
 func fromSDKUsage(u *codexsdk.UsageStatus) *domain.CodexUsageSnapshot {
 	if u == nil {
 		return nil
@@ -499,11 +536,13 @@ func fromSDKUsage(u *codexsdk.UsageStatus) *domain.CodexUsageSnapshot {
 	if rl := u.RateLimit; rl != nil && rl.PrimaryWindow != nil {
 		s.RateLimit = &domain.CodexRateLimit{UsedPercent: rl.PrimaryWindow.UsedPercent}
 		if rl.PrimaryWindow.ResetAt > 0 {
-			s.RateLimit.ResetAt = time.Unix(int64(rl.PrimaryWindow.ResetAt), 0).UTC()
+			t := time.Unix(int64(rl.PrimaryWindow.ResetAt), 0).UTC()
+			s.RateLimit.ResetAt = &t
 		}
 	}
-	if c := u.Credits; c != nil && c.Balance != nil {
-		s.Credits = &domain.CodexCredits{Balance: *c.Balance}
+	if c := u.Credits; c != nil && c.Balance != nil && *c.Balance != "" {
+		b := *c.Balance
+		s.Credits = &domain.CodexCredits{Balance: &b}
 	}
 	if sc := u.SpendControl; sc != nil && sc.IndividualLimit != nil {
 		l := sc.IndividualLimit

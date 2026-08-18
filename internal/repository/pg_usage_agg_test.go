@@ -114,3 +114,24 @@ func TestPGScanUsageAggPartitionPruning(t *testing.T) {
 	_, err = reposNoPool.ScanUsageAgg(ctx, []int64{1}, today, today.Add(time.Hour))
 	require.Error(t, err, "未注入 pgx 池（New）→ 显式错误")
 }
+
+// TestPGScanUsageAggIDLimit 数量防御（N5——repo 层兜底 handler 之外调用方）：
+// >100 ids → 显式错误（ANY 参数数组规模上限），不落 SQL。
+func TestPGScanUsageAggIDLimit(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	from := time.Now().UTC().Truncate(time.Second)
+
+	ids := make([]int64, 101)
+	for i := range ids {
+		ids[i] = int64(i + 1)
+	}
+	_, err := repos.ScanUsageAgg(ctx, ids, from, from.Add(time.Hour))
+	require.Error(t, err, "101 ids → 错误（>100 上限）")
+	require.Contains(t, err.Error(), "exceed limit")
+
+	// 恰 100 不误伤（空表 → 空 map 不报错）
+	ok, err := repos.ScanUsageAgg(ctx, ids[:100], from, from.Add(time.Hour))
+	require.NoError(t, err, "恰 100 上限内正常")
+	require.Empty(t, ok)
+}
