@@ -129,6 +129,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/import/codex-oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Codex OAuth account JSON */
+        post: operations["PostAccountsImportCodexOauth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/batch-delete": {
         parameters: {
             query?: never;
@@ -1138,6 +1155,38 @@ export interface components {
         /** @description 账号用量聚合响应（items 顺序 = account_ids 去重后顺序） */
         AccountsUsageResponse: {
             items: components["schemas"]["AccountUsageItem"][];
+        };
+        CodexOAuthImportRequest: {
+            /** Format: int64 */
+            template_id: number;
+            group_ids?: number[];
+            name_prefix?: string;
+            weight?: number;
+            max_concurrency?: number;
+            /** @description OAuth JSON from Codex clients. Supports one object, an array, credentials/accounts/items/data wrappers, and Codex auth.json. Each entry must resolve to an email and workspace/space ID; account_id is accepted as a legacy space_id alias. */
+            credentials: unknown;
+        };
+        CodexOAuthImportItem: {
+            /** Format: int64 */
+            index: number;
+            /** @enum {string} */
+            status: "imported" | "updated" | "skipped" | "failed";
+            /**
+             * Format: int64
+             * @description Imported, updated, or winning gateway account ID
+             */
+            account_id?: number | null;
+            /** @description OAuth workspace/space metadata; not an account identity by itself */
+            space_id?: string;
+            email?: string;
+            message?: string;
+        };
+        CodexOAuthImportResponse: {
+            imported: number;
+            updated: number;
+            skipped: number;
+            failed: number;
+            items: components["schemas"]["CodexOAuthImportItem"][];
         };
         TemplateExt: {
             /** Format: int64 */
@@ -2857,6 +2906,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountsUsageResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsImportCodexOauth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexOAuthImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-item import results without credential material */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexOAuthImportResponse"];
                 };
             };
             default: components["responses"]["Error"];

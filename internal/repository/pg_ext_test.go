@@ -195,6 +195,49 @@ func TestAccountExtPG(t *testing.T) {
 	})
 }
 
+// TestAccountExtCodexIdentityPairPG protects email + space identity semantics.
+func TestAccountExtCodexIdentityPairPG(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	first := seedPGAccount(t, repos, tpl.ID, "pair-first")
+	sameSpace := seedPGAccount(t, repos, tpl.ID, "pair-same-space")
+	otherSpace := seedPGAccount(t, repos, tpl.ID, "pair-other-space")
+	duplicate := seedPGAccount(t, repos, tpl.ID, "pair-duplicate")
+
+	_, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
+		AccountID: first.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "11111111-1111-4111-8111-111111111111"},
+		CodexOAuthToken: strPtrPG("at-1"), CodexEmail: strPtrPG("user@example.com"), CodexAccountID: strPtrPG("team-space"),
+	})
+	require.NoError(t, err)
+
+	got, err := repos.AccountExts.GetAccountExtByCodexEmailAndAccountID(ctx, " USER@example.com ", " team-space ")
+	require.NoError(t, err)
+	require.Equal(t, first.ID, got.AccountID)
+
+	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
+		AccountID: sameSpace.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "22222222-2222-4222-8222-222222222222"},
+		CodexOAuthToken: strPtrPG("at-2"), CodexEmail: strPtrPG("other@example.com"), CodexAccountID: strPtrPG("team-space"),
+	})
+	require.NoError(t, err, "different emails in one team space are distinct accounts")
+
+	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
+		AccountID: otherSpace.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "33333333-3333-4333-8333-333333333333"},
+		CodexOAuthToken: strPtrPG("at-3"), CodexEmail: strPtrPG("user@example.com"), CodexAccountID: strPtrPG("other-space"),
+	})
+	require.NoError(t, err, "one email in different spaces is distinct")
+
+	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
+		AccountID: duplicate.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "44444444-4444-4444-8444-444444444444"},
+		CodexOAuthToken: strPtrPG("at-4"), CodexEmail: strPtrPG("user@example.com"), CodexAccountID: strPtrPG("team-space"),
+	})
+	require.ErrorIs(t, err, repository.ErrConflict)
+}
+
 // TestAccountExtTryInsertPG TryInsertAccountExt 首写原子性（I2）：先写者胜——
 // 缺失 → 插入（true）；已存在 → 跳过不覆盖（false）；并发双首写 → 单份身份、
 // 不报错、不覆盖。

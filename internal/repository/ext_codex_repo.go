@@ -9,7 +9,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"entgo.io/ent/dialect/sql/sqlgraph"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
@@ -79,6 +82,9 @@ func (r *AccountExtRepo) UpsertAccountExt(ctx context.Context, e *domain.Account
 		}).
 		ID(ctx)
 	if err != nil {
+		if sqlgraph.IsUniqueConstraintError(err) {
+			return nil, fmt.Errorf("%w: codex email and space already exist", ErrConflict)
+		}
 		return nil, err
 	}
 	return r.GetAccountExt(ctx, e.AccountID)
@@ -108,6 +114,9 @@ func (r *AccountExtRepo) TryInsertAccountExt(ctx context.Context, e *domain.Acco
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil // 冲突：先写者已落行，本次跳过（不覆盖）
+	}
+	if sqlgraph.IsUniqueConstraintError(err) {
+		return false, fmt.Errorf("%w: codex email and space already exist", ErrConflict)
 	}
 	return false, err
 }
@@ -154,6 +163,25 @@ func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*d
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return nil, fmt.Errorf("%w: account_id=%d missing", ErrNotFound, accountID)
+		}
+		return nil, err
+	}
+	return toDomainAccountExt(row), nil
+}
+
+// GetAccountExtByCodexEmailAndAccountID resolves the stable Codex account
+// identity: normalized login email plus workspace/space ID. The space ID is
+// metadata only and is not used when fetching usage from the SDK.
+func (r *AccountExtRepo) GetAccountExtByCodexEmailAndAccountID(ctx context.Context, email, accountID string) (*domain.AccountExt, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	accountID = strings.TrimSpace(accountID)
+	row, err := r.client.AccountExt.Query().Where(
+		accountext.CodexEmailEqualFold(email),
+		accountext.CodexAccountIDEQ(accountID),
+	).Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: codex email=%q space_id=%q missing", ErrNotFound, email, accountID)
 		}
 		return nil, err
 	}

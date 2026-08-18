@@ -173,6 +173,7 @@ type AccountExtStore interface {
 	UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error)
 	TryInsertAccountExt(ctx context.Context, e *domain.AccountExt) (bool, error)
 	GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error)
+	GetAccountExtByCodexEmailAndAccountID(ctx context.Context, email, accountID string) (*domain.AccountExt, error)
 }
 
 // RedemptionStore 兑换码 + 兑换审计持久化（Phase 5 计费前基础设施）。

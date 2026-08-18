@@ -308,6 +308,10 @@ func (r *Repository) GetAccountExt(ctx context.Context, accountID int64) (*domai
 	return r.AccountExts.GetAccountExt(ctx, accountID)
 }
 
+func (r *Repository) GetAccountExtByCodexEmailAndAccountID(ctx context.Context, email, accountID string) (*domain.AccountExt, error) {
+	return r.AccountExts.GetAccountExtByCodexEmailAndAccountID(ctx, email, accountID)
+}
+
 // --- 用户（Phase 3a） ---
 
 func (r *Repository) CreateUser(ctx context.Context, u *domain.User) (*domain.User, error) {

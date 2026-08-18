@@ -126,6 +126,8 @@ export class ApiClient {
   getAccountGroups = (id: number) => this.request<components['schemas']['AccountGroupsResponse']>(`/accounts/${id}/groups`)
   getAccountExt = (id: number) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`)
   putAccountExt = (id: number, b: components['schemas']['AccountExt']) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`, { method: 'PUT', body: JSON.stringify(b) })
+  importCodexOAuth = (b: components['schemas']['CodexOAuthImportRequest']) => this.request<components['schemas']['CodexOAuthImportResponse']>('/accounts/import/codex-oauth', { method: 'POST', body: JSON.stringify(b) })
+  getAccountsUsage = (accountIds: number[], from?: string, to?: string) => this.request<components['schemas']['AccountsUsageResponse']>('/accounts/usage', { params: toQuery({ account_ids: accountIds.join(','), from, to }) })
   // —— 规则 ——
   listRules = (p?: { enabled?: boolean }) => this.request<components['schemas']['RuleListResponse']>('/rules', { params: toQuery(p) })
   createRule = (b: components['schemas']['RuleCreate']) => this.request<components['schemas']['Rule']>('/rules', { method: 'POST', body: JSON.stringify(b) })

@@ -344,6 +344,11 @@ func (f *fakeStore) GetTemplateExt(ctx context.Context, templateID int64) (*doma
 func (f *fakeStore) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for accountID, existing := range f.accExts {
+		if accountID != e.AccountID && sameHandlerCodexImportIdentity(existing, e) {
+			return nil, fmt.Errorf("%w: codex email and space already exist", repository.ErrConflict)
+		}
+	}
 	c := *e
 	f.accExts[e.AccountID] = &c
 	return &c, nil
@@ -356,6 +361,11 @@ func (f *fakeStore) TryInsertAccountExt(ctx context.Context, e *domain.AccountEx
 	defer f.mu.Unlock()
 	if _, ok := f.accExts[e.AccountID]; ok {
 		return false, nil
+	}
+	for _, existing := range f.accExts {
+		if sameHandlerCodexImportIdentity(existing, e) {
+			return false, fmt.Errorf("%w: codex email and space already exist", repository.ErrConflict)
+		}
 	}
 	c := *e
 	f.accExts[e.AccountID] = &c
@@ -371,6 +381,28 @@ func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain
 	}
 	c := *e
 	return &c, nil
+}
+
+func (f *fakeStore) GetAccountExtByCodexEmailAndAccountID(ctx context.Context, email, accountID string) (*domain.AccountExt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	email = strings.ToLower(strings.TrimSpace(email))
+	accountID = strings.TrimSpace(accountID)
+	for _, e := range f.accExts {
+		if e.CodexEmail != nil && e.CodexAccountID != nil &&
+			strings.EqualFold(strings.TrimSpace(*e.CodexEmail), email) && strings.TrimSpace(*e.CodexAccountID) == accountID {
+			c := *e
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: codex email=%q space_id=%q missing", repository.ErrNotFound, email, accountID)
+}
+
+func sameHandlerCodexImportIdentity(a, b *domain.AccountExt) bool {
+	return a != nil && b != nil && a.CodexEmail != nil && b.CodexEmail != nil &&
+		a.CodexAccountID != nil && b.CodexAccountID != nil &&
+		strings.EqualFold(strings.TrimSpace(*a.CodexEmail), strings.TrimSpace(*b.CodexEmail)) &&
+		strings.TrimSpace(*a.CodexAccountID) == strings.TrimSpace(*b.CodexAccountID)
 }
 
 // QueryUsages 模拟 repo 过滤（R4-M2 防假绿：完整过滤面与真实 repo

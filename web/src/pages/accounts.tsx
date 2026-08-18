@@ -5,11 +5,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, FileJson } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import { BatchBar } from '@/components/batch-bar'
+import { CodexImportDialog, CodexUsagePopover } from '@/components/codex-account-tools'
 import { ListToolbar } from '@/components/list-toolbar'
 import { Pagination } from '@/components/pagination'
 import { SortableHeader, type SortOrder } from '@/components/sortable-header'
@@ -224,6 +225,7 @@ export default function Accounts() {
   })
   const templatesQ = useQuery({ queryKey: ['templates'], queryFn: () => api.listTemplates({ limit: 100 }) })
   const templates = templatesQ.data?.rows ?? []
+  const codexOAuthTemplates = templates.filter(template => template.CredentialType === 'codex-oauth')
   const groupsQ = useQuery({ queryKey: ['groups'], queryFn: () => api.listGroups({ limit: 100 }) })
   const groups = groupsQ.data?.rows ?? []
   const rows = data?.rows ?? []
@@ -340,6 +342,7 @@ export default function Accounts() {
 
   // —— 单行 创建/编辑/删除 ——
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [codexImportOpen, setCodexImportOpen] = useState(false)
   const [editing, setEditing] = useState<AccountView | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [deleting, setDeleting] = useState<AccountView | null>(null)
@@ -410,6 +413,7 @@ export default function Accounts() {
           account_id: id,
           credential_type: ct,
           codex_email: (f.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
+          codex_account_id: cur?.codex_account_id ?? null,
           ...(ct === 'codex-oauth'
             ? {
                 codex_oauth_token: f.codex_oauth_token.trim() || null,
@@ -504,6 +508,7 @@ export default function Accounts() {
         account_id: a.ID,
         credential_type: ct,
         codex_email: extForm.codex_email.trim() || null,
+        codex_account_id: cur?.codex_account_id ?? null,
         // 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key（其余置 NULL）
         ...(ct === 'codex-oauth'
           ? {
@@ -536,14 +541,24 @@ export default function Accounts() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t('accounts.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('accounts.subtitle')}</p>
         </div>
-        <Button onClick={openCreate} disabled={templates.length === 0} title={templates.length === 0 ? t('accounts.noTemplate') : undefined}>
-          <Plus /> {t('accounts.new')}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setCodexImportOpen(true)}
+            disabled={codexOAuthTemplates.length === 0}
+            title={codexOAuthTemplates.length === 0 ? t('accounts.codexImport.noTemplate') : undefined}
+          >
+            <FileJson /> {t('accounts.codexImport.button')}
+          </Button>
+          <Button onClick={openCreate} disabled={templates.length === 0} title={templates.length === 0 ? t('accounts.noTemplate') : undefined}>
+            <Plus /> {t('accounts.new')}
+          </Button>
+        </div>
       </div>
 
       <ListToolbar
@@ -640,6 +655,7 @@ export default function Accounts() {
                   <SortableHeader field="name" label={t('accounts.table.name')} active={activeSort === 'name'} order={order} onToggle={onColumnToggle} />
                   <SortableHeader field="template_id" label={t('accounts.table.template')} active={activeSort === 'template_id'} order={order} onToggle={onColumnToggle} />
                   <SortableHeader field="status" label={t('accounts.table.status')} active={activeSort === 'status'} order={order} onToggle={onColumnToggle} />
+                  <TableHead>{t('accounts.table.usage')}</TableHead>
                   <SortableHeader field="weight" label={t('accounts.table.weight')} active={activeSort === 'weight'} order={order} onToggle={onColumnToggle} className="text-right [&_button]:justify-end" />
                   <SortableHeader field="max_concurrency" label={t('accounts.table.maxConcurrency')} active={activeSort === 'max_concurrency'} order={order} onToggle={onColumnToggle} className="text-right [&_button]:justify-end" />
                   <TableHead className="text-right">{t('accounts.table.curConcurrency')}</TableHead>
@@ -664,6 +680,13 @@ export default function Accounts() {
                         {/* A-4：冷却标识（CooldownUntil 未过期即标出，status=active 也显示） */}
                         <CooldownBadge cooldownUntil={a.CooldownUntil} />
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      {a.Template?.CredentialType === 'codex-oauth' && a.ID ? (
+                        <CodexUsagePopover accountID={a.ID} accountName={a.Name} />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{a.Weight ?? 0}</TableCell>
                     <TableCell className="text-right tabular-nums">{a.MaxConcurrency ?? 8}</TableCell>
@@ -708,6 +731,13 @@ export default function Accounts() {
           <Pagination total={data?.total ?? 0} limit={limit} offset={offset} onOffsetChange={setOffset} onLimitChange={changeLimit} />
         </>
       )}
+
+      <CodexImportDialog
+        open={codexImportOpen}
+        onOpenChange={setCodexImportOpen}
+        templates={codexOAuthTemplates}
+        groups={groups}
+      />
 
       {/* —— 创建/编辑对话框 —— */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -1019,6 +1049,14 @@ export default function Accounts() {
                 onChange={e => setExtForm(f => ({ ...f, codex_email: e.target.value }))}
               />
             </div>
+            {extCredentialType === 'codex-oauth' && (
+              <div className="space-y-1.5">
+                <Label>{t('accounts.ext.spaceId')}</Label>
+                <div className="min-h-9 break-all rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm">
+                  {extQ.data?.codex_account_id ?? '—'}
+                </div>
+              </div>
+            )}
             {extCredentialType === 'codex-oauth' ? (
               <>
                 <div className="space-y-1.5">

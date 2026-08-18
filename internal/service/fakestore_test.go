@@ -107,8 +107,8 @@ func newFakeStore() *fakeStore {
 		imagePrices:    make(map[string]*domain.ImagePrice),
 		functionPrices: make(map[string]*domain.FunctionPrice),
 		tplExts:        make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
-		accExtErr:      make(map[int64]error),
-		nextID: 1,
+		accExtErr: make(map[int64]error),
+		nextID:    1,
 	}
 }
 
@@ -1419,6 +1419,11 @@ func (f *fakeStore) GetTemplateExt(ctx context.Context, templateID int64) (*doma
 func (f *fakeStore) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for accountID, existing := range f.accExts {
+		if accountID != e.AccountID && sameCodexImportIdentity(existing, e) {
+			return nil, fmt.Errorf("%w: codex email and space already exist", repository.ErrConflict)
+		}
+	}
 	c := *e
 	f.accExts[e.AccountID] = &c
 	return &c, nil
@@ -1431,6 +1436,11 @@ func (f *fakeStore) TryInsertAccountExt(ctx context.Context, e *domain.AccountEx
 	defer f.mu.Unlock()
 	if _, ok := f.accExts[e.AccountID]; ok {
 		return false, nil
+	}
+	for _, existing := range f.accExts {
+		if sameCodexImportIdentity(existing, e) {
+			return false, fmt.Errorf("%w: codex email and space already exist", repository.ErrConflict)
+		}
 	}
 	c := *e
 	f.accExts[e.AccountID] = &c
@@ -1449,6 +1459,28 @@ func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain
 	}
 	c := *e
 	return &c, nil
+}
+
+func (f *fakeStore) GetAccountExtByCodexEmailAndAccountID(ctx context.Context, email, accountID string) (*domain.AccountExt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	email = strings.ToLower(strings.TrimSpace(email))
+	accountID = strings.TrimSpace(accountID)
+	for _, e := range f.accExts {
+		if e.CodexEmail != nil && e.CodexAccountID != nil &&
+			strings.EqualFold(strings.TrimSpace(*e.CodexEmail), email) && strings.TrimSpace(*e.CodexAccountID) == accountID {
+			c := *e
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: codex email=%q space_id=%q missing", repository.ErrNotFound, email, accountID)
+}
+
+func sameCodexImportIdentity(a, b *domain.AccountExt) bool {
+	return a != nil && b != nil && a.CodexEmail != nil && b.CodexEmail != nil &&
+		a.CodexAccountID != nil && b.CodexAccountID != nil &&
+		strings.EqualFold(strings.TrimSpace(*a.CodexEmail), strings.TrimSpace(*b.CodexEmail)) &&
+		strings.TrimSpace(*a.CodexAccountID) == strings.TrimSpace(*b.CodexAccountID)
 }
 
 // --- 兑换码非事务面（管理端 CRUD 用；错误格式镜像真实 repo） ---

@@ -218,6 +218,24 @@ paths:
               schema: { $ref: '#/components/schemas/AccountsUsageResponse' }
         default:
           $ref: '#/components/responses/Error'
+  /accounts/import/codex-oauth:
+    post:
+      operationId: PostAccountsImportCodexOauth
+      tags: [accounts]
+      summary: Import Codex OAuth account JSON
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodexOAuthImportRequest' }
+      responses:
+        '200':
+          description: Per-item import results without credential material
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodexOAuthImportResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   /accounts/batch-delete:
     post:
       operationId: PostAccountsBatchDelete
@@ -1639,6 +1657,40 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/AccountUsageItem' }
+    CodexOAuthImportRequest:
+      type: object
+      required: [template_id, credentials]
+      properties:
+        template_id: { type: integer, format: int64 }
+        group_ids:
+          type: array
+          items: { type: integer, format: int64 }
+        name_prefix: { type: string }
+        weight: { type: integer, minimum: 1 }
+        max_concurrency: { type: integer, minimum: 1 }
+        credentials:
+          description: OAuth JSON from Codex clients. Supports one object, an array, credentials/accounts/items/data wrappers, and Codex auth.json. Each entry must resolve to an email and workspace/space ID; account_id is accepted as a legacy space_id alias.
+    CodexOAuthImportItem:
+      type: object
+      required: [index, status]
+      properties:
+        index: { type: integer, format: int64 }
+        status: { type: string, enum: [imported, updated, skipped, failed] }
+        account_id: { type: integer, format: int64, nullable: true, description: "Imported, updated, or winning gateway account ID" }
+        space_id: { type: string, description: "OAuth workspace/space metadata; not an account identity by itself" }
+        email: { type: string }
+        message: { type: string }
+    CodexOAuthImportResponse:
+      type: object
+      required: [imported, updated, skipped, failed, items]
+      properties:
+        imported: { type: integer }
+        updated: { type: integer }
+        skipped: { type: integer }
+        failed: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CodexOAuthImportItem' }
     TemplateExt:
       type: object
       required: [credential_type]

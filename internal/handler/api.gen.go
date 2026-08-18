@@ -41,6 +41,14 @@ const (
 	UpstreamUnavailable AccountUsageItemUpstreamError = "upstream_unavailable"
 )
 
+// Defines values for CodexOAuthImportItemStatus.
+const (
+	Failed   CodexOAuthImportItemStatus = "failed"
+	Imported CodexOAuthImportItemStatus = "imported"
+	Skipped  CodexOAuthImportItemStatus = "skipped"
+	Updated  CodexOAuthImportItemStatus = "updated"
+)
+
 // Defines values for ErrorType.
 const (
 	Abort     ErrorType = "abort"
@@ -543,6 +551,42 @@ type CodexIdentity struct {
 
 	// WindowId 身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n；响应 nil → null）
 	WindowId *string `json:"window_id"`
+}
+
+// CodexOAuthImportItem defines model for CodexOAuthImportItem.
+type CodexOAuthImportItem struct {
+	// AccountId Imported, updated, or winning gateway account ID
+	AccountId *int64  `json:"account_id"`
+	Email     *string `json:"email,omitempty"`
+	Index     int64   `json:"index"`
+	Message   *string `json:"message,omitempty"`
+
+	// SpaceId OAuth workspace/space metadata; not an account identity by itself
+	SpaceId *string                    `json:"space_id,omitempty"`
+	Status  CodexOAuthImportItemStatus `json:"status"`
+}
+
+// CodexOAuthImportItemStatus defines model for CodexOAuthImportItem.Status.
+type CodexOAuthImportItemStatus string
+
+// CodexOAuthImportRequest defines model for CodexOAuthImportRequest.
+type CodexOAuthImportRequest struct {
+	// Credentials OAuth JSON from Codex clients. Supports one object, an array, credentials/accounts/items/data wrappers, and Codex auth.json. Each entry must resolve to an email and workspace/space ID; account_id is accepted as a legacy space_id alias.
+	Credentials    interface{} `json:"credentials"`
+	GroupIds       *[]int64    `json:"group_ids,omitempty"`
+	MaxConcurrency *int        `json:"max_concurrency,omitempty"`
+	NamePrefix     *string     `json:"name_prefix,omitempty"`
+	TemplateId     int64       `json:"template_id"`
+	Weight         *int        `json:"weight,omitempty"`
+}
+
+// CodexOAuthImportResponse defines model for CodexOAuthImportResponse.
+type CodexOAuthImportResponse struct {
+	Failed   int                    `json:"failed"`
+	Imported int                    `json:"imported"`
+	Items    []CodexOAuthImportItem `json:"items"`
+	Skipped  int                    `json:"skipped"`
+	Updated  int                    `json:"updated"`
 }
 
 // CodexRateLimit 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01）
@@ -1750,6 +1794,9 @@ type PostAccountsBatchDeleteJSONRequestBody = BatchDeleteBody
 // PostAccountsBatchUpdateJSONRequestBody defines body for PostAccountsBatchUpdate for application/json ContentType.
 type PostAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
 
+// PostAccountsImportCodexOauthJSONRequestBody defines body for PostAccountsImportCodexOauth for application/json ContentType.
+type PostAccountsImportCodexOauthJSONRequestBody = CodexOAuthImportRequest
+
 // PutAccountsIdJSONRequestBody defines body for PutAccountsId for application/json ContentType.
 type PutAccountsIdJSONRequestBody = AccountCreate
 
@@ -1839,6 +1886,9 @@ type ServerInterface interface {
 	// 批量更新账号（fields 为任意字段子集）
 	// (POST /accounts/batch-update)
 	PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
+	// Import Codex OAuth account JSON
+	// (POST /accounts/import/codex-oauth)
+	PostAccountsImportCodexOauth(w http.ResponseWriter, r *http.Request)
 	// 账号用量聚合（统一 usage API——批量 ≤100 条；from/to 缺省 = 当天）
 	// (GET /accounts/usage)
 	GetAccountsUsage(w http.ResponseWriter, r *http.Request, params GetAccountsUsageParams)
@@ -2046,6 +2096,12 @@ func (_ Unimplemented) PostAccountsBatchDelete(w http.ResponseWriter, r *http.Re
 // 批量更新账号（fields 为任意字段子集）
 // (POST /accounts/batch-update)
 func (_ Unimplemented) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Import Codex OAuth account JSON
+// (POST /accounts/import/codex-oauth)
+func (_ Unimplemented) PostAccountsImportCodexOauth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2517,6 +2573,20 @@ func (siw *ServerInterfaceWrapper) PostAccountsBatchUpdate(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAccountsBatchUpdate(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccountsImportCodexOauth operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsImportCodexOauth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsImportCodexOauth(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4733,6 +4803,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/batch-update", wrapper.PostAccountsBatchUpdate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/import/codex-oauth", wrapper.PostAccountsImportCodexOauth)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/accounts/usage", wrapper.GetAccountsUsage)
