@@ -882,6 +882,16 @@ func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *ti
 				next.errCount++
 				next.lastError = strPtr(errMsgOr("upstream error", errMsg))
 			case domain.StatusActive:
+				// A-5（用户裁决 2026-08-19，覆盖 C-M2）：ok 规则恢复 active 前
+				// 检查冷却——冷却未过期不得恢复（早退零副作用：不回写
+				// enqueueWrite、不更新 lastUsedAt、不触碰 errCount/lastError/
+				// EWMA——避免每 ok 事件一次纠正回写；状态自愈靠后续错误事件 +
+				// A-2 冷却保留 + A-4 展示兜底，Select 恒被冷却拦截）。冷却过期/
+				// 无冷却 → 短路 → 现状恢复。检查基于本 CAS 轮次的 cur（读-改-写
+				// 原子：并发转换使 CAS 失败重读后重新检查）。
+				if cur.cooldownUntil != nil && !cur.cooldownUntil.Before(now) {
+					return
+				}
 				next.errCount = 0
 				next.lastError = nil
 			}
