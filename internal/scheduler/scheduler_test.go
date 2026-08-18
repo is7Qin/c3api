@@ -1695,7 +1695,10 @@ func TestInvalidateGroupReuseKeepsCounters(t *testing.T) {
 	require.Greater(t, float64(after.errRate.Load())/errRateScale, 0.0, "errRate 跨组级重载保留")
 	require.Equal(t, []int64{10}, after.static.Load().groupIDs, "groupIDs 重建为 [10]（无残留）")
 
-	// 组级重载后仍可正常调度
+	// 组级重载后仍可正常调度。冷却保留语义（2026-08-19 缺陷 2 修复：组级重载
+	// 不再隐式清内存冷却——seed-5xx 的 10m 冷却随重载保留）→ 推进时间越过
+	// 冷却后惰性恢复（TestMark429CooldownAndRecover 同款）。
+	s.timeNow = func() time.Time { return time.Now().Add(11 * time.Minute) }
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)

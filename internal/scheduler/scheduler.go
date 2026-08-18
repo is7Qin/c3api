@@ -269,6 +269,8 @@ func (s *Scheduler) reload(ctx context.Context) error {
 // 同步，动态字段（concurrency/errRate/errCount/lastError）保留内存值：
 //   - 管理面改动（weight/status/max_concurrency 等）经全量同步/组级重载生效；
 //   - err_rate/err_count 跨 ≤30s 全量同步与组级重载不清零（管理端列表展示连续）；
+//   - cooldownUntil：DB 有值同步、nil 保留内存冷却（回写丢弃/失败保底——冷却
+//     不因重建缩水，见下方 state 同步注释；2026-08-19 缺陷 2 修复）；
 //   - 实例指针不变 → 原子操作天然连续，Load-Store 间隙窗口一并消除。
 // 新账号（oldByID 无）→ 新建（含 state 初始化与钳制，现状逻辑）。
 //
@@ -306,13 +308,20 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[i
 					//（concurrency/errRate/errCount/lastError）不触碰。
 					as = old
 					as.static.Store(av)
-					// state DB 权威同步（写时复制，评审 P-1 修订）：status/
-					// cooldownUntil 以 DB 为准，errCount/lastError 等动态字段
-					// 保留内存值。cur 恒非 nil（构造即初始化）。
+					// state 同步（写时复制，评审 P-1 修订）：status 以 DB 为准，
+					// errCount/lastError 等动态字段保留内存值。cooldownUntil
+					// 特殊：DB 有值 → 同步（回写成功路径，与内存一致）；DB nil
+					// → 保留内存冷却——回写丢弃/失败（队列满/DB 故障）保底：
+					// 冷却不因 ≤30s 重建缩水；管理面无清冷却操作（DB 列仅回写
+					// 镜像，非管理面输入），"DB nil 清内存冷却"无语义损失
+					//（2026-08-19 缺陷 2 修复，与 errRate 同款连续性）。
+					// cur 恒非 nil（构造即初始化）。
 					cur := as.state.Load()
 					next := *cur
 					next.status = a.Status
-					next.cooldownUntil = a.CooldownUntil
+					if a.CooldownUntil != nil {
+						next.cooldownUntil = a.CooldownUntil
+					}
 					as.state.Store(&next)
 				} else {
 					// 新账号：新建实例（含 state 初始化）。
@@ -790,8 +799,9 @@ func RuleKindOf(httpStatus int) rule.Kind {
 // 的 scheduler 包装）：快照取 TemplateID/GroupID（对齐 MarkResult——调用方
 // 事件构造无快照访问）后委托规则引擎首中分类。返回 transmit（true = 命中
 // 规则声明透传上游原文——响应/日志原文；false = 归一固定文案）与 punish
-// （true = 命中规则有状态动作，应投递 MarkResult 让 worker 精确应用——含
-// 窗口条件规则的"可能命中"保守判定）。快照未加载/账号快照外 → (false, false)
+// （true = 命中规则有状态动作——Status/Weight/Cooldown 任一非 nil，应投递
+// MarkResult 让 worker 精确应用——含窗口条件规则的"可能命中"保守判定）。
+// 快照未加载/账号快照外 → (false, false)
 // （对齐 MarkResult 早退语义——请求路径不可达；本地拒绝不进本机制）。
 func (s *Scheduler) Classify(ev rule.Event) (transmit bool, punish bool) {
 	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
