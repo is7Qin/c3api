@@ -783,6 +783,66 @@ func TestClassify(t *testing.T) {
 	require.False(t, pu)
 }
 
+// TestClassifyCooldownPunish A-1 修复回归（2026-08-19 缺陷 1 直接根因）：
+// punish 判定必须含 Cooldown——cooldown-only 规则（transmit=false、status/
+// weight nil）命中后必须 punish=true，否则 429/5xx/network 分支不投递
+// MarkResult、冷却动作静默丢弃（账号恒 active、请求恒 "no available
+// account"）。矩阵：cooldown-only / 带 status（回归）/ transmit-only（回归，
+// 透传不冷却语义不变）/ transmit+cooldown 组合（评审 O-3）/ 窗口条件
+// cooldown-only（保守"可能命中"语义，与既有窗口规则测试同构）。
+func TestClassifyCooldownPunish(t *testing.T) {
+	http401, http400, http402 := 401, 400, 402
+	e, _ := newTestEngine(t,
+		domain.Rule{Name: "cd-only", Enabled: true, Priority: 10,
+			When: domain.RuleWhen{Kind: strPtr("429")},
+			Then: domain.RuleThen{Cooldown: strPtr("5h")}},
+		domain.Rule{Name: "status-429", Enabled: true, Priority: 20,
+			When: domain.RuleWhen{Kind: strPtr("429"), HTTPStatus: &http401},
+			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")}},
+		domain.Rule{Name: "transmit-only", Enabled: true, Priority: 30,
+			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
+			Then: domain.RuleThen{Transmit: true}},
+		domain.Rule{Name: "transmit-cd", Enabled: true, Priority: 40,
+			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http402},
+			Then: domain.RuleThen{Transmit: true, Cooldown: strPtr("30s")}},
+		domain.Rule{Name: "window-cd", Enabled: true, Priority: 50,
+			When: domain.RuleWhen{Kind: strPtr("5xx"), CountFailureGE: intPtr(5), WindowSeconds: intPtr(60)},
+			Then: domain.RuleThen{Cooldown: strPtr("5h")}},
+	)
+	ev := func(kind Kind, code int) Event {
+		var hp *int
+		if code > 0 {
+			hp = &code
+		}
+		return Event{AccountID: 1, Kind: kind, HTTPStatus: hp}
+	}
+
+	// cooldown-only 规则 → punish=true（修复前 false——缺陷 1 根因）
+	tx, pu := e.Classify(ev(Kind429, 0))
+	require.False(t, tx)
+	require.True(t, pu, "cooldown-only 规则 punish=true（漏 Cooldown → 冷却永不生效）")
+
+	// 带 status 规则 → punish=true（回归）
+	tx, pu = e.Classify(ev(Kind429, http401))
+	require.False(t, tx)
+	require.True(t, pu, "带 status 规则 punish=true 回归")
+
+	// transmit-only 规则 → punish=false（回归——透传不冷却，语义不变）
+	tx, pu = e.Classify(ev(Kind4xx, http400))
+	require.True(t, tx)
+	require.False(t, pu, "transmit-only 规则 punish=false 回归")
+
+	// transmit+cooldown 组合 → (true, true)（评审 O-3）
+	tx, pu = e.Classify(ev(Kind4xx, http402))
+	require.True(t, tx)
+	require.True(t, pu, "transmit+cooldown 组合 punish=true")
+
+	// 窗口条件 cooldown-only 规则 → 保守 punish=true（投递后 worker 窗口精确判）
+	tx, pu = e.Classify(ev(Kind5xx, 500))
+	require.False(t, tx)
+	require.True(t, pu, "窗口条件 cooldown-only 规则 punish=true（可能命中）")
+}
+
 // TestClassifyMessageContains message_contains 参与分类（含/不含）。
 func TestClassifyMessageContains(t *testing.T) {
 	e, _ := newTestEngine(t,

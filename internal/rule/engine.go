@@ -304,8 +304,10 @@ func statusPtr(s domain.AccountStatus) *domain.AccountStatus { return &s }
 // 历史计数，预判不可得——按"可能命中"保守处理（不参与判定，窗口阈值由 worker
 // Match 精确裁决；prejudge 命中 → punish 保证事件投递，worker 再精确应用）。
 // 返回 transmit（true = 命中规则 then.transmit——透传上游原文）与 punish
-// （true = 命中规则有状态动作 Status/Weight 任一非 nil——应投递 MarkResult）。
-// 无命中 → (false, false)（默认归一，安全默认——不认识的错误不透传）。
+// （true = 命中规则有状态动作 Status/Weight/Cooldown 任一非 nil——应投递
+// MarkResult；漏判 Cooldown 则 cooldown-only 规则永不投递，冷却静默丢弃，
+// 2026-08-19 缺陷 1 根因）。无命中 → (false, false)（默认归一，安全默认
+// ——不认识的错误不透传）。
 // 零分配：仅读规则集切片（RLock 快照）+ 字符串比较。
 func (e *RuleEngine) Classify(ev Event) (transmit bool, punish bool) {
 	e.rulesMu.RLock()
@@ -315,7 +317,7 @@ func (e *RuleEngine) Classify(ev Event) (transmit bool, punish bool) {
 		if !matchBasic(r.When, ev) {
 			continue
 		}
-		return r.Then.Transmit, r.Then.Status != nil || r.Then.Weight != nil
+		return r.Then.Transmit, r.Then.Status != nil || r.Then.Weight != nil || r.Then.Cooldown != nil
 	}
 	return false, false
 }

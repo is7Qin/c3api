@@ -15,6 +15,28 @@ export function formatDateTime(iso?: string): string {
   return d.toLocaleString('zh-CN', { hour12: false })
 }
 
+// 冷却剩余时长（A-4 增量，2026-08-19）：untilISO → 人类可读剩余。向上取整秒、
+// 最小显示 1s（避免 0s 闪烁）；分段：≥24h → "Xd Xh"（10086h → "420d 6h"）、
+// ≥1h → "Xh Ym"、≥1m → "Xm Ys"、<1m → "Xs"；整除时零段省略（恰好 24h →
+// "1d"）。空值/非法/已过期 → null（调用方不渲染）。不做实时倒计时——列表
+// refetchInterval 轮询重算（用户裁决）。
+export function formatRemaining(untilISO?: string | null): string | null {
+  if (!untilISO) return null
+  const until = new Date(untilISO)
+  if (Number.isNaN(until.getTime())) return null
+  const ms = until.getTime() - Date.now()
+  if (ms <= 0) return null
+  const totalSec = Math.ceil(ms / 1000)
+  const d = Math.floor(totalSec / 86400)
+  const h = Math.floor((totalSec % 86400) / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`
+  return `${s}s`
+}
+
 // 超长文本截断（title/末尾省略），适合表格单元格。
 export function truncate(s: string | undefined | null, n = 16): string {
   if (!s) return '—'

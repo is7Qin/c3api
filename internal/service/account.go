@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
@@ -238,12 +239,19 @@ func groupsOf(a *domain.Account) []int64 {
 	return *a.GroupIDs
 }
 
-// AccountView 是账号的管理端视图（含调度器运行时信息）。
+// AccountView 是账号的管理端视图（含调度器运行时信息）。Status/CooldownUntil
+// 覆盖嵌入 Account 的同名字段（Go 字段提升规则：同名顶层字段遮蔽嵌入字段）：
+// 合并后列表显示 = 调度器内存权威（A-4，2026-08-19）——回写丢失/失败时内存与
+// DB 不一致，管理端显示与 Select 请求行为同源（overview 聚合早已用内存状态，
+// A-4 后列表口径与其统一）；DB 列仍是持久化镜像。JSON 键名与嵌入字段默认
+// 一致（"Status"/"CooldownUntil"，形状不变）。
 type AccountView struct {
 	*domain.Account
-	Concurrency int64   `json:"concurrency"`
-	ErrRate     float64 `json:"err_rate"`
-	ErrCount    int     `json:"err_count"`
+	Status        domain.AccountStatus `json:"Status"`
+	CooldownUntil *time.Time           `json:"CooldownUntil"`
+	Concurrency   int64                `json:"concurrency"`
+	ErrRate       float64              `json:"err_rate"`
+	ErrCount      int                  `json:"err_count"`
 }
 
 // ListAccountViews 账号管理端视图（含调度器运行时信息）。handler 列表入口，
@@ -258,10 +266,15 @@ func (s *Service) ListAccountViews(ctx context.Context, q repository.ListQuery) 
 	}
 	out := make([]*AccountView, 0, len(accs))
 	for _, a := range accs {
-		v := &AccountView{Account: a}
+		// 顶层覆盖字段初始化为 DB 值（sched 未装配/快照外时回退 DB 镜像——
+		// 与嵌入字段默认序列化形状一致）
+		v := &AccountView{Account: a, Status: a.Status, CooldownUntil: a.CooldownUntil}
 		if s.sched != nil {
 			if ri, ok := s.sched.Runtime(a.ID); ok {
 				v.Concurrency, v.ErrRate, v.ErrCount = ri.Concurrency, ri.ErrRate, ri.ErrCount
+				// A-4：Status/CooldownUntil 合并调度器内存值（快照内账号必有
+				// Runtime；快照未加载时保持 DB 值——与请求路径不可达一致）
+				v.Status, v.CooldownUntil = ri.Status, ri.CooldownUntil
 			}
 		}
 		out = append(out, v)

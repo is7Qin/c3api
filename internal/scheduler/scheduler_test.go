@@ -239,6 +239,17 @@ func TestMark429CooldownAndRecover(t *testing.T) {
 	s.FlushRules()
 	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrNoAvailable, "in cooldown should be unavailable")
+	// A-5（用户裁决覆盖 C-M2）：冷却未过期时 OK 不得恢复 active——早退零副作用
+	//（status/errCount/cooldownUntil 全不变、不回写），Select 仍拦截。
+	before, _ := s.Runtime(1)
+	s.MarkResult(1, rule.KindOK, nil, 0, "")
+	s.FlushRules()
+	ri, _ := s.Runtime(1)
+	require.Equal(t, before.Status, ri.Status, "冷却未过期：status 不变（仍 429）")
+	require.Equal(t, before.ErrCount, ri.ErrCount, "冷却未过期：errCount 不变")
+	require.Equal(t, before.CooldownUntil, ri.CooldownUntil, "冷却未过期：cooldownUntil 不变")
+	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
+	require.ErrorIs(t, err, ErrNoAvailable, "冷却未过期：仍不可调度")
 	// 冷却过期后惰性恢复（种子 cooldown 30s > 15s，需推进 35s）
 	s.timeNow = func() time.Time { return time.Now().Add(35 * time.Second) }
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
@@ -246,10 +257,11 @@ func TestMark429CooldownAndRecover(t *testing.T) {
 	s.MarkResult(sel.AccountID, rule.KindOK, nil, 0, "")
 	s.FlushRules()
 	s.Release(sel.AccountID)
-	// C-M2 语义钉：OK 恢复 active 但残留 cooldownUntil 保留至过期（新 apply 仅
-	// cooldownUntil 非 nil 才设置；种子 ok 规则无 cooldown → 旧冷却不清除）。
-	ri, _ := s.Runtime(1)
-	require.Equal(t, domain.StatusActive, ri.Status, "OK 恢复 active")
+	// C-M2 残留钉（A-5 保留"残留不清"部分）：过期后 OK 恢复 active，但残留
+	// cooldownUntil 不清除（新 apply 仅 cooldownUntil 非 nil 才设置；种子 ok
+	// 规则无 cooldown → 旧冷却不清除——保留至过期，Select 按时间判定不受影响）。
+	ri, _ = s.Runtime(1)
+	require.Equal(t, domain.StatusActive, ri.Status, "冷却过期后 OK 恢复 active")
 	require.NotNil(t, ri.CooldownUntil, "OK 不清除残留冷却（保留至过期，Select 按时间判定不受影响）")
 	require.Eventually(t, func() bool {
 		m.mu.Lock()
@@ -263,7 +275,7 @@ func TestMarkErrorBackoff(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
 	s := newSched(t, m)
 
-	// 种子规则：error → unhealthy + cooldown 5s（指数退避已废弃——升级惩罚由规则表达）
+	// 种子规则：error → unhealthy + cooldown 10m（指数退避已废弃——升级惩罚由规则表达）
 	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	s.FlushRules()
 	ri, ok := s.Runtime(1)
@@ -271,16 +283,25 @@ func TestMarkErrorBackoff(t *testing.T) {
 	require.Equal(t, domain.StatusUnhealthy, ri.Status)
 	require.Equal(t, 1, ri.ErrCount)
 	require.NotNil(t, ri.CooldownUntil)
-	require.True(t, ri.CooldownUntil.After(time.Now().Add(4*time.Second)), "seed cooldown 5s applied")
+	require.True(t, ri.CooldownUntil.After(time.Now().Add(4*time.Second)), "seed cooldown 10m applied")
 	s.MarkResult(1, rule.Kind5xx, nil, 500, "")
 	s.FlushRules()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, 2, ri.ErrCount)
+	// A-5（用户裁决覆盖 C-M2）：冷却未过期时 OK 恢复被 skip——status 恒
+	// unhealthy、ErrCount 保持 2（早退零副作用，err_top 持续显示错误态）。
 	s.MarkResult(1, rule.KindOK, nil, 0, "")
 	s.FlushRules()
 	ri, _ = s.Runtime(1)
-	require.Equal(t, domain.StatusActive, ri.Status, "success resets status")
-	require.Equal(t, 0, ri.ErrCount, "success resets err count")
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "冷却中 OK 不恢复 active（A-5 skip）")
+	require.Equal(t, 2, ri.ErrCount, "冷却中 OK 不重置 errCount")
+	// 推进过冷却（seed 10m）后 OK → 恢复 active + errCount 清零
+	s.timeNow = func() time.Time { return time.Now().Add(11 * time.Minute) }
+	s.MarkResult(1, rule.KindOK, nil, 0, "")
+	s.FlushRules()
+	ri, _ = s.Runtime(1)
+	require.Equal(t, domain.StatusActive, ri.Status, "冷却过期后 success resets status")
+	require.Equal(t, 0, ri.ErrCount, "冷却过期后 success resets err count")
 }
 
 func TestSelectUnknownGroup(t *testing.T) {
@@ -1184,7 +1205,20 @@ func TestMarkResultLastErrorWriteback(t *testing.T) {
 		return len(m.writes) == 1 && m.writes[0].lastErr != nil && *m.writes[0].lastErr == "upstream error"
 	}, time.Second, 10*time.Millisecond, "无文本 → 回退 upstream error")
 
-	// 成功恢复：last_error 清空（nil）
+	// 成功恢复：A-5（用户裁决覆盖 C-M2）——冷却未过期（seed-5xx 10m）时 OK
+	// skip 零副作用：不投递纠正回写（无新 write；上段 5xx 回写已消费）。
+	m.mu.Lock()
+	m.writes = nil
+	m.mu.Unlock()
+	s.MarkResult(1, rule.KindOK, nil, 200, "")
+	s.FlushRules()
+	require.Never(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return len(m.writes) > 0
+	}, 200*time.Millisecond, 10*time.Millisecond, "冷却中 OK skip：不得产生新回写")
+	// 推进过冷却（seed-5xx 10m）后 OK → 恢复 active → last_error 清空回写
+	s.timeNow = func() time.Time { return time.Now().Add(11 * time.Minute) }
 	m.mu.Lock()
 	m.writes = nil
 	m.mu.Unlock()
@@ -1695,7 +1729,10 @@ func TestInvalidateGroupReuseKeepsCounters(t *testing.T) {
 	require.Greater(t, float64(after.errRate.Load())/errRateScale, 0.0, "errRate 跨组级重载保留")
 	require.Equal(t, []int64{10}, after.static.Load().groupIDs, "groupIDs 重建为 [10]（无残留）")
 
-	// 组级重载后仍可正常调度
+	// 组级重载后仍可正常调度。冷却保留语义（2026-08-19 缺陷 2 修复：组级重载
+	// 不再隐式清内存冷却——seed-5xx 的 10m 冷却随重载保留）→ 推进时间越过
+	// 冷却后惰性恢复（TestMark429CooldownAndRecover 同款）。
+	s.timeNow = func() time.Time { return time.Now().Add(11 * time.Minute) }
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
