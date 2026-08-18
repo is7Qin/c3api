@@ -507,7 +507,7 @@ func TestResponsesWSCodexTypeZeroCount(t *testing.T) {
 	// SDK 路径（newTestCodexWSProxy）：模板 BaseURL = mock 上游根，账号 ext 快
 	// 照承载 PAT（relay 线凭据——不经 credential 注册表）。
 	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
-		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, InstallationID: "i", PATKey: &pat}},
+		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: "i"}, CodexPATKey: &pat}},
 		up.URL, &BillingHooks{
 			Prices:   prices,
 			Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),

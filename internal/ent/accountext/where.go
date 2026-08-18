@@ -65,49 +65,34 @@ func CredentialType(v string) predicate.AccountExt {
 	return predicate.AccountExt(sql.FieldEQ(FieldCredentialType, v))
 }
 
-// InstallationID applies equality check predicate on the "installation_id" field. It's identical to InstallationIDEQ.
-func InstallationID(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldInstallationID, v))
+// CodexOauthToken applies equality check predicate on the "codex_oauth_token" field. It's identical to CodexOauthTokenEQ.
+func CodexOauthToken(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexOauthToken, v))
 }
 
-// SessionID applies equality check predicate on the "session_id" field. It's identical to SessionIDEQ.
-func SessionID(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldSessionID, v))
+// CodexOauthRefreshToken applies equality check predicate on the "codex_oauth_refresh_token" field. It's identical to CodexOauthRefreshTokenEQ.
+func CodexOauthRefreshToken(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexOauthRefreshToken, v))
 }
 
-// ThreadID applies equality check predicate on the "thread_id" field. It's identical to ThreadIDEQ.
-func ThreadID(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldThreadID, v))
+// CodexOauthExpiresAt applies equality check predicate on the "codex_oauth_expires_at" field. It's identical to CodexOauthExpiresAtEQ.
+func CodexOauthExpiresAt(v time.Time) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexOauthExpiresAt, v))
 }
 
-// WindowID applies equality check predicate on the "window_id" field. It's identical to WindowIDEQ.
-func WindowID(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldWindowID, v))
+// CodexPatKey applies equality check predicate on the "codex_pat_key" field. It's identical to CodexPatKeyEQ.
+func CodexPatKey(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexPatKey, v))
 }
 
-// OauthToken applies equality check predicate on the "oauth_token" field. It's identical to OauthTokenEQ.
-func OauthToken(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldOauthToken, v))
+// CodexEmail applies equality check predicate on the "codex_email" field. It's identical to CodexEmailEQ.
+func CodexEmail(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexEmail, v))
 }
 
-// OauthRefreshToken applies equality check predicate on the "oauth_refresh_token" field. It's identical to OauthRefreshTokenEQ.
-func OauthRefreshToken(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldOauthRefreshToken, v))
-}
-
-// OauthExpiresAt applies equality check predicate on the "oauth_expires_at" field. It's identical to OauthExpiresAtEQ.
-func OauthExpiresAt(v time.Time) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldOauthExpiresAt, v))
-}
-
-// PatKey applies equality check predicate on the "pat_key" field. It's identical to PatKeyEQ.
-func PatKey(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldPatKey, v))
-}
-
-// Email applies equality check predicate on the "email" field. It's identical to EmailEQ.
-func Email(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldEmail, v))
+// CodexAccountID applies equality check predicate on the "codex_account_id" field. It's identical to CodexAccountIDEQ.
+func CodexAccountID(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexAccountID, v))
 }
 
 // AccountIDEQ applies the EQ predicate on the "account_id" field.
@@ -195,644 +180,439 @@ func CredentialTypeContainsFold(v string) predicate.AccountExt {
 	return predicate.AccountExt(sql.FieldContainsFold(FieldCredentialType, v))
 }
 
-// InstallationIDEQ applies the EQ predicate on the "installation_id" field.
-func InstallationIDEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldInstallationID, v))
+// CodexIdentityIsNil applies the IsNil predicate on the "codex_identity" field.
+func CodexIdentityIsNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIsNull(FieldCodexIdentity))
 }
 
-// InstallationIDNEQ applies the NEQ predicate on the "installation_id" field.
-func InstallationIDNEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNEQ(FieldInstallationID, v))
+// CodexIdentityNotNil applies the NotNil predicate on the "codex_identity" field.
+func CodexIdentityNotNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotNull(FieldCodexIdentity))
 }
 
-// InstallationIDIn applies the In predicate on the "installation_id" field.
-func InstallationIDIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIn(FieldInstallationID, vs...))
+// CodexOauthTokenEQ applies the EQ predicate on the "codex_oauth_token" field.
+func CodexOauthTokenEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexOauthToken, v))
 }
 
-// InstallationIDNotIn applies the NotIn predicate on the "installation_id" field.
-func InstallationIDNotIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotIn(FieldInstallationID, vs...))
+// CodexOauthTokenNEQ applies the NEQ predicate on the "codex_oauth_token" field.
+func CodexOauthTokenNEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNEQ(FieldCodexOauthToken, v))
 }
 
-// InstallationIDGT applies the GT predicate on the "installation_id" field.
-func InstallationIDGT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGT(FieldInstallationID, v))
+// CodexOauthTokenIn applies the In predicate on the "codex_oauth_token" field.
+func CodexOauthTokenIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIn(FieldCodexOauthToken, vs...))
 }
 
-// InstallationIDGTE applies the GTE predicate on the "installation_id" field.
-func InstallationIDGTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGTE(FieldInstallationID, v))
+// CodexOauthTokenNotIn applies the NotIn predicate on the "codex_oauth_token" field.
+func CodexOauthTokenNotIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotIn(FieldCodexOauthToken, vs...))
 }
 
-// InstallationIDLT applies the LT predicate on the "installation_id" field.
-func InstallationIDLT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLT(FieldInstallationID, v))
+// CodexOauthTokenGT applies the GT predicate on the "codex_oauth_token" field.
+func CodexOauthTokenGT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGT(FieldCodexOauthToken, v))
 }
 
-// InstallationIDLTE applies the LTE predicate on the "installation_id" field.
-func InstallationIDLTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLTE(FieldInstallationID, v))
+// CodexOauthTokenGTE applies the GTE predicate on the "codex_oauth_token" field.
+func CodexOauthTokenGTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGTE(FieldCodexOauthToken, v))
 }
 
-// InstallationIDContains applies the Contains predicate on the "installation_id" field.
-func InstallationIDContains(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContains(FieldInstallationID, v))
+// CodexOauthTokenLT applies the LT predicate on the "codex_oauth_token" field.
+func CodexOauthTokenLT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLT(FieldCodexOauthToken, v))
 }
 
-// InstallationIDHasPrefix applies the HasPrefix predicate on the "installation_id" field.
-func InstallationIDHasPrefix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasPrefix(FieldInstallationID, v))
+// CodexOauthTokenLTE applies the LTE predicate on the "codex_oauth_token" field.
+func CodexOauthTokenLTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLTE(FieldCodexOauthToken, v))
 }
 
-// InstallationIDHasSuffix applies the HasSuffix predicate on the "installation_id" field.
-func InstallationIDHasSuffix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasSuffix(FieldInstallationID, v))
+// CodexOauthTokenContains applies the Contains predicate on the "codex_oauth_token" field.
+func CodexOauthTokenContains(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContains(FieldCodexOauthToken, v))
 }
 
-// InstallationIDEqualFold applies the EqualFold predicate on the "installation_id" field.
-func InstallationIDEqualFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEqualFold(FieldInstallationID, v))
+// CodexOauthTokenHasPrefix applies the HasPrefix predicate on the "codex_oauth_token" field.
+func CodexOauthTokenHasPrefix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasPrefix(FieldCodexOauthToken, v))
 }
 
-// InstallationIDContainsFold applies the ContainsFold predicate on the "installation_id" field.
-func InstallationIDContainsFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContainsFold(FieldInstallationID, v))
+// CodexOauthTokenHasSuffix applies the HasSuffix predicate on the "codex_oauth_token" field.
+func CodexOauthTokenHasSuffix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasSuffix(FieldCodexOauthToken, v))
 }
 
-// SessionIDEQ applies the EQ predicate on the "session_id" field.
-func SessionIDEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldSessionID, v))
+// CodexOauthTokenIsNil applies the IsNil predicate on the "codex_oauth_token" field.
+func CodexOauthTokenIsNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIsNull(FieldCodexOauthToken))
 }
 
-// SessionIDNEQ applies the NEQ predicate on the "session_id" field.
-func SessionIDNEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNEQ(FieldSessionID, v))
+// CodexOauthTokenNotNil applies the NotNil predicate on the "codex_oauth_token" field.
+func CodexOauthTokenNotNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotNull(FieldCodexOauthToken))
 }
 
-// SessionIDIn applies the In predicate on the "session_id" field.
-func SessionIDIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIn(FieldSessionID, vs...))
+// CodexOauthTokenEqualFold applies the EqualFold predicate on the "codex_oauth_token" field.
+func CodexOauthTokenEqualFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEqualFold(FieldCodexOauthToken, v))
 }
 
-// SessionIDNotIn applies the NotIn predicate on the "session_id" field.
-func SessionIDNotIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotIn(FieldSessionID, vs...))
+// CodexOauthTokenContainsFold applies the ContainsFold predicate on the "codex_oauth_token" field.
+func CodexOauthTokenContainsFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContainsFold(FieldCodexOauthToken, v))
 }
 
-// SessionIDGT applies the GT predicate on the "session_id" field.
-func SessionIDGT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGT(FieldSessionID, v))
+// CodexOauthRefreshTokenEQ applies the EQ predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexOauthRefreshToken, v))
 }
 
-// SessionIDGTE applies the GTE predicate on the "session_id" field.
-func SessionIDGTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGTE(FieldSessionID, v))
+// CodexOauthRefreshTokenNEQ applies the NEQ predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenNEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNEQ(FieldCodexOauthRefreshToken, v))
 }
 
-// SessionIDLT applies the LT predicate on the "session_id" field.
-func SessionIDLT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLT(FieldSessionID, v))
+// CodexOauthRefreshTokenIn applies the In predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIn(FieldCodexOauthRefreshToken, vs...))
 }
 
-// SessionIDLTE applies the LTE predicate on the "session_id" field.
-func SessionIDLTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLTE(FieldSessionID, v))
+// CodexOauthRefreshTokenNotIn applies the NotIn predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenNotIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotIn(FieldCodexOauthRefreshToken, vs...))
 }
 
-// SessionIDContains applies the Contains predicate on the "session_id" field.
-func SessionIDContains(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContains(FieldSessionID, v))
+// CodexOauthRefreshTokenGT applies the GT predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenGT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGT(FieldCodexOauthRefreshToken, v))
 }
 
-// SessionIDHasPrefix applies the HasPrefix predicate on the "session_id" field.
-func SessionIDHasPrefix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasPrefix(FieldSessionID, v))
+// CodexOauthRefreshTokenGTE applies the GTE predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenGTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGTE(FieldCodexOauthRefreshToken, v))
 }
 
-// SessionIDHasSuffix applies the HasSuffix predicate on the "session_id" field.
-func SessionIDHasSuffix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasSuffix(FieldSessionID, v))
+// CodexOauthRefreshTokenLT applies the LT predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenLT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLT(FieldCodexOauthRefreshToken, v))
 }
 
-// SessionIDIsNil applies the IsNil predicate on the "session_id" field.
-func SessionIDIsNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIsNull(FieldSessionID))
+// CodexOauthRefreshTokenLTE applies the LTE predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenLTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLTE(FieldCodexOauthRefreshToken, v))
 }
 
-// SessionIDNotNil applies the NotNil predicate on the "session_id" field.
-func SessionIDNotNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotNull(FieldSessionID))
+// CodexOauthRefreshTokenContains applies the Contains predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenContains(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContains(FieldCodexOauthRefreshToken, v))
 }
 
-// SessionIDEqualFold applies the EqualFold predicate on the "session_id" field.
-func SessionIDEqualFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEqualFold(FieldSessionID, v))
+// CodexOauthRefreshTokenHasPrefix applies the HasPrefix predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenHasPrefix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasPrefix(FieldCodexOauthRefreshToken, v))
 }
 
-// SessionIDContainsFold applies the ContainsFold predicate on the "session_id" field.
-func SessionIDContainsFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContainsFold(FieldSessionID, v))
+// CodexOauthRefreshTokenHasSuffix applies the HasSuffix predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenHasSuffix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasSuffix(FieldCodexOauthRefreshToken, v))
 }
 
-// ThreadIDEQ applies the EQ predicate on the "thread_id" field.
-func ThreadIDEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldThreadID, v))
+// CodexOauthRefreshTokenIsNil applies the IsNil predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenIsNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIsNull(FieldCodexOauthRefreshToken))
 }
 
-// ThreadIDNEQ applies the NEQ predicate on the "thread_id" field.
-func ThreadIDNEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNEQ(FieldThreadID, v))
+// CodexOauthRefreshTokenNotNil applies the NotNil predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenNotNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotNull(FieldCodexOauthRefreshToken))
 }
 
-// ThreadIDIn applies the In predicate on the "thread_id" field.
-func ThreadIDIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIn(FieldThreadID, vs...))
+// CodexOauthRefreshTokenEqualFold applies the EqualFold predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenEqualFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEqualFold(FieldCodexOauthRefreshToken, v))
 }
 
-// ThreadIDNotIn applies the NotIn predicate on the "thread_id" field.
-func ThreadIDNotIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotIn(FieldThreadID, vs...))
+// CodexOauthRefreshTokenContainsFold applies the ContainsFold predicate on the "codex_oauth_refresh_token" field.
+func CodexOauthRefreshTokenContainsFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContainsFold(FieldCodexOauthRefreshToken, v))
 }
 
-// ThreadIDGT applies the GT predicate on the "thread_id" field.
-func ThreadIDGT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGT(FieldThreadID, v))
+// CodexOauthExpiresAtEQ applies the EQ predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtEQ(v time.Time) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexOauthExpiresAt, v))
 }
 
-// ThreadIDGTE applies the GTE predicate on the "thread_id" field.
-func ThreadIDGTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGTE(FieldThreadID, v))
+// CodexOauthExpiresAtNEQ applies the NEQ predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtNEQ(v time.Time) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNEQ(FieldCodexOauthExpiresAt, v))
 }
 
-// ThreadIDLT applies the LT predicate on the "thread_id" field.
-func ThreadIDLT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLT(FieldThreadID, v))
+// CodexOauthExpiresAtIn applies the In predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtIn(vs ...time.Time) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIn(FieldCodexOauthExpiresAt, vs...))
 }
 
-// ThreadIDLTE applies the LTE predicate on the "thread_id" field.
-func ThreadIDLTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLTE(FieldThreadID, v))
+// CodexOauthExpiresAtNotIn applies the NotIn predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtNotIn(vs ...time.Time) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotIn(FieldCodexOauthExpiresAt, vs...))
 }
 
-// ThreadIDContains applies the Contains predicate on the "thread_id" field.
-func ThreadIDContains(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContains(FieldThreadID, v))
+// CodexOauthExpiresAtGT applies the GT predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtGT(v time.Time) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGT(FieldCodexOauthExpiresAt, v))
 }
 
-// ThreadIDHasPrefix applies the HasPrefix predicate on the "thread_id" field.
-func ThreadIDHasPrefix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasPrefix(FieldThreadID, v))
+// CodexOauthExpiresAtGTE applies the GTE predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtGTE(v time.Time) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGTE(FieldCodexOauthExpiresAt, v))
 }
 
-// ThreadIDHasSuffix applies the HasSuffix predicate on the "thread_id" field.
-func ThreadIDHasSuffix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasSuffix(FieldThreadID, v))
+// CodexOauthExpiresAtLT applies the LT predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtLT(v time.Time) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLT(FieldCodexOauthExpiresAt, v))
 }
 
-// ThreadIDIsNil applies the IsNil predicate on the "thread_id" field.
-func ThreadIDIsNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIsNull(FieldThreadID))
+// CodexOauthExpiresAtLTE applies the LTE predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtLTE(v time.Time) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLTE(FieldCodexOauthExpiresAt, v))
 }
 
-// ThreadIDNotNil applies the NotNil predicate on the "thread_id" field.
-func ThreadIDNotNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotNull(FieldThreadID))
+// CodexOauthExpiresAtIsNil applies the IsNil predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtIsNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIsNull(FieldCodexOauthExpiresAt))
 }
 
-// ThreadIDEqualFold applies the EqualFold predicate on the "thread_id" field.
-func ThreadIDEqualFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEqualFold(FieldThreadID, v))
+// CodexOauthExpiresAtNotNil applies the NotNil predicate on the "codex_oauth_expires_at" field.
+func CodexOauthExpiresAtNotNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotNull(FieldCodexOauthExpiresAt))
 }
 
-// ThreadIDContainsFold applies the ContainsFold predicate on the "thread_id" field.
-func ThreadIDContainsFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContainsFold(FieldThreadID, v))
+// CodexPatKeyEQ applies the EQ predicate on the "codex_pat_key" field.
+func CodexPatKeyEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexPatKey, v))
 }
 
-// WindowIDEQ applies the EQ predicate on the "window_id" field.
-func WindowIDEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldWindowID, v))
+// CodexPatKeyNEQ applies the NEQ predicate on the "codex_pat_key" field.
+func CodexPatKeyNEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNEQ(FieldCodexPatKey, v))
 }
 
-// WindowIDNEQ applies the NEQ predicate on the "window_id" field.
-func WindowIDNEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNEQ(FieldWindowID, v))
+// CodexPatKeyIn applies the In predicate on the "codex_pat_key" field.
+func CodexPatKeyIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIn(FieldCodexPatKey, vs...))
 }
 
-// WindowIDIn applies the In predicate on the "window_id" field.
-func WindowIDIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIn(FieldWindowID, vs...))
+// CodexPatKeyNotIn applies the NotIn predicate on the "codex_pat_key" field.
+func CodexPatKeyNotIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotIn(FieldCodexPatKey, vs...))
 }
 
-// WindowIDNotIn applies the NotIn predicate on the "window_id" field.
-func WindowIDNotIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotIn(FieldWindowID, vs...))
+// CodexPatKeyGT applies the GT predicate on the "codex_pat_key" field.
+func CodexPatKeyGT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGT(FieldCodexPatKey, v))
 }
 
-// WindowIDGT applies the GT predicate on the "window_id" field.
-func WindowIDGT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGT(FieldWindowID, v))
+// CodexPatKeyGTE applies the GTE predicate on the "codex_pat_key" field.
+func CodexPatKeyGTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGTE(FieldCodexPatKey, v))
 }
 
-// WindowIDGTE applies the GTE predicate on the "window_id" field.
-func WindowIDGTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGTE(FieldWindowID, v))
+// CodexPatKeyLT applies the LT predicate on the "codex_pat_key" field.
+func CodexPatKeyLT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLT(FieldCodexPatKey, v))
 }
 
-// WindowIDLT applies the LT predicate on the "window_id" field.
-func WindowIDLT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLT(FieldWindowID, v))
+// CodexPatKeyLTE applies the LTE predicate on the "codex_pat_key" field.
+func CodexPatKeyLTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLTE(FieldCodexPatKey, v))
 }
 
-// WindowIDLTE applies the LTE predicate on the "window_id" field.
-func WindowIDLTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLTE(FieldWindowID, v))
+// CodexPatKeyContains applies the Contains predicate on the "codex_pat_key" field.
+func CodexPatKeyContains(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContains(FieldCodexPatKey, v))
 }
 
-// WindowIDContains applies the Contains predicate on the "window_id" field.
-func WindowIDContains(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContains(FieldWindowID, v))
+// CodexPatKeyHasPrefix applies the HasPrefix predicate on the "codex_pat_key" field.
+func CodexPatKeyHasPrefix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasPrefix(FieldCodexPatKey, v))
 }
 
-// WindowIDHasPrefix applies the HasPrefix predicate on the "window_id" field.
-func WindowIDHasPrefix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasPrefix(FieldWindowID, v))
+// CodexPatKeyHasSuffix applies the HasSuffix predicate on the "codex_pat_key" field.
+func CodexPatKeyHasSuffix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasSuffix(FieldCodexPatKey, v))
 }
 
-// WindowIDHasSuffix applies the HasSuffix predicate on the "window_id" field.
-func WindowIDHasSuffix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasSuffix(FieldWindowID, v))
+// CodexPatKeyIsNil applies the IsNil predicate on the "codex_pat_key" field.
+func CodexPatKeyIsNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIsNull(FieldCodexPatKey))
 }
 
-// WindowIDIsNil applies the IsNil predicate on the "window_id" field.
-func WindowIDIsNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIsNull(FieldWindowID))
+// CodexPatKeyNotNil applies the NotNil predicate on the "codex_pat_key" field.
+func CodexPatKeyNotNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotNull(FieldCodexPatKey))
 }
 
-// WindowIDNotNil applies the NotNil predicate on the "window_id" field.
-func WindowIDNotNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotNull(FieldWindowID))
+// CodexPatKeyEqualFold applies the EqualFold predicate on the "codex_pat_key" field.
+func CodexPatKeyEqualFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEqualFold(FieldCodexPatKey, v))
 }
 
-// WindowIDEqualFold applies the EqualFold predicate on the "window_id" field.
-func WindowIDEqualFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEqualFold(FieldWindowID, v))
+// CodexPatKeyContainsFold applies the ContainsFold predicate on the "codex_pat_key" field.
+func CodexPatKeyContainsFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContainsFold(FieldCodexPatKey, v))
 }
 
-// WindowIDContainsFold applies the ContainsFold predicate on the "window_id" field.
-func WindowIDContainsFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContainsFold(FieldWindowID, v))
+// CodexEmailEQ applies the EQ predicate on the "codex_email" field.
+func CodexEmailEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexEmail, v))
 }
 
-// OauthTokenEQ applies the EQ predicate on the "oauth_token" field.
-func OauthTokenEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldOauthToken, v))
+// CodexEmailNEQ applies the NEQ predicate on the "codex_email" field.
+func CodexEmailNEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNEQ(FieldCodexEmail, v))
 }
 
-// OauthTokenNEQ applies the NEQ predicate on the "oauth_token" field.
-func OauthTokenNEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNEQ(FieldOauthToken, v))
+// CodexEmailIn applies the In predicate on the "codex_email" field.
+func CodexEmailIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIn(FieldCodexEmail, vs...))
 }
 
-// OauthTokenIn applies the In predicate on the "oauth_token" field.
-func OauthTokenIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIn(FieldOauthToken, vs...))
+// CodexEmailNotIn applies the NotIn predicate on the "codex_email" field.
+func CodexEmailNotIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotIn(FieldCodexEmail, vs...))
 }
 
-// OauthTokenNotIn applies the NotIn predicate on the "oauth_token" field.
-func OauthTokenNotIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotIn(FieldOauthToken, vs...))
+// CodexEmailGT applies the GT predicate on the "codex_email" field.
+func CodexEmailGT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGT(FieldCodexEmail, v))
 }
 
-// OauthTokenGT applies the GT predicate on the "oauth_token" field.
-func OauthTokenGT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGT(FieldOauthToken, v))
+// CodexEmailGTE applies the GTE predicate on the "codex_email" field.
+func CodexEmailGTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGTE(FieldCodexEmail, v))
 }
 
-// OauthTokenGTE applies the GTE predicate on the "oauth_token" field.
-func OauthTokenGTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGTE(FieldOauthToken, v))
+// CodexEmailLT applies the LT predicate on the "codex_email" field.
+func CodexEmailLT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLT(FieldCodexEmail, v))
 }
 
-// OauthTokenLT applies the LT predicate on the "oauth_token" field.
-func OauthTokenLT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLT(FieldOauthToken, v))
+// CodexEmailLTE applies the LTE predicate on the "codex_email" field.
+func CodexEmailLTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLTE(FieldCodexEmail, v))
 }
 
-// OauthTokenLTE applies the LTE predicate on the "oauth_token" field.
-func OauthTokenLTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLTE(FieldOauthToken, v))
+// CodexEmailContains applies the Contains predicate on the "codex_email" field.
+func CodexEmailContains(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContains(FieldCodexEmail, v))
 }
 
-// OauthTokenContains applies the Contains predicate on the "oauth_token" field.
-func OauthTokenContains(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContains(FieldOauthToken, v))
+// CodexEmailHasPrefix applies the HasPrefix predicate on the "codex_email" field.
+func CodexEmailHasPrefix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasPrefix(FieldCodexEmail, v))
 }
 
-// OauthTokenHasPrefix applies the HasPrefix predicate on the "oauth_token" field.
-func OauthTokenHasPrefix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasPrefix(FieldOauthToken, v))
+// CodexEmailHasSuffix applies the HasSuffix predicate on the "codex_email" field.
+func CodexEmailHasSuffix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasSuffix(FieldCodexEmail, v))
 }
 
-// OauthTokenHasSuffix applies the HasSuffix predicate on the "oauth_token" field.
-func OauthTokenHasSuffix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasSuffix(FieldOauthToken, v))
+// CodexEmailIsNil applies the IsNil predicate on the "codex_email" field.
+func CodexEmailIsNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIsNull(FieldCodexEmail))
 }
 
-// OauthTokenIsNil applies the IsNil predicate on the "oauth_token" field.
-func OauthTokenIsNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIsNull(FieldOauthToken))
+// CodexEmailNotNil applies the NotNil predicate on the "codex_email" field.
+func CodexEmailNotNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotNull(FieldCodexEmail))
 }
 
-// OauthTokenNotNil applies the NotNil predicate on the "oauth_token" field.
-func OauthTokenNotNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotNull(FieldOauthToken))
+// CodexEmailEqualFold applies the EqualFold predicate on the "codex_email" field.
+func CodexEmailEqualFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEqualFold(FieldCodexEmail, v))
 }
 
-// OauthTokenEqualFold applies the EqualFold predicate on the "oauth_token" field.
-func OauthTokenEqualFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEqualFold(FieldOauthToken, v))
+// CodexEmailContainsFold applies the ContainsFold predicate on the "codex_email" field.
+func CodexEmailContainsFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContainsFold(FieldCodexEmail, v))
 }
 
-// OauthTokenContainsFold applies the ContainsFold predicate on the "oauth_token" field.
-func OauthTokenContainsFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContainsFold(FieldOauthToken, v))
+// CodexAccountIDEQ applies the EQ predicate on the "codex_account_id" field.
+func CodexAccountIDEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEQ(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenEQ applies the EQ predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldOauthRefreshToken, v))
+// CodexAccountIDNEQ applies the NEQ predicate on the "codex_account_id" field.
+func CodexAccountIDNEQ(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNEQ(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenNEQ applies the NEQ predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenNEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNEQ(FieldOauthRefreshToken, v))
+// CodexAccountIDIn applies the In predicate on the "codex_account_id" field.
+func CodexAccountIDIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIn(FieldCodexAccountID, vs...))
 }
 
-// OauthRefreshTokenIn applies the In predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIn(FieldOauthRefreshToken, vs...))
+// CodexAccountIDNotIn applies the NotIn predicate on the "codex_account_id" field.
+func CodexAccountIDNotIn(vs ...string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotIn(FieldCodexAccountID, vs...))
 }
 
-// OauthRefreshTokenNotIn applies the NotIn predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenNotIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotIn(FieldOauthRefreshToken, vs...))
+// CodexAccountIDGT applies the GT predicate on the "codex_account_id" field.
+func CodexAccountIDGT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGT(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenGT applies the GT predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenGT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGT(FieldOauthRefreshToken, v))
+// CodexAccountIDGTE applies the GTE predicate on the "codex_account_id" field.
+func CodexAccountIDGTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldGTE(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenGTE applies the GTE predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenGTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGTE(FieldOauthRefreshToken, v))
+// CodexAccountIDLT applies the LT predicate on the "codex_account_id" field.
+func CodexAccountIDLT(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLT(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenLT applies the LT predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenLT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLT(FieldOauthRefreshToken, v))
+// CodexAccountIDLTE applies the LTE predicate on the "codex_account_id" field.
+func CodexAccountIDLTE(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldLTE(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenLTE applies the LTE predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenLTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLTE(FieldOauthRefreshToken, v))
+// CodexAccountIDContains applies the Contains predicate on the "codex_account_id" field.
+func CodexAccountIDContains(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContains(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenContains applies the Contains predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenContains(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContains(FieldOauthRefreshToken, v))
+// CodexAccountIDHasPrefix applies the HasPrefix predicate on the "codex_account_id" field.
+func CodexAccountIDHasPrefix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasPrefix(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenHasPrefix applies the HasPrefix predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenHasPrefix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasPrefix(FieldOauthRefreshToken, v))
+// CodexAccountIDHasSuffix applies the HasSuffix predicate on the "codex_account_id" field.
+func CodexAccountIDHasSuffix(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldHasSuffix(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenHasSuffix applies the HasSuffix predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenHasSuffix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasSuffix(FieldOauthRefreshToken, v))
+// CodexAccountIDIsNil applies the IsNil predicate on the "codex_account_id" field.
+func CodexAccountIDIsNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldIsNull(FieldCodexAccountID))
 }
 
-// OauthRefreshTokenIsNil applies the IsNil predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenIsNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIsNull(FieldOauthRefreshToken))
+// CodexAccountIDNotNil applies the NotNil predicate on the "codex_account_id" field.
+func CodexAccountIDNotNil() predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldNotNull(FieldCodexAccountID))
 }
 
-// OauthRefreshTokenNotNil applies the NotNil predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenNotNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotNull(FieldOauthRefreshToken))
+// CodexAccountIDEqualFold applies the EqualFold predicate on the "codex_account_id" field.
+func CodexAccountIDEqualFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldEqualFold(FieldCodexAccountID, v))
 }
 
-// OauthRefreshTokenEqualFold applies the EqualFold predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenEqualFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEqualFold(FieldOauthRefreshToken, v))
-}
-
-// OauthRefreshTokenContainsFold applies the ContainsFold predicate on the "oauth_refresh_token" field.
-func OauthRefreshTokenContainsFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContainsFold(FieldOauthRefreshToken, v))
-}
-
-// OauthExpiresAtEQ applies the EQ predicate on the "oauth_expires_at" field.
-func OauthExpiresAtEQ(v time.Time) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldOauthExpiresAt, v))
-}
-
-// OauthExpiresAtNEQ applies the NEQ predicate on the "oauth_expires_at" field.
-func OauthExpiresAtNEQ(v time.Time) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNEQ(FieldOauthExpiresAt, v))
-}
-
-// OauthExpiresAtIn applies the In predicate on the "oauth_expires_at" field.
-func OauthExpiresAtIn(vs ...time.Time) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIn(FieldOauthExpiresAt, vs...))
-}
-
-// OauthExpiresAtNotIn applies the NotIn predicate on the "oauth_expires_at" field.
-func OauthExpiresAtNotIn(vs ...time.Time) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotIn(FieldOauthExpiresAt, vs...))
-}
-
-// OauthExpiresAtGT applies the GT predicate on the "oauth_expires_at" field.
-func OauthExpiresAtGT(v time.Time) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGT(FieldOauthExpiresAt, v))
-}
-
-// OauthExpiresAtGTE applies the GTE predicate on the "oauth_expires_at" field.
-func OauthExpiresAtGTE(v time.Time) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGTE(FieldOauthExpiresAt, v))
-}
-
-// OauthExpiresAtLT applies the LT predicate on the "oauth_expires_at" field.
-func OauthExpiresAtLT(v time.Time) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLT(FieldOauthExpiresAt, v))
-}
-
-// OauthExpiresAtLTE applies the LTE predicate on the "oauth_expires_at" field.
-func OauthExpiresAtLTE(v time.Time) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLTE(FieldOauthExpiresAt, v))
-}
-
-// OauthExpiresAtIsNil applies the IsNil predicate on the "oauth_expires_at" field.
-func OauthExpiresAtIsNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIsNull(FieldOauthExpiresAt))
-}
-
-// OauthExpiresAtNotNil applies the NotNil predicate on the "oauth_expires_at" field.
-func OauthExpiresAtNotNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotNull(FieldOauthExpiresAt))
-}
-
-// PatKeyEQ applies the EQ predicate on the "pat_key" field.
-func PatKeyEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldPatKey, v))
-}
-
-// PatKeyNEQ applies the NEQ predicate on the "pat_key" field.
-func PatKeyNEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNEQ(FieldPatKey, v))
-}
-
-// PatKeyIn applies the In predicate on the "pat_key" field.
-func PatKeyIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIn(FieldPatKey, vs...))
-}
-
-// PatKeyNotIn applies the NotIn predicate on the "pat_key" field.
-func PatKeyNotIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotIn(FieldPatKey, vs...))
-}
-
-// PatKeyGT applies the GT predicate on the "pat_key" field.
-func PatKeyGT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGT(FieldPatKey, v))
-}
-
-// PatKeyGTE applies the GTE predicate on the "pat_key" field.
-func PatKeyGTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGTE(FieldPatKey, v))
-}
-
-// PatKeyLT applies the LT predicate on the "pat_key" field.
-func PatKeyLT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLT(FieldPatKey, v))
-}
-
-// PatKeyLTE applies the LTE predicate on the "pat_key" field.
-func PatKeyLTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLTE(FieldPatKey, v))
-}
-
-// PatKeyContains applies the Contains predicate on the "pat_key" field.
-func PatKeyContains(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContains(FieldPatKey, v))
-}
-
-// PatKeyHasPrefix applies the HasPrefix predicate on the "pat_key" field.
-func PatKeyHasPrefix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasPrefix(FieldPatKey, v))
-}
-
-// PatKeyHasSuffix applies the HasSuffix predicate on the "pat_key" field.
-func PatKeyHasSuffix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasSuffix(FieldPatKey, v))
-}
-
-// PatKeyIsNil applies the IsNil predicate on the "pat_key" field.
-func PatKeyIsNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIsNull(FieldPatKey))
-}
-
-// PatKeyNotNil applies the NotNil predicate on the "pat_key" field.
-func PatKeyNotNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotNull(FieldPatKey))
-}
-
-// PatKeyEqualFold applies the EqualFold predicate on the "pat_key" field.
-func PatKeyEqualFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEqualFold(FieldPatKey, v))
-}
-
-// PatKeyContainsFold applies the ContainsFold predicate on the "pat_key" field.
-func PatKeyContainsFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContainsFold(FieldPatKey, v))
-}
-
-// EmailEQ applies the EQ predicate on the "email" field.
-func EmailEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEQ(FieldEmail, v))
-}
-
-// EmailNEQ applies the NEQ predicate on the "email" field.
-func EmailNEQ(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNEQ(FieldEmail, v))
-}
-
-// EmailIn applies the In predicate on the "email" field.
-func EmailIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIn(FieldEmail, vs...))
-}
-
-// EmailNotIn applies the NotIn predicate on the "email" field.
-func EmailNotIn(vs ...string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotIn(FieldEmail, vs...))
-}
-
-// EmailGT applies the GT predicate on the "email" field.
-func EmailGT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGT(FieldEmail, v))
-}
-
-// EmailGTE applies the GTE predicate on the "email" field.
-func EmailGTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldGTE(FieldEmail, v))
-}
-
-// EmailLT applies the LT predicate on the "email" field.
-func EmailLT(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLT(FieldEmail, v))
-}
-
-// EmailLTE applies the LTE predicate on the "email" field.
-func EmailLTE(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldLTE(FieldEmail, v))
-}
-
-// EmailContains applies the Contains predicate on the "email" field.
-func EmailContains(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContains(FieldEmail, v))
-}
-
-// EmailHasPrefix applies the HasPrefix predicate on the "email" field.
-func EmailHasPrefix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasPrefix(FieldEmail, v))
-}
-
-// EmailHasSuffix applies the HasSuffix predicate on the "email" field.
-func EmailHasSuffix(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldHasSuffix(FieldEmail, v))
-}
-
-// EmailIsNil applies the IsNil predicate on the "email" field.
-func EmailIsNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldIsNull(FieldEmail))
-}
-
-// EmailNotNil applies the NotNil predicate on the "email" field.
-func EmailNotNil() predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldNotNull(FieldEmail))
-}
-
-// EmailEqualFold applies the EqualFold predicate on the "email" field.
-func EmailEqualFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldEqualFold(FieldEmail, v))
-}
-
-// EmailContainsFold applies the ContainsFold predicate on the "email" field.
-func EmailContainsFold(v string) predicate.AccountExt {
-	return predicate.AccountExt(sql.FieldContainsFold(FieldEmail, v))
+// CodexAccountIDContainsFold applies the ContainsFold predicate on the "codex_account_id" field.
+func CodexAccountIDContainsFold(v string) predicate.AccountExt {
+	return predicate.AccountExt(sql.FieldContainsFold(FieldCodexAccountID, v))
 }
 
 // HasAccount applies the HasEdge predicate on the "account" edge.

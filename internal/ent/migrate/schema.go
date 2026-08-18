@@ -44,15 +44,13 @@ var (
 	AccountExtsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "credential_type", Type: field.TypeString},
-		{Name: "installation_id", Type: field.TypeString},
-		{Name: "session_id", Type: field.TypeString, Nullable: true},
-		{Name: "thread_id", Type: field.TypeString, Nullable: true},
-		{Name: "window_id", Type: field.TypeString, Nullable: true},
-		{Name: "oauth_token", Type: field.TypeString, Nullable: true},
-		{Name: "oauth_refresh_token", Type: field.TypeString, Nullable: true},
-		{Name: "oauth_expires_at", Type: field.TypeTime, Nullable: true},
-		{Name: "pat_key", Type: field.TypeString, Nullable: true},
-		{Name: "email", Type: field.TypeString, Nullable: true},
+		{Name: "codex_identity", Type: field.TypeJSON, Nullable: true},
+		{Name: "codex_oauth_token", Type: field.TypeString, Nullable: true},
+		{Name: "codex_oauth_refresh_token", Type: field.TypeString, Nullable: true},
+		{Name: "codex_oauth_expires_at", Type: field.TypeTime, Nullable: true},
+		{Name: "codex_pat_key", Type: field.TypeString, Nullable: true},
+		{Name: "codex_email", Type: field.TypeString, Nullable: true},
+		{Name: "codex_account_id", Type: field.TypeString, Nullable: true},
 		{Name: "account_id", Type: field.TypeInt64},
 	}
 	// AccountExtsTable holds the schema information for the "account_exts" table.
@@ -63,7 +61,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "account_exts_accounts_ext",
-				Columns:    []*schema.Column{AccountExtsColumns[11]},
+				Columns:    []*schema.Column{AccountExtsColumns[9]},
 				RefColumns: []*schema.Column{AccountsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -72,7 +70,12 @@ var (
 			{
 				Name:    "accountext_account_id",
 				Unique:  true,
-				Columns: []*schema.Column{AccountExtsColumns[11]},
+				Columns: []*schema.Column{AccountExtsColumns[9]},
+			},
+			{
+				Name:    "accountext_codex_email_codex_account_id",
+				Unique:  true,
+				Columns: []*schema.Column{AccountExtsColumns[7], AccountExtsColumns[8]},
 			},
 		},
 	}

@@ -23,7 +23,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // seedPGOAuthExt 建 codex-oauth 模板 + 账号 + 带身份四元组与 oauth 凭据的
-// ext 行（写入面全列：session/thread/window/pat/email 断言不动）。
+// ext 行（写入面全列：codex_identity/codex_pat_key/codex_email 断言不动）。
 func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at, rt string, expires *time.Time) (*domain.Account, *domain.AccountExt) {
 	t.Helper()
 	ctx := context.Background()
@@ -39,21 +39,23 @@ func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at,
 	require.NoError(t, err)
 	ext := &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		InstallationID: "inst-" + name,
-		SessionID:      strPtrPG("sess-" + name), ThreadID: strPtrPG("th-" + name), WindowID: strPtrPG("th-" + name + ":0"),
-		OAuthToken: strPtrPG(at), OAuthRefreshToken: strPtrPG(rt), OAuthExpiresAt: expires,
-		Email: strPtrPG("a@" + name + ".x"),
+		CodexIdentity: &domain.CodexIdentity{
+			InstallationID: "inst-" + name,
+			SessionID:      "sess-" + name, ThreadID: "th-" + name, WindowID: "th-" + name + ":0",
+		},
+		CodexOAuthToken: strPtrPG(at), CodexOAuthRefreshToken: strPtrPG(rt), CodexOAuthExpiresAt: expires,
+		CodexEmail: strPtrPG("a@" + name + ".x"),
 	}
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, ext)
 	require.NoError(t, err)
 	return acc, ext
 }
 
-// TestWriteOAuthRotationPG 轮转回写 roundtrip：部分更新 upsert 仅动 oauth
-// 三列（oauth_token/oauth_refresh_token/oauth_expires_at 保旧），其余列
-//（session/thread/window/pat/email/installation）原样保留（防 UpsertAccountExt
-// 全量 upsert 的 ClearX 清空回归——P3-4 expiry 保旧断言）；幂等（重复回调
-// 收敛）；行缺失 → 报错。
+// TestWriteOAuthRotationPG 轮转回写 roundtrip：部分更新 upsert 仅动
+// codex_oauth_* 三列（codex_oauth_token/codex_oauth_refresh_token/
+// codex_oauth_expires_at 保旧），其余列（codex_identity/codex_pat_key/
+// codex_email）原样保留（防 UpsertAccountExt 全量 upsert 的 ClearX 清空
+// 回归——P3-4 expiry 保旧断言）；幂等（重复回调收敛）；行缺失 → 报错。
 func TestWriteOAuthRotationPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -65,28 +67,28 @@ func TestWriteOAuthRotationPG(t *testing.T) {
 
 	got, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
-	require.Equal(t, "at-new", *got.OAuthToken)
-	require.Equal(t, "rt-new", *got.OAuthRefreshToken)
-	require.NotNil(t, got.OAuthExpiresAt, "expiry 保旧——不得被 ClearX 清空")
-	require.True(t, got.OAuthExpiresAt.Equal(expires), "oauth_expires_at 写回后不变（防 ClearX 清空回归）")
+	require.Equal(t, "at-new", *got.CodexOAuthToken)
+	require.Equal(t, "rt-new", *got.CodexOAuthRefreshToken)
+	require.NotNil(t, got.CodexOAuthExpiresAt, "expiry 保旧——不得被 ClearX 清空")
+	require.True(t, got.CodexOAuthExpiresAt.Equal(expires), "codex_oauth_expires_at 写回后不变（防 ClearX 清空回归）")
 	// 其余列原样（部分更新不触碰）
-	require.Equal(t, ext.InstallationID, got.InstallationID)
-	require.Equal(t, *ext.SessionID, *got.SessionID)
-	require.Equal(t, *ext.ThreadID, *got.ThreadID)
-	require.Equal(t, *ext.WindowID, *got.WindowID)
-	require.Equal(t, *ext.Email, *got.Email)
+	require.Equal(t, ext.CodexIdentity.InstallationID, got.CodexIdentity.InstallationID)
+	require.Equal(t, ext.CodexIdentity.SessionID, got.CodexIdentity.SessionID)
+	require.Equal(t, ext.CodexIdentity.ThreadID, got.CodexIdentity.ThreadID)
+	require.Equal(t, ext.CodexIdentity.WindowID, got.CodexIdentity.WindowID)
+	require.Equal(t, *ext.CodexEmail, *got.CodexEmail)
 
 	// 幂等：重复回调（D4 重试投递同一 (at, rt)）→ 收敛不报错
 	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at-new", "rt-new", &expires))
 	got2, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
-	require.Equal(t, "at-new", *got2.OAuthToken)
-	require.Equal(t, "rt-new", *got2.OAuthRefreshToken)
-	require.True(t, got2.OAuthExpiresAt.Equal(expires))
+	require.Equal(t, "at-new", *got2.CodexOAuthToken)
+	require.Equal(t, "rt-new", *got2.CodexOAuthRefreshToken)
+	require.True(t, got2.CodexOAuthExpiresAt.Equal(expires))
 }
 
 // TestWriteOAuthRotationNilExpiryPG 保旧语义的 nil 形态：携带 nil expiry 回写
-// → oauth_expires_at 写 NULL（与"未知过期"语义一致）。
+// → codex_oauth_expires_at 写 NULL（与"未知过期"语义一致）。
 func TestWriteOAuthRotationNilExpiryPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -96,8 +98,8 @@ func TestWriteOAuthRotationNilExpiryPG(t *testing.T) {
 	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at-new", "rt-new", nil))
 	got, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
-	require.Nil(t, got.OAuthExpiresAt, "nil expiry → 写 NULL（保旧携带值语义）")
-	require.Equal(t, "at-new", *got.OAuthToken)
+	require.Nil(t, got.CodexOAuthExpiresAt, "nil expiry → 写 NULL（保旧携带值语义）")
+	require.Equal(t, "at-new", *got.CodexOAuthToken)
 }
 
 // TestWriteOAuthRotationMissingRowPG 行缺失（配置损坏——codex 账号必有 ext

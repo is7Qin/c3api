@@ -65,13 +65,13 @@ interface FormState {
   weight: string
   max_concurrency: string
   group_ids: number[]
-  // codex 凭据（按模板类型分流：codex-oauth → oauth_* 组；codex-pat → pat_key；
-  // 与 account_ext 字段对应——保存时链式写入扩展配置）
-  oauth_token: string
-  oauth_refresh_token: string
-  oauth_expires_at: string
-  pat_key: string
-  email: string
+  // codex 凭据（按模板类型分流：codex-oauth → codex_oauth_* 组；codex-pat →
+  // codex_pat_key；与 account_ext 字段对应——保存时链式写入扩展配置）
+  codex_oauth_token: string
+  codex_oauth_refresh_token: string
+  codex_oauth_expires_at: string
+  codex_pat_key: string
+  codex_email: string
 }
 
 const emptyForm = (): FormState => ({
@@ -83,11 +83,11 @@ const emptyForm = (): FormState => ({
   weight: '0',
   max_concurrency: '8',
   group_ids: [],
-  oauth_token: '',
-  oauth_refresh_token: '',
-  oauth_expires_at: '',
-  pat_key: '',
-  email: '',
+  codex_oauth_token: '',
+  codex_oauth_refresh_token: '',
+  codex_oauth_expires_at: '',
+  codex_pat_key: '',
+  codex_email: '',
 })
 
 function toForm(a: AccountView): FormState {
@@ -102,11 +102,11 @@ function toForm(a: AccountView): FormState {
     // 编辑回显不走账号列表（I-1 方案 B）：对话框挂载时经 getAccountGroups
     // 拉取，加载完成前禁用保存（防误发 [] 清空）。codex 凭据经 ext 拉取回显。
     group_ids: [],
-    oauth_token: '',
-    oauth_refresh_token: '',
-    oauth_expires_at: '',
-    pat_key: '',
-    email: '',
+    codex_oauth_token: '',
+    codex_oauth_refresh_token: '',
+    codex_oauth_expires_at: '',
+    codex_pat_key: '',
+    codex_email: '',
   }
 }
 
@@ -377,11 +377,11 @@ export default function Accounts() {
     if (editing && !extEcho.isLoading && d) {
       setForm(f => ({
         ...f,
-        oauth_token: d.oauth_token ?? '',
-        oauth_refresh_token: d.oauth_refresh_token ?? '',
-        oauth_expires_at: d.oauth_expires_at ? toLocalDT(d.oauth_expires_at) : '',
-        pat_key: d.pat_key ?? '',
-        email: d.email ?? '',
+        codex_oauth_token: d.codex_oauth_token ?? '',
+        codex_oauth_refresh_token: d.codex_oauth_refresh_token ?? '',
+        codex_oauth_expires_at: d.codex_oauth_expires_at ? toLocalDT(d.codex_oauth_expires_at) : '',
+        codex_pat_key: d.codex_pat_key ?? '',
+        codex_email: d.codex_email ?? '',
       }))
     }
   }, [editing, extEcho.isLoading, extEcho.data])
@@ -398,7 +398,7 @@ export default function Accounts() {
   }
 
   // 表单直填凭据：codex 类型账号本体（upstream_key 可空）+ 链式 PUT account_ext
-  // （oauth 列组 / pat_key 按模板类型分流；与「扩展配置」弹窗共用写路径）。
+  // （codex_oauth_* 列组 / codex_pat_key 按模板类型分流；与「扩展配置」弹窗共用写路径）。
   const save = useMutation({
     mutationFn: async (f: FormState) => {
       const ct = selTemplate?.CredentialType
@@ -409,22 +409,22 @@ export default function Accounts() {
         const extBody: AccountExt = {
           account_id: id,
           credential_type: ct,
-          email: (f.email?.trim() ?? cur?.email ?? null) as string | null | undefined,
+          codex_email: (f.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
           ...(ct === 'codex-oauth'
             ? {
-                oauth_token: f.oauth_token.trim() || null,
-                oauth_refresh_token: f.oauth_refresh_token.trim() || null,
-                oauth_expires_at: toRFC3339(f.oauth_expires_at) ?? null,
-                pat_key: null,
+                codex_oauth_token: f.codex_oauth_token.trim() || null,
+                codex_oauth_refresh_token: f.codex_oauth_refresh_token.trim() || null,
+                codex_oauth_expires_at: toRFC3339(f.codex_oauth_expires_at) ?? null,
+                codex_pat_key: null,
               }
             : {
-                pat_key: f.pat_key.trim() || null,
-                oauth_token: null,
-                oauth_refresh_token: null,
-                oauth_expires_at: null,
+                codex_pat_key: f.codex_pat_key.trim() || null,
+                codex_oauth_token: null,
+                codex_oauth_refresh_token: null,
+                codex_oauth_expires_at: null,
               }),
-          // 身份四元组只读：回显原值防清空（首次写入由 service 自动生成）
-          ...(cur ? { installation_id: cur.installation_id, session_id: cur.session_id, thread_id: cur.thread_id, window_id: cur.window_id } : {}),
+          // 身份四元组只读：回显原对象防清空（首次写入由 service 自动生成）
+          ...(cur?.codex_identity ? { codex_identity: cur.codex_identity } : {}),
         }
         await api.putAccountExt(id, extBody)
       }
@@ -452,18 +452,18 @@ export default function Accounts() {
 
   const submit = () => {
     // 凭据必填性按模板类型分流：api_key/responses-special → upstream_key；
-    // codex-oauth → oauth_token；codex-pat → pat_key（后端同步校验）。
+    // codex-oauth → codex_oauth_token；codex-pat → codex_pat_key（后端同步校验）。
     if (!form.name.trim() || !form.template_id) return
     const ct = selTemplate?.CredentialType
-    if (ct === 'codex-oauth' && !form.oauth_token.trim()) return
-    if (ct === 'codex-pat' && !form.pat_key.trim()) return
+    if (ct === 'codex-oauth' && !form.codex_oauth_token.trim()) return
+    if (ct === 'codex-pat' && !form.codex_pat_key.trim()) return
     if (ct !== 'codex-oauth' && ct !== 'codex-pat' && !form.upstream_key) return
     save.mutate(form)
   }
 
   // —— 扩展配置（codex-oauth/codex-pat 模板；GET 404 = 无 ext 行 → 空表单，credential_type 预填模板类型） ——
   const [extTarget, setExtTarget] = useState<AccountView | null>(null)
-  const [extForm, setExtForm] = useState({ oauth_token: '', oauth_refresh_token: '', oauth_expires_at: '', pat_key: '', email: '' })
+  const [extForm, setExtForm] = useState({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '' })
   const extQ = useQuery({
     queryKey: ['account-ext', extTarget?.ID],
     queryFn: async () => {
@@ -478,18 +478,18 @@ export default function Accounts() {
   })
   const openExt = (a: AccountView) => {
     setExtTarget(a)
-    setExtForm({ oauth_token: '', oauth_refresh_token: '', oauth_expires_at: '', pat_key: '', email: '' })
+    setExtForm({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '' })
   }
   // 读回显填充（404/无数据 = 保持空表单）
   useEffect(() => {
     const d = extQ.data
     if (extTarget && !extQ.isLoading && d) {
       setExtForm({
-        oauth_token: d.oauth_token ?? '',
-        oauth_refresh_token: d.oauth_refresh_token ?? '',
-        oauth_expires_at: d.oauth_expires_at ? toLocalDT(d.oauth_expires_at) : '',
-        pat_key: d.pat_key ?? '',
-        email: d.email ?? '',
+        codex_oauth_token: d.codex_oauth_token ?? '',
+        codex_oauth_refresh_token: d.codex_oauth_refresh_token ?? '',
+        codex_oauth_expires_at: d.codex_oauth_expires_at ? toLocalDT(d.codex_oauth_expires_at) : '',
+        codex_pat_key: d.codex_pat_key ?? '',
+        codex_email: d.codex_email ?? '',
       })
     }
   }, [extTarget, extQ.isLoading, extQ.data])
@@ -498,28 +498,28 @@ export default function Accounts() {
     mutationFn: () => {
       const a = extTarget!
       const ct: AccountExt['credential_type'] = extCredentialType
-      if (ct === 'codex-oauth' && !extForm.oauth_token.trim()) throw new Error(t('accounts.ext.oauthTokenRequired'))
+      if (ct === 'codex-oauth' && !extForm.codex_oauth_token.trim()) throw new Error(t('accounts.ext.oauthTokenRequired'))
       const cur = extQ.data
       const body: AccountExt = {
         account_id: a.ID,
         credential_type: ct,
-        email: extForm.email.trim() || null,
-        // 类型-列组约束（service 校验）：oauth 只允许 oauth_* 列组；pat 只允许 pat_key（其余置 NULL）
+        codex_email: extForm.codex_email.trim() || null,
+        // 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key（其余置 NULL）
         ...(ct === 'codex-oauth'
           ? {
-              oauth_token: extForm.oauth_token.trim() || null,
-              oauth_refresh_token: extForm.oauth_refresh_token.trim() || null,
-              oauth_expires_at: toRFC3339(extForm.oauth_expires_at) ?? null,
-              pat_key: null,
+              codex_oauth_token: extForm.codex_oauth_token.trim() || null,
+              codex_oauth_refresh_token: extForm.codex_oauth_refresh_token.trim() || null,
+              codex_oauth_expires_at: toRFC3339(extForm.codex_oauth_expires_at) ?? null,
+              codex_pat_key: null,
             }
           : {
-              pat_key: extForm.pat_key.trim() || null,
-              oauth_token: null,
-              oauth_refresh_token: null,
-              oauth_expires_at: null,
+              codex_pat_key: extForm.codex_pat_key.trim() || null,
+              codex_oauth_token: null,
+              codex_oauth_refresh_token: null,
+              codex_oauth_expires_at: null,
             }),
-        // 身份四元组只读展示：回显原值，防 PUT 全列更新清空（首次写入由 service 自动生成）
-        ...(cur ? { installation_id: cur.installation_id, session_id: cur.session_id, thread_id: cur.thread_id, window_id: cur.window_id } : {}),
+        // 身份四元组只读展示：回显原对象，防 PUT 全列更新清空（首次写入由 service 自动生成）
+        ...(cur?.codex_identity ? { codex_identity: cur.codex_identity } : {}),
       }
       return api.putAccountExt(a.ID!, body)
     },
@@ -740,9 +740,9 @@ export default function Accounts() {
                   <Input
                     id="acc-oauth-token"
                     type="password"
-                    value={form.oauth_token}
+                    value={form.codex_oauth_token}
                     placeholder={t('accounts.ext.oauthTokenPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, oauth_token: e.target.value }))}
+                    onChange={e => setForm(f => ({ ...f, codex_oauth_token: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -750,26 +750,26 @@ export default function Accounts() {
                   <Input
                     id="acc-oauth-refresh"
                     type="password"
-                    value={form.oauth_refresh_token}
+                    value={form.codex_oauth_refresh_token}
                     placeholder={t('accounts.ext.oauthRefreshPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, oauth_refresh_token: e.target.value }))}
+                    onChange={e => setForm(f => ({ ...f, codex_oauth_refresh_token: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t('accounts.ext.oauthExpiresAt')}</Label>
                   <DateTimePicker
                     id="acc-oauth-expires"
-                    value={form.oauth_expires_at}
-                    onChange={v => setForm(f => ({ ...f, oauth_expires_at: v }))}
+                    value={form.codex_oauth_expires_at}
+                    onChange={v => setForm(f => ({ ...f, codex_oauth_expires_at: v }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="acc-ext-email">{t('accounts.ext.email')}</Label>
                   <Input
                     id="acc-ext-email"
-                    value={form.email}
+                    value={form.codex_email}
                     placeholder={t('accounts.ext.emailPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                    onChange={e => setForm(f => ({ ...f, codex_email: e.target.value }))}
                   />
                 </div>
               </div>
@@ -780,18 +780,18 @@ export default function Accounts() {
                   <Input
                     id="acc-pat"
                     type="password"
-                    value={form.pat_key}
+                    value={form.codex_pat_key}
                     placeholder={t('accounts.ext.patKeyPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, pat_key: e.target.value }))}
+                    onChange={e => setForm(f => ({ ...f, codex_pat_key: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="acc-ext-email">{t('accounts.ext.email')}</Label>
                   <Input
                     id="acc-ext-email"
-                    value={form.email}
+                    value={form.codex_email}
                     placeholder={t('accounts.ext.emailPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                    onChange={e => setForm(f => ({ ...f, codex_email: e.target.value }))}
                   />
                 </div>
               </div>
@@ -861,8 +861,8 @@ export default function Accounts() {
                 save.isPending ||
                 !form.name.trim() ||
                 !form.template_id ||
-                (selTemplate?.CredentialType === 'codex-oauth' && !form.oauth_token.trim()) ||
-                (selTemplate?.CredentialType === 'codex-pat' && !form.pat_key.trim()) ||
+                (selTemplate?.CredentialType === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
+                (selTemplate?.CredentialType === 'codex-pat' && !form.codex_pat_key.trim()) ||
                 (selTemplate?.CredentialType !== 'codex-oauth' && selTemplate?.CredentialType !== 'codex-pat' && form.upstream_key === '') ||
                 (editing && !groupsLoaded)
               }
@@ -992,7 +992,7 @@ export default function Accounts() {
         </DialogContent>
       </Dialog>
 
-      {/* —— 扩展配置（codex 生态账号；credential_type 分流 oauth 列组 / pat_key；身份四元组只读） —— */}
+      {/* —— 扩展配置（codex 生态账号；credential_type 分流 codex_oauth_* 列组 / codex_pat_key；身份四元组只读） —— */}
       <Dialog open={!!extTarget} onOpenChange={o => { if (!o && !extSave.isPending) setExtTarget(null) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1008,9 +1008,9 @@ export default function Accounts() {
               <Label htmlFor="acc-ext-email">{t('accounts.ext.email')}</Label>
               <Input
                 id="acc-ext-email"
-                value={extForm.email}
+                value={extForm.codex_email}
                 placeholder={t('accounts.ext.emailPlaceholder')}
-                onChange={e => setExtForm(f => ({ ...f, email: e.target.value }))}
+                onChange={e => setExtForm(f => ({ ...f, codex_email: e.target.value }))}
               />
             </div>
             {extCredentialType === 'codex-oauth' ? (
@@ -1020,8 +1020,8 @@ export default function Accounts() {
                   <Input
                     id="acc-ext-oauth-token"
                     type="password"
-                    value={extForm.oauth_token}
-                    onChange={e => setExtForm(f => ({ ...f, oauth_token: e.target.value }))}
+                    value={extForm.codex_oauth_token}
+                    onChange={e => setExtForm(f => ({ ...f, codex_oauth_token: e.target.value }))}
                   />
                   <p className="text-xs text-muted-foreground">{t('accounts.ext.oauthTokenRequired')}</p>
                 </div>
@@ -1030,16 +1030,16 @@ export default function Accounts() {
                   <Input
                     id="acc-ext-oauth-refresh"
                     type="password"
-                    value={extForm.oauth_refresh_token}
-                    onChange={e => setExtForm(f => ({ ...f, oauth_refresh_token: e.target.value }))}
+                    value={extForm.codex_oauth_refresh_token}
+                    onChange={e => setExtForm(f => ({ ...f, codex_oauth_refresh_token: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t('accounts.ext.oauthExpiresAt')}</Label>
                   <DateTimePicker
                     id="acc-ext-oauth-expires"
-                    value={extForm.oauth_expires_at}
-                    onChange={v => setExtForm(f => ({ ...f, oauth_expires_at: v }))}
+                    value={extForm.codex_oauth_expires_at}
+                    onChange={v => setExtForm(f => ({ ...f, codex_oauth_expires_at: v }))}
                   />
                 </div>
               </>
@@ -1049,8 +1049,8 @@ export default function Accounts() {
                 <Input
                   id="acc-ext-pat"
                   type="password"
-                  value={extForm.pat_key}
-                  onChange={e => setExtForm(f => ({ ...f, pat_key: e.target.value }))}
+                  value={extForm.codex_pat_key}
+                  onChange={e => setExtForm(f => ({ ...f, codex_pat_key: e.target.value }))}
                 />
               </div>
             )}
@@ -1058,10 +1058,10 @@ export default function Accounts() {
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">{t('accounts.ext.identityNote')}</p>
               <div className="space-y-0.5 font-mono text-xs text-muted-foreground">
-                <p>{t('accounts.ext.installationId')}: {extQ.data?.installation_id ?? '—'}</p>
-                <p>{t('accounts.ext.sessionId')}: {extQ.data?.session_id ?? '—'}</p>
-                <p>{t('accounts.ext.threadId')}: {extQ.data?.thread_id ?? '—'}</p>
-                <p>{t('accounts.ext.windowId')}: {extQ.data?.window_id ?? '—'}</p>
+                <p>{t('accounts.ext.installationId')}: {extQ.data?.codex_identity?.installation_id ?? '—'}</p>
+                <p>{t('accounts.ext.sessionId')}: {extQ.data?.codex_identity?.session_id ?? '—'}</p>
+                <p>{t('accounts.ext.threadId')}: {extQ.data?.codex_identity?.thread_id ?? '—'}</p>
+                <p>{t('accounts.ext.windowId')}: {extQ.data?.codex_identity?.window_id ?? '—'}</p>
               </div>
             </div>
             {extQ.isError && (
@@ -1075,7 +1075,7 @@ export default function Accounts() {
             <Button variant="outline" onClick={() => setExtTarget(null)} disabled={extSave.isPending}>{t('common.cancel')}</Button>
             <Button
               onClick={() => extSave.mutate()}
-              disabled={extSave.isPending || extQ.isLoading || (extCredentialType === 'codex-oauth' && !extForm.oauth_token.trim())}
+              disabled={extSave.isPending || extQ.isLoading || (extCredentialType === 'codex-oauth' && !extForm.codex_oauth_token.trim())}
             >
               {extSave.isPending ? t('common.saving') : t('common.save')}
             </Button>

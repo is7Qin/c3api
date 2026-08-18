@@ -200,24 +200,27 @@ func isWSDeathCode(code string) bool {
 // 存在期间稳定：InstallationID 账号级永久 / SessionID==ThreadID 会话级 /
 // WindowID={thread}:0）。返回 SDK Session（握手头 + 帧内 metadata 双注入）与
 // CodexMeta（帧内 x-codex-installation-id 等；优先级 CodexMeta > WithSession，
-// 双选项同值无冲突）。缺列（旧数据/异常）→ 空值（SDK 内层 omit，不注入）；
-// Session.ClientRequestID 留空——SDK 缺省回退 ThreadID（client.go:349-355）。
+// 双选项同值无冲突）。身份 nil/缺列（codex_identity jsonb 可空——未配置/
+// 旧数据异常）→ 空值（SDK 内层 omit，不注入；sdkbridge identitySig 既有
+// 空身份兜底——零新增语义）；Session.ClientRequestID 留空——SDK 缺省回退
+// ThreadID（client.go:349-355）。
 func codexIdentityFromExt(ext *domain.AccountExt) (sess codexsdk.Session, meta codexsdk.CodexMeta) {
-	if ext == nil {
+	if ext == nil || ext.CodexIdentity == nil {
 		return sess, meta
 	}
-	meta.InstallationID = ext.InstallationID
-	if ext.SessionID != nil {
-		sess.SessionID = *ext.SessionID
-		meta.SessionID = *ext.SessionID
+	id := ext.CodexIdentity
+	meta.InstallationID = id.InstallationID
+	if id.SessionID != "" {
+		sess.SessionID = id.SessionID
+		meta.SessionID = id.SessionID
 	}
-	if ext.ThreadID != nil {
-		sess.ThreadID = *ext.ThreadID
-		meta.ThreadID = *ext.ThreadID
+	if id.ThreadID != "" {
+		sess.ThreadID = id.ThreadID
+		meta.ThreadID = id.ThreadID
 	}
-	if ext.WindowID != nil {
-		sess.WindowID = *ext.WindowID
-		meta.WindowID = *ext.WindowID
+	if id.WindowID != "" {
+		sess.WindowID = id.WindowID
+		meta.WindowID = id.WindowID
 	}
 	return sess, meta
 }

@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
 	"github.com/is7qin/c3api/internal/ent/predicate"
@@ -57,177 +58,135 @@ func (_u *AccountExtUpdate) SetNillableCredentialType(v *string) *AccountExtUpda
 	return _u
 }
 
-// SetInstallationID sets the "installation_id" field.
-func (_u *AccountExtUpdate) SetInstallationID(v string) *AccountExtUpdate {
-	_u.mutation.SetInstallationID(v)
+// SetCodexIdentity sets the "codex_identity" field.
+func (_u *AccountExtUpdate) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpdate {
+	_u.mutation.SetCodexIdentity(v)
 	return _u
 }
 
-// SetNillableInstallationID sets the "installation_id" field if the given value is not nil.
-func (_u *AccountExtUpdate) SetNillableInstallationID(v *string) *AccountExtUpdate {
+// ClearCodexIdentity clears the value of the "codex_identity" field.
+func (_u *AccountExtUpdate) ClearCodexIdentity() *AccountExtUpdate {
+	_u.mutation.ClearCodexIdentity()
+	return _u
+}
+
+// SetCodexOauthToken sets the "codex_oauth_token" field.
+func (_u *AccountExtUpdate) SetCodexOauthToken(v string) *AccountExtUpdate {
+	_u.mutation.SetCodexOauthToken(v)
+	return _u
+}
+
+// SetNillableCodexOauthToken sets the "codex_oauth_token" field if the given value is not nil.
+func (_u *AccountExtUpdate) SetNillableCodexOauthToken(v *string) *AccountExtUpdate {
 	if v != nil {
-		_u.SetInstallationID(*v)
+		_u.SetCodexOauthToken(*v)
 	}
 	return _u
 }
 
-// SetSessionID sets the "session_id" field.
-func (_u *AccountExtUpdate) SetSessionID(v string) *AccountExtUpdate {
-	_u.mutation.SetSessionID(v)
+// ClearCodexOauthToken clears the value of the "codex_oauth_token" field.
+func (_u *AccountExtUpdate) ClearCodexOauthToken() *AccountExtUpdate {
+	_u.mutation.ClearCodexOauthToken()
 	return _u
 }
 
-// SetNillableSessionID sets the "session_id" field if the given value is not nil.
-func (_u *AccountExtUpdate) SetNillableSessionID(v *string) *AccountExtUpdate {
+// SetCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field.
+func (_u *AccountExtUpdate) SetCodexOauthRefreshToken(v string) *AccountExtUpdate {
+	_u.mutation.SetCodexOauthRefreshToken(v)
+	return _u
+}
+
+// SetNillableCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field if the given value is not nil.
+func (_u *AccountExtUpdate) SetNillableCodexOauthRefreshToken(v *string) *AccountExtUpdate {
 	if v != nil {
-		_u.SetSessionID(*v)
+		_u.SetCodexOauthRefreshToken(*v)
 	}
 	return _u
 }
 
-// ClearSessionID clears the value of the "session_id" field.
-func (_u *AccountExtUpdate) ClearSessionID() *AccountExtUpdate {
-	_u.mutation.ClearSessionID()
+// ClearCodexOauthRefreshToken clears the value of the "codex_oauth_refresh_token" field.
+func (_u *AccountExtUpdate) ClearCodexOauthRefreshToken() *AccountExtUpdate {
+	_u.mutation.ClearCodexOauthRefreshToken()
 	return _u
 }
 
-// SetThreadID sets the "thread_id" field.
-func (_u *AccountExtUpdate) SetThreadID(v string) *AccountExtUpdate {
-	_u.mutation.SetThreadID(v)
+// SetCodexOauthExpiresAt sets the "codex_oauth_expires_at" field.
+func (_u *AccountExtUpdate) SetCodexOauthExpiresAt(v time.Time) *AccountExtUpdate {
+	_u.mutation.SetCodexOauthExpiresAt(v)
 	return _u
 }
 
-// SetNillableThreadID sets the "thread_id" field if the given value is not nil.
-func (_u *AccountExtUpdate) SetNillableThreadID(v *string) *AccountExtUpdate {
+// SetNillableCodexOauthExpiresAt sets the "codex_oauth_expires_at" field if the given value is not nil.
+func (_u *AccountExtUpdate) SetNillableCodexOauthExpiresAt(v *time.Time) *AccountExtUpdate {
 	if v != nil {
-		_u.SetThreadID(*v)
+		_u.SetCodexOauthExpiresAt(*v)
 	}
 	return _u
 }
 
-// ClearThreadID clears the value of the "thread_id" field.
-func (_u *AccountExtUpdate) ClearThreadID() *AccountExtUpdate {
-	_u.mutation.ClearThreadID()
+// ClearCodexOauthExpiresAt clears the value of the "codex_oauth_expires_at" field.
+func (_u *AccountExtUpdate) ClearCodexOauthExpiresAt() *AccountExtUpdate {
+	_u.mutation.ClearCodexOauthExpiresAt()
 	return _u
 }
 
-// SetWindowID sets the "window_id" field.
-func (_u *AccountExtUpdate) SetWindowID(v string) *AccountExtUpdate {
-	_u.mutation.SetWindowID(v)
+// SetCodexPatKey sets the "codex_pat_key" field.
+func (_u *AccountExtUpdate) SetCodexPatKey(v string) *AccountExtUpdate {
+	_u.mutation.SetCodexPatKey(v)
 	return _u
 }
 
-// SetNillableWindowID sets the "window_id" field if the given value is not nil.
-func (_u *AccountExtUpdate) SetNillableWindowID(v *string) *AccountExtUpdate {
+// SetNillableCodexPatKey sets the "codex_pat_key" field if the given value is not nil.
+func (_u *AccountExtUpdate) SetNillableCodexPatKey(v *string) *AccountExtUpdate {
 	if v != nil {
-		_u.SetWindowID(*v)
+		_u.SetCodexPatKey(*v)
 	}
 	return _u
 }
 
-// ClearWindowID clears the value of the "window_id" field.
-func (_u *AccountExtUpdate) ClearWindowID() *AccountExtUpdate {
-	_u.mutation.ClearWindowID()
+// ClearCodexPatKey clears the value of the "codex_pat_key" field.
+func (_u *AccountExtUpdate) ClearCodexPatKey() *AccountExtUpdate {
+	_u.mutation.ClearCodexPatKey()
 	return _u
 }
 
-// SetOauthToken sets the "oauth_token" field.
-func (_u *AccountExtUpdate) SetOauthToken(v string) *AccountExtUpdate {
-	_u.mutation.SetOauthToken(v)
+// SetCodexEmail sets the "codex_email" field.
+func (_u *AccountExtUpdate) SetCodexEmail(v string) *AccountExtUpdate {
+	_u.mutation.SetCodexEmail(v)
 	return _u
 }
 
-// SetNillableOauthToken sets the "oauth_token" field if the given value is not nil.
-func (_u *AccountExtUpdate) SetNillableOauthToken(v *string) *AccountExtUpdate {
+// SetNillableCodexEmail sets the "codex_email" field if the given value is not nil.
+func (_u *AccountExtUpdate) SetNillableCodexEmail(v *string) *AccountExtUpdate {
 	if v != nil {
-		_u.SetOauthToken(*v)
+		_u.SetCodexEmail(*v)
 	}
 	return _u
 }
 
-// ClearOauthToken clears the value of the "oauth_token" field.
-func (_u *AccountExtUpdate) ClearOauthToken() *AccountExtUpdate {
-	_u.mutation.ClearOauthToken()
+// ClearCodexEmail clears the value of the "codex_email" field.
+func (_u *AccountExtUpdate) ClearCodexEmail() *AccountExtUpdate {
+	_u.mutation.ClearCodexEmail()
 	return _u
 }
 
-// SetOauthRefreshToken sets the "oauth_refresh_token" field.
-func (_u *AccountExtUpdate) SetOauthRefreshToken(v string) *AccountExtUpdate {
-	_u.mutation.SetOauthRefreshToken(v)
+// SetCodexAccountID sets the "codex_account_id" field.
+func (_u *AccountExtUpdate) SetCodexAccountID(v string) *AccountExtUpdate {
+	_u.mutation.SetCodexAccountID(v)
 	return _u
 }
 
-// SetNillableOauthRefreshToken sets the "oauth_refresh_token" field if the given value is not nil.
-func (_u *AccountExtUpdate) SetNillableOauthRefreshToken(v *string) *AccountExtUpdate {
+// SetNillableCodexAccountID sets the "codex_account_id" field if the given value is not nil.
+func (_u *AccountExtUpdate) SetNillableCodexAccountID(v *string) *AccountExtUpdate {
 	if v != nil {
-		_u.SetOauthRefreshToken(*v)
+		_u.SetCodexAccountID(*v)
 	}
 	return _u
 }
 
-// ClearOauthRefreshToken clears the value of the "oauth_refresh_token" field.
-func (_u *AccountExtUpdate) ClearOauthRefreshToken() *AccountExtUpdate {
-	_u.mutation.ClearOauthRefreshToken()
-	return _u
-}
-
-// SetOauthExpiresAt sets the "oauth_expires_at" field.
-func (_u *AccountExtUpdate) SetOauthExpiresAt(v time.Time) *AccountExtUpdate {
-	_u.mutation.SetOauthExpiresAt(v)
-	return _u
-}
-
-// SetNillableOauthExpiresAt sets the "oauth_expires_at" field if the given value is not nil.
-func (_u *AccountExtUpdate) SetNillableOauthExpiresAt(v *time.Time) *AccountExtUpdate {
-	if v != nil {
-		_u.SetOauthExpiresAt(*v)
-	}
-	return _u
-}
-
-// ClearOauthExpiresAt clears the value of the "oauth_expires_at" field.
-func (_u *AccountExtUpdate) ClearOauthExpiresAt() *AccountExtUpdate {
-	_u.mutation.ClearOauthExpiresAt()
-	return _u
-}
-
-// SetPatKey sets the "pat_key" field.
-func (_u *AccountExtUpdate) SetPatKey(v string) *AccountExtUpdate {
-	_u.mutation.SetPatKey(v)
-	return _u
-}
-
-// SetNillablePatKey sets the "pat_key" field if the given value is not nil.
-func (_u *AccountExtUpdate) SetNillablePatKey(v *string) *AccountExtUpdate {
-	if v != nil {
-		_u.SetPatKey(*v)
-	}
-	return _u
-}
-
-// ClearPatKey clears the value of the "pat_key" field.
-func (_u *AccountExtUpdate) ClearPatKey() *AccountExtUpdate {
-	_u.mutation.ClearPatKey()
-	return _u
-}
-
-// SetEmail sets the "email" field.
-func (_u *AccountExtUpdate) SetEmail(v string) *AccountExtUpdate {
-	_u.mutation.SetEmail(v)
-	return _u
-}
-
-// SetNillableEmail sets the "email" field if the given value is not nil.
-func (_u *AccountExtUpdate) SetNillableEmail(v *string) *AccountExtUpdate {
-	if v != nil {
-		_u.SetEmail(*v)
-	}
-	return _u
-}
-
-// ClearEmail clears the value of the "email" field.
-func (_u *AccountExtUpdate) ClearEmail() *AccountExtUpdate {
-	_u.mutation.ClearEmail()
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (_u *AccountExtUpdate) ClearCodexAccountID() *AccountExtUpdate {
+	_u.mutation.ClearCodexAccountID()
 	return _u
 }
 
@@ -297,56 +256,47 @@ func (_u *AccountExtUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	if value, ok := _u.mutation.CredentialType(); ok {
 		_spec.SetField(accountext.FieldCredentialType, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.InstallationID(); ok {
-		_spec.SetField(accountext.FieldInstallationID, field.TypeString, value)
+	if value, ok := _u.mutation.CodexIdentity(); ok {
+		_spec.SetField(accountext.FieldCodexIdentity, field.TypeJSON, value)
 	}
-	if value, ok := _u.mutation.SessionID(); ok {
-		_spec.SetField(accountext.FieldSessionID, field.TypeString, value)
+	if _u.mutation.CodexIdentityCleared() {
+		_spec.ClearField(accountext.FieldCodexIdentity, field.TypeJSON)
 	}
-	if _u.mutation.SessionIDCleared() {
-		_spec.ClearField(accountext.FieldSessionID, field.TypeString)
+	if value, ok := _u.mutation.CodexOauthToken(); ok {
+		_spec.SetField(accountext.FieldCodexOauthToken, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.ThreadID(); ok {
-		_spec.SetField(accountext.FieldThreadID, field.TypeString, value)
+	if _u.mutation.CodexOauthTokenCleared() {
+		_spec.ClearField(accountext.FieldCodexOauthToken, field.TypeString)
 	}
-	if _u.mutation.ThreadIDCleared() {
-		_spec.ClearField(accountext.FieldThreadID, field.TypeString)
+	if value, ok := _u.mutation.CodexOauthRefreshToken(); ok {
+		_spec.SetField(accountext.FieldCodexOauthRefreshToken, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.WindowID(); ok {
-		_spec.SetField(accountext.FieldWindowID, field.TypeString, value)
+	if _u.mutation.CodexOauthRefreshTokenCleared() {
+		_spec.ClearField(accountext.FieldCodexOauthRefreshToken, field.TypeString)
 	}
-	if _u.mutation.WindowIDCleared() {
-		_spec.ClearField(accountext.FieldWindowID, field.TypeString)
+	if value, ok := _u.mutation.CodexOauthExpiresAt(); ok {
+		_spec.SetField(accountext.FieldCodexOauthExpiresAt, field.TypeTime, value)
 	}
-	if value, ok := _u.mutation.OauthToken(); ok {
-		_spec.SetField(accountext.FieldOauthToken, field.TypeString, value)
+	if _u.mutation.CodexOauthExpiresAtCleared() {
+		_spec.ClearField(accountext.FieldCodexOauthExpiresAt, field.TypeTime)
 	}
-	if _u.mutation.OauthTokenCleared() {
-		_spec.ClearField(accountext.FieldOauthToken, field.TypeString)
+	if value, ok := _u.mutation.CodexPatKey(); ok {
+		_spec.SetField(accountext.FieldCodexPatKey, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.OauthRefreshToken(); ok {
-		_spec.SetField(accountext.FieldOauthRefreshToken, field.TypeString, value)
+	if _u.mutation.CodexPatKeyCleared() {
+		_spec.ClearField(accountext.FieldCodexPatKey, field.TypeString)
 	}
-	if _u.mutation.OauthRefreshTokenCleared() {
-		_spec.ClearField(accountext.FieldOauthRefreshToken, field.TypeString)
+	if value, ok := _u.mutation.CodexEmail(); ok {
+		_spec.SetField(accountext.FieldCodexEmail, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.OauthExpiresAt(); ok {
-		_spec.SetField(accountext.FieldOauthExpiresAt, field.TypeTime, value)
+	if _u.mutation.CodexEmailCleared() {
+		_spec.ClearField(accountext.FieldCodexEmail, field.TypeString)
 	}
-	if _u.mutation.OauthExpiresAtCleared() {
-		_spec.ClearField(accountext.FieldOauthExpiresAt, field.TypeTime)
+	if value, ok := _u.mutation.CodexAccountID(); ok {
+		_spec.SetField(accountext.FieldCodexAccountID, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.PatKey(); ok {
-		_spec.SetField(accountext.FieldPatKey, field.TypeString, value)
-	}
-	if _u.mutation.PatKeyCleared() {
-		_spec.ClearField(accountext.FieldPatKey, field.TypeString)
-	}
-	if value, ok := _u.mutation.Email(); ok {
-		_spec.SetField(accountext.FieldEmail, field.TypeString, value)
-	}
-	if _u.mutation.EmailCleared() {
-		_spec.ClearField(accountext.FieldEmail, field.TypeString)
+	if _u.mutation.CodexAccountIDCleared() {
+		_spec.ClearField(accountext.FieldCodexAccountID, field.TypeString)
 	}
 	if _u.mutation.AccountCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -425,177 +375,135 @@ func (_u *AccountExtUpdateOne) SetNillableCredentialType(v *string) *AccountExtU
 	return _u
 }
 
-// SetInstallationID sets the "installation_id" field.
-func (_u *AccountExtUpdateOne) SetInstallationID(v string) *AccountExtUpdateOne {
-	_u.mutation.SetInstallationID(v)
+// SetCodexIdentity sets the "codex_identity" field.
+func (_u *AccountExtUpdateOne) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpdateOne {
+	_u.mutation.SetCodexIdentity(v)
 	return _u
 }
 
-// SetNillableInstallationID sets the "installation_id" field if the given value is not nil.
-func (_u *AccountExtUpdateOne) SetNillableInstallationID(v *string) *AccountExtUpdateOne {
+// ClearCodexIdentity clears the value of the "codex_identity" field.
+func (_u *AccountExtUpdateOne) ClearCodexIdentity() *AccountExtUpdateOne {
+	_u.mutation.ClearCodexIdentity()
+	return _u
+}
+
+// SetCodexOauthToken sets the "codex_oauth_token" field.
+func (_u *AccountExtUpdateOne) SetCodexOauthToken(v string) *AccountExtUpdateOne {
+	_u.mutation.SetCodexOauthToken(v)
+	return _u
+}
+
+// SetNillableCodexOauthToken sets the "codex_oauth_token" field if the given value is not nil.
+func (_u *AccountExtUpdateOne) SetNillableCodexOauthToken(v *string) *AccountExtUpdateOne {
 	if v != nil {
-		_u.SetInstallationID(*v)
+		_u.SetCodexOauthToken(*v)
 	}
 	return _u
 }
 
-// SetSessionID sets the "session_id" field.
-func (_u *AccountExtUpdateOne) SetSessionID(v string) *AccountExtUpdateOne {
-	_u.mutation.SetSessionID(v)
+// ClearCodexOauthToken clears the value of the "codex_oauth_token" field.
+func (_u *AccountExtUpdateOne) ClearCodexOauthToken() *AccountExtUpdateOne {
+	_u.mutation.ClearCodexOauthToken()
 	return _u
 }
 
-// SetNillableSessionID sets the "session_id" field if the given value is not nil.
-func (_u *AccountExtUpdateOne) SetNillableSessionID(v *string) *AccountExtUpdateOne {
+// SetCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field.
+func (_u *AccountExtUpdateOne) SetCodexOauthRefreshToken(v string) *AccountExtUpdateOne {
+	_u.mutation.SetCodexOauthRefreshToken(v)
+	return _u
+}
+
+// SetNillableCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field if the given value is not nil.
+func (_u *AccountExtUpdateOne) SetNillableCodexOauthRefreshToken(v *string) *AccountExtUpdateOne {
 	if v != nil {
-		_u.SetSessionID(*v)
+		_u.SetCodexOauthRefreshToken(*v)
 	}
 	return _u
 }
 
-// ClearSessionID clears the value of the "session_id" field.
-func (_u *AccountExtUpdateOne) ClearSessionID() *AccountExtUpdateOne {
-	_u.mutation.ClearSessionID()
+// ClearCodexOauthRefreshToken clears the value of the "codex_oauth_refresh_token" field.
+func (_u *AccountExtUpdateOne) ClearCodexOauthRefreshToken() *AccountExtUpdateOne {
+	_u.mutation.ClearCodexOauthRefreshToken()
 	return _u
 }
 
-// SetThreadID sets the "thread_id" field.
-func (_u *AccountExtUpdateOne) SetThreadID(v string) *AccountExtUpdateOne {
-	_u.mutation.SetThreadID(v)
+// SetCodexOauthExpiresAt sets the "codex_oauth_expires_at" field.
+func (_u *AccountExtUpdateOne) SetCodexOauthExpiresAt(v time.Time) *AccountExtUpdateOne {
+	_u.mutation.SetCodexOauthExpiresAt(v)
 	return _u
 }
 
-// SetNillableThreadID sets the "thread_id" field if the given value is not nil.
-func (_u *AccountExtUpdateOne) SetNillableThreadID(v *string) *AccountExtUpdateOne {
+// SetNillableCodexOauthExpiresAt sets the "codex_oauth_expires_at" field if the given value is not nil.
+func (_u *AccountExtUpdateOne) SetNillableCodexOauthExpiresAt(v *time.Time) *AccountExtUpdateOne {
 	if v != nil {
-		_u.SetThreadID(*v)
+		_u.SetCodexOauthExpiresAt(*v)
 	}
 	return _u
 }
 
-// ClearThreadID clears the value of the "thread_id" field.
-func (_u *AccountExtUpdateOne) ClearThreadID() *AccountExtUpdateOne {
-	_u.mutation.ClearThreadID()
+// ClearCodexOauthExpiresAt clears the value of the "codex_oauth_expires_at" field.
+func (_u *AccountExtUpdateOne) ClearCodexOauthExpiresAt() *AccountExtUpdateOne {
+	_u.mutation.ClearCodexOauthExpiresAt()
 	return _u
 }
 
-// SetWindowID sets the "window_id" field.
-func (_u *AccountExtUpdateOne) SetWindowID(v string) *AccountExtUpdateOne {
-	_u.mutation.SetWindowID(v)
+// SetCodexPatKey sets the "codex_pat_key" field.
+func (_u *AccountExtUpdateOne) SetCodexPatKey(v string) *AccountExtUpdateOne {
+	_u.mutation.SetCodexPatKey(v)
 	return _u
 }
 
-// SetNillableWindowID sets the "window_id" field if the given value is not nil.
-func (_u *AccountExtUpdateOne) SetNillableWindowID(v *string) *AccountExtUpdateOne {
+// SetNillableCodexPatKey sets the "codex_pat_key" field if the given value is not nil.
+func (_u *AccountExtUpdateOne) SetNillableCodexPatKey(v *string) *AccountExtUpdateOne {
 	if v != nil {
-		_u.SetWindowID(*v)
+		_u.SetCodexPatKey(*v)
 	}
 	return _u
 }
 
-// ClearWindowID clears the value of the "window_id" field.
-func (_u *AccountExtUpdateOne) ClearWindowID() *AccountExtUpdateOne {
-	_u.mutation.ClearWindowID()
+// ClearCodexPatKey clears the value of the "codex_pat_key" field.
+func (_u *AccountExtUpdateOne) ClearCodexPatKey() *AccountExtUpdateOne {
+	_u.mutation.ClearCodexPatKey()
 	return _u
 }
 
-// SetOauthToken sets the "oauth_token" field.
-func (_u *AccountExtUpdateOne) SetOauthToken(v string) *AccountExtUpdateOne {
-	_u.mutation.SetOauthToken(v)
+// SetCodexEmail sets the "codex_email" field.
+func (_u *AccountExtUpdateOne) SetCodexEmail(v string) *AccountExtUpdateOne {
+	_u.mutation.SetCodexEmail(v)
 	return _u
 }
 
-// SetNillableOauthToken sets the "oauth_token" field if the given value is not nil.
-func (_u *AccountExtUpdateOne) SetNillableOauthToken(v *string) *AccountExtUpdateOne {
+// SetNillableCodexEmail sets the "codex_email" field if the given value is not nil.
+func (_u *AccountExtUpdateOne) SetNillableCodexEmail(v *string) *AccountExtUpdateOne {
 	if v != nil {
-		_u.SetOauthToken(*v)
+		_u.SetCodexEmail(*v)
 	}
 	return _u
 }
 
-// ClearOauthToken clears the value of the "oauth_token" field.
-func (_u *AccountExtUpdateOne) ClearOauthToken() *AccountExtUpdateOne {
-	_u.mutation.ClearOauthToken()
+// ClearCodexEmail clears the value of the "codex_email" field.
+func (_u *AccountExtUpdateOne) ClearCodexEmail() *AccountExtUpdateOne {
+	_u.mutation.ClearCodexEmail()
 	return _u
 }
 
-// SetOauthRefreshToken sets the "oauth_refresh_token" field.
-func (_u *AccountExtUpdateOne) SetOauthRefreshToken(v string) *AccountExtUpdateOne {
-	_u.mutation.SetOauthRefreshToken(v)
+// SetCodexAccountID sets the "codex_account_id" field.
+func (_u *AccountExtUpdateOne) SetCodexAccountID(v string) *AccountExtUpdateOne {
+	_u.mutation.SetCodexAccountID(v)
 	return _u
 }
 
-// SetNillableOauthRefreshToken sets the "oauth_refresh_token" field if the given value is not nil.
-func (_u *AccountExtUpdateOne) SetNillableOauthRefreshToken(v *string) *AccountExtUpdateOne {
+// SetNillableCodexAccountID sets the "codex_account_id" field if the given value is not nil.
+func (_u *AccountExtUpdateOne) SetNillableCodexAccountID(v *string) *AccountExtUpdateOne {
 	if v != nil {
-		_u.SetOauthRefreshToken(*v)
+		_u.SetCodexAccountID(*v)
 	}
 	return _u
 }
 
-// ClearOauthRefreshToken clears the value of the "oauth_refresh_token" field.
-func (_u *AccountExtUpdateOne) ClearOauthRefreshToken() *AccountExtUpdateOne {
-	_u.mutation.ClearOauthRefreshToken()
-	return _u
-}
-
-// SetOauthExpiresAt sets the "oauth_expires_at" field.
-func (_u *AccountExtUpdateOne) SetOauthExpiresAt(v time.Time) *AccountExtUpdateOne {
-	_u.mutation.SetOauthExpiresAt(v)
-	return _u
-}
-
-// SetNillableOauthExpiresAt sets the "oauth_expires_at" field if the given value is not nil.
-func (_u *AccountExtUpdateOne) SetNillableOauthExpiresAt(v *time.Time) *AccountExtUpdateOne {
-	if v != nil {
-		_u.SetOauthExpiresAt(*v)
-	}
-	return _u
-}
-
-// ClearOauthExpiresAt clears the value of the "oauth_expires_at" field.
-func (_u *AccountExtUpdateOne) ClearOauthExpiresAt() *AccountExtUpdateOne {
-	_u.mutation.ClearOauthExpiresAt()
-	return _u
-}
-
-// SetPatKey sets the "pat_key" field.
-func (_u *AccountExtUpdateOne) SetPatKey(v string) *AccountExtUpdateOne {
-	_u.mutation.SetPatKey(v)
-	return _u
-}
-
-// SetNillablePatKey sets the "pat_key" field if the given value is not nil.
-func (_u *AccountExtUpdateOne) SetNillablePatKey(v *string) *AccountExtUpdateOne {
-	if v != nil {
-		_u.SetPatKey(*v)
-	}
-	return _u
-}
-
-// ClearPatKey clears the value of the "pat_key" field.
-func (_u *AccountExtUpdateOne) ClearPatKey() *AccountExtUpdateOne {
-	_u.mutation.ClearPatKey()
-	return _u
-}
-
-// SetEmail sets the "email" field.
-func (_u *AccountExtUpdateOne) SetEmail(v string) *AccountExtUpdateOne {
-	_u.mutation.SetEmail(v)
-	return _u
-}
-
-// SetNillableEmail sets the "email" field if the given value is not nil.
-func (_u *AccountExtUpdateOne) SetNillableEmail(v *string) *AccountExtUpdateOne {
-	if v != nil {
-		_u.SetEmail(*v)
-	}
-	return _u
-}
-
-// ClearEmail clears the value of the "email" field.
-func (_u *AccountExtUpdateOne) ClearEmail() *AccountExtUpdateOne {
-	_u.mutation.ClearEmail()
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (_u *AccountExtUpdateOne) ClearCodexAccountID() *AccountExtUpdateOne {
+	_u.mutation.ClearCodexAccountID()
 	return _u
 }
 
@@ -695,56 +603,47 @@ func (_u *AccountExtUpdateOne) sqlSave(ctx context.Context) (_node *AccountExt, 
 	if value, ok := _u.mutation.CredentialType(); ok {
 		_spec.SetField(accountext.FieldCredentialType, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.InstallationID(); ok {
-		_spec.SetField(accountext.FieldInstallationID, field.TypeString, value)
+	if value, ok := _u.mutation.CodexIdentity(); ok {
+		_spec.SetField(accountext.FieldCodexIdentity, field.TypeJSON, value)
 	}
-	if value, ok := _u.mutation.SessionID(); ok {
-		_spec.SetField(accountext.FieldSessionID, field.TypeString, value)
+	if _u.mutation.CodexIdentityCleared() {
+		_spec.ClearField(accountext.FieldCodexIdentity, field.TypeJSON)
 	}
-	if _u.mutation.SessionIDCleared() {
-		_spec.ClearField(accountext.FieldSessionID, field.TypeString)
+	if value, ok := _u.mutation.CodexOauthToken(); ok {
+		_spec.SetField(accountext.FieldCodexOauthToken, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.ThreadID(); ok {
-		_spec.SetField(accountext.FieldThreadID, field.TypeString, value)
+	if _u.mutation.CodexOauthTokenCleared() {
+		_spec.ClearField(accountext.FieldCodexOauthToken, field.TypeString)
 	}
-	if _u.mutation.ThreadIDCleared() {
-		_spec.ClearField(accountext.FieldThreadID, field.TypeString)
+	if value, ok := _u.mutation.CodexOauthRefreshToken(); ok {
+		_spec.SetField(accountext.FieldCodexOauthRefreshToken, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.WindowID(); ok {
-		_spec.SetField(accountext.FieldWindowID, field.TypeString, value)
+	if _u.mutation.CodexOauthRefreshTokenCleared() {
+		_spec.ClearField(accountext.FieldCodexOauthRefreshToken, field.TypeString)
 	}
-	if _u.mutation.WindowIDCleared() {
-		_spec.ClearField(accountext.FieldWindowID, field.TypeString)
+	if value, ok := _u.mutation.CodexOauthExpiresAt(); ok {
+		_spec.SetField(accountext.FieldCodexOauthExpiresAt, field.TypeTime, value)
 	}
-	if value, ok := _u.mutation.OauthToken(); ok {
-		_spec.SetField(accountext.FieldOauthToken, field.TypeString, value)
+	if _u.mutation.CodexOauthExpiresAtCleared() {
+		_spec.ClearField(accountext.FieldCodexOauthExpiresAt, field.TypeTime)
 	}
-	if _u.mutation.OauthTokenCleared() {
-		_spec.ClearField(accountext.FieldOauthToken, field.TypeString)
+	if value, ok := _u.mutation.CodexPatKey(); ok {
+		_spec.SetField(accountext.FieldCodexPatKey, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.OauthRefreshToken(); ok {
-		_spec.SetField(accountext.FieldOauthRefreshToken, field.TypeString, value)
+	if _u.mutation.CodexPatKeyCleared() {
+		_spec.ClearField(accountext.FieldCodexPatKey, field.TypeString)
 	}
-	if _u.mutation.OauthRefreshTokenCleared() {
-		_spec.ClearField(accountext.FieldOauthRefreshToken, field.TypeString)
+	if value, ok := _u.mutation.CodexEmail(); ok {
+		_spec.SetField(accountext.FieldCodexEmail, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.OauthExpiresAt(); ok {
-		_spec.SetField(accountext.FieldOauthExpiresAt, field.TypeTime, value)
+	if _u.mutation.CodexEmailCleared() {
+		_spec.ClearField(accountext.FieldCodexEmail, field.TypeString)
 	}
-	if _u.mutation.OauthExpiresAtCleared() {
-		_spec.ClearField(accountext.FieldOauthExpiresAt, field.TypeTime)
+	if value, ok := _u.mutation.CodexAccountID(); ok {
+		_spec.SetField(accountext.FieldCodexAccountID, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.PatKey(); ok {
-		_spec.SetField(accountext.FieldPatKey, field.TypeString, value)
-	}
-	if _u.mutation.PatKeyCleared() {
-		_spec.ClearField(accountext.FieldPatKey, field.TypeString)
-	}
-	if value, ok := _u.mutation.Email(); ok {
-		_spec.SetField(accountext.FieldEmail, field.TypeString, value)
-	}
-	if _u.mutation.EmailCleared() {
-		_spec.ClearField(accountext.FieldEmail, field.TypeString)
+	if _u.mutation.CodexAccountIDCleared() {
+		_spec.ClearField(accountext.FieldCodexAccountID, field.TypeString)
 	}
 	if _u.mutation.AccountCleared() {
 		edge := &sqlgraph.EdgeSpec{

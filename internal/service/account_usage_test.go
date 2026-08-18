@@ -59,7 +59,7 @@ func TestAccountUsageTypeDispatch(t *testing.T) {
 	f := svc.store.(*fakeStore)
 	f.accExts[2] = &domain.AccountExt{
 		AccountID: 2, CredentialType: credential.TypeCodexOAuth,
-		OAuthToken: strPtr("at"), OAuthRefreshToken: strPtr("rt"), OAuthExpiresAt: &exp,
+		CodexOAuthToken: strPtr("at"), CodexOAuthRefreshToken: strPtr("rt"), CodexOAuthExpiresAt: &exp,
 	}
 	snap, err = svc.AccountUsage(ctx, 2)
 	require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestAccountUsageTypeDispatch(t *testing.T) {
 	require.Equal(t, "rt", creds[0].OAuthRefreshToken, "oauth 列组派生 cred")
 
 	// codex-pat：pat 列组派生 cred
-	f.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-x")}
+	f.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-x")}
 	snap, err = svc.AccountUsage(ctx, 3)
 	require.NoError(t, err)
 	require.NotNil(t, snap)
@@ -86,7 +86,7 @@ func TestAccountUsageErrorPassthrough(t *testing.T) {
 	svc := &Service{store: newFakeStore()}
 	ctx := context.Background()
 	f := svc.store.(*fakeStore)
-	f.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-x")}
+	f.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-x")}
 
 	for _, want := range []error{sdkbridge.ErrAuthExpired, sdkbridge.ErrUpstream} {
 		svc.SetUsageSnapshotter(&fakeUsageSnapshotter{err: want})

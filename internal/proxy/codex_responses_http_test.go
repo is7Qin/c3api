@@ -143,7 +143,7 @@ func isUUIDv7(s string) bool { return uuidv7Re.MatchString(s) }
 // codexPATExt 构造 codex-pat 账号扩展（PAT 静态凭据——无 oauth 列）。
 func codexPATExt(accountID int64, pat string) *domain.AccountExt {
 	return &domain.AccountExt{
-		AccountID: accountID, CredentialType: credential.TypeCodexPAT, PATKey: &pat,
+		AccountID: accountID, CredentialType: credential.TypeCodexPAT, CodexPATKey: &pat,
 	}
 }
 
@@ -397,7 +397,7 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 const t6RespCallEv = `{"type":"output_item.done","item":{"id":"call_1","status":"completed","type":"function_call","name":"shell","arguments":"{}","call_id":"call_1"}}`
 
 // postResponsesTS 向网关发 /v1/responses 请求并携带 x-codex-turn-state 头
-//（HOST-2 透传优先断言面；空 = 不带头）。
+// （HOST-2 透传优先断言面；空 = 不带头）。
 func postResponsesTS(t *testing.T, srv *httptest.Server, body, turnState string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/responses", strings.NewReader(body))

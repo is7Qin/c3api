@@ -333,9 +333,9 @@ func TestAccountAndGroup(t *testing.T) {
 	// >65,535 触顶）→ 全表扫描 + 内存 join（零参数，与成员关系扫描同构）；
 	// api_key 账号无 ext 行 → 空结果 → Ext 边 nil（语义与真实导入路径一致）
 	tr.pool.ExpectQuery(q(`FROM "account_exts"`)).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "account_id", "credential_type", "installation_id",
-			"session_id", "thread_id", "window_id", "oauth_token", "oauth_refresh_token",
-			"oauth_expires_at", "pat_key", "email"}))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "account_id", "credential_type", "codex_identity",
+			"codex_oauth_token", "codex_oauth_refresh_token", "codex_oauth_expires_at",
+			"codex_pat_key", "codex_email", "codex_account_id"}))
 	tr.pool.ExpectQuery(q(`FROM "groups"`)).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(3)))
 	tr.pool.ExpectQuery(q(`SELECT account_id, group_id FROM account_groups`)).

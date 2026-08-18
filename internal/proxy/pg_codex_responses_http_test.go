@@ -88,11 +88,13 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: acc.ID, CredentialType: credential.TypeCodexPAT, PATKey: strPtrPG("pat-pg-1"),
-		InstallationID: "inst-pg-1",
-		SessionID:      strPtrPG("sess-pg-1"),
-		ThreadID:       strPtrPG("thread-pg-1"),
-		WindowID:       strPtrPG("thread-pg-1:0"),
+		AccountID: acc.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtrPG("pat-pg-1"),
+		CodexIdentity: &domain.CodexIdentity{
+			InstallationID: "inst-pg-1",
+			SessionID:      "sess-pg-1",
+			ThreadID:       "thread-pg-1",
+			WindowID:       "thread-pg-1:0",
+		},
 	})
 	require.NoError(t, err)
 

@@ -189,12 +189,9 @@ func (m *codexWSRefreshMock) callsN() int {
 // 级永久 / session==thread 会话级 / window={thread}:0）。
 func codexWSExt(accountID int64, at, rt string) *domain.AccountExt {
 	ext := codexOAuthExt(accountID, at, rt)
-	sess := "11111111-1111-7111-8111-111111111111"
-	thread := "22222222-2222-7222-8222-222222222222"
-	win := thread + ":0"
-	ext.SessionID = &sess
-	ext.ThreadID = &thread
-	ext.WindowID = &win
+	ext.CodexIdentity.SessionID = "11111111-1111-7111-8111-111111111111"
+	ext.CodexIdentity.ThreadID = "22222222-2222-7222-8222-222222222222"
+	ext.CodexIdentity.WindowID = ext.CodexIdentity.ThreadID + ":0"
 	return ext
 }
 
@@ -294,7 +291,7 @@ func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
 	store := &captureLogStore{}
 	pat := "sk-pat-10" // 缺 PATKey → 适配层 errCredentialIncomplete 快速失败（测不到超时）
 	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
-		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, InstallationID: "i", PATKey: &pat}}, up.URL, nil, store)
+		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: "i"}, CodexPATKey: &pat}}, up.URL, nil, store)
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
@@ -307,7 +304,7 @@ func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
 	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
-	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
+	p.sched.FlushRules()          // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(10) // codex 代理账号 ID = 组键 10（newTestCodexWSProxy）
 	require.True(t, ok)
 	require.Equal(t, domain.StatusUnhealthy, ri.Status, "黑洞超时 → 连接级/5xx 分流 冷却")
@@ -390,20 +387,20 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	require.Equal(t, "Bearer at-new", hooks.headers[1].Get("Authorization"), "轮转后新 at")
 	h := hooks.headers[1]
 	ext := codexWSExt(10, "", "")
-	require.Equal(t, *ext.SessionID, h.Get("Session-Id"), "session-id = 账号 ext 身份（rogue 已剔除）")
-	require.Equal(t, *ext.ThreadID, h.Get("Thread-Id"), "thread-id = 账号 ext 身份")
-	require.Equal(t, *ext.ThreadID, h.Get("X-Client-Request-Id"), "x-client-request-id 缺省 = thread-id")
-	require.Equal(t, *ext.WindowID, h.Get("X-Codex-Window-Id"), "window-id = {thread}:0")
+	require.Equal(t, ext.CodexIdentity.SessionID, h.Get("Session-Id"), "session-id = 账号 ext 身份（rogue 已剔除）")
+	require.Equal(t, ext.CodexIdentity.ThreadID, h.Get("Thread-Id"), "thread-id = 账号 ext 身份")
+	require.Equal(t, ext.CodexIdentity.ThreadID, h.Get("X-Client-Request-Id"), "x-client-request-id 缺省 = thread-id")
+	require.Equal(t, ext.CodexIdentity.WindowID, h.Get("X-Codex-Window-Id"), "window-id = {thread}:0")
 	require.Equal(t, "responses_websockets="+aiclient.ResponsesWSBetaHeader, h.Get("OpenAI-Beta"), "网关默认 beta（rogue 已剔除）")
 	require.Equal(t, "codex-1.2.3", h.Get("X-Client-Version"), "非冲突面客户端头透传")
 	require.NotEqual(t, "Bearer ck-1", h.Get("Authorization"), "网关 key 不得直通上游")
 
 	// 帧内 client_metadata 注入（伪装四元组帧级面——真实 codex 客户端语义）
 	f0 := hooks.frames[0]
-	require.Contains(t, f0, `"x-codex-installation-id":"`+ext.InstallationID+`"`)
-	require.Contains(t, f0, `"session_id":"`+*ext.SessionID+`"`)
-	require.Contains(t, f0, `"thread_id":"`+*ext.ThreadID+`"`)
-	require.Contains(t, f0, `"x-codex-window-id":"`+*ext.WindowID+`"`)
+	require.Contains(t, f0, `"x-codex-installation-id":"`+ext.CodexIdentity.InstallationID+`"`)
+	require.Contains(t, f0, `"session_id":"`+ext.CodexIdentity.SessionID+`"`)
+	require.Contains(t, f0, `"thread_id":"`+ext.CodexIdentity.ThreadID+`"`)
+	require.Contains(t, f0, `"x-codex-window-id":"`+ext.CodexIdentity.WindowID+`"`)
 
 	// usage 记录：5 计数 + 成功路径（与 aiclient 路径逐字节同口径）
 	require.NoError(t, p.rec.Close(context.Background()))
@@ -700,7 +697,7 @@ func TestCodexWSAdapterMissing(t *testing.T) {
 	defer up.Close()
 	store := &captureLogStore{}
 	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
-		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, InstallationID: "i"}}, up.URL, nil, store)
+		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: "i"}}}, up.URL, nil, store)
 	p.SetCodex(nil) // 模拟 main 未装配
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
@@ -829,7 +826,7 @@ func TestCodexWSHeartbeatCadence(t *testing.T) {
 	pat := "pat-1"
 	store := &captureLogStore{}
 	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
-		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, InstallationID: "i", PATKey: &pat}}, up.URL, nil, store)
+		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: "i"}, CodexPATKey: &pat}}, up.URL, nil, store)
 	p.wsHeartbeatInterval = 200 * time.Millisecond // 测试缩短观测
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
@@ -930,20 +927,25 @@ func TestCodexWSPassthroughHeaders(t *testing.T) {
 func TestCodexIdentityFromExt(t *testing.T) {
 	ext := codexWSExt(10, "", "")
 	sess, meta := codexIdentityFromExt(ext)
-	require.Equal(t, *ext.SessionID, sess.SessionID)
-	require.Equal(t, *ext.ThreadID, sess.ThreadID)
-	require.Equal(t, *ext.WindowID, sess.WindowID)
+	require.Equal(t, ext.CodexIdentity.SessionID, sess.SessionID)
+	require.Equal(t, ext.CodexIdentity.ThreadID, sess.ThreadID)
+	require.Equal(t, ext.CodexIdentity.WindowID, sess.WindowID)
 	require.Empty(t, sess.ClientRequestID, "SDK 缺省回退 thread-id")
-	require.Equal(t, ext.InstallationID, meta.InstallationID)
-	require.Equal(t, *ext.SessionID, meta.SessionID)
-	require.Equal(t, *ext.ThreadID, meta.ThreadID)
-	require.Equal(t, *ext.WindowID, meta.WindowID)
+	require.Equal(t, ext.CodexIdentity.InstallationID, meta.InstallationID)
+	require.Equal(t, ext.CodexIdentity.SessionID, meta.SessionID)
+	require.Equal(t, ext.CodexIdentity.ThreadID, meta.ThreadID)
+	require.Equal(t, ext.CodexIdentity.WindowID, meta.WindowID)
 
 	emptySess, emptyMeta := codexIdentityFromExt(nil)
 	require.Zero(t, emptySess)
 	require.Zero(t, emptyMeta)
+	// nil 身份（codex_identity jsonb 可空——未配置/异常）→ 空组装不 panic
+	noIdentity := &domain.AccountExt{AccountID: 10, CredentialType: credential.TypeCodexOAuth}
+	nSess, nMeta := codexIdentityFromExt(noIdentity)
+	require.Zero(t, nSess, "nil 身份 → 空 Session（identitySig 既有兜底，零新增语义）")
+	require.Zero(t, nMeta, "nil 身份 → 空 CodexMeta")
 	// 缺列（旧数据）→ 空值不注入
-	partial := &domain.AccountExt{AccountID: 10, CredentialType: credential.TypeCodexOAuth, InstallationID: "inst-1"}
+	partial := &domain.AccountExt{AccountID: 10, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}}
 	s2, m2 := codexIdentityFromExt(partial)
 	require.Empty(t, s2.SessionID)
 	require.Empty(t, m2.ThreadID)

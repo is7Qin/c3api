@@ -18,7 +18,7 @@ import (
 
 // decodeLenient 宽松解码（ext 端点专用，handler.go 的 decode 已严格化——spec
 // 2026-08-17 边界收敛）：忽略未知字段。ext 契约演进时客户端可能携带已迁移到
-// 别处的凭据列（oauth_token/pat 等一律在 account_ext）——忽略不产生配置
+// 别处的凭据列（codex_oauth_token/codex_pat_key 等一律在 account_ext）——忽略不产生配置
 // （既有契约，TestTemplatesIdExt 锁定，行为不随严格化改变）。
 func decodeLenient(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))

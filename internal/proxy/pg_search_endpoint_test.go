@@ -87,7 +87,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: acc.ID, CredentialType: credential.TypeCodexPAT, PATKey: strPtrPG("pat-pg-s"),
+		AccountID: acc.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtrPG("pat-pg-s"),
 	})
 	require.NoError(t, err)
 

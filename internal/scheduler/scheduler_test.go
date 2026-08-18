@@ -122,7 +122,7 @@ func (f *fakeRuleStore) CountRules(ctx context.Context) (int64, error) {
 
 var _ repository.RuleStore = (*fakeRuleStore)(nil)
 
-func intPtr(v int) *int { return &v }
+func intPtr(v int) *int                                      { return &v }
 func statusPtr(s domain.AccountStatus) *domain.AccountStatus { return &s }
 
 func tpl(id int64, format domain.RequestFormat, models []string) *domain.Template {
@@ -1365,7 +1365,7 @@ func (c *countingLoader) loadsN() int {
 func TestSelectCarriesAccountExt(t *testing.T) {
 	ext := &domain.AccountExt{
 		AccountID: 7, CredentialType: credential.TypeCodexOAuth,
-		InstallationID: "inst-1", SessionID: intPtrStr("s1"), ThreadID: intPtrStr("t1"),
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "s1", ThreadID: "t1"},
 	}
 	// tpl() 硬编码 api_key 类型——codex 类型模板手动构造
 	tpl := &domain.Template{ID: 1, BaseURL: "https://u/v1", CredentialType: credential.TypeCodexOAuth,

@@ -1655,21 +1655,31 @@ components:
       properties:
         # account_id 只读（响应）；请求体忽略——路径 {id} 为准。
         account_id: { type: integer, format: int64 }
-        credential_type: { type: string, enum: [codex-oauth, codex-pat], description: 类型-列组约束（service 校验）：oauth 只允许 oauth_* 列组；pat 只允许 pat_key }
-        # 身份四元组（真实 codex 客户端语义；首次写入缺省 → service 自动生成
-        # （UUIDv4/v7 形状）并持久化，账号存在期间稳定；显式提供 → 采用；
-        # 恒等 thread_id == session_id、window_id = {thread_id}:0）。
-        installation_id: { type: string, description: "身份：账号级唯一（UUIDv4；响应恒有——首次写入自动生成）" }
-        session_id: { type: string, nullable: true, description: "身份：会话级（UUIDv7；恒等 == thread_id；service 自动生成/沿用）" }
-        thread_id: { type: string, nullable: true, description: "身份：会话级（UUIDv7；恒等 == session_id）" }
-        window_id: { type: string, nullable: true, description: "身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n）" }
-        # 凭据列组（按 credential_type 约束）
-        oauth_token: { type: string, nullable: true, description: 凭据：oauth 访问令牌（oauth 行必填——最小完整性） }
-        oauth_refresh_token: { type: string, nullable: true, description: 凭据：oauth 刷新令牌 }
-        oauth_expires_at: { type: string, format: date-time, nullable: true, description: 凭据：oauth 访问令牌过期时间 }
-        pat_key: { type: string, nullable: true, description: 凭据：pat }
+        credential_type: { type: string, enum: [codex-oauth, codex-pat], description: "类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key" }
+        # 身份四元组对象（与存储 codex_identity jsonb 同形——映射层零展开/收拢；
+        # 首次写入缺省 → service 自动生成（UUIDv4/v7 形状）并持久化，账号存在
+        # 期间稳定；显式提供 → 采用；恒等 thread_id == session_id、window_id =
+        # {thread_id}:0。请求语义：null 与空串同 = 未提供——沿用存量/自动生成
+        # （identity 无清空路径）。响应语义：nil 身份 → 字段省略（不输出 null）。
+        codex_identity: { $ref: '#/components/schemas/CodexIdentity' }
+        # 凭据列组（按 credential_type 约束）。请求语义：null/缺省 = NULL 清空
+        # 落库；空串 = 字面空值写入（两者区分）。响应语义：nil → null。
+        codex_oauth_token: { type: string, nullable: true, description: "凭据：oauth 访问令牌（oauth 行必填——最小完整性）" }
+        codex_oauth_refresh_token: { type: string, nullable: true, description: "凭据：oauth 刷新令牌" }
+        codex_oauth_expires_at: { type: string, format: date-time, nullable: true, description: "凭据：oauth 访问令牌过期时间" }
+        codex_pat_key: { type: string, nullable: true, description: "凭据：pat" }
         # 管理标识（非请求面）
-        email: { type: string, nullable: true, description: "管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空）" }
+        codex_email: { type: string, nullable: true, description: "管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空）" }
+        # 上游账号/空间标识（Task B 批量导入必填；本 task 仅 schema 声明——写入面 Task B）
+        codex_account_id: { type: string, nullable: true, description: "上游账号/空间标识（Task B 导入必填；本 task 仅声明）" }
+    CodexIdentity:
+      type: object
+      description: "codex 账号身份四元组（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）"
+      properties:
+        installation_id: { type: string, description: "身份：账号级唯一（UUIDv4；响应恒有——首次写入自动生成；空/缺省 → service 自动生成）" }
+        session_id: { type: string, nullable: true, description: "身份：会话级（UUIDv7；恒等 == thread_id；service 自动生成/沿用；响应 nil → null）" }
+        thread_id: { type: string, nullable: true, description: "身份：会话级（UUIDv7；恒等 == session_id；响应 nil → null）" }
+        window_id: { type: string, nullable: true, description: "身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n；响应 nil → null）" }
     TemplateListResponse:
       type: object
       required: [total, rows]

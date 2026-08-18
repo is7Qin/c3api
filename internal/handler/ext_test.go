@@ -51,11 +51,11 @@ func TestTemplatesIdExt(t *testing.T) {
 		`{"credential_type":"codex-oauth"}`)
 	require.Equal(t, 400, rec.Code, "special 模板 ext 行类型必须一致（oauth 拒绝）: %s", rec.Body.String())
 
-	// 凭据列不再存在：模板 ext 无 oauth/pat 凭据列（一律在 account_ext）——
-	// 请求携带 oauth_token 被忽略（契约无该字段），不产生配置
+	// 凭据列不再存在：模板 ext 无 codex_oauth_*/codex_pat_key 凭据列（一律在
+	// account_ext）——请求携带 codex_oauth_token 被忽略（契约无该字段），不产生配置
 	rec = do(http.MethodPut, "/admin/templates/"+itoa64(tpl.ID)+"/ext",
-		`{"credential_type":"responses-special","oauth_token":"at"}`)
-	require.Equal(t, 200, rec.Code, "模板 ext 忽略 oauth_token（契约无凭据列）: %s", rec.Body.String())
+		`{"credential_type":"responses-special","codex_oauth_token":"at"}`)
+	require.Equal(t, 200, rec.Code, "模板 ext 忽略 codex_oauth_token（契约无凭据列）: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ext))
 	require.Nil(t, ext.StripImageTools, "携带凭据列不产生配置")
 
@@ -113,37 +113,38 @@ func TestAccountsIdExt(t *testing.T) {
 
 	// PUT oauth ext（身份缺省）→ 200 + service 自动生成四元组（email 非自动生成）
 	rec = do(http.MethodPut, "/admin/accounts/"+itoa64(*acc.ID)+"/ext",
-		`{"credential_type":"codex-oauth","oauth_token":"at","oauth_refresh_token":"rt"}`)
+		`{"credential_type":"codex-oauth","codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}`)
 	require.Equal(t, 200, rec.Code, "put account ext: %s", rec.Body.String())
 	var ext AccountExt
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ext))
 	require.Equal(t, AccountExtCredentialTypeCodexOauth, ext.CredentialType)
-	require.NotNil(t, ext.InstallationId, "首次写入自动生成 installation_id")
-	require.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`, *ext.InstallationId)
-	require.NotNil(t, ext.SessionId)
-	require.Equal(t, ext.SessionId, ext.ThreadId, "主线程 thread_id == session_id")
-	require.Equal(t, *ext.ThreadId+":0", *ext.WindowId, "window_id = {thread_id}:0")
-	require.Nil(t, ext.Email, "email 非自动生成（NewCodexIdentity 只生成身份四元组）")
-	require.Equal(t, "at", *ext.OauthToken)
+	require.NotNil(t, ext.CodexIdentity, "身份对象响应恒有（首次写入自动生成）")
+	require.NotNil(t, ext.CodexIdentity.InstallationId, "首次写入自动生成 installation_id")
+	require.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`, *ext.CodexIdentity.InstallationId)
+	require.NotNil(t, ext.CodexIdentity.SessionId)
+	require.Equal(t, ext.CodexIdentity.SessionId, ext.CodexIdentity.ThreadId, "主线程 thread_id == session_id")
+	require.Equal(t, *ext.CodexIdentity.ThreadId+":0", *ext.CodexIdentity.WindowId, "window_id = {thread_id}:0")
+	require.Nil(t, ext.CodexEmail, "email 非自动生成（NewCodexIdentity 只生成身份四元组）")
+	require.Equal(t, "at", *ext.CodexOauthToken)
 	require.Equal(t, *acc.ID, *ext.AccountId)
-	autoIID := *ext.InstallationId
+	autoIID := *ext.CodexIdentity.InstallationId
 
 	// GET 回显（身份持久复用）
 	rec = do(http.MethodGet, "/admin/accounts/"+itoa64(*acc.ID)+"/ext", "")
 	require.Equal(t, 200, rec.Code, "get account ext: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ext))
-	require.Equal(t, "rt", *ext.OauthRefreshToken)
-	require.Equal(t, autoIID, *ext.InstallationId)
+	require.Equal(t, "rt", *ext.CodexOauthRefreshToken)
+	require.Equal(t, autoIID, *ext.CodexIdentity.InstallationId)
 
 	// 类型一致性：oauth 模板账号挂 pat 行 → 400（父模板类型不一致）
 	rec = do(http.MethodPut, "/admin/accounts/"+itoa64(*acc.ID)+"/ext",
-		`{"credential_type":"codex-pat","pat_key":"pat"}`)
+		`{"credential_type":"codex-pat","codex_pat_key":"pat"}`)
 	require.Equal(t, 400, rec.Code, "oauth 模板账号 ext 行类型必须一致（pat 拒绝）: %s", rec.Body.String())
 
-	// oauth 最小完整性：无 oauth_token → 400
+	// oauth 最小完整性：无 codex_oauth_token → 400
 	rec = do(http.MethodPut, "/admin/accounts/"+itoa64(*acc.ID)+"/ext",
 		`{"credential_type":"codex-oauth"}`)
-	require.Equal(t, 400, rec.Code, "oauth 行至少 oauth_token: %s", rec.Body.String())
+	require.Equal(t, 400, rec.Code, "oauth 行至少 codex_oauth_token: %s", rec.Body.String())
 
 	// pat 模板 + 账号：显式身份 + email（导入时人工/上游填写）→ 采用
 	rec = do(http.MethodPost, "/admin/templates", `{
@@ -156,14 +157,15 @@ func TestAccountsIdExt(t *testing.T) {
 	require.Equal(t, 200, rec.Code, "create pat account: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
 	rec = do(http.MethodPut, "/admin/accounts/"+itoa64(*acc.ID)+"/ext",
-		`{"credential_type":"codex-pat","pat_key":"pat2","email":"user@example.com","session_id":"s1","thread_id":"s1","window_id":"s1:0"}`)
+		`{"credential_type":"codex-pat","codex_pat_key":"pat2","codex_email":"user@example.com","codex_identity":{"session_id":"s1","thread_id":"s1","window_id":"s1:0"}}`)
 	require.Equal(t, 200, rec.Code, "put account ext explicit identity: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ext))
-	require.Equal(t, "pat2", *ext.PatKey)
-	require.Equal(t, "user@example.com", *ext.Email, "email roundtrip")
-	require.Equal(t, "s1", *ext.SessionId)
-	require.Equal(t, "s1", *ext.ThreadId, "thread==session 恒等")
-	require.Equal(t, "s1:0", *ext.WindowId)
+	require.Equal(t, "pat2", *ext.CodexPatKey)
+	require.Equal(t, "user@example.com", *ext.CodexEmail, "email roundtrip")
+	require.NotNil(t, ext.CodexIdentity.InstallationId, "显式身份对象携带 installation（未提供 → service 自动生成）")
+	require.Equal(t, "s1", *ext.CodexIdentity.SessionId)
+	require.Equal(t, "s1", *ext.CodexIdentity.ThreadId, "thread==session 恒等")
+	require.Equal(t, "s1:0", *ext.CodexIdentity.WindowId)
 
 	// 类型一致性：api_key 模板账号挂 codex 行 → 400
 	rec = do(http.MethodPost, "/admin/templates", `{
@@ -175,7 +177,7 @@ func TestAccountsIdExt(t *testing.T) {
 	require.Equal(t, 200, rec.Code, "create api_key account: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
 	rec = do(http.MethodPut, "/admin/accounts/"+itoa64(*acc.ID)+"/ext",
-		`{"credential_type":"codex-oauth","oauth_token":"at"}`)
+		`{"credential_type":"codex-oauth","codex_oauth_token":"at"}`)
 	require.Equal(t, 400, rec.Code, "api_key 模板账号不允许 codex ext 行: %s", rec.Body.String())
 
 	// 类型白名单：responses-special 账号 ext → 400
@@ -184,7 +186,7 @@ func TestAccountsIdExt(t *testing.T) {
 	require.Equal(t, 400, rec.Code, "账号 ext 不接受 special: %s", rec.Body.String())
 
 	// 父账号缺失 → 404
-	rec = do(http.MethodPut, "/admin/accounts/999999/ext", `{"credential_type":"codex-pat","pat_key":"p"}`)
+	rec = do(http.MethodPut, "/admin/accounts/999999/ext", `{"credential_type":"codex-pat","codex_pat_key":"p"}`)
 	require.Equal(t, 404, rec.Code, "父账号缺失 → 404: %s", rec.Body.String())
 }
 

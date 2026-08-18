@@ -1154,31 +1154,37 @@ export interface components {
             /** Format: int64 */
             account_id?: number;
             /**
-             * @description 类型-列组约束（service 校验）：oauth 只允许 oauth_* 列组；pat 只允许 pat_key
+             * @description 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
              * @enum {string}
              */
             credential_type: "codex-oauth" | "codex-pat";
-            /** @description 身份：账号级唯一（UUIDv4；响应恒有——首次写入自动生成） */
-            installation_id?: string;
-            /** @description 身份：会话级（UUIDv7；恒等 == thread_id；service 自动生成/沿用） */
-            session_id?: string | null;
-            /** @description 身份：会话级（UUIDv7；恒等 == session_id） */
-            thread_id?: string | null;
-            /** @description 身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n） */
-            window_id?: string | null;
+            codex_identity?: components["schemas"]["CodexIdentity"];
             /** @description 凭据：oauth 访问令牌（oauth 行必填——最小完整性） */
-            oauth_token?: string | null;
+            codex_oauth_token?: string | null;
             /** @description 凭据：oauth 刷新令牌 */
-            oauth_refresh_token?: string | null;
+            codex_oauth_refresh_token?: string | null;
             /**
              * Format: date-time
              * @description 凭据：oauth 访问令牌过期时间
              */
-            oauth_expires_at?: string | null;
+            codex_oauth_expires_at?: string | null;
             /** @description 凭据：pat */
-            pat_key?: string | null;
+            codex_pat_key?: string | null;
             /** @description 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空） */
-            email?: string | null;
+            codex_email?: string | null;
+            /** @description 上游账号/空间标识（Task B 导入必填；本 task 仅声明） */
+            codex_account_id?: string | null;
+        };
+        /** @description codex 账号身份四元组（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供） */
+        CodexIdentity: {
+            /** @description 身份：账号级唯一（UUIDv4；响应恒有——首次写入自动生成；空/缺省 → service 自动生成） */
+            installation_id?: string;
+            /** @description 身份：会话级（UUIDv7；恒等 == thread_id；service 自动生成/沿用；响应 nil → null） */
+            session_id?: string | null;
+            /** @description 身份：会话级（UUIDv7；恒等 == session_id；响应 nil → null） */
+            thread_id?: string | null;
+            /** @description 身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n；响应 nil → null） */
+            window_id?: string | null;
         };
         TemplateListResponse: {
             /** Format: int64 */

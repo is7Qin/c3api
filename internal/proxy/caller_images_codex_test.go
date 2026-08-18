@@ -154,8 +154,8 @@ func codexOAuthExt(accountID int64, at, rt string) *domain.AccountExt {
 	exp := time.Now().Add(time.Hour)
 	return &domain.AccountExt{
 		AccountID: accountID, CredentialType: credential.TypeCodexOAuth,
-		InstallationID: "inst-" + strings.Repeat("0", 32),
-		OAuthToken:     &at, OAuthRefreshToken: &rt, OAuthExpiresAt: &exp,
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "inst-" + strings.Repeat("0", 32)},
+		CodexOAuthToken: &at, CodexOAuthRefreshToken: &rt, CodexOAuthExpiresAt: &exp,
 	}
 }
 
@@ -268,8 +268,8 @@ func TestImagesCodexPATDirect(t *testing.T) {
 	pat := "pat-key-1"
 	ext := &domain.AccountExt{
 		AccountID: 11, CredentialType: credential.TypeCodexPAT,
-		InstallationID: "inst-" + strings.Repeat("1", 32),
-		PATKey:         &pat,
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-" + strings.Repeat("1", 32)},
+		CodexPATKey:   &pat,
 	}
 	store := &captureLogStore{}
 	p, recorder := newTestCodexProxy(t, credential.TypeCodexPAT, map[int64]*domain.AccountExt{11: ext}, up.URL, nil, store)
@@ -604,8 +604,8 @@ func TestImagesCodexEmptyRT(t *testing.T) {
 	at := "at-10"
 	ext := &domain.AccountExt{
 		AccountID: 10, CredentialType: credential.TypeCodexOAuth,
-		InstallationID: "inst-" + strings.Repeat("2", 32),
-		OAuthToken:     &at, // rt 缺失
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "inst-" + strings.Repeat("2", 32)},
+		CodexOAuthToken: &at, // rt 缺失
 	}
 	store := &captureLogStore{}
 	p, recorder := newTestCodexProxy(t, credential.TypeCodexOAuth, map[int64]*domain.AccountExt{10: ext}, up.URL, nil, store)

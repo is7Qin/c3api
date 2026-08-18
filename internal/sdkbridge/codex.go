@@ -47,8 +47,9 @@ func (a *Codex) SetTransport(rt http.RoundTripper) {
 }
 
 // RotationStore 轮转回写落库面（repository.AccountExtRepo 满足；接口化供测试
-// 注入与装配侧解耦）。部分更新 upsert——仅 oauth_token/oauth_refresh_token/
-// oauth_expires_at（expiresAt 为调用方携带的旧值，保旧语义），其余列不动。
+// 注入与装配侧解耦）。部分更新 upsert——仅 codex_oauth_token/
+// codex_oauth_refresh_token/codex_oauth_expires_at（expiresAt 为调用方携带的
+// 旧值，保旧语义），其余列不动。
 type RotationStore interface {
 	WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error
 }
@@ -98,8 +99,8 @@ type codexEntry struct {
 	// 重建 HTTPClient——与 idSig 同语义；生产路径共享 transport 承载连接池，
 	// 重建不重置连接池）。
 	appliedTurnState string
-	expiresAt         *time.Time
-	reported          atomic.Bool
+	expiresAt        *time.Time
+	reported         atomic.Bool
 	// usage 额度快照缓存（Task 3——GetUsageSnapshot 5min TTL）+ 失败冷却起点
 	// （60s——gate Major 2）：重建（sig 变化）随新条目一并清除；usageErr 只存
 	// 分类哨兵（ErrAuthExpired/ErrUpstream），不缓存错误体。
@@ -761,8 +762,8 @@ func (a *Codex) FatalAuth(accountID int64, fatal error) {
 
 // rotateWriteback 轮转回写（T5 §1——SDK OnTokenRotated 回调；在 SDK 单飞内
 // 串行执行——同账号并发轮转天然单飞，无需额外互斥）：
-//   - account_ext 部分更新 upsert（oauth_token + oauth_refresh_token +
-//     oauth_expires_at 保旧——携带 e.expiresAt 构造时旧值）
+//   - account_ext 部分更新 upsert（codex_oauth_token + codex_oauth_refresh_token +
+//     codex_oauth_expires_at 保旧——携带 e.expiresAt 构造时旧值）
 //   - 失败 → panic（SDK D4 契约：回调失败 = 令牌持久化中断信号——callRotate
 //     recover 后记 pending 下次 refresh 前重试，连续达阈值 →
 //     CallbackDeliveryError fatal → 统一回调摘除；fail-closed）

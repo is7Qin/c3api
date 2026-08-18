@@ -338,38 +338,32 @@ type AccountCreate struct {
 type AccountExt struct {
 	AccountId *int64 `json:"account_id,omitempty"`
 
-	// CredentialType 类型-列组约束（service 校验）：oauth 只允许 oauth_* 列组；pat 只允许 pat_key
+	// CodexAccountId 上游账号/空间标识（Task B 导入必填；本 task 仅声明）
+	CodexAccountId *string `json:"codex_account_id"`
+
+	// CodexEmail 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空）
+	CodexEmail *string `json:"codex_email"`
+
+	// CodexIdentity codex 账号身份四元组（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）
+	CodexIdentity *CodexIdentity `json:"codex_identity,omitempty"`
+
+	// CodexOauthExpiresAt 凭据：oauth 访问令牌过期时间
+	CodexOauthExpiresAt *time.Time `json:"codex_oauth_expires_at"`
+
+	// CodexOauthRefreshToken 凭据：oauth 刷新令牌
+	CodexOauthRefreshToken *string `json:"codex_oauth_refresh_token"`
+
+	// CodexOauthToken 凭据：oauth 访问令牌（oauth 行必填——最小完整性）
+	CodexOauthToken *string `json:"codex_oauth_token"`
+
+	// CodexPatKey 凭据：pat
+	CodexPatKey *string `json:"codex_pat_key"`
+
+	// CredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
 	CredentialType AccountExtCredentialType `json:"credential_type"`
-
-	// Email 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空）
-	Email *string `json:"email"`
-
-	// InstallationId 身份：账号级唯一（UUIDv4；响应恒有——首次写入自动生成）
-	InstallationId *string `json:"installation_id,omitempty"`
-
-	// OauthExpiresAt 凭据：oauth 访问令牌过期时间
-	OauthExpiresAt *time.Time `json:"oauth_expires_at"`
-
-	// OauthRefreshToken 凭据：oauth 刷新令牌
-	OauthRefreshToken *string `json:"oauth_refresh_token"`
-
-	// OauthToken 凭据：oauth 访问令牌（oauth 行必填——最小完整性）
-	OauthToken *string `json:"oauth_token"`
-
-	// PatKey 凭据：pat
-	PatKey *string `json:"pat_key"`
-
-	// SessionId 身份：会话级（UUIDv7；恒等 == thread_id；service 自动生成/沿用）
-	SessionId *string `json:"session_id"`
-
-	// ThreadId 身份：会话级（UUIDv7；恒等 == session_id）
-	ThreadId *string `json:"thread_id"`
-
-	// WindowId 身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n）
-	WindowId *string `json:"window_id"`
 }
 
-// AccountExtCredentialType 类型-列组约束（service 校验）：oauth 只允许 oauth_* 列组；pat 只允许 pat_key
+// AccountExtCredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
 type AccountExtCredentialType string
 
 // AccountGroupsResponse defines model for AccountGroupsResponse.
@@ -534,6 +528,21 @@ type BatchUpdateTemplatesBody struct {
 // CodexCredits 充值余额（金额字符串，如 "12.50"；上游空串 → null，非空串占位）
 type CodexCredits struct {
 	Balance *string `json:"balance"`
+}
+
+// CodexIdentity codex 账号身份四元组（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）
+type CodexIdentity struct {
+	// InstallationId 身份：账号级唯一（UUIDv4；响应恒有——首次写入自动生成；空/缺省 → service 自动生成）
+	InstallationId *string `json:"installation_id,omitempty"`
+
+	// SessionId 身份：会话级（UUIDv7；恒等 == thread_id；service 自动生成/沿用；响应 nil → null）
+	SessionId *string `json:"session_id"`
+
+	// ThreadId 身份：会话级（UUIDv7；恒等 == session_id；响应 nil → null）
+	ThreadId *string `json:"thread_id"`
+
+	// WindowId 身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n；响应 nil → null）
+	WindowId *string `json:"window_id"`
 }
 
 // CodexRateLimit 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01）

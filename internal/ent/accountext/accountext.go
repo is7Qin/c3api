@@ -16,24 +16,20 @@ const (
 	FieldAccountID = "account_id"
 	// FieldCredentialType holds the string denoting the credential_type field in the database.
 	FieldCredentialType = "credential_type"
-	// FieldInstallationID holds the string denoting the installation_id field in the database.
-	FieldInstallationID = "installation_id"
-	// FieldSessionID holds the string denoting the session_id field in the database.
-	FieldSessionID = "session_id"
-	// FieldThreadID holds the string denoting the thread_id field in the database.
-	FieldThreadID = "thread_id"
-	// FieldWindowID holds the string denoting the window_id field in the database.
-	FieldWindowID = "window_id"
-	// FieldOauthToken holds the string denoting the oauth_token field in the database.
-	FieldOauthToken = "oauth_token"
-	// FieldOauthRefreshToken holds the string denoting the oauth_refresh_token field in the database.
-	FieldOauthRefreshToken = "oauth_refresh_token"
-	// FieldOauthExpiresAt holds the string denoting the oauth_expires_at field in the database.
-	FieldOauthExpiresAt = "oauth_expires_at"
-	// FieldPatKey holds the string denoting the pat_key field in the database.
-	FieldPatKey = "pat_key"
-	// FieldEmail holds the string denoting the email field in the database.
-	FieldEmail = "email"
+	// FieldCodexIdentity holds the string denoting the codex_identity field in the database.
+	FieldCodexIdentity = "codex_identity"
+	// FieldCodexOauthToken holds the string denoting the codex_oauth_token field in the database.
+	FieldCodexOauthToken = "codex_oauth_token"
+	// FieldCodexOauthRefreshToken holds the string denoting the codex_oauth_refresh_token field in the database.
+	FieldCodexOauthRefreshToken = "codex_oauth_refresh_token"
+	// FieldCodexOauthExpiresAt holds the string denoting the codex_oauth_expires_at field in the database.
+	FieldCodexOauthExpiresAt = "codex_oauth_expires_at"
+	// FieldCodexPatKey holds the string denoting the codex_pat_key field in the database.
+	FieldCodexPatKey = "codex_pat_key"
+	// FieldCodexEmail holds the string denoting the codex_email field in the database.
+	FieldCodexEmail = "codex_email"
+	// FieldCodexAccountID holds the string denoting the codex_account_id field in the database.
+	FieldCodexAccountID = "codex_account_id"
 	// EdgeAccount holds the string denoting the account edge name in mutations.
 	EdgeAccount = "account"
 	// Table holds the table name of the accountext in the database.
@@ -52,15 +48,13 @@ var Columns = []string{
 	FieldID,
 	FieldAccountID,
 	FieldCredentialType,
-	FieldInstallationID,
-	FieldSessionID,
-	FieldThreadID,
-	FieldWindowID,
-	FieldOauthToken,
-	FieldOauthRefreshToken,
-	FieldOauthExpiresAt,
-	FieldPatKey,
-	FieldEmail,
+	FieldCodexIdentity,
+	FieldCodexOauthToken,
+	FieldCodexOauthRefreshToken,
+	FieldCodexOauthExpiresAt,
+	FieldCodexPatKey,
+	FieldCodexEmail,
+	FieldCodexAccountID,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -91,49 +85,34 @@ func ByCredentialType(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCredentialType, opts...).ToFunc()
 }
 
-// ByInstallationID orders the results by the installation_id field.
-func ByInstallationID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldInstallationID, opts...).ToFunc()
+// ByCodexOauthToken orders the results by the codex_oauth_token field.
+func ByCodexOauthToken(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexOauthToken, opts...).ToFunc()
 }
 
-// BySessionID orders the results by the session_id field.
-func BySessionID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldSessionID, opts...).ToFunc()
+// ByCodexOauthRefreshToken orders the results by the codex_oauth_refresh_token field.
+func ByCodexOauthRefreshToken(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexOauthRefreshToken, opts...).ToFunc()
 }
 
-// ByThreadID orders the results by the thread_id field.
-func ByThreadID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldThreadID, opts...).ToFunc()
+// ByCodexOauthExpiresAt orders the results by the codex_oauth_expires_at field.
+func ByCodexOauthExpiresAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexOauthExpiresAt, opts...).ToFunc()
 }
 
-// ByWindowID orders the results by the window_id field.
-func ByWindowID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldWindowID, opts...).ToFunc()
+// ByCodexPatKey orders the results by the codex_pat_key field.
+func ByCodexPatKey(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexPatKey, opts...).ToFunc()
 }
 
-// ByOauthToken orders the results by the oauth_token field.
-func ByOauthToken(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOauthToken, opts...).ToFunc()
+// ByCodexEmail orders the results by the codex_email field.
+func ByCodexEmail(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexEmail, opts...).ToFunc()
 }
 
-// ByOauthRefreshToken orders the results by the oauth_refresh_token field.
-func ByOauthRefreshToken(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOauthRefreshToken, opts...).ToFunc()
-}
-
-// ByOauthExpiresAt orders the results by the oauth_expires_at field.
-func ByOauthExpiresAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOauthExpiresAt, opts...).ToFunc()
-}
-
-// ByPatKey orders the results by the pat_key field.
-func ByPatKey(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPatKey, opts...).ToFunc()
-}
-
-// ByEmail orders the results by the email field.
-func ByEmail(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldEmail, opts...).ToFunc()
+// ByCodexAccountID orders the results by the codex_account_id field.
+func ByCodexAccountID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexAccountID, opts...).ToFunc()
 }
 
 // ByAccountField orders the results by account field.

@@ -29,8 +29,9 @@ type AccountCredential struct {
 }
 
 // CredentialFromExt 从账号扩展行派生每次调用必传的凭据（投影语义：按类型取
-// 对应凭据列组——codex-oauth → oauth 列组、codex-pat → pat 列组；nil 列 →
-// 空值；不报错——调用方按类型分流，非本类型的列不触达）。nil ext → 全零值。
+// 对应凭据列组——codex-oauth → codex_oauth_* 列组、codex-pat → codex_pat_key；
+// nil 列 → 空值；不报错——调用方按类型分流，非本类型的列不触达）。nil ext →
+// 全零值。
 func CredentialFromExt(e *AccountExt) AccountCredential {
 	if e == nil {
 		return AccountCredential{}
@@ -38,16 +39,16 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 	c := AccountCredential{AccountID: e.AccountID}
 	switch e.CredentialType {
 	case credential.TypeCodexOAuth:
-		if e.OAuthToken != nil {
-			c.OAuthToken = *e.OAuthToken
+		if e.CodexOAuthToken != nil {
+			c.OAuthToken = *e.CodexOAuthToken
 		}
-		if e.OAuthRefreshToken != nil {
-			c.OAuthRefreshToken = *e.OAuthRefreshToken
+		if e.CodexOAuthRefreshToken != nil {
+			c.OAuthRefreshToken = *e.CodexOAuthRefreshToken
 		}
-		c.OAuthExpiresAt = e.OAuthExpiresAt
+		c.OAuthExpiresAt = e.CodexOAuthExpiresAt
 	case credential.TypeCodexPAT:
-		if e.PATKey != nil {
-			c.PATKey = *e.PATKey
+		if e.CodexPATKey != nil {
+			c.PATKey = *e.CodexPATKey
 		}
 	}
 	return c

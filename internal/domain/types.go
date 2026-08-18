@@ -278,26 +278,38 @@ type TemplateExt struct {
 	StripImageTools *bool // 三类型公共能力开关：模板级图像 tool 剥离（W4 消费）
 }
 
+// CodexIdentity codex 账号身份四元组（对齐真实客户端语义：installation_id
+// 安装级永久；session/thread 会话级恒等；window = {thread_id}:{n} 起始 :0）——
+// account_ext.codex_identity jsonb 序列化契约类型（json tag 即落库形态）。
+// 空字段 = 未提供（service 归一：全空 → 自动生成/沿用存量；identity 无清空
+// 路径——账号存在期间稳定）。
+type CodexIdentity struct {
+	InstallationID string `json:"installation_id"`
+	SessionID      string `json:"session_id"`
+	ThreadID       string `json:"thread_id"`
+	WindowID       string `json:"window_id"`
+}
+
 // AccountExt 账号类型化鉴权扩展（account_ext 子表，1:1）：credential_type
 // ∈ {codex-oauth, codex-pat}（账号只两种 codex 类型）。字段按作用分组：
-// 标识 → 身份（四元组连续块）→ 凭据 → 管理标识。身份四元组（对齐真实 codex
-// 客户端语义，导入时 service NewCodexIdentity() 自动生成并持久化、账号存在
-// 期间稳定）：InstallationID 必存（UUIDv4 安装级永久）；SessionID/ThreadID
-// UUIDv7 会话级（恒等 thread==session）；WindowID = {thread_id}:0（导入时生成
-// 后恒定不变——零递增零状态）。凭据列组按类型约束（service 校验）：oauth 只
-// 允许 OAuth* 列组；pat 只允许 PATKey。nil = 未配置。
+// 标识 → 身份（codex_identity jsonb 单列）→ 凭据 → 管理标识。身份四元组
+// （对齐真实 codex 客户端语义，导入时 service NewCodexIdentity() 自动生成并
+// 持久化、账号存在期间稳定）：InstallationID 必存（UUIDv4 安装级永久）；
+// SessionID/ThreadID UUIDv7 会话级（恒等 thread==session）；WindowID =
+// {thread_id}:0（导入时生成后恒定不变——零递增零状态）。nil = 未配置。
+// 凭据列组按类型约束（service 校验）：oauth 只允许 CodexOAuth* 列组；pat
+// 只允许 CodexPATKey。CodexAccountID 为上游账号/空间标识（Task B 批量导入
+// 必填；本 task 仅建结构——管理面写入能力 Task B 接线）。
 type AccountExt struct {
-	AccountID         int64
-	CredentialType    credential.Type
-	InstallationID    string     // 身份：账号级唯一（UUIDv4，必存）
-	SessionID         *string    // 身份：会话级（UUIDv7；恒等 == ThreadID）
-	ThreadID          *string    // 身份：会话级（UUIDv7）
-	WindowID          *string    // 身份：会话级派生 {thread_id}:0（恒 0 恒定；无透传解析——用户裁决）
-	OAuthToken        *string    // 凭据：oauth 访问令牌
-	OAuthRefreshToken *string    // 凭据：oauth 刷新令牌
-	OAuthExpiresAt    *time.Time // 凭据：oauth 访问令牌过期时间
-	PATKey            *string    // 凭据：pat
-	Email             *string    // 管理标识：账号登录邮箱（导入时人工/上游提供，非自动生成，可空）
+	AccountID              int64
+	CredentialType         credential.Type
+	CodexIdentity          *CodexIdentity `json:"codex_identity"` // 身份四元组（jsonb；nil = 未配置/异常）
+	CodexOAuthToken        *string        // 凭据：oauth 访问令牌
+	CodexOAuthRefreshToken *string        // 凭据：oauth 刷新令牌
+	CodexOAuthExpiresAt    *time.Time     // 凭据：oauth 访问令牌过期时间
+	CodexPATKey            *string        // 凭据：pat
+	CodexEmail             *string        // 管理标识：账号登录邮箱（导入时人工/上游提供，非自动生成，可空）
+	CodexAccountID         *string        // 上游账号/空间标识（Task B 导入必填；可空）
 }
 
 // CodexUsageSnapshot 账号 codex 额度快照（白名单收敛契约——spec 2026-08-18
@@ -311,9 +323,9 @@ type AccountExt struct {
 // 账本 = usage_logs）。
 type CodexUsageSnapshot struct {
 	PlanType     string             `json:"plan_type,omitempty"`
-	RateLimit    *CodexRateLimit    `json:"rate_limit,omitempty"`     // 窗口用量
-	Credits      *CodexCredits      `json:"credits,omitempty"`        // 充值余额
-	SpendControl *CodexSpendControl `json:"spend_control,omitempty"`  // 消费限额（花了多少）
+	RateLimit    *CodexRateLimit    `json:"rate_limit,omitempty"`    // 窗口用量
+	Credits      *CodexCredits      `json:"credits,omitempty"`       // 充值余额
+	SpendControl *CodexSpendControl `json:"spend_control,omitempty"` // 消费限额（花了多少）
 }
 
 // CodexRateLimit 主窗口用量（ResetAt = SDK Unix 秒 → time.Time，JSON RFC3339；
@@ -357,7 +369,7 @@ type UsageAgg struct {
 type AccountUsageUpstreamError string
 
 const (
-	UpstreamErrorAuthExpired         AccountUsageUpstreamError = "auth_expired"          // 凭据失效（sdkbridge fatal 类）
+	UpstreamErrorAuthExpired         AccountUsageUpstreamError = "auth_expired"         // 凭据失效（sdkbridge fatal 类）
 	UpstreamErrorUpstreamUnavailable AccountUsageUpstreamError = "upstream_unavailable" // 网络/5xx 等上游错误（ErrUpstream/其余）
 )
 

@@ -159,9 +159,9 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 		}},
 		errs: map[int64]error{3: sdkbridge.ErrAuthExpired, 4: sdkbridge.ErrUpstream},
 	})
-	store.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-ok")}
-	store.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-bad")}
-	store.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-net")}
+	store.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
+	store.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-bad")}
+	store.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-net")}
 
 	rec := getUsage(h, "account_ids=1,2,3,4")
 	require.Equal(t, 200, rec.Code, "单账号快照失败不整批失败: %s", rec.Body.String())

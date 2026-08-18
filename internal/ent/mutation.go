@@ -12,6 +12,7 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
 	"github.com/is7qin/c3api/internal/ent/errlog"
@@ -1509,25 +1510,23 @@ func (m *AccountMutation) ResetEdge(name string) error {
 // AccountExtMutation represents an operation that mutates the AccountExt nodes in the graph.
 type AccountExtMutation struct {
 	config
-	op                  Op
-	typ                 string
-	id                  *int64
-	credential_type     *string
-	installation_id     *string
-	session_id          *string
-	thread_id           *string
-	window_id           *string
-	oauth_token         *string
-	oauth_refresh_token *string
-	oauth_expires_at    *time.Time
-	pat_key             *string
-	email               *string
-	clearedFields       map[string]struct{}
-	account             *int64
-	clearedaccount      bool
-	done                bool
-	oldValue            func(context.Context) (*AccountExt, error)
-	predicates          []predicate.AccountExt
+	op                        Op
+	typ                       string
+	id                        *int64
+	credential_type           *string
+	codex_identity            **domain.CodexIdentity
+	codex_oauth_token         *string
+	codex_oauth_refresh_token *string
+	codex_oauth_expires_at    *time.Time
+	codex_pat_key             *string
+	codex_email               *string
+	codex_account_id          *string
+	clearedFields             map[string]struct{}
+	account                   *int64
+	clearedaccount            bool
+	done                      bool
+	oldValue                  func(context.Context) (*AccountExt, error)
+	predicates                []predicate.AccountExt
 }
 
 var _ ent.Mutation = (*AccountExtMutation)(nil)
@@ -1706,432 +1705,347 @@ func (m *AccountExtMutation) ResetCredentialType() {
 	m.credential_type = nil
 }
 
-// SetInstallationID sets the "installation_id" field.
-func (m *AccountExtMutation) SetInstallationID(s string) {
-	m.installation_id = &s
+// SetCodexIdentity sets the "codex_identity" field.
+func (m *AccountExtMutation) SetCodexIdentity(di *domain.CodexIdentity) {
+	m.codex_identity = &di
 }
 
-// InstallationID returns the value of the "installation_id" field in the mutation.
-func (m *AccountExtMutation) InstallationID() (r string, exists bool) {
-	v := m.installation_id
+// CodexIdentity returns the value of the "codex_identity" field in the mutation.
+func (m *AccountExtMutation) CodexIdentity() (r *domain.CodexIdentity, exists bool) {
+	v := m.codex_identity
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldInstallationID returns the old "installation_id" field's value of the AccountExt entity.
+// OldCodexIdentity returns the old "codex_identity" field's value of the AccountExt entity.
 // If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldInstallationID(ctx context.Context) (v string, err error) {
+func (m *AccountExtMutation) OldCodexIdentity(ctx context.Context) (v *domain.CodexIdentity, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldInstallationID is only allowed on UpdateOne operations")
+		return v, errors.New("OldCodexIdentity is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldInstallationID requires an ID field in the mutation")
+		return v, errors.New("OldCodexIdentity requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldInstallationID: %w", err)
+		return v, fmt.Errorf("querying old value for OldCodexIdentity: %w", err)
 	}
-	return oldValue.InstallationID, nil
+	return oldValue.CodexIdentity, nil
 }
 
-// ResetInstallationID resets all changes to the "installation_id" field.
-func (m *AccountExtMutation) ResetInstallationID() {
-	m.installation_id = nil
+// ClearCodexIdentity clears the value of the "codex_identity" field.
+func (m *AccountExtMutation) ClearCodexIdentity() {
+	m.codex_identity = nil
+	m.clearedFields[accountext.FieldCodexIdentity] = struct{}{}
 }
 
-// SetSessionID sets the "session_id" field.
-func (m *AccountExtMutation) SetSessionID(s string) {
-	m.session_id = &s
-}
-
-// SessionID returns the value of the "session_id" field in the mutation.
-func (m *AccountExtMutation) SessionID() (r string, exists bool) {
-	v := m.session_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSessionID returns the old "session_id" field's value of the AccountExt entity.
-// If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldSessionID(ctx context.Context) (v *string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSessionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSessionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSessionID: %w", err)
-	}
-	return oldValue.SessionID, nil
-}
-
-// ClearSessionID clears the value of the "session_id" field.
-func (m *AccountExtMutation) ClearSessionID() {
-	m.session_id = nil
-	m.clearedFields[accountext.FieldSessionID] = struct{}{}
-}
-
-// SessionIDCleared returns if the "session_id" field was cleared in this mutation.
-func (m *AccountExtMutation) SessionIDCleared() bool {
-	_, ok := m.clearedFields[accountext.FieldSessionID]
+// CodexIdentityCleared returns if the "codex_identity" field was cleared in this mutation.
+func (m *AccountExtMutation) CodexIdentityCleared() bool {
+	_, ok := m.clearedFields[accountext.FieldCodexIdentity]
 	return ok
 }
 
-// ResetSessionID resets all changes to the "session_id" field.
-func (m *AccountExtMutation) ResetSessionID() {
-	m.session_id = nil
-	delete(m.clearedFields, accountext.FieldSessionID)
+// ResetCodexIdentity resets all changes to the "codex_identity" field.
+func (m *AccountExtMutation) ResetCodexIdentity() {
+	m.codex_identity = nil
+	delete(m.clearedFields, accountext.FieldCodexIdentity)
 }
 
-// SetThreadID sets the "thread_id" field.
-func (m *AccountExtMutation) SetThreadID(s string) {
-	m.thread_id = &s
+// SetCodexOauthToken sets the "codex_oauth_token" field.
+func (m *AccountExtMutation) SetCodexOauthToken(s string) {
+	m.codex_oauth_token = &s
 }
 
-// ThreadID returns the value of the "thread_id" field in the mutation.
-func (m *AccountExtMutation) ThreadID() (r string, exists bool) {
-	v := m.thread_id
+// CodexOauthToken returns the value of the "codex_oauth_token" field in the mutation.
+func (m *AccountExtMutation) CodexOauthToken() (r string, exists bool) {
+	v := m.codex_oauth_token
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldThreadID returns the old "thread_id" field's value of the AccountExt entity.
+// OldCodexOauthToken returns the old "codex_oauth_token" field's value of the AccountExt entity.
 // If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldThreadID(ctx context.Context) (v *string, err error) {
+func (m *AccountExtMutation) OldCodexOauthToken(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldThreadID is only allowed on UpdateOne operations")
+		return v, errors.New("OldCodexOauthToken is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldThreadID requires an ID field in the mutation")
+		return v, errors.New("OldCodexOauthToken requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldThreadID: %w", err)
+		return v, fmt.Errorf("querying old value for OldCodexOauthToken: %w", err)
 	}
-	return oldValue.ThreadID, nil
+	return oldValue.CodexOauthToken, nil
 }
 
-// ClearThreadID clears the value of the "thread_id" field.
-func (m *AccountExtMutation) ClearThreadID() {
-	m.thread_id = nil
-	m.clearedFields[accountext.FieldThreadID] = struct{}{}
+// ClearCodexOauthToken clears the value of the "codex_oauth_token" field.
+func (m *AccountExtMutation) ClearCodexOauthToken() {
+	m.codex_oauth_token = nil
+	m.clearedFields[accountext.FieldCodexOauthToken] = struct{}{}
 }
 
-// ThreadIDCleared returns if the "thread_id" field was cleared in this mutation.
-func (m *AccountExtMutation) ThreadIDCleared() bool {
-	_, ok := m.clearedFields[accountext.FieldThreadID]
+// CodexOauthTokenCleared returns if the "codex_oauth_token" field was cleared in this mutation.
+func (m *AccountExtMutation) CodexOauthTokenCleared() bool {
+	_, ok := m.clearedFields[accountext.FieldCodexOauthToken]
 	return ok
 }
 
-// ResetThreadID resets all changes to the "thread_id" field.
-func (m *AccountExtMutation) ResetThreadID() {
-	m.thread_id = nil
-	delete(m.clearedFields, accountext.FieldThreadID)
+// ResetCodexOauthToken resets all changes to the "codex_oauth_token" field.
+func (m *AccountExtMutation) ResetCodexOauthToken() {
+	m.codex_oauth_token = nil
+	delete(m.clearedFields, accountext.FieldCodexOauthToken)
 }
 
-// SetWindowID sets the "window_id" field.
-func (m *AccountExtMutation) SetWindowID(s string) {
-	m.window_id = &s
+// SetCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field.
+func (m *AccountExtMutation) SetCodexOauthRefreshToken(s string) {
+	m.codex_oauth_refresh_token = &s
 }
 
-// WindowID returns the value of the "window_id" field in the mutation.
-func (m *AccountExtMutation) WindowID() (r string, exists bool) {
-	v := m.window_id
+// CodexOauthRefreshToken returns the value of the "codex_oauth_refresh_token" field in the mutation.
+func (m *AccountExtMutation) CodexOauthRefreshToken() (r string, exists bool) {
+	v := m.codex_oauth_refresh_token
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldWindowID returns the old "window_id" field's value of the AccountExt entity.
+// OldCodexOauthRefreshToken returns the old "codex_oauth_refresh_token" field's value of the AccountExt entity.
 // If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldWindowID(ctx context.Context) (v *string, err error) {
+func (m *AccountExtMutation) OldCodexOauthRefreshToken(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWindowID is only allowed on UpdateOne operations")
+		return v, errors.New("OldCodexOauthRefreshToken is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWindowID requires an ID field in the mutation")
+		return v, errors.New("OldCodexOauthRefreshToken requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWindowID: %w", err)
+		return v, fmt.Errorf("querying old value for OldCodexOauthRefreshToken: %w", err)
 	}
-	return oldValue.WindowID, nil
+	return oldValue.CodexOauthRefreshToken, nil
 }
 
-// ClearWindowID clears the value of the "window_id" field.
-func (m *AccountExtMutation) ClearWindowID() {
-	m.window_id = nil
-	m.clearedFields[accountext.FieldWindowID] = struct{}{}
+// ClearCodexOauthRefreshToken clears the value of the "codex_oauth_refresh_token" field.
+func (m *AccountExtMutation) ClearCodexOauthRefreshToken() {
+	m.codex_oauth_refresh_token = nil
+	m.clearedFields[accountext.FieldCodexOauthRefreshToken] = struct{}{}
 }
 
-// WindowIDCleared returns if the "window_id" field was cleared in this mutation.
-func (m *AccountExtMutation) WindowIDCleared() bool {
-	_, ok := m.clearedFields[accountext.FieldWindowID]
+// CodexOauthRefreshTokenCleared returns if the "codex_oauth_refresh_token" field was cleared in this mutation.
+func (m *AccountExtMutation) CodexOauthRefreshTokenCleared() bool {
+	_, ok := m.clearedFields[accountext.FieldCodexOauthRefreshToken]
 	return ok
 }
 
-// ResetWindowID resets all changes to the "window_id" field.
-func (m *AccountExtMutation) ResetWindowID() {
-	m.window_id = nil
-	delete(m.clearedFields, accountext.FieldWindowID)
+// ResetCodexOauthRefreshToken resets all changes to the "codex_oauth_refresh_token" field.
+func (m *AccountExtMutation) ResetCodexOauthRefreshToken() {
+	m.codex_oauth_refresh_token = nil
+	delete(m.clearedFields, accountext.FieldCodexOauthRefreshToken)
 }
 
-// SetOauthToken sets the "oauth_token" field.
-func (m *AccountExtMutation) SetOauthToken(s string) {
-	m.oauth_token = &s
+// SetCodexOauthExpiresAt sets the "codex_oauth_expires_at" field.
+func (m *AccountExtMutation) SetCodexOauthExpiresAt(t time.Time) {
+	m.codex_oauth_expires_at = &t
 }
 
-// OauthToken returns the value of the "oauth_token" field in the mutation.
-func (m *AccountExtMutation) OauthToken() (r string, exists bool) {
-	v := m.oauth_token
+// CodexOauthExpiresAt returns the value of the "codex_oauth_expires_at" field in the mutation.
+func (m *AccountExtMutation) CodexOauthExpiresAt() (r time.Time, exists bool) {
+	v := m.codex_oauth_expires_at
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldOauthToken returns the old "oauth_token" field's value of the AccountExt entity.
+// OldCodexOauthExpiresAt returns the old "codex_oauth_expires_at" field's value of the AccountExt entity.
 // If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldOauthToken(ctx context.Context) (v *string, err error) {
+func (m *AccountExtMutation) OldCodexOauthExpiresAt(ctx context.Context) (v *time.Time, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOauthToken is only allowed on UpdateOne operations")
+		return v, errors.New("OldCodexOauthExpiresAt is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOauthToken requires an ID field in the mutation")
+		return v, errors.New("OldCodexOauthExpiresAt requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOauthToken: %w", err)
+		return v, fmt.Errorf("querying old value for OldCodexOauthExpiresAt: %w", err)
 	}
-	return oldValue.OauthToken, nil
+	return oldValue.CodexOauthExpiresAt, nil
 }
 
-// ClearOauthToken clears the value of the "oauth_token" field.
-func (m *AccountExtMutation) ClearOauthToken() {
-	m.oauth_token = nil
-	m.clearedFields[accountext.FieldOauthToken] = struct{}{}
+// ClearCodexOauthExpiresAt clears the value of the "codex_oauth_expires_at" field.
+func (m *AccountExtMutation) ClearCodexOauthExpiresAt() {
+	m.codex_oauth_expires_at = nil
+	m.clearedFields[accountext.FieldCodexOauthExpiresAt] = struct{}{}
 }
 
-// OauthTokenCleared returns if the "oauth_token" field was cleared in this mutation.
-func (m *AccountExtMutation) OauthTokenCleared() bool {
-	_, ok := m.clearedFields[accountext.FieldOauthToken]
+// CodexOauthExpiresAtCleared returns if the "codex_oauth_expires_at" field was cleared in this mutation.
+func (m *AccountExtMutation) CodexOauthExpiresAtCleared() bool {
+	_, ok := m.clearedFields[accountext.FieldCodexOauthExpiresAt]
 	return ok
 }
 
-// ResetOauthToken resets all changes to the "oauth_token" field.
-func (m *AccountExtMutation) ResetOauthToken() {
-	m.oauth_token = nil
-	delete(m.clearedFields, accountext.FieldOauthToken)
+// ResetCodexOauthExpiresAt resets all changes to the "codex_oauth_expires_at" field.
+func (m *AccountExtMutation) ResetCodexOauthExpiresAt() {
+	m.codex_oauth_expires_at = nil
+	delete(m.clearedFields, accountext.FieldCodexOauthExpiresAt)
 }
 
-// SetOauthRefreshToken sets the "oauth_refresh_token" field.
-func (m *AccountExtMutation) SetOauthRefreshToken(s string) {
-	m.oauth_refresh_token = &s
+// SetCodexPatKey sets the "codex_pat_key" field.
+func (m *AccountExtMutation) SetCodexPatKey(s string) {
+	m.codex_pat_key = &s
 }
 
-// OauthRefreshToken returns the value of the "oauth_refresh_token" field in the mutation.
-func (m *AccountExtMutation) OauthRefreshToken() (r string, exists bool) {
-	v := m.oauth_refresh_token
+// CodexPatKey returns the value of the "codex_pat_key" field in the mutation.
+func (m *AccountExtMutation) CodexPatKey() (r string, exists bool) {
+	v := m.codex_pat_key
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldOauthRefreshToken returns the old "oauth_refresh_token" field's value of the AccountExt entity.
+// OldCodexPatKey returns the old "codex_pat_key" field's value of the AccountExt entity.
 // If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldOauthRefreshToken(ctx context.Context) (v *string, err error) {
+func (m *AccountExtMutation) OldCodexPatKey(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOauthRefreshToken is only allowed on UpdateOne operations")
+		return v, errors.New("OldCodexPatKey is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOauthRefreshToken requires an ID field in the mutation")
+		return v, errors.New("OldCodexPatKey requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOauthRefreshToken: %w", err)
+		return v, fmt.Errorf("querying old value for OldCodexPatKey: %w", err)
 	}
-	return oldValue.OauthRefreshToken, nil
+	return oldValue.CodexPatKey, nil
 }
 
-// ClearOauthRefreshToken clears the value of the "oauth_refresh_token" field.
-func (m *AccountExtMutation) ClearOauthRefreshToken() {
-	m.oauth_refresh_token = nil
-	m.clearedFields[accountext.FieldOauthRefreshToken] = struct{}{}
+// ClearCodexPatKey clears the value of the "codex_pat_key" field.
+func (m *AccountExtMutation) ClearCodexPatKey() {
+	m.codex_pat_key = nil
+	m.clearedFields[accountext.FieldCodexPatKey] = struct{}{}
 }
 
-// OauthRefreshTokenCleared returns if the "oauth_refresh_token" field was cleared in this mutation.
-func (m *AccountExtMutation) OauthRefreshTokenCleared() bool {
-	_, ok := m.clearedFields[accountext.FieldOauthRefreshToken]
+// CodexPatKeyCleared returns if the "codex_pat_key" field was cleared in this mutation.
+func (m *AccountExtMutation) CodexPatKeyCleared() bool {
+	_, ok := m.clearedFields[accountext.FieldCodexPatKey]
 	return ok
 }
 
-// ResetOauthRefreshToken resets all changes to the "oauth_refresh_token" field.
-func (m *AccountExtMutation) ResetOauthRefreshToken() {
-	m.oauth_refresh_token = nil
-	delete(m.clearedFields, accountext.FieldOauthRefreshToken)
+// ResetCodexPatKey resets all changes to the "codex_pat_key" field.
+func (m *AccountExtMutation) ResetCodexPatKey() {
+	m.codex_pat_key = nil
+	delete(m.clearedFields, accountext.FieldCodexPatKey)
 }
 
-// SetOauthExpiresAt sets the "oauth_expires_at" field.
-func (m *AccountExtMutation) SetOauthExpiresAt(t time.Time) {
-	m.oauth_expires_at = &t
+// SetCodexEmail sets the "codex_email" field.
+func (m *AccountExtMutation) SetCodexEmail(s string) {
+	m.codex_email = &s
 }
 
-// OauthExpiresAt returns the value of the "oauth_expires_at" field in the mutation.
-func (m *AccountExtMutation) OauthExpiresAt() (r time.Time, exists bool) {
-	v := m.oauth_expires_at
+// CodexEmail returns the value of the "codex_email" field in the mutation.
+func (m *AccountExtMutation) CodexEmail() (r string, exists bool) {
+	v := m.codex_email
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldOauthExpiresAt returns the old "oauth_expires_at" field's value of the AccountExt entity.
+// OldCodexEmail returns the old "codex_email" field's value of the AccountExt entity.
 // If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldOauthExpiresAt(ctx context.Context) (v *time.Time, err error) {
+func (m *AccountExtMutation) OldCodexEmail(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOauthExpiresAt is only allowed on UpdateOne operations")
+		return v, errors.New("OldCodexEmail is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOauthExpiresAt requires an ID field in the mutation")
+		return v, errors.New("OldCodexEmail requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOauthExpiresAt: %w", err)
+		return v, fmt.Errorf("querying old value for OldCodexEmail: %w", err)
 	}
-	return oldValue.OauthExpiresAt, nil
+	return oldValue.CodexEmail, nil
 }
 
-// ClearOauthExpiresAt clears the value of the "oauth_expires_at" field.
-func (m *AccountExtMutation) ClearOauthExpiresAt() {
-	m.oauth_expires_at = nil
-	m.clearedFields[accountext.FieldOauthExpiresAt] = struct{}{}
+// ClearCodexEmail clears the value of the "codex_email" field.
+func (m *AccountExtMutation) ClearCodexEmail() {
+	m.codex_email = nil
+	m.clearedFields[accountext.FieldCodexEmail] = struct{}{}
 }
 
-// OauthExpiresAtCleared returns if the "oauth_expires_at" field was cleared in this mutation.
-func (m *AccountExtMutation) OauthExpiresAtCleared() bool {
-	_, ok := m.clearedFields[accountext.FieldOauthExpiresAt]
+// CodexEmailCleared returns if the "codex_email" field was cleared in this mutation.
+func (m *AccountExtMutation) CodexEmailCleared() bool {
+	_, ok := m.clearedFields[accountext.FieldCodexEmail]
 	return ok
 }
 
-// ResetOauthExpiresAt resets all changes to the "oauth_expires_at" field.
-func (m *AccountExtMutation) ResetOauthExpiresAt() {
-	m.oauth_expires_at = nil
-	delete(m.clearedFields, accountext.FieldOauthExpiresAt)
+// ResetCodexEmail resets all changes to the "codex_email" field.
+func (m *AccountExtMutation) ResetCodexEmail() {
+	m.codex_email = nil
+	delete(m.clearedFields, accountext.FieldCodexEmail)
 }
 
-// SetPatKey sets the "pat_key" field.
-func (m *AccountExtMutation) SetPatKey(s string) {
-	m.pat_key = &s
+// SetCodexAccountID sets the "codex_account_id" field.
+func (m *AccountExtMutation) SetCodexAccountID(s string) {
+	m.codex_account_id = &s
 }
 
-// PatKey returns the value of the "pat_key" field in the mutation.
-func (m *AccountExtMutation) PatKey() (r string, exists bool) {
-	v := m.pat_key
+// CodexAccountID returns the value of the "codex_account_id" field in the mutation.
+func (m *AccountExtMutation) CodexAccountID() (r string, exists bool) {
+	v := m.codex_account_id
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldPatKey returns the old "pat_key" field's value of the AccountExt entity.
+// OldCodexAccountID returns the old "codex_account_id" field's value of the AccountExt entity.
 // If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldPatKey(ctx context.Context) (v *string, err error) {
+func (m *AccountExtMutation) OldCodexAccountID(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPatKey is only allowed on UpdateOne operations")
+		return v, errors.New("OldCodexAccountID is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPatKey requires an ID field in the mutation")
+		return v, errors.New("OldCodexAccountID requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPatKey: %w", err)
+		return v, fmt.Errorf("querying old value for OldCodexAccountID: %w", err)
 	}
-	return oldValue.PatKey, nil
+	return oldValue.CodexAccountID, nil
 }
 
-// ClearPatKey clears the value of the "pat_key" field.
-func (m *AccountExtMutation) ClearPatKey() {
-	m.pat_key = nil
-	m.clearedFields[accountext.FieldPatKey] = struct{}{}
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (m *AccountExtMutation) ClearCodexAccountID() {
+	m.codex_account_id = nil
+	m.clearedFields[accountext.FieldCodexAccountID] = struct{}{}
 }
 
-// PatKeyCleared returns if the "pat_key" field was cleared in this mutation.
-func (m *AccountExtMutation) PatKeyCleared() bool {
-	_, ok := m.clearedFields[accountext.FieldPatKey]
+// CodexAccountIDCleared returns if the "codex_account_id" field was cleared in this mutation.
+func (m *AccountExtMutation) CodexAccountIDCleared() bool {
+	_, ok := m.clearedFields[accountext.FieldCodexAccountID]
 	return ok
 }
 
-// ResetPatKey resets all changes to the "pat_key" field.
-func (m *AccountExtMutation) ResetPatKey() {
-	m.pat_key = nil
-	delete(m.clearedFields, accountext.FieldPatKey)
-}
-
-// SetEmail sets the "email" field.
-func (m *AccountExtMutation) SetEmail(s string) {
-	m.email = &s
-}
-
-// Email returns the value of the "email" field in the mutation.
-func (m *AccountExtMutation) Email() (r string, exists bool) {
-	v := m.email
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldEmail returns the old "email" field's value of the AccountExt entity.
-// If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldEmail(ctx context.Context) (v *string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldEmail is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldEmail requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldEmail: %w", err)
-	}
-	return oldValue.Email, nil
-}
-
-// ClearEmail clears the value of the "email" field.
-func (m *AccountExtMutation) ClearEmail() {
-	m.email = nil
-	m.clearedFields[accountext.FieldEmail] = struct{}{}
-}
-
-// EmailCleared returns if the "email" field was cleared in this mutation.
-func (m *AccountExtMutation) EmailCleared() bool {
-	_, ok := m.clearedFields[accountext.FieldEmail]
-	return ok
-}
-
-// ResetEmail resets all changes to the "email" field.
-func (m *AccountExtMutation) ResetEmail() {
-	m.email = nil
-	delete(m.clearedFields, accountext.FieldEmail)
+// ResetCodexAccountID resets all changes to the "codex_account_id" field.
+func (m *AccountExtMutation) ResetCodexAccountID() {
+	m.codex_account_id = nil
+	delete(m.clearedFields, accountext.FieldCodexAccountID)
 }
 
 // ClearAccount clears the "account" edge to the Account entity.
@@ -2195,39 +2109,33 @@ func (m *AccountExtMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountExtMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 9)
 	if m.account != nil {
 		fields = append(fields, accountext.FieldAccountID)
 	}
 	if m.credential_type != nil {
 		fields = append(fields, accountext.FieldCredentialType)
 	}
-	if m.installation_id != nil {
-		fields = append(fields, accountext.FieldInstallationID)
+	if m.codex_identity != nil {
+		fields = append(fields, accountext.FieldCodexIdentity)
 	}
-	if m.session_id != nil {
-		fields = append(fields, accountext.FieldSessionID)
+	if m.codex_oauth_token != nil {
+		fields = append(fields, accountext.FieldCodexOauthToken)
 	}
-	if m.thread_id != nil {
-		fields = append(fields, accountext.FieldThreadID)
+	if m.codex_oauth_refresh_token != nil {
+		fields = append(fields, accountext.FieldCodexOauthRefreshToken)
 	}
-	if m.window_id != nil {
-		fields = append(fields, accountext.FieldWindowID)
+	if m.codex_oauth_expires_at != nil {
+		fields = append(fields, accountext.FieldCodexOauthExpiresAt)
 	}
-	if m.oauth_token != nil {
-		fields = append(fields, accountext.FieldOauthToken)
+	if m.codex_pat_key != nil {
+		fields = append(fields, accountext.FieldCodexPatKey)
 	}
-	if m.oauth_refresh_token != nil {
-		fields = append(fields, accountext.FieldOauthRefreshToken)
+	if m.codex_email != nil {
+		fields = append(fields, accountext.FieldCodexEmail)
 	}
-	if m.oauth_expires_at != nil {
-		fields = append(fields, accountext.FieldOauthExpiresAt)
-	}
-	if m.pat_key != nil {
-		fields = append(fields, accountext.FieldPatKey)
-	}
-	if m.email != nil {
-		fields = append(fields, accountext.FieldEmail)
+	if m.codex_account_id != nil {
+		fields = append(fields, accountext.FieldCodexAccountID)
 	}
 	return fields
 }
@@ -2241,24 +2149,20 @@ func (m *AccountExtMutation) Field(name string) (ent.Value, bool) {
 		return m.AccountID()
 	case accountext.FieldCredentialType:
 		return m.CredentialType()
-	case accountext.FieldInstallationID:
-		return m.InstallationID()
-	case accountext.FieldSessionID:
-		return m.SessionID()
-	case accountext.FieldThreadID:
-		return m.ThreadID()
-	case accountext.FieldWindowID:
-		return m.WindowID()
-	case accountext.FieldOauthToken:
-		return m.OauthToken()
-	case accountext.FieldOauthRefreshToken:
-		return m.OauthRefreshToken()
-	case accountext.FieldOauthExpiresAt:
-		return m.OauthExpiresAt()
-	case accountext.FieldPatKey:
-		return m.PatKey()
-	case accountext.FieldEmail:
-		return m.Email()
+	case accountext.FieldCodexIdentity:
+		return m.CodexIdentity()
+	case accountext.FieldCodexOauthToken:
+		return m.CodexOauthToken()
+	case accountext.FieldCodexOauthRefreshToken:
+		return m.CodexOauthRefreshToken()
+	case accountext.FieldCodexOauthExpiresAt:
+		return m.CodexOauthExpiresAt()
+	case accountext.FieldCodexPatKey:
+		return m.CodexPatKey()
+	case accountext.FieldCodexEmail:
+		return m.CodexEmail()
+	case accountext.FieldCodexAccountID:
+		return m.CodexAccountID()
 	}
 	return nil, false
 }
@@ -2272,24 +2176,20 @@ func (m *AccountExtMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldAccountID(ctx)
 	case accountext.FieldCredentialType:
 		return m.OldCredentialType(ctx)
-	case accountext.FieldInstallationID:
-		return m.OldInstallationID(ctx)
-	case accountext.FieldSessionID:
-		return m.OldSessionID(ctx)
-	case accountext.FieldThreadID:
-		return m.OldThreadID(ctx)
-	case accountext.FieldWindowID:
-		return m.OldWindowID(ctx)
-	case accountext.FieldOauthToken:
-		return m.OldOauthToken(ctx)
-	case accountext.FieldOauthRefreshToken:
-		return m.OldOauthRefreshToken(ctx)
-	case accountext.FieldOauthExpiresAt:
-		return m.OldOauthExpiresAt(ctx)
-	case accountext.FieldPatKey:
-		return m.OldPatKey(ctx)
-	case accountext.FieldEmail:
-		return m.OldEmail(ctx)
+	case accountext.FieldCodexIdentity:
+		return m.OldCodexIdentity(ctx)
+	case accountext.FieldCodexOauthToken:
+		return m.OldCodexOauthToken(ctx)
+	case accountext.FieldCodexOauthRefreshToken:
+		return m.OldCodexOauthRefreshToken(ctx)
+	case accountext.FieldCodexOauthExpiresAt:
+		return m.OldCodexOauthExpiresAt(ctx)
+	case accountext.FieldCodexPatKey:
+		return m.OldCodexPatKey(ctx)
+	case accountext.FieldCodexEmail:
+		return m.OldCodexEmail(ctx)
+	case accountext.FieldCodexAccountID:
+		return m.OldCodexAccountID(ctx)
 	}
 	return nil, fmt.Errorf("unknown AccountExt field %s", name)
 }
@@ -2313,68 +2213,54 @@ func (m *AccountExtMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCredentialType(v)
 		return nil
-	case accountext.FieldInstallationID:
+	case accountext.FieldCodexIdentity:
+		v, ok := value.(*domain.CodexIdentity)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCodexIdentity(v)
+		return nil
+	case accountext.FieldCodexOauthToken:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetInstallationID(v)
+		m.SetCodexOauthToken(v)
 		return nil
-	case accountext.FieldSessionID:
+	case accountext.FieldCodexOauthRefreshToken:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetSessionID(v)
+		m.SetCodexOauthRefreshToken(v)
 		return nil
-	case accountext.FieldThreadID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetThreadID(v)
-		return nil
-	case accountext.FieldWindowID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWindowID(v)
-		return nil
-	case accountext.FieldOauthToken:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOauthToken(v)
-		return nil
-	case accountext.FieldOauthRefreshToken:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOauthRefreshToken(v)
-		return nil
-	case accountext.FieldOauthExpiresAt:
+	case accountext.FieldCodexOauthExpiresAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetOauthExpiresAt(v)
+		m.SetCodexOauthExpiresAt(v)
 		return nil
-	case accountext.FieldPatKey:
+	case accountext.FieldCodexPatKey:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetPatKey(v)
+		m.SetCodexPatKey(v)
 		return nil
-	case accountext.FieldEmail:
+	case accountext.FieldCodexEmail:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetEmail(v)
+		m.SetCodexEmail(v)
+		return nil
+	case accountext.FieldCodexAccountID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCodexAccountID(v)
 		return nil
 	}
 	return fmt.Errorf("unknown AccountExt field %s", name)
@@ -2409,29 +2295,26 @@ func (m *AccountExtMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *AccountExtMutation) ClearedFields() []string {
 	var fields []string
-	if m.FieldCleared(accountext.FieldSessionID) {
-		fields = append(fields, accountext.FieldSessionID)
+	if m.FieldCleared(accountext.FieldCodexIdentity) {
+		fields = append(fields, accountext.FieldCodexIdentity)
 	}
-	if m.FieldCleared(accountext.FieldThreadID) {
-		fields = append(fields, accountext.FieldThreadID)
+	if m.FieldCleared(accountext.FieldCodexOauthToken) {
+		fields = append(fields, accountext.FieldCodexOauthToken)
 	}
-	if m.FieldCleared(accountext.FieldWindowID) {
-		fields = append(fields, accountext.FieldWindowID)
+	if m.FieldCleared(accountext.FieldCodexOauthRefreshToken) {
+		fields = append(fields, accountext.FieldCodexOauthRefreshToken)
 	}
-	if m.FieldCleared(accountext.FieldOauthToken) {
-		fields = append(fields, accountext.FieldOauthToken)
+	if m.FieldCleared(accountext.FieldCodexOauthExpiresAt) {
+		fields = append(fields, accountext.FieldCodexOauthExpiresAt)
 	}
-	if m.FieldCleared(accountext.FieldOauthRefreshToken) {
-		fields = append(fields, accountext.FieldOauthRefreshToken)
+	if m.FieldCleared(accountext.FieldCodexPatKey) {
+		fields = append(fields, accountext.FieldCodexPatKey)
 	}
-	if m.FieldCleared(accountext.FieldOauthExpiresAt) {
-		fields = append(fields, accountext.FieldOauthExpiresAt)
+	if m.FieldCleared(accountext.FieldCodexEmail) {
+		fields = append(fields, accountext.FieldCodexEmail)
 	}
-	if m.FieldCleared(accountext.FieldPatKey) {
-		fields = append(fields, accountext.FieldPatKey)
-	}
-	if m.FieldCleared(accountext.FieldEmail) {
-		fields = append(fields, accountext.FieldEmail)
+	if m.FieldCleared(accountext.FieldCodexAccountID) {
+		fields = append(fields, accountext.FieldCodexAccountID)
 	}
 	return fields
 }
@@ -2447,29 +2330,26 @@ func (m *AccountExtMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *AccountExtMutation) ClearField(name string) error {
 	switch name {
-	case accountext.FieldSessionID:
-		m.ClearSessionID()
+	case accountext.FieldCodexIdentity:
+		m.ClearCodexIdentity()
 		return nil
-	case accountext.FieldThreadID:
-		m.ClearThreadID()
+	case accountext.FieldCodexOauthToken:
+		m.ClearCodexOauthToken()
 		return nil
-	case accountext.FieldWindowID:
-		m.ClearWindowID()
+	case accountext.FieldCodexOauthRefreshToken:
+		m.ClearCodexOauthRefreshToken()
 		return nil
-	case accountext.FieldOauthToken:
-		m.ClearOauthToken()
+	case accountext.FieldCodexOauthExpiresAt:
+		m.ClearCodexOauthExpiresAt()
 		return nil
-	case accountext.FieldOauthRefreshToken:
-		m.ClearOauthRefreshToken()
+	case accountext.FieldCodexPatKey:
+		m.ClearCodexPatKey()
 		return nil
-	case accountext.FieldOauthExpiresAt:
-		m.ClearOauthExpiresAt()
+	case accountext.FieldCodexEmail:
+		m.ClearCodexEmail()
 		return nil
-	case accountext.FieldPatKey:
-		m.ClearPatKey()
-		return nil
-	case accountext.FieldEmail:
-		m.ClearEmail()
+	case accountext.FieldCodexAccountID:
+		m.ClearCodexAccountID()
 		return nil
 	}
 	return fmt.Errorf("unknown AccountExt nullable field %s", name)
@@ -2485,32 +2365,26 @@ func (m *AccountExtMutation) ResetField(name string) error {
 	case accountext.FieldCredentialType:
 		m.ResetCredentialType()
 		return nil
-	case accountext.FieldInstallationID:
-		m.ResetInstallationID()
+	case accountext.FieldCodexIdentity:
+		m.ResetCodexIdentity()
 		return nil
-	case accountext.FieldSessionID:
-		m.ResetSessionID()
+	case accountext.FieldCodexOauthToken:
+		m.ResetCodexOauthToken()
 		return nil
-	case accountext.FieldThreadID:
-		m.ResetThreadID()
+	case accountext.FieldCodexOauthRefreshToken:
+		m.ResetCodexOauthRefreshToken()
 		return nil
-	case accountext.FieldWindowID:
-		m.ResetWindowID()
+	case accountext.FieldCodexOauthExpiresAt:
+		m.ResetCodexOauthExpiresAt()
 		return nil
-	case accountext.FieldOauthToken:
-		m.ResetOauthToken()
+	case accountext.FieldCodexPatKey:
+		m.ResetCodexPatKey()
 		return nil
-	case accountext.FieldOauthRefreshToken:
-		m.ResetOauthRefreshToken()
+	case accountext.FieldCodexEmail:
+		m.ResetCodexEmail()
 		return nil
-	case accountext.FieldOauthExpiresAt:
-		m.ResetOauthExpiresAt()
-		return nil
-	case accountext.FieldPatKey:
-		m.ResetPatKey()
-		return nil
-	case accountext.FieldEmail:
-		m.ResetEmail()
+	case accountext.FieldCodexAccountID:
+		m.ResetCodexAccountID()
 		return nil
 	}
 	return fmt.Errorf("unknown AccountExt field %s", name)

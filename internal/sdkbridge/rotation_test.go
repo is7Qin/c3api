@@ -115,7 +115,7 @@ func TestCodexRotationWritebackPersists(t *testing.T) {
 	require.Equal(t, "at-new", calls[0].at)
 	require.Equal(t, "rt-new", calls[0].rt)
 	require.NotNil(t, calls[0].expiresAt, "expiry 保旧：回调无 expiry，携带构造时旧值")
-	require.True(t, calls[0].expiresAt.Equal(*expires), "oauth_expires_at 保旧——防 ClearX 清空回归")
+	require.True(t, calls[0].expiresAt.Equal(*expires), "codex_oauth_expires_at 保旧——防 ClearX 清空回归")
 
 	// 不重建缓存：条目保留（回调写回的是本 Auth 内部已更新状态）
 	a.mu.Lock()

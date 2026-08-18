@@ -22,8 +22,8 @@ func TestCredentialFromExt(t *testing.T) {
 	t.Run("codex-oauth 取 oauth 列组", func(t *testing.T) {
 		e := &AccountExt{
 			AccountID: 7, CredentialType: credential.TypeCodexOAuth,
-			OAuthToken: strP("at"), OAuthRefreshToken: strP("rt"), OAuthExpiresAt: &exp,
-			PATKey: strP("patshould-not-leak"),
+			CodexOAuthToken: strP("at"), CodexOAuthRefreshToken: strP("rt"), CodexOAuthExpiresAt: &exp,
+			CodexPATKey: strP("patshould-not-leak"),
 		}
 		c := CredentialFromExt(e)
 		require.Equal(t, int64(7), c.AccountID)
@@ -36,8 +36,8 @@ func TestCredentialFromExt(t *testing.T) {
 	t.Run("codex-pat 取 pat 列组", func(t *testing.T) {
 		e := &AccountExt{
 			AccountID: 8, CredentialType: credential.TypeCodexPAT,
-			PATKey:     strP("pk"),
-			OAuthToken: strP("at-should-not-leak"),
+			CodexPATKey:     strP("pk"),
+			CodexOAuthToken: strP("at-should-not-leak"),
 		}
 		c := CredentialFromExt(e)
 		require.Equal(t, int64(8), c.AccountID)

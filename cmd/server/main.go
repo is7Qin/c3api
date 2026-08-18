@@ -354,7 +354,7 @@ func main() {
 		Proxy: nil,
 	}))
 	// T5 §1 轮转回写面装配：WithOnTokenRotated → account_ext 部分更新 upsert
-	//（oauth_token + oauth_refresh_token + oauth_expires_at 保旧）+ 失效调度器
+	//（codex_oauth_token + codex_oauth_refresh_token + codex_oauth_expires_at 保旧）+ 失效调度器
 	// AccountExt 内存快照条目（P3-3——下个会话重载新凭据；不重建 Auth 缓存）。
 	codexAdapter.SetRotationDeps(sdkbridge.RotationDeps{
 		Store:              repos.AccountExts,

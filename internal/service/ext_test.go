@@ -235,40 +235,40 @@ func TestAccountExtValidation(t *testing.T) {
 	// 恒定；email 非自动生成（人工/上游导入）。
 	saved, err := svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth,
-		OAuthToken: strPtr("at"), OAuthRefreshToken: strPtr("rt"), OAuthExpiresAt: &exp,
+		CodexOAuthToken: strPtr("at"), CodexOAuthRefreshToken: strPtr("rt"), CodexOAuthExpiresAt: &exp,
 	})
 	require.NoError(t, err)
-	require.Equal(t, "at", *saved.OAuthToken)
-	require.NotEmpty(t, saved.InstallationID, "首次写入自动生成 installation_id")
+	require.Equal(t, "at", *saved.CodexOAuthToken)
+	require.NotEmpty(t, saved.CodexIdentity.InstallationID, "首次写入自动生成 installation_id")
 	require.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
-		saved.InstallationID, "installation_id UUIDv4 形状")
-	require.NotNil(t, saved.SessionID)
-	require.NotNil(t, saved.ThreadID)
-	require.Equal(t, saved.SessionID, saved.ThreadID, "主线程 thread_id == session_id（真实客户端语义）")
-	require.Equal(t, *saved.ThreadID+":0", *saved.WindowID, "window_id = {thread_id}:0（恒定）")
-	require.Nil(t, saved.Email, "email 非自动生成（NewCodexIdentity 只生成身份四元组）")
-	autoIID := saved.InstallationID
+		saved.CodexIdentity.InstallationID, "installation_id UUIDv4 形状")
+	require.NotNil(t, saved.CodexIdentity.SessionID)
+	require.NotNil(t, saved.CodexIdentity.ThreadID)
+	require.Equal(t, saved.CodexIdentity.SessionID, saved.CodexIdentity.ThreadID, "主线程 thread_id == session_id（真实客户端语义）")
+	require.Equal(t, saved.CodexIdentity.ThreadID+":0", saved.CodexIdentity.WindowID, "window_id = {thread_id}:0（恒定）")
+	require.Nil(t, saved.CodexEmail, "email 非自动生成（NewCodexIdentity 只生成身份四元组）")
+	autoIID := saved.CodexIdentity.InstallationID
 
 	got, err := svc.GetAccountExt(ctx, accO.ID)
 	require.NoError(t, err)
 	require.Equal(t, credential.TypeCodexOAuth, got.CredentialType)
-	require.Equal(t, "rt", *got.OAuthRefreshToken)
-	require.Equal(t, autoIID, got.InstallationID)
-	require.Nil(t, got.Email, "未提供 email → NULL 落库")
+	require.Equal(t, "rt", *got.CodexOAuthRefreshToken)
+	require.Equal(t, autoIID, got.CodexIdentity.InstallationID)
+	require.Nil(t, got.CodexEmail, "未提供 email → NULL 落库")
 
 	// 后续写入缺省身份 → 沿用存量（持久复用，账号存在期间稳定）+ 缺省列清空
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, OAuthToken: strPtr("at2"),
+		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, CodexOAuthToken: strPtr("at2"),
 	})
 	require.NoError(t, err)
-	require.Equal(t, "at2", *saved.OAuthToken)
-	require.Nil(t, saved.OAuthRefreshToken, "缺省列 NULL 清空")
-	require.Equal(t, autoIID, saved.InstallationID, "installation_id 持久复用")
-	require.Equal(t, *saved.ThreadID+":0", *saved.WindowID, "window 持久复用恒定")
+	require.Equal(t, "at2", *saved.CodexOAuthToken)
+	require.Nil(t, saved.CodexOAuthRefreshToken, "缺省列 NULL 清空")
+	require.Equal(t, autoIID, saved.CodexIdentity.InstallationID, "installation_id 持久复用")
+	require.Equal(t, saved.CodexIdentity.ThreadID+":0", saved.CodexIdentity.WindowID, "window 持久复用恒定")
 
 	// 类型一致性：oauth 模板账号挂 pat 行 → 400（父模板类型不一致）
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accO.ID, CredentialType: credential.TypeCodexPAT, InstallationID: iid, PATKey: strPtr("pat"),
+		AccountID: accO.ID, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtr("pat"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "oauth 模板账号 ext 行类型必须一致（pat 拒绝）")
 
@@ -276,105 +276,144 @@ func TestAccountExtValidation(t *testing.T) {
 	// 恒等式：thread==session、window={thread}:0（I1）
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT,
-		InstallationID: iid, Email: strPtr("user@example.com"), PATKey: strPtr("pat"),
-		SessionID: strPtr("s1"), ThreadID: strPtr("s1"), WindowID: strPtr("s1:0"),
+		CodexIdentity: &domain.CodexIdentity{
+			InstallationID: iid, SessionID: "s1", ThreadID: "s1", WindowID: "s1:0",
+		},
+		CodexEmail: strPtr("user@example.com"), CodexPATKey: strPtr("pat"),
 	})
 	require.NoError(t, err)
-	require.Equal(t, iid, saved.InstallationID)
-	require.Equal(t, "user@example.com", *saved.Email, "email roundtrip")
-	require.Equal(t, "s1", *saved.SessionID)
-	require.Equal(t, "s1", *saved.ThreadID, "thread==session 恒等")
-	require.Equal(t, "s1:0", *saved.WindowID)
+	require.Equal(t, iid, saved.CodexIdentity.InstallationID)
+	require.Equal(t, "user@example.com", *saved.CodexEmail, "email roundtrip")
+	require.Equal(t, "s1", saved.CodexIdentity.SessionID)
+	require.Equal(t, "s1", saved.CodexIdentity.ThreadID, "thread==session 恒等")
+	require.Equal(t, "s1:0", saved.CodexIdentity.WindowID)
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat2"),
+		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat2"),
 	})
 	require.NoError(t, err)
-	require.Equal(t, iid, saved.InstallationID, "显式提供后缺省沿用")
-	require.Nil(t, saved.Email, "未提供 email → NULL 清空（B1-5：email 不在缺省沿用面）")
-	require.Equal(t, "s1", *saved.SessionID, "session 持久复用")
+	require.Equal(t, iid, saved.CodexIdentity.InstallationID, "显式提供后缺省沿用")
+	require.Nil(t, saved.CodexEmail, "未提供 email → NULL 清空（B1-5：email 不在缺省沿用面）")
+	require.Equal(t, "s1", saved.CodexIdentity.SessionID, "session 持久复用")
 
 	// 列组约束
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, InstallationID: iid, PATKey: strPtr("p"),
+		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtr("p"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "oauth 行 pat 列必须为空")
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, InstallationID: iid, OAuthToken: strPtr("t"),
+		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexOAuthToken: strPtr("t"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "pat 行 oauth 列必须为空")
 
 	// B1-2 复查落库态：校验先于落库——被拒写入零残留（存量行不被改动）
 	got2, err := svc.GetAccountExt(ctx, accO.ID)
 	require.NoError(t, err)
-	require.Equal(t, "at2", *got2.OAuthToken, "被拒写入不得改动存量行")
+	require.Equal(t, "at2", *got2.CodexOAuthToken, "被拒写入不得改动存量行")
 	got2, err = svc.GetAccountExt(ctx, accP.ID)
 	require.NoError(t, err)
-	require.Equal(t, "pat2", *got2.PATKey)
+	require.Equal(t, "pat2", *got2.CodexPATKey)
 
 	// oauth 最小完整性：三列全空 → 400（refresh/expires 可空——仅 token 已覆盖）
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, InstallationID: iid,
+		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: iid},
 	})
-	require.ErrorIs(t, err, ErrInvalidInput, "oauth 行至少 oauth_token")
+	require.ErrorIs(t, err, ErrInvalidInput, "oauth 行至少 codex_oauth_token")
 
 	// B1-2 首写零残留：新账号被拒（列组违规）→ 无行落库（修复前 TryInsert
 	// 先写、校验后置 → 被拒凭据残留进调度快照被真实使用）
 	accBad := seedExtAccount(t, svc, tplP.ID)
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: accBad.ID, CredentialType: credential.TypeCodexPAT,
-		PATKey: strPtr("leaked-pat"), OAuthToken: strPtr("t"),
+		CodexPATKey: strPtr("leaked-pat"), CodexOAuthToken: strPtr("t"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "pat 行 oauth 列必须为空")
 	_, err = svc.GetAccountExt(ctx, accBad.ID)
 	require.ErrorIs(t, err, ErrNotFound, "被拒凭据零残留——校验失败不得落库")
 
-	// B1-4 pat 最小完整性：pat 行必须 pat_key（与 oauth 分支对称——空 key 写
+	// B1-4 pat 最小完整性：pat 行必须 codex_pat_key（与 oauth 分支对称——空 key 写
 	// 成功即死账号 + 运行时误报失效）
 	accP2 := seedExtAccount(t, svc, tplP.ID)
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accP2.ID, CredentialType: credential.TypeCodexPAT, InstallationID: iid,
+		AccountID: accP2.ID, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: iid},
 	})
-	require.ErrorIs(t, err, ErrInvalidInput, "pat 行必须 pat_key")
+	require.ErrorIs(t, err, ErrInvalidInput, "pat 行必须 codex_pat_key")
 	_, err = svc.GetAccountExt(ctx, accP2.ID)
 	require.ErrorIs(t, err, ErrNotFound, "pat 空 key 被拒 → 零残留")
 
 	// 类型白名单：responses-special 账号 ext → 400；api_key 模板账号挂 codex
 	// 行 → 400（父模板类型不一致）
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accO.ID, CredentialType: credential.TypeResponsesSpecial, InstallationID: iid,
+		AccountID: accO.ID, CredentialType: credential.TypeResponsesSpecial, CodexIdentity: &domain.CodexIdentity{InstallationID: iid},
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "账号 ext 不接受 special 类型")
 	apiTpl := seedExtTemplate(t, svc, "t-key", credential.TypeAPIKey, domain.FormatOpenAIChat)
 	accKey := seedExtAccount(t, svc, apiTpl.ID)
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accKey.ID, CredentialType: credential.TypeCodexOAuth, InstallationID: iid,
+		AccountID: accKey.ID, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: iid},
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "api_key 模板账号不允许 codex ext 行")
 
 	// B1-5 email 清空往返：提供 → 写入；未提供 → NULL 清空（全列更新含
 	// NULL 清空契约；修复前 fillIdentityDefaults 恒回填存量 email → 不可清空）
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat3"),
-		Email: strPtr("again@example.com"),
+		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat3"),
+		CodexEmail: strPtr("again@example.com"),
 	})
 	require.NoError(t, err)
-	require.Equal(t, "again@example.com", *saved.Email, "提供 email → 写入")
+	require.Equal(t, "again@example.com", *saved.CodexEmail, "提供 email → 写入")
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat3"),
+		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat3"),
 	})
 	require.NoError(t, err)
-	require.Nil(t, saved.Email, "未提供 email → NULL 清空（不再持久复用）")
+	require.Nil(t, saved.CodexEmail, "未提供 email → NULL 清空（不再持久复用）")
 	got, err = svc.GetAccountExt(ctx, accP.ID)
 	require.NoError(t, err)
-	require.Nil(t, got.Email, "落库态复查：email 已清空")
+	require.Nil(t, got.CodexEmail, "落库态复查：email 已清空")
 
 	// 父账号缺失 → 404
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: 999, CredentialType: credential.TypeCodexOAuth, InstallationID: iid,
+		AccountID: 999, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: iid},
 	})
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = svc.GetAccountExt(ctx, 999)
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+// TestAccountExtNilIdentityRejected 身份缺失行（NULL codex_identity——仅手工
+// SQL 可达的损坏行，应用写路径恒带完整身份）上写缺省身份 → 400（loud——
+// 正确行为：不静默写残缺身份，防止消费面组装残缺伪装四元组）。
+func TestAccountExtNilIdentityRejected(t *testing.T) {
+	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: nil}
+	ctx := context.Background()
+	tpl := seedExtTemplate(t, svc, "t-oauth", credential.TypeCodexOAuth, domain.FormatOpenAIResponses)
+	acc := seedExtAccount(t, svc, tpl.ID)
+
+	// 损坏行：存量身份 NULL（模拟手工 SQL 注入）
+	svc.store.(*fakeStore).accExts[acc.ID] = &domain.AccountExt{
+		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexOAuthToken: strPtr("at"),
+	}
+	// 已有行路径：身份缺省 → 无法沿用（存量也缺）→ 终校验 400，不落库
+	_, err := svc.UpsertAccountExt(ctx, &domain.AccountExt{
+		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexOAuthToken: strPtr("at2"),
+	})
+	require.ErrorIs(t, err, ErrInvalidInput, "存量身份缺失 + 请求缺省身份 → 400（loud 拒绝）")
+	got, err := svc.store.GetAccountExt(ctx, acc.ID)
+	require.NoError(t, err)
+	require.Nil(t, got.CodexIdentity, "被拒写入不改动损坏行")
+	require.Equal(t, "at", *got.CodexOAuthToken)
+	// 显式提供完整身份 → 可修复（不 400）
+	saved, err := svc.UpsertAccountExt(ctx, &domain.AccountExt{
+		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexIdentity: &domain.CodexIdentity{
+			InstallationID: "11111111-2222-3333-4444-555555555555",
+			SessionID:      "s1", ThreadID: "s1", WindowID: "s1:0",
+		},
+		CodexOAuthToken: strPtr("at3"),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "s1", saved.CodexIdentity.SessionID, "显式身份修复损坏行")
 }
 
 // TestAccountExtIdentityInvariant 身份恒等式（I1）：thread==session、
@@ -390,71 +429,71 @@ func TestAccountExtIdentityInvariant(t *testing.T) {
 	// 只给 session → thread 自动补齐恒等 + window 派生 + installation 自动生成
 	saved, err := svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		SessionID: strPtr("s1"), OAuthToken: strPtr("at"),
+		CodexIdentity: &domain.CodexIdentity{SessionID: "s1"}, CodexOAuthToken: strPtr("at"),
 	})
 	require.NoError(t, err)
-	require.Equal(t, "s1", *saved.SessionID)
-	require.Equal(t, "s1", *saved.ThreadID, "只给 session → thread 自动补齐恒等")
-	require.Equal(t, "s1:0", *saved.WindowID, "window = {thread}:0 派生")
-	require.NotEmpty(t, saved.InstallationID, "installation 缺省自动生成")
+	require.Equal(t, "s1", saved.CodexIdentity.SessionID)
+	require.Equal(t, "s1", saved.CodexIdentity.ThreadID, "只给 session → thread 自动补齐恒等")
+	require.Equal(t, "s1:0", saved.CodexIdentity.WindowID, "window = {thread}:0 派生")
+	require.NotEmpty(t, saved.CodexIdentity.InstallationID, "installation 缺省自动生成")
 
 	// 已有行：只给 thread（轮换）→ session 跟随、window 跟随
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		ThreadID: strPtr("t2"), OAuthToken: strPtr("at"),
+		CodexIdentity: &domain.CodexIdentity{ThreadID: "t2"}, CodexOAuthToken: strPtr("at"),
 	})
 	require.NoError(t, err)
-	require.Equal(t, "t2", *saved.ThreadID)
-	require.Equal(t, "t2", *saved.SessionID, "只给 thread → session 补齐恒等")
-	require.Equal(t, "t2:0", *saved.WindowID, "window 跟随 thread 派生")
+	require.Equal(t, "t2", saved.CodexIdentity.ThreadID)
+	require.Equal(t, "t2", saved.CodexIdentity.SessionID, "只给 thread → session 补齐恒等")
+	require.Equal(t, "t2:0", saved.CodexIdentity.WindowID, "window 跟随 thread 派生")
 
 	// B1-3 方向 2：存量行只给 window——反推 == 存量 thread → 幂等保留；
 	// 反推 ≠ 存量 → 400（派生值不得冒充显式值改身份）
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		WindowID: strPtr("t2:0"), OAuthToken: strPtr("at"),
+		CodexIdentity: &domain.CodexIdentity{WindowID: "t2:0"}, CodexOAuthToken: strPtr("at"),
 	})
 	require.NoError(t, err)
-	require.Equal(t, "t2", *saved.ThreadID, "存量 window-only 反推 == 存量 → 保留")
-	require.Equal(t, "t2:0", *saved.WindowID)
+	require.Equal(t, "t2", saved.CodexIdentity.ThreadID, "存量 window-only 反推 == 存量 → 保留")
+	require.Equal(t, "t2:0", saved.CodexIdentity.WindowID)
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		WindowID: strPtr("x9:0"), OAuthToken: strPtr("at"),
+		CodexIdentity: &domain.CodexIdentity{WindowID: "x9:0"}, CodexOAuthToken: strPtr("at"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "存量 window-only 反推 ≠ 存量 → 400")
 	got, err := svc.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
-	require.Equal(t, "t2", *got.ThreadID, "400 不改动存量身份")
+	require.Equal(t, "t2", got.CodexIdentity.ThreadID, "400 不改动存量身份")
 
 	// 另一账号：只给 window → 反推 thread/session
 	acc2 := seedExtAccount(t, svc, tplO.ID)
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc2.ID, CredentialType: credential.TypeCodexOAuth,
-		WindowID: strPtr("w1:0"), OAuthToken: strPtr("at"),
+		CodexIdentity: &domain.CodexIdentity{WindowID: "w1:0"}, CodexOAuthToken: strPtr("at"),
 	})
 	require.NoError(t, err)
-	require.Equal(t, "w1", *saved.ThreadID, "只给 window → 反推 thread")
-	require.Equal(t, "w1", *saved.SessionID, "thread==session 恒等")
-	require.Equal(t, "w1:0", *saved.WindowID)
+	require.Equal(t, "w1", saved.CodexIdentity.ThreadID, "只给 window → 反推 thread")
+	require.Equal(t, "w1", saved.CodexIdentity.SessionID, "thread==session 恒等")
+	require.Equal(t, "w1:0", saved.CodexIdentity.WindowID)
 
 	// 成对显式冲突：session ≠ thread → 400
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		SessionID: strPtr("s9"), ThreadID: strPtr("t9x"), OAuthToken: strPtr("at"),
+		CodexIdentity: &domain.CodexIdentity{SessionID: "s9", ThreadID: "t9x"}, CodexOAuthToken: strPtr("at"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "session≠thread 成对冲突必须 400")
 
 	// window 与 {thread}:0 不符（thread 已知）→ 400
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		ThreadID: strPtr("t3"), WindowID: strPtr("t3:5"), OAuthToken: strPtr("at"),
+		CodexIdentity: &domain.CodexIdentity{ThreadID: "t3", WindowID: "t3:5"}, CodexOAuthToken: strPtr("at"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "window 非 {thread}:0 必须 400")
 
 	// 只给 window 且形状非法 → 400
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		WindowID: strPtr(":0"), OAuthToken: strPtr("at"),
+		CodexIdentity: &domain.CodexIdentity{WindowID: ":0"}, CodexOAuthToken: strPtr("at"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "window 形状非法必须 400")
 }
@@ -478,7 +517,7 @@ func TestAccountExtConcurrentFirstWrite(t *testing.T) {
 			defer wg.Done()
 			results[i], errs[i] = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 				AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-				OAuthToken: strPtr("at"),
+				CodexOAuthToken: strPtr("at"),
 			})
 		}(i)
 	}
@@ -490,13 +529,13 @@ func TestAccountExtConcurrentFirstWrite(t *testing.T) {
 	got, err := svc.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
 	for i := 0; i < n; i++ {
-		require.Equal(t, got.InstallationID, results[i].InstallationID, "单份身份不覆盖（i=%d）", i)
-		require.Equal(t, *got.SessionID, *results[i].SessionID)
-		require.Equal(t, *got.ThreadID, *results[i].ThreadID)
-		require.Equal(t, *got.WindowID, *results[i].WindowID)
+		require.Equal(t, got.CodexIdentity.InstallationID, results[i].CodexIdentity.InstallationID, "单份身份不覆盖（i=%d）", i)
+		require.Equal(t, got.CodexIdentity.SessionID, results[i].CodexIdentity.SessionID)
+		require.Equal(t, got.CodexIdentity.ThreadID, results[i].CodexIdentity.ThreadID)
+		require.Equal(t, got.CodexIdentity.WindowID, results[i].CodexIdentity.WindowID)
 	}
-	require.Equal(t, *got.ThreadID+":0", *got.WindowID, "恒等式 window={thread}:0")
-	require.Equal(t, *got.SessionID, *got.ThreadID, "恒等式 thread==session")
+	require.Equal(t, got.CodexIdentity.ThreadID+":0", got.CodexIdentity.WindowID, "恒等式 window={thread}:0")
+	require.Equal(t, got.CodexIdentity.SessionID, got.CodexIdentity.ThreadID, "恒等式 thread==session")
 }
 
 // firstCallBarrierStore fakeStore 包装：对 GetAccountExt 的前 want 次调用设
@@ -555,12 +594,12 @@ func TestAccountExtConflictLoserAdoptsWinnerIdentity(t *testing.T) {
 			defer wg.Done()
 			e := &domain.AccountExt{
 				AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-				OAuthToken: strPtr("at"),
+				CodexOAuthToken: strPtr("at"),
 			}
 			if i%2 == 0 {
-				e.WindowID = strPtr(fmt.Sprintf("w%d:0", i))
+				e.CodexIdentity = &domain.CodexIdentity{WindowID: fmt.Sprintf("w%d:0", i)}
 			} else {
-				e.SessionID = strPtr(fmt.Sprintf("s%d", i))
+				e.CodexIdentity = &domain.CodexIdentity{SessionID: fmt.Sprintf("s%d", i)}
 			}
 			results[i], errs[i] = svc.UpsertAccountExt(ctx, e)
 		}(i)
@@ -571,14 +610,14 @@ func TestAccountExtConflictLoserAdoptsWinnerIdentity(t *testing.T) {
 	}
 	got, err := svc.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
-	require.Equal(t, *got.SessionID, *got.ThreadID, "恒等式 thread==session")
-	require.Equal(t, *got.ThreadID+":0", *got.WindowID, "恒等式 window={thread}:0")
+	require.Equal(t, got.CodexIdentity.SessionID, got.CodexIdentity.ThreadID, "恒等式 thread==session")
+	require.Equal(t, got.CodexIdentity.ThreadID+":0", got.CodexIdentity.WindowID, "恒等式 window={thread}:0")
 	for i := 0; i < n; i++ {
-		require.Equal(t, got.InstallationID, results[i].InstallationID, "败者 installation 必须完全采用赢者（i=%d）", i)
-		require.Equal(t, *got.SessionID, *results[i].SessionID, "败者 session 必须完全采用赢者（i=%d）", i)
-		require.Equal(t, *got.ThreadID, *results[i].ThreadID, "败者 thread 必须完全采用赢者（i=%d）", i)
-		require.Equal(t, *got.WindowID, *results[i].WindowID, "败者 window 必须完全采用赢者（i=%d）", i)
-		require.Equal(t, "at", *results[i].OAuthToken, "败者凭据（令牌）按本次请求写")
+		require.Equal(t, got.CodexIdentity.InstallationID, results[i].CodexIdentity.InstallationID, "败者 installation 必须完全采用赢者（i=%d）", i)
+		require.Equal(t, got.CodexIdentity.SessionID, results[i].CodexIdentity.SessionID, "败者 session 必须完全采用赢者（i=%d）", i)
+		require.Equal(t, got.CodexIdentity.ThreadID, results[i].CodexIdentity.ThreadID, "败者 thread 必须完全采用赢者（i=%d）", i)
+		require.Equal(t, got.CodexIdentity.WindowID, results[i].CodexIdentity.WindowID, "败者 window 必须完全采用赢者（i=%d）", i)
+		require.Equal(t, "at", *results[i].CodexOAuthToken, "败者凭据（令牌）按本次请求写")
 	}
 }
 

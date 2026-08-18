@@ -33,7 +33,7 @@ func toDomainKey(k *ent.Key) *domain.Key {
 func toDomainGroup(g *ent.Group) *domain.Group {
 	return &domain.Group{
 		ID: g.ID, Name: g.Name, Visibility: domain.GroupVisibility(g.Visibility),
-		PriceMultiplier: g.PriceMultiplier,
+		PriceMultiplier:  g.PriceMultiplier,
 		ProtocolConverts: toDomainProtocolConverts(g.ProtocolConvert),
 		CreatedAt:        g.CreatedAt, UpdatedAt: g.UpdatedAt, DeletedAt: g.DeletedAt,
 	}
@@ -73,19 +73,20 @@ func toDomainTemplateExt(e *ent.TemplateExt) *domain.TemplateExt {
 	}
 }
 
+// toDomainAccountExt ent → domain 投影（codex_identity jsonb 已由生成层扫描器
+// 解包为 *domain.CodexIdentity——NULL → nil、坏 json → 查询报错原样透传；
+// 此处直拷不重解包）。
 func toDomainAccountExt(e *ent.AccountExt) *domain.AccountExt {
 	return &domain.AccountExt{
-		AccountID:         e.AccountID,
-		CredentialType:    credential.Type(e.CredentialType),
-		InstallationID:    e.InstallationID,
-		SessionID:         e.SessionID,
-		ThreadID:          e.ThreadID,
-		WindowID:          e.WindowID,
-		OAuthToken:        e.OauthToken,
-		OAuthRefreshToken: e.OauthRefreshToken,
-		OAuthExpiresAt:    e.OauthExpiresAt,
-		PATKey:            e.PatKey,
-		Email:             e.Email,
+		AccountID:              e.AccountID,
+		CredentialType:         credential.Type(e.CredentialType),
+		CodexIdentity:          e.CodexIdentity,
+		CodexOAuthToken:        e.CodexOauthToken,
+		CodexOAuthRefreshToken: e.CodexOauthRefreshToken,
+		CodexOAuthExpiresAt:    e.CodexOauthExpiresAt,
+		CodexPATKey:            e.CodexPatKey,
+		CodexEmail:             e.CodexEmail,
+		CodexAccountID:         e.CodexAccountID,
 	}
 }
 

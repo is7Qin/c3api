@@ -17,7 +17,7 @@ import (
 // AccountExt 内存快照条目失效 → 组级定向重载（复用 InvalidateGroup）→ 快照
 // 携带新凭据（下个会话重载新凭据——避免旧令牌 401 额外往返）。
 func TestInvalidateAccountReloadsExt(t *testing.T) {
-	ext := &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexOAuth, InstallationID: "inst-1"}
+	ext := &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}}
 	acc := &domain.Account{ID: 1, TemplateID: 1, Status: domain.StatusActive, Ext: ext}
 	byGroup := map[int64][]*domain.Account{10: {acc}}
 	m := newMemLoader(byGroup)
@@ -26,7 +26,7 @@ func TestInvalidateAccountReloadsExt(t *testing.T) {
 
 	// 轮转回写落库后 loader 数据已变（新凭据）
 	extNew := &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexOAuth,
-		InstallationID: "inst-1", OAuthToken: strPtrT("at-new"), OAuthRefreshToken: strPtrT("rt-new")}
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}, CodexOAuthToken: strPtrT("at-new"), CodexOAuthRefreshToken: strPtrT("rt-new")}
 	m.mu.Lock()
 	m.byGroup[10][0].Ext = extNew
 	m.mu.Unlock()
@@ -41,9 +41,9 @@ func TestInvalidateAccountReloadsExt(t *testing.T) {
 }
 
 // TestInvalidateAccountUnknownNoop 快照外账号 / 无分组账号 → no-op 不 panic
-//（轮转回调低频防御；失效上报同哲学——快照外无状态可改）。
+// （轮转回调低频防御；失效上报同哲学——快照外无状态可改）。
 func TestInvalidateAccountUnknownNoop(t *testing.T) {
-	ext := &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexOAuth, InstallationID: "inst-1"}
+	ext := &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}}
 	byGroup := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Status: domain.StatusActive, Ext: ext}}}
 	m := newMemLoader(byGroup)
 	s := newSched(t, m)

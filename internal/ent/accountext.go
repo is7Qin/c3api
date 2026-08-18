@@ -3,12 +3,14 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
 )
@@ -22,24 +24,20 @@ type AccountExt struct {
 	AccountID int64 `json:"account_id,omitempty"`
 	// CredentialType holds the value of the "credential_type" field.
 	CredentialType string `json:"credential_type,omitempty"`
-	// InstallationID holds the value of the "installation_id" field.
-	InstallationID string `json:"installation_id,omitempty"`
-	// SessionID holds the value of the "session_id" field.
-	SessionID *string `json:"session_id,omitempty"`
-	// ThreadID holds the value of the "thread_id" field.
-	ThreadID *string `json:"thread_id,omitempty"`
-	// WindowID holds the value of the "window_id" field.
-	WindowID *string `json:"window_id,omitempty"`
-	// OauthToken holds the value of the "oauth_token" field.
-	OauthToken *string `json:"oauth_token,omitempty"`
-	// OauthRefreshToken holds the value of the "oauth_refresh_token" field.
-	OauthRefreshToken *string `json:"oauth_refresh_token,omitempty"`
-	// OauthExpiresAt holds the value of the "oauth_expires_at" field.
-	OauthExpiresAt *time.Time `json:"oauth_expires_at,omitempty"`
-	// PatKey holds the value of the "pat_key" field.
-	PatKey *string `json:"pat_key,omitempty"`
-	// Email holds the value of the "email" field.
-	Email *string `json:"email,omitempty"`
+	// CodexIdentity holds the value of the "codex_identity" field.
+	CodexIdentity *domain.CodexIdentity `json:"codex_identity,omitempty"`
+	// CodexOauthToken holds the value of the "codex_oauth_token" field.
+	CodexOauthToken *string `json:"codex_oauth_token,omitempty"`
+	// CodexOauthRefreshToken holds the value of the "codex_oauth_refresh_token" field.
+	CodexOauthRefreshToken *string `json:"codex_oauth_refresh_token,omitempty"`
+	// CodexOauthExpiresAt holds the value of the "codex_oauth_expires_at" field.
+	CodexOauthExpiresAt *time.Time `json:"codex_oauth_expires_at,omitempty"`
+	// CodexPatKey holds the value of the "codex_pat_key" field.
+	CodexPatKey *string `json:"codex_pat_key,omitempty"`
+	// CodexEmail holds the value of the "codex_email" field.
+	CodexEmail *string `json:"codex_email,omitempty"`
+	// CodexAccountID holds the value of the "codex_account_id" field.
+	CodexAccountID *string `json:"codex_account_id,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the AccountExtQuery when eager-loading is set.
 	Edges        AccountExtEdges `json:"edges"`
@@ -71,11 +69,13 @@ func (*AccountExt) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case accountext.FieldCodexIdentity:
+			values[i] = new([]byte)
 		case accountext.FieldID, accountext.FieldAccountID:
 			values[i] = new(sql.NullInt64)
-		case accountext.FieldCredentialType, accountext.FieldInstallationID, accountext.FieldSessionID, accountext.FieldThreadID, accountext.FieldWindowID, accountext.FieldOauthToken, accountext.FieldOauthRefreshToken, accountext.FieldPatKey, accountext.FieldEmail:
+		case accountext.FieldCredentialType, accountext.FieldCodexOauthToken, accountext.FieldCodexOauthRefreshToken, accountext.FieldCodexPatKey, accountext.FieldCodexEmail, accountext.FieldCodexAccountID:
 			values[i] = new(sql.NullString)
-		case accountext.FieldOauthExpiresAt:
+		case accountext.FieldCodexOauthExpiresAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -110,67 +110,55 @@ func (_m *AccountExt) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.CredentialType = value.String
 			}
-		case accountext.FieldInstallationID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field installation_id", values[i])
-			} else if value.Valid {
-				_m.InstallationID = value.String
+		case accountext.FieldCodexIdentity:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field codex_identity", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.CodexIdentity); err != nil {
+					return fmt.Errorf("unmarshal field codex_identity: %w", err)
+				}
 			}
-		case accountext.FieldSessionID:
+		case accountext.FieldCodexOauthToken:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field session_id", values[i])
+				return fmt.Errorf("unexpected type %T for field codex_oauth_token", values[i])
 			} else if value.Valid {
-				_m.SessionID = new(string)
-				*_m.SessionID = value.String
+				_m.CodexOauthToken = new(string)
+				*_m.CodexOauthToken = value.String
 			}
-		case accountext.FieldThreadID:
+		case accountext.FieldCodexOauthRefreshToken:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field thread_id", values[i])
+				return fmt.Errorf("unexpected type %T for field codex_oauth_refresh_token", values[i])
 			} else if value.Valid {
-				_m.ThreadID = new(string)
-				*_m.ThreadID = value.String
+				_m.CodexOauthRefreshToken = new(string)
+				*_m.CodexOauthRefreshToken = value.String
 			}
-		case accountext.FieldWindowID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field window_id", values[i])
-			} else if value.Valid {
-				_m.WindowID = new(string)
-				*_m.WindowID = value.String
-			}
-		case accountext.FieldOauthToken:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field oauth_token", values[i])
-			} else if value.Valid {
-				_m.OauthToken = new(string)
-				*_m.OauthToken = value.String
-			}
-		case accountext.FieldOauthRefreshToken:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field oauth_refresh_token", values[i])
-			} else if value.Valid {
-				_m.OauthRefreshToken = new(string)
-				*_m.OauthRefreshToken = value.String
-			}
-		case accountext.FieldOauthExpiresAt:
+		case accountext.FieldCodexOauthExpiresAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field oauth_expires_at", values[i])
+				return fmt.Errorf("unexpected type %T for field codex_oauth_expires_at", values[i])
 			} else if value.Valid {
-				_m.OauthExpiresAt = new(time.Time)
-				*_m.OauthExpiresAt = value.Time
+				_m.CodexOauthExpiresAt = new(time.Time)
+				*_m.CodexOauthExpiresAt = value.Time
 			}
-		case accountext.FieldPatKey:
+		case accountext.FieldCodexPatKey:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field pat_key", values[i])
+				return fmt.Errorf("unexpected type %T for field codex_pat_key", values[i])
 			} else if value.Valid {
-				_m.PatKey = new(string)
-				*_m.PatKey = value.String
+				_m.CodexPatKey = new(string)
+				*_m.CodexPatKey = value.String
 			}
-		case accountext.FieldEmail:
+		case accountext.FieldCodexEmail:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field email", values[i])
+				return fmt.Errorf("unexpected type %T for field codex_email", values[i])
 			} else if value.Valid {
-				_m.Email = new(string)
-				*_m.Email = value.String
+				_m.CodexEmail = new(string)
+				*_m.CodexEmail = value.String
+			}
+		case accountext.FieldCodexAccountID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field codex_account_id", values[i])
+			} else if value.Valid {
+				_m.CodexAccountID = new(string)
+				*_m.CodexAccountID = value.String
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -219,46 +207,36 @@ func (_m *AccountExt) String() string {
 	builder.WriteString("credential_type=")
 	builder.WriteString(_m.CredentialType)
 	builder.WriteString(", ")
-	builder.WriteString("installation_id=")
-	builder.WriteString(_m.InstallationID)
+	builder.WriteString("codex_identity=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CodexIdentity))
 	builder.WriteString(", ")
-	if v := _m.SessionID; v != nil {
-		builder.WriteString("session_id=")
+	if v := _m.CodexOauthToken; v != nil {
+		builder.WriteString("codex_oauth_token=")
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
-	if v := _m.ThreadID; v != nil {
-		builder.WriteString("thread_id=")
+	if v := _m.CodexOauthRefreshToken; v != nil {
+		builder.WriteString("codex_oauth_refresh_token=")
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
-	if v := _m.WindowID; v != nil {
-		builder.WriteString("window_id=")
-		builder.WriteString(*v)
-	}
-	builder.WriteString(", ")
-	if v := _m.OauthToken; v != nil {
-		builder.WriteString("oauth_token=")
-		builder.WriteString(*v)
-	}
-	builder.WriteString(", ")
-	if v := _m.OauthRefreshToken; v != nil {
-		builder.WriteString("oauth_refresh_token=")
-		builder.WriteString(*v)
-	}
-	builder.WriteString(", ")
-	if v := _m.OauthExpiresAt; v != nil {
-		builder.WriteString("oauth_expires_at=")
+	if v := _m.CodexOauthExpiresAt; v != nil {
+		builder.WriteString("codex_oauth_expires_at=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
 	builder.WriteString(", ")
-	if v := _m.PatKey; v != nil {
-		builder.WriteString("pat_key=")
+	if v := _m.CodexPatKey; v != nil {
+		builder.WriteString("codex_pat_key=")
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
-	if v := _m.Email; v != nil {
-		builder.WriteString("email=")
+	if v := _m.CodexEmail; v != nil {
+		builder.WriteString("codex_email=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.CodexAccountID; v != nil {
+		builder.WriteString("codex_account_id=")
 		builder.WriteString(*v)
 	}
 	builder.WriteByte(')')

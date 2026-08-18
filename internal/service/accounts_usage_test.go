@@ -47,9 +47,9 @@ func TestAccountsUsageAssembly(t *testing.T) {
 		{RequestID: "u2", AccountID: 2, Format: domain.FormatOpenAIChat, ErrorType: domain.ErrNone, TotalTokens: 50, Cost: 500, RawCost: 600, CreatedAt: base},
 	}
 	// codex 账号 ext 行（2 = 成功、3 = fatal、4 = 上游失败）
-	f.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-ok")}
-	f.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-bad")}
-	f.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-net")}
+	f.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
+	f.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-bad")}
+	f.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-net")}
 	snap := &perAccountSnap{
 		snaps: map[int64]*domain.CodexUsageSnapshot{2: {PlanType: "chatgpt-plus"}},
 		errs:  map[int64]error{3: sdkbridge.ErrAuthExpired, 4: sdkbridge.ErrUpstream},
@@ -151,7 +151,7 @@ func TestAccountsUsageParallelAssembly(t *testing.T) {
 	f := newFakeStore()
 	base := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
 	for i := int64(1); i <= 8; i++ {
-		f.accExts[i] = &domain.AccountExt{AccountID: i, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-ok")}
+		f.accExts[i] = &domain.AccountExt{AccountID: i, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
 	}
 	snap := &gatedSnap{
 		twoInFlight: make(chan struct{}),
@@ -207,8 +207,8 @@ func TestAccountsUsageParallelAssembly(t *testing.T) {
 func TestAccountsUsageStoreErrorIsolated(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeStore()
-	f.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-ok")}
-	f.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, PATKey: strPtr("pat-ok")}
+	f.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
+	f.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
 	f.accExtErr[2] = errors.New("store down") // 非 ErrNotFound store 故障
 	snap := &perAccountSnap{
 		snaps: map[int64]*domain.CodexUsageSnapshot{1: {PlanType: "chatgpt-plus"}},

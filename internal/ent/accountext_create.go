@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
 )
@@ -35,120 +36,92 @@ func (_c *AccountExtCreate) SetCredentialType(v string) *AccountExtCreate {
 	return _c
 }
 
-// SetInstallationID sets the "installation_id" field.
-func (_c *AccountExtCreate) SetInstallationID(v string) *AccountExtCreate {
-	_c.mutation.SetInstallationID(v)
+// SetCodexIdentity sets the "codex_identity" field.
+func (_c *AccountExtCreate) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtCreate {
+	_c.mutation.SetCodexIdentity(v)
 	return _c
 }
 
-// SetSessionID sets the "session_id" field.
-func (_c *AccountExtCreate) SetSessionID(v string) *AccountExtCreate {
-	_c.mutation.SetSessionID(v)
+// SetCodexOauthToken sets the "codex_oauth_token" field.
+func (_c *AccountExtCreate) SetCodexOauthToken(v string) *AccountExtCreate {
+	_c.mutation.SetCodexOauthToken(v)
 	return _c
 }
 
-// SetNillableSessionID sets the "session_id" field if the given value is not nil.
-func (_c *AccountExtCreate) SetNillableSessionID(v *string) *AccountExtCreate {
+// SetNillableCodexOauthToken sets the "codex_oauth_token" field if the given value is not nil.
+func (_c *AccountExtCreate) SetNillableCodexOauthToken(v *string) *AccountExtCreate {
 	if v != nil {
-		_c.SetSessionID(*v)
+		_c.SetCodexOauthToken(*v)
 	}
 	return _c
 }
 
-// SetThreadID sets the "thread_id" field.
-func (_c *AccountExtCreate) SetThreadID(v string) *AccountExtCreate {
-	_c.mutation.SetThreadID(v)
+// SetCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field.
+func (_c *AccountExtCreate) SetCodexOauthRefreshToken(v string) *AccountExtCreate {
+	_c.mutation.SetCodexOauthRefreshToken(v)
 	return _c
 }
 
-// SetNillableThreadID sets the "thread_id" field if the given value is not nil.
-func (_c *AccountExtCreate) SetNillableThreadID(v *string) *AccountExtCreate {
+// SetNillableCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field if the given value is not nil.
+func (_c *AccountExtCreate) SetNillableCodexOauthRefreshToken(v *string) *AccountExtCreate {
 	if v != nil {
-		_c.SetThreadID(*v)
+		_c.SetCodexOauthRefreshToken(*v)
 	}
 	return _c
 }
 
-// SetWindowID sets the "window_id" field.
-func (_c *AccountExtCreate) SetWindowID(v string) *AccountExtCreate {
-	_c.mutation.SetWindowID(v)
+// SetCodexOauthExpiresAt sets the "codex_oauth_expires_at" field.
+func (_c *AccountExtCreate) SetCodexOauthExpiresAt(v time.Time) *AccountExtCreate {
+	_c.mutation.SetCodexOauthExpiresAt(v)
 	return _c
 }
 
-// SetNillableWindowID sets the "window_id" field if the given value is not nil.
-func (_c *AccountExtCreate) SetNillableWindowID(v *string) *AccountExtCreate {
+// SetNillableCodexOauthExpiresAt sets the "codex_oauth_expires_at" field if the given value is not nil.
+func (_c *AccountExtCreate) SetNillableCodexOauthExpiresAt(v *time.Time) *AccountExtCreate {
 	if v != nil {
-		_c.SetWindowID(*v)
+		_c.SetCodexOauthExpiresAt(*v)
 	}
 	return _c
 }
 
-// SetOauthToken sets the "oauth_token" field.
-func (_c *AccountExtCreate) SetOauthToken(v string) *AccountExtCreate {
-	_c.mutation.SetOauthToken(v)
+// SetCodexPatKey sets the "codex_pat_key" field.
+func (_c *AccountExtCreate) SetCodexPatKey(v string) *AccountExtCreate {
+	_c.mutation.SetCodexPatKey(v)
 	return _c
 }
 
-// SetNillableOauthToken sets the "oauth_token" field if the given value is not nil.
-func (_c *AccountExtCreate) SetNillableOauthToken(v *string) *AccountExtCreate {
+// SetNillableCodexPatKey sets the "codex_pat_key" field if the given value is not nil.
+func (_c *AccountExtCreate) SetNillableCodexPatKey(v *string) *AccountExtCreate {
 	if v != nil {
-		_c.SetOauthToken(*v)
+		_c.SetCodexPatKey(*v)
 	}
 	return _c
 }
 
-// SetOauthRefreshToken sets the "oauth_refresh_token" field.
-func (_c *AccountExtCreate) SetOauthRefreshToken(v string) *AccountExtCreate {
-	_c.mutation.SetOauthRefreshToken(v)
+// SetCodexEmail sets the "codex_email" field.
+func (_c *AccountExtCreate) SetCodexEmail(v string) *AccountExtCreate {
+	_c.mutation.SetCodexEmail(v)
 	return _c
 }
 
-// SetNillableOauthRefreshToken sets the "oauth_refresh_token" field if the given value is not nil.
-func (_c *AccountExtCreate) SetNillableOauthRefreshToken(v *string) *AccountExtCreate {
+// SetNillableCodexEmail sets the "codex_email" field if the given value is not nil.
+func (_c *AccountExtCreate) SetNillableCodexEmail(v *string) *AccountExtCreate {
 	if v != nil {
-		_c.SetOauthRefreshToken(*v)
+		_c.SetCodexEmail(*v)
 	}
 	return _c
 }
 
-// SetOauthExpiresAt sets the "oauth_expires_at" field.
-func (_c *AccountExtCreate) SetOauthExpiresAt(v time.Time) *AccountExtCreate {
-	_c.mutation.SetOauthExpiresAt(v)
+// SetCodexAccountID sets the "codex_account_id" field.
+func (_c *AccountExtCreate) SetCodexAccountID(v string) *AccountExtCreate {
+	_c.mutation.SetCodexAccountID(v)
 	return _c
 }
 
-// SetNillableOauthExpiresAt sets the "oauth_expires_at" field if the given value is not nil.
-func (_c *AccountExtCreate) SetNillableOauthExpiresAt(v *time.Time) *AccountExtCreate {
+// SetNillableCodexAccountID sets the "codex_account_id" field if the given value is not nil.
+func (_c *AccountExtCreate) SetNillableCodexAccountID(v *string) *AccountExtCreate {
 	if v != nil {
-		_c.SetOauthExpiresAt(*v)
-	}
-	return _c
-}
-
-// SetPatKey sets the "pat_key" field.
-func (_c *AccountExtCreate) SetPatKey(v string) *AccountExtCreate {
-	_c.mutation.SetPatKey(v)
-	return _c
-}
-
-// SetNillablePatKey sets the "pat_key" field if the given value is not nil.
-func (_c *AccountExtCreate) SetNillablePatKey(v *string) *AccountExtCreate {
-	if v != nil {
-		_c.SetPatKey(*v)
-	}
-	return _c
-}
-
-// SetEmail sets the "email" field.
-func (_c *AccountExtCreate) SetEmail(v string) *AccountExtCreate {
-	_c.mutation.SetEmail(v)
-	return _c
-}
-
-// SetNillableEmail sets the "email" field if the given value is not nil.
-func (_c *AccountExtCreate) SetNillableEmail(v *string) *AccountExtCreate {
-	if v != nil {
-		_c.SetEmail(*v)
+		_c.SetCodexAccountID(*v)
 	}
 	return _c
 }
@@ -204,9 +177,6 @@ func (_c *AccountExtCreate) check() error {
 	if _, ok := _c.mutation.CredentialType(); !ok {
 		return &ValidationError{Name: "credential_type", err: errors.New(`ent: missing required field "AccountExt.credential_type"`)}
 	}
-	if _, ok := _c.mutation.InstallationID(); !ok {
-		return &ValidationError{Name: "installation_id", err: errors.New(`ent: missing required field "AccountExt.installation_id"`)}
-	}
 	if len(_c.mutation.AccountIDs()) == 0 {
 		return &ValidationError{Name: "account", err: errors.New(`ent: missing required edge "AccountExt.account"`)}
 	}
@@ -247,41 +217,33 @@ func (_c *AccountExtCreate) createSpec() (*AccountExt, *sqlgraph.CreateSpec) {
 		_spec.SetField(accountext.FieldCredentialType, field.TypeString, value)
 		_node.CredentialType = value
 	}
-	if value, ok := _c.mutation.InstallationID(); ok {
-		_spec.SetField(accountext.FieldInstallationID, field.TypeString, value)
-		_node.InstallationID = value
+	if value, ok := _c.mutation.CodexIdentity(); ok {
+		_spec.SetField(accountext.FieldCodexIdentity, field.TypeJSON, value)
+		_node.CodexIdentity = value
 	}
-	if value, ok := _c.mutation.SessionID(); ok {
-		_spec.SetField(accountext.FieldSessionID, field.TypeString, value)
-		_node.SessionID = &value
+	if value, ok := _c.mutation.CodexOauthToken(); ok {
+		_spec.SetField(accountext.FieldCodexOauthToken, field.TypeString, value)
+		_node.CodexOauthToken = &value
 	}
-	if value, ok := _c.mutation.ThreadID(); ok {
-		_spec.SetField(accountext.FieldThreadID, field.TypeString, value)
-		_node.ThreadID = &value
+	if value, ok := _c.mutation.CodexOauthRefreshToken(); ok {
+		_spec.SetField(accountext.FieldCodexOauthRefreshToken, field.TypeString, value)
+		_node.CodexOauthRefreshToken = &value
 	}
-	if value, ok := _c.mutation.WindowID(); ok {
-		_spec.SetField(accountext.FieldWindowID, field.TypeString, value)
-		_node.WindowID = &value
+	if value, ok := _c.mutation.CodexOauthExpiresAt(); ok {
+		_spec.SetField(accountext.FieldCodexOauthExpiresAt, field.TypeTime, value)
+		_node.CodexOauthExpiresAt = &value
 	}
-	if value, ok := _c.mutation.OauthToken(); ok {
-		_spec.SetField(accountext.FieldOauthToken, field.TypeString, value)
-		_node.OauthToken = &value
+	if value, ok := _c.mutation.CodexPatKey(); ok {
+		_spec.SetField(accountext.FieldCodexPatKey, field.TypeString, value)
+		_node.CodexPatKey = &value
 	}
-	if value, ok := _c.mutation.OauthRefreshToken(); ok {
-		_spec.SetField(accountext.FieldOauthRefreshToken, field.TypeString, value)
-		_node.OauthRefreshToken = &value
+	if value, ok := _c.mutation.CodexEmail(); ok {
+		_spec.SetField(accountext.FieldCodexEmail, field.TypeString, value)
+		_node.CodexEmail = &value
 	}
-	if value, ok := _c.mutation.OauthExpiresAt(); ok {
-		_spec.SetField(accountext.FieldOauthExpiresAt, field.TypeTime, value)
-		_node.OauthExpiresAt = &value
-	}
-	if value, ok := _c.mutation.PatKey(); ok {
-		_spec.SetField(accountext.FieldPatKey, field.TypeString, value)
-		_node.PatKey = &value
-	}
-	if value, ok := _c.mutation.Email(); ok {
-		_spec.SetField(accountext.FieldEmail, field.TypeString, value)
-		_node.Email = &value
+	if value, ok := _c.mutation.CodexAccountID(); ok {
+		_spec.SetField(accountext.FieldCodexAccountID, field.TypeString, value)
+		_node.CodexAccountID = &value
 	}
 	if nodes := _c.mutation.AccountIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -376,159 +338,129 @@ func (u *AccountExtUpsert) UpdateCredentialType() *AccountExtUpsert {
 	return u
 }
 
-// SetInstallationID sets the "installation_id" field.
-func (u *AccountExtUpsert) SetInstallationID(v string) *AccountExtUpsert {
-	u.Set(accountext.FieldInstallationID, v)
+// SetCodexIdentity sets the "codex_identity" field.
+func (u *AccountExtUpsert) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpsert {
+	u.Set(accountext.FieldCodexIdentity, v)
 	return u
 }
 
-// UpdateInstallationID sets the "installation_id" field to the value that was provided on create.
-func (u *AccountExtUpsert) UpdateInstallationID() *AccountExtUpsert {
-	u.SetExcluded(accountext.FieldInstallationID)
+// UpdateCodexIdentity sets the "codex_identity" field to the value that was provided on create.
+func (u *AccountExtUpsert) UpdateCodexIdentity() *AccountExtUpsert {
+	u.SetExcluded(accountext.FieldCodexIdentity)
 	return u
 }
 
-// SetSessionID sets the "session_id" field.
-func (u *AccountExtUpsert) SetSessionID(v string) *AccountExtUpsert {
-	u.Set(accountext.FieldSessionID, v)
+// ClearCodexIdentity clears the value of the "codex_identity" field.
+func (u *AccountExtUpsert) ClearCodexIdentity() *AccountExtUpsert {
+	u.SetNull(accountext.FieldCodexIdentity)
 	return u
 }
 
-// UpdateSessionID sets the "session_id" field to the value that was provided on create.
-func (u *AccountExtUpsert) UpdateSessionID() *AccountExtUpsert {
-	u.SetExcluded(accountext.FieldSessionID)
+// SetCodexOauthToken sets the "codex_oauth_token" field.
+func (u *AccountExtUpsert) SetCodexOauthToken(v string) *AccountExtUpsert {
+	u.Set(accountext.FieldCodexOauthToken, v)
 	return u
 }
 
-// ClearSessionID clears the value of the "session_id" field.
-func (u *AccountExtUpsert) ClearSessionID() *AccountExtUpsert {
-	u.SetNull(accountext.FieldSessionID)
+// UpdateCodexOauthToken sets the "codex_oauth_token" field to the value that was provided on create.
+func (u *AccountExtUpsert) UpdateCodexOauthToken() *AccountExtUpsert {
+	u.SetExcluded(accountext.FieldCodexOauthToken)
 	return u
 }
 
-// SetThreadID sets the "thread_id" field.
-func (u *AccountExtUpsert) SetThreadID(v string) *AccountExtUpsert {
-	u.Set(accountext.FieldThreadID, v)
+// ClearCodexOauthToken clears the value of the "codex_oauth_token" field.
+func (u *AccountExtUpsert) ClearCodexOauthToken() *AccountExtUpsert {
+	u.SetNull(accountext.FieldCodexOauthToken)
 	return u
 }
 
-// UpdateThreadID sets the "thread_id" field to the value that was provided on create.
-func (u *AccountExtUpsert) UpdateThreadID() *AccountExtUpsert {
-	u.SetExcluded(accountext.FieldThreadID)
+// SetCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field.
+func (u *AccountExtUpsert) SetCodexOauthRefreshToken(v string) *AccountExtUpsert {
+	u.Set(accountext.FieldCodexOauthRefreshToken, v)
 	return u
 }
 
-// ClearThreadID clears the value of the "thread_id" field.
-func (u *AccountExtUpsert) ClearThreadID() *AccountExtUpsert {
-	u.SetNull(accountext.FieldThreadID)
+// UpdateCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field to the value that was provided on create.
+func (u *AccountExtUpsert) UpdateCodexOauthRefreshToken() *AccountExtUpsert {
+	u.SetExcluded(accountext.FieldCodexOauthRefreshToken)
 	return u
 }
 
-// SetWindowID sets the "window_id" field.
-func (u *AccountExtUpsert) SetWindowID(v string) *AccountExtUpsert {
-	u.Set(accountext.FieldWindowID, v)
+// ClearCodexOauthRefreshToken clears the value of the "codex_oauth_refresh_token" field.
+func (u *AccountExtUpsert) ClearCodexOauthRefreshToken() *AccountExtUpsert {
+	u.SetNull(accountext.FieldCodexOauthRefreshToken)
 	return u
 }
 
-// UpdateWindowID sets the "window_id" field to the value that was provided on create.
-func (u *AccountExtUpsert) UpdateWindowID() *AccountExtUpsert {
-	u.SetExcluded(accountext.FieldWindowID)
+// SetCodexOauthExpiresAt sets the "codex_oauth_expires_at" field.
+func (u *AccountExtUpsert) SetCodexOauthExpiresAt(v time.Time) *AccountExtUpsert {
+	u.Set(accountext.FieldCodexOauthExpiresAt, v)
 	return u
 }
 
-// ClearWindowID clears the value of the "window_id" field.
-func (u *AccountExtUpsert) ClearWindowID() *AccountExtUpsert {
-	u.SetNull(accountext.FieldWindowID)
+// UpdateCodexOauthExpiresAt sets the "codex_oauth_expires_at" field to the value that was provided on create.
+func (u *AccountExtUpsert) UpdateCodexOauthExpiresAt() *AccountExtUpsert {
+	u.SetExcluded(accountext.FieldCodexOauthExpiresAt)
 	return u
 }
 
-// SetOauthToken sets the "oauth_token" field.
-func (u *AccountExtUpsert) SetOauthToken(v string) *AccountExtUpsert {
-	u.Set(accountext.FieldOauthToken, v)
+// ClearCodexOauthExpiresAt clears the value of the "codex_oauth_expires_at" field.
+func (u *AccountExtUpsert) ClearCodexOauthExpiresAt() *AccountExtUpsert {
+	u.SetNull(accountext.FieldCodexOauthExpiresAt)
 	return u
 }
 
-// UpdateOauthToken sets the "oauth_token" field to the value that was provided on create.
-func (u *AccountExtUpsert) UpdateOauthToken() *AccountExtUpsert {
-	u.SetExcluded(accountext.FieldOauthToken)
+// SetCodexPatKey sets the "codex_pat_key" field.
+func (u *AccountExtUpsert) SetCodexPatKey(v string) *AccountExtUpsert {
+	u.Set(accountext.FieldCodexPatKey, v)
 	return u
 }
 
-// ClearOauthToken clears the value of the "oauth_token" field.
-func (u *AccountExtUpsert) ClearOauthToken() *AccountExtUpsert {
-	u.SetNull(accountext.FieldOauthToken)
+// UpdateCodexPatKey sets the "codex_pat_key" field to the value that was provided on create.
+func (u *AccountExtUpsert) UpdateCodexPatKey() *AccountExtUpsert {
+	u.SetExcluded(accountext.FieldCodexPatKey)
 	return u
 }
 
-// SetOauthRefreshToken sets the "oauth_refresh_token" field.
-func (u *AccountExtUpsert) SetOauthRefreshToken(v string) *AccountExtUpsert {
-	u.Set(accountext.FieldOauthRefreshToken, v)
+// ClearCodexPatKey clears the value of the "codex_pat_key" field.
+func (u *AccountExtUpsert) ClearCodexPatKey() *AccountExtUpsert {
+	u.SetNull(accountext.FieldCodexPatKey)
 	return u
 }
 
-// UpdateOauthRefreshToken sets the "oauth_refresh_token" field to the value that was provided on create.
-func (u *AccountExtUpsert) UpdateOauthRefreshToken() *AccountExtUpsert {
-	u.SetExcluded(accountext.FieldOauthRefreshToken)
+// SetCodexEmail sets the "codex_email" field.
+func (u *AccountExtUpsert) SetCodexEmail(v string) *AccountExtUpsert {
+	u.Set(accountext.FieldCodexEmail, v)
 	return u
 }
 
-// ClearOauthRefreshToken clears the value of the "oauth_refresh_token" field.
-func (u *AccountExtUpsert) ClearOauthRefreshToken() *AccountExtUpsert {
-	u.SetNull(accountext.FieldOauthRefreshToken)
+// UpdateCodexEmail sets the "codex_email" field to the value that was provided on create.
+func (u *AccountExtUpsert) UpdateCodexEmail() *AccountExtUpsert {
+	u.SetExcluded(accountext.FieldCodexEmail)
 	return u
 }
 
-// SetOauthExpiresAt sets the "oauth_expires_at" field.
-func (u *AccountExtUpsert) SetOauthExpiresAt(v time.Time) *AccountExtUpsert {
-	u.Set(accountext.FieldOauthExpiresAt, v)
+// ClearCodexEmail clears the value of the "codex_email" field.
+func (u *AccountExtUpsert) ClearCodexEmail() *AccountExtUpsert {
+	u.SetNull(accountext.FieldCodexEmail)
 	return u
 }
 
-// UpdateOauthExpiresAt sets the "oauth_expires_at" field to the value that was provided on create.
-func (u *AccountExtUpsert) UpdateOauthExpiresAt() *AccountExtUpsert {
-	u.SetExcluded(accountext.FieldOauthExpiresAt)
+// SetCodexAccountID sets the "codex_account_id" field.
+func (u *AccountExtUpsert) SetCodexAccountID(v string) *AccountExtUpsert {
+	u.Set(accountext.FieldCodexAccountID, v)
 	return u
 }
 
-// ClearOauthExpiresAt clears the value of the "oauth_expires_at" field.
-func (u *AccountExtUpsert) ClearOauthExpiresAt() *AccountExtUpsert {
-	u.SetNull(accountext.FieldOauthExpiresAt)
+// UpdateCodexAccountID sets the "codex_account_id" field to the value that was provided on create.
+func (u *AccountExtUpsert) UpdateCodexAccountID() *AccountExtUpsert {
+	u.SetExcluded(accountext.FieldCodexAccountID)
 	return u
 }
 
-// SetPatKey sets the "pat_key" field.
-func (u *AccountExtUpsert) SetPatKey(v string) *AccountExtUpsert {
-	u.Set(accountext.FieldPatKey, v)
-	return u
-}
-
-// UpdatePatKey sets the "pat_key" field to the value that was provided on create.
-func (u *AccountExtUpsert) UpdatePatKey() *AccountExtUpsert {
-	u.SetExcluded(accountext.FieldPatKey)
-	return u
-}
-
-// ClearPatKey clears the value of the "pat_key" field.
-func (u *AccountExtUpsert) ClearPatKey() *AccountExtUpsert {
-	u.SetNull(accountext.FieldPatKey)
-	return u
-}
-
-// SetEmail sets the "email" field.
-func (u *AccountExtUpsert) SetEmail(v string) *AccountExtUpsert {
-	u.Set(accountext.FieldEmail, v)
-	return u
-}
-
-// UpdateEmail sets the "email" field to the value that was provided on create.
-func (u *AccountExtUpsert) UpdateEmail() *AccountExtUpsert {
-	u.SetExcluded(accountext.FieldEmail)
-	return u
-}
-
-// ClearEmail clears the value of the "email" field.
-func (u *AccountExtUpsert) ClearEmail() *AccountExtUpsert {
-	u.SetNull(accountext.FieldEmail)
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (u *AccountExtUpsert) ClearCodexAccountID() *AccountExtUpsert {
+	u.SetNull(accountext.FieldCodexAccountID)
 	return u
 }
 
@@ -608,185 +540,150 @@ func (u *AccountExtUpsertOne) UpdateCredentialType() *AccountExtUpsertOne {
 	})
 }
 
-// SetInstallationID sets the "installation_id" field.
-func (u *AccountExtUpsertOne) SetInstallationID(v string) *AccountExtUpsertOne {
+// SetCodexIdentity sets the "codex_identity" field.
+func (u *AccountExtUpsertOne) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetInstallationID(v)
+		s.SetCodexIdentity(v)
 	})
 }
 
-// UpdateInstallationID sets the "installation_id" field to the value that was provided on create.
-func (u *AccountExtUpsertOne) UpdateInstallationID() *AccountExtUpsertOne {
+// UpdateCodexIdentity sets the "codex_identity" field to the value that was provided on create.
+func (u *AccountExtUpsertOne) UpdateCodexIdentity() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateInstallationID()
+		s.UpdateCodexIdentity()
 	})
 }
 
-// SetSessionID sets the "session_id" field.
-func (u *AccountExtUpsertOne) SetSessionID(v string) *AccountExtUpsertOne {
+// ClearCodexIdentity clears the value of the "codex_identity" field.
+func (u *AccountExtUpsertOne) ClearCodexIdentity() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetSessionID(v)
+		s.ClearCodexIdentity()
 	})
 }
 
-// UpdateSessionID sets the "session_id" field to the value that was provided on create.
-func (u *AccountExtUpsertOne) UpdateSessionID() *AccountExtUpsertOne {
+// SetCodexOauthToken sets the "codex_oauth_token" field.
+func (u *AccountExtUpsertOne) SetCodexOauthToken(v string) *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateSessionID()
+		s.SetCodexOauthToken(v)
 	})
 }
 
-// ClearSessionID clears the value of the "session_id" field.
-func (u *AccountExtUpsertOne) ClearSessionID() *AccountExtUpsertOne {
+// UpdateCodexOauthToken sets the "codex_oauth_token" field to the value that was provided on create.
+func (u *AccountExtUpsertOne) UpdateCodexOauthToken() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearSessionID()
+		s.UpdateCodexOauthToken()
 	})
 }
 
-// SetThreadID sets the "thread_id" field.
-func (u *AccountExtUpsertOne) SetThreadID(v string) *AccountExtUpsertOne {
+// ClearCodexOauthToken clears the value of the "codex_oauth_token" field.
+func (u *AccountExtUpsertOne) ClearCodexOauthToken() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetThreadID(v)
+		s.ClearCodexOauthToken()
 	})
 }
 
-// UpdateThreadID sets the "thread_id" field to the value that was provided on create.
-func (u *AccountExtUpsertOne) UpdateThreadID() *AccountExtUpsertOne {
+// SetCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field.
+func (u *AccountExtUpsertOne) SetCodexOauthRefreshToken(v string) *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateThreadID()
+		s.SetCodexOauthRefreshToken(v)
 	})
 }
 
-// ClearThreadID clears the value of the "thread_id" field.
-func (u *AccountExtUpsertOne) ClearThreadID() *AccountExtUpsertOne {
+// UpdateCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field to the value that was provided on create.
+func (u *AccountExtUpsertOne) UpdateCodexOauthRefreshToken() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearThreadID()
+		s.UpdateCodexOauthRefreshToken()
 	})
 }
 
-// SetWindowID sets the "window_id" field.
-func (u *AccountExtUpsertOne) SetWindowID(v string) *AccountExtUpsertOne {
+// ClearCodexOauthRefreshToken clears the value of the "codex_oauth_refresh_token" field.
+func (u *AccountExtUpsertOne) ClearCodexOauthRefreshToken() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetWindowID(v)
+		s.ClearCodexOauthRefreshToken()
 	})
 }
 
-// UpdateWindowID sets the "window_id" field to the value that was provided on create.
-func (u *AccountExtUpsertOne) UpdateWindowID() *AccountExtUpsertOne {
+// SetCodexOauthExpiresAt sets the "codex_oauth_expires_at" field.
+func (u *AccountExtUpsertOne) SetCodexOauthExpiresAt(v time.Time) *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateWindowID()
+		s.SetCodexOauthExpiresAt(v)
 	})
 }
 
-// ClearWindowID clears the value of the "window_id" field.
-func (u *AccountExtUpsertOne) ClearWindowID() *AccountExtUpsertOne {
+// UpdateCodexOauthExpiresAt sets the "codex_oauth_expires_at" field to the value that was provided on create.
+func (u *AccountExtUpsertOne) UpdateCodexOauthExpiresAt() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearWindowID()
+		s.UpdateCodexOauthExpiresAt()
 	})
 }
 
-// SetOauthToken sets the "oauth_token" field.
-func (u *AccountExtUpsertOne) SetOauthToken(v string) *AccountExtUpsertOne {
+// ClearCodexOauthExpiresAt clears the value of the "codex_oauth_expires_at" field.
+func (u *AccountExtUpsertOne) ClearCodexOauthExpiresAt() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetOauthToken(v)
+		s.ClearCodexOauthExpiresAt()
 	})
 }
 
-// UpdateOauthToken sets the "oauth_token" field to the value that was provided on create.
-func (u *AccountExtUpsertOne) UpdateOauthToken() *AccountExtUpsertOne {
+// SetCodexPatKey sets the "codex_pat_key" field.
+func (u *AccountExtUpsertOne) SetCodexPatKey(v string) *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateOauthToken()
+		s.SetCodexPatKey(v)
 	})
 }
 
-// ClearOauthToken clears the value of the "oauth_token" field.
-func (u *AccountExtUpsertOne) ClearOauthToken() *AccountExtUpsertOne {
+// UpdateCodexPatKey sets the "codex_pat_key" field to the value that was provided on create.
+func (u *AccountExtUpsertOne) UpdateCodexPatKey() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearOauthToken()
+		s.UpdateCodexPatKey()
 	})
 }
 
-// SetOauthRefreshToken sets the "oauth_refresh_token" field.
-func (u *AccountExtUpsertOne) SetOauthRefreshToken(v string) *AccountExtUpsertOne {
+// ClearCodexPatKey clears the value of the "codex_pat_key" field.
+func (u *AccountExtUpsertOne) ClearCodexPatKey() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetOauthRefreshToken(v)
+		s.ClearCodexPatKey()
 	})
 }
 
-// UpdateOauthRefreshToken sets the "oauth_refresh_token" field to the value that was provided on create.
-func (u *AccountExtUpsertOne) UpdateOauthRefreshToken() *AccountExtUpsertOne {
+// SetCodexEmail sets the "codex_email" field.
+func (u *AccountExtUpsertOne) SetCodexEmail(v string) *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateOauthRefreshToken()
+		s.SetCodexEmail(v)
 	})
 }
 
-// ClearOauthRefreshToken clears the value of the "oauth_refresh_token" field.
-func (u *AccountExtUpsertOne) ClearOauthRefreshToken() *AccountExtUpsertOne {
+// UpdateCodexEmail sets the "codex_email" field to the value that was provided on create.
+func (u *AccountExtUpsertOne) UpdateCodexEmail() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearOauthRefreshToken()
+		s.UpdateCodexEmail()
 	})
 }
 
-// SetOauthExpiresAt sets the "oauth_expires_at" field.
-func (u *AccountExtUpsertOne) SetOauthExpiresAt(v time.Time) *AccountExtUpsertOne {
+// ClearCodexEmail clears the value of the "codex_email" field.
+func (u *AccountExtUpsertOne) ClearCodexEmail() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetOauthExpiresAt(v)
+		s.ClearCodexEmail()
 	})
 }
 
-// UpdateOauthExpiresAt sets the "oauth_expires_at" field to the value that was provided on create.
-func (u *AccountExtUpsertOne) UpdateOauthExpiresAt() *AccountExtUpsertOne {
+// SetCodexAccountID sets the "codex_account_id" field.
+func (u *AccountExtUpsertOne) SetCodexAccountID(v string) *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateOauthExpiresAt()
+		s.SetCodexAccountID(v)
 	})
 }
 
-// ClearOauthExpiresAt clears the value of the "oauth_expires_at" field.
-func (u *AccountExtUpsertOne) ClearOauthExpiresAt() *AccountExtUpsertOne {
+// UpdateCodexAccountID sets the "codex_account_id" field to the value that was provided on create.
+func (u *AccountExtUpsertOne) UpdateCodexAccountID() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearOauthExpiresAt()
+		s.UpdateCodexAccountID()
 	})
 }
 
-// SetPatKey sets the "pat_key" field.
-func (u *AccountExtUpsertOne) SetPatKey(v string) *AccountExtUpsertOne {
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (u *AccountExtUpsertOne) ClearCodexAccountID() *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetPatKey(v)
-	})
-}
-
-// UpdatePatKey sets the "pat_key" field to the value that was provided on create.
-func (u *AccountExtUpsertOne) UpdatePatKey() *AccountExtUpsertOne {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdatePatKey()
-	})
-}
-
-// ClearPatKey clears the value of the "pat_key" field.
-func (u *AccountExtUpsertOne) ClearPatKey() *AccountExtUpsertOne {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearPatKey()
-	})
-}
-
-// SetEmail sets the "email" field.
-func (u *AccountExtUpsertOne) SetEmail(v string) *AccountExtUpsertOne {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.SetEmail(v)
-	})
-}
-
-// UpdateEmail sets the "email" field to the value that was provided on create.
-func (u *AccountExtUpsertOne) UpdateEmail() *AccountExtUpsertOne {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateEmail()
-	})
-}
-
-// ClearEmail clears the value of the "email" field.
-func (u *AccountExtUpsertOne) ClearEmail() *AccountExtUpsertOne {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearEmail()
+		s.ClearCodexAccountID()
 	})
 }
 
@@ -1031,185 +928,150 @@ func (u *AccountExtUpsertBulk) UpdateCredentialType() *AccountExtUpsertBulk {
 	})
 }
 
-// SetInstallationID sets the "installation_id" field.
-func (u *AccountExtUpsertBulk) SetInstallationID(v string) *AccountExtUpsertBulk {
+// SetCodexIdentity sets the "codex_identity" field.
+func (u *AccountExtUpsertBulk) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetInstallationID(v)
+		s.SetCodexIdentity(v)
 	})
 }
 
-// UpdateInstallationID sets the "installation_id" field to the value that was provided on create.
-func (u *AccountExtUpsertBulk) UpdateInstallationID() *AccountExtUpsertBulk {
+// UpdateCodexIdentity sets the "codex_identity" field to the value that was provided on create.
+func (u *AccountExtUpsertBulk) UpdateCodexIdentity() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateInstallationID()
+		s.UpdateCodexIdentity()
 	})
 }
 
-// SetSessionID sets the "session_id" field.
-func (u *AccountExtUpsertBulk) SetSessionID(v string) *AccountExtUpsertBulk {
+// ClearCodexIdentity clears the value of the "codex_identity" field.
+func (u *AccountExtUpsertBulk) ClearCodexIdentity() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetSessionID(v)
+		s.ClearCodexIdentity()
 	})
 }
 
-// UpdateSessionID sets the "session_id" field to the value that was provided on create.
-func (u *AccountExtUpsertBulk) UpdateSessionID() *AccountExtUpsertBulk {
+// SetCodexOauthToken sets the "codex_oauth_token" field.
+func (u *AccountExtUpsertBulk) SetCodexOauthToken(v string) *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateSessionID()
+		s.SetCodexOauthToken(v)
 	})
 }
 
-// ClearSessionID clears the value of the "session_id" field.
-func (u *AccountExtUpsertBulk) ClearSessionID() *AccountExtUpsertBulk {
+// UpdateCodexOauthToken sets the "codex_oauth_token" field to the value that was provided on create.
+func (u *AccountExtUpsertBulk) UpdateCodexOauthToken() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearSessionID()
+		s.UpdateCodexOauthToken()
 	})
 }
 
-// SetThreadID sets the "thread_id" field.
-func (u *AccountExtUpsertBulk) SetThreadID(v string) *AccountExtUpsertBulk {
+// ClearCodexOauthToken clears the value of the "codex_oauth_token" field.
+func (u *AccountExtUpsertBulk) ClearCodexOauthToken() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetThreadID(v)
+		s.ClearCodexOauthToken()
 	})
 }
 
-// UpdateThreadID sets the "thread_id" field to the value that was provided on create.
-func (u *AccountExtUpsertBulk) UpdateThreadID() *AccountExtUpsertBulk {
+// SetCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field.
+func (u *AccountExtUpsertBulk) SetCodexOauthRefreshToken(v string) *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateThreadID()
+		s.SetCodexOauthRefreshToken(v)
 	})
 }
 
-// ClearThreadID clears the value of the "thread_id" field.
-func (u *AccountExtUpsertBulk) ClearThreadID() *AccountExtUpsertBulk {
+// UpdateCodexOauthRefreshToken sets the "codex_oauth_refresh_token" field to the value that was provided on create.
+func (u *AccountExtUpsertBulk) UpdateCodexOauthRefreshToken() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearThreadID()
+		s.UpdateCodexOauthRefreshToken()
 	})
 }
 
-// SetWindowID sets the "window_id" field.
-func (u *AccountExtUpsertBulk) SetWindowID(v string) *AccountExtUpsertBulk {
+// ClearCodexOauthRefreshToken clears the value of the "codex_oauth_refresh_token" field.
+func (u *AccountExtUpsertBulk) ClearCodexOauthRefreshToken() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetWindowID(v)
+		s.ClearCodexOauthRefreshToken()
 	})
 }
 
-// UpdateWindowID sets the "window_id" field to the value that was provided on create.
-func (u *AccountExtUpsertBulk) UpdateWindowID() *AccountExtUpsertBulk {
+// SetCodexOauthExpiresAt sets the "codex_oauth_expires_at" field.
+func (u *AccountExtUpsertBulk) SetCodexOauthExpiresAt(v time.Time) *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateWindowID()
+		s.SetCodexOauthExpiresAt(v)
 	})
 }
 
-// ClearWindowID clears the value of the "window_id" field.
-func (u *AccountExtUpsertBulk) ClearWindowID() *AccountExtUpsertBulk {
+// UpdateCodexOauthExpiresAt sets the "codex_oauth_expires_at" field to the value that was provided on create.
+func (u *AccountExtUpsertBulk) UpdateCodexOauthExpiresAt() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearWindowID()
+		s.UpdateCodexOauthExpiresAt()
 	})
 }
 
-// SetOauthToken sets the "oauth_token" field.
-func (u *AccountExtUpsertBulk) SetOauthToken(v string) *AccountExtUpsertBulk {
+// ClearCodexOauthExpiresAt clears the value of the "codex_oauth_expires_at" field.
+func (u *AccountExtUpsertBulk) ClearCodexOauthExpiresAt() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetOauthToken(v)
+		s.ClearCodexOauthExpiresAt()
 	})
 }
 
-// UpdateOauthToken sets the "oauth_token" field to the value that was provided on create.
-func (u *AccountExtUpsertBulk) UpdateOauthToken() *AccountExtUpsertBulk {
+// SetCodexPatKey sets the "codex_pat_key" field.
+func (u *AccountExtUpsertBulk) SetCodexPatKey(v string) *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateOauthToken()
+		s.SetCodexPatKey(v)
 	})
 }
 
-// ClearOauthToken clears the value of the "oauth_token" field.
-func (u *AccountExtUpsertBulk) ClearOauthToken() *AccountExtUpsertBulk {
+// UpdateCodexPatKey sets the "codex_pat_key" field to the value that was provided on create.
+func (u *AccountExtUpsertBulk) UpdateCodexPatKey() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearOauthToken()
+		s.UpdateCodexPatKey()
 	})
 }
 
-// SetOauthRefreshToken sets the "oauth_refresh_token" field.
-func (u *AccountExtUpsertBulk) SetOauthRefreshToken(v string) *AccountExtUpsertBulk {
+// ClearCodexPatKey clears the value of the "codex_pat_key" field.
+func (u *AccountExtUpsertBulk) ClearCodexPatKey() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetOauthRefreshToken(v)
+		s.ClearCodexPatKey()
 	})
 }
 
-// UpdateOauthRefreshToken sets the "oauth_refresh_token" field to the value that was provided on create.
-func (u *AccountExtUpsertBulk) UpdateOauthRefreshToken() *AccountExtUpsertBulk {
+// SetCodexEmail sets the "codex_email" field.
+func (u *AccountExtUpsertBulk) SetCodexEmail(v string) *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateOauthRefreshToken()
+		s.SetCodexEmail(v)
 	})
 }
 
-// ClearOauthRefreshToken clears the value of the "oauth_refresh_token" field.
-func (u *AccountExtUpsertBulk) ClearOauthRefreshToken() *AccountExtUpsertBulk {
+// UpdateCodexEmail sets the "codex_email" field to the value that was provided on create.
+func (u *AccountExtUpsertBulk) UpdateCodexEmail() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearOauthRefreshToken()
+		s.UpdateCodexEmail()
 	})
 }
 
-// SetOauthExpiresAt sets the "oauth_expires_at" field.
-func (u *AccountExtUpsertBulk) SetOauthExpiresAt(v time.Time) *AccountExtUpsertBulk {
+// ClearCodexEmail clears the value of the "codex_email" field.
+func (u *AccountExtUpsertBulk) ClearCodexEmail() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetOauthExpiresAt(v)
+		s.ClearCodexEmail()
 	})
 }
 
-// UpdateOauthExpiresAt sets the "oauth_expires_at" field to the value that was provided on create.
-func (u *AccountExtUpsertBulk) UpdateOauthExpiresAt() *AccountExtUpsertBulk {
+// SetCodexAccountID sets the "codex_account_id" field.
+func (u *AccountExtUpsertBulk) SetCodexAccountID(v string) *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateOauthExpiresAt()
+		s.SetCodexAccountID(v)
 	})
 }
 
-// ClearOauthExpiresAt clears the value of the "oauth_expires_at" field.
-func (u *AccountExtUpsertBulk) ClearOauthExpiresAt() *AccountExtUpsertBulk {
+// UpdateCodexAccountID sets the "codex_account_id" field to the value that was provided on create.
+func (u *AccountExtUpsertBulk) UpdateCodexAccountID() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearOauthExpiresAt()
+		s.UpdateCodexAccountID()
 	})
 }
 
-// SetPatKey sets the "pat_key" field.
-func (u *AccountExtUpsertBulk) SetPatKey(v string) *AccountExtUpsertBulk {
+// ClearCodexAccountID clears the value of the "codex_account_id" field.
+func (u *AccountExtUpsertBulk) ClearCodexAccountID() *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
-		s.SetPatKey(v)
-	})
-}
-
-// UpdatePatKey sets the "pat_key" field to the value that was provided on create.
-func (u *AccountExtUpsertBulk) UpdatePatKey() *AccountExtUpsertBulk {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdatePatKey()
-	})
-}
-
-// ClearPatKey clears the value of the "pat_key" field.
-func (u *AccountExtUpsertBulk) ClearPatKey() *AccountExtUpsertBulk {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearPatKey()
-	})
-}
-
-// SetEmail sets the "email" field.
-func (u *AccountExtUpsertBulk) SetEmail(v string) *AccountExtUpsertBulk {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.SetEmail(v)
-	})
-}
-
-// UpdateEmail sets the "email" field to the value that was provided on create.
-func (u *AccountExtUpsertBulk) UpdateEmail() *AccountExtUpsertBulk {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.UpdateEmail()
-	})
-}
-
-// ClearEmail clears the value of the "email" field.
-func (u *AccountExtUpsertBulk) ClearEmail() *AccountExtUpsertBulk {
-	return u.Update(func(s *AccountExtUpsert) {
-		s.ClearEmail()
+		s.ClearCodexAccountID()
 	})
 }
 
