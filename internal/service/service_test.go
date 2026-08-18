@@ -385,6 +385,7 @@ func TestBatchUpdateAccounts(t *testing.T) {
 type fakeKeyRegistrar struct {
 	mu       sync.Mutex
 	upserted []string
+	metas    []domain.KeyMeta // 快照断言（A-2：ProtocolConverts 增量注册）
 	deleted  []string
 }
 
@@ -392,6 +393,18 @@ func (k *fakeKeyRegistrar) Upsert(hash string, meta domain.KeyMeta) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.upserted = append(k.upserted, hash)
+	k.metas = append(k.metas, meta)
+}
+
+// lastMeta 最近一次 Upsert 的 KeyMeta（nil = 无）。
+func (k *fakeKeyRegistrar) lastMeta() *domain.KeyMeta {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if len(k.metas) == 0 {
+		return nil
+	}
+	m := k.metas[len(k.metas)-1]
+	return &m
 }
 
 func (k *fakeKeyRegistrar) Delete(hash string) {

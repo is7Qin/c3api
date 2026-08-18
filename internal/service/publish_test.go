@@ -332,10 +332,12 @@ func TestPublishMultipliersAndGroupDelete(t *testing.T) {
 	g, err := svc.CreateGroup(ctx, "g", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "创建组 → Multipliers:true")
+	require.False(t, pr.last().Keys, "组创建无 key → 不置 Keys（A-3：创建后建 key 的即时性由 A-2 增量注册保证）")
 
 	_, err = svc.UpdateGroup(ctx, &domain.Group{ID: g.ID, Name: "g", PriceMultiplier: 20000, ProtocolConverts: nil})
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "更新组倍率 → Multipliers:true")
+	require.True(t, pr.last().Keys, "组更新（含 protocol_convert 变更）→ Keys:true——旧 key meta 即时收敛（A-3）")
 
 	u := seedUser(t, fs, "am@example.com", 0, 0)
 	_, _, err = svc.SetGroupAssignments(ctx, g.ID, []int64{u.ID}, map[int64]*int{u.ID: intPtr(5000)})
