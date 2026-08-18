@@ -28,7 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
-import { StatusBadge } from '@/components/status-badge'
+import { StatusBadge, CooldownBadge } from '@/components/status-badge'
 import { formatPercent, toRFC3339, truncate } from '@/components/fmt'
 import type { components } from '@/lib/api/schema'
 
@@ -658,7 +658,13 @@ export default function Accounts() {
                     <TableCell className="tabular-nums">{a.ID}</TableCell>
                     <TableCell className="max-w-32 truncate" title={a.Name}>{a.Name}</TableCell>
                     <TableCell className="max-w-32 truncate" title={templateName(a)}>{templateName(a)}</TableCell>
-                    <TableCell><StatusBadge status={a.Status} /></TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <StatusBadge status={a.Status} />
+                        {/* A-4：冷却标识（CooldownUntil 未过期即标出，status=active 也显示） */}
+                        <CooldownBadge cooldownUntil={a.CooldownUntil} />
+                      </div>
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{a.Weight ?? 0}</TableCell>
                     <TableCell className="text-right tabular-nums">{a.MaxConcurrency ?? 8}</TableCell>
                     <TableCell className="text-right tabular-nums">{a.concurrency ?? 0}</TableCell>

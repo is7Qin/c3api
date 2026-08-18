@@ -6,6 +6,8 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type { components } from '@/lib/api/schema'
 import { Badge } from '@/components/ui/badge'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { formatDateTime } from '@/components/fmt'
 import { cn } from '@/lib/utils'
 
 export type AccountStatus = components['schemas']['AccountStatus']
@@ -30,5 +32,29 @@ export function StatusBadge({ status, className }: { status?: AccountStatus; cla
       <span className={cn('size-1.5 shrink-0 rounded-full', meta.dot)} />
       {statusLabel(status, t)}
     </Badge>
+  )
+}
+
+// 冷却徽章（A-4，2026-08-19）：CooldownUntil 未过期 → "冷却中"（status=active
+// 也标出——status 与冷却解耦展示：C-M2 语义下 ok 规则把 unhealthy/429 拉回
+// active 而冷却保留，解决"active 却恒 429"的展示盲区）。过期/无冷却 → 不渲染。
+// 样式同 StatusBadge 模式（secondary 底 + 圆点 + 文字同色，dark: 变体）。
+export function CooldownBadge({ cooldownUntil, className }: { cooldownUntil?: string | null; className?: string }) {
+  const { t } = useTranslation()
+  if (!cooldownUntil) return null
+  const until = new Date(cooldownUntil)
+  if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) return null
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Badge variant="secondary" className={cn('gap-1.5 text-muted-foreground', className)}>
+            <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
+            {t('cooldown.active')}
+          </Badge>
+        }
+      />
+      <TooltipContent>{t('cooldown.until', { time: formatDateTime(cooldownUntil) })}</TooltipContent>
+    </Tooltip>
   )
 }

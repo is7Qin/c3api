@@ -70,6 +70,8 @@ func toAPIAccount(a *domain.Account) Account {
 
 // toAPIAccountView 账号运行时视图 → 契约类型（AccountView 是平铺结构，
 // 非 allOf 嵌入：所有 Account 字段内联 + concurrency/err_rate/err_count）。
+// Status/CooldownUntil 取调度器内存合并值（A-4：列表显示与 Select 请求行为
+// 同源——回写丢失/失败时不再显示 DB 镜像的 active）。
 func toAPIAccountView(v *service.AccountView) AccountView {
 	base := toAPIAccount(v.Account)
 	return AccountView{
@@ -80,8 +82,8 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 		// BaseURL 平铺逐字段拷贝（C3——缺则列表/编辑回显恒缺，前端保存静默清空）
 		BaseURL:        base.BaseURL,
 		UpstreamKey:    base.UpstreamKey,
-		Status:         base.Status,
-		CooldownUntil:  base.CooldownUntil,
+		Status:         ptr(AccountStatus(v.Status)), // A-4：调度器内存权威（快照未加载时 = DB 值，与合并块同构）
+		CooldownUntil:  v.CooldownUntil,              // A-4：同上
 		Weight:         base.Weight,
 		MaxConcurrency: base.MaxConcurrency,
 		LastError:      base.LastError,

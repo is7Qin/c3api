@@ -41,6 +41,10 @@
     "unhealthy": "不健康",
     "disabled": "已禁用"
   },
+  "cooldown": {
+    "active": "冷却中",
+    "until": "冷却至 {time}"
+  },
   "errorType": {
     "429": "限流 429",
     "none": "正常",

@@ -41,6 +41,10 @@
     "unhealthy": "Unhealthy",
     "disabled": "Disabled"
   },
+  "cooldown": {
+    "active": "Cooling down",
+    "until": "Cooldown until {time}"
+  },
   "errorType": {
     "429": "Rate limited 429",
     "none": "OK",
