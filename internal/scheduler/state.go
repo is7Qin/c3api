@@ -23,11 +23,23 @@ type accState struct {
 	lastUsedAt    *time.Time
 }
 
-type accountSnapshot struct {
-	gid      int64 // 所属组（权重动作重建路由用；多组账号 = 首个出现组）
+// snapshotStatic 是账号静态字段视图（acc/tpl/gid/groupIDs）：**发布后不可变**。
+// 重建复用实例 / 权重动作对静态字段的更新一律 copy-modify-Store 整体替换
+// （原子指针发布），热路径经 atomic.Load() 一次取视图（与普通字段读同量级
+// 开销），零锁读与低频写并发安全。评审 Critical 修复：复用分支此前对已发布
+// 实例裸写 acc/tpl/gid/groupIDs，与热路径无锁读构成数据竞态（-race 复现）。
+type snapshotStatic struct {
 	acc      domain.Account
 	tpl      *domain.Template
-	groupIDs []int64 // 账号所属全部分组（多组账号共享实例的跨组引用集；组级重载时其它组引用替换依据）
+	gid      int64      // 所属组（权重动作重建路由用；多组账号 = 首个出现组）
+	groupIDs []int64    // 账号所属全部分组（多组账号共享实例的跨组引用集；组级重载时其它组引用替换依据）
+}
+
+type accountSnapshot struct {
+	// static 静态字段视图——不可变原子发布；重建/权重动作 copy-modify-Store，
+	// 热路径 Load 一次取用（评审 Critical 修复：静态字段读全部经视图，杜绝
+	// 与重建写并发的数据竞态）。
+	static      atomic.Pointer[snapshotStatic]
 	concurrency atomic.Int64
 	errRate     atomic.Uint64 // 定点
 	state       atomic.Pointer[accState]
@@ -69,14 +81,14 @@ const maxSeqLen = 4096
 func newWeightedSeq(pool []*accountSnapshot) *weightedSeq {
 	g := 0
 	for _, a := range pool {
-		g = gcdInt(g, a.acc.Weight)
+		g = gcdInt(g, a.static.Load().acc.Weight)
 	}
 	if g <= 0 {
 		g = 1
 	}
 	var total int
 	for _, a := range pool {
-		total += a.acc.Weight / g
+		total += a.static.Load().acc.Weight / g
 	}
 	// 超长缩放：ceil 除法降权，每个账号至少保留 1 次。语义：序列长度 ≈
 	// max(账号数, maxSeqLen) 量级——上限防极端权重比（9999:1 → 10000 长）的
@@ -88,7 +100,7 @@ func newWeightedSeq(pool []*accountSnapshot) *weightedSeq {
 	ws := &weightedSeq{}
 	ws.seq = make([]*accountSnapshot, 0, total/scale+len(pool))
 	for _, a := range pool {
-		n := a.acc.Weight / g / scale
+		n := a.static.Load().acc.Weight / g / scale
 		if n < 1 {
 			n = 1
 		}

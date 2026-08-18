@@ -35,7 +35,7 @@ func TestInvalidateAccountReloadsExt(t *testing.T) {
 	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
 	got, ok := byID[1]
 	require.True(t, ok, "账号仍在快照")
-	require.Same(t, extNew, got.acc.Ext, "回写后快照条目重载新凭据（下个会话 Selection.Ext 新值）")
+	require.Same(t, extNew, got.static.Load().acc.Ext, "回写后快照条目重载新凭据（下个会话 Selection.Ext 新值）")
 	// 并发槽继承（组级重载纪律）：失效不丢在途计数
 	require.Equal(t, int64(0), got.concurrency.Load())
 }
@@ -53,7 +53,7 @@ func TestInvalidateAccountUnknownNoop(t *testing.T) {
 		s.InvalidateAccount(999) // 快照外
 	})
 	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
-	require.Same(t, ext, byID[1].acc.Ext, "未知账号失效不影响既有快照")
+	require.Same(t, ext, byID[1].static.Load().acc.Ext, "未知账号失效不影响既有快照")
 }
 
 // strPtrT 测试用字符串指针。
