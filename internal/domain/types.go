@@ -449,11 +449,11 @@ type UsageLog struct {
 	ID                       int64
 	RequestID                string
 	ClientIP                 string // 客户端 IP（供应商头按序识别 + RemoteAddr 兜底——proxy.behind_cdn 门控；审计/排障标识，非安全边界；空 = 理论无（提取恒有兜底））
-	GroupID                  int64 // 0 = 无
-	AccountID                int64 // 0 = 无
-	TemplateID               int64 // 0 = 无
-	UserID                   int64 // 0 = 无（鉴权失败/无 key）
-	KeyID                    int64 // 0 = 无
+	GroupID                  int64  // 0 = 无
+	AccountID                int64  // 0 = 无
+	TemplateID               int64  // 0 = 无
+	UserID                   int64  // 0 = 无（鉴权失败/无 key）
+	KeyID                    int64  // 0 = 无
 	Model                    string
 	MappedModel              string // 空 = 未映射
 	Format                   RequestFormat
@@ -474,10 +474,14 @@ type UsageLog struct {
 	CallCount                int64  // 功能调用计数：图片生成 = 张数（data 长/completed 事件数）、search = 1；不入 TotalTokens（功能调用非 token）
 	PricePerCallMillis       *int64 // 按单元价快照（**毫分/单元**——search 每次 / 图片每张；例外单位，例外于上文"毫分/1M"口径——per-call 计费不走 /1e6 除法）；nil = 无按单元分量
 	Cost                     int64  // 毫分；错误请求（402/4xx）为 0
-	BillingTier              string // priority/flex/fast/auto；空 = 未计费路径
-	AboveHit                 bool
-	Overdraft                bool
-	CreatedAt                time.Time
+	// RawCost 乘倍率前的原始成本（毫分；免费组 cost=0 但 raw 有值——"实际消耗"
+	// 只有 raw 能看）。回显面投影归 Task 2（本字段无 json tag，对齐 domain 全
+	// 结构惯例）。
+	RawCost     int64  // 毫分；bill 未装配/无价防御路径恒 0
+	BillingTier string // priority/flex/fast/auto；空 = 未计费路径
+	AboveHit    bool
+	Overdraft   bool
+	CreatedAt   time.Time
 }
 
 // StatBucket 小时统计桶（usage_stats 行；离线聚合 worker 的 INSERT 行形态）。
@@ -512,15 +516,15 @@ type StatBucket struct {
 
 // —— 规则引擎（可编排状态管理） ——
 type RuleWhen struct {
-	Kind                 *string  `json:"kind,omitempty"`
-	HTTPStatus           *int     `json:"http_status,omitempty"`
-	ErrorMessageContains *string  `json:"error_message_contains,omitempty"`
-	AccountID            *int64   `json:"account_id,omitempty"`
-	TemplateID           *int64   `json:"template_id,omitempty"`
-	GroupID              *int64   `json:"group_id,omitempty"`
-	Model                *string  `json:"model,omitempty"`
-	WindowSeconds        *int     `json:"window_seconds,omitempty"`
-	Count429GE           *int     `json:"count_429_ge,omitempty"`
+	Kind                 *string `json:"kind,omitempty"`
+	HTTPStatus           *int    `json:"http_status,omitempty"`
+	ErrorMessageContains *string `json:"error_message_contains,omitempty"`
+	AccountID            *int64  `json:"account_id,omitempty"`
+	TemplateID           *int64  `json:"template_id,omitempty"`
+	GroupID              *int64  `json:"group_id,omitempty"`
+	Model                *string `json:"model,omitempty"`
+	WindowSeconds        *int    `json:"window_seconds,omitempty"`
+	Count429GE           *int    `json:"count_429_ge,omitempty"`
 	// CountFailureGE 语义 = "失败事件桶"（非 ok 非 429 事件计数——5xx/network/4xx
 	// 并入）。
 	CountFailureGE *int     `json:"count_failure_ge,omitempty"`

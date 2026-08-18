@@ -64,6 +64,8 @@ const (
 	FieldPricePerCallMillis = "price_per_call_millis"
 	// FieldCost holds the string denoting the cost field in the database.
 	FieldCost = "cost"
+	// FieldRawCost holds the string denoting the raw_cost field in the database.
+	FieldRawCost = "raw_cost"
 	// FieldBillingTier holds the string denoting the billing_tier field in the database.
 	FieldBillingTier = "billing_tier"
 	// FieldAboveHit holds the string denoting the above_hit field in the database.
@@ -104,6 +106,7 @@ var Columns = []string{
 	FieldCallCount,
 	FieldPricePerCallMillis,
 	FieldCost,
+	FieldRawCost,
 	FieldBillingTier,
 	FieldAboveHit,
 	FieldOverdraft,
@@ -141,6 +144,8 @@ var (
 	DefaultCallCount int64
 	// DefaultCost holds the default value on creation for the "cost" field.
 	DefaultCost int64
+	// DefaultRawCost holds the default value on creation for the "raw_cost" field.
+	DefaultRawCost int64
 	// DefaultAboveHit holds the default value on creation for the "above_hit" field.
 	DefaultAboveHit bool
 	// DefaultOverdraft holds the default value on creation for the "overdraft" field.
@@ -307,6 +312,11 @@ func ByPricePerCallMillis(opts ...sql.OrderTermOption) OrderOption {
 // ByCost orders the results by the cost field.
 func ByCost(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCost, opts...).ToFunc()
+}
+
+// ByRawCost orders the results by the raw_cost field.
+func ByRawCost(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRawCost, opts...).ToFunc()
 }
 
 // ByBillingTier orders the results by the billing_tier field.

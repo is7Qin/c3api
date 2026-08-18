@@ -48,7 +48,9 @@ func (r *UsageRepo) InsertBatch(ctx context.Context, logs []*domain.UsageLog) er
 // buildUsageLogCreate 构建单条 usagelog 插入构建器（InsertBatch 与计费事务
 // DeductAndLog 共用——tx client 经同一 client 传入即同一事务连接）。
 // 计费列（Phase 5）：Cost 毫分（0 = 未计费/错误路径）；BillingTier 空 = 未计费
-// 路径（落库 NULL）；AboveHit/Overdraft 布尔直接落。
+// 路径（落库 NULL）；AboveHit/Overdraft 布尔直接落。RawCost（spec 2026-08-18）
+// 乘倍率前原始成本——恒落（对齐 SetCost，ent 缺省 0 无妨），COPY 路径
+// usageLogRowValues 同序（两路径列集合锚定）。
 // 时间/价格快照列（nil = NULL 落库，SQL 不写该列）：TTFTMS 首 token 时间毫秒
 // （非流式/失败路径 nil）；Price*Millis 每 M token 毫分单价快照（未计费路径
 // /无该分量 nil）。
@@ -73,6 +75,7 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 		SetCacheCreationTokens(l.CacheCreationTokens).
 		SetCallCount(l.CallCount).
 		SetCost(l.Cost).
+		SetRawCost(l.RawCost).
 		SetAboveHit(l.AboveHit).
 		SetOverdraft(l.Overdraft).
 		SetCreatedAt(l.CreatedAt)
@@ -189,6 +192,7 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 			CallCount:                row.CallCount,
 			PricePerCallMillis:       row.PricePerCallMillis,
 			Cost:                     row.Cost,
+			RawCost:                  row.RawCost,
 			AboveHit:                 row.AboveHit,
 			Overdraft:                row.Overdraft,
 			CreatedAt:                row.CreatedAt,

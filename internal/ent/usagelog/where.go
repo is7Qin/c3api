@@ -174,6 +174,11 @@ func Cost(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCost, v))
 }
 
+// RawCost applies equality check predicate on the "raw_cost" field. It's identical to RawCostEQ.
+func RawCost(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldRawCost, v))
+}
+
 // BillingTier applies equality check predicate on the "billing_tier" field. It's identical to BillingTierEQ.
 func BillingTier(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldBillingTier, v))
@@ -1427,6 +1432,46 @@ func CostLT(v int64) predicate.UsageLog {
 // CostLTE applies the LTE predicate on the "cost" field.
 func CostLTE(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldCost, v))
+}
+
+// RawCostEQ applies the EQ predicate on the "raw_cost" field.
+func RawCostEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldRawCost, v))
+}
+
+// RawCostNEQ applies the NEQ predicate on the "raw_cost" field.
+func RawCostNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldRawCost, v))
+}
+
+// RawCostIn applies the In predicate on the "raw_cost" field.
+func RawCostIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldRawCost, vs...))
+}
+
+// RawCostNotIn applies the NotIn predicate on the "raw_cost" field.
+func RawCostNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldRawCost, vs...))
+}
+
+// RawCostGT applies the GT predicate on the "raw_cost" field.
+func RawCostGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldRawCost, v))
+}
+
+// RawCostGTE applies the GTE predicate on the "raw_cost" field.
+func RawCostGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldRawCost, v))
+}
+
+// RawCostLT applies the LT predicate on the "raw_cost" field.
+func RawCostLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldRawCost, v))
+}
+
+// RawCostLTE applies the LTE predicate on the "raw_cost" field.
+func RawCostLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldRawCost, v))
 }
 
 // BillingTierEQ applies the EQ predicate on the "billing_tier" field.

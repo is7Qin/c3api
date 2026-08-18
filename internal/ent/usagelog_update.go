@@ -589,6 +589,27 @@ func (_u *UsageLogUpdate) AddCost(v int64) *UsageLogUpdate {
 	return _u
 }
 
+// SetRawCost sets the "raw_cost" field.
+func (_u *UsageLogUpdate) SetRawCost(v int64) *UsageLogUpdate {
+	_u.mutation.ResetRawCost()
+	_u.mutation.SetRawCost(v)
+	return _u
+}
+
+// SetNillableRawCost sets the "raw_cost" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableRawCost(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetRawCost(*v)
+	}
+	return _u
+}
+
+// AddRawCost adds value to the "raw_cost" field.
+func (_u *UsageLogUpdate) AddRawCost(v int64) *UsageLogUpdate {
+	_u.mutation.AddRawCost(v)
+	return _u
+}
+
 // SetBillingTier sets the "billing_tier" field.
 func (_u *UsageLogUpdate) SetBillingTier(v string) *UsageLogUpdate {
 	_u.mutation.SetBillingTier(v)
@@ -875,6 +896,12 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedCost(); ok {
 		_spec.AddField(usagelog.FieldCost, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.RawCost(); ok {
+		_spec.SetField(usagelog.FieldRawCost, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRawCost(); ok {
+		_spec.AddField(usagelog.FieldRawCost, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.BillingTier(); ok {
 		_spec.SetField(usagelog.FieldBillingTier, field.TypeString, value)
@@ -1472,6 +1499,27 @@ func (_u *UsageLogUpdateOne) AddCost(v int64) *UsageLogUpdateOne {
 	return _u
 }
 
+// SetRawCost sets the "raw_cost" field.
+func (_u *UsageLogUpdateOne) SetRawCost(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetRawCost()
+	_u.mutation.SetRawCost(v)
+	return _u
+}
+
+// SetNillableRawCost sets the "raw_cost" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableRawCost(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetRawCost(*v)
+	}
+	return _u
+}
+
+// AddRawCost adds value to the "raw_cost" field.
+func (_u *UsageLogUpdateOne) AddRawCost(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddRawCost(v)
+	return _u
+}
+
 // SetBillingTier sets the "billing_tier" field.
 func (_u *UsageLogUpdateOne) SetBillingTier(v string) *UsageLogUpdateOne {
 	_u.mutation.SetBillingTier(v)
@@ -1788,6 +1836,12 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.AddedCost(); ok {
 		_spec.AddField(usagelog.FieldCost, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.RawCost(); ok {
+		_spec.SetField(usagelog.FieldRawCost, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRawCost(); ok {
+		_spec.AddField(usagelog.FieldRawCost, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.BillingTier(); ok {
 		_spec.SetField(usagelog.FieldBillingTier, field.TypeString, value)

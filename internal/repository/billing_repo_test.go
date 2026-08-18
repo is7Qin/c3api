@@ -48,6 +48,9 @@ func fullLogFor(userID int64, requestID string) *domain.UsageLog {
 	l.CacheCreationTokens = 2
 	l.CallCount = 2
 	l.PricePerCallMillis = int64Ptr(5_400) // 毫分/单元（例外单位——per-call 不走 /1e6）
+	// RawCost（spec 2026-08-18）：乘倍率前原始成本——有值即两路径（COPY/ent
+	// CreateBulk）都必须落库（TestPGDeductCopyPathEquivalent 逐字段对比）。
+	l.RawCost = 7_700
 	// S-E（2026-08-17）：client_ip 有值——双路径（COPY/ent CreateBulk）等价性
 	// 测试逐字段对比，有值即两路径都必须落库（TestPGDeductCopyPathEquivalent）。
 	l.ClientIP = "9.9.9.9"

@@ -256,7 +256,16 @@ func (p *Proxy) applyBilling(l *domain.UsageLog) {
 	// 价格倍率（T3.5，用户拍板）：整单 × 有效倍率（万分数；用户覆盖组——
 	// 用户已设置 → 用户值，否则组倍率，均缺 ×1）。m==10000 恒等短路零开销；
 	// m==0 免费（cost 0，仍记日志不扣费）。倍率不改变 aboveHit 语义。
-	l.Cost = applyMultiplier(l.Cost, p.bill.Balances.EffectiveMultiplier(l.UserID, l.GroupID))
+	p.applyMultiplierLog(l, l.Cost) // l.Cost 已含 chat 分量累计（倍率前原始成本）
+}
+
+// applyMultiplierLog 倍率施加单点（spec 2026-08-18 raw_cost 列）：raw 显式传
+// 参——三处倍率参数形态不同，读 l.Cost 作 raw 在 search 路径（该时刻 l.Cost
+// 恒 0——buildLog 不设 Cost）恒失真（gate Major 1 修订）。cost 语义零变化
+// （applyMultiplier 纯函数不动）。热路径一次 int64 赋值零额外开销。
+func (p *Proxy) applyMultiplierLog(l *domain.UsageLog, raw int64) {
+	l.RawCost = raw
+	l.Cost = applyMultiplier(raw, p.bill.Balances.EffectiveMultiplier(l.UserID, l.GroupID))
 }
 
 // applyImageBilling 生图计费（images 格式专用——只计 image 分量）：价格快照
@@ -289,7 +298,7 @@ func (p *Proxy) applyImageBilling(l *domain.UsageLog) {
 		l.PricePerCallMillis = ip.OutputCostPerImageMilli
 	}
 	l.Cost = billing.ImageCost(ip, l.InputTokens, l.OutputTokens, l.CallCount)
-	l.Cost = applyMultiplier(l.Cost, p.bill.Balances.EffectiveMultiplier(l.UserID, l.GroupID))
+	p.applyMultiplierLog(l, l.Cost) // :291 已赋值 ImageCost——raw 取倍率前累计
 }
 
 // applyFunctionBilling 按单元计费（openai-search 格式专用——只计按次分量）：
@@ -312,7 +321,9 @@ func (p *Proxy) applyFunctionBilling(l *domain.UsageLog) {
 	if l.CallCount > 0 {
 		l.PricePerCallMillis = fp.PricePerCall
 	}
-	l.Cost = applyMultiplier(*fp.PricePerCall*l.CallCount, p.bill.Balances.EffectiveMultiplier(l.UserID, l.GroupID))
+	// raw = 显式表达式（gate Major 1）：该时刻 l.Cost 恒 0，读字段作 raw 会
+	// 静默丢 search 全量原始成本（测试红绿断言兜底）。
+	p.applyMultiplierLog(l, *fp.PricePerCall*l.CallCount)
 }
 
 // buildLog 组装 UsageLog（record 与 finish 共用）。语义（评审 I-1 确认）：

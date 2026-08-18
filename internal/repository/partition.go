@@ -128,6 +128,10 @@ var usageLogColumnDefs = []string{
 	`call_count bigint NOT NULL DEFAULT 0`,
 	`price_per_call_millis bigint NULL`,
 	`cost bigint NOT NULL DEFAULT 0`,
+	// raw_cost（spec 2026-08-18）：乘倍率前的原始成本（毫分）——免费组
+	// cost=0 但 raw 有值（"实际消耗"可见）；历史行/缺省 = 0（fresh setup
+	// 不迁移）。
+	`raw_cost bigint NOT NULL DEFAULT 0`,
 	`billing_tier varchar NULL`,
 	`above_hit boolean NOT NULL DEFAULT false`,
 	`overdraft boolean NOT NULL DEFAULT false`,

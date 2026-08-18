@@ -40,7 +40,9 @@ const deductTimeout = 10 * time.Second
 // 统一计费模型重构（spec 2026-08-13）删 6 加 2 后最坏界 28 列 × 2000 =
 // 56,000 参数 < 65,535（仍安全，常量不动；生产 28 列 56,000）。S-E
 // （2026-08-17）加 client_ip 后最坏界 29 列 × 2000 = 58,000 参数 < 65,535
-// （仍安全，常量不动；生产 29 列 58,000）。
+// （仍安全，常量不动；生产 29 列 58,000）。raw_cost（spec 2026-08-18）后
+// 最坏界 30 列 × 2000 = 60,000 参数 < 65,535（仍安全，常量不动；生产 30 列
+// 60,000）。
 // 仅 ent CreateBulk 回落路径（pool == nil）使用；pgx COPY 路径无参数上限，
 // 整事务一次 COPY 不涉及本常量。
 const usageLogBatchSize = 2000
@@ -376,12 +378,13 @@ func (x *pgxDeductTx) QueryRowScan(ctx context.Context, query string, args []any
 	return x.tx.QueryRow(ctx, query, args...).Scan(dest...)
 }
 
-// usageLogCopyColumns COPY 列清单 = buildUsageLogCreate 设置的列集合（29 列
+// usageLogCopyColumns COPY 列清单 = buildUsageLogCreate 设置的列集合（30 列
 // 全列显式列出——未设置的可选列传 NULL，与 ent 省略列（→NULL）等价；列序
 // 与 usage_logs 分区表列定义一致，5 索引兼容）。COPY 无 65535 参数上限，
 // 整事务一次 COPY（无分片）。统一计费模型（spec 2026-08-13）：原图片 6 列
 // （image tokens/count + 3 价格快照）已删，加 call_count/price_per_call_millis。
 // S-E（2026-08-17）：加 client_ip（紧随 request_id，与分区表列定义一致）。
+// spec 2026-08-18：加 raw_cost（紧随 cost——恒落可 0，对齐 cost 恒落语义）。
 var usageLogCopyColumns = []string{
 	usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldGroupID,
 	usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID,
@@ -392,12 +395,14 @@ var usageLogCopyColumns = []string{
 	usagelog.FieldCacheReadTokens, usagelog.FieldPriceCacheReadMillis,
 	usagelog.FieldCacheCreationTokens, usagelog.FieldPriceCacheCreationMillis,
 	usagelog.FieldCallCount, usagelog.FieldPricePerCallMillis, usagelog.FieldCost,
+	usagelog.FieldRawCost,
 	usagelog.FieldBillingTier, usagelog.FieldAboveHit, usagelog.FieldOverdraft,
 	usagelog.FieldCreatedAt,
 }
 
 // usageLogRowValues 单行 COPY 值（与 buildUsageLogCreate 的 Set 条件一一对应：
 // 可选列 >0/非空/非 nil 才赋值，否则 NULL；call_count 恒落（NOT NULL DEFAULT 0）；
+// cost/raw_cost 恒落（spec 2026-08-18——乘倍率前原始成本，可 0）；
 // client_ip 非空才赋值，否则 NULL）。
 func usageLogRowValues(l *domain.UsageLog) []any {
 	var groupID, accountID, templateID, userID, keyID, mappedModel, billingTier, clientIP any
@@ -450,7 +455,7 @@ func usageLogRowValues(l *domain.UsageLog) []any {
 		l.InputTokens, priceIn, l.OutputTokens, priceOut, l.TotalTokens,
 		l.CacheReadTokens, priceCR, l.CacheCreationTokens, priceCC,
 		l.CallCount, pricePerCall,
-		l.Cost, billingTier, l.AboveHit, l.Overdraft, l.CreatedAt,
+		l.Cost, l.RawCost, billingTier, l.AboveHit, l.Overdraft, l.CreatedAt,
 	}
 }
 

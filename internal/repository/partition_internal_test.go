@@ -19,6 +19,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/ent/usagelog"
 )
 
 // ddlColumnNames 提取建表 DDL 的列名（行首标识符，跳过 CREATE/PRIMARY 非列
@@ -54,10 +56,38 @@ func TestUsageLogColumnDefsMatchCreateDDL(t *testing.T) {
 	//（任何同步点残留图片 6 列即红）。
 	require.Contains(t, source, "call_count", "锚必须覆盖 call_count 新列")
 	require.Contains(t, source, "price_per_call_millis", "锚必须覆盖 price_per_call_millis 新列")
+	// raw_cost（spec 2026-08-18）：倍率前原始成本列锚（建表 DDL 事实源）。
+	require.Contains(t, source, "raw_cost", "锚必须覆盖 raw_cost 新列")
 	for _, old := range []string{"image_input_tokens", "image_output_tokens", "image_count",
 		"price_image_input_millis", "price_image_output_millis", "price_per_image_millis"} {
 		require.NotContains(t, source, old, "删 6 列：%s 不得残留", old)
 	}
+}
+
+// TestUsageLogCopyColumnsMatchColumnDefs COPY 列集合锚（spec 2026-08-18 gate
+// 修订）：COPY 列清单（usageLogCopyColumns——COPY 事实源）与建表 DDL 数据列
+// 集合一致（除 id 自增列——COPY 不写 id，序列默认生成）；列数 29→30 锚定。
+// raw_cost 紧随 cost（两事实源列序同向防漂移）。
+func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
+	source := ddlColumnNames(strings.Join(usageLogColumnDefs, "\n"))
+	require.Len(t, usageLogCopyColumns, 30, "COPY 列数 29→30")
+	want := make([]string, 0, len(source)-1)
+	for _, s := range source {
+		if s != "id" { // id 为自增列（COPY 不写，序列默认生成）
+			want = append(want, s)
+		}
+	}
+	got := append([]string(nil), usageLogCopyColumns...)
+	sort.Strings(want)
+	sort.Strings(got)
+	require.Equal(t, want, got, "COPY 列集合 = 建表 DDL 数据列集合（除 id）")
+	for i, c := range usageLogCopyColumns {
+		if c == usagelog.FieldCost {
+			require.Equal(t, usagelog.FieldRawCost, usageLogCopyColumns[i+1], "raw_cost 紧随 cost")
+			return
+		}
+	}
+	t.Fatal("COPY 列清单缺少 cost 列")
 }
 
 // TestErrLogColumnDefsMatchCreateDDL err_logs 列事实源锚（架构审查 S2——

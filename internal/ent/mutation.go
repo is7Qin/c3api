@@ -17794,6 +17794,8 @@ type UsageLogMutation struct {
 	addprice_per_call_millis       *int64
 	cost                           *int64
 	addcost                        *int64
+	raw_cost                       *int64
+	addraw_cost                    *int64
 	billing_tier                   *string
 	above_hit                      *bool
 	overdraft                      *bool
@@ -19368,6 +19370,62 @@ func (m *UsageLogMutation) ResetCost() {
 	m.addcost = nil
 }
 
+// SetRawCost sets the "raw_cost" field.
+func (m *UsageLogMutation) SetRawCost(i int64) {
+	m.raw_cost = &i
+	m.addraw_cost = nil
+}
+
+// RawCost returns the value of the "raw_cost" field in the mutation.
+func (m *UsageLogMutation) RawCost() (r int64, exists bool) {
+	v := m.raw_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRawCost returns the old "raw_cost" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldRawCost(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRawCost is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRawCost requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRawCost: %w", err)
+	}
+	return oldValue.RawCost, nil
+}
+
+// AddRawCost adds i to the "raw_cost" field.
+func (m *UsageLogMutation) AddRawCost(i int64) {
+	if m.addraw_cost != nil {
+		*m.addraw_cost += i
+	} else {
+		m.addraw_cost = &i
+	}
+}
+
+// AddedRawCost returns the value that was added to the "raw_cost" field in this mutation.
+func (m *UsageLogMutation) AddedRawCost() (r int64, exists bool) {
+	v := m.addraw_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRawCost resets all changes to the "raw_cost" field.
+func (m *UsageLogMutation) ResetRawCost() {
+	m.raw_cost = nil
+	m.addraw_cost = nil
+}
+
 // SetBillingTier sets the "billing_tier" field.
 func (m *UsageLogMutation) SetBillingTier(s string) {
 	m.billing_tier = &s
@@ -19559,7 +19617,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 29)
+	fields := make([]string, 0, 30)
 	if m.request_id != nil {
 		fields = append(fields, usagelog.FieldRequestID)
 	}
@@ -19635,6 +19693,9 @@ func (m *UsageLogMutation) Fields() []string {
 	if m.cost != nil {
 		fields = append(fields, usagelog.FieldCost)
 	}
+	if m.raw_cost != nil {
+		fields = append(fields, usagelog.FieldRawCost)
+	}
 	if m.billing_tier != nil {
 		fields = append(fields, usagelog.FieldBillingTier)
 	}
@@ -19705,6 +19766,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.PricePerCallMillis()
 	case usagelog.FieldCost:
 		return m.Cost()
+	case usagelog.FieldRawCost:
+		return m.RawCost()
 	case usagelog.FieldBillingTier:
 		return m.BillingTier()
 	case usagelog.FieldAboveHit:
@@ -19772,6 +19835,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldPricePerCallMillis(ctx)
 	case usagelog.FieldCost:
 		return m.OldCost(ctx)
+	case usagelog.FieldRawCost:
+		return m.OldRawCost(ctx)
 	case usagelog.FieldBillingTier:
 		return m.OldBillingTier(ctx)
 	case usagelog.FieldAboveHit:
@@ -19964,6 +20029,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCost(v)
 		return nil
+	case usagelog.FieldRawCost:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRawCost(v)
+		return nil
 	case usagelog.FieldBillingTier:
 		v, ok := value.(string)
 		if !ok {
@@ -20057,6 +20129,9 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addcost != nil {
 		fields = append(fields, usagelog.FieldCost)
 	}
+	if m.addraw_cost != nil {
+		fields = append(fields, usagelog.FieldRawCost)
+	}
 	return fields
 }
 
@@ -20103,6 +20178,8 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedPricePerCallMillis()
 	case usagelog.FieldCost:
 		return m.AddedCost()
+	case usagelog.FieldRawCost:
+		return m.AddedRawCost()
 	}
 	return nil, false
 }
@@ -20244,6 +20321,13 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddCost(v)
+		return nil
+	case usagelog.FieldRawCost:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRawCost(v)
 		return nil
 	}
 	return fmt.Errorf("unknown UsageLog numeric field %s", name)
@@ -20433,6 +20517,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldCost:
 		m.ResetCost()
+		return nil
+	case usagelog.FieldRawCost:
+		m.ResetRawCost()
 		return nil
 	case usagelog.FieldBillingTier:
 		m.ResetBillingTier()

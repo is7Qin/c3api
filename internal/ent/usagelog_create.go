@@ -356,6 +356,20 @@ func (_c *UsageLogCreate) SetNillableCost(v *int64) *UsageLogCreate {
 	return _c
 }
 
+// SetRawCost sets the "raw_cost" field.
+func (_c *UsageLogCreate) SetRawCost(v int64) *UsageLogCreate {
+	_c.mutation.SetRawCost(v)
+	return _c
+}
+
+// SetNillableRawCost sets the "raw_cost" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableRawCost(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetRawCost(*v)
+	}
+	return _c
+}
+
 // SetBillingTier sets the "billing_tier" field.
 func (_c *UsageLogCreate) SetBillingTier(v string) *UsageLogCreate {
 	_c.mutation.SetBillingTier(v)
@@ -493,6 +507,10 @@ func (_c *UsageLogCreate) defaults() {
 		v := usagelog.DefaultCost
 		_c.mutation.SetCost(v)
 	}
+	if _, ok := _c.mutation.RawCost(); !ok {
+		v := usagelog.DefaultRawCost
+		_c.mutation.SetRawCost(v)
+	}
 	if _, ok := _c.mutation.AboveHit(); !ok {
 		v := usagelog.DefaultAboveHit
 		_c.mutation.SetAboveHit(v)
@@ -549,6 +567,9 @@ func (_c *UsageLogCreate) check() error {
 	}
 	if _, ok := _c.mutation.Cost(); !ok {
 		return &ValidationError{Name: "cost", err: errors.New(`ent: missing required field "UsageLog.cost"`)}
+	}
+	if _, ok := _c.mutation.RawCost(); !ok {
+		return &ValidationError{Name: "raw_cost", err: errors.New(`ent: missing required field "UsageLog.raw_cost"`)}
 	}
 	if _, ok := _c.mutation.AboveHit(); !ok {
 		return &ValidationError{Name: "above_hit", err: errors.New(`ent: missing required field "UsageLog.above_hit"`)}
@@ -691,6 +712,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Cost(); ok {
 		_spec.SetField(usagelog.FieldCost, field.TypeInt64, value)
 		_node.Cost = value
+	}
+	if value, ok := _c.mutation.RawCost(); ok {
+		_spec.SetField(usagelog.FieldRawCost, field.TypeInt64, value)
+		_node.RawCost = value
 	}
 	if value, ok := _c.mutation.BillingTier(); ok {
 		_spec.SetField(usagelog.FieldBillingTier, field.TypeString, value)
@@ -1249,6 +1274,24 @@ func (u *UsageLogUpsert) UpdateCost() *UsageLogUpsert {
 // AddCost adds v to the "cost" field.
 func (u *UsageLogUpsert) AddCost(v int64) *UsageLogUpsert {
 	u.Add(usagelog.FieldCost, v)
+	return u
+}
+
+// SetRawCost sets the "raw_cost" field.
+func (u *UsageLogUpsert) SetRawCost(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldRawCost, v)
+	return u
+}
+
+// UpdateRawCost sets the "raw_cost" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateRawCost() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldRawCost)
+	return u
+}
+
+// AddRawCost adds v to the "raw_cost" field.
+func (u *UsageLogUpsert) AddRawCost(v int64) *UsageLogUpsert {
+	u.Add(usagelog.FieldRawCost, v)
 	return u
 }
 
@@ -1925,6 +1968,27 @@ func (u *UsageLogUpsertOne) AddCost(v int64) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateCost() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCost()
+	})
+}
+
+// SetRawCost sets the "raw_cost" field.
+func (u *UsageLogUpsertOne) SetRawCost(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRawCost(v)
+	})
+}
+
+// AddRawCost adds v to the "raw_cost" field.
+func (u *UsageLogUpsertOne) AddRawCost(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRawCost(v)
+	})
+}
+
+// UpdateRawCost sets the "raw_cost" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateRawCost() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRawCost()
 	})
 }
 
@@ -2776,6 +2840,27 @@ func (u *UsageLogUpsertBulk) AddCost(v int64) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateCost() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCost()
+	})
+}
+
+// SetRawCost sets the "raw_cost" field.
+func (u *UsageLogUpsertBulk) SetRawCost(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRawCost(v)
+	})
+}
+
+// AddRawCost adds v to the "raw_cost" field.
+func (u *UsageLogUpsertBulk) AddRawCost(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRawCost(v)
+	})
+}
+
+// UpdateRawCost sets the "raw_cost" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateRawCost() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRawCost()
 	})
 }
 

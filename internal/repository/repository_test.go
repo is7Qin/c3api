@@ -541,22 +541,24 @@ func TestLogsAndStats(t *testing.T) {
 	// above_hit, account_id, cache_creation_tokens, cache_read_tokens, call_count,
 	// cost, ..., format, group_id, input_tokens, ..., output_tokens, overdraft,
 	// price_cache_creation_millis, price_cache_read_millis, price_input_millis,
-	// price_output_millis, ..., total_tokens, ttft_ms；billing_tier 未设置不落列
-	// 保持 NULL；price_per_call_millis nil → 该行省略不落列（call_count 恒设 0
-	// 落列）。统一计费模型（spec 2026-08-13）：原图片 6 列已删——image token
-	// 并入 input/output_tokens，per-image 价迁移为 price_per_call_millis）。
+	// price_output_millis, raw_cost, request_id, ..., total_tokens, ttft_ms；
+	// billing_tier 未设置不落列保持 NULL；price_per_call_millis nil → 该行省略
+	// 不落列（call_count 恒设 0 落列）。统一计费模型（spec 2026-08-13）：原图片
+	// 6 列已删——image token 并入 input/output_tokens，per-image 价迁移为
+	// price_per_call_millis）。raw_cost（spec 2026-08-18）：SetRawCost 恒落
+	// （字母序在 price_output_millis 与 request_id 之间）。
 	// status_code 已从 usage_logs 移除（分表设计瘦身，错误审计列归 err_logs）
 	// ——InsertBatch 不再携带该列）
 	tr.pool.ExpectQuery(q(`INSERT INTO "usage_logs"`)).
 		WithArgs(false, int64(2), int64(2), int64(4), int64(0), int64(0), pgxmock.AnyArg(), "none",
 			usagelog.Format("openai-chat"), int64(1), int64(0),
 			int64(10), "m", int64(0), false,
-			int64(5678), int64(1234), int64(1e7), int64(2e7), "r1",
+			int64(5678), int64(1234), int64(1e7), int64(2e7), int64(7700), "r1",
 			int64(3), int64(100), int64(88),
 			false, int64(2), int64(3), int64(5), int64(0), int64(0), pgxmock.AnyArg(), "5xx",
 			usagelog.Format("openai-chat"), int64(1), int64(0),
 			int64(20), "m", int64(0), false,
-			"r2", int64(3), int64(0)).
+			int64(0), "r2", int64(3), int64(0)).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(1)).AddRow(int64(2)))
 
 	// Log Query -> SELECT（keyset 游标：去 Count，LIMIT limit+1 探测——契约
@@ -564,7 +566,8 @@ func TestLogsAndStats(t *testing.T) {
 	// tokens 列；统一计费模型两列（call_count + price_per_call_millis）在
 	// price_cache_creation_millis 与 cost 之间（schema 序——原图片 6 列已删）；
 	// 计费四列 cost/billing_tier/above_hit/overdraft 在 price_per_call_millis
-	// 与 created_at 之间）
+	// 与 created_at 之间；raw_cost（spec 2026-08-18）在 cost 与 billing_tier
+	// 之间（schema 序））
 	tr.pool.ExpectQuery(q(`FROM "usage_logs"`)).
 		WithArgs(int64(1)).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "request_id", "group_id", "account_id", "template_id",
@@ -572,18 +575,18 @@ func TestLogsAndStats(t *testing.T) {
 			"ttft_ms", "input_tokens", "price_input_millis", "output_tokens", "price_output_millis",
 			"total_tokens", "cache_read_tokens", "price_cache_read_millis", "cache_creation_tokens",
 			"price_cache_creation_millis", "call_count", "price_per_call_millis",
-			"cost", "billing_tier", "above_hit", "overdraft", "created_at"}).
+			"cost", "raw_cost", "billing_tier", "above_hit", "overdraft", "created_at"}).
 			AddRow(int64(1), "r1", int64(1), int64(2), int64(3), "m", "", "openai-chat",
 				"none", int64(10), int64(88), int64(0), int64(1e7), int64(0), int64(2e7),
 				int64(100), int64(4), int64(1234), int64(2), int64(5678),
 				int64(0), sql.NullInt64{},
-				int64(0), "", false, false,
+				int64(0), int64(7700), "", false, false,
 				time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)).
 			AddRow(int64(2), "r2", int64(1), int64(2), int64(3), "m", "", "openai-chat",
 				"5xx", int64(20), sql.NullInt64{}, int64(0), sql.NullInt64{}, int64(0), sql.NullInt64{},
 				int64(0), int64(5), sql.NullInt64{}, int64(3), sql.NullInt64{},
 				int64(0), sql.NullInt64{},
-				int64(0), "", false, false,
+				int64(0), int64(0), "", false, false,
 				time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
 
 	// Stats 离线聚合写入（AggregateRange）需要 pgx 原生连接池（NewWithPG 注入）：
@@ -601,7 +604,8 @@ func TestLogsAndStats(t *testing.T) {
 			PriceInputMillis:         int64Ptr(1e7),
 			PriceOutputMillis:        int64Ptr(2e7),
 			PriceCacheReadMillis:     int64Ptr(1234),
-			PriceCacheCreationMillis: int64Ptr(5678)},
+			PriceCacheCreationMillis: int64Ptr(5678),
+			RawCost:                  7700},
 		{RequestID: "r2", GroupID: 1, AccountID: 2, TemplateID: 3, Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 500, ErrorType: domain.Err5xx, LatencyMS: 20, TotalTokens: 0, CacheReadTokens: 5, CacheCreationTokens: 3},
 	}
 	require.NoError(t, tr.repos.Usages.InsertBatch(ctx(), logs))
@@ -613,6 +617,8 @@ func TestLogsAndStats(t *testing.T) {
 	require.Equal(t, int64(5), rows[1].CacheReadTokens)
 	require.Equal(t, int64(3), rows[1].CacheCreationTokens)
 	require.Equal(t, int64(0), rows[0].Cost, "cost round-trip")
+	require.Equal(t, int64(7700), rows[0].RawCost, "raw_cost round-trip（spec 2026-08-18 有值）")
+	require.Zero(t, rows[1].RawCost, "raw_cost 未设置 → 0 落库")
 	require.Equal(t, "", rows[0].BillingTier, "billing_tier round-trip（空 = 未计费）")
 	require.False(t, rows[0].AboveHit, "above_hit round-trip")
 	require.False(t, rows[0].Overdraft, "overdraft round-trip")

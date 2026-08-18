@@ -75,7 +75,11 @@ func (UsageLog) Fields() []ent.Field {
 		// 请求 service_tier 归一化值（priority/flex/fast/auto；nil = 未计费路径）；
 		// above_hit 任一分量超 above_threshold 命中分段；overdraft 本次扣费透支
 		// （负余额）。错误请求（402/4xx）cost = 0。
+		// raw_cost（spec 2026-08-18）：乘倍率前的原始成本（毫分）——免费组
+		// cost=0 但 raw 有值（"实际消耗"可见）；历史行/缺省 = 0（fresh setup
+		// 不迁移）。恒落（对齐 cost 恒落语义）。
 		field.Int64("cost").Default(0),
+		field.Int64("raw_cost").Default(0),
 		field.String("billing_tier").Optional().Nillable(),
 		field.Bool("above_hit").Default(false),
 		field.Bool("overdraft").Default(false),

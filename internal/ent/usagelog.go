@@ -67,6 +67,8 @@ type UsageLog struct {
 	PricePerCallMillis *int64 `json:"price_per_call_millis,omitempty"`
 	// Cost holds the value of the "cost" field.
 	Cost int64 `json:"cost,omitempty"`
+	// RawCost holds the value of the "raw_cost" field.
+	RawCost int64 `json:"raw_cost,omitempty"`
 	// BillingTier holds the value of the "billing_tier" field.
 	BillingTier *string `json:"billing_tier,omitempty"`
 	// AboveHit holds the value of the "above_hit" field.
@@ -85,7 +87,7 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case usagelog.FieldAboveHit, usagelog.FieldOverdraft:
 			values[i] = new(sql.NullBool)
-		case usagelog.FieldID, usagelog.FieldGroupID, usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID, usagelog.FieldKeyID, usagelog.FieldLatencyMs, usagelog.FieldTtftMs, usagelog.FieldInputTokens, usagelog.FieldPriceInputMillis, usagelog.FieldOutputTokens, usagelog.FieldPriceOutputMillis, usagelog.FieldTotalTokens, usagelog.FieldCacheReadTokens, usagelog.FieldPriceCacheReadMillis, usagelog.FieldCacheCreationTokens, usagelog.FieldPriceCacheCreationMillis, usagelog.FieldCallCount, usagelog.FieldPricePerCallMillis, usagelog.FieldCost:
+		case usagelog.FieldID, usagelog.FieldGroupID, usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID, usagelog.FieldKeyID, usagelog.FieldLatencyMs, usagelog.FieldTtftMs, usagelog.FieldInputTokens, usagelog.FieldPriceInputMillis, usagelog.FieldOutputTokens, usagelog.FieldPriceOutputMillis, usagelog.FieldTotalTokens, usagelog.FieldCacheReadTokens, usagelog.FieldPriceCacheReadMillis, usagelog.FieldCacheCreationTokens, usagelog.FieldPriceCacheCreationMillis, usagelog.FieldCallCount, usagelog.FieldPricePerCallMillis, usagelog.FieldCost, usagelog.FieldRawCost:
 			values[i] = new(sql.NullInt64)
 		case usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldModel, usagelog.FieldMappedModel, usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldBillingTier:
 			values[i] = new(sql.NullString)
@@ -275,6 +277,12 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Cost = value.Int64
 			}
+		case usagelog.FieldRawCost:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field raw_cost", values[i])
+			} else if value.Valid {
+				_m.RawCost = value.Int64
+			}
 		case usagelog.FieldBillingTier:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field billing_tier", values[i])
@@ -436,6 +444,9 @@ func (_m *UsageLog) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("cost=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Cost))
+	builder.WriteString(", ")
+	builder.WriteString("raw_cost=")
+	builder.WriteString(fmt.Sprintf("%v", _m.RawCost))
 	builder.WriteString(", ")
 	if v := _m.BillingTier; v != nil {
 		builder.WriteString("billing_tier=")
