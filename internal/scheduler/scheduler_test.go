@@ -195,7 +195,8 @@ func TestSelectCredentialTypeFromTemplate(t *testing.T) {
 }
 
 func TestSelectModelPreference(t *testing.T) {
-	// 两账号同格式：一个 Serves(model)，一个不
+	// 两账号同格式：一个 Serves(model)，一个不——未命中的 tB 带模型空间
+	// （白名单账号）→ 不进 tier2（硬白名单：gpt-4o 桶路由仅 tier1）
 	tA := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	tB := tpl(2, domain.FormatOpenAIChat, []string{"other"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tA, 4), acc(2, tB, 4)}})
@@ -203,6 +204,11 @@ func TestSelectModelPreference(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID, "model preference tier")
+	gs := s.store.groups.Load().(map[int64]*groupSnapshot)[10]
+	rt := gs.routes[routeKey{domain.FormatOpenAIChat, "gpt-4o"}]
+	require.NotNil(t, rt)
+	require.NotNil(t, rt.tier1)
+	require.Nil(t, rt.tier2, "未命中白名单账号（有模型空间）→ 跳过，不进 tier2")
 }
 
 func TestConcurrencyLimit(t *testing.T) {
@@ -635,11 +641,9 @@ func TestBuildRoutesBucketsAndDefault(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, rt.tier1, "gpt-4o 在 models 里 → tier1")
 	require.Nil(t, rt.tier2)
-	// 默认桶（未知模型回落）
-	rtD, ok := routes[routeKey{domain.FormatOpenAIChat, ""}]
-	require.True(t, ok)
-	require.Nil(t, rtD.tier1)
-	require.NotNil(t, rtD.tier2, "未知模型 → 默认格式 tier2")
+	// 默认桶（未知模型回落）：白名单账号（有模型空间）不进默认桶 → 无默认路由
+	_, ok = routes[routeKey{domain.FormatOpenAIChat, ""}]
+	require.False(t, ok, "默认桶仅含全模型账号，白名单账号被排除")
 	// 其他格式无桶
 	_, ok = routes[routeKey{domain.FormatAnthropic, "gpt-4o"}]
 	require.False(t, ok)
@@ -667,6 +671,142 @@ func TestBuildRoutesFormatModelsLimit(t *testing.T) {
 	// responses 不在 supported → 无桶
 	_, ok = routes[routeKey{domain.FormatOpenAIResponses, "special"}]
 	require.False(t, ok, "格式不在 supported → 无桶")
+}
+
+// —— 模板模型硬白名单（用户裁决 2026-08-18）：Serves 未命中 + 白名单账号 →
+// 404；全模型账号（无模型空间）保留 tier2/默认桶兜底 ——
+
+// TestSelectWhitelistHitMiss 白名单命中 → tier1 选中；白名单外模型 → 404
+// （ErrFormatUnavailable，不再 tier2 兜底转发）。
+func TestSelectWhitelistHitMiss(t *testing.T) {
+	s := newTestScheduler(t, []*domain.Account{
+		{ID: 1, TemplateID: 1, Template: tplWith(domain.FormatOpenAIChat, []string{"gpt-4o"}), UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+	})
+	require.NoError(t, s.InvalidateAllSync())
+	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), sel.AccountID)
+	s.Release(sel.AccountID)
+	_, err = s.Select(10, domain.FormatOpenAIChat, "claude-3-5-sonnet-20241022")
+	require.ErrorIs(t, err, ErrFormatUnavailable, "白名单外模型 → 404（此前 tier2 兜底转发）")
+}
+
+// TestSelectFormatModelsOnlyBoundary 评审 M-1：Models=[] + FormatModels={chat:[gpt-4o]}
+// + supported_formats 含 anthropic 的账号——anthropic 格式任意模型 → 404（未列
+// 模型的格式不建路由）；chat + gpt-4o → tier1 命中。
+func TestSelectFormatModelsOnlyBoundary(t *testing.T) {
+	tplFm := &domain.Template{
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatAnthropic},
+		FormatModels:     map[domain.RequestFormat][]string{domain.FormatOpenAIChat: {"gpt-4o"}},
+	}
+	s := newTestScheduler(t, []*domain.Account{
+		{ID: 1, TemplateID: 1, Template: tplFm, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+	})
+	require.NoError(t, s.InvalidateAllSync())
+	// 未配置 FormatModels 但 supported 含的格式（anthropic）：任意模型 → 404
+	_, err := s.Select(10, domain.FormatAnthropic, "claude-3-5-sonnet-20241022")
+	require.ErrorIs(t, err, ErrFormatUnavailable, "FormatModels-only 账号在未列模型格式上不建路由 → 404")
+	// 配置格式 + 白名单模型 → tier1
+	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), sel.AccountID)
+	s.Release(sel.AccountID)
+}
+
+// TestSelectFormatModelsEmptyList 评审 Minor ② 防回归：FormatModels={chat:[]}
+//（覆盖但空列表）退化配置——HasModelSpace true（FormatModels 非空）→ 归白名单
+// 账号 → 默认桶排除；FormatSupports(chat, m) 对空列表恒 false → 该格式全 404
+//（含未知模型回落，不再经默认桶绕过 format_models 限制）。
+func TestSelectFormatModelsEmptyList(t *testing.T) {
+	tplFm := &domain.Template{
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+		FormatModels:     map[domain.RequestFormat][]string{domain.FormatOpenAIChat: {}},
+	}
+	s := newTestScheduler(t, []*domain.Account{
+		{ID: 1, TemplateID: 1, Template: tplFm, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+	})
+	require.NoError(t, s.InvalidateAllSync())
+	for _, m := range []string{"gpt-4o", "unknown-model-xyz"} {
+		_, err := s.Select(10, domain.FormatOpenAIChat, m)
+		require.ErrorIs(t, err, ErrFormatUnavailable, "空列表格式（覆盖但空）→ 全 404（含未知模型回落）")
+	}
+}
+
+// TestSelectMappingKeyWhitelist 评审 O-5：mapping key（gpt-4o）命中 → tier1（白名单
+// 别名）；映射目标（deepseek-chat）不复查——直接请求目标模型 → 404。
+func TestSelectMappingKeyWhitelist(t *testing.T) {
+	tplMap := &domain.Template{
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+		ModelMapping:     map[string]string{"gpt-4o": "deepseek-chat"},
+	}
+	s := newTestScheduler(t, []*domain.Account{
+		{ID: 1, TemplateID: 1, Template: tplMap, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+	})
+	require.NoError(t, s.InvalidateAllSync())
+	// mapping key 即白名单别名 → tier1，Selection.Model = 映射目标（pickFrom 内映射）
+	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), sel.AccountID)
+	require.Equal(t, "deepseek-chat", sel.Model)
+	s.Release(sel.AccountID)
+	// 映射目标不复查：直接请求 deepseek-chat → 未命中白名单 → 404
+	_, err = s.Select(10, domain.FormatOpenAIChat, "deepseek-chat")
+	require.ErrorIs(t, err, ErrFormatUnavailable, "映射目标（上游模型名）不复查")
+}
+
+// TestSelectFullModelTier2Fallback 全模型账号（模型空间空）未命中任何白名单 →
+// tier2/默认桶兜底转发（保留）。
+func TestSelectFullModelTier2Fallback(t *testing.T) {
+	tplOpen := &domain.Template{SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}}
+	s := newTestScheduler(t, []*domain.Account{
+		{ID: 1, TemplateID: 1, Template: tplOpen, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+	})
+	require.NoError(t, s.InvalidateAllSync())
+	for _, m := range []string{"any-model-1", "gpt-4o", "claude-3-5-sonnet-20241022"} {
+		sel, err := s.Select(10, domain.FormatOpenAIChat, m)
+		require.NoError(t, err, "全模型账号：任意模型 200（tier2 兜底保留）")
+		require.Equal(t, int64(1), sel.AccountID)
+		s.Release(sel.AccountID)
+	}
+}
+
+// TestSelectDefaultBucketExcludesWhitelist 默认桶不含白名单账号：未知模型 + 组内
+// 仅白名单账号 → 404（白名单账号不得参与未知模型回落误转发）。
+func TestSelectDefaultBucketExcludesWhitelist(t *testing.T) {
+	s := newTestScheduler(t, []*domain.Account{
+		{ID: 1, TemplateID: 1, Template: tplWith(domain.FormatOpenAIChat, []string{"gpt-4o"}), UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+	})
+	require.NoError(t, s.InvalidateAllSync())
+	_, err := s.Select(10, domain.FormatOpenAIChat, "unknown-model-xyz")
+	require.ErrorIs(t, err, ErrFormatUnavailable, "默认桶不含白名单账号 → 未知模型 404")
+}
+
+// TestSelectMixedGroupWhitelistFullModel 混合组：A 白名单 ["gpt-4o"] + B 全模型——
+// 请求 gpt-4o 走 tier1 A；A 冷却 → tier2 B 兜底；请求白名单外模型 → 直接 B。
+func TestSelectMixedGroupWhitelistFullModel(t *testing.T) {
+	tplOpen := &domain.Template{ID: 2, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}}
+	s := newTestScheduler(t, []*domain.Account{
+		{ID: 1, TemplateID: 1, Template: tplWith(domain.FormatOpenAIChat, []string{"gpt-4o"}), UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+		{ID: 2, TemplateID: 2, Template: tplOpen, UpstreamKey: "k2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+	})
+	require.NoError(t, s.InvalidateAllSync())
+	// gpt-4o → tier1 A 优先
+	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), sel.AccountID, "白名单命中 → tier1 A")
+	s.Release(sel.AccountID)
+	// A 冷却 → tier2 B 兜底
+	s.MarkResult(1, rule.Kind429, nil, 0, "")
+	s.FlushRules()
+	sel, err = s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), sel.AccountID, "tier1 冷却 → 全模型账号 tier2 兜底")
+	s.Release(sel.AccountID)
+	// 白名单外模型 → 直接 B（默认桶仅全模型账号，无 tier1）
+	sel, err = s.Select(10, domain.FormatOpenAIChat, "claude-3-5-sonnet-20241022")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), sel.AccountID, "白名单外模型 → 默认桶（仅全模型账号）")
+	s.Release(sel.AccountID)
 }
 
 // 分布：10 万次选号，频率 vs 权重比例（±5% 容差，shuffle 后的轮询分布）
@@ -729,25 +869,27 @@ func TestSelectAllCooldownReturnsNoAvailable(t *testing.T) {
 	}
 }
 
-// 未知模型回落默认桶：请求 model 不在任何模板可服务集合 → 默认格式 tier2 选中
+// 未知模型回落默认桶：请求 model 不在任何模板可服务集合 → 默认格式 tier2 选中。
+// 硬白名单语义：白名单账号（有模型空间）不进默认桶 → 组内仅白名单账号时未知
+// 模型 404（默认桶兜底仅全模型账号，见 TestSelectFullModelTier2Fallback）。
 func TestSelectUnknownModelDefaultBucket(t *testing.T) {
 	s := newTestScheduler(t, []*domain.Account{
 		{ID: 1, TemplateID: 1, Template: tplWith(domain.FormatOpenAIChat, []string{"gpt-4o"}), UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
 	})
 	require.NoError(t, s.InvalidateAllSync())
-	sel, err := s.Select(10, domain.FormatOpenAIChat, "unknown-model-xyz")
-	require.NoError(t, err, "未知模型走默认回退桶（默认格式 tier2）")
-	require.Equal(t, int64(1), sel.AccountID)
+	_, err := s.Select(10, domain.FormatOpenAIChat, "unknown-model-xyz")
+	require.ErrorIs(t, err, ErrFormatUnavailable, "组内仅白名单账号 → 未知模型 404（不进默认桶）")
 }
 
-// tier 回落：tier1 全冷却 → tier2 选中
+// tier 回落：tier1 全冷却 → tier2 选中（tier2 账号须为全模型账号——白名单
+// 账号未命中已跳过，见 TestSelectModelPreference）
 func TestSelectTierFallback(t *testing.T) {
 	s := newTestScheduler(t, []*domain.Account{
 		{ID: 1, TemplateID: 1, Template: tplWith(domain.FormatOpenAIChat, []string{"gpt-4o"}), UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
-		{ID: 2, TemplateID: 2, Template: &domain.Template{ID: 2, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"other-model"}}, UpstreamKey: "k2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
+		{ID: 2, TemplateID: 2, Template: &domain.Template{ID: 2, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}}, UpstreamKey: "k2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
 	})
 	require.NoError(t, s.InvalidateAllSync())
-	// 账号 1（tier1）进冷却 → 请求 gpt-4o 应回落 tier2（账号 2，Serves 为 false）
+	// 账号 1（tier1）进冷却 → 请求 gpt-4o 应回落 tier2（账号 2，全模型账号 Serves 为 false）
 	s.MarkResult(1, rule.Kind429, nil, 0, "")
 	s.FlushRules()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
@@ -762,14 +904,14 @@ func TestSelectTierFallback(t *testing.T) {
 func TestSelectTier1FullFallsBackToTier2(t *testing.T) {
 	s := newTestScheduler(t, []*domain.Account{
 		{ID: 1, TemplateID: 1, Template: tplWith(domain.FormatOpenAIChat, []string{"gpt-4o"}), UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1},
-		{ID: 2, TemplateID: 2, Template: &domain.Template{ID: 2, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"other-model"}}, UpstreamKey: "k2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4},
+		{ID: 2, TemplateID: 2, Template: &domain.Template{ID: 2, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}}, UpstreamKey: "k2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4},
 	})
 	require.NoError(t, s.InvalidateAllSync())
 	// 账号 1 是唯一 Serves gpt-4o 的账号（tier1 序列只有它）→ 确定性占用其唯一并发槽
 	sel1, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel1.AccountID, "tier1 唯一账号先被选中")
-	// tier1 并发满 → 必须回落 tier2（账号 2，Serves 恒 false 但同默认格式）
+	// tier1 并发满 → 必须回落 tier2（账号 2，全模型账号 Serves 恒 false 但同默认格式）
 	sel2, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), sel2.AccountID, "tier1 并发满 → tier2 回落（可用性优先）")

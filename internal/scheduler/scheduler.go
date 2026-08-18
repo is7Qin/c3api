@@ -3,8 +3,8 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // Package scheduler 实现内存优先的账号调度：规则驱动的状态管理（internal/rule 引擎
-// 事件投递 + apply 回调）、选号（格式硬过滤 + 模型偏好 + 预生成加权轮询序列）、
-// 并发槽、快照缓存与异步状态回写。规格 §5。单实例语义：运行时状态仅存内存。
+// 事件投递 + apply 回调）、选号（格式硬过滤 + 模型硬白名单 + 全模型账号 tier2 兜底
+// + 预生成加权轮询序列）、并发槽、快照缓存与异步状态回写。规格 §5。单实例语义：运行时状态仅存内存。
 package scheduler
 
 import (
@@ -310,9 +310,23 @@ func modelSet(accs []*accountSnapshot) map[string]struct{} {
 	return set
 }
 
-// buildRoutes 预生成 (format, model) 调度路径：格式硬过滤（FormatSupports）与模型偏好
-// （Serves）都是静态信息，可完全在重建时计算。另为每个格式生成默认回退桶
-// （model == ""）：请求模型未知时行为等价于格式桶 + tier2（Serves 恒 false）。
+// buildRoutes 预生成 (format, model) 调度路径：格式硬过滤（FormatSupports）与
+// 模型硬白名单（Serves）都是静态信息，可完全在重建时计算。另为每个格式生成
+// 默认回退桶（model == ""）：仅含全模型账号（无模型空间），请求模型未知时
+// 兜底转发。
+//
+// 分桶语义（模板模型硬白名单，用户裁决 2026-08-18）：
+//   - Serves(model) 命中 → tier1（不变）；
+//   - 未命中 + 模板有模型空间（Models/FormatModels/ModelMapping 任一非空 =
+//     白名单账号）→ 跳过（不建路由 → Select 404，不再 tier2 兜底转发）；
+//   - 未命中 + 无模型空间（全模型账号）→ tier2（兜底保留）。
+//
+// 边界：仅配置 format_models/mapping、Models 空的账号同样归白名单账号——其
+// 未列模型的格式（FormatModels 未覆盖但 supported_formats 含）上不建任何路由
+// → 404（旧行为该格式全模型 tier2 转发，随白名单语义收窄）。
+//
+// mapping 交互：白名单只查请求模型（mapping key 即白名单别名，∈ Serves 空间），
+// 映射目标（上游模型名）不复查（pickFrom 内映射）。
 func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 	routes := make(map[routeKey]*route)
 	formats := []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS, domain.FormatOpenAIImages, domain.FormatAnthropic}
@@ -325,9 +339,10 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 				}
 				if a.tpl.Serves(model) {
 					t1 = append(t1, a)
-				} else {
-					t2 = append(t2, a)
+				} else if !a.tpl.HasModelSpace() {
+					t2 = append(t2, a) // 全模型账号：tier2 兜底
 				}
+				// 白名单账号未命中 → 跳过（不建路由 → 404）
 			}
 			if len(t1) == 0 && len(t2) == 0 {
 				continue
@@ -347,6 +362,9 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 		for _, a := range accs {
 			if a.tpl == nil || !slices.Contains(a.tpl.SupportedFormats, format) {
 				continue
+			}
+			if a.tpl.HasModelSpace() {
+				continue // 白名单账号不参与未知模型回落（默认桶仅全模型账号）
 			}
 			t2 = append(t2, a)
 		}

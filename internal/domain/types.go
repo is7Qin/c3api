@@ -222,6 +222,12 @@ func (t *Template) Serves(m string) bool {
 	return false
 }
 
+// HasModelSpace 模型空间是否已配置（Models/FormatModels/ModelMapping 任一非空）。
+// 空 = 未配置 = 全模型支持（硬白名单语义下归 tier2 兜底桶）。
+func (t *Template) HasModelSpace() bool {
+	return len(t.Models) > 0 || len(t.FormatModels) > 0 || len(t.ModelMapping) > 0
+}
+
 type Account struct {
 	ID         int64
 	Name       string

@@ -43,7 +43,7 @@ func (a *accountSnapshot) statePtr() *accState {
 }
 
 // routeKey 是预生成调度路径的桶键；model == "" 表示默认回退桶
-// （请求模型不在任何模板可服务集合内时，行为等价于默认格式的 tier2）。
+// （请求模型不在任何模板可服务集合内时，回落默认桶——仅含全模型账号的 tier2）。
 type routeKey struct {
 	format domain.RequestFormat
 	model  string
@@ -56,7 +56,8 @@ type weightedSeq struct {
 	cursor atomic.Uint64 // 请求时原子游标取模取用（Select 热路径）
 }
 
-// route 是 (format, model) 桶：模型命中（Serves）走 tier1，未命中走 tier2。
+// route 是 (format, model) 桶：模型命中（Serves）走 tier1；未命中时白名单账号
+// （有模型空间）跳过 → 404，全模型账号（无模型空间）走 tier2。
 type route struct {
 	tier1 *weightedSeq
 	tier2 *weightedSeq

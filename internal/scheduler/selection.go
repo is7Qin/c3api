@@ -10,7 +10,8 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Select 按预生成调度路径（格式硬过滤 + 模型偏好 + 加权轮询序列）选号，并占用并发槽。
+// Select 按预生成调度路径（格式硬过滤 + 模型硬白名单 + 全模型账号 tier2 兜底
+// + 加权轮询序列）选号，并占用并发槽。
 // 路径在快照重建时生成（buildRoutes），本函数热路径只做 O(1) 桶查找 + 序列游标取用
 // + 动态状态检查（冷却/禁用/并发满，atomic 读）+ CAS 抢占。
 // 调用方完成请求后必须 Release + MarkResult。
@@ -30,7 +31,7 @@ func (s *Scheduler) Select(groupID int64, format domain.RequestFormat, model str
 	}
 	rt, ok := gs.routes[routeKey{format, model}]
 	if !ok {
-		// 未知模型：回落默认桶（默认格式 tier2 语义）
+		// 未知模型：回落默认桶（仅含全模型账号的默认格式 tier2）
 		rt, ok = gs.routes[routeKey{format, ""}]
 	}
 	if !ok {
