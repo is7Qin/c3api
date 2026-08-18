@@ -300,6 +300,42 @@ type AccountExt struct {
 	Email             *string    // 管理标识：账号登录邮箱（导入时人工/上游提供，非自动生成，可空）
 }
 
+// CodexUsageSnapshot 账号 codex 额度快照（白名单收敛契约——spec 2026-08-18
+// Task 3：SDK UsageStatus 五块砍四留四——RateLimitReachedType（与 allowed=false
+// 重复的派生状态）与瞬时布尔（Allowed/LimitReached/HasCredits/Unlimited/
+// OverageLimitReached——5min 缓存下已过时）与 ApproxLocalMessages/
+// ApproxCloudMessages（[]any 未定型数组——不进契约）一律不出现）。每块 nil →
+// omitempty（上游没返回就不出字段——个人订阅账号可能无 SpendControl、team
+// 账号可能无 Credits.Balance；上游返回什么透什么，零填充）。金额字段为字符串
+// 不解析（SDK 有意保精度）。快照为尽力视图（展示面参考，非计费依据——真实
+// 账本 = usage_logs）。
+type CodexUsageSnapshot struct {
+	PlanType     string             `json:"plan_type,omitempty"`
+	RateLimit    *CodexRateLimit    `json:"rate_limit,omitempty"`     // 窗口用量
+	Credits      *CodexCredits      `json:"credits,omitempty"`        // 充值余额
+	SpendControl *CodexSpendControl `json:"spend_control,omitempty"`  // 消费限额（花了多少）
+}
+
+// CodexRateLimit 主窗口用量（ResetAt = SDK Unix 秒 → time.Time，JSON RFC3339）。
+type CodexRateLimit struct {
+	UsedPercent int       `json:"used_percent"`
+	ResetAt     time.Time `json:"reset_at"`
+}
+
+// CodexCredits 充值余额（Balance 金额字符串——如 "12.50"，不解析）。
+type CodexCredits struct {
+	Balance string `json:"balance"`
+}
+
+// CodexSpendControl 消费控制额度（Limit/Used/Remaining 金额字符串）。
+type CodexSpendControl struct {
+	Limit            string `json:"limit"`
+	Used             string `json:"used"`
+	Remaining        string `json:"remaining"`
+	UsedPercent      int    `json:"used_percent"`
+	RemainingPercent int    `json:"remaining_percent"`
+}
+
 type Group struct {
 	ID         int64
 	Name       string

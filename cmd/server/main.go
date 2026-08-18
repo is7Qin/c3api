@@ -362,6 +362,9 @@ func main() {
 		Log:                log,
 	})
 	px.SetCodex(codexAdapter)
+	// Task 3 codex 额度快照装配：svc.AccountUsage → sdkbridge.GetUsageSnapshot
+	//（TTL 缓存/有界并发/失败冷却全在适配层——service 纯编排零基础设施）。
+	svc.SetUsageSnapshotter(codexAdapter)
 	// 多实例集群 N 注入（#14 T3b）：gate 预算 ceil(剩余/N) + limit RPM ceil(rpm/N)。
 	// svc 构造后调用（svc.ClusterInstances 读 settings 快照）；settings NOTIFY
 	// 变更 N 后再次调用即触发预算即时重算（设计 §3.4）。

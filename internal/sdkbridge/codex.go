@@ -100,6 +100,13 @@ type codexEntry struct {
 	appliedTurnState string
 	expiresAt         *time.Time
 	reported          atomic.Bool
+	// usage 额度快照缓存（Task 3——GetUsageSnapshot 5min TTL）+ 失败冷却起点
+	// （60s——gate Major 2）：重建（sig 变化）随新条目一并清除；usageErr 只存
+	// 分类哨兵（ErrAuthExpired/ErrUpstream），不缓存错误体。
+	usage      *domain.CodexUsageSnapshot
+	usageAt    time.Time
+	usageErrAt time.Time
+	usageErr   error
 }
 
 // NewCodex 构造 codex 适配层。failure 为 T1 统一失效回调（适配层构造注册
@@ -254,6 +261,8 @@ func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredent
 //   - 空 rt 防护（P2-3）：codex-oauth 缺 refresh_token → 按失效上报（账号凭据
 //     不完整）不 panic（OAuthWithRotation 空 rt 构造 panic）；PAT 走 PAT(key)
 //     无此面
+//   - 重建 = 新条目构造——usage/usageAt/usageErrAt/usageErr 一并清除（对齐
+//     auth 重建；Task 3：凭据变更后快照重拉）
 //
 // 条目承载 Auth（HTTP 面 GenerateImage/Stream 与 WS 面 Dial 共享——连接
 // per-请求不缓存，Auth 账号级状态跨面复用；HTTPClient 由 clientFor 懒构造）。
@@ -352,6 +361,158 @@ func (a *Codex) ClearTurnState(accountID int64) {
 		e.turnState = ""
 	}
 	a.mu.Unlock()
+}
+
+// —— Task 3：codex 额度快照（GetUsageSnapshot——TTL 缓存 + 有界并发 + 失败冷却） ——
+
+// ErrAuthExpired 凭据失效分类错误（GetUsageSnapshot 错误面——IsFatal 纯判定
+// 零副作用：usage 查询面不重复上报不摘除——凭据失效由会话路径（Dial/
+// Responses）经 FatalAuth 上报，防循环；凭据变更后 entry sig 重建自然恢复。
+// task 2 upstream_error 映射输入）。
+var ErrAuthExpired = errors.New("codex: usage auth expired")
+
+// ErrUpstream 上游错误分类错误（GetUsageSnapshot 错误面——*HTTPError/网络/
+// RefreshError 等一律保守归本类；task 2 upstream_error 映射输入）。
+var ErrUpstream = errors.New("codex: usage upstream error")
+
+// usageFetchSem 快照拉取包级 semaphore（容量 8——所有调用面共享节流：管理面
+// 几百账号懒加载 + 未来路由面共用同一上限，防 OpenAI 429；只限并发不限速率
+// ——速率上限由失败冷却封顶）。
+var usageFetchSem = make(chan struct{}, usageFetchConcurrency)
+
+const usageFetchConcurrency = 8
+
+// usageSnapshotTTL 快照 TTL（5min 慢变量——上游分钟级更新；滚动查看零上游）。
+// var（非 const）——测试注入可调值。
+var usageSnapshotTTL = 5 * time.Minute
+
+// usageCooldown 失败冷却（60s——冷却内直接返回分类错误零上游，封顶重试率
+// ≤1 次/账号/分钟；不缓存错误体，冷却后重试）。
+var usageCooldown = 60 * time.Second
+
+// GetUsageSnapshot 账号 codex 额度快照（ChatGPT 面 wham/usage）：cred →
+// 缓存条目（entryFor——sig 比对/重建，重建时 usage/usageAt/usageErrAt 随新
+// 条目一并清除）→ 5min TTL 命中直接返回（零上游）；未命中 → 包级 semaphore
+// （容量 8，有界并发）→ SDK GetUsage（e.client 复用——BaseURL 已带，usage
+// 端点 SDK 内部派生，网关零拼装）→ 白名单收敛映射（fromSDKUsage）→ 写
+// e.usage + e.usageAt。失败 → 写 e.usageErrAt（60s 冷却）。
+//
+// 错误分类**纯判定零副作用**（gate Major 3——不复用 translateError：其 fatal
+// 分支 reportFatal → evict 删 entry，冷却随 entry 消失）：IsFatal（fatal 五类
+// 穿透信封链）→ ErrAuthExpired；其余（*HTTPError/网络/RefreshError）保守归
+// ErrUpstream。usage 是查询面不是会话面——凭据失效由会话路径上报（防循环），
+// entry 恒保留（fatal 后后续调用仍命中冷却）。
+func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
+	e, err := a.clientFor(cred, nil, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := a.snapshotCached(e); ok {
+		return s, nil
+	}
+	if err := a.snapshotCooldown(e); err != nil {
+		return nil, err
+	}
+	select {
+	case usageFetchSem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-usageFetchSem }()
+	// 双检：semaphore 等待期间并发请求可能已拉取成功/失败（TTL/冷却语义保持
+	// ——不重复拉取、不重复报错）。
+	if s, ok := a.snapshotCached(e); ok {
+		return s, nil
+	}
+	if err := a.snapshotCooldown(e); err != nil {
+		return nil, err
+	}
+	resp, err := e.client.GetUsage(ctx)
+	if err != nil {
+		// 取消/超时短路（task review 2026-08-18 Important 1）：ctx 取消 →
+		// 不写失败冷却（误记会锁死该账号 60s——管理面批量拉取切页触发面）、
+		// 返回 ctx 错误本身保留取消身份（不误归 ErrUpstream）。
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		a.recordUsageFailure(e, err)
+		return nil, classifyUsageErr(err)
+	}
+	s := fromSDKUsage(resp)
+	a.mu.Lock()
+	e.usage = s
+	e.usageAt = time.Now()
+	a.mu.Unlock()
+	return s, nil
+}
+
+// snapshotCached 快照 TTL 命中判定（5min 慢变量；e.usage nil = 未拉取过）。
+func (a *Codex) snapshotCached(e *codexEntry) (*domain.CodexUsageSnapshot, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if e.usage != nil && time.Since(e.usageAt) < usageSnapshotTTL {
+		return e.usage, true
+	}
+	return nil, false
+}
+
+// snapshotCooldown 失败冷却判定（60s）：冷却中 → 返回分类哨兵（
+// ErrAuthExpired/ErrUpstream——非错误体，冷却后重试拉取新错误）；冷却外 →
+// nil（可拉取）。
+func (a *Codex) snapshotCooldown(e *codexEntry) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !e.usageErrAt.IsZero() && time.Since(e.usageErrAt) < usageCooldown {
+		return e.usageErr
+	}
+	return nil
+}
+
+// recordUsageFailure 失败冷却起点（gate Major 2）：写 usageErrAt + 分类哨兵
+// （不缓存错误体）。
+func (a *Codex) recordUsageFailure(e *codexEntry, err error) {
+	a.mu.Lock()
+	e.usageErrAt = time.Now()
+	e.usageErr = classifyUsageErr(err)
+	a.mu.Unlock()
+}
+
+// classifyUsageErr 错误分类纯判定（gate Major 3——零副作用不上报不摘除）：
+// IsFatal（fatal 五类穿透信封链——RefreshOAuthError/AuthPermanentlyRevoked-
+// Error/AccountDisabledError/CallbackDeliveryError）→ ErrAuthExpired；其余
+// （*HTTPError/网络/RefreshError 等）保守归 ErrUpstream。
+func classifyUsageErr(err error) error {
+	if IsFatal(err) {
+		return ErrAuthExpired
+	}
+	return ErrUpstream
+}
+
+// fromSDKUsage codexsdk.UsageStatus → domain.CodexUsageSnapshot 白名单收敛
+// 映射（spec 变更 3——砍四留四：approx_*/瞬时布尔/派生状态/RateLimitReached
+// 一律不进契约；每块 nil → 不出字段；ResetAt Unix 秒 → time.Time）。
+func fromSDKUsage(u *codexsdk.UsageStatus) *domain.CodexUsageSnapshot {
+	if u == nil {
+		return nil
+	}
+	s := &domain.CodexUsageSnapshot{PlanType: u.PlanType}
+	if rl := u.RateLimit; rl != nil && rl.PrimaryWindow != nil {
+		s.RateLimit = &domain.CodexRateLimit{UsedPercent: rl.PrimaryWindow.UsedPercent}
+		if rl.PrimaryWindow.ResetAt > 0 {
+			s.RateLimit.ResetAt = time.Unix(int64(rl.PrimaryWindow.ResetAt), 0).UTC()
+		}
+	}
+	if c := u.Credits; c != nil && c.Balance != nil {
+		s.Credits = &domain.CodexCredits{Balance: *c.Balance}
+	}
+	if sc := u.SpendControl; sc != nil && sc.IndividualLimit != nil {
+		l := sc.IndividualLimit
+		s.SpendControl = &domain.CodexSpendControl{
+			Limit: l.Limit, Used: l.Used, Remaining: l.Remaining,
+			UsedPercent: l.UsedPercent, RemainingPercent: l.RemainingPercent,
+		}
+	}
+	return s
 }
 
 // identityOpts 伪装身份 → SDK Option（META-2：WithSession/WithCodexMeta——
