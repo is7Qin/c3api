@@ -163,6 +163,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/batch-import-codex-oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量导入 codex-oauth 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批） */
+        post: operations["PostAccountsBatchImportCodexOauth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/batch-import-codex-pat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批） */
+        post: operations["PostAccountsBatchImportCodexPat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{id}": {
         parameters: {
             query?: never;
@@ -1185,6 +1219,79 @@ export interface components {
             thread_id?: string | null;
             /** @description 身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n；响应 nil → null） */
             window_id?: string | null;
+        };
+        /** @description 批量导入 codex-oauth 单行（组合幂等键 codex_email + codex_account_id；token+refresh 成对必填） */
+        CodexOAuthImportItem: {
+            /** @description 组合幂等键①：codex 账号登录邮箱（必填；格式非法 → 行级 failed） */
+            codex_email: string;
+            /** @description 组合幂等键②：上游账号/空间标识（必填） */
+            codex_account_id: string;
+            /** @description 凭据：oauth 访问令牌（必填；与 refresh 成对） */
+            codex_oauth_token: string;
+            /** @description 凭据：oauth 刷新令牌（必填；与 token 成对） */
+            codex_oauth_refresh_token: string;
+            /** @description 凭据：oauth 访问令牌过期时间（可选；RFC3339 格式——解析失败 → 行级 failed） */
+            codex_oauth_expires_at?: string;
+            /** @description 可选；缺省 25（导入面裁决——非账号表默认 8）；<1 → 归 25 */
+            max_concurrency?: number;
+            /** @description 可选；缺省 100；负值 → 行级 failed */
+            weight?: number;
+        };
+        /** @description 批量导入 codex-pat 单行（组合幂等键同上） */
+        CodexPATImportItem: {
+            /** @description 组合幂等键①：codex 账号登录邮箱（必填；格式非法 → 行级 failed） */
+            codex_email: string;
+            /** @description 组合幂等键②：上游账号/空间标识（必填） */
+            codex_account_id: string;
+            /** @description 凭据：pat（必填非空） */
+            codex_pat_key: string;
+            /** @description 可选；缺省 25（导入面裁决）；<1 → 归 25 */
+            max_concurrency?: number;
+            /** @description 可选；缺省 100；负值 → 行级 failed */
+            weight?: number;
+        };
+        /** @description 批量导入 codex-oauth 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-oauth——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed） */
+        CodexOAuthImportBody: {
+            items: components["schemas"]["CodexOAuthImportItem"][];
+            /**
+             * Format: int64
+             * @description 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-oauth）
+             */
+            template_id: number;
+            /**
+             * Format: int64
+             * @description 可选：新建账号归组（缺省不归组；不存在 → 行级 failed——FK 违反归行级不整批 400）
+             */
+            group_id?: number | null;
+        };
+        /** @description 批量导入 codex-pat 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-pat——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed） */
+        CodexPATImportBody: {
+            items: components["schemas"]["CodexPATImportItem"][];
+            /**
+             * Format: int64
+             * @description 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-pat）
+             */
+            template_id: number;
+            /**
+             * Format: int64
+             * @description 可选：新建账号归组（不存在 → 行级 failed）
+             */
+            group_id?: number | null;
+        };
+        /** @description 行级失败条目（index = items 原始下标——行级定位契约） */
+        ImportFailedItem: {
+            /** @description items 原始下标 */
+            index: number;
+            /** @description 该行失败原因文案 */
+            error: string;
+        };
+        /** @description 批量导入结果（单行失败不毁整批——整批不原子；有失败行也 200） */
+        ImportResult: {
+            /** @description 新建账号数 */
+            imported: number;
+            /** @description 键存在更新凭据数 */
+            updated: number;
+            failed: components["schemas"]["ImportFailedItem"][];
         };
         TemplateListResponse: {
             /** Format: int64 */
@@ -2907,6 +3014,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BatchUpdateResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsBatchImportCodexOauth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexOAuthImportBody"];
+            };
+        };
+        responses: {
+            /** @description 导入结果（imported 新建 / updated 键存在更新凭据 / failed 行级 index+error——有失败行也 200） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsBatchImportCodexPat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexPATImportBody"];
+            };
+        };
+        responses: {
+            /** @description 导入结果（imported 新建 / updated 键存在更新凭据 / failed 行级 index+error——有失败行也 200） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
                 };
             };
             default: components["responses"]["Error"];

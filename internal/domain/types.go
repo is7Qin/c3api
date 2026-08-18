@@ -312,6 +312,45 @@ type AccountExt struct {
 	CodexAccountID         *string        // 上游账号/空间标识（Task B 导入必填；可空）
 }
 
+// CodexOAuthImportItem 批量导入 codex-oauth 单行（Task B——组合幂等键
+// codex_email + codex_account_id；token+refresh 成对必填；expires_at 可选
+// 原始 RFC3339 字符串（service 逐行解析——格式错误 → 行级 failed 非整批
+// 400；nil = 过期未知 → 401 自愈）；max_concurrency/weight 配置面——nil =
+// 缺省 25/100（导入面裁决覆盖账号表默认 8））。
+type CodexOAuthImportItem struct {
+	CodexEmail             string
+	CodexAccountID         string
+	CodexOAuthToken        string
+	CodexOAuthRefreshToken string
+	CodexOAuthExpiresAt    *string
+	MaxConcurrency         *int
+	Weight                 *int
+}
+
+// CodexPATImportItem 批量导入 codex-pat 单行（组合键同上；pat_key 必填）。
+type CodexPATImportItem struct {
+	CodexEmail     string
+	CodexAccountID string
+	CodexPATKey    string
+	MaxConcurrency *int
+	Weight         *int
+}
+
+// ImportFailedItem 行级失败条目（index = items 原始下标——行级定位契约；
+// error 为该行失败原因文案）。
+type ImportFailedItem struct {
+	Index int
+	Error string
+}
+
+// ImportResult 批量导入结果（imported 新建 / updated 键存在更新凭据 /
+// failed 行级失败——单行失败不毁整批，整批不原子）。
+type ImportResult struct {
+	Imported int
+	Updated  int
+	Failed   []ImportFailedItem
+}
+
 // CodexUsageSnapshot 账号 codex 额度快照（白名单收敛契约——spec 2026-08-18
 // Task 3：SDK UsageStatus 五块砍四留四——RateLimitReachedType（与 allowed=false
 // 重复的派生状态）与瞬时布尔（Allowed/LimitReached/HasCredits/Unlimited/

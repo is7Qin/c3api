@@ -173,6 +173,17 @@ type AccountExtStore interface {
 	UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error)
 	TryInsertAccountExt(ctx context.Context, e *domain.AccountExt) (bool, error)
 	GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error)
+	// FindAccountExtByCodexKey 组合幂等键查重（Task B 批量导入——(codex_email,
+	// codex_account_id)；GetAccountExt 仅按 account_id，查重面不存在）；缺行 →
+	// ErrNotFound。
+	FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error)
+	// WriteOAuthRotation oauth 凭据三列部分更新（Task B 导入 updated 路径——
+	// identity/email/其余列零触碰；SDK 轮转回写 sdkbridge.RotationStore 同签名
+	// 独立面，repository.AccountExts 一实现双面）；行缺失 → ErrNotFound。
+	WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error
+	// WritePATKey pat 凭据列部分更新（WriteOAuthRotation 的 pat 对称形态）；
+	// 行缺失 → ErrNotFound。
+	WritePATKey(ctx context.Context, accountID int64, patKey string) error
 }
 
 // RedemptionStore 兑换码 + 兑换审计持久化（Phase 5 计费前基础设施）。

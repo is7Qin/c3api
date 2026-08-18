@@ -154,6 +154,14 @@ type TxStore interface {
 	ListAssignmentsByGroup(ctx context.Context, groupID int64) ([]*domain.GroupAssignment, error)
 	// ListAssignmentsByUser SetUserGroups 替换循环内读（撤销判定与写同一事务）。
 	ListAssignmentsByUser(ctx context.Context, userID int64) ([]*domain.GroupAssignment, error)
+	// 账号/扩展/归组（Task B codex 批量导入 imported 行单行事务——第三领域；
+	// tx 版 Repository 天然实现（newRepository 完整构造），类型收窄延续：
+	// 闭包只能调清单内方法）。GetTemplate 不入事务面——模板存在性顶层已校验，
+	// credential_type 即端点类型（oauth 端点恒 codex-oauth）。
+	FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error)
+	CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
+	SetAccountGroups(ctx context.Context, accountID int64, groupIDs []int64) error
+	UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error)
 }
 
 // WithTx 在单事务内执行 fn（评审 I-1）：ent `Tx().Client()` 模式构造 tx 版 Repository
@@ -306,6 +314,24 @@ func (r *Repository) TryInsertAccountExt(ctx context.Context, e *domain.AccountE
 
 func (r *Repository) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	return r.AccountExts.GetAccountExt(ctx, accountID)
+}
+
+// FindAccountExtByCodexKey 组合幂等键查重（Task B 批量导入——(codex_email,
+// codex_account_id) 双条件；缺行 → ErrNotFound）。
+func (r *Repository) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
+	return r.AccountExts.FindAccountExtByCodexKey(ctx, codexEmail, codexAccountID)
+}
+
+// WriteOAuthRotation oauth 凭据三列部分更新（SDK 轮转回写 sdkbridge.RotationStore
+// 与批量导入 updated 路径共用面）；行缺失 → ErrNotFound。
+func (r *Repository) WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error {
+	return r.AccountExts.WriteOAuthRotation(ctx, accountID, at, rt, expiresAt)
+}
+
+// WritePATKey pat 凭据列部分更新（批量导入 updated 路径；WriteOAuthRotation
+// 的 pat 对称形态）；行缺失 → ErrNotFound。
+func (r *Repository) WritePATKey(ctx context.Context, accountID int64, patKey string) error {
+	return r.AccountExts.WritePATKey(ctx, accountID, patKey)
 }
 
 // --- 用户（Phase 3a） ---

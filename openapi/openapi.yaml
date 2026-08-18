@@ -254,6 +254,42 @@ paths:
               schema: { $ref: '#/components/schemas/BatchUpdateResponse' }
         default:
           $ref: '#/components/responses/Error'
+  /accounts/batch-import-codex-oauth:
+    post:
+      operationId: PostAccountsBatchImportCodexOauth
+      tags: [accounts]
+      summary: 批量导入 codex-oauth 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodexOAuthImportBody' }
+      responses:
+        '200':
+          description: 导入结果（imported 新建 / updated 键存在更新凭据 / failed 行级 index+error——有失败行也 200）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportResult' }
+        default:
+          $ref: '#/components/responses/Error'
+  /accounts/batch-import-codex-pat:
+    post:
+      operationId: PostAccountsBatchImportCodexPat
+      tags: [accounts]
+      summary: 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodexPATImportBody' }
+      responses:
+        '200':
+          description: 导入结果（imported 新建 / updated 键存在更新凭据 / failed 行级 index+error——有失败行也 200）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportResult' }
+        default:
+          $ref: '#/components/responses/Error'
   /accounts/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -1680,6 +1716,71 @@ components:
         session_id: { type: string, nullable: true, description: "身份：会话级（UUIDv7；恒等 == thread_id；service 自动生成/沿用；响应 nil → null）" }
         thread_id: { type: string, nullable: true, description: "身份：会话级（UUIDv7；恒等 == session_id；响应 nil → null）" }
         window_id: { type: string, nullable: true, description: "身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n；响应 nil → null）" }
+    CodexOAuthImportItem:
+      type: object
+      required: [codex_email, codex_account_id, codex_oauth_token, codex_oauth_refresh_token]
+      description: 批量导入 codex-oauth 单行（组合幂等键 codex_email + codex_account_id；token+refresh 成对必填）
+      properties:
+        codex_email: { type: string, description: "组合幂等键①：codex 账号登录邮箱（必填；格式非法 → 行级 failed）" }
+        codex_account_id: { type: string, description: "组合幂等键②：上游账号/空间标识（必填）" }
+        codex_oauth_token: { type: string, description: "凭据：oauth 访问令牌（必填；与 refresh 成对）" }
+        codex_oauth_refresh_token: { type: string, description: "凭据：oauth 刷新令牌（必填；与 token 成对）" }
+        # 原始字符串（非 format: date-time）——解析失败须行级 failed（行级错误
+        # 归 failed 不整批 400）；nil = 过期未知 → 401 自愈。
+        codex_oauth_expires_at: { type: string, description: "凭据：oauth 访问令牌过期时间（可选；RFC3339 格式——解析失败 → 行级 failed）" }
+        max_concurrency: { type: integer, description: "可选；缺省 25（导入面裁决——非账号表默认 8）；<1 → 归 25" }
+        weight: { type: integer, description: "可选；缺省 100；负值 → 行级 failed" }
+    CodexPATImportItem:
+      type: object
+      required: [codex_email, codex_account_id, codex_pat_key]
+      description: 批量导入 codex-pat 单行（组合幂等键同上）
+      properties:
+        codex_email: { type: string, description: "组合幂等键①：codex 账号登录邮箱（必填；格式非法 → 行级 failed）" }
+        codex_account_id: { type: string, description: "组合幂等键②：上游账号/空间标识（必填）" }
+        codex_pat_key: { type: string, description: "凭据：pat（必填非空）" }
+        max_concurrency: { type: integer, description: "可选；缺省 25（导入面裁决）；<1 → 归 25" }
+        weight: { type: integer, description: "可选；缺省 100；负值 → 行级 failed" }
+    CodexOAuthImportBody:
+      type: object
+      required: [items, template_id]
+      description: 批量导入 codex-oauth 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-oauth——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/CodexOAuthImportItem' }
+        template_id: { type: integer, format: int64, description: "必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-oauth）" }
+        group_id: { type: integer, format: int64, nullable: true, description: "可选：新建账号归组（缺省不归组；不存在 → 行级 failed——FK 违反归行级不整批 400）" }
+    CodexPATImportBody:
+      type: object
+      required: [items, template_id]
+      description: 批量导入 codex-pat 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-pat——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/CodexPATImportItem' }
+        template_id: { type: integer, format: int64, description: "必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-pat）" }
+        group_id: { type: integer, format: int64, nullable: true, description: "可选：新建账号归组（不存在 → 行级 failed）" }
+    ImportFailedItem:
+      type: object
+      required: [index, error]
+      description: 行级失败条目（index = items 原始下标——行级定位契约）
+      properties:
+        index: { type: integer, description: "items 原始下标" }
+        error: { type: string, description: "该行失败原因文案" }
+    ImportResult:
+      type: object
+      required: [imported, updated, failed]
+      description: 批量导入结果（单行失败不毁整批——整批不原子；有失败行也 200）
+      properties:
+        imported: { type: integer, description: "新建账号数" }
+        updated: { type: integer, description: "键存在更新凭据数" }
+        failed:
+          type: array
+          items: { $ref: '#/components/schemas/ImportFailedItem' }
     TemplateListResponse:
       type: object
       required: [total, rows]

@@ -545,6 +545,68 @@ type CodexIdentity struct {
 	WindowId *string `json:"window_id"`
 }
 
+// CodexOAuthImportBody 批量导入 codex-oauth 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-oauth——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）
+type CodexOAuthImportBody struct {
+	// GroupId 可选：新建账号归组（缺省不归组；不存在 → 行级 failed——FK 违反归行级不整批 400）
+	GroupId *int64                 `json:"group_id"`
+	Items   []CodexOAuthImportItem `json:"items"`
+
+	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-oauth）
+	TemplateId int64 `json:"template_id"`
+}
+
+// CodexOAuthImportItem 批量导入 codex-oauth 单行（组合幂等键 codex_email + codex_account_id；token+refresh 成对必填）
+type CodexOAuthImportItem struct {
+	// CodexAccountId 组合幂等键②：上游账号/空间标识（必填）
+	CodexAccountId string `json:"codex_account_id"`
+
+	// CodexEmail 组合幂等键①：codex 账号登录邮箱（必填；格式非法 → 行级 failed）
+	CodexEmail string `json:"codex_email"`
+
+	// CodexOauthExpiresAt 凭据：oauth 访问令牌过期时间（可选；RFC3339 格式——解析失败 → 行级 failed）
+	CodexOauthExpiresAt *string `json:"codex_oauth_expires_at,omitempty"`
+
+	// CodexOauthRefreshToken 凭据：oauth 刷新令牌（必填；与 token 成对）
+	CodexOauthRefreshToken string `json:"codex_oauth_refresh_token"`
+
+	// CodexOauthToken 凭据：oauth 访问令牌（必填；与 refresh 成对）
+	CodexOauthToken string `json:"codex_oauth_token"`
+
+	// MaxConcurrency 可选；缺省 25（导入面裁决——非账号表默认 8）；<1 → 归 25
+	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+
+	// Weight 可选；缺省 100；负值 → 行级 failed
+	Weight *int `json:"weight,omitempty"`
+}
+
+// CodexPATImportBody 批量导入 codex-pat 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-pat——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）
+type CodexPATImportBody struct {
+	// GroupId 可选：新建账号归组（不存在 → 行级 failed）
+	GroupId *int64               `json:"group_id"`
+	Items   []CodexPATImportItem `json:"items"`
+
+	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-pat）
+	TemplateId int64 `json:"template_id"`
+}
+
+// CodexPATImportItem 批量导入 codex-pat 单行（组合幂等键同上）
+type CodexPATImportItem struct {
+	// CodexAccountId 组合幂等键②：上游账号/空间标识（必填）
+	CodexAccountId string `json:"codex_account_id"`
+
+	// CodexEmail 组合幂等键①：codex 账号登录邮箱（必填；格式非法 → 行级 failed）
+	CodexEmail string `json:"codex_email"`
+
+	// CodexPatKey 凭据：pat（必填非空）
+	CodexPatKey string `json:"codex_pat_key"`
+
+	// MaxConcurrency 可选；缺省 25（导入面裁决）；<1 → 归 25
+	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+
+	// Weight 可选；缺省 100；负值 → 行级 failed
+	Weight *int `json:"weight,omitempty"`
+}
+
 // CodexRateLimit 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01）
 type CodexRateLimit struct {
 	ResetAt     *time.Time `json:"reset_at"`
@@ -788,6 +850,26 @@ type ImagePriceUpsert struct {
 
 	// OutputImageTokenPricePerMillion image token 输出价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；API 边界 ×1e5 → 毫分/1M）；缺省/null = 清空该分量
 	OutputImageTokenPricePerMillion *float64 `json:"output_image_token_price_per_million"`
+}
+
+// ImportFailedItem 行级失败条目（index = items 原始下标——行级定位契约）
+type ImportFailedItem struct {
+	// Error 该行失败原因文案
+	Error string `json:"error"`
+
+	// Index items 原始下标
+	Index int `json:"index"`
+}
+
+// ImportResult 批量导入结果（单行失败不毁整批——整批不原子；有失败行也 200）
+type ImportResult struct {
+	Failed []ImportFailedItem `json:"failed"`
+
+	// Imported 新建账号数
+	Imported int `json:"imported"`
+
+	// Updated 键存在更新凭据数
+	Updated int `json:"updated"`
 }
 
 // KeyStatus defines model for KeyStatus.
@@ -1747,6 +1829,12 @@ type PostAccountsJSONRequestBody = AccountCreate
 // PostAccountsBatchDeleteJSONRequestBody defines body for PostAccountsBatchDelete for application/json ContentType.
 type PostAccountsBatchDeleteJSONRequestBody = BatchDeleteBody
 
+// PostAccountsBatchImportCodexOauthJSONRequestBody defines body for PostAccountsBatchImportCodexOauth for application/json ContentType.
+type PostAccountsBatchImportCodexOauthJSONRequestBody = CodexOAuthImportBody
+
+// PostAccountsBatchImportCodexPatJSONRequestBody defines body for PostAccountsBatchImportCodexPat for application/json ContentType.
+type PostAccountsBatchImportCodexPatJSONRequestBody = CodexPATImportBody
+
 // PostAccountsBatchUpdateJSONRequestBody defines body for PostAccountsBatchUpdate for application/json ContentType.
 type PostAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
 
@@ -1836,6 +1924,12 @@ type ServerInterface interface {
 	// 批量删除账号（事务，全成或全败）
 	// (POST /accounts/batch-delete)
 	PostAccountsBatchDelete(w http.ResponseWriter, r *http.Request)
+	// 批量导入 codex-oauth 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
+	// (POST /accounts/batch-import-codex-oauth)
+	PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request)
+	// 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
+	// (POST /accounts/batch-import-codex-pat)
+	PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request)
 	// 批量更新账号（fields 为任意字段子集）
 	// (POST /accounts/batch-update)
 	PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
@@ -2040,6 +2134,18 @@ func (_ Unimplemented) PostAccounts(w http.ResponseWriter, r *http.Request) {
 // 批量删除账号（事务，全成或全败）
 // (POST /accounts/batch-delete)
 func (_ Unimplemented) PostAccountsBatchDelete(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 批量导入 codex-oauth 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
+// (POST /accounts/batch-import-codex-oauth)
+func (_ Unimplemented) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
+// (POST /accounts/batch-import-codex-pat)
+func (_ Unimplemented) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2503,6 +2609,34 @@ func (siw *ServerInterfaceWrapper) PostAccountsBatchDelete(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAccountsBatchDelete(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccountsBatchImportCodexOauth operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsBatchImportCodexOauth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccountsBatchImportCodexPat operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsBatchImportCodexPat(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4730,6 +4864,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/batch-delete", wrapper.PostAccountsBatchDelete)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/batch-import-codex-oauth", wrapper.PostAccountsBatchImportCodexOauth)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/batch-import-codex-pat", wrapper.PostAccountsBatchImportCodexPat)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/batch-update", wrapper.PostAccountsBatchUpdate)

@@ -126,6 +126,9 @@ export class ApiClient {
   getAccountGroups = (id: number) => this.request<components['schemas']['AccountGroupsResponse']>(`/accounts/${id}/groups`)
   getAccountExt = (id: number) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`)
   putAccountExt = (id: number, b: components['schemas']['AccountExt']) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`, { method: 'PUT', body: JSON.stringify(b) })
+  // —— codex 凭据批量导入（Task B；行级失败归 failed——HTTP 恒 200）——
+  importCodexOauthAccounts = (b: components['schemas']['CodexOAuthImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-oauth', { method: 'POST', body: JSON.stringify(b) })
+  importCodexPatAccounts = (b: components['schemas']['CodexPATImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-pat', { method: 'POST', body: JSON.stringify(b) })
   // —— 规则 ——
   listRules = (p?: { enabled?: boolean }) => this.request<components['schemas']['RuleListResponse']>('/rules', { params: toQuery(p) })
   createRule = (b: components['schemas']['RuleCreate']) => this.request<components['schemas']['Rule']>('/rules', { method: 'POST', body: JSON.stringify(b) })

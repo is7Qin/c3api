@@ -148,6 +148,41 @@ func (r *AccountExtRepo) WriteOAuthRotation(ctx context.Context, accountID int64
 	return nil
 }
 
+// FindAccountExtByCodexKey 组合幂等键查重（Task B 批量导入专用——
+// (codex_email, codex_account_id) 双条件 AND 定位，对齐唯一索引；GetAccountExt
+// 仅按 account_id，查重面不存在）。命中返回行（含 credential_type——跨类型
+// 判定用）；缺行 → ErrNotFound。
+func (r *AccountExtRepo) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
+	row, err := r.client.AccountExt.Query().
+		Where(accountext.CodexEmailEQ(codexEmail), accountext.CodexAccountIDEQ(codexAccountID)).
+		Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: codex_email=%q codex_account_id=%q missing", ErrNotFound, codexEmail, codexAccountID)
+		}
+		return nil, err
+	}
+	return toDomainAccountExt(row), nil
+}
+
+// WritePATKey pat 凭据部分更新（Task B 批量导入 updated 路径；WriteOAuthRotation
+// 的 pat 对称形态——只 SetCodexPatKey，identity/email/oauth 列零触碰；全量
+// UpsertAccountExt 的 ClearX 清 NULL 面在此禁用）。行缺失 → ErrNotFound（同
+// WriteOAuthRotation 语义——updated 路径行必存在，dedup 刚查到，不触发）。
+func (r *AccountExtRepo) WritePATKey(ctx context.Context, accountID int64, patKey string) error {
+	n, err := r.client.AccountExt.Update().
+		Where(accountext.AccountIDEQ(accountID)).
+		SetCodexPatKey(patKey).
+		Save(ctx)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: account_id=%d ext row missing (codex account must have account_ext)", ErrNotFound, accountID)
+	}
+	return nil
+}
+
 // GetAccountExt 按账号 id 取扩展行；无行 → ErrNotFound。
 func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	row, err := r.client.AccountExt.Query().Where(accountext.AccountIDEQ(accountID)).Only(ctx)

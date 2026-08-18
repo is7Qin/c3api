@@ -373,6 +373,49 @@ func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain
 	return &c, nil
 }
 
+// FindAccountExtByCodexKey 组合幂等键查重（Task B 批量导入；镜像真实 repo
+// 双条件 AND——缺行 → ErrNotFound）。
+func (f *fakeStore) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, e := range f.accExts {
+		if e.CodexEmail != nil && *e.CodexEmail == codexEmail &&
+			e.CodexAccountID != nil && *e.CodexAccountID == codexAccountID {
+			c := *e
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: codex_email=%q codex_account_id=%q missing", repository.ErrNotFound, codexEmail, codexAccountID)
+}
+
+// WriteOAuthRotation oauth 凭据三列部分更新（镜像真实 repo 部分更新语义——
+// 其余列零触碰）；行缺失 → ErrNotFound。
+func (f *fakeStore) WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.accExts[accountID]
+	if !ok {
+		return fmt.Errorf("%w: account_id=%d ext row missing", repository.ErrNotFound, accountID)
+	}
+	e.CodexOAuthToken = &at
+	e.CodexOAuthRefreshToken = &rt
+	e.CodexOAuthExpiresAt = expiresAt
+	return nil
+}
+
+// WritePATKey pat 凭据列部分更新（WriteOAuthRotation 的 pat 对称形态）；
+// 行缺失 → ErrNotFound。
+func (f *fakeStore) WritePATKey(ctx context.Context, accountID int64, patKey string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.accExts[accountID]
+	if !ok {
+		return fmt.Errorf("%w: account_id=%d ext row missing", repository.ErrNotFound, accountID)
+	}
+	e.CodexPATKey = &patKey
+	return nil
+}
+
 // QueryUsages 模拟 repo 过滤（R4-M2 防假绿：完整过滤面与真实 repo
 // QueryUsages 逐项一致——归属四元组/model/error_type/时间范围 + cursor 游标
 // （id < cursor）+ ID 降序 + limit+1 探测；user_id > 0 强制过滤——
@@ -1244,12 +1287,18 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		// 授予面（S3-F2：assignment 替换循环入事务）
 		assign:     cloneAssignMap(f.assign),
 		assignMult: maps.Clone(f.assignMult),
+		// 账号/扩展/归组面（Task B codex 导入 imported 行单行事务）
+		accs:      cloneAccMap(f.accs),
+		accExts:   cloneAccExtMap(f.accExts),
+		accGroups: cloneAccGroupsMap(f.accGroups),
+		groups:    cloneGroupMap(f.groups),
 	}
 	if err := fn(tx); err != nil {
 		return err // 回滚：暂存丢弃
 	}
 	f.codes, f.uses, f.users, f.temps, f.nextID = tx.codes, tx.uses, tx.users, tx.temps, tx.nextID
 	f.assign, f.assignMult = tx.assign, tx.assignMult
+	f.accs, f.accExts, f.accGroups = tx.accs, tx.accExts, tx.accGroups
 	return nil
 }
 
@@ -1278,6 +1327,12 @@ type fakeTx struct {
 	// 授予面（S3-F2）：assign/assignMult 同 fakeStore 语义。
 	assign     map[int64][]int64
 	assignMult map[[2]int64]*int
+	// 账号/扩展/归组面（Task B codex 导入 imported 行单行事务）：同 fakeStore
+	// 语义。
+	accs      map[int64]*domain.Account
+	accExts   map[int64]*domain.AccountExt
+	accGroups map[int64][]int64
+	groups    map[int64]*domain.Group
 }
 
 var _ repository.TxStore = (*fakeTx)(nil)
@@ -1307,6 +1362,84 @@ func cloneUserMap(m map[int64]*domain.User) map[int64]*domain.User {
 		out[k] = &c
 	}
 	return out
+}
+
+func cloneAccMap(m map[int64]*domain.Account) map[int64]*domain.Account {
+	out := make(map[int64]*domain.Account, len(m))
+	for k, v := range m {
+		c := *v
+		out[k] = &c
+	}
+	return out
+}
+
+func cloneAccExtMap(m map[int64]*domain.AccountExt) map[int64]*domain.AccountExt {
+	out := make(map[int64]*domain.AccountExt, len(m))
+	for k, v := range m {
+		c := *v
+		out[k] = &c
+	}
+	return out
+}
+
+func cloneAccGroupsMap(m map[int64][]int64) map[int64][]int64 {
+	out := make(map[int64][]int64, len(m))
+	for k, v := range m {
+		out[k] = slices.Clone(v)
+	}
+	return out
+}
+
+func cloneGroupMap(m map[int64]*domain.Group) map[int64]*domain.Group {
+	out := make(map[int64]*domain.Group, len(m))
+	for k, v := range m {
+		c := *v
+		out[k] = &c
+	}
+	return out
+}
+
+// --- 账号/扩展/归组（Task B codex 导入 imported 行单行事务面；语义镜像
+// fakeStore 对应方法——变更只落暂存） ---
+
+func (t *fakeTx) CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
+	a.ID = t.nextID
+	t.nextID++
+	c := *a
+	t.accs[a.ID] = &c
+	return a, nil
+}
+
+// SetAccountGroups 替换账号的全部分组（镜像真实 repo：组存在性先校验——缺失
+// → ErrNotFound 含 id；账号缺 id → ErrNotFound）。
+func (t *fakeTx) SetAccountGroups(ctx context.Context, accountID int64, groupIDs []int64) error {
+	for _, gid := range groupIDs {
+		if _, ok := t.groups[gid]; !ok {
+			return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, gid)
+		}
+	}
+	if _, ok := t.accs[accountID]; !ok {
+		return missingErr(accountID)
+	}
+	t.accGroups[accountID] = slices.Clone(groupIDs)
+	return nil
+}
+
+func (t *fakeTx) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
+	c := *e
+	t.accExts[e.AccountID] = &c
+	return &c, nil
+}
+
+func (t *fakeTx) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
+	for _, e := range t.accExts {
+		if e.CodexEmail != nil && *e.CodexEmail == codexEmail &&
+			e.CodexAccountID != nil && *e.CodexAccountID == codexAccountID {
+			c := *e
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: codex_email=%q codex_account_id=%q missing", repository.ErrNotFound, codexEmail, codexAccountID)
 }
 
 func (t *fakeTx) CreateCodes(ctx context.Context, codes []*domain.RedemptionCode) error {
