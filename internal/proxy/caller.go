@@ -40,7 +40,7 @@ type forwardRoute struct {
 // 的客户端协议与本次请求格式一致才返回转换（其余请求格式不受影响）；空集合
 // （off）→ 无。多方向按客户端格式命中第一个匹配方向——同客户端格式多方向已被
 // 创建/更新校验拒绝（service），至多命中一个。只补差语义的缺口判定（客户端
-// 协议无路由）由调用方负责。
+// 协议无路由或无可用账号）由调用方负责。
 func convertedRoute(converts []domain.ProtocolConvert, client domain.RequestFormat) (domain.RequestFormat, domain.ProtocolConvert, bool) {
 	for _, pc := range converts {
 		switch pc {
@@ -224,11 +224,12 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	}
 
 	sel, err := p.sched.Select(groupID, format, reqModel)
-	if err != nil && errors.Is(err, scheduler.ErrFormatUnavailable) {
-		// 补差语义：模板已支持客户端协议 → 直接转发零转换；组内无客户端协议
-		// 路由（缺口）且组配置了转换方向 → 客户端协议 → 转换 → 模板协议路由。
-		// off（默认）→ 上面的 errors.Is 分支零开销。ErrNoAvailable（有路由但
-		// 全忙）不转换——组有客户端协议模板，按现状 429。
+	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable)) {
+		// 补差语义：模板已支持客户端协议 → 直接转发零转换；缺口 = 组内无客户
+		// 端协议路由（404）或路由存在但无可用账号（429——全忙/全禁用），组配置
+		// 了转换方向 → 客户端协议 → 转换 → 模板协议路由（配置方向即声明
+		// fallback 意图）。off（默认）→ 上面的 errors.Is 分支零开销（errors.Is
+		// 自身零分配）。ErrGroupNotFound（组不存在）仍不转换 → 404 直返。
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
 			if sel2, err2 := p.sched.Select(groupID, tgt, reqModel); err2 == nil {
 				cb, cerr := protoconv.ConvertRequest(body, conv)

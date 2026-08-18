@@ -147,6 +147,21 @@ func newConvertedTestProxyLogs(t *testing.T, upstream string, tplFormats []domai
 		ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream",
 		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
 	}}}
+	return newConvertedTestProxyAccsLogs(t, accs, pcs, logs, streamTimeout)
+}
+
+// newConvertedTestProxyAccs 同 newConvertedTestProxyLogs，但账号直接注入
+// （自定义模板/状态/并发上限——用户场景与全忙变体需多模板组）。
+func newConvertedTestProxyAccs(t *testing.T, accs map[int64][]*domain.Account, pcs []domain.ProtocolConvert) *Proxy {
+	t.Helper()
+	return newConvertedTestProxyAccsLogs(t, accs, pcs, noopLogStore{}, 30*time.Second)
+}
+
+// newConvertedTestProxyAccsLogs 构造转换路径测试代理（共享内核）：账号按组
+// 注入（noopLoader 直供调度器快照），KeyMeta 携带组级 protocol_convert 方向
+// 集合（空 = off）。
+func newConvertedTestProxyAccsLogs(t *testing.T, accs map[int64][]*domain.Account, pcs []domain.ProtocolConvert, logs usage.LogInserter, streamTimeout time.Duration) *Proxy {
+	t.Helper()
 	cfg := Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
@@ -552,4 +567,191 @@ func TestConvertedChatToMessNonStreamingLogTotalTokens(t *testing.T) {
 	require.Equal(t, int64(3), lg.InputTokens)
 	require.Equal(t, int64(5), lg.OutputTokens)
 	require.Equal(t, int64(8), lg.TotalTokens, "非流式 tt 由 anthropicUsageFromResponse 自带（it + ot）")
+}
+
+// --- 429 回退扩展（A-1：ErrNoAvailable 也触发转换）测试 ---
+
+// userScenarioAccs 用户场景组账号（2026-08-18 用户报告）：模板 A 全协议
+// full-model（无模型空间）+ 模板 B 仅 openai-responses（models 白名单
+// gpt-4o）；fullStatus 控制模板 A 账号状态（disabled = 转换回退场景，
+// active = 直连对照组）。
+func userScenarioAccs(srvURL string, fullStatus domain.AccountStatus) map[int64][]*domain.Account {
+	tplFull := &domain.Template{ID: 1, Name: "full-t", BaseURL: srvURL, CredentialType: credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses}}
+	tplResp := &domain.Template{ID: 2, Name: "resp-t", BaseURL: srvURL, CredentialType: credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	return map[int64][]*domain.Account{10: {
+		{ID: 1, TemplateID: 1, Template: tplFull, UpstreamKey: "sk-upstream", Status: fullStatus, Weight: 100, MaxConcurrency: 4},
+		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4},
+	}}
+}
+
+// TestConvertedUserScenarioDisabledFullModel 用户报告场景（2026-08-18）规格化：
+// 模板 A 全协议 full-model 账号 disabled（无模型空间 → 任意模型都建路由，但
+// pickFrom 跳过 disabled → ErrNoAvailable）+ 模板 B resp 白名单 active +
+// chat_to_resp → 修复前 429 "no available account" 上游零命中；修复后 200
+// 转换生效（上游命中 /v1/responses）。
+func TestConvertedUserScenarioDisabledFullModel(t *testing.T) {
+	up := &capturedUpstream{}
+	srv := up.srv(t)
+	defer srv.Close()
+	p := newConvertedTestProxyAccs(t, userScenarioAccs(srv.URL, domain.StatusDisabled),
+		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	require.Equal(t, 200, rec.Code, "全协议账号 disabled → 转换回退到 resp 白名单账号（修复前 429）")
+	path, body, _ := up.last(t)
+	require.Equal(t, "/v1/responses", path, "上游命中转换目标模板协议路由")
+	require.NotNil(t, body["input"], "上游收到 resp 形态请求体（messages → input）")
+}
+
+// TestConvertedUserScenarioFullModelActive 用户场景对照组：同组全协议
+// full-model 账号 active → 直连 chat 零转换（客户端协议直连优先，补差语义
+// 不变）。
+func TestConvertedUserScenarioFullModelActive(t *testing.T) {
+	up := &capturedUpstream{}
+	srv := up.srv(t)
+	defer srv.Close()
+	p := newConvertedTestProxyAccs(t, userScenarioAccs(srv.URL, domain.StatusActive),
+		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	require.Equal(t, 200, rec.Code)
+	path, body, _ := up.last(t)
+	require.Equal(t, "/v1/chat/completions", path, "账号可用 → 直连零转换")
+	require.NotNil(t, body["messages"], "上游收到 chat 形态请求体（未转换）")
+}
+
+// TestConvertedChatBusyFallback 全忙变体（429 语义扩展边界）：客户端路由存在
+// 但账号并发满（非 disabled）→ ErrNoAvailable → 同样转换回退。先经
+// sched.Select 直接占满 chat 账号唯一并发槽再发请求；断言转换目标账号槽位
+// 随请求结束释放（复用 TestConvertedRequestConvertFailReleasesSlot 的 Runtime
+// 断言模式）。
+func TestConvertedChatBusyFallback(t *testing.T) {
+	up := &capturedUpstream{}
+	srv := up.srv(t)
+	defer srv.Close()
+	tplChat := &domain.Template{ID: 1, Name: "chat-t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}}
+	tplResp := &domain.Template{ID: 2, Name: "resp-t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	accs := map[int64][]*domain.Account{10: {
+		{ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1},
+		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4},
+	}}
+	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
+
+	// 占满 chat 账号唯一并发槽（直接经调度器抢占——并发满而非 disabled）
+	sel, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), sel.AccountID)
+	defer p.sched.Release(1)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	require.Equal(t, 200, rec.Code, "chat 账号并发满 → 转换回退")
+	path, _, _ := up.last(t)
+	require.Equal(t, "/v1/responses", path, "上游命中转换目标模板协议路由")
+
+	// 槽释放断言：转换目标槽随请求结束归零（无泄漏）；chat 槽仍由测试持有
+	ri, ok := p.sched.Runtime(2)
+	require.True(t, ok)
+	require.Zero(t, ri.Concurrency, "转换目标账号槽位已释放")
+	ri, ok = p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, int64(1), ri.Concurrency, "chat 槽仍由测试持有（未误释放）")
+}
+
+// TestConvertedTargetAlsoBusy429 目标也全忙：客户端 429（ErrNoAvailable）→
+// 转换目标 Select ErrNoAvailable → 响应 429 "no available account" +
+// Retry-After: 1 原样（错误分流与 P-1 目标 404 成对覆盖）。
+func TestConvertedTargetAlsoBusy429(t *testing.T) {
+	up := &capturedUpstream{}
+	srv := up.srv(t)
+	defer srv.Close()
+	tplChat := &domain.Template{ID: 1, Name: "chat-t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}}
+	tplResp := &domain.Template{ID: 2, Name: "resp-t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	accs := map[int64][]*domain.Account{10: {
+		{ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream", Status: domain.StatusDisabled, Weight: 100, MaxConcurrency: 4},
+		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1},
+	}}
+	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
+
+	// 占满 resp 账号唯一并发槽（目标全忙）
+	sel, err := p.sched.Select(10, domain.FormatOpenAIResponses, "gpt-4o")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), sel.AccountID)
+	defer p.sched.Release(2)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, "目标也全忙 → 429 原样")
+	require.Equal(t, "1", rec.Header().Get("Retry-After"), "Retry-After: 1 保留")
+	require.Contains(t, rec.Body.String(), "no available account")
+}
+
+// TestConvertedTargetFormatUnavailable404 P-1 分流钉死（行为漂移声明）：客户端
+// 429（ErrNoAvailable）进入转换分支后目标 Select ErrFormatUnavailable（组配了
+// chat_to_resp 但组内无 resp 模板——配置错误）→ 404 "no account supports this
+// request format" 且无 Retry-After（修复前该场景是 429 + Retry-After——404 是
+// 配置错误的准确信号，且转换分支仅在方向已配置时进入）。
+func TestConvertedTargetFormatUnavailable404(t *testing.T) {
+	up := &capturedUpstream{}
+	srv := up.srv(t)
+	defer srv.Close()
+	tplChat := &domain.Template{ID: 1, Name: "chat-t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}}
+	accs := map[int64][]*domain.Account{10: {{
+		ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream",
+		Status: domain.StatusDisabled, Weight: 100, MaxConcurrency: 4,
+	}}}
+	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code, "转换方向指向不存在的格式 → 404（配置错误信号）")
+	require.Contains(t, rec.Body.String(), "no account supports this request format")
+	require.Empty(t, rec.Header().Get("Retry-After"), "404 无 Retry-After（漂移声明）")
+}
+
+// TestConvertedGroupNotFoundNoConvert 组不存在 → ErrGroupNotFound 不转换 →
+// 404 "group not found"（即使配置了转换方向）。
+func TestConvertedGroupNotFoundNoConvert(t *testing.T) {
+	up := &capturedUpstream{}
+	srv := up.srv(t)
+	defer srv.Close()
+	p := newConvertedTestProxyAccs(t, map[int64][]*domain.Account{}, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), "group not found")
 }
