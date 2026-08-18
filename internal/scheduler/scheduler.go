@@ -217,7 +217,7 @@ func (s *Scheduler) processWrite(w statusWrite) {
 	gidSet := make(map[int64]struct{})
 	for _, id := range okIDs {
 		if as, ok := byID[id]; ok {
-			for _, g := range as.groupIDs {
+			for _, g := range as.static.Load().groupIDs {
 				gidSet[g] = struct{}{}
 			}
 		}
@@ -240,16 +240,17 @@ func (s *Scheduler) reload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency)
-	// 在途并发继承：重建快照会把 concurrency 归零，跨 reload 的在途请求结束后
-	// Release 命中新快照 → Add(-1) 把计数拉成负数（管理页并发列显示负值）。
-	// Store/Add 均原子、无竞态窗口：继承前旧快照上的 Release 计入旧值后被继承，
-	// 继承后新快照上的 Release 正常递减。
-	if old, ok := s.store.byID.Load().(map[int64]*accountSnapshot); ok {
-		for id, as := range byID {
-			if oa, ok := old[id]; ok {
-				as.concurrency.Store(oa.concurrency.Load())
-			}
+	// oldByID = 当前快照 map（复用旧实例的查询源——计数器连续性机制，见
+	// buildSnapshots）。reload 持 reloadMu，读取安全；首刷（store 未装载）为 nil。
+	oldByID, _ := s.store.byID.Load().(map[int64]*accountSnapshot)
+	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
+	// 在途并发继承（O-2 修订）：复用后保留账号的 oa == as（同一实例指针），
+	// Store/Load 是自赋值 no-op——原子连续性天然保证（指针不变、计数不归零，
+	// 顺带消除旧继承的 Load-Store 间隙窗口）；新账号（旧 map 无）计数自 0 起，
+	// 无在途请求（新建瞬间不可能有 Release 先到）。保留循环以显式表达纪律。
+	for id, as := range byID {
+		if oa, ok := oldByID[id]; ok {
+			as.concurrency.Store(oa.concurrency.Load())
 		}
 	}
 	s.store.store(groups, byID)
@@ -261,7 +262,27 @@ func (s *Scheduler) reload(ctx context.Context) error {
 // Select 与 byID Release 命中不同计数器 → 并发计数分裂漂移 → 槽位假满
 // "no available account"，e2e 场景 4 实证；去抖消除"每变更全量重载"后暴露）。
 // 组级重载（InvalidateGroup）依赖 groupIDs 跨组引用替换，纪律同此。
-func buildSnapshots(m map[int64][]*domain.Account, defaultMax int) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
+//
+// 快照重建复用旧实例（计数器连续性，2026-08-18 裁决）：oldByID 提供上一次
+// 快照的实例（调用点 s.store.byID.Load()，reload/InvalidateGroup 均持 reloadMu，
+// 读取安全）。已存在账号**复用实例**——静态字段（acc/tpl/gid/groupIDs）DB 权威
+// 同步，动态字段（concurrency/errRate/errCount/lastError）保留内存值：
+//   - 管理面改动（weight/status/max_concurrency 等）经全量同步/组级重载生效；
+//   - err_rate/err_count 跨 ≤30s 全量同步与组级重载不清零（管理端列表展示连续）；
+//   - 实例指针不变 → 原子操作天然连续，Load-Store 间隙窗口一并消除。
+// 新账号（oldByID 无）→ 新建（含 state 初始化与钳制，现状逻辑）。
+//
+// 已知竞态（评审 M-3，明示接受）：pickFrom 对 state 是盲写 Store（selection.go:85，
+// 热路径零锁刻意取舍）——本分支的 DB 权威 Store 若落在 pickFrom 的 statePtr()
+// （selection.go:66）与 state.Store(&st2)（:85）之间，pickFrom 用重建前的陈旧副本
+// 覆盖 DB 同步值（内存时间回退），≤30s 下次重建自愈——窗口指令级、不碰热路径
+// 的代价，接受。
+//
+// 静态字段发布纪律（评审 Critical 修复）：acc/tpl/gid/groupIDs 一律经
+// snapshotStatic 视图 + atomic.Pointer 整体替换（copy-modify-Store）——复用分支
+// 对已发布实例的更新与热路径无锁读（pickFrom/MarkResult/Classify）零锁并发安全，
+// 不再裸写实例字段。同加载内多组的 groupIDs 追加同样复制视图后发布。
+func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[int64]*accountSnapshot) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
 	groups := make(map[int64]*groupSnapshot, len(m))
 	byID := make(map[int64]*accountSnapshot)
 	for gid, accs := range m {
@@ -269,16 +290,47 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int) (map[int64]*g
 		for _, a := range accs {
 			as, ok := byID[a.ID]
 			if !ok {
-				as = &accountSnapshot{gid: gid, acc: *a, tpl: a.Template, groupIDs: []int64{gid}}
-				as.state.Store(&accState{status: a.Status, cooldownUntil: a.CooldownUntil})
+				// 静态字段视图构建（复用/新建共用）：acc 整结构覆盖（含
+				// Weight/BaseURL/Ext/LastError 等全部 DB 列）+ MaxConcurrency
+				// 钳制（评审 M-2：DB=0 时不钳制 → 门禁 cur >= 0 恒真 → 账号
+				// 永久不可选）+ groupIDs 首次出现重置（评审 M-1，不得 append
+				// 旧值：账号从某组移除后旧 gid 残留 → processWrite 发布过期组、
+				// InvalidateGroup otherGids 推导错误）。
+				av := &snapshotStatic{acc: *a, tpl: a.Template, gid: gid, groupIDs: []int64{gid}}
 				if a.MaxConcurrency <= 0 {
-					as.acc.MaxConcurrency = defaultMax
+					av.acc.MaxConcurrency = defaultMax
+				}
+				if old, exists := oldByID[a.ID]; exists {
+					// 复用旧实例：静态字段 DB 权威同步（原子发布新视图——评审
+					// Critical 修复，杜绝与热路径无锁读的数据竞态）；动态字段
+					//（concurrency/errRate/errCount/lastError）不触碰。
+					as = old
+					as.static.Store(av)
+					// state DB 权威同步（写时复制，评审 P-1 修订）：status/
+					// cooldownUntil 以 DB 为准，errCount/lastError 等动态字段
+					// 保留内存值。cur 恒非 nil（构造即初始化）。
+					cur := as.state.Load()
+					next := *cur
+					next.status = a.Status
+					next.cooldownUntil = a.CooldownUntil
+					as.state.Store(&next)
+				} else {
+					// 新账号：新建实例（含 state 初始化）。
+					as = &accountSnapshot{}
+					as.static.Store(av)
+					as.state.Store(&accState{status: a.Status, cooldownUntil: a.CooldownUntil})
 				}
 				byID[a.ID] = as
 			} else {
-				// 多组账号：复用已建实例并登记本组（共享实例的 gid = 首个组；
-				// 数据同源——同一 DB 行的多组引用）。
-				as.groupIDs = append(as.groupIDs, gid)
+				// 多组账号：登记本组（共享实例的 gid = 首个组；数据同源——同一
+				// DB 行的多组引用）。视图复制后追加再发布（视图不可变纪律）。
+				st := as.static.Load()
+				ns := *st
+				ng := make([]int64, len(st.groupIDs)+1)
+				copy(ng, st.groupIDs)
+				ng[len(st.groupIDs)] = gid
+				ns.groupIDs = ng
+				as.static.Store(&ns)
 			}
 			gs.accounts = append(gs.accounts, as)
 		}
@@ -289,21 +341,24 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int) (map[int64]*g
 }
 
 // modelSet 组内所有账号模板的可服务模型并集（桶 key 的模型空间）。
+// 重建路径调用（buildSnapshots/rebuildGroupLocked 均在 reloadMu 内），静态字段
+// 经视图读取（评审 Critical 修复后实例不再保留裸字段）。
 func modelSet(accs []*accountSnapshot) map[string]struct{} {
 	set := make(map[string]struct{})
 	for _, a := range accs {
-		if a.tpl == nil {
+		tpl := a.static.Load().tpl
+		if tpl == nil {
 			continue
 		}
-		for _, m := range a.tpl.Models {
+		for _, m := range tpl.Models {
 			set[m] = struct{}{}
 		}
-		for _, list := range a.tpl.FormatModels {
+		for _, list := range tpl.FormatModels {
 			for _, m := range list {
 				set[m] = struct{}{}
 			}
 		}
-		for m := range a.tpl.ModelMapping {
+		for m := range tpl.ModelMapping {
 			set[m] = struct{}{}
 		}
 	}
@@ -334,12 +389,13 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 		for _, format := range formats {
 			var t1, t2 []*accountSnapshot
 			for _, a := range accs {
-				if a.tpl == nil || !a.tpl.FormatSupports(format, model) {
+				tpl := a.static.Load().tpl
+				if tpl == nil || !tpl.FormatSupports(format, model) {
 					continue
 				}
-				if a.tpl.Serves(model) {
+				if tpl.Serves(model) {
 					t1 = append(t1, a)
-				} else if !a.tpl.HasModelSpace() {
+				} else if !tpl.HasModelSpace() {
 					t2 = append(t2, a) // 全模型账号：tier2 兜底
 				}
 				// 白名单账号未命中 → 跳过（不建路由 → 404）
@@ -360,10 +416,11 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 	for _, format := range formats {
 		var t2 []*accountSnapshot
 		for _, a := range accs {
-			if a.tpl == nil || !slices.Contains(a.tpl.SupportedFormats, format) {
+			tpl := a.static.Load().tpl
+			if tpl == nil || !slices.Contains(tpl.SupportedFormats, format) {
 				continue
 			}
-			if a.tpl.HasModelSpace() {
+			if tpl.HasModelSpace() {
 				continue // 白名单账号不参与未知模型回落（默认桶仅全模型账号）
 			}
 			t2 = append(t2, a)
@@ -381,8 +438,9 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 // 其它组引用——Select（经组路由）与 Release（经 byID）必须命中同一计数器，
 // 否则多组账号并发计数分裂漂移 → 槽位假满（O2 实证修复）。账号从组移除且
 // 不再属于任何组 → 从 byID 移除；仍属其它组 → 保留实例并摘除本组引用。
-// groupIDs 仅经 reloadMu 读写（buildSnapshots/本方法/processWrite 发布收集——
-// 评审 M-1 后 processWrite 也持锁读），无锁外读者。
+// 静态字段（含 groupIDs）在 snapshotStatic 不可变视图中：写经 reloadMu +
+// 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
+//（processWrite 发布收集仍持 reloadMu——评审 M-1 纪律，无锁外裸读）。
 func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
@@ -394,7 +452,9 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		return
 	}
 	m, byID := s.store.groups.Load().(map[int64]*groupSnapshot), s.store.byID.Load().(map[int64]*accountSnapshot)
-	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, s.cfg.DefaultMaxConcurrency)
+	// byID 兼作复用查询源（oldByID）：组级重载同样复用旧实例——errRate/errCount
+	// 跨组级 NOTIFY 重载保留（A-2 M-4），静态字段 DB 权威同步。持 reloadMu 读取安全。
+	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, s.cfg.DefaultMaxConcurrency, byID)
 	newAccs := gs[groupID].accounts
 	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
 	// 避免组级重载后 routes 为 nil（Select 预生成路径断裂）。
@@ -415,15 +475,20 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	if old, ok := m[groupID]; ok {
 		newIDs := make(map[int64]struct{}, len(newAccs))
 		for _, ns := range newAccs {
-			newIDs[ns.acc.ID] = struct{}{}
+			newIDs[ns.static.Load().acc.ID] = struct{}{}
 		}
 		for _, os := range old.accounts {
-			if _, stillIn := newIDs[os.acc.ID]; stillIn {
+			ost := os.static.Load()
+			if _, stillIn := newIDs[ost.acc.ID]; stillIn {
 				continue
 			}
-			os.groupIDs = removeGid(os.groupIDs, groupID)
-			if len(os.groupIDs) == 0 {
-				delete(newByID, os.acc.ID)
+			// 视图 copy-modify-Store：removeGid 就地改写切片（out := gids[:0]），
+			// 必须先复制再摘除，不得动已发布视图的 backing array。
+			ns := *ost
+			ns.groupIDs = removeGid(append([]int64(nil), ost.groupIDs...), groupID)
+			os.static.Store(&ns)
+			if len(ns.groupIDs) == 0 {
+				delete(newByID, ost.acc.ID)
 			}
 		}
 	}
@@ -438,18 +503,25 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	otherRefs := make(map[int64]*ogRef)
 	for _, ns := range newAccs {
 		var otherGids []int64
-		if oa, ok := byID[ns.acc.ID]; ok {
-			// 在途并发继承（与 reload 同纪律）：重建把计数归零，保留账号的在途
-			// 请求 Release 命中新实例 → 继承旧计数避免拉成负数。
+		nst := ns.static.Load()
+		if oa, ok := byID[nst.acc.ID]; ok {
+			// 在途并发继承（与 reload 同纪律，O-2 修订）：复用后 oa == ns（同一
+			// 实例），Store/Load 是自赋值 no-op——原子连续性天然保证（指针不变、
+			// 计数不归零），保留循环以显式表达纪律；新账号（旧 map 无）计数自 0 起。
 			ns.concurrency.Store(oa.concurrency.Load())
-			for _, g := range oa.groupIDs {
+			for _, g := range oa.static.Load().groupIDs {
 				if g != groupID {
 					otherGids = append(otherGids, g)
 				}
 			}
 		}
-		ns.groupIDs = append([]int64{groupID}, otherGids...)
-		newByID[ns.acc.ID] = ns
+		// 复用下 oa.groupIDs 已被 buildSnapshots 重置为 [groupID]（本组 DB 权威），
+		// otherGids 为空 → 与重建值同构（多组成员资格经 ≤30s 全量同步的 append
+		// 分支恢复——组级重载只从 DB 重载本组，其余组属内存记录）。
+		nns := *nst
+		nns.groupIDs = append([]int64{groupID}, otherGids...)
+		ns.static.Store(&nns)
+		newByID[nst.acc.ID] = ns
 		for _, og := range otherGids {
 			if _, ok := otherRefs[og]; ok {
 				continue
@@ -460,7 +532,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 			}
 			ref := &ogRef{gs: ogp, idx: make(map[int64]int, len(ogp.accounts))}
 			for i, oas := range ogp.accounts {
-				ref.idx[oas.acc.ID] = i
+				ref.idx[oas.static.Load().acc.ID] = i
 			}
 			otherRefs[og] = ref
 		}
@@ -469,7 +541,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		repl := make([]*accountSnapshot, len(ref.gs.accounts))
 		copy(repl, ref.gs.accounts)
 		for _, ns := range newAccs {
-			if i, ok := ref.idx[ns.acc.ID]; ok {
+			if i, ok := ref.idx[ns.static.Load().acc.ID]; ok {
 				repl[i] = ns
 			}
 		}
@@ -492,7 +564,7 @@ func (s *Scheduler) InvalidateAccount(accountID int64) {
 	var gids []int64
 	if ok {
 		if as, exists := byID[accountID]; exists {
-			gids = append([]int64(nil), as.groupIDs...)
+			gids = append([]int64(nil), as.static.Load().groupIDs...)
 		} else {
 			ok = false // 快照外账号：无可失效条目
 		}
@@ -582,12 +654,13 @@ func (s *Scheduler) Runtimes() []AccountRuntime {
 	}
 	out := make([]AccountRuntime, 0, len(byID))
 	for id, a := range byID {
+		av := a.static.Load()
 		st := a.statePtr()
 		out = append(out, AccountRuntime{
 			AccountID:      id,
-			Name:           a.acc.Name,
+			Name:           av.acc.Name,
 			Status:         st.status,
-			MaxConcurrency: a.acc.MaxConcurrency,
+			MaxConcurrency: av.acc.MaxConcurrency,
 			Concurrency:    a.concurrency.Load(),
 			ErrRate:        float64(a.errRate.Load()) / errRateScale,
 			ErrCount:       st.errCount,
@@ -640,10 +713,11 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 	if httpStatus > 0 {
 		hp = &httpStatus
 	}
+	av := a.static.Load() // 静态字段视图一次取用（评审 Critical 修复）
 	ev := rule.Event{
 		AccountID:    accountID,
-		TemplateID:   a.acc.TemplateID,
-		GroupID:      groupIDPtr(a.gid),
+		TemplateID:   av.acc.TemplateID,
+		GroupID:      groupIDPtr(av.gid),
 		Kind:         kind,
 		HTTPStatus:   hp,
 		ErrorMessage: errMsg,
@@ -728,8 +802,9 @@ func (s *Scheduler) Classify(ev rule.Event) (transmit bool, punish bool) {
 	if !ok {
 		return false, false
 	}
-	ev.TemplateID = a.acc.TemplateID
-	ev.GroupID = groupIDPtr(a.gid)
+	av := a.static.Load() // 静态字段视图一次取用（评审 Critical 修复）
+	ev.TemplateID = av.acc.TemplateID
+	ev.GroupID = groupIDPtr(av.gid)
 	return s.rule.Classify(ev)
 }
 
@@ -820,16 +895,21 @@ func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *ti
 		// 重读重试：并发转换（FailAccount/另一 apply）已落地，循环顶早退或再转换
 	}
 	if weight != nil {
-		// acc.Weight 与组路由重建同锁区（C2）：InvalidateGroup 等锁内读
-		// acc.Weight（buildRoutes/newWeightedSeq），锁外写是数据竞态。
+		// 权重写与组路由重建同锁区（C2）：InvalidateGroup 等锁内读 acc.Weight
+		//（buildRoutes/newWeightedSeq），锁外写是数据竞态。静态字段视图
+		// copy-modify-Store（评审 Critical 修复：不得裸写已发布视图——热路径
+		// 原子 Load 读者与之并发）。
 		s.reloadMu.Lock()
-		a.acc.Weight = *weight
+		av := a.static.Load()
+		nv := *av
+		nv.acc.Weight = *weight
+		a.static.Store(&nv)
 		// weightedSeq 是预生成缓存：权重变更必须重建该组路由序列，
 		// 否则选号仍按旧权重（I1）。
-		// 评审 I-2：多组账号共享实例只重建首个组（a.gid）的路由——其它组的
+		// 评审 I-2：多组账号共享实例只重建首个组（nv.gid）的路由——其它组的
 		// 路由保留旧权重序列，经 ≤30s 全量同步 / 账号变更组级重载自愈，
 		// 非回归（预生成序列的固有折衷：热路径零计算，代价是弱一致性窗口）。
-		s.rebuildGroupLocked(a.gid)
+		s.rebuildGroupLocked(nv.gid)
 		s.reloadMu.Unlock()
 	}
 	// 回写前复查 disabled（防 active 回写覆盖 FailAccount 并发置位）——仅对

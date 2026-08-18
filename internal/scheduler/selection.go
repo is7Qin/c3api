@@ -60,6 +60,9 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 	}
 	for i := 0; i < n; i++ {
 		a := ws.seq[int(ws.cursor.Add(1))%n]
+		// 静态字段视图一次 Load（评审 Critical 修复）：重建/权重动作以原子指针
+		// 整体替换视图，本热路径读与低频写零锁并发安全，同量级开销。
+		av := a.static.Load()
 		st := a.statePtr()
 		if st.status == domain.StatusDisabled {
 			continue
@@ -68,12 +71,12 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 			continue
 		}
 		cur := a.concurrency.Load()
-		if cur >= int64(a.acc.MaxConcurrency) {
+		if cur >= int64(av.acc.MaxConcurrency) {
 			continue
 		}
 		if a.concurrency.CompareAndSwap(cur, cur+1) {
 			mapped := model
-			if m, ok := a.tpl.ModelMapping[model]; ok {
+			if m, ok := av.tpl.ModelMapping[model]; ok {
 				mapped = m
 			}
 			used := s.timeNow()
@@ -82,17 +85,17 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 			a.state.Store(&st2)
 			// 优先级账号级 > 模板级：仅 nil 检查 + 字符串比较（零分配——
 			// 用户裁决 2026-08-14 热路径约束）；baseURL 局部变量为值拷贝
-			//（与现 BaseURL: a.tpl.BaseURL 同成本）。
-			baseURL := a.tpl.BaseURL
-			if a.acc.BaseURL != nil && *a.acc.BaseURL != "" {
-				baseURL = *a.acc.BaseURL
+			//（与现 BaseURL: av.tpl.BaseURL 同成本）。
+			baseURL := av.tpl.BaseURL
+			if av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
+				baseURL = *av.acc.BaseURL
 			}
 			return &Selection{
-				AccountID: a.acc.ID, TemplateID: a.tpl.ID,
+				AccountID: av.acc.ID, TemplateID: av.tpl.ID,
 				BaseURL: baseURL, Format: format,
-				UpstreamKey: a.acc.UpstreamKey, CredentialType: a.tpl.CredentialType, Model: mapped,
-				StripImageTools: a.tpl.StripImageTools, // W4：模板快照布尔复制（热路径零 DB）
-				Ext:             a.acc.Ext,             // T2：账号扩展快照（codex 路由派生 AccountCredential；指针复制零拷贝）
+				UpstreamKey: av.acc.UpstreamKey, CredentialType: av.tpl.CredentialType, Model: mapped,
+				StripImageTools: av.tpl.StripImageTools, // W4：模板快照布尔复制（热路径零 DB）
+				Ext:             av.acc.Ext,             // T2：账号扩展快照（codex 路由派生 AccountCredential；指针复制零拷贝）
 			}, true
 		}
 	}

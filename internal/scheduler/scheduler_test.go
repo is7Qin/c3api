@@ -508,7 +508,7 @@ func TestWeightActionRebuildsRoutes(t *testing.T) {
 	require.Equal(t, domain.StatusActive, ri.Status, "纯 weight 动作不动状态")
 	require.Zero(t, ri.ErrRate, "纯 weight 动作不更新 EWMA")
 	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
-	require.Equal(t, 10, byID[1].acc.Weight, "快照权重已更新")
+	require.Equal(t, 10, byID[1].static.Load().acc.Weight, "快照权重已更新")
 
 	// 回写携带 weight
 	require.Eventually(t, func() bool {
@@ -589,7 +589,8 @@ func TestCloseDrainsWritebacks(t *testing.T) {
 }
 
 func mkAcc(id int64, weight int, tpl *domain.Template) *accountSnapshot {
-	a := &accountSnapshot{acc: domain.Account{ID: id, Weight: weight}, tpl: tpl}
+	a := &accountSnapshot{}
+	a.static.Store(&snapshotStatic{acc: domain.Account{ID: id, Weight: weight}, tpl: tpl})
 	a.state.Store(&accState{status: domain.StatusActive})
 	return a
 }
@@ -605,7 +606,7 @@ func TestNewWeightedSeqGcdNormalization(t *testing.T) {
 	require.Len(t, ws.seq, 3, "weight 100:50 → GCD=50 → 序列长 3")
 	count1, count2 := 0, 0
 	for _, a := range ws.seq {
-		if a.acc.ID == 1 {
+		if a.static.Load().acc.ID == 1 {
 			count1++
 		} else {
 			count2++
@@ -620,7 +621,7 @@ func TestNewWeightedSeqEqualWeights(t *testing.T) {
 	pool := []*accountSnapshot{mkAcc(1, 100, tpl), mkAcc(2, 100, tpl), mkAcc(3, 100, tpl)}
 	ws := newWeightedSeq(pool)
 	require.Len(t, ws.seq, 3, "全同权重 → 每账号 1 次")
-	require.ElementsMatch(t, []int64{1, 2, 3}, []int64{ws.seq[0].acc.ID, ws.seq[1].acc.ID, ws.seq[2].acc.ID})
+	require.ElementsMatch(t, []int64{1, 2, 3}, []int64{ws.seq[0].static.Load().acc.ID, ws.seq[1].static.Load().acc.ID, ws.seq[2].static.Load().acc.ID})
 }
 
 func TestNewWeightedSeqLengthCap(t *testing.T) {
@@ -629,7 +630,7 @@ func TestNewWeightedSeqLengthCap(t *testing.T) {
 	pool2 := []*accountSnapshot{mkAcc(1, 9999, tpl), mkAcc(2, 1, tpl)}
 	ws := newWeightedSeq(pool2)
 	require.LessOrEqual(t, len(ws.seq), maxSeqLen, "长度上限 4096")
-	require.Contains(t, []int64{ws.seq[0].acc.ID, ws.seq[1].acc.ID}, int64(1), "权重高的账号至少出现一次")
+	require.Contains(t, []int64{ws.seq[0].static.Load().acc.ID, ws.seq[1].static.Load().acc.ID}, int64(1), "权重高的账号至少出现一次")
 }
 
 func TestBuildRoutesBucketsAndDefault(t *testing.T) {
@@ -1030,7 +1031,7 @@ func TestMultiGroupSharedInstance(t *testing.T) {
 	groups := s.store.groups.Load().(map[int64]*groupSnapshot)
 	require.Same(t, byID[1], groups[10].accounts[0], "组 10 路由与 byID 共享实例")
 	require.Same(t, byID[1], groups[11].accounts[0], "组 11 路由与 byID 共享实例")
-	require.ElementsMatch(t, []int64{10, 11}, byID[1].groupIDs, "跨组引用集登记完整")
+	require.ElementsMatch(t, []int64{10, 11}, byID[1].static.Load().groupIDs, "跨组引用集登记完整")
 
 	// 跨组占满共享槽位：组 10 选 1、组 11 选 1 → 计数 2 == max 2
 	sel1, err := s.Select(10, domain.FormatOpenAIChat, "m")
@@ -1121,7 +1122,7 @@ func TestInvalidateGroupMultiGroupRemove(t *testing.T) {
 	groups := s.store.groups.Load().(map[int64]*groupSnapshot)
 	_, ok := byID[1]
 	require.True(t, ok, "仍属其它组 → byID 保留")
-	require.Equal(t, []int64{11}, byID[1].groupIDs, "本组引用已摘除")
+	require.Equal(t, []int64{11}, byID[1].static.Load().groupIDs, "本组引用已摘除")
 	require.Empty(t, groups[10].accounts, "组 10 已空")
 	require.Len(t, groups[11].accounts, 1, "组 11 引用保留")
 	require.Same(t, byID[1], groups[11].accounts[0], "组 11 路由仍指向共享实例")
@@ -1530,4 +1531,236 @@ func TestApplyDisabledActionPersistsAcrossReload(t *testing.T) {
 
 	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrNoAvailable, "disabled 账号不可调度")
+}
+
+// --- 快照重建复用旧实例（计数器连续性，2026-08-18） ---
+
+// reuseByID 取当前 byID 快照中账号的实例（复用断言用；测试单线程访问安全）。
+func reuseByID(s *Scheduler, id int64) *accountSnapshot {
+	return s.store.byID.Load().(map[int64]*accountSnapshot)[id]
+}
+
+// TestReusePreservesErrCountersAcrossReload 复用后 errRate/errCount/lastError
+// 跨全量重建保留（不归零）——管理端账号列表 30s 清零问题（用户观察 2026-08-18）
+// 的修复断言：实例指针不变（复用机制本体）+ 动态字段保留内存值。
+func TestReusePreservesErrCountersAcrossReload(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
+	s := newSched(t, m)
+
+	// 错误事件：errCount=1 + lastError + EWMA 非零（种子 5xx → unhealthy）
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "boom")
+	s.FlushRules()
+	before := reuseByID(s, 1)
+	require.Equal(t, 1, before.statePtr().errCount)
+	require.NotNil(t, before.statePtr().lastError)
+	require.Equal(t, "boom", *before.statePtr().lastError)
+	require.Greater(t, float64(before.errRate.Load())/errRateScale, 0.0, "EWMA 已更新")
+
+	// 全量重建（≤30s 定时同步 / InvalidateAllSync 同路径）
+	require.NoError(t, s.reload(context.Background()))
+	after := reuseByID(s, 1)
+	require.Same(t, before, after, "已存在账号复用旧实例（指针不变）")
+	ri, _ := s.Runtime(1)
+	require.Equal(t, 1, ri.ErrCount, "errCount 跨重建保留（不归零）")
+	require.Equal(t, "boom", *after.statePtr().lastError, "lastError 跨重建保留")
+	require.Greater(t, float64(after.errRate.Load())/errRateScale, 0.0, "errRate 跨重建保留（EWMA 连续）")
+}
+
+// TestReuseConcurrencyContinuity 复用后 concurrency 保留且新请求 CAS 连续
+//（+1/-1 同实例）——Load-Store 间隙残留窗口消除（指针不变，原子操作天然连续）。
+func TestReuseConcurrencyContinuity(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
+	s := newSched(t, m)
+
+	// 两个在途请求占槽
+	sel1, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	require.NoError(t, err)
+	sel2, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	require.NoError(t, err)
+	before := reuseByID(s, 1)
+
+	// 重建复用：实例指针不变、计数不归零（原子连续，无需 Load-Store 继承搬运）
+	require.NoError(t, s.reload(context.Background()))
+	after := reuseByID(s, 1)
+	require.Same(t, before, after, "复用实例指针不变")
+	require.Equal(t, int64(2), after.concurrency.Load(), "重建后计数保持")
+
+	// Release 命中同一实例：+1/-1 连续，不得拉负
+	s.Release(sel1.AccountID)
+	s.Release(sel2.AccountID)
+	require.Equal(t, int64(0), after.concurrency.Load(), "释放归零，不得为负")
+
+	// 重建后新请求 CAS 连续（同实例递增，无继承间隙窗口）
+	sel3, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), after.concurrency.Load(), "重建后新请求在原子计数上连续 +1")
+	s.Release(sel3.AccountID)
+}
+
+// TestReuseSyncsStaticFieldsFromDB 静态字段 DB 权威同步：管理面改动
+//（weight/status/max_concurrency）→ 重建后复用实例读到新值（管理面改动生效）。
+func TestReuseSyncsStaticFieldsFromDB(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
+	s := newSched(t, m)
+	before := reuseByID(s, 1)
+
+	// 管理面改动 DB（memLoader 与快照共享账号指针——原地改即数据源变更）
+	m.mu.Lock()
+	a := m.byGroup[10][0]
+	a.Weight = 50
+	a.Status = domain.Status429
+	a.MaxConcurrency = 1
+	m.mu.Unlock()
+	require.NoError(t, s.reload(context.Background()))
+
+	after := reuseByID(s, 1)
+	require.Same(t, before, after, "复用实例指针不变")
+	require.Equal(t, 50, after.static.Load().acc.Weight, "weight 同步 DB 新值")
+	require.Equal(t, 1, after.static.Load().acc.MaxConcurrency, "max_concurrency 同步 DB 新值")
+	ri, _ := s.Runtime(1)
+	require.Equal(t, domain.Status429, ri.Status, "status 同步 DB 新值")
+
+	// 门禁按新 max 生效：占满 1 个槽后第二个请求 ErrNoAvailable
+	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), sel.AccountID)
+	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
+	require.ErrorIs(t, err, ErrNoAvailable, "max_concurrency=1 → 第二个请求假满")
+	s.Release(sel.AccountID)
+}
+
+// TestReuseClampsMaxConcurrency 复用分支的 MaxConcurrency 钳制（评审 M-2）：
+// DB max_concurrency=0 的账号复用后钳制为 defaultMax——不钳制则门禁
+// cur >= 0 恒真 → 账号永久不可选（静默回归）。
+func TestReuseClampsMaxConcurrency(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 0)}})
+	s := newSched(t, m) // 首次加载：新建分支钳制
+	require.Equal(t, 2, reuseByID(s, 1).static.Load().acc.MaxConcurrency, "新建分支钳制 defaultMax=2")
+	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	require.NoError(t, err, "钳制后门禁不恒满")
+	s.Release(sel.AccountID)
+
+	// 重建（复用分支）：同样钳制，不得把 DB=0 带进实例
+	require.NoError(t, s.reload(context.Background()))
+	require.Equal(t, 2, reuseByID(s, 1).static.Load().acc.MaxConcurrency, "复用分支钳制 defaultMax=2")
+	sel, err = s.Select(10, domain.FormatOpenAIChat, "m")
+	require.NoError(t, err, "复用后门禁不恒满")
+	s.Release(sel.AccountID)
+}
+
+// TestReuseGroupIDsResetOnRemoval groupIDs 首次出现重置（评审 M-1）：账号从组
+// 移除后全量重建 → 复用实例 groupIDs 不含旧 gid——append 旧值残留会导致
+// processWrite 发布过期组、InvalidateGroup otherGids 推导错误。
+func TestReuseGroupIDsResetOnRemoval(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	a := acc(1, tplx, 4)
+	m := newMemLoader(map[int64][]*domain.Account{10: {a}, 20: {a}})
+	s := newSched(t, m)
+	before := reuseByID(s, 1)
+	require.ElementsMatch(t, []int64{10, 20}, before.static.Load().groupIDs, "多组账号跨组引用集完整")
+
+	// 从组 20 移除（DB 只属组 10）后全量重建：复用实例 groupIDs 重置为 [10]
+	m.mu.Lock()
+	m.byGroup[20] = nil
+	m.mu.Unlock()
+	require.NoError(t, s.reload(context.Background()))
+	after := reuseByID(s, 1)
+	require.Same(t, before, after, "实例复用（非新建）")
+	require.Equal(t, []int64{10}, after.static.Load().groupIDs, "旧 gid 20 不得残留")
+}
+
+// TestInvalidateGroupReuseKeepsCounters 组级路径（评审 M-4）：组级 NOTIFY 重载
+// 后 errCount/errRate/lastError 保留 + groupIDs 重建正确——组级重载也经
+// buildSnapshots，复用机制自动覆盖（管理端改账号/组 NOTIFY 同路径）。
+func TestInvalidateGroupReuseKeepsCounters(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
+	s := newSched(t, m)
+
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "boom")
+	s.FlushRules()
+	before := reuseByID(s, 1)
+	require.Equal(t, 1, before.statePtr().errCount)
+
+	// 组级重载（与全量同步同纪律的复用路径）
+	s.InvalidateGroup(10)
+	after := reuseByID(s, 1)
+	require.Same(t, before, after, "组级重载复用旧实例（指针不变）")
+	require.Equal(t, 1, after.statePtr().errCount, "errCount 跨组级重载保留")
+	require.Equal(t, "boom", *after.statePtr().lastError, "lastError 跨组级重载保留")
+	require.Greater(t, float64(after.errRate.Load())/errRateScale, 0.0, "errRate 跨组级重载保留")
+	require.Equal(t, []int64{10}, after.static.Load().groupIDs, "groupIDs 重建为 [10]（无残留）")
+
+	// 组级重载后仍可正常调度
+	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), sel.AccountID)
+	s.Release(sel.AccountID)
+}
+
+// TestReuseNewAccountCreatesFresh 新账号（DB 新增）→ 新建实例：复用只作用于
+// 已存在账号；新实例含 state 初始化与钳制，动态字段自 0 起。
+func TestReuseNewAccountCreatesFresh(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
+	s := newSched(t, m)
+	old1 := reuseByID(s, 1)
+
+	// DB 新增账号 2（max_concurrency=0 顺带验证新建分支钳制）
+	m.mu.Lock()
+	m.byGroup[10] = append(m.byGroup[10], acc(2, tplx, 0))
+	m.mu.Unlock()
+	require.NoError(t, s.reload(context.Background()))
+
+	require.Same(t, old1, reuseByID(s, 1), "已存在账号仍复用")
+	as2 := reuseByID(s, 2)
+	require.NotNil(t, as2, "新账号进入 byID")
+	require.Equal(t, 2, as2.static.Load().acc.MaxConcurrency, "新账号新建分支钳制 defaultMax=2")
+	require.Equal(t, []int64{10}, as2.static.Load().groupIDs, "新账号组引用集登记")
+	require.Zero(t, as2.concurrency.Load(), "新账号计数自 0 起")
+	require.Zero(t, as2.statePtr().errCount, "新账号状态全新")
+}
+
+// TestReuseConcurrentSelectReloadRace 评审 Critical 回归：复用分支对已发布实例
+// 的静态字段写（acc/tpl/gid/groupIDs 原子指针发布）与热路径无锁读
+//（pickFrom/MarkResult/Classify 的 static.Load()）并发——修复前裸写实例字段
+// 构成数据竞态（自建并发复现 -race 5 处 WARNING），修复后 -race 必须静默。
+// 并发 Select/Release/MarkResult/Classify + 全量重建（触发复用分支）循环。
+func TestReuseConcurrentSelectReloadRace(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 1000)}})
+	s := newSched(t, m)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go s.writebackLoop(ctx) // 消费 MarkResult 的状态回写
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		// 请求热路径：Select（pickFrom 静态读点）+ Release + MarkResult/Classify
+		//（TemplateID/gid 静态读点）
+		defer wg.Done()
+		for i := 0; i < 8000; i++ {
+			sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
+			if err != nil {
+				continue
+			}
+			s.Release(sel.AccountID)
+			s.MarkResult(sel.AccountID, rule.KindOK, nil, 200, "")
+			s.Classify(rule.Event{AccountID: sel.AccountID, Kind: rule.Kind5xx})
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		// 重建侧：全量重建每次命中复用分支（静态字段视图整体原子替换）
+		defer wg.Done()
+		for i := 0; i < 400; i++ {
+			require.NoError(t, s.reload(context.Background()))
+		}
+	}()
+	wg.Wait()
 }
