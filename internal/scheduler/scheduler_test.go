@@ -1498,3 +1498,36 @@ func TestSchedulerClassify(t *testing.T) {
 	require.False(t, tx)
 	require.False(t, pu)
 }
+
+// TestApplyDisabledActionPersistsAcrossReload 规则动作 disabled 必须回写（bug
+// 2026-08-18）：规则匹配命中 → 动作置 disabled → apply 后 enqueueWrite 被调用
+// 且回写经 loader 落库 status=disabled → ≤30s 全量同步等价（InvalidateAllSync
+// 从数据源重建快照）后仍 disabled（不复活）。修复前：回写前复查把"本 apply
+// 动作即 disabled"（CAS 后活快照已 disabled）误判为他人并发置位 → 跳过
+// enqueueWrite → DB 恒 active → 全量同步拉回复活，规则禁用完全失效。断言装置
+// 复用既有模式：persistLoader（fail_test.go）+ drainWrites + 落库断言
+// （TestFailAccountPersistsAcrossReload 同构）。
+func TestApplyDisabledActionPersistsAcrossReload(t *testing.T) {
+	pl := newPersistLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
+	s := newSchedLoader(t, pl)
+
+	disabled := domain.StatusDisabled
+	s.apply(1, &disabled, nil, nil, "") // 规则引擎 disabled 动作同构的 apply
+	drainWrites(t, s)                   // 回写经 loader 落库
+
+	ri, ok := s.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusDisabled, ri.Status, "快照已 disabled")
+
+	pl.mu.Lock()
+	require.Equal(t, domain.StatusDisabled, pl.byGroup[10][0].Status, "回写发生：loader 落库 status=disabled")
+	pl.mu.Unlock()
+
+	require.NoError(t, s.InvalidateAllSync()) // 重启/全量同步等价：从数据源重建快照
+	ri, ok = s.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusDisabled, ri.Status, "全量重载后仍 disabled（不复活）")
+
+	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	require.ErrorIs(t, err, ErrNoAvailable, "disabled 账号不可调度")
+}

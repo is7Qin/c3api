@@ -832,19 +832,20 @@ func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *ti
 		s.rebuildGroupLocked(a.gid)
 		s.reloadMu.Unlock()
 	}
-	// 回写前复查 disabled（gate M1 主修，位置钉扎：weight 锁区之后、紧邻
-	// enqueueWrite）：CAS 成功后本 apply 的 active 回写仍可能晚于 FailAccount
-	// 的 disabled 回写入队（writeback 合并"后写覆盖先写"→ DB 落 active → 重载
-	// 复活）——复查挡住全部实际可达窗口：复查与入队指令相邻，此间 FailAccount
-	// 若完成 CAS+入队，其入队必然晚于本入队 → 通道序 [active, disabled] 合并取
-	// disabled。残余窗口（FailAccount 的 CAS+阻塞入队整体落进复查-入队指令
-	// 间隙）接受——生产事件驱动下复查-入队连续执行，间隙指令级；测试实证
-	// （-race 抢占 apply 于复查-入队之间）该窗口可复现、DB 可短暂落 active，
-	// 属 spec M1b 明示接受的取舍（不引入锁重设计）。注意 ≤30s 全量同步是坏
-	// DB 写的显形机制（重载会把 DB 的 active 拉回内存），不是自愈承诺；真正
-	// 兜底是复查-入队相邻 + 内存终态恒 disabled（失效源持续时下一次失败回调
-	// 经 CAS 再摘除）。
-	if a.statePtr().status == domain.StatusDisabled {
+	// 回写前复查 disabled（防 active 回写覆盖 FailAccount 并发置位）——仅对
+	// 非 disabled 动作生效：本 apply 动作即 disabled 时必须照常回写（否则
+	// disabled 只活内存 ≤30s，全量同步拉回 DB 旧值复活——规则禁用失效，bug
+	// 2026-08-18）。st == nil（纯 weight/冷却动作）保留复查（disabled 后规则
+	// 动作整体失效语义）。
+	// 原 gate M1 设计备注（位置钉扎：weight 锁区之后、紧邻 enqueueWrite）：
+	// CAS 成功后本 apply 的 active 回写仍可能晚于 FailAccount 的 disabled 回写
+	// 入队（writeback 合并"后写覆盖先写"→ DB 落 active → 重载复活）——复查与
+	// 入队指令相邻关闭全部实际可达窗口（此间 FailAccount 完成 CAS+入队则其入队
+	// 必然晚于本入队 → 通道序 [active, disabled] 合并取 disabled）；残余窗口
+	// （CAS+阻塞入队整体落进复查-入队间隙）为 spec M1b 明示接受（-race 实证可
+	// 复现、DB 可短暂落 active）。≤30s 全量同步是坏 DB 写的显形机制而非自愈
+	// 承诺；真正兜底是复查-入队相邻 + 内存终态恒 disabled。
+	if (st == nil || *st != domain.StatusDisabled) && a.statePtr().status == domain.StatusDisabled {
 		return
 	}
 	s.enqueueWrite(aid, next, weight)
