@@ -87,7 +87,8 @@ func TestSkeletonModelNonString400(t *testing.T) {
 func TestSkeletonStreamValueBoundaries(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
-	p := newTestProxy(t, up.URL, 1)
+	// 请求体无 model 字段 → 全模型账号基座（白名单账号对无模型请求 404）
+	p := newTestProxyFullModel(t, up.URL, 1)
 
 	for _, tc := range []struct {
 		name string
@@ -133,7 +134,8 @@ func TestSkeletonStreamValueBoundaries(t *testing.T) {
 func TestSkeletonModelTierExplicitNull(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
-	p := newTestProxy(t, up.URL, 1)
+	// model null → 同缺失（零值）→ 全模型账号基座
+	p := newTestProxyFullModel(t, up.URL, 1)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":null,"service_tier":null,"messages":[{"role":"user","content":"hi"}]}`))
@@ -220,7 +222,8 @@ func TestSkeletonLargeBodyExtraction(t *testing.T) {
 func TestSkeletonModelNullLikeMissing(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
-	p := newTestProxy(t, up.URL, 1)
+	// model null → 同缺失 → 全模型账号基座
+	p := newTestProxyFullModel(t, up.URL, 1)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":null,"messages":[{"role":"user","content":"hi"}]}`))

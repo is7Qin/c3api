@@ -128,7 +128,7 @@ flowchart LR
 - **余额预检**（`internal/proxy/caller.go:140-147`）：BillingCapture 门控快照读零 DB（滞后 ≤ balance_refresh_interval）；快照缺失/<0 且非免费组 → 402（余额 0 放行——临时额度由 FEFO 扣费消化）；免费组（EffectiveMultiplier==0）放行。
 - **并发门禁**：user → key 两级 CAS（`internal/proxy/gate.go:219-244`），key 失败回滚 user 计数；跨 reload 在途值继承。
 - **限流**：`internal/proxy/limit.go:39-56` 固定窗口 `ceil(group_key_rpm/N)`；`cooldown_429/backoff_*` 已移除（2026-08-13 用户裁决：配置含这些键将启动失败）——429 冷却与错误退避由规则引擎（种子 + `/admin/rules` 自定义）接管。
-- **选号**：`internal/scheduler/selection.go:17` tier1（模型偏好 Serves）→ tier2 → 默认桶；预生成加权轮询序列（零热路径计算）；协议转换只补差（`internal/proxy/caller.go:41-61` convertedRoute，off 零开销）。
+- **选号**：`internal/scheduler/selection.go:17` tier1（模型硬白名单 Serves）→ tier2（仅全模型账号）→ 默认桶（仅全模型账号）；预生成加权轮询序列（零热路径计算）；协议转换只补差（`internal/proxy/caller.go:41-61` convertedRoute，off 零开销）。
 - **缺价预检**：failover 循环内每轮 `caller.go:288-293` + `precheckPrice :438-451`——images 查 image_price、其余查 pricings，缺价 402 释放槽。
 - **codex 分流**（`caller.go:303-309`）：按 `sel.CredentialType` 换 codexImagesCaller（:320-321 codex 类型跳单字符串凭据走 sel.Ext → AccountCredential 直供适配层）。
 - **流式透传**：aiclient 流式入口经 `pkg/sserelay` 字节级 relay + Observer 旁路提取 usage；C1 批次能力：EOF 末帧 flush（`relay.go:217-230`，无末尾空行上游丢 completed 帧 → cost=0 修复）、deadline watcher（`relay.go:353-376` + `middleware.go:154-156`）、normalize 错误分类（`relay.go:269-277` 三态可分）、relayBufio 池（`relay.go:86-98`）、按需武装 flush timer（`relay.go:307-323`）；WS 1:1 透传（`internal/proxy/caller_responses_ws.go:272`，心跳 :352）。

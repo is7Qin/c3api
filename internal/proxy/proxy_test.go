@@ -215,6 +215,19 @@ func newTestProxyCapture(t *testing.T, upstream string, accountID int64, usageCa
 	return newTestProxyTplCapture(t, tpl, accountID, usageCapture)
 }
 
+// newTestProxyFullModel 用全模型模板（无模型空间）构造测试代理：模型缺失/未知
+// 请求走默认桶 tier2 兜底——骨架解析类用例（请求体无 model 字段/null model）的
+// 测试基座（硬白名单语义下白名单账号对无模型请求 404，见 scheduler buildRoutes）。
+func newTestProxyFullModel(t *testing.T, upstream string, accountID int64) *Proxy {
+	t.Helper()
+	tpl := &domain.Template{
+		ID: 1, Name: "t", BaseURL: upstream,
+		CredentialType:   credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+	}
+	return newTestProxyTplCapture(t, tpl, accountID, true)
+}
+
 // newTestProxyTimeoutLogs 同 newTestProxy，但注入 LogInserter（模型语义断言用捕获实现）。
 func newTestProxyTimeoutLogs(t *testing.T, upstream string, accountID int64, logs usage.LogInserter) *Proxy {
 	t.Helper()

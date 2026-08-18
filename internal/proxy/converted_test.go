@@ -132,13 +132,16 @@ func newConvertedTestProxy(t *testing.T, upstream string, tplFormats []domain.Re
 }
 
 // newConvertedTestProxyLogs 同 newConvertedTestProxy，但允许注入 LogInserter
-// （用量断言用捕获实现）与上游流超时（中止路径用例缩短触发）。
+// （用量断言用捕获实现）与上游流超时（中止路径用例缩短触发）。模板为全模型
+// 账号（无模型空间）：转换路径测试覆盖解析/转换/失败语义，不测模型白名单
+// 路由——含无 model 字段请求（顶层数组转换失败用例经默认桶选号；白名单账号
+// 在硬白名单语义下对无模型请求 404，见 scheduler buildRoutes）。
 func newConvertedTestProxyLogs(t *testing.T, upstream string, tplFormats []domain.RequestFormat, pcs []domain.ProtocolConvert, logs usage.LogInserter, streamTimeout time.Duration) *Proxy {
 	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: upstream,
 		CredentialType:   credential.TypeAPIKey,
-		SupportedFormats: tplFormats, Models: []string{"gpt-4o"},
+		SupportedFormats: tplFormats,
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream",
