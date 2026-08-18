@@ -100,8 +100,11 @@ func (s *Service) UpdateGroup(ctx context.Context, g *domain.Group) (*domain.Gro
 	}
 	// O2 组倍率矩阵：倍率变更 → 余额倍率快照定向刷新（名字/可见性变更不触发
 	// 任何快照，此处保守一并标记——去抖窗口内一次小表单查，可忽略）。
+	// Keys：组更新（含 protocol_convert 变更）→ 旧 key 的 auth 快照全量 Reload
+	// 即时收敛（A-2 姊妹路径；CreateGroup 不加——组创建时无 key，Keys reload
+	// 空转，组创建后建 key 的即时性由 A-2 增量注册保证）。
 	s.inv.Multipliers()
-	s.publish(ctx, notify.Change{Multipliers: true})
+	s.publish(ctx, notify.Change{Multipliers: true, Keys: true})
 	return updated, nil
 }
 
