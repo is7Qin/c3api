@@ -93,7 +93,7 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 		Keys:          &KeyRepo{client: client, driver: drv},
 		Assignments:   &GroupAssignmentRepo{client: client},
 		Settings:      &SettingRepo{client: client},
-		Usages:        &UsageRepo{client: client},
+		Usages:        &UsageRepo{client: client, pool: pool},
 		ErrLogs:       &ErrLogRepo{client: client},
 		Stats:         &StatRepo{client: client, pool: pool},
 		Rules:         &RuleRepo{client: client},
@@ -474,6 +474,12 @@ func (r *Repository) CountRules(ctx context.Context) (int64, error) {
 
 func (r *Repository) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.UsageLog, error) {
 	return r.Usages.QueryUsages(ctx, q)
+}
+
+// ScanUsageAgg 批量账号 usage_logs 区间聚合（/admin/accounts/usage 查询面；
+// LogStore 接口面注入——service 构造注入，测试 fake 直插）。
+func (r *Repository) ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error) {
+	return r.Usages.ScanUsageAgg(ctx, accountIDs, from, to)
 }
 
 // InsertErrLogBatch 批量插入错误明细（err_logs；errlog worker 写路径）。

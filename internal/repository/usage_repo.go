@@ -10,7 +10,10 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
@@ -31,7 +34,13 @@ type UsageQuery struct {
 	Limit     int
 }
 
-type UsageRepo struct{ client *ent.Client }
+type UsageRepo struct {
+	client *ent.Client
+	// pool 为聚合 SQL 直查入口（ScanUsageAgg——usage_logs 含 raw_cost 等
+	// SUM 聚合，ent 构建器无 SUM 能力，pgx 直查同 StatRepo carve-out 形态）；
+	// NewWithPG 注入（生产与 ent driver 同 DSN），New 未注入 → 显式错误。
+	pool *pgxpool.Pool
+}
 
 func (r *UsageRepo) InsertBatch(ctx context.Context, logs []*domain.UsageLog) error {
 	if len(logs) == 0 {
@@ -224,4 +233,38 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 		out = append(out, l)
 	}
 	return out, nil
+}
+
+// ScanUsageAgg 批量账号 usage_logs 区间聚合（/admin/accounts/usage 查询面——
+// 统一 usage API spec 2026-08-18）：单连接单查询，`ANY($1)` 100 ids 参数数组
+// 规模内 + created_at 半开区间 [from, to)（分区键——RANGE 分区剪枝 + 既有
+// account_id/created_at 索引）。SQL 侧 GROUP BY 聚合（F-P2-2 形态：服务端
+// 聚合，不拉全行客户端算）；SUM 毫分 int64 原样（USD 换算在 handler 展示
+// 边界）。返回 map[account_id]agg——无记录账号无键（补零由 service 层按 ids
+// 全量组装）。pool 未注入（New 构造）→ 显式错误（与 StatRepo 同纪律）。
+func (r *UsageRepo) ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error) {
+	if r.pool == nil {
+		return nil, fmt.Errorf("usage repo: pgx pool not configured (repository.NewWithPG); cannot scan usage agg")
+	}
+	// sum(bigint) → numeric，显式 ::bigint 回落（pgx 扫描 int64 不受 numeric
+	// 精度语义干扰——statSummarySQL 同款）；GROUP BY 行必有行 → sum 非 NULL，
+	// COALESCE 归零仅为形态防御。
+	rows, err := r.pool.Query(ctx, `SELECT account_id, count(*)::bigint,
+		COALESCE(sum(cost), 0)::bigint, COALESCE(sum(raw_cost), 0)::bigint,
+		COALESCE(sum(total_tokens), 0)::bigint
+		FROM usage_logs WHERE account_id = ANY($1) AND created_at >= $2 AND created_at < $3
+		GROUP BY account_id`, accountIDs, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]*domain.UsageAgg, len(accountIDs))
+	for rows.Next() {
+		a := &domain.UsageAgg{}
+		if err := rows.Scan(&a.AccountID, &a.Requests, &a.Cost, &a.RawCost, &a.TotalTokens); err != nil {
+			return nil, err
+		}
+		out[a.AccountID] = a
+	}
+	return out, rows.Err()
 }

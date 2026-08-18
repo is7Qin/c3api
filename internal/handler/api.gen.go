@@ -35,6 +35,12 @@ const (
 	AccountStatusUnhealthy AccountStatus = "unhealthy"
 )
 
+// Defines values for AccountUsageItemUpstreamError.
+const (
+	AuthExpired         AccountUsageItemUpstreamError = "auth_expired"
+	UpstreamUnavailable AccountUsageItemUpstreamError = "upstream_unavailable"
+)
+
 // Defines values for ErrorType.
 const (
 	Abort     ErrorType = "abort"
@@ -396,6 +402,21 @@ type AccountPatchStatus string
 // AccountStatus defines model for AccountStatus.
 type AccountStatus string
 
+// AccountUsageItem 账号 usage 视图 item（恒 = account_ids 去重后全量；upstream 为 codex 额度快照，api-key/无凭据账号恒 null）
+type AccountUsageItem struct {
+	AccountId int64 `json:"account_id"`
+
+	// Gateway 账号网关计费聚合（usage_logs 实时明细；毫分 /1e5 → USD；无记录账号全 0）
+	Gateway  UsageGatewayStats   `json:"gateway"`
+	Upstream *CodexUsageSnapshot `json:"upstream"`
+
+	// UpstreamError 上游快照失败分类（null = 无上游能力/快照成功；auth_expired = 凭据失效（fatal 类）；upstream_unavailable = 网络/5xx 等上游错误）
+	UpstreamError *AccountUsageItemUpstreamError `json:"upstream_error"`
+}
+
+// AccountUsageItemUpstreamError 上游快照失败分类（null = 无上游能力/快照成功；auth_expired = 凭据失效（fatal 类）；upstream_unavailable = 网络/5xx 等上游错误）
+type AccountUsageItemUpstreamError string
+
 // AccountView defines model for AccountView.
 type AccountView struct {
 	// BaseURL 账号级覆盖：非空优先于模板 base_url；null = 继承模板
@@ -419,6 +440,11 @@ type AccountView struct {
 	Concurrency    *int64         `json:"concurrency,omitempty"`
 	ErrCount       *int           `json:"err_count,omitempty"`
 	ErrRate        *float64       `json:"err_rate,omitempty"`
+}
+
+// AccountsUsageResponse 账号用量聚合响应（items 顺序 = account_ids 去重后顺序）
+type AccountsUsageResponse struct {
+	Items []AccountUsageItem `json:"items"`
 }
 
 // AdminKey defines model for AdminKey.
@@ -503,6 +529,39 @@ type BatchUpdateResponse struct {
 type BatchUpdateTemplatesBody struct {
 	Fields TemplatePatch `json:"fields"`
 	Ids    []int64       `json:"ids"`
+}
+
+// CodexCredits 充值余额（金额字符串，如 "12.50"）
+type CodexCredits struct {
+	Balance string `json:"balance"`
+}
+
+// CodexRateLimit 主窗口用量（reset_at RFC3339）
+type CodexRateLimit struct {
+	ResetAt     time.Time `json:"reset_at"`
+	UsedPercent int       `json:"used_percent"`
+}
+
+// CodexSpendControl 消费控制额度（金额字符串）
+type CodexSpendControl struct {
+	Limit            string `json:"limit"`
+	Remaining        string `json:"remaining"`
+	RemainingPercent int    `json:"remaining_percent"`
+	Used             string `json:"used"`
+	UsedPercent      int    `json:"used_percent"`
+}
+
+// CodexUsageSnapshot 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度）
+type CodexUsageSnapshot struct {
+	// Credits 充值余额（金额字符串，如 "12.50"）
+	Credits  *CodexCredits `json:"credits,omitempty"`
+	PlanType *string       `json:"plan_type,omitempty"`
+
+	// RateLimit 主窗口用量（reset_at RFC3339）
+	RateLimit *CodexRateLimit `json:"rate_limit,omitempty"`
+
+	// SpendControl 消费控制额度（金额字符串）
+	SpendControl *CodexSpendControl `json:"spend_control,omitempty"`
 }
 
 // DeactivateRequest 单码失效无请求体（保留空 schema 对齐批量端点命名）
@@ -1253,6 +1312,21 @@ type TemplatePatch struct {
 // TemplatePatchSupportedFormats defines model for TemplatePatch.SupportedFormats.
 type TemplatePatchSupportedFormats string
 
+// UsageGatewayStats 账号网关计费聚合（usage_logs 实时明细；毫分 /1e5 → USD；无记录账号全 0）
+type UsageGatewayStats struct {
+	// CostUsd 计费成本（USD，毫分 /1e5）
+	CostUsd float64 `json:"cost_usd"`
+
+	// RawCostUsd 乘倍率前原始成本（USD，毫分 /1e5）
+	RawCostUsd float64 `json:"raw_cost_usd"`
+
+	// Requests 请求数（COUNT(*)）
+	Requests int64 `json:"requests"`
+
+	// TotalTokens 总 token（SUM(total_tokens)）
+	TotalTokens int64 `json:"total_tokens"`
+}
+
 // UsageLog defines model for UsageLog.
 type UsageLog struct {
 	// AboveHit 任一分量超 above 阈值命中分段
@@ -1420,6 +1494,13 @@ type GetAccountsParams struct {
 
 // GetAccountsParamsOrder defines parameters for GetAccounts.
 type GetAccountsParamsOrder string
+
+// GetAccountsUsageParams defines parameters for GetAccountsUsage.
+type GetAccountsUsageParams struct {
+	AccountIds string     `form:"account_ids" json:"account_ids"`
+	From       *time.Time `form:"from,omitempty" json:"from,omitempty"`
+	To         *time.Time `form:"to,omitempty" json:"to,omitempty"`
+}
 
 // GetErrLogsParams defines parameters for GetErrLogs.
 type GetErrLogsParams struct {
@@ -1749,6 +1830,9 @@ type ServerInterface interface {
 	// 批量更新账号（fields 为任意字段子集）
 	// (POST /accounts/batch-update)
 	PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
+	// 账号用量聚合（统一 usage API——批量 ≤100 条；from/to 缺省 = 当天）
+	// (GET /accounts/usage)
+	GetAccountsUsage(w http.ResponseWriter, r *http.Request, params GetAccountsUsageParams)
 
 	// (DELETE /accounts/{id})
 	DeleteAccountsId(w http.ResponseWriter, r *http.Request, id int64)
@@ -1953,6 +2037,12 @@ func (_ Unimplemented) PostAccountsBatchDelete(w http.ResponseWriter, r *http.Re
 // 批量更新账号（fields 为任意字段子集）
 // (POST /accounts/batch-update)
 func (_ Unimplemented) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 账号用量聚合（统一 usage API——批量 ≤100 条；from/to 缺省 = 当天）
+// (GET /accounts/usage)
+func (_ Unimplemented) GetAccountsUsage(w http.ResponseWriter, r *http.Request, params GetAccountsUsageParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2418,6 +2508,56 @@ func (siw *ServerInterfaceWrapper) PostAccountsBatchUpdate(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAccountsBatchUpdate(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAccountsUsage operation middleware
+func (siw *ServerInterfaceWrapper) GetAccountsUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAccountsUsageParams
+
+	// ------------- Required query parameter "account_ids" -------------
+
+	if paramValue := r.URL.Query().Get("account_ids"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "account_ids"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "account_ids", r.URL.Query(), &params.AccountIds)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "account_ids", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAccountsUsage(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4584,6 +4724,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/batch-update", wrapper.PostAccountsBatchUpdate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/accounts/usage", wrapper.GetAccountsUsage)
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/accounts/{id}", wrapper.DeleteAccountsId)

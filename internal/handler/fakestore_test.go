@@ -55,6 +55,10 @@ type fakeStore struct {
 	// lastPatch 记录最近一次 UpdateAccountsBatch 收到的 patch（评审 M3：
 	// 断言 handler 的 group_ids nil/[] 映射是否真正传到了 repo 层）。
 	lastPatch repository.AccountPatch
+	// aggIDs/aggFrom/aggTo 记录最近一次 ScanUsageAgg 收参（缺省时间注入断言用）。
+	aggIDs  []int64
+	aggFrom time.Time
+	aggTo   time.Time
 }
 
 func newFakeStore() *fakeStore {
@@ -389,6 +393,40 @@ func (f *fakeStore) QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) 
 		model: q.Model, format: q.Format, errorType: q.ErrorType, statusCode: q.StatusCode,
 		from: q.From, to: q.To, cursor: q.Cursor, limit: q.Limit,
 	}), nil
+}
+
+// ScanUsageAgg 模拟 repo 聚合（/admin/accounts/usage 查询面——与真实 SQL 同
+// 语义：account_ids 过滤 + created_at 半开区间 [from, to)；SUM/COUNT 毫分原样
+// 聚合；无记录账号无键）。aggFrom/aggTo/aggIDs 记录最近一次收参（缺省时间
+// 注入断言用）。
+func (f *fakeStore) ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.aggIDs = append([]int64(nil), accountIDs...)
+	f.aggFrom, f.aggTo = from, to
+	inSet := make(map[int64]struct{}, len(accountIDs))
+	for _, id := range accountIDs {
+		inSet[id] = struct{}{}
+	}
+	out := make(map[int64]*domain.UsageAgg)
+	for _, l := range f.logs {
+		if _, ok := inSet[l.AccountID]; !ok {
+			continue
+		}
+		if l.CreatedAt.Before(from) || !l.CreatedAt.Before(to) {
+			continue
+		}
+		a := out[l.AccountID]
+		if a == nil {
+			a = &domain.UsageAgg{AccountID: l.AccountID}
+			out[l.AccountID] = a
+		}
+		a.Requests++
+		a.Cost += l.Cost
+		a.RawCost += l.RawCost
+		a.TotalTokens += l.TotalTokens
+	}
+	return out, nil
 }
 
 // logFilter 日志查询过滤面（fake 内部表示——镜像真实 repo UsageQuery/

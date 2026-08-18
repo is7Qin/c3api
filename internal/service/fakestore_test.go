@@ -500,6 +500,37 @@ func (f *fakeStore) QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) 
 	return f.queryLogs(q.UserID), nil
 }
 
+// ScanUsageAgg 模拟 repo 聚合（/admin/accounts/usage 查询面——与真实 SQL
+// 同语义：account_ids 过滤 + created_at 半开区间 [from, to)；SUM/COUNT 毫分
+// 原样聚合；无记录账号无键）。
+func (f *fakeStore) ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	inSet := make(map[int64]struct{}, len(accountIDs))
+	for _, id := range accountIDs {
+		inSet[id] = struct{}{}
+	}
+	out := make(map[int64]*domain.UsageAgg)
+	for _, l := range f.logs {
+		if _, ok := inSet[l.AccountID]; !ok {
+			continue
+		}
+		if l.CreatedAt.Before(from) || !l.CreatedAt.Before(to) {
+			continue
+		}
+		a := out[l.AccountID]
+		if a == nil {
+			a = &domain.UsageAgg{AccountID: l.AccountID}
+			out[l.AccountID] = a
+		}
+		a.Requests++
+		a.Cost += l.Cost
+		a.RawCost += l.RawCost
+		a.TotalTokens += l.TotalTokens
+	}
+	return out, nil
+}
+
 func (f *fakeStore) queryLogs(userID int64) []*domain.UsageLog {
 	f.mu.Lock()
 	defer f.mu.Unlock()

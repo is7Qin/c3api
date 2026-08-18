@@ -336,6 +336,39 @@ type CodexSpendControl struct {
 	RemainingPercent int    `json:"remaining_percent"`
 }
 
+// UsageAgg 账号 usage_logs 区间聚合行（ScanUsageAgg 行形态——统一 usage API
+// 查询面 spec 2026-08-18）：毫分 int64 原样聚合（USD 换算在 handler 展示边界
+// /1e5，temp-balances 先例），不做逐行事后计算。
+type UsageAgg struct {
+	AccountID   int64
+	Requests    int64 // COUNT(*)
+	Cost        int64 // SUM(cost)，毫分（计费成本）
+	RawCost     int64 // SUM(raw_cost)，毫分（乘倍率前原始成本）
+	TotalTokens int64 // SUM(total_tokens)
+}
+
+// AccountUsageUpstreamError 上游快照失败分类标记（upstream_error 枚举——
+// task 3 sdkbridge 错误分类即映射输入：ErrAuthExpired → auth_expired、
+// ErrUpstream → upstream_unavailable；api-key 无凭据/"缺失"恒 nil，不进
+// auth_expired）。
+type AccountUsageUpstreamError string
+
+const (
+	UpstreamErrorAuthExpired         AccountUsageUpstreamError = "auth_expired"          // 凭据失效（sdkbridge fatal 类）
+	UpstreamErrorUpstreamUnavailable AccountUsageUpstreamError = "upstream_unavailable" // 网络/5xx 等上游错误（ErrUpstream/其余）
+)
+
+// AccountUsage 账号 usage 视图 item（/admin/accounts/usage 统一 usage API 查询
+// 面）：Gateway 恒全量（无记录全 0——前端免补零）；Upstream 为 codex 额度快照
+// （task 3 sdkbridge；api-key/无凭据账号恒 nil）；UpstreamError 为快照失败标记
+// （成功/nil 上游恒 nil——"无上游能力"与"快照挂了"区分）。
+type AccountUsage struct {
+	AccountID     int64
+	Gateway       UsageAgg
+	Upstream      *CodexUsageSnapshot
+	UpstreamError *AccountUsageUpstreamError
+}
+
 type Group struct {
 	ID         int64
 	Name       string

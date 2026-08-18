@@ -112,6 +112,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 账号用量聚合（统一 usage API——批量 ≤100 条；from/to 缺省 = 当天） */
+        get: operations["GetAccountsUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/batch-delete": {
         parameters: {
             query?: never;
@@ -1057,6 +1074,70 @@ export interface components {
             /** Format: double */
             err_rate?: number;
             err_count?: number;
+        };
+        /** @description 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度） */
+        CodexUsageSnapshot: {
+            plan_type?: string;
+            rate_limit?: components["schemas"]["CodexRateLimit"];
+            credits?: components["schemas"]["CodexCredits"];
+            spend_control?: components["schemas"]["CodexSpendControl"];
+        };
+        /** @description 主窗口用量（reset_at RFC3339） */
+        CodexRateLimit: {
+            used_percent: number;
+            /** Format: date-time */
+            reset_at: string;
+        };
+        /** @description 充值余额（金额字符串，如 "12.50"） */
+        CodexCredits: {
+            balance: string;
+        };
+        /** @description 消费控制额度（金额字符串） */
+        CodexSpendControl: {
+            limit: string;
+            used: string;
+            remaining: string;
+            used_percent: number;
+            remaining_percent: number;
+        };
+        /** @description 账号网关计费聚合（usage_logs 实时明细；毫分 /1e5 → USD；无记录账号全 0） */
+        UsageGatewayStats: {
+            /**
+             * Format: double
+             * @description 乘倍率前原始成本（USD，毫分 /1e5）
+             */
+            raw_cost_usd: number;
+            /**
+             * Format: double
+             * @description 计费成本（USD，毫分 /1e5）
+             */
+            cost_usd: number;
+            /**
+             * Format: int64
+             * @description 请求数（COUNT(*)）
+             */
+            requests: number;
+            /**
+             * Format: int64
+             * @description 总 token（SUM(total_tokens)）
+             */
+            total_tokens: number;
+        };
+        /** @description 账号 usage 视图 item（恒 = account_ids 去重后全量；upstream 为 codex 额度快照，api-key/无凭据账号恒 null） */
+        AccountUsageItem: {
+            /** Format: int64 */
+            account_id: number;
+            gateway: components["schemas"]["UsageGatewayStats"];
+            upstream?: components["schemas"]["CodexUsageSnapshot"] | null;
+            /**
+             * @description 上游快照失败分类（null = 无上游能力/快照成功；auth_expired = 凭据失效（fatal 类）；upstream_unavailable = 网络/5xx 等上游错误）
+             * @enum {string|null}
+             */
+            upstream_error?: "auth_expired" | "upstream_unavailable" | null;
+        };
+        /** @description 账号用量聚合响应（items 顺序 = account_ids 去重后顺序） */
+        AccountsUsageResponse: {
+            items: components["schemas"]["AccountUsageItem"][];
         };
         TemplateExt: {
             /** Format: int64 */
@@ -2745,6 +2826,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Account"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetAccountsUsage: {
+        parameters: {
+            query: {
+                account_ids: string;
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 账号 usage items（恒 = account_ids 去重后全量——无记录账号 gateway 全 0，前端免补零；upstream 为 codex 额度快照，api-key 无凭据恒 null） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountsUsageResponse"];
                 };
             };
             default: components["responses"]["Error"];
