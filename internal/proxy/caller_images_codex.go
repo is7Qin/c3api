@@ -131,7 +131,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(wire)
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
+	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
 	// 计费提取：data 长 = 张数 + usage image_tokens → usageTuple → finish 的
 	// applyImageBilling（GetImagePrice → ImageCost，倍率整单施加）。
 	ii, io, count := billing.ImageUsageFromResponse(wire)

@@ -695,7 +695,7 @@ func (s *Scheduler) Release(accountID int64) {
 // 快照/EWMA/组路由/DB 回写全部由规则命中后的 apply 回调完成（本方法不再触碰状态）。
 // kind 直接收 rule.Kind（单一 kind 概念——scheduler 不再有第二套枚举；连接级/
 // 5xx 分流由调用点 RuleKindOf 完成）。
-func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Time, httpStatus int, errMsg string) {
+func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Time, httpStatus int, errMsg string, model string) {
 	// 断言 ok 防御性守卫（同 Release：MarkResult 恒在 Select 成功之后，快照未
 	// 加载时请求路径不可达；防未来调用序变化时 panic）。
 	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
@@ -729,6 +729,7 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 		GroupID:      groupIDPtr(av.gid),
 		Kind:         kind,
 		HTTPStatus:   hp,
+		Model:        model,
 		ErrorMessage: errMsg,
 		ResetAt:      resetAt,
 		OccurredAt:   s.timeNow(),

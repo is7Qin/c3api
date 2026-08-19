@@ -206,12 +206,13 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			}
 			// 429 分支统一走 Classify（规则表 = 单一决策源）：seed-429 恒命中
 			// （punish=true → 恒投递，现状等价）；规则删改后按声明裁定投递。
+			// Model 口径 = 客户端请求模型 reqModel（映射前，与 user err_logs 脱敏一致）。
 			_, punish := p.sched.Classify(rule.Event{
 				AccountID: sel.AccountID, Kind: rule.Kind429, HTTPStatus: &code,
-				Model: sel.Model, ErrorMessage: lastErrMsg,
+				Model: reqModel, ErrorMessage: lastErrMsg,
 			})
 			if punish {
-				p.sched.MarkResult(sel.AccountID, rule.Kind429, nil, code, lastErrMsg)
+				p.sched.MarkResult(sel.AccountID, rule.Kind429, nil, code, lastErrMsg, reqModel)
 			}
 		} else if code >= 500 || code == 0 {
 			// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
@@ -257,10 +258,10 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			}
 			_, punish := p.sched.Classify(rule.Event{
 				AccountID: sel.AccountID, Kind: kind, HTTPStatus: hp,
-				Model: sel.Model, ErrorMessage: lastErrMsg,
+				Model: reqModel, ErrorMessage: lastErrMsg,
 			})
 			if punish {
-				p.sched.MarkResult(sel.AccountID, kind, nil, code, lastErrMsg)
+				p.sched.MarkResult(sel.AccountID, kind, nil, code, lastErrMsg, reqModel)
 			}
 		} else {
 			// 4xx 确定性错误：透传上游状态码与原始 body，不转移（规格 §5.3）；
@@ -289,7 +290,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			// contains balance → unhealthy 30m）可命中，bug 修复。
 			transmit, punish := p.sched.Classify(rule.Event{
 				AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code,
-				Model: sel.Model, ErrorMessage: em,
+				Model: reqModel, ErrorMessage: em,
 			})
 			if transmit {
 				sink.writeUpstreamRejection(w, st, code, respBody)
@@ -297,7 +298,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 				sink.writeUpstreamRejection(w, st, http.StatusBadGateway, nil)
 			}
 			if punish {
-				p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em)
+				p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em, reqModel)
 			}
 			return
 		}

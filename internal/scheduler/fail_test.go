@@ -156,8 +156,8 @@ func TestFailAccountMarkResultGuard(t *testing.T) {
 	require.NoError(t, err)
 
 	s.FailAccount(1, "auth permanently revoked")
-	s.MarkResult(1, rule.KindOK, nil, 200, "")
-	s.MarkResult(1, rule.KindNetwork, nil, 0, "stale error")
+	s.MarkResult(1, rule.KindOK, nil, 200, "", "")
+	s.MarkResult(1, rule.KindNetwork, nil, 0, "stale error", "")
 	s.FlushRules()
 	s.Release(1)
 	drainWrites(t, s)
@@ -183,8 +183,8 @@ func TestFailAccountQueuedEventsBeforeFailure(t *testing.T) {
 	s := newSchedLoader(t, pl)
 
 	// 入队在先：error→unhealthy+冷却 / ok→active 两条事件在失效前入队
-	s.MarkResult(1, rule.Kind5xx, nil, 500, "boom")
-	s.MarkResult(1, rule.KindOK, nil, 200, "")
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "boom", "")
+	s.MarkResult(1, rule.KindOK, nil, 200, "", "")
 	s.FailAccount(1, "auth permanently revoked")
 	s.FlushRules() // 消费入队事件 → apply
 	drainWrites(t, s)

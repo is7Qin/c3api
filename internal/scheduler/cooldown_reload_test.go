@@ -60,7 +60,7 @@ func TestCooldownOnlyRuleFullChain(t *testing.T) {
 	require.True(t, pu, "cooldown-only 规则 punish=true（漏 Cooldown → 冷却静默丢弃）")
 
 	// MarkResult → 规则引擎 apply：st=nil（不碰状态）、冷却 = 事件时刻 + 5h
-	s.MarkResult(1, rule.Kind429, nil, 429, "")
+	s.MarkResult(1, rule.Kind429, nil, 429, "", "")
 	s.FlushRules()
 	ri, ok := s.Runtime(1)
 	require.True(t, ok)
@@ -93,7 +93,7 @@ func TestCooldownOnlyPersistReloadPreserved(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
 	s := newSchedCooldownOnly(t, m)
 
-	s.MarkResult(1, rule.Kind429, nil, 429, "")
+	s.MarkResult(1, rule.Kind429, nil, 429, "", "")
 	s.FlushRules()
 	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrNoAvailable, "冷却生效")
@@ -144,7 +144,7 @@ func TestCooldownPreservedOnInvalidateGroup(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
 	s := newSchedCooldownOnly(t, m)
 
-	s.MarkResult(1, rule.Kind429, nil, 429, "")
+	s.MarkResult(1, rule.Kind429, nil, 429, "", "")
 	s.FlushRules()
 	before := *mustCooldown(t, s, 1)
 	_, err := s.Select(10, domain.FormatOpenAIChat, "m")

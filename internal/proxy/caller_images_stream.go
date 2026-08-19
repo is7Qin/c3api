@@ -129,7 +129,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			return 0, nil, true, nil
 		}
 		p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, u, genErr)
-		p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(statusOf(genErr)), nil, statusOf(genErr), genErr.Error())
+		p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(statusOf(genErr)), nil, statusOf(genErr), genErr.Error(), sel.Model)
 		return 0, nil, true, nil
 	}
 
@@ -139,7 +139,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		writeSSEHeaders(w)
 		flushWriter(w)
 	}
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
+	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
 	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrNone, u, start)))
 	return http.StatusOK, nil, true, nil
 }
