@@ -368,6 +368,9 @@ export default function Accounts() {
       queryKey: ['accounts-usage-block', b.map(r => r.ID).join(',')],
       queryFn: () => api.listAccountsUsage(b.map(r => r.ID!)),
       enabled: isColVisible('usage') && pageIds.length > 0,
+      // staleTime = 轮询周期：切回页面/滚回视口时缓存新鲜（<10s）零请求直显，
+      // 避免 staleTime=0 默认的切回突刺 refetch；过期后按轮询节奏刷新。
+      staleTime: 10_000,
       refetchInterval: 10_000,
     })),
   })
