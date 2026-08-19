@@ -30,7 +30,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
 import { StatusBadge, CooldownBadge } from '@/components/status-badge'
-import { fmtTokens, formatDateTime, formatPercent, toRFC3339, truncate } from '@/components/fmt'
+import { fmtTokens, formatPercent, toRFC3339, truncate } from '@/components/fmt'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 
@@ -88,6 +88,17 @@ const USAGE_RANGES = [
   { key: '30d', hours: 720 },
   { key: '90d', hours: 2160 },
 ] as const
+
+// 分桶时间列按粒度截断：day → 仅日期（桶边界 08:00 的 UTC 时刻对"一天"无语义）；
+// hour → 日期 + 整点（桶起点）。本地时区转换（与 formatDateTime 一致）。
+const fmtBucketTime = (iso?: string, g: 'hour' | 'day' = 'day'): string => {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const date = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`
+  return g === 'hour' ? `${date} ${pad(d.getHours())}:00` : date
+}
 
 // 汇总卡片（A 原始成本 / U 计费成本 / 请求数 / 总 tokens），口径与用量单元格一致。
 function UsageSummary({ label, value }: { label: string; value: string }) {
@@ -412,6 +423,8 @@ export default function Accounts() {
   const [usageDetail, setUsageDetail] = useState<AccountView | null>(null)
   const [rangeKey, setRangeKey] = useState<string>('7d')
   const range = USAGE_RANGES.find(r => r.key === rangeKey) ?? USAGE_RANGES[1]
+  // 分桶粒度（≤72h → hour，否则 day）——分桶表时间列按粒度截断（day 只显示日期）
+  const granularity: 'hour' | 'day' = range.hours <= 72 ? 'hour' : 'day'
   const from = new Date(Date.now() - range.hours * 3600_000).toISOString()
   const to = new Date().toISOString()
   const detailQ = useQuery({
@@ -421,7 +434,7 @@ export default function Accounts() {
   })
   const statsQ = useQuery({
     queryKey: ['account-stats-detail', usageDetail?.ID, rangeKey],
-    queryFn: () => api.getStats({ account_id: usageDetail!.ID!, from, to, granularity: range.hours <= 72 ? 'hour' : 'day' }),
+    queryFn: () => api.getStats({ account_id: usageDetail!.ID!, from, to, granularity }),
     enabled: !!usageDetail,
   })
   // 统计桶按 BucketTime 升序（spec 钉死）：后端 day 合并按 map 迭代返回无序
@@ -1399,7 +1412,7 @@ export default function Accounts() {
                   <TableBody className="[&_td]:py-2.5">
                     {shownBuckets.map((b, i) => (
                       <TableRow key={b.BucketTime ?? i}>
-                        <TableCell className="whitespace-nowrap tabular-nums">{formatDateTime(b.BucketTime)}</TableCell>
+                        <TableCell className="whitespace-nowrap tabular-nums">{fmtBucketTime(b.BucketTime, granularity)}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtUsd(b.raw_cost_usd)}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtUsd(b.Cost)}</TableCell>
                         <TableCell className="text-right tabular-nums">{b.RequestCount ?? 0}</TableCell>
