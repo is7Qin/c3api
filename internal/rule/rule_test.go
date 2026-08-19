@@ -202,8 +202,17 @@ func TestValidateThen(t *testing.T) {
 		{"no action", domain.RuleThen{}, false},
 		{"status only", domain.RuleThen{Status: &status}, true},
 		{"cooldown only", domain.RuleThen{Cooldown: &cooldown}, true},
-		{"transmit only", domain.RuleThen{Transmit: true}, true},
-		{"transmit with cooldown", domain.RuleThen{Transmit: true, Cooldown: &cooldown}, true},
+		{"custom_message only", domain.RuleThen{CustomMessage: strPtr("rate limited")}, true},
+		{"response_code only 502", domain.RuleThen{ResponseCode: intPtr(502)}, true},
+		{"response_code with cooldown", domain.RuleThen{ResponseCode: intPtr(429), Cooldown: &cooldown}, true},
+		{"custom_message with cooldown", domain.RuleThen{CustomMessage: strPtr("x"), Cooldown: &cooldown}, true},
+		{"response_code 400 ok", domain.RuleThen{ResponseCode: intPtr(400)}, true},
+		{"response_code 599 ok", domain.RuleThen{ResponseCode: intPtr(599)}, true},
+		{"response_code 200 rejected", domain.RuleThen{ResponseCode: intPtr(200)}, false},
+		{"response_code 399 rejected", domain.RuleThen{ResponseCode: intPtr(399)}, false},
+		{"response_code 600 rejected", domain.RuleThen{ResponseCode: intPtr(600)}, false},
+		{"response_code -1 rejected", domain.RuleThen{ResponseCode: intPtr(-1)}, false},
+		{"custom_message empty rejected", domain.RuleThen{CustomMessage: strPtr("")}, false},
 		{"bad status", domain.RuleThen{Status: statusPtr(domain.AccountStatus("banana"))}, false},
 		{"unparseable cooldown", domain.RuleThen{Cooldown: strPtr("30x")}, false},
 		{"zero cooldown", domain.RuleThen{Cooldown: strPtr("0s")}, false},
@@ -413,8 +422,8 @@ func TestSeedRules(t *testing.T) {
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.Reload(context.Background()))
 
-	// 种子 5 条（fresh setup 哲学）：429/30s、4xx+400/transmit、5xx/unhealthy/10m、
-	// network/unhealthy/5s、ok/active，priority 10/15/20/25/30
+	// 种子 5 条（fresh setup 哲学，指针即意图）：429/30s+nil/rate limited、4xx+400/nil/nil 全透、5xx/unhealthy/10m+502/generic、
+	// network/unhealthy/5s+502/generic、ok/active，priority 10/15/20/25/30
 	require.Equal(t, int64(5), mustCountAny(t, st))
 	require.True(t, e.NeedsOKEvents()) // 种子含 kind=ok 恢复规则（C1）
 
@@ -427,16 +436,27 @@ func TestSeedRules(t *testing.T) {
 	require.Equal(t, "429", *rules[0].When.Kind)
 	require.Equal(t, domain.Status429, *rules[0].Then.Status)
 	require.Equal(t, "30s", *rules[0].Then.Cooldown)
+	require.Nil(t, rules[0].Then.ResponseCode, "seed-429 码透传 nil")
+	require.NotNil(t, rules[0].Then.CustomMessage)
+	require.Equal(t, "rate limited", *rules[0].Then.CustomMessage, "seed-429 文不透 rate limited")
 	require.Equal(t, "4xx", *rules[1].When.Kind)
 	require.Equal(t, 400, *rules[1].When.HTTPStatus)
-	require.True(t, rules[1].Then.Transmit, "seed-4xx-400：400 透传原文（现状等价）")
-	require.False(t, rules[1].Then.Status != nil || rules[1].Then.Cooldown != nil, "transmit-only 种子")
+	require.Nil(t, rules[1].Then.ResponseCode, "seed-4xx-400 码透传 nil")
+	require.Nil(t, rules[1].Then.CustomMessage, "seed-4xx-400 文透传 nil（全透，种子特例）")
+	require.Nil(t, rules[1].Then.Status)
+	require.Nil(t, rules[1].Then.Cooldown)
 	require.Equal(t, "5xx", *rules[2].When.Kind)
 	require.Equal(t, domain.StatusUnhealthy, *rules[2].Then.Status)
 	require.Equal(t, "10m", *rules[2].Then.Cooldown, "seed-5xx 冷却 10m（用户裁决）")
+	require.NotNil(t, rules[2].Then.ResponseCode)
+	require.Equal(t, 502, *rules[2].Then.ResponseCode)
+	require.Equal(t, "Upstream request failed", *rules[2].Then.CustomMessage)
 	require.Equal(t, "network", *rules[3].When.Kind)
 	require.Equal(t, domain.StatusUnhealthy, *rules[3].Then.Status)
 	require.Equal(t, "5s", *rules[3].Then.Cooldown, "seed-network 冷却 5s（连接级独立，不吃 10m）")
+	require.NotNil(t, rules[3].Then.ResponseCode)
+	require.Equal(t, 502, *rules[3].Then.ResponseCode)
+	require.Equal(t, "Upstream request failed", *rules[3].Then.CustomMessage)
 	require.Equal(t, "ok", *rules[4].When.Kind)
 	require.Equal(t, domain.StatusActive, *rules[4].Then.Status)
 	require.Nil(t, rules[4].Then.Cooldown)
@@ -729,16 +749,16 @@ func TestClassify(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "r4xx-401", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http401},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("30m")}},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("30m"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 		domain.Rule{Name: "r4xx-400-transmit", Enabled: true, Priority: 15,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
-			Then: domain.RuleThen{Transmit: true}},
+			Then: domain.RuleThen{}},
 		domain.Rule{Name: "r5xx", Enabled: true, Priority: 20,
 			When: domain.RuleWhen{Kind: strPtr("5xx")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 		domain.Rule{Name: "rnet", Enabled: true, Priority: 25,
 			When: domain.RuleWhen{Kind: strPtr("network")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 	)
 	ev := func(kind Kind, code int, msg string) Event {
 		var hp *int
@@ -748,39 +768,44 @@ func TestClassify(t *testing.T) {
 		return Event{AccountID: 1, Kind: kind, HTTPStatus: hp, ErrorMessage: msg}
 	}
 
-	// 无规则 4xx（其他状态码）→ (false, false)（默认归一 502）
-	tx, pu := e.Classify(ev(Kind4xx, 403, "forbidden"))
-	require.False(t, tx)
+	// 无规则 4xx（其他状态码）→ (empty, false)（默认归一 502）
+	then, pu := e.Classify(ev(Kind4xx, 403, "forbidden"))
+	require.Nil(t, then.ResponseCode)
+	require.Nil(t, then.CustomMessage)
 	require.False(t, pu)
 
-	// kind=4xx + http=401 → 401 (false, true)（unhealthy 30m——用户案例）
-	tx, pu = e.Classify(ev(Kind4xx, 401, "no balance"))
-	require.False(t, tx, "未声明 transmit → 归一")
+	// kind=4xx + http=401 → 401 (502+generic, true)（unhealthy 30m——用户案例，指针归一）
+	then, pu = e.Classify(ev(Kind4xx, 401, "no balance"))
+	require.NotNil(t, then.ResponseCode)
+	require.Equal(t, 502, *then.ResponseCode, "未透传 → 归一 502")
+	require.NotNil(t, then.CustomMessage)
 	require.True(t, pu, "有状态动作 → 投递")
 
-	// kind=4xx + http=400 + transmit → 400 (true, false)
-	tx, pu = e.Classify(ev(Kind4xx, 400, "bad request"))
-	require.True(t, tx, "transmit 规则 → 透传")
-	require.False(t, pu, "transmit-only 无状态动作")
+	// kind=4xx + http=400 + passthrough → 400 (nil/nil, false)（指针 nil 即透传）
+	then, pu = e.Classify(ev(Kind4xx, 400, "bad request"))
+	require.Nil(t, then.ResponseCode, "透传规则 → ResponseCode nil")
+	require.Nil(t, then.CustomMessage, "透传规则 → CustomMessage nil")
+	require.False(t, pu, "透传-only 无状态动作")
 
-	// kind=5xx → 5xx (false, true)
-	tx, pu = e.Classify(ev(Kind5xx, 500, "boom"))
-	require.False(t, tx)
+	// kind=5xx → 5xx (502+generic, true)
+	then, pu = e.Classify(ev(Kind5xx, 500, "boom"))
+	require.NotNil(t, then.ResponseCode)
+	require.Equal(t, 502, *then.ResponseCode)
 	require.True(t, pu)
 
-	// kind=network → network (false, true)
-	tx, pu = e.Classify(ev(KindNetwork, 0, "dial tcp: refused"))
-	require.False(t, tx)
+	// kind=network → network (502+generic, true)
+	then, pu = e.Classify(ev(KindNetwork, 0, "dial tcp: refused"))
+	require.NotNil(t, then.ResponseCode)
 	require.True(t, pu)
 
 	// ok 事件：无 kind=ok 规则 → 无命中
-	tx, pu = e.Classify(ev(KindOK, 200, ""))
-	require.False(t, tx)
+	then, pu = e.Classify(ev(KindOK, 200, ""))
+	require.Nil(t, then.ResponseCode)
 	require.False(t, pu)
 
 	// 429：无 kind=429 规则（r4xx-401 的 http=401 不匹配 429）→ 无命中
-	tx, pu = e.Classify(ev(Kind429, 429, "rate limited"))
-	require.False(t, tx)
+	then, pu = e.Classify(ev(Kind429, 429, "rate limited"))
+	require.Nil(t, then.ResponseCode)
 	require.False(t, pu)
 }
 
@@ -796,19 +821,19 @@ func TestClassifyCooldownPunish(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "cd-only", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("429")},
-			Then: domain.RuleThen{Cooldown: strPtr("5h")}},
+			Then: domain.RuleThen{Cooldown: strPtr("5h"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 		domain.Rule{Name: "status-429", Enabled: true, Priority: 20,
 			When: domain.RuleWhen{Kind: strPtr("429"), HTTPStatus: &http401},
-			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")}},
+			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 		domain.Rule{Name: "transmit-only", Enabled: true, Priority: 30,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
-			Then: domain.RuleThen{Transmit: true}},
+			Then: domain.RuleThen{}},
 		domain.Rule{Name: "transmit-cd", Enabled: true, Priority: 40,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http402},
-			Then: domain.RuleThen{Transmit: true, Cooldown: strPtr("30s")}},
+			Then: domain.RuleThen{Cooldown: strPtr("30s")}},
 		domain.Rule{Name: "window-cd", Enabled: true, Priority: 50,
 			When: domain.RuleWhen{Kind: strPtr("5xx"), CountFailureGE: intPtr(5), WindowSeconds: intPtr(60)},
-			Then: domain.RuleThen{Cooldown: strPtr("5h")}},
+			Then: domain.RuleThen{Cooldown: strPtr("5h"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 	)
 	ev := func(kind Kind, code int) Event {
 		var hp *int
@@ -818,29 +843,31 @@ func TestClassifyCooldownPunish(t *testing.T) {
 		return Event{AccountID: 1, Kind: kind, HTTPStatus: hp}
 	}
 
-	// cooldown-only 规则 → punish=true（修复前 false——缺陷 1 根因）
-	tx, pu := e.Classify(ev(Kind429, 0))
-	require.False(t, tx)
+	// cooldown-only 规则 → punish=true，归一 502（修复前 false——缺陷 1 根因，指针归一）
+	then, pu := e.Classify(ev(Kind429, 0))
+	require.NotNil(t, then.ResponseCode)
+	require.Equal(t, 502, *then.ResponseCode)
 	require.True(t, pu, "cooldown-only 规则 punish=true（漏 Cooldown → 冷却永不生效）")
 
-	// 带 status 规则 → punish=true（回归）
-	tx, pu = e.Classify(ev(Kind429, http401))
-	require.False(t, tx)
+	// 带 status 规则 → punish=true（回归，归一）
+	then, pu = e.Classify(ev(Kind429, http401))
+	require.NotNil(t, then.ResponseCode)
 	require.True(t, pu, "带 status 规则 punish=true 回归")
 
-	// transmit-only 规则 → punish=false（回归——透传不冷却，语义不变）
-	tx, pu = e.Classify(ev(Kind4xx, http400))
-	require.True(t, tx)
+	// transmit-only 规则 → punish=false（回归——透传 nil/nil 不冷却，语义不变）
+	then, pu = e.Classify(ev(Kind4xx, http400))
+	require.Nil(t, then.ResponseCode, "transmit-only 指针 nil 透传")
+	require.Nil(t, then.CustomMessage)
 	require.False(t, pu, "transmit-only 规则 punish=false 回归")
 
-	// transmit+cooldown 组合 → (true, true)（评审 O-3）
-	tx, pu = e.Classify(ev(Kind4xx, http402))
-	require.True(t, tx)
+	// transmit+cooldown 组合 → (nil/nil passthrough, true)（评审 O-3，指针透传+冷却）
+	then, pu = e.Classify(ev(Kind4xx, http402))
+	require.Nil(t, then.ResponseCode, "transmit+cooldown 透传码")
 	require.True(t, pu, "transmit+cooldown 组合 punish=true")
 
-	// 窗口条件 cooldown-only 规则 → 保守 punish=true（投递后 worker 窗口精确判）
-	tx, pu = e.Classify(ev(Kind5xx, 500))
-	require.False(t, tx)
+	// 窗口条件 cooldown-only 规则 → 保守 punish=true（投递后 worker 窗口精确判，归一）
+	then, pu = e.Classify(ev(Kind5xx, 500))
+	require.NotNil(t, then.ResponseCode)
 	require.True(t, pu, "窗口条件 cooldown-only 规则 punish=true（可能命中）")
 }
 
@@ -868,11 +895,12 @@ func TestClassifyWindowRulePossibleHit(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "escalate", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), CountFailureGE: intPtr(5), WindowSeconds: intPtr(60)},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 	)
 	code := 401
-	tx, pu := e.Classify(Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: &code, ErrorMessage: "x"})
-	require.False(t, tx)
+	then, pu := e.Classify(Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: &code, ErrorMessage: "x"})
+	require.NotNil(t, then.ResponseCode)
+	require.Equal(t, 502, *then.ResponseCode)
 	require.True(t, pu, "窗口规则可能命中 → 保守 punish（投递后 worker 精确判）")
 }
 
