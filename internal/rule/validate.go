@@ -62,12 +62,13 @@ func ValidateWhen(w domain.RuleWhen) error {
 	return nil
 }
 
-// ValidateThen then 动作校验：至少一个动作（status/cooldown/weight/transmit——
-// transmit-only 规则如 seed-4xx-400 通过；空 then 拒绝）；status 合法枚举；
-// cooldown 可 time.ParseDuration 解析且 > 0；weight ∈ [0,100]。
+// ValidateThen then 动作校验：至少一个动作（status/cooldown/weight/response_code/custom_message 任一非nil——
+// 指针即意图，nil=透传；seed-4xx-400 nil/nil 为种子特例直插 store 不走本校验，用户规则 nil/nil 视为无效）；
+// status 合法枚举；cooldown 可 time.ParseDuration 解析且 > 0；weight ∈ [0,100]；
+// ResponseCode!=nil 需 400-599；CustomMessage==ptr("") 拒绝。
 func ValidateThen(t domain.RuleThen) error {
-	if t.Status == nil && t.Cooldown == nil && t.Weight == nil && !t.Transmit {
-		return fmt.Errorf("then must set at least one of status/cooldown/weight/transmit")
+	if t.Status == nil && t.Cooldown == nil && t.Weight == nil && t.ResponseCode == nil && t.CustomMessage == nil {
+		return fmt.Errorf("then must set at least one of status/cooldown/weight/response_code/custom_message")
 	}
 	if t.Status != nil && !validStatus(*t.Status) {
 		return fmt.Errorf("then.status must be active/unhealthy/429/disabled, got %q", *t.Status)
@@ -83,6 +84,12 @@ func ValidateThen(t domain.RuleThen) error {
 	}
 	if t.Weight != nil && (*t.Weight < 0 || *t.Weight > 100) {
 		return fmt.Errorf("then.weight must be in [0,100], got %d", *t.Weight)
+	}
+	if t.ResponseCode != nil && (*t.ResponseCode < 400 || *t.ResponseCode > 599) {
+		return fmt.Errorf("then.response_code must be in [400,599], got %d", *t.ResponseCode)
+	}
+	if t.CustomMessage != nil && *t.CustomMessage == "" {
+		return fmt.Errorf("then.custom_message must be non-empty, got %q", *t.CustomMessage)
 	}
 	return nil
 }

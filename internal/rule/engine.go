@@ -193,15 +193,16 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 }
 
 // seedRules 规则表为空时写入种子规则（fresh setup 哲学，用户裁决；kind=error
-// 旧规则不迁移——管理面重建）：
+// 旧规则不迁移——管理面重建；指针即意图 ResponseCode/CustomMessage nil=透传）：
 //
-//	seed-429（p10）      kind=429   → status=429 + cooldown 30s（现状等价）
-//	seed-4xx-400（p15）  kind=4xx + http_status=400 → transmit（400 透传原文，
-//	                       现状等价；其余 4xx 默认归一 502——无规则即归一）
-//	seed-5xx（p20）      kind=5xx   → status=unhealthy + cooldown 10m（用户裁决）
-//	seed-network（p25）  kind=network → status=unhealthy + cooldown 5s
+//	seed-429（p10）      kind=429   → status=429 + cooldown 30s + ResponseCode nil(透429) + CustomMessage "rate limited"（码透文不透）
+//	seed-4xx-400（p15）  kind=4xx + http_status=400 → ResponseCode nil + CustomMessage nil（400 全透；其余 4xx 默认归一 502——无规则即归一；种子特例直插不走 ValidateThen）
+//	seed-5xx（p20）      kind=5xx   → status=unhealthy + cooldown 10m + 502/"Upstream request failed"（用户裁决归一）
+//	seed-network（p25）  kind=network → status=unhealthy + cooldown 5s + 502/"Upstream request failed"
 //	                       （连接级独立类型——原连接级 5s 语义，不吃 10m）
 //	seed-ok（p30）       kind=ok    → status=active 无冷却（恢复）
+//
+// 启动 guard 检测旧列 Transmit：fresh setup 下旧列若存在则需重建 DB（本 Task 仅注释占位，真实 DB 检测后续承载）。
 //
 // 多实例种子幂等（设计文档 §1.5 / R2）：两实例同时空表启动 → 双双进入本方法，
 // name/priority 唯一约束（ent schema 已有）保证只有一个实例的插入成功；失败方
@@ -220,22 +221,22 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 		{
 			Name: "seed-429", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("429")},
-			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")},
+			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s"), CustomMessage: strPtr("rate limited")},
 		},
 		{
 			Name: "seed-4xx-400", Enabled: true, Priority: 15,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},
-			Then: domain.RuleThen{Transmit: true},
+			Then: domain.RuleThen{}, // ResponseCode nil + CustomMessage nil = 全透（种子特例，直插）
 		},
 		{
 			Name: "seed-5xx", Enabled: true, Priority: 20,
 			When: domain.RuleWhen{Kind: strPtr("5xx")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("10m")},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("10m"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
 		},
 		{
 			Name: "seed-network", Enabled: true, Priority: 25,
 			When: domain.RuleWhen{Kind: strPtr("network")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("5s")},
+			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("5s"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
 		},
 		{
 			Name: "seed-ok", Enabled: true, Priority: 30,
@@ -303,13 +304,13 @@ func statusPtr(s domain.AccountStatus) *domain.AccountStatus { return &s }
 // model）命中者决定结果。窗口条件规则（count_*/ratio_*，ruleNeedsWindow）依赖
 // 历史计数，预判不可得——按"可能命中"保守处理（不参与判定，窗口阈值由 worker
 // Match 精确裁决；prejudge 命中 → punish 保证事件投递，worker 再精确应用）。
-// 返回 transmit（true = 命中规则 then.transmit——透传上游原文）与 punish
-// （true = 命中规则有状态动作 Status/Weight/Cooldown 任一非 nil——应投递
+// 指针即意图：then.ResponseCode nil=透传上游码，non-nil=覆写；then.CustomMessage nil=透传上游文，non-nil=覆写；头透传与 kind 解耦（ResponseCode==nil 才透）。
+// 返回 then 值拷贝（调用方只读不得修改）与 punish（true = 命中规则有状态动作 Status/Weight/Cooldown 任一非 nil——应投递
 // MarkResult；漏判 Cooldown 则 cooldown-only 规则永不投递，冷却静默丢弃，
-// 2026-08-19 缺陷 1 根因）。无命中 → (false, false)（默认归一，安全默认
+// 2026-08-19 缺陷 1 根因）。无命中 → (domain.RuleThen{}, false)（默认归一 502+generic，安全默认
 // ——不认识的错误不透传）。
 // 零分配：仅读规则集切片（RLock 快照）+ 字符串比较。
-func (e *RuleEngine) Classify(ev Event) (transmit bool, punish bool) {
+func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 	e.rulesMu.RLock()
 	rules := e.rules
 	e.rulesMu.RUnlock()
@@ -317,7 +318,7 @@ func (e *RuleEngine) Classify(ev Event) (transmit bool, punish bool) {
 		if !matchBasic(r.When, ev) {
 			continue
 		}
-		return r.Then.Transmit, r.Then.Status != nil || r.Then.Weight != nil || r.Then.Cooldown != nil
+		return r.Then, r.Then.Status != nil || r.Then.Weight != nil || r.Then.Cooldown != nil
 	}
-	return false, false
+	return domain.RuleThen{}, false
 }
