@@ -377,7 +377,7 @@ export default function Accounts() {
       }
       if (!raf) raf = requestAnimationFrame(flush)
     })
-    trs.forEach((tr, i) => { tr.dataset.idx = String(i); io.observe(tr) })
+    trs.forEach((tr, i) => { (tr as HTMLElement).dataset.idx = String(i); io.observe(tr) })
     return () => { io.disconnect(); if (raf) cancelAnimationFrame(raf) }
   }, [data])
 
