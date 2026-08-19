@@ -669,11 +669,11 @@ type RuleThen struct {
 	Status   *AccountStatus `json:"status,omitempty"`
 	Cooldown *string        `json:"cooldown,omitempty"` // time.ParseDuration 可解析的时长，如 "30s"、"5h"
 	Weight   *int           `json:"weight,omitempty"`   // 0-100
-	// Transmit true = 透传上游原文给客户端（响应原文 + 用户面 err_logs 原文）；
-	// false/缺省 = 归一固定文案（响应归一 502 "upstream rejected request" +
-	// 用户面日志同文案）。Classify 命中规则时决定响应/日志透传——transmit-only
-	// 规则（seed-4xx-400 形态）通过 ValidateThen（"至少一个动作"计入 transmit）。
-	Transmit bool `json:"transmit,omitempty"`
+	// ResponseCode nil=透传上游码，non-nil=覆写为指定码（400-599）；指针即意图（fresh setup，无旧 Transmit 兼容）。
+	ResponseCode *int `json:"response_code,omitempty"`
+	// CustomMessage nil=透传上游文，non-nil=覆写为固定文案（禁止空串）；指针即意图。
+	CustomMessage *string `json:"custom_message,omitempty"`
+	// 启动 guard 检测旧列 Transmit：fresh setup 哲学，用户裁决；旧列存在则 fail-fast 需重建（本 Task 仅注释占位，DB 检测由后续迁移承载）。
 }
 
 type Rule struct {
