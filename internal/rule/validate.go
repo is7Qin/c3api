@@ -29,14 +29,41 @@ func ValidateWhen(w domain.RuleWhen) error {
 	if w.Kind != nil && kindFromString(*w.Kind) < 0 {
 		return fmt.Errorf("when.kind must be ok/429/4xx/5xx/network, got %q", *w.Kind)
 	}
-	if w.HTTPStatus != nil && len(w.HTTPStatusIn) > 0 {
-		return errors.New("http_status and http_status_in are mutually exclusive")
+	intSpecs := []struct {
+		name   string
+		single *int
+		in     []int
+	}{
+		{"http_status", w.HTTPStatus, w.HTTPStatusIn},
 	}
-	if w.Model != nil && len(w.ModelIn) > 0 {
-		return errors.New("model and model_in are mutually exclusive")
+	strSpecs := []struct {
+		name   string
+		single *string
+		in     []string
+	}{
+		{"model", w.Model, w.ModelIn},
 	}
-	if w.ErrorMessageContains != nil && len(w.ErrorMessageContainsIn) > 0 {
-		return errors.New("error_message_contains and error_message_contains_in are mutually exclusive")
+	subSpecs := []struct {
+		name   string
+		single *string
+		in     []string
+	}{
+		{"error_message_contains", w.ErrorMessageContains, w.ErrorMessageContainsIn},
+	}
+	for _, s := range intSpecs {
+		if s.single != nil && len(s.in) > 0 {
+			return fmt.Errorf("%s and %s_in are mutually exclusive", s.name, s.name)
+		}
+	}
+	for _, s := range strSpecs {
+		if s.single != nil && len(s.in) > 0 {
+			return fmt.Errorf("%s and %s_in are mutually exclusive", s.name, s.name)
+		}
+	}
+	for _, s := range subSpecs {
+		if s.single != nil && len(s.in) > 0 {
+			return fmt.Errorf("%s and %s_in are mutually exclusive", s.name, s.name)
+		}
 	}
 	// 确定性死配置：ok 事件不带错误信息，contains 恒假 → 规则永不命中。
 	// 其余 kind 交叉组合（如 kind=ok + count_429_ge）为合法观察者语义，放行。

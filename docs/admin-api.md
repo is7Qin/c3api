@@ -829,6 +829,7 @@
 > - `model`/`model_in` 匹配**最终请求模型**（sel.Model/mapped），响应/状态/日志三面一致
 > - 元素校验：`http_status_in` 400-599且去重，`model_in`/`error_message_contains_in` 非空去重；`kind=ok` 拒 `error_message_contains_in` 
 > - Upgrade: `DisallowUnknownFields` 下旧部署发 `_in` 判 `400`，新库 **fresh setup 空库重建**（无迁移）
+> - 性能：复合 IN 预编译集合，Classify 零分配（与 strip_scan 热路径纪律对齐）
 
 ### 规则列表
 
