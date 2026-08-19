@@ -768,10 +768,11 @@ func TestClassify(t *testing.T) {
 		return Event{AccountID: 1, Kind: kind, HTTPStatus: hp, ErrorMessage: msg}
 	}
 
-	// 无规则 4xx（其他状态码）→ (empty, false)（默认归一 502）
+	// 无规则 4xx（其他状态码）→ 默认归一 502（engine 默认）
 	then, pu := e.Classify(ev(Kind4xx, 403, "forbidden"))
-	require.Nil(t, then.ResponseCode)
-	require.Nil(t, then.CustomMessage)
+	require.NotNil(t, then.ResponseCode)
+	require.Equal(t, 502, *then.ResponseCode)
+	require.Equal(t, "upstream rejected request", *then.CustomMessage)
 	require.False(t, pu)
 
 	// kind=4xx + http=401 → 401 (502+generic, true)（unhealthy 30m——用户案例，指针归一）
@@ -803,9 +804,11 @@ func TestClassify(t *testing.T) {
 	require.Nil(t, then.ResponseCode)
 	require.False(t, pu)
 
-	// 429：无 kind=429 规则（r4xx-401 的 http=401 不匹配 429）→ 无命中
+	// 429：无 kind=429 规则（r4xx-401 的 http=401 不匹配 429）→ 默认归一 502
 	then, pu = e.Classify(ev(Kind429, 429, "rate limited"))
-	require.Nil(t, then.ResponseCode)
+	require.NotNil(t, then.ResponseCode)
+	require.Equal(t, 502, *then.ResponseCode)
+	require.Equal(t, "upstream rejected request", *then.CustomMessage)
 	require.False(t, pu)
 }
 

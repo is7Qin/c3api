@@ -114,7 +114,10 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 // ——与 chat 版保留不统一（gate Minor 2a）。
 type searchAttempt struct{ p *Proxy }
 
-func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, bool, error) {
+func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+	// TODO(P22-I1): 当前 hdr 恒 nil（UpstreamCaller.Call 未回收 resp.Header），
+	// 仅 fallback 1 生效；待扩展 Header 透传后替换为真实透传
+	// （Global Constraints 豁免 fallback 保留）
 	var (
 		code     int
 		respBody []byte
@@ -137,7 +140,7 @@ func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http
 				logx.Error(callErr))
 		}
 	}
-	return code, respBody, handled, callErr
+	return code, respBody, nil, handled, callErr
 }
 
 // callCodexSearch codex-oauth/codex-pat 类型 search 调用（SDK 路径）：凭据线

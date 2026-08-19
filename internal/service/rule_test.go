@@ -73,13 +73,16 @@ func TestCreateRule(t *testing.T) {
 	require.Equal(t, "5s", *got.Then.Cooldown)
 	require.Equal(t, 1, rl.calls, "规则创建后必须触发引擎 Reload")
 
-	// transmit 契约 round-trip（transmit-only 规则——seed-4xx-400 形态）
+	// response_code/custom_message 契约 round-trip（指针意图，seed-400 nil/nil 形态直插，普通规则需显式 ResponseCode/CustomMessage）
 	got2, err := svc.CreateRule(context.Background(), RuleInput{
 		Name: "tx", Priority: 20, When: map[string]any{"kind": "4xx", "http_status": 400},
-		Then: map[string]any{"transmit": true},
+		Then: map[string]any{"response_code": 400, "custom_message": "bad request passthrough"},
 	})
-	require.NoError(t, err, "transmit-only 规则通过 ValidateThen（放宽）")
-	require.True(t, got2.Then.Transmit)
+	require.NoError(t, err, "ResponseCode/CustomMessage 规则通过 ValidateThen")
+	require.NotNil(t, got2.Then.ResponseCode)
+	require.Equal(t, 400, *got2.Then.ResponseCode)
+	require.NotNil(t, got2.Then.CustomMessage)
+	require.Equal(t, "bad request passthrough", *got2.Then.CustomMessage)
 	require.Nil(t, got2.Then.Status)
 }
 

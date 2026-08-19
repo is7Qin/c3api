@@ -97,7 +97,7 @@ func TestErrClassifyUserCase401Balance(t *testing.T) {
 		domain.Rule{Name: "balance-401", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(401),
 				ErrorMessageContains: strPtrT("balance")},
-			Then: domain.RuleThen{Status: statusPtrT(domain.StatusUnhealthy), Cooldown: strPtrT("30m")}},
+			Then: domain.RuleThen{Status: statusPtrT(domain.StatusUnhealthy), Cooldown: strPtrT("30m"), ResponseCode: intPtrT(502), CustomMessage: strPtrT("upstream rejected request")}},
 	)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -106,7 +106,7 @@ func TestErrClassifyUserCase401Balance(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
-	require.Equal(t, http.StatusBadGateway, rec.Code, "未声明 transmit → 归一 502，body=%s", rec.Body.String())
+	require.Equal(t, http.StatusBadGateway, rec.Code, "未声明 ResponseCode/CustomMessage → 归一 502，body=%s", rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"upstream rejected request"`, "归一固定文案")
 	require.NotContains(t, rec.Body.String(), "CreditsError", "上游私有错误体不得透传")
 	require.NotContains(t, rec.Body.String(), "ws_abc123", "工作区 ID 不得透传")
@@ -154,7 +154,7 @@ func TestErrClassify4xxNormalizeMatrix(t *testing.T) {
 		})
 	}
 
-	// 400 → seed-4xx-400 transmit=true → 原文透传（状态码 400）
+	// 400 → seed-4xx-400 ResponseCode nil + CustomMessage nil 全透 → 原文透传（状态码 400）
 	up := fakeUpstreamStatus(t, 400, `{"error":{"message":"bad request"}}`)
 	defer up.Close()
 	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat)
@@ -168,15 +168,15 @@ func TestErrClassify4xxNormalizeMatrix(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "upstream rejected request")
 }
 
-// TestErrClassifyTransmitRulePassthrough 用户 transmit 规则命中 → 原文透传
-// （穿透语义：transmit=true 规则 = 用户需要错误详情）。
+// TestErrClassifyTransmitRulePassthrough 用户自定义全透规则命中 → 原文透传
+// （指针意图：ResponseCode nil + CustomMessage nil = 全透）。
 func TestErrClassifyTransmitRulePassthrough(t *testing.T) {
 	up := fakeUpstreamStatus(t, 403, `{"error":{"message":"payment required: upgrade plan"}}`)
 	defer up.Close()
 	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat,
 		domain.Rule{Name: "tx-403", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(403)},
-			Then: domain.RuleThen{Transmit: true}},
+			Then: domain.RuleThen{}},
 	)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -185,11 +185,11 @@ func TestErrClassifyTransmitRulePassthrough(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
-	require.Equal(t, 403, rec.Code, "transmit 规则 → 原始状态码透传")
+	require.Equal(t, 403, rec.Code, "全透规则 → 原始状态码透传")
 	require.Contains(t, rec.Body.String(), "upgrade plan", "原文透传")
 	require.NotContains(t, rec.Body.String(), "upstream rejected request")
 
-	// transmit-only 规则无状态动作 → 不投递 MarkResult → 账号不冷却
+	// 全透规则（空 Then）无状态动作 → 不投递 MarkResult → 账号不冷却
 	p.sched.FlushRules()
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)

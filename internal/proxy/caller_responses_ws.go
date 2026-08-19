@@ -175,7 +175,10 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 // （WS 不新增 Warn——gate Minor 2b）。
 type wsAttempt struct{ p *Proxy }
 
-func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, bool, error) {
+func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+	// TODO(P22-I1): 当前 hdr 恒 nil（UpstreamCaller.Call 未回收 resp.Header），
+	// 仅 fallback 1 生效；待扩展 Header 透传后替换为真实透传
+	// （Global Constraints 豁免 fallback 保留）
 	p := a.p
 	if isCodexCredentialType(sel.CredentialType) {
 		// codex 独立 relay 变体（T4 §1）：SDK Dial 路径——快照派生 cred 直供
@@ -198,24 +201,24 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			}
 			handled, fwMsg := p.relayWS(st.client, newCodexTransport(up), frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, st.first)
 			if handled {
-				return 0, nil, true, nil
+				return 0, nil, nil, true, nil
 			}
 			// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（同拨号失败）
-			return 0, []byte(fwMsg), false, nil
+			return 0, []byte(fwMsg), nil, false, nil
 		}
 		if stop, code, msg := p.handleCodexDialError(r, reqID, groupID, start, sel, reqModel, st.client, dialErr); stop {
 			// 501/fatal/4xx 已收尾（错误帧 + 记录）——请求终止不转移
-			return 0, nil, true, nil
+			return 0, nil, nil, true, nil
 		} else {
 			// 429 → Kind429 转移；5xx（归一 lastCode 原样）/RefreshError/
 			// 网络（code 0）→ RuleKindOf(code) 转移——分类由循环统一完成。
-			return code, []byte(msg), false, nil
+			return code, []byte(msg), nil, false, nil
 		}
 	}
 	cred, err := p.credentialFor(ctx, sel)
 	if err != nil {
 		// 凭据错误按网络错误处理（等价 handleFormat 的 code==0 语义）
-		return 0, []byte(domain.TruncateErrMsg(err.Error())), false, nil
+		return 0, []byte(domain.TruncateErrMsg(err.Error())), nil, false, nil
 	}
 	// 拨号超时上限（黑洞上游接受 TCP 不回 101 → 无界等待占死并发槽）：wrapped
 	// ctx 取消不向上传播（原 r.Context() 未取消）→ 超时按连接级错误转移
@@ -238,10 +241,10 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 		handled, fwMsg := p.relayWS(st.client, newAiclientTransport(up), nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, first)
 		if handled {
-			return 0, nil, true, nil
+			return 0, nil, nil, true, nil
 		}
 		// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（同拨号失败）
-		return 0, []byte(fwMsg), false, nil
+		return 0, []byte(fwMsg), nil, false, nil
 	}
 	// 拨号失败分类（与 handleFormat 的 code 分支同构）：msg 归一 = 上游 body
 	// message（B1 分通道——4xx 无则空、dialErr 全文走 callErr；0/5xx/429 保持
@@ -262,7 +265,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		// emOr 回退固定网关文案）；dialErr 全文走 callErr 通道（failoverLoop
 		// 4xx 分支以 callErr 回退落盘保全文）——SDK 拨号错误文本不再顶替进用
 		// 户可见面。
-		return code, []byte(msg), false, dialErr
+		return code, []byte(msg), nil, false, dialErr
 	}
 	if msg == "" {
 		msg = dialErr.Error()
@@ -270,7 +273,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	if code < 400 || code >= 600 {
 		code = 0 // 连接级/非标准拒绝（含 2xx/3xx 未升级）→ 现状 default 分支语义
 	}
-	return code, []byte(msg), false, nil
+	return code, []byte(msg), nil, false, nil
 }
 
 // aiclientTransport 上游侧 *websocket.Conn 的 wsRelayTransport 适配（aiclient

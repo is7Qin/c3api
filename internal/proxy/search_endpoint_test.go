@@ -454,7 +454,7 @@ func TestSearchFatalMarksFailed(t *testing.T) {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode, "fatal 耗尽 → 502")
-	require.Contains(t, string(b), "all upstream attempts failed")
+	require.Contains(t, string(b), "Upstream request failed")
 	require.Equal(t, 1, upc.callsN(), "判死不重试——上游恰一次接触")
 	require.Equal(t, 1, recorderCalls(recorder), "统一回调恰一次")
 	_, acc, _ := recorder.snapshot()
@@ -558,7 +558,7 @@ func TestSearchIndependentSelection(t *testing.T) {
 // failover_attempts=0（绕过 validate 的 >=1 下限——测试侧 p.cfg 改写等价直构）
 // 时 failover 循环零次执行，首次 Select 已占并发槽——修复前槽永不释放（组内
 // 账号耗尽后全组 429 死锁，重启才能恢复）；耗尽路径必须补 Release。N=0 时
-// lastCode=0 → ErrNetwork → 502 "all upstream attempts failed"。
+// lastCode=0 → ErrNetwork → 502 "Upstream request failed"。
 func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
 	up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 500, body: `{}`})
 	defer up.Close()
@@ -573,7 +573,7 @@ func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode, "body=%s", string(b))
-	require.Contains(t, string(b), "all upstream attempts failed")
+	require.Contains(t, string(b), "Upstream request failed")
 	require.Equal(t, 0, upc.callsN(), "N=0 循环零次执行：无上游接触")
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
