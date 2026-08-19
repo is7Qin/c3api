@@ -55,8 +55,9 @@ func TestCooldownOnlyRuleFullChain(t *testing.T) {
 	s := newSchedCooldownOnly(t, pl)
 
 	// Classify(429)：cooldown-only 规则命中 → punish=true（修复前 false）
-	tx, pu := s.Classify(rule.Event{AccountID: 1, Kind: rule.Kind429, HTTPStatus: intPtr(429)})
-	require.False(t, tx)
+	then, pu := s.Classify(rule.Event{AccountID: 1, Kind: rule.Kind429, HTTPStatus: intPtr(429)})
+	require.Nil(t, then.ResponseCode)
+	require.Nil(t, then.CustomMessage)
 	require.True(t, pu, "cooldown-only 规则 punish=true（漏 Cooldown → 冷却静默丢弃）")
 
 	// MarkResult → 规则引擎 apply：st=nil（不碰状态）、冷却 = 事件时刻 + 5h

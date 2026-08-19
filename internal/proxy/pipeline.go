@@ -145,7 +145,7 @@ type attemptState struct {
 //     attempt 内部代发（Warn 文案两版本保留不统一——循环不代发；WS code==0
 //     恒 callErr=nil 不新增 Warn）
 type upstreamAttempt interface {
-	call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (code int, respBody []byte, handled bool, callErr error)
+	call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (code int, respBody []byte, hdr http.Header, handled bool, callErr error)
 }
 
 // pipelineSink 循环收尾写出（HTTP 信封 vs WS 错误事件帧）。
@@ -170,6 +170,8 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 	var (
 		lastCode   int
 		lastErrMsg string // 最后一次实际尝试的错误文本（耗尽路径 ErrorMessage 用）
+		lastHdr    http.Header
+		lastBody   []byte
 	)
 	// 防呆（spec：failover_attempts=0 直构绕过 validate 下限）：循环零次执行时
 	// 首次 Select 已占并发槽，耗尽路径按此标志补 Release——N>=1 恒 true，不双释放。
@@ -190,11 +192,13 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 				return
 			}
 		}
-		code, respBody, handled, callErr := attempt.call(r.Context(), w, r, reqID, groupID, start, sel, reqModel, body, st)
+		code, respBody, hdr, handled, callErr := attempt.call(r.Context(), w, r, reqID, groupID, start, sel, reqModel, body, st)
 		if handled {
 			return // attempt 已处理完毕（成功/客户端断开/流中止已记录；本地拒绝已写出无记录）
 		}
 		lastCode = code
+		lastHdr = hdr
+		lastBody = respBody
 		if code == http.StatusTooManyRequests {
 			// 429：上游 body message（既有语义；域内截断 500）。WS 拨号 429 的
 			// 错误文本经 respBody 传递（可能为 SDK 纯文本）——提取为空时直取
@@ -264,15 +268,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 				p.sched.MarkResult(sel.AccountID, kind, nil, code, lastErrMsg, sel.Model)
 			}
 		} else {
-			// 4xx 确定性错误：透传上游状态码与原始 body，不转移（规格 §5.3）；
-			// body 不可得（连接级错误不会有 4xx 码）才回退网关文案。
-			// 错误文本：上游 body 原文截断 500 落 ErrorMessage（仅错误分支构造，
-			// 成功路径 ErrorMessage 恒空、零分配）；respBody 空且 callErr 非空 →
-			// 以 callErr 全文回退落盘（B1 分通道的落盘面：WS 拨号 4xx 的 dialErr
-			// 不再顶替进 respBody，改经 err 通道到此处落盘——4xx 空 body 边缘落盘
-			// 增益 B1' 裁决接受、不加守卫；chat/search 4xx 恒有上游 body 且
-			// callErr=nil，该回退不可达，落盘语义零变化）。WS 静态拨号 4xx 也归
-			// 此统一段（finish + 错误帧——emOr 语义由 wsSink 保持）。
+			// 4xx 确定性错误（统一公式 status=ResponseCode!=nil?*ResponseCode:code, msg=CustomMessage!=nil?*CustomMessage:respBody）
 			l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, format, code, domain.Err4xx, usageTuple{}, start))
 			em := domain.TruncateErrMsg(string(respBody))
 			if em == "" && callErr != nil {
@@ -282,20 +278,34 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 				l.ErrorMessage = &em
 			}
 			p.finish(sel.AccountID, l)
-			// 4xx 决策走规则表（单一决策源，零硬编码状态码清单）：transmit=true
-			// 规则命中（seed-4xx-400）→ 现状透传（原始状态码 + body）；否则（无
-			// 规则声明/transmit=false）→ 归一 502 + 固定文案（复用
-			// writeUpstreamRejection 空 body 分支——T7 遗留泄漏修复）。
-			// punish → MarkResult(Kind4xx)：用户规则（如 kind=4xx + http=401 +
-			// contains balance → unhealthy 30m）可命中，bug 修复。
-			transmit, punish := p.sched.Classify(rule.Event{
+			then, punish := p.sched.Classify(rule.Event{
 				AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code,
 				Model: sel.Model, ErrorMessage: em,
 			})
-			if transmit {
-				sink.writeUpstreamRejection(w, st, code, respBody)
+			status := code
+			if then.ResponseCode != nil {
+				status = *then.ResponseCode
+			}
+			if then.ResponseCode == nil && hdr != nil {
+				if v := hdr.Get("Retry-After"); v != "" {
+					w.Header().Set("Retry-After", v)
+				} else if v := hdr.Get("X-Retry-After"); v != "" {
+					w.Header().Set("Retry-After", v)
+				}
+			}
+			// fallback不透头: ResponseCode!=nil 覆写码时即使上游有 Retry-After 也不透传，不伪造
+			if _, isWS := sink.(*wsSink); isWS {
+				if then.CustomMessage != nil {
+					sink.writeUpstreamRejection(w, st, status, []byte(*then.CustomMessage))
+				} else {
+					sink.writeUpstreamRejection(w, st, status, respBody)
+				}
 			} else {
-				sink.writeUpstreamRejection(w, st, http.StatusBadGateway, nil)
+				if then.CustomMessage != nil {
+					writeJSON(w, status, map[string]any{"error": map[string]any{"message": *then.CustomMessage, "type": "upstream_error"}})
+				} else {
+					sink.writeUpstreamRejection(w, st, status, respBody)
+				}
 			}
 			if punish {
 				p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em, sel.Model)
@@ -314,9 +324,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			break
 		}
 	}
-	// 耗尽：请求已完成（上游消费了请求），以最后一次尝试的结果记一条用量。
-	// 错误文本：最后一次尝试的 errMsg（连接级 err.Error() / 429/5xx 上游
-	// message，域内截断 500）填 ErrorMessage；成功路径恒空。
+	// 耗尽：请求已完成（上游消费了请求），以最后一次尝试的结果记一条用量（统一公式 status=ResponseCode!=nil?*ResponseCode:lastCode, msg=CustomMessage!=nil?*CustomMessage:lastBody/lastErrMsg）。
 	// 防呆释放：循环零次执行（failover_attempts=0 直构）时首次 Select 的槽从未
 	// 释放——耗尽路径补 Release；N>=1 时 attempted 恒 true（循环尾已释放，不双释放）。
 	if !attempted {
@@ -329,12 +337,69 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 	case lastCode == 0:
 		et = domain.ErrNetwork
 	}
+	// 耗尽统一公式：按最后一次尝试的 kind/HTTPStatus/Message 重新分类获取 then
+	var then domain.RuleThen
+	{
+		kind := scheduler.RuleKindOf(lastCode)
+		if lastCode == http.StatusTooManyRequests {
+			kind = rule.Kind429
+		} else if lastCode >= 400 && lastCode < 500 {
+			kind = rule.Kind4xx
+		}
+		var hp *int
+		if lastCode != 0 {
+			hp = &lastCode
+		}
+		then, _ = p.sched.Classify(rule.Event{AccountID: lastSel.AccountID, Kind: kind, HTTPStatus: hp, Model: lastSel.Model, ErrorMessage: lastErrMsg})
+	}
+	status := lastCode
+	if then.ResponseCode != nil {
+		status = *then.ResponseCode
+	}
+	if status == 0 {
+		status = http.StatusBadGateway
+	}
+	// 头透传仅当 ResponseCode==nil 且上游带 Retry-After/X-Retry-After 才透，否则不透不伪造；fallback不透头（覆写码时不透头）
+	if then.ResponseCode == nil {
+		if lastHdr != nil {
+			if v := lastHdr.Get("Retry-After"); v != "" {
+				w.Header().Set("Retry-After", v)
+			} else if v := lastHdr.Get("X-Retry-After"); v != "" {
+				w.Header().Set("Retry-After", v)
+			} else if status == http.StatusTooManyRequests {
+				w.Header().Set("Retry-After", "1")
+			}
+		} else if status == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", "1")
+		}
+	}
 	l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, lastSel.Model, format, lastCode, et, usageTuple{}, start))
 	if lastErrMsg != "" {
 		l.ErrorMessage = &lastErrMsg
 	}
 	p.recordLog(l)
-	sink.writeExhausted(w, st, lastCode, lastErrMsg)
+	// 统一写出：CustomMessage 覆写时用固定文案，否则透传上游 body；WS 与 HTTP 分流
+	if _, isWS := sink.(*wsSink); isWS {
+		if then.CustomMessage != nil {
+			sink.writeExhausted(w, st, status, *then.CustomMessage)
+		} else if lastErrMsg != "" {
+			sink.writeExhausted(w, st, status, lastErrMsg)
+		} else {
+			sink.writeExhausted(w, st, status, "all upstream attempts failed")
+		}
+	} else {
+		if then.CustomMessage != nil {
+			writeJSON(w, status, map[string]any{"error": map[string]any{"message": *then.CustomMessage, "type": "upstream_error"}})
+		} else if len(lastBody) > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write(lastBody)
+		} else if lastErrMsg != "" {
+			writeJSON(w, status, map[string]any{"error": map[string]any{"message": lastErrMsg, "type": "upstream_error"}})
+		} else {
+			writeErr(w, &formatError{status: status, msg: "all upstream attempts failed"})
+		}
+	}
 }
 
 // httpSink HTTP 信封收尾（chat/search 共用；无状态——w 经方法参数流入）。

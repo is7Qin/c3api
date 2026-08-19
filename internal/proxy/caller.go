@@ -271,7 +271,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 // 本地拒绝——chat 专属）。
 type chatAttempt struct{ p *Proxy }
 
-func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, bool, error) {
+func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	// codex 分流落位（T2 §2，B 的 501 骨架）：images 端点 codex-oauth/
 	// codex-pat 模板选号命中 → codexImagesCaller（GenerateImage 非流式 /
 	// GenerateImageStream 流式 T3 已接——caller 内 stream 分支同签名直赋）。
@@ -299,7 +299,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 	} else {
 		cred, err := a.p.credentialFor(ctx, sel)
 		if err != nil {
-			return 0, nil, false, err // 凭据错误按网络错误处理（等价现状 try* 内 false,0,nil → 耗尽 ErrNetwork）
+			return 0, nil, nil, false, err // 凭据错误按网络错误处理（等价现状 try* 内 false,0,nil → 耗尽 ErrNetwork）
 		}
 		// err 保留（部署故障修复：错误文本落盘）：code 承载分类（0=连接级/
 		// 凭据错、4xx、429、5xx），callErr 提供 err.Error() 文本——仅错误
@@ -339,10 +339,10 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
 				"message": sdkErr, "type": "upstream_error",
 			}})
-			return 0, nil, true, nil
+			return 0, nil, nil, true, nil
 		}
 	}
-	return code, respBody, handled, callErr
+	return code, respBody, nil, handled, callErr
 }
 
 // precheckPrice 缺价预检（评审 P1-1：预检按格式切换）——images 格式查

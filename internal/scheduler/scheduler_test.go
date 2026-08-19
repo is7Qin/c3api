@@ -1495,7 +1495,7 @@ func TestMarkResultNetworkVs5xxSplit(t *testing.T) {
 }
 
 // TestSchedulerClassify scheduler.Classify 包装：快照取 TemplateID/GroupID 后
-// 委托引擎；transmit = 命中规则 then.transmit；快照外账号 → (false, false)。
+// 委托引擎；then.ResponseCode nil=透码，CustomMessage nil=透文；快照外账号 → (domain.RuleThen{}, false)。
 func TestSchedulerClassify(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIResponsesWS, []string{"gpt-4o"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {
@@ -1506,13 +1506,13 @@ func TestSchedulerClassify(t *testing.T) {
 	_, err := rstore.CreateRule(context.Background(), domain.Rule{
 		Name: "transmit-400", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
-		Then: domain.RuleThen{Transmit: true},
+		Then: domain.RuleThen{}, // ResponseCode nil + CustomMessage nil = 全透（种子特例 nil/nil）
 	})
 	require.NoError(t, err)
 	_, err = rstore.CreateRule(context.Background(), domain.Rule{
 		Name: "punish-401", Enabled: true, Priority: 20,
 		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http401},
-		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("30m")},
+		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("30m"), ResponseCode: intPtr(502), CustomMessage: strPtr("upstream rejected request")},
 	})
 	require.NoError(t, err)
 	re := rule.New(rule.Config{}, rstore, nil)
@@ -1520,17 +1520,20 @@ func TestSchedulerClassify(t *testing.T) {
 	s := New(testCfg(), m, re, nil)
 	require.NoError(t, s.reload(context.Background()))
 
-	// 400 → transmit=true（seed 语义同）
-	tx, pu := s.Classify(rule.Event{AccountID: 1, Kind: rule.Kind4xx, HTTPStatus: &http400})
-	require.True(t, tx)
+	// 400 → 全透（ResponseCode nil + CustomMessage nil）
+	then, pu := s.Classify(rule.Event{AccountID: 1, Kind: rule.Kind4xx, HTTPStatus: &http400})
+	require.Nil(t, then.ResponseCode)
+	require.Nil(t, then.CustomMessage)
 	require.False(t, pu)
-	// 401 → punish（unhealthy 30m），transmit=false
-	tx, pu = s.Classify(rule.Event{AccountID: 1, Kind: rule.Kind4xx, HTTPStatus: &http401})
-	require.False(t, tx)
+	// 401 → punish（unhealthy 30m），ResponseCode 502 覆写
+	then, pu = s.Classify(rule.Event{AccountID: 1, Kind: rule.Kind4xx, HTTPStatus: &http401})
+	require.NotNil(t, then.ResponseCode)
+	require.Equal(t, 502, *then.ResponseCode)
 	require.True(t, pu)
-	// 快照外账号 → (false, false)
-	tx, pu = s.Classify(rule.Event{AccountID: 999, Kind: rule.Kind4xx, HTTPStatus: &http401})
-	require.False(t, tx)
+	// 快照外账号 → (domain.RuleThen{}, false)
+	then, pu = s.Classify(rule.Event{AccountID: 999, Kind: rule.Kind4xx, HTTPStatus: &http401})
+	require.Nil(t, then.ResponseCode)
+	require.Nil(t, then.CustomMessage)
 	require.False(t, pu)
 }
 

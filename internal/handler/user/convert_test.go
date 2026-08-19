@@ -69,9 +69,9 @@ func newTestUserAPI(t *testing.T, rules ...domain.Rule) *UserAPI {
 }
 
 // TestUserErrLogSanitize 用户面 err_logs 行级脱敏（gate Major 2 全函数映射）：
-// 401 原文行 → 固定文案（无 4xx-401 规则 → 默认归一）；400 行 → 原文
-// （seed-4xx-400 transmit=true）；ErrAuth/ErrBilling 本地拒绝行 → 原样（无
-// kind 不参与策略）；5xx/network/abort 行 → 固定文案（seed 命中 transmit=false）。
+// 401 原文行 → 固定文案（无命中 → 默认归一）；400 行 → 原文
+// （seed-4xx-400 ResponseCode nil + CustomMessage nil 全透）；ErrAuth/ErrBilling 本地拒绝行 → 原样（无
+// kind 不参与策略）；5xx/network/abort 行 → 固定文案（seed 命中 CustomMessage）。
 func TestUserErrLogSanitize(t *testing.T) {
 	h := newTestUserAPI(t) // 空表 → 种子 5 条
 
@@ -84,10 +84,10 @@ func TestUserErrLogSanitize(t *testing.T) {
 			upstreamRejectedMsg},
 		{"403 原文行 → 固定文案", errRow(domain.Err4xx, 403, "forbidden upstream detail"), upstreamRejectedMsg},
 		{"400 行 → 原文（seed-4xx-400 透传）", errRow(domain.Err4xx, 400, "bad request"), "bad request"},
-		{"429 行 → 固定文案（seed-429）", errRow(domain.Err429, 429, "upstream 429 detail"), upstreamRejectedMsg},
-		{"5xx 行 → 固定文案（seed-5xx）", errRow(domain.Err5xx, 500, "upstream internal detail"), upstreamRejectedMsg},
-		{"network 行 → 固定文案（seed-network）", errRow(domain.ErrNetwork, 0, "dial tcp: refused"), upstreamRejectedMsg},
-		{"abort 行 → 固定文案（保守映射 5xx）", errRow(domain.ErrAbort, 499, "client closed before response"), upstreamRejectedMsg},
+		{"429 行 → 固定文案（seed-429）", errRow(domain.Err429, 429, "upstream 429 detail"), "rate limited"},
+		{"5xx 行 → 固定文案（seed-5xx）", errRow(domain.Err5xx, 500, "upstream internal detail"), "Upstream request failed"},
+		{"network 行 → 固定文案（seed-network）", errRow(domain.ErrNetwork, 0, "dial tcp: refused"), "Upstream request failed"},
+		{"abort 行 → 固定文案（保守映射 5xx）", errRow(domain.ErrAbort, 499, "client closed before response"), "Upstream request failed"},
 		{"ErrAuth 本地拒绝行 → 原样", errRow(domain.ErrAuth, 401, "invalid gateway key"), "invalid gateway key"},
 		{"ErrBilling 本地拒绝行 → 原样", errRow(domain.ErrBilling, 402, "insufficient balance"), "insufficient balance"},
 		{"ErrNoAccount 本地拒绝行 → 原样", errRow(domain.ErrNoAccount, 404, "no available account"), "no available account"},
@@ -101,13 +101,13 @@ func TestUserErrLogSanitize(t *testing.T) {
 	}
 }
 
-// TestUserErrLogSanitizeTransmitRule 用户 transmit 规则命中 → 原文保留
-// （穿透语义：transmit=true = 用户需要错误详情，响应与日志同步原文）。
+// TestUserErrLogSanitizeTransmitRule 用户全透规则命中 → 原文保留
+// （指针意图：CustomMessage nil = 透传原文，响应与日志同步原文）。
 func TestUserErrLogSanitizeTransmitRule(t *testing.T) {
 	h := newTestUserAPI(t,
 		domain.Rule{Name: "tx-401", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtrS("4xx"), HTTPStatus: intPtrS(401)},
-			Then: domain.RuleThen{Transmit: true}},
+			Then: domain.RuleThen{}},
 	)
 	e := h.toAPIErrLog(errRow(domain.Err4xx, 401, "balance detail for user debugging"))
 	require.NotNil(t, e.ErrorMessage)
@@ -121,9 +121,9 @@ func TestUserErrLogSanitizeAccountScoped(t *testing.T) {
 	h := newTestUserAPI(t,
 		domain.Rule{Name: "acc-1-tx", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtrS("4xx"), HTTPStatus: intPtrS(401), AccountID: &aid},
-			Then: domain.RuleThen{Transmit: true}},
+			Then: domain.RuleThen{}},
 	)
-	// 账号 1 的 401 行 → transmit 规则命中 → 原文
+	// 账号 1 的 401 行 → 全透规则命中 → 原文
 	e := h.toAPIErrLog(errRow(domain.Err4xx, 401, "acc1 raw"))
 	require.Equal(t, "acc1 raw", *e.ErrorMessage)
 	// 账号 2 的 401 行 → 不命中 → 归一

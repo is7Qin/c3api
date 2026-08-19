@@ -320,5 +320,9 @@ func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 		}
 		return r.Then, r.Then.Status != nil || r.Then.Weight != nil || r.Then.Cooldown != nil
 	}
-	return domain.RuleThen{}, false
+	// 无规则命中 → 默认归一 502/"upstream rejected request"（安全默认，不透传）；ok 事件不归一（透传语义，成功不处理）
+	if ev.Kind == KindOK {
+		return domain.RuleThen{}, false
+	}
+	return domain.RuleThen{ResponseCode: intPtr(502), CustomMessage: strPtr("upstream rejected request")}, false
 }

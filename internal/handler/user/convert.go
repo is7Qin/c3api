@@ -171,9 +171,8 @@ func errTypeKind(et domain.ErrorType) (rule.Kind, bool) {
 
 // sanitizeErrLog 用户面 err_logs 行级脱敏：行 {kind ← error_type 全函数映射、
 // http_status ← status_code、message ← error_message} 调同一策略（规则引擎
-// Classify）→ transmit=false 行（无规则默认归一 / 命中规则未声明透传）→
-// error_message 替换固定文案。行级脱敏复用同一策略引擎 → 规则改动用户面
-// 同步生效，杜绝"响应归一但用户日志漏原文"的漂移。返回 (替换后文本, 是否替换)。
+// Classify）→ CustomMessage!=nil 行（命中规则声明覆写）→ error_message 替换为 *CustomMessage，否则透传原文。
+// 统一公式 msg=CustomMessage!=nil?*CustomMessage:origMsg，与 pipeline 响应同公式。返回 (替换后文本, 是否替换)。
 // sanitizeErrLog 用户 err_logs 行级脱敏：Model 口径 = 最终请求模型（映射后 sel.Model，与 pipeline failoverLoop 一致）。
 func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	k, ok := errTypeKind(l.ErrorType)
@@ -198,11 +197,11 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	if l.ErrorMessage != nil {
 		ev.ErrorMessage = *l.ErrorMessage
 	}
-	transmit, _ := h.rules.Classify(ev)
-	if transmit {
+	then, _ := h.rules.Classify(ev)
+	if then.CustomMessage == nil {
 		return "", false
 	}
-	return upstreamRejectedMsg, true
+	return *then.CustomMessage, true
 }
 
 // toAPIStatBucket 统计桶领域对象 → 契约类型（/user/stats；rewrite spec

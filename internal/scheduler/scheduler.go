@@ -798,20 +798,20 @@ func RuleKindOf(httpStatus int) rule.Kind {
 
 // Classify 错误事件分类决策（failoverLoop 错误分支调用；对齐 MarkResult 模式
 // 的 scheduler 包装）：快照取 TemplateID/GroupID（对齐 MarkResult——调用方
-// 事件构造无快照访问）后委托规则引擎首中分类。返回 transmit（true = 命中
-// 规则声明透传上游原文——响应/日志原文；false = 归一固定文案）与 punish
+// 事件构造无快照访问）后委托规则引擎首中分类。返回 then（ResponseCode nil=透传上游码，CustomMessage nil=透传上游文，指针即意图）与 punish
 // （true = 命中规则有状态动作——Status/Weight/Cooldown 任一非 nil，应投递
 // MarkResult 让 worker 精确应用——含窗口条件规则的"可能命中"保守判定）。
-// 快照未加载/账号快照外 → (false, false)
+// 头透传与 kind 解耦：ResponseCode==nil 且上游带 Retry-After/X-Retry-After 才透，否则不透不伪造。
+// 快照未加载/账号快照外 → (domain.RuleThen{}, false)
 // （对齐 MarkResult 早退语义——请求路径不可达；本地拒绝不进本机制）。
-func (s *Scheduler) Classify(ev rule.Event) (transmit bool, punish bool) {
+func (s *Scheduler) Classify(ev rule.Event) (then domain.RuleThen, punish bool) {
 	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
 	if !ok {
-		return false, false
+		return domain.RuleThen{}, false
 	}
 	a, ok := byID[ev.AccountID]
 	if !ok {
-		return false, false
+		return domain.RuleThen{}, false
 	}
 	av := a.static.Load() // 静态字段视图一次取用（评审 Critical 修复）
 	ev.TemplateID = av.acc.TemplateID
