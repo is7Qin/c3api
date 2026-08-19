@@ -1461,8 +1461,11 @@ type UsageLog struct {
 	PriceInputMillis *int64 `json:"PriceInputMillis"`
 
 	// PriceOutputMillis 输出单价快照（每 M token 毫分）；null = 未计费路径
-	PriceOutputMillis *int64  `json:"PriceOutputMillis"`
-	RequestID         *string `json:"RequestID,omitempty"`
+	PriceOutputMillis *int64 `json:"PriceOutputMillis"`
+
+	// RawCost 原始成本（毫分，乘倍率前——免费组 cost=0 但 raw 有值，实际消耗口径）；bill 未装配/无价防御路径恒 0
+	RawCost   *int64  `json:"RawCost,omitempty"`
+	RequestID *string `json:"RequestID,omitempty"`
 
 	// TTFTMS 首 token 时间毫秒（流式首 chunk 采集）；非流式/失败/无首 token 路径 = null
 	TTFTMS      *int64 `json:"TTFTMS"`

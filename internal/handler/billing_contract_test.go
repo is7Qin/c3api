@@ -378,7 +378,7 @@ func TestLogsStatsBillingFields(t *testing.T) {
 			ID: 1, UserID: userID, RequestID: "r-bill", Model: "gpt-4o",
 			Format: domain.FormatOpenAIChat, StatusCode: 200,
 			InputTokens: 10, OutputTokens: 20, TotalTokens: 30,
-			Cost: 500, BillingTier: "fast", AboveHit: true, Overdraft: false,
+			Cost: 500, RawCost: 700, BillingTier: "fast", AboveHit: true, Overdraft: false,
 			CreatedAt: base,
 		},
 	}
@@ -396,6 +396,7 @@ func TestLogsStatsBillingFields(t *testing.T) {
 	require.Len(t, logs.Rows, 1)
 	r := logs.Rows[0]
 	require.Equal(t, int64(500), *r.Cost, "log cost 回显（毫分）")
+	require.Equal(t, int64(700), *r.RawCost, "log raw_cost 回显（毫分——乘倍率前原始成本）")
 	require.Equal(t, "fast", *r.BillingTier, "log billing_tier 回显")
 	require.True(t, *r.AboveHit)
 	require.False(t, *r.Overdraft)
@@ -407,6 +408,7 @@ func TestLogsStatsBillingFields(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ul))
 	require.Len(t, ul.Rows, 1)
 	require.Equal(t, int64(500), *ul.Rows[0].Cost, "user log cost 回显")
+	require.Equal(t, int64(700), *ul.Rows[0].RawCost, "user log raw_cost 回显")
 
 	// 管理面 /admin/stats
 	rec = doAdmin(http.MethodGet, "/admin/stats", "", "")

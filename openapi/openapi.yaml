@@ -2529,6 +2529,7 @@ components:
         CacheCreationTokens: { type: integer, format: int64 }
         PriceCacheCreationMillis: { type: integer, format: int64, nullable: true, description: 缓存写单价快照（每 M token 毫分）；null = 该请求无缓存写或无缓存价 }
         Cost: { type: integer, format: int64, description: "计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0" }
+        RawCost: { type: integer, format: int64, description: "原始成本（毫分，乘倍率前——免费组 cost=0 但 raw 有值，实际消耗口径）；bill 未装配/无价防御路径恒 0" }
         BillingTier: { type: string, description: 请求 service_tier 归一化值（priority/flex/fast/auto）；空 = 未计费路径 }
         AboveHit: { type: boolean, description: 任一分量超 above 阈值命中分段 }
         Overdraft: { type: boolean, description: 本次扣费透支（余额不足扣为负余额） }
@@ -2561,6 +2562,7 @@ components:
         CacheCreationTokens: { type: integer, format: int64 }
         PriceCacheCreationMillis: { type: integer, format: int64, nullable: true, description: 缓存写单价快照（每 M token 毫分）；null = 该请求无缓存写或无缓存价 }
         Cost: { type: integer, format: int64, description: "计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0" }
+        RawCost: { type: integer, format: int64, description: "原始成本（毫分，乘倍率前——免费组 cost=0 但 raw 有值，实际消耗口径）；bill 未装配/无价防御路径恒 0" }
         BillingTier: { type: string, description: 请求 service_tier 归一化值（priority/flex/fast/auto）；空 = 未计费路径 }
         AboveHit: { type: boolean, description: 任一分量超 above 阈值命中分段 }
         Overdraft: { type: boolean, description: 本次扣费透支（余额不足扣为负余额） }
