@@ -29,14 +29,62 @@ func ruleWindowSeconds(w domain.RuleWhen) int {
 // 共用）：kind/http_status/error_message_contains/account/template/group/model。
 // 窗口条件（count_*/ratio_*）依赖历史计数，预判不可得——按"可能命中"保守
 // 处理（不参与判定，worker Match 精确裁决）。
+func matchIntIn(evStatus *int, single *int, in []int) bool {
+	if single == nil && len(in) == 0 {
+		return true
+	}
+	if evStatus == nil {
+		return false
+	}
+	if single != nil {
+		return *evStatus == *single
+	}
+	for _, v := range in {
+		if *evStatus == v {
+			return true
+		}
+	}
+	return false
+}
+
+func matchStringIn(val string, single *string, in []string) bool {
+	if single == nil && len(in) == 0 {
+		return true
+	}
+	if single != nil {
+		return val == *single
+	}
+	for _, v := range in {
+		if val == v {
+			return true
+		}
+	}
+	return false
+}
+
+func matchSubstringIn(val string, single *string, in []string) bool {
+	if single == nil && len(in) == 0 {
+		return true
+	}
+	if single != nil {
+		return strings.Contains(val, *single)
+	}
+	for _, sub := range in {
+		if strings.Contains(val, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 func matchBasic(w domain.RuleWhen, ev Event) bool {
 	if w.Kind != nil && kindFromString(*w.Kind) != ev.Kind {
 		return false
 	}
-	if w.HTTPStatus != nil && (ev.HTTPStatus == nil || *ev.HTTPStatus != *w.HTTPStatus) {
+	if !matchIntIn(ev.HTTPStatus, w.HTTPStatus, w.HTTPStatusIn) {
 		return false
 	}
-	if w.ErrorMessageContains != nil && !strings.Contains(ev.ErrorMessage, *w.ErrorMessageContains) {
+	if !matchSubstringIn(ev.ErrorMessage, w.ErrorMessageContains, w.ErrorMessageContainsIn) {
 		return false
 	}
 	if w.AccountID != nil && ev.AccountID != *w.AccountID {
@@ -48,7 +96,7 @@ func matchBasic(w domain.RuleWhen, ev Event) bool {
 	if w.GroupID != nil && (ev.GroupID == nil || *ev.GroupID != *w.GroupID) {
 		return false
 	}
-	if w.Model != nil && ev.Model != *w.Model {
+	if !matchStringIn(ev.Model, w.Model, w.ModelIn) {
 		return false
 	}
 	return true
