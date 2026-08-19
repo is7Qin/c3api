@@ -3,9 +3,9 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
@@ -19,6 +19,7 @@ import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DateTimePicker } from '@/components/ui/date-picker'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -44,6 +45,25 @@ type Group = components['schemas']['Group']
 const CODE_CREDENTIAL_TYPES: NonNullable<components['schemas']['Template']['CredentialType']>[] = ['codex-oauth', 'codex-pat']
 const isCodexTemplate = (a: AccountView) =>
   a.Template?.CredentialType === 'codex-oauth' || a.Template?.CredentialType === 'codex-pat'
+
+// —— 列设置（logs 同款模式）：可隐藏列 + localStorage 持久化；usage 列懒加载——
+// 隐藏选择持久化（accounts-hidden-columns）；勾选/ID/操作恒显。
+// 视口懒加载块大小 = 批量端点上限（accounts/usage ≤100/次）。
+const USAGE_BLOCK_SIZE = 100
+const ACCOUNTS_HIDDEN_STORAGE_KEY = 'accounts-hidden-columns'
+const ACCOUNTS_HIDDENABLE_COLS = ['name', 'template', 'status', 'weight', 'maxConcurrency', 'curConcurrency', 'errRate', 'errCount', 'lastError', 'usage'] as const
+
+function loadHiddenCols(): Set<string> {
+  try {
+    const raw = localStorage.getItem(ACCOUNTS_HIDDEN_STORAGE_KEY)
+    if (raw) return new Set(JSON.parse(raw) as string[])
+  } catch { /* 损坏数据忽略 */ }
+  return new Set()
+}
+
+function saveHiddenCols(cols: Set<string>) {
+  localStorage.setItem(ACCOUNTS_HIDDEN_STORAGE_KEY, JSON.stringify([...cols]))
+}
 
 // —— 用量/额度概要列（0e77d2a accounts/usage 批量聚合）——
 // A = 乘倍率前原始成本（raw_cost_usd）、U = 计费成本（cost_usd）——gateway 全账号有；
@@ -286,19 +306,82 @@ export default function Accounts() {
   const toggleAll = (c: boolean) =>
     setSelected(s => (c ? Array.from(new Set([...s, ...pageIds])) : s.filter(x => !pageIds.includes(x))))
 
-  // —— 用量/额度聚合（0e77d2a）：当前页账号批量查询（≤100），from/to 缺省 = 今日；
-  // 与列表同频 refetch（额度/用量实时刷新）；分页/筛选变化（pageIds 变）自动重查。
-  const usageQ = useQuery({
-    queryKey: ['accounts-usage', pageIds.join(',')],
-    queryFn: () => api.listAccountsUsage(pageIds),
-    enabled: pageIds.length > 0,
-    refetchInterval: 10_000,
+  // —— 列可见性（usage 懒加载：列隐藏 → 查询停用，轮询停）——
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => loadHiddenCols())
+  const isColVisible = (key: string) => !hiddenCols.has(key)
+  const toggleCol = (key: string) =>
+    setHiddenCols(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      saveHiddenCols(next)
+      return next
+    })
+
+  // —— 用量/额度聚合（0e77d2a）：**视口懒加载**（用户裁决 2026-08-19）——
+  // 批量端点上限 100/次 → 块 100；滚动/缩放 rAF 节流 + 二分定位可视行；
+  // useQueries 每块独立 key/缓存/轮询——块滚出视口即停轮询（数据留缓存，
+  // 滚回从缓存恢复）；usage 列隐藏时 enabled=false 全停。from/to 缺省 = 今日。
+  const tableRef = useRef<HTMLTableElement>(null)
+  const [visibleRange, setVisibleRange] = useState<[number, number]>([0, 0])
+  // IO 观察数据行（表格在 ScrollArea viewport 内滚动——window scroll 监听接不住；
+  // IO 尊重 overflow 裁剪链，滚出可视区的行自动报告离开，无需识别滚动容器）。
+  useEffect(() => {
+    const el = tableRef.current
+    if (!el) return
+    const trs = Array.from(el.querySelectorAll('tbody tr'))
+    if (trs.length === 0) return
+    const visible = new Set<number>()
+    let raf = 0
+    const flush = () => {
+      raf = 0
+      if (visible.size === 0) { setVisibleRange(prev => prev[0] === -1 ? prev : [-1, -1]); return }
+      let first = Infinity, last = -1
+      visible.forEach(i => { if (i < first) first = i; if (i > last) last = i })
+      setVisibleRange(prev => (prev[0] === first && prev[1] === last) ? prev : [first, last])
+    }
+    const io = new IntersectionObserver(entries => {
+      for (const e of entries) {
+        const idx = Number((e.target as HTMLElement).dataset.idx)
+        if (e.isIntersecting) visible.add(idx)
+        else visible.delete(idx)
+      }
+      if (!raf) raf = requestAnimationFrame(flush)
+    })
+    trs.forEach((tr, i) => { tr.dataset.idx = String(i); io.observe(tr) })
+    return () => { io.disconnect(); if (raf) cancelAnimationFrame(raf) }
+  }, [data])
+
+  // 可视行覆盖的账号块（行序 chunk 100；视口外块不请求）
+  const visibleBlocks = useMemo(() => {
+    const ids = new Set(rows.slice(Math.max(0, visibleRange[0]), visibleRange[1] + 1).map(r => r.ID!))
+    const blocks: typeof rows[] = []
+    for (let i = 0; i < rows.length; i += USAGE_BLOCK_SIZE) {
+      const b = rows.slice(i, i + USAGE_BLOCK_SIZE)
+      if (b.some(r => ids.has(r.ID!))) blocks.push(b)
+    }
+    return blocks
+  }, [rows, visibleRange])
+
+  const usageQs = useQueries({
+    queries: visibleBlocks.map(b => ({
+      queryKey: ['accounts-usage-block', b.map(r => r.ID).join(',')],
+      queryFn: () => api.listAccountsUsage(b.map(r => r.ID!)),
+      enabled: isColVisible('usage') && pageIds.length > 0,
+      refetchInterval: 10_000,
+    })),
   })
   const usageById = useMemo(() => {
     const m = new Map<number, components['schemas']['AccountUsageItem']>()
-    usageQ.data?.items?.forEach(i => { if (i.account_id != null) m.set(i.account_id, i) })
+    usageQs.forEach(q => q.data?.items?.forEach(i => { if (i.account_id != null) m.set(i.account_id, i) }))
     return m
-  }, [usageQ.data])
+  }, [usageQs])
+  // 单元格所属块首载 pending → Skeleton 蒙版（刷新保留旧数据不清空）
+  const blockLoadingById = useMemo(() => {
+    const m = new Map<number, boolean>()
+    visibleBlocks.forEach((b, idx) => { for (const r of b) m.set(r.ID!, usageQs[idx]?.isPending ?? false) })
+    return m
+  }, [visibleBlocks, usageQs])
 
   // rows 变化清理已不存在的勾选（M2，templates 同款思路）：refetchInterval/操作
   // 刷新后把已删除的行移出 selected。账号页跨页勾选是既有语义（翻页不清空），
@@ -667,6 +750,23 @@ export default function Accounts() {
         })}
       />
 
+      {/* 列设置（usage 列开关控制懒加载查询） */}
+      <div className="flex justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="outline" size="sm"><SlidersHorizontal className="size-4" />{t('accounts.columnSettings')}</Button>} />
+          <DropdownMenuContent align="end" className="max-h-80 w-48">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>{t('accounts.columnSettings')}</DropdownMenuLabel>
+              {ACCOUNTS_HIDDENABLE_COLS.map(key => (
+                <DropdownMenuCheckboxItem key={key} checked={isColVisible(key)} onCheckedChange={() => toggleCol(key)}>
+                  {t(`accounts.table.${key}`)}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       {isError ? (
         <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
       ) : isLoading ? (
@@ -689,7 +789,7 @@ export default function Accounts() {
       ) : (
         <>
           <div className="overflow-hidden rounded-lg border bg-card">
-            <Table>
+            <Table ref={tableRef}>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
@@ -709,7 +809,7 @@ export default function Accounts() {
                   <TableHead className="text-right">{t('accounts.table.errRate')}</TableHead>
                   <TableHead className="text-right">{t('accounts.table.errCount')}</TableHead>
                   <TableHead>{t('accounts.table.lastError')}</TableHead>
-                  <TableHead className="text-center">{t('accounts.table.usage')}</TableHead>
+                  {isColVisible('usage') && <TableHead className="text-center">{t('accounts.table.usage')}</TableHead>}
                   <TableHead className="text-right">{t('accounts.table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -746,9 +846,16 @@ export default function Accounts() {
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-center">
-                      <UsageCell item={usageById.get(a.ID!)} />
-                    </TableCell>
+                    {isColVisible('usage') && (
+                      <TableCell className="text-center">
+                        {/* 懒加载蒙版：所属块首载 pending 时 Skeleton 动画盖住，不出占位/空值 */}
+                        {blockLoadingById.get(a.ID!) ? (
+                          <Skeleton className="mx-auto h-10 w-24" />
+                        ) : (
+                          <UsageCell item={usageById.get(a.ID!)} />
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button

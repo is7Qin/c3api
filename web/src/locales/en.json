@@ -221,6 +221,7 @@
       "actions": "Actions",
       "usage": "Usage/Quota"
     },
+    "columnSettings": "Columns",
     "enable": "Enable",
     "disable": "Disable",
     "editTitle": "Edit account #{{id}}",

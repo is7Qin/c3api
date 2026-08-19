@@ -221,6 +221,7 @@
       "actions": "操作",
       "usage": "用量/额度"
     },
+    "columnSettings": "列设置",
     "enable": "启用",
     "disable": "禁用",
     "editTitle": "编辑账号 #{{id}}",

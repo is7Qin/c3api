@@ -6,20 +6,24 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Table({ containerClassName, className, ...props }: React.ComponentProps<"table"> & { containerClassName?: string }) {
-  return (
-    <div
-      data-slot="table-container"
-      className={cn("relative w-full overflow-x-auto", containerClassName)}
-    >
-      <table
-        data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
-        {...props}
-      />
-    </div>
-  )
-}
+// forwardRef：accounts 页视口懒加载需 table 元素引用（IO 观察数据行）。
+const Table = React.forwardRef<HTMLTableElement, React.ComponentProps<"table"> & { containerClassName?: string }>(
+  function Table({ containerClassName, className, ...props }, ref) {
+    return (
+      <div
+        data-slot="table-container"
+        className={cn("relative w-full overflow-x-auto", containerClassName)}
+      >
+        <table
+          ref={ref}
+          data-slot="table"
+          className={cn("w-full caption-bottom text-sm", className)}
+          {...props}
+        />
+      </div>
+    )
+  }
+)
 
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
