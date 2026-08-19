@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
-
 package rule
 
 import (
@@ -248,19 +247,18 @@ func TestClassifyFallbackStill502(t *testing.T) {
 }
 
 func TestMatchWithInAndSingleSemantics(t *testing.T) {
-	// single == nil && len(in)==0 => true (no filter)
-	require.True(t, matchIntIn(nil, nil, nil))
-	require.True(t, matchIntIn(intPtr(500), nil, nil))
-	require.True(t, matchStringIn("any", nil, nil))
-	require.True(t, matchSubstringIn("any", nil, nil))
+	// single == nil && len(in)==0 => true (no filter) via Match
+	require.True(t, Match(domain.RuleWhen{}, Event{Kind: Kind5xx, HTTPStatus: intPtr(500)}, windowSnapshot{}))
+	require.True(t, Match(domain.RuleWhen{}, Event{Kind: Kind5xx, Model: "any"}, windowSnapshot{}))
+	require.True(t, Match(domain.RuleWhen{}, Event{Kind: Kind5xx, ErrorMessage: "any"}, windowSnapshot{}))
 	// single !=nil -> exact / substring
-	require.True(t, matchStringIn("a", strPtr("a"), []string{"b"}))
-	require.False(t, matchStringIn("a", strPtr("b"), []string{"a"})) // single path ignores in
-	require.True(t, matchSubstringIn("hello world", strPtr("world"), nil))
-	require.False(t, matchSubstringIn("hello", strPtr("world"), nil))
+	require.True(t, Match(domain.RuleWhen{Model: strPtr("a")}, Event{Kind: Kind5xx, Model: "a"}, windowSnapshot{}))
+	require.False(t, Match(domain.RuleWhen{Model: strPtr("b")}, Event{Kind: Kind5xx, Model: "a"}, windowSnapshot{}))
+	require.True(t, Match(domain.RuleWhen{ErrorMessageContains: strPtr("world")}, Event{Kind: Kind5xx, ErrorMessage: "hello world"}, windowSnapshot{}))
+	require.False(t, Match(domain.RuleWhen{ErrorMessageContains: strPtr("world")}, Event{Kind: Kind5xx, ErrorMessage: "hello"}, windowSnapshot{}))
 	// in path: any hit
-	require.True(t, matchIntIn(intPtr(502), nil, []int{500, 502}))
-	require.False(t, matchIntIn(intPtr(503), nil, []int{500, 502}))
+	require.True(t, Match(domain.RuleWhen{HTTPStatusIn: []int{500, 502}}, Event{Kind: Kind5xx, HTTPStatus: intPtr(502)}, windowSnapshot{}))
+	require.False(t, Match(domain.RuleWhen{HTTPStatusIn: []int{500, 502}}, Event{Kind: Kind5xx, HTTPStatus: intPtr(503)}, windowSnapshot{}))
 }
 
 func mustEngineWithRules(t *testing.T, rules ...domain.Rule) *RuleEngine {

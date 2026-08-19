@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
-
 package rule
 
 import (
@@ -25,67 +24,42 @@ func ruleWindowSeconds(w domain.RuleWhen) int {
 	return defaultWindowSeconds
 }
 
-// matchBasic 规则 when 与事件的非窗口条件维度匹配（Classify 预判与 Match
-// 共用）：kind/http_status/error_message_contains/account/template/group/model。
-// 窗口条件（count_*/ratio_*）依赖历史计数，预判不可得——按"可能命中"保守
-// 处理（不参与判定，worker Match 精确裁决）。
-func matchIntIn(evStatus *int, single *int, in []int) bool {
-	if single == nil && len(in) == 0 {
-		return true
-	}
-	if evStatus == nil {
-		return false
-	}
-	if single != nil {
-		return *evStatus == *single
-	}
-	for _, v := range in {
-		if *evStatus == v {
-			return true
-		}
-	}
-	return false
-}
-
-func matchStringIn(val string, single *string, in []string) bool {
-	if single == nil && len(in) == 0 {
-		return true
-	}
-	if single != nil {
-		return val == *single
-	}
-	for _, v := range in {
-		if val == v {
-			return true
-		}
-	}
-	return false
-}
-
-func matchSubstringIn(val string, single *string, in []string) bool {
-	if single == nil && len(in) == 0 {
-		return true
-	}
-	if single != nil {
-		return strings.Contains(val, *single)
-	}
-	for _, sub := range in {
-		if strings.Contains(val, sub) {
-			return true
-		}
-	}
-	return false
-}
-
 func matchBasic(w domain.RuleWhen, ev Event) bool {
 	if w.Kind != nil && kindFromString(*w.Kind) != ev.Kind {
 		return false
 	}
-	if !matchIntIn(ev.HTTPStatus, w.HTTPStatus, w.HTTPStatusIn) {
+	if w.HTTPStatus != nil && (ev.HTTPStatus == nil || *w.HTTPStatus != *ev.HTTPStatus) {
 		return false
 	}
-	if !matchSubstringIn(ev.ErrorMessage, w.ErrorMessageContains, w.ErrorMessageContainsIn) {
+	if len(w.HTTPStatusIn) > 0 {
+		if ev.HTTPStatus == nil {
+			return false
+		}
+		found := false
+		for _, v := range w.HTTPStatusIn {
+			if *ev.HTTPStatus == v {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	if w.ErrorMessageContains != nil && !strings.Contains(ev.ErrorMessage, *w.ErrorMessageContains) {
 		return false
+	}
+	if len(w.ErrorMessageContainsIn) > 0 {
+		found := false
+		for _, sub := range w.ErrorMessageContainsIn {
+			if strings.Contains(ev.ErrorMessage, sub) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
 	}
 	if w.AccountID != nil && ev.AccountID != *w.AccountID {
 		return false
@@ -96,8 +70,20 @@ func matchBasic(w domain.RuleWhen, ev Event) bool {
 	if w.GroupID != nil && (ev.GroupID == nil || *ev.GroupID != *w.GroupID) {
 		return false
 	}
-	if !matchStringIn(ev.Model, w.Model, w.ModelIn) {
+	if w.Model != nil && *w.Model != ev.Model {
 		return false
+	}
+	if len(w.ModelIn) > 0 {
+		found := false
+		for _, v := range w.ModelIn {
+			if ev.Model == v {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
 	}
 	return true
 }

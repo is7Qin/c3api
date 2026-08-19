@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -101,6 +102,43 @@ const defaultWindowSeconds = 60
 // 12,355 恰可触发一次）。var（非 const）：测试注入小阈值。
 var ruleDropWarnThreshold int64 = 10_000
 
+// compiledRule 预编译规则：domain.Rule 纯数据 + 三 Set 只读视图。
+// 编译后只读无锁，Classify 热路径零分配。
+type compiledRule struct {
+	domain.Rule
+	httpStatusSet *intSet
+	modelSet      *stringSet
+	containsSet   *substringSet
+}
+
+func compileRule(r domain.Rule) (compiledRule, error) {
+	httpSet, err := newIntSet(r.When.HTTPStatusIn)
+	if err != nil {
+		return compiledRule{}, err
+	}
+	mSet, err := newStringSet(r.When.ModelIn)
+	if err != nil {
+		return compiledRule{}, err
+	}
+	cSet, err := newSubstringSet(r.When.ErrorMessageContainsIn)
+	if err != nil {
+		return compiledRule{}, err
+	}
+	return compiledRule{Rule: r, httpStatusSet: httpSet, modelSet: mSet, containsSet: cSet}, nil
+}
+
+func compileRules(in []domain.Rule) ([]compiledRule, error) {
+	out := make([]compiledRule, 0, len(in))
+	for _, r := range in {
+		cr, err := compileRule(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cr)
+	}
+	return out, nil
+}
+
 // RuleEngine 规则引擎：加载 enabled 规则（priority 升序）、逐规则首中匹配、
 // 窗口计数维护与 worker 消费循环（Name/Start/Close 见 worker.go）。
 type RuleEngine struct {
@@ -117,7 +155,7 @@ type RuleEngine struct {
 	apply   ApplyFunc
 	applyMu sync.RWMutex
 
-	rules   []domain.Rule // enabled、priority 升序
+	rules   []compiledRule // enabled、priority 升序（预编译）
 	rulesMu sync.RWMutex
 
 	needsOK atomic.Bool
@@ -183,8 +221,12 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 			maxWindow = *r.When.WindowSeconds
 		}
 	}
+	compiled, err := compileRules(rules)
+	if err != nil {
+		return err
+	}
 	e.rulesMu.Lock()
-	e.rules = rules
+	e.rules = compiled
 	e.rulesMu.Unlock()
 	e.needsOK.Store(needsOK)
 	// 窗口重建：覆盖规则集最大窗口；计数清零（重载语义，规则变更后旧计数不可信）。
@@ -260,6 +302,64 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 // 执行语义（设计文档 §1.5，NOTIFY Rules:true 远端变更触发）。
 func (e *RuleEngine) ReloadRules(ctx context.Context) error { return e.Reload(ctx) }
 
+// matchBasic 编译后热路径：1 级缩进 6 行单值+Set 早退，零分配。
+func (e *RuleEngine) matchBasic(ev Event, r compiledRule) bool {
+	if r.When.Kind != nil && kindFromString(*r.When.Kind) != ev.Kind {
+		return false
+	}
+	if r.When.AccountID != nil && ev.AccountID != *r.When.AccountID {
+		return false
+	}
+	if r.When.TemplateID != nil && ev.TemplateID != *r.When.TemplateID {
+		return false
+	}
+	if r.When.GroupID != nil && (ev.GroupID == nil || *ev.GroupID != *r.When.GroupID) {
+		return false
+	}
+	if r.When.HTTPStatus != nil && (ev.HTTPStatus == nil || *r.When.HTTPStatus != *ev.HTTPStatus) {
+		return false
+	}
+	if r.httpStatusSet != nil && !r.httpStatusSet.contains(ev.HTTPStatus) {
+		return false
+	}
+	if r.When.Model != nil && *r.When.Model != ev.Model {
+		return false
+	}
+	if r.modelSet != nil && !r.modelSet.contains(ev.Model) {
+		return false
+	}
+	if r.When.ErrorMessageContains != nil && !strings.Contains(ev.ErrorMessage, *r.When.ErrorMessageContains) {
+		return false
+	}
+	if r.containsSet != nil && !r.containsSet.contains(ev.ErrorMessage) {
+		return false
+	}
+	return true
+}
+
+// matchWindow 窗口条件判定（非热路径，次数/比例）。
+func matchWindow(w domain.RuleWhen, wc windowSnapshot) bool {
+	if w.Count429GE != nil && wc.t429 < *w.Count429GE {
+		return false
+	}
+	if w.CountFailureGE != nil && wc.failure < *w.CountFailureGE {
+		return false
+	}
+	if w.CountOKGE != nil && wc.ok < *w.CountOKGE {
+		return false
+	}
+	if w.CountTotalGE != nil && wc.total() < *w.CountTotalGE {
+		return false
+	}
+	if w.Ratio429GE != nil && !ratioPass(wc.t429, wc.total(), w.CountTotalGE, *w.Ratio429GE) {
+		return false
+	}
+	if w.RatioFailureGE != nil && !ratioPass(wc.failure, wc.total(), w.CountTotalGE, *w.RatioFailureGE) {
+		return false
+	}
+	return true
+}
+
 // HandleEvent 同步处理单个事件：窗口计数 → 逐规则 Match（首中）→ ApplyFunc。
 // worker 消费循环与测试共用。命中不清零窗口计数（C2）——滑动自然衰减，
 // 升级阶梯（如 60s 内 ≥5 error → 更重惩罚）不被低阈值规则清零阻断。
@@ -279,7 +379,10 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 		if ruleNeedsWindow(r.When) {
 			wc = e.wm.Snapshot(ev.AccountID, ruleWindowSeconds(r.When), ev.OccurredAt)
 		}
-		if !Match(r.When, ev, wc) {
+		if !e.matchBasic(ev, r) {
+			continue
+		}
+		if !matchWindow(r.When, wc) {
 			continue
 		}
 		st, cd, w := Apply(r.Then, ev)
@@ -315,7 +418,7 @@ func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 	rules := e.rules
 	e.rulesMu.RUnlock()
 	for _, r := range rules {
-		if !matchBasic(r.When, ev) {
+		if !e.matchBasic(ev, r) {
 			continue
 		}
 		return r.Then, r.Then.Status != nil || r.Then.Weight != nil || r.Then.Cooldown != nil
@@ -336,3 +439,4 @@ func UnifiedMessage(then domain.RuleThen, upstream string) (string, bool) {
 	}
 	return "", false
 }
+
