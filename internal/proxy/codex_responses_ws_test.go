@@ -301,7 +301,7 @@ func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	ef := readResponsesWSFrame(t, c)
 	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	require.Contains(t, string(ef), "Upstream request failed", "WS 耗尽 CustomMessage（P22 honor msg）")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	p.sched.FlushRules()          // MarkResult 异步投递：断言前排空

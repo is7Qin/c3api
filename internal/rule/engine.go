@@ -329,6 +329,7 @@ func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 
 // UnifiedMessage 统一公式 msg=CustomMessage!=nil?*CustomMessage:upstream
 // 响应与 sanitize 同源（I-3），代理日志保留原文边界另述
+// TODO: upstream param unused — kept for formula parity (honest return would be upstream when CustomMessage==nil; callers currently handle passthrough separately)
 func UnifiedMessage(then domain.RuleThen, upstream string) (string, bool) {
 	if then.CustomMessage != nil {
 		return *then.CustomMessage, true

@@ -503,7 +503,7 @@ func TestResponsesWSBlackHoleDialTimeout(t *testing.T) {
 	start := time.Now()
 	ef := readResponsesWSFrame(t, c)
 	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	require.Contains(t, string(ef), "Upstream request failed", "WS 耗尽 CustomMessage（P22 指针意图：wsSink honor msg）")
 	require.Less(t, time.Since(start), 5*time.Second, "超时转移必须在秒级完成（修复前此用例挂死）")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
@@ -578,7 +578,7 @@ func TestResponsesWSFailoverZeroReleasesSlot(t *testing.T) {
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	ef := readResponsesWSFrame(t, c)
 	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	require.Contains(t, string(ef), "Upstream request failed", "WS 耗尽 CustomMessage（P22：N=0 时 lastCode=0→network 定制文案）")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 	require.Equal(t, 0, hooks.upgradesN(), "N=0 循环零次执行：无上游拨号")
 	ri, ok := p.sched.Runtime(1)
@@ -675,7 +675,7 @@ func TestResponsesWSDial429Failover(t *testing.T) {
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	ef := readResponsesWSFrame(t, c)
 	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	require.Contains(t, string(ef), "rate limited", "WS 耗尽 CustomMessage（P22：429 定制文案 honor msg）")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
@@ -712,7 +712,7 @@ func TestResponsesWSDial5xxNormalized(t *testing.T) {
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	ef := readResponsesWSFrame(t, c)
 	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "all upstream attempts failed", "WS 耗尽固定文案")
+	require.Contains(t, string(ef), "Upstream request failed", "WS 耗尽 CustomMessage（P22：5xx/network 定制文案 honor msg）")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空

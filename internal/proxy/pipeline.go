@@ -152,7 +152,7 @@ type upstreamAttempt interface {
 type pipelineSink interface {
 	writeUpstreamRejection(w http.ResponseWriter, st attemptState, code int, body []byte) // 4xx 确定性拒绝透传（http 原文；ws 错误帧 emOr 语义）
 	writePrecheckRejected(w http.ResponseWriter, st attemptState)                          // 缺价 402 本地拒绝（骨架 precheck 失败收尾；http writeErr / ws 错误帧）
-	writeExhausted(w http.ResponseWriter, st attemptState, lastCode int, msg string)       // 耗尽收尾（http: Retry-After 429 分支；ws: 固定文案忽略入参）
+	writeExhausted(w http.ResponseWriter, st attemptState, status int, msg string)          // 耗尽收尾（honor status/msg，msg=="" 回退 "all upstream attempts failed"；http Retry-After 已由外层 applyPassthroughHeader 负责）
 }
 
 // passthroughStatus 统一公式 status=ResponseCode!=nil?*ResponseCode:upstream
@@ -431,14 +431,14 @@ func (s *httpSink) writeUpstreamRejection(w http.ResponseWriter, _ attemptState,
 
 func (s *httpSink) writePrecheckRejected(w http.ResponseWriter, _ attemptState) { writeErr(w, errNoPrice) }
 
-func (s *httpSink) writeExhausted(w http.ResponseWriter, _ attemptState, lastCode int, _ string) {
-	if lastCode == http.StatusTooManyRequests {
-		// search 耗尽 Retry-After 分支保持（httpSink 判 lastCode==429）
-		w.Header().Set("Retry-After", "1")
-		writeErr(w, errTooMany)
-	} else {
-		writeErr(w, &formatError{status: http.StatusBadGateway, msg: "all upstream attempts failed"})
+func (s *httpSink) writeExhausted(w http.ResponseWriter, _ attemptState, status int, msg string) {
+	if msg == "" {
+		msg = "all upstream attempts failed"
 	}
+	if status == 0 {
+		status = http.StatusBadGateway
+	}
+	writeErr(w, &formatError{status: status, msg: msg})
 }
 
 // wsSink WS 错误事件帧收尾（WS 无 HTTP 状态码，拒绝语义经事件帧承载；无状态
@@ -451,4 +451,9 @@ func (s *wsSink) writeUpstreamRejection(_ http.ResponseWriter, st attemptState, 
 
 func (s *wsSink) writePrecheckRejected(_ http.ResponseWriter, st attemptState) { wsWriteError(st.client, errNoPrice.msg) }
 
-func (s *wsSink) writeExhausted(_ http.ResponseWriter, st attemptState, _ int, _ string) { wsWriteError(st.client, "all upstream attempts failed") }
+func (s *wsSink) writeExhausted(_ http.ResponseWriter, st attemptState, _ int, msg string) {
+	if msg == "" {
+		msg = "all upstream attempts failed"
+	}
+	wsWriteError(st.client, msg)
+}
