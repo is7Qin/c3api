@@ -646,15 +646,18 @@ type StatBucket struct {
 
 // —— 规则引擎（可编排状态管理） ——
 type RuleWhen struct {
-	Kind                 *string `json:"kind,omitempty"`
-	HTTPStatus           *int    `json:"http_status,omitempty"`
-	ErrorMessageContains *string `json:"error_message_contains,omitempty"`
-	AccountID            *int64  `json:"account_id,omitempty"`
-	TemplateID           *int64  `json:"template_id,omitempty"`
-	GroupID              *int64  `json:"group_id,omitempty"`
-	Model                *string `json:"model,omitempty"`
-	WindowSeconds        *int    `json:"window_seconds,omitempty"`
-	Count429GE           *int    `json:"count_429_ge,omitempty"`
+	Kind                   *string  `json:"kind,omitempty"`
+	HTTPStatus             *int     `json:"http_status,omitempty"`
+	ErrorMessageContains   *string  `json:"error_message_contains,omitempty"`
+	AccountID              *int64   `json:"account_id,omitempty"`
+	TemplateID             *int64   `json:"template_id,omitempty"`
+	GroupID                *int64   `json:"group_id,omitempty"`
+	Model                  *string  `json:"model,omitempty"`
+	HTTPStatusIn           []int    `json:"http_status_in,omitempty"`            // 与 HTTPStatus 互斥，同字段 OR
+	ModelIn                []string `json:"model_in,omitempty"`                  // 与 Model 互斥，同字段 OR，语义=最终请求模型 sel.Model/mapped
+	ErrorMessageContainsIn []string `json:"error_message_contains_in,omitempty"` // 与 ErrorMessageContains 互斥，任一子串命中
+	WindowSeconds          *int     `json:"window_seconds,omitempty"`
+	Count429GE             *int     `json:"count_429_ge,omitempty"`
 	// CountFailureGE 语义 = "失败事件桶"（非 ok 非 429 事件计数——5xx/network/4xx
 	// 并入）。
 	CountFailureGE *int     `json:"count_failure_ge,omitempty"`
