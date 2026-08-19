@@ -276,7 +276,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	switch end {
 	case relayEndUpstreamClosed:
 		_ = up.Close(websocket.StatusNormalClosure, "") // 完成关闭握手（上游已发关闭帧）
-		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "")
+		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
 		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrNone, u, start)))
 		_ = client.Close(websocket.StatusNormalClosure, "")
 	case relayEndClientAbort:
@@ -290,7 +290,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		_ = up.Close(code, "") // 向上游传播客户端关闭
 	case relayEndUpstreamError:
 		p.recordStreamAbort(logCtx, reqID, groupID, start, sel, reqModel, u, endErr)
-		p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(0), nil, 0, endErr.Error())
+		p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(0), nil, 0, endErr.Error(), sel.Model)
 		_ = client.Close(wsCloseStatus(endErr), "")
 		up.CloseNow() // 上游已死/失联，免握手等待
 	}

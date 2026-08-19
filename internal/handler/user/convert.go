@@ -174,14 +174,20 @@ func errTypeKind(et domain.ErrorType) (rule.Kind, bool) {
 // Classify）→ transmit=false 行（无规则默认归一 / 命中规则未声明透传）→
 // error_message 替换固定文案。行级脱敏复用同一策略引擎 → 规则改动用户面
 // 同步生效，杜绝"响应归一但用户日志漏原文"的漂移。返回 (替换后文本, 是否替换)。
+// sanitizeErrLog 用户 err_logs 行级脱敏：Model 口径 = 最终请求模型（映射后 sel.Model，与 pipeline failoverLoop 一致）。
 func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	k, ok := errTypeKind(l.ErrorType)
 	if !ok {
 		return "", false
 	}
+	// 最终模型：MappedModel 非空时为映射后模型，否则回退 Model（无映射时二者相等）。
+	model := l.MappedModel
+	if model == "" {
+		model = l.Model
+	}
 	ev := rule.Event{
 		AccountID: l.AccountID, TemplateID: l.TemplateID,
-		Model: l.Model, Kind: k,
+		Model: model, Kind: k, // 最终模型（映射后），与 proxy 侧 sel.Model 一致
 	}
 	if l.GroupID > 0 {
 		ev.GroupID = &l.GroupID
