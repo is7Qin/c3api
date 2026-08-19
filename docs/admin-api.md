@@ -781,7 +781,7 @@
 | `http_status` | int | 上游状态码等值匹配 |
 | `error_message_contains` | string | 错误消息子串匹配 |
 | `account_id` / `template_id` / `group_id` | int | 维度等值匹配（nil = 不限） |
-| `model` | string | 模型等值匹配 |
+| `model` | string | 模型等值匹配（最终请求模型，映射后 sel.Model / MappedModel；无映射时退化为请求模型；空串非法，validate 拒绝） |
 | `window_seconds` | int | 统计窗口（≥1，缺省 60；固定粒度近似，误差 ≤ 一个粒度） |
 | `count_429_ge` / `count_failure_ge` / `count_ok_ge` / `count_total_ge` | int | 窗口内计数阈值（≥0）；`count_failure_ge` 语义 = 失败事件桶（4xx/5xx/network 并入） |
 | `ratio_429_ge` / `ratio_failure_ge` | float | 窗口内比例阈值（[0,1]，**必须配 `count_total_ge`**）；`ratio_failure_ge` 分母为失败事件桶 |

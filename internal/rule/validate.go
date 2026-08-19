@@ -19,6 +19,9 @@ import (
 //   - 计数阈值 ≥ 0、window_seconds ≥ 1
 //   - 比例 ∈ [0,1] 且必须配 count_total_ge（比例样本下限）
 func ValidateWhen(w domain.RuleWhen) error {
+	if w.Model != nil && *w.Model == "" {
+		return fmt.Errorf("when.model must be non-empty, got %q", *w.Model)
+	}
 	if w.Kind != nil && kindFromString(*w.Kind) < 0 {
 		return fmt.Errorf("when.kind must be ok/429/4xx/5xx/network, got %q", *w.Kind)
 	}

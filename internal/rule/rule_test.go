@@ -176,6 +176,7 @@ func TestValidateWhen(t *testing.T) {
 		{"full valid", domain.RuleWhen{
 			Kind: strPtr("5xx"), CountFailureGE: intPtr(2), WindowSeconds: intPtr(30),
 		}, true},
+		{"model empty rejected", domain.RuleWhen{Model: strPtr("")}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -895,4 +896,58 @@ func TestWindowErrBucket4xx5xxNetwork(t *testing.T) {
 	require.Empty(t, rec.get())
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: KindNetwork, OccurredAt: at(2)})
 	require.Len(t, rec.get(), 1, "4xx/5xx/network 三类事件全部计入 failure 桶（防呆 a）")
+}
+
+// TestClassifyModelSemantics P2-1 最终模型三面一致：ModelMapping gpt-5->gpt-5-0611 时
+// when.model=gpt-5-0611 命中、when.model=gpt-5 不命中，横跨 Classify/Match/sanitizeErrLog。
+// 三面中 sanitizeErrLog 复用 Classify 同一策略引擎（user/convert.go:sanitizeErrLog → rules.Classify），
+// 故覆盖 Classify 即覆盖 sanitizeErrLog；Match 为 worker 精确路径。此测试固化最终模型口径：
+// 事件 Model 恒为映射后最终模型（pipeline/scheduler 侧 sel.Model），规则仅按最终模型等值匹配。
+func TestClassifyModelSemantics(t *testing.T) {
+	finalModel := "gpt-5-0611"
+	rawModel := "gpt-5"
+	// Event 使用最终模型（映射后），Kind 任意——仅测 Model 维度等值匹配（大小写敏感）。
+	ev := Event{AccountID: 1, Kind: Kind5xx, Model: finalModel, OccurredAt: at(0)}
+	whenFinal := domain.RuleWhen{Model: strPtr(finalModel)}
+	whenRaw := domain.RuleWhen{Model: strPtr(rawModel)}
+
+	// —— Match 面：精确等值，大小写敏感 ——
+	require.True(t, Match(whenFinal, ev, windowSnapshot{}), "when.model=gpt-5-0611 命中最终模型事件")
+	require.False(t, Match(whenRaw, ev, windowSnapshot{}), "when.model=gpt-5 不命中最终模型 gpt-5-0611")
+
+	// 反向：raw 事件不命中 final 规则（对称性）
+	evRaw := Event{AccountID: 1, Kind: Kind5xx, Model: rawModel, OccurredAt: at(0)}
+	require.False(t, Match(whenFinal, evRaw, windowSnapshot{}), "final 规则不命中 raw 事件")
+	require.True(t, Match(whenRaw, evRaw, windowSnapshot{}), "raw 规则命中 raw 事件")
+
+	// —— Classify 面（预判，与 Match 同口径，不含窗口条件，透传 sanitizeErrLog）——
+	// rule when.model=gpt-5-0611 的引擎：最终模型事件应 punish=true
+	eFinal, _ := newTestEngine(t, domain.Rule{
+		Name: "final-model", Enabled: true, Priority: 10,
+		When: domain.RuleWhen{Model: strPtr(finalModel)},
+		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+	})
+	_, pu := eFinal.Classify(ev)
+	require.True(t, pu, "Classify: when.model=gpt-5-0611 命中最终模型 → punish")
+
+	// 同引擎对 raw 事件不命中
+	_, pu = eFinal.Classify(evRaw)
+	require.False(t, pu, "Classify: when.model=gpt-5-0611 不命中 raw 模型")
+
+	// rule when.model=gpt-5 的引擎：最终模型事件不命中
+	eRaw, _ := newTestEngine(t, domain.Rule{
+		Name: "raw-model", Enabled: true, Priority: 10,
+		When: domain.RuleWhen{Model: strPtr(rawModel)},
+		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+	})
+	_, pu = eRaw.Classify(ev)
+	require.False(t, pu, "Classify: when.model=gpt-5 不命中最终模型 gpt-5-0611")
+
+	_, pu = eRaw.Classify(evRaw)
+	require.True(t, pu, "Classify: when.model=gpt-5 命中 raw 模型")
+
+	// 空 Model 事件不命中任意 model 限定规则
+	evEmpty := Event{AccountID: 1, Kind: Kind5xx, OccurredAt: at(0)}
+	require.False(t, Match(whenFinal, evEmpty, windowSnapshot{}), "空 Model 不命中 final 规则")
+	require.False(t, Match(whenRaw, evEmpty, windowSnapshot{}), "空 Model 不命中 raw 规则")
 }
