@@ -2431,6 +2431,11 @@ export interface components {
              */
             Cost?: number;
             /**
+             * Format: double
+             * @description 原始成本 USD（毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值）
+             */
+            raw_cost_usd?: number;
+            /**
              * Format: int64
              * @description 按次调用：图片生成张数、search 次数（不入 TotalTokens）
              */
@@ -2491,7 +2496,7 @@ export interface components {
             /** Format: date-time */
             generated_at: string;
         };
-        /** @description 今日汇总（UTC 日界；cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
+        /** @description 今日汇总（UTC 日界；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
         OverviewSummary: {
             /** Format: int64 */
             requests: number;
@@ -2507,6 +2512,11 @@ export interface components {
              * @description 今日成本（USD，毫分 /1e5——与价格 API 口径一致）
              */
             cost_usd: number;
+            /**
+             * Format: double
+             * @description 今日原始成本（USD，毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值）
+             */
+            raw_cost_usd: number;
             /** Format: int64 */
             input_tokens: number;
             /** Format: int64 */
@@ -2558,6 +2568,11 @@ export interface components {
              * @description 当日成本（USD，毫分 /1e5）
              */
             cost_usd: number;
+            /**
+             * Format: double
+             * @description 当日原始成本（USD，毫分 /1e5——乘倍率前"实际消耗"口径）
+             */
+            raw_cost_usd: number;
             /**
              * Format: int64
              * @description 当日总 token（usage_stats total_tokens 列聚合）

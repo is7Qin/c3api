@@ -274,6 +274,9 @@ type StatBucket struct {
 
 	// UserID 鉴权归属用户；0 = 无
 	UserID *int64 `json:"UserID,omitempty"`
+
+	// RawCostUsd 原始成本 USD（毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值）
+	RawCostUsd *float64 `json:"raw_cost_usd,omitempty"`
 }
 
 // TempBalanceRow defines model for TempBalanceRow.

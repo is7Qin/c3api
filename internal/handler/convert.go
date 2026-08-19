@@ -403,6 +403,7 @@ func toAPIStatBucket(b *domain.StatBucket) StatBucket {
 		CacheReadTokens:     &b.CacheReadTokens,
 		CacheCreationTokens: &b.CacheCreationTokens,
 		Cost:                ptr(millisToUSD(b.Cost)),
+		RawCostUsd:          ptr(millisToUSD(b.RawCost)),
 		CallCount:           &b.CallCount,
 		TTFTCount:           &b.TTFTCount,
 		TTFTAvgMS:           ptr(ttftAvg),

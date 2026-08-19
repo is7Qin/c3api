@@ -46,6 +46,7 @@ func (s *Service) QueryStats(ctx context.Context, q repository.StatQuery, granul
 		m.CacheReadTokens += b.CacheReadTokens
 		m.CacheCreationTokens += b.CacheCreationTokens
 		m.Cost += b.Cost
+		m.RawCost += b.RawCost // raw 毫分（spec 2026-08-19：与 Cost 同构累加——缺省 day 粒度不丢）
 		m.CallCount += b.CallCount // 按次调用（spec 2026-08-14：入桶与展示）
 		// TTFT 四字段日合并（rewrite spec 2026-08-14 前置清单②）：total/count
 		// 求和、max 取大、直方图逐元素加（与 repository.mergeHist 同语义——

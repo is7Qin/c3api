@@ -120,6 +120,49 @@ func TestUsageStatsColumnDefsMatchCreateDDL(t *testing.T) {
 	require.NotContains(t, source, "total_latency_ms", "表重建删除总延迟列（TTFT 直方图替代）")
 }
 
+// TestStatsAggColumnAlignment usage_stats 聚合/扫描列序锚（spec 2026-08-19：
+// 列序四段对齐——SELECT → rows.Scan → 赋值 → INSERT，raw 恒在 cost 后）：
+//   - statsAggInsertCols = 建表 DDL 数据列集合（除 id 自增列）+ raw_cost 紧随
+//     cost（INSERT 列序与 DDL 同向）；
+//   - 三聚合 SQL/扫描 SQL 字符串级锚 raw 紧随 cost（防 SELECT/Scan 错位）。
+func TestStatsAggColumnAlignment(t *testing.T) {
+	source := ddlColumnNames(strings.Join(usageStatsColumnDefs, "\n"))
+	want := make([]string, 0, len(source)-1)
+	for _, s := range source {
+		if s != "id" { // id 自增列 INSERT 不带（DEFAULT nextval）
+			want = append(want, s)
+		}
+	}
+	got := append([]string(nil), statsAggInsertCols...)
+	sort.Strings(got)
+	require.Equal(t, want, got, "statsAggInsertCols 集合 = 建表 DDL 数据列集合（除 id）")
+	for i, c := range statsAggInsertCols {
+		if c == "cost" {
+			require.Equal(t, "raw_cost", statsAggInsertCols[i+1], "INSERT 列序 raw_cost 紧随 cost")
+			break
+		}
+	}
+	// 事实源内序锚（与 INSERT 同向）：usageStatsColumnDefs 的 raw_cost 恒在 cost 后
+	for i, c := range usageStatsColumnDefs {
+		if strings.HasPrefix(c, "cost ") {
+			require.True(t, strings.HasPrefix(usageStatsColumnDefs[i+1], "raw_cost "),
+				"usageStatsColumnDefs 内序 raw_cost 紧随 cost")
+			break
+		}
+	}
+	// SELECT/Scan 列序锚（与 INSERT 同向——错位即四段对齐链断）
+	require.Contains(t, statScanSQL, "cost, raw_cost, call_count", "statScanSQL 列序 raw 紧随 cost")
+	require.Contains(t, aggUsageSuccessSQL, "sum(cost), COALESCE(sum(raw_cost), 0)", "成功桶 SELECT raw 紧随 cost（COALESCE 空区间归零）")
+	require.Contains(t, aggUsageAbortSQL, "sum(cost), COALESCE(sum(raw_cost), 0)", "abort 桶 SELECT raw 紧随 cost")
+	// aggErrLogSQL 恒 0 补位锚：测量恒 0 行 7 位（in/out/tot/cr/cc/cost/raw——
+	// raw 补位在 cost 恒 0 位后）+ call/TTFT 恒 0 行 4 位不变
+	require.Contains(t, aggErrLogSQL,
+		"0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint,\n\t0::bigint, 0::bigint, 0::bigint, 0::bigint,",
+		"aggErrLogSQL 恒 0 序列 7+4 位（raw 补位后）")
+	require.Contains(t, statSummarySQL, "COALESCE(sum(cost), 0)::bigint,\n\tCOALESCE(sum(raw_cost), 0)::bigint", "summary SELECT raw 紧随 cost")
+	require.Contains(t, statTrendSQL, "COALESCE(sum(cost), 0)::bigint,\n\tCOALESCE(sum(raw_cost), 0)::bigint", "trend SELECT raw 紧随 cost")
+}
+
 // TestIsBootstrapRaceErrorCodeSet 并发 bootstrap 容忍码集锚：撞名
 // （isDuplicateObject——42P07 关系插入撞锁 / 42710 类型名预检撞隐式复合类型 /
 // 23505 CREATE SEQUENCE 并发）+ 缺失（isMissingObject——42P01，stale-DROP 窗

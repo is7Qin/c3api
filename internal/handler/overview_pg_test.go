@@ -170,21 +170,24 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 	// avg=(250+450)/10=70、max=200、p50: rank5 → 桶1 内 50+2/5×50=70、
 	// p90: rank9 → 桶2 内 100+1/2×100=150、p95/p99: rank10 → 200
 	b1 := overviewBucket(day0.Add(3*time.Hour), 7, 10, 2, 100, 50, 150, 20, 100_000) // $1.00
+	b1.RawCost = 250_000                                                                 // $2.50（raw 口径独立于 cost）
 	b1.CallCount = 5
 	b1.TTFTTotalMS = 250
 	b1.TTFTCount = 5
 	b1.TTFTMaxMS = 120
 	b1.TTFTHist = []int64{3, 2, 0, 0, 0, 0, 0, 0, 0, 0}
 	b2 := overviewBucket(day0.Add(5*time.Hour), 7, 5, 1, 50, 25, 75, 10, 50_000) // $0.50
+	b2.RawCost = 150_000                                                            // $1.50
 	b2.CallCount = 5
 	b2.TTFTTotalMS = 450
 	b2.TTFTCount = 5
 	b2.TTFTMaxMS = 200
 	b2.TTFTHist = []int64{0, 3, 2, 0, 0, 0, 0, 0, 0, 0}
-	overviewSeedBuckets(t, repos, b1, b2,
-		overviewBucket(day0.Add(-21*time.Hour), 7, 20, 3, 200, 100, 300, 0, 200_000), // $2.00
-		overviewBucket(day0.Add(-45*time.Hour), 7, 30, 0, 300, 150, 450, 0, 300_000), // $3.00
-	)
+	b3 := overviewBucket(day0.Add(-21*time.Hour), 7, 20, 3, 200, 100, 300, 0, 200_000) // $2.00
+	b3.RawCost = 400_000                                                                  // $4.00
+	b4 := overviewBucket(day0.Add(-45*time.Hour), 7, 30, 0, 300, 150, 450, 0, 300_000)   // $3.00
+	b4.RawCost = 600_000                                                                  // $6.00
+	overviewSeedBuckets(t, repos, b1, b2, b3, b4)
 	// 资源计数种子：1 模板 + 1 组 + 2 用户（软删模板不计）
 	_, err := repos.Client.Template.Create().SetName("t1").SetBaseURL("https://upstream.example").
 		SetSupportedFormats([]string{"openai-chat"}).SetModels([]string{"gpt-4o"}).
@@ -214,6 +217,7 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 	require.Equal(t, int64(3), resp.Summary.Errors)
 	require.InDelta(t, 0.2, resp.Summary.ErrRate, 1e-9)
 	require.InDelta(t, 1.5, resp.Summary.CostUsd, 1e-9) // (100000+50000)/1e5
+	require.InDelta(t, 4.0, resp.Summary.RawCostUsd, 1e-9, "(250000+150000)/1e5——raw 独立口径")
 	require.Equal(t, int64(150), resp.Summary.InputTokens)
 	require.Equal(t, int64(75), resp.Summary.OutputTokens)
 	require.Equal(t, int64(225), resp.Summary.TotalTokens)
@@ -234,6 +238,7 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 	require.Equal(t, int64(30), resp.Trend[0].Requests)
 	require.Equal(t, int64(0), resp.Trend[0].Errors)
 	require.InDelta(t, 3.0, resp.Trend[0].CostUsd, 1e-9)
+	require.InDelta(t, 6.0, resp.Trend[0].RawCostUsd, 1e-9, "日桶 raw 聚合（600000/1e5）")
 	require.Equal(t, int64(450), resp.Trend[0].Tokens)
 	require.Zero(t, resp.Trend[0].CallCount, "无 TTFT 数据日 call_count 0")
 	require.Zero(t, resp.Trend[0].TtftAvgMs)
@@ -241,9 +246,11 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 	require.Equal(t, int64(20), resp.Trend[1].Requests)
 	require.Equal(t, int64(3), resp.Trend[1].Errors)
 	require.InDelta(t, 2.0, resp.Trend[1].CostUsd, 1e-9)
+	require.InDelta(t, 4.0, resp.Trend[1].RawCostUsd, 1e-9, "日桶 raw 聚合（400000/1e5）")
 	require.Equal(t, day0.Format("2006-01-02"), resp.Trend[2].Date.Format("2006-01-02"))
 	require.Equal(t, int64(15), resp.Trend[2].Requests)
 	require.InDelta(t, 1.5, resp.Trend[2].CostUsd, 1e-9)
+	require.InDelta(t, 4.0, resp.Trend[2].RawCostUsd, 1e-9, "今日两桶 raw 合并（250000+150000）/1e5")
 	require.Equal(t, int64(225), resp.Trend[2].Tokens)
 	require.Equal(t, int64(10), resp.Trend[2].CallCount, "今日趋势 call_count")
 	require.InDelta(t, 70.0, resp.Trend[2].TtftAvgMs, 1e-9)
@@ -345,6 +352,7 @@ func TestPGOverviewGroupFilter(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, int64(0), resp.Summary.Requests)
 	require.InDelta(t, 0.0, resp.Summary.CostUsd, 1e-9)
+	require.InDelta(t, 0.0, resp.Summary.RawCostUsd, 1e-9, "空区间 raw_cost_usd 恒 0（COALESCE 路径）")
 	require.Empty(t, resp.Trend)
 }
 

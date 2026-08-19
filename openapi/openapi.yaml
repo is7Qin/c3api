@@ -2656,6 +2656,7 @@ components:
         CacheReadTokens: { type: integer, format: int64 }
         CacheCreationTokens: { type: integer, format: int64 }
         Cost: { type: number, format: double, description: 成本 USD（毫分 /1e5，与价格 API/overview 口径一致；破坏性变更） }
+        raw_cost_usd: { type: number, format: double, description: 原始成本 USD（毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值） }
         CallCount: { type: integer, format: int64, description: 按次调用：图片生成张数、search 次数（不入 TotalTokens） }
         TTFTCount: { type: integer, format: int64, description: 首 token 样本数（pN/加权 avg 分母——前端跨行合并必需） }
         TTFTAvgMS: { type: number, format: double, description: 首 token 平均毫秒（sum/count，无样本 = 0） }
@@ -2733,13 +2734,14 @@ components:
     # 管理端总览（spec 2026-08-14）：OverviewResponse 各段类型。
     OverviewSummary:
       type: object
-      required: [requests, errors, err_rate, cost_usd, input_tokens, output_tokens, total_tokens, cache_read_tokens, call_count, ttft_avg_ms, ttft_max_ms, ttft_p50_ms, ttft_p90_ms, ttft_p95_ms, ttft_p99_ms]
-      description: 今日汇总（UTC 日界；cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
+      required: [requests, errors, err_rate, cost_usd, raw_cost_usd, input_tokens, output_tokens, total_tokens, cache_read_tokens, call_count, ttft_avg_ms, ttft_max_ms, ttft_p50_ms, ttft_p90_ms, ttft_p95_ms, ttft_p99_ms]
+      description: 今日汇总（UTC 日界；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
       properties:
         requests: { type: integer, format: int64 }
         errors: { type: integer, format: int64 }
         err_rate: { type: number, format: double, description: 错误率（errors / requests；无请求 = 0） }
         cost_usd: { type: number, format: double, description: 今日成本（USD，毫分 /1e5——与价格 API 口径一致） }
+        raw_cost_usd: { type: number, format: double, description: 今日原始成本（USD，毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值） }
         input_tokens: { type: integer, format: int64 }
         output_tokens: { type: integer, format: int64 }
         total_tokens: { type: integer, format: int64 }
@@ -2753,13 +2755,14 @@ components:
         ttft_p99_ms: { type: integer, format: int64 }
     OverviewTrend:
       type: object
-      required: [date, requests, errors, cost_usd, tokens, call_count, ttft_avg_ms, ttft_max_ms, ttft_p50_ms, ttft_p90_ms, ttft_p95_ms, ttft_p99_ms]
+      required: [date, requests, errors, cost_usd, raw_cost_usd, tokens, call_count, ttft_avg_ms, ttft_max_ms, ttft_p50_ms, ttft_p90_ms, ttft_p95_ms, ttft_p99_ms]
       description: 近 N 天日桶（SQL 侧 GROUP BY date_trunc('day', bucket_time)；UTC 日；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
       properties:
         date: { type: string, format: date, description: 日桶（UTC） }
         requests: { type: integer, format: int64 }
         errors: { type: integer, format: int64 }
         cost_usd: { type: number, format: double, description: 当日成本（USD，毫分 /1e5） }
+        raw_cost_usd: { type: number, format: double, description: 当日原始成本（USD，毫分 /1e5——乘倍率前"实际消耗"口径） }
         tokens: { type: integer, format: int64, description: 当日总 token（usage_stats total_tokens 列聚合） }
         call_count: { type: integer, format: int64, description: 按次调用（图片生成 = 张数、search = 1） }
         ttft_avg_ms: { type: number, format: double, description: 当日 TTFT 均值（查询侧 Go 除） }

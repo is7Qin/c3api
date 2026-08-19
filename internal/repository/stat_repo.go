@@ -48,7 +48,7 @@ type StatRepo struct {
 
 // —— 离线聚合写入面（spec 2026-08-14 §3；单一写者：usage_stats 只由聚合 worker 写入） ——
 
-// statsAggBatchSize 单条批量 INSERT 的桶数（21 列 × 500 ≈ 10.5k 参数，PG 参数
+// statsAggBatchSize 单条批量 INSERT 的桶数（22 列 × 500 ≈ 11k 参数，PG 参数
 // 上限 65535 安全；沿用 statBatchSize 纪律——离线聚合每 5 分钟一轮，冷路径）。
 const statsAggBatchSize = 500
 
@@ -170,7 +170,7 @@ var aggHistExpr = `ARRAY[count(*) FILTER (WHERE ttft_ms < 50),
 // 全字段；spec §3.1a）。
 var aggUsageSuccessSQL = `SELECT ` + aggDimCols + `, false, count(*), 0::bigint,
 	sum(input_tokens), sum(output_tokens), sum(total_tokens),
-	sum(cache_read_tokens), sum(cache_creation_tokens), sum(cost),
+	sum(cache_read_tokens), sum(cache_creation_tokens), sum(cost), COALESCE(sum(raw_cost), 0),
 	sum(call_count),
 	COALESCE(sum(ttft_ms), 0), count(ttft_ms), COALESCE(max(ttft_ms), 0), ` + aggHistExpr + `
 FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND error_type = 'none'
@@ -182,7 +182,7 @@ GROUP BY 1, 2, 3, 4, 5, 6`
 // P1-B）。
 var aggUsageAbortSQL = `SELECT ` + aggDimCols + `, true, count(*), count(*),
 	sum(input_tokens), sum(output_tokens), sum(total_tokens),
-	sum(cache_read_tokens), sum(cache_creation_tokens), sum(cost),
+	sum(cache_read_tokens), sum(cache_creation_tokens), sum(cost), COALESCE(sum(raw_cost), 0),
 	sum(call_count),
 	COALESCE(sum(ttft_ms), 0), count(ttft_ms), COALESCE(max(ttft_ms), 0), ` + aggHistExpr + `
 FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND error_type = 'abort'
@@ -190,10 +190,11 @@ GROUP BY 1, 2, 3, 4, 5, 6`
 
 // aggErrLogSQL err_logs → 纯错误桶补充（isErr=true count 语义；WHERE error_type
 // <> 'abort' 防双计——abort 行已由 aggUsageAbortSQL 全字段计；spec §3.2）。
-// 瘦表无 tokens/cost/call_count/TTFT 列 → 恒 0（含全零直方图）。
+// 瘦表无 tokens/cost/call_count/TTFT 列 → 恒 0（含全零直方图）；raw_cost 恒 0
+// 补位紧随 cost 恒 0 位后（列序对齐扫描）。
 var aggErrLogSQL = `SELECT ` + aggDimCols + `, true, count(*),
 	count(*) FILTER (WHERE error_type <> 'none'),
-	0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint,
+	0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint,
 	0::bigint, 0::bigint, 0::bigint, 0::bigint,
 	ARRAY[0::bigint, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 FROM err_logs WHERE created_at >= $1 AND created_at < $2 AND error_type <> 'abort'
@@ -219,10 +220,12 @@ func aggKeyOf(b *domain.StatBucket) aggRowKey {
 // LoadAggRange 离线聚合三查询（spec 2026-08-14 §3）：重算范围 [from,to) 的小时
 // 桶全量重建——usage_logs 按 error_type 拆两查询（none → isErr=false 成功桶、
 // abort → isErr=true 错误桶**全字段**含 TTFT/call_count，P1-B）+ err_logs 纯
-// 错误桶补充（count 语义；WHERE error_type <> 'abort' 防双计）。合并语义：跨
-// 查询同 key（abort 桶 vs err_logs 桶）测量列累加——错误桶重建 = 双源合并。
-// 返回：桶（按键排序——确定性，重放同范围结果一致）+ 消费的明细行数
-// （= 三查询 request_count 合计 = count(*) 之和；观测面"上轮行数"）。
+// 错误桶补充（count 语义；WHERE error_type <> 'abort' 防双计）。raw_cost
+// （spec 2026-08-19）：成功/abort 查询 SUM(raw_cost)（COALESCE 空区间归零），
+// err_logs 恒 0 补位——SELECT 列序 raw 恒在 cost 后（与扫描/INSERT 同向）。
+// 合并语义：跨查询同 key（abort 桶 vs err_logs 桶）测量列累加——错误桶重建 =
+// 双源合并。返回：桶（按键排序——确定性，重放同范围结果一致）+ 消费的明细
+// 行数（= 三查询 request_count 合计 = count(*) 之和；观测面"上轮行数"）。
 // 覆盖语义：SELECT 覆盖已消费行无害（DELETE 先清、INSERT 全量覆盖，幂等）。
 func (r *StatRepo) LoadAggRange(ctx context.Context, from, to time.Time) ([]*domain.StatBucket, int64, error) {
 	if r.pool == nil {
@@ -237,17 +240,18 @@ func (r *StatRepo) LoadAggRange(ctx context.Context, from, to time.Time) ([]*dom
 		}
 		for rows.Next() {
 			// 每行独立扫描目标（pgx Scan 需逐行独立地址；列序 = aggDimCols +
-			// is_error + 2 计数 + 6 测量 + call_count + 3 TTFT + 直方图）。
+			// is_error + 2 计数 + 7 测量（in/out/tot/cr/cc/cost/raw——raw 恒在
+			// cost 后）+ call_count + 3 TTFT + 直方图）。
 			var (
 				bt                                                               time.Time
 				g, a, t2, u                                                      int64
 				m                                                                string
 				isErr                                                            bool
-				req, errN, in, out, tot, cr, cc, cost, call, ttftS, ttftC, ttftM int64
+				req, errN, in, out, tot, cr, cc, cost, raw, call, ttftS, ttftC, ttftM int64
 				hist                                                             []int64
 			)
 			if err := rows.Scan(&bt, &g, &a, &t2, &u, &m, &isErr, &req, &errN, &in,
-				&out, &tot, &cr, &cc, &cost, &call, &ttftS, &ttftC, &ttftM, &hist); err != nil {
+				&out, &tot, &cr, &cc, &cost, &raw, &call, &ttftS, &ttftC, &ttftM, &hist); err != nil {
 				rows.Close()
 				return nil, 0, err
 			}
@@ -259,7 +263,7 @@ func (r *StatRepo) LoadAggRange(ctx context.Context, from, to time.Time) ([]*dom
 				BucketTime: bt, GroupID: g, AccountID: a, TemplateID: t2, UserID: u,
 				Model: m, IsError: isErr, RequestCount: req, ErrorCount: errN,
 				InputTokens: in, OutputTokens: out, TotalTokens: tot,
-				CacheReadTokens: cr, CacheCreationTokens: cc, Cost: cost, CallCount: call,
+				CacheReadTokens: cr, CacheCreationTokens: cc, Cost: cost, RawCost: raw, CallCount: call,
 				TTFTTotalMS: ttftS, TTFTCount: ttftC, TTFTMaxMS: ttftM, TTFTHist: hist,
 			}
 			detailRows += b.RequestCount
@@ -294,6 +298,7 @@ func mergeAggRow(dst, src *domain.StatBucket) {
 	dst.CacheReadTokens += src.CacheReadTokens
 	dst.CacheCreationTokens += src.CacheCreationTokens
 	dst.Cost += src.Cost
+	dst.RawCost += src.RawCost
 	dst.CallCount += src.CallCount
 	dst.TTFTTotalMS += src.TTFTTotalMS
 	dst.TTFTCount += src.TTFTCount
@@ -331,11 +336,11 @@ func lessStatBucket(a, b *domain.StatBucket) bool {
 }
 
 // statsAggInsertCols 离线聚合 INSERT 列（与 usage_stats DDL 列序一致；不含
-// id——DEFAULT nextval，ent bigserial 同款语义）。
+// id——DEFAULT nextval，ent bigserial 同款语义；raw_cost 紧随 cost）。
 var statsAggInsertCols = []string{
 	"bucket_time", "group_id", "account_id", "template_id", "user_id", "model", "is_error",
 	"request_count", "error_count", "input_tokens", "output_tokens", "total_tokens",
-	"cache_read_tokens", "cache_creation_tokens", "cost", "call_count",
+	"cache_read_tokens", "cache_creation_tokens", "cost", "raw_cost", "call_count",
 	"ttft_total_ms", "ttft_count", "ttft_max_ms", "ttft_hist", "updated_at",
 }
 
@@ -350,7 +355,7 @@ func statsAggRowArgs(b *domain.StatBucket, now time.Time) []any {
 	return []any{
 		b.BucketTime, b.GroupID, b.AccountID, b.TemplateID, b.UserID, b.Model, b.IsError,
 		b.RequestCount, b.ErrorCount, b.InputTokens, b.OutputTokens, b.TotalTokens,
-		b.CacheReadTokens, b.CacheCreationTokens, b.Cost, b.CallCount,
+		b.CacheReadTokens, b.CacheCreationTokens, b.Cost, b.RawCost, b.CallCount,
 		b.TTFTTotalMS, b.TTFTCount, b.TTFTMaxMS, hist, now,
 	}
 }
@@ -396,7 +401,7 @@ func (r *StatRepo) AggregateRange(ctx context.Context, delFrom, delTo, wmTo time
 }
 
 // insertStatBuckets 参数化批量 INSERT（占位符按批大小动态构建——批 ≤ 500 ×
-// 21 列，PG 参数上限 65535 安全）。
+// 22 列，PG 参数上限 65535 安全）。
 func insertStatBuckets(ctx context.Context, tx pgx.Tx, rows []*domain.StatBucket, now time.Time) error {
 	var b strings.Builder
 	b.WriteString(`INSERT INTO "usage_stats" (`)
@@ -495,6 +500,7 @@ type StatSummary struct {
 	TotalTokens     int64
 	CacheReadTokens int64
 	Cost            int64 // 毫分
+	RawCost         int64 // 毫分（乘倍率前原始成本）
 	CallCount       int64 // 按次调用（图片生成 = 张数、search = 1）
 	TTFTTotalMS     int64
 	TTFTCount       int64
@@ -510,6 +516,7 @@ type StatDayAgg struct {
 	Errors      int64
 	Tokens      int64
 	Cost        int64 // 毫分
+	RawCost     int64 // 毫分（乘倍率前原始成本）
 	CallCount   int64
 	TTFTTotalMS int64
 	TTFTCount   int64
@@ -529,6 +536,7 @@ var statSummarySQL = `SELECT COALESCE(sum(request_count), 0)::bigint,
 	COALESCE(sum(total_tokens), 0)::bigint,
 	COALESCE(sum(cache_read_tokens), 0)::bigint,
 	COALESCE(sum(cost), 0)::bigint,
+	COALESCE(sum(raw_cost), 0)::bigint,
 	COALESCE(sum(call_count), 0)::bigint,
 	COALESCE(sum(ttft_total_ms), 0)::bigint,
 	COALESCE(sum(ttft_count), 0)::bigint,
@@ -548,6 +556,7 @@ var statTrendSQL = `SELECT date_trunc('day', "bucket_time" AT TIME ZONE 'UTC') A
 	COALESCE(sum(error_count), 0)::bigint,
 	COALESCE(sum(total_tokens), 0)::bigint,
 	COALESCE(sum(cost), 0)::bigint,
+	COALESCE(sum(raw_cost), 0)::bigint,
 	COALESCE(sum(call_count), 0)::bigint,
 	COALESCE(sum(ttft_total_ms), 0)::bigint,
 	COALESCE(sum(ttft_count), 0)::bigint,
@@ -575,7 +584,7 @@ func (r *StatRepo) SummarizeStats(ctx context.Context, from, to time.Time, group
 	s := &StatSummary{}
 	err := r.pool.QueryRow(ctx, sql, args...).Scan(
 		&s.Requests, &s.Errors, &s.InputTokens, &s.OutputTokens,
-		&s.TotalTokens, &s.CacheReadTokens, &s.Cost, &s.CallCount,
+		&s.TotalTokens, &s.CacheReadTokens, &s.Cost, &s.RawCost, &s.CallCount,
 		&s.TTFTTotalMS, &s.TTFTCount, &s.TTFTMaxMS, &rawHist)
 	if err != nil {
 		return nil, err
@@ -610,7 +619,7 @@ func (r *StatRepo) ScanStatsDays(ctx context.Context, from, to time.Time, groupI
 	for rows.Next() {
 		d := &StatDayAgg{}
 		var rawHist [][]int64
-		if err := rows.Scan(&d.Date, &d.Requests, &d.Errors, &d.Tokens, &d.Cost,
+		if err := rows.Scan(&d.Date, &d.Requests, &d.Errors, &d.Tokens, &d.Cost, &d.RawCost,
 			&d.CallCount, &d.TTFTTotalMS, &d.TTFTCount, &d.TTFTMaxMS, &rawHist); err != nil {
 			return nil, err
 		}
@@ -653,7 +662,7 @@ func (r *StatRepo) CountOverviewResources(ctx context.Context) (*OverviewResourc
 // ent 数组列 carve-out，ScanStats 改 pgx 直查，评审 P1-1）。
 var statScanSQL = `SELECT bucket_time, group_id, account_id, template_id, user_id, model, is_error,
 	request_count, error_count, input_tokens, output_tokens, total_tokens,
-	cache_read_tokens, cache_creation_tokens, cost, call_count,
+	cache_read_tokens, cache_creation_tokens, cost, raw_cost, call_count,
 	ttft_total_ms, ttft_count, ttft_max_ms, ttft_hist
 FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
 
@@ -700,7 +709,7 @@ func (r *StatRepo) ScanStats(ctx context.Context, q StatQuery) ([]*domain.StatBu
 		if err := rows.Scan(&b.BucketTime, &b.GroupID, &b.AccountID, &b.TemplateID, &b.UserID,
 			&b.Model, &b.IsError, &b.RequestCount, &b.ErrorCount, &b.InputTokens,
 			&b.OutputTokens, &b.TotalTokens, &b.CacheReadTokens, &b.CacheCreationTokens,
-			&b.Cost, &b.CallCount, &b.TTFTTotalMS, &b.TTFTCount, &b.TTFTMaxMS, &b.TTFTHist); err != nil {
+			&b.Cost, &b.RawCost, &b.CallCount, &b.TTFTTotalMS, &b.TTFTCount, &b.TTFTMaxMS, &b.TTFTHist); err != nil {
 			return nil, err
 		}
 		out = append(out, b)

@@ -20,7 +20,7 @@ package repository_test
 
 import (
 	"context"
-
+	"fmt"
 	"testing"
 	"time"
 
@@ -74,15 +74,15 @@ func legacyAggregate(logs []*domain.UsageLog) map[legacyAggKey]*domain.StatBucke
 	return m
 }
 
-// usageLogRow 构造放行路径明细（usage_logs 成员：none/abort；全字段）。
+// usageLogRow 构造放行路径明细（usage_logs 成员：none/abort；全字段含 raw_cost）。
 func usageLogRow(rid string, at time.Time, et domain.ErrorType, groupID, userID int64, model string,
-	in, out, cacheRead, cacheCreate, cost, callCount int64, ttft *int64) *domain.UsageLog {
+	in, out, cacheRead, cacheCreate, cost, rawCost, callCount int64, ttft *int64) *domain.UsageLog {
 	return &domain.UsageLog{
 		RequestID: rid, GroupID: groupID, UserID: userID, Model: model,
 		Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: et,
 		InputTokens: in, OutputTokens: out, TotalTokens: in + out,
 		CacheReadTokens: cacheRead, CacheCreationTokens: cacheCreate,
-		CallCount: callCount, Cost: cost, TTFTMS: ttft, CreatedAt: at,
+		CallCount: callCount, Cost: cost, RawCost: rawCost, TTFTMS: ttft, CreatedAt: at,
 	}
 }
 
@@ -127,7 +127,7 @@ func TestPGStatsAggregateRangeInsert(t *testing.T) {
 	rows := []*domain.StatBucket{{
 		BucketTime: bucket, GroupID: 7, UserID: 42, Model: "gpt-4o",
 		RequestCount: 6, ErrorCount: 0, InputTokens: 10, OutputTokens: 20,
-		TotalTokens: 30, Cost: 123, CallCount: 4,
+		TotalTokens: 30, Cost: 123, RawCost: 456, CallCount: 4,
 		TTFTTotalMS: 240, TTFTCount: 6, TTFTMaxMS: 150, TTFTHist: hist,
 	}}
 	wmTo := bucket.Add(20 * time.Minute)
@@ -145,11 +145,79 @@ func TestPGStatsAggregateRangeInsert(t *testing.T) {
 	b := got[0]
 	require.Equal(t, int64(6), b.RequestCount)
 	require.Equal(t, int64(123), b.Cost)
+	require.Equal(t, int64(456), b.RawCost, "raw_cost 直查回读")
 	require.Equal(t, int64(4), b.CallCount, "call_count 直查回读")
 	require.Equal(t, int64(240), b.TTFTTotalMS)
 	require.Equal(t, int64(6), b.TTFTCount)
 	require.Equal(t, int64(150), b.TTFTMaxMS)
 	require.Equal(t, hist, b.TTFTHist, "bigint[] 直方图 round-trip（ent 数组列 carve-out）")
+}
+
+// TestPGStatsRawCostRoundtrip raw_cost 全链路 roundtrip（spec 2026-08-19 测试
+// 节）：usage_logs 造数（含免费组行 cost=0 raw>0）→ LoadAggRange → AggregateRange
+// 落盘 → ScanStats/SummarizeStats/ScanStatsDays 读取面 raw 正确（免费组不丢）；
+// 重算幂等（二次 AggregateRange 同值——DELETE+INSERT 覆盖语义）。
+func TestPGStatsRawCostRoundtrip(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	h := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, h, h))
+	require.NoError(t, repos.EnsureErrLogPartitions(ctx, h, h))
+	require.NoError(t, repos.EnsureUsageStatsPartitions(ctx, h, h))
+
+	// 免费组行：cost=0 raw>0（"实际消耗"口径不丢）；付费行 + abort 行
+	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{
+		usageLogRow("rc1", h.Add(time.Minute), domain.ErrNone, 1, 42, "gpt-4o", 10, 20, 0, 0, 0, 500, 1, nil),   // 免费组
+		usageLogRow("rc2", h.Add(2*time.Minute), domain.ErrNone, 1, 42, "gpt-4o", 5, 5, 0, 0, 100, 250, 0, nil), // 付费行
+		usageLogRow("rc3", h.Add(3*time.Minute), domain.ErrAbort, 1, 42, "gpt-4o", 1, 1, 0, 0, 40, 90, 1, nil),
+	}))
+	require.NoError(t, repos.ErrLogs.InsertBatch(ctx, []*domain.UsageLog{
+		errLogRow("rc4", h.Add(4*time.Minute), domain.Err5xx, 1, 42, "gpt-4o"), // 与 abort 同维度合并
+		errLogRow("rc5", h.Add(5*time.Minute), domain.ErrNetwork, 2, 9, "claude-3-5"), // 纯 err 桶
+	}))
+
+	rows, detail, err := repos.Stats.LoadAggRange(ctx, h, h.Add(time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, int64(5), detail)
+
+	// AggregateRange 落盘 → ScanStats 读取面
+	require.NoError(t, repos.Stats.AggregateRange(ctx, h, h.Add(time.Hour), h.Add(30*time.Minute), rows))
+	got, err := repos.Stats.ScanStats(ctx, repository.StatQuery{From: h, To: h.Add(time.Hour)})
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	rawOf := map[string]int64{}
+	costOf := map[string]int64{}
+	for _, b := range got {
+		key := fmt.Sprintf("%d|%d|%v", b.GroupID, b.UserID, b.IsError)
+		rawOf[key] = b.RawCost
+		costOf[key] = b.Cost
+	}
+	require.Equal(t, int64(750), rawOf["1|42|false"], "成功桶 SUM(raw_cost)（免费组 500 + 付费 250）")
+	require.Equal(t, int64(100), costOf["1|42|false"], "免费组 cost=0 不污染付费口径")
+	require.Equal(t, int64(90), rawOf["1|42|true"], "abort 桶 SUM(raw_cost)（err_logs 恒 0）")
+	require.Equal(t, int64(40), costOf["1|42|true"])
+	require.Equal(t, int64(0), rawOf["2|9|true"], "纯 err 桶 raw 恒 0")
+	require.Equal(t, int64(0), costOf["2|9|true"])
+
+	// 读取面其余两处：SummarizeStats 总览 + ScanStatsDays 日桶
+	sum, err := repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(840), sum.RawCost, "summary SUM(raw_cost)（750+90+0）")
+	days, err := repos.Stats.ScanStatsDays(ctx, h, h.Add(time.Hour), 0)
+	require.NoError(t, err)
+	require.Len(t, days, 1)
+	require.Equal(t, int64(840), days[0].RawCost, "日桶 SUM(raw_cost)")
+
+	// 重算幂等：二次 AggregateRange（同 rows）→ 桶值不变（DELETE+INSERT 覆盖）
+	require.NoError(t, repos.Stats.AggregateRange(ctx, h, h.Add(time.Hour), h.Add(30*time.Minute), rows))
+	got2, err := repos.Stats.ScanStats(ctx, repository.StatQuery{From: h, To: h.Add(time.Hour)})
+	require.NoError(t, err)
+	require.Len(t, got2, 3)
+	for _, b := range got2 {
+		key := fmt.Sprintf("%d|%d|%v", b.GroupID, b.UserID, b.IsError)
+		require.Equal(t, rawOf[key], b.RawCost, "重算幂等（raw_cost 不变）")
+		require.Equal(t, costOf[key], b.Cost, "重算幂等（cost 不变）")
+	}
 }
 
 // TestPGStatsLoadAggRangeEquivalent 聚合等价断言（spec 测试节）：同一批
@@ -169,12 +237,13 @@ func TestPGStatsLoadAggRangeEquivalent(t *testing.T) {
 	ttft := func(v int64) *int64 { return &v }
 	logs := []*domain.UsageLog{
 		// usage_logs：none 成功行（全字段）
-		usageLogRow("r1", h.Add(1*time.Minute), domain.ErrNone, 1, 42, "gpt-4o", 10, 20, 4, 2, 100, 3, ttft(30)),
-		usageLogRow("r2", h.Add(2*time.Minute), domain.ErrNone, 1, 42, "gpt-4o", 0, 0, 0, 0, 0, 1, nil),
-		usageLogRow("r3", h.Add(3*time.Minute), domain.ErrNone, 1, 7, "gpt-4o", 5, 5, 0, 0, 50, 0, ttft(80)),
+		usageLogRow("r1", h.Add(1*time.Minute), domain.ErrNone, 1, 42, "gpt-4o", 10, 20, 4, 2, 100, 300, 3, ttft(30)),
+		// r2 = 免费组行：cost=0 但 raw>0（"实际消耗"可见）
+		usageLogRow("r2", h.Add(2*time.Minute), domain.ErrNone, 1, 42, "gpt-4o", 0, 0, 0, 0, 0, 150, 1, nil),
+		usageLogRow("r3", h.Add(3*time.Minute), domain.ErrNone, 1, 7, "gpt-4o", 5, 5, 0, 0, 50, 200, 0, ttft(80)),
 		// usage_logs：abort 双轨行（全字段——P1-B）
-		usageLogRow("r4", h.Add(4*time.Minute), domain.ErrAbort, 1, 42, "gpt-4o", 3, 6, 0, 0, 40, 2, ttft(120)),
-		usageLogRow("r5", h.Add(5*time.Minute), domain.ErrAbort, 1, 7, "gpt-4o", 1, 1, 0, 0, 10, 1, nil),
+		usageLogRow("r4", h.Add(4*time.Minute), domain.ErrAbort, 1, 42, "gpt-4o", 3, 6, 0, 0, 40, 90, 2, ttft(120)),
+		usageLogRow("r5", h.Add(5*time.Minute), domain.ErrAbort, 1, 7, "gpt-4o", 1, 1, 0, 0, 10, 20, 1, nil),
 	}
 	// err_logs：纯错误行（4xx/5xx/network——count 语义）
 	errLogs := []*domain.UsageLog{
@@ -205,6 +274,8 @@ func TestPGStatsLoadAggRangeEquivalent(t *testing.T) {
 	// 新列单独断言（旧逻辑无累加）
 	okBucket := gotByKey[legacyAggKey{hourUnix: h.Unix(), groupID: 1, accountID: 0, templateID: 0, userID: 42, model: "gpt-4o", isErr: false}]
 	require.NotNil(t, okBucket)
+	require.Equal(t, int64(100), okBucket.Cost)
+	require.Equal(t, int64(450), okBucket.RawCost, "成功桶 SUM(raw_cost)（r1 300 + 免费组 r2 150）")
 	require.Equal(t, int64(4), okBucket.CallCount, "none 行 call_count sum（3+1）")
 	require.Equal(t, int64(1), okBucket.TTFTCount, "TTFT 样本数 = 非 nil 行数（r2 无首 token）")
 	require.Equal(t, int64(30), okBucket.TTFTTotalMS)
@@ -223,6 +294,7 @@ func TestPGStatsLoadAggRangeEquivalent(t *testing.T) {
 	require.Equal(t, int64(3), abortBucket.InputTokens, "abort 行 tokens 计入（err_logs 恒 0）")
 	require.Equal(t, int64(6), abortBucket.OutputTokens)
 	require.Equal(t, int64(40), abortBucket.Cost)
+	require.Equal(t, int64(90), abortBucket.RawCost, "abort 桶 SUM(raw_cost)（err_logs 恒 0）")
 
 	// err_logs 合并桶：abort（usage_logs）+ 纯错误（err_logs）双源合并
 	errMergeBucket := gotByKey[legacyAggKey{hourUnix: h.Unix(), groupID: 1, userID: 7, model: "gpt-4o", isErr: true}]
@@ -232,6 +304,12 @@ func TestPGStatsLoadAggRangeEquivalent(t *testing.T) {
 	require.Equal(t, int64(1), errMergeBucket.CallCount, "abort 行 CallCount 计入（err_logs 恒 0）")
 	require.Equal(t, int64(1), errMergeBucket.InputTokens, "abort 行 tokens 计入（err_logs 恒 0）")
 	require.Equal(t, int64(2), errMergeBucket.TotalTokens, "abort 行 TotalTokens（1+1）")
+	require.Equal(t, int64(20), errMergeBucket.RawCost, "abort 行 raw 计入（err_logs 恒 0）")
+
+	// 纯 err_logs 桶（e3——无 usage_logs 同维度行）：raw 恒 0
+	errOnlyBucket := gotByKey[legacyAggKey{hourUnix: h.Unix(), groupID: 2, userID: 9, model: "claude-3-5", isErr: true}]
+	require.NotNil(t, errOnlyBucket)
+	require.Equal(t, int64(0), errOnlyBucket.RawCost, "err 桶（瘦表）raw 恒 0")
 }
 
 // TestPGStatsAbortSplitNoDoubleCount abort 拆分断言（P1-B）：abort 行只经
@@ -247,7 +325,7 @@ func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
 
 	ttft := func(v int64) *int64 { return &v }
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{
-		usageLogRow("a1", h.Add(time.Minute), domain.ErrAbort, 3, 42, "gpt-4o", 7, 8, 1, 1, 60, 5, ttft(200)),
+		usageLogRow("a1", h.Add(time.Minute), domain.ErrAbort, 3, 42, "gpt-4o", 7, 8, 1, 1, 60, 120, 5, ttft(200)),
 	}))
 	// err_logs 插入一条 abort 行（防御性双计探针——实际豁免通道不写，但 SQL
 	// 语义必须排除）
@@ -267,6 +345,7 @@ func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
 	require.Equal(t, int64(5), b.CallCount, "abort 行全字段（call_count）")
 	require.Equal(t, int64(15), b.TotalTokens, "abort 行全字段（tokens）")
 	require.Equal(t, int64(60), b.Cost, "abort 行全字段（cost）")
+	require.Equal(t, int64(120), b.RawCost, "abort 行全字段（raw_cost）")
 	require.Equal(t, int64(200), b.TTFTMaxMS, "abort 行全字段（TTFT）")
 	require.Equal(t, int64(1), b.TTFTCount)
 }
@@ -285,7 +364,7 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 	logs1 := make([]*domain.UsageLog, 0, 8)
 	for i := 0; i < 8; i++ {
 		logs1 = append(logs1, usageLogRow("c1-"+string(rune('a'+i)), h.Add(time.Duration(i+1)*time.Minute),
-			domain.ErrNone, 1, 42, "gpt-4o", 1, 1, 0, 0, 0, 0, nil))
+			domain.ErrNone, 1, 42, "gpt-4o", 1, 1, 0, 0, 0, 0, 0, nil))
 	}
 	require.NoError(t, repos.Usages.InsertBatch(ctx, logs1))
 
@@ -305,7 +384,7 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 	logs2 := make([]*domain.UsageLog, 0, 3)
 	for i := 0; i < 3; i++ {
 		logs2 = append(logs2, usageLogRow("c2-"+string(rune('a'+i)), h.Add(time.Duration(25+i)*time.Minute),
-			domain.ErrNone, 1, 42, "gpt-4o", 1, 1, 0, 0, 0, 0, nil))
+			domain.ErrNone, 1, 42, "gpt-4o", 1, 1, 0, 0, 0, 0, 0, nil))
 	}
 	require.NoError(t, repos.Usages.InsertBatch(ctx, logs2))
 	waitForRequestCount(t, repos, h, 11, "部分小时桶跨周期累积不截断（8+3 全量重建）")
@@ -428,14 +507,16 @@ func TestPGStatsSummarizeTTFT(t *testing.T) {
 	require.NoError(t, repos.Stats.AggregateRange(ctx, bucket, bucket.Add(time.Hour), bucket.Add(30*time.Minute),
 		[]*domain.StatBucket{
 			{BucketTime: bucket, GroupID: 1, UserID: 42, Model: "m", RequestCount: 5, CallCount: 3,
-				TTFTTotalMS: 300, TTFTCount: 5, TTFTMaxMS: 90, TTFTHist: hist},
+				Cost: 100, RawCost: 300, TTFTTotalMS: 300, TTFTCount: 5, TTFTMaxMS: 90, TTFTHist: hist},
 			{BucketTime: bucket, GroupID: 2, UserID: 42, Model: "m", RequestCount: 5, CallCount: 2,
-				TTFTTotalMS: 180, TTFTCount: 5, TTFTMaxMS: 60, TTFTHist: hist},
+				Cost: 50, RawCost: 150, TTFTTotalMS: 180, TTFTCount: 5, TTFTMaxMS: 60, TTFTHist: hist},
 		}))
 
 	sum, err := repos.Stats.SummarizeStats(ctx, bucket, bucket.Add(time.Hour), 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), sum.Requests)
+	require.Equal(t, int64(450), sum.RawCost, "raw_cost 跨行合并（300+150）")
+	require.Equal(t, int64(150), sum.Cost, "cost 跨行合并（100+50）")
 	require.Equal(t, int64(5), sum.CallCount, "call_count 跨行合并")
 	require.Equal(t, int64(480), sum.TTFTTotalMS, "ttft_total 跨行合并")
 	require.Equal(t, int64(10), sum.TTFTCount)
@@ -492,6 +573,7 @@ func TestPGStatsSummarizeNoData(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, sum.Requests)
 	require.Zero(t, sum.CallCount)
+	require.Zero(t, sum.RawCost, "空区间 COALESCE 归零（裸 sum(raw_cost) = NULL 扫描报错）")
 	require.Zero(t, sum.TTFTCount)
 	require.Zero(t, sum.TTFTPercentileMS(0.95), "无样本 → 0")
 	require.Zero(t, sum.TTFTAvgMS())

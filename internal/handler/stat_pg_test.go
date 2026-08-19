@@ -35,13 +35,13 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// statBucketWithTTFT 统计桶测试种子（TTFT 直方图 10 档；cost 毫分）。
-func statBucketWithTTFT(bt time.Time, groupID, userID int64, req, call, cost int64,
+// statBucketWithTTFT 统计桶测试种子（TTFT 直方图 10 档；cost/rawCost 毫分）。
+func statBucketWithTTFT(bt time.Time, groupID, userID int64, req, call, cost, rawCost int64,
 	ttftTotal, ttftCount, ttftMax int64, hist []int64) *domain.StatBucket {
 	return &domain.StatBucket{
 		BucketTime: bt, GroupID: groupID, AccountID: 42, UserID: userID,
 		Model: "gpt-4o", RequestCount: req, TotalTokens: req * 3,
-		Cost: cost, CallCount: call,
+		Cost: cost, RawCost: rawCost, CallCount: call,
 		TTFTTotalMS: ttftTotal, TTFTCount: ttftCount, TTFTMaxMS: ttftMax, TTFTHist: hist,
 	}
 }
@@ -58,8 +58,8 @@ func TestPGStatsEndpointBucketFields(t *testing.T) {
 	// 同小时两维度行（group 1/2）单次 AggregateRange 种子
 	require.NoError(t, repos.Stats.AggregateRange(ctx, bucket, bucket.Add(time.Hour), bucket.Add(30*time.Minute),
 		[]*domain.StatBucket{
-			statBucketWithTTFT(bucket, 1, 42, 5, 3, 100_000, 300, 5, 90, hist),
-			statBucketWithTTFT(bucket, 2, 42, 5, 2, 50_000, 180, 5, 60, hist),
+			statBucketWithTTFT(bucket, 1, 42, 5, 3, 100_000, 200_000, 300, 5, 90, hist),
+			statBucketWithTTFT(bucket, 2, 42, 5, 2, 50_000, 100_000, 180, 5, 60, hist),
 		}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
@@ -80,6 +80,7 @@ func TestPGStatsEndpointBucketFields(t *testing.T) {
 	require.Equal(t, int64(5), *b1.TTFTCount)
 	require.Equal(t, int64(3), *b1.CallCount, "call_count 随桶返回")
 	require.InDelta(t, 1.0, *b1.Cost, 1e-9, "Cost 毫分 /1e5 → USD")
+	require.InDelta(t, 2.0, *b1.RawCostUsd, 1e-9, "RawCostUsd 毫分 /1e5 → USD（200000）")
 	require.InDelta(t, 60.0, *b1.TTFTAvgMS, 1e-9, "avg = sum/count")
 	require.Equal(t, int64(90), *b1.TTFTMaxMS)
 	require.Equal(t, int64(25), *b1.TTFTP50MS)
@@ -90,6 +91,7 @@ func TestPGStatsEndpointBucketFields(t *testing.T) {
 	b2 := byGroup[2]
 	require.InDelta(t, 36.0, *b2.TTFTAvgMS, 1e-9)
 	require.InDelta(t, 0.5, *b2.Cost, 1e-9)
+	require.InDelta(t, 1.0, *b2.RawCostUsd, 1e-9, "RawCostUsd 毫分 /1e5（100000）")
 	require.Equal(t, int64(60), *b2.TTFTMaxMS)
 }
 
@@ -106,8 +108,8 @@ func TestPGStatsEndpointDayGranularity(t *testing.T) {
 	hist := []int64{6, 4, 0, 0, 0, 0, 0, 0, 0, 0}
 	require.NoError(t, repos.Stats.AggregateRange(ctx, h0, h0.Add(2*time.Hour), h0.Add(30*time.Minute),
 		[]*domain.StatBucket{
-			statBucketWithTTFT(h0, 1, 42, 5, 3, 100_000, 300, 5, 90, hist),
-			statBucketWithTTFT(h0.Add(time.Hour), 1, 42, 5, 2, 50_000, 180, 5, 60, hist),
+			statBucketWithTTFT(h0, 1, 42, 5, 3, 100_000, 200_000, 300, 5, 90, hist),
+			statBucketWithTTFT(h0.Add(time.Hour), 1, 42, 5, 2, 50_000, 100_000, 180, 5, 60, hist),
 		}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
@@ -121,6 +123,7 @@ func TestPGStatsEndpointDayGranularity(t *testing.T) {
 	require.Equal(t, int64(10), *b.RequestCount)
 	require.Equal(t, int64(5), *b.CallCount, "call_count 日合并求和")
 	require.InDelta(t, 1.5, *b.Cost, 1e-9, "(100000+50000)/1e5")
+	require.InDelta(t, 3.0, *b.RawCostUsd, 1e-9, "(200000+100000)/1e5 日合并 raw 不丢")
 	require.Equal(t, int64(10), *b.TTFTCount, "TTFTCount 日合并")
 	require.InDelta(t, 48.0, *b.TTFTAvgMS, 1e-9, "(300+180)/10")
 	require.Equal(t, int64(90), *b.TTFTMaxMS, "max 取大")
@@ -128,6 +131,65 @@ func TestPGStatsEndpointDayGranularity(t *testing.T) {
 	require.Equal(t, int64(37), *b.TTFTP90MS)
 	require.Equal(t, int64(41), *b.TTFTP95MS)
 	require.Equal(t, int64(41), *b.TTFTP99MS)
+
+	// 缺省 granularity（无参数——GetStats 回落 day）走同一 Go 合并路径：raw 不丢
+	// （gate Major 1 回归：漏 m.RawCost += b.RawCost 则此处 RawCostUsd 恒 0）
+	w2 := router("GET", fmt.Sprintf("/admin/stats?from=%s&to=%s",
+		h0.Format(time.RFC3339), h0.Add(2*time.Hour).Format(time.RFC3339)))
+	require.Equal(t, http.StatusOK, w2.Code, "default granularity: %s", w2.Body.String())
+	var out2 []StatBucket
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &out2))
+	require.Len(t, out2, 1, "缺省 granularity=day 合并")
+	require.InDelta(t, 3.0, *out2[0].RawCostUsd, 1e-9, "缺省 day 路径 raw 不丢")
+	require.InDelta(t, 1.5, *out2[0].Cost, 1e-9, "缺省 day 路径 cost 口径不变")
+}
+
+// TestPGStatsRawCostUsdFreeGroupDefaultDay 免费组 raw 全链路（spec 2026-08-19
+// 测试节）：cost=0 raw>0 的桶 + 付费桶同维度同小时 → /admin/stats 缺省 day
+// 合并（gate Major 1 路径）与 /user/stats 缺省 day 均输出 raw_cost_usd > 0
+//（免费组"实际消耗"USD 不丢；cost_usd 恒 0 不污染）。
+func TestPGStatsRawCostUsdFreeGroupDefaultDay(t *testing.T) {
+	repos := overviewPGTestDB(t, time.Now().UTC(), time.Now().UTC())
+	ctx := context.Background()
+	now := time.Now().UTC()
+	bucket := now.Truncate(time.Hour)
+	user, err := repos.Users.CreateUser(ctx, &domain.User{Email: "free@x.test", PasswordHash: "h",
+		Role: domain.RoleUser, Status: domain.UserStatusActive})
+	require.NoError(t, err)
+	require.NoError(t, repos.Stats.AggregateRange(ctx, bucket, bucket.Add(2*time.Hour), bucket.Add(30*time.Minute),
+		[]*domain.StatBucket{
+			// 免费组行：cost=0 raw>0；付费行同维度邻小时（day 合并为一桶）
+			statBucketWithTTFT(bucket, 1, user.ID, 2, 0, 0, 500_000, 0, 0, 0, make([]int64, 10)),
+			statBucketWithTTFT(bucket.Add(time.Hour), 1, user.ID, 3, 0, 100_000, 250_000, 0, 0, 0, make([]int64, 10)),
+		}))
+
+	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
+	w := router("GET", fmt.Sprintf("/admin/stats?from=%s&to=%s",
+		bucket.Format(time.RFC3339), bucket.Add(2*time.Hour).Format(time.RFC3339)))
+	require.Equal(t, http.StatusOK, w.Code, "stats: %s", w.Body.String())
+	var out []StatBucket
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 1, "缺省 day 合并为一桶")
+	require.InDelta(t, 7.5, *out[0].RawCostUsd, 1e-9, "免费组 raw 500000+250000 → USD 7.5（raw>0 不丢）")
+	require.InDelta(t, 1.0, *out[0].Cost, 1e-9, "cost 只计付费行 100000 → USD 1.0")
+
+	// /user/stats 缺省 day（同一 QueryStats 路径——独立包双工件输出）
+	iss := auth.NewIssuer("test-secret")
+	token, err := iss.Issue(user.ID, user.Email, string(user.Role))
+	require.NoError(t, err)
+	svc := service.New(repos, stubSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	ur := userapi.Router(svc, iss, pgUserStatus{repos: repos}, nil)
+	ureq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/user/stats?from=%s&to=%s",
+		bucket.Format(time.RFC3339), bucket.Add(2*time.Hour).Format(time.RFC3339)), nil)
+	ureq.Header.Set("Authorization", "Bearer "+token)
+	urec := httptest.NewRecorder()
+	ur.ServeHTTP(urec, ureq)
+	require.Equal(t, http.StatusOK, urec.Code, "user stats: %s", urec.Body.String())
+	var uout []userapi.StatBucket
+	require.NoError(t, json.Unmarshal(urec.Body.Bytes(), &uout))
+	require.Len(t, uout, 1)
+	require.InDelta(t, 7.5, *uout[0].RawCostUsd, 1e-9, "/user/stats 缺省 day raw 不丢")
+	require.InDelta(t, 1.0, *uout[0].Cost, 1e-9, "/user/stats cost 口径不变")
 }
 
 // TestPGStatsTemplateFilterBothEndpoints template_id 过滤接线验证（前置清单①）：
@@ -145,7 +207,7 @@ func TestPGStatsTemplateFilterBothEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, repos.Stats.AggregateRange(ctx, bucket, bucket.Add(time.Hour), bucket.Add(30*time.Minute),
 		[]*domain.StatBucket{
-			statBucketWithTTFT(bucket, 1, user.ID, 1, 0, 0, 0, 0, 0, make([]int64, 10)),
+			statBucketWithTTFT(bucket, 1, user.ID, 1, 0, 0, 0, 0, 0, 0, make([]int64, 10)),
 			{BucketTime: bucket, GroupID: 1, AccountID: 42, UserID: user.ID, Model: "gpt-4o",
 				TemplateID: 5, RequestCount: 7, TTFTHist: make([]int64, 10)},
 		}))
@@ -206,8 +268,8 @@ func TestPGUserStatsForcedOwnUser(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, repos.Stats.AggregateRange(ctx, bucket, bucket.Add(time.Hour), bucket.Add(30*time.Minute),
 		[]*domain.StatBucket{
-			statBucketWithTTFT(bucket, 1, ua.ID, 3, 1, 10_000, 0, 0, 0, make([]int64, 10)),
-			statBucketWithTTFT(bucket, 2, ub.ID, 9, 2, 20_000, 0, 0, 0, make([]int64, 10)),
+			statBucketWithTTFT(bucket, 1, ua.ID, 3, 1, 10_000, 25_000, 0, 0, 0, make([]int64, 10)),
+			statBucketWithTTFT(bucket, 2, ub.ID, 9, 2, 20_000, 50_000, 0, 0, 0, make([]int64, 10)),
 		}))
 
 	iss := auth.NewIssuer("test-secret")
@@ -236,11 +298,13 @@ func TestPGUserStatsForcedOwnUser(t *testing.T) {
 	require.Len(t, out, 1, "非本人 user_id 过滤参数无效")
 	require.Equal(t, ua.ID, *out[0].UserID)
 	require.Equal(t, int64(3), *out[0].RequestCount)
+	require.InDelta(t, 0.25, *out[0].RawCostUsd, 1e-9, "RawCostUsd 毫分 /1e5（25000）")
 	// B 同样只见自己的行（正向）
 	out = do(tokenB, "")
 	require.Len(t, out, 1)
 	require.Equal(t, ub.ID, *out[0].UserID)
 	require.Equal(t, int64(9), *out[0].RequestCount)
+	require.InDelta(t, 0.5, *out[0].RawCostUsd, 1e-9, "RawCostUsd 毫分 /1e5（50000）")
 }
 
 // TestPGStatsEndpointNoSample 无样本语义：仅有请求量无 TTFT 样本/费用/调用量
@@ -251,7 +315,7 @@ func TestPGStatsEndpointNoSample(t *testing.T) {
 	now := time.Now().UTC()
 	bucket := now.Truncate(time.Hour)
 	require.NoError(t, repos.Stats.AggregateRange(ctx, bucket, bucket.Add(time.Hour), bucket.Add(30*time.Minute),
-		[]*domain.StatBucket{statBucketWithTTFT(bucket, 1, 42, 3, 0, 0, 0, 0, 0, make([]int64, 10))}))
+		[]*domain.StatBucket{statBucketWithTTFT(bucket, 1, 42, 3, 0, 0, 0, 0, 0, 0, make([]int64, 10))}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
 	w := router("GET", fmt.Sprintf("/admin/stats?granularity=hour&from=%s&to=%s",
@@ -264,6 +328,7 @@ func TestPGStatsEndpointNoSample(t *testing.T) {
 	require.Equal(t, int64(3), *b.RequestCount)
 	require.Equal(t, int64(0), *b.CallCount, "无按次调用 → 0")
 	require.InDelta(t, 0.0, *b.Cost, 1e-9, "无费用 → USD 0")
+	require.InDelta(t, 0.0, *b.RawCostUsd, 1e-9, "无 raw → USD 0")
 	require.Equal(t, int64(0), *b.TTFTCount, "无样本 → TTFTCount 0")
 	require.InDelta(t, 0.0, *b.TTFTAvgMS, 1e-9, "无样本 → avg 0")
 	require.Equal(t, int64(0), *b.TTFTMaxMS, "无样本 → max 0")
@@ -286,7 +351,7 @@ func TestPGStatsEndpointTopBucketFallback(t *testing.T) {
 	bucket := now.Truncate(time.Hour)
 	hist := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 5}
 	require.NoError(t, repos.Stats.AggregateRange(ctx, bucket, bucket.Add(time.Hour), bucket.Add(30*time.Minute),
-		[]*domain.StatBucket{statBucketWithTTFT(bucket, 1, 42, 5, 0, 0, 65_000, 5, 20_000, hist)}))
+		[]*domain.StatBucket{statBucketWithTTFT(bucket, 1, 42, 5, 0, 0, 0, 65_000, 5, 20_000, hist)}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
 	w := router("GET", fmt.Sprintf("/admin/stats?granularity=hour&from=%s&to=%s",

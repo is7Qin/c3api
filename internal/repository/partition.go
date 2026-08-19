@@ -218,6 +218,10 @@ var usageStatsColumnDefs = []string{
 	`cache_read_tokens bigint NOT NULL DEFAULT 0`,
 	`cache_creation_tokens bigint NOT NULL DEFAULT 0`,
 	`cost bigint NOT NULL DEFAULT 0`,
+	// raw_cost（spec 2026-08-19）：乘倍率前的原始成本（毫分）——离线聚合
+	// SUM(raw_cost)（usage_logs 同源口径）；历史桶/缺省 = 0（fresh setup
+	// 不迁移，重算即填）。
+	`raw_cost bigint NOT NULL DEFAULT 0`,
 	// 按次调用（用户裁决 2026-08-14）：图片生成 = 张数、search = 1；离线聚合
 	// sum(call_count) 直取（usage_logs 明细已有 CallCount——图片 6 专列删后的
 	// 统一计费模型分量，spec 2026-08-13）。

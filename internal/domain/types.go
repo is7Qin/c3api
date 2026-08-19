@@ -636,6 +636,7 @@ type StatBucket struct {
 	CacheReadTokens     int64   // 缓存读取 token
 	CacheCreationTokens int64   // 缓存写入 token
 	Cost                int64   // 毫分（计费预聚合，花费统计不扫明细）
+	RawCost             int64   // 毫分（乘倍率前原始成本——免费组 cost=0 但 raw 有值）
 	CallCount           int64   // 按次调用：图片生成 = 张数、search = 1（离线聚合 sum(call_count) 直取）
 	TTFTTotalMS         int64   // TTFT sum（avg = 查询侧 Go 除 TTFTCount）
 	TTFTCount           int64   // TTFT 样本数（仅首 token 流式请求；abort 行含 TTFT 也计入其桶）

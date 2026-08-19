@@ -936,12 +936,12 @@ type OverviewResponse struct {
 	// Resources 资源计数（冷面 count；模板/分组排除软删）
 	Resources OverviewResources `json:"resources"`
 
-	// Summary 今日汇总（UTC 日界；cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
+	// Summary 今日汇总（UTC 日界；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
 	Summary OverviewSummary `json:"summary"`
 	Trend   []OverviewTrend `json:"trend"`
 }
 
-// OverviewSummary 今日汇总（UTC 日界；cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
+// OverviewSummary 今日汇总（UTC 日界；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
 type OverviewSummary struct {
 	CacheReadTokens int64 `json:"cache_read_tokens"`
 
@@ -956,8 +956,11 @@ type OverviewSummary struct {
 	Errors       int64   `json:"errors"`
 	InputTokens  int64   `json:"input_tokens"`
 	OutputTokens int64   `json:"output_tokens"`
-	Requests     int64   `json:"requests"`
-	TotalTokens  int64   `json:"total_tokens"`
+
+	// RawCostUsd 今日原始成本（USD，毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值）
+	RawCostUsd  float64 `json:"raw_cost_usd"`
+	Requests    int64   `json:"requests"`
+	TotalTokens int64   `json:"total_tokens"`
 
 	// TtftAvgMs TTFT 均值（ttft_total_ms / ttft_count，查询侧 Go 除）
 	TtftAvgMs float64 `json:"ttft_avg_ms"`
@@ -981,9 +984,12 @@ type OverviewTrend struct {
 	CostUsd float64 `json:"cost_usd"`
 
 	// Date 日桶（UTC）
-	Date     openapi_types.Date `json:"date"`
-	Errors   int64              `json:"errors"`
-	Requests int64              `json:"requests"`
+	Date   openapi_types.Date `json:"date"`
+	Errors int64              `json:"errors"`
+
+	// RawCostUsd 当日原始成本（USD，毫分 /1e5——乘倍率前"实际消耗"口径）
+	RawCostUsd float64 `json:"raw_cost_usd"`
+	Requests   int64   `json:"requests"`
 
 	// Tokens 当日总 token（usage_stats total_tokens 列聚合）
 	Tokens int64 `json:"tokens"`
@@ -1327,6 +1333,9 @@ type StatBucket struct {
 
 	// UserID 鉴权归属用户；0 = 无
 	UserID *int64 `json:"UserID,omitempty"`
+
+	// RawCostUsd 原始成本 USD（毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值）
+	RawCostUsd *float64 `json:"raw_cost_usd,omitempty"`
 }
 
 // Template defines model for Template.
