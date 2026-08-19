@@ -97,3 +97,15 @@ export function formatUSD(c?: number | null): string {
 export function formatPricePerMillion(c?: number | null): string {
   return c == null ? '—' : `$${c.toFixed(4)}/M`
 }
+
+// 行内 token 紧凑格式：K/M/B 分级（1 位小数去尾零），<1000 原始值。
+// 阈值留四舍五入余量（999.95K+ 升 M、999.95M+ 升 B），避免 999999 → "1000K"
+// 的进位断裂；只有 K 时大数值（1000K/1234567K）会撑破单元格被裁。
+// 大卡内保持千分位原始值（toLocaleString，不改）。
+export function fmtTokens(n: number): string {
+  const trim = (v: number) => `${v.toFixed(1).replace(/\.0$/, '')}`
+  if (n >= 999.95e6) return `${trim(n / 1e9)}B`
+  if (n >= 999.95e3) return `${trim(n / 1e6)}M`
+  if (n >= 1e3) return `${trim(n / 1e3)}K`
+  return String(n)
+}

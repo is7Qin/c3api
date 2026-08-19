@@ -23,7 +23,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCursorLogs } from '@/components/use-cursor-logs'
-import { defaultLogRange, formatCost, formatDateTime, toRFC3339 } from '@/components/fmt'
+import { defaultLogRange, fmtTokens, formatCost, formatDateTime, toRFC3339 } from '@/components/fmt'
 import { useDebounced } from '@/lib/use-debounced'
 import { cn } from '@/lib/utils'
 import type { ErrLogParams, UsageLogParams } from '@/lib/api/client'
@@ -98,18 +98,6 @@ const fmtPricePerM = (millis: number): string => {
   const usd = millis / 100_000
   const s = (usd >= 0.01 ? usd.toFixed(4) : usd.toFixed(6)).replace(/\.?0+$/, '')
   return `$${s}/M`
-}
-
-// 行内 token 紧凑格式：K/M/B 分级（1 位小数去尾零），<1000 原始值。
-// 阈值留四舍五入余量（999.95K+ 升 M、999.95M+ 升 B），避免 999999 → "1000K"
-// 的进位断裂；只有 K 时大数值（1000K/1234567K）会撑破单元格被裁。
-// 大卡内保持千分位原始值（toLocaleString，不改）。
-const fmtTokens = (n: number): string => {
-  const trim = (v: number) => `${v.toFixed(1).replace(/\.0$/, '')}`
-  if (n >= 999.95e6) return `${trim(n / 1e9)}B`
-  if (n >= 999.95e3) return `${trim(n / 1e6)}M`
-  if (n >= 1e3) return `${trim(n / 1e3)}K`
-  return String(n)
 }
 
 // base-ui Select 不接受空串值，用哨兵表示「全部」。

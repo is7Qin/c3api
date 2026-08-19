@@ -30,7 +30,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
 import { StatusBadge, CooldownBadge } from '@/components/status-badge'
-import { formatPercent, toRFC3339, truncate } from '@/components/fmt'
+import { fmtTokens, formatDateTime, formatPercent, toRFC3339, truncate } from '@/components/fmt'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 
@@ -79,6 +79,24 @@ const fmtReset = (ms: number): string => {
   if (d > 0) return `${d}d ${h}h`
   if (h > 0) return `${h}h ${m}m`
   return `${m}m`
+}
+
+// —— 用量明细弹窗（B-2）：预置时间范围（hours ≤72 → 分桶 hour 粒度，否则 day）——
+const USAGE_RANGES = [
+  { key: '24h', hours: 24 },
+  { key: '7d', hours: 168 },
+  { key: '30d', hours: 720 },
+  { key: '90d', hours: 2160 },
+] as const
+
+// 汇总卡片（A 原始成本 / U 计费成本 / 请求数 / 总 tokens），口径与用量单元格一致。
+function UsageSummary({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
+    </div>
+  )
 }
 function UsageCell({ item }: { item?: components['schemas']['AccountUsageItem'] }) {
   const { t } = useTranslation()
@@ -385,6 +403,47 @@ export default function Accounts() {
     visibleBlocks.forEach((b, idx) => { for (const r of b) m.set(r.ID!, usageQs[idx]?.isPending ?? false) })
     return m
   }, [visibleBlocks, usageQs])
+
+  // —— 用量明细弹窗（B-2）：三查询并行——汇总 = usage_logs 实时全窗（无聚合延迟，
+  // A/U 准确、含尾窗）；分桶 = stats-agg 离线聚合（watermark 滞后 Lag，末桶为进行中的
+  // 部分桶）→ 末桶被尾窗补行 [末桶起点, now) 原位替代（无双计无缺口）。
+  // from/to 每次渲染重算但查询 key 不含时间戳——渲染期不重取；弹窗打开（enabled
+  // 翻转触发 refetch）/切换范围（key 变化）时 queryFn 拿到当前时刻，滚动/轮询零请求。
+  const [usageDetail, setUsageDetail] = useState<AccountView | null>(null)
+  const [rangeKey, setRangeKey] = useState<string>('7d')
+  const range = USAGE_RANGES.find(r => r.key === rangeKey) ?? USAGE_RANGES[1]
+  const from = new Date(Date.now() - range.hours * 3600_000).toISOString()
+  const to = new Date().toISOString()
+  const detailQ = useQuery({
+    queryKey: ['account-usage-detail', usageDetail?.ID, rangeKey],
+    queryFn: () => api.listAccountsUsage([usageDetail!.ID!], { from, to }),
+    enabled: !!usageDetail,
+  })
+  const statsQ = useQuery({
+    queryKey: ['account-stats-detail', usageDetail?.ID, rangeKey],
+    queryFn: () => api.getStats({ account_id: usageDetail!.ID!, from, to, granularity: range.hours <= 72 ? 'hour' : 'day' }),
+    enabled: !!usageDetail,
+  })
+  // 统计桶按 BucketTime 升序（spec 钉死）：后端 day 合并按 map 迭代返回无序
+  //（实测 17/18/19/16 乱序）——末桶判定/slice(0,-1) 依赖升序，必须显式排序。
+  const statsBuckets = useMemo(
+    () => [...(statsQ.data ?? [])].sort((a, b) => Date.parse(a.BucketTime ?? '') - Date.parse(b.BucketTime ?? '')),
+    [statsQ.data],
+  )
+  // 切分点不假设「上一整点」——取 stats 升序数组末桶 BucketTime 为真实边界
+  //（watermark 可停在任意整点）；stats 空数组 → 不查尾窗、分桶表无补行。
+  const tailFrom = statsBuckets.length > 0 ? statsBuckets[statsBuckets.length - 1].BucketTime : undefined
+  const tailQ = useQuery({
+    queryKey: ['account-stats-tail', usageDetail?.ID, rangeKey, tailFrom],
+    queryFn: () => api.listAccountsUsage([usageDetail!.ID!], { from: tailFrom!, to }),
+    enabled: !!usageDetail && !!tailFrom,
+  })
+  // 尾窗补行：末桶被尾窗行原位替代（slice(0,-1)）；tailQ 失败 → 恢复完整 buckets
+  //（末桶保留，防当前小时整行空缺）+ 错误行提示（复审 O 级裁决）；加载中/空 → 完整
+  // buckets。isError 时置空 tailItem——错误态残留的旧缓存尾行会误隐藏末桶（实测）。
+  const tailItem = tailQ.isError ? undefined : tailQ.data?.items?.[0]
+  const tailFailed = tailQ.isError && statsBuckets.length > 0
+  const shownBuckets = tailItem ? statsBuckets.slice(0, -1) : statsBuckets
 
   // rows 变化清理已不存在的勾选（M2，templates 同款思路）：refetchInterval/操作
   // 刷新后把已删除的行移出 selected。账号页跨页勾选是既有语义（翻页不清空），
@@ -850,7 +909,11 @@ export default function Accounts() {
                       )}
                     </TableCell>
                     {isColVisible('usage') && (
-                      <TableCell className="text-center">
+                      <TableCell
+                        className="cursor-pointer text-center"
+                        title={t('accounts.usageDetail.hint')}
+                        onClick={() => setUsageDetail(a)}
+                      >
                         {/* 懒加载蒙版：所属块首载 pending 时 Skeleton 动画盖住，不出占位/空值 */}
                         {blockLoadingById.get(a.ID!) ? (
                           <Skeleton className="mx-auto h-10 w-24" />
@@ -1262,6 +1325,114 @@ export default function Accounts() {
             >
               {extSave.isPending ? t('common.saving') : t('common.save')}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* —— 用量明细弹窗（B-2）：汇总 = usage_logs 实时全窗；分桶 = stats-agg 离线
+          聚合（watermark 滞后）——末桶（进行中部分桶）被「当前」尾窗补行原位替代；
+          弹窗内数据不轮询（打开时点快照，切换范围手动刷新） —— */}
+      <Dialog open={!!usageDetail} onOpenChange={o => { if (!o) setUsageDetail(null) }}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t('accounts.usageDetail.title', { name: usageDetail?.Name ?? '—', id: usageDetail?.ID })}</DialogTitle>
+            <DialogDescription>{t(`accounts.usageDetail.range.${rangeKey}`)}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex justify-end">
+              <Select
+                items={Object.fromEntries(USAGE_RANGES.map(r => [r.key, t(`accounts.usageDetail.range.${r.key}`)]))}
+                value={rangeKey}
+                onValueChange={setRangeKey}
+              >
+                <SelectTrigger size="sm" className="w-36"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {USAGE_RANGES.map(r => (
+                    <SelectItem key={r.key} value={r.key} label={t(`accounts.usageDetail.range.${r.key}`)}>
+                      {t(`accounts.usageDetail.range.${r.key}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {/* 汇总卡片（A/U 金额口径与单元格一致：≥$0.01 两位、更小四位，0 → $0.00） */}
+            {detailQ.isError ? (
+              <p className="text-sm text-destructive">{t('common.loadFailed', { message: (detailQ.error as Error).message })}</p>
+            ) : detailQ.isPending ? (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <UsageSummary label={t('accounts.usageDetail.rawCost')} value={fmtUsd(detailQ.data?.items?.[0]?.gateway?.raw_cost_usd)} />
+                <UsageSummary label={t('accounts.usageDetail.cost')} value={fmtUsd(detailQ.data?.items?.[0]?.gateway?.cost_usd)} />
+                <UsageSummary label={t('accounts.usageDetail.requests')} value={String(detailQ.data?.items?.[0]?.gateway?.requests ?? 0)} />
+                <UsageSummary label={t('accounts.usageDetail.tokens')} value={fmtTokens(detailQ.data?.items?.[0]?.gateway?.total_tokens ?? 0)} />
+              </div>
+            )}
+            {/* 分桶表：A 列来自 raw_cost_usd（与汇总同口径）；末桶被尾窗行原位替代；
+                尾窗失败 → 恢复完整 buckets 渲染（末桶保留）+ 错误行提示（O 级裁决） */}
+            {statsQ.isError ? (
+              <p className="text-sm text-destructive">{t('common.loadFailed', { message: (statsQ.error as Error).message })}</p>
+            ) : statsQ.isPending ? (
+              <div className="space-y-2">
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
+              </div>
+            ) : statsBuckets.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">{t('accounts.usageDetail.empty')}</p>
+            ) : (
+              <ScrollArea className="max-h-80 rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('accounts.usageDetail.col.time')}</TableHead>
+                      <TableHead className="text-right">{t('accounts.usageDetail.rawCost')}</TableHead>
+                      <TableHead className="text-right">{t('accounts.usageDetail.col.cost')}</TableHead>
+                      <TableHead className="text-right">{t('accounts.usageDetail.col.requests')}</TableHead>
+                      <TableHead className="text-right">{t('accounts.usageDetail.col.errors')}</TableHead>
+                      <TableHead className="text-right">{t('accounts.usageDetail.col.input')}</TableHead>
+                      <TableHead className="text-right">{t('accounts.usageDetail.col.output')}</TableHead>
+                      <TableHead className="text-right">{t('accounts.usageDetail.col.cacheRead')}</TableHead>
+                      <TableHead className="text-right">{t('accounts.usageDetail.col.cacheWrite')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="[&_td]:py-2.5">
+                    {shownBuckets.map((b, i) => (
+                      <TableRow key={b.BucketTime ?? i}>
+                        <TableCell className="whitespace-nowrap tabular-nums">{formatDateTime(b.BucketTime)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtUsd(b.raw_cost_usd)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtUsd(b.Cost)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{b.RequestCount ?? 0}</TableCell>
+                        <TableCell className="text-right tabular-nums">{b.ErrorCount ?? 0}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(b.InputTokens ?? 0)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(b.OutputTokens ?? 0)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(b.CacheReadTokens ?? 0)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(b.CacheCreationTokens ?? 0)}</TableCell>
+                      </TableRow>
+                    ))}
+                    {tailItem && (
+                      <TableRow className="text-muted-foreground">
+                        <TableCell className="whitespace-nowrap">{t('accounts.usageDetail.current')}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtUsd(tailItem.gateway?.raw_cost_usd)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtUsd(tailItem.gateway?.cost_usd)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{tailItem.gateway?.requests ?? 0}</TableCell>
+                        <TableCell className="text-right" colSpan={5}>—</TableCell>
+                      </TableRow>
+                    )}
+                    {tailFailed && (
+                      <TableRow>
+                        <TableCell colSpan={9} className="text-sm text-destructive">
+                          {t('common.loadFailed', { message: (tailQ.error as Error).message })}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUsageDetail(null)}>{t('common.cancel')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

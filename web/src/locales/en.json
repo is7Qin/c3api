@@ -282,6 +282,32 @@
         "auth_expired": "Credential expired",
         "upstream_unavailable": "Upstream unavailable"
       }
+    },
+    "usageDetail": {
+      "title": "Usage details — {{name}} #{{id}}",
+      "range": {
+        "24h": "Last 24 hours",
+        "7d": "Last 7 days",
+        "30d": "Last 30 days",
+        "90d": "Last 90 days"
+      },
+      "rawCost": "A raw cost",
+      "cost": "U billed cost",
+      "requests": "Requests",
+      "tokens": "Total tokens",
+      "col": {
+        "time": "Time",
+        "cost": "U billed cost",
+        "requests": "Requests",
+        "errors": "Errors",
+        "input": "Input",
+        "output": "Output",
+        "cacheRead": "Cache read",
+        "cacheWrite": "Cache write"
+      },
+      "empty": "No usage in this period",
+      "current": "Now",
+      "hint": "View usage details"
     }
   },
   "users": {

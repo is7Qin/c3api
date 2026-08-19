@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCursorLogs } from '@/components/use-cursor-logs'
-import { defaultLogRange, formatCost, formatDateTime, toRFC3339 } from '@/components/fmt'
+import { defaultLogRange, fmtTokens, formatCost, formatDateTime, toRFC3339 } from '@/components/fmt'
 import { userApi } from '@/lib/api/client'
 import type { MyErrLogParams, MyUsageLogParams } from '@/lib/api/client'
 import { useDebounced } from '@/lib/use-debounced'
@@ -95,15 +95,6 @@ const fmtPricePerM = (millis: number): string => {
   if (usd >= 1) return `$${usd.toFixed(4)}/M`
   if (usd >= 0.001) return `$${usd.toFixed(4)}/M`
   return `$${usd.toPrecision(2)}/M`
-}
-// token 缩写：K/M/B 分级（1.2K/27.5K/3.1M），否则原样（与 admin 端同步；
-// 只有 K 时大数值会撑破单元格被裁；阈值留四舍五入余量防 999999→"1000K"）。
-const fmtTokens = (n: number): string => {
-  const trim = (v: number) => `${v.toFixed(1).replace(/\.0$/, '')}`
-  if (n >= 999.95e6) return `${trim(n / 1e9)}B`
-  if (n >= 999.95e3) return `${trim(n / 1e6)}M`
-  if (n >= 1e3) return `${trim(n / 1e3)}K`
-  return String(n)
 }
 
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
