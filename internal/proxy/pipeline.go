@@ -155,6 +155,43 @@ type pipelineSink interface {
 	writeExhausted(w http.ResponseWriter, st attemptState, lastCode int, msg string)       // 耗尽收尾（http: Retry-After 429 分支；ws: 固定文案忽略入参）
 }
 
+// passthroughStatus 统一公式 status=ResponseCode!=nil?*ResponseCode:upstream
+// 单点共用，消除 4xx/耗尽分支重复（I-2）。
+func passthroughStatus(then domain.RuleThen, upstream int) int {
+	if then.ResponseCode != nil {
+		return *then.ResponseCode
+	}
+	if upstream == 0 {
+		return http.StatusBadGateway
+	}
+	return upstream
+}
+
+// applyPassthroughHeader 统一头透传
+// 仅 ResponseCode==nil 且上游带 Retry-After/X-Retry-After 才透，
+// 否则不透不伪造；429 且无头时 fallback 1
+// （Global Constraints 豁免：当前 hdr 恒 nil 时 fallback 保留）
+// TODO(P22-I1): UpstreamCaller.Call 未回收 resp.Header，当前 chat/search/ws
+// 三实现 hdr 恒 nil，仅 fallback 1 生效；待扩展后透传真实值
+func applyPassthroughHeader(w http.ResponseWriter, then domain.RuleThen, hdr http.Header, status int) {
+	if then.ResponseCode != nil {
+		return // fallback不透头：覆写码时不透头
+	}
+	if hdr != nil {
+		if v := hdr.Get("Retry-After"); v != "" {
+			w.Header().Set("Retry-After", v)
+			return
+		}
+		if v := hdr.Get("X-Retry-After"); v != "" {
+			w.Header().Set("Retry-After", v)
+			return
+		}
+	}
+	if status == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", "1")
+	}
+}
+
 // failoverLoop 共享 failover 骨架：precheckPrice(开关) → attempt.call → 分类
 // （429 MarkResult / 5xx、0 MarkResult / 4xx finish+透传）→ Release → attempted
 // 防呆 → 尾部 Select（最后一轮不预选——防并发槽泄漏）→ 耗尽记录（et 分类 +
@@ -282,30 +319,17 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 				AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code,
 				Model: sel.Model, ErrorMessage: em,
 			})
-			status := code
-			if then.ResponseCode != nil {
-				status = *then.ResponseCode
-			}
-			if then.ResponseCode == nil && hdr != nil {
-				if v := hdr.Get("Retry-After"); v != "" {
-					w.Header().Set("Retry-After", v)
-				} else if v := hdr.Get("X-Retry-After"); v != "" {
-					w.Header().Set("Retry-After", v)
-				}
-			}
-			// fallback不透头: ResponseCode!=nil 覆写码时即使上游有 Retry-After 也不透传，不伪造
-			if _, isWS := sink.(*wsSink); isWS {
-				if then.CustomMessage != nil {
-					sink.writeUpstreamRejection(w, st, status, []byte(*then.CustomMessage))
+			status := passthroughStatus(then, code)
+			applyPassthroughHeader(w, then, hdr, status)
+			// I-3: 代理日志保留原文 em，响应与 sanitize 同源 via rule.UnifiedMessage
+			if msg, isCustom := rule.UnifiedMessage(then, string(respBody)); isCustom {
+				if _, isWS := sink.(*wsSink); isWS {
+					sink.writeUpstreamRejection(w, st, status, []byte(msg))
 				} else {
-					sink.writeUpstreamRejection(w, st, status, respBody)
+					writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": "upstream_error"}})
 				}
 			} else {
-				if then.CustomMessage != nil {
-					writeJSON(w, status, map[string]any{"error": map[string]any{"message": *then.CustomMessage, "type": "upstream_error"}})
-				} else {
-					sink.writeUpstreamRejection(w, st, status, respBody)
-				}
+				sink.writeUpstreamRejection(w, st, status, respBody)
 			}
 			if punish {
 				p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em, sel.Model)
@@ -352,50 +376,38 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 		}
 		then, _ = p.sched.Classify(rule.Event{AccountID: lastSel.AccountID, Kind: kind, HTTPStatus: hp, Model: lastSel.Model, ErrorMessage: lastErrMsg})
 	}
-	status := lastCode
-	if then.ResponseCode != nil {
-		status = *then.ResponseCode
-	}
-	if status == 0 {
-		status = http.StatusBadGateway
-	}
-	// 头透传仅当 ResponseCode==nil 且上游带 Retry-After/X-Retry-After 才透，否则不透不伪造；fallback不透头（覆写码时不透头）
-	if then.ResponseCode == nil {
-		if lastHdr != nil {
-			if v := lastHdr.Get("Retry-After"); v != "" {
-				w.Header().Set("Retry-After", v)
-			} else if v := lastHdr.Get("X-Retry-After"); v != "" {
-				w.Header().Set("Retry-After", v)
-			} else if status == http.StatusTooManyRequests {
-				w.Header().Set("Retry-After", "1")
-			}
-		} else if status == http.StatusTooManyRequests {
-			w.Header().Set("Retry-After", "1")
-		}
-	}
+	status := passthroughStatus(then, lastCode)
+	applyPassthroughHeader(w, then, lastHdr, status)
 	l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, lastSel.Model, format, lastCode, et, usageTuple{}, start))
 	if lastErrMsg != "" {
 		l.ErrorMessage = &lastErrMsg
 	}
 	p.recordLog(l)
-	// 统一写出：CustomMessage 覆写时用固定文案，否则透传上游 body；WS 与 HTTP 分流
-	if _, isWS := sink.(*wsSink); isWS {
-		if then.CustomMessage != nil {
-			sink.writeExhausted(w, st, status, *then.CustomMessage)
-		} else if lastErrMsg != "" {
-			sink.writeExhausted(w, st, status, lastErrMsg)
+	// 统一写出：via rule.UnifiedMessage，同 sanitize 同源；WS/HTTP 分流
+	// 代理日志保留原文 lastErrMsg（I-3 边界）
+	if msg, isCustom := rule.UnifiedMessage(then, string(lastBody)); isCustom {
+		if _, isWS := sink.(*wsSink); isWS {
+			sink.writeExhausted(w, st, status, msg)
 		} else {
-			sink.writeExhausted(w, st, status, "all upstream attempts failed")
+			writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": "upstream_error"}})
 		}
-	} else {
-		if then.CustomMessage != nil {
-			writeJSON(w, status, map[string]any{"error": map[string]any{"message": *then.CustomMessage, "type": "upstream_error"}})
-		} else if len(lastBody) > 0 {
+	} else if len(lastBody) > 0 {
+		if _, isWS := sink.(*wsSink); isWS {
+			sink.writeExhausted(w, st, status, string(lastBody))
+		} else {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
 			_, _ = w.Write(lastBody)
-		} else if lastErrMsg != "" {
+		}
+	} else if lastErrMsg != "" {
+		if _, isWS := sink.(*wsSink); isWS {
+			sink.writeExhausted(w, st, status, lastErrMsg)
+		} else {
 			writeJSON(w, status, map[string]any{"error": map[string]any{"message": lastErrMsg, "type": "upstream_error"}})
+		}
+	} else {
+		if _, isWS := sink.(*wsSink); isWS {
+			sink.writeExhausted(w, st, status, "all upstream attempts failed")
 		} else {
 			writeErr(w, &formatError{status: status, msg: "all upstream attempts failed"})
 		}

@@ -176,6 +176,9 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 type wsAttempt struct{ p *Proxy }
 
 func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+	// TODO(P22-I1): 当前 hdr 恒 nil（UpstreamCaller.Call 未回收 resp.Header），
+	// 仅 fallback 1 生效；待扩展 Header 透传后替换为真实透传
+	// （Global Constraints 豁免 fallback 保留）
 	p := a.p
 	if isCodexCredentialType(sel.CredentialType) {
 		// codex 独立 relay 变体（T4 §1）：SDK Dial 路径——快照派生 cred 直供

@@ -174,19 +174,23 @@ func errTypeKind(et domain.ErrorType) (rule.Kind, bool) {
 // Classify）→ CustomMessage!=nil 行（命中规则声明覆写）→ error_message 替换为 *CustomMessage，否则透传原文。
 // 统一公式 msg=CustomMessage!=nil?*CustomMessage:origMsg，与 pipeline 响应同公式。返回 (替换后文本, 是否替换)。
 // sanitizeErrLog 用户 err_logs 行级脱敏：Model 口径 = 最终请求模型（映射后 sel.Model，与 pipeline failoverLoop 一致）。
+// sanitizeErrLog 用户面 err_logs 行级脱敏
+// 统一公式 msg=CustomMessage!=nil?*CustomMessage:orig
+// 与 proxy/pipeline.go 的 passthroughStatus/applyPassthroughHeader
+// 同源（I-3）；代理日志 finish/recordLog 保留原文 lastErrMsg/em
+// 边界另述，不覆写 CustomMessage。
 func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	k, ok := errTypeKind(l.ErrorType)
 	if !ok {
 		return "", false
 	}
-	// 最终模型：MappedModel 非空时为映射后模型，否则回退 Model（无映射时二者相等）。
 	model := l.MappedModel
 	if model == "" {
 		model = l.Model
 	}
 	ev := rule.Event{
 		AccountID: l.AccountID, TemplateID: l.TemplateID,
-		Model: model, Kind: k, // 最终模型（映射后），与 proxy 侧 sel.Model 一致
+		Model: model, Kind: k,
 	}
 	if l.GroupID > 0 {
 		ev.GroupID = &l.GroupID
@@ -198,10 +202,12 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 		ev.ErrorMessage = *l.ErrorMessage
 	}
 	then, _ := h.rules.Classify(ev)
-	if then.CustomMessage == nil {
-		return "", false
+	// 与 pipeline 同源（I-3 helper 单点）
+	upstream := ""
+	if l.ErrorMessage != nil {
+		upstream = *l.ErrorMessage
 	}
-	return *then.CustomMessage, true
+	return rule.UnifiedMessage(then, upstream)
 }
 
 // toAPIStatBucket 统计桶领域对象 → 契约类型（/user/stats；rewrite spec

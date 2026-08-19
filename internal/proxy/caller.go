@@ -272,6 +272,9 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 type chatAttempt struct{ p *Proxy }
 
 func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+	// TODO(P22-I1): 当前 hdr 恒 nil（UpstreamCaller.Call 未回收 resp.Header），
+	// 仅 fallback 1 生效；待扩展 Header 透传后替换为真实透传
+	// （Global Constraints 豁免 fallback 保留）
 	// codex 分流落位（T2 §2，B 的 501 骨架）：images 端点 codex-oauth/
 	// codex-pat 模板选号命中 → codexImagesCaller（GenerateImage 非流式 /
 	// GenerateImageStream 流式 T3 已接——caller 内 stream 分支同签名直赋）。
