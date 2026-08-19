@@ -5,6 +5,7 @@
 package rule
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -22,13 +23,68 @@ func ValidateWhen(w domain.RuleWhen) error {
 	if w.Model != nil && *w.Model == "" {
 		return fmt.Errorf("when.model must be non-empty, got %q", *w.Model)
 	}
+	if w.HTTPStatus != nil && (*w.HTTPStatus < 400 || *w.HTTPStatus > 599) {
+		return errors.New("http_status must be between 400 and 599")
+	}
 	if w.Kind != nil && kindFromString(*w.Kind) < 0 {
 		return fmt.Errorf("when.kind must be ok/429/4xx/5xx/network, got %q", *w.Kind)
+	}
+	if w.HTTPStatus != nil && len(w.HTTPStatusIn) > 0 {
+		return errors.New("http_status and http_status_in are mutually exclusive")
+	}
+	if w.Model != nil && len(w.ModelIn) > 0 {
+		return errors.New("model and model_in are mutually exclusive")
+	}
+	if w.ErrorMessageContains != nil && len(w.ErrorMessageContainsIn) > 0 {
+		return errors.New("error_message_contains and error_message_contains_in are mutually exclusive")
 	}
 	// 确定性死配置：ok 事件不带错误信息，contains 恒假 → 规则永不命中。
 	// 其余 kind 交叉组合（如 kind=ok + count_429_ge）为合法观察者语义，放行。
 	if w.Kind != nil && kindFromString(*w.Kind) == KindOK && w.ErrorMessageContains != nil {
 		return fmt.Errorf("when.error_message_contains is incompatible with when.kind=ok")
+	}
+	if w.Kind != nil && kindFromString(*w.Kind) == KindOK && len(w.ErrorMessageContainsIn) > 0 {
+		return errors.New("when.error_message_contains_in is incompatible with when.kind=ok")
+	}
+	for _, s := range w.ModelIn {
+		if s == "" {
+			return errors.New("model_in must not contain empty string")
+		}
+	}
+	for _, s := range w.ErrorMessageContainsIn {
+		if s == "" {
+			return errors.New("error_message_contains_in must not contain empty string")
+		}
+	}
+	if len(w.HTTPStatusIn) > 0 {
+		seen := make(map[int]struct{}, len(w.HTTPStatusIn))
+		for _, v := range w.HTTPStatusIn {
+			if v < 400 || v > 599 {
+				return errors.New("http_status_in must be between 400 and 599")
+			}
+			if _, ok := seen[v]; ok {
+				return errors.New("http_status_in contains duplicate value")
+			}
+			seen[v] = struct{}{}
+		}
+	}
+	if len(w.ModelIn) > 0 {
+		seen := make(map[string]struct{}, len(w.ModelIn))
+		for _, v := range w.ModelIn {
+			if _, ok := seen[v]; ok {
+				return errors.New("model_in contains duplicate value")
+			}
+			seen[v] = struct{}{}
+		}
+	}
+	if len(w.ErrorMessageContainsIn) > 0 {
+		seen := make(map[string]struct{}, len(w.ErrorMessageContainsIn))
+		for _, v := range w.ErrorMessageContainsIn {
+			if _, ok := seen[v]; ok {
+				return errors.New("error_message_contains_in contains duplicate value")
+			}
+			seen[v] = struct{}{}
+		}
 	}
 	if w.WindowSeconds != nil && *w.WindowSeconds < 1 {
 		return fmt.Errorf("when.window_seconds must be >= 1, got %d", *w.WindowSeconds)
