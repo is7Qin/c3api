@@ -218,7 +218,8 @@
       "errRate": "错误率",
       "errCount": "错误数",
       "lastError": "最近错误",
-      "actions": "操作"
+      "actions": "操作",
+      "usage": "用量/额度"
     },
     "enable": "启用",
     "disable": "禁用",
@@ -273,6 +274,13 @@
       "oauthTokenPlaceholder": "OAuth 访问令牌",
       "oauthRefreshPlaceholder": "OAuth 刷新令牌（可选）",
       "patKeyPlaceholder": "Codex PAT Key"
+    },
+    "usage": {
+      "resetSoon": "即将重置",
+      "err": {
+        "auth_expired": "凭据失效",
+        "upstream_unavailable": "上游不可用"
+      }
     }
   },
   "users": {

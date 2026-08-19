@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2 } from 'lucide-react'
@@ -30,6 +30,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { toast } from '@/components/ui/toast'
 import { StatusBadge, CooldownBadge } from '@/components/status-badge'
 import { formatPercent, toRFC3339, truncate } from '@/components/fmt'
+import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 
 type AccountView = components['schemas']['AccountView']
@@ -43,6 +44,54 @@ type Group = components['schemas']['Group']
 const CODE_CREDENTIAL_TYPES: NonNullable<components['schemas']['Template']['CredentialType']>[] = ['codex-oauth', 'codex-pat']
 const isCodexTemplate = (a: AccountView) =>
   a.Template?.CredentialType === 'codex-oauth' || a.Template?.CredentialType === 'codex-pat'
+
+// —— 用量/额度概要列（0e77d2a accounts/usage 批量聚合）——
+// A = 乘倍率前原始成本（raw_cost_usd）、U = 计费成本（cost_usd）——gateway 全账号有；
+// codex 账号（upstream 非 null）追加消耗百分比条 + reset 剩余时间；upstream_error 显示失败态。
+// 金额：≥$0.01 两位小数，更小四位保精度（0.0042 不被抹成 $0.00）；0/null 显示 —。
+const fmtUsd = (v?: number | null): string => (v == null || v <= 0 ? '$0.00' : `$${(v >= 0.01 ? v.toFixed(2) : v.toFixed(4))}`)
+const pctColor = (p: number): string => (p < 60 ? 'bg-emerald-500' : p < 85 ? 'bg-amber-500' : 'bg-red-500')
+// reset 剩余时长紧凑格式：≥1d → "Xd Xh"，≥1h → "Xh Xm"，否则 "Xm"。
+const fmtReset = (ms: number): string => {
+  const d = Math.floor(ms / 86_400_000)
+  const h = Math.floor((ms % 86_400_000) / 3_600_000)
+  const m = Math.floor((ms % 3_600_000) / 60_000)
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
+}
+function UsageCell({ item }: { item?: components['schemas']['AccountUsageItem'] }) {
+  const { t } = useTranslation()
+  if (!item) return <span className="text-xs text-muted-foreground">—</span>
+  const g = item.gateway
+  const up = item.upstream
+  const pct = up?.rate_limit?.used_percent
+  const resetAt = up?.rate_limit?.reset_at
+  // reset 剩余时长（列表 10s refetch 刷新，无需定时器）
+  const leftMs = resetAt ? new Date(resetAt).getTime() - Date.now() : null
+  return (
+    <div className="space-y-1 text-xs">
+      <div className="whitespace-nowrap tabular-nums text-muted-foreground">
+        A <span className="font-medium text-foreground">{fmtUsd(g?.raw_cost_usd)}</span>
+        <span className="mx-1 text-muted-foreground/40">·</span>
+        U <span className="font-medium text-foreground">{fmtUsd(g?.cost_usd)}</span>
+      </div>
+      {up && pct != null && (
+        <div className="flex items-center justify-center gap-1.5">
+          <div className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
+            <div className={cn('h-full rounded-full', pctColor(pct))} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+          </div>
+          <span className="whitespace-nowrap tabular-nums text-muted-foreground">{pct}%</span>
+          {resetAt && leftMs != null && leftMs > 0 && (
+            <span className="whitespace-nowrap tabular-nums text-muted-foreground">{fmtReset(leftMs)}</span>
+          )}
+        </div>
+      )}
+      {resetAt && leftMs != null && leftMs <= 0 && <div className="whitespace-nowrap text-[11px] text-muted-foreground">{t('accounts.usage.resetSoon')}</div>}
+      {item.upstream_error && <div className="whitespace-nowrap text-[11px] text-destructive">{t(`accounts.usage.err.${item.upstream_error}`)}</div>}
+    </div>
+  )
+}
 
 // RFC3339（API）→ datetime-local 'YYYY-MM-DDTHH:mm'（本地时区；DateTimePicker 值格式，'' = 未设置）
 function toLocalDT(iso: string): string {
@@ -236,6 +285,20 @@ export default function Accounts() {
   const toggleRow = (id: number) => setSelected(s => (s.includes(id) ? s.filter(x => x !== id) : [...s, id]))
   const toggleAll = (c: boolean) =>
     setSelected(s => (c ? Array.from(new Set([...s, ...pageIds])) : s.filter(x => !pageIds.includes(x))))
+
+  // —— 用量/额度聚合（0e77d2a）：当前页账号批量查询（≤100），from/to 缺省 = 今日；
+  // 与列表同频 refetch（额度/用量实时刷新）；分页/筛选变化（pageIds 变）自动重查。
+  const usageQ = useQuery({
+    queryKey: ['accounts-usage', pageIds.join(',')],
+    queryFn: () => api.listAccountsUsage(pageIds),
+    enabled: pageIds.length > 0,
+    refetchInterval: 10_000,
+  })
+  const usageById = useMemo(() => {
+    const m = new Map<number, components['schemas']['AccountUsageItem']>()
+    usageQ.data?.items?.forEach(i => { if (i.account_id != null) m.set(i.account_id, i) })
+    return m
+  }, [usageQ.data])
 
   // rows 变化清理已不存在的勾选（M2，templates 同款思路）：refetchInterval/操作
   // 刷新后把已删除的行移出 selected。账号页跨页勾选是既有语义（翻页不清空），
@@ -646,6 +709,7 @@ export default function Accounts() {
                   <TableHead className="text-right">{t('accounts.table.errRate')}</TableHead>
                   <TableHead className="text-right">{t('accounts.table.errCount')}</TableHead>
                   <TableHead>{t('accounts.table.lastError')}</TableHead>
+                  <TableHead className="text-center">{t('accounts.table.usage')}</TableHead>
                   <TableHead className="text-right">{t('accounts.table.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -681,6 +745,9 @@ export default function Accounts() {
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <UsageCell item={usageById.get(a.ID!)} />
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">

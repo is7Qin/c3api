@@ -218,7 +218,8 @@
       "errRate": "Error rate",
       "errCount": "Errors",
       "lastError": "Last error",
-      "actions": "Actions"
+      "actions": "Actions",
+      "usage": "Usage/Quota"
     },
     "enable": "Enable",
     "disable": "Disable",
@@ -273,6 +274,13 @@
       "oauthTokenPlaceholder": "OAuth access token",
       "oauthRefreshPlaceholder": "OAuth refresh token (optional)",
       "patKeyPlaceholder": "Codex PAT key"
+    },
+    "usage": {
+      "resetSoon": "resets now",
+      "err": {
+        "auth_expired": "Credential expired",
+        "upstream_unavailable": "Upstream unavailable"
+      }
     }
   },
   "users": {

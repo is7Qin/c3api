@@ -126,6 +126,12 @@ export class ApiClient {
   getAccountGroups = (id: number) => this.request<components['schemas']['AccountGroupsResponse']>(`/accounts/${id}/groups`)
   getAccountExt = (id: number) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`)
   putAccountExt = (id: number, b: components['schemas']['AccountExt']) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`, { method: 'PUT', body: JSON.stringify(b) })
+  // —— 账号用量聚合（0e77d2a）：批量 ≤100 条；from/to 缺省 = 当天（UTC 零点 → now）。
+  // codex 账号附带上游额度快照（upstream）；api-key/无凭据账号恒 null。
+  listAccountsUsage = (accountIds: number[]) =>
+    this.request<components['schemas']['AccountsUsageResponse']>('/accounts/usage', {
+      params: toQuery({ account_ids: accountIds.join(',') }),
+    })
   // —— codex 凭据批量导入（Task B；行级失败归 failed——HTTP 恒 200）——
   importCodexOauthAccounts = (b: components['schemas']['CodexOAuthImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-oauth', { method: 'POST', body: JSON.stringify(b) })
   importCodexPatAccounts = (b: components['schemas']['CodexPATImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-pat', { method: 'POST', body: JSON.stringify(b) })
