@@ -383,6 +383,13 @@ export default function UserLogs() {
                                   {((l.InputTokens ?? 0) + (l.OutputTokens ?? 0) + (l.CacheReadTokens ?? 0) + (l.CacheCreationTokens ?? 0)).toLocaleString()}
                                 </span>
                               </div>
+                              {/* A 原始成本（乘倍率前，毫分 → USD）；RawCost 0 = 未计费路径不显示 */}
+                              {l.RawCost != null && l.RawCost > 0 && (
+                                <div className="flex items-center justify-between gap-6 border-t pt-1.5">
+                                  <span className="text-muted-foreground">{t('logs.tokens.rawCost')}</span>
+                                  <span className="font-medium tabular-nums">{formatCost(l.RawCost)}</span>
+                                </div>
+                              )}
                               <div className="flex items-center justify-between gap-6 border-t pt-1.5">
                                 <span className="text-muted-foreground">{t('logs.table.billingTier')}</span>
                                 {l.BillingTier ? (

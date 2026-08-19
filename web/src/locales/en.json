@@ -475,7 +475,8 @@
       "output": "Output",
       "total": "Total",
       "cacheRead": "Cache read",
-      "cacheWrite": "Cache write"
+      "cacheWrite": "Cache write",
+      "rawCost": "Raw cost"
     },
     "latency": {
       "ttft": "TTFT",

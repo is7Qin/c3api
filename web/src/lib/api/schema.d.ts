@@ -2199,6 +2199,11 @@ export interface components {
              * @description 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0
              */
             Cost?: number;
+            /**
+             * Format: int64
+             * @description 原始成本（毫分，乘倍率前——免费组 cost=0 但 raw 有值，实际消耗口径）；bill 未装配/无价防御路径恒 0
+             */
+            RawCost?: number;
             /** @description 请求 service_tier 归一化值（priority/flex/fast/auto）；空 = 未计费路径 */
             BillingTier?: string;
             /** @description 任一分量超 above 阈值命中分段 */
@@ -2273,6 +2278,11 @@ export interface components {
              * @description 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0
              */
             Cost?: number;
+            /**
+             * Format: int64
+             * @description 原始成本（毫分，乘倍率前——免费组 cost=0 但 raw 有值，实际消耗口径）；bill 未装配/无价防御路径恒 0
+             */
+            RawCost?: number;
             /** @description 请求 service_tier 归一化值（priority/flex/fast/auto）；空 = 未计费路径 */
             BillingTier?: string;
             /** @description 任一分量超 above 阈值命中分段 */

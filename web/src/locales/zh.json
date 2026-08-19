@@ -475,7 +475,8 @@
       "output": "输出",
       "total": "总计",
       "cacheRead": "缓存读",
-      "cacheWrite": "缓存写"
+      "cacheWrite": "缓存写",
+      "rawCost": "原始成本"
     },
     "latency": {
       "ttft": "TTFT",
