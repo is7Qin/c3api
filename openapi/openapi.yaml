@@ -1468,7 +1468,7 @@ paths:
         default:
           $ref: '#/components/responses/Error'
   # 运维观测面（/admin/ops/workers，用户裁决并入管理面）：路由由 oapi-codegen
-  # chi-server 生成（BaseURL /admin 拼接），鉴权走 /admin 组 adminAuth；类型在
+  # chi-server 生成（BaseURL /api/admin 拼接），鉴权走 /api/admin 组 adminAuth；类型在
   # 契约（handler/api.gen.go + 前端 schema.d.ts 同源）。
   /ops/workers:
     get:
@@ -2263,7 +2263,7 @@ components:
         rows:
           type: array
           items: { $ref: '#/components/schemas/RedemptionRecord' }
-    # --- 临时额度（/user/temp-balances + /admin/temp-balances，spec 2026-08-15） ---
+    # --- 临时额度（/api/user/temp-balances + /api/admin/temp-balances，spec 2026-08-15） ---
     # 用户侧仅有效额度（amount > 0 且未过期，FEFO 同序）；管理侧全量视角。
     # amount_usd = 毫分 /1e5（API 边界换算，内部存储恒毫分）。
     TempBalanceRow:

@@ -121,7 +121,7 @@ func NewServer(opts Options) *Server {
 		// 回 index.html。
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 			p := r.URL.Path
-			if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/v1") || strings.HasPrefix(p, "/assets/") || p == "/healthz" || p == "/favicon.svg" {
+			if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/v1") || strings.HasPrefix(p, "/assets/") || p == "/healthz" || p == "/favicon.svg" {
 				http.NotFound(w, r)
 				return
 			}
