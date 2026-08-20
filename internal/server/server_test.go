@@ -130,8 +130,9 @@ func TestFaviconServedFromWebFS(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "<svg")
 	require.NotContains(t, rec.Body.String(), "<link") // 不能是 index.html
 
-	// 对照组：SPA fallback 路径仍回 index.html。
+	// 对照组：SPA fallback 路径仍回 index.html（仅浏览器导航 Accept: text/html 触发）。
 	req = httptest.NewRequest(http.MethodGet, "/groups", nil)
+	req.Header.Set("Accept", "text/html")
 	rec = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	require.Equal(t, 200, rec.Code)
