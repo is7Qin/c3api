@@ -33,7 +33,7 @@ c3api is in **beta**: feature-complete, but breaking changes are free to happen.
 |---|---|
 | **Six formats, one gateway** | OpenAI Responses API (REST + WebSocket), Anthropic Messages API, OpenAI Chat Completions API, OpenAI Images API, Codex web search, and the OpenAI-compatible model list — each with its own upstream orchestration and protocol conversion |
 | **Template & account management** | Model templates, upstream accounts, groups, credentials, and per-template format/model allowlists |
-| **Admin console** | React web UI embedded in the binary (`/admin`), plus a full OpenAPI-defined admin API |
+| **Admin console** | React web UI embedded in the binary (`/app`), plus a full OpenAPI-defined admin API (`/api/admin`) |
 | **Billing & usage** | Per-user balance with pre-check deductions, FEFO temporary quotas, per-model pricing synced from litellm, daily-partitioned usage logs and statistics — billing is enabled by default (`config.example.toml` billing.enabled=true) |
 | **Rules engine** | Customizable routing, rate limiting, and 429/error backoff rules with a built-in scheduler |
 | **Multi-instance ready** | PostgreSQL-based state, `NOTIFY`-based cross-instance invalidation, zero-config horizontal scaling |
@@ -70,9 +70,9 @@ cp .env.example .env        # fill in AUTH_JWT_SECRET (ADMIN_TOKEN optional — 
 docker compose up -d --build
 ```
 
-The gateway listens on `http://127.0.0.1:18080` — admin console at `/admin`, health check at `/healthz`.
+The gateway listens on `http://127.0.0.1:18080` — admin console at `/app`, user console at `/user`, health check at `/healthz`.
 
-**First admin user (bootstrap)** — the first user to register on a fresh database automatically becomes a `platform_admin` and can sign into the admin console (`/admin`) right after startup; later signups get the regular `user` role.
+**First admin user (bootstrap)** — the first user to register on a fresh database automatically becomes a `platform_admin` and can sign into the admin console (`/app`) right after startup; later signups get the regular `user` role.
 
 Prebuilt images are published to GHCR (`ghcr.io/is7qin/c3api`): `:beta` tracks the latest beta release, and version-pinned tags such as `:v0.0.1-beta.1` are also available. Pull standalone: `docker pull ghcr.io/is7qin/c3api:beta`.
 
@@ -87,7 +87,7 @@ export C3API_AUTH_JWT_SECRET=$(openssl rand -hex 16)
 # 1. Start the gateway (default :18080)
 go run ./cmd/server -config config.toml
 
-# 2. Start the frontend dev server (:5173, proxies /admin to 18080)
+# 2. Start the frontend dev server (:5173, proxies /api to 18080)
 cd web && pnpm install && pnpm run dev
 ```
 
@@ -100,7 +100,7 @@ Point any OpenAI/Anthropic-compatible SDK at the gateway URL — the request for
  OpenAI SDK / curl ─▶│   c3api gateway (1 binary)    │
  Anthropic SDK ─────▶│  ┌─────────────────────────┐  │
  Codex client ──────▶│  │ chi router              │  │──▶ OpenAI upstream (REST + SSE)
-   Browser (SPA) ───▶│  │ /healthz /admin /user   │  │──▶ Anthropic upstream (REST + SSE)
+   Browser (SPA) ───▶│  │ /healthz /api/admin /api/user + SPA / /user /app │  │──▶ Anthropic upstream (REST + SSE)
                     │  │ /v1/*                    │  │──▶ Responses / resp-ws upstream
                     │  │ proxy: auth → gate →     │  │
                     │  │         route → forward  │  │
@@ -139,7 +139,7 @@ The gateway loads `config.toml` (see `config.example.toml`), overlaid by `C3API_
 
 | Variable | Description |
 |---|---|
-| `C3API_ADMIN_TOKEN` | Admin API token (optional; leave empty to disable static-token auth — `/admin` then accepts `platform_admin` JWTs only) |
+| `C3API_ADMIN_TOKEN` | Admin API token (optional; leave empty to disable static-token auth — `/api/admin` then accepts `platform_admin` JWTs only) |
 | `C3API_AUTH_JWT_SECRET` | JWT signing secret for user auth (required; stable across restarts and instances) |
 | `C3API_DB_DSN` | PostgreSQL DSN |
 

@@ -42,7 +42,7 @@ services:
         condition: service_healthy
     environment:
       # 敏感项走环境变量（config.Load 支持 C3API_ADMIN_TOKEN / C3API_DB_DSN / C3API_AUTH_JWT_SECRET 覆盖）
-      # admin token 可选（`:-` 空值注入空串 = 不启用静态 token，/admin 仅 platform_admin
+      # admin token 可选（`:-` 空值注入空串 = 不启用静态 token，/api/admin 仅 platform_admin
       # JWT；首个注册用户自动成为 admin——无需静态 token 也能登录管理面）
       C3API_ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       C3API_AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?set AUTH_JWT_SECRET in .env (openssl rand -hex 32)}

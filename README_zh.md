@@ -33,7 +33,7 @@ c3api 处于 **beta**：功能齐全，但破坏性变更自由。
 |---|---|
 | **六格式一网关** | OpenAI Responses API（REST + WebSocket）、Anthropic Messages API、OpenAI Chat Completions API、OpenAI Images API、Codex 网页搜索与 OpenAI 兼容模型列表——各自独立的上游编排与协议转换 |
 | **模板与账号管理** | 模型模板、上游账号、分组、凭证，以及按模板的格式/模型白名单 |
-| **管理台** | React 前端内嵌进二进制（`/admin`），另有 OpenAPI 契约定义的管理 API |
+| **管理台** | React 前端内嵌进二进制（`/app`），另有 OpenAPI 契约定义的管理 API（`/api/admin`） |
 | **计费与用量** | 用户余额预检扣费、FEFO 临时额度、litellm 价格同步的按模型计费、按日分区的用量日志与统计——计费默认开启（`config.example.toml` billing.enabled=true） |
 | **规则引擎** | 可自定义的路由、限流与 429/错误退避规则，内置调度器 |
 | **多实例就绪** | 状态全在 PostgreSQL，`NOTIFY` 跨实例失效广播，水平扩容零配置 |
@@ -70,9 +70,9 @@ cp .env.example .env        # 填写 AUTH_JWT_SECRET（ADMIN_TOKEN 可选——�
 docker compose up -d --build
 ```
 
-网关监听 `http://127.0.0.1:18080`——管理台 `/admin`，健康检查 `/healthz`。
+网关监听 `http://127.0.0.1:18080`——管理台 `/app`，用户台 `/user`，健康检查 `/healthz`。
 
-**首个 admin 用户（bootstrap）**——新库上第一个注册的用户自动成为 `platform_admin`，启动后即可登录管理台（`/admin`）；之后的注册都是普通 `user` 角色。
+**首个 admin 用户（bootstrap）**——新库上第一个注册的用户自动成为 `platform_admin`，启动后即可登录管理台（`/app`）；之后的注册都是普通 `user` 角色。
 
 预构建镜像发布在 GHCR（`ghcr.io/is7qin/c3api`）：`:beta` 跟随最新 beta 版本，另有版本固定 tag（如 `:v0.0.1-beta.1`）。单独拉取：`docker pull ghcr.io/is7qin/c3api:beta`。
 
@@ -86,7 +86,7 @@ export C3API_AUTH_JWT_SECRET=$(openssl rand -hex 16)
 # 1. 启动网关（默认 :18080）
 go run ./cmd/server -config config.toml
 
-# 2. 启动前端 dev server（:5173，/admin 代理到 18080）
+# 2. 启动前端 dev server（:5173，代理 /api 到 18080）
 cd web && pnpm install && pnpm run dev
 ```
 
@@ -99,7 +99,7 @@ cd web && pnpm install && pnpm run dev
  OpenAI SDK / curl ─▶│   c3api 网关（单二进制）        │
  Anthropic SDK ─────▶│  ┌─────────────────────────┐  │
  Codex 客户端 ──────▶│  │ chi 路由                │  │──▶ OpenAI 上游（REST + SSE）
-   浏览器（SPA） ───▶│  │ /healthz /admin /user   │  │──▶ Anthropic 上游（REST + SSE）
+   浏览器（SPA） ───▶│  │ /healthz /api/admin /api/user + SPA / /user /app │  │──▶ Anthropic 上游（REST + SSE）
                     │  │ /v1/*                    │  │──▶ Responses / resp-ws 上游
                     │  │ proxy：鉴权 → 门禁 →      │  │
                     │  │         选号 → 转发       │  │
@@ -138,7 +138,7 @@ cd web && pnpm install && pnpm run dev
 
 | 变量 | 说明 |
 |---|---|
-| `C3API_ADMIN_TOKEN` | 管理端 token（可选；留空 = 不启用静态 token 鉴权，`/admin` 仅接受 `platform_admin` JWT） |
+| `C3API_ADMIN_TOKEN` | 管理端 token（可选；留空 = 不启用静态 token 鉴权，`/api/admin` 仅接受 `platform_admin` JWT） |
 | `C3API_AUTH_JWT_SECRET` | 用户鉴权 JWT 密钥（必填；跨重启与多实例须稳定） |
 | `C3API_DB_DSN` | PostgreSQL 连接串 |
 

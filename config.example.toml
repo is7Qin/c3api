@@ -2,7 +2,7 @@ server = { addr = ":8080", read_header_timeout = "10s", max_header_bytes = 10485
 log = { level = "warn", output = "stdout" }
 # 敏感项（auth.jwt_secret / db.dsn）必填，强制经 env 注入：
 #   export C3API_AUTH_JWT_SECRET=xxx / C3API_DB_DSN=xxx
-# admin.token 可选——空 = 不启用静态 token 鉴权，/admin 仅接受 platform_admin
+# admin.token 可选——空 = 不启用静态 token 鉴权，/api/admin 仅接受 platform_admin
 # JWT（首个注册用户自动成为 platform_admin，注册后即可登录管理面）。
 # 示例不留占位值——占位符（change-me 等）会被 Load 拒绝，防原样部署鉴权绕过。
 admin = { token = "" }
@@ -30,7 +30,7 @@ upstream = {
 limit = { group_key_rpm = 0 }
 # cooldown_429 / backoff_base / backoff_max 已移除（不向后兼容）——配置含这些
 # 键将启动失败；429 冷却与错误退避由规则引擎（种子规则 +
-# /admin/rules 自定义规则）接管。
+# /api/admin/rules 自定义规则）接管。
 scheduler = {
   default_max_concurrency = 8,
   sync_interval = "30s",
@@ -61,7 +61,7 @@ usage = {
   #                                    # PG DELETE 不释放空间）
 }
 # 计费（Phase 5）：默认开启（与代码默认一致）。首次启动后需先同步价格
-# （POST /admin/pricing/sync）——空价格表 = 全模型 402。开启后：请求前余额
+# （POST /api/admin/pricing/sync）——空价格表 = 全模型 402。开启后：请求前余额
 # 预检（快照缺失或 <0 → 402——余额 0 放行，临时额度由 FEFO 扣费消化）、临时额度 FEFO 优先扣、条件扣费允许透支、
 # 优雅停机排空不丢计费。enabled = false 退回纯代理模式（不计费不扣费）。
 # flush_interval：扣费批量落库周期（pending 聚合满或周期到 → 逐 user 小事务

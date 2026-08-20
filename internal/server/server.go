@@ -117,10 +117,15 @@ func NewServer(opts Options) *Server {
 		})
 		// SPA fallback：API 404 与页面路由彻底分离（架构根治）。
 		// 所有 API 统一在 /api/* 与 /v1/*，未知 API 直接 404；其余路径
-		// （/、/api/user/*、/app/* 等前端路由）一律回 index.html 交由前端 Router 接管。
+		// （/、/user/*、/app/* 等前端路由）仅对浏览器导航（Accept: text/html）
+		// 回 index.html。
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 			p := r.URL.Path
 			if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/v1") || strings.HasPrefix(p, "/assets/") || p == "/healthz" || p == "/favicon.svg" {
+				http.NotFound(w, r)
+				return
+			}
+			if !strings.Contains(r.Header.Get("Accept"), "text/html") {
 				http.NotFound(w, r)
 				return
 			}
