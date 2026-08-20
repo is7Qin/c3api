@@ -688,7 +688,10 @@
       "countOK": "OK count ≥",
       "countTotal": "Total count ≥",
       "ratio429": "429 ratio ≥",
-      "ratioFailure": "Failure ratio ≥"
+      "ratioFailure": "Failure ratio ≥",
+      "httpStatusIn": "HTTP Status In",
+      "modelIn": "Model In",
+      "errorContainsIn": "Error Contains In"
     },
     "addCondition": "Add condition",
     "condOf": "when",
@@ -721,7 +724,12 @@
       "transmit": "Pass through upstream text"
     },
     "deleteTitle": "Delete rule",
-    "deleteDesc": "Delete rule \"{{name}}\"? It takes effect immediately."
+    "deleteDesc": "Delete rule \"{{name}}\"? It takes effect immediately.",
+    "whenErrMutual": "{{a}} and {{b}} are mutually exclusive",
+    "whenErrDuplicate": "{{field}} contains duplicate value",
+    "whenErrRange": "http_status must be between 400 and 599",
+    "whenErrRangeIn": "http_status_in must be between 400 and 599",
+    "whenErrEmpty": "{{field}} must not contain empty string"
   },
   "redemptions": {
     "title": "Redemption codes",

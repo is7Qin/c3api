@@ -688,7 +688,10 @@
       "countOK": "成功次数 ≥",
       "countTotal": "总次数 ≥",
       "ratio429": "429 比例 ≥",
-      "ratioFailure": "失败比例 ≥"
+      "ratioFailure": "失败比例 ≥",
+      "httpStatusIn": "HTTP 状态码集合",
+      "modelIn": "模型集合",
+      "errorContainsIn": "错误信息包含集合"
     },
     "addCondition": "添加条件",
     "condOf": "当",
@@ -721,7 +724,12 @@
       "transmit": "透传上游原文"
     },
     "deleteTitle": "删除规则",
-    "deleteDesc": "确定删除规则「{{name}}」？立即生效。"
+    "deleteDesc": "确定删除规则「{{name}}」？立即生效。",
+    "whenErrMutual": "{{a}} and {{b}} are mutually exclusive",
+    "whenErrDuplicate": "{{field}} contains duplicate value",
+    "whenErrRange": "http_status must be between 400 and 599",
+    "whenErrRangeIn": "http_status_in must be between 400 and 599",
+    "whenErrEmpty": "{{field}} must not contain empty string"
   },
   "redemptions": {
     "title": "兑换码",

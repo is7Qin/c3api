@@ -34,16 +34,16 @@ const STATUSES: AccountStatus[] = ['active', 'unhealthy', '429', 'disabled']
 
 // —— 条件行模型：when = kind 锚行（Select 常驻首行）+ 动态条件行 ——
 type WhenField =
-  | 'http_status' | 'error_message_contains' | 'account_id' | 'template_id' | 'group_id'
-  | 'model' | 'window_seconds' | 'count_total_ge'
+  | 'http_status' | 'http_status_in' | 'error_message_contains' | 'error_message_contains_in' | 'account_id' | 'template_id' | 'group_id'
+  | 'model' | 'model_in' | 'window_seconds' | 'count_total_ge'
   | 'count_429_ge' | 'ratio_429_ge' | 'count_failure_ge' | 'ratio_failure_ge' | 'count_ok_ge'
 
-interface CondRow { field: WhenField; value: string }
+interface CondRow { field: WhenField; value: string | string[] }
 
 interface WhenFieldMeta {
   key: WhenField
   kinds: readonly string[] // kind 归属：'any' | '429' | '4xx' | '5xx' | 'network' | 'ok'（error_message_contains 联合归属 4xx|5xx|network）
-  input: 'number' | 'text'
+  input: 'number' | 'text' | 'tags'
   placeholder?: string
   min?: number
   max?: number
@@ -53,12 +53,15 @@ interface WhenFieldMeta {
 // 匹配器元数据表：key 与后端 when JSON 键一致；kinds 驱动"添加条件"下拉过滤；
 // input/min/max/step 决定值输入控件（操作符由字段类型隐含，无操作符选择器）。
 const WHEN_FIELDS: WhenFieldMeta[] = [
-  { key: 'http_status', kinds: ['any'], input: 'number', placeholder: '503', min: 100, max: 599 },
+  { key: 'http_status', kinds: ['any'], input: 'number', placeholder: '503', min: 400, max: 599 },
+  { key: 'http_status_in', kinds: ['any'], input: 'tags', placeholder: '[500,502]' },
   { key: 'error_message_contains', kinds: ['4xx', '5xx', 'network'], input: 'text', placeholder: 'unhealthy' },
+  { key: 'error_message_contains_in', kinds: ['4xx', '5xx', 'network'], input: 'tags', placeholder: '[overload,busy]' },
   { key: 'account_id', kinds: ['any'], input: 'number', placeholder: '12' },
   { key: 'template_id', kinds: ['any'], input: 'number', placeholder: '3' },
   { key: 'group_id', kinds: ['any'], input: 'number', placeholder: '1' },
   { key: 'model', kinds: ['any'], input: 'text', placeholder: 'gpt-4o' },
+  { key: 'model_in', kinds: ['any'], input: 'tags', placeholder: '[gpt-5-0611,gpt-4o]' },
   { key: 'window_seconds', kinds: ['any'], input: 'number', placeholder: '60', min: 1 },
   { key: 'count_total_ge', kinds: ['any'], input: 'number', placeholder: '10', min: 1 },
   { key: 'count_429_ge', kinds: ['429'], input: 'number', placeholder: '3', min: 0 },
@@ -72,9 +75,10 @@ const MAX_CONDITIONS = 10
 
 // WhenField key → locale 键（rules.whenFields.*）。
 const WHEN_FIELD_LOCALE: Record<WhenField, string> = {
-  http_status: 'httpStatus', error_message_contains: 'errorContains',
+  http_status: 'httpStatus', http_status_in: 'httpStatusIn',
+  error_message_contains: 'errorContains', error_message_contains_in: 'errorContainsIn',
   account_id: 'accountId', template_id: 'templateId', group_id: 'groupId',
-  model: 'model', window_seconds: 'windowSeconds', count_total_ge: 'countTotal',
+  model: 'model', model_in: 'modelIn', window_seconds: 'windowSeconds', count_total_ge: 'countTotal',
   count_429_ge: 'count429', ratio_429_ge: 'ratio429',
   count_failure_ge: 'countFailure', ratio_failure_ge: 'ratioFailure', count_ok_ge: 'countOK',
 }
@@ -122,6 +126,10 @@ function whenToRows(w: Rule['When']): CondRow[] {
   const rows: CondRow[] = []
   for (const f of WHEN_FIELDS) {
     const v = w[f.key]
+    if (Array.isArray(v)) {
+      if (v.length > 0) rows.push({ field: f.key, value: v.join(',') })
+      continue
+    }
     if (v !== undefined && v !== null && v !== '') rows.push({ field: f.key, value: String(v) })
   }
   return rows
@@ -147,18 +155,30 @@ function toForm(r: Rule): FormState {
   }
 }
 
-// 条件行 → when JSON：number 字段 Number()（NaN 跳过）、空值跳过、未知键忽略
+// 条件行 → when JSON：number 字段 Number()（NaN 跳过）、tags 按逗号/空格切数组、空值跳过、未知键忽略
 // （WHEN_FIELDS 表驱动白名单，与后端字段全集一致）。
 function rowsToWhen(rows: CondRow[]): Record<string, unknown> {
   const w: Record<string, unknown> = {}
   for (const r of rows) {
     const meta = WHEN_FIELDS.find(f => f.key === r.field)
-    if (!meta || r.value === '') continue
+    const raw = Array.isArray(r.value) ? r.value.join(',') : String(r.value ?? '')
+    if (!meta || raw.trim() === '') continue
+    if (meta.input === 'tags') {
+      const parts = raw.split(/[,\s]+/).map(s => s.trim()).filter(Boolean)
+      if (parts.length === 0) continue
+      if (r.field === 'http_status_in') {
+        const nums = parts.map(Number).filter(n => !Number.isNaN(n))
+        if (nums.length > 0) w[r.field] = nums
+      } else {
+        w[r.field] = parts
+      }
+      continue
+    }
     if (meta.input === 'number') {
-      const n = num(r.value)
+      const n = num(raw)
       if (n !== undefined) w[r.field] = n
     } else {
-      w[r.field] = r.value
+      w[r.field] = raw
     }
   }
   return w
@@ -200,11 +220,14 @@ function WhenSummary({ w, t }: { w: Rule['When']; t: (k: string) => string }) {
   const parts: string[] = []
   if (typeof w.kind === 'string') parts.push(t(`rules.kind.${w.kind}`))
   if (typeof w.http_status === 'number') parts.push(`HTTP ${w.http_status}`)
+  if (Array.isArray((w as Record<string, unknown>).http_status_in)) parts.push(`HTTP [${((w as Record<string, unknown>).http_status_in as unknown[]).join(',')}]`)
   if (typeof w.error_message_contains === 'string') parts.push(t('rules.when.errorContains') + ` "${w.error_message_contains}"`)
+  if (Array.isArray((w as Record<string, unknown>).error_message_contains_in)) parts.push(`err∈[${((w as Record<string, unknown>).error_message_contains_in as string[]).join(',')}]`)
   if (typeof w.account_id === 'number') parts.push(`acc#${w.account_id}`)
   if (typeof w.template_id === 'number') parts.push(`tpl#${w.template_id}`)
   if (typeof w.group_id === 'number') parts.push(`grp#${w.group_id}`)
   if (typeof w.model === 'string') parts.push(w.model)
+  if (Array.isArray((w as Record<string, unknown>).model_in)) parts.push(`model∈[${((w as Record<string, unknown>).model_in as string[]).join(',')}]`)
   if (typeof w.window_seconds === 'number') parts.push(`${w.window_seconds}s`)
   if (typeof w.count_429_ge === 'number') parts.push(`429≥${w.count_429_ge}`)
   if (typeof w.count_failure_ge === 'number') parts.push(`fail≥${w.count_failure_ge}`)
@@ -326,14 +349,52 @@ export default function Rules() {
   // kind=ok + error_message_contains → 确定死配置（ok 事件错误信息恒空）；比例无总次数 → 缺失依赖。
   const submit = () => {
     if (!form.name.trim() || form.priority === '') return
-    const when = toWhen(form.when)
-    if (when.kind === 'ok' && when.error_message_contains !== undefined) {
+    const when = toWhen(form.when) as Record<string, unknown>
+    const exclusivePairs: [string, string][] = [
+      ['http_status', 'http_status_in'],
+      ['model', 'model_in'],
+      ['error_message_contains', 'error_message_contains_in'],
+    ]
+    for (const [a, b] of exclusivePairs) {
+      if (when[a] !== undefined && when[b] !== undefined) {
+        setWhenErr(t('rules.whenErrMutual', { a, b } as unknown as Record<string, unknown>) || `${a} and ${b} are mutually exclusive`)
+        return
+      }
+    }
+    if (when.kind === 'ok' && (when.error_message_contains !== undefined || when.error_message_contains_in !== undefined)) {
       setWhenErr(t('rules.whenErrOkContains'))
       return
     }
     if ((when.ratio_429_ge !== undefined || when.ratio_failure_ge !== undefined) && when.count_total_ge === undefined) {
       setWhenErr(t('rules.whenErrRatio'))
       return
+    }
+    const httpSingle = when.http_status as number | undefined
+    if (httpSingle !== undefined && (httpSingle < 400 || httpSingle > 599)) {
+      setWhenErr(t('rules.whenErrRange') || 'http_status must be between 400 and 599')
+      return
+    }
+    const dupSpecs: { key: string; arr: unknown }[] = [
+      { key: 'http_status_in', arr: when.http_status_in },
+      { key: 'model_in', arr: when.model_in },
+      { key: 'error_message_contains_in', arr: when.error_message_contains_in },
+    ]
+    for (const s of dupSpecs) {
+      const arr = s.arr as unknown[] | undefined
+      if (!Array.isArray(arr) || arr.length === 0) continue
+      if (s.key === 'http_status_in') {
+        for (const v of arr as number[]) {
+          if (v < 400 || v > 599) { setWhenErr(t('rules.whenErrRangeIn') || 'http_status_in must be between 400 and 599'); return }
+        }
+      } else {
+        for (const v of arr as string[]) {
+          if (v === '') { setWhenErr(t('rules.whenErrEmpty') || `${s.key} must not contain empty string`); return }
+        }
+      }
+      if (new Set(arr).size !== arr.length) {
+        setWhenErr(t('rules.whenErrDuplicate', { field: s.key } as unknown as Record<string, unknown>) || `${s.key} contains duplicate value`)
+        return
+      }
     }
     setWhenErr(null)
     save.mutate(form)
