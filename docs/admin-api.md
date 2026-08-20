@@ -4,7 +4,7 @@
 
 ## 通用约定
 
-- **Base URL**：`http://<gateway>/admin`
+- **Base URL**：`http://<gateway>/api/admin`
 - **认证**：所有请求必须带 `Authorization: Bearer <admin_token>`（`config.toml` 的 `admin.token`，或环境变量 `C3API_ADMIN_TOKEN`）。缺失或错误返回 `401`。
 - **Content-Type**：请求体与响应均为 `application/json`（`rotate-key` 等无请求体操作除外）。
 - **错误格式**：非 2xx 响应体为 `{"error": "<消息>"}`。404 的消息含缺失资源 id（如 `service: not found: id=999 missing`），便于定位。
@@ -33,7 +33,7 @@
 
 ### 创建模板
 
-`POST /admin/templates`
+`POST /api/admin/templates`
 
 请求体：
 
@@ -79,7 +79,7 @@
 
 ### 模板列表
 
-`GET /admin/templates`
+`GET /api/admin/templates`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -102,7 +102,7 @@
 
 ### 模板批量操作
 
-`POST /admin/templates/batch-delete`
+`POST /api/admin/templates/batch-delete`
 
 请求体：`{"ids": [1, 2, 3]}`（1–100 条，重复 id 自动去重）。
 
@@ -112,7 +112,7 @@
 | `400` | `ids` 为空或超过 100 条；`fields` 为空（batch-update） |
 | `404` | 任一 id 不存在：`{"error": "...id=999 missing..."}`（全败，不部分删除） |
 
-`POST /admin/templates/batch-update`
+`POST /api/admin/templates/batch-update`
 
 请求体：`{"ids": [1, 2], "fields": {"name": "renamed"}}`。
 
@@ -131,9 +131,9 @@
 
 | 方法/路径 | 说明 | 响应 |
 |---|---|---|
-| `GET /admin/templates/{id}` | 单个模板 | `200`：模板对象；`404` 不存在 |
-| `PUT /admin/templates/{id}` | 全量更新（字段同创建） | `200`：更新后模板对象 |
-| `DELETE /admin/templates/{id}` | 删除 | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id）；仍被账号引用时返回 `500`（DB 外键约束） |
+| `GET /api/admin/templates/{id}` | 单个模板 | `200`：模板对象；`404` 不存在 |
+| `PUT /api/admin/templates/{id}` | 全量更新（字段同创建） | `200`：更新后模板对象 |
+| `DELETE /api/admin/templates/{id}` | 删除 | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id）；仍被账号引用时返回 `500`（DB 外键约束） |
 
 > 模板变更（含 base_url / supported_formats / format_models / model_mapping）通过 invalidate 回调即时生效于调度器快照与上游 SDK 客户端（无需重启）。
 
@@ -145,7 +145,7 @@
 
 ### 创建账号
 
-`POST /admin/accounts`
+`POST /api/admin/accounts`
 
 ```json
 {
@@ -200,11 +200,11 @@
 
 > `unhealthy` / `429` 为**健康轴**（自动退避），`disabled` 为**启用轴**（手动）。管理端 `PUT` 设 `disabled` 后，在途请求完成不会覆盖回写（防复活守卫）。
 
-> **失效恢复须知（SDK 接入账号——codex-oauth / codex-pat）**：凭据被判死（refresh token 判死、token 端点 401、账号禁用等 SDK 判定终止）后账号置 `disabled` 摘除并写 `failed_at`。管理面将 status 改回 `active`（隐含清 `failed_at` / `last_error`）**只恢复"可调度"**——若凭据确已判死，请求面仍恒失败（适配层毒化凭据保留至凭据变更重建，失败会再次触发摘除）。**恢复须重新导入凭据**（`PUT /admin/accounts/{id}/ext` 更新 account_ext 后凭据签名变化 → 适配层重建）才可真正服务——这是有意设计：判死凭据不得在未重新导入的情况下复活。
+> **失效恢复须知（SDK 接入账号——codex-oauth / codex-pat）**：凭据被判死（refresh token 判死、token 端点 401、账号禁用等 SDK 判定终止）后账号置 `disabled` 摘除并写 `failed_at`。管理面将 status 改回 `active`（隐含清 `failed_at` / `last_error`）**只恢复"可调度"**——若凭据确已判死，请求面仍恒失败（适配层毒化凭据保留至凭据变更重建，失败会再次触发摘除）。**恢复须重新导入凭据**（`PUT /api/admin/accounts/{id}/ext` 更新 account_ext 后凭据签名变化 → 适配层重建）才可真正服务——这是有意设计：判死凭据不得在未重新导入的情况下复活。
 
 ### 账号列表（含运行时视图）
 
-`GET /admin/accounts`
+`GET /api/admin/accounts`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -242,7 +242,7 @@
 
 ### 账号批量操作
 
-`POST /admin/accounts/batch-delete`
+`POST /api/admin/accounts/batch-delete`
 
 请求体：`{"ids": [1, 2]}`（1–100 条，重复自动去重）。
 
@@ -252,7 +252,7 @@
 | `400` | `ids` 为空或超过 100 条 |
 | `404` | 任一 id 不存在：`{"error": "...id=999 missing..."}`（全败） |
 
-`POST /admin/accounts/batch-update`
+`POST /api/admin/accounts/batch-update`
 
 请求体：`{"ids": [1], "fields": {"status": "disabled", "weight": 50}}`。
 
@@ -271,9 +271,9 @@
 
 | 方法/路径 | 说明 | 响应 |
 |---|---|---|
-| `GET /admin/accounts/{id}` | 单个账号 | `200`：账号对象；`404` 不存在 |
-| `PUT /admin/accounts/{id}` | 全量更新（字段同创建；`status` 可改为 `disabled` 禁用） | `200`：更新后账号对象 |
-| `DELETE /admin/accounts/{id}` | 删除 | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id） |
+| `GET /api/admin/accounts/{id}` | 单个账号 | `200`：账号对象；`404` 不存在 |
+| `PUT /api/admin/accounts/{id}` | 全量更新（字段同创建；`status` 可改为 `disabled` 禁用） | `200`：更新后账号对象 |
+| `DELETE /api/admin/accounts/{id}` | 删除 | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id） |
 
 ---
 
@@ -283,7 +283,7 @@
 
 ### 创建分组
 
-`POST /admin/groups`
+`POST /api/admin/groups`
 
 ```json
 { "name": "bench", "price_multiplier": 2.0 }
@@ -313,12 +313,12 @@
 |---|---|---|
 | `ID` | int64 | 分组 id |
 | `Name` | string | 分组名 |
-| `Visibility` | `public` / `private` | public 全部用户可选；private 仅授予用户（`/admin/groups/{id}/assignments`） |
+| `Visibility` | `public` / `private` | public 全部用户可选；private 仅授予用户（`/api/admin/groups/{id}/assignments`） |
 | `PriceMultiplier` | number（float64） | **价格倍率**（正常值，见上）；计费按 `用户-组专属倍率 ?? 组倍率 ?? ×1` 生效（见「价格倍率语义」章节） |
 
 ### 分组列表
 
-`GET /admin/groups`
+`GET /api/admin/groups`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -332,7 +332,7 @@
 
 ### 分组批量操作
 
-`POST /admin/groups/batch-delete`
+`POST /api/admin/groups/batch-delete`
 
 请求体：`{"ids": [1, 2]}`（1–100 条，重复自动去重）。
 
@@ -342,7 +342,7 @@
 | `400` | `ids` 为空或超过 100 条 |
 | `404` | 任一 id 不存在：`{"error": "...id=999 missing..."}`（全败） |
 
-`POST /admin/groups/batch-update`
+`POST /api/admin/groups/batch-update`
 
 请求体：`{"ids": [1], "fields": {"name": "renamed"}}`（`name` 非空，`fields` 必须提供）。任一 id 不存在 → `404`（事务全败）。成功 `200`：`{"updated": 1}`。
 
@@ -350,18 +350,18 @@
 
 | 方法/路径 | 说明 | 响应 |
 |---|---|---|
-| `GET /admin/groups/{id}` | 单个分组 | `200`：分组对象 |
-| `PUT /admin/groups/{id}` | 全量更新分组（`name` / `visibility` / `price_multiplier`） | `200`：更新后分组对象；`price_multiplier` 缺省 = 保持原值、显式提供（含 `0` = 免费）即写入 |
-| `DELETE /admin/groups/{id}` | 删除（先删注册 key 再删 DB） | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id） |
-| `PUT /admin/groups/{id}/assignments` | 设置组的授予用户（替换语义）+ 用户-组专属倍率 | `200`：`{"user_ids": [...], "multipliers": {...}}`；见下方 |
-| `PUT /admin/groups/{id}/accounts` | 绑定账号集合 | 请求体 `{"account_ids": [1, 2, 3]}`；`200`：`{"updated": true}` |
-| `POST /admin/groups/{id}/rotate-key` | 轮换分组 key | `200`：`{"key": "ck-<新明文>"}`（旧 key 立即失效） |
+| `GET /api/admin/groups/{id}` | 单个分组 | `200`：分组对象 |
+| `PUT /api/admin/groups/{id}` | 全量更新分组（`name` / `visibility` / `price_multiplier`） | `200`：更新后分组对象；`price_multiplier` 缺省 = 保持原值、显式提供（含 `0` = 免费）即写入 |
+| `DELETE /api/admin/groups/{id}` | 删除（先删注册 key 再删 DB） | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id） |
+| `PUT /api/admin/groups/{id}/assignments` | 设置组的授予用户（替换语义）+ 用户-组专属倍率 | `200`：`{"user_ids": [...], "multipliers": {...}}`；见下方 |
+| `PUT /api/admin/groups/{id}/accounts` | 绑定账号集合 | 请求体 `{"account_ids": [1, 2, 3]}`；`200`：`{"updated": true}` |
+| `POST /api/admin/groups/{id}/rotate-key` | 轮换分组 key | `200`：`{"key": "ck-<新明文>"}`（旧 key 立即失效） |
 
 > `setGroupAccounts` 为**全量替换**绑定关系（传空数组清空）。变更即时触发调度器快照重建（invalidate）。
 
 ### 设置组授予用户 + 用户-组专属倍率
 
-`PUT /admin/groups/{id}/assignments`（platform_admin 专属；替换语义：`user_ids` 未列出即撤销，空数组 = 清空）
+`PUT /api/admin/groups/{id}/assignments`（platform_admin 专属；替换语义：`user_ids` 未列出即撤销，空数组 = 清空）
 
 ```json
 {
@@ -385,7 +385,7 @@
 
 ### 创建用户
 
-`POST /admin/users`（platform_admin 专属）
+`POST /api/admin/users`（platform_admin 专属）
 
 ```json
 {
@@ -405,11 +405,11 @@
 | `max_concurrency` | int | 否 | 用户级在途上限；0 = 不限 |
 | `balance` | number（USD） | 否 | 余额 USD float64（≥ 0；`10` = $10 = 1,000,000 毫分） |
 
-> **价格倍率按组（T3.5 修正）**：用户本体无倍率字段——专属倍率挂在该用户与组的授予关系上（`PUT /admin/groups/{id}/assignments` 的 `multipliers`），用户在不同组可有不同倍率。
+> **价格倍率按组（T3.5 修正）**：用户本体无倍率字段——专属倍率挂在该用户与组的授予关系上（`PUT /api/admin/groups/{id}/assignments` 的 `multipliers`），用户在不同组可有不同倍率。
 
 ### 用户列表
 
-`GET /admin/users?limit=20&offset=0&email=alice&sort=id&order=desc`
+`GET /api/admin/users?limit=20&offset=0&email=alice&sort=id&order=desc`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -421,7 +421,7 @@
 
 ### 更新用户
 
-`PUT /admin/users/{id}`
+`PUT /api/admin/users/{id}`
 
 ```json
 { "balance": 5.25 }
@@ -439,7 +439,7 @@
 - `POST /user/auth/register` / `POST /user/auth/login`：注册（受 `signup_enabled` 设置）与登录，返回 JWT + 用户对象（`Balance` 同样 USD float64）。
 - `GET /user/auth/me`：当前用户信息。
 - `POST /user/auth/change-password`：修改密码（旧密码校验复用登录语义——失败 `401` 同登录文案防枚举；新密码非空且 ≤72 字节，非法 `400`；**不撤销既有 JWT**，新密码下次登录生效），见下方「用户面：修改密码」。
-- `GET /user/stats`：我的用量统计（强制 `user_id` = 当前用户，防越权；字段与 `/admin/stats` 同契约，见「查询用量统计」章节）。
+- `GET /user/stats`：我的用量统计（强制 `user_id` = 当前用户，防越权；字段与 `/api/admin/stats` 同契约，见「查询用量统计」章节）。
 - `GET /user/temp-balances`：我的临时额度（仅有效额度：未过期且正余额，`expires_at` 升序 FEFO 同序、永久最后；`total_usd` 合计 USD），见「临时额度 Temp Balances」章节。
 - 兑换码（`/user/redemptions`）：`balance` / `temp_balance` 类型向毫分余额/临时额度充值，见「兑换码 Redemption Codes」章节。
 
@@ -490,7 +490,7 @@
 
 ### 管理面：临时额度列表
 
-`GET /admin/temp-balances`（platform_admin 专属）
+`GET /api/admin/temp-balances`（platform_admin 专属）
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -553,7 +553,7 @@
 
 ### 查询用量日志
 
-`GET /admin/usage_logs?limit=20&cursor=1234&group_id=1&account_id=2&model=gpt-4o&error_type=none&from=2026-08-06T00:00:00Z&to=2026-08-06T23:59:59Z`
+`GET /api/admin/usage_logs?limit=20&cursor=1234&group_id=1&account_id=2&model=gpt-4o&error_type=none&from=2026-08-06T00:00:00Z&to=2026-08-06T23:59:59Z`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -610,7 +610,7 @@
 
 ### 查询错误日志
 
-`GET /admin/err_logs?limit=20&cursor=1234&group_id=1&account_id=2&model=gpt-4o&status_code=429&error_type=billing&from=2026-08-06T00:00:00Z&to=2026-08-06T23:59:59Z`
+`GET /api/admin/err_logs?limit=20&cursor=1234&group_id=1&account_id=2&model=gpt-4o&status_code=429&error_type=billing&from=2026-08-06T00:00:00Z&to=2026-08-06T23:59:59Z`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -630,7 +630,7 @@
 
 ### 查询用量统计
 
-`GET /admin/stats?from=2026-08-06T00:00:00Z&to=2026-08-06T23:59:59Z&granularity=day&group_id=1&account_id=2&model=gpt-4o`（管理侧，可 `user_id` 过滤）
+`GET /api/admin/stats?from=2026-08-06T00:00:00Z&to=2026-08-06T23:59:59Z&granularity=day&group_id=1&account_id=2&model=gpt-4o`（管理侧，可 `user_id` 过滤）
 
 `GET /user/stats?...`（用户侧，强制 `user_id` = 当前用户，`user_id` 过滤参数无效——防越权）
 
@@ -638,7 +638,7 @@
 |---|---|---|---|
 | `from` / `to` | RFC3339 | 近 24 小时 | 时间范围 |
 | `granularity` | `hour` / `day` | `day` | 聚合粒度（`day` 为 UTC 日对齐，`hour` 为 UTC 小时对齐） |
-| `group_id` / `account_id` / `template_id` / `user_id`(仅 `/admin/stats`) / `model` | int / int / int / int / string | — | 维度过滤 |
+| `group_id` / `account_id` / `template_id` / `user_id`(仅 `/api/admin/stats`) / `model` | int / int / int / int / string | — | 维度过滤 |
 
 响应 `200`：统计行数组（按粒度对齐的桶）：
 
@@ -673,7 +673,7 @@
 
 字段说明：
 
-- `Cost`（float64 **USD**）= 内部毫分 /1e5，与价格 API、`/admin/overview` 口径一致（破坏性变更：旧版为毫分 int64）
+- `Cost`（float64 **USD**）= 内部毫分 /1e5，与价格 API、`/api/admin/overview` 口径一致（破坏性变更：旧版为毫分 int64）
 - `CallCount` = 按次调用计数（图片生成张数 / search 次数；**不入** `TotalTokens`）
 - `TTFT*` = 首 token 时间（毫秒）统计，**仅含首 token 流式请求**（非流式/失败/无首 token 行不计）：`TTFTCount` 样本数（pN/加权 avg 分母）、`TTFTAvgMS` = ΣTTFT/样本数、`TTFTMaxMS` 最大值、`TTFTP50/P90/P95/P99MS` = 直方图插值分位数（nearest-rank + 桶内线性插值；顶桶 `[12800ms, ∞)` 回落 12800；无样本全 0）
 - 前端跨行合并语义：avg 加权（`Σ(avg×count)/Σcount`）、max 取最大、**pN 取请求量最大维度行的近似值**（分位数不可跨行合并）
@@ -685,7 +685,7 @@
 
 ### 总览聚合
 
-`GET /admin/overview?days=7&group_id=1`——dashboard 主数据一站式聚合
+`GET /api/admin/overview?days=7&group_id=1`——dashboard 主数据一站式聚合
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -718,7 +718,7 @@
 }
 ```
 
-- `summary`：今日汇总（UTC 日界），`cost_usd` 为 USD（毫分 /1e5），`ttft_*` 口径同 `/admin/stats`
+- `summary`：今日汇总（UTC 日界），`cost_usd` 为 USD（毫分 /1e5），`ttft_*` 口径同 `/api/admin/stats`
 - `trend`：近 N 天日桶（SQL 侧按日聚合；`tokens` = input+output+cache 合并）
 - `accounts`：账号健康分布 + 并发水位（**调度器快照同源**——与账号列表运行时视图一致；运行时状态只在内存，DB 无第二份）
 - `err_top`：账号维度错误率 Top5（调度器 EWMA，`name` = 账号名）
@@ -727,7 +727,7 @@
 
 ### 实时并发排行
 
-`GET /admin/users-top?top=20`
+`GET /api/admin/users-top?top=20`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -808,7 +808,7 @@
 
 ### 创建规则
 
-`POST /admin/rules`
+`POST /api/admin/rules`
 
 ```json
 {
@@ -833,21 +833,21 @@
 
 ### 规则列表
 
-`GET /admin/rules?enabled=true`（`enabled` 可选，缺省返回全部；priority 升序，无分页）
+`GET /api/admin/rules?enabled=true`（`enabled` 可选，缺省返回全部；priority 升序，无分页）
 
 响应 `200`：`{"total": N, "rows": [...]}`。
 
 ### 更新规则
 
-`PUT /admin/rules/{id}`——部分更新：未提供的字段保持原值（`when`/`then` 提供即整体替换）。
+`PUT /api/admin/rules/{id}`——部分更新：未提供的字段保持原值（`when`/`then` 提供即整体替换）。
 
 响应 `200`：更新后的规则；`404` 含缺失 id。
 
 ### 删除规则
 
-`DELETE /admin/rules/{id}`——响应 `204`；`404` 含缺失 id。
+`DELETE /api/admin/rules/{id}`——响应 `204`；`404` 含缺失 id。
 
-`POST /admin/rules/batch-delete`——请求体 `{"ids": [...]}`（1-100 条，自动去重）；事务全成或全败；响应 `200` `{"deleted": N}`；`404` 消息含缺失 id。注意：批量删除后触发规则引擎重载，若规则表删空则下次重载自动重建种子规则。
+`POST /api/admin/rules/batch-delete`——请求体 `{"ids": [...]}`（1-100 条，自动去重）；事务全成或全败；响应 `200` `{"deleted": N}`；`404` 消息含缺失 id。注意：批量删除后触发规则引擎重载，若规则表删空则下次重载自动重建种子规则。
 
 ### 错误语义
 
@@ -864,7 +864,7 @@
 
 ### 生成兑换码
 
-`POST /admin/redemption-codes`
+`POST /api/admin/redemption-codes`
 
 请求体：
 
@@ -916,7 +916,7 @@
 
 ### 兑换码列表
 
-`GET /admin/redemption-codes`
+`GET /api/admin/redemption-codes`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -931,7 +931,7 @@
 
 ### 批量失效
 
-`POST /admin/redemption-codes/batch-deactivate`
+`POST /api/admin/redemption-codes/batch-deactivate`
 
 请求体：`{"ids": [1, 2, 3]}`（`1–100` 条，去重；空或超 100 → `400`）。
 
@@ -944,13 +944,13 @@
 
 ### 单码失效
 
-`POST /admin/redemption-codes/{id}/deactivate`
+`POST /api/admin/redemption-codes/{id}/deactivate`
 
 无请求体。已失效再次调用为 no-op 成功（响应仍为 `{"deactivated": true}`，表示操作成功而非"本次新失效"）；`404`：id 不存在（消息含缺失 id）。
 
 ### 兑换记录（审计）
 
-`GET /admin/redemption-codes/{id}/uses`
+`GET /api/admin/redemption-codes/{id}/uses`
 
 响应 `200`：
 
@@ -1012,7 +1012,7 @@
 | 静态 admin token（`Authorization: Bearer <admin.token>`） | `config.toml` 的 `admin.token` | 生成码时 `created_by = 0`（**0 = 系统**，未注入用户身份） |
 | platform_admin JWT（`Authorization: Bearer <jwt>`） | 与 /user 面同签发的 JWT，且 `role == platform_admin` | 生成码时 `created_by = 该用户 id`（>`0`） |
 
-`/admin/*` 两条路径任一通过即可；普通 `user` 角色的 JWT 访问 `/admin/*` → `401`。`created_by` 用于审计"哪个管理员/系统创建了这批发码"。
+`/api/admin/*` 两条路径任一通过即可；普通 `user` 角色的 JWT 访问 `/api/admin/*` → `401`。`created_by` 用于审计"哪个管理员/系统创建了这批发码"。
 
 ---
 
@@ -1045,7 +1045,7 @@
 
 ### 价格列表
 
-`GET /admin/pricing`
+`GET /api/admin/pricing`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -1084,7 +1084,7 @@
 
 ### 手动设价
 
-`PUT /admin/pricing?model={model}`
+`PUT /api/admin/pricing?model={model}`
 
 请求体：`{"prompt_price_per_million": 2.5, "completion_price_per_million": 3.0}`（USD/1M tokens 正常值，**必须 ≥ 0**，内部 `math.Round(x × 1e5)` 存毫分；负数 → `400`，model 缺失 → `400`）。`model` 走 query 参数——模型名是自由字符串可含 `/`（如 `1024-x-1024/50-steps/bedrock/amazon.nova-canvas-v1:0`），路径参数单段匹配会拆段 404，故不入路径。可选字段：
 
@@ -1095,7 +1095,7 @@
 
 ### 删除手动价
 
-`DELETE /admin/pricing?model={model}`
+`DELETE /api/admin/pricing?model={model}`
 
 | 响应 | 说明 |
 |---|---|
@@ -1105,7 +1105,7 @@
 
 ### 手动触发同步
 
-`POST /admin/pricing/sync`
+`POST /api/admin/pricing/sync`
 
 手动触发一次价格拉取（与定时 worker 同路径：fetch → 批量 upsert → 快照重载），不等 cron。响应 `200`：
 
@@ -1133,7 +1133,7 @@
 
 `image_price` 表（生图模型价格；`image_price`/`function_price`/`pricing` 三件套同形态——列表分页/筛选/排序、PUT/DELETE 的 `model` 走 query 参数（模型名可含 `/`，路径参数单段匹配会拆段 404，故不入路径）、upsert 强制 `source=manual` 可接管 litellm 行）。
 
-`GET /admin/image-price`
+`GET /api/admin/image-price`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -1149,15 +1149,15 @@
 | `Provider` | litellm_provider（litellm 行才有；manual 行 nil） |
 | `Source` / `CreatedAt` / `UpdatedAt` | 来源（`litellm` / `manual`）与时间 |
 
-`PUT /admin/image-price?model={model}`：请求体 `{"input_image_token_price_per_million": ..., "output_image_token_price_per_million": ..., "output_cost_per_image": ...}`——三分量全可选但**至少一个非 null**（否则 400）；全量替换（缺省/null = 清空该分量）；upsert 接管 litellm 行（同 pricing 语义）。
+`PUT /api/admin/image-price?model={model}`：请求体 `{"input_image_token_price_per_million": ..., "output_image_token_price_per_million": ..., "output_cost_per_image": ...}`——三分量全可选但**至少一个非 null**（否则 400）；全量替换（缺省/null = 清空该分量）；upsert 接管 litellm 行（同 pricing 语义）。
 
-`DELETE /admin/image-price?model={model}`：仅 `source=manual` 行可删（`200 {"deleted": true}`；litellm 行 `409`；不存在 `404`——同 pricing 语义）。
+`DELETE /api/admin/image-price?model={model}`：仅 `source=manual` 行可删（`200 {"deleted": true}`；litellm 行 `409`；不存在 `404`——同 pricing 语义）。
 
 ### 功能价格 Function Price
 
 `function_price` 表（按单元计费功能类——search 起，audio/video 等未来 per-unit 端点复用；对齐 `image_price` 形态）。
 
-`GET /admin/function-prices`——参数与响应形态同图片价格列表（`model` 为模型/功能标识模糊搜索，**含 `codex-search`**）。
+`GET /api/admin/function-prices`——参数与响应形态同图片价格列表（`model` 为模型/功能标识模糊搜索，**含 `codex-search`**）。
 
 响应行：
 
@@ -1167,11 +1167,11 @@
 | `PricePerCall` | 按单元价（**USD/次**——litellm 原生口径 `input_cost_per_query`；内部毫分/次，×1e5 换算，**与 token 价不同换算系**，计费不走 /1e6 除法） |
 | `Provider` | litellm_provider（litellm 行才有；manual 行 nil） |
 
-`PUT /admin/function-prices?model={model}`：请求体 `{"price_per_call": ...}`——**必填且 ≥0**（缺省/null → 400；0 = 按次免费）。
+`PUT /api/admin/function-prices?model={model}`：请求体 `{"price_per_call": ...}`——**必填且 ≥0**（缺省/null → 400；0 = 按次免费）。
 
-`DELETE /admin/function-prices?model={model}`：仅 manual 行可删（同 pricing 语义）。
+`DELETE /api/admin/function-prices?model={model}`：仅 manual 行可删（同 pricing 语义）。
 
-### 相关 settings（PUT /admin/settings）
+### 相关 settings（PUT /api/admin/settings）
 
 | key | 默认 | 说明 |
 |---|---|---|
@@ -1197,7 +1197,7 @@ billing = { enabled = true, flush_interval = "1s", balance_refresh_interval = "1
 
 | 配置 | 默认 | 说明 |
 |---|---|---|
-| `billing.enabled` | `false` | **默认关闭（opt-in）**。启用前必须先同步价格（`POST /admin/pricing/sync` 或等待定时拉取）——空价格表 = 全模型 402（契约语义：缺价不按 0 计价） |
+| `billing.enabled` | `false` | **默认关闭（opt-in）**。启用前必须先同步价格（`POST /api/admin/pricing/sync` 或等待定时拉取）——空价格表 = 全模型 402（契约语义：缺价不按 0 计价） |
 | `billing.flush_interval` | `1s` | 扣费批量落库周期（内存聚合满或周期到 → 逐 user 小事务条件扣费；停机排空受 shutdown 预算约束，超时 Warn 截断、不阻塞退出） |
 | `billing.balance_refresh_interval` | `10s` | 余额快照全量刷新周期（预检读快照；扣费后定向即时刷新该 user） |
 | `billing.flush_workers` | `8` | 并行落库 worker 数（O1 管道化分片并行，同用户实例内恒串行）。默认 8（多角度压测 C 项实证 2026-08-12：多用户水线告警清零、pending 斜率降 25-40%、QPS/CPU 零回退）：每 worker 一笔 `DeductAndLog` 事务，须 ≤ DB 连接池余量（`db.max_conns` 扣除其他连接占用） |
@@ -1228,7 +1228,7 @@ billing = { enabled = true, flush_interval = "1s", balance_refresh_interval = "1
 | 状态码 | 场景 |
 |---|---|
 | `400` | 请求体非法 / 修改密码新密码为空或超 72 字节 / 路径 ID 非法 / 非法 `sort` 或 `order` / 非法 `status` 枚举 / 批量 `ids` 为空或超 100 条 / 批量 `fields` 为空 / 规则 `when`/`then` 校验失败 / 兑换码生成参数非法（`type` 非法、`value ≤ 0`、`temp_balance` 缺 `resource_expires_at`、`expires_at` 过去、`count` 越界）/ 兑换码无效（`invalid code`：不存在/失效/过期/用尽，统一不泄露细节）/ 价格负数或非负校验失败 / `fast_multiplier` 越界 / 倍率（组/用户-组专属 `price_multiplier`，正常值 `0`~`10`）越界 / `service_tier_policy_*` 非法值 / `source` 筛选非法 / `price_source_url` 未配置触发 sync |
-| `401` | admin token 缺失或错误；普通 `user` 角色 JWT 访问 `/admin/*` |
+| `401` | admin token 缺失或错误；普通 `user` 角色 JWT 访问 `/api/admin/*` |
 | `402` | **计费拒绝**（`error_type=billing`）：模型缺价 / 余额快照缺失或 ≤ 0（AI 请求面，非管理面） |
 | `404` | 资源不存在（单资源与批量均返回，消息含缺失 id，如 `service: not found: id=999 missing`） |
 | `409` | 规则 `priority`/`name` 唯一冲突 / 兑换码重复兑换（`already redeemed`）/ 删除 litellm 价格行 |

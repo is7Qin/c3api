@@ -18,7 +18,7 @@ flowchart LR
 
     subgraph G1["网关实例 1（单二进制 server）"]
         direction TB
-        S["chi 路由<br/>/healthz /admin /user /v1/* /assets"]
+        S["chi 路由<br/>/healthz /api/admin /api/user /v1/* /assets + SPA / /user /app"]
         PX["proxy 热路径<br/>鉴权→门禁→选号→转发"]
         WH["常驻 worker 群<br/>billing/usage/errlog/retention/stats-agg/<br/>scheduler/notify/invalidate/<br/>pricing-sync/auth-sync/rule-engine"]
     end
@@ -39,7 +39,7 @@ flowchart LR
     C1 -->|"POST /v1/chat/completions"| S
     C2 -->|"POST /v1/messages"| S
     C3 -->|"WS /v1/responses"| S
-    W1 -->|"/admin /user /assets"| S
+    W1 -->|"/ (SPA: / /user /app) + /api/* + /assets"| S
     C1 --> S2
     C2 --> S2
     C3 --> S2
@@ -61,7 +61,7 @@ flowchart LR
   - `Dockerfile`：多阶段构建，`CGO_ENABLED=0` 静态单二进制。
   - `scripts/build.sh`：pnpm 构建 web → 拷入 `cmd/server/dist` → `go build -o bin/server`。
   - `tools/`：`tools/loadtest`（打压测，-mode stream/fill，交错跑 + 每请求 CPU）、`tools/fakeupstream`（假上游，chunks/latency 可配）、`tools/e2e`（端到端计费测试）。
-- 运维观测面：admin/ops/workers、/admin/overview、/admin/users-top 收敛进 handler 包（`internal/handler/ops.go:62`、`overview.go:24`、`users_top.go:18`），worker 观测聚合在 `cmd/server/main.go:384-398`；`internal/server` 已纯通用装配（Options 注入 AdminHandler/UserHandler/AIHandler/WebFS，`internal/server/server.go:22-34`）。
+- 运维观测面：/api/admin/ops/workers、/api/admin/overview、/api/admin/users-top 收敛进 handler 包（`internal/handler/ops.go:62`、`overview.go:24`、`users_top.go:18`），worker 观测聚合在 `cmd/server/main.go:384-398`；`internal/server` 已纯通用装配（Options 注入 AdminHandler/UserHandler/AIHandler/WebFS，`internal/server/server.go:22-34`）。
 
 ## 2. 模块地图
 
@@ -70,7 +70,7 @@ flowchart LR
 | 包 | 职责 | 依赖（被谁依赖） |
 |---|---|---|
 | `internal/config` | TOML 加载 + env 覆盖（`C3API_*`） | main 入口 |
-| `internal/server` | 纯通用装配：/healthz、/admin 鉴权中间件、/user 分流、AI Mount、SPA fallback（业务 handler 由 Options 注入） | main |
+| `internal/server` | 纯通用装配：/healthz、/api/admin 鉴权中间件、/api/user 分流、AI Mount、SPA fallback（业务 handler 由 Options 注入） | main |
 | `internal/handler`（+`/user`） | 管理面 API（openapi 生成，含 ops/overview/users-top）+ 用户面 API | 依赖 service/repository |
 | `internal/service` | 业务层：settings/pricing 快照、变更发布 `publish`、ClusterInstances | 依赖 repository/notify/invalidate/rule |
 | `internal/repository` | ent 持久化门面，只暴露 domain 类型（`internal/repository/repository.go:13`）；分区表 DDL 独占管理 | 被所有上层依赖 |
@@ -123,11 +123,11 @@ flowchart LR
 
 每个决策点：
 - **鉴权**（`internal/proxy/auth.go:127-151`）：`Authorization: Bearer` 或 `x-api-key`（Anthropic 口径）→ 快照按明文等值查（零 DB）；key 或归属用户禁用 → 401 即时失效。
-- **认证双路径**（`internal/server/middleware.go:38-67` adminAuth + `internal/server/server.go:68-79` /admin 组 Handle）：/admin 组 = 静态 admin token `Bearer <AdminToken>` **OR** platform_admin JWT（`JWTIssuer.Verify` + `claims.Role==platform_admin` + 快照用户状态 active 校验；JWT 路径注入 `adminUserIDKey`）；/user 组 = 内部公开分流（`internal/handler/user/router.go:22-40`：register/login 公开，其余 RequireJWT）；AI 组 = key 鉴权（无 JWT）。
+- **认证双路径**（`internal/server/middleware.go:38-67` adminAuth + `internal/server/server.go:68-79` /api/admin 组 Handle）：/api/admin 组 = 静态 admin token `Bearer <AdminToken>` **OR** platform_admin JWT（`JWTIssuer.Verify` + `claims.Role==platform_admin` + 快照用户状态 active 校验；JWT 路径注入 `adminUserIDKey`）；/api/user 组 = 内部公开分流（`internal/handler/user/router.go:22-40`：register/login 公开，其余 RequireJWT）；AI 组 = key 鉴权（无 JWT）。
 - **配额**：`quotaExhausted`（`internal/proxy/gate.go:267-319`）本地预算两原子读；耗尽才触发 DB 复核认领（`internal/proxy/gate.go:320-374`，慢路径单飞 + 10s 失败退避）；复核公式 `budget = consumed + ceil(remaining_eff/N)`（#37 P1 收敛修正，防复核无限续额）。
 - **余额预检**（`internal/proxy/caller.go:140-147`）：BillingCapture 门控快照读零 DB（滞后 ≤ balance_refresh_interval）；快照缺失/<0 且非免费组 → 402（余额 0 放行——临时额度由 FEFO 扣费消化）；免费组（EffectiveMultiplier==0）放行。
 - **并发门禁**：user → key 两级 CAS（`internal/proxy/gate.go:219-244`），key 失败回滚 user 计数；跨 reload 在途值继承。
-- **限流**：`internal/proxy/limit.go:39-56` 固定窗口 `ceil(group_key_rpm/N)`；`cooldown_429/backoff_*` 已移除（2026-08-13 用户裁决：配置含这些键将启动失败）——429 冷却与错误退避由规则引擎（种子 + `/admin/rules` 自定义）接管。
+- **限流**：`internal/proxy/limit.go:39-56` 固定窗口 `ceil(group_key_rpm/N)`；`cooldown_429/backoff_*` 已移除（2026-08-13 用户裁决：配置含这些键将启动失败）——429 冷却与错误退避由规则引擎（种子 + `/api/admin/rules` 自定义）接管。
 - **选号**：`internal/scheduler/selection.go:17` tier1（模型硬白名单 Serves）→ tier2（仅全模型账号）→ 默认桶（仅全模型账号）；预生成加权轮询序列（零热路径计算）；协议转换只补差（`internal/proxy/caller.go:41-61` convertedRoute，off 零开销）。
 - **缺价预检**：failover 循环内每轮 `caller.go:288-293` + `precheckPrice :438-451`——images 查 image_price、其余查 pricings，缺价 402 释放槽。
 - **codex 分流**（`caller.go:303-309`）：按 `sel.CredentialType` 换 codexImagesCaller（:320-321 codex 类型跳单字符串凭据走 sel.Ext → AccountCredential 直供适配层）。
@@ -290,13 +290,13 @@ flowchart LR
 | 路由 | 鉴权 | 说明 |
 |---|---|---|
 | `GET /healthz` | 无 | inflight/goroutines/heap（`internal/server/server.go:58-66`） |
-| `/admin/*` | 静态 admin token OR platform_admin JWT（`internal/server/server.go:68-79` + `middleware.go:38-67`） | 管理面（chi Handle，:73-78） |
-| `/user/*` | register/login 公开，其余 RequireJWT（`internal/handler/user/router.go:22-40`） | 用户面 |
+| `/api/admin/*` | 静态 admin token OR platform_admin JWT（`internal/server/server.go:68-79` + `middleware.go:38-67`） | 管理面（chi Handle，:73-78） |
+| `/api/user/*` | register/login 公开，其余 RequireJWT（`internal/handler/user/router.go:22-40`） | 用户面 |
 | `Mount("/")` | AI key 鉴权（proxy） | 8 端点：chat/anthropic/responses + WS + images×2 + search + models（`internal/proxy/router.go:19-58`） |
 | `/assets/*`、`/favicon.svg`、`/`、SPA fallback | 无 | 网关内嵌 web/dist（`internal/server/server.go:97-126` + `cmd/server/embed.go:14`） |
 
-- admin 组（`internal/handler/api.gen.go`，openapi 生成；Handler 路由区 :4228）：`/accounts`（含批量 batch-delete/batch-update、`{id}/ext`、`{id}/groups`）、`/groups`（含 assignments）、`/users`（含 `{id}/groups`）、`/temp-balances`、`/templates`（含 batch、`{id}/ext`）、`/keys`、`/pricing`（含 `/pricing/sync`；PUT/DELETE 的 model 在 query）、`/image-price`、`/function-prices`（价格表三件套）、`/rules`、`/settings`、`/redemption-codes`（含 batch-deactivate、`{id}/deactivate`、`{id}/uses`）、`/usage_logs`、`/err_logs`、`/stats`、`/overview`、`/users-top`、`/ops/workers`（ops tag 契约化并入管理面，`internal/handler/ops.go:62`）。
-- user 组（`internal/handler/user/api.gen.go:1303`）：`/user/auth/login|register|me`、`/user/keys`（含 `{id}`、`{id}/rotate`）、`/user/groups`、`/user/usage_logs`、`/user/err_logs`、`/user/stats`、`/user/redemptions`、`/user/temp-balances`、`/user/auth/change-password`。
+- admin 组（`internal/handler/api.gen.go`，openapi 生成；Handler 路由区 :4228，BaseURL `/api/admin`）：`/accounts`（含批量 batch-delete/batch-update、`{id}/ext`、`{id}/groups`）、`/groups`（含 assignments）、`/users`（含 `{id}/groups`）、`/temp-balances`、`/templates`（含 batch、`{id}/ext`）、`/keys`、`/pricing`（含 `/pricing/sync`；PUT/DELETE 的 model 在 query）、`/image-price`、`/function-prices`（价格表三件套）、`/rules`、`/settings`、`/redemption-codes`（含 batch-deactivate、`{id}/deactivate`、`{id}/uses`）、`/usage_logs`、`/err_logs`、`/stats`、`/overview`、`/users-top`、`/ops/workers`（ops tag 契约化并入管理面，`internal/handler/ops.go:62`）。
+- user 组（`internal/handler/user/api.gen.go:1303`，路径自带 `/api/user` 前缀）：`/api/user/auth/login|register|me`、`/api/user/keys`（含 `{id}`、`{id}/rotate`）、`/api/user/groups`、`/api/user/usage_logs`、`/api/user/err_logs`、`/api/user/stats`、`/api/user/redemptions`、`/api/user/temp-balances`、`/api/user/auth/change-password`。
 - AI 组（`internal/proxy/router.go:19-58`）：`POST /v1/chat/completions`、`POST /v1/responses`（upgrade → WS）、`GET /v1/responses`（仅 upgrade 放行，否则 405）、`POST /v1/messages`、`POST /v1/images/generations`、`POST /v1/images/edits`、`POST /v1/alpha/search`（codex CLI web search 独立编排，`forward_search.go:59`）、`GET /v1/models`（快照读零 DB，`models.go:19`）。
 
 ## 12. 配置面
