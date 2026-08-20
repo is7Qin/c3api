@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
 package rule
 
 import (
@@ -24,6 +25,7 @@ func ruleWindowSeconds(w domain.RuleWhen) int {
 	return defaultWindowSeconds
 }
 
+// 非热路径：Match 供测试/窗口判定线性扫；热路径 Classify 走 engine.compiledRule Set（零分配早退）。
 func matchBasic(w domain.RuleWhen, ev Event) bool {
 	if w.Kind != nil && kindFromString(*w.Kind) != ev.Kind {
 		return false
