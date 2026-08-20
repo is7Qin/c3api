@@ -50,19 +50,22 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
         to={to}
         end={end}
         className={({ isActive }) =>
-          `group flex items-center gap-2 rounded-md px-3 py-2.5 text-sm transition-colors ${isActive ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'}`
+          `group flex min-h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm font-medium transition-all duration-200 ${isActive ? 'bg-foreground text-background shadow-sm' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`
         }
       >
-        <Icon className="h-4 w-4 transition-transform duration-150 group-hover:scale-110" /> {t(key)}
+        <Icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-105" /> {t(key)}
       </NavLink>
     ))
 
   return (
-    <aside className="w-64 border-r border-sidebar-border bg-sidebar text-sidebar-foreground flex flex-col">
-      <div className="p-4 font-semibold text-lg">{t('common.appTitle')}</div>
+    <aside data-od-id="app-sidebar" className="hidden w-[264px] shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex md:flex-col">
+      <div data-od-id="app-sidebar-brand" className="flex h-20 items-center gap-2 px-5">
+        <span className="flex size-7 items-center justify-center rounded-[9px] bg-foreground text-[11px] font-semibold text-background">GP</span>
+        <span className="text-[17px] font-semibold tracking-tight" style={{ fontFamily: '"SF Pro Display", "Helvetica Neue", Helvetica, sans-serif' }}>{t('common.appTitle')}</span>
+      </div>
       {/* 自定义滚动条（scroll-area：自绘 thumb，深色模式不再刺眼） */}
       <ScrollArea className="flex-1">
-        <nav className="space-y-1 p-2">
+        <nav data-od-id="app-sidebar-navigation" className="space-y-3 px-3 pb-3">
         {navs.map(group => (
           <div key={group.titleKey ?? group.items[0]?.to}>
             {group.titleKey ? (
@@ -71,7 +74,7 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
                   type="button"
                   aria-expanded={!collapsed[group.titleKey]}
                   onClick={() => setCollapsed(prev => ({ ...prev, [group.titleKey!]: !prev[group.titleKey!] }))}
-                  className="flex w-full items-center justify-between rounded-md px-3 pt-3 pb-1 text-xs font-medium text-sidebar-foreground/40 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  className="flex h-8 w-full items-center justify-between rounded-[8px] px-3 text-[11px] font-semibold tracking-wide text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                 >
                   {t(group.titleKey)}
                   <ChevronDown
@@ -89,12 +92,12 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
       </ScrollArea>
       <div className="border-t border-sidebar-border p-3">
         <DropdownMenu>
-          <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-lg p-2 hover:bg-sidebar-accent focus:bg-sidebar-accent data-popup-open:bg-sidebar-accent focus:outline-none">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-sidebar-accent text-sm font-medium text-sidebar-accent-foreground">
+          <DropdownMenuTrigger data-od-id="app-sidebar-account-menu" className="flex w-full items-center gap-2 rounded-[12px] p-2 transition-colors hover:bg-accent focus:bg-accent data-popup-open:bg-accent focus:outline-none">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground text-sm font-medium text-background">
               {avatarInitial}
             </span>
-            <span className="min-w-0 flex-1 truncate text-left text-sm">{userEmail ?? ''}</span>
-            <ChevronsUpDown className="h-4 w-4 shrink-0 text-sidebar-foreground/40" />
+            <span className="min-w-0 flex-1 truncate text-left text-sm text-sidebar-foreground">{userEmail ?? ''}</span>
+            <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="right" sideOffset={4} className="min-w-48">
             <div className="flex items-center gap-2 px-1.5 py-1.5 text-sm">

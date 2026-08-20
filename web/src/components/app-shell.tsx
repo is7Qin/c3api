@@ -95,7 +95,7 @@ export default function AppShell() {
   // 顶栏面包屑（两级）：未知路径返回 null 不渲染
   const crumb = breadcrumbFor(location.pathname)
   return (
-    <div data-od-id="app-shell" className="flex h-screen overflow-hidden bg-[#f5f5f7] text-[#1d1d1f] dark:bg-[#000000] dark:text-white">
+    <div data-od-id="app-shell" className="flex h-screen overflow-hidden bg-background text-foreground">
       {/* h-screen 锁定视口高度：侧边栏 nav 与 main 各自 ScrollArea 独立滚动（自绘
           滚动条，深色模式统一观感）；底部用户卡固定左下角 */}
       <AppSidebar navs={navs} userEmail={me?.Email} />
@@ -105,19 +105,19 @@ export default function AppShell() {
         <ScrollArea className="flex-1">
           <header
             data-od-id="app-shell-header"
-            className="sticky top-3 z-10 mx-3 flex h-14 shrink-0 items-center gap-3 rounded-[18px] border border-white/70 bg-white/72 px-4 shadow-[0_8px_24px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.92)] backdrop-blur-xl dark:border-white/15 dark:bg-[#272729]/72 dark:shadow-[0_8px_24px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)] lg:mx-5 lg:px-5"
+            className="sticky top-3 z-10 mx-3 flex h-14 shrink-0 items-center gap-3 rounded-[18px] border border-white/70 bg-white/72 px-4 shadow-[0_8px_24px_rgba(29,29,31,0.06),inset_0_1px_0_rgba(255,255,255,0.92)] backdrop-blur-xl dark:border-white/15 dark:bg-[#272729]/72 dark:shadow-[0_8px_24px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)] lg:mx-5 lg:px-5"
           >
             {crumb && (
               <Breadcrumb data-od-id="app-shell-breadcrumb" className="min-w-0 flex-1">
                 <BreadcrumbList>
                   <BreadcrumbItem className="hidden md:block">
-                    <Link to={crumb.root} className="text-sm text-[#6e6e73] transition-colors hover:text-[#1d1d1f] dark:text-[#a1a1a6] dark:hover:text-white">
+                    <Link to={crumb.root} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
                       {t(crumb.section)}
                     </Link>
                   </BreadcrumbItem>
                   <BreadcrumbSeparator className="hidden md:block" />
                   <BreadcrumbItem>
-                    <BreadcrumbPage className="font-semibold text-[#1d1d1f] dark:text-white">{t(crumb.page)}</BreadcrumbPage>
+                    <BreadcrumbPage className="font-semibold text-foreground">{t(crumb.page)}</BreadcrumbPage>
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>
@@ -130,13 +130,13 @@ export default function AppShell() {
                   <Menu />
                   <span className="sr-only">{t('common.appTitle')}</span>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-60 rounded-[14px] border-[#d2d2d7] bg-white/95 p-2 shadow-lg backdrop-blur-xl dark:border-white/15 dark:bg-[#272729]/95">
+                <DropdownMenuContent align="end" className="w-60 rounded-[14px] border-border bg-popover/95 p-2 shadow-lg backdrop-blur-xl">
                   {navs.map((group, groupIndex) => (
                     <DropdownMenuGroup key={group.titleKey ?? group.items[0]?.to}>
                       {groupIndex > 0 && <DropdownMenuSeparator />}
                       {group.titleKey && <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-semibold tracking-wide text-[#6e6e73] dark:text-[#a1a1a6]">{t(group.titleKey)}</DropdownMenuLabel>}
                       {group.items.map(({ to, key, icon: Icon }) => (
-                        <DropdownMenuItem key={to} render={<Link to={to} />} className="min-h-10 rounded-[9px] text-[#1d1d1f] focus:bg-[#f5f5f7] focus:text-[#1d1d1f] dark:text-white dark:focus:bg-white/10 dark:focus:text-white">
+                  <DropdownMenuItem key={to} render={<Link to={to} />} className="min-h-10 rounded-[9px] text-foreground focus:bg-accent focus:text-accent-foreground">
                           <Icon className="size-4" />
                           {t(key)}
                         </DropdownMenuItem>
@@ -145,7 +145,7 @@ export default function AppShell() {
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <span className="hidden max-w-48 truncate text-sm text-[#6e6e73] xl:block dark:text-[#a1a1a6]">{me?.Email ?? ''}</span>
+              <span className="hidden max-w-48 truncate text-sm text-muted-foreground xl:block">{me?.Email ?? ''}</span>
               <ModeToggle />
               <div data-od-id="app-shell-language" className="inline-flex items-center gap-0.5 rounded-[10px] border border-[#d2d2d7]/80 bg-white/55 p-0.5 dark:border-white/15 dark:bg-white/5">
                 {LANGS.map(({ code, label }) => (
@@ -153,7 +153,7 @@ export default function AppShell() {
                     key={code}
                     size="sm"
                     variant="ghost"
-                    className={cn('h-8 min-w-9 rounded-[8px] px-2 text-xs', lang === code && 'bg-[#1d1d1f] text-white shadow-sm dark:bg-white dark:text-[#1d1d1f]')}
+                    className={cn('h-8 min-w-9 rounded-[8px] px-2 text-xs', lang === code && 'bg-foreground text-background shadow-sm')}
                     onClick={() => setLang(code)}
                   >
                     {label}
@@ -162,7 +162,7 @@ export default function AppShell() {
               </div>
             </div>
           </header>
-          <div data-od-id="app-shell-content" className="@container/main flex flex-col px-4 pb-6 pt-7 lg:px-8 lg:pb-8 lg:pt-9">
+          <div data-od-id="app-shell-content" className="@container/main flex flex-col bg-[color:var(--apple-tint)] px-4 pb-6 pt-7 lg:px-8 lg:pb-8 lg:pt-9">
             <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 md:gap-6">
               <motion.div key={location.pathname} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
                 <Outlet />
