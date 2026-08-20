@@ -265,12 +265,12 @@ export default function UserLogs() {
         </Card>
       ) : (
         <>
-        <Card className="overflow-hidden">
-          {/* 纵横向滚动均走 ScrollArea 自绘滚动条（深色模式统一观感） */}
-          <ScrollArea className="max-h-[calc(100vh-16rem)]" showHorizontal>
-          {/* overflow-x-visible 覆盖 Table 默认 overflow-x-auto（twMerge）：横向
-              滚动交由 ScrollArea viewport，避免嵌套滚动条 */}
-          <Table containerClassName="overflow-x-visible">
+        <Card className="bg-transparent border-0 shadow-none backdrop-blur-none p-0 gap-0">
+          {/* 玻璃与滚动分离：Card 透明化，玻璃与圆角由包裹表格的 ScrollArea 承载（单层边框）；
+              横竖滚动均由 ScrollArea 自绘滚动条承接，Table 去自身玻璃与横向滚动依赖，
+              避免 Card overflow-hidden 与 Table 横向滚动嵌套导致的裁切/贴边 */}
+          <ScrollArea className="max-h-[calc(100vh-16rem)] rounded-[14px] border border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] dark:border-[rgba(148,180,220,0.32)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)]" showHorizontal>
+          <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
             <TableHeader className="!bg-transparent">
               {/* 列顺序与管理端 logs.tsx 对齐：Key→model→format→statusCode(errors)→errorType→
                   errorMessage(errors)→Token(usage)→费用(usage)→耗时→计费档(errors) */}
