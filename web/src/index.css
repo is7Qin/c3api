@@ -1,4 +1,4 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
@@ -51,22 +51,30 @@
 }
 
 :root {
-    --background: #f5f5f7;
+    --dsw-alias-bg-base: #F4F8FD;
+    --glass-blur: 14px;
+    --glass-frost: 1;
+    /* Do not use color-mix with a calculated percentage here. The production
+       compiler emits an opaque fallback for that expression, turning every
+       table surface back into a solid panel in runtimes without that support. */
+    --glass-card-light: rgb(255 255 255 / 42%);
+    --glass-card-dark: rgb(34 38 47 / 42%);
+    --background: var(--dsw-alias-bg-base);
     --foreground: #1d1d1f;
-    --card: #ffffff;
+    --card: var(--glass-card-light);
     --card-foreground: #1d1d1f;
-    --popover: #ffffff;
+    --popover: var(--glass-card-light);
     --popover-foreground: #1d1d1f;
     --primary: #0071e3;
     --primary-foreground: #ffffff;
-    --secondary: #f5f5f7;
+    --secondary: color-mix(in srgb, rgb(255 255 255) 28%, transparent);
     --secondary-foreground: #1d1d1f;
-    --muted: #f5f5f7;
+    --muted: color-mix(in srgb, rgb(255 255 255) 18%, transparent);
     --muted-foreground: #6e6e73;
-    --accent: #f0f4ff;
+    --accent: color-mix(in srgb, #0071e3 8%, transparent);
     --accent-foreground: #1d1d1f;
     --destructive: #dc2626;
-    --border: #d2d2d7;
+    --border: rgba(19, 45, 83, 0.26);
     --input: #86868b;
     --ring: #0071e3;
     --chart-1: #0071e3;
@@ -77,50 +85,118 @@
     --apple-tint: color-mix(in srgb, #f0f4ff 6%, transparent);
     --apple-tint-strong: #f0f4ff;
     --radius: 0.625rem;
-    --sidebar: #ffffff;
+    --sidebar: var(--glass-card-light);
     --sidebar-foreground: #1d1d1f;
     --sidebar-primary: #0071e3;
     --sidebar-primary-foreground: #ffffff;
-    --sidebar-accent: #f0f4ff;
+    --sidebar-accent: var(--accent);
     --sidebar-accent-foreground: #1d1d1f;
-    --sidebar-border: #d2d2d7;
+    --sidebar-border: rgba(19, 45, 83, 0.26);
     --sidebar-ring: #0071e3;
 }
 
 .dark {
-    --background: #000000;
+    --dsw-alias-bg-base: #0C121B;
+    --background: var(--dsw-alias-bg-base);
     --foreground: #f5f5f7;
-    --card: #272729;
+    --card: var(--glass-card-dark);
     --card-foreground: #f5f5f7;
-    --popover: #272729;
+    --popover: var(--glass-card-dark);
     --popover-foreground: #f5f5f7;
-    --primary: #0071e3;
+    --primary: #2997ff;
     --primary-foreground: #ffffff;
-    --secondary: #272729;
+    --secondary: color-mix(in srgb, rgb(34 38 47) 42%, transparent);
     --secondary-foreground: #f5f5f7;
-    --muted: #272729;
-    --muted-foreground: #a1a1a6;
-    --accent: #303b52;
+    --muted: color-mix(in srgb, rgb(34 38 47) 28%, transparent);
+    --muted-foreground: #b8b8c0;
+    --accent: color-mix(in srgb, #2997ff 12%, transparent);
     --accent-foreground: #f5f5f7;
-    --destructive: #dc2626;
-    --border: #424245;
-    --input: #86868b;
+    --destructive: #ff453a;
+    --border: rgba(148, 180, 220, 0.32);
+    --input: #555560;
     --ring: #2997ff;
     --chart-1: #2997ff;
     --chart-2: #0071e3;
-    --chart-3: #a1a1a6;
+    --chart-3: #b8b8c0;
     --chart-4: #eab308;
-    --chart-5: #16a34a;
-    --apple-tint: color-mix(in srgb, #f0f4ff 9%, transparent);
-    --apple-tint-strong: #303b52;
-    --sidebar: #1d1d1f;
+    --chart-5: #30d158;
+    --apple-tint: color-mix(in srgb, #f0f4ff 6%, transparent);
+    --apple-tint-strong: var(--accent);
+    --sidebar: var(--glass-card-dark);
     --sidebar-foreground: #f5f5f7;
     --sidebar-primary: #2997ff;
     --sidebar-primary-foreground: #ffffff;
-    --sidebar-accent: #303b52;
+    --sidebar-accent: var(--accent);
     --sidebar-accent-foreground: #f5f5f7;
-    --sidebar-border: #424245;
+    --sidebar-border: rgba(148, 180, 220, 0.32);
     --sidebar-ring: #2997ff;
+}
+
+/* Glass Aqua ambient scene: the canvas stays behind transparent AppShell space,
+   while all operational surfaces retain their existing glass recipes. */
+html[data-glass] body {
+  background: var(--dsw-alias-bg-base);
+}
+
+html[data-glass] #root {
+  min-height: 100vh;
+}
+
+/* Legacy semantic surfaces inherit the same Glass mica as the updated Card
+   component. Keep muted utility fills opaque-ish for progress/status bars. */
+html[data-glass] [class~="bg-card"],
+html[data-glass] [class~="bg-popover"],
+html[data-glass] [class~="bg-secondary"],
+html[data-glass] [class~="bg-sidebar"] {
+  background: var(--glass-card-light) !important;
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+html[data-glass].dark [class~="bg-card"],
+html[data-glass].dark [class~="bg-popover"],
+html[data-glass].dark [class~="bg-secondary"],
+html[data-glass].dark [class~="bg-sidebar"] {
+  background: var(--glass-card-dark) !important;
+}
+
+/* Fluid ambient: WebGL 流体由 FluidCanvas 渲染，此处仅保留容器与呼吸动效 */
+
+html[data-glass] [data-glass-ambient] {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(760px 420px at 50% -8%, rgba(160, 200, 255, 0.26), transparent 70%),
+    linear-gradient(180deg, rgba(156, 193, 231, 0.22) 0%, rgba(156, 193, 231, 0) 38%),
+    radial-gradient(900px 420px at 50% 108%, rgba(156, 193, 231, 0.14), transparent 70%);
+}
+
+html[data-glass].dark [data-glass-ambient] {
+  background:
+    radial-gradient(760px 420px at 50% -8%, rgba(110, 165, 255, 0.13), transparent 70%),
+    linear-gradient(180deg, rgba(94, 143, 224, 0.13) 0%, rgba(94, 143, 224, 0) 46%),
+    radial-gradient(900px 420px at 50% 108%, rgba(94, 143, 224, 0.09), transparent 70%);
+}
+
+html[data-glass] [data-glass-fluid-canvas] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-glass] [data-glass-ambient] {
+    animation: glass-breathe 9s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes glass-breathe {
+  from { opacity: 0.86; }
+  to { opacity: 1; }
 }
 
 @layer base {

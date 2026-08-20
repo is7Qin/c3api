@@ -70,7 +70,7 @@ function Th({ className, ...props }: React.ComponentProps<typeof TableHead>) {
   return (
     <TableHead
       className={cn(
-        'sticky top-0 z-10 bg-background text-xs uppercase tracking-wider text-muted-foreground',
+        'sticky top-0 z-10 !bg-white/20 text-xs uppercase tracking-wider text-muted-foreground backdrop-blur-[var(--glass-blur)] dark:!bg-white/6',
         className
       )}
       {...props}
@@ -271,7 +271,7 @@ export default function UserLogs() {
           {/* overflow-x-visible 覆盖 Table 默认 overflow-x-auto（twMerge）：横向
               滚动交由 ScrollArea viewport，避免嵌套滚动条 */}
           <Table containerClassName="overflow-x-visible">
-            <TableHeader>
+            <TableHeader className="!bg-transparent">
               {/* 列顺序与管理端 logs.tsx 对齐：Key→model→format→statusCode(errors)→errorType→
                   errorMessage(errors)→Token(usage)→费用(usage)→耗时→计费档(errors) */}
               <TableRow>

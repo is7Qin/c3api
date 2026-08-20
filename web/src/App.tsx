@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
@@ -8,6 +8,7 @@ import { ApiClient, ApiUnauthorized } from '@/lib/api/client'
 import { ThemeProvider } from '@/components/theme-provider'
 import { userAuth } from '@/lib/auth'
 import { Toaster } from '@/components/ui/toast'
+import { FluidCanvas } from '@/components/fluid-canvas'
 import Home from '@/pages/home'
 import AppShell from '@/components/app-shell'
 import UserLogin from '@/pages/user/login'
@@ -114,6 +115,9 @@ const qc = new QueryClient({
 export default function App() {
   return (
     <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
+      <div data-glass-ambient aria-hidden="true">
+        <FluidCanvas />
+      </div>
       <QueryClientProvider client={qc}>
         <RouterProvider router={router} />
       </QueryClientProvider>

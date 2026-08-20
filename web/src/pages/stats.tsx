@@ -240,7 +240,7 @@ export default function Stats() {
       </Card>
 
       {/* 明细表 */}
-      <Card className="overflow-hidden">
+      <Card className="bg-transparent border-0 shadow-none backdrop-blur-none p-0">
         {isError ? (
           <p className="p-4 text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
         ) : (

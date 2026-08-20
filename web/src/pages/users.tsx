@@ -382,7 +382,7 @@ export default function Users() {
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg border bg-card">
+          <div className="overflow-hidden rounded-lg">
             <Table>
               <TableHeader>
                 <TableRow>

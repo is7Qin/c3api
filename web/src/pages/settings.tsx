@@ -29,12 +29,13 @@ const USD_KEYS = new Set(['default_user_balance', 'default_user_temp_balance'])
 const TIER_KEYS = new Set(['service_tier_policy_priority', 'service_tier_policy_flex', 'service_tier_policy_fast'])
 const TIER_VALUES = ['passthrough', 'strip', 'reject'] as const
 
-// 分组卡片：注册 / 新用户默认资源 / 价格同步 / 服务档位策略（固定顺序渲染）。
+// 分组卡片：注册 / 新用户默认资源 / 价格同步 / 服务档位策略 / 集群（固定顺序渲染）。
 const GROUPS: { id: string; keys: string[] }[] = [
   { id: 'signup', keys: ['signup_enabled'] },
   { id: 'defaults', keys: ['default_user_max_concurrency', 'default_user_balance', 'default_user_temp_balance', 'default_user_temp_balance_ttl_days'] },
   { id: 'pricingSync', keys: ['price_source_url', 'price_sync_cron'] },
   { id: 'tierPolicy', keys: ['service_tier_policy_priority', 'service_tier_policy_flex', 'service_tier_policy_fast'] },
+  { id: 'cluster', keys: ['cluster.instances'] },
 ]
 // 清单内全部键（兜底卡判定用——服务器新增键不在清单内时渲染到「其他设置」）。
 const GROUPED_KEYS = new Set(GROUPS.flatMap(g => g.keys))
@@ -148,7 +149,7 @@ function SettingRow({ setting }: { setting: Setting }) {
         onValueChange={v => { setDraft(v); doSave(v) }}
         disabled={save.isPending}
       >
-        <SelectTrigger className="w-44 bg-background" aria-label={t(`settings.labels.${key}`)}>
+        <SelectTrigger className="w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)]" aria-label={t(`settings.labels.${key}`)}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -162,7 +163,7 @@ function SettingRow({ setting }: { setting: Setting }) {
         type="number"
         min={0}
         step={isUsd ? 0.00001 : 1}
-        className="w-48 bg-background text-right tabular-nums"
+        className="w-48 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)] text-right tabular-nums"
         value={draft}
         onChange={e => { setDraft(e.target.value); setErr(null) }}
         onBlur={() => { if (draft !== current) doSave(submitValue()) }}
@@ -171,7 +172,7 @@ function SettingRow({ setting }: { setting: Setting }) {
     ) : (
       <Input
         type="text"
-        className="w-96 max-w-full bg-background"
+        className="w-96 max-w-full bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)]"
         value={draft}
         onChange={e => { setDraft(e.target.value); setErr(null) }}
         onKeyDown={onEnter}

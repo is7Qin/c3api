@@ -713,7 +713,7 @@ export default function PricingPage() {
             </motion.div>
           ) : (
             <>
-              <div className="overflow-hidden rounded-lg border bg-card">
+              <div className="overflow-hidden rounded-lg">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -815,7 +815,7 @@ export default function PricingPage() {
             </motion.div>
           ) : (
             <>
-              <div className="overflow-hidden rounded-lg border bg-card">
+              <div className="overflow-hidden rounded-lg">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -911,7 +911,7 @@ export default function PricingPage() {
             </motion.div>
           ) : (
             <>
-              <div className="overflow-hidden rounded-lg border bg-card">
+              <div className="overflow-hidden rounded-lg">
                 <Table>
                   <TableHeader>
                     <TableRow>

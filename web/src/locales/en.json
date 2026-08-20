@@ -921,7 +921,8 @@
       "signup": "Signup",
       "defaults": "New user defaults",
       "pricingSync": "Price sync",
-      "tierPolicy": "Service tier policy"
+      "tierPolicy": "Service tier policy",
+      "cluster": "Cluster"
     },
     "labels": {
       "signup_enabled": "Open signup",
@@ -933,7 +934,8 @@
       "price_sync_cron": "Price sync schedule",
       "service_tier_policy_priority": "Priority tier field policy",
       "service_tier_policy_flex": "Flex tier field policy",
-      "service_tier_policy_fast": "Fast tier field policy"
+      "service_tier_policy_fast": "Fast tier field policy",
+      "cluster.instances": "Cluster instances"
     },
     "descs": {
       "signup_enabled": "When off, the public signup channel stops accepting new users",
@@ -945,7 +947,8 @@
       "price_sync_cron": "Cron schedule for price sync",
       "service_tier_policy_priority": "How the priority tier field is handled when forwarding requests",
       "service_tier_policy_flex": "How the flex tier field is handled when forwarding requests",
-      "service_tier_policy_fast": "How the fast tier field is handled when forwarding requests"
+      "service_tier_policy_fast": "How the fast tier field is handled when forwarding requests",
+      "cluster.instances": "Number of cluster instances (budget sharing; must be consistent across instances)"
     },
     "policies": {
       "passthrough": "Pass through",

@@ -150,7 +150,7 @@ export default function UserRedemptions() {
 
       {/* 兑换记录表 */}
       <motion.div {...fadeUp} transition={{ duration: 0.25, delay: 0.1 }}>
-        <div className="overflow-hidden rounded-lg border bg-card">
+        <div className="overflow-hidden rounded-lg">
           {isError ? (
             <p className="p-4 text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
           ) : isLoading ? (

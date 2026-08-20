@@ -258,7 +258,7 @@ export default function RedemptionCodes() {
       </div>
 
       {/* 筛选工具栏（与 ListToolbar 同风格；本列表无名称搜索，仅 type/status 筛选） */}
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3">
         <Select items={filterTypeItems} value={typeFilter} onValueChange={changeType}>
           <SelectTrigger size="default" className="w-40" aria-label={t('redemptions.filterType')}>
             <SelectValue placeholder={t('redemptions.filterType')} />
@@ -315,7 +315,7 @@ export default function RedemptionCodes() {
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg border bg-card">
+          <div className="overflow-hidden rounded-lg">
             <Table>
               <TableHeader>
                 <TableRow>

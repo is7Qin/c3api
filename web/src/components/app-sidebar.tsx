@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
@@ -50,7 +50,7 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
         to={to}
         end={end}
         className={({ isActive }) =>
-          `group flex min-h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm font-medium transition-all duration-200 ${isActive ? 'bg-foreground text-background shadow-sm' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`
+          `group relative flex min-h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm font-medium transition-all duration-200 ${isActive ? 'bg-white text-[#1d1d1f] shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.06] dark:bg-white/[0.11] dark:text-white dark:ring-white/10 dark:shadow-none' : 'text-[#6e6e73] hover:bg-black/[0.04] hover:text-[#1d1d1f] dark:text-[#a1a1a6] dark:hover:bg-white/[0.07] dark:hover:text-white'}`
         }
       >
         <Icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-105" /> {t(key)}
@@ -58,9 +58,9 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
     ))
 
   return (
-    <aside data-od-id="app-sidebar" className="hidden w-[264px] shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex md:flex-col">
+    <aside data-od-id="app-sidebar" className="hidden w-[264px] shrink-0 border-r border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] text-[#1d1d1f] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] md:flex md:flex-col dark:border-[rgba(148,180,220,0.32)] dark:bg-[color:var(--glass-card-dark)] dark:text-[#f5f5f7] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)]">
       <div data-od-id="app-sidebar-brand" className="flex h-20 items-center gap-2 px-5">
-        <span className="flex size-7 items-center justify-center rounded-[9px] bg-foreground text-[11px] font-semibold text-background">GP</span>
+        <span className="flex size-7 items-center justify-center rounded-[9px] bg-[#1d1d1f] text-[11px] font-semibold text-white dark:bg-white/12 dark:text-white">GP</span>
         <span className="text-[17px] font-semibold tracking-tight" style={{ fontFamily: '"SF Pro Display", "Helvetica Neue", Helvetica, sans-serif' }}>{t('common.appTitle')}</span>
       </div>
       {/* 自定义滚动条（scroll-area：自绘 thumb，深色模式不再刺眼） */}
@@ -74,7 +74,7 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
                   type="button"
                   aria-expanded={!collapsed[group.titleKey]}
                   onClick={() => setCollapsed(prev => ({ ...prev, [group.titleKey!]: !prev[group.titleKey!] }))}
-                  className="flex h-8 w-full items-center justify-between rounded-[8px] px-3 text-[11px] font-semibold tracking-wide text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                  className="flex h-8 w-full items-center justify-between rounded-[8px] px-3 text-[11px] font-semibold tracking-wide text-[#6e6e73] transition-colors hover:bg-[#e8e8ed] hover:text-[#1d1d1f] dark:text-[#b8b8c0] dark:hover:bg-white/8 dark:hover:text-white"
                 >
                   {t(group.titleKey)}
                   <ChevronDown
@@ -90,14 +90,14 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
         ))}
         </nav>
       </ScrollArea>
-      <div className="border-t border-sidebar-border p-3">
+      <div className="border-t border-[rgba(19,45,83,0.18)] p-3 dark:border-[rgba(148,180,220,0.2)]">
         <DropdownMenu>
-          <DropdownMenuTrigger data-od-id="app-sidebar-account-menu" className="flex w-full items-center gap-2 rounded-[12px] p-2 transition-colors hover:bg-accent focus:bg-accent data-popup-open:bg-accent focus:outline-none">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground text-sm font-medium text-background">
+          <DropdownMenuTrigger data-od-id="app-sidebar-account-menu" className="flex w-full items-center gap-2 rounded-[12px] p-2 transition-colors hover:bg-[#e8e8ed] focus:bg-[#e8e8ed] data-popup-open:bg-[#e8e8ed] focus:outline-none dark:hover:bg-white/8 dark:focus:bg-white/8 dark:data-popup-open:bg-white/8">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#1d1d1f] text-sm font-medium text-white dark:bg-white/12 dark:text-white">
               {avatarInitial}
             </span>
-            <span className="min-w-0 flex-1 truncate text-left text-sm text-sidebar-foreground">{userEmail ?? ''}</span>
-            <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate text-left text-sm text-[#1d1d1f] dark:text-[#f5f5f7]">{userEmail ?? ''}</span>
+            <ChevronsUpDown className="h-4 w-4 shrink-0 text-[#86868b]" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="right" sideOffset={4} className="min-w-48">
             <div className="flex items-center gap-2 px-1.5 py-1.5 text-sm">

@@ -136,7 +136,7 @@ export default function Ops() {
               {snapshots.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">{t('ops.noSnapshots')}</p>
               ) : (
-                <div className="overflow-hidden rounded-lg border">
+                <div className="overflow-hidden rounded-lg">
                   <Table>
                     <TableHeader className="bg-muted">
                       <TableRow>

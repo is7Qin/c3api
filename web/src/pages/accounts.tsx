@@ -863,7 +863,7 @@ export default function Accounts() {
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg border bg-card">
+          <div className="overflow-hidden rounded-lg">
             <Table ref={tableRef}>
               <TableHeader>
                 <TableRow>

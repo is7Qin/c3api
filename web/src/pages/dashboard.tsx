@@ -340,7 +340,7 @@ export default function Dashboard() {
                       {t('dashboard.usersTopEmpty')}
                     </p>
                   ) : (
-                    <div className="overflow-hidden rounded-lg border">
+                    <div className="overflow-hidden rounded-lg">
                       <Table>
                         <TableHeader className="bg-muted">
                           <TableRow>
@@ -458,9 +458,9 @@ export default function Dashboard() {
                   <CardDescription>{t('dashboard.waterDesc', { cur: totalCur, max: totalMax })}</CardDescription>
                 </CardHeader>
                 <CardContent className="flex h-[320px] flex-col justify-center">
-                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div className="h-3 w-full overflow-hidden rounded-full bg-foreground/10 dark:bg-white/10 border border-foreground/5">
                     <motion.div
-                      className="h-full rounded-full bg-primary"
+                      className="h-full rounded-full bg-primary shadow-sm"
                       initial={{ width: 0 }}
                       animate={{ width: `${Math.max(water * 100, water > 0 ? 2 : 0)}%` }}
                       transition={{ duration: 0.5 }}
@@ -485,7 +485,7 @@ export default function Dashboard() {
                 {errData.length === 0 ? (
                   <p className="py-6 text-center text-sm text-muted-foreground">{t('dashboard.errTopEmpty')}</p>
                 ) : (
-                  <div className="overflow-hidden rounded-lg border">
+                  <div className="overflow-hidden rounded-lg">
                     <Table>
                       <TableHeader className="bg-muted">
                         <TableRow>

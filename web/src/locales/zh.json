@@ -921,7 +921,8 @@
       "signup": "注册",
       "defaults": "新用户默认资源",
       "pricingSync": "价格同步",
-      "tierPolicy": "服务档位策略"
+      "tierPolicy": "服务档位策略",
+      "cluster": "集群"
     },
     "labels": {
       "signup_enabled": "开放注册",
@@ -933,7 +934,8 @@
       "price_sync_cron": "价格同步计划",
       "service_tier_policy_priority": "优先档字段策略",
       "service_tier_policy_flex": "弹性档字段策略",
-      "service_tier_policy_fast": "快速挡位策略"
+      "service_tier_policy_fast": "快速挡位策略",
+      "cluster.instances": "集群实例数"
     },
     "descs": {
       "signup_enabled": "关闭后公开注册通道不再受理新用户",
@@ -945,7 +947,8 @@
       "price_sync_cron": "价格同步的定时计划（cron 表达式）",
       "service_tier_policy_priority": "优先档字段在转发请求时的处理方式",
       "service_tier_policy_flex": "弹性档字段在转发请求时的处理方式",
-      "service_tier_policy_fast": "快速挡位（fast）请求转发时字段的处理方式"
+      "service_tier_policy_fast": "快速挡位（fast）请求转发时字段的处理方式",
+      "cluster.instances": "集群实例数（多实例预算分摊；所有实例共识，需一致）"
     },
     "policies": {
       "passthrough": "透传",
