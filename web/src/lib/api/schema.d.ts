@@ -600,7 +600,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/auth/register": {
+    "/api/user/auth/register": {
         parameters: {
             query?: never;
             header?: never;
@@ -617,7 +617,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/auth/login": {
+    "/api/user/auth/login": {
         parameters: {
             query?: never;
             header?: never;
@@ -634,7 +634,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/auth/me": {
+    "/api/user/auth/me": {
         parameters: {
             query?: never;
             header?: never;
@@ -651,7 +651,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/auth/change-password": {
+    "/api/user/auth/change-password": {
         parameters: {
             query?: never;
             header?: never;
@@ -668,7 +668,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/groups": {
+    "/api/user/groups": {
         parameters: {
             query?: never;
             header?: never;
@@ -685,7 +685,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/keys": {
+    "/api/user/keys": {
         parameters: {
             query?: never;
             header?: never;
@@ -703,7 +703,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/keys/{id}": {
+    "/api/user/keys/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -724,7 +724,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/keys/{id}/rotate": {
+    "/api/user/keys/{id}/rotate": {
         parameters: {
             query?: never;
             header?: never;
@@ -743,7 +743,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/usage_logs": {
+    "/api/user/usage_logs": {
         parameters: {
             query?: never;
             header?: never;
@@ -760,7 +760,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/err_logs": {
+    "/api/user/err_logs": {
         parameters: {
             query?: never;
             header?: never;
@@ -777,7 +777,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/stats": {
+    "/api/user/stats": {
         parameters: {
             query?: never;
             header?: never;
@@ -794,7 +794,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/redemptions": {
+    "/api/user/redemptions": {
         parameters: {
             query?: never;
             header?: never;
@@ -812,7 +812,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/user/temp-balances": {
+    "/api/user/temp-balances": {
         parameters: {
             query?: never;
             header?: never;

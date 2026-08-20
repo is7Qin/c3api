@@ -531,55 +531,55 @@ type PostUserRedemptionsJSONRequestBody = RedeemRequest
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// 修改密码（旧密码校验复用登录语义——失败 401 同登录文案防枚举；新密码非空且 ≤72 字节，非法 400；不撤销既有 JWT，新密码下次登录生效）
-	// (POST /user/auth/change-password)
+	// (POST /api/user/auth/change-password)
 	PostUserAuthChangePassword(w http.ResponseWriter, r *http.Request)
 	// 登录（bcrypt 校验 → JWT）
-	// (POST /user/auth/login)
+	// (POST /api/user/auth/login)
 	PostUserAuthLogin(w http.ResponseWriter, r *http.Request)
 	// 当前用户信息（JWT）
-	// (GET /user/auth/me)
+	// (GET /api/user/auth/me)
 	GetUserAuthMe(w http.ResponseWriter, r *http.Request)
 	// 注册（signup_enabled 开关检查；注册即登录返回 JWT）
-	// (POST /user/auth/register)
+	// (POST /api/user/auth/register)
 	PostUserAuthRegister(w http.ResponseWriter, r *http.Request)
 	// 我的错误明细（err_logs 完整错误面：拒绝 + 异常双轨；强制 user_id = 当前用户，防越权）
-	// (GET /user/err_logs)
+	// (GET /api/user/err_logs)
 	GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams)
 	// 可选组列表（public 全部 + 已授予 private；只读，key 创建时选组）
-	// (GET /user/groups)
+	// (GET /api/user/groups)
 	GetUserGroups(w http.ResponseWriter, r *http.Request)
 	// 我的 key 列表（分页/排序；key 明文长期可查看/复制）
-	// (GET /user/keys)
+	// (GET /api/user/keys)
 	GetUserKeys(w http.ResponseWriter, r *http.Request, params GetUserKeysParams)
 	// 创建 key（组可选性校验：public 或已授予 private；明文长期回显）
-	// (POST /user/keys)
+	// (POST /api/user/keys)
 	PostUserKeys(w http.ResponseWriter, r *http.Request)
 	// 删除 key（仅本人；Auth 快照增量移除——立即失效）
-	// (DELETE /user/keys/{id})
+	// (DELETE /api/user/keys/{id})
 	DeleteUserKeysId(w http.ResponseWriter, r *http.Request, id int64)
 	// key 详情（仅本人；他人 key → 404）
-	// (GET /user/keys/{id})
+	// (GET /api/user/keys/{id})
 	GetUserKeysId(w http.ResponseWriter, r *http.Request, id int64)
 	// 更新 key（name/status/max_concurrency/quota；仅本人）
-	// (PUT /user/keys/{id})
+	// (PUT /api/user/keys/{id})
 	PutUserKeysId(w http.ResponseWriter, r *http.Request, id int64)
 	// 轮换 key（仅本人；新明文生效，旧 key 立即失效）
-	// (POST /user/keys/{id}/rotate)
+	// (POST /api/user/keys/{id}/rotate)
 	PostUserKeysIdRotate(w http.ResponseWriter, r *http.Request, id int64)
 	// 我的兑换记录（use 快照 + 码的 type/remark 联查；强制 user_id = 当前用户，防越权）
-	// (GET /user/redemptions)
+	// (GET /api/user/redemptions)
 	GetUserRedemptions(w http.ResponseWriter, r *http.Request, params GetUserRedemptionsParams)
 	// 兑换码（400 invalid code：不存在/失效/过期/用尽，统一不泄露细节；409 already redeemed 重复兑换）
-	// (POST /user/redemptions)
+	// (POST /api/user/redemptions)
 	PostUserRedemptions(w http.ResponseWriter, r *http.Request)
 	// 我的用量统计（强制 user_id = 当前用户）
-	// (GET /user/stats)
+	// (GET /api/user/stats)
 	GetUserStats(w http.ResponseWriter, r *http.Request, params GetUserStatsParams)
 	// 我的临时额度（仅有效额度：未过期且正余额，用尽/过期隐藏；expires_at 升序 FEFO 同序、永久最后；强制 user_id = 当前用户，无 user_id 参数防越权）
-	// (GET /user/temp-balances)
+	// (GET /api/user/temp-balances)
 	GetUserTempBalances(w http.ResponseWriter, r *http.Request)
 	// 我的用量明细（usage_logs 纯计费明细；强制 user_id = 当前用户，防越权；error_type 值域 none/abort）
-	// (GET /user/usage_logs)
+	// (GET /api/user/usage_logs)
 	GetUserUsageLogs(w http.ResponseWriter, r *http.Request, params GetUserUsageLogsParams)
 }
 
@@ -588,103 +588,103 @@ type ServerInterface interface {
 type Unimplemented struct{}
 
 // 修改密码（旧密码校验复用登录语义——失败 401 同登录文案防枚举；新密码非空且 ≤72 字节，非法 400；不撤销既有 JWT，新密码下次登录生效）
-// (POST /user/auth/change-password)
+// (POST /api/user/auth/change-password)
 func (_ Unimplemented) PostUserAuthChangePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 登录（bcrypt 校验 → JWT）
-// (POST /user/auth/login)
+// (POST /api/user/auth/login)
 func (_ Unimplemented) PostUserAuthLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 当前用户信息（JWT）
-// (GET /user/auth/me)
+// (GET /api/user/auth/me)
 func (_ Unimplemented) GetUserAuthMe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 注册（signup_enabled 开关检查；注册即登录返回 JWT）
-// (POST /user/auth/register)
+// (POST /api/user/auth/register)
 func (_ Unimplemented) PostUserAuthRegister(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 我的错误明细（err_logs 完整错误面：拒绝 + 异常双轨；强制 user_id = 当前用户，防越权）
-// (GET /user/err_logs)
+// (GET /api/user/err_logs)
 func (_ Unimplemented) GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 可选组列表（public 全部 + 已授予 private；只读，key 创建时选组）
-// (GET /user/groups)
+// (GET /api/user/groups)
 func (_ Unimplemented) GetUserGroups(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 我的 key 列表（分页/排序；key 明文长期可查看/复制）
-// (GET /user/keys)
+// (GET /api/user/keys)
 func (_ Unimplemented) GetUserKeys(w http.ResponseWriter, r *http.Request, params GetUserKeysParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 创建 key（组可选性校验：public 或已授予 private；明文长期回显）
-// (POST /user/keys)
+// (POST /api/user/keys)
 func (_ Unimplemented) PostUserKeys(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 删除 key（仅本人；Auth 快照增量移除——立即失效）
-// (DELETE /user/keys/{id})
+// (DELETE /api/user/keys/{id})
 func (_ Unimplemented) DeleteUserKeysId(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // key 详情（仅本人；他人 key → 404）
-// (GET /user/keys/{id})
+// (GET /api/user/keys/{id})
 func (_ Unimplemented) GetUserKeysId(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 更新 key（name/status/max_concurrency/quota；仅本人）
-// (PUT /user/keys/{id})
+// (PUT /api/user/keys/{id})
 func (_ Unimplemented) PutUserKeysId(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 轮换 key（仅本人；新明文生效，旧 key 立即失效）
-// (POST /user/keys/{id}/rotate)
+// (POST /api/user/keys/{id}/rotate)
 func (_ Unimplemented) PostUserKeysIdRotate(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 我的兑换记录（use 快照 + 码的 type/remark 联查；强制 user_id = 当前用户，防越权）
-// (GET /user/redemptions)
+// (GET /api/user/redemptions)
 func (_ Unimplemented) GetUserRedemptions(w http.ResponseWriter, r *http.Request, params GetUserRedemptionsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 兑换码（400 invalid code：不存在/失效/过期/用尽，统一不泄露细节；409 already redeemed 重复兑换）
-// (POST /user/redemptions)
+// (POST /api/user/redemptions)
 func (_ Unimplemented) PostUserRedemptions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 我的用量统计（强制 user_id = 当前用户）
-// (GET /user/stats)
+// (GET /api/user/stats)
 func (_ Unimplemented) GetUserStats(w http.ResponseWriter, r *http.Request, params GetUserStatsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 我的临时额度（仅有效额度：未过期且正余额，用尽/过期隐藏；expires_at 升序 FEFO 同序、永久最后；强制 user_id = 当前用户，无 user_id 参数防越权）
-// (GET /user/temp-balances)
+// (GET /api/user/temp-balances)
 func (_ Unimplemented) GetUserTempBalances(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // 我的用量明细（usage_logs 纯计费明细；强制 user_id = 当前用户，防越权；error_type 值域 none/abort）
-// (GET /user/usage_logs)
+// (GET /api/user/usage_logs)
 func (_ Unimplemented) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, params GetUserUsageLogsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
