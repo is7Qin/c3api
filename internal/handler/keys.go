@@ -12,7 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// 管理端密钥列表（/admin/keys，spec 2026-08-16）：全量视角（不限归属用户）+
+// 管理端密钥列表（/api/admin/keys，spec 2026-08-16）：全量视角（不限归属用户）+
 // name 模糊 / user_id / group_id 等值收窄 + sort 白名单 id/name/created_at。
 // 脱敏铁律（用户裁决）：AdminKey 响应 schema 无 key 明文字段——转换面必须
 // 剥掉 KeyRaw，密钥明文绝不下发管理端。

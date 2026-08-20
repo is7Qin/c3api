@@ -67,7 +67,7 @@ func TestAdminFlow(t *testing.T) {
 		return rec
 	}
 
-	rec := do(http.MethodPost, "/admin/templates", `{
+	rec := do(http.MethodPost, "/api/admin/templates", `{
 		"name":"openai-main","base_url":"https://api.openai.com",
 		"supported_formats":["openai-chat","openai-responses"],"models":["gpt-4o","o3"],
 		"format_models":{"openai-responses":["o3"]},
@@ -80,18 +80,18 @@ func TestAdminFlow(t *testing.T) {
 	require.Equal(t, credential.TypeAPIKey, tpl.CredentialType, "缺省 credential_type → 响应含默认 api_key")
 
 	// 非法 credential_type（未知值；合法值 codex-oauth/codex-pat 用连字符）→ 400
-	recBad := do(http.MethodPost, "/admin/templates", `{
+	recBad := do(http.MethodPost, "/api/admin/templates", `{
 		"name":"bad","base_url":"https://u","supported_formats":["openai-chat"],
 		"credential_type":"codex_oauth"}`)
 	require.Equal(t, 400, recBad.Code, "非法 credential_type 必须 400: %s", recBad.Body.String())
 
-	rec = do(http.MethodPost, "/admin/accounts", `{
+	rec = do(http.MethodPost, "/api/admin/accounts", `{
 		"name":"acc1","template_id":`+itoa(tpl.ID)+`,"upstream_key":"sk-x","weight":80,"max_concurrency":4}`)
 	require.Equal(t, 200, rec.Code, "create account: %s", rec.Body.String())
 	var acc domain.Account
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
 
-	rec = do(http.MethodPost, "/admin/groups", `{"name":"g1"}`)
+	rec = do(http.MethodPost, "/api/admin/groups", `{"name":"g1"}`)
 	require.Equal(t, 200, rec.Code, "create group: %s", rec.Body.String())
 	var groupResp domain.Group
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &groupResp))
@@ -99,24 +99,24 @@ func TestAdminFlow(t *testing.T) {
 	require.Equal(t, domain.GroupVisibilityPublic, groupResp.Visibility, "缺省 visibility = public")
 
 	// 账号侧绑定分组：PUT 账号 body 带 group_ids；回显经 GET /accounts/{id}/groups 核对。
-	rec = do(http.MethodPut, "/admin/accounts/"+itoa(acc.ID),
+	rec = do(http.MethodPut, "/api/admin/accounts/"+itoa(acc.ID),
 		`{"name":"acc1","template_id":`+itoa(tpl.ID)+`,"upstream_key":"sk-x","group_ids":[`+itoa(groupResp.ID)+`]}`)
 	require.Equal(t, 200, rec.Code, "account-side binding: %s", rec.Body.String())
-	rec = do(http.MethodGet, "/admin/accounts/"+itoa(acc.ID)+"/groups", "")
+	rec = do(http.MethodGet, "/api/admin/accounts/"+itoa(acc.ID)+"/groups", "")
 	require.Equal(t, 200, rec.Code, "get account groups: %s", rec.Body.String())
 	var accGroups AccountGroupsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &accGroups))
 	require.Equal(t, []int64{groupResp.ID}, accGroups.GroupIds, "账号分组回显")
 
-	// Phase 3a：rotate-key 端点已删除（key 轮换在用户面 /user/keys/{id}/rotate）→ 404
-	rec = do(http.MethodPost, "/admin/groups/"+itoa(groupResp.ID)+"/rotate-key", "")
+	// Phase 3a：rotate-key 端点已删除（key 轮换在用户面 /api/user/keys/{id}/rotate）→ 404
+	rec = do(http.MethodPost, "/api/admin/groups/"+itoa(groupResp.ID)+"/rotate-key", "")
 	require.Equal(t, 404, rec.Code, "rotate-key 端点已删除: %s", rec.Body.String())
 
-	rec = do(http.MethodGet, "/admin/stats?granularity=day", "")
+	rec = do(http.MethodGet, "/api/admin/stats?granularity=day", "")
 	require.Equal(t, 200, rec.Code, "stats: %s", rec.Body.String())
 
 	// 未认证 → 401
-	req := httptest.NewRequest(http.MethodGet, "/admin/templates", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/templates", nil)
 	rec2 := httptest.NewRecorder()
 	r.ServeHTTP(rec2, req)
 	require.Equal(t, 401, rec2.Code)
@@ -145,7 +145,7 @@ func TestAdminUpdateTemplateRoundTrip(t *testing.T) {
 		return rec
 	}
 
-	rec := do(http.MethodPost, "/admin/templates", `{
+	rec := do(http.MethodPost, "/api/admin/templates", `{
 		"name":"openai-main","base_url":"https://api.openai.com",
 		"supported_formats":["openai-chat","openai-responses"],"models":["gpt-4o","gpt-4o-mini","o3"],
 		"format_models":{"openai-responses":["o3"]},
@@ -157,7 +157,7 @@ func TestAdminUpdateTemplateRoundTrip(t *testing.T) {
 	// PUT 全量 snake_case body：字段必须全部生效（评审发现：原实现直接解码
 	// 无 tag 的 domain.Template，base_url/supported_formats/format_models/model_mapping
 	// 被丢弃 → 校验失败 400）。
-	rec = do(http.MethodPut, "/admin/templates/"+itoa(tpl.ID), `{
+	rec = do(http.MethodPut, "/api/admin/templates/"+itoa(tpl.ID), `{
 		"name":"openai-main-v2","base_url":"https://api.openai.com/v2",
 		"credential_type":"api_key",
 		"supported_formats":["openai-chat","anthropic"],"models":["gpt-4o","o3"],
@@ -175,7 +175,7 @@ func TestAdminUpdateTemplateRoundTrip(t *testing.T) {
 	require.Equal(t, "gpt-4o-2026-06-01", updated.ModelMapping["gpt-4o"], "model_mapping must round-trip")
 
 	// GET 确认已持久化
-	rec = do(http.MethodGet, "/admin/templates/"+itoa(tpl.ID), "")
+	rec = do(http.MethodGet, "/api/admin/templates/"+itoa(tpl.ID), "")
 	require.Equal(t, 200, rec.Code, "get: %s", rec.Body.String())
 	var got domain.Template
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
@@ -209,9 +209,9 @@ func TestParamBindErrorIsErrorResponse(t *testing.T) {
 	for _, tc := range []struct {
 		name, path string
 	}{
-		{"path param non-int", "/admin/templates/abc"},
-		{"query limit non-int", "/admin/usage_logs?limit=abc"},
-		{"query date invalid", "/admin/usage_logs?from=2026-13-01"},
+		{"path param non-int", "/api/admin/templates/abc"},
+		{"query limit non-int", "/api/admin/usage_logs?limit=abc"},
+		{"query date invalid", "/api/admin/usage_logs?from=2026-13-01"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := do(tc.path)
@@ -240,7 +240,7 @@ func TestGetUsageLogs(t *testing.T) {
 	})
 	r.Mount("/", h.Router())
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/usage_logs?from=2026-08-10T00:00:00Z&to=2026-08-10T23:59:59Z", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/usage_logs?from=2026-08-10T00:00:00Z&to=2026-08-10T23:59:59Z", nil)
 	req.Header.Set("Authorization", "Bearer admin-tok")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -266,7 +266,7 @@ func TestGetUsageLogsRequiresFromTo(t *testing.T) {
 	})
 	r.Mount("/", h.Router())
 
-	for _, path := range []string{"/admin/usage_logs", "/admin/usage_logs?from=2026-08-10T00:00:00Z", "/admin/usage_logs?to=2026-08-10T23:59:59Z"} {
+	for _, path := range []string{"/api/admin/usage_logs", "/api/admin/usage_logs?from=2026-08-10T00:00:00Z", "/api/admin/usage_logs?to=2026-08-10T23:59:59Z"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set("Authorization", "Bearer admin-tok")
 		rec := httptest.NewRecorder()
@@ -292,7 +292,7 @@ func TestGetErrLogsRequiresFromTo(t *testing.T) {
 	})
 	r.Mount("/", h.Router())
 
-	for _, path := range []string{"/admin/err_logs", "/admin/err_logs?from=2026-08-10T00:00:00Z", "/admin/err_logs?to=2026-08-10T23:59:59Z"} {
+	for _, path := range []string{"/api/admin/err_logs", "/api/admin/err_logs?from=2026-08-10T00:00:00Z", "/api/admin/err_logs?to=2026-08-10T23:59:59Z"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set("Authorization", "Bearer admin-tok")
 		rec := httptest.NewRecorder()
@@ -320,7 +320,7 @@ func TestGetErrLogs(t *testing.T) {
 	r.Mount("/", h.Router())
 
 	// 空库 → 空响应（from/to 必填；next_cursor 缺省 null）
-	req := httptest.NewRequest(http.MethodGet, "/admin/err_logs?from=2026-08-10T00:00:00Z&to=2026-08-10T23:59:59Z", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/err_logs?from=2026-08-10T00:00:00Z&to=2026-08-10T23:59:59Z", nil)
 	req.Header.Set("Authorization", "Bearer admin-tok")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -378,8 +378,8 @@ func TestGetLogsFilters(t *testing.T) {
 	store.mu.Unlock()
 	win := "from=2026-08-10T09:00:00Z&to=2026-08-10T15:00:00Z"
 
-	// --- /admin/usage_logs：model 过滤（精确匹配，与真实 repo ModelEQ 一致） ---
-	rec := doAdmin(http.MethodGet, "/admin/usage_logs?model=gpt-4o&"+win, "", "")
+	// --- /api/admin/usage_logs：model 过滤（精确匹配，与真实 repo ModelEQ 一致） ---
+	rec := doAdmin(http.MethodGet, "/api/admin/usage_logs?model=gpt-4o&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "model filter: %s", rec.Body.String())
 	var body LogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -389,7 +389,7 @@ func TestGetLogsFilters(t *testing.T) {
 	}
 
 	// error_type 过滤
-	rec = doAdmin(http.MethodGet, "/admin/usage_logs?error_type=429&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/usage_logs?error_type=429&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "error_type filter: %s", rec.Body.String())
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -399,7 +399,7 @@ func TestGetLogsFilters(t *testing.T) {
 	}
 
 	// format 过滤（usage 侧）：openai-chat → 行 1/2（与 model 同 AND 谓词语义）
-	rec = doAdmin(http.MethodGet, "/admin/usage_logs?format=openai-chat&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/usage_logs?format=openai-chat&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "format filter: %s", rec.Body.String())
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -409,21 +409,21 @@ func TestGetLogsFilters(t *testing.T) {
 	}
 
 	// format + model 组合过滤：openai-responses + o3 → 行 3/4
-	rec = doAdmin(http.MethodGet, "/admin/usage_logs?format=openai-responses&model=o3&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/usage_logs?format=openai-responses&model=o3&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "format+model filter: %s", rec.Body.String())
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Rows, 2, "format=openai-responses + model=o3 → 行 3/4: %s", rec.Body.String())
 
 	// 无效 format 值（契约不校验值域）→ 自然查空
-	rec = doAdmin(http.MethodGet, "/admin/usage_logs?format=no-such-format&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/usage_logs?format=no-such-format&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "invalid format: %s", rec.Body.String())
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Empty(t, body.Rows)
 
 	// key_id 过滤（管理面 /usage_logs 新增参数；与 user_id 同 AND 谓词）
-	rec = doAdmin(http.MethodGet, "/admin/usage_logs?key_id=72&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/usage_logs?key_id=72&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "key filter: %s", rec.Body.String())
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -433,7 +433,7 @@ func TestGetLogsFilters(t *testing.T) {
 
 	// 时间范围过滤（from 含、to 含——与真实 repo CreatedAtGTE/LTE 一致）
 	rec = doAdmin(http.MethodGet,
-		"/admin/usage_logs?from=2026-08-10T10:30:00Z&to=2026-08-10T12:00:00Z", "", "")
+		"/api/admin/usage_logs?from=2026-08-10T10:30:00Z&to=2026-08-10T12:00:00Z", "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "time range: %s", rec.Body.String())
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -443,7 +443,7 @@ func TestGetLogsFilters(t *testing.T) {
 
 	// keyset 游标分页：ID 降序全量 [4,3,2,1] → 首页 limit=2 → [4,3] +
 	// next_cursor=3；cursor=3 → 次页 [2,1] + next_cursor 缺省（探测 ≤ limit 行）
-	rec = doAdmin(http.MethodGet, "/admin/usage_logs?limit=2&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/usage_logs?limit=2&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "paging: %s", rec.Body.String())
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -453,7 +453,7 @@ func TestGetLogsFilters(t *testing.T) {
 	require.NotNil(t, body.NextCursor, "探测行存在 → next_cursor = 本页最后一条 id")
 	require.Equal(t, int64(3), *body.NextCursor)
 
-	rec = doAdmin(http.MethodGet, "/admin/usage_logs?limit=2&cursor=3&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/usage_logs?limit=2&cursor=3&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "paging: %s", rec.Body.String())
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -463,7 +463,7 @@ func TestGetLogsFilters(t *testing.T) {
 	require.Nil(t, body.NextCursor, "末页 ≤ limit 行 → next_cursor 缺省")
 
 	// 无匹配 → 空页 + next_cursor 缺省
-	rec = doAdmin(http.MethodGet, "/admin/usage_logs?model=no-such-model&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/usage_logs?model=no-such-model&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -471,14 +471,14 @@ func TestGetLogsFilters(t *testing.T) {
 	require.Nil(t, body.NextCursor)
 
 	// limit > 200 裁剪到 200（不 400）
-	rec = doAdmin(http.MethodGet, "/admin/usage_logs?limit=500&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/usage_logs?limit=500&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "limit clip: %s", rec.Body.String())
 	body = LogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Rows, 4, "裁剪后仍返回全部 4 行")
 
-	// --- /admin/err_logs：status_code 专属过滤（usage_logs 无此列） ---
-	rec = doAdmin(http.MethodGet, "/admin/err_logs?status_code=429&"+win, "", "")
+	// --- /api/admin/err_logs：status_code 专属过滤（usage_logs 无此列） ---
+	rec = doAdmin(http.MethodGet, "/api/admin/err_logs?status_code=429&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "status filter: %s", rec.Body.String())
 	var ebody ErrLogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ebody))
@@ -488,7 +488,7 @@ func TestGetLogsFilters(t *testing.T) {
 	}
 
 	// err_logs error_type 过滤 + 响应含 status_code 全值
-	rec = doAdmin(http.MethodGet, "/admin/err_logs?error_type=billing&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/err_logs?error_type=billing&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "err type filter: %s", rec.Body.String())
 	ebody = ErrLogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ebody))
@@ -498,7 +498,7 @@ func TestGetLogsFilters(t *testing.T) {
 	require.Equal(t, "o3", *ebody.Rows[0].Model)
 
 	// err_logs format 过滤：openai-chat → 行 1/2
-	rec = doAdmin(http.MethodGet, "/admin/err_logs?format=openai-chat&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/err_logs?format=openai-chat&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "err format filter: %s", rec.Body.String())
 	ebody = ErrLogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ebody))
@@ -508,7 +508,7 @@ func TestGetLogsFilters(t *testing.T) {
 	}
 
 	// key_id 过滤（管理面 /err_logs 新增参数）
-	rec = doAdmin(http.MethodGet, "/admin/err_logs?key_id=74&"+win, "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/err_logs?key_id=74&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "err key filter: %s", rec.Body.String())
 	ebody = ErrLogsResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ebody))
@@ -535,7 +535,7 @@ func TestGetUsageLogsLimitClip(t *testing.T) {
 	store.mu.Unlock()
 	win := "from=2026-08-10T10:00:00Z&to=2026-08-10T16:00:00Z" // 覆盖全部 201 行（12:00 起 +200min = 15:20）
 
-	rec := doAdmin(http.MethodGet, "/admin/usage_logs?limit=500&"+win, "", "")
+	rec := doAdmin(http.MethodGet, "/api/admin/usage_logs?limit=500&"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "limit clip: %s", rec.Body.String())
 	var body LogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -576,12 +576,12 @@ func newListTestRouter(t *testing.T) (*AdminAPI, http.Handler, func(method, path
 // （fake store 不筛选，参数不报错 + 结构正确即通过）。
 func TestGetTemplatesParams(t *testing.T) {
 	_, _, do := newListTestRouter(t)
-	rec := do(http.MethodPost, "/admin/templates", `{
+	rec := do(http.MethodPost, "/api/admin/templates", `{
 		"name":"openai-main","base_url":"https://api.openai.com",
 		"supported_formats":["openai-chat"],"models":["gpt-4o"]}`)
 	require.Equal(t, 200, rec.Code, "create: %s", rec.Body.String())
 
-	rec = do(http.MethodGet, "/admin/templates?limit=5&offset=0&name=openai&sort=name&order=asc", "")
+	rec = do(http.MethodGet, "/api/admin/templates?limit=5&offset=0&name=openai&sort=name&order=asc", "")
 	require.Equal(t, 200, rec.Code, "list: %s", rec.Body.String())
 	var body TemplateListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -594,15 +594,15 @@ func TestGetTemplatesParams(t *testing.T) {
 // （openapi status 是纯 string 不校验枚举，handler 必须显式校验）。
 func TestGetAccountsStatusMulti(t *testing.T) {
 	_, _, do := newListTestRouter(t)
-	rec := do(http.MethodPost, "/admin/templates", `{
+	rec := do(http.MethodPost, "/api/admin/templates", `{
 		"name":"openai-main","base_url":"https://api.openai.com",
 		"supported_formats":["openai-chat"]}`)
 	require.Equal(t, 200, rec.Code, "create template: %s", rec.Body.String())
-	rec = do(http.MethodPost, "/admin/accounts", `{
+	rec = do(http.MethodPost, "/api/admin/accounts", `{
 		"name":"acc1","template_id":1,"upstream_key":"sk-x","status":"active"}`)
 	require.Equal(t, 200, rec.Code, "create account: %s", rec.Body.String())
 
-	rec = do(http.MethodGet, "/admin/accounts?status=active,disabled&template_id=1", "")
+	rec = do(http.MethodGet, "/api/admin/accounts?status=active,disabled&template_id=1", "")
 	require.Equal(t, 200, rec.Code, "list: %s", rec.Body.String())
 	var body AccountListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -610,7 +610,7 @@ func TestGetAccountsStatusMulti(t *testing.T) {
 	require.Len(t, body.Rows, 1, "rows")
 
 	// 非法 status 枚举 → 400（handoff 硬性要求：不校验会落 repo 裸 error → 500）
-	rec = do(http.MethodGet, "/admin/accounts?status=bogus", "")
+	rec = do(http.MethodGet, "/api/admin/accounts?status=bogus", "")
 	require.Equal(t, 400, rec.Code, "invalid status: %s", rec.Body.String())
 	var errBody map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errBody))
@@ -620,7 +620,7 @@ func TestGetAccountsStatusMulti(t *testing.T) {
 // 非法 sort 值 → 400（service validateListQuery 白名单校验）。
 func TestGetGroupsSortInvalid(t *testing.T) {
 	_, _, do := newListTestRouter(t)
-	rec := do(http.MethodGet, "/admin/groups?sort=bogus", "")
+	rec := do(http.MethodGet, "/api/admin/groups?sort=bogus", "")
 	require.Equal(t, 400, rec.Code, "invalid sort: %s", rec.Body.String())
 	var errBody map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errBody))
@@ -632,19 +632,19 @@ func TestGetGroupsSortInvalid(t *testing.T) {
 func TestTemplateGroupConflict409(t *testing.T) {
 	_, _, do := newListTestRouter(t)
 
-	rec := do(http.MethodPost, "/admin/templates", `{
+	rec := do(http.MethodPost, "/api/admin/templates", `{
 		"name":"dup","base_url":"https://api.example.com","supported_formats":["openai-chat"]}`)
 	require.Equal(t, 200, rec.Code, "create template: %s", rec.Body.String())
 
-	rec = do(http.MethodPost, "/admin/templates", `{
+	rec = do(http.MethodPost, "/api/admin/templates", `{
 		"name":"dup","base_url":"https://api2.example.com","supported_formats":["openai-chat"]}`)
 	require.Equal(t, 409, rec.Code, "重复 name 创建模板必须 409: %s", rec.Body.String())
 	require.Contains(t, errMsg(t, rec), `name="dup"`, "409 消息含冲突详情")
 
-	rec = do(http.MethodPost, "/admin/groups", `{"name":"dup-g"}`)
+	rec = do(http.MethodPost, "/api/admin/groups", `{"name":"dup-g"}`)
 	require.Equal(t, 200, rec.Code, "create group: %s", rec.Body.String())
 
-	rec = do(http.MethodPost, "/admin/groups", `{"name":"dup-g"}`)
+	rec = do(http.MethodPost, "/api/admin/groups", `{"name":"dup-g"}`)
 	require.Equal(t, 409, rec.Code, "重复 name 创建分组必须 409: %s", rec.Body.String())
 	require.Contains(t, errMsg(t, rec), `name="dup-g"`, "409 消息含冲突详情")
 }
@@ -668,12 +668,12 @@ func TestSingleResourceMissingID(t *testing.T) {
 	for _, tc := range []struct {
 		method, path string
 	}{
-		{http.MethodGet, "/admin/templates/999"},
-		{http.MethodDelete, "/admin/templates/999"},
-		{http.MethodGet, "/admin/accounts/999"},
-		{http.MethodDelete, "/admin/accounts/999"},
-		{http.MethodGet, "/admin/groups/999"},
-		{http.MethodDelete, "/admin/groups/999"},
+		{http.MethodGet, "/api/admin/templates/999"},
+		{http.MethodDelete, "/api/admin/templates/999"},
+		{http.MethodGet, "/api/admin/accounts/999"},
+		{http.MethodDelete, "/api/admin/accounts/999"},
+		{http.MethodGet, "/api/admin/groups/999"},
+		{http.MethodDelete, "/api/admin/groups/999"},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			rec := do(tc.method, tc.path, "")

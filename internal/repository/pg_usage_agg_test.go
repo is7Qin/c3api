@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// TestPGScanUsageAgg 批量账号 usage_logs 区间聚合 roundtrip（/admin/accounts/
+// TestPGScanUsageAgg 批量账号 usage_logs 区间聚合 roundtrip（/api/admin/accounts/
 // usage 数据面 spec 2026-08-18）：多账号多行 SUM/COUNT 正确、raw 与 cost 分离
 // （乘倍率前 vs 计费成本）、无记录账号无键（补零由 service 层按 ids 组装）、
 // 时间过滤边界（created_at == from 含、== to 不含——半开区间）。

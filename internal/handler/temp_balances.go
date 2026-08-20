@@ -11,7 +11,7 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
-// 临时额度管理面（/admin/temp-balances，spec 2026-08-15）：全量视角分页列表
+// 临时额度管理面（/api/admin/temp-balances，spec 2026-08-15）：全量视角分页列表
 // （含过期/用尽/负扣减行——与用户侧"仅有效额度"视角分明）；amount 毫分 →
 // USD 在 handler/convert 边界换算（内部毫分不动）。
 

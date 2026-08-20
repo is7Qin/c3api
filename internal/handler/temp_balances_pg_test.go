@@ -27,7 +27,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// /admin/temp-balances 真实 PG 测试（spec 2026-08-15）：全量视角（含过期/
+// /api/admin/temp-balances 真实 PG 测试（spec 2026-08-15）：全量视角（含过期/
 // 用尽/负扣减行）+ user_id 筛选 + sort/order 白名单 + 分页 total + USD 换算。
 // 基座同 overview_pg_test.go：独立 schema + repository.New（本查询走 ent，
 // 无需 pool/分区表）。
@@ -144,7 +144,7 @@ func TestPGAdminTempBalances(t *testing.T) {
 
 	// 全量视角：两用户 4 行全可见（含过期/用尽）；默认 expires_at asc（FEFO
 	// 同序）→ 已过期(-1d) 先、永久最后；amount_usd = 毫分/1e5。
-	rec := do(http.MethodGet, "/admin/temp-balances", "")
+	rec := do(http.MethodGet, "/api/admin/temp-balances", "")
 	require.Equal(t, http.StatusOK, rec.Code, "list: %s", rec.Body.String())
 	var resp AdminTempBalancesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -158,7 +158,7 @@ func TestPGAdminTempBalances(t *testing.T) {
 	require.Equal(t, "redemption code", *resp.Rows[3].Note)
 
 	// user_id 筛选
-	rec = do(http.MethodGet, fmt.Sprintf("/admin/temp-balances?user_id=%d", u2), "")
+	rec = do(http.MethodGet, fmt.Sprintf("/api/admin/temp-balances?user_id=%d", u2), "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var filtered AdminTempBalancesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &filtered))
@@ -167,13 +167,13 @@ func TestPGAdminTempBalances(t *testing.T) {
 	require.Equal(t, u2, filtered.Rows[0].UserId)
 
 	// 分页：page_size=2 → 行集 2、total 恒 4；page=2 → 后两行
-	rec = do(http.MethodGet, "/admin/temp-balances?page=1&page_size=2", "")
+	rec = do(http.MethodGet, "/api/admin/temp-balances?page=1&page_size=2", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var p1 AdminTempBalancesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &p1))
 	require.Equal(t, int64(4), p1.Total, "total = 满足筛选总数，不分页裁剪")
 	require.Len(t, p1.Rows, 2)
-	rec = do(http.MethodGet, "/admin/temp-balances?page=2&page_size=2", "")
+	rec = do(http.MethodGet, "/api/admin/temp-balances?page=2&page_size=2", "")
 	var p2 AdminTempBalancesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &p2))
 	require.Equal(t, int64(4), p2.Total)
@@ -182,29 +182,29 @@ func TestPGAdminTempBalances(t *testing.T) {
 	require.Nil(t, p2.Rows[1].ExpiresAt, "第 2 页末行 = 永久行（FEFO 序最后）")
 
 	// sort=amount desc + order=desc（显式）
-	rec = do(http.MethodGet, "/admin/temp-balances?sort=amount&order=desc", "")
+	rec = do(http.MethodGet, "/api/admin/temp-balances?sort=amount&order=desc", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var byAmount AdminTempBalancesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &byAmount))
 	require.Equal(t, float64(3.0), byAmount.Rows[0].AmountUsd, "amount desc 最大在前")
 
 	// sort=created_at 白名单键可用（order=asc 显式）
-	rec = do(http.MethodGet, "/admin/temp-balances?sort=created_at&order=asc", "")
+	rec = do(http.MethodGet, "/api/admin/temp-balances?sort=created_at&order=asc", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	// 非法输入 → 400：sort 白名单外 / order 非法 / page_size 越界
 	for _, path := range []string{
-		"/admin/temp-balances?sort=id",
-		"/admin/temp-balances?sort=amount&order=sideways",
-		"/admin/temp-balances?page_size=0",
-		"/admin/temp-balances?page_size=1001",
+		"/api/admin/temp-balances?sort=id",
+		"/api/admin/temp-balances?sort=amount&order=sideways",
+		"/api/admin/temp-balances?page_size=0",
+		"/api/admin/temp-balances?page_size=1001",
 	} {
 		rec = do(http.MethodGet, path, "")
 		require.Equal(t, http.StatusBadRequest, rec.Code, "%s: %s", path, rec.Body.String())
 	}
 
 	// 空结果（不存在的 user_id 筛选）：total 0 + 空数组（非 null）
-	rec = do(http.MethodGet, "/admin/temp-balances?user_id=999999", "")
+	rec = do(http.MethodGet, "/api/admin/temp-balances?user_id=999999", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var empty AdminTempBalancesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &empty))

@@ -54,7 +54,7 @@ func (s *Service) AccountUsage(ctx context.Context, accountID int64) (*domain.Co
 	return s.usageSnapshots.GetUsageSnapshot(ctx, &cred)
 }
 
-// AccountsUsage 账号 usage 批量视图（/admin/accounts/usage 查询面——统一
+// AccountsUsage 账号 usage 批量视图（/api/admin/accounts/usage 查询面——统一
 // usage API spec 2026-08-18）：repo 单查询聚合 + 按 ids 顺序组装全量 items
 // （无记录账号补零——gateway 全 0，前端免补零）+ upstream 装配（task 3
 // AccountUsage：api-key 无凭据 → nil 快照/nil 标记；codex 成功 → 快照/nil；

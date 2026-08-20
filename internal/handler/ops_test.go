@@ -30,7 +30,7 @@ type typedStats struct {
 
 // TestGetOpsWorkersResponse 响应 typed struct：workers 条目名称 + stats 透传
 // （struct → JSON → map roundtrip）、snapshots 区、generated_at。路由走契约
-// chi-server（BaseURL /admin → /admin/ops/workers）。
+// chi-server（BaseURL /admin → /api/admin/ops/workers）。
 func TestGetOpsWorkersResponse(t *testing.T) {
 	h := New(nil, OpsOptions{
 		Workers: []StatsProvider{
@@ -41,7 +41,7 @@ func TestGetOpsWorkersResponse(t *testing.T) {
 			return []SnapshotState{{Name: "auth", Scopes: &[]string{"settings"}, LastReload: time.Now().UTC()}}
 		},
 	})
-	req := httptest.NewRequest(http.MethodGet, "/admin/ops/workers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
 	rec := httptest.NewRecorder()
 	h.Router().ServeHTTP(rec, req)
 	require.Equal(t, 200, rec.Code)
@@ -66,7 +66,7 @@ func TestGetOpsWorkersResponse(t *testing.T) {
 // required 字段，JSON 不得缺省）；零值 OpsOptions（未 WithOps）→ 空 workers。
 func TestGetOpsWorkersNoSnapshots(t *testing.T) {
 	h := New(nil)
-	req := httptest.NewRequest(http.MethodGet, "/admin/ops/workers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
 	rec := httptest.NewRecorder()
 	h.Router().ServeHTTP(rec, req)
 	require.Equal(t, 200, rec.Code)

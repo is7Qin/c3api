@@ -69,7 +69,7 @@ type RedemptionUse struct {
 	CreatedAt         time.Time
 }
 
-// RedemptionApply 兑换成功回执（/user/redemptions POST 响应体）。
+// RedemptionApply 兑换成功回执（/api/user/redemptions POST 响应体）。
 // ResourceExpiresAt = 兑换后资源到期（temp_balance 必有；balance/concurrency 恒 nil）。
 type RedemptionApply struct {
 	Type              RedemptionType
@@ -77,7 +77,7 @@ type RedemptionApply struct {
 	ResourceExpiresAt *time.Time
 }
 
-// RedemptionRecord 我的兑换记录（/user/redemptions GET 行）：use 快照 + 码的
+// RedemptionRecord 我的兑换记录（/api/user/redemptions GET 行）：use 快照 + 码的
 // type/remark 联查（use 行不存码类型；码生成后 type/remark 不可变，失效不影响）。
 type RedemptionRecord struct {
 	ID                int64

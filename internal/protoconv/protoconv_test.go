@@ -61,7 +61,7 @@ func TestConvertRequestChatToResp(t *testing.T) {
 	require.NotContains(t, m, "frequency_penalty", "resp 无 frequency_penalty，按规范丢弃")
 
 	input := arrOf(t, m, "input")
-	require.Len(t, input, 5, "system/user/assistant 各一消息项 + assistant tool_calls 独立 function_call 项 + tool 消息")
+	require.Len(t, input, 5, "system/api/user/assistant 各一消息项 + assistant tool_calls 独立 function_call 项 + tool 消息")
 	sys := input[0].(map[string]any)
 	require.Equal(t, "developer", sys["role"], "system → developer")
 	user := input[1].(map[string]any)

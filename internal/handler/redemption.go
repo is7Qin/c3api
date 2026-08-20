@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// 兑换码管理面（/admin/redemption-codes）：生成/列表/审计/失效。
+// 兑换码管理面（/api/admin/redemption-codes）：生成/列表/审计/失效。
 // 生成参数校验在 service 层（validateGenerateRequest），handler 只做 JSON 解码
 // 与 created_by 注入（决策 5：JWT 路径 context 有 UserID；静态 admin token → 0）。
 

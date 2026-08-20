@@ -103,7 +103,7 @@ var (
 		"user_id": redemptionuse.FieldUserID, "value": redemptionuse.FieldValue,
 		"created_at": redemptionuse.FieldCreatedAt,
 	}
-	// tempBalanceSortFields /admin/temp-balances sort 白名单（spec 2026-08-15：
+	// tempBalanceSortFields /api/admin/temp-balances sort 白名单（spec 2026-08-15：
 	// 仅 expires_at/amount/created_at 三键——默认 expires_at asc 由 handler 显式
 	// 设置，不走 sortOrder 的 id 缺省）。
 	tempBalanceSortFields = map[string]string{

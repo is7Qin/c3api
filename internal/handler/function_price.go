@@ -12,9 +12,9 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// 按单元计费功能类价格管理面（/admin/function-prices）：列表 / 手动设价 /
+// 按单元计费功能类价格管理面（/api/admin/function-prices）：列表 / 手动设价 /
 // 删除手动价（价格表三件套；search 起，audio/video 等未来 per-unit 端点复用）。
-// 与 /admin/image-price 同形态，仅价格单位不同（USD/次 → 毫分/次，见换算函数
+// 与 /api/admin/image-price 同形态，仅价格单位不同（USD/次 → 毫分/次，见换算函数
 // 注释）；PUT/DELETE 的 model 走 query 参数（生成契约签名 params.Model——模型名
 // 可含 `/`，同 /pricing 不入路径）；错误映射走 httpface.WriteServiceErr（ErrNotFound →
 // 404、ErrConflict → 409、ErrInvalidInput → 400——含"price_per_call 必填"校验）。

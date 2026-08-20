@@ -6,7 +6,7 @@ package domain
 
 import "time"
 
-// TempBalance 临时额度行（只读查询面：/user/temp-balances + /admin/temp-balances）。
+// TempBalance 临时额度行（只读查询面：/api/user/temp-balances + /api/admin/temp-balances）。
 // 写面仅 CreateTempBalance（标量参数）；扣费走 FEFO 条件更新不经过本类型。
 type TempBalance struct {
 	ID        int64

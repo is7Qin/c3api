@@ -11,7 +11,7 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
-// GET /admin/ops/workers 运维观测端点（spec 2026-08-11；用户裁决并入管理面）：
+// GET /api/admin/ops/workers 运维观测端点（spec 2026-08-11；用户裁决并入管理面）：
 // 按需聚合各 worker 可观测状态。采集纪律：原子读既有计数器 + len(channel)
 // （零锁零分配，O(1)）；不做持续采集/推送/存储；鉴权走 /admin 组 adminAuth。
 //
@@ -37,15 +37,15 @@ type StatsProvider interface {
 	Stats() any
 }
 
-// OpsOptions GET /admin/ops/workers 装配参数（New 变参注入；零值 = 端点返回空）。
+// OpsOptions GET /api/admin/ops/workers 装配参数（New 变参注入；零值 = 端点返回空）。
 type OpsOptions struct {
 	Workers   []StatsProvider
 	Snapshots func() []SnapshotState // nil = 快照区返回空
-	// InFlightUsers 实时在途并发快照提供面（/admin/users-top；实现 =
+	// InFlightUsers 实时在途并发快照提供面（/api/admin/users-top；实现 =
 	// proxy.Auth.InFlightUsers——门禁快照只读访问器，零锁冷面。nil = 未装配 →
 	// 端点返回空列表）。
 	InFlightUsers func() map[int64]int64
-	// BillingAlerts 计费告警面（/admin/overview alerts 段；实现 = billing
+	// BillingAlerts 计费告警面（/api/admin/overview alerts 段；实现 = billing
 	// flusher 直读 PendingLogs/PendingWaterline/Warned。nil = 未装配 →
 	// alerts 全零）。
 	BillingAlerts func() BillingAlerts

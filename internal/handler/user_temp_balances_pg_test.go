@@ -26,7 +26,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// /user/temp-balances + /user/auth/change-password 真实 PG 测试（spec
+// /api/user/temp-balances + /api/user/auth/change-password 真实 PG 测试（spec
 // 2026-08-15）：有效过滤/FEFO 排序/total USD/越权回归/空结果；改密码
 // 登录语义校验 + 新密码校验 + 更新后旧密登录失败新密成功。
 
@@ -75,7 +75,7 @@ func newUserTempPGRouter(t *testing.T) (*repository.Repository, func(method, pat
 // registerPGUser 经注册端点建用户，返回 (JWT, 用户 id)。
 func registerPGUser(t *testing.T, do func(method, path, body, token string) *httptest.ResponseRecorder, email, password string) (string, int64) {
 	t.Helper()
-	rec := do(http.MethodPost, "/user/auth/register",
+	rec := do(http.MethodPost, "/api/user/auth/register",
 		fmt.Sprintf(`{"email":%q,"password":%q}`, email, password), "")
 	require.Equal(t, http.StatusOK, rec.Code, "register: %s", rec.Body.String())
 	var resp userapi.UserAuthResponse
@@ -109,7 +109,7 @@ func TestPGUserTempBalances(t *testing.T) {
 		require.NoError(t, repos.CreateTempBalance(ctx, uid, r.amount, r.expiresAt, r.note))
 	}
 
-	rec := do(http.MethodGet, "/user/temp-balances", "", token)
+	rec := do(http.MethodGet, "/api/user/temp-balances", "", token)
 	require.Equal(t, http.StatusOK, rec.Code, "list: %s", rec.Body.String())
 	var resp userapi.TempBalancesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -126,7 +126,7 @@ func TestPGUserTempBalances(t *testing.T) {
 	require.NotNil(t, resp.Rows[1].ExpiresAt)
 
 	// 越权回归：契约无 user_id 参数——query 带他人 user_id 被忽略（仍返回本人数据）
-	rec = do(http.MethodGet, "/user/temp-balances?user_id=999999", "", token)
+	rec = do(http.MethodGet, "/api/user/temp-balances?user_id=999999", "", token)
 	require.Equal(t, http.StatusOK, rec.Code, "user_id 参数无效（忽略）: %s", rec.Body.String())
 	var again userapi.TempBalancesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &again))
@@ -134,7 +134,7 @@ func TestPGUserTempBalances(t *testing.T) {
 
 	// 空结果（另一用户无有效额度）：total_usd 0 + rows 空数组（不 404、非 null）
 	registerPGUser(t, do, "tbuser2@example.com", "s3cret-pass")
-	rec = do(http.MethodGet, "/user/temp-balances", "", token2For(t, do, "tbuser2@example.com", "s3cret-pass"))
+	rec = do(http.MethodGet, "/api/user/temp-balances", "", token2For(t, do, "tbuser2@example.com", "s3cret-pass"))
 	require.Equal(t, http.StatusOK, rec.Code)
 	var empty userapi.TempBalancesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &empty))
@@ -143,14 +143,14 @@ func TestPGUserTempBalances(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"rows":[]`, "rows 序列化为空数组而非 null")
 
 	// 无 token → 401
-	rec = do(http.MethodGet, "/user/temp-balances", "", "")
+	rec = do(http.MethodGet, "/api/user/temp-balances", "", "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 // token2For 二次登录取 JWT（空结果断言用第二个用户）。
 func token2For(t *testing.T, do func(method, path, body, token string) *httptest.ResponseRecorder, email, password string) string {
 	t.Helper()
-	rec := do(http.MethodPost, "/user/auth/login", fmt.Sprintf(`{"email":%q,"password":%q}`, email, password), "")
+	rec := do(http.MethodPost, "/api/user/auth/login", fmt.Sprintf(`{"email":%q,"password":%q}`, email, password), "")
 	require.Equal(t, http.StatusOK, rec.Code, "login: %s", rec.Body.String())
 	var resp userapi.UserAuthResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -165,20 +165,20 @@ func TestPGUserChangePassword(t *testing.T) {
 	token, uid := registerPGUser(t, do, "cp@example.com", "old-pass-1")
 
 	// 旧密错误 → 401（同登录文案防枚举）
-	rec := do(http.MethodPost, "/user/auth/change-password",
+	rec := do(http.MethodPost, "/api/user/auth/change-password",
 		`{"old_password":"wrong-pass","new_password":"new-pass-1"}`, token)
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "wrong old: %s", rec.Body.String())
 
 	// 新密空 → 400；新密超长（73 字节）→ 400
-	rec = do(http.MethodPost, "/user/auth/change-password",
+	rec = do(http.MethodPost, "/api/user/auth/change-password",
 		`{"old_password":"old-pass-1","new_password":""}`, token)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "empty new: %s", rec.Body.String())
-	rec = do(http.MethodPost, "/user/auth/change-password",
+	rec = do(http.MethodPost, "/api/user/auth/change-password",
 		`{"old_password":"old-pass-1","new_password":"`+strings.Repeat("a", 73)+`"}`, token)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "long new: %s", rec.Body.String())
 
 	// 正确修改 → 200 {"updated": true}
-	rec = do(http.MethodPost, "/user/auth/change-password",
+	rec = do(http.MethodPost, "/api/user/auth/change-password",
 		`{"old_password":"old-pass-1","new_password":"new-pass-1"}`, token)
 	require.Equal(t, http.StatusOK, rec.Code, "change: %s", rec.Body.String())
 	var chg userapi.ChangePasswordResponse
@@ -186,14 +186,14 @@ func TestPGUserChangePassword(t *testing.T) {
 	require.True(t, chg.Updated)
 
 	// 更新后：旧密登录 401、新密登录 200
-	rec = do(http.MethodPost, "/user/auth/login", `{"email":"cp@example.com","password":"old-pass-1"}`, "")
+	rec = do(http.MethodPost, "/api/user/auth/login", `{"email":"cp@example.com","password":"old-pass-1"}`, "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "old password login must fail: %s", rec.Body.String())
-	rec = do(http.MethodPost, "/user/auth/login", `{"email":"cp@example.com","password":"new-pass-1"}`, "")
+	rec = do(http.MethodPost, "/api/user/auth/login", `{"email":"cp@example.com","password":"new-pass-1"}`, "")
 	require.Equal(t, http.StatusOK, rec.Code, "new password login: %s", rec.Body.String())
 
 	// 既有 JWT 不撤销（无状态 token 无撤销机制——新密码下次登录生效）：
-	// 改密前的 token 仍可用 /user/auth/me
-	rec = do(http.MethodGet, "/user/auth/me", "", token)
+	// 改密前的 token 仍可用 /api/user/auth/me
+	rec = do(http.MethodGet, "/api/user/auth/me", "", token)
 	require.Equal(t, http.StatusOK, rec.Code, "old token still valid: %s", rec.Body.String())
 	require.Equal(t, uid, *mustMe(t, rec).ID)
 
@@ -203,7 +203,7 @@ func TestPGUserChangePassword(t *testing.T) {
 	require.NotEqual(t, "old-pass-1", u.PasswordHash, "hash 落库")
 }
 
-// mustMe 解析 /user/auth/me 响应（改密后旧 token 仍可用断言）。
+// mustMe 解析 /api/user/auth/me 响应（改密后旧 token 仍可用断言）。
 func mustMe(t *testing.T, rec *httptest.ResponseRecorder) *userapi.User {
 	t.Helper()
 	var me userapi.User

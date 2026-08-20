@@ -59,7 +59,7 @@ func TestUserRegisterLoginMe(t *testing.T) {
 
 	// 注册成功（注册即登录：返回 JWT + 用户）。空表首个注册 = platform_admin
 	// （bootstrap，spec 2026-08-15）；后续注册恒为普通 user。
-	rec := do(http.MethodPost, "/user/auth/register", `{"email":"new@example.com","password":"s3cret-pass"}`, "")
+	rec := do(http.MethodPost, "/api/user/auth/register", `{"email":"new@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusOK, rec.Code, "register: %s", rec.Body.String())
 	var resp userapi.UserAuthResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -68,44 +68,44 @@ func TestUserRegisterLoginMe(t *testing.T) {
 	require.Equal(t, userapi.UserRole("platform_admin"), *resp.User.Role, "空表首个注册 = platform_admin")
 
 	// 第二个注册 → 普通 user（bootstrap 之后恒 user）
-	rec = do(http.MethodPost, "/user/auth/register", `{"email":"second@example.com","password":"s3cret-pass"}`, "")
+	rec = do(http.MethodPost, "/api/user/auth/register", `{"email":"second@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusOK, rec.Code, "second register: %s", rec.Body.String())
 	var resp2 userapi.UserAuthResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp2))
 	require.Equal(t, userapi.UserRole("user"), *resp2.User.Role, "非空表注册恒为普通 user")
 
 	// me（注册返回的 JWT 直接可用）
-	rec = do(http.MethodGet, "/user/auth/me", "", resp.Token)
+	rec = do(http.MethodGet, "/api/user/auth/me", "", resp.Token)
 	require.Equal(t, http.StatusOK, rec.Code, "me: %s", rec.Body.String())
 	var me userapi.User
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &me))
 	require.Equal(t, "new@example.com", *me.Email)
 
 	// me 无 token → 401
-	rec = do(http.MethodGet, "/user/auth/me", "", "")
+	rec = do(http.MethodGet, "/api/user/auth/me", "", "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 
 	// 重复注册 → 409
-	rec = do(http.MethodPost, "/user/auth/register", `{"email":"new@example.com","password":"s3cret-pass"}`, "")
+	rec = do(http.MethodPost, "/api/user/auth/register", `{"email":"new@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusConflict, rec.Code, "dup register: %s", rec.Body.String())
 
 	// 登录成功
-	rec = do(http.MethodPost, "/user/auth/login", `{"email":"new@example.com","password":"s3cret-pass"}`, "")
+	rec = do(http.MethodPost, "/api/user/auth/login", `{"email":"new@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusOK, rec.Code, "login: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.NotEmpty(t, resp.Token)
 
 	// 口令错误 → 401
-	rec = do(http.MethodPost, "/user/auth/login", `{"email":"new@example.com","password":"wrong"}`, "")
+	rec = do(http.MethodPost, "/api/user/auth/login", `{"email":"new@example.com","password":"wrong"}`, "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 
 	// 邮箱格式非法 → 400
-	rec = do(http.MethodPost, "/user/auth/register", `{"email":"not-an-email","password":"s3cret-pass"}`, "")
+	rec = do(http.MethodPost, "/api/user/auth/register", `{"email":"not-an-email","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusBadRequest, rec.Code, "bad email: %s", rec.Body.String())
 
 	// 密码超长（>72 字节）→ 400
 	longPass := strings.Repeat("a", 73)
-	rec = do(http.MethodPost, "/user/auth/register", `{"email":"long@example.com","password":"`+longPass+`"}`, "")
+	rec = do(http.MethodPost, "/api/user/auth/register", `{"email":"long@example.com","password":"`+longPass+`"}`, "")
 	require.Equal(t, http.StatusBadRequest, rec.Code, "long password: %s", rec.Body.String())
 }
 
@@ -114,27 +114,27 @@ func TestUserRegisterSignupDisabled(t *testing.T) {
 	do, _, _, svc := newTestUserRouter(t)
 	_, err := svc.UpdateSetting(t.Context(), "signup_enabled", "false")
 	require.NoError(t, err)
-	rec := do(http.MethodPost, "/user/auth/register", `{"email":"x@example.com","password":"s3cret-pass"}`, "")
+	rec := do(http.MethodPost, "/api/user/auth/register", `{"email":"x@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusForbidden, rec.Code, "signup disabled: %s", rec.Body.String())
 }
 
 // 禁用用户登录 → 401（与口令错误同文案，防枚举）。
 func TestUserLoginDisabled(t *testing.T) {
 	do, store, iss, _ := newTestUserRouter(t)
-	rec := do(http.MethodPost, "/user/auth/register", `{"email":"d@example.com","password":"s3cret-pass"}`, "")
+	rec := do(http.MethodPost, "/api/user/auth/register", `{"email":"d@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, 200, rec.Code)
 	u, err := store.GetUserByEmail(t.Context(), "d@example.com")
 	require.NoError(t, err)
 	st := domain.UserStatusDisabled
 	_, err = store.UpdateUser(t.Context(), &repository.UserPatch{ID: u.ID, Status: &st})
 	require.NoError(t, err)
-	rec = do(http.MethodPost, "/user/auth/login", `{"email":"d@example.com","password":"s3cret-pass"}`, "")
+	rec = do(http.MethodPost, "/api/user/auth/login", `{"email":"d@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "disabled login: %s", rec.Body.String())
 
 	// 禁用用户的既有 JWT → me 401（快照校验）
 	token, err := iss.Issue(u.ID, u.Email, string(u.Role))
 	require.NoError(t, err)
-	rec = do(http.MethodGet, "/user/auth/me", "", token)
+	rec = do(http.MethodGet, "/api/user/auth/me", "", token)
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "disabled me: %s", rec.Body.String())
 }
 
@@ -144,7 +144,7 @@ func TestAdminSettings(t *testing.T) {
 	_, _, do := newListTestRouter(t)
 
 	// GET：全部默认值（注册表逐项）
-	rec := do(http.MethodGet, "/admin/settings", "")
+	rec := do(http.MethodGet, "/api/admin/settings", "")
 	require.Equal(t, http.StatusOK, rec.Code, "get: %s", rec.Body.String())
 	var rows []Setting
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rows))
@@ -153,22 +153,22 @@ func TestAdminSettings(t *testing.T) {
 	require.Equal(t, "true", *rows[0].Value)
 
 	// PUT：switch 合法值
-	rec = do(http.MethodPut, "/admin/settings", `{"key":"signup_enabled","value":"false"}`)
+	rec = do(http.MethodPut, "/api/admin/settings", `{"key":"signup_enabled","value":"false"}`)
 	require.Equal(t, http.StatusOK, rec.Code, "put: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rows))
 	require.Equal(t, "false", *rows[0].Value)
 
 	// PUT：switch 非法值 → 400（类型化校验）
-	rec = do(http.MethodPut, "/admin/settings", `{"key":"signup_enabled","value":"maybe"}`)
+	rec = do(http.MethodPut, "/api/admin/settings", `{"key":"signup_enabled","value":"maybe"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "bad switch: %s", rec.Body.String())
 
 	// PUT：未知 key → 400
-	rec = do(http.MethodPut, "/admin/settings", `{"key":"unknown_key","value":"1"}`)
+	rec = do(http.MethodPut, "/api/admin/settings", `{"key":"unknown_key","value":"1"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "unknown key: %s", rec.Body.String())
 
 	// PUT：number 类型校验（number 内置项传非数字 → 400；合法数字 → 200）
-	rec = do(http.MethodPut, "/admin/settings", `{"key":"default_user_max_concurrency","value":"abc"}`)
+	rec = do(http.MethodPut, "/api/admin/settings", `{"key":"default_user_max_concurrency","value":"abc"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "number 传非数字必须 400")
-	rec = do(http.MethodPut, "/admin/settings", `{"key":"default_user_max_concurrency","value":"5"}`)
+	rec = do(http.MethodPut, "/api/admin/settings", `{"key":"default_user_max_concurrency","value":"5"}`)
 	require.Equal(t, http.StatusOK, rec.Code, "number 合法值: %s", rec.Body.String())
 }

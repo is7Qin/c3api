@@ -408,7 +408,7 @@ func validateFillFlags() {
 			os.Exit(2)
 		}
 	case "keys":
-		// keys 填充走用户面（登录 + /user/keys），不需要 admin token
+		// keys 填充走用户面（登录 + /api/user/keys），不需要 admin token
 	default:
 		fmt.Fprintf(os.Stderr, "invalid -fill-type %q: want users, keys, accounts, groups, templates, pricing or mixed\n", *fillType)
 		os.Exit(2)
@@ -466,7 +466,7 @@ func newFillRequest(client *http.Client, rng *rand.Rand) (req *http.Request, pre
 	switch typ {
 	case "users":
 		// 含余额/并发：计费预检需要用户有钱（余额快照）+ 用户级在途门禁
-		return mk(http.MethodPost, "/admin/users", map[string]any{
+		return mk(http.MethodPost, "/api/admin/users", map[string]any{
 			"email": tag + "@loadtest.test", "password": "fill-pass-1",
 			"balance": 100.0, "max_concurrency": 8,
 		}), ""
@@ -474,7 +474,7 @@ func newFillRequest(client *http.Client, rng *rand.Rand) (req *http.Request, pre
 		// 登录（bcrypt 校验，管理面最重路径之一）+ 建 key，同一事务计延迟
 		email, password := pickFillUser(rng)
 		loginBody, _ := json.Marshal(map[string]any{"email": email, "password": password})
-		req, _ := http.NewRequest(http.MethodPost, *addr+"/user/auth/login", bytes.NewReader(loginBody))
+		req, _ := http.NewRequest(http.MethodPost, *addr+"/api/user/auth/login", bytes.NewReader(loginBody))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
@@ -489,33 +489,33 @@ func newFillRequest(client *http.Client, rng *rand.Rand) (req *http.Request, pre
 			Token string `json:"token"`
 		}
 		_ = json.Unmarshal(b, &lr)
-		req = mk(http.MethodPost, "/user/keys", map[string]any{
+		req = mk(http.MethodPost, "/api/user/keys", map[string]any{
 			"name": "fill-key-" + tag, "group_id": *fillGroupID,
 		})
 		req.Header.Set("Authorization", "Bearer "+lr.Token)
 		return req, ""
 	case "accounts":
-		return mk(http.MethodPost, "/admin/accounts", map[string]any{
+		return mk(http.MethodPost, "/api/admin/accounts", map[string]any{
 			"name": tag, "template_id": *fillTplID, "upstream_key": "sk-fill",
 			"group_ids": []int64{*fillGroupID}, "weight": 100, "max_concurrency": 100000,
 		}), ""
 	case "groups":
-		return mk(http.MethodPost, "/admin/groups", map[string]any{
+		return mk(http.MethodPost, "/api/admin/groups", map[string]any{
 			"name": "grp-" + tag, "visibility": "public",
 		}), ""
 	case "templates":
-		return mk(http.MethodPost, "/admin/templates", map[string]any{
+		return mk(http.MethodPost, "/api/admin/templates", map[string]any{
 			"name": "tpl-" + tag, "base_url": *fillUpstream,
 			"supported_formats": []string{fillFormats[int(seq-1)%len(fillFormats)]},
 			"models":            []string{fillModels[rng.IntN(len(fillModels))]},
 		}), ""
 	case "pricing":
 		// PUT 幂等 upsert：同模型重复设价 = 覆盖更新，不撞唯一键。
-		// 单位契约：/admin/pricing 的 prompt_price_per_million 等为"元/百万
+		// 单位契约：/api/admin/pricing 的 prompt_price_per_million 等为"元/百万
 		// token"（handler ×1e5 存毫分）。此前 fill 误传毫分（250000）→ 定价
 		// 虚高 1e5 倍，每请求扣费 3.3 万元 → 压测 402 风暴根因（实测 2026-08-18）。
 		// 量级对齐真实模型价（claude sonnet ≈ 21/105 元每百万 in/out）。
-		return mk(http.MethodPut, "/admin/pricing?model="+url.QueryEscape(fillModels[rng.IntN(len(fillModels))]), map[string]any{
+		return mk(http.MethodPut, "/api/admin/pricing?model="+url.QueryEscape(fillModels[rng.IntN(len(fillModels))]), map[string]any{
 			"prompt_price_per_million":     20 + rng.Int64N(180),  // 元/百万 token
 			"completion_price_per_million": 60 + rng.Int64N(540),  // 元/百万 token
 		}), ""

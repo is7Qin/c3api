@@ -363,7 +363,7 @@ func TestPGUsageLogUserKeyRoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// user_id 过滤（/user/logs 语义：只看到自己的）
+	// user_id 过滤（/api/user/logs 语义：只看到自己的）
 	rows, err := repos.Usages.QueryUsages(ctx, repository.UsageQuery{UserID: u.ID, Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)

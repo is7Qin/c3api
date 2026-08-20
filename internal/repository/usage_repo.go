@@ -23,7 +23,7 @@ import (
 type UsageQuery struct {
 	GroupID   int64 // 0 = 不过滤
 	AccountID int64
-	UserID    int64 // 0 = 不过滤（/user/usages 强制 = 自己）
+	UserID    int64 // 0 = 不过滤（/api/user/usages 强制 = 自己）
 	KeyID     int64
 	Model     string
 	Format    string // 空 = 不过滤（无效值自然查空——与 model 同语义，契约不校验值域）
@@ -239,7 +239,7 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 	return out, nil
 }
 
-// ScanUsageAgg 批量账号 usage_logs 区间聚合（/admin/accounts/usage 查询面——
+// ScanUsageAgg 批量账号 usage_logs 区间聚合（/api/admin/accounts/usage 查询面——
 // 统一 usage API spec 2026-08-18）：单连接单查询，`ANY($1)` 100 ids 参数数组
 // 规模内 + created_at 半开区间 [from, to)（分区键——RANGE 分区剪枝 + 既有
 // account_id/created_at 索引）。SQL 侧 GROUP BY 聚合（F-P2-2 形态：服务端

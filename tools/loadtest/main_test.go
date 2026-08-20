@@ -169,7 +169,7 @@ func TestFillRequestUsersBody(t *testing.T) {
 	req, preErr := newFillRequest(&http.Client{Timeout: time.Second}, rand.New(rand.NewPCG(1, 1)))
 	require.Empty(t, preErr)
 	require.Equal(t, "Bearer tok-test", req.Header.Get("Authorization"))
-	require.Equal(t, "http://127.0.0.1:8080/admin/users", req.URL.String())
+	require.Equal(t, "http://127.0.0.1:8080/api/admin/users", req.URL.String())
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
 	require.Equal(t, "fill-42-1@loadtest.test", body["email"])

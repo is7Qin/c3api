@@ -26,7 +26,7 @@ type StatQuery struct {
 	GroupID    int64
 	AccountID  int64
 	TemplateID int64 // 0 = 不过滤（rewrite spec 依赖契约：/stats 端点补 template_id 参数接线）
-	UserID     int64 // 0 = 不过滤（/user/stats 强制 = 自己）
+	UserID     int64 // 0 = 不过滤（/api/user/stats 强制 = 自己）
 	Model      string
 	From       time.Time
 	To         time.Time
@@ -78,7 +78,7 @@ func mergeHist(dst, src []int64) {
 }
 
 // TTFTPercentileMS 直方图桶内线性插值（spec 2026-08-14 §1 公式钉死；rewrite
-// spec 2026-08-14 插值复用契约：/stats + /user/stats 端点经本导出函数共用——
+// spec 2026-08-14 插值复用契约：/stats + /api/user/stats 端点经本导出函数共用——
 // overview 查询与端点插值同一实现，无第二份逻辑）：
 // low + (rank − cumBelow) / bucketCount × width；rank = ceil(p × N)（nearest-
 // rank）；落在顶桶 [12800, ∞) → 返回下界 12800（**顶桶不可插值**——无上界，
@@ -485,7 +485,7 @@ func (r *StatRepo) InitStatsAggWatermark(ctx context.Context, t time.Time) error
 	return err
 }
 
-// —— /admin/overview 聚合面（spec 2026-08-14；SQL 侧 GROUP BY——F-P2-2 形态：
+// —— /api/admin/overview 聚合面（spec 2026-08-14；SQL 侧 GROUP BY——F-P2-2 形态：
 // 服务端分组返回日桶，不拉全行客户端聚合——720 万行/30 天客户端解码不可行） ——
 
 // StatSummary 区间聚合单行（summary"今日"区间；SQL 侧单行 sum）。TTFT 指标：
@@ -658,7 +658,7 @@ func (r *StatRepo) CountOverviewResources(ctx context.Context) (*OverviewResourc
 	return &OverviewResourceCounts{Templates: tpls, Groups: groups, Users: users}, nil
 }
 
-// statScanSQL 原始小时桶拉取（/stats + /user/stats；列 = 全列含 ttft_hist——
+// statScanSQL 原始小时桶拉取（/stats + /api/user/stats；列 = 全列含 ttft_hist——
 // ent 数组列 carve-out，ScanStats 改 pgx 直查，评审 P1-1）。
 var statScanSQL = `SELECT bucket_time, group_id, account_id, template_id, user_id, model, is_error,
 	request_count, error_count, input_tokens, output_tokens, total_tokens,

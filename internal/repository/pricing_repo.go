@@ -187,7 +187,7 @@ func (r *PricingRepo) upsertLitellmBatch(ctx context.Context, batch []*domain.Pr
 	return int(n), err
 }
 
-// PricingManual 手动设价入参（管理端 PUT /admin/pricing?model=X，全量替换语义）：
+// PricingManual 手动设价入参（管理端 PUT /api/admin/pricing?model=X，全量替换语义）：
 // Prompt/CompletionPricePerMillion 必填（≥0）；其余全部可选——nil = 不设价（新行
 // NULL；接管的 litellm 行清空该矩阵价，计费回退基础价），非 nil = 显式设价（≥0，
 // 可为 0 = 该价明确为 0）。单位毫分/1M tokens（1 USD = 100,000 毫分）；

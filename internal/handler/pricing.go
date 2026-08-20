@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// 模型价格管理面（/admin/pricing）：列表 / 手动设价 / 删除手动价 / 手动触发
+// 模型价格管理面（/api/admin/pricing）：列表 / 手动设价 / 删除手动价 / 手动触发
 // 同步。PUT/DELETE 的 model 走 query 参数（生成契约签名 params.Model——模型名
 // 是自由字符串可含 `/`，路径参数单段匹配会拆段 404，故不入路径）；错误映射
 // 走 httpface.WriteServiceErr（ErrNotFound → 404、ErrConflict → 409、ErrInvalidInput →

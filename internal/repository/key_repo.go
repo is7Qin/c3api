@@ -21,7 +21,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/key"
 )
 
-// keyAdminSortFields /admin/keys sort 白名单（spec 2026-08-16 用户规格：仅
+// keyAdminSortFields /api/admin/keys sort 白名单（spec 2026-08-16 用户规格：仅
 // id/name/created_at 三键）；用户端 keySortFields（8 键）不动。
 var keyAdminSortFields = map[string]string{
 	"id": key.FieldID, "name": key.FieldName, "created_at": key.FieldCreatedAt,
@@ -88,7 +88,7 @@ func (r *KeyRepo) GetKeyByRaw(ctx context.Context, raw string) (*domain.Key, err
 	return toDomainKey(row), nil
 }
 
-// ListKeys 管理端全量 key 列表（/admin/keys，spec 2026-08-16；与 ListKeysByUser
+// ListKeys 管理端全量 key 列表（/api/admin/keys，spec 2026-08-16；与 ListKeysByUser
 // 并存——管理面全量视角 + UserID/GroupID 收窄，用户面行为不变）。三筛选参数
 // （name/user_id/group_id）AND 组合，零值不过滤；软删过滤（count 同谓词——
 // pred 复用，对齐 ListGroups）；sort 白名单 keyAdminSortFields 三键。

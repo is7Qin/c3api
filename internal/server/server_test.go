@@ -50,7 +50,7 @@ func TestUnknownPath404(t *testing.T) {
 	require.Equal(t, 404, rec.Code)
 }
 
-// 规格 §6.1：/admin/* 需要 Bearer admin token；无/错 token → 401。
+// 规格 §6.1：/api/admin/* 需要 Bearer admin token；无/错 token → 401。
 func TestAdminAuthRequired(t *testing.T) {
 	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -67,7 +67,7 @@ func TestAdminAuthRequired(t *testing.T) {
 		{"right token", "Bearer tok", 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 			if tc.auth != "" {
 				req.Header.Set("Authorization", tc.auth)
 			}
@@ -79,7 +79,7 @@ func TestAdminAuthRequired(t *testing.T) {
 }
 
 // 回归：生产 main.go 同时设置 AdminHandler + AIHandler（各自 Mount("/") 曾
-// 触发 chi 重复 Mount panic）。断言 /admin/* 与 /v1/* 分别打到对应 handler。
+// 触发 chi 重复 Mount panic）。断言 /api/admin/* 与 /v1/* 分别打到对应 handler。
 func TestAdminAndAIHandlersCoexist(t *testing.T) {
 	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpface.WriteJSON(w, http.StatusOK, map[string]any{"handler": "admin", "path": r.URL.Path})
@@ -92,8 +92,8 @@ func TestAdminAndAIHandlersCoexist(t *testing.T) {
 	for _, tc := range []struct {
 		path, auth, wantHandler string
 	}{
-		{"/admin/templates", "Bearer tok", "admin"},
-		{"/admin/templates/1", "Bearer tok", "admin"},
+		{"/api/admin/templates", "Bearer tok", "admin"},
+		{"/api/admin/templates/1", "Bearer tok", "admin"},
 		{"/v1/chat/completions", "", "ai"},
 		{"/v1/images/generations", "", "ai"},
 		{"/v1/images/edits", "", "ai"},
@@ -248,7 +248,7 @@ func TestAdminAuthTokenOrPlatformJWT(t *testing.T) {
 		{"no token", "", 401},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 			if tc.auth != "" {
 				req.Header.Set("Authorization", tc.auth)
 			}
@@ -282,7 +282,7 @@ func TestAdminUserIDContextInjection(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewServer(Options{AdminToken: "tok", JWTIssuer: iss, UserStatus: fakeUserStatus{roles: map[int64]domain.Role{7: domain.RolePlatformAdmin}}, AdminHandler: admin})
-			req := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 			req.Header.Set("Authorization", tc.auth)
 			rec := httptest.NewRecorder()
 			s.Handler().ServeHTTP(rec, req)
@@ -296,7 +296,7 @@ func TestAdminUserIDContextInjection(t *testing.T) {
 	// nil 放行——无快照角色可校验，fail-closed 语义一致；生产恒装配）。
 	t.Run("UserStatus nil JWT 路径拒绝", func(t *testing.T) {
 		s := NewServer(Options{AdminToken: "tok", JWTIssuer: iss, AdminHandler: admin})
-		req := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 		req.Header.Set("Authorization", "Bearer "+tok)
 		rec := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rec, req)
@@ -319,7 +319,7 @@ func TestAdminPlatformJWTPartialAdmin(t *testing.T) {
 		UserStatus:   fakeUserStatus{disabled: map[int64]bool{1: true}, roles: map[int64]domain.Role{1: domain.RolePlatformAdmin}},
 		AdminHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }),
 	})
-	req := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -342,7 +342,7 @@ func TestAdminRoleDowngradeImmediate(t *testing.T) {
 		AdminHandler: admin,
 	})
 	do := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 		req.Header.Set("Authorization", "Bearer "+tok)
 		rec := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rec, req)
@@ -366,7 +366,7 @@ func TestAdminSnapshotMissingFailClosed(t *testing.T) {
 		UserStatus:   emptySnapshotProvider{},
 		AdminHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }),
 	})
-	req := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -377,10 +377,10 @@ func TestAdminSnapshotMissingFailClosed(t *testing.T) {
 func TestUserMount(t *testing.T) {
 	userH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	s := NewServer(Options{AdminToken: "tok", UserHandler: userH})
-	req := httptest.NewRequest(http.MethodGet, "/user/whatever", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/user/whatever", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
-	require.Equal(t, 200, rec.Code, "/user/* 必须由 UserHandler 处理")
+	require.Equal(t, 200, rec.Code, "/api/user/* 必须由 UserHandler 处理")
 }
 
 // --- 补压测修复回归（resp-ws 501 + statusWriter Hijack 语义） ---

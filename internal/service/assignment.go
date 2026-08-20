@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// SetGroupAssignments 替换语义设置组的授予用户（PUT /admin/groups/{id}/
+// SetGroupAssignments 替换语义设置组的授予用户（PUT /api/admin/groups/{id}/
 // assignments）：完整列表 = 授予结果（未列出即撤销，空数组 = 清空）。
 // 幂等（Grant/Revoke 本身幂等）；用户/组必须存在且组未软删（缺失/软删 → 404，
 // F3）。整个替换循环包 WithTx（S3-F2）：Grant/SetMultiplier/Revoke/组内读同一
@@ -117,7 +117,7 @@ func (s *Service) applyGroupAssignments(ctx context.Context, tx repository.TxSto
 	return post, nil
 }
 
-// ListGroupsForUser 用户可选组列表（public 全部 + 已授予 private；/user/groups
+// ListGroupsForUser 用户可选组列表（public 全部 + 已授予 private；/api/user/groups
 // 只读，key 创建时选组）。
 func (s *Service) ListGroupsForUser(ctx context.Context, userID int64) ([]*domain.Group, error) {
 	return s.store.ListGroupsForUser(ctx, userID)

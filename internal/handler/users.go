@@ -12,9 +12,9 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// 用户管理面（/admin/users）：余额字段在 API 边界换算 USD float64（内部存储
+// 用户管理面（/api/admin/users）：余额字段在 API 边界换算 USD float64（内部存储
 // 毫分——1 USD = 100,000 毫分；usdToMillis/millisToUSD）。价格倍率按组
-// （T3.5 修正）经 /admin/groups/{id}/assignments 的 multipliers 设置，用户
+// （T3.5 修正）经 /api/admin/groups/{id}/assignments 的 multipliers 设置，用户
 // 本体无倍率字段。
 
 // GetUsers 用户列表（platform_admin 专属；/admin 组中间件已鉴权，

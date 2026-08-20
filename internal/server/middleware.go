@@ -33,7 +33,7 @@ func UserIDFromContext(ctx context.Context) (int64, bool) {
 	return id, ok
 }
 
-// adminAuth 管理面鉴权（/admin 组，含 /admin/ops/workers 运维观测）= 静态
+// adminAuth 管理面鉴权（/admin 组，含 /api/admin/ops/workers 运维观测）= 静态
 // admin token OR platform_admin JWT（两个都过才拒）。JWT 路径校验快照
 // status+role（F1）：**快照 role 覆盖 claims.Role**——降权（platform_admin →
 // user）后旧 JWT 立即失效（快照刷新 ≤Reload 周期），claims 24h 长时效不作

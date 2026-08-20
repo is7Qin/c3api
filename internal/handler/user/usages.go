@@ -11,7 +11,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// GetUserUsageLogs 我的用量明细（/user/usage_logs；强制 user_id = 当前用户——
+// GetUserUsageLogs 我的用量明细（/api/user/usage_logs；强制 user_id = 当前用户——
 // 越权过滤在 service/repo 层，请求侧不可指定他人，ServerInterface）。
 // keyset 游标分页：cursor 透传仅作本人行内 id 下界（跨页注入他人 id 仍被
 // user_id 过滤钳制），next_cursor 组装与 admin 侧同构。

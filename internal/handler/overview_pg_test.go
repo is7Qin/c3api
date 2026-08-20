@@ -29,7 +29,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// /admin/overview + /admin/users-top 真实 PG 测试（spec 2026-08-14）：
+// /api/admin/overview + /api/admin/users-top 真实 PG 测试（spec 2026-08-14）：
 // summary/trend 走 usage_stats 真实分区表 SQL 侧聚合（COPY 两阶段种子）；
 // resources/email 走真实表；accounts/err_top 走 stub 调度器快照（与
 // ListAccountViews 同源接口，确定性断言）；alerts/在途走 OpsOptions 注入面。
@@ -207,7 +207,7 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 		BillingAlerts: func() BillingAlerts { return BillingAlerts{Pending: 123, PendingWaterline: 50000, Warned: false} },
 	})
 
-	w := router("GET", "/admin/overview")
+	w := router("GET", "/api/admin/overview")
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp OverviewResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -294,25 +294,25 @@ func TestPGOverviewTrendDaysParamAndClamp(t *testing.T) {
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
 
 	// 缺省 days=7 → 3 桶全含
-	w := router("GET", "/admin/overview")
+	w := router("GET", "/api/admin/overview")
 	var resp OverviewResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Trend, 3)
 
 	// days=2 → 仅近两日（今日 + 昨日）
-	w = router("GET", "/admin/overview?days=2")
+	w = router("GET", "/api/admin/overview?days=2")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Trend, 2)
 	require.Equal(t, day0.Add(-24*time.Hour).Format("2006-01-02"), resp.Trend[0].Date.Format("2006-01-02"))
 
 	// days=999 → 钳制 30（数据仅 3 日，不报错）
-	w = router("GET", "/admin/overview?days=999")
+	w = router("GET", "/api/admin/overview?days=999")
 	require.Equal(t, http.StatusOK, w.Code)
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Trend, 3)
 
 	// days=0（非法值）→ 回落缺省 7（同 GetStats 非法 granularity 回落 day）
-	w = router("GET", "/admin/overview?days=0")
+	w = router("GET", "/api/admin/overview?days=0")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Trend, 3)
 }
@@ -329,26 +329,26 @@ func TestPGOverviewGroupFilter(t *testing.T) {
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
 
 	// 全局：今日 = 10+99
-	w := router("GET", "/admin/overview")
+	w := router("GET", "/api/admin/overview")
 	var resp OverviewResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, int64(109), resp.Summary.Requests)
 	require.Len(t, resp.Trend, 2)
 
 	// group_id=7：仅组 7（今日 10；趋势仅今日桶）
-	w = router("GET", "/admin/overview?group_id=7")
+	w = router("GET", "/api/admin/overview?group_id=7")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, int64(10), resp.Summary.Requests)
 	require.Len(t, resp.Trend, 1)
 
 	// group_id=8：仅组 8（今日 99；趋势 2 桶——组 8 有昨日+今日）
-	w = router("GET", "/admin/overview?group_id=8")
+	w = router("GET", "/api/admin/overview?group_id=8")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, int64(99), resp.Summary.Requests)
 	require.Len(t, resp.Trend, 2)
 
 	// group_id=404：无数据 → 全零（字段恒存在）
-	w = router("GET", "/admin/overview?group_id=404")
+	w = router("GET", "/api/admin/overview?group_id=404")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, int64(0), resp.Summary.Requests)
 	require.InDelta(t, 0.0, resp.Summary.CostUsd, 1e-9)
@@ -366,7 +366,7 @@ func TestPGOverviewCacheHit(t *testing.T) {
 	cnt := &countingStore{Store: repos}
 	_, router := overviewPGRouter(t, cnt, stubSched{}, OpsOptions{})
 
-	w := router("GET", "/admin/overview")
+	w := router("GET", "/api/admin/overview")
 	require.Equal(t, http.StatusOK, w.Code)
 	var first OverviewResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &first))
@@ -374,14 +374,14 @@ func TestPGOverviewCacheHit(t *testing.T) {
 	require.Equal(t, int64(3), aggs, "首次调用 = summary+trend+resources 三次聚合")
 
 	// TTL 内二次调用：缓存命中 → 零聚合（statAggs 不变），响应一致
-	w = router("GET", "/admin/overview")
+	w = router("GET", "/api/admin/overview")
 	var second OverviewResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &second))
 	require.Equal(t, aggs, cnt.statAggs.Load(), "TTL 内二次调用零聚合")
 	require.Equal(t, first.Summary.Requests, second.Summary.Requests)
 
 	// 不同参数 → 缓存键分离 → 重新聚合
-	w = router("GET", "/admin/overview?days=2")
+	w = router("GET", "/api/admin/overview?days=2")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &second))
 	require.Equal(t, aggs+3, cnt.statAggs.Load(), "days 参数入缓存键——重新聚合")
 }
@@ -399,7 +399,7 @@ func TestPGOverviewCacheDayRollover(t *testing.T) {
 	// 时钟固定今日（23:59:59——午夜前最后时刻）：summary 含今日桶
 	fakeNow := day0.Add(24*time.Hour - time.Second)
 	h.now = func() time.Time { return fakeNow }
-	w := router("GET", "/admin/overview")
+	w := router("GET", "/api/admin/overview")
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp OverviewResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -409,7 +409,7 @@ func TestPGOverviewCacheDayRollover(t *testing.T) {
 	// 跨 UTC 午夜滚转（时钟 +1 天 00:00:01）：缓存键含日界 → 未命中 → 重新
 	// 聚合；summary"今日" = 新日界（无种子桶 → 0）
 	fakeNow = day0.Add(24*time.Hour + time.Second)
-	w = router("GET", "/admin/overview")
+	w = router("GET", "/api/admin/overview")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Greater(t, cnt.statAggs.Load(), aggs, "跨午夜键分离——重新聚合")
 	require.Equal(t, int64(0), resp.Summary.Requests, "新日界今日无数据")
@@ -422,7 +422,7 @@ func TestPGUsersTopTopNOtherAndEmail(t *testing.T) {
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{InFlightUsers: func() map[int64]int64 { return inflight }})
 
 	// 缺省 top=20 → 全部在途（过滤 0），降序；other = 0
-	w := router("GET", "/admin/users-top")
+	w := router("GET", "/api/admin/users-top")
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp UsersTopResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -437,7 +437,7 @@ func TestPGUsersTopTopNOtherAndEmail(t *testing.T) {
 	require.Equal(t, int64(0), resp.OtherConcurrency)
 
 	// top=2 → Top2 + other = 其余在途合计（5+2+1）
-	w = router("GET", "/admin/users-top?top=2")
+	w = router("GET", "/api/admin/users-top?top=2")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Users, 2)
 	require.Equal(t, int64(12), resp.Users[0].Concurrency)
@@ -445,10 +445,10 @@ func TestPGUsersTopTopNOtherAndEmail(t *testing.T) {
 	require.Equal(t, int64(8), resp.OtherConcurrency)
 
 	// top=500 → 钳制 100（数据 5 条全出）；top=0 → 回落缺省 20
-	w = router("GET", "/admin/users-top?top=500")
+	w = router("GET", "/api/admin/users-top?top=500")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Users, 5)
-	w = router("GET", "/admin/users-top?top=0")
+	w = router("GET", "/api/admin/users-top?top=0")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Users, 5)
 }
@@ -460,7 +460,7 @@ func TestPGUsersTopCacheHitAndEmpty(t *testing.T) {
 	cnt := &countingStore{Store: repos}
 	_, router := overviewPGRouter(t, cnt, stubSched{}, OpsOptions{InFlightUsers: func() map[int64]int64 { return inflight }})
 
-	w := router("GET", "/admin/users-top")
+	w := router("GET", "/api/admin/users-top")
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp UsersTopResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -468,14 +468,14 @@ func TestPGUsersTopCacheHitAndEmpty(t *testing.T) {
 	require.Equal(t, int64(1), cnt.emailCalls.Load(), "首次调用一次 IN 查询")
 
 	// TTL 内二次调用 → 缓存命中 → 零 email 查询（快照遍历 + IN 均摊薄）
-	w = router("GET", "/admin/users-top")
+	w = router("GET", "/api/admin/users-top")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, int64(1), cnt.emailCalls.Load(), "TTL 内二次调用零查询")
 	require.Len(t, resp.Users, 3)
 
 	// 无在途（全 0）→ 空列表 + other 0（0 过滤；未装配注入面 = 空）
 	_, router2 := overviewPGRouter(t, cnt, stubSched{}, OpsOptions{})
-	w = router2("GET", "/admin/users-top")
+	w = router2("GET", "/api/admin/users-top")
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Empty(t, resp.Users)
 	require.Equal(t, int64(0), resp.OtherConcurrency)

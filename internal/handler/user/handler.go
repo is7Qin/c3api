@@ -21,7 +21,7 @@ import (
 type UserAPI struct {
 	svc *service.Service
 	iss tokenIssuer
-	// rules 规则引擎（/user/err_logs 行级脱敏用：平台问题行 error_message 按
+	// rules 规则引擎（/api/user/err_logs 行级脱敏用：平台问题行 error_message 按
 	// Classify 判定替换固定文案；main 装配经 Router 注入——nil = 不脱敏）。
 	rules *rule.RuleEngine
 }

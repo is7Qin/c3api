@@ -15,7 +15,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// GET /admin/overview 管理端总览（spec 2026-08-14）：一站式聚合端点——
+// GET /api/admin/overview 管理端总览（spec 2026-08-14）：一站式聚合端点——
 // summary（今日 UTC 日界，cost 毫分 /1e5 → USD）+ trend（近 N 天日桶，SQL
 // 侧 GROUP BY）+ accounts（调度器快照健康分布/并发水位）+ resources（三表
 // 冷面 count）+ err_top（账号维度 EWMA Top5）+ alerts（billing 水线注入面）。

@@ -372,7 +372,7 @@ func main() {
 	// litellm 价格同步 worker：启动异步拉取一次（不阻塞启动）+ price_sync_cron
 	// 定期循环；source_url/cron 每轮从 svc 的 settings 快照现读（变更下次循环
 	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（Phase 5 计费读零 DB）。
-	// fetcher 与 svc 共享同一实例（手动 sync 端点 /admin/pricing/sync 同路径）。
+	// fetcher 与 svc 共享同一实例（手动 sync 端点 /api/admin/pricing/sync 同路径）。
 	// log：A-P2-12 方案 A 多档位 Warn 目标（nil 则静默——不传即退化为无告警）。
 	priceFetcher := pricing.NewFetcher(hc, log)
 	svc.SetPriceFetcher(priceFetcher)
@@ -393,7 +393,7 @@ func main() {
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
 	userHandler := userapi.Router(svc, iss, auth, ruleEngine)
 
-	// /admin/ops/workers 运维观测（spec 2026-08-11，用户裁决并入管理面）：
+	// /api/admin/ops/workers 运维观测（spec 2026-08-11，用户裁决并入管理面）：
 	// 独立 Stats 契约不改 worker.Worker——装配侧类型断言聚合（各模块已持
 	// 具体引用，断言实现 handler.StatsProvider 的入列；快照注册表状态单独
 	// 经 Status 直出）。WithOps 注入，路由由契约 chi-server 生成。
@@ -405,14 +405,14 @@ func main() {
 			// G2-3（spec 2026-08-13）：断言失败 Warn 一次——StatsProvider 是约定
 			// 非强制，新 worker 忘实现时 /ops/workers 静默缺项，启动期提示（非
 			// 错误：无 Stats 的 worker 合法）。
-			log.Warn("worker does not implement StatsProvider, missing from /admin/ops/workers",
+			log.Warn("worker does not implement StatsProvider, missing from /api/admin/ops/workers",
 				logx.String("worker", w.Name()))
 		}
 	}
 	if billFlusher != nil {
 		opsWorkers = append(opsWorkers, billFlusher)
 	}
-	// /admin/overview + /admin/users-top（spec 2026-08-14）：门禁在途快照
+	// /api/admin/overview + /api/admin/users-top（spec 2026-08-14）：门禁在途快照
 	// （Auth.InFlightUsers 只读访问器——零锁冷面）与 billing 水线告警（flusher
 	// 直读；未装配 nil → 端点空/零值）经 OpsOptions 注入——不改 service.New
 	// 签名（main.go:376-390 注入先例）。

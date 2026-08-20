@@ -12,7 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
-// GET /admin/users-top 实时在途并发排行（spec 2026-08-14）：读门禁快照在途
+// GET /api/admin/users-top 实时在途并发排行（spec 2026-08-14）：读门禁快照在途
 // 计数（Auth.InFlightUsers 只读访问器——零锁零热路径）→ 过滤 0 → 降序 →
 // TopN（缺省 20，上限 100）+ other 归并（其余在途用户合计，非伪用户条目）；
 // email = TopN user_id 一次 IN 查询回填（users 表无 name 列——仅 email）。

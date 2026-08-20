@@ -86,7 +86,7 @@ func (r *GroupAssignmentRepo) ListByGroup(ctx context.Context, groupID int64) ([
 	return out, nil
 }
 
-// ListGroupsForUser 用户可选组：public 全部 + 已授予的 private（/user/groups
+// ListGroupsForUser 用户可选组：public 全部 + 已授予的 private（/api/user/groups
 // 只读列表；软删除：已删组不进可选列表）。
 func (r *GroupAssignmentRepo) ListGroupsForUser(ctx context.Context, userID int64) ([]*domain.Group, error) {
 	rows, err := r.client.Group.Query().

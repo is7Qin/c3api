@@ -40,7 +40,7 @@ func toAPIUser(u *domain.User) User {
 	}
 }
 
-// toAPIGroup 组领域对象 → 契约类型（/user/groups 只读列表；PriceMultiplier
+// toAPIGroup 组领域对象 → 契约类型（/api/user/groups 只读列表；PriceMultiplier
 // 万分数 → 正常值 float64，API 边界换算）。
 func toAPIGroup(g *domain.Group) Group {
 	v := GroupVisibility(g.Visibility)
@@ -74,7 +74,7 @@ func toAPIKey(k *domain.Key) Key {
 	}
 }
 
-// toAPIUsageLog 用量日志领域对象 → 用户面契约类型（/user/usage_logs；
+// toAPIUsageLog 用量日志领域对象 → 用户面契约类型（/api/user/usage_logs；
 // UserUsageLog 无 AccountID/TemplateID——用户无上游账号拓扑概念；err_logs
 // 分表后无 status_code/error_message 字段）。
 func toAPIUsageLog(l *domain.UsageLog) UserUsageLog {
@@ -111,7 +111,7 @@ func toAPIUsageLog(l *domain.UsageLog) UserUsageLog {
 	}
 }
 
-// toAPIErrLog 错误明细领域对象 → 用户面契约类型（/user/err_logs；
+// toAPIErrLog 错误明细领域对象 → 用户面契约类型（/api/user/err_logs；
 // UserErrLog 无 AccountID/TemplateID——用户无上游账号拓扑概念；BillingTier
 // 空 = 未计费路径 → null）。行级脱敏（规则引擎已注入时）：平台问题行
 // error_message 按同一策略替换固定文案——管理面恒原文不动（管理员排障）。
@@ -201,11 +201,11 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	return rule.UnifiedMessage(then, upstream)
 }
 
-// toAPIStatBucket 统计桶领域对象 → 契约类型（/user/stats；rewrite spec
+// toAPIStatBucket 统计桶领域对象 → 契约类型（/api/user/stats；rewrite spec
 // 2026-08-14 端点重写：Cost 毫分 → USD（/1e5，与 /admin 同口径——本包
 // 兑换码换算同款系数）；TTFT 六指标在 convert 边界算定——avg = sum/count
 // （无样本 0）、pN = 直方图插值（复用 repository.TTFTPercentileMS，与
-// overview /admin/stats 同一实现）。
+// overview /api/admin/stats 同一实现）。
 // 毫秒值输出前 math.Round 收敛整数（用户裁决 2026-08-14：除法/插值裸浮点
 // 直出 → 前端显示 335.12241653418124；毫秒语义整数即可，契约 number 不变）。
 func toAPIStatBucket(b *domain.StatBucket) StatBucket {

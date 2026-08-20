@@ -15,7 +15,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// GetSettings 全部设置（默认值 + DB 覆盖；/admin/settings GET）。
+// GetSettings 全部设置（默认值 + DB 覆盖；/api/admin/settings GET）。
 func (s *Service) GetSettings(ctx context.Context) ([]*domain.Setting, error) {
 	return s.store.GetAllSettings(ctx)
 }
@@ -33,7 +33,7 @@ var serviceTierPolicyKeys = func() map[string][]string {
 	return m
 }()
 
-// UpdateSetting 类型化校验后更新（/admin/settings PUT）：
+// UpdateSetting 类型化校验后更新（/api/admin/settings PUT）：
 // key ∈ 内置注册表（未知 key → 400）；switch 必须 true/false；number 必须
 // 数字且落在注册表 Min/Max 值域内（负值/越界 → 400）；带 PolicyValues 枚举
 // 域的条目（service_tier_policy_*）必须命中枚举。更新成功后同步内存快照——

@@ -42,7 +42,7 @@ func TestPutImagePrice(t *testing.T) {
 
 	// 新模型设价：token 价 8.0/30.0 USD/1M → 800,000/3,000,000 毫分/1M（×1e5，
 	// 与 chat 价同系数）；per-image 0.054 USD/张 → 5,400 毫分/张；回显反向换算
-	rec := do(http.MethodPut, "/admin/image-price?model=gpt-image-3",
+	rec := do(http.MethodPut, "/api/admin/image-price?model=gpt-image-3",
 		`{"input_image_token_price_per_million":8.0,"output_image_token_price_per_million":30.0,"output_cost_per_image":0.054}`)
 	require.Equal(t, 200, rec.Code, "put: %s", rec.Body.String())
 	var p ImagePrice
@@ -59,7 +59,7 @@ func TestPutImagePrice(t *testing.T) {
 	// 接管 litellm 行：先 sync 入库再手动设价（litellm 行带 provider → 接管后清空）
 	_, err := h.svc.SyncPricingNow(context.Background())
 	require.NoError(t, err)
-	rec = do(http.MethodPut, "/admin/image-price?model=gpt-image-2",
+	rec = do(http.MethodPut, "/api/admin/image-price?model=gpt-image-2",
 		`{"input_image_token_price_per_million":8.0,"output_cost_per_image":0.054}`)
 	require.Equal(t, 200, rec.Code, "takeover: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &p))
@@ -68,21 +68,21 @@ func TestPutImagePrice(t *testing.T) {
 	require.Nil(t, p.Provider, "manual 接管后 provider nil（S-2）")
 
 	// 全 nil → 400（行有效性 = 至少一价）
-	rec = do(http.MethodPut, "/admin/image-price?model=m-none", `{}`)
+	rec = do(http.MethodPut, "/api/admin/image-price?model=m-none", `{}`)
 	require.Equal(t, 400, rec.Code, "all nil: %s", rec.Body.String())
-	rec = do(http.MethodPut, "/admin/image-price?model=m-none", `{"input_image_token_price_per_million":null}`)
+	rec = do(http.MethodPut, "/api/admin/image-price?model=m-none", `{"input_image_token_price_per_million":null}`)
 	require.Equal(t, 400, rec.Code, "explicit null: %s", rec.Body.String())
 
 	// 负数 → 400（token 价与 per-image 各自校验）
-	rec = do(http.MethodPut, "/admin/image-price?model=m-neg",
+	rec = do(http.MethodPut, "/api/admin/image-price?model=m-neg",
 		`{"input_image_token_price_per_million":-0.01,"output_cost_per_image":0.054}`)
 	require.Equal(t, 400, rec.Code, "negative token price: %s", rec.Body.String())
-	rec = do(http.MethodPut, "/admin/image-price?model=m-neg",
+	rec = do(http.MethodPut, "/api/admin/image-price?model=m-neg",
 		`{"input_image_token_price_per_million":8.0,"output_cost_per_image":-0.054}`)
 	require.Equal(t, 400, rec.Code, "negative per-image: %s", rec.Body.String())
 
 	// 非法 JSON → 400
-	rec = do(http.MethodPut, "/admin/image-price?model=m-bad", `not json`)
+	rec = do(http.MethodPut, "/api/admin/image-price?model=m-bad", `not json`)
 	require.Equal(t, 400, rec.Code, "invalid json: %s", rec.Body.String())
 }
 
@@ -97,45 +97,45 @@ func TestImagePriceList(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rec := do(http.MethodGet, "/admin/image-price", "")
+	rec := do(http.MethodGet, "/api/admin/image-price", "")
 	require.Equal(t, 200, rec.Code, "list all: %s", rec.Body.String())
 	var list ImagePriceListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(t, int64(2), list.Total)
 	require.Len(t, list.Rows, 2)
 
-	rec = do(http.MethodGet, "/admin/image-price?source=litellm", "")
+	rec = do(http.MethodGet, "/api/admin/image-price?source=litellm", "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(t, int64(1), list.Total)
 	require.Equal(t, PricingSource("litellm"), list.Rows[0].Source)
 
 	// litellm 行回显 provider（拉取直贴）；manual 行 nil
-	rec = do(http.MethodGet, "/admin/image-price?source=litellm", "")
+	rec = do(http.MethodGet, "/api/admin/image-price?source=litellm", "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.NotNil(t, list.Rows[0].Provider)
 	require.Equal(t, "openai", string(*list.Rows[0].Provider), "litellm 行回显 provider")
-	rec = do(http.MethodGet, "/admin/image-price?source=manual", "")
+	rec = do(http.MethodGet, "/api/admin/image-price?source=manual", "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Nil(t, list.Rows[0].Provider, "manual 行 provider nil")
 
 	// provider 等值筛选：命中 openai → 1 行（manual 行不命中）；不命中 → 0 行
-	rec = do(http.MethodGet, "/admin/image-price?provider=openai", "")
+	rec = do(http.MethodGet, "/api/admin/image-price?provider=openai", "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(t, int64(1), list.Total)
 	require.Equal(t, "gpt-image-2", list.Rows[0].Model)
-	rec = do(http.MethodGet, "/admin/image-price?provider=bedrock", "")
+	rec = do(http.MethodGet, "/api/admin/image-price?provider=bedrock", "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Zero(t, list.Total, "provider 不命中 → 空列表")
 	// 非 enum 自由字符串也可筛（DB 自由字符串等值）
-	rec = do(http.MethodGet, "/admin/image-price?provider=some_future_vendor", "")
+	rec = do(http.MethodGet, "/api/admin/image-price?provider=some_future_vendor", "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Zero(t, list.Total)
 
-	rec = do(http.MethodGet, "/admin/image-price?model=IMAGE", "")
+	rec = do(http.MethodGet, "/api/admin/image-price?model=IMAGE", "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(t, int64(2), list.Total, "model 模糊（大小写不敏感；gpt-image-2 + aiml-image）")
 
-	rec = do(http.MethodGet, "/admin/image-price?page=2&page_size=1", "")
+	rec = do(http.MethodGet, "/api/admin/image-price?page=2&page_size=1", "")
 	require.Equal(t, 200, rec.Code, "pagination: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(t, int64(2), list.Total)
@@ -148,7 +148,7 @@ func TestImagePriceList(t *testing.T) {
 		{"page_size 越界", "?page_size=1001"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := do(http.MethodGet, "/admin/image-price"+tc.query, "")
+			rec := do(http.MethodGet, "/api/admin/image-price"+tc.query, "")
 			require.Equal(t, 400, rec.Code, "%s: %s", tc.name, rec.Body.String())
 		})
 	}
@@ -166,15 +166,15 @@ func TestDeleteImagePrice(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rec := do(http.MethodDelete, "/admin/image-price?model=gpt-image-2", "")
+	rec := do(http.MethodDelete, "/api/admin/image-price?model=gpt-image-2", "")
 	require.Equal(t, 409, rec.Code, "litellm 行 → 409: %s", rec.Body.String())
 	// G3-2：409 响应体恒英文（对外分层），不含中文
 	require.Contains(t, errMsg(t, rec), "manual price only", "409 消息英文（manual price only）")
 	require.NotContains(t, errMsg(t, rec), "只允许删手动价", "409 消息不得含中文")
 
-	rec = do(http.MethodDelete, "/admin/image-price?model=manual-m", "")
+	rec = do(http.MethodDelete, "/api/admin/image-price?model=manual-m", "")
 	require.Equal(t, 200, rec.Code, "manual 删除: %s", rec.Body.String())
 
-	rec = do(http.MethodDelete, "/admin/image-price?model=no-such", "")
+	rec = do(http.MethodDelete, "/api/admin/image-price?model=no-such", "")
 	require.Equal(t, 404, rec.Code, "不存在 → 404: %s", rec.Body.String())
 }

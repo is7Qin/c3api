@@ -412,7 +412,7 @@ const (
 	UpstreamErrorUpstreamUnavailable AccountUsageUpstreamError = "upstream_unavailable" // 网络/5xx 等上游错误（ErrUpstream/其余）
 )
 
-// AccountUsage 账号 usage 视图 item（/admin/accounts/usage 统一 usage API 查询
+// AccountUsage 账号 usage 视图 item（/api/admin/accounts/usage 统一 usage API 查询
 // 面）：Gateway 恒全量（无记录全 0——前端免补零）；Upstream 为 codex 额度快照
 // （task 3 sdkbridge；api-key/无凭据账号恒 nil）；UpstreamError 为快照失败标记
 // （成功/nil 上游恒 nil——"无上游能力"与"快照挂了"区分）。
@@ -625,7 +625,7 @@ type StatBucket struct {
 	GroupID             int64     // 0 = 无
 	AccountID           int64     // 0 = 无
 	TemplateID          int64     // 0 = 无
-	UserID              int64     // 0 = 无（鉴权失败/无 key）；/user/stats 按此过滤
+	UserID              int64     // 0 = 无（鉴权失败/无 key）；/api/user/stats 按此过滤
 	Model               string
 	IsError             bool
 	RequestCount        int64

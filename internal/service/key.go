@@ -19,7 +19,7 @@ import (
 // ErrInvalidInput → 400）。
 var ErrGroupNotEligible = fmt.Errorf("%w: group is private and not granted to user", ErrInvalidInput)
 
-// CreateKey 用户自建 key（/user/keys POST）：
+// CreateKey 用户自建 key（/api/user/keys POST）：
 // 组可选性校验（public 或已授予 private）→ 用户门禁字段写库前预取（B1-1：
 // GetUser 前置——写后注册退化为纯内存 Upsert 不可失败）→ cryptox 生成明文
 // → 落库 → Auth 增量纯内存 Upsert。明文长期可查看/复制（列表/详情回显）。
@@ -87,7 +87,7 @@ func (s *Service) checkGroupEligible(ctx context.Context, userID, groupID int64)
 	return nil, ErrGroupNotEligible
 }
 
-// ListAdminKeys 管理端全量 key 列表（/admin/keys，spec 2026-08-16）：全量
+// ListAdminKeys 管理端全量 key 列表（/api/admin/keys，spec 2026-08-16）：全量
 // 视角（不限归属用户）+ name/user_id/group_id 筛选 + sort 白名单
 // id/name/created_at。脱敏在 handler 转换面（AdminKey 无 key 明文字段——
 // 用户裁决，明文绝不下发管理端）。
@@ -98,12 +98,12 @@ func (s *Service) ListAdminKeys(ctx context.Context, q repository.ListQuery) ([]
 	return s.store.ListKeys(ctx, q)
 }
 
-// GetKey 用户取自己的 key 详情（/user/keys/{id} GET）。
+// GetKey 用户取自己的 key 详情（/api/user/keys/{id} GET）。
 func (s *Service) GetKey(ctx context.Context, userID, keyID int64) (*domain.Key, error) {
 	return s.ownedKey(ctx, userID, keyID)
 }
 
-// ListKeys 用户自己的 key 列表（/user/keys GET）。
+// ListKeys 用户自己的 key 列表（/api/user/keys GET）。
 func (s *Service) ListKeys(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.Key, int64, error) {
 	if err := validateListQuery(q, listSortFields["keys"]); err != nil {
 		return nil, 0, err
@@ -156,7 +156,7 @@ func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *stri
 	return updated, nil
 }
 
-// RotateKey 轮换自己的 key（/user/keys/{id}/rotate）：新明文落库；旧明文
+// RotateKey 轮换自己的 key（/api/user/keys/{id}/rotate）：新明文落库；旧明文
 // 增量移除（立即失效）、新明文增量注册。用户门禁字段写库前预取（B1-1：
 // GetUser 前置——Delete 后只剩不可失败的内存 Upsert，失败窗口整体消失——
 // DB 已轮换只留新明文时新 raw 永不蒸发）。
@@ -196,7 +196,7 @@ func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (*domain.K
 	return updated, nil
 }
 
-// DeleteKey 删除自己的 key（/user/keys/{id} DELETE；Auth 增量移除——旧明文
+// DeleteKey 删除自己的 key（/api/user/keys/{id} DELETE；Auth 增量移除——旧明文
 // 立即失效）。
 func (s *Service) DeleteKey(ctx context.Context, userID, keyID int64) error {
 	cur, err := s.ownedKey(ctx, userID, keyID)

@@ -138,7 +138,7 @@ func (r *ImagePriceRepo) upsertImageLitellmBatch(ctx context.Context, batch []*d
 	return int(n), err
 }
 
-// ImagePriceManual 手动设价入参（管理端 PUT /admin/image-price?model=X，
+// ImagePriceManual 手动设价入参（管理端 PUT /api/admin/image-price?model=X，
 // 全量替换语义）：三价格分量全可选——nil = 清空该分量（新行 NULL；接管的
 // litellm 行清空该分量价），非 nil = 显式设价（≥0，可为 0 = 该价明确为 0）。
 // 单位：token 价毫分/1M image tokens、per-image 毫分/张（handler 边界已由

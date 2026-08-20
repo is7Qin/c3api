@@ -115,7 +115,7 @@ func doReq(t *testing.T, mw func(http.Handler) http.Handler, token string) *http
 		}
 		_, _ = w.Write([]byte(claims.Email))
 	}))
-	req := httptest.NewRequest(http.MethodGet, "/user/keys", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/user/keys", nil)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// —— /admin/overview 聚合面（spec 2026-08-14；全冷面：聚合查询 + 快照遍历，
+// —— /api/admin/overview 聚合面（spec 2026-08-14；全冷面：聚合查询 + 快照遍历，
 // 门禁/计费面零改动） ——
 
 // OverviewAccounts 账号健康分布 + 并发水位（调度器快照同源——与账号列表
@@ -46,7 +46,7 @@ type OverviewData struct {
 	ErrTop    []OverviewErrTop
 }
 
-// Overview 管理端总览聚合（/admin/overview 服务端聚合面）：
+// Overview 管理端总览聚合（/api/admin/overview 服务端聚合面）：
 //
 //	summary = [utcDay, utcDay+1d) 区间单行 sum（SQL 侧）；
 //	trend   = [utcDay-(days-1)d, utcDay+1d) 日桶（SQL 侧 GROUP BY
@@ -119,7 +119,7 @@ func (s *Service) Overview(ctx context.Context, utcDay time.Time, days int, grou
 	}, nil
 }
 
-// UserEmails 批量取邮箱（/admin/users-top TopN 回填；users 表无 name 列——
+// UserEmails 批量取邮箱（/api/admin/users-top TopN 回填；users 表无 name 列——
 // 仅 email；id IN 一次查询）。缺失 id 不在 map（handler 兜底空串）。
 func (s *Service) UserEmails(ctx context.Context, ids []int64) (map[int64]string, error) {
 	return s.store.ListUserEmails(ctx, ids)

@@ -54,7 +54,7 @@ func TestPostAccountsBatchImportCodexOauthHandler(t *testing.T) {
 	h, _, tplID, _ := codexImportTestAPI(t)
 
 	t.Run("imported with group", func(t *testing.T) {
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth", `{
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
 			"items": [{"codex_email":"h1@example.com","codex_account_id":"h-1",
 				"codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}],
 			"template_id": `+itoa(tplID)+`, "group_id": 3}`)
@@ -67,7 +67,7 @@ func TestPostAccountsBatchImportCodexOauthHandler(t *testing.T) {
 	})
 
 	t.Run("row level failures still 200 with original index", func(t *testing.T) {
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth", `{
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
 			"items": [
 				{"codex_email":"h2@example.com","codex_account_id":"h-2",
 					"codex_oauth_token":"at","codex_oauth_refresh_token":"rt"},
@@ -86,7 +86,7 @@ func TestPostAccountsBatchImportCodexOauthHandler(t *testing.T) {
 	})
 
 	t.Run("all failed still 200", func(t *testing.T) {
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth", `{
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
 			"items": [{"codex_email":"h5@example.com","codex_account_id":"h-5"}],
 			"template_id": `+itoa(tplID)+`}`)
 		require.Equal(t, 200, rec.Code, "全部失败也 200: %s", rec.Body.String())
@@ -99,7 +99,7 @@ func TestPostAccountsBatchImportCodexOauthHandler(t *testing.T) {
 	})
 
 	t.Run("updated on re-import", func(t *testing.T) {
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth", `{
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
 			"items": [{"codex_email":"h1@example.com","codex_account_id":"h-1",
 				"codex_oauth_token":"at2","codex_oauth_refresh_token":"rt2"}],
 			"template_id": `+itoa(tplID)+`}`)
@@ -120,7 +120,7 @@ func TestPostAccountsBatchImportCodexStructural400(t *testing.T) {
 		"codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}], "template_id": `
 
 	t.Run("empty items 400", func(t *testing.T) {
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth",
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth",
 			`{"items": [], "template_id": `+itoa(tplID)+`}`)
 		require.Equal(t, 400, rec.Code)
 	})
@@ -135,31 +135,31 @@ func TestPostAccountsBatchImportCodexStructural400(t *testing.T) {
 			sb.WriteString(`{"codex_email":"x` + itoa(int64(i)) + `@example.com","codex_account_id":"x` + itoa(int64(i)) + `","codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}`)
 		}
 		sb.WriteString(`], "template_id": ` + itoa(tplID) + `}`)
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth", sb.String())
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", sb.String())
 		require.Equal(t, 400, rec.Code, "items 原始条数超 100 → 400")
 	})
 
 	t.Run("template_id missing 400", func(t *testing.T) {
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth", `{
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
 			"items": [{"codex_email":"x@example.com","codex_account_id":"x",
 				"codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}]}`)
 		require.Equal(t, 400, rec.Code, "template_id 缺 → 400")
 	})
 
 	t.Run("template_id missing 404", func(t *testing.T) {
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth",
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth",
 			base+`999999}`)
 		require.Equal(t, 404, rec.Code, "template_id 不存在 → 404: %s", rec.Body.String())
 	})
 
 	t.Run("invalid json 400", func(t *testing.T) {
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth", `{bad`)
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{bad`)
 		require.Equal(t, 400, rec.Code)
 	})
 
 	t.Run("template type mismatch 400", func(t *testing.T) {
 		// pat 类型模板（oauth 端点错误配用）→ 400 整批拒绝
-		rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth", `{
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
 			"items": [{"codex_email":"tm@example.com","codex_account_id":"tm",
 				"codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}],
 			"template_id": 2}`)
@@ -172,7 +172,7 @@ func TestPostAccountsBatchImportCodexStructural400(t *testing.T) {
 // 400（task review Important 1——两端点对称拒绝）。
 func TestPostAccountsBatchImportCodexTemplateMismatch(t *testing.T) {
 	h, _, _, _ := codexImportTestAPI(t)
-	rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-pat", `{
+	rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-pat", `{
 		"items": [{"codex_email":"tm2@example.com","codex_account_id":"tm2","codex_pat_key":"pat"}],
 		"template_id": 1}`)
 	require.Equal(t, 400, rec.Code, "pat 端点配 codex-oauth 模板 → 400: %s", rec.Body.String())
@@ -184,7 +184,7 @@ func TestPostAccountsBatchImportCodexTemplateMismatch(t *testing.T) {
 func TestPostAccountsBatchImportCodexPatHandler(t *testing.T) {
 	h, _, tplID, _ := codexImportTestAPI(t)
 
-	rec := doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-pat", `{
+	rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-pat", `{
 		"items": [{"codex_email":"p1@example.com","codex_account_id":"p-1","codex_pat_key":"pat-1"}],
 		"template_id": 2}`)
 	require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
@@ -194,7 +194,7 @@ func TestPostAccountsBatchImportCodexPatHandler(t *testing.T) {
 	require.Empty(t, out.Failed)
 
 	// oauth 端点命中 pat 行 → 行级 failed 形状（不混写）
-	rec = doImport(t, h, http.MethodPost, "/admin/accounts/batch-import-codex-oauth", `{
+	rec = doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
 		"items": [{"codex_email":"p1@example.com","codex_account_id":"p-1",
 			"codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}],
 		"template_id": `+itoa(tplID)+`}`)

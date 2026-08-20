@@ -15,17 +15,16 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// Router 组装 /user 组路由（挂载于 /user/*）：
-// 公开路径（/user/auth/register、/user/auth/login）跳过 JWT；其余路径
+// Router 组装 /api/user 组路由（挂载于 /api/user/*）：
+// 公开路径（/api/user/auth/register、/api/user/auth/login）跳过 JWT；其余路径
 // RequireJWT（验证 + 内存快照用户状态校验）。生成路由的 spec 路径自带
-// /user 前缀（与 /admin 的 spec 相对路径不同——/logs 等路径已被管理面占用，
-// 不能同 spec 路径共存），故无 BaseURL。
-// rules 为规则引擎（/user/err_logs 行级脱敏用；main 装配注入——非 New，
+// /api/user 前缀，故无独立 BaseURL，HandlerWithOptions 直接使用 spec 路径。
+// rules 为规则引擎（/api/user/err_logs 行级脱敏用；main 装配注入——非 New，
 // 测试构造零回归；nil = 不脱敏）。
 func Router(svc *service.Service, iss *auth.Issuer, users auth.UserStatusProvider, rules *rule.RuleEngine) http.Handler {
 	publicPaths := map[string]bool{
-		"/user/auth/register": true,
-		"/user/auth/login":    true,
+		"/api/user/auth/register": true,
+		"/api/user/auth/login":    true,
 	}
 	api := New(svc, iss)
 	api.rules = rules

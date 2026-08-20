@@ -640,7 +640,7 @@ func (s *Scheduler) Runtime(accountID int64) (RuntimeInfo, bool) {
 	}, true
 }
 
-// AccountRuntime 账号运行时视图（/admin/overview 聚合专用；含账号名——err_top
+// AccountRuntime 账号运行时视图（/api/admin/overview 聚合专用；含账号名——err_top
 // 为账号维度，name = 账号名）。与 RuntimeInfo 同源（快照 EWMA/并发原子读），
 // 仅多带聚合所需字段。
 type AccountRuntime struct {

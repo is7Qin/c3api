@@ -108,7 +108,7 @@ func (s *Service) GetFunctionPrice(model string) (*domain.FunctionPrice, error) 
 	return nil, fmt.Errorf("%w: model=%q（无按单元价格数据：请管理端设价或等待 litellm 同步）", ErrNotFound, model)
 }
 
-// UpsertManualFunctionPrice 手动设按单元价（管理端 PUT /admin/function-prices?
+// UpsertManualFunctionPrice 手动设按单元价（管理端 PUT /api/admin/function-prices?
 // model=X）：校验（model 非空；price_per_call 全 nil → 400——行有效性 = 按
 // 单元价非 nil；非 nil 且 < 0 → 400）+ 落库（upsert 强制 source=manual，可
 // 接管 litellm 行）+ 成功后重载快照（读路径即时生效）。FunctionPriceManual
@@ -131,7 +131,7 @@ func (s *Service) UpsertManualFunctionPrice(ctx context.Context, m *repository.F
 	return p, nil
 }
 
-// DeleteManualFunctionPrice 删除手动按单元价（管理端 DELETE /admin/function-
+// DeleteManualFunctionPrice 删除手动按单元价（管理端 DELETE /api/admin/function-
 // prices?model=X）：仅 source=manual 行可删（litellm 行 → ErrConflict；仓库
 // 语义）；成功后重载快照——该 model 从快照消失（缺失窗口内 GetFunctionPrice
 // → 兜底/ErrNotFound，下轮拉取补回；codex-search 种子行删除后下轮启动
@@ -144,7 +144,7 @@ func (s *Service) DeleteManualFunctionPrice(ctx context.Context, model string) e
 	return nil
 }
 
-// ListFunctionPrice 管理端按单元价列表（GET /admin/function-prices）：分页 +
+// ListFunctionPrice 管理端按单元价列表（GET /api/admin/function-prices）：分页 +
 // source/model 筛选 + sort 白名单校验（非法 → ErrInvalidInput 400）。
 func (s *Service) ListFunctionPrice(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.FunctionPrice, int64, error) {
 	if source != nil && !source.Valid() {

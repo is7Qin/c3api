@@ -14,8 +14,8 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// 用户维度分组操作（GET/PUT /admin/users/{id}/groups）+ 组授予读取
-// （GET /admin/groups/{id}/assignments）：与组维度 SetGroupAssignments 对称，
+// 用户维度分组操作（GET/PUT /api/admin/users/{id}/groups）+ 组授予读取
+// （GET /api/admin/groups/{id}/assignments）：与组维度 SetGroupAssignments 对称，
 // 复用 applyGroupAssignments 组维度替换核心。
 
 // collectAssignmentIDs 授予行 → id 列表 + 专属倍率 map（mults 只含有专属倍率
@@ -37,7 +37,7 @@ func collectAssignmentIDs(rows []*domain.GroupAssignment, idOf func(a *domain.Gr
 	return ids, mults
 }
 
-// GetGroupAssignments 读取组当前授予用户与专属倍率（GET /admin/groups/{id}/
+// GetGroupAssignments 读取组当前授予用户与专属倍率（GET /api/admin/groups/{id}/
 // assignments；组缺失 → 404）。mults 只含该组有专属倍率的用户（nil/缺省 =
 // 未设置 → 用组倍率）。
 func (s *Service) GetGroupAssignments(ctx context.Context, groupID int64) ([]int64, map[int64]*int, error) {
@@ -52,7 +52,7 @@ func (s *Service) GetGroupAssignments(ctx context.Context, groupID int64) ([]int
 	return ids, mults, nil
 }
 
-// GetUserGroups 读取用户被授予的组与各专属倍率（GET /admin/users/{id}/groups；
+// GetUserGroups 读取用户被授予的组与各专属倍率（GET /api/admin/users/{id}/groups；
 // 用户缺失 → 404）。mults 只含该用户有专属倍率的组。
 func (s *Service) GetUserGroups(ctx context.Context, userID int64) ([]int64, map[int64]*int, error) {
 	if _, err := s.store.GetUser(ctx, userID); err != nil {
@@ -66,7 +66,7 @@ func (s *Service) GetUserGroups(ctx context.Context, userID int64) ([]int64, map
 	return ids, mults, nil
 }
 
-// SetUserGroups 替换语义设置用户的授予组（PUT /admin/users/{id}/groups）：
+// SetUserGroups 替换语义设置用户的授予组（PUT /api/admin/users/{id}/groups）：
 // group_ids = 完整授予组列表（未列出即撤销，空数组 = 清空）。multipliers 仅对
 // group_ids 中的组生效（key 必须 ∈ group_ids，否则 400；null = 清除为未设置 →
 // 回退组倍率；未列出的组 = 撤销，谈不上倍率）。校验：用户存在（404）、组存在

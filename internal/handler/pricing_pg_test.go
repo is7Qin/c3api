@@ -103,13 +103,13 @@ func TestPricingModelSlashPG(t *testing.T) {
 	enc := "model=" + url.QueryEscape(model)
 
 	// --- pricing：PUT → list 精确筛选命中 → DELETE ---
-	rec := do(http.MethodPut, "/admin/pricing?"+enc, `{"prompt_price_per_million":0.001,"completion_price_per_million":0.002}`)
+	rec := do(http.MethodPut, "/api/admin/pricing?"+enc, `{"prompt_price_per_million":0.001,"completion_price_per_million":0.002}`)
 	require.Equal(t, 200, rec.Code, "pricing put: %s", rec.Body.String())
 	var p Pricing
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &p))
 	require.Equal(t, model, p.Model, "PUT 回显含斜杠模型名")
 
-	rec = do(http.MethodGet, "/admin/pricing?"+enc, "")
+	rec = do(http.MethodGet, "/api/admin/pricing?"+enc, "")
 	require.Equal(t, 200, rec.Code, "pricing list: %s", rec.Body.String())
 	var pl PricingListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pl))
@@ -117,44 +117,44 @@ func TestPricingModelSlashPG(t *testing.T) {
 	require.Equal(t, model, pl.Rows[0].Model, "list 回显含斜杠模型名")
 	require.Equal(t, 0.001, pl.Rows[0].PromptPricePerMillion, "价格 roundtrip")
 
-	rec = do(http.MethodDelete, "/admin/pricing?"+enc, "")
+	rec = do(http.MethodDelete, "/api/admin/pricing?"+enc, "")
 	require.Equal(t, 200, rec.Code, "pricing delete: %s", rec.Body.String())
 
-	rec = do(http.MethodGet, "/admin/pricing?"+enc, "")
+	rec = do(http.MethodGet, "/api/admin/pricing?"+enc, "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pl))
 	require.Zero(t, pl.Total, "删除后列表精确筛选为空")
 
 	// --- image-price：同链 ---
-	rec = do(http.MethodPut, "/admin/image-price?"+enc, `{"output_cost_per_image":0.05}`)
+	rec = do(http.MethodPut, "/api/admin/image-price?"+enc, `{"output_cost_per_image":0.05}`)
 	require.Equal(t, 200, rec.Code, "image-price put: %s", rec.Body.String())
 	var ip ImagePrice
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ip))
 	require.Equal(t, model, ip.Model)
 
-	rec = do(http.MethodGet, "/admin/image-price?"+enc, "")
+	rec = do(http.MethodGet, "/api/admin/image-price?"+enc, "")
 	require.Equal(t, 200, rec.Code, "image-price list: %s", rec.Body.String())
 	var il ImagePriceListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &il))
 	require.Equal(t, int64(1), il.Total, "image-price list 精确筛选命中")
 	require.Equal(t, model, il.Rows[0].Model)
 
-	rec = do(http.MethodDelete, "/admin/image-price?"+enc, "")
+	rec = do(http.MethodDelete, "/api/admin/image-price?"+enc, "")
 	require.Equal(t, 200, rec.Code, "image-price delete: %s", rec.Body.String())
 
 	// --- function-prices：同链 ---
-	rec = do(http.MethodPut, "/admin/function-prices?"+enc, `{"price_per_call":0.01}`)
+	rec = do(http.MethodPut, "/api/admin/function-prices?"+enc, `{"price_per_call":0.01}`)
 	require.Equal(t, 200, rec.Code, "function-prices put: %s", rec.Body.String())
 	var fp FunctionPrice
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &fp))
 	require.Equal(t, model, fp.Model)
 
-	rec = do(http.MethodGet, "/admin/function-prices?"+enc, "")
+	rec = do(http.MethodGet, "/api/admin/function-prices?"+enc, "")
 	require.Equal(t, 200, rec.Code, "function-prices list: %s", rec.Body.String())
 	var fl FunctionPriceListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &fl))
 	require.Equal(t, int64(1), fl.Total, "function-prices list 精确筛选命中")
 	require.Equal(t, model, fl.Rows[0].Model)
 
-	rec = do(http.MethodDelete, "/admin/function-prices?"+enc, "")
+	rec = do(http.MethodDelete, "/api/admin/function-prices?"+enc, "")
 	require.Equal(t, 200, rec.Code, "function-prices delete: %s", rec.Body.String())
 }

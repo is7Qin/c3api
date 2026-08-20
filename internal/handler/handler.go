@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package handler 实现 /admin/* 的 HTTP 处理：OpenAPI 契约层（oapi-codegen
+// Package handler 实现 /api/admin/* 的 HTTP 处理：OpenAPI 契约层（oapi-codegen
 // 生成的 ServerInterface + chi 路由），JSON in/out。
 package handler
 
@@ -48,19 +48,19 @@ func New(svc *service.Service, ops ...OpsOptions) *AdminAPI {
 	}
 }
 
-// Router 返回带 /admin 前缀的 chi 路由（替代原 Routes/RoutesMux）。
+// Router 返回带 /api/admin 前缀的 chi 路由（替代原 Routes/RoutesMux）。
 // ErrorHandlerFunc 覆盖生成的默认 http.Error 纯文本 400：参数绑定失败
 // （InvalidParamFormatError 等）统一输出契约 ErrorResponse（{"error": ...}）。
 func (h *AdminAPI) Router() http.Handler {
 	return HandlerWithOptions(h, ChiServerOptions{
-		BaseURL: "/admin",
+		BaseURL: "/api/admin",
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		},
 	})
 }
 
-// RoutesMux 兼容保留：cmd/server/main.go 仍以 Handle("/admin/*") 挂载，
+// RoutesMux 兼容保留：cmd/server/main.go 仍以 Handle("/api/admin/*") 挂载，
 // 后续任务改接 Router 后可删除。
 func (h *AdminAPI) RoutesMux() http.Handler {
 	return h.Router()

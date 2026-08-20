@@ -32,7 +32,7 @@ func (p *perAccountSnap) GetUsageSnapshot(ctx context.Context, cred *domain.Acco
 	return p.snaps[cred.AccountID], p.errs[cred.AccountID]
 }
 
-// TestAccountsUsageAssembly upstream 装配矩阵（/admin/accounts/usage 查询面）：
+// TestAccountsUsageAssembly upstream 装配矩阵（/api/admin/accounts/usage 查询面）：
 // api-key 无凭据 → null 快照/null 标记（"缺失"不进 auth_expired）；codex 成功 →
 // 快照/null；codex 失败 fatal → null/auth_expired；失败上游 → null/
 // upstream_unavailable；**单账号失败不整批失败**——其余账号照常返回。

@@ -183,7 +183,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	rst := retention.Stats().(usage.RetentionWorkerStats)
 	require.Equal(t, int64(1), rst.LastDroppedLogPartitions, "DROP 分区数与真实一致")
 
-	// --- 4) /admin/ops/workers 端点：typed struct 断言 + 指标与真实状态一致 ---
+	// --- 4) /api/admin/ops/workers 端点：typed struct 断言 + 指标与真实状态一致 ---
 	// （用户裁决并入管理面：路由由契约 chi-server 生成，走 /admin 组鉴权）
 	opsWorkers := []handler.StatsProvider{ruleEngine, sched, rec, errlogW, retention, statsAgg}
 	ah := handler.New(nil, handler.OpsOptions{
@@ -196,7 +196,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	})
 
 	// 非 admin → 401。
-	req := httptest.NewRequest(http.MethodGet, "/admin/ops/workers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
 	recw := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(recw, req)
 	require.Equal(t, http.StatusUnauthorized, recw.Code, "非 admin 401")
@@ -222,7 +222,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.False(t, wm.IsZero(), "watermark 已初始化（首轮聚合推进）")
 
 	// admin → 200 + typed struct 解码断言。
-	req = httptest.NewRequest(http.MethodGet, "/admin/ops/workers", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	recw = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(recw, req)

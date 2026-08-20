@@ -33,7 +33,7 @@ func (s *hUsageSnap) GetUsageSnapshot(ctx context.Context, cred *domain.AccountC
 	return s.snaps[cred.AccountID], s.errs[cred.AccountID]
 }
 
-// newUsageTestHandler /admin/accounts/usage 专用测试装配（h.now 注入 + 可编程
+// newUsageTestHandler /api/admin/accounts/usage 专用测试装配（h.now 注入 + 可编程
 // 快照数据源）。
 func newUsageTestHandler(t *testing.T, now time.Time, snap *hUsageSnap) (*AdminAPI, *fakeStore) {
 	t.Helper()
@@ -45,9 +45,9 @@ func newUsageTestHandler(t *testing.T, now time.Time, snap *hUsageSnap) (*AdminA
 	return h, store
 }
 
-// getUsage 发 GET /admin/accounts/usage 请求。
+// getUsage 发 GET /api/admin/accounts/usage 请求。
 func getUsage(h *AdminAPI, query string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, "/admin/accounts/usage?"+query, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/accounts/usage?"+query, nil)
 	rec := httptest.NewRecorder()
 	h.Router().ServeHTTP(rec, req)
 	return rec

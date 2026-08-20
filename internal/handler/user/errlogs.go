@@ -11,8 +11,8 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// GetUserErrLogs 我的错误明细（/user/err_logs：完整错误面——本地拒绝 + 半异常
-// 双轨；强制 user_id = 当前用户，防越权）。keyset 游标分页与 /user/usage_logs
+// GetUserErrLogs 我的错误明细（/api/user/err_logs：完整错误面——本地拒绝 + 半异常
+// 双轨；强制 user_id = 当前用户，防越权）。keyset 游标分页与 /api/user/usage_logs
 // 同语义（cursor 透传仅本人行内生效）。
 func (h *UserAPI) GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams) {
 	lq := repository.ErrLogQuery{Limit: 20, From: &params.From, To: &params.To, UserID: currentUserID(r)}

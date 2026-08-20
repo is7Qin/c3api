@@ -15,7 +15,7 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
-// GetAccountsUsage 账号用量聚合（/admin/accounts/usage——统一 usage API 查询
+// GetAccountsUsage 账号用量聚合（/api/admin/accounts/usage——统一 usage API 查询
 // 面 spec 2026-08-18，ServerInterface）。参数解析与校验在 handler 层：
 // account_ids 逗号分隔必填（非数字/空/去重后 >100 → 400）；from/to RFC3339
 // 可选——缺省 = 当天（from=UTC 当日零点、to=now，"当天"语义单点，经 h.now

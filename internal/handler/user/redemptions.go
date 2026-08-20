@@ -12,7 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// 兑换码用户面（/user/redemptions，JWT 保护区内——Router 中间件强制；user_id
+// 兑换码用户面（/api/user/redemptions，JWT 保护区内——Router 中间件强制；user_id
 // 一律取当前登录用户，防越权）。
 
 // pageToQuery 增强分页范式（page 1-based + page_size）→ repository.ListQuery

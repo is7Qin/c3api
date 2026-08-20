@@ -65,7 +65,7 @@ const codexAuthFailedMsg = "codex authorization failed"
 //     端该头不进握手头，仅帧 metadata）
 //   - WithPingInterval(0)：禁 SDK 内部心跳（心跳单源——编排层 30s+10s）
 //   - WithPayloadFiltering(false)（P2-A 必配）：Send 默认白名单过滤会剥
-//     max_output_tokens/user/metadata 等合法顶层键（过滤后为空整帧不入网）——
+//     max_output_tokens/api/user/metadata 等合法顶层键（过滤后为空整帧不入网）——
 //     与双向帧透传 1:1 等价直接矛盾；关闭过滤与 client_metadata 伪装注入独立
 //     （prepareFrame client.go:513-579——关闭后注入仍生效）
 //   - 透传头（P3-7/P3-8）：codexWSPassthroughHeaders——session 头族 +

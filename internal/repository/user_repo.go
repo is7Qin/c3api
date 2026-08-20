@@ -73,7 +73,7 @@ func (r *UserRepo) UpdateUserMaxConcurrency(ctx context.Context, userID int64, v
 	return nil
 }
 
-// ListUserEmails 批量取邮箱（/admin/users-top TopN 回填；id IN 一次查询——
+// ListUserEmails 批量取邮箱（/api/admin/users-top TopN 回填；id IN 一次查询——
 // 防逐 id N+1）。缺失 id 不在 map（调用方按需兜底空串）；空 ids → nil map。
 func (r *UserRepo) ListUserEmails(ctx context.Context, ids []int64) (map[int64]string, error) {
 	if len(ids) == 0 {
@@ -108,7 +108,7 @@ func (r *UserRepo) CreateTempBalance(ctx context.Context, userID int64, amount i
 	return err
 }
 
-// ListUserTempBalances 用户侧有效临时额度（/user/temp-balances）：amount > 0
+// ListUserTempBalances 用户侧有效临时额度（/api/user/temp-balances）：amount > 0
 // AND (expires_at IS NULL OR expires_at > now) ORDER BY expires_at ASC——PG
 // ASC 默认 NULLS LAST（永久最后），与 billing_repo.go fefoSelectSQL 语义逐条件
 // 一致（同源排序：扣费顺序 = 展示顺序，用户可见"哪个先过期"）。
@@ -131,7 +131,7 @@ func (r *UserRepo) ListUserTempBalances(ctx context.Context, userID int64) ([]*d
 	return out, nil
 }
 
-// ListTempBalances 管理侧临时额度全量列表（/admin/temp-balances）：无有效过滤
+// ListTempBalances 管理侧临时额度全量列表（/api/admin/temp-balances）：无有效过滤
 // （含过期/用尽/负扣减行——管理需要历史与状态全量视角，与用户侧"仅有效额度"
 // 分明）；userID > 0 时按用户筛选（0 = 全部）；sort 白名单（expires_at/
 // amount/created_at，非法 → ErrInvalidSort）+ order；分页 total 与行集同条件。

@@ -46,11 +46,11 @@ func TestListEndpointsLimitClamp(t *testing.T) {
 		rec   *httptest.ResponseRecorder
 		total int64
 	}{
-		{"templates", doAdmin(http.MethodGet, "/admin/templates?limit=500", "", ""), 201},
-		{"accounts", doAdmin(http.MethodGet, "/admin/accounts?limit=500", "", ""), 201},
-		{"groups", doAdmin(http.MethodGet, "/admin/groups?limit=500", "", ""), 201},
-		{"keys", doAdmin(http.MethodGet, "/admin/keys?limit=500", "", ""), 201},
-		{"users", doAdmin(http.MethodGet, "/admin/users?limit=500", "", ""), 202},
+		{"templates", doAdmin(http.MethodGet, "/api/admin/templates?limit=500", "", ""), 201},
+		{"accounts", doAdmin(http.MethodGet, "/api/admin/accounts?limit=500", "", ""), 201},
+		{"groups", doAdmin(http.MethodGet, "/api/admin/groups?limit=500", "", ""), 201},
+		{"keys", doAdmin(http.MethodGet, "/api/admin/keys?limit=500", "", ""), 201},
+		{"users", doAdmin(http.MethodGet, "/api/admin/users?limit=500", "", ""), 202},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, 200, tc.rec.Code, "%s: %s", tc.name, tc.rec.Body.String())
@@ -64,8 +64,8 @@ func TestListEndpointsLimitClamp(t *testing.T) {
 		})
 	}
 
-	// 用户面 /user/keys（第 6 处同构）
-	rec := doUser(http.MethodGet, "/user/keys?limit=500", "", token)
+	// 用户面 /api/user/keys（第 6 处同构）
+	rec := doUser(http.MethodGet, "/api/user/keys?limit=500", "", token)
 	require.Equal(t, 200, rec.Code, "user keys: %s", rec.Body.String())
 	var ukeys userapi.KeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ukeys))
@@ -73,17 +73,17 @@ func TestListEndpointsLimitClamp(t *testing.T) {
 	require.Len(t, ukeys.Rows, 200, "user keys limit=500 裁剪到 200")
 
 	// ≤200 原样 + 缺省/负值归一下限零回归（≤0 → repo 20）
-	rec = doAdmin(http.MethodGet, "/admin/templates?limit=150", "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/templates?limit=150", "", "")
 	var tpls TemplateListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpls))
 	require.Len(t, tpls.Rows, 150, "limit=150 原样")
 
-	rec = doAdmin(http.MethodGet, "/admin/templates?limit=-5", "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/templates?limit=-5", "", "")
 	tpls = TemplateListResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpls))
 	require.Len(t, tpls.Rows, 20, "limit=-5 → repo ≤0 归一下限 20（行为零变化）")
 
-	rec = doAdmin(http.MethodGet, "/admin/templates", "", "")
+	rec = doAdmin(http.MethodGet, "/api/admin/templates", "", "")
 	tpls = TemplateListResponse{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpls))
 	require.Len(t, tpls.Rows, 20, "缺省 limit → 20（行为零变化）")
@@ -100,12 +100,12 @@ func TestRedemptionUsesPagination(t *testing.T) {
 	// 同一用户复兑同一码 → 409（评审 M-1）；25 个不同用户各兑一次 → 25 条。
 	for i := 0; i < 25; i++ {
 		uToken, _ := registerAndGet(t, doUser, fmt.Sprintf("uses-p%d@example.com", i))
-		rec := doUser(http.MethodPost, "/user/redemptions", `{"code":"`+c.Code+`"}`, uToken)
+		rec := doUser(http.MethodPost, "/api/user/redemptions", `{"code":"`+c.Code+`"}`, uToken)
 		require.Equal(t, 200, rec.Code, "redeem %d: %s", i, rec.Body.String())
 	}
 
 	// 无参数默认行为零回归：20 行 + Total 全量
-	rec := doAdmin(http.MethodGet, fmt.Sprintf("/admin/redemption-codes/%d/uses", c.ID), "", "")
+	rec := doAdmin(http.MethodGet, fmt.Sprintf("/api/admin/redemption-codes/%d/uses", c.ID), "", "")
 	require.Equal(t, 200, rec.Code, "uses default: %s", rec.Body.String())
 	var uses RedemptionUseListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &uses))
@@ -118,7 +118,7 @@ func TestRedemptionUsesPagination(t *testing.T) {
 		{"10", "0"}, {"10", "10"}, {"10", "20"},
 	} {
 		rec = doAdmin(http.MethodGet,
-			fmt.Sprintf("/admin/redemption-codes/%d/uses?limit=%s&offset=%s", c.ID, page.limit, page.offset), "", "")
+			fmt.Sprintf("/api/admin/redemption-codes/%d/uses?limit=%s&offset=%s", c.ID, page.limit, page.offset), "", "")
 		require.Equal(t, 200, rec.Code, "uses paged: %s", rec.Body.String())
 		uses = RedemptionUseListResponse{}
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &uses))
@@ -148,18 +148,18 @@ func TestDecodeStrict(t *testing.T) {
 	_, _, do := newListTestRouter(t)
 
 	// 拼错字段名 → 400 显式
-	rec := do(http.MethodPost, "/admin/templates",
+	rec := do(http.MethodPost, "/api/admin/templates",
 		`{"namee":"x","base_url":"https://u","supported_formats":["openai-chat"]}`)
 	require.Equal(t, 400, rec.Code, "unknown field: %s", rec.Body.String())
 	require.Contains(t, errMsg(t, rec), "namee", "错误消息含未知字段名")
 
 	// 尾随数据（合法 JSON + 垃圾）→ 400
-	rec = do(http.MethodPost, "/admin/templates",
+	rec = do(http.MethodPost, "/api/admin/templates",
 		`{"name":"x","base_url":"https://u","supported_formats":["openai-chat"]} {"extra":1}`)
 	require.Equal(t, 400, rec.Code, "trailing data: %s", rec.Body.String())
 
 	// 合法请求零回归
-	rec = do(http.MethodPost, "/admin/templates",
+	rec = do(http.MethodPost, "/api/admin/templates",
 		`{"name":"ok","base_url":"https://u","supported_formats":["openai-chat"]}`)
 	require.Equal(t, 200, rec.Code, "valid: %s", rec.Body.String())
 }
@@ -171,20 +171,20 @@ func TestDecodeStrictUser(t *testing.T) {
 	token, _ := registerAndGet(t, doUser, "decode-strict@example.com")
 
 	// 建 public 组（key 创建必需 group_id）
-	rec := doAdmin(http.MethodPost, "/admin/groups", `{"name":"pub-g"}`, "")
+	rec := doAdmin(http.MethodPost, "/api/admin/groups", `{"name":"pub-g"}`, "")
 	require.Equal(t, 200, rec.Code, "create group: %s", rec.Body.String())
 	var g Group
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
 
-	rec = doUser(http.MethodPost, "/user/keys", `{"namee":"k"}`, token)
+	rec = doUser(http.MethodPost, "/api/user/keys", `{"namee":"k"}`, token)
 	require.Equal(t, 400, rec.Code, "unknown field: %s", rec.Body.String())
 
-	rec = doUser(http.MethodPost, "/user/keys", `{"name":"k","group_id":`+itoa(*g.ID)+`}`, token)
+	rec = doUser(http.MethodPost, "/api/user/keys", `{"name":"k","group_id":`+itoa(*g.ID)+`}`, token)
 	require.Equal(t, 200, rec.Code, "valid: %s", rec.Body.String())
 
 	// admin 面另一入口（PUT 拼错字段——此前 200 静默不生效的典型场景）
-	doAdmin(http.MethodPost, "/admin/templates",
+	doAdmin(http.MethodPost, "/api/admin/templates",
 		`{"name":"t1","base_url":"https://u","supported_formats":["openai-chat"]}`, "")
-	rec = doAdmin(http.MethodPut, "/admin/templates/1", `{"namee":"x"}`, "")
+	rec = doAdmin(http.MethodPut, "/api/admin/templates/1", `{"namee":"x"}`, "")
 	require.Equal(t, 400, rec.Code, "put unknown field: %s", rec.Body.String())
 }

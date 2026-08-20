@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// PostGroups 创建分组（平台容量池；key 为独立表，用户面 /user/keys 创建，
+// PostGroups 创建分组（平台容量池；key 为独立表，用户面 /api/user/keys 创建，
 // ServerInterface）。price_multiplier（正常值 0~10，API 边界换算万分数）：
 // 缺省/null = 不设置（×1）；显式 0 = 免费组（恒写入——T3.5 修正：API 可表达
 // 显式 0，repo 不再把 0 当未指定）。

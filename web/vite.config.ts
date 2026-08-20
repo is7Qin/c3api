@@ -9,19 +9,13 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     proxy: {
-      // target 用 localhost（::1）而非 127.0.0.1：本机 127.0.0.1:18080 可能被
-      // 其他进程（如 mock-mfp-api.mjs 联调服务）占用，特定地址绑定优先于 0.0.0.0，
-      // 代理会误入 mock 返回 404。localhost 解析到 ::1 命中真后端。
-      '/admin': { target: 'http://localhost:18080', changeOrigin: true },
-      '/user': {
-        target: 'http://localhost:18080',
-        changeOrigin: true,
-        // 页面导航（Accept: text/html，如 /user/login /user/keys 等 SPA 路由）交回
-        // vite 返回 index.html；API fetch（Accept: */*）代理到后端。
-        // 注意 vite 8 语义：bypass 返回 string 才绕过代理（url 重写），true/undefined 均继续代理。
-        bypass: (req) =>
-          req.headers.accept?.includes('text/html') ? req.url : undefined,
-      },
+      // 所有 API 统一收口于 /api/*（/api/admin/*、/api/user/*），前端 SPA
+      // 占用 /、/user/*、/app/* 已无前缀冲突，vite 代理无需 bypass 分流。
+      // target 用 localhost（::1）而非 127.0.0.1：避免 127.0.0.1:18080 被
+      // 其他进程（如 mock-mfp-api.mjs）占用导致代理误入 mock。
+      '/api': { target: 'http://localhost:18080', changeOrigin: true },
+      // AI 代理端点 /v1/* 保持直通（与 /api 隔离）
+      '/v1': { target: 'http://localhost:18080', changeOrigin: true },
     },
   },
   build: { outDir: 'dist', emptyOutDir: true },

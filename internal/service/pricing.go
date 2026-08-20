@@ -20,7 +20,7 @@ import (
 // 与 fetch 内部错误包装，保留详情）。
 var ErrPriceFetch = errors.New("service: price fetch failed")
 
-// PricingSyncStats 一次手动同步的拉取统计（POST /admin/pricing/sync 响应）。
+// PricingSyncStats 一次手动同步的拉取统计（POST /api/admin/pricing/sync 响应）。
 // Task A 双线扩展：ImageRows/ImageUpdated 为 image_price 行统计（与文本价
 // 独立判定独立落库）；价格表三件套再扩：FunctionRows/FunctionUpdated 为
 // function_price 行统计（同款独立判定独立落库）；Skipped 语义含三线判定——
@@ -140,7 +140,7 @@ func (s *Service) ServiceTierPolicy(tier billing.Tier) billing.TierPolicyMode {
 	}
 }
 
-// UpsertManualPricing 手动设价（管理端 PUT /admin/pricing?model=X）：校验 + 落库
+// UpsertManualPricing 手动设价（管理端 PUT /api/admin/pricing?model=X）：校验 + 落库
 // （upsert 强制 source=manual，可接管 litellm 行）+ 成功后重载快照（读路径
 // 即时生效）。PricingManual 可选字段（nil = 清空）校验语义：非 nil 且 < 0 →
 // 400（与主价一致）；FastMultiplier 万分数 0 < m ≤ 100000（×1.0..×10.0，评审
@@ -191,7 +191,7 @@ func (s *Service) UpsertManualPricing(ctx context.Context, m *repository.Pricing
 	return p, nil
 }
 
-// DeleteManualPricing 删除手动价（管理端 DELETE /admin/pricing?model=X）：仅
+// DeleteManualPricing 删除手动价（管理端 DELETE /api/admin/pricing?model=X）：仅
 // source=manual 行可删（litellm 行 → ErrConflict；仓库语义）；成功后重载快照
 // ——该 model 从快照消失（缺失窗口内 GetPrice → ErrNotFound，下轮拉取补回）。
 func (s *Service) DeleteManualPricing(ctx context.Context, model string) error {
@@ -202,7 +202,7 @@ func (s *Service) DeleteManualPricing(ctx context.Context, model string) error {
 	return nil
 }
 
-// ListPricing 管理端价格列表（GET /admin/pricing）：分页 + source/provider/model
+// ListPricing 管理端价格列表（GET /api/admin/pricing）：分页 + source/provider/model
 // 筛选 + sort 白名单校验（非法 → ErrInvalidInput 400）。source 枚举非法 → 400
 // （handler 显式校验已做，service 兜底双保险）；provider 为自由字符串等值
 // （DB 侧不限于 openapi Provider enum——litellm_provider 动态，新厂商可筛）。
@@ -221,7 +221,7 @@ func (s *Service) ListPricing(ctx context.Context, q repository.ListQuery, sourc
 // 以错误拒绝。
 func (s *Service) SetPriceFetcher(f pricing.Fetcher) { s.priceFetcher = f }
 
-// SyncPricingNow 手动触发一次价格同步（管理端 POST /admin/pricing/sync）：与
+// SyncPricingNow 手动触发一次价格同步（管理端 POST /api/admin/pricing/sync）：与
 // SyncWorker.Sync 同路径语义——fetch（price_source_url settings 快照，零 DB）
 // → 文本价 UpsertFromLiteLLM + image 价 UpsertImageFromLiteLLM + 按单元价
 // UpsertFunctionFromLiteLLM（三线独立判定独立落库，均 manual 行级互斥，永不

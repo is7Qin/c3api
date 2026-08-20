@@ -114,13 +114,13 @@ func (s *Service) LoginUser(ctx context.Context, email, password string) (*domai
 	return u, nil
 }
 
-// ListUserTempBalances 当前用户有效临时额度（/user/temp-balances；userID 由
-// handler 强制 = 当前用户，无 user_id 参数防越权——对齐 /user/stats 模式）。
+// ListUserTempBalances 当前用户有效临时额度（/api/user/temp-balances；userID 由
+// handler 强制 = 当前用户，无 user_id 参数防越权——对齐 /api/user/stats 模式）。
 func (s *Service) ListUserTempBalances(ctx context.Context, userID int64) ([]*domain.TempBalance, error) {
 	return s.store.ListUserTempBalances(ctx, userID)
 }
 
-// ListTempBalances 管理侧临时额度全量列表（/admin/temp-balances；userID 0 =
+// ListTempBalances 管理侧临时额度全量列表（/api/admin/temp-balances；userID 0 =
 // 全部用户；sort/order 白名单校验——非法 → ErrInvalidInput 400）。
 func (s *Service) ListTempBalances(ctx context.Context, q repository.ListQuery, userID int64) ([]*domain.TempBalance, int64, error) {
 	if err := validateListQuery(q, listSortFields["temp_balances"]); err != nil {
@@ -129,7 +129,7 @@ func (s *Service) ListTempBalances(ctx context.Context, q repository.ListQuery, 
 	return s.store.ListTempBalances(ctx, q, userID)
 }
 
-// ChangePassword 修改密码（/user/auth/change-password）：旧密码校验复用登录
+// ChangePassword 修改密码（/api/user/auth/change-password）：旧密码校验复用登录
 // 语义（bcrypt 校验 + 状态检查——失败 ErrInvalidCredentials 401 同登录文案
 // 防枚举）；新密码非空 + ≤72 字节（bcrypt 截断限制，注册/建用户同款校验）→
 // 非法 ErrInvalidInput 400；成功 bcrypt 重哈希落库。**不撤销既有 JWT**——
@@ -153,7 +153,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, old, new str
 	return s.store.UpdateUserPassword(ctx, userID, hash)
 }
 
-// GetUser 用户详情（/admin/users/{id} 更新前置读取）。
+// GetUser 用户详情（/api/admin/users/{id} 更新前置读取）。
 func (s *Service) GetUser(ctx context.Context, id int64) (*domain.User, error) {
 	u, err := s.store.GetUser(ctx, id)
 	if err != nil {
@@ -162,7 +162,7 @@ func (s *Service) GetUser(ctx context.Context, id int64) (*domain.User, error) {
 	return u, nil
 }
 
-// GetUserMe 当前用户信息（/user/auth/me）。
+// GetUserMe 当前用户信息（/api/user/auth/me）。
 func (s *Service) GetUserMe(ctx context.Context, userID int64) (*domain.User, error) {
 	return s.GetUser(ctx, userID)
 }
@@ -208,7 +208,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string, role d
 	return created, nil
 }
 
-// ListUsers 用户列表（/admin/users；platform_admin 专属）。
+// ListUsers 用户列表（/api/admin/users；platform_admin 专属）。
 func (s *Service) ListUsers(ctx context.Context, q repository.ListQuery) ([]*domain.User, int64, error) {
 	if err := validateListQuery(q, listSortFields["users"]); err != nil {
 		return nil, 0, err

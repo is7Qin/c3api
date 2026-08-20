@@ -70,14 +70,14 @@ type UserStore interface {
 	// CreateTempBalance 创建临时额度行（注册赠品、兑换码兑换等；user_id 外键必
 	// 存在）。expiresAt/note 为 nil 时不落该列（nil = 永久；兑换码路径必非零）。
 	CreateTempBalance(ctx context.Context, userID int64, amount int64, expiresAt *time.Time, note *string) error
-	// ListUserTempBalances 用户侧有效临时额度（/user/temp-balances：amount > 0
+	// ListUserTempBalances 用户侧有效临时额度（/api/user/temp-balances：amount > 0
 	// 且未过期，expires_at 升序——PG ASC 默认 NULLS LAST，永久最后，与
 	// fefoSelectSQL 扣费顺序同源）。
 	ListUserTempBalances(ctx context.Context, userID int64) ([]*domain.TempBalance, error)
-	// ListTempBalances 管理侧全量临时额度（/admin/temp-balances：含过期/用尽/
+	// ListTempBalances 管理侧全量临时额度（/api/admin/temp-balances：含过期/用尽/
 	// 负扣减行——全量视角；userID 0 = 全部；sort 白名单 + 分页）。
 	ListTempBalances(ctx context.Context, q repository.ListQuery, userID int64) ([]*domain.TempBalance, int64, error)
-	// ListUserEmails 批量取邮箱（/admin/users-top TopN 回填；id IN 一次查询）。
+	// ListUserEmails 批量取邮箱（/api/admin/users-top TopN 回填；id IN 一次查询）。
 	ListUserEmails(ctx context.Context, ids []int64) (map[int64]string, error)
 }
 
@@ -88,12 +88,12 @@ type SettingStore interface {
 	SetSetting(ctx context.Context, key string, typ domain.SettingType, value string) (*domain.Setting, error)
 }
 
-// KeyStore 客户端 key 持久化（/user/keys 面 + 组删除前置清理）。
+// KeyStore 客户端 key 持久化（/api/user/keys 面 + 组删除前置清理）。
 type KeyStore interface {
 	CreateKey(ctx context.Context, k *domain.Key) (*domain.Key, error)
 	GetKey(ctx context.Context, id int64) (*domain.Key, error)
 	ListKeysByUser(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.Key, int64, error)
-	// ListKeys 管理端全量 key 列表（/admin/keys：软删过滤 + UserID/GroupID
+	// ListKeys 管理端全量 key 列表（/api/admin/keys：软删过滤 + UserID/GroupID
 	// 零值不过滤 + 3 键 sort 白名单；脱敏在 handler 转换面——明文字段不下发）。
 	ListKeys(ctx context.Context, q repository.ListQuery) ([]*domain.Key, int64, error)
 	// UpdateKey patch 语义更新（S3-F1）：仅 Set 非 nil 字段，nil = 不改——并发
@@ -105,8 +105,8 @@ type KeyStore interface {
 	DeleteKeysByGroup(ctx context.Context, groupID int64) ([]string, error)
 }
 
-// GroupAssignmentStore private 组授予持久化（/admin/groups/{id}/assignments +
-// /user/groups 可选组列表）。
+// GroupAssignmentStore private 组授予持久化（/api/admin/groups/{id}/assignments +
+// /api/user/groups 可选组列表）。
 type GroupAssignmentStore interface {
 	GrantGroup(ctx context.Context, groupID, userID int64) error
 	RevokeGroup(ctx context.Context, groupID, userID int64) error
@@ -194,7 +194,7 @@ type RedemptionStore interface {
 	GetCode(ctx context.Context, id int64) (*domain.RedemptionCode, error)
 	ListCodes(ctx context.Context, q repository.ListQuery, typ *domain.RedemptionType, status *domain.RedemptionStatus) ([]*domain.RedemptionCode, int64, error)
 	ListCodeUses(ctx context.Context, codeID int64, q repository.ListQuery) ([]*domain.RedemptionUse, int64, error)
-	// ListUsesByUser 某用户的兑换记录（/user/redemptions；use + 码联查视图）。
+	// ListUsesByUser 某用户的兑换记录（/api/user/redemptions；use + 码联查视图）。
 	ListUsesByUser(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.RedemptionRecord, int64, error)
 	DeactivateCodes(ctx context.Context, ids []int64) (int64, error)
 	GetUse(ctx context.Context, codeID, userID int64) (*domain.RedemptionUse, error)
@@ -227,14 +227,14 @@ type PricingStore interface {
 type LogStore interface {
 	QueryUsages(ctx context.Context, q repository.UsageQuery) ([]*domain.UsageLog, error)
 	QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) ([]*domain.UsageLog, error)
-	// ScanUsageAgg 批量账号 usage_logs 区间聚合（/admin/accounts/usage 查询面：
+	// ScanUsageAgg 批量账号 usage_logs 区间聚合（/api/admin/accounts/usage 查询面：
 	// 单查询 ANY + GROUP BY；无记录账号无键——补零由 service 按 ids 全量组装）。
 	ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error)
 }
 
 type StatStore interface {
 	ScanStats(ctx context.Context, q repository.StatQuery) ([]*domain.StatBucket, error)
-	// /admin/overview 聚合面（spec 2026-08-14）：SQL 侧聚合（F-P2-2 形态——
+	// /api/admin/overview 聚合面（spec 2026-08-14）：SQL 侧聚合（F-P2-2 形态——
 	// 服务端 GROUP BY 返回日桶，不拉全行客户端聚合）。
 	SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*repository.StatSummary, error)
 	ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64) ([]*repository.StatDayAgg, error)
@@ -478,20 +478,20 @@ var listSortFields = map[string][]string{
 	"groups":    {"id", "name", "created_at", "updated_at"},
 	"users":     {"id", "email", "role", "status", "max_concurrency", "created_at", "updated_at"},
 	"keys":      {"id", "name", "status", "max_concurrency", "quota", "quota_used", "created_at", "updated_at"},
-	// 与 repo 层 keyAdminSortFields 白名单一致（双保险；/admin/keys——管理端仅
+	// 与 repo 层 keyAdminSortFields 白名单一致（双保险；/api/admin/keys——管理端仅
 	// id/name/created_at 三键，用户端 8 键白名单见上 "keys"）。
 	"admin_keys": {"id", "name", "created_at"},
 	// 与 repo 层 redemptionCodeSortFields 白名单一致（双保险）。
 	"redemption_codes": {"id", "code", "type", "value", "max_uses", "used_count", "status", "created_by", "created_at", "updated_at"},
-	// 与 repo 层 redemptionUseSortFields 白名单一致（双保险；/user/redemptions）。
+	// 与 repo 层 redemptionUseSortFields 白名单一致（双保险；/api/user/redemptions）。
 	"redemption_uses": {"id", "code_id", "user_id", "value", "created_at"},
-	// 与 repo 层 tempBalanceSortFields 白名单一致（双保险；/admin/temp-balances）。
+	// 与 repo 层 tempBalanceSortFields 白名单一致（双保险；/api/admin/temp-balances）。
 	"temp_balances": {"expires_at", "amount", "created_at"},
-	// 与 repo 层 pricingSortFields 白名单一致（双保险；/admin/pricing）。
+	// 与 repo 层 pricingSortFields 白名单一致（双保险；/api/admin/pricing）。
 	"pricing": {"model", "updated_at"},
-	// 与 repo 层 imagePriceSortFields 白名单一致（双保险；/admin/image-price）。
+	// 与 repo 层 imagePriceSortFields 白名单一致（双保险；/api/admin/image-price）。
 	"image_price": {"model", "updated_at"},
-	// 与 repo 层 functionPriceSortFields 白名单一致（双保险；/admin/function-prices）。
+	// 与 repo 层 functionPriceSortFields 白名单一致（双保险；/api/admin/function-prices）。
 	"function_price": {"model", "updated_at"},
 }
 

@@ -158,7 +158,7 @@ var usageLogIndexDDLs = []string{
 // errLogColumnDefs err_logs 分区表列定义（单一事实源，与 ent schema 完全一致，
 // 锚测试 TestErrLogColumnDefsMatchCreateDDL 断言列集合一致）：错误审计瘦表——
 // 无 token/价格列；status_code/error_message（usage_logs 瘦身去掉的排障列）+
-// 审计归属（group/account/template/user/key）+ billing_tier（评审 I-3：tier
+// 审计归属（group/account/template/api/user/key）+ billing_tier（评审 I-3：tier
 // reject 的 tier 维度审计保留）。
 var errLogColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('err_logs_id_seq'::regclass)`,

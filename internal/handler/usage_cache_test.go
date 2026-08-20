@@ -19,7 +19,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// TestGetUsageLogsCacheTokens /admin/usage_logs 响应含 cache read/creation 字段
+// TestGetUsageLogsCacheTokens /api/admin/usage_logs 响应含 cache read/creation 字段
 // （toAPIUsageLog 手写映射接线，评审 I-3）。
 func TestGetUsageLogsCacheTokens(t *testing.T) {
 	store := newFakeStore()
@@ -44,7 +44,7 @@ func TestGetUsageLogsCacheTokens(t *testing.T) {
 	})
 	r.Mount("/", h.Router())
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/usage_logs?from=2026-08-07T00:00:00Z&to=2026-08-07T23:59:59Z", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/usage_logs?from=2026-08-07T00:00:00Z&to=2026-08-07T23:59:59Z", nil)
 	req.Header.Set("Authorization", "Bearer admin-tok")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)

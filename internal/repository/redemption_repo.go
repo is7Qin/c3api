@@ -149,7 +149,7 @@ func (r *RedemptionRepo) ListCodeUses(ctx context.Context, codeID int64, q ListQ
 	return out, int64(total), nil
 }
 
-// ListUsesByUser 某用户的兑换记录（/user/redemptions）：use + 码联查
+// ListUsesByUser 某用户的兑换记录（/api/user/redemptions）：use + 码联查
 // （WithCode 边，Required 恒非空；码的 type/remark 随记录返回），分页/排序
 // （sort 白名单）。
 func (r *RedemptionRepo) ListUsesByUser(ctx context.Context, userID int64, q ListQuery) ([]*domain.RedemptionRecord, int64, error) {

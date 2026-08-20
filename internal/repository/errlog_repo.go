@@ -24,7 +24,7 @@ import (
 type ErrLogQuery struct {
 	GroupID    int64 // 0 = 不过滤
 	AccountID  int64
-	UserID     int64 // 0 = 不过滤（/user/errlogs 强制 = 自己）
+	UserID     int64 // 0 = 不过滤（/api/user/errlogs 强制 = 自己）
 	KeyID      int64
 	Model      string
 	Format     string // 空 = 不过滤（无效值自然查空——与 model 同语义，契约不校验值域）

@@ -12,12 +12,12 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// 图片生成价格管理面（/admin/image-price）：列表 / 手动设价 / 删除手动价
+// 图片生成价格管理面（/api/admin/image-price）：列表 / 手动设价 / 删除手动价
 // （Task A 数据面；images 端点计费价格来源）。PUT/DELETE 的 model 走 query
 // 参数（生成契约签名 params.Model——模型名可含 `/`，同 /pricing 不入路径）；
 // 错误映射走 httpface.WriteServiceErr（ErrNotFound → 404、ErrConflict → 409、
 // ErrInvalidInput → 400——含"至少一价非 nil"校验）。
-// 与 /admin/pricing 同形态同单位（token 价 USD/1M per-million；仅多 per-image
+// 与 /api/admin/pricing 同形态同单位（token 价 USD/1M per-million；仅多 per-image
 // USD/张 分量，见换算函数注释）。
 
 // GetImagePrice 图片价格列表（分页/筛选/排序，对齐 GetPricing），ServerInterface。

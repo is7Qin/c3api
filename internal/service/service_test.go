@@ -96,7 +96,7 @@ func TestTemplateCredentialTypeDefaultAndValid(t *testing.T) {
 }
 
 // Phase 3a：分组 = 平台容量池（无内嵌 key）。创建返回分组本身（visibility
-// 缺省 public）；key 为独立表（用户面 /user/keys 创建）。
+// 缺省 public）；key 为独立表（用户面 /api/user/keys 创建）。
 func TestCreateGroupFlow(t *testing.T) {
 	fs := newFakeStore()
 	svc := &Service{store: fs, inv: &invRecorder{}, log: nil}

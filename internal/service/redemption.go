@@ -18,7 +18,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// GenerateRequest 兑换码生成参数（/admin/redemption-codes POST）。
+// GenerateRequest 兑换码生成参数（/api/admin/redemption-codes POST）。
 // MaxUses ≤ 0 → 1（单次码，决策 3）；Count ≤ 0 → 1，上限 1000。
 type GenerateRequest struct {
 	Type              domain.RedemptionType
@@ -126,7 +126,7 @@ func (s *Service) GenerateCodes(ctx context.Context, req GenerateRequest, create
 	panic("unreachable") // 循环内 5 次迭代全部 return（continue 仅 attempt<4，末次冲突必 return）
 }
 
-// ListCodes 兑换码列表（/admin/redemption-codes）：type/status 筛选
+// ListCodes 兑换码列表（/api/admin/redemption-codes）：type/status 筛选
 // （nil = 不过滤；非法枚举 → 400）+ sort 白名单校验（非法 → 400）。
 func (s *Service) ListCodes(ctx context.Context, q repository.ListQuery, typ *domain.RedemptionType, status *domain.RedemptionStatus) ([]*domain.RedemptionCode, int64, error) {
 	if typ != nil && !typ.Valid() {
@@ -152,7 +152,7 @@ func (s *Service) GetCode(ctx context.Context, id int64) (*domain.RedemptionCode
 	return c, nil
 }
 
-// GetCodeUses 某码的兑换记录（审计，/admin/redemption-codes/{id}/uses）：
+// GetCodeUses 某码的兑换记录（审计，/api/admin/redemption-codes/{id}/uses）：
 // 码不存在 → 404（mapRepoErr 含详情）。use 快照不存码类型——handler 需先
 // GetCode 取 type 做面值换算。q 直透 ListCodeUses（limit/offset 缺省归一在
 // repo——≤0→20/<0→0；spec 2026-08-17 补分页参数）。
@@ -163,7 +163,7 @@ func (s *Service) GetCodeUses(ctx context.Context, codeID int64, q repository.Li
 	return s.store.ListCodeUses(ctx, codeID, q)
 }
 
-// ListMyRedemptions 我的兑换记录（/user/redemptions）：use 快照 + 码的 type/remark
+// ListMyRedemptions 我的兑换记录（/api/user/redemptions）：use 快照 + 码的 type/remark
 // 联查；userID 由 handler 从 JWT 取（强制本人数据，防越权）。sort/order 白名单
 // 校验（非法 → 400）。
 func (s *Service) ListMyRedemptions(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.RedemptionRecord, int64, error) {
@@ -173,7 +173,7 @@ func (s *Service) ListMyRedemptions(ctx context.Context, userID int64, q reposit
 	return s.store.ListUsesByUser(ctx, userID, q)
 }
 
-// DeactivateCode 单码失效（/admin/redemption-codes/{id}/deactivate）：
+// DeactivateCode 单码失效（/api/admin/redemption-codes/{id}/deactivate）：
 // 不存在 → 404 含详情；已 disabled → no-op 成功（幂等重放友好，决策 6）。
 func (s *Service) DeactivateCode(ctx context.Context, id int64) error {
 	c, err := s.store.GetCode(ctx, id)
@@ -189,7 +189,7 @@ func (s *Service) DeactivateCode(ctx context.Context, id int64) error {
 	return nil
 }
 
-// DeactivateCodesBatch 批量失效（/admin/redemption-codes/batch-deactivate，
+// DeactivateCodesBatch 批量失效（/api/admin/redemption-codes/batch-deactivate，
 // 决策 6）：validateIDs → 逐 id 先查（缺失 id → 404 含缺失详情，对齐批量删除
 // 范式）→ DeactivateCodes 单事务（已 disabled no-op）→ 返回新失效数。
 // 先查后失效窗口竞态可接受：失效不新增行，检查到的 id 不会消失（评审 M-2）。
@@ -238,7 +238,7 @@ func applyTempBalance(ctx context.Context, tx repository.TxStore, userID int64, 
 	return tx.CreateTempBalance(ctx, userID, c.Value, c.ResourceExpiresAt, &note)
 }
 
-// Redeem 兑换（/user/redemptions POST，决策 7/10-12 编排）：
+// Redeem 兑换（/api/user/redemptions POST，决策 7/10-12 编排）：
 // 单事务内按序——① GetByCode 定位码（不存在 → 400 invalid code）；
 // ② GetUse 先查本用户已兑换（评审 M-1：重复请求稳定 409，不因码状态漂移）；
 // ③ 码状态检查（disabled/过期 → 400 invalid code，统一不泄露具体原因）；

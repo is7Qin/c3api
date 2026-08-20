@@ -73,11 +73,12 @@ export function toQuery(p?: object): string {
   return s ? `?${s}` : ''
 }
 
-// base：管理端 '/admin' / 用户端 '/user'；token 统一由 userAuth 注入（一套登录态）。
+// base：管理端 '/api/admin' / 用户端 '/api/user'；token 统一由 userAuth 注入（一套登录态）。
+// 架构约束：所有 API 统一收口于 /api/*，前端 SPA 与 API 无前缀重叠。
 export class ApiClient {
   private base: string
   private getToken: () => string | null
-  constructor(getToken: () => string | null, base: string = '/admin') {
+  constructor(getToken: () => string | null, base: string = '/api/admin') {
     this.getToken = getToken
     this.base = base
   }
@@ -185,13 +186,13 @@ export class ApiClient {
   getFunctionPrices = (p?: { page?: number; page_size?: number; source?: string; provider?: components['schemas']['Provider']; model?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['FunctionPriceListResponse']>('/function-prices', { params: toQuery(p) })
   putFunctionPrice = (model: string, b: components['schemas']['FunctionPriceUpsert']) => this.request<components['schemas']['FunctionPrice']>('/function-prices', { method: 'PUT', params: toQuery({ model }), body: JSON.stringify(b) })
   deleteFunctionPrice = (model: string) => this.request<components['schemas']['DeletedResponse']>('/function-prices', { method: 'DELETE', params: toQuery({ model }) })
-  // —— 管理端总览（/admin/overview + /admin/users-top；聚合面 30s / 实时面 2s
+  // —— 管理端总览（/api/admin/overview + /api/admin/users-top；聚合面 30s / 实时面 2s
   // 服务端 TTL 缓存，dashboard 轮询频率下无陈旧感）——
   getOverview = (p?: { days?: number; group_id?: number }) => this.request<components['schemas']['OverviewResponse']>('/overview', { params: toQuery(p) })
   getUsersTop = (p?: { top?: number }) => this.request<components['schemas']['UsersTopResponse']>('/users-top', { params: toQuery(p) })
-  // —— 运维观测（/admin/ops/workers；管理端专属，契约 ops tag 生成类型）——
+  // —— 运维观测（/api/admin/ops/workers；管理端专属，契约 ops tag 生成类型）——
   getOpsWorkers = () => this.request<components['schemas']['WorkersResponse']>('/ops/workers')
-  // 管理侧临时额度全量分页（/admin/temp-balances；/app/users 查看入口消费）
+  // 管理侧临时额度全量分页（/api/admin/temp-balances；/app/users 查看入口消费）
   getAdminTempBalances = (p?: { page?: number; page_size?: number; user_id?: number; sort?: string; order?: 'asc' | 'desc' }) =>
     this.request<components['schemas']['AdminTempBalancesResponse']>('/temp-balances', { params: toQuery(p) })
   // —— 用户端（userApi 专属；token 用 userAuth）——
@@ -217,5 +218,5 @@ export class ApiUnauthorized extends Error {
   constructor() { super('unauthorized'); this.name = 'ApiUnauthorized' }
 }
 
-// 用户端实例：base '/user'，Authorization 走 userAuth（c3api_user_token）。
-export const userApi = new ApiClient(userAuth.getToken, '/user')
+// 用户端实例：base '/api/user'，Authorization 走 userAuth（c3api_user_token）。
+export const userApi = new ApiClient(userAuth.getToken, '/api/user')

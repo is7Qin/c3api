@@ -70,7 +70,7 @@ func (s pricingSnapshot) Reload(ctx context.Context) error {
 	return s.svc.ReloadFunctionPricingCtx(ctx)
 }
 
-// snapshotStates 注册表状态 → /admin/ops/workers 响应映射（LastError error
+// snapshotStates 注册表状态 → /api/admin/ops/workers 响应映射（LastError error
 // 接口 JSON 不可用 → 字符串；snapshot.Status 值拷贝，调用方安全持有）。
 func snapshotStates(st []snapshot.Status) []handler.SnapshotState {
 	out := make([]handler.SnapshotState, 0, len(st))

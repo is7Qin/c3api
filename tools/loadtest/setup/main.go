@@ -185,7 +185,7 @@ func main() {
 			name += fmt.Sprintf("-%d", i)
 		}
 		var out tpl
-		admin(http.MethodPost, "/admin/templates", map[string]any{
+		admin(http.MethodPost, "/api/admin/templates", map[string]any{
 			"name": name, "base_url": upURLs[i%len(upURLs)],
 			"supported_formats": []string{f}, "models": randomModels(rng),
 		}, &out)
@@ -198,7 +198,7 @@ func main() {
 	groupIDs := make([]int64, 0, *groups)
 	for i := 0; i < *groups; i++ {
 		var out grp
-		admin(http.MethodPost, "/admin/groups", map[string]any{
+		admin(http.MethodPost, "/api/admin/groups", map[string]any{
 			"name": fmt.Sprintf("pool-%d", i), "visibility": "public",
 		}, &out)
 		groupIDs = append(groupIDs, out.ID)
@@ -211,7 +211,7 @@ func main() {
 	aStart := time.Now()
 	for i := 0; i < *accounts; i++ {
 		var out acc
-		admin(http.MethodPost, "/admin/accounts", map[string]any{
+		admin(http.MethodPost, "/api/admin/accounts", map[string]any{
 			"name":         fmt.Sprintf("acc-%d", i),
 			"template_id":  tplIDs[rng.IntN(len(tplIDs))],
 			"upstream_key": "sk-upstream",
@@ -228,7 +228,7 @@ func main() {
 	// 基础价 + 随机 1-2 个矩阵字段（priority/fast 等），保证计费链路有价。
 	pStart := time.Now()
 	for _, model := range pickModels(rng, *priceModels) {
-		admin(http.MethodPut, "/admin/pricing?model="+url.QueryEscape(model), randomPricingBody(rng), nil)
+		admin(http.MethodPut, "/api/admin/pricing?model="+url.QueryEscape(model), randomPricingBody(rng), nil)
 	}
 	fmt.Printf("pricing: %d models (%s)\n", *priceModels, time.Since(pStart).Round(time.Millisecond))
 
@@ -257,9 +257,9 @@ func main() {
 				userBody["max_concurrency"] = v
 			}
 			var u usr
-			admin(http.MethodPost, "/admin/users", userBody, &u)
+			admin(http.MethodPost, "/api/admin/users", userBody, &u)
 			var lr loginResp
-			call(http.MethodPost, "/user/auth/login", "", map[string]any{
+			call(http.MethodPost, "/api/user/auth/login", "", map[string]any{
 				"email": email, "password": pass,
 			}, &lr)
 			for k := 0; k < *keysPerUser; k++ {
@@ -284,7 +284,7 @@ func main() {
 						if attempt > 0 {
 							time.Sleep(300 * time.Millisecond)
 						}
-						if e = callNoExit(http.MethodPost, "/user/keys", "Bearer "+lr.Token, keyBody, &kr); e == nil {
+						if e = callNoExit(http.MethodPost, "/api/user/keys", "Bearer "+lr.Token, keyBody, &kr); e == nil {
 							return nil
 						}
 					}

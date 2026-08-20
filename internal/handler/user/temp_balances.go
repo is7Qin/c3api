@@ -11,12 +11,12 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
-// 我的临时额度（/user/temp-balances，spec 2026-08-15）：仅有效额度（未过期且
+// 我的临时额度（/api/user/temp-balances，spec 2026-08-15）：仅有效额度（未过期且
 // 正余额），FEFO 同序展示；amount 毫分 → USD 在本包 convert 边界换算（内部
 // 毫分不动）。
 
 // GetUserTempBalances 我的临时额度（强制 user_id = 当前用户，无 user_id 参数
-// ——对齐 /user/stats 模式防越权，ServerInterface）。
+// ——对齐 /api/user/stats 模式防越权，ServerInterface）。
 func (h *UserAPI) GetUserTempBalances(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.svc.ListUserTempBalances(r.Context(), currentUserID(r))
 	if err != nil {

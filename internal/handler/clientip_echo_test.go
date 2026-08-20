@@ -21,7 +21,7 @@ import (
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 )
 
-// TestAdminUsageLogsClientIPEcho 管理面 /admin/usage_logs 回显 client_ip
+// TestAdminUsageLogsClientIPEcho 管理面 /api/admin/usage_logs 回显 client_ip
 // （toAPIUsageLog 投影）。
 func TestAdminUsageLogsClientIPEcho(t *testing.T) {
 	doAdmin, _, store := newSharedRouters(t)
@@ -34,7 +34,7 @@ func TestAdminUsageLogsClientIPEcho(t *testing.T) {
 	store.mu.Unlock()
 	win := "from=" + base.Add(-time.Hour).Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339)
 
-	rec := doAdmin(http.MethodGet, "/admin/usage_logs?"+win, "", "")
+	rec := doAdmin(http.MethodGet, "/api/admin/usage_logs?"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "logs: %s", rec.Body.String())
 	var body LogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -42,7 +42,7 @@ func TestAdminUsageLogsClientIPEcho(t *testing.T) {
 	require.Equal(t, "9.9.9.9", *body.Rows[0].ClientIP, "管理面 usage 行回显 client_ip 非空（四转换器之一）")
 }
 
-// TestAdminErrLogsClientIPEcho 管理面 /admin/err_logs 回显 client_ip
+// TestAdminErrLogsClientIPEcho 管理面 /api/admin/err_logs 回显 client_ip
 // （toAPIErrLog 投影）。
 func TestAdminErrLogsClientIPEcho(t *testing.T) {
 	doAdmin, _, store := newSharedRouters(t)
@@ -57,7 +57,7 @@ func TestAdminErrLogsClientIPEcho(t *testing.T) {
 	store.mu.Unlock()
 	win := "from=" + base.Add(-time.Hour).Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339)
 
-	rec := doAdmin(http.MethodGet, "/admin/err_logs?"+win, "", "")
+	rec := doAdmin(http.MethodGet, "/api/admin/err_logs?"+win, "", "")
 	require.Equal(t, http.StatusOK, rec.Code, "err logs: %s", rec.Body.String())
 	var body ErrLogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -65,7 +65,7 @@ func TestAdminErrLogsClientIPEcho(t *testing.T) {
 	require.Equal(t, "9.9.9.9", *body.Rows[0].ClientIP, "管理面 err 行回显 client_ip 非空（四转换器之二）")
 }
 
-// TestUserUsageLogsClientIPEcho 用户面 /user/usage_logs 回显 client_ip
+// TestUserUsageLogsClientIPEcho 用户面 /api/user/usage_logs 回显 client_ip
 // （用户面 toAPIUsageLog → UserUsageLog 投影）。
 func TestUserUsageLogsClientIPEcho(t *testing.T) {
 	_, doUser, store := newSharedRouters(t)
@@ -79,7 +79,7 @@ func TestUserUsageLogsClientIPEcho(t *testing.T) {
 	store.mu.Unlock()
 	win := "from=" + base.Add(-time.Hour).Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339)
 
-	rec := doUser(http.MethodGet, "/user/usage_logs?"+win, "", tokenA)
+	rec := doUser(http.MethodGet, "/api/user/usage_logs?"+win, "", tokenA)
 	require.Equal(t, http.StatusOK, rec.Code, "user logs: %s", rec.Body.String())
 	var body userapi.UserLogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -87,7 +87,7 @@ func TestUserUsageLogsClientIPEcho(t *testing.T) {
 	require.Equal(t, "9.9.9.9", *body.Rows[0].ClientIP, "用户面 usage 行回显 client_ip 非空（四转换器之三）")
 }
 
-// TestUserErrLogsClientIPEcho 用户面 /user/err_logs 回显 client_ip（用户面
+// TestUserErrLogsClientIPEcho 用户面 /api/user/err_logs 回显 client_ip（用户面
 // toAPIErrLog → UserErrLog 投影——漏则用户面错误明细回显恒缺，gate m4）。
 func TestUserErrLogsClientIPEcho(t *testing.T) {
 	_, doUser, store := newSharedRouters(t)
@@ -103,7 +103,7 @@ func TestUserErrLogsClientIPEcho(t *testing.T) {
 	store.mu.Unlock()
 	win := "from=" + base.Add(-time.Hour).Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339)
 
-	rec := doUser(http.MethodGet, "/user/err_logs?"+win, "", tokenA)
+	rec := doUser(http.MethodGet, "/api/user/err_logs?"+win, "", tokenA)
 	require.Equal(t, http.StatusOK, rec.Code, "user err logs: %s", rec.Body.String())
 	var body userapi.UserErrLogsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))

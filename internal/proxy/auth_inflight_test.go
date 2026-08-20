@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// /admin/users-top 数据源（spec 2026-08-14 P2-3）：Auth.InFlightUsers 只读
+// /api/admin/users-top 数据源（spec 2026-08-14 P2-3）：Auth.InFlightUsers 只读
 // 访问器——acquire/release 后反映在途数（gateSnapshot 原子换入，store.Load()
 // 零锁遍历）；含 0 值条目（过滤由 handler 做）；跨 reload 在途继承不丢。
 func TestAuthInFlightUsersAcquireRelease(t *testing.T) {

@@ -22,7 +22,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// TestGetKeys /admin/keys（fake store，spec 2026-08-16）：name 模糊 / user_id /
+// TestGetKeys /api/admin/keys（fake store，spec 2026-08-16）：name 模糊 / user_id /
 // group_id 收窄与 AND 组合 + 分页 + 非法 sort/order 400 + 脱敏铁律（响应 JSON
 // 无 key/key_raw 键、密钥明文不出现在响应体）+ 越权 401。
 func TestGetKeys(t *testing.T) {
@@ -68,7 +68,7 @@ func TestGetKeys(t *testing.T) {
 	k3 := mk("gamma-test", 2, 10)
 
 	// 全量（默认 limit 20 / 排序由 fake 不保证，断言集合与 total）
-	rec := do("/admin/keys", "admin-tok")
+	rec := do("/api/admin/keys", "admin-tok")
 	require.Equal(t, http.StatusOK, rec.Code, "list: %s", rec.Body.String())
 	var all AdminKeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &all))
@@ -81,7 +81,7 @@ func TestGetKeys(t *testing.T) {
 	require.True(t, ids[k1.ID] && ids[k2.ID] && ids[k3.ID], "三 key 全量可见: %v", ids)
 
 	// name 模糊命中（同大小写；ILIKE 语义由 repo 真实 PG 测试覆盖）
-	rec = do("/admin/keys?name=test", "admin-tok")
+	rec = do("/api/admin/keys?name=test", "admin-tok")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var byName AdminKeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &byName))
@@ -91,7 +91,7 @@ func TestGetKeys(t *testing.T) {
 	}
 
 	// user_id 收窄
-	rec = do(fmt.Sprintf("/admin/keys?user_id=%d", 1), "admin-tok")
+	rec = do(fmt.Sprintf("/api/admin/keys?user_id=%d", 1), "admin-tok")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var byUser AdminKeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &byUser))
@@ -101,7 +101,7 @@ func TestGetKeys(t *testing.T) {
 	}
 
 	// group_id 收窄
-	rec = do(fmt.Sprintf("/admin/keys?group_id=%d", 10), "admin-tok")
+	rec = do(fmt.Sprintf("/api/admin/keys?group_id=%d", 10), "admin-tok")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var byGroup AdminKeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &byGroup))
@@ -111,7 +111,7 @@ func TestGetKeys(t *testing.T) {
 	}
 
 	// AND 组合：name + user_id + group_id → 唯一命中
-	rec = do("/admin/keys?name=test&user_id=1&group_id=20", "admin-tok")
+	rec = do("/api/admin/keys?name=test&user_id=1&group_id=20", "admin-tok")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var andResp AdminKeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &andResp))
@@ -120,20 +120,20 @@ func TestGetKeys(t *testing.T) {
 	require.Equal(t, "beta-test", *andResp.Rows[0].Name)
 
 	// 分页：limit=2 → rows 2、total 恒 3；offset 翻页
-	rec = do("/admin/keys?limit=2", "admin-tok")
+	rec = do("/api/admin/keys?limit=2", "admin-tok")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var page1 AdminKeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page1))
 	require.Equal(t, int64(3), page1.Total, "total = 满足筛选总数，不分页裁剪")
 	require.Len(t, page1.Rows, 2)
-	rec = do("/admin/keys?limit=2&offset=2", "admin-tok")
+	rec = do("/api/admin/keys?limit=2&offset=2", "admin-tok")
 	var page2 AdminKeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page2))
 	require.Equal(t, int64(3), page2.Total)
 	require.Len(t, page2.Rows, 1)
 
 	// 空结果：user_id 无匹配 → total 0 + rows 空数组（非 null）
-	rec = do("/admin/keys?user_id=999", "admin-tok")
+	rec = do("/api/admin/keys?user_id=999", "admin-tok")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var empty AdminKeyListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &empty))
@@ -142,19 +142,19 @@ func TestGetKeys(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"rows":[]`, "rows 序列化为空数组而非 null")
 
 	// 非法 sort（白名单外）→ 400；非法 order → 400
-	for _, path := range []string{"/admin/keys?sort=status", "/admin/keys?sort=quota", "/admin/keys?order=sideways"} {
+	for _, path := range []string{"/api/admin/keys?sort=status", "/api/admin/keys?sort=quota", "/api/admin/keys?order=sideways"} {
 		rec = do(path, "admin-tok")
 		require.Equal(t, http.StatusBadRequest, rec.Code, "%s: %s", path, rec.Body.String())
 	}
 	// sort 白名单三键可用（fake 不排序，仅验证 200）
-	for _, path := range []string{"/admin/keys?sort=id", "/admin/keys?sort=name", "/admin/keys?sort=created_at&order=asc"} {
+	for _, path := range []string{"/api/admin/keys?sort=id", "/api/admin/keys?sort=name", "/api/admin/keys?sort=created_at&order=asc"} {
 		rec = do(path, "admin-tok")
 		require.Equal(t, http.StatusOK, rec.Code, "%s: %s", path, rec.Body.String())
 	}
 
 	// 脱敏铁律：明文恒存在于 fake 存库（种子 KeyRaw），响应体必须不含——
 	// JSON 断言无 key/key_raw 键 + 明文串不出现在响应体
-	rec = do("/admin/keys", "admin-tok")
+	rec = do("/api/admin/keys", "admin-tok")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -182,8 +182,8 @@ func TestGetKeys(t *testing.T) {
 	require.Equal(t, 1, found)
 
 	// 越权面：非 platform_admin（无 admin token）→ 401
-	rec = do("/admin/keys", "")
+	rec = do("/api/admin/keys", "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "非 admin token → 401")
-	rec = do("/admin/keys", "user-tok")
+	rec = do("/api/admin/keys", "user-tok")
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "非 admin token（普通用户 token）→ 401")
 }

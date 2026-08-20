@@ -4,12 +4,12 @@
 
 package handler
 
-// /admin/stats + /user/stats 真实 PG 测试（rewrite spec 2026-08-14 测试节）：
+// /api/admin/stats + /api/user/stats 真实 PG 测试（rewrite spec 2026-08-14 测试节）：
 //   - 桶数组响应含全部新字段（TTFT 六指标插值数值断言——已知分布 + TTFTCount；
 //     call_count；Cost USD 口径——毫分 /1e5）
 //   - granularity=day：Go map 合并 24 小时直方图 + 插值断言（TTFT 四字段）
 //   - template_id 过滤断言（两端点——前置清单①接线验证）
-//   - /user/stats 越权回归（非本人 user_id 过滤参数无效）
+//   - /api/user/stats 越权回归（非本人 user_id 过滤参数无效）
 //   - 无样本（空区间）：TTFT 全 0、Cost 0、CallCount 0
 //   - 顶桶回落（>12800ms 样本 → pN = 12800）
 //
@@ -46,7 +46,7 @@ func statBucketWithTTFT(bt time.Time, groupID, userID int64, req, call, cost, ra
 	}
 }
 
-// TestPGStatsEndpointBucketFields /admin/stats 桶数组全字段（hour 粒度不合并）：
+// TestPGStatsEndpointBucketFields /api/admin/stats 桶数组全字段（hour 粒度不合并）：
 // 同小时两维度行各自携带已知 TTFT 分布（hist {6,4} N=5）——p50/p90/p95/p99
 // 桶内线性插值数值断言 + TTFTCount + call_count + Cost USD（毫分 /1e5）。
 func TestPGStatsEndpointBucketFields(t *testing.T) {
@@ -63,7 +63,7 @@ func TestPGStatsEndpointBucketFields(t *testing.T) {
 		}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
-	w := router("GET", fmt.Sprintf("/admin/stats?granularity=hour&from=%s&to=%s",
+	w := router("GET", fmt.Sprintf("/api/admin/stats?granularity=hour&from=%s&to=%s",
 		bucket.Format(time.RFC3339), bucket.Add(time.Hour).Format(time.RFC3339)))
 	require.Equal(t, http.StatusOK, w.Code, "stats: %s", w.Body.String())
 	var out []StatBucket
@@ -96,7 +96,7 @@ func TestPGStatsEndpointBucketFields(t *testing.T) {
 }
 
 // TestPGStatsEndpointDayGranularity granularity=day：Go map 合并（service
-// QueryStats）——同维度（group/account/template/user/model/isError 一致）两小时
+// QueryStats）——同维度（group/account/template/api/user/model/isError 一致）两小时
 // 桶按 BucketTime 合并后 24h 直方图 {12,8} N=10 插值：
 // avg=(300+180)/10=48、max=90、p50: rank5 → 0+5/12×50≈20、p90: rank9 → 37、
 // p95/p99: rank10 → 41（与 TestPGStatsSummarizeTTFT 合并数学一致）。
@@ -113,7 +113,7 @@ func TestPGStatsEndpointDayGranularity(t *testing.T) {
 		}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
-	w := router("GET", fmt.Sprintf("/admin/stats?granularity=day&from=%s&to=%s",
+	w := router("GET", fmt.Sprintf("/api/admin/stats?granularity=day&from=%s&to=%s",
 		h0.Format(time.RFC3339), h0.Add(2*time.Hour).Format(time.RFC3339)))
 	require.Equal(t, http.StatusOK, w.Code, "stats: %s", w.Body.String())
 	var out []StatBucket
@@ -134,7 +134,7 @@ func TestPGStatsEndpointDayGranularity(t *testing.T) {
 
 	// 缺省 granularity（无参数——GetStats 回落 day）走同一 Go 合并路径：raw 不丢
 	// （gate Major 1 回归：漏 m.RawCost += b.RawCost 则此处 RawCostUsd 恒 0）
-	w2 := router("GET", fmt.Sprintf("/admin/stats?from=%s&to=%s",
+	w2 := router("GET", fmt.Sprintf("/api/admin/stats?from=%s&to=%s",
 		h0.Format(time.RFC3339), h0.Add(2*time.Hour).Format(time.RFC3339)))
 	require.Equal(t, http.StatusOK, w2.Code, "default granularity: %s", w2.Body.String())
 	var out2 []StatBucket
@@ -145,8 +145,8 @@ func TestPGStatsEndpointDayGranularity(t *testing.T) {
 }
 
 // TestPGStatsRawCostUsdFreeGroupDefaultDay 免费组 raw 全链路（spec 2026-08-19
-// 测试节）：cost=0 raw>0 的桶 + 付费桶同维度同小时 → /admin/stats 缺省 day
-// 合并（gate Major 1 路径）与 /user/stats 缺省 day 均输出 raw_cost_usd > 0
+// 测试节）：cost=0 raw>0 的桶 + 付费桶同维度同小时 → /api/admin/stats 缺省 day
+// 合并（gate Major 1 路径）与 /api/user/stats 缺省 day 均输出 raw_cost_usd > 0
 //（免费组"实际消耗"USD 不丢；cost_usd 恒 0 不污染）。
 func TestPGStatsRawCostUsdFreeGroupDefaultDay(t *testing.T) {
 	repos := overviewPGTestDB(t, time.Now().UTC(), time.Now().UTC())
@@ -164,7 +164,7 @@ func TestPGStatsRawCostUsdFreeGroupDefaultDay(t *testing.T) {
 		}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
-	w := router("GET", fmt.Sprintf("/admin/stats?from=%s&to=%s",
+	w := router("GET", fmt.Sprintf("/api/admin/stats?from=%s&to=%s",
 		bucket.Format(time.RFC3339), bucket.Add(2*time.Hour).Format(time.RFC3339)))
 	require.Equal(t, http.StatusOK, w.Code, "stats: %s", w.Body.String())
 	var out []StatBucket
@@ -173,13 +173,13 @@ func TestPGStatsRawCostUsdFreeGroupDefaultDay(t *testing.T) {
 	require.InDelta(t, 7.5, *out[0].RawCostUsd, 1e-9, "免费组 raw 500000+250000 → USD 7.5（raw>0 不丢）")
 	require.InDelta(t, 1.0, *out[0].Cost, 1e-9, "cost 只计付费行 100000 → USD 1.0")
 
-	// /user/stats 缺省 day（同一 QueryStats 路径——独立包双工件输出）
+	// /api/user/stats 缺省 day（同一 QueryStats 路径——独立包双工件输出）
 	iss := auth.NewIssuer("test-secret")
 	token, err := iss.Issue(user.ID, user.Email, string(user.Role))
 	require.NoError(t, err)
 	svc := service.New(repos, stubSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
 	ur := userapi.Router(svc, iss, pgUserStatus{repos: repos}, nil)
-	ureq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/user/stats?from=%s&to=%s",
+	ureq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/user/stats?from=%s&to=%s",
 		bucket.Format(time.RFC3339), bucket.Add(2*time.Hour).Format(time.RFC3339)), nil)
 	ureq.Header.Set("Authorization", "Bearer "+token)
 	urec := httptest.NewRecorder()
@@ -188,19 +188,19 @@ func TestPGStatsRawCostUsdFreeGroupDefaultDay(t *testing.T) {
 	var uout []userapi.StatBucket
 	require.NoError(t, json.Unmarshal(urec.Body.Bytes(), &uout))
 	require.Len(t, uout, 1)
-	require.InDelta(t, 7.5, *uout[0].RawCostUsd, 1e-9, "/user/stats 缺省 day raw 不丢")
-	require.InDelta(t, 1.0, *uout[0].Cost, 1e-9, "/user/stats cost 口径不变")
+	require.InDelta(t, 7.5, *uout[0].RawCostUsd, 1e-9, "/api/user/stats 缺省 day raw 不丢")
+	require.InDelta(t, 1.0, *uout[0].Cost, 1e-9, "/api/user/stats cost 口径不变")
 }
 
 // TestPGStatsTemplateFilterBothEndpoints template_id 过滤接线验证（前置清单①）：
-// 同小时 TemplateID 0 与 5 两行种子 → /admin/stats 与 /user/stats 的
+// 同小时 TemplateID 0 与 5 两行种子 → /api/admin/stats 与 /api/user/stats 的
 // template_id 参数均只回命中行。
 func TestPGStatsTemplateFilterBothEndpoints(t *testing.T) {
 	repos := overviewPGTestDB(t, time.Now().UTC(), time.Now().UTC())
 	ctx := context.Background()
 	now := time.Now().UTC()
 	bucket := now.Truncate(time.Hour)
-	// 用户先建（usage_stats 无外键，但 /user/stats 强制 user_id = 本人——桶的
+	// 用户先建（usage_stats 无外键，但 /api/user/stats 强制 user_id = 本人——桶的
 	// user_id 必须等于真实用户 ID 才能命中）
 	user, err := repos.Users.CreateUser(ctx, &domain.User{Email: "u42@x.test", PasswordHash: "h",
 		Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -213,7 +213,7 @@ func TestPGStatsTemplateFilterBothEndpoints(t *testing.T) {
 		}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
-	w := router("GET", fmt.Sprintf("/admin/stats?granularity=hour&template_id=5&from=%s&to=%s",
+	w := router("GET", fmt.Sprintf("/api/admin/stats?granularity=hour&template_id=5&from=%s&to=%s",
 		bucket.Format(time.RFC3339), bucket.Add(time.Hour).Format(time.RFC3339)))
 	require.Equal(t, http.StatusOK, w.Code)
 	var out []StatBucket
@@ -222,13 +222,13 @@ func TestPGStatsTemplateFilterBothEndpoints(t *testing.T) {
 	require.Equal(t, int64(5), *out[0].TemplateID)
 	require.Equal(t, int64(7), *out[0].RequestCount)
 
-	// /user/stats 同参数形态（真实用户 token）
+	// /api/user/stats 同参数形态（真实用户 token）
 	iss := auth.NewIssuer("test-secret")
 	token, err := iss.Issue(user.ID, user.Email, string(user.Role))
 	require.NoError(t, err)
 	svc := service.New(repos, stubSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
 	ur := userapi.Router(svc, iss, pgUserStatus{repos: repos}, nil)
-	ureq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/user/stats?granularity=hour&template_id=5&from=%s&to=%s",
+	ureq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/user/stats?granularity=hour&template_id=5&from=%s&to=%s",
 		bucket.Format(time.RFC3339), bucket.Add(time.Hour).Format(time.RFC3339)), nil)
 	ureq.Header.Set("Authorization", "Bearer "+token)
 	urec := httptest.NewRecorder()
@@ -236,7 +236,7 @@ func TestPGStatsTemplateFilterBothEndpoints(t *testing.T) {
 	require.Equal(t, http.StatusOK, urec.Code, "user stats: %s", urec.Body.String())
 	var uout []userapi.StatBucket
 	require.NoError(t, json.Unmarshal(urec.Body.Bytes(), &uout))
-	require.Len(t, uout, 1, "/user/stats template_id=5 只回命中行")
+	require.Len(t, uout, 1, "/api/user/stats template_id=5 只回命中行")
 	require.Equal(t, int64(5), *uout[0].TemplateID)
 }
 
@@ -252,7 +252,7 @@ func (p pgUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 	return domain.UserSnapshot{Status: u.Status, Role: u.Role}, true
 }
 
-// TestPGUserStatsForcedOwnUser 越权回归：/user/stats 强制 user_id = 当前用户——
+// TestPGUserStatsForcedOwnUser 越权回归：/api/user/stats 强制 user_id = 当前用户——
 // query 里带他人 user_id 被忽略（oapi-codegen 未声明参数不解析），响应只含
 // 本人行。
 func TestPGUserStatsForcedOwnUser(t *testing.T) {
@@ -282,7 +282,7 @@ func TestPGUserStatsForcedOwnUser(t *testing.T) {
 
 	do := func(token string, qs string) []userapi.StatBucket {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/user/stats?granularity=hour&from="+bucket.Format(time.RFC3339)+
+		req := httptest.NewRequest(http.MethodGet, "/api/user/stats?granularity=hour&from="+bucket.Format(time.RFC3339)+
 			"&to="+bucket.Add(time.Hour).Format(time.RFC3339)+qs, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
@@ -318,7 +318,7 @@ func TestPGStatsEndpointNoSample(t *testing.T) {
 		[]*domain.StatBucket{statBucketWithTTFT(bucket, 1, 42, 3, 0, 0, 0, 0, 0, 0, make([]int64, 10))}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
-	w := router("GET", fmt.Sprintf("/admin/stats?granularity=hour&from=%s&to=%s",
+	w := router("GET", fmt.Sprintf("/api/admin/stats?granularity=hour&from=%s&to=%s",
 		bucket.Format(time.RFC3339), bucket.Add(time.Hour).Format(time.RFC3339)))
 	require.Equal(t, http.StatusOK, w.Code)
 	var out []StatBucket
@@ -336,7 +336,7 @@ func TestPGStatsEndpointNoSample(t *testing.T) {
 	require.Equal(t, int64(0), *b.TTFTP99MS, "无样本 → pN 0")
 
 	// 空区间：200 空数组（无 42703/扫描错误）
-	w2 := router("GET", fmt.Sprintf("/admin/stats?granularity=hour&from=%s&to=%s",
+	w2 := router("GET", fmt.Sprintf("/api/admin/stats?granularity=hour&from=%s&to=%s",
 		bucket.Add(2*time.Hour).Format(time.RFC3339), bucket.Add(3*time.Hour).Format(time.RFC3339)))
 	require.Equal(t, http.StatusOK, w2.Code, "empty range: %s", w2.Body.String())
 	require.JSONEq(t, "[]", w2.Body.String(), "空区间 → 空数组")
@@ -354,7 +354,7 @@ func TestPGStatsEndpointTopBucketFallback(t *testing.T) {
 		[]*domain.StatBucket{statBucketWithTTFT(bucket, 1, 42, 5, 0, 0, 0, 65_000, 5, 20_000, hist)}))
 
 	_, router := overviewPGRouter(t, repos, stubSched{}, OpsOptions{})
-	w := router("GET", fmt.Sprintf("/admin/stats?granularity=hour&from=%s&to=%s",
+	w := router("GET", fmt.Sprintf("/api/admin/stats?granularity=hour&from=%s&to=%s",
 		bucket.Format(time.RFC3339), bucket.Add(time.Hour).Format(time.RFC3339)))
 	require.Equal(t, http.StatusOK, w.Code)
 	var out []StatBucket

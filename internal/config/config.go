@@ -124,7 +124,7 @@ type UsageConfig struct {
 
 // BillingConfig 计费（Phase 5 T3）：Enabled 默认开（全链默认开启：代码默认 +
 // 模板默认一致；空价格表 = 全模型 402——首次启动需先同步价格（POST
-// /admin/pricing/sync）；余额预检 + FEFO 条件扣费 + 优雅停机排空全链随之生效。
+// /api/admin/pricing/sync）；余额预检 + FEFO 条件扣费 + 优雅停机排空全链随之生效。
 // 本地开发可用 enabled=false 显式退回纯代理模式）。
 type BillingConfig struct {
 	Enabled                bool          `koanf:"enabled"`

@@ -130,7 +130,7 @@ func (r *FunctionPriceRepo) upsertFunctionLitellmBatch(ctx context.Context, batc
 	return int(n), err
 }
 
-// FunctionPriceManual 手动设价入参（管理端 PUT /admin/function-prices?model=X，
+// FunctionPriceManual 手动设价入参（管理端 PUT /api/admin/function-prices?model=X，
 // 全量替换语义）：price_per_call 必填（≥0，可为 0 = 该价明确为 0——按次免费）。
 // 单位：毫分/次（handler 边界已由 API 入参 USD 换算）。校验（非 nil 且 ≥0）
 // 在 service 层。manual 行恒不写 raw（仓库强制清空）。

@@ -49,7 +49,7 @@ const (
 )
 
 // adminURL / aiURL 端点基址。
-func adminURL(p string) string { return "http://" + serverAddr + "/admin" + p }
+func adminURL(p string) string { return "http://" + serverAddr + "/api/admin" + p }
 func aiURL(p string) string    { return "http://" + serverAddr + p }
 
 // pricesFixture 本地 litellm 价格表（fakeupstream 之外的独立 httptest 服务；
@@ -205,7 +205,7 @@ func TestBillingE2E(t *testing.T) {
 	if adminDSN == "" {
 		adminDSN = "postgres://postgres:c3api@localhost:15432/postgres"
 	}
-	// TEST_DATABASE_URL 指向 c3api_test 库：取其 host/port/user/password，目标库换 c3api_e2e。
+	// TEST_DATABASE_URL 指向 c3api_test 库：取其 host/port/api/user/password，目标库换 c3api_e2e。
 	adminPool, err := pgxpool.New(ctx, adminDSN)
 	require.NoError(t, err)
 	t.Cleanup(adminPool.Close)
@@ -279,7 +279,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	require.NoError(t, srv.Start())
 	t.Cleanup(func() { _ = srv.Process.Kill() })
 
-	// 就绪：轮询 /admin/settings 直到 200（ent migrate + 分区 bootstrap 完成）。
+	// 就绪：轮询 /api/admin/settings 直到 200（ent migrate + 分区 bootstrap 完成）。
 	// 就绪前连接被拒属正常（启动中），原始请求不中断测试；须带 admin token
 	// （否则 401 恒不满足）。
 	ready := false
@@ -449,7 +449,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	})
 	require.Equal(t, 200, codeResp, "gen code: %s", respBody)
 	code := jsonGet(t, respBody, "codes", 0, "Code")
-	rec, rb := env.req(http.MethodPost, aiURL("/user/redemptions"), "Bearer "+u2Token, map[string]any{"code": code})
+	rec, rb := env.req(http.MethodPost, aiURL("/api/user/redemptions"), "Bearer "+u2Token, map[string]any{"code": code})
 	require.Equal(t, 200, rec, "redeem: %s", rb)
 
 	// 请求 cost 500：临时额度优先扣（temp 500 → 0，余额不动）
@@ -886,12 +886,12 @@ func userKey(t *testing.T, env *e2eEnv, userID, groupID int64) (string, string) 
 	// 登录：邮箱需还原——users 表按 id 查 email
 	email, err := env.dbVal(`SELECT email FROM users WHERE id=$1`, userID)
 	require.NoError(t, err)
-	c, rb := env.req(http.MethodPost, aiURL("/user/auth/login"), "", map[string]any{
+	c, rb := env.req(http.MethodPost, aiURL("/api/user/auth/login"), "", map[string]any{
 		"email": email, "password": "s3cret-pass",
 	})
 	require.Equal(t, 200, c, "login: %s", rb)
 	token := jsonGet(t, rb, "token").(string)
-	c, rb = env.req(http.MethodPost, aiURL("/user/keys"), "Bearer "+token, map[string]any{
+	c, rb = env.req(http.MethodPost, aiURL("/api/user/keys"), "Bearer "+token, map[string]any{
 		"name": "k-" + email, "group_id": groupID,
 	})
 	require.Equal(t, 200, c, "create key: %s", rb)

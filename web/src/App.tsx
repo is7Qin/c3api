@@ -41,9 +41,6 @@ const router = createBrowserRouter([
   { path: '/', element: <Home /> },
   { path: '/user/login', element: <UserLogin /> },
   { path: '/user/register', element: <UserRegister /> },
-  // 无匹配路径兜底：自定义 404 页（替代 React Router 默认开发错误页）。
-  // errorElement 兜住渲染期异常（非路由缺失），避免白屏/默认错误面板。
-  { path: '*', element: <NotFound /> },
   // /app 与 /user 共用单一 AppShell：路由切换只换 Outlet，侧边栏/顶栏不重挂
   {
     path: '/',
@@ -81,6 +78,8 @@ const router = createBrowserRouter([
       },
     ],
   },
+  // 无匹配路径兜底：必须置于最后，避免吞掉 /user 与 /app 子路由
+  { path: '*', element: <NotFound /> },
 ])
 
 // 管理端路由守卫：未登录一律跳登录页；已登录但角色不足渲染 403 界面。

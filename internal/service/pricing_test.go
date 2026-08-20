@@ -344,7 +344,7 @@ func TestListPricing(t *testing.T) {
 	})
 }
 
-// TestSyncPricingNow 手动触发同步（POST /admin/pricing/sync 语义）：fetch →
+// TestSyncPricingNow 手动触发同步（POST /api/admin/pricing/sync 语义）：fetch →
 // upsert（manual 行级互斥）→ 快照重载；成功返回拉取统计；fetch 失败 →
 // ErrPriceFetch（502 语义）、url 未配置 → ErrInvalidInput、未注入 fetcher →
 // 错误。

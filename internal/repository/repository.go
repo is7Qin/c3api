@@ -381,7 +381,7 @@ func (r *Repository) ListTempBalances(ctx context.Context, q ListQuery, userID i
 	return r.Users.ListTempBalances(ctx, q, userID)
 }
 
-// ListUserEmails 批量取邮箱（/admin/users-top TopN 回填；id IN 一次查询）。
+// ListUserEmails 批量取邮箱（/api/admin/users-top TopN 回填；id IN 一次查询）。
 func (r *Repository) ListUserEmails(ctx context.Context, ids []int64) (map[int64]string, error) {
 	return r.Users.ListUserEmails(ctx, ids)
 }
@@ -404,7 +404,7 @@ func (r *Repository) ListKeysByUser(ctx context.Context, userID int64, q ListQue
 	return r.Keys.ListKeysByUser(ctx, userID, q)
 }
 
-// ListKeys 管理端全量 key 列表（/admin/keys；UserID/GroupID 零值不过滤——
+// ListKeys 管理端全量 key 列表（/api/admin/keys；UserID/GroupID 零值不过滤——
 // 软删过滤 + 3 键 sort 白名单见 KeyRepo.ListKeys）。
 func (r *Repository) ListKeys(ctx context.Context, q ListQuery) ([]*domain.Key, int64, error) {
 	return r.Keys.ListKeys(ctx, q)
@@ -502,7 +502,7 @@ func (r *Repository) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.U
 	return r.Usages.QueryUsages(ctx, q)
 }
 
-// ScanUsageAgg 批量账号 usage_logs 区间聚合（/admin/accounts/usage 查询面；
+// ScanUsageAgg 批量账号 usage_logs 区间聚合（/api/admin/accounts/usage 查询面；
 // LogStore 接口面注入——service 构造注入，测试 fake 直插）。
 func (r *Repository) ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error) {
 	return r.Usages.ScanUsageAgg(ctx, accountIDs, from, to)
@@ -522,7 +522,7 @@ func (r *Repository) ScanStats(ctx context.Context, q StatQuery) ([]*domain.Stat
 	return r.Stats.ScanStats(ctx, q)
 }
 
-// --- /admin/overview 聚合面（spec 2026-08-14；SQL 侧聚合 + 冷面计数） ---
+// --- /api/admin/overview 聚合面（spec 2026-08-14；SQL 侧聚合 + 冷面计数） ---
 
 func (r *Repository) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*StatSummary, error) {
 	return r.Stats.SummarizeStats(ctx, from, to, groupID)
@@ -764,7 +764,7 @@ func (r *Repository) UpdateUserMaxConcurrency(ctx context.Context, userID int64,
 //
 // 形态：pgx DSN query 参数 → 连接启动包 → 会话级 GUC（lock_timeout 为 USERSET
 // context，可启动期设置），作用于本池全部连接（含 ent 路径）。SELECT 路径不
-// 取行锁不受 lock_timeout 影响（快照全量扫描/ScanStats//user/stats 各面实测
+// 取行锁不受 lock_timeout 影响（快照全量扫描/ScanStats//api/user/stats 各面实测
 // ms 级，见实现报告）。
 var poolTimeoutParams = []string{"lock_timeout=5s"}
 

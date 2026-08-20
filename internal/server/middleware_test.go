@@ -107,7 +107,7 @@ func TestAdminAuthEmptyTokenContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.opts.AdminHandler = admin
 			s := NewServer(tc.opts)
-			req := httptest.NewRequest(http.MethodGet, "/admin/groups", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/admin/groups", nil)
 			if tc.auth != "" {
 				req.Header.Set("Authorization", tc.auth)
 			}

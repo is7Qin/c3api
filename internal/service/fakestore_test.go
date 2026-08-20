@@ -495,19 +495,19 @@ func (f *fakeStore) UpdateGroupsBatch(ctx context.Context, ids []int64, p reposi
 	return nil
 }
 
-// QueryUsages 模拟 repo 过滤：user_id > 0 时强制过滤（/user/usage_logs 防越权
+// QueryUsages 模拟 repo 过滤：user_id > 0 时强制过滤（/api/user/usage_logs 防越权
 // 测试依赖此语义）；返回副本防别名污染。去 Total（契约已移除）。
 func (f *fakeStore) QueryUsages(ctx context.Context, q repository.UsageQuery) ([]*domain.UsageLog, error) {
 	return f.queryLogs(q.UserID), nil
 }
 
-// QueryErrLogs 模拟 repo 过滤（/err_logs：user_id > 0 强制过滤——/user/err_logs
+// QueryErrLogs 模拟 repo 过滤（/err_logs：user_id > 0 强制过滤——/api/user/err_logs
 // 防越权测试依赖此语义）。
 func (f *fakeStore) QueryErrLogs(ctx context.Context, q repository.ErrLogQuery) ([]*domain.UsageLog, error) {
 	return f.queryLogs(q.UserID), nil
 }
 
-// ScanUsageAgg 模拟 repo 聚合（/admin/accounts/usage 查询面——与真实 SQL
+// ScanUsageAgg 模拟 repo 聚合（/api/admin/accounts/usage 查询面——与真实 SQL
 // 同语义：account_ids 过滤 + created_at 半开区间 [from, to)；SUM/COUNT 毫分
 // 原样聚合；无记录账号无键）。
 func (f *fakeStore) ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error) {
@@ -552,7 +552,7 @@ func (f *fakeStore) queryLogs(userID int64) []*domain.UsageLog {
 	return out
 }
 
-// ScanStats 模拟 repo 过滤：user_id > 0 时强制过滤（/user/stats 防越权测试
+// ScanStats 模拟 repo 过滤：user_id > 0 时强制过滤（/api/user/stats 防越权测试
 // 依赖此语义）。
 func (f *fakeStore) ScanStats(ctx context.Context, q repository.StatQuery) ([]*domain.StatBucket, error) {
 	f.mu.Lock()
@@ -568,7 +568,7 @@ func (f *fakeStore) ScanStats(ctx context.Context, q repository.StatQuery) ([]*d
 	return out, nil
 }
 
-// --- /admin/overview 聚合面（与真实 StatRepo 同语义：区间 + 组过滤；毫分原样） ---
+// --- /api/admin/overview 聚合面（与真实 StatRepo 同语义：区间 + 组过滤；毫分原样） ---
 
 func (f *fakeStore) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*repository.StatSummary, error) {
 	f.mu.Lock()
@@ -972,7 +972,7 @@ func (f *fakeStore) ListKeysByUser(ctx context.Context, userID int64, q reposito
 	return out, int64(len(out)), nil
 }
 
-// ListKeys 管理端全量 key 列表（/admin/keys：name 模糊 + user_id/group_id
+// ListKeys 管理端全量 key 列表（/api/admin/keys：name 模糊 + user_id/group_id
 // 等值 AND 组合 + limit/offset 裁剪；软删过滤——fake 的 DeleteKey 即置
 // deleted_at，行保留。total 恒为满足筛选全量，不分页裁剪）。
 func (f *fakeStore) ListKeys(ctx context.Context, q repository.ListQuery) ([]*domain.Key, int64, error) {
@@ -1686,7 +1686,7 @@ func (f *fakeStore) ListCodeUses(ctx context.Context, codeID int64, q repository
 	return out, int64(total), nil
 }
 
-// ListUsesByUser 某用户的兑换记录（/user/redemptions）：use + 码联查（码的
+// ListUsesByUser 某用户的兑换记录（/api/user/redemptions）：use + 码联查（码的
 // type/remark 随记录返回，对齐真实 repo 的 WithCode 边）。
 func (f *fakeStore) ListUsesByUser(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.RedemptionRecord, int64, error) {
 	f.mu.Lock()

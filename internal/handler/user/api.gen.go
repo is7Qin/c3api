@@ -1427,55 +1427,55 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/user/auth/change-password", wrapper.PostUserAuthChangePassword)
+		r.Post(options.BaseURL+"/api/user/auth/change-password", wrapper.PostUserAuthChangePassword)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/user/auth/login", wrapper.PostUserAuthLogin)
+		r.Post(options.BaseURL+"/api/user/auth/login", wrapper.PostUserAuthLogin)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/user/auth/me", wrapper.GetUserAuthMe)
+		r.Get(options.BaseURL+"/api/user/auth/me", wrapper.GetUserAuthMe)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/user/auth/register", wrapper.PostUserAuthRegister)
+		r.Post(options.BaseURL+"/api/user/auth/register", wrapper.PostUserAuthRegister)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/user/err_logs", wrapper.GetUserErrLogs)
+		r.Get(options.BaseURL+"/api/user/err_logs", wrapper.GetUserErrLogs)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/user/groups", wrapper.GetUserGroups)
+		r.Get(options.BaseURL+"/api/user/groups", wrapper.GetUserGroups)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/user/keys", wrapper.GetUserKeys)
+		r.Get(options.BaseURL+"/api/user/keys", wrapper.GetUserKeys)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/user/keys", wrapper.PostUserKeys)
+		r.Post(options.BaseURL+"/api/user/keys", wrapper.PostUserKeys)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/user/keys/{id}", wrapper.DeleteUserKeysId)
+		r.Delete(options.BaseURL+"/api/user/keys/{id}", wrapper.DeleteUserKeysId)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/user/keys/{id}", wrapper.GetUserKeysId)
+		r.Get(options.BaseURL+"/api/user/keys/{id}", wrapper.GetUserKeysId)
 	})
 	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/user/keys/{id}", wrapper.PutUserKeysId)
+		r.Put(options.BaseURL+"/api/user/keys/{id}", wrapper.PutUserKeysId)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/user/keys/{id}/rotate", wrapper.PostUserKeysIdRotate)
+		r.Post(options.BaseURL+"/api/user/keys/{id}/rotate", wrapper.PostUserKeysIdRotate)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/user/redemptions", wrapper.GetUserRedemptions)
+		r.Get(options.BaseURL+"/api/user/redemptions", wrapper.GetUserRedemptions)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/user/redemptions", wrapper.PostUserRedemptions)
+		r.Post(options.BaseURL+"/api/user/redemptions", wrapper.PostUserRedemptions)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/user/stats", wrapper.GetUserStats)
+		r.Get(options.BaseURL+"/api/user/stats", wrapper.GetUserStats)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/user/temp-balances", wrapper.GetUserTempBalances)
+		r.Get(options.BaseURL+"/api/user/temp-balances", wrapper.GetUserTempBalances)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/user/usage_logs", wrapper.GetUserUsageLogs)
+		r.Get(options.BaseURL+"/api/user/usage_logs", wrapper.GetUserUsageLogs)
 	})
 
 	return r

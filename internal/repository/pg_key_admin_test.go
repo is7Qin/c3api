@@ -4,7 +4,7 @@
 
 package repository_test
 
-// /admin/keys 管理端全量列表查询真实 PG 单测（spec 2026-08-16 用户规格）：
+// /api/admin/keys 管理端全量列表查询真实 PG 单测（spec 2026-08-16 用户规格）：
 // ListKeys 三筛选参数（name 模糊/user_id/group_id 等值）AND 组合 + 软删过滤 +
 // 分页 total 不裁剪 + sort 白名单 id/name/created_at（非法 → ErrInvalidSort）
 // + order 非法 → error。基座同 pg_key_test（newPGRepos 每测试重建 schema）。
