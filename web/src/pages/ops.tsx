@@ -126,62 +126,64 @@ export default function Ops() {
             )}
           </div>
 
-          {/* 快照注册表：reload 状态审计表 */}
-          <Card>
-            <CardHeader>
+          {/* 快照注册表：玻璃单框表 — Card 仅作标题容器，Table 自带玻璃外框，避免双层边框 */}
+          <Card className="bg-transparent border-0 shadow-none backdrop-blur-none p-0 gap-0 pt-4">
+            <CardHeader className="pb-4">
               <CardTitle>{t('ops.snapshotsTitle')}</CardTitle>
               <CardDescription>{t('ops.snapshotsDesc')}</CardDescription>
             </CardHeader>
-            <CardContent>
-              {snapshots.length === 0 ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">{t('ops.noSnapshots')}</p>
-              ) : (
-                <div className="overflow-hidden rounded-lg">
-                  <Table>
-                    <TableHeader className="bg-muted">
-                      <TableRow>
-                        <TableHead>{t('ops.snapshotName')}</TableHead>
-                        <TableHead>{t('ops.snapshotScopes')}</TableHead>
-                        <TableHead>{t('ops.snapshotLastReload')}</TableHead>
-                        <TableHead>{t('ops.snapshotLastError')}</TableHead>
+            {snapshots.length === 0 ? (
+              <div className="mt-1 rounded-[14px] border border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] py-10 text-center text-sm text-muted-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] dark:border-[rgba(148,180,220,0.32)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)]">
+                {t('ops.noSnapshots')}
+              </div>
+            ) : (
+              <div className="mt-1">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('ops.snapshotName')}</TableHead>
+                      <TableHead>{t('ops.snapshotScopes')}</TableHead>
+                      <TableHead>{t('ops.snapshotLastReload')}</TableHead>
+                      <TableHead>{t('ops.snapshotLastError')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="[&_td]:py-3.5">
+                    {snapshots.map(s => (
+                      <TableRow key={s.name}>
+                        <TableCell className="font-medium">{s.name}</TableCell>
+                        <TableCell>
+                          {s.scopes && s.scopes.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {s.scopes.map(sc => (
+                                <span key={sc} className="inline-flex items-center rounded-full border border-black/10 bg-black/[0.04] px-2 py-0.5 font-mono text-xs dark:border-white/10 dark:bg-white/10">{sc}</span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">{t('ops.snapshotNoScope')}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap tabular-nums text-xs text-muted-foreground">
+                          {new Date(s.last_reload).toLocaleString()}
+                        </TableCell>
+                        <TableCell>
+                          {s.last_error ? (
+                            <span className="inline-flex max-w-64 items-center gap-1.5 truncate text-xs text-destructive" title={s.last_error}>
+                              <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
+                              <span className="truncate">{s.last_error}</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                              <span className="size-1.5 rounded-full bg-emerald-500" />
+                              {t('ops.snapshotNoError')}
+                            </span>
+                          )}
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {snapshots.map(s => (
-                        <TableRow key={s.name}>
-                          <TableCell className="font-medium">{s.name}</TableCell>
-                          <TableCell>
-                            {s.scopes && s.scopes.length > 0 ? (
-                              <div className="flex flex-wrap gap-1">
-                                {s.scopes.map(sc => (
-                                  <Badge key={sc} variant="secondary" className="font-mono text-xs">{sc}</Badge>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-muted-foreground">{t('ops.snapshotNoScope')}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="tabular-nums">
-                            {new Date(s.last_reload).toLocaleString()}
-                          </TableCell>
-                          <TableCell>
-                            {s.last_error ? (
-                              <Badge variant="destructive" className="max-w-64 truncate" title={s.last_error}>
-                                {s.last_error}
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-emerald-600 dark:text-emerald-400">
-                                {t('ops.snapshotNoError')}
-                              </Badge>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </Card>
         </>
       )}
