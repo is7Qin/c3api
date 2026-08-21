@@ -17,6 +17,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
@@ -142,14 +143,23 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 	case code == http.StatusTooManyRequests:
 		return false, code, domain.TruncateErrMsg(msg)
 	case code >= 400 && code < 500:
+		em := domain.TruncateErrMsg(msg)
 		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, code, domain.Err4xx, usageTuple{}, start))
-		if em := domain.TruncateErrMsg(msg); em != "" {
+		if em != "" {
 			l.ErrorMessage = &em
 		}
 		p.finish(sel.AccountID, l)
-		// 4xx 用户帧固定文案（SDK DialError 无 body——固定文案即上游 message 等
-		// 价面，emOr 回退不可达）；上方 ErrorMessage 仍用 :135 msg 原文落盘。
-		wsWriteError(client, "upstream rejected request")
+		// R-1 规则驱动（与 REST 4xx 同公式）：Classify(Kind4xx) → punish 投递 → UnifiedMessage/passthrough 帧。
+		// WS 无 HTTP 状态码，ResponseCode 维度自然无效，仅 CustomMessage 生效；DialError Refreshed=true 无特殊处理。
+		then, punish := p.sched.Classify(rule.Event{AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code, Model: sel.Model, ErrorMessage: em})
+		if punish {
+			p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em, sel.Model)
+		}
+		if customMsg, isCustom := rule.UnifiedMessage(then, em); isCustom {
+			wsWriteError(client, customMsg)
+		} else {
+			wsWriteError(client, emOr(em, "upstream rejected request"))
+		}
 		return true, 0, ""
 	default:
 		// 5xx（信封）/ 裸 RefreshError / 网络（code 0）：连接级转移。5xx 归一

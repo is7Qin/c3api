@@ -17,8 +17,8 @@ import (
 )
 
 // FailureHandler 账号失效上报的唯一入口：SDK 适配层（T2/T4 起）把 SDK 内部判死
-// （OnAuthFatal / errors.As fatal 五类——RefreshOAuthError / AuthPermanentlyRevokedError /
-// AccountDisabledError / CallbackDeliveryError / RefreshError）翻译成一次统一回调；
+// （OnAuthFatal / errors.As fatal 四类——RefreshOAuthError / AuthPermanentlyRevokedError /
+// AccountDisabledError / CallbackDeliveryError；RefreshError 可重试，有意排除）翻译成一次统一回调；
 // 网关侧只处理这一个入口。
 //
 // 语义：
