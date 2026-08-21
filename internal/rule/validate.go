@@ -65,6 +65,15 @@ func ValidateWhen(w domain.RuleWhen) error {
 			return fmt.Errorf("%s and %s_in are mutually exclusive", s.name, s.name)
 		}
 	}
+	if w.HTTPStatusIn != nil && len(w.HTTPStatusIn) == 0 {
+		return errors.New("http_status_in must not be empty")
+	}
+	if w.ModelIn != nil && len(w.ModelIn) == 0 {
+		return errors.New("model_in must not be empty")
+	}
+	if w.ErrorMessageContainsIn != nil && len(w.ErrorMessageContainsIn) == 0 {
+		return errors.New("error_message_contains_in must not be empty")
+	}
 	// 确定性死配置：ok 事件不带错误信息，contains 恒假 → 规则永不命中。
 	// 其余 kind 交叉组合（如 kind=ok + count_429_ge）为合法观察者语义，放行。
 	if w.Kind != nil && kindFromString(*w.Kind) == KindOK && w.ErrorMessageContains != nil {
@@ -145,14 +154,11 @@ func ValidateWhen(w domain.RuleWhen) error {
 	return nil
 }
 
-// ValidateThen then 动作校验：至少一个动作（status/cooldown/weight/response_code/custom_message 任一非nil——
-// 指针即意图，nil=透传；seed-4xx-400 nil/nil 为种子特例直插 store 不走本校验，用户规则 nil/nil 视为无效）；
-// status 合法枚举；cooldown 可 time.ParseDuration 解析且 > 0；weight ∈ [0,100]；
-// ResponseCode!=nil 需 400-599；CustomMessage==ptr("") 拒绝。
+// ValidateThen then 动作校验：全空 Then{} 合法=纯透传（匹配后码/文双透、上游原样返回、零惩罚）；
+// 其余：status 合法枚举；cooldown 可 time.ParseDuration 解析且 > 0；weight ∈ [0,100]；
+// ResponseCode!=nil 需 400-599；CustomMessage==ptr("") 拒绝。指针即意图，nil=透传；
+// seed-4xx-400 直插 store 的 Then{} 与用户规则 Then{} 语义等价（零惩罚全透）。
 func ValidateThen(t domain.RuleThen) error {
-	if t.Status == nil && t.Cooldown == nil && t.Weight == nil && t.ResponseCode == nil && t.CustomMessage == nil {
-		return fmt.Errorf("then must set at least one of status/cooldown/weight/response_code/custom_message")
-	}
 	if t.Status != nil && !validStatus(*t.Status) {
 		return fmt.Errorf("then.status must be active/unhealthy/429/disabled, got %q", *t.Status)
 	}

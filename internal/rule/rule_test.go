@@ -199,7 +199,7 @@ func TestValidateThen(t *testing.T) {
 		t    domain.RuleThen
 		ok   bool
 	}{
-		{"no action", domain.RuleThen{}, false},
+		{"no action pure-passthrough", domain.RuleThen{}, true},
 		{"status only", domain.RuleThen{Status: &status}, true},
 		{"cooldown only", domain.RuleThen{Cooldown: &cooldown}, true},
 		{"custom_message only", domain.RuleThen{CustomMessage: strPtr("rate limited")}, true},
