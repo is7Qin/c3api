@@ -40,10 +40,13 @@ function ScrollArea({
       >
         <ScrollAreaPrimitive.Content
           data-slot="scroll-area-content"
-          // base-ui 默认 minWidth: fit-content 会让容器宽度取内容固有宽度，
-          // 破坏 Table/表单等 w-full 子元素的自适应撑满（实测表格出现横向
-          // 溢出）；覆盖为 0 恢复"内容填满容器"语义
-          style={{ minWidth: 0 }}
+          // 默认（无横向滚动）时 minWidth: 0：让 Table/表单等 w-full 子元素
+          // 撑满容器而非按内容固有宽度撑开（base-ui 默认 fit-content 会让
+          // 容器取内容宽度，破坏自适应）
+          // showHorizontal 时保持 fit-content：容器覆盖整个内容宽度（表格
+          // 1630px），否则容器只有视口宽，向右滚动后表格溢出容器右缘，
+          // 底部出现色差带
+          style={showHorizontal ? undefined : { minWidth: 0 }}
         >
           {children}
         </ScrollAreaPrimitive.Content>
