@@ -70,6 +70,7 @@ function breadcrumbFor(pathname: string): { root: string; section: string; page:
     return item ? { root: '/app', section: 'user.nav.adminSection', page: item.key } : null
   }
   if (pathname.startsWith('/user')) {
+    if (pathname === '/user/profile') return { root: '/user', section: 'user.nav.userSection', page: 'user.nav.profile' }
     const item = userNav.find((n) => n.to === pathname)
     return item ? { root: '/user', section: 'user.nav.userSection', page: item.key } : null
   }
