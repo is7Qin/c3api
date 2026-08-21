@@ -74,7 +74,7 @@ function Th({ className, ...props }: React.ComponentProps<typeof TableHead>) {
   return (
     <TableHead
       className={cn(
-        'sticky top-0 z-10 !bg-white/92 text-xs uppercase tracking-wider text-muted-foreground backdrop-blur-[var(--glass-blur)] dark:!bg-[#22262f]/92',
+        'sticky top-0 z-10 !bg-white/60 text-xs uppercase tracking-wider text-muted-foreground backdrop-blur-[var(--glass-blur)] dark:!bg-[#22262f]/92',
         className
       )}
       {...props}

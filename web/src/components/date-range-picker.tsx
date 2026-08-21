@@ -60,10 +60,24 @@ export function DateRangePicker({
 
   // 日历选范围：日期替换 + 保留两端原时间（无则 00:00）；range 未完成（无 to）
   // 仅推进 draft，提交（有 to）才 onChange。
-  const onSelect = (r: DateRange | undefined) => {
-    setDraft(r)
-    if (!r?.from || !r.to) return
-    onChange({ from: withTime(localDateStr(r.from), timeOf(value.from)), to: withTime(localDateStr(r.to), timeOf(value.to)) })
+  // 端点锚定：点击范围外日期只动对应端点（from 左侧 → from，to 右侧 → to），
+  // 另一端点不动；点击范围内部 → 对称收缩——把较近的端点拉过来
+  // （15-21 点 17 → 17-21 收 from，点 19 → 15-19 收 to），单次点击直接生效。
+  const onSelect = (r: DateRange | undefined, click?: Date) => {
+    let next = r
+    const cur = selected
+    if (cur?.from && cur.to && click) {
+      const t = click.getTime()
+      if (t > cur.from.getTime() && t < cur.to.getTime()) {
+        next =
+          Math.abs(t - cur.from.getTime()) < Math.abs(t - cur.to.getTime())
+            ? { from: click, to: cur.to }
+            : { from: cur.from, to: click }
+      }
+    }
+    setDraft(next)
+    if (!next?.from || !next.to) return
+    onChange({ from: withTime(localDateStr(next.from), timeOf(value.from)), to: withTime(localDateStr(next.to), timeOf(value.to)) })
     setDraft(undefined)
   }
 
@@ -78,7 +92,13 @@ export function DateRangePicker({
     'h-8 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none'
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={o => {
+        setOpen(o)
+        if (!o) setDraft(undefined)
+      }}
+    >
       <PopoverTrigger
         render={
           <Button variant="outline" size="lg" className={cn('w-full justify-start gap-2 font-normal', className)} />
