@@ -438,10 +438,10 @@ func TestCodexWSRefreshed401Terminal(t *testing.T) {
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	// 错误事件帧（含 401 文案）+ 关闭
+	// 错误事件帧（R-1 规则驱动：Classify(Kind4xx)→UnifiedMessage/passthrough，默认归一仍为 "upstream rejected request"；可被 CustomMessage 改写，见 TestCodexWSDial401RuleCustomMessage）+ 关闭
 	ef := readResponsesWSFrame(t, c)
 	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "upstream rejected request", "4xx 用户帧固定文案（不泄 SDK 内部串）")
+	require.Contains(t, string(ef), "upstream rejected request", "4xx 归一 via rule engine default（无命中 CustomMessage 时 passthrough/归一文案）")
 	require.NotContains(t, string(ef), "401", "SDK 拨号错误文本不得上用户帧")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
@@ -456,6 +456,77 @@ func TestCodexWSRefreshed401Terminal(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Equal(t, domain.Err4xx, store.logs[0].ErrorType)
 	require.Equal(t, http.StatusUnauthorized, store.logs[0].StatusCode)
+}
+
+// TestCodexWSDial401RuleCustomMessage 拨号 4xx 规则驱动文案与 punish 投递（R-1）：
+// 自定义规则（Kind4xx + HTTP 401 + CustomMessage）改写 WS 错误帧，且 MarkResult 投递使账号状态按规则更新。
+func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
+	up, _ := newCodexWSUpstream(t, []int{401, 401}, 0)
+	defer up.Close()
+	_ = newCodexWSRefreshMock(t, codexUpStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
+	store := &captureLogStore{}
+
+	// 定制规则引擎：种子后插入高优 CustomMessage 规则（punish=true → MarkResult 投递）。
+	frs := &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}
+	re := rule.New(rule.Config{}, frs, nil)
+	require.NoError(t, re.Reload(context.Background()))
+	kind4xx := "4xx"
+	customMsg := "dial-4xx-custom"
+	statusUnhealthy := domain.StatusUnhealthy
+	cooldown := "5s"
+	_, err := frs.CreateRule(context.Background(), domain.Rule{
+		Name: "custom-dial-401", Enabled: true, Priority: 5,
+		When: domain.RuleWhen{Kind: &kind4xx, HTTPStatus: intPtrT(401)},
+		Then: domain.RuleThen{Status: &statusUnhealthy, Cooldown: &cooldown, CustomMessage: &customMsg},
+	})
+	require.NoError(t, err)
+	require.NoError(t, re.Reload(context.Background()))
+
+	// 手动装配代理（复用 newTestCodexWSProxy 装配逻辑，注入已含 custom 规则的 re）。
+	tpl := &domain.Template{
+		ID: 1, Name: "t", BaseURL: up.URL,
+		CredentialType: credential.TypeCodexOAuth,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
+		Models:           []string{"gpt-4o"},
+	}
+	ext := codexWSExt(10, "at-10", "rt-10")
+	accs := map[int64][]*domain.Account{10: {{
+		ID: 10, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
+		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: ext,
+	}}}
+	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, store, nil)
+	cfg := Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, GroupKeyRPM: 0, UsageCapture: true}
+	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
+	require.NoError(t, sched.InvalidateAllSync())
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil)
+	require.NoError(t, auth.Reload(context.Background()))
+	hc := &http.Client{Transport: http.DefaultTransport}
+	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
+	failureStore := &fakeFailureStore{}
+	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: failureStore, Failer: sched, Log: nil})
+	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, BatchSize: 100, FlushInterval: 20 * time.Millisecond}, store, nil)
+	wctx, wcancel := context.WithCancel(context.Background())
+	require.NoError(t, errlogW.Start(wctx))
+	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
+	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
+	p.SetCodex(sdkbridge.NewCodex(failure))
+
+	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+	defer srv.Close()
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	ef := readResponsesWSFrame(t, c)
+	require.Contains(t, string(ef), `"type":"error"`)
+	require.Contains(t, string(ef), customMsg, "自定义 CustomMessage 必须改写 dial 4xx 帧文案（R-1 UnifiedMessage）")
+	require.NotContains(t, string(ef), "upstream rejected request", "命中自定义文案时不再回退默认归一文案")
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	p.sched.FlushRules()
+	ri, ok := p.sched.Runtime(10)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusUnhealthy, ri.Status, "punish=true 必须投递 MarkResult → 规则 Status 生效")
+	require.NotNil(t, ri.CooldownUntil, "punish 规则的 Cooldown 必须生效")
 }
 
 // TestCodexWSFatalNoTransfer 裸 fatal（refresh 判死 invalid_grant）→ 统一回
