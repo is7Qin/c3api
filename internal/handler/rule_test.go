@@ -72,19 +72,23 @@ func TestRulesCRUD(t *testing.T) {
 		"then":{"status":"unhealthy"}}`)
 	require.Equal(t, 400, rec.Code, "unknown when key: %s", rec.Body.String())
 
-	// then 无动作 → 400
+	// then 空动作 → 201（纯透传规则合法，R-4：命中不改码文、零惩罚）
 	rec = do(http.MethodPost, "/api/admin/rules", `{
 		"name":"r4","priority":21,
 		"when":{"kind":"5xx"},"then":{}}`)
-	require.Equal(t, 400, rec.Code, "empty then: %s", rec.Body.String())
+	require.Equal(t, 201, rec.Code, "empty then: %s", rec.Body.String())
+	var passthrough Rule
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &passthrough))
+	require.NotNil(t, passthrough.Then, "空动作 round-trip 应为 {} 而非 null")
+	require.Empty(t, passthrough.Then)
 
 	// 列表：priority 升序 + {total, rows}
 	rec = do(http.MethodGet, "/api/admin/rules", "")
 	require.Equal(t, 200, rec.Code)
 	var list RuleListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
-	require.Equal(t, int64(1), list.Total)
-	require.Len(t, list.Rows, 1)
+	require.Equal(t, int64(2), list.Total)
+	require.Len(t, list.Rows, 2)
 	require.Equal(t, 10, list.Rows[0].Priority)
 
 	// enabled 过滤
@@ -113,6 +117,10 @@ func TestRulesCRUD(t *testing.T) {
 	rec = do(http.MethodDelete, "/api/admin/rules/"+itoa(created.ID), "")
 	require.Equal(t, 404, rec.Code, "delete missing: %s", rec.Body.String())
 	require.Contains(t, rec.Body.String(), "id="+itoa(created.ID)+" missing")
+
+	// 删除纯透传规则 r4（204）
+	rec = do(http.MethodDelete, "/api/admin/rules/"+itoa(passthrough.ID), "")
+	require.Equal(t, 204, rec.Code)
 
 	// 删除后列表为空
 	rec = do(http.MethodGet, "/api/admin/rules", "")
