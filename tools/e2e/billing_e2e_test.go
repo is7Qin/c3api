@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -863,10 +864,11 @@ func waitExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
 	}
 }
 
-// putPrice manual 设价（断言 200）。
+// putPrice manual 设价（断言 200）。model 走 query 参数——模型名可含 `/`，
+// 路径参数形态已在价格表重构时废弃（openapi /pricing PUT/DELETE）。
 func putPrice(t *testing.T, env *e2eEnv, model string, body map[string]any) {
 	t.Helper()
-	c, rb := env.admin(http.MethodPut, "/pricing/"+model, body)
+	c, rb := env.admin(http.MethodPut, "/pricing?model="+url.QueryEscape(model), body)
 	require.Equal(t, 200, c, "put price %s: %s", model, rb)
 }
 
