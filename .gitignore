@@ -15,6 +15,7 @@ cmd/server/dist/*
 .superpowers/
 .claude/
 .playwright-mcp/
+.omo/
 
 # 设计文档仅存本地，不进 git
 docs/superpowers/
