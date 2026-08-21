@@ -105,10 +105,14 @@ func TestCreateRuleRejectsUnknownWhenKey(t *testing.T) {
 
 func TestCreateRuleInvalidThen(t *testing.T) {
 	svc, _, _ := newRuleSvc()
-	_, err := svc.CreateRule(context.Background(), RuleInput{
+	// Then{} 空=纯透传合法（R-4）
+	got, err := svc.CreateRule(context.Background(), RuleInput{
 		Name: "r1", Priority: 10, When: validWhen(), Then: map[string]any{},
 	})
-	require.ErrorIs(t, err, ErrInvalidInput, "then 无动作 → 400 语义")
+	require.NoError(t, err, "Then{} 纯透传合法")
+	require.Nil(t, got.Then.Status)
+	require.Nil(t, got.Then.ResponseCode)
+	require.Nil(t, got.Then.CustomMessage)
 	_, err = svc.CreateRule(context.Background(), RuleInput{
 		Name: "r2", Priority: 11, When: validWhen(), Then: map[string]any{"cooldown": "0s"},
 	})

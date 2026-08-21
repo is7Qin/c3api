@@ -238,7 +238,7 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 // 旧规则不迁移——管理面重建；指针即意图 ResponseCode/CustomMessage nil=透传）：
 //
 //	seed-429（p10）      kind=429   → status=429 + cooldown 30s + ResponseCode nil(透429) + CustomMessage "rate limited"（码透文不透）
-//	seed-4xx-400（p15）  kind=4xx + http_status=400 → ResponseCode nil + CustomMessage nil（400 全透；其余 4xx 默认归一 502——无规则即归一；种子特例直插不走 ValidateThen）
+//	seed-4xx-400（p15）  kind=4xx + http_status=400 → ResponseCode nil + CustomMessage nil（400 全透；其余 4xx 默认归一 502——无规则即归一；直插 store，其 Then{} 与用户规则 Then{} 全透语义等价）
 //	seed-5xx（p20）      kind=5xx   → status=unhealthy + cooldown 10m + 502/"Upstream request failed"（用户裁决归一）
 //	seed-network（p25）  kind=network → status=unhealthy + cooldown 5s + 502/"Upstream request failed"
 //	                       （连接级独立类型——原连接级 5s 语义，不吃 10m）
