@@ -820,18 +820,6 @@ export default function Accounts() {
         </Select>
       </ListToolbar>
 
-      <BatchBar
-        selected={selected}
-        onClear={() => setSelected([])}
-        onDelete={async () => {
-          await batchDelete.mutateAsync(selected)
-        }}
-        onUpdate={() => new Promise<'cancelled' | 'submitted'>(resolve => {
-          batchResolve.current = resolve
-          openBatchUpdate()
-        })}
-      />
-
       {/* 列设置（usage 列开关控制懒加载查询） */}
       <div className="flex justify-end">
         <DropdownMenu>
@@ -848,6 +836,18 @@ export default function Accounts() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <BatchBar
+        selected={selected}
+        onClear={() => setSelected([])}
+        onDelete={async () => {
+          await batchDelete.mutateAsync(selected)
+        }}
+        onUpdate={() => new Promise<'cancelled' | 'submitted'>(resolve => {
+          batchResolve.current = resolve
+          openBatchUpdate()
+        })}
+      />
 
       {isError ? (
         <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>

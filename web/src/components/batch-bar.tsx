@@ -65,10 +65,10 @@ export function BatchBar({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[rgba(19,45,83,0.12)] bg-[color:var(--glass-card-light)] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[var(--glass-blur)] dark:border-[rgba(148,180,220,0.18)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
       {(
         <>
-          <span className="rounded-md bg-background px-2 py-0.5 text-sm font-medium text-foreground tabular-nums">
+          <span className="rounded-md border border-[rgba(19,45,83,0.08)] bg-primary/10 px-2 py-0.5 text-sm font-medium text-primary tabular-nums dark:border-[rgba(148,180,220,0.14)] dark:bg-primary/15 dark:text-primary">
             {t('list.selected', { count })}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
