@@ -3,7 +3,6 @@ import { Upload, FileText, FolderOpen, Files, CheckCircle2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -15,7 +14,6 @@ import { SourceSelect } from './source-select'
 import { PreviewTable } from './preview-table'
 import { ResultView } from './result-view'
 import { getAdapter, type SourceId } from '@/lib/codex-import/adapters'
-import { readImportFile } from '@/lib/codex-import/parse'
 import { importSequential } from '@/lib/codex-import/chunk'
 import type { CredentialKind, NormalizedRow } from '@/lib/codex-import/normalize'
 import type { components } from '@/lib/api/schema'
@@ -71,7 +69,7 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
       setParseState({ rows: [], parseError: t('accounts.import.folderOnlyCpa') })
       return
     }
-    // 5MB 单文件校验由 readImportFile 完成；文件夹总大小校验
+    // 5MB 单文件校验在 adapter 预览解析时完成；此处做文件夹总大小校验
     const total = list.reduce((s, f) => s + f.size, 0)
     if (total > 20 * 1024 * 1024) {
       setParseState({ rows: [], parseError: t('accounts.import.input.fileTooLarge') })
@@ -81,36 +79,14 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
       const texts = await Promise.all(list.map(f => f.text()))
       // 记录显示名：单文件用文件名，多文件/文件夹显示数量
       const displayName = list.length === 1 ? list[0].name : t('accounts.import.filesCount', { count: list.length })
-      const combined = texts.join('\n')
-      // 若为多文件，逐文件解析后合并，避免 JSON 数组拼接错误
-      if (list.length > 1) {
-        const allRows: unknown[] = []
-        for (const text of texts) {
-          const parsed = getAdapter(source).parse(text, kind)
-          if (parsed.parseError && parsed.rows.length === 0) {
-            // 忽略空文件
-            continue
-          }
-          // parse 成功则收集 raw，再统一归一化已在 parse 内完成；此处直接合并 NormalizedRow
-          // 为避免重复归一化，直接用 parse 结果的 rows
-          // 需要重新索引
-        }
-        // 简化：用 combined 文本走统一 parse，兼容 JSONL 拼接；JSON 数组多文件场景 improbable，文件夹内应为单对象/JSONL
-        setRawText(combined)
-        setFileName(displayName)
-        setTab('file')
-        return
-      }
-      setRawText(combined)
+      // 多文件合并文本走统一 parse（JSONL 拼接兼容；JSON 数组多文件场景 improbable），
+      // 解析/归一化由 adapter 在预览阶段完成
+      setRawText(texts.join('\n'))
       setFileName(displayName)
       setTab('file')
     } catch {
       setParseState({ rows: [], parseError: t('common.loadFailed', { message: '' }) })
     }
-  }
-  const handleFile = async (file?: File) => {
-    if (!file) return
-    await handleFiles([file])
   }
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault()
