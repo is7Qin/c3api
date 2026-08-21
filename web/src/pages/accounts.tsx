@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal } from 'lucide-react'
+import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
@@ -33,6 +33,7 @@ import { StatusBadge, CooldownBadge } from '@/components/status-badge'
 import { fmtTokens, formatPercent, toRFC3339, truncate } from '@/components/fmt'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
+import { CodexImportDialog } from '@/components/codex-import/import-dialog'
 
 type AccountView = components['schemas']['AccountView']
 type AccountCreate = components['schemas']['AccountCreate']
@@ -564,6 +565,7 @@ export default function Accounts() {
   const [editing, setEditing] = useState<AccountView | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [deleting, setDeleting] = useState<AccountView | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
 
   // 编辑回显（评审 I-1 方案 B）：对话框挂载时拉取当前分组；数据未到前禁用
   // 保存与分组多选（防未加载完提交误发 [] 清空）。
@@ -762,9 +764,14 @@ export default function Accounts() {
           <h1 className="text-2xl font-semibold tracking-tight">{t('accounts.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('accounts.subtitle')}</p>
         </div>
+        <div className="flex items-center gap-2">
+        <Button variant="outline" onClick={() => setImportOpen(true)} disabled={templates.length === 0} title={templates.length === 0 ? '无可用模板，请先创建 codex-oauth/pat 模板' : undefined}>
+          <Upload /> {t('accounts.import.button')}
+        </Button>
         <Button onClick={openCreate} disabled={templates.length === 0} title={templates.length === 0 ? t('accounts.noTemplate') : undefined}>
           <Plus /> {t('accounts.new')}
         </Button>
+        </div>
       </div>
 
       <ListToolbar
@@ -863,8 +870,9 @@ export default function Accounts() {
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg">
-            <Table ref={tableRef}>
+          <Card className="bg-transparent border-0 shadow-none backdrop-blur-none p-0 gap-0">
+          <ScrollArea className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+            <Table ref={tableRef} containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none" className="min-w-[1080px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
@@ -957,7 +965,8 @@ export default function Accounts() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
+          </Card>
           <Pagination total={data?.total ?? 0} limit={limit} offset={offset} onOffsetChange={setOffset} onLimitChange={changeLimit} />
         </>
       )}
@@ -1346,12 +1355,13 @@ export default function Accounts() {
           聚合（watermark 滞后）——末桶（进行中部分桶）被「当前」尾窗补行原位替代；
           弹窗内数据不轮询（打开时点快照，切换范围手动刷新） —— */}
       <Dialog open={!!usageDetail} onOpenChange={o => { if (!o) setUsageDetail(null) }}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
+          <DialogHeader className="shrink-0 px-6 pt-6">
             <DialogTitle>{t('accounts.usageDetail.title', { name: usageDetail?.Name ?? '—', id: usageDetail?.ID })}</DialogTitle>
             <DialogDescription>{t(`accounts.usageDetail.range.${rangeKey}`)}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+            <div className="space-y-4">
             <div className="flex justify-end">
               <Select
                 items={Object.fromEntries(USAGE_RANGES.map(r => [r.key, t(`accounts.usageDetail.range.${r.key}`)]))}
@@ -1394,8 +1404,8 @@ export default function Accounts() {
             ) : statsBuckets.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">{t('accounts.usageDetail.empty')}</p>
             ) : (
-              <ScrollArea className="max-h-80 rounded-lg border">
-                <Table>
+              <ScrollArea className="max-h-80 rounded-lg border" showHorizontal>
+                <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none" className="min-w-[720px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>{t('accounts.usageDetail.col.time')}</TableHead>
@@ -1443,12 +1453,20 @@ export default function Accounts() {
                 </Table>
               </ScrollArea>
             )}
+            </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 rounded-b-[14px] border-t bg-muted/10 px-6 py-5">
             <Button variant="outline" onClick={() => setUsageDetail(null)}>{t('common.cancel')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <CodexImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        templates={templates}
+        groups={groups}
+        onDone={() => qc.invalidateQueries({ queryKey: ['accounts'] })}
+      />
     </div>
   )
 }
