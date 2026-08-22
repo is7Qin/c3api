@@ -96,6 +96,8 @@ func (s *Service) mailConfig() (host string, port int, username, password, fromA
 	return host, port64, s.settingValue("mail.smtp_username"), s.settingValue("mail.smtp_password"), fromAddr, s.settingValue("mail.tls"), true
 }
 
+var mailSendTimeout = 15 * time.Second
+
 // sendMail 同步发送（15s 超时上下文，按设置快照构造 client）。
 func (s *Service) sendMail(ctx context.Context, to string, purpose domain.EmailCodePurpose, code string) error {
 	host, port, username, password, fromAddr, tlsPolicy, ok := s.mailConfig()
@@ -116,7 +118,7 @@ func (s *Service) sendMail(ctx context.Context, to string, purpose domain.EmailC
 	// 构造 client
 	opts := []mail.Option{
 		mail.WithPort(port),
-		mail.WithTimeout(15 * time.Second),
+		mail.WithTimeout(mailSendTimeout),
 	}
 	switch tlsPolicy {
 	case "implicit":
@@ -145,7 +147,7 @@ func (s *Service) sendMail(ctx context.Context, to string, purpose domain.EmailC
 	}
 	msg.Subject(subj)
 	msg.SetBodyString(mail.TypeTextPlain, body)
-	sendCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	sendCtx, cancel := context.WithTimeout(ctx, mailSendTimeout)
 	defer cancel()
 	if err := client.DialAndSendWithContext(sendCtx, msg); err != nil {
 		if s.log != nil {
