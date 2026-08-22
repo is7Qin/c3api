@@ -422,16 +422,16 @@ func TestSeedRules(t *testing.T) {
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.Reload(context.Background()))
 
-	// 种子 5 条（fresh setup 哲学，指针即意图）：429/30s+nil/rate limited、4xx+400/nil/nil 全透、5xx/unhealthy/10m+502/generic、
-	// network/unhealthy/5s+502/generic、ok/active，priority 10/15/20/25/30
-	require.Equal(t, int64(5), mustCountAny(t, st))
+	// 种子 6 条（fresh setup 哲学，指针即意图）：429/30s+nil/rate limited、4xx+400/nil/nil 全透、5xx+503+overload 全透、
+	// 5xx/unhealthy/10m+502/generic、network/unhealthy/5s+502/generic、ok/active，priority 10/15/16/20/25/30
+	require.Equal(t, int64(6), mustCountAny(t, st))
 	require.True(t, e.NeedsOKEvents()) // 种子含 kind=ok 恢复规则（C1）
 
 	rules, err := st.ListRules(context.Background(), nil)
 	require.NoError(t, err)
-	require.Len(t, rules, 5)
-	require.Equal(t, []int{10, 15, 20, 25, 30}, []int{
-		rules[0].Priority, rules[1].Priority, rules[2].Priority, rules[3].Priority, rules[4].Priority,
+	require.Len(t, rules, 6)
+	require.Equal(t, []int{10, 15, 16, 20, 25, 30}, []int{
+		rules[0].Priority, rules[1].Priority, rules[2].Priority, rules[3].Priority, rules[4].Priority, rules[5].Priority,
 	})
 	require.Equal(t, "429", *rules[0].When.Kind)
 	require.Equal(t, domain.Status429, *rules[0].Then.Status)
@@ -446,24 +446,31 @@ func TestSeedRules(t *testing.T) {
 	require.Nil(t, rules[1].Then.Status)
 	require.Nil(t, rules[1].Then.Cooldown)
 	require.Equal(t, "5xx", *rules[2].When.Kind)
-	require.Equal(t, domain.StatusUnhealthy, *rules[2].Then.Status)
-	require.Equal(t, "10m", *rules[2].Then.Cooldown, "seed-5xx 冷却 10m（用户裁决）")
-	require.NotNil(t, rules[2].Then.ResponseCode)
-	require.Equal(t, 502, *rules[2].Then.ResponseCode)
-	require.Equal(t, "Upstream request failed", *rules[2].Then.CustomMessage)
-	require.Equal(t, "network", *rules[3].When.Kind)
+	require.Equal(t, 503, *rules[2].When.HTTPStatus)
+	require.Equal(t, "overload", *rules[2].When.ErrorMessageContains)
+	require.Nil(t, rules[2].Then.ResponseCode, "seed-5xx-503-overload 码透传 nil")
+	require.Nil(t, rules[2].Then.CustomMessage, "seed-5xx-503-overload 文透传 nil（503 overload 全透）")
+	require.Nil(t, rules[2].Then.Status)
+	require.Nil(t, rules[2].Then.Cooldown)
+	require.Equal(t, "5xx", *rules[3].When.Kind)
 	require.Equal(t, domain.StatusUnhealthy, *rules[3].Then.Status)
-	require.Equal(t, "5s", *rules[3].Then.Cooldown, "seed-network 冷却 5s（连接级独立，不吃 10m）")
+	require.Equal(t, "10m", *rules[3].Then.Cooldown, "seed-5xx 冷却 10m（用户裁决）")
 	require.NotNil(t, rules[3].Then.ResponseCode)
 	require.Equal(t, 502, *rules[3].Then.ResponseCode)
 	require.Equal(t, "Upstream request failed", *rules[3].Then.CustomMessage)
-	require.Equal(t, "ok", *rules[4].When.Kind)
-	require.Equal(t, domain.StatusActive, *rules[4].Then.Status)
-	require.Nil(t, rules[4].Then.Cooldown)
+	require.Equal(t, "network", *rules[4].When.Kind)
+	require.Equal(t, domain.StatusUnhealthy, *rules[4].Then.Status)
+	require.Equal(t, "5s", *rules[4].Then.Cooldown, "seed-network 冷却 5s（连接级独立，不吃 10m）")
+	require.NotNil(t, rules[4].Then.ResponseCode)
+	require.Equal(t, 502, *rules[4].Then.ResponseCode)
+	require.Equal(t, "Upstream request failed", *rules[4].Then.CustomMessage)
+	require.Equal(t, "ok", *rules[5].When.Kind)
+	require.Equal(t, domain.StatusActive, *rules[5].Then.Status)
+	require.Nil(t, rules[5].Then.Cooldown)
 
 	// 非空表不重复写种子
 	require.NoError(t, e.Reload(context.Background()))
-	require.Equal(t, int64(5), mustCountAny(t, st))
+	require.Equal(t, int64(6), mustCountAny(t, st))
 }
 
 // mustCountAny 表内规则数（接受唯一约束包装 store；种子幂等测试用）。
@@ -668,7 +675,7 @@ func TestSeedRulesIdempotentConcurrent(t *testing.T) {
 	wg.Wait()
 	require.NoError(t, err1)
 	require.NoError(t, err2, "冲突方不得失败（唯一约束 → 跳过继续，并集收敛）")
-	require.Equal(t, int64(5), mustCountAny(t, st), "种子并集恰 5 条（不双写）")
+	require.Equal(t, int64(6), mustCountAny(t, st), "种子并集恰 6 条（不双写）")
 }
 
 // TestSeedRulesIdempotentRepeat 已种子表重复 Reload 不重写（幂等回归）。
@@ -676,9 +683,9 @@ func TestSeedRulesIdempotentRepeat(t *testing.T) {
 	st := &uniqueRuleStore{newFakeRuleStore()}
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.Reload(context.Background()))
-	require.Equal(t, int64(5), mustCountAny(t, st))
+	require.Equal(t, int64(6), mustCountAny(t, st))
 	require.NoError(t, e.Reload(context.Background()))
-	require.Equal(t, int64(5), mustCountAny(t, st), "重复 Reload 不重写种子")
+	require.Equal(t, int64(6), mustCountAny(t, st), "重复 Reload 不重写种子")
 }
 
 // TestReloadRulesAdapter ReloadRules 与 Reload 同实现（invalidate.RulesReloader
@@ -687,7 +694,7 @@ func TestReloadRulesAdapter(t *testing.T) {
 	st := newFakeRuleStore()
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.ReloadRules(context.Background()))
-	require.Equal(t, int64(5), mustCountAny(t, st), "ReloadRules 空表同样写种子")
+	require.Equal(t, int64(6), mustCountAny(t, st), "ReloadRules 空表同样写种子")
 }
 
 // —— 热点修复 B：Enqueue 丢弃阈值告警（errlog 模式对齐） ——
