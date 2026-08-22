@@ -41,7 +41,7 @@ require (
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/hashicorp/hcl/v2 v2.18.1 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
-	github.com/is7Qin/codex-sdk v0.0.0-20260817090548-598e20f8ea87
+	github.com/is7Qin/codex-sdk v0.0.0-20260822073553-aef6a68a4474
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
