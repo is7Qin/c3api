@@ -50,20 +50,24 @@ var (
 	addr        = flag.String("addr", "http://127.0.0.1:8080", "gateway addr")
 	key         = flag.String("key", "ck-", "single gateway key (fallback when -keys is empty)")
 	keysFile    = flag.String("keys", "", "file with one gateway key per line; pick random per request (multi-key load)")
-	format      = flag.String("format", "chat", "request format: chat, responses or anthropic")
+	format      = flag.String("format", "chat", "request format: chat, responses, anthropic or images")
 	healthz     = flag.String("healthz", "", "gateway /healthz url to sample memory")
 	out         = flag.String("out", "", "write RESULT summary to this file as well")
 	pprof       = flag.String("pprof", "", "listen addr for /debug/pprof (goroutine dump on hang)")
-	mode        = flag.String("mode", "stream", "request mode: stream, chat or fill")
+	mode        = flag.String("mode", "stream", "request mode: stream, chat, fill, models, api-admin or api-user")
 	// fill 模式（管理面填充 API 压测）：并发创建用户/key/账号/组/模板/定价。
-	adminToken   = flag.String("admin-token", "", "C3API_ADMIN_TOKEN (fill mode admin APIs; keys fill 走用户面不需要)")
+	adminToken   = flag.String("admin-token", "", "C3API_ADMIN_TOKEN (fill/api-admin mode admin APIs; keys fill 走用户面不需要)")
 	fillType     = flag.String("fill-type", "users", "fill mode entity: users, keys, accounts, groups, templates, pricing or mixed")
 	fillUser     = flag.String("fill-user", "user0@loadtest.test:loadtest-pass-1", "keys fill: 登录账号 email:password（-fill-user-file 为空时兜底）")
 	fillUserFile = flag.String("fill-user-file", "", "keys fill: 每行 email:password 的账号文件，随机挑（分散登录压力，对齐 setup 用户命名）")
 	fillTplID    = flag.Int64("fill-template-id", 1, "accounts fill: 模板 ID（setup 创建的第 1 个模板，压测前确认存在）")
 	fillGroupID  = flag.Int64("fill-group-id", 1, "keys/accounts fill: 组 ID（setup 创建的第 1 个组）")
 	fillUpstream = flag.String("fill-upstream", "http://127.0.0.1:9100", "templates fill: base_url（裸根约定）")
-	fillKeysOut = flag.String("fill-keys-out", "", "keys fill: 把创建的 key 明文逐行追加写入此文件（fill 主循环响应解析；压测前 keys.txt 落盘用）")
+	fillKeysOut  = flag.String("fill-keys-out", "", "keys fill: 把创建的 key 明文逐行追加写入此文件（fill 主循环响应解析；压测前 keys.txt 落盘用）")
+	// api 模式（管理面/用户面全端点锤）：兑换码跨进程交接文件。
+	codesOut = flag.String("codes-out", "", "api-admin: 生成的兑换码逐行追加此文件（供 api-user -codes-in 消费）")
+	codesIn  = flag.String("codes-in", "", "api-user: 可核销兑换码文件（追加式，进程内周期重读；多进程并跑会有重复核销 4xx 噪声）")
+	readsOnly = flag.Bool("api-reads-only", false, "api 模式只跑读场景（增长后纯读延迟对比用）")
 )
 
 // keyPool 多 key 模式：每请求随机取一个（-keys 文件行）；空 = 用 -key 单 key。
@@ -93,15 +97,34 @@ func (m *metrics) addErr(detail string) {
 
 func main() {
 	flag.Parse()
-	if *mode != "stream" && *mode != "chat" && *mode != "fill" {
-		fmt.Fprintf(os.Stderr, "invalid -mode %q: want stream, chat or fill\n", *mode)
+	switch *mode {
+	case "stream", "chat", "fill", "models", "api-admin", "api-user":
+	default:
+		fmt.Fprintf(os.Stderr, "invalid -mode %q: want stream, chat, fill, models, api-admin or api-user\n", *mode)
 		os.Exit(2)
 	}
 	if *mode == "fill" {
 		validateFillFlags()
 	}
-	if *format != "chat" && *format != "responses" && *format != "anthropic" {
-		fmt.Fprintf(os.Stderr, "invalid -format %q: want chat, responses or anthropic\n", *format)
+	if *mode == "api-admin" {
+		if *adminToken == "" {
+			fmt.Fprintln(os.Stderr, "-mode api-admin requires -admin-token (C3API_ADMIN_TOKEN)")
+			os.Exit(2)
+		}
+		if *codesIn != "" {
+			fmt.Fprintln(os.Stderr, "-mode api-admin ignores -codes-in (admin 生成码用 -codes-out)")
+			os.Exit(2)
+		}
+	}
+	if *mode == "api-user" && *fillUserFile != "" {
+		loadFillUserFile()
+		if *codesIn != "" {
+			apiReloadCodes()
+			fmt.Printf("loaded %d redeem codes from %s\n", len(codesSeen), *codesIn)
+		}
+	}
+	if *format != "chat" && *format != "responses" && *format != "anthropic" && *format != "images" {
+		fmt.Fprintf(os.Stderr, "invalid -format %q: want chat, responses, anthropic or images\n", *format)
 		os.Exit(2)
 	}
 	if *keysFile != "" {
@@ -125,8 +148,11 @@ func main() {
 		go func() { _ = http.ListenAndServe(*pprof, nil) }() // net/http/pprof 自动挂载
 	}
 	m := &metrics{errDetail: make(map[string]int64)}
-	if *mode != "fill" {
+	if *mode != "fill" && *mode != "api-admin" && *mode != "api-user" {
 		buildReqTemplate()
+	}
+	if *mode == "api-admin" {
+		apiBootstrapAdmin(http.DefaultClient)
 	}
 	warmEnd := time.Now().Add(*warmup)
 	start := warmEnd
@@ -138,10 +164,11 @@ func main() {
 	// （connsMu）在 50k 并发下是跨 worker 争抢点；每 worker 独立 transport
 	// 后池锁归零竞争，连接数不变（稳态每 worker 恰好一条 keep-alive）。
 	randSeed := uint64(time.Now().UnixNano())
+	isAPI := *mode == "api-admin" || *mode == "api-user"
 	var wg sync.WaitGroup
 	for i := 0; i < *concurrency; i++ {
 		wg.Add(1)
-		go func(rng *rand.Rand) {
+		go func(idx int, rng *rand.Rand) {
 			defer wg.Done()
 			// 每 worker 独立 transport（池容量 1 即够——稳态恒 1 条连接）：
 			// 避免共享 transport 的连接池锁竞争（#19）；参数同全局版。
@@ -151,6 +178,11 @@ func main() {
 				IdleConnTimeout:     90 * time.Second,
 			}
 			client := &http.Client{Timeout: 10 * time.Minute, Transport: transport}
+			if isAPI {
+				// api 模式：worker 自含循环（登录/预热/计时段都在内）。
+				apiWorkerLoop(newAPIWorker(idx, client, rng), warmEnd, stop)
+				return
+			}
 			// 预热：先跑不计数的流，把突发拨号造成的 RST 吸收在计时窗口外，
 			// 同时让 keep-alive 连接池就位（Windows backlog≈200，见错误退避注释）。
 			for time.Now().Before(warmEnd) {
@@ -167,7 +199,7 @@ func main() {
 					doRequest(client, m, rng, true)
 				}
 			}
-		}(rand.New(rand.NewPCG(randSeed, uint64(i+1))))
+		}(i, rand.New(rand.NewPCG(randSeed, uint64(i+1))))
 	}
 
 	// 采样 goroutine：打印即时进度 + /healthz 内存
@@ -196,22 +228,32 @@ func main() {
 	if *mode == "fill" {
 		result += fmt.Sprintf("fill_type=%s\n", *fillType)
 	}
-	result += fmt.Sprintf("total=%d errs=%d\n", m.total.Load(), m.errs.Load())
-	if *mode == "chat" || *mode == "fill" {
-		result += fmt.Sprintf("avg_latency_ms=%.1f\n", float64(m.latencyMS.Load())/float64(max(1, m.total.Load()-m.errs.Load())))
-		result += fmt.Sprintf("p99_latency_ms=%d\n", p99Latency(m))
+	if isAPI {
+		result += apiResultSection()
 	} else {
-		result += fmt.Sprintf("avg_first_byte_ms=%.1f\n", float64(m.firstByteMS.Load())/float64(max(1, m.total.Load()-m.errs.Load())))
-		result += fmt.Sprintf("p99_first_byte_ms=%d\n", p99(m))
-	}
-	result += fmt.Sprintf("elapsed=%s concurrency=%d\n", time.Since(start).Round(time.Second), *concurrency)
-	m.mu.Lock()
-	for d, c := range m.errDetail {
-		if c >= 1 {
-			result += fmt.Sprintf("err_detail: %d x %s\n", c, d)
+		result += fmt.Sprintf("total=%d errs=%d\n", m.total.Load(), m.errs.Load())
+		if *mode == "chat" || *mode == "models" || *mode == "fill" {
+			result += fmt.Sprintf("avg_latency_ms=%.1f\n", float64(m.latencyMS.Load())/float64(max(1, m.total.Load()-m.errs.Load())))
+			result += fmt.Sprintf("p99_latency_ms=%d\n", p99Latency(m))
+		} else {
+			result += fmt.Sprintf("avg_first_byte_ms=%.1f\n", float64(m.firstByteMS.Load())/float64(max(1, m.total.Load()-m.errs.Load())))
+			result += fmt.Sprintf("p99_first_byte_ms=%d\n", p99(m))
 		}
 	}
-	m.mu.Unlock()
+	result += fmt.Sprintf("elapsed=%s concurrency=%d\n", time.Since(start).Round(time.Second), *concurrency)
+	if isAPI {
+		for _, line := range apiMergedErrDetails() {
+			result += line + "\n"
+		}
+	} else {
+		m.mu.Lock()
+		for d, c := range m.errDetail {
+			if c >= 1 {
+				result += fmt.Sprintf("err_detail: %d x %s\n", c, d)
+			}
+		}
+		m.mu.Unlock()
+	}
 	fmt.Print(result)
 	if *out != "" {
 		if err := os.WriteFile(*out, []byte(result), 0o644); err != nil {
@@ -233,6 +275,12 @@ func pickKey(rng *rand.Rand) string {
 // 三格式（多模板多格式压测）：chat → /v1/chat/completions（Bearer），
 // responses → /v1/responses（Bearer），anthropic → /v1/messages（x-api-key）。
 func newLoadtestRequest(base, groupKey, requestMode string) *http.Request {
+	if requestMode == "models" {
+		// GET /v1/models：网关内存快照直出（零上游、零 DB），延迟口径同 chat。
+		req, _ := http.NewRequest(http.MethodGet, base+"/v1/models", nil)
+		req.Header.Set("Authorization", "Bearer "+groupKey)
+		return req
+	}
 	var path, body string
 	switch *format {
 	case "responses":
@@ -247,6 +295,11 @@ func newLoadtestRequest(base, groupKey, requestMode string) *http.Request {
 		if requestMode == "stream" {
 			body = `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 		}
+	case "images":
+		// images generations：非流式 JSON（data 数组计图计费）；流式变体需
+		// 上游 SSE 帧规格支持，fakeupstream 未实现——压测覆盖非流式。
+		path = "/v1/images/generations"
+		body = `{"model":"gpt-image-1","prompt":"a cat","n":1,"size":"1024x1024"}`
 	default: // chat
 		path = "/v1/chat/completions"
 		body = `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -275,7 +328,9 @@ var (
 // buildReqTemplate 按当前 flags 预构建请求模板（main 启动时调用一次）。
 func buildReqTemplate() {
 	reqTmpl = newLoadtestRequest(*addr, *key, *mode)
-	tmplBody, _ = io.ReadAll(reqTmpl.Body)
+	if reqTmpl.Body != nil { // GET（models）无体
+		tmplBody, _ = io.ReadAll(reqTmpl.Body)
+	}
 	reqTmpl.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(tmplBody)), nil
 	}
@@ -328,7 +383,7 @@ func doRequest(client *http.Client, m *metrics, rng *rand.Rand, count bool) {
 		resp.Body.Close()
 		return
 	}
-	if *mode == "chat" {
+	if *mode == "chat" || *mode == "models" {
 		_, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
@@ -398,6 +453,28 @@ var fillModels = []string{
 // 空 = 单账号 -fill-user 兜底（对齐 setup 用户命名约定）。
 var fillUserPool []string
 
+// loadFillUserFile 加载 -fill-user-file 登录账号池（fill keys / api-user 共用）。
+func loadFillUserFile() {
+	if *fillUserFile == "" || len(fillUserPool) > 0 {
+		return
+	}
+	b, err := os.ReadFile(*fillUserFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read -fill-user-file %s: %v\n", *fillUserFile, err)
+		os.Exit(2)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			fillUserPool = append(fillUserPool, line)
+		}
+	}
+	if len(fillUserPool) == 0 {
+		fmt.Fprintf(os.Stderr, "-fill-user-file %s: no entries found\n", *fillUserFile)
+		os.Exit(2)
+	}
+	fmt.Printf("loaded %d fill users from %s\n", len(fillUserPool), *fillUserFile)
+}
+
 // validateFillFlags fill 模式启动校验：fill-type 枚举 + admin token 依赖 +
 // 登录账号文件加载。
 func validateFillFlags() {
@@ -413,23 +490,7 @@ func validateFillFlags() {
 		fmt.Fprintf(os.Stderr, "invalid -fill-type %q: want users, keys, accounts, groups, templates, pricing or mixed\n", *fillType)
 		os.Exit(2)
 	}
-	if *fillUserFile != "" {
-		b, err := os.ReadFile(*fillUserFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "read -fill-user-file %s: %v\n", *fillUserFile, err)
-			os.Exit(2)
-		}
-		for _, line := range strings.Split(string(b), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				fillUserPool = append(fillUserPool, line)
-			}
-		}
-		if len(fillUserPool) == 0 {
-			fmt.Fprintf(os.Stderr, "-fill-user-file %s: no entries found\n", *fillUserFile)
-			os.Exit(2)
-		}
-		fmt.Printf("loaded %d fill users from %s\n", len(fillUserPool), *fillUserFile)
-	}
+	loadFillUserFile()
 }
 
 // fillTypeFor mixed 模式按全局请求序号循环轮流（每请求一种填充类型）。

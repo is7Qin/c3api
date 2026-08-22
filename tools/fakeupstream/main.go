@@ -189,6 +189,32 @@ func main() {
 		writeAnthropic("message_stop", map[string]any{"type": "message_stop"})
 	})
 
+	// openai images 格式（generations）：非流式 JSON，data 数组按请求 n 回显——
+	// 网关按 data 长度数图计费（ImageCost），size/model 取自请求体不回显校验。
+	http.HandleFunc("/v1/images/generations", func(w http.ResponseWriter, r *http.Request) {
+		if code := failIfInjected(w, r, f429, f500, f400); code != 0 {
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			w.WriteHeader(400)
+			return
+		}
+		n := 1
+		if v, ok := body["n"].(float64); ok && v >= 1 && v <= 10 {
+			n = int(v)
+		}
+		data := make([]map[string]any, n)
+		for i := range data {
+			data[i] = map[string]any{"url": fmt.Sprintf("https://fake.invalid/img-%d.png", i)}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"created": time.Now().Unix(),
+			"data":    data,
+		})
+	})
+
 	log.Printf("fake upstream on %s (chunks=%d latency=%s fail429=%v fail500=%v fail400=%v)",
 		*addr, *chunks, *latency, f429, f500, f400)
 	log.Fatal(http.ListenAndServe(*addr, nil))
