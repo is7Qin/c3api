@@ -644,6 +644,40 @@ type StatBucket struct {
 	TTFTHist            []int64 // TTFT 直方图 10 档（len = 10；SQL 侧 count(*) FILTER 生成）
 }
 
+// EntityStatBucket 实体小时卷积桶（usage_entity_stats 行语义）。
+type EntityStatBucket struct {
+	BucketTime          time.Time
+	EntityType          string // 'account' | 'user' | 'key'
+	EntityID            int64
+	Model               string
+	RequestCount        int64
+	ErrorCount          int64
+	CallCount           int64
+	InputTokens         int64
+	OutputTokens        int64
+	TotalTokens         int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	Cost                int64
+	RawCost             int64
+	TTFTTotalMS         int64
+	TTFTCount           int64
+	TTFTMaxMS           int64
+}
+
+// TTFTSummary TTFT 卡片聚合（/stats/ttft 与 /api/user/stats/ttft 响应内核）。
+// 空窗 = 零值结构 Count:0 Source:""；Source: "exact"（usage_logs percentile_cont）
+// 或 "sketch"（cube hist 服务端合并）。
+type TTFTSummary struct {
+	Count  int64
+	AvgMS  int64
+	P50MS  int64
+	P95MS  int64
+	P99MS  int64
+	MaxMS  int64
+	Source string
+}
+
 // —— 规则引擎（可编排状态管理） ——
 type RuleWhen struct {
 	Kind                   *string  `json:"kind,omitempty"`
