@@ -8,6 +8,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each release). The first beta is `v0.0.1-beta.1`; concrete numbers for later releases are decided at tag time.
 
+## [v0.0.1-beta.4] - 2026-08-22
+
+### Breaking
+
+- All management/user APIs moved under the `/api` prefix (`/api/admin/*`, `/api/user/*`); the SPA is now served from the repository root. The data plane (`/v1/*`) is unchanged — scripts and integrations must update their base URLs.
+
+### Added
+
+- Rules engine composite conditions: `http_status_in` / `model_in` / `error_message_contains_in` OR-match sets (mutually exclusive with the single-value forms, empty arrays rejected with 400), precompiled into zero-allocation lookup sets on the hot path; a fully-empty `then {}` is now a valid pure-passthrough rule.
+- Rules-driven response shaping: `response_code`/`custom_message` are pointer-intent (nil passes the upstream code/message through), the event taxonomy is `ok/429/4xx/5xx/network`, unmatched non-ok errors normalize to a fixed 502 message, user-face error logs are sanitized accordingly, and `when.model` matches the final mapped model uniformly across the REST/WS/log surfaces.
+- Batch cooldown reset: new `POST /accounts/batch-reset-cooldown`; writing `status=active` through PUT/batch-update also clears the cooldown — manually recovered accounts become selectable immediately on every instance.
+- Codex credential batch import (OAuth/PAT); PAT revocation detection unified inside codex-sdk (AT-401 classifier owns the death codeset, wired to the fatal-disable callback), and WS death-frame classification delegates to the same source.
+- Per-account usage snapshots surfaced to admins (TTL-cached, bounded-concurrency fetch) with a batch aggregation endpoint; `raw_cost` flows end-to-end (usage logs → offline stats aggregation → API → UI).
+- Template model hard whitelist: non-matching models return 404; tier-2 selection narrows to full-model accounts.
+- Admin console: glass design-system refresh with Apple palette, codex multi-format import dialog (CPA/folder), account usage detail dialog, cooldown badge with remaining time, client IP columns on all four log tables, composite-IN condition editors, custom 404 page.
+- Contributor knowledge base: hierarchical `AGENTS.md` (root / internal / web).
+
+### Changed
+
+- codex-sdk updated to `aef6a68`: exported auth-frame classifier and SDK-owned PAT death judgment (the gateway-side 401 heuristic was removed).
+- Snapshot rebuilds reuse previous instances so concurrency/reuse counters stay continuous; static views swap atomically; the scheduler's in-memory status/cooldown is the authoritative source shown in the account list.
+- OpenAPI: the rules `when`/`then` schema reference is fully documented (kind values, model semantics, empty-array rejection, pure-passthrough meaning).
+- README gained a performance section (pprof CPU profile findings and measured GC-tuning numbers).
+
+### Fixed
+
+- Freshly created users could hit a 401 on their first immediate request (the debounced JWT-snapshot reload lagged the creation) — user create/register/update now update the local snapshot instantly.
+- Rule cooldown defects: cooldown-only punishments were silently dropped, ok-recovery could fire while a cooldown was still unexpired, and rebuilds lost in-memory cooldowns when the DB column was NULL; the `disabled` action now persists to the database.
+- Codex dial 4xx responses bypassed rule-engine punishment — they are now classified and punished like every other failure surface.
+- Protocol conversion fallback missed `ErrNoAvailable`, and group-level protocol-convert edits did not propagate to key metadata (now registered incrementally with the Keys NOTIFY bit).
+- Web: a dead import broke the production build (`tsc`), the user-profile page lacked its breadcrumb, the bucket time column truncated by granularity, the mobile menu lost its dropdown context, and several table-styling regressions.
+
 ## [v0.0.1-beta.3] - 2026-08-17
 
 ### Added
