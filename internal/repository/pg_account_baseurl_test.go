@@ -37,7 +37,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 	// 单条更新设值 → 读回
 	b := "https://acc.example.com"
 	acc.BaseURL = &b
-	updated, err := repos.Accounts.UpdateAccount(ctx, acc)
+	updated, err := repos.Accounts.UpdateAccount(ctx, acc, nil)
 	require.NoError(t, err)
 	require.NotNil(t, updated.BaseURL)
 	require.Equal(t, b, *updated.BaseURL)
@@ -48,7 +48,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 
 	// 清空：nil → NULL 往返（继承模板）
 	acc.BaseURL = nil
-	_, err = repos.Accounts.UpdateAccount(ctx, acc)
+	_, err = repos.Accounts.UpdateAccount(ctx, acc, nil)
 	require.NoError(t, err)
 	got, err = repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)

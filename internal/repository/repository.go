@@ -242,8 +242,8 @@ func (r *Repository) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.A
 	return r.Accounts.ListAccounts(ctx, q)
 }
 
-func (r *Repository) UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
-	return r.Accounts.UpdateAccount(ctx, a)
+func (r *Repository) UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error) {
+	return r.Accounts.UpdateAccount(ctx, a, cooldownUntil)
 }
 
 func (r *Repository) DeleteAccount(ctx context.Context, id int64) error {

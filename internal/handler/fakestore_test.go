@@ -205,10 +205,13 @@ func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([
 	return paginate(out, q), int64(len(out)), nil
 }
 
-func (f *fakeStore) UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
+func (f *fakeStore) UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c := *a
+	if cooldownUntil != nil {
+		c.CooldownUntil = cooldownUntil
+	}
 	f.accs[a.ID] = &c
 	return &c, nil
 }
@@ -656,6 +659,9 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 		}
 		if p.GroupIDs != nil {
 			f.accGroups[id] = slices.Clone(*p.GroupIDs)
+		}
+		if p.CooldownUntil != nil {
+			a.CooldownUntil = p.CooldownUntil
 		}
 	}
 	return nil

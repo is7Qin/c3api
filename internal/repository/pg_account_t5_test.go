@@ -151,7 +151,7 @@ func TestAccountRecoveryClearsFailedPG(t *testing.T) {
 	cur, err := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
 	cur.Status = domain.StatusActive
-	_, err = repos.Accounts.UpdateAccount(ctx, cur)
+	_, err = repos.Accounts.UpdateAccount(ctx, cur, nil)
 	require.NoError(t, err)
 	check(t, false)
 
@@ -160,7 +160,7 @@ func TestAccountRecoveryClearsFailedPG(t *testing.T) {
 	cur2, err := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
 	cur2.Status = domain.StatusDisabled
-	_, err = repos.Accounts.UpdateAccount(ctx, cur2)
+	_, err = repos.Accounts.UpdateAccount(ctx, cur2, nil)
 	require.NoError(t, err)
 	check2 := func(t *testing.T) {
 		t.Helper()

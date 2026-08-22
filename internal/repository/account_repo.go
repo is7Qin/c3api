@@ -94,7 +94,7 @@ func toAccountStatusList(list []string) ([]account.Status, error) {
 	return out, nil
 }
 
-func (r *AccountRepo) UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
+func (r *AccountRepo) UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error) {
 	u := r.client.Account.UpdateOneID(a.ID).
 		SetName(a.Name).SetTemplateID(a.TemplateID).
 		SetUpstreamKey(a.UpstreamKey).
@@ -113,6 +113,9 @@ func (r *AccountRepo) UpdateAccount(ctx context.Context, a *domain.Account) (*do
 		// failed_at + last_error（恢复动作 = 状态切换，不做 openapi 字段扩展；
 		// 清字段语义对齐既有 ClearLastError——active ⇒ 未失效不变量）。
 		u = u.ClearFailedAt().ClearLastError()
+	}
+	if cooldownUntil != nil {
+		u = u.SetCooldownUntil(*cooldownUntil)
 	}
 	row, err := u.Save(ctx)
 	if err != nil {

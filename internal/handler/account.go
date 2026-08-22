@@ -186,6 +186,27 @@ func (h *AdminAPI) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Reques
 	httpface.WriteJSON(w, http.StatusOK, BatchUpdateResponse{Updated: len(ids)})
 }
 
+// PostAccountsBatchResetCooldown 批量重置账号冷却（事务，全成或全败；冷却
+// 重置后调度快照失效由 service invalidate 完成，ServerInterface）。
+func (h *AdminAPI) PostAccountsBatchResetCooldown(w http.ResponseWriter, r *http.Request) {
+	var in BatchResetCooldownBody
+	if err := decode(r, &in); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	ids, err := normalizeIDs(in.Ids)
+	if err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	n, err := h.svc.ResetAccountsCooldownBatch(r.Context(), ids)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, BatchResetCooldownResponse{Reset: n})
+}
+
 // accountPatchFromBody 生成类型 fields → repo patch（nil 字段 = 不更新；
 // GroupIDs nil = 不变，非 nil（含空数组） = 替换/清空）。
 // 契约 status 枚举不参与解码校验（与列表参数一致），此处显式校验；

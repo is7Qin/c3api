@@ -48,6 +48,8 @@ type AccountPatch struct {
 	MaxConcurrency *int
 	// GroupIDs nil = 不变；非 nil = 替换账号全部分组（含空数组 = 清空）。
 	GroupIDs *[]int64
+	// CooldownUntil nil = 不变；非 nil = SetCooldownUntil（管理面永不 Clear）。
+	CooldownUntil *time.Time
 }
 
 type GroupPatch struct {
@@ -218,6 +220,9 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			// ent 无 SetGroups：ClearGroups + AddGroupIDs 实现整组替换
 			// （AddGroupIDs 内部 map 去重，重复 id 安全）。
 			u = u.ClearGroups().AddGroupIDs(*p.GroupIDs...)
+		}
+		if p.CooldownUntil != nil {
+			u = u.SetCooldownUntil(*p.CooldownUntil)
 		}
 		if _, err := u.Save(ctx); err != nil {
 			return errMissingID(err, id)

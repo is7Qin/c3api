@@ -117,6 +117,7 @@ export class ApiClient {
   deleteAccount = (id: number) => this.request<components['schemas']['DeletedResponse']>(`/accounts/${id}`, { method: 'DELETE' })
   deleteAccountsBatch = (ids: number[]) => this.request<components['schemas']['BatchDeleteResponse']>('/accounts/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
   updateAccountsBatch = (ids: number[], fields: components['schemas']['AccountPatch']) => this.request<components['schemas']['BatchUpdateResponse']>('/accounts/batch-update', { method: 'POST', body: JSON.stringify({ ids, fields }) })
+  resetAccountsCooldown = (ids: number[]) => this.request<components['schemas']['BatchResetCooldownResponse']>('/accounts/batch-reset-cooldown', { method: 'POST', body: JSON.stringify({ ids }) })
   // —— 分组 ——
   listGroups = (p?: GroupListParams) => this.request<components['schemas']['GroupListResponse']>('/groups', { params: toQuery(p) })
   createGroup = (b: components['schemas']['GroupCreate']) => this.request<components['schemas']['Group']>('/groups', { method: 'POST', body: JSON.stringify(b) })

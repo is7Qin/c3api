@@ -282,6 +282,7 @@
     "batchUpdateTitle": "Batch update accounts",
     "batchUpdateDesc": "Fill in only the fields to change; leave empty to keep current values",
     "batchUpdateEmpty": "Fill in at least one field",
+    "resetCooldown": "Reset cooldown",
     "groupLabel": "Groups",
     "groupHint": "Saving replaces the account's current groups. Accounts in no group are not scheduled.",
     "loadGroupsFailed": "Failed to load current groups — saving is disabled",
@@ -577,6 +578,7 @@
     "selected": "{{count}} selected",
     "batchDelete": "Batch delete",
     "batchUpdate": "Batch update",
+    "batchResetCooldown": "Reset cooldown",
     "reset": "Reset",
     "clearSelection": "Clear selection",
     "unchanged": "Unchanged"
@@ -584,7 +586,8 @@
   "batch": {
     "confirmDelete": "Delete the {{count}} selected items?",
     "deleted": "Deleted {{count}} items",
-    "updated": "Updated {{count}} items"
+    "updated": "Updated {{count}} items",
+    "resetCooldown": "Reset {{count}} cooldowns"
   },
   "stats": {
     "title": "Stats",

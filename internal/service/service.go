@@ -135,7 +135,7 @@ type AccountStore interface {
 	CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
 	GetAccount(ctx context.Context, id int64) (*domain.Account, error)
 	ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error)
-	UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
+	UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error)
 	DeleteAccount(ctx context.Context, id int64) error
 	DeleteAccountsBatch(ctx context.Context, ids []int64) error
 	UpdateAccountsBatch(ctx context.Context, ids []int64, p repository.AccountPatch) error

@@ -254,6 +254,24 @@ paths:
               schema: { $ref: '#/components/schemas/BatchUpdateResponse' }
         default:
           $ref: '#/components/responses/Error'
+  /accounts/batch-reset-cooldown:
+    post:
+      operationId: PostAccountsBatchResetCooldown
+      tags: [accounts]
+      summary: 批量重置账号冷却（事务，全成或全败；status→active + cooldown_until=now）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchResetCooldownBody' }
+      responses:
+        '200':
+          description: 重置成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BatchResetCooldownResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   /accounts/batch-import-codex-oauth:
     post:
       operationId: PostAccountsBatchImportCodexOauth
@@ -2249,6 +2267,20 @@ components:
       required: [updated]
       properties:
         updated: { type: integer }
+    BatchResetCooldownBody:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          items: { type: integer, format: int64 }
+          minItems: 1
+          maxItems: 100
+    BatchResetCooldownResponse:
+      type: object
+      required: [reset]
+      properties:
+        reset: { type: integer }
     # --- 兑换码（Phase 5 计费前基础设施：资源发放的通用载体） ---
     RedemptionType:
       type: string

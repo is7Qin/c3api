@@ -524,6 +524,13 @@ export default function Accounts() {
       closeBatchUpdate('submitted')
     },
   })
+  const batchResetCooldown = useMutation({
+    mutationFn: (ids: number[]) => api.resetAccountsCooldown(ids),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      setSelected([])
+    },
+  })
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
   const [batchUpdateOpen, setBatchUpdateOpen] = useState(false)
   const [batchForm, setBatchForm] = useState<BatchForm>(emptyBatchForm())
@@ -847,6 +854,9 @@ export default function Accounts() {
           batchResolve.current = resolve
           openBatchUpdate()
         })}
+        onResetCooldown={async () => {
+          await batchResetCooldown.mutateAsync(selected)
+        }}
       />
 
       {isError ? (

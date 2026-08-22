@@ -107,7 +107,12 @@ func (s *Service) UpdateAccount(ctx context.Context, a *domain.Account) (*domain
 		keyChanged = keyChanged || curB != newB
 		recovered = cur.FailedAt != nil && a.Status == domain.StatusActive
 	}
-	updated, err := s.store.UpdateAccount(ctx, a)
+	var cooldownUntil *time.Time
+	if a.Status == domain.StatusActive {
+		now := time.Now()
+		cooldownUntil = &now
+	}
+	updated, err := s.store.UpdateAccount(ctx, a, cooldownUntil)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +218,10 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	if p.GroupIDs != nil {
 		gids = append(gids, (*p.GroupIDs)...)
 	}
+	if p.Status != nil && *p.Status == domain.StatusActive {
+		now := time.Now()
+		p.CooldownUntil = &now
+	}
 	if err := mapRepoErr(s.store.UpdateAccountsBatch(ctx, ids, p)); err != nil {
 		return err
 	}
@@ -229,6 +238,42 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	s.inv.Accounts(gids, p.UpstreamKey != nil || p.BaseURL != nil)
 	s.publish(ctx, notify.Change{Groups: gids, Clients: p.UpstreamKey != nil || p.BaseURL != nil})
 	return nil
+}
+
+// ResetAccountsCooldownBatch 批量重置账号冷却：validateIDs → 预取目标
+// 存在性 + 旧组并集 → 合成 patch {Status:active, CooldownUntil:now}
+// 复用 UpdateAccountsBatch（触发既有 failed_at/last_error 清理 + 新冷却写入）
+// → 恢复审计 → 组级失效 + NOTIFY。
+func (s *Service) ResetAccountsCooldownBatch(ctx context.Context, ids []int64) (int, error) {
+	if err := validateIDs(ids); err != nil {
+		return 0, err
+	}
+	var gids []int64
+	for _, id := range ids {
+		if _, err := s.store.GetAccount(ctx, id); err != nil {
+			return 0, mapRepoErr(err)
+		}
+		gs, err := s.store.GetAccountGroups(ctx, id)
+		if err != nil {
+			if s.log != nil {
+				s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(err))
+			}
+			continue
+		}
+		gids = append(gids, gs...)
+	}
+	now := time.Now()
+	st := domain.StatusActive
+	patch := repository.AccountPatch{Status: &st, CooldownUntil: &now}
+	if err := mapRepoErr(s.store.UpdateAccountsBatch(ctx, ids, patch)); err != nil {
+		return 0, err
+	}
+	if s.log != nil {
+		s.log.Info("account failure cleared (batch status->active)", logx.Int("count", len(ids)))
+	}
+	s.inv.Accounts(gids, false)
+	s.publish(ctx, notify.Change{Groups: gids})
+	return len(ids), nil
 }
 
 // groupsOf 账号分组 id 列表（nil = 无分组）。

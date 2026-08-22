@@ -282,6 +282,7 @@
     "batchUpdateTitle": "批量更新账号",
     "batchUpdateDesc": "仅填写需要修改的字段，留空表示保持原值",
     "batchUpdateEmpty": "至少填写一个字段",
+    "resetCooldown": "重置冷却",
     "groupLabel": "分组",
     "groupHint": "保存后替换账号原有分组；不在任何分组中的账号不会被调度。",
     "loadGroupsFailed": "读取当前分组失败，已禁用保存",
@@ -577,6 +578,7 @@
     "selected": "已选 {{count}} 项",
     "batchDelete": "批量删除",
     "batchUpdate": "批量更新",
+    "batchResetCooldown": "重置冷却",
     "reset": "重置",
     "clearSelection": "清除选择",
     "unchanged": "不修改"
@@ -584,7 +586,8 @@
   "batch": {
     "confirmDelete": "确认删除选中的 {{count}} 项？",
     "deleted": "已删除 {{count}} 项",
-    "updated": "已更新 {{count}} 项"
+    "updated": "已更新 {{count}} 项",
+    "resetCooldown": "已重置 {{count}} 个冷却"
   },
   "stats": {
     "title": "统计",

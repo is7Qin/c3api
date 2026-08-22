@@ -163,6 +163,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/batch-reset-cooldown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量重置账号冷却（事务，全成或全败；status→active + cooldown_until=now） */
+        post: operations["PostAccountsBatchResetCooldown"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/batch-import-codex-oauth": {
         parameters: {
             query?: never;
@@ -1705,6 +1722,12 @@ export interface components {
         BatchUpdateResponse: {
             updated: number;
         };
+        BatchResetCooldownBody: {
+            ids: number[];
+        };
+        BatchResetCooldownResponse: {
+            reset: number;
+        };
         /** @enum {string} */
         RedemptionType: "balance" | "concurrency" | "temp_balance";
         /** @enum {string} */
@@ -3099,6 +3122,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BatchUpdateResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsBatchResetCooldown: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchResetCooldownBody"];
+            };
+        };
+        responses: {
+            /** @description 重置成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchResetCooldownResponse"];
                 };
             };
             default: components["responses"]["Error"];

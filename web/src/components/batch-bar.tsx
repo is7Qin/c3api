@@ -16,16 +16,18 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from '@/components/ui/toast'
 
-// 列表页批量操作条：已选计数 + 批量删除（带确认弹窗）+ 可选批量更新 + 清除选择。
-// onDelete/onUpdate 可为异步；resolve 后就地显示短暂成功反馈（batch.deleted / batch.updated），reject 时就地显示错误（2s 自动消失）。
+// 列表页批量操作条：已选计数 + 批量删除（带确认弹窗）+ 可选批量更新 + 批量重置冷却 + 清除选择。
+// onDelete/onUpdate/onResetCooldown 可为异步；resolve 后就地显示短暂成功反馈（batch.deleted / batch.updated / batch.resetCooldown），reject 时就地显示错误（2s 自动消失）。
 // confirmTitle/confirmDesc/successTitle 用于覆盖「删除」语义（如批量失效场景），缺省保持默认文案。
 export function BatchBar({
   selected,
   onClear,
   onDelete,
   onUpdate,
+  onResetCooldown,
   deleteLabel,
   updateLabel,
+  resetCooldownLabel,
   confirmTitle,
   confirmDesc,
   successTitle,
@@ -34,27 +36,30 @@ export function BatchBar({
   onClear: () => void
   onDelete: () => void | Promise<void>
   onUpdate?: () => void | Promise<void | 'cancelled' | 'submitted'>
+  onResetCooldown?: () => void | Promise<void>
   deleteLabel?: string
   updateLabel?: string
+  resetCooldownLabel?: string
   confirmTitle?: string
   confirmDesc?: string
   successTitle?: string
 }) {
   const { t } = useTranslation()
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [pending, setPending] = useState<'delete' | 'update' | null>(null)
+  const [pending, setPending] = useState<'delete' | 'update' | 'reset' | null>(null)
 
   if (selected.length === 0) return null
 
   const count = selected.length
 
-  function run(action: 'delete' | 'update', fn: () => void | Promise<void | 'cancelled' | 'submitted'>) {
+  function run(action: 'delete' | 'update' | 'reset', fn: () => void | Promise<void | 'cancelled' | 'submitted'>) {
     setPending(action)
     Promise.resolve(fn())
       .then((result) => {
         if (result === 'cancelled') return
+        const key = action === 'delete' ? 'batch.deleted' : action === 'update' ? 'batch.updated' : 'batch.resetCooldown'
         toast.add({
-          title: successTitle ?? t(action === 'delete' ? 'batch.deleted' : 'batch.updated', { count }),
+          title: successTitle ?? t(key, { count }),
           type: 'success',
         })
       })
@@ -89,6 +94,16 @@ export function BatchBar({
                 onClick={() => run('update', onUpdate)}
               >
                 {pending === 'update' ? t('common.saving') : updateLabel ?? t('list.batchUpdate')}
+              </Button>
+            )}
+            {onResetCooldown && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pending !== null}
+                onClick={() => run('reset', onResetCooldown)}
+              >
+                {pending === 'reset' ? t('common.saving') : resetCooldownLabel ?? t('accounts.resetCooldown')}
               </Button>
             )}
             <Button variant="ghost" size="sm" disabled={pending !== null} onClick={onClear}>

@@ -502,6 +502,16 @@ type BatchDeleteResponse struct {
 	Deleted int `json:"deleted"`
 }
 
+// BatchResetCooldownBody defines model for BatchResetCooldownBody.
+type BatchResetCooldownBody struct {
+	Ids []int64 `json:"ids"`
+}
+
+// BatchResetCooldownResponse defines model for BatchResetCooldownResponse.
+type BatchResetCooldownResponse struct {
+	Reset int `json:"reset"`
+}
+
 // BatchUpdateAccountsBody defines model for BatchUpdateAccountsBody.
 type BatchUpdateAccountsBody struct {
 	Fields AccountPatch `json:"fields"`
@@ -1905,6 +1915,9 @@ type PostAccountsBatchImportCodexOauthJSONRequestBody = CodexOAuthImportBody
 // PostAccountsBatchImportCodexPatJSONRequestBody defines body for PostAccountsBatchImportCodexPat for application/json ContentType.
 type PostAccountsBatchImportCodexPatJSONRequestBody = CodexPATImportBody
 
+// PostAccountsBatchResetCooldownJSONRequestBody defines body for PostAccountsBatchResetCooldown for application/json ContentType.
+type PostAccountsBatchResetCooldownJSONRequestBody = BatchResetCooldownBody
+
 // PostAccountsBatchUpdateJSONRequestBody defines body for PostAccountsBatchUpdate for application/json ContentType.
 type PostAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
 
@@ -2000,6 +2013,9 @@ type ServerInterface interface {
 	// 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
 	// (POST /accounts/batch-import-codex-pat)
 	PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request)
+	// 批量重置账号冷却（事务，全成或全败；status→active + cooldown_until=now）
+	// (POST /accounts/batch-reset-cooldown)
+	PostAccountsBatchResetCooldown(w http.ResponseWriter, r *http.Request)
 	// 批量更新账号（fields 为任意字段子集）
 	// (POST /accounts/batch-update)
 	PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
@@ -2216,6 +2232,12 @@ func (_ Unimplemented) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, 
 // 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
 // (POST /accounts/batch-import-codex-pat)
 func (_ Unimplemented) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 批量重置账号冷却（事务，全成或全败；status→active + cooldown_until=now）
+// (POST /accounts/batch-reset-cooldown)
+func (_ Unimplemented) PostAccountsBatchResetCooldown(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2707,6 +2729,20 @@ func (siw *ServerInterfaceWrapper) PostAccountsBatchImportCodexPat(w http.Respon
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAccountsBatchImportCodexPat(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccountsBatchResetCooldown operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsBatchResetCooldown(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsBatchResetCooldown(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4940,6 +4976,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/batch-import-codex-pat", wrapper.PostAccountsBatchImportCodexPat)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/batch-reset-cooldown", wrapper.PostAccountsBatchResetCooldown)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/batch-update", wrapper.PostAccountsBatchUpdate)

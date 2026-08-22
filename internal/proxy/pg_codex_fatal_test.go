@@ -138,7 +138,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 	cur, err := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
 	cur.Status = domain.StatusActive
-	_, err = repos.Accounts.UpdateAccount(ctx, cur)
+	_, err = repos.Accounts.UpdateAccount(ctx, cur, nil)
 	require.NoError(t, err)
 	got2, err := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
