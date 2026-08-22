@@ -436,9 +436,12 @@
 
 ### 用户面
 
-- `POST /user/auth/register` / `POST /user/auth/login`：注册（受 `signup_enabled` 设置）与登录，返回 JWT + 用户对象（`Balance` 同样 USD float64）。
+- `POST /user/auth/register` / `POST /user/auth/login`：注册（受 `signup_enabled` 设置；开启注册邮箱验证后还需先经 `/user/auth/register-code` 获取并携带 `code` 字段）与登录，返回 JWT + 用户对象（`Balance` 同样 USD float64）。
 - `GET /user/auth/me`：当前用户信息。
 - `POST /user/auth/change-password`：修改密码（旧密码校验复用登录语义——失败 `401` 同登录文案防枚举；新密码非空且 ≤72 字节，非法 `400`；**不撤销既有 JWT**，新密码下次登录生效），见下方「用户面：修改密码」。
+- `POST /user/auth/register-code`：发送注册验证码（受 `mail.register_verification` + `signup_enabled` 双闸；未开验证 → `400` 哨兵文案；同邮箱 `60s` 限频 → `429`；已注册邮箱静默抑制发送仍返回 `{sent:true}`——防枚举）。响应恒 `{"sent":true}`。
+- `POST /user/auth/forgot-password`：忘记密码发码。**恒 `200 {"sent":true}` 同形响应（防枚举）**——无论账号是否存在、邮件是否启用；实际发送条件 = `mail.enabled` 且账号存在且未限频。
+- `POST /user/auth/reset-password {email, code, new_password}`：凭邮件验证码重置密码（码一次性、10 分钟有效、5 次尝试上限后须重新请求；新密码校验前置）；**不撤销既有 JWT**（同修改密码语义），新密码下次登录生效。
 - `GET /user/stats`：我的用量统计（强制 `user_id` = 当前用户，防越权；字段与 `/api/admin/stats` 同契约，见「查询用量统计」章节）。
 - `GET /user/temp-balances`：我的临时额度（仅有效额度：未过期且正余额，`expires_at` 升序 FEFO 同序、永久最后；`total_usd` 合计 USD），见「临时额度 Temp Balances」章节。
 - 兑换码（`/user/redemptions`）：`balance` / `temp_balance` 类型向毫分余额/临时额度充值，见「兑换码 Redemption Codes」章节。
@@ -471,6 +474,21 @@
 | `404` | 用户不存在 |
 
 > **不撤销既有 JWT**：无状态 token 无撤销机制——修改成功后已签发的 token 仍有效，新密码**下次登录**生效。
+
+### 用户面：邮箱验证与密码重置（邮件服务）
+
+邮件功能由运行时设置 `mail.*` 驱动（管理台「设置 → 邮件」页签配置：SMTP 主机/端口/账号/密码/发件人/TLS 策略），**`mail.enabled=false` 时零行为**——注册直通、忘记密码空转。
+
+- **注册验证码**：开启 `mail.register_verification` 后，注册须先调 `/user/auth/register-code` 获取 6 位码（10 分钟有效、5 次尝试上限、同邮箱 60s 限频），注册请求携带 `code` 字段；验证通过方建号。首个完成验证的注册者成为 `platform_admin`。
+- **密码重置**：忘记密码 → `/user/auth/forgot-password` 发码 → `/user/auth/reset-password` 凭码改密。码消费原子（防双花），重置后旧 JWT 存活至自然过期（≤24h）。
+- **模板系统**：两套内置中文默认模板（注册验证码/重置密码验证码，占位符 `{{code}}` / `{{ttl_minutes}}` / `{{app_name}}`），管理台可编辑覆盖、清空正文即还原默认。
+
+### 邮件模板管理（platform_admin）
+
+- `GET /api/admin/mail/templates`：列出全部用途模板（缺行自动合成内置默认，恒返回 register_code/reset_code 两条）。
+- `PUT /api/admin/mail/templates/{purpose}`：body `{subject, body_text}`；`body_text` 置空 = 删行还原内置默认。非法 purpose → 非 200。
+
+SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置键 `mail.*`，经通用 `GET|PUT /api/admin/settings` 读写（`smtp_password` 明文回读，沿用 `upstream_key` 先例；前端以密码框呈现）。
 
 ### 价格倍率语义（计费生效）
 

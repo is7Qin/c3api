@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each release). The first beta is `v0.0.1-beta.1`; concrete numbers for later releases are decided at tag time.
 
+## [Unreleased]
+
+### Added
+
+- Email service: registration email verification codes and password reset by emailed code — SMTP relay configured through runtime settings (`mail.*`, admin console → Settings → Mail tab, disabled by default), editable Chinese-default email templates with built-in fallback, async-safe sync send with 15 s timeout.
+- Admin settings page reorganized into category tabs (signup / defaults / pricing sync / tier policy / cluster / mail), with a Mail tab covering SMTP config and template editors; new user-facing pages for register code entry and forgot-password flow.
+
 ## [v0.0.1-beta.4] - 2026-08-22
 
 ### Breaking
