@@ -1525,9 +1525,36 @@ export interface components {
             name: string;
             enabled?: boolean;
             priority: number;
+            /**
+             * @description 事件匹配条件（自由对象，未知键拒绝 → 400）。规则按 priority 升序首中匹配，
+             *     全部条件 AND 组合，缺省键不参与匹配。可用键：
+             *     - kind：事件类别，ok/429/4xx/5xx/network 之一；network = 连接级失败（独立类别，不吃 5xx 冷却）
+             *     - http_status：精确匹配响应码（400-599）；与 http_status_in 互斥（同现 → 400）
+             *     - http_status_in：响应码集合任一命中即匹配（OR；值限 400-599、去重、禁止空数组——传空数组 → 400）；与 http_status 互斥
+             *     - model：精确匹配最终请求模型名——映射后 sel.Model/MappedModel 口径（非客户端原始请求名），响应分类/状态事件/日志脱敏各事件面统一；区分大小写；空串非法；事件未携带模型时不命中；与 model_in 互斥
+             *     - model_in：最终请求模型名集合任一精确命中（OR；口径同 model、区分大小写、去重、元素禁止空串、禁止空数组——传空数组 → 400）；与 model 互斥
+             *     - error_message_contains：上游错误文本子串匹配；与 kind=ok 不兼容（ok 事件错误信息恒空，永不命中 → 400）
+             *     - error_message_contains_in：子串集合任一命中（OR；去重、元素禁止空串、禁止空数组）；与 error_message_contains 互斥、与 kind=ok 不兼容
+             *     - account_id / template_id / group_id：按账号/模板/分组过滤事件（精确匹配）
+             *     - window_seconds：计数/比例条件的滑动统计窗口秒数（≥1；缺省 60）
+             *     - count_429_ge / count_failure_ge / count_ok_ge / count_total_ge：窗口内计数阈值（≥0；failure 桶 = 非 ok 非 429 的失败事件，5xx/network/4xx 并入）
+             *     - ratio_429_ge / ratio_failure_ge：窗口内比例阈值 ∈ [0,1]，必须同时配置 count_total_ge 作为样本下限
+             */
             when?: {
                 [key: string]: unknown;
             };
+            /**
+             * @description 动作集（指针即意图：键缺省/null = 该维度透传不改）。全空对象 {} 合法 =
+             *     纯透传规则：命中后状态/冷却/权重零改动、响应码与文案双透传上游原样返回、
+             *     不计惩罚（不投递状态事件）。可用键：
+             *     - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
+             *     - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
+             *     - weight：调度权重 ∈ [0,100]
+             *     - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
+             *     - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
+             *     错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
+             *     （安全默认，未知错误不透传）；可用本对象的 response_code/custom_message 覆写该默认。
+             */
             then?: {
                 [key: string]: unknown;
             };
@@ -1536,9 +1563,40 @@ export interface components {
             name?: string;
             enabled?: boolean;
             priority?: number;
+            /**
+             * @description 事件匹配条件（自由对象，未知键拒绝 → 400）。PUT 部分更新语义：键缺省
+             *     （null/省略）= 保持原值；显式提供时整体替换该对象（显式 {} = 清空），
+             *     并对合并后的完整 when/then 重新校验。规则按 priority 升序首中匹配，
+             *     全部条件 AND 组合，缺省键不参与匹配。可用键：
+             *     - kind：事件类别，ok/429/4xx/5xx/network 之一；network = 连接级失败（独立类别，不吃 5xx 冷却）
+             *     - http_status：精确匹配响应码（400-599）；与 http_status_in 互斥（同现 → 400）
+             *     - http_status_in：响应码集合任一命中即匹配（OR；值限 400-599、去重、禁止空数组——传空数组 → 400）；与 http_status 互斥
+             *     - model：精确匹配最终请求模型名——映射后 sel.Model/MappedModel 口径（非客户端原始请求名），响应分类/状态事件/日志脱敏各事件面统一；区分大小写；空串非法；事件未携带模型时不命中；与 model_in 互斥
+             *     - model_in：最终请求模型名集合任一精确命中（OR；口径同 model、区分大小写、去重、元素禁止空串、禁止空数组——传空数组 → 400）；与 model 互斥
+             *     - error_message_contains：上游错误文本子串匹配；与 kind=ok 不兼容（ok 事件错误信息恒空，永不命中 → 400）
+             *     - error_message_contains_in：子串集合任一命中（OR；去重、元素禁止空串、禁止空数组）；与 error_message_contains 互斥、与 kind=ok 不兼容
+             *     - account_id / template_id / group_id：按账号/模板/分组过滤事件（精确匹配）
+             *     - window_seconds：计数/比例条件的滑动统计窗口秒数（≥1；缺省 60）
+             *     - count_429_ge / count_failure_ge / count_ok_ge / count_total_ge：窗口内计数阈值（≥0；failure 桶 = 非 ok 非 429 的失败事件，5xx/network/4xx 并入）
+             *     - ratio_429_ge / ratio_failure_ge：窗口内比例阈值 ∈ [0,1]，必须同时配置 count_total_ge 作为样本下限
+             */
             when?: {
                 [key: string]: unknown;
             };
+            /**
+             * @description 动作集（指针即意图：键缺省/null = 该维度透传不改）。PUT 部分更新语义：
+             *     键缺省（null/省略）= 保持原值；显式提供时整体替换该对象（显式 {} = 清空），
+             *     并对合并后的完整 when/then 重新校验。全空对象 {} 合法 = 纯透传规则：
+             *     命中后状态/冷却/权重零改动、响应码与文案双透传上游原样返回、不计惩罚
+             *     （不投递状态事件）。可用键：
+             *     - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
+             *     - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
+             *     - weight：调度权重 ∈ [0,100]
+             *     - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
+             *     - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
+             *     错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
+             *     （安全默认，未知错误不透传）；可用本对象的 response_code/custom_message 覆写该默认。
+             */
             then?: {
                 [key: string]: unknown;
             };
@@ -1549,9 +1607,11 @@ export interface components {
             Name: string;
             Enabled: boolean;
             Priority: number;
+            /** @description 事件匹配条件（只读回显；字段集与语义同 RuleCreate.when——kind/http_status(_in)/model/model_in/error_message_contains(_in)/account_id/template_id/group_id/window_seconds/count_*\/ratio_*；model 口径为映射后最终请求模型，区分大小写） */
             When: {
                 [key: string]: unknown;
             };
+            /** @description 动作集（只读回显；字段集与语义同 RuleCreate.then——status/cooldown/weight/response_code/custom_message；全空 {} = 纯透传规则：命中后码/文双透、零惩罚） */
             Then: {
                 [key: string]: unknown;
             };
