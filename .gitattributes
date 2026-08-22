@@ -1,0 +1,6 @@
+# 全仓统一 LF：eol 属性优先于 core.autocrlf，任何 clone 配置下都不再发生 CRLF 转换。
+# 本仓所有文本文件以 LF 提交与检出；工作区出现 CRLF 属工具污染，勿提交。
+* text=auto eol=lf
+
+# 显式二进制（防 text=auto 启发式误判）
+*.png binary
