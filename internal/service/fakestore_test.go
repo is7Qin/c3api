@@ -58,6 +58,9 @@ type fakeStore struct {
 	// tplExts/accExts 模板/账号类型化扩展（key = 父 id，镜像仓库 1:1 唯一索引）。
 	tplExts map[int64]*domain.TemplateExt
 	accExts map[int64]*domain.AccountExt
+	// emailTemplates/emailCodes 邮件模板与验证码 fake（task email）。
+	emailTemplates map[string]*domain.EmailTemplate
+	emailCodes     map[string]*domain.EmailCode
 	// accExtErr 注入 GetAccountExt 非 ErrNotFound 故障（per-account；T2-2
 	// store 故障隔离测试——不误标上游问题）。
 	accExtErr map[int64]error
@@ -87,6 +90,8 @@ type fakeStore struct {
 	// txUpsertExtErr 注入事务内 UpsertAccountExt 失败（Task B 导入单行事务
 	// 回滚测试——ext 写入失败 → 无 account 行无 ext 行）。
 	txUpsertExtErr error
+	// emailTemplateDeleteErr 注入 DeleteEmailTemplate 非 NotFound 故障（评审 FIX-3a）。
+	emailTemplateDeleteErr error
 }
 
 // fakeTempRow 临时额度行模拟（domain 无 TempBalance 类型，CreateTempBalance
@@ -110,6 +115,8 @@ func newFakeStore() *fakeStore {
 		imagePrices:    make(map[string]*domain.ImagePrice),
 		functionPrices: make(map[string]*domain.FunctionPrice),
 		tplExts:        make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
+		emailTemplates: make(map[string]*domain.EmailTemplate),
+		emailCodes:     make(map[string]*domain.EmailCode),
 		accExtErr:      make(map[int64]error),
 		nextID: 1,
 	}
@@ -2144,4 +2151,111 @@ func (f *fakeStore) GetFunctionPrice(ctx context.Context, model string) (*domain
 	}
 	c := *p
 	return &c, nil
+}
+
+// --- 邮件模板 / 验证码 fake（email service） ---
+
+func emailCodeKey(email, purpose string) string { return email + "|" + purpose }
+
+func (f *fakeStore) GetEmailTemplate(ctx context.Context, purpose string) (*domain.EmailTemplate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if t, ok := f.emailTemplates[purpose]; ok {
+		c := *t
+		return &c, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeStore) ListEmailTemplates(ctx context.Context) ([]*domain.EmailTemplate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*domain.EmailTemplate
+	for _, t := range f.emailTemplates {
+		c := *t
+		out = append(out, &c)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) UpsertEmailTemplate(ctx context.Context, purpose, subject, bodyText string) (*domain.EmailTemplate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t := &domain.EmailTemplate{Purpose: domain.EmailTemplatePurpose(purpose), Subject: subject, BodyText: bodyText, UpdatedAt: time.Now()}
+	f.emailTemplates[purpose] = t
+	c := *t
+	return &c, nil
+}
+
+func (f *fakeStore) DeleteEmailTemplate(ctx context.Context, purpose string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.emailTemplateDeleteErr != nil {
+		return f.emailTemplateDeleteErr
+	}
+	if _, ok := f.emailTemplates[purpose]; !ok {
+		return fmt.Errorf("%w: purpose=%s", repository.ErrNotFound, purpose)
+	}
+	delete(f.emailTemplates, purpose)
+	return nil
+}
+
+func (f *fakeStore) GetEmailCode(ctx context.Context, email, purpose string) (*domain.EmailCode, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c, ok := f.emailCodes[emailCodeKey(email, purpose)]; ok {
+		cc := *c
+		return &cc, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeStore) UpsertEmailCode(ctx context.Context, email, purpose, sha256 string, expiresAt time.Time) (*domain.EmailCode, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// 机会式清理：删除所有已过期验证码（与真实 repo 的 driver Exec 语义对齐）。
+	now := time.Now()
+	for k, v := range f.emailCodes {
+		if v.ExpiresAt.Before(now) {
+			delete(f.emailCodes, k)
+		}
+	}
+	key := emailCodeKey(email, purpose)
+	if existing, ok := f.emailCodes[key]; ok {
+		existing.CodeSHA256 = sha256
+		existing.ExpiresAt = expiresAt
+		existing.Attempts = 0
+		existing.UpdatedAt = now
+		cc := *existing
+		return &cc, nil
+	}
+	c := &domain.EmailCode{ID: f.nextID, Email: email, Purpose: domain.EmailCodePurpose(purpose), CodeSHA256: sha256, ExpiresAt: expiresAt, Attempts: 0, CreatedAt: now, UpdatedAt: now}
+	f.nextID++
+	f.emailCodes[key] = c
+	cc := *c
+	return &cc, nil
+}
+
+func (f *fakeStore) IncrementEmailCodeAttempts(ctx context.Context, email, purpose string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := emailCodeKey(email, purpose)
+	c, ok := f.emailCodes[key]
+	if !ok {
+		return 0, fmt.Errorf("%w: email=%s purpose=%s", repository.ErrNotFound, email, purpose)
+	}
+	c.Attempts++
+	c.UpdatedAt = time.Now()
+	return c.Attempts, nil
+}
+
+func (f *fakeStore) DeleteEmailCode(ctx context.Context, email, purpose string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := emailCodeKey(email, purpose)
+	if _, ok := f.emailCodes[key]; !ok {
+		return fmt.Errorf("%w: email=%s purpose=%s", repository.ErrNotFound, email, purpose)
+	}
+	delete(f.emailCodes, key)
+	return nil
 }

@@ -13,7 +13,8 @@
     "saveChanges": "保存修改",
     "confirmDelete": "确认删除",
     "loadFailed": "加载失败：{{message}}",
-    "logout": "退出"
+    "logout": "退出",
+    "back": "返回"
   },
   "nav": {
     "overview": "总览",
@@ -210,26 +211,86 @@
       "title": "批量导入 Codex 账号",
       "desc": "选择凭据类型与来源，粘贴或上传文件后预览并导入",
       "typeLabel": "凭据类型",
-      "type": { "oauth": "Codex OAuth", "pat": "Codex PAT" },
+      "type": {
+        "oauth": "Codex OAuth",
+        "pat": "Codex PAT"
+      },
       "sourceLabel": "来源格式",
-      "source": { "cpa": "CPA", "c3api": "C3API", "sub2api": "Sub2API", "cockpit": "Cockpit", "9router": "9Router", "codex": "Codex", "axonhub": "AxonHub", "codex-manager": "Codex-Manager", "recommended": "推荐", "comingSoon": "适配器待实现" },
-      "input": { "fileTab": "文件", "textTab": "粘贴文本", "dropHint": "拖拽文件到此处或点击选择", "pasteHint": "粘贴 JSON / JSONL / 单对象", "fileTooLarge": "文件过大（≤ 5 MB）", "chooseFile": "选择文件", "chooseFolder": "选择文件夹", "dropActive": "松开即可导入", "fileDropDescCpa": "支持 .json / .txt / .at_txt · 单文件 ≤5 MB · 拖拽文件或文件夹", "folderHint": "文件夹仅支持 CPA 格式" },
+      "source": {
+        "cpa": "CPA",
+        "c3api": "C3API",
+        "sub2api": "Sub2API",
+        "cockpit": "Cockpit",
+        "9router": "9Router",
+        "codex": "Codex",
+        "axonhub": "AxonHub",
+        "codex-manager": "Codex-Manager",
+        "recommended": "推荐",
+        "comingSoon": "适配器待实现"
+      },
+      "input": {
+        "fileTab": "文件",
+        "textTab": "粘贴文本",
+        "dropHint": "拖拽文件到此处或点击选择",
+        "pasteHint": "粘贴 JSON / JSONL / 单对象",
+        "fileTooLarge": "文件过大（≤ 5 MB）",
+        "chooseFile": "选择文件",
+        "chooseFolder": "选择文件夹",
+        "dropActive": "松开即可导入",
+        "fileDropDescCpa": "支持 .json / .txt / .at_txt · 单文件 ≤5 MB · 拖拽文件或文件夹",
+        "folderHint": "文件夹仅支持 CPA 格式"
+      },
       "templateLabel": "归属模板 *",
       "templateHint": "模板类型必须与导入类型一致",
       "templatePlaceholder": "选择模板",
       "templateEmpty": "无可用模板，请先创建 {{type}} 模板",
       "groupLabel": "归属分组（可选）",
       "groupNone": "不分组",
-      "preview": { "title": "预览", "valid": "可导入 {{n}} / 无效 {{m}} / 总计 {{t}}", "col": { "index": "#", "email": "邮箱", "accountId": "账号 ID", "cred": "凭据", "expires": "过期时间", "error": "错误" } },
+      "preview": {
+        "title": "预览",
+        "valid": "可导入 {{n}} / 无效 {{m}} / 总计 {{t}}",
+        "col": {
+          "index": "#",
+          "email": "邮箱",
+          "accountId": "账号 ID",
+          "cred": "凭据",
+          "expires": "过期时间",
+          "error": "错误"
+        }
+      },
       "sending": "导入中… ({{done}}/{{total}} 批)",
-      "result": { "title": "导入结果", "summary": "新建 {{imported}} · 更新 {{updated}} · 失败 {{failed}}", "failedTitle": "失败明细", "retryHint": "可修正后重新导入失败行" },
+      "result": {
+        "title": "导入结果",
+        "summary": "新建 {{imported}} · 更新 {{updated}} · 失败 {{failed}}",
+        "failedTitle": "失败明细",
+        "retryHint": "可修正后重新导入失败行"
+      },
       "noValidRows": "无可导入行",
-      "step": { "kind": "凭据类型", "source": "来源格式", "input": "输入与归属", "preview": "预览与导入" },
-      "stepDesc": { "kind": "不同类型对应不同后端接口，模板会按类型自动过滤", "source": "仅 CPA 已就绪，其余来源为扩展占位", "input": "文件与粘贴共用同一解析，关闭弹窗自动清空", "preview": "仅发送有效行，分片 100 条顺序提交" },
-      "kindDesc": { "oauth": "包含 access_token + refresh_token，支持过期时间归一化到 RFC3339", "pat": "从 headers.authorization 提取 Bearer，缺省回退 access_token" },
-      "interface": { "oauth": "接口：batch-import-codex-oauth", "pat": "接口：batch-import-codex-pat" },
+      "step": {
+        "kind": "凭据类型",
+        "source": "来源格式",
+        "input": "输入与归属",
+        "preview": "预览与导入"
+      },
+      "stepDesc": {
+        "kind": "不同类型对应不同后端接口，模板会按类型自动过滤",
+        "source": "仅 CPA 已就绪，其余来源为扩展占位",
+        "input": "文件与粘贴共用同一解析，关闭弹窗自动清空",
+        "preview": "仅发送有效行，分片 100 条顺序提交"
+      },
+      "kindDesc": {
+        "oauth": "包含 access_token + refresh_token，支持过期时间归一化到 RFC3339",
+        "pat": "从 headers.authorization 提取 Bearer，缺省回退 access_token"
+      },
+      "interface": {
+        "oauth": "接口：batch-import-codex-oauth",
+        "pat": "接口：batch-import-codex-pat"
+      },
       "infer": "推断建议：{{hint}} · 手动选择优先",
-      "inferHint": { "oauth": "检测到 refresh_token + access_token + account_id → 推荐 CPA OAuth", "pat": "检测到 headers.authorization → 推荐 CPA PAT" },
+      "inferHint": {
+        "oauth": "检测到 refresh_token + access_token + account_id → 推荐 CPA OAuth",
+        "pat": "检测到 headers.authorization → 推荐 CPA PAT"
+      },
       "fileDropTitle": "拖拽或点击选择文件",
       "fileDropDesc": "支持 .json / .txt / .at_txt · 最大 5 MB",
       "selected": "已选择",
@@ -238,8 +299,16 @@
       "folderOnlyCpa": "文件夹上传仅支持 CPA 格式",
       "filesCount": "{{count}} 个文件",
       "previewEmpty": "暂无可预览数据，请返回上一步补充输入",
-      "stats": { "valid": "可导入", "invalid": "无效", "total": "总计" },
-      "next": { "source": "下一步", "input": "去输入", "preview": "去预览" },
+      "stats": {
+        "valid": "可导入",
+        "invalid": "无效",
+        "total": "总计"
+      },
+      "next": {
+        "source": "下一步",
+        "input": "去输入",
+        "preview": "去预览"
+      },
       "prev": "上一步",
       "importAction": "导入 {{count}} 条",
       "done": "完成"
@@ -964,7 +1033,8 @@
       "defaults": "新用户默认资源",
       "pricingSync": "价格同步",
       "tierPolicy": "服务档位策略",
-      "cluster": "集群"
+      "cluster": "集群",
+      "mail": "邮件"
     },
     "labels": {
       "signup_enabled": "开放注册",
@@ -977,7 +1047,15 @@
       "service_tier_policy_priority": "优先档字段策略",
       "service_tier_policy_flex": "弹性档字段策略",
       "service_tier_policy_fast": "快速挡位策略",
-      "cluster.instances": "集群实例数"
+      "cluster.instances": "集群实例数",
+      "mail.enabled": "启用邮件服务",
+      "mail.register_verification": "注册邮箱验证",
+      "mail.smtp_host": "SMTP 主机",
+      "mail.smtp_port": "SMTP 端口",
+      "mail.smtp_username": "SMTP 用户名",
+      "mail.smtp_password": "SMTP 密码",
+      "mail.from_address": "发件人地址",
+      "mail.tls": "TLS 策略"
     },
     "descs": {
       "signup_enabled": "关闭后公开注册通道不再受理新用户",
@@ -990,7 +1068,15 @@
       "service_tier_policy_priority": "优先档字段在转发请求时的处理方式",
       "service_tier_policy_flex": "弹性档字段在转发请求时的处理方式",
       "service_tier_policy_fast": "快速挡位（fast）请求转发时字段的处理方式",
-      "cluster.instances": "集群实例数（多实例预算分摊；所有实例共识，需一致）"
+      "cluster.instances": "集群实例数（多实例预算分摊；所有实例共识，需一致）",
+      "mail.enabled": "关闭时注册直通、忘记密码空转",
+      "mail.register_verification": "开启后注册需验证码（需先启用邮件并配置 host/from）",
+      "mail.smtp_host": "SMTP 服务器主机名",
+      "mail.smtp_port": "SMTP 端口 1-65535",
+      "mail.smtp_username": "SMTP 用户名（可选）",
+      "mail.smtp_password": "SMTP 密码",
+      "mail.from_address": "发件人邮箱地址",
+      "mail.tls": "starttls / implicit / none"
     },
     "policies": {
       "passthrough": "透传",
@@ -1000,7 +1086,18 @@
     "usdHint": "1 USD = 100,000 毫分",
     "invalidUsd": "请输入有效的非负金额",
     "invalidNumber": "请输入非负整数",
-    "saved": "设置已保存"
+    "saved": "设置已保存",
+    "mailTemplate": {
+      "register_code": "注册验证码模板",
+      "reset_code": "重置密码模板",
+      "subject": "主题",
+      "body": "正文",
+      "hint": "可用占位符：{{code}} {{ttl_minutes}} {{app_name}}",
+      "restored": "已恢复默认",
+      "saved": "已保存"
+    },
+    "restored": "已恢复默认",
+    "restoreDefault": "还原默认"
   },
   "ops": {
     "title": "运维状态",
@@ -1074,14 +1171,19 @@
       "registerButton": "注册",
       "registerLink": "没有账号？去注册",
       "loginLink": "已有账号？去登录",
-      "errorGeneric": "登录失败，请检查邮箱与密码后重试"
+      "errorGeneric": "登录失败，请检查邮箱与密码后重试",
+      "forgotPasswordLink": "忘记密码？"
     },
     "register": {
       "title": "注册账号",
       "subtitle": "注册后即可创建 API Keys",
       "signupDisabled": "注册已关闭，请联系管理员开通",
       "passwordMismatch": "两次输入的密码不一致",
-      "required": "邮箱、密码和确认密码均为必填"
+      "required": "邮箱、密码和确认密码均为必填",
+      "codePlaceholder": "验证码",
+      "codeRequired": "请输入验证码",
+      "resend": "重发",
+      "verifyButton": "验证并注册"
     },
     "nav": {
       "adminSection": "管理台",
@@ -1286,6 +1388,17 @@
       "submitting": "修改中…",
       "successTitle": "密码修改成功",
       "successDesc": "新密码将在下次登录时生效"
+    },
+    "forgot": {
+      "title": "忘记密码",
+      "emailRequired": "请输入邮箱",
+      "required": "请输入验证码和新密码",
+      "sendCode": "发送验证码",
+      "codeSent": "验证码已发送（若账号存在）",
+      "codePlaceholder": "验证码",
+      "newPassword": "新密码",
+      "resetButton": "重置密码",
+      "resetSuccess": "重置成功，请用新密码登录"
     }
   },
   "error404": {

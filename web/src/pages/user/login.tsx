@@ -76,6 +76,7 @@ export default function UserLogin() {
             <Input type="password" placeholder={t('user.auth.password')} value={password} onChange={e => { setPassword(e.target.value); setErr('') }} onKeyDown={e => { if (e.key === 'Enter') submit() }} />
             {err && <p className="text-sm text-destructive">{err}</p>}
             <Button className="w-full" disabled={loading} onClick={submit}>{t('user.auth.loginButton')}</Button>
+            <Link to="/user/forgot-password" className="block text-center text-sm text-muted-foreground transition-colors hover:text-foreground">{t('user.auth.forgotPasswordLink')}</Link>
             <Link to="/user/register" className="block text-center text-sm text-muted-foreground transition-colors hover:text-foreground">
               {t('user.auth.registerLink')}
             </Link>

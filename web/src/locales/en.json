@@ -13,7 +13,8 @@
     "saveChanges": "Save changes",
     "confirmDelete": "Confirm delete",
     "loadFailed": "Failed to load: {{message}}",
-    "logout": "Log out"
+    "logout": "Log out",
+    "back": "Back"
   },
   "nav": {
     "overview": "Overview",
@@ -210,26 +211,86 @@
       "title": "Import Codex accounts",
       "desc": "Choose a credential type and source, then preview and import a file or pasted text",
       "typeLabel": "Credential type",
-      "type": { "oauth": "Codex OAuth", "pat": "Codex PAT" },
+      "type": {
+        "oauth": "Codex OAuth",
+        "pat": "Codex PAT"
+      },
       "sourceLabel": "Source format",
-      "source": { "cpa": "CPA", "c3api": "C3API", "sub2api": "Sub2API", "cockpit": "Cockpit", "9router": "9Router", "codex": "Codex", "axonhub": "AxonHub", "codex-manager": "Codex-Manager", "recommended": "Recommended", "comingSoon": "Adapter coming soon" },
-      "input": { "fileTab": "File", "textTab": "Paste text", "dropHint": "Drop a file here or choose one", "pasteHint": "Paste JSON / JSONL / a single object", "fileTooLarge": "File is too large (≤ 5 MB)", "chooseFile": "Choose file", "chooseFolder": "Choose folder", "dropActive": "Drop to import", "fileDropDescCpa": "Supports .json / .txt / .at_txt · single file ≤5 MB · drag files or folders", "folderHint": "Folder upload only for CPA" },
+      "source": {
+        "cpa": "CPA",
+        "c3api": "C3API",
+        "sub2api": "Sub2API",
+        "cockpit": "Cockpit",
+        "9router": "9Router",
+        "codex": "Codex",
+        "axonhub": "AxonHub",
+        "codex-manager": "Codex-Manager",
+        "recommended": "Recommended",
+        "comingSoon": "Adapter coming soon"
+      },
+      "input": {
+        "fileTab": "File",
+        "textTab": "Paste text",
+        "dropHint": "Drop a file here or choose one",
+        "pasteHint": "Paste JSON / JSONL / a single object",
+        "fileTooLarge": "File is too large (≤ 5 MB)",
+        "chooseFile": "Choose file",
+        "chooseFolder": "Choose folder",
+        "dropActive": "Drop to import",
+        "fileDropDescCpa": "Supports .json / .txt / .at_txt · single file ≤5 MB · drag files or folders",
+        "folderHint": "Folder upload only for CPA"
+      },
       "templateLabel": "Destination template *",
       "templateHint": "Template type must match the import type",
       "templatePlaceholder": "Select template",
       "templateEmpty": "No matching templates. Create a {{type}} template first",
       "groupLabel": "Destination group (optional)",
       "groupNone": "No group",
-      "preview": { "title": "Preview", "valid": "Valid {{n}} / Invalid {{m}} / Total {{t}}", "col": { "index": "#", "email": "Email", "accountId": "Account ID", "cred": "Credential", "expires": "Expires", "error": "Error" } },
+      "preview": {
+        "title": "Preview",
+        "valid": "Valid {{n}} / Invalid {{m}} / Total {{t}}",
+        "col": {
+          "index": "#",
+          "email": "Email",
+          "accountId": "Account ID",
+          "cred": "Credential",
+          "expires": "Expires",
+          "error": "Error"
+        }
+      },
       "sending": "Importing… ({{done}}/{{total}} batches)",
-      "result": { "title": "Import result", "summary": "New {{imported}} · Updated {{updated}} · Failed {{failed}}", "failedTitle": "Failed rows", "retryHint": "Fix the failed rows and import again" },
+      "result": {
+        "title": "Import result",
+        "summary": "New {{imported}} · Updated {{updated}} · Failed {{failed}}",
+        "failedTitle": "Failed rows",
+        "retryHint": "Fix the failed rows and import again"
+      },
       "noValidRows": "No valid rows to import",
-      "step": { "kind": "Credential type", "source": "Source format", "input": "Input & destination", "preview": "Preview & import" },
-      "stepDesc": { "kind": "Each type maps to a backend endpoint; templates are filtered by type", "source": "Only CPA is ready; other sources are placeholders", "input": "File and paste share the same parse; closing clears the content", "preview": "Only valid rows are sent, 100 per batch sequentially" },
-      "kindDesc": { "oauth": "Has access_token + refresh_token, expires normalized to RFC3339", "pat": "Extracts Bearer from headers.authorization, falls back to access_token" },
-      "interface": { "oauth": "Endpoint: batch-import-codex-oauth", "pat": "Endpoint: batch-import-codex-pat" },
+      "step": {
+        "kind": "Credential type",
+        "source": "Source format",
+        "input": "Input & destination",
+        "preview": "Preview & import"
+      },
+      "stepDesc": {
+        "kind": "Each type maps to a backend endpoint; templates are filtered by type",
+        "source": "Only CPA is ready; other sources are placeholders",
+        "input": "File and paste share the same parse; closing clears the content",
+        "preview": "Only valid rows are sent, 100 per batch sequentially"
+      },
+      "kindDesc": {
+        "oauth": "Has access_token + refresh_token, expires normalized to RFC3339",
+        "pat": "Extracts Bearer from headers.authorization, falls back to access_token"
+      },
+      "interface": {
+        "oauth": "Endpoint: batch-import-codex-oauth",
+        "pat": "Endpoint: batch-import-codex-pat"
+      },
       "infer": "Hint: {{hint}} · manual choice wins",
-      "inferHint": { "oauth": "Found refresh_token + access_token + account_id → CPA OAuth recommended", "pat": "Found headers.authorization → CPA PAT recommended" },
+      "inferHint": {
+        "oauth": "Found refresh_token + access_token + account_id → CPA OAuth recommended",
+        "pat": "Found headers.authorization → CPA PAT recommended"
+      },
       "fileDropTitle": "Drag & drop or choose a file",
       "fileDropDesc": "Supports .json / .txt / .at_txt · max 5 MB",
       "selected": "Selected",
@@ -238,8 +299,16 @@
       "folderOnlyCpa": "Folder upload only for CPA",
       "filesCount": "{{count}} files",
       "previewEmpty": "No preview data; go back to add input",
-      "stats": { "valid": "Valid", "invalid": "Invalid", "total": "Total" },
-      "next": { "source": "Next", "input": "Next: input", "preview": "Go to preview" },
+      "stats": {
+        "valid": "Valid",
+        "invalid": "Invalid",
+        "total": "Total"
+      },
+      "next": {
+        "source": "Next",
+        "input": "Next: input",
+        "preview": "Go to preview"
+      },
       "prev": "Previous",
       "importAction": "Import {{count}} rows",
       "done": "Done"
@@ -964,7 +1033,8 @@
       "defaults": "New user defaults",
       "pricingSync": "Price sync",
       "tierPolicy": "Service tier policy",
-      "cluster": "Cluster"
+      "cluster": "Cluster",
+      "mail": "Mail"
     },
     "labels": {
       "signup_enabled": "Open signup",
@@ -977,7 +1047,15 @@
       "service_tier_policy_priority": "Priority tier field policy",
       "service_tier_policy_flex": "Flex tier field policy",
       "service_tier_policy_fast": "Fast tier field policy",
-      "cluster.instances": "Cluster instances"
+      "cluster.instances": "Cluster instances",
+      "mail.enabled": "Enable mail",
+      "mail.register_verification": "Require email verification",
+      "mail.smtp_host": "SMTP host",
+      "mail.smtp_port": "SMTP port",
+      "mail.smtp_username": "SMTP username",
+      "mail.smtp_password": "SMTP password",
+      "mail.from_address": "From address",
+      "mail.tls": "TLS policy"
     },
     "descs": {
       "signup_enabled": "When off, the public signup channel stops accepting new users",
@@ -990,7 +1068,15 @@
       "service_tier_policy_priority": "How the priority tier field is handled when forwarding requests",
       "service_tier_policy_flex": "How the flex tier field is handled when forwarding requests",
       "service_tier_policy_fast": "How the fast tier field is handled when forwarding requests",
-      "cluster.instances": "Number of cluster instances (budget sharing; must be consistent across instances)"
+      "cluster.instances": "Number of cluster instances (budget sharing; must be consistent across instances)",
+      "mail.enabled": "When disabled, registration passes and forgot-password no-ops",
+      "mail.register_verification": "When enabled registration requires a code (requires mail enabled + host/from)",
+      "mail.smtp_host": "SMTP host",
+      "mail.smtp_port": "SMTP port 1-65535",
+      "mail.smtp_username": "SMTP username (optional)",
+      "mail.smtp_password": "SMTP password",
+      "mail.from_address": "From address",
+      "mail.tls": "starttls / implicit / none"
     },
     "policies": {
       "passthrough": "Pass through",
@@ -1000,7 +1086,18 @@
     "usdHint": "1 USD = 100,000 milli-cents",
     "invalidUsd": "Enter a valid non-negative amount",
     "invalidNumber": "Enter a non-negative integer",
-    "saved": "Setting saved"
+    "saved": "Setting saved",
+    "mailTemplate": {
+      "register_code": "Register code template",
+      "reset_code": "Reset code template",
+      "subject": "Subject",
+      "body": "Body",
+      "hint": "Placeholders: {{code}} {{ttl_minutes}} {{app_name}}",
+      "restored": "Restored default",
+      "saved": "Saved"
+    },
+    "restored": "Restored",
+    "restoreDefault": "Restore default"
   },
   "ops": {
     "title": "Ops",
@@ -1074,14 +1171,19 @@
       "registerButton": "Sign up",
       "registerLink": "No account? Sign up",
       "loginLink": "Already have an account? Sign in",
-      "errorGeneric": "Sign-in failed. Check your email and password and try again"
+      "errorGeneric": "Sign-in failed. Check your email and password and try again",
+      "forgotPasswordLink": "Forgot password?"
     },
     "register": {
       "title": "Create account",
       "subtitle": "Create an account to issue API keys",
       "signupDisabled": "Registration is closed. Contact the administrator.",
       "passwordMismatch": "The passwords do not match",
-      "required": "Email, password, and confirm password are all required"
+      "required": "Email, password, and confirm password are all required",
+      "codePlaceholder": "Verification code",
+      "codeRequired": "Code required",
+      "resend": "Resend",
+      "verifyButton": "Verify & Register"
     },
     "nav": {
       "adminSection": "Admin Console",
@@ -1286,6 +1388,17 @@
       "submitting": "Changing…",
       "successTitle": "Password changed",
       "successDesc": "Your new password takes effect next time you sign in"
+    },
+    "forgot": {
+      "title": "Forgot password",
+      "emailRequired": "Email required",
+      "required": "Code and new password required",
+      "sendCode": "Send code",
+      "codeSent": "Code sent (if account exists)",
+      "codePlaceholder": "Verification code",
+      "newPassword": "New password",
+      "resetButton": "Reset password",
+      "resetSuccess": "Reset success, please login with new password"
     }
   },
   "error404": {

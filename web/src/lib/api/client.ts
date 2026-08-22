@@ -213,6 +213,12 @@ export class ApiClient {
   listUserRedemptions = (p?: { page?: number; page_size?: number; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['RedemptionRecordListResponse']>('/redemptions', { params: toQuery(p) })
   getTempBalances = () => this.request<components['schemas']['TempBalancesResponse']>('/temp-balances')
   changePassword = (b: components['schemas']['UserAuthChangePassword']) => this.request<components['schemas']['ChangePasswordResponse']>('/auth/change-password', { method: 'POST', body: JSON.stringify(b) })
+  registerCode = (b: components['schemas']['RegisterCodeRequest']) => this.request<components['schemas']['SentResponse']>('/auth/register-code', { method: 'POST', body: JSON.stringify(b) })
+  forgotPassword = (b: components['schemas']['ForgotPasswordRequest']) => this.request<components['schemas']['SentResponse']>('/auth/forgot-password', { method: 'POST', body: JSON.stringify(b) })
+  resetPassword = (b: components['schemas']['ResetPasswordRequest']) => this.request<components['schemas']['ChangePasswordResponse']>('/auth/reset-password', { method: 'POST', body: JSON.stringify(b) })
+  // —— 邮件模板（管理端）——
+  getMailTemplates = () => this.request<components['schemas']['MailTemplate'][]>('/mail/templates')
+  putMailTemplate = (purpose: string, b: components['schemas']['MailTemplateUpdate']) => this.request<components['schemas']['MailTemplate']>(`/mail/templates/${purpose}`, { method: 'PUT', body: JSON.stringify(b) })
 }
 
 export class ApiUnauthorized extends Error {

@@ -23,26 +23,28 @@ import (
 // Repository 聚合各实体仓库（绑定单一 client + driver；WithTx 复用同一构造函数
 // newRepository 构造 tx 版实例）。
 type Repository struct {
-	Templates     *TemplateRepo
-	Accounts      *AccountRepo
-	Groups        *GroupRepo
-	Users         *UserRepo
-	Keys          *KeyRepo
-	Assignments   *GroupAssignmentRepo
-	Settings      *SettingRepo
-	Usages        *UsageRepo  // usage_logs 明细（消费面改名：log → usage 语义）
-	ErrLogs       *ErrLogRepo // err_logs 错误审计明细（分表设计）
-	Stats         *StatRepo
-	Rules         RuleStore
-	Redemptions   *RedemptionRepo
-	Pricing       *PricingRepo
-	ImagePrice    *ImagePriceRepo    // 图片生成价格（Task A 数据面；images 端点计费价格来源）
-	FunctionPrice *FunctionPriceRepo // 按单元计费功能类价格（search 起；对齐 image_price 形态）
-	Billing       *BillingRepo       // 扣费落库（Phase 5 T3）
-	Partitions    *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats，Phase 5 T4.5 + 用户裁决 2026-08-11）
-	TemplateExts  *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1；W1 数据层，消费接线 W3/W4）
-	AccountExts   *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1；W1 数据层，消费接线 W6）
-	Client        *ent.Client
+	Templates      *TemplateRepo
+	Accounts       *AccountRepo
+	Groups         *GroupRepo
+	Users          *UserRepo
+	Keys           *KeyRepo
+	Assignments    *GroupAssignmentRepo
+	Settings       *SettingRepo
+	Usages         *UsageRepo  // usage_logs 明细（消费面改名：log → usage 语义）
+	ErrLogs        *ErrLogRepo // err_logs 错误审计明细（分表设计）
+	Stats          *StatRepo
+	Rules          RuleStore
+	Redemptions    *RedemptionRepo
+	Pricing        *PricingRepo
+	ImagePrice     *ImagePriceRepo    // 图片生成价格（Task A 数据面；images 端点计费价格来源）
+	FunctionPrice  *FunctionPriceRepo // 按单元计费功能类价格（search 起；对齐 image_price 形态）
+	Billing        *BillingRepo       // 扣费落库（Phase 5 T3）
+	Partitions     *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats，Phase 5 T4.5 + 用户裁决 2026-08-11）
+	TemplateExts   *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1；W1 数据层，消费接线 W3/W4）
+	AccountExts    *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1；W1 数据层，消费接线 W6）
+	EmailTemplates *EmailTemplateRepo // 邮件模板（email_template；邮件服务）
+	EmailCodes     *EmailCodeRepo     // 验证码（email_code；邮件服务）
+	Client         *ent.Client
 	// driver 为原始 dialect.Driver：原子资源方法/条件递增等 raw SQL 走它
 	//（ent v0.14 生成代码无 ExecContext/QueryContext，raw SQL 无客户端入口）；
 	// WithTx 内为事务驱动（txDriver），保证 raw SQL 与 ent 构建器同连接。
@@ -86,27 +88,29 @@ func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxp
 func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *Repository {
 	accounts := &AccountRepo{client: client}
 	return &Repository{
-		Templates:     &TemplateRepo{client: client},
-		Accounts:      accounts,
-		Groups:        &GroupRepo{client: client, accounts: accounts, driver: drv},
-		Users:         &UserRepo{client: client, driver: drv},
-		Keys:          &KeyRepo{client: client, driver: drv},
-		Assignments:   &GroupAssignmentRepo{client: client},
-		Settings:      &SettingRepo{client: client},
-		Usages:        &UsageRepo{client: client, pool: pool},
-		ErrLogs:       &ErrLogRepo{client: client},
-		Stats:         &StatRepo{client: client, pool: pool},
-		Rules:         &RuleRepo{client: client},
-		Redemptions:   &RedemptionRepo{client: client, driver: drv},
-		Pricing:       &PricingRepo{client: client, driver: drv},
-		ImagePrice:    &ImagePriceRepo{client: client, driver: drv},
-		FunctionPrice: &FunctionPriceRepo{client: client, driver: drv},
-		Billing:       &BillingRepo{client: client, driver: drv, pool: pool},
-		Partitions:    &PartitionRepo{driver: drv},
-		TemplateExts:  &TemplateExtRepo{client: client},
-		AccountExts:   &AccountExtRepo{client: client},
-		Client:        client,
-		driver:        drv,
+		Templates:      &TemplateRepo{client: client},
+		Accounts:       accounts,
+		Groups:         &GroupRepo{client: client, accounts: accounts, driver: drv},
+		Users:          &UserRepo{client: client, driver: drv},
+		Keys:           &KeyRepo{client: client, driver: drv},
+		Assignments:    &GroupAssignmentRepo{client: client},
+		Settings:       &SettingRepo{client: client},
+		Usages:         &UsageRepo{client: client, pool: pool},
+		ErrLogs:        &ErrLogRepo{client: client},
+		Stats:          &StatRepo{client: client, pool: pool},
+		Rules:          &RuleRepo{client: client},
+		Redemptions:    &RedemptionRepo{client: client, driver: drv},
+		Pricing:        &PricingRepo{client: client, driver: drv},
+		ImagePrice:     &ImagePriceRepo{client: client, driver: drv},
+		FunctionPrice:  &FunctionPriceRepo{client: client, driver: drv},
+		Billing:        &BillingRepo{client: client, driver: drv, pool: pool},
+		Partitions:     &PartitionRepo{driver: drv},
+		TemplateExts:   &TemplateExtRepo{client: client},
+		AccountExts:    &AccountExtRepo{client: client},
+		EmailTemplates: &EmailTemplateRepo{client: client},
+		EmailCodes:     &EmailCodeRepo{client: client, driver: drv},
+		Client:         client,
+		driver:         drv,
 	}
 }
 
@@ -472,6 +476,40 @@ func (r *Repository) GetAllSettings(ctx context.Context) ([]*domain.Setting, err
 
 func (r *Repository) SetSetting(ctx context.Context, key string, typ domain.SettingType, value string) (*domain.Setting, error) {
 	return r.Settings.Set(ctx, key, typ, value)
+}
+
+// --- 邮件模板 / 验证码（邮件服务） ---
+
+func (r *Repository) GetEmailTemplate(ctx context.Context, purpose string) (*domain.EmailTemplate, error) {
+	return r.EmailTemplates.GetEmailTemplate(ctx, purpose)
+}
+
+func (r *Repository) ListEmailTemplates(ctx context.Context) ([]*domain.EmailTemplate, error) {
+	return r.EmailTemplates.ListEmailTemplates(ctx)
+}
+
+func (r *Repository) UpsertEmailTemplate(ctx context.Context, purpose, subject, bodyText string) (*domain.EmailTemplate, error) {
+	return r.EmailTemplates.UpsertEmailTemplate(ctx, purpose, subject, bodyText)
+}
+
+func (r *Repository) DeleteEmailTemplate(ctx context.Context, purpose string) error {
+	return r.EmailTemplates.DeleteEmailTemplate(ctx, purpose)
+}
+
+func (r *Repository) GetEmailCode(ctx context.Context, email, purpose string) (*domain.EmailCode, error) {
+	return r.EmailCodes.GetEmailCode(ctx, email, purpose)
+}
+
+func (r *Repository) UpsertEmailCode(ctx context.Context, email, purpose, sha256 string, expiresAt time.Time) (*domain.EmailCode, error) {
+	return r.EmailCodes.UpsertEmailCode(ctx, email, purpose, sha256, expiresAt)
+}
+
+func (r *Repository) IncrementEmailCodeAttempts(ctx context.Context, email, purpose string) (int, error) {
+	return r.EmailCodes.IncrementAttempts(ctx, email, purpose)
+}
+
+func (r *Repository) DeleteEmailCode(ctx context.Context, email, purpose string) error {
+	return r.EmailCodes.DeleteEmailCode(ctx, email, purpose)
 }
 
 func (r *Repository) ListRules(ctx context.Context, enabled *bool) ([]domain.Rule, error) {
