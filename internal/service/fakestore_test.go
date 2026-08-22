@@ -90,6 +90,8 @@ type fakeStore struct {
 	// txUpsertExtErr 注入事务内 UpsertAccountExt 失败（Task B 导入单行事务
 	// 回滚测试——ext 写入失败 → 无 account 行无 ext 行）。
 	txUpsertExtErr error
+	// emailTemplateDeleteErr 注入 DeleteEmailTemplate 非 NotFound 故障（评审 FIX-3a）。
+	emailTemplateDeleteErr error
 }
 
 // fakeTempRow 临时额度行模拟（domain 无 TempBalance 类型，CreateTempBalance
@@ -2188,6 +2190,9 @@ func (f *fakeStore) UpsertEmailTemplate(ctx context.Context, purpose, subject, b
 func (f *fakeStore) DeleteEmailTemplate(ctx context.Context, purpose string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.emailTemplateDeleteErr != nil {
+		return f.emailTemplateDeleteErr
+	}
 	if _, ok := f.emailTemplates[purpose]; !ok {
 		return fmt.Errorf("%w: purpose=%s", repository.ErrNotFound, purpose)
 	}
@@ -2208,8 +2213,14 @@ func (f *fakeStore) GetEmailCode(ctx context.Context, email, purpose string) (*d
 func (f *fakeStore) UpsertEmailCode(ctx context.Context, email, purpose, sha256 string, expiresAt time.Time) (*domain.EmailCode, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	key := emailCodeKey(email, purpose)
+	// 机会式清理：删除所有已过期验证码（与真实 repo 的 driver Exec 语义对齐）。
 	now := time.Now()
+	for k, v := range f.emailCodes {
+		if v.ExpiresAt.Before(now) {
+			delete(f.emailCodes, k)
+		}
+	}
+	key := emailCodeKey(email, purpose)
 	if existing, ok := f.emailCodes[key]; ok {
 		existing.CodeSHA256 = sha256
 		existing.ExpiresAt = expiresAt

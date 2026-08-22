@@ -134,6 +134,9 @@ func (s *Service) verifyAndConsume(ctx context.Context, email, purpose, plain st
 
 // RegisterUserWithCode 带验证码校验的注册入口（handler 侧根据 verif 开关分发）。
 func (s *Service) RegisterUserWithCode(ctx context.Context, email, password, code string) (*domain.User, error) {
+	if password == "" || auth.ValidatePasswordLen(password) != nil {
+		return nil, ErrInvalidInput
+	}
 	verifOn := s.settingValue("mail.register_verification") == "true"
 	if verifOn {
 		if code == "" {

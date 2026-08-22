@@ -5,7 +5,12 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"time"
+
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
@@ -13,7 +18,10 @@ import (
 )
 
 // EmailCodeRepo 验证码持久化。
-type EmailCodeRepo struct{ client *ent.Client }
+type EmailCodeRepo struct {
+	client *ent.Client
+	driver dialect.Driver
+}
 
 func toDomainEmailCode(row *ent.EmailCode) *domain.EmailCode {
 	return &domain.EmailCode{
@@ -42,6 +50,11 @@ func (r *EmailCodeRepo) GetEmailCode(ctx context.Context, email, purpose string)
 
 // UpsertEmailCode 覆盖旧码（天然失效旧码），重置 attempts/expires。
 func (r *EmailCodeRepo) UpsertEmailCode(ctx context.Context, email, purpose, sha256 string, expiresAt time.Time) (*domain.EmailCode, error) {
+	// 机会式清理替代常驻清扫工（评审 M2）。
+	var res sql.Result
+	if err := r.driver.Exec(ctx, `DELETE FROM "email_codes" WHERE "expires_at" < now()`, []any{}, &res); err != nil {
+		return nil, err
+	}
 	_, err := r.client.EmailCode.Create().
 		SetEmail(email).
 		SetPurpose(emailcode.Purpose(purpose)).
@@ -63,15 +76,26 @@ func (r *EmailCodeRepo) UpsertEmailCode(ctx context.Context, email, purpose, sha
 
 // IncrementAttempts 原子自增 attempts 并返回新值。
 func (r *EmailCodeRepo) IncrementAttempts(ctx context.Context, email, purpose string) (int, error) {
-	row, err := r.client.EmailCode.Query().Where(emailcode.EmailEQ(email), emailcode.PurposeEQ(emailcode.Purpose(purpose))).Only(ctx)
-	if err != nil {
+	const q = `UPDATE "email_codes" SET attempts = attempts + 1 WHERE email = $1 AND purpose = $2 RETURNING "attempts"`
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, q, []any{email, purpose}, rows); err != nil {
 		return 0, err
 	}
-	updated, err := r.client.EmailCode.UpdateOneID(row.ID).SetAttempts(row.Attempts + 1).Save(ctx)
-	if err != nil {
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		return 0, fmt.Errorf("%w: email=%s purpose=%s", ErrNotFound, email, purpose)
+	}
+	var attempts int
+	if err := rows.Scan(&attempts); err != nil {
 		return 0, err
 	}
-	return updated.Attempts, nil
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return attempts, nil
 }
 
 // DeleteEmailCode 删除验证码（消费成功后）。

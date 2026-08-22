@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	mail "github.com/wneessen/go-mail"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -71,7 +73,11 @@ func (s *Service) UpdateMailTemplate(ctx context.Context, purpose, subject, body
 	}
 	if bodyText == "" {
 		// 还原默认：删行，返回默认
-		_ = s.store.DeleteEmailTemplate(ctx, purpose)
+		if err := s.store.DeleteEmailTemplate(ctx, purpose); err != nil {
+			if !errors.Is(err, repository.ErrNotFound) {
+				return nil, err
+			}
+		}
 		d := domain.DefaultEmailTemplate(p)
 		return &d, nil
 	}

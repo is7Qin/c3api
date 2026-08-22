@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 // test helper: set settings snapshot via fakeStore + reload.
@@ -367,4 +369,82 @@ func TestResetPasswordSuccess(t *testing.T) {
 	require.NotEqual(t, "old", updated.PasswordHash)
 	// login with new password should succeed (verify via auth)
 	require.True(t, auth.VerifyPassword(updated.PasswordHash, "newpass123"))
+}
+
+func TestRegisterWithCode_VerifOn_PasswordTooLong_DoesNotConsumeCode(t *testing.T) {
+	fs := newFakeStore()
+	svc := newMailService(t, fs)
+	setMailSettings(t, fs, svc, map[string]string{
+		"signup_enabled": "true", "mail.enabled": "true", "mail.register_verification": "true",
+		"mail.smtp_host": "127.0.0.1", "mail.smtp_port": "587", "mail.from_address": "noreply@example.com", "mail.tls": "none",
+	})
+	ctx := context.Background()
+	email := "toolongpw@example.com"
+	code := "123456"
+	sha := hashForTest(code)
+	_, err := fs.UpsertEmailCode(ctx, email, string(domain.EmailCodeRegister), sha, time.Now().Add(10*time.Minute))
+	require.NoError(t, err)
+	longPw := strings.Repeat("a", 73)
+	_, err = svc.RegisterUserWithCode(ctx, email, longPw, code)
+	require.ErrorIs(t, err, ErrInvalidInput)
+	// code row still unconsumed and attempts unchanged (0)
+	got, err := fs.GetEmailCode(ctx, email, string(domain.EmailCodeRegister))
+	require.NoError(t, err)
+	require.NotNil(t, got, "code must not be consumed when password validation fails")
+	require.Equal(t, 0, got.Attempts, "attempts must remain unchanged")
+	require.Equal(t, sha, got.CodeSHA256)
+	// empty password also should not consume
+	_, err = svc.RegisterUserWithCode(ctx, email, "", code)
+	require.ErrorIs(t, err, ErrInvalidInput)
+	got2, err := fs.GetEmailCode(ctx, email, string(domain.EmailCodeRegister))
+	require.NoError(t, err)
+	require.NotNil(t, got2)
+	require.Equal(t, 0, got2.Attempts)
+}
+
+func TestUpdateMailTemplate_DeleteFailure_Propagates(t *testing.T) {
+	fs := newFakeStore()
+	svc := newMailService(t, fs)
+	ctx := context.Background()
+	// seed one template so delete would normally succeed, but inject failure
+	_, err := fs.UpsertEmailTemplate(ctx, string(domain.EmailTemplateRegisterCode), "subj", "body")
+	require.NoError(t, err)
+	fs.emailTemplateDeleteErr = errors.New("boom db error")
+	_, err = svc.UpdateMailTemplate(ctx, string(domain.EmailTemplateRegisterCode), "any", "")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, repository.ErrNotFound)
+	require.Contains(t, err.Error(), "boom db error")
+	// tolerate NotFound: should succeed and return default
+	fs.emailTemplateDeleteErr = nil
+	// ensure missing purpose returns default without error
+	_, err = svc.UpdateMailTemplate(ctx, string(domain.EmailTemplateResetCode), "any", "")
+	require.NoError(t, err)
+	fs.emailTemplateDeleteErr = repository.ErrNotFound
+	_, err = svc.UpdateMailTemplate(ctx, string(domain.EmailTemplateRegisterCode), "any", "")
+	require.NoError(t, err, "ErrNotFound should be tolerated (restore default)")
+}
+
+func TestSendRegisterCode_EmailTooLong_Rejected(t *testing.T) {
+	fs := newFakeStore()
+	svc := newMailService(t, fs)
+	stub := startTestSTUB(t)
+	_, port := stubAddr(stub)
+	setMailSettings(t, fs, svc, map[string]string{
+		"signup_enabled": "true", "mail.enabled": "true", "mail.register_verification": "true",
+		"mail.smtp_host": "127.0.0.1", "mail.smtp_port": port, "mail.from_address": "noreply@example.com", "mail.tls": "none",
+	})
+	ctx := context.Background()
+	longLocal := strings.Repeat("a", 250)
+	longEmail := longLocal + "@example.com" // >254
+	require.Greater(t, len(longEmail), 254)
+	err := svc.SendRegisterCode(ctx, longEmail)
+	require.ErrorIs(t, err, ErrInvalidInput)
+	got, err := fs.GetEmailCode(ctx, longEmail, string(domain.EmailCodeRegister))
+	require.NoError(t, err)
+	require.Nil(t, got, "no code row should be written for overly long email")
+	select {
+	case <-stub.msgs:
+		require.Fail(t, "must not send mail for invalid email")
+	default:
+	}
 }

@@ -282,6 +282,9 @@ func (s *Service) upsertUserSnapshot(u *domain.User) {
 
 // validEmail 简单邮箱格式校验（net/mail 解析 + 纯地址形式）。
 func validEmail(email string) bool {
+	if len(email) > 254 {
+		return false
+	}
 	addr, err := mail.ParseAddress(email)
 	if err != nil || addr.Address != email {
 		return false
