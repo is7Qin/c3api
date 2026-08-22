@@ -703,6 +703,41 @@ paths:
                 items: { $ref: '#/components/schemas/Setting' }
         default:
           $ref: '#/components/responses/Error'
+  /mail/templates:
+    get:
+      operationId: GetMailTemplates
+      tags: [templates]
+      summary: 邮件模板列表（缺行自动回退内置默认）
+      responses:
+        '200':
+          description: 模板列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MailTemplate' }
+        default:
+          $ref: '#/components/responses/Error'
+  /mail/templates/{purpose}:
+    parameters:
+      - { name: purpose, in: path, required: true, schema: { type: string, enum: [register_code, reset_code] } }
+    put:
+      operationId: PutMailTemplate
+      tags: [templates]
+      summary: 更新邮件模板（空 body_text 还原内置默认=删行）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MailTemplateUpdate' }
+      responses:
+        '200':
+          description: 更新后的模板
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MailTemplate' }
+        default:
+          $ref: '#/components/responses/Error'
   # --- 兑换码（tag: redemptions；Phase 5 计费前基础设施——资源发放的通用载体） ---
   # 注意 chi 路径顺序：/redemption-codes/batch-deactivate 必须先于
   # /redemption-codes/{id}/... 注册（生成器按 spec 顺序注册，防 "batch-deactivate"
@@ -1047,6 +1082,60 @@ paths:
       responses:
         '200':
           description: 修改成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChangePasswordResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/auth/register-code:
+    post:
+      operationId: PostUserAuthRegisterCode
+      tags: [user]
+      summary: 发送注册验证码（signup_enabled  gate 403；已注册静默抑制仍 200；限频 429）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterCodeRequest' }
+      responses:
+        '200':
+          description: 已发送（恒 {sent:true}）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SentResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/auth/forgot-password:
+    post:
+      operationId: PostUserAuthForgotPassword
+      tags: [user]
+      summary: 忘记密码发码（恒 200 {sent:true}，反枚举——无论账号是否存在或邮件是否启用）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ForgotPasswordRequest' }
+      responses:
+        '200':
+          description: 已发送（恒 {sent:true}）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SentResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/auth/reset-password:
+    post:
+      operationId: PostUserAuthResetPassword
+      tags: [user]
+      summary: 重置密码（验证码校验→更新密码；不撤销既有 JWT）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResetPasswordRequest' }
+      responses:
+        '200':
+          description: 重置成功
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ChangePasswordResponse' }
@@ -1978,6 +2067,7 @@ components:
       properties:
         email: { type: string }
         password: { type: string }
+        code: { type: string, description: "可选：邮箱验证码（mail.register_verification 开启时必填，否则 400 email verification required）" }
     UserAuthLogin:
       type: object
       required: [email, password]
@@ -1990,6 +2080,42 @@ components:
       properties:
         old_password: { type: string }
         new_password: { type: string, description: 非空且 ≤72 字节（bcrypt 截断限制），非法 400 }
+    RegisterCodeRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string }
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string }
+    ResetPasswordRequest:
+      type: object
+      required: [email, code, new_password]
+      properties:
+        email: { type: string }
+        code: { type: string }
+        new_password: { type: string }
+    SentResponse:
+      type: object
+      required: [sent]
+      properties:
+        sent: { type: boolean }
+    MailTemplate:
+      type: object
+      required: [purpose, subject, body_text]
+      properties:
+        purpose: { type: string, enum: [register_code, reset_code] }
+        subject: { type: string }
+        body_text: { type: string }
+        updated_at: { type: string, format: date-time, nullable: true }
+    MailTemplateUpdate:
+      type: object
+      required: [subject, body_text]
+      properties:
+        subject: { type: string }
+        body_text: { type: string, description: "空串=还原默认（删行）" }
     ChangePasswordResponse:
       type: object
       required: [updated]

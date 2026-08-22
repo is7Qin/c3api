@@ -110,6 +110,11 @@ type ErrorResponse struct {
 // ErrorType defines model for ErrorType.
 type ErrorType string
 
+// ForgotPasswordRequest defines model for ForgotPasswordRequest.
+type ForgotPasswordRequest struct {
+	Email string `json:"email"`
+}
+
 // Group defines model for Group.
 type Group struct {
 	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
@@ -226,8 +231,25 @@ type RedemptionRecordListResponse struct {
 // RedemptionType defines model for RedemptionType.
 type RedemptionType string
 
+// RegisterCodeRequest defines model for RegisterCodeRequest.
+type RegisterCodeRequest struct {
+	Email string `json:"email"`
+}
+
 // RequestFormat defines model for RequestFormat.
 type RequestFormat string
+
+// ResetPasswordRequest defines model for ResetPasswordRequest.
+type ResetPasswordRequest struct {
+	Code        string `json:"code"`
+	Email       string `json:"email"`
+	NewPassword string `json:"new_password"`
+}
+
+// SentResponse defines model for SentResponse.
+type SentResponse struct {
+	Sent bool `json:"sent"`
+}
 
 // StatBucket 统计桶（rewrite spec 2026-08-14 契约更新：Cost 毫分 → USD /1e5 破坏性变更；TotalLatencyMS 随列删除；TTFT pN 服务端直方图插值——直方图不可前端反算）
 type StatBucket struct {
@@ -328,8 +350,10 @@ type UserAuthLogin struct {
 
 // UserAuthRegister defines model for UserAuthRegister.
 type UserAuthRegister struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	// Code 可选：邮箱验证码（mail.register_verification 开启时必填，否则 400 email verification required）
+	Code     *string `json:"code,omitempty"`
+	Email    string  `json:"email"`
+	Password string  `json:"password"`
 }
 
 // UserAuthResponse defines model for UserAuthResponse.
@@ -513,11 +537,20 @@ type GetUserUsageLogsParams struct {
 // PostUserAuthChangePasswordJSONRequestBody defines body for PostUserAuthChangePassword for application/json ContentType.
 type PostUserAuthChangePasswordJSONRequestBody = UserAuthChangePassword
 
+// PostUserAuthForgotPasswordJSONRequestBody defines body for PostUserAuthForgotPassword for application/json ContentType.
+type PostUserAuthForgotPasswordJSONRequestBody = ForgotPasswordRequest
+
 // PostUserAuthLoginJSONRequestBody defines body for PostUserAuthLogin for application/json ContentType.
 type PostUserAuthLoginJSONRequestBody = UserAuthLogin
 
 // PostUserAuthRegisterJSONRequestBody defines body for PostUserAuthRegister for application/json ContentType.
 type PostUserAuthRegisterJSONRequestBody = UserAuthRegister
+
+// PostUserAuthRegisterCodeJSONRequestBody defines body for PostUserAuthRegisterCode for application/json ContentType.
+type PostUserAuthRegisterCodeJSONRequestBody = RegisterCodeRequest
+
+// PostUserAuthResetPasswordJSONRequestBody defines body for PostUserAuthResetPassword for application/json ContentType.
+type PostUserAuthResetPasswordJSONRequestBody = ResetPasswordRequest
 
 // PostUserKeysJSONRequestBody defines body for PostUserKeys for application/json ContentType.
 type PostUserKeysJSONRequestBody = KeyCreate
@@ -533,6 +566,9 @@ type ServerInterface interface {
 	// 修改密码（旧密码校验复用登录语义——失败 401 同登录文案防枚举；新密码非空且 ≤72 字节，非法 400；不撤销既有 JWT，新密码下次登录生效）
 	// (POST /api/user/auth/change-password)
 	PostUserAuthChangePassword(w http.ResponseWriter, r *http.Request)
+	// 忘记密码发码（恒 200 {sent:true}，反枚举——无论账号是否存在或邮件是否启用）
+	// (POST /api/user/auth/forgot-password)
+	PostUserAuthForgotPassword(w http.ResponseWriter, r *http.Request)
 	// 登录（bcrypt 校验 → JWT）
 	// (POST /api/user/auth/login)
 	PostUserAuthLogin(w http.ResponseWriter, r *http.Request)
@@ -542,6 +578,12 @@ type ServerInterface interface {
 	// 注册（signup_enabled 开关检查；注册即登录返回 JWT）
 	// (POST /api/user/auth/register)
 	PostUserAuthRegister(w http.ResponseWriter, r *http.Request)
+	// 发送注册验证码（signup_enabled  gate 403；已注册静默抑制仍 200；限频 429）
+	// (POST /api/user/auth/register-code)
+	PostUserAuthRegisterCode(w http.ResponseWriter, r *http.Request)
+	// 重置密码（验证码校验→更新密码；不撤销既有 JWT）
+	// (POST /api/user/auth/reset-password)
+	PostUserAuthResetPassword(w http.ResponseWriter, r *http.Request)
 	// 我的错误明细（err_logs 完整错误面：拒绝 + 异常双轨；强制 user_id = 当前用户，防越权）
 	// (GET /api/user/err_logs)
 	GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams)
@@ -593,6 +635,12 @@ func (_ Unimplemented) PostUserAuthChangePassword(w http.ResponseWriter, r *http
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// 忘记密码发码（恒 200 {sent:true}，反枚举——无论账号是否存在或邮件是否启用）
+// (POST /api/user/auth/forgot-password)
+func (_ Unimplemented) PostUserAuthForgotPassword(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // 登录（bcrypt 校验 → JWT）
 // (POST /api/user/auth/login)
 func (_ Unimplemented) PostUserAuthLogin(w http.ResponseWriter, r *http.Request) {
@@ -608,6 +656,18 @@ func (_ Unimplemented) GetUserAuthMe(w http.ResponseWriter, r *http.Request) {
 // 注册（signup_enabled 开关检查；注册即登录返回 JWT）
 // (POST /api/user/auth/register)
 func (_ Unimplemented) PostUserAuthRegister(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 发送注册验证码（signup_enabled  gate 403；已注册静默抑制仍 200；限频 429）
+// (POST /api/user/auth/register-code)
+func (_ Unimplemented) PostUserAuthRegisterCode(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 重置密码（验证码校验→更新密码；不撤销既有 JWT）
+// (POST /api/user/auth/reset-password)
+func (_ Unimplemented) PostUserAuthResetPassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -712,6 +772,20 @@ func (siw *ServerInterfaceWrapper) PostUserAuthChangePassword(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// PostUserAuthForgotPassword operation middleware
+func (siw *ServerInterfaceWrapper) PostUserAuthForgotPassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUserAuthForgotPassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PostUserAuthLogin operation middleware
 func (siw *ServerInterfaceWrapper) PostUserAuthLogin(w http.ResponseWriter, r *http.Request) {
 
@@ -745,6 +819,34 @@ func (siw *ServerInterfaceWrapper) PostUserAuthRegister(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostUserAuthRegister(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostUserAuthRegisterCode operation middleware
+func (siw *ServerInterfaceWrapper) PostUserAuthRegisterCode(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUserAuthRegisterCode(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostUserAuthResetPassword operation middleware
+func (siw *ServerInterfaceWrapper) PostUserAuthResetPassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUserAuthResetPassword(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1430,6 +1532,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/user/auth/change-password", wrapper.PostUserAuthChangePassword)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/auth/forgot-password", wrapper.PostUserAuthForgotPassword)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/user/auth/login", wrapper.PostUserAuthLogin)
 	})
 	r.Group(func(r chi.Router) {
@@ -1437,6 +1542,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/user/auth/register", wrapper.PostUserAuthRegister)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/auth/register-code", wrapper.PostUserAuthRegisterCode)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/auth/reset-password", wrapper.PostUserAuthResetPassword)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/err_logs", wrapper.GetUserErrLogs)

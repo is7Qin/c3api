@@ -13,6 +13,7 @@ import Home from '@/pages/home'
 import AppShell from '@/components/app-shell'
 import UserLogin from '@/pages/user/login'
 import UserRegister from '@/pages/user/register'
+import ForgotPassword from '@/pages/user/forgot-password'
 import UserOverview from '@/pages/user/overview'
 import UserKeys from '@/pages/user/keys'
 import UserLogs from '@/pages/user/logs'
@@ -42,6 +43,7 @@ const router = createBrowserRouter([
   { path: '/', element: <Home /> },
   { path: '/user/login', element: <UserLogin /> },
   { path: '/user/register', element: <UserRegister /> },
+  { path: '/user/forgot-password', element: <ForgotPassword /> },
   // /app 与 /user 共用单一 AppShell：路由切换只换 Outlet，侧边栏/顶栏不重挂
   {
     path: '/',

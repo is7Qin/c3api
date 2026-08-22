@@ -13,19 +13,62 @@ import (
 )
 
 // PostUserAuthRegister 注册（signup_enabled 开关检查在 service；注册即登录：
-// 直接签发 JWT 返回，ServerInterface）。
+// 直接签发 JWT 返回，ServerInterface）。code 可选：verif=on 时必填（缺→400 sentinel），verif=off 时忽略。
 func (h *UserAPI) PostUserAuthRegister(w http.ResponseWriter, r *http.Request) {
 	var in UserAuthRegister
 	if err := decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	u, err := h.svc.RegisterUser(r.Context(), in.Email, in.Password)
+	code := ""
+	if in.Code != nil {
+		code = *in.Code
+	}
+	u, err := h.svc.RegisterUserWithCode(r.Context(), in.Email, in.Password, code)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
 	h.writeAuthResponse(w, u)
+}
+
+// PostUserAuthRegisterCode 发送注册验证码（public）。
+func (h *UserAPI) PostUserAuthRegisterCode(w http.ResponseWriter, r *http.Request) {
+	var in RegisterCodeRequest
+	if err := decode(r, &in); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if err := h.svc.SendRegisterCode(r.Context(), in.Email); err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, SentResponse{Sent: true})
+}
+
+// PostUserAuthForgotPassword 忘记密码发码（恒 200 反枚举）。
+func (h *UserAPI) PostUserAuthForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var in ForgotPasswordRequest
+	if err := decode(r, &in); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	_ = h.svc.SendForgotPasswordCode(r.Context(), in.Email)
+	httpface.WriteJSON(w, http.StatusOK, SentResponse{Sent: true})
+}
+
+// PostUserAuthResetPassword 重置密码（验证码校验→更新密码；不撤销 JWT）。
+func (h *UserAPI) PostUserAuthResetPassword(w http.ResponseWriter, r *http.Request) {
+	var in ResetPasswordRequest
+	if err := decode(r, &in); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if err := h.svc.ResetPassword(r.Context(), in.Email, in.Code, in.NewPassword); err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, ChangePasswordResponse{Updated: true})
 }
 
 // PostUserAuthLogin 登录：bcrypt 校验 → JWT（ServerInterface）。

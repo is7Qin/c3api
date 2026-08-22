@@ -37,6 +37,15 @@ var DefaultSettings = []Setting{
 	// 缺失/非法回退 1（单实例语义）。Min=1：PUT 0 从"接受回退 1"强化为 400
 	// 拒绝（护栏前置；除零安全面本就由消费端双守卫覆盖，见 spec 评审）。
 	{Key: "cluster.instances", Type: SettingTypeNumber, Value: "1", Min: i64p(1)},
+	// 邮件服务（email service）：全部走运行时设置，非 config.toml。
+	{Key: "mail.enabled", Type: SettingTypeSwitch, Value: "false"},
+	{Key: "mail.register_verification", Type: SettingTypeSwitch, Value: "false"},
+	{Key: "mail.smtp_host", Type: SettingTypeString, Value: ""},
+	{Key: "mail.smtp_port", Type: SettingTypeNumber, Value: "587", Min: i64p(1), Max: i64p(65535)},
+	{Key: "mail.smtp_username", Type: SettingTypeString, Value: ""},
+	{Key: "mail.smtp_password", Type: SettingTypeString, Value: ""},
+	{Key: "mail.from_address", Type: SettingTypeString, Value: ""},
+	{Key: "mail.tls", Type: SettingTypeString, Value: "starttls", PolicyValues: []string{"starttls", "implicit", "none"}},
 }
 
 // i64p 注册表数值值域指针辅助（Min/Max 域字面量；nil = 无限制，见 Setting 注释）。

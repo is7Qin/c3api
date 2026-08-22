@@ -66,6 +66,20 @@ func (s *Service) UpdateSetting(ctx context.Context, key, value string) (*domain
 	if vals, ok := serviceTierPolicyKeys[key]; ok && !slices.Contains(vals, value) {
 		return nil, ErrInvalidInput
 	}
+	// mail 依赖约束（fail-fast，无静默联动）：
+	// register_verification 开启时要求 enabled=true 且 smtp_host/from_address 非空；
+	// 关闭 enabled 时若 verif 仍为开同样拒绝。
+	effective := func(k string) string {
+		if k == key {
+			return value
+		}
+		return s.settingValue(k)
+	}
+	if effective("mail.register_verification") == "true" {
+		if effective("mail.enabled") != "true" || effective("mail.smtp_host") == "" || effective("mail.from_address") == "" {
+			return nil, ErrInvalidInput
+		}
+	}
 	set, err := s.store.SetSetting(ctx, key, def.Type, value)
 	if err != nil {
 		return nil, err

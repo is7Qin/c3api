@@ -26,12 +26,17 @@ import (
 )
 
 // 错误哨兵定义下沉 internal/service/errors（叶子包，单一真相）；此处别名
-// re-export 保持既有引用（errors.Is(err, service.ErrXxx)）同一实例语义。
+// re-export 保持既有引用（errors.Is(err, service.ErrXxx)）同一哨兵实例语义。
 var (
-	ErrNotFound     = serviceerr.ErrNotFound
-	ErrInvalidInput = serviceerr.ErrInvalidInput
-	ErrConflict     = serviceerr.ErrConflict
+	ErrNotFound          = serviceerr.ErrNotFound
+	ErrInvalidInput      = serviceerr.ErrInvalidInput
+	ErrConflict          = serviceerr.ErrConflict
+	ErrTooManyRequests   = serviceerr.ErrTooManyRequests
+	ErrMailNotConfigured = serviceerr.ErrMailNotConfigured
 )
+
+// EmailVerificationRequired 缺验证码时 400 响应的固定哨兵片段（前端发现机制）。
+const EmailVerificationRequired = "email verification required"
 
 type Store interface {
 	TemplateStore
@@ -48,6 +53,8 @@ type Store interface {
 	PricingStore
 	TemplateExtStore
 	AccountExtStore
+	EmailTemplateStore
+	EmailCodeStore
 	// WithTx 在单事务内执行 fn（评审 I-1）：真实仓库为 tx 版 Repository（全部走
 	// tx 连接）；fake 为事务语义模拟（fn 内变更先入暂存、成功提交/失败丢弃——
 	// 回滚断言的前提）。
@@ -184,6 +191,22 @@ type AccountExtStore interface {
 	// WritePATKey pat 凭据列部分更新（WriteOAuthRotation 的 pat 对称形态）；
 	// 行缺失 → ErrNotFound。
 	WritePATKey(ctx context.Context, accountID int64, patKey string) error
+}
+
+// EmailTemplateStore 邮件模板持久化。
+type EmailTemplateStore interface {
+	GetEmailTemplate(ctx context.Context, purpose string) (*domain.EmailTemplate, error)
+	ListEmailTemplates(ctx context.Context) ([]*domain.EmailTemplate, error)
+	UpsertEmailTemplate(ctx context.Context, purpose, subject, bodyText string) (*domain.EmailTemplate, error)
+	DeleteEmailTemplate(ctx context.Context, purpose string) error
+}
+
+// EmailCodeStore 验证码持久化。
+type EmailCodeStore interface {
+	GetEmailCode(ctx context.Context, email, purpose string) (*domain.EmailCode, error)
+	UpsertEmailCode(ctx context.Context, email, purpose, sha256 string, expiresAt time.Time) (*domain.EmailCode, error)
+	IncrementEmailCodeAttempts(ctx context.Context, email, purpose string) (int, error)
+	DeleteEmailCode(ctx context.Context, email, purpose string) error
 }
 
 // RedemptionStore 兑换码 + 兑换审计持久化（Phase 5 计费前基础设施）。

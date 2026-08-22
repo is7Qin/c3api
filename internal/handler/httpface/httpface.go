@@ -56,6 +56,10 @@ func WriteServiceErr(w http.ResponseWriter, err error) {
 		WriteErr(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, serviceerr.ErrSignupDisabled):
 		WriteErr(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, serviceerr.ErrTooManyRequests):
+		WriteErr(w, http.StatusTooManyRequests, err.Error())
+	case errors.Is(err, serviceerr.ErrMailNotConfigured):
+		WriteErr(w, http.StatusInternalServerError, err.Error())
 	default:
 		WriteErr(w, http.StatusInternalServerError, "internal error")
 	}

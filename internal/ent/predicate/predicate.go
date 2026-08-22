@@ -12,6 +12,12 @@ type Account func(*sql.Selector)
 // AccountExt is the predicate function for accountext builders.
 type AccountExt func(*sql.Selector)
 
+// EmailCode is the predicate function for emailcode builders.
+type EmailCode func(*sql.Selector)
+
+// EmailTemplate is the predicate function for emailtemplate builders.
+type EmailTemplate func(*sql.Selector)
+
 // ErrLog is the predicate function for errlog builders.
 type ErrLog func(*sql.Selector)
 

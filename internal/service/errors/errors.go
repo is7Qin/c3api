@@ -18,4 +18,6 @@ var (
 	ErrConflict           = errors.New("service: conflict")
 	ErrInvalidCredentials = errors.New("service: invalid email or password")
 	ErrSignupDisabled     = errors.New("service: signup disabled")
+	ErrTooManyRequests    = errors.New("service: too many requests")
+	ErrMailNotConfigured  = errors.New("service: mail not configured")
 )

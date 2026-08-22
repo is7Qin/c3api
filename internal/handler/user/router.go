@@ -23,8 +23,11 @@ import (
 // 测试构造零回归；nil = 不脱敏）。
 func Router(svc *service.Service, iss *auth.Issuer, users auth.UserStatusProvider, rules *rule.RuleEngine) http.Handler {
 	publicPaths := map[string]bool{
-		"/api/user/auth/register": true,
-		"/api/user/auth/login":    true,
+		"/api/user/auth/register":        true,
+		"/api/user/auth/login":           true,
+		"/api/user/auth/register-code":   true,
+		"/api/user/auth/forgot-password": true,
+		"/api/user/auth/reset-password":  true,
 	}
 	api := New(svc, iss)
 	api.rules = rules

@@ -79,6 +79,51 @@ var (
 			},
 		},
 	}
+	// EmailCodesColumns holds the columns for the "email_codes" table.
+	EmailCodesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "email", Type: field.TypeString},
+		{Name: "purpose", Type: field.TypeEnum, Enums: []string{"register", "reset"}},
+		{Name: "code_sha256", Type: field.TypeString},
+		{Name: "expires_at", Type: field.TypeTime},
+		{Name: "attempts", Type: field.TypeInt, Default: 0},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// EmailCodesTable holds the schema information for the "email_codes" table.
+	EmailCodesTable = &schema.Table{
+		Name:       "email_codes",
+		Columns:    EmailCodesColumns,
+		PrimaryKey: []*schema.Column{EmailCodesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "emailcode_email_purpose",
+				Unique:  true,
+				Columns: []*schema.Column{EmailCodesColumns[1], EmailCodesColumns[2]},
+			},
+		},
+	}
+	// EmailTemplatesColumns holds the columns for the "email_templates" table.
+	EmailTemplatesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "purpose", Type: field.TypeEnum, Enums: []string{"register_code", "reset_code"}},
+		{Name: "subject", Type: field.TypeString},
+		{Name: "body_text", Type: field.TypeString},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// EmailTemplatesTable holds the schema information for the "email_templates" table.
+	EmailTemplatesTable = &schema.Table{
+		Name:       "email_templates",
+		Columns:    EmailTemplatesColumns,
+		PrimaryKey: []*schema.Column{EmailTemplatesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "emailtemplate_purpose",
+				Unique:  true,
+				Columns: []*schema.Column{EmailTemplatesColumns[1]},
+			},
+		},
+	}
 	// ErrLogsColumns holds the columns for the "err_logs" table.
 	ErrLogsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -630,6 +675,8 @@ var (
 	Tables = []*schema.Table{
 		AccountsTable,
 		AccountExtsTable,
+		EmailCodesTable,
+		EmailTemplatesTable,
 		ErrLogsTable,
 		FunctionPricesTable,
 		GroupsTable,

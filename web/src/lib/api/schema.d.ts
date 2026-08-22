@@ -470,6 +470,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mail/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 邮件模板列表（缺行自动回退内置默认） */
+        get: operations["GetMailTemplates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mail/templates/{purpose}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                purpose: "register_code" | "reset_code";
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 更新邮件模板（空 body_text 还原内置默认=删行） */
+        put: operations["PutMailTemplate"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/redemption-codes": {
         parameters: {
             query?: never;
@@ -679,6 +715,57 @@ export interface paths {
         put?: never;
         /** 修改密码（旧密码校验复用登录语义——失败 401 同登录文案防枚举；新密码非空且 ≤72 字节，非法 400；不撤销既有 JWT，新密码下次登录生效） */
         post: operations["PostUserAuthChangePassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/auth/register-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 发送注册验证码（signup_enabled  gate 403；已注册静默抑制仍 200；限频 429） */
+        post: operations["PostUserAuthRegisterCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/auth/forgot-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 忘记密码发码（恒 200 {sent:true}，反枚举——无论账号是否存在或邮件是否启用） */
+        post: operations["PostUserAuthForgotPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/auth/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重置密码（验证码校验→更新密码；不撤销既有 JWT） */
+        post: operations["PostUserAuthResetPassword"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1470,6 +1557,8 @@ export interface components {
         UserAuthRegister: {
             email: string;
             password: string;
+            /** @description 可选：邮箱验证码（mail.register_verification 开启时必填，否则 400 email verification required） */
+            code?: string;
         };
         UserAuthLogin: {
             email: string;
@@ -1479,6 +1568,33 @@ export interface components {
             old_password: string;
             /** @description 非空且 ≤72 字节（bcrypt 截断限制），非法 400 */
             new_password: string;
+        };
+        RegisterCodeRequest: {
+            email: string;
+        };
+        ForgotPasswordRequest: {
+            email: string;
+        };
+        ResetPasswordRequest: {
+            email: string;
+            code: string;
+            new_password: string;
+        };
+        SentResponse: {
+            sent: boolean;
+        };
+        MailTemplate: {
+            /** @enum {string} */
+            purpose: "register_code" | "reset_code";
+            subject: string;
+            body_text: string;
+            /** Format: date-time */
+            updated_at?: string | null;
+        };
+        MailTemplateUpdate: {
+            subject: string;
+            /** @description 空串=还原默认（删行） */
+            body_text: string;
         };
         ChangePasswordResponse: {
             updated: boolean;
@@ -3804,6 +3920,54 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    GetMailTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 模板列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailTemplate"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutMailTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                purpose: "register_code" | "reset_code";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MailTemplateUpdate"];
+            };
+        };
+        responses: {
+            /** @description 更新后的模板 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailTemplate"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     GetRedemptionCodes: {
         parameters: {
             query?: {
@@ -4278,6 +4442,81 @@ export interface operations {
         };
         responses: {
             /** @description 修改成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangePasswordResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostUserAuthRegisterCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description 已发送（恒 {sent:true}） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SentResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostUserAuthForgotPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForgotPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description 已发送（恒 {sent:true}） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SentResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostUserAuthResetPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description 重置成功 */
             200: {
                 headers: {
                     [name: string]: unknown;

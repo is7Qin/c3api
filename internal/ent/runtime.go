@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/ent/account"
+	"github.com/is7qin/c3api/internal/ent/emailcode"
+	"github.com/is7qin/c3api/internal/ent/emailtemplate"
 	"github.com/is7qin/c3api/internal/ent/errlog"
 	"github.com/is7qin/c3api/internal/ent/functionprice"
 	"github.com/is7qin/c3api/internal/ent/group"
@@ -49,6 +51,30 @@ func init() {
 	accountDescCreatedAt := accountFields[14].Descriptor()
 	// account.DefaultCreatedAt holds the default value on creation for the created_at field.
 	account.DefaultCreatedAt = accountDescCreatedAt.Default.(func() time.Time)
+	emailcodeFields := schema.EmailCode{}.Fields()
+	_ = emailcodeFields
+	// emailcodeDescAttempts is the schema descriptor for attempts field.
+	emailcodeDescAttempts := emailcodeFields[5].Descriptor()
+	// emailcode.DefaultAttempts holds the default value on creation for the attempts field.
+	emailcode.DefaultAttempts = emailcodeDescAttempts.Default.(int)
+	// emailcodeDescCreatedAt is the schema descriptor for created_at field.
+	emailcodeDescCreatedAt := emailcodeFields[6].Descriptor()
+	// emailcode.DefaultCreatedAt holds the default value on creation for the created_at field.
+	emailcode.DefaultCreatedAt = emailcodeDescCreatedAt.Default.(func() time.Time)
+	// emailcodeDescUpdatedAt is the schema descriptor for updated_at field.
+	emailcodeDescUpdatedAt := emailcodeFields[7].Descriptor()
+	// emailcode.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	emailcode.DefaultUpdatedAt = emailcodeDescUpdatedAt.Default.(func() time.Time)
+	// emailcode.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	emailcode.UpdateDefaultUpdatedAt = emailcodeDescUpdatedAt.UpdateDefault.(func() time.Time)
+	emailtemplateFields := schema.EmailTemplate{}.Fields()
+	_ = emailtemplateFields
+	// emailtemplateDescUpdatedAt is the schema descriptor for updated_at field.
+	emailtemplateDescUpdatedAt := emailtemplateFields[4].Descriptor()
+	// emailtemplate.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	emailtemplate.DefaultUpdatedAt = emailtemplateDescUpdatedAt.Default.(func() time.Time)
+	// emailtemplate.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	emailtemplate.UpdateDefaultUpdatedAt = emailtemplateDescUpdatedAt.UpdateDefault.(func() time.Time)
 	errlogFields := schema.ErrLog{}.Fields()
 	_ = errlogFields
 	// errlogDescModel is the schema descriptor for model field.

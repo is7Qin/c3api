@@ -74,6 +74,12 @@ const (
 	KeyStatusDisabled KeyStatus = "disabled"
 )
 
+// Defines values for MailTemplatePurpose.
+const (
+	RegisterCode MailTemplatePurpose = "register_code"
+	ResetCode    MailTemplatePurpose = "reset_code"
+)
+
 // Defines values for PricingSource.
 const (
 	PricingSourceLitellm PricingSource = "litellm"
@@ -890,6 +896,24 @@ type LogsResponse struct {
 	// NextCursor 下一页游标（本页最后一条 id）；null = 无更多行
 	NextCursor *int64     `json:"next_cursor"`
 	Rows       []UsageLog `json:"rows"`
+}
+
+// MailTemplate defines model for MailTemplate.
+type MailTemplate struct {
+	BodyText  string              `json:"body_text"`
+	Purpose   MailTemplatePurpose `json:"purpose"`
+	Subject   string              `json:"subject"`
+	UpdatedAt *time.Time          `json:"updated_at"`
+}
+
+// MailTemplatePurpose defines model for MailTemplate.Purpose.
+type MailTemplatePurpose string
+
+// MailTemplateUpdate defines model for MailTemplateUpdate.
+type MailTemplateUpdate struct {
+	// BodyText 空串=还原默认（删行）
+	BodyText string `json:"body_text"`
+	Subject  string `json:"subject"`
 }
 
 // OverviewAccounts 账号健康分布 + 并发水位（调度器快照同源——与账号列表运行时视图一致）
@@ -1948,6 +1972,9 @@ type PutGroupsIdAssignmentsJSONRequestBody = GroupAssignmentsBody
 // PutImagePriceModelJSONRequestBody defines body for PutImagePriceModel for application/json ContentType.
 type PutImagePriceModelJSONRequestBody = ImagePriceUpsert
 
+// PutMailTemplateJSONRequestBody defines body for PutMailTemplate for application/json ContentType.
+type PutMailTemplateJSONRequestBody = MailTemplateUpdate
+
 // PutPricingModelJSONRequestBody defines body for PutPricingModel for application/json ContentType.
 type PutPricingModelJSONRequestBody = PricingUpsert
 
@@ -2091,6 +2118,12 @@ type ServerInterface interface {
 	// 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端）
 	// (GET /keys)
 	GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams)
+	// 邮件模板列表（缺行自动回退内置默认）
+	// (GET /mail/templates)
+	GetMailTemplates(w http.ResponseWriter, r *http.Request)
+	// 更新邮件模板（空 body_text 还原内置默认=删行）
+	// (PUT /mail/templates/{purpose})
+	PutMailTemplate(w http.ResponseWriter, r *http.Request, purpose string)
 	// 运维观测（worker 状态 + 快照注册表）
 	// (GET /ops/workers)
 	GetOpsWorkers(w http.ResponseWriter, r *http.Request)
@@ -2382,6 +2415,18 @@ func (_ Unimplemented) PutImagePriceModel(w http.ResponseWriter, r *http.Request
 // 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端）
 // (GET /keys)
 func (_ Unimplemented) GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 邮件模板列表（缺行自动回退内置默认）
+// (GET /mail/templates)
+func (_ Unimplemented) GetMailTemplates(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 更新邮件模板（空 body_text 还原内置默认=删行）
+// (PUT /mail/templates/{purpose})
+func (_ Unimplemented) PutMailTemplate(w http.ResponseWriter, r *http.Request, purpose string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3673,6 +3718,45 @@ func (siw *ServerInterfaceWrapper) GetKeys(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetKeys(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMailTemplates operation middleware
+func (siw *ServerInterfaceWrapper) GetMailTemplates(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMailTemplates(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutMailTemplate operation middleware
+func (siw *ServerInterfaceWrapper) PutMailTemplate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "purpose" -------------
+	var purpose string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "purpose", chi.URLParam(r, "purpose"), &purpose, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "purpose", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutMailTemplate(w, r, purpose)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5054,6 +5138,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/keys", wrapper.GetKeys)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/mail/templates", wrapper.GetMailTemplates)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/mail/templates/{purpose}", wrapper.PutMailTemplate)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/ops/workers", wrapper.GetOpsWorkers)
