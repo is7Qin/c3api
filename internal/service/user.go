@@ -90,6 +90,7 @@ func (s *Service) RegisterUser(ctx context.Context, email, password string) (*do
 			}
 		}
 	}
+	s.upsertUserSnapshot(created)
 	s.inv.Users()
 	s.publish(ctx, notify.Change{Users: true})
 	if s.log != nil {
@@ -200,6 +201,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string, role d
 	if err != nil {
 		return nil, err
 	}
+	s.upsertUserSnapshot(created)
 	s.inv.Users()
 	s.publish(ctx, notify.Change{Users: true})
 	if s.log != nil {
@@ -243,6 +245,7 @@ func (s *Service) UpdateUser(ctx context.Context, p *repository.UserPatch) (*dom
 	for attempt := 0; ; attempt++ {
 		updated, err := s.store.UpdateUser(ctx, p)
 		if err == nil {
+			s.upsertUserSnapshot(updated)
 			s.inv.Users()
 			s.publish(ctx, notify.Change{Users: true})
 			return updated, nil
@@ -257,6 +260,23 @@ func (s *Service) UpdateUser(ctx context.Context, p *repository.UserPatch) (*dom
 		}
 		p.OldMaxConcurrency = &cur.MaxConcurrency
 		p.OldBalance = &cur.Balance
+	}
+}
+
+// userSnapshotUpdater Auth 快照用户表的本地增量写面（proxy.Auth.UpsertUser）。
+// 仅本地立即可见，跨实例仍经 NOTIFY 全量 Reload；不存在则 no-op（测试 fake 不实现）。
+type userSnapshotUpdater interface {
+	UpsertUser(userID int64, snap domain.UserSnapshot)
+}
+
+// upsertUserSnapshot 本地立即可见的用户快照写入（不等 200ms 去抖窗口）。
+// 新用户 401 窗口的根因修复：创建后 RequireJWT 立即可查 active 状态。
+func (s *Service) upsertUserSnapshot(u *domain.User) {
+	if s.keys == nil || u == nil {
+		return
+	}
+	if upd, ok := s.keys.(userSnapshotUpdater); ok {
+		upd.UpsertUser(u.ID, domain.UserSnapshot{Status: u.Status, Role: u.Role})
 	}
 }
 

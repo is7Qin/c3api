@@ -111,6 +111,22 @@ func (a *Auth) Delete(raw string) {
 	}
 }
 
+// UpsertUser 增量刷新单个用户状态（本地立即可见，不等去抖窗口）。
+// 供 admin 创建用户 / 注册 / 状态变更后本地实例立即对 RequireJWT 可见，
+// 消除 200ms 窗口内新建用户 401；远端实例仍经 NOTIFY → 全量 Reload 收敛。
+func (a *Auth) UpsertUser(userID int64, snap domain.UserSnapshot) {
+	a.mu.Lock()
+	a.states[userID] = snap
+	a.mu.Unlock()
+}
+
+// RemoveUser 增量移除用户（暂未使用，防御性；与 UpsertUser 对称）。
+func (a *Auth) RemoveUser(userID int64) {
+	a.mu.Lock()
+	delete(a.states, userID)
+	a.mu.Unlock()
+}
+
 // UserSnapshot 用户快照（RequireJWT 状态校验 + adminAuth 快照 role 校验共用；
 // 用户变更走 invalidate → Reload，不用 DB 直查）。单次查找同时取 status+role
 // （热路径零分配）。

@@ -467,7 +467,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	r = env.lastLogFor("e2e-model")
 	require.Equal(t, int64(500), r.Cost)
 
-	// 第二笔：余额 1000 → 500；第三笔：500 → 0；第四笔：预检 402
+	// 第二笔：余额 1000 → 500；第三笔：500 → 0；第四笔：0 仍放行（spec 2026-08-15 余额 0 放行，FEFO 覆盖）→ -500 overdraft；第五笔：负余额预检 402
 	for _, want := range []int64{500, 0} {
 		c, rb2 := env.aiReq(http.MethodPost, "/v1/chat/completions", u2Key, map[string]any{
 			"model": "e2e-model", "stream": true,
@@ -477,6 +477,16 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		sleepFlush()
 		require.Equal(t, want, env.balance(u2))
 	}
+	// 余额 0 仍放行一次（overdraft），见 proxy/billing_test.go:691 “余额 0 放行”
+	c, rbOver := env.aiReq(http.MethodPost, "/v1/chat/completions", u2Key, map[string]any{
+		"model": "e2e-model", "stream": true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+	require.Equal(t, 200, c, "overdraft must still 200 (bal 0 → -500): %s", rbOver)
+	sleepFlush()
+	require.Equal(t, int64(-500), env.balance(u2), "透支后余额 -500")
+	rOver := env.lastLogFor("e2e-model")
+	require.True(t, rOver.Overdraft, "透支行 overdraft=true")
 	c, rb3 := env.aiReq(http.MethodPost, "/v1/chat/completions", u2Key, map[string]any{
 		"model": "e2e-model", "stream": true,
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
@@ -493,7 +503,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	// 402 拒绝行（分表裁决 R3-M1）：错误审计面归 err_logs——error_type=billing
 	// 全值 + status_code；usage_logs 零行（放行路径语义：失败行不入 usage_logs）。
 	sleepFlush() // 等待 errlog worker 落库（独立 500ms 批间隔）
-	code3, resp3 := env.admin(http.MethodGet, "/err_logs?model=e2e-noprice-model", nil)
+	code3, resp3 := env.admin(http.MethodGet, "/err_logs?model=e2e-noprice-model&from=2000-01-01T00:00:00Z&to=2030-01-01T00:00:00Z", nil)
 	require.Equal(t, 200, code3, "err logs: %s", resp3)
 	require.Contains(t, resp3, `"billing"`, "402 拒绝行 err_logs error_type=billing")
 	// R4-M3：HTTP 面 ↔ DB 面交叉验证（同一条拒绝行经 errlog worker 落库 → HTTP 查询可见）
@@ -503,9 +513,10 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		WHERE model='e2e-noprice-model' ORDER BY id DESC LIMIT 1`).Scan(&dbEType)
 	require.NoError(t, err)
 	require.Equal(t, "billing", dbEType, "err_logs DB 面与 HTTP 面一致")
-	code3u, resp3u := env.admin(http.MethodGet, "/usage_logs?model=e2e-noprice-model", nil)
+	code3u, resp3u := env.admin(http.MethodGet, "/usage_logs?model=e2e-noprice-model&from=2000-01-01T00:00:00Z&to=2030-01-01T00:00:00Z", nil)
 	require.Equal(t, 200, code3u, "usage logs: %s", resp3u)
-	require.Contains(t, resp3u, `"total":0`, "402 失败行不入 usage_logs（放行路径语义）")
+	// 新分页契约：游标分页无 total，空结果为 rows 空数组（旧 total:0 已移除）
+	require.Contains(t, resp3u, `"rows":[]`, "402 失败行不入 usage_logs（放行路径语义）")
 
 	// ============ 场景 4：tier strip/reject 策略（settings 三 key） ============
 	t.Log("场景 4：service_tier_policy_priority strip/reject")
