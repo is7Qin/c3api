@@ -363,17 +363,27 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 	}
 }
 
-// TestCodexUsageSnapshotHTTP401AuthExpired PAT 死 token 401 特判（T3-5）：SDK
-// 对 PAT 不判死不轮转原样返回 HTTPError → classifyUsageErr 401 特判 →
-// ErrAuthExpired（语义 = 凭据失效，非上游故障）。
-func TestCodexUsageSnapshotHTTP401AuthExpired(t *testing.T) {
-	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"message":"invalid token"}}`})
-	a := NewCodex(nil)
-	ctx := context.Background()
+// TestCodexUsageSnapshotHTTP401Classification usage 面 401 分类边界（SDK PAT
+// 判死上线后）：非致命 401（无判死标记——上游未宣告凭证死亡）→ ErrUpstream，
+// 不从状态码反推鉴权结论（T3-5 网关侧 401 特判已随 SDK classifyAT401 接管
+// PAT 而退役）；致命 401（token_revoked 判死标记）→ SDK 内分类产出
+// AuthPermanentlyRevokedError → IsFatal 统一判定 → ErrAuthExpired。
+func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
+	t.Run("non_fatal_401_upstream", func(t *testing.T) {
+		srv, c := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"message":"invalid token"}}`})
+		a := NewCodex(nil)
 
-	_, err := a.GetUsageSnapshot(ctx, usageCred(1, srv.URL+"/codex/responses"))
-	require.ErrorIs(t, err, ErrAuthExpired, "401 → ErrAuthExpired（PAT 死 token 语义）")
-	require.Equal(t, 1, c.callsN())
+		_, err := a.GetUsageSnapshot(context.Background(), usageCred(1, srv.URL+"/codex/responses"))
+		require.ErrorIs(t, err, ErrUpstream, "非致命 401 归上游面（鉴权结论唯一来源 = SDK 致命分类）")
+		require.Equal(t, 1, c.callsN())
+	})
+	t.Run("fatal_401_auth_expired", func(t *testing.T) {
+		srv, _ := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"code":"token_revoked"}}`})
+		a := NewCodex(nil)
+
+		_, err := a.GetUsageSnapshot(context.Background(), usageCred(2, srv.URL+"/codex/responses"))
+		require.ErrorIs(t, err, ErrAuthExpired, "致命 401 经 SDK 判死走统一 fatal 判定")
+	})
 }
 
 // TestCodexUsageSnapshotEntryErrAuthExpired 入口错误分类（N2）：oauth 缺 rt
@@ -522,10 +532,9 @@ func TestCodexUsageSnapshotEntryRebuildClears(t *testing.T) {
 	require.Equal(t, 2, c.callsN(), "TTL 过期 + sig 变化 → 重建重拉")
 }
 
-// TestClassifyUsageErr 错误分类纯判定矩阵（gate Major 3——IsFatal/HTTPError
-// 双分支零副作用）：fatal 五类 → ErrAuthExpired（含信封链穿透）；
-// *HTTPError 401 → ErrAuthExpired（T3-5 PAT 死 token）；RefreshError/其余
-// *HTTPError/网络 → ErrUpstream。
+// TestClassifyUsageErr 错误分类纯判定矩阵（gate Major 3——边界单一原则零副作
+// 用）：fatal 五类 → ErrAuthExpired（含信封链穿透，鉴权面真相唯一来源 = SDK
+// 致命分类）；RefreshError/全部 *HTTPError（含非致命 401）/网络 → ErrUpstream。
 func TestClassifyUsageErr(t *testing.T) {
 	require.ErrorIs(t, classifyUsageErr(&codexsdk.RefreshOAuthError{Code: "invalid_grant"}), ErrAuthExpired)
 	require.ErrorIs(t, classifyUsageErr(&codexsdk.AuthPermanentlyRevokedError{Code: "token_invalidated"}), ErrAuthExpired)
@@ -536,7 +545,7 @@ func TestClassifyUsageErr(t *testing.T) {
 
 	require.ErrorIs(t, classifyUsageErr(&codexsdk.RefreshError{Attempts: 3, Err: errors.New("net")}), ErrUpstream, "RefreshError 不在 fatal 集")
 	require.ErrorIs(t, classifyUsageErr(&codexsdk.HTTPError{StatusCode: 500, Raw: []byte(`{}`)}), ErrUpstream)
-	require.ErrorIs(t, classifyUsageErr(&codexsdk.HTTPError{StatusCode: 401, Raw: []byte(`{}`)}), ErrAuthExpired, "401 特判（PAT 死 token）")
+	require.ErrorIs(t, classifyUsageErr(&codexsdk.HTTPError{StatusCode: 401, Raw: []byte(`{}`)}), ErrUpstream, "非致命 401 归上游面（T3-5 特判已退役）")
 	require.ErrorIs(t, classifyUsageErr(&codexsdk.HTTPError{StatusCode: 403, Raw: []byte(`{}`)}), ErrUpstream, "非 401 HTTPError 仍归 ErrUpstream")
 	require.ErrorIs(t, classifyUsageErr(errors.New("network error")), ErrUpstream)
 }

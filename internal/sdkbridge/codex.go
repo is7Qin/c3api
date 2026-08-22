@@ -402,9 +402,9 @@ var usageCooldown = 60 * time.Second
 //
 // 错误分类**纯判定零副作用**（gate Major 3——不复用 translateError：其 fatal
 // 分支 reportFatal → evict 删 entry，冷却随 entry 消失）：IsFatal（fatal 五类
-// 穿透信封链）→ ErrAuthExpired；HTTPError 401（PAT 死 token——SDK 对 PAT 不
-// 判死不轮转原样返回，语义 = 凭据失效）→ ErrAuthExpired；其余（*HTTPError/
-// 网络/RefreshError）保守归 ErrUpstream。usage 是查询面不是会话面——凭据失效
+// 穿透信封链——SDK 说凭据死才是凭据死，鉴权面真相唯一来源）→ ErrAuthExpired；
+// 其余（*HTTPError/网络/RefreshError，含非致命 401——无判死标记的拒绝属上游
+// 面，不从状态码反推鉴权结论）保守归 ErrUpstream。usage 是查询面不是会话面——凭据失效
 // 由会话路径上报（防循环），entry 恒保留（fatal 后后续调用仍命中冷却）。
 // 命中路径零分配（T3-4）：先按 accountID 查 entry.usage（map 查 + 锁 + 时间
 // 比较——不计算 credSig 字符串拼接/不重建条目），命中直接返回；未命中才走
@@ -508,18 +508,15 @@ func (a *Codex) recordUsageFailure(e *codexEntry, err error) {
 	a.mu.Unlock()
 }
 
-// classifyUsageErr 错误分类纯判定（gate Major 3——零副作用不上报不摘除）：
-// IsFatal（fatal 五类穿透信封链——RefreshOAuthError/AuthPermanentlyRevoked-
-// Error/AccountDisabledError/CallbackDeliveryError）→ ErrAuthExpired；
-// *HTTPError 401 特判（T3-5——PAT 死 token：SDK 对 PAT 不判死不轮转原样返回
-// HTTPError，语义 = 凭据失效非上游故障）→ ErrAuthExpired；其余（*HTTPError/
-// 网络/RefreshError 等）保守归 ErrUpstream。
+// classifyUsageErr 错误分类纯判定（gate Major 3——零副作用不上报不摘除）。
+// 边界单一原则：鉴权面真相唯一来源是 SDK 致命分类——IsFatal（fatal 五类穿透
+// 信封链：RefreshOAuthError/AuthPermanentlyRevokedError/AccountDisabledError/
+// CallbackDeliveryError）→ ErrAuthExpired；其余一律 ErrUpstream。非致命 401
+// （无判死标记的拒绝——上游未宣告凭证死亡）不在此反推鉴权结论：真死亡必带
+// 致命标记走 fatal 路径并经 OnAuthFatal 禁用，无标记则按上游抖动冷却重试自愈
+// （T3-5 的 401 特判已随 SDK PAT 判死上线退役——补丁理由消失即删）。
 func classifyUsageErr(err error) error {
 	if IsFatal(err) {
-		return ErrAuthExpired
-	}
-	var he *codexsdk.HTTPError
-	if errors.As(err, &he) && he.StatusCode == http.StatusUnauthorized {
 		return ErrAuthExpired
 	}
 	return ErrUpstream
@@ -661,12 +658,17 @@ func (a *Codex) translateDialError(e *codexEntry, err error) error {
 //     未知（nil）→ 预置单参 at 避免首调用强制 refresh
 //   - WithOnTokenRotated（T5 §1）：每次 refresh 成功产出新 at+rt → account_ext
 //     部分更新回写（幂等；回调在 SDK 单飞内串行——同账号并发轮转不重复回写）
-//   - codex-pat：PAT(key)
+//   - codex-pat：PAT(key, WithPATOnAuthFatal(统一回调))——PAT 致命 401 在 SDK
+//     内分类后同走 OnAuthFatal 禁用链路（毒化 + 单次上报，与 OAuth 双源去重共用）
 //   - 空 rt（oauth 缺 refresh_token）→ 上报失效（凭据不完整）并返回错误，不
 //     panic
 func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexsdk.Auth, error) {
 	if cred.PATKey != "" {
-		return codexsdk.PAT(cred.PATKey), nil
+		return codexsdk.PAT(cred.PATKey,
+			// 统一回调装配（与 OAuth 同源）：SDK 判死（PAT 401 致命体分类）→
+			// reportFatal 上报禁用（双源去重单次）
+			codexsdk.WithPATOnAuthFatal(func(fatal error) { a.reportFatal(e, fatal) }),
+		), nil
 	}
 	if cred.OAuthRefreshToken == "" {
 		return nil, errCredentialIncomplete // 上报在 clientFor 锁外执行（见 clientFor）
