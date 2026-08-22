@@ -9,24 +9,28 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/is7qin/c3api/internal/ent/usagestat"
+	"github.com/is7qin/c3api/internal/ent/usageentitystat"
 )
 
-// UsageStat is the model entity for the UsageStat schema.
-type UsageStat struct {
+// UsageEntityStat is the model entity for the UsageEntityStat schema.
+type UsageEntityStat struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int64 `json:"id,omitempty"`
 	// BucketTime holds the value of the "bucket_time" field.
 	BucketTime time.Time `json:"bucket_time,omitempty"`
-	// GroupID holds the value of the "group_id" field.
-	GroupID int64 `json:"group_id,omitempty"`
+	// EntityType holds the value of the "entity_type" field.
+	EntityType string `json:"entity_type,omitempty"`
+	// EntityID holds the value of the "entity_id" field.
+	EntityID int64 `json:"entity_id,omitempty"`
 	// Model holds the value of the "model" field.
 	Model string `json:"model,omitempty"`
 	// RequestCount holds the value of the "request_count" field.
 	RequestCount int64 `json:"request_count,omitempty"`
 	// ErrorCount holds the value of the "error_count" field.
 	ErrorCount int64 `json:"error_count,omitempty"`
+	// CallCount holds the value of the "call_count" field.
+	CallCount int64 `json:"call_count,omitempty"`
 	// InputTokens holds the value of the "input_tokens" field.
 	InputTokens int64 `json:"input_tokens,omitempty"`
 	// OutputTokens holds the value of the "output_tokens" field.
@@ -41,8 +45,6 @@ type UsageStat struct {
 	Cost int64 `json:"cost,omitempty"`
 	// RawCost holds the value of the "raw_cost" field.
 	RawCost int64 `json:"raw_cost,omitempty"`
-	// CallCount holds the value of the "call_count" field.
-	CallCount int64 `json:"call_count,omitempty"`
 	// TtftTotalMs holds the value of the "ttft_total_ms" field.
 	TtftTotalMs int64 `json:"ttft_total_ms,omitempty"`
 	// TtftCount holds the value of the "ttft_count" field.
@@ -55,15 +57,15 @@ type UsageStat struct {
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
-func (*UsageStat) scanValues(columns []string) ([]any, error) {
+func (*UsageEntityStat) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usagestat.FieldID, usagestat.FieldGroupID, usagestat.FieldRequestCount, usagestat.FieldErrorCount, usagestat.FieldInputTokens, usagestat.FieldOutputTokens, usagestat.FieldTotalTokens, usagestat.FieldCacheReadTokens, usagestat.FieldCacheCreationTokens, usagestat.FieldCost, usagestat.FieldRawCost, usagestat.FieldCallCount, usagestat.FieldTtftTotalMs, usagestat.FieldTtftCount, usagestat.FieldTtftMaxMs:
+		case usageentitystat.FieldID, usageentitystat.FieldEntityID, usageentitystat.FieldRequestCount, usageentitystat.FieldErrorCount, usageentitystat.FieldCallCount, usageentitystat.FieldInputTokens, usageentitystat.FieldOutputTokens, usageentitystat.FieldTotalTokens, usageentitystat.FieldCacheReadTokens, usageentitystat.FieldCacheCreationTokens, usageentitystat.FieldCost, usageentitystat.FieldRawCost, usageentitystat.FieldTtftTotalMs, usageentitystat.FieldTtftCount, usageentitystat.FieldTtftMaxMs:
 			values[i] = new(sql.NullInt64)
-		case usagestat.FieldModel:
+		case usageentitystat.FieldEntityType, usageentitystat.FieldModel:
 			values[i] = new(sql.NullString)
-		case usagestat.FieldBucketTime, usagestat.FieldUpdatedAt:
+		case usageentitystat.FieldBucketTime, usageentitystat.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -73,116 +75,122 @@ func (*UsageStat) scanValues(columns []string) ([]any, error) {
 }
 
 // assignValues assigns the values that were returned from sql.Rows (after scanning)
-// to the UsageStat fields.
-func (_m *UsageStat) assignValues(columns []string, values []any) error {
+// to the UsageEntityStat fields.
+func (_m *UsageEntityStat) assignValues(columns []string, values []any) error {
 	if m, n := len(values), len(columns); m < n {
 		return fmt.Errorf("mismatch number of scan values: %d != %d", m, n)
 	}
 	for i := range columns {
 		switch columns[i] {
-		case usagestat.FieldID:
+		case usageentitystat.FieldID:
 			value, ok := values[i].(*sql.NullInt64)
 			if !ok {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int64(value.Int64)
-		case usagestat.FieldBucketTime:
+		case usageentitystat.FieldBucketTime:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field bucket_time", values[i])
 			} else if value.Valid {
 				_m.BucketTime = value.Time
 			}
-		case usagestat.FieldGroupID:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field group_id", values[i])
+		case usageentitystat.FieldEntityType:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field entity_type", values[i])
 			} else if value.Valid {
-				_m.GroupID = value.Int64
+				_m.EntityType = value.String
 			}
-		case usagestat.FieldModel:
+		case usageentitystat.FieldEntityID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field entity_id", values[i])
+			} else if value.Valid {
+				_m.EntityID = value.Int64
+			}
+		case usageentitystat.FieldModel:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field model", values[i])
 			} else if value.Valid {
 				_m.Model = value.String
 			}
-		case usagestat.FieldRequestCount:
+		case usageentitystat.FieldRequestCount:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field request_count", values[i])
 			} else if value.Valid {
 				_m.RequestCount = value.Int64
 			}
-		case usagestat.FieldErrorCount:
+		case usageentitystat.FieldErrorCount:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field error_count", values[i])
 			} else if value.Valid {
 				_m.ErrorCount = value.Int64
 			}
-		case usagestat.FieldInputTokens:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field input_tokens", values[i])
-			} else if value.Valid {
-				_m.InputTokens = value.Int64
-			}
-		case usagestat.FieldOutputTokens:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field output_tokens", values[i])
-			} else if value.Valid {
-				_m.OutputTokens = value.Int64
-			}
-		case usagestat.FieldTotalTokens:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field total_tokens", values[i])
-			} else if value.Valid {
-				_m.TotalTokens = value.Int64
-			}
-		case usagestat.FieldCacheReadTokens:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field cache_read_tokens", values[i])
-			} else if value.Valid {
-				_m.CacheReadTokens = value.Int64
-			}
-		case usagestat.FieldCacheCreationTokens:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field cache_creation_tokens", values[i])
-			} else if value.Valid {
-				_m.CacheCreationTokens = value.Int64
-			}
-		case usagestat.FieldCost:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field cost", values[i])
-			} else if value.Valid {
-				_m.Cost = value.Int64
-			}
-		case usagestat.FieldRawCost:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field raw_cost", values[i])
-			} else if value.Valid {
-				_m.RawCost = value.Int64
-			}
-		case usagestat.FieldCallCount:
+		case usageentitystat.FieldCallCount:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field call_count", values[i])
 			} else if value.Valid {
 				_m.CallCount = value.Int64
 			}
-		case usagestat.FieldTtftTotalMs:
+		case usageentitystat.FieldInputTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field input_tokens", values[i])
+			} else if value.Valid {
+				_m.InputTokens = value.Int64
+			}
+		case usageentitystat.FieldOutputTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field output_tokens", values[i])
+			} else if value.Valid {
+				_m.OutputTokens = value.Int64
+			}
+		case usageentitystat.FieldTotalTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field total_tokens", values[i])
+			} else if value.Valid {
+				_m.TotalTokens = value.Int64
+			}
+		case usageentitystat.FieldCacheReadTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_read_tokens", values[i])
+			} else if value.Valid {
+				_m.CacheReadTokens = value.Int64
+			}
+		case usageentitystat.FieldCacheCreationTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_creation_tokens", values[i])
+			} else if value.Valid {
+				_m.CacheCreationTokens = value.Int64
+			}
+		case usageentitystat.FieldCost:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field cost", values[i])
+			} else if value.Valid {
+				_m.Cost = value.Int64
+			}
+		case usageentitystat.FieldRawCost:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field raw_cost", values[i])
+			} else if value.Valid {
+				_m.RawCost = value.Int64
+			}
+		case usageentitystat.FieldTtftTotalMs:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field ttft_total_ms", values[i])
 			} else if value.Valid {
 				_m.TtftTotalMs = value.Int64
 			}
-		case usagestat.FieldTtftCount:
+		case usageentitystat.FieldTtftCount:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field ttft_count", values[i])
 			} else if value.Valid {
 				_m.TtftCount = value.Int64
 			}
-		case usagestat.FieldTtftMaxMs:
+		case usageentitystat.FieldTtftMaxMs:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field ttft_max_ms", values[i])
 			} else if value.Valid {
 				_m.TtftMaxMs = value.Int64
 			}
-		case usagestat.FieldUpdatedAt:
+		case usageentitystat.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
 			} else if value.Valid {
@@ -195,40 +203,43 @@ func (_m *UsageStat) assignValues(columns []string, values []any) error {
 	return nil
 }
 
-// Value returns the ent.Value that was dynamically selected and assigned to the UsageStat.
+// Value returns the ent.Value that was dynamically selected and assigned to the UsageEntityStat.
 // This includes values selected through modifiers, order, etc.
-func (_m *UsageStat) Value(name string) (ent.Value, error) {
+func (_m *UsageEntityStat) Value(name string) (ent.Value, error) {
 	return _m.selectValues.Get(name)
 }
 
-// Update returns a builder for updating this UsageStat.
-// Note that you need to call UsageStat.Unwrap() before calling this method if this UsageStat
+// Update returns a builder for updating this UsageEntityStat.
+// Note that you need to call UsageEntityStat.Unwrap() before calling this method if this UsageEntityStat
 // was returned from a transaction, and the transaction was committed or rolled back.
-func (_m *UsageStat) Update() *UsageStatUpdateOne {
-	return NewUsageStatClient(_m.config).UpdateOne(_m)
+func (_m *UsageEntityStat) Update() *UsageEntityStatUpdateOne {
+	return NewUsageEntityStatClient(_m.config).UpdateOne(_m)
 }
 
-// Unwrap unwraps the UsageStat entity that was returned from a transaction after it was closed,
+// Unwrap unwraps the UsageEntityStat entity that was returned from a transaction after it was closed,
 // so that all future queries will be executed through the driver which created the transaction.
-func (_m *UsageStat) Unwrap() *UsageStat {
+func (_m *UsageEntityStat) Unwrap() *UsageEntityStat {
 	_tx, ok := _m.config.driver.(*txDriver)
 	if !ok {
-		panic("ent: UsageStat is not a transactional entity")
+		panic("ent: UsageEntityStat is not a transactional entity")
 	}
 	_m.config.driver = _tx.drv
 	return _m
 }
 
 // String implements the fmt.Stringer.
-func (_m *UsageStat) String() string {
+func (_m *UsageEntityStat) String() string {
 	var builder strings.Builder
-	builder.WriteString("UsageStat(")
+	builder.WriteString("UsageEntityStat(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
 	builder.WriteString("bucket_time=")
 	builder.WriteString(_m.BucketTime.Format(time.ANSIC))
 	builder.WriteString(", ")
-	builder.WriteString("group_id=")
-	builder.WriteString(fmt.Sprintf("%v", _m.GroupID))
+	builder.WriteString("entity_type=")
+	builder.WriteString(_m.EntityType)
+	builder.WriteString(", ")
+	builder.WriteString("entity_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.EntityID))
 	builder.WriteString(", ")
 	builder.WriteString("model=")
 	builder.WriteString(_m.Model)
@@ -238,6 +249,9 @@ func (_m *UsageStat) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("error_count=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ErrorCount))
+	builder.WriteString(", ")
+	builder.WriteString("call_count=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CallCount))
 	builder.WriteString(", ")
 	builder.WriteString("input_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.InputTokens))
@@ -260,9 +274,6 @@ func (_m *UsageStat) String() string {
 	builder.WriteString("raw_cost=")
 	builder.WriteString(fmt.Sprintf("%v", _m.RawCost))
 	builder.WriteString(", ")
-	builder.WriteString("call_count=")
-	builder.WriteString(fmt.Sprintf("%v", _m.CallCount))
-	builder.WriteString(", ")
 	builder.WriteString("ttft_total_ms=")
 	builder.WriteString(fmt.Sprintf("%v", _m.TtftTotalMs))
 	builder.WriteString(", ")
@@ -278,5 +289,5 @@ func (_m *UsageStat) String() string {
 	return builder.String()
 }
 
-// UsageStats is a parsable slice of UsageStat.
-type UsageStats []*UsageStat
+// UsageEntityStats is a parsable slice of UsageEntityStat.
+type UsageEntityStats []*UsageEntityStat

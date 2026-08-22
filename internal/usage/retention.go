@@ -18,8 +18,9 @@ import (
 
 // PartitionManager 分区管理面（repository.Repository 实现）：保留策略只需
 // DROP 过期分区 + 预建未来分区，不感知分区表内部 DDL。now/until 由调用方
-// 传入（start 边界由 now 推导，测试可注入时钟）。三表各自独立调度（保留期
-// 独立：LogRetentionDays / ErrLogRetentionDays / StatsRetentionDays）。
+// 传入（start 边界由 now 推导，测试可注入时钟）。四表各自独立调度（保留期
+// 独立：LogRetentionDays / ErrLogRetentionDays / StatsRetentionDays——后者由
+// usage_stats 与 usage_entity_stats 共用，同一循环 DROP+预建）。
 // DeleteRedemptionUsesBefore 是普通表（redemption_uses 无分区可 DROP）的
 // 有界批删路径——同为保留策略的周期清理手段，归口本接口（F3-2）。
 type PartitionManager interface {
@@ -29,6 +30,8 @@ type PartitionManager interface {
 	DropErrLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
 	EnsureUsageStatsPartitions(ctx context.Context, now, until time.Time) error
 	DropUsageStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
+	EnsureUsageEntityStatsPartitions(ctx context.Context, now, until time.Time) error
+	DropUsageEntityStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error)
 }
 
@@ -46,9 +49,9 @@ type RetentionConfig struct {
 }
 
 // RetentionWorker 按日分区保留 worker（worker.Worker 契约，Name="retention"）：
-// 每小时巡检一次——三表各自独立调度（usage_logs 按 LogRetentionDays、err_logs
-// 按 ErrLogRetentionDays、usage_stats 按 StatsRetentionDays，同一循环无新增
-// goroutine）：
+// 每小时巡检一次——四表各自独立调度（usage_logs 按 LogRetentionDays、err_logs
+// 按 ErrLogRetentionDays、usage_stats/usage_entity_stats 共用 StatsRetentionDays
+// （同一循环 DROP+预建，180d），同一循环无新增 goroutine）：
 //   - DROP 分区下界 < now - 保留天数的分区（DROP TABLE O(1)，比逐行 DELETE
 //     快 5~6 个量级；按分区名日期判定，无需查元数据——usage_stats 保留清理
 //     用户裁决 2026-08-11：PG DELETE 不释放空间，必须分区 DROP）
@@ -73,11 +76,13 @@ type RetentionWorker struct {
 	// 观测面（/ops/workers；runOnce 收尾原子写，零新增 DB）：lastPatrol 最近
 	// 一次巡检完成时刻（UnixMilli；0 = 尚未巡检）；lastDrop* 最近成功轮各表
 	// DROP 分区数（失败轮保留上轮值——缓存 runOnce 现有返回值，DROP 的 n 即
-	// 真实 DB 答案）。
-	lastPatrol      atomic.Int64
-	lastDropLogs    atomic.Int64
-	lastDropErrLogs atomic.Int64
-	lastDropStats   atomic.Int64
+	// 真实 DB 答案）；usage_entity_stats 与 usage_stats 共用 StatsRetentionDays，
+	// 独立计数 lastDropEntityStats。
+	lastPatrol          atomic.Int64
+	lastDropLogs        atomic.Int64
+	lastDropErrLogs     atomic.Int64
+	lastDropStats       atomic.Int64
+	lastDropEntityStats atomic.Int64
 }
 
 func NewRetention(cfg RetentionConfig, parts PartitionManager, log *logx.Logger) *RetentionWorker {
@@ -165,6 +170,17 @@ func (w *RetentionWorker) runOnce() {
 				w.log.Info("retention dropped usage_stats partitions", logx.Int("count", n))
 			}
 		}
+		m, err2 := w.parts.DropUsageEntityStatsPartitionsBefore(ctx, cutoff)
+		if err2 != nil {
+			if w.log != nil {
+				w.log.Warn("retention drop usage_entity_stats partitions failed", logx.Error(err2))
+			}
+		} else {
+			w.lastDropEntityStats.Store(int64(m))
+			if m > 0 && w.log != nil {
+				w.log.Info("retention dropped usage_entity_stats partitions", logx.Int("count", m))
+			}
+		}
 	}
 	// redemption_uses 有界批删（F3-2）：TTL 定死 90 天（非配置项）——90 天窗口
 	// 内的兑换记录即审计证据，超窗删除不破坏审计语义。每轮至多删 5000 行
@@ -190,6 +206,11 @@ func (w *RetentionWorker) runOnce() {
 	if err := w.parts.EnsureUsageStatsPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
 		if w.log != nil {
 			w.log.Warn("retention pre-create usage_stats partitions failed", logx.Error(err))
+		}
+	}
+	if err := w.parts.EnsureUsageEntityStatsPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
+		if w.log != nil {
+			w.log.Warn("retention pre-create usage_entity_stats partitions failed", logx.Error(err))
 		}
 	}
 	w.lastPatrol.Store(now.UnixMilli())

@@ -28,21 +28,25 @@ import (
 // usage_stats 分区复用同路线，用户决策 2026-08-11）：50k 并发量级 usage_logs
 // 增长 ~4.3 亿行/天——逐行 DELETE 清理不可行，按月分区单分区 26 亿行仍不可行
 // → PostgreSQL 原生分区表 PARTITION BY RANGE (分区键)，每日一区（usage_logs
-// ~8600 万行），保留期满直接 DROP TABLE O(1)。三表：
+// ~8600 万行），保留期满直接 DROP TABLE O(1)。四表：
 //   - usage_logs 计费明细（分区键 created_at；默认 30 天保留）
 //   - err_logs 错误审计明细（分区键 created_at；风暴背压采样后量可控，默认
 //     7 天短保留，见 usage.ErrLogRetentionDays）
 //   - usage_stats 统计聚合（分区键 bucket_time——小时桶聚合 24 桶/日分区；
 //     默认 180 天保留；用户裁决：PG DELETE 不释放空间，清理必须分区 DROP）
+//   - usage_entity_stats 实体小时卷积（分区键 bucket_time——小时桶聚合；默认
+//     180 天保留，与 usage_stats 共用 StatsRetentionDays；用户裁决 2026-08-23
+//     v2.1：实体视角专属卷积表）
 //
 // 主键 (id, 分区键)（分区表硬约束：主键必须含分区键）；id 由专用序列
 // {table}_id_seq 生成（ent 生成的 INSERT 不带 id 列 → 走 DEFAULT nextval，
 // 与普通表 bigserial 语义一致，插入自动路由到分区键所在分区）。序列 OWNED BY
 // 表列 → DROP TABLE 级联回收。
 //
-// Ensure/Drop 均按表参数化（表名 + 分区键 + 日期）——三表共用一套实现（单一
+// Ensure/Drop 均按表参数化（表名 + 分区键 + 日期）——四表共用一套实现（单一
 // 实现防漂移，P1 教训同款）；幂等语义全表通用（IF NOT EXISTS / IF EXISTS、
-// 42P07/duplicate_object 容忍、并发实例安全）。
+// 42P07/duplicate_object 容忍、并发实例安全）。升级策略（用户裁决
+// 2026-08-23）：beta 全新库自举，无迁移，bootstrap 对已分区表 no-op 预期。
 type PartitionRepo struct {
 	// driver 为 raw SQL 入口（ent 无分区 DDL 能力；bootstrap/retention 均走
 	// dialect.Driver.Exec/Query —— execUpdate 同构，txDriver 下同连接）。
@@ -192,24 +196,24 @@ var errLogIndexDDLs = []string{
 	`CREATE INDEX errlog_user_id_created_at ON err_logs (user_id, created_at)`,
 }
 
-// usageStatsColumnDefs usage_stats 分区表列定义（单一事实源；spec 2026-08-14
-// 离线聚合化重建：total_latency_ms 删除 + call_count（按次调用）+ TTFT 四列
-// （ttft_total_ms/ttft_count/ttft_max_ms/ttft_hist bigint[10] 直方图）。列定义与
-// ent schema 一致**除 ttft_hist**——PG bigint[] 数组列 ent 无类型（field.Ints 等
-// 是 JSON 语义，无法扫描 PG 数组），数组列 carve-out 不进 ent schema（评审
-// P1-1），ScanStats 改 pgx 直查扫描 []int64。分区键 bucket_time（小时桶聚合
-// 24 桶/区）。id 走 usage_stats_id_seq（ent bigserial 同款语义——INSERT 不带 id
-// 列走 DEFAULT nextval；该表经 bootstrap 建表（表不存在则建，全新安装唯一路
-// 径），零迁移逻辑。
+// usageStatsColumnDefs usage_stats 分区表列定义 v2（单一事实源；spec
+// 2026-08-14 离线聚合化重建 + spec 2026-08-23 v2 瘦身：删除 account_id/
+// template_id/user_id/is_error 四列，维度 7→3（hour × group × model）；
+// call_count（按次调用）+ TTFT 四列（ttft_total_ms/ttft_count/ttft_max_ms/
+// ttft_hist bigint[10] 直方图）保留。列定义与 ent schema 一致**除 ttft_hist**
+// ——PG bigint[] 数组列 ent 无类型（field.Ints 等是 JSON 语义，无法扫描 PG
+// 数组），数组列 carve-out 不进 ent schema（评审 P1-1），ScanStats/ScanStatsDays
+// 改 pgx 直查扫描 []int64。分区键 bucket_time（小时桶聚合 24 桶/区）。id 走
+// usage_stats_id_seq（ent bigserial 同款语义——INSERT 不带 id 列走 DEFAULT
+// nextval；该表经 bootstrap 建表（表不存在则建，全新安装唯一路径），零迁移
+// 逻辑。升级策略（用户裁决 2026-08-23）：beta 教义全新库自举，无迁移逻辑无
+// 兼容路径；bootstrap 对已分区表 no-op 是预期行为非缺陷（旧形状表不在支持
+// 范围内，重建全新卷即是迁移）。
 var usageStatsColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('usage_stats_id_seq'::regclass)`,
 	`bucket_time timestamptz NOT NULL`,
 	`group_id bigint NOT NULL DEFAULT 0`,
-	`account_id bigint NOT NULL DEFAULT 0`,
-	`template_id bigint NOT NULL DEFAULT 0`,
-	`user_id bigint NOT NULL DEFAULT 0`,
 	`model varchar NOT NULL DEFAULT ''`,
-	`is_error boolean NOT NULL DEFAULT false`,
 	`request_count bigint NOT NULL DEFAULT 0`,
 	`error_count bigint NOT NULL DEFAULT 0`,
 	`input_tokens bigint NOT NULL DEFAULT 0`,
@@ -233,6 +237,8 @@ var usageStatsColumnDefs = []string{
 	// [400,800) [800,1600) [1600,3200) [3200,6400) [6400,12800) [12800,∞)——
 	// SQL 侧 count(*) FILTER 逐档计数（PG 原生，零自定义聚合）；查询侧 Go
 	// 逐元素合并 + 桶内线性插值（顶桶回落下界 12800，见 stat_repo.go）。
+	// v2.2 裁决：ttft_hist 保留于 cube（平台级分位数草图，overview 的
+	// ScanStatsDays 消费）；实体卷积表无 hist 列。
 	`ttft_hist bigint[] NOT NULL DEFAULT '{0,0,0,0,0,0,0,0,0,0}'`,
 	`updated_at timestamptz NOT NULL`,
 }
@@ -242,12 +248,51 @@ var usageStatsCreateDDL = partitionedCreateDDL("usage_stats", "bucket_time", usa
 // usageStatsIndexDDLs 对齐 ent schema Indexes（同名同列；分区表父表索引为分区
 // 索引，子分区自动继承）。唯一索引含分区键 bucket_time（分区表硬约束：唯一
 // 索引必须含分区键；顺带即 Upsert 的 ON CONFLICT 目标列序——batched COPY
-// 两阶段 merge 在分区表上行为不变）。bucket_time 独立索引为纯写放大无查询受
-// 益（(user_id, bucket_time) 复合索引已覆盖 user_id 前缀查询面），F3-1 已删
-// （p2-18 P2-B 建议删 + 用户裁决 2026-08-13 取删）。
+// 两阶段 merge 在分区表上行为不变。唯一索引列序 = ON CONFLICT 目标列序，
+// 改序即破坏幂等写入契约，勿动）。v2 瘦身：三键 (bucket_time, group_id,
+// model) 唯一；删除旧 (user_id, bucket_time) 索引（该表已无 user 维）。
 var usageStatsIndexDDLs = []string{
-	`CREATE UNIQUE INDEX usagestat_bucket_time_group_id_account_id_template_id_user_id_model_is_error ON usage_stats (bucket_time, group_id, account_id, template_id, user_id, model, is_error)`,
-	`CREATE INDEX usagestat_user_id_bucket_time ON usage_stats (user_id, bucket_time)`,
+	`CREATE UNIQUE INDEX usagestat_bucket_time_group_id_model ON usage_stats (bucket_time, group_id, model)`,
+}
+
+// usageEntityStatsColumnDefs usage_entity_stats 分区表列定义（单一事实源；
+// spec 2026-08-23 v2.1 新表：实体小时卷积，维度 bucket_time × entity_type
+// × entity_id × model；三实体类型 account|user|key 各一条 hour×entity×model
+// GROUP BY。无 hist 列（实体视角走 percentile_cont 精确）。分区键
+// bucket_time（小时桶聚合 24 桶/区）。id 走 usage_entity_stats_id_seq
+// （ent bigserial 同款语义——INSERT 不带 id 列走 DEFAULT nextval；该表经
+// bootstrap 建表，全新安装唯一路径，零迁移逻辑。升级策略同 usage_stats——
+// beta 全新库自举，无迁移，bootstrap 对已分区表 no-op 预期）。
+var usageEntityStatsColumnDefs = []string{
+	`id bigint NOT NULL DEFAULT nextval('usage_entity_stats_id_seq'::regclass)`,
+	`bucket_time timestamptz NOT NULL`,
+	`entity_type varchar NOT NULL`,
+	`entity_id bigint NOT NULL`,
+	`model varchar NOT NULL DEFAULT ''`,
+	`request_count bigint NOT NULL DEFAULT 0`,
+	`error_count bigint NOT NULL DEFAULT 0`,
+	`call_count bigint NOT NULL DEFAULT 0`,
+	`input_tokens bigint NOT NULL DEFAULT 0`,
+	`output_tokens bigint NOT NULL DEFAULT 0`,
+	`total_tokens bigint NOT NULL DEFAULT 0`,
+	`cache_read_tokens bigint NOT NULL DEFAULT 0`,
+	`cache_creation_tokens bigint NOT NULL DEFAULT 0`,
+	`cost bigint NOT NULL DEFAULT 0`,
+	`raw_cost bigint NOT NULL DEFAULT 0`,
+	`ttft_total_ms bigint NOT NULL DEFAULT 0`,
+	`ttft_count bigint NOT NULL DEFAULT 0`,
+	`ttft_max_ms bigint NOT NULL DEFAULT 0`,
+	`updated_at timestamptz NOT NULL`,
+}
+
+var usageEntityStatsCreateDDL = partitionedCreateDDL("usage_entity_stats", "bucket_time", usageEntityStatsColumnDefs)
+
+// usageEntityStatsIndexDDLs 对齐查询契约：唯一索引含分区键 bucket_time
+// （分区表硬约束；唯一索引列序 = ON CONFLICT 目标列序，改序即破坏幂等
+// 写入契约，勿动）+ 实体钻取索引 (entity_type, entity_id, bucket_time)。
+var usageEntityStatsIndexDDLs = []string{
+	`CREATE UNIQUE INDEX usageentity_bucket_time_entity_type_entity_id_model ON usage_entity_stats (bucket_time, entity_type, entity_id, model)`,
+	`CREATE INDEX usageentity_entity_type_entity_id_bucket_time ON usage_entity_stats (entity_type, entity_id, bucket_time)`,
 }
 
 // IsTablePartitioned 查 pg_partitioned_table（pg_class.relkind='p'）判断指定
@@ -278,6 +323,11 @@ func (r *PartitionRepo) IsErrLogPartitioned(ctx context.Context) (bool, error) {
 // IsUsageStatsPartitioned usage_stats 是否分区表（bootstrap 幂等判定）。
 func (r *PartitionRepo) IsUsageStatsPartitioned(ctx context.Context) (bool, error) {
 	return r.IsTablePartitioned(ctx, "usage_stats")
+}
+
+// IsUsageEntityStatsPartitioned usage_entity_stats 是否分区表（bootstrap 幂等判定）。
+func (r *PartitionRepo) IsUsageEntityStatsPartitioned(ctx context.Context) (bool, error) {
+	return r.IsTablePartitioned(ctx, "usage_entity_stats")
 }
 
 // partitionExists 分区表是否存在（幂等预建判定；pgx 下 to_regclass 错误处理
@@ -500,6 +550,21 @@ func (r *PartitionRepo) EnsureUsageStatsPartitions(ctx context.Context, now, unt
 	return r.EnsureTablePartitions(ctx, "usage_stats", now, until)
 }
 
+// EnsureUsageEntityStatsPartitioned usage_entity_stats 分区 bootstrap（spec
+// 2026-08-23 v2.1 新表：实体小时卷积，分区键 bucket_time；建表语义同
+// ensureTablePartitioned，幂等；升级策略同 usage_stats——全新库自举，bootstrap
+// 对已分区表 no-op 预期）。
+func (r *PartitionRepo) EnsureUsageEntityStatsPartitioned(ctx context.Context, now time.Time) error {
+	return r.ensureTablePartitioned(ctx, "usage_entity_stats", "bucket_time", usageEntityStatsColumnDefs, usageEntityStatsIndexDDLs, now)
+}
+
+// EnsureUsageEntityStatsPartitions usage_entity_stats 每日分区预建（retention
+// worker 共用；分区键 bucket_time——日界分区从 now 当日零点起；与 usage_stats
+// 同 retention 窗口 StatsRetentionDays 180d）。
+func (r *PartitionRepo) EnsureUsageEntityStatsPartitions(ctx context.Context, now, until time.Time) error {
+	return r.EnsureTablePartitions(ctx, "usage_entity_stats", now, until)
+}
+
 // DropTablePartitionsBefore DROP 指定表分区下界日期早于 cutoff 的分区（O(1)，
 // 按分区名日期判定，无需查元数据）；返回删除个数。保留 >= cutoff 的分区。
 func (r *PartitionRepo) DropTablePartitionsBefore(ctx context.Context, table string, cutoff time.Time) (int, error) {
@@ -547,6 +612,13 @@ func (r *PartitionRepo) DropUsageStatsPartitionsBefore(ctx context.Context, cuto
 	return r.DropTablePartitionsBefore(ctx, "usage_stats", cutoff)
 }
 
+// DropUsageEntityStatsPartitionsBefore usage_entity_stats DROP 分区下界早于
+// cutoff 的分区（与 usage_stats 共用 StatsRetentionDays 180d，同一循环
+// DROP+预建；PG DELETE 不释放空间，必须分区 DROP O(1)）。
+func (r *PartitionRepo) DropUsageEntityStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.DropTablePartitionsBefore(ctx, "usage_entity_stats", cutoff)
+}
+
 // redemptionUsesDeleteBatchLimit redemption_uses 每轮批删上限（F3-2 批删有界：
 // 普通表无分区可 DROP，不能对齐分区表 O(1) DROP 形态——有界 DELETE 防长事务
 // 持锁；低频表单轮即清，超大批多轮收敛）。
@@ -573,7 +645,7 @@ func (r *PartitionRepo) DeleteRedemptionUsesBefore(ctx context.Context, cutoff t
 }
 
 // migrateHookExcludesPartitioned 让 ent migrate 跳过分区表（usage_logs +
-// err_logs + usage_stats）——分区表 DDL 由 ensureTablePartitioned 独占管理。
+// err_logs + usage_stats + usage_entity_stats）——分区表 DDL 由 ensureTablePartitioned 独占管理。
 // 真实 PG 实测
 // 结论（2026-08-09，ent v0.14.6 + atlas v0.36.2 + PostgreSQL 18）：atlas 能
 // 识别已存在的分区表（分区键属性），与 ent schema 的普通表定义 diff 时在规划
@@ -587,7 +659,7 @@ func migrateHookExcludesPartitioned() schema.MigrateOption {
 		return schema.CreateFunc(func(ctx context.Context, tables ...*schema.Table) error {
 			kept := make([]*schema.Table, 0, len(tables))
 			for _, t := range tables {
-				if t.Name != usagelog.Table && t.Name != errlog.Table && t.Name != usagestat.Table {
+				if t.Name != usagelog.Table && t.Name != errlog.Table && t.Name != usagestat.Table && t.Name != "usage_entity_stats" {
 					kept = append(kept, t)
 				}
 			}

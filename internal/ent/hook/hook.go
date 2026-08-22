@@ -201,6 +201,18 @@ func (f TemplateExtFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value,
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.TemplateExtMutation", m)
 }
 
+// The UsageEntityStatFunc type is an adapter to allow the use of ordinary
+// function as UsageEntityStat mutator.
+type UsageEntityStatFunc func(context.Context, *ent.UsageEntityStatMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f UsageEntityStatFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.UsageEntityStatMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UsageEntityStatMutation", m)
+}
+
 // The UsageLogFunc type is an adapter to allow the use of ordinary
 // function as UsageLog mutator.
 type UsageLogFunc func(context.Context, *ent.UsageLogMutation) (ent.Value, error)

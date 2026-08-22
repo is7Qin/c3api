@@ -702,7 +702,7 @@ func (r *Repository) DropErrLogPartitionsBefore(ctx context.Context, cutoff time
 }
 
 // EnsureUsageStatsPartitioned usage_stats 分区 bootstrap（幂等；main 装配在
-// ent migrate 之后调用——migrate 经钩子跳过分区表，三表同路线）。
+// ent migrate 之后调用——migrate 经钩子跳过分区表，四表同路线）。
 func (r *Repository) EnsureUsageStatsPartitioned(ctx context.Context, now time.Time) error {
 	return r.Partitions.EnsureUsageStatsPartitioned(ctx, now)
 }
@@ -718,6 +718,26 @@ func (r *Repository) EnsureUsageStatsPartitions(ctx context.Context, now, until 
 // DROP——retention worker 按 StatsRetentionDays 调）。
 func (r *Repository) DropUsageStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DropUsageStatsPartitionsBefore(ctx, cutoff)
+}
+
+// EnsureUsageEntityStatsPartitioned usage_entity_stats 分区 bootstrap（幂等；
+// main 装配在 ent migrate 之后调用——migrate 经钩子跳过分区表，四表同路线；
+// beta 全新库自举，无迁移，bootstrap 对已分区表 no-op 预期）。
+func (r *Repository) EnsureUsageEntityStatsPartitioned(ctx context.Context, now time.Time) error {
+	return r.Partitions.EnsureUsageEntityStatsPartitioned(ctx, now)
+}
+
+// EnsureUsageEntityStatsPartitions usage_entity_stats 预建 [trunc(now), trunc(until)] 每日
+// 分区（retention worker 防日界竞态；分区键 bucket_time，幂等；与 usage_stats
+// 共用 StatsRetentionDays 180d 同一循环 DROP+预建）。
+func (r *Repository) EnsureUsageEntityStatsPartitions(ctx context.Context, now, until time.Time) error {
+	return r.Partitions.EnsureUsageEntityStatsPartitions(ctx, now, until)
+}
+
+// DropUsageEntityStatsPartitionsBefore usage_entity_stats DROP 分区下界 < cutoff 的分区
+// （O(1)；与 usage_stats 共用 StatsRetentionDays 180d，同一循环 DROP+预建）。
+func (r *Repository) DropUsageEntityStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.Partitions.DropUsageEntityStatsPartitionsBefore(ctx, cutoff)
 }
 
 // DeleteRedemptionUsesBefore redemption_uses 有界批删（F3-2：普通表无分区可

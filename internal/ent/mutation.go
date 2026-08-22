@@ -30,6 +30,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/template"
 	"github.com/is7qin/c3api/internal/ent/templateext"
+	"github.com/is7qin/c3api/internal/ent/usageentitystat"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/ent/usagestat"
 	"github.com/is7qin/c3api/internal/ent/user"
@@ -60,6 +61,7 @@ const (
 	TypeTempBalance     = "TempBalance"
 	TypeTemplate        = "Template"
 	TypeTemplateExt     = "TemplateExt"
+	TypeUsageEntityStat = "UsageEntityStat"
 	TypeUsageLog        = "UsageLog"
 	TypeUsageStat       = "UsageStat"
 	TypeUser            = "User"
@@ -17618,6 +17620,1721 @@ func (m *TemplateExtMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown TemplateExt edge %s", name)
 }
 
+// UsageEntityStatMutation represents an operation that mutates the UsageEntityStat nodes in the graph.
+type UsageEntityStatMutation struct {
+	config
+	op                       Op
+	typ                      string
+	id                       *int64
+	bucket_time              *time.Time
+	entity_type              *string
+	entity_id                *int64
+	addentity_id             *int64
+	model                    *string
+	request_count            *int64
+	addrequest_count         *int64
+	error_count              *int64
+	adderror_count           *int64
+	call_count               *int64
+	addcall_count            *int64
+	input_tokens             *int64
+	addinput_tokens          *int64
+	output_tokens            *int64
+	addoutput_tokens         *int64
+	total_tokens             *int64
+	addtotal_tokens          *int64
+	cache_read_tokens        *int64
+	addcache_read_tokens     *int64
+	cache_creation_tokens    *int64
+	addcache_creation_tokens *int64
+	cost                     *int64
+	addcost                  *int64
+	raw_cost                 *int64
+	addraw_cost              *int64
+	ttft_total_ms            *int64
+	addttft_total_ms         *int64
+	ttft_count               *int64
+	addttft_count            *int64
+	ttft_max_ms              *int64
+	addttft_max_ms           *int64
+	updated_at               *time.Time
+	clearedFields            map[string]struct{}
+	done                     bool
+	oldValue                 func(context.Context) (*UsageEntityStat, error)
+	predicates               []predicate.UsageEntityStat
+}
+
+var _ ent.Mutation = (*UsageEntityStatMutation)(nil)
+
+// usageentitystatOption allows management of the mutation configuration using functional options.
+type usageentitystatOption func(*UsageEntityStatMutation)
+
+// newUsageEntityStatMutation creates new mutation for the UsageEntityStat entity.
+func newUsageEntityStatMutation(c config, op Op, opts ...usageentitystatOption) *UsageEntityStatMutation {
+	m := &UsageEntityStatMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeUsageEntityStat,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withUsageEntityStatID sets the ID field of the mutation.
+func withUsageEntityStatID(id int64) usageentitystatOption {
+	return func(m *UsageEntityStatMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *UsageEntityStat
+		)
+		m.oldValue = func(ctx context.Context) (*UsageEntityStat, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().UsageEntityStat.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withUsageEntityStat sets the old UsageEntityStat of the mutation.
+func withUsageEntityStat(node *UsageEntityStat) usageentitystatOption {
+	return func(m *UsageEntityStatMutation) {
+		m.oldValue = func(context.Context) (*UsageEntityStat, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m UsageEntityStatMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m UsageEntityStatMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of UsageEntityStat entities.
+func (m *UsageEntityStatMutation) SetID(id int64) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *UsageEntityStatMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *UsageEntityStatMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().UsageEntityStat.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetBucketTime sets the "bucket_time" field.
+func (m *UsageEntityStatMutation) SetBucketTime(t time.Time) {
+	m.bucket_time = &t
+}
+
+// BucketTime returns the value of the "bucket_time" field in the mutation.
+func (m *UsageEntityStatMutation) BucketTime() (r time.Time, exists bool) {
+	v := m.bucket_time
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBucketTime returns the old "bucket_time" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldBucketTime(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBucketTime is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBucketTime requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBucketTime: %w", err)
+	}
+	return oldValue.BucketTime, nil
+}
+
+// ResetBucketTime resets all changes to the "bucket_time" field.
+func (m *UsageEntityStatMutation) ResetBucketTime() {
+	m.bucket_time = nil
+}
+
+// SetEntityType sets the "entity_type" field.
+func (m *UsageEntityStatMutation) SetEntityType(s string) {
+	m.entity_type = &s
+}
+
+// EntityType returns the value of the "entity_type" field in the mutation.
+func (m *UsageEntityStatMutation) EntityType() (r string, exists bool) {
+	v := m.entity_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEntityType returns the old "entity_type" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldEntityType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEntityType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEntityType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEntityType: %w", err)
+	}
+	return oldValue.EntityType, nil
+}
+
+// ResetEntityType resets all changes to the "entity_type" field.
+func (m *UsageEntityStatMutation) ResetEntityType() {
+	m.entity_type = nil
+}
+
+// SetEntityID sets the "entity_id" field.
+func (m *UsageEntityStatMutation) SetEntityID(i int64) {
+	m.entity_id = &i
+	m.addentity_id = nil
+}
+
+// EntityID returns the value of the "entity_id" field in the mutation.
+func (m *UsageEntityStatMutation) EntityID() (r int64, exists bool) {
+	v := m.entity_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEntityID returns the old "entity_id" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldEntityID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEntityID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEntityID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEntityID: %w", err)
+	}
+	return oldValue.EntityID, nil
+}
+
+// AddEntityID adds i to the "entity_id" field.
+func (m *UsageEntityStatMutation) AddEntityID(i int64) {
+	if m.addentity_id != nil {
+		*m.addentity_id += i
+	} else {
+		m.addentity_id = &i
+	}
+}
+
+// AddedEntityID returns the value that was added to the "entity_id" field in this mutation.
+func (m *UsageEntityStatMutation) AddedEntityID() (r int64, exists bool) {
+	v := m.addentity_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEntityID resets all changes to the "entity_id" field.
+func (m *UsageEntityStatMutation) ResetEntityID() {
+	m.entity_id = nil
+	m.addentity_id = nil
+}
+
+// SetModel sets the "model" field.
+func (m *UsageEntityStatMutation) SetModel(s string) {
+	m.model = &s
+}
+
+// Model returns the value of the "model" field in the mutation.
+func (m *UsageEntityStatMutation) Model() (r string, exists bool) {
+	v := m.model
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldModel returns the old "model" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldModel(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldModel is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldModel requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldModel: %w", err)
+	}
+	return oldValue.Model, nil
+}
+
+// ResetModel resets all changes to the "model" field.
+func (m *UsageEntityStatMutation) ResetModel() {
+	m.model = nil
+}
+
+// SetRequestCount sets the "request_count" field.
+func (m *UsageEntityStatMutation) SetRequestCount(i int64) {
+	m.request_count = &i
+	m.addrequest_count = nil
+}
+
+// RequestCount returns the value of the "request_count" field in the mutation.
+func (m *UsageEntityStatMutation) RequestCount() (r int64, exists bool) {
+	v := m.request_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestCount returns the old "request_count" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldRequestCount(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestCount: %w", err)
+	}
+	return oldValue.RequestCount, nil
+}
+
+// AddRequestCount adds i to the "request_count" field.
+func (m *UsageEntityStatMutation) AddRequestCount(i int64) {
+	if m.addrequest_count != nil {
+		*m.addrequest_count += i
+	} else {
+		m.addrequest_count = &i
+	}
+}
+
+// AddedRequestCount returns the value that was added to the "request_count" field in this mutation.
+func (m *UsageEntityStatMutation) AddedRequestCount() (r int64, exists bool) {
+	v := m.addrequest_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRequestCount resets all changes to the "request_count" field.
+func (m *UsageEntityStatMutation) ResetRequestCount() {
+	m.request_count = nil
+	m.addrequest_count = nil
+}
+
+// SetErrorCount sets the "error_count" field.
+func (m *UsageEntityStatMutation) SetErrorCount(i int64) {
+	m.error_count = &i
+	m.adderror_count = nil
+}
+
+// ErrorCount returns the value of the "error_count" field in the mutation.
+func (m *UsageEntityStatMutation) ErrorCount() (r int64, exists bool) {
+	v := m.error_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldErrorCount returns the old "error_count" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldErrorCount(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldErrorCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldErrorCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldErrorCount: %w", err)
+	}
+	return oldValue.ErrorCount, nil
+}
+
+// AddErrorCount adds i to the "error_count" field.
+func (m *UsageEntityStatMutation) AddErrorCount(i int64) {
+	if m.adderror_count != nil {
+		*m.adderror_count += i
+	} else {
+		m.adderror_count = &i
+	}
+}
+
+// AddedErrorCount returns the value that was added to the "error_count" field in this mutation.
+func (m *UsageEntityStatMutation) AddedErrorCount() (r int64, exists bool) {
+	v := m.adderror_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetErrorCount resets all changes to the "error_count" field.
+func (m *UsageEntityStatMutation) ResetErrorCount() {
+	m.error_count = nil
+	m.adderror_count = nil
+}
+
+// SetCallCount sets the "call_count" field.
+func (m *UsageEntityStatMutation) SetCallCount(i int64) {
+	m.call_count = &i
+	m.addcall_count = nil
+}
+
+// CallCount returns the value of the "call_count" field in the mutation.
+func (m *UsageEntityStatMutation) CallCount() (r int64, exists bool) {
+	v := m.call_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCallCount returns the old "call_count" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldCallCount(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCallCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCallCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCallCount: %w", err)
+	}
+	return oldValue.CallCount, nil
+}
+
+// AddCallCount adds i to the "call_count" field.
+func (m *UsageEntityStatMutation) AddCallCount(i int64) {
+	if m.addcall_count != nil {
+		*m.addcall_count += i
+	} else {
+		m.addcall_count = &i
+	}
+}
+
+// AddedCallCount returns the value that was added to the "call_count" field in this mutation.
+func (m *UsageEntityStatMutation) AddedCallCount() (r int64, exists bool) {
+	v := m.addcall_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetCallCount resets all changes to the "call_count" field.
+func (m *UsageEntityStatMutation) ResetCallCount() {
+	m.call_count = nil
+	m.addcall_count = nil
+}
+
+// SetInputTokens sets the "input_tokens" field.
+func (m *UsageEntityStatMutation) SetInputTokens(i int64) {
+	m.input_tokens = &i
+	m.addinput_tokens = nil
+}
+
+// InputTokens returns the value of the "input_tokens" field in the mutation.
+func (m *UsageEntityStatMutation) InputTokens() (r int64, exists bool) {
+	v := m.input_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInputTokens returns the old "input_tokens" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldInputTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInputTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInputTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInputTokens: %w", err)
+	}
+	return oldValue.InputTokens, nil
+}
+
+// AddInputTokens adds i to the "input_tokens" field.
+func (m *UsageEntityStatMutation) AddInputTokens(i int64) {
+	if m.addinput_tokens != nil {
+		*m.addinput_tokens += i
+	} else {
+		m.addinput_tokens = &i
+	}
+}
+
+// AddedInputTokens returns the value that was added to the "input_tokens" field in this mutation.
+func (m *UsageEntityStatMutation) AddedInputTokens() (r int64, exists bool) {
+	v := m.addinput_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetInputTokens resets all changes to the "input_tokens" field.
+func (m *UsageEntityStatMutation) ResetInputTokens() {
+	m.input_tokens = nil
+	m.addinput_tokens = nil
+}
+
+// SetOutputTokens sets the "output_tokens" field.
+func (m *UsageEntityStatMutation) SetOutputTokens(i int64) {
+	m.output_tokens = &i
+	m.addoutput_tokens = nil
+}
+
+// OutputTokens returns the value of the "output_tokens" field in the mutation.
+func (m *UsageEntityStatMutation) OutputTokens() (r int64, exists bool) {
+	v := m.output_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOutputTokens returns the old "output_tokens" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldOutputTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOutputTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOutputTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOutputTokens: %w", err)
+	}
+	return oldValue.OutputTokens, nil
+}
+
+// AddOutputTokens adds i to the "output_tokens" field.
+func (m *UsageEntityStatMutation) AddOutputTokens(i int64) {
+	if m.addoutput_tokens != nil {
+		*m.addoutput_tokens += i
+	} else {
+		m.addoutput_tokens = &i
+	}
+}
+
+// AddedOutputTokens returns the value that was added to the "output_tokens" field in this mutation.
+func (m *UsageEntityStatMutation) AddedOutputTokens() (r int64, exists bool) {
+	v := m.addoutput_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetOutputTokens resets all changes to the "output_tokens" field.
+func (m *UsageEntityStatMutation) ResetOutputTokens() {
+	m.output_tokens = nil
+	m.addoutput_tokens = nil
+}
+
+// SetTotalTokens sets the "total_tokens" field.
+func (m *UsageEntityStatMutation) SetTotalTokens(i int64) {
+	m.total_tokens = &i
+	m.addtotal_tokens = nil
+}
+
+// TotalTokens returns the value of the "total_tokens" field in the mutation.
+func (m *UsageEntityStatMutation) TotalTokens() (r int64, exists bool) {
+	v := m.total_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTotalTokens returns the old "total_tokens" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldTotalTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTotalTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTotalTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTotalTokens: %w", err)
+	}
+	return oldValue.TotalTokens, nil
+}
+
+// AddTotalTokens adds i to the "total_tokens" field.
+func (m *UsageEntityStatMutation) AddTotalTokens(i int64) {
+	if m.addtotal_tokens != nil {
+		*m.addtotal_tokens += i
+	} else {
+		m.addtotal_tokens = &i
+	}
+}
+
+// AddedTotalTokens returns the value that was added to the "total_tokens" field in this mutation.
+func (m *UsageEntityStatMutation) AddedTotalTokens() (r int64, exists bool) {
+	v := m.addtotal_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTotalTokens resets all changes to the "total_tokens" field.
+func (m *UsageEntityStatMutation) ResetTotalTokens() {
+	m.total_tokens = nil
+	m.addtotal_tokens = nil
+}
+
+// SetCacheReadTokens sets the "cache_read_tokens" field.
+func (m *UsageEntityStatMutation) SetCacheReadTokens(i int64) {
+	m.cache_read_tokens = &i
+	m.addcache_read_tokens = nil
+}
+
+// CacheReadTokens returns the value of the "cache_read_tokens" field in the mutation.
+func (m *UsageEntityStatMutation) CacheReadTokens() (r int64, exists bool) {
+	v := m.cache_read_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCacheReadTokens returns the old "cache_read_tokens" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldCacheReadTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCacheReadTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCacheReadTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCacheReadTokens: %w", err)
+	}
+	return oldValue.CacheReadTokens, nil
+}
+
+// AddCacheReadTokens adds i to the "cache_read_tokens" field.
+func (m *UsageEntityStatMutation) AddCacheReadTokens(i int64) {
+	if m.addcache_read_tokens != nil {
+		*m.addcache_read_tokens += i
+	} else {
+		m.addcache_read_tokens = &i
+	}
+}
+
+// AddedCacheReadTokens returns the value that was added to the "cache_read_tokens" field in this mutation.
+func (m *UsageEntityStatMutation) AddedCacheReadTokens() (r int64, exists bool) {
+	v := m.addcache_read_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetCacheReadTokens resets all changes to the "cache_read_tokens" field.
+func (m *UsageEntityStatMutation) ResetCacheReadTokens() {
+	m.cache_read_tokens = nil
+	m.addcache_read_tokens = nil
+}
+
+// SetCacheCreationTokens sets the "cache_creation_tokens" field.
+func (m *UsageEntityStatMutation) SetCacheCreationTokens(i int64) {
+	m.cache_creation_tokens = &i
+	m.addcache_creation_tokens = nil
+}
+
+// CacheCreationTokens returns the value of the "cache_creation_tokens" field in the mutation.
+func (m *UsageEntityStatMutation) CacheCreationTokens() (r int64, exists bool) {
+	v := m.cache_creation_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCacheCreationTokens returns the old "cache_creation_tokens" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldCacheCreationTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCacheCreationTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCacheCreationTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCacheCreationTokens: %w", err)
+	}
+	return oldValue.CacheCreationTokens, nil
+}
+
+// AddCacheCreationTokens adds i to the "cache_creation_tokens" field.
+func (m *UsageEntityStatMutation) AddCacheCreationTokens(i int64) {
+	if m.addcache_creation_tokens != nil {
+		*m.addcache_creation_tokens += i
+	} else {
+		m.addcache_creation_tokens = &i
+	}
+}
+
+// AddedCacheCreationTokens returns the value that was added to the "cache_creation_tokens" field in this mutation.
+func (m *UsageEntityStatMutation) AddedCacheCreationTokens() (r int64, exists bool) {
+	v := m.addcache_creation_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetCacheCreationTokens resets all changes to the "cache_creation_tokens" field.
+func (m *UsageEntityStatMutation) ResetCacheCreationTokens() {
+	m.cache_creation_tokens = nil
+	m.addcache_creation_tokens = nil
+}
+
+// SetCost sets the "cost" field.
+func (m *UsageEntityStatMutation) SetCost(i int64) {
+	m.cost = &i
+	m.addcost = nil
+}
+
+// Cost returns the value of the "cost" field in the mutation.
+func (m *UsageEntityStatMutation) Cost() (r int64, exists bool) {
+	v := m.cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCost returns the old "cost" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldCost(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCost is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCost requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCost: %w", err)
+	}
+	return oldValue.Cost, nil
+}
+
+// AddCost adds i to the "cost" field.
+func (m *UsageEntityStatMutation) AddCost(i int64) {
+	if m.addcost != nil {
+		*m.addcost += i
+	} else {
+		m.addcost = &i
+	}
+}
+
+// AddedCost returns the value that was added to the "cost" field in this mutation.
+func (m *UsageEntityStatMutation) AddedCost() (r int64, exists bool) {
+	v := m.addcost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetCost resets all changes to the "cost" field.
+func (m *UsageEntityStatMutation) ResetCost() {
+	m.cost = nil
+	m.addcost = nil
+}
+
+// SetRawCost sets the "raw_cost" field.
+func (m *UsageEntityStatMutation) SetRawCost(i int64) {
+	m.raw_cost = &i
+	m.addraw_cost = nil
+}
+
+// RawCost returns the value of the "raw_cost" field in the mutation.
+func (m *UsageEntityStatMutation) RawCost() (r int64, exists bool) {
+	v := m.raw_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRawCost returns the old "raw_cost" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldRawCost(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRawCost is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRawCost requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRawCost: %w", err)
+	}
+	return oldValue.RawCost, nil
+}
+
+// AddRawCost adds i to the "raw_cost" field.
+func (m *UsageEntityStatMutation) AddRawCost(i int64) {
+	if m.addraw_cost != nil {
+		*m.addraw_cost += i
+	} else {
+		m.addraw_cost = &i
+	}
+}
+
+// AddedRawCost returns the value that was added to the "raw_cost" field in this mutation.
+func (m *UsageEntityStatMutation) AddedRawCost() (r int64, exists bool) {
+	v := m.addraw_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRawCost resets all changes to the "raw_cost" field.
+func (m *UsageEntityStatMutation) ResetRawCost() {
+	m.raw_cost = nil
+	m.addraw_cost = nil
+}
+
+// SetTtftTotalMs sets the "ttft_total_ms" field.
+func (m *UsageEntityStatMutation) SetTtftTotalMs(i int64) {
+	m.ttft_total_ms = &i
+	m.addttft_total_ms = nil
+}
+
+// TtftTotalMs returns the value of the "ttft_total_ms" field in the mutation.
+func (m *UsageEntityStatMutation) TtftTotalMs() (r int64, exists bool) {
+	v := m.ttft_total_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTtftTotalMs returns the old "ttft_total_ms" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldTtftTotalMs(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTtftTotalMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTtftTotalMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTtftTotalMs: %w", err)
+	}
+	return oldValue.TtftTotalMs, nil
+}
+
+// AddTtftTotalMs adds i to the "ttft_total_ms" field.
+func (m *UsageEntityStatMutation) AddTtftTotalMs(i int64) {
+	if m.addttft_total_ms != nil {
+		*m.addttft_total_ms += i
+	} else {
+		m.addttft_total_ms = &i
+	}
+}
+
+// AddedTtftTotalMs returns the value that was added to the "ttft_total_ms" field in this mutation.
+func (m *UsageEntityStatMutation) AddedTtftTotalMs() (r int64, exists bool) {
+	v := m.addttft_total_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTtftTotalMs resets all changes to the "ttft_total_ms" field.
+func (m *UsageEntityStatMutation) ResetTtftTotalMs() {
+	m.ttft_total_ms = nil
+	m.addttft_total_ms = nil
+}
+
+// SetTtftCount sets the "ttft_count" field.
+func (m *UsageEntityStatMutation) SetTtftCount(i int64) {
+	m.ttft_count = &i
+	m.addttft_count = nil
+}
+
+// TtftCount returns the value of the "ttft_count" field in the mutation.
+func (m *UsageEntityStatMutation) TtftCount() (r int64, exists bool) {
+	v := m.ttft_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTtftCount returns the old "ttft_count" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldTtftCount(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTtftCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTtftCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTtftCount: %w", err)
+	}
+	return oldValue.TtftCount, nil
+}
+
+// AddTtftCount adds i to the "ttft_count" field.
+func (m *UsageEntityStatMutation) AddTtftCount(i int64) {
+	if m.addttft_count != nil {
+		*m.addttft_count += i
+	} else {
+		m.addttft_count = &i
+	}
+}
+
+// AddedTtftCount returns the value that was added to the "ttft_count" field in this mutation.
+func (m *UsageEntityStatMutation) AddedTtftCount() (r int64, exists bool) {
+	v := m.addttft_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTtftCount resets all changes to the "ttft_count" field.
+func (m *UsageEntityStatMutation) ResetTtftCount() {
+	m.ttft_count = nil
+	m.addttft_count = nil
+}
+
+// SetTtftMaxMs sets the "ttft_max_ms" field.
+func (m *UsageEntityStatMutation) SetTtftMaxMs(i int64) {
+	m.ttft_max_ms = &i
+	m.addttft_max_ms = nil
+}
+
+// TtftMaxMs returns the value of the "ttft_max_ms" field in the mutation.
+func (m *UsageEntityStatMutation) TtftMaxMs() (r int64, exists bool) {
+	v := m.ttft_max_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTtftMaxMs returns the old "ttft_max_ms" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldTtftMaxMs(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTtftMaxMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTtftMaxMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTtftMaxMs: %w", err)
+	}
+	return oldValue.TtftMaxMs, nil
+}
+
+// AddTtftMaxMs adds i to the "ttft_max_ms" field.
+func (m *UsageEntityStatMutation) AddTtftMaxMs(i int64) {
+	if m.addttft_max_ms != nil {
+		*m.addttft_max_ms += i
+	} else {
+		m.addttft_max_ms = &i
+	}
+}
+
+// AddedTtftMaxMs returns the value that was added to the "ttft_max_ms" field in this mutation.
+func (m *UsageEntityStatMutation) AddedTtftMaxMs() (r int64, exists bool) {
+	v := m.addttft_max_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTtftMaxMs resets all changes to the "ttft_max_ms" field.
+func (m *UsageEntityStatMutation) ResetTtftMaxMs() {
+	m.ttft_max_ms = nil
+	m.addttft_max_ms = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *UsageEntityStatMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *UsageEntityStatMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the UsageEntityStat entity.
+// If the UsageEntityStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageEntityStatMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *UsageEntityStatMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the UsageEntityStatMutation builder.
+func (m *UsageEntityStatMutation) Where(ps ...predicate.UsageEntityStat) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the UsageEntityStatMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *UsageEntityStatMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.UsageEntityStat, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *UsageEntityStatMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *UsageEntityStatMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (UsageEntityStat).
+func (m *UsageEntityStatMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *UsageEntityStatMutation) Fields() []string {
+	fields := make([]string, 0, 18)
+	if m.bucket_time != nil {
+		fields = append(fields, usageentitystat.FieldBucketTime)
+	}
+	if m.entity_type != nil {
+		fields = append(fields, usageentitystat.FieldEntityType)
+	}
+	if m.entity_id != nil {
+		fields = append(fields, usageentitystat.FieldEntityID)
+	}
+	if m.model != nil {
+		fields = append(fields, usageentitystat.FieldModel)
+	}
+	if m.request_count != nil {
+		fields = append(fields, usageentitystat.FieldRequestCount)
+	}
+	if m.error_count != nil {
+		fields = append(fields, usageentitystat.FieldErrorCount)
+	}
+	if m.call_count != nil {
+		fields = append(fields, usageentitystat.FieldCallCount)
+	}
+	if m.input_tokens != nil {
+		fields = append(fields, usageentitystat.FieldInputTokens)
+	}
+	if m.output_tokens != nil {
+		fields = append(fields, usageentitystat.FieldOutputTokens)
+	}
+	if m.total_tokens != nil {
+		fields = append(fields, usageentitystat.FieldTotalTokens)
+	}
+	if m.cache_read_tokens != nil {
+		fields = append(fields, usageentitystat.FieldCacheReadTokens)
+	}
+	if m.cache_creation_tokens != nil {
+		fields = append(fields, usageentitystat.FieldCacheCreationTokens)
+	}
+	if m.cost != nil {
+		fields = append(fields, usageentitystat.FieldCost)
+	}
+	if m.raw_cost != nil {
+		fields = append(fields, usageentitystat.FieldRawCost)
+	}
+	if m.ttft_total_ms != nil {
+		fields = append(fields, usageentitystat.FieldTtftTotalMs)
+	}
+	if m.ttft_count != nil {
+		fields = append(fields, usageentitystat.FieldTtftCount)
+	}
+	if m.ttft_max_ms != nil {
+		fields = append(fields, usageentitystat.FieldTtftMaxMs)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, usageentitystat.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *UsageEntityStatMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case usageentitystat.FieldBucketTime:
+		return m.BucketTime()
+	case usageentitystat.FieldEntityType:
+		return m.EntityType()
+	case usageentitystat.FieldEntityID:
+		return m.EntityID()
+	case usageentitystat.FieldModel:
+		return m.Model()
+	case usageentitystat.FieldRequestCount:
+		return m.RequestCount()
+	case usageentitystat.FieldErrorCount:
+		return m.ErrorCount()
+	case usageentitystat.FieldCallCount:
+		return m.CallCount()
+	case usageentitystat.FieldInputTokens:
+		return m.InputTokens()
+	case usageentitystat.FieldOutputTokens:
+		return m.OutputTokens()
+	case usageentitystat.FieldTotalTokens:
+		return m.TotalTokens()
+	case usageentitystat.FieldCacheReadTokens:
+		return m.CacheReadTokens()
+	case usageentitystat.FieldCacheCreationTokens:
+		return m.CacheCreationTokens()
+	case usageentitystat.FieldCost:
+		return m.Cost()
+	case usageentitystat.FieldRawCost:
+		return m.RawCost()
+	case usageentitystat.FieldTtftTotalMs:
+		return m.TtftTotalMs()
+	case usageentitystat.FieldTtftCount:
+		return m.TtftCount()
+	case usageentitystat.FieldTtftMaxMs:
+		return m.TtftMaxMs()
+	case usageentitystat.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *UsageEntityStatMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case usageentitystat.FieldBucketTime:
+		return m.OldBucketTime(ctx)
+	case usageentitystat.FieldEntityType:
+		return m.OldEntityType(ctx)
+	case usageentitystat.FieldEntityID:
+		return m.OldEntityID(ctx)
+	case usageentitystat.FieldModel:
+		return m.OldModel(ctx)
+	case usageentitystat.FieldRequestCount:
+		return m.OldRequestCount(ctx)
+	case usageentitystat.FieldErrorCount:
+		return m.OldErrorCount(ctx)
+	case usageentitystat.FieldCallCount:
+		return m.OldCallCount(ctx)
+	case usageentitystat.FieldInputTokens:
+		return m.OldInputTokens(ctx)
+	case usageentitystat.FieldOutputTokens:
+		return m.OldOutputTokens(ctx)
+	case usageentitystat.FieldTotalTokens:
+		return m.OldTotalTokens(ctx)
+	case usageentitystat.FieldCacheReadTokens:
+		return m.OldCacheReadTokens(ctx)
+	case usageentitystat.FieldCacheCreationTokens:
+		return m.OldCacheCreationTokens(ctx)
+	case usageentitystat.FieldCost:
+		return m.OldCost(ctx)
+	case usageentitystat.FieldRawCost:
+		return m.OldRawCost(ctx)
+	case usageentitystat.FieldTtftTotalMs:
+		return m.OldTtftTotalMs(ctx)
+	case usageentitystat.FieldTtftCount:
+		return m.OldTtftCount(ctx)
+	case usageentitystat.FieldTtftMaxMs:
+		return m.OldTtftMaxMs(ctx)
+	case usageentitystat.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown UsageEntityStat field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *UsageEntityStatMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case usageentitystat.FieldBucketTime:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBucketTime(v)
+		return nil
+	case usageentitystat.FieldEntityType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEntityType(v)
+		return nil
+	case usageentitystat.FieldEntityID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEntityID(v)
+		return nil
+	case usageentitystat.FieldModel:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetModel(v)
+		return nil
+	case usageentitystat.FieldRequestCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestCount(v)
+		return nil
+	case usageentitystat.FieldErrorCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetErrorCount(v)
+		return nil
+	case usageentitystat.FieldCallCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCallCount(v)
+		return nil
+	case usageentitystat.FieldInputTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInputTokens(v)
+		return nil
+	case usageentitystat.FieldOutputTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOutputTokens(v)
+		return nil
+	case usageentitystat.FieldTotalTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTotalTokens(v)
+		return nil
+	case usageentitystat.FieldCacheReadTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCacheReadTokens(v)
+		return nil
+	case usageentitystat.FieldCacheCreationTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCacheCreationTokens(v)
+		return nil
+	case usageentitystat.FieldCost:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCost(v)
+		return nil
+	case usageentitystat.FieldRawCost:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRawCost(v)
+		return nil
+	case usageentitystat.FieldTtftTotalMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTtftTotalMs(v)
+		return nil
+	case usageentitystat.FieldTtftCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTtftCount(v)
+		return nil
+	case usageentitystat.FieldTtftMaxMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTtftMaxMs(v)
+		return nil
+	case usageentitystat.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown UsageEntityStat field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *UsageEntityStatMutation) AddedFields() []string {
+	var fields []string
+	if m.addentity_id != nil {
+		fields = append(fields, usageentitystat.FieldEntityID)
+	}
+	if m.addrequest_count != nil {
+		fields = append(fields, usageentitystat.FieldRequestCount)
+	}
+	if m.adderror_count != nil {
+		fields = append(fields, usageentitystat.FieldErrorCount)
+	}
+	if m.addcall_count != nil {
+		fields = append(fields, usageentitystat.FieldCallCount)
+	}
+	if m.addinput_tokens != nil {
+		fields = append(fields, usageentitystat.FieldInputTokens)
+	}
+	if m.addoutput_tokens != nil {
+		fields = append(fields, usageentitystat.FieldOutputTokens)
+	}
+	if m.addtotal_tokens != nil {
+		fields = append(fields, usageentitystat.FieldTotalTokens)
+	}
+	if m.addcache_read_tokens != nil {
+		fields = append(fields, usageentitystat.FieldCacheReadTokens)
+	}
+	if m.addcache_creation_tokens != nil {
+		fields = append(fields, usageentitystat.FieldCacheCreationTokens)
+	}
+	if m.addcost != nil {
+		fields = append(fields, usageentitystat.FieldCost)
+	}
+	if m.addraw_cost != nil {
+		fields = append(fields, usageentitystat.FieldRawCost)
+	}
+	if m.addttft_total_ms != nil {
+		fields = append(fields, usageentitystat.FieldTtftTotalMs)
+	}
+	if m.addttft_count != nil {
+		fields = append(fields, usageentitystat.FieldTtftCount)
+	}
+	if m.addttft_max_ms != nil {
+		fields = append(fields, usageentitystat.FieldTtftMaxMs)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *UsageEntityStatMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case usageentitystat.FieldEntityID:
+		return m.AddedEntityID()
+	case usageentitystat.FieldRequestCount:
+		return m.AddedRequestCount()
+	case usageentitystat.FieldErrorCount:
+		return m.AddedErrorCount()
+	case usageentitystat.FieldCallCount:
+		return m.AddedCallCount()
+	case usageentitystat.FieldInputTokens:
+		return m.AddedInputTokens()
+	case usageentitystat.FieldOutputTokens:
+		return m.AddedOutputTokens()
+	case usageentitystat.FieldTotalTokens:
+		return m.AddedTotalTokens()
+	case usageentitystat.FieldCacheReadTokens:
+		return m.AddedCacheReadTokens()
+	case usageentitystat.FieldCacheCreationTokens:
+		return m.AddedCacheCreationTokens()
+	case usageentitystat.FieldCost:
+		return m.AddedCost()
+	case usageentitystat.FieldRawCost:
+		return m.AddedRawCost()
+	case usageentitystat.FieldTtftTotalMs:
+		return m.AddedTtftTotalMs()
+	case usageentitystat.FieldTtftCount:
+		return m.AddedTtftCount()
+	case usageentitystat.FieldTtftMaxMs:
+		return m.AddedTtftMaxMs()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *UsageEntityStatMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case usageentitystat.FieldEntityID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEntityID(v)
+		return nil
+	case usageentitystat.FieldRequestCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRequestCount(v)
+		return nil
+	case usageentitystat.FieldErrorCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddErrorCount(v)
+		return nil
+	case usageentitystat.FieldCallCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCallCount(v)
+		return nil
+	case usageentitystat.FieldInputTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddInputTokens(v)
+		return nil
+	case usageentitystat.FieldOutputTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOutputTokens(v)
+		return nil
+	case usageentitystat.FieldTotalTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTotalTokens(v)
+		return nil
+	case usageentitystat.FieldCacheReadTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCacheReadTokens(v)
+		return nil
+	case usageentitystat.FieldCacheCreationTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCacheCreationTokens(v)
+		return nil
+	case usageentitystat.FieldCost:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCost(v)
+		return nil
+	case usageentitystat.FieldRawCost:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRawCost(v)
+		return nil
+	case usageentitystat.FieldTtftTotalMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTtftTotalMs(v)
+		return nil
+	case usageentitystat.FieldTtftCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTtftCount(v)
+		return nil
+	case usageentitystat.FieldTtftMaxMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTtftMaxMs(v)
+		return nil
+	}
+	return fmt.Errorf("unknown UsageEntityStat numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *UsageEntityStatMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *UsageEntityStatMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *UsageEntityStatMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown UsageEntityStat nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *UsageEntityStatMutation) ResetField(name string) error {
+	switch name {
+	case usageentitystat.FieldBucketTime:
+		m.ResetBucketTime()
+		return nil
+	case usageentitystat.FieldEntityType:
+		m.ResetEntityType()
+		return nil
+	case usageentitystat.FieldEntityID:
+		m.ResetEntityID()
+		return nil
+	case usageentitystat.FieldModel:
+		m.ResetModel()
+		return nil
+	case usageentitystat.FieldRequestCount:
+		m.ResetRequestCount()
+		return nil
+	case usageentitystat.FieldErrorCount:
+		m.ResetErrorCount()
+		return nil
+	case usageentitystat.FieldCallCount:
+		m.ResetCallCount()
+		return nil
+	case usageentitystat.FieldInputTokens:
+		m.ResetInputTokens()
+		return nil
+	case usageentitystat.FieldOutputTokens:
+		m.ResetOutputTokens()
+		return nil
+	case usageentitystat.FieldTotalTokens:
+		m.ResetTotalTokens()
+		return nil
+	case usageentitystat.FieldCacheReadTokens:
+		m.ResetCacheReadTokens()
+		return nil
+	case usageentitystat.FieldCacheCreationTokens:
+		m.ResetCacheCreationTokens()
+		return nil
+	case usageentitystat.FieldCost:
+		m.ResetCost()
+		return nil
+	case usageentitystat.FieldRawCost:
+		m.ResetRawCost()
+		return nil
+	case usageentitystat.FieldTtftTotalMs:
+		m.ResetTtftTotalMs()
+		return nil
+	case usageentitystat.FieldTtftCount:
+		m.ResetTtftCount()
+		return nil
+	case usageentitystat.FieldTtftMaxMs:
+		m.ResetTtftMaxMs()
+		return nil
+	case usageentitystat.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown UsageEntityStat field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *UsageEntityStatMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *UsageEntityStatMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *UsageEntityStatMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *UsageEntityStatMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *UsageEntityStatMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *UsageEntityStatMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *UsageEntityStatMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown UsageEntityStat unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *UsageEntityStatMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown UsageEntityStat edge %s", name)
+}
+
 // UsageLogMutation represents an operation that mutates the UsageLog nodes in the graph.
 type UsageLogMutation struct {
 	config
@@ -20468,14 +22185,7 @@ type UsageStatMutation struct {
 	bucket_time              *time.Time
 	group_id                 *int64
 	addgroup_id              *int64
-	account_id               *int64
-	addaccount_id            *int64
-	template_id              *int64
-	addtemplate_id           *int64
-	user_id                  *int64
-	adduser_id               *int64
 	model                    *string
-	is_error                 *bool
 	request_count            *int64
 	addrequest_count         *int64
 	error_count              *int64
@@ -20492,6 +22202,8 @@ type UsageStatMutation struct {
 	addcache_creation_tokens *int64
 	cost                     *int64
 	addcost                  *int64
+	raw_cost                 *int64
+	addraw_cost              *int64
 	call_count               *int64
 	addcall_count            *int64
 	ttft_total_ms            *int64
@@ -20703,174 +22415,6 @@ func (m *UsageStatMutation) ResetGroupID() {
 	m.addgroup_id = nil
 }
 
-// SetAccountID sets the "account_id" field.
-func (m *UsageStatMutation) SetAccountID(i int64) {
-	m.account_id = &i
-	m.addaccount_id = nil
-}
-
-// AccountID returns the value of the "account_id" field in the mutation.
-func (m *UsageStatMutation) AccountID() (r int64, exists bool) {
-	v := m.account_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAccountID returns the old "account_id" field's value of the UsageStat entity.
-// If the UsageStat object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *UsageStatMutation) OldAccountID(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAccountID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
-	}
-	return oldValue.AccountID, nil
-}
-
-// AddAccountID adds i to the "account_id" field.
-func (m *UsageStatMutation) AddAccountID(i int64) {
-	if m.addaccount_id != nil {
-		*m.addaccount_id += i
-	} else {
-		m.addaccount_id = &i
-	}
-}
-
-// AddedAccountID returns the value that was added to the "account_id" field in this mutation.
-func (m *UsageStatMutation) AddedAccountID() (r int64, exists bool) {
-	v := m.addaccount_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAccountID resets all changes to the "account_id" field.
-func (m *UsageStatMutation) ResetAccountID() {
-	m.account_id = nil
-	m.addaccount_id = nil
-}
-
-// SetTemplateID sets the "template_id" field.
-func (m *UsageStatMutation) SetTemplateID(i int64) {
-	m.template_id = &i
-	m.addtemplate_id = nil
-}
-
-// TemplateID returns the value of the "template_id" field in the mutation.
-func (m *UsageStatMutation) TemplateID() (r int64, exists bool) {
-	v := m.template_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTemplateID returns the old "template_id" field's value of the UsageStat entity.
-// If the UsageStat object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *UsageStatMutation) OldTemplateID(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTemplateID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTemplateID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTemplateID: %w", err)
-	}
-	return oldValue.TemplateID, nil
-}
-
-// AddTemplateID adds i to the "template_id" field.
-func (m *UsageStatMutation) AddTemplateID(i int64) {
-	if m.addtemplate_id != nil {
-		*m.addtemplate_id += i
-	} else {
-		m.addtemplate_id = &i
-	}
-}
-
-// AddedTemplateID returns the value that was added to the "template_id" field in this mutation.
-func (m *UsageStatMutation) AddedTemplateID() (r int64, exists bool) {
-	v := m.addtemplate_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetTemplateID resets all changes to the "template_id" field.
-func (m *UsageStatMutation) ResetTemplateID() {
-	m.template_id = nil
-	m.addtemplate_id = nil
-}
-
-// SetUserID sets the "user_id" field.
-func (m *UsageStatMutation) SetUserID(i int64) {
-	m.user_id = &i
-	m.adduser_id = nil
-}
-
-// UserID returns the value of the "user_id" field in the mutation.
-func (m *UsageStatMutation) UserID() (r int64, exists bool) {
-	v := m.user_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUserID returns the old "user_id" field's value of the UsageStat entity.
-// If the UsageStat object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *UsageStatMutation) OldUserID(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUserID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
-	}
-	return oldValue.UserID, nil
-}
-
-// AddUserID adds i to the "user_id" field.
-func (m *UsageStatMutation) AddUserID(i int64) {
-	if m.adduser_id != nil {
-		*m.adduser_id += i
-	} else {
-		m.adduser_id = &i
-	}
-}
-
-// AddedUserID returns the value that was added to the "user_id" field in this mutation.
-func (m *UsageStatMutation) AddedUserID() (r int64, exists bool) {
-	v := m.adduser_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetUserID resets all changes to the "user_id" field.
-func (m *UsageStatMutation) ResetUserID() {
-	m.user_id = nil
-	m.adduser_id = nil
-}
-
 // SetModel sets the "model" field.
 func (m *UsageStatMutation) SetModel(s string) {
 	m.model = &s
@@ -20905,42 +22449,6 @@ func (m *UsageStatMutation) OldModel(ctx context.Context) (v string, err error) 
 // ResetModel resets all changes to the "model" field.
 func (m *UsageStatMutation) ResetModel() {
 	m.model = nil
-}
-
-// SetIsError sets the "is_error" field.
-func (m *UsageStatMutation) SetIsError(b bool) {
-	m.is_error = &b
-}
-
-// IsError returns the value of the "is_error" field in the mutation.
-func (m *UsageStatMutation) IsError() (r bool, exists bool) {
-	v := m.is_error
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldIsError returns the old "is_error" field's value of the UsageStat entity.
-// If the UsageStat object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *UsageStatMutation) OldIsError(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldIsError is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldIsError requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldIsError: %w", err)
-	}
-	return oldValue.IsError, nil
-}
-
-// ResetIsError resets all changes to the "is_error" field.
-func (m *UsageStatMutation) ResetIsError() {
-	m.is_error = nil
 }
 
 // SetRequestCount sets the "request_count" field.
@@ -21391,6 +22899,62 @@ func (m *UsageStatMutation) ResetCost() {
 	m.addcost = nil
 }
 
+// SetRawCost sets the "raw_cost" field.
+func (m *UsageStatMutation) SetRawCost(i int64) {
+	m.raw_cost = &i
+	m.addraw_cost = nil
+}
+
+// RawCost returns the value of the "raw_cost" field in the mutation.
+func (m *UsageStatMutation) RawCost() (r int64, exists bool) {
+	v := m.raw_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRawCost returns the old "raw_cost" field's value of the UsageStat entity.
+// If the UsageStat object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageStatMutation) OldRawCost(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRawCost is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRawCost requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRawCost: %w", err)
+	}
+	return oldValue.RawCost, nil
+}
+
+// AddRawCost adds i to the "raw_cost" field.
+func (m *UsageStatMutation) AddRawCost(i int64) {
+	if m.addraw_cost != nil {
+		*m.addraw_cost += i
+	} else {
+		m.addraw_cost = &i
+	}
+}
+
+// AddedRawCost returns the value that was added to the "raw_cost" field in this mutation.
+func (m *UsageStatMutation) AddedRawCost() (r int64, exists bool) {
+	v := m.addraw_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRawCost resets all changes to the "raw_cost" field.
+func (m *UsageStatMutation) ResetRawCost() {
+	m.raw_cost = nil
+	m.addraw_cost = nil
+}
+
 // SetCallCount sets the "call_count" field.
 func (m *UsageStatMutation) SetCallCount(i int64) {
 	m.call_count = &i
@@ -21685,27 +23249,15 @@ func (m *UsageStatMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageStatMutation) Fields() []string {
-	fields := make([]string, 0, 20)
+	fields := make([]string, 0, 17)
 	if m.bucket_time != nil {
 		fields = append(fields, usagestat.FieldBucketTime)
 	}
 	if m.group_id != nil {
 		fields = append(fields, usagestat.FieldGroupID)
 	}
-	if m.account_id != nil {
-		fields = append(fields, usagestat.FieldAccountID)
-	}
-	if m.template_id != nil {
-		fields = append(fields, usagestat.FieldTemplateID)
-	}
-	if m.user_id != nil {
-		fields = append(fields, usagestat.FieldUserID)
-	}
 	if m.model != nil {
 		fields = append(fields, usagestat.FieldModel)
-	}
-	if m.is_error != nil {
-		fields = append(fields, usagestat.FieldIsError)
 	}
 	if m.request_count != nil {
 		fields = append(fields, usagestat.FieldRequestCount)
@@ -21730,6 +23282,9 @@ func (m *UsageStatMutation) Fields() []string {
 	}
 	if m.cost != nil {
 		fields = append(fields, usagestat.FieldCost)
+	}
+	if m.raw_cost != nil {
+		fields = append(fields, usagestat.FieldRawCost)
 	}
 	if m.call_count != nil {
 		fields = append(fields, usagestat.FieldCallCount)
@@ -21758,16 +23313,8 @@ func (m *UsageStatMutation) Field(name string) (ent.Value, bool) {
 		return m.BucketTime()
 	case usagestat.FieldGroupID:
 		return m.GroupID()
-	case usagestat.FieldAccountID:
-		return m.AccountID()
-	case usagestat.FieldTemplateID:
-		return m.TemplateID()
-	case usagestat.FieldUserID:
-		return m.UserID()
 	case usagestat.FieldModel:
 		return m.Model()
-	case usagestat.FieldIsError:
-		return m.IsError()
 	case usagestat.FieldRequestCount:
 		return m.RequestCount()
 	case usagestat.FieldErrorCount:
@@ -21784,6 +23331,8 @@ func (m *UsageStatMutation) Field(name string) (ent.Value, bool) {
 		return m.CacheCreationTokens()
 	case usagestat.FieldCost:
 		return m.Cost()
+	case usagestat.FieldRawCost:
+		return m.RawCost()
 	case usagestat.FieldCallCount:
 		return m.CallCount()
 	case usagestat.FieldTtftTotalMs:
@@ -21807,16 +23356,8 @@ func (m *UsageStatMutation) OldField(ctx context.Context, name string) (ent.Valu
 		return m.OldBucketTime(ctx)
 	case usagestat.FieldGroupID:
 		return m.OldGroupID(ctx)
-	case usagestat.FieldAccountID:
-		return m.OldAccountID(ctx)
-	case usagestat.FieldTemplateID:
-		return m.OldTemplateID(ctx)
-	case usagestat.FieldUserID:
-		return m.OldUserID(ctx)
 	case usagestat.FieldModel:
 		return m.OldModel(ctx)
-	case usagestat.FieldIsError:
-		return m.OldIsError(ctx)
 	case usagestat.FieldRequestCount:
 		return m.OldRequestCount(ctx)
 	case usagestat.FieldErrorCount:
@@ -21833,6 +23374,8 @@ func (m *UsageStatMutation) OldField(ctx context.Context, name string) (ent.Valu
 		return m.OldCacheCreationTokens(ctx)
 	case usagestat.FieldCost:
 		return m.OldCost(ctx)
+	case usagestat.FieldRawCost:
+		return m.OldRawCost(ctx)
 	case usagestat.FieldCallCount:
 		return m.OldCallCount(ctx)
 	case usagestat.FieldTtftTotalMs:
@@ -21866,40 +23409,12 @@ func (m *UsageStatMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetGroupID(v)
 		return nil
-	case usagestat.FieldAccountID:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAccountID(v)
-		return nil
-	case usagestat.FieldTemplateID:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTemplateID(v)
-		return nil
-	case usagestat.FieldUserID:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUserID(v)
-		return nil
 	case usagestat.FieldModel:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetModel(v)
-		return nil
-	case usagestat.FieldIsError:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetIsError(v)
 		return nil
 	case usagestat.FieldRequestCount:
 		v, ok := value.(int64)
@@ -21957,6 +23472,13 @@ func (m *UsageStatMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCost(v)
 		return nil
+	case usagestat.FieldRawCost:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRawCost(v)
+		return nil
 	case usagestat.FieldCallCount:
 		v, ok := value.(int64)
 		if !ok {
@@ -22003,15 +23525,6 @@ func (m *UsageStatMutation) AddedFields() []string {
 	if m.addgroup_id != nil {
 		fields = append(fields, usagestat.FieldGroupID)
 	}
-	if m.addaccount_id != nil {
-		fields = append(fields, usagestat.FieldAccountID)
-	}
-	if m.addtemplate_id != nil {
-		fields = append(fields, usagestat.FieldTemplateID)
-	}
-	if m.adduser_id != nil {
-		fields = append(fields, usagestat.FieldUserID)
-	}
 	if m.addrequest_count != nil {
 		fields = append(fields, usagestat.FieldRequestCount)
 	}
@@ -22036,6 +23549,9 @@ func (m *UsageStatMutation) AddedFields() []string {
 	if m.addcost != nil {
 		fields = append(fields, usagestat.FieldCost)
 	}
+	if m.addraw_cost != nil {
+		fields = append(fields, usagestat.FieldRawCost)
+	}
 	if m.addcall_count != nil {
 		fields = append(fields, usagestat.FieldCallCount)
 	}
@@ -22058,12 +23574,6 @@ func (m *UsageStatMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case usagestat.FieldGroupID:
 		return m.AddedGroupID()
-	case usagestat.FieldAccountID:
-		return m.AddedAccountID()
-	case usagestat.FieldTemplateID:
-		return m.AddedTemplateID()
-	case usagestat.FieldUserID:
-		return m.AddedUserID()
 	case usagestat.FieldRequestCount:
 		return m.AddedRequestCount()
 	case usagestat.FieldErrorCount:
@@ -22080,6 +23590,8 @@ func (m *UsageStatMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedCacheCreationTokens()
 	case usagestat.FieldCost:
 		return m.AddedCost()
+	case usagestat.FieldRawCost:
+		return m.AddedRawCost()
 	case usagestat.FieldCallCount:
 		return m.AddedCallCount()
 	case usagestat.FieldTtftTotalMs:
@@ -22103,27 +23615,6 @@ func (m *UsageStatMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddGroupID(v)
-		return nil
-	case usagestat.FieldAccountID:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAccountID(v)
-		return nil
-	case usagestat.FieldTemplateID:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddTemplateID(v)
-		return nil
-	case usagestat.FieldUserID:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddUserID(v)
 		return nil
 	case usagestat.FieldRequestCount:
 		v, ok := value.(int64)
@@ -22180,6 +23671,13 @@ func (m *UsageStatMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddCost(v)
+		return nil
+	case usagestat.FieldRawCost:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRawCost(v)
 		return nil
 	case usagestat.FieldCallCount:
 		v, ok := value.(int64)
@@ -22242,20 +23740,8 @@ func (m *UsageStatMutation) ResetField(name string) error {
 	case usagestat.FieldGroupID:
 		m.ResetGroupID()
 		return nil
-	case usagestat.FieldAccountID:
-		m.ResetAccountID()
-		return nil
-	case usagestat.FieldTemplateID:
-		m.ResetTemplateID()
-		return nil
-	case usagestat.FieldUserID:
-		m.ResetUserID()
-		return nil
 	case usagestat.FieldModel:
 		m.ResetModel()
-		return nil
-	case usagestat.FieldIsError:
-		m.ResetIsError()
 		return nil
 	case usagestat.FieldRequestCount:
 		m.ResetRequestCount()
@@ -22280,6 +23766,9 @@ func (m *UsageStatMutation) ResetField(name string) error {
 		return nil
 	case usagestat.FieldCost:
 		m.ResetCost()
+		return nil
+	case usagestat.FieldRawCost:
+		m.ResetRawCost()
 		return nil
 	case usagestat.FieldCallCount:
 		m.ResetCallCount()

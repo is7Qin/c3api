@@ -20,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/setting"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/template"
+	"github.com/is7qin/c3api/internal/ent/usageentitystat"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/ent/usagestat"
 	"github.com/is7qin/c3api/internal/ent/user"
@@ -237,6 +238,70 @@ func init() {
 	templateDescCreatedAt := templateFields[10].Descriptor()
 	// template.DefaultCreatedAt holds the default value on creation for the created_at field.
 	template.DefaultCreatedAt = templateDescCreatedAt.Default.(func() time.Time)
+	usageentitystatFields := schema.UsageEntityStat{}.Fields()
+	_ = usageentitystatFields
+	// usageentitystatDescModel is the schema descriptor for model field.
+	usageentitystatDescModel := usageentitystatFields[4].Descriptor()
+	// usageentitystat.DefaultModel holds the default value on creation for the model field.
+	usageentitystat.DefaultModel = usageentitystatDescModel.Default.(string)
+	// usageentitystatDescRequestCount is the schema descriptor for request_count field.
+	usageentitystatDescRequestCount := usageentitystatFields[5].Descriptor()
+	// usageentitystat.DefaultRequestCount holds the default value on creation for the request_count field.
+	usageentitystat.DefaultRequestCount = usageentitystatDescRequestCount.Default.(int64)
+	// usageentitystatDescErrorCount is the schema descriptor for error_count field.
+	usageentitystatDescErrorCount := usageentitystatFields[6].Descriptor()
+	// usageentitystat.DefaultErrorCount holds the default value on creation for the error_count field.
+	usageentitystat.DefaultErrorCount = usageentitystatDescErrorCount.Default.(int64)
+	// usageentitystatDescCallCount is the schema descriptor for call_count field.
+	usageentitystatDescCallCount := usageentitystatFields[7].Descriptor()
+	// usageentitystat.DefaultCallCount holds the default value on creation for the call_count field.
+	usageentitystat.DefaultCallCount = usageentitystatDescCallCount.Default.(int64)
+	// usageentitystatDescInputTokens is the schema descriptor for input_tokens field.
+	usageentitystatDescInputTokens := usageentitystatFields[8].Descriptor()
+	// usageentitystat.DefaultInputTokens holds the default value on creation for the input_tokens field.
+	usageentitystat.DefaultInputTokens = usageentitystatDescInputTokens.Default.(int64)
+	// usageentitystatDescOutputTokens is the schema descriptor for output_tokens field.
+	usageentitystatDescOutputTokens := usageentitystatFields[9].Descriptor()
+	// usageentitystat.DefaultOutputTokens holds the default value on creation for the output_tokens field.
+	usageentitystat.DefaultOutputTokens = usageentitystatDescOutputTokens.Default.(int64)
+	// usageentitystatDescTotalTokens is the schema descriptor for total_tokens field.
+	usageentitystatDescTotalTokens := usageentitystatFields[10].Descriptor()
+	// usageentitystat.DefaultTotalTokens holds the default value on creation for the total_tokens field.
+	usageentitystat.DefaultTotalTokens = usageentitystatDescTotalTokens.Default.(int64)
+	// usageentitystatDescCacheReadTokens is the schema descriptor for cache_read_tokens field.
+	usageentitystatDescCacheReadTokens := usageentitystatFields[11].Descriptor()
+	// usageentitystat.DefaultCacheReadTokens holds the default value on creation for the cache_read_tokens field.
+	usageentitystat.DefaultCacheReadTokens = usageentitystatDescCacheReadTokens.Default.(int64)
+	// usageentitystatDescCacheCreationTokens is the schema descriptor for cache_creation_tokens field.
+	usageentitystatDescCacheCreationTokens := usageentitystatFields[12].Descriptor()
+	// usageentitystat.DefaultCacheCreationTokens holds the default value on creation for the cache_creation_tokens field.
+	usageentitystat.DefaultCacheCreationTokens = usageentitystatDescCacheCreationTokens.Default.(int64)
+	// usageentitystatDescCost is the schema descriptor for cost field.
+	usageentitystatDescCost := usageentitystatFields[13].Descriptor()
+	// usageentitystat.DefaultCost holds the default value on creation for the cost field.
+	usageentitystat.DefaultCost = usageentitystatDescCost.Default.(int64)
+	// usageentitystatDescRawCost is the schema descriptor for raw_cost field.
+	usageentitystatDescRawCost := usageentitystatFields[14].Descriptor()
+	// usageentitystat.DefaultRawCost holds the default value on creation for the raw_cost field.
+	usageentitystat.DefaultRawCost = usageentitystatDescRawCost.Default.(int64)
+	// usageentitystatDescTtftTotalMs is the schema descriptor for ttft_total_ms field.
+	usageentitystatDescTtftTotalMs := usageentitystatFields[15].Descriptor()
+	// usageentitystat.DefaultTtftTotalMs holds the default value on creation for the ttft_total_ms field.
+	usageentitystat.DefaultTtftTotalMs = usageentitystatDescTtftTotalMs.Default.(int64)
+	// usageentitystatDescTtftCount is the schema descriptor for ttft_count field.
+	usageentitystatDescTtftCount := usageentitystatFields[16].Descriptor()
+	// usageentitystat.DefaultTtftCount holds the default value on creation for the ttft_count field.
+	usageentitystat.DefaultTtftCount = usageentitystatDescTtftCount.Default.(int64)
+	// usageentitystatDescTtftMaxMs is the schema descriptor for ttft_max_ms field.
+	usageentitystatDescTtftMaxMs := usageentitystatFields[17].Descriptor()
+	// usageentitystat.DefaultTtftMaxMs holds the default value on creation for the ttft_max_ms field.
+	usageentitystat.DefaultTtftMaxMs = usageentitystatDescTtftMaxMs.Default.(int64)
+	// usageentitystatDescUpdatedAt is the schema descriptor for updated_at field.
+	usageentitystatDescUpdatedAt := usageentitystatFields[18].Descriptor()
+	// usageentitystat.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	usageentitystat.DefaultUpdatedAt = usageentitystatDescUpdatedAt.Default.(func() time.Time)
+	// usageentitystat.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	usageentitystat.UpdateDefaultUpdatedAt = usageentitystatDescUpdatedAt.UpdateDefault.(func() time.Time)
 	usagelogFields := schema.UsageLog{}.Fields()
 	_ = usagelogFields
 	// usagelogDescModel is the schema descriptor for model field.
@@ -301,76 +366,64 @@ func init() {
 	usagestatDescGroupID := usagestatFields[2].Descriptor()
 	// usagestat.DefaultGroupID holds the default value on creation for the group_id field.
 	usagestat.DefaultGroupID = usagestatDescGroupID.Default.(int64)
-	// usagestatDescAccountID is the schema descriptor for account_id field.
-	usagestatDescAccountID := usagestatFields[3].Descriptor()
-	// usagestat.DefaultAccountID holds the default value on creation for the account_id field.
-	usagestat.DefaultAccountID = usagestatDescAccountID.Default.(int64)
-	// usagestatDescTemplateID is the schema descriptor for template_id field.
-	usagestatDescTemplateID := usagestatFields[4].Descriptor()
-	// usagestat.DefaultTemplateID holds the default value on creation for the template_id field.
-	usagestat.DefaultTemplateID = usagestatDescTemplateID.Default.(int64)
-	// usagestatDescUserID is the schema descriptor for user_id field.
-	usagestatDescUserID := usagestatFields[5].Descriptor()
-	// usagestat.DefaultUserID holds the default value on creation for the user_id field.
-	usagestat.DefaultUserID = usagestatDescUserID.Default.(int64)
 	// usagestatDescModel is the schema descriptor for model field.
-	usagestatDescModel := usagestatFields[6].Descriptor()
+	usagestatDescModel := usagestatFields[3].Descriptor()
 	// usagestat.DefaultModel holds the default value on creation for the model field.
 	usagestat.DefaultModel = usagestatDescModel.Default.(string)
-	// usagestatDescIsError is the schema descriptor for is_error field.
-	usagestatDescIsError := usagestatFields[7].Descriptor()
-	// usagestat.DefaultIsError holds the default value on creation for the is_error field.
-	usagestat.DefaultIsError = usagestatDescIsError.Default.(bool)
 	// usagestatDescRequestCount is the schema descriptor for request_count field.
-	usagestatDescRequestCount := usagestatFields[8].Descriptor()
+	usagestatDescRequestCount := usagestatFields[4].Descriptor()
 	// usagestat.DefaultRequestCount holds the default value on creation for the request_count field.
 	usagestat.DefaultRequestCount = usagestatDescRequestCount.Default.(int64)
 	// usagestatDescErrorCount is the schema descriptor for error_count field.
-	usagestatDescErrorCount := usagestatFields[9].Descriptor()
+	usagestatDescErrorCount := usagestatFields[5].Descriptor()
 	// usagestat.DefaultErrorCount holds the default value on creation for the error_count field.
 	usagestat.DefaultErrorCount = usagestatDescErrorCount.Default.(int64)
 	// usagestatDescInputTokens is the schema descriptor for input_tokens field.
-	usagestatDescInputTokens := usagestatFields[10].Descriptor()
+	usagestatDescInputTokens := usagestatFields[6].Descriptor()
 	// usagestat.DefaultInputTokens holds the default value on creation for the input_tokens field.
 	usagestat.DefaultInputTokens = usagestatDescInputTokens.Default.(int64)
 	// usagestatDescOutputTokens is the schema descriptor for output_tokens field.
-	usagestatDescOutputTokens := usagestatFields[11].Descriptor()
+	usagestatDescOutputTokens := usagestatFields[7].Descriptor()
 	// usagestat.DefaultOutputTokens holds the default value on creation for the output_tokens field.
 	usagestat.DefaultOutputTokens = usagestatDescOutputTokens.Default.(int64)
 	// usagestatDescTotalTokens is the schema descriptor for total_tokens field.
-	usagestatDescTotalTokens := usagestatFields[12].Descriptor()
+	usagestatDescTotalTokens := usagestatFields[8].Descriptor()
 	// usagestat.DefaultTotalTokens holds the default value on creation for the total_tokens field.
 	usagestat.DefaultTotalTokens = usagestatDescTotalTokens.Default.(int64)
 	// usagestatDescCacheReadTokens is the schema descriptor for cache_read_tokens field.
-	usagestatDescCacheReadTokens := usagestatFields[13].Descriptor()
+	usagestatDescCacheReadTokens := usagestatFields[9].Descriptor()
 	// usagestat.DefaultCacheReadTokens holds the default value on creation for the cache_read_tokens field.
 	usagestat.DefaultCacheReadTokens = usagestatDescCacheReadTokens.Default.(int64)
 	// usagestatDescCacheCreationTokens is the schema descriptor for cache_creation_tokens field.
-	usagestatDescCacheCreationTokens := usagestatFields[14].Descriptor()
+	usagestatDescCacheCreationTokens := usagestatFields[10].Descriptor()
 	// usagestat.DefaultCacheCreationTokens holds the default value on creation for the cache_creation_tokens field.
 	usagestat.DefaultCacheCreationTokens = usagestatDescCacheCreationTokens.Default.(int64)
 	// usagestatDescCost is the schema descriptor for cost field.
-	usagestatDescCost := usagestatFields[15].Descriptor()
+	usagestatDescCost := usagestatFields[11].Descriptor()
 	// usagestat.DefaultCost holds the default value on creation for the cost field.
 	usagestat.DefaultCost = usagestatDescCost.Default.(int64)
+	// usagestatDescRawCost is the schema descriptor for raw_cost field.
+	usagestatDescRawCost := usagestatFields[12].Descriptor()
+	// usagestat.DefaultRawCost holds the default value on creation for the raw_cost field.
+	usagestat.DefaultRawCost = usagestatDescRawCost.Default.(int64)
 	// usagestatDescCallCount is the schema descriptor for call_count field.
-	usagestatDescCallCount := usagestatFields[16].Descriptor()
+	usagestatDescCallCount := usagestatFields[13].Descriptor()
 	// usagestat.DefaultCallCount holds the default value on creation for the call_count field.
 	usagestat.DefaultCallCount = usagestatDescCallCount.Default.(int64)
 	// usagestatDescTtftTotalMs is the schema descriptor for ttft_total_ms field.
-	usagestatDescTtftTotalMs := usagestatFields[17].Descriptor()
+	usagestatDescTtftTotalMs := usagestatFields[14].Descriptor()
 	// usagestat.DefaultTtftTotalMs holds the default value on creation for the ttft_total_ms field.
 	usagestat.DefaultTtftTotalMs = usagestatDescTtftTotalMs.Default.(int64)
 	// usagestatDescTtftCount is the schema descriptor for ttft_count field.
-	usagestatDescTtftCount := usagestatFields[18].Descriptor()
+	usagestatDescTtftCount := usagestatFields[15].Descriptor()
 	// usagestat.DefaultTtftCount holds the default value on creation for the ttft_count field.
 	usagestat.DefaultTtftCount = usagestatDescTtftCount.Default.(int64)
 	// usagestatDescTtftMaxMs is the schema descriptor for ttft_max_ms field.
-	usagestatDescTtftMaxMs := usagestatFields[19].Descriptor()
+	usagestatDescTtftMaxMs := usagestatFields[16].Descriptor()
 	// usagestat.DefaultTtftMaxMs holds the default value on creation for the ttft_max_ms field.
 	usagestat.DefaultTtftMaxMs = usagestatDescTtftMaxMs.Default.(int64)
 	// usagestatDescUpdatedAt is the schema descriptor for updated_at field.
-	usagestatDescUpdatedAt := usagestatFields[20].Descriptor()
+	usagestatDescUpdatedAt := usagestatFields[17].Descriptor()
 	// usagestat.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	usagestat.DefaultUpdatedAt = usagestatDescUpdatedAt.Default.(func() time.Time)
 	// usagestat.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
