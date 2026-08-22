@@ -176,7 +176,36 @@ func adminScenarios() []apiScenario {
 		w("err_logs.list", 6, "GET", func(*rand.Rand) string {
 			return "/api/admin/err_logs?" + apiDayRange() + "&limit=50"
 		}, nil),
-		w("stats.get", 10, "GET", func(*rand.Rand) string { return "/api/admin/stats" }, nil),
+		// stats 重构 T6：旧 /stats 删除，新增 trend/top/entity-trend/ttft 四加权场景（后端 W3 落地前 404 属预期）
+		w("stats.trend", 10, "GET", func(r *rand.Rand) string {
+			return "/api/admin/stats/trend?" + apiStatsRangeMixed(r) + "&granularity=" + apiGranularity(r)
+		}, nil),
+		w("stats.top", 8, "GET", func(r *rand.Rand) string {
+			entities := []string{"account", "user", "key"}
+			bys := []string{"cost", "requests", "tokens"}
+			return "/api/admin/stats/top?" + apiStatsRangeMixed(r) +
+				"&entity=" + entities[r.IntN(len(entities))] +
+				"&by=" + bys[r.IntN(len(bys))] + "&limit=20"
+		}, nil),
+		w("stats.entity-trend", 6, "GET", func(r *rand.Rand) string {
+			entities := []string{"account", "user", "key"}
+			ent := entities[r.IntN(len(entities))]
+			id := r.Int64N(5000) + 1 // 从既有账号/用户池取样
+			return "/api/admin/stats/entity-trend?entity=" + ent +
+				"&id=" + strconv.FormatInt(id, 10) +
+				"&" + apiStatsRangeMixed(r) + "&granularity=hour"
+		}, nil),
+		w("stats.ttft", 6, "GET", func(r *rand.Rand) string {
+			base := "/api/admin/stats/ttft?" + apiStatsRangeMixed(r)
+			// 部分请求带实体过滤走 exact 分支（打 usage_logs），其余走 sketch 分支（cube hist）
+			if r.IntN(2) == 0 {
+				entities := []string{"account", "user", "key"}
+				ent := entities[r.IntN(len(entities))]
+				id := r.Int64N(5000) + 1
+				base += "&entity=" + ent + "&id=" + strconv.FormatInt(id, 10)
+			}
+			return base
+		}, nil),
 		w("overview.get", 8, "GET", func(*rand.Rand) string { return "/api/admin/overview" }, nil),
 		w("users-top.get", 4, "GET", func(*rand.Rand) string { return "/api/admin/users-top" }, nil),
 		w("ops.workers", 3, "GET", func(*rand.Rand) string { return "/api/admin/ops/workers" }, nil),
@@ -248,7 +277,12 @@ func userScenarios() []apiScenario {
 		w("my-err_logs.list", 5, "GET", func(*apiWorker, *rand.Rand) string {
 			return "/api/user/err_logs?" + apiDayRange() + "&limit=50"
 		}, nil),
-		w("my-stats.get", 12, "GET", func(*apiWorker, *rand.Rand) string { return "/api/user/stats" }, nil),
+		w("my-stats.get", 12, "GET", func(_ *apiWorker, r *rand.Rand) string {
+			return "/api/user/stats?" + apiStatsRangeMixed(r) + "&granularity=" + apiGranularity(r)
+		}, nil),
+		w("my-stats.ttft", 8, "GET", func(_ *apiWorker, r *rand.Rand) string {
+			return "/api/user/stats/ttft?" + apiStatsRangeMixed(r)
+		}, nil),
 		w("my-redemptions.list", 5, "GET", func(*apiWorker, *rand.Rand) string { return "/api/user/redemptions" }, nil),
 		w("my-temp-balances.list", 5, "GET", func(*apiWorker, *rand.Rand) string { return "/api/user/temp-balances" }, nil),
 
@@ -289,6 +323,26 @@ func apiDayRange() string {
 	from := url.QueryEscape(now.Add(-24 * time.Hour).Format(time.RFC3339))
 	to := url.QueryEscape(now.Format(time.RFC3339))
 	return "from=" + from + "&to=" + to
+}
+
+// apiStatsRangeMixed stats 趋势类端点时间窗：近 24h 与近 7d 混合，复用 RFC3339 编码。
+func apiStatsRangeMixed(rng *rand.Rand) string {
+	now := time.Now().UTC()
+	var from time.Time
+	if rng.IntN(2) == 0 {
+		from = now.Add(-24 * time.Hour)
+	} else {
+		from = now.Add(-7 * 24 * time.Hour)
+	}
+	return "from=" + url.QueryEscape(from.Format(time.RFC3339)) + "&to=" + url.QueryEscape(now.Format(time.RFC3339))
+}
+
+// apiGranularity 趋势 granularity 轮换（hour/day）。
+func apiGranularity(rng *rand.Rand) string {
+	if rng.IntN(2) == 0 {
+		return "hour"
+	}
+	return "day"
 }
 
 // apiReq 构造 JSON 请求（body nil = GET/无体）；token 为完整凭证值。
