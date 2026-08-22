@@ -104,14 +104,6 @@ func main() {
 	if err != nil {
 		fatalDB("migrate", err)
 	}
-	// R-2 启动哨兵：探测旧 DB 残留的 rules.transmit 列（ent 已移除该字段，
-	// 旧库若仍存在则静默忽略——指针化重构语义丢失）。存在即 fail-fast，要求 fresh
-	// setup（项目无迁移路径哲学）。查询走 information_schema.columns 字面量，
-	// 表不存在时返回 0 → 通过（全新库）。实现见 internal/repository/guard.go，
-	// 单次启动执行、热路径零触及；调用置于分区 bootstrap 之前（同属启动期 DDL 探测）。
-	if err := repository.EnsureNoLegacyTransmitColumn(startupCtx, pool); err != nil {
-		fatalDB("legacy transmit guard", err)
-	}
 	// usage_logs/err_logs/usage_stats 分区 bootstrap（Phase 5 T4.5 + 分表设计 +
 	// 用户裁决 2026-08-11 三表统一分区机制）：ent migrate 已跳过三表
 	// （migrateHookExcludesPartitioned——atlas 对分区表 diff 规划期必失败，实测

@@ -244,11 +244,6 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 //	                       （连接级独立类型——原连接级 5s 语义，不吃 10m）
 //	seed-ok（p30）       kind=ok    → status=active 无冷却（恢复）
 //
-// 启动 guard 已落地：internal/repository.EnsureNoLegacyTransmitColumn 于 main 启动期
-// （分区 bootstrap 前，单次执行、热路径零触及）探测 information_schema.columns 中
-// rules.transmit 残留；若存在则 fail-fast 要求 fresh setup（无迁移路径），防旧库
-// 静默忽略指针化语义。
-//
 // 多实例种子幂等（设计文档 §1.5 / R2）：两实例同时空表启动 → 双双进入本方法，
 // name/priority 唯一约束（ent schema 已有）保证只有一个实例的插入成功；失败方
 // 收到 ErrConflict——忽略继续（各实例插入同一份种子，并集收敛为完整五份，
