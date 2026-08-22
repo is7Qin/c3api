@@ -518,10 +518,6 @@ func (r *Repository) QueryErrLogs(ctx context.Context, q ErrLogQuery) ([]*domain
 	return r.ErrLogs.QueryErrLogs(ctx, q)
 }
 
-func (r *Repository) ScanStats(ctx context.Context, q StatQuery) ([]*domain.StatBucket, error) {
-	return r.Stats.ScanStats(ctx, q)
-}
-
 // --- /api/admin/overview 聚合面（spec 2026-08-14；SQL 侧聚合 + 冷面计数） ---
 
 func (r *Repository) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*StatSummary, error) {

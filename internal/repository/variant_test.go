@@ -25,8 +25,8 @@ func TestVariantAggregateRangeOverwrite(t *testing.T) {
 	base := time.Now().UTC().Truncate(time.Hour)
 	mk := func(g, req int64) *domain.StatBucket {
 		return &domain.StatBucket{
-			BucketTime: base, GroupID: g, AccountID: 0, TemplateID: 0, UserID: 42,
-			Model: "gpt-4o", IsError: false,
+			BucketTime: base, GroupID: g,
+			Model:        "gpt-4o",
 			RequestCount: req, ErrorCount: 0, InputTokens: 0, OutputTokens: 0,
 			TotalTokens: 10 * req, CacheReadTokens: 0, CacheCreationTokens: 0, Cost: 0,
 			TTFTHist: make([]int64, 10),
@@ -38,10 +38,10 @@ func TestVariantAggregateRangeOverwrite(t *testing.T) {
 		buckets = append(buckets, mk(g, 1))
 	}
 	// 第一跑：全新范围（DELETE 空）→ 全 INSERT
-	require.NoError(t, repos.Stats.AggregateRange(ctx, base, base.Add(time.Hour), base.Add(30*time.Minute), buckets))
+	require.NoError(t, repos.Stats.AggregateRange(ctx, base, base.Add(time.Hour), base.Add(30*time.Minute), buckets, nil))
 
 	// 第二跑：同范围同值 → DELETE 后全量覆盖，结果一致（幂等重放）
-	require.NoError(t, repos.Stats.AggregateRange(ctx, base, base.Add(time.Hour), base.Add(30*time.Minute), buckets))
+	require.NoError(t, repos.Stats.AggregateRange(ctx, base, base.Add(time.Hour), base.Add(30*time.Minute), buckets, nil))
 	total, err := repos.Client.UsageStat.Query().Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, n, total, "重放同范围不重复计（覆盖语义）")
@@ -51,7 +51,7 @@ func TestVariantAggregateRangeOverwrite(t *testing.T) {
 	for g := int64(1); g <= n; g++ {
 		changed = append(changed, mk(g, 3))
 	}
-	require.NoError(t, repos.Stats.AggregateRange(ctx, base, base.Add(time.Hour), base.Add(30*time.Minute), changed))
+	require.NoError(t, repos.Stats.AggregateRange(ctx, base, base.Add(time.Hour), base.Add(30*time.Minute), changed, nil))
 	g1, err := repos.Client.UsageStat.Query().Where(usagestat.GroupIDEQ(1)).Only(ctx)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), g1.RequestCount, "重跑同范围覆盖为新值（非累加）")

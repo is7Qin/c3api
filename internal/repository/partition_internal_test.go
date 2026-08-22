@@ -192,11 +192,12 @@ func TestUsageEntityStatsIndexDDLs(t *testing.T) {
 	require.Contains(t, usageEntityStatsIndexDDLs[1], "(entity_type, entity_id, bucket_time)", "探测索引列序 (entity_type, entity_id, bucket_time)")
 }
 
-// TestStatsAggColumnAlignment usage_stats 聚合/扫描列序锚（spec 2026-08-19：
-// 列序四段对齐——SELECT → rows.Scan → 赋值 → INSERT，raw 恒在 cost 后）：
+// TestStatsAggColumnAlignment usage_stats 聚合/读取列序锚（spec 2026-08-19：
+// 列序四段对齐——SELECT → rows.Scan → 赋值 → INSERT，raw 恒在 cost 后；
+// spec 2026-08-23 v2：cube 两源单扫描 + 实体卷积表同纪律）：
 //   - statsAggInsertCols = 建表 DDL 数据列集合（除 id 自增列）+ raw_cost 紧随
 //     cost（INSERT 列序与 DDL 同向）；
-//   - 三聚合 SQL/扫描 SQL 字符串级锚 raw 紧随 cost（防 SELECT/Scan 错位）。
+//   - 聚合/读取 SQL 字符串级锚 raw 紧随 cost（防 SELECT/Scan 错位）。
 func TestStatsAggColumnAlignment(t *testing.T) {
 	source := ddlColumnNames(strings.Join(usageStatsColumnDefs, "\n"))
 	want := make([]string, 0, len(source)-1)
@@ -223,14 +224,22 @@ func TestStatsAggColumnAlignment(t *testing.T) {
 		}
 	}
 	// SELECT/Scan 列序锚（与 INSERT 同向——错位即四段对齐链断）
-	require.Contains(t, statScanSQL, "cost, raw_cost, call_count", "statScanSQL 列序 raw 紧随 cost")
-	require.Contains(t, aggUsageSuccessSQL, "sum(cost), COALESCE(sum(raw_cost), 0)", "成功桶 SELECT raw 紧随 cost（COALESCE 空区间归零）")
-	require.Contains(t, aggUsageAbortSQL, "sum(cost), COALESCE(sum(raw_cost), 0)", "abort 桶 SELECT raw 紧随 cost")
+	require.Contains(t, aggUsageSQL, "sum(cost), COALESCE(sum(raw_cost), 0)", "cube 单扫描 SELECT raw 紧随 cost（COALESCE 空区间归零）")
 	// aggErrLogSQL 恒 0 补位锚：测量恒 0 行 7 位（in/out/tot/cr/cc/cost/raw——
 	// raw 补位在 cost 恒 0 位后）+ call/TTFT 恒 0 行 4 位不变
 	require.Contains(t, aggErrLogSQL,
 		"0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint,\n\t0::bigint, 0::bigint, 0::bigint, 0::bigint,",
 		"aggErrLogSQL 恒 0 序列 7+4 位（raw 补位后）")
+	// 实体卷积同纪律：usage 源 SELECT 与 INSERT 列序 raw 紧随 cost
+	require.Contains(t, aggEntityUsageSQLTpl, "sum(cost), COALESCE(sum(raw_cost), 0)", "entity usage 源 SELECT raw 紧随 cost")
+	for i, c := range usageEntityStatsInsertCols {
+		if c == "cost" {
+			require.Equal(t, "raw_cost", usageEntityStatsInsertCols[i+1], "entity INSERT 列序 raw_cost 紧随 cost")
+			break
+		}
+	}
+	// 读取面测量投影列序锚（stat_query_repo.go 三查询共享）
+	require.Contains(t, statMeasureSums, "COALESCE(sum(cost), 0)::bigint,\n\tCOALESCE(sum(raw_cost), 0)::bigint", "读取面测量投影 raw 紧随 cost")
 	require.Contains(t, statSummarySQL, "COALESCE(sum(cost), 0)::bigint,\n\tCOALESCE(sum(raw_cost), 0)::bigint", "summary SELECT raw 紧随 cost")
 	require.Contains(t, statTrendSQL, "COALESCE(sum(cost), 0)::bigint,\n\tCOALESCE(sum(raw_cost), 0)::bigint", "trend SELECT raw 紧随 cost")
 }

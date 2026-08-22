@@ -619,15 +619,14 @@ type UsageLog struct {
 // ttft_total_ms/ttft_count/ttft_max_ms/ttft_hist 四列承载（avg 在查询侧 Go 除；
 // ttft_hist 10 档直方图见 stat_repo.go ttftHistBounds）。ttft_hist 为 PG bigint[]
 // 数组列——ent 无数组类型（field.Ints 是 JSON 语义），不进 ent schema（carve-out，
-// 评审 P1-1；ScanStats 改 pgx 直查扫描）。
+// 评审 P1-1；统计读取面走 pgx 直查扫描）。v2 瘦身（spec 2026-08-23）：维度
+// 7→3——account_id/template_id/user_id/is_error 四维删除（实体视角由
+// EntityStatBucket/usage_entity_stats 承载；is_error 降为 error_count 测量列
+// 语义），唯一键 = (bucket_time, group_id, model)。
 type StatBucket struct {
 	BucketTime          time.Time // 对齐到小时（UTC）
 	GroupID             int64     // 0 = 无
-	AccountID           int64     // 0 = 无
-	TemplateID          int64     // 0 = 无
-	UserID              int64     // 0 = 无（鉴权失败/无 key）；/api/user/stats 按此过滤
 	Model               string
-	IsError             bool
 	RequestCount        int64
 	ErrorCount          int64
 	InputTokens         int64
@@ -666,8 +665,9 @@ type EntityStatBucket struct {
 }
 
 // TTFTSummary TTFT 卡片聚合（/stats/ttft 与 /api/user/stats/ttft 响应内核）。
-// 空窗 = 零值结构 Count:0 Source:""；Source: "exact"（usage_logs percentile_cont）
-// 或 "sketch"（cube hist 服务端合并）。
+// Source 恒标分支身份："exact"（usage_logs percentile_cont 精确）或 "sketch"
+// （cube hist 服务端合并插值）；空窗 = 零值结构（Count:0），Source 仍标分支
+// ——调用方以 Count 判空，不以 Source 判空。
 type TTFTSummary struct {
 	Count  int64
 	AvgMS  int64

@@ -592,11 +592,11 @@ func TestLogsAndStats(t *testing.T) {
 	// Stats 离线聚合写入（AggregateRange）需要 pgx 原生连接池（NewWithPG 注入）：
 	// pgxmock 的 Acquire 未实现（无法 mock 事务 SQL）→ New 未注入池时返回显式
 	// 错误，不静默降级。离线聚合语义覆盖在真实 PG
-	// （pg_stat_test.go TestPGStatsAggregateRangeInsert / LoadAggRange 等价套件）。
+	// （pg_stat_test.go cube/entity 等价套件 + 双表回滚/幂等用例）。
 	bucket := time.Now().Truncate(time.Hour)
 	require.Error(t, tr.repos.Stats.AggregateRange(ctx(), bucket, bucket.Add(time.Hour), bucket.Add(30*time.Minute), []*domain.StatBucket{
 		{BucketTime: bucket, GroupID: 1, Model: "m", RequestCount: 2, ErrorCount: 1, TotalTokens: 100, CacheReadTokens: 4, CacheCreationTokens: 2},
-	}), "未注入 pgx 池（New）→ 显式错误")
+	}, nil), "未注入 pgx 池（New）→ 显式错误")
 
 	logs := []*domain.UsageLog{
 		{RequestID: "r1", GroupID: 1, AccountID: 2, TemplateID: 3, Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, LatencyMS: 10, TotalTokens: 100, CacheReadTokens: 4, CacheCreationTokens: 2,
@@ -635,10 +635,10 @@ func TestLogsAndStats(t *testing.T) {
 	require.Nil(t, rows[1].PriceOutputMillis, "未设置 price_output_millis → NULL")
 	require.Nil(t, rows[1].PriceCacheReadMillis, "未设置 price_cache_read_millis → NULL")
 	require.Nil(t, rows[1].PriceCacheCreationMillis, "未设置 price_cache_creation_millis → NULL")
-	// Stats Scan 走 pgx 直查（ent carve-out——ttft_hist 数组列 ent 无类型）：
+	// Stats 读取面走 pgx 直查（ent carve-out——ttft_hist 数组列 ent 无类型）：
 	// pgxmock 的 Acquire 未实现 → New 未注入池时返回显式错误，不静默降级。
-	// 真实查询语义在 PG 套件（TestPGStatsScanStatsCarveOut 全字段回读）。
-	_, err = tr.repos.Stats.ScanStats(ctx(), repository.StatQuery{From: bucket, To: bucket.Add(time.Hour)})
+	// 真实查询语义在 PG 套件（pg_stat_query_test.go 下推金标准对照）。
+	_, _, _, err = tr.repos.Stats.LoadAggRange(ctx(), bucket, bucket.Add(time.Hour))
 	require.Error(t, err, "未注入 pgx 池（New）→ 显式错误")
 	tr.expectDone(t)
 }

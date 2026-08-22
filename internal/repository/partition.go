@@ -202,8 +202,8 @@ var errLogIndexDDLs = []string{
 // call_count（按次调用）+ TTFT 四列（ttft_total_ms/ttft_count/ttft_max_ms/
 // ttft_hist bigint[10] 直方图）保留。列定义与 ent schema 一致**除 ttft_hist**
 // ——PG bigint[] 数组列 ent 无类型（field.Ints 等是 JSON 语义，无法扫描 PG
-// 数组），数组列 carve-out 不进 ent schema（评审 P1-1），ScanStats/ScanStatsDays
-// 改 pgx 直查扫描 []int64。分区键 bucket_time（小时桶聚合 24 桶/区）。id 走
+// 数组），数组列 carve-out 不进 ent schema（评审 P1-1），统计读取面
+// （ScanStatsDays/StatsTrend 族）走 pgx 直查扫描 []int64。分区键 bucket_time（小时桶聚合 24 桶/区）。id 走
 // usage_stats_id_seq（ent bigserial 同款语义——INSERT 不带 id 列走 DEFAULT
 // nextval；该表经 bootstrap 建表（表不存在则建，全新安装唯一路径），零迁移
 // 逻辑。升级策略（用户裁决 2026-08-23）：beta 教义全新库自举，无迁移逻辑无

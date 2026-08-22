@@ -32,8 +32,8 @@ import (
 // TTFTHist 零值直方图——INSERT 列）。
 func statBucketFor(at time.Time, req int64) *domain.StatBucket {
 	return &domain.StatBucket{
-		BucketTime: at, GroupID: 3, AccountID: 0, TemplateID: 0, UserID: 9,
-		Model: "gpt-4o", IsError: false,
+		BucketTime: at, GroupID: 3,
+		Model:        "gpt-4o",
 		RequestCount: req, ErrorCount: 0, InputTokens: 0, OutputTokens: 0,
 		TotalTokens: 10 * req, CacheReadTokens: 0, CacheCreationTokens: 0,
 		Cost: 0, TTFTHist: make([]int64, 10),
@@ -44,7 +44,7 @@ func statBucketFor(at time.Time, req int64) *domain.StatBucket {
 // bucket 同小时对齐）。
 func writeRange(t *testing.T, repos *repository.Repository, from, to time.Time, buckets ...*domain.StatBucket) {
 	t.Helper()
-	require.NoError(t, repos.Stats.AggregateRange(context.Background(), from, to, to.Add(-time.Minute), buckets))
+	require.NoError(t, repos.Stats.AggregateRange(context.Background(), from, to, to.Add(-time.Minute), buckets, nil))
 }
 
 // pgUsageStatsPartitionNames 当前 usage_stats 分区名列表（pgPartitionNames
@@ -94,20 +94,20 @@ func TestUsageStatsPartitionBootstrapPG(t *testing.T) {
 	parted, err = repos.Partitions.IsUsageStatsPartitioned(ctx)
 	require.NoError(t, err)
 	require.True(t, parted)
-	got, err := repos.Stats.ScanStats(ctx, repository.StatQuery{From: bucket, To: bucket.Add(time.Hour)})
+	var req int64
+	err = pool.QueryRow(ctx, `SELECT request_count FROM usage_stats WHERE bucket_time = $1 AND group_id = 3`, bucket).Scan(&req)
 	require.NoError(t, err)
-	require.Len(t, got, 1, "二次 bootstrap 不重建（数据保留）")
-	require.Equal(t, int64(1), got[0].RequestCount)
+	require.Equal(t, int64(1), req, "二次 bootstrap 不重建（数据保留）")
 
-	// 预建分区：当日 + 明日（bucket_time 日界）；两枚索引齐（F3-1 删 bucket_time
-	// 独立索引——纯写放大无查询受益，(user_id, bucket_time) 复合索引已覆盖前缀）
+	// 预建分区：当日 + 明日（bucket_time 日界）；v2 唯一索引齐（三键
+	// (bucket_time, group_id, model)——ON CONFLICT 目标列序；旧 user_id 维索引已删）
 	day := bucket.Truncate(24 * time.Hour)
 	require.Contains(t, pgUsageStatsPartitionNames(t, pool), "usage_stats_"+day.Format("20060102"))
 	require.Contains(t, pgUsageStatsPartitionNames(t, pool), "usage_stats_"+day.AddDate(0, 0, 1).Format("20060102"))
 	var n int64
-	err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'usage_stats' AND indexname IN ('usagestat_bucket_time_group_id_account_id_template_id_user_id_model_is_error','usagestat_user_id_bucket_time')`).Scan(&n)
+	err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'usage_stats' AND indexname = 'usagestat_bucket_time_group_id_model'`).Scan(&n)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), n, "bootstrap 建齐两枚索引（唯一索引 ON CONFLICT 目标 + user_id 前缀索引）")
+	require.Equal(t, int64(1), n, "bootstrap 建齐 v2 唯一索引（唯一索引 ON CONFLICT 目标）")
 }
 
 // TestUsageStatsPartitionRoutingPG 分区键覆盖写入路由正确（用户裁决要求）：
@@ -137,7 +137,7 @@ func TestUsageStatsPartitionRoutingPG(t *testing.T) {
 	writeRange(t, repos, bucketA, bucketA.Add(time.Hour), statBucketFor(bucketA, 2))
 	require.Equal(t, int64(1), pgCount(t, pool, `SELECT COUNT(*) FROM usage_stats_`+dayA.Format("20060102")), "覆盖语义不重复计")
 	var req int64
-	err := pool.QueryRow(ctx, `SELECT request_count FROM usage_stats_`+dayA.Format("20060102")+` WHERE group_id = 3 AND user_id = 9`).Scan(&req)
+	err := pool.QueryRow(ctx, `SELECT request_count FROM usage_stats_`+dayA.Format("20060102")+` WHERE group_id = 3 AND model = 'gpt-4o'`).Scan(&req)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), req, "重跑同范围覆盖为新值（1 → 2，非累加 3）")
 	// 另一日分区不受影响（DELETE 范围仅 A 区小时桶）
@@ -175,10 +175,10 @@ func TestUsageStatsPartitionRetentionPG(t *testing.T) {
 	n, err = repos.DropUsageStatsPartitionsBefore(ctx, now.AddDate(0, 0, -180))
 	require.NoError(t, err)
 	require.Zero(t, n, "无过期分区可删（幂等）")
-	got, err := repos.Stats.ScanStats(ctx, repository.StatQuery{From: day.Add(3 * time.Hour), To: day.Add(4 * time.Hour)})
+	var req int64
+	err = pool.QueryRow(ctx, `SELECT request_count FROM usage_stats WHERE bucket_time = $1 AND group_id = 3`, day.Add(3*time.Hour)).Scan(&req)
 	require.NoError(t, err)
-	require.Len(t, got, 1, "当日桶数据完整")
-	require.Equal(t, int64(5), got[0].RequestCount)
+	require.Equal(t, int64(5), req, "当日桶数据完整")
 }
 
 // TestUsageStatsPartitionConcurrentBootstrapPG 并发 bootstrap 幂等（评审 I-1

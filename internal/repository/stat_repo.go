@@ -22,24 +22,15 @@ import (
 	"github.com/is7qin/c3api/internal/ent/template"
 )
 
-type StatQuery struct {
-	GroupID    int64
-	AccountID  int64
-	TemplateID int64 // 0 = 不过滤（rewrite spec 依赖契约：/stats 端点补 template_id 参数接线）
-	UserID     int64 // 0 = 不过滤（/api/user/stats 强制 = 自己）
-	Model      string
-	From       time.Time
-	To         time.Time
-}
-
-// StatRepo 统计仓库（spec 2026-08-14 离线聚合化）：查询面（ScanStats/
-// SummarizeStats/ScanStatsDays）与离线聚合写入面（LoadAggRange/AggregateRange）
-// 全部经 pgx 原生池直查直写——ent client 仅用于资源计数等非统计面（usage_stats
-// 含 bigint[] 数组列，ent 无类型，ent carve-out 评审 P1-1）。pool 由 NewWithPG
-// 构造注入（生产 main.go 注入 OpenPG 池；与 ent driver 同 DSN 共享连接上限）。
-// usage_stats 为分区表（用户裁决 2026-08-11：PG DELETE 不释放空间，保留清理
-// 必须 DROP 分区 O(1)）——清理由 retention worker 经 PartitionRepo
-// DropUsageStatsPartitionsBefore 执行；usage_stats 只由离线聚合 worker 写入
+// StatRepo 统计仓库（spec 2026-08-14 离线聚合化 + spec 2026-08-23 v2 重构）：
+// 离线聚合写入面（LoadAggRange/AggregateRange——cube 两源 + 实体六查询）、
+// 读取面（stat_query_repo.go StatsTrend 族）与 overview 聚合面（SummarizeStats/
+// ScanStatsDays）全部经 pgx 原生池直查直写——ent client 仅用于资源计数等非
+// 统计面（usage_stats 含 bigint[] 数组列，ent 无类型，ent carve-out 评审 P1-1）。
+// pool 由 NewWithPG 构造注入（生产 main.go 注入 OpenPG 池；与 ent driver 同
+// DSN 共享连接上限）。usage_stats / usage_entity_stats 均为分区表（用户裁决
+// 2026-08-11：PG DELETE 不释放空间，保留清理必须 DROP 分区 O(1)）——清理由
+// retention worker 经 PartitionRepo 执行；两表只由离线聚合 worker 写入
 // （DELETE+INSERT 覆盖语义，无双写者、无 merge 累加——issue #8 教训）。
 type StatRepo struct {
 	client *ent.Client
@@ -144,13 +135,15 @@ func (d *StatDayAgg) TTFTPercentileMS(p float64) int64 {
 	return TTFTPercentileMS(d.TTFTHist, d.TTFTCount, p)
 }
 
-// aggDimCols 三查询共享维度列前缀（重算范围 [from,to) 占位 $1/$2；usage_logs/
-// err_logs 的 group_id 等可空列 COALESCE 归零——GROUP BY 位置引用与 INSERT
-// NOT NULL 一致；小时桶 UTC 墙钟截断——会话 TimeZone 无关，与 usage_stats
-// 分区键对齐）。
+// aggDimCols cube 两查询共享维度列前缀（v2 三维：hour × group × model；重算
+// 范围 [from,to) 占位 $1/$2）。usage_logs/err_logs 的 group_id 可空列 COALESCE
+// 归零——GROUP BY 位置引用与 INSERT NOT NULL 一致（无主行归 0 组保留——cube
+// 是平台总卷；与实体卷积表的 IS NOT NULL 丢弃语义有意不对称，见
+// stat_entity_agg.go）；model 列两表均 NOT NULL，COALESCE 防御性保留（spec
+// SQL 形状钉死）。小时桶 UTC 墙钟截断——会话 TimeZone 无关，与 usage_stats
+// 分区键对齐。
 var aggDimCols = `date_trunc('hour', created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
-       COALESCE(group_id, 0), COALESCE(account_id, 0), COALESCE(template_id, 0),
-       COALESCE(user_id, 0), COALESCE(model, '')`
+       COALESCE(group_id, 0), COALESCE(model, '')`
 
 // aggHistExpr 直方图 10 档 count(*) FILTER（PG 原生，零自定义聚合；档位边界
 // 与 ttftHistBounds/DDL DEFAULT 钉死同步）。ttft_ms 可空（非流式/失败路径
@@ -166,102 +159,99 @@ var aggHistExpr = `ARRAY[count(*) FILTER (WHERE ttft_ms < 50),
        count(*) FILTER (WHERE ttft_ms >= 6400 AND ttft_ms < 12800),
        count(*) FILTER (WHERE ttft_ms >= 12800)]`
 
-// aggUsageSuccessSQL usage_logs → isErr=false 桶（error_type='none' 放行成功行，
-// 全字段；spec §3.1a）。
-var aggUsageSuccessSQL = `SELECT ` + aggDimCols + `, false, count(*), 0::bigint,
+// aggUsageSQL usage_logs 单扫描 → cube 桶（v2：is_error 出键后 success/abort
+// 双查询合一；spec 2026-08-23 §3.1）。
+//
+// 语义等价性论证（旧双查询 vs 本单扫描，逐字段）：旧口径下 success 行
+// （error_type='none'）成桶 rc=count(*)、ec=0；abort 行（error_type='abort'）
+// 成桶 rc=ec=count(*)。本单扫描 WHERE error_type IN ('none','abort') 后维度
+// 不再含 is_error——同维度 none 行与 abort 行合并为一桶：
+//   - rc = count(*) = rc_none + rc_abort（两旧行集不相交，恒等）；
+//   - ec = count(*) FILTER (WHERE error_type <> 'none') = rc_abort（'abort' 是
+//     该行集中唯一非 none 值）= 旧 abort 桶 ec + 旧 success 桶 ec(=0)，恒等；
+//   - 测量列（tokens×5/cost/raw_cost/call_count/ttft sum/count/max/hist 逐档
+//     FILTER 计数）对不相交行集可加——合并桶 = 两旧桶逐列相加。
+//
+// err_logs 纯错误桶补充照抄旧 aggErrLogSQL 口径（aggErrLogSQL）。
+var aggUsageSQL = `SELECT ` + aggDimCols + `,
+	count(*), count(*) FILTER (WHERE error_type <> 'none'),
 	sum(input_tokens), sum(output_tokens), sum(total_tokens),
 	sum(cache_read_tokens), sum(cache_creation_tokens), sum(cost), COALESCE(sum(raw_cost), 0),
 	sum(call_count),
 	COALESCE(sum(ttft_ms), 0), count(ttft_ms), COALESCE(max(ttft_ms), 0), ` + aggHistExpr + `
-FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND error_type = 'none'
-GROUP BY 1, 2, 3, 4, 5, 6`
+FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND error_type IN ('none', 'abort')
+GROUP BY 1, 2, 3`
 
-// aggUsageAbortSQL usage_logs → isErr=true 桶（error_type='abort' 双轨行，全字段
-// 同 a；**error_count = count(*)**——abort 行全是错误行，ErrorCount 必须 =
-// RequestCount，与旧 aggregateLocked 的 isErr 行 ErrorCount++ 等价；spec §3.1b
-// P1-B）。
-var aggUsageAbortSQL = `SELECT ` + aggDimCols + `, true, count(*), count(*),
-	sum(input_tokens), sum(output_tokens), sum(total_tokens),
-	sum(cache_read_tokens), sum(cache_creation_tokens), sum(cost), COALESCE(sum(raw_cost), 0),
-	sum(call_count),
-	COALESCE(sum(ttft_ms), 0), count(ttft_ms), COALESCE(max(ttft_ms), 0), ` + aggHistExpr + `
-FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND error_type = 'abort'
-GROUP BY 1, 2, 3, 4, 5, 6`
-
-// aggErrLogSQL err_logs → 纯错误桶补充（isErr=true count 语义；WHERE error_type
-// <> 'abort' 防双计——abort 行已由 aggUsageAbortSQL 全字段计；spec §3.2）。
-// 瘦表无 tokens/cost/call_count/TTFT 列 → 恒 0（含全零直方图）；raw_cost 恒 0
-// 补位紧随 cost 恒 0 位后（列序对齐扫描）。
-var aggErrLogSQL = `SELECT ` + aggDimCols + `, true, count(*),
-	count(*) FILTER (WHERE error_type <> 'none'),
+// aggErrLogSQL err_logs → 纯错误桶补充（count 语义；WHERE error_type <> 'abort'
+// 防双计——abort 行已由 aggUsageSQL 全字段计；spec §3.2）。**rc = count(\*)**
+// ——err_logs 含豁免非错误行（error_type='none'），request_count 必须计入
+// （Momus M1 勘误：勿按"rc=0"理解）；ec = FILTER (WHERE error_type <> 'none')。
+// 瘦表无 tokens/cost/call_count/TTFT 列 → 恒 0 补位（11 测量列 + 全零直方图；
+// 列序对齐扫描：raw 恒在 cost 后）。
+var aggErrLogSQL = `SELECT ` + aggDimCols + `,
+	count(*), count(*) FILTER (WHERE error_type <> 'none'),
 	0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint,
 	0::bigint, 0::bigint, 0::bigint, 0::bigint,
 	ARRAY[0::bigint, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 FROM err_logs WHERE created_at >= $1 AND created_at < $2 AND error_type <> 'abort'
-GROUP BY 1, 2, 3, 4, 5, 6`
+GROUP BY 1, 2, 3`
 
-// aggRowKey 聚合行合并键（跨查询撞 key 判定：abort 桶与 err_logs 纯错误桶同
-// 维度可撞——合并累加；单查询内 GROUP BY 天然无重复）。
+// aggRowKey cube 聚合行合并键（v2 三键 = 唯一索引列序；跨源撞 key 判定：
+// usage_logs 行与 err_logs 行同维度可撞——合并累加；单查询内 GROUP BY 天然
+// 无重复）。
 type aggRowKey struct {
 	bucketTime time.Time
 	groupID    int64
-	accountID  int64
-	templateID int64
-	userID     int64
 	model      string
-	isErr      bool
 }
 
 func aggKeyOf(b *domain.StatBucket) aggRowKey {
-	return aggRowKey{bucketTime: b.BucketTime, groupID: b.GroupID, accountID: b.AccountID,
-		templateID: b.TemplateID, userID: b.UserID, model: b.Model, isErr: b.IsError}
+	return aggRowKey{bucketTime: b.BucketTime, groupID: b.GroupID, model: b.Model}
 }
 
-// LoadAggRange 离线聚合三查询（spec 2026-08-14 §3）：重算范围 [from,to) 的小时
-// 桶全量重建——usage_logs 按 error_type 拆两查询（none → isErr=false 成功桶、
-// abort → isErr=true 错误桶**全字段**含 TTFT/call_count，P1-B）+ err_logs 纯
-// 错误桶补充（count 语义；WHERE error_type <> 'abort' 防双计）。raw_cost
-// （spec 2026-08-19）：成功/abort 查询 SUM(raw_cost)（COALESCE 空区间归零），
-// err_logs 恒 0 补位——SELECT 列序 raw 恒在 cost 后（与扫描/INSERT 同向）。
-// 合并语义：跨查询同 key（abort 桶 vs err_logs 桶）测量列累加——错误桶重建 =
-// 双源合并。返回：桶（按键排序——确定性，重放同范围结果一致）+ 消费的明细
-// 行数（= 三查询 request_count 合计 = count(*) 之和；观测面"上轮行数"）。
-// 覆盖语义：SELECT 覆盖已消费行无害（DELETE 先清、INSERT 全量覆盖，幂等）。
-func (r *StatRepo) LoadAggRange(ctx context.Context, from, to time.Time) ([]*domain.StatBucket, int64, error) {
+// LoadAggRange 离线聚合双结果集重建（spec 2026-08-23 §3）：重算范围 [from,to)
+// 的小时桶全量重建——cube 两查询（usage_logs 单扫描放行行含 abort 全字段 +
+// err_logs 纯错误桶补充，见 aggUsageSQL/aggErrLogSQL）+ 实体六查询（三实体
+// 类型 × usage/errlog 两源，见 stat_entity_agg.go）。合并语义：跨源同 key 测量
+// 列累加（cube：usage_logs 行 vs err_logs 行；entity 同理）。返回：cube 桶 +
+// entity 桶（各自按键排序——确定性，重放同范围结果一致）+ 消费的明细行数
+// （= cube 两查询 count(*) 合计；实体六查询扫的是同两表的同批行，不重复计数
+// ——观测面"上轮行数"口径）。覆盖语义：SELECT 覆盖已消费行无害（DELETE 先清、
+// INSERT 全量覆盖，幂等）。
+func (r *StatRepo) LoadAggRange(ctx context.Context, from, to time.Time) ([]*domain.StatBucket, []*domain.EntityStatBucket, int64, error) {
 	if r.pool == nil {
-		return nil, 0, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot aggregate offline range")
+		return nil, nil, 0, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot aggregate offline range")
 	}
 	merged := make(map[aggRowKey]*domain.StatBucket)
 	var detailRows int64
-	for _, sql := range []string{aggUsageSuccessSQL, aggUsageAbortSQL, aggErrLogSQL} {
+	for _, sql := range []string{aggUsageSQL, aggErrLogSQL} {
 		rows, err := r.pool.Query(ctx, sql, from, to)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 		for rows.Next() {
 			// 每行独立扫描目标（pgx Scan 需逐行独立地址；列序 = aggDimCols +
-			// is_error + 2 计数 + 7 测量（in/out/tot/cr/cc/cost/raw——raw 恒在
-			// cost 后）+ call_count + 3 TTFT + 直方图）。
+			// 2 计数 + 11 测量（in/out/tot/cr/cc/cost/raw——raw 恒在 cost 后——
+			// call + 3 TTFT）+ 直方图）。
 			var (
-				bt                                                               time.Time
-				g, a, t2, u                                                      int64
-				m                                                                string
-				isErr                                                            bool
+				bt                                                                    time.Time
+				g                                                                     int64
+				m                                                                     string
 				req, errN, in, out, tot, cr, cc, cost, raw, call, ttftS, ttftC, ttftM int64
-				hist                                                             []int64
+				hist                                                                  []int64
 			)
-			if err := rows.Scan(&bt, &g, &a, &t2, &u, &m, &isErr, &req, &errN, &in,
+			if err := rows.Scan(&bt, &g, &m, &req, &errN, &in,
 				&out, &tot, &cr, &cc, &cost, &raw, &call, &ttftS, &ttftC, &ttftM, &hist); err != nil {
 				rows.Close()
-				return nil, 0, err
+				return nil, nil, 0, err
 			}
 			if len(hist) != len(ttftHistBounds) { // 防御：直方图档位漂移即刻显形
 				rows.Close()
-				return nil, 0, fmt.Errorf("stat repo: agg hist len %d != %d (bucket %s)", len(hist), len(ttftHistBounds), bt)
+				return nil, nil, 0, fmt.Errorf("stat repo: agg hist len %d != %d (bucket %s)", len(hist), len(ttftHistBounds), bt)
 			}
 			b := &domain.StatBucket{
-				BucketTime: bt, GroupID: g, AccountID: a, TemplateID: t2, UserID: u,
-				Model: m, IsError: isErr, RequestCount: req, ErrorCount: errN,
+				BucketTime: bt, GroupID: g, Model: m,
+				RequestCount: req, ErrorCount: errN,
 				InputTokens: in, OutputTokens: out, TotalTokens: tot,
 				CacheReadTokens: cr, CacheCreationTokens: cc, Cost: cost, RawCost: raw, CallCount: call,
 				TTFTTotalMS: ttftS, TTFTCount: ttftC, TTFTMaxMS: ttftM, TTFTHist: hist,
@@ -276,19 +266,23 @@ func (r *StatRepo) LoadAggRange(ctx context.Context, from, to time.Time) ([]*dom
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 		rows.Close()
 	}
-	out := make([]*domain.StatBucket, 0, len(merged))
+	cube := make([]*domain.StatBucket, 0, len(merged))
 	for _, b := range merged {
-		out = append(out, b)
+		cube = append(cube, b)
 	}
-	sort.Slice(out, func(i, j int) bool { return lessStatBucket(out[i], out[j]) })
-	return out, detailRows, nil
+	sort.Slice(cube, func(i, j int) bool { return lessStatBucket(cube[i], cube[j]) })
+	entity, err := r.loadEntityAggRange(ctx, from, to)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return cube, entity, detailRows, nil
 }
 
-// mergeAggRow 跨查询同 key 桶测量列累加（错误桶重建双源合并；TTFT max 取大）。
+// mergeAggRow 跨源同 key 桶测量列累加（cube 双源合并；TTFT max 取大）。
 func mergeAggRow(dst, src *domain.StatBucket) {
 	dst.RequestCount += src.RequestCount
 	dst.ErrorCount += src.ErrorCount
@@ -312,7 +306,7 @@ func mergeAggRow(dst, src *domain.StatBucket) {
 }
 
 // lessStatBucket 桶确定性排序（LoadAggRange 输出与重放结果一致；排序键 =
-// 唯一索引列序）。
+// 唯一索引列序 bucket_time, group_id, model）。
 func lessStatBucket(a, b *domain.StatBucket) bool {
 	if !a.BucketTime.Equal(b.BucketTime) {
 		return a.BucketTime.Before(b.BucketTime)
@@ -320,25 +314,13 @@ func lessStatBucket(a, b *domain.StatBucket) bool {
 	if a.GroupID != b.GroupID {
 		return a.GroupID < b.GroupID
 	}
-	if a.AccountID != b.AccountID {
-		return a.AccountID < b.AccountID
-	}
-	if a.TemplateID != b.TemplateID {
-		return a.TemplateID < b.TemplateID
-	}
-	if a.UserID != b.UserID {
-		return a.UserID < b.UserID
-	}
-	if a.Model != b.Model {
-		return a.Model < b.Model
-	}
-	return !a.IsError && b.IsError
+	return a.Model < b.Model
 }
 
-// statsAggInsertCols 离线聚合 INSERT 列（与 usage_stats DDL 列序一致；不含
+// statsAggInsertCols 离线聚合 INSERT 列（与 usage_stats DDL v2 列序一致；不含
 // id——DEFAULT nextval，ent bigserial 同款语义；raw_cost 紧随 cost）。
 var statsAggInsertCols = []string{
-	"bucket_time", "group_id", "account_id", "template_id", "user_id", "model", "is_error",
+	"bucket_time", "group_id", "model",
 	"request_count", "error_count", "input_tokens", "output_tokens", "total_tokens",
 	"cache_read_tokens", "cache_creation_tokens", "cost", "raw_cost", "call_count",
 	"ttft_total_ms", "ttft_count", "ttft_max_ms", "ttft_hist", "updated_at",
@@ -353,22 +335,23 @@ func statsAggRowArgs(b *domain.StatBucket, now time.Time) []any {
 		hist = ttftZeroHist
 	}
 	return []any{
-		b.BucketTime, b.GroupID, b.AccountID, b.TemplateID, b.UserID, b.Model, b.IsError,
+		b.BucketTime, b.GroupID, b.Model,
 		b.RequestCount, b.ErrorCount, b.InputTokens, b.OutputTokens, b.TotalTokens,
 		b.CacheReadTokens, b.CacheCreationTokens, b.Cost, b.RawCost, b.CallCount,
 		b.TTFTTotalMS, b.TTFTCount, b.TTFTMaxMS, hist, now,
 	}
 }
 
-// AggregateRange 单事务覆盖落盘（spec 2026-08-14 §3.3）：DELETE [delFrom,delTo)
-// → INSERT rows（参数化批量，[]int64→bigint[] pgx 原生编码）→ watermark 推进
-// wmTo。**同一事务**——崩溃回滚 → 游标不动 → 重算恢复不双计；重复执行同范围
-// 结果一致（覆盖语义，issue #8 教训：修正/补账通过重算 bucket 实现，非累加）。
-// **wmTo = 读窗口 T（≠ 重算范围上界 delTo）**——watermark 推进到 delTo 会永久
-// 跳过 [T, delTo) 的行（P1-A 要防的错误形态）；两范围分离由调用方 worker 执行
-// （见 usage/stats_agg.go）。Upsert（COPY+ON CONFLICT 累加）语义不适用（覆盖
-// 语义，无双写者），已删除。
-func (r *StatRepo) AggregateRange(ctx context.Context, delFrom, delTo, wmTo time.Time, rows []*domain.StatBucket) error {
+// AggregateRange 单事务覆盖落盘（spec 2026-08-14 §3.3 + spec 2026-08-23 §3.3
+// 双表扩展）：DELETE cube [range] → INSERT cube → DELETE entity [range] →
+// INSERT entity → watermark 推进 wmTo。**同一事务**——任一步失败整体回滚 →
+// 游标不动 → 重算恢复不双计（双表原子：cube 失败则 entity 同回滚，反之亦然）；
+// 重复执行同范围结果一致（覆盖语义，issue #8 教训：修正/补账通过重算 bucket
+// 实现，非累加）。**wmTo = 读窗口 T（≠ 重算范围上界 delTo）**——watermark 推进
+// 到 delTo 会永久跳过 [T, delTo) 的行（P1-A 要防的错误形态）；两范围分离由
+// 调用方 worker 执行（见 usage/stats_agg.go）。Upsert（COPY+ON CONFLICT 累加）
+// 语义不适用（覆盖语义，无双写者），已删除。
+func (r *StatRepo) AggregateRange(ctx context.Context, delFrom, delTo, wmTo time.Time, cube []*domain.StatBucket, entity []*domain.EntityStatBucket) error {
 	if r.pool == nil {
 		return fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot aggregate offline range")
 	}
@@ -386,9 +369,18 @@ func (r *StatRepo) AggregateRange(ctx context.Context, delFrom, delTo, wmTo time
 		return err
 	}
 	now := time.Now()
-	for start := 0; start < len(rows); start += statsAggBatchSize {
-		end := min(start+statsAggBatchSize, len(rows))
-		if err := insertStatBuckets(ctx, tx, rows[start:end], now); err != nil {
+	for start := 0; start < len(cube); start += statsAggBatchSize {
+		end := min(start+statsAggBatchSize, len(cube))
+		if err := insertStatBuckets(ctx, tx, cube[start:end], now); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM "usage_entity_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`, delFrom, delTo); err != nil {
+		return err
+	}
+	for start := 0; start < len(entity); start += statsAggBatchSize {
+		end := min(start+statsAggBatchSize, len(entity))
+		if err := insertEntityStatBuckets(ctx, tx, entity[start:end], now); err != nil {
 			return err
 		}
 	}
@@ -400,12 +392,14 @@ func (r *StatRepo) AggregateRange(ctx context.Context, delFrom, delTo, wmTo time
 	return tx.Commit(ctx)
 }
 
-// insertStatBuckets 参数化批量 INSERT（占位符按批大小动态构建——批 ≤ 500 ×
-// 22 列，PG 参数上限 65535 安全）。
-func insertStatBuckets(ctx context.Context, tx pgx.Tx, rows []*domain.StatBucket, now time.Time) error {
+// batchInsertExec 单条多值参数化 INSERT（占位符按行列动态构建；调用方保证单批
+// ≤ statsAggBatchSize 行——18 列 × 500 ≈ 9k 参数，PG 参数上限 65535 安全）。
+func batchInsertExec(ctx context.Context, tx pgx.Tx, table string, cols []string, argRows [][]any) error {
 	var b strings.Builder
-	b.WriteString(`INSERT INTO "usage_stats" (`)
-	for i, col := range statsAggInsertCols {
+	b.WriteString(`INSERT INTO "`)
+	b.WriteString(table)
+	b.WriteString(`" (`)
+	for i, col := range cols {
 		if i > 0 {
 			b.WriteString(", ")
 		}
@@ -414,23 +408,32 @@ func insertStatBuckets(ctx context.Context, tx pgx.Tx, rows []*domain.StatBucket
 		b.WriteString(`"`)
 	}
 	b.WriteString(`) VALUES `)
-	args := make([]any, 0, len(rows)*len(statsAggInsertCols))
-	for i, row := range rows {
+	args := make([]any, 0, len(argRows)*len(cols))
+	for i, rowArgs := range argRows {
 		if i > 0 {
 			b.WriteString(", ")
 		}
 		b.WriteString(`(`)
-		for j := range statsAggInsertCols {
+		for j := range rowArgs {
 			if j > 0 {
 				b.WriteString(", ")
 			}
-			fmt.Fprintf(&b, "$%d", i*len(statsAggInsertCols)+j+1)
+			fmt.Fprintf(&b, "$%d", i*len(cols)+j+1)
 		}
 		b.WriteString(`)`)
-		args = append(args, statsAggRowArgs(row, now)...)
+		args = append(args, rowArgs...)
 	}
 	_, err := tx.Exec(ctx, b.String(), args...)
 	return err
+}
+
+// insertStatBuckets 参数化批量 INSERT（cube；列序 = statsAggInsertCols）。
+func insertStatBuckets(ctx context.Context, tx pgx.Tx, rows []*domain.StatBucket, now time.Time) error {
+	argRows := make([][]any, len(rows))
+	for i, row := range rows {
+		argRows[i] = statsAggRowArgs(row, now)
+	}
+	return batchInsertExec(ctx, tx, "usage_stats", statsAggInsertCols, argRows)
 }
 
 // AcquireStatsAggLock 抢占聚合 worker 会话级 advisory lock（pg_try_advisory_
@@ -656,63 +659,4 @@ func (r *StatRepo) CountOverviewResources(ctx context.Context) (*OverviewResourc
 		return nil, err
 	}
 	return &OverviewResourceCounts{Templates: tpls, Groups: groups, Users: users}, nil
-}
-
-// statScanSQL 原始小时桶拉取（/stats + /api/user/stats；列 = 全列含 ttft_hist——
-// ent 数组列 carve-out，ScanStats 改 pgx 直查，评审 P1-1）。
-var statScanSQL = `SELECT bucket_time, group_id, account_id, template_id, user_id, model, is_error,
-	request_count, error_count, input_tokens, output_tokens, total_tokens,
-	cache_read_tokens, cache_creation_tokens, cost, raw_cost, call_count,
-	ttft_total_ms, ttft_count, ttft_max_ms, ttft_hist
-FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
-
-// statScanTailSQL 原始小时桶拉取尾段（过滤条件拼接后追加）。
-var statScanTailSQL = ` ORDER BY bucket_time`
-
-// ScanStats 拉取时间范围内的原始小时桶（pgx 直查——usage_stats 含 bigint[]
-// 数组列，ent 无法扫描（carve-out）；日聚合在 service 层做，规避方言差异）。
-func (r *StatRepo) ScanStats(ctx context.Context, q StatQuery) ([]*domain.StatBucket, error) {
-	if r.pool == nil {
-		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot scan stats")
-	}
-	sql := statScanSQL
-	args := []any{q.From, q.To}
-	n := 3
-	// 过滤条件顺序固定（确定性 SQL 形态；0/空 = 不过滤）。
-	for _, f := range []struct {
-		cond string
-		val  any
-		on   bool
-	}{
-		{`"group_id" = $`, q.GroupID, q.GroupID > 0},
-		{`"account_id" = $`, q.AccountID, q.AccountID > 0},
-		{`"template_id" = $`, q.TemplateID, q.TemplateID > 0},
-		{`"user_id" = $`, q.UserID, q.UserID > 0},
-		{`"model" = $`, q.Model, q.Model != ""},
-	} {
-		if !f.on {
-			continue
-		}
-		sql += ` AND ` + f.cond + fmt.Sprint(n)
-		args = append(args, f.val)
-		n++
-	}
-	sql += statScanTailSQL
-	rows, err := r.pool.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []*domain.StatBucket{}
-	for rows.Next() {
-		b := &domain.StatBucket{}
-		if err := rows.Scan(&b.BucketTime, &b.GroupID, &b.AccountID, &b.TemplateID, &b.UserID,
-			&b.Model, &b.IsError, &b.RequestCount, &b.ErrorCount, &b.InputTokens,
-			&b.OutputTokens, &b.TotalTokens, &b.CacheReadTokens, &b.CacheCreationTokens,
-			&b.Cost, &b.RawCost, &b.CallCount, &b.TTFTTotalMS, &b.TTFTCount, &b.TTFTMaxMS, &b.TTFTHist); err != nil {
-			return nil, err
-		}
-		out = append(out, b)
-	}
-	return out, rows.Err()
 }
