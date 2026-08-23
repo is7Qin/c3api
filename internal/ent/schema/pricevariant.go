@@ -5,8 +5,6 @@ import (
 	"time"
 
 	"entgo.io/ent"
-	"entgo.io/ent/dialect/entsql"
-	"entgo.io/ent/schema"
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
 )
@@ -30,12 +28,6 @@ func (PriceVariant) Fields() []ent.Field {
 		field.Int64("set_output_per_m").Optional().Nillable(),
 		field.Time("created_at").Default(time.Now),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
-	}
-}
-
-func (PriceVariant) Annotations() []schema.Annotation {
-	return []schema.Annotation{
-		entsql.Check(`(mult_bp IS NOT NULL OR set_input_per_m IS NOT NULL OR set_output_per_m IS NOT NULL)`),
 	}
 }
 

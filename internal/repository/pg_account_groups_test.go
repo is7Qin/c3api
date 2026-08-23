@@ -54,6 +54,7 @@ func newPGRepos(tb testing.TB) *repository.Repository {
 	require.NoError(tb, repos.EnsureErrLogPartitioned(ctx, time.Now()))
 	require.NoError(tb, repos.EnsureUsageStatsPartitioned(ctx, time.Now()))
 	require.NoError(tb, repos.EnsureUsageEntityStatsPartitioned(ctx, time.Now()))
+	require.NoError(tb, repos.EnsurePriceVariantsEffectCheck(ctx))
 	return repos
 }
 

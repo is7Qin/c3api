@@ -741,6 +741,13 @@ func (r *Repository) EnsureUsageEntityStatsPartitioned(ctx context.Context, now 
 	return r.Partitions.EnsureUsageEntityStatsPartitioned(ctx, now)
 }
 
+// EnsurePriceVariantsEffectCheck price_variants 效果字段 CHECK 约束 bootstrap
+// （幂等 DO 块；main 装配在 ent migrate 之后调用——裁决 2026-08-24：Atlas 注解
+// 路线在 wipe-and-remigrate 场景下引发间歇性迁移污染，改裸 DDL 独占建约束）。
+func (r *Repository) EnsurePriceVariantsEffectCheck(ctx context.Context) error {
+	return r.Partitions.EnsurePriceVariantsEffectCheck(ctx)
+}
+
 // EnsureUsageEntityStatsPartitions usage_entity_stats 预建 [trunc(now), trunc(until)] 每日
 // 分区（retention worker 防日界竞态；分区键 bucket_time，幂等；与 usage_stats
 // 共用 StatsRetentionDays 180d 同一循环 DROP+预建）。

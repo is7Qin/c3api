@@ -3,7 +3,6 @@
 package migrate
 
 import (
-	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/dialect/sql/schema"
 	"entgo.io/ent/schema/field"
 )
@@ -714,9 +713,6 @@ func init() {
 	GroupAssignmentsTable.ForeignKeys[1].RefTable = UsersTable
 	KeysTable.ForeignKeys[0].RefTable = GroupsTable
 	KeysTable.ForeignKeys[1].RefTable = UsersTable
-	PriceVariantsTable.Annotation = &entsql.Annotation{
-		Check: "(mult_bp IS NOT NULL OR set_input_per_m IS NOT NULL OR set_output_per_m IS NOT NULL)",
-	}
 	RedemptionUsesTable.ForeignKeys[0].RefTable = RedemptionCodesTable
 	TempBalancesTable.ForeignKeys[0].RefTable = UsersTable
 	TemplateExtsTable.ForeignKeys[0].RefTable = TemplatesTable

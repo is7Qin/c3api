@@ -29,6 +29,7 @@ func newPGServiceRepos(t *testing.T) (*repository.Repository, *Service) {
 	drv := entsql.OpenDB("postgres", db)
 	repo, err := repository.NewWithPG(ctx, drv, true, pool)
 	require.NoError(t, err)
+	require.NoError(t, repo.EnsurePriceVariantsEffectCheck(ctx))
 	_, err = pool.Exec(ctx, "DELETE FROM price_variants")
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, "DELETE FROM price_entries")
