@@ -74,6 +74,8 @@ func (r *UsageRepo) InsertBatch(ctx context.Context, logs []*domain.UsageLog) er
 // InputTokens/OutputTokens（TotalTokens 口径不变）。
 // 用户裁决（err_logs 分表）：StatusCode/ErrorMessage 为域内瞬态审计字段
 // （err_logs 承载），不再写 usage_logs（该两列已从表移除——瘦身）。
+// billed（F2 ledger-cursor，spec 2026-08-23）：出生标记直接透传（false=待对账
+// 消费；true=关闭计费/匿名行出生吸收态），翻转只发生在对账事务内。
 func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCreate {
 	c := client.UsageLog.Create().
 		SetRequestID(l.RequestID).
@@ -91,6 +93,7 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 		SetRawCost(l.RawCost).
 		SetAboveHit(l.AboveHit).
 		SetOverdraft(l.Overdraft).
+		SetBilled(l.Billed).
 		SetCreatedAt(l.CreatedAt)
 	// client_ip（S-E 2026-08-17）：非空才 Set（ent 只落被 Set 的列——空 = NULL
 	// 不写该列，与 COPY 路径 usageLogRowValues 条件赋值一一对应）。
@@ -137,6 +140,91 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 		c = c.SetPricePerCallMillis(*l.PricePerCallMillis)
 	}
 	return c
+}
+
+// usageLogCopyColumns COPY 列清单 = buildUsageLogCreate 设置的列集合（31 列
+// 全列显式列出——未设置的可选列传 NULL，与 ent 省略列（→NULL）等价；列序
+// 与 usage_logs 分区表列定义一致，5 索引兼容）。COPY 无 65535 参数上限，
+// 整事务一次 COPY（无分片）。统一计费模型（spec 2026-08-13）：原图片 6 列
+// （image tokens/count + 3 价格快照）已删，加 call_count/price_per_call_millis。
+// S-E（2026-08-17）：加 client_ip（紧随 request_id，与分区表列定义一致）。
+// spec 2026-08-18：加 raw_cost（紧随 cost——恒落可 0，对齐 cost 恒落语义）。
+// F2 ledger-cursor（spec 2026-08-23）：加 billed（紧随 overdraft——与分区表
+// 列定义同位；恒落布尔，出生标记由调用方盖章）。（自 billing_repo.go 整体
+// 搬迁：COPY 事实源归 usage 写入面所有，billing_repo.go 归 F2 T3 独占。）
+var usageLogCopyColumns = []string{
+	usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldGroupID,
+	usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID,
+	usagelog.FieldKeyID, usagelog.FieldModel, usagelog.FieldMappedModel,
+	usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldLatencyMs,
+	usagelog.FieldTtftMs, usagelog.FieldInputTokens, usagelog.FieldPriceInputMillis,
+	usagelog.FieldOutputTokens, usagelog.FieldPriceOutputMillis, usagelog.FieldTotalTokens,
+	usagelog.FieldCacheReadTokens, usagelog.FieldPriceCacheReadMillis,
+	usagelog.FieldCacheCreationTokens, usagelog.FieldPriceCacheCreationMillis,
+	usagelog.FieldCallCount, usagelog.FieldPricePerCallMillis, usagelog.FieldCost,
+	usagelog.FieldRawCost,
+	usagelog.FieldBillingTier, usagelog.FieldAboveHit, usagelog.FieldOverdraft,
+	usagelog.FieldBilled,
+	usagelog.FieldCreatedAt,
+}
+
+// usageLogRowValues 单行 COPY 值（与 buildUsageLogCreate 的 Set 条件一一对应：
+// 可选列 >0/非空/非 nil 才赋值，否则 NULL；call_count 恒落（NOT NULL DEFAULT 0）；
+// cost/raw_cost 恒落（spec 2026-08-18——乘倍率前原始成本，可 0）；
+// client_ip 非空才赋值，否则 NULL；billed 恒落布尔——出生标记透传）。
+func usageLogRowValues(l *domain.UsageLog) []any {
+	var groupID, accountID, templateID, userID, keyID, mappedModel, billingTier, clientIP any
+	var ttft, priceIn, priceOut, priceCR, priceCC, pricePerCall any
+	if l.ClientIP != "" {
+		clientIP = l.ClientIP
+	}
+	if l.GroupID > 0 {
+		groupID = l.GroupID
+	}
+	if l.AccountID > 0 {
+		accountID = l.AccountID
+	}
+	if l.TemplateID > 0 {
+		templateID = l.TemplateID
+	}
+	if l.UserID > 0 {
+		userID = l.UserID
+	}
+	if l.KeyID > 0 {
+		keyID = l.KeyID
+	}
+	if l.MappedModel != "" {
+		mappedModel = l.MappedModel
+	}
+	if l.BillingTier != "" {
+		billingTier = l.BillingTier
+	}
+	if l.TTFTMS != nil {
+		ttft = *l.TTFTMS
+	}
+	if l.PriceInputMillis != nil {
+		priceIn = *l.PriceInputMillis
+	}
+	if l.PriceOutputMillis != nil {
+		priceOut = *l.PriceOutputMillis
+	}
+	if l.PriceCacheReadMillis != nil {
+		priceCR = *l.PriceCacheReadMillis
+	}
+	if l.PriceCacheCreationMillis != nil {
+		priceCC = *l.PriceCacheCreationMillis
+	}
+	if l.PricePerCallMillis != nil {
+		pricePerCall = *l.PricePerCallMillis
+	}
+	return []any{
+		l.RequestID, clientIP, groupID, accountID, templateID, userID, keyID,
+		l.Model, mappedModel, string(l.Format), string(l.ErrorType), l.LatencyMS, ttft,
+		l.InputTokens, priceIn, l.OutputTokens, priceOut, l.TotalTokens,
+		l.CacheReadTokens, priceCR, l.CacheCreationTokens, priceCC,
+		l.CallCount, pricePerCall,
+		l.Cost, l.RawCost, billingTier, l.AboveHit, l.Overdraft, l.Billed, l.CreatedAt,
+	}
 }
 
 // QueryUsages usage_logs keyset 游标分页查询（用户裁决：无 from/to 的全分区

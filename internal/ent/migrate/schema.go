@@ -586,6 +586,7 @@ var (
 		{Name: "billing_tier", Type: field.TypeString, Nullable: true},
 		{Name: "above_hit", Type: field.TypeBool, Default: false},
 		{Name: "overdraft", Type: field.TypeBool, Default: false},
+		{Name: "billed", Type: field.TypeBool, Default: false},
 		{Name: "created_at", Type: field.TypeTime},
 	}
 	// UsageLogsTable holds the schema information for the "usage_logs" table.
@@ -597,32 +598,32 @@ var (
 			{
 				Name:    "usagelog_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[30]},
+				Columns: []*schema.Column{UsageLogsColumns[31]},
 			},
 			{
 				Name:    "usagelog_group_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[3], UsageLogsColumns[30]},
+				Columns: []*schema.Column{UsageLogsColumns[3], UsageLogsColumns[31]},
 			},
 			{
 				Name:    "usagelog_account_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[4], UsageLogsColumns[30]},
+				Columns: []*schema.Column{UsageLogsColumns[4], UsageLogsColumns[31]},
 			},
 			{
 				Name:    "usagelog_user_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[6], UsageLogsColumns[30]},
+				Columns: []*schema.Column{UsageLogsColumns[6], UsageLogsColumns[31]},
 			},
 			{
 				Name:    "usagelog_key_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[7], UsageLogsColumns[30]},
+				Columns: []*schema.Column{UsageLogsColumns[7], UsageLogsColumns[31]},
 			},
 			{
 				Name:    "usagelog_request_id_created_at",
 				Unique:  true,
-				Columns: []*schema.Column{UsageLogsColumns[1], UsageLogsColumns[30]},
+				Columns: []*schema.Column{UsageLogsColumns[1], UsageLogsColumns[31]},
 			},
 		},
 	}

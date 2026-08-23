@@ -658,6 +658,20 @@ func (_u *UsageLogUpdate) SetNillableOverdraft(v *bool) *UsageLogUpdate {
 	return _u
 }
 
+// SetBilled sets the "billed" field.
+func (_u *UsageLogUpdate) SetBilled(v bool) *UsageLogUpdate {
+	_u.mutation.SetBilled(v)
+	return _u
+}
+
+// SetNillableBilled sets the "billed" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableBilled(v *bool) *UsageLogUpdate {
+	if v != nil {
+		_u.SetBilled(*v)
+	}
+	return _u
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_u *UsageLogUpdate) SetCreatedAt(v time.Time) *UsageLogUpdate {
 	_u.mutation.SetCreatedAt(v)
@@ -914,6 +928,9 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Overdraft(); ok {
 		_spec.SetField(usagelog.FieldOverdraft, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Billed(); ok {
+		_spec.SetField(usagelog.FieldBilled, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)
@@ -1568,6 +1585,20 @@ func (_u *UsageLogUpdateOne) SetNillableOverdraft(v *bool) *UsageLogUpdateOne {
 	return _u
 }
 
+// SetBilled sets the "billed" field.
+func (_u *UsageLogUpdateOne) SetBilled(v bool) *UsageLogUpdateOne {
+	_u.mutation.SetBilled(v)
+	return _u
+}
+
+// SetNillableBilled sets the "billed" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableBilled(v *bool) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetBilled(*v)
+	}
+	return _u
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_u *UsageLogUpdateOne) SetCreatedAt(v time.Time) *UsageLogUpdateOne {
 	_u.mutation.SetCreatedAt(v)
@@ -1854,6 +1885,9 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.Overdraft(); ok {
 		_spec.SetField(usagelog.FieldOverdraft, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Billed(); ok {
+		_spec.SetField(usagelog.FieldBilled, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)

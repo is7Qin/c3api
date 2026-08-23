@@ -412,6 +412,20 @@ func (_c *UsageLogCreate) SetNillableOverdraft(v *bool) *UsageLogCreate {
 	return _c
 }
 
+// SetBilled sets the "billed" field.
+func (_c *UsageLogCreate) SetBilled(v bool) *UsageLogCreate {
+	_c.mutation.SetBilled(v)
+	return _c
+}
+
+// SetNillableBilled sets the "billed" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableBilled(v *bool) *UsageLogCreate {
+	if v != nil {
+		_c.SetBilled(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *UsageLogCreate) SetCreatedAt(v time.Time) *UsageLogCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -519,6 +533,10 @@ func (_c *UsageLogCreate) defaults() {
 		v := usagelog.DefaultOverdraft
 		_c.mutation.SetOverdraft(v)
 	}
+	if _, ok := _c.mutation.Billed(); !ok {
+		v := usagelog.DefaultBilled
+		_c.mutation.SetBilled(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := usagelog.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -576,6 +594,9 @@ func (_c *UsageLogCreate) check() error {
 	}
 	if _, ok := _c.mutation.Overdraft(); !ok {
 		return &ValidationError{Name: "overdraft", err: errors.New(`ent: missing required field "UsageLog.overdraft"`)}
+	}
+	if _, ok := _c.mutation.Billed(); !ok {
+		return &ValidationError{Name: "billed", err: errors.New(`ent: missing required field "UsageLog.billed"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "UsageLog.created_at"`)}
@@ -728,6 +749,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Overdraft(); ok {
 		_spec.SetField(usagelog.FieldOverdraft, field.TypeBool, value)
 		_node.Overdraft = value
+	}
+	if value, ok := _c.mutation.Billed(); ok {
+		_spec.SetField(usagelog.FieldBilled, field.TypeBool, value)
+		_node.Billed = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)
@@ -1334,6 +1359,18 @@ func (u *UsageLogUpsert) SetOverdraft(v bool) *UsageLogUpsert {
 // UpdateOverdraft sets the "overdraft" field to the value that was provided on create.
 func (u *UsageLogUpsert) UpdateOverdraft() *UsageLogUpsert {
 	u.SetExcluded(usagelog.FieldOverdraft)
+	return u
+}
+
+// SetBilled sets the "billed" field.
+func (u *UsageLogUpsert) SetBilled(v bool) *UsageLogUpsert {
+	u.Set(usagelog.FieldBilled, v)
+	return u
+}
+
+// UpdateBilled sets the "billed" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateBilled() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldBilled)
 	return u
 }
 
@@ -2038,6 +2075,20 @@ func (u *UsageLogUpsertOne) SetOverdraft(v bool) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateOverdraft() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateOverdraft()
+	})
+}
+
+// SetBilled sets the "billed" field.
+func (u *UsageLogUpsertOne) SetBilled(v bool) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetBilled(v)
+	})
+}
+
+// UpdateBilled sets the "billed" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateBilled() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateBilled()
 	})
 }
 
@@ -2910,6 +2961,20 @@ func (u *UsageLogUpsertBulk) SetOverdraft(v bool) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateOverdraft() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateOverdraft()
+	})
+}
+
+// SetBilled sets the "billed" field.
+func (u *UsageLogUpsertBulk) SetBilled(v bool) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetBilled(v)
+	})
+}
+
+// UpdateBilled sets the "billed" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateBilled() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateBilled()
 	})
 }
 
