@@ -58,19 +58,19 @@ func (p EmailCodePurpose) TemplatePurpose() EmailTemplatePurpose {
 
 // EmailCode 验证码行（email+purpose 唯一）。
 type EmailCode struct {
-	ID        int64
-	Email     string
-	Purpose   EmailCodePurpose
+	ID         int64
+	Email      string
+	Purpose    EmailCodePurpose
 	CodeSHA256 string
-	ExpiresAt time.Time
-	Attempts  int
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ExpiresAt  time.Time
+	Attempts   int
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // 邮件验证码常量（spec R-3）。
 const (
-	EmailCodeTTL        = 10 * time.Minute
+	EmailCodeTTL         = 10 * time.Minute
 	EmailCodeMaxAttempts = 5
 	EmailCodeRateLimit   = 60 * time.Second
 	EmailCodeDigits      = 6

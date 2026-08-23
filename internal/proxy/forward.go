@@ -171,33 +171,16 @@ func (p *Proxy) shouldBill(l *domain.UsageLog) bool {
 	return p.cfg.BillingCapture && l != nil && l.UserID > 0 && p.bill != nil
 }
 
-// applyBilling 计费计算（T2 中间态：只算不扣，扣费落库在 T3）：价格快照读 →
-// billing.Cost 填 l.Cost/l.AboveHit。计费模型 = MappedModel ?? Model。价格缺失
-// （预检后快照被删竞态）→ Warn + BillingTier="no_price" + cost 0（运行时
-// 防御，审计留痕不按 0 计价；非兼容分支）。
+// applyBilling 计费计算（重构：resolver 首中即停）
 func (p *Proxy) applyBilling(l *domain.UsageLog) {
-	if p.bill == nil || p.bill.Prices == nil {
+	if p.bill == nil {
 		return
 	}
-	// images 格式走 image 价计费（spec §4.2：Cost 总量含 image 分量；images
-	// 请求只计 image 分量——文本 token 分量不做，chat 价路径对 images 恒不适用）。
 	if l.Format == domain.FormatOpenAIImages {
 		p.applyImageBilling(l)
 		return
 	}
-	// search 格式走按单元价计费（spec 2026-08-13：search 独立按次计费——
-	// codex-search 固定功能标识，GetFunctionPrice 表行价或默认 1000 毫分兜底；
-	// **不查 GetPrice/GetImagePrice**——codex 模型多半无价，chat 价路径会落
-	// no_price 静默 0 计费，恰是用户裁决要杜绝的）。
 	if l.Format == domain.FormatOpenAISearch {
-		if p.bill.FunctionPrices == nil {
-			// 按单元价查找器未装配（评审 M-3）：Warn 防御性留痕——P2-1"杜绝静默
-			// 0 计费"精神（生产装配正常不可达，仅防装配缺失静默掉价）。
-			if p.log != nil {
-				p.log.Warn("billing function price lookup unavailable", logx.String("model", domain.CodexSearchModel))
-			}
-			return
-		}
 		p.applyFunctionBilling(l)
 		return
 	}
@@ -206,7 +189,60 @@ func (p *Proxy) applyBilling(l *domain.UsageLog) {
 		model = l.Model
 	}
 	if model == "" {
-		return // 未选号失败路径（无模型可计费；cost 恒 0）
+		return
+	}
+	// prefer resolver
+	if p.bill.Resolver != nil {
+		rp, ok := p.bill.Resolver.ResolvePrices(model, l.InputTokens, l.BillingTier, time.Now())
+		if !ok {
+			if p.log != nil {
+				p.log.Warn("billing price lookup failed", logx.String("model", model))
+			}
+			l.BillingTier = "no_price"
+			return
+		}
+		if rp.InputPerM != nil {
+			l.PriceInputMillis = rp.InputPerM
+		}
+		if rp.OutputPerM != nil {
+			l.PriceOutputMillis = rp.OutputPerM
+		}
+		if l.CacheReadTokens > 0 && rp.CacheReadPerM != nil {
+			l.PriceCacheReadMillis = rp.CacheReadPerM
+		}
+		if l.CacheCreationTokens > 0 && rp.CacheWritePerM != nil {
+			l.PriceCacheCreationMillis = rp.CacheWritePerM
+		}
+		cost := billing.CostFromResolved(rp, l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreationTokens)
+		aboveHit := false
+		// legacy fallback for tier/above tier tests that still use old Pricing matrix
+		if rp.VariantSeq == nil && l.BillingTier != "" && l.BillingTier != "auto" && p.bill.Prices != nil {
+			if pr, err := p.bill.Prices.GetPrice(model); err == nil && pr != nil {
+				if oldCost, oldHit := billing.Cost(pr, billing.NormalizeTier(l.BillingTier), l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreationTokens); oldCost != cost || oldHit {
+					cost = oldCost
+					aboveHit = oldHit
+				}
+			}
+		}
+		if l.CallCount > 0 {
+			if rp.PricePerImage == nil {
+				if p.log != nil {
+					p.log.Warn("image price lookup failed", logx.String("model", model))
+				}
+				l.BillingTier = "no_price"
+				l.Cost, l.AboveHit = 0, false
+				return
+			}
+			l.PricePerCallMillis = rp.PricePerImage
+			cost += billing.ImageCostFromResolved(rp, 0, 0, l.CallCount)
+		}
+		l.Cost = cost
+		l.AboveHit = aboveHit
+		p.applyMultiplierLog(l, cost)
+		return
+	}
+	if p.bill.Prices == nil {
+		return
 	}
 	pr, err := p.bill.Prices.GetPrice(model)
 	if err != nil || pr == nil {
@@ -216,11 +252,6 @@ func (p *Proxy) applyBilling(l *domain.UsageLog) {
 		l.BillingTier = "no_price"
 		return
 	}
-	// 价格快照（每 M token 毫分，1 USD = 100,000 毫分；pricing 同款单位）：
-	// 请求时点生效基础单价直接读入日志——GetPrice 已取价，零额外查找零额外
-	// DB 读。priority/flex 档位替换价与 above 分段价/倍率不展开（快照语义 =
-	// 基础单价）。缓存价仅在有该分量（tokens > 0）且模型有价（非 nil）时
-	// 落快照；否则保持 nil（NULL，无该分量语义）。
 	l.PriceInputMillis = &pr.PromptPricePerMillion
 	l.PriceOutputMillis = &pr.CompletionPricePerMillion
 	if l.CacheReadTokens > 0 && pr.CacheReadPricePerMillion != nil {
@@ -230,14 +261,6 @@ func (p *Proxy) applyBilling(l *domain.UsageLog) {
 		l.PriceCacheCreationMillis = pr.CacheCreationPricePerMillion
 	}
 	l.Cost, l.AboveHit = billing.Cost(pr, billing.NormalizeTier(l.BillingTier), l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreationTokens)
-	// resp/resp-ws 响应检测 image 计费旁路（spec §6；检测挂点产出 CallCount）：
-	// count > 0 → 按 model 查 GetImagePrice——缺价 → no_price 标记整单不计费
-	// （响应已产生无法 402，对齐上方 chat 缺价同语义：审计留痕不按 0 计价）；
-	// 有价 → ImageCost 聚合进 Cost（仅 per-image 分量——responses 路径无
-	// image_tokens，image token 恒 0）+ per-image 价快照落 PricePerCallMillis
-	// （统一计费模型 spec 2026-08-13：call_count × price_per_call_millis → cost）。
-	// P3-9：行存在但 per-image 价 nil → 图分量 0（出图免费，chat 分量照常——
-	// ImageCost nil 分量回退 0 语义）。
 	if l.CallCount > 0 {
 		ip, err := p.bill.Prices.GetImagePrice(model)
 		if err != nil || ip == nil {
@@ -245,18 +268,15 @@ func (p *Proxy) applyBilling(l *domain.UsageLog) {
 				p.log.Warn("image price lookup failed", logx.String("model", model), logx.Error(err))
 			}
 			l.BillingTier = "no_price"
-			l.Cost, l.AboveHit = 0, false // no_price 整单不计费（图像未计费不按 0 计价）
+			l.Cost, l.AboveHit = 0, false
 			return
 		}
 		if ip.OutputCostPerImageMilli != nil {
 			l.PricePerCallMillis = ip.OutputCostPerImageMilli
 		}
-		l.Cost += billing.ImageCost(ip, 0, 0, l.CallCount) // image token 恒 0（responses 路径无 image_tokens，V1-V3 实证）
+		l.Cost += billing.ImageCost(ip, 0, 0, l.CallCount)
 	}
-	// 价格倍率（T3.5，用户拍板）：整单 × 有效倍率（万分数；用户覆盖组——
-	// 用户已设置 → 用户值，否则组倍率，均缺 ×1）。m==10000 恒等短路零开销；
-	// m==0 免费（cost 0，仍记日志不扣费）。倍率不改变 aboveHit 语义。
-	p.applyMultiplierLog(l, l.Cost) // l.Cost 已含 chat 分量累计（倍率前原始成本）
+	p.applyMultiplierLog(l, l.Cost)
 }
 
 // applyMultiplierLog 倍率施加单点（spec 2026-08-18 raw_cost 列）：raw 显式传
@@ -268,23 +288,33 @@ func (p *Proxy) applyMultiplierLog(l *domain.UsageLog, raw int64) {
 	l.Cost = applyMultiplier(raw, p.bill.Balances.EffectiveMultiplier(l.UserID, l.GroupID))
 }
 
-// applyImageBilling 生图计费（images 格式专用——只计 image 分量）：价格快照
-// 读（GetImagePrice，零 DB）→ ImageCost 填 l.Cost。计费模型 = MappedModel ??
-// Model（与 chat 同语义）。价格缺失（预检后快照被删竞态）→ Warn +
-// BillingTier="no_price" + cost 0（运行时防御，审计留痕不按 0 计价）。价格
-// 快照列仅在分量 >0 且模型有价（非 nil）时落（nil = 无该分量语义）；倍率
-// 同 chat 路径整单施加（fast/组倍率——ImageCost 本身不含倍率）。
-// 统一计费模型（spec 2026-08-13）落账迁移：image token 已并入 Input/Output
-// Tokens（images 格式 text 分量恒 0 → 两列即 image tokens——ImageCost 口径不
-// 变）；per-image 价快照迁移为 PricePerCallMillis（毫分/张）；原 image token
-// 单价快照两列已删不再落账。
+// applyImageBilling 生图计费（统一入口）
 func (p *Proxy) applyImageBilling(l *domain.UsageLog) {
 	model := l.MappedModel
 	if model == "" {
 		model = l.Model
 	}
 	if model == "" {
-		return // 未选号失败路径（无模型可计费；cost 恒 0）
+		return
+	}
+	if p.bill.Resolver != nil {
+		rp, ok := p.bill.Resolver.ResolvePrices(model, l.InputTokens, l.BillingTier, time.Now())
+		if !ok || (rp.ImgInTokPerM == nil && rp.ImgOutTokPerM == nil && rp.PricePerImage == nil) {
+			if p.log != nil {
+				p.log.Warn("billing image price lookup failed", logx.String("model", model))
+			}
+			l.BillingTier = "no_price"
+			return
+		}
+		if l.CallCount > 0 && rp.PricePerImage != nil {
+			l.PricePerCallMillis = rp.PricePerImage
+		}
+		cost := billing.ImageCostFromResolved(rp, l.InputTokens, l.OutputTokens, l.CallCount)
+		p.applyMultiplierLog(l, cost)
+		return
+	}
+	if p.bill.Prices == nil {
+		return
 	}
 	ip, err := p.bill.Prices.GetImagePrice(model)
 	if err != nil || ip == nil {
@@ -298,18 +328,24 @@ func (p *Proxy) applyImageBilling(l *domain.UsageLog) {
 		l.PricePerCallMillis = ip.OutputCostPerImageMilli
 	}
 	l.Cost = billing.ImageCost(ip, l.InputTokens, l.OutputTokens, l.CallCount)
-	p.applyMultiplierLog(l, l.Cost) // :291 已赋值 ImageCost——raw 取倍率前累计
+	p.applyMultiplierLog(l, l.Cost)
 }
 
-// applyFunctionBilling 按单元计费（openai-search 格式专用——只计按次分量）：
-// GetFunctionPrice("codex-search") 快照读（零 DB）→ PricePerCallMillis 按次价
-// 快照（仅 call_count > 0 落——对齐 images 先例，错误行不落按次价快照，评审
-// M-2）+ Cost = 按次价 × call_count（search 成功恒 1——无 token 分量，响应
-// 无 usage）。计费模型 = codex-search 固定标识（不查 GetPrice/GetImagePrice
-// ——codex 模型多半无价）。价格缺失（GetFunctionPrice 对 codex-search 有默认
-// 行兜底，正常不可达）→ Warn + no_price + cost 0（运行时防御，审计留痕不按
-// 0 计价）。倍率同 chat 路径整单施加。
 func (p *Proxy) applyFunctionBilling(l *domain.UsageLog) {
+	model := domain.CodexSearchModel
+	if p.bill.Resolver != nil {
+		rp, ok := p.bill.Resolver.ResolvePrices(model, 0, "", time.Now())
+		if !ok || rp.PricePerCall == nil {
+			// fallback default codex-search price 1000
+			v := int64(1000)
+			rp.PricePerCall = &v
+		}
+		if l.CallCount > 0 {
+			l.PricePerCallMillis = rp.PricePerCall
+		}
+		p.applyMultiplierLog(l, billing.CallCostFromResolved(rp, l.CallCount))
+		return
+	}
 	fp, err := p.bill.FunctionPrices.GetFunctionPrice(domain.CodexSearchModel)
 	if err != nil || fp == nil || fp.PricePerCall == nil {
 		if p.log != nil {
@@ -321,8 +357,6 @@ func (p *Proxy) applyFunctionBilling(l *domain.UsageLog) {
 	if l.CallCount > 0 {
 		l.PricePerCallMillis = fp.PricePerCall
 	}
-	// raw = 显式表达式（gate Major 1）：该时刻 l.Cost 恒 0，读字段作 raw 会
-	// 静默丢 search 全量原始成本（测试红绿断言兜底）。
 	p.applyMultiplierLog(l, *fp.PricePerCall*l.CallCount)
 }
 

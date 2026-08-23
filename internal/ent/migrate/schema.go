@@ -166,23 +166,6 @@ var (
 			},
 		},
 	}
-	// FunctionPricesColumns holds the columns for the "function_prices" table.
-	FunctionPricesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeInt64, Increment: true},
-		{Name: "model", Type: field.TypeString, Unique: true},
-		{Name: "price_per_call", Type: field.TypeInt64, Nullable: true},
-		{Name: "provider", Type: field.TypeString, Nullable: true},
-		{Name: "raw", Type: field.TypeJSON, Nullable: true},
-		{Name: "source", Type: field.TypeEnum, Enums: []string{"litellm", "manual"}},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-	}
-	// FunctionPricesTable holds the schema information for the "function_prices" table.
-	FunctionPricesTable = &schema.Table{
-		Name:       "function_prices",
-		Columns:    FunctionPricesColumns,
-		PrimaryKey: []*schema.Column{FunctionPricesColumns[0]},
-	}
 	// GroupsColumns holds the columns for the "groups" table.
 	GroupsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -235,25 +218,6 @@ var (
 			},
 		},
 	}
-	// ImagePricesColumns holds the columns for the "image_prices" table.
-	ImagePricesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeInt64, Increment: true},
-		{Name: "model", Type: field.TypeString, Unique: true},
-		{Name: "input_image_token_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "output_image_token_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "output_cost_per_image_milli", Type: field.TypeInt64, Nullable: true},
-		{Name: "provider", Type: field.TypeString, Nullable: true},
-		{Name: "raw", Type: field.TypeJSON, Nullable: true},
-		{Name: "source", Type: field.TypeEnum, Enums: []string{"litellm", "manual"}},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-	}
-	// ImagePricesTable holds the schema information for the "image_prices" table.
-	ImagePricesTable = &schema.Table{
-		Name:       "image_prices",
-		Columns:    ImagePricesColumns,
-		PrimaryKey: []*schema.Column{ImagePricesColumns[0]},
-	}
 	// KeysColumns holds the columns for the "keys" table.
 	KeysColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -301,51 +265,63 @@ var (
 			},
 		},
 	}
-	// PricingsColumns holds the columns for the "pricings" table.
-	PricingsColumns = []*schema.Column{
+	// PriceEntriesColumns holds the columns for the "price_entries" table.
+	PriceEntriesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "model", Type: field.TypeString, Unique: true},
-		{Name: "prompt_price_per_million", Type: field.TypeInt64},
-		{Name: "completion_price_per_million", Type: field.TypeInt64},
+		{Name: "mode", Type: field.TypeEnum, Enums: []string{"token", "call", "image"}},
+		{Name: "input_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "output_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "cache_read_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "cache_write_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "price_per_call", Type: field.TypeInt64, Nullable: true},
+		{Name: "img_in_tok_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "img_out_tok_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "price_per_image", Type: field.TypeInt64, Nullable: true},
+		{Name: "provider", Type: field.TypeString, Nullable: true},
 		{Name: "max_input_tokens", Type: field.TypeInt64, Nullable: true},
 		{Name: "max_output_tokens", Type: field.TypeInt64, Nullable: true},
-		{Name: "cache_read_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "cache_creation_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "priority_prompt_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "priority_completion_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "priority_cache_read_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "priority_cache_creation_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "flex_prompt_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "flex_completion_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "flex_cache_read_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "flex_cache_creation_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_threshold", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_prompt_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_completion_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_cache_read_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_cache_creation_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_priority_prompt_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_priority_completion_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_priority_cache_read_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_priority_cache_creation_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_flex_prompt_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_flex_completion_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_flex_cache_read_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "above_flex_cache_creation_price_per_million", Type: field.TypeInt64, Nullable: true},
-		{Name: "fast_multiplier", Type: field.TypeInt64, Nullable: true},
-		{Name: "provider", Type: field.TypeString, Nullable: true},
-		{Name: "mode", Type: field.TypeString, Nullable: true},
 		{Name: "supports_prompt_caching", Type: field.TypeBool, Nullable: true},
 		{Name: "raw", Type: field.TypeJSON, Nullable: true},
-		{Name: "source", Type: field.TypeEnum, Enums: []string{"litellm", "manual"}},
+		{Name: "source", Type: field.TypeEnum, Enums: []string{"litellm", "manual"}, Default: "manual"},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}
-	// PricingsTable holds the schema information for the "pricings" table.
-	PricingsTable = &schema.Table{
-		Name:       "pricings",
-		Columns:    PricingsColumns,
-		PrimaryKey: []*schema.Column{PricingsColumns[0]},
+	// PriceEntriesTable holds the schema information for the "price_entries" table.
+	PriceEntriesTable = &schema.Table{
+		Name:       "price_entries",
+		Columns:    PriceEntriesColumns,
+		PrimaryKey: []*schema.Column{PriceEntriesColumns[0]},
+	}
+	// PriceVariantsColumns holds the columns for the "price_variants" table.
+	PriceVariantsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "model", Type: field.TypeString},
+		{Name: "seq", Type: field.TypeInt},
+		{Name: "service_tier", Type: field.TypeString, Nullable: true},
+		{Name: "ctx_min", Type: field.TypeInt64, Nullable: true},
+		{Name: "ctx_max", Type: field.TypeInt64, Nullable: true},
+		{Name: "time_start", Type: field.TypeString, Nullable: true},
+		{Name: "time_end", Type: field.TypeString, Nullable: true},
+		{Name: "dow_mask", Type: field.TypeInt, Nullable: true},
+		{Name: "mult_bp", Type: field.TypeInt, Nullable: true},
+		{Name: "set_input_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "set_output_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// PriceVariantsTable holds the schema information for the "price_variants" table.
+	PriceVariantsTable = &schema.Table{
+		Name:       "price_variants",
+		Columns:    PriceVariantsColumns,
+		PrimaryKey: []*schema.Column{PriceVariantsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "pricevariant_model_seq",
+				Unique:  true,
+				Columns: []*schema.Column{PriceVariantsColumns[1], PriceVariantsColumns[2]},
+			},
+		},
 	}
 	// RedemptionCodesColumns holds the columns for the "redemption_codes" table.
 	RedemptionCodesColumns = []*schema.Column{
@@ -710,12 +686,11 @@ var (
 		EmailCodesTable,
 		EmailTemplatesTable,
 		ErrLogsTable,
-		FunctionPricesTable,
 		GroupsTable,
 		GroupAssignmentsTable,
-		ImagePricesTable,
 		KeysTable,
-		PricingsTable,
+		PriceEntriesTable,
+		PriceVariantsTable,
 		RedemptionCodesTable,
 		RedemptionUsesTable,
 		RulesTable,

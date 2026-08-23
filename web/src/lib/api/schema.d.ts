@@ -615,6 +615,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pricing/sync/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 预览价格同步（零写库 diff 报告） */
+        post: operations["PostPricingSyncPreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 统一价格列表（分页+筛选） */
+        get: operations["GetPrices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prices/{model}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model: string;
+            };
+            cookie?: never;
+        };
+        get: operations["GetPricesModel"];
+        put: operations["PutPricesModel"];
+        post?: never;
+        delete: operations["DeletePricesModel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prices/{model}/variants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model: string;
+            };
+            cookie?: never;
+        };
+        get: operations["GetPricesModelVariants"];
+        put: operations["PutPricesModelVariants"];
+        post?: never;
+        delete: operations["DeletePricesModelVariants"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/image-price": {
         parameters: {
             query?: never;
@@ -2306,6 +2376,115 @@ export interface components {
             function_rows?: number;
             /** @description 按单元价 upsert 落库数（manual 行不计） */
             function_updated?: number;
+        };
+        PricingSyncPreviewResponse: {
+            to_add: number;
+            to_update: number;
+            skipped: number;
+            entries?: components["schemas"]["PricingPreviewEntry"][];
+            variants_changed?: number;
+        };
+        PricingPreviewEntry: {
+            model: string;
+            /** @enum {string} */
+            mode: "token" | "call" | "image";
+            /** @enum {string} */
+            action: "add" | "update";
+        };
+        PriceEntry: {
+            Model: string;
+            /** @enum {string} */
+            Mode: "token" | "call" | "image";
+            /** Format: double */
+            InputPerM?: number | null;
+            /** Format: double */
+            OutputPerM?: number | null;
+            /** Format: double */
+            CacheReadPerM?: number | null;
+            /** Format: double */
+            CacheWritePerM?: number | null;
+            /** Format: double */
+            PricePerCall?: number | null;
+            /** Format: double */
+            ImgInTokPerM?: number | null;
+            /** Format: double */
+            ImgOutTokPerM?: number | null;
+            /** Format: double */
+            PricePerImage?: number | null;
+            Provider?: components["schemas"]["Provider"] | null;
+            Source: components["schemas"]["PricingSource"];
+            /** Format: date-time */
+            CreatedAt: string;
+            /** Format: date-time */
+            UpdatedAt: string;
+        };
+        PriceEntryUpsert: {
+            /** @enum {string} */
+            mode: "token" | "call" | "image";
+            /** Format: double */
+            input_per_m?: number | null;
+            /** Format: double */
+            output_per_m?: number | null;
+            /** Format: double */
+            cache_read_per_m?: number | null;
+            /** Format: double */
+            cache_write_per_m?: number | null;
+            /** Format: double */
+            price_per_call?: number | null;
+            /** Format: double */
+            img_in_tok_per_m?: number | null;
+            /** Format: double */
+            img_out_tok_per_m?: number | null;
+            /** Format: double */
+            price_per_image?: number | null;
+        };
+        PriceEntryListResponse: {
+            /** Format: int64 */
+            total: number;
+            rows: components["schemas"]["PriceEntry"][];
+        };
+        PriceVariant: {
+            Model: string;
+            Seq: number;
+            ServiceTier?: string | null;
+            /** Format: int64 */
+            CtxMin?: number | null;
+            /** Format: int64 */
+            CtxMax?: number | null;
+            TimeStart?: string | null;
+            TimeEnd?: string | null;
+            DowMask?: number | null;
+            MultBP?: number | null;
+            /** Format: double */
+            SetInputPerM?: number | null;
+            /** Format: double */
+            SetOutputPerM?: number | null;
+            /** Format: date-time */
+            CreatedAt: string;
+            /** Format: date-time */
+            UpdatedAt: string;
+        };
+        PriceVariantUpsert: {
+            service_tier?: string | null;
+            /** Format: int64 */
+            ctx_min?: number | null;
+            /** Format: int64 */
+            ctx_max?: number | null;
+            time_start?: string | null;
+            time_end?: string | null;
+            dow_mask?: number | null;
+            mult_bp?: number | null;
+            /** Format: double */
+            set_input_per_m?: number | null;
+            /** Format: double */
+            set_output_per_m?: number | null;
+            seq?: number;
+        };
+        PriceVariantListResponse: {
+            rows?: components["schemas"]["PriceVariant"][];
+        };
+        PriceVariantListRequest: {
+            variants?: components["schemas"]["PriceVariantUpsert"][];
         };
         ImagePrice: {
             /** @description 模型名（与 pricings.model 同口径） */
@@ -4272,6 +4451,202 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PricingSyncResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostPricingSyncPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 预览报告 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PricingSyncPreviewResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetPrices: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: number;
+                mode?: "token" | "call" | "image";
+                source?: "litellm" | "manual";
+                model?: string;
+                sort?: string;
+                order?: "asc" | "desc";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 价格列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceEntryListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetPricesModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 价格条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutPricesModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceEntryUpsert"];
+            };
+        };
+        responses: {
+            /** @description 更新后条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    DeletePricesModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetPricesModelVariants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 变体列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceVariantListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutPricesModelVariants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceVariantListRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新后变体列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceVariantListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    DeletePricesModelVariants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedResponse"];
                 };
             };
             default: components["responses"]["Error"];

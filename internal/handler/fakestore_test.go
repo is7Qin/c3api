@@ -25,23 +25,23 @@ import (
 // （评审发现：测试必然失败或退化为恒真断言）。
 // 实现 service.Store 接口，供 handler 测试使用。
 type fakeStore struct {
-	mu         sync.Mutex
-	tpls       map[int64]*domain.Template
-	accs       map[int64]*domain.Account
-	groups     map[int64]*domain.Group
-	accGroups  map[int64][]int64 // accountID → groupIDs（账号侧绑定，Set/GetAccountGroups）
-	keys       map[int64]*domain.Key
-	users      map[int64]*domain.User
-	settings   map[string]*domain.Setting
-	rules      map[int64]domain.Rule
+	mu          sync.Mutex
+	tpls        map[int64]*domain.Template
+	accs        map[int64]*domain.Account
+	groups      map[int64]*domain.Group
+	accGroups   map[int64][]int64 // accountID → groupIDs（账号侧绑定，Set/GetAccountGroups）
+	keys        map[int64]*domain.Key
+	users       map[int64]*domain.User
+	settings    map[string]*domain.Setting
+	rules       map[int64]domain.Rule
 	logs        []*domain.UsageLog
 	stats       []*domain.StatBucket
 	entityStats []*domain.EntityStatBucket
 	assign      map[int64][]int64 // groupID → 授予 user_id 列表（group_assignments 模拟）
-	assignMult map[[2]int64]*int // (groupID, userID) → 专属价格倍率（nil = 未设置；T3.5 按组）
-	codes      map[int64]*domain.RedemptionCode
-	uses       map[int64]*domain.RedemptionUse
-	temps      []*fakeTempRow // 临时额度行（domain 无 TempBalance 类型，标量参数即全字段）
+	assignMult  map[[2]int64]*int // (groupID, userID) → 专属价格倍率（nil = 未设置；T3.5 按组）
+	codes       map[int64]*domain.RedemptionCode
+	uses        map[int64]*domain.RedemptionUse
+	temps       []*fakeTempRow // 临时额度行（domain 无 TempBalance 类型，标量参数即全字段）
 	// pricings 模型价格（key = model，一行 = 最终生效价；manual > litellm 优先级
 	// 语义与真实仓库一致）。
 	pricings map[string]*domain.Pricing
@@ -49,12 +49,14 @@ type fakeStore struct {
 	imagePrices map[string]*domain.ImagePrice
 	// functionPrices 按单元计费功能类价格（价格表三件套；同 pricings 优先级语义）。
 	functionPrices map[string]*domain.FunctionPrice
+	priceEntries   map[string]*domain.PriceEntry
+	priceVariants  map[string][]*domain.PriceVariant
 	// tplExts/accExts 模板/账号类型化扩展（key = 父 id，镜像仓库 1:1 唯一索引）。
-	tplExts map[int64]*domain.TemplateExt
-	accExts map[int64]*domain.AccountExt
+	tplExts        map[int64]*domain.TemplateExt
+	accExts        map[int64]*domain.AccountExt
 	emailTemplates map[string]*domain.EmailTemplate
 	emailCodes     map[string]*domain.EmailCode
-	nextID  int64
+	nextID         int64
 	// lastPatch 记录最近一次 UpdateAccountsBatch 收到的 patch（评审 M3：
 	// 断言 handler 的 group_ids nil/[] 映射是否真正传到了 repo 层）。
 	lastPatch repository.AccountPatch
@@ -75,10 +77,12 @@ func newFakeStore() *fakeStore {
 		uses:  make(map[int64]*domain.RedemptionUse), pricings: make(map[string]*domain.Pricing),
 		imagePrices:    make(map[string]*domain.ImagePrice),
 		functionPrices: make(map[string]*domain.FunctionPrice),
+		priceEntries:   make(map[string]*domain.PriceEntry),
+		priceVariants:  make(map[string][]*domain.PriceVariant),
 		tplExts:        make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
 		emailTemplates: make(map[string]*domain.EmailTemplate),
 		emailCodes:     make(map[string]*domain.EmailCode),
-		nextID: 1,
+		nextID:         1,
 	}
 }
 

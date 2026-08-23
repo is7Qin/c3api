@@ -11,68 +11,68 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/is7qin/c3api/internal/ent/imageprice"
 	"github.com/is7qin/c3api/internal/ent/predicate"
+	"github.com/is7qin/c3api/internal/ent/pricevariant"
 )
 
-// ImagePriceQuery is the builder for querying ImagePrice entities.
-type ImagePriceQuery struct {
+// PriceVariantQuery is the builder for querying PriceVariant entities.
+type PriceVariantQuery struct {
 	config
 	ctx        *QueryContext
-	order      []imageprice.OrderOption
+	order      []pricevariant.OrderOption
 	inters     []Interceptor
-	predicates []predicate.ImagePrice
+	predicates []predicate.PriceVariant
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
 }
 
-// Where adds a new predicate for the ImagePriceQuery builder.
-func (_q *ImagePriceQuery) Where(ps ...predicate.ImagePrice) *ImagePriceQuery {
+// Where adds a new predicate for the PriceVariantQuery builder.
+func (_q *PriceVariantQuery) Where(ps ...predicate.PriceVariant) *PriceVariantQuery {
 	_q.predicates = append(_q.predicates, ps...)
 	return _q
 }
 
 // Limit the number of records to be returned by this query.
-func (_q *ImagePriceQuery) Limit(limit int) *ImagePriceQuery {
+func (_q *PriceVariantQuery) Limit(limit int) *PriceVariantQuery {
 	_q.ctx.Limit = &limit
 	return _q
 }
 
 // Offset to start from.
-func (_q *ImagePriceQuery) Offset(offset int) *ImagePriceQuery {
+func (_q *PriceVariantQuery) Offset(offset int) *PriceVariantQuery {
 	_q.ctx.Offset = &offset
 	return _q
 }
 
 // Unique configures the query builder to filter duplicate records on query.
 // By default, unique is set to true, and can be disabled using this method.
-func (_q *ImagePriceQuery) Unique(unique bool) *ImagePriceQuery {
+func (_q *PriceVariantQuery) Unique(unique bool) *PriceVariantQuery {
 	_q.ctx.Unique = &unique
 	return _q
 }
 
 // Order specifies how the records should be ordered.
-func (_q *ImagePriceQuery) Order(o ...imageprice.OrderOption) *ImagePriceQuery {
+func (_q *PriceVariantQuery) Order(o ...pricevariant.OrderOption) *PriceVariantQuery {
 	_q.order = append(_q.order, o...)
 	return _q
 }
 
-// First returns the first ImagePrice entity from the query.
-// Returns a *NotFoundError when no ImagePrice was found.
-func (_q *ImagePriceQuery) First(ctx context.Context) (*ImagePrice, error) {
+// First returns the first PriceVariant entity from the query.
+// Returns a *NotFoundError when no PriceVariant was found.
+func (_q *PriceVariantQuery) First(ctx context.Context) (*PriceVariant, error) {
 	nodes, err := _q.Limit(1).All(setContextOp(ctx, _q.ctx, ent.OpQueryFirst))
 	if err != nil {
 		return nil, err
 	}
 	if len(nodes) == 0 {
-		return nil, &NotFoundError{imageprice.Label}
+		return nil, &NotFoundError{pricevariant.Label}
 	}
 	return nodes[0], nil
 }
 
 // FirstX is like First, but panics if an error occurs.
-func (_q *ImagePriceQuery) FirstX(ctx context.Context) *ImagePrice {
+func (_q *PriceVariantQuery) FirstX(ctx context.Context) *PriceVariant {
 	node, err := _q.First(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
@@ -80,22 +80,22 @@ func (_q *ImagePriceQuery) FirstX(ctx context.Context) *ImagePrice {
 	return node
 }
 
-// FirstID returns the first ImagePrice ID from the query.
-// Returns a *NotFoundError when no ImagePrice ID was found.
-func (_q *ImagePriceQuery) FirstID(ctx context.Context) (id int64, err error) {
+// FirstID returns the first PriceVariant ID from the query.
+// Returns a *NotFoundError when no PriceVariant ID was found.
+func (_q *PriceVariantQuery) FirstID(ctx context.Context) (id int64, err error) {
 	var ids []int64
 	if ids, err = _q.Limit(1).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryFirstID)); err != nil {
 		return
 	}
 	if len(ids) == 0 {
-		err = &NotFoundError{imageprice.Label}
+		err = &NotFoundError{pricevariant.Label}
 		return
 	}
 	return ids[0], nil
 }
 
 // FirstIDX is like FirstID, but panics if an error occurs.
-func (_q *ImagePriceQuery) FirstIDX(ctx context.Context) int64 {
+func (_q *PriceVariantQuery) FirstIDX(ctx context.Context) int64 {
 	id, err := _q.FirstID(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
@@ -103,10 +103,10 @@ func (_q *ImagePriceQuery) FirstIDX(ctx context.Context) int64 {
 	return id
 }
 
-// Only returns a single ImagePrice entity found by the query, ensuring it only returns one.
-// Returns a *NotSingularError when more than one ImagePrice entity is found.
-// Returns a *NotFoundError when no ImagePrice entities are found.
-func (_q *ImagePriceQuery) Only(ctx context.Context) (*ImagePrice, error) {
+// Only returns a single PriceVariant entity found by the query, ensuring it only returns one.
+// Returns a *NotSingularError when more than one PriceVariant entity is found.
+// Returns a *NotFoundError when no PriceVariant entities are found.
+func (_q *PriceVariantQuery) Only(ctx context.Context) (*PriceVariant, error) {
 	nodes, err := _q.Limit(2).All(setContextOp(ctx, _q.ctx, ent.OpQueryOnly))
 	if err != nil {
 		return nil, err
@@ -115,14 +115,14 @@ func (_q *ImagePriceQuery) Only(ctx context.Context) (*ImagePrice, error) {
 	case 1:
 		return nodes[0], nil
 	case 0:
-		return nil, &NotFoundError{imageprice.Label}
+		return nil, &NotFoundError{pricevariant.Label}
 	default:
-		return nil, &NotSingularError{imageprice.Label}
+		return nil, &NotSingularError{pricevariant.Label}
 	}
 }
 
 // OnlyX is like Only, but panics if an error occurs.
-func (_q *ImagePriceQuery) OnlyX(ctx context.Context) *ImagePrice {
+func (_q *PriceVariantQuery) OnlyX(ctx context.Context) *PriceVariant {
 	node, err := _q.Only(ctx)
 	if err != nil {
 		panic(err)
@@ -130,10 +130,10 @@ func (_q *ImagePriceQuery) OnlyX(ctx context.Context) *ImagePrice {
 	return node
 }
 
-// OnlyID is like Only, but returns the only ImagePrice ID in the query.
-// Returns a *NotSingularError when more than one ImagePrice ID is found.
+// OnlyID is like Only, but returns the only PriceVariant ID in the query.
+// Returns a *NotSingularError when more than one PriceVariant ID is found.
 // Returns a *NotFoundError when no entities are found.
-func (_q *ImagePriceQuery) OnlyID(ctx context.Context) (id int64, err error) {
+func (_q *PriceVariantQuery) OnlyID(ctx context.Context) (id int64, err error) {
 	var ids []int64
 	if ids, err = _q.Limit(2).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryOnlyID)); err != nil {
 		return
@@ -142,15 +142,15 @@ func (_q *ImagePriceQuery) OnlyID(ctx context.Context) (id int64, err error) {
 	case 1:
 		id = ids[0]
 	case 0:
-		err = &NotFoundError{imageprice.Label}
+		err = &NotFoundError{pricevariant.Label}
 	default:
-		err = &NotSingularError{imageprice.Label}
+		err = &NotSingularError{pricevariant.Label}
 	}
 	return
 }
 
 // OnlyIDX is like OnlyID, but panics if an error occurs.
-func (_q *ImagePriceQuery) OnlyIDX(ctx context.Context) int64 {
+func (_q *PriceVariantQuery) OnlyIDX(ctx context.Context) int64 {
 	id, err := _q.OnlyID(ctx)
 	if err != nil {
 		panic(err)
@@ -158,18 +158,18 @@ func (_q *ImagePriceQuery) OnlyIDX(ctx context.Context) int64 {
 	return id
 }
 
-// All executes the query and returns a list of ImagePrices.
-func (_q *ImagePriceQuery) All(ctx context.Context) ([]*ImagePrice, error) {
+// All executes the query and returns a list of PriceVariants.
+func (_q *PriceVariantQuery) All(ctx context.Context) ([]*PriceVariant, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryAll)
 	if err := _q.prepareQuery(ctx); err != nil {
 		return nil, err
 	}
-	qr := querierAll[[]*ImagePrice, *ImagePriceQuery]()
-	return withInterceptors[[]*ImagePrice](ctx, _q, qr, _q.inters)
+	qr := querierAll[[]*PriceVariant, *PriceVariantQuery]()
+	return withInterceptors[[]*PriceVariant](ctx, _q, qr, _q.inters)
 }
 
 // AllX is like All, but panics if an error occurs.
-func (_q *ImagePriceQuery) AllX(ctx context.Context) []*ImagePrice {
+func (_q *PriceVariantQuery) AllX(ctx context.Context) []*PriceVariant {
 	nodes, err := _q.All(ctx)
 	if err != nil {
 		panic(err)
@@ -177,20 +177,20 @@ func (_q *ImagePriceQuery) AllX(ctx context.Context) []*ImagePrice {
 	return nodes
 }
 
-// IDs executes the query and returns a list of ImagePrice IDs.
-func (_q *ImagePriceQuery) IDs(ctx context.Context) (ids []int64, err error) {
+// IDs executes the query and returns a list of PriceVariant IDs.
+func (_q *PriceVariantQuery) IDs(ctx context.Context) (ids []int64, err error) {
 	if _q.ctx.Unique == nil && _q.path != nil {
 		_q.Unique(true)
 	}
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryIDs)
-	if err = _q.Select(imageprice.FieldID).Scan(ctx, &ids); err != nil {
+	if err = _q.Select(pricevariant.FieldID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
 // IDsX is like IDs, but panics if an error occurs.
-func (_q *ImagePriceQuery) IDsX(ctx context.Context) []int64 {
+func (_q *PriceVariantQuery) IDsX(ctx context.Context) []int64 {
 	ids, err := _q.IDs(ctx)
 	if err != nil {
 		panic(err)
@@ -199,16 +199,16 @@ func (_q *ImagePriceQuery) IDsX(ctx context.Context) []int64 {
 }
 
 // Count returns the count of the given query.
-func (_q *ImagePriceQuery) Count(ctx context.Context) (int, error) {
+func (_q *PriceVariantQuery) Count(ctx context.Context) (int, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryCount)
 	if err := _q.prepareQuery(ctx); err != nil {
 		return 0, err
 	}
-	return withInterceptors[int](ctx, _q, querierCount[*ImagePriceQuery](), _q.inters)
+	return withInterceptors[int](ctx, _q, querierCount[*PriceVariantQuery](), _q.inters)
 }
 
 // CountX is like Count, but panics if an error occurs.
-func (_q *ImagePriceQuery) CountX(ctx context.Context) int {
+func (_q *PriceVariantQuery) CountX(ctx context.Context) int {
 	count, err := _q.Count(ctx)
 	if err != nil {
 		panic(err)
@@ -217,7 +217,7 @@ func (_q *ImagePriceQuery) CountX(ctx context.Context) int {
 }
 
 // Exist returns true if the query has elements in the graph.
-func (_q *ImagePriceQuery) Exist(ctx context.Context) (bool, error) {
+func (_q *PriceVariantQuery) Exist(ctx context.Context) (bool, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryExist)
 	switch _, err := _q.FirstID(ctx); {
 	case IsNotFound(err):
@@ -230,7 +230,7 @@ func (_q *ImagePriceQuery) Exist(ctx context.Context) (bool, error) {
 }
 
 // ExistX is like Exist, but panics if an error occurs.
-func (_q *ImagePriceQuery) ExistX(ctx context.Context) bool {
+func (_q *PriceVariantQuery) ExistX(ctx context.Context) bool {
 	exist, err := _q.Exist(ctx)
 	if err != nil {
 		panic(err)
@@ -238,18 +238,18 @@ func (_q *ImagePriceQuery) ExistX(ctx context.Context) bool {
 	return exist
 }
 
-// Clone returns a duplicate of the ImagePriceQuery builder, including all associated steps. It can be
+// Clone returns a duplicate of the PriceVariantQuery builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
-func (_q *ImagePriceQuery) Clone() *ImagePriceQuery {
+func (_q *PriceVariantQuery) Clone() *PriceVariantQuery {
 	if _q == nil {
 		return nil
 	}
-	return &ImagePriceQuery{
+	return &PriceVariantQuery{
 		config:     _q.config,
 		ctx:        _q.ctx.Clone(),
-		order:      append([]imageprice.OrderOption{}, _q.order...),
+		order:      append([]pricevariant.OrderOption{}, _q.order...),
 		inters:     append([]Interceptor{}, _q.inters...),
-		predicates: append([]predicate.ImagePrice{}, _q.predicates...),
+		predicates: append([]predicate.PriceVariant{}, _q.predicates...),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
@@ -266,15 +266,15 @@ func (_q *ImagePriceQuery) Clone() *ImagePriceQuery {
 //		Count int `json:"count,omitempty"`
 //	}
 //
-//	client.ImagePrice.Query().
-//		GroupBy(imageprice.FieldModel).
+//	client.PriceVariant.Query().
+//		GroupBy(pricevariant.FieldModel).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
-func (_q *ImagePriceQuery) GroupBy(field string, fields ...string) *ImagePriceGroupBy {
+func (_q *PriceVariantQuery) GroupBy(field string, fields ...string) *PriceVariantGroupBy {
 	_q.ctx.Fields = append([]string{field}, fields...)
-	grbuild := &ImagePriceGroupBy{build: _q}
+	grbuild := &PriceVariantGroupBy{build: _q}
 	grbuild.flds = &_q.ctx.Fields
-	grbuild.label = imageprice.Label
+	grbuild.label = pricevariant.Label
 	grbuild.scan = grbuild.Scan
 	return grbuild
 }
@@ -288,23 +288,23 @@ func (_q *ImagePriceQuery) GroupBy(field string, fields ...string) *ImagePriceGr
 //		Model string `json:"model,omitempty"`
 //	}
 //
-//	client.ImagePrice.Query().
-//		Select(imageprice.FieldModel).
+//	client.PriceVariant.Query().
+//		Select(pricevariant.FieldModel).
 //		Scan(ctx, &v)
-func (_q *ImagePriceQuery) Select(fields ...string) *ImagePriceSelect {
+func (_q *PriceVariantQuery) Select(fields ...string) *PriceVariantSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)
-	sbuild := &ImagePriceSelect{ImagePriceQuery: _q}
-	sbuild.label = imageprice.Label
+	sbuild := &PriceVariantSelect{PriceVariantQuery: _q}
+	sbuild.label = pricevariant.Label
 	sbuild.flds, sbuild.scan = &_q.ctx.Fields, sbuild.Scan
 	return sbuild
 }
 
-// Aggregate returns a ImagePriceSelect configured with the given aggregations.
-func (_q *ImagePriceQuery) Aggregate(fns ...AggregateFunc) *ImagePriceSelect {
+// Aggregate returns a PriceVariantSelect configured with the given aggregations.
+func (_q *PriceVariantQuery) Aggregate(fns ...AggregateFunc) *PriceVariantSelect {
 	return _q.Select().Aggregate(fns...)
 }
 
-func (_q *ImagePriceQuery) prepareQuery(ctx context.Context) error {
+func (_q *PriceVariantQuery) prepareQuery(ctx context.Context) error {
 	for _, inter := range _q.inters {
 		if inter == nil {
 			return fmt.Errorf("ent: uninitialized interceptor (forgotten import ent/runtime?)")
@@ -316,7 +316,7 @@ func (_q *ImagePriceQuery) prepareQuery(ctx context.Context) error {
 		}
 	}
 	for _, f := range _q.ctx.Fields {
-		if !imageprice.ValidColumn(f) {
+		if !pricevariant.ValidColumn(f) {
 			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
 		}
 	}
@@ -330,16 +330,16 @@ func (_q *ImagePriceQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
-func (_q *ImagePriceQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*ImagePrice, error) {
+func (_q *PriceVariantQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*PriceVariant, error) {
 	var (
-		nodes = []*ImagePrice{}
+		nodes = []*PriceVariant{}
 		_spec = _q.querySpec()
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
-		return (*ImagePrice).scanValues(nil, columns)
+		return (*PriceVariant).scanValues(nil, columns)
 	}
 	_spec.Assign = func(columns []string, values []any) error {
-		node := &ImagePrice{config: _q.config}
+		node := &PriceVariant{config: _q.config}
 		nodes = append(nodes, node)
 		return node.assignValues(columns, values)
 	}
@@ -355,7 +355,7 @@ func (_q *ImagePriceQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*I
 	return nodes, nil
 }
 
-func (_q *ImagePriceQuery) sqlCount(ctx context.Context) (int, error) {
+func (_q *PriceVariantQuery) sqlCount(ctx context.Context) (int, error) {
 	_spec := _q.querySpec()
 	_spec.Node.Columns = _q.ctx.Fields
 	if len(_q.ctx.Fields) > 0 {
@@ -364,8 +364,8 @@ func (_q *ImagePriceQuery) sqlCount(ctx context.Context) (int, error) {
 	return sqlgraph.CountNodes(ctx, _q.driver, _spec)
 }
 
-func (_q *ImagePriceQuery) querySpec() *sqlgraph.QuerySpec {
-	_spec := sqlgraph.NewQuerySpec(imageprice.Table, imageprice.Columns, sqlgraph.NewFieldSpec(imageprice.FieldID, field.TypeInt64))
+func (_q *PriceVariantQuery) querySpec() *sqlgraph.QuerySpec {
+	_spec := sqlgraph.NewQuerySpec(pricevariant.Table, pricevariant.Columns, sqlgraph.NewFieldSpec(pricevariant.FieldID, field.TypeInt64))
 	_spec.From = _q.sql
 	if unique := _q.ctx.Unique; unique != nil {
 		_spec.Unique = *unique
@@ -374,9 +374,9 @@ func (_q *ImagePriceQuery) querySpec() *sqlgraph.QuerySpec {
 	}
 	if fields := _q.ctx.Fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
-		_spec.Node.Columns = append(_spec.Node.Columns, imageprice.FieldID)
+		_spec.Node.Columns = append(_spec.Node.Columns, pricevariant.FieldID)
 		for i := range fields {
-			if fields[i] != imageprice.FieldID {
+			if fields[i] != pricevariant.FieldID {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
 		}
@@ -404,12 +404,12 @@ func (_q *ImagePriceQuery) querySpec() *sqlgraph.QuerySpec {
 	return _spec
 }
 
-func (_q *ImagePriceQuery) sqlQuery(ctx context.Context) *sql.Selector {
+func (_q *PriceVariantQuery) sqlQuery(ctx context.Context) *sql.Selector {
 	builder := sql.Dialect(_q.driver.Dialect())
-	t1 := builder.Table(imageprice.Table)
+	t1 := builder.Table(pricevariant.Table)
 	columns := _q.ctx.Fields
 	if len(columns) == 0 {
-		columns = imageprice.Columns
+		columns = pricevariant.Columns
 	}
 	selector := builder.Select(t1.Columns(columns...)...).From(t1)
 	if _q.sql != nil {
@@ -436,28 +436,28 @@ func (_q *ImagePriceQuery) sqlQuery(ctx context.Context) *sql.Selector {
 	return selector
 }
 
-// ImagePriceGroupBy is the group-by builder for ImagePrice entities.
-type ImagePriceGroupBy struct {
+// PriceVariantGroupBy is the group-by builder for PriceVariant entities.
+type PriceVariantGroupBy struct {
 	selector
-	build *ImagePriceQuery
+	build *PriceVariantQuery
 }
 
 // Aggregate adds the given aggregation functions to the group-by query.
-func (_g *ImagePriceGroupBy) Aggregate(fns ...AggregateFunc) *ImagePriceGroupBy {
+func (_g *PriceVariantGroupBy) Aggregate(fns ...AggregateFunc) *PriceVariantGroupBy {
 	_g.fns = append(_g.fns, fns...)
 	return _g
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (_g *ImagePriceGroupBy) Scan(ctx context.Context, v any) error {
+func (_g *PriceVariantGroupBy) Scan(ctx context.Context, v any) error {
 	ctx = setContextOp(ctx, _g.build.ctx, ent.OpQueryGroupBy)
 	if err := _g.build.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*ImagePriceQuery, *ImagePriceGroupBy](ctx, _g.build, _g, _g.build.inters, v)
+	return scanWithInterceptors[*PriceVariantQuery, *PriceVariantGroupBy](ctx, _g.build, _g, _g.build.inters, v)
 }
 
-func (_g *ImagePriceGroupBy) sqlScan(ctx context.Context, root *ImagePriceQuery, v any) error {
+func (_g *PriceVariantGroupBy) sqlScan(ctx context.Context, root *PriceVariantQuery, v any) error {
 	selector := root.sqlQuery(ctx).Select()
 	aggregation := make([]string, 0, len(_g.fns))
 	for _, fn := range _g.fns {
@@ -484,28 +484,28 @@ func (_g *ImagePriceGroupBy) sqlScan(ctx context.Context, root *ImagePriceQuery,
 	return sql.ScanSlice(rows, v)
 }
 
-// ImagePriceSelect is the builder for selecting fields of ImagePrice entities.
-type ImagePriceSelect struct {
-	*ImagePriceQuery
+// PriceVariantSelect is the builder for selecting fields of PriceVariant entities.
+type PriceVariantSelect struct {
+	*PriceVariantQuery
 	selector
 }
 
 // Aggregate adds the given aggregation functions to the selector query.
-func (_s *ImagePriceSelect) Aggregate(fns ...AggregateFunc) *ImagePriceSelect {
+func (_s *PriceVariantSelect) Aggregate(fns ...AggregateFunc) *PriceVariantSelect {
 	_s.fns = append(_s.fns, fns...)
 	return _s
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (_s *ImagePriceSelect) Scan(ctx context.Context, v any) error {
+func (_s *PriceVariantSelect) Scan(ctx context.Context, v any) error {
 	ctx = setContextOp(ctx, _s.ctx, ent.OpQuerySelect)
 	if err := _s.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*ImagePriceQuery, *ImagePriceSelect](ctx, _s.ImagePriceQuery, _s, _s.inters, v)
+	return scanWithInterceptors[*PriceVariantQuery, *PriceVariantSelect](ctx, _s.PriceVariantQuery, _s, _s.inters, v)
 }
 
-func (_s *ImagePriceSelect) sqlScan(ctx context.Context, root *ImagePriceQuery, v any) error {
+func (_s *PriceVariantSelect) sqlScan(ctx context.Context, root *PriceVariantQuery, v any) error {
 	selector := root.sqlQuery(ctx)
 	aggregation := make([]string, 0, len(_s.fns))
 	for _, fn := range _s.fns {

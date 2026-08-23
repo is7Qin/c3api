@@ -156,7 +156,9 @@ func adminScenarios() []apiScenario {
 		w("keys.list", 8, "GET", func(r *rand.Rand) string { return "/api/admin/keys?limit=100&offset=" + strconv.Itoa(r.IntN(60)*100) }, nil),
 		w("groups.list", 6, "GET", func(*rand.Rand) string { return "/api/admin/groups?limit=100" }, nil),
 		w("templates.list", 5, "GET", func(*rand.Rand) string { return "/api/admin/templates?limit=100" }, nil),
-		w("accounts.list", 8, "GET", func(r *rand.Rand) string { return "/api/admin/accounts?limit=100&offset=" + strconv.Itoa(r.IntN(60)*100) }, nil),
+		w("accounts.list", 8, "GET", func(r *rand.Rand) string {
+			return "/api/admin/accounts?limit=100&offset=" + strconv.Itoa(r.IntN(60)*100)
+		}, nil),
 		w("accounts.usage", 4, "GET", func(r *rand.Rand) string {
 			ids := make([]string, 10)
 			for i := range ids {

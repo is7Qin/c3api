@@ -12,7 +12,7 @@ import (
 )
 
 func strPtrP(s string) *string { return &s }
-func intPtrP(v int) *int { return &v }
+func intPtrP(v int) *int       { return &v }
 
 func TestPassthrough429CodeBodySplit(t *testing.T) {
 	e, _ := newTestEngine(t)

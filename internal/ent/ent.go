@@ -17,12 +17,11 @@ import (
 	"github.com/is7qin/c3api/internal/ent/emailcode"
 	"github.com/is7qin/c3api/internal/ent/emailtemplate"
 	"github.com/is7qin/c3api/internal/ent/errlog"
-	"github.com/is7qin/c3api/internal/ent/functionprice"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
-	"github.com/is7qin/c3api/internal/ent/imageprice"
 	"github.com/is7qin/c3api/internal/ent/key"
-	"github.com/is7qin/c3api/internal/ent/pricing"
+	"github.com/is7qin/c3api/internal/ent/priceentry"
+	"github.com/is7qin/c3api/internal/ent/pricevariant"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
 	"github.com/is7qin/c3api/internal/ent/redemptionuse"
 	"github.com/is7qin/c3api/internal/ent/rule"
@@ -99,12 +98,11 @@ func checkColumn(t, c string) error {
 			emailcode.Table:       emailcode.ValidColumn,
 			emailtemplate.Table:   emailtemplate.ValidColumn,
 			errlog.Table:          errlog.ValidColumn,
-			functionprice.Table:   functionprice.ValidColumn,
 			group.Table:           group.ValidColumn,
 			groupassignment.Table: groupassignment.ValidColumn,
-			imageprice.Table:      imageprice.ValidColumn,
 			key.Table:             key.ValidColumn,
-			pricing.Table:         pricing.ValidColumn,
+			priceentry.Table:      priceentry.ValidColumn,
+			pricevariant.Table:    pricevariant.ValidColumn,
 			redemptioncode.Table:  redemptioncode.ValidColumn,
 			redemptionuse.Table:   redemptionuse.ValidColumn,
 			rule.Table:            rule.ValidColumn,

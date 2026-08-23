@@ -87,7 +87,7 @@ func TestCooldownOnlyRuleFullChain(t *testing.T) {
 
 // TestCooldownOnlyPersistReloadPreserved 缺陷 2 修复（回写不持久化路径）：
 // memLoader（UpdateAccountStatus 只记录不落数据）→ 冷却生效 → 全量重建
-//（≤30s 定时同步/重启快照重载同路径）→ 内存冷却保留——修复前 DB cooldown
+// （≤30s 定时同步/重启快照重载同路径）→ 内存冷却保留——修复前 DB cooldown
 // 恒 nil 被重建清零 → 5h 冷却缩水 ≤30s（缺陷 2 第二层）。修复后 DB nil →
 // 保留内存值（与 errRate 同款连续性，管理面无清冷却操作、无语义损失）。
 func TestCooldownOnlyPersistReloadPreserved(t *testing.T) {

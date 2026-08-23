@@ -283,18 +283,18 @@ func sniffResponsesCompletedTopRef(data []byte) (usageTuple, bool) {
 func TestUsageExtractEquivalence(t *testing.T) {
 	chatFrames := []string{
 		`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5},"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":2}}}`,
-		`{"id":"x","choices":[],"usage":{}}`, // 空对象仍存在
-		`{"id":"x","choices":[]}`,            // usage 缺失
+		`{"id":"x","choices":[],"usage":{}}`,   // 空对象仍存在
+		`{"id":"x","choices":[]}`,              // usage 缺失
 		`{"id":"x","choices":[],"usage":null}`, // 显式 null
-		`{"id":"x","choices":[],"usage":[]}`, // usage 为数组（gjson JSON Type 含数组）
+		`{"id":"x","choices":[],"usage":[]}`,   // usage 为数组（gjson JSON Type 含数组）
 		`{"id":"x","choices":[],"usage":{"prompt_tokens":null,"completion_tokens":null,"total_tokens":null,"prompt_tokens_details":{"cached_tokens":null}}}`,
-		`{"id":"x","choices":[],"usage":{"prompt_tokens":"10","completion_tokens":"20","total_tokens":"30"}}`, // 字符串数字
-		`{"id":"x","choices":[],"usage":{"prompt_tokens":-5,"completion_tokens":0,"total_tokens":-5}}`,       // 负数
-		`{"id":"x","choices":[],"usage":{"prompt_tokens":9223372036854775807,"completion_tokens":1,"total_tokens":9223372036854775807}}`, // int64 边界
-		`{"id":"x","choices":[],"usage":{"prompt_tokens_extra":5,"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}`, // 键名前缀干扰
+		`{"id":"x","choices":[],"usage":{"prompt_tokens":"10","completion_tokens":"20","total_tokens":"30"}}`,                                                       // 字符串数字
+		`{"id":"x","choices":[],"usage":{"prompt_tokens":-5,"completion_tokens":0,"total_tokens":-5}}`,                                                              // 负数
+		`{"id":"x","choices":[],"usage":{"prompt_tokens":9223372036854775807,"completion_tokens":1,"total_tokens":9223372036854775807}}`,                            // int64 边界
+		`{"id":"x","choices":[],"usage":{"prompt_tokens_extra":5,"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}`,                                        // 键名前缀干扰
 		`{"id":"x","choices":[],"usage":{"prompt_tokens":7,"prompt_tokens_details":{"prompt_tokens":99,"cached_tokens":5},"completion_tokens":2,"total_tokens":9}}`, // 嵌套同名键（子区间内不误定位）
-		`{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"cache_creation":{"ephemeral_1h_input_tokens":2}}}`, // cache_creation 单桶缺失
-		`{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"cache_creation":{}}}`, // cache_creation 空对象
+		`{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"cache_creation":{"ephemeral_1h_input_tokens":2}}}`,               // cache_creation 单桶缺失
+		`{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"cache_creation":{}}}`,                                            // cache_creation 空对象
 	}
 	for _, f := range chatFrames {
 		got, ok := chatStreamUsage([]byte(f))

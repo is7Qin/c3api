@@ -30,7 +30,7 @@ func imageSeedFetcher() *fakePriceFetcher {
 	}}
 }
 
-func i64p(v int64) *int64 { return &v }
+func i64p(v int64) *int64     { return &v }
 func strPtr(s string) *string { return &s }
 
 // TestPutImagePrice 手动设图片价格：单位换算（token 价 USD/1M ×1e5 存储、

@@ -83,10 +83,10 @@ func TestErrLogWorkerStats(t *testing.T) {
 // countingPartitionManager 可配置 DROP 返回值的 PartitionManager（观测面断言：
 // runOnce 缓存真实返回值；四表：entity 与 stats 共用 StatsRetentionDays）。
 type countingPartitionManager struct {
-	mu                       sync.Mutex
-	logDrops, errDrops       int
-	statsDrops, entityDrops  int
-	dropErr                  error // usage_logs drop 失败注入
+	mu                      sync.Mutex
+	logDrops, errDrops      int
+	statsDrops, entityDrops int
+	dropErr                 error // usage_logs drop 失败注入
 }
 
 func (c *countingPartitionManager) DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {

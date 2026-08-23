@@ -42,4 +42,3 @@ const CodexSearchModel = "codex-search"
 // 初始化种子行写入值（source=manual）与快照兜底常量同值——表删/初始化失败时
 // GetFunctionPrice("codex-search") 仍返回该默认行（防御语义，注释见 service）。
 const DefaultCodexSearchPricePerCall int64 = 1000
-

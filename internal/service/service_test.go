@@ -439,10 +439,10 @@ func TestBatchDeleteInvalidIDs(t *testing.T) {
 	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: nil}
 	ctx := context.Background()
 	cases := map[string][]int64{
-		"nil ids":           nil,
-		"空 ids":             {},
+		"nil ids":       nil,
+		"空 ids":         {},
 		"超长 ids（101 个）": make([]int64, 101),
-		"重复 ids":           {1, 1},
+		"重复 ids":        {1, 1},
 	}
 	for name, ids := range cases {
 		err := svc.DeleteTemplatesBatch(ctx, ids)

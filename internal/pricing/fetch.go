@@ -39,6 +39,8 @@ type FetchResult struct {
 	Rows         []*domain.Pricing       // 数值有效的模型价格行（source=litellm；有文本价）
 	ImageRows    []*domain.ImagePrice    // image 价行（source=litellm；任一 image 价分量有效）
 	FunctionRows []*domain.FunctionPrice // 按单元计费功能类价行（source=litellm；search mode 且带 per-query 价）
+	PriceEntries []*domain.PriceEntry    // 新统一价表行
+	Variants     []*domain.PriceVariant  // 关联变体（平铺）
 	// Skipped 无效条目跳过数（字段类型非法 / 文本价、image 价与 function 价
 	// 均无效——判定含 image/function 分量；同一条目三线独立判定，互不干扰，
 	// 只产生任一行即不计 skip）。
@@ -171,14 +173,21 @@ func Parse(data []byte, log *logx.Logger) (*FetchResult, error) {
 		valid := false
 		if p, err := parseEntry(model, entry, log); err == nil {
 			res.Rows = append(res.Rows, p)
+			pe, vars := convertPricingToEntry(p, entry)
+			res.PriceEntries = append(res.PriceEntries, pe)
+			res.Variants = append(res.Variants, vars...)
 			valid = true
 		}
 		if img, ok := parseImageEntry(model, entry); ok {
 			res.ImageRows = append(res.ImageRows, img)
+			pe := &domain.PriceEntry{Model: model, Mode: domain.PriceModeImage, ImgInTokPerM: img.InputImageTokenPricePerMillion, ImgOutTokPerM: img.OutputImageTokenPricePerMillion, PricePerImage: img.OutputCostPerImageMilli, Provider: img.Provider, Raw: img.Raw, Source: img.Source}
+			res.PriceEntries = append(res.PriceEntries, pe)
 			valid = true
 		}
 		if fn, ok := parseFunctionEntry(model, entry); ok {
 			res.FunctionRows = append(res.FunctionRows, fn)
+			pe := &domain.PriceEntry{Model: model, Mode: domain.PriceModeCall, PricePerCall: fn.PricePerCall, Provider: fn.Provider, Raw: fn.Raw, Source: fn.Source}
+			res.PriceEntries = append(res.PriceEntries, pe)
 			valid = true
 		}
 		if !valid {
@@ -186,6 +195,106 @@ func Parse(data []byte, log *logx.Logger) (*FetchResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// convertPricingToEntry maps old Pricing matrix to unified entry+variants.
+// Mapping: priority_* → variant service_tier=priority; flex_*→flex;
+// above_{N}k→ctx_min=N descending full-preservation — C5 fixed;
+// fast_multiplier→variant service_tier=fast × mult_bp
+// NOTE (momus caveat): cache-above expressiveness tradeoff — original above group
+// carried per-component cache prices, but variant model aggregates to row-level mult/set;
+// per-component cache-above fidelity is reduced (acceptable per spec — cache分量只受mult影响).
+func convertPricingToEntry(p *domain.Pricing, raw json.RawMessage) (*domain.PriceEntry, []*domain.PriceVariant) {
+	base := &domain.PriceEntry{
+		Model: p.Model, Mode: domain.PriceModeToken,
+		InputPerM: &p.PromptPricePerMillion, OutputPerM: &p.CompletionPricePerMillion,
+		CacheReadPerM: p.CacheReadPricePerMillion, CacheWritePerM: p.CacheCreationPricePerMillion,
+		Provider: p.Provider, Raw: p.Raw, Source: p.Source,
+	}
+	var vars []*domain.PriceVariant
+	seq := 1
+	if p.PriorityPromptPricePerMillion != nil || p.PriorityCompletionPricePerMillion != nil {
+		st := "priority"
+		vars = append(vars, &domain.PriceVariant{Model: p.Model, Seq: seq, ServiceTier: &st, SetInputPerM: p.PriorityPromptPricePerMillion, SetOutputPerM: p.PriorityCompletionPricePerMillion})
+		seq++
+	}
+	if p.FlexPromptPricePerMillion != nil || p.FlexCompletionPricePerMillion != nil {
+		st := "flex"
+		vars = append(vars, &domain.PriceVariant{Model: p.Model, Seq: seq, ServiceTier: &st, SetInputPerM: p.FlexPromptPricePerMillion, SetOutputPerM: p.FlexCompletionPricePerMillion})
+		seq++
+	}
+	// above thresholds: parse raw for all N and create ctx_min variants sorted descending
+	aboveMap := extractAboveAll(p.Model, raw)
+	// sort Ns descending for full-preservation: larger thresholds later? Actually first-match-by-seq: smaller ctx_min first would hit always; need descending so larger threshold checked first? Spec descending.
+	// We'll order descending so higher threshold variants have lower seq.
+	type ab struct {
+		n    int64
+		vals [2]*int64
+	}
+	var abs []ab
+	for n, v := range aboveMap {
+		abs = append(abs, ab{n: n, vals: v})
+	}
+	// sort descending
+	for i := 0; i < len(abs); i++ {
+		for j := i + 1; j < len(abs); j++ {
+			if abs[j].n > abs[i].n {
+				abs[i], abs[j] = abs[j], abs[i]
+			}
+		}
+	}
+	for _, a := range abs {
+		nv := a.n * 1000
+		vars = append(vars, &domain.PriceVariant{Model: p.Model, Seq: seq, CtxMin: &nv, SetInputPerM: a.vals[0], SetOutputPerM: a.vals[1]})
+		seq++
+	}
+	if p.FastMultiplier != nil {
+		st := "fast"
+		m := int(*p.FastMultiplier)
+		vars = append(vars, &domain.PriceVariant{Model: p.Model, Seq: seq, ServiceTier: &st, MultBP: &m})
+		seq++
+	}
+	return base, vars
+}
+
+func extractAboveAll(model string, raw json.RawMessage) map[int64][2]*int64 {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	out := make(map[int64][2]*int64)
+	for k, v := range m {
+		var n int64
+		// match input_cost_per_token_above_{N}k_tokens
+		var prefix string
+		var idx int
+		if strings.HasPrefix(k, "input_cost_per_token_above_") && strings.HasSuffix(k, "k_tokens") {
+			prefix = "input_cost_per_token_above_"
+			idx = 0
+		} else if strings.HasPrefix(k, "output_cost_per_token_above_") && strings.HasSuffix(k, "k_tokens") {
+			prefix = "output_cost_per_token_above_"
+			idx = 1
+		} else {
+			continue
+		}
+		rest := k[len(prefix) : len(k)-len("k_tokens")]
+		fmt.Sscanf(rest, "%d", &n)
+		var f float64
+		if json.Unmarshal(v, &f) != nil || f <= 0 {
+			continue
+		}
+		milli := toMilliCentsPerMillion(f)
+		arr := out[n]
+		arr[idx] = &milli
+		out[n] = arr
+	}
+	// keep only complete pairs
+	for n, a := range out {
+		if a[0] == nil || a[1] == nil {
+			delete(out, n)
+		}
+	}
+	return out
 }
 
 func parseEntry(model string, raw json.RawMessage, log *logx.Logger) (*domain.Pricing, error) {

@@ -166,7 +166,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 // 闭包；无状态单例，per-request 差异（client/首帧/strip 标记）经 attemptState
 // 流入，热路径零新增分配）。差异段：codex 拨号分流（dialCodexWS +
 // handleCodexDialError）与静态拨号（credentialFor + ResponsesWSDial）、relay
-//（relayWS 合一骨架 + 双传输适配 aiclientTransport/codexTransport——首帧模型
+// （relayWS 合一骨架 + 双传输适配 aiclientTransport/codexTransport——首帧模型
 // 改写 + 双向帧透传 + usage 嗅探 + codex 每帧判死钩子）。
 // 错误文本回传（B1 分通道）：4xx respBody 只放上游 body message（无则空——
 // 帧侧 wsSink emOr 回退固定网关文案），dialErr 全文走 callErr 通道（循环 4xx

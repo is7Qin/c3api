@@ -11,68 +11,68 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/is7qin/c3api/internal/ent/functionprice"
 	"github.com/is7qin/c3api/internal/ent/predicate"
+	"github.com/is7qin/c3api/internal/ent/priceentry"
 )
 
-// FunctionPriceQuery is the builder for querying FunctionPrice entities.
-type FunctionPriceQuery struct {
+// PriceEntryQuery is the builder for querying PriceEntry entities.
+type PriceEntryQuery struct {
 	config
 	ctx        *QueryContext
-	order      []functionprice.OrderOption
+	order      []priceentry.OrderOption
 	inters     []Interceptor
-	predicates []predicate.FunctionPrice
+	predicates []predicate.PriceEntry
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
 }
 
-// Where adds a new predicate for the FunctionPriceQuery builder.
-func (_q *FunctionPriceQuery) Where(ps ...predicate.FunctionPrice) *FunctionPriceQuery {
+// Where adds a new predicate for the PriceEntryQuery builder.
+func (_q *PriceEntryQuery) Where(ps ...predicate.PriceEntry) *PriceEntryQuery {
 	_q.predicates = append(_q.predicates, ps...)
 	return _q
 }
 
 // Limit the number of records to be returned by this query.
-func (_q *FunctionPriceQuery) Limit(limit int) *FunctionPriceQuery {
+func (_q *PriceEntryQuery) Limit(limit int) *PriceEntryQuery {
 	_q.ctx.Limit = &limit
 	return _q
 }
 
 // Offset to start from.
-func (_q *FunctionPriceQuery) Offset(offset int) *FunctionPriceQuery {
+func (_q *PriceEntryQuery) Offset(offset int) *PriceEntryQuery {
 	_q.ctx.Offset = &offset
 	return _q
 }
 
 // Unique configures the query builder to filter duplicate records on query.
 // By default, unique is set to true, and can be disabled using this method.
-func (_q *FunctionPriceQuery) Unique(unique bool) *FunctionPriceQuery {
+func (_q *PriceEntryQuery) Unique(unique bool) *PriceEntryQuery {
 	_q.ctx.Unique = &unique
 	return _q
 }
 
 // Order specifies how the records should be ordered.
-func (_q *FunctionPriceQuery) Order(o ...functionprice.OrderOption) *FunctionPriceQuery {
+func (_q *PriceEntryQuery) Order(o ...priceentry.OrderOption) *PriceEntryQuery {
 	_q.order = append(_q.order, o...)
 	return _q
 }
 
-// First returns the first FunctionPrice entity from the query.
-// Returns a *NotFoundError when no FunctionPrice was found.
-func (_q *FunctionPriceQuery) First(ctx context.Context) (*FunctionPrice, error) {
+// First returns the first PriceEntry entity from the query.
+// Returns a *NotFoundError when no PriceEntry was found.
+func (_q *PriceEntryQuery) First(ctx context.Context) (*PriceEntry, error) {
 	nodes, err := _q.Limit(1).All(setContextOp(ctx, _q.ctx, ent.OpQueryFirst))
 	if err != nil {
 		return nil, err
 	}
 	if len(nodes) == 0 {
-		return nil, &NotFoundError{functionprice.Label}
+		return nil, &NotFoundError{priceentry.Label}
 	}
 	return nodes[0], nil
 }
 
 // FirstX is like First, but panics if an error occurs.
-func (_q *FunctionPriceQuery) FirstX(ctx context.Context) *FunctionPrice {
+func (_q *PriceEntryQuery) FirstX(ctx context.Context) *PriceEntry {
 	node, err := _q.First(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
@@ -80,22 +80,22 @@ func (_q *FunctionPriceQuery) FirstX(ctx context.Context) *FunctionPrice {
 	return node
 }
 
-// FirstID returns the first FunctionPrice ID from the query.
-// Returns a *NotFoundError when no FunctionPrice ID was found.
-func (_q *FunctionPriceQuery) FirstID(ctx context.Context) (id int64, err error) {
+// FirstID returns the first PriceEntry ID from the query.
+// Returns a *NotFoundError when no PriceEntry ID was found.
+func (_q *PriceEntryQuery) FirstID(ctx context.Context) (id int64, err error) {
 	var ids []int64
 	if ids, err = _q.Limit(1).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryFirstID)); err != nil {
 		return
 	}
 	if len(ids) == 0 {
-		err = &NotFoundError{functionprice.Label}
+		err = &NotFoundError{priceentry.Label}
 		return
 	}
 	return ids[0], nil
 }
 
 // FirstIDX is like FirstID, but panics if an error occurs.
-func (_q *FunctionPriceQuery) FirstIDX(ctx context.Context) int64 {
+func (_q *PriceEntryQuery) FirstIDX(ctx context.Context) int64 {
 	id, err := _q.FirstID(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
@@ -103,10 +103,10 @@ func (_q *FunctionPriceQuery) FirstIDX(ctx context.Context) int64 {
 	return id
 }
 
-// Only returns a single FunctionPrice entity found by the query, ensuring it only returns one.
-// Returns a *NotSingularError when more than one FunctionPrice entity is found.
-// Returns a *NotFoundError when no FunctionPrice entities are found.
-func (_q *FunctionPriceQuery) Only(ctx context.Context) (*FunctionPrice, error) {
+// Only returns a single PriceEntry entity found by the query, ensuring it only returns one.
+// Returns a *NotSingularError when more than one PriceEntry entity is found.
+// Returns a *NotFoundError when no PriceEntry entities are found.
+func (_q *PriceEntryQuery) Only(ctx context.Context) (*PriceEntry, error) {
 	nodes, err := _q.Limit(2).All(setContextOp(ctx, _q.ctx, ent.OpQueryOnly))
 	if err != nil {
 		return nil, err
@@ -115,14 +115,14 @@ func (_q *FunctionPriceQuery) Only(ctx context.Context) (*FunctionPrice, error) 
 	case 1:
 		return nodes[0], nil
 	case 0:
-		return nil, &NotFoundError{functionprice.Label}
+		return nil, &NotFoundError{priceentry.Label}
 	default:
-		return nil, &NotSingularError{functionprice.Label}
+		return nil, &NotSingularError{priceentry.Label}
 	}
 }
 
 // OnlyX is like Only, but panics if an error occurs.
-func (_q *FunctionPriceQuery) OnlyX(ctx context.Context) *FunctionPrice {
+func (_q *PriceEntryQuery) OnlyX(ctx context.Context) *PriceEntry {
 	node, err := _q.Only(ctx)
 	if err != nil {
 		panic(err)
@@ -130,10 +130,10 @@ func (_q *FunctionPriceQuery) OnlyX(ctx context.Context) *FunctionPrice {
 	return node
 }
 
-// OnlyID is like Only, but returns the only FunctionPrice ID in the query.
-// Returns a *NotSingularError when more than one FunctionPrice ID is found.
+// OnlyID is like Only, but returns the only PriceEntry ID in the query.
+// Returns a *NotSingularError when more than one PriceEntry ID is found.
 // Returns a *NotFoundError when no entities are found.
-func (_q *FunctionPriceQuery) OnlyID(ctx context.Context) (id int64, err error) {
+func (_q *PriceEntryQuery) OnlyID(ctx context.Context) (id int64, err error) {
 	var ids []int64
 	if ids, err = _q.Limit(2).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryOnlyID)); err != nil {
 		return
@@ -142,15 +142,15 @@ func (_q *FunctionPriceQuery) OnlyID(ctx context.Context) (id int64, err error) 
 	case 1:
 		id = ids[0]
 	case 0:
-		err = &NotFoundError{functionprice.Label}
+		err = &NotFoundError{priceentry.Label}
 	default:
-		err = &NotSingularError{functionprice.Label}
+		err = &NotSingularError{priceentry.Label}
 	}
 	return
 }
 
 // OnlyIDX is like OnlyID, but panics if an error occurs.
-func (_q *FunctionPriceQuery) OnlyIDX(ctx context.Context) int64 {
+func (_q *PriceEntryQuery) OnlyIDX(ctx context.Context) int64 {
 	id, err := _q.OnlyID(ctx)
 	if err != nil {
 		panic(err)
@@ -158,18 +158,18 @@ func (_q *FunctionPriceQuery) OnlyIDX(ctx context.Context) int64 {
 	return id
 }
 
-// All executes the query and returns a list of FunctionPrices.
-func (_q *FunctionPriceQuery) All(ctx context.Context) ([]*FunctionPrice, error) {
+// All executes the query and returns a list of PriceEntries.
+func (_q *PriceEntryQuery) All(ctx context.Context) ([]*PriceEntry, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryAll)
 	if err := _q.prepareQuery(ctx); err != nil {
 		return nil, err
 	}
-	qr := querierAll[[]*FunctionPrice, *FunctionPriceQuery]()
-	return withInterceptors[[]*FunctionPrice](ctx, _q, qr, _q.inters)
+	qr := querierAll[[]*PriceEntry, *PriceEntryQuery]()
+	return withInterceptors[[]*PriceEntry](ctx, _q, qr, _q.inters)
 }
 
 // AllX is like All, but panics if an error occurs.
-func (_q *FunctionPriceQuery) AllX(ctx context.Context) []*FunctionPrice {
+func (_q *PriceEntryQuery) AllX(ctx context.Context) []*PriceEntry {
 	nodes, err := _q.All(ctx)
 	if err != nil {
 		panic(err)
@@ -177,20 +177,20 @@ func (_q *FunctionPriceQuery) AllX(ctx context.Context) []*FunctionPrice {
 	return nodes
 }
 
-// IDs executes the query and returns a list of FunctionPrice IDs.
-func (_q *FunctionPriceQuery) IDs(ctx context.Context) (ids []int64, err error) {
+// IDs executes the query and returns a list of PriceEntry IDs.
+func (_q *PriceEntryQuery) IDs(ctx context.Context) (ids []int64, err error) {
 	if _q.ctx.Unique == nil && _q.path != nil {
 		_q.Unique(true)
 	}
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryIDs)
-	if err = _q.Select(functionprice.FieldID).Scan(ctx, &ids); err != nil {
+	if err = _q.Select(priceentry.FieldID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
 // IDsX is like IDs, but panics if an error occurs.
-func (_q *FunctionPriceQuery) IDsX(ctx context.Context) []int64 {
+func (_q *PriceEntryQuery) IDsX(ctx context.Context) []int64 {
 	ids, err := _q.IDs(ctx)
 	if err != nil {
 		panic(err)
@@ -199,16 +199,16 @@ func (_q *FunctionPriceQuery) IDsX(ctx context.Context) []int64 {
 }
 
 // Count returns the count of the given query.
-func (_q *FunctionPriceQuery) Count(ctx context.Context) (int, error) {
+func (_q *PriceEntryQuery) Count(ctx context.Context) (int, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryCount)
 	if err := _q.prepareQuery(ctx); err != nil {
 		return 0, err
 	}
-	return withInterceptors[int](ctx, _q, querierCount[*FunctionPriceQuery](), _q.inters)
+	return withInterceptors[int](ctx, _q, querierCount[*PriceEntryQuery](), _q.inters)
 }
 
 // CountX is like Count, but panics if an error occurs.
-func (_q *FunctionPriceQuery) CountX(ctx context.Context) int {
+func (_q *PriceEntryQuery) CountX(ctx context.Context) int {
 	count, err := _q.Count(ctx)
 	if err != nil {
 		panic(err)
@@ -217,7 +217,7 @@ func (_q *FunctionPriceQuery) CountX(ctx context.Context) int {
 }
 
 // Exist returns true if the query has elements in the graph.
-func (_q *FunctionPriceQuery) Exist(ctx context.Context) (bool, error) {
+func (_q *PriceEntryQuery) Exist(ctx context.Context) (bool, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryExist)
 	switch _, err := _q.FirstID(ctx); {
 	case IsNotFound(err):
@@ -230,7 +230,7 @@ func (_q *FunctionPriceQuery) Exist(ctx context.Context) (bool, error) {
 }
 
 // ExistX is like Exist, but panics if an error occurs.
-func (_q *FunctionPriceQuery) ExistX(ctx context.Context) bool {
+func (_q *PriceEntryQuery) ExistX(ctx context.Context) bool {
 	exist, err := _q.Exist(ctx)
 	if err != nil {
 		panic(err)
@@ -238,18 +238,18 @@ func (_q *FunctionPriceQuery) ExistX(ctx context.Context) bool {
 	return exist
 }
 
-// Clone returns a duplicate of the FunctionPriceQuery builder, including all associated steps. It can be
+// Clone returns a duplicate of the PriceEntryQuery builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
-func (_q *FunctionPriceQuery) Clone() *FunctionPriceQuery {
+func (_q *PriceEntryQuery) Clone() *PriceEntryQuery {
 	if _q == nil {
 		return nil
 	}
-	return &FunctionPriceQuery{
+	return &PriceEntryQuery{
 		config:     _q.config,
 		ctx:        _q.ctx.Clone(),
-		order:      append([]functionprice.OrderOption{}, _q.order...),
+		order:      append([]priceentry.OrderOption{}, _q.order...),
 		inters:     append([]Interceptor{}, _q.inters...),
-		predicates: append([]predicate.FunctionPrice{}, _q.predicates...),
+		predicates: append([]predicate.PriceEntry{}, _q.predicates...),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
@@ -266,15 +266,15 @@ func (_q *FunctionPriceQuery) Clone() *FunctionPriceQuery {
 //		Count int `json:"count,omitempty"`
 //	}
 //
-//	client.FunctionPrice.Query().
-//		GroupBy(functionprice.FieldModel).
+//	client.PriceEntry.Query().
+//		GroupBy(priceentry.FieldModel).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
-func (_q *FunctionPriceQuery) GroupBy(field string, fields ...string) *FunctionPriceGroupBy {
+func (_q *PriceEntryQuery) GroupBy(field string, fields ...string) *PriceEntryGroupBy {
 	_q.ctx.Fields = append([]string{field}, fields...)
-	grbuild := &FunctionPriceGroupBy{build: _q}
+	grbuild := &PriceEntryGroupBy{build: _q}
 	grbuild.flds = &_q.ctx.Fields
-	grbuild.label = functionprice.Label
+	grbuild.label = priceentry.Label
 	grbuild.scan = grbuild.Scan
 	return grbuild
 }
@@ -288,23 +288,23 @@ func (_q *FunctionPriceQuery) GroupBy(field string, fields ...string) *FunctionP
 //		Model string `json:"model,omitempty"`
 //	}
 //
-//	client.FunctionPrice.Query().
-//		Select(functionprice.FieldModel).
+//	client.PriceEntry.Query().
+//		Select(priceentry.FieldModel).
 //		Scan(ctx, &v)
-func (_q *FunctionPriceQuery) Select(fields ...string) *FunctionPriceSelect {
+func (_q *PriceEntryQuery) Select(fields ...string) *PriceEntrySelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)
-	sbuild := &FunctionPriceSelect{FunctionPriceQuery: _q}
-	sbuild.label = functionprice.Label
+	sbuild := &PriceEntrySelect{PriceEntryQuery: _q}
+	sbuild.label = priceentry.Label
 	sbuild.flds, sbuild.scan = &_q.ctx.Fields, sbuild.Scan
 	return sbuild
 }
 
-// Aggregate returns a FunctionPriceSelect configured with the given aggregations.
-func (_q *FunctionPriceQuery) Aggregate(fns ...AggregateFunc) *FunctionPriceSelect {
+// Aggregate returns a PriceEntrySelect configured with the given aggregations.
+func (_q *PriceEntryQuery) Aggregate(fns ...AggregateFunc) *PriceEntrySelect {
 	return _q.Select().Aggregate(fns...)
 }
 
-func (_q *FunctionPriceQuery) prepareQuery(ctx context.Context) error {
+func (_q *PriceEntryQuery) prepareQuery(ctx context.Context) error {
 	for _, inter := range _q.inters {
 		if inter == nil {
 			return fmt.Errorf("ent: uninitialized interceptor (forgotten import ent/runtime?)")
@@ -316,7 +316,7 @@ func (_q *FunctionPriceQuery) prepareQuery(ctx context.Context) error {
 		}
 	}
 	for _, f := range _q.ctx.Fields {
-		if !functionprice.ValidColumn(f) {
+		if !priceentry.ValidColumn(f) {
 			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
 		}
 	}
@@ -330,16 +330,16 @@ func (_q *FunctionPriceQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
-func (_q *FunctionPriceQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*FunctionPrice, error) {
+func (_q *PriceEntryQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*PriceEntry, error) {
 	var (
-		nodes = []*FunctionPrice{}
+		nodes = []*PriceEntry{}
 		_spec = _q.querySpec()
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
-		return (*FunctionPrice).scanValues(nil, columns)
+		return (*PriceEntry).scanValues(nil, columns)
 	}
 	_spec.Assign = func(columns []string, values []any) error {
-		node := &FunctionPrice{config: _q.config}
+		node := &PriceEntry{config: _q.config}
 		nodes = append(nodes, node)
 		return node.assignValues(columns, values)
 	}
@@ -355,7 +355,7 @@ func (_q *FunctionPriceQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([
 	return nodes, nil
 }
 
-func (_q *FunctionPriceQuery) sqlCount(ctx context.Context) (int, error) {
+func (_q *PriceEntryQuery) sqlCount(ctx context.Context) (int, error) {
 	_spec := _q.querySpec()
 	_spec.Node.Columns = _q.ctx.Fields
 	if len(_q.ctx.Fields) > 0 {
@@ -364,8 +364,8 @@ func (_q *FunctionPriceQuery) sqlCount(ctx context.Context) (int, error) {
 	return sqlgraph.CountNodes(ctx, _q.driver, _spec)
 }
 
-func (_q *FunctionPriceQuery) querySpec() *sqlgraph.QuerySpec {
-	_spec := sqlgraph.NewQuerySpec(functionprice.Table, functionprice.Columns, sqlgraph.NewFieldSpec(functionprice.FieldID, field.TypeInt64))
+func (_q *PriceEntryQuery) querySpec() *sqlgraph.QuerySpec {
+	_spec := sqlgraph.NewQuerySpec(priceentry.Table, priceentry.Columns, sqlgraph.NewFieldSpec(priceentry.FieldID, field.TypeInt64))
 	_spec.From = _q.sql
 	if unique := _q.ctx.Unique; unique != nil {
 		_spec.Unique = *unique
@@ -374,9 +374,9 @@ func (_q *FunctionPriceQuery) querySpec() *sqlgraph.QuerySpec {
 	}
 	if fields := _q.ctx.Fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
-		_spec.Node.Columns = append(_spec.Node.Columns, functionprice.FieldID)
+		_spec.Node.Columns = append(_spec.Node.Columns, priceentry.FieldID)
 		for i := range fields {
-			if fields[i] != functionprice.FieldID {
+			if fields[i] != priceentry.FieldID {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
 		}
@@ -404,12 +404,12 @@ func (_q *FunctionPriceQuery) querySpec() *sqlgraph.QuerySpec {
 	return _spec
 }
 
-func (_q *FunctionPriceQuery) sqlQuery(ctx context.Context) *sql.Selector {
+func (_q *PriceEntryQuery) sqlQuery(ctx context.Context) *sql.Selector {
 	builder := sql.Dialect(_q.driver.Dialect())
-	t1 := builder.Table(functionprice.Table)
+	t1 := builder.Table(priceentry.Table)
 	columns := _q.ctx.Fields
 	if len(columns) == 0 {
-		columns = functionprice.Columns
+		columns = priceentry.Columns
 	}
 	selector := builder.Select(t1.Columns(columns...)...).From(t1)
 	if _q.sql != nil {
@@ -436,28 +436,28 @@ func (_q *FunctionPriceQuery) sqlQuery(ctx context.Context) *sql.Selector {
 	return selector
 }
 
-// FunctionPriceGroupBy is the group-by builder for FunctionPrice entities.
-type FunctionPriceGroupBy struct {
+// PriceEntryGroupBy is the group-by builder for PriceEntry entities.
+type PriceEntryGroupBy struct {
 	selector
-	build *FunctionPriceQuery
+	build *PriceEntryQuery
 }
 
 // Aggregate adds the given aggregation functions to the group-by query.
-func (_g *FunctionPriceGroupBy) Aggregate(fns ...AggregateFunc) *FunctionPriceGroupBy {
+func (_g *PriceEntryGroupBy) Aggregate(fns ...AggregateFunc) *PriceEntryGroupBy {
 	_g.fns = append(_g.fns, fns...)
 	return _g
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (_g *FunctionPriceGroupBy) Scan(ctx context.Context, v any) error {
+func (_g *PriceEntryGroupBy) Scan(ctx context.Context, v any) error {
 	ctx = setContextOp(ctx, _g.build.ctx, ent.OpQueryGroupBy)
 	if err := _g.build.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*FunctionPriceQuery, *FunctionPriceGroupBy](ctx, _g.build, _g, _g.build.inters, v)
+	return scanWithInterceptors[*PriceEntryQuery, *PriceEntryGroupBy](ctx, _g.build, _g, _g.build.inters, v)
 }
 
-func (_g *FunctionPriceGroupBy) sqlScan(ctx context.Context, root *FunctionPriceQuery, v any) error {
+func (_g *PriceEntryGroupBy) sqlScan(ctx context.Context, root *PriceEntryQuery, v any) error {
 	selector := root.sqlQuery(ctx).Select()
 	aggregation := make([]string, 0, len(_g.fns))
 	for _, fn := range _g.fns {
@@ -484,28 +484,28 @@ func (_g *FunctionPriceGroupBy) sqlScan(ctx context.Context, root *FunctionPrice
 	return sql.ScanSlice(rows, v)
 }
 
-// FunctionPriceSelect is the builder for selecting fields of FunctionPrice entities.
-type FunctionPriceSelect struct {
-	*FunctionPriceQuery
+// PriceEntrySelect is the builder for selecting fields of PriceEntry entities.
+type PriceEntrySelect struct {
+	*PriceEntryQuery
 	selector
 }
 
 // Aggregate adds the given aggregation functions to the selector query.
-func (_s *FunctionPriceSelect) Aggregate(fns ...AggregateFunc) *FunctionPriceSelect {
+func (_s *PriceEntrySelect) Aggregate(fns ...AggregateFunc) *PriceEntrySelect {
 	_s.fns = append(_s.fns, fns...)
 	return _s
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (_s *FunctionPriceSelect) Scan(ctx context.Context, v any) error {
+func (_s *PriceEntrySelect) Scan(ctx context.Context, v any) error {
 	ctx = setContextOp(ctx, _s.ctx, ent.OpQuerySelect)
 	if err := _s.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*FunctionPriceQuery, *FunctionPriceSelect](ctx, _s.FunctionPriceQuery, _s, _s.inters, v)
+	return scanWithInterceptors[*PriceEntryQuery, *PriceEntrySelect](ctx, _s.PriceEntryQuery, _s, _s.inters, v)
 }
 
-func (_s *FunctionPriceSelect) sqlScan(ctx context.Context, root *FunctionPriceQuery, v any) error {
+func (_s *PriceEntrySelect) sqlScan(ctx context.Context, root *PriceEntryQuery, v any) error {
 	selector := root.sqlQuery(ctx)
 	aggregation := make([]string, 0, len(_s.fns))
 	for _, fn := range _s.fns {

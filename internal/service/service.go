@@ -226,26 +226,32 @@ type RedemptionStore interface {
 	IncrementUsed(ctx context.Context, codeID int64) (bool, error)
 }
 
-// PricingStore 模型价格持久化（Phase 5 计费价格来源）。source 行级互斥优先级
-// manual > litellm 由仓库保证（拉取 upsert 永不覆盖手动价）；service 层快照
-// 构建与仓库同语义。
+// PricingStore 统一价格持久化。
 type PricingStore interface {
+	UpsertPriceEntriesFromLiteLLM(ctx context.Context, rows []*domain.PriceEntry) (int, error)
+	UpsertPriceEntryManual(ctx context.Context, m *repository.PriceEntryManual) (*domain.PriceEntry, error)
+	DeletePriceEntryManual(ctx context.Context, model string) error
+	ListPriceEntries(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error)
+	GetPriceEntry(ctx context.Context, model string) (*domain.PriceEntry, error)
+	ListPriceVariants(ctx context.Context, model string) ([]*domain.PriceVariant, error)
+	ListAllPriceVariants(ctx context.Context) ([]*domain.PriceVariant, error)
+	ReplacePriceVariants(ctx context.Context, model string, variants []*domain.PriceVariant) ([]*domain.PriceVariant, error)
+	// legacy old pricing APIs (coexistence)
 	UpsertFromLiteLLM(ctx context.Context, rows []*domain.Pricing) (int, error)
 	UpsertManual(ctx context.Context, m *repository.PricingManual) (*domain.Pricing, error)
 	DeleteManual(ctx context.Context, model string) error
 	ListPricing(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.Pricing, int64, error)
 	GetPricing(ctx context.Context, model string) (*domain.Pricing, error)
-	// Task A 双线：图片生成价格（image_price 表；机制与 pricings 同款）。
 	UpsertImageFromLiteLLM(ctx context.Context, rows []*domain.ImagePrice) (int, error)
 	UpsertImageManual(ctx context.Context, m *repository.ImagePriceManual) (*domain.ImagePrice, error)
 	DeleteImageManual(ctx context.Context, model string) error
 	ListImagePrice(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.ImagePrice, int64, error)
 	GetImagePrice(ctx context.Context, model string) (*domain.ImagePrice, error)
-	// 价格表三件套：按单元计费功能类价格（function_price 表；机制同款）。
 	UpsertFunctionFromLiteLLM(ctx context.Context, rows []*domain.FunctionPrice) (int, error)
 	UpsertFunctionManual(ctx context.Context, m *repository.FunctionPriceManual) (*domain.FunctionPrice, error)
 	DeleteFunctionManual(ctx context.Context, model string) error
 	ListFunctionPrice(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.FunctionPrice, int64, error)
+	GetFunctionPrice(ctx context.Context, model string) (*domain.FunctionPrice, error)
 }
 
 type LogStore interface {
@@ -343,19 +349,8 @@ type Service struct {
 	// settings 设置全量内存快照（默认值 + DB 覆盖）：公开读路径（注册等）
 	// 零 DB 直读；仅管理面 UpdateSetting 后重载（低频，无锁）。
 	settings atomic.Pointer[map[string]*domain.Setting]
-	// pricing 模型价格全量内存快照（key = model 名；表内一行 = 最终生效价）：
-	// Phase 5 计费读路径（GetPrice）零 DB 直读；New 初始化 + 管理端改价
-	// （UpsertManualPricing/DeleteManualPricing）+ 同步拉取成功后重载（低频，无锁）。
-	pricing atomic.Pointer[map[string]*domain.Pricing]
-	// imagePrice 图片生成价格全量内存快照（key = model 名；Task A 数据面）：
-	// images 端点计费读路径（GetImagePrice）零 DB 直读；重载时机 = 同步拉取
-	// 成功后 + 管理端改价后（对齐 pricing 快照，低频无锁）。
-	imagePrice atomic.Pointer[map[string]*domain.ImagePrice]
-	// functionPrice 按单元计费功能类价格全量内存快照（key = model/功能标识；
-	// 价格表三件套）：search 等按单元计费读路径（GetFunctionPrice）零 DB 直读；
-	// 重载时机 = 同步拉取成功后 + 管理端改价后（对齐 pricing/imagePrice 快照，
-	// 低频无锁）。
-	functionPrice atomic.Pointer[map[string]*domain.FunctionPrice]
+	// priceSnapshot 统一价格快照：entries + variants
+	priceSnapshot atomic.Pointer[priceSnapshot]
 	// priceFetcher 价格拉取器（pricing.Fetcher 实现）：管理端手动 sync
 	// （SyncPricingNow）与 cron worker 共享同一实例（main 装配注入；nil 时
 	// SyncPricingNow 返回错误——启动配置缺失，不应发生）。
@@ -520,11 +515,10 @@ var listSortFields = map[string][]string{
 	"redemption_uses": {"id", "code_id", "user_id", "value", "created_at"},
 	// 与 repo 层 tempBalanceSortFields 白名单一致（双保险；/api/admin/temp-balances）。
 	"temp_balances": {"expires_at", "amount", "created_at"},
-	// 与 repo 层 pricingSortFields 白名单一致（双保险；/api/admin/pricing）。
-	"pricing": {"model", "updated_at"},
-	// 与 repo 层 imagePriceSortFields 白名单一致（双保险；/api/admin/image-price）。
-	"image_price": {"model", "updated_at"},
-	// 与 repo 层 functionPriceSortFields 白名单一致（双保险；/api/admin/function-prices）。
+	// 与 repo 层 priceEntrySortFields 白名单一致（双保险；/api/admin/prices）。
+	"price_entries":  {"model", "updated_at"},
+	"pricing":        {"model", "updated_at"},
+	"image_price":    {"model", "updated_at"},
 	"function_price": {"model", "updated_at"},
 }
 

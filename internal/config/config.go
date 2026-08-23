@@ -71,8 +71,8 @@ type ProxyConfig struct {
 	UpstreamStreamTimeout time.Duration `koanf:"upstream_stream_timeout"`
 	// FailoverAttempts 总尝试次数（含首次）——>= 1（0 启动即拒绝：failover 循环
 	// 零次执行，首次选号占用的并发槽永不释放，组内账号耗尽后全组 429 死锁）。
-	FailoverAttempts      int           `koanf:"failover_attempts"`
-	UsageCapture          bool          `koanf:"usage_capture"`
+	FailoverAttempts int  `koanf:"failover_attempts"`
+	UsageCapture     bool `koanf:"usage_capture"`
 	// BehindCDN 客户端 IP 识别开关（用户裁决 2026-08-17：config 文件键，非 admin
 	// setting）：false（默认）→ 完全不读供应商头（CF-Connecting-IP /
 	// True-Client-IP / X-Real-IP），直取 RemoteAddr（零伪造面，与直连行为一致）；

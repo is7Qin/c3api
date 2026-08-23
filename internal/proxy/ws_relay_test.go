@@ -410,7 +410,7 @@ func TestRelayWSClientLoopPanic(t *testing.T) {
 
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`))) // 触发 client-loop 的 up.Write panic
-	readResponsesWSClose(t, c, websocket.StatusInternalError)               // 1011 内部错误传播
+	readResponsesWSClose(t, c, websocket.StatusInternalError) // 1011 内部错误传播
 	r := <-env.out
 	require.True(t, r.handled, "panic 后连接必须收尾（进程存活）")
 	require.True(t, env.ft.closeNow.Load(), "上游错误 → CloseNow 直拆（免握手等待）")

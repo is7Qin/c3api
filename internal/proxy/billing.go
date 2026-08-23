@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/tidwall/sjson"
 
@@ -19,6 +20,11 @@ import (
 type PriceLookup interface {
 	GetPrice(model string) (*domain.Pricing, error)
 	GetImagePrice(model string) (*domain.ImagePrice, error)
+}
+
+// PriceResolver 统一价格解析（新入口）。
+type PriceResolver interface {
+	ResolvePrices(model string, promptTokens int64, tier string, at time.Time) (domain.ResolvedPrices, bool)
 }
 
 // ImagePriceLookup 图片价格快照读取（service.Service 实现，零 DB 快照读）。
@@ -44,6 +50,7 @@ type FunctionPriceLookup interface {
 // config.Billing.Enabled，与 hooks 装配同一判定）。
 type BillingHooks struct {
 	Prices   PriceLookup
+	Resolver PriceResolver
 	Balances *billing.Balances // 余额只读快照（预检 + 扣费后定向刷新）
 	Flusher  *billing.Flusher  // 批量扣费落库（billed 路由终点）
 	// ImagePrices 图片价格快照（Task B：images 端点预检专用；nil = 未装配

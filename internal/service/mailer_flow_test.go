@@ -26,15 +26,15 @@ import (
 func setMailSettings(t *testing.T, fs *fakeStore, svc *Service, m map[string]string) {
 	t.Helper()
 	types := map[string]domain.SettingType{
-		"signup_enabled":           domain.SettingTypeSwitch,
-		"mail.enabled":             domain.SettingTypeSwitch,
+		"signup_enabled":             domain.SettingTypeSwitch,
+		"mail.enabled":               domain.SettingTypeSwitch,
 		"mail.register_verification": domain.SettingTypeSwitch,
-		"mail.smtp_host":           domain.SettingTypeString,
-		"mail.smtp_port":           domain.SettingTypeNumber,
-		"mail.smtp_username":       domain.SettingTypeString,
-		"mail.smtp_password":       domain.SettingTypeString,
-		"mail.from_address":        domain.SettingTypeString,
-		"mail.tls":                 domain.SettingTypeString,
+		"mail.smtp_host":             domain.SettingTypeString,
+		"mail.smtp_port":             domain.SettingTypeNumber,
+		"mail.smtp_username":         domain.SettingTypeString,
+		"mail.smtp_password":         domain.SettingTypeString,
+		"mail.from_address":          domain.SettingTypeString,
+		"mail.tls":                   domain.SettingTypeString,
 	}
 	for k, v := range m {
 		typ := types[k]

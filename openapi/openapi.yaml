@@ -906,6 +906,122 @@ paths:
               schema: { $ref: '#/components/schemas/PricingSyncResponse' }
         default:
           $ref: '#/components/responses/Error'
+  /pricing/sync/preview:
+    post:
+      operationId: PostPricingSyncPreview
+      tags: [pricing]
+      summary: 预览价格同步（零写库 diff 报告）
+      responses:
+        '200':
+          description: 预览报告
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PricingSyncPreviewResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /prices:
+    get:
+      operationId: GetPrices
+      tags: [pricing]
+      summary: 统一价格列表（分页+筛选）
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1, minimum: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 1000 } }
+        - { name: mode, in: query, schema: { type: string, enum: [token, call, image] } }
+        - { name: source, in: query, schema: { type: string, enum: [litellm, manual] } }
+        - { name: model, in: query, schema: { type: string } }
+        - { name: sort, in: query, schema: { type: string } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
+      responses:
+        '200':
+          description: 价格列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceEntryListResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /prices/{model}:
+    parameters:
+      - { name: model, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: GetPricesModel
+      tags: [pricing]
+      responses:
+        '200':
+          description: 价格条目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceEntry' }
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: PutPricesModel
+      tags: [pricing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PriceEntryUpsert' }
+      responses:
+        '200':
+          description: 更新后条目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceEntry' }
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: DeletePricesModel
+      tags: [pricing]
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /prices/{model}/variants:
+    parameters:
+      - { name: model, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: GetPricesModelVariants
+      tags: [pricing]
+      responses:
+        '200':
+          description: 变体列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceVariantListResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: PutPricesModelVariants
+      tags: [pricing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PriceVariantListRequest' }
+      responses:
+        '200':
+          description: 更新后变体列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceVariantListResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: DeletePricesModelVariants
+      tags: [pricing]
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   # --- 图片生成价格（tag: pricing；Task A 数据面——images 端点计费价格来源） ---
   # 模型标识在 query（PUT/DELETE 的 model 参数，同 /pricing——模型名可含 `/`）。
   /image-price:
@@ -2723,6 +2839,105 @@ components:
         image_updated: { type: integer, description: image 价 upsert 落库数（manual 行不计） }
         function_rows: { type: integer, description: 拉取到的有效按单元价行数（价格表三件套） }
         function_updated: { type: integer, description: 按单元价 upsert 落库数（manual 行不计） }
+    PricingSyncPreviewResponse:
+      type: object
+      required: [to_add, to_update, skipped]
+      properties:
+        to_add: { type: integer }
+        to_update: { type: integer }
+        skipped: { type: integer }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/PricingPreviewEntry' }
+        variants_changed: { type: integer }
+    PricingPreviewEntry:
+      type: object
+      required: [model, mode, action]
+      properties:
+        model: { type: string }
+        mode: { type: string, enum: [token, call, image] }
+        action: { type: string, enum: [add, update] }
+    PriceEntry:
+      type: object
+      required: [Model, Mode, Source, CreatedAt, UpdatedAt]
+      properties:
+        Model: { type: string }
+        Mode: { type: string, enum: [token, call, image] }
+        InputPerM: { type: number, format: double, nullable: true }
+        OutputPerM: { type: number, format: double, nullable: true }
+        CacheReadPerM: { type: number, format: double, nullable: true }
+        CacheWritePerM: { type: number, format: double, nullable: true }
+        PricePerCall: { type: number, format: double, nullable: true }
+        ImgInTokPerM: { type: number, format: double, nullable: true }
+        ImgOutTokPerM: { type: number, format: double, nullable: true }
+        PricePerImage: { type: number, format: double, nullable: true }
+        Provider: { allOf: [{ $ref: '#/components/schemas/Provider' }], nullable: true }
+        Source: { $ref: '#/components/schemas/PricingSource' }
+        CreatedAt: { type: string, format: date-time }
+        UpdatedAt: { type: string, format: date-time }
+    PriceEntryUpsert:
+      type: object
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [token, call, image] }
+        input_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        output_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        cache_read_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        cache_write_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        price_per_call: { type: number, format: double, minimum: 0, nullable: true }
+        img_in_tok_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        img_out_tok_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        price_per_image: { type: number, format: double, minimum: 0, nullable: true }
+    PriceEntryListResponse:
+      type: object
+      required: [total, rows]
+      properties:
+        total: { type: integer, format: int64 }
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/PriceEntry' }
+    PriceVariant:
+      type: object
+      required: [Model, Seq, CreatedAt, UpdatedAt]
+      properties:
+        Model: { type: string }
+        Seq: { type: integer }
+        ServiceTier: { type: string, nullable: true }
+        CtxMin: { type: integer, format: int64, nullable: true }
+        CtxMax: { type: integer, format: int64, nullable: true }
+        TimeStart: { type: string, nullable: true }
+        TimeEnd: { type: string, nullable: true }
+        DowMask: { type: integer, nullable: true }
+        MultBP: { type: integer, nullable: true }
+        SetInputPerM: { type: number, format: double, nullable: true }
+        SetOutputPerM: { type: number, format: double, nullable: true }
+        CreatedAt: { type: string, format: date-time }
+        UpdatedAt: { type: string, format: date-time }
+    PriceVariantUpsert:
+      type: object
+      properties:
+        service_tier: { type: string, nullable: true }
+        ctx_min: { type: integer, format: int64, nullable: true }
+        ctx_max: { type: integer, format: int64, nullable: true }
+        time_start: { type: string, nullable: true }
+        time_end: { type: string, nullable: true }
+        dow_mask: { type: integer, nullable: true }
+        mult_bp: { type: integer, nullable: true }
+        set_input_per_m: { type: number, format: double, nullable: true }
+        set_output_per_m: { type: number, format: double, nullable: true }
+        seq: { type: integer, minimum: 1 }
+    PriceVariantListResponse:
+      type: object
+      properties:
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/PriceVariant' }
+    PriceVariantListRequest:
+      type: object
+      properties:
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/PriceVariantUpsert' }
     ImagePrice:
       type: object
       required: [Model, Source, CreatedAt, UpdatedAt]

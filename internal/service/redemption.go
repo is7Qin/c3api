@@ -106,7 +106,7 @@ func (s *Service) GenerateCodes(ctx context.Context, req GenerateRequest, create
 				Code: code, Type: req.Type, Value: req.Value,
 				Remark: req.Remark, ExpiresAt: req.ExpiresAt,
 				ResourceExpiresAt: req.ResourceExpiresAt,
-				MaxUses: maxUses, UsedCount: 0,
+				MaxUses:           maxUses, UsedCount: 0,
 				Status: domain.RedemptionStatusActive, CreatedBy: createdBy,
 			})
 		}

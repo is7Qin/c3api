@@ -34,8 +34,8 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
-	"net/url"
 	_ "net/http/pprof"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -65,8 +65,8 @@ var (
 	fillUpstream = flag.String("fill-upstream", "http://127.0.0.1:9100", "templates fill: base_url（裸根约定）")
 	fillKeysOut  = flag.String("fill-keys-out", "", "keys fill: 把创建的 key 明文逐行追加写入此文件（fill 主循环响应解析；压测前 keys.txt 落盘用）")
 	// api 模式（管理面/用户面全端点锤）：兑换码跨进程交接文件。
-	codesOut = flag.String("codes-out", "", "api-admin: 生成的兑换码逐行追加此文件（供 api-user -codes-in 消费）")
-	codesIn  = flag.String("codes-in", "", "api-user: 可核销兑换码文件（追加式，进程内周期重读；多进程并跑会有重复核销 4xx 噪声）")
+	codesOut  = flag.String("codes-out", "", "api-admin: 生成的兑换码逐行追加此文件（供 api-user -codes-in 消费）")
+	codesIn   = flag.String("codes-in", "", "api-user: 可核销兑换码文件（追加式，进程内周期重读；多进程并跑会有重复核销 4xx 噪声）")
 	readsOnly = flag.Bool("api-reads-only", false, "api 模式只跑读场景（增长后纯读延迟对比用）")
 )
 
@@ -577,8 +577,8 @@ func newFillRequest(client *http.Client, rng *rand.Rand) (req *http.Request, pre
 		// 虚高 1e5 倍，每请求扣费 3.3 万元 → 压测 402 风暴根因（实测 2026-08-18）。
 		// 量级对齐真实模型价（claude sonnet ≈ 21/105 元每百万 in/out）。
 		return mk(http.MethodPut, "/api/admin/pricing?model="+url.QueryEscape(fillModels[rng.IntN(len(fillModels))]), map[string]any{
-			"prompt_price_per_million":     20 + rng.Int64N(180),  // 元/百万 token
-			"completion_price_per_million": 60 + rng.Int64N(540),  // 元/百万 token
+			"prompt_price_per_million":     20 + rng.Int64N(180), // 元/百万 token
+			"completion_price_per_million": 60 + rng.Int64N(540), // 元/百万 token
 		}), ""
 	}
 	return nil, "fill:unknown-type:" + typ // 不可达（validateFillFlags 已校验）

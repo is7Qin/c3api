@@ -12,7 +12,7 @@ import (
 
 // fixedWindowLimiter 每分组 key 的固定窗口计数限流（规格 §10.6，默认关闭）。
 // 多实例（#14 §3.2）：本地窗口限额 = ceil(rpm/N)，N 从 InstancesProvider 读
-//（窗口建立时读一次——N 变更下次窗口生效，§3.4 偏放行/偏收紧瞬态可接受）。
+// （窗口建立时读一次——N 变更下次窗口生效，§3.4 偏放行/偏收紧瞬态可接受）。
 // 误差上界：每窗口总放行 ≤ N×ceil(rpm/N) ≤ rpm + (N-1)（软保护，无 DB 复核）。
 type fixedWindowLimiter struct {
 	rpm       int

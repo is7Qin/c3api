@@ -23,7 +23,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // TestAccountFailedColumnsPG ent schema 建列断言：accounts 表存在 failed_at
-//（timestamptz NULL）一列；不新增 failed_reason（用户裁决——原因复用 last_error）。
+// （timestamptz NULL）一列；不新增 failed_reason（用户裁决——原因复用 last_error）。
 func TestAccountFailedColumnsPG(t *testing.T) {
 	repos := newPGRepos(t) // 迁移建表（ent AutoMigrate 按 migrate/schema.go 建列）
 	ctx := context.Background()

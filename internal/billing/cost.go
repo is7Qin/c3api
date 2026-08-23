@@ -200,3 +200,86 @@ func Cost(p *domain.Pricing, tier Tier, pt, ct, cr, cc int64) (int64, bool) {
 	}
 	return cost, aboveHit
 }
+
+const imageTotalCap = math.MaxInt64 / 100_000
+
+// CostFromResolved pure arithmetic on resolved prices (new unified path).
+func CostFromResolved(rp domain.ResolvedPrices, pt, ct, cr, cc int64) int64 {
+	clamp := func(t int64) int64 {
+		if t < 0 {
+			return 0
+		}
+		return t
+	}
+	pt, ct, cr, cc = clamp(pt), clamp(ct), clamp(cr), clamp(cc)
+	orInt := func(v *int64) int64 {
+		if v == nil {
+			return 0
+		}
+		return *v
+	}
+	raw := clampToken(pt, orInt(rp.InputPerM))*orInt(rp.InputPerM) +
+		clampToken(ct, orInt(rp.OutputPerM))*orInt(rp.OutputPerM) +
+		clampToken(cr, orInt(rp.CacheReadPerM))*orInt(rp.CacheReadPerM) +
+		clampToken(cc, orInt(rp.CacheWritePerM))*orInt(rp.CacheWritePerM)
+	return (raw + milliPerMillion/2) / milliPerMillion
+}
+
+// ImageCostFromResolved image branch via unified ResolvedPrices.
+func ImageCostFromResolved(rp domain.ResolvedPrices, inTok, outTok, count int64) int64 {
+	clamp := func(t int64) int64 {
+		if t < 0 {
+			return 0
+		}
+		return t
+	}
+	inTok, outTok, count = clamp(inTok), clamp(outTok), clamp(count)
+	var inP, outP, perP int64
+	if rp.ImgInTokPerM != nil {
+		inP = *rp.ImgInTokPerM
+	}
+	if rp.ImgOutTokPerM != nil {
+		outP = *rp.ImgOutTokPerM
+	}
+	if rp.PricePerImage != nil {
+		perP = *rp.PricePerImage
+	}
+	raw := clampToken(inTok, inP)*inP + clampToken(outTok, outP)*outP
+	tokenCost := (raw + milliPerMillion/2) / milliPerMillion
+	var perImage int64
+	if perP > 0 && count > 0 {
+		if lim := imageTotalCap / perP; count > lim {
+			count = lim
+		}
+		perImage = count * perP
+	}
+	total := tokenCost + perImage
+	if total > imageTotalCap {
+		total = imageTotalCap
+	}
+	return total
+}
+
+// CallCostFromResolved per-call branch.
+func CallCostFromResolved(rp domain.ResolvedPrices, count int64) int64 {
+	if count < 0 {
+		count = 0
+	}
+	if rp.PricePerCall == nil {
+		return 0
+	}
+	p := *rp.PricePerCall
+	if count > imageTotalCap/p {
+		count = imageTotalCap / p
+	}
+	return count * p
+}
+
+// ImageCost legacy shim (old ImagePrice path).
+func ImageCost(p *domain.ImagePrice, inTok, outTok, count int64) int64 {
+	if p == nil {
+		return 0
+	}
+	rp := domain.ResolvedPrices{ImgInTokPerM: p.InputImageTokenPricePerMillion, ImgOutTokPerM: p.OutputImageTokenPricePerMillion, PricePerImage: p.OutputCostPerImageMilli}
+	return ImageCostFromResolved(rp, inTok, outTok, count)
+}

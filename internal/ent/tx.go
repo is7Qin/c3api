@@ -22,18 +22,16 @@ type Tx struct {
 	EmailTemplate *EmailTemplateClient
 	// ErrLog is the client for interacting with the ErrLog builders.
 	ErrLog *ErrLogClient
-	// FunctionPrice is the client for interacting with the FunctionPrice builders.
-	FunctionPrice *FunctionPriceClient
 	// Group is the client for interacting with the Group builders.
 	Group *GroupClient
 	// GroupAssignment is the client for interacting with the GroupAssignment builders.
 	GroupAssignment *GroupAssignmentClient
-	// ImagePrice is the client for interacting with the ImagePrice builders.
-	ImagePrice *ImagePriceClient
 	// Key is the client for interacting with the Key builders.
 	Key *KeyClient
-	// Pricing is the client for interacting with the Pricing builders.
-	Pricing *PricingClient
+	// PriceEntry is the client for interacting with the PriceEntry builders.
+	PriceEntry *PriceEntryClient
+	// PriceVariant is the client for interacting with the PriceVariant builders.
+	PriceVariant *PriceVariantClient
 	// RedemptionCode is the client for interacting with the RedemptionCode builders.
 	RedemptionCode *RedemptionCodeClient
 	// RedemptionUse is the client for interacting with the RedemptionUse builders.
@@ -192,12 +190,11 @@ func (tx *Tx) init() {
 	tx.EmailCode = NewEmailCodeClient(tx.config)
 	tx.EmailTemplate = NewEmailTemplateClient(tx.config)
 	tx.ErrLog = NewErrLogClient(tx.config)
-	tx.FunctionPrice = NewFunctionPriceClient(tx.config)
 	tx.Group = NewGroupClient(tx.config)
 	tx.GroupAssignment = NewGroupAssignmentClient(tx.config)
-	tx.ImagePrice = NewImagePriceClient(tx.config)
 	tx.Key = NewKeyClient(tx.config)
-	tx.Pricing = NewPricingClient(tx.config)
+	tx.PriceEntry = NewPriceEntryClient(tx.config)
+	tx.PriceVariant = NewPriceVariantClient(tx.config)
 	tx.RedemptionCode = NewRedemptionCodeClient(tx.config)
 	tx.RedemptionUse = NewRedemptionUseClient(tx.config)
 	tx.Rule = NewRuleClient(tx.config)

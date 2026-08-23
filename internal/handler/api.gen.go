@@ -80,6 +80,33 @@ const (
 	ResetCode    MailTemplatePurpose = "reset_code"
 )
 
+// Defines values for PriceEntryMode.
+const (
+	PriceEntryModeCall  PriceEntryMode = "call"
+	PriceEntryModeImage PriceEntryMode = "image"
+	PriceEntryModeToken PriceEntryMode = "token"
+)
+
+// Defines values for PriceEntryUpsertMode.
+const (
+	PriceEntryUpsertModeCall  PriceEntryUpsertMode = "call"
+	PriceEntryUpsertModeImage PriceEntryUpsertMode = "image"
+	PriceEntryUpsertModeToken PriceEntryUpsertMode = "token"
+)
+
+// Defines values for PricingPreviewEntryAction.
+const (
+	Add    PricingPreviewEntryAction = "add"
+	Update PricingPreviewEntryAction = "update"
+)
+
+// Defines values for PricingPreviewEntryMode.
+const (
+	PricingPreviewEntryModeCall  PricingPreviewEntryMode = "call"
+	PricingPreviewEntryModeImage PricingPreviewEntryMode = "image"
+	PricingPreviewEntryModeToken PricingPreviewEntryMode = "token"
+)
+
 // Defines values for PricingSource.
 const (
 	PricingSourceLitellm PricingSource = "litellm"
@@ -263,10 +290,29 @@ const (
 	GetKeysParamsOrderDesc GetKeysParamsOrder = "desc"
 )
 
+// Defines values for GetPricesParamsMode.
+const (
+	GetPricesParamsModeCall  GetPricesParamsMode = "call"
+	GetPricesParamsModeImage GetPricesParamsMode = "image"
+	GetPricesParamsModeToken GetPricesParamsMode = "token"
+)
+
+// Defines values for GetPricesParamsSource.
+const (
+	GetPricesParamsSourceLitellm GetPricesParamsSource = "litellm"
+	GetPricesParamsSourceManual  GetPricesParamsSource = "manual"
+)
+
+// Defines values for GetPricesParamsOrder.
+const (
+	GetPricesParamsOrderAsc  GetPricesParamsOrder = "asc"
+	GetPricesParamsOrderDesc GetPricesParamsOrder = "desc"
+)
+
 // Defines values for GetPricingParamsSource.
 const (
-	GetPricingParamsSourceLitellm GetPricingParamsSource = "litellm"
-	GetPricingParamsSourceManual  GetPricingParamsSource = "manual"
+	Litellm GetPricingParamsSource = "litellm"
+	Manual  GetPricingParamsSource = "manual"
 )
 
 // Defines values for GetPricingParamsOrder.
@@ -348,8 +394,8 @@ const (
 
 // Defines values for GetUsersParamsOrder.
 const (
-	GetUsersParamsOrderAsc  GetUsersParamsOrder = "asc"
-	GetUsersParamsOrderDesc GetUsersParamsOrder = "desc"
+	Asc  GetUsersParamsOrder = "asc"
+	Desc GetUsersParamsOrder = "desc"
 )
 
 // Account defines model for Account.
@@ -1084,6 +1130,90 @@ type OverviewTrend struct {
 	TtftP99Ms int64   `json:"ttft_p99_ms"`
 }
 
+// PriceEntry defines model for PriceEntry.
+type PriceEntry struct {
+	CacheReadPerM  *float64       `json:"CacheReadPerM"`
+	CacheWritePerM *float64       `json:"CacheWritePerM"`
+	CreatedAt      time.Time      `json:"CreatedAt"`
+	ImgInTokPerM   *float64       `json:"ImgInTokPerM"`
+	ImgOutTokPerM  *float64       `json:"ImgOutTokPerM"`
+	InputPerM      *float64       `json:"InputPerM"`
+	Mode           PriceEntryMode `json:"Mode"`
+	Model          string         `json:"Model"`
+	OutputPerM     *float64       `json:"OutputPerM"`
+	PricePerCall   *float64       `json:"PricePerCall"`
+	PricePerImage  *float64       `json:"PricePerImage"`
+	Provider       *Provider      `json:"Provider"`
+	Source         PricingSource  `json:"Source"`
+	UpdatedAt      time.Time      `json:"UpdatedAt"`
+}
+
+// PriceEntryMode defines model for PriceEntry.Mode.
+type PriceEntryMode string
+
+// PriceEntryListResponse defines model for PriceEntryListResponse.
+type PriceEntryListResponse struct {
+	Rows  []PriceEntry `json:"rows"`
+	Total int64        `json:"total"`
+}
+
+// PriceEntryUpsert defines model for PriceEntryUpsert.
+type PriceEntryUpsert struct {
+	CacheReadPerM  *float64             `json:"cache_read_per_m"`
+	CacheWritePerM *float64             `json:"cache_write_per_m"`
+	ImgInTokPerM   *float64             `json:"img_in_tok_per_m"`
+	ImgOutTokPerM  *float64             `json:"img_out_tok_per_m"`
+	InputPerM      *float64             `json:"input_per_m"`
+	Mode           PriceEntryUpsertMode `json:"mode"`
+	OutputPerM     *float64             `json:"output_per_m"`
+	PricePerCall   *float64             `json:"price_per_call"`
+	PricePerImage  *float64             `json:"price_per_image"`
+}
+
+// PriceEntryUpsertMode defines model for PriceEntryUpsert.Mode.
+type PriceEntryUpsertMode string
+
+// PriceVariant defines model for PriceVariant.
+type PriceVariant struct {
+	CreatedAt     time.Time `json:"CreatedAt"`
+	CtxMax        *int64    `json:"CtxMax"`
+	CtxMin        *int64    `json:"CtxMin"`
+	DowMask       *int      `json:"DowMask"`
+	Model         string    `json:"Model"`
+	MultBP        *int      `json:"MultBP"`
+	Seq           int       `json:"Seq"`
+	ServiceTier   *string   `json:"ServiceTier"`
+	SetInputPerM  *float64  `json:"SetInputPerM"`
+	SetOutputPerM *float64  `json:"SetOutputPerM"`
+	TimeEnd       *string   `json:"TimeEnd"`
+	TimeStart     *string   `json:"TimeStart"`
+	UpdatedAt     time.Time `json:"UpdatedAt"`
+}
+
+// PriceVariantListRequest defines model for PriceVariantListRequest.
+type PriceVariantListRequest struct {
+	Variants *[]PriceVariantUpsert `json:"variants,omitempty"`
+}
+
+// PriceVariantListResponse defines model for PriceVariantListResponse.
+type PriceVariantListResponse struct {
+	Rows *[]PriceVariant `json:"rows,omitempty"`
+}
+
+// PriceVariantUpsert defines model for PriceVariantUpsert.
+type PriceVariantUpsert struct {
+	CtxMax        *int64   `json:"ctx_max"`
+	CtxMin        *int64   `json:"ctx_min"`
+	DowMask       *int     `json:"dow_mask"`
+	MultBp        *int     `json:"mult_bp"`
+	Seq           *int     `json:"seq,omitempty"`
+	ServiceTier   *string  `json:"service_tier"`
+	SetInputPerM  *float64 `json:"set_input_per_m"`
+	SetOutputPerM *float64 `json:"set_output_per_m"`
+	TimeEnd       *string  `json:"time_end"`
+	TimeStart     *string  `json:"time_start"`
+}
+
 // Pricing defines model for Pricing.
 type Pricing struct {
 	AboveCacheCreationPricePerMillion     *float64 `json:"AboveCacheCreationPricePerMillion"`
@@ -1159,8 +1289,30 @@ type PricingListResponse struct {
 	Total int64     `json:"total"`
 }
 
+// PricingPreviewEntry defines model for PricingPreviewEntry.
+type PricingPreviewEntry struct {
+	Action PricingPreviewEntryAction `json:"action"`
+	Mode   PricingPreviewEntryMode   `json:"mode"`
+	Model  string                    `json:"model"`
+}
+
+// PricingPreviewEntryAction defines model for PricingPreviewEntry.Action.
+type PricingPreviewEntryAction string
+
+// PricingPreviewEntryMode defines model for PricingPreviewEntry.Mode.
+type PricingPreviewEntryMode string
+
 // PricingSource defines model for PricingSource.
 type PricingSource string
+
+// PricingSyncPreviewResponse defines model for PricingSyncPreviewResponse.
+type PricingSyncPreviewResponse struct {
+	Entries         *[]PricingPreviewEntry `json:"entries,omitempty"`
+	Skipped         int                    `json:"skipped"`
+	ToAdd           int                    `json:"to_add"`
+	ToUpdate        int                    `json:"to_update"`
+	VariantsChanged *int                   `json:"variants_changed,omitempty"`
+}
 
 // PricingSyncResponse defines model for PricingSyncResponse.
 type PricingSyncResponse struct {
@@ -1860,6 +2012,26 @@ type GetAdminOverviewParams struct {
 	GroupId *int64 `form:"group_id,omitempty" json:"group_id,omitempty"`
 }
 
+// GetPricesParams defines parameters for GetPrices.
+type GetPricesParams struct {
+	Page     *int                   `form:"page,omitempty" json:"page,omitempty"`
+	PageSize *int                   `form:"page_size,omitempty" json:"page_size,omitempty"`
+	Mode     *GetPricesParamsMode   `form:"mode,omitempty" json:"mode,omitempty"`
+	Source   *GetPricesParamsSource `form:"source,omitempty" json:"source,omitempty"`
+	Model    *string                `form:"model,omitempty" json:"model,omitempty"`
+	Sort     *string                `form:"sort,omitempty" json:"sort,omitempty"`
+	Order    *GetPricesParamsOrder  `form:"order,omitempty" json:"order,omitempty"`
+}
+
+// GetPricesParamsMode defines parameters for GetPrices.
+type GetPricesParamsMode string
+
+// GetPricesParamsSource defines parameters for GetPrices.
+type GetPricesParamsSource string
+
+// GetPricesParamsOrder defines parameters for GetPrices.
+type GetPricesParamsOrder string
+
 // DeletePricingModelParams defines parameters for DeletePricingModel.
 type DeletePricingModelParams struct {
 	Model string `form:"model" json:"model"`
@@ -2076,6 +2248,12 @@ type PutImagePriceModelJSONRequestBody = ImagePriceUpsert
 // PutMailTemplateJSONRequestBody defines body for PutMailTemplate for application/json ContentType.
 type PutMailTemplateJSONRequestBody = MailTemplateUpdate
 
+// PutPricesModelJSONRequestBody defines body for PutPricesModel for application/json ContentType.
+type PutPricesModelJSONRequestBody = PriceEntryUpsert
+
+// PutPricesModelVariantsJSONRequestBody defines body for PutPricesModelVariants for application/json ContentType.
+type PutPricesModelVariantsJSONRequestBody = PriceVariantListRequest
+
 // PutPricingModelJSONRequestBody defines body for PutPricingModel for application/json ContentType.
 type PutPricingModelJSONRequestBody = PricingUpsert
 
@@ -2231,6 +2409,27 @@ type ServerInterface interface {
 	// 管理端总览（summary USD + trend 日桶 + 账号健康 + 资源 + err_top + 计费告警）
 	// (GET /overview)
 	GetAdminOverview(w http.ResponseWriter, r *http.Request, params GetAdminOverviewParams)
+	// 统一价格列表（分页+筛选）
+	// (GET /prices)
+	GetPrices(w http.ResponseWriter, r *http.Request, params GetPricesParams)
+
+	// (DELETE /prices/{model})
+	DeletePricesModel(w http.ResponseWriter, r *http.Request, model string)
+
+	// (GET /prices/{model})
+	GetPricesModel(w http.ResponseWriter, r *http.Request, model string)
+
+	// (PUT /prices/{model})
+	PutPricesModel(w http.ResponseWriter, r *http.Request, model string)
+
+	// (DELETE /prices/{model}/variants)
+	DeletePricesModelVariants(w http.ResponseWriter, r *http.Request, model string)
+
+	// (GET /prices/{model}/variants)
+	GetPricesModelVariants(w http.ResponseWriter, r *http.Request, model string)
+
+	// (PUT /prices/{model}/variants)
+	PutPricesModelVariants(w http.ResponseWriter, r *http.Request, model string)
 	// 删除手动价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回）
 	// (DELETE /pricing)
 	DeletePricingModel(w http.ResponseWriter, r *http.Request, params DeletePricingModelParams)
@@ -2243,6 +2442,9 @@ type ServerInterface interface {
 	// 手动触发一次价格同步（fetch 官方价格表 → upsert → 快照重载；失败保留旧价）
 	// (POST /pricing/sync)
 	PostPricingSync(w http.ResponseWriter, r *http.Request)
+	// 预览价格同步（零写库 diff 报告）
+	// (POST /pricing/sync/preview)
+	PostPricingSyncPreview(w http.ResponseWriter, r *http.Request)
 	// 兑换码列表（增强分页范式 page/page_size；type/status 筛选；sort 白名单）
 	// (GET /redemption-codes)
 	GetRedemptionCodes(w http.ResponseWriter, r *http.Request, params GetRedemptionCodesParams)
@@ -2552,6 +2754,42 @@ func (_ Unimplemented) GetAdminOverview(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// 统一价格列表（分页+筛选）
+// (GET /prices)
+func (_ Unimplemented) GetPrices(w http.ResponseWriter, r *http.Request, params GetPricesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /prices/{model})
+func (_ Unimplemented) DeletePricesModel(w http.ResponseWriter, r *http.Request, model string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /prices/{model})
+func (_ Unimplemented) GetPricesModel(w http.ResponseWriter, r *http.Request, model string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /prices/{model})
+func (_ Unimplemented) PutPricesModel(w http.ResponseWriter, r *http.Request, model string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /prices/{model}/variants)
+func (_ Unimplemented) DeletePricesModelVariants(w http.ResponseWriter, r *http.Request, model string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /prices/{model}/variants)
+func (_ Unimplemented) GetPricesModelVariants(w http.ResponseWriter, r *http.Request, model string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /prices/{model}/variants)
+func (_ Unimplemented) PutPricesModelVariants(w http.ResponseWriter, r *http.Request, model string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // 删除手动价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回）
 // (DELETE /pricing)
 func (_ Unimplemented) DeletePricingModel(w http.ResponseWriter, r *http.Request, params DeletePricingModelParams) {
@@ -2573,6 +2811,12 @@ func (_ Unimplemented) PutPricingModel(w http.ResponseWriter, r *http.Request, p
 // 手动触发一次价格同步（fetch 官方价格表 → upsert → 快照重载；失败保留旧价）
 // (POST /pricing/sync)
 func (_ Unimplemented) PostPricingSync(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 预览价格同步（零写库 diff 报告）
+// (POST /pricing/sync/preview)
+func (_ Unimplemented) PostPricingSyncPreview(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3943,6 +4187,231 @@ func (siw *ServerInterfaceWrapper) GetAdminOverview(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetPrices operation middleware
+func (siw *ServerInterfaceWrapper) GetPrices(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPricesParams
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "page", r.URL.Query(), &params.Page)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "page_size" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "page_size", r.URL.Query(), &params.PageSize)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_size", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "mode" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "mode", r.URL.Query(), &params.Mode)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mode", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "source" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "source", r.URL.Query(), &params.Source)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "model" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "sort" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "sort", r.URL.Query(), &params.Sort)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "order" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "order", r.URL.Query(), &params.Order)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPrices(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePricesModel operation middleware
+func (siw *ServerInterfaceWrapper) DeletePricesModel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "model" -------------
+	var model string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePricesModel(w, r, model)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPricesModel operation middleware
+func (siw *ServerInterfaceWrapper) GetPricesModel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "model" -------------
+	var model string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPricesModel(w, r, model)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutPricesModel operation middleware
+func (siw *ServerInterfaceWrapper) PutPricesModel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "model" -------------
+	var model string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutPricesModel(w, r, model)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePricesModelVariants operation middleware
+func (siw *ServerInterfaceWrapper) DeletePricesModelVariants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "model" -------------
+	var model string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePricesModelVariants(w, r, model)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPricesModelVariants operation middleware
+func (siw *ServerInterfaceWrapper) GetPricesModelVariants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "model" -------------
+	var model string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPricesModelVariants(w, r, model)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutPricesModelVariants operation middleware
+func (siw *ServerInterfaceWrapper) PutPricesModelVariants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "model" -------------
+	var model string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutPricesModelVariants(w, r, model)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeletePricingModel operation middleware
 func (siw *ServerInterfaceWrapper) DeletePricingModel(w http.ResponseWriter, r *http.Request) {
 
@@ -4091,6 +4560,20 @@ func (siw *ServerInterfaceWrapper) PostPricingSync(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostPricingSync(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostPricingSyncPreview operation middleware
+func (siw *ServerInterfaceWrapper) PostPricingSyncPreview(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostPricingSyncPreview(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5532,6 +6015,27 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/overview", wrapper.GetAdminOverview)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/prices", wrapper.GetPrices)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/prices/{model}", wrapper.DeletePricesModel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/prices/{model}", wrapper.GetPricesModel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/prices/{model}", wrapper.PutPricesModel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/prices/{model}/variants", wrapper.DeletePricesModelVariants)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/prices/{model}/variants", wrapper.GetPricesModelVariants)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/prices/{model}/variants", wrapper.PutPricesModelVariants)
+	})
+	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/pricing", wrapper.DeletePricingModel)
 	})
 	r.Group(func(r chi.Router) {
@@ -5542,6 +6046,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/pricing/sync", wrapper.PostPricingSync)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/pricing/sync/preview", wrapper.PostPricingSyncPreview)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/redemption-codes", wrapper.GetRedemptionCodes)

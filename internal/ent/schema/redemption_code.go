@@ -21,9 +21,9 @@ func (RedemptionCode) Fields() []ent.Field {
 		field.Enum("type").Values("balance", "concurrency", "temp_balance"),
 		field.Int64("value"), // 最小单位（分/并发数）
 		field.String("remark").Optional().Nillable(),
-		field.Time("expires_at").Optional().Nillable(), // 码未兑换即过期；nil = 永久
+		field.Time("expires_at").Optional().Nillable(),          // 码未兑换即过期；nil = 永久
 		field.Time("resource_expires_at").Optional().Nillable(), // 兑换后资源到期；temp_balance 必填（service 校验）
-		field.Int("max_uses").Default(1), // 1 = 单次码；>1 = 多人码
+		field.Int("max_uses").Default(1),                        // 1 = 单次码；>1 = 多人码
 		field.Int("used_count").Default(0),
 		field.Enum("status").Values("active", "disabled").Default("active"),
 		field.Int64("created_by").Default(0), // 0 = 系统（静态 admin token）；>0 = platform_admin user_id

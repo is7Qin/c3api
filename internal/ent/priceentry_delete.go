@@ -8,30 +8,30 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/is7qin/c3api/internal/ent/imageprice"
 	"github.com/is7qin/c3api/internal/ent/predicate"
+	"github.com/is7qin/c3api/internal/ent/priceentry"
 )
 
-// ImagePriceDelete is the builder for deleting a ImagePrice entity.
-type ImagePriceDelete struct {
+// PriceEntryDelete is the builder for deleting a PriceEntry entity.
+type PriceEntryDelete struct {
 	config
 	hooks    []Hook
-	mutation *ImagePriceMutation
+	mutation *PriceEntryMutation
 }
 
-// Where appends a list predicates to the ImagePriceDelete builder.
-func (_d *ImagePriceDelete) Where(ps ...predicate.ImagePrice) *ImagePriceDelete {
+// Where appends a list predicates to the PriceEntryDelete builder.
+func (_d *PriceEntryDelete) Where(ps ...predicate.PriceEntry) *PriceEntryDelete {
 	_d.mutation.Where(ps...)
 	return _d
 }
 
 // Exec executes the deletion query and returns how many vertices were deleted.
-func (_d *ImagePriceDelete) Exec(ctx context.Context) (int, error) {
+func (_d *PriceEntryDelete) Exec(ctx context.Context) (int, error) {
 	return withHooks(ctx, _d.sqlExec, _d.mutation, _d.hooks)
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_d *ImagePriceDelete) ExecX(ctx context.Context) int {
+func (_d *PriceEntryDelete) ExecX(ctx context.Context) int {
 	n, err := _d.Exec(ctx)
 	if err != nil {
 		panic(err)
@@ -39,8 +39,8 @@ func (_d *ImagePriceDelete) ExecX(ctx context.Context) int {
 	return n
 }
 
-func (_d *ImagePriceDelete) sqlExec(ctx context.Context) (int, error) {
-	_spec := sqlgraph.NewDeleteSpec(imageprice.Table, sqlgraph.NewFieldSpec(imageprice.FieldID, field.TypeInt64))
+func (_d *PriceEntryDelete) sqlExec(ctx context.Context) (int, error) {
+	_spec := sqlgraph.NewDeleteSpec(priceentry.Table, sqlgraph.NewFieldSpec(priceentry.FieldID, field.TypeInt64))
 	if ps := _d.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
@@ -56,32 +56,32 @@ func (_d *ImagePriceDelete) sqlExec(ctx context.Context) (int, error) {
 	return affected, err
 }
 
-// ImagePriceDeleteOne is the builder for deleting a single ImagePrice entity.
-type ImagePriceDeleteOne struct {
-	_d *ImagePriceDelete
+// PriceEntryDeleteOne is the builder for deleting a single PriceEntry entity.
+type PriceEntryDeleteOne struct {
+	_d *PriceEntryDelete
 }
 
-// Where appends a list predicates to the ImagePriceDelete builder.
-func (_d *ImagePriceDeleteOne) Where(ps ...predicate.ImagePrice) *ImagePriceDeleteOne {
+// Where appends a list predicates to the PriceEntryDelete builder.
+func (_d *PriceEntryDeleteOne) Where(ps ...predicate.PriceEntry) *PriceEntryDeleteOne {
 	_d._d.mutation.Where(ps...)
 	return _d
 }
 
 // Exec executes the deletion query.
-func (_d *ImagePriceDeleteOne) Exec(ctx context.Context) error {
+func (_d *PriceEntryDeleteOne) Exec(ctx context.Context) error {
 	n, err := _d._d.Exec(ctx)
 	switch {
 	case err != nil:
 		return err
 	case n == 0:
-		return &NotFoundError{imageprice.Label}
+		return &NotFoundError{priceentry.Label}
 	default:
 		return nil
 	}
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_d *ImagePriceDeleteOne) ExecX(ctx context.Context) {
+func (_d *PriceEntryDeleteOne) ExecX(ctx context.Context) {
 	if err := _d.Exec(ctx); err != nil {
 		panic(err)
 	}

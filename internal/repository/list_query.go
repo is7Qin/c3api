@@ -12,11 +12,9 @@ import (
 
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
-	"github.com/is7qin/c3api/internal/ent/functionprice"
 	"github.com/is7qin/c3api/internal/ent/group"
-	"github.com/is7qin/c3api/internal/ent/imageprice"
 	"github.com/is7qin/c3api/internal/ent/key"
-	"github.com/is7qin/c3api/internal/ent/pricing"
+	"github.com/is7qin/c3api/internal/ent/priceentry"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
 	"github.com/is7qin/c3api/internal/ent/redemptionuse"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
@@ -110,16 +108,8 @@ var (
 		"expires_at": tempbalance.FieldExpiresAt, "amount": tempbalance.FieldAmount,
 		"created_at": tempbalance.FieldCreatedAt,
 	}
-	pricingSortFields = map[string]string{
-		"id": pricing.FieldID, "model": pricing.FieldModel,
-		"updated_at": pricing.FieldUpdatedAt,
-	}
-	imagePriceSortFields = map[string]string{
-		"id": imageprice.FieldID, "model": imageprice.FieldModel,
-		"updated_at": imageprice.FieldUpdatedAt,
-	}
-	functionPriceSortFields = map[string]string{
-		"id": functionprice.FieldID, "model": functionprice.FieldModel,
-		"updated_at": functionprice.FieldUpdatedAt,
+	priceEntrySortFields = map[string]string{
+		"id": priceentry.FieldID, "model": priceentry.FieldModel,
+		"updated_at": priceentry.FieldUpdatedAt,
 	}
 )

@@ -178,8 +178,16 @@ export class ApiClient {
   // URLSearchParams 自动编码）；list 的 model 为模糊筛选，保持 query 不变。
   listPricing = (p?: { page?: number; page_size?: number; source?: string; provider?: components['schemas']['Provider']; model?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['PricingListResponse']>('/pricing', { params: toQuery(p) })
   syncPricing = () => this.request<components['schemas']['PricingSyncResponse']>('/pricing/sync', { method: 'POST' })
+  syncPricingPreview = () => this.request<components['schemas']['PricingSyncPreviewResponse']>('/pricing/sync/preview', { method: 'POST' })
   upsertPricing = (model: string, b: components['schemas']['PricingUpsert']) => this.request<components['schemas']['Pricing']>('/pricing', { method: 'PUT', params: toQuery({ model }), body: JSON.stringify(b) })
   deletePricing = (model: string) => this.request<components['schemas']['DeletedResponse']>('/pricing', { method: 'DELETE', params: toQuery({ model }) })
+  listPriceEntries = (p?: { page?: number; page_size?: number; mode?: string; source?: string; model?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['PriceEntryListResponse']>('/prices', { params: toQuery(p) })
+  getPriceEntry = (model: string) => this.request<components['schemas']['PriceEntry']>(`/prices/${encodeURIComponent(model)}`)
+  upsertPriceEntry = (model: string, b: components['schemas']['PriceEntryUpsert']) => this.request<components['schemas']['PriceEntry']>(`/prices/${encodeURIComponent(model)}`, { method: 'PUT', body: JSON.stringify(b) })
+  deletePriceEntry = (model: string) => this.request<components['schemas']['DeletedResponse']>(`/prices/${encodeURIComponent(model)}`, { method: 'DELETE' })
+  listPriceVariants = (model: string) => this.request<components['schemas']['PriceVariantListResponse']>(`/prices/${encodeURIComponent(model)}/variants`)
+  putPriceVariants = (model: string, b: components['schemas']['PriceVariantListRequest']) => this.request<components['schemas']['PriceVariantListResponse']>(`/prices/${encodeURIComponent(model)}/variants`, { method: 'PUT', body: JSON.stringify(b) })
+  deletePriceVariants = (model: string) => this.request<components['schemas']['DeletedResponse']>(`/prices/${encodeURIComponent(model)}/variants`, { method: 'DELETE' })
   // —— 图片价格（Task A 数据面计费来源）——
   getImagePrices = (p?: { page?: number; page_size?: number; source?: string; provider?: components['schemas']['Provider']; model?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['ImagePriceListResponse']>('/image-price', { params: toQuery(p) })
   putImagePrice = (model: string, b: components['schemas']['ImagePriceUpsert']) => this.request<components['schemas']['ImagePrice']>('/image-price', { method: 'PUT', params: toQuery({ model }), body: JSON.stringify(b) })

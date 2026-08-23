@@ -17,7 +17,7 @@ func (Template) Fields() []ent.Field {
 		field.String("base_url"),
 		// credential_type 模板级：一个模板 = 一种号池（默认 api_key；号池生态类型后续追加）。
 		field.String("credential_type").Default("api_key"),
-		field.JSON("supported_formats", []string{}),       // 格式数组
+		field.JSON("supported_formats", []string{}), // 格式数组
 		field.JSON("models", []string{}),
 		field.JSON("format_models", map[string][]string{}), // format -> model 列表
 		field.JSON("model_mapping", map[string]string{}),

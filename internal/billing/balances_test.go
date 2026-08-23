@@ -14,10 +14,10 @@ import (
 
 // fakeBalLoader 余额 + 倍率快照测试 loader（failLoad 注入失败——fail-safe 断言）。
 type fakeBalLoader struct {
-	m  map[int64]int64              // 余额
-	am map[AssignmentKey]int        // 用户-组专属倍率（仅已设置行）
-	gm map[int64]int                // 组倍率
-	failAt int                      // 1 = LoadBalances 失败；2 = LoadGroupMultipliers 失败；3 = LoadAssignmentMultipliers 失败
+	m      map[int64]int64       // 余额
+	am     map[AssignmentKey]int // 用户-组专属倍率（仅已设置行）
+	gm     map[int64]int         // 组倍率
+	failAt int                   // 1 = LoadBalances 失败；2 = LoadGroupMultipliers 失败；3 = LoadAssignmentMultipliers 失败
 }
 
 func (f fakeBalLoader) LoadBalances(ctx context.Context) (map[int64]int64, error) {
@@ -61,7 +61,7 @@ func TestBalancesReloadFailSafe(t *testing.T) {
 }
 
 // TestBalancesReloadGroupFailSafe 组倍率加载失败 → 余额与倍率两路都保留旧值
-//（快照内自洽：不出现新余额 + 旧倍率错配）。
+// （快照内自洽：不出现新余额 + 旧倍率错配）。
 func TestBalancesReloadGroupFailSafe(t *testing.T) {
 	b := NewBalances(fakeBalLoader{
 		m: map[int64]int64{1: 100}, am: map[AssignmentKey]int{{1, 1}: 20000}, gm: map[int64]int{1: 15000},
@@ -147,7 +147,7 @@ func TestReloadMultipliers(t *testing.T) {
 
 	// 组倍率变更（g2 从 10000 → 30000）+ assignment 倍率变更（(1,1) 20000 → 0）
 	b.loader = fakeBalLoader{
-		m: map[int64]int64{1: 100},
+		m:  map[int64]int64{1: 100},
 		am: map[AssignmentKey]int{{1, 1}: 0, {9, 3}: 5000},
 		gm: map[int64]int{1: 15000, 2: 30000},
 	}

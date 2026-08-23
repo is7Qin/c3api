@@ -9,29 +9,29 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/is7qin/c3api/internal/ent/predicate"
-	"github.com/is7qin/c3api/internal/ent/pricing"
+	"github.com/is7qin/c3api/internal/ent/pricevariant"
 )
 
-// PricingDelete is the builder for deleting a Pricing entity.
-type PricingDelete struct {
+// PriceVariantDelete is the builder for deleting a PriceVariant entity.
+type PriceVariantDelete struct {
 	config
 	hooks    []Hook
-	mutation *PricingMutation
+	mutation *PriceVariantMutation
 }
 
-// Where appends a list predicates to the PricingDelete builder.
-func (_d *PricingDelete) Where(ps ...predicate.Pricing) *PricingDelete {
+// Where appends a list predicates to the PriceVariantDelete builder.
+func (_d *PriceVariantDelete) Where(ps ...predicate.PriceVariant) *PriceVariantDelete {
 	_d.mutation.Where(ps...)
 	return _d
 }
 
 // Exec executes the deletion query and returns how many vertices were deleted.
-func (_d *PricingDelete) Exec(ctx context.Context) (int, error) {
+func (_d *PriceVariantDelete) Exec(ctx context.Context) (int, error) {
 	return withHooks(ctx, _d.sqlExec, _d.mutation, _d.hooks)
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_d *PricingDelete) ExecX(ctx context.Context) int {
+func (_d *PriceVariantDelete) ExecX(ctx context.Context) int {
 	n, err := _d.Exec(ctx)
 	if err != nil {
 		panic(err)
@@ -39,8 +39,8 @@ func (_d *PricingDelete) ExecX(ctx context.Context) int {
 	return n
 }
 
-func (_d *PricingDelete) sqlExec(ctx context.Context) (int, error) {
-	_spec := sqlgraph.NewDeleteSpec(pricing.Table, sqlgraph.NewFieldSpec(pricing.FieldID, field.TypeInt64))
+func (_d *PriceVariantDelete) sqlExec(ctx context.Context) (int, error) {
+	_spec := sqlgraph.NewDeleteSpec(pricevariant.Table, sqlgraph.NewFieldSpec(pricevariant.FieldID, field.TypeInt64))
 	if ps := _d.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
@@ -56,32 +56,32 @@ func (_d *PricingDelete) sqlExec(ctx context.Context) (int, error) {
 	return affected, err
 }
 
-// PricingDeleteOne is the builder for deleting a single Pricing entity.
-type PricingDeleteOne struct {
-	_d *PricingDelete
+// PriceVariantDeleteOne is the builder for deleting a single PriceVariant entity.
+type PriceVariantDeleteOne struct {
+	_d *PriceVariantDelete
 }
 
-// Where appends a list predicates to the PricingDelete builder.
-func (_d *PricingDeleteOne) Where(ps ...predicate.Pricing) *PricingDeleteOne {
+// Where appends a list predicates to the PriceVariantDelete builder.
+func (_d *PriceVariantDeleteOne) Where(ps ...predicate.PriceVariant) *PriceVariantDeleteOne {
 	_d._d.mutation.Where(ps...)
 	return _d
 }
 
 // Exec executes the deletion query.
-func (_d *PricingDeleteOne) Exec(ctx context.Context) error {
+func (_d *PriceVariantDeleteOne) Exec(ctx context.Context) error {
 	n, err := _d._d.Exec(ctx)
 	switch {
 	case err != nil:
 		return err
 	case n == 0:
-		return &NotFoundError{pricing.Label}
+		return &NotFoundError{pricevariant.Label}
 	default:
 		return nil
 	}
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_d *PricingDeleteOne) ExecX(ctx context.Context) {
+func (_d *PriceVariantDeleteOne) ExecX(ctx context.Context) {
 	if err := _d.Exec(ctx); err != nil {
 		panic(err)
 	}

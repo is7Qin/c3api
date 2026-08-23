@@ -37,9 +37,9 @@ type TemplatePatch struct {
 }
 
 type AccountPatch struct {
-	Name           *string
-	TemplateID     *int64
-	UpstreamKey    *string
+	Name        *string
+	TemplateID  *int64
+	UpstreamKey *string
 	// BaseURL 批量三态（C1 定死）：nil = 不变；&"" = 清空（落 NULL = 继承
 	// 模板）；&非空 = 落值。
 	BaseURL        *string
@@ -323,4 +323,3 @@ func diffMissing(existing, ids []int64) error {
 	}
 	return nil
 }
-

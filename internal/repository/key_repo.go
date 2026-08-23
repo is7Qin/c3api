@@ -211,7 +211,7 @@ func (r *KeyRepo) RotateKey(ctx context.Context, id int64, newRaw string) (*doma
 
 // DeleteKey 软删除：deleted_at 置值（行保留留审计；鉴权快照按 deleted_at
 // IS NULL 过滤 → 已删 key 鉴权拒绝，GET 单个仍可查已删项）。bulk Update
-//（无 re-SELECT）单语句；0 行命中 = 缺 id → ErrNotFound（与 errMissingID 同格式）。
+// （无 re-SELECT）单语句；0 行命中 = 缺 id → ErrNotFound（与 errMissingID 同格式）。
 func (r *KeyRepo) DeleteKey(ctx context.Context, id int64) error {
 	n, err := r.client.Key.Update().Where(key.IDEQ(id)).SetDeletedAt(time.Now()).Save(ctx)
 	if err != nil {
@@ -304,7 +304,7 @@ func (r *KeyRepo) LoadKeys(ctx context.Context) (map[string]domain.KeyMeta, erro
 
 // AddQuotaUsed 批量回写 key 额度消耗（增量；Recorder 节奏，内存权威，
 // DB 滞后 ≤ flush 间隔）。单条 SQL CASE 批量更新替代逐 key UpdateOneID 轮询
-//（#15 验收：10k 逐 key 额度写回是统计面慢 flush 3-5min 周期根因之一）。
+// （#15 验收：10k 逐 key 额度写回是统计面慢 flush 3-5min 周期根因之一）。
 // key 已删（不在 IN 列表）静默跳过——回写无意义（与旧逐 key
 // ent.IsNotFound 跳过语义一致）。调用方（usage.Recorder.flushStats）按
 // quotaBatchSize 分块并以块为失败回灌原子单位——本方法单语句全成或全败。

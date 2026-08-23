@@ -59,14 +59,14 @@ func TestGenerateCodes(t *testing.T) {
 
 	t.Run("非法参数 400", func(t *testing.T) {
 		bad := []GenerateRequest{
-			{Type: domain.RedemptionType("bogus"), Value: 100},                      // type 非法
-			{Type: domain.RedemptionTypeBalance, Value: 0},                          // value = 0
-			{Type: domain.RedemptionTypeBalance, Value: -1},                         // value < 0
-			{Type: domain.RedemptionTypeBalance, Value: 100, MaxUses: -1},           // max_uses < 0
-			{Type: domain.RedemptionTypeBalance, Value: 100, Count: -1},             // count < 0
-			{Type: domain.RedemptionTypeBalance, Value: 100, Count: 1001},           // count > 1000
-			{Type: domain.RedemptionTypeBalance, Value: 100, ExpiresAt: &time.Time{}}, // expires_at 过去
-			{Type: domain.RedemptionTypeTempBalance, Value: 100},                    // temp_balance 缺 resource_expires_at
+			{Type: domain.RedemptionType("bogus"), Value: 100},                                    // type 非法
+			{Type: domain.RedemptionTypeBalance, Value: 0},                                        // value = 0
+			{Type: domain.RedemptionTypeBalance, Value: -1},                                       // value < 0
+			{Type: domain.RedemptionTypeBalance, Value: 100, MaxUses: -1},                         // max_uses < 0
+			{Type: domain.RedemptionTypeBalance, Value: 100, Count: -1},                           // count < 0
+			{Type: domain.RedemptionTypeBalance, Value: 100, Count: 1001},                         // count > 1000
+			{Type: domain.RedemptionTypeBalance, Value: 100, ExpiresAt: &time.Time{}},             // expires_at 过去
+			{Type: domain.RedemptionTypeTempBalance, Value: 100},                                  // temp_balance 缺 resource_expires_at
 			{Type: domain.RedemptionTypeTempBalance, Value: 100, ResourceExpiresAt: &time.Time{}}, // resource_expires_at 过去
 		}
 		for _, req := range bad {

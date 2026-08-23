@@ -23,14 +23,16 @@ type fakeRuntimeProvider struct {
 	ok bool
 }
 
-func (f *fakeRuntimeProvider) Runtime(accountID int64) (scheduler.RuntimeInfo, bool) { return f.ri, f.ok }
-func (f *fakeRuntimeProvider) Runtimes() []scheduler.AccountRuntime                  { return nil }
+func (f *fakeRuntimeProvider) Runtime(accountID int64) (scheduler.RuntimeInfo, bool) {
+	return f.ri, f.ok
+}
+func (f *fakeRuntimeProvider) Runtimes() []scheduler.AccountRuntime { return nil }
 
 // TestListAccountViewsMergesRuntimeStatus A-4：列表显示 = 调度器内存权威——
 // DB active + 内存 429+冷却 → AccountView.Status/CooldownUntil 与 Runtime 一致
-//（回写丢失/失败时管理端不再显示 DB 镜像的 active——用户报告"active 却恒 429"
+// （回写丢失/失败时管理端不再显示 DB 镜像的 active——用户报告"active 却恒 429"
 // 的展示盲区）；Concurrency/ErrRate/ErrCount 既有合并回归。sched 未装配
-//（既有构造）与 Runtime 未命中 → 回退 DB 值（既有行为不变）。
+// （既有构造）与 Runtime 未命中 → 回退 DB 值（既有行为不变）。
 func TestListAccountViewsMergesRuntimeStatus(t *testing.T) {
 	ctx := context.Background()
 	fs := newFakeStore()

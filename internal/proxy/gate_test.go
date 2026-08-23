@@ -268,7 +268,7 @@ type fakeInstances int
 func (n fakeInstances) ClusterInstances() int { return int(n) }
 
 // fakeQuotaReader 可编程复核读：used 返回值/错误 + 调用计数 + 可选阻塞
-//（单飞并发测试用）。线程安全。
+// （单飞并发测试用）。线程安全。
 type fakeQuotaReader struct {
 	mu      sync.Mutex
 	used    int64

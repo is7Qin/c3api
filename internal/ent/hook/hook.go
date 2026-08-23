@@ -69,18 +69,6 @@ func (f ErrLogFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, erro
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ErrLogMutation", m)
 }
 
-// The FunctionPriceFunc type is an adapter to allow the use of ordinary
-// function as FunctionPrice mutator.
-type FunctionPriceFunc func(context.Context, *ent.FunctionPriceMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f FunctionPriceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.FunctionPriceMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.FunctionPriceMutation", m)
-}
-
 // The GroupFunc type is an adapter to allow the use of ordinary
 // function as Group mutator.
 type GroupFunc func(context.Context, *ent.GroupMutation) (ent.Value, error)
@@ -105,18 +93,6 @@ func (f GroupAssignmentFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Va
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.GroupAssignmentMutation", m)
 }
 
-// The ImagePriceFunc type is an adapter to allow the use of ordinary
-// function as ImagePrice mutator.
-type ImagePriceFunc func(context.Context, *ent.ImagePriceMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ImagePriceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ImagePriceMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ImagePriceMutation", m)
-}
-
 // The KeyFunc type is an adapter to allow the use of ordinary
 // function as Key mutator.
 type KeyFunc func(context.Context, *ent.KeyMutation) (ent.Value, error)
@@ -129,16 +105,28 @@ func (f KeyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) 
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.KeyMutation", m)
 }
 
-// The PricingFunc type is an adapter to allow the use of ordinary
-// function as Pricing mutator.
-type PricingFunc func(context.Context, *ent.PricingMutation) (ent.Value, error)
+// The PriceEntryFunc type is an adapter to allow the use of ordinary
+// function as PriceEntry mutator.
+type PriceEntryFunc func(context.Context, *ent.PriceEntryMutation) (ent.Value, error)
 
 // Mutate calls f(ctx, m).
-func (f PricingFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.PricingMutation); ok {
+func (f PriceEntryFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.PriceEntryMutation); ok {
 		return f(ctx, mv)
 	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PricingMutation", m)
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PriceEntryMutation", m)
+}
+
+// The PriceVariantFunc type is an adapter to allow the use of ordinary
+// function as PriceVariant mutator.
+type PriceVariantFunc func(context.Context, *ent.PriceVariantMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f PriceVariantFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.PriceVariantMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PriceVariantMutation", m)
 }
 
 // The RedemptionCodeFunc type is an adapter to allow the use of ordinary

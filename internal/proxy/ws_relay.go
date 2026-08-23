@@ -182,7 +182,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	wg.Add(1)
 	go func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
 		defer wg.Done()
-		defer close(upLoopDone) // 编排等本读者退出后再分类（I-1 记录可见性）
+		defer close(upLoopDone)                   // 编排等本读者退出后再分类（I-1 记录可见性）
 		defer relayRecover("up-loop", &clientErr) // panic 按身份入槽：本 goroutine 故障归客户端侧
 		for {
 			typ, f, err := up.Read(relayCtx)
@@ -229,7 +229,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	wg.Add(1)
 	go func() { // 心跳：向上游周期 Ping（pong 超时 = 上游失联 → 按上游错误收尾）
 		defer wg.Done()
-		defer relayRecover("heartbeat", &pingErr) // panic 按身份入槽：本 goroutine 故障归心跳错误
+		defer relayRecover("heartbeat", &pingErr)       // panic 按身份入槽：本 goroutine 故障归心跳错误
 		ticker := time.NewTicker(p.wsHeartbeatInterval) // seam：测试缩短验证节奏（T4）
 		defer ticker.Stop()
 		for {

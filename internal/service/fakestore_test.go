@@ -31,23 +31,23 @@ type fakeTempBalance struct {
 }
 
 type fakeStore struct {
-	mu         sync.Mutex
-	tpls       map[int64]*domain.Template
-	accs       map[int64]*domain.Account
-	groups     map[int64]*domain.Group
-	accGroups  map[int64][]int64 // accountID → groupIDs（账号侧绑定，Set/GetAccountGroups）
-	keys       map[int64]*domain.Key
-	users      map[int64]*domain.User
-	settings   map[string]*domain.Setting
-	rules      map[int64]domain.Rule
+	mu          sync.Mutex
+	tpls        map[int64]*domain.Template
+	accs        map[int64]*domain.Account
+	groups      map[int64]*domain.Group
+	accGroups   map[int64][]int64 // accountID → groupIDs（账号侧绑定，Set/GetAccountGroups）
+	keys        map[int64]*domain.Key
+	users       map[int64]*domain.User
+	settings    map[string]*domain.Setting
+	rules       map[int64]domain.Rule
 	logs        []*domain.UsageLog
 	stats       []*domain.StatBucket
 	entityStats []*domain.EntityStatBucket
 	assign      map[int64][]int64 // groupID → 授予 user_id 列表（group_assignments 模拟）
-	assignMult map[[2]int64]*int // (groupID, userID) → 专属价格倍率（nil = 未设置；T3.5 按组）
-	codes      map[int64]*domain.RedemptionCode
-	uses       map[int64]*domain.RedemptionUse
-	temps      []*fakeTempRow
+	assignMult  map[[2]int64]*int // (groupID, userID) → 专属价格倍率（nil = 未设置；T3.5 按组）
+	codes       map[int64]*domain.RedemptionCode
+	uses        map[int64]*domain.RedemptionUse
+	temps       []*fakeTempRow
 	// pricings 模型价格（key = model，一行 = 最终生效价，镜像仓库 unique(model)
 	// 约束；manual > litellm 优先级语义与真实仓库一致）。
 	pricings map[string]*domain.Pricing
@@ -56,6 +56,8 @@ type fakeStore struct {
 	imagePrices map[string]*domain.ImagePrice
 	// functionPrices 按单元计费功能类价格（价格表三件套；同 pricings 优先级语义）。
 	functionPrices map[string]*domain.FunctionPrice
+	priceEntries   map[string]*domain.PriceEntry
+	priceVariants  map[string][]*domain.PriceVariant
 	// tplExts/accExts 模板/账号类型化扩展（key = 父 id，镜像仓库 1:1 唯一索引）。
 	tplExts map[int64]*domain.TemplateExt
 	accExts map[int64]*domain.AccountExt
@@ -115,11 +117,13 @@ func newFakeStore() *fakeStore {
 		uses:  make(map[int64]*domain.RedemptionUse), pricings: make(map[string]*domain.Pricing),
 		imagePrices:    make(map[string]*domain.ImagePrice),
 		functionPrices: make(map[string]*domain.FunctionPrice),
+		priceEntries:   make(map[string]*domain.PriceEntry),
+		priceVariants:  make(map[string][]*domain.PriceVariant),
 		tplExts:        make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
 		emailTemplates: make(map[string]*domain.EmailTemplate),
 		emailCodes:     make(map[string]*domain.EmailCode),
 		accExtErr:      make(map[int64]error),
-		nextID: 1,
+		nextID:         1,
 	}
 }
 
@@ -1404,11 +1408,11 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		assignMult: maps.Clone(f.assignMult),
 		revokeErr:  f.revokeGroupErr,
 		// 账号/扩展/归组面（Task B codex 导入 imported 行单行事务；注入透传）
-		accs:       cloneAccMap(f.accs),
-		accExts:    cloneAccExtMap(f.accExts),
-		accGroups:  cloneAccGroupsMap(f.accGroups),
-		groups:     cloneGroupMap(f.groups),
-		upsertErr:  f.txUpsertExtErr,
+		accs:      cloneAccMap(f.accs),
+		accExts:   cloneAccExtMap(f.accExts),
+		accGroups: cloneAccGroupsMap(f.accGroups),
+		groups:    cloneGroupMap(f.groups),
+		upsertErr: f.txUpsertExtErr,
 	}
 	if err := fn(tx); err != nil {
 		return err // 回滚：暂存丢弃
@@ -2001,6 +2005,12 @@ func (f *fakeStore) UpsertFromLiteLLM(ctx context.Context, rows []*domain.Pricin
 		c := *p
 		c.Source = domain.PricingSourceLitellm // 防误传 manual 行破坏优先级（同真实 repo）
 		f.pricings[p.Model] = &c
+		// sync to unified
+		if f.priceEntries == nil {
+			f.priceEntries = make(map[string]*domain.PriceEntry)
+		}
+		pe := &domain.PriceEntry{Model: p.Model, Mode: domain.PriceModeToken, InputPerM: &p.PromptPricePerMillion, OutputPerM: &p.CompletionPricePerMillion, CacheReadPerM: p.CacheReadPricePerMillion, CacheWritePerM: p.CacheCreationPricePerMillion, Source: domain.PricingSourceLitellm}
+		f.priceEntries[p.Model] = pe
 		n++
 	}
 	return n, nil
@@ -2042,6 +2052,12 @@ func (f *fakeStore) UpsertManual(ctx context.Context, m *repository.PricingManua
 		Source:                                    domain.PricingSourceManual,
 	}
 	f.pricings[m.Model] = p
+	// sync to unified table for new wrappers
+	if f.priceEntries == nil {
+		f.priceEntries = make(map[string]*domain.PriceEntry)
+	}
+	pe := &domain.PriceEntry{Model: m.Model, Mode: domain.PriceModeToken, InputPerM: &m.PromptPricePerMillion, OutputPerM: &m.CompletionPricePerMillion, CacheReadPerM: m.CacheReadPricePerMillion, CacheWritePerM: m.CacheCreationPricePerMillion, Source: domain.PricingSourceManual}
+	f.priceEntries[m.Model] = pe
 	c := *p
 	return &c, nil
 }
@@ -2053,12 +2069,18 @@ func (f *fakeStore) DeleteManual(ctx context.Context, model string) error {
 	defer f.mu.Unlock()
 	cur, ok := f.pricings[model]
 	if !ok {
+		// also check unified
+		if _, ok2 := f.priceEntries[model]; ok2 {
+			delete(f.priceEntries, model)
+			return nil
+		}
 		return fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
 	}
 	if cur.Source != domain.PricingSourceManual {
 		return fmt.Errorf("%w: model=%q source=litellm (manual price only)", repository.ErrConflict, model)
 	}
 	delete(f.pricings, model)
+	delete(f.priceEntries, model)
 	return nil
 }
 
@@ -2138,6 +2160,10 @@ func (f *fakeStore) UpsertImageFromLiteLLM(ctx context.Context, rows []*domain.I
 		c := *p
 		c.Source = domain.PricingSourceLitellm
 		f.imagePrices[p.Model] = &c
+		if f.priceEntries == nil {
+			f.priceEntries = make(map[string]*domain.PriceEntry)
+		}
+		f.priceEntries[p.Model] = &domain.PriceEntry{Model: p.Model, Mode: domain.PriceModeImage, ImgInTokPerM: p.InputImageTokenPricePerMillion, ImgOutTokPerM: p.OutputImageTokenPricePerMillion, PricePerImage: p.OutputCostPerImageMilli, Source: domain.PricingSourceLitellm}
 		n++
 	}
 	return n, nil
@@ -2156,6 +2182,10 @@ func (f *fakeStore) UpsertImageManual(ctx context.Context, m *repository.ImagePr
 		Source:                          domain.PricingSourceManual,
 	}
 	f.imagePrices[m.Model] = p
+	if f.priceEntries == nil {
+		f.priceEntries = make(map[string]*domain.PriceEntry)
+	}
+	f.priceEntries[m.Model] = &domain.PriceEntry{Model: m.Model, Mode: domain.PriceModeImage, ImgInTokPerM: p.InputImageTokenPricePerMillion, ImgOutTokPerM: p.OutputImageTokenPricePerMillion, PricePerImage: p.OutputCostPerImageMilli, Source: domain.PricingSourceManual}
 	c := *p
 	return &c, nil
 }
@@ -2167,12 +2197,17 @@ func (f *fakeStore) DeleteImageManual(ctx context.Context, model string) error {
 	defer f.mu.Unlock()
 	cur, ok := f.imagePrices[model]
 	if !ok {
+		if _, ok2 := f.priceEntries[model]; ok2 {
+			delete(f.priceEntries, model)
+			return nil
+		}
 		return fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
 	}
 	if cur.Source != domain.PricingSourceManual {
 		return fmt.Errorf("%w: model=%q source=litellm (manual price only)", repository.ErrConflict, model)
 	}
 	delete(f.imagePrices, model)
+	delete(f.priceEntries, model)
 	return nil
 }
 
@@ -2252,6 +2287,10 @@ func (f *fakeStore) UpsertFunctionFromLiteLLM(ctx context.Context, rows []*domai
 		c := *p
 		c.Source = domain.PricingSourceLitellm
 		f.functionPrices[p.Model] = &c
+		if f.priceEntries == nil {
+			f.priceEntries = make(map[string]*domain.PriceEntry)
+		}
+		f.priceEntries[p.Model] = &domain.PriceEntry{Model: p.Model, Mode: domain.PriceModeCall, PricePerCall: p.PricePerCall, Source: domain.PricingSourceLitellm}
 		n++
 	}
 	return n, nil
@@ -2268,6 +2307,10 @@ func (f *fakeStore) UpsertFunctionManual(ctx context.Context, m *repository.Func
 		Source:       domain.PricingSourceManual,
 	}
 	f.functionPrices[m.Model] = p
+	if f.priceEntries == nil {
+		f.priceEntries = make(map[string]*domain.PriceEntry)
+	}
+	f.priceEntries[m.Model] = &domain.PriceEntry{Model: m.Model, Mode: domain.PriceModeCall, PricePerCall: p.PricePerCall, Source: domain.PricingSourceManual}
 	c := *p
 	return &c, nil
 }
@@ -2279,12 +2322,17 @@ func (f *fakeStore) DeleteFunctionManual(ctx context.Context, model string) erro
 	defer f.mu.Unlock()
 	cur, ok := f.functionPrices[model]
 	if !ok {
+		if _, ok2 := f.priceEntries[model]; ok2 {
+			delete(f.priceEntries, model)
+			return nil
+		}
 		return fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
 	}
 	if cur.Source != domain.PricingSourceManual {
 		return fmt.Errorf("%w: model=%q source=litellm（只允许删手动价）", repository.ErrConflict, model)
 	}
 	delete(f.functionPrices, model)
+	delete(f.priceEntries, model)
 	return nil
 }
 

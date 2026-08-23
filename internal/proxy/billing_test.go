@@ -685,8 +685,8 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 	cases := []struct {
 		name     string
 		bal      *billing.Balances
-		pass     bool   // true = 放行（上游命中）；false = 402 + 上游零命中
-		upStatus int    // 放行用例 200（单次命中完成流，failover 不重试）；拒绝用例 500（不可达）
+		pass     bool // true = 放行（上游命中）；false = 402 + 上游零命中
+		upStatus int  // 放行用例 200（单次命中完成流，failover 不重试）；拒绝用例 500（不可达）
 	}{
 		{"余额 0 放行", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 0}}, nil), true, http.StatusOK},
 		{"余额负", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: -1}}, nil), false, http.StatusInternalServerError},
