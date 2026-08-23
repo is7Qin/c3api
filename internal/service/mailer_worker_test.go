@@ -220,7 +220,7 @@ func TestMailWorkerShutdownDrain(t *testing.T) {
 	require.Equal(t, int64(0), int64(st.Queued))
 	// total of sent + dropped should account for 3
 	total := st.SentTotal + st.DroppedTotal + st.FailedTotal
-	require.GreaterOrEqual(t, total, int64(0))
+	require.Equal(t, int64(3), total, "每个入队任务必须恰好一个终态")
 	// verify msgs received (at least 1, up to 3 within budget)
 	received := len(stub.msgs)
 	// drain remaining msgs without blocking

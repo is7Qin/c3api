@@ -79,10 +79,22 @@ func (w *MailWorker) Start(ctx context.Context) error {
 }
 
 // Close 关闭接收并限时排空已在队任务（反序排空中段关闭，D-W4）。
+// drain 与 loop 路径的 recover 对称（评审 F-1）：drain 跑在 Manager 关停 goroutine
+// 上、无 Manager.Go 托管，panic 会中断后续 worker 的 Close 链。
 func (w *MailWorker) Close(ctx context.Context) error {
 	w.closeOnce.Do(func() { close(w.quit) })
 	// 限时排空：ctx 预算内继续消费，超时丢弃计数。
-	w.drainRemaining(ctx)
+	func() {
+		defer func() {
+			if r := recover(); r != nil && w.svc != nil && w.svc.log != nil {
+				w.svc.log.Warn("mail worker drain panicked",
+					logx.Any("panic", r),
+					logx.String("stack", string(debug.Stack())),
+				)
+			}
+		}()
+		w.drainRemaining(ctx)
+	}()
 	return nil
 }
 
