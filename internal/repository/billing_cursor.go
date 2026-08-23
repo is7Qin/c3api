@@ -64,7 +64,7 @@ const markBilledBulkSQL = `UPDATE usage_logs SET billed = TRUE
 const zeroCostIDsSQL = `SELECT id FROM usage_logs WHERE NOT billed AND cost = 0
 	ORDER BY id LIMIT $1`
 
-// unbilledLagSQL lag 度量（停机护栏数据源，替代旧 pendingWaterline 口径）：
+// unbilledLagSQL lag 度量（停机护栏数据源）：
 // 部分索引最小 unbilled 行 created_at + 行数。COUNT 走部分索引；MIN(created_at)
 // 需堆取列——unbilled 集合小（正常恒近空），O(unbilled) 可接受。
 const unbilledLagSQL = `SELECT COUNT(*), MIN(created_at) FROM usage_logs WHERE NOT billed`

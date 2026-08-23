@@ -267,10 +267,9 @@ func (p *Proxy) applyMultiplierLog(l *domain.UsageLog, raw int64) {
 // BillingTier="no_price" + cost 0（运行时防御，审计留痕不按 0 计价）。价格
 // 快照列仅在分量 >0 且模型有价（非 nil）时落（nil = 无该分量语义）；倍率
 // 同 chat 路径整单施加（fast/组倍率——ImageCost 本身不含倍率）。
-// 统一计费模型（spec 2026-08-13）落账迁移：image token 已并入 Input/Output
+// 统一计费模型（spec 2026-08-13）落账口径：image token 并入 Input/Output
 // Tokens（images 格式 text 分量恒 0 → 两列即 image tokens——ImageCost 口径不
-// 变）；per-image 价快照迁移为 PricePerCallMillis（毫分/张）；原 image token
-// 单价快照两列已删不再落账。
+// 变）；per-image 价快照即 PricePerCallMillis（毫分/张）。
 func (p *Proxy) applyImageBilling(l *domain.UsageLog) {
 	model := l.MappedModel
 	if model == "" {
@@ -351,7 +350,7 @@ func mappedFor(req, used string) string {
 
 // record 记录一条用量日志（无并发槽的失败路径；有槽路径走 finish）。
 // ctx 提供鉴权 KeyMeta（user_id/key_id 归属；401 等鉴权失败路径无 KeyMeta）。
-// 落库路由与 finish 同走 routeLog 单写点（F2：shouldBill 分流退役）。**本地
+// 落库路由与 finish 同走 routeLog 单写点。**本地
 // 预用量拒绝（429/402 等，见 recordRejected）不在此路径**——无用量可记的
 // 拒绝不产生明细，避免拒绝风暴打爆 pending。
 func (p *Proxy) record(ctx context.Context, reqID string, groupID, accountID int64, reqModel, usedModel string, format domain.RequestFormat, status int, et domain.ErrorType, latencyMS int64, u usageTuple, start time.Time) {
@@ -403,9 +402,7 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 // （倍率 0 的成功行）与 0 token 成功行（空响应））：
 //   - usage_logs = 放行路径明细：error_type ∈ {none（成功，含 cost=0 免费组/
 //     空响应）, abort（半异常计费）}——F2 单写点（spec §一）：billable 行一律
-//     经 rec.Record 入队，入队前盖 Billed 出生标记。旧 shouldBill 双写分流
-//     （billed→Flusher 扣费落库 / 非 billed→rec）退役——双写竞速 + 23505
-//     COMMIT 歧义仲裁是杂味源头，单写点消除它；扣费改由 billing worker 从
+//     经 rec.Record 入队，入队前盖 Billed 出生标记；扣费由 billing worker 从
 //     账本游标消费（T3）。4xx/5xx/network（上游透传/耗尽失败行）不写
 //     usage_logs（失败明细归 err_logs，P2a 拒绝风暴教训同族）
 //   - err_logs = 全部错误明细（error_type != none）：4xx/5xx（上游透传/耗尽）

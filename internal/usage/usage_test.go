@@ -81,8 +81,8 @@ func TestQuotaAccumulatesOnRecord(t *testing.T) {
 
 	// 非 billed 放行行：Record 累加 quota
 	r.Record(&domain.UsageLog{RequestID: "a", KeyID: 7, TotalTokens: 10, CreatedAt: now})
-	// billed 放行行：Flusher.Record 经 AddQuota 并入同一 map（billed/非 billed
-	// 两路闭环，评审 P1-C）
+	// AddQuota 手工注入：同 key 增量并入 Record 已建的 map 项，异 key 新建
+	// （两路同 map 同回写闭环）
 	r.AddQuota(7, 5)
 	r.AddQuota(9, 3)
 	r.flushQuota(context.Background())

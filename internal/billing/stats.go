@@ -8,16 +8,14 @@ package billing
 // 接口——装配侧类型断言聚合（main.go），响应 typed struct 非 map。
 // 采集纪律：原子读既有计数器（零锁零分配，O(1)）；不新增热路径埋点。
 //
-// F2 ABI-4 终态（spec-f2-ledger-cursor T5）：水线族（pending_logs/
-// pending_waterline/warned）随内存队列删除整体退役，ops 观测换 lag 族——
-// lag/unbilled/quarantine 三真值由 worker 每周期收尾 refreshLag 原子写
-// （spec §一 lag 度量源点名：部分索引最小 unbilled 行 created_at vs now）。
+// F2 ABI-4 终态（spec-f2-ledger-cursor T5）：ops 观测为 lag 族——lag/unbilled/
+// quarantine 三真值由 worker 每周期收尾 refreshLag 原子写（spec §一 lag 度量源
+// 点名：部分索引最小 unbilled 行 created_at vs now）。
 
 // FlusherStats billing flusher 状态（原子读组装，不锁模块内部）。
 type FlusherStats struct {
 	// LagMs 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行
-	// created_at；0 = 游标空/未探测。消费停摆时此值持续增长（护栏告警同源，
-	// 替代旧 pendingWaterline 口径）。
+	// created_at；0 = 游标空/未探测。消费停摆时此值持续增长——护栏告警同源。
 	LagMs int64 `json:"lag_ms"`
 	// UnbilledRows 当前未扣费账本行数（部分索引 WHERE NOT billed 行数）。
 	UnbilledRows int64 `json:"unbilled_rows"`

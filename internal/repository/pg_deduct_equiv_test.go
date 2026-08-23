@@ -4,11 +4,10 @@
 
 package repository_test
 
-// F2 裁剪（spec-f2-ledger-cursor）：本文件原测 DeductAndLog 双路径（pgx COPY vs
-// ent CreateBulk）插入等价性——插入面已随双写删除，usage flusher InsertBatch 是
-// usage_logs 唯一写者。残余等价面 = DeductOnlyAndMark 的**事务载体**（pool →
-// pgx 直连事务 vs nil pool → ent txDriver 回落）：同输入终态逐字段一致（FEFO/
-// 透支/幽灵用户三场景矩阵），防两载体行为漂移。
+// 事务载体等价性测试（spec-f2-ledger-cursor）：DeductOnlyAndMark 双载体——
+// pool → pgx 直连事务 vs nil pool → ent txDriver 回落——同输入终态逐字段一致
+// （FEFO/透支/幽灵用户三场景矩阵），防两载体行为漂移。usage flusher InsertBatch
+// 是 usage_logs 唯一写者。
 
 import (
 	"context"
