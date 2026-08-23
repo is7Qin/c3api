@@ -64,6 +64,10 @@ func overviewPGTestDB(t *testing.T, seedFrom, seedUntil time.Time) *repository.R
 	require.NoError(t, err)
 	require.NoError(t, repos.EnsureUsageStatsPartitioned(ctx, time.Now()))
 	require.NoError(t, repos.EnsureUsageStatsPartitions(ctx, seedFrom, seedUntil))
+	// v2.2：AggregateRange 双表事务连带写 usage_entity_stats——bootstrap 必须同步
+	// 建表+分区，否则聚合落盘撞 42P01。
+	require.NoError(t, repos.EnsureUsageEntityStatsPartitioned(ctx, time.Now()))
+	require.NoError(t, repos.EnsureUsageEntityStatsPartitions(ctx, seedFrom, seedUntil))
 	return repos
 }
 
