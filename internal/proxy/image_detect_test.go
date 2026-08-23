@@ -35,13 +35,32 @@ import (
 const respImagesOutput = `[{"type":"image_generation_call","id":"igc_1","status":"generating","result":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="},{"type":"image_generation_call","id":"igc_2","status":"generating","result":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="},{"type":"function_call","id":"fc_1","call_id":"call_1","name":"web_search","arguments":"{}","result":"{\"query\":\"x\"}"}]`
 
 // respImagePriceRow 构造 ImagePrice 测试行（三分量指针）。
-func respImagePriceRow(in, out, perImage *int64) *domain.ImagePrice {
-	return &domain.ImagePrice{
+func respImagePriceRow(in, out, perImage *int64) *domain.PriceEntry {
+	return &domain.PriceEntry{
+		Mode: domain.PriceModeImage,
 		Model:                           "gpt-4o",
-		InputImageTokenPricePerMillion:  in,
-		OutputImageTokenPricePerMillion: out,
-		OutputCostPerImageMilli:         perImage,
+		ImgInTokPerM:  in,
+		ImgOutTokPerM: out,
+		PricePerImage:         perImage,
 	}
+}
+
+func mergePricingWithImage(base *domain.PriceEntry, m map[string]*domain.PriceEntry) map[string]*domain.PriceEntry {
+	if m == nil {
+		return map[string]*domain.PriceEntry{"gpt-4o": base}
+	}
+	if img, ok := m["gpt-4o"]; ok && img != nil {
+		if img.PricePerImage != nil {
+			base.PricePerImage = img.PricePerImage
+		}
+		if img.ImgInTokPerM != nil {
+			base.ImgInTokPerM = img.ImgInTokPerM
+		}
+		if img.ImgOutTokPerM != nil {
+			base.ImgOutTokPerM = img.ImgOutTokPerM
+		}
+	}
+	return map[string]*domain.PriceEntry{"gpt-4o": base}
 }
 
 // --- unit：计数提取 ---
@@ -225,15 +244,15 @@ func TestProxyResponsesImageDetectNonStream(t *testing.T) {
 	up := fakeResponsesImages(t, respImagesOutput)
 	defer up.Close()
 	// 有价行：per-image 5400 毫分/张（aiml 0.054 ×1e5 形态）
-	withPerImage := map[string]*domain.ImagePrice{"gpt-4o": respImagePriceRow(nil, nil, i64p(5400))}
+	withPerImage := map[string]*domain.PriceEntry{"gpt-4o": respImagePriceRow(nil, nil, i64p(5400))}
 	// P3-9：行存在但 per-image nil（仅 token 价有）→ 图分量 0
-	tokenOnly := map[string]*domain.ImagePrice{"gpt-4o": respImagePriceRow(i64p(800000), i64p(3000000), nil)}
+	tokenOnly := map[string]*domain.PriceEntry{"gpt-4o": respImagePriceRow(i64p(800000), i64p(3000000), nil)}
 
 	tests := []struct {
 		name        string
 		typ         credential.Type
 		strip       bool
-		im          map[string]*domain.ImagePrice
+		entries     map[string]*domain.PriceEntry
 		wantCount   int64
 		wantCost    int64
 		wantPerCall *int64 // 统一计费模型：有按单元价分量时落 price_per_call_millis 快照
@@ -248,9 +267,19 @@ func TestProxyResponsesImageDetectNonStream(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &captureLogStore{}
+			// 缺图价用例：首检通过（token 价存在）、落账时缺图价 → no_price 0（failFrom 模拟竞态缺失）。
+			entries := mergePricingWithImage(proxyPricingEntry(), tt.entries)
+			failFrom := 0
+			if tt.entries == nil {
+				entries = map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}
+				failFrom = 2
+			}
 			prices := &fakePriceLookup{
-				m:  map[string]*domain.Pricing{"gpt-4o": proxyPricing()},
-				im: tt.im,
+				entries: entries, failFrom: failFrom,
+			}
+			if tt.entries != nil {
+				prices.variants = nil
+				// 合并已含 perImage/Img tokens，无需额外 variants
 			}
 			tpl := &domain.Template{
 				ID: 1, Name: "t", BaseURL: up.URL,
@@ -260,7 +289,7 @@ func TestProxyResponsesImageDetectNonStream(t *testing.T) {
 				StripImageTools:  tt.strip,
 			}
 			p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, &BillingHooks{
-				Prices:   prices,
+				Resolver: prices,
 				Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 			})
 			srv := httptest.NewServer(http.HandlerFunc(p.HandleResponses))
@@ -292,7 +321,6 @@ func TestProxyResponsesImageDetectNonStream(t *testing.T) {
 // TestProxyResponsesImageDetectMultiplier 组倍率整单作用（fast/组倍率与 chat
 // 同路径声明）：含 image 分量的 cost × 1.5——(130 + 2×5400) × 1.5 = 16395。
 func TestProxyResponsesImageDetectMultiplier(t *testing.T) {
-	i64p := func(v int64) *int64 { return &v }
 	up := fakeResponsesImages(t, respImagesOutput)
 	defer up.Close()
 	store := &captureLogStore{}
@@ -303,15 +331,14 @@ func TestProxyResponsesImageDetectMultiplier(t *testing.T) {
 		Models:           []string{"gpt-4o"},
 	}
 	prices := &fakePriceLookup{
-		m:  map[string]*domain.Pricing{"gpt-4o": proxyPricing()},
-		im: map[string]*domain.ImagePrice{"gpt-4o": respImagePriceRow(nil, nil, i64p(5400))},
+		entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v:= int64(5400); e.PricePerImage = &v; return e }()},
 	}
 	bal := billing.NewBalances(fakeBalanceLoader{
 		m: map[int64]int64{}, gm: map[int64]int{10: 15000}, // 组 10 ×1.5（ck-1 归属组）
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()), "倍率快照加载（EffectiveMultiplier 读 mult 快照）")
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, &BillingHooks{
-		Prices:   prices,
+		Resolver: prices,
 		Balances: bal,
 	})
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponses))
@@ -329,7 +356,6 @@ func TestProxyResponsesImageDetectMultiplier(t *testing.T) {
 // TestProxyResponsesImageDetectStream 流式 resp 检测：response.completed 帧
 // 计数（Observer 旁路）→ 计费落账；api_key 不检测对照。
 func TestProxyResponsesImageDetectStream(t *testing.T) {
-	i64p := func(v int64) *int64 { return &v }
 	up := fakeResponsesImages(t, respImagesOutput)
 	defer up.Close()
 
@@ -351,11 +377,10 @@ func TestProxyResponsesImageDetectStream(t *testing.T) {
 				Models:           []string{"gpt-4o"},
 			}
 			prices := &fakePriceLookup{
-				m:  map[string]*domain.Pricing{"gpt-4o": proxyPricing()},
-				im: map[string]*domain.ImagePrice{"gpt-4o": respImagePriceRow(nil, nil, i64p(5400))},
+				entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v:= int64(5400); e.PricePerImage = &v; return e }()},
 			}
 			p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, &BillingHooks{
-				Prices:   prices,
+				Resolver: prices,
 				Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 			})
 			srv := httptest.NewServer(http.HandlerFunc(p.HandleResponses))
@@ -418,7 +443,6 @@ func fakeResponsesWSImages(t *testing.T, output string) *httptest.Server {
 // TestResponsesWSImageDetect resp-ws 检测 + 计费：completed 帧图片 item 计数
 // （relay sniff 旁路）→ ImageCost 落账；api_key 永不检测对照。
 func TestResponsesWSImageDetect(t *testing.T) {
-	i64p := func(v int64) *int64 { return &v }
 	up := fakeResponsesWSImages(t, respImagesOutput)
 	defer up.Close()
 
@@ -440,11 +464,10 @@ func TestResponsesWSImageDetect(t *testing.T) {
 				Models:           []string{"gpt-4o"},
 			}
 			prices := &fakePriceLookup{
-				m:  map[string]*domain.Pricing{"gpt-4o": proxyPricing()},
-				im: map[string]*domain.ImagePrice{"gpt-4o": respImagePriceRow(nil, nil, i64p(5400))},
+				entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v:= int64(5400); e.PricePerImage = &v; return e }()},
 			}
 			p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, &BillingHooks{
-				Prices:   prices,
+				Resolver: prices,
 				Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 			})
 			srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
@@ -472,7 +495,6 @@ func TestResponsesWSImageDetect(t *testing.T) {
 // 型走 SDK Dial 路径（T2 的 credentialFor + 静态 provider 方法已随
 // codexKeyProvider 移除——快照派生 cred 直供适配层）。
 func TestResponsesWSCodexTypeZeroCount(t *testing.T) {
-	i64p := func(v int64) *int64 { return &v }
 	// SDK 路径 mock 上游（Accept-only）：fakeResponsesWSImages 校验
 	// "Bearer sk-upstream"（aiclient 形态）——SDK Dial 注入的是账号 PAT，需
 	// 独立上游；completed 帧 output 含 function_call 工具 item（无图片 item——
@@ -501,15 +523,14 @@ func TestResponsesWSCodexTypeZeroCount(t *testing.T) {
 	store := &captureLogStore{}
 	pat := "pat-1"
 	prices := &fakePriceLookup{
-		m:  map[string]*domain.Pricing{"gpt-4o": proxyPricing()},
-		im: map[string]*domain.ImagePrice{"gpt-4o": respImagePriceRow(nil, nil, i64p(5400))},
+		entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v:= int64(5400); e.PricePerImage = &v; return e }()},
 	}
 	// SDK 路径（newTestCodexWSProxy）：模板 BaseURL = mock 上游根，账号 ext 快
 	// 照承载 PAT（relay 线凭据——不经 credential 注册表）。
 	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: "i"}, CodexPATKey: &pat}},
 		up.URL, &BillingHooks{
-			Prices:   prices,
+			Resolver: prices,
 			Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 		}, store)
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))

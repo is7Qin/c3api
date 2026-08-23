@@ -15,6 +15,24 @@ type PriceVariantRepo struct {
 	client *ent.Client
 }
 
+func (r *PriceVariantRepo) UpsertFromLiteLLM(ctx context.Context, variants []*domain.PriceVariant) (int, error) {
+	if len(variants) == 0 {
+		return 0, nil
+	}
+	byModel := make(map[string][]*domain.PriceVariant)
+	for _, v := range variants {
+		byModel[v.Model] = append(byModel[v.Model], v)
+	}
+	total := 0
+	for model, lst := range byModel {
+		if _, err := r.ReplaceBatch(ctx, model, lst); err != nil {
+			return total, err
+		}
+		total += len(lst)
+	}
+	return total, nil
+}
+
 func (r *PriceVariantRepo) ListByModel(ctx context.Context, model string) ([]*domain.PriceVariant, error) {
 	rows, err := r.client.PriceVariant.Query().Where(pricevariant.ModelEQ(model)).Order(ent.Asc(pricevariant.FieldSeq)).All(ctx)
 	if err != nil {

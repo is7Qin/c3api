@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/repository"
@@ -17,13 +18,10 @@ import (
 var ErrPriceFetch = errors.New("service: price fetch failed")
 
 type PricingSyncStats struct {
-	Rows            int
-	Skipped         int
-	Updated         int
-	ImageRows       int
-	ImageUpdated    int
-	FunctionRows    int
-	FunctionUpdated int
+	Rows     int
+	Skipped  int
+	Updated  int
+	Variants int
 }
 
 type PricingPreview struct {
@@ -99,123 +97,14 @@ func (s *Service) loadPricingSnapshot(ctx context.Context) (*priceSnapshot, erro
 	return &priceSnapshot{entries: entriesMap, variants: vMap}, nil
 }
 
-// ResolvePrices 模型价格解析：base + 首中即停变体。
+// ResolvePrices 模型价格解析：快照零 DB 读 + 委托 domain 解析核
+// （entry→基底→首中变体；纯函数与测试假实现共用，防逻辑漂移）。
 func (s *Service) ResolvePrices(model string, promptTokens int64, tier string, at time.Time) (domain.ResolvedPrices, bool) {
 	snap := s.priceSnapshot.Load()
 	if snap == nil {
 		return domain.ResolvedPrices{}, false
 	}
-	entry, ok := (*snap).entries[model]
-	if !ok {
-		return domain.ResolvedPrices{}, false
-	}
-	rp := domain.ResolvedPrices{
-		Mode:           entry.Mode,
-		InputPerM:      entry.InputPerM,
-		OutputPerM:     entry.OutputPerM,
-		CacheReadPerM:  entry.CacheReadPerM,
-		CacheWritePerM: entry.CacheWritePerM,
-		PricePerCall:   entry.PricePerCall,
-		ImgInTokPerM:   entry.ImgInTokPerM,
-		ImgOutTokPerM:  entry.ImgOutTokPerM,
-		PricePerImage:  entry.PricePerImage,
-		Provider:       entry.Provider,
-	}
-	vars := (*snap).variants[model]
-	for _, v := range vars {
-		if !variantMatches(v, tier, promptTokens, at) {
-			continue
-		}
-		seq := v.Seq
-		rp.VariantSeq = &seq
-		if v.MultBP != nil {
-			mult := int64(*v.MultBP)
-			applyMult := func(p **int64) {
-				if *p != nil {
-					val := (**p*mult + 5000) / 10000
-					// need to copy to avoid mutating snapshot; allocate new
-					nv := val
-					*p = &nv
-				}
-			}
-			applyMult(&rp.InputPerM)
-			applyMult(&rp.OutputPerM)
-			applyMult(&rp.CacheReadPerM)
-			applyMult(&rp.CacheWritePerM)
-			applyMult(&rp.PricePerCall)
-			applyMult(&rp.ImgInTokPerM)
-			applyMult(&rp.ImgOutTokPerM)
-			applyMult(&rp.PricePerImage)
-		}
-		if v.SetInputPerM != nil {
-			nv := *v.SetInputPerM
-			rp.InputPerM = &nv
-		}
-		if v.SetOutputPerM != nil {
-			nv := *v.SetOutputPerM
-			rp.OutputPerM = &nv
-		}
-		break
-	}
-	return rp, true
-}
-
-func variantMatches(v *domain.PriceVariant, tier string, promptTokens int64, at time.Time) bool {
-	if v.ServiceTier != nil && *v.ServiceTier != tier {
-		return false
-	}
-	if v.CtxMin != nil && promptTokens < *v.CtxMin {
-		return false
-	}
-	if v.CtxMax != nil && promptTokens >= *v.CtxMax {
-		return false
-	}
-	if v.TimeStart != nil || v.TimeEnd != nil {
-		if !timeMatches(v.TimeStart, v.TimeEnd, at) {
-			return false
-		}
-	}
-	if v.DowMask != nil {
-		wd := int(at.Weekday()) // 0=Sun
-		if (*v.DowMask>>wd)&1 == 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func timeMatches(start, end *string, at time.Time) bool {
-	if start == nil && end == nil {
-		return true
-	}
-	// parse HH:MM
-	parse := func(s string) int {
-		var h, m int
-		fmt.Sscanf(s, "%d:%d", &h, &m)
-		return h*60 + m
-	}
-	cur := at.Hour()*60 + at.Minute()
-	if start != nil && end != nil {
-		s := parse(*start)
-		e := parse(*end)
-		if s == e {
-			return true
-		}
-		if s < e {
-			return cur >= s && cur < e
-		}
-		// midnight wrap
-		return cur >= s || cur < e
-	}
-	if start != nil {
-		s := parse(*start)
-		return cur >= s
-	}
-	if end != nil {
-		e := parse(*end)
-		return cur < e
-	}
-	return true
+	return domain.ResolveEntryPrices((*snap).entries[model], (*snap).variants[model], tier, promptTokens, at)
 }
 
 // validation helpers
@@ -273,6 +162,14 @@ func (s *Service) DeletePriceEntry(ctx context.Context, model string) error {
 	return nil
 }
 
+func (s *Service) GetPriceEntry(ctx context.Context, model string) (*domain.PriceEntry, error) {
+	pe, err := s.store.GetPriceEntry(ctx, model)
+	if err != nil {
+		return nil, mapRepoErr(err)
+	}
+	return pe, nil
+}
+
 func (s *Service) ListPriceEntries(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error) {
 	if source != nil && !source.Valid() {
 		return nil, 0, fmt.Errorf("%w: invalid source %q", ErrInvalidInput, *source)
@@ -306,6 +203,29 @@ func (s *Service) ReplacePriceVariants(ctx context.Context, model string, varian
 	return out, nil
 }
 
+func (s *Service) ServiceTierPolicy(tier billing.Tier) billing.TierPolicyMode {
+	key := "service_tier_policy_priority"
+	if tier == billing.TierFlex {
+		key = "service_tier_policy_flex"
+	}
+	if tier == billing.TierFast {
+		key = "service_tier_policy_fast"
+	}
+	switch s.settingValue(key) {
+	case "strip":
+		return billing.TierPolicyStrip
+	case "reject":
+		return billing.TierPolicyReject
+	default:
+		return billing.TierPolicyPassthrough
+	}
+}
+
+func (s *Service) ReloadImagePricing()                                { s.ReloadPricing() }
+func (s *Service) ReloadImagePricingCtx(ctx context.Context) error    { return s.ReloadPricingCtx(ctx) }
+func (s *Service) ReloadFunctionPricing()                             { s.ReloadPricing() }
+func (s *Service) ReloadFunctionPricingCtx(ctx context.Context) error { return s.ReloadPricingCtx(ctx) }
+
 func (s *Service) SetPriceFetcher(f pricing.Fetcher) { s.priceFetcher = f }
 
 func (s *Service) SyncPricingNow(ctx context.Context) (*PricingSyncStats, error) {
@@ -323,31 +243,22 @@ func (s *Service) SyncPricingNow(ctx context.Context) (*PricingSyncStats, error)
 		}
 		return nil, fmt.Errorf("%w: %w", ErrPriceFetch, err)
 	}
-	// res now contains PriceEntries? Need adapter: pricing.FetchResult still returns old types
-	// For refactor, FetchResult should return []*domain.PriceEntry + variants
-	// But fetch.go not yet updated; handle both: if PriceEntries present use it, else fallback to Rows conversion
-	var entries []*domain.PriceEntry
-	if res.PriceEntries != nil {
-		entries = res.PriceEntries
-	} else {
-		// fallback: convert old Pricing to PriceEntry (temporary)
-		for _, p := range res.Rows {
-			pe := &domain.PriceEntry{
-				Model: p.Model, Mode: domain.PriceModeToken,
-				InputPerM: &p.PromptPricePerMillion, OutputPerM: &p.CompletionPricePerMillion,
-				CacheReadPerM: p.CacheReadPricePerMillion, CacheWritePerM: p.CacheCreationPricePerMillion,
-				Provider: p.Provider, Raw: p.Raw, Source: p.Source,
-			}
-			entries = append(entries, pe)
-		}
-	}
+	entries := res.PriceEntries
 	n, err := s.store.UpsertPriceEntriesFromLiteLLM(ctx, entries)
 	if err != nil {
 		s.reloadPricing(ctx)
 		return nil, err
 	}
+	if len(res.Variants) > 0 {
+		if _, verr := s.store.UpsertPriceVariantsFromLiteLLM(ctx, res.Variants); verr != nil && err == nil {
+			err = verr
+		}
+	}
 	s.reloadPricing(ctx)
-	return &PricingSyncStats{Rows: len(entries), Skipped: res.Skipped, Updated: n}, nil
+	if err != nil {
+		return nil, err
+	}
+	return &PricingSyncStats{Rows: len(entries), Skipped: res.Skipped, Updated: n, Variants: len(res.Variants)}, nil
 }
 
 func (s *Service) PreviewPricingSync(ctx context.Context) (*PricingPreview, error) {
@@ -365,20 +276,7 @@ func (s *Service) PreviewPricingSync(ctx context.Context) (*PricingPreview, erro
 		}
 		return nil, fmt.Errorf("%w: %w", ErrPriceFetch, err)
 	}
-	var entries []*domain.PriceEntry
-	if res.PriceEntries != nil {
-		entries = res.PriceEntries
-	} else {
-		for _, p := range res.Rows {
-			pe := &domain.PriceEntry{
-				Model: p.Model, Mode: domain.PriceModeToken,
-				InputPerM: &p.PromptPricePerMillion, OutputPerM: &p.CompletionPricePerMillion,
-				CacheReadPerM: p.CacheReadPricePerMillion, CacheWritePerM: p.CacheCreationPricePerMillion,
-				Provider: p.Provider, Raw: p.Raw, Source: p.Source,
-			}
-			entries = append(entries, pe)
-		}
-	}
+	entries := res.PriceEntries
 	snap := s.priceSnapshot.Load()
 	preview := &PricingPreview{Skipped: res.Skipped}
 	if snap == nil {
@@ -386,6 +284,7 @@ func (s *Service) PreviewPricingSync(ctx context.Context) (*PricingPreview, erro
 		for _, e := range entries {
 			preview.Entries = append(preview.Entries, PricingPreviewEntry{Model: e.Model, Mode: string(e.Mode), Action: "add"})
 		}
+		preview.VariantsChanged = len(res.Variants)
 		return preview, nil
 	}
 	for _, e := range entries {
@@ -397,10 +296,7 @@ func (s *Service) PreviewPricingSync(ctx context.Context) (*PricingPreview, erro
 			preview.Entries = append(preview.Entries, PricingPreviewEntry{Model: e.Model, Mode: string(e.Mode), Action: "add"})
 		}
 	}
-	// variants changes crude count
-	if res.Variants != nil {
-		preview.VariantsChanged = len(res.Variants)
-	}
+	preview.VariantsChanged = len(res.Variants)
 	return preview, nil
 }
 

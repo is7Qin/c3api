@@ -46,7 +46,7 @@ func rawCostChatProxy(t *testing.T, gm int) (*Proxy, *billing.Flusher, *fakeDedu
 	f := billing.NewFlusher(billing.FlushConfig{
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
 	return p, f, writer, store
 }
 
@@ -99,7 +99,7 @@ func TestProxyRawCostImageMultiplier(t *testing.T) {
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()))
 	hooks := &BillingHooks{
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{}, im: imageTestPrices()},
+		Resolver: &fakePriceLookup{entries: imageTestPrices()},
 		Balances: bal,
 	}
 	p := newTestProxyBillingLogs(t, up.URL, nil, nil, store)
@@ -130,8 +130,7 @@ func TestProxyRawCostSearchMultiplier(t *testing.T) {
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()))
 	bill := &BillingHooks{
-		Prices:         &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
-		FunctionPrices: &fakeFunctionPriceLookup{m: map[string]*domain.FunctionPrice{"codex-search": {Model: "codex-search", PricePerCall: i64ptr(2500)}}},
+		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(2500), Source: domain.PricingSourceManual}}},
 		Balances:       bal,
 	}
 	p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},

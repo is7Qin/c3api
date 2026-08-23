@@ -14,54 +14,17 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// PriceLookup 价格快照读取（service.Service 实现，零 DB 快照读）。任何错误
-// = 该模型无可用价格（计费方拒绝计费而非按 0 计价）。GetImagePrice 为图片
-// 生成价快照（Task A 数据面；resp/resp-ws 检测旁路按 model 查价用）。
-type PriceLookup interface {
-	GetPrice(model string) (*domain.Pricing, error)
-	GetImagePrice(model string) (*domain.ImagePrice, error)
-}
-
-// PriceResolver 统一价格解析（新入口）。
+// PriceResolver 统一价格解析（零 DB 快照读，首中即停变体解析）。
 type PriceResolver interface {
 	ResolvePrices(model string, promptTokens int64, tier string, at time.Time) (domain.ResolvedPrices, bool)
 }
 
-// ImagePriceLookup 图片价格快照读取（service.Service 实现，零 DB 快照读）。
-// Task B images 端点预检用（P1-1 预检按格式切换：images 格式查 GetImagePrice、
-// 跳过 chat 价预检 GetPrice）。任何错误 = 该模型无图片价格（402 拒绝计费而
-// 非按 0 计价——空行语义 = 端点定生死）。
-type ImagePriceLookup interface {
-	GetImagePrice(model string) (*domain.ImagePrice, error)
-}
-
-// FunctionPriceLookup 按单元计费功能类价格快照读取（service.Service 实现，
-// 零 DB 快照读）：search 等 per-unit 端点计费价。语义（价格表三件套裁决）：
-// 查无 + model == codex-search → 返回默认价行（$0.01/次常量兜底，防御语义）；
-// 查无其他 → 错误（计费方拒绝计费而非按 0 计价）。
-type FunctionPriceLookup interface {
-	GetFunctionPrice(model string) (*domain.FunctionPrice, error)
-}
-
 // BillingHooks 计费钩子（proxy.New 参数；nil = 计费全关：不查价、不记
 // BillingTier、不处理 service_tier 转发策略、不做余额预检）。
-// T3 填满（中间态清理终点）：Balances/Flusher 为真实类型直接接线，无 nil
-// 容忍分支——装配方（main）保证 bill 非 nil 时六字段齐备（计费开关 =
-// config.Billing.Enabled，与 hooks 装配同一判定）。
 type BillingHooks struct {
-	Prices   PriceLookup
 	Resolver PriceResolver
 	Balances *billing.Balances // 余额只读快照（预检 + 扣费后定向刷新）
 	Flusher  *billing.Flusher  // 批量扣费落库（billed 路由终点）
-	// ImagePrices 图片价格快照（Task B：images 端点预检专用；nil = 未装配
-	// ——images 端点缺价预检跳过，等价计费全关）。
-	ImagePrices ImagePriceLookup
-	// FunctionPrices 按单元价快照（价格表三件套：search 等 per-unit 端点计费
-	// 用；nil = 未装配——按单元计费端点缺价预检跳过，等价计费全关）。
-	FunctionPrices FunctionPriceLookup
-	// TierPolicy 读取 service_tier 转发策略（nil = 恒透传）：priority/flex/fast
-	// 分别按 settings service_tier_policy_priority / service_tier_policy_flex /
-	// service_tier_policy_fast 快照取值（装配方注入闭包，零 DB）。
 	TierPolicy func(tier billing.Tier) billing.TierPolicyMode
 }
 

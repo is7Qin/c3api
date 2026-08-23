@@ -171,9 +171,9 @@ func (p *Proxy) shouldBill(l *domain.UsageLog) bool {
 	return p.cfg.BillingCapture && l != nil && l.UserID > 0 && p.bill != nil
 }
 
-// applyBilling 计费计算（重构：resolver 首中即停）
+// applyBilling 计费计算（统一 PriceEntry/variants 解析，零 DB）。
 func (p *Proxy) applyBilling(l *domain.UsageLog) {
-	if p.bill == nil {
+	if p.bill == nil || p.bill.Resolver == nil {
 		return
 	}
 	if l.Format == domain.FormatOpenAIImages {
@@ -191,92 +191,34 @@ func (p *Proxy) applyBilling(l *domain.UsageLog) {
 	if model == "" {
 		return
 	}
-	// prefer resolver
-	if p.bill.Resolver != nil {
-		rp, ok := p.bill.Resolver.ResolvePrices(model, l.InputTokens, l.BillingTier, time.Now())
-		if !ok {
-			if p.log != nil {
-				p.log.Warn("billing price lookup failed", logx.String("model", model))
-			}
-			l.BillingTier = "no_price"
-			return
-		}
-		if rp.InputPerM != nil {
-			l.PriceInputMillis = rp.InputPerM
-		}
-		if rp.OutputPerM != nil {
-			l.PriceOutputMillis = rp.OutputPerM
-		}
-		if l.CacheReadTokens > 0 && rp.CacheReadPerM != nil {
-			l.PriceCacheReadMillis = rp.CacheReadPerM
-		}
-		if l.CacheCreationTokens > 0 && rp.CacheWritePerM != nil {
-			l.PriceCacheCreationMillis = rp.CacheWritePerM
-		}
-		cost := billing.CostFromResolved(rp, l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreationTokens)
-		aboveHit := false
-		// legacy fallback for tier/above tier tests that still use old Pricing matrix
-		if rp.VariantSeq == nil && l.BillingTier != "" && l.BillingTier != "auto" && p.bill.Prices != nil {
-			if pr, err := p.bill.Prices.GetPrice(model); err == nil && pr != nil {
-				if oldCost, oldHit := billing.Cost(pr, billing.NormalizeTier(l.BillingTier), l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreationTokens); oldCost != cost || oldHit {
-					cost = oldCost
-					aboveHit = oldHit
-				}
-			}
-		}
-		if l.CallCount > 0 {
-			if rp.PricePerImage == nil {
-				if p.log != nil {
-					p.log.Warn("image price lookup failed", logx.String("model", model))
-				}
-				l.BillingTier = "no_price"
-				l.Cost, l.AboveHit = 0, false
-				return
-			}
-			l.PricePerCallMillis = rp.PricePerImage
-			cost += billing.ImageCostFromResolved(rp, 0, 0, l.CallCount)
-		}
-		l.Cost = cost
-		l.AboveHit = aboveHit
-		p.applyMultiplierLog(l, cost)
-		return
-	}
-	if p.bill.Prices == nil {
-		return
-	}
-	pr, err := p.bill.Prices.GetPrice(model)
-	if err != nil || pr == nil {
+	rp, ok := p.bill.Resolver.ResolvePrices(model, l.InputTokens, l.BillingTier, time.Now())
+	if !ok {
 		if p.log != nil {
-			p.log.Warn("billing price lookup failed", logx.String("model", model), logx.Error(err))
+			p.log.Warn("billing price lookup failed", logx.String("model", model))
 		}
 		l.BillingTier = "no_price"
 		return
 	}
-	l.PriceInputMillis = &pr.PromptPricePerMillion
-	l.PriceOutputMillis = &pr.CompletionPricePerMillion
-	if l.CacheReadTokens > 0 && pr.CacheReadPricePerMillion != nil {
-		l.PriceCacheReadMillis = pr.CacheReadPricePerMillion
+	if rp.InputPerM != nil {
+		l.PriceInputMillis = rp.InputPerM
 	}
-	if l.CacheCreationTokens > 0 && pr.CacheCreationPricePerMillion != nil {
-		l.PriceCacheCreationMillis = pr.CacheCreationPricePerMillion
+	if rp.OutputPerM != nil {
+		l.PriceOutputMillis = rp.OutputPerM
 	}
-	l.Cost, l.AboveHit = billing.Cost(pr, billing.NormalizeTier(l.BillingTier), l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreationTokens)
-	if l.CallCount > 0 {
-		ip, err := p.bill.Prices.GetImagePrice(model)
-		if err != nil || ip == nil {
-			if p.log != nil {
-				p.log.Warn("image price lookup failed", logx.String("model", model), logx.Error(err))
-			}
-			l.BillingTier = "no_price"
-			l.Cost, l.AboveHit = 0, false
-			return
-		}
-		if ip.OutputCostPerImageMilli != nil {
-			l.PricePerCallMillis = ip.OutputCostPerImageMilli
-		}
-		l.Cost += billing.ImageCost(ip, 0, 0, l.CallCount)
+	if l.CacheReadTokens > 0 && rp.CacheReadPerM != nil {
+		l.PriceCacheReadMillis = rp.CacheReadPerM
 	}
-	p.applyMultiplierLog(l, l.Cost)
+	if l.CacheCreationTokens > 0 && rp.CacheWritePerM != nil {
+		l.PriceCacheCreationMillis = rp.CacheWritePerM
+	}
+	cost := billing.CostFromResolved(rp, l.InputTokens, l.OutputTokens, l.CacheReadTokens, l.CacheCreationTokens)
+	if l.CallCount > 0 && rp.PricePerImage != nil {
+		l.PricePerCallMillis = rp.PricePerImage
+		cost += billing.ImageCostFromResolved(rp, 0, 0, l.CallCount)
+	}
+	l.Cost = cost
+	l.AboveHit = false
+	p.applyMultiplierLog(l, cost)
 }
 
 // applyMultiplierLog 倍率施加单点（spec 2026-08-18 raw_cost 列）：raw 显式传
@@ -288,8 +230,11 @@ func (p *Proxy) applyMultiplierLog(l *domain.UsageLog, raw int64) {
 	l.Cost = applyMultiplier(raw, p.bill.Balances.EffectiveMultiplier(l.UserID, l.GroupID))
 }
 
-// applyImageBilling 生图计费（统一入口）
+// applyImageBilling 生图计费（统一 PriceEntry image 分量）。
 func (p *Proxy) applyImageBilling(l *domain.UsageLog) {
+	if p.bill == nil || p.bill.Resolver == nil {
+		return
+	}
 	model := l.MappedModel
 	if model == "" {
 		model = l.Model
@@ -297,67 +242,35 @@ func (p *Proxy) applyImageBilling(l *domain.UsageLog) {
 	if model == "" {
 		return
 	}
-	if p.bill.Resolver != nil {
-		rp, ok := p.bill.Resolver.ResolvePrices(model, l.InputTokens, l.BillingTier, time.Now())
-		if !ok || (rp.ImgInTokPerM == nil && rp.ImgOutTokPerM == nil && rp.PricePerImage == nil) {
-			if p.log != nil {
-				p.log.Warn("billing image price lookup failed", logx.String("model", model))
-			}
-			l.BillingTier = "no_price"
-			return
-		}
-		if l.CallCount > 0 && rp.PricePerImage != nil {
-			l.PricePerCallMillis = rp.PricePerImage
-		}
-		cost := billing.ImageCostFromResolved(rp, l.InputTokens, l.OutputTokens, l.CallCount)
-		p.applyMultiplierLog(l, cost)
-		return
-	}
-	if p.bill.Prices == nil {
-		return
-	}
-	ip, err := p.bill.Prices.GetImagePrice(model)
-	if err != nil || ip == nil {
+	rp, ok := p.bill.Resolver.ResolvePrices(model, l.InputTokens, l.BillingTier, time.Now())
+	if !ok || (rp.ImgInTokPerM == nil && rp.ImgOutTokPerM == nil && rp.PricePerImage == nil) {
 		if p.log != nil {
-			p.log.Warn("billing image price lookup failed", logx.String("model", model), logx.Error(err))
+			p.log.Warn("billing image price lookup failed", logx.String("model", model))
 		}
 		l.BillingTier = "no_price"
 		return
 	}
-	if l.CallCount > 0 && ip.OutputCostPerImageMilli != nil {
-		l.PricePerCallMillis = ip.OutputCostPerImageMilli
+	if l.CallCount > 0 && rp.PricePerImage != nil {
+		l.PricePerCallMillis = rp.PricePerImage
 	}
-	l.Cost = billing.ImageCost(ip, l.InputTokens, l.OutputTokens, l.CallCount)
-	p.applyMultiplierLog(l, l.Cost)
+	cost := billing.ImageCostFromResolved(rp, l.InputTokens, l.OutputTokens, l.CallCount)
+	p.applyMultiplierLog(l, cost)
 }
 
 func (p *Proxy) applyFunctionBilling(l *domain.UsageLog) {
-	model := domain.CodexSearchModel
-	if p.bill.Resolver != nil {
-		rp, ok := p.bill.Resolver.ResolvePrices(model, 0, "", time.Now())
-		if !ok || rp.PricePerCall == nil {
-			// fallback default codex-search price 1000
-			v := int64(1000)
-			rp.PricePerCall = &v
-		}
-		if l.CallCount > 0 {
-			l.PricePerCallMillis = rp.PricePerCall
-		}
-		p.applyMultiplierLog(l, billing.CallCostFromResolved(rp, l.CallCount))
+	if p.bill == nil || p.bill.Resolver == nil {
 		return
 	}
-	fp, err := p.bill.FunctionPrices.GetFunctionPrice(domain.CodexSearchModel)
-	if err != nil || fp == nil || fp.PricePerCall == nil {
-		if p.log != nil {
-			p.log.Warn("billing function price lookup failed", logx.String("model", domain.CodexSearchModel), logx.Error(err))
-		}
-		l.BillingTier = "no_price"
-		return
+	model := domain.CodexSearchModel
+	rp, ok := p.bill.Resolver.ResolvePrices(model, 0, "", time.Now())
+	if !ok || rp.PricePerCall == nil {
+		v := int64(1000)
+		rp.PricePerCall = &v
 	}
 	if l.CallCount > 0 {
-		l.PricePerCallMillis = fp.PricePerCall
+		l.PricePerCallMillis = rp.PricePerCall
 	}
-	p.applyMultiplierLog(l, *fp.PricePerCall*l.CallCount)
+	p.applyMultiplierLog(l, billing.CallCostFromResolved(rp, l.CallCount))
 }
 
 // buildLog 组装 UsageLog（record 与 finish 共用）。语义（评审 I-1 确认）：

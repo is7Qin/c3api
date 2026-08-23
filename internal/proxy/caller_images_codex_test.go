@@ -221,8 +221,7 @@ func TestImagesCodexGenerationsOK(t *testing.T) {
 	codexRefreshMock(t, 200, `{"access_token":"at-new","refresh_token":"rt-new"}`)
 	store := &captureLogStore{}
 	p, recorder := newTestCodexProxy(t, credential.TypeCodexOAuth, map[int64]*domain.AccountExt{10: codexOAuthExt(10, "at-10", "rt-10")}, up.URL, &BillingHooks{
-		Prices:      &fakePriceLookup{m: map[string]*domain.Pricing{}, im: map[string]*domain.ImagePrice{"gpt-image-2": perImagePriceRow("gpt-image-2")}},
-		ImagePrices: &fakeImagePriceLookup{m: map[string]*domain.ImagePrice{"gpt-image-2": perImagePriceRow("gpt-image-2")}},
+		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-2": perImagePriceRow("gpt-image-2")}},
 		Balances:    billingBalances(),
 	}, store)
 
@@ -455,8 +454,7 @@ func TestImagesCodexStreamSSE(t *testing.T) {
 	defer up.Close()
 	store := &captureLogStore{}
 	p, recorder := newTestCodexProxy(t, credential.TypeCodexOAuth, map[int64]*domain.AccountExt{10: codexOAuthExt(10, "at-10", "rt-10")}, up.URL, &BillingHooks{
-		Prices:      &fakePriceLookup{m: map[string]*domain.Pricing{}, im: map[string]*domain.ImagePrice{"gpt-image-2": perImagePriceRow("gpt-image-2")}},
-		ImagePrices: &fakeImagePriceLookup{m: map[string]*domain.ImagePrice{"gpt-image-2": perImagePriceRow("gpt-image-2")}},
+		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-2": perImagePriceRow("gpt-image-2")}},
 		Balances:    billingBalances(),
 	}, store)
 

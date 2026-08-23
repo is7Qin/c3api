@@ -154,7 +154,7 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 		f := billing.NewFlusher(billing.FlushConfig{
 			FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 		}, writer, rec, bal, nil)
-		p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+		p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
 		meta := activeKey(1, 1, 10)
 		meta.KeyMaxConc = 1
 		p.auth.Upsert("ck-1", meta)

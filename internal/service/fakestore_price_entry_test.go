@@ -26,6 +26,21 @@ func (f *fakeStore) UpsertPriceEntriesFromLiteLLM(_ context.Context, rows []*dom
 	}
 	return n, nil
 }
+func (f *fakeStore) UpsertPriceVariantsFromLiteLLM(_ context.Context, variants []*domain.PriceVariant) (int, error) {
+	if f.pricingUpsertErr != nil {
+		return 0, f.pricingUpsertErr
+	}
+	byModel := map[string][]*domain.PriceVariant{}
+	for _, v := range variants {
+		byModel[v.Model] = append(byModel[v.Model], v)
+	}
+	total := 0
+	for m, lst := range byModel {
+		f.priceVariants[m] = lst
+		total += len(lst)
+	}
+	return total, nil
+}
 func (f *fakeStore) UpsertPriceEntryManual(_ context.Context, m *repository.PriceEntryManual) (*domain.PriceEntry, error) {
 	pe := &domain.PriceEntry{Model: m.Model, Mode: m.Mode, InputPerM: m.InputPerM, OutputPerM: m.OutputPerM, CacheReadPerM: m.CacheReadPerM, CacheWritePerM: m.CacheWritePerM, PricePerCall: m.PricePerCall, ImgInTokPerM: m.ImgInTokPerM, ImgOutTokPerM: m.ImgOutTokPerM, PricePerImage: m.PricePerImage, Source: domain.PricingSourceManual}
 	f.priceEntries[m.Model] = pe

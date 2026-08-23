@@ -31,14 +31,10 @@ type SettingReader interface {
 }
 
 // Upserter 拉取价落库（*repository.Repository 实现；500/批独立事务 + manual
-// 行级互斥 WHERE source != 'manual'，部分成功可接受）。Image 线为 Task A 双线
-// 扩展：与文本价同款机制独立落库（image_price 表，不碰 pricings 行有效性）；
-// Function 线为价格表三件套扩展：search 等按单元计费功能类独立落库
-// （function_price 表，同款机制）。
+// 行级互斥 WHERE source != 'manual'，部分成功可接受）。统一单表 + 变体批量。
 type Upserter interface {
-	UpsertFromLiteLLM(ctx context.Context, rows []*domain.Pricing) (int, error)
-	UpsertImageFromLiteLLM(ctx context.Context, rows []*domain.ImagePrice) (int, error)
-	UpsertFunctionFromLiteLLM(ctx context.Context, rows []*domain.FunctionPrice) (int, error)
+	UpsertPriceEntriesFromLiteLLM(ctx context.Context, rows []*domain.PriceEntry) (int, error)
+	UpsertPriceVariantsFromLiteLLM(ctx context.Context, variants []*domain.PriceVariant) (int, error)
 }
 
 // SyncWorkerConfig SyncWorker 装配参数。
@@ -119,33 +115,28 @@ func (w *SyncWorker) Sync(ctx context.Context) error {
 		return fmt.Errorf("pricing: price_source_url not set, skip sync")
 	}
 	res, err := w.fetch.Fetch(ctx, url)
-	w.lastSync.Store(time.Now().UnixMilli()) // 观测面：fetch 后即记（成败都算一次同步尝试）
+	w.lastSync.Store(time.Now().UnixMilli())
 	if err != nil {
 		return err
 	}
-	n, err := w.repo.UpsertFromLiteLLM(ctx, res.Rows)
-	nImage, imgErr := w.repo.UpsertImageFromLiteLLM(ctx, res.ImageRows)
-	nFunction, fnErr := w.repo.UpsertFunctionFromLiteLLM(ctx, res.FunctionRows)
-	// upsert 部分成功后仍刷新快照（已落库的批立即生效）；fetch 失败则数据未变，
-	// 保留旧快照（下方因错误直接返回）。错误语义：文本价错误优先（原路径行为），
-	// 无则透传 image 价错误、再透传 function 价错误——三线均为部分成功可接受，
-	// 重试语义不变。
-	if err == nil {
-		err = imgErr
-	}
-	if err == nil {
-		err = fnErr
+	n, err := w.repo.UpsertPriceEntriesFromLiteLLM(ctx, res.PriceEntries)
+	var nVar int
+	var varErr error
+	if len(res.Variants) > 0 {
+		nVar, varErr = w.repo.UpsertPriceVariantsFromLiteLLM(ctx, res.Variants)
+		if err == nil {
+			err = varErr
+		}
 	}
 	if w.reload != nil {
 		w.reload()
 	}
 	if err == nil && w.log != nil {
 		w.log.Info("pricing: sync done",
-			logx.Int("rows", len(res.Rows)), logx.Int("image_rows", len(res.ImageRows)),
-			logx.Int("function_rows", len(res.FunctionRows)),
+			logx.Int("rows", len(res.PriceEntries)),
+			logx.Int("variants", len(res.Variants)),
 			logx.Int("skipped", res.Skipped),
-			logx.Int("updated", n), logx.Int("image_updated", nImage),
-			logx.Int("function_updated", nFunction),
+			logx.Int("updated", n), logx.Int("variants_updated", nVar),
 			logx.Duration("elapsed", w.now().Sub(start)),
 		)
 	}

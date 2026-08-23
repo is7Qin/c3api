@@ -106,8 +106,8 @@ func TestStartupReloadAllPG(t *testing.T) {
 		Status: domain.KeyStatusActive, MaxConcurrency: 8, Quota: 1_000_000,
 	})
 	require.NoError(t, err)
-	_, err = repos.UpsertManual(ctx, &repository.PricingManual{
-		Model: "gpt-4o", PromptPricePerMillion: 250_000, CompletionPricePerMillion: 1_000_000,
+	_, err = repos.UpsertPriceEntryManual(ctx, &repository.PriceEntryManual{
+		Model: "gpt-4o", Mode: domain.PriceModeToken, InputPerM: ptrI64Startup(250_000), OutputPerM: ptrI64Startup(1_000_000),
 	})
 	require.NoError(t, err)
 
@@ -157,9 +157,10 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.Equal(t, int64(123_456), bal)
 
 	// pricing：价格快照命中（计费读零 DB）。
-	p, err := svc.GetPrice("gpt-4o")
+	pe, err := svc.GetPriceEntry(context.Background(), "gpt-4o")
 	require.NoError(t, err)
-	require.Equal(t, int64(250_000), p.PromptPricePerMillion)
+	require.NotNil(t, pe.InputPerM)
+	require.Equal(t, int64(250_000), *pe.InputPerM)
 
 	// Status 可观测：5 条、全部已加载、无错误。
 	st := reg.Status()
@@ -269,3 +270,5 @@ func TestSettingsTimingPG(t *testing.T) {
 	require.Eventually(t, func() bool { return seenN.Load() == 3 }, 2*time.Second, 5*time.Millisecond,
 		"本地 UpdateSetting：直连分发器 → auth.Reload 读到新 N=3（本地实例预算即时重算）")
 }
+
+func ptrI64Startup(v int64) *int64 { return &v }

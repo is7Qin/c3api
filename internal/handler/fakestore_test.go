@@ -44,11 +44,11 @@ type fakeStore struct {
 	temps       []*fakeTempRow // 临时额度行（domain 无 TempBalance 类型，标量参数即全字段）
 	// pricings 模型价格（key = model，一行 = 最终生效价；manual > litellm 优先级
 	// 语义与真实仓库一致）。
-	pricings map[string]*domain.Pricing
+	pricings map[string]*domain.PriceEntry
 	// imagePrices 图片生成价格（Task A 双线；同 pricings 优先级语义）。
-	imagePrices map[string]*domain.ImagePrice
+	imagePrices map[string]*domain.PriceEntry
 	// functionPrices 按单元计费功能类价格（价格表三件套；同 pricings 优先级语义）。
-	functionPrices map[string]*domain.FunctionPrice
+	functionPrices map[string]*domain.PriceEntry
 	priceEntries   map[string]*domain.PriceEntry
 	priceVariants  map[string][]*domain.PriceVariant
 	// tplExts/accExts 模板/账号类型化扩展（key = 父 id，镜像仓库 1:1 唯一索引）。
@@ -74,9 +74,9 @@ func newFakeStore() *fakeStore {
 		settings: make(map[string]*domain.Setting), rules: make(map[int64]domain.Rule),
 		assign: make(map[int64][]int64), assignMult: make(map[[2]int64]*int),
 		codes: make(map[int64]*domain.RedemptionCode),
-		uses:  make(map[int64]*domain.RedemptionUse), pricings: make(map[string]*domain.Pricing),
-		imagePrices:    make(map[string]*domain.ImagePrice),
-		functionPrices: make(map[string]*domain.FunctionPrice),
+		uses:  make(map[int64]*domain.RedemptionUse), pricings: make(map[string]*domain.PriceEntry),
+		imagePrices:    make(map[string]*domain.PriceEntry),
+		functionPrices: make(map[string]*domain.PriceEntry),
 		priceEntries:   make(map[string]*domain.PriceEntry),
 		priceVariants:  make(map[string][]*domain.PriceVariant),
 		tplExts:        make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
@@ -2001,327 +2001,136 @@ func (f *fakeStore) UpdateUserMaxConcurrency(ctx context.Context, userID int64, 
 
 // UpsertFromLiteLLM 模拟批量 upsert + manual 行级互斥（已存在 manual 行不覆盖、
 // 不计入更新数；source 恒 litellm）。
-func (f *fakeStore) UpsertFromLiteLLM(ctx context.Context, rows []*domain.Pricing) (int, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	n := 0
-	for _, p := range rows {
-		if cur, ok := f.pricings[p.Model]; ok && cur.Source == domain.PricingSourceManual {
-			continue
-		}
-		c := *p
-		c.Source = domain.PricingSourceLitellm
-		f.pricings[p.Model] = &c
-		n++
-	}
-	return n, nil
-}
+
 
 // UpsertManual 模拟手动设价（可接管 litellm 行；返回副本）。可选字段
 // （cache 价 + 矩阵 22 列）：nil = 不设价（NULL 语义）；非 nil = 设价。
-func (f *fakeStore) UpsertManual(ctx context.Context, m *repository.PricingManual) (*domain.Pricing, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	p := &domain.Pricing{
-		Model:                                     m.Model,
-		PromptPricePerMillion:                     m.PromptPricePerMillion,
-		CompletionPricePerMillion:                 m.CompletionPricePerMillion,
-		CacheReadPricePerMillion:                  m.CacheReadPricePerMillion,
-		CacheCreationPricePerMillion:              m.CacheCreationPricePerMillion,
-		PriorityPromptPricePerMillion:             m.PriorityPromptPricePerMillion,
-		PriorityCompletionPricePerMillion:         m.PriorityCompletionPricePerMillion,
-		PriorityCacheReadPricePerMillion:          m.PriorityCacheReadPricePerMillion,
-		PriorityCacheCreationPricePerMillion:      m.PriorityCacheCreationPricePerMillion,
-		FlexPromptPricePerMillion:                 m.FlexPromptPricePerMillion,
-		FlexCompletionPricePerMillion:             m.FlexCompletionPricePerMillion,
-		FlexCacheReadPricePerMillion:              m.FlexCacheReadPricePerMillion,
-		FlexCacheCreationPricePerMillion:          m.FlexCacheCreationPricePerMillion,
-		AboveThreshold:                            m.AboveThreshold,
-		AbovePromptPricePerMillion:                m.AbovePromptPricePerMillion,
-		AboveCompletionPricePerMillion:            m.AboveCompletionPricePerMillion,
-		AboveCacheReadPricePerMillion:             m.AboveCacheReadPricePerMillion,
-		AboveCacheCreationPricePerMillion:         m.AboveCacheCreationPricePerMillion,
-		AbovePriorityPromptPricePerMillion:        m.AbovePriorityPromptPricePerMillion,
-		AbovePriorityCompletionPricePerMillion:    m.AbovePriorityCompletionPricePerMillion,
-		AbovePriorityCacheReadPricePerMillion:     m.AbovePriorityCacheReadPricePerMillion,
-		AbovePriorityCacheCreationPricePerMillion: m.AbovePriorityCacheCreationPricePerMillion,
-		AboveFlexPromptPricePerMillion:            m.AboveFlexPromptPricePerMillion,
-		AboveFlexCompletionPricePerMillion:        m.AboveFlexCompletionPricePerMillion,
-		AboveFlexCacheReadPricePerMillion:         m.AboveFlexCacheReadPricePerMillion,
-		AboveFlexCacheCreationPricePerMillion:     m.AboveFlexCacheCreationPricePerMillion,
-		FastMultiplier:                            m.FastMultiplier,
-		Source:                                    domain.PricingSourceManual,
-	}
-	f.pricings[m.Model] = p
-	c := *p
-	return &c, nil
-}
+
 
 // DeleteManual 模拟删除：仅 source=manual 可删（litellm 行 → ErrConflict）；
 // 不存在 → ErrNotFound。
-func (f *fakeStore) DeleteManual(ctx context.Context, model string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cur, ok := f.pricings[model]
-	if !ok {
-		return fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
-	}
-	if cur.Source != domain.PricingSourceManual {
-		return fmt.Errorf("%w: model=%q source=litellm (manual price only)", repository.ErrConflict, model)
-	}
-	delete(f.pricings, model)
-	return nil
-}
 
 // ListPricing 模拟列表：source/provider/model 筛选 + model 排序 + 分页。
-func (f *fakeStore) ListPricing(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.Pricing, int64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var rows []*domain.Pricing
-	for _, p := range f.pricings {
-		if source != nil && p.Source != *source {
-			continue
-		}
-		if provider != "" && (p.Provider == nil || *p.Provider != provider) {
-			continue
-		}
-		if model != "" && !strings.Contains(strings.ToLower(p.Model), strings.ToLower(model)) {
-			continue
-		}
-		c := *p
-		rows = append(rows, &c)
-	}
-	if q.Sort != "" && q.Sort != "model" && q.Sort != "updated_at" {
-		return nil, 0, repository.ErrInvalidSort
-	}
-	if q.Sort == "model" {
-		slices.SortFunc(rows, func(a, b *domain.Pricing) int {
-			if q.Order == "desc" {
-				return -strings.Compare(a.Model, b.Model)
-			}
-			return strings.Compare(a.Model, b.Model)
-		})
-	}
-	if q.Limit <= 0 {
-		q.Limit = 20
-	}
-	if q.Offset < 0 {
-		q.Offset = 0
-	}
-	end := q.Offset + q.Limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	if q.Offset > len(rows) {
-		q.Offset = len(rows)
-	}
-	return rows[q.Offset:end], int64(len(rows)), nil
-}
+
 
 // GetPricing 模拟按 model 取行（缺失 → repository.ErrNotFound）。
-func (f *fakeStore) GetPricing(ctx context.Context, model string) (*domain.Pricing, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	p, ok := f.pricings[model]
-	if !ok {
-		return nil, fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
-	}
-	c := *p
-	return &c, nil
-}
+
 
 // --- 图片生成价格（service.PricingStore Task A 双线；与文本价同款模拟语义） ---
 
 // UpsertImageFromLiteLLM 模拟批量 upsert + manual 行级互斥（已存在 manual 行
 // 不覆盖、不计入更新数；source 恒 litellm）。
-func (f *fakeStore) UpsertImageFromLiteLLM(ctx context.Context, rows []*domain.ImagePrice) (int, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	n := 0
-	for _, p := range rows {
-		if cur, ok := f.imagePrices[p.Model]; ok && cur.Source == domain.PricingSourceManual {
-			continue
-		}
-		c := *p
-		c.Source = domain.PricingSourceLitellm
-		f.imagePrices[p.Model] = &c
-		n++
-	}
-	return n, nil
-}
 
 // UpsertImageManual 模拟手动设图价格（可接管 litellm 行；返回副本）。
-func (f *fakeStore) UpsertImageManual(ctx context.Context, m *repository.ImagePriceManual) (*domain.ImagePrice, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	p := &domain.ImagePrice{
-		Model:                           m.Model,
-		InputImageTokenPricePerMillion:  m.InputImageTokenPricePerMillion,
-		OutputImageTokenPricePerMillion: m.OutputImageTokenPricePerMillion,
-		OutputCostPerImageMilli:         m.OutputCostPerImageMilli,
-		Source:                          domain.PricingSourceManual,
-	}
-	f.imagePrices[m.Model] = p
-	c := *p
-	return &c, nil
-}
+
 
 // DeleteImageManual 模拟删除：仅 source=manual 可删（litellm 行 → ErrConflict）；
 // 不存在 → ErrNotFound。
-func (f *fakeStore) DeleteImageManual(ctx context.Context, model string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cur, ok := f.imagePrices[model]
-	if !ok {
-		return fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
-	}
-	if cur.Source != domain.PricingSourceManual {
-		return fmt.Errorf("%w: model=%q source=litellm (manual price only)", repository.ErrConflict, model)
-	}
-	delete(f.imagePrices, model)
-	return nil
-}
 
 // ListImagePrice 模拟列表：source/provider/model 筛选 + model 排序 + 分页。
-func (f *fakeStore) ListImagePrice(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.ImagePrice, int64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var rows []*domain.ImagePrice
-	for _, p := range f.imagePrices {
-		if source != nil && p.Source != *source {
-			continue
-		}
-		if provider != "" && (p.Provider == nil || *p.Provider != provider) {
-			continue
-		}
-		if model != "" && !strings.Contains(strings.ToLower(p.Model), strings.ToLower(model)) {
-			continue
-		}
-		c := *p
-		rows = append(rows, &c)
-	}
-	if q.Limit <= 0 {
-		q.Limit = 20
-	}
-	if q.Offset < 0 {
-		q.Offset = 0
-	}
-	end := q.Offset + q.Limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	if q.Offset > len(rows) {
-		q.Offset = len(rows)
-	}
-	return rows[q.Offset:end], int64(len(rows)), nil
-}
+
 
 // GetImagePrice 模拟按 model 取行（缺失 → repository.ErrNotFound）。
-func (f *fakeStore) GetImagePrice(ctx context.Context, model string) (*domain.ImagePrice, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	p, ok := f.imagePrices[model]
-	if !ok {
-		return nil, fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
-	}
-	c := *p
-	return &c, nil
-}
+
 
 // --- 按单元计费功能类价格（价格表三件套；与文本价/image 价同款模拟语义） ---
 
 // UpsertFunctionFromLiteLLM 模拟批量 upsert + manual 行级互斥（已存在 manual
 // 行不覆盖、不计入更新数；source 恒 litellm）。
-func (f *fakeStore) UpsertFunctionFromLiteLLM(ctx context.Context, rows []*domain.FunctionPrice) (int, error) {
+
+// UpsertFunctionManual 模拟手动设按单元价（可接管 litellm 行；返回副本）。
+
+
+// DeleteFunctionManual 模拟删除：仅 source=manual 可删（litellm 行 → ErrConflict）；
+// 不存在 → ErrNotFound。
+
+// ListFunctionPrice 模拟列表：source/provider/model 筛选 + model 排序 + 分页。
+
+
+// GetFunctionPrice 模拟按 model 取行（缺失 → repository.ErrNotFound）。
+
+
+func (f *fakeStore) UpsertPriceEntriesFromLiteLLM(_ context.Context, rows []*domain.PriceEntry) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n := 0
-	for _, p := range rows {
-		if cur, ok := f.functionPrices[p.Model]; ok && cur.Source == domain.PricingSourceManual {
+	for _, r := range rows {
+		if cur, ok := f.priceEntries[r.Model]; ok && cur.Source == domain.PricingSourceManual {
 			continue
 		}
-		c := *p
-		c.Source = domain.PricingSourceLitellm
-		f.functionPrices[p.Model] = &c
+		f.priceEntries[r.Model] = r
 		n++
 	}
 	return n, nil
 }
-
-// UpsertFunctionManual 模拟手动设按单元价（可接管 litellm 行；返回副本）。
-func (f *fakeStore) UpsertFunctionManual(ctx context.Context, m *repository.FunctionPriceManual) (*domain.FunctionPrice, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	p := &domain.FunctionPrice{
-		Model:        m.Model,
-		PricePerCall: m.PricePerCall,
-		Source:       domain.PricingSourceManual,
+func (f *fakeStore) UpsertPriceVariantsFromLiteLLM(_ context.Context, variants []*domain.PriceVariant) (int, error) {
+	byModel := map[string][]*domain.PriceVariant{}
+	for _, v := range variants {
+		byModel[v.Model] = append(byModel[v.Model], v)
 	}
-	f.functionPrices[m.Model] = p
-	c := *p
-	return &c, nil
+	total := 0
+	for m, lst := range byModel {
+		f.priceVariants[m] = lst
+		total += len(lst)
+	}
+	return total, nil
 }
-
-// DeleteFunctionManual 模拟删除：仅 source=manual 可删（litellm 行 → ErrConflict）；
-// 不存在 → ErrNotFound。
-func (f *fakeStore) DeleteFunctionManual(ctx context.Context, model string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cur, ok := f.functionPrices[model]
-	if !ok {
+func (f *fakeStore) UpsertPriceEntryManual(_ context.Context, m *repository.PriceEntryManual) (*domain.PriceEntry, error) {
+	pe := &domain.PriceEntry{Model: m.Model, Mode: m.Mode, InputPerM: m.InputPerM, OutputPerM: m.OutputPerM, CacheReadPerM: m.CacheReadPerM, CacheWritePerM: m.CacheWritePerM, PricePerCall: m.PricePerCall, ImgInTokPerM: m.ImgInTokPerM, ImgOutTokPerM: m.ImgOutTokPerM, PricePerImage: m.PricePerImage, Source: domain.PricingSourceManual}
+	f.priceEntries[m.Model] = pe
+	return pe, nil
+}
+func (f *fakeStore) DeletePriceEntryManual(_ context.Context, model string) error {
+	if _, ok := f.priceEntries[model]; !ok {
 		return fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
 	}
-	if cur.Source != domain.PricingSourceManual {
-		return fmt.Errorf("%w: model=%q source=litellm（只允许删手动价）", repository.ErrConflict, model)
+	if f.priceEntries[model].Source != domain.PricingSourceManual {
+		return fmt.Errorf("%w: model=%q source=litellm", repository.ErrConflict, model)
 	}
-	delete(f.functionPrices, model)
+	delete(f.priceEntries, model)
+	delete(f.priceVariants, model)
 	return nil
 }
-
-// ListFunctionPrice 模拟列表：source/provider/model 筛选 + model 排序 + 分页。
-func (f *fakeStore) ListFunctionPrice(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.FunctionPrice, int64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var rows []*domain.FunctionPrice
-	for _, p := range f.functionPrices {
-		if source != nil && p.Source != *source {
+func (f *fakeStore) ListPriceEntries(_ context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error) {
+	var all []*domain.PriceEntry
+	for _, e := range f.priceEntries {
+		if source != nil && e.Source != *source {
 			continue
 		}
-		if provider != "" && (p.Provider == nil || *p.Provider != provider) {
+		if mode != nil && e.Mode != *mode {
 			continue
 		}
-		if model != "" && !strings.Contains(strings.ToLower(p.Model), strings.ToLower(model)) {
+		if model != "" && !strings.Contains(strings.ToLower(e.Model), strings.ToLower(model)) {
 			continue
 		}
-		c := *p
-		rows = append(rows, &c)
+		all = append(all, e)
 	}
-	if q.Limit <= 0 {
-		q.Limit = 20
-	}
-	if q.Offset < 0 {
-		q.Offset = 0
-	}
-	end := q.Offset + q.Limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	if q.Offset > len(rows) {
-		q.Offset = len(rows)
-	}
-	return rows[q.Offset:end], int64(len(rows)), nil
+	return all, int64(len(all)), nil
 }
-
-// GetFunctionPrice 模拟按 model 取行（缺失 → repository.ErrNotFound）。
-func (f *fakeStore) GetFunctionPrice(ctx context.Context, model string) (*domain.FunctionPrice, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	p, ok := f.functionPrices[model]
-	if !ok {
-		return nil, fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
+func (f *fakeStore) GetPriceEntry(_ context.Context, model string) (*domain.PriceEntry, error) {
+	if e, ok := f.priceEntries[model]; ok {
+		return e, nil
 	}
-	c := *p
-	return &c, nil
+	return nil, fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
+}
+func (f *fakeStore) ListPriceVariants(_ context.Context, model string) ([]*domain.PriceVariant, error) {
+	return f.priceVariants[model], nil
+}
+func (f *fakeStore) ListAllPriceVariants(_ context.Context) ([]*domain.PriceVariant, error) {
+	var all []*domain.PriceVariant
+	for _, lst := range f.priceVariants {
+		all = append(all, lst...)
+	}
+	return all, nil
+}
+func (f *fakeStore) ReplacePriceVariants(_ context.Context, model string, variants []*domain.PriceVariant) ([]*domain.PriceVariant, error) {
+	for _, v := range variants {
+		if v.MultBP == nil && v.SetInputPerM == nil && v.SetOutputPerM == nil {
+			return nil, fmt.Errorf("variant seq %d requires at least one effect", v.Seq)
+		}
+	}
+	f.priceVariants[model] = variants
+	return variants, nil
 }
 
 func emailCodeKeyHandler(email, purpose string) string { return email + "|" + purpose }

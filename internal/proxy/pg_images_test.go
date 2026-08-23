@@ -245,8 +245,7 @@ func TestPGImagesMultipartHardGateAnd402(t *testing.T) {
 	// 402 生死：计费启用 + image_price 快照无行 → 402（预检零 DB 快照读，
 	// 上游不接触——路由链路与预检解耦，此处断言状态码语义）
 	p402 := newPGImagesTestProxy(t, sched, gAPI, &BillingHooks{
-		Prices:      &fakePriceLookup{m: map[string]*domain.Pricing{}},
-		ImagePrices: &fakeImagePriceLookup{m: map[string]*domain.ImagePrice{}},
+		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{}},
 		Balances:    billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 	})
 	req = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
@@ -258,8 +257,7 @@ func TestPGImagesMultipartHardGateAnd402(t *testing.T) {
 	// 纯 image 价模型不被 chat 预检误杀：chat 价表空（Prices 空 map）+ image
 	// 价有行 → 200（修复前 GetPrice 先行 402 误杀）
 	pOK := newPGImagesTestProxy(t, sched, gAPI, &BillingHooks{
-		Prices:      &fakePriceLookup{m: map[string]*domain.Pricing{}},
-		ImagePrices: &fakeImagePriceLookup{m: map[string]*domain.ImagePrice{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
+		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
 		Balances:    billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 	})
 	req = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))

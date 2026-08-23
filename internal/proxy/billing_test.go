@@ -7,7 +7,6 @@ package proxy
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -31,50 +30,55 @@ import (
 // proxyPricing 测试价格行：gpt-4o 基础价 $100/$200 每 1M（1e7/2e7 毫分），
 // priority 档 $200/$300，fast ×2.0。非流式上游返回 usage 3/5 tokens →
 // auto 130 毫分 / priority 210 / fast 260。
-func proxyPricing() *domain.Pricing {
-	i64 := func(v int64) *int64 { return &v }
-	return &domain.Pricing{
-		Model:                             "gpt-4o",
-		PromptPricePerMillion:             1e7,
-		CompletionPricePerMillion:         2e7,
-		PriorityPromptPricePerMillion:     i64(2e7),
-		PriorityCompletionPricePerMillion: i64(3e7),
-		FastMultiplier:                    i64(20000), // ×2.0
+func proxyPricingEntry() *domain.PriceEntry {
+	return &domain.PriceEntry{
+		Model: "gpt-4o", Mode: domain.PriceModeToken,
+		InputPerM:  ptr(int64(1e7)),
+		OutputPerM: ptr(int64(2e7)),
+		Source: domain.PricingSourceManual,
 	}
 }
 
+func proxyPricingVariants() []*domain.PriceVariant {
+	return []*domain.PriceVariant{
+		{Seq: 1, ServiceTier: strPtr("priority"), SetInputPerM: ptr(int64(2e7)), SetOutputPerM: ptr(int64(3e7))},
+		{Seq: 2, ServiceTier: strPtr("fast"), MultBP: ptr(20000)},
+	}
+}
+
+func proxyPricingMap() (map[string]*domain.PriceEntry, map[string][]*domain.PriceVariant) {
+	return map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()},
+		map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}
+}
+
+func strPtr(s string) *string { return &s }
+
+// 兼容旧名：proxyPricing 返回基底 entry，供单行测试直接取用（变体需另配）。
+func proxyPricing() *domain.PriceEntry { return proxyPricingEntry() }
+
 // fakePriceLookup 内存价格快照（proxy 计费测试用）。failFrom > 0 = 第 N 次
-// GetPrice 调用起恒失败（模拟预检后快照被删竞态）。im 为图片生成价快照
-// （Task D 响应检测计费旁路用；nil = 无图价——GetImagePrice 恒 ErrNotFound）。
+// ResolvePrices 调用起恒失败（模拟预检后快照被删竞态）。entries/variants 为
+// 统一 PriceEntry 快照，经 domain.ResolveEntryPrices 委托（与 service 同核）。
 type fakePriceLookup struct {
 	mu       sync.Mutex
-	m        map[string]*domain.Pricing
-	im       map[string]*domain.ImagePrice
+	entries  map[string]*domain.PriceEntry
+	variants map[string][]*domain.PriceVariant
 	call     int
 	failFrom int
 }
 
-func (f *fakePriceLookup) GetPrice(model string) (*domain.Pricing, error) {
+func (f *fakePriceLookup) ResolvePrices(model string, promptTokens int64, tier string, at time.Time) (domain.ResolvedPrices, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.call++
 	if f.failFrom > 0 && f.call >= f.failFrom {
-		return nil, errors.New("no price")
+		return domain.ResolvedPrices{}, false
 	}
-	if p, ok := f.m[model]; ok {
-		return p, nil
+	e, ok := f.entries[model]
+	if !ok {
+		return domain.ResolvedPrices{}, false
 	}
-	return nil, errors.New("no price")
-}
-
-// GetImagePrice 图片生成价快照读（spec §6 检测旁路查价；缺失 → 错误）。
-func (f *fakePriceLookup) GetImagePrice(model string) (*domain.ImagePrice, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if p, ok := f.im[model]; ok {
-		return p, nil
-	}
-	return nil, errors.New("no image price")
+	return domain.ResolveEntryPrices(e, f.variants[model], tier, promptTokens, at)
 }
 
 // newTestProxyBillingLogs 构造注入计费钩子的测试代理（默认 gpt-4o 模板 + 捕获
@@ -88,7 +92,7 @@ func newTestProxyBillingLogs(t *testing.T, upstream string, prices *fakePriceLoo
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
 	}
 	return newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, logs, &BillingHooks{
-		Prices:     prices,
+		Resolver: prices,
 		Balances:   billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 		TierPolicy: policy,
 	})
@@ -106,7 +110,7 @@ func TestProxyBillingNoPrice402(t *testing.T) {
 	}))
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{}}, nil, store)
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{}}, nil, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -132,7 +136,7 @@ func TestProxyBillingAppliesCost(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, nil, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -162,7 +166,7 @@ func TestProxyBillingTierPriority(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, nil, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"priority","messages":[]}`))
@@ -185,7 +189,7 @@ func TestProxyBillingTierFast(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, nil, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","service_tier":"fast","messages":[]}`))
@@ -224,7 +228,7 @@ func TestProxyBillingTierPolicyStrip(t *testing.T) {
 	}))
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyStrip }, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -255,7 +259,7 @@ func TestProxyBillingTierPolicyReject(t *testing.T) {
 	}))
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyReject }, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -299,7 +303,7 @@ func TestProxyBillingTierFastPolicyStrip(t *testing.T) {
 	}))
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyStrip }, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -328,7 +332,7 @@ func TestProxyBillingTierFastPolicyReject(t *testing.T) {
 	}))
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyReject }, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -371,7 +375,7 @@ func TestProxyBillingTierFastPolicyPassthrough(t *testing.T) {
 	}))
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyPassthrough }, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -397,9 +401,7 @@ func TestProxyBillingNoPriceDefenseAtFinish(t *testing.T) {
 	defer up.Close()
 	store := &captureLogStore{}
 	// failFrom=2：预检（第 1 次）成功，finish applyBilling（第 2 次）失败。
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{
-		m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}, failFrom: 2,
-	}, nil, store)
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}, failFrom: 2}, nil, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -439,10 +441,10 @@ func TestProxyBillingPriceSnapshotCache(t *testing.T) {
 	defer up.Close()
 	i64 := func(v int64) *int64 { return &v }
 	pr := proxyPricing()
-	pr.CacheReadPricePerMillion = i64(5e6)     // $50 / 1M
-	pr.CacheCreationPricePerMillion = i64(1e7) // $100 / 1M
+	pr.CacheReadPerM = i64(5e6)     // $50 / 1M
+	pr.CacheWritePerM = i64(1e7) // $100 / 1M
 	store := &captureLogStore{}
-	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": pr}}, nil, store)
+	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": pr}}, nil, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[]}`))
@@ -483,7 +485,7 @@ func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
 	}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 100*time.Millisecond, store, &BillingHooks{
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 	})
 
@@ -529,7 +531,7 @@ func TestProxyBillingStreamAbortGroupMultiplier(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
 	}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 100*time.Millisecond, store, &BillingHooks{
-		Prices: &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: func() *billing.Balances {
 			bal := billing.NewBalances(fakeBalanceLoader{
 				m: map[int64]int64{}, gm: map[int64]int{10: 15000}, // 组倍率 ×1.5（用户未设置）
@@ -668,7 +670,7 @@ func newTestProxyBillingT3Logs(t *testing.T, upstream string, prices *fakePriceL
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
 	}
 	p := newTestProxyTplTimeoutRec(t, tpl, 1, true, 30*time.Second, rec, &BillingHooks{
-		Prices: prices, Balances: bal, Flusher: f,
+		Resolver: prices, Balances: bal, Flusher: f,
 	}, nil)
 	p.cfg.BillingCapture = true
 	return p
@@ -718,7 +720,7 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 			f := billing.NewFlusher(billing.FlushConfig{
 				FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 			}, writer, rec, c.bal, nil)
-			p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, c.bal, f, rec)
+			p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, c.bal, f, rec)
 
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 			req.Header.Set("Authorization", "Bearer ck-1")
@@ -766,7 +768,7 @@ func TestProxyBillingRoutesToFlusher(t *testing.T) {
 	f := billing.NewFlusher(billing.FlushConfig{
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -838,7 +840,7 @@ func TestProxyBillingMultiplierAssignment(t *testing.T) {
 	f := billing.NewFlusher(billing.FlushConfig{
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -882,7 +884,7 @@ func newTestProxyBillingKeys(t *testing.T, keys map[string]domain.KeyMeta, accs 
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal, Flusher: f,
 	}, nil)
 	p.cfg.BillingCapture = true
@@ -972,7 +974,7 @@ func TestProxyBillingMultiplierGroup(t *testing.T) {
 	f := billing.NewFlusher(billing.FlushConfig{
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -1007,7 +1009,7 @@ func TestProxyBillingFreeUserPasses(t *testing.T) {
 	f := billing.NewFlusher(billing.FlushConfig{
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -1044,7 +1046,7 @@ func TestProxyBillingFreeGroupPasses(t *testing.T) {
 	f := billing.NewFlusher(billing.FlushConfig{
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -1081,7 +1083,7 @@ func TestProxyBillingFreeGroupSnapshotMissing(t *testing.T) {
 	f := billing.NewFlusher(billing.FlushConfig{
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -1116,7 +1118,7 @@ func TestProxyBillingNewUserImmediatelyUsable(t *testing.T) {
 	f := billing.NewFlusher(billing.FlushConfig{
 		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
 	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
 
 	req := func() int {
 		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))

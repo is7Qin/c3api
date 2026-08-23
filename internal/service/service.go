@@ -229,6 +229,7 @@ type RedemptionStore interface {
 // PricingStore 统一价格持久化。
 type PricingStore interface {
 	UpsertPriceEntriesFromLiteLLM(ctx context.Context, rows []*domain.PriceEntry) (int, error)
+	UpsertPriceVariantsFromLiteLLM(ctx context.Context, variants []*domain.PriceVariant) (int, error)
 	UpsertPriceEntryManual(ctx context.Context, m *repository.PriceEntryManual) (*domain.PriceEntry, error)
 	DeletePriceEntryManual(ctx context.Context, model string) error
 	ListPriceEntries(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error)
@@ -236,22 +237,6 @@ type PricingStore interface {
 	ListPriceVariants(ctx context.Context, model string) ([]*domain.PriceVariant, error)
 	ListAllPriceVariants(ctx context.Context) ([]*domain.PriceVariant, error)
 	ReplacePriceVariants(ctx context.Context, model string, variants []*domain.PriceVariant) ([]*domain.PriceVariant, error)
-	// legacy old pricing APIs (coexistence)
-	UpsertFromLiteLLM(ctx context.Context, rows []*domain.Pricing) (int, error)
-	UpsertManual(ctx context.Context, m *repository.PricingManual) (*domain.Pricing, error)
-	DeleteManual(ctx context.Context, model string) error
-	ListPricing(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.Pricing, int64, error)
-	GetPricing(ctx context.Context, model string) (*domain.Pricing, error)
-	UpsertImageFromLiteLLM(ctx context.Context, rows []*domain.ImagePrice) (int, error)
-	UpsertImageManual(ctx context.Context, m *repository.ImagePriceManual) (*domain.ImagePrice, error)
-	DeleteImageManual(ctx context.Context, model string) error
-	ListImagePrice(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.ImagePrice, int64, error)
-	GetImagePrice(ctx context.Context, model string) (*domain.ImagePrice, error)
-	UpsertFunctionFromLiteLLM(ctx context.Context, rows []*domain.FunctionPrice) (int, error)
-	UpsertFunctionManual(ctx context.Context, m *repository.FunctionPriceManual) (*domain.FunctionPrice, error)
-	DeleteFunctionManual(ctx context.Context, model string) error
-	ListFunctionPrice(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.FunctionPrice, int64, error)
-	GetFunctionPrice(ctx context.Context, model string) (*domain.FunctionPrice, error)
 }
 
 type LogStore interface {
@@ -516,10 +501,7 @@ var listSortFields = map[string][]string{
 	// 与 repo 层 tempBalanceSortFields 白名单一致（双保险；/api/admin/temp-balances）。
 	"temp_balances": {"expires_at", "amount", "created_at"},
 	// 与 repo 层 priceEntrySortFields 白名单一致（双保险；/api/admin/prices）。
-	"price_entries":  {"model", "updated_at"},
-	"pricing":        {"model", "updated_at"},
-	"image_price":    {"model", "updated_at"},
-	"function_price": {"model", "updated_at"},
+	"price_entries": {"model", "updated_at"},
 }
 
 // validateListQuery sort/order 白名单校验（非法 → ErrInvalidInput；handler 依赖此 400）。

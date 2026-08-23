@@ -122,14 +122,6 @@ func main() {
 	if err := repos.EnsureUsageEntityStatsPartitioned(startupCtx, time.Now()); err != nil {
 		fatalDB("usage_entity_stats partition bootstrap", err)
 	}
-	// function_price 初始化种子（价格表三件套）：codex-search 默认按次价行
-	// （1000 毫分 = $0.01/次，source=manual）——ON CONFLICT DO NOTHING 幂等：
-	// 已存在（含管理端改价后的行）恒不覆盖；失败即 fatal（默认按次价不可缺；
-	// 即便缺失，GetFunctionPrice 快照兜底仍返回默认价——此为双保险）。
-	if err := repos.EnsureFunctionPriceSeed(startupCtx); err != nil {
-		fatalDB("function_price seed bootstrap", err)
-	}
-
 	// #14 T3a：NOTIFY 发布器（多实例广播，设计文档 §2）。实例 ID = hostname-pid-
 	// nonce（config 无实例字段，最小方案；B4-1/p2-05：容器化多实例同 hostname、
 	// pid namespace 各自 pid 1 → 纯 hostname-pid 互相碰撞 → 互把对方 NOTIFY 当
@@ -313,14 +305,10 @@ func main() {
 			Workers:                cfg.Billing.FlushWorkers,
 		}, repos, rec, billBalances, log)
 		billHooks = &proxy.BillingHooks{
-			Prices:      svc,
-			ImagePrices: svc, // Task B：images 端点预检查 image_price 快照（P1-1 预检按格式切换）
-			// FunctionPrices 按单元价快照（价格表三件套：search 等 per-unit 端点
-			// 计费用；codex-search 查无 → service 默认价兜底）。
-			FunctionPrices: svc,
-			Balances:       billBalances,
-			Flusher:        billFlusher,
-			TierPolicy:     svc.ServiceTierPolicy,
+			Resolver:   svc,
+			Balances:   billBalances,
+			Flusher:    billFlusher,
+			TierPolicy: svc.ServiceTierPolicy,
 		}
 	}
 	px := proxy.New(proxy.Config{

@@ -123,8 +123,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 		UpstreamStreamTimeout: 30 * time.Second,
 		GroupKeyRPM:           0, UsageCapture: true, BillingCapture: true,
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
-		Prices:         &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
-		FunctionPrices: &fakeFunctionPriceLookup{m: map[string]*domain.FunctionPrice{}},
+		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{}},
 		Balances:       bal,
 		Flusher:        f,
 	}, nil)

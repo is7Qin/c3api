@@ -653,6 +653,10 @@ func (r *Repository) ListPriceVariants(ctx context.Context, model string) ([]*do
 func (r *Repository) ListAllPriceVariants(ctx context.Context) ([]*domain.PriceVariant, error) {
 	return r.PriceVariants.ListAll(ctx)
 }
+func (r *Repository) UpsertPriceVariantsFromLiteLLM(ctx context.Context, variants []*domain.PriceVariant) (int, error) {
+	return r.PriceVariants.UpsertFromLiteLLM(ctx, variants)
+}
+
 func (r *Repository) ReplacePriceVariants(ctx context.Context, model string, variants []*domain.PriceVariant) ([]*domain.PriceVariant, error) {
 	return r.PriceVariants.ReplaceBatch(ctx, model, variants)
 }

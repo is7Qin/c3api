@@ -87,7 +87,7 @@ func TestResponsesWSBillingPG(t *testing.T) {
 		Models:           []string{"gpt-4o"},
 	}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, noopLogStore{}, &BillingHooks{
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,
 		Flusher:  f,
 	})
@@ -173,7 +173,7 @@ func TestResponsesWSBillingTierPG(t *testing.T) {
 		Models:           []string{"gpt-4o"},
 	}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, noopLogStore{}, &BillingHooks{
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,
 		Flusher:  f,
 	})

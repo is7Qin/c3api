@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+// PricingSource 价格行来源：litellm = 自动拉取；manual = 管理端手动设置。
+type PricingSource string
+
+const (
+	PricingSourceLitellm PricingSource = "litellm"
+	PricingSourceManual  PricingSource = "manual"
+)
+
+func (s PricingSource) Valid() bool {
+	switch s {
+	case PricingSourceLitellm, PricingSourceManual:
+		return true
+	}
+	return false
+}
+
 // PriceMode 统一价格条目主计费方式。
 type PriceMode string
 
@@ -78,3 +94,7 @@ type ResolvedPrices struct {
 	VariantSeq     *int // 命中变体 seq，无命中 nil
 	Provider       *string
 }
+
+const CodexSearchModel = "codex-search"
+
+const DefaultCodexSearchPricePerCall int64 = 1000
