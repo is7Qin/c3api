@@ -150,11 +150,7 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 		}, store, nil)
 		bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
 		require.NoError(t, bal.Reload(context.Background()))
-		writer := &fakeDeductWriter{}
-		f := billing.NewFlusher(billing.FlushConfig{
-			FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
-		}, writer, rec, bal, nil)
-		p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, f, rec)
+		p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, rec)
 		meta := activeKey(1, 1, 10)
 		meta.KeyMaxConc = 1
 		p.auth.Upsert("ck-1", meta)
@@ -174,11 +170,10 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 
 		close(release)
 		<-done
-		require.NoError(t, f.Close(context.Background()))
-		writer.mu.Lock()
-		require.Len(t, writer.calls, 1, "仅成功请求进 billed flusher（429 风暴零记录——修复前 9.8M 行实证）")
-		writer.mu.Unlock()
 		require.NoError(t, rec.Close(context.Background()))
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		require.Len(t, store.logs, 1, "仅成功请求落 usage_logs 单写点（429 风暴零记录——修复前 9.8M 行实证）")
 	})
 }
 

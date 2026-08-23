@@ -94,18 +94,22 @@ func TestPGUpdateUserPatchConditional(t *testing.T) {
 	})
 }
 
-// TestPGUpdateUserVsDeductAndLogInterleave v02 点名无回归网：GET 快照(100000)
-// → 扣费(40000) → 陈旧快照条件写必须 ErrConflict（余额不复活、usage_logs 消费
-// 与余额一致）；新鲜快照条件写成功（管理员显式意图建立在当前值上）。
-func TestPGUpdateUserVsDeductAndLogInterleave(t *testing.T) {
+// TestPGUpdateUserVsDeductOnlyInterleave v02 点名无回归网（F2 游标语义适配）：
+// GET 快照(100000) → 游标消费扣费(40000) → 陈旧快照条件写必须 ErrConflict
+//（余额不复活、usage_logs 消费与余额一致）；新鲜快照条件写成功（管理员显式
+// 意图建立在当前值上）。
+func TestPGUpdateUserVsDeductOnlyInterleave(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "patch-deduct@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 100000))
 
-	// 模拟：handler GET 后、条件写前 flusher 已扣费落账
+	// 模拟：handler GET 后、条件写前 flusher 已消费游标扣费标记
 	snapshot := int64(100000)
-	_, _, err := repos.DeductAndLog(ctx, u.ID, 40000, []*domain.UsageLog{logFor(u.ID, "pre")})
+	seedUnbilled(t, repos, logFor(u.ID, "pre"))
+	rows := fetchAllUnbilled(t, repos)
+	require.Len(t, rows, 1)
+	_, _, _, err := repos.DeductOnlyAndMark(ctx, u.ID, 40000, ledgerRowIDs(rows))
 	require.NoError(t, err)
 
 	// 陈旧快照条件写 → 拒绝，余额保持扣费后值（修复前：无条件写回复活 100000）
@@ -128,10 +132,11 @@ func TestPGUpdateUserVsDeductAndLogInterleave(t *testing.T) {
 	require.Equal(t, int64(1), countLogs(t, repos, u.ID), "消费日志在（账实一致）")
 }
 
-// TestPGUpdateUserPatchConcurrentDeduct 条件写与并发扣费交错（多轮 stress）：
-// 条件写要么成功（New = 重读 + 5000，建立在当前值上）要么 ErrConflict 重读
-// 重试——任何交错下最终余额 = 100000 + 5000 - 20×1000（成功）或
-// 100000 - 20×1000（全冲突），扣费零丢失（修复前无条件写回会吞并发增量）。
+// TestPGUpdateUserPatchConcurrentDeduct 条件写与并发扣费交错（多轮 stress，
+// F2 游标语义：每 goroutine 消费各自 unbilled 行）：条件写要么成功（New =
+// 重读 + 5000，建立在当前值上）要么 ErrConflict 重读重试——任何交错下最终
+// 余额 = 100000 + 5000 - 20×1000（成功）或 100000 - 20×1000（全冲突），扣费
+// 零丢失（修复前无条件写回会吞并发增量）。
 func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -139,13 +144,19 @@ func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 	const base, perDeduct, nDeducts = int64(100000), int64(1000), 20
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, base))
 
+	// 种子 nDeducts 行 unbilled（usage flusher 单写点形态），逐行分发并发消费
+	for i := 0; i < nDeducts; i++ {
+		seedUnbilled(t, repos, logFor(u.ID, fmt.Sprintf("race%d", i)))
+	}
+	all := fetchAllUnbilled(t, repos)
+	require.Len(t, all, nDeducts)
+
 	var wg sync.WaitGroup
 	wg.Add(nDeducts)
 	for i := 0; i < nDeducts; i++ {
 		go func(n int) {
 			defer wg.Done()
-			_, _, err := repos.DeductAndLog(ctx, u.ID, perDeduct,
-				[]*domain.UsageLog{logFor(u.ID, fmt.Sprintf("race%d", n))})
+			_, _, _, err := repos.DeductOnlyAndMark(ctx, u.ID, perDeduct, []int64{all[n].ID})
 			require.NoError(t, err)
 		}(i)
 	}

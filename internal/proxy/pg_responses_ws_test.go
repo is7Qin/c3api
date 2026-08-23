@@ -37,8 +37,8 @@ import (
 const wsPGTestSchema = "proxy_ws_test"
 
 // TestResponsesWSBillingPG resp-ws 全链路计费落库：WS 请求 → usage 嗅探 →
-// finish → applyBilling（价格快照 + 倍率）→ Flusher.Record → DeductAndLog
-// 单事务 → 断言 usage_logs 5 计数 + cost + 格式。
+// finish → applyBilling（价格快照 + 倍率）→ routeLog 单写点（F2，spec §一）→
+// rec → InsertBatch 落库 → 断言 usage_logs 5 计数 + cost + 格式 + Billed 出生标记。
 // 5 计数：input 3 / output 5 / total 8 / cache_read 1 / cache_creation 3；
 // cost = 3×1e7 + 5×2e7 每 M 毫分 = 130 毫分（缓存分量无价不参与计费）。
 func TestResponsesWSBillingPG(t *testing.T) {
@@ -62,21 +62,19 @@ func TestResponsesWSBillingPG(t *testing.T) {
 	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
 	require.NoError(t, err)
 	// usagelog 已从 ent migrate 排除——分区表基座由 bootstrap 独占建表（与
-	// repository 包 PG 测试同款基座约定）；缺表则 flusher 的 DeductAndLog
-	// INSERT usage_logs 落入 42P01/挂死路径，必须先建。
+	// repository 包 PG 测试同款基座约定）；缺表则 rec 的 InsertBatch 落入
+	// 42P01/挂死路径，必须先建。
 	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
 
-	// 计费钩子：价格快照 + 余额快照（用户 1 余额充足）+ flusher（DeductAndLog → PG）
+	// 计费钩子：价格快照 + 余额快照（用户 1 余额充足）；单写点：billable 行经
+	// rec → repos.Usages 直落 usage_logs（F2：无 flusher 分流）。
 	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
 	require.NoError(t, bal.Reload(ctx), "余额快照加载")
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
-	}, noopLogStore{}, nil)
-	f := billing.NewFlusher(billing.FlushConfig{
-		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
-	}, repos.Billing, rec, bal, nil)
-	t.Cleanup(func() { _ = f.Close(context.Background()) })
+	}, repos.Usages, nil)
+	t.Cleanup(func() { _ = rec.Close(context.Background()) })
 
 	up := fakeResponsesWS(t, &fakeWSHooks{frameLimit: 1})
 	defer up.Close()
@@ -86,12 +84,11 @@ func TestResponsesWSBillingPG(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
 	}
-	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, noopLogStore{}, &BillingHooks{
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, repos.Usages, &BillingHooks{ // 单写点：proxy 内部 rec 直插真实 PG
 		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
 		Balances: bal,
-		Flusher:  f,
 	})
-	p.cfg.BillingCapture = true // shouldBill 路由（billed → flusher）
+	p.cfg.BillingCapture = true // 余额预检生效 + Billed=false 出生待对账（spec §一）
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
 
@@ -104,18 +101,19 @@ func TestResponsesWSBillingPG(t *testing.T) {
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
-	// flusher 排空（单事务 DeductAndLog 落库）后断言 usage_logs 行。
+	// rec 排空（InsertBatch 落库）后断言 usage_logs 行。
 	// usage_logs 瘦身（分表设计）：status_code 已移除（错误审计归 err_logs）——
 	// 成功计费行 status 语义由 error_type=none 承载。
-	require.NoError(t, f.Close(context.Background()))
+	require.NoError(t, p.rec.Close(ctx)) // F2 单写点：排空 proxy 内部 rec（pending 直插真实 PG）
 	var (
 		it, ot, tt, cr, cc, cost int64
 		format, et, model        string
+		billed                   bool
 	)
 	err = db.QueryRowContext(ctx, `SELECT input_tokens, output_tokens, total_tokens,
-		cache_read_tokens, cache_creation_tokens, cost, format, error_type, model
+		cache_read_tokens, cache_creation_tokens, cost, format, error_type, model, billed
 		FROM usage_logs WHERE format = 'openai-responses-ws' ORDER BY id DESC LIMIT 1`).
-		Scan(&it, &ot, &tt, &cr, &cc, &cost, &format, &et, &model)
+		Scan(&it, &ot, &tt, &cr, &cc, &cost, &format, &et, &model, &billed)
 	require.NoError(t, err, "usage_logs 必须有 resp-ws 计费行")
 	require.Equal(t, int64(3), it, "input_tokens")
 	require.Equal(t, int64(5), ot, "output_tokens")
@@ -126,6 +124,7 @@ func TestResponsesWSBillingPG(t *testing.T) {
 	require.Equal(t, "openai-responses-ws", format)
 	require.Equal(t, "none", et)
 	require.Equal(t, "gpt-4o", model)
+	require.False(t, billed, "capture on + 有用户 → 出生待对账（spec §一）")
 }
 
 // TestResponsesWSBillingTierPG resp-ws service_tier 计费落库（真实 PG）：WS 首帧
@@ -158,11 +157,8 @@ func TestResponsesWSBillingTierPG(t *testing.T) {
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
-	}, noopLogStore{}, nil)
-	f := billing.NewFlusher(billing.FlushConfig{
-		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
-	}, repos.Billing, rec, bal, nil)
-	t.Cleanup(func() { _ = f.Close(context.Background()) })
+	}, repos.Usages, nil)
+	t.Cleanup(func() { _ = rec.Close(context.Background()) })
 
 	up := fakeResponsesWS(t, &fakeWSHooks{frameLimit: 1})
 	defer up.Close()
@@ -172,12 +168,11 @@ func TestResponsesWSBillingTierPG(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
 	}
-	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, noopLogStore{}, &BillingHooks{
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, repos.Usages, &BillingHooks{ // 单写点：proxy 内部 rec 直插真实 PG
 		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
 		Balances: bal,
-		Flusher:  f,
 	})
-	p.cfg.BillingCapture = true // shouldBill 路由（billed → flusher）
+	p.cfg.BillingCapture = true // 余额预检生效 + Billed=false 出生待对账（spec §一）
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
 
@@ -189,7 +184,7 @@ func TestResponsesWSBillingTierPG(t *testing.T) {
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
-	require.NoError(t, f.Close(context.Background()))
+	require.NoError(t, p.rec.Close(ctx)) // F2 单写点：排空 proxy 内部 rec（pending 直插真实 PG）
 	var cost int64
 	var billingTier string
 	err = db.QueryRowContext(ctx, `SELECT cost, billing_tier

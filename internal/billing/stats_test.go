@@ -4,38 +4,47 @@
 
 package billing
 
-// /ops/workers billing flusher Stats 与真实状态一致性单测（pending 增长 +
-// lastFlush 时间戳；typed struct 断言）。
+// /ops/workers billing flusher Stats 与真实状态一致性单测（F2 ABI-4 终态：
+// lag 族四字段——lag/unbilled/quarantine 每周期收尾 refreshLag 原子写，
+// last_cycle = 最近成功消费时刻；typed struct 断言）。
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/is7qin/c3api/internal/domain"
 )
 
 func TestFlusherStats(t *testing.T) {
-	f := newTestFlusher(&fakeDeductWriter{})
-	require.Zero(t, f.Stats().(FlusherStats).LastFlushUnixMs, "尚未 flush = 0")
+	store := newFakeLedgerStore()
+	f := newFlusherWith(store, 1, map[int64]int64{1: 1_000_000})
+	require.Zero(t, f.Stats().(FlusherStats).LastCycleUnixMs, "尚未消费 = 0")
 
-	f.Record(&domain.UsageLog{UserID: 1, Model: "m", Format: domain.FormatOpenAIChat,
-		StatusCode: 200, ErrorType: domain.ErrNone, TotalTokens: 10, Cost: 5, CreatedAt: time.Now()})
-	f.Record(&domain.UsageLog{UserID: 1, Model: "m", Format: domain.FormatOpenAIChat,
-		StatusCode: 200, ErrorType: domain.ErrNone, TotalTokens: 20, Cost: 7, CreatedAt: time.Now()})
+	// 空游标周期：不推进 lastFlush（观测"最近何时真正消费过"）。
+	f.consumeCycle(context.Background())
 	st := f.Stats().(FlusherStats)
-	require.Equal(t, int64(2), st.PendingLogs, "pending 与 Record 累计一致")
-	require.Equal(t, pendingWaterline, st.PendingWaterline)
-	require.False(t, st.Warned)
+	require.Zero(t, st.LastCycleUnixMs, "空周期不推进 lastFlush")
+	require.Zero(t, st.UnbilledRows)
+	require.Zero(t, st.LagMs, "游标空 = lag 0")
+	require.Zero(t, st.QuarantinedRows)
 
-	f.flush()
+	// 600 行 > 单批 LIMIT 500：一个周期消费 500，lag 探测刷新剩余 100——
+	// UnbilledRows = 当前未扣费账本行数；行回填 1 分钟 → lag 稳健为正。
+	for i := 1; i <= 600; i++ {
+		store.seedRow(int64(i), 1, 10, time.Now().Add(-time.Minute))
+		store.setBalance(1, 1_000_000)
+	}
+	f.consumeCycle(context.Background())
 	st = f.Stats().(FlusherStats)
-	require.Zero(t, st.PendingLogs, "flush 后排空")
-	require.Greater(t, st.LastFlushUnixMs, int64(0), "lastFlush = 最近实际 flush 时刻")
+	require.Equal(t, int64(100), st.UnbilledRows, "UnbilledRows = 当前未扣费行数（批间 lag 探测）")
+	require.Positive(t, st.LagMs, "lag = 探测时刻 now − 最老 unbilled 行 created_at")
+	require.Greater(t, st.LastCycleUnixMs, int64(0), "lastFlush = 最近成功消费时刻")
+	require.Zero(t, st.QuarantinedRows, "无隔离")
 
-	// 空 pending 的 flush 不推进 lastFlush（观测"最近何时真正落过库"）。
-	prev := st.LastFlushUnixMs
-	f.flush()
-	require.Equal(t, prev, f.Stats().(FlusherStats).LastFlushUnixMs, "空 flush 不更新 lastFlush")
+	// Close 排空至游标清空 → UnbilledRows/lag 归零。
+	require.NoError(t, f.Close(context.Background()))
+	st = f.Stats().(FlusherStats)
+	require.Zero(t, st.UnbilledRows, "排空后 Unbilled 归零")
+	require.Zero(t, st.LagMs, "排空后游标空 = lag 0")
 }

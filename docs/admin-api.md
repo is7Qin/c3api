@@ -732,7 +732,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
                 "concurrency": 3, "max_concurrency": 40 },
   "resources": { "templates": 8, "groups": 4, "users": 15 },
   "err_top": [ { "name": "account-01", "err_rate": 0.05, "err_count": 12 } ],
-  "alerts": { "billing_pending": 123, "billing_pending_waterline": 50000, "billing_warned": false }
+  "alerts": { "billing_lag_ms": 12345, "billing_unbilled_rows": 123, "billing_quarantined_rows": 0 }
 }
 ```
 
@@ -740,7 +740,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 - `trend`：近 N 天日桶（SQL 侧按日聚合；`tokens` = input+output+cache 合并）
 - `accounts`：账号健康分布 + 并发水位（**调度器快照同源**——与账号列表运行时视图一致；运行时状态只在内存，DB 无第二份）
 - `err_top`：账号维度错误率 Top5（调度器 EWMA，`name` = 账号名）
-- `alerts`：billing flusher 水线状态
+- `alerts`：billing 游标积压观测（lag 族——`billing_lag_ms` 时滞毫秒 / `billing_unbilled_rows` 未扣费行数 / `billing_quarantined_rows` 隔离行数累计）
 - 聚合结果内部 TTL 30s 缓存（键含 `days`/`group_id` 与 UTC 日界）；统计本身为离线聚合产物（≤5 分钟陈旧）
 
 ### 实时并发排行

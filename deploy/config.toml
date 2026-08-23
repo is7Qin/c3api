@@ -65,11 +65,13 @@ usage = {
 # 价格（POST /admin/pricing/sync）——空价格表 = 全模型 402。开启后：请求前
 # 余额预检（快照缺失或 <0 → 402——余额 0 放行，临时额度由 FEFO 扣费消化）、
 # 临时额度 FEFO 优先扣、条件扣费允许透支、优雅停机排空不丢计费。
-# flush_interval：扣费批量落库周期（pending 聚合满或周期到 → 逐 user 小事务
-# 条件扣费；停机排空受 shutdown 预算约束，超时 Warn 截断不阻塞退出）。
-# flush_workers：并行落库 worker 数（默认 8——多角度压测 C 项实证 2026-08-12：
-# 多用户水线告警清零、pending 斜率降 25-40%、QPS/CPU 零回退；每 worker 一笔
-# DeductAndLog 事务，受 DB 连接池余量 db.max_conns 约束，同用户实例内恒串行）。
+# flush_interval：计费游标轮询周期（F2 ledger-cursor：billable 行由 usage
+# flusher 单写落库 billed=false，本 worker 每周期取批消费 unbilled 账本——
+# FEFO 扣减与 billed 标记同事务原子；停机排空受 shutdown 预算约束，超时 Warn
+# 截断不阻塞退出）。
+# flush_workers：用户组并行消费 worker 数（默认 8——每 worker 一笔
+# DeductOnlyAndMark 事务，受 DB 连接池余量 db.max_conns 约束；多实例由会话级
+# advisory lock 取批互斥）。
 # 注：compose 未注入 C3API_BILLING_*（env 覆盖能力存在，可按需注入），开关/参数
 # 经挂载的 config.toml 文件修改生效。
-billing = { enabled = true, flush_interval = "1s", balance_refresh_interval = "10s", flush_workers = 8 }
+billing = { enabled = true, flush_interval = "250ms", balance_refresh_interval = "10s", flush_workers = 8 }

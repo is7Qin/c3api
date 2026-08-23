@@ -4,6 +4,13 @@
 
 package repository
 
+// billing_repo.go 扣费事务面（F2 ledger-cursor，spec 2026-08-23）：FEFO 临时额度
+// 优先 + 条件扣费（允许透支）+ 同事务标记 billed——扣减与标记原子（at-least-once
+// 消费 + 原子 = exactly-once，丢账窗口构造性为零；会话锁丢失的并发标记由标记步
+// 受影响行数守卫兜底 → 回滚重放，见 errConcurrentMark）。usage_logs 明细的唯一
+// 写者是 usage flusher（InsertBatch）；本文件不再插日志（旧 DeductAndLog 三件套 +
+// InsertLogs 双实现随双写一并删除）。游标取批/纯标记/lag 观测面见 billing_cursor.go。
+
 import (
 	"context"
 	"database/sql"
@@ -15,10 +22,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
-	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/ent/user"
 )
 
@@ -27,145 +32,131 @@ import (
 // 天 → 57014，见 f1-impl-report.md 副作用核实）→ 按 spec 授权降级为计费路径
 // per-query 超时：扣费事务整体 10s 上限（执行时长 + 锁等待双有界；锁等待另有
 // 池级 lock_timeout=5s 会话 GUC 先行兜底——SELECT 不取行锁不受其影响）。
-// 超时 → 事务取消回滚 → 调用方（billing.Flusher）失败回灌不丢不重。
+// 超时 → 事务取消回滚 → 行保持 unbilled，游标下周期重放（不丢不重）。
 const deductTimeout = 10 * time.Second
 
-// usageLogBatchSize 计费日志单批插入行数上限（#37 P2）：ent CreateBulk 参数 =
-// 列数 × 行数，超 PG 65535 参数上限即失败（"extended protocol limited to
-// 65535 parameters"，19 列 × ~3448 行——压测实证扣费停滞根因）。
-// 热点修复 A（2026-08-11，测量数据见 pg_deduct_bench_test.go）：500 → 2000
-// 行/批（26 列最坏界 × 2000 = 52,000 参数 < 65,535；生产 19 列 38,000）——
-// 单事务 10k 行往返 20 → 5 次（往返实测 0.3ms/次，本地净省 ~4.5ms/事务 ~2%，
-// 负载/远端 DB 上按延迟放大）；服务器侧逐行插入耗时持平（~6.6µs/行）。
-// 统一计费模型重构（spec 2026-08-13）删 6 加 2 后最坏界 28 列 × 2000 =
-// 56,000 参数 < 65,535（仍安全，常量不动；生产 28 列 56,000）。S-E
-// （2026-08-17）加 client_ip 后最坏界 29 列 × 2000 = 58,000 参数 < 65,535
-// （仍安全，常量不动；生产 29 列 58,000）。raw_cost（spec 2026-08-18）后
-// 最坏界 30 列 × 2000 = 60,000 参数 < 65,535（仍安全，常量不动；生产 30 列
-// 60,000）。
-// 仅 ent CreateBulk 回落路径（pool == nil）使用；pgx COPY 路径无参数上限，
-// 整事务一次 COPY 不涉及本常量。
-const usageLogBatchSize = 2000
-
-// BillingRepo 扣费落库：FEFO 临时额度优先 + 条件扣费（允许透支）+ 同事务批量
-// 计费日志。全毫分直接扣减（1 USD = 100,000 毫分，零换算零取整误差）。
+// BillingRepo 计费扣减仓库：DeductOnlyAndMark 单事务完成 FEFO 扣减 + billed 标记。
+// 全毫分直接扣减（1 USD = 100,000 毫分，零换算零取整误差）。
 //
-// 双路径（热点修复 A 扩，2026-08-11 用户裁决）：
-//   - pool != nil（生产 NewWithPG 装配）→ deductAndLogCopy：pgx 直连事务 +
-//     COPY 落明细（替代 ent CreateBulk 的客户端逐行编码/服务器 RETURNING
-//     物化主成分——单事务 10k 行实测 230-254ms → 见 pg_deduct_bench_test.go）
-//   - pool == nil（mock/无池装配、WithTx 事务内）→ deductAndLogEnt：既有
-//     ent 事务路径回落
+// 双事务载体（形态沿袭热点修复 A，载体差异收敛到 deductTx 双适配）：
+//   - pool != nil（生产 NewWithPG 装配）→ pgx 直连事务
+//   - pool == nil（mock/无池装配、WithTx 事务内）→ ent txDriver 事务回落
 //
-// 两路径共用 deductCore（FEFO/余额逻辑单一实现，防漂移——等价性测试兜底），
-// 仅事务载体与明细落库面不同（deductTx 双适配）。
+// 两载体共用 deductOnlyCore（FEFO/余额逻辑单一实现，防漂移）。
 type BillingRepo struct {
 	client *ent.Client
 	// driver 为 raw SQL（FEFO/余额条件更新）用：与 txDriver 组合保证 raw SQL
 	// 与 ent 构建器同事务连接（WithTx 同构，评审 I-1）。
 	driver dialect.Driver
 	// pool 为 pgx 连接池（NewWithPG 注入；New 构造的仓库为 nil）：非 nil →
-	// DeductAndLog 走 pgx 直连 + COPY 路径；nil → ent 事务路径回落。WithTx
-	// 的 tx 版仓库恒传 nil（事务内不挂池，见 repository.go WithTx）。
+	// DeductOnlyAndMark 走 pgx 直连事务；nil → ent 事务路径回落。WithTx 的
+	// tx 版仓库恒传 nil（事务内不挂池，见 repository.go WithTx）。
 	pool *pgxpool.Pool
 }
 
-// DeductAndLog 批量扣费 + 计费日志落库（单事务，全成或全败）：
+// DeductOnlyAndMark 单事务扣费 + 标记（F2 冻结 ABI-2，签名不得偏移）：
 //
-// ① FEFO 临时额度（评审 I-4 用户裁决）：未过期 temp_balances 按 expires_at
+// ① FEFO 临时额度（不变量 #1）：未过期 temp_balances 按 expires_at 升序逐行扣
 //
-//	升序逐行扣（最早到期先扣、永久 NULL 最后——PG ASC 默认 NULLS LAST），
-//	行级条件更新 amount >= take 防并发透支（多实例并发扣同一用户时 SELECT
-//	读到的存量可能已被他事务扣减：条件不满足则跳过该行，剩余转扣余额，
-//	temp 恒不为负）
+//	（最早到期先扣、永久 NULL 最后——PG ASC 默认 NULLS LAST），行级条件更新
+//	amount >= take 防并发透支（条件不满足则跳过该行，剩余转扣余额，temp 恒
+//	不为负）
 //
 // ② 剩余扣 users.balance：条件更新 balance >= remain（防并发负余额）；0 行 →
 //
-//	无条件扣（允许透支）；再 0 行 = user 不存在 → 跳过扣减仍插日志
-//	（usagelog 无 FK）
+//	无条件扣（允许透支）；再 0 行 = 用户不存在 → **跳过扣减但仍标记全部 ids、
+//	quarantined=true 返回**（不变量 #1 尾语义——毒用户不卡游标）
 //
 // ③ 事务内 SELECT balance 回读（行锁串行无竞态）返回 balanceAfter
-// ④ logs 逐个 Overdraft=overdrafted 同事务落明细（pgx COPY / ent CreateBulk）
+// ④ UPDATE usage_logs SET billed=true, overdraft=$od WHERE id=ANY($ids) AND NOT
 //
-// 任一步失败整体回滚。cost == 0 → 只插日志（不扣款；balanceAfter = 当前余额
-// 原值，overdrafted=false）。
+//	billed——与扣减同事务原子；AND NOT billed 选用部分索引 usagelog_unbilled_id
+//	(spec §五 非 HOT 注记)；标记步校验受影响行数（affected < len(ids) →
+//	errConcurrentMark 整事务回滚——锁丢失双扣防御，见 billing_cursor.go）
 //
-// F-P2-4：整个扣费事务受 deductTimeout per-query 超时约束（ctx 截止——pgx
-// deadline watcher 取消在途语句 → 事务回滚；覆盖执行时长与锁等待双面，见
-// deductTimeout 注释）。
-func (r *BillingRepo) DeductAndLog(ctx context.Context, userID, cost int64, logs []*domain.UsageLog) (overdrafted bool, balanceAfter int64, err error) {
+// 任一步失败整体回滚（行保持 unbilled，游标重放）。cost <= 0 → 纯标记不扣减
+// （防御路径：游标消费面 cost>0 行才进本方法，cost=0 走 MarkBilledBulk 快速
+// 标记）。整个事务受 deductTimeout per-query 超时约束（ctx 截止 → 回滚）。
+func (r *BillingRepo) DeductOnlyAndMark(ctx context.Context, userID, cost int64, ids []int64) (balanceAfter int64, overdrafted, quarantined bool, err error) {
+	if len(ids) == 0 {
+		return 0, false, false, nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, deductTimeout)
 	defer cancel()
 	if r.pool != nil {
-		return r.deductAndLogCopy(ctx, userID, cost, logs)
+		return r.deductOnlyAndMarkPGX(ctx, userID, cost, ids)
 	}
-	return r.deductAndLogEnt(ctx, userID, cost, logs)
+	return r.deductOnlyAndMarkEnt(ctx, userID, cost, ids)
 }
 
-// deductAndLogEnt 既有 ent 事务路径（pool == nil 回落；与 COPY 路径共用
-// deductCore）。WithTx 事务内经 txDriver 的嵌套 Tx（返回自身）语义不变。
-func (r *BillingRepo) deductAndLogEnt(ctx context.Context, userID, cost int64, logs []*domain.UsageLog) (bool, int64, error) {
+// deductOnlyAndMarkEnt ent 事务路径（pool == nil 回落；与 pgx 路径共用
+// deductOnlyCore）。WithTx 事务内经 txDriver 的嵌套 Tx（返回自身）语义不变。
+func (r *BillingRepo) deductOnlyAndMarkEnt(ctx context.Context, userID, cost int64, ids []int64) (int64, bool, bool, error) {
 	tx, err := r.driver.Tx(ctx)
 	if err != nil {
-		return false, 0, err
+		return 0, false, false, err
 	}
 	defer tx.Rollback() // nolint:errcheck // Commit 成功后 Rollback 返回 ErrTxDone，忽略
 	drv := &txDriver{tx: tx, drv: r.driver}
-	exe := &entDeductTx{drv: drv, client: ent.NewClient(ent.Driver(drv))}
-	od, bal, err := r.deductCore(ctx, exe, userID, cost, logs)
+	exe := &entDeductTx{drv: drv}
+	bal, od, q, err := deductOnlyCore(ctx, exe, userID, cost)
 	if err != nil {
-		return false, 0, err
+		return 0, false, false, err
+	}
+	if err := markBilledExec(ctx, exe, ids, od); err != nil {
+		return 0, false, false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return false, 0, err
+		return 0, false, false, err
 	}
-	return od, bal, nil
+	return bal, od, q, nil
 }
 
-// deductAndLogCopy pgx 直连路径（热点修复 A 扩）：单连接 BEGIN → deductCore
-// （pgx 执行面）→ COPY 明细 → COMMIT。同事务原子；任一失败整体回滚——错误
-// 语义与 ent 路径一致（flusher 失败回灌/重试链不变）。
-func (r *BillingRepo) deductAndLogCopy(ctx context.Context, userID, cost int64, logs []*domain.UsageLog) (bool, int64, error) {
+// deductOnlyAndMarkPGX pgx 直连路径：单连接 BEGIN → deductOnlyCore → 标记 →
+// COMMIT。同事务原子；任一失败整体回滚——错误语义与 ent 路径一致（行保持
+// unbilled，flusher 下周期重放）。
+func (r *BillingRepo) deductOnlyAndMarkPGX(ctx context.Context, userID, cost int64, ids []int64) (int64, bool, bool, error) {
 	conn, err := r.pool.Acquire(ctx)
 	if err != nil {
-		return false, 0, err
+		return 0, false, false, err
 	}
 	defer conn.Release()
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return false, 0, err
+		return 0, false, false, err
 	}
 	defer tx.Rollback(ctx) // nolint:errcheck // Commit 成功后返回 ErrTxClosed，忽略
-	od, bal, err := r.deductCore(ctx, &pgxDeductTx{tx: tx}, userID, cost, logs)
+	exe := &pgxDeductTx{tx: tx}
+	bal, od, q, err := deductOnlyCore(ctx, exe, userID, cost)
 	if err != nil {
-		return false, 0, err
+		return 0, false, false, err
+	}
+	if err := markBilledExec(ctx, exe, ids, od); err != nil {
+		return 0, false, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return false, 0, err
+		return 0, false, false, err
 	}
-	return od, bal, nil
+	return bal, od, q, nil
 }
 
-// —— deductCore：扣费事务核心（两路径单一实现，防漂移） ——
+// —— deductOnlyCore：扣费事务核心（两载体单一实现，防漂移） ——
 
-// deductTx 扣费事务执行面（ent txDriver / pgx.Tx 双适配）：FEFO/余额逻辑在
-// deductCore 单一实现，事务载体差异收敛到本接口。
+// deductTx 扣费事务执行面（ent txDriver / pgx.Tx 双适配）：FEFO/余额/标记逻辑在
+// deductOnlyCore 单一实现，事务载体差异收敛到本接口。
 type deductTx interface {
 	// ExecAffected 执行一条 SQL 返回受影响行数（条件更新判定）。
 	ExecAffected(ctx context.Context, query string, args []any) (int64, error)
 	// QueryRows 执行查询返回行扫描器（FEFO SELECT）。
 	QueryRows(ctx context.Context, query string, args []any) (rowScanner, error)
-	// QueryRowScan 单行查询扫描（余额回读）；0 行 → 错误（与 ent Only 语义
-	// 一致——cost==0 且用户缺失同样报错回滚）。
+	// QueryRowScan 单行查询扫描（余额回读）；0 行 → 错误（整体回滚）。
 	QueryRowScan(ctx context.Context, query string, args []any, dest ...any) error
-	// InsertLogs 同事务落计费明细（ent CreateBulk / pgx COPY）。
-	InsertLogs(ctx context.Context, logs []*domain.UsageLog, overdrafted bool) error
 }
 
 // rowScanner 行扫描面（entsql.Rows 与 pgx.Rows 的公共子集；两者 Close 签名
-// 不同——entsql.Close() error vs pgx.Close()，故不含 Close）。deductCore 读取
-// 至 EOF（rows.Err() 确认）即释放连接：FEFO 行集在事务连接上，tx 生命周期内
-// 无池归还压力，EOF 后连接立即可复用（database/sql 与 pgx 同语义）。
+// 不同——entsql.Close() error vs pgx.Close()，故不含 Close）。deductOnlyCore
+// 读取至 EOF（rows.Err() 确认）即释放连接：FEFO 行集在事务连接上，tx 生命周期
+// 内无池归还压力，EOF 后连接立即可复用（database/sql 与 pgx 同语义）。
 type rowScanner interface {
 	Next() bool
 	Scan(dest ...any) error
@@ -173,7 +164,7 @@ type rowScanner interface {
 }
 
 // fefoSelectSQL FEFO 临时额度查询（与 ent 生成的语义等价：未过期 + 正余额，
-// expires_at 升序——PG ASC 默认 NULLS LAST，永久额度最后）。两路径共用同一
+// expires_at 升序——PG ASC 默认 NULLS LAST，永久额度最后）。两载体共用同一
 // SQL 事实源。
 const fefoSelectSQL = `SELECT id, amount FROM temp_balances
 WHERE user_id = $1 AND amount > 0 AND (expires_at IS NULL OR expires_at > $2)
@@ -182,26 +173,29 @@ ORDER BY expires_at`
 // balanceSelectSQL 余额回读（事务内行锁串行无竞态）。
 const balanceSelectSQL = `SELECT balance FROM users WHERE id = $1`
 
-// deductCore 事务内扣费核心：FEFO 逐行条件扣 → 余额条件扣（允许透支/用户缺失
-// 兜底）→ 余额回读 → 明细落库。任一步失败整体回滚（由调用方事务语义保证）。
-func (r *BillingRepo) deductCore(ctx context.Context, exe deductTx, userID, cost int64, logs []*domain.UsageLog) (bool, int64, error) {
+// deductOnlyCore 事务内扣费核心：FEFO 逐行条件扣 → 余额条件扣（允许透支）→
+// 余额回读。**不插日志**（usage flusher 是 usage_logs 唯一写者）。用户缺失 →
+// quarantined=true 返回（跳过扣减；标记仍由调用方执行——不变量 #1 尾语义）。
+// cost <= 0 → 不扣不减不回读（纯标记防御路径）。任一步失败整体回滚（由调用方
+// 事务语义保证）。
+func deductOnlyCore(ctx context.Context, exe deductTx, userID, cost int64) (balanceAfter int64, overdrafted, quarantined bool, err error) {
 	remain := cost
 	if cost > 0 {
 		rows, err := exe.QueryRows(ctx, fefoSelectSQL, []any{userID, time.Now()})
 		if err != nil {
-			return false, 0, err
+			return 0, false, false, err
 		}
 		type tempRow struct{ id, amount int64 }
 		var tempRows []tempRow
 		for rows.Next() {
 			var t tempRow
 			if err := rows.Scan(&t.id, &t.amount); err != nil {
-				return false, 0, err
+				return 0, false, false, err
 			}
 			tempRows = append(tempRows, t)
 		}
 		if err := rows.Err(); err != nil {
-			return false, 0, err
+			return 0, false, false, err
 		}
 		for _, tb := range tempRows {
 			if remain <= 0 {
@@ -214,47 +208,38 @@ func (r *BillingRepo) deductCore(ctx context.Context, exe deductTx, userID, cost
 			q, args := tempBalanceDeductQuery(tb.id, take)
 			n, err := exe.ExecAffected(ctx, q, args)
 			if err != nil {
-				return false, 0, err
+				return 0, false, false, err
 			}
 			if n > 0 {
 				remain -= take
 			}
 		}
 	}
-	overdrafted := false
-	userExists := true
 	if remain > 0 {
 		q, args := balanceDeductQuery(userID, remain)
 		n, err := exe.ExecAffected(ctx, q, args)
 		if err != nil {
-			return false, 0, err
+			return 0, false, false, err
 		}
 		if n == 0 {
 			// 余额不足 → 无条件扣（允许透支）；再 0 行 = 用户不存在
 			q, args = balanceDeductForceQuery(userID, remain)
 			n, err = exe.ExecAffected(ctx, q, args)
 			if err != nil {
-				return false, 0, err
+				return 0, false, false, err
 			}
 			if n == 0 {
-				userExists = false
-			} else {
-				overdrafted = true
+				return 0, false, true, nil // 用户缺失：跳过扣减，quarantined 出口
 			}
+			overdrafted = true
 		}
 	}
-	balanceAfter := int64(0)
-	if userExists {
+	if cost > 0 { // 有扣减面（FEFO/余额/透支任一）即回读（事务内行锁串行无竞态）
 		if err := exe.QueryRowScan(ctx, balanceSelectSQL, []any{userID}, &balanceAfter); err != nil {
-			return false, 0, err
+			return 0, false, false, err
 		}
 	}
-	if len(logs) > 0 {
-		if err := exe.InsertLogs(ctx, logs, overdrafted); err != nil {
-			return false, 0, err
-		}
-	}
-	return overdrafted, balanceAfter, nil
+	return balanceAfter, overdrafted, false, nil
 }
 
 // tempBalanceDeductQuery 临时额度行级条件扣（amount >= take 防并发透支）。
@@ -298,10 +283,9 @@ func balanceDeductForceQuery(userID, remain int64) (string, []any) {
 
 // —— ent txDriver 适配（回落路径） ——
 
-// entDeductTx ent 事务路径执行面（txDriver + tx client）。
+// entDeductTx ent 事务路径执行面（txDriver）。
 type entDeductTx struct {
-	drv    dialect.Driver
-	client *ent.Client
+	drv dialect.Driver
 }
 
 func (d *entDeductTx) ExecAffected(ctx context.Context, query string, args []any) (int64, error) {
@@ -338,24 +322,7 @@ func (d *entDeductTx) QueryRowScan(ctx context.Context, query string, args []any
 	return rows.Scan(dest...)
 }
 
-// InsertLogs 既有 ent CreateBulk 分片插入（#37 P2 参数上限分片；热点修复 A：
-// 2000 行/批）。与 COPY 路径语义等价（等价性测试兜底）。
-func (d *entDeductTx) InsertLogs(ctx context.Context, logs []*domain.UsageLog, overdrafted bool) error {
-	for start := 0; start < len(logs); start += usageLogBatchSize {
-		end := min(start+usageLogBatchSize, len(logs))
-		builders := make([]*ent.UsageLogCreate, 0, end-start)
-		for _, l := range logs[start:end] {
-			l.Overdraft = overdrafted
-			builders = append(builders, buildUsageLogCreate(d.client, l))
-		}
-		if _, err := d.client.UsageLog.CreateBulk(builders...).Save(ctx); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// —— pgx 直连适配（COPY 路径） ——
+// —— pgx 直连适配 ——
 
 // pgxDeductTx pgx 事务执行面。
 type pgxDeductTx struct {
@@ -376,110 +343,4 @@ func (x *pgxDeductTx) QueryRows(ctx context.Context, query string, args []any) (
 
 func (x *pgxDeductTx) QueryRowScan(ctx context.Context, query string, args []any, dest ...any) error {
 	return x.tx.QueryRow(ctx, query, args...).Scan(dest...)
-}
-
-// usageLogCopyColumns COPY 列清单 = buildUsageLogCreate 设置的列集合（30 列
-// 全列显式列出——未设置的可选列传 NULL，与 ent 省略列（→NULL）等价；列序
-// 与 usage_logs 分区表列定义一致，5 索引兼容）。COPY 无 65535 参数上限，
-// 整事务一次 COPY（无分片）。统一计费模型（spec 2026-08-13）：原图片 6 列
-// （image tokens/count + 3 价格快照）已删，加 call_count/price_per_call_millis。
-// S-E（2026-08-17）：加 client_ip（紧随 request_id，与分区表列定义一致）。
-// spec 2026-08-18：加 raw_cost（紧随 cost——恒落可 0，对齐 cost 恒落语义）。
-var usageLogCopyColumns = []string{
-	usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldGroupID,
-	usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID,
-	usagelog.FieldKeyID, usagelog.FieldModel, usagelog.FieldMappedModel,
-	usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldLatencyMs,
-	usagelog.FieldTtftMs, usagelog.FieldInputTokens, usagelog.FieldPriceInputMillis,
-	usagelog.FieldOutputTokens, usagelog.FieldPriceOutputMillis, usagelog.FieldTotalTokens,
-	usagelog.FieldCacheReadTokens, usagelog.FieldPriceCacheReadMillis,
-	usagelog.FieldCacheCreationTokens, usagelog.FieldPriceCacheCreationMillis,
-	usagelog.FieldCallCount, usagelog.FieldPricePerCallMillis, usagelog.FieldCost,
-	usagelog.FieldRawCost,
-	usagelog.FieldBillingTier, usagelog.FieldAboveHit, usagelog.FieldOverdraft,
-	usagelog.FieldCreatedAt,
-}
-
-// usageLogRowValues 单行 COPY 值（与 buildUsageLogCreate 的 Set 条件一一对应：
-// 可选列 >0/非空/非 nil 才赋值，否则 NULL；call_count 恒落（NOT NULL DEFAULT 0）；
-// cost/raw_cost 恒落（spec 2026-08-18——乘倍率前原始成本，可 0）；
-// client_ip 非空才赋值，否则 NULL）。
-func usageLogRowValues(l *domain.UsageLog) []any {
-	var groupID, accountID, templateID, userID, keyID, mappedModel, billingTier, clientIP any
-	var ttft, priceIn, priceOut, priceCR, priceCC, pricePerCall any
-	if l.ClientIP != "" {
-		clientIP = l.ClientIP
-	}
-	if l.GroupID > 0 {
-		groupID = l.GroupID
-	}
-	if l.AccountID > 0 {
-		accountID = l.AccountID
-	}
-	if l.TemplateID > 0 {
-		templateID = l.TemplateID
-	}
-	if l.UserID > 0 {
-		userID = l.UserID
-	}
-	if l.KeyID > 0 {
-		keyID = l.KeyID
-	}
-	if l.MappedModel != "" {
-		mappedModel = l.MappedModel
-	}
-	if l.BillingTier != "" {
-		billingTier = l.BillingTier
-	}
-	if l.TTFTMS != nil {
-		ttft = *l.TTFTMS
-	}
-	if l.PriceInputMillis != nil {
-		priceIn = *l.PriceInputMillis
-	}
-	if l.PriceOutputMillis != nil {
-		priceOut = *l.PriceOutputMillis
-	}
-	if l.PriceCacheReadMillis != nil {
-		priceCR = *l.PriceCacheReadMillis
-	}
-	if l.PriceCacheCreationMillis != nil {
-		priceCC = *l.PriceCacheCreationMillis
-	}
-	if l.PricePerCallMillis != nil {
-		pricePerCall = *l.PricePerCallMillis
-	}
-	return []any{
-		l.RequestID, clientIP, groupID, accountID, templateID, userID, keyID,
-		l.Model, mappedModel, string(l.Format), string(l.ErrorType), l.LatencyMS, ttft,
-		l.InputTokens, priceIn, l.OutputTokens, priceOut, l.TotalTokens,
-		l.CacheReadTokens, priceCR, l.CacheCreationTokens, priceCC,
-		l.CallCount, pricePerCall,
-		l.Cost, l.RawCost, billingTier, l.AboveHit, l.Overdraft, l.CreatedAt,
-	}
-}
-
-// InsertLogs COPY 落明细（热点修复 A 扩，实测选优）：同环境 ≥5 轮中位数
-// 10k 行/事务：ent CreateBulk 222ms / raw multi-row INSERT（2000 行/批分片）
-// 181ms / COPY 75ms——COPY 胜出（服务器批量装载路径 + 无参数上限一次完成 +
-// 无 RETURNING 物化）。分区表按 created_at 逐行路由（等价性测试验证）。
-// 失败 → 外层事务回滚（COPY 中途失败同样整体回滚——语义与 CreateBulk 分片
-// 一致）。格式枚举校验前置：分区表 format 列为 varchar（无 DB 层 enum 约束），
-// ent 路径由 CreateBulk 客户端 FormatValidator 拒绝非法值——COPY 路径必须
-// 等价复刻（错误文本不同：ent 包装为 ValidationError（含字段前缀），COPY
-// 返回裸错误；可观察行为一致——均在任何插入前拒绝、均致事务回滚）。
-func (x *pgxDeductTx) InsertLogs(ctx context.Context, logs []*domain.UsageLog, overdrafted bool) error {
-	if len(logs) == 0 {
-		return nil
-	}
-	rows := make([][]any, 0, len(logs))
-	for _, l := range logs {
-		if err := usagelog.FormatValidator(usagelog.Format(l.Format)); err != nil {
-			return err
-		}
-		l.Overdraft = overdrafted
-		rows = append(rows, usageLogRowValues(l))
-	}
-	_, err := x.tx.CopyFrom(ctx, pgx.Identifier{usagelog.Table}, usageLogCopyColumns, pgx.CopyFromRows(rows))
-	return err
 }

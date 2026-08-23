@@ -12,9 +12,9 @@ package repository_test
 //   - ent CreateBulk 路径（InsertBatch）roundtrip：2 列有值 + image token 并入
 //     in/out + format=openai-images 落库、QueryUsages 读回、SQL 层直查
 //   - 价格列 NULL 语义（未设置 → NULL 落库、nil 读回；call_count DEFAULT 0）
-//   - pgx COPY 路径（DeductAndLog + pool）：2 列 + openai-images/openai-search
-//     落库（COPY 逐行 FormatValidator 校验通过断言——不扩展枚举则 search 行
-//     COPY 恒失败回灌）
+//   - F2 单写点 + 游标消费：openai-images/openai-search 行经 InsertBatch 落库
+//     （ent FormatValidator 校验通过）→ DeductOnlyAndMark 扣费标记 → SQL 层
+//     直查 billed 翻转（旧 COPY 路径断言随双写删除——usage flusher 是唯一写者）
 //
 // 基座约定同 pg_logcols_test.go：newPGRepos 每测试 DROP SCHEMA 重建 + migrate
 //（钩子跳过 usagelog）+ 分区 bootstrap。
@@ -199,11 +199,12 @@ func TestUsageLogCallColumnsRoundtripPG(t *testing.T) {
 	require.Nil(t, raw, "DB 层 price_per_call_millis 为 NULL")
 }
 
-// TestUsageLogCallColumnsCopyPG pgx COPY 路径（DeductAndLog + pool）：2 列 +
-// format=openai-images 落库——pgx InsertLogs 逐行 FormatValidator 校验通过
-// （不扩展枚举则图片行 COPY 恒失败回灌，spec D4 评审实证路径）；SQL 层直查。
-func TestUsageLogCallColumnsCopyPG(t *testing.T) {
-	repos := newPGRepos(t) // pool != nil → pgx COPY 路径
+// TestUsageLogCallColumnsBillingCursorPG F2 单写点 + 游标消费：format=
+// openai-images 行经 InsertBatch 落库（ent CreateBulk FormatValidator 校验通过）
+// → DeductOnlyAndMark 扣费标记——SQL 层直查 2 列 + billed 翻转（旧 COPY 路径
+// 断言随双写删除）。
+func TestUsageLogCallColumnsBillingCursorPG(t *testing.T) {
+	repos := newPGRepos(t)
 	ctx := context.Background()
 	pool := pgTestPool(t)
 	u := seedPGUser(t, repos, "imgcopy@example.com")
@@ -211,31 +212,38 @@ func TestUsageLogCallColumnsCopyPG(t *testing.T) {
 
 	l := imageLogFor(u.ID, "img-copy-1")
 	l.Cost = 130
-	od, bal, err := repos.DeductAndLog(ctx, u.ID, 130, []*domain.UsageLog{l})
-	require.NoError(t, err, "COPY 路径 openai-images 落库必须成功（FormatValidator 校验通过）")
+	seedUnbilled(t, repos, l)
+	rows := fetchAllUnbilled(t, repos)
+	require.Len(t, rows, 1)
+
+	bal, od, _, err := repos.DeductOnlyAndMark(ctx, u.ID, 130, ledgerRowIDs(rows))
+	require.NoError(t, err, "openai-images 行经单写点落库 + 游标消费必须成功")
 	require.False(t, od)
 	require.Equal(t, int64(999_870), bal)
 
 	var it, ot, cnt int64
 	var perCall *int64
 	var format string
+	var billed bool
 	err = pool.QueryRow(ctx, `SELECT format, input_tokens, output_tokens, call_count,
-		price_per_call_millis
+		price_per_call_millis, billed
 		FROM usage_logs WHERE request_id = 'img-copy-1'`).
-		Scan(&format, &it, &ot, &cnt, &perCall)
+		Scan(&format, &it, &ot, &cnt, &perCall, &billed)
 	require.NoError(t, err)
 	require.Equal(t, "openai-images", format)
 	require.Equal(t, int64(5000), it)
 	require.Equal(t, int64(20000), ot)
 	require.Equal(t, int64(2), cnt)
 	require.Equal(t, int64(5_400), *perCall)
+	require.True(t, billed, "扣费事务内 billed 翻转")
 }
 
-// TestUsageLogSearchCopyPG format=openai-search COPY 落库（spec 2026-08-13：
-// search 端点 task 消费本枚举 + call_count 落账——本 task 只验枚举可用面）：
-// call_count=1 + price_per_call_millis（按次价快照）经 COPY 落库。
-func TestUsageLogSearchCopyPG(t *testing.T) {
-	repos := newPGRepos(t) // pool != nil → pgx COPY 路径
+// TestUsageLogSearchBillingCursorPG format=openai-search 单写点落库 + 游标消费
+//（spec 2026-08-13：search 端点 task 消费本枚举 + call_count 落账）：call_count=1
+// + price_per_call_millis（按次价快照）经 InsertBatch 落库 → DeductOnlyAndMark
+// 标记翻转。
+func TestUsageLogSearchBillingCursorPG(t *testing.T) {
+	repos := newPGRepos(t)
 	ctx := context.Background()
 	pool := pgTestPool(t)
 	u := seedPGUser(t, repos, "search@example.com")
@@ -245,21 +253,27 @@ func TestUsageLogSearchCopyPG(t *testing.T) {
 	l.Format = domain.FormatOpenAISearch
 	l.CallCount = 1
 	l.PricePerCallMillis = int64Ptr(2_000_000) // 毫分/次（search 按次价快照形态）
-	od, bal, err := repos.DeductAndLog(ctx, u.ID, 130, []*domain.UsageLog{l})
-	require.NoError(t, err, "COPY 路径 openai-search 落库必须成功（FormatValidator 校验通过）")
+	seedUnbilled(t, repos, l)
+	rows := fetchAllUnbilled(t, repos)
+	require.Len(t, rows, 1)
+
+	bal, od, _, err := repos.DeductOnlyAndMark(ctx, u.ID, 130, ledgerRowIDs(rows))
+	require.NoError(t, err, "openai-search 行经单写点落库 + 游标消费必须成功")
 	require.False(t, od)
 	require.Equal(t, int64(999_870), bal)
 
 	var format string
 	var cnt int64
 	var perCall *int64
-	err = pool.QueryRow(ctx, `SELECT format, call_count, price_per_call_millis
+	var billed bool
+	err = pool.QueryRow(ctx, `SELECT format, call_count, price_per_call_millis, billed
 		FROM usage_logs WHERE request_id = 'search-1'`).
-		Scan(&format, &cnt, &perCall)
+		Scan(&format, &cnt, &perCall, &billed)
 	require.NoError(t, err)
 	require.Equal(t, "openai-search", format)
 	require.Equal(t, int64(1), cnt)
 	require.Equal(t, int64(2_000_000), *perCall)
+	require.True(t, billed, "扣费事务内 billed 翻转")
 }
 
 // TestUsageLogCallFormatValidator 客户端面校验（spec §4.3/2026-08-13）：ent 生

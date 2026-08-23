@@ -46,17 +46,16 @@ type OpsOptions struct {
 	// 端点返回空列表）。
 	InFlightUsers func() map[int64]int64
 	// BillingAlerts 计费告警面（/api/admin/overview alerts 段；实现 = billing
-	// flusher 直读 PendingLogs/PendingWaterline/Warned。nil = 未装配 →
-	// alerts 全零）。
+	// 游标消费者 lag 族观测直读（F2 ledger-cursor）。nil = 未装配 → alerts 全零）。
 	BillingAlerts func() BillingAlerts
 }
 
-// BillingAlerts overview.alerts 数据（毫分水位原样输出——pending_waterline
-// 为 billing 包级水线常量直读；warned = 水线告警边沿是否置位）。
+// BillingAlerts overview.alerts 数据（billing 游标积压 lag 族三真值原样直出
+// ——每周期收尾 refreshLag 原子写，见 billing.FlusherStats）。
 type BillingAlerts struct {
-	Pending          int64
-	PendingWaterline int64
-	Warned           bool
+	LagMs           int64
+	UnbilledRows    int64
+	QuarantinedRows int64
 }
 
 // GetOpsWorkers 契约实现（api.gen.go ServerInterface）：按需组装，无缓存。

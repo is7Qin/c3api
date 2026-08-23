@@ -382,8 +382,12 @@ func init() {
 	usagelogDescOverdraft := usagelogFields[29].Descriptor()
 	// usagelog.DefaultOverdraft holds the default value on creation for the overdraft field.
 	usagelog.DefaultOverdraft = usagelogDescOverdraft.Default.(bool)
+	// usagelogDescBilled is the schema descriptor for billed field.
+	usagelogDescBilled := usagelogFields[30].Descriptor()
+	// usagelog.DefaultBilled holds the default value on creation for the billed field.
+	usagelog.DefaultBilled = usagelogDescBilled.Default.(bool)
 	// usagelogDescCreatedAt is the schema descriptor for created_at field.
-	usagelogDescCreatedAt := usagelogFields[30].Descriptor()
+	usagelogDescCreatedAt := usagelogFields[31].Descriptor()
 	// usagelog.DefaultCreatedAt holds the default value on creation for the created_at field.
 	usagelog.DefaultCreatedAt = usagelogDescCreatedAt.Default.(func() time.Time)
 	usagestatFields := schema.UsageStat{}.Fields()
