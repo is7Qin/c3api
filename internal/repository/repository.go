@@ -532,6 +532,26 @@ func (r *Repository) CountOverviewResources(ctx context.Context) (*OverviewResou
 	return r.Stats.CountOverviewResources(ctx)
 }
 
+func (r *Repository) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string) ([]*domain.StatBucket, error) {
+	return r.Stats.StatsTrend(ctx, from, to, unit, groupID, model)
+}
+
+func (r *Repository) StatsTop(ctx context.Context, from, to time.Time, entityType string, by string, limit int) ([]*domain.EntityStatBucket, error) {
+	return r.Stats.StatsTop(ctx, from, to, entityType, by, limit)
+}
+
+func (r *Repository) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string) ([]*domain.EntityStatBucket, error) {
+	return r.Stats.StatsEntityTrend(ctx, from, to, unit, entityType, entityID, model)
+}
+
+func (r *Repository) StatsTTFTSketch(ctx context.Context, from, to time.Time, model string) (*domain.TTFTSummary, error) {
+	return r.Stats.StatsTTFTSketch(ctx, from, to, model)
+}
+
+func (r *Repository) StatsTTFTExact(ctx context.Context, from, to time.Time, entityType string, entityID int64, model string) (*domain.TTFTSummary, error) {
+	return r.Stats.StatsTTFTExact(ctx, from, to, entityType, entityID, model)
+}
+
 // --- 兑换码（Phase 5 计费前基础设施） ---
 
 func (r *Repository) CreateCodes(ctx context.Context, codes []*domain.RedemptionCode) error {

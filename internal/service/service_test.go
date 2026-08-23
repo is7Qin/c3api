@@ -111,28 +111,6 @@ func TestCreateGroupFlow(t *testing.T) {
 	require.Equal(t, "g1", got.Name)
 }
 
-func TestQueryStatsGranularity(t *testing.T) {
-	fs := newFakeStore()
-	fs.stats = []*domain.StatBucket{
-		{BucketTime: mustTime("2026-08-01T10:00:00Z"), GroupID: 1, Model: "m", RequestCount: 10, TotalTokens: 100,
-			TTFTTotalMS: 200, TTFTCount: 5, TTFTMaxMS: 80, TTFTHist: []int64{3, 2, 0, 0, 0, 0, 0, 0, 0, 0}},
-		{BucketTime: mustTime("2026-08-01T11:00:00Z"), GroupID: 1, Model: "m", RequestCount: 5, TotalTokens: 50,
-			TTFTTotalMS: 250, TTFTCount: 5, TTFTMaxMS: 60, TTFTHist: []int64{1, 4, 0, 0, 0, 0, 0, 0, 0, 0}},
-	}
-	svc := &Service{store: fs, inv: &invRecorder{}}
-	rows, err := svc.QueryStats(context.Background(), repository.StatQuery{}, "day")
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, int64(15), rows[0].RequestCount, "day aggregation sums requests")
-	require.Equal(t, int64(150), rows[0].TotalTokens)
-	// TTFT 四字段日合并（rewrite spec 2026-08-14 前置清单②）：total/count 求和、
-	// max 取大、直方图逐元素加。
-	require.Equal(t, int64(450), rows[0].TTFTTotalMS, "day aggregation sums ttft_total")
-	require.Equal(t, int64(10), rows[0].TTFTCount, "day aggregation sums ttft_count")
-	require.Equal(t, int64(80), rows[0].TTFTMaxMS, "day aggregation takes max ttft_max")
-	require.Equal(t, []int64{4, 6, 0, 0, 0, 0, 0, 0, 0, 0}, rows[0].TTFTHist, "day aggregation merges hist element-wise")
-}
-
 // TestListQueryValidation service 层 sort/order 白名单校验：非法值 → ErrInvalidInput
 // （handler 依赖此 400；fake store 不校验，故校验必须在 service 层前置）。
 func TestListQueryValidation(t *testing.T) {

@@ -233,12 +233,16 @@ type LogStore interface {
 }
 
 type StatStore interface {
-	ScanStats(ctx context.Context, q repository.StatQuery) ([]*domain.StatBucket, error)
 	// /api/admin/overview 聚合面（spec 2026-08-14）：SQL 侧聚合（F-P2-2 形态——
 	// 服务端 GROUP BY 返回日桶，不拉全行客户端聚合）。
 	SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*repository.StatSummary, error)
 	ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64) ([]*repository.StatDayAgg, error)
 	CountOverviewResources(ctx context.Context) (*repository.OverviewResourceCounts, error)
+	StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string) ([]*domain.StatBucket, error)
+	StatsTop(ctx context.Context, from, to time.Time, entityType string, by string, limit int) ([]*domain.EntityStatBucket, error)
+	StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string) ([]*domain.EntityStatBucket, error)
+	StatsTTFTSketch(ctx context.Context, from, to time.Time, model string) (*domain.TTFTSummary, error)
+	StatsTTFTExact(ctx context.Context, from, to time.Time, entityType string, entityID int64, model string) (*domain.TTFTSummary, error)
 }
 
 // Invalidator 管理面变更的去抖定向失效回调（O2 接线矩阵，评审 M-1）：
