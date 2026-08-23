@@ -33,6 +33,7 @@ var (
 	ErrConflict          = serviceerr.ErrConflict
 	ErrTooManyRequests   = serviceerr.ErrTooManyRequests
 	ErrMailNotConfigured = serviceerr.ErrMailNotConfigured
+	ErrMailQueueFull     = serviceerr.ErrMailQueueFull
 )
 
 // EmailVerificationRequired 缺验证码时 400 响应的固定哨兵片段（前端发现机制）。
@@ -362,7 +363,8 @@ type Service struct {
 	// usageSnapshots codex 额度快照数据源（*sdkbridge.Codex 满足；AccountUsage
 	// 调用——nil = 未装配（测试/单实例），AccountUsage 返回 nil 快照）。
 	usageSnapshots CodexUsageSnapshotter
-	log            *logx.Logger
+	mailEnqueue func(MailSendTask) error
+	log        *logx.Logger
 }
 
 func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger) *Service {
@@ -373,6 +375,10 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 	s.reloadSettings(context.Background())
 	return s
 }
+
+// SetMailEnqueue 注入邮件入队函数（D-W1异步化：svc 构造后回填 mailW.Enqueue——
+// 循环依赖先例 SetLocalDispatcher；未注入 → SendRegisterCode 退化为 ErrMailNotConfigured）。
+func (s *Service) SetMailEnqueue(fn func(MailSendTask) error) { s.mailEnqueue = fn }
 
 // SetLocalDispatcher 注入本地变更分发器（#36 本地实例即时重算）：main 装配序
 // 上 dispatcher 需要 svc（SettingsReloader）、svc 需要 dispatcher（本地分发）

@@ -49,10 +49,27 @@ func setMailSettings(t *testing.T, fs *fakeStore, svc *Service, m map[string]str
 func newMailService(t *testing.T, fs *fakeStore) *Service {
 	t.Helper()
 	svc := &Service{store: fs, inv: &invRecorder{}, log: nil}
-	// Ensure defaults are loaded (service.New does reload)
-	// but we constructed manually, so reload.
 	require.NoError(t, svc.ReloadSettings(context.Background()))
+	// momus FIX: wire mail enqueue to avoid nil-func panic; default = no-op success
+	// (tests needing real delivery override with worker-backed enqueue).
+	svc.SetMailEnqueue(func(MailSendTask) error { return nil })
 	return svc
+}
+
+// newMailServiceWithWorker wires a real MailWorker with short backoff for async tests.
+func newMailServiceWithWorker(t *testing.T, fs *fakeStore) (*Service, *MailWorker) {
+	t.Helper()
+	svc := &Service{store: fs, inv: &invRecorder{}, log: nil}
+	require.NoError(t, svc.ReloadSettings(context.Background()))
+	mw := NewMailWorker(svc)
+	// short backoff for tests
+	origBackoff := mailRetryBackoff
+	mailRetryBackoff = []time.Duration{10 * time.Millisecond, 20 * time.Millisecond}
+	t.Cleanup(func() { mailRetryBackoff = origBackoff })
+	require.NoError(t, mw.Start(context.Background()))
+	t.Cleanup(func() { _ = mw.Close(context.Background()) })
+	svc.SetMailEnqueue(mw.Enqueue)
+	return svc, mw
 }
 
 func hashForTest(s string) string {

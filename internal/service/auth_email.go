@@ -48,12 +48,20 @@ func (s *Service) SendRegisterCode(ctx context.Context, email string) error {
 	if _, err := s.store.UpsertEmailCode(ctx, email, string(domain.EmailCodeRegister), sha, expires); err != nil {
 		return err
 	}
-	// 同步发送；若 mail 未配置（disabled），SendRegisterCode 调用方决定：verif=on 时必须可发，否则 500？
-	// spec: register-code 在 verif 关闭时直接 400 同哨兵（无人合法调用，防探测）——由 handler 层 gate。
-	// 此处若 mail not configured → 返回错误由 handler 转 500（邮件服务不可用）。
-	if err := s.sendMail(ctx, email, domain.EmailCodeRegister, plain); err != nil {
+	if _, _, _, _, _, _, ok := s.mailConfig(); !ok {
+		return ErrMailNotConfigured
+	}
+	if s.mailEnqueue == nil {
+		return ErrMailNotConfigured
+	}
+	if err := s.mailEnqueue(MailSendTask{
+		To:      email,
+		Purpose: domain.EmailTemplateRegisterCode,
+		Code:    plain,
+		TTLMin:  int(domain.EmailCodeTTL / time.Minute),
+	}); err != nil {
 		if s.log != nil {
-			s.log.Error("register code mail failed", logx.String("email", email), logx.Error(err))
+			s.log.Error("register code enqueue failed", logx.String("email", email), logx.Error(err))
 		}
 		return err
 	}
@@ -92,11 +100,16 @@ func (s *Service) SendForgotPasswordCode(ctx context.Context, email string) erro
 	if _, err := s.store.UpsertEmailCode(ctx, email, string(domain.EmailCodeReset), sha, expires); err != nil {
 		return nil
 	}
-	if err := s.sendMail(ctx, email, domain.EmailCodeReset, plain); err != nil {
-		if s.log != nil {
-			s.log.Error("reset code mail failed", logx.String("email", email), logx.Error(err))
-		}
-		return nil // still 200
+	if _, _, _, _, _, _, ok := s.mailConfig(); !ok {
+		return nil
+	}
+	if s.mailEnqueue != nil {
+		_ = s.mailEnqueue(MailSendTask{
+			To:      email,
+			Purpose: domain.EmailTemplateResetCode,
+			Code:    plain,
+			TTLMin:  int(domain.EmailCodeTTL / time.Minute),
+		})
 	}
 	return nil
 }

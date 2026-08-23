@@ -9,17 +9,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"math/big"
 	"strconv"
 	"strings"
-	"time"
-
-	mail "github.com/wneessen/go-mail"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
-	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // RenderTemplate 渲染模板：缺行走编译内置默认；仅替换 {{code}}/{{ttl_minutes}}/{{app_name}}。
@@ -104,70 +99,7 @@ func (s *Service) mailConfig() (host string, port int, username, password, fromA
 	return host, port64, s.settingValue("mail.smtp_username"), s.settingValue("mail.smtp_password"), fromAddr, s.settingValue("mail.tls"), true
 }
 
-var mailSendTimeout = 15 * time.Second
 
-// sendMail 同步发送（15s 超时上下文，按设置快照构造 client）。
-func (s *Service) sendMail(ctx context.Context, to string, purpose domain.EmailCodePurpose, code string) error {
-	host, port, username, password, fromAddr, tlsPolicy, ok := s.mailConfig()
-	if !ok {
-		return ErrMailNotConfigured
-	}
-	// 渲染
-	tmplPurpose := purpose.TemplatePurpose()
-	ttlMin := strconv.Itoa(int(domain.EmailCodeTTL / time.Minute))
-	subj, body, err := s.RenderTemplate(ctx, tmplPurpose, map[string]string{
-		"code":        code,
-		"ttl_minutes": ttlMin,
-		"app_name":    domain.AppName,
-	})
-	if err != nil {
-		return err
-	}
-	// 构造 client
-	opts := []mail.Option{
-		mail.WithPort(port),
-		mail.WithTimeout(mailSendTimeout),
-	}
-	switch tlsPolicy {
-	case "implicit":
-		opts = append(opts, mail.WithSSL())
-	case "none":
-		opts = append(opts, mail.WithTLSPolicy(mail.NoTLS))
-	default: // starttls
-		opts = append(opts, mail.WithTLSPolicy(mail.TLSMandatory))
-	}
-	if username != "" {
-		opts = append(opts, mail.WithSMTPAuth(mail.SMTPAuthPlain), mail.WithUsername(username), mail.WithPassword(password))
-	}
-	client, err := mail.NewClient(host, opts...)
-	if err != nil {
-		if s.log != nil {
-			s.log.Error("mail client create failed", logx.String("email", to), logx.String("purpose", string(purpose)), logx.Error(err))
-		}
-		return fmt.Errorf("mail client: %w", err)
-	}
-	msg := mail.NewMsg()
-	if err := msg.From(fromAddr); err != nil {
-		return fmt.Errorf("from: %w", err)
-	}
-	if err := msg.To(to); err != nil {
-		return fmt.Errorf("to: %w", err)
-	}
-	msg.Subject(subj)
-	msg.SetBodyString(mail.TypeTextPlain, body)
-	sendCtx, cancel := context.WithTimeout(ctx, mailSendTimeout)
-	defer cancel()
-	if err := client.DialAndSendWithContext(sendCtx, msg); err != nil {
-		if s.log != nil {
-			s.log.Error("mail send failed", logx.String("email", to), logx.String("purpose", string(purpose)), logx.Error(err))
-		}
-		return err
-	}
-	if s.log != nil {
-		s.log.Info("mail sent", logx.String("email", to), logx.String("purpose", string(purpose)))
-	}
-	return nil
-}
 
 // generateCode 生成 6 位数字验证码及其 sha256 hex。
 func generateCode() (plain string, shaHex string, err error) {
