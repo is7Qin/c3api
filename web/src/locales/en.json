@@ -1073,11 +1073,11 @@
       "mail.enabled": "When disabled, registration passes and forgot-password no-ops",
       "mail.register_verification": "When enabled registration requires a code (requires mail enabled + host/from)",
       "mail.smtp_host": "SMTP host",
-      "mail.smtp_port": "SMTP port 1-65535",
+      "mail.smtp_port": "SMTP port 1-65535 (default 465)",
       "mail.smtp_username": "SMTP username (optional)",
       "mail.smtp_password": "SMTP password",
       "mail.from_address": "From address",
-      "mail.tls": "starttls / implicit / none"
+      "mail.tls": "starttls(587) / implicit(465, default) / none"
     },
     "policies": {
       "passthrough": "Pass through",
@@ -1411,3 +1411,4 @@
     "backHome": "Back to Home"
   }
 }
+

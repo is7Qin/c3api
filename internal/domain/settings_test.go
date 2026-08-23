@@ -41,11 +41,11 @@ func TestMailSettingsRegistry(t *testing.T) {
 		{"mail.enabled", SettingTypeSwitch, "false"},
 		{"mail.register_verification", SettingTypeSwitch, "false"},
 		{"mail.smtp_host", SettingTypeString, ""},
-		{"mail.smtp_port", SettingTypeNumber, "587"},
+		{"mail.smtp_port", SettingTypeNumber, "465"},
 		{"mail.smtp_username", SettingTypeString, ""},
 		{"mail.smtp_password", SettingTypeString, ""},
 		{"mail.from_address", SettingTypeString, ""},
-		{"mail.tls", SettingTypeString, "starttls"},
+		{"mail.tls", SettingTypeString, "implicit"},
 	}
 	for _, c := range cases {
 		s := DefaultSetting(c.key)

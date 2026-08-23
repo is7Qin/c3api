@@ -41,11 +41,11 @@ var DefaultSettings = []Setting{
 	{Key: "mail.enabled", Type: SettingTypeSwitch, Value: "false"},
 	{Key: "mail.register_verification", Type: SettingTypeSwitch, Value: "false"},
 	{Key: "mail.smtp_host", Type: SettingTypeString, Value: ""},
-	{Key: "mail.smtp_port", Type: SettingTypeNumber, Value: "587", Min: i64p(1), Max: i64p(65535)},
+	{Key: "mail.smtp_port", Type: SettingTypeNumber, Value: "465", Min: i64p(1), Max: i64p(65535)},
 	{Key: "mail.smtp_username", Type: SettingTypeString, Value: ""},
 	{Key: "mail.smtp_password", Type: SettingTypeString, Value: ""},
 	{Key: "mail.from_address", Type: SettingTypeString, Value: ""},
-	{Key: "mail.tls", Type: SettingTypeString, Value: "starttls", PolicyValues: []string{"starttls", "implicit", "none"}},
+	{Key: "mail.tls", Type: SettingTypeString, Value: "implicit", PolicyValues: []string{"starttls", "implicit", "none"}},
 }
 
 // i64p 注册表数值值域指针辅助（Min/Max 域字面量；nil = 无限制，见 Setting 注释）。

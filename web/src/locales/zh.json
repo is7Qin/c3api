@@ -1073,11 +1073,11 @@
       "mail.enabled": "关闭时注册直通、忘记密码空转",
       "mail.register_verification": "开启后注册需验证码（需先启用邮件并配置 host/from）",
       "mail.smtp_host": "SMTP 服务器主机名",
-      "mail.smtp_port": "SMTP 端口 1-65535",
+      "mail.smtp_port": "SMTP 端口 1-65535（默认 465）",
       "mail.smtp_username": "SMTP 用户名（可选）",
       "mail.smtp_password": "SMTP 密码",
       "mail.from_address": "发件人邮箱地址",
-      "mail.tls": "starttls / implicit / none"
+      "mail.tls": "starttls(587) / implicit(465，默认) / none"
     },
     "policies": {
       "passthrough": "透传",
@@ -1411,3 +1411,4 @@
     "backHome": "返回首页"
   }
 }
+
