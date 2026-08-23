@@ -81,3 +81,36 @@ func TestGetOpsWorkersNoSnapshots(t *testing.T) {
 	require.Empty(t, resp.Workers)
 	require.Empty(t, resp.Snapshots)
 }
+
+// emailStats 模拟 service.MailWorker Stats 的七字段形态（与 mailer_worker.go 的 mailStats 同构）。
+type emailStats struct {
+	Queued       int   `json:"queued"`
+	QueueCap     int   `json:"queue_cap"`
+	SentTotal    int64 `json:"sent_total"`
+	FailedTotal  int64 `json:"failed_total"`
+	RetryTotal   int64 `json:"retry_total"`
+	DroppedTotal int64 `json:"dropped_total"`
+	LastError    string `json:"last_error"`
+}
+
+func TestGetOpsWorkersEmailContract(t *testing.T) {
+	h := New(nil, OpsOptions{
+		Workers: []StatsProvider{
+			fakeOpsWorker{"email", emailStats{Queued: 1, QueueCap: 256, SentTotal: 2, FailedTotal: 0, RetryTotal: 1, DroppedTotal: 0, LastError: ""}},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+	require.Equal(t, 200, rec.Code)
+	var resp WorkersResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Workers, 1)
+	require.Equal(t, "email", resp.Workers[0].Name)
+	st, ok := resp.Workers[0].Stats.(map[string]any)
+	require.True(t, ok)
+	for _, k := range []string{"queued", "queue_cap", "sent_total", "failed_total", "retry_total", "dropped_total", "last_error"} {
+		_, exists := st[k]
+		require.True(t, exists, "missing field %s", k)
+	}
+}

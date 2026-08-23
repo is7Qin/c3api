@@ -3010,6 +3010,7 @@ components:
         #   notify: running bool
         #   auth-sync: running bool, last_reload_unix_ms int64（最近成功 Reload 时刻）,
         #     failures int64（Reload 失败累计）, last_failure_unix_ms int64（最近失败时刻）
+        #   email: queued int（待发队列深度）, queue_cap int（队列容量 256）, sent_total int64, failed_total int64, retry_total int64, dropped_total int64, last_error string（最近一次投递失败摘要；空=无）
         stats:
           description: 各 worker 异构观测字段；完整字段清单见本 schema 上方 yaml 注释（与各 worker Stats() 实现同步维护）
     SnapshotState:

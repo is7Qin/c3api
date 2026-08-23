@@ -39,6 +39,10 @@ func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *ht
 	t.Helper()
 	store := newFakeStore()
 	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	mw := service.NewMailWorker(svc)
+	require.NoError(t, mw.Start(t.Context()))
+	t.Cleanup(func() { _ = mw.Close(context.Background()) })
+	svc.SetMailEnqueue(mw.Enqueue)
 	iss := auth.NewIssuer("test-secret")
 	router := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil)
 	do := func(method, path, body, token string) *httptest.ResponseRecorder {

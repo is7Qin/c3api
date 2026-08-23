@@ -254,6 +254,8 @@ func main() {
 	// ruleReload 独立于 invalidate：规则 CRUD 后全量重载（重载会重置窗口计数，
 	// 不能随模板/账号/分组等任意资源变更触发）。
 	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log)
+	mailW := service.NewMailWorker(svc)
+	svc.SetMailEnqueue(mailW.Enqueue)
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据
 	// （零 DB），首刷统一在构造链完成后执行（见下 ReloadAll——单一启动入口，
@@ -401,7 +403,7 @@ func main() {
 	// 具体引用，断言实现 handler.StatsProvider 的入列；快照注册表状态单独
 	// 经 Status 直出）。WithOps 注入，路由由契约 chi-server 生成。
 	var opsWorkers []handler.StatsProvider
-	for _, w := range []worker.Worker{inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg, listener, authSync} {
+	for _, w := range []worker.Worker{inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg, mailW, listener, authSync} {
 		if s, ok := w.(handler.StatsProvider); ok {
 			opsWorkers = append(opsWorkers, s)
 		} else {
@@ -476,7 +478,7 @@ func main() {
 	// 统一 worker 管理：顺序启动（scheduler 先、usage 后）、反向排空
 	// （usage 先排明细 → rule 先关排空事件（scheduler 已停投）→ scheduler 后排空回写）。
 	wm := worker.New(log)
-	wm.Register(inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg) // invalidate 去抖器执行 goroutine（单 goroutine 串行）；errlog 错误明细排空在 rec 之后注册 → 反向排空先于 rec；retention/stats-agg 顺序无依赖（覆盖语义幂等，停摆窗口由追赶上限收敛）
+	wm.Register(inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg, mailW) // invalidate 去抖器执行 goroutine（单 goroutine 串行）；errlog 错误明细排空在 rec 之后注册 → 反向排空先于 rec；retention/stats-agg 顺序无依赖（覆盖语义幂等，停摆窗口由追赶上限收敛）；mailW 尾部——反序排空中段关闭，无资金风险（D-W4）
 	if billFlusher != nil {
 		// 计费 flusher 注册在 listener/auth-sync 之前（评审 I-1）：反向排空时它
 		// 是最后一个产生计费流量的 worker（扣费 + 计费日志全量落库）；其后注册

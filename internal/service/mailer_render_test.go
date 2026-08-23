@@ -95,7 +95,16 @@ func TestMailConfigAndTLSMapping(t *testing.T) {
 		})
 		_, _, _, _, _, _, ok := svc.mailConfig()
 		require.False(t, ok)
-		require.ErrorIs(t, svc.sendMail(context.Background(), "a@b.com", domain.EmailCodeRegister, "123"), ErrMailNotConfigured)
+		// SendRegisterCode pre-check should fail with ErrMailNotConfigured
+		setMailSettings(t, fs, svc, map[string]string{
+			"signup_enabled": "true", "mail.register_verification": "true",
+			"mail.enabled": "false", "mail.smtp_host": "h", "mail.from_address": "f@a.com", "mail.smtp_port": "587", "mail.tls": "none",
+		})
+		mw := NewMailWorker(svc)
+		require.NoError(t, mw.Start(context.Background()))
+		t.Cleanup(func() { _ = mw.Close(context.Background()) })
+		svc.SetMailEnqueue(mw.Enqueue)
+		require.ErrorIs(t, svc.SendRegisterCode(context.Background(), "a@b.com"), ErrMailNotConfigured)
 
 		setMailSettings(t, fs, svc, map[string]string{
 			"mail.enabled": "true", "mail.smtp_host": "", "mail.from_address": "f@a.com", "mail.smtp_port": "587", "mail.tls": "none",
@@ -140,24 +149,21 @@ func TestMailConfigAndTLSMapping(t *testing.T) {
 }
 
 func TestMailSendNonePolicyDelivers(t *testing.T) {
-	// validates that none-policy actually delivers rendered body containing code
 	fs := newFakeStore()
-	svc := newMailService(t, fs)
+	svc, mw := newMailServiceWithWorker(t, fs)
 	stub := startTestSTUB(t)
 	_, port := stubAddr(stub)
 	setMailSettings(t, fs, svc, map[string]string{
 		"mail.enabled": "true", "mail.smtp_host": "127.0.0.1", "mail.smtp_port": port, "mail.from_address": "from@example.com", "mail.tls": "none",
 	})
-	// custom template to assert rendering
 	_, err := fs.UpsertEmailTemplate(context.Background(), string(domain.EmailTemplateRegisterCode), "subj {{app_name}}", "code={{code}} ttl={{ttl_minutes}}")
 	require.NoError(t, err)
-	err = svc.sendMail(context.Background(), "to@example.com", domain.EmailCodeRegister, "424242")
-	require.NoError(t, err)
+	require.NoError(t, mw.Enqueue(MailSendTask{To: "to@example.com", Purpose: domain.EmailTemplateRegisterCode, Code: "424242", TTLMin: 10}))
 	select {
 	case msg := <-stub.msgs:
-		require.Contains(t, msg, "424242", "rendered code must be in delivered body (quoted-printable may escape =)")
-		require.Contains(t, msg, "from@example.com", "From header")
-		require.Contains(t, msg, "to@example.com", "To header")
+		require.Contains(t, msg, "424242")
+		require.Contains(t, msg, "from@example.com")
+		require.Contains(t, msg, "to@example.com")
 	case <-time.After(2 * time.Second):
 		require.Fail(t, "smtp stub did not receive message")
 	}
