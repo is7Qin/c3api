@@ -44,7 +44,7 @@ func TestDefaults(t *testing.T) {
 	require.Equal(t, "test-admin-token", c.Admin.Token)
 	require.Equal(t, 30*time.Second, c.Scheduler.SyncInterval)
 	require.True(t, c.Billing.Enabled, "计费默认开（全链默认开启）")
-	require.Equal(t, 1*time.Second, c.Billing.FlushInterval)
+	require.Equal(t, 250*time.Millisecond, c.Billing.FlushInterval, "F2 游标轮询默认 250ms（spec-f2-ledger-cursor）")
 	require.Equal(t, 10*time.Second, c.Billing.BalanceRefreshInterval)
 	require.Equal(t, 8, c.Billing.FlushWorkers, "flush 并行 worker 默认 8（O1）")
 }

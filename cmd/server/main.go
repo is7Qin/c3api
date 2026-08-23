@@ -100,7 +100,7 @@ func main() {
 	// ent v0.14.6 的 entsql.OpenDB 只接受 *sql.DB：pgxpool 经 pgx/stdlib 桥接（用户决策 2026-08-05）
 	db := stdlib.OpenDBFromPool(pool)
 	drv := entsql.OpenDB(dialect.Postgres, db)
-	repos, err := repository.NewWithPG(startupCtx, drv, true, pool) // pool 供 Stats.Upsert COPY 两阶段批量写（#17）与 Billing.DeductAndLog COPY 路径（热点修复 A 扩）
+	repos, err := repository.NewWithPG(startupCtx, drv, true, pool) // pool 供 Stats.Upsert COPY 两阶段批量写（#17）与 Billing 游标消费/DeductOnlyAndMark 直连事务 + 会话锁专用连接（F2 ledger-cursor）
 	if err != nil {
 		fatalDB("migrate", err)
 	}
@@ -307,11 +307,16 @@ func main() {
 	// T3b 在其 Reload 内接入 N 与预算重分配，本 worker 侧无需再改）。
 	authSync := newAuthSync(auth, 0, log)
 	if cfg.Billing.Enabled {
+		// F2 ledger-cursor（spec 2026-08-23）：游标消费者——不再注入 rec（内存
+		// pending 队列已删，billable 行由 usage flusher 单写落库 billed=false，
+		// 本 worker 只消费账本游标）；LogRetentionDays 接线 lag 护栏（最老
+		// unbilled 行超保留期 80% 高声 Warn）。
 		billFlusher = billing.NewFlusher(billing.FlushConfig{
 			FlushInterval:          cfg.Billing.FlushInterval,
 			BalanceRefreshInterval: cfg.Billing.BalanceRefreshInterval,
 			Workers:                cfg.Billing.FlushWorkers,
-		}, repos, rec, billBalances, log)
+			LogRetentionDays:       cfg.Usage.LogRetentionDays,
+		}, repos, billBalances, log)
 		billHooks = &proxy.BillingHooks{
 			Prices:      svc,
 			ImagePrices: svc, // Task B：images 端点预检查 image_price 快照（P1-1 预检按格式切换）

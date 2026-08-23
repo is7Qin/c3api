@@ -58,8 +58,9 @@ func (r *UsageRepo) InsertBatch(ctx context.Context, logs []*domain.UsageLog) er
 	return err
 }
 
-// buildUsageLogCreate 构建单条 usagelog 插入构建器（InsertBatch 与计费事务
-// DeductAndLog 共用——tx client 经同一 client 传入即同一事务连接）。
+// buildUsageLogCreate 构建单条 usagelog 插入构建器（F2 单写点：usage flusher
+// InsertBatch 是 usage_logs 唯一写者——计费游标消费面只翻 billed/overdraft，
+// 不再插日志）。
 // 计费列（Phase 5）：Cost 毫分（0 = 未计费/错误路径）；BillingTier 空 = 未计费
 // 路径（落库 NULL）；AboveHit/Overdraft 布尔直接落。RawCost（spec 2026-08-18）
 // 乘倍率前原始成本——恒落（对齐 SetCost，ent 缺省 0 无妨），COPY 路径
