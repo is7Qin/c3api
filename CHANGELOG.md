@@ -16,8 +16,8 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ### Added
 
-- Email service: registration email verification codes and password reset by emailed code — SMTP relay configured through runtime settings (`mail.*`, admin console → Settings → Mail tab, disabled by default), editable Chinese-default email templates with built-in fallback, async-safe sync send with 15 s timeout.
-- Admin settings page reorganized into category tabs (signup / defaults / pricing sync / tier policy / cluster / mail), with a Mail tab covering SMTP config and template editors; new user-facing pages for register code entry and forgot-password flow.
+- Email service: registration email verification codes and password reset by emailed code — SMTP relay configured through runtime settings (`mail.*`, admin console → Settings → Mail tab, disabled by default; TLS defaults to implicit SMTPS on port 465), editable email templates with built-in English defaults and fallback. Delivery runs on a dedicated background mail worker (bounded queue, 3-attempt retry with backoff) observable via `/api/admin/ops/workers`.
+- Admin settings page reorganized into category tabs (signup / defaults / pricing sync / tier policy / cluster / mail), with a two-column Mail tab covering SMTP config and template editors; new user-facing pages for register code entry and forgot-password flow.
 - Loadtest tooling for full-surface hammering: `-mode api-admin` (26 weighted scenarios incl. the new stats shapes, redemption codes handed off via `-codes-out`) and `-mode api-user` (JWT pool + code redemption, `-codes-in`), `-format images`, `-api-reads-only`, plus a fake-upstream images endpoint.
 
 ### Changed
