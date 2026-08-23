@@ -109,3 +109,9 @@ export function fmtTokens(n: number): string {
   if (n >= 1e3) return `${trim(n / 1e3)}K`
   return String(n)
 }
+
+// TTFT 显示格式化（用户裁决 2026-08-14）：≥1000ms 转秒（2 位小数）；无样本 → '—'。
+export function fmtTTFT(value: number): string {
+  if (value <= 0) return '—'
+  return value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${value} ms`
+}

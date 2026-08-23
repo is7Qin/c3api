@@ -627,7 +627,8 @@
       "desc": "First token latency (streaming requests only); no samples = 0",
       "avg": "Avg",
       "p95": "P95",
-      "p99": "P99"
+      "p99": "P99",
+      "source": "Source: {{source}}"
     }
   },
   "calendar": {
@@ -1199,6 +1200,8 @@
         "seriesHitRate": "Cache hit rate"
       },
       "chartDesc": "Aggregated by time bucket; bar height scaled to the maximum",
+      "modelLabel": "Model",
+      "modelPlaceholder": "e.g. gpt-4o (all if empty)",
       "table": {
         "time": "Time",
         "requests": "Requests",
@@ -1218,7 +1221,8 @@
         "desc": "First token latency (streaming requests only); no samples = 0",
         "avg": "Avg",
         "p95": "P95",
-        "p99": "P99"
+        "p99": "P99",
+        "source": "Source: {{source}}"
       }
     },
     "redemptions": {

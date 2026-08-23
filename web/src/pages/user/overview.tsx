@@ -40,7 +40,7 @@ export default function UserOverview() {
   const keysQ = useQuery({ queryKey: ['user', 'keys'], queryFn: () => userApi.listUserKeys({ limit: 1 }) })
   const statsQ = useQuery({
     queryKey: ['user', 'stats', { from, to, granularity: 'day' }],
-    queryFn: () => userApi.getUserStats({ from, to, granularity: 'day' }),
+    queryFn: () => userApi.getMyStats({ from, to, granularity: 'day' }),
   })
 
   // 最近 7 天汇总：请求数 / 总 token / 成本（/user/stats 的 Cost 已 USD → formatUSD）

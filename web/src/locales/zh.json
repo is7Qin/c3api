@@ -627,7 +627,8 @@
       "desc": "首 token 时延（仅首 token 流式请求）；无样本 = 0",
       "avg": "均值",
       "p95": "P95",
-      "p99": "P99"
+      "p99": "P99",
+      "source": "来源：{{source}}"
     }
   },
   "calendar": {
@@ -1199,6 +1200,8 @@
         "seriesHitRate": "读缓存命中率"
       },
       "chartDesc": "按时间桶聚合，柱高按最大值缩放",
+      "modelLabel": "模型",
+      "modelPlaceholder": "如 gpt-4o（留空为全部）",
       "table": {
         "time": "时间",
         "requests": "请求数",
@@ -1218,7 +1221,8 @@
         "desc": "首 token 时延（仅首 token 流式请求）；无样本 = 0",
         "avg": "均值",
         "p95": "P95",
-        "p99": "P99"
+        "p99": "P99",
+        "source": "来源：{{source}}"
       }
     },
     "redemptions": {

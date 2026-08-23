@@ -53,11 +53,9 @@ export interface ErrLogParams extends UsageLogParams {
 export type MyUsageLogParams = Omit<UsageLogParams, 'user_id' | 'account_id'>
 export type MyErrLogParams = Omit<ErrLogParams, 'user_id' | 'account_id'>
 export interface UserStatParams {
-  from?: string
-  to?: string
+  from: string
+  to: string
   granularity?: 'hour' | 'day'
-  group_id?: number
-  account_id?: number
   model?: string
 }
 
@@ -146,12 +144,15 @@ export class ApiClient {
   // —— 日志 / 统计 ——
   getUsageLogs = (p: UsageLogParams) => this.request<components['schemas']['LogsResponse']>('/usage_logs', { params: toQuery(p) })
   getErrLogs = (p: ErrLogParams) => this.request<components['schemas']['ErrLogsResponse']>('/err_logs', { params: toQuery(p) })
-  getStats = (params: Record<string, string | number | undefined>) => {
-    const qs = new URLSearchParams()
-    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v))
-    const s = qs.toString()
-    return this.request<components['schemas']['StatBucket'][]>(`/stats${s ? `?${s}` : ''}`)
-  }
+  // —— 统计 v2（P1 后端已落地，旧 /stats 已删）——
+  getStatsTrend = (p: { from: string; to: string; granularity: 'hour' | 'day'; group_id?: number; model?: string }) =>
+    this.request<components['schemas']['StatTrendPoint'][]>('/stats/trend', { params: toQuery(p) })
+  getStatsTop = (p: { from: string; to: string; entity: 'account' | 'user' | 'key'; by: 'cost' | 'requests' | 'tokens'; limit?: number }) =>
+    this.request<components['schemas']['StatTopEntry'][]>('/stats/top', { params: toQuery(p) })
+  getStatsEntityTrend = (p: { entity: 'account' | 'user' | 'key'; id: number; from: string; to: string; granularity: 'hour' | 'day'; model?: string }) =>
+    this.request<components['schemas']['StatTrendPoint'][]>('/stats/entity-trend', { params: toQuery(p) })
+  getStatsTTFT = (p: { from: string; to: string; entity?: 'account' | 'user' | 'key'; id?: number; model?: string }) =>
+    this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
   // —— 用户管理 ——
   listUsers = (p?: { limit?: number; offset?: number; email?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['UserListResponse']>('/users', { params: toQuery(p) })
   createUser = (b: components['schemas']['UserCreate']) => this.request<components['schemas']['User']>('/users', { method: 'POST', body: JSON.stringify(b) })
@@ -208,7 +209,9 @@ export class ApiClient {
   rotateUserKey = (id: number) => this.request<components['schemas']['Key']>(`/keys/${id}/rotate`, { method: 'POST' })
   getMyUsageLogs = (p: MyUsageLogParams) => this.request<components['schemas']['UserLogsResponse']>('/usage_logs', { params: toQuery(p) })
   getMyErrLogs = (p: MyErrLogParams) => this.request<components['schemas']['UserErrLogsResponse']>('/err_logs', { params: toQuery(p) })
-  getUserStats = (params?: UserStatParams) => this.request<components['schemas']['StatBucket'][]>('/stats', { params: toQuery(params) })
+  getMyStats = (p: UserStatParams) => this.request<components['schemas']['StatTrendPoint'][]>('/stats', { params: toQuery(p) })
+  getMyStatsTTFT = (p: { from: string; to: string; model?: string }) =>
+    this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
   redeem = (code: string) => this.request<components['schemas']['RedeemResponse']>('/redemptions', { method: 'POST', body: JSON.stringify({ code }) })
   listUserRedemptions = (p?: { page?: number; page_size?: number; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['RedemptionRecordListResponse']>('/redemptions', { params: toQuery(p) })
   getTempBalances = () => this.request<components['schemas']['TempBalancesResponse']>('/temp-balances')

@@ -435,7 +435,7 @@ export default function Accounts() {
   })
   const statsQ = useQuery({
     queryKey: ['account-stats-detail', usageDetail?.ID, rangeKey],
-    queryFn: () => api.getStats({ account_id: usageDetail!.ID!, from, to, granularity }),
+    queryFn: () => api.getStatsEntityTrend({ entity: 'account', id: usageDetail!.ID!, from, to, granularity }),
     enabled: !!usageDetail,
   })
   // 统计桶按 BucketTime 升序（spec 钉死）：后端 day 合并按 map 迭代返回无序
@@ -1433,7 +1433,7 @@ export default function Accounts() {
                     {shownBuckets.map((b, i) => (
                       <TableRow key={b.BucketTime ?? i}>
                         <TableCell className="whitespace-nowrap tabular-nums">{fmtBucketTime(b.BucketTime, granularity)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{fmtUsd(b.raw_cost_usd)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtUsd(b.RawCost)}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtUsd(b.Cost)}</TableCell>
                         <TableCell className="text-right tabular-nums">{b.RequestCount ?? 0}</TableCell>
                         <TableCell className="text-right tabular-nums">{b.ErrorCount ?? 0}</TableCell>
