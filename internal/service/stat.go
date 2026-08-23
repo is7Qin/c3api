@@ -12,6 +12,8 @@ package service
 
 import (
 	"context"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -137,20 +139,31 @@ func (s *Service) QueryEntityTrend(ctx context.Context, q EntityTrendQuery) ([]*
 //     MaxStatsSketchBuckets；
 //   - 非空：exact 分支（usage_logs percentile_cont），必须配 EntityID ≠ 0 且
 //     entityType 过白名单，跨度 ≤ MaxStatsTTFTExactSpan。
+//
+// 校验通过后经 statsTTFTC TTL 缓存（P3 验收遗留尾巴：exact 冷缓存 × 系统饱和
+// 排序致负载 p99 5-6s；仪表盘同参轮询命中率天然高，陈旧 ≤30s 为展示面可
+// 接受语义——overview 先例）。
 func (s *Service) QueryStatsTTFT(ctx context.Context, q TTFTQuery) (*domain.TTFTSummary, error) {
 	if q.EntityType == "" {
 		if err := validateStatsWindow(q.From, q.To, MaxStatsSketchBuckets*time.Hour); err != nil {
 			return nil, err
 		}
-		return s.store.StatsTTFTSketch(ctx, q.From, q.To, q.Model)
+	} else {
+		if err := validateStatsWindow(q.From, q.To, MaxStatsTTFTExactSpan); err != nil {
+			return nil, err
+		}
+		if !statEntityTypes[q.EntityType] || q.EntityID == 0 {
+			return nil, ErrInvalidInput
+		}
 	}
-	if err := validateStatsWindow(q.From, q.To, MaxStatsTTFTExactSpan); err != nil {
-		return nil, err
-	}
-	if !statEntityTypes[q.EntityType] || q.EntityID == 0 {
-		return nil, ErrInvalidInput
-	}
-	return s.store.StatsTTFTExact(ctx, q.From, q.To, q.EntityType, q.EntityID, q.Model)
+	key := q.EntityType + "|" + strconv.FormatInt(q.EntityID, 10) + "|" + q.Model + "|" +
+		strconv.FormatInt(q.From.Unix(), 10) + "|" + strconv.FormatInt(q.To.Unix(), 10)
+	return statsTTFTC.fetch(key, func() (*domain.TTFTSummary, error) {
+		if q.EntityType == "" {
+			return s.store.StatsTTFTSketch(ctx, q.From, q.To, q.Model)
+		}
+		return s.store.StatsTTFTExact(ctx, q.From, q.To, q.EntityType, q.EntityID, q.Model)
+	})
 }
 
 // UserStats 用户台自己的用量趋势：忽略调用方传入的任何 entity 参数，userID
@@ -196,3 +209,82 @@ func normalizeGranularity(g string) (string, error) {
 		return "", ErrInvalidInput
 	}
 }
+
+// —— stats.ttft TTL 缓存（spec-ttft-cache-2026-08-23）——
+
+// ttftCacheTTL 对齐 overview TTL 30s 先例：展示面数据陈旧上界。
+const ttftCacheTTL = 30 * time.Second
+
+// ttftCacheMaxEnt 条目上限：防变窗请求撑爆内存，满则整体重置（展示面粗粒度
+// 防线——精确 LRU 的复杂度不为此处买单）。
+const ttftCacheMaxEnt = 4096
+
+type ttftCacheEntry struct {
+	summary *domain.TTFTSummary
+	expires time.Time
+}
+
+// ttftCacheCall 同键并发冷查询的去重句柄：等待方经 done close 的
+// happens-before 语义读取结果，fn 只执行一次。
+type ttftCacheCall struct {
+	done    chan struct{}
+	summary *domain.TTFTSummary
+	err     error
+}
+
+// ttftCache 进程内 TTL 缓存 + inflight 去重。包级单例 statsTTFTC 挂载；
+// now 可注入供测试推进时钟。
+type ttftCache struct {
+	ttl    time.Duration
+	maxEnt int
+	now    func() time.Time
+	mu     sync.Mutex
+	done   map[string]ttftCacheEntry
+	calls  map[string]*ttftCacheCall
+}
+
+func newTTFTCache() *ttftCache {
+	return &ttftCache{
+		ttl:    ttftCacheTTL,
+		maxEnt: ttftCacheMaxEnt,
+		now:    time.Now,
+		done:   map[string]ttftCacheEntry{},
+		calls:  map[string]*ttftCacheCall{},
+	}
+}
+
+// fetch 命中未过期缓存直接返回；未命中执行 fn（同键并发合并为单次）；仅
+// 成功结果入缓存——瞬时 DB 抖动的错误不得钉死整个 TTL 窗口。
+func (c *ttftCache) fetch(key string, fn func() (*domain.TTFTSummary, error)) (*domain.TTFTSummary, error) {
+	c.mu.Lock()
+	if e, ok := c.done[key]; ok && c.now().Before(e.expires) {
+		c.mu.Unlock()
+		return e.summary, nil
+	}
+	if call, ok := c.calls[key]; ok {
+		c.mu.Unlock()
+		<-call.done
+		return call.summary, call.err
+	}
+	call := &ttftCacheCall{done: make(chan struct{})}
+	c.calls[key] = call
+	c.mu.Unlock()
+
+	summary, err := fn()
+
+	c.mu.Lock()
+	delete(c.calls, key)
+	if err == nil {
+		if len(c.done) >= c.maxEnt {
+			c.done = map[string]ttftCacheEntry{}
+		}
+		c.done[key] = ttftCacheEntry{summary: summary, expires: c.now().Add(c.ttl)}
+	}
+	c.mu.Unlock()
+	close(call.done)
+	call.summary = summary
+	call.err = err
+	return summary, err
+}
+
+var statsTTFTC = newTTFTCache()
