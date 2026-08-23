@@ -108,17 +108,15 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 
-	// 计费钩子：价格快照 + 余额快照 + flusher（DeductAndLog → PG）
+	// 计费钩子：价格快照 + 余额快照；单写点：billable 行经 rec → repos.Usages
+	// 直落 usage_logs（F2：无 flusher 分流）。
 	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
 	require.NoError(t, bal.Reload(ctx), "余额快照加载")
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
-	}, noopLogStore{}, nil)
-	f := billing.NewFlusher(billing.FlushConfig{
-		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
-	}, repos.Billing, rec, bal, nil)
-	t.Cleanup(func() { _ = f.Close(context.Background()) })
+	}, repos.Usages, nil)
+	t.Cleanup(func() { _ = rec.Close(context.Background()) })
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{
 		UpstreamTimeout:       5 * time.Second,
@@ -132,7 +130,6 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
 		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
 		Balances: bal,
-		Flusher:  f,
 	}, nil)
 	p.SetCodex(sdkbridge.NewCodex(nil))
 	srv := httptest.NewServer(AIRouter(p))
@@ -161,9 +158,9 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	require.Equal(t, "thread-pg-1:0", cm.Get("x-codex-window-id").String(), "window_id（ext 持久化）注入")
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id UUIDv7 格式（SDK 自动生成）")
 
-	// flusher 排空（单事务 DeductAndLog 落库）后断言 usage_logs 行——顶层 usage
+	// rec 排空（InsertBatch 落库）后断言 usage_logs 行——顶层 usage
 	// 五计数 + cost（10×1e7+20×2e7 = 500 毫分；cache 价 nil → cache 分量 0 成本）
-	require.NoError(t, f.Close(context.Background()))
+	require.NoError(t, rec.Close(ctx))
 	var (
 		it, ot, tt, cr, cc, cost int64
 		format, et, model        string
