@@ -79,26 +79,27 @@ const (
 // AppName 模板变量 app_name 常量。
 const AppName = "c3api"
 
-// DefaultEmailTemplate 编译内置中文默认模板（含 {{code}}/{{ttl_minutes}}/{{app_name}}）。
+// DefaultEmailTemplate 编译内置英文默认模板（占位符 {{code}}/{{ttl_minutes}}/{{app_name}}；
+// 开源项目默认英文，管理台可按语言自定义覆盖）。
 func DefaultEmailTemplate(purpose EmailTemplatePurpose) EmailTemplate {
 	switch purpose {
 	case EmailTemplateRegisterCode:
 		return EmailTemplate{
 			Purpose:  EmailTemplateRegisterCode,
-			Subject:  "【{{app_name}}】注册验证码",
-			BodyText: "您的注册验证码是 {{code}}，有效期 {{ttl_minutes}} 分钟。如非本人操作请忽略。",
+			Subject:  "{{app_name}} verification code",
+			BodyText: "Your verification code is {{code}}. It expires in {{ttl_minutes}} minutes. If you did not request this, please ignore this email.",
 		}
 	case EmailTemplateResetCode:
 		return EmailTemplate{
 			Purpose:  EmailTemplateResetCode,
-			Subject:  "【{{app_name}}】重置密码验证码",
-			BodyText: "您的重置密码验证码是 {{code}}，有效期 {{ttl_minutes}} 分钟。如非本人操作请忽略。",
+			Subject:  "{{app_name}} password reset code",
+			BodyText: "Your password reset code is {{code}}. It expires in {{ttl_minutes}} minutes. If you did not request this, please ignore this email.",
 		}
 	default:
 		return EmailTemplate{
 			Purpose:  purpose,
-			Subject:  "【{{app_name}}】验证码",
-			BodyText: "您的验证码是 {{code}}，有效期 {{ttl_minutes}} 分钟。",
+			Subject:  "{{app_name}} verification code",
+			BodyText: "Your verification code is {{code}}. It expires in {{ttl_minutes}} minutes.",
 		}
 	}
 }
