@@ -610,7 +610,24 @@ type UsageLog struct {
 	BillingTier string // priority/flex/fast/auto；空 = 未计费路径
 	AboveHit    bool
 	Overdraft   bool
-	CreatedAt   time.Time
+	// Billed 扣费收敛标记（F2 ledger-cursor，spec 2026-08-23）：false=待对账
+	// 消费者扣减；true=扣费事务已完成（或出生吸收态——计费关闭/匿名行）。
+	// 出生标记由 proxy.routeLog 按 NOT BillingCapture OR UserID<=0 盖章；
+	// 翻转为 true 只发生在对账事务内（与 FEFO 扣减同事务原子）。
+	Billed     bool
+	CreatedAt  time.Time
+}
+
+// LedgerRow 计费游标消费行（usage_logs 未扣子集的瘦身投影；spec-f2-ledger-cursor
+// ABI-1 冻结契约）：FetchUnbilledBatch 返回、按 UserID 分组进 DeductOnlyAndMark。
+type LedgerRow struct {
+	ID          int64
+	UserID      int64
+	Cost        int64
+	Model       string
+	BillingTier string
+	CallCount   int64
+	Format      string
 }
 
 // StatBucket 小时统计桶（usage_stats 行；离线聚合 worker 的 INSERT 行形态）。
