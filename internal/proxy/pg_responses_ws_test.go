@@ -84,7 +84,7 @@ func TestResponsesWSBillingPG(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
 	}
-	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, noopLogStore{}, &BillingHooks{
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, repos.Usages, &BillingHooks{ // 单写点：proxy 内部 rec 直插真实 PG
 		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
 		Balances: bal,
 	})
@@ -104,7 +104,7 @@ func TestResponsesWSBillingPG(t *testing.T) {
 	// rec 排空（InsertBatch 落库）后断言 usage_logs 行。
 	// usage_logs 瘦身（分表设计）：status_code 已移除（错误审计归 err_logs）——
 	// 成功计费行 status 语义由 error_type=none 承载。
-	require.NoError(t, rec.Close(ctx))
+	require.NoError(t, p.rec.Close(ctx)) // F2 单写点：排空 proxy 内部 rec（pending 直插真实 PG）
 	var (
 		it, ot, tt, cr, cc, cost int64
 		format, et, model        string
@@ -168,7 +168,7 @@ func TestResponsesWSBillingTierPG(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
 	}
-	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, noopLogStore{}, &BillingHooks{
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, repos.Usages, &BillingHooks{ // 单写点：proxy 内部 rec 直插真实 PG
 		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
 		Balances: bal,
 	})
@@ -184,7 +184,7 @@ func TestResponsesWSBillingTierPG(t *testing.T) {
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
-	require.NoError(t, rec.Close(ctx))
+	require.NoError(t, p.rec.Close(ctx)) // F2 单写点：排空 proxy 内部 rec（pending 直插真实 PG）
 	var cost int64
 	var billingTier string
 	err = db.QueryRowContext(ctx, `SELECT cost, billing_tier
