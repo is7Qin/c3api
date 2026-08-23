@@ -363,8 +363,8 @@ type Service struct {
 	// usageSnapshots codex 额度快照数据源（*sdkbridge.Codex 满足；AccountUsage
 	// 调用——nil = 未装配（测试/单实例），AccountUsage 返回 nil 快照）。
 	usageSnapshots CodexUsageSnapshotter
-	mailEnqueue func(MailSendTask) error
-	log        *logx.Logger
+	mailEnqueue    func(MailSendTask) error
+	log            *logx.Logger
 }
 
 func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger) *Service {

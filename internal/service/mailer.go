@@ -5,8 +5,8 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"math/big"
@@ -98,8 +98,6 @@ func (s *Service) mailConfig() (host string, port int, username, password, fromA
 	}
 	return host, port64, s.settingValue("mail.smtp_username"), s.settingValue("mail.smtp_password"), fromAddr, s.settingValue("mail.tls"), true
 }
-
-
 
 // generateCode 生成 6 位数字验证码及其 sha256 hex。
 func generateCode() (plain string, shaHex string, err error) {

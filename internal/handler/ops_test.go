@@ -84,12 +84,12 @@ func TestGetOpsWorkersNoSnapshots(t *testing.T) {
 
 // emailStats 模拟 service.MailWorker Stats 的七字段形态（与 mailer_worker.go 的 mailStats 同构）。
 type emailStats struct {
-	Queued       int   `json:"queued"`
-	QueueCap     int   `json:"queue_cap"`
-	SentTotal    int64 `json:"sent_total"`
-	FailedTotal  int64 `json:"failed_total"`
-	RetryTotal   int64 `json:"retry_total"`
-	DroppedTotal int64 `json:"dropped_total"`
+	Queued       int    `json:"queued"`
+	QueueCap     int    `json:"queue_cap"`
+	SentTotal    int64  `json:"sent_total"`
+	FailedTotal  int64  `json:"failed_total"`
+	RetryTotal   int64  `json:"retry_total"`
+	DroppedTotal int64  `json:"dropped_total"`
 	LastError    string `json:"last_error"`
 }
 
