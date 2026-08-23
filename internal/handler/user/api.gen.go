@@ -62,6 +62,12 @@ const (
 	OpenaiSearch      RequestFormat = "openai-search"
 )
 
+// Defines values for StatTTFTSummarySource.
+const (
+	Exact  StatTTFTSummarySource = "exact"
+	Sketch StatTTFTSummarySource = "sketch"
+)
+
 // Defines values for UserRole.
 const (
 	UserRolePlatformAdmin UserRole = "platform_admin"
@@ -229,54 +235,43 @@ type RedemptionType string
 // RequestFormat defines model for RequestFormat.
 type RequestFormat string
 
-// StatBucket 统计桶（rewrite spec 2026-08-14 契约更新：Cost 毫分 → USD /1e5 破坏性变更；TotalLatencyMS 随列删除；TTFT pN 服务端直方图插值——直方图不可前端反算）
-type StatBucket struct {
-	AccountID           *int64     `json:"AccountID,omitempty"`
+// StatTTFTSummary defines model for StatTTFTSummary.
+type StatTTFTSummary struct {
+	AvgMS  float64               `json:"AvgMS"`
+	Count  int64                 `json:"Count"`
+	MaxMS  int64                 `json:"MaxMS"`
+	P50MS  int64                 `json:"P50MS"`
+	P95MS  int64                 `json:"P95MS"`
+	P99MS  int64                 `json:"P99MS"`
+	Source StatTTFTSummarySource `json:"Source"`
+}
+
+// StatTTFTSummarySource defines model for StatTTFTSummary.Source.
+type StatTTFTSummarySource string
+
+// StatTrendPoint defines model for StatTrendPoint.
+type StatTrendPoint struct {
 	BucketTime          *time.Time `json:"BucketTime,omitempty"`
 	CacheCreationTokens *int64     `json:"CacheCreationTokens,omitempty"`
 	CacheReadTokens     *int64     `json:"CacheReadTokens,omitempty"`
+	CallCount           *int64     `json:"CallCount,omitempty"`
 
-	// CallCount 按次调用：图片生成张数、search 次数（不入 TotalTokens）
-	CallCount *int64 `json:"CallCount,omitempty"`
-
-	// Cost 成本 USD（毫分 /1e5，与价格 API/overview 口径一致；破坏性变更）
+	// Cost 成本 USD（毫分 /1e5）
 	Cost         *float64 `json:"Cost,omitempty"`
 	ErrorCount   *int64   `json:"ErrorCount,omitempty"`
-	GroupID      *int64   `json:"GroupID,omitempty"`
 	InputTokens  *int64   `json:"InputTokens,omitempty"`
-	IsError      *bool    `json:"IsError,omitempty"`
-	Model        *string  `json:"Model,omitempty"`
 	OutputTokens *int64   `json:"OutputTokens,omitempty"`
+
+	// RawCost 原始成本 USD（毫分 /1e5）
+	RawCost      *float64 `json:"RawCost,omitempty"`
 	RequestCount *int64   `json:"RequestCount,omitempty"`
 
-	// TTFTAvgMS 首 token 平均毫秒（sum/count，无样本 = 0）
+	// TTFTAvgMS TTFT 平均毫秒（TTFTTotalMS/TTFTCount，无样本 0）
 	TTFTAvgMS *float64 `json:"TTFTAvgMS,omitempty"`
 
-	// TTFTCount 首 token 样本数（pN/加权 avg 分母——前端跨行合并必需）
-	TTFTCount *int64 `json:"TTFTCount,omitempty"`
-
-	// TTFTMaxMS 首 token 最大毫秒（无样本 = 0）
-	TTFTMaxMS *int64 `json:"TTFTMaxMS,omitempty"`
-
-	// TTFTP50MS 首 token 分位毫秒（直方图插值 nearest-rank + 桶内线性插值；顶桶 12800+ 回落 12800；无样本 = 0）
-	TTFTP50MS *int64 `json:"TTFTP50MS,omitempty"`
-
-	// TTFTP90MS 同 TTFTP50MS（p90）
-	TTFTP90MS *int64 `json:"TTFTP90MS,omitempty"`
-
-	// TTFTP95MS 同 TTFTP50MS（p95）
-	TTFTP95MS *int64 `json:"TTFTP95MS,omitempty"`
-
-	// TTFTP99MS 同 TTFTP50MS（p99）
-	TTFTP99MS   *int64 `json:"TTFTP99MS,omitempty"`
-	TemplateID  *int64 `json:"TemplateID,omitempty"`
+	// TTFTMaxMS TTFT 最大毫秒
+	TTFTMaxMS   *int64 `json:"TTFTMaxMS,omitempty"`
 	TotalTokens *int64 `json:"TotalTokens,omitempty"`
-
-	// UserID 鉴权归属用户；0 = 无
-	UserID *int64 `json:"UserID,omitempty"`
-
-	// RawCostUsd 原始成本 USD（毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值）
-	RawCostUsd *float64 `json:"raw_cost_usd,omitempty"`
 }
 
 // TempBalanceRow defines model for TempBalanceRow.
@@ -485,17 +480,21 @@ type GetUserRedemptionsParamsOrder string
 
 // GetUserStatsParams defines parameters for GetUserStats.
 type GetUserStatsParams struct {
-	From        *time.Time                     `form:"from,omitempty" json:"from,omitempty"`
-	To          *time.Time                     `form:"to,omitempty" json:"to,omitempty"`
+	From        time.Time                      `form:"from" json:"from"`
+	To          time.Time                      `form:"to" json:"to"`
 	Granularity *GetUserStatsParamsGranularity `form:"granularity,omitempty" json:"granularity,omitempty"`
-	GroupId     *int64                         `form:"group_id,omitempty" json:"group_id,omitempty"`
-	AccountId   *int64                         `form:"account_id,omitempty" json:"account_id,omitempty"`
-	TemplateId  *int64                         `form:"template_id,omitempty" json:"template_id,omitempty"`
 	Model       *string                        `form:"model,omitempty" json:"model,omitempty"`
 }
 
 // GetUserStatsParamsGranularity defines parameters for GetUserStats.
 type GetUserStatsParamsGranularity string
+
+// GetUserStatsTTFTParams defines parameters for GetUserStatsTTFT.
+type GetUserStatsTTFTParams struct {
+	From  time.Time `form:"from" json:"from"`
+	To    time.Time `form:"to" json:"to"`
+	Model *string   `form:"model,omitempty" json:"model,omitempty"`
+}
 
 // GetUserUsageLogsParams defines parameters for GetUserUsageLogs.
 type GetUserUsageLogsParams struct {
@@ -575,6 +574,9 @@ type ServerInterface interface {
 	// 我的用量统计（强制 user_id = 当前用户）
 	// (GET /api/user/stats)
 	GetUserStats(w http.ResponseWriter, r *http.Request, params GetUserStatsParams)
+	// 我的 TTFT 聚合（强制 user_id = 当前用户）
+	// (GET /api/user/stats/ttft)
+	GetUserStatsTTFT(w http.ResponseWriter, r *http.Request, params GetUserStatsTTFTParams)
 	// 我的临时额度（仅有效额度：未过期且正余额，用尽/过期隐藏；expires_at 升序 FEFO 同序、永久最后；强制 user_id = 当前用户，无 user_id 参数防越权）
 	// (GET /api/user/temp-balances)
 	GetUserTempBalances(w http.ResponseWriter, r *http.Request)
@@ -674,6 +676,12 @@ func (_ Unimplemented) PostUserRedemptions(w http.ResponseWriter, r *http.Reques
 // 我的用量统计（强制 user_id = 当前用户）
 // (GET /api/user/stats)
 func (_ Unimplemented) GetUserStats(w http.ResponseWriter, r *http.Request, params GetUserStatsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 我的 TTFT 聚合（强制 user_id = 当前用户）
+// (GET /api/user/stats/ttft)
+func (_ Unimplemented) GetUserStatsTTFT(w http.ResponseWriter, r *http.Request, params GetUserStatsTTFTParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1127,17 +1135,31 @@ func (siw *ServerInterfaceWrapper) GetUserStats(w http.ResponseWriter, r *http.R
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetUserStatsParams
 
-	// ------------- Optional query parameter "from" -------------
+	// ------------- Required query parameter "from" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
+	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
 		return
 	}
 
-	// ------------- Optional query parameter "to" -------------
+	// ------------- Required query parameter "to" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
+	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
 		return
@@ -1151,27 +1173,60 @@ func (siw *ServerInterfaceWrapper) GetUserStats(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// ------------- Optional query parameter "group_id" -------------
+	// ------------- Optional query parameter "model" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "group_id", r.URL.Query(), &params.GroupId)
+	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
 		return
 	}
 
-	// ------------- Optional query parameter "account_id" -------------
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserStats(w, r, params)
+	}))
 
-	err = runtime.BindQueryParameter("form", true, false, "account_id", r.URL.Query(), &params.AccountId)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "account_id", Err: err})
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUserStatsTTFT operation middleware
+func (siw *ServerInterfaceWrapper) GetUserStatsTTFT(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUserStatsTTFTParams
+
+	// ------------- Required query parameter "from" -------------
+
+	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
 		return
 	}
 
-	// ------------- Optional query parameter "template_id" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "template_id", r.URL.Query(), &params.TemplateId)
+	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "template_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "to" -------------
+
+	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
 		return
 	}
 
@@ -1184,7 +1239,7 @@ func (siw *ServerInterfaceWrapper) GetUserStats(w http.ResponseWriter, r *http.R
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetUserStats(w, r, params)
+		siw.Handler.GetUserStatsTTFT(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1470,6 +1525,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/stats", wrapper.GetUserStats)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/stats/ttft", wrapper.GetUserStatsTTFT)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/temp-balances", wrapper.GetUserTempBalances)

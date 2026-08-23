@@ -34,9 +34,10 @@ type fakeStore struct {
 	users      map[int64]*domain.User
 	settings   map[string]*domain.Setting
 	rules      map[int64]domain.Rule
-	logs       []*domain.UsageLog
-	stats      []*domain.StatBucket
-	assign     map[int64][]int64 // groupID → 授予 user_id 列表（group_assignments 模拟）
+	logs        []*domain.UsageLog
+	stats       []*domain.StatBucket
+	entityStats []*domain.EntityStatBucket
+	assign      map[int64][]int64 // groupID → 授予 user_id 列表（group_assignments 模拟）
 	assignMult map[[2]int64]*int // (groupID, userID) → 专属价格倍率（nil = 未设置；T3.5 按组）
 	codes      map[int64]*domain.RedemptionCode
 	uses       map[int64]*domain.RedemptionUse
@@ -695,20 +696,221 @@ func (f *fakeStore) UpdateGroupsBatch(ctx context.Context, ids []int64, p reposi
 	return nil
 }
 
-// ScanStats 模拟 repo 过滤：user_id > 0 时强制过滤（/api/user/stats 防越权测试
-// 依赖此语义）。
-func (f *fakeStore) ScanStats(ctx context.Context, q repository.StatQuery) ([]*domain.StatBucket, error) {
+func (f *fakeStore) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string) ([]*domain.StatBucket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []*domain.StatBucket
+	m := map[time.Time]*domain.StatBucket{}
 	for _, b := range f.stats {
-		if q.UserID > 0 && b.UserID != q.UserID {
+		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
 			continue
 		}
-		c := *b
+		if groupID > 0 && b.GroupID != groupID {
+			continue
+		}
+		if model != "" && b.Model != model {
+			continue
+		}
+		var bt time.Time
+		if unit == "hour" {
+			bt = b.BucketTime.Truncate(time.Hour)
+		} else {
+			bt = b.BucketTime.UTC().Truncate(24 * time.Hour)
+		}
+		v, ok := m[bt]
+		if !ok {
+			v = &domain.StatBucket{BucketTime: bt, Model: b.Model, GroupID: b.GroupID}
+			if unit == "day" {
+				v.Model = model
+				if model == "" {
+					v.Model = ""
+				}
+			}
+			m[bt] = v
+		}
+		v.RequestCount += b.RequestCount
+		v.ErrorCount += b.ErrorCount
+		v.CallCount += b.CallCount
+		v.InputTokens += b.InputTokens
+		v.OutputTokens += b.OutputTokens
+		v.TotalTokens += b.TotalTokens
+		v.CacheReadTokens += b.CacheReadTokens
+		v.CacheCreationTokens += b.CacheCreationTokens
+		v.Cost += b.Cost
+		v.RawCost += b.RawCost
+		v.TTFTTotalMS += b.TTFTTotalMS
+		v.TTFTCount += b.TTFTCount
+		if b.TTFTMaxMS > v.TTFTMaxMS {
+			v.TTFTMaxMS = b.TTFTMaxMS
+		}
+	}
+	out := make([]*domain.StatBucket, 0, len(m))
+	for _, v := range m {
+		c := *v
 		out = append(out, &c)
 	}
+	slices.SortFunc(out, func(a, b *domain.StatBucket) int { return a.BucketTime.Compare(b.BucketTime) })
 	return out, nil
+}
+
+func (f *fakeStore) StatsTop(ctx context.Context, from, to time.Time, entityType string, by string, limit int) ([]*domain.EntityStatBucket, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	agg := map[int64]*domain.EntityStatBucket{}
+	for _, b := range f.entityStats {
+		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
+			continue
+		}
+		if b.EntityType != entityType {
+			continue
+		}
+		v, ok := agg[b.EntityID]
+		if !ok {
+			v = &domain.EntityStatBucket{EntityType: entityType, EntityID: b.EntityID, Model: ""}
+			agg[b.EntityID] = v
+		}
+		v.RequestCount += b.RequestCount
+		v.ErrorCount += b.ErrorCount
+		v.CallCount += b.CallCount
+		v.InputTokens += b.InputTokens
+		v.OutputTokens += b.OutputTokens
+		v.TotalTokens += b.TotalTokens
+		v.CacheReadTokens += b.CacheReadTokens
+		v.CacheCreationTokens += b.CacheCreationTokens
+		v.Cost += b.Cost
+		v.RawCost += b.RawCost
+		v.TTFTTotalMS += b.TTFTTotalMS
+		v.TTFTCount += b.TTFTCount
+		if b.TTFTMaxMS > v.TTFTMaxMS {
+			v.TTFTMaxMS = b.TTFTMaxMS
+		}
+	}
+	out := make([]*domain.EntityStatBucket, 0, len(agg))
+	for _, v := range agg {
+		c := *v
+		out = append(out, &c)
+	}
+	slices.SortFunc(out, func(a, b *domain.EntityStatBucket) int {
+		var va, vb int64
+		switch by {
+		case "cost":
+			va, vb = a.Cost, b.Cost
+		case "requests":
+			va, vb = a.RequestCount, b.RequestCount
+		case "tokens":
+			va, vb = a.TotalTokens, b.TotalTokens
+		default:
+			va, vb = a.Cost, b.Cost
+		}
+		if va != vb {
+			return cmp.Compare(vb, va)
+		}
+		return cmp.Compare(a.EntityID, b.EntityID)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (f *fakeStore) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string) ([]*domain.EntityStatBucket, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m := map[time.Time]*domain.EntityStatBucket{}
+	for _, b := range f.entityStats {
+		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
+			continue
+		}
+		if b.EntityType != entityType || b.EntityID != entityID {
+			continue
+		}
+		if model != "" && b.Model != model {
+			continue
+		}
+		var bt time.Time
+		if unit == "hour" {
+			bt = b.BucketTime.Truncate(time.Hour)
+		} else {
+			bt = b.BucketTime.UTC().Truncate(24 * time.Hour)
+		}
+		v, ok := m[bt]
+		if !ok {
+			v = &domain.EntityStatBucket{BucketTime: bt, EntityType: entityType, EntityID: entityID, Model: b.Model}
+			m[bt] = v
+		}
+		v.RequestCount += b.RequestCount
+		v.ErrorCount += b.ErrorCount
+		v.CallCount += b.CallCount
+		v.InputTokens += b.InputTokens
+		v.OutputTokens += b.OutputTokens
+		v.TotalTokens += b.TotalTokens
+		v.CacheReadTokens += b.CacheReadTokens
+		v.CacheCreationTokens += b.CacheCreationTokens
+		v.Cost += b.Cost
+		v.RawCost += b.RawCost
+		v.TTFTTotalMS += b.TTFTTotalMS
+		v.TTFTCount += b.TTFTCount
+		if b.TTFTMaxMS > v.TTFTMaxMS {
+			v.TTFTMaxMS = b.TTFTMaxMS
+		}
+	}
+	out := make([]*domain.EntityStatBucket, 0, len(m))
+	for _, v := range m {
+		c := *v
+		out = append(out, &c)
+	}
+	slices.SortFunc(out, func(a, b *domain.EntityStatBucket) int { return a.BucketTime.Compare(b.BucketTime) })
+	return out, nil
+}
+
+func (f *fakeStore) StatsTTFTSketch(ctx context.Context, from, to time.Time, model string) (*domain.TTFTSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var total, count, maxMS int64
+	for _, b := range f.stats {
+		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
+			continue
+		}
+		if model != "" && b.Model != model {
+			continue
+		}
+		total += b.TTFTTotalMS
+		count += b.TTFTCount
+		if b.TTFTMaxMS > maxMS {
+			maxMS = b.TTFTMaxMS
+		}
+	}
+	avg := int64(0)
+	if count > 0 {
+		avg = (total + count/2) / count
+	}
+	return &domain.TTFTSummary{Count: count, AvgMS: avg, MaxMS: maxMS, Source: "sketch"}, nil
+}
+
+func (f *fakeStore) StatsTTFTExact(ctx context.Context, from, to time.Time, entityType string, entityID int64, model string) (*domain.TTFTSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var total, count, maxMS int64
+	for _, b := range f.entityStats {
+		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
+			continue
+		}
+		if b.EntityType != entityType || b.EntityID != entityID {
+			continue
+		}
+		if model != "" && b.Model != model {
+			continue
+		}
+		total += b.TTFTTotalMS
+		count += b.TTFTCount
+		if b.TTFTMaxMS > maxMS {
+			maxMS = b.TTFTMaxMS
+		}
+	}
+	avg := int64(0)
+	if count > 0 {
+		avg = (total + count/2) / count
+	}
+	return &domain.TTFTSummary{Count: count, AvgMS: avg, MaxMS: maxMS, Source: "exact"}, nil
 }
 
 // --- /api/admin/overview 聚合面（与真实 StatRepo 同语义：区间 + 组过滤；毫分原样） ---

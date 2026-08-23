@@ -8,7 +8,6 @@ import (
 	"math"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
 )
 
@@ -201,42 +200,62 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	return rule.UnifiedMessage(then, upstream)
 }
 
-// toAPIStatBucket 统计桶领域对象 → 契约类型（/api/user/stats；rewrite spec
-// 2026-08-14 端点重写：Cost 毫分 → USD（/1e5，与 /admin 同口径——本包
-// 兑换码换算同款系数）；TTFT 六指标在 convert 边界算定——avg = sum/count
-// （无样本 0）、pN = 直方图插值（复用 repository.TTFTPercentileMS，与
-// overview /api/admin/stats 同一实现）。
-// 毫秒值输出前 math.Round 收敛整数（用户裁决 2026-08-14：除法/插值裸浮点
-// 直出 → 前端显示 335.12241653418124；毫秒语义整数即可，契约 number 不变）。
-func toAPIStatBucket(b *domain.StatBucket) StatBucket {
-	var ttftAvg float64
+func toAPIStatTrendPoint(b *domain.StatBucket) StatTrendPoint {
+	var avg float64
 	if b.TTFTCount > 0 {
-		ttftAvg = math.Round(float64(b.TTFTTotalMS) / float64(b.TTFTCount))
+		avg = math.Round(float64(b.TTFTTotalMS) / float64(b.TTFTCount))
 	}
-	return StatBucket{
+	return StatTrendPoint{
 		BucketTime:          &b.BucketTime,
-		GroupID:             &b.GroupID,
-		AccountID:           &b.AccountID,
-		TemplateID:          &b.TemplateID,
-		UserID:              &b.UserID,
-		Model:               &b.Model,
-		IsError:             &b.IsError,
 		RequestCount:        &b.RequestCount,
 		ErrorCount:          &b.ErrorCount,
+		CallCount:           &b.CallCount,
 		InputTokens:         &b.InputTokens,
 		OutputTokens:        &b.OutputTokens,
 		TotalTokens:         &b.TotalTokens,
 		CacheReadTokens:     &b.CacheReadTokens,
 		CacheCreationTokens: &b.CacheCreationTokens,
 		Cost:                ptr(float64(b.Cost) / 1e5),
-		RawCostUsd:          ptr(float64(b.RawCost) / 1e5),
-		CallCount:           &b.CallCount,
-		TTFTCount:           &b.TTFTCount,
-		TTFTAvgMS:           ptr(ttftAvg),
+		RawCost:             ptr(float64(b.RawCost) / 1e5),
+		TTFTAvgMS:           ptr(avg),
 		TTFTMaxMS:           &b.TTFTMaxMS,
-		TTFTP50MS:           ptr(repository.TTFTPercentileMS(b.TTFTHist, b.TTFTCount, 0.50)),
-		TTFTP90MS:           ptr(repository.TTFTPercentileMS(b.TTFTHist, b.TTFTCount, 0.90)),
-		TTFTP95MS:           ptr(repository.TTFTPercentileMS(b.TTFTHist, b.TTFTCount, 0.95)),
-		TTFTP99MS:           ptr(repository.TTFTPercentileMS(b.TTFTHist, b.TTFTCount, 0.99)),
+	}
+}
+
+func toAPIEntityStatTrendPoint(b *domain.EntityStatBucket) StatTrendPoint {
+	var avg float64
+	if b.TTFTCount > 0 {
+		avg = math.Round(float64(b.TTFTTotalMS) / float64(b.TTFTCount))
+	}
+	return StatTrendPoint{
+		BucketTime:          &b.BucketTime,
+		RequestCount:        &b.RequestCount,
+		ErrorCount:          &b.ErrorCount,
+		CallCount:           &b.CallCount,
+		InputTokens:         &b.InputTokens,
+		OutputTokens:        &b.OutputTokens,
+		TotalTokens:         &b.TotalTokens,
+		CacheReadTokens:     &b.CacheReadTokens,
+		CacheCreationTokens: &b.CacheCreationTokens,
+		Cost:                ptr(float64(b.Cost) / 1e5),
+		RawCost:             ptr(float64(b.RawCost) / 1e5),
+		TTFTAvgMS:           ptr(avg),
+		TTFTMaxMS:           &b.TTFTMaxMS,
+	}
+}
+
+func toAPIStatTTFTSummary(s *domain.TTFTSummary) StatTTFTSummary {
+	if s == nil {
+		s = &domain.TTFTSummary{Source: "sketch"}
+	}
+	src := StatTTFTSummarySource(s.Source)
+	return StatTTFTSummary{
+		Count:  s.Count,
+		AvgMS:  float64(s.AvgMS),
+		P50MS:  s.P50MS,
+		P95MS:  s.P95MS,
+		P99MS:  s.P99MS,
+		MaxMS:  s.MaxMS,
+		Source: src,
 	}
 }

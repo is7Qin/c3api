@@ -11,7 +11,6 @@ import (
 	"strconv"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -374,45 +373,6 @@ func toAPIErrLog(l *domain.UsageLog) ErrLog {
 		e.BillingTier = &l.BillingTier
 	}
 	return e
-}
-
-// toAPIStatBucket 统计桶领域对象 → 契约类型（rewrite spec 2026-08-14 端点重写：
-// Cost 毫分 → USD（/1e5，对齐 overview 先例 millisToUSD——内部层毫分不动）；
-// TTFT 六指标在 convert 边界算定——avg = sum/count（无样本 0）、pN = 直方图
-// 插值（复用 repository.TTFTPercentileMS，与 overview 同一实现）。
-// 毫秒值输出前 math.Round 收敛整数（用户裁决 2026-08-14：除法/插值裸浮点
-// 直出 → 前端显示 335.12241653418124；毫秒语义整数即可，契约 number 不变）。
-func toAPIStatBucket(b *domain.StatBucket) StatBucket {
-	var ttftAvg float64
-	if b.TTFTCount > 0 {
-		ttftAvg = math.Round(float64(b.TTFTTotalMS) / float64(b.TTFTCount))
-	}
-	return StatBucket{
-		BucketTime:          &b.BucketTime,
-		GroupID:             &b.GroupID,
-		AccountID:           &b.AccountID,
-		TemplateID:          &b.TemplateID,
-		UserID:              &b.UserID,
-		Model:               &b.Model,
-		IsError:             &b.IsError,
-		RequestCount:        &b.RequestCount,
-		ErrorCount:          &b.ErrorCount,
-		InputTokens:         &b.InputTokens,
-		OutputTokens:        &b.OutputTokens,
-		TotalTokens:         &b.TotalTokens,
-		CacheReadTokens:     &b.CacheReadTokens,
-		CacheCreationTokens: &b.CacheCreationTokens,
-		Cost:                ptr(millisToUSD(b.Cost)),
-		RawCostUsd:          ptr(millisToUSD(b.RawCost)),
-		CallCount:           &b.CallCount,
-		TTFTCount:           &b.TTFTCount,
-		TTFTAvgMS:           ptr(ttftAvg),
-		TTFTMaxMS:           &b.TTFTMaxMS,
-		TTFTP50MS:           ptr(repository.TTFTPercentileMS(b.TTFTHist, b.TTFTCount, 0.50)),
-		TTFTP90MS:           ptr(repository.TTFTPercentileMS(b.TTFTHist, b.TTFTCount, 0.90)),
-		TTFTP95MS:           ptr(repository.TTFTPercentileMS(b.TTFTHist, b.TTFTCount, 0.95)),
-		TTFTP99MS:           ptr(repository.TTFTPercentileMS(b.TTFTHist, b.TTFTCount, 0.99)),
-	}
 }
 
 // toAPISetting 设置领域对象 → 契约类型。

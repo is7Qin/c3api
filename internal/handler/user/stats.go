@@ -6,34 +6,13 @@ package user
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/is7qin/c3api/internal/handler/httpface"
-	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/service"
 )
 
-// GetUserStats 我的用量统计（强制 user_id = 当前用户；from/to 缺省
-// now-24h..now，granularity 非法值回落 day，ServerInterface）。
+// GetUserStats 我的用量统计（强制 user_id = 当前用户；granularity 缺省 day）。
 func (h *UserAPI) GetUserStats(w http.ResponseWriter, r *http.Request, params GetUserStatsParams) {
-	sq := repository.StatQuery{From: time.Now().Add(-24 * time.Hour), To: time.Now(), UserID: currentUserID(r)}
-	if params.From != nil {
-		sq.From = *params.From
-	}
-	if params.To != nil {
-		sq.To = *params.To
-	}
-	if params.GroupId != nil {
-		sq.GroupID = *params.GroupId
-	}
-	if params.AccountId != nil {
-		sq.AccountID = *params.AccountId
-	}
-	if params.TemplateId != nil {
-		sq.TemplateID = *params.TemplateId
-	}
-	if params.Model != nil {
-		sq.Model = *params.Model
-	}
 	granularity := "day"
 	if params.Granularity != nil {
 		granularity = string(*params.Granularity)
@@ -41,14 +20,39 @@ func (h *UserAPI) GetUserStats(w http.ResponseWriter, r *http.Request, params Ge
 			granularity = "day"
 		}
 	}
-	rows, err := h.svc.QueryStats(r.Context(), sq, granularity)
+	q := service.EntityTrendQuery{
+		From:        params.From,
+		To:          params.To,
+		Granularity: granularity,
+	}
+	if params.Model != nil {
+		q.Model = *params.Model
+	}
+	rows, err := h.svc.UserStats(r.Context(), currentUserID(r), q)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	out := make([]StatBucket, 0, len(rows))
+	out := make([]StatTrendPoint, 0, len(rows))
 	for _, b := range rows {
-		out = append(out, toAPIStatBucket(b))
+		out = append(out, toAPIEntityStatTrendPoint(b))
 	}
 	httpface.WriteJSON(w, http.StatusOK, out)
+}
+
+// GetUserStatsTTFT 我的 TTFT 聚合（强制 user_id = 当前用户）。
+func (h *UserAPI) GetUserStatsTTFT(w http.ResponseWriter, r *http.Request, params GetUserStatsTTFTParams) {
+	q := service.TTFTQuery{
+		From: params.From,
+		To:   params.To,
+	}
+	if params.Model != nil {
+		q.Model = *params.Model
+	}
+	sum, err := h.svc.UserStatsTTFT(r.Context(), currentUserID(r), q)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, toAPIStatTTFTSummary(sum))
 }

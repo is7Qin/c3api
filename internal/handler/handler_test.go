@@ -112,8 +112,11 @@ func TestAdminFlow(t *testing.T) {
 	rec = do(http.MethodPost, "/api/admin/groups/"+itoa(groupResp.ID)+"/rotate-key", "")
 	require.Equal(t, 404, rec.Code, "rotate-key 端点已删除: %s", rec.Body.String())
 
-	rec = do(http.MethodGet, "/api/admin/stats?granularity=day", "")
-	require.Equal(t, 200, rec.Code, "stats: %s", rec.Body.String())
+	now := time.Now().UTC()
+	from := now.Add(-time.Hour).Format(time.RFC3339)
+	to := now.Format(time.RFC3339)
+	rec = do(http.MethodGet, "/api/admin/stats/trend?from="+from+"&to="+to+"&granularity=day", "")
+	require.Equal(t, 200, rec.Code, "stats trend: %s", rec.Body.String())
 
 	// 未认证 → 401
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/templates", nil)
