@@ -1983,19 +1983,6 @@ func (f *fakeStore) DeactivateCodes(ctx context.Context, ids []int64) (int64, er
 	return n, nil
 }
 
-// --- 模型价格（PricingStore，Phase 5 计费价格来源） ---
-
-// UpsertFromLiteLLM 模拟批量 upsert + manual 行级互斥：已存在 manual 行 →
-// 不覆盖（不计入更新数）；其余插入/更新（source 恒 litellm）。返回更新数。
-
-// UpsertManual 模拟手动设价（可接管 litellm 行；返回副本）。可选字段
-// （cache 价 + 矩阵 22 列）：nil = 不设价（NULL 语义）；非 nil = 设价。
-
-// ListFunctionPrice 模拟列表：source/provider/model 筛选 + sort 白名单
-// （model/updated_at）+ 分页（sort 非法 → ErrInvalidSort，对齐真实 repo）。
-
-// GetFunctionPrice 模拟按 model 取行（缺失 → repository.ErrNotFound）。
-
 // --- 邮件模板 / 验证码 fake（email service） ---
 
 func emailCodeKey(email, purpose string) string { return email + "|" + purpose }

@@ -161,9 +161,11 @@ func CallCostFromResolved(rp domain.ResolvedPrices, count int64) int64 {
 	if rp.PricePerCall == nil {
 		return 0
 	}
-	p := *rp.PricePerCall
-	if count > imageTotalCap/p {
-		count = imageTotalCap / p
+	if p := *rp.PricePerCall; p > 0 {
+		if count > imageTotalCap/p {
+			count = imageTotalCap / p
+		}
+		return count * p
 	}
-	return count * p
+	return 0
 }

@@ -1036,170 +1036,69 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 ## 模型价格 Model Pricing
 
-模型计费价格表（`pricing` 表）：每行一个模型，价格内部以**毫分/1M tokens** 整数存储（1 USD = 100,000 毫分），**API 边界一律以 USD/1M 正常值（float64）收发**——与 balance 毫分↔USD 同构：输入 `math.Round(usd × 1e5)` 存毫分、输出 `millis / 1e5` 回显。价格来源分两路，**行级互斥**：
+模型计费价格表（`price_entries` + `price_variants` 双表）：`price_entries` 每模型一行，`mode` 声明主计费方式（`token`/`call`/`image`），但价格分量跨模式可选配——token 行可携带 image/call 分量治 resp 图片旁路归零盲区；`price_variants` 条件变体首中即停（seq 升序，条件 AND 组合，效果为万分数整单倍率或绝对覆盖）。价格内部以**毫分**整数存储（1 USD = 100,000 毫分），**API 边界一律以 USD 正常值（float64）收发**——与 balance 同构：token 价内部 `math.Round(usd*1e11)`（USD/token ×1e6×1e5）/ 展示 `millis/1e5` per 1M tokens，image 每张/次价 `math.Round(usd*1e5)`；入参 `≥0`（负数 → 400），`nil` = 无该分量（回退）。
 
-- `litellm`：从 litellm 官方价格表拉取（`price_source_url` 配置的 JSON，默认 GitHub raw `model_prices_and_context_window.json`）。启动时异步拉取一次 + `price_sync_cron` 定时（默认 `0 3 * * *`，cron 表达式）。拉取为批量 upsert，**永不覆盖已存在的手动价**（`ON CONFLICT (model) DO UPDATE ... WHERE source != 'manual'`）。
-- `manual`：管理端手动设价（PUT），**优先级最高**——upsert 强制 `source=manual`，可直接接管已存在的 litellm 行。
+价格来源分两路，**行级互斥**：
 
-**单位换算**：1 USD = 100,000 毫分（10⁻⁵ USD 精度）。litellm 价格为 per-token USD，换算公式 `× 1e6 tokens × 1e5 毫分 = × 1e11`，四舍五入取整。PUT 请求体中 `prompt_price_per_million` / `completion_price_per_million` / `cache_read_price_per_million` / `cache_creation_price_per_million` 均为 USD/1M tokens 正常值（**≥ 0**，内部 `math.Round(x × 1e5)` 存毫分）。例如 `2.5e-6` USD/token → `250000` 毫分/1M = **API 显示 `2.5`**（=$2.5/1M tokens）。
+- `litellm`：从 litellm 官方价格表拉取（`price_source_url` 配置的 JSON，默认 GitHub raw `model_prices_and_context_window.json`）。启动时异步拉取一次 + `price_sync_cron` 定时（默认 `0 3 * * *`）。批量 upsert，**永不覆盖已存在的手动价**（`ON CONFLICT (model) DO UPDATE ... WHERE source != 'manual'`；变体同步同理跳过手动模型的变体）。
+- `manual`：管理端手动设价（PUT），**优先级最高**——upsert 强制 `source=manual`，可直接接管已存在的 litellm 行；手动变体由管理端全量替换（PUT variants）。
 
-**缓存价语义**：`cache_read` / `cache_creation` 对应 litellm 的 `cache_read_input_token_cost` / `cache_creation_input_token_cost`（OpenAI 系缓存命中按 read 价替换计价；Anthropic 系缓存独立计价，见 Phase 5 计费公式）。`nil` = 无缓存价（OpenAI 常规模型无 cache_creation 价，写缓存不计费）。litellm 行 0 → 落库 `nil`；manual 显式设 0 → 落库 0。
+**mode 与分量校验（PUT /prices/entry）**：`mode=token` ⇒ `input_per_m` + `output_per_m` 必填；`mode=call` ⇒ `price_per_call` 必填；`mode=image` ⇒ image 三分量至少其一；其余分量可选配。`max_input_tokens` / `max_output_tokens` / `supports_prompt_caching` 为 litellm 元数据（仅 litellm 行携带，manual 行 `nil`；查询与计费无关，信息保留在 `raw` JSONB）。
 
-**价格矩阵（Phase 5，22 列）**：除 4 个基础价外，每行还可设置 service_tier 单价替换档与上下文分段价——API 全部 USD/1M 正常值（`number`，内部毫分）、`nil` = 无该档价（计费回退）。**挡位归属（定稿）**：Priority*/Flex* 各 4 列 = **OpenAI 专属**（gpt-5 系列 priority 价、gpt-5.6-sol flex 价）；FastMultiplier = **Anthropic 专属**（claude 系列 Fast Mode 整单倍率）；基础 4 价与 above 三组 12 价通用：
+**变体语义**：条件全可空=通配，多条件 AND；首条命中即停（按 seq 升序）。效果至少其一非空：`mult_bp` 万分数整单乘数（0~100000，0=免费，100000=×10），`set_input_per_m`/`set_output_per_m` 绝对覆盖（仅 input/output 受覆盖；cache 分量只受 mult_bp 影响）。DB 侧 `CHECK(mult_bp IS NOT NULL OR set_input_per_m IS NOT NULL OR set_output_per_m IS NOT NULL)` 防御空效果行。
 
-| 列组 | 字段（API 大写下发 / 请求体 snake_case） | 语义 |
-|---|---|---|
-| priority 档（4） | `PriorityPromptPricePerMillion` / `PriorityCompletionPricePerMillion` / `PriorityCacheReadPricePerMillion` / `PriorityCacheCreationPricePerMillion` | 请求 `service_tier=priority` 时的单价替换档；缺失回退基础价。**OpenAI 专属**（gpt-5 系列 priority 价） |
-| flex 档（4） | `Flex*PricePerMillion`（同上 4 列） | 请求 `service_tier=flex` 时的单价替换档；缺失回退基础价。**OpenAI 专属**（gpt-5.6-sol flex 价） |
-| 分段阈值 | `AboveThreshold` | 上下文分段阈值（**tokens，integer**）；`nil` = 无分段。litellm 行由 `*_above_<N>k_tokens` 精确 key 动态提取（阈值 = N×1000），未来新档自动跟随 |
-| above 基础组（4） | `AbovePromptPricePerMillion` 等 4 列 | 任一分量 `tokens > threshold` 时超量部分按 above 价计价（该分量 above 缺失 → 该分量不拆段）。通用 |
-| above priority 组（4） | `AbovePriority*PricePerMillion`（azure 形态 `_above_<N>k_tokens_priority`） | priority 请求的分段价；缺失回退 above 基础组。**OpenAI 专属** |
-| above flex 组（4） | `AboveFlex*PricePerMillion`（gpt-5.6-sol 形态 `_above_<N>k_tokens_flex`） | flex 请求的分段价；缺失回退 above 基础组。**OpenAI 专属** |
-| fast 倍率 | `FastMultiplier` | **Anthropic 专属**：claude 系列 Fast Mode **整单倍率**（API 正常值 `2.0` = ×2.0，`0 < m ≤ 10`，内部万分数 ×1e4 round；`nil` = 无倍率）。源自 litellm `provider_specific_entry.fast`（opus-4-6/4-7 6.0 → 内部 60000） |
-
-**分段计费规则**：单价组合优先 `above+tier > above > tier > 基础`（above 按请求 tier 选组：priority → above_priority ?? above；flex → above_flex ?? above；auto/fast → above）；无价 → 基础价（不涨价）。`tokens > threshold` 才拆段（`==` 不拆）：`within = min(t, thr) × 档内价 + excess × above 价`。fast 请求且表有 `FastMultiplier` → 整单 `×(万分数/10000)`（API 正常值 × 倍率值本身）。litellm 行矩阵从 raw 提取（含 above 干扰键排除：character/audio 阶梯、`above_1hr` 缓存档不匹配精确 key）。
-
-**生效与缺失语义**：表内一行即最终生效价；手动设价/拉取成功后服务端价格快照即时重载（Phase 5 计费热路径读内存快照，零 DB）。删除手动价后该模型在下一轮拉取前存在缺失窗口——计费侧对无价格模型**拒绝计费并显式报错**（不按 0 计价）。`max_input_tokens` / `max_output_tokens` 为 litellm 自带上下文窗口，`nil` = 未知。`provider` / `mode` / `supports_prompt_caching` 为 litellm 元数据（manual 行 `nil`）。litellm 官方表完整原始条目（149 字段）镜像存于数据库 `raw` JSONB 列，**不通过 API 暴露**（manual 行接管后清空）。
+**解析与计费**：`ResolveEntryPrices` 按 entry 基底 → 首中变体 → mult_bp 全体乘（钳制 [0,100000]，溢出防御）→ set_* 绝对覆盖；`billing.CostFromResolved` 纯算术对解析后单价组计算（零分配零锁；价格快照读零 DB）。
 
 ### 价格列表
 
-`GET /api/admin/pricing`
+`GET /api/admin/prices`
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `page` | int | 1 | 页码，**1-based**；缺省或 `< 1` 按 1（不报错） |
-| `page_size` | int | 20 | 每页行数；越界（`< 1` 或 `> 100`）→ `400` |
-| `source` | string | — | 筛选枚举：`litellm` / `manual`；非法 → `400` |
-| `provider` | string | — | 厂商等值筛选（取值 = `litellm_provider` 字符串；主流集合见 openapi `Provider` enum——23 家厂商，前端下拉框消费；**DB 筛选为自由字符串**，新厂商不受 enum 限制；manual 行恒 nil——筛 manual 行不命中） |
+| `page` | int | 1 | 页码，**1-based**；缺省或 `<1` 按 1 |
+| `page_size` | int | 20 | 每页行数；越界（`<1` 或 `>100`）→ 400 |
+| `mode` | string | — | 筛选：`token` / `call` / `image`；非法 → 400 |
+| `source` | string | — | 筛选：`litellm` / `manual`；非法 → 400 |
 | `model` | string | — | 模型名模糊搜索（大小写不敏感） |
-| `sort` | string | `id` | 白名单：`model` / `updated_at`（空或缺省 → 实际按 `id` 排）；非法 → `400` |
-| `order` | string | `desc` | `asc` / `desc`（空或缺省 → `desc`）；其他值 → `400` |
+| `sort` | string | `model` | 白名单：`model` / `updated_at`；非法 → 400 |
+| `order` | string | `desc` | `asc` / `desc`；其他值 → 400 |
 
-响应 `200`：
+响应 `200`：`{"total": N, "rows": [PriceEntry...]}`（PriceEntry 含 mode 分量、provider/raw/source/时间；价格字段为 USD 正常值，`null` = 无该分量）。
 
-```json
-{
-  "total": 4,
-  "rows": [
-    {
-      "Model": "gpt-4o",
-      "PromptPricePerMillion": 2.5,
-      "CompletionPricePerMillion": 10.0,
-      "MaxInputTokens": 128000,
-      "MaxOutputTokens": 16384,
-      "CacheReadPricePerMillion": 0.25,
-      "CacheCreationPricePerMillion": null,
-      "Provider": "openai",
-      "Mode": "chat",
-      "SupportsPromptCaching": true,
-      "Source": "litellm",
-      "CreatedAt": "2026-08-08T19:26:35+08:00",
-      "UpdatedAt": "2026-08-08T19:26:35+08:00"
-    }
-  ]
-}
-```
+### 价格条目 Entry
 
-### 手动设价
+`GET /api/admin/prices/entry?model={model}` — 单行查询；`404` 模型不存在。
 
-`PUT /api/admin/pricing?model={model}`
+`PUT /api/admin/prices/entry?model={model}` — 手动设价（全量替换，body 含 `mode` + 各分量 USD 正常值；`model` 走 query 参数——模型名可含 `/`，路径参数单段匹配会拆段 404）。校验见上；upsert 强制 `source=manual`。响应 `200` 为更新后的 PriceEntry。
 
-请求体：`{"prompt_price_per_million": 2.5, "completion_price_per_million": 3.0}`（USD/1M tokens 正常值，**必须 ≥ 0**，内部 `math.Round(x × 1e5)` 存毫分；负数 → `400`，model 缺失 → `400`）。`model` 走 query 参数——模型名是自由字符串可含 `/`（如 `1024-x-1024/50-steps/bedrock/amazon.nova-canvas-v1:0`），路径参数单段匹配会拆段 404，故不入路径。可选字段：
+`DELETE /api/admin/prices/entry?model={model}` — 仅 `source=manual` 行可删（`200 {"deleted": true}`；litellm 行 `409`；不存在 `404`）。
 
-- 缓存价：`cache_read_price_per_million` / `cache_creation_price_per_million`（USD/1M 正常值，≥ 0）
-- **矩阵 22 列**：`priority_prompt_price_per_million` 等 priority/flex 各 4 列、`above_threshold`（tokens，integer）+ above 三组各 4 列、`fast_multiplier`（正常值，0 < m ≤ 10）——全部 ≥ 0、缺省或 `null` = 不设该价（落库 NULL）
+### 价格变体 Variants
 
-语义：**PUT 全量替换**——请求体中未提供的可选字段一律清空（接管 litellm 行时该矩阵价清除、回退基础价）；显式设 0 表示该价明确为 0。upsert 强制 `source=manual`——模型已存在 litellm 行时**直接接管**（该行来源改为 manual，后续拉取不再覆盖）。响应 `200` 为更新后的价格对象（22 矩阵列全部回显）。
+`GET /api/admin/prices/variants?model={model}` — 该模型变体集（seq 升序）。
 
-### 删除手动价
+`PUT /api/admin/prices/variants?model={model}` — 批量整体替换该模型变体集（请求体 `{"variants": [...]}`；空数组 = 清空）。每条 `seq` 唯一、效果至少其一（`mult_bp` ∈ [0,100000] 且 `set_*` ≥0）；非法 → 400。响应 `200` 为替换后变体集。
 
-`DELETE /api/admin/pricing?model={model}`
-
-| 响应 | 说明 |
-|---|---|
-| `200` | `{"deleted": true}`——仅 `source=manual` 行可删；删除后该模型恢复 litellm 价（下轮拉取补回，此前缺失窗口按上文语义处理） |
-| `409` | 目标是 litellm 行（不可删——下轮拉取会重新写入，语义上只允许删手动价） |
-| `404` | 模型不存在 |
+`DELETE /api/admin/prices/variants?model={model}` — 清空该模型变体集（等价 PUT 空数组；`200 {"deleted": true}`）。
 
 ### 手动触发同步
 
-`POST /api/admin/pricing/sync`
+`POST /api/admin/pricing/sync` — 手动触发一次价格拉取（与定时 worker 同路径：fetch → 批量 upsert → 快照重载，不等 cron）。响应 `200`：`{"rows": N, "skipped": M, "updated": K, "variants": V}`（`rows` 有效模型行数，`skipped` 非法行数，`updated` 入库数（manual 行不计），`variants` 变体数）。错误：`400` price_source_url 未配置；`502` 拉取上游失败（保留旧价格）；`500` 落库失败。
 
-手动触发一次价格拉取（与定时 worker 同路径：fetch → 批量 upsert → 快照重载），不等 cron。响应 `200`：
-
-```json
-{"rows": 4, "skipped": 6, "updated": 3}
-```
-
-| 字段 | 说明 |
-|---|---|
-| `rows` | 拉取到的有效模型行数 |
-| `skipped` | 解析时跳过的非法行数（缺价/非正数/NaN/字段类型非法） |
-| `updated` | upsert 落库数（`manual` 行不计——手动价不被覆盖） |
-
-错误映射：
-
-| 状态码 | 场景 |
-|---|---|
-| `400` | `price_source_url` 未配置（空字符串） |
-| `502` | 拉取上游失败（非 200 / 网络错误 / JSON 解析失败）——**保留旧价格**，下个周期或下次手动重试 |
-| `500` | 落库失败（DB 等） |
-
-手动 sync 与 cron 可并发（幂等 upsert，最坏浪费一次 fetch，无额外冲突处理）。
-
-### 图片价格 Image Price
-
-`image_price` 表（生图模型价格；`image_price`/`function_price`/`pricing` 三件套同形态——列表分页/筛选/排序、PUT/DELETE 的 `model` 走 query 参数（模型名可含 `/`，路径参数单段匹配会拆段 404，故不入路径）、upsert 强制 `source=manual` 可接管 litellm 行）。
-
-`GET /api/admin/image-price`
-
-| 查询参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `page` / `page_size` / `source` / `provider` / `model` / `sort` / `order` | — | — | 与价格列表同形态（`sort` 白名单 `model` / `updated_at`；`provider` 等值筛选，manual 行恒 nil） |
-
-响应行：
-
-| 字段 | 说明 |
-|---|---|
-| `Model` | 模型名（与 `pricings.model` 同口径） |
-| `InputImageTokenPricePerMillion` / `OutputImageTokenPricePerMillion` | image token 输入/输出价（**USD per 1M image tokens**——per-million 口径，与 `pricings` 字段语义一致；内部毫分/1M，×1e5 换算） |
-| `OutputCostPerImage` | 每张图价（**USD/张** flat；与 token 价同换算系数但单位语义独立——计费不走 /1e6 除法） |
-| `Provider` | litellm_provider（litellm 行才有；manual 行 nil） |
-| `Source` / `CreatedAt` / `UpdatedAt` | 来源（`litellm` / `manual`）与时间 |
-
-`PUT /api/admin/image-price?model={model}`：请求体 `{"input_image_token_price_per_million": ..., "output_image_token_price_per_million": ..., "output_cost_per_image": ...}`——三分量全可选但**至少一个非 null**（否则 400）；全量替换（缺省/null = 清空该分量）；upsert 接管 litellm 行（同 pricing 语义）。
-
-`DELETE /api/admin/image-price?model={model}`：仅 `source=manual` 行可删（`200 {"deleted": true}`；litellm 行 `409`；不存在 `404`——同 pricing 语义）。
-
-### 功能价格 Function Price
-
-`function_price` 表（按单元计费功能类——search 起，audio/video 等未来 per-unit 端点复用；对齐 `image_price` 形态）。
-
-`GET /api/admin/function-prices`——参数与响应形态同图片价格列表（`model` 为模型/功能标识模糊搜索，**含 `codex-search`**）。
-
-响应行：
-
-| 字段 | 说明 |
-|---|---|
-| `Model` | 模型/功能标识（litellm search 模型名 或 `codex-search` 固定标识） |
-| `PricePerCall` | 按单元价（**USD/次**——litellm 原生口径 `input_cost_per_query`；内部毫分/次，×1e5 换算，**与 token 价不同换算系**，计费不走 /1e6 除法） |
-| `Provider` | litellm_provider（litellm 行才有；manual 行 nil） |
-
-`PUT /api/admin/function-prices?model={model}`：请求体 `{"price_per_call": ...}`——**必填且 ≥0**（缺省/null → 400；0 = 按次免费）。
-
-`DELETE /api/admin/function-prices?model={model}`：仅 manual 行可删（同 pricing 语义）。
+`POST /api/admin/pricing/sync/preview` — 预览拉取（零写库）：内存拉取+解析+与当前快照 diff → `{"to_add": N, "to_update": M, "skipped": K, "variants_changed": V, "entries": [...]}`（advisory，apply 重拉最新数据）。
 
 ### 相关 settings（PUT /api/admin/settings）
 
 | key | 默认 | 说明 |
 |---|---|---|
-| `price_source_url` | litellm 官方价格表 JSON raw URL | 拉取源（可换，如本地镜像）；空 → sync 拒绝（400） |
+| `price_source_url` | litellm 官方价格表 JSON raw URL | 拉取源；空 → sync 拒绝（400） |
 | `price_sync_cron` | `0 3 * * *` | 拉取 cron 表达式；变更下次循环生效 |
-| `service_tier_policy_priority` | `passthrough` | 请求 `service_tier=priority` 的**转发策略**：`passthrough`（原样转发，默认）/ `strip`（转发体删除该字段）/ `reject`（400 拒绝，不转发） |
+| `service_tier_policy_priority` | `passthrough` | 请求 `service_tier=priority` 的**转发策略**：`passthrough` / `strip` / `reject` |
 | `service_tier_policy_flex` | `passthrough` | 同上，作用于 `service_tier=flex` 请求 |
 | `service_tier_policy_fast` | `passthrough` | 同上，作用于 `service_tier=fast` 请求（Anthropic Fast Mode） |
 
 > 策略仅影响**转发体**；计费读取不受影响（剥离/拒绝路径照常按 priority/flex/fast 档计价）。`auto`/空/未知 tier 恒透传。非法值（非三值）→ `400`。
+
 
 ---
 

@@ -4,7 +4,6 @@ package pricing
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -158,6 +157,7 @@ func parsePriceEntry(model string, raw json.RawMessage, log *logx.Logger) (*doma
 	pe.SupportsPromptCaching = e.SupportsPromptCaching
 	var vars []*domain.PriceVariant
 	seq := 1
+	// 缓存分量表达力取舍（momus）——priority/flex 的 cache 字段与 above_ 系列 cache 键不映射为变体（仅 input/output），缓存计价恒走基础价；信息保留在 raw JSONB。
 	if e.InputCostPerTokenPriority != nil || e.OutputCostPerTokenPriority != nil {
 		if validCost(e.InputCostPerTokenPriority) || validCost(e.OutputCostPerTokenPriority) {
 			st := "priority"
@@ -217,19 +217,18 @@ func parsePriceEntry(model string, raw json.RawMessage, log *logx.Logger) (*doma
 	}
 	if e.ProviderSpecificEntry != nil && e.ProviderSpecificEntry.Fast != nil {
 		v := e.ProviderSpecificEntry.Fast
-		if !math.IsNaN(*v) && !math.IsInf(*v, 0) && *v > 0 {
-			m := int(math.Round(*v * 1e4))
-			if m > 100000 {
+		if !math.IsNaN(*v) && !math.IsInf(*v, 0) {
+			f := *v * 1e4
+			var m int
+			if !(f >= 0 && f <= 100000) {
 				m = 100000
+			} else {
+				m = int(math.Round(f))
 			}
 			st := "fast"
 			vars = append(vars, &domain.PriceVariant{Model: model, Seq: seq, ServiceTier: &st, MultBP: &m})
 			seq++
 		}
-	}
-	// warn for multi-tier above groups via original extractAbove logic (preserve log semantics for priority/flex groups)
-	if log != nil {
-		_ = extractAbove(model, raw, log)
 	}
 	return pe, vars, true
 }
@@ -314,123 +313,6 @@ func parseFunctionPriceEntry(model string, raw json.RawMessage) (*domain.PriceEn
 	return &domain.PriceEntry{Model: model, Mode: domain.PriceModeCall, PricePerCall: &v, Provider: e.Provider, Source: domain.PricingSourceLitellm, Raw: raw}, true
 }
 
-type aboveStep struct {
-	threshold             int64
-	prompt                *int64
-	completion            *int64
-	cacheRead             *int64
-	cacheCreation         *int64
-	priorityPrompt        *int64
-	priorityCompletion    *int64
-	priorityCacheRead     *int64
-	priorityCacheCreation *int64
-	flexPrompt            *int64
-	flexCompletion        *int64
-	flexCacheRead         *int64
-	flexCacheCreation     *int64
-}
-
-func extractAbove(model string, raw json.RawMessage, log *logx.Logger) *aboveStep {
-	groupNames := [3]string{"base", "priority", "flex"}
-	var bases = [4]string{
-		"input_cost_per_token_above_",
-		"output_cost_per_token_above_",
-		"cache_read_input_token_cost_above_",
-		"cache_creation_input_token_cost_above_",
-	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil
-	}
-	var cols [3]map[int64][4]float64
-	for key, val := range m {
-		var n int64
-		g, c := -1, -1
-		for ci, base := range bases {
-			if !strings.HasPrefix(key, base) {
-				continue
-			}
-			rest := key[len(base):]
-			i := 0
-			for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
-				n = n*10 + int64(rest[i]-'0')
-				i++
-			}
-			if i == 0 || i >= len(rest) || rest[i] != 'k' {
-				break
-			}
-			switch rest[i+1:] {
-			case "_tokens":
-				g = 0
-			case "_tokens_priority":
-				g = 1
-			case "_tokens_flex":
-				g = 2
-			default:
-				break
-			}
-			c = ci
-			break
-		}
-		if g < 0 || n == 0 {
-			continue
-		}
-		var v float64
-		if json.Unmarshal(val, &v) != nil || math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
-			continue
-		}
-		if cols[g] == nil {
-			cols[g] = make(map[int64][4]float64)
-		}
-		s := cols[g][n]
-		s[c] = v
-		cols[g][n] = s
-	}
-	var out aboveStep
-	found := false
-	var maxN int64
-	setGroup := func(g int, dst *[4]**int64) {
-		best, ok := int64(0), false
-		var bestV [4]float64
-		qualifying := 0
-		for n, s := range cols[g] {
-			if s[0] == 0 || s[1] == 0 {
-				continue
-			}
-			qualifying++
-			if n > best {
-				best, bestV, ok = n, s, true
-			}
-		}
-		if !ok {
-			return
-		}
-		if qualifying > 1 && log != nil {
-			log.Warn("pricing: multi-tier above pricing dropped, lower tiers billed at base price",
-				logx.String("model", model), logx.String("group", groupNames[g]),
-				logx.Int64("kept_tier_tokens", best*1000))
-		}
-		for c := 0; c < 4; c++ {
-			if bestV[c] != 0 {
-				m := toMilliCentsPerMillion(bestV[c])
-				*dst[c] = &m
-			}
-		}
-		if best > maxN {
-			maxN = best
-		}
-		found = true
-	}
-	setGroup(0, &[4]**int64{&out.prompt, &out.completion, &out.cacheRead, &out.cacheCreation})
-	setGroup(1, &[4]**int64{&out.priorityPrompt, &out.priorityCompletion, &out.priorityCacheRead, &out.priorityCacheCreation})
-	setGroup(2, &[4]**int64{&out.flexPrompt, &out.flexCompletion, &out.flexCacheRead, &out.flexCacheCreation})
-	if !found {
-		return nil
-	}
-	out.threshold = maxN * 1000
-	return &out
-}
-
 func cacheCost(v *float64) *int64 {
 	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v <= 0 {
 		return nil
@@ -464,6 +346,3 @@ func windowTokens(v *float64) int64 {
 	}
 	return int64(math.Round(*v))
 }
-
-// legacy symbols for compatibility during migration (removed after build green); keep stub to avoid import errors in tests that reference constants
-var _ = errors.New

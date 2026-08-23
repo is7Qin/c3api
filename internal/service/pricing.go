@@ -193,6 +193,9 @@ func (s *Service) ReplacePriceVariants(ctx context.Context, model string, varian
 		if v.MultBP == nil && v.SetInputPerM == nil && v.SetOutputPerM == nil {
 			return nil, fmt.Errorf("%w: variant seq %d requires at least one effect", ErrInvalidInput, v.Seq)
 		}
+		if v.MultBP != nil && (*v.MultBP < 0 || *v.MultBP > 100000) {
+			return nil, fmt.Errorf("%w: variant seq %d mult_bp out of range [0,100000]", ErrInvalidInput, v.Seq)
+		}
 	}
 	// entry existence check? allow variants for non-existent model? For now allow but warn; service layer still writes.
 	out, err := s.store.ReplacePriceVariants(ctx, model, variants)
@@ -221,8 +224,11 @@ func (s *Service) ServiceTierPolicy(tier billing.Tier) billing.TierPolicyMode {
 	}
 }
 
-func (s *Service) ReloadImagePricing()                                { s.ReloadPricing() }
-func (s *Service) ReloadImagePricingCtx(ctx context.Context) error    { return s.ReloadPricingCtx(ctx) }
+// ReloadImagePricing intentional dispatch point over unified snapshot (not compat shim).
+func (s *Service) ReloadImagePricing()                             { s.ReloadPricing() }
+func (s *Service) ReloadImagePricingCtx(ctx context.Context) error { return s.ReloadPricingCtx(ctx) }
+
+// ReloadFunctionPricing intentional dispatch point over unified snapshot (not compat shim).
 func (s *Service) ReloadFunctionPricing()                             { s.ReloadPricing() }
 func (s *Service) ReloadFunctionPricingCtx(ctx context.Context) error { return s.ReloadPricingCtx(ctx) }
 
@@ -250,8 +256,27 @@ func (s *Service) SyncPricingNow(ctx context.Context) (*PricingSyncStats, error)
 		return nil, err
 	}
 	if len(res.Variants) > 0 {
-		if _, verr := s.store.UpsertPriceVariantsFromLiteLLM(ctx, res.Variants); verr != nil && err == nil {
-			err = verr
+		filtered := res.Variants
+		if manualModels, merr := s.store.ManualEntryModels(ctx); merr == nil && len(manualModels) > 0 {
+			manualSet := make(map[string]struct{}, len(manualModels))
+			for _, m := range manualModels {
+				manualSet[m] = struct{}{}
+			}
+			tmp := filtered[:0]
+			for _, v := range filtered {
+				if _, isManual := manualSet[v.Model]; !isManual {
+					tmp = append(tmp, v)
+				}
+			}
+			filtered = tmp
+		}
+		if len(filtered) > 0 {
+			if verr := func() error {
+				_, e := s.store.UpsertPriceVariantsFromLiteLLM(ctx, filtered)
+				return e
+			}(); verr != nil {
+				err = verr
+			}
 		}
 	}
 	s.reloadPricing(ctx)

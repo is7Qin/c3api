@@ -39,9 +39,17 @@ func ResolveEntryPrices(entry *PriceEntry, variants []*PriceVariant, tier string
 		rp.VariantSeq = &seq
 		if v.MultBP != nil {
 			mult := int64(*v.MultBP)
+			if mult < 0 {
+				mult = 0
+			} else if mult > 100000 {
+				mult = 100000
+			}
 			applyMult := func(p **int64) {
 				if *p != nil {
 					val := (**p*mult + 5000) / 10000
+					if val < 0 {
+						return
+					}
 					// 复制新指针，禁止改写快照内分量（并发读者可见性）
 					nv := val
 					*p = &nv

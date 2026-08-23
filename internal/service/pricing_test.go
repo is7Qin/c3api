@@ -77,3 +77,67 @@ func TestResolvePricesWithVariant(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(150000), *rp.InputPerM)
 }
+
+func TestReplacePriceVariants_MultBPValidation(t *testing.T) {
+	fs := newFakeStore()
+	svc := newPricingSvc(t, fs)
+	// MaxInt rejected
+	maxInt := 1 << 30
+	_, err := svc.ReplacePriceVariants(context.Background(), "m", []*domain.PriceVariant{{Model: "m", Seq: 1, MultBP: &maxInt}})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	// negative rejected
+	neg := -1
+	_, err = svc.ReplacePriceVariants(context.Background(), "m", []*domain.PriceVariant{{Model: "m", Seq: 1, MultBP: &neg}})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	// boundary 100000 allowed, 100001 rejected
+	v100k := 100000
+	_, err = svc.ReplacePriceVariants(context.Background(), "m", []*domain.PriceVariant{{Model: "m", Seq: 1, MultBP: &v100k}})
+	require.NoError(t, err)
+	v100001 := 100001
+	_, err = svc.ReplacePriceVariants(context.Background(), "m", []*domain.PriceVariant{{Model: "m", Seq: 1, MultBP: &v100001}})
+	require.ErrorIs(t, err, ErrInvalidInput)
+}
+
+func TestSyncPricingGuardsManualVariants(t *testing.T) {
+	fs := newFakeStore()
+	// create manual entry + custom variants for model X
+	_, err := fs.UpsertPriceEntryManual(context.Background(), &repository.PriceEntryManual{Model: "guard-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000)})
+	require.NoError(t, err)
+	mult := 5000
+	_, err = fs.ReplacePriceVariants(context.Background(), "guard-model", []*domain.PriceVariant{{Model: "guard-model", Seq: 99, MultBP: &mult}})
+	require.NoError(t, err)
+	// also create a litellm model that should be overwritten
+	_, err = fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{{Model: "litellm-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceLitellm}})
+	require.NoError(t, err)
+	svc := newPricingSvc(t, fs)
+	// settings needed for SyncPricingNow
+	_, err = fs.SetSetting(context.Background(), "price_source_url", domain.SettingTypeString, "http://example.com/prices.json")
+	require.NoError(t, err)
+	// fake fetcher emits variants for both models: guard-model's variants should be dropped, litellm-model's should be applied
+	fetcher := &fakePriceFetcher{res: &pricing.FetchResult{
+		PriceEntries: []*domain.PriceEntry{{Model: "guard-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(999), OutputPerM: int64Ptr(999), Source: domain.PricingSourceLitellm}},
+		Variants: []*domain.PriceVariant{
+			{Model: "guard-model", Seq: 1, MultBP: intPtr(20000)},
+			{Model: "litellm-model", Seq: 1, MultBP: intPtr(30000)},
+		},
+	}}
+	svc.SetPriceFetcher(fetcher)
+	_, err = svc.SyncPricingNow(context.Background())
+	require.NoError(t, err)
+	// guard-model variants must survive (seq 99), not replaced by fetcher's seq 1
+	vars, err := fs.ListPriceVariants(context.Background(), "guard-model")
+	require.NoError(t, err)
+	require.Len(t, vars, 1)
+	require.Equal(t, 99, vars[0].Seq)
+	require.Equal(t, 5000, *vars[0].MultBP)
+	// litellm-model variants should be applied
+	vars2, err := fs.ListPriceVariants(context.Background(), "litellm-model")
+	require.NoError(t, err)
+	require.Len(t, vars2, 1)
+	require.Equal(t, 1, vars2[0].Seq)
+	require.Equal(t, 30000, *vars2[0].MultBP)
+	// entry for guard-model must remain manual (not overwritten)
+	pe, err := fs.GetPriceEntry(context.Background(), "guard-model")
+	require.NoError(t, err)
+	require.Equal(t, domain.PricingSourceManual, pe.Source)
+}

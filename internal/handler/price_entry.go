@@ -169,8 +169,6 @@ func (h *AdminAPI) PostPricingSyncPreview(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func intPtr(i int) *int { return &i }
-
 func toAPIPriceEntry(p *domain.PriceEntry) PriceEntry {
 	return PriceEntry{
 		Model: p.Model, Mode: PriceEntryMode(p.Mode),

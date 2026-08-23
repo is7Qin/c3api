@@ -266,6 +266,18 @@ func (r *PriceEntryRepo) ListPriceEntries(ctx context.Context, q ListQuery, sour
 	return out, int64(total), nil
 }
 
+func (r *PriceEntryRepo) ManualEntryModels(ctx context.Context) ([]string, error) {
+	rows, err := r.client.PriceEntry.Query().Where(priceentry.SourceEQ(priceentry.SourceManual)).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, p.Model)
+	}
+	return out, nil
+}
+
 func (r *PriceEntryRepo) GetPriceEntry(ctx context.Context, model string) (*domain.PriceEntry, error) {
 	row, err := r.client.PriceEntry.Query().Where(priceentry.ModelEQ(model)).Only(ctx)
 	if err != nil {

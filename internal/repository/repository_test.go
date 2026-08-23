@@ -755,3 +755,5 @@ func TestUsageEntityStatsColumnDefsAnchor(t *testing.T) {
 	require.Contains(t, uniqueIdx, "(bucket_time, entity_type, entity_id, model)", "唯一索引列序 = ON CONFLICT 目标列序")
 	require.Contains(t, probeIdx, "(entity_type, entity_id, bucket_time)", "探测索引列序")
 }
+
+func int64Ptr(v int64) *int64 { return &v }

@@ -154,3 +154,13 @@ func (f *fakeStore) ReplacePriceVariants(_ context.Context, model string, varian
 	f.priceVariants[model] = variants
 	return variants, nil
 }
+
+func (f *fakeStore) ManualEntryModels(_ context.Context) ([]string, error) {
+	var out []string
+	for _, e := range f.priceEntries {
+		if e.Source == domain.PricingSourceManual {
+			out = append(out, e.Model)
+		}
+	}
+	return out, nil
+}

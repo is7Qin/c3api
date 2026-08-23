@@ -218,9 +218,9 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 		attempted = true
 		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前
 		// 查价——计费启用时模型无价格 → 释放并发槽 + 402（不按 0 计价），零 DB
-		// （快照读）。images 格式查 GetImagePrice（image_price 表；跳过 chat
-		// 价预检 GetPrice——纯 image 价模型无 pricings 行，chat 预检会先行
-		// 402 误杀，"ImagePrice 定生死"轮不到执行）；其余格式照旧。
+		// （快照读）。images 格式查统一价格快照 image 分量（跳过 chat
+		// 价预检——纯 image 价模型无 token 行，chat 预检会先行
+		// 402 误杀，"image 分量定生死"轮不到执行）；其余格式照旧。
 		if precheck {
 			if err := p.precheckPrice(format, sel.Model); err != nil {
 				p.sched.Release(sel.AccountID)

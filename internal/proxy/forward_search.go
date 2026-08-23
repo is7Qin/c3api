@@ -48,7 +48,7 @@ var errCodexSearchNotIntegrated = &formatError{status: http.StatusNotImplemented
 //   - **不做 ModelMapping 改写（P3-3 显式取舍）**：请求体原样 = 映射对 search
 //     不生效（上游收客户端模型名）——零解析是 spec 显式约束，自洽记录
 //   - 计费：2xx → usage_logs 行（format=openai-search + call_count=1 +
-//     price_per_call_millis=GetFunctionPrice("codex-search") + cost=按次价×整单
+//     price_per_call_millis=PriceResolver call 档（codex-search 模型） + cost=按次价×整单
 //     倍率，applyBilling search 分支）；非 2xx/网络错误 → 不计费（cost=0，错误
 //     行走既有 err_logs 面）
 //
@@ -193,7 +193,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp.Raw)
 	// 2xx → 按次计费落账（call_count=1；price_per_call/cost 由 applyBilling
-	// search 分支按 GetFunctionPrice("codex-search") 结算——无 token 分量）。
+	// search 分支按 PriceResolver call 档（codex-search）结算——无 token 分量）。
 	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
 	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil

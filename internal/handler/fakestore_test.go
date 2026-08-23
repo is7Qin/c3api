@@ -2123,6 +2123,16 @@ func (f *fakeStore) ReplacePriceVariants(_ context.Context, model string, varian
 	return variants, nil
 }
 
+func (f *fakeStore) ManualEntryModels(_ context.Context) ([]string, error) {
+	var out []string
+	for _, e := range f.priceEntries {
+		if e.Source == domain.PricingSourceManual {
+			out = append(out, e.Model)
+		}
+	}
+	return out, nil
+}
+
 func emailCodeKeyHandler(email, purpose string) string { return email + "|" + purpose }
 
 func (f *fakeStore) GetEmailTemplate(ctx context.Context, purpose string) (*domain.EmailTemplate, error) {

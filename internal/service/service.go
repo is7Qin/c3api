@@ -237,6 +237,7 @@ type PricingStore interface {
 	ListPriceVariants(ctx context.Context, model string) ([]*domain.PriceVariant, error)
 	ListAllPriceVariants(ctx context.Context) ([]*domain.PriceVariant, error)
 	ReplacePriceVariants(ctx context.Context, model string, variants []*domain.PriceVariant) ([]*domain.PriceVariant, error)
+	ManualEntryModels(ctx context.Context) ([]string, error)
 }
 
 type LogStore interface {
