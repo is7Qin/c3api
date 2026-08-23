@@ -67,11 +67,11 @@ func overviewPGTestDB(t *testing.T, seedFrom, seedUntil time.Time) *repository.R
 	return repos
 }
 
-// overviewBucket 构造小时桶（UTC 对齐；cost 毫分）。
+// overviewBucket 构造小时桶（UTC 对齐；cost 毫分；v2 瘦身后仅 group/model 维度）。
 func overviewBucket(bt time.Time, groupID int64, req, errs, in, out, total, cache, cost int64) *domain.StatBucket {
 	return &domain.StatBucket{
-		BucketTime: bt, GroupID: groupID, AccountID: 42, TemplateID: 0, UserID: 7,
-		Model: "gpt-4o", IsError: false,
+		BucketTime: bt, GroupID: groupID,
+		Model: "gpt-4o",
 		RequestCount: req, ErrorCount: errs, InputTokens: in, OutputTokens: out,
 		TotalTokens: total, CacheReadTokens: cache, CacheCreationTokens: 0,
 		Cost: cost,
@@ -86,7 +86,7 @@ func overviewSeedBuckets(t *testing.T, repos *repository.Repository, buckets ...
 	for _, b := range buckets {
 		require.NoError(t, repos.Stats.AggregateRange(context.Background(),
 			b.BucketTime, b.BucketTime.Add(time.Hour), b.BucketTime.Add(30*time.Minute),
-			[]*domain.StatBucket{b}))
+			[]*domain.StatBucket{b}, nil))
 	}
 }
 
@@ -526,4 +526,15 @@ func TestPGOverviewTrendUTCDayBoundary(t *testing.T) {
 	require.Equal(t, int64(3), tr[0].Requests)
 	require.Equal(t, day0.Format("2006-01-02"), tr[1].Date.Format("2006-01-02"))
 	require.Equal(t, int64(5), tr[1].Requests)
+}
+
+// pgUserStatus 真实 PG 用户快照 provider（RequireJWT 快照校验；fail-closed）。
+type pgUserStatus struct{ repos *repository.Repository }
+
+func (p pgUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
+	u, err := p.repos.Users.GetUser(context.Background(), userID)
+	if err != nil {
+		return domain.UserSnapshot{}, false
+	}
+	return domain.UserSnapshot{Status: u.Status, Role: u.Role}, true
 }

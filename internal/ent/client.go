@@ -33,6 +33,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/template"
 	"github.com/is7qin/c3api/internal/ent/templateext"
+	"github.com/is7qin/c3api/internal/ent/usageentitystat"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/ent/usagestat"
 	"github.com/is7qin/c3api/internal/ent/user"
@@ -79,6 +80,8 @@ type Client struct {
 	Template *TemplateClient
 	// TemplateExt is the client for interacting with the TemplateExt builders.
 	TemplateExt *TemplateExtClient
+	// UsageEntityStat is the client for interacting with the UsageEntityStat builders.
+	UsageEntityStat *UsageEntityStatClient
 	// UsageLog is the client for interacting with the UsageLog builders.
 	UsageLog *UsageLogClient
 	// UsageStat is the client for interacting with the UsageStat builders.
@@ -114,6 +117,7 @@ func (c *Client) init() {
 	c.TempBalance = NewTempBalanceClient(c.config)
 	c.Template = NewTemplateClient(c.config)
 	c.TemplateExt = NewTemplateExtClient(c.config)
+	c.UsageEntityStat = NewUsageEntityStatClient(c.config)
 	c.UsageLog = NewUsageLogClient(c.config)
 	c.UsageStat = NewUsageStatClient(c.config)
 	c.User = NewUserClient(c.config)
@@ -227,6 +231,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		TempBalance:     NewTempBalanceClient(cfg),
 		Template:        NewTemplateClient(cfg),
 		TemplateExt:     NewTemplateExtClient(cfg),
+		UsageEntityStat: NewUsageEntityStatClient(cfg),
 		UsageLog:        NewUsageLogClient(cfg),
 		UsageStat:       NewUsageStatClient(cfg),
 		User:            NewUserClient(cfg),
@@ -267,6 +272,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		TempBalance:     NewTempBalanceClient(cfg),
 		Template:        NewTemplateClient(cfg),
 		TemplateExt:     NewTemplateExtClient(cfg),
+		UsageEntityStat: NewUsageEntityStatClient(cfg),
 		UsageLog:        NewUsageLogClient(cfg),
 		UsageStat:       NewUsageStatClient(cfg),
 		User:            NewUserClient(cfg),
@@ -302,7 +308,7 @@ func (c *Client) Use(hooks ...Hook) {
 		c.Account, c.AccountExt, c.EmailCode, c.EmailTemplate, c.ErrLog,
 		c.FunctionPrice, c.Group, c.GroupAssignment, c.ImagePrice, c.Key, c.Pricing,
 		c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting, c.TempBalance,
-		c.Template, c.TemplateExt, c.UsageLog, c.UsageStat, c.User,
+		c.Template, c.TemplateExt, c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Use(hooks...)
 	}
@@ -315,7 +321,7 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.Account, c.AccountExt, c.EmailCode, c.EmailTemplate, c.ErrLog,
 		c.FunctionPrice, c.Group, c.GroupAssignment, c.ImagePrice, c.Key, c.Pricing,
 		c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting, c.TempBalance,
-		c.Template, c.TemplateExt, c.UsageLog, c.UsageStat, c.User,
+		c.Template, c.TemplateExt, c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -360,6 +366,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Template.mutate(ctx, m)
 	case *TemplateExtMutation:
 		return c.TemplateExt.mutate(ctx, m)
+	case *UsageEntityStatMutation:
+		return c.UsageEntityStat.mutate(ctx, m)
 	case *UsageLogMutation:
 		return c.UsageLog.mutate(ctx, m)
 	case *UsageStatMutation:
@@ -3037,6 +3045,139 @@ func (c *TemplateExtClient) mutate(ctx context.Context, m *TemplateExtMutation) 
 	}
 }
 
+// UsageEntityStatClient is a client for the UsageEntityStat schema.
+type UsageEntityStatClient struct {
+	config
+}
+
+// NewUsageEntityStatClient returns a client for the UsageEntityStat from the given config.
+func NewUsageEntityStatClient(c config) *UsageEntityStatClient {
+	return &UsageEntityStatClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `usageentitystat.Hooks(f(g(h())))`.
+func (c *UsageEntityStatClient) Use(hooks ...Hook) {
+	c.hooks.UsageEntityStat = append(c.hooks.UsageEntityStat, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `usageentitystat.Intercept(f(g(h())))`.
+func (c *UsageEntityStatClient) Intercept(interceptors ...Interceptor) {
+	c.inters.UsageEntityStat = append(c.inters.UsageEntityStat, interceptors...)
+}
+
+// Create returns a builder for creating a UsageEntityStat entity.
+func (c *UsageEntityStatClient) Create() *UsageEntityStatCreate {
+	mutation := newUsageEntityStatMutation(c.config, OpCreate)
+	return &UsageEntityStatCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of UsageEntityStat entities.
+func (c *UsageEntityStatClient) CreateBulk(builders ...*UsageEntityStatCreate) *UsageEntityStatCreateBulk {
+	return &UsageEntityStatCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *UsageEntityStatClient) MapCreateBulk(slice any, setFunc func(*UsageEntityStatCreate, int)) *UsageEntityStatCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &UsageEntityStatCreateBulk{err: fmt.Errorf("calling to UsageEntityStatClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*UsageEntityStatCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &UsageEntityStatCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for UsageEntityStat.
+func (c *UsageEntityStatClient) Update() *UsageEntityStatUpdate {
+	mutation := newUsageEntityStatMutation(c.config, OpUpdate)
+	return &UsageEntityStatUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *UsageEntityStatClient) UpdateOne(_m *UsageEntityStat) *UsageEntityStatUpdateOne {
+	mutation := newUsageEntityStatMutation(c.config, OpUpdateOne, withUsageEntityStat(_m))
+	return &UsageEntityStatUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *UsageEntityStatClient) UpdateOneID(id int64) *UsageEntityStatUpdateOne {
+	mutation := newUsageEntityStatMutation(c.config, OpUpdateOne, withUsageEntityStatID(id))
+	return &UsageEntityStatUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for UsageEntityStat.
+func (c *UsageEntityStatClient) Delete() *UsageEntityStatDelete {
+	mutation := newUsageEntityStatMutation(c.config, OpDelete)
+	return &UsageEntityStatDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *UsageEntityStatClient) DeleteOne(_m *UsageEntityStat) *UsageEntityStatDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *UsageEntityStatClient) DeleteOneID(id int64) *UsageEntityStatDeleteOne {
+	builder := c.Delete().Where(usageentitystat.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &UsageEntityStatDeleteOne{builder}
+}
+
+// Query returns a query builder for UsageEntityStat.
+func (c *UsageEntityStatClient) Query() *UsageEntityStatQuery {
+	return &UsageEntityStatQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeUsageEntityStat},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a UsageEntityStat entity by its id.
+func (c *UsageEntityStatClient) Get(ctx context.Context, id int64) (*UsageEntityStat, error) {
+	return c.Query().Where(usageentitystat.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *UsageEntityStatClient) GetX(ctx context.Context, id int64) *UsageEntityStat {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *UsageEntityStatClient) Hooks() []Hook {
+	return c.hooks.UsageEntityStat
+}
+
+// Interceptors returns the client interceptors.
+func (c *UsageEntityStatClient) Interceptors() []Interceptor {
+	return c.inters.UsageEntityStat
+}
+
+func (c *UsageEntityStatClient) mutate(ctx context.Context, m *UsageEntityStatMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&UsageEntityStatCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&UsageEntityStatUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&UsageEntityStatUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&UsageEntityStatDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown UsageEntityStat mutation op: %q", m.Op())
+	}
+}
+
 // UsageLogClient is a client for the UsageLog schema.
 type UsageLogClient struct {
 	config
@@ -3489,13 +3630,13 @@ type (
 	hooks struct {
 		Account, AccountExt, EmailCode, EmailTemplate, ErrLog, FunctionPrice, Group,
 		GroupAssignment, ImagePrice, Key, Pricing, RedemptionCode, RedemptionUse, Rule,
-		Setting, TempBalance, Template, TemplateExt, UsageLog, UsageStat,
-		User []ent.Hook
+		Setting, TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog,
+		UsageStat, User []ent.Hook
 	}
 	inters struct {
 		Account, AccountExt, EmailCode, EmailTemplate, ErrLog, FunctionPrice, Group,
 		GroupAssignment, ImagePrice, Key, Pricing, RedemptionCode, RedemptionUse, Rule,
-		Setting, TempBalance, Template, TemplateExt, UsageLog, UsageStat,
-		User []ent.Interceptor
+		Setting, TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog,
+		UsageStat, User []ent.Interceptor
 	}
 )

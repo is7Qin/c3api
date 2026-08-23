@@ -64,29 +64,9 @@ func GroupID(v int64) predicate.UsageStat {
 	return predicate.UsageStat(sql.FieldEQ(FieldGroupID, v))
 }
 
-// AccountID applies equality check predicate on the "account_id" field. It's identical to AccountIDEQ.
-func AccountID(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldEQ(FieldAccountID, v))
-}
-
-// TemplateID applies equality check predicate on the "template_id" field. It's identical to TemplateIDEQ.
-func TemplateID(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldEQ(FieldTemplateID, v))
-}
-
-// UserID applies equality check predicate on the "user_id" field. It's identical to UserIDEQ.
-func UserID(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldEQ(FieldUserID, v))
-}
-
 // Model applies equality check predicate on the "model" field. It's identical to ModelEQ.
 func Model(v string) predicate.UsageStat {
 	return predicate.UsageStat(sql.FieldEQ(FieldModel, v))
-}
-
-// IsError applies equality check predicate on the "is_error" field. It's identical to IsErrorEQ.
-func IsError(v bool) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldEQ(FieldIsError, v))
 }
 
 // RequestCount applies equality check predicate on the "request_count" field. It's identical to RequestCountEQ.
@@ -127,6 +107,11 @@ func CacheCreationTokens(v int64) predicate.UsageStat {
 // Cost applies equality check predicate on the "cost" field. It's identical to CostEQ.
 func Cost(v int64) predicate.UsageStat {
 	return predicate.UsageStat(sql.FieldEQ(FieldCost, v))
+}
+
+// RawCost applies equality check predicate on the "raw_cost" field. It's identical to RawCostEQ.
+func RawCost(v int64) predicate.UsageStat {
+	return predicate.UsageStat(sql.FieldEQ(FieldRawCost, v))
 }
 
 // CallCount applies equality check predicate on the "call_count" field. It's identical to CallCountEQ.
@@ -234,126 +219,6 @@ func GroupIDLTE(v int64) predicate.UsageStat {
 	return predicate.UsageStat(sql.FieldLTE(FieldGroupID, v))
 }
 
-// AccountIDEQ applies the EQ predicate on the "account_id" field.
-func AccountIDEQ(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldEQ(FieldAccountID, v))
-}
-
-// AccountIDNEQ applies the NEQ predicate on the "account_id" field.
-func AccountIDNEQ(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldNEQ(FieldAccountID, v))
-}
-
-// AccountIDIn applies the In predicate on the "account_id" field.
-func AccountIDIn(vs ...int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldIn(FieldAccountID, vs...))
-}
-
-// AccountIDNotIn applies the NotIn predicate on the "account_id" field.
-func AccountIDNotIn(vs ...int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldNotIn(FieldAccountID, vs...))
-}
-
-// AccountIDGT applies the GT predicate on the "account_id" field.
-func AccountIDGT(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldGT(FieldAccountID, v))
-}
-
-// AccountIDGTE applies the GTE predicate on the "account_id" field.
-func AccountIDGTE(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldGTE(FieldAccountID, v))
-}
-
-// AccountIDLT applies the LT predicate on the "account_id" field.
-func AccountIDLT(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldLT(FieldAccountID, v))
-}
-
-// AccountIDLTE applies the LTE predicate on the "account_id" field.
-func AccountIDLTE(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldLTE(FieldAccountID, v))
-}
-
-// TemplateIDEQ applies the EQ predicate on the "template_id" field.
-func TemplateIDEQ(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldEQ(FieldTemplateID, v))
-}
-
-// TemplateIDNEQ applies the NEQ predicate on the "template_id" field.
-func TemplateIDNEQ(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldNEQ(FieldTemplateID, v))
-}
-
-// TemplateIDIn applies the In predicate on the "template_id" field.
-func TemplateIDIn(vs ...int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldIn(FieldTemplateID, vs...))
-}
-
-// TemplateIDNotIn applies the NotIn predicate on the "template_id" field.
-func TemplateIDNotIn(vs ...int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldNotIn(FieldTemplateID, vs...))
-}
-
-// TemplateIDGT applies the GT predicate on the "template_id" field.
-func TemplateIDGT(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldGT(FieldTemplateID, v))
-}
-
-// TemplateIDGTE applies the GTE predicate on the "template_id" field.
-func TemplateIDGTE(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldGTE(FieldTemplateID, v))
-}
-
-// TemplateIDLT applies the LT predicate on the "template_id" field.
-func TemplateIDLT(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldLT(FieldTemplateID, v))
-}
-
-// TemplateIDLTE applies the LTE predicate on the "template_id" field.
-func TemplateIDLTE(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldLTE(FieldTemplateID, v))
-}
-
-// UserIDEQ applies the EQ predicate on the "user_id" field.
-func UserIDEQ(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldEQ(FieldUserID, v))
-}
-
-// UserIDNEQ applies the NEQ predicate on the "user_id" field.
-func UserIDNEQ(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldNEQ(FieldUserID, v))
-}
-
-// UserIDIn applies the In predicate on the "user_id" field.
-func UserIDIn(vs ...int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldIn(FieldUserID, vs...))
-}
-
-// UserIDNotIn applies the NotIn predicate on the "user_id" field.
-func UserIDNotIn(vs ...int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldNotIn(FieldUserID, vs...))
-}
-
-// UserIDGT applies the GT predicate on the "user_id" field.
-func UserIDGT(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldGT(FieldUserID, v))
-}
-
-// UserIDGTE applies the GTE predicate on the "user_id" field.
-func UserIDGTE(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldGTE(FieldUserID, v))
-}
-
-// UserIDLT applies the LT predicate on the "user_id" field.
-func UserIDLT(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldLT(FieldUserID, v))
-}
-
-// UserIDLTE applies the LTE predicate on the "user_id" field.
-func UserIDLTE(v int64) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldLTE(FieldUserID, v))
-}
-
 // ModelEQ applies the EQ predicate on the "model" field.
 func ModelEQ(v string) predicate.UsageStat {
 	return predicate.UsageStat(sql.FieldEQ(FieldModel, v))
@@ -417,16 +282,6 @@ func ModelEqualFold(v string) predicate.UsageStat {
 // ModelContainsFold applies the ContainsFold predicate on the "model" field.
 func ModelContainsFold(v string) predicate.UsageStat {
 	return predicate.UsageStat(sql.FieldContainsFold(FieldModel, v))
-}
-
-// IsErrorEQ applies the EQ predicate on the "is_error" field.
-func IsErrorEQ(v bool) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldEQ(FieldIsError, v))
-}
-
-// IsErrorNEQ applies the NEQ predicate on the "is_error" field.
-func IsErrorNEQ(v bool) predicate.UsageStat {
-	return predicate.UsageStat(sql.FieldNEQ(FieldIsError, v))
 }
 
 // RequestCountEQ applies the EQ predicate on the "request_count" field.
@@ -747,6 +602,46 @@ func CostLT(v int64) predicate.UsageStat {
 // CostLTE applies the LTE predicate on the "cost" field.
 func CostLTE(v int64) predicate.UsageStat {
 	return predicate.UsageStat(sql.FieldLTE(FieldCost, v))
+}
+
+// RawCostEQ applies the EQ predicate on the "raw_cost" field.
+func RawCostEQ(v int64) predicate.UsageStat {
+	return predicate.UsageStat(sql.FieldEQ(FieldRawCost, v))
+}
+
+// RawCostNEQ applies the NEQ predicate on the "raw_cost" field.
+func RawCostNEQ(v int64) predicate.UsageStat {
+	return predicate.UsageStat(sql.FieldNEQ(FieldRawCost, v))
+}
+
+// RawCostIn applies the In predicate on the "raw_cost" field.
+func RawCostIn(vs ...int64) predicate.UsageStat {
+	return predicate.UsageStat(sql.FieldIn(FieldRawCost, vs...))
+}
+
+// RawCostNotIn applies the NotIn predicate on the "raw_cost" field.
+func RawCostNotIn(vs ...int64) predicate.UsageStat {
+	return predicate.UsageStat(sql.FieldNotIn(FieldRawCost, vs...))
+}
+
+// RawCostGT applies the GT predicate on the "raw_cost" field.
+func RawCostGT(v int64) predicate.UsageStat {
+	return predicate.UsageStat(sql.FieldGT(FieldRawCost, v))
+}
+
+// RawCostGTE applies the GTE predicate on the "raw_cost" field.
+func RawCostGTE(v int64) predicate.UsageStat {
+	return predicate.UsageStat(sql.FieldGTE(FieldRawCost, v))
+}
+
+// RawCostLT applies the LT predicate on the "raw_cost" field.
+func RawCostLT(v int64) predicate.UsageStat {
+	return predicate.UsageStat(sql.FieldLT(FieldRawCost, v))
+}
+
+// RawCostLTE applies the LTE predicate on the "raw_cost" field.
+func RawCostLTE(v int64) predicate.UsageStat {
+	return predicate.UsageStat(sql.FieldLTE(FieldRawCost, v))
 }
 
 // CallCountEQ applies the EQ predicate on the "call_count" field.

@@ -30,6 +30,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/template"
 	"github.com/is7qin/c3api/internal/ent/templateext"
+	"github.com/is7qin/c3api/internal/ent/usageentitystat"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/ent/usagestat"
 	"github.com/is7qin/c3api/internal/ent/user"
@@ -111,6 +112,7 @@ func checkColumn(t, c string) error {
 			tempbalance.Table:     tempbalance.ValidColumn,
 			template.Table:        template.ValidColumn,
 			templateext.Table:     templateext.ValidColumn,
+			usageentitystat.Table: usageentitystat.ValidColumn,
 			usagelog.Table:        usagelog.ValidColumn,
 			usagestat.Table:       usagestat.ValidColumn,
 			user.Table:            user.ValidColumn,

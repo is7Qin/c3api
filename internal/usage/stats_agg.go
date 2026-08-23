@@ -2,9 +2,10 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// 离线聚合 worker（spec 2026-08-14 使用量统计离线聚合化）：请求路径零统计
-// 计算/投递——usage_stats 只由本 worker 每周期从 DB（usage_logs + err_logs）
-// 重建（SQL 侧聚合，DELETE+INSERT 覆盖语义）。放行行（含 abort）从 usage_logs
+// 离线聚合 worker（spec 2026-08-14 使用量统计离线聚合化 + spec 2026-08-23 v2
+// 双表扩展）：请求路径零统计计算/投递——usage_stats（cube）与 usage_entity_
+// stats（实体卷积）只由本 worker 每周期从 DB（usage_logs + err_logs）重建
+// （SQL 侧聚合，DELETE+INSERT 覆盖语义）。放行行（含 abort）从 usage_logs
 // 重建（全字段）；纯错误行（4xx/5xx/network）从 err_logs 重建（count 语义）；
 // 拒绝行随 err_logs 采样队列丢样（口径注释见 proxy/forward.go recordRejected）。
 // 统计分钟级陈旧（接受，不加 hot counter）；quota 回写在线保留（Recorder
@@ -23,16 +24,18 @@ import (
 
 // StatsAggStore 离线聚合存储面（repository.StatRepo 实现）：两范围分离 +
 // 单事务覆盖落盘 + watermark + 会话级 advisory lock 全部在 repo 侧
-// （stat_repo.go——pgx 直查直写，ent 无数组列类型）。
+// （stat_repo.go/stat_entity_agg.go——pgx 直查直写，ent 无数组列类型）。
 type StatsAggStore interface {
 	// AcquireStatsAggLock 抢占会话级 advisory lock（专用连接持有到 release；
 	// 抢锁失败 ok=false——其他实例在聚合，本轮跳过）。
 	AcquireStatsAggLock(ctx context.Context) (release func(), ok bool, err error)
-	// LoadAggRange 重算范围 [from,to) 的三查询小时桶全量重建（含消费明细行数）。
-	LoadAggRange(ctx context.Context, from, to time.Time) ([]*domain.StatBucket, int64, error)
-	// AggregateRange 单事务 DELETE [delFrom,delTo) + INSERT rows + watermark
-	// 推进 wmTo（= 读窗口 T，≠ 重算范围上界——P1-A 两范围分离）。
-	AggregateRange(ctx context.Context, delFrom, delTo, wmTo time.Time, rows []*domain.StatBucket) error
+	// LoadAggRange 重算范围 [from,to) 双结果集全量重建：cube 两查询 +
+	// entity 六查询（含消费明细行数——cube 两查询 count(*) 合计）。
+	LoadAggRange(ctx context.Context, from, to time.Time) ([]*domain.StatBucket, []*domain.EntityStatBucket, int64, error)
+	// AggregateRange 单事务 DELETE cube [delFrom,delTo) + INSERT cube +
+	// DELETE entity [同范围] + INSERT entity + watermark 推进 wmTo（= 读窗口 T，
+	// ≠ 重算范围上界——P1-A 两范围分离；双表同一事务原子回滚）。
+	AggregateRange(ctx context.Context, delFrom, delTo, wmTo time.Time, cube []*domain.StatBucket, entity []*domain.EntityStatBucket) error
 	LoadStatsAggWatermark(ctx context.Context) (time.Time, error)
 	InitStatsAggWatermark(ctx context.Context, t time.Time) error
 }
@@ -58,22 +61,24 @@ var defaultStatsAggLag = 5 * time.Second
 type StatsAggWorkerStats struct {
 	// WatermarkUnixMs watermark 位置（毫秒；0 = 尚未推进——未初始化/首轮未完成）
 	WatermarkUnixMs int64 `json:"watermark_unix_ms"`
-	// LastBuckets 上轮写入桶数（失败轮保留上轮值）
+	// LastBuckets 上轮写入桶数（cube + entity 合计；失败轮保留上轮值）
 	LastBuckets int64 `json:"last_buckets"`
-	// LastRows 上轮消费明细行数（三查询 count(*) 合计；失败轮保留上轮值）
+	// LastRows 上轮消费明细行数（cube 两查询 count(*) 合计——实体六查询扫的
+	// 是同批源行不重复计数；失败轮保留上轮值）
 	LastRows int64 `json:"last_rows"`
 	// LastDurationMs 上轮耗时（毫秒；失败轮保留上轮值）
 	LastDurationMs int64 `json:"last_duration_ms"`
 }
 
 // StatsAggWorker 离线聚合 worker（worker.Worker 契约，Name="stats-agg"）：
-// 每周期一个两范围 + 三查询 + 单事务流程（spec §3）：
+// 每周期一个两范围 + 双结果集（cube 两查询 + entity 六查询）+ 单事务流程
+// （spec §3）：
 //
 //	读窗口 [W, T)：W = watermark，T = now − 滞后——只推进 watermark，不直接
 //	              用于 DELETE（部分小时桶边界问题，见下）
 //	重算范围 [R0, R1) = [trunc_hour(W), trunc_hour(T) + 1h)——DELETE + SELECT
-//	              共同边界
-//	LoadAggRange(R0, R1) → AggregateRange(R0, R1, T, rows) 单事务落盘
+//	              共同边界（cube 与 entity 两表同范围）
+//	LoadAggRange(R0, R1) → AggregateRange(R0, R1, T, cube, entity) 单事务落盘
 //
 // **两范围分离（评审 P1-A，核心正确性）**：小时桶是部分完成的桶（跨多周期
 // 累积），直接按读窗口 DELETE 会截断当前小时桶（[小时起点, W) 的行丢失）→
@@ -95,6 +100,13 @@ type StatsAggWorkerStats struct {
 // （防首跑扫全史 + DELETE 撞 retention 已 DROP 分区）；ON CONFLICT DO NOTHING
 // 容忍多实例并发初始化（败者重读既有值）；**追赶上限**：停摆恢复后单周期
 // 窗口 ≤ 1h 分批收敛（防单次超大窗口）。
+//
+// **手动重建运维口径（Momus B1 勘误）**：worker 对缺失 watermark 行的初始化
+// 硬编码 now−lag——"清空 watermark 行"不会触发历史回算。手动重建统计必须：
+// (1) 清空 usage_stats / usage_entity_stats 数据；(2) **手工种子单行 watermark**
+// 至最早保留小时边界（INSERT INTO stats_agg_watermark (id, watermark)
+// VALUES (1, '<最早保留小时>')），否则历史窗口永远聚合不出数据（worker 只从
+// watermark 起追赶，且受 1h/周期上限分批收敛）。
 type StatsAggWorker struct {
 	cfg     StatsAggConfig
 	store   StatsAggStore
@@ -149,7 +161,7 @@ func (w *StatsAggWorker) loop(ctx context.Context) {
 	}
 }
 
-// runOnce 单轮聚合（两范围 + 三查询 + 单事务，见类型注释）；任一步失败 →
+// runOnce 单轮聚合（两范围 + 双结果集 + 单事务，见类型注释）；任一步失败 →
 // Warn + 跳过（watermark 未推进 → 下轮重试不双计）。抢锁失败 → 静默跳过
 // （其他实例在聚合，非异常）。
 func (w *StatsAggWorker) runOnce() {
@@ -206,23 +218,24 @@ func (w *StatsAggWorker) runOnce() {
 	r0 := wm.UTC().Truncate(time.Hour)
 	r1 := t.UTC().Truncate(time.Hour).Add(time.Hour)
 
-	rows, detailRows, err := w.store.LoadAggRange(ctx, r0, r1)
+	cube, entity, detailRows, err := w.store.LoadAggRange(ctx, r0, r1)
 	if err != nil {
 		w.warnErr("load agg range", err)
 		return
 	}
-	if err := w.store.AggregateRange(ctx, r0, r1, t, rows); err != nil {
+	if err := w.store.AggregateRange(ctx, r0, r1, t, cube, entity); err != nil {
 		w.warnErr("aggregate range", err)
 		return
 	}
 	// 观测面收尾原子写（成功轮才推进；失败轮保留上轮值）。
 	w.lastWatermark.Store(t.UnixMilli())
-	w.lastBuckets.Store(int64(len(rows)))
+	w.lastBuckets.Store(int64(len(cube) + len(entity)))
 	w.lastRows.Store(detailRows)
 	w.lastDuration.Store(time.Since(start).Milliseconds())
 	if w.log != nil {
 		w.log.Info("stats agg cycle complete",
-			logx.Int("buckets", len(rows)), logx.Int64("rows", detailRows),
+			logx.Int("cube_buckets", len(cube)), logx.Int("entity_buckets", len(entity)),
+			logx.Int64("rows", detailRows),
 			logx.Int64("watermark_ms", t.UnixMilli()),
 			logx.String("range", r0.UTC().Format("2006-01-02T15:04Z")+".."+r1.UTC().Format("2006-01-02T15:04Z")))
 	}

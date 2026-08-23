@@ -48,6 +48,8 @@ type Tx struct {
 	Template *TemplateClient
 	// TemplateExt is the client for interacting with the TemplateExt builders.
 	TemplateExt *TemplateExtClient
+	// UsageEntityStat is the client for interacting with the UsageEntityStat builders.
+	UsageEntityStat *UsageEntityStatClient
 	// UsageLog is the client for interacting with the UsageLog builders.
 	UsageLog *UsageLogClient
 	// UsageStat is the client for interacting with the UsageStat builders.
@@ -203,6 +205,7 @@ func (tx *Tx) init() {
 	tx.TempBalance = NewTempBalanceClient(tx.config)
 	tx.Template = NewTemplateClient(tx.config)
 	tx.TemplateExt = NewTemplateExtClient(tx.config)
+	tx.UsageEntityStat = NewUsageEntityStatClient(tx.config)
 	tx.UsageLog = NewUsageLogClient(tx.config)
 	tx.UsageStat = NewUsageStatClient(tx.config)
 	tx.User = NewUserClient(tx.config)

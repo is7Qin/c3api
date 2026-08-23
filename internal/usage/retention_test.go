@@ -18,8 +18,9 @@ import (
 
 var errBoom = errors.New("boom")
 
-// fakePartitionManager 三表计数 fake（usage_logs / err_logs / usage_stats 各自
-// 独立计数——三表独立调度断言：cutoff 独立、失败隔离）。
+// fakePartitionManager 四表计数 fake（usage_logs / err_logs / usage_stats /
+// usage_entity_stats 各自独立计数——四表独立调度断言：cutoff 独立、失败隔离；
+// entity_stats 与 usage_stats 共用 StatsRetentionDays 同一循环 DROP+预建）。
 type fakePartitionManager struct {
 	mu        sync.Mutex
 	drops     []time.Time // usage_logs cutoff 参数
@@ -31,10 +32,14 @@ type fakePartitionManager struct {
 	sdrops    []time.Time // usage_stats cutoff 参数
 	snows     []time.Time // usage_stats ensure 的 now 参数
 	sensures  []time.Time // usage_stats ensure 的 until 参数
+	esdrops   []time.Time // usage_entity_stats cutoff 参数（与 usage_stats 同 StatsRetentionDays）
+	esnows    []time.Time // usage_entity_stats ensure 的 now 参数
+	esensures []time.Time // usage_entity_stats ensure 的 until 参数
 	rdeletes  []time.Time // redemption_uses 批删 cutoff 参数（F3-2）
 	dropErr   error       // usage_logs drop 失败注入
 	edropErr  error       // err_logs drop 失败注入（失败隔离断言）
 	sdropErr  error       // usage_stats drop 失败注入（失败隔离断言）
+	esdropErr error       // usage_entity_stats drop 失败注入（失败隔离断言，与 sdrop 独立）
 	rdelErr   error       // redemption_uses 批删失败注入（失败隔离断言）
 	ensureErr error
 }
@@ -84,6 +89,21 @@ func (f *fakePartitionManager) EnsureUsageStatsPartitions(ctx context.Context, n
 	return f.ensureErr
 }
 
+func (f *fakePartitionManager) DropUsageEntityStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.esdrops = append(f.esdrops, cutoff)
+	return 0, f.esdropErr
+}
+
+func (f *fakePartitionManager) EnsureUsageEntityStatsPartitions(ctx context.Context, now, until time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.esnows = append(f.esnows, now)
+	f.esensures = append(f.esensures, until)
+	return f.ensureErr
+}
+
 func (f *fakePartitionManager) DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -107,6 +127,12 @@ func (f *fakePartitionManager) statsCounts() (int, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.sdrops), len(f.sensures)
+}
+
+func (f *fakePartitionManager) entityStatsCounts() (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.esdrops), len(f.esensures)
 }
 
 // waitCounts 轮询直到 drops/ensures 达到目标（短 ticker 调度断言）。
@@ -154,15 +180,22 @@ func TestRetentionWorkerTicks(t *testing.T) {
 	sgot := pm.sdrops[0].UTC().Truncate(24 * time.Hour)
 	require.True(t, scut.Equal(sgot) || scut.Add(-24*time.Hour).Equal(sgot) || scut.Add(24*time.Hour).Equal(sgot),
 		"usage_stats cutoff = now-180d 独立长保留期，got=%v want≈%v", pm.sdrops[0], scut)
+	// usage_entity_stats 共用 StatsRetentionDays：cutoff 同 usage_stats，各自 DROP+预建（同一循环）
+	require.Len(t, pm.esdrops, len(pm.sdrops), "usage_entity_stats 与 usage_stats 同 StatsRetentionDays 各自 DROP")
+	esgot := pm.esdrops[0].UTC().Truncate(24 * time.Hour)
+	require.True(t, scut.Equal(esgot) || scut.Add(-24*time.Hour).Equal(esgot) || scut.Add(24*time.Hour).Equal(esgot),
+		"usage_entity_stats cutoff = now-180d 与 usage_stats 共用 StatsRetentionDays，got=%v want≈%v", pm.esdrops[0], scut)
 	// until 语义：now + 1 天（预建当日/明日分区）
 	until := pm.ensures[0]
 	require.WithinDuration(t, time.Now().AddDate(0, 0, 1), until, 2*time.Second)
 	// now 语义（评审 I-2）：ensure 的 now = 巡检时刻（与 until 同源，边界
 	// 由同一 now 推导）
 	require.WithinDuration(t, time.Now(), pm.nows[0], 2*time.Second)
-	require.Len(t, pm.eensures, len(pm.ensures), "三表各自预建分区")
+	require.Len(t, pm.eensures, len(pm.ensures), "四表各自预建分区（usage_logs/err_logs/stats/entity）")
 	require.Len(t, pm.sensures, len(pm.ensures), "usage_stats 独立预建分区")
+	require.Len(t, pm.esensures, len(pm.sensures), "usage_entity_stats 独立预建分区（与 usage_stats 同循环）")
 	require.WithinDuration(t, time.Now(), pm.snows[0], 2*time.Second)
+	require.WithinDuration(t, time.Now(), pm.esnows[0], 2*time.Second)
 }
 
 // TestRetentionWorkerStartsWithImmediateRun 启动即巡检（不等到第一个 tick）。
@@ -194,10 +227,14 @@ func TestRetentionWorkerZeroRetentionSkipsDrop(t *testing.T) {
 	require.NotEmpty(t, pm.eensures, "err_logs 预建分区")
 	require.Empty(t, pm.sdrops, "usage_stats 未配置保留天数 → 不删除")
 	require.NotEmpty(t, pm.sensures, "usage_stats 仍预建分区（保留期仅管删除）")
+	require.Empty(t, pm.esdrops, "usage_entity_stats 未配置保留天数 → 不删除（与 usage_stats 共用 StatsRetentionDays）")
+	require.NotEmpty(t, pm.esensures, "usage_entity_stats 仍预建分区（保留期仅管删除，与 usage_stats 同循环）")
 }
 
 // TestRetentionWorkerStatsFailureIsolated C32 扩展：usage_stats DROP 失败不影响
-// 明细两表（三表逐表错误隔离——180 天清理失败不连带 30 天/7 天清理）。
+// 明细两表（四表逐表错误隔离——180 天清理失败不连带 30 天/7 天清理）；
+// usage_entity_stats 与 usage_stats 共用 StatsRetentionDays 但各自独立错误隔离——
+// stats 失败不影响 entity，反之亦然（同一循环内逐表隔离）。
 func TestRetentionWorkerStatsFailureIsolated(t *testing.T) {
 	pm := &fakePartitionManager{sdropErr: errBoom}
 	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, StatsRetentionDays: 180, TickerInterval: 20 * time.Millisecond}, pm, nil)
@@ -210,6 +247,9 @@ func TestRetentionWorkerStatsFailureIsolated(t *testing.T) {
 	ed, ee := pm.errCounts()
 	require.GreaterOrEqual(t, ed, 2, "err_logs 不受 usage_stats 失败影响")
 	require.GreaterOrEqual(t, ee, 2)
+	esd, ese := pm.entityStatsCounts()
+	require.GreaterOrEqual(t, esd, 2, "usage_entity_stats 不受 usage_stats 失败影响（同一 StatsRetentionDays 各自隔离）")
+	require.GreaterOrEqual(t, ese, 2)
 	cancel()
 	require.NoError(t, w.Close(ctx))
 }
@@ -225,6 +265,24 @@ func TestRetentionWorkerErrLogsFailureIsolated(t *testing.T) {
 	ed, ee := pm.errCounts()
 	require.GreaterOrEqual(t, ed, 2, "err_logs drop 失败仍每轮重试")
 	require.GreaterOrEqual(t, ee, 2, "err_logs ensure 不受 drop 失败影响")
+	cancel()
+	require.NoError(t, w.Close(ctx))
+}
+
+// TestRetentionWorkerEntityStatsFailureIsolated 四表隔离：usage_entity_stats DROP 失败不影响
+// usage_stats 及明细两表（同一 StatsRetentionDays 各自错误隔离——entity 失败不连带 cube）。
+func TestRetentionWorkerEntityStatsFailureIsolated(t *testing.T) {
+	pm := &fakePartitionManager{esdropErr: errBoom}
+	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, StatsRetentionDays: 180, TickerInterval: 20 * time.Millisecond}, pm, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, w.Start(ctx))
+	waitCounts(t, pm, 2, 2)
+	esd, ese := pm.entityStatsCounts()
+	require.GreaterOrEqual(t, esd, 2, "usage_entity_stats drop 失败仍每轮重试")
+	require.GreaterOrEqual(t, ese, 2, "usage_entity_stats ensure 不受 drop 失败影响")
+	sd, se := pm.statsCounts()
+	require.GreaterOrEqual(t, sd, 2, "usage_stats 不受 usage_entity_stats 失败影响")
+	require.GreaterOrEqual(t, se, 2)
 	cancel()
 	require.NoError(t, w.Close(ctx))
 }
@@ -308,4 +366,5 @@ func TestRetentionWorkerRedemptionDeleteFailureIsolated(t *testing.T) {
 	require.GreaterOrEqual(t, len(pm.rdeletes), 2, "批删失败仍每轮重试")
 	require.Len(t, pm.edrops, len(pm.drops), "err_logs 不受 redemption_uses 批删失败影响")
 	require.Len(t, pm.sdrops, len(pm.drops), "usage_stats 不受 redemption_uses 批删失败影响")
+	require.Len(t, pm.esdrops, len(pm.drops), "usage_entity_stats 不受 redemption_uses 批删失败影响（四表同一循环）")
 }

@@ -22,16 +22,17 @@ import (
 
 // fakeStatsAggStore 记录 worker 调用序列（两范围参数 + watermark 状态机）。
 type fakeStatsAggStore struct {
-	mu        sync.Mutex
-	lockOK    bool // AcquireStatsAggLock 返回值（false = 其他实例持锁）
-	lockErr   error
-	wm        time.Time // 当前 watermark（zero = 未初始化）
-	aggErr    error     // AggregateRange 注入失败
-	calls     []aggCall // LoadAggRange 调用（from/to）
-	aggrCalls []aggCall // AggregateRange 调用（delFrom/delTo/wmTo）
-	initCalls []time.Time
-	rows      []*domain.StatBucket
-	detail    int64
+	mu         sync.Mutex
+	lockOK     bool // AcquireStatsAggLock 返回值（false = 其他实例持锁）
+	lockErr    error
+	wm         time.Time // 当前 watermark（zero = 未初始化）
+	aggErr     error     // AggregateRange 注入失败
+	calls      []aggCall // LoadAggRange 调用（from/to）
+	aggrCalls  []aggCall // AggregateRange 调用（delFrom/delTo/wmTo）
+	initCalls  []time.Time
+	rows       []*domain.StatBucket
+	entityRows []*domain.EntityStatBucket
+	detail     int64
 }
 
 type aggCall struct {
@@ -48,14 +49,14 @@ func (s *fakeStatsAggStore) AcquireStatsAggLock(ctx context.Context) (func(), bo
 	return func() {}, true, nil
 }
 
-func (s *fakeStatsAggStore) LoadAggRange(ctx context.Context, from, to time.Time) ([]*domain.StatBucket, int64, error) {
+func (s *fakeStatsAggStore) LoadAggRange(ctx context.Context, from, to time.Time) ([]*domain.StatBucket, []*domain.EntityStatBucket, int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, aggCall{from, to})
-	return s.rows, s.detail, nil
+	return s.rows, s.entityRows, s.detail, nil
 }
 
-func (s *fakeStatsAggStore) AggregateRange(ctx context.Context, delFrom, delTo, wmTo time.Time, rows []*domain.StatBucket) error {
+func (s *fakeStatsAggStore) AggregateRange(ctx context.Context, delFrom, delTo, wmTo time.Time, cube []*domain.StatBucket, entity []*domain.EntityStatBucket) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.aggrCalls = append(s.aggrCalls, aggCall{delFrom, delTo})

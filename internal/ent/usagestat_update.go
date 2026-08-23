@@ -63,69 +63,6 @@ func (_u *UsageStatUpdate) AddGroupID(v int64) *UsageStatUpdate {
 	return _u
 }
 
-// SetAccountID sets the "account_id" field.
-func (_u *UsageStatUpdate) SetAccountID(v int64) *UsageStatUpdate {
-	_u.mutation.ResetAccountID()
-	_u.mutation.SetAccountID(v)
-	return _u
-}
-
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (_u *UsageStatUpdate) SetNillableAccountID(v *int64) *UsageStatUpdate {
-	if v != nil {
-		_u.SetAccountID(*v)
-	}
-	return _u
-}
-
-// AddAccountID adds value to the "account_id" field.
-func (_u *UsageStatUpdate) AddAccountID(v int64) *UsageStatUpdate {
-	_u.mutation.AddAccountID(v)
-	return _u
-}
-
-// SetTemplateID sets the "template_id" field.
-func (_u *UsageStatUpdate) SetTemplateID(v int64) *UsageStatUpdate {
-	_u.mutation.ResetTemplateID()
-	_u.mutation.SetTemplateID(v)
-	return _u
-}
-
-// SetNillableTemplateID sets the "template_id" field if the given value is not nil.
-func (_u *UsageStatUpdate) SetNillableTemplateID(v *int64) *UsageStatUpdate {
-	if v != nil {
-		_u.SetTemplateID(*v)
-	}
-	return _u
-}
-
-// AddTemplateID adds value to the "template_id" field.
-func (_u *UsageStatUpdate) AddTemplateID(v int64) *UsageStatUpdate {
-	_u.mutation.AddTemplateID(v)
-	return _u
-}
-
-// SetUserID sets the "user_id" field.
-func (_u *UsageStatUpdate) SetUserID(v int64) *UsageStatUpdate {
-	_u.mutation.ResetUserID()
-	_u.mutation.SetUserID(v)
-	return _u
-}
-
-// SetNillableUserID sets the "user_id" field if the given value is not nil.
-func (_u *UsageStatUpdate) SetNillableUserID(v *int64) *UsageStatUpdate {
-	if v != nil {
-		_u.SetUserID(*v)
-	}
-	return _u
-}
-
-// AddUserID adds value to the "user_id" field.
-func (_u *UsageStatUpdate) AddUserID(v int64) *UsageStatUpdate {
-	_u.mutation.AddUserID(v)
-	return _u
-}
-
 // SetModel sets the "model" field.
 func (_u *UsageStatUpdate) SetModel(v string) *UsageStatUpdate {
 	_u.mutation.SetModel(v)
@@ -136,20 +73,6 @@ func (_u *UsageStatUpdate) SetModel(v string) *UsageStatUpdate {
 func (_u *UsageStatUpdate) SetNillableModel(v *string) *UsageStatUpdate {
 	if v != nil {
 		_u.SetModel(*v)
-	}
-	return _u
-}
-
-// SetIsError sets the "is_error" field.
-func (_u *UsageStatUpdate) SetIsError(v bool) *UsageStatUpdate {
-	_u.mutation.SetIsError(v)
-	return _u
-}
-
-// SetNillableIsError sets the "is_error" field if the given value is not nil.
-func (_u *UsageStatUpdate) SetNillableIsError(v *bool) *UsageStatUpdate {
-	if v != nil {
-		_u.SetIsError(*v)
 	}
 	return _u
 }
@@ -322,6 +245,27 @@ func (_u *UsageStatUpdate) AddCost(v int64) *UsageStatUpdate {
 	return _u
 }
 
+// SetRawCost sets the "raw_cost" field.
+func (_u *UsageStatUpdate) SetRawCost(v int64) *UsageStatUpdate {
+	_u.mutation.ResetRawCost()
+	_u.mutation.SetRawCost(v)
+	return _u
+}
+
+// SetNillableRawCost sets the "raw_cost" field if the given value is not nil.
+func (_u *UsageStatUpdate) SetNillableRawCost(v *int64) *UsageStatUpdate {
+	if v != nil {
+		_u.SetRawCost(*v)
+	}
+	return _u
+}
+
+// AddRawCost adds value to the "raw_cost" field.
+func (_u *UsageStatUpdate) AddRawCost(v int64) *UsageStatUpdate {
+	_u.mutation.AddRawCost(v)
+	return _u
+}
+
 // SetCallCount sets the "call_count" field.
 func (_u *UsageStatUpdate) SetCallCount(v int64) *UsageStatUpdate {
 	_u.mutation.ResetCallCount()
@@ -471,29 +415,8 @@ func (_u *UsageStatUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedGroupID(); ok {
 		_spec.AddField(usagestat.FieldGroupID, field.TypeInt64, value)
 	}
-	if value, ok := _u.mutation.AccountID(); ok {
-		_spec.SetField(usagestat.FieldAccountID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedAccountID(); ok {
-		_spec.AddField(usagestat.FieldAccountID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.TemplateID(); ok {
-		_spec.SetField(usagestat.FieldTemplateID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedTemplateID(); ok {
-		_spec.AddField(usagestat.FieldTemplateID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.UserID(); ok {
-		_spec.SetField(usagestat.FieldUserID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedUserID(); ok {
-		_spec.AddField(usagestat.FieldUserID, field.TypeInt64, value)
-	}
 	if value, ok := _u.mutation.Model(); ok {
 		_spec.SetField(usagestat.FieldModel, field.TypeString, value)
-	}
-	if value, ok := _u.mutation.IsError(); ok {
-		_spec.SetField(usagestat.FieldIsError, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.RequestCount(); ok {
 		_spec.SetField(usagestat.FieldRequestCount, field.TypeInt64, value)
@@ -542,6 +465,12 @@ func (_u *UsageStatUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedCost(); ok {
 		_spec.AddField(usagestat.FieldCost, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.RawCost(); ok {
+		_spec.SetField(usagestat.FieldRawCost, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRawCost(); ok {
+		_spec.AddField(usagestat.FieldRawCost, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.CallCount(); ok {
 		_spec.SetField(usagestat.FieldCallCount, field.TypeInt64, value)
@@ -625,69 +554,6 @@ func (_u *UsageStatUpdateOne) AddGroupID(v int64) *UsageStatUpdateOne {
 	return _u
 }
 
-// SetAccountID sets the "account_id" field.
-func (_u *UsageStatUpdateOne) SetAccountID(v int64) *UsageStatUpdateOne {
-	_u.mutation.ResetAccountID()
-	_u.mutation.SetAccountID(v)
-	return _u
-}
-
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (_u *UsageStatUpdateOne) SetNillableAccountID(v *int64) *UsageStatUpdateOne {
-	if v != nil {
-		_u.SetAccountID(*v)
-	}
-	return _u
-}
-
-// AddAccountID adds value to the "account_id" field.
-func (_u *UsageStatUpdateOne) AddAccountID(v int64) *UsageStatUpdateOne {
-	_u.mutation.AddAccountID(v)
-	return _u
-}
-
-// SetTemplateID sets the "template_id" field.
-func (_u *UsageStatUpdateOne) SetTemplateID(v int64) *UsageStatUpdateOne {
-	_u.mutation.ResetTemplateID()
-	_u.mutation.SetTemplateID(v)
-	return _u
-}
-
-// SetNillableTemplateID sets the "template_id" field if the given value is not nil.
-func (_u *UsageStatUpdateOne) SetNillableTemplateID(v *int64) *UsageStatUpdateOne {
-	if v != nil {
-		_u.SetTemplateID(*v)
-	}
-	return _u
-}
-
-// AddTemplateID adds value to the "template_id" field.
-func (_u *UsageStatUpdateOne) AddTemplateID(v int64) *UsageStatUpdateOne {
-	_u.mutation.AddTemplateID(v)
-	return _u
-}
-
-// SetUserID sets the "user_id" field.
-func (_u *UsageStatUpdateOne) SetUserID(v int64) *UsageStatUpdateOne {
-	_u.mutation.ResetUserID()
-	_u.mutation.SetUserID(v)
-	return _u
-}
-
-// SetNillableUserID sets the "user_id" field if the given value is not nil.
-func (_u *UsageStatUpdateOne) SetNillableUserID(v *int64) *UsageStatUpdateOne {
-	if v != nil {
-		_u.SetUserID(*v)
-	}
-	return _u
-}
-
-// AddUserID adds value to the "user_id" field.
-func (_u *UsageStatUpdateOne) AddUserID(v int64) *UsageStatUpdateOne {
-	_u.mutation.AddUserID(v)
-	return _u
-}
-
 // SetModel sets the "model" field.
 func (_u *UsageStatUpdateOne) SetModel(v string) *UsageStatUpdateOne {
 	_u.mutation.SetModel(v)
@@ -698,20 +564,6 @@ func (_u *UsageStatUpdateOne) SetModel(v string) *UsageStatUpdateOne {
 func (_u *UsageStatUpdateOne) SetNillableModel(v *string) *UsageStatUpdateOne {
 	if v != nil {
 		_u.SetModel(*v)
-	}
-	return _u
-}
-
-// SetIsError sets the "is_error" field.
-func (_u *UsageStatUpdateOne) SetIsError(v bool) *UsageStatUpdateOne {
-	_u.mutation.SetIsError(v)
-	return _u
-}
-
-// SetNillableIsError sets the "is_error" field if the given value is not nil.
-func (_u *UsageStatUpdateOne) SetNillableIsError(v *bool) *UsageStatUpdateOne {
-	if v != nil {
-		_u.SetIsError(*v)
 	}
 	return _u
 }
@@ -881,6 +733,27 @@ func (_u *UsageStatUpdateOne) SetNillableCost(v *int64) *UsageStatUpdateOne {
 // AddCost adds value to the "cost" field.
 func (_u *UsageStatUpdateOne) AddCost(v int64) *UsageStatUpdateOne {
 	_u.mutation.AddCost(v)
+	return _u
+}
+
+// SetRawCost sets the "raw_cost" field.
+func (_u *UsageStatUpdateOne) SetRawCost(v int64) *UsageStatUpdateOne {
+	_u.mutation.ResetRawCost()
+	_u.mutation.SetRawCost(v)
+	return _u
+}
+
+// SetNillableRawCost sets the "raw_cost" field if the given value is not nil.
+func (_u *UsageStatUpdateOne) SetNillableRawCost(v *int64) *UsageStatUpdateOne {
+	if v != nil {
+		_u.SetRawCost(*v)
+	}
+	return _u
+}
+
+// AddRawCost adds value to the "raw_cost" field.
+func (_u *UsageStatUpdateOne) AddRawCost(v int64) *UsageStatUpdateOne {
+	_u.mutation.AddRawCost(v)
 	return _u
 }
 
@@ -1063,29 +936,8 @@ func (_u *UsageStatUpdateOne) sqlSave(ctx context.Context) (_node *UsageStat, er
 	if value, ok := _u.mutation.AddedGroupID(); ok {
 		_spec.AddField(usagestat.FieldGroupID, field.TypeInt64, value)
 	}
-	if value, ok := _u.mutation.AccountID(); ok {
-		_spec.SetField(usagestat.FieldAccountID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedAccountID(); ok {
-		_spec.AddField(usagestat.FieldAccountID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.TemplateID(); ok {
-		_spec.SetField(usagestat.FieldTemplateID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedTemplateID(); ok {
-		_spec.AddField(usagestat.FieldTemplateID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.UserID(); ok {
-		_spec.SetField(usagestat.FieldUserID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedUserID(); ok {
-		_spec.AddField(usagestat.FieldUserID, field.TypeInt64, value)
-	}
 	if value, ok := _u.mutation.Model(); ok {
 		_spec.SetField(usagestat.FieldModel, field.TypeString, value)
-	}
-	if value, ok := _u.mutation.IsError(); ok {
-		_spec.SetField(usagestat.FieldIsError, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.RequestCount(); ok {
 		_spec.SetField(usagestat.FieldRequestCount, field.TypeInt64, value)
@@ -1134,6 +986,12 @@ func (_u *UsageStatUpdateOne) sqlSave(ctx context.Context) (_node *UsageStat, er
 	}
 	if value, ok := _u.mutation.AddedCost(); ok {
 		_spec.AddField(usagestat.FieldCost, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.RawCost(); ok {
+		_spec.SetField(usagestat.FieldRawCost, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRawCost(); ok {
+		_spec.AddField(usagestat.FieldRawCost, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.CallCount(); ok {
 		_spec.SetField(usagestat.FieldCallCount, field.TypeInt64, value)

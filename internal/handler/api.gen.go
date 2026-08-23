@@ -143,6 +143,19 @@ const (
 	Switch SettingType = "switch"
 )
 
+// Defines values for StatTTFTSummarySource.
+const (
+	Exact  StatTTFTSummarySource = "exact"
+	Sketch StatTTFTSummarySource = "sketch"
+)
+
+// Defines values for StatTopEntryEntityType.
+const (
+	StatTopEntryEntityTypeAccount StatTopEntryEntityType = "account"
+	StatTopEntryEntityTypeKey     StatTopEntryEntityType = "key"
+	StatTopEntryEntityTypeUser    StatTopEntryEntityType = "user"
+)
+
 // Defines values for TemplateCredentialType.
 const (
 	TemplateCredentialTypeApiKey           TemplateCredentialType = "api_key"
@@ -281,10 +294,44 @@ const (
 	GetRedemptionCodesParamsOrderDesc GetRedemptionCodesParamsOrder = "desc"
 )
 
-// Defines values for GetStatsParamsGranularity.
+// Defines values for GetStatsEntityTrendParamsEntity.
 const (
-	Day  GetStatsParamsGranularity = "day"
-	Hour GetStatsParamsGranularity = "hour"
+	GetStatsEntityTrendParamsEntityAccount GetStatsEntityTrendParamsEntity = "account"
+	GetStatsEntityTrendParamsEntityKey     GetStatsEntityTrendParamsEntity = "key"
+	GetStatsEntityTrendParamsEntityUser    GetStatsEntityTrendParamsEntity = "user"
+)
+
+// Defines values for GetStatsEntityTrendParamsGranularity.
+const (
+	GetStatsEntityTrendParamsGranularityDay  GetStatsEntityTrendParamsGranularity = "day"
+	GetStatsEntityTrendParamsGranularityHour GetStatsEntityTrendParamsGranularity = "hour"
+)
+
+// Defines values for GetStatsTopParamsEntity.
+const (
+	GetStatsTopParamsEntityAccount GetStatsTopParamsEntity = "account"
+	GetStatsTopParamsEntityKey     GetStatsTopParamsEntity = "key"
+	GetStatsTopParamsEntityUser    GetStatsTopParamsEntity = "user"
+)
+
+// Defines values for GetStatsTopParamsBy.
+const (
+	Cost     GetStatsTopParamsBy = "cost"
+	Requests GetStatsTopParamsBy = "requests"
+	Tokens   GetStatsTopParamsBy = "tokens"
+)
+
+// Defines values for GetStatsTrendParamsGranularity.
+const (
+	GetStatsTrendParamsGranularityDay  GetStatsTrendParamsGranularity = "day"
+	GetStatsTrendParamsGranularityHour GetStatsTrendParamsGranularity = "hour"
+)
+
+// Defines values for GetStatsTTFTParamsEntity.
+const (
+	GetStatsTTFTParamsEntityAccount GetStatsTTFTParamsEntity = "account"
+	GetStatsTTFTParamsEntityKey     GetStatsTTFTParamsEntity = "key"
+	GetStatsTTFTParamsEntityUser    GetStatsTTFTParamsEntity = "user"
 )
 
 // Defines values for GetTempBalancesParamsOrder.
@@ -1380,54 +1427,68 @@ type SnapshotState struct {
 	Scopes *[]string `json:"scopes,omitempty"`
 }
 
-// StatBucket 统计桶（rewrite spec 2026-08-14 契约更新：Cost 毫分 → USD /1e5 破坏性变更；TotalLatencyMS 随列删除；TTFT pN 服务端直方图插值——直方图不可前端反算）
-type StatBucket struct {
-	AccountID           *int64     `json:"AccountID,omitempty"`
+// StatTTFTSummary defines model for StatTTFTSummary.
+type StatTTFTSummary struct {
+	AvgMS  float64               `json:"AvgMS"`
+	Count  int64                 `json:"Count"`
+	MaxMS  int64                 `json:"MaxMS"`
+	P50MS  int64                 `json:"P50MS"`
+	P95MS  int64                 `json:"P95MS"`
+	P99MS  int64                 `json:"P99MS"`
+	Source StatTTFTSummarySource `json:"Source"`
+}
+
+// StatTTFTSummarySource defines model for StatTTFTSummary.Source.
+type StatTTFTSummarySource string
+
+// StatTopEntry defines model for StatTopEntry.
+type StatTopEntry struct {
+	CacheCreationTokens *int64 `json:"CacheCreationTokens,omitempty"`
+	CacheReadTokens     *int64 `json:"CacheReadTokens,omitempty"`
+	CallCount           *int64 `json:"CallCount,omitempty"`
+
+	// Cost 成本 USD（毫分 /1e5）
+	Cost         *float64                `json:"Cost,omitempty"`
+	EntityID     *int64                  `json:"EntityID,omitempty"`
+	EntityType   *StatTopEntryEntityType `json:"EntityType,omitempty"`
+	ErrorCount   *int64                  `json:"ErrorCount,omitempty"`
+	InputTokens  *int64                  `json:"InputTokens,omitempty"`
+	OutputTokens *int64                  `json:"OutputTokens,omitempty"`
+
+	// RawCost 原始成本 USD（毫分 /1e5）
+	RawCost      *float64 `json:"RawCost,omitempty"`
+	RequestCount *int64   `json:"RequestCount,omitempty"`
+	TTFTAvgMS    *float64 `json:"TTFTAvgMS,omitempty"`
+	TTFTMaxMS    *int64   `json:"TTFTMaxMS,omitempty"`
+	TotalTokens  *int64   `json:"TotalTokens,omitempty"`
+}
+
+// StatTopEntryEntityType defines model for StatTopEntry.EntityType.
+type StatTopEntryEntityType string
+
+// StatTrendPoint defines model for StatTrendPoint.
+type StatTrendPoint struct {
 	BucketTime          *time.Time `json:"BucketTime,omitempty"`
 	CacheCreationTokens *int64     `json:"CacheCreationTokens,omitempty"`
 	CacheReadTokens     *int64     `json:"CacheReadTokens,omitempty"`
+	CallCount           *int64     `json:"CallCount,omitempty"`
 
-	// CallCount 按次调用：图片生成张数、search 次数（不入 TotalTokens）
-	CallCount *int64 `json:"CallCount,omitempty"`
-
-	// Cost 成本 USD（毫分 /1e5，与价格 API/overview 口径一致；破坏性变更）
+	// Cost 成本 USD（毫分 /1e5）
 	Cost         *float64 `json:"Cost,omitempty"`
 	ErrorCount   *int64   `json:"ErrorCount,omitempty"`
-	GroupID      *int64   `json:"GroupID,omitempty"`
 	InputTokens  *int64   `json:"InputTokens,omitempty"`
-	IsError      *bool    `json:"IsError,omitempty"`
-	Model        *string  `json:"Model,omitempty"`
 	OutputTokens *int64   `json:"OutputTokens,omitempty"`
+
+	// RawCost 原始成本 USD（毫分 /1e5）
+	RawCost      *float64 `json:"RawCost,omitempty"`
 	RequestCount *int64   `json:"RequestCount,omitempty"`
 
-	// TTFTAvgMS 首 token 平均毫秒（sum/count，无样本 = 0）
+	// TTFTAvgMS TTFT 平均毫秒（TTFTTotalMS/TTFTCount，无样本 0）
 	TTFTAvgMS *float64 `json:"TTFTAvgMS,omitempty"`
 
-	// TTFTCount 首 token 样本数（pN/加权 avg 分母——前端跨行合并必需）
-	TTFTCount *int64 `json:"TTFTCount,omitempty"`
-
-	// TTFTMaxMS 首 token 最大毫秒（无样本 = 0）
-	TTFTMaxMS *int64 `json:"TTFTMaxMS,omitempty"`
-
-	// TTFTP50MS 首 token 分位毫秒（直方图插值 nearest-rank + 桶内线性插值；顶桶 12800+ 回落 12800；无样本 = 0）
-	TTFTP50MS *int64 `json:"TTFTP50MS,omitempty"`
-
-	// TTFTP90MS 同 TTFTP50MS（p90）
-	TTFTP90MS *int64 `json:"TTFTP90MS,omitempty"`
-
-	// TTFTP95MS 同 TTFTP50MS（p95）
-	TTFTP95MS *int64 `json:"TTFTP95MS,omitempty"`
-
-	// TTFTP99MS 同 TTFTP50MS（p99）
-	TTFTP99MS   *int64 `json:"TTFTP99MS,omitempty"`
-	TemplateID  *int64 `json:"TemplateID,omitempty"`
+	// TTFTMaxMS TTFT 最大毫秒
+	TTFTMaxMS   *int64 `json:"TTFTMaxMS,omitempty"`
 	TotalTokens *int64 `json:"TotalTokens,omitempty"`
-
-	// UserID 鉴权归属用户；0 = 无
-	UserID *int64 `json:"UserID,omitempty"`
-
-	// RawCostUsd 原始成本 USD（毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值）
-	RawCostUsd *float64 `json:"raw_cost_usd,omitempty"`
 }
 
 // Template defines model for Template.
@@ -1856,20 +1917,60 @@ type ListRulesParams struct {
 	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty"`
 }
 
-// GetStatsParams defines parameters for GetStats.
-type GetStatsParams struct {
-	From        *time.Time                 `form:"from,omitempty" json:"from,omitempty"`
-	To          *time.Time                 `form:"to,omitempty" json:"to,omitempty"`
-	Granularity *GetStatsParamsGranularity `form:"granularity,omitempty" json:"granularity,omitempty"`
-	GroupId     *int64                     `form:"group_id,omitempty" json:"group_id,omitempty"`
-	AccountId   *int64                     `form:"account_id,omitempty" json:"account_id,omitempty"`
-	TemplateId  *int64                     `form:"template_id,omitempty" json:"template_id,omitempty"`
-	UserId      *int64                     `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Model       *string                    `form:"model,omitempty" json:"model,omitempty"`
+// GetStatsEntityTrendParams defines parameters for GetStatsEntityTrend.
+type GetStatsEntityTrendParams struct {
+	Entity      GetStatsEntityTrendParamsEntity      `form:"entity" json:"entity"`
+	Id          int64                                `form:"id" json:"id"`
+	From        time.Time                            `form:"from" json:"from"`
+	To          time.Time                            `form:"to" json:"to"`
+	Granularity GetStatsEntityTrendParamsGranularity `form:"granularity" json:"granularity"`
+	Model       *string                              `form:"model,omitempty" json:"model,omitempty"`
 }
 
-// GetStatsParamsGranularity defines parameters for GetStats.
-type GetStatsParamsGranularity string
+// GetStatsEntityTrendParamsEntity defines parameters for GetStatsEntityTrend.
+type GetStatsEntityTrendParamsEntity string
+
+// GetStatsEntityTrendParamsGranularity defines parameters for GetStatsEntityTrend.
+type GetStatsEntityTrendParamsGranularity string
+
+// GetStatsTopParams defines parameters for GetStatsTop.
+type GetStatsTopParams struct {
+	From   time.Time               `form:"from" json:"from"`
+	To     time.Time               `form:"to" json:"to"`
+	Entity GetStatsTopParamsEntity `form:"entity" json:"entity"`
+	By     GetStatsTopParamsBy     `form:"by" json:"by"`
+	Limit  *int                    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetStatsTopParamsEntity defines parameters for GetStatsTop.
+type GetStatsTopParamsEntity string
+
+// GetStatsTopParamsBy defines parameters for GetStatsTop.
+type GetStatsTopParamsBy string
+
+// GetStatsTrendParams defines parameters for GetStatsTrend.
+type GetStatsTrendParams struct {
+	From        time.Time                       `form:"from" json:"from"`
+	To          time.Time                       `form:"to" json:"to"`
+	Granularity *GetStatsTrendParamsGranularity `form:"granularity,omitempty" json:"granularity,omitempty"`
+	GroupId     *int64                          `form:"group_id,omitempty" json:"group_id,omitempty"`
+	Model       *string                         `form:"model,omitempty" json:"model,omitempty"`
+}
+
+// GetStatsTrendParamsGranularity defines parameters for GetStatsTrend.
+type GetStatsTrendParamsGranularity string
+
+// GetStatsTTFTParams defines parameters for GetStatsTTFT.
+type GetStatsTTFTParams struct {
+	From   time.Time                 `form:"from" json:"from"`
+	To     time.Time                 `form:"to" json:"to"`
+	Entity *GetStatsTTFTParamsEntity `form:"entity,omitempty" json:"entity,omitempty"`
+	Id     *int64                    `form:"id,omitempty" json:"id,omitempty"`
+	Model  *string                   `form:"model,omitempty" json:"model,omitempty"`
+}
+
+// GetStatsTTFTParamsEntity defines parameters for GetStatsTTFT.
+type GetStatsTTFTParamsEntity string
 
 // GetTempBalancesParams defines parameters for GetTempBalances.
 type GetTempBalancesParams struct {
@@ -2178,9 +2279,18 @@ type ServerInterface interface {
 	// 更新设置（类型化校验：switch 必须 true/false、number 必须数字）
 	// (PUT /settings)
 	PutAdminSettings(w http.ResponseWriter, r *http.Request)
-	// 用量统计聚合
-	// (GET /stats)
-	GetStats(w http.ResponseWriter, r *http.Request, params GetStatsParams)
+	// 实体趋势（entity 卷积）
+	// (GET /stats/entity-trend)
+	GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, params GetStatsEntityTrendParams)
+	// Top 排行（entity 卷积）
+	// (GET /stats/top)
+	GetStatsTop(w http.ResponseWriter, r *http.Request, params GetStatsTopParams)
+	// 趋势聚合（cube）
+	// (GET /stats/trend)
+	GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams)
+	// TTFT 聚合（sketch 或 exact）
+	// (GET /stats/ttft)
+	GetStatsTTFT(w http.ResponseWriter, r *http.Request, params GetStatsTTFTParams)
 	// 临时额度列表（platform_admin 专属；全量视角含过期/用尽/负扣减行；user_id 筛选；sort 白名单 expires_at/amount/created_at，默认 expires_at asc——FEFO 同序）
 	// (GET /temp-balances)
 	GetTempBalances(w http.ResponseWriter, r *http.Request, params GetTempBalancesParams)
@@ -2538,9 +2648,27 @@ func (_ Unimplemented) PutAdminSettings(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 用量统计聚合
-// (GET /stats)
-func (_ Unimplemented) GetStats(w http.ResponseWriter, r *http.Request, params GetStatsParams) {
+// 实体趋势（entity 卷积）
+// (GET /stats/entity-trend)
+func (_ Unimplemented) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, params GetStatsEntityTrendParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Top 排行（entity 卷积）
+// (GET /stats/top)
+func (_ Unimplemented) GetStatsTop(w http.ResponseWriter, r *http.Request, params GetStatsTopParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 趋势聚合（cube）
+// (GET /stats/trend)
+func (_ Unimplemented) GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// TTFT 聚合（sketch 或 exact）
+// (GET /stats/ttft)
+func (_ Unimplemented) GetStatsTTFT(w http.ResponseWriter, r *http.Request, params GetStatsTTFTParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4269,25 +4397,228 @@ func (siw *ServerInterfaceWrapper) PutAdminSettings(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
-// GetStats operation middleware
-func (siw *ServerInterfaceWrapper) GetStats(w http.ResponseWriter, r *http.Request) {
+// GetStatsEntityTrend operation middleware
+func (siw *ServerInterfaceWrapper) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetStatsParams
+	var params GetStatsEntityTrendParams
 
-	// ------------- Optional query parameter "from" -------------
+	// ------------- Required query parameter "entity" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
+	if paramValue := r.URL.Query().Get("entity"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "entity"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "entity", r.URL.Query(), &params.Entity)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entity", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "id" -------------
+
+	if paramValue := r.URL.Query().Get("id"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "id"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "id", r.URL.Query(), &params.Id)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "from" -------------
+
+	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
 		return
 	}
 
-	// ------------- Optional query parameter "to" -------------
+	// ------------- Required query parameter "to" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
+	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "granularity" -------------
+
+	if paramValue := r.URL.Query().Get("granularity"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "granularity"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "granularity", r.URL.Query(), &params.Granularity)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "granularity", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "model" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStatsEntityTrend(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetStatsTop operation middleware
+func (siw *ServerInterfaceWrapper) GetStatsTop(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetStatsTopParams
+
+	// ------------- Required query parameter "from" -------------
+
+	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "to" -------------
+
+	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "entity" -------------
+
+	if paramValue := r.URL.Query().Get("entity"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "entity"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "entity", r.URL.Query(), &params.Entity)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entity", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "by" -------------
+
+	if paramValue := r.URL.Query().Get("by"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "by"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "by", r.URL.Query(), &params.By)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "by", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStatsTop(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetStatsTrend operation middleware
+func (siw *ServerInterfaceWrapper) GetStatsTrend(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetStatsTrendParams
+
+	// ------------- Required query parameter "from" -------------
+
+	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "to" -------------
+
+	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
 		return
@@ -4309,27 +4640,76 @@ func (siw *ServerInterfaceWrapper) GetStats(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// ------------- Optional query parameter "account_id" -------------
+	// ------------- Optional query parameter "model" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "account_id", r.URL.Query(), &params.AccountId)
+	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "account_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
 		return
 	}
 
-	// ------------- Optional query parameter "template_id" -------------
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStatsTrend(w, r, params)
+	}))
 
-	err = runtime.BindQueryParameter("form", true, false, "template_id", r.URL.Query(), &params.TemplateId)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "template_id", Err: err})
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetStatsTTFT operation middleware
+func (siw *ServerInterfaceWrapper) GetStatsTTFT(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetStatsTTFTParams
+
+	// ------------- Required query parameter "from" -------------
+
+	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
 		return
 	}
 
-	// ------------- Optional query parameter "user_id" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "user_id", r.URL.Query(), &params.UserId)
+	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "user_id", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "to" -------------
+
+	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "entity" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "entity", r.URL.Query(), &params.Entity)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entity", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "id", r.URL.Query(), &params.Id)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
 		return
 	}
 
@@ -4342,7 +4722,7 @@ func (siw *ServerInterfaceWrapper) GetStats(w http.ResponseWriter, r *http.Reque
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetStats(w, r, params)
+		siw.Handler.GetStatsTTFT(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5200,7 +5580,16 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Put(options.BaseURL+"/settings", wrapper.PutAdminSettings)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/stats", wrapper.GetStats)
+		r.Get(options.BaseURL+"/stats/entity-trend", wrapper.GetStatsEntityTrend)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/stats/top", wrapper.GetStatsTop)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/stats/trend", wrapper.GetStatsTrend)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/stats/ttft", wrapper.GetStatsTTFT)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/temp-balances", wrapper.GetTempBalances)

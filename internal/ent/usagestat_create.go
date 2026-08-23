@@ -42,48 +42,6 @@ func (_c *UsageStatCreate) SetNillableGroupID(v *int64) *UsageStatCreate {
 	return _c
 }
 
-// SetAccountID sets the "account_id" field.
-func (_c *UsageStatCreate) SetAccountID(v int64) *UsageStatCreate {
-	_c.mutation.SetAccountID(v)
-	return _c
-}
-
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (_c *UsageStatCreate) SetNillableAccountID(v *int64) *UsageStatCreate {
-	if v != nil {
-		_c.SetAccountID(*v)
-	}
-	return _c
-}
-
-// SetTemplateID sets the "template_id" field.
-func (_c *UsageStatCreate) SetTemplateID(v int64) *UsageStatCreate {
-	_c.mutation.SetTemplateID(v)
-	return _c
-}
-
-// SetNillableTemplateID sets the "template_id" field if the given value is not nil.
-func (_c *UsageStatCreate) SetNillableTemplateID(v *int64) *UsageStatCreate {
-	if v != nil {
-		_c.SetTemplateID(*v)
-	}
-	return _c
-}
-
-// SetUserID sets the "user_id" field.
-func (_c *UsageStatCreate) SetUserID(v int64) *UsageStatCreate {
-	_c.mutation.SetUserID(v)
-	return _c
-}
-
-// SetNillableUserID sets the "user_id" field if the given value is not nil.
-func (_c *UsageStatCreate) SetNillableUserID(v *int64) *UsageStatCreate {
-	if v != nil {
-		_c.SetUserID(*v)
-	}
-	return _c
-}
-
 // SetModel sets the "model" field.
 func (_c *UsageStatCreate) SetModel(v string) *UsageStatCreate {
 	_c.mutation.SetModel(v)
@@ -94,20 +52,6 @@ func (_c *UsageStatCreate) SetModel(v string) *UsageStatCreate {
 func (_c *UsageStatCreate) SetNillableModel(v *string) *UsageStatCreate {
 	if v != nil {
 		_c.SetModel(*v)
-	}
-	return _c
-}
-
-// SetIsError sets the "is_error" field.
-func (_c *UsageStatCreate) SetIsError(v bool) *UsageStatCreate {
-	_c.mutation.SetIsError(v)
-	return _c
-}
-
-// SetNillableIsError sets the "is_error" field if the given value is not nil.
-func (_c *UsageStatCreate) SetNillableIsError(v *bool) *UsageStatCreate {
-	if v != nil {
-		_c.SetIsError(*v)
 	}
 	return _c
 }
@@ -220,6 +164,20 @@ func (_c *UsageStatCreate) SetCost(v int64) *UsageStatCreate {
 func (_c *UsageStatCreate) SetNillableCost(v *int64) *UsageStatCreate {
 	if v != nil {
 		_c.SetCost(*v)
+	}
+	return _c
+}
+
+// SetRawCost sets the "raw_cost" field.
+func (_c *UsageStatCreate) SetRawCost(v int64) *UsageStatCreate {
+	_c.mutation.SetRawCost(v)
+	return _c
+}
+
+// SetNillableRawCost sets the "raw_cost" field if the given value is not nil.
+func (_c *UsageStatCreate) SetNillableRawCost(v *int64) *UsageStatCreate {
+	if v != nil {
+		_c.SetRawCost(*v)
 	}
 	return _c
 }
@@ -339,25 +297,9 @@ func (_c *UsageStatCreate) defaults() {
 		v := usagestat.DefaultGroupID
 		_c.mutation.SetGroupID(v)
 	}
-	if _, ok := _c.mutation.AccountID(); !ok {
-		v := usagestat.DefaultAccountID
-		_c.mutation.SetAccountID(v)
-	}
-	if _, ok := _c.mutation.TemplateID(); !ok {
-		v := usagestat.DefaultTemplateID
-		_c.mutation.SetTemplateID(v)
-	}
-	if _, ok := _c.mutation.UserID(); !ok {
-		v := usagestat.DefaultUserID
-		_c.mutation.SetUserID(v)
-	}
 	if _, ok := _c.mutation.Model(); !ok {
 		v := usagestat.DefaultModel
 		_c.mutation.SetModel(v)
-	}
-	if _, ok := _c.mutation.IsError(); !ok {
-		v := usagestat.DefaultIsError
-		_c.mutation.SetIsError(v)
 	}
 	if _, ok := _c.mutation.RequestCount(); !ok {
 		v := usagestat.DefaultRequestCount
@@ -391,6 +333,10 @@ func (_c *UsageStatCreate) defaults() {
 		v := usagestat.DefaultCost
 		_c.mutation.SetCost(v)
 	}
+	if _, ok := _c.mutation.RawCost(); !ok {
+		v := usagestat.DefaultRawCost
+		_c.mutation.SetRawCost(v)
+	}
 	if _, ok := _c.mutation.CallCount(); !ok {
 		v := usagestat.DefaultCallCount
 		_c.mutation.SetCallCount(v)
@@ -421,20 +367,8 @@ func (_c *UsageStatCreate) check() error {
 	if _, ok := _c.mutation.GroupID(); !ok {
 		return &ValidationError{Name: "group_id", err: errors.New(`ent: missing required field "UsageStat.group_id"`)}
 	}
-	if _, ok := _c.mutation.AccountID(); !ok {
-		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "UsageStat.account_id"`)}
-	}
-	if _, ok := _c.mutation.TemplateID(); !ok {
-		return &ValidationError{Name: "template_id", err: errors.New(`ent: missing required field "UsageStat.template_id"`)}
-	}
-	if _, ok := _c.mutation.UserID(); !ok {
-		return &ValidationError{Name: "user_id", err: errors.New(`ent: missing required field "UsageStat.user_id"`)}
-	}
 	if _, ok := _c.mutation.Model(); !ok {
 		return &ValidationError{Name: "model", err: errors.New(`ent: missing required field "UsageStat.model"`)}
-	}
-	if _, ok := _c.mutation.IsError(); !ok {
-		return &ValidationError{Name: "is_error", err: errors.New(`ent: missing required field "UsageStat.is_error"`)}
 	}
 	if _, ok := _c.mutation.RequestCount(); !ok {
 		return &ValidationError{Name: "request_count", err: errors.New(`ent: missing required field "UsageStat.request_count"`)}
@@ -459,6 +393,9 @@ func (_c *UsageStatCreate) check() error {
 	}
 	if _, ok := _c.mutation.Cost(); !ok {
 		return &ValidationError{Name: "cost", err: errors.New(`ent: missing required field "UsageStat.cost"`)}
+	}
+	if _, ok := _c.mutation.RawCost(); !ok {
+		return &ValidationError{Name: "raw_cost", err: errors.New(`ent: missing required field "UsageStat.raw_cost"`)}
 	}
 	if _, ok := _c.mutation.CallCount(); !ok {
 		return &ValidationError{Name: "call_count", err: errors.New(`ent: missing required field "UsageStat.call_count"`)}
@@ -516,25 +453,9 @@ func (_c *UsageStatCreate) createSpec() (*UsageStat, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagestat.FieldGroupID, field.TypeInt64, value)
 		_node.GroupID = value
 	}
-	if value, ok := _c.mutation.AccountID(); ok {
-		_spec.SetField(usagestat.FieldAccountID, field.TypeInt64, value)
-		_node.AccountID = value
-	}
-	if value, ok := _c.mutation.TemplateID(); ok {
-		_spec.SetField(usagestat.FieldTemplateID, field.TypeInt64, value)
-		_node.TemplateID = value
-	}
-	if value, ok := _c.mutation.UserID(); ok {
-		_spec.SetField(usagestat.FieldUserID, field.TypeInt64, value)
-		_node.UserID = value
-	}
 	if value, ok := _c.mutation.Model(); ok {
 		_spec.SetField(usagestat.FieldModel, field.TypeString, value)
 		_node.Model = value
-	}
-	if value, ok := _c.mutation.IsError(); ok {
-		_spec.SetField(usagestat.FieldIsError, field.TypeBool, value)
-		_node.IsError = value
 	}
 	if value, ok := _c.mutation.RequestCount(); ok {
 		_spec.SetField(usagestat.FieldRequestCount, field.TypeInt64, value)
@@ -567,6 +488,10 @@ func (_c *UsageStatCreate) createSpec() (*UsageStat, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Cost(); ok {
 		_spec.SetField(usagestat.FieldCost, field.TypeInt64, value)
 		_node.Cost = value
+	}
+	if value, ok := _c.mutation.RawCost(); ok {
+		_spec.SetField(usagestat.FieldRawCost, field.TypeInt64, value)
+		_node.RawCost = value
 	}
 	if value, ok := _c.mutation.CallCount(); ok {
 		_spec.SetField(usagestat.FieldCallCount, field.TypeInt64, value)
@@ -670,60 +595,6 @@ func (u *UsageStatUpsert) AddGroupID(v int64) *UsageStatUpsert {
 	return u
 }
 
-// SetAccountID sets the "account_id" field.
-func (u *UsageStatUpsert) SetAccountID(v int64) *UsageStatUpsert {
-	u.Set(usagestat.FieldAccountID, v)
-	return u
-}
-
-// UpdateAccountID sets the "account_id" field to the value that was provided on create.
-func (u *UsageStatUpsert) UpdateAccountID() *UsageStatUpsert {
-	u.SetExcluded(usagestat.FieldAccountID)
-	return u
-}
-
-// AddAccountID adds v to the "account_id" field.
-func (u *UsageStatUpsert) AddAccountID(v int64) *UsageStatUpsert {
-	u.Add(usagestat.FieldAccountID, v)
-	return u
-}
-
-// SetTemplateID sets the "template_id" field.
-func (u *UsageStatUpsert) SetTemplateID(v int64) *UsageStatUpsert {
-	u.Set(usagestat.FieldTemplateID, v)
-	return u
-}
-
-// UpdateTemplateID sets the "template_id" field to the value that was provided on create.
-func (u *UsageStatUpsert) UpdateTemplateID() *UsageStatUpsert {
-	u.SetExcluded(usagestat.FieldTemplateID)
-	return u
-}
-
-// AddTemplateID adds v to the "template_id" field.
-func (u *UsageStatUpsert) AddTemplateID(v int64) *UsageStatUpsert {
-	u.Add(usagestat.FieldTemplateID, v)
-	return u
-}
-
-// SetUserID sets the "user_id" field.
-func (u *UsageStatUpsert) SetUserID(v int64) *UsageStatUpsert {
-	u.Set(usagestat.FieldUserID, v)
-	return u
-}
-
-// UpdateUserID sets the "user_id" field to the value that was provided on create.
-func (u *UsageStatUpsert) UpdateUserID() *UsageStatUpsert {
-	u.SetExcluded(usagestat.FieldUserID)
-	return u
-}
-
-// AddUserID adds v to the "user_id" field.
-func (u *UsageStatUpsert) AddUserID(v int64) *UsageStatUpsert {
-	u.Add(usagestat.FieldUserID, v)
-	return u
-}
-
 // SetModel sets the "model" field.
 func (u *UsageStatUpsert) SetModel(v string) *UsageStatUpsert {
 	u.Set(usagestat.FieldModel, v)
@@ -733,18 +604,6 @@ func (u *UsageStatUpsert) SetModel(v string) *UsageStatUpsert {
 // UpdateModel sets the "model" field to the value that was provided on create.
 func (u *UsageStatUpsert) UpdateModel() *UsageStatUpsert {
 	u.SetExcluded(usagestat.FieldModel)
-	return u
-}
-
-// SetIsError sets the "is_error" field.
-func (u *UsageStatUpsert) SetIsError(v bool) *UsageStatUpsert {
-	u.Set(usagestat.FieldIsError, v)
-	return u
-}
-
-// UpdateIsError sets the "is_error" field to the value that was provided on create.
-func (u *UsageStatUpsert) UpdateIsError() *UsageStatUpsert {
-	u.SetExcluded(usagestat.FieldIsError)
 	return u
 }
 
@@ -889,6 +748,24 @@ func (u *UsageStatUpsert) UpdateCost() *UsageStatUpsert {
 // AddCost adds v to the "cost" field.
 func (u *UsageStatUpsert) AddCost(v int64) *UsageStatUpsert {
 	u.Add(usagestat.FieldCost, v)
+	return u
+}
+
+// SetRawCost sets the "raw_cost" field.
+func (u *UsageStatUpsert) SetRawCost(v int64) *UsageStatUpsert {
+	u.Set(usagestat.FieldRawCost, v)
+	return u
+}
+
+// UpdateRawCost sets the "raw_cost" field to the value that was provided on create.
+func (u *UsageStatUpsert) UpdateRawCost() *UsageStatUpsert {
+	u.SetExcluded(usagestat.FieldRawCost)
+	return u
+}
+
+// AddRawCost adds v to the "raw_cost" field.
+func (u *UsageStatUpsert) AddRawCost(v int64) *UsageStatUpsert {
+	u.Add(usagestat.FieldRawCost, v)
 	return u
 }
 
@@ -1059,69 +936,6 @@ func (u *UsageStatUpsertOne) UpdateGroupID() *UsageStatUpsertOne {
 	})
 }
 
-// SetAccountID sets the "account_id" field.
-func (u *UsageStatUpsertOne) SetAccountID(v int64) *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.SetAccountID(v)
-	})
-}
-
-// AddAccountID adds v to the "account_id" field.
-func (u *UsageStatUpsertOne) AddAccountID(v int64) *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.AddAccountID(v)
-	})
-}
-
-// UpdateAccountID sets the "account_id" field to the value that was provided on create.
-func (u *UsageStatUpsertOne) UpdateAccountID() *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.UpdateAccountID()
-	})
-}
-
-// SetTemplateID sets the "template_id" field.
-func (u *UsageStatUpsertOne) SetTemplateID(v int64) *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.SetTemplateID(v)
-	})
-}
-
-// AddTemplateID adds v to the "template_id" field.
-func (u *UsageStatUpsertOne) AddTemplateID(v int64) *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.AddTemplateID(v)
-	})
-}
-
-// UpdateTemplateID sets the "template_id" field to the value that was provided on create.
-func (u *UsageStatUpsertOne) UpdateTemplateID() *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.UpdateTemplateID()
-	})
-}
-
-// SetUserID sets the "user_id" field.
-func (u *UsageStatUpsertOne) SetUserID(v int64) *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.SetUserID(v)
-	})
-}
-
-// AddUserID adds v to the "user_id" field.
-func (u *UsageStatUpsertOne) AddUserID(v int64) *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.AddUserID(v)
-	})
-}
-
-// UpdateUserID sets the "user_id" field to the value that was provided on create.
-func (u *UsageStatUpsertOne) UpdateUserID() *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.UpdateUserID()
-	})
-}
-
 // SetModel sets the "model" field.
 func (u *UsageStatUpsertOne) SetModel(v string) *UsageStatUpsertOne {
 	return u.Update(func(s *UsageStatUpsert) {
@@ -1133,20 +947,6 @@ func (u *UsageStatUpsertOne) SetModel(v string) *UsageStatUpsertOne {
 func (u *UsageStatUpsertOne) UpdateModel() *UsageStatUpsertOne {
 	return u.Update(func(s *UsageStatUpsert) {
 		s.UpdateModel()
-	})
-}
-
-// SetIsError sets the "is_error" field.
-func (u *UsageStatUpsertOne) SetIsError(v bool) *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.SetIsError(v)
-	})
-}
-
-// UpdateIsError sets the "is_error" field to the value that was provided on create.
-func (u *UsageStatUpsertOne) UpdateIsError() *UsageStatUpsertOne {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.UpdateIsError()
 	})
 }
 
@@ -1315,6 +1115,27 @@ func (u *UsageStatUpsertOne) AddCost(v int64) *UsageStatUpsertOne {
 func (u *UsageStatUpsertOne) UpdateCost() *UsageStatUpsertOne {
 	return u.Update(func(s *UsageStatUpsert) {
 		s.UpdateCost()
+	})
+}
+
+// SetRawCost sets the "raw_cost" field.
+func (u *UsageStatUpsertOne) SetRawCost(v int64) *UsageStatUpsertOne {
+	return u.Update(func(s *UsageStatUpsert) {
+		s.SetRawCost(v)
+	})
+}
+
+// AddRawCost adds v to the "raw_cost" field.
+func (u *UsageStatUpsertOne) AddRawCost(v int64) *UsageStatUpsertOne {
+	return u.Update(func(s *UsageStatUpsert) {
+		s.AddRawCost(v)
+	})
+}
+
+// UpdateRawCost sets the "raw_cost" field to the value that was provided on create.
+func (u *UsageStatUpsertOne) UpdateRawCost() *UsageStatUpsertOne {
+	return u.Update(func(s *UsageStatUpsert) {
+		s.UpdateRawCost()
 	})
 }
 
@@ -1665,69 +1486,6 @@ func (u *UsageStatUpsertBulk) UpdateGroupID() *UsageStatUpsertBulk {
 	})
 }
 
-// SetAccountID sets the "account_id" field.
-func (u *UsageStatUpsertBulk) SetAccountID(v int64) *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.SetAccountID(v)
-	})
-}
-
-// AddAccountID adds v to the "account_id" field.
-func (u *UsageStatUpsertBulk) AddAccountID(v int64) *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.AddAccountID(v)
-	})
-}
-
-// UpdateAccountID sets the "account_id" field to the value that was provided on create.
-func (u *UsageStatUpsertBulk) UpdateAccountID() *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.UpdateAccountID()
-	})
-}
-
-// SetTemplateID sets the "template_id" field.
-func (u *UsageStatUpsertBulk) SetTemplateID(v int64) *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.SetTemplateID(v)
-	})
-}
-
-// AddTemplateID adds v to the "template_id" field.
-func (u *UsageStatUpsertBulk) AddTemplateID(v int64) *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.AddTemplateID(v)
-	})
-}
-
-// UpdateTemplateID sets the "template_id" field to the value that was provided on create.
-func (u *UsageStatUpsertBulk) UpdateTemplateID() *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.UpdateTemplateID()
-	})
-}
-
-// SetUserID sets the "user_id" field.
-func (u *UsageStatUpsertBulk) SetUserID(v int64) *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.SetUserID(v)
-	})
-}
-
-// AddUserID adds v to the "user_id" field.
-func (u *UsageStatUpsertBulk) AddUserID(v int64) *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.AddUserID(v)
-	})
-}
-
-// UpdateUserID sets the "user_id" field to the value that was provided on create.
-func (u *UsageStatUpsertBulk) UpdateUserID() *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.UpdateUserID()
-	})
-}
-
 // SetModel sets the "model" field.
 func (u *UsageStatUpsertBulk) SetModel(v string) *UsageStatUpsertBulk {
 	return u.Update(func(s *UsageStatUpsert) {
@@ -1739,20 +1497,6 @@ func (u *UsageStatUpsertBulk) SetModel(v string) *UsageStatUpsertBulk {
 func (u *UsageStatUpsertBulk) UpdateModel() *UsageStatUpsertBulk {
 	return u.Update(func(s *UsageStatUpsert) {
 		s.UpdateModel()
-	})
-}
-
-// SetIsError sets the "is_error" field.
-func (u *UsageStatUpsertBulk) SetIsError(v bool) *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.SetIsError(v)
-	})
-}
-
-// UpdateIsError sets the "is_error" field to the value that was provided on create.
-func (u *UsageStatUpsertBulk) UpdateIsError() *UsageStatUpsertBulk {
-	return u.Update(func(s *UsageStatUpsert) {
-		s.UpdateIsError()
 	})
 }
 
@@ -1921,6 +1665,27 @@ func (u *UsageStatUpsertBulk) AddCost(v int64) *UsageStatUpsertBulk {
 func (u *UsageStatUpsertBulk) UpdateCost() *UsageStatUpsertBulk {
 	return u.Update(func(s *UsageStatUpsert) {
 		s.UpdateCost()
+	})
+}
+
+// SetRawCost sets the "raw_cost" field.
+func (u *UsageStatUpsertBulk) SetRawCost(v int64) *UsageStatUpsertBulk {
+	return u.Update(func(s *UsageStatUpsert) {
+		s.SetRawCost(v)
+	})
+}
+
+// AddRawCost adds v to the "raw_cost" field.
+func (u *UsageStatUpsertBulk) AddRawCost(v int64) *UsageStatUpsertBulk {
+	return u.Update(func(s *UsageStatUpsert) {
+		s.AddRawCost(v)
+	})
+}
+
+// UpdateRawCost sets the "raw_cost" field to the value that was provided on create.
+func (u *UsageStatUpsertBulk) UpdateRawCost() *UsageStatUpsertBulk {
+	return u.Update(func(s *UsageStatUpsert) {
+		s.UpdateRawCost()
 	})
 }
 

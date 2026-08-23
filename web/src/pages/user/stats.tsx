@@ -10,17 +10,18 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, XAxis, YAxis } fro
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { DateRangePicker } from '@/components/date-range-picker'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { formatDateTime, toRFC3339 } from '@/components/fmt'
+import { fmtTTFT, formatDateTime, toRFC3339 } from '@/components/fmt'
 import { userApi } from '@/lib/api/client'
-import { fmtTTFT, mergeBuckets, summarizeTTFT, type Granularity } from '@/lib/stats-merge'
+import { useDebounced } from '@/lib/use-debounced'
 
 type Metric = 'requests' | 'tokens'
+type Granularity = 'hour' | 'day'
 
-// 默认近 24h（组件挂载时固定一次，避免渲染期时间漂移）。
 function defaultRange() {
   const to = new Date()
   const from = new Date(to.getTime() - 24 * 3600 * 1000)
@@ -31,17 +32,13 @@ function defaultRange() {
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
 
-// 后端按 (bucket_time, group, account, template, model, is_error) 返回多行，
-// 同一时间桶可能有多行 → 前端按 BucketTime 合并求和（图表与表格共用；
-// TTFT 合并语义见 stats-merge.ts——rewrite spec 2026-08-14 评审 P1）。
-
 export default function UserStats() {
   const { t } = useTranslation()
   const [range, setRange] = useState(defaultRange)
-  // 用户端默认按日聚合（与管理端默认 hour 区分）。
   const [granularity, setGranularity] = useState<Granularity>('day')
   const [metric, setMetric] = useState<Metric>('tokens')
-  // 图例点击开关序列（2026-08-14：ChartLegendContent 增强 onItemClick/hiddenKeys）。
+  const [modelInput, setModelInput] = useState('')
+  const debouncedModel = useDebounced(modelInput, 300)
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const toggleSeries = (key: string) => {
     setHidden(prev => {
@@ -53,19 +50,33 @@ export default function UserStats() {
   }
 
   const params = useMemo(
-    () => ({ from: toRFC3339(range.from), to: toRFC3339(range.to), granularity }),
-    [range, granularity]
+    () => ({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, granularity, model: debouncedModel || undefined }),
+    [range, granularity, debouncedModel]
   )
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['user', 'stats', params],
-    queryFn: () => userApi.getUserStats(params),
+    queryFn: () => userApi.getMyStats(params),
   })
-  const rows = useMemo(() => mergeBuckets(data ?? [], granularity), [data, granularity])
-  // TTFT 范围汇总（同 mergeBuckets 合并语义：avg 加权、pN 取请求量最大桶近似）。
-  const ttft = useMemo(() => summarizeTTFT(rows), [rows])
+  const rows = data ?? []
+  const labeledRows = useMemo(() => rows.map(r => {
+    const d = r.BucketTime ? new Date(r.BucketTime) : null
+    const label = d && !Number.isNaN(d.getTime())
+      ? granularity === 'hour'
+        ? `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+        : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+      : r.BucketTime ?? '—'
+    return { ...r, label, time: r.BucketTime ?? '' }
+  }), [rows, granularity])
 
-  // 主题色走 --chart-* 变量（ChartStyle 注入 --color-*）；requests 柱图用 chart-1，
-  // tokens 独立面积四序列 + 命中率线用 chart-1..5（spec 2026-08-14）。
+  const ttftParams = useMemo(
+    () => ({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, model: debouncedModel || undefined }),
+    [range, debouncedModel]
+  )
+  const ttftQ = useQuery({
+    queryKey: ['user', 'stats-ttft', ttftParams],
+    queryFn: () => userApi.getMyStatsTTFT(ttftParams),
+  })
+
   const chartConfig = {
     requests: { label: t('user.stats.metricRequests'), color: 'var(--chart-1)' },
     input: { label: t('user.stats.chart.seriesInput'), color: 'var(--chart-1)' },
@@ -75,23 +86,21 @@ export default function UserStats() {
     hitRate: { label: t('user.stats.chart.seriesHitRate'), color: 'var(--chart-5)' },
   } satisfies ChartConfig
 
-  // 图表只消费 label + 指标值列，dataKey 与 chartConfig 键对齐（官方示例写法）。
-  // 读缓存命中率（spec 2026-08-14 钉死）：CacheRead / (CacheRead + Input)，两者均 0 → 0%。
   const chartData = useMemo(
-    () => rows.map(r => {
-      const cacheRead = r.CacheReadTokens
-      const input = r.InputTokens
+    () => labeledRows.map(r => {
+      const cacheRead = r.CacheReadTokens ?? 0
+      const input = r.InputTokens ?? 0
       return {
         label: r.label,
-        requests: r.RequestCount,
+        requests: r.RequestCount ?? 0,
         input,
         cacheRead,
-        output: r.OutputTokens,
-        cacheWrite: r.CacheCreationTokens,
+        output: r.OutputTokens ?? 0,
+        cacheWrite: r.CacheCreationTokens ?? 0,
         hitRate: cacheRead + input > 0 ? (cacheRead / (cacheRead + input)) * 100 : 0,
       }
     }),
-    [rows]
+    [labeledRows]
   )
 
   return (
@@ -101,9 +110,6 @@ export default function UserStats() {
         <p className="text-sm text-muted-foreground">{t('user.stats.subtitle')}</p>
       </div>
 
-      {/* 控制：时间范围 + 粒度 + 指标（管理端修复版同款：
-          flex-nowrap + 子项 shrink-0 + overflow-x-auto：窄窗口横向滚动而非换行；
-          items-start 顶对齐（结构性防下沉）：打开日历后左列高度变化不影响右列位置。 */}
       <Card className="p-4">
         <div className="flex flex-nowrap items-start gap-5 overflow-x-auto">
           <div className="w-[14rem] shrink-0 space-y-1.5">
@@ -128,10 +134,13 @@ export default function UserStats() {
               </TabsList>
             </Tabs>
           </div>
+          <div className="w-[12rem] shrink-0 space-y-1.5">
+            <Label htmlFor="user-stats-model">{t('user.stats.modelLabel')}</Label>
+            <Input id="user-stats-model" placeholder={t('user.stats.modelPlaceholder')} value={modelInput} onChange={e => setModelInput(e.target.value)} />
+          </div>
         </div>
       </Card>
 
-      {/* 图表 */}
       <Card>
         <CardHeader>
           <CardTitle>{metric === 'requests' ? t('user.stats.chartRequestsTitle') : t('user.stats.chartTokensTitle')}</CardTitle>
@@ -142,7 +151,7 @@ export default function UserStats() {
             <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
           ) : isLoading ? (
             <Skeleton className="h-[320px] w-full" />
-          ) : rows.length === 0 ? (
+          ) : labeledRows.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
               <BarChart3 className="size-10" />
               <p className="font-medium">{t('user.stats.emptyTitle')}</p>
@@ -159,9 +168,6 @@ export default function UserStats() {
                   <Bar dataKey="requests" fill="var(--color-requests)" radius={4} />
                 </BarChart>
               ) : (
-                // Token 构成独立面积（四序列各自从 0 基线起画，直接比较绝对高度；
-                // fillOpacity 防重叠遮挡，描边区分）。
-                // 读缓存命中率 = CacheRead / (CacheRead + Input)，右轴 [0,100]%，虚线。
                 <AreaChart accessibilityLayer data={chartData} margin={{ left: 0, right: 8 }}>
                   <CartesianGrid vertical={false} />
                   <XAxis dataKey="label" tickCount={chartData.length} tickLine={false} tickMargin={10} axisLine={false} fontSize={12} />
@@ -213,30 +219,40 @@ export default function UserStats() {
         </CardContent>
       </Card>
 
-      {/* TTFT 卡（rewrite spec 2026-08-14：range 汇总——avg = Σ(avg×count)/Σcount
-          加权、p95/p99 取请求量最大桶的 pN 近似；无样本 = 0） */}
       <Card>
         <CardHeader>
           <CardTitle>{t('user.stats.ttft.title')}</CardTitle>
           <CardDescription>{t('user.stats.ttft.desc')}</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
-            {[
-              { key: 'avg', labelKey: 'user.stats.ttft.avg', value: ttft.avg },
-              { key: 'p95', labelKey: 'user.stats.ttft.p95', value: ttft.p95 },
-              { key: 'p99', labelKey: 'user.stats.ttft.p99', value: ttft.p99 },
-            ].map(({ key, labelKey, value }) => (
-              <div key={key}>
-                <div className="text-sm text-muted-foreground">{t(labelKey)}</div>
-                <div className="text-2xl font-semibold tabular-nums">{fmtTTFT(value)}</div>
+          {ttftQ.isError ? (
+            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (ttftQ.error as Error).message })}</p>
+          ) : ttftQ.isLoading ? (
+            <div className="grid grid-cols-3 gap-4">
+              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16" />)}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-4">
+                {[
+                  { key: 'avg', labelKey: 'user.stats.ttft.avg', value: ttftQ.data?.AvgMS ?? 0 },
+                  { key: 'p95', labelKey: 'user.stats.ttft.p95', value: ttftQ.data?.P95MS ?? 0 },
+                  { key: 'p99', labelKey: 'user.stats.ttft.p99', value: ttftQ.data?.P99MS ?? 0 },
+                ].map(({ key, labelKey, value }) => (
+                  <div key={key}>
+                    <div className="text-sm text-muted-foreground">{t(labelKey)}</div>
+                    <div className="text-2xl font-semibold tabular-nums">{fmtTTFT(value)}</div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+              {ttftQ.data?.Source && (
+                <p className="mt-3 text-xs text-muted-foreground">{t('user.stats.ttft.source', { source: ttftQ.data.Source })}</p>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
 
-      {/* 明细表 */}
       <Card className="bg-transparent border-0 shadow-none backdrop-blur-none p-0">
         {isError ? (
           <p className="p-4 text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
@@ -265,24 +281,24 @@ export default function UserStats() {
                       ))}
                     </TableRow>
                   ))
-                : rows.length === 0
+                : labeledRows.length === 0
                   ? (
                     <TableRow>
                       <TableCell colSpan={10} className="!py-10 text-center text-muted-foreground">{t('user.stats.emptyTitle')}</TableCell>
                     </TableRow>
                   )
-                  : rows.map(r => (
+                  : labeledRows.map(r => (
                     <TableRow key={r.time}>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">{formatDateTime(r.time)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.RequestCount}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.ErrorCount}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.CallCount}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.InputTokens}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.OutputTokens}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.CacheReadTokens}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.CacheCreationTokens}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.TotalTokens}</TableCell>
-                      <TableCell className="text-right tabular-nums">{`$${r.Cost.toFixed(4)}`}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.RequestCount ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.ErrorCount ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.CallCount ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.InputTokens ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.OutputTokens ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.CacheReadTokens ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.CacheCreationTokens ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.TotalTokens ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{`$${(r.Cost ?? 0).toFixed(4)}`}</TableCell>
                     </TableRow>
                   ))}
             </TableBody>

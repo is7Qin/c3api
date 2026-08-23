@@ -898,6 +898,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/stats/ttft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的 TTFT 聚合（强制 user_id = 当前用户） */
+        get: operations["GetUserStatsTTFT"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/redemptions": {
         parameters: {
             query?: never;
@@ -1022,15 +1039,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/stats": {
+    "/stats/trend": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** 用量统计聚合 */
-        get: operations["GetStats"];
+        /** 趋势聚合（cube） */
+        get: operations["GetStatsTrend"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stats/top": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Top 排行（entity 卷积） */
+        get: operations["GetStatsTop"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stats/entity-trend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 实体趋势（entity 卷积） */
+        get: operations["GetStatsEntityTrend"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stats/ttft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** TTFT 聚合（sketch 或 exact） */
+        get: operations["GetStatsTTFT"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2593,27 +2661,15 @@ export interface components {
              */
             next_cursor: number | null;
         };
-        /** @description 统计桶（rewrite spec 2026-08-14 契约更新：Cost 毫分 → USD /1e5 破坏性变更；TotalLatencyMS 随列删除；TTFT pN 服务端直方图插值——直方图不可前端反算） */
-        StatBucket: {
+        StatTrendPoint: {
             /** Format: date-time */
             BucketTime?: string;
-            /** Format: int64 */
-            GroupID?: number;
-            /** Format: int64 */
-            AccountID?: number;
-            /** Format: int64 */
-            TemplateID?: number;
-            /**
-             * Format: int64
-             * @description 鉴权归属用户；0 = 无
-             */
-            UserID?: number;
-            Model?: string;
-            IsError?: boolean;
             /** Format: int64 */
             RequestCount?: number;
             /** Format: int64 */
             ErrorCount?: number;
+            /** Format: int64 */
+            CallCount?: number;
             /** Format: int64 */
             InputTokens?: number;
             /** Format: int64 */
@@ -2626,54 +2682,76 @@ export interface components {
             CacheCreationTokens?: number;
             /**
              * Format: double
-             * @description 成本 USD（毫分 /1e5，与价格 API/overview 口径一致；破坏性变更）
+             * @description 成本 USD（毫分 /1e5）
              */
             Cost?: number;
             /**
              * Format: double
-             * @description 原始成本 USD（毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值）
+             * @description 原始成本 USD（毫分 /1e5）
              */
-            raw_cost_usd?: number;
-            /**
-             * Format: int64
-             * @description 按次调用：图片生成张数、search 次数（不入 TotalTokens）
-             */
-            CallCount?: number;
-            /**
-             * Format: int64
-             * @description 首 token 样本数（pN/加权 avg 分母——前端跨行合并必需）
-             */
-            TTFTCount?: number;
+            RawCost?: number;
             /**
              * Format: double
-             * @description 首 token 平均毫秒（sum/count，无样本 = 0）
+             * @description TTFT 平均毫秒（TTFTTotalMS/TTFTCount，无样本 0）
              */
             TTFTAvgMS?: number;
             /**
              * Format: int64
-             * @description 首 token 最大毫秒（无样本 = 0）
+             * @description TTFT 最大毫秒
              */
             TTFTMaxMS?: number;
+        };
+        StatTopEntry: {
+            /** @enum {string} */
+            EntityType?: "account" | "user" | "key";
+            /** Format: int64 */
+            EntityID?: number;
+            /** Format: int64 */
+            RequestCount?: number;
+            /** Format: int64 */
+            ErrorCount?: number;
+            /** Format: int64 */
+            CallCount?: number;
+            /** Format: int64 */
+            InputTokens?: number;
+            /** Format: int64 */
+            OutputTokens?: number;
+            /** Format: int64 */
+            TotalTokens?: number;
+            /** Format: int64 */
+            CacheReadTokens?: number;
+            /** Format: int64 */
+            CacheCreationTokens?: number;
             /**
-             * Format: int64
-             * @description 首 token 分位毫秒（直方图插值 nearest-rank + 桶内线性插值；顶桶 12800+ 回落 12800；无样本 = 0）
+             * Format: double
+             * @description 成本 USD（毫分 /1e5）
              */
-            TTFTP50MS?: number;
+            Cost?: number;
             /**
-             * Format: int64
-             * @description 同 TTFTP50MS（p90）
+             * Format: double
+             * @description 原始成本 USD（毫分 /1e5）
              */
-            TTFTP90MS?: number;
-            /**
-             * Format: int64
-             * @description 同 TTFTP50MS（p95）
-             */
-            TTFTP95MS?: number;
-            /**
-             * Format: int64
-             * @description 同 TTFTP50MS（p99）
-             */
-            TTFTP99MS?: number;
+            RawCost?: number;
+            /** Format: double */
+            TTFTAvgMS?: number;
+            /** Format: int64 */
+            TTFTMaxMS?: number;
+        };
+        StatTTFTSummary: {
+            /** Format: int64 */
+            Count: number;
+            /** Format: double */
+            AvgMS: number;
+            /** Format: int64 */
+            P50MS: number;
+            /** Format: int64 */
+            P95MS: number;
+            /** Format: int64 */
+            P99MS: number;
+            /** Format: int64 */
+            MaxMS: number;
+            /** @enum {string} */
+            Source: "exact" | "sketch";
         };
         WorkerStatus: {
             name: string;
@@ -4762,13 +4840,10 @@ export interface operations {
     };
     GetUserStats: {
         parameters: {
-            query?: {
-                from?: string;
-                to?: string;
+            query: {
+                from: string;
+                to: string;
                 granularity?: "hour" | "day";
-                group_id?: number;
-                account_id?: number;
-                template_id?: number;
                 model?: string;
             };
             header?: never;
@@ -4777,13 +4852,38 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 统计桶数组 */
+            /** @description 统计趋势点数组 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StatBucket"][];
+                    "application/json": components["schemas"]["StatTrendPoint"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetUserStatsTTFT: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                model?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description TTFT 聚合摘要 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatTTFTSummary"];
                 };
             };
             default: components["responses"]["Error"];
@@ -5049,16 +5149,13 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    GetStats: {
+    GetStatsTrend: {
         parameters: {
-            query?: {
-                from?: string;
-                to?: string;
+            query: {
+                from: string;
+                to: string;
                 granularity?: "hour" | "day";
                 group_id?: number;
-                account_id?: number;
-                template_id?: number;
-                user_id?: number;
                 model?: string;
             };
             header?: never;
@@ -5067,13 +5164,95 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 统计桶数组 */
+            /** @description 统计趋势点数组 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StatBucket"][];
+                    "application/json": components["schemas"]["StatTrendPoint"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetStatsTop: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                entity: "account" | "user" | "key";
+                by: "cost" | "requests" | "tokens";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Top 排行条目数组 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatTopEntry"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetStatsEntityTrend: {
+        parameters: {
+            query: {
+                entity: "account" | "user" | "key";
+                id: number;
+                from: string;
+                to: string;
+                granularity: "hour" | "day";
+                model?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 实体趋势点数组 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatTrendPoint"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetStatsTTFT: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                entity?: "account" | "user" | "key";
+                id?: number;
+                model?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description TTFT 聚合摘要 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatTTFTSummary"];
                 };
             };
             default: components["responses"]["Error"];

@@ -60,6 +60,9 @@ type Template func(*sql.Selector)
 // TemplateExt is the predicate function for templateext builders.
 type TemplateExt func(*sql.Selector)
 
+// UsageEntityStat is the predicate function for usageentitystat builders.
+type UsageEntityStat func(*sql.Selector)
+
 // UsageLog is the predicate function for usagelog builders.
 type UsageLog func(*sql.Selector)
 

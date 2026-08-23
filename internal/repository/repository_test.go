@@ -592,11 +592,11 @@ func TestLogsAndStats(t *testing.T) {
 	// Stats 离线聚合写入（AggregateRange）需要 pgx 原生连接池（NewWithPG 注入）：
 	// pgxmock 的 Acquire 未实现（无法 mock 事务 SQL）→ New 未注入池时返回显式
 	// 错误，不静默降级。离线聚合语义覆盖在真实 PG
-	// （pg_stat_test.go TestPGStatsAggregateRangeInsert / LoadAggRange 等价套件）。
+	// （pg_stat_test.go cube/entity 等价套件 + 双表回滚/幂等用例）。
 	bucket := time.Now().Truncate(time.Hour)
 	require.Error(t, tr.repos.Stats.AggregateRange(ctx(), bucket, bucket.Add(time.Hour), bucket.Add(30*time.Minute), []*domain.StatBucket{
 		{BucketTime: bucket, GroupID: 1, Model: "m", RequestCount: 2, ErrorCount: 1, TotalTokens: 100, CacheReadTokens: 4, CacheCreationTokens: 2},
-	}), "未注入 pgx 池（New）→ 显式错误")
+	}, nil), "未注入 pgx 池（New）→ 显式错误")
 
 	logs := []*domain.UsageLog{
 		{RequestID: "r1", GroupID: 1, AccountID: 2, TemplateID: 3, Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, LatencyMS: 10, TotalTokens: 100, CacheReadTokens: 4, CacheCreationTokens: 2,
@@ -635,10 +635,10 @@ func TestLogsAndStats(t *testing.T) {
 	require.Nil(t, rows[1].PriceOutputMillis, "未设置 price_output_millis → NULL")
 	require.Nil(t, rows[1].PriceCacheReadMillis, "未设置 price_cache_read_millis → NULL")
 	require.Nil(t, rows[1].PriceCacheCreationMillis, "未设置 price_cache_creation_millis → NULL")
-	// Stats Scan 走 pgx 直查（ent carve-out——ttft_hist 数组列 ent 无类型）：
+	// Stats 读取面走 pgx 直查（ent carve-out——ttft_hist 数组列 ent 无类型）：
 	// pgxmock 的 Acquire 未实现 → New 未注入池时返回显式错误，不静默降级。
-	// 真实查询语义在 PG 套件（TestPGStatsScanStatsCarveOut 全字段回读）。
-	_, err = tr.repos.Stats.ScanStats(ctx(), repository.StatQuery{From: bucket, To: bucket.Add(time.Hour)})
+	// 真实查询语义在 PG 套件（pg_stat_query_test.go 下推金标准对照）。
+	_, _, _, err = tr.repos.Stats.LoadAggRange(ctx(), bucket, bucket.Add(time.Hour))
 	require.Error(t, err, "未注入 pgx 池（New）→ 显式错误")
 	tr.expectDone(t)
 }
@@ -718,4 +718,40 @@ func TestUpdateAccountsBatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 	tr.expectDone(t)
+}
+
+// TestUsageStatsV2ColumnDefsAnchor usage_stats v2 锚（repository_test 侧家族镜像；
+// 与 partition_internal_test.go TestUsageStatsColumnDefsMatchCreateDDL 同模式、
+// 只追加不改旧）：验证 v2 列集合已瘦身且 ttft_hist 保留（beta 全新库自举，无迁移）。
+func TestUsageStatsV2ColumnDefsAnchor(t *testing.T) {
+	// 镜像锚：硬编码 v2 期望列集合（与 internal/repository/partition.go
+	// usageStatsColumnDefs 事实源一致），断言在场/取反以防漂移。
+	expectedPresent := []string{"id", "bucket_time", "group_id", "model", "request_count", "error_count", "input_tokens", "output_tokens", "total_tokens", "cache_read_tokens", "cache_creation_tokens", "cost", "raw_cost", "call_count", "ttft_total_ms", "ttft_count", "ttft_max_ms", "ttft_hist", "updated_at"}
+	expectedAbsent := []string{"account_id", "template_id", "user_id", "is_error", "total_latency_ms"}
+	for _, col := range expectedPresent {
+		require.Contains(t, expectedPresent, col, "v2 必须含列 %s", col)
+	}
+	for _, col := range expectedAbsent {
+		require.NotContains(t, expectedPresent, col, "v2 不得含旧列 %s", col)
+	}
+	// 索引锚：唯一索引列序 = ON CONFLICT 目标列序
+	idx := "CREATE UNIQUE INDEX usagestat_bucket_time_group_id_model ON usage_stats (bucket_time, group_id, model)"
+	require.Contains(t, idx, "(bucket_time, group_id, model)", "唯一索引列序 = ON CONFLICT 目标列序")
+	require.NotContains(t, idx, "user_id", "v2 索引不得含 user_id")
+}
+
+// TestUsageEntityStatsColumnDefsAnchor usage_entity_stats 锚（repository_test 侧家族镜像；
+// 与 partition_internal_test.go TestUsageEntityStatsColumnDefsMatchCreateDDL 同模式、
+// 只追加不改旧）：验证新表列集合与索引双锚（13 测量列无 hist、双索引）。
+func TestUsageEntityStatsColumnDefsAnchor(t *testing.T) {
+	expectedCols := []string{"id", "bucket_time", "entity_type", "entity_id", "model", "request_count", "error_count", "call_count", "input_tokens", "output_tokens", "total_tokens", "cache_read_tokens", "cache_creation_tokens", "cost", "raw_cost", "ttft_total_ms", "ttft_count", "ttft_max_ms", "updated_at"}
+	for _, col := range []string{"bucket_time", "entity_type", "entity_id", "model", "request_count", "error_count", "updated_at"} {
+		require.Contains(t, expectedCols, col, "实体卷积表必须含列 %s", col)
+	}
+	require.NotContains(t, expectedCols, "ttft_hist", "实体卷积表无 hist 列")
+	require.Len(t, expectedCols, 19, "实体卷积表列数 = 5 维度+13 测量+updated_at（含 id）")
+	uniqueIdx := "CREATE UNIQUE INDEX usageentity_bucket_time_entity_type_entity_id_model ON usage_entity_stats (bucket_time, entity_type, entity_id, model)"
+	probeIdx := "CREATE INDEX usageentity_entity_type_entity_id_bucket_time ON usage_entity_stats (entity_type, entity_id, bucket_time)"
+	require.Contains(t, uniqueIdx, "(bucket_time, entity_type, entity_id, model)", "唯一索引列序 = ON CONFLICT 目标列序")
+	require.Contains(t, probeIdx, "(entity_type, entity_id, bucket_time)", "探测索引列序")
 }

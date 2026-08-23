@@ -29,30 +29,31 @@ import (
 // 未设置 TEST_DATABASE_URL → t.Skip（不炸本地/CI 无库环境）。
 // ---------------------------------------------------------------------------
 
-func newPGRepos(t *testing.T) *repository.Repository {
-	t.Helper()
+func newPGRepos(tb testing.TB) *repository.Repository {
+	tb.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
+		tb.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
 	}
 	ctx := context.Background()
 	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	require.NoError(tb, err)
+	tb.Cleanup(pool.Close)
 	db := stdlib.OpenDBFromPool(pool)
-	t.Cleanup(func() { _ = db.Close() })
+	tb.Cleanup(func() { _ = db.Close() })
 	// 每测试重建 schema（AutoMigrate 幂等；DROP 保证表间无残留）
 	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
-	require.NoError(t, err)
-	repos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, db), true, pool) // pool 注入 Stats（Upsert COPY 两阶段真实路径）
-	require.NoError(t, err)
-	// T4.5 + 分表设计 + 用户裁决 2026-08-11：三张分区表（usage_logs/err_logs/
-	// usage_stats）已从 ent migrate 列表排除（migrateHookExcludesPartitioned），
-	// 分区表由 bootstrap 独占建表——所有 PG 测试共用同一分区表基座（含
-	// usage_stats 分区上的 Upsert 真实路径）。
-	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
-	require.NoError(t, repos.EnsureErrLogPartitioned(ctx, time.Now()))
-	require.NoError(t, repos.EnsureUsageStatsPartitioned(ctx, time.Now()))
+	require.NoError(tb, err)
+	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool) // pool 注入 Stats（Upsert COPY 两阶段真实路径）
+	require.NoError(tb, err)
+	// T4.5 + 分表设计 + 用户裁决 2026-08-11：四张分区表（usage_logs/err_logs/
+	// usage_stats/usage_entity_stats）已从 ent migrate 列表排除
+	// （migrateHookExcludesPartitioned），分区表由 bootstrap 独占建表——所有 PG
+	// 测试共用同一分区表基座（含 usage_stats 分区上的 Upsert 真实路径）。
+	require.NoError(tb, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
+	require.NoError(tb, repos.EnsureErrLogPartitioned(ctx, time.Now()))
+	require.NoError(tb, repos.EnsureUsageStatsPartitioned(ctx, time.Now()))
+	require.NoError(tb, repos.EnsureUsageEntityStatsPartitioned(ctx, time.Now()))
 	return repos
 }
 

@@ -33,33 +33,6 @@ func (m *memLogStore) InsertBatch(ctx context.Context, logs []*domain.UsageLog) 
 	return nil
 }
 
-// memStatStore 旧统计桶内存 upsert 留存（spec 2026-08-14 等价性测试基座：离线
-// SQL 聚合 vs 现状聚合逻辑的对照存储——Recorder 不再消费，仅测试等价断言用）。
-type memStatStore struct {
-	mu      sync.Mutex
-	buckets []*domain.StatBucket
-}
-
-func (m *memStatStore) Upsert(ctx context.Context, b []*domain.StatBucket) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, nb := range b {
-		for _, ob := range m.buckets {
-			if ob.BucketTime.Equal(nb.BucketTime) && ob.GroupID == nb.GroupID && ob.Model == nb.Model && ob.IsError == nb.IsError {
-				ob.RequestCount += nb.RequestCount
-				ob.ErrorCount += nb.ErrorCount
-				ob.TotalTokens += nb.TotalTokens
-				ob.CacheReadTokens += nb.CacheReadTokens
-				ob.CacheCreationTokens += nb.CacheCreationTokens
-				goto next
-			}
-		}
-		m.buckets = append(m.buckets, nb)
-	next:
-	}
-	return nil
-}
-
 func testCfg() UsageConfig {
 	return UsageConfig{
 		BatchSize:          2,

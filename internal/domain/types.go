@@ -619,15 +619,14 @@ type UsageLog struct {
 // ttft_total_ms/ttft_count/ttft_max_ms/ttft_hist 四列承载（avg 在查询侧 Go 除；
 // ttft_hist 10 档直方图见 stat_repo.go ttftHistBounds）。ttft_hist 为 PG bigint[]
 // 数组列——ent 无数组类型（field.Ints 是 JSON 语义），不进 ent schema（carve-out，
-// 评审 P1-1；ScanStats 改 pgx 直查扫描）。
+// 评审 P1-1；统计读取面走 pgx 直查扫描）。v2 瘦身（spec 2026-08-23）：维度
+// 7→3——account_id/template_id/user_id/is_error 四维删除（实体视角由
+// EntityStatBucket/usage_entity_stats 承载；is_error 降为 error_count 测量列
+// 语义），唯一键 = (bucket_time, group_id, model)。
 type StatBucket struct {
 	BucketTime          time.Time // 对齐到小时（UTC）
 	GroupID             int64     // 0 = 无
-	AccountID           int64     // 0 = 无
-	TemplateID          int64     // 0 = 无
-	UserID              int64     // 0 = 无（鉴权失败/无 key）；/api/user/stats 按此过滤
 	Model               string
-	IsError             bool
 	RequestCount        int64
 	ErrorCount          int64
 	InputTokens         int64
@@ -642,6 +641,41 @@ type StatBucket struct {
 	TTFTCount           int64   // TTFT 样本数（仅首 token 流式请求；abort 行含 TTFT 也计入其桶）
 	TTFTMaxMS           int64   // TTFT max
 	TTFTHist            []int64 // TTFT 直方图 10 档（len = 10；SQL 侧 count(*) FILTER 生成）
+}
+
+// EntityStatBucket 实体小时卷积桶（usage_entity_stats 行语义）。
+type EntityStatBucket struct {
+	BucketTime          time.Time
+	EntityType          string // 'account' | 'user' | 'key'
+	EntityID            int64
+	Model               string
+	RequestCount        int64
+	ErrorCount          int64
+	CallCount           int64
+	InputTokens         int64
+	OutputTokens        int64
+	TotalTokens         int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	Cost                int64
+	RawCost             int64
+	TTFTTotalMS         int64
+	TTFTCount           int64
+	TTFTMaxMS           int64
+}
+
+// TTFTSummary TTFT 卡片聚合（/stats/ttft 与 /api/user/stats/ttft 响应内核）。
+// Source 恒标分支身份："exact"（usage_logs percentile_cont 精确）或 "sketch"
+// （cube hist 服务端合并插值）；空窗 = 零值结构（Count:0），Source 仍标分支
+// ——调用方以 Count 判空，不以 Source 判空。
+type TTFTSummary struct {
+	Count  int64
+	AvgMS  int64
+	P50MS  int64
+	P95MS  int64
+	P99MS  int64
+	MaxMS  int64
+	Source string
 }
 
 // —— 规则引擎（可编排状态管理） ——

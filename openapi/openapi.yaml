@@ -1306,21 +1306,35 @@ paths:
       tags: [user]
       summary: 我的用量统计（强制 user_id = 当前用户）
       parameters:
-        - { name: from, in: query, schema: { type: string, format: date-time } }
-        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: granularity, in: query, schema: { type: string, enum: [hour, day], default: day } }
-        - { name: group_id, in: query, schema: { type: integer, format: int64 } }
-        - { name: account_id, in: query, schema: { type: integer, format: int64 } }
-        - { name: template_id, in: query, schema: { type: integer, format: int64 } }
         - { name: model, in: query, schema: { type: string } }
       responses:
         '200':
-          description: 统计桶数组
+          description: 统计趋势点数组
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/StatBucket' }
+                items: { $ref: '#/components/schemas/StatTrendPoint' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/stats/ttft:
+    get:
+      operationId: GetUserStatsTTFT
+      tags: [user]
+      summary: 我的 TTFT 聚合（强制 user_id = 当前用户）
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: model, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: TTFT 聚合摘要
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatTTFTSummary' }
         default:
           $ref: '#/components/responses/Error'
   /api/user/redemptions:
@@ -1502,28 +1516,87 @@ paths:
               schema: { $ref: '#/components/schemas/ErrLogsResponse' }
         default:
           $ref: '#/components/responses/Error'
-  /stats:
+  /stats/trend:
     get:
-      operationId: GetStats
+      operationId: GetStatsTrend
       tags: [stats]
-      summary: 用量统计聚合
+      summary: 趋势聚合（cube）
       parameters:
-        - { name: from, in: query, schema: { type: string, format: date-time } }
-        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: granularity, in: query, schema: { type: string, enum: [hour, day], default: day } }
         - { name: group_id, in: query, schema: { type: integer, format: int64 } }
-        - { name: account_id, in: query, schema: { type: integer, format: int64 } }
-        - { name: template_id, in: query, schema: { type: integer, format: int64 } }
-        - { name: user_id, in: query, schema: { type: integer, format: int64, description: 按用户过滤（admin 看全部） } }
         - { name: model, in: query, schema: { type: string } }
       responses:
         '200':
-          description: 统计桶数组
+          description: 统计趋势点数组
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/StatBucket' }
+                items: { $ref: '#/components/schemas/StatTrendPoint' }
+        default:
+          $ref: '#/components/responses/Error'
+  /stats/top:
+    get:
+      operationId: GetStatsTop
+      tags: [stats]
+      summary: Top 排行（entity 卷积）
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: entity, in: query, required: true, schema: { type: string, enum: [account, user, key] } }
+        - { name: by, in: query, required: true, schema: { type: string, enum: [cost, requests, tokens] } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 200 } }
+      responses:
+        '200':
+          description: Top 排行条目数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/StatTopEntry' }
+        default:
+          $ref: '#/components/responses/Error'
+  /stats/entity-trend:
+    get:
+      operationId: GetStatsEntityTrend
+      tags: [stats]
+      summary: 实体趋势（entity 卷积）
+      parameters:
+        - { name: entity, in: query, required: true, schema: { type: string, enum: [account, user, key] } }
+        - { name: id, in: query, required: true, schema: { type: integer, format: int64 } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: granularity, in: query, required: true, schema: { type: string, enum: [hour, day] } }
+        - { name: model, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: 实体趋势点数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/StatTrendPoint' }
+        default:
+          $ref: '#/components/responses/Error'
+  /stats/ttft:
+    get:
+      operationId: GetStatsTTFT
+      tags: [stats]
+      summary: TTFT 聚合（sketch 或 exact）
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: entity, in: query, schema: { type: string, enum: [account, user, key] } }
+        - { name: id, in: query, schema: { type: integer, format: int64 } }
+        - { name: model, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: TTFT 聚合摘要
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatTTFTSummary' }
         default:
           $ref: '#/components/responses/Error'
   # 管理端总览（spec 2026-08-14，用户裁决）：聚合面与实时面拆两个端点——
@@ -2851,34 +2924,50 @@ components:
           type: array
           items: { $ref: '#/components/schemas/UserErrLog' }
         next_cursor: { type: integer, format: int64, nullable: true, description: 下一页游标（本页最后一条 id）；null = 无更多行 }
-    StatBucket:
+    StatTrendPoint:
       type: object
-      description: 统计桶（rewrite spec 2026-08-14 契约更新：Cost 毫分 → USD /1e5 破坏性变更；TotalLatencyMS 随列删除；TTFT pN 服务端直方图插值——直方图不可前端反算）
       properties:
         BucketTime: { type: string, format: date-time }
-        GroupID: { type: integer, format: int64 }
-        AccountID: { type: integer, format: int64 }
-        TemplateID: { type: integer, format: int64 }
-        UserID: { type: integer, format: int64, description: 鉴权归属用户；0 = 无 }
-        Model: { type: string }
-        IsError: { type: boolean }
         RequestCount: { type: integer, format: int64 }
         ErrorCount: { type: integer, format: int64 }
+        CallCount: { type: integer, format: int64 }
         InputTokens: { type: integer, format: int64 }
         OutputTokens: { type: integer, format: int64 }
         TotalTokens: { type: integer, format: int64 }
         CacheReadTokens: { type: integer, format: int64 }
         CacheCreationTokens: { type: integer, format: int64 }
-        Cost: { type: number, format: double, description: 成本 USD（毫分 /1e5，与价格 API/overview 口径一致；破坏性变更） }
-        raw_cost_usd: { type: number, format: double, description: 原始成本 USD（毫分 /1e5——乘倍率前"实际消耗"口径；免费组 cost 为 0 但 raw 有值） }
-        CallCount: { type: integer, format: int64, description: 按次调用：图片生成张数、search 次数（不入 TotalTokens） }
-        TTFTCount: { type: integer, format: int64, description: 首 token 样本数（pN/加权 avg 分母——前端跨行合并必需） }
-        TTFTAvgMS: { type: number, format: double, description: 首 token 平均毫秒（sum/count，无样本 = 0） }
-        TTFTMaxMS: { type: integer, format: int64, description: 首 token 最大毫秒（无样本 = 0） }
-        TTFTP50MS: { type: integer, format: int64, description: 首 token 分位毫秒（直方图插值 nearest-rank + 桶内线性插值；顶桶 12800+ 回落 12800；无样本 = 0） }
-        TTFTP90MS: { type: integer, format: int64, description: 同 TTFTP50MS（p90） }
-        TTFTP95MS: { type: integer, format: int64, description: 同 TTFTP50MS（p95） }
-        TTFTP99MS: { type: integer, format: int64, description: 同 TTFTP50MS（p99） }
+        Cost: { type: number, format: double, description: 成本 USD（毫分 /1e5） }
+        RawCost: { type: number, format: double, description: 原始成本 USD（毫分 /1e5） }
+        TTFTAvgMS: { type: number, format: double, description: TTFT 平均毫秒（TTFTTotalMS/TTFTCount，无样本 0） }
+        TTFTMaxMS: { type: integer, format: int64, description: TTFT 最大毫秒 }
+    StatTopEntry:
+      type: object
+      properties:
+        EntityType: { type: string, enum: [account, user, key] }
+        EntityID: { type: integer, format: int64 }
+        RequestCount: { type: integer, format: int64 }
+        ErrorCount: { type: integer, format: int64 }
+        CallCount: { type: integer, format: int64 }
+        InputTokens: { type: integer, format: int64 }
+        OutputTokens: { type: integer, format: int64 }
+        TotalTokens: { type: integer, format: int64 }
+        CacheReadTokens: { type: integer, format: int64 }
+        CacheCreationTokens: { type: integer, format: int64 }
+        Cost: { type: number, format: double, description: 成本 USD（毫分 /1e5） }
+        RawCost: { type: number, format: double, description: 原始成本 USD（毫分 /1e5） }
+        TTFTAvgMS: { type: number, format: double }
+        TTFTMaxMS: { type: integer, format: int64 }
+    StatTTFTSummary:
+      type: object
+      required: [Count, AvgMS, P50MS, P95MS, P99MS, MaxMS, Source]
+      properties:
+        Count: { type: integer, format: int64 }
+        AvgMS: { type: number, format: double }
+        P50MS: { type: integer, format: int64 }
+        P95MS: { type: integer, format: int64 }
+        P99MS: { type: integer, format: int64 }
+        MaxMS: { type: integer, format: int64 }
+        Source: { type: string, enum: [exact, sketch] }
     # 运维观测（/admin/ops/workers）：WorkerStatus/SnapshotState/WorkersResponse
     # 类型由本契约生成（ops tag → handler/api.gen.go + 前端 schema.d.ts），
     # handler/ops.go 唯一实现；字段清单见 WorkerStatus.stats.description。

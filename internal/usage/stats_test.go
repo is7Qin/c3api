@@ -81,12 +81,12 @@ func TestErrLogWorkerStats(t *testing.T) {
 // --- Retention ---
 
 // countingPartitionManager 可配置 DROP 返回值的 PartitionManager（观测面断言：
-// runOnce 缓存真实返回值）。
+// runOnce 缓存真实返回值；四表：entity 与 stats 共用 StatsRetentionDays）。
 type countingPartitionManager struct {
-	mu                 sync.Mutex
-	logDrops, errDrops int
-	statsDrops         int
-	dropErr            error // usage_logs drop 失败注入
+	mu                       sync.Mutex
+	logDrops, errDrops       int
+	statsDrops, entityDrops  int
+	dropErr                  error // usage_logs drop 失败注入
 }
 
 func (c *countingPartitionManager) DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
@@ -104,6 +104,11 @@ func (c *countingPartitionManager) DropUsageStatsPartitionsBefore(ctx context.Co
 	defer c.mu.Unlock()
 	return c.statsDrops, nil
 }
+func (c *countingPartitionManager) DropUsageEntityStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.entityDrops, nil
+}
 func (c *countingPartitionManager) EnsureUsageLogPartitions(ctx context.Context, now, until time.Time) error {
 	return nil
 }
@@ -111,6 +116,9 @@ func (c *countingPartitionManager) EnsureErrLogPartitions(ctx context.Context, n
 	return nil
 }
 func (c *countingPartitionManager) EnsureUsageStatsPartitions(ctx context.Context, now, until time.Time) error {
+	return nil
+}
+func (c *countingPartitionManager) EnsureUsageEntityStatsPartitions(ctx context.Context, now, until time.Time) error {
 	return nil
 }
 func (c *countingPartitionManager) DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error) {

@@ -514,6 +514,46 @@ var (
 			},
 		},
 	}
+	// UsageEntityStatsColumns holds the columns for the "usage_entity_stats" table.
+	UsageEntityStatsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "bucket_time", Type: field.TypeTime},
+		{Name: "entity_type", Type: field.TypeString},
+		{Name: "entity_id", Type: field.TypeInt64},
+		{Name: "model", Type: field.TypeString, Default: ""},
+		{Name: "request_count", Type: field.TypeInt64, Default: 0},
+		{Name: "error_count", Type: field.TypeInt64, Default: 0},
+		{Name: "call_count", Type: field.TypeInt64, Default: 0},
+		{Name: "input_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "output_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "total_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "cache_read_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "cache_creation_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "cost", Type: field.TypeInt64, Default: 0},
+		{Name: "raw_cost", Type: field.TypeInt64, Default: 0},
+		{Name: "ttft_total_ms", Type: field.TypeInt64, Default: 0},
+		{Name: "ttft_count", Type: field.TypeInt64, Default: 0},
+		{Name: "ttft_max_ms", Type: field.TypeInt64, Default: 0},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// UsageEntityStatsTable holds the schema information for the "usage_entity_stats" table.
+	UsageEntityStatsTable = &schema.Table{
+		Name:       "usage_entity_stats",
+		Columns:    UsageEntityStatsColumns,
+		PrimaryKey: []*schema.Column{UsageEntityStatsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "usageentitystat_bucket_time_entity_type_entity_id_model",
+				Unique:  true,
+				Columns: []*schema.Column{UsageEntityStatsColumns[1], UsageEntityStatsColumns[2], UsageEntityStatsColumns[3], UsageEntityStatsColumns[4]},
+			},
+			{
+				Name:    "usageentitystat_entity_type_entity_id_bucket_time",
+				Unique:  false,
+				Columns: []*schema.Column{UsageEntityStatsColumns[2], UsageEntityStatsColumns[3], UsageEntityStatsColumns[1]},
+			},
+		},
+	}
 	// UsageLogsColumns holds the columns for the "usage_logs" table.
 	UsageLogsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -591,11 +631,7 @@ var (
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "bucket_time", Type: field.TypeTime},
 		{Name: "group_id", Type: field.TypeInt64, Default: 0},
-		{Name: "account_id", Type: field.TypeInt64, Default: 0},
-		{Name: "template_id", Type: field.TypeInt64, Default: 0},
-		{Name: "user_id", Type: field.TypeInt64, Default: 0},
 		{Name: "model", Type: field.TypeString, Default: ""},
-		{Name: "is_error", Type: field.TypeBool, Default: false},
 		{Name: "request_count", Type: field.TypeInt64, Default: 0},
 		{Name: "error_count", Type: field.TypeInt64, Default: 0},
 		{Name: "input_tokens", Type: field.TypeInt64, Default: 0},
@@ -604,6 +640,7 @@ var (
 		{Name: "cache_read_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "cache_creation_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "cost", Type: field.TypeInt64, Default: 0},
+		{Name: "raw_cost", Type: field.TypeInt64, Default: 0},
 		{Name: "call_count", Type: field.TypeInt64, Default: 0},
 		{Name: "ttft_total_ms", Type: field.TypeInt64, Default: 0},
 		{Name: "ttft_count", Type: field.TypeInt64, Default: 0},
@@ -617,14 +654,9 @@ var (
 		PrimaryKey: []*schema.Column{UsageStatsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "usagestat_user_id_bucket_time",
-				Unique:  false,
-				Columns: []*schema.Column{UsageStatsColumns[5], UsageStatsColumns[1]},
-			},
-			{
-				Name:    "usagestat_bucket_time_group_id_account_id_template_id_user_id_model_is_error",
+				Name:    "usagestat_bucket_time_group_id_model",
 				Unique:  true,
-				Columns: []*schema.Column{UsageStatsColumns[1], UsageStatsColumns[2], UsageStatsColumns[3], UsageStatsColumns[4], UsageStatsColumns[5], UsageStatsColumns[6], UsageStatsColumns[7]},
+				Columns: []*schema.Column{UsageStatsColumns[1], UsageStatsColumns[2], UsageStatsColumns[3]},
 			},
 		},
 	}
@@ -691,6 +723,7 @@ var (
 		TempBalancesTable,
 		TemplatesTable,
 		TemplateExtsTable,
+		UsageEntityStatsTable,
 		UsageLogsTable,
 		UsageStatsTable,
 		UsersTable,

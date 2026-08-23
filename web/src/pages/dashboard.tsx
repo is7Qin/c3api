@@ -9,14 +9,13 @@ import { useTranslation } from 'react-i18next'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { api } from '@/App'
-import { fmtTTFT } from '@/lib/stats-merge'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { StatusBadge } from '@/components/status-badge'
-import { formatPercent, truncate } from '@/components/fmt'
+import { fmtTTFT, formatPercent, truncate } from '@/components/fmt'
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
