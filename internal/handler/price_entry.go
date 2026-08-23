@@ -2,11 +2,13 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/service"
 )
 
 func (h *AdminAPI) GetPrices(w http.ResponseWriter, r *http.Request, params GetPricesParams) {
@@ -39,8 +41,8 @@ func (h *AdminAPI) GetPrices(w http.ResponseWriter, r *http.Request, params GetP
 	httpface.WriteJSON(w, http.StatusOK, PriceEntryListResponse{Total: total, Rows: out})
 }
 
-func (h *AdminAPI) GetPricesModel(w http.ResponseWriter, r *http.Request, model string) {
-	p, err := h.svc.GetPriceEntry(r.Context(), model)
+func (h *AdminAPI) GetPriceEntry(w http.ResponseWriter, r *http.Request, params GetPriceEntryParams) {
+	p, err := h.svc.GetPriceEntry(r.Context(), params.Model)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -49,14 +51,14 @@ func (h *AdminAPI) GetPricesModel(w http.ResponseWriter, r *http.Request, model 
 	httpface.WriteJSON(w, http.StatusOK, pe)
 }
 
-func (h *AdminAPI) PutPricesModel(w http.ResponseWriter, r *http.Request, model string) {
+func (h *AdminAPI) PutPriceEntry(w http.ResponseWriter, r *http.Request, params PutPriceEntryParams) {
 	var in PriceEntryUpsert
 	if err := decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	m := &repository.PriceEntryManual{
-		Model: model, Mode: domain.PriceMode(in.Mode),
+		Model: params.Model, Mode: domain.PriceMode(in.Mode),
 		InputPerM: usdToMillisPtr(in.InputPerM), OutputPerM: usdToMillisPtr(in.OutputPerM),
 		CacheReadPerM: usdToMillisPtr(in.CacheReadPerM), CacheWritePerM: usdToMillisPtr(in.CacheWritePerM),
 		PricePerCall: usdPerCallToMilliPtr(in.PricePerCall),
@@ -71,16 +73,16 @@ func (h *AdminAPI) PutPricesModel(w http.ResponseWriter, r *http.Request, model 
 	httpface.WriteJSON(w, http.StatusOK, toAPIPriceEntry(p))
 }
 
-func (h *AdminAPI) DeletePricesModel(w http.ResponseWriter, r *http.Request, model string) {
-	if err := h.svc.DeletePriceEntry(r.Context(), model); err != nil {
+func (h *AdminAPI) DeletePriceEntry(w http.ResponseWriter, r *http.Request, params DeletePriceEntryParams) {
+	if err := h.svc.DeletePriceEntry(r.Context(), params.Model); err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
 	httpface.WriteJSON(w, http.StatusOK, DeletedResponse{Deleted: true})
 }
 
-func (h *AdminAPI) GetPricesModelVariants(w http.ResponseWriter, r *http.Request, model string) {
-	rows, err := h.svc.ListPriceVariants(r.Context(), model)
+func (h *AdminAPI) GetPriceVariants(w http.ResponseWriter, r *http.Request, params GetPriceVariantsParams) {
+	rows, err := h.svc.ListPriceVariants(r.Context(), params.Model)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -92,7 +94,7 @@ func (h *AdminAPI) GetPricesModelVariants(w http.ResponseWriter, r *http.Request
 	httpface.WriteJSON(w, http.StatusOK, PriceVariantListResponse{Rows: &out})
 }
 
-func (h *AdminAPI) PutPricesModelVariants(w http.ResponseWriter, r *http.Request, model string) {
+func (h *AdminAPI) PutPriceVariants(w http.ResponseWriter, r *http.Request, params PutPriceVariantsParams) {
 	var in PriceVariantListRequest
 	if err := decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
@@ -101,7 +103,7 @@ func (h *AdminAPI) PutPricesModelVariants(w http.ResponseWriter, r *http.Request
 	var vars []*domain.PriceVariant
 	if in.Variants != nil {
 		for _, v := range *in.Variants {
-			pv := &domain.PriceVariant{Model: model, Seq: deref(v.Seq)}
+			pv := &domain.PriceVariant{Model: params.Model, Seq: deref(v.Seq)}
 			if v.ServiceTier != nil {
 				pv.ServiceTier = v.ServiceTier
 			}
@@ -120,7 +122,7 @@ func (h *AdminAPI) PutPricesModelVariants(w http.ResponseWriter, r *http.Request
 			vars = append(vars, pv)
 		}
 	}
-	out, err := h.svc.ReplacePriceVariants(r.Context(), model, vars)
+	out, err := h.svc.ReplacePriceVariants(r.Context(), params.Model, vars)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -132,13 +134,28 @@ func (h *AdminAPI) PutPricesModelVariants(w http.ResponseWriter, r *http.Request
 	httpface.WriteJSON(w, http.StatusOK, PriceVariantListResponse{Rows: &apiOut})
 }
 
-func (h *AdminAPI) DeletePricesModelVariants(w http.ResponseWriter, r *http.Request, model string) {
-	_, err := h.svc.ReplacePriceVariants(r.Context(), model, nil)
+func (h *AdminAPI) DeletePriceVariants(w http.ResponseWriter, r *http.Request, params DeletePriceVariantsParams) {
+	_, err := h.svc.ReplacePriceVariants(r.Context(), params.Model, nil)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
 	httpface.WriteJSON(w, http.StatusOK, DeletedResponse{Deleted: true})
+}
+
+func (h *AdminAPI) PostPricingSync(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.svc.SyncPricingNow(r.Context())
+	if err != nil {
+		if errors.Is(err, service.ErrPriceFetch) {
+			httpface.WriteErr(w, http.StatusBadGateway, "pricing sync failed")
+			return
+		}
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, PricingSyncResponse{
+		Rows: stats.Rows, Skipped: stats.Skipped, Updated: stats.Updated,
+	})
 }
 
 func (h *AdminAPI) PostPricingSyncPreview(w http.ResponseWriter, r *http.Request) {

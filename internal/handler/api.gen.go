@@ -254,34 +254,10 @@ const (
 	GetAccountsParamsOrderDesc GetAccountsParamsOrder = "desc"
 )
 
-// Defines values for GetFunctionPricesParamsSource.
-const (
-	GetFunctionPricesParamsSourceLitellm GetFunctionPricesParamsSource = "litellm"
-	GetFunctionPricesParamsSourceManual  GetFunctionPricesParamsSource = "manual"
-)
-
-// Defines values for GetFunctionPricesParamsOrder.
-const (
-	GetFunctionPricesParamsOrderAsc  GetFunctionPricesParamsOrder = "asc"
-	GetFunctionPricesParamsOrderDesc GetFunctionPricesParamsOrder = "desc"
-)
-
 // Defines values for GetGroupsParamsOrder.
 const (
 	GetGroupsParamsOrderAsc  GetGroupsParamsOrder = "asc"
 	GetGroupsParamsOrderDesc GetGroupsParamsOrder = "desc"
-)
-
-// Defines values for GetImagePriceParamsSource.
-const (
-	GetImagePriceParamsSourceLitellm GetImagePriceParamsSource = "litellm"
-	GetImagePriceParamsSourceManual  GetImagePriceParamsSource = "manual"
-)
-
-// Defines values for GetImagePriceParamsOrder.
-const (
-	GetImagePriceParamsOrderAsc  GetImagePriceParamsOrder = "asc"
-	GetImagePriceParamsOrderDesc GetImagePriceParamsOrder = "desc"
 )
 
 // Defines values for GetKeysParamsOrder.
@@ -307,18 +283,6 @@ const (
 const (
 	GetPricesParamsOrderAsc  GetPricesParamsOrder = "asc"
 	GetPricesParamsOrderDesc GetPricesParamsOrder = "desc"
-)
-
-// Defines values for GetPricingParamsSource.
-const (
-	Litellm GetPricingParamsSource = "litellm"
-	Manual  GetPricingParamsSource = "manual"
-)
-
-// Defines values for GetPricingParamsOrder.
-const (
-	GetPricingParamsOrderAsc  GetPricingParamsOrder = "asc"
-	GetPricingParamsOrderDesc GetPricingParamsOrder = "desc"
 )
 
 // Defines values for GetRedemptionCodesParamsType.
@@ -394,8 +358,8 @@ const (
 
 // Defines values for GetUsersParamsOrder.
 const (
-	Asc  GetUsersParamsOrder = "asc"
-	Desc GetUsersParamsOrder = "desc"
+	GetUsersParamsOrderAsc  GetUsersParamsOrder = "asc"
+	GetUsersParamsOrderDesc GetUsersParamsOrder = "desc"
 )
 
 // Account defines model for Account.
@@ -804,34 +768,6 @@ type ErrorResponse struct {
 // ErrorType defines model for ErrorType.
 type ErrorType string
 
-// FunctionPrice defines model for FunctionPrice.
-type FunctionPrice struct {
-	CreatedAt time.Time `json:"CreatedAt"`
-
-	// Model 模型/功能标识（litellm search 模型名 或 codex-search 固定标识）
-	Model string `json:"Model"`
-
-	// PricePerCall 按单元价（USD/次——litellm 原生口径 input_cost_per_query；内部存储毫分/次，×1e5 换算，1 USD = 100,000 毫分，**与 token 价不同换算系**，计费不走 /1e6 除法）；null = 无按单元价
-	PricePerCall *float64 `json:"PricePerCall"`
-
-	// Provider litellm_provider（litellm 行才有；manual 行 nil）
-	Provider  *Provider     `json:"Provider"`
-	Source    PricingSource `json:"Source"`
-	UpdatedAt time.Time     `json:"UpdatedAt"`
-}
-
-// FunctionPriceListResponse defines model for FunctionPriceListResponse.
-type FunctionPriceListResponse struct {
-	Rows  []FunctionPrice `json:"rows"`
-	Total int64           `json:"total"`
-}
-
-// FunctionPriceUpsert defines model for FunctionPriceUpsert.
-type FunctionPriceUpsert struct {
-	// PricePerCall 按单元价（USD/次；API 边界 ×1e5 → 毫分/次）；必填且 ≥0——缺省/null → 400（service 行有效性校验：按单元价非 nil；0 = 按次免费）
-	PricePerCall *float64 `json:"price_per_call"`
-}
-
 // GenerateRequest defines model for GenerateRequest.
 type GenerateRequest struct {
 	// Count 生成个数 1-1000（缺省 1）
@@ -920,46 +856,6 @@ type GroupProtocolConvert string
 
 // GroupVisibility defines model for GroupVisibility.
 type GroupVisibility string
-
-// ImagePrice defines model for ImagePrice.
-type ImagePrice struct {
-	CreatedAt time.Time `json:"CreatedAt"`
-
-	// InputImageTokenPricePerMillion image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算，1 USD = 100,000 毫分）；null = 无该分量价
-	InputImageTokenPricePerMillion *float64 `json:"InputImageTokenPricePerMillion"`
-
-	// Model 模型名（与 pricings.model 同口径）
-	Model string `json:"Model"`
-
-	// OutputCostPerImage 每张图价（USD/张；内部存储毫分——×1e5 换算，与 token 价同系数但单位语义不同：按张 flat，计费不走 /1e6 除法）；null = 不启用按张分量
-	OutputCostPerImage *float64 `json:"OutputCostPerImage"`
-
-	// OutputImageTokenPricePerMillion image token 输出价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算）；null = 无该分量价
-	OutputImageTokenPricePerMillion *float64 `json:"OutputImageTokenPricePerMillion"`
-
-	// Provider litellm_provider（litellm 行才有；manual 行 nil）
-	Provider  *Provider     `json:"Provider"`
-	Source    PricingSource `json:"Source"`
-	UpdatedAt time.Time     `json:"UpdatedAt"`
-}
-
-// ImagePriceListResponse defines model for ImagePriceListResponse.
-type ImagePriceListResponse struct {
-	Rows  []ImagePrice `json:"rows"`
-	Total int64        `json:"total"`
-}
-
-// ImagePriceUpsert defines model for ImagePriceUpsert.
-type ImagePriceUpsert struct {
-	// InputImageTokenPricePerMillion image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；API 边界 ×1e5 → 毫分/1M）；缺省/null = 清空该分量
-	InputImageTokenPricePerMillion *float64 `json:"input_image_token_price_per_million"`
-
-	// OutputCostPerImage 每张图价（USD/张；API 边界 ×1e5 → 毫分/张——与 token 价同系数但单位语义独立：按张 flat，不走 /1e6 除法）；缺省/null = 清空该分量
-	OutputCostPerImage *float64 `json:"output_cost_per_image"`
-
-	// OutputImageTokenPricePerMillion image token 输出价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；API 边界 ×1e5 → 毫分/1M）；缺省/null = 清空该分量
-	OutputImageTokenPricePerMillion *float64 `json:"output_image_token_price_per_million"`
-}
 
 // ImportFailedItem 行级失败条目（index = items 原始下标——行级定位契约）
 type ImportFailedItem struct {
@@ -1214,81 +1110,6 @@ type PriceVariantUpsert struct {
 	TimeStart     *string  `json:"time_start"`
 }
 
-// Pricing defines model for Pricing.
-type Pricing struct {
-	AboveCacheCreationPricePerMillion     *float64 `json:"AboveCacheCreationPricePerMillion"`
-	AboveCacheReadPricePerMillion         *float64 `json:"AboveCacheReadPricePerMillion"`
-	AboveCompletionPricePerMillion        *float64 `json:"AboveCompletionPricePerMillion"`
-	AboveFlexCacheCreationPricePerMillion *float64 `json:"AboveFlexCacheCreationPricePerMillion"`
-	AboveFlexCacheReadPricePerMillion     *float64 `json:"AboveFlexCacheReadPricePerMillion"`
-	AboveFlexCompletionPricePerMillion    *float64 `json:"AboveFlexCompletionPricePerMillion"`
-
-	// AboveFlexPromptPricePerMillion 超阈值分段价（flex 组，gpt-5.6-sol 形态）；nil = 该档回退基础 above 组
-	AboveFlexPromptPricePerMillion            *float64 `json:"AboveFlexPromptPricePerMillion"`
-	AbovePriorityCacheCreationPricePerMillion *float64 `json:"AbovePriorityCacheCreationPricePerMillion"`
-	AbovePriorityCacheReadPricePerMillion     *float64 `json:"AbovePriorityCacheReadPricePerMillion"`
-	AbovePriorityCompletionPricePerMillion    *float64 `json:"AbovePriorityCompletionPricePerMillion"`
-
-	// AbovePriorityPromptPricePerMillion 超阈值分段价（priority 组，azure 形态）；nil = 该档回退基础 above 组
-	AbovePriorityPromptPricePerMillion *float64 `json:"AbovePriorityPromptPricePerMillion"`
-
-	// AbovePromptPricePerMillion 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；nil = 该分量不拆段
-	AbovePromptPricePerMillion *float64 `json:"AbovePromptPricePerMillion"`
-
-	// AboveThreshold 上下文分段阈值（tokens）；nil = 无分段
-	AboveThreshold *int64 `json:"AboveThreshold"`
-
-	// CacheCreationPricePerMillion 缓存写入价（litellm cache_creation_input_token_cost 换算）；nil = 无缓存价
-	CacheCreationPricePerMillion *float64 `json:"CacheCreationPricePerMillion"`
-
-	// CacheReadPricePerMillion 缓存读取价（litellm cache_read_input_token_cost 换算）；nil = 无缓存价
-	CacheReadPricePerMillion *float64 `json:"CacheReadPricePerMillion"`
-
-	// CompletionPricePerMillion USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）
-	CompletionPricePerMillion float64   `json:"CompletionPricePerMillion"`
-	CreatedAt                 time.Time `json:"CreatedAt"`
-
-	// FastMultiplier Anthropic 专属（claude 系列 Fast Mode 整单倍率，正常值 2.0 = ×2.0；fast 挡计费 = 基础价 × 此倍率；API 边界换算）；nil = 无倍率
-	FastMultiplier                   *float64 `json:"FastMultiplier"`
-	FlexCacheCreationPricePerMillion *float64 `json:"FlexCacheCreationPricePerMillion"`
-	FlexCacheReadPricePerMillion     *float64 `json:"FlexCacheReadPricePerMillion"`
-	FlexCompletionPricePerMillion    *float64 `json:"FlexCompletionPricePerMillion"`
-
-	// FlexPromptPricePerMillion service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价
-	FlexPromptPricePerMillion *float64 `json:"FlexPromptPricePerMillion"`
-
-	// MaxInputTokens litellm 自带上下文窗口；nil = 未知
-	MaxInputTokens  *int64 `json:"MaxInputTokens"`
-	MaxOutputTokens *int64 `json:"MaxOutputTokens"`
-
-	// Mode litellm mode（chat/completion/embedding 等）
-	Mode                                 *string  `json:"Mode"`
-	Model                                string   `json:"Model"`
-	PriorityCacheCreationPricePerMillion *float64 `json:"PriorityCacheCreationPricePerMillion"`
-	PriorityCacheReadPricePerMillion     *float64 `json:"PriorityCacheReadPricePerMillion"`
-	PriorityCompletionPricePerMillion    *float64 `json:"PriorityCompletionPricePerMillion"`
-
-	// PriorityPromptPricePerMillion service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价
-	PriorityPromptPricePerMillion *float64 `json:"PriorityPromptPricePerMillion"`
-
-	// PromptPricePerMillion USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）
-	PromptPricePerMillion float64 `json:"PromptPricePerMillion"`
-
-	// Provider litellm_provider（litellm 行才有；manual 行 nil）
-	Provider *Provider     `json:"Provider"`
-	Source   PricingSource `json:"Source"`
-
-	// SupportsPromptCaching litellm supports_prompt_caching
-	SupportsPromptCaching *bool     `json:"SupportsPromptCaching"`
-	UpdatedAt             time.Time `json:"UpdatedAt"`
-}
-
-// PricingListResponse defines model for PricingListResponse.
-type PricingListResponse struct {
-	Rows  []Pricing `json:"rows"`
-	Total int64     `json:"total"`
-}
-
 // PricingPreviewEntry defines model for PricingPreviewEntry.
 type PricingPreviewEntry struct {
 	Action PricingPreviewEntryAction `json:"action"`
@@ -1316,18 +1137,6 @@ type PricingSyncPreviewResponse struct {
 
 // PricingSyncResponse defines model for PricingSyncResponse.
 type PricingSyncResponse struct {
-	// FunctionRows 拉取到的有效按单元价行数（价格表三件套）
-	FunctionRows *int `json:"function_rows,omitempty"`
-
-	// FunctionUpdated 按单元价 upsert 落库数（manual 行不计）
-	FunctionUpdated *int `json:"function_updated,omitempty"`
-
-	// ImageRows 拉取到的有效 image 价行数（Task A 双线）
-	ImageRows *int `json:"image_rows,omitempty"`
-
-	// ImageUpdated image 价 upsert 落库数（manual 行不计）
-	ImageUpdated *int `json:"image_updated,omitempty"`
-
 	// Rows 拉取到的有效模型行数
 	Rows int `json:"rows"`
 
@@ -1336,56 +1145,6 @@ type PricingSyncResponse struct {
 
 	// Updated 文本价 upsert 落库数（manual 行不计）
 	Updated int `json:"updated"`
-}
-
-// PricingUpsert defines model for PricingUpsert.
-type PricingUpsert struct {
-	AboveCacheCreationPricePerMillion     *float64 `json:"above_cache_creation_price_per_million"`
-	AboveCacheReadPricePerMillion         *float64 `json:"above_cache_read_price_per_million"`
-	AboveCompletionPricePerMillion        *float64 `json:"above_completion_price_per_million"`
-	AboveFlexCacheCreationPricePerMillion *float64 `json:"above_flex_cache_creation_price_per_million"`
-	AboveFlexCacheReadPricePerMillion     *float64 `json:"above_flex_cache_read_price_per_million"`
-	AboveFlexCompletionPricePerMillion    *float64 `json:"above_flex_completion_price_per_million"`
-
-	// AboveFlexPromptPricePerMillion 超阈值分段价（flex 组，gpt-5.6-sol 形态）；缺省/null = 该档回退基础 above 组
-	AboveFlexPromptPricePerMillion            *float64 `json:"above_flex_prompt_price_per_million"`
-	AbovePriorityCacheCreationPricePerMillion *float64 `json:"above_priority_cache_creation_price_per_million"`
-	AbovePriorityCacheReadPricePerMillion     *float64 `json:"above_priority_cache_read_price_per_million"`
-	AbovePriorityCompletionPricePerMillion    *float64 `json:"above_priority_completion_price_per_million"`
-
-	// AbovePriorityPromptPricePerMillion 超阈值分段价（priority 组，azure 形态）；缺省/null = 该档回退基础 above 组
-	AbovePriorityPromptPricePerMillion *float64 `json:"above_priority_prompt_price_per_million"`
-
-	// AbovePromptPricePerMillion 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；缺省/null = 该分量不拆段
-	AbovePromptPricePerMillion *float64 `json:"above_prompt_price_per_million"`
-
-	// AboveThreshold 上下文分段阈值（tokens）；缺省/null = 不设（无分段）
-	AboveThreshold *int64 `json:"above_threshold"`
-
-	// CacheCreationPricePerMillion 缓存写入价；缺省 = 不设缓存价（落库 NULL）
-	CacheCreationPricePerMillion *float64 `json:"cache_creation_price_per_million"`
-
-	// CacheReadPricePerMillion 缓存读取价（USD/1M tokens；内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省 = 不设缓存价（落库 NULL）
-	CacheReadPricePerMillion  *float64 `json:"cache_read_price_per_million"`
-	CompletionPricePerMillion float64  `json:"completion_price_per_million"`
-
-	// FastMultiplier Anthropic 专属（claude 系列 Fast Mode 整单倍率，正常值 0 < m ≤ 10，2.0 = ×2.0；fast 挡计费 = 基础价 × 此倍率；API 边界换算）；缺省/null = 不设
-	FastMultiplier                   *float64 `json:"fast_multiplier"`
-	FlexCacheCreationPricePerMillion *float64 `json:"flex_cache_creation_price_per_million"`
-	FlexCacheReadPricePerMillion     *float64 `json:"flex_cache_read_price_per_million"`
-	FlexCompletionPricePerMillion    *float64 `json:"flex_completion_price_per_million"`
-
-	// FlexPromptPricePerMillion service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）
-	FlexPromptPricePerMillion            *float64 `json:"flex_prompt_price_per_million"`
-	PriorityCacheCreationPricePerMillion *float64 `json:"priority_cache_creation_price_per_million"`
-	PriorityCacheReadPricePerMillion     *float64 `json:"priority_cache_read_price_per_million"`
-	PriorityCompletionPricePerMillion    *float64 `json:"priority_completion_price_per_million"`
-
-	// PriorityPromptPricePerMillion service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）
-	PriorityPromptPricePerMillion *float64 `json:"priority_prompt_price_per_million"`
-
-	// PromptPricePerMillion USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）；≥ 0
-	PromptPricePerMillion float64 `json:"prompt_price_per_million"`
 }
 
 // Provider 主流厂商枚举（litellm_provider 实际字符串，服务前端下拉框）。**litellm_provider 动态**——litellm 更新会加新厂商，此 enum 为主流集合；新厂商出现时扩 enum（DB 筛选不受限——自由字符串等值）
@@ -1926,33 +1685,6 @@ type GetErrLogsParams struct {
 	To         time.Time      `form:"to" json:"to"`
 }
 
-// DeleteFunctionPricesModelParams defines parameters for DeleteFunctionPricesModel.
-type DeleteFunctionPricesModelParams struct {
-	Model string `form:"model" json:"model"`
-}
-
-// GetFunctionPricesParams defines parameters for GetFunctionPrices.
-type GetFunctionPricesParams struct {
-	Page     *int                           `form:"page,omitempty" json:"page,omitempty"`
-	PageSize *int                           `form:"page_size,omitempty" json:"page_size,omitempty"`
-	Source   *GetFunctionPricesParamsSource `form:"source,omitempty" json:"source,omitempty"`
-	Provider *Provider                      `form:"provider,omitempty" json:"provider,omitempty"`
-	Model    *string                        `form:"model,omitempty" json:"model,omitempty"`
-	Sort     *string                        `form:"sort,omitempty" json:"sort,omitempty"`
-	Order    *GetFunctionPricesParamsOrder  `form:"order,omitempty" json:"order,omitempty"`
-}
-
-// GetFunctionPricesParamsSource defines parameters for GetFunctionPrices.
-type GetFunctionPricesParamsSource string
-
-// GetFunctionPricesParamsOrder defines parameters for GetFunctionPrices.
-type GetFunctionPricesParamsOrder string
-
-// PutFunctionPricesModelParams defines parameters for PutFunctionPricesModel.
-type PutFunctionPricesModelParams struct {
-	Model string `form:"model" json:"model"`
-}
-
 // GetGroupsParams defines parameters for GetGroups.
 type GetGroupsParams struct {
 	Limit  *int                  `form:"limit,omitempty" json:"limit,omitempty"`
@@ -1964,33 +1696,6 @@ type GetGroupsParams struct {
 
 // GetGroupsParamsOrder defines parameters for GetGroups.
 type GetGroupsParamsOrder string
-
-// DeleteImagePriceModelParams defines parameters for DeleteImagePriceModel.
-type DeleteImagePriceModelParams struct {
-	Model string `form:"model" json:"model"`
-}
-
-// GetImagePriceParams defines parameters for GetImagePrice.
-type GetImagePriceParams struct {
-	Page     *int                       `form:"page,omitempty" json:"page,omitempty"`
-	PageSize *int                       `form:"page_size,omitempty" json:"page_size,omitempty"`
-	Source   *GetImagePriceParamsSource `form:"source,omitempty" json:"source,omitempty"`
-	Provider *Provider                  `form:"provider,omitempty" json:"provider,omitempty"`
-	Model    *string                    `form:"model,omitempty" json:"model,omitempty"`
-	Sort     *string                    `form:"sort,omitempty" json:"sort,omitempty"`
-	Order    *GetImagePriceParamsOrder  `form:"order,omitempty" json:"order,omitempty"`
-}
-
-// GetImagePriceParamsSource defines parameters for GetImagePrice.
-type GetImagePriceParamsSource string
-
-// GetImagePriceParamsOrder defines parameters for GetImagePrice.
-type GetImagePriceParamsOrder string
-
-// PutImagePriceModelParams defines parameters for PutImagePriceModel.
-type PutImagePriceModelParams struct {
-	Model string `form:"model" json:"model"`
-}
 
 // GetKeysParams defines parameters for GetKeys.
 type GetKeysParams struct {
@@ -2032,30 +1737,33 @@ type GetPricesParamsSource string
 // GetPricesParamsOrder defines parameters for GetPrices.
 type GetPricesParamsOrder string
 
-// DeletePricingModelParams defines parameters for DeletePricingModel.
-type DeletePricingModelParams struct {
+// DeletePriceEntryParams defines parameters for DeletePriceEntry.
+type DeletePriceEntryParams struct {
 	Model string `form:"model" json:"model"`
 }
 
-// GetPricingParams defines parameters for GetPricing.
-type GetPricingParams struct {
-	Page     *int                    `form:"page,omitempty" json:"page,omitempty"`
-	PageSize *int                    `form:"page_size,omitempty" json:"page_size,omitempty"`
-	Source   *GetPricingParamsSource `form:"source,omitempty" json:"source,omitempty"`
-	Provider *Provider               `form:"provider,omitempty" json:"provider,omitempty"`
-	Model    *string                 `form:"model,omitempty" json:"model,omitempty"`
-	Sort     *string                 `form:"sort,omitempty" json:"sort,omitempty"`
-	Order    *GetPricingParamsOrder  `form:"order,omitempty" json:"order,omitempty"`
+// GetPriceEntryParams defines parameters for GetPriceEntry.
+type GetPriceEntryParams struct {
+	Model string `form:"model" json:"model"`
 }
 
-// GetPricingParamsSource defines parameters for GetPricing.
-type GetPricingParamsSource string
+// PutPriceEntryParams defines parameters for PutPriceEntry.
+type PutPriceEntryParams struct {
+	Model string `form:"model" json:"model"`
+}
 
-// GetPricingParamsOrder defines parameters for GetPricing.
-type GetPricingParamsOrder string
+// DeletePriceVariantsParams defines parameters for DeletePriceVariants.
+type DeletePriceVariantsParams struct {
+	Model string `form:"model" json:"model"`
+}
 
-// PutPricingModelParams defines parameters for PutPricingModel.
-type PutPricingModelParams struct {
+// GetPriceVariantsParams defines parameters for GetPriceVariants.
+type GetPriceVariantsParams struct {
+	Model string `form:"model" json:"model"`
+}
+
+// PutPriceVariantsParams defines parameters for PutPriceVariants.
+type PutPriceVariantsParams struct {
 	Model string `form:"model" json:"model"`
 }
 
@@ -2224,9 +1932,6 @@ type PutAccountsIdJSONRequestBody = AccountCreate
 // PutAccountsIdExtJSONRequestBody defines body for PutAccountsIdExt for application/json ContentType.
 type PutAccountsIdExtJSONRequestBody = AccountExt
 
-// PutFunctionPricesModelJSONRequestBody defines body for PutFunctionPricesModel for application/json ContentType.
-type PutFunctionPricesModelJSONRequestBody = FunctionPriceUpsert
-
 // PostGroupsJSONRequestBody defines body for PostGroups for application/json ContentType.
 type PostGroupsJSONRequestBody = GroupCreate
 
@@ -2242,20 +1947,14 @@ type PutGroupsIdJSONRequestBody = GroupCreate
 // PutGroupsIdAssignmentsJSONRequestBody defines body for PutGroupsIdAssignments for application/json ContentType.
 type PutGroupsIdAssignmentsJSONRequestBody = GroupAssignmentsBody
 
-// PutImagePriceModelJSONRequestBody defines body for PutImagePriceModel for application/json ContentType.
-type PutImagePriceModelJSONRequestBody = ImagePriceUpsert
-
 // PutMailTemplateJSONRequestBody defines body for PutMailTemplate for application/json ContentType.
 type PutMailTemplateJSONRequestBody = MailTemplateUpdate
 
-// PutPricesModelJSONRequestBody defines body for PutPricesModel for application/json ContentType.
-type PutPricesModelJSONRequestBody = PriceEntryUpsert
+// PutPriceEntryJSONRequestBody defines body for PutPriceEntry for application/json ContentType.
+type PutPriceEntryJSONRequestBody = PriceEntryUpsert
 
-// PutPricesModelVariantsJSONRequestBody defines body for PutPricesModelVariants for application/json ContentType.
-type PutPricesModelVariantsJSONRequestBody = PriceVariantListRequest
-
-// PutPricingModelJSONRequestBody defines body for PutPricingModel for application/json ContentType.
-type PutPricingModelJSONRequestBody = PricingUpsert
+// PutPriceVariantsJSONRequestBody defines body for PutPriceVariants for application/json ContentType.
+type PutPriceVariantsJSONRequestBody = PriceVariantListRequest
 
 // PostRedemptionCodesJSONRequestBody defines body for PostRedemptionCodes for application/json ContentType.
 type PostRedemptionCodesJSONRequestBody = GenerateRequest
@@ -2349,15 +2048,6 @@ type ServerInterface interface {
 	// 错误明细分页查询（err_logs 完整错误面：本地拒绝 + 半异常双轨；status_code/error_type 全值）
 	// (GET /err_logs)
 	GetErrLogs(w http.ResponseWriter, r *http.Request, params GetErrLogsParams)
-	// 删除手动按单元价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回；codex-search 种子行重启补回）
-	// (DELETE /function-prices)
-	DeleteFunctionPricesModel(w http.ResponseWriter, r *http.Request, params DeleteFunctionPricesModelParams)
-	// 按单元计费功能类价格列表（分页/筛选/排序；sort 白名单 model/updated_at）
-	// (GET /function-prices)
-	GetFunctionPrices(w http.ResponseWriter, r *http.Request, params GetFunctionPricesParams)
-	// 手动设按单元价（price_per_call USD/次 必填 ≥0；×1e5 存储毫分/次；upsert 强制 source=manual，可接管 litellm 行——codex-search 价可改）
-	// (PUT /function-prices)
-	PutFunctionPricesModel(w http.ResponseWriter, r *http.Request, params PutFunctionPricesModelParams)
 	// 分组列表（分页/筛选/排序）
 	// (GET /groups)
 	GetGroups(w http.ResponseWriter, r *http.Request, params GetGroupsParams)
@@ -2385,15 +2075,6 @@ type ServerInterface interface {
 	// 设置组的授予用户（platform_admin；替换语义：未列出即撤销，空数组 = 清空）
 	// (PUT /groups/{id}/assignments)
 	PutGroupsIdAssignments(w http.ResponseWriter, r *http.Request, id int64)
-	// 删除手动图片价格（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回）
-	// (DELETE /image-price)
-	DeleteImagePriceModel(w http.ResponseWriter, r *http.Request, params DeleteImagePriceModelParams)
-	// 图片生成价格列表（分页/筛选/排序；sort 白名单 model/updated_at）
-	// (GET /image-price)
-	GetImagePrice(w http.ResponseWriter, r *http.Request, params GetImagePriceParams)
-	// 手动设图片价格（三分量全可选；至少一个非 null——否则 400；upsert 强制 source=manual，可接管 litellm 行）
-	// (PUT /image-price)
-	PutImagePriceModel(w http.ResponseWriter, r *http.Request, params PutImagePriceModelParams)
 	// 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端）
 	// (GET /keys)
 	GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams)
@@ -2413,32 +2094,23 @@ type ServerInterface interface {
 	// (GET /prices)
 	GetPrices(w http.ResponseWriter, r *http.Request, params GetPricesParams)
 
-	// (DELETE /prices/{model})
-	DeletePricesModel(w http.ResponseWriter, r *http.Request, model string)
-
-	// (GET /prices/{model})
-	GetPricesModel(w http.ResponseWriter, r *http.Request, model string)
-
-	// (PUT /prices/{model})
-	PutPricesModel(w http.ResponseWriter, r *http.Request, model string)
-
-	// (DELETE /prices/{model}/variants)
-	DeletePricesModelVariants(w http.ResponseWriter, r *http.Request, model string)
-
-	// (GET /prices/{model}/variants)
-	GetPricesModelVariants(w http.ResponseWriter, r *http.Request, model string)
-
-	// (PUT /prices/{model}/variants)
-	PutPricesModelVariants(w http.ResponseWriter, r *http.Request, model string)
-	// 删除手动价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回）
-	// (DELETE /pricing)
-	DeletePricingModel(w http.ResponseWriter, r *http.Request, params DeletePricingModelParams)
-	// 模型价格列表（分页/筛选/排序；sort 白名单 model/updated_at）
-	// (GET /pricing)
-	GetPricing(w http.ResponseWriter, r *http.Request, params GetPricingParams)
-	// 手动设价（毫分/1M tokens；upsert 强制 source=manual，可接管 litellm 行）
-	// (PUT /pricing)
-	PutPricingModel(w http.ResponseWriter, r *http.Request, params PutPricingModelParams)
+	// (DELETE /prices/entry)
+	DeletePriceEntry(w http.ResponseWriter, r *http.Request, params DeletePriceEntryParams)
+	// 单条价格查询
+	// (GET /prices/entry)
+	GetPriceEntry(w http.ResponseWriter, r *http.Request, params GetPriceEntryParams)
+	// 手动设价（upsert）
+	// (PUT /prices/entry)
+	PutPriceEntry(w http.ResponseWriter, r *http.Request, params PutPriceEntryParams)
+	// 清空变体
+	// (DELETE /prices/variants)
+	DeletePriceVariants(w http.ResponseWriter, r *http.Request, params DeletePriceVariantsParams)
+	// 变体列表（seq 升序）
+	// (GET /prices/variants)
+	GetPriceVariants(w http.ResponseWriter, r *http.Request, params GetPriceVariantsParams)
+	// 整体替换变体（seq 升序首匹配）
+	// (PUT /prices/variants)
+	PutPriceVariants(w http.ResponseWriter, r *http.Request, params PutPriceVariantsParams)
 	// 手动触发一次价格同步（fetch 官方价格表 → upsert → 快照重载；失败保留旧价）
 	// (POST /pricing/sync)
 	PostPricingSync(w http.ResponseWriter, r *http.Request)
@@ -2637,24 +2309,6 @@ func (_ Unimplemented) GetErrLogs(w http.ResponseWriter, r *http.Request, params
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 删除手动按单元价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回；codex-search 种子行重启补回）
-// (DELETE /function-prices)
-func (_ Unimplemented) DeleteFunctionPricesModel(w http.ResponseWriter, r *http.Request, params DeleteFunctionPricesModelParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 按单元计费功能类价格列表（分页/筛选/排序；sort 白名单 model/updated_at）
-// (GET /function-prices)
-func (_ Unimplemented) GetFunctionPrices(w http.ResponseWriter, r *http.Request, params GetFunctionPricesParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 手动设按单元价（price_per_call USD/次 必填 ≥0；×1e5 存储毫分/次；upsert 强制 source=manual，可接管 litellm 行——codex-search 价可改）
-// (PUT /function-prices)
-func (_ Unimplemented) PutFunctionPricesModel(w http.ResponseWriter, r *http.Request, params PutFunctionPricesModelParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
 // 分组列表（分页/筛选/排序）
 // (GET /groups)
 func (_ Unimplemented) GetGroups(w http.ResponseWriter, r *http.Request, params GetGroupsParams) {
@@ -2706,24 +2360,6 @@ func (_ Unimplemented) PutGroupsIdAssignments(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 删除手动图片价格（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回）
-// (DELETE /image-price)
-func (_ Unimplemented) DeleteImagePriceModel(w http.ResponseWriter, r *http.Request, params DeleteImagePriceModelParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 图片生成价格列表（分页/筛选/排序；sort 白名单 model/updated_at）
-// (GET /image-price)
-func (_ Unimplemented) GetImagePrice(w http.ResponseWriter, r *http.Request, params GetImagePriceParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 手动设图片价格（三分量全可选；至少一个非 null——否则 400；upsert 强制 source=manual，可接管 litellm 行）
-// (PUT /image-price)
-func (_ Unimplemented) PutImagePriceModel(w http.ResponseWriter, r *http.Request, params PutImagePriceModelParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
 // 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端）
 // (GET /keys)
 func (_ Unimplemented) GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams) {
@@ -2760,51 +2396,38 @@ func (_ Unimplemented) GetPrices(w http.ResponseWriter, r *http.Request, params 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (DELETE /prices/{model})
-func (_ Unimplemented) DeletePricesModel(w http.ResponseWriter, r *http.Request, model string) {
+// (DELETE /prices/entry)
+func (_ Unimplemented) DeletePriceEntry(w http.ResponseWriter, r *http.Request, params DeletePriceEntryParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (GET /prices/{model})
-func (_ Unimplemented) GetPricesModel(w http.ResponseWriter, r *http.Request, model string) {
+// 单条价格查询
+// (GET /prices/entry)
+func (_ Unimplemented) GetPriceEntry(w http.ResponseWriter, r *http.Request, params GetPriceEntryParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (PUT /prices/{model})
-func (_ Unimplemented) PutPricesModel(w http.ResponseWriter, r *http.Request, model string) {
+// 手动设价（upsert）
+// (PUT /prices/entry)
+func (_ Unimplemented) PutPriceEntry(w http.ResponseWriter, r *http.Request, params PutPriceEntryParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (DELETE /prices/{model}/variants)
-func (_ Unimplemented) DeletePricesModelVariants(w http.ResponseWriter, r *http.Request, model string) {
+// 清空变体
+// (DELETE /prices/variants)
+func (_ Unimplemented) DeletePriceVariants(w http.ResponseWriter, r *http.Request, params DeletePriceVariantsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (GET /prices/{model}/variants)
-func (_ Unimplemented) GetPricesModelVariants(w http.ResponseWriter, r *http.Request, model string) {
+// 变体列表（seq 升序）
+// (GET /prices/variants)
+func (_ Unimplemented) GetPriceVariants(w http.ResponseWriter, r *http.Request, params GetPriceVariantsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (PUT /prices/{model}/variants)
-func (_ Unimplemented) PutPricesModelVariants(w http.ResponseWriter, r *http.Request, model string) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 删除手动价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回）
-// (DELETE /pricing)
-func (_ Unimplemented) DeletePricingModel(w http.ResponseWriter, r *http.Request, params DeletePricingModelParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 模型价格列表（分页/筛选/排序；sort 白名单 model/updated_at）
-// (GET /pricing)
-func (_ Unimplemented) GetPricing(w http.ResponseWriter, r *http.Request, params GetPricingParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 手动设价（毫分/1M tokens；upsert 强制 source=manual，可接管 litellm 行）
-// (PUT /pricing)
-func (_ Unimplemented) PutPricingModel(w http.ResponseWriter, r *http.Request, params PutPricingModelParams) {
+// 整体替换变体（seq 升序首匹配）
+// (PUT /prices/variants)
+func (_ Unimplemented) PutPriceVariants(w http.ResponseWriter, r *http.Request, params PutPriceVariantsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3512,149 +3135,6 @@ func (siw *ServerInterfaceWrapper) GetErrLogs(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
-// DeleteFunctionPricesModel operation middleware
-func (siw *ServerInterfaceWrapper) DeleteFunctionPricesModel(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params DeleteFunctionPricesModelParams
-
-	// ------------- Required query parameter "model" -------------
-
-	if paramValue := r.URL.Query().Get("model"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "model", r.URL.Query(), &params.Model)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteFunctionPricesModel(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetFunctionPrices operation middleware
-func (siw *ServerInterfaceWrapper) GetFunctionPrices(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetFunctionPricesParams
-
-	// ------------- Optional query parameter "page" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "page", r.URL.Query(), &params.Page)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "page_size" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "page_size", r.URL.Query(), &params.PageSize)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_size", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "source" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "source", r.URL.Query(), &params.Source)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "provider" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "provider", r.URL.Query(), &params.Provider)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "model" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "sort" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "sort", r.URL.Query(), &params.Sort)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "order" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "order", r.URL.Query(), &params.Order)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetFunctionPrices(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutFunctionPricesModel operation middleware
-func (siw *ServerInterfaceWrapper) PutFunctionPricesModel(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params PutFunctionPricesModelParams
-
-	// ------------- Required query parameter "model" -------------
-
-	if paramValue := r.URL.Query().Get("model"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "model", r.URL.Query(), &params.Model)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutFunctionPricesModel(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // GetGroups operation middleware
 func (siw *ServerInterfaceWrapper) GetGroups(w http.ResponseWriter, r *http.Request) {
 
@@ -3872,149 +3352,6 @@ func (siw *ServerInterfaceWrapper) PutGroupsIdAssignments(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutGroupsIdAssignments(w, r, id)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteImagePriceModel operation middleware
-func (siw *ServerInterfaceWrapper) DeleteImagePriceModel(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params DeleteImagePriceModelParams
-
-	// ------------- Required query parameter "model" -------------
-
-	if paramValue := r.URL.Query().Get("model"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "model", r.URL.Query(), &params.Model)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteImagePriceModel(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetImagePrice operation middleware
-func (siw *ServerInterfaceWrapper) GetImagePrice(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetImagePriceParams
-
-	// ------------- Optional query parameter "page" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "page", r.URL.Query(), &params.Page)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "page_size" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "page_size", r.URL.Query(), &params.PageSize)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_size", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "source" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "source", r.URL.Query(), &params.Source)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "provider" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "provider", r.URL.Query(), &params.Provider)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "model" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "sort" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "sort", r.URL.Query(), &params.Sort)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "order" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "order", r.URL.Query(), &params.Order)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetImagePrice(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutImagePriceModel operation middleware
-func (siw *ServerInterfaceWrapper) PutImagePriceModel(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params PutImagePriceModelParams
-
-	// ------------- Required query parameter "model" -------------
-
-	if paramValue := r.URL.Query().Get("model"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "model", r.URL.Query(), &params.Model)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutImagePriceModel(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4262,163 +3599,13 @@ func (siw *ServerInterfaceWrapper) GetPrices(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
-// DeletePricesModel operation middleware
-func (siw *ServerInterfaceWrapper) DeletePricesModel(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "model" -------------
-	var model string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeletePricesModel(w, r, model)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetPricesModel operation middleware
-func (siw *ServerInterfaceWrapper) GetPricesModel(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "model" -------------
-	var model string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPricesModel(w, r, model)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutPricesModel operation middleware
-func (siw *ServerInterfaceWrapper) PutPricesModel(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "model" -------------
-	var model string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutPricesModel(w, r, model)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeletePricesModelVariants operation middleware
-func (siw *ServerInterfaceWrapper) DeletePricesModelVariants(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "model" -------------
-	var model string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeletePricesModelVariants(w, r, model)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetPricesModelVariants operation middleware
-func (siw *ServerInterfaceWrapper) GetPricesModelVariants(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "model" -------------
-	var model string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPricesModelVariants(w, r, model)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutPricesModelVariants operation middleware
-func (siw *ServerInterfaceWrapper) PutPricesModelVariants(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "model" -------------
-	var model string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "model", chi.URLParam(r, "model"), &model, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutPricesModelVariants(w, r, model)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeletePricingModel operation middleware
-func (siw *ServerInterfaceWrapper) DeletePricingModel(w http.ResponseWriter, r *http.Request) {
+// DeletePriceEntry operation middleware
+func (siw *ServerInterfaceWrapper) DeletePriceEntry(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params DeletePricingModelParams
+	var params DeletePriceEntryParams
 
 	// ------------- Required query parameter "model" -------------
 
@@ -4436,7 +3623,7 @@ func (siw *ServerInterfaceWrapper) DeletePricingModel(w http.ResponseWriter, r *
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeletePricingModel(w, r, params)
+		siw.Handler.DeletePriceEntry(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4446,88 +3633,13 @@ func (siw *ServerInterfaceWrapper) DeletePricingModel(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
-// GetPricing operation middleware
-func (siw *ServerInterfaceWrapper) GetPricing(w http.ResponseWriter, r *http.Request) {
+// GetPriceEntry operation middleware
+func (siw *ServerInterfaceWrapper) GetPriceEntry(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetPricingParams
-
-	// ------------- Optional query parameter "page" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "page", r.URL.Query(), &params.Page)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "page_size" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "page_size", r.URL.Query(), &params.PageSize)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_size", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "source" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "source", r.URL.Query(), &params.Source)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "provider" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "provider", r.URL.Query(), &params.Provider)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "model" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "sort" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "sort", r.URL.Query(), &params.Sort)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "order" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "order", r.URL.Query(), &params.Order)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPricing(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutPricingModel operation middleware
-func (siw *ServerInterfaceWrapper) PutPricingModel(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params PutPricingModelParams
+	var params GetPriceEntryParams
 
 	// ------------- Required query parameter "model" -------------
 
@@ -4545,7 +3657,143 @@ func (siw *ServerInterfaceWrapper) PutPricingModel(w http.ResponseWriter, r *htt
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutPricingModel(w, r, params)
+		siw.Handler.GetPriceEntry(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutPriceEntry operation middleware
+func (siw *ServerInterfaceWrapper) PutPriceEntry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutPriceEntryParams
+
+	// ------------- Required query parameter "model" -------------
+
+	if paramValue := r.URL.Query().Get("model"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "model", r.URL.Query(), &params.Model)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutPriceEntry(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePriceVariants operation middleware
+func (siw *ServerInterfaceWrapper) DeletePriceVariants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeletePriceVariantsParams
+
+	// ------------- Required query parameter "model" -------------
+
+	if paramValue := r.URL.Query().Get("model"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "model", r.URL.Query(), &params.Model)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePriceVariants(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPriceVariants operation middleware
+func (siw *ServerInterfaceWrapper) GetPriceVariants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPriceVariantsParams
+
+	// ------------- Required query parameter "model" -------------
+
+	if paramValue := r.URL.Query().Get("model"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "model", r.URL.Query(), &params.Model)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPriceVariants(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutPriceVariants operation middleware
+func (siw *ServerInterfaceWrapper) PutPriceVariants(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutPriceVariantsParams
+
+	// ------------- Required query parameter "model" -------------
+
+	if paramValue := r.URL.Query().Get("model"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "model", r.URL.Query(), &params.Model)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutPriceVariants(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5955,15 +5203,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/err_logs", wrapper.GetErrLogs)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/function-prices", wrapper.DeleteFunctionPricesModel)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/function-prices", wrapper.GetFunctionPrices)
-	})
-	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/function-prices", wrapper.PutFunctionPricesModel)
-	})
-	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/groups", wrapper.GetGroups)
 	})
 	r.Group(func(r chi.Router) {
@@ -5991,15 +5230,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Put(options.BaseURL+"/groups/{id}/assignments", wrapper.PutGroupsIdAssignments)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/image-price", wrapper.DeleteImagePriceModel)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/image-price", wrapper.GetImagePrice)
-	})
-	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/image-price", wrapper.PutImagePriceModel)
-	})
-	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/keys", wrapper.GetKeys)
 	})
 	r.Group(func(r chi.Router) {
@@ -6018,31 +5248,22 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/prices", wrapper.GetPrices)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/prices/{model}", wrapper.DeletePricesModel)
+		r.Delete(options.BaseURL+"/prices/entry", wrapper.DeletePriceEntry)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/prices/{model}", wrapper.GetPricesModel)
+		r.Get(options.BaseURL+"/prices/entry", wrapper.GetPriceEntry)
 	})
 	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/prices/{model}", wrapper.PutPricesModel)
+		r.Put(options.BaseURL+"/prices/entry", wrapper.PutPriceEntry)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/prices/{model}/variants", wrapper.DeletePricesModelVariants)
+		r.Delete(options.BaseURL+"/prices/variants", wrapper.DeletePriceVariants)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/prices/{model}/variants", wrapper.GetPricesModelVariants)
+		r.Get(options.BaseURL+"/prices/variants", wrapper.GetPriceVariants)
 	})
 	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/prices/{model}/variants", wrapper.PutPricesModelVariants)
-	})
-	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/pricing", wrapper.DeletePricingModel)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/pricing", wrapper.GetPricing)
-	})
-	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/pricing", wrapper.PutPricingModel)
+		r.Put(options.BaseURL+"/prices/variants", wrapper.PutPriceVariants)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/pricing/sync", wrapper.PostPricingSync)

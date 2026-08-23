@@ -630,37 +630,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/prices/{model}": {
+    "/prices/entry": {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                model: string;
-            };
+            path?: never;
             cookie?: never;
         };
-        get: operations["GetPricesModel"];
-        put: operations["PutPricesModel"];
+        /** 单条价格查询 */
+        get: operations["GetPriceEntry"];
+        /** 手动设价（upsert） */
+        put: operations["PutPriceEntry"];
         post?: never;
-        delete: operations["DeletePricesModel"];
+        delete: operations["DeletePriceEntry"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/prices/{model}/variants": {
+    "/prices/variants": {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                model: string;
-            };
+            path?: never;
             cookie?: never;
         };
-        get: operations["GetPricesModelVariants"];
-        put: operations["PutPricesModelVariants"];
+        /** 变体列表（seq 升序） */
+        get: operations["GetPriceVariants"];
+        /** 整体替换变体（seq 升序首匹配） */
+        put: operations["PutPriceVariants"];
         post?: never;
-        delete: operations["DeletePricesModelVariants"];
+        /** 清空变体 */
+        delete: operations["DeletePriceVariants"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4091,13 +4092,13 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    GetPricesModel: {
+    GetPriceEntry: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query: {
                 model: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -4114,13 +4115,13 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    PutPricesModel: {
+    PutPriceEntry: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query: {
                 model: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody: {
@@ -4141,13 +4142,13 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    DeletePricesModel: {
+    DeletePriceEntry: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query: {
                 model: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -4164,13 +4165,13 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    GetPricesModelVariants: {
+    GetPriceVariants: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query: {
                 model: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -4187,13 +4188,13 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    PutPricesModelVariants: {
+    PutPriceVariants: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query: {
                 model: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody: {
@@ -4214,13 +4215,13 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    DeletePricesModelVariants: {
+    DeletePriceVariants: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query: {
                 model: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;

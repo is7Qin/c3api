@@ -247,7 +247,7 @@ func adminScenarios() []apiScenario {
 				return map[string]any{"count": 100, "type": "balance", "value": 1, "max_uses": 1}
 			}),
 		w("prices.put", 2, "PUT", func(r *rand.Rand) string {
-			return "/api/admin/prices/" + url.PathEscape(fillModels[r.IntN(len(fillModels))])
+			return "/api/admin/prices/entry?model=" + url.QueryEscape(fillModels[r.IntN(len(fillModels))])
 		}, func(r *rand.Rand, _ string) any {
 			// 单位契约：token 档 input_per_m/output_per_m 为 USD/百万 token
 			// （×1e5 存毫分），量级对齐真实价

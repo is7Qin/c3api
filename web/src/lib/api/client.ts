@@ -177,12 +177,13 @@ export class ApiClient {
   syncPricing = () => this.request<components['schemas']['PricingSyncResponse']>('/pricing/sync', { method: 'POST' })
   syncPricingPreview = () => this.request<components['schemas']['PricingSyncPreviewResponse']>('/pricing/sync/preview', { method: 'POST' })
   listPriceEntries = (p?: { page?: number; page_size?: number; mode?: string; source?: string; model?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['PriceEntryListResponse']>('/prices', { params: toQuery(p) })
-  getPriceEntry = (model: string) => this.request<components['schemas']['PriceEntry']>(`/prices/${encodeURIComponent(model)}`)
-  upsertPriceEntry = (model: string, b: components['schemas']['PriceEntryUpsert']) => this.request<components['schemas']['PriceEntry']>(`/prices/${encodeURIComponent(model)}`, { method: 'PUT', body: JSON.stringify(b) })
-  deletePriceEntry = (model: string) => this.request<components['schemas']['DeletedResponse']>(`/prices/${encodeURIComponent(model)}`, { method: 'DELETE' })
-  listPriceVariants = (model: string) => this.request<components['schemas']['PriceVariantListResponse']>(`/prices/${encodeURIComponent(model)}/variants`)
-  putPriceVariants = (model: string, b: components['schemas']['PriceVariantListRequest']) => this.request<components['schemas']['PriceVariantListResponse']>(`/prices/${encodeURIComponent(model)}/variants`, { method: 'PUT', body: JSON.stringify(b) })
-  deletePriceVariants = (model: string) => this.request<components['schemas']['DeletedResponse']>(`/prices/${encodeURIComponent(model)}/variants`, { method: 'DELETE' })
+  // 模型 ID 含 "/"（openai/gpt-5.6-sol）——一律查询参数，禁路径拼接
+  getPriceEntry = (model: string) => this.request<components['schemas']['PriceEntry']>('/prices/entry', { params: toQuery({ model }) })
+  upsertPriceEntry = (model: string, b: components['schemas']['PriceEntryUpsert']) => this.request<components['schemas']['PriceEntry']>('/prices/entry', { method: 'PUT', params: toQuery({ model }), body: JSON.stringify(b) })
+  deletePriceEntry = (model: string) => this.request<components['schemas']['DeletedResponse']>('/prices/entry', { method: 'DELETE', params: toQuery({ model }) })
+  listPriceVariants = (model: string) => this.request<components['schemas']['PriceVariantListResponse']>('/prices/variants', { params: toQuery({ model }) })
+  putPriceVariants = (model: string, b: components['schemas']['PriceVariantListRequest']) => this.request<components['schemas']['PriceVariantListResponse']>('/prices/variants', { method: 'PUT', params: toQuery({ model }), body: JSON.stringify(b) })
+  deletePriceVariants = (model: string) => this.request<components['schemas']['DeletedResponse']>('/prices/variants', { method: 'DELETE', params: toQuery({ model }) })
   // —— 管理端总览（/api/admin/overview + /api/admin/users-top；聚合面 30s / 实时面 2s
   // 服务端 TTL 缓存，dashboard 轮询频率下无陈旧感）——
   getOverview = (p?: { days?: number; group_id?: number }) => this.request<components['schemas']['OverviewResponse']>('/overview', { params: toQuery(p) })

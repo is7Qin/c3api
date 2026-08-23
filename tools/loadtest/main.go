@@ -572,11 +572,12 @@ func newFillRequest(client *http.Client, rng *rand.Rand) (req *http.Request, pre
 		}), ""
 	case "pricing":
 		// PUT 幂等 upsert：同模型重复设价 = 覆盖更新，不撞唯一键。
-		// 单位契约：/api/admin/prices/{model} 的 input_per_m/output_per_m 为
+		// 单位契约：/api/admin/prices/entry?model= 的 input_per_m/output_per_m 为
 		// "USD/百万 token"（handler ×1e5 存毫分）。此前 fill 误传毫分（250000）→
 		// 定价虚高 1e5 倍，每请求扣费 3.3 万元 → 压测 402 风暴根因（实测 2026-08-18）。
 		// 量级对齐真实模型价（claude sonnet ≈ 21/105 元每百万 in/out）。
-		return mk(http.MethodPut, "/api/admin/prices/"+url.PathEscape(fillModels[rng.IntN(len(fillModels))]), map[string]any{
+		// 模型走查询参数：ID 含 "/"（openai/gpt-5.6-sol），路径参数会撞路由。
+		return mk(http.MethodPut, "/api/admin/prices/entry?model="+url.QueryEscape(fillModels[rng.IntN(len(fillModels))]), map[string]any{
 			"mode":         "token",
 			"input_per_m":  20 + rng.Int64N(180), // USD/百万 token
 			"output_per_m": 60 + rng.Int64N(540), // USD/百万 token

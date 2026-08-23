@@ -355,9 +355,9 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 
 	// --- 3. manual 设价（e2e-model 基础 + fast；e2e-matrix-model 全矩阵；
 	// e2e-mult-model 基础；API 输入 USD/1M 正常值，存储毫分）---
-	// 统一价格表契约：基础价 PUT /prices/{model}（token 档 input_per_m/
-	// output_per_m），矩阵档 PUT /prices/{model}/variants（service_tier 替换档 /
-	// ctx_min 分段 / mult_bp 万分倍率）。
+	// 统一价格表契约：基础价 PUT /prices/entry?model=（token 档 input_per_m/
+	// output_per_m），矩阵档 PUT /prices/variants?model=（service_tier 替换档 /
+	// ctx_min 分段 / mult_bp 万分倍率）。模型 ID 含 "/"，一律查询参数。
 	// USD/1M：prompt 100.0（$100）、completion 200.0（$200）。
 	putPrice(t, env, "e2e-model", map[string]any{
 		"input_per_m": 100.0, "output_per_m": 200.0,
@@ -683,7 +683,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	c, rb13 := env.admin(http.MethodPost, "/pricing/sync", nil)
 	require.Equal(t, 200, c, "sync: %s", rb13)
 	require.Contains(t, rb13, `"rows":2`)
-	c, rb14 := env.admin(http.MethodGet, "/prices/e2e-litellm-model", nil)
+	c, rb14 := env.admin(http.MethodGet, "/prices/entry?model=e2e-litellm-model", nil)
 	require.Equal(t, 200, c, "price entry: %s", rb14)
 	row := jsonGet(t, rb14).(map[string]any)
 	for field, want := range map[string]any{
@@ -699,7 +699,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	}
 	require.Equal(t, "litellm", row["Source"], "sync 行 source=litellm")
 	// 矩阵字段迁至变体：priority/flex 替换档 + ctx_min 分段 + fast 万分倍率
-	c, rb14v := env.admin(http.MethodGet, "/prices/e2e-litellm-model/variants", nil)
+	c, rb14v := env.admin(http.MethodGet, "/prices/variants?model=e2e-litellm-model", nil)
 	require.Equal(t, 200, c, "variants list: %s", rb14v)
 	vrows := jsonGet(t, rb14v, "rows").([]any)
 	require.Len(t, vrows, 4, "litellm 行变体：priority/flex/above/fast")
@@ -730,7 +730,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	c, rb15 := env.admin(http.MethodPost, "/pricing/sync", nil)
 	require.Equal(t, 200, c, "sync2: %s", rb15)
 	require.Contains(t, rb15, `"updated":1`, "manual 行不计入 updated（litellm 行仍更新）")
-	c, rb16 := env.admin(http.MethodGet, "/prices/e2e-manual-model", nil)
+	c, rb16 := env.admin(http.MethodGet, "/prices/entry?model=e2e-manual-model", nil)
 	require.Equal(t, 200, c, "price manual: %s", rb16)
 	row = jsonGet(t, rb16).(map[string]any)
 	require.Equal(t, "manual", row["Source"], "manual 行不被 sync 覆盖")
@@ -898,15 +898,15 @@ func waitExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
 	}
 }
 
-// putPrice manual 设价（断言 200）。统一价格表契约：PUT /prices/{model} 路径
-// 参数形态（模型池不含 `/`，PathEscape 仅兜底）；token 档必填 mode。
+// putPrice manual 设价（断言 200）。统一价格表契约：PUT /prices/entry?model=
+// 查询参数形态（模型 ID 含 "/"，禁路径参数）；token 档必填 mode。
 func putPrice(t *testing.T, env *e2eEnv, model string, body map[string]any) {
 	t.Helper()
 	full := map[string]any{"mode": "token"}
 	for k, v := range body {
 		full[k] = v
 	}
-	c, rb := env.admin(http.MethodPut, "/prices/"+url.PathEscape(model), full)
+	c, rb := env.admin(http.MethodPut, "/prices/entry?model="+url.QueryEscape(model), full)
 	require.Equal(t, 200, c, "put price %s: %s", model, rb)
 }
 
@@ -914,7 +914,7 @@ func putPrice(t *testing.T, env *e2eEnv, model string, body map[string]any) {
 // mult_bp 万分倍率，整体替换语义。
 func putVariants(t *testing.T, env *e2eEnv, model string, variants []map[string]any) {
 	t.Helper()
-	c, rb := env.admin(http.MethodPut, "/prices/"+url.PathEscape(model)+"/variants",
+	c, rb := env.admin(http.MethodPut, "/prices/variants?model="+url.QueryEscape(model),
 		map[string]any{"variants": variants})
 	require.Equal(t, 200, c, "put variants %s: %s", model, rb)
 }
