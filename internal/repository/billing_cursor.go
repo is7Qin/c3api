@@ -38,13 +38,14 @@ func (b *billingRows) Close() { b.closeFunc() }
 const billingCursorLockKey int64 = 0x62696c63 // "bilc"
 
 // fetchUnbilledSQL 取未扣账本批（游标消费主查询）：部分索引谓词同构（NOT
-// billed）+ error_type 收敛值域（usage_logs 仅 none/abort，IN 为防御性显式）
-// + cost > 0（cost=0 行走 FetchZeroCostIDs 纯标记，不进 FEFO 机器）。ORDER BY
+// billed）+ error_type 收敛值域（usage_logs 仅 none/abort，IN 为防御性显式）。
+// F2-opt D1 单取批面：cost > 0 谓词删除——零价行同批取出由消费侧内存路由
+// （MarkBilledBulk 纯标记），消灭 FetchZeroCostIDs 第二遍全扫查询类。ORDER BY
 // id 单调推进游标。
 const fetchUnbilledSQL = `SELECT id, COALESCE(user_id, 0), cost, model,
 	COALESCE(billing_tier, ''), call_count, format
 	FROM usage_logs
-	WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
+	WHERE NOT billed AND error_type IN ('none', 'abort')
 	ORDER BY id LIMIT $1`
 
 // markBilledOverdraftSQL 扣费事务内标记（overdraft 回写，B2）：AND NOT billed
@@ -53,16 +54,10 @@ const fetchUnbilledSQL = `SELECT id, COALESCE(user_id, 0), cost, model,
 const markBilledOverdraftSQL = `UPDATE usage_logs SET billed = TRUE, overdraft = $1
 	WHERE id = ANY($2) AND NOT billed`
 
-// markBilledBulkSQL 纯标记（cost=0 快速路径 + 终极毒行隔离）：不触碰 overdraft
-// （出生 false 保持），幂等可重入。
+// markBilledBulkSQL 纯标记（零价行快速路径 + 终极毒行隔离）：不触碰 overdraft
+//（出生 false 保持），幂等可重入。
 const markBilledBulkSQL = `UPDATE usage_logs SET billed = TRUE
 	WHERE id = ANY($1) AND NOT billed`
-
-// zeroCostIDsSQL cost=0 未标记行 id 批（m4 具名机制 CostZeroFastMark 的取数半：
-// 标记半 = MarkBilledBulk）。无 error_type 过滤——usage_logs 内 cost=0 行均为
-// 免费消耗/出生吸收态，纯标记无资金语义。
-const zeroCostIDsSQL = `SELECT id FROM usage_logs WHERE NOT billed AND cost = 0
-	ORDER BY id LIMIT $1`
 
 // unbilledLagSQL lag 度量（停机护栏数据源）：
 // 部分索引最小 unbilled 行 created_at + 行数。COUNT 走部分索引；MIN(created_at)
@@ -83,29 +78,7 @@ func (r *BillingRepo) FetchUnbilledBatch(ctx context.Context, limit int) ([]doma
 	return scanLedgerRows(rows)
 }
 
-// FetchZeroCostIDs 取 cost=0 未标记行 id 批（快速标记取数半；与 MarkBilledBulk
-// 配对使用）。
-func (r *BillingRepo) FetchZeroCostIDs(ctx context.Context, limit int) ([]int64, error) {
-	if limit <= 0 {
-		return nil, nil
-	}
-	rows, err := r.queryRows(ctx, zeroCostIDsSQL, []any{limit})
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-// MarkBilledBulk 纯标记（F2 冻结 ABI-2，签名不得偏移）：cost=0 快速路径 +
+// MarkBilledBulk 纯标记（F2 冻结 ABI-2，签名不得偏移）：零价行快速路径 +
 // 终极毒行隔离共用——幂等（AND NOT billed），单语句原子。行不存在/已标记 →
 // 静默跳过（幂等语义，不报错）。
 func (r *BillingRepo) MarkBilledBulk(ctx context.Context, ids []int64) error {

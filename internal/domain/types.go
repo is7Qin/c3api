@@ -630,6 +630,24 @@ type LedgerRow struct {
 	Format      string
 }
 
+// LedgerGroup 计费游标消费组（spec-f2-cursor-throughput D3 单一表示，替代
+// billing 包局部 userGroup）：同批同用户行（保序）——chunk 事务内一组一次
+// deductOnlyCore。cost 恒 = Σ Rows[i].Cost（构造即和，无拆块比例公式）。
+type LedgerGroup struct {
+	UserID int64
+	Rows   []LedgerRow
+}
+
+// LedgerGroupOutcome 组级消费结果（DeductGroupsAndMark 返回，与 groups 序一一
+// 对应）：BalanceAfter 事务内余额回读（quarantined/cost<=0 组恒 0）；Overdrafted
+// 该组透支（标记步 od=true 集合归属依据）；Quarantined 用户缺失（跳过扣减仍
+// 标记——不变量 #1 尾语义）。
+type LedgerGroupOutcome struct {
+	BalanceAfter int64
+	Overdrafted  bool
+	Quarantined  bool
+}
+
 // StatBucket 小时统计桶（usage_stats 行；离线聚合 worker 的 INSERT 行形态）。
 // 请求路径零统计计算（spec 2026-08-14）：usage_stats 只由离线聚合 worker 写入
 // （DELETE+INSERT 覆盖语义）——total_latency_ms 已删除（延迟列出局）；TTFT 由

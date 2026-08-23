@@ -97,13 +97,18 @@ func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
 }
 
 // TestUsageLogUnbilledPartialIndex 计费游标部分索引锚（F2 ledger-cursor，
-// spec 2026-08-23 §一）：usagelog_unbilled_id = (id) WHERE NOT billed 即计费
-// 游标本体——标记后自动退出索引，重启天然续传；谓词列序/索引名漂移即红。
+// spec 2026-08-23 §一 + F2-opt D5）：usagelog_unbilled_id = (id) WHERE NOT
+// billed 即计费游标本体——标记后自动退出索引，重启天然续传；
+// usagelog_unbilled_created = (created_at) WHERE NOT billed 供 lag 度量
+// MIN 索引定位；谓词列序/索引名漂移即红。
 func TestUsageLogUnbilledPartialIndex(t *testing.T) {
-	require.Len(t, usageLogIndexDDLs, 7, "6 个 ent 对齐索引 + 1 个计费游标部分索引")
+	require.Len(t, usageLogIndexDDLs, 8, "6 个 ent 对齐索引 + 2 个计费游标部分索引")
 	idx := usageLogIndexDDLs[len(usageLogIndexDDLs)-1]
 	require.Contains(t, idx, "CREATE INDEX usagelog_unbilled_id ON usage_logs (id)", "游标索引名与键列")
 	require.Contains(t, idx, "WHERE NOT billed", "部分索引谓词 = 未扣子集")
+	lag := usageLogIndexDDLs[len(usageLogIndexDDLs)-2]
+	require.Contains(t, lag, "CREATE INDEX usagelog_unbilled_created ON usage_logs (created_at)", "lag 度量索引名与键列")
+	require.Contains(t, lag, "WHERE NOT billed", "lag 度量索引同谓词未扣子集")
 }
 
 // TestErrLogColumnDefsMatchCreateDDL err_logs 列事实源锚（架构审查 S2——

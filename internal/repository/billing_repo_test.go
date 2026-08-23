@@ -28,7 +28,7 @@ func logFor(userID int64, requestID string) *domain.UsageLog {
 		RequestID: requestID, UserID: userID, Model: "gpt-4o",
 		Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone,
 		LatencyMS: 10, InputTokens: 3, OutputTokens: 5, TotalTokens: 8,
-		Cost: 130, BillingTier: "auto",
+		CallCount: 1, Cost: 130, BillingTier: "auto",
 		CreatedAt: time.Now(),
 	}
 }
@@ -95,8 +95,8 @@ func fetchAllUnbilled(t *testing.T, repos *repository.Repository) []domain.Ledge
 }
 
 // TestPGFetchUnbilledBatchFilters 取批过滤语义：NOT billed + error_type IN
-// ('none','abort') + cost > 0 三谓词 + ORDER BY id + LIMIT；LedgerRow 瘦身投影
-// 字段逐项断言。cost=0 行不进取批（走 FetchZeroCostIDs 快速标记）。
+// ('none','abort') 两谓词（F2-opt D1：cost > 0 谓词删除——零价行同批取出由消
+// 费侧内存路由）+ ORDER BY id + LIMIT；LedgerRow 瘦身投影字段逐项断言。
 func TestPGFetchUnbilledBatchFilters(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -104,7 +104,7 @@ func TestPGFetchUnbilledBatchFilters(t *testing.T) {
 	a := logFor(1, "f-a")                          // none + cost>0 → 取
 	b := logFor(1, "f-b")                          // abort + cost>0 → 取
 	b.ErrorType = domain.ErrAbort
-	c := logFor(1, "f-c")                          // cost=0 → 不进取批
+	c := logFor(1, "f-c")                          // cost=0 → 取（D1 单取批面）
 	c.Cost = 0
 	d := logFor(1, "f-d")                          // born-absorbed（billed=true）→ 不取
 	d.Billed = true
@@ -114,7 +114,7 @@ func TestPGFetchUnbilledBatchFilters(t *testing.T) {
 	seedUnbilled(t, repos, d)
 
 	rows := fetchAllUnbilled(t, repos)
-	require.Len(t, rows, 2, "仅 none/abort 且 cost>0 且未标记行进取批")
+	require.Len(t, rows, 3, "none/abort 且未标记行进取批——零价行不再被谓词排除")
 	require.Less(t, rows[0].ID, rows[1].ID, "ORDER BY id 单调推进游标")
 	first := rows[0]
 	require.Equal(t, int64(1), first.UserID)
@@ -129,10 +129,8 @@ func TestPGFetchUnbilledBatchFilters(t *testing.T) {
 	require.Len(t, limited, 1, "LIMIT 生效")
 	require.Equal(t, rows[0].ID, limited[0].ID, "取批按 id 升序截断")
 
-	zeros, err := repos.FetchZeroCostIDs(ctx, 100)
-	require.NoError(t, err)
-	require.Len(t, zeros, 1, "cost=0 行进快速标记取数半")
-	require.Equal(t, c.RequestID, requestIDOf(t, repos, zeros[0]))
+	require.Equal(t, c.RequestID, requestIDOf(t, repos, rows[2].ID),
+		"cost=0 行同批取出（零价路由归消费侧内存判断）")
 }
 
 // requestIDOf 按 id 反查 request_id（零价取数半归属断言辅助）。
@@ -336,8 +334,9 @@ func TestPGDeductOnlyAndMarkUserMissingQuarantined(t *testing.T) {
 	require.Zero(t, lagN, "全部 ids 标记退出游标")
 }
 
-// TestPGZeroCostFastMarkPath cost=0 快速路径（m4）：FetchZeroCostIDs 取数 +
-// MarkBilledBulk 幂等纯标记——不触碰余额/temp（不走 FEFO 机器），不进取批。
+// TestPGZeroCostFastMarkPath 零价快速路径（m4 CostZeroFastMark，F2-opt D1 后
+// 形态）：cost=0 行进取批（单取批面）→ MarkBilledBulk 幂等纯标记——不触碰余额/
+// temp（不走 FEFO 机器），零资金移动。
 func TestPGZeroCostFastMarkPath(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -353,10 +352,8 @@ func TestPGZeroCostFastMarkPath(t *testing.T) {
 	seedUnbilled(t, repos, z2)
 
 	fetched := fetchAllUnbilled(t, repos)
-	require.Empty(t, fetched, "cost=0 不进取批（不进 FEFO）")
-	ids, err := repos.FetchZeroCostIDs(ctx, 100)
-	require.NoError(t, err)
-	require.Len(t, ids, 2)
+	require.Len(t, fetched, 2, "cost=0 行进取批（D1 单取批面）")
+	ids := ledgerRowIDs(fetched)
 
 	require.NoError(t, repos.MarkBilledBulk(ctx, ids))
 	require.NoError(t, repos.MarkBilledBulk(ctx, ids), "幂等：重复标记静默跳过")
