@@ -1077,12 +1077,17 @@
       "mail.smtp_username": "SMTP username (optional)",
       "mail.smtp_password": "SMTP password",
       "mail.from_address": "From address",
-      "mail.tls": "starttls(587) / implicit(465, default) / none"
+      "mail.tls": "Connection encryption policy; defaults to SMTPS implicit TLS on port 465"
     },
     "policies": {
       "passthrough": "Pass through",
       "strip": "Strip",
       "reject": "Reject"
+    },
+    "tlsOptions": {
+      "starttls": "STARTTLS (587, upgrade in-band)",
+      "implicit": "SMTPS implicit TLS (465)",
+      "none": "No encryption"
     },
     "usdHint": "1 USD = 100,000 milli-cents",
     "invalidUsd": "Enter a valid non-negative amount",

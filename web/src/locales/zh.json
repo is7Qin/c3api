@@ -1077,12 +1077,17 @@
       "mail.smtp_username": "SMTP 用户名（可选）",
       "mail.smtp_password": "SMTP 密码",
       "mail.from_address": "发件人邮箱地址",
-      "mail.tls": "starttls(587) / implicit(465，默认) / none"
+      "mail.tls": "连接加密策略；默认 SMTPS 隐式 TLS（端口 465）"
     },
     "policies": {
       "passthrough": "透传",
       "strip": "移除",
       "reject": "拒绝"
+    },
+    "tlsOptions": {
+      "starttls": "STARTTLS（587 明文起步升级）",
+      "implicit": "SMTPS 隐式 TLS（465）",
+      "none": "无加密"
     },
     "usdHint": "1 USD = 100,000 毫分",
     "invalidUsd": "请输入有效的非负金额",

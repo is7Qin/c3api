@@ -25,6 +25,8 @@ const MILLI_PER_USD = 100_000
 const USD_KEYS = new Set(['default_user_balance', 'default_user_temp_balance'])
 const TIER_KEYS = new Set(['service_tier_policy_priority', 'service_tier_policy_flex', 'service_tier_policy_fast'])
 const TIER_VALUES = ['passthrough', 'strip', 'reject'] as const
+const TLS_KEY = 'mail.tls'
+const TLS_VALUES = ['starttls', 'implicit', 'none'] as const
 
 const GROUPS: { id: string; keys: string[] }[] = [
   { id: 'signup', keys: ['signup_enabled'] },
@@ -48,6 +50,7 @@ function SettingRow({ setting }: { setting: Setting }) {
   const isUsd = USD_KEYS.has(key)
   const isTier = TIER_KEYS.has(key)
   const isPassword = key === 'mail.smtp_password'
+  const isTls = key === TLS_KEY
   const toInput = (v: string) => (isUsd ? String(Number(v) / MILLI_PER_USD) : v)
   const [draft, setDraft] = useState(() => toInput(current))
   const pendingRef = useRef<string | null>(null)
@@ -110,6 +113,11 @@ function SettingRow({ setting }: { setting: Setting }) {
         <SelectTrigger className="w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
         <SelectContent>{TIER_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.policies.${v}`)}>{t(`settings.policies.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
+    ) : isTls ? (
+      <Select items={{ starttls: t('settings.tlsOptions.starttls'), implicit: t('settings.tlsOptions.implicit'), none: t('settings.tlsOptions.none') }} value={draft} onValueChange={v => { setDraft(v); doSave(v) }} disabled={save.isPending}>
+        <SelectTrigger className="w-56 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
+        <SelectContent>{TLS_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.tlsOptions.${v}`)}>{t(`settings.tlsOptions.${v}`)}</SelectItem>)}</SelectContent>
+      </Select>
     ) : typ === 'number' ? (
       <Input type="number" min={0} step={isUsd ? 0.00001 : 1} className="w-48 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10 text-right tabular-nums" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
     ) : (
@@ -123,7 +131,7 @@ function SettingRow({ setting }: { setting: Setting }) {
         {isUsd && !err && <p className="text-xs text-muted-foreground">{t('settings.usdHint')}</p>}
         {err && <p className="text-xs text-destructive">{err}</p>}
       </div>
-      <div className="flex shrink-0 items-center gap-2">{control}{typ === 'string' && !isTier && <Button variant="outline" size="sm" onClick={() => doSave(submitValue())} disabled={save.isPending}>{save.isPending ? t('common.saving') : t('common.save')}</Button>}</div>
+      <div className="flex shrink-0 items-center gap-2">{control}{typ === 'string' && !isTier && !isTls && <Button variant="outline" size="sm" onClick={() => doSave(submitValue())} disabled={save.isPending}>{save.isPending ? t('common.saving') : t('common.save')}</Button>}</div>
     </div>
   )
 }
@@ -176,10 +184,17 @@ export default function SettingsPage() {
           </TabsList>
           {GROUPS.map(g => {
             const rows = g.keys.map(k => byKey.get(k)).filter((s): s is Setting => !!s)
+            const smtpCard = rows.length > 0 && (
+              <Card><CardHeader><CardTitle>{t(`settings.groups.${g.id}`)}</CardTitle></CardHeader><div className="divide-y divide-border px-(--card-spacing)">{rows.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>
+            )
             return (
               <TabsContent key={g.id} value={g.id} className="space-y-4 pt-4">
-                {rows.length > 0 && <Card><CardHeader><CardTitle>{t(`settings.groups.${g.id}`)}</CardTitle></CardHeader><div className="divide-y divide-border px-(--card-spacing)">{rows.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>}
-                {g.id === 'mail' && <div className="space-y-4"><MailTemplateCard purpose="register_code" /><MailTemplateCard purpose="reset_code" /></div>}
+                {g.id === 'mail' ? (
+                  <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+                    {smtpCard}
+                    <div className="space-y-4"><MailTemplateCard purpose="register_code" /><MailTemplateCard purpose="reset_code" /></div>
+                  </div>
+                ) : smtpCard}
               </TabsContent>
             )
           })}
