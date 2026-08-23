@@ -119,6 +119,9 @@ func main() {
 	if err := repos.EnsureUsageStatsPartitioned(startupCtx, time.Now()); err != nil {
 		fatalDB("usage_stats partition bootstrap", err)
 	}
+	if err := repos.EnsureUsageEntityStatsPartitioned(startupCtx, time.Now()); err != nil {
+		fatalDB("usage_entity_stats partition bootstrap", err)
+	}
 	// function_price 初始化种子（价格表三件套）：codex-search 默认按次价行
 	// （1000 毫分 = $0.01/次，source=manual）——ON CONFLICT DO NOTHING 幂等：
 	// 已存在（含管理端改价后的行）恒不覆盖；失败即 fatal（默认按次价不可缺；

@@ -84,6 +84,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, now))
 	require.NoError(t, repos.EnsureErrLogPartitioned(ctx, now))
 	require.NoError(t, repos.EnsureUsageStatsPartitioned(ctx, now))
+	require.NoError(t, repos.EnsureUsageEntityStatsPartitioned(ctx, now))
 
 	// --- 种子数据（注册表 ReloadAll 首刷全部可见） ---
 	u, err := repos.CreateUser(ctx, &domain.User{
