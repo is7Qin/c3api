@@ -6,8 +6,9 @@ package repository
 
 // billing_repo.go 扣费事务面（F2 ledger-cursor，spec 2026-08-23）：FEFO 临时额度
 // 优先 + 条件扣费（允许透支）+ 同事务标记 billed——扣减与标记原子（at-least-once
-// 消费 + 原子 = exactly-once，丢账窗口构造性为零）。usage_logs 明细的唯一写者是
-// usage flusher（InsertBatch）；本文件不再插日志（旧 DeductAndLog 三件套 +
+// 消费 + 原子 = exactly-once，丢账窗口构造性为零；会话锁丢失的并发标记由标记步
+// 受影响行数守卫兜底 → 回滚重放，见 errConcurrentMark）。usage_logs 明细的唯一
+// 写者是 usage flusher（InsertBatch）；本文件不再插日志（旧 DeductAndLog 三件套 +
 // InsertLogs 双实现随双写一并删除）。游标取批/纯标记/lag 观测面见 billing_cursor.go。
 
 import (
@@ -69,8 +70,9 @@ type BillingRepo struct {
 // ③ 事务内 SELECT balance 回读（行锁串行无竞态）返回 balanceAfter
 // ④ UPDATE usage_logs SET billed=true, overdraft=$od WHERE id=ANY($ids) AND NOT
 //
-//	billed——与扣减同事务原子；AND NOT billed 幂等 + 选用部分索引
-//	usagelog_unbilled_id（spec §五 非 HOT 注记）
+//	billed——与扣减同事务原子；AND NOT billed 选用部分索引 usagelog_unbilled_id
+//	(spec §五 非 HOT 注记)；标记步校验受影响行数（affected < len(ids) →
+//	errConcurrentMark 整事务回滚——锁丢失双扣防御，见 billing_cursor.go）
 //
 // 任一步失败整体回滚（行保持 unbilled，游标重放）。cost <= 0 → 纯标记不扣减
 // （防御路径：游标消费面 cost>0 行才进本方法，cost=0 走 MarkBilledBulk 快速
@@ -101,7 +103,7 @@ func (r *BillingRepo) deductOnlyAndMarkEnt(ctx context.Context, userID, cost int
 	if err != nil {
 		return 0, false, false, err
 	}
-	if _, err := markBilledExec(ctx, exe, ids, od); err != nil {
+	if err := markBilledExec(ctx, exe, ids, od); err != nil {
 		return 0, false, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -129,7 +131,7 @@ func (r *BillingRepo) deductOnlyAndMarkPGX(ctx context.Context, userID, cost int
 	if err != nil {
 		return 0, false, false, err
 	}
-	if _, err := markBilledExec(ctx, exe, ids, od); err != nil {
+	if err := markBilledExec(ctx, exe, ids, od); err != nil {
 		return 0, false, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {

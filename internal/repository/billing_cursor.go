@@ -11,6 +11,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -47,7 +48,8 @@ const fetchUnbilledSQL = `SELECT id, COALESCE(user_id, 0), cost, model,
 	ORDER BY id LIMIT $1`
 
 // markBilledOverdraftSQL 扣费事务内标记（overdraft 回写，B2）：AND NOT billed
-// 幂等 + 选用部分索引。
+// 选用部分索引；幂等语义由调用方标记步受影响行数守卫承接（见 errConcurrentMark
+// ——部分受影响不再静默成功，而是整事务回滚）。
 const markBilledOverdraftSQL = `UPDATE usage_logs SET billed = TRUE, overdraft = $1
 	WHERE id = ANY($2) AND NOT billed`
 
@@ -163,9 +165,25 @@ func (r *BillingRepo) AcquireBillingLock(ctx context.Context) (release func(), o
 	}, true, nil
 }
 
-// markBilledExec 扣费事务内标记（DeductOnlyAndMark 第 ④ 步；overdraft 回写 B2）。
-func markBilledExec(ctx context.Context, exe deductTx, ids []int64, overdrafted bool) (int64, error) {
-	return exe.ExecAffected(ctx, markBilledOverdraftSQL, []any{overdrafted, ids})
+// errConcurrentMark 并发标记哨兵（锁丢失双扣防御，oracle 终审 B 面 CONCERN）：
+// DeductOnlyAndMark 标记步受影响行数少于批大小 = 他方消费者已抢先标记同批行。
+// 触发场景：会话级 advisory lock 持有连接的后端异常死亡（pg_terminate_backend/
+// OOM kill 单后端）而本实例其余池连接幸存——第二实例取锁消费重叠未标记行，本
+// 实例在途组继续提交即双扣。返回本错误使整个扣费事务回滚（余额零变动），该组
+// 行下周期由游标重放（重放时已标记行退出取批，恰扣一次）。
+var errConcurrentMark = errors.New("billing: concurrent mark detected")
+
+// markBilledExec 扣费事务内标记（DeductOnlyAndMark 第 ④ 步；overdraft 回写 B2）
+// + 并发标记守卫：affected < len(ids) → errConcurrentMark（调用方整事务回滚）。
+func markBilledExec(ctx context.Context, exe deductTx, ids []int64, overdrafted bool) error {
+	affected, err := exe.ExecAffected(ctx, markBilledOverdraftSQL, []any{overdrafted, ids})
+	if err != nil {
+		return err
+	}
+	if affected < int64(len(ids)) {
+		return fmt.Errorf("%w: marked %d/%d rows in deduct tx", errConcurrentMark, affected, len(ids))
+	}
+	return nil
 }
 
 // queryRows 非事务查询双载体分发：pool 直连优先（生产），nil 回落 ent driver

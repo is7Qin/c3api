@@ -770,3 +770,65 @@ func TestPGBillingCursorCostZeroFastMarkBulk(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, lagN)
 }
+
+// —— 族 12：LockLossGuard ——
+
+// TestPGBillingCursorLockLossGuard 锁丢失双扣防御（oracle 终审 B 面 CONCERN）：
+// 会话级 advisory lock 持有连接的后端异常死亡（pg_terminate_backend/OOM kill 单
+// 后端）而本实例其余池连接幸存 → 第二实例取锁消费与本实例在途组重叠的未标记行；
+// 本实例在途组提交即双扣。防御：标记步受影响行数守卫——批内已有他方标记行
+//（affected < len(ids)）→ errConcurrentMark 使整事务回滚（余额零变动），该组
+// 下周期游标重放恰扣一次。双载体各验一遍（pgx 直连 / ent txDriver——守卫在
+// markBilledExec 单点实现，两路径同源）。
+func TestPGBillingCursorLockLossGuard(t *testing.T) {
+	t.Run("pgx", func(t *testing.T) {
+		testBillingCursorLockLossGuard(t, newPGRepos(t), "lockloss-pgx@example.com")
+	})
+	t.Run("ent", func(t *testing.T) {
+		newPGRepos(t) // schema 基座（newPGReposNoPool 共用同一测试 schema）
+		testBillingCursorLockLossGuard(t, newPGReposNoPool(t), "lockloss-ent@example.com")
+	})
+}
+
+// testBillingCursorLockLossGuard 锁丢失场景行为链：种 3 行 unbilled → 外部先标记
+// 一行（模拟他方消费者已扣款并标记）→ 本实例在途组提交全批 → 断言并发标记错误 +
+// 余额零变动（回滚验证）+ 未标记行保持 unbilled → 重放收敛零双扣。
+func testBillingCursorLockLossGuard(t *testing.T, repos *repository.Repository, email string) {
+	t.Helper()
+	ensureCursorPartitions(t, repos)
+	ctx := context.Background()
+
+	u := seedPGUser(t, repos, email)
+	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
+	seedCursorRows(t, repos, u.ID, 3, 100_000)
+
+	rows := fetchAllUnbilled(t, repos)
+	require.Len(t, rows, 3)
+
+	// 锁丢失窗口：他方消费者抢先扣款并标记批内一行（纯标记面注入，资金侧
+	// 已由他方完成——本测试只关心本实例在途组的原子性）
+	victim := rows[0].ID
+	require.NoError(t, repos.MarkBilledBulk(ctx, []int64{victim}))
+	balBefore := cursorBalance(t, repos, u.ID)
+
+	// 本实例在途组提交全批（含他方已标记行）：标记步 affected(2) < len(ids)(3)
+	cost, ids := cursorGroupSum(&cursorUserGroup{userID: u.ID, rows: rows})
+	bal, od, q, err := repos.DeductOnlyAndMark(ctx, u.ID, cost, ids)
+	require.Error(t, err, "并发标记必须使整事务失败")
+	require.Contains(t, err.Error(), "concurrent mark", "errConcurrentMark 哨兵语义")
+	require.False(t, od)
+	require.False(t, q)
+	require.Zero(t, bal)
+
+	// 回滚验证：余额零变动；未标记行保持 unbilled（下周期重放）；他方行保持 billed
+	require.Equal(t, balBefore, cursorBalance(t, repos, u.ID), "整事务回滚：余额零变动")
+	require.Equal(t, 2, cursorUnbilledCount(t, repos), "未标记行保持 unbilled")
+	require.True(t, cursorUsageLogRow(t, repos, victim).Billed, "他方已标记行不被回滚复活")
+
+	// 下周期重放收敛：剩余两行恰扣一次（1000000 − 200000），无双扣
+	drained, quarantinedN := drainBillingCursor(t, repos)
+	require.Equal(t, int64(2), drained)
+	require.Zero(t, quarantinedN)
+	require.Equal(t, balBefore-200_000, cursorBalance(t, repos, u.ID),
+		"重放仅消费未标记行：每行恰扣一次")
+}
