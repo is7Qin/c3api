@@ -4,10 +4,11 @@
 
 package repository_test
 
-// 计费游标消费者 PG 测试套件（F2 T4，spec-f2-ledger-cursor §四测试清单十一族）：
-// 端到端行为级——usage flusher 单写点（InsertBatch，billed=false 出生）落种子行，
-// 游标消费面（FetchUnbilledBatch → 按 userID 分组 → DeductOnlyAndMark 单事务
-// FEFO 扣减 + billed 标记原子 / MarkBilledBulk 幂等纯标记 / UnbilledLag 度量 /
+// 计费游标消费者 PG 测试套件（F2 T4 十二族 + F2-opt chunk 族，spec
+// spec-f2-ledger-cursor §四 / spec-f2-cursor-throughput §三）：端到端行为级——
+// usage flusher 单写点（InsertBatch，billed=false 出生）落种子行，游标消费面
+//（FetchUnbilledBatch 单取批面 → 内存路由 → chunk 事务 DeductGroupsAndMark /
+// DeductOnlyAndMark 单组事务 / MarkBilledBulk 幂等纯标记 / UnbilledLag 度量 /
 // AcquireBillingLock 会话锁）逐族验收。与 billing_repo_test.go（消费面直调单元）
 // 互补：本文件每族走完整"落库→消费→对账收敛"链路。
 //
@@ -23,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/billing"
@@ -124,9 +126,37 @@ func cursorGroupSum(g *cursorUserGroup) (cost int64, ids []int64) {
 	return cost, ids
 }
 
-// drainBillingCursor 消费循环至游标清空（镜像 billing.flusher consumeBatch 主
-// 路径：取批 LIMIT 500 → 分组 → 逐组单事务 DeductOnlyAndMark）。返回退出游标
-// 的行数与其中 quarantined（用户缺失零扣费标记）行数。轮数上限 = 看门狗
+// ledgerRowsOf 按 userID 过滤游标行（保序——chunk 组装辅助）。
+func ledgerRowsOf(rows []domain.LedgerRow, uid int64) []domain.LedgerRow {
+	out := make([]domain.LedgerRow, 0, 2)
+	for _, r := range rows {
+		if r.UserID == uid {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// cursorPackChunks 组切片按 ≤64 用户/chunk 连续打包（镜像 billing.flusher
+// packChunks D3 打包策略；测试内单线程顺序消费——分片维度省略）。
+func cursorPackChunks(groups []*cursorUserGroup) [][]domain.LedgerGroup {
+	const chunkUsersLimit = 64
+	chunks := make([][]domain.LedgerGroup, 0, (len(groups)+chunkUsersLimit-1)/chunkUsersLimit)
+	for start := 0; start < len(groups); start += chunkUsersLimit {
+		end := min(start+chunkUsersLimit, len(groups))
+		chunk := make([]domain.LedgerGroup, 0, end-start)
+		for _, g := range groups[start:end] {
+			chunk = append(chunk, domain.LedgerGroup{UserID: g.userID, Rows: g.rows})
+		}
+		chunks = append(chunks, chunk)
+	}
+	return chunks
+}
+
+// drainBillingCursor 消费循环至游标清空（镜像 billing.flusher F2-opt 主路径：
+// 取批 LIMIT 2000 单取批面 → 内存路由——cost<=0 行 MarkBilledBulk 纯标记、
+// cost>0 行分组打包 ≤64 用户/chunk 逐块 DeductGroupsAndMark 单事务）。返回退出
+// 游标的行数与其中 quarantined（用户缺失零扣费标记）行数。轮数上限 = 看门狗
 //（有界收敛，替代 sleep——病态不推进时快速失败而非拖垮套件）。
 func drainBillingCursor(t *testing.T, repos *repository.Repository) (drained, quarantined int64) {
 	t.Helper()
@@ -135,18 +165,32 @@ func drainBillingCursor(t *testing.T, repos *repository.Repository) (drained, qu
 		if round >= 200 {
 			t.Fatalf("drainBillingCursor: 游标 200 轮未清空——消费推进卡死")
 		}
-		rows, err := repos.FetchUnbilledBatch(ctx, 500)
+		rows, err := repos.FetchUnbilledBatch(ctx, 2000)
 		require.NoError(t, err)
 		if len(rows) == 0 {
 			return drained, quarantined
 		}
-		for _, g := range cursorGroups(rows) {
-			cost, ids := cursorGroupSum(g)
-			_, _, q, err := repos.DeductOnlyAndMark(ctx, g.userID, cost, ids)
+		var paid []domain.LedgerRow
+		var zeroIDs []int64
+		for _, r := range rows { // D1 内存路由：零价直标、付费进扣费面
+			if r.Cost <= 0 {
+				zeroIDs = append(zeroIDs, r.ID)
+			} else {
+				paid = append(paid, r)
+			}
+		}
+		if len(zeroIDs) > 0 {
+			require.NoError(t, repos.MarkBilledBulk(ctx, zeroIDs))
+			drained += int64(len(zeroIDs))
+		}
+		for _, chunk := range cursorPackChunks(cursorGroups(paid)) {
+			outcomes, err := repos.DeductGroupsAndMark(ctx, chunk)
 			require.NoError(t, err)
-			drained += int64(len(g.rows))
-			if q {
-				quarantined += int64(len(g.rows))
+			for i, g := range chunk {
+				drained += int64(len(g.Rows))
+				if outcomes[i].Quarantined {
+					quarantined += int64(len(g.Rows))
+				}
 			}
 		}
 	}
@@ -231,31 +275,26 @@ func TestPGBillingCursorCrashRecovery(t *testing.T) {
 	require.Equal(t, int64(400_000), bal)
 	require.Equal(t, 3, cursorUnbilledCount(t, repos), "仅 u2×2 + ghost×1 待处理")
 
-	// 失败注入：已取消 ctx 上重试 u2 组（崩溃瞬间语义）→ 报错且零标记
+	// 失败注入：已取消 ctx 上提交 chunk（崩溃瞬间语义，u2+ghost 两组一笔事务）
+	// → 报错且整块零标记（SC3：chunk 中途取消无半标记）
 	failCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	u2Cost, u2IDs := cursorGroupSum(u2Group)
-	_, _, _, err = repos.DeductOnlyAndMark(failCtx, u2.ID, u2Cost, u2IDs)
+	_, err = repos.DeductGroupsAndMark(failCtx, []domain.LedgerGroup{
+		{UserID: u2.ID, Rows: u2Group.rows},
+		{UserID: ghostUID, Rows: ghostGroup.rows},
+	})
 	require.Error(t, err, "已取消 ctx 上事务开启即败")
-	require.Equal(t, 3, cursorUnbilledCount(t, repos), "失败注入不标记任何行")
+	require.Equal(t, 3, cursorUnbilledCount(t, repos), "失败注入整块零标记")
 
-	// quarantined 路径：ghost 组跳过扣减仍标记
-	ghostCost, ghostIDs := cursorGroupSum(ghostGroup)
-	gbal, god, gq, err := repos.DeductOnlyAndMark(ctx, ghostUID, ghostCost, ghostIDs)
-	require.NoError(t, err)
-	require.True(t, gq, "用户缺失 → quarantined 出口")
-	require.False(t, god)
-	require.Zero(t, gbal)
-	require.Equal(t, 2, cursorUnbilledCount(t, repos), "ghost 行已标记退出游标")
-
-	// 重放：重启后消费循环至清空——u2 恰扣一次、u1 不再扣
+	// 重放：重启后消费循环至清空——u2 恰扣一次、u1 不再扣、ghost 隔离零扣费
 	drained, quarantinedN := drainBillingCursor(t, repos)
-	require.Equal(t, int64(2), drained)
-	require.Zero(t, quarantinedN)
+	require.Equal(t, int64(3), drained)
+	require.Equal(t, int64(1), quarantinedN)
 	require.Equal(t, int64(400_000), cursorBalance(t, repos, u1.ID), "u1 不被重放双扣")
 	require.Equal(t, int64(400_000), cursorBalance(t, repos, u2.ID), "u2 重放恰扣一次")
 
 	// 对账恒等式：Σbilled 行 cost == Σ|余额变动| + quarantine 和
+	ghostCost, _ := cursorGroupSum(ghostGroup)
 	nBilled, sumBilled := cursorBilledStats(t, repos)
 	require.Equal(t, 5, nBilled, "全部行退出游标")
 	require.Equal(t, (1_000_000-400_000)+(800_000-400_000)+ghostCost, sumBilled,
@@ -547,13 +586,11 @@ func TestPGBillingCursorCaptureOffAbsorb(t *testing.T) {
 	absorbed.Billed = true
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{absorbed}))
 
-	// 游标三面全空：取批 / 零价取数 / lag 度量均不见吸收态行
+	// 游标两面全空：取批 / lag 度量均不见吸收态行（F2-opt D1 后无独立零价取数
+	// 面——吸收态 billed=true 行被 NOT billed 谓词排除于唯一取批查询）
 	rows, err := repos.FetchUnbilledBatch(ctx, 100)
 	require.NoError(t, err)
 	require.Empty(t, rows, "出生吸收态不进游标")
-	zeros, err := repos.FetchZeroCostIDs(ctx, 100)
-	require.NoError(t, err)
-	require.Empty(t, zeros)
 	_, lagN, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
 	require.Zero(t, lagN)
@@ -635,8 +672,9 @@ func TestPGBillingCursorOverdraftWriteBack(t *testing.T) {
 
 // —— 族 9：CostZeroFastMark ——
 
-// TestPGBillingCursorCostZeroFastMark cost=0 行混批：不进取批（不经 FEFO 机器
-// ——balances/temp 无变动）走 FetchZeroCostIDs + MarkBilledBulk 快速标记收敛。
+// TestPGBillingCursorCostZeroFastMark cost=0 行混批（F2-opt D1 内存路由形态）：
+// 零价行同批取出直标（不经 FEFO 机器——balances/temp 无变动），付费行走 FEFO
+// 扣费收敛。
 func TestPGBillingCursorCostZeroFastMark(t *testing.T) {
 	repos := newPGRepos(t)
 	ensureCursorPartitions(t, repos)
@@ -651,31 +689,38 @@ func TestPGBillingCursorCostZeroFastMark(t *testing.T) {
 	paid := cursorLog(u.ID, 120_000)
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{z1, paid, z2}))
 
-	// cost=0 行不进主批（不进 FEFO）
+	// D1 单取批面：零价行与付费行同批取出
 	rows := fetchAllUnbilled(t, repos)
-	require.Len(t, rows, 1, "仅 cost>0 行进取批")
-	require.Equal(t, int64(120_000), rows[0].Cost)
+	require.Len(t, rows, 3, "零价行不再被取批谓词排除")
 
-	// 主批消费：FEFO 只见付费行——临时额度扣 80000 + 余额补 40000
-	drained, quarantinedN := drainBillingCursor(t, repos)
-	require.Equal(t, int64(1), drained)
-	require.Zero(t, quarantinedN)
+	// 消费（镜像 flusher 内存路由）：零价行纯标记 + 付费行 FEFO 扣费
+	var zeroIDs []int64
+	var paidRows []domain.LedgerRow
+	for _, r := range rows {
+		if r.Cost <= 0 {
+			zeroIDs = append(zeroIDs, r.ID)
+		} else {
+			paidRows = append(paidRows, r)
+		}
+	}
+	require.Len(t, zeroIDs, 2)
+	require.NoError(t, repos.MarkBilledBulk(ctx, zeroIDs))
+	outcomes, err := repos.DeductGroupsAndMark(ctx, []domain.LedgerGroup{{UserID: u.ID, Rows: paidRows}})
+	require.NoError(t, err)
+	require.Len(t, outcomes, 1)
+	require.False(t, outcomes[0].Overdrafted)
+	require.False(t, outcomes[0].Quarantined)
+
+	// FEFO 只见付费行——临时额度扣 80000 + 余额补 40000；零价标记零资金语义
 	require.Equal(t, int64(960_000), cursorBalance(t, repos, u.ID), "1000000 − 40000")
 	require.Zero(t, tempBalanceAmount(t, repos, tp), "临时额度恰被付费行耗尽")
 
-	// 零价快速标记：纯标记零资金语义（余额/临时额度不动）
-	ids, err := repos.FetchZeroCostIDs(ctx, 100)
-	require.NoError(t, err)
-	require.Len(t, ids, 2)
-	require.NoError(t, repos.MarkBilledBulk(ctx, ids))
-	require.Equal(t, int64(960_000), cursorBalance(t, repos, u.ID), "快速标记不扣款")
-	require.Zero(t, tempBalanceAmount(t, repos, tp))
-
-	for _, zid := range ids {
+	for _, zid := range zeroIDs {
 		row := cursorUsageLogRow(t, repos, zid)
 		require.True(t, row.Billed, "cost=0 行标记收敛")
 		require.False(t, row.Overdraft, "出生 false 保持")
 	}
+	require.True(t, cursorUsageLogRow(t, repos, paidRows[0].ID).Billed)
 	_, lagN, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
 	require.Zero(t, lagN, "全游标清空")
@@ -745,9 +790,9 @@ func TestPGBillingCursorCostZeroFastMarkBulk(t *testing.T) {
 
 	seedCursorRows(t, repos, u.ID, 3, 0) // 三行 cost=0
 
-	ids, err := repos.FetchZeroCostIDs(ctx, 100)
-	require.NoError(t, err)
-	require.Len(t, ids, 3)
+	rows := fetchAllUnbilled(t, repos)
+	require.Len(t, rows, 3, "零价行进取批（D1 单取批面）")
+	ids := ledgerRowIDs(rows)
 
 	// 重复调用 + 混入不存在 id + 空批：全部静默成功
 	require.NoError(t, repos.MarkBilledBulk(ctx, ids))
@@ -773,13 +818,14 @@ func TestPGBillingCursorCostZeroFastMarkBulk(t *testing.T) {
 
 // —— 族 12：LockLossGuard ——
 
-// TestPGBillingCursorLockLossGuard 锁丢失双扣防御（oracle 终审 B 面 CONCERN）：
-// 会话级 advisory lock 持有连接的后端异常死亡（pg_terminate_backend/OOM kill 单
-// 后端）而本实例其余池连接幸存 → 第二实例取锁消费与本实例在途组重叠的未标记行；
-// 本实例在途组提交即双扣。防御：标记步受影响行数守卫——批内已有他方标记行
-//（affected < len(ids)）→ errConcurrentMark 使整事务回滚（余额零变动），该组
-// 下周期游标重放恰扣一次。双载体各验一遍（pgx 直连 / ent txDriver——守卫在
-// markBilledExec 单点实现，两路径同源）。
+// TestPGBillingCursorLockLossGuard 锁丢失双扣防御（oracle 终审 B 面 CONCERN；
+// F2-opt 升级 chunk 级）：会话级 advisory lock 持有连接的后端异常死亡
+//（pg_terminate_backend/OOM kill 单后端）而本实例其余池连接幸存 → 第二实例取锁
+// 消费与本实例在途 chunk 重叠的未标记行；本实例在途 chunk 提交即双扣。防御：
+// 标记步合并受影响行数守卫——chunk 内已有他方标记行（Σaffected < len(allIDs)）
+// → errConcurrentMark 使整块事务回滚（全组余额零变动），下周期游标重放恰扣一次。
+// 双载体各验一遍（pgx 直连 / ent txDriver——守卫在 deductGroupsCore 单点实现，
+// 两路径同源）。
 func TestPGBillingCursorLockLossGuard(t *testing.T) {
 	t.Run("pgx", func(t *testing.T) {
 		testBillingCursorLockLossGuard(t, newPGRepos(t), "lockloss-pgx@example.com")
@@ -790,45 +836,171 @@ func TestPGBillingCursorLockLossGuard(t *testing.T) {
 	})
 }
 
-// testBillingCursorLockLossGuard 锁丢失场景行为链：种 3 行 unbilled → 外部先标记
-// 一行（模拟他方消费者已扣款并标记）→ 本实例在途组提交全批 → 断言并发标记错误 +
-// 余额零变动（回滚验证）+ 未标记行保持 unbilled → 重放收敛零双扣。
+// testBillingCursorLockLossGuard 锁丢失场景行为链（F2-opt chunk 级升级，SC5）：
+// 种两用户各 2 行 unbilled → 外部先标记 u1 一行（模拟他方消费者已扣款并标记）→
+// 本实例整 chunk（u1+u2 两组一笔事务）提交 → 断言并发标记错误 + **整 chunk**
+// 回滚零移动（无辜组 u2 同块回滚——原子域放大到 chunk 的守卫随迁）→ 重放收敛
+// 恰扣一次。双载体各验一遍（pgx 直连 / ent txDriver——守卫在 deductGroupsCore
+// 单点实现，两路径同源）。
 func testBillingCursorLockLossGuard(t *testing.T, repos *repository.Repository, email string) {
 	t.Helper()
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
-	u := seedPGUser(t, repos, email)
-	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
-	seedCursorRows(t, repos, u.ID, 3, 100_000)
+	u1 := seedPGUser(t, repos, email)
+	u2 := seedPGUser(t, repos, email+"-peer")
+	require.NoError(t, repos.UpdateUserBalance(ctx, u1.ID, 1_000_000))
+	require.NoError(t, repos.UpdateUserBalance(ctx, u2.ID, 1_000_000))
+	seedCursorRows(t, repos, u1.ID, 2, 100_000)
+	seedCursorRows(t, repos, u2.ID, 2, 100_000)
 
-	rows := fetchAllUnbilled(t, repos)
-	require.Len(t, rows, 3)
+	all := fetchAllUnbilled(t, repos)
+	require.Len(t, all, 4)
+	u1Rows := ledgerRowsOf(all, u1.ID)
+	u2Rows := ledgerRowsOf(all, u2.ID)
+	require.Len(t, u1Rows, 2)
+	require.Len(t, u2Rows, 2)
 
-	// 锁丢失窗口：他方消费者抢先扣款并标记批内一行（纯标记面注入，资金侧
-	// 已由他方完成——本测试只关心本实例在途组的原子性）
-	victim := rows[0].ID
+	// 锁丢失窗口：他方消费者抢先扣款并标记 u1 批内一行（纯标记面注入，资金侧
+	// 已由他方完成——本测试只关心本实例在途 chunk 的原子性）
+	victim := u1Rows[0].ID
 	require.NoError(t, repos.MarkBilledBulk(ctx, []int64{victim}))
-	balBefore := cursorBalance(t, repos, u.ID)
+	bal1Before := cursorBalance(t, repos, u1.ID)
+	bal2Before := cursorBalance(t, repos, u2.ID)
 
-	// 本实例在途组提交全批（含他方已标记行）：标记步 affected(2) < len(ids)(3)
-	cost, ids := cursorGroupSum(&cursorUserGroup{userID: u.ID, rows: rows})
-	bal, od, q, err := repos.DeductOnlyAndMark(ctx, u.ID, cost, ids)
-	require.Error(t, err, "并发标记必须使整事务失败")
+	// 本实例在途 chunk 提交（含他方已标记行）：合并守卫 Σaffected(3) < len(allIDs)(4)
+	_, err := repos.DeductGroupsAndMark(ctx, []domain.LedgerGroup{
+		{UserID: u1.ID, Rows: u1Rows},
+		{UserID: u2.ID, Rows: u2Rows},
+	})
+	require.Error(t, err, "并发标记必须使整 chunk 事务失败")
 	require.Contains(t, err.Error(), "concurrent mark", "errConcurrentMark 哨兵语义")
-	require.False(t, od)
-	require.False(t, q)
-	require.Zero(t, bal)
 
-	// 回滚验证：余额零变动；未标记行保持 unbilled（下周期重放）；他方行保持 billed
-	require.Equal(t, balBefore, cursorBalance(t, repos, u.ID), "整事务回滚：余额零变动")
-	require.Equal(t, 2, cursorUnbilledCount(t, repos), "未标记行保持 unbilled")
+	// 整块回滚验证：两用户余额零变动；未标记行保持 unbilled；他方行保持 billed
+	require.Equal(t, bal1Before, cursorBalance(t, repos, u1.ID), "u1 整事务回滚：余额零变动")
+	require.Equal(t, bal2Before, cursorBalance(t, repos, u2.ID), "u2 无辜组同块回滚：零移动（chunk 原子域）")
+	require.Equal(t, 3, cursorUnbilledCount(t, repos), "未标记行保持 unbilled")
 	require.True(t, cursorUsageLogRow(t, repos, victim).Billed, "他方已标记行不被回滚复活")
 
-	// 下周期重放收敛：剩余两行恰扣一次（1000000 − 200000），无双扣
+	// 下周期重放收敛：剩余三行恰扣一次（u1 剩 1 行、u2 剩 2 行），无双扣
 	drained, quarantinedN := drainBillingCursor(t, repos)
-	require.Equal(t, int64(2), drained)
+	require.Equal(t, int64(3), drained)
 	require.Zero(t, quarantinedN)
-	require.Equal(t, balBefore-200_000, cursorBalance(t, repos, u.ID),
+	require.Equal(t, bal1Before-100_000, cursorBalance(t, repos, u1.ID),
 		"重放仅消费未标记行：每行恰扣一次")
+	require.Equal(t, bal2Before-200_000, cursorBalance(t, repos, u2.ID))
+}
+
+// —— 族 13：DeductGroupsChunk（F2-opt SC2 新增族） ——
+
+// TestPGDeductGroupsChunk chunk 合并事务（spec-f2-cursor-throughput §三新增族，
+// SC2）：混合透支标志 chunk——od=true/false 两集合各一条 UPDATE、逐用户 Δ余额
+// 精确、缺失用户 quarantined 出口且邻组照常推进。双载体各验一遍。
+func TestPGDeductGroupsChunk(t *testing.T) {
+	t.Run("pgx", func(t *testing.T) {
+		testPGDeductGroupsChunk(t, newPGRepos(t))
+	})
+	t.Run("ent", func(t *testing.T) {
+		newPGRepos(t) // schema 基座（newPGReposNoPool 共用同一测试 schema）
+		testPGDeductGroupsChunk(t, newPGReposNoPool(t))
+	})
+}
+
+func testPGDeductGroupsChunk(t *testing.T, repos *repository.Repository) {
+	t.Helper()
+	ensureCursorPartitions(t, repos)
+	ctx := context.Background()
+
+	rich := seedPGUser(t, repos, "chunk-rich@example.com") // 余额充足：条件扣
+	poor := seedPGUser(t, repos, "chunk-poor@example.com") // 余额不足：透支
+	require.NoError(t, repos.UpdateUserBalance(ctx, rich.ID, 500_000))
+	require.NoError(t, repos.UpdateUserBalance(ctx, poor.ID, 30_000))
+	const ghostUID = int64(777777001) // 缺失用户：quarantined 出口
+
+	seedCursorRows(t, repos, rich.ID, 2, 100_000)
+	seedCursorRows(t, repos, poor.ID, 2, 40_000)
+	seedCursorRows(t, repos, ghostUID, 1, 70_000)
+
+	all := fetchAllUnbilled(t, repos)
+	require.Len(t, all, 5)
+	chunk := []domain.LedgerGroup{
+		{UserID: rich.ID, Rows: ledgerRowsOf(all, rich.ID)},
+		{UserID: ghostUID, Rows: ledgerRowsOf(all, ghostUID)},
+		{UserID: poor.ID, Rows: ledgerRowsOf(all, poor.ID)}, // od=true 居 chunk 尾
+	}
+	require.Len(t, chunk[0].Rows, 2)
+	require.Len(t, chunk[1].Rows, 1)
+	require.Len(t, chunk[2].Rows, 2)
+
+	outcomes, err := repos.DeductGroupsAndMark(ctx, chunk)
+	require.NoError(t, err)
+	require.Len(t, outcomes, 3, "outcomes 与 groups 序一一对应")
+	require.False(t, outcomes[0].Overdrafted)
+	require.False(t, outcomes[0].Quarantined)
+	require.Equal(t, int64(300_000), outcomes[0].BalanceAfter, "rich 500000−200000")
+	require.True(t, outcomes[1].Quarantined, "缺失用户 quarantined 出口")
+	require.False(t, outcomes[1].Overdrafted)
+	require.Zero(t, outcomes[1].BalanceAfter)
+	require.True(t, outcomes[2].Overdrafted, "poor 透支回写 B2")
+	require.False(t, outcomes[2].Quarantined)
+	require.Equal(t, int64(-50_000), outcomes[2].BalanceAfter, "poor 30000−80000")
+
+	// 逐用户 Δ余额精确（对账恒等式：Σ|Δ| == Σ billed cost）
+	require.Equal(t, int64(300_000), cursorBalance(t, repos, rich.ID))
+	require.Equal(t, int64(-50_000), cursorBalance(t, repos, poor.ID))
+	nBilled, sumBilled := cursorBilledStats(t, repos)
+	require.Equal(t, 5, nBilled, "整 chunk 五行一笔事务全标记")
+	require.Equal(t, int64(350_000), sumBilled, "200000+70000+80000（隔离行零扣费计入 cost 和）")
+
+	// overdraft 列逐行精确：od=false 集合（rich+ghost）保持 false、od=true 集合（poor）全 true
+	for _, r := range chunk[0].Rows {
+		require.False(t, cursorUsageLogRow(t, repos, r.ID).Overdraft)
+	}
+	require.False(t, cursorUsageLogRow(t, repos, chunk[1].Rows[0].ID).Overdraft,
+		"隔离行 overdraft 出生 false 保持")
+	for _, r := range chunk[2].Rows {
+		row := cursorUsageLogRow(t, repos, r.ID)
+		require.True(t, row.Billed)
+		require.True(t, row.Overdraft, "od=true 集合整组回写")
+	}
+	require.Zero(t, cursorUnbilledCount(t, repos))
+}
+
+// —— 族 14：SyncCommitOffSmoke（F2-opt D4 新增族） ——
+
+// TestPGBillingChunkSyncCommitOffSmoke sync_commit 会话级让渡冒烟（D4）：SET
+// LOCAL synchronous_commit TO off 事务作用域生效（tx 内 current_setting=off）、
+// 连接归还即失效（tx 外回落库默认 on——零泄漏面）；chunk 事务含 SET LOCAL 首
+// 语句正常提交（SET 失败 = 回滚重放的安全缺省由既有回滚族覆盖）。
+func TestPGBillingChunkSyncCommitOffSmoke(t *testing.T) {
+	repos := newPGRepos(t)
+	ensureCursorPartitions(t, repos)
+	ctx := context.Background()
+
+	u := seedPGUser(t, repos, "synccommit@example.com")
+	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 100_000))
+	seedCursorRows(t, repos, u.ID, 1, 10_000)
+
+	// 事务作用域断言：独立连接手工复现 chunk 事务首语句形态
+	conn, err := pgx.Connect(ctx, os.Getenv("TEST_DATABASE_URL"))
+	require.NoError(t, err)
+	defer conn.Close(ctx)
+	var setting string
+	tx, err := conn.Begin(ctx)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `SET LOCAL synchronous_commit TO off`)
+	require.NoError(t, err)
+	require.NoError(t, tx.QueryRow(ctx, `SELECT current_setting('synchronous_commit')`).Scan(&setting))
+	require.Equal(t, "off", setting, "事务作用域内让渡生效")
+	require.NoError(t, tx.Rollback(ctx))
+	require.NoError(t, conn.QueryRow(ctx, `SELECT current_setting('synchronous_commit')`).Scan(&setting))
+	require.NotEqual(t, "off", setting, "连接归还即失效（tx 外回落库默认 on——零泄漏面）")
+
+	// 行为级冒烟：chunk 事务含 SET LOCAL 首语句正常提交
+	rows := fetchAllUnbilled(t, repos)
+	require.Len(t, rows, 1)
+	_, err = repos.DeductGroupsAndMark(ctx, []domain.LedgerGroup{{UserID: u.ID, Rows: rows}})
+	require.NoError(t, err)
+	require.Zero(t, cursorUnbilledCount(t, repos), "chunk 事务正常提交（行退出游标）")
+	require.Equal(t, int64(90_000), cursorBalance(t, repos, u.ID))
 }

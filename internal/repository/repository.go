@@ -717,14 +717,15 @@ func (r *Repository) DeductOnlyAndMark(ctx context.Context, userID, cost int64, 
 	return r.Billing.DeductOnlyAndMark(ctx, userID, cost, ids)
 }
 
+// DeductGroupsAndMark chunk 单事务多用户组扣费 + 合并标记（F2-opt D3；outcomes
+// 与 groups 序一一对应），见 BillingRepo。
+func (r *Repository) DeductGroupsAndMark(ctx context.Context, groups []domain.LedgerGroup) ([]domain.LedgerGroupOutcome, error) {
+	return r.Billing.DeductGroupsAndMark(ctx, groups)
+}
+
 // FetchUnbilledBatch 取未扣账本批（F2 冻结 ABI-2；游标 = 部分索引 WHERE NOT billed）。
 func (r *Repository) FetchUnbilledBatch(ctx context.Context, limit int) ([]domain.LedgerRow, error) {
 	return r.Billing.FetchUnbilledBatch(ctx, limit)
-}
-
-// FetchZeroCostIDs 取 cost=0 未标记行 id 批（CostZeroFastMark 取数半）。
-func (r *Repository) FetchZeroCostIDs(ctx context.Context, limit int) ([]int64, error) {
-	return r.Billing.FetchZeroCostIDs(ctx, limit)
 }
 
 // MarkBilledBulk 纯标记 billed（cost=0 快速路径 + 终极毒行隔离；幂等）。
