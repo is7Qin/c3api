@@ -121,7 +121,7 @@ function SettingRow({ setting }: { setting: Setting }) {
     ) : typ === 'number' ? (
       <Input type="number" min={0} step={isUsd ? 0.00001 : 1} className="w-48 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10 text-right tabular-nums" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
     ) : (
-      <Input type={isPassword ? 'password' : 'text'} className="w-96 max-w-full bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onKeyDown={onEnter} />
+      <Input type={isPassword ? 'password' : 'text'} className="w-96 max-w-full bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
     )
   return (
     <div className="flex items-start justify-between gap-5 py-3">
@@ -131,7 +131,7 @@ function SettingRow({ setting }: { setting: Setting }) {
         {isUsd && !err && <p className="text-xs text-muted-foreground">{t('settings.usdHint')}</p>}
         {err && <p className="text-xs text-destructive">{err}</p>}
       </div>
-      <div className="flex shrink-0 items-center gap-2">{control}{typ === 'string' && !isTier && !isTls && <Button variant="outline" size="sm" onClick={() => doSave(submitValue())} disabled={save.isPending}>{save.isPending ? t('common.saving') : t('common.save')}</Button>}</div>
+      <div className="flex shrink-0 items-center gap-2">{control}</div>
     </div>
   )
 }
