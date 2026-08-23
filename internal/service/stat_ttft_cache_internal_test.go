@@ -133,6 +133,44 @@ func TestTTFTCache_DistinctKeysIsolated(t *testing.T) {
 	require.Equal(t, int32(1), userCalls.Load())
 }
 
+func TestTTFTCache_WaitersGetFnError(t *testing.T) {
+	// RG-B1 探测场景：并发等待方经 close(done) 的 happens-before 读取结果——
+	// 若发布顺序颠倒（先 close 后写字段）此用例在 -race 下必炸。
+	c := newTestCache(30 * time.Second)
+	const n = 6
+	f := &countingFn{err: ErrInvalidInput, gate: make(chan struct{})}
+	fn := f.fn()
+
+	arrived := make([]chan struct{}, n)
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		arrived[i] = make(chan struct{})
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			close(arrived[i])
+			_, errs[i] = c.fetch("err-key", fn)
+		}(i)
+	}
+	for _, a := range arrived {
+		<-a
+	}
+	require.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.calls) == 1
+	}, time.Second, time.Millisecond)
+
+	close(f.gate)
+	wg.Wait()
+	for i := 0; i < n; i++ {
+		require.ErrorIs(t, errs[i], ErrInvalidInput, "等待方必须收到同一错误")
+	}
+	require.Equal(t, int32(1), f.calls.Load())
+	require.Zero(t, len(c.done), "失败不得入缓存")
+}
+
 func TestTTFTCache_InflightDedup(t *testing.T) {
 	c := newTestCache(30 * time.Second)
 	const n = 8
@@ -207,8 +245,7 @@ func TestTTFTCache_MaxEntriesReset(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(1), c4.Load(), "重置轮写入的新键正常命中")
 
-	require.Zero(t, c1.Load()+c2.Load()+c3.Load()-3, "其余键各执行过一次即可")
-	_ = c1
-	_ = c2
-	_ = c3
+	require.Equal(t, int32(1), c1.Load(), "被重置键保持各自首次执行计数")
+	require.Equal(t, int32(1), c2.Load())
+	require.Equal(t, int32(1), c3.Load())
 }

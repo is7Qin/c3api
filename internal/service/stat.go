@@ -12,6 +12,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -41,6 +42,10 @@ const (
 	// MaxStatsListLimit top 排行上限钳制（对齐 httpface.ClampLimit(200) 惯例
 	// ——service 不 import handler 包，此处同语义本地化：超限裁剪不报错）。
 	MaxStatsListLimit = 200
+
+	// ttftQueryBudget TTFT 冷查询预算上界（P3 实测最坏 ~7s；30s 为宽裕封顶
+	// ——配合 WithoutCancel 脱钩 leader 取消，见 QueryStatsTTFT 注释）。
+	ttftQueryBudget = 30 * time.Second
 )
 
 // statEntityTypes 实体类型白名单（与 repository.statEntityCols 键集一致——
@@ -159,10 +164,15 @@ func (s *Service) QueryStatsTTFT(ctx context.Context, q TTFTQuery) (*domain.TTFT
 	key := q.EntityType + "|" + strconv.FormatInt(q.EntityID, 10) + "|" + q.Model + "|" +
 		strconv.FormatInt(q.From.Unix(), 10) + "|" + strconv.FormatInt(q.To.Unix(), 10)
 	return statsTTFTC.fetch(key, func() (*domain.TTFTSummary, error) {
+		// M2：fn 由首个请求的 ctx 触发，但结果服务同键全部等待者——leader 取消
+		// 不得连坐。脱钩后以 30s 预算封顶（冷查询最坏实测 ~7s；裸 WithoutCancel
+		// 无界是 AGENTS.md 反模式 #5 明令禁止形态）。
+		qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ttftQueryBudget)
+		defer cancel()
 		if q.EntityType == "" {
-			return s.store.StatsTTFTSketch(ctx, q.From, q.To, q.Model)
+			return s.store.StatsTTFTSketch(qctx, q.From, q.To, q.Model)
 		}
-		return s.store.StatsTTFTExact(ctx, q.From, q.To, q.EntityType, q.EntityID, q.Model)
+		return s.store.StatsTTFTExact(qctx, q.From, q.To, q.EntityType, q.EntityID, q.Model)
 	})
 }
 
@@ -270,8 +280,30 @@ func (c *ttftCache) fetch(key string, fn func() (*domain.TTFTSummary, error)) (*
 	c.calls[key] = call
 	c.mu.Unlock()
 
-	summary, err := fn()
+	c.settle(key, call, fn)
+	return call.summary, call.err
+}
 
+// settle 执行 fn 并收尾发布。发布顺序铁律：**字段写入必须全部先于
+// close(done)** ——close 的 happens-before 边只覆盖此前写入，颠倒即等待方
+// 读到撕裂/空值的数据竞争（RG 审计 B1，-race 实测复现）。
+// panic 兜底（M1）：store 层 panic 被 handler Recoverer 兜住时进程存活，
+// 等待方不得永久阻塞在未 close 的 done 上——以错误形态传播给等待方后原样
+// 重抛给 leader。
+func (c *ttftCache) settle(key string, call *ttftCacheCall, fn func() (*domain.TTFTSummary, error)) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.finish(key, call, nil, fmt.Errorf("stats ttft: underlying query panic: %v", r))
+			panic(r)
+		}
+		c.finish(key, call, call.summary, call.err)
+	}()
+	call.summary, call.err = fn()
+}
+
+// finish 收尾三步的唯一点：清 inflight → 成功才入缓存（含容量重置）→ 写字段
+// → close 发布。
+func (c *ttftCache) finish(key string, call *ttftCacheCall, summary *domain.TTFTSummary, err error) {
 	c.mu.Lock()
 	delete(c.calls, key)
 	if err == nil {
@@ -281,10 +313,9 @@ func (c *ttftCache) fetch(key string, fn func() (*domain.TTFTSummary, error)) (*
 		c.done[key] = ttftCacheEntry{summary: summary, expires: c.now().Add(c.ttl)}
 	}
 	c.mu.Unlock()
-	close(call.done)
 	call.summary = summary
 	call.err = err
-	return summary, err
+	close(call.done)
 }
 
 var statsTTFTC = newTTFTCache()
