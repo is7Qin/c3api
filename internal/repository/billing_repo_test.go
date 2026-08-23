@@ -20,9 +20,7 @@ import (
 // 计费游标消费面直调测试（F2 ledger-cursor，spec 2026-08-23 §四）：usage_logs
 // 明细由 usage flusher 单写落库（InsertBatch，billed=false 出生），本文件只测
 // 消费侧——FetchUnbilledBatch 取批过滤 / DeductOnlyAndMark FEFO 扣减 + billed
-// 标记原子 / MarkBilledBulk 幂等纯标记 / UnbilledLag 度量。旧 DeductAndLog 三
-// 件套的插入断言（rollback-on-format/大批分片/zero-cost-only-logs）随双写删除，
-// 场景被新游标语义吸收。
+// 标记原子 / MarkBilledBulk 幂等纯标记 / UnbilledLag 度量。
 
 // logFor 构造测试计费日志（usage flusher InsertBatch 种子行；多文件共用）。
 func logFor(userID int64, requestID string) *domain.UsageLog {

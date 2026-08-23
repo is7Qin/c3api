@@ -175,9 +175,8 @@ func (r *Recorder) Record(l *domain.UsageLog) {
 }
 
 // AddQuota 累加 key 额度增量并入同一 quotaUsed map、同一回写路径（不回桶、
-// 不落统计）。旧世界 billed 行经 billing Flusher.Record 走此入口；F2 后计费
-// worker 只动余额不动配额——Record 对 KeyID>0 行的累加是唯一生产增量入口，
-// 本方法当前仅测试/手工注入面。
+// 不落统计）。Record 对 KeyID>0 行的累加是唯一生产增量入口（计费 worker 只动
+// 余额不动配额）；本方法是测试/手工注入面，汇入同一 map 与回写路径。
 func (r *Recorder) AddQuota(keyID int64, delta int64) {
 	if keyID <= 0 || delta == 0 {
 		return

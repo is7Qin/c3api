@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 
 type ErrorType = components['schemas']['ErrorType']
-// 用户面行类型（无 AccountID/TemplateID——用户级契约已删上游拓扑字段）。
+// 用户面行类型（无 AccountID/TemplateID——用户级契约不含上游拓扑）。
 type UsageLog = components['schemas']['UserUsageLog']
 type ErrLog = components['schemas']['UserErrLog']
 

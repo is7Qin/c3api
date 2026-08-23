@@ -722,9 +722,9 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 }
 
 // TestProxyBillingSingleWritePointRecCapture F2 单写点路由（spec §一）：capture
-// 开 + 有用户归属的 billable 行一律进 rec（旧 shouldBill 双写分流退役——每日志
-// 恰好一个写者由"唯一写点就是 rec 本身"构造性保证），入队前盖 Billed=false
-// （待对账，billing worker 游标消费——T3）；cost 按聚合毫分落行。
+// 开 + 有用户归属的 billable 行一律经 rec.Record 入队（每日志恰好一个写者由
+// "唯一写点就是 rec 本身"构造性保证），入队前盖出生 Billed 标记（billable 行
+// 置 false 待对账，billing worker 游标消费——T3）；cost 按聚合毫分落行。
 func TestProxyBillingSingleWritePointRecCapture(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()

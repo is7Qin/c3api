@@ -8,8 +8,8 @@ package repository
 // 优先 + 条件扣费（允许透支）+ 同事务标记 billed——扣减与标记原子（at-least-once
 // 消费 + 原子 = exactly-once，丢账窗口构造性为零；会话锁丢失的并发标记由标记步
 // 受影响行数守卫兜底 → 回滚重放，见 errConcurrentMark）。usage_logs 明细的唯一
-// 写者是 usage flusher（InsertBatch）；本文件不再插日志（旧 DeductAndLog 三件套 +
-// InsertLogs 双实现随双写一并删除）。游标取批/纯标记/lag 观测面见 billing_cursor.go。
+// 写者是 usage flusher（InsertBatch）；本文件只做标记/消费，不插日志。游标取批/
+// 纯标记/lag 观测面见 billing_cursor.go。
 
 import (
 	"context"

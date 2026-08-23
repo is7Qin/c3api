@@ -317,7 +317,7 @@ func (g *concurrencyGate) quotaExhausted(meta domain.KeyMeta) bool {
 // DB 往返，额度边缘瞬时 429 可接受）。复核用独立超时 ctx（不用请求 ctx——
 // 请求中途断开不能悬挂 reclaiming 标志，否则该 key 永久 429 直到 reload）。
 //
-// 缺失 key（ErrNotFound，已删）与瞬时 DB 错同等对待（同上"Warn+放行"策略，
+// 缺失 key（ErrNotFound）与瞬时 DB 错同等对待（同上"Warn+放行"策略，
 // 评审 I-2）：删除传播存在快照残留期（≤60s，R1 兜底），其间该 key 退避涓流
 // 放行 ≤6 笔/60s，可接受；残留条目本身由 Reload 移除收敛。
 //
