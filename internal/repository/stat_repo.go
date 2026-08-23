@@ -39,7 +39,7 @@ type StatRepo struct {
 
 // —— 离线聚合写入面（spec 2026-08-14 §3；单一写者：usage_stats 只由聚合 worker 写入） ——
 
-// statsAggBatchSize 单条批量 INSERT 的桶数（22 列 × 500 ≈ 11k 参数，PG 参数
+// statsAggBatchSize 单条批量 INSERT 的桶数（18 列 × 500 ≈ 9k 参数，PG 参数
 // 上限 65535 安全；沿用 statBatchSize 纪律——离线聚合每 5 分钟一轮，冷路径）。
 const statsAggBatchSize = 500
 

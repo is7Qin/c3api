@@ -15,12 +15,11 @@ import (
 
 // GetStatsTrend 趋势聚合（cube）— ServerInterface。
 func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams) {
-	granularity := "day"
+	// 非法 granularity 直透 service 哨兵→400（RG-BE M-1：handler 静默回落
+	// 会掩盖 normalizeGranularity 的 ErrInvalidInput，契约不一致）。
+	granularity := ""
 	if params.Granularity != nil {
 		granularity = string(*params.Granularity)
-		if granularity != "hour" && granularity != "day" {
-			granularity = "day"
-		}
 	}
 	q := service.TrendQuery{
 		From:        params.From,

@@ -13,12 +13,10 @@ import (
 
 // GetUserStats 我的用量统计（强制 user_id = 当前用户；granularity 缺省 day）。
 func (h *UserAPI) GetUserStats(w http.ResponseWriter, r *http.Request, params GetUserStatsParams) {
-	granularity := "day"
+	// 非法 granularity 直透 service 哨兵（同 GetStatsTrend，RG-BE M-1）。
+	granularity := ""
 	if params.Granularity != nil {
 		granularity = string(*params.Granularity)
-		if granularity != "hour" && granularity != "day" {
-			granularity = "day"
-		}
 	}
 	q := service.EntityTrendQuery{
 		From:        params.From,
