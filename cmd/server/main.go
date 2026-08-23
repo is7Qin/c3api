@@ -423,9 +423,9 @@ func main() {
 		opsWorkers = append(opsWorkers, billFlusher)
 	}
 	// /api/admin/overview + /api/admin/users-top（spec 2026-08-14）：门禁在途快照
-	// （Auth.InFlightUsers 只读访问器——零锁冷面）与 billing 水线告警（flusher
-	// 直读；未装配 nil → 端点空/零值）经 OpsOptions 注入——不改 service.New
-	// 签名（main.go:376-390 注入先例）。
+	// （Auth.InFlightUsers 只读访问器——零锁冷面）与 billing 游标积压 lag 族观测
+	// （flusher 直读；未装配 nil → 端点空/零值）经 OpsOptions 注入——不改
+	// service.New 签名（main.go:376-390 注入先例）。
 	h := handler.New(svc, handler.OpsOptions{
 		Workers:       opsWorkers,
 		Snapshots:     func() []handler.SnapshotState { return snapshotStates(snapReg.Status()) },
@@ -436,9 +436,9 @@ func main() {
 			}
 			s := billFlusher.Stats().(billing.FlusherStats)
 			return handler.BillingAlerts{
-				Pending:          s.PendingLogs,
-				PendingWaterline: s.PendingWaterline,
-				Warned:           s.Warned,
+				LagMs:           s.LagMs,
+				UnbilledRows:    s.UnbilledRows,
+				QuarantinedRows: s.QuarantinedRows,
 			}
 		},
 	})

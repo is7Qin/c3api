@@ -110,15 +110,16 @@ type Flusher struct {
 	baseCtx    context.Context // ticker 路径周期的可取消父 ctx（Close 预算到期 Cancel）
 	baseCancel context.CancelFunc
 	// 观测原子：lastFlush 最近成功消费时刻（UnixMilli；0 = 尚未消费）；
-	// unbilledN 当前 Unbilled 行数（每周期 UnbilledLag 刷新——Stats().PendingLogs
-	// 语义重映射真值）；quarantined 累计隔离行数（用户缺失组 + 毒行终极隔离）；
-	// lagOldestUnixMs 最老 unbilled 行 created_at（UnixMilli；0 = 游标空/未探测，
-	// T5 lag 族真值）；lagWarned lag 护栏告警边沿（回落复位防刷屏）。
-	lastFlush       atomic.Int64
-	unbilledN       atomic.Int64
-	quarantined     atomic.Int64
-	lagOldestUnixMs atomic.Int64
-	lagWarned       atomic.Bool
+	// unbilledN 当前 Unbilled 行数（每周期 UnbilledLag 刷新——Stats().UnbilledRows
+	// 真值）；quarantined 累计隔离行数（用户缺失组 + 毒行终极隔离）；
+	// lagMs 游标积压时滞（毫秒，= 探测时刻 now − 最老 unbilled 行 created_at；
+	// 0 = 游标空/未探测，ABI-4 lag 族真值）；lagWarned lag 护栏告警边沿（回落
+	// 复位防刷屏）。
+	lastFlush   atomic.Int64
+	unbilledN   atomic.Int64
+	quarantined atomic.Int64
+	lagMs       atomic.Int64
+	lagWarned   atomic.Bool
 }
 
 // NewFlusher 构造游标消费者（store = repository 门面；bal 余额快照定向刷新面）。
@@ -332,7 +333,8 @@ func (f *Flusher) markZeroCost(ctx context.Context) int64 {
 
 // refreshLag lag 护栏 + Stats 真值刷新：最老 unbilled 行距今超保留期 80% →
 // 高声 Warn（边沿触发，回落复位防刷屏）——消费停摆逼近分区 DROP 线提前可见
-//（替代旧 pendingWaterline 口径，spec §一 lag 度量源点名）。
+//（替代旧 pendingWaterline 口径，spec §一 lag 度量源点名）。lag/unbilled 真值
+// 每周期收尾原子写（Stats() 零锁直读）。
 func (f *Flusher) refreshLag(ctx context.Context) {
 	oldest, count, err := f.store.UnbilledLag(ctx)
 	if err != nil {
@@ -343,11 +345,11 @@ func (f *Flusher) refreshLag(ctx context.Context) {
 	}
 	f.unbilledN.Store(count)
 	if count == 0 || oldest.IsZero() {
-		f.lagOldestUnixMs.Store(0)
+		f.lagMs.Store(0)
 		f.lagWarned.Store(false)
 		return
 	}
-	f.lagOldestUnixMs.Store(oldest.UnixMilli())
+	f.lagMs.Store(time.Since(oldest).Milliseconds())
 	if f.cfg.LogRetentionDays <= 0 { // 护栏禁用（对齐 retention <= 0 不删除语义）——真值照常刷新
 		f.lagWarned.Store(false)
 		return

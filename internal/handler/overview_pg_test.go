@@ -208,7 +208,7 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 		{AccountID: 4, Name: "account-04", Status: domain.StatusDisabled, MaxConcurrency: 8, Concurrency: 0, ErrRate: 0.09, ErrCount: 3},
 	}}
 	_, router := overviewPGRouter(t, repos, sched, OpsOptions{
-		BillingAlerts: func() BillingAlerts { return BillingAlerts{Pending: 123, PendingWaterline: 50000, Warned: false} },
+		BillingAlerts: func() BillingAlerts { return BillingAlerts{LagMs: 12345, UnbilledRows: 123, QuarantinedRows: 2} },
 	})
 
 	w := router("GET", "/api/admin/overview")
@@ -280,10 +280,10 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 	require.Equal(t, 1, resp.Resources.Groups)
 	require.Equal(t, 2, resp.Resources.Users)
 
-	// alerts：billing 注入面直出
-	require.Equal(t, int64(123), resp.Alerts.BillingPending)
-	require.Equal(t, int64(50000), resp.Alerts.BillingPendingWaterline)
-	require.False(t, resp.Alerts.BillingWarned)
+	// alerts：billing 注入面直出（lag 族三真值逐字段映射）
+	require.Equal(t, int64(12345), resp.Alerts.BillingLagMs)
+	require.Equal(t, int64(123), resp.Alerts.BillingUnbilledRows)
+	require.Equal(t, int64(2), resp.Alerts.BillingQuarantinedRows)
 }
 
 func TestPGOverviewTrendDaysParamAndClamp(t *testing.T) {

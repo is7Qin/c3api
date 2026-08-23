@@ -471,7 +471,7 @@ func TestFlusherLagGuardrailWarns(t *testing.T) {
 
 	store.holdLock() // 锁外观测：他实例消费时本实例 lag 护栏照常工作
 	f.consumeCycle(context.Background())
-	require.Positive(t, f.lagOldestUnixMs.Load(), "lag 真值刷新")
+	require.Positive(t, f.lagMs.Load(), "lag 真值刷新")
 	require.True(t, f.lagWarned.Load(), "越线置位告警边沿")
 	require.NoError(t, logger.Sync())
 	b, err := os.ReadFile(out)
@@ -491,7 +491,7 @@ func TestFlusherLagGuardrailWarns(t *testing.T) {
 	store.rows[1].createdAt = time.Now().Add(-1 * time.Hour)
 	store.mu.Unlock()
 	f.consumeCycle(context.Background())
-	require.Positive(t, f.lagOldestUnixMs.Load(), "行仍在游标内，lag 真值保持")
+	require.Positive(t, f.lagMs.Load(), "行仍在游标内，lag 真值保持")
 	require.False(t, f.lagWarned.Load(), "回落复位告警边沿")
 }
 
@@ -507,7 +507,7 @@ func TestFlusherLagDisabled(t *testing.T) {
 
 	store.holdLock()
 	f.consumeCycle(context.Background())
-	require.Positive(t, f.lagOldestUnixMs.Load(), "护栏禁用不影响真值刷新")
+	require.Positive(t, f.lagMs.Load(), "护栏禁用不影响真值刷新")
 	require.NoError(t, logger.Sync())
 	b, err := os.ReadFile(out)
 	require.NoError(t, err)

@@ -977,16 +977,16 @@ type OverviewAccounts struct {
 	Unhealthy      int `json:"unhealthy"`
 }
 
-// OverviewAlerts 告警面（billing flusher 水线状态；注入面读取，未装配 = 全零）
+// OverviewAlerts 告警面（billing 游标消费者 lag 族观测，F2 ledger-cursor；注入面读取，未装配 = 全零）
 type OverviewAlerts struct {
-	// BillingPending 尚未落库的计费日志条数
-	BillingPending int64 `json:"billing_pending"`
+	// BillingLagMs 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/未探测
+	BillingLagMs int64 `json:"billing_lag_ms"`
 
-	// BillingPendingWaterline 水线（包级常量直读）
-	BillingPendingWaterline int64 `json:"billing_pending_waterline"`
+	// BillingQuarantinedRows 累计隔离行数（用户缺失组 + 毒行终极隔离——未扣费写销）
+	BillingQuarantinedRows int64 `json:"billing_quarantined_rows"`
 
-	// BillingWarned 水线告警边沿是否置位
-	BillingWarned bool `json:"billing_warned"`
+	// BillingUnbilledRows 当前未扣费账本行数（部分索引 WHERE NOT billed）
+	BillingUnbilledRows int64 `json:"billing_unbilled_rows"`
 }
 
 // OverviewErrTop 账号维度错误率 Top5（调度器 EWMA err_rate 降序；name = 账号名）
@@ -1010,7 +1010,7 @@ type OverviewResponse struct {
 	// Accounts 账号健康分布 + 并发水位（调度器快照同源——与账号列表运行时视图一致）
 	Accounts OverviewAccounts `json:"accounts"`
 
-	// Alerts 告警面（billing flusher 水线状态；注入面读取，未装配 = 全零）
+	// Alerts 告警面（billing 游标消费者 lag 族观测，F2 ledger-cursor；注入面读取，未装配 = 全零）
 	Alerts OverviewAlerts   `json:"alerts"`
 	ErrTop []OverviewErrTop `json:"err_top"`
 
