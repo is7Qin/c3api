@@ -10,10 +10,22 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ## [Unreleased]
 
+### Breaking
+
+- Stats API redesigned around bounded query shapes: `GET /api/admin/stats` (unbounded raw-bucket dump) is removed and replaced by `GET /api/admin/stats/trend` (time series), `/stats/top` (entity leaderboard), `/stats/entity-trend` (single-entity drill-down) and `/stats/ttft` (TTFT percentile card — histogram sketch platform-wide, exact `percentile_cont` when entity-filtered). `/api/user/stats` now returns aggregated trend points instead of raw buckets (optional `model` filter gained), and `/api/user/stats/ttft` is new. Storage: `usage_stats` slimmed to hour × group × model keys (account/template/user/is_error dimensions dropped, `is_error` demoted to a column) and a new daily-partitioned `usage_entity_stats` hourly rollup now backs every entity-scoped view.
+
 ### Added
 
 - Email service: registration email verification codes and password reset by emailed code — SMTP relay configured through runtime settings (`mail.*`, admin console → Settings → Mail tab, disabled by default), editable Chinese-default email templates with built-in fallback, async-safe sync send with 15 s timeout.
 - Admin settings page reorganized into category tabs (signup / defaults / pricing sync / tier policy / cluster / mail), with a Mail tab covering SMTP config and template editors; new user-facing pages for register code entry and forgot-password flow.
+- Loadtest tooling for full-surface hammering: `-mode api-admin` (26 weighted scenarios incl. the new stats shapes, redemption codes handed off via `-codes-out`) and `-mode api-user` (JWT pool + code redemption, `-codes-in`), `-format images`, `-api-reads-only`, plus a fake-upstream images endpoint.
+
+### Changed
+
+- Statistics reads are fully pushed down to PostgreSQL: dashboards aggregate via `GROUP BY date_trunc` server-side instead of pulling whole dimension cubes into gateway memory (the old endpoint materialized up to millions of rows per call and was OOM-killed at 33.6 GB under load). Measured on the high-cardinality stress dataset: stats endpoints 24–27 s average → hundreds of ms, stats-related live heap 20 GB (87.7 % of total) → ~5 MB (<0.1 %), process RSS now plateaus at the known stream watermark.
+- Entity-scoped views (user self-service stats, account drill-down, leaderboards) are served from the new hourly entity rollup — row count scales with active entities, not request volume; exact TTFT percentiles are computed from raw logs only within entity-filtered windows, while platform-wide cards read the retained per-bucket histogram sketch (~2 ms over 24 M samples).
+- Admin/user console statistics pages consume the new endpoints directly; the client-side cross-dimension bucket merge (and its "pN of the largest row" approximation) is retired — TTFT p50/p95/p99 shown in the UI are server-computed. A per-model filter was added to user stats.
+- TTFT percentile cards are TTL-cached (30 s, per-key request deduplication): concurrent identical dashboard queries share one database round-trip, and leader cancellation no longer poisons waiting requests.
 
 ## [v0.0.1-beta.4] - 2026-08-22
 
