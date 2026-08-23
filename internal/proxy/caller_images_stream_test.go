@@ -71,7 +71,7 @@ func imageTestPrices() map[string]*domain.PriceEntry {
 		Model: "gpt-image-2", Mode: domain.PriceModeImage,
 		ImgInTokPerM:  i64(800000),
 		ImgOutTokPerM: i64(3000000),
-		PricePerImage:         i64(5400),
+		PricePerImage: i64(5400),
 	}}
 }
 

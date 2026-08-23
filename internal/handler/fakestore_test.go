@@ -2002,19 +2002,15 @@ func (f *fakeStore) UpdateUserMaxConcurrency(ctx context.Context, userID int64, 
 // UpsertFromLiteLLM 模拟批量 upsert + manual 行级互斥（已存在 manual 行不覆盖、
 // 不计入更新数；source 恒 litellm）。
 
-
 // UpsertManual 模拟手动设价（可接管 litellm 行；返回副本）。可选字段
 // （cache 价 + 矩阵 22 列）：nil = 不设价（NULL 语义）；非 nil = 设价。
-
 
 // DeleteManual 模拟删除：仅 source=manual 可删（litellm 行 → ErrConflict）；
 // 不存在 → ErrNotFound。
 
 // ListPricing 模拟列表：source/provider/model 筛选 + model 排序 + 分页。
 
-
 // GetPricing 模拟按 model 取行（缺失 → repository.ErrNotFound）。
-
 
 // --- 图片生成价格（service.PricingStore Task A 双线；与文本价同款模拟语义） ---
 
@@ -2023,15 +2019,12 @@ func (f *fakeStore) UpdateUserMaxConcurrency(ctx context.Context, userID int64, 
 
 // UpsertImageManual 模拟手动设图价格（可接管 litellm 行；返回副本）。
 
-
 // DeleteImageManual 模拟删除：仅 source=manual 可删（litellm 行 → ErrConflict）；
 // 不存在 → ErrNotFound。
 
 // ListImagePrice 模拟列表：source/provider/model 筛选 + model 排序 + 分页。
 
-
 // GetImagePrice 模拟按 model 取行（缺失 → repository.ErrNotFound）。
-
 
 // --- 按单元计费功能类价格（价格表三件套；与文本价/image 价同款模拟语义） ---
 
@@ -2040,15 +2033,12 @@ func (f *fakeStore) UpdateUserMaxConcurrency(ctx context.Context, userID int64, 
 
 // UpsertFunctionManual 模拟手动设按单元价（可接管 litellm 行；返回副本）。
 
-
 // DeleteFunctionManual 模拟删除：仅 source=manual 可删（litellm 行 → ErrConflict）；
 // 不存在 → ErrNotFound。
 
 // ListFunctionPrice 模拟列表：source/provider/model 筛选 + model 排序 + 分页。
 
-
 // GetFunctionPrice 模拟按 model 取行（缺失 → repository.ErrNotFound）。
-
 
 func (f *fakeStore) UpsertPriceEntriesFromLiteLLM(_ context.Context, rows []*domain.PriceEntry) (int, error) {
 	f.mu.Lock()

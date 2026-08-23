@@ -22,9 +22,9 @@ type PriceResolver interface {
 // BillingHooks 计费钩子（proxy.New 参数；nil = 计费全关：不查价、不记
 // BillingTier、不处理 service_tier 转发策略、不做余额预检）。
 type BillingHooks struct {
-	Resolver PriceResolver
-	Balances *billing.Balances // 余额只读快照（预检 + 扣费后定向刷新）
-	Flusher  *billing.Flusher  // 批量扣费落库（billed 路由终点）
+	Resolver   PriceResolver
+	Balances   *billing.Balances // 余额只读快照（预检 + 扣费后定向刷新）
+	Flusher    *billing.Flusher  // 批量扣费落库（billed 路由终点）
 	TierPolicy func(tier billing.Tier) billing.TierPolicyMode
 }
 

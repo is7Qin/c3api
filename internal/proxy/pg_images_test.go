@@ -246,7 +246,7 @@ func TestPGImagesMultipartHardGateAnd402(t *testing.T) {
 	// 上游不接触——路由链路与预检解耦，此处断言状态码语义）
 	p402 := newPGImagesTestProxy(t, sched, gAPI, &BillingHooks{
 		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{}},
-		Balances:    billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
+		Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 	})
 	req = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
 	req.Header.Set("Authorization", "Bearer "+keyForGroup(gAPI))
@@ -258,7 +258,7 @@ func TestPGImagesMultipartHardGateAnd402(t *testing.T) {
 	// 价有行 → 200（修复前 GetPrice 先行 402 误杀）
 	pOK := newPGImagesTestProxy(t, sched, gAPI, &BillingHooks{
 		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		Balances:    billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
+		Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 	})
 	req = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
 	req.Header.Set("Authorization", "Bearer "+keyForGroup(gAPI))

@@ -169,7 +169,7 @@ func wsTestProxyBilling(t *testing.T, upstream string, prices *fakePriceLookup, 
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS}, Models: []string{"gpt-4o"},
 	}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, logs, &BillingHooks{
-		Resolver: prices,
+		Resolver:   prices,
 		Balances:   billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 		TierPolicy: policy,
 	})

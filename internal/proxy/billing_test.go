@@ -35,7 +35,7 @@ func proxyPricingEntry() *domain.PriceEntry {
 		Model: "gpt-4o", Mode: domain.PriceModeToken,
 		InputPerM:  ptr(int64(1e7)),
 		OutputPerM: ptr(int64(2e7)),
-		Source: domain.PricingSourceManual,
+		Source:     domain.PricingSourceManual,
 	}
 }
 
@@ -92,7 +92,7 @@ func newTestProxyBillingLogs(t *testing.T, upstream string, prices *fakePriceLoo
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
 	}
 	return newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, logs, &BillingHooks{
-		Resolver: prices,
+		Resolver:   prices,
 		Balances:   billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 		TierPolicy: policy,
 	})
@@ -441,7 +441,7 @@ func TestProxyBillingPriceSnapshotCache(t *testing.T) {
 	defer up.Close()
 	i64 := func(v int64) *int64 { return &v }
 	pr := proxyPricing()
-	pr.CacheReadPerM = i64(5e6)     // $50 / 1M
+	pr.CacheReadPerM = i64(5e6)  // $50 / 1M
 	pr.CacheWritePerM = i64(1e7) // $100 / 1M
 	store := &captureLogStore{}
 	p := newTestProxyBillingLogs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": pr}}, nil, store)

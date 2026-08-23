@@ -167,5 +167,3 @@ func CallCostFromResolved(rp domain.ResolvedPrices, count int64) int64 {
 	}
 	return count * p
 }
-
-

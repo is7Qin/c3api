@@ -264,7 +264,8 @@ func (p *Proxy) applyFunctionBilling(l *domain.UsageLog) {
 	model := domain.CodexSearchModel
 	rp, ok := p.bill.Resolver.ResolvePrices(model, 0, "", time.Now())
 	if !ok || rp.PricePerCall == nil {
-		v := int64(1000)
+		// codex-search 查无价 → 默认按次价兜底（$0.01/次，契约同旧快照兜底）
+		v := domain.DefaultCodexSearchPricePerCall
 		rp.PricePerCall = &v
 	}
 	if l.CallCount > 0 {

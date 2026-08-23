@@ -291,7 +291,7 @@ func TestImagesPureImageModelNotKilledByChatPrecheck(t *testing.T) {
 	store := &captureLogStore{}
 	p := newTestImagesProxyWithBill(t, up.URL, &BillingHooks{
 		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		Balances:    billingBalances(),
+		Balances: billingBalances(),
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
@@ -336,7 +336,7 @@ func TestImagesDirectUsageExtractionBilling(t *testing.T) {
 	store := &captureLogStore{}
 	p := newTestImagesProxyWithBill(t, up.URL, &BillingHooks{
 		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		Balances:    billingBalances(),
+		Balances: billingBalances(),
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"a cat","n":2}`))
@@ -430,7 +430,7 @@ func TestImagesStreamDirectBilling(t *testing.T) {
 	store := &captureLogStore{}
 	p := newTestImagesProxyWithBill(t, up.URL, &BillingHooks{
 		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		Balances:    billingBalances(),
+		Balances: billingBalances(),
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(

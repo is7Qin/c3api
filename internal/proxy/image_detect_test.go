@@ -37,11 +37,11 @@ const respImagesOutput = `[{"type":"image_generation_call","id":"igc_1","status"
 // respImagePriceRow 构造 ImagePrice 测试行（三分量指针）。
 func respImagePriceRow(in, out, perImage *int64) *domain.PriceEntry {
 	return &domain.PriceEntry{
-		Mode: domain.PriceModeImage,
-		Model:                           "gpt-4o",
+		Mode:          domain.PriceModeImage,
+		Model:         "gpt-4o",
 		ImgInTokPerM:  in,
 		ImgOutTokPerM: out,
-		PricePerImage:         perImage,
+		PricePerImage: perImage,
 	}
 }
 
@@ -331,7 +331,7 @@ func TestProxyResponsesImageDetectMultiplier(t *testing.T) {
 		Models:           []string{"gpt-4o"},
 	}
 	prices := &fakePriceLookup{
-		entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v:= int64(5400); e.PricePerImage = &v; return e }()},
+		entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v := int64(5400); e.PricePerImage = &v; return e }()},
 	}
 	bal := billing.NewBalances(fakeBalanceLoader{
 		m: map[int64]int64{}, gm: map[int64]int{10: 15000}, // 组 10 ×1.5（ck-1 归属组）
@@ -377,7 +377,7 @@ func TestProxyResponsesImageDetectStream(t *testing.T) {
 				Models:           []string{"gpt-4o"},
 			}
 			prices := &fakePriceLookup{
-				entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v:= int64(5400); e.PricePerImage = &v; return e }()},
+				entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v := int64(5400); e.PricePerImage = &v; return e }()},
 			}
 			p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, &BillingHooks{
 				Resolver: prices,
@@ -464,7 +464,7 @@ func TestResponsesWSImageDetect(t *testing.T) {
 				Models:           []string{"gpt-4o"},
 			}
 			prices := &fakePriceLookup{
-				entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v:= int64(5400); e.PricePerImage = &v; return e }()},
+				entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v := int64(5400); e.PricePerImage = &v; return e }()},
 			}
 			p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, &BillingHooks{
 				Resolver: prices,
@@ -523,7 +523,7 @@ func TestResponsesWSCodexTypeZeroCount(t *testing.T) {
 	store := &captureLogStore{}
 	pat := "pat-1"
 	prices := &fakePriceLookup{
-		entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v:= int64(5400); e.PricePerImage = &v; return e }()},
+		entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v := int64(5400); e.PricePerImage = &v; return e }()},
 	}
 	// SDK 路径（newTestCodexWSProxy）：模板 BaseURL = mock 上游根，账号 ext 快
 	// 照承载 PAT（relay 线凭据——不经 credential 注册表）。

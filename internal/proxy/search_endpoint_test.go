@@ -244,7 +244,7 @@ func searchBillingHooks(fn *fakeFunctionPriceLookup) *BillingHooks {
 	}
 	return &BillingHooks{
 		Resolver: fn,
-		Balances:       billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil),
+		Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil),
 	}
 }
 

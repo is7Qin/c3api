@@ -71,7 +71,7 @@ type fakeStore struct {
 	// imageListErr 注入 ListImagePrice 失败（image 快照 fail-safe 测试）。
 	imageListErr error
 	// functionListErr 注入 ListFunctionPrice 失败（function 快照 fail-safe 测试）。
-	functionListErr error
+	functionListErr  error
 	pricingUpsertErr error
 	nextID           int64
 	// lastPatch 记录最近一次 UpdateAccountsBatch 收到的 patch（评审 M3：
@@ -111,11 +111,11 @@ func newFakeStore() *fakeStore {
 		keys: make(map[int64]*domain.Key), users: make(map[int64]*domain.User),
 		settings: make(map[string]*domain.Setting), rules: make(map[int64]domain.Rule),
 		assign: make(map[int64][]int64), assignMult: make(map[[2]int64]*int),
-		codes: make(map[int64]*domain.RedemptionCode),
-		uses:  make(map[int64]*domain.RedemptionUse),
-		priceEntries:   make(map[string]*domain.PriceEntry),
-		priceVariants:  make(map[string][]*domain.PriceVariant),
-		tplExts:        make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
+		codes:         make(map[int64]*domain.RedemptionCode),
+		uses:          make(map[int64]*domain.RedemptionUse),
+		priceEntries:  make(map[string]*domain.PriceEntry),
+		priceVariants: make(map[string][]*domain.PriceVariant),
+		tplExts:       make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
 		emailTemplates: make(map[string]*domain.EmailTemplate),
 		emailCodes:     make(map[string]*domain.EmailCode),
 		accExtErr:      make(map[int64]error),
@@ -1988,17 +1988,13 @@ func (f *fakeStore) DeactivateCodes(ctx context.Context, ids []int64) (int64, er
 // UpsertFromLiteLLM 模拟批量 upsert + manual 行级互斥：已存在 manual 行 →
 // 不覆盖（不计入更新数）；其余插入/更新（source 恒 litellm）。返回更新数。
 
-
 // UpsertManual 模拟手动设价（可接管 litellm 行；返回副本）。可选字段
 // （cache 价 + 矩阵 22 列）：nil = 不设价（NULL 语义）；非 nil = 设价。
-
 
 // ListFunctionPrice 模拟列表：source/provider/model 筛选 + sort 白名单
 // （model/updated_at）+ 分页（sort 非法 → ErrInvalidSort，对齐真实 repo）。
 
-
 // GetFunctionPrice 模拟按 model 取行（缺失 → repository.ErrNotFound）。
-
 
 // --- 邮件模板 / 验证码 fake（email service） ---
 

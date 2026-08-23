@@ -365,22 +365,22 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	putVariants(t, env, "e2e-model", []map[string]any{
 		{"seq": 1, "service_tier": "fast", "mult_bp": 20000},
 	})
-	// 矩阵：priority/flex 替换档 + ctx_min=5 分段（base→above 两段计价）+ fast ×2。
-	// auto:   pt10→(5×10+5×5)=75   ct20→(5×20+15×10)=250  → 325
-	// priority: pt10→(5×15+5×7)=110  ct20→(5×25+15×12)=305 → 415
-	// flex:    pt10→(5×12+5×4)=80   ct20→(5×18+15×8)=210  → 290
-	// fast:    325 × 2 = 650
-	// anthropic 中止（仅 pt=10）：(5×10+5×5)=75
+	// 变体语义 = 整单切换（旧 above 分段计价已随三表退役）：pt10/ct20 每 token
+	// 基数 in=10/out=20。
+	// auto:     首中通配长上下文兜底 seq4 → 整单 (5,10)：10×5+20×10 = 250
+	// priority: 首中 seq1 → (15,25)：150+500 = 650
+	// flex:     首中 seq2 → (12,18)：120+360 = 480
+	// fast:     首中 seq3 → 基础 500 ×2.0 = 1000
+	// anthropic 中止（仅 pt=10）：seq4 → 10×5 = 50
 	putPrice(t, env, "e2e-matrix-model", map[string]any{
 		"input_per_m": 100.0, "output_per_m": 200.0,
 	})
 	putVariants(t, env, "e2e-matrix-model", []map[string]any{
 		{"seq": 1, "service_tier": "priority", "set_input_per_m": 150.0, "set_output_per_m": 250.0},
 		{"seq": 2, "service_tier": "flex", "set_input_per_m": 120.0, "set_output_per_m": 180.0},
-		{"seq": 3, "ctx_min": 5, "set_input_per_m": 50.0, "set_output_per_m": 100.0},
-		{"seq": 4, "ctx_min": 5, "service_tier": "priority", "set_input_per_m": 70.0, "set_output_per_m": 120.0},
-		{"seq": 5, "ctx_min": 5, "service_tier": "flex", "set_input_per_m": 40.0, "set_output_per_m": 80.0},
-		{"seq": 6, "service_tier": "fast", "mult_bp": 20000},
+		{"seq": 3, "service_tier": "fast", "mult_bp": 20000},
+		// 通配长上下文兜底必须排在档位专属之后——首中即停，先匹配者赢
+		{"seq": 4, "ctx_min": 5, "set_input_per_m": 50.0, "set_output_per_m": 100.0},
 	})
 	putPrice(t, env, "e2e-mult-model", map[string]any{
 		"input_per_m": 100.0, "output_per_m": 200.0,
@@ -406,42 +406,42 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		return 200
 	}
 
-	// auto：cost 325，above_hit
+	// auto：cost 250（首中通配 ctx 变体，整单切换）
 	chatReq("e2e-matrix-model", nil)
 	sleepFlush()
 	r := env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(325), r.Cost, "auto 档矩阵计费")
+	require.Equal(t, int64(250), r.Cost, "auto 档矩阵计费")
 	require.Equal(t, "auto", r.Tier)
-	require.True(t, r.AboveHit, "pt/ct 均超阈值 → above_hit")
+	require.False(t, r.AboveHit, "above 分段已退役 → 恒 false")
 	require.False(t, r.Overdraft)
-	bal -= 325
+	bal -= 250
 	require.Equal(t, bal, env.balance(u1), "余额毫分扣减")
 
-	// priority：cost 415
+	// priority：cost 650
 	chatReq("e2e-matrix-model", map[string]any{"service_tier": "priority"})
 	sleepFlush()
 	r = env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(415), r.Cost, "priority 档计费")
+	require.Equal(t, int64(650), r.Cost, "priority 档计费")
 	require.Equal(t, "priority", r.Tier)
-	bal -= 415
+	bal -= 650
 	require.Equal(t, bal, env.balance(u1))
 
-	// flex：cost 290
+	// flex：cost 480
 	chatReq("e2e-matrix-model", map[string]any{"service_tier": "flex"})
 	sleepFlush()
 	r = env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(290), r.Cost, "flex 档计费")
+	require.Equal(t, int64(480), r.Cost, "flex 档计费")
 	require.Equal(t, "flex", r.Tier)
-	bal -= 290
+	bal -= 480
 	require.Equal(t, bal, env.balance(u1))
 
-	// fast：基础档 × fast 变体 mult_bp 20000（×2）→ 650
+	// fast：基础档 × fast 变体 mult_bp 20000（×2）→ 1000
 	chatReq("e2e-matrix-model", map[string]any{"service_tier": "fast"})
 	sleepFlush()
 	r = env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(650), r.Cost, "fast 倍率计费")
+	require.Equal(t, int64(1000), r.Cost, "fast 倍率计费")
 	require.Equal(t, "fast", r.Tier)
-	bal -= 650
+	bal -= 1000
 	require.Equal(t, bal, env.balance(u1))
 
 	// ============ 场景 2：FEFO 临时额度优先扣 + 余额不足 402 ============
@@ -549,8 +549,8 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	sleepFlush()
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, "priority", r.Tier, "strip 照常计费 priority 档")
-	require.Equal(t, int64(415), r.Cost)
-	bal -= 415
+	require.Equal(t, int64(650), r.Cost)
+	bal -= 650
 	require.Equal(t, bal, env.balance(u1))
 	// 恢复 passthrough
 	c, rb9 := env.admin(http.MethodPut, "/settings", map[string]any{
@@ -583,8 +583,8 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	sleepFlush()
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, "fast", r.Tier, "strip 照常计费 fast 档")
-	require.Equal(t, int64(650), r.Cost, "fast ×2：325×2 = 650")
-	bal -= 650
+	require.Equal(t, int64(1000), r.Cost, "fast ×2：500×2 = 1000")
+	bal -= 1000
 	require.Equal(t, bal, env.balance(u1))
 	// 恢复 passthrough
 	c, rbe := env.admin(http.MethodPut, "/settings", map[string]any{
@@ -814,7 +814,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	balBefore := env.balance(u1)
 	// anthropic 长流（chunks 1000 × 5ms ≈ 5s > Shutdown 2s 优雅窗口：强断发生
 	// 时流仍在途）：message_start 已带 pt=10，停机强断后按已累积 token 计费：
-	// auto 档 (5×10+5×5)=75 毫分
+	// auto 档首中通配 ctx 变体 → 整单 10×5 = 50 毫分
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -838,10 +838,10 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	sleepFlush()
 	// 流式中断日志：cost 完整（不丢计费）+ 余额扣减（排空落库）
 	r = env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(75), r.Cost, "优雅停机后流式中断日志 cost 不丢")
+	require.Equal(t, int64(50), r.Cost, "优雅停机后流式中断日志 cost 不丢")
 	require.Equal(t, "auto", r.Tier)
-	require.True(t, r.AboveHit)
-	require.Equal(t, balBefore-75, env.balance(u1), "优雅停机排空扣费完整")
+	require.False(t, r.AboveHit)
+	require.Equal(t, balBefore-50, env.balance(u1), "优雅停机排空扣费完整")
 
 	// R3-I1：abort 双轨关联——同一 request_id 在 usage_logs（计费明细）与
 	// err_logs（错误审计）各一行（豁免队列恒落盘，停机排空后可见）

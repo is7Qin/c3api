@@ -124,8 +124,8 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 		GroupKeyRPM:           0, UsageCapture: true, BillingCapture: true,
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
 		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{}},
-		Balances:       bal,
-		Flusher:        f,
+		Balances: bal,
+		Flusher:  f,
 	}, nil)
 	p.SetCodex(sdkbridge.NewCodex(nil))
 	srv := httptest.NewServer(AIRouter(p))

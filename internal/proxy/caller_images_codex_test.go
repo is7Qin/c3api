@@ -222,7 +222,7 @@ func TestImagesCodexGenerationsOK(t *testing.T) {
 	store := &captureLogStore{}
 	p, recorder := newTestCodexProxy(t, credential.TypeCodexOAuth, map[int64]*domain.AccountExt{10: codexOAuthExt(10, "at-10", "rt-10")}, up.URL, &BillingHooks{
 		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-2": perImagePriceRow("gpt-image-2")}},
-		Balances:    billingBalances(),
+		Balances: billingBalances(),
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
@@ -455,7 +455,7 @@ func TestImagesCodexStreamSSE(t *testing.T) {
 	store := &captureLogStore{}
 	p, recorder := newTestCodexProxy(t, credential.TypeCodexOAuth, map[int64]*domain.AccountExt{10: codexOAuthExt(10, "at-10", "rt-10")}, up.URL, &BillingHooks{
 		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-2": perImagePriceRow("gpt-image-2")}},
-		Balances:    billingBalances(),
+		Balances: billingBalances(),
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(

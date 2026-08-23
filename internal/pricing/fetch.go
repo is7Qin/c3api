@@ -82,10 +82,10 @@ type litellmEntry struct {
 	Provider                            *string                `json:"litellm_provider"`
 	Mode                                *string                `json:"mode"`
 	SupportsPromptCaching               *bool                  `json:"supports_prompt_caching"`
-	InputCostPerImageToken              *float64 `json:"input_cost_per_image_token"`
-	OutputCostPerImageToken             *float64 `json:"output_cost_per_image_token"`
-	OutputCostPerImage                  *float64 `json:"output_cost_per_image"`
-	InputCostPerQuery                   *float64 `json:"input_cost_per_query"`
+	InputCostPerImageToken              *float64               `json:"input_cost_per_image_token"`
+	OutputCostPerImageToken             *float64               `json:"output_cost_per_image_token"`
+	OutputCostPerImage                  *float64               `json:"output_cost_per_image"`
+	InputCostPerQuery                   *float64               `json:"input_cost_per_query"`
 }
 
 type providerSpecificEntry struct {
