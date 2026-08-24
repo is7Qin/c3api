@@ -1136,7 +1136,7 @@ export interface paths {
          *     （SQL 侧 GROUP BY date_trunc('day', bucket_time)，days 上限 30）；
          *     accounts = 账号健康分布 + 并发水位（调度器快照同源）；err_top = 账号
          *     维度 err_rate Top5（调度器 EWMA，name = 账号名）；alerts = billing
-         *     flusher 水线状态（注入面读取）。
+         *     游标积压观测（lag 族，注入面读取）。
          */
         get: operations["GetAdminOverview"];
         put?: never;
@@ -2748,20 +2748,23 @@ export interface components {
             err_rate: number;
             err_count: number;
         };
-        /** @description 告警面（billing flusher 水线状态；注入面读取，未装配 = 全零） */
+        /** @description 告警面（billing 游标消费者 lag 族观测，F2 ledger-cursor；注入面读取，未装配 = 全零） */
         OverviewAlerts: {
             /**
              * Format: int64
-             * @description 尚未落库的计费日志条数
+             * @description 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/未探测
              */
-            billing_pending: number;
+            billing_lag_ms: number;
             /**
              * Format: int64
-             * @description 水线（包级常量直读）
+             * @description 当前未扣费账本行数（部分索引 WHERE NOT billed）
              */
-            billing_pending_waterline: number;
-            /** @description 水线告警边沿是否置位 */
-            billing_warned: boolean;
+            billing_unbilled_rows: number;
+            /**
+             * Format: int64
+             * @description 累计隔离行数（用户缺失组 + 毒行终极隔离——未扣费写销）
+             */
+            billing_quarantined_rows: number;
         };
         OverviewResponse: {
             summary: components["schemas"]["OverviewSummary"];

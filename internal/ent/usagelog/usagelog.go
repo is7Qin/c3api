@@ -72,6 +72,8 @@ const (
 	FieldAboveHit = "above_hit"
 	// FieldOverdraft holds the string denoting the overdraft field in the database.
 	FieldOverdraft = "overdraft"
+	// FieldBilled holds the string denoting the billed field in the database.
+	FieldBilled = "billed"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// Table holds the table name of the usagelog in the database.
@@ -110,6 +112,7 @@ var Columns = []string{
 	FieldBillingTier,
 	FieldAboveHit,
 	FieldOverdraft,
+	FieldBilled,
 	FieldCreatedAt,
 }
 
@@ -150,6 +153,8 @@ var (
 	DefaultAboveHit bool
 	// DefaultOverdraft holds the default value on creation for the "overdraft" field.
 	DefaultOverdraft bool
+	// DefaultBilled holds the default value on creation for the "billed" field.
+	DefaultBilled bool
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 )
@@ -332,6 +337,11 @@ func ByAboveHit(opts ...sql.OrderTermOption) OrderOption {
 // ByOverdraft orders the results by the overdraft field.
 func ByOverdraft(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldOverdraft, opts...).ToFunc()
+}
+
+// ByBilled orders the results by the billed field.
+func ByBilled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBilled, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

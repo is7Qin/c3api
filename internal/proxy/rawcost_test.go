@@ -27,9 +27,9 @@ import (
 	"github.com/is7qin/c3api/internal/usage"
 )
 
-// rawCostChatProxy 构造 chat 计费测试代理（billed 路由 flusher + 捕获 store；
-// gm 为组 10 倍率——ck-1 → (user 1, group 10)）。
-func rawCostChatProxy(t *testing.T, gm int) (*Proxy, *billing.Flusher, *fakeDeductWriter, *captureLogStore) {
+// rawCostChatProxy 构造 chat 计费测试代理（单写点 rec → 捕获 store；gm 为组 10
+// 倍率——ck-1 → (user 1, group 10)）。
+func rawCostChatProxy(t *testing.T, gm int) (*Proxy, *captureLogStore) {
 	t.Helper()
 	up := fakeOpenAI(t, "")
 	t.Cleanup(up.Close)
@@ -38,16 +38,12 @@ func rawCostChatProxy(t *testing.T, gm int) (*Proxy, *billing.Flusher, *fakeDedu
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
 	}, store, nil)
-	writer := &fakeDeductWriter{}
 	bal := billing.NewBalances(fakeBalanceLoader{
 		m: map[int64]int64{1: 50000}, gm: map[int64]int{10: gm},
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()))
-	f := billing.NewFlusher(billing.FlushConfig{
-		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
-	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
-	return p, f, writer, store
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, rec)
+	return p, store
 }
 
 // chatCostReq 发一次 gpt-4o chat 请求（3/5 tokens → 130 毫分倍率前）。
@@ -61,31 +57,31 @@ func chatCostReq(t *testing.T, p *Proxy) {
 }
 
 // TestProxyRawCostChatMultiplier billed chat ×1.5（组倍率）：cost=倍率后 195、
-// raw=倍率前 130（billed 双值——raw 原文、cost 乘后）。
+// raw=倍率前 130（billed 双值——raw 原文、cost 乘后）；单写点落 rec，
+// Billed=false 出生待对账。
 func TestProxyRawCostChatMultiplier(t *testing.T) {
-	p, f, writer, _ := rawCostChatProxy(t, 15000)
+	p, store := rawCostChatProxy(t, 15000)
 	chatCostReq(t, p)
-	require.NoError(t, f.Close(context.Background()))
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
-	require.Len(t, writer.calls, 1)
-	require.Equal(t, int64(195), writer.calls[0].cost, "组倍率 ×1.5：130×15000/10000 = 195")
-	require.Equal(t, int64(195), writer.calls[0].logs[0].Cost)
-	require.Equal(t, int64(130), writer.calls[0].logs[0].RawCost, "billed 行 raw = 倍率前 cost 原文")
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	require.Equal(t, int64(195), store.logs[0].Cost, "组倍率 ×1.5：130×15000/10000 = 195")
+	require.Equal(t, int64(130), store.logs[0].RawCost, "billed 行 raw = 倍率前 cost 原文")
+	require.False(t, store.logs[0].Billed, "capture on + 有用户 → 出生待对账")
 }
 
 // TestProxyRawCostChatFreeGroup 免费组（m=0）：cost=0、raw=130 照填（"实际
 // 消耗"只有 raw 能看）。
 func TestProxyRawCostChatFreeGroup(t *testing.T) {
-	p, f, writer, _ := rawCostChatProxy(t, 0)
+	p, store := rawCostChatProxy(t, 0)
 	chatCostReq(t, p)
-	require.NoError(t, f.Close(context.Background()))
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
-	require.Len(t, writer.calls, 1)
-	require.Zero(t, writer.calls[0].cost, "免费组 cost 0 不扣费")
-	require.Zero(t, writer.calls[0].logs[0].Cost)
-	require.Equal(t, int64(130), writer.calls[0].logs[0].RawCost, "免费组 cost=0 但 raw 有值")
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.logs, 1)
+	require.Zero(t, store.logs[0].Cost, "免费组 cost 0")
+	require.Equal(t, int64(130), store.logs[0].RawCost, "免费组 cost=0 但 raw 有值")
 }
 
 // TestProxyRawCostImageMultiplier image 路径 ×1.5（用户-组专属倍率）：cost=
@@ -130,7 +126,7 @@ func TestProxyRawCostSearchMultiplier(t *testing.T) {
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()))
 	bill := &BillingHooks{
-		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(2500), Source: domain.PricingSourceManual}}},
+		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(2500)}}},
 		Balances: bal,
 	}
 	p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},
@@ -154,7 +150,8 @@ func TestProxyRawCostSearchMultiplier(t *testing.T) {
 
 // TestProxyRawCostNonBilledFilled 非 billed 行（UserID==0 但 bill 装配——
 // gate 修订："非 billed 恒 0" 不实）：applyBilling 照算 → raw 照填（倍率前
-// 原文），cost 乘后——helper 在 applyBilling 内天然覆盖，无额外条件。
+// 原文），cost 乘后——helper 在 applyBilling 内天然覆盖，无额外条件。F2 单写
+// 点（spec §一）：UserID=0 + capture off 双吸收态叠加 → Billed=true 出生即结算。
 func TestProxyRawCostNonBilledFilled(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -169,8 +166,8 @@ func TestProxyRawCostNonBilledFilled(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
 	}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
 	p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
-		"ck-1": activeKey(1, 0, 10), // UserID 0 → shouldBill false（非 billed）
-	}, map[int64][]*domain.Account{10: {acc}}, bal, nil, store)
+		"ck-1": activeKey(1, 0, 10), // UserID 0 → 出生吸收态（Billed=true）
+	}, map[int64][]*domain.Account{10: {acc}}, bal, store)
 	p.cfg.BillingCapture = false // 计费捕获关但钩子装配——applyBilling 照算、routeLog 走 rec
 
 	chatCostReq(t, p)
@@ -180,6 +177,7 @@ func TestProxyRawCostNonBilledFilled(t *testing.T) {
 	require.Len(t, store.logs, 1)
 	require.Equal(t, int64(195), store.logs[0].Cost, "bill 装配 → 倍率 ×1.5 照算")
 	require.Equal(t, int64(130), store.logs[0].RawCost, "非 billed 行 raw 照填（倍率前原文）")
+	require.True(t, store.logs[0].Billed, "capture off + UserID=0 → 出生即结算吸收态（spec §一）")
 }
 
 // TestProxyRawCostBillUnassembledZero bill 未装配（计费全关）：cost/raw 恒 0。

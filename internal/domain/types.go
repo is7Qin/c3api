@@ -610,7 +610,42 @@ type UsageLog struct {
 	BillingTier string // priority/flex/fast/auto；空 = 未计费路径
 	AboveHit    bool
 	Overdraft   bool
-	CreatedAt   time.Time
+	// Billed 扣费收敛标记（F2 ledger-cursor，spec 2026-08-23）：false=待对账
+	// 消费者扣减；true=扣费事务已完成（或出生吸收态——计费关闭/匿名行）。
+	// 出生标记由 proxy.routeLog 按 NOT BillingCapture OR UserID<=0 盖章；
+	// 翻转为 true 只发生在对账事务内（与 FEFO 扣减同事务原子）。
+	Billed    bool
+	CreatedAt time.Time
+}
+
+// LedgerRow 计费游标消费行（usage_logs 未扣子集的瘦身投影；spec-f2-ledger-cursor
+// ABI-1 冻结契约）：FetchUnbilledBatch 返回、按 UserID 分组进 DeductOnlyAndMark。
+type LedgerRow struct {
+	ID          int64
+	UserID      int64
+	Cost        int64
+	Model       string
+	BillingTier string
+	CallCount   int64
+	Format      string
+}
+
+// LedgerGroup 计费游标消费组（spec-f2-cursor-throughput D3 单一表示，替代
+// billing 包局部 userGroup）：同批同用户行（保序）——chunk 事务内一组一次
+// deductOnlyCore。cost 恒 = Σ Rows[i].Cost（构造即和，无拆块比例公式）。
+type LedgerGroup struct {
+	UserID int64
+	Rows   []LedgerRow
+}
+
+// LedgerGroupOutcome 组级消费结果（DeductGroupsAndMark 返回，与 groups 序一一
+// 对应）：BalanceAfter 事务内余额回读（quarantined/cost<=0 组恒 0）；Overdrafted
+// 该组透支（标记步 od=true 集合归属依据）；Quarantined 用户缺失（跳过扣减仍
+// 标记——不变量 #1 尾语义）。
+type LedgerGroupOutcome struct {
+	BalanceAfter int64
+	Overdrafted  bool
+	Quarantined  bool
 }
 
 // StatBucket 小时统计桶（usage_stats 行；离线聚合 worker 的 INSERT 行形态）。

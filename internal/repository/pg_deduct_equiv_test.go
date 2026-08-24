@@ -4,205 +4,112 @@
 
 package repository_test
 
-// 热点修复 A 扩：DeductAndLog 双路径等价性测试（约束 ① 语义等价的兜底——
-// deductCore 单一实现防结构漂移，本测试防行为漂移）。同一输入分别走 ent
-// CreateBulk 路径（pool == nil）与 pgx COPY 路径（pool）→ 全列逐字段断言
-// usage_logs 行 + 余额/临时额度终态 + 分区路由（跨日 created_at 逐行落区）。
+// 事务载体等价性测试（spec-f2-ledger-cursor）：DeductOnlyAndMark 双载体——
+// pool → pgx 直连事务 vs nil pool → ent txDriver 回落——同输入终态逐字段一致
+// （FEFO/透支/幽灵用户三场景矩阵），防两载体行为漂移。usage flusher InsertBatch
+// 是 usage_logs 唯一写者。
 
 import (
 	"context"
 	"fmt"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
+	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// deductState 单次 DeductAndLog 后的可观测终态（双路径对比面）。
+// deductState 单次 DeductOnlyAndMark 后的可观测终态（双载体对比面）。
 type deductState struct {
-	balance int64
-	od      bool
+	balance     int64
+	od          bool
+	quarantined bool
 	// temp 该用户剩余临时额度金额（升序；FEFO 扣减顺序对比）。
 	temp []int64
-	// logs 该用户 usage_logs 全列（request_id 升序；UserID/ID 归一后对比——
-	// 两路径各用独立用户，避免余额互扰）。
-	logs []*domain.UsageLog
+	// unbilled 该用户剩余未标记行数（0 = 扣减与标记同事务原子完成）。
+	unbilled int64
 }
 
-// TestPGDeductCopyPathEquivalent 双路径等价：5 个场景矩阵（条件扣成功 + FEFO
-// 临时额度 / 透支 / cost=0 只插日志 / 用户缺失仍插日志 / 大批 4000 行跨分片 +
-// 跨日分区路由）逐场景对比终态。
-func TestPGDeductCopyPathEquivalent(t *testing.T) {
-	reposCopy := newPGRepos(t)      // pool → pgx COPY 路径
-	reposEnt := newPGReposNoPool(t) // nil pool → ent CreateBulk 路径（同 schema）
+// TestPGDeductOnlyCarrierEquivalent 双载体等价：3 场景矩阵（FEFO 条件扣成功 /
+// 透支 / 用户缺失隔离）逐场景对比终态。
+func TestPGDeductOnlyCarrierEquivalent(t *testing.T) {
+	reposCopy := newPGRepos(t)      // pool → pgx 直连事务载体
+	reposEnt := newPGReposNoPool(t) // nil pool → ent txDriver 载体（同 schema）
 	ctx := context.Background()
 
 	scenarios := []struct {
-		name string
-		cost int64
-		// ghost = 不创建用户（用户缺失仍插日志场景）。
-		ghost bool
-		seed  func(t *testing.T, repos *repository.Repository, uid int64)
-		// logs 用共享基准时间构造（两路径同输入确定性——now 为同一次截断值）。
-		logs func(uid int64, now time.Time) []*domain.UsageLog
+		name    string
+		cost    int64
+		ghost   bool
+		balance int64   // 预置余额（ghost 忽略）
+		temps   []int64 // 预置永久临时额度
 	}{
 		{
-			name: "conditional success with FEFO temp balances",
-			cost: 400_000,
-			seed: func(t *testing.T, repos *repository.Repository, uid int64) {
-				require.NoError(t, repos.UpdateUserBalance(ctx, uid, 1_000_000))
-				exp1 := time.Now().Add(time.Hour).Truncate(time.Second)
-				seedTempBalance(t, repos, uid, 150_000, &exp1)
-				seedTempBalance(t, repos, uid, 300_000, nil)
-			},
-			logs: func(uid int64, now time.Time) []*domain.UsageLog {
-				ls := []*domain.UsageLog{
-					fullLogFor(uid, "eq-fefo-1"),
-					fullLogFor(uid, "eq-fefo-2"),
-				}
-				for _, l := range ls {
-					l.CreatedAt = now // 基准时间统一（fullLogFor 内部 time.Now 覆盖）
-				}
-				return ls
-			},
+			name:    "conditional success with FEFO temp balances",
+			cost:    400_000,
+			balance: 1_000_000,
+			temps:   []int64{150_000, 300_000},
 		},
 		{
-			name: "overdraft",
-			cost: 400_000,
-			seed: func(t *testing.T, repos *repository.Repository, uid int64) {
-				require.NoError(t, repos.UpdateUserBalance(ctx, uid, 10_000))
-			},
-			logs: func(uid int64, now time.Time) []*domain.UsageLog {
-				l := fullLogFor(uid, "eq-od-1")
-				l.CreatedAt = now
-				return []*domain.UsageLog{l}
-			},
+			name:    "overdraft",
+			cost:    400_000,
+			balance: 10_000,
 		},
 		{
-			name: "zero cost only logs",
-			cost: 0,
-			seed: func(t *testing.T, repos *repository.Repository, uid int64) {
-				require.NoError(t, repos.UpdateUserBalance(ctx, uid, 50_000))
-				seedTempBalance(t, repos, uid, 30_000, nil)
-			},
-			logs: func(uid int64, now time.Time) []*domain.UsageLog {
-				ls := []*domain.UsageLog{
-					fullLogFor(uid, "eq-z-1"),
-					fullLogFor(uid, "eq-z-2"),
-				}
-				for _, l := range ls {
-					l.CreatedAt = now
-				}
-				return ls
-			},
-		},
-		{
-			name:  "user missing still logs",
+			name:  "user missing quarantined",
 			cost:  400_000,
 			ghost: true,
-			logs: func(uid int64, now time.Time) []*domain.UsageLog {
-				l := fullLogFor(uid, "eq-ghost-1")
-				l.CreatedAt = now
-				return []*domain.UsageLog{l}
-			},
-		},
-		{
-			name: "large batch 4000 rows cross chunks",
-			cost: 520_000,
-			seed: func(t *testing.T, repos *repository.Repository, uid int64) {
-				require.NoError(t, repos.UpdateUserBalance(ctx, uid, 1_000_000))
-			},
-			logs: func(uid int64, now time.Time) []*domain.UsageLog {
-				logs := make([]*domain.UsageLog, 0, 4000)
-				for i := 0; i < 4000; i++ {
-					l := fullLogFor(uid, fmt.Sprintf("eq-big-%d", i))
-					l.CreatedAt = now // 全行统一基准（fullLogFor 内部 time.Now 覆盖）
-					// 跨日分区路由：末 3 行 created_at = 明日（今日分区之外）。
-					if i >= 3997 {
-						l.CreatedAt = now.Add(24 * time.Hour)
-					}
-					logs = append(logs, l)
-				}
-				return logs
-			},
 		},
 	}
 
-	// 输入确定性：基准时间测试级一次性计算，两路径同一次截断值。
-	base := time.Now().Truncate(time.Second)
-	pool := pgTestPool(t)
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
-			stCopy, uidCopy := runDeductScenario(t, sc.name, "copy", reposCopy, base, sc.cost, sc.ghost, sc.seed, sc.logs)
-			if sc.name == "large batch 4000 rows cross chunks" {
-				// COPY 路径分区路由断言（清行前）：明日分区 3 行、今日分区 3997
-				// 行。分区名由种子基准 base 派生（与插入行同一日期——新
-				// time.Now() 在 UTC 午夜跨日 ~1s 窗口会断言错分区，L-4 flake）。
-				tomorrow := base.Add(24 * time.Hour).UTC().Format("20060102")
-				require.Equal(t, int64(3), pgCount(t, pool,
-					"SELECT count(*) FROM usage_logs_"+tomorrow+" WHERE user_id = $1", uidCopy),
-					"COPY 路径跨日行落入明日分区")
-			}
-			// 幂等键（方向 A 批次 1a）：两路径同输入（同 request_id + created_at）
-			// 先后落同一 schema，唯一索引拒重——跑完 copy 路径即清其行，再跑
-			// ent 路径。终态对比语义不变：两路径各自独立的行/余额/临时额度采集
-			// 于各自运行时刻。
-			pgExec(t, pool, `DELETE FROM usage_logs WHERE user_id = $1`, uidCopy)
-			stEnt, uidEnt := runDeductScenario(t, sc.name, "ent", reposEnt, base, sc.cost, sc.ghost, sc.seed, sc.logs)
-			require.Equal(t, stEnt, stCopy, "ent 路径与 COPY 路径终态必须逐字段一致")
-			if sc.name == "large batch 4000 rows cross chunks" {
-				// ent 路径分区路由断言（终态对比后；行尚在）
-				tomorrow := base.Add(24 * time.Hour).UTC().Format("20060102")
-				require.Equal(t, int64(3), pgCount(t, pool,
-					"SELECT count(*) FROM usage_logs_"+tomorrow+" WHERE user_id = $1", uidEnt),
-					"ent 路径跨日行落入明日分区")
-			}
+			// 两载体各自独立用户/行（email/id 带 tag 防撞），无需清行——状态
+			// 采集全部按 user 过滤。
+			stCopy := runDeductOnlyScenario(t, sc.name, "copy", reposCopy, ctx, sc.cost, sc.ghost, sc.balance, sc.temps)
+			stEnt := runDeductOnlyScenario(t, sc.name, "ent", reposEnt, ctx, sc.cost, sc.ghost, sc.balance, sc.temps)
+			require.Equal(t, stEnt, stCopy, "ent 载体与 pgx 载体终态必须逐字段一致")
 		})
 	}
 }
 
-// runDeductScenario 在指定路径上执行一个场景并采集终态（ghost = 不建用户，用
-// 固定不存在 uid；email 带路径 tag 防撞 users_email_key）。返回 (终态, userID)。
-func runDeductScenario(t *testing.T, name, tag string, repos *repository.Repository, base time.Time, cost int64, ghost bool,
-	seed func(t *testing.T, repos *repository.Repository, uid int64),
-	logs func(uid int64, now time.Time) []*domain.UsageLog,
-) (deductState, int64) {
+// runDeductOnlyScenario 在指定载体上执行一个场景并采集终态（ghost = 不建用户，
+// 固定不存在 uid；email 带载体 tag 防撞 users_email_key）。
+func runDeductOnlyScenario(t *testing.T, name, tag string, repos *repository.Repository, ctx context.Context,
+	cost int64, ghost bool, balance int64, temps []int64) deductState {
 	t.Helper()
-	ctx := context.Background()
-	uid := int64(999999)
-	if ghost {
-		// 两路径 ghost 用户不同（同一 schema 内各自插日志互不干扰）。
-		uid = int64(900000 + len(tag))
-	} else {
-		u := seedPGUser(t, repos, fmt.Sprintf("equiv-%s-%s@example.com", name, tag))
+	uid := int64(900000 + len(tag))
+	if !ghost {
+		u := seedPGUser(t, repos, fmt.Sprintf("equivonly-%s-%s@example.com", name, tag))
 		uid = u.ID
-		seed(t, repos, uid)
+		require.NoError(t, repos.UpdateUserBalance(ctx, uid, balance))
+		for _, amt := range temps {
+			seedTempBalance(t, repos, uid, amt, nil)
+		}
 	}
-	in := logs(uid, base)
+	l := fullLogFor(uid, "eqo-"+tag)
+	l.Cost = cost
+	seedUnbilled(t, repos, l)
+	rows := fetchAllUnbilled(t, repos)
+	require.Len(t, rows, 1)
 
-	od, bal, err := repos.DeductAndLog(ctx, uid, cost, in)
+	bal, od, q, err := repos.DeductOnlyAndMark(ctx, uid, cost, ledgerRowIDs(rows))
 	require.NoError(t, err)
 
-	st := deductState{balance: bal, od: od}
-	rows, err := repos.Client.TempBalance.Query().
+	st := deductState{balance: bal, od: od, quarantined: q}
+	trows, err := repos.Client.TempBalance.Query().
 		Where(tempbalance.UserIDEQ(uid)).All(ctx)
 	require.NoError(t, err)
-	for _, r := range rows {
+	for _, r := range trows {
 		st.temp = append(st.temp, r.Amount)
 	}
 	sort.Slice(st.temp, func(i, j int) bool { return st.temp[i] < st.temp[j] })
-	out, err := repos.Usages.QueryUsages(ctx, repository.UsageQuery{UserID: uid, Limit: 10000})
+	n, err := repos.Client.UsageLog.Query().
+		Where(usagelog.UserIDEQ(uid), usagelog.BilledEQ(false)).Count(ctx)
 	require.NoError(t, err)
-	sort.Slice(out, func(i, j int) bool { return out[i].RequestID < out[j].RequestID })
-	for _, l := range out {
-		l.UserID = 0 // 两路径用户不同，非语义字段
-		l.ID = 0     // 序列推进随路径不同，非语义字段
-		st.logs = append(st.logs, l)
-	}
-	return st, uid
+	st.unbilled = int64(n)
+	return st
 }

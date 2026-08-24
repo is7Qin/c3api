@@ -83,6 +83,11 @@ func (UsageLog) Fields() []ent.Field {
 		field.String("billing_tier").Optional().Nillable(),
 		field.Bool("above_hit").Default(false),
 		field.Bool("overdraft").Default(false),
+		// billed（F2 ledger-cursor，spec 2026-08-23）：扣费收敛标记——false=待
+		// 对账消费（出生未扣），true=已结算（扣费事务内原子标记或出生吸收态）。
+		// 计费游标 = 部分索引 (id) WHERE NOT billed——ent 无部分索引表达力，
+		// 仅存于 repository/partition.go usageLogIndexDDLs（双轨声明单向）。
+		field.Bool("billed").Default(false),
 		field.Time("created_at").Default(time.Now),
 	}
 }

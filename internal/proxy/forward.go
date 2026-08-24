@@ -39,7 +39,7 @@ type Config struct {
 	FailoverAttempts      int
 	GroupKeyRPM           int
 	UsageCapture          bool
-	BillingCapture        bool // 计费开关（config.Billing.Enabled 映射；shouldBill 路由判定）
+	BillingCapture        bool // 计费开关（config.Billing.Enabled 映射；余额预检门控 + billable 行 Billed 出生标记取反——F2 单写点后不再路由分流）
 	// BehindCDN 客户端 IP 识别开关（config.proxy.behind_cdn 映射；clientIP
 	// 提取门控——false 完全不读供应商头直取 RemoteAddr，true 按序采信三头）。
 	// 部署前提见 config.go 注释与 clientip.go：源站只对 CDN 暴露。
@@ -162,13 +162,6 @@ func (p *Proxy) finish(accountID int64, l *domain.UsageLog) {
 	if p.cfg.UsageCapture && l != nil {
 		p.routeLog(l)
 	}
-}
-
-// shouldBill 计费路由判定（评审 C-4：record() 与 finish() 两处调用同一判定，
-// 共用函数保证 billed/非 billed 边界一致）：billed = 计费开关 && 有用户归属
-// && 计费钩子已装配。billed 只进 Flusher、其余只进 rec。
-func (p *Proxy) shouldBill(l *domain.UsageLog) bool {
-	return p.cfg.BillingCapture && l != nil && l.UserID > 0 && p.bill != nil
 }
 
 // applyBilling 计费计算（统一 PriceEntry/variants 解析，零 DB）。
@@ -306,9 +299,9 @@ func mappedFor(req, used string) string {
 
 // record 记录一条用量日志（无并发槽的失败路径；有槽路径走 finish）。
 // ctx 提供鉴权 KeyMeta（user_id/key_id 归属；401 等鉴权失败路径无 KeyMeta）。
-// 计费路由与 finish 同一 shouldBill 判定（评审 C-4）。**本地预用量拒绝
-// （429/402 等，见 recordRejected）不在此路径**——无用量可记的拒绝不产生
-// 明细，避免拒绝风暴打爆 pending。
+// 落库路由与 finish 同走 routeLog 单写点。**本地
+// 预用量拒绝（429/402 等，见 recordRejected）不在此路径**——无用量可记的
+// 拒绝不产生明细，避免拒绝风暴打爆 pending。
 func (p *Proxy) record(ctx context.Context, reqID string, groupID, accountID int64, reqModel, usedModel string, format domain.RequestFormat, status int, et domain.ErrorType, latencyMS int64, u usageTuple, start time.Time) {
 	p.recordLog(logWithCtx(ctx, p.buildLog(reqID, groupID, accountID, reqModel, usedModel, format, status, et, u, start)))
 }
@@ -357,9 +350,10 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 // 路径语义（error_type）**判定，与 cost 无关——cost>0 判定会漏掉免费分组
 // （倍率 0 的成功行）与 0 token 成功行（空响应））：
 //   - usage_logs = 放行路径明细：error_type ∈ {none（成功，含 cost=0 免费组/
-//     空响应）, abort（半异常计费）}——billed → Flusher（扣费 + 落库，每日志
-//     恰好一个写者），非 billed → rec.Record；4xx/5xx/network（上游透传/耗尽
-//     失败行）**不写 usage_logs**（失败明细归 err_logs，P2a 拒绝风暴教训同族）
+//     空响应）, abort（半异常计费）}——F2 单写点（spec §一）：billable 行一律
+//     经 rec.Record 入队，入队前盖 Billed 出生标记；扣费由 billing worker 从
+//     账本游标消费（T3）。4xx/5xx/network（上游透传/耗尽失败行）不写
+//     usage_logs（失败明细归 err_logs，P2a 拒绝风暴教训同族）
 //   - err_logs = 全部错误明细（error_type != none）：4xx/5xx（上游透传/耗尽）
 //   - abort 双轨（豁免队列恒落盘——架构审查 B2）；拒绝行走 recordRejected
 //     的采样队列，不经本路由
@@ -368,11 +362,12 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 //     call_count）；纯错误行（4xx/5xx/network）从 err_logs 重建（count 语义）；
 //     拒绝行随 err_logs 采样丢样（口径注释见 recordRejected）
 func (p *Proxy) routeLog(l *domain.UsageLog) {
-	billable := l.ErrorType == domain.ErrNone || l.ErrorType == domain.ErrAbort // 放行路径
-	if p.shouldBill(l) && billable {
-		p.bill.Flusher.Record(l) // 计费明细（扣费 + usage_logs；额度经 AddQuota）
-	} else if billable {
-		p.rec.Record(l) // 非 billed 放行行（usage_logs + quota 累加）
+	if l.ErrorType == domain.ErrNone || l.ErrorType == domain.ErrAbort { // 放行路径
+		// F2 出生标记盖章（spec §一）：Billed = !(计费捕获开 && 有用户归属)。
+		// true = 出生即结算吸收态（计费关闭/匿名行本就不扣，游标零消费顺带
+		// 省一次循环）；false = 待对账，billing worker 游标消费（T3）。
+		l.Billed = !(p.cfg.BillingCapture && l.UserID > 0)
+		p.rec.Record(l) // 唯一持久化入口（usage_logs 落库 + quota 累加）
 	}
 	if l.ErrorType != domain.ErrNone {
 		p.enqueueErrLog(l) // 全部错误明细 → err_logs（豁免通道）

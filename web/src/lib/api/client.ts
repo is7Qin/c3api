@@ -49,7 +49,7 @@ export interface UsageLogParams {
 export interface ErrLogParams extends UsageLogParams {
   status_code?: number
 }
-// 用户端无 user_id 过滤（服务端强制本人），也无 account_id（用户级契约已删该参数）
+// 用户端无 user_id 过滤（服务端强制本人），也无 account_id（用户级契约不含该参数）
 export type MyUsageLogParams = Omit<UsageLogParams, 'user_id' | 'account_id'>
 export type MyErrLogParams = Omit<ErrLogParams, 'user_id' | 'account_id'>
 export interface UserStatParams {
@@ -144,7 +144,7 @@ export class ApiClient {
   // —— 日志 / 统计 ——
   getUsageLogs = (p: UsageLogParams) => this.request<components['schemas']['LogsResponse']>('/usage_logs', { params: toQuery(p) })
   getErrLogs = (p: ErrLogParams) => this.request<components['schemas']['ErrLogsResponse']>('/err_logs', { params: toQuery(p) })
-  // —— 统计 v2（P1 后端已落地，旧 /stats 已删）——
+  // —— 统计 v2 ——
   getStatsTrend = (p: { from: string; to: string; granularity: 'hour' | 'day'; group_id?: number; model?: string }) =>
     this.request<components['schemas']['StatTrendPoint'][]>('/stats/trend', { params: toQuery(p) })
   getStatsTop = (p: { from: string; to: string; entity: 'account' | 'user' | 'key'; by: 'cost' | 'requests' | 'tokens'; limit?: number }) =>

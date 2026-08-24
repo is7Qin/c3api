@@ -172,8 +172,7 @@ func TestStreamImagePassthrough(t *testing.T) {
 	// 流终计费（与 T2 同口径）：call_count=2、image token 取末事件、价格快照、
 	// ImageCost（100×800000/1e6 + 50×3000000/1e6 + 2×5400 = 11030）；text 分量
 	// 恒 0；TotalTokens 含 image tokens 不含张数。统一计费模型（spec 2026-08-13）：
-	// image token 并入 in/out、张数入 call_count、每张价入 price_per_call_millis
-	//（原图片 6 专列已删——image token 单价快照不再落账）。
+	// image token 并入 in/out、张数入 call_count、每张价入 price_per_call_millis。
 	l := collectImageLogs(t, p, store)
 	require.Equal(t, domain.FormatOpenAIImages, l.Format)
 	require.Equal(t, domain.ErrNone, l.ErrorType)

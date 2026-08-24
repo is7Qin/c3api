@@ -361,11 +361,7 @@ func TestResponsesWSInsufficientBalance402(t *testing.T) {
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
 	}, store, nil)
-	writer := &fakeDeductWriter{}
-	f := billing.NewFlusher(billing.FlushConfig{
-		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
-	}, writer, rec, bal, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, f, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, rec)
 
 	// 完整升级请求（upgrade 头齐备）：预检在升级处理前拒绝 → 402 而非握手
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
@@ -385,10 +381,6 @@ func TestResponsesWSInsufficientBalance402(t *testing.T) {
 	require.Zero(t, ri.Concurrency, "预检在 Acquire 前：不占用并发槽")
 	require.Zero(t, p.rec.Pending(), "预用量拒绝不产生明细 pending")
 
-	require.NoError(t, f.Close(context.Background()))
-	writer.mu.Lock()
-	require.Empty(t, writer.calls, "预用量拒绝不进 billed flusher（无扣费无计费日志）")
-	writer.mu.Unlock()
 	require.NoError(t, rec.Close(context.Background()), "Recorder 手动 flush")
 }
 

@@ -194,6 +194,11 @@ func Overdraft(v bool) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldOverdraft, v))
 }
 
+// Billed applies equality check predicate on the "billed" field. It's identical to BilledEQ.
+func Billed(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldBilled, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCreatedAt, v))
@@ -1567,6 +1572,16 @@ func OverdraftEQ(v bool) predicate.UsageLog {
 // OverdraftNEQ applies the NEQ predicate on the "overdraft" field.
 func OverdraftNEQ(v bool) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNEQ(FieldOverdraft, v))
+}
+
+// BilledEQ applies the EQ predicate on the "billed" field.
+func BilledEQ(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldBilled, v))
+}
+
+// BilledNEQ applies the NEQ predicate on the "billed" field.
+func BilledNEQ(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldBilled, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

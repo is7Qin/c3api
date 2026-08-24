@@ -209,10 +209,6 @@ func newTestProxyClientIPBilling(t *testing.T, upstream string, bal *billing.Bal
 		QuotaFlushInterval: time.Hour,
 	}, store, nil)
 	require.NoError(t, bal.Reload(context.Background()), "快照加载（余额不足）")
-	writer := &fakeDeductWriter{}
-	f := billing.NewFlusher(billing.FlushConfig{
-		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
-	}, writer, rec, bal, nil)
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: upstream,
 		CredentialType:   credential.TypeAPIKey,
@@ -221,7 +217,6 @@ func newTestProxyClientIPBilling(t *testing.T, upstream string, bal *billing.Bal
 	p := newTestProxyTplTimeoutRec(t, tpl, 1, true, 30*time.Second, rec, &BillingHooks{
 		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,
-		Flusher:  f,
 	}, store)
 	p.cfg.BillingCapture = true
 	p.cfg.BehindCDN = true

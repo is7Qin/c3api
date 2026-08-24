@@ -165,8 +165,58 @@ func (e *e2eEnv) balance(userID int64) int64 {
 	return v
 }
 
-// sleepFlush 等待 flusher 周期落库（配置 flush_interval=300ms，留足余量）。
-func sleepFlush() { time.Sleep(900 * time.Millisecond) }
+// ---- 轮询收敛助手（spec-f2-ledger-cursor M3）----
+// F2 扣费两跳异步：usage flusher 落库（flush_interval=300ms）→ billing 扫游标
+// 扣费（flush_interval=300ms），最坏 ≈750ms；固定 sleep 余量不足，负载下必
+// flake。断言一律有界轮询：条件成立即返回，超时 FailNow 并附最后观测值。
+
+const (
+	pollTick    = 100 * time.Millisecond
+	pollTimeout = 10 * time.Second
+)
+
+// pollUntil 有界轮询直到 observe 报告收敛；超时 FailNow（what 标注等待目标，
+// last 为最后一次观测描述）。observe 须容忍行未落库（pgx.ErrNoRows 等）返回
+// false 重试。
+func pollUntil(t *testing.T, what string, observe func() (done bool, last string)) {
+	t.Helper()
+	tick := time.NewTicker(pollTick)
+	defer tick.Stop()
+	deadline := time.Now().Add(pollTimeout)
+	for {
+		done, last := observe()
+		if done {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("轮询超时(%s) %s：%s", pollTimeout, what, last)
+		}
+		<-tick.C
+	}
+}
+
+// pollBalance 轮询用户余额至期望毫分值。余额收敛蕴含对应 usage_logs 行已落库
+// 且被 billing 消费——其后的 lastLogFor 断言无需再等落库。
+func pollBalance(t *testing.T, env *e2eEnv, userID, want int64) {
+	t.Helper()
+	pollUntil(t, fmt.Sprintf("user=%d 余额→%d", userID, want), func() (bool, string) {
+		got := env.balance(userID)
+		return got == want, fmt.Sprintf("balance got=%d want=%d", got, want)
+	})
+}
+
+// pollUserLastLogCost 轮询某用户最新 usage_logs 行落库且 cost 收敛到期望值
+// （cost=0 免费场景余额不动，无法以余额为收敛信号，退化为行级轮询）。
+func pollUserLastLogCost(t *testing.T, env *e2eEnv, userID, want int64) {
+	t.Helper()
+	pollUntil(t, fmt.Sprintf("user=%d 最新日志 cost→%d", userID, want), func() (bool, string) {
+		cost, err := env.dbInt(`SELECT cost FROM usage_logs WHERE user_id=$1 ORDER BY id DESC LIMIT 1`, userID)
+		if err != nil {
+			return false, err.Error()
+		}
+		return cost == want, fmt.Sprintf("cost got=%d want=%d", cost, want)
+	})
+}
 
 // waitSnapshot 等待去抖窗口 + 一次重载完成（O2：管理面变更生效延迟 ≤200ms
 // 窗口 + 一次重载时长——变更后的断言性请求须落在重载之后，等效旧实现同步
@@ -408,41 +458,37 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 
 	// auto：cost 250（首中通配 ctx 变体，整单切换）
 	chatReq("e2e-matrix-model", nil)
-	sleepFlush()
+	bal -= 250
+	pollBalance(t, env, u1, bal) // 余额收敛蕴含日志行已落库且被 billing 消费
 	r := env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, int64(250), r.Cost, "auto 档矩阵计费")
 	require.Equal(t, "auto", r.Tier)
 	require.False(t, r.AboveHit, "above 分段已退役 → 恒 false")
 	require.False(t, r.Overdraft)
-	bal -= 250
-	require.Equal(t, bal, env.balance(u1), "余额毫分扣减")
 
 	// priority：cost 650
 	chatReq("e2e-matrix-model", map[string]any{"service_tier": "priority"})
-	sleepFlush()
+	bal -= 650
+	pollBalance(t, env, u1, bal)
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, int64(650), r.Cost, "priority 档计费")
 	require.Equal(t, "priority", r.Tier)
-	bal -= 650
-	require.Equal(t, bal, env.balance(u1))
 
 	// flex：cost 480
 	chatReq("e2e-matrix-model", map[string]any{"service_tier": "flex"})
-	sleepFlush()
+	bal -= 480
+	pollBalance(t, env, u1, bal)
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, int64(480), r.Cost, "flex 档计费")
 	require.Equal(t, "flex", r.Tier)
-	bal -= 480
-	require.Equal(t, bal, env.balance(u1))
 
 	// fast：基础档 × fast 变体 mult_bp 20000（×2）→ 1000
 	chatReq("e2e-matrix-model", map[string]any{"service_tier": "fast"})
-	sleepFlush()
+	bal -= 1000
+	pollBalance(t, env, u1, bal)
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, int64(1000), r.Cost, "fast 倍率计费")
 	require.Equal(t, "fast", r.Tier)
-	bal -= 1000
-	require.Equal(t, bal, env.balance(u1))
 
 	// ============ 场景 2：FEFO 临时额度优先扣 + 余额不足 402 ============
 	t.Log("场景 2：FEFO 临时额度优先扣；余额不足 402")
@@ -465,10 +511,14 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
 	require.Equal(t, 200, code2, "fefo req: %s", resp2)
-	sleepFlush()
-	tempLeft, err := env.dbInt(`SELECT COALESCE(SUM(amount),0) FROM temp_balances WHERE user_id=$1 AND amount>0`, u2)
-	require.NoError(t, err)
-	require.Zero(t, tempLeft, "临时额度扣至 0")
+	// 余额不动（temp 优先扣）：以临时额度清零为收敛信号（billing 消费该行后扣 temp）
+	pollUntil(t, "FEFO 临时额度扣至 0", func() (bool, string) {
+		left, err := env.dbInt(`SELECT COALESCE(SUM(amount),0) FROM temp_balances WHERE user_id=$1 AND amount>0`, u2)
+		if err != nil {
+			return false, err.Error()
+		}
+		return left == 0, fmt.Sprintf("temp_left=%d", left)
+	})
 	require.Equal(t, int64(1000), env.balance(u2), "余额未被临时额度请求消耗")
 	r = env.lastLogFor("e2e-model")
 	require.Equal(t, int64(500), r.Cost)
@@ -480,8 +530,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 			"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 		})
 		require.Equal(t, 200, c, "drain: %s", rb2)
-		sleepFlush()
-		require.Equal(t, want, env.balance(u2))
+		pollBalance(t, env, u2, want)
 	}
 	// 余额 0 仍放行一次（overdraft），见 proxy/billing_test.go:691 “余额 0 放行”
 	c, rbOver := env.aiReq(http.MethodPost, "/v1/chat/completions", u2Key, map[string]any{
@@ -489,8 +538,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
 	require.Equal(t, 200, c, "overdraft must still 200 (bal 0 → -500): %s", rbOver)
-	sleepFlush()
-	require.Equal(t, int64(-500), env.balance(u2), "透支后余额 -500")
+	pollBalance(t, env, u2, -500) // 透支后余额 -500
 	rOver := env.lastLogFor("e2e-model")
 	require.True(t, rOver.Overdraft, "透支行 overdraft=true")
 	c, rb3 := env.aiReq(http.MethodPost, "/v1/chat/completions", u2Key, map[string]any{
@@ -508,16 +556,21 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	require.Equal(t, 402, c, "no price must 402: %s", rb4)
 	// 402 拒绝行（分表裁决 R3-M1）：错误审计面归 err_logs——error_type=billing
 	// 全值 + status_code；usage_logs 零行（放行路径语义：失败行不入 usage_logs）。
-	sleepFlush() // 等待 errlog worker 落库（独立 500ms 批间隔）
+	// errlog worker 独立管道落库：轮询拒绝行出现（替代固定 sleep）
+	var dbEType string
+	pollUntil(t, "err_logs 402 拒绝行落库", func() (bool, string) {
+		err := env.pg.QueryRow(context.Background(), `
+			SELECT error_type FROM err_logs
+			WHERE model='e2e-noprice-model' ORDER BY id DESC LIMIT 1`).Scan(&dbEType)
+		if err != nil {
+			return false, err.Error()
+		}
+		return true, "error_type=" + dbEType
+	})
 	code3, resp3 := env.admin(http.MethodGet, "/err_logs?model=e2e-noprice-model&from=2000-01-01T00:00:00Z&to=2030-01-01T00:00:00Z", nil)
 	require.Equal(t, 200, code3, "err logs: %s", resp3)
 	require.Contains(t, resp3, `"billing"`, "402 拒绝行 err_logs error_type=billing")
 	// R4-M3：HTTP 面 ↔ DB 面交叉验证（同一条拒绝行经 errlog worker 落库 → HTTP 查询可见）
-	var dbEType string
-	err = env.pg.QueryRow(context.Background(), `
-		SELECT error_type FROM err_logs
-		WHERE model='e2e-noprice-model' ORDER BY id DESC LIMIT 1`).Scan(&dbEType)
-	require.NoError(t, err)
 	require.Equal(t, "billing", dbEType, "err_logs DB 面与 HTTP 面一致")
 	code3u, resp3u := env.admin(http.MethodGet, "/usage_logs?model=e2e-noprice-model&from=2000-01-01T00:00:00Z&to=2030-01-01T00:00:00Z", nil)
 	require.Equal(t, 200, code3u, "usage logs: %s", resp3u)
@@ -546,12 +599,11 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
 	require.Equal(t, 200, c, "strip must forward: %s", rb8)
-	sleepFlush()
+	bal -= 650
+	pollBalance(t, env, u1, bal)
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, "priority", r.Tier, "strip 照常计费 priority 档")
 	require.Equal(t, int64(650), r.Cost)
-	bal -= 650
-	require.Equal(t, bal, env.balance(u1))
 	// 恢复 passthrough
 	c, rb9 := env.admin(http.MethodPut, "/settings", map[string]any{
 		"key": "service_tier_policy_priority", "value": "passthrough",
@@ -580,12 +632,11 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
 	require.Equal(t, 200, c, "fast strip must forward: %s", rbd)
-	sleepFlush()
+	bal -= 1000
+	pollBalance(t, env, u1, bal)
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, "fast", r.Tier, "strip 照常计费 fast 档")
 	require.Equal(t, int64(1000), r.Cost, "fast ×2：500×2 = 1000")
-	bal -= 1000
-	require.Equal(t, bal, env.balance(u1))
 	// 恢复 passthrough
 	c, rbe := env.admin(http.MethodPut, "/settings", map[string]any{
 		"key": "service_tier_policy_fast", "value": "passthrough",
@@ -604,13 +655,12 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 			"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 		})
 		require.Equal(t, 200, c, "chat: %s", rb)
-		sleepFlush()
 	}
 	// 组倍率 2.0 → 500×2 = 1000
 	chat(u4Key, "e2e-mult-model")
+	pollBalance(t, env, u4, 1000000-1000)
 	r = env.lastLogFor("e2e-mult-model")
 	require.Equal(t, int64(1000), r.Cost, "组倍率 ×2")
-	require.Equal(t, int64(1000000-1000), env.balance(u4))
 
 	// 用户-组专属倍率覆盖组（T3.5 修正：按组挂载，经 assignments 的 multipliers）：
 	// 0.5 → 500×0.5 = 250
@@ -619,9 +669,9 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	require.Equal(t, 200, c, "set assignment mult: %s", rb10)
 	waitSnapshot() // O2 去抖：新倍率须已进快照（请求按快照计费）
 	chat(u4Key, "e2e-mult-model")
+	pollBalance(t, env, u4, 1000000-1000-250)
 	r = env.lastLogFor("e2e-mult-model")
 	require.Equal(t, int64(250), r.Cost, "用户-组专属倍率覆盖组倍率")
-	require.Equal(t, int64(1000000-1000-250), env.balance(u4))
 
 	// 专属倍率 0 = 免费：cost 0 不扣费
 	c, _ = env.admin(http.MethodPut, "/groups/"+strconv.FormatInt(g2, 10)+"/assignments",
@@ -629,6 +679,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	require.Equal(t, 200, c, "set free mult")
 	waitSnapshot() // O2 去抖：新倍率须已进快照
 	chat(u4Key, "e2e-mult-model")
+	pollUserLastLogCost(t, env, u4, 0) // cost=0 余额不动：以最新行落库为收敛信号
 	r = env.lastLogFor("e2e-mult-model")
 	require.Equal(t, int64(0), r.Cost, "0 = 免费（cost 0）")
 	require.Equal(t, int64(1000000-1000-250), env.balance(u4), "免费不扣费")
@@ -640,6 +691,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	require.Equal(t, 200, c, "set group free: %s", rb11)
 	waitSnapshot() // O2 去抖：u5 入余额快照 + g3 倍率 0 进倍率快照（同窗口合并一次重载）
 	chat(u5Key, "e2e-mult-model")
+	pollUserLastLogCost(t, env, u5, 0) // u5 首行落库即收敛（此前无行，ErrNoRows 重试）
 	r = env.lastLogFor("e2e-mult-model")
 	require.Equal(t, int64(0), r.Cost, "组倍率 0 = 免费")
 	require.Equal(t, int64(0), env.balance(u5), "余额 0 免费用户不扣费不 402")
@@ -765,10 +817,9 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	require.Equal(t, 200, c, "新用户立即请求必须 200（余额快照未收敛 → 402）: %s", rbNew)
 	require.Less(t, time.Since(t0), 500*time.Millisecond,
 		"userKey 后 <0.5s（去抖窗口 200ms + 一次重载 + 请求余量；若 invalidate 未按矩阵去抖合并会超时或 402）")
-	sleepFlush()
+	pollBalance(t, env, uNew, 1000000-500)
 	r = env.lastLogFor("e2e-model")
 	require.Equal(t, int64(500), r.Cost, "新用户计费正常（快照内余额扣减）")
-	require.Equal(t, int64(1000000-500), env.balance(uNew), "新用户余额扣减")
 
 	// ============ 场景 8.5：上游 4xx 错误文本落盘（部署故障修复） ============
 	// 独立模板/账号/组：上游 key = fail400-key → fakeupstream 注入 400（透传，
@@ -794,12 +845,17 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	})
 	require.Equal(t, 400, c, "4xx 透传: %s", rb400)
 	require.Contains(t, rb400, "injected 400", "4xx 必须透传上游原始 body")
-	sleepFlush() // errlog worker 周期落盘（err_logs 独立管道，500ms 批间隔）
+	// errlog worker 独立管道落盘：轮询 4xx 行出现（替代固定 sleep）
 	var errMsg string
-	err = env.pg.QueryRow(context.Background(), `
-		SELECT COALESCE(error_message,'') FROM err_logs
-		WHERE model='e2e-model' ORDER BY id DESC LIMIT 1`).Scan(&errMsg)
-	require.NoError(t, err)
+	pollUntil(t, "err_logs 4xx 行落盘", func() (bool, string) {
+		err := env.pg.QueryRow(context.Background(), `
+			SELECT COALESCE(error_message,'') FROM err_logs
+			WHERE model='e2e-model' ORDER BY id DESC LIMIT 1`).Scan(&errMsg)
+		if err != nil {
+			return false, err.Error()
+		}
+		return true, "error_message=" + errMsg
+	})
 	require.Contains(t, errMsg, "injected 400", "4xx 错误文本必须落盘 err_logs.error_message")
 	require.LessOrEqual(t, len(errMsg), 500, "error_message 域内截断 500")
 	// 分表验证：4xx 失败行不入 usage_logs（仅成功/abort 放行路径行）
@@ -835,8 +891,9 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	case <-time.After(5 * time.Second):
 		t.Fatal("流式请求 goroutine 未退出")
 	}
-	sleepFlush()
-	// 流式中断日志：cost 完整（不丢计费）+ 余额扣减（排空落库）
+	// 流式中断日志：cost 完整（不丢计费）+ 余额扣减（排空落库）。停机后排空是
+	// 一次性终态：轮询至余额收敛——数据缺失时 10s 超时带最后观测值失败，而非盲等。
+	pollBalance(t, env, u1, balBefore-50)
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, int64(50), r.Cost, "优雅停机后流式中断日志 cost 不丢")
 	require.Equal(t, "auto", r.Tier)

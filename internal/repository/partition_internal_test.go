@@ -60,6 +60,8 @@ func TestUsageLogColumnDefsMatchCreateDDL(t *testing.T) {
 	require.Contains(t, source, "price_per_call_millis", "锚必须覆盖 price_per_call_millis 新列")
 	// raw_cost（spec 2026-08-18）：倍率前原始成本列锚（建表 DDL 事实源）。
 	require.Contains(t, source, "raw_cost", "锚必须覆盖 raw_cost 新列")
+	// billed（F2 ledger-cursor，spec 2026-08-23）：扣费收敛标记列锚。
+	require.Contains(t, source, "billed", "锚必须覆盖 billed 新列")
 	for _, old := range []string{"image_input_tokens", "image_output_tokens", "image_count",
 		"price_image_input_millis", "price_image_output_millis", "price_per_image_millis"} {
 		require.NotContains(t, source, old, "删 6 列：%s 不得残留", old)
@@ -68,11 +70,12 @@ func TestUsageLogColumnDefsMatchCreateDDL(t *testing.T) {
 
 // TestUsageLogCopyColumnsMatchColumnDefs COPY 列集合锚（spec 2026-08-18 gate
 // 修订）：COPY 列清单（usageLogCopyColumns——COPY 事实源）与建表 DDL 数据列
-// 集合一致（除 id 自增列——COPY 不写 id，序列默认生成）；列数 29→30 锚定。
-// raw_cost 紧随 cost（两事实源列序同向防漂移）。
+// 集合一致（除 id 自增列——COPY 不写 id，序列默认生成）；列数 30→31 锚定。
+// raw_cost 紧随 cost、billed 紧随 overdraft（两事实源列序同向防漂移；
+// billed 为 F2 ledger-cursor spec 2026-08-23 追加）。
 func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
 	source := ddlColumnNames(strings.Join(usageLogColumnDefs, "\n"))
-	require.Len(t, usageLogCopyColumns, 30, "COPY 列数 29→30")
+	require.Len(t, usageLogCopyColumns, 31, "COPY 列数 30→31")
 	want := make([]string, 0, len(source)-1)
 	for _, s := range source {
 		if s != "id" { // id 为自增列（COPY 不写，序列默认生成）
@@ -86,10 +89,26 @@ func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
 	for i, c := range usageLogCopyColumns {
 		if c == usagelog.FieldCost {
 			require.Equal(t, usagelog.FieldRawCost, usageLogCopyColumns[i+1], "raw_cost 紧随 cost")
-			return
+		}
+		if c == usagelog.FieldOverdraft {
+			require.Equal(t, usagelog.FieldBilled, usageLogCopyColumns[i+1], "billed 紧随 overdraft")
 		}
 	}
-	t.Fatal("COPY 列清单缺少 cost 列")
+}
+
+// TestUsageLogUnbilledPartialIndex 计费游标部分索引锚（F2 ledger-cursor，
+// spec 2026-08-23 §一 + F2-opt D5）：usagelog_unbilled_id = (id) WHERE NOT
+// billed 即计费游标本体——标记后自动退出索引，重启天然续传；
+// usagelog_unbilled_created = (created_at) WHERE NOT billed 供 lag 度量
+// MIN 索引定位；谓词列序/索引名漂移即红。
+func TestUsageLogUnbilledPartialIndex(t *testing.T) {
+	require.Len(t, usageLogIndexDDLs, 8, "6 个 ent 对齐索引 + 2 个计费游标部分索引")
+	idx := usageLogIndexDDLs[len(usageLogIndexDDLs)-1]
+	require.Contains(t, idx, "CREATE INDEX usagelog_unbilled_id ON usage_logs (id)", "游标索引名与键列")
+	require.Contains(t, idx, "WHERE NOT billed", "部分索引谓词 = 未扣子集")
+	lag := usageLogIndexDDLs[len(usageLogIndexDDLs)-2]
+	require.Contains(t, lag, "CREATE INDEX usagelog_unbilled_created ON usage_logs (created_at)", "lag 度量索引名与键列")
+	require.Contains(t, lag, "WHERE NOT billed", "lag 度量索引同谓词未扣子集")
 }
 
 // TestErrLogColumnDefsMatchCreateDDL err_logs 列事实源锚（架构审查 S2——

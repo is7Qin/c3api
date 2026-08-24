@@ -6,9 +6,9 @@ package repository_test
 
 // client_ip（S-E 2026-08-17）真实 PG roundtrip：两表（usage_logs + err_logs）
 // bootstrap 建表含 client_ip 列（text，紧随 request_id）；NULL + 有值两态
-// 插/查（QueryUsages/QueryErrLogs 回填映射红绿——gate M3）；billing COPY
-// 路径（DeductAndLog）落库行带 client_ip（全列对比见 TestPGDeductCopyPathEquivalent
-// 的 fullLogFor.ClientIP，本文件 SQL 层直查断言）。
+// 插/查（QueryUsages/QueryErrLogs 回填映射红绿——gate M3）；F2 后计费游标消费
+// 不触碰 client_ip（写面唯一归 usage flusher InsertBatch，全列对比见
+// TestPGDeductOnlyCarrierEquivalent 的 fullLogFor.ClientIP，本文件 SQL 层直查断言）。
 //
 // 基座约定同 pg_partition_test.go：newPGRepos 每测试 DROP SCHEMA 重建 +
 // migrate（钩子跳过分区表）+ 分区 bootstrap（两表 DDL 含新列）。
@@ -99,24 +99,29 @@ func TestErrLogClientIPRoundtripPG(t *testing.T) {
 	require.Empty(t, got["cip-e-2"].ClientIP, "未设置 → NULL → 回填空")
 }
 
-// TestBillingDeductAndLogCarriesClientIPPG billing DeductAndLog（COPY 路径——
-// newPGRepos 带 pool）落库行带 client_ip（SQL 层直查；全列双路径等价对比见
-// TestPGDeductCopyPathEquivalent）。
-func TestBillingDeductAndLogCarriesClientIPPG(t *testing.T) {
+// TestBillingCursorPreservesClientIPPG F2 游标消费不触碰 client_ip：usage
+// flusher 单写落库行带 client_ip（fullLogFor），DeductOnlyAndMark 只翻 billed/
+// overdraft 两列（SQL 层直查；全列双载体等价对比见 TestPGDeductOnlyCarrierEquivalent）。
+func TestBillingCursorPreservesClientIPPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	pool := pgTestPool(t)
 
 	u := seedPGUser(t, repos, "cip-bill@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
-	l := fullLogFor(u.ID, "cip-bill-1") // fullLogFor 带 ClientIP = "9.9.9.9"
-	od, bal, err := repos.DeductAndLog(ctx, u.ID, 100_000, []*domain.UsageLog{l})
+	seedUnbilled(t, repos, fullLogFor(u.ID, "cip-bill-1")) // fullLogFor 带 ClientIP = "9.9.9.9"
+	rows := fetchAllUnbilled(t, repos)
+	require.Len(t, rows, 1)
+
+	bal, od, _, err := repos.DeductOnlyAndMark(ctx, u.ID, 100_000, ledgerRowIDs(rows))
 	require.NoError(t, err)
 	require.False(t, od)
 	require.Equal(t, int64(900_000), bal)
 
 	var raw string
-	err = pool.QueryRow(ctx, `SELECT client_ip FROM usage_logs WHERE request_id = 'cip-bill-1'`).Scan(&raw)
+	var billed bool
+	err = pool.QueryRow(ctx, `SELECT client_ip, billed FROM usage_logs WHERE request_id = 'cip-bill-1'`).Scan(&raw, &billed)
 	require.NoError(t, err)
-	require.Equal(t, "9.9.9.9", raw, "DeductAndLog（COPY 路径）落库行必须带 client_ip")
+	require.Equal(t, "9.9.9.9", raw, "游标消费不触碰 client_ip（写面唯一归 usage flusher）")
+	require.True(t, billed, "扣费事务内 billed 翻转")
 }

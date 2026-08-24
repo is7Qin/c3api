@@ -139,6 +139,10 @@ var usageLogColumnDefs = []string{
 	`billing_tier varchar NULL`,
 	`above_hit boolean NOT NULL DEFAULT false`,
 	`overdraft boolean NOT NULL DEFAULT false`,
+	// billed（F2 ledger-cursor，spec 2026-08-23 §一/§三）：扣费收敛标记——
+	// false=待对账消费（出生未扣，计费游标子集）；true=已结算（billing worker
+	// 扣费事务内原子标记，或关闭计费/匿名行的出生吸收态）。
+	`billed boolean NOT NULL DEFAULT false`,
 	`created_at timestamptz NOT NULL`,
 }
 
@@ -157,6 +161,16 @@ var usageLogIndexDDLs = []string{
 	`CREATE INDEX usagelog_user_id_created_at ON usage_logs (user_id, created_at)`,
 	`CREATE INDEX usagelog_key_id_created_at ON usage_logs (key_id, created_at)`,
 	`CREATE UNIQUE INDEX usagelog_request_id_created_at ON usage_logs (request_id, created_at)`,
+	// F2 ledger-cursor 计费游标（spec 2026-08-23 §一）：部分索引 (id) WHERE NOT
+	// billed 即计费游标本体——取批只扫未扣子集，行标记 billed=true 后自动退出
+	// 索引（重启天然续传，无 watermark 表）；分区表父表索引为分区索引，子分区
+	// 自动继承。ent 无部分索引表达力，仅存于本事实源。
+	// F2-opt D5（spec-f2-cursor-throughput）：lag 度量 MIN(created_at) 变索引
+	// 定位（同谓词未扣子集）；COUNT 继续走 usagelog_unbilled_id index-only，
+	// 1s 节流下可接受。不建 (id) WHERE NOT billed AND cost=0——D1 已消灭该查
+	// 询类，索引是写放大负债。
+	`CREATE INDEX usagelog_unbilled_created ON usage_logs (created_at) WHERE NOT billed`,
+	`CREATE INDEX usagelog_unbilled_id ON usage_logs (id) WHERE NOT billed`,
 }
 
 // errLogColumnDefs err_logs 分区表列定义（单一事实源，与 ent schema 完全一致，

@@ -18313,6 +18313,7 @@ type UsageLogMutation struct {
 	billing_tier                   *string
 	above_hit                      *bool
 	overdraft                      *bool
+	billed                         *bool
 	created_at                     *time.Time
 	clearedFields                  map[string]struct{}
 	done                           bool
@@ -20061,6 +20062,42 @@ func (m *UsageLogMutation) ResetOverdraft() {
 	m.overdraft = nil
 }
 
+// SetBilled sets the "billed" field.
+func (m *UsageLogMutation) SetBilled(b bool) {
+	m.billed = &b
+}
+
+// Billed returns the value of the "billed" field in the mutation.
+func (m *UsageLogMutation) Billed() (r bool, exists bool) {
+	v := m.billed
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBilled returns the old "billed" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldBilled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBilled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBilled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBilled: %w", err)
+	}
+	return oldValue.Billed, nil
+}
+
+// ResetBilled resets all changes to the "billed" field.
+func (m *UsageLogMutation) ResetBilled() {
+	m.billed = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *UsageLogMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -20131,7 +20168,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 30)
+	fields := make([]string, 0, 31)
 	if m.request_id != nil {
 		fields = append(fields, usagelog.FieldRequestID)
 	}
@@ -20219,6 +20256,9 @@ func (m *UsageLogMutation) Fields() []string {
 	if m.overdraft != nil {
 		fields = append(fields, usagelog.FieldOverdraft)
 	}
+	if m.billed != nil {
+		fields = append(fields, usagelog.FieldBilled)
+	}
 	if m.created_at != nil {
 		fields = append(fields, usagelog.FieldCreatedAt)
 	}
@@ -20288,6 +20328,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.AboveHit()
 	case usagelog.FieldOverdraft:
 		return m.Overdraft()
+	case usagelog.FieldBilled:
+		return m.Billed()
 	case usagelog.FieldCreatedAt:
 		return m.CreatedAt()
 	}
@@ -20357,6 +20399,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldAboveHit(ctx)
 	case usagelog.FieldOverdraft:
 		return m.OldOverdraft(ctx)
+	case usagelog.FieldBilled:
+		return m.OldBilled(ctx)
 	case usagelog.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	}
@@ -20570,6 +20614,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetOverdraft(v)
+		return nil
+	case usagelog.FieldBilled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBilled(v)
 		return nil
 	case usagelog.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -21043,6 +21094,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldOverdraft:
 		m.ResetOverdraft()
+		return nil
+	case usagelog.FieldBilled:
+		m.ResetBilled()
 		return nil
 	case usagelog.FieldCreatedAt:
 		m.ResetCreatedAt()

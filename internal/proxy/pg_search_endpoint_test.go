@@ -101,17 +101,15 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 
-	// 计费钩子：价格快照 + 按单元价快照 + 余额快照 + flusher（DeductAndLog → PG）
+	// 计费钩子：价格快照 + 按单元价快照 + 余额快照；单写点：billable 行经
+	// rec → repos.Usages 直落 usage_logs（F2：无 flusher 分流）。
 	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
 	require.NoError(t, bal.Reload(ctx), "余额快照加载")
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
-	}, noopLogStore{}, nil)
-	f := billing.NewFlusher(billing.FlushConfig{
-		FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour,
-	}, repos.Billing, rec, bal, nil)
-	t.Cleanup(func() { _ = f.Close(context.Background()) })
+	}, repos.Usages, nil)
+	t.Cleanup(func() { _ = rec.Close(context.Background()) })
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{
 		UpstreamTimeout:       5 * time.Second,
@@ -125,7 +123,6 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
 		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{}},
 		Balances: bal,
-		Flusher:  f,
 	}, nil)
 	p.SetCodex(sdkbridge.NewCodex(nil))
 	srv := httptest.NewServer(AIRouter(p))
@@ -142,10 +139,10 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	require.Equal(t, "Bearer pat-pg-s", upc.auth(0), "PAT 凭据落库 → 派生直供适配层")
 	require.Equal(t, searchReqBody, string(upc.body(0)), "请求体原样送达上游")
 
-	// flusher 排空（单事务 DeductAndLog 落库）后断言 usage_logs 行——search
+	// rec 排空（InsertBatch 落库）后断言 usage_logs 行——search
 	// 按次计费（format=openai-search + call_count=1 + price_per_call_millis
 	// 1000 默认兜底 + cost=1000）
-	require.NoError(t, f.Close(context.Background()))
+	require.NoError(t, rec.Close(ctx))
 	var (
 		callCount, pricePerCall, cost int64
 		format, et, model             string

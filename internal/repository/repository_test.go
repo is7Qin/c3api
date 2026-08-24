@@ -549,13 +549,19 @@ func TestLogsAndStats(t *testing.T) {
 	// （字母序在 price_output_millis 与 request_id 之间）。
 	// status_code 已从 usage_logs 移除（分表设计瘦身，错误审计列归 err_logs）
 	// ——InsertBatch 不再携带该列）
+	// 参数面钉死（45 参 = r1 段 25 + r2 段 20）：ent CreateBulk 按字段名字母序
+	// 装配各元组占位符；billed（F2 ledger-cursor）字母序落在 account_id 之后、
+	// cache_creation_tokens 之前——注意与 COPY/DDL 列序（overdraft 之后）不同，
+	// 两套列序勿混。两行可选字段集合不同（r1 富：ttft/价格四族/raw_cost；
+	// r2 疏：仅 raw_cost=0 恒落），逐段核对；billing_tier/mapped_model/
+	// price_per_call_millis 未设置不落列。
 	tr.pool.ExpectQuery(q(`INSERT INTO "usage_logs"`)).
-		WithArgs(false, int64(2), int64(2), int64(4), int64(0), int64(0), pgxmock.AnyArg(), "none",
+		WithArgs(false, int64(2), false, int64(2), int64(4), int64(0), int64(0), pgxmock.AnyArg(), "none",
 			usagelog.Format("openai-chat"), int64(1), int64(0),
 			int64(10), "m", int64(0), false,
 			int64(5678), int64(1234), int64(1e7), int64(2e7), int64(7700), "r1",
 			int64(3), int64(100), int64(88),
-			false, int64(2), int64(3), int64(5), int64(0), int64(0), pgxmock.AnyArg(), "5xx",
+			false, int64(2), false, int64(3), int64(5), int64(0), int64(0), pgxmock.AnyArg(), "5xx",
 			usagelog.Format("openai-chat"), int64(1), int64(0),
 			int64(20), "m", int64(0), false,
 			int64(0), "r2", int64(3), int64(0)).

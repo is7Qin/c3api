@@ -1574,7 +1574,7 @@ paths:
         （SQL 侧 GROUP BY date_trunc('day', bucket_time)，days 上限 30）；
         accounts = 账号健康分布 + 并发水位（调度器快照同源）；err_top = 账号
         维度 err_rate Top5（调度器 EWMA，name = 账号名）；alerts = billing
-        flusher 水线状态（注入面读取）。
+        游标积压观测（lag 族，注入面读取）。
       parameters:
         - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 30, default: 7, description: 趋势天数（含今日；缺省 7，上限 30） } }
         - { name: group_id, in: query, schema: { type: integer, format: int64, description: 按组过滤聚合（summary/trend；缺省全局） } }
@@ -2921,8 +2921,12 @@ components:
         #   rule-engine: queued int（事件队列积压）, queue_cap int（容量/丢弃阈值）,
         #     dropped int64（队列满丢弃累计）, drop_warn_threshold int64（丢弃告警阈值）
         #   usage: pending_logs int64（未落库明细条数）, pending_waterline int64
-        #     （水线）, warned bool（水线告警边沿）——spec 2026-08-14：统计桶机制
-        #     整体删除，stat_buckets_created 随之消失
+        #     （水线）, warned bool（水线告警边沿）
+        #   billing（游标消费者，F2 ledger-cursor）: lag_ms int64（游标积压时滞
+        #     毫秒 = 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/
+        #     未探测）, unbilled_rows int64（当前未扣费账本行数）, quarantined_rows
+        #     int64（累计隔离行数——用户缺失组 + 毒行终极隔离）, last_cycle_unix_ms
+        #     int64（最近成功消费周期时刻）
         #   stats-agg（离线聚合 worker，spec 2026-08-14）: watermark_unix_ms int64
         #     （watermark 位置毫秒；0 = 尚未推进）, last_buckets int64（上轮写入
         #     桶数）, last_rows int64（上轮消费明细行数）, last_duration_ms int64
@@ -3033,12 +3037,12 @@ components:
         err_count: { type: integer }
     OverviewAlerts:
       type: object
-      required: [billing_pending, billing_pending_waterline, billing_warned]
-      description: 告警面（billing flusher 水线状态；注入面读取，未装配 = 全零）
+      required: [billing_lag_ms, billing_unbilled_rows, billing_quarantined_rows]
+      description: 告警面（billing 游标消费者 lag 族观测，F2 ledger-cursor；注入面读取，未装配 = 全零）
       properties:
-        billing_pending: { type: integer, format: int64, description: 尚未落库的计费日志条数 }
-        billing_pending_waterline: { type: integer, format: int64, description: 水线（包级常量直读） }
-        billing_warned: { type: boolean, description: 水线告警边沿是否置位 }
+        billing_lag_ms: { type: integer, format: int64, description: 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/未探测 }
+        billing_unbilled_rows: { type: integer, format: int64, description: 当前未扣费账本行数（部分索引 WHERE NOT billed） }
+        billing_quarantined_rows: { type: integer, format: int64, description: 累计隔离行数（用户缺失组 + 毒行终极隔离——未扣费写销） }
     OverviewResponse:
       type: object
       required: [summary, trend, accounts, resources, err_top, alerts]

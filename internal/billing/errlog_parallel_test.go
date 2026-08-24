@@ -4,11 +4,10 @@
 
 package billing
 
-// 分表设计并行隔离（用户裁决 2026-08-11）：计费 Flusher（billed 明细 →
-// DeductAndLog）与 errlog worker（错误审计明细 → err_logs）在代理内并行运行，
-// 两路无共享可变状态（Flusher pending map vs ErrLogWorker 队列）；同一
-// Recorder 实例共享（billed 统计聚合面——每日志恰好一个统计写者）。并发喂入
-// 两路 → 各自 Close 排空计数精确，互不串路、互不阻塞。
+// 分表设计并行隔离（用户裁决 2026-08-11）：计费游标消费者（F2 后无内存队列——
+// 消费 DB 游标扣费）与 errlog worker（错误审计明细 → err_logs）在代理内并行
+// 运行，两路无共享可变状态（Flusher 游标周期 vs ErrLogWorker 队列）。并发喂入
+// 两路 → 各自排空计数精确，互不串路、互不阻塞。
 
 import (
 	"context"
@@ -43,37 +42,26 @@ func (c *captureErrInserter) count() int {
 	return len(c.ids)
 }
 
-// TestFlusherErrlogWorkerParallelIsolated 并行隔离：同一 Recorder 上挂
-// Flusher（billed）+ 并行 errlog worker（错误审计），多 goroutine 并发喂两路
-// → 各自 Close 排空完整（flusher writer 调用 = billed 行数；errlog 捕获 =
-// 拒绝行数），互不串路。
+// TestFlusherErrlogWorkerParallelIsolated 并行隔离：游标消费者 Close 排空
+// （DB 游标真值）与 errlog worker 并发喂入/排空同时进行 → 各自完整收敛
+// （flusher 全部行 billed 翻转；errlog 捕获 = 拒绝行数），互不串路。
 func TestFlusherErrlogWorkerParallelIsolated(t *testing.T) {
-	writer := &fakeDeductWriter{}
-	rec := usage.New(usage.UsageConfig{
-		BatchSize: 100, FlushInterval: time.Hour,
-		QuotaFlushInterval: time.Hour,
-	}, noopLogInserter{}, nil)
-	bal := NewBalances(fakeBalLoader{m: map[int64]int64{1: 1e9}}, nil)
-	f := NewFlusher(FlushConfig{
-		FlushInterval:          time.Hour,
-		BalanceRefreshInterval: time.Hour,
-	}, writer, rec, bal, nil)
+	store := newFakeLedgerStore()
+	const billed, rejected = 2000, 2000
+	for i := 1; i <= billed; i++ {
+		store.seedRow(int64(i), int64(i%4+1), 100, time.Now())
+		store.setBalance(int64(i%4+1), 1_000_000)
+	}
+	f := newFlusherWith(store, 4, map[int64]int64{1: 1e9, 2: 1e9, 3: 1e9, 4: 1e9})
 
 	errs := &captureErrInserter{}
 	ew := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errs, nil)
 
-	const billed, rejected = 2000, 2000
 	var wg sync.WaitGroup
 	for g := 0; g < 4; g++ {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
-			for i := 0; i < billed/4; i++ {
-				f.Record(&domain.UsageLog{
-					RequestID: "billed", UserID: 1, Model: "m",
-					ErrorType: domain.ErrNone, Cost: 100,
-				})
-			}
 			for i := 0; i < rejected/4; i++ {
 				ew.EnqueueRejected(&domain.UsageLog{
 					RequestID: "rej", Model: "m",
@@ -82,20 +70,24 @@ func TestFlusherErrlogWorkerParallelIsolated(t *testing.T) {
 			}
 		}(g)
 	}
-	wg.Wait()
 
-	require.NoError(t, f.Close(context.Background()))
+	closeDone := make(chan struct{})
+	go func() { defer close(closeDone); _ = f.Close(context.Background()) }() // 排空至游标清空
+
+	wg.Wait()
+	select {
+	case <-closeDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close 未在预算内排空游标")
+	}
 	require.NoError(t, ew.Close(context.Background()))
 
-	writer.mu.Lock()
-	calls := len(writer.calls)
-	var rows int
-	for _, c := range writer.calls {
-		rows += len(c.logs)
+	require.Equal(t, 0, store.unbilledCount(), "计费游标独立排空全部 billed 行（billed 翻转）")
+	var consumed int64
+	for _, c := range store.deductSnapshot() {
+		consumed += int64(len(c.ids))
 	}
-	writer.mu.Unlock()
-	require.Equal(t, billed, rows, "计费 flusher 独立排空全部 billed 明细")
-	require.Equal(t, 1, calls, "同用户聚合一笔事务（flusher 语义不受 errlog 并行影响）")
+	require.Equal(t, int64(billed), consumed, "扣费事务逐组推进合计（消费不受 errlog 并行影响）")
 	require.Equal(t, rejected, errs.count(), "errlog worker 独立排空全部拒绝行（与 flusher 互不串路）")
 	require.Zero(t, ew.Queued(), "errlog 队列排空")
 }
