@@ -1739,6 +1739,7 @@ type GetPricesParams struct {
 	PageSize *int                   `form:"page_size,omitempty" json:"page_size,omitempty"`
 	Mode     *GetPricesParamsMode   `form:"mode,omitempty" json:"mode,omitempty"`
 	Source   *GetPricesParamsSource `form:"source,omitempty" json:"source,omitempty"`
+	Provider *string                `form:"provider,omitempty" json:"provider,omitempty"`
 	Model    *string                `form:"model,omitempty" json:"model,omitempty"`
 	Sort     *string                `form:"sort,omitempty" json:"sort,omitempty"`
 	Order    *GetPricesParamsOrder  `form:"order,omitempty" json:"order,omitempty"`
@@ -3577,6 +3578,14 @@ func (siw *ServerInterfaceWrapper) GetPrices(w http.ResponseWriter, r *http.Requ
 	err = runtime.BindQueryParameter("form", true, false, "source", r.URL.Query(), &params.Source)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "provider" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "provider", r.URL.Query(), &params.Provider)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "provider", Err: err})
 		return
 	}
 

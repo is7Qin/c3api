@@ -648,8 +648,8 @@ func (r *Repository) DeletePriceEntryManual(ctx context.Context, model string) e
 func (r *Repository) DeletePriceVariantsByModel(ctx context.Context, model string) error {
 	return r.PriceVariants.DeleteByModel(ctx, model)
 }
-func (r *Repository) ListPriceEntries(ctx context.Context, q ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error) {
-	return r.PriceEntries.ListPriceEntries(ctx, q, source, mode, model)
+func (r *Repository) ListPriceEntries(ctx context.Context, q ListQuery, source *domain.PricingSource, mode *domain.PriceMode, provider *string, model string) ([]*domain.PriceEntry, int64, error) {
+	return r.PriceEntries.ListPriceEntries(ctx, q, source, mode, provider, model)
 }
 func (r *Repository) ManualEntryModels(ctx context.Context) ([]string, error) {
 	return r.PriceEntries.ManualEntryModels(ctx)

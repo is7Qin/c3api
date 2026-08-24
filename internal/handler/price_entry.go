@@ -29,7 +29,14 @@ func (h *AdminAPI) GetPrices(w http.ResponseWriter, r *http.Request, params GetP
 		m := domain.PriceMode(*params.Mode)
 		mode = &m
 	}
-	rows, total, err := h.svc.ListPriceEntries(r.Context(), q, src, mode, deref(params.Model))
+	var prov *string
+	if params.Provider != nil {
+		v := deref(params.Provider)
+		if v != "" {
+			prov = &v
+		}
+	}
+	rows, total, err := h.svc.ListPriceEntries(r.Context(), q, src, mode, prov, deref(params.Model))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return

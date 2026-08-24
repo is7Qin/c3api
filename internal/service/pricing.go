@@ -64,7 +64,7 @@ func (s *Service) reloadPricing(ctx context.Context) {
 func (s *Service) loadPricingSnapshot(ctx context.Context) (*priceSnapshot, error) {
 	var all []*domain.PriceEntry
 	for offset := 0; ; offset += pricingReloadPage {
-		rows, _, err := s.store.ListPriceEntries(ctx, repository.ListQuery{Limit: pricingReloadPage, Offset: offset, Sort: "model", Order: "asc"}, nil, nil, "")
+		rows, _, err := s.store.ListPriceEntries(ctx, repository.ListQuery{Limit: pricingReloadPage, Offset: offset, Sort: "model", Order: "asc"}, nil, nil, nil, "")
 		if err != nil {
 			if s.log != nil {
 				s.log.Warn("pricing snapshot reload failed", logx.Error(err))
@@ -182,7 +182,7 @@ func (s *Service) GetPriceEntry(ctx context.Context, model string) (*domain.Pric
 	return pe, nil
 }
 
-func (s *Service) ListPriceEntries(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error) {
+func (s *Service) ListPriceEntries(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, provider *string, model string) ([]*domain.PriceEntry, int64, error) {
 	if source != nil && !source.Valid() {
 		return nil, 0, fmt.Errorf("%w: invalid source %q", ErrInvalidInput, *source)
 	}
@@ -192,7 +192,7 @@ func (s *Service) ListPriceEntries(ctx context.Context, q repository.ListQuery, 
 	if err := validateListQuery(q, listSortFields["price_entries"]); err != nil {
 		return nil, 0, err
 	}
-	return s.store.ListPriceEntries(ctx, q, source, mode, model)
+	return s.store.ListPriceEntries(ctx, q, source, mode, provider, model)
 }
 
 func (s *Service) ListPriceVariants(ctx context.Context, model string) ([]*domain.PriceVariant, error) {

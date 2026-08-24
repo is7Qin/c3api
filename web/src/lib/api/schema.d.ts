@@ -4105,6 +4105,7 @@ export interface operations {
                 page_size?: number;
                 mode?: "token" | "call" | "image";
                 source?: "litellm" | "manual";
+                provider?: string;
                 model?: string;
                 sort?: string;
                 order?: "asc" | "desc";
