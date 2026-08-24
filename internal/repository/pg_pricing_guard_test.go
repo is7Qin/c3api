@@ -72,3 +72,60 @@ func TestVariantGuard_ManualEntrySurvives_PG(t *testing.T) {
 	_, err = repos.PriceVariants.ReplaceBatch(ctx, model, []*domain.PriceVariant{{Model: model, Seq: 99, MultBP: &adminMult}})
 	require.NoError(t, err)
 }
+
+// TestDeletePriceEntryCascadeManual_PG verifies D-C1: manual entry+variant →
+// WithTx{DeletePriceVariantsByModel; DeletePriceEntryManual} → both tables empty.
+// 冒烟发现 2026-08-24：删条目不清变体致孤儿挂新条目。
+func TestDeletePriceEntryCascadeManual_PG(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	model := "pg-cascade-manual-model"
+	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000)})
+	require.NoError(t, err)
+	mult := 5000
+	_, err = repos.PriceVariants.ReplaceBatch(ctx, model, []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: &mult}, {Model: model, Seq: 2, MultBP: &mult}})
+	require.NoError(t, err)
+	err = repos.WithTx(ctx, func(tx repository.TxStore) error {
+		if err := tx.DeletePriceVariantsByModel(ctx, model); err != nil {
+			return err
+		}
+		return tx.DeletePriceEntryManual(ctx, model)
+	})
+	require.NoError(t, err)
+	_, err = repos.PriceEntries.GetPriceEntry(ctx, model)
+	require.ErrorIs(t, err, repository.ErrNotFound)
+	vars, err := repos.PriceVariants.ListByModel(ctx, model)
+	require.NoError(t, err)
+	require.Empty(t, vars, "variants must be cascade-deleted with manual entry")
+}
+
+// TestDeletePriceEntryCascadeLitellmConflict_PG verifies D-C1 guard: litellm
+// entry+variant → same cascade → ErrConflict AND variants intact (whole tx rolled back).
+func TestDeletePriceEntryCascadeLitellmConflict_PG(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	model := "pg-cascade-litellm-model"
+	_, err := repos.PriceEntries.UpsertFromLiteLLM(ctx, []*domain.PriceEntry{{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceLitellm}})
+	require.NoError(t, err)
+	mult := 7000
+	_, err = repos.PriceVariants.ReplaceBatch(ctx, model, []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: &mult}})
+	require.NoError(t, err)
+	err = repos.WithTx(ctx, func(tx repository.TxStore) error {
+		if err := tx.DeletePriceVariantsByModel(ctx, model); err != nil {
+			return err
+		}
+		return tx.DeletePriceEntryManual(ctx, model)
+	})
+	require.ErrorIs(t, err, repository.ErrConflict)
+	// entry still exists
+	pe, err := repos.PriceEntries.GetPriceEntry(ctx, model)
+	require.NoError(t, err)
+	require.Equal(t, model, pe.Model)
+	require.Equal(t, domain.PricingSourceLitellm, pe.Source)
+	// variants intact due to rollback
+	vars, err := repos.PriceVariants.ListByModel(ctx, model)
+	require.NoError(t, err)
+	require.Len(t, vars, 1)
+	require.Equal(t, 1, vars[0].Seq)
+	require.Equal(t, 7000, *vars[0].MultBP)
+}

@@ -121,6 +121,13 @@ func (r *PriceVariantRepo) ReplaceBatch(ctx context.Context, model string, varia
 	return r.ListByModel(ctx, model)
 }
 
+// DeleteByModel 删除该模型全部变体（纯原语，无源守卫；调用方负责事务与
+// manual 守卫 — 冒烟发现 2026-08-24：删条目不清变体致孤儿挂新条目）。
+func (r *PriceVariantRepo) DeleteByModel(ctx context.Context, model string) error {
+	_, err := r.client.PriceVariant.Delete().Where(pricevariant.ModelEQ(model)).Exec(ctx)
+	return err
+}
+
 func toDomainVariant(v *ent.PriceVariant) *domain.PriceVariant {
 	return &domain.PriceVariant{
 		ID:            v.ID,

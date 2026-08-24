@@ -1504,10 +1504,12 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		assign:     cloneAssignMap(f.assign),
 		assignMult: maps.Clone(f.assignMult),
 		// 账号/扩展/归组面（Task B codex 导入 imported 行单行事务）
-		accs:      cloneAccMap(f.accs),
-		accExts:   cloneAccExtMap(f.accExts),
-		accGroups: cloneAccGroupsMap(f.accGroups),
-		groups:    cloneGroupMap(f.groups),
+		accs:          cloneAccMap(f.accs),
+		accExts:       cloneAccExtMap(f.accExts),
+		accGroups:     cloneAccGroupsMap(f.accGroups),
+		groups:        cloneGroupMap(f.groups),
+		priceEntries:  clonePriceEntryMap(f.priceEntries),
+		priceVariants: clonePriceVariantMap(f.priceVariants),
 	}
 	if err := fn(tx); err != nil {
 		return err // 回滚：暂存丢弃
@@ -1515,11 +1517,29 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 	f.codes, f.uses, f.users, f.temps, f.nextID = tx.codes, tx.uses, tx.users, tx.temps, tx.nextID
 	f.assign, f.assignMult = tx.assign, tx.assignMult
 	f.accs, f.accExts, f.accGroups = tx.accs, tx.accExts, tx.accGroups
+	f.priceEntries, f.priceVariants = tx.priceEntries, tx.priceVariants
 	return nil
 }
 
 func cloneAssignMap(m map[int64][]int64) map[int64][]int64 {
 	out := make(map[int64][]int64, len(m))
+	for k, v := range m {
+		out[k] = slices.Clone(v)
+	}
+	return out
+}
+
+func clonePriceEntryMap(m map[string]*domain.PriceEntry) map[string]*domain.PriceEntry {
+	out := make(map[string]*domain.PriceEntry, len(m))
+	for k, v := range m {
+		c := *v
+		out[k] = &c
+	}
+	return out
+}
+
+func clonePriceVariantMap(m map[string][]*domain.PriceVariant) map[string][]*domain.PriceVariant {
+	out := make(map[string][]*domain.PriceVariant, len(m))
 	for k, v := range m {
 		out[k] = slices.Clone(v)
 	}
@@ -1549,6 +1569,10 @@ type fakeTx struct {
 	accExts   map[int64]*domain.AccountExt
 	accGroups map[int64][]int64
 	groups    map[int64]*domain.Group
+	// 价格条目/变体（D-C4：级联删除事务面；语义镜像真实 repo + fakeStore
+	// DeletePriceEntryManual 已有级联行为）。
+	priceEntries  map[string]*domain.PriceEntry
+	priceVariants map[string][]*domain.PriceVariant
 }
 
 var _ repository.TxStore = (*fakeTx)(nil)
@@ -1656,6 +1680,23 @@ func (t *fakeTx) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codex
 		}
 	}
 	return nil, fmt.Errorf("%w: codex_email=%q codex_account_id=%q missing", repository.ErrNotFound, codexEmail, codexAccountID)
+}
+
+func (t *fakeTx) DeletePriceVariantsByModel(_ context.Context, model string) error {
+	delete(t.priceVariants, model)
+	return nil
+}
+
+func (t *fakeTx) DeletePriceEntryManual(_ context.Context, model string) error {
+	if _, ok := t.priceEntries[model]; !ok {
+		return fmt.Errorf("%w: model=%q", repository.ErrNotFound, model)
+	}
+	if t.priceEntries[model].Source != domain.PricingSourceManual {
+		return fmt.Errorf("%w: model=%q source=litellm", repository.ErrConflict, model)
+	}
+	delete(t.priceEntries, model)
+	delete(t.priceVariants, model)
+	return nil
 }
 
 func (t *fakeTx) CreateCodes(ctx context.Context, codes []*domain.RedemptionCode) error {
