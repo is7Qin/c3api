@@ -1027,3 +1027,192 @@ func TestPGBillingChunkSyncCommitOffSmoke(t *testing.T) {
 	require.Zero(t, cursorUnbilledCount(t, repos), "结算事务正常提交（行退出游标）")
 	require.Equal(t, int64(90_000), cursorBalance(t, repos, u.ID))
 }
+
+// —— 族 15：桶不相交（wave3 D-C 桶级并行仓库侧契约） ——
+
+// TestPGSettleBucketDisjointness 桶谓词不相交性：K=4 逐桶各跑一次
+// SettleBalanceBatch，断言每桶只消费自己 uid 集（COALESCE(user_id,0)%4=bucket）
+// 的行——ΣBatchRows == 全量种子、桶间余额对 uid 零重叠、逐用户恰扣一次、全部
+// 行标记。uid 由 PG serial 分配不可预置 → 运行期按 u.ID%4 归桶并要求四桶全非空。
+func TestPGSettleBucketDisjointness(t *testing.T) {
+	repos := newPGRepos(t)
+	ensureCursorPartitions(t, repos)
+	ctx := context.Background()
+
+	const users = 8
+	const rowsPerUser = 2
+	uids := make([]int64, users)
+	expectedDeduct := make(map[int64]int64, users)
+	bucketUIDs := make([][]int64, 4) // bucket -> 本桶 uids（运行期归桶）
+	for i := range uids {
+		u := seedPGUser(t, repos, fmt.Sprintf("bucket-%d@example.com", i))
+		uids[i] = u.ID
+		require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
+		rowA := int64(i+1) * 100
+		rowB := rowA + 10 // 同用户两行异价（totals 聚合面非平凡）
+		require.NoError(t, repos.Usages.InsertBatch(ctx,
+			[]*domain.UsageLog{cursorLog(u.ID, rowA), cursorLog(u.ID, rowB)}))
+		expectedDeduct[u.ID] = rowA + rowB
+		bucketUIDs[u.ID%4] = append(bucketUIDs[u.ID%4], u.ID)
+	}
+	for b := range bucketUIDs {
+		require.NotEmpty(t, bucketUIDs[b], "bucket %d 必须有种子用户（8 连号 serial mod 4 构造性覆盖）", b)
+	}
+
+	totalRows := int64(0)
+	seenUIDs := map[int64]bool{}
+	for b := 0; b < 4; b++ {
+		res, err := repos.SettleBalanceBatch(ctx, 2000, 4, b)
+		require.NoError(t, err)
+		require.Equal(t, int64(len(bucketUIDs[b])*rowsPerUser), res.BatchRows,
+			"bucket %d 只吃自己 uid 集的行", b)
+		require.Equal(t, res.BatchRows, res.Marked, "bucket %d 批内全标记", b)
+		require.Zero(t, res.Quarantined, "bucket %d 无幽灵", b)
+		got := map[int64]int64{}
+		for _, p := range res.Balances {
+			require.False(t, seenUIDs[p.UserID], "uid %d 跨桶重复——桶集不相交破坏", p.UserID)
+			seenUIDs[p.UserID] = true
+			got[p.UserID] = p.Balance
+		}
+		require.Len(t, got, len(bucketUIDs[b]), "bucket %d 余额对恰含本桶用户（无外来 uid）", b)
+		for _, uid := range bucketUIDs[b] {
+			require.Contains(t, got, uid, "本桶用户 %d 必须出现在 bucket %d 余额对中", uid, b)
+		}
+		totalRows += res.BatchRows
+	}
+	require.Equal(t, int64(users*rowsPerUser), totalRows, "ΣBatchRows == 全量种子")
+
+	// 逐用户恰扣一次 + 游标清空 + 对账闭合
+	for _, uid := range uids {
+		require.Equal(t, 1_000_000-expectedDeduct[uid], cursorBalance(t, repos, uid),
+			fmt.Sprintf("user %d 恰扣一次", uid))
+	}
+	require.Zero(t, cursorUnbilledCount(t, repos))
+	nBilled, sumBilled := cursorBilledStats(t, repos)
+	require.Equal(t, users*rowsPerUser, nBilled)
+	var wantSum int64
+	for _, d := range expectedDeduct {
+		wantSum += d
+	}
+	require.Equal(t, wantSum, sumBilled, "Σbilled cost == Σ扣减凭证")
+}
+
+// —— 族 16：桶并发收敛（race 目标族；CI 无 -race，本地显式 -race 门） ——
+
+// TestPGSettleBucketConcurrency 真实 flusher 排空循环驱动 settleLaneParallel
+// （K=4 goroutine 并发结算语句 + mutex 合并 summary）：200 行 / 40 用户积压一次
+// 排空收敛——exactly-once（无双扣/漏扣）、守恒精确（Σbilled == Σ|Δbalance|）、
+// 游标清空。
+func TestPGSettleBucketConcurrency(t *testing.T) {
+	repos := newPGRepos(t)
+	ensureCursorPartitions(t, repos)
+	ctx := context.Background()
+
+	const users = 40
+	const rowsPerUser = 5
+	uids := make([]int64, users)
+	expectedDeduct := make(map[int64]int64, users)
+	for i := range uids {
+		u := seedPGUser(t, repos, fmt.Sprintf("conc-%d@example.com", i))
+		uids[i] = u.ID
+		require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 10_000_000))
+		rowCost := int64(i%7+1) * 100
+		seedCursorRows(t, repos, u.ID, rowsPerUser, rowCost)
+		expectedDeduct[u.ID] = rowCost * rowsPerUser
+	}
+
+	f := billing.NewFlusher(
+		billing.FlushConfig{FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour},
+		repos, billing.NewBalances(repos, nil), nil)
+	drainCtx, drainCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer drainCancel()
+	require.NoError(t, f.Close(drainCtx))
+
+	for _, uid := range uids {
+		require.Equal(t, 10_000_000-expectedDeduct[uid], cursorBalance(t, repos, uid),
+			fmt.Sprintf("user %d exactly-once 收敛", uid))
+	}
+	require.Zero(t, cursorUnbilledCount(t, repos), "游标清空")
+	nBilled, sumBilled := cursorBilledStats(t, repos)
+	require.Equal(t, users*rowsPerUser, nBilled)
+	var wantSum int64
+	for _, d := range expectedDeduct {
+		wantSum += d
+	}
+	require.Equal(t, wantSum, sumBilled, "守恒：Σbilled cost == Σ扣减凭证")
+}
+
+// —— 族 17：匿名行桶边界（Momus COALESCE 必改回归钉） ——
+
+// TestPGSettleBucketBoundaryNULL 匿名行（user_id NULL → COALESCE 归 0 → 恒落
+// bucket 0）与真实用户混库：K=4 逐桶单遍结算后匿名行在 bucket 0 内隔离退出游标
+// （零扣费标记、不搁浅）——裸 user_id 取模对 NULL 恒 NULL → 永不命中任何桶 =
+// 游标永久搁浅的回归面。
+func TestPGSettleBucketBoundaryNULL(t *testing.T) {
+	repos := newPGRepos(t)
+	ensureCursorPartitions(t, repos)
+	ctx := context.Background()
+
+	const realUsers = 3
+	uids := make([]int64, realUsers)
+	for i := range uids {
+		u := seedPGUser(t, repos, fmt.Sprintf("nullbkt-%d@example.com", i))
+		uids[i] = u.ID
+		require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 500_000))
+		seedCursorRows(t, repos, u.ID, 2, 50_000)
+	}
+	// 匿名行：UserID=0 → 列 NULL 出生（cursorLog 种子路径原生支持）
+	const anonRows = 2
+	anonCosts := []int64{70_000, 30_000}
+	anons := make([]*domain.UsageLog, anonRows)
+	for i, c := range anonCosts {
+		anons[i] = cursorLog(0, c)
+	}
+	require.NoError(t, repos.Usages.InsertBatch(ctx, anons))
+
+	// 前置：匿名行确以 userID=0（NULL 列）混入游标
+	all := fetchAllUnbilled(t, repos)
+	require.Len(t, all, realUsers*2+anonRows)
+	var anonIDs []int64
+	for _, r := range all {
+		if r.UserID == 0 {
+			anonIDs = append(anonIDs, r.ID)
+		}
+	}
+	require.Len(t, anonIDs, anonRows)
+
+	// K=4 逐桶单遍：匿名行只可能命中 bucket 0（COALESCE(NULL,0)%4=0）
+	for b := 0; b < 4; b++ {
+		res, err := repos.SettleBalanceBatch(ctx, 2000, 4, b)
+		require.NoError(t, err)
+		require.Equal(t, res.BatchRows, res.Marked, "bucket %d 批内全标记", b)
+		if b == 0 {
+			require.GreaterOrEqual(t, res.BatchRows, int64(anonRows), "匿名行进 bucket 0 取批")
+			require.Equal(t, int64(anonRows), res.Quarantined,
+				"匿名行 uid=0 无 users 行 → 幽灵隔离零扣费")
+		} else {
+			require.Zero(t, res.Quarantined, "bucket %d 不见匿名行", b)
+		}
+	}
+
+	// 回归钉核心：匿名行不搁浅——全部退出游标且零扣费标记
+	require.Zero(t, cursorUnbilledCount(t, repos), "匿名行不被任何桶搁浅")
+	for _, id := range anonIDs {
+		row := usageLogByID(t, repos, id)
+		require.True(t, row.Billed, "id=%d 匿名行标记退出", id)
+		require.False(t, row.Overdraft, "id=%d 隔离路径零透支", id)
+	}
+	// 真实用户照常精确扣减 + 对账闭合
+	nBilled, sumBilled := cursorBilledStats(t, repos)
+	require.Equal(t, realUsers*2+anonRows, nBilled)
+	var wantSum int64
+	for _, c := range anonCosts {
+		wantSum += c
+	}
+	wantSum += int64(realUsers) * 100_000
+	require.Equal(t, wantSum, sumBilled)
+	for _, uid := range uids {
+		require.Equal(t, int64(400_000), cursorBalance(t, repos, uid),
+			fmt.Sprintf("user %d 匿名行不摊派", uid))
+	}
+}
