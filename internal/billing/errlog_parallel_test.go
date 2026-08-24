@@ -43,8 +43,8 @@ func (c *captureErrInserter) count() int {
 }
 
 // TestFlusherErrlogWorkerParallelIsolated 并行隔离：游标消费者 Close 排空
-//（DB 游标真值）与 errlog worker 并发喂入/排空同时进行 → 各自完整收敛
-//（flusher 全部行 billed 翻转；errlog 捕获 = 拒绝行数），互不串路。
+// （DB 游标真值）与 errlog worker 并发喂入/排空同时进行 → 各自完整收敛
+// （flusher 全部行 billed 翻转；errlog 捕获 = 拒绝行数），互不串路。
 func TestFlusherErrlogWorkerParallelIsolated(t *testing.T) {
 	store := newFakeLedgerStore()
 	const billed, rejected = 2000, 2000

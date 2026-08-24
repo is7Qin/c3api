@@ -129,7 +129,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 		UpstreamStreamTimeout: 30 * time.Second,
 		GroupKeyRPM:           0, UsageCapture: true, BillingCapture: true,
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,
 	}, nil)
 	p.SetCodex(sdkbridge.NewCodex(nil))

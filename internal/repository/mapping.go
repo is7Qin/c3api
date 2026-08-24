@@ -40,7 +40,7 @@ func toDomainGroup(g *ent.Group) *domain.Group {
 }
 
 // toDomainProtocolConverts ent JSON 数组（[]string）→ domain 协议转换方向集合
-//（空数组/nil = off = 不转换）。
+// （空数组/nil = off = 不转换）。
 func toDomainProtocolConverts(v []string) []domain.ProtocolConvert {
 	if len(v) == 0 {
 		return nil

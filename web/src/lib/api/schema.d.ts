@@ -579,25 +579,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/pricing": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 模型价格列表（分页/筛选/排序；sort 白名单 model/updated_at） */
-        get: operations["GetPricing"];
-        /** 手动设价（毫分/1M tokens；upsert 强制 source=manual，可接管 litellm 行） */
-        put: operations["PutPricingModel"];
-        post?: never;
-        /** 删除手动价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回） */
-        delete: operations["DeletePricingModel"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/pricing/sync": {
         parameters: {
             query?: never;
@@ -615,39 +596,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/image-price": {
+    "/pricing/sync/preview": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** 图片生成价格列表（分页/筛选/排序；sort 白名单 model/updated_at） */
-        get: operations["GetImagePrice"];
-        /** 手动设图片价格（三分量全可选；至少一个非 null——否则 400；upsert 强制 source=manual，可接管 litellm 行） */
-        put: operations["PutImagePriceModel"];
-        post?: never;
-        /** 删除手动图片价格（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回） */
-        delete: operations["DeleteImagePriceModel"];
+        get?: never;
+        put?: never;
+        /** 预览价格同步（零写库 diff 报告） */
+        post: operations["PostPricingSyncPreview"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/function-prices": {
+    "/prices": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** 按单元计费功能类价格列表（分页/筛选/排序；sort 白名单 model/updated_at） */
-        get: operations["GetFunctionPrices"];
-        /** 手动设按单元价（price_per_call USD/次 必填 ≥0；×1e5 存储毫分/次；upsert 强制 source=manual，可接管 litellm 行——codex-search 价可改） */
-        put: operations["PutFunctionPricesModel"];
+        /** 统一价格列表（分页+筛选） */
+        get: operations["GetPrices"];
+        put?: never;
         post?: never;
-        /** 删除手动按单元价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回；codex-search 种子行重启补回） */
-        delete: operations["DeleteFunctionPricesModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prices/entry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 单条价格查询 */
+        get: operations["GetPriceEntry"];
+        /** 手动设价（upsert） */
+        put: operations["PutPriceEntry"];
+        post?: never;
+        delete: operations["DeletePriceEntry"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prices/variants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 变体列表（seq 升序） */
+        get: operations["GetPriceVariants"];
+        /** 整体替换变体（seq 升序首匹配） */
+        put: operations["PutPriceVariants"];
+        post?: never;
+        /** 清空变体 */
+        delete: operations["DeletePriceVariants"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2096,201 +2110,6 @@ export interface components {
         Provider: "openai" | "anthropic" | "azure" | "vertex_ai" | "bedrock" | "deepseek" | "mistral" | "cohere" | "xai" | "openrouter" | "groq" | "together_ai" | "fireworks_ai" | "replicate" | "huggingface" | "moonshot" | "zhipu" | "baidu" | "alibaba" | "meta" | "nvidia" | "cerebras" | "perplexity";
         /** @enum {string} */
         PricingSource: "litellm" | "manual";
-        Pricing: {
-            Model: string;
-            /**
-             * Format: double
-             * @description USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）
-             */
-            PromptPricePerMillion: number;
-            /**
-             * Format: double
-             * @description USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）
-             */
-            CompletionPricePerMillion: number;
-            /**
-             * Format: int64
-             * @description litellm 自带上下文窗口；nil = 未知
-             */
-            MaxInputTokens?: number | null;
-            /** Format: int64 */
-            MaxOutputTokens?: number | null;
-            /**
-             * Format: double
-             * @description 缓存读取价（litellm cache_read_input_token_cost 换算）；nil = 无缓存价
-             */
-            CacheReadPricePerMillion?: number | null;
-            /**
-             * Format: double
-             * @description 缓存写入价（litellm cache_creation_input_token_cost 换算）；nil = 无缓存价
-             */
-            CacheCreationPricePerMillion?: number | null;
-            /**
-             * Format: double
-             * @description service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价
-             */
-            PriorityPromptPricePerMillion?: number | null;
-            /** Format: double */
-            PriorityCompletionPricePerMillion?: number | null;
-            /** Format: double */
-            PriorityCacheReadPricePerMillion?: number | null;
-            /** Format: double */
-            PriorityCacheCreationPricePerMillion?: number | null;
-            /**
-             * Format: double
-             * @description service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价
-             */
-            FlexPromptPricePerMillion?: number | null;
-            /** Format: double */
-            FlexCompletionPricePerMillion?: number | null;
-            /** Format: double */
-            FlexCacheReadPricePerMillion?: number | null;
-            /** Format: double */
-            FlexCacheCreationPricePerMillion?: number | null;
-            /**
-             * Format: double
-             * @description Anthropic 专属（claude 系列 Fast Mode 整单倍率，正常值 2.0 = ×2.0；fast 挡计费 = 基础价 × 此倍率；API 边界换算）；nil = 无倍率
-             */
-            FastMultiplier?: number | null;
-            /**
-             * Format: int64
-             * @description 上下文分段阈值（tokens）；nil = 无分段
-             */
-            AboveThreshold?: number | null;
-            /**
-             * Format: double
-             * @description 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；nil = 该分量不拆段
-             */
-            AbovePromptPricePerMillion?: number | null;
-            /** Format: double */
-            AboveCompletionPricePerMillion?: number | null;
-            /** Format: double */
-            AboveCacheReadPricePerMillion?: number | null;
-            /** Format: double */
-            AboveCacheCreationPricePerMillion?: number | null;
-            /**
-             * Format: double
-             * @description 超阈值分段价（priority 组，azure 形态）；nil = 该档回退基础 above 组
-             */
-            AbovePriorityPromptPricePerMillion?: number | null;
-            /** Format: double */
-            AbovePriorityCompletionPricePerMillion?: number | null;
-            /** Format: double */
-            AbovePriorityCacheReadPricePerMillion?: number | null;
-            /** Format: double */
-            AbovePriorityCacheCreationPricePerMillion?: number | null;
-            /**
-             * Format: double
-             * @description 超阈值分段价（flex 组，gpt-5.6-sol 形态）；nil = 该档回退基础 above 组
-             */
-            AboveFlexPromptPricePerMillion?: number | null;
-            /** Format: double */
-            AboveFlexCompletionPricePerMillion?: number | null;
-            /** Format: double */
-            AboveFlexCacheReadPricePerMillion?: number | null;
-            /** Format: double */
-            AboveFlexCacheCreationPricePerMillion?: number | null;
-            /** @description litellm_provider（litellm 行才有；manual 行 nil） */
-            Provider?: components["schemas"]["Provider"] | null;
-            /** @description litellm mode（chat/completion/embedding 等） */
-            Mode?: string | null;
-            /** @description litellm supports_prompt_caching */
-            SupportsPromptCaching?: boolean | null;
-            Source: components["schemas"]["PricingSource"];
-            /** Format: date-time */
-            CreatedAt: string;
-            /** Format: date-time */
-            UpdatedAt: string;
-        };
-        PricingUpsert: {
-            /**
-             * Format: double
-             * @description USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）；≥ 0
-             */
-            prompt_price_per_million: number;
-            /** Format: double */
-            completion_price_per_million: number;
-            /**
-             * Format: double
-             * @description 缓存读取价（USD/1M tokens；内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省 = 不设缓存价（落库 NULL）
-             */
-            cache_read_price_per_million?: number | null;
-            /**
-             * Format: double
-             * @description 缓存写入价；缺省 = 不设缓存价（落库 NULL）
-             */
-            cache_creation_price_per_million?: number | null;
-            /**
-             * Format: double
-             * @description service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）
-             */
-            priority_prompt_price_per_million?: number | null;
-            /** Format: double */
-            priority_completion_price_per_million?: number | null;
-            /** Format: double */
-            priority_cache_read_price_per_million?: number | null;
-            /** Format: double */
-            priority_cache_creation_price_per_million?: number | null;
-            /**
-             * Format: double
-             * @description service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）
-             */
-            flex_prompt_price_per_million?: number | null;
-            /** Format: double */
-            flex_completion_price_per_million?: number | null;
-            /** Format: double */
-            flex_cache_read_price_per_million?: number | null;
-            /** Format: double */
-            flex_cache_creation_price_per_million?: number | null;
-            /**
-             * Format: double
-             * @description Anthropic 专属（claude 系列 Fast Mode 整单倍率，正常值 0 < m ≤ 10，2.0 = ×2.0；fast 挡计费 = 基础价 × 此倍率；API 边界换算）；缺省/null = 不设
-             */
-            fast_multiplier?: number | null;
-            /**
-             * Format: int64
-             * @description 上下文分段阈值（tokens）；缺省/null = 不设（无分段）
-             */
-            above_threshold?: number | null;
-            /**
-             * Format: double
-             * @description 超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；缺省/null = 该分量不拆段
-             */
-            above_prompt_price_per_million?: number | null;
-            /** Format: double */
-            above_completion_price_per_million?: number | null;
-            /** Format: double */
-            above_cache_read_price_per_million?: number | null;
-            /** Format: double */
-            above_cache_creation_price_per_million?: number | null;
-            /**
-             * Format: double
-             * @description 超阈值分段价（priority 组，azure 形态）；缺省/null = 该档回退基础 above 组
-             */
-            above_priority_prompt_price_per_million?: number | null;
-            /** Format: double */
-            above_priority_completion_price_per_million?: number | null;
-            /** Format: double */
-            above_priority_cache_read_price_per_million?: number | null;
-            /** Format: double */
-            above_priority_cache_creation_price_per_million?: number | null;
-            /**
-             * Format: double
-             * @description 超阈值分段价（flex 组，gpt-5.6-sol 形态）；缺省/null = 该档回退基础 above 组
-             */
-            above_flex_prompt_price_per_million?: number | null;
-            /** Format: double */
-            above_flex_completion_price_per_million?: number | null;
-            /** Format: double */
-            above_flex_cache_read_price_per_million?: number | null;
-            /** Format: double */
-            above_flex_cache_creation_price_per_million?: number | null;
-        };
-        PricingListResponse: {
-            /** Format: int64 */
-            total: number;
-            rows: components["schemas"]["Pricing"][];
-        };
         PricingSyncResponse: {
             /** @description 拉取到的有效模型行数 */
             rows: number;
@@ -2298,72 +2117,41 @@ export interface components {
             skipped: number;
             /** @description 文本价 upsert 落库数（manual 行不计） */
             updated: number;
-            /** @description 拉取到的有效 image 价行数（Task A 双线） */
-            image_rows?: number;
-            /** @description image 价 upsert 落库数（manual 行不计） */
-            image_updated?: number;
-            /** @description 拉取到的有效按单元价行数（价格表三件套） */
-            function_rows?: number;
-            /** @description 按单元价 upsert 落库数（manual 行不计） */
-            function_updated?: number;
         };
-        ImagePrice: {
-            /** @description 模型名（与 pricings.model 同口径） */
+        PricingSyncPreviewResponse: {
+            to_add: number;
+            to_update: number;
+            skipped: number;
+            entries?: components["schemas"]["PricingPreviewEntry"][];
+            variants_changed?: number;
+        };
+        PricingPreviewEntry: {
+            model: string;
+            /** @enum {string} */
+            mode: "token" | "call" | "image";
+            /** @enum {string} */
+            action: "add" | "update";
+        };
+        PriceEntry: {
             Model: string;
-            /**
-             * Format: double
-             * @description image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算，1 USD = 100,000 毫分）；null = 无该分量价
-             */
-            InputImageTokenPricePerMillion?: number | null;
-            /**
-             * Format: double
-             * @description image token 输出价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算）；null = 无该分量价
-             */
-            OutputImageTokenPricePerMillion?: number | null;
-            /**
-             * Format: double
-             * @description 每张图价（USD/张；内部存储毫分——×1e5 换算，与 token 价同系数但单位语义不同：按张 flat，计费不走 /1e6 除法）；null = 不启用按张分量
-             */
-            OutputCostPerImage?: number | null;
-            /** @description litellm_provider（litellm 行才有；manual 行 nil） */
-            Provider?: components["schemas"]["Provider"] | null;
-            Source: components["schemas"]["PricingSource"];
-            /** Format: date-time */
-            CreatedAt: string;
-            /** Format: date-time */
-            UpdatedAt: string;
-        };
-        ImagePriceUpsert: {
-            /**
-             * Format: double
-             * @description image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；API 边界 ×1e5 → 毫分/1M）；缺省/null = 清空该分量
-             */
-            input_image_token_price_per_million?: number | null;
-            /**
-             * Format: double
-             * @description image token 输出价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；API 边界 ×1e5 → 毫分/1M）；缺省/null = 清空该分量
-             */
-            output_image_token_price_per_million?: number | null;
-            /**
-             * Format: double
-             * @description 每张图价（USD/张；API 边界 ×1e5 → 毫分/张——与 token 价同系数但单位语义独立：按张 flat，不走 /1e6 除法）；缺省/null = 清空该分量
-             */
-            output_cost_per_image?: number | null;
-        };
-        ImagePriceListResponse: {
-            /** Format: int64 */
-            total: number;
-            rows: components["schemas"]["ImagePrice"][];
-        };
-        FunctionPrice: {
-            /** @description 模型/功能标识（litellm search 模型名 或 codex-search 固定标识） */
-            Model: string;
-            /**
-             * Format: double
-             * @description 按单元价（USD/次——litellm 原生口径 input_cost_per_query；内部存储毫分/次，×1e5 换算，1 USD = 100,000 毫分，**与 token 价不同换算系**，计费不走 /1e6 除法）；null = 无按单元价
-             */
+            /** @enum {string} */
+            Mode: "token" | "call" | "image";
+            /** Format: double */
+            InputPerM?: number | null;
+            /** Format: double */
+            OutputPerM?: number | null;
+            /** Format: double */
+            CacheReadPerM?: number | null;
+            /** Format: double */
+            CacheWritePerM?: number | null;
+            /** Format: double */
             PricePerCall?: number | null;
-            /** @description litellm_provider（litellm 行才有；manual 行 nil） */
+            /** Format: double */
+            ImgInTokPerM?: number | null;
+            /** Format: double */
+            ImgOutTokPerM?: number | null;
+            /** Format: double */
+            PricePerImage?: number | null;
             Provider?: components["schemas"]["Provider"] | null;
             Source: components["schemas"]["PricingSource"];
             /** Format: date-time */
@@ -2371,17 +2159,73 @@ export interface components {
             /** Format: date-time */
             UpdatedAt: string;
         };
-        FunctionPriceUpsert: {
-            /**
-             * Format: double
-             * @description 按单元价（USD/次；API 边界 ×1e5 → 毫分/次）；必填且 ≥0——缺省/null → 400（service 行有效性校验：按单元价非 nil；0 = 按次免费）
-             */
+        PriceEntryUpsert: {
+            /** @enum {string} */
+            mode: "token" | "call" | "image";
+            /** Format: double */
+            input_per_m?: number | null;
+            /** Format: double */
+            output_per_m?: number | null;
+            /** Format: double */
+            cache_read_per_m?: number | null;
+            /** Format: double */
+            cache_write_per_m?: number | null;
+            /** Format: double */
             price_per_call?: number | null;
+            /** Format: double */
+            img_in_tok_per_m?: number | null;
+            /** Format: double */
+            img_out_tok_per_m?: number | null;
+            /** Format: double */
+            price_per_image?: number | null;
         };
-        FunctionPriceListResponse: {
+        PriceEntryListResponse: {
             /** Format: int64 */
             total: number;
-            rows: components["schemas"]["FunctionPrice"][];
+            rows: components["schemas"]["PriceEntry"][];
+        };
+        PriceVariant: {
+            Model: string;
+            Seq: number;
+            ServiceTier?: string | null;
+            /** Format: int64 */
+            CtxMin?: number | null;
+            /** Format: int64 */
+            CtxMax?: number | null;
+            TimeStart?: string | null;
+            TimeEnd?: string | null;
+            DowMask?: number | null;
+            MultBP?: number | null;
+            /** Format: double */
+            SetInputPerM?: number | null;
+            /** Format: double */
+            SetOutputPerM?: number | null;
+            /** Format: date-time */
+            CreatedAt: string;
+            /** Format: date-time */
+            UpdatedAt: string;
+        };
+        PriceVariantUpsert: {
+            service_tier?: string | null;
+            /** Format: int64 */
+            ctx_min?: number | null;
+            /** Format: int64 */
+            ctx_max?: number | null;
+            time_start?: string | null;
+            time_end?: string | null;
+            dow_mask?: number | null;
+            mult_bp?: number | null;
+            /** Format: double */
+            set_input_per_m?: number | null;
+            /** Format: double */
+            set_output_per_m?: number | null;
+            seq?: number;
+        };
+        PriceVariantListResponse: {
+            rows?: components["schemas"]["PriceVariant"][];
+        };
+        PriceVariantListRequest: {
+            variants?: components["schemas"]["PriceVariantUpsert"][];
         };
         RedeemRequest: {
             code: string;
@@ -4180,85 +4024,6 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    GetPricing: {
-        parameters: {
-            query?: {
-                page?: number;
-                page_size?: number;
-                source?: "litellm" | "manual";
-                provider?: components["schemas"]["Provider"];
-                model?: string;
-                sort?: string;
-                order?: "asc" | "desc";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 价格列表 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PricingListResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    PutPricingModel: {
-        parameters: {
-            query: {
-                model: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PricingUpsert"];
-            };
-        };
-        responses: {
-            /** @description 设价后的价格行 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Pricing"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    DeletePricingModel: {
-        parameters: {
-            query: {
-                model: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 删除成功 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeletedResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     PostPricingSync: {
         parameters: {
             query?: never;
@@ -4280,13 +4045,34 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    GetImagePrice: {
+    PostPricingSyncPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 预览报告 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PricingSyncPreviewResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetPrices: {
         parameters: {
             query?: {
                 page?: number;
                 page_size?: number;
+                mode?: "token" | "call" | "image";
                 source?: "litellm" | "manual";
-                provider?: components["schemas"]["Provider"];
                 model?: string;
                 sort?: string;
                 order?: "asc" | "desc";
@@ -4297,19 +4083,42 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 图片价格列表 */
+            /** @description 价格列表 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImagePriceListResponse"];
+                    "application/json": components["schemas"]["PriceEntryListResponse"];
                 };
             };
             default: components["responses"]["Error"];
         };
     };
-    PutImagePriceModel: {
+    GetPriceEntry: {
+        parameters: {
+            query: {
+                model: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 价格条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutPriceEntry: {
         parameters: {
             query: {
                 model: string;
@@ -4320,23 +4129,23 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImagePriceUpsert"];
+                "application/json": components["schemas"]["PriceEntryUpsert"];
             };
         };
         responses: {
-            /** @description 设价后的图片价格行 */
+            /** @description 更新后条目 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImagePrice"];
+                    "application/json": components["schemas"]["PriceEntry"];
                 };
             };
             default: components["responses"]["Error"];
         };
     };
-    DeleteImagePriceModel: {
+    DeletePriceEntry: {
         parameters: {
             query: {
                 model: string;
@@ -4359,16 +4168,10 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    GetFunctionPrices: {
+    GetPriceVariants: {
         parameters: {
-            query?: {
-                page?: number;
-                page_size?: number;
-                source?: "litellm" | "manual";
-                provider?: components["schemas"]["Provider"];
-                model?: string;
-                sort?: string;
-                order?: "asc" | "desc";
+            query: {
+                model: string;
             };
             header?: never;
             path?: never;
@@ -4376,19 +4179,19 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 按单元价列表 */
+            /** @description 变体列表 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FunctionPriceListResponse"];
+                    "application/json": components["schemas"]["PriceVariantListResponse"];
                 };
             };
             default: components["responses"]["Error"];
         };
     };
-    PutFunctionPricesModel: {
+    PutPriceVariants: {
         parameters: {
             query: {
                 model: string;
@@ -4399,23 +4202,23 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FunctionPriceUpsert"];
+                "application/json": components["schemas"]["PriceVariantListRequest"];
             };
         };
         responses: {
-            /** @description 设价后的按单元价行 */
+            /** @description 更新后变体列表 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FunctionPrice"];
+                    "application/json": components["schemas"]["PriceVariantListResponse"];
                 };
             };
             default: components["responses"]["Error"];
         };
     };
-    DeleteFunctionPricesModel: {
+    DeletePriceVariants: {
         parameters: {
             query: {
                 model: string;

@@ -53,9 +53,8 @@ func (s balanceSnapshot) Name() string                     { return "balances" }
 func (s balanceSnapshot) Scopes() []string                 { return nil }
 func (s balanceSnapshot) Reload(ctx context.Context) error { return s.b.Reload(ctx) }
 
-// pricingSnapshot 价格表快照（service pricing + image_price + function_price
-// 缓存；与 price_sync_cron / 管理端改价同一刷新目标——Task A 双线 + 价格表
-// 三件套：三快照同路径首刷，重启后计费读零 DB 即时可用）。
+// pricingSnapshot 价格表快照（service 统一 price_entries+price_variants
+// 缓存；与 price_sync_cron / 管理端改价同一刷新目标——统一快照单路径首刷，重启后计费读零 DB 即时可用）。
 type pricingSnapshot struct{ svc *service.Service }
 
 func (s pricingSnapshot) Name() string     { return "pricing" }

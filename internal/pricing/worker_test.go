@@ -54,44 +54,30 @@ func (f *fakeFetcher) urlsSeen() []string {
 	return out
 }
 
-// fakeUpserter 记录式 Upserter（注入返回 n/err；三线：文本价、image 价与
-// 按单元价分开记录，可分别注入返回值/错误）。
 type fakeUpserter struct {
-	mu          sync.Mutex
-	n           int
-	err         error
-	calls       int
-	nImage      int
-	errImage    error
-	callsImg    int
-	imageRows   []*domain.ImagePrice
-	nFunction   int
-	errFunction error
-	callsFn     int
-	fnRows      []*domain.FunctionPrice
+	mu       sync.Mutex
+	n        int
+	err      error
+	calls    int
+	nVar     int
+	errVar   error
+	callsVar int
+	varRows  []*domain.PriceVariant
 }
 
-func (u *fakeUpserter) UpsertFromLiteLLM(ctx context.Context, rows []*domain.Pricing) (int, error) {
+func (u *fakeUpserter) UpsertPriceEntriesFromLiteLLM(ctx context.Context, rows []*domain.PriceEntry) (int, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.calls++
 	return u.n, u.err
 }
 
-func (u *fakeUpserter) UpsertImageFromLiteLLM(ctx context.Context, rows []*domain.ImagePrice) (int, error) {
+func (u *fakeUpserter) UpsertPriceVariantsFromLiteLLM(ctx context.Context, rows []*domain.PriceVariant) (int, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.callsImg++
-	u.imageRows = rows
-	return u.nImage, u.errImage
-}
-
-func (u *fakeUpserter) UpsertFunctionFromLiteLLM(ctx context.Context, rows []*domain.FunctionPrice) (int, error) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.callsFn++
-	u.fnRows = rows
-	return u.nFunction, u.errFunction
+	u.callsVar++
+	u.varRows = rows
+	return u.nVar, u.errVar
 }
 
 func (u *fakeUpserter) count() int {
@@ -100,16 +86,10 @@ func (u *fakeUpserter) count() int {
 	return u.calls
 }
 
-func (u *fakeUpserter) imageCount() int {
+func (u *fakeUpserter) variantCount() int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.callsImg
-}
-
-func (u *fakeUpserter) functionCount() int {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.callsFn
+	return u.callsVar
 }
 
 // fakeSettings 固定值 settings（mutex 保护，测试中可改）。
@@ -256,7 +236,7 @@ func TestNextTrigger(t *testing.T) {
 // --- 同步执行路径（Sync/syncOnce） ---
 
 func TestSyncSuccess(t *testing.T) {
-	f := &fakeFetcher{result: &FetchResult{Rows: []*domain.Pricing{{Model: "m", Source: domain.PricingSourceLitellm}}}}
+	f := &fakeFetcher{result: &FetchResult{PriceEntries: []*domain.PriceEntry{{Model: "m", Source: domain.PricingSourceLitellm}}}}
 	u := &fakeUpserter{n: 1}
 	reloads := 0
 	w := NewSyncWorker(SyncWorkerConfig{Fetcher: f, Repo: u, Settings: &fakeSettings{url: "https://u"}, Reload: func() { reloads++ }, Log: nil})
@@ -293,7 +273,7 @@ func TestSyncFetchFailureKeepsOldPrices(t *testing.T) {
 
 func TestSyncPartialUpsertErrorStillReloads(t *testing.T) {
 	// 仓库部分成功（分批独立事务）仍返回错误：已落库的批立即生效 → 刷新快照。
-	f := &fakeFetcher{result: &FetchResult{Rows: []*domain.Pricing{{Model: "m"}}}}
+	f := &fakeFetcher{result: &FetchResult{PriceEntries: []*domain.PriceEntry{{Model: "m"}}}}
 	u := &fakeUpserter{n: 100, err: errors.New("batch 2 failed")}
 	reloads := 0
 	w := NewSyncWorker(SyncWorkerConfig{Fetcher: f, Repo: u, Settings: &fakeSettings{url: "https://u"}, Reload: func() { reloads++ }, Log: nil})
@@ -303,88 +283,14 @@ func TestSyncPartialUpsertErrorStillReloads(t *testing.T) {
 	require.Equal(t, 1, reloads, "部分落库仍刷新快照")
 }
 
-// TestSyncImageLine Task A 双线：image 行独立落库（UpsertImageFromLiteLLM
-// 收到 FetchResult.ImageRows）+ 成功后同样重载快照；image 线错误在文本价
-// 成功后透传（原文本价错误优先）。
-func TestSyncImageLine(t *testing.T) {
-	t.Run("image rows upserted and reloaded", func(t *testing.T) {
-		img := &domain.ImagePrice{Model: "gpt-image-2", Source: domain.PricingSourceLitellm}
-		f := &fakeFetcher{result: &FetchResult{
-			Rows:      []*domain.Pricing{{Model: "m", Source: domain.PricingSourceLitellm}},
-			ImageRows: []*domain.ImagePrice{img},
-		}}
-		u := &fakeUpserter{n: 1, nImage: 1}
-		reloads := 0
-		w := NewSyncWorker(SyncWorkerConfig{Fetcher: f, Repo: u, Settings: &fakeSettings{url: "https://u"}, Reload: func() { reloads++ }, Log: nil})
-
-		require.NoError(t, w.Sync(context.Background()))
-		require.Equal(t, 1, u.imageCount(), "image 行 upsert 一次")
-		require.Len(t, u.imageRows, 1, "UpsertImageFromLiteLLM 收到 FetchResult.ImageRows")
-		require.Equal(t, "gpt-image-2", u.imageRows[0].Model)
-		require.Equal(t, 1, reloads, "image 拉取成功后同样重载快照")
-	})
-
-	t.Run("image upsert error propagates when pricing ok", func(t *testing.T) {
-		f := &fakeFetcher{result: &FetchResult{ImageRows: []*domain.ImagePrice{{Model: "gpt-image-2"}}}}
-		u := &fakeUpserter{n: 0, nImage: 0, errImage: errors.New("image batch failed")}
-		w := NewSyncWorker(SyncWorkerConfig{Fetcher: f, Repo: u, Settings: &fakeSettings{url: "https://u"}, Log: nil})
-
-		err := w.Sync(context.Background())
-		require.Error(t, err, "image 线错误透传（调用方告警）")
-		require.Contains(t, err.Error(), "image batch failed")
-	})
-
-	t.Run("pricing error takes precedence over image error", func(t *testing.T) {
-		f := &fakeFetcher{result: &FetchResult{Rows: []*domain.Pricing{{Model: "m"}}, ImageRows: []*domain.ImagePrice{{Model: "gpt-image-2"}}}}
-		u := &fakeUpserter{n: 0, err: errors.New("pricing batch failed"), nImage: 0, errImage: errors.New("image batch failed")}
-		w := NewSyncWorker(SyncWorkerConfig{Fetcher: f, Repo: u, Settings: &fakeSettings{url: "https://u"}, Log: nil})
-
-		err := w.Sync(context.Background())
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "pricing batch failed", "文本价错误优先")
-	})
-}
-
-// TestSyncFunctionLine 按单元价线（价格表三件套）：function 行独立 upsert +
-// 快照重载；function 线错误在文本价/image 价之后透传（错误优先级三线一致）。
-func TestSyncFunctionLine(t *testing.T) {
-	t.Run("function rows upserted and reloaded", func(t *testing.T) {
-		perCall := int64(1000)
-		fn := &domain.FunctionPrice{Model: "codex-search", PricePerCall: &perCall, Source: domain.PricingSourceLitellm}
-		f := &fakeFetcher{result: &FetchResult{
-			Rows:         []*domain.Pricing{{Model: "m", Source: domain.PricingSourceLitellm}},
-			FunctionRows: []*domain.FunctionPrice{fn},
-		}}
-		u := &fakeUpserter{n: 1, nFunction: 1}
-		reloads := 0
-		w := NewSyncWorker(SyncWorkerConfig{Fetcher: f, Repo: u, Settings: &fakeSettings{url: "https://u"}, Reload: func() { reloads++ }, Log: nil})
-
-		require.NoError(t, w.Sync(context.Background()))
-		require.Equal(t, 1, u.functionCount(), "function 行 upsert 一次")
-		require.Len(t, u.fnRows, 1, "UpsertFunctionFromLiteLLM 收到 FetchResult.FunctionRows")
-		require.Equal(t, "codex-search", u.fnRows[0].Model)
-		require.Equal(t, 1, reloads, "function 拉取成功后同样重载快照")
-	})
-
-	t.Run("function upsert error propagates when pricing/image ok", func(t *testing.T) {
-		f := &fakeFetcher{result: &FetchResult{FunctionRows: []*domain.FunctionPrice{{Model: "codex-search"}}}}
-		u := &fakeUpserter{n: 0, nImage: 0, nFunction: 0, errFunction: errors.New("function batch failed")}
-		w := NewSyncWorker(SyncWorkerConfig{Fetcher: f, Repo: u, Settings: &fakeSettings{url: "https://u"}, Log: nil})
-
-		err := w.Sync(context.Background())
-		require.Error(t, err, "function 线错误透传（调用方告警）")
-		require.Contains(t, err.Error(), "function batch failed")
-	})
-
-	t.Run("pricing error takes precedence over function error", func(t *testing.T) {
-		f := &fakeFetcher{result: &FetchResult{Rows: []*domain.Pricing{{Model: "m"}}, FunctionRows: []*domain.FunctionPrice{{Model: "codex-search"}}}}
-		u := &fakeUpserter{n: 0, err: errors.New("pricing batch failed"), nFunction: 0, errFunction: errors.New("function batch failed")}
-		w := NewSyncWorker(SyncWorkerConfig{Fetcher: f, Repo: u, Settings: &fakeSettings{url: "https://u"}, Log: nil})
-
-		err := w.Sync(context.Background())
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "pricing batch failed", "文本价错误优先")
-	})
+// TestSyncVariantLine 变体行独立落库
+func TestSyncVariantLine(t *testing.T) {
+	f := &fakeFetcher{result: &FetchResult{PriceEntries: []*domain.PriceEntry{{Model: "m", Mode: domain.PriceModeToken, Source: domain.PricingSourceLitellm}}, Variants: []*domain.PriceVariant{{Model: "m", Seq: 1}}}}
+	u := &fakeUpserter{n: 1, nVar: 1}
+	reloads := 0
+	w := NewSyncWorker(SyncWorkerConfig{Fetcher: f, Repo: u, Settings: &fakeSettings{url: "https://u"}, Reload: func() { reloads++ }, Log: nil})
+	require.NoError(t, w.Sync(context.Background()))
+	require.Equal(t, 1, u.variantCount())
 }
 
 // --- cron 循环 ---
@@ -392,7 +298,7 @@ func TestSyncFunctionLine(t *testing.T) {
 // TestCronLoopFiresSyncOnSchedule 到点触发拉取：wait 首次返回 nil（timer 到点）
 // → syncOnce 执行；第二次返回 ctx 取消 → 循环退出。共一次同步。
 func TestCronLoopFiresSyncOnSchedule(t *testing.T) {
-	f := &fakeFetcher{result: &FetchResult{Rows: []*domain.Pricing{{Model: "m"}}}}
+	f := &fakeFetcher{result: &FetchResult{PriceEntries: []*domain.PriceEntry{{Model: "m"}}}}
 	u := &fakeUpserter{n: 1}
 	reloads := 0
 	w := newTestWorker(f, u, &fakeSettings{url: "https://u", cron: "* * * * *"})
@@ -426,7 +332,7 @@ func TestCronLoopFailureNoCrash(t *testing.T) {
 // TestCronLoopSettingsChangeNextLoop 设置变更下次循环生效：URL/cron 每轮现读
 // （seqSettings 按调用序返回），第二轮同步用新 URL；cron 读取次数 ≥ 循环次数。
 func TestCronLoopSettingsChangeNextLoop(t *testing.T) {
-	f := &fakeFetcher{result: &FetchResult{Rows: []*domain.Pricing{{Model: "m"}}}}
+	f := &fakeFetcher{result: &FetchResult{PriceEntries: []*domain.PriceEntry{{Model: "m"}}}}
 	u := &fakeUpserter{n: 1}
 	ss := &seqSettings{urls: []string{"https://u1", "https://u2"}}
 	w := newTestWorker(f, u, ss)
@@ -442,7 +348,7 @@ func TestCronLoopSettingsChangeNextLoop(t *testing.T) {
 // TestCronLoopInvalidCronRetry 非法 cron：Warn + 重试等待，不 panic、不拉取；
 // 修正后恢复（seqSettings 第二轮返回合法表达式）。
 func TestCronLoopInvalidCronRetry(t *testing.T) {
-	f := &fakeFetcher{result: &FetchResult{Rows: []*domain.Pricing{{Model: "m"}}}}
+	f := &fakeFetcher{result: &FetchResult{PriceEntries: []*domain.PriceEntry{{Model: "m"}}}}
 	u := &fakeUpserter{n: 1}
 	ss := &seqSettings{crons: []string{"bogus", "0 3 * * *"}}
 	w := newTestWorker(f, u, ss)
@@ -460,7 +366,7 @@ func TestCronLoopInvalidCronRetry(t *testing.T) {
 // TestStartAsyncFetchAndIdempotent Start 非阻塞 + 异步拉取一次 + 重复 Start
 // 报错 + Close 幂等安全。
 func TestStartAsyncFetchAndIdempotent(t *testing.T) {
-	f := &fakeFetcher{result: &FetchResult{Rows: []*domain.Pricing{{Model: "m"}}}}
+	f := &fakeFetcher{result: &FetchResult{PriceEntries: []*domain.PriceEntry{{Model: "m"}}}}
 	u := &fakeUpserter{n: 1}
 	w := newTestWorker(f, u, &fakeSettings{url: "https://u", cron: "* * * * *"})
 	w.wait = waitBlock // cronLoop 保持存活至 ctx 取消

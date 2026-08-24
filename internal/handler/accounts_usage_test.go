@@ -197,3 +197,4 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 	require.NotNil(t, resp.Items[3].UpstreamError)
 	require.Equal(t, AccountUsageItemUpstreamError("upstream_unavailable"), *resp.Items[3].UpstreamError)
 }
+func strPtr(s string) *string { return &s }

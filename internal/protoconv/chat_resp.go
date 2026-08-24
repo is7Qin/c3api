@@ -49,7 +49,7 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 	// 预筛：顶层单遍 ForEach 提取各字段原始文本（Raw 零拷贝切片；重复键
 	// 后者覆盖——与 map 解码 last-wins 语义一致）。
 	var (
-		msgs, maxCT, maxT, toolChoice, tools gjson.Result
+		msgs, maxCT, maxT, toolChoice, tools                              gjson.Result
 		model, temperature, topP, stream, parallel, user, metadata, store string
 	)
 	root.ForEach(func(k, v gjson.Result) bool {

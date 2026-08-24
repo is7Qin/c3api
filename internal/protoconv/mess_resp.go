@@ -291,10 +291,10 @@ func respUsageToMess(r map[string]any) map[string]any {
 		}
 	}
 	return map[string]any{
-		"input_tokens":               it,
-		"output_tokens":              ot,
+		"input_tokens":                it,
+		"output_tokens":               ot,
 		"cache_creation_input_tokens": 0,
-		"cache_read_input_tokens":    cached,
+		"cache_read_input_tokens":     cached,
 	}
 }
 

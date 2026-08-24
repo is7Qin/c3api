@@ -19,7 +19,7 @@ import (
 )
 
 // recoveryTestLogger 审计日志面替身：os.Stdout 重定向到临时文件后构造 logx
-//（zap stdout sink 构造时捕获 os.Stdout 值——sink.go newFileSinkFromPath），
+// （zap stdout sink 构造时捕获 os.Stdout 值——sink.go newFileSinkFromPath），
 // Sync 排空后读回断言操作留痕。
 func recoveryTestLogger(t *testing.T) (*logx.Logger, func() string) {
 	t.Helper()

@@ -21,23 +21,20 @@ type EmailTemplate func(*sql.Selector)
 // ErrLog is the predicate function for errlog builders.
 type ErrLog func(*sql.Selector)
 
-// FunctionPrice is the predicate function for functionprice builders.
-type FunctionPrice func(*sql.Selector)
-
 // Group is the predicate function for group builders.
 type Group func(*sql.Selector)
 
 // GroupAssignment is the predicate function for groupassignment builders.
 type GroupAssignment func(*sql.Selector)
 
-// ImagePrice is the predicate function for imageprice builders.
-type ImagePrice func(*sql.Selector)
-
 // Key is the predicate function for key builders.
 type Key func(*sql.Selector)
 
-// Pricing is the predicate function for pricing builders.
-type Pricing func(*sql.Selector)
+// PriceEntry is the predicate function for priceentry builders.
+type PriceEntry func(*sql.Selector)
+
+// PriceVariant is the predicate function for pricevariant builders.
+type PriceVariant func(*sql.Selector)
 
 // RedemptionCode is the predicate function for redemptioncode builders.
 type RedemptionCode func(*sql.Selector)

@@ -150,7 +150,7 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 		}, store, nil)
 		bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
 		require.NoError(t, bal.Reload(context.Background()))
-		p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, rec)
+		p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, rec)
 		meta := activeKey(1, 1, 10)
 		meta.KeyMaxConc = 1
 		p.auth.Upsert("ck-1", meta)

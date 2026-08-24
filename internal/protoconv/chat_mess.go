@@ -134,7 +134,7 @@ func chatMessagesToMess(req map[string]any) ([]any, bool) {
 			if outText, ok := contentText(mm["content"]); ok {
 				callID, _ := str(mm, "tool_call_id")
 				out = append(out, map[string]any{
-					"role": "user",
+					"role":    "user",
 					"content": []any{map[string]any{"type": "tool_result", "tool_use_id": callID, "content": outText}},
 				})
 			}
@@ -143,7 +143,7 @@ func chatMessagesToMess(req map[string]any) ([]any, bool) {
 			if outText, ok := contentText(mm["content"]); ok {
 				name, _ := str(mm, "name")
 				out = append(out, map[string]any{
-					"role": "user",
+					"role":    "user",
 					"content": []any{map[string]any{"type": "tool_result", "tool_use_id": name, "content": outText}},
 				})
 			}

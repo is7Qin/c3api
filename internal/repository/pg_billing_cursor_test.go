@@ -116,7 +116,7 @@ func cursorFindGroup(groups []*cursorUserGroup, uid int64) *cursorUserGroup {
 }
 
 // cursorGroupSum 组内成本和（逐行累加——cost == Σ rows.Cost 不变量）与 id 序列
-//（DeductOnlyAndMark 标记面实参）。
+// （DeductOnlyAndMark 标记面实参）。
 func cursorGroupSum(g *cursorUserGroup) (cost int64, ids []int64) {
 	ids = make([]int64, 0, len(g.rows))
 	for _, r := range g.rows {
@@ -157,7 +157,7 @@ func cursorPackChunks(groups []*cursorUserGroup) [][]domain.LedgerGroup {
 // 取批 LIMIT 2000 单取批面 → 内存路由——cost<=0 行 MarkBilledBulk 纯标记、
 // cost>0 行分组打包 ≤64 用户/chunk 逐块 DeductGroupsAndMark 单事务）。返回退出
 // 游标的行数与其中 quarantined（用户缺失零扣费标记）行数。轮数上限 = 看门狗
-//（有界收敛，替代 sleep——病态不推进时快速失败而非拖垮套件）。
+// （有界收敛，替代 sleep——病态不推进时快速失败而非拖垮套件）。
 func drainBillingCursor(t *testing.T, repos *repository.Repository) (drained, quarantined int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -237,7 +237,7 @@ func cursorUsageLogRow(t *testing.T, repos *repository.Repository, id int64) *en
 // —— 族 1：CrashRecovery ——
 
 // TestPGBillingCursorCrashRecovery 崩溃恢复：部分用户先成功扣减 → 注入一次失败
-//（已取消 ctx = 事务未开启即败，行保持 unbilled 由游标天然重放）+ 已删用户行
+// （已取消 ctx = 事务未开启即败，行保持 unbilled 由游标天然重放）+ 已删用户行
 // quarantined 路径 → 重放收敛。断言：成功组余额精确、quarantined 行 billed=true
 // 零扣费、重放无重复（Σbilled 行 cost == Σ|余额变动| + quarantine 和）。
 func TestPGBillingCursorCrashRecovery(t *testing.T) {
@@ -313,7 +313,7 @@ func TestPGBillingCursorCrashRecovery(t *testing.T) {
 // —— 族 2：SingleWriterNoConflict ——
 
 // TestPGBillingCursorSingleWriterNoConflict 结构性断言：usage flusher 写入路径
-//（InsertBatch）产出的 billable 行出生恒 billed=false 直至消费；消费后
+// （InsertBatch）产出的 billable 行出生恒 billed=false 直至消费；消费后
 // Σ(billed=true 行 cost) == Σ 扣减凭证（逐用户余额变动精确和）。
 func TestPGBillingCursorSingleWriterNoConflict(t *testing.T) {
 	repos := newPGRepos(t)
@@ -731,8 +731,8 @@ func TestPGBillingCursorCostZeroFastMark(t *testing.T) {
 // TestPGBillingCursorRestartConvergence 停机遗留收敛：实例 A（pgx 载体）部分
 // 消费后"停机"→ 实例 B（ent 载体，模拟重启后进程）重新消费 → 全部收敛且零重复。
 func TestPGBillingCursorRestartConvergence(t *testing.T) {
-	reposA := newPGRepos(t)        // pgx 直连事务载体
-	reposB := newPGReposNoPool(t)  // nil pool → ent txDriver 载体（同 schema）
+	reposA := newPGRepos(t)       // pgx 直连事务载体
+	reposB := newPGReposNoPool(t) // nil pool → ent txDriver 载体（同 schema）
 	ensureCursorPartitions(t, reposA)
 	ctx := context.Background()
 
@@ -778,7 +778,7 @@ func TestPGBillingCursorRestartConvergence(t *testing.T) {
 // —— 族 11：CostZeroFastMarkBulk ——
 
 // TestPGBillingCursorCostZeroFastMarkBulk bulk 标记幂等性：重复调用零副作用
-//（已标记行静默跳过、不复活不重扣、不存在 id 静默、空批 no-op）。
+// （已标记行静默跳过、不复活不重扣、不存在 id 静默、空批 no-op）。
 func TestPGBillingCursorCostZeroFastMarkBulk(t *testing.T) {
 	repos := newPGRepos(t)
 	ensureCursorPartitions(t, repos)
@@ -820,7 +820,7 @@ func TestPGBillingCursorCostZeroFastMarkBulk(t *testing.T) {
 
 // TestPGBillingCursorLockLossGuard 锁丢失双扣防御（oracle 终审 B 面 CONCERN；
 // F2-opt 升级 chunk 级）：会话级 advisory lock 持有连接的后端异常死亡
-//（pg_terminate_backend/OOM kill 单后端）而本实例其余池连接幸存 → 第二实例取锁
+// （pg_terminate_backend/OOM kill 单后端）而本实例其余池连接幸存 → 第二实例取锁
 // 消费与本实例在途 chunk 重叠的未标记行；本实例在途 chunk 提交即双扣。防御：
 // 标记步合并受影响行数守卫——chunk 内已有他方标记行（Σaffected < len(allIDs)）
 // → errConcurrentMark 使整块事务回滚（全组余额零变动），下周期游标重放恰扣一次。

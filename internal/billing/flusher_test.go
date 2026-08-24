@@ -55,7 +55,7 @@ type fakeLedgerStore struct {
 	lockHeld    bool // 已持有 → ok=false（互斥面）
 	fetches     int
 	lagProbes   int
-	endlessRows bool  // 每次取批合成一行全新未标记行（周期预算回归——持续到达形态）
+	endlessRows bool // 每次取批合成一行全新未标记行（周期预算回归——持续到达形态）
 	endlessID   int64
 	deductCalls []deductObs
 	markCalls   [][]int64
@@ -182,7 +182,7 @@ func (s *fakeLedgerStore) DeductGroupsAndMark(ctx context.Context, groups []doma
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.chunkCalls = append(s.chunkCalls, append([]domain.LedgerGroup(nil), groups...)) // 入口记录：失败尝试亦观测
-	for _, g := range groups { // 结构错误预检：任一 id 注入失败 → 整块回滚形态
+	for _, g := range groups {                                                        // 结构错误预检：任一 id 注入失败 → 整块回滚形态
 		for _, r := range g.Rows {
 			if n := s.failLeft[r.ID]; n > 0 {
 				s.failLeft[r.ID] = n - 1
@@ -373,7 +373,7 @@ func restoreLagThrottle(t *testing.T, d time.Duration) {
 // —— 用例 ——
 
 // TestFlusherConsumesAndMarksBilled 正常消费链：取批 → 按 user 分组各一笔事务
-//（同 user 成本聚合）→ billed 翻转 + 余额精确扣减 + 余额快照定向刷新 +
+// （同 user 成本聚合）→ billed 翻转 + 余额精确扣减 + 余额快照定向刷新 +
 // lastFlush/unbilledN 观测推进。
 func TestFlusherConsumesAndMarksBilled(t *testing.T) {
 	store := newFakeLedgerStore()
@@ -432,7 +432,7 @@ func TestFlusherOverdraftFlow(t *testing.T) {
 }
 
 // TestFlusherPoisonIsolated 毒行二分隔离推进：含毒行的组整体失败 → 折半重试
-//（无毒半原子推进）→ 单行毒行重试仍失败 → MarkBilledBulk 终极隔离（未扣费
+// （无毒半原子推进）→ 单行毒行重试仍失败 → MarkBilledBulk 终极隔离（未扣费
 // 写销 + QuarantinedRows 计数 + Error 日志）——游标永不卡死。
 func TestFlusherPoisonIsolated(t *testing.T) {
 	store := newFakeLedgerStore()

@@ -11,6 +11,7 @@ import (
 
 // webDist 前端构建产物（web 构建脚本输出 → cmd/server/dist）。
 // 未构建时仅含 .gitkeep 占位（仓库内已提交），服务端正常启动（开发期无 UI 也能跑）。
+//
 //go:embed all:dist
 var webDist embed.FS
 

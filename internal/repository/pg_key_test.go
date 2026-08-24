@@ -71,7 +71,7 @@ func TestPGAddQuotaUsedBatch(t *testing.T) {
 }
 
 // TestPGKeyQuotaUsed #14 T3b 预算复核点读锚：QuotaUsed 单列读返回 DB 权威值
-//（与 GetKey 全行读同源）；AddQuotaUsed 增量后复核读到新值（复核协议依赖：
+// （与 GetKey 全行读同源）；AddQuotaUsed 增量后复核读到新值（复核协议依赖：
 // 复核时刻 SELECT quota_used 是"剩余额"判定依据）；缺失 key → ErrNotFound。
 func TestPGKeyQuotaUsed(t *testing.T) {
 	repos := newPGRepos(t)

@@ -28,7 +28,7 @@ type ErrLogQuery struct {
 	KeyID      int64
 	Model      string
 	Format     string // 空 = 不过滤（无效值自然查空——与 model 同语义，契约不校验值域）
-	StatusCode int // 0 = 不过滤
+	StatusCode int    // 0 = 不过滤
 	ErrorType  string
 	From       *time.Time
 	To         *time.Time

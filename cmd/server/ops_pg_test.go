@@ -45,6 +45,8 @@ import (
 	"github.com/is7qin/c3api/internal/usage"
 )
 
+func ptrI64(v int64) *int64 { return &v }
+
 // opsTestSchema 本测试专用 schema（同一数据库内隔离命名空间）。
 const opsTestSchema = "ops_test"
 
@@ -115,8 +117,8 @@ func TestOpsWorkersPG(t *testing.T) {
 		Status: domain.KeyStatusActive, MaxConcurrency: 8, Quota: 1_000_000,
 	})
 	require.NoError(t, err)
-	_, err = repos.UpsertManual(ctx, &repository.PricingManual{
-		Model: "gpt-4o", PromptPricePerMillion: 250_000, CompletionPricePerMillion: 1_000_000,
+	_, err = repos.UpsertPriceEntryManual(ctx, &repository.PriceEntryManual{
+		Model: "gpt-4o", Mode: domain.PriceModeToken, InputPerM: ptrI64(250_000), OutputPerM: ptrI64(1_000_000),
 	})
 	require.NoError(t, err)
 

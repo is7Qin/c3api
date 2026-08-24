@@ -835,64 +835,6 @@ paths:
               schema: { $ref: '#/components/schemas/DeactivateResponse' }
         default:
           $ref: '#/components/responses/Error'
-  # --- litellm 模型价格（tag: pricing；Phase 5 计费价格来源） ---
-  # 模型标识在 query（PUT/DELETE 的 model 参数）：模型名是自由字符串可含 `/`
-  # （如 1024-x-1024/50-steps/bedrock/amazon.nova-canvas-v1:0），路径参数单段
-  # 匹配会拆段 404——URL 编码与 chi 通配方案均否决，见 spec 裁决（2026-08-14）。
-  /pricing:
-    get:
-      operationId: GetPricing
-      tags: [pricing]
-      summary: 模型价格列表（分页/筛选/排序；sort 白名单 model/updated_at）
-      parameters:
-        - { name: page, in: query, schema: { type: integer, default: 1, minimum: 1, description: 页码（1-based） } }
-        - { name: page_size, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 1000 } }
-        - { name: source, in: query, schema: { type: string, enum: [litellm, manual] } }
-        - { name: provider, in: query, schema: { $ref: '#/components/schemas/Provider', description: 厂商等值筛选（DB 侧自由字符串，不限于枚举；缺省 = 不筛） } }
-        - { name: model, in: query, schema: { type: string, description: 模型名模糊搜索（大小写不敏感） } }
-        - { name: sort, in: query, schema: { type: string, description: sort 白名单：model/updated_at } }
-        - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
-      responses:
-        '200':
-          description: 价格列表
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/PricingListResponse' }
-        default:
-          $ref: '#/components/responses/Error'
-    put:
-      operationId: PutPricingModel
-      tags: [pricing]
-      summary: 手动设价（毫分/1M tokens；upsert 强制 source=manual，可接管 litellm 行）
-      parameters:
-        - { name: model, in: query, required: true, schema: { type: string, description: 模型名 } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PricingUpsert' }
-      responses:
-        '200':
-          description: 设价后的价格行
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Pricing' }
-        default:
-          $ref: '#/components/responses/Error'
-    delete:
-      operationId: DeletePricingModel
-      tags: [pricing]
-      summary: 删除手动价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回）
-      parameters:
-        - { name: model, in: query, required: true, schema: { type: string, description: 模型名 } }
-      responses:
-        '200':
-          description: 删除成功
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/DeletedResponse' }
-        default:
-          $ref: '#/components/responses/Error'
   /pricing/sync:
     post:
       operationId: PostPricingSync
@@ -906,54 +848,80 @@ paths:
               schema: { $ref: '#/components/schemas/PricingSyncResponse' }
         default:
           $ref: '#/components/responses/Error'
-  # --- 图片生成价格（tag: pricing；Task A 数据面——images 端点计费价格来源） ---
-  # 模型标识在 query（PUT/DELETE 的 model 参数，同 /pricing——模型名可含 `/`）。
-  /image-price:
-    get:
-      operationId: GetImagePrice
+  /pricing/sync/preview:
+    post:
+      operationId: PostPricingSyncPreview
       tags: [pricing]
-      summary: 图片生成价格列表（分页/筛选/排序；sort 白名单 model/updated_at）
+      summary: 预览价格同步（零写库 diff 报告）
+      responses:
+        '200':
+          description: 预览报告
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PricingSyncPreviewResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /prices:
+    get:
+      operationId: GetPrices
+      tags: [pricing]
+      summary: 统一价格列表（分页+筛选）
       parameters:
-        - { name: page, in: query, schema: { type: integer, default: 1, minimum: 1, description: 页码（1-based） } }
+        - { name: page, in: query, schema: { type: integer, default: 1, minimum: 1 } }
         - { name: page_size, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 1000 } }
+        - { name: mode, in: query, schema: { type: string, enum: [token, call, image] } }
         - { name: source, in: query, schema: { type: string, enum: [litellm, manual] } }
-        - { name: provider, in: query, schema: { $ref: '#/components/schemas/Provider', description: 厂商等值筛选（DB 侧自由字符串，不限于枚举；缺省 = 不筛） } }
-        - { name: model, in: query, schema: { type: string, description: 模型名模糊搜索（大小写不敏感） } }
-        - { name: sort, in: query, schema: { type: string, description: sort 白名单：model/updated_at } }
+        - { name: model, in: query, schema: { type: string } }
+        - { name: sort, in: query, schema: { type: string } }
         - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
       responses:
         '200':
-          description: 图片价格列表
+          description: 价格列表
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ImagePriceListResponse' }
+              schema: { $ref: '#/components/schemas/PriceEntryListResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  # 模型 ID 含 "/"（litellm 命名空间惯例 openai/gpt-5.6-sol）——一律查询参数，禁路径参数
+  /prices/entry:
+    get:
+      operationId: GetPriceEntry
+      tags: [pricing]
+      summary: 单条价格查询
+      parameters:
+        - { name: model, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: 价格条目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceEntry' }
         default:
           $ref: '#/components/responses/Error'
     put:
-      parameters:
-        - { name: model, in: query, required: true, schema: { type: string, description: 模型名 } }
-      operationId: PutImagePriceModel
+      operationId: PutPriceEntry
       tags: [pricing]
-      summary: 手动设图片价格（三分量全可选；至少一个非 null——否则 400；upsert 强制 source=manual，可接管 litellm 行）
+      summary: 手动设价（upsert）
+      parameters:
+        - { name: model, in: query, required: true, schema: { type: string } }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ImagePriceUpsert' }
+            schema: { $ref: '#/components/schemas/PriceEntryUpsert' }
       responses:
         '200':
-          description: 设价后的图片价格行
+          description: 更新后条目
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ImagePrice' }
+              schema: { $ref: '#/components/schemas/PriceEntry' }
         default:
           $ref: '#/components/responses/Error'
     delete:
-      parameters:
-        - { name: model, in: query, required: true, schema: { type: string, description: 模型名 } }
-      operationId: DeleteImagePriceModel
+      operationId: DeletePriceEntry
       tags: [pricing]
-      summary: 删除手动图片价格（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回）
+      parameters:
+        - { name: model, in: query, required: true, schema: { type: string } }
       responses:
         '200':
           description: 删除成功
@@ -962,55 +930,46 @@ paths:
               schema: { $ref: '#/components/schemas/DeletedResponse' }
         default:
           $ref: '#/components/responses/Error'
-  # --- 按单元计费功能类价格（tag: pricing；价格表三件套——search 起，audio/video
-  # 等未来 per-unit 端点复用；对齐 image_price 形态） ---
-  # 模型标识在 query（PUT/DELETE 的 model 参数，同 /pricing——模型名可含 `/`）。
-  /function-prices:
+  /prices/variants:
     get:
-      operationId: GetFunctionPrices
+      operationId: GetPriceVariants
       tags: [pricing]
-      summary: 按单元计费功能类价格列表（分页/筛选/排序；sort 白名单 model/updated_at）
+      summary: 变体列表（seq 升序）
       parameters:
-        - { name: page, in: query, schema: { type: integer, default: 1, minimum: 1, description: 页码（1-based） } }
-        - { name: page_size, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 1000 } }
-        - { name: source, in: query, schema: { type: string, enum: [litellm, manual] } }
-        - { name: provider, in: query, schema: { $ref: '#/components/schemas/Provider', description: 厂商等值筛选（DB 侧自由字符串，不限于枚举；缺省 = 不筛） } }
-        - { name: model, in: query, schema: { type: string, description: 模型/功能标识模糊搜索（大小写不敏感；含 codex-search） } }
-        - { name: sort, in: query, schema: { type: string, description: sort 白名单：model/updated_at } }
-        - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
+        - { name: model, in: query, required: true, schema: { type: string } }
       responses:
         '200':
-          description: 按单元价列表
+          description: 变体列表
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/FunctionPriceListResponse' }
+              schema: { $ref: '#/components/schemas/PriceVariantListResponse' }
         default:
           $ref: '#/components/responses/Error'
     put:
-      parameters:
-        - { name: model, in: query, required: true, schema: { type: string, description: 模型/功能标识（如 codex-search） } }
-      operationId: PutFunctionPricesModel
+      operationId: PutPriceVariants
       tags: [pricing]
-      summary: 手动设按单元价（price_per_call USD/次 必填 ≥0；×1e5 存储毫分/次；upsert 强制 source=manual，可接管 litellm 行——codex-search 价可改）
+      summary: 整体替换变体（seq 升序首匹配）
+      parameters:
+        - { name: model, in: query, required: true, schema: { type: string } }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/FunctionPriceUpsert' }
+            schema: { $ref: '#/components/schemas/PriceVariantListRequest' }
       responses:
         '200':
-          description: 设价后的按单元价行
+          description: 更新后变体列表
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/FunctionPrice' }
+              schema: { $ref: '#/components/schemas/PriceVariantListResponse' }
         default:
           $ref: '#/components/responses/Error'
     delete:
-      parameters:
-        - { name: model, in: query, required: true, schema: { type: string, description: 模型/功能标识（如 codex-search） } }
-      operationId: DeleteFunctionPricesModel
+      operationId: DeletePriceVariants
       tags: [pricing]
-      summary: 删除手动按单元价（litellm 行 → 409；不存在 → 404；删除后下轮拉取补回；codex-search 种子行重启补回）
+      summary: 清空变体
+      parameters:
+        - { name: model, in: query, required: true, schema: { type: string } }
       responses:
         '200':
           description: 删除成功
@@ -2635,83 +2594,6 @@ components:
     PricingSource:
       type: string
       enum: [litellm, manual]
-    Pricing:
-      type: object
-      required: [Model, PromptPricePerMillion, CompletionPricePerMillion, Source, CreatedAt, UpdatedAt]
-      properties:
-        Model: { type: string }
-        PromptPricePerMillion: { type: number, format: double, description: "USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）" }
-        CompletionPricePerMillion: { type: number, format: double, description: "USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）" }
-        MaxInputTokens: { type: integer, format: int64, nullable: true, description: litellm 自带上下文窗口；nil = 未知 }
-        MaxOutputTokens: { type: integer, format: int64, nullable: true }
-        CacheReadPricePerMillion: { type: number, format: double, nullable: true, description: 缓存读取价（litellm cache_read_input_token_cost 换算）；nil = 无缓存价 }
-        CacheCreationPricePerMillion: { type: number, format: double, nullable: true, description: 缓存写入价（litellm cache_creation_input_token_cost 换算）；nil = 无缓存价 }
-        PriorityPromptPricePerMillion: { type: number, format: double, nullable: true, description: "service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价" }
-        PriorityCompletionPricePerMillion: { type: number, format: double, nullable: true }
-        PriorityCacheReadPricePerMillion: { type: number, format: double, nullable: true }
-        PriorityCacheCreationPricePerMillion: { type: number, format: double, nullable: true }
-        FlexPromptPricePerMillion: { type: number, format: double, nullable: true, description: "service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；nil = 无该档价，计费回退基础价" }
-        FlexCompletionPricePerMillion: { type: number, format: double, nullable: true }
-        FlexCacheReadPricePerMillion: { type: number, format: double, nullable: true }
-        FlexCacheCreationPricePerMillion: { type: number, format: double, nullable: true }
-        FastMultiplier: { type: number, format: double, nullable: true, description: Anthropic 专属（claude 系列 Fast Mode 整单倍率，正常值 2.0 = ×2.0；fast 挡计费 = 基础价 × 此倍率；API 边界换算）；nil = 无倍率 }
-        AboveThreshold: { type: integer, format: int64, nullable: true, description: 上下文分段阈值（tokens）；nil = 无分段 }
-        AbovePromptPricePerMillion: { type: number, format: double, nullable: true, description: "超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；nil = 该分量不拆段" }
-        AboveCompletionPricePerMillion: { type: number, format: double, nullable: true }
-        AboveCacheReadPricePerMillion: { type: number, format: double, nullable: true }
-        AboveCacheCreationPricePerMillion: { type: number, format: double, nullable: true }
-        AbovePriorityPromptPricePerMillion: { type: number, format: double, nullable: true, description: 超阈值分段价（priority 组，azure 形态）；nil = 该档回退基础 above 组 }
-        AbovePriorityCompletionPricePerMillion: { type: number, format: double, nullable: true }
-        AbovePriorityCacheReadPricePerMillion: { type: number, format: double, nullable: true }
-        AbovePriorityCacheCreationPricePerMillion: { type: number, format: double, nullable: true }
-        AboveFlexPromptPricePerMillion: { type: number, format: double, nullable: true, description: 超阈值分段价（flex 组，gpt-5.6-sol 形态）；nil = 该档回退基础 above 组 }
-        AboveFlexCompletionPricePerMillion: { type: number, format: double, nullable: true }
-        AboveFlexCacheReadPricePerMillion: { type: number, format: double, nullable: true }
-        AboveFlexCacheCreationPricePerMillion: { type: number, format: double, nullable: true }
-        Provider: { allOf: [{ $ref: '#/components/schemas/Provider' }], nullable: true, description: litellm_provider（litellm 行才有；manual 行 nil） }
-        Mode: { type: string, nullable: true, description: litellm mode（chat/completion/embedding 等） }
-        SupportsPromptCaching: { type: boolean, nullable: true, description: litellm supports_prompt_caching }
-        Source: { $ref: '#/components/schemas/PricingSource' }
-        CreatedAt: { type: string, format: date-time }
-        UpdatedAt: { type: string, format: date-time }
-    PricingUpsert:
-      type: object
-      required: [prompt_price_per_million, completion_price_per_million]
-      properties:
-        prompt_price_per_million: { type: number, format: double, minimum: 0, description: "USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分）；≥ 0" }
-        completion_price_per_million: { type: number, format: double, minimum: 0 }
-        cache_read_price_per_million: { type: number, format: double, minimum: 0, nullable: true, description: "缓存读取价（USD/1M tokens；内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省 = 不设缓存价（落库 NULL）" }
-        cache_creation_price_per_million: { type: number, format: double, minimum: 0, nullable: true, description: 缓存写入价；缺省 = 不设缓存价（落库 NULL） }
-        priority_prompt_price_per_million: { type: number, format: double, minimum: 0, nullable: true, description: "service_tier=priority 单价替换档（OpenAI 专属：gpt-5 系列 priority 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）" }
-        priority_completion_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        priority_cache_read_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        priority_cache_creation_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        flex_prompt_price_per_million: { type: number, format: double, minimum: 0, nullable: true, description: "service_tier=flex 单价替换档（OpenAI 专属：gpt-5.6-sol flex 价；USD/1M tokens，内部存储毫分——1 USD = 100,000 毫分，API 边界换算）；缺省/null = 不设（落库 NULL，计费回退基础价）" }
-        flex_completion_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        flex_cache_read_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        flex_cache_creation_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        fast_multiplier: { type: number, format: double, minimum: 0, maximum: 10, nullable: true, description: Anthropic 专属（claude 系列 Fast Mode 整单倍率，正常值 0 < m ≤ 10，2.0 = ×2.0；fast 挡计费 = 基础价 × 此倍率；API 边界换算）；缺省/null = 不设 }
-        above_threshold: { type: integer, format: int64, minimum: 0, nullable: true, description: 上下文分段阈值（tokens）；缺省/null = 不设（无分段） }
-        above_prompt_price_per_million: { type: number, format: double, minimum: 0, nullable: true, description: "超阈值分段价（基础组，USD/1M tokens（API 边界换算；内部存储毫分——1 USD = 100,000 毫分））；缺省/null = 该分量不拆段" }
-        above_completion_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        above_cache_read_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        above_cache_creation_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        above_priority_prompt_price_per_million: { type: number, format: double, minimum: 0, nullable: true, description: 超阈值分段价（priority 组，azure 形态）；缺省/null = 该档回退基础 above 组 }
-        above_priority_completion_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        above_priority_cache_read_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        above_priority_cache_creation_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        above_flex_prompt_price_per_million: { type: number, format: double, minimum: 0, nullable: true, description: 超阈值分段价（flex 组，gpt-5.6-sol 形态）；缺省/null = 该档回退基础 above 组 }
-        above_flex_completion_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        above_flex_cache_read_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-        above_flex_cache_creation_price_per_million: { type: number, format: double, minimum: 0, nullable: true }
-    PricingListResponse:
-      type: object
-      required: [total, rows]
-      properties:
-        total: { type: integer, format: int64 }
-        rows:
-          type: array
-          items: { $ref: '#/components/schemas/Pricing' }
     PricingSyncResponse:
       type: object
       required: [rows, skipped, updated]
@@ -2719,58 +2601,105 @@ components:
         rows: { type: integer, description: 拉取到的有效模型行数 }
         skipped: { type: integer, description: 解析时跳过的非法条目数（文本价、image 价与 function 价均无效，计一次） }
         updated: { type: integer, description: 文本价 upsert 落库数（manual 行不计） }
-        image_rows: { type: integer, description: 拉取到的有效 image 价行数（Task A 双线） }
-        image_updated: { type: integer, description: image 价 upsert 落库数（manual 行不计） }
-        function_rows: { type: integer, description: 拉取到的有效按单元价行数（价格表三件套） }
-        function_updated: { type: integer, description: 按单元价 upsert 落库数（manual 行不计） }
-    ImagePrice:
+    PricingSyncPreviewResponse:
       type: object
-      required: [Model, Source, CreatedAt, UpdatedAt]
+      required: [to_add, to_update, skipped]
       properties:
-        Model: { type: string, description: 模型名（与 pricings.model 同口径） }
-        InputImageTokenPricePerMillion: { type: number, format: double, nullable: true, description: "image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算，1 USD = 100,000 毫分）；null = 无该分量价" }
-        OutputImageTokenPricePerMillion: { type: number, format: double, nullable: true, description: image token 输出价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；内部存储毫分/1M，×1e5 换算）；null = 无该分量价 }
-        OutputCostPerImage: { type: number, format: double, nullable: true, description: 每张图价（USD/张；内部存储毫分——×1e5 换算，与 token 价同系数但单位语义不同：按张 flat，计费不走 /1e6 除法）；null = 不启用按张分量 }
-        Provider: { allOf: [{ $ref: '#/components/schemas/Provider' }], nullable: true, description: litellm_provider（litellm 行才有；manual 行 nil） }
+        to_add: { type: integer }
+        to_update: { type: integer }
+        skipped: { type: integer }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/PricingPreviewEntry' }
+        variants_changed: { type: integer }
+    PricingPreviewEntry:
+      type: object
+      required: [model, mode, action]
+      properties:
+        model: { type: string }
+        mode: { type: string, enum: [token, call, image] }
+        action: { type: string, enum: [add, update] }
+    PriceEntry:
+      type: object
+      required: [Model, Mode, Source, CreatedAt, UpdatedAt]
+      properties:
+        Model: { type: string }
+        Mode: { type: string, enum: [token, call, image] }
+        InputPerM: { type: number, format: double, nullable: true }
+        OutputPerM: { type: number, format: double, nullable: true }
+        CacheReadPerM: { type: number, format: double, nullable: true }
+        CacheWritePerM: { type: number, format: double, nullable: true }
+        PricePerCall: { type: number, format: double, nullable: true }
+        ImgInTokPerM: { type: number, format: double, nullable: true }
+        ImgOutTokPerM: { type: number, format: double, nullable: true }
+        PricePerImage: { type: number, format: double, nullable: true }
+        Provider: { allOf: [{ $ref: '#/components/schemas/Provider' }], nullable: true }
         Source: { $ref: '#/components/schemas/PricingSource' }
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
-    ImagePriceUpsert:
+    PriceEntryUpsert:
       type: object
+      required: [mode]
       properties:
-        input_image_token_price_per_million: { type: number, format: double, minimum: 0, nullable: true, description: image token 输入价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；API 边界 ×1e5 → 毫分/1M）；缺省/null = 清空该分量 }
-        output_image_token_price_per_million: { type: number, format: double, minimum: 0, nullable: true, description: image token 输出价（USD per 1M image tokens——per-million 口径，与 pricings 字段语义一致；API 边界 ×1e5 → 毫分/1M）；缺省/null = 清空该分量 }
-        output_cost_per_image: { type: number, format: double, minimum: 0, nullable: true, description: 每张图价（USD/张；API 边界 ×1e5 → 毫分/张——与 token 价同系数但单位语义独立：按张 flat，不走 /1e6 除法）；缺省/null = 清空该分量 }
-    ImagePriceListResponse:
+        mode: { type: string, enum: [token, call, image] }
+        input_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        output_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        cache_read_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        cache_write_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        price_per_call: { type: number, format: double, minimum: 0, nullable: true }
+        img_in_tok_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        img_out_tok_per_m: { type: number, format: double, minimum: 0, nullable: true }
+        price_per_image: { type: number, format: double, minimum: 0, nullable: true }
+    PriceEntryListResponse:
       type: object
       required: [total, rows]
       properties:
         total: { type: integer, format: int64 }
         rows:
           type: array
-          items: { $ref: '#/components/schemas/ImagePrice' }
-    FunctionPrice:
+          items: { $ref: '#/components/schemas/PriceEntry' }
+    PriceVariant:
       type: object
-      required: [Model, Source, CreatedAt, UpdatedAt]
+      required: [Model, Seq, CreatedAt, UpdatedAt]
       properties:
-        Model: { type: string, description: 模型/功能标识（litellm search 模型名 或 codex-search 固定标识） }
-        PricePerCall: { type: number, format: double, nullable: true, description: "按单元价（USD/次——litellm 原生口径 input_cost_per_query；内部存储毫分/次，×1e5 换算，1 USD = 100,000 毫分，**与 token 价不同换算系**，计费不走 /1e6 除法）；null = 无按单元价" }
-        Provider: { allOf: [{ $ref: '#/components/schemas/Provider' }], nullable: true, description: litellm_provider（litellm 行才有；manual 行 nil） }
-        Source: { $ref: '#/components/schemas/PricingSource' }
+        Model: { type: string }
+        Seq: { type: integer }
+        ServiceTier: { type: string, nullable: true }
+        CtxMin: { type: integer, format: int64, nullable: true }
+        CtxMax: { type: integer, format: int64, nullable: true }
+        TimeStart: { type: string, nullable: true }
+        TimeEnd: { type: string, nullable: true }
+        DowMask: { type: integer, nullable: true }
+        MultBP: { type: integer, nullable: true }
+        SetInputPerM: { type: number, format: double, nullable: true }
+        SetOutputPerM: { type: number, format: double, nullable: true }
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
-    FunctionPriceUpsert:
+    PriceVariantUpsert:
       type: object
       properties:
-        price_per_call: { type: number, format: double, minimum: 0, nullable: true, description: 按单元价（USD/次；API 边界 ×1e5 → 毫分/次）；必填且 ≥0——缺省/null → 400（service 行有效性校验：按单元价非 nil；0 = 按次免费） }
-    FunctionPriceListResponse:
+        service_tier: { type: string, nullable: true }
+        ctx_min: { type: integer, format: int64, nullable: true }
+        ctx_max: { type: integer, format: int64, nullable: true }
+        time_start: { type: string, nullable: true }
+        time_end: { type: string, nullable: true }
+        dow_mask: { type: integer, nullable: true }
+        mult_bp: { type: integer, nullable: true }
+        set_input_per_m: { type: number, format: double, nullable: true }
+        set_output_per_m: { type: number, format: double, nullable: true }
+        seq: { type: integer, minimum: 1 }
+    PriceVariantListResponse:
       type: object
-      required: [total, rows]
       properties:
-        total: { type: integer, format: int64 }
         rows:
           type: array
-          items: { $ref: '#/components/schemas/FunctionPrice' }
+          items: { $ref: '#/components/schemas/PriceVariant' }
+    PriceVariantListRequest:
+      type: object
+      properties:
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/PriceVariantUpsert' }
     RedeemRequest:
       type: object
       required: [code]

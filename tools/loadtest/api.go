@@ -156,7 +156,9 @@ func adminScenarios() []apiScenario {
 		w("keys.list", 8, "GET", func(r *rand.Rand) string { return "/api/admin/keys?limit=100&offset=" + strconv.Itoa(r.IntN(60)*100) }, nil),
 		w("groups.list", 6, "GET", func(*rand.Rand) string { return "/api/admin/groups?limit=100" }, nil),
 		w("templates.list", 5, "GET", func(*rand.Rand) string { return "/api/admin/templates?limit=100" }, nil),
-		w("accounts.list", 8, "GET", func(r *rand.Rand) string { return "/api/admin/accounts?limit=100&offset=" + strconv.Itoa(r.IntN(60)*100) }, nil),
+		w("accounts.list", 8, "GET", func(r *rand.Rand) string {
+			return "/api/admin/accounts?limit=100&offset=" + strconv.Itoa(r.IntN(60)*100)
+		}, nil),
 		w("accounts.usage", 4, "GET", func(r *rand.Rand) string {
 			ids := make([]string, 10)
 			for i := range ids {
@@ -166,9 +168,9 @@ func adminScenarios() []apiScenario {
 		}, nil),
 		w("rules.list", 4, "GET", func(*rand.Rand) string { return "/api/admin/rules" }, nil),
 		w("redemptions.list", 5, "GET", func(r *rand.Rand) string { return "/api/admin/redemption-codes?" + apiRandPage(r, 200) }, nil),
-		w("pricing.list", 5, "GET", func(*rand.Rand) string { return "/api/admin/pricing?page=1&page_size=200" }, nil),
-		w("image-price.list", 3, "GET", func(*rand.Rand) string { return "/api/admin/image-price?page=1&page_size=100" }, nil),
-		w("function-prices.list", 2, "GET", func(*rand.Rand) string { return "/api/admin/function-prices?page=1&page_size=100" }, nil),
+		w("prices.list", 5, "GET", func(*rand.Rand) string { return "/api/admin/prices?page=1&page_size=200" }, nil),
+		w("prices.image.list", 3, "GET", func(*rand.Rand) string { return "/api/admin/prices?page=1&page_size=100&mode=image" }, nil),
+		w("prices.call.list", 2, "GET", func(*rand.Rand) string { return "/api/admin/prices?page=1&page_size=100&mode=call" }, nil),
 		w("usage_logs.list", 12, "GET", func(r *rand.Rand) string {
 			return "/api/admin/usage_logs?" + apiDayRange() +
 				"&limit=50&offset=" + strconv.Itoa(r.IntN(500)*50)
@@ -244,12 +246,13 @@ func adminScenarios() []apiScenario {
 			func(_ *rand.Rand, _ string) any {
 				return map[string]any{"count": 100, "type": "balance", "value": 1, "max_uses": 1}
 			}),
-		w("pricing.put", 2, "PUT", func(r *rand.Rand) string {
-			return "/api/admin/pricing?model=" + url.QueryEscape(fillModels[r.IntN(len(fillModels))])
+		w("prices.put", 2, "PUT", func(r *rand.Rand) string {
+			return "/api/admin/prices/entry?model=" + url.QueryEscape(fillModels[r.IntN(len(fillModels))])
 		}, func(r *rand.Rand, _ string) any {
-			// 单位契约：元/百万 token（×1e5 存毫分），量级对齐真实价
-			return map[string]any{"prompt_price_per_million": 20 + r.Int64N(180),
-				"completion_price_per_million": 60 + r.Int64N(540)}
+			// 单位契约：token 档 input_per_m/output_per_m 为 USD/百万 token
+			// （×1e5 存毫分），量级对齐真实价
+			return map[string]any{"mode": "token",
+				"input_per_m": 20 + r.Int64N(180), "output_per_m": 60 + r.Int64N(540)}
 		}),
 	}
 }

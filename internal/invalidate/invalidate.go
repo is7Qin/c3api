@@ -141,9 +141,9 @@ type Debouncer struct {
 	// goFn 托管 goroutine 启动器（B4-3/p2-03：裸 goroutine → worker.Manager.Go
 	// 同契约——panic 捕获 + Warn，进程不崩，worker.go:6 承诺）。默认
 	// worker.New(cfg.Log).Go；测试可注入记录/替代实现。
-	goFn     func(ctx context.Context, name string, fn func(context.Context))
-	state    atomic.Pointer[State]
-	wake     chan struct{} // 空 → 非空置脏唤醒执行 goroutine（cap 1）
+	goFn      func(ctx context.Context, name string, fn func(context.Context))
+	state     atomic.Pointer[State]
+	wake      chan struct{} // 空 → 非空置脏唤醒执行 goroutine（cap 1）
 	startOnce atomic.Bool
 }
 

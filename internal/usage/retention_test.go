@@ -255,7 +255,7 @@ func TestRetentionWorkerStatsFailureIsolated(t *testing.T) {
 }
 
 // TestRetentionWorkerErrLogsFailureIsolated C32：一表 DROP 失败不影响另一表
-//（err_logs drop 失败 → usage_logs 仍正常 drop/ensure，下轮重试各自独立）。
+// （err_logs drop 失败 → usage_logs 仍正常 drop/ensure，下轮重试各自独立）。
 func TestRetentionWorkerErrLogsFailureIsolated(t *testing.T) {
 	pm := &fakePartitionManager{edropErr: errBoom}
 	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, TickerInterval: 20 * time.Millisecond}, pm, nil)
@@ -299,7 +299,7 @@ func TestRetentionWorkerErrorTolerated(t *testing.T) {
 }
 
 // TestRetentionWorkerCloseIdempotent Close 未 Start 也安全 + 重复 Close 幂等
-//（worker.Worker 契约）。
+// （worker.Worker 契约）。
 func TestRetentionWorkerCloseIdempotent(t *testing.T) {
 	pm := &fakePartitionManager{}
 	w := NewRetention(RetentionConfig{LogRetentionDays: 30}, pm, nil)

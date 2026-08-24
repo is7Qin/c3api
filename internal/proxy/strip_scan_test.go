@@ -363,7 +363,7 @@ func TestParseStringValue(t *testing.T) {
 		{"字符串", `"gpt-4o"`, "gpt-4o", true},
 		{"空字符串", `""`, "", true},
 		{"unicode转义", `"g\u002d4o"`, "g-4o", true}, // - 解码 = '-'（gjson String() 同款）
-		{"双反斜杠字面", `"\\u0069"`, `\u0069`, true}, // JSON \\u = 字面反斜杠 + u0069，不解码
+		{"双反斜杠字面", `"\\u0069"`, `\u0069`, true},    // JSON \\u = 字面反斜杠 + u0069，不解码
 		{"数字", "123", "", false},
 		{"布尔", "true", "", false},
 		{"对象", "{}", "", false},

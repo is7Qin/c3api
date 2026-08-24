@@ -28,8 +28,8 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
-	"net/url"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -228,7 +228,7 @@ func main() {
 	// 基础价 + 随机 1-2 个矩阵字段（priority/fast 等），保证计费链路有价。
 	pStart := time.Now()
 	for _, model := range pickModels(rng, *priceModels) {
-		admin(http.MethodPut, "/api/admin/pricing?model="+url.QueryEscape(model), randomPricingBody(rng), nil)
+		admin(http.MethodPut, "/api/admin/prices/entry?model="+url.QueryEscape(model), randomPricingBody(rng), nil)
 	}
 	fmt.Printf("pricing: %d models (%s)\n", *priceModels, time.Since(pStart).Round(time.Millisecond))
 
@@ -324,29 +324,25 @@ func randomModels(rng *rand.Rand) []string {
 	return pickModels(rng, 1+rng.IntN(20))
 }
 
-// randomPricingBody 基础价（prompt/completion，USD/1M tokens——API 契约
-// float 直发，handler usdToMillis ×1e5 落库毫分）+ 随机 1-2 个矩阵字段
-// （priority/flex 单价替换档、above 分段、fast 倍率）。注意：主价单位 USD
+// randomPricingBody token 档基础价（input_per_m/output_per_m，USD/1M tokens——
+// API 契约 float 直发，handler usdToMillis ×1e5 落库毫分）+ 随机 1-2 个可选
+// 缓存字段（cache_read/cache_write，真实模型常见有价）。注意：主价单位 USD
 // 非毫分——旧 int 50000-500000 会被当 $50k-500k/1M，×1e5 落库后单请求扣
 // 巨款余额秒光（402），压测数据全废。
 func randomPricingBody(rng *rand.Rand) map[string]any {
 	prompt := 0.5 + rng.Float64()*4.5 // 0.5-5 USD/1M tokens
 	completion := prompt * 4
 	body := map[string]any{
-		"prompt_price_per_million":     prompt,
-		"completion_price_per_million": completion,
+		"mode":         "token",
+		"input_per_m":  prompt,
+		"output_per_m": completion,
 	}
-	matrix := []func(){
-		func() { body["priority_prompt_price_per_million"] = prompt * 2 },
-		func() { body["priority_completion_price_per_million"] = completion * 2 },
-		func() { body["flex_prompt_price_per_million"] = prompt * 3 / 2 },
-		func() { body["flex_completion_price_per_million"] = completion * 3 / 2 },
-		func() { body["above_threshold"] = 128000 },
-		func() { body["above_prompt_price_per_million"] = prompt / 2 },
-		func() { body["fast_multiplier"] = 1.0 + rng.Float64()*5.0 }, // ×1.0-6.0（API 契约 float 直发；旧 int 万分数契约已废）
+	extras := []func(){
+		func() { body["cache_read_per_m"] = prompt / 10 },
+		func() { body["cache_write_per_m"] = prompt / 4 },
 	}
-	for _, idx := range rng.Perm(len(matrix))[:1+rng.IntN(2)] {
-		matrix[idx]()
+	for _, idx := range rng.Perm(len(extras))[:1+rng.IntN(2)] {
+		extras[idx]()
 	}
 	return body
 }

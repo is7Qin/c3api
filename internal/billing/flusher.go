@@ -79,13 +79,13 @@ var lagRefreshInterval = time.Second
 // inflightAbandonGrace 在途消费周期收尾宽限（A-P2-8-2，与 usage 包同值同语义
 // ——两包各自声明）：Close 预算到期 Cancel baseCtx 后给在途周期收尾的兜底等待
 // ——正常情形取消传播微秒级完成；DB 病态卡死时超时即放弃排空、Warn 截断退出
-//（在途事务由已取消 baseCtx 收尾回滚，行保持 unbilled 不丢），不无界阻塞停机。
+// （在途事务由已取消 baseCtx 收尾回滚，行保持 unbilled 不丢），不无界阻塞停机。
 // var（非 const）：测试注入小阈值。
 var inflightAbandonGrace = 500 * time.Millisecond
 
 // Flusher 计费游标消费者（worker.Worker 契约，Name="billing"）。F2 重写裁决：
 // 内存 pending 队列整体删除（双写元凶）——billable 行由 usage flusher 落库
-//（billed=false 出生），本 worker 只消费账本游标：
+// （billed=false 出生），本 worker 只消费账本游标：
 //
 //	每周期（FlushInterval 默认 250ms）：会话级 advisory lock 取批前获取、持有
 //	整周期后释放（多实例取批互斥）→ 排空式循环（F2-opt D2）：FetchUnbilledBatch
@@ -257,9 +257,9 @@ func (f *Flusher) refreshLag(ctx context.Context, force bool) {
 }
 
 // Close 幂等排空（优雅停机核心，惯用法与 usage 包同形态）：等消费 loop 退出
-//（受预算约束）→ 以 flushMu 获取等待在途周期（SIGTERM 时 ticker 周期可能在途
+// （受预算约束）→ 以 flushMu 获取等待在途周期（SIGTERM 时 ticker 周期可能在途
 // 占住 flushMu；Close 必须先等其结束）→ 受 shutdown ctx 预算约束的排空循环
-//（逐周期消费至游标清空；n==0 = 清空/锁被他实例持有/DB 故障——均退出，剩余
+// （逐周期消费至游标清空；n==0 = 清空/锁被他实例持有/DB 故障——均退出，剩余
 // 行下次启动收敛）。ctx 到期 → Cancel baseCtx（在途事务快速失败回滚，行保持
 // unbilled 不丢）+ Warn 截断退出；在途收尾超时（A-P2-8-2）→ 放弃排空 Warn
 // 截断退出。未 Start 也安全（跳过 loop 等待；在途周期同样等待/排空）。

@@ -30,14 +30,14 @@ const authSyncTimeout = 30 * time.Second
 // （事件即时 + 周期兜底双保险）；Reload 内部持锁整体换快照（last-wins），与
 // 事件驱动并发调用安全。
 type authSync struct {
-	auth      invalidate.AuthReloader
-	interval  time.Duration
-	timeout   time.Duration // per-attempt Reload 超时（B4-2：0 兜底 → authSyncTimeout 30s；测试可缩短）
-	log       *logx.Logger
+	auth     invalidate.AuthReloader
+	interval time.Duration
+	timeout  time.Duration // per-attempt Reload 超时（B4-2：0 兜底 → authSyncTimeout 30s；测试可缩短）
+	log      *logx.Logger
 	// goFn 托管 goroutine 启动器（B4-3/p2-03：裸 goroutine → worker.Manager.Go
 	// 同契约——panic 捕获 + Warn，进程不崩，worker.go:6 承诺）。默认
 	// worker.New(log).Go；测试可注入记录/替代实现。
-	goFn func(ctx context.Context, name string, fn func(context.Context))
+	goFn      func(ctx context.Context, name string, fn func(context.Context))
 	startOnce atomic.Bool
 	// running/lastReload 观测面（/ops/workers）：循环存活 + 最近一次 Reload 成功
 	// 完成时刻（B4-2：失败不前移——成败都记是"正常刷新"可观测性谎言）。

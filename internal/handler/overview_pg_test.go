@@ -75,7 +75,7 @@ func overviewPGTestDB(t *testing.T, seedFrom, seedUntil time.Time) *repository.R
 func overviewBucket(bt time.Time, groupID int64, req, errs, in, out, total, cache, cost int64) *domain.StatBucket {
 	return &domain.StatBucket{
 		BucketTime: bt, GroupID: groupID,
-		Model: "gpt-4o",
+		Model:        "gpt-4o",
 		RequestCount: req, ErrorCount: errs, InputTokens: in, OutputTokens: out,
 		TotalTokens: total, CacheReadTokens: cache, CacheCreationTokens: 0,
 		Cost: cost,
@@ -174,23 +174,23 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 	// avg=(250+450)/10=70、max=200、p50: rank5 → 桶1 内 50+2/5×50=70、
 	// p90: rank9 → 桶2 内 100+1/2×100=150、p95/p99: rank10 → 200
 	b1 := overviewBucket(day0.Add(3*time.Hour), 7, 10, 2, 100, 50, 150, 20, 100_000) // $1.00
-	b1.RawCost = 250_000                                                                 // $2.50（raw 口径独立于 cost）
+	b1.RawCost = 250_000                                                             // $2.50（raw 口径独立于 cost）
 	b1.CallCount = 5
 	b1.TTFTTotalMS = 250
 	b1.TTFTCount = 5
 	b1.TTFTMaxMS = 120
 	b1.TTFTHist = []int64{3, 2, 0, 0, 0, 0, 0, 0, 0, 0}
 	b2 := overviewBucket(day0.Add(5*time.Hour), 7, 5, 1, 50, 25, 75, 10, 50_000) // $0.50
-	b2.RawCost = 150_000                                                            // $1.50
+	b2.RawCost = 150_000                                                         // $1.50
 	b2.CallCount = 5
 	b2.TTFTTotalMS = 450
 	b2.TTFTCount = 5
 	b2.TTFTMaxMS = 200
 	b2.TTFTHist = []int64{0, 3, 2, 0, 0, 0, 0, 0, 0, 0}
 	b3 := overviewBucket(day0.Add(-21*time.Hour), 7, 20, 3, 200, 100, 300, 0, 200_000) // $2.00
-	b3.RawCost = 400_000                                                                  // $4.00
-	b4 := overviewBucket(day0.Add(-45*time.Hour), 7, 30, 0, 300, 150, 450, 0, 300_000)   // $3.00
-	b4.RawCost = 600_000                                                                  // $6.00
+	b3.RawCost = 400_000                                                               // $4.00
+	b4 := overviewBucket(day0.Add(-45*time.Hour), 7, 30, 0, 300, 150, 450, 0, 300_000) // $3.00
+	b4.RawCost = 600_000                                                               // $6.00
 	overviewSeedBuckets(t, repos, b1, b2, b3, b4)
 	// 资源计数种子：1 模板 + 1 组 + 2 用户（软删模板不计）
 	_, err := repos.Client.Template.Create().SetName("t1").SetBaseURL("https://upstream.example").

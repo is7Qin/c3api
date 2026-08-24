@@ -96,7 +96,7 @@ func TestPGUpdateUserPatchConditional(t *testing.T) {
 
 // TestPGUpdateUserVsDeductOnlyInterleave v02 点名无回归网（F2 游标语义适配）：
 // GET 快照(100000) → 游标消费扣费(40000) → 陈旧快照条件写必须 ErrConflict
-//（余额不复活、usage_logs 消费与余额一致）；新鲜快照条件写成功（管理员显式
+// （余额不复活、usage_logs 消费与余额一致）；新鲜快照条件写成功（管理员显式
 // 意图建立在当前值上）。
 func TestPGUpdateUserVsDeductOnlyInterleave(t *testing.T) {
 	repos := newPGRepos(t)

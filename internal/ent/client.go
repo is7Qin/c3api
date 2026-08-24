@@ -20,12 +20,11 @@ import (
 	"github.com/is7qin/c3api/internal/ent/emailcode"
 	"github.com/is7qin/c3api/internal/ent/emailtemplate"
 	"github.com/is7qin/c3api/internal/ent/errlog"
-	"github.com/is7qin/c3api/internal/ent/functionprice"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
-	"github.com/is7qin/c3api/internal/ent/imageprice"
 	"github.com/is7qin/c3api/internal/ent/key"
-	"github.com/is7qin/c3api/internal/ent/pricing"
+	"github.com/is7qin/c3api/internal/ent/priceentry"
+	"github.com/is7qin/c3api/internal/ent/pricevariant"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
 	"github.com/is7qin/c3api/internal/ent/redemptionuse"
 	"github.com/is7qin/c3api/internal/ent/rule"
@@ -54,18 +53,16 @@ type Client struct {
 	EmailTemplate *EmailTemplateClient
 	// ErrLog is the client for interacting with the ErrLog builders.
 	ErrLog *ErrLogClient
-	// FunctionPrice is the client for interacting with the FunctionPrice builders.
-	FunctionPrice *FunctionPriceClient
 	// Group is the client for interacting with the Group builders.
 	Group *GroupClient
 	// GroupAssignment is the client for interacting with the GroupAssignment builders.
 	GroupAssignment *GroupAssignmentClient
-	// ImagePrice is the client for interacting with the ImagePrice builders.
-	ImagePrice *ImagePriceClient
 	// Key is the client for interacting with the Key builders.
 	Key *KeyClient
-	// Pricing is the client for interacting with the Pricing builders.
-	Pricing *PricingClient
+	// PriceEntry is the client for interacting with the PriceEntry builders.
+	PriceEntry *PriceEntryClient
+	// PriceVariant is the client for interacting with the PriceVariant builders.
+	PriceVariant *PriceVariantClient
 	// RedemptionCode is the client for interacting with the RedemptionCode builders.
 	RedemptionCode *RedemptionCodeClient
 	// RedemptionUse is the client for interacting with the RedemptionUse builders.
@@ -104,12 +101,11 @@ func (c *Client) init() {
 	c.EmailCode = NewEmailCodeClient(c.config)
 	c.EmailTemplate = NewEmailTemplateClient(c.config)
 	c.ErrLog = NewErrLogClient(c.config)
-	c.FunctionPrice = NewFunctionPriceClient(c.config)
 	c.Group = NewGroupClient(c.config)
 	c.GroupAssignment = NewGroupAssignmentClient(c.config)
-	c.ImagePrice = NewImagePriceClient(c.config)
 	c.Key = NewKeyClient(c.config)
-	c.Pricing = NewPricingClient(c.config)
+	c.PriceEntry = NewPriceEntryClient(c.config)
+	c.PriceVariant = NewPriceVariantClient(c.config)
 	c.RedemptionCode = NewRedemptionCodeClient(c.config)
 	c.RedemptionUse = NewRedemptionUseClient(c.config)
 	c.Rule = NewRuleClient(c.config)
@@ -218,12 +214,11 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		EmailCode:       NewEmailCodeClient(cfg),
 		EmailTemplate:   NewEmailTemplateClient(cfg),
 		ErrLog:          NewErrLogClient(cfg),
-		FunctionPrice:   NewFunctionPriceClient(cfg),
 		Group:           NewGroupClient(cfg),
 		GroupAssignment: NewGroupAssignmentClient(cfg),
-		ImagePrice:      NewImagePriceClient(cfg),
 		Key:             NewKeyClient(cfg),
-		Pricing:         NewPricingClient(cfg),
+		PriceEntry:      NewPriceEntryClient(cfg),
+		PriceVariant:    NewPriceVariantClient(cfg),
 		RedemptionCode:  NewRedemptionCodeClient(cfg),
 		RedemptionUse:   NewRedemptionUseClient(cfg),
 		Rule:            NewRuleClient(cfg),
@@ -259,12 +254,11 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		EmailCode:       NewEmailCodeClient(cfg),
 		EmailTemplate:   NewEmailTemplateClient(cfg),
 		ErrLog:          NewErrLogClient(cfg),
-		FunctionPrice:   NewFunctionPriceClient(cfg),
 		Group:           NewGroupClient(cfg),
 		GroupAssignment: NewGroupAssignmentClient(cfg),
-		ImagePrice:      NewImagePriceClient(cfg),
 		Key:             NewKeyClient(cfg),
-		Pricing:         NewPricingClient(cfg),
+		PriceEntry:      NewPriceEntryClient(cfg),
+		PriceVariant:    NewPriceVariantClient(cfg),
 		RedemptionCode:  NewRedemptionCodeClient(cfg),
 		RedemptionUse:   NewRedemptionUseClient(cfg),
 		Rule:            NewRuleClient(cfg),
@@ -305,10 +299,10 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.Account, c.AccountExt, c.EmailCode, c.EmailTemplate, c.ErrLog,
-		c.FunctionPrice, c.Group, c.GroupAssignment, c.ImagePrice, c.Key, c.Pricing,
-		c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting, c.TempBalance,
-		c.Template, c.TemplateExt, c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
+		c.Account, c.AccountExt, c.EmailCode, c.EmailTemplate, c.ErrLog, c.Group,
+		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
+		c.RedemptionUse, c.Rule, c.Setting, c.TempBalance, c.Template, c.TemplateExt,
+		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Use(hooks...)
 	}
@@ -318,10 +312,10 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.Account, c.AccountExt, c.EmailCode, c.EmailTemplate, c.ErrLog,
-		c.FunctionPrice, c.Group, c.GroupAssignment, c.ImagePrice, c.Key, c.Pricing,
-		c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting, c.TempBalance,
-		c.Template, c.TemplateExt, c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
+		c.Account, c.AccountExt, c.EmailCode, c.EmailTemplate, c.ErrLog, c.Group,
+		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
+		c.RedemptionUse, c.Rule, c.Setting, c.TempBalance, c.Template, c.TemplateExt,
+		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -340,18 +334,16 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.EmailTemplate.mutate(ctx, m)
 	case *ErrLogMutation:
 		return c.ErrLog.mutate(ctx, m)
-	case *FunctionPriceMutation:
-		return c.FunctionPrice.mutate(ctx, m)
 	case *GroupMutation:
 		return c.Group.mutate(ctx, m)
 	case *GroupAssignmentMutation:
 		return c.GroupAssignment.mutate(ctx, m)
-	case *ImagePriceMutation:
-		return c.ImagePrice.mutate(ctx, m)
 	case *KeyMutation:
 		return c.Key.mutate(ctx, m)
-	case *PricingMutation:
-		return c.Pricing.mutate(ctx, m)
+	case *PriceEntryMutation:
+		return c.PriceEntry.mutate(ctx, m)
+	case *PriceVariantMutation:
+		return c.PriceVariant.mutate(ctx, m)
 	case *RedemptionCodeMutation:
 		return c.RedemptionCode.mutate(ctx, m)
 	case *RedemptionUseMutation:
@@ -1108,139 +1100,6 @@ func (c *ErrLogClient) mutate(ctx context.Context, m *ErrLogMutation) (Value, er
 	}
 }
 
-// FunctionPriceClient is a client for the FunctionPrice schema.
-type FunctionPriceClient struct {
-	config
-}
-
-// NewFunctionPriceClient returns a client for the FunctionPrice from the given config.
-func NewFunctionPriceClient(c config) *FunctionPriceClient {
-	return &FunctionPriceClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `functionprice.Hooks(f(g(h())))`.
-func (c *FunctionPriceClient) Use(hooks ...Hook) {
-	c.hooks.FunctionPrice = append(c.hooks.FunctionPrice, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `functionprice.Intercept(f(g(h())))`.
-func (c *FunctionPriceClient) Intercept(interceptors ...Interceptor) {
-	c.inters.FunctionPrice = append(c.inters.FunctionPrice, interceptors...)
-}
-
-// Create returns a builder for creating a FunctionPrice entity.
-func (c *FunctionPriceClient) Create() *FunctionPriceCreate {
-	mutation := newFunctionPriceMutation(c.config, OpCreate)
-	return &FunctionPriceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of FunctionPrice entities.
-func (c *FunctionPriceClient) CreateBulk(builders ...*FunctionPriceCreate) *FunctionPriceCreateBulk {
-	return &FunctionPriceCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *FunctionPriceClient) MapCreateBulk(slice any, setFunc func(*FunctionPriceCreate, int)) *FunctionPriceCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &FunctionPriceCreateBulk{err: fmt.Errorf("calling to FunctionPriceClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*FunctionPriceCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &FunctionPriceCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for FunctionPrice.
-func (c *FunctionPriceClient) Update() *FunctionPriceUpdate {
-	mutation := newFunctionPriceMutation(c.config, OpUpdate)
-	return &FunctionPriceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *FunctionPriceClient) UpdateOne(_m *FunctionPrice) *FunctionPriceUpdateOne {
-	mutation := newFunctionPriceMutation(c.config, OpUpdateOne, withFunctionPrice(_m))
-	return &FunctionPriceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *FunctionPriceClient) UpdateOneID(id int64) *FunctionPriceUpdateOne {
-	mutation := newFunctionPriceMutation(c.config, OpUpdateOne, withFunctionPriceID(id))
-	return &FunctionPriceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for FunctionPrice.
-func (c *FunctionPriceClient) Delete() *FunctionPriceDelete {
-	mutation := newFunctionPriceMutation(c.config, OpDelete)
-	return &FunctionPriceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *FunctionPriceClient) DeleteOne(_m *FunctionPrice) *FunctionPriceDeleteOne {
-	return c.DeleteOneID(_m.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *FunctionPriceClient) DeleteOneID(id int64) *FunctionPriceDeleteOne {
-	builder := c.Delete().Where(functionprice.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &FunctionPriceDeleteOne{builder}
-}
-
-// Query returns a query builder for FunctionPrice.
-func (c *FunctionPriceClient) Query() *FunctionPriceQuery {
-	return &FunctionPriceQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeFunctionPrice},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a FunctionPrice entity by its id.
-func (c *FunctionPriceClient) Get(ctx context.Context, id int64) (*FunctionPrice, error) {
-	return c.Query().Where(functionprice.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *FunctionPriceClient) GetX(ctx context.Context, id int64) *FunctionPrice {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *FunctionPriceClient) Hooks() []Hook {
-	return c.hooks.FunctionPrice
-}
-
-// Interceptors returns the client interceptors.
-func (c *FunctionPriceClient) Interceptors() []Interceptor {
-	return c.inters.FunctionPrice
-}
-
-func (c *FunctionPriceClient) mutate(ctx context.Context, m *FunctionPriceMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&FunctionPriceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&FunctionPriceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&FunctionPriceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&FunctionPriceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown FunctionPrice mutation op: %q", m.Op())
-	}
-}
-
 // GroupClient is a client for the Group schema.
 type GroupClient struct {
 	config
@@ -1587,139 +1446,6 @@ func (c *GroupAssignmentClient) mutate(ctx context.Context, m *GroupAssignmentMu
 	}
 }
 
-// ImagePriceClient is a client for the ImagePrice schema.
-type ImagePriceClient struct {
-	config
-}
-
-// NewImagePriceClient returns a client for the ImagePrice from the given config.
-func NewImagePriceClient(c config) *ImagePriceClient {
-	return &ImagePriceClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `imageprice.Hooks(f(g(h())))`.
-func (c *ImagePriceClient) Use(hooks ...Hook) {
-	c.hooks.ImagePrice = append(c.hooks.ImagePrice, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `imageprice.Intercept(f(g(h())))`.
-func (c *ImagePriceClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ImagePrice = append(c.inters.ImagePrice, interceptors...)
-}
-
-// Create returns a builder for creating a ImagePrice entity.
-func (c *ImagePriceClient) Create() *ImagePriceCreate {
-	mutation := newImagePriceMutation(c.config, OpCreate)
-	return &ImagePriceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of ImagePrice entities.
-func (c *ImagePriceClient) CreateBulk(builders ...*ImagePriceCreate) *ImagePriceCreateBulk {
-	return &ImagePriceCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ImagePriceClient) MapCreateBulk(slice any, setFunc func(*ImagePriceCreate, int)) *ImagePriceCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ImagePriceCreateBulk{err: fmt.Errorf("calling to ImagePriceClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ImagePriceCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ImagePriceCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for ImagePrice.
-func (c *ImagePriceClient) Update() *ImagePriceUpdate {
-	mutation := newImagePriceMutation(c.config, OpUpdate)
-	return &ImagePriceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ImagePriceClient) UpdateOne(_m *ImagePrice) *ImagePriceUpdateOne {
-	mutation := newImagePriceMutation(c.config, OpUpdateOne, withImagePrice(_m))
-	return &ImagePriceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ImagePriceClient) UpdateOneID(id int64) *ImagePriceUpdateOne {
-	mutation := newImagePriceMutation(c.config, OpUpdateOne, withImagePriceID(id))
-	return &ImagePriceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for ImagePrice.
-func (c *ImagePriceClient) Delete() *ImagePriceDelete {
-	mutation := newImagePriceMutation(c.config, OpDelete)
-	return &ImagePriceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ImagePriceClient) DeleteOne(_m *ImagePrice) *ImagePriceDeleteOne {
-	return c.DeleteOneID(_m.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ImagePriceClient) DeleteOneID(id int64) *ImagePriceDeleteOne {
-	builder := c.Delete().Where(imageprice.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ImagePriceDeleteOne{builder}
-}
-
-// Query returns a query builder for ImagePrice.
-func (c *ImagePriceClient) Query() *ImagePriceQuery {
-	return &ImagePriceQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeImagePrice},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a ImagePrice entity by its id.
-func (c *ImagePriceClient) Get(ctx context.Context, id int64) (*ImagePrice, error) {
-	return c.Query().Where(imageprice.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ImagePriceClient) GetX(ctx context.Context, id int64) *ImagePrice {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ImagePriceClient) Hooks() []Hook {
-	return c.hooks.ImagePrice
-}
-
-// Interceptors returns the client interceptors.
-func (c *ImagePriceClient) Interceptors() []Interceptor {
-	return c.inters.ImagePrice
-}
-
-func (c *ImagePriceClient) mutate(ctx context.Context, m *ImagePriceMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ImagePriceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ImagePriceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ImagePriceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ImagePriceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown ImagePrice mutation op: %q", m.Op())
-	}
-}
-
 // KeyClient is a client for the Key schema.
 type KeyClient struct {
 	config
@@ -1885,107 +1611,107 @@ func (c *KeyClient) mutate(ctx context.Context, m *KeyMutation) (Value, error) {
 	}
 }
 
-// PricingClient is a client for the Pricing schema.
-type PricingClient struct {
+// PriceEntryClient is a client for the PriceEntry schema.
+type PriceEntryClient struct {
 	config
 }
 
-// NewPricingClient returns a client for the Pricing from the given config.
-func NewPricingClient(c config) *PricingClient {
-	return &PricingClient{config: c}
+// NewPriceEntryClient returns a client for the PriceEntry from the given config.
+func NewPriceEntryClient(c config) *PriceEntryClient {
+	return &PriceEntryClient{config: c}
 }
 
 // Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `pricing.Hooks(f(g(h())))`.
-func (c *PricingClient) Use(hooks ...Hook) {
-	c.hooks.Pricing = append(c.hooks.Pricing, hooks...)
+// A call to `Use(f, g, h)` equals to `priceentry.Hooks(f(g(h())))`.
+func (c *PriceEntryClient) Use(hooks ...Hook) {
+	c.hooks.PriceEntry = append(c.hooks.PriceEntry, hooks...)
 }
 
 // Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `pricing.Intercept(f(g(h())))`.
-func (c *PricingClient) Intercept(interceptors ...Interceptor) {
-	c.inters.Pricing = append(c.inters.Pricing, interceptors...)
+// A call to `Intercept(f, g, h)` equals to `priceentry.Intercept(f(g(h())))`.
+func (c *PriceEntryClient) Intercept(interceptors ...Interceptor) {
+	c.inters.PriceEntry = append(c.inters.PriceEntry, interceptors...)
 }
 
-// Create returns a builder for creating a Pricing entity.
-func (c *PricingClient) Create() *PricingCreate {
-	mutation := newPricingMutation(c.config, OpCreate)
-	return &PricingCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+// Create returns a builder for creating a PriceEntry entity.
+func (c *PriceEntryClient) Create() *PriceEntryCreate {
+	mutation := newPriceEntryMutation(c.config, OpCreate)
+	return &PriceEntryCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
-// CreateBulk returns a builder for creating a bulk of Pricing entities.
-func (c *PricingClient) CreateBulk(builders ...*PricingCreate) *PricingCreateBulk {
-	return &PricingCreateBulk{config: c.config, builders: builders}
+// CreateBulk returns a builder for creating a bulk of PriceEntry entities.
+func (c *PriceEntryClient) CreateBulk(builders ...*PriceEntryCreate) *PriceEntryCreateBulk {
+	return &PriceEntryCreateBulk{config: c.config, builders: builders}
 }
 
 // MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
 // a builder and applies setFunc on it.
-func (c *PricingClient) MapCreateBulk(slice any, setFunc func(*PricingCreate, int)) *PricingCreateBulk {
+func (c *PriceEntryClient) MapCreateBulk(slice any, setFunc func(*PriceEntryCreate, int)) *PriceEntryCreateBulk {
 	rv := reflect.ValueOf(slice)
 	if rv.Kind() != reflect.Slice {
-		return &PricingCreateBulk{err: fmt.Errorf("calling to PricingClient.MapCreateBulk with wrong type %T, need slice", slice)}
+		return &PriceEntryCreateBulk{err: fmt.Errorf("calling to PriceEntryClient.MapCreateBulk with wrong type %T, need slice", slice)}
 	}
-	builders := make([]*PricingCreate, rv.Len())
+	builders := make([]*PriceEntryCreate, rv.Len())
 	for i := 0; i < rv.Len(); i++ {
 		builders[i] = c.Create()
 		setFunc(builders[i], i)
 	}
-	return &PricingCreateBulk{config: c.config, builders: builders}
+	return &PriceEntryCreateBulk{config: c.config, builders: builders}
 }
 
-// Update returns an update builder for Pricing.
-func (c *PricingClient) Update() *PricingUpdate {
-	mutation := newPricingMutation(c.config, OpUpdate)
-	return &PricingUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+// Update returns an update builder for PriceEntry.
+func (c *PriceEntryClient) Update() *PriceEntryUpdate {
+	mutation := newPriceEntryMutation(c.config, OpUpdate)
+	return &PriceEntryUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // UpdateOne returns an update builder for the given entity.
-func (c *PricingClient) UpdateOne(_m *Pricing) *PricingUpdateOne {
-	mutation := newPricingMutation(c.config, OpUpdateOne, withPricing(_m))
-	return &PricingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+func (c *PriceEntryClient) UpdateOne(_m *PriceEntry) *PriceEntryUpdateOne {
+	mutation := newPriceEntryMutation(c.config, OpUpdateOne, withPriceEntry(_m))
+	return &PriceEntryUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // UpdateOneID returns an update builder for the given id.
-func (c *PricingClient) UpdateOneID(id int64) *PricingUpdateOne {
-	mutation := newPricingMutation(c.config, OpUpdateOne, withPricingID(id))
-	return &PricingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+func (c *PriceEntryClient) UpdateOneID(id int64) *PriceEntryUpdateOne {
+	mutation := newPriceEntryMutation(c.config, OpUpdateOne, withPriceEntryID(id))
+	return &PriceEntryUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
-// Delete returns a delete builder for Pricing.
-func (c *PricingClient) Delete() *PricingDelete {
-	mutation := newPricingMutation(c.config, OpDelete)
-	return &PricingDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+// Delete returns a delete builder for PriceEntry.
+func (c *PriceEntryClient) Delete() *PriceEntryDelete {
+	mutation := newPriceEntryMutation(c.config, OpDelete)
+	return &PriceEntryDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // DeleteOne returns a builder for deleting the given entity.
-func (c *PricingClient) DeleteOne(_m *Pricing) *PricingDeleteOne {
+func (c *PriceEntryClient) DeleteOne(_m *PriceEntry) *PriceEntryDeleteOne {
 	return c.DeleteOneID(_m.ID)
 }
 
 // DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *PricingClient) DeleteOneID(id int64) *PricingDeleteOne {
-	builder := c.Delete().Where(pricing.ID(id))
+func (c *PriceEntryClient) DeleteOneID(id int64) *PriceEntryDeleteOne {
+	builder := c.Delete().Where(priceentry.ID(id))
 	builder.mutation.id = &id
 	builder.mutation.op = OpDeleteOne
-	return &PricingDeleteOne{builder}
+	return &PriceEntryDeleteOne{builder}
 }
 
-// Query returns a query builder for Pricing.
-func (c *PricingClient) Query() *PricingQuery {
-	return &PricingQuery{
+// Query returns a query builder for PriceEntry.
+func (c *PriceEntryClient) Query() *PriceEntryQuery {
+	return &PriceEntryQuery{
 		config: c.config,
-		ctx:    &QueryContext{Type: TypePricing},
+		ctx:    &QueryContext{Type: TypePriceEntry},
 		inters: c.Interceptors(),
 	}
 }
 
-// Get returns a Pricing entity by its id.
-func (c *PricingClient) Get(ctx context.Context, id int64) (*Pricing, error) {
-	return c.Query().Where(pricing.ID(id)).Only(ctx)
+// Get returns a PriceEntry entity by its id.
+func (c *PriceEntryClient) Get(ctx context.Context, id int64) (*PriceEntry, error) {
+	return c.Query().Where(priceentry.ID(id)).Only(ctx)
 }
 
 // GetX is like Get, but panics if an error occurs.
-func (c *PricingClient) GetX(ctx context.Context, id int64) *Pricing {
+func (c *PriceEntryClient) GetX(ctx context.Context, id int64) *PriceEntry {
 	obj, err := c.Get(ctx, id)
 	if err != nil {
 		panic(err)
@@ -1994,27 +1720,160 @@ func (c *PricingClient) GetX(ctx context.Context, id int64) *Pricing {
 }
 
 // Hooks returns the client hooks.
-func (c *PricingClient) Hooks() []Hook {
-	return c.hooks.Pricing
+func (c *PriceEntryClient) Hooks() []Hook {
+	return c.hooks.PriceEntry
 }
 
 // Interceptors returns the client interceptors.
-func (c *PricingClient) Interceptors() []Interceptor {
-	return c.inters.Pricing
+func (c *PriceEntryClient) Interceptors() []Interceptor {
+	return c.inters.PriceEntry
 }
 
-func (c *PricingClient) mutate(ctx context.Context, m *PricingMutation) (Value, error) {
+func (c *PriceEntryClient) mutate(ctx context.Context, m *PriceEntryMutation) (Value, error) {
 	switch m.Op() {
 	case OpCreate:
-		return (&PricingCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+		return (&PriceEntryCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
 	case OpUpdate:
-		return (&PricingUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+		return (&PriceEntryUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
 	case OpUpdateOne:
-		return (&PricingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+		return (&PriceEntryUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
 	case OpDelete, OpDeleteOne:
-		return (&PricingDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+		return (&PriceEntryDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
-		return nil, fmt.Errorf("ent: unknown Pricing mutation op: %q", m.Op())
+		return nil, fmt.Errorf("ent: unknown PriceEntry mutation op: %q", m.Op())
+	}
+}
+
+// PriceVariantClient is a client for the PriceVariant schema.
+type PriceVariantClient struct {
+	config
+}
+
+// NewPriceVariantClient returns a client for the PriceVariant from the given config.
+func NewPriceVariantClient(c config) *PriceVariantClient {
+	return &PriceVariantClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `pricevariant.Hooks(f(g(h())))`.
+func (c *PriceVariantClient) Use(hooks ...Hook) {
+	c.hooks.PriceVariant = append(c.hooks.PriceVariant, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `pricevariant.Intercept(f(g(h())))`.
+func (c *PriceVariantClient) Intercept(interceptors ...Interceptor) {
+	c.inters.PriceVariant = append(c.inters.PriceVariant, interceptors...)
+}
+
+// Create returns a builder for creating a PriceVariant entity.
+func (c *PriceVariantClient) Create() *PriceVariantCreate {
+	mutation := newPriceVariantMutation(c.config, OpCreate)
+	return &PriceVariantCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of PriceVariant entities.
+func (c *PriceVariantClient) CreateBulk(builders ...*PriceVariantCreate) *PriceVariantCreateBulk {
+	return &PriceVariantCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *PriceVariantClient) MapCreateBulk(slice any, setFunc func(*PriceVariantCreate, int)) *PriceVariantCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &PriceVariantCreateBulk{err: fmt.Errorf("calling to PriceVariantClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*PriceVariantCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &PriceVariantCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for PriceVariant.
+func (c *PriceVariantClient) Update() *PriceVariantUpdate {
+	mutation := newPriceVariantMutation(c.config, OpUpdate)
+	return &PriceVariantUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *PriceVariantClient) UpdateOne(_m *PriceVariant) *PriceVariantUpdateOne {
+	mutation := newPriceVariantMutation(c.config, OpUpdateOne, withPriceVariant(_m))
+	return &PriceVariantUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *PriceVariantClient) UpdateOneID(id int64) *PriceVariantUpdateOne {
+	mutation := newPriceVariantMutation(c.config, OpUpdateOne, withPriceVariantID(id))
+	return &PriceVariantUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for PriceVariant.
+func (c *PriceVariantClient) Delete() *PriceVariantDelete {
+	mutation := newPriceVariantMutation(c.config, OpDelete)
+	return &PriceVariantDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *PriceVariantClient) DeleteOne(_m *PriceVariant) *PriceVariantDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *PriceVariantClient) DeleteOneID(id int64) *PriceVariantDeleteOne {
+	builder := c.Delete().Where(pricevariant.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &PriceVariantDeleteOne{builder}
+}
+
+// Query returns a query builder for PriceVariant.
+func (c *PriceVariantClient) Query() *PriceVariantQuery {
+	return &PriceVariantQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypePriceVariant},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a PriceVariant entity by its id.
+func (c *PriceVariantClient) Get(ctx context.Context, id int64) (*PriceVariant, error) {
+	return c.Query().Where(pricevariant.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *PriceVariantClient) GetX(ctx context.Context, id int64) *PriceVariant {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *PriceVariantClient) Hooks() []Hook {
+	return c.hooks.PriceVariant
+}
+
+// Interceptors returns the client interceptors.
+func (c *PriceVariantClient) Interceptors() []Interceptor {
+	return c.inters.PriceVariant
+}
+
+func (c *PriceVariantClient) mutate(ctx context.Context, m *PriceVariantMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&PriceVariantCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&PriceVariantUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&PriceVariantUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&PriceVariantDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown PriceVariant mutation op: %q", m.Op())
 	}
 }
 
@@ -3628,15 +3487,15 @@ func (c *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error)
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Account, AccountExt, EmailCode, EmailTemplate, ErrLog, FunctionPrice, Group,
-		GroupAssignment, ImagePrice, Key, Pricing, RedemptionCode, RedemptionUse, Rule,
-		Setting, TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog,
-		UsageStat, User []ent.Hook
+		Account, AccountExt, EmailCode, EmailTemplate, ErrLog, Group, GroupAssignment,
+		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
+		TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog, UsageStat,
+		User []ent.Hook
 	}
 	inters struct {
-		Account, AccountExt, EmailCode, EmailTemplate, ErrLog, FunctionPrice, Group,
-		GroupAssignment, ImagePrice, Key, Pricing, RedemptionCode, RedemptionUse, Rule,
-		Setting, TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog,
-		UsageStat, User []ent.Interceptor
+		Account, AccountExt, EmailCode, EmailTemplate, ErrLog, Group, GroupAssignment,
+		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
+		TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog, UsageStat,
+		User []ent.Interceptor
 	}
 )

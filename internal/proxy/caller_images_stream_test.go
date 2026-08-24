@@ -65,13 +65,13 @@ func (e *fakeEnvelope) RawJSON() string { return e.body }
 // imageTestPrices 生图测试价格（litellm gpt-image-2 官方形态换算：
 // input 8e-06 → 800,000 毫分/1M、output 3e-05 → 3,000,000；per-image
 // 0.054 → 5,400 毫分/张——Task A ImageCost 实参断言同款）。
-func imageTestPrices() map[string]*domain.ImagePrice {
+func imageTestPrices() map[string]*domain.PriceEntry {
 	i64 := func(v int64) *int64 { return &v }
-	return map[string]*domain.ImagePrice{"gpt-image-2": {
-		Model:                           "gpt-image-2",
-		InputImageTokenPricePerMillion:  i64(800000),
-		OutputImageTokenPricePerMillion: i64(3000000),
-		OutputCostPerImageMilli:         i64(5400),
+	return map[string]*domain.PriceEntry{"gpt-image-2": {
+		Model: "gpt-image-2", Mode: domain.PriceModeImage,
+		ImgInTokPerM:  i64(800000),
+		ImgOutTokPerM: i64(3000000),
+		PricePerImage: i64(5400),
 	}}
 }
 
@@ -85,7 +85,7 @@ func newImageStreamTestProxy(t *testing.T, hooks *BillingHooks) (*Proxy, *captur
 	store := &captureLogStore{}
 	if hooks == nil {
 		hooks = &BillingHooks{
-			Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{}, im: imageTestPrices()},
+			Resolver: &fakePriceLookup{entries: imageTestPrices()},
 			Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 		}
 	}
@@ -398,7 +398,7 @@ func TestStreamImageBillingNoPrice(t *testing.T) {
 	t.Cleanup(up.Close)
 	store := &captureLogStore{}
 	hooks := &BillingHooks{
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{}, im: map[string]*domain.ImagePrice{}},
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{}},
 		Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 	}
 	p := newTestProxyBillingLogs(t, up.URL, nil, nil, store)
@@ -426,7 +426,7 @@ func TestStreamImageGroupMultiplier(t *testing.T) {
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()))
 	hooks := &BillingHooks{
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{}, im: imageTestPrices()},
+		Resolver: &fakePriceLookup{entries: imageTestPrices()},
 		Balances: bal,
 	}
 	p := newTestProxyBillingLogs(t, up.URL, nil, nil, store)

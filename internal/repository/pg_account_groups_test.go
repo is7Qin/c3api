@@ -54,12 +54,13 @@ func newPGRepos(tb testing.TB) *repository.Repository {
 	require.NoError(tb, repos.EnsureErrLogPartitioned(ctx, time.Now()))
 	require.NoError(tb, repos.EnsureUsageStatsPartitioned(ctx, time.Now()))
 	require.NoError(tb, repos.EnsureUsageEntityStatsPartitioned(ctx, time.Now()))
+	require.NoError(tb, repos.EnsurePriceVariantsEffectCheck(ctx))
 	return repos
 }
 
 // newPGReposNoPool 同一 schema 上的无池仓库（F2：DeductOnlyAndMark 双载体
 // A/B 与等价性测试用）——pool == nil → ent txDriver 载体；与 newPGRepos
-//（pool → pgx 直连载体）共享同一测试 schema（必须先于本函数调用
+// （pool → pgx 直连载体）共享同一测试 schema（必须先于本函数调用
 // newPGRepos 完成建表）。
 func newPGReposNoPool(t *testing.T) *repository.Repository {
 	t.Helper()

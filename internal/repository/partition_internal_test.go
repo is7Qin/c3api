@@ -129,7 +129,7 @@ func TestErrLogColumnDefsMatchCreateDDL(t *testing.T) {
 // 2026-08-11 三表统一分区机制——usageStatsColumnDefs 第三列事实源，建表 DDL
 // 与事实源列集合一致；防 P1 同型复发）→ spec 2026-08-23 v2 瘦身：删
 // account_id/template_id/user_id/is_error 四列（维度 7→3），保留 ttft_hist
-//（v2.2 裁决——平台级分位数草图，overview 的 ScanStatsDays 消费）；spec
+// （v2.2 裁决——平台级分位数草图，overview 的 ScanStatsDays 消费）；spec
 // 2026-08-14 表重建遗留：删 total_latency_ms、加 call_count/ttft_* 四列 +
 // bigint[] 数组列。
 func TestUsageStatsColumnDefsMatchCreateDDL(t *testing.T) {
@@ -168,7 +168,7 @@ func TestUsageStatsIndexDDLsV2(t *testing.T) {
 }
 
 // TestUsageEntityStatsColumnDefsMatchCreateDDL usage_entity_stats 列事实源锚
-//（spec 2026-08-23 v2.1 新表：实体小时卷积，维度 bucket_time × entity_type
+// （spec 2026-08-23 v2.1 新表：实体小时卷积，维度 bucket_time × entity_type
 // × entity_id × model；13 测量列无 hist；分区键 bucket_time；id 走
 // usage_entity_stats_id_seq。升级策略：beta 全新库自举，无迁移。）
 func TestUsageEntityStatsColumnDefsMatchCreateDDL(t *testing.T) {

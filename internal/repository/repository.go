@@ -35,9 +35,8 @@ type Repository struct {
 	Stats          *StatRepo
 	Rules          RuleStore
 	Redemptions    *RedemptionRepo
-	Pricing        *PricingRepo
-	ImagePrice     *ImagePriceRepo    // 图片生成价格（Task A 数据面；images 端点计费价格来源）
-	FunctionPrice  *FunctionPriceRepo // 按单元计费功能类价格（search 起；对齐 image_price 形态）
+	PriceEntries   *PriceEntryRepo
+	PriceVariants  *PriceVariantRepo
 	Billing        *BillingRepo       // 扣费落库（Phase 5 T3）
 	Partitions     *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats，Phase 5 T4.5 + 用户裁决 2026-08-11）
 	TemplateExts   *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1；W1 数据层，消费接线 W3/W4）
@@ -100,9 +99,8 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 		Stats:          &StatRepo{client: client, pool: pool},
 		Rules:          &RuleRepo{client: client},
 		Redemptions:    &RedemptionRepo{client: client, driver: drv},
-		Pricing:        &PricingRepo{client: client, driver: drv},
-		ImagePrice:     &ImagePriceRepo{client: client, driver: drv},
-		FunctionPrice:  &FunctionPriceRepo{client: client, driver: drv},
+		PriceEntries:   &PriceEntryRepo{client: client, driver: drv},
+		PriceVariants:  &PriceVariantRepo{client: client},
 		Billing:        &BillingRepo{client: client, driver: drv, pool: pool},
 		Partitions:     &PartitionRepo{driver: drv},
 		TemplateExts:   &TemplateExtRepo{client: client},
@@ -632,77 +630,39 @@ func (r *Repository) DeactivateCodes(ctx context.Context, ids []int64) (int64, e
 	return r.Redemptions.DeactivateCodes(ctx, ids)
 }
 
-// --- 模型价格（Phase 5 计费价格来源） ---
+// --- 统一价格条目 ---
 
-func (r *Repository) UpsertFromLiteLLM(ctx context.Context, rows []*domain.Pricing) (int, error) {
-	return r.Pricing.UpsertFromLiteLLM(ctx, rows)
+func (r *Repository) UpsertPriceEntriesFromLiteLLM(ctx context.Context, rows []*domain.PriceEntry) (int, error) {
+	return r.PriceEntries.UpsertFromLiteLLM(ctx, rows)
+}
+func (r *Repository) UpsertPriceEntryManual(ctx context.Context, m *PriceEntryManual) (*domain.PriceEntry, error) {
+	return r.PriceEntries.UpsertManual(ctx, m)
+}
+func (r *Repository) DeletePriceEntryManual(ctx context.Context, model string) error {
+	return r.PriceEntries.DeleteManual(ctx, model)
+}
+func (r *Repository) ListPriceEntries(ctx context.Context, q ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error) {
+	return r.PriceEntries.ListPriceEntries(ctx, q, source, mode, model)
+}
+func (r *Repository) ManualEntryModels(ctx context.Context) ([]string, error) {
+	return r.PriceEntries.ManualEntryModels(ctx)
 }
 
-func (r *Repository) UpsertManual(ctx context.Context, m *PricingManual) (*domain.Pricing, error) {
-	return r.Pricing.UpsertManual(ctx, m)
+func (r *Repository) GetPriceEntry(ctx context.Context, model string) (*domain.PriceEntry, error) {
+	return r.PriceEntries.GetPriceEntry(ctx, model)
+}
+func (r *Repository) ListPriceVariants(ctx context.Context, model string) ([]*domain.PriceVariant, error) {
+	return r.PriceVariants.ListByModel(ctx, model)
+}
+func (r *Repository) ListAllPriceVariants(ctx context.Context) ([]*domain.PriceVariant, error) {
+	return r.PriceVariants.ListAll(ctx)
+}
+func (r *Repository) UpsertPriceVariantsFromLiteLLM(ctx context.Context, variants []*domain.PriceVariant) (int, error) {
+	return r.PriceVariants.UpsertFromLiteLLM(ctx, variants)
 }
 
-func (r *Repository) DeleteManual(ctx context.Context, model string) error {
-	return r.Pricing.DeleteManual(ctx, model)
-}
-
-func (r *Repository) ListPricing(ctx context.Context, q ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.Pricing, int64, error) {
-	return r.Pricing.ListPricing(ctx, q, source, provider, model)
-}
-
-func (r *Repository) GetPricing(ctx context.Context, model string) (*domain.Pricing, error) {
-	return r.Pricing.GetPricing(ctx, model)
-}
-
-// --- 图片生成价格（Task A 数据面；机制与 pricings 同款） ---
-
-func (r *Repository) UpsertImageFromLiteLLM(ctx context.Context, rows []*domain.ImagePrice) (int, error) {
-	return r.ImagePrice.UpsertFromLiteLLM(ctx, rows)
-}
-
-func (r *Repository) UpsertImageManual(ctx context.Context, m *ImagePriceManual) (*domain.ImagePrice, error) {
-	return r.ImagePrice.UpsertManual(ctx, m)
-}
-
-func (r *Repository) DeleteImageManual(ctx context.Context, model string) error {
-	return r.ImagePrice.DeleteManual(ctx, model)
-}
-
-func (r *Repository) ListImagePrice(ctx context.Context, q ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.ImagePrice, int64, error) {
-	return r.ImagePrice.ListImagePrice(ctx, q, source, provider, model)
-}
-
-func (r *Repository) GetImagePrice(ctx context.Context, model string) (*domain.ImagePrice, error) {
-	return r.ImagePrice.GetImagePrice(ctx, model)
-}
-
-// --- 按单元计费功能类价格（Task 价格表三件套；机制与 pricings/image_price 同款） ---
-
-func (r *Repository) UpsertFunctionFromLiteLLM(ctx context.Context, rows []*domain.FunctionPrice) (int, error) {
-	return r.FunctionPrice.UpsertFromLiteLLM(ctx, rows)
-}
-
-func (r *Repository) UpsertFunctionManual(ctx context.Context, m *FunctionPriceManual) (*domain.FunctionPrice, error) {
-	return r.FunctionPrice.UpsertManual(ctx, m)
-}
-
-func (r *Repository) DeleteFunctionManual(ctx context.Context, model string) error {
-	return r.FunctionPrice.DeleteManual(ctx, model)
-}
-
-func (r *Repository) ListFunctionPrice(ctx context.Context, q ListQuery, source *domain.PricingSource, provider, model string) ([]*domain.FunctionPrice, int64, error) {
-	return r.FunctionPrice.ListFunctionPrice(ctx, q, source, provider, model)
-}
-
-func (r *Repository) GetFunctionPrice(ctx context.Context, model string) (*domain.FunctionPrice, error) {
-	return r.FunctionPrice.GetFunctionPrice(ctx, model)
-}
-
-// EnsureFunctionPriceSeed 幂等插入 codex-search 初始化行（bootstrap 钩子；main
-// 启动期 ent migrate 之后调用，失败即 fatal——默认按次价不可缺）。ON CONFLICT
-// DO NOTHING：已存在（含管理端改价后的行）恒不覆盖。
-func (r *Repository) EnsureFunctionPriceSeed(ctx context.Context) error {
-	return r.FunctionPrice.EnsureCodexSearchSeed(ctx)
+func (r *Repository) ReplacePriceVariants(ctx context.Context, model string, variants []*domain.PriceVariant) ([]*domain.PriceVariant, error) {
+	return r.PriceVariants.ReplaceBatch(ctx, model, variants)
 }
 
 // --- 原子资源更新（评审 I-1：UserStore 扩展；普通 client 与 tx client 均可用） ---
@@ -806,6 +766,13 @@ func (r *Repository) DropUsageStatsPartitionsBefore(ctx context.Context, cutoff 
 // beta 全新库自举，无迁移，bootstrap 对已分区表 no-op 预期）。
 func (r *Repository) EnsureUsageEntityStatsPartitioned(ctx context.Context, now time.Time) error {
 	return r.Partitions.EnsureUsageEntityStatsPartitioned(ctx, now)
+}
+
+// EnsurePriceVariantsEffectCheck price_variants 效果字段 CHECK 约束 bootstrap
+// （幂等 DO 块；main 装配在 ent migrate 之后调用——裁决 2026-08-24：Atlas 注解
+// 路线在 wipe-and-remigrate 场景下引发间歇性迁移污染，改裸 DDL 独占建约束）。
+func (r *Repository) EnsurePriceVariantsEffectCheck(ctx context.Context) error {
+	return r.Partitions.EnsurePriceVariantsEffectCheck(ctx)
 }
 
 // EnsureUsageEntityStatsPartitions usage_entity_stats 预建 [trunc(now), trunc(until)] 每日

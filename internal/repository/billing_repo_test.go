@@ -80,7 +80,7 @@ func countLogs(t *testing.T, repos *repository.Repository, userID int64) int64 {
 }
 
 // seedUnbilled usage flusher 单写点种子：InsertBatch 落库 billed=false 出生行
-//（F2 后计费消费面的唯一入账形态）。
+// （F2 后计费消费面的唯一入账形态）。
 func seedUnbilled(t *testing.T, repos *repository.Repository, l *domain.UsageLog) {
 	t.Helper()
 	require.NoError(t, repos.Usages.InsertBatch(context.Background(), []*domain.UsageLog{l}))
@@ -101,12 +101,12 @@ func TestPGFetchUnbilledBatchFilters(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 
-	a := logFor(1, "f-a")                          // none + cost>0 → 取
-	b := logFor(1, "f-b")                          // abort + cost>0 → 取
+	a := logFor(1, "f-a") // none + cost>0 → 取
+	b := logFor(1, "f-b") // abort + cost>0 → 取
 	b.ErrorType = domain.ErrAbort
-	c := logFor(1, "f-c")                          // cost=0 → 取（D1 单取批面）
+	c := logFor(1, "f-c") // cost=0 → 取（D1 单取批面）
 	c.Cost = 0
-	d := logFor(1, "f-d")                          // born-absorbed（billed=true）→ 不取
+	d := logFor(1, "f-d") // born-absorbed（billed=true）→ 不取
 	d.Billed = true
 	seedUnbilled(t, repos, a)
 	seedUnbilled(t, repos, b)
@@ -227,7 +227,7 @@ func TestPGDeductOnlyAndMarkTempPartialAndBalance(t *testing.T) {
 }
 
 // TestPGDeductOnlyAndMarkConditionalSuccess 无临时额度：余额充足走条件扣成功
-//（不透支）。
+// （不透支）。
 func TestPGDeductOnlyAndMarkConditionalSuccess(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()

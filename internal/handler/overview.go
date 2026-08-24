@@ -72,19 +72,19 @@ func overviewResponse(d *service.OverviewData, alerts func() BillingAlerts) Over
 	trend := make([]OverviewTrend, 0, len(d.Trend))
 	for _, t := range d.Trend {
 		trend = append(trend, OverviewTrend{
-			Date:      openapiDate(t.Date),
-			Requests:  t.Requests,
-			Errors:    t.Errors,
-			CostUsd:   millisToUSD(t.Cost),
+			Date:       openapiDate(t.Date),
+			Requests:   t.Requests,
+			Errors:     t.Errors,
+			CostUsd:    millisToUSD(t.Cost),
 			RawCostUsd: millisToUSD(t.RawCost),
-			Tokens:    t.Tokens,
-			CallCount: t.CallCount,
-			TtftAvgMs: t.TTFTAvgMS(),
-			TtftMaxMs: t.TTFTMaxMS,
-			TtftP50Ms: t.TTFTPercentileMS(0.50),
-			TtftP90Ms: t.TTFTPercentileMS(0.90),
-			TtftP95Ms: t.TTFTPercentileMS(0.95),
-			TtftP99Ms: t.TTFTPercentileMS(0.99),
+			Tokens:     t.Tokens,
+			CallCount:  t.CallCount,
+			TtftAvgMs:  t.TTFTAvgMS(),
+			TtftMaxMs:  t.TTFTMaxMS,
+			TtftP50Ms:  t.TTFTPercentileMS(0.50),
+			TtftP90Ms:  t.TTFTPercentileMS(0.90),
+			TtftP95Ms:  t.TTFTPercentileMS(0.95),
+			TtftP99Ms:  t.TTFTPercentileMS(0.99),
 		})
 	}
 	errTop := make([]OverviewErrTop, 0, len(d.ErrTop))

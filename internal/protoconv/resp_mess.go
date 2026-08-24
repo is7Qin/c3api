@@ -288,9 +288,9 @@ func messUsageToResp(msg map[string]any, it, ot int64) map[string]any {
 		cached = intOr0(u, "cache_read_input_tokens")
 	}
 	return map[string]any{
-		"input_tokens":  it,
-		"output_tokens": ot,
-		"total_tokens":  it + ot,
+		"input_tokens":         it,
+		"output_tokens":        ot,
+		"total_tokens":         it + ot,
 		"input_tokens_details": map[string]any{"cached_tokens": cached},
 	}
 }
@@ -348,7 +348,7 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 			m.blockOrder = append(m.blockOrder, index)
 			item := map[string]any{
 				"id": m.itemID(index), "type": "message", "status": "in_progress",
-				"role": "assistant",
+				"role":    "assistant",
 				"content": []any{map[string]any{"type": "output_text", "text": "", "annotations": []any{}}},
 			}
 			return EncodeFrame("response.output_item.added", map[string]any{

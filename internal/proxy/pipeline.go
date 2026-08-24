@@ -151,8 +151,8 @@ type upstreamAttempt interface {
 // pipelineSink 循环收尾写出（HTTP 信封 vs WS 错误事件帧）。
 type pipelineSink interface {
 	writeUpstreamRejection(w http.ResponseWriter, st attemptState, code int, body []byte) // 4xx 确定性拒绝透传（http 原文；ws 错误帧 emOr 语义）
-	writePrecheckRejected(w http.ResponseWriter, st attemptState)                          // 缺价 402 本地拒绝（骨架 precheck 失败收尾；http writeErr / ws 错误帧）
-	writeExhausted(w http.ResponseWriter, st attemptState, status int, msg string)          // 耗尽收尾（honor status/msg，msg=="" 回退 "all upstream attempts failed"；http Retry-After 已由外层 applyPassthroughHeader 负责）
+	writePrecheckRejected(w http.ResponseWriter, st attemptState)                         // 缺价 402 本地拒绝（骨架 precheck 失败收尾；http writeErr / ws 错误帧）
+	writeExhausted(w http.ResponseWriter, st attemptState, status int, msg string)        // 耗尽收尾（honor status/msg，msg=="" 回退 "all upstream attempts failed"；http Retry-After 已由外层 applyPassthroughHeader 负责）
 }
 
 // passthroughStatus 统一公式 status=ResponseCode!=nil?*ResponseCode:upstream
@@ -218,9 +218,9 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 		attempted = true
 		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前
 		// 查价——计费启用时模型无价格 → 释放并发槽 + 402（不按 0 计价），零 DB
-		// （快照读）。images 格式查 GetImagePrice（image_price 表；跳过 chat
-		// 价预检 GetPrice——纯 image 价模型无 pricings 行，chat 预检会先行
-		// 402 误杀，"ImagePrice 定生死"轮不到执行）；其余格式照旧。
+		// （快照读）。images 格式查统一价格快照 image 分量（跳过 chat
+		// 价预检——纯 image 价模型无 token 行，chat 预检会先行
+		// 402 误杀，"image 分量定生死"轮不到执行）；其余格式照旧。
 		if precheck {
 			if err := p.precheckPrice(format, sel.Model); err != nil {
 				p.sched.Release(sel.AccountID)
@@ -429,7 +429,9 @@ func (s *httpSink) writeUpstreamRejection(w http.ResponseWriter, _ attemptState,
 	}
 }
 
-func (s *httpSink) writePrecheckRejected(w http.ResponseWriter, _ attemptState) { writeErr(w, errNoPrice) }
+func (s *httpSink) writePrecheckRejected(w http.ResponseWriter, _ attemptState) {
+	writeErr(w, errNoPrice)
+}
 
 func (s *httpSink) writeExhausted(w http.ResponseWriter, _ attemptState, status int, msg string) {
 	if msg == "" {
@@ -449,7 +451,9 @@ func (s *wsSink) writeUpstreamRejection(_ http.ResponseWriter, st attemptState, 
 	wsWriteError(st.client, emOr(string(body), "upstream rejected request"))
 }
 
-func (s *wsSink) writePrecheckRejected(_ http.ResponseWriter, st attemptState) { wsWriteError(st.client, errNoPrice.msg) }
+func (s *wsSink) writePrecheckRejected(_ http.ResponseWriter, st attemptState) {
+	wsWriteError(st.client, errNoPrice.msg)
+}
 
 func (s *wsSink) writeExhausted(_ http.ResponseWriter, st attemptState, _ int, msg string) {
 	if msg == "" {

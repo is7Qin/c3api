@@ -84,8 +84,8 @@ func TestResponsesWSBillingPG(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
 	}
-	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, repos.Usages, &BillingHooks{ // 单写点：proxy 内部 rec 直插真实 PG
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, repos.Usages, &BillingHooks{ // 直写点：proxy 内部 rec 直连真实 PG
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,
 	})
 	p.cfg.BillingCapture = true // 余额预检生效 + Billed=false 出生待对账（spec §一）
@@ -169,7 +169,7 @@ func TestResponsesWSBillingTierPG(t *testing.T) {
 		Models:           []string{"gpt-4o"},
 	}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, repos.Usages, &BillingHooks{ // 单写点：proxy 内部 rec 直插真实 PG
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,
 	})
 	p.cfg.BillingCapture = true // 余额预检生效 + Billed=false 出生待对账（spec §一）

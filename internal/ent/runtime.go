@@ -9,12 +9,11 @@ import (
 	"github.com/is7qin/c3api/internal/ent/emailcode"
 	"github.com/is7qin/c3api/internal/ent/emailtemplate"
 	"github.com/is7qin/c3api/internal/ent/errlog"
-	"github.com/is7qin/c3api/internal/ent/functionprice"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
-	"github.com/is7qin/c3api/internal/ent/imageprice"
 	"github.com/is7qin/c3api/internal/ent/key"
-	"github.com/is7qin/c3api/internal/ent/pricing"
+	"github.com/is7qin/c3api/internal/ent/priceentry"
+	"github.com/is7qin/c3api/internal/ent/pricevariant"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
 	"github.com/is7qin/c3api/internal/ent/redemptionuse"
 	"github.com/is7qin/c3api/internal/ent/rule"
@@ -98,18 +97,6 @@ func init() {
 	errlogDescCreatedAt := errlogFields[15].Descriptor()
 	// errlog.DefaultCreatedAt holds the default value on creation for the created_at field.
 	errlog.DefaultCreatedAt = errlogDescCreatedAt.Default.(func() time.Time)
-	functionpriceFields := schema.FunctionPrice{}.Fields()
-	_ = functionpriceFields
-	// functionpriceDescCreatedAt is the schema descriptor for created_at field.
-	functionpriceDescCreatedAt := functionpriceFields[6].Descriptor()
-	// functionprice.DefaultCreatedAt holds the default value on creation for the created_at field.
-	functionprice.DefaultCreatedAt = functionpriceDescCreatedAt.Default.(func() time.Time)
-	// functionpriceDescUpdatedAt is the schema descriptor for updated_at field.
-	functionpriceDescUpdatedAt := functionpriceFields[7].Descriptor()
-	// functionprice.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	functionprice.DefaultUpdatedAt = functionpriceDescUpdatedAt.Default.(func() time.Time)
-	// functionprice.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	functionprice.UpdateDefaultUpdatedAt = functionpriceDescUpdatedAt.UpdateDefault.(func() time.Time)
 	groupFields := schema.Group{}.Fields()
 	_ = groupFields
 	// groupDescPriceMultiplier is the schema descriptor for price_multiplier field.
@@ -136,18 +123,6 @@ func init() {
 	groupassignmentDescCreatedAt := groupassignmentFields[4].Descriptor()
 	// groupassignment.DefaultCreatedAt holds the default value on creation for the created_at field.
 	groupassignment.DefaultCreatedAt = groupassignmentDescCreatedAt.Default.(func() time.Time)
-	imagepriceFields := schema.ImagePrice{}.Fields()
-	_ = imagepriceFields
-	// imagepriceDescCreatedAt is the schema descriptor for created_at field.
-	imagepriceDescCreatedAt := imagepriceFields[8].Descriptor()
-	// imageprice.DefaultCreatedAt holds the default value on creation for the created_at field.
-	imageprice.DefaultCreatedAt = imagepriceDescCreatedAt.Default.(func() time.Time)
-	// imagepriceDescUpdatedAt is the schema descriptor for updated_at field.
-	imagepriceDescUpdatedAt := imagepriceFields[9].Descriptor()
-	// imageprice.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	imageprice.DefaultUpdatedAt = imagepriceDescUpdatedAt.Default.(func() time.Time)
-	// imageprice.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	imageprice.UpdateDefaultUpdatedAt = imagepriceDescUpdatedAt.UpdateDefault.(func() time.Time)
 	keyFields := schema.Key{}.Fields()
 	_ = keyFields
 	// keyDescMaxConcurrency is the schema descriptor for max_concurrency field.
@@ -172,18 +147,30 @@ func init() {
 	keyDescCreatedAt := keyFields[11].Descriptor()
 	// key.DefaultCreatedAt holds the default value on creation for the created_at field.
 	key.DefaultCreatedAt = keyDescCreatedAt.Default.(func() time.Time)
-	pricingFields := schema.Pricing{}.Fields()
-	_ = pricingFields
-	// pricingDescCreatedAt is the schema descriptor for created_at field.
-	pricingDescCreatedAt := pricingFields[35].Descriptor()
-	// pricing.DefaultCreatedAt holds the default value on creation for the created_at field.
-	pricing.DefaultCreatedAt = pricingDescCreatedAt.Default.(func() time.Time)
-	// pricingDescUpdatedAt is the schema descriptor for updated_at field.
-	pricingDescUpdatedAt := pricingFields[36].Descriptor()
-	// pricing.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	pricing.DefaultUpdatedAt = pricingDescUpdatedAt.Default.(func() time.Time)
-	// pricing.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	pricing.UpdateDefaultUpdatedAt = pricingDescUpdatedAt.UpdateDefault.(func() time.Time)
+	priceentryFields := schema.PriceEntry{}.Fields()
+	_ = priceentryFields
+	// priceentryDescCreatedAt is the schema descriptor for created_at field.
+	priceentryDescCreatedAt := priceentryFields[17].Descriptor()
+	// priceentry.DefaultCreatedAt holds the default value on creation for the created_at field.
+	priceentry.DefaultCreatedAt = priceentryDescCreatedAt.Default.(func() time.Time)
+	// priceentryDescUpdatedAt is the schema descriptor for updated_at field.
+	priceentryDescUpdatedAt := priceentryFields[18].Descriptor()
+	// priceentry.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	priceentry.DefaultUpdatedAt = priceentryDescUpdatedAt.Default.(func() time.Time)
+	// priceentry.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	priceentry.UpdateDefaultUpdatedAt = priceentryDescUpdatedAt.UpdateDefault.(func() time.Time)
+	pricevariantFields := schema.PriceVariant{}.Fields()
+	_ = pricevariantFields
+	// pricevariantDescCreatedAt is the schema descriptor for created_at field.
+	pricevariantDescCreatedAt := pricevariantFields[12].Descriptor()
+	// pricevariant.DefaultCreatedAt holds the default value on creation for the created_at field.
+	pricevariant.DefaultCreatedAt = pricevariantDescCreatedAt.Default.(func() time.Time)
+	// pricevariantDescUpdatedAt is the schema descriptor for updated_at field.
+	pricevariantDescUpdatedAt := pricevariantFields[13].Descriptor()
+	// pricevariant.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	pricevariant.DefaultUpdatedAt = pricevariantDescUpdatedAt.Default.(func() time.Time)
+	// pricevariant.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	pricevariant.UpdateDefaultUpdatedAt = pricevariantDescUpdatedAt.UpdateDefault.(func() time.Time)
 	redemptioncodeFields := schema.RedemptionCode{}.Fields()
 	_ = redemptioncodeFields
 	// redemptioncodeDescMaxUses is the schema descriptor for max_uses field.

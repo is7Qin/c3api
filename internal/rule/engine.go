@@ -444,4 +444,3 @@ func UnifiedMessage(then domain.RuleThen, upstream string) (string, bool) {
 	}
 	return "", false
 }
-

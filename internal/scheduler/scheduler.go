@@ -272,6 +272,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 //   - cooldownUntil：DB 有值同步、nil 保留内存冷却（回写丢弃/失败保底——冷却
 //     不因重建缩水，见下方 state 同步注释；2026-08-19 缺陷 2 修复）；
 //   - 实例指针不变 → 原子操作天然连续，Load-Store 间隙窗口一并消除。
+//
 // 新账号（oldByID 无）→ 新建（含 state 初始化与钳制，现状逻辑）。
 //
 // 已知竞态（评审 M-3，明示接受）：pickFrom 对 state 是盲写 Store（selection.go:85，
@@ -449,7 +450,7 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 // 不再属于任何组 → 从 byID 移除；仍属其它组 → 保留实例并摘除本组引用。
 // 静态字段（含 groupIDs）在 snapshotStatic 不可变视图中：写经 reloadMu +
 // 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
-//（processWrite 发布收集仍持 reloadMu——评审 M-1 纪律，无锁外裸读）。
+// （processWrite 发布收集仍持 reloadMu——评审 M-1 纪律，无锁外裸读）。
 func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()

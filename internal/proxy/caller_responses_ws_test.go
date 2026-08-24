@@ -169,7 +169,7 @@ func wsTestProxyBilling(t *testing.T, upstream string, prices *fakePriceLookup, 
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS}, Models: []string{"gpt-4o"},
 	}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, logs, &BillingHooks{
-		Prices:     prices,
+		Resolver:   prices,
 		Balances:   billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil),
 		TierPolicy: policy,
 	})
@@ -361,7 +361,7 @@ func TestResponsesWSInsufficientBalance402(t *testing.T) {
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
 	}, store, nil)
-	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, bal, rec)
+	p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, bal, rec)
 
 	// 完整升级请求（upgrade 头齐备）：预检在升级处理前拒绝 → 402 而非握手
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
@@ -875,7 +875,7 @@ func TestResponsesWSBillingTierFast(t *testing.T) {
 	up := fakeResponsesWS(t, hooks)
 	defer up.Close()
 	store := &captureLogStore{}
-	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, nil, store)
 
 	c := dialResponsesWS(t, srv)
 	defer c.CloseNow()
@@ -905,7 +905,7 @@ func TestResponsesWSBillingTierAuto(t *testing.T) {
 	up := fakeResponsesWS(t, &fakeWSHooks{frameLimit: 1})
 	defer up.Close()
 	store := &captureLogStore{}
-	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, nil, store)
 
 	c := dialResponsesWS(t, srv)
 	defer c.CloseNow()
@@ -932,7 +932,7 @@ func TestResponsesWSBillingTierStrip(t *testing.T) {
 	up := fakeResponsesWS(t, hooks)
 	defer up.Close()
 	store := &captureLogStore{}
-	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyStrip }, store)
 
 	c := dialResponsesWS(t, srv)
@@ -967,7 +967,7 @@ func TestResponsesWSBillingTierReject(t *testing.T) {
 	up := fakeResponsesWS(t, hooks)
 	defer up.Close()
 	store := &captureLogStore{}
-	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		func(billing.Tier) billing.TierPolicyMode { return billing.TierPolicyReject }, store)
 
 	c := dialResponsesWS(t, srv)
@@ -1015,7 +1015,7 @@ func TestResponsesWSBillingTierTypeError(t *testing.T) {
 	up := fakeResponsesWS(t, hooks)
 	defer up.Close()
 	store := &captureLogStore{}
-	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}}, nil, store)
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, nil, store)
 
 	c := dialResponsesWS(t, srv)
 	defer c.CloseNow()

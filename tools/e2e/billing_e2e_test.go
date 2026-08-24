@@ -405,29 +405,35 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 
 	// --- 3. manual 设价（e2e-model 基础 + fast；e2e-matrix-model 全矩阵；
 	// e2e-mult-model 基础；API 输入 USD/1M 正常值，存储毫分）---
+	// 统一价格表契约：基础价 PUT /prices/entry?model=（token 档 input_per_m/
+	// output_per_m），矩阵档 PUT /prices/variants?model=（service_tier 替换档 /
+	// ctx_min 分段 / mult_bp 万分倍率）。模型 ID 含 "/"，一律查询参数。
 	// USD/1M：prompt 100.0（$100）、completion 200.0（$200）。
 	putPrice(t, env, "e2e-model", map[string]any{
-		"prompt_price_per_million": 100.0, "completion_price_per_million": 200.0,
-		"fast_multiplier": 2.0,
+		"input_per_m": 100.0, "output_per_m": 200.0,
 	})
-	// 矩阵：priority/flex 替换档 + above_threshold 5 + above 三组 + fast ×2。
-	// auto:   pt10→(5×10+5×5)=75   ct20→(5×20+15×10)=250  → 325
-	// priority: pt10→(5×15+5×7)=110  ct20→(5×25+15×12)=305 → 415
-	// flex:    pt10→(5×12+5×4)=80   ct20→(5×18+15×8)=210  → 290
-	// fast:    325 × 2 = 650
-	// anthropic 中止（仅 pt=10）：(5×10+5×5)=75
+	putVariants(t, env, "e2e-model", []map[string]any{
+		{"seq": 1, "service_tier": "fast", "mult_bp": 20000},
+	})
+	// 变体语义 = 整单切换（旧 above 分段计价已随三表退役）：pt10/ct20 每 token
+	// 基数 in=10/out=20。
+	// auto:     首中通配长上下文兜底 seq4 → 整单 (5,10)：10×5+20×10 = 250
+	// priority: 首中 seq1 → (15,25)：150+500 = 650
+	// flex:     首中 seq2 → (12,18)：120+360 = 480
+	// fast:     首中 seq3 → 基础 500 ×2.0 = 1000
+	// anthropic 中止（仅 pt=10）：seq4 → 10×5 = 50
 	putPrice(t, env, "e2e-matrix-model", map[string]any{
-		"prompt_price_per_million": 100.0, "completion_price_per_million": 200.0,
-		"priority_prompt_price_per_million": 150.0, "priority_completion_price_per_million": 250.0,
-		"flex_prompt_price_per_million": 120.0, "flex_completion_price_per_million": 180.0,
-		"above_threshold":                5,
-		"above_prompt_price_per_million": 50.0, "above_completion_price_per_million": 100.0,
-		"above_priority_prompt_price_per_million": 70.0, "above_priority_completion_price_per_million": 120.0,
-		"above_flex_prompt_price_per_million": 40.0, "above_flex_completion_price_per_million": 80.0,
-		"fast_multiplier": 2.0,
+		"input_per_m": 100.0, "output_per_m": 200.0,
+	})
+	putVariants(t, env, "e2e-matrix-model", []map[string]any{
+		{"seq": 1, "service_tier": "priority", "set_input_per_m": 150.0, "set_output_per_m": 250.0},
+		{"seq": 2, "service_tier": "flex", "set_input_per_m": 120.0, "set_output_per_m": 180.0},
+		{"seq": 3, "service_tier": "fast", "mult_bp": 20000},
+		// 通配长上下文兜底必须排在档位专属之后——首中即停，先匹配者赢
+		{"seq": 4, "ctx_min": 5, "set_input_per_m": 50.0, "set_output_per_m": 100.0},
 	})
 	putPrice(t, env, "e2e-mult-model", map[string]any{
-		"prompt_price_per_million": 100.0, "completion_price_per_million": 200.0,
+		"input_per_m": 100.0, "output_per_m": 200.0,
 	})
 
 	// --- 4. 用户/密钥 ---
@@ -450,38 +456,38 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		return 200
 	}
 
-	// auto：cost 325，above_hit
+	// auto：cost 250（首中通配 ctx 变体，整单切换）
 	chatReq("e2e-matrix-model", nil)
-	bal -= 325
+	bal -= 250
 	pollBalance(t, env, u1, bal) // 余额收敛蕴含日志行已落库且被 billing 消费
 	r := env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(325), r.Cost, "auto 档矩阵计费")
+	require.Equal(t, int64(250), r.Cost, "auto 档矩阵计费")
 	require.Equal(t, "auto", r.Tier)
-	require.True(t, r.AboveHit, "pt/ct 均超阈值 → above_hit")
+	require.False(t, r.AboveHit, "above 分段已退役 → 恒 false")
 	require.False(t, r.Overdraft)
 
-	// priority：cost 415
+	// priority：cost 650
 	chatReq("e2e-matrix-model", map[string]any{"service_tier": "priority"})
-	bal -= 415
-	pollBalance(t, env, u1, bal)
-	r = env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(415), r.Cost, "priority 档计费")
-	require.Equal(t, "priority", r.Tier)
-
-	// flex：cost 290
-	chatReq("e2e-matrix-model", map[string]any{"service_tier": "flex"})
-	bal -= 290
-	pollBalance(t, env, u1, bal)
-	r = env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(290), r.Cost, "flex 档计费")
-	require.Equal(t, "flex", r.Tier)
-
-	// fast：基础档 × fast_multiplier 2 → 650
-	chatReq("e2e-matrix-model", map[string]any{"service_tier": "fast"})
 	bal -= 650
 	pollBalance(t, env, u1, bal)
 	r = env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(650), r.Cost, "fast 倍率计费")
+	require.Equal(t, int64(650), r.Cost, "priority 档计费")
+	require.Equal(t, "priority", r.Tier)
+
+	// flex：cost 480
+	chatReq("e2e-matrix-model", map[string]any{"service_tier": "flex"})
+	bal -= 480
+	pollBalance(t, env, u1, bal)
+	r = env.lastLogFor("e2e-matrix-model")
+	require.Equal(t, int64(480), r.Cost, "flex 档计费")
+	require.Equal(t, "flex", r.Tier)
+
+	// fast：基础档 × fast 变体 mult_bp 20000（×2）→ 1000
+	chatReq("e2e-matrix-model", map[string]any{"service_tier": "fast"})
+	bal -= 1000
+	pollBalance(t, env, u1, bal)
+	r = env.lastLogFor("e2e-matrix-model")
+	require.Equal(t, int64(1000), r.Cost, "fast 倍率计费")
 	require.Equal(t, "fast", r.Tier)
 
 	// ============ 场景 2：FEFO 临时额度优先扣 + 余额不足 402 ============
@@ -593,11 +599,11 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
 	require.Equal(t, 200, c, "strip must forward: %s", rb8)
-	bal -= 415
+	bal -= 650
 	pollBalance(t, env, u1, bal)
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, "priority", r.Tier, "strip 照常计费 priority 档")
-	require.Equal(t, int64(415), r.Cost)
+	require.Equal(t, int64(650), r.Cost)
 	// 恢复 passthrough
 	c, rb9 := env.admin(http.MethodPut, "/settings", map[string]any{
 		"key": "service_tier_policy_priority", "value": "passthrough",
@@ -626,11 +632,11 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
 	require.Equal(t, 200, c, "fast strip must forward: %s", rbd)
-	bal -= 650
+	bal -= 1000
 	pollBalance(t, env, u1, bal)
 	r = env.lastLogFor("e2e-matrix-model")
 	require.Equal(t, "fast", r.Tier, "strip 照常计费 fast 档")
-	require.Equal(t, int64(650), r.Cost, "fast ×2：325×2 = 650")
+	require.Equal(t, int64(1000), r.Cost, "fast ×2：500×2 = 1000")
 	// 恢复 passthrough
 	c, rbe := env.admin(http.MethodPut, "/settings", map[string]any{
 		"key": "service_tier_policy_fast", "value": "passthrough",
@@ -729,41 +735,58 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	c, rb13 := env.admin(http.MethodPost, "/pricing/sync", nil)
 	require.Equal(t, 200, c, "sync: %s", rb13)
 	require.Contains(t, rb13, `"rows":2`)
-	c, rb14 := env.admin(http.MethodGet, "/pricing?model=e2e-litellm-model", nil)
-	require.Equal(t, 200, c, "pricing list: %s", rb14)
-	row := jsonGet(t, rb14, "rows", 0, "").(map[string]any)
+	c, rb14 := env.admin(http.MethodGet, "/prices/entry?model=e2e-litellm-model", nil)
+	require.Equal(t, 200, c, "price entry: %s", rb14)
+	row := jsonGet(t, rb14).(map[string]any)
 	for field, want := range map[string]any{
-		"PromptPricePerMillion":                  float64(2.5),
-		"CompletionPricePerMillion":              float64(10.0),
-		"CacheReadPricePerMillion":               float64(0.25),
-		"CacheCreationPricePerMillion":           float64(1.25),
-		"PriorityPromptPricePerMillion":          float64(5.0),
-		"PriorityCacheCreationPricePerMillion":   float64(2.5),
-		"FlexCompletionPricePerMillion":          float64(8.0),
-		"AboveThreshold":                         float64(256000),
-		"AbovePromptPricePerMillion":             float64(1.5),
-		"AbovePriorityCompletionPricePerMillion": float64(15.0),
-		"AboveFlexCacheReadPricePerMillion":      float64(0.12),
-		"FastMultiplier":                         float64(6.0),
+		"Mode":           "token",
+		"InputPerM":      float64(2.5),
+		"OutputPerM":     float64(10.0),
+		"CacheReadPerM":  float64(0.25),
+		"CacheWritePerM": float64(1.25),
 	} {
 		got, ok := row[field]
 		require.True(t, ok, "litellm 行含 %s", field)
 		require.Equal(t, want, got, "字段 %s 值", field)
 	}
 	require.Equal(t, "litellm", row["Source"], "sync 行 source=litellm")
+	// 矩阵字段迁至变体：priority/flex 替换档 + ctx_min 分段 + fast 万分倍率
+	c, rb14v := env.admin(http.MethodGet, "/prices/variants?model=e2e-litellm-model", nil)
+	require.Equal(t, 200, c, "variants list: %s", rb14v)
+	vrows := jsonGet(t, rb14v, "rows").([]any)
+	require.Len(t, vrows, 4, "litellm 行变体：priority/flex/above/fast")
+	for _, vr := range vrows {
+		vm := vr.(map[string]any)
+		switch vm["ServiceTier"] {
+		case "priority":
+			require.Equal(t, float64(5.0), vm["SetInputPerM"], "priority 变体 SetInputPerM")
+			require.Equal(t, float64(20.0), vm["SetOutputPerM"], "priority 变体 SetOutputPerM")
+		case "flex":
+			require.Equal(t, float64(2.0), vm["SetInputPerM"], "flex 变体 SetInputPerM")
+			require.Equal(t, float64(8.0), vm["SetOutputPerM"], "flex 变体 SetOutputPerM")
+		case "fast":
+			require.Equal(t, float64(60000), vm["MultBP"], "fast 变体 ×6.0 = 60000bp")
+		default:
+			if vm["CtxMin"] != nil {
+				require.Equal(t, float64(256000), vm["CtxMin"], "above 分段阈值 256k tokens")
+				require.Equal(t, float64(1.5), vm["SetInputPerM"], "above 变体 SetInputPerM")
+				require.Equal(t, float64(7.5), vm["SetOutputPerM"], "above 变体 SetOutputPerM")
+			}
+		}
+	}
 
 	// manual 接管后 sync 不覆盖
 	putPrice(t, env, "e2e-manual-model", map[string]any{
-		"prompt_price_per_million": 1.23456, "completion_price_per_million": 6.54321,
+		"input_per_m": 1.23456, "output_per_m": 6.54321,
 	})
 	c, rb15 := env.admin(http.MethodPost, "/pricing/sync", nil)
 	require.Equal(t, 200, c, "sync2: %s", rb15)
 	require.Contains(t, rb15, `"updated":1`, "manual 行不计入 updated（litellm 行仍更新）")
-	c, rb16 := env.admin(http.MethodGet, "/pricing?model=e2e-manual-model", nil)
-	require.Equal(t, 200, c, "pricing manual: %s", rb16)
-	row = jsonGet(t, rb16, "rows", 0, "").(map[string]any)
+	c, rb16 := env.admin(http.MethodGet, "/prices/entry?model=e2e-manual-model", nil)
+	require.Equal(t, 200, c, "price manual: %s", rb16)
+	row = jsonGet(t, rb16).(map[string]any)
 	require.Equal(t, "manual", row["Source"], "manual 行不被 sync 覆盖")
-	require.Equal(t, float64(1.23456), row["PromptPricePerMillion"], "manual 价保持（USD/1M 回显）")
+	require.Equal(t, float64(1.23456), row["InputPerM"], "manual 价保持（USD/1M 回显）")
 
 	// ============ 场景 7：usagelog 按日分区 ============
 	t.Log("场景 7：usagelog 当日分区存在且行落入正确分区")
@@ -847,7 +870,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	balBefore := env.balance(u1)
 	// anthropic 长流（chunks 1000 × 5ms ≈ 5s > Shutdown 2s 优雅窗口：强断发生
 	// 时流仍在途）：message_start 已带 pt=10，停机强断后按已累积 token 计费：
-	// auto 档 (5×10+5×5)=75 毫分
+	// auto 档首中通配 ctx 变体 → 整单 10×5 = 50 毫分
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -870,11 +893,12 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	}
 	// 流式中断日志：cost 完整（不丢计费）+ 余额扣减（排空落库）。停机后排空是
 	// 一次性终态：轮询至余额收敛——数据缺失时 10s 超时带最后观测值失败，而非盲等。
-	pollBalance(t, env, u1, balBefore-75)
+	pollBalance(t, env, u1, balBefore-50)
 	r = env.lastLogFor("e2e-matrix-model")
-	require.Equal(t, int64(75), r.Cost, "优雅停机后流式中断日志 cost 不丢")
+	require.Equal(t, int64(50), r.Cost, "优雅停机后流式中断日志 cost 不丢")
 	require.Equal(t, "auto", r.Tier)
-	require.True(t, r.AboveHit)
+	require.False(t, r.AboveHit)
+	require.Equal(t, balBefore-50, env.balance(u1), "优雅停机排空扣费完整")
 
 	// R3-I1：abort 双轨关联——同一 request_id 在 usage_logs（计费明细）与
 	// err_logs（错误审计）各一行（豁免队列恒落盘，停机排空后可见）
@@ -931,12 +955,25 @@ func waitExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
 	}
 }
 
-// putPrice manual 设价（断言 200）。model 走 query 参数——模型名可含 `/`，
-// 路径参数形态已在价格表重构时废弃（openapi /pricing PUT/DELETE）。
+// putPrice manual 设价（断言 200）。统一价格表契约：PUT /prices/entry?model=
+// 查询参数形态（模型 ID 含 "/"，禁路径参数）；token 档必填 mode。
 func putPrice(t *testing.T, env *e2eEnv, model string, body map[string]any) {
 	t.Helper()
-	c, rb := env.admin(http.MethodPut, "/pricing?model="+url.QueryEscape(model), body)
+	full := map[string]any{"mode": "token"}
+	for k, v := range body {
+		full[k] = v
+	}
+	c, rb := env.admin(http.MethodPut, "/prices/entry?model="+url.QueryEscape(model), full)
 	require.Equal(t, 200, c, "put price %s: %s", model, rb)
+}
+
+// putVariants manual 变体矩阵（断言 200）：service_tier 替换档 / ctx_min 分段 /
+// mult_bp 万分倍率，整体替换语义。
+func putVariants(t *testing.T, env *e2eEnv, model string, variants []map[string]any) {
+	t.Helper()
+	c, rb := env.admin(http.MethodPut, "/prices/variants?model="+url.QueryEscape(model),
+		map[string]any{"variants": variants})
+	require.Equal(t, 200, c, "put variants %s: %s", model, rb)
 }
 
 // createUser 管理面创建用户（balance USD float64），返回 userID。

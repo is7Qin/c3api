@@ -83,7 +83,7 @@ func TestPGSoftDeleteListFilters(t *testing.T) {
 }
 
 // TestPGSoftDeleteUniqueHeld 软删项仍占唯一约束：同名/同明文重建 → ErrConflict
-//（审计优先：唯一检查不加 deleted_at 过滤，与 DB 约束一致；同名重建走运维 SQL）。
+// （审计优先：唯一检查不加 deleted_at 过滤，与 DB 约束一致；同名重建走运维 SQL）。
 func TestPGSoftDeleteUniqueHeld(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()

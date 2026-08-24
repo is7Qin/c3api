@@ -161,7 +161,7 @@ func groupRows(chunk []*domain.LedgerGroup) []domain.LedgerGroup {
 
 // consumeGroup 单用户组消费（chunk 二分的单例终点）：一笔 DeductOnlyAndMark
 // 事务（FEFO 扣减 + billed 标记原子）。结构错误 → 组内二分重试归因
-//（bisectGroup）。返回本组退出游标的行数（含用户缺失被标记的行；0 = 全组未推进）。
+// （bisectGroup）。返回本组退出游标的行数（含用户缺失被标记的行；0 = 全组未推进）。
 func (f *Flusher) consumeGroup(ctx context.Context, g *domain.LedgerGroup) int64 {
 	bal, _, quarantined, err := f.store.DeductOnlyAndMark(ctx, g.UserID, groupCost(g.Rows), ledgerIDs(g.Rows))
 	if err == nil {
@@ -175,8 +175,8 @@ func (f *Flusher) consumeGroup(ctx context.Context, g *domain.LedgerGroup) int64
 }
 
 // settleGroup 成功事务收尾：余额快照定向刷新（O(1) 原地 Store）；用户缺失
-//（不变量 #1 尾语义：跳过扣减仍标记全部 ids）→ QuarantinedRows 计数 + Warn
-//（毒用户不卡游标）。
+// （不变量 #1 尾语义：跳过扣减仍标记全部 ids）→ QuarantinedRows 计数 + Warn
+// （毒用户不卡游标）。
 func (f *Flusher) settleGroup(userID, bal int64, quarantined bool, n int) {
 	if quarantined {
 		f.quarantined.Add(int64(n))

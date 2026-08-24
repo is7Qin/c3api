@@ -239,7 +239,7 @@ func TestUsageLogCallColumnsBillingCursorPG(t *testing.T) {
 }
 
 // TestUsageLogSearchBillingCursorPG format=openai-search 单写点落库 + 游标消费
-//（spec 2026-08-13：search 端点 task 消费本枚举 + call_count 落账）：call_count=1
+// （spec 2026-08-13：search 端点 task 消费本枚举 + call_count 落账）：call_count=1
 // + price_per_call_millis（按次价快照）经 InsertBatch 落库 → DeductOnlyAndMark
 // 标记翻转。
 func TestUsageLogSearchBillingCursorPG(t *testing.T) {

@@ -736,9 +736,9 @@ func TestSelectFormatModelsOnlyBoundary(t *testing.T) {
 }
 
 // TestSelectFormatModelsEmptyList 评审 Minor ② 防回归：FormatModels={chat:[]}
-//（覆盖但空列表）退化配置——HasModelSpace true（FormatModels 非空）→ 归白名单
+// （覆盖但空列表）退化配置——HasModelSpace true（FormatModels 非空）→ 归白名单
 // 账号 → 默认桶排除；FormatSupports(chat, m) 对空列表恒 false → 该格式全 404
-//（含未知模型回落，不再经默认桶绕过 format_models 限制）。
+// （含未知模型回落，不再经默认桶绕过 format_models 限制）。
 func TestSelectFormatModelsEmptyList(t *testing.T) {
 	tplFm := &domain.Template{
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
@@ -1605,7 +1605,7 @@ func TestReusePreservesErrCountersAcrossReload(t *testing.T) {
 }
 
 // TestReuseConcurrencyContinuity 复用后 concurrency 保留且新请求 CAS 连续
-//（+1/-1 同实例）——Load-Store 间隙残留窗口消除（指针不变，原子操作天然连续）。
+// （+1/-1 同实例）——Load-Store 间隙残留窗口消除（指针不变，原子操作天然连续）。
 func TestReuseConcurrencyContinuity(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
@@ -1637,7 +1637,7 @@ func TestReuseConcurrencyContinuity(t *testing.T) {
 }
 
 // TestReuseSyncsStaticFieldsFromDB 静态字段 DB 权威同步：管理面改动
-//（weight/status/max_concurrency）→ 重建后复用实例读到新值（管理面改动生效）。
+// （weight/status/max_concurrency）→ 重建后复用实例读到新值（管理面改动生效）。
 func TestReuseSyncsStaticFieldsFromDB(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
@@ -1767,7 +1767,7 @@ func TestReuseNewAccountCreatesFresh(t *testing.T) {
 
 // TestReuseConcurrentSelectReloadRace 评审 Critical 回归：复用分支对已发布实例
 // 的静态字段写（acc/tpl/gid/groupIDs 原子指针发布）与热路径无锁读
-//（pickFrom/MarkResult/Classify 的 static.Load()）并发——修复前裸写实例字段
+// （pickFrom/MarkResult/Classify 的 static.Load()）并发——修复前裸写实例字段
 // 构成数据竞态（自建并发复现 -race 5 处 WARNING），修复后 -race 必须静默。
 // 并发 Select/Release/MarkResult/Classify + 全量重建（触发复用分支）循环。
 func TestReuseConcurrentSelectReloadRace(t *testing.T) {

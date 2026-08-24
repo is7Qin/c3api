@@ -72,9 +72,9 @@ func (r *recAuth) Reload(ctx context.Context) error {
 func (r *recAuth) calls() int { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
 
 type recBal struct {
-	mu    sync.Mutex
-	rel   int
-	mult  int
+	mu   sync.Mutex
+	rel  int
+	mult int
 }
 
 func (r *recBal) Reload(ctx context.Context) error { r.mu.Lock(); r.rel++; r.mu.Unlock(); return nil }
@@ -238,7 +238,7 @@ func TestDebounceMerge(t *testing.T) {
 	gen := r.clock.genNow() // 评审 M-1：代数读取必须放在首次 mark 前——执行 goroutine
 	// 可能已在 mark 后建好定时器（代数已推进），后读会等到永不出现的新定时器。
 	r.d.Users()
-	r.d.Users()   // 重复并入
+	r.d.Users() // 重复并入
 	r.d.Templates()
 	r.d.Multipliers()
 	r.d.mark(0, nil) // 额外唤醒（已有脏 → 无新定时器）

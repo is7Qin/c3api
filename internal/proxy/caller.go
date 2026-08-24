@@ -348,25 +348,21 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 	return code, respBody, nil, handled, callErr
 }
 
-// precheckPrice 缺价预检（评审 P1-1：预检按格式切换）——images 格式查
-// GetImagePrice（image_price 快照，跳过 chat 价预检 GetPrice：纯 image 价
-// 模型无 pricings 行，chat 预检会先行 402 误杀，"ImagePrice 定生死"轮不到
-// 执行）；其余格式照旧查 chat 价表。resp/resp-ws 共享同一 helper（P2-3
-// 裁决：resp 路径保留 chat 价预检照常执行——行为不变）。零 DB（快照读）。
-// 相应查找器未装配（bill 钩子 nil / 分查找器 nil）→ 不预检（等价计费全关）。
+// precheckPrice 缺价预检（统一 PriceEntry resolver，零 DB）。
 func (p *Proxy) precheckPrice(format domain.RequestFormat, model string) error {
-	if format == domain.FormatOpenAIImages {
-		if p.bill == nil || p.bill.ImagePrices == nil {
-			return nil
-		}
-		_, err := p.bill.ImagePrices.GetImagePrice(model)
-		return err
-	}
-	if p.bill == nil || p.bill.Prices == nil {
+	if p.bill == nil || p.bill.Resolver == nil {
 		return nil
 	}
-	_, err := p.bill.Prices.GetPrice(model)
-	return err
+	rp, ok := p.bill.Resolver.ResolvePrices(model, 0, "", time.Now())
+	if !ok {
+		return errNoPrice
+	}
+	if format == domain.FormatOpenAIImages {
+		if rp.ImgInTokPerM == nil && rp.ImgOutTokPerM == nil && rp.PricePerImage == nil {
+			return errNoPrice
+		}
+	}
+	return nil
 }
 
 // imagesCallerFor 按端点路径选 images 调用器（generations/edits 上游子路径

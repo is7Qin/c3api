@@ -94,22 +94,10 @@ func clampToken(t, p int64) int64 {
 	return t
 }
 
-// Cost 计费纯函数：按 tier 选价 → per 分量独立分段（above）→ fast 整单倍率 →
-// 求和毫分（1 USD = 100,000 毫分；零换算零取整误差，与 balance 直接相减）。
-//
-// 选价：priority → priority 列 ?? 基础列；flex → flex 列 ?? 基础列；fast/auto
-// → 基础列（不碰 tier 列——无 tier 价不涨价，回退基础）。分量价缺失（如无缓存
-// 价）→ 该分量 0（不发明价格）。
-//
-// 分段：pt/ct/cr/cc 各自独立拆两段，tokens > AboveThreshold 才拆段；above 组
-// 按请求 tier 选（priority → above_priority ?? above；flex → above_flex ??
-// above；fast/auto → above），该分量 above 缺失 → 不拆段（全按组内价）。
-// aboveHit = 任一分量实际拆段（t > 阈值且该分量 above 价存在）。
-//
-// fast：tier == TierFast 且 FastMultiplier 有效（> 0）→ 整单 ×（万分数，
-// 四舍五入）——total = (total×m+5000)/10000；m 先钳 ≤ 1e5（A-P2-4，见下方
-// 分支注释与溢出预算注释）。
-func Cost(p *domain.Pricing, tier Tier, pt, ct, cr, cc int64) (int64, bool) {
+const imageTotalCap = math.MaxInt64 / 100_000
+
+// CostFromResolved pure arithmetic on resolved prices (new unified path).
+func CostFromResolved(rp domain.ResolvedPrices, pt, ct, cr, cc int64) int64 {
 	clamp := func(t int64) int64 {
 		if t < 0 {
 			return 0
@@ -117,86 +105,67 @@ func Cost(p *domain.Pricing, tier Tier, pt, ct, cr, cc int64) (int64, bool) {
 		return t
 	}
 	pt, ct, cr, cc = clamp(pt), clamp(ct), clamp(cr), clamp(cc)
-
-	orPtr := func(a, b *int64) *int64 {
-		if a != nil {
-			return a
-		}
-		return b
-	}
-	tierOr := func(tierV *int64, base int64) int64 {
-		if tierV != nil {
-			return *tierV
-		}
-		return base
-	}
-	// 单价档：priority/flex 列 ?? 基础列（基础 prompt/completion 恒存在，
-	// 缓存价可缺失）；fast/auto 保持基础列。
-	prompt, completion := p.PromptPricePerMillion, p.CompletionPricePerMillion
-	cacheRead, cacheCreation := p.CacheReadPricePerMillion, p.CacheCreationPricePerMillion
-	switch tier {
-	case TierPriority:
-		prompt = tierOr(p.PriorityPromptPricePerMillion, prompt)
-		completion = tierOr(p.PriorityCompletionPricePerMillion, completion)
-		cacheRead = orPtr(p.PriorityCacheReadPricePerMillion, cacheRead)
-		cacheCreation = orPtr(p.PriorityCacheCreationPricePerMillion, cacheCreation)
-	case TierFlex:
-		prompt = tierOr(p.FlexPromptPricePerMillion, prompt)
-		completion = tierOr(p.FlexCompletionPricePerMillion, completion)
-		cacheRead = orPtr(p.FlexCacheReadPricePerMillion, cacheRead)
-		cacheCreation = orPtr(p.FlexCacheCreationPricePerMillion, cacheCreation)
-	}
-	// above 组按 tier 选（组内缺失分量 → 基础 above 组回退；再缺失 → 不拆段）。
-	var above [4]*int64
-	if p.AboveThreshold != nil {
-		ap, ac, ar, aw := p.AbovePromptPricePerMillion, p.AboveCompletionPricePerMillion,
-			p.AboveCacheReadPricePerMillion, p.AboveCacheCreationPricePerMillion
-		switch tier {
-		case TierPriority:
-			ap = orPtr(p.AbovePriorityPromptPricePerMillion, ap)
-			ac = orPtr(p.AbovePriorityCompletionPricePerMillion, ac)
-			ar = orPtr(p.AbovePriorityCacheReadPricePerMillion, ar)
-			aw = orPtr(p.AbovePriorityCacheCreationPricePerMillion, aw)
-		case TierFlex:
-			ap = orPtr(p.AboveFlexPromptPricePerMillion, ap)
-			ac = orPtr(p.AboveFlexCompletionPricePerMillion, ac)
-			ar = orPtr(p.AboveFlexCacheReadPricePerMillion, ar)
-			aw = orPtr(p.AboveFlexCacheCreationPricePerMillion, aw)
-		}
-		above = [4]*int64{ap, ac, ar, aw}
-	}
 	orInt := func(v *int64) int64 {
 		if v == nil {
 			return 0
 		}
 		return *v
 	}
-	units := [4]int64{prompt, completion, orInt(cacheRead), orInt(cacheCreation)}
-	toks := [4]int64{pt, ct, cr, cc}
-	thr := p.AboveThreshold
+	raw := clampToken(pt, orInt(rp.InputPerM))*orInt(rp.InputPerM) +
+		clampToken(ct, orInt(rp.OutputPerM))*orInt(rp.OutputPerM) +
+		clampToken(cr, orInt(rp.CacheReadPerM))*orInt(rp.CacheReadPerM) +
+		clampToken(cc, orInt(rp.CacheWritePerM))*orInt(rp.CacheWritePerM)
+	return (raw + milliPerMillion/2) / milliPerMillion
+}
 
-	raw := int64(0)
-	aboveHit := false
-	for i := 0; i < 4; i++ {
-		t, base, ov := toks[i], units[i], above[i]
-		if thr != nil && ov != nil && t > *thr {
-			raw += clampToken(*thr, base)*base + clampToken(t-*thr, *ov)**ov // 钳制后单乘积 ≤ segBudget
-			aboveHit = true
-		} else {
-			raw += clampToken(t, base) * base
+// ImageCostFromResolved image branch via unified ResolvedPrices.
+func ImageCostFromResolved(rp domain.ResolvedPrices, inTok, outTok, count int64) int64 {
+	clamp := func(t int64) int64 {
+		if t < 0 {
+			return 0
 		}
+		return t
 	}
-	cost := (raw + milliPerMillion/2) / milliPerMillion // 四舍五入 → 毫分
-	if tier == TierFast && p.FastMultiplier != nil && *p.FastMultiplier > 0 {
-		// A-P2-4 fast 倍率钳制（必要层）：快照可经任何途径进入超界值（含手动
-		// DB 操作；fetch assign 双保险防的是脏数据再入快照，本层兜住快照已脏
-		// 的情形）。钳制而非拒绝（拒绝致该模型整条无价全 402）；钳后 cost ≤
-		// 9.22e13 毫分 ≪ MaxInt64，溢出预算注释先决条件恢复成立；纯算术零分配。
-		m := *p.FastMultiplier
-		if m > 100000 {
-			m = 100000
+	inTok, outTok, count = clamp(inTok), clamp(outTok), clamp(count)
+	var inP, outP, perP int64
+	if rp.ImgInTokPerM != nil {
+		inP = *rp.ImgInTokPerM
+	}
+	if rp.ImgOutTokPerM != nil {
+		outP = *rp.ImgOutTokPerM
+	}
+	if rp.PricePerImage != nil {
+		perP = *rp.PricePerImage
+	}
+	raw := clampToken(inTok, inP)*inP + clampToken(outTok, outP)*outP
+	tokenCost := (raw + milliPerMillion/2) / milliPerMillion
+	var perImage int64
+	if perP > 0 && count > 0 {
+		if lim := imageTotalCap / perP; count > lim {
+			count = lim
 		}
-		cost = (cost*m + 5000) / 10000
+		perImage = count * perP
 	}
-	return cost, aboveHit
+	total := tokenCost + perImage
+	if total > imageTotalCap {
+		total = imageTotalCap
+	}
+	return total
+}
+
+// CallCostFromResolved per-call branch.
+func CallCostFromResolved(rp domain.ResolvedPrices, count int64) int64 {
+	if count < 0 {
+		count = 0
+	}
+	if rp.PricePerCall == nil {
+		return 0
+	}
+	if p := *rp.PricePerCall; p > 0 {
+		if count > imageTotalCap/p {
+			count = imageTotalCap / p
+		}
+		return count * p
+	}
+	return 0
 }

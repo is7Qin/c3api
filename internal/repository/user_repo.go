@@ -261,13 +261,13 @@ func (r *UserRepo) ListUsers(ctx context.Context, q ListQuery) ([]*domain.User, 
 // （期间有扣费/并发变更）→ 0 行 → ErrConflict，绝不无条件覆盖并发增量
 // （v02 核实：GET 快照陈旧值写回与 flusher 扣费双向覆盖，余额凭空复活）。
 type UserPatch struct {
-	ID               int64
-	Role             *domain.Role
-	Status           *domain.UserStatus
-	MaxConcurrency   *int
+	ID                int64
+	Role              *domain.Role
+	Status            *domain.UserStatus
+	MaxConcurrency    *int
 	OldMaxConcurrency *int
-	Balance          *int64
-	OldBalance       *int64
+	Balance           *int64
+	OldBalance        *int64
 }
 
 // UpdateUser 按 patch 更新（email 不可变、密码走 UpdateUserPassword）。价格

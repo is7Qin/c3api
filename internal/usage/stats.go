@@ -53,14 +53,14 @@ func (w *ErrLogWorker) Stats() any {
 
 // RetentionWorkerStats 分区保留 worker 状态（runOnce 收尾原子写，零新增 DB）。
 type RetentionWorkerStats struct {
-	LastPatrolUnixMs                  int64 `json:"last_patrol_unix_ms"`                   // 最近一次巡检完成时刻（0 = 尚未巡检）
-	LastDroppedLogPartitions          int64 `json:"last_dropped_log_partitions"`           // 最近成功轮 usage_logs DROP 分区数（失败轮保留上轮值）
-	LastDroppedErrLogPartitions       int64 `json:"last_dropped_errlog_partitions"`        // 最近成功轮 err_logs DROP 分区数（失败轮保留上轮值）
-	LastDroppedStatsPartitions        int64 `json:"last_dropped_stats_partitions"`         // 最近成功轮 usage_stats DROP 分区数（失败轮保留上轮值）
-	LastDroppedEntityStatsPartitions  int64 `json:"last_dropped_entity_stats_partitions"`  // 最近成功轮 usage_entity_stats DROP 分区数（与 stats 同 StatsRetentionDays，失败轮保留上轮值）
-	LogRetentionDays                  int   `json:"log_retention_days"`
-	ErrLogRetentionDays               int   `json:"errlog_retention_days"`
-	StatsRetentionDays                int   `json:"stats_retention_days"`
+	LastPatrolUnixMs                 int64 `json:"last_patrol_unix_ms"`                  // 最近一次巡检完成时刻（0 = 尚未巡检）
+	LastDroppedLogPartitions         int64 `json:"last_dropped_log_partitions"`          // 最近成功轮 usage_logs DROP 分区数（失败轮保留上轮值）
+	LastDroppedErrLogPartitions      int64 `json:"last_dropped_errlog_partitions"`       // 最近成功轮 err_logs DROP 分区数（失败轮保留上轮值）
+	LastDroppedStatsPartitions       int64 `json:"last_dropped_stats_partitions"`        // 最近成功轮 usage_stats DROP 分区数（失败轮保留上轮值）
+	LastDroppedEntityStatsPartitions int64 `json:"last_dropped_entity_stats_partitions"` // 最近成功轮 usage_entity_stats DROP 分区数（与 stats 同 StatsRetentionDays，失败轮保留上轮值）
+	LogRetentionDays                 int   `json:"log_retention_days"`
+	ErrLogRetentionDays              int   `json:"errlog_retention_days"`
+	StatsRetentionDays               int   `json:"stats_retention_days"`
 }
 
 // Stats 满足 handler.StatsProvider（独立于 worker.Worker 契约；装配链路见 internal/handler/ops.go 文件头）。

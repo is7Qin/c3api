@@ -106,7 +106,7 @@ func clientTurnState(r *http.Request) string {
 func isCodexCallItemType(t string) bool { return strings.HasSuffix(t, "_call") }
 
 // codexTurnEndedBody 非流式合成体轮结束判定：output 无工具调用项 → 轮结束
-//（SDK 聚合器成功返回必已收到 response.completed 终态——合成体恒 completed）。
+// （SDK 聚合器成功返回必已收到 response.completed 终态——合成体恒 completed）。
 func codexTurnEndedBody(body []byte) bool {
 	for _, t := range gjson.GetBytes(body, "output.#.type").Array() {
 		if isCodexCallItemType(t.String()) {

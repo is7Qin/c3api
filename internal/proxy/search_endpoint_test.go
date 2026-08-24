@@ -6,7 +6,6 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -137,22 +136,26 @@ type searchTestAcct struct {
 }
 
 // fakeFunctionPriceLookup 内存按单元价快照（search 计费测试用）。镜像生产
-// GetFunctionPrice 兜底语义（service.go——同一定义防测试与实现漂移）：命中
-// 返回行；查无 + codex-search → 默认价行（1000 毫分 = $0.01/次）；查无其他
-// → 错误。
+// 兜底语义：命中返回行；查无 + codex-search → 默认价行（1000 毫分 = $0.01/次）；
+// 否则 false。统一 PriceResolver 经 domain.ResolveEntryPrices 委托。
 type fakeFunctionPriceLookup struct {
-	m map[string]*domain.FunctionPrice
+	mu       sync.Mutex
+	entries  map[string]*domain.PriceEntry
+	variants map[string][]*domain.PriceVariant
 }
 
-func (f *fakeFunctionPriceLookup) GetFunctionPrice(model string) (*domain.FunctionPrice, error) {
-	if p, ok := f.m[model]; ok {
-		return p, nil
+func (f *fakeFunctionPriceLookup) ResolvePrices(model string, promptTokens int64, tier string, at time.Time) (domain.ResolvedPrices, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e, ok := f.entries[model]; ok {
+		return domain.ResolveEntryPrices(e, f.variants[model], tier, promptTokens, at)
 	}
 	if model == domain.CodexSearchModel {
 		v := domain.DefaultCodexSearchPricePerCall
-		return &domain.FunctionPrice{Model: model, PricePerCall: &v, Source: domain.PricingSourceManual}, nil
+		e := &domain.PriceEntry{Model: model, Mode: domain.PriceModeCall, PricePerCall: &v, Source: domain.PricingSourceManual}
+		return domain.ResolveEntryPrices(e, nil, tier, promptTokens, at)
 	}
-	return nil, errors.New("no function price")
+	return domain.ResolvedPrices{}, false
 }
 
 // newTestSearchProxy 构造 search 测试代理：每账号独立模板（同组 10——
@@ -237,12 +240,11 @@ func postSearch(t *testing.T, srv *httptest.Server, body string, turnMetadata st
 // fn 为按单元价快照（nil = 空表——GetFunctionPrice 兜底路径）。
 func searchBillingHooks(fn *fakeFunctionPriceLookup) *BillingHooks {
 	if fn == nil {
-		fn = &fakeFunctionPriceLookup{m: map[string]*domain.FunctionPrice{}}
+		fn = &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{}}
 	}
 	return &BillingHooks{
-		Prices:         &fakePriceLookup{m: map[string]*domain.Pricing{"gpt-4o": proxyPricing()}},
-		FunctionPrices: fn,
-		Balances:       billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil),
+		Resolver: fn,
+		Balances: billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil),
 	}
 }
 
@@ -258,8 +260,8 @@ func TestSearchStaticPassthroughBilling(t *testing.T) {
 	defer up.Close()
 	store := &captureLogStore{}
 	p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},
-		up.URL, searchBillingHooks(&fakeFunctionPriceLookup{m: map[string]*domain.FunctionPrice{
-			"codex-search": {Model: "codex-search", PricePerCall: i64ptr(2500)},
+		up.URL, searchBillingHooks(&fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{
+			"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(2500), Source: domain.PricingSourceManual},
 		}}), store)
 
 	srv := httptest.NewServer(AIRouter(p))

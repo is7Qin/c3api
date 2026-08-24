@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -101,24 +100,28 @@ func newTestImagesProxy(t *testing.T, upstream string, bill *BillingHooks) (*Pro
 	return newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, bill), store
 }
 
-// fakeImagePriceLookup 内存 image 价快照（ImagePriceLookup 实现；缺失 →
-// ErrNotFound 语义）。
+// fakeImagePriceLookup 内存 image 价快照（PriceResolver 实现；缺失 → false）。
 type fakeImagePriceLookup struct {
-	m map[string]*domain.ImagePrice
+	mu       sync.Mutex
+	entries  map[string]*domain.PriceEntry
+	variants map[string][]*domain.PriceVariant
 }
 
-func (f *fakeImagePriceLookup) GetImagePrice(model string) (*domain.ImagePrice, error) {
-	if p, ok := f.m[model]; ok {
-		return p, nil
+func (f *fakeImagePriceLookup) ResolvePrices(model string, promptTokens int64, tier string, at time.Time) (domain.ResolvedPrices, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.entries[model]
+	if !ok {
+		return domain.ResolvedPrices{}, false
 	}
-	return nil, errors.New("no image price")
+	return domain.ResolveEntryPrices(e, f.variants[model], tier, promptTokens, at)
 }
 
-func perImagePriceRow(model string) *domain.ImagePrice {
-	return &domain.ImagePrice{
-		Model:                   model,
-		OutputCostPerImageMilli: ptr(int64(5400)), // aiml 形态：仅 per-image 分量（无 token 价）
-		Source:                  domain.PricingSourceManual,
+func perImagePriceRow(model string) *domain.PriceEntry {
+	return &domain.PriceEntry{
+		Model: model, Mode: domain.PriceModeImage,
+		PricePerImage: ptr(int64(5400)),
+		Source:        domain.PricingSourceManual,
 	}
 }
 
@@ -264,8 +267,7 @@ func TestImagesNoImagePrice402(t *testing.T) {
 	}))
 	defer up.Close()
 	p := newTestImagesProxyWithBill(t, up.URL, &BillingHooks{
-		Prices:      &fakePriceLookup{m: map[string]*domain.Pricing{}},
-		ImagePrices: &fakeImagePriceLookup{m: map[string]*domain.ImagePrice{}},
+		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{}},
 	}, &captureLogStore{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
@@ -288,11 +290,8 @@ func TestImagesPureImageModelNotKilledByChatPrecheck(t *testing.T) {
 	defer up.Close()
 	store := &captureLogStore{}
 	p := newTestImagesProxyWithBill(t, up.URL, &BillingHooks{
-		// chat 价表空（纯 image 价模型）+ image 价齐（T2 计费集成路径）+ 倍率
-		// 快照（applyImageBilling 走到整单倍率——五字段齐备契约）
-		Prices:      &fakePriceLookup{m: map[string]*domain.Pricing{}, im: map[string]*domain.ImagePrice{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		ImagePrices: &fakeImagePriceLookup{m: map[string]*domain.ImagePrice{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		Balances:    billingBalances(),
+		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
+		Balances: billingBalances(),
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"x"}`))
@@ -336,9 +335,8 @@ func TestImagesDirectUsageExtractionBilling(t *testing.T) {
 	defer up.Close()
 	store := &captureLogStore{}
 	p := newTestImagesProxyWithBill(t, up.URL, &BillingHooks{
-		Prices:      &fakePriceLookup{m: map[string]*domain.Pricing{}, im: map[string]*domain.ImagePrice{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		ImagePrices: &fakeImagePriceLookup{m: map[string]*domain.ImagePrice{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		Balances:    billingBalances(),
+		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
+		Balances: billingBalances(),
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"a cat","n":2}`))
@@ -369,7 +367,6 @@ func TestImagesNoImagePriceWhenImagePricesNil(t *testing.T) {
 	up, c := fakeImagesUpstream(t, "/v1/images/generations")
 	defer up.Close()
 	p := newTestImagesProxyWithBill(t, up.URL, &BillingHooks{
-		Prices:   &fakePriceLookup{m: map[string]*domain.Pricing{}},
 		Balances: billingBalances(),
 	}, &captureLogStore{})
 
@@ -432,9 +429,8 @@ func TestImagesStreamDirectBilling(t *testing.T) {
 	defer up.Close()
 	store := &captureLogStore{}
 	p := newTestImagesProxyWithBill(t, up.URL, &BillingHooks{
-		Prices:      &fakePriceLookup{m: map[string]*domain.Pricing{}, im: map[string]*domain.ImagePrice{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		ImagePrices: &fakeImagePriceLookup{m: map[string]*domain.ImagePrice{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
-		Balances:    billingBalances(),
+		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
+		Balances: billingBalances(),
 	}, store)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(

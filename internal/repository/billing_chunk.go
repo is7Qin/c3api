@@ -66,7 +66,7 @@ func (r *BillingRepo) deductGroupsAndMarkEnt(ctx context.Context, groups []domai
 
 // deductGroupsAndMarkPGX pgx 直连路径：单连接 BEGIN → SET LOCAL → 逐组扣减 →
 // 合并标记 → COMMIT。同事务原子；任一失败整体回滚——错误语义与 ent 路径一致
-//（整 chunk 行保持 unbilled，flusher 下周期重放）。
+// （整 chunk 行保持 unbilled，flusher 下周期重放）。
 func (r *BillingRepo) deductGroupsAndMarkPGX(ctx context.Context, groups []domain.LedgerGroup) ([]domain.LedgerGroupOutcome, error) {
 	conn, err := r.pool.Acquire(ctx)
 	if err != nil {

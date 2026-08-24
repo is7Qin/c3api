@@ -55,7 +55,7 @@ const markBilledOverdraftSQL = `UPDATE usage_logs SET billed = TRUE, overdraft =
 	WHERE id = ANY($2) AND NOT billed`
 
 // markBilledBulkSQL 纯标记（零价行快速路径 + 终极毒行隔离）：不触碰 overdraft
-//（出生 false 保持），幂等可重入。
+// （出生 false 保持），幂等可重入。
 const markBilledBulkSQL = `UPDATE usage_logs SET billed = TRUE
 	WHERE id = ANY($1) AND NOT billed`
 
@@ -160,7 +160,7 @@ func markBilledExec(ctx context.Context, exe deductTx, ids []int64, overdrafted 
 }
 
 // queryRows 非事务查询双载体分发：pool 直连优先（生产），nil 回落 ent driver
-//（New 构造的仓库/测试装配）。返回归一化 Close 的行集句柄。
+// （New 构造的仓库/测试装配）。返回归一化 Close 的行集句柄。
 func (r *BillingRepo) queryRows(ctx context.Context, query string, args []any) (*billingRows, error) {
 	if r.pool != nil {
 		rows, err := r.pool.Query(ctx, query, args...)

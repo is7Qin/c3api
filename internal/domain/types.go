@@ -20,7 +20,7 @@ const (
 	FormatOpenAIResponsesWS RequestFormat = "openai-responses-ws" // Responses WS（Codex 客户端形态）
 	FormatAnthropic         RequestFormat = "anthropic"
 	// FormatOpenAIImages 图片生成（/v1/images/generations|edits，spec §4.3）：
-	// JSON + multipart 双协议；预检查 image_price 表（GetImagePrice，跳过 chat
+	// JSON + multipart 双协议；预检查统一价格快照 image 分量（跳过 chat
 	// 价预检——P1-1 预检按格式切换）。落库 format = openai-images——usage_logs.format
 	// 无 DB enum（varchar），ent 生成 FormatValidator 客户端面校验（COPY 逐行
 	// 校验前置——不扩展则图片行 COPY 恒失败回灌）。
@@ -614,8 +614,8 @@ type UsageLog struct {
 	// 消费者扣减；true=扣费事务已完成（或出生吸收态——计费关闭/匿名行）。
 	// 出生标记由 proxy.routeLog 按 NOT BillingCapture OR UserID<=0 盖章；
 	// 翻转为 true 只发生在对账事务内（与 FEFO 扣减同事务原子）。
-	Billed     bool
-	CreatedAt  time.Time
+	Billed    bool
+	CreatedAt time.Time
 }
 
 // LedgerRow 计费游标消费行（usage_logs 未扣子集的瘦身投影；spec-f2-ledger-cursor
