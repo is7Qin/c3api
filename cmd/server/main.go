@@ -249,6 +249,15 @@ func main() {
 	// ruleReload 独立于 invalidate：规则 CRUD 后全量重载（重载会重置窗口计数，
 	// 不能随模板/账号/分组等任意资源变更触发）。
 	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log)
+	var svcLoc *time.Location
+	if cfg.Server.TimeZone != "" {
+		l, err := time.LoadLocation(cfg.Server.TimeZone)
+		if err != nil {
+			fatalf("server.time_zone: invalid IANA timezone %q: %v", cfg.Server.TimeZone, err)
+		}
+		svcLoc = l
+	}
+	svc.SetTimeLocation(svcLoc)
 	mailW := service.NewMailWorker(svc)
 	svc.SetMailEnqueue(mailW.Enqueue)
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
