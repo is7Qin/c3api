@@ -307,6 +307,12 @@ var (
 		{Name: "mult_bp", Type: field.TypeInt, Nullable: true},
 		{Name: "set_input_per_m", Type: field.TypeInt64, Nullable: true},
 		{Name: "set_output_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "set_cache_read_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "set_cache_creation_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "set_price_per_call", Type: field.TypeInt64, Nullable: true},
+		{Name: "set_img_in_tok_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "set_img_out_tok_per_m", Type: field.TypeInt64, Nullable: true},
+		{Name: "set_price_per_image", Type: field.TypeInt64, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}

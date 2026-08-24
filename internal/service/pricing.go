@@ -202,7 +202,7 @@ func (s *Service) ListPriceVariants(ctx context.Context, model string) ([]*domai
 func (s *Service) ReplacePriceVariants(ctx context.Context, model string, variants []*domain.PriceVariant) ([]*domain.PriceVariant, error) {
 	// effect at-least-one check mirrored
 	for _, v := range variants {
-		if v.MultBP == nil && v.SetInputPerM == nil && v.SetOutputPerM == nil {
+		if v.MultBP == nil && v.SetInputPerM == nil && v.SetOutputPerM == nil && v.SetCacheReadPerM == nil && v.SetCacheCreationPerM == nil && v.SetPricePerCall == nil && v.SetImgInTokPerM == nil && v.SetImgOutTokPerM == nil && v.SetPricePerImage == nil {
 			return nil, fmt.Errorf("%w: variant seq %d requires at least one effect", ErrInvalidInput, v.Seq)
 		}
 		if v.MultBP != nil && (*v.MultBP < 0 || *v.MultBP > 100000) {

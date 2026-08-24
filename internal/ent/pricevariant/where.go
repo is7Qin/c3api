@@ -109,6 +109,36 @@ func SetOutputPerM(v int64) predicate.PriceVariant {
 	return predicate.PriceVariant(sql.FieldEQ(FieldSetOutputPerM, v))
 }
 
+// SetCacheReadPerM applies equality check predicate on the "set_cache_read_per_m" field. It's identical to SetCacheReadPerMEQ.
+func SetCacheReadPerM(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetCacheReadPerM, v))
+}
+
+// SetCacheCreationPerM applies equality check predicate on the "set_cache_creation_per_m" field. It's identical to SetCacheCreationPerMEQ.
+func SetCacheCreationPerM(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetCacheCreationPerM, v))
+}
+
+// SetPricePerCall applies equality check predicate on the "set_price_per_call" field. It's identical to SetPricePerCallEQ.
+func SetPricePerCall(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetPricePerCall, v))
+}
+
+// SetImgInTokPerM applies equality check predicate on the "set_img_in_tok_per_m" field. It's identical to SetImgInTokPerMEQ.
+func SetImgInTokPerM(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetImgInTokPerM, v))
+}
+
+// SetImgOutTokPerM applies equality check predicate on the "set_img_out_tok_per_m" field. It's identical to SetImgOutTokPerMEQ.
+func SetImgOutTokPerM(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetImgOutTokPerM, v))
+}
+
+// SetPricePerImage applies equality check predicate on the "set_price_per_image" field. It's identical to SetPricePerImageEQ.
+func SetPricePerImage(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetPricePerImage, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.PriceVariant {
 	return predicate.PriceVariant(sql.FieldEQ(FieldCreatedAt, v))
@@ -747,6 +777,306 @@ func SetOutputPerMIsNil() predicate.PriceVariant {
 // SetOutputPerMNotNil applies the NotNil predicate on the "set_output_per_m" field.
 func SetOutputPerMNotNil() predicate.PriceVariant {
 	return predicate.PriceVariant(sql.FieldNotNull(FieldSetOutputPerM))
+}
+
+// SetCacheReadPerMEQ applies the EQ predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetCacheReadPerM, v))
+}
+
+// SetCacheReadPerMNEQ applies the NEQ predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMNEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNEQ(FieldSetCacheReadPerM, v))
+}
+
+// SetCacheReadPerMIn applies the In predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIn(FieldSetCacheReadPerM, vs...))
+}
+
+// SetCacheReadPerMNotIn applies the NotIn predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMNotIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotIn(FieldSetCacheReadPerM, vs...))
+}
+
+// SetCacheReadPerMGT applies the GT predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMGT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGT(FieldSetCacheReadPerM, v))
+}
+
+// SetCacheReadPerMGTE applies the GTE predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMGTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGTE(FieldSetCacheReadPerM, v))
+}
+
+// SetCacheReadPerMLT applies the LT predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMLT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLT(FieldSetCacheReadPerM, v))
+}
+
+// SetCacheReadPerMLTE applies the LTE predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMLTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLTE(FieldSetCacheReadPerM, v))
+}
+
+// SetCacheReadPerMIsNil applies the IsNil predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMIsNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIsNull(FieldSetCacheReadPerM))
+}
+
+// SetCacheReadPerMNotNil applies the NotNil predicate on the "set_cache_read_per_m" field.
+func SetCacheReadPerMNotNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotNull(FieldSetCacheReadPerM))
+}
+
+// SetCacheCreationPerMEQ applies the EQ predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetCacheCreationPerM, v))
+}
+
+// SetCacheCreationPerMNEQ applies the NEQ predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMNEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNEQ(FieldSetCacheCreationPerM, v))
+}
+
+// SetCacheCreationPerMIn applies the In predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIn(FieldSetCacheCreationPerM, vs...))
+}
+
+// SetCacheCreationPerMNotIn applies the NotIn predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMNotIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotIn(FieldSetCacheCreationPerM, vs...))
+}
+
+// SetCacheCreationPerMGT applies the GT predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMGT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGT(FieldSetCacheCreationPerM, v))
+}
+
+// SetCacheCreationPerMGTE applies the GTE predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMGTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGTE(FieldSetCacheCreationPerM, v))
+}
+
+// SetCacheCreationPerMLT applies the LT predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMLT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLT(FieldSetCacheCreationPerM, v))
+}
+
+// SetCacheCreationPerMLTE applies the LTE predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMLTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLTE(FieldSetCacheCreationPerM, v))
+}
+
+// SetCacheCreationPerMIsNil applies the IsNil predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMIsNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIsNull(FieldSetCacheCreationPerM))
+}
+
+// SetCacheCreationPerMNotNil applies the NotNil predicate on the "set_cache_creation_per_m" field.
+func SetCacheCreationPerMNotNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotNull(FieldSetCacheCreationPerM))
+}
+
+// SetPricePerCallEQ applies the EQ predicate on the "set_price_per_call" field.
+func SetPricePerCallEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetPricePerCall, v))
+}
+
+// SetPricePerCallNEQ applies the NEQ predicate on the "set_price_per_call" field.
+func SetPricePerCallNEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNEQ(FieldSetPricePerCall, v))
+}
+
+// SetPricePerCallIn applies the In predicate on the "set_price_per_call" field.
+func SetPricePerCallIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIn(FieldSetPricePerCall, vs...))
+}
+
+// SetPricePerCallNotIn applies the NotIn predicate on the "set_price_per_call" field.
+func SetPricePerCallNotIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotIn(FieldSetPricePerCall, vs...))
+}
+
+// SetPricePerCallGT applies the GT predicate on the "set_price_per_call" field.
+func SetPricePerCallGT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGT(FieldSetPricePerCall, v))
+}
+
+// SetPricePerCallGTE applies the GTE predicate on the "set_price_per_call" field.
+func SetPricePerCallGTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGTE(FieldSetPricePerCall, v))
+}
+
+// SetPricePerCallLT applies the LT predicate on the "set_price_per_call" field.
+func SetPricePerCallLT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLT(FieldSetPricePerCall, v))
+}
+
+// SetPricePerCallLTE applies the LTE predicate on the "set_price_per_call" field.
+func SetPricePerCallLTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLTE(FieldSetPricePerCall, v))
+}
+
+// SetPricePerCallIsNil applies the IsNil predicate on the "set_price_per_call" field.
+func SetPricePerCallIsNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIsNull(FieldSetPricePerCall))
+}
+
+// SetPricePerCallNotNil applies the NotNil predicate on the "set_price_per_call" field.
+func SetPricePerCallNotNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotNull(FieldSetPricePerCall))
+}
+
+// SetImgInTokPerMEQ applies the EQ predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetImgInTokPerM, v))
+}
+
+// SetImgInTokPerMNEQ applies the NEQ predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMNEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNEQ(FieldSetImgInTokPerM, v))
+}
+
+// SetImgInTokPerMIn applies the In predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIn(FieldSetImgInTokPerM, vs...))
+}
+
+// SetImgInTokPerMNotIn applies the NotIn predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMNotIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotIn(FieldSetImgInTokPerM, vs...))
+}
+
+// SetImgInTokPerMGT applies the GT predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMGT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGT(FieldSetImgInTokPerM, v))
+}
+
+// SetImgInTokPerMGTE applies the GTE predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMGTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGTE(FieldSetImgInTokPerM, v))
+}
+
+// SetImgInTokPerMLT applies the LT predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMLT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLT(FieldSetImgInTokPerM, v))
+}
+
+// SetImgInTokPerMLTE applies the LTE predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMLTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLTE(FieldSetImgInTokPerM, v))
+}
+
+// SetImgInTokPerMIsNil applies the IsNil predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMIsNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIsNull(FieldSetImgInTokPerM))
+}
+
+// SetImgInTokPerMNotNil applies the NotNil predicate on the "set_img_in_tok_per_m" field.
+func SetImgInTokPerMNotNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotNull(FieldSetImgInTokPerM))
+}
+
+// SetImgOutTokPerMEQ applies the EQ predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetImgOutTokPerM, v))
+}
+
+// SetImgOutTokPerMNEQ applies the NEQ predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMNEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNEQ(FieldSetImgOutTokPerM, v))
+}
+
+// SetImgOutTokPerMIn applies the In predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIn(FieldSetImgOutTokPerM, vs...))
+}
+
+// SetImgOutTokPerMNotIn applies the NotIn predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMNotIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotIn(FieldSetImgOutTokPerM, vs...))
+}
+
+// SetImgOutTokPerMGT applies the GT predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMGT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGT(FieldSetImgOutTokPerM, v))
+}
+
+// SetImgOutTokPerMGTE applies the GTE predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMGTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGTE(FieldSetImgOutTokPerM, v))
+}
+
+// SetImgOutTokPerMLT applies the LT predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMLT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLT(FieldSetImgOutTokPerM, v))
+}
+
+// SetImgOutTokPerMLTE applies the LTE predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMLTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLTE(FieldSetImgOutTokPerM, v))
+}
+
+// SetImgOutTokPerMIsNil applies the IsNil predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMIsNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIsNull(FieldSetImgOutTokPerM))
+}
+
+// SetImgOutTokPerMNotNil applies the NotNil predicate on the "set_img_out_tok_per_m" field.
+func SetImgOutTokPerMNotNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotNull(FieldSetImgOutTokPerM))
+}
+
+// SetPricePerImageEQ applies the EQ predicate on the "set_price_per_image" field.
+func SetPricePerImageEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldEQ(FieldSetPricePerImage, v))
+}
+
+// SetPricePerImageNEQ applies the NEQ predicate on the "set_price_per_image" field.
+func SetPricePerImageNEQ(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNEQ(FieldSetPricePerImage, v))
+}
+
+// SetPricePerImageIn applies the In predicate on the "set_price_per_image" field.
+func SetPricePerImageIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIn(FieldSetPricePerImage, vs...))
+}
+
+// SetPricePerImageNotIn applies the NotIn predicate on the "set_price_per_image" field.
+func SetPricePerImageNotIn(vs ...int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotIn(FieldSetPricePerImage, vs...))
+}
+
+// SetPricePerImageGT applies the GT predicate on the "set_price_per_image" field.
+func SetPricePerImageGT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGT(FieldSetPricePerImage, v))
+}
+
+// SetPricePerImageGTE applies the GTE predicate on the "set_price_per_image" field.
+func SetPricePerImageGTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldGTE(FieldSetPricePerImage, v))
+}
+
+// SetPricePerImageLT applies the LT predicate on the "set_price_per_image" field.
+func SetPricePerImageLT(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLT(FieldSetPricePerImage, v))
+}
+
+// SetPricePerImageLTE applies the LTE predicate on the "set_price_per_image" field.
+func SetPricePerImageLTE(v int64) predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldLTE(FieldSetPricePerImage, v))
+}
+
+// SetPricePerImageIsNil applies the IsNil predicate on the "set_price_per_image" field.
+func SetPricePerImageIsNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldIsNull(FieldSetPricePerImage))
+}
+
+// SetPricePerImageNotNil applies the NotNil predicate on the "set_price_per_image" field.
+func SetPricePerImageNotNil() predicate.PriceVariant {
+	return predicate.PriceVariant(sql.FieldNotNull(FieldSetPricePerImage))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

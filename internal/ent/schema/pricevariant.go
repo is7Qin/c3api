@@ -26,6 +26,12 @@ func (PriceVariant) Fields() []ent.Field {
 		field.Int("mult_bp").Optional().Nillable(),
 		field.Int64("set_input_per_m").Optional().Nillable(),
 		field.Int64("set_output_per_m").Optional().Nillable(),
+		field.Int64("set_cache_read_per_m").Optional().Nillable(),
+		field.Int64("set_cache_creation_per_m").Optional().Nillable(),
+		field.Int64("set_price_per_call").Optional().Nillable(),
+		field.Int64("set_img_in_tok_per_m").Optional().Nillable(),
+		field.Int64("set_img_out_tok_per_m").Optional().Nillable(),
+		field.Int64("set_price_per_image").Optional().Nillable(),
 		field.Time("created_at").Default(time.Now),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

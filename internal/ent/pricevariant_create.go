@@ -160,6 +160,90 @@ func (_c *PriceVariantCreate) SetNillableSetOutputPerM(v *int64) *PriceVariantCr
 	return _c
 }
 
+// SetSetCacheReadPerM sets the "set_cache_read_per_m" field.
+func (_c *PriceVariantCreate) SetSetCacheReadPerM(v int64) *PriceVariantCreate {
+	_c.mutation.SetSetCacheReadPerM(v)
+	return _c
+}
+
+// SetNillableSetCacheReadPerM sets the "set_cache_read_per_m" field if the given value is not nil.
+func (_c *PriceVariantCreate) SetNillableSetCacheReadPerM(v *int64) *PriceVariantCreate {
+	if v != nil {
+		_c.SetSetCacheReadPerM(*v)
+	}
+	return _c
+}
+
+// SetSetCacheCreationPerM sets the "set_cache_creation_per_m" field.
+func (_c *PriceVariantCreate) SetSetCacheCreationPerM(v int64) *PriceVariantCreate {
+	_c.mutation.SetSetCacheCreationPerM(v)
+	return _c
+}
+
+// SetNillableSetCacheCreationPerM sets the "set_cache_creation_per_m" field if the given value is not nil.
+func (_c *PriceVariantCreate) SetNillableSetCacheCreationPerM(v *int64) *PriceVariantCreate {
+	if v != nil {
+		_c.SetSetCacheCreationPerM(*v)
+	}
+	return _c
+}
+
+// SetSetPricePerCall sets the "set_price_per_call" field.
+func (_c *PriceVariantCreate) SetSetPricePerCall(v int64) *PriceVariantCreate {
+	_c.mutation.SetSetPricePerCall(v)
+	return _c
+}
+
+// SetNillableSetPricePerCall sets the "set_price_per_call" field if the given value is not nil.
+func (_c *PriceVariantCreate) SetNillableSetPricePerCall(v *int64) *PriceVariantCreate {
+	if v != nil {
+		_c.SetSetPricePerCall(*v)
+	}
+	return _c
+}
+
+// SetSetImgInTokPerM sets the "set_img_in_tok_per_m" field.
+func (_c *PriceVariantCreate) SetSetImgInTokPerM(v int64) *PriceVariantCreate {
+	_c.mutation.SetSetImgInTokPerM(v)
+	return _c
+}
+
+// SetNillableSetImgInTokPerM sets the "set_img_in_tok_per_m" field if the given value is not nil.
+func (_c *PriceVariantCreate) SetNillableSetImgInTokPerM(v *int64) *PriceVariantCreate {
+	if v != nil {
+		_c.SetSetImgInTokPerM(*v)
+	}
+	return _c
+}
+
+// SetSetImgOutTokPerM sets the "set_img_out_tok_per_m" field.
+func (_c *PriceVariantCreate) SetSetImgOutTokPerM(v int64) *PriceVariantCreate {
+	_c.mutation.SetSetImgOutTokPerM(v)
+	return _c
+}
+
+// SetNillableSetImgOutTokPerM sets the "set_img_out_tok_per_m" field if the given value is not nil.
+func (_c *PriceVariantCreate) SetNillableSetImgOutTokPerM(v *int64) *PriceVariantCreate {
+	if v != nil {
+		_c.SetSetImgOutTokPerM(*v)
+	}
+	return _c
+}
+
+// SetSetPricePerImage sets the "set_price_per_image" field.
+func (_c *PriceVariantCreate) SetSetPricePerImage(v int64) *PriceVariantCreate {
+	_c.mutation.SetSetPricePerImage(v)
+	return _c
+}
+
+// SetNillableSetPricePerImage sets the "set_price_per_image" field if the given value is not nil.
+func (_c *PriceVariantCreate) SetNillableSetPricePerImage(v *int64) *PriceVariantCreate {
+	if v != nil {
+		_c.SetSetPricePerImage(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *PriceVariantCreate) SetCreatedAt(v time.Time) *PriceVariantCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -329,6 +413,30 @@ func (_c *PriceVariantCreate) createSpec() (*PriceVariant, *sqlgraph.CreateSpec)
 	if value, ok := _c.mutation.SetOutputPerM(); ok {
 		_spec.SetField(pricevariant.FieldSetOutputPerM, field.TypeInt64, value)
 		_node.SetOutputPerM = &value
+	}
+	if value, ok := _c.mutation.SetCacheReadPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetCacheReadPerM, field.TypeInt64, value)
+		_node.SetCacheReadPerM = &value
+	}
+	if value, ok := _c.mutation.SetCacheCreationPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetCacheCreationPerM, field.TypeInt64, value)
+		_node.SetCacheCreationPerM = &value
+	}
+	if value, ok := _c.mutation.SetPricePerCall(); ok {
+		_spec.SetField(pricevariant.FieldSetPricePerCall, field.TypeInt64, value)
+		_node.SetPricePerCall = &value
+	}
+	if value, ok := _c.mutation.SetImgInTokPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetImgInTokPerM, field.TypeInt64, value)
+		_node.SetImgInTokPerM = &value
+	}
+	if value, ok := _c.mutation.SetImgOutTokPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetImgOutTokPerM, field.TypeInt64, value)
+		_node.SetImgOutTokPerM = &value
+	}
+	if value, ok := _c.mutation.SetPricePerImage(); ok {
+		_spec.SetField(pricevariant.FieldSetPricePerImage, field.TypeInt64, value)
+		_node.SetPricePerImage = &value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(pricevariant.FieldCreatedAt, field.TypeTime, value)
@@ -615,6 +723,150 @@ func (u *PriceVariantUpsert) AddSetOutputPerM(v int64) *PriceVariantUpsert {
 // ClearSetOutputPerM clears the value of the "set_output_per_m" field.
 func (u *PriceVariantUpsert) ClearSetOutputPerM() *PriceVariantUpsert {
 	u.SetNull(pricevariant.FieldSetOutputPerM)
+	return u
+}
+
+// SetSetCacheReadPerM sets the "set_cache_read_per_m" field.
+func (u *PriceVariantUpsert) SetSetCacheReadPerM(v int64) *PriceVariantUpsert {
+	u.Set(pricevariant.FieldSetCacheReadPerM, v)
+	return u
+}
+
+// UpdateSetCacheReadPerM sets the "set_cache_read_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsert) UpdateSetCacheReadPerM() *PriceVariantUpsert {
+	u.SetExcluded(pricevariant.FieldSetCacheReadPerM)
+	return u
+}
+
+// AddSetCacheReadPerM adds v to the "set_cache_read_per_m" field.
+func (u *PriceVariantUpsert) AddSetCacheReadPerM(v int64) *PriceVariantUpsert {
+	u.Add(pricevariant.FieldSetCacheReadPerM, v)
+	return u
+}
+
+// ClearSetCacheReadPerM clears the value of the "set_cache_read_per_m" field.
+func (u *PriceVariantUpsert) ClearSetCacheReadPerM() *PriceVariantUpsert {
+	u.SetNull(pricevariant.FieldSetCacheReadPerM)
+	return u
+}
+
+// SetSetCacheCreationPerM sets the "set_cache_creation_per_m" field.
+func (u *PriceVariantUpsert) SetSetCacheCreationPerM(v int64) *PriceVariantUpsert {
+	u.Set(pricevariant.FieldSetCacheCreationPerM, v)
+	return u
+}
+
+// UpdateSetCacheCreationPerM sets the "set_cache_creation_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsert) UpdateSetCacheCreationPerM() *PriceVariantUpsert {
+	u.SetExcluded(pricevariant.FieldSetCacheCreationPerM)
+	return u
+}
+
+// AddSetCacheCreationPerM adds v to the "set_cache_creation_per_m" field.
+func (u *PriceVariantUpsert) AddSetCacheCreationPerM(v int64) *PriceVariantUpsert {
+	u.Add(pricevariant.FieldSetCacheCreationPerM, v)
+	return u
+}
+
+// ClearSetCacheCreationPerM clears the value of the "set_cache_creation_per_m" field.
+func (u *PriceVariantUpsert) ClearSetCacheCreationPerM() *PriceVariantUpsert {
+	u.SetNull(pricevariant.FieldSetCacheCreationPerM)
+	return u
+}
+
+// SetSetPricePerCall sets the "set_price_per_call" field.
+func (u *PriceVariantUpsert) SetSetPricePerCall(v int64) *PriceVariantUpsert {
+	u.Set(pricevariant.FieldSetPricePerCall, v)
+	return u
+}
+
+// UpdateSetPricePerCall sets the "set_price_per_call" field to the value that was provided on create.
+func (u *PriceVariantUpsert) UpdateSetPricePerCall() *PriceVariantUpsert {
+	u.SetExcluded(pricevariant.FieldSetPricePerCall)
+	return u
+}
+
+// AddSetPricePerCall adds v to the "set_price_per_call" field.
+func (u *PriceVariantUpsert) AddSetPricePerCall(v int64) *PriceVariantUpsert {
+	u.Add(pricevariant.FieldSetPricePerCall, v)
+	return u
+}
+
+// ClearSetPricePerCall clears the value of the "set_price_per_call" field.
+func (u *PriceVariantUpsert) ClearSetPricePerCall() *PriceVariantUpsert {
+	u.SetNull(pricevariant.FieldSetPricePerCall)
+	return u
+}
+
+// SetSetImgInTokPerM sets the "set_img_in_tok_per_m" field.
+func (u *PriceVariantUpsert) SetSetImgInTokPerM(v int64) *PriceVariantUpsert {
+	u.Set(pricevariant.FieldSetImgInTokPerM, v)
+	return u
+}
+
+// UpdateSetImgInTokPerM sets the "set_img_in_tok_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsert) UpdateSetImgInTokPerM() *PriceVariantUpsert {
+	u.SetExcluded(pricevariant.FieldSetImgInTokPerM)
+	return u
+}
+
+// AddSetImgInTokPerM adds v to the "set_img_in_tok_per_m" field.
+func (u *PriceVariantUpsert) AddSetImgInTokPerM(v int64) *PriceVariantUpsert {
+	u.Add(pricevariant.FieldSetImgInTokPerM, v)
+	return u
+}
+
+// ClearSetImgInTokPerM clears the value of the "set_img_in_tok_per_m" field.
+func (u *PriceVariantUpsert) ClearSetImgInTokPerM() *PriceVariantUpsert {
+	u.SetNull(pricevariant.FieldSetImgInTokPerM)
+	return u
+}
+
+// SetSetImgOutTokPerM sets the "set_img_out_tok_per_m" field.
+func (u *PriceVariantUpsert) SetSetImgOutTokPerM(v int64) *PriceVariantUpsert {
+	u.Set(pricevariant.FieldSetImgOutTokPerM, v)
+	return u
+}
+
+// UpdateSetImgOutTokPerM sets the "set_img_out_tok_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsert) UpdateSetImgOutTokPerM() *PriceVariantUpsert {
+	u.SetExcluded(pricevariant.FieldSetImgOutTokPerM)
+	return u
+}
+
+// AddSetImgOutTokPerM adds v to the "set_img_out_tok_per_m" field.
+func (u *PriceVariantUpsert) AddSetImgOutTokPerM(v int64) *PriceVariantUpsert {
+	u.Add(pricevariant.FieldSetImgOutTokPerM, v)
+	return u
+}
+
+// ClearSetImgOutTokPerM clears the value of the "set_img_out_tok_per_m" field.
+func (u *PriceVariantUpsert) ClearSetImgOutTokPerM() *PriceVariantUpsert {
+	u.SetNull(pricevariant.FieldSetImgOutTokPerM)
+	return u
+}
+
+// SetSetPricePerImage sets the "set_price_per_image" field.
+func (u *PriceVariantUpsert) SetSetPricePerImage(v int64) *PriceVariantUpsert {
+	u.Set(pricevariant.FieldSetPricePerImage, v)
+	return u
+}
+
+// UpdateSetPricePerImage sets the "set_price_per_image" field to the value that was provided on create.
+func (u *PriceVariantUpsert) UpdateSetPricePerImage() *PriceVariantUpsert {
+	u.SetExcluded(pricevariant.FieldSetPricePerImage)
+	return u
+}
+
+// AddSetPricePerImage adds v to the "set_price_per_image" field.
+func (u *PriceVariantUpsert) AddSetPricePerImage(v int64) *PriceVariantUpsert {
+	u.Add(pricevariant.FieldSetPricePerImage, v)
+	return u
+}
+
+// ClearSetPricePerImage clears the value of the "set_price_per_image" field.
+func (u *PriceVariantUpsert) ClearSetPricePerImage() *PriceVariantUpsert {
+	u.SetNull(pricevariant.FieldSetPricePerImage)
 	return u
 }
 
@@ -953,6 +1205,174 @@ func (u *PriceVariantUpsertOne) UpdateSetOutputPerM() *PriceVariantUpsertOne {
 func (u *PriceVariantUpsertOne) ClearSetOutputPerM() *PriceVariantUpsertOne {
 	return u.Update(func(s *PriceVariantUpsert) {
 		s.ClearSetOutputPerM()
+	})
+}
+
+// SetSetCacheReadPerM sets the "set_cache_read_per_m" field.
+func (u *PriceVariantUpsertOne) SetSetCacheReadPerM(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetCacheReadPerM(v)
+	})
+}
+
+// AddSetCacheReadPerM adds v to the "set_cache_read_per_m" field.
+func (u *PriceVariantUpsertOne) AddSetCacheReadPerM(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetCacheReadPerM(v)
+	})
+}
+
+// UpdateSetCacheReadPerM sets the "set_cache_read_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsertOne) UpdateSetCacheReadPerM() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetCacheReadPerM()
+	})
+}
+
+// ClearSetCacheReadPerM clears the value of the "set_cache_read_per_m" field.
+func (u *PriceVariantUpsertOne) ClearSetCacheReadPerM() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetCacheReadPerM()
+	})
+}
+
+// SetSetCacheCreationPerM sets the "set_cache_creation_per_m" field.
+func (u *PriceVariantUpsertOne) SetSetCacheCreationPerM(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetCacheCreationPerM(v)
+	})
+}
+
+// AddSetCacheCreationPerM adds v to the "set_cache_creation_per_m" field.
+func (u *PriceVariantUpsertOne) AddSetCacheCreationPerM(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetCacheCreationPerM(v)
+	})
+}
+
+// UpdateSetCacheCreationPerM sets the "set_cache_creation_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsertOne) UpdateSetCacheCreationPerM() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetCacheCreationPerM()
+	})
+}
+
+// ClearSetCacheCreationPerM clears the value of the "set_cache_creation_per_m" field.
+func (u *PriceVariantUpsertOne) ClearSetCacheCreationPerM() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetCacheCreationPerM()
+	})
+}
+
+// SetSetPricePerCall sets the "set_price_per_call" field.
+func (u *PriceVariantUpsertOne) SetSetPricePerCall(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetPricePerCall(v)
+	})
+}
+
+// AddSetPricePerCall adds v to the "set_price_per_call" field.
+func (u *PriceVariantUpsertOne) AddSetPricePerCall(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetPricePerCall(v)
+	})
+}
+
+// UpdateSetPricePerCall sets the "set_price_per_call" field to the value that was provided on create.
+func (u *PriceVariantUpsertOne) UpdateSetPricePerCall() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetPricePerCall()
+	})
+}
+
+// ClearSetPricePerCall clears the value of the "set_price_per_call" field.
+func (u *PriceVariantUpsertOne) ClearSetPricePerCall() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetPricePerCall()
+	})
+}
+
+// SetSetImgInTokPerM sets the "set_img_in_tok_per_m" field.
+func (u *PriceVariantUpsertOne) SetSetImgInTokPerM(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetImgInTokPerM(v)
+	})
+}
+
+// AddSetImgInTokPerM adds v to the "set_img_in_tok_per_m" field.
+func (u *PriceVariantUpsertOne) AddSetImgInTokPerM(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetImgInTokPerM(v)
+	})
+}
+
+// UpdateSetImgInTokPerM sets the "set_img_in_tok_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsertOne) UpdateSetImgInTokPerM() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetImgInTokPerM()
+	})
+}
+
+// ClearSetImgInTokPerM clears the value of the "set_img_in_tok_per_m" field.
+func (u *PriceVariantUpsertOne) ClearSetImgInTokPerM() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetImgInTokPerM()
+	})
+}
+
+// SetSetImgOutTokPerM sets the "set_img_out_tok_per_m" field.
+func (u *PriceVariantUpsertOne) SetSetImgOutTokPerM(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetImgOutTokPerM(v)
+	})
+}
+
+// AddSetImgOutTokPerM adds v to the "set_img_out_tok_per_m" field.
+func (u *PriceVariantUpsertOne) AddSetImgOutTokPerM(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetImgOutTokPerM(v)
+	})
+}
+
+// UpdateSetImgOutTokPerM sets the "set_img_out_tok_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsertOne) UpdateSetImgOutTokPerM() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetImgOutTokPerM()
+	})
+}
+
+// ClearSetImgOutTokPerM clears the value of the "set_img_out_tok_per_m" field.
+func (u *PriceVariantUpsertOne) ClearSetImgOutTokPerM() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetImgOutTokPerM()
+	})
+}
+
+// SetSetPricePerImage sets the "set_price_per_image" field.
+func (u *PriceVariantUpsertOne) SetSetPricePerImage(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetPricePerImage(v)
+	})
+}
+
+// AddSetPricePerImage adds v to the "set_price_per_image" field.
+func (u *PriceVariantUpsertOne) AddSetPricePerImage(v int64) *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetPricePerImage(v)
+	})
+}
+
+// UpdateSetPricePerImage sets the "set_price_per_image" field to the value that was provided on create.
+func (u *PriceVariantUpsertOne) UpdateSetPricePerImage() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetPricePerImage()
+	})
+}
+
+// ClearSetPricePerImage clears the value of the "set_price_per_image" field.
+func (u *PriceVariantUpsertOne) ClearSetPricePerImage() *PriceVariantUpsertOne {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetPricePerImage()
 	})
 }
 
@@ -1461,6 +1881,174 @@ func (u *PriceVariantUpsertBulk) UpdateSetOutputPerM() *PriceVariantUpsertBulk {
 func (u *PriceVariantUpsertBulk) ClearSetOutputPerM() *PriceVariantUpsertBulk {
 	return u.Update(func(s *PriceVariantUpsert) {
 		s.ClearSetOutputPerM()
+	})
+}
+
+// SetSetCacheReadPerM sets the "set_cache_read_per_m" field.
+func (u *PriceVariantUpsertBulk) SetSetCacheReadPerM(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetCacheReadPerM(v)
+	})
+}
+
+// AddSetCacheReadPerM adds v to the "set_cache_read_per_m" field.
+func (u *PriceVariantUpsertBulk) AddSetCacheReadPerM(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetCacheReadPerM(v)
+	})
+}
+
+// UpdateSetCacheReadPerM sets the "set_cache_read_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsertBulk) UpdateSetCacheReadPerM() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetCacheReadPerM()
+	})
+}
+
+// ClearSetCacheReadPerM clears the value of the "set_cache_read_per_m" field.
+func (u *PriceVariantUpsertBulk) ClearSetCacheReadPerM() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetCacheReadPerM()
+	})
+}
+
+// SetSetCacheCreationPerM sets the "set_cache_creation_per_m" field.
+func (u *PriceVariantUpsertBulk) SetSetCacheCreationPerM(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetCacheCreationPerM(v)
+	})
+}
+
+// AddSetCacheCreationPerM adds v to the "set_cache_creation_per_m" field.
+func (u *PriceVariantUpsertBulk) AddSetCacheCreationPerM(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetCacheCreationPerM(v)
+	})
+}
+
+// UpdateSetCacheCreationPerM sets the "set_cache_creation_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsertBulk) UpdateSetCacheCreationPerM() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetCacheCreationPerM()
+	})
+}
+
+// ClearSetCacheCreationPerM clears the value of the "set_cache_creation_per_m" field.
+func (u *PriceVariantUpsertBulk) ClearSetCacheCreationPerM() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetCacheCreationPerM()
+	})
+}
+
+// SetSetPricePerCall sets the "set_price_per_call" field.
+func (u *PriceVariantUpsertBulk) SetSetPricePerCall(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetPricePerCall(v)
+	})
+}
+
+// AddSetPricePerCall adds v to the "set_price_per_call" field.
+func (u *PriceVariantUpsertBulk) AddSetPricePerCall(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetPricePerCall(v)
+	})
+}
+
+// UpdateSetPricePerCall sets the "set_price_per_call" field to the value that was provided on create.
+func (u *PriceVariantUpsertBulk) UpdateSetPricePerCall() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetPricePerCall()
+	})
+}
+
+// ClearSetPricePerCall clears the value of the "set_price_per_call" field.
+func (u *PriceVariantUpsertBulk) ClearSetPricePerCall() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetPricePerCall()
+	})
+}
+
+// SetSetImgInTokPerM sets the "set_img_in_tok_per_m" field.
+func (u *PriceVariantUpsertBulk) SetSetImgInTokPerM(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetImgInTokPerM(v)
+	})
+}
+
+// AddSetImgInTokPerM adds v to the "set_img_in_tok_per_m" field.
+func (u *PriceVariantUpsertBulk) AddSetImgInTokPerM(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetImgInTokPerM(v)
+	})
+}
+
+// UpdateSetImgInTokPerM sets the "set_img_in_tok_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsertBulk) UpdateSetImgInTokPerM() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetImgInTokPerM()
+	})
+}
+
+// ClearSetImgInTokPerM clears the value of the "set_img_in_tok_per_m" field.
+func (u *PriceVariantUpsertBulk) ClearSetImgInTokPerM() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetImgInTokPerM()
+	})
+}
+
+// SetSetImgOutTokPerM sets the "set_img_out_tok_per_m" field.
+func (u *PriceVariantUpsertBulk) SetSetImgOutTokPerM(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetImgOutTokPerM(v)
+	})
+}
+
+// AddSetImgOutTokPerM adds v to the "set_img_out_tok_per_m" field.
+func (u *PriceVariantUpsertBulk) AddSetImgOutTokPerM(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetImgOutTokPerM(v)
+	})
+}
+
+// UpdateSetImgOutTokPerM sets the "set_img_out_tok_per_m" field to the value that was provided on create.
+func (u *PriceVariantUpsertBulk) UpdateSetImgOutTokPerM() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetImgOutTokPerM()
+	})
+}
+
+// ClearSetImgOutTokPerM clears the value of the "set_img_out_tok_per_m" field.
+func (u *PriceVariantUpsertBulk) ClearSetImgOutTokPerM() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetImgOutTokPerM()
+	})
+}
+
+// SetSetPricePerImage sets the "set_price_per_image" field.
+func (u *PriceVariantUpsertBulk) SetSetPricePerImage(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.SetSetPricePerImage(v)
+	})
+}
+
+// AddSetPricePerImage adds v to the "set_price_per_image" field.
+func (u *PriceVariantUpsertBulk) AddSetPricePerImage(v int64) *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.AddSetPricePerImage(v)
+	})
+}
+
+// UpdateSetPricePerImage sets the "set_price_per_image" field to the value that was provided on create.
+func (u *PriceVariantUpsertBulk) UpdateSetPricePerImage() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.UpdateSetPricePerImage()
+	})
+}
+
+// ClearSetPricePerImage clears the value of the "set_price_per_image" field.
+func (u *PriceVariantUpsertBulk) ClearSetPricePerImage() *PriceVariantUpsertBulk {
+	return u.Update(func(s *PriceVariantUpsert) {
+		s.ClearSetPricePerImage()
 	})
 }
 

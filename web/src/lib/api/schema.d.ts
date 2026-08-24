@@ -2204,6 +2204,18 @@ export interface components {
             SetInputPerM?: number | null;
             /** Format: double */
             SetOutputPerM?: number | null;
+            /** Format: double */
+            SetCacheReadPerM?: number | null;
+            /** Format: double */
+            SetCacheCreationPerM?: number | null;
+            /** Format: double */
+            SetPricePerCall?: number | null;
+            /** Format: double */
+            SetImgInTokPerM?: number | null;
+            /** Format: double */
+            SetImgOutTokPerM?: number | null;
+            /** Format: double */
+            SetPricePerImage?: number | null;
             /** Format: date-time */
             CreatedAt: string;
             /** Format: date-time */
@@ -2227,6 +2239,18 @@ export interface components {
             set_input_per_m?: number | null;
             /** Format: double */
             set_output_per_m?: number | null;
+            /** Format: double */
+            set_cache_read_per_m?: number | null;
+            /** Format: double */
+            set_cache_creation_per_m?: number | null;
+            /** Format: double */
+            set_price_per_call?: number | null;
+            /** Format: double */
+            set_img_in_tok_per_m?: number | null;
+            /** Format: double */
+            set_img_out_tok_per_m?: number | null;
+            /** Format: double */
+            set_price_per_image?: number | null;
             seq?: number;
         };
         PriceVariantListResponse: {

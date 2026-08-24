@@ -4,6 +4,7 @@ package repository_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -97,6 +98,62 @@ func TestDeletePriceEntryCascadeManual_PG(t *testing.T) {
 	vars, err := repos.PriceVariants.ListByModel(ctx, model)
 	require.NoError(t, err)
 	require.Empty(t, vars, "variants must be cascade-deleted with manual entry")
+}
+
+// TestVariantImageOverridesRoundTrip_PG verifies F-B: image-mode entry +
+// img overrides round-trip via ReplaceBatch + ListByModel.
+func TestVariantImageOverridesRoundTrip_PG(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	model := "pg-variant-image-model"
+	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeImage, ImgInTokPerM: int64Ptr(100), ImgOutTokPerM: int64Ptr(200), PricePerImage: int64Ptr(300)})
+	require.NoError(t, err)
+	imgIn := int64(111)
+	imgOut := int64(222)
+	perImg := int64(333)
+	_, err = repos.PriceVariants.ReplaceBatch(ctx, model, []*domain.PriceVariant{{Model: model, Seq: 1, SetImgInTokPerM: &imgIn, SetImgOutTokPerM: &imgOut, SetPricePerImage: &perImg}})
+	require.NoError(t, err)
+	vars, err := repos.PriceVariants.ListByModel(ctx, model)
+	require.NoError(t, err)
+	require.Len(t, vars, 1)
+	require.Equal(t, imgIn, *vars[0].SetImgInTokPerM)
+	require.Equal(t, imgOut, *vars[0].SetImgOutTokPerM)
+	require.Equal(t, perImg, *vars[0].SetPricePerImage)
+	// resolver yields same
+	entry, err := repos.PriceEntries.GetPriceEntry(ctx, model)
+	require.NoError(t, err)
+	rp, ok := domain.ResolveEntryPrices(entry, vars, "auto", 0, time.Now())
+	require.True(t, ok)
+	require.Equal(t, imgIn, *rp.ImgInTokPerM)
+	require.Equal(t, imgOut, *rp.ImgOutTokPerM)
+	require.Equal(t, perImg, *rp.PricePerImage)
+}
+
+// TestCodexSearchSeed_Idempotent_PG verifies F-A: seed is idempotent and source=manual.
+func TestCodexSearchSeed_Idempotent_PG(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	// ensure seed runs
+	require.NoError(t, repos.EnsureCodexSearchSeed(ctx))
+	pe, err := repos.PriceEntries.GetPriceEntry(ctx, domain.CodexSearchModel)
+	require.NoError(t, err)
+	require.Equal(t, domain.CodexSearchModel, pe.Model)
+	require.Equal(t, domain.PriceModeCall, pe.Mode)
+	require.Equal(t, domain.PricingSourceManual, pe.Source)
+	require.NotNil(t, pe.PricePerCall)
+	require.Equal(t, domain.DefaultCodexSearchPricePerCall, *pe.PricePerCall)
+	// idempotent second run
+	require.NoError(t, repos.EnsureCodexSearchSeed(ctx))
+	// still exactly 1 row for that model (ON CONFLICT DO NOTHING)
+	pe2, err := repos.PriceEntries.GetPriceEntry(ctx, domain.CodexSearchModel)
+	require.NoError(t, err)
+	require.Equal(t, pe.Model, pe2.Model)
+	require.Equal(t, *pe.PricePerCall, *pe2.PricePerCall)
+	// count via List with model filter
+	rows, total, err := repos.PriceEntries.ListPriceEntries(ctx, repository.ListQuery{Limit: 10, Offset: 0}, nil, nil, domain.CodexSearchModel)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, rows, 1)
 }
 
 // TestDeletePriceEntryCascadeLitellmConflict_PG verifies D-C1 guard: litellm

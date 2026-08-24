@@ -2673,6 +2673,12 @@ components:
         multiplier: { type: number, format: double, minimum: 0, maximum: 10, nullable: true, description: "价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）" }
         SetInputPerM: { type: number, format: double, nullable: true }
         SetOutputPerM: { type: number, format: double, nullable: true }
+        SetCacheReadPerM: { type: number, format: double, nullable: true }
+        SetCacheCreationPerM: { type: number, format: double, nullable: true }
+        SetPricePerCall: { type: number, format: double, nullable: true }
+        SetImgInTokPerM: { type: number, format: double, nullable: true }
+        SetImgOutTokPerM: { type: number, format: double, nullable: true }
+        SetPricePerImage: { type: number, format: double, nullable: true }
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
     PriceVariantUpsert:
@@ -2687,6 +2693,12 @@ components:
         multiplier: { type: number, format: double, minimum: 0, maximum: 10, nullable: true, description: "价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）" }
         set_input_per_m: { type: number, format: double, nullable: true }
         set_output_per_m: { type: number, format: double, nullable: true }
+        set_cache_read_per_m: { type: number, format: double, nullable: true }
+        set_cache_creation_per_m: { type: number, format: double, nullable: true }
+        set_price_per_call: { type: number, format: double, nullable: true }
+        set_img_in_tok_per_m: { type: number, format: double, nullable: true }
+        set_img_out_tok_per_m: { type: number, format: double, nullable: true }
+        set_price_per_image: { type: number, format: double, nullable: true }
         seq: { type: integer, minimum: 1 }
     PriceVariantListResponse:
       type: object

@@ -146,7 +146,7 @@ func (f *fakeStore) ListAllPriceVariants(_ context.Context) ([]*domain.PriceVari
 func (f *fakeStore) ReplacePriceVariants(_ context.Context, model string, variants []*domain.PriceVariant) ([]*domain.PriceVariant, error) {
 	// validate at-least-one
 	for _, v := range variants {
-		if v.MultBP == nil && v.SetInputPerM == nil && v.SetOutputPerM == nil {
+		if v.MultBP == nil && v.SetInputPerM == nil && v.SetOutputPerM == nil && v.SetCacheReadPerM == nil && v.SetCacheCreationPerM == nil && v.SetPricePerCall == nil && v.SetImgInTokPerM == nil && v.SetImgOutTokPerM == nil && v.SetPricePerImage == nil {
 			return nil, fmt.Errorf("variant seq %d requires at least one effect", v.Seq)
 		}
 	}

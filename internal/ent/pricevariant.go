@@ -39,6 +39,18 @@ type PriceVariant struct {
 	SetInputPerM *int64 `json:"set_input_per_m,omitempty"`
 	// SetOutputPerM holds the value of the "set_output_per_m" field.
 	SetOutputPerM *int64 `json:"set_output_per_m,omitempty"`
+	// SetCacheReadPerM holds the value of the "set_cache_read_per_m" field.
+	SetCacheReadPerM *int64 `json:"set_cache_read_per_m,omitempty"`
+	// SetCacheCreationPerM holds the value of the "set_cache_creation_per_m" field.
+	SetCacheCreationPerM *int64 `json:"set_cache_creation_per_m,omitempty"`
+	// SetPricePerCall holds the value of the "set_price_per_call" field.
+	SetPricePerCall *int64 `json:"set_price_per_call,omitempty"`
+	// SetImgInTokPerM holds the value of the "set_img_in_tok_per_m" field.
+	SetImgInTokPerM *int64 `json:"set_img_in_tok_per_m,omitempty"`
+	// SetImgOutTokPerM holds the value of the "set_img_out_tok_per_m" field.
+	SetImgOutTokPerM *int64 `json:"set_img_out_tok_per_m,omitempty"`
+	// SetPricePerImage holds the value of the "set_price_per_image" field.
+	SetPricePerImage *int64 `json:"set_price_per_image,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -51,7 +63,7 @@ func (*PriceVariant) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case pricevariant.FieldID, pricevariant.FieldSeq, pricevariant.FieldCtxMin, pricevariant.FieldCtxMax, pricevariant.FieldDowMask, pricevariant.FieldMultBp, pricevariant.FieldSetInputPerM, pricevariant.FieldSetOutputPerM:
+		case pricevariant.FieldID, pricevariant.FieldSeq, pricevariant.FieldCtxMin, pricevariant.FieldCtxMax, pricevariant.FieldDowMask, pricevariant.FieldMultBp, pricevariant.FieldSetInputPerM, pricevariant.FieldSetOutputPerM, pricevariant.FieldSetCacheReadPerM, pricevariant.FieldSetCacheCreationPerM, pricevariant.FieldSetPricePerCall, pricevariant.FieldSetImgInTokPerM, pricevariant.FieldSetImgOutTokPerM, pricevariant.FieldSetPricePerImage:
 			values[i] = new(sql.NullInt64)
 		case pricevariant.FieldModel, pricevariant.FieldServiceTier, pricevariant.FieldTimeStart, pricevariant.FieldTimeEnd:
 			values[i] = new(sql.NullString)
@@ -153,6 +165,48 @@ func (_m *PriceVariant) assignValues(columns []string, values []any) error {
 				_m.SetOutputPerM = new(int64)
 				*_m.SetOutputPerM = value.Int64
 			}
+		case pricevariant.FieldSetCacheReadPerM:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field set_cache_read_per_m", values[i])
+			} else if value.Valid {
+				_m.SetCacheReadPerM = new(int64)
+				*_m.SetCacheReadPerM = value.Int64
+			}
+		case pricevariant.FieldSetCacheCreationPerM:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field set_cache_creation_per_m", values[i])
+			} else if value.Valid {
+				_m.SetCacheCreationPerM = new(int64)
+				*_m.SetCacheCreationPerM = value.Int64
+			}
+		case pricevariant.FieldSetPricePerCall:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field set_price_per_call", values[i])
+			} else if value.Valid {
+				_m.SetPricePerCall = new(int64)
+				*_m.SetPricePerCall = value.Int64
+			}
+		case pricevariant.FieldSetImgInTokPerM:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field set_img_in_tok_per_m", values[i])
+			} else if value.Valid {
+				_m.SetImgInTokPerM = new(int64)
+				*_m.SetImgInTokPerM = value.Int64
+			}
+		case pricevariant.FieldSetImgOutTokPerM:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field set_img_out_tok_per_m", values[i])
+			} else if value.Valid {
+				_m.SetImgOutTokPerM = new(int64)
+				*_m.SetImgOutTokPerM = value.Int64
+			}
+		case pricevariant.FieldSetPricePerImage:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field set_price_per_image", values[i])
+			} else if value.Valid {
+				_m.SetPricePerImage = new(int64)
+				*_m.SetPricePerImage = value.Int64
+			}
 		case pricevariant.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
@@ -249,6 +303,36 @@ func (_m *PriceVariant) String() string {
 	builder.WriteString(", ")
 	if v := _m.SetOutputPerM; v != nil {
 		builder.WriteString("set_output_per_m=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.SetCacheReadPerM; v != nil {
+		builder.WriteString("set_cache_read_per_m=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.SetCacheCreationPerM; v != nil {
+		builder.WriteString("set_cache_creation_per_m=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.SetPricePerCall; v != nil {
+		builder.WriteString("set_price_per_call=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.SetImgInTokPerM; v != nil {
+		builder.WriteString("set_img_in_tok_per_m=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.SetImgOutTokPerM; v != nil {
+		builder.WriteString("set_img_out_tok_per_m=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.SetPricePerImage; v != nil {
+		builder.WriteString("set_price_per_image=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")

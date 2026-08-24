@@ -1071,18 +1071,24 @@ type PriceEntryUpsertMode string
 
 // PriceVariant defines model for PriceVariant.
 type PriceVariant struct {
-	CreatedAt     time.Time `json:"CreatedAt"`
-	CtxMax        *int64    `json:"CtxMax"`
-	CtxMin        *int64    `json:"CtxMin"`
-	DowMask       *int      `json:"DowMask"`
-	Model         string    `json:"Model"`
-	Seq           int       `json:"Seq"`
-	ServiceTier   *string   `json:"ServiceTier"`
-	SetInputPerM  *float64  `json:"SetInputPerM"`
-	SetOutputPerM *float64  `json:"SetOutputPerM"`
-	TimeEnd       *string   `json:"TimeEnd"`
-	TimeStart     *string   `json:"TimeStart"`
-	UpdatedAt     time.Time `json:"UpdatedAt"`
+	CreatedAt            time.Time `json:"CreatedAt"`
+	CtxMax               *int64    `json:"CtxMax"`
+	CtxMin               *int64    `json:"CtxMin"`
+	DowMask              *int      `json:"DowMask"`
+	Model                string    `json:"Model"`
+	Seq                  int       `json:"Seq"`
+	ServiceTier          *string   `json:"ServiceTier"`
+	SetCacheCreationPerM *float64  `json:"SetCacheCreationPerM"`
+	SetCacheReadPerM     *float64  `json:"SetCacheReadPerM"`
+	SetImgInTokPerM      *float64  `json:"SetImgInTokPerM"`
+	SetImgOutTokPerM     *float64  `json:"SetImgOutTokPerM"`
+	SetInputPerM         *float64  `json:"SetInputPerM"`
+	SetOutputPerM        *float64  `json:"SetOutputPerM"`
+	SetPricePerCall      *float64  `json:"SetPricePerCall"`
+	SetPricePerImage     *float64  `json:"SetPricePerImage"`
+	TimeEnd              *string   `json:"TimeEnd"`
+	TimeStart            *string   `json:"TimeStart"`
+	UpdatedAt            time.Time `json:"UpdatedAt"`
 
 	// Multiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）
 	Multiplier *float64 `json:"multiplier"`
@@ -1105,13 +1111,19 @@ type PriceVariantUpsert struct {
 	DowMask *int   `json:"dow_mask"`
 
 	// Multiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）
-	Multiplier    *float64 `json:"multiplier"`
-	Seq           *int     `json:"seq,omitempty"`
-	ServiceTier   *string  `json:"service_tier"`
-	SetInputPerM  *float64 `json:"set_input_per_m"`
-	SetOutputPerM *float64 `json:"set_output_per_m"`
-	TimeEnd       *string  `json:"time_end"`
-	TimeStart     *string  `json:"time_start"`
+	Multiplier           *float64 `json:"multiplier"`
+	Seq                  *int     `json:"seq,omitempty"`
+	ServiceTier          *string  `json:"service_tier"`
+	SetCacheCreationPerM *float64 `json:"set_cache_creation_per_m"`
+	SetCacheReadPerM     *float64 `json:"set_cache_read_per_m"`
+	SetImgInTokPerM      *float64 `json:"set_img_in_tok_per_m"`
+	SetImgOutTokPerM     *float64 `json:"set_img_out_tok_per_m"`
+	SetInputPerM         *float64 `json:"set_input_per_m"`
+	SetOutputPerM        *float64 `json:"set_output_per_m"`
+	SetPricePerCall      *float64 `json:"set_price_per_call"`
+	SetPricePerImage     *float64 `json:"set_price_per_image"`
+	TimeEnd              *string  `json:"time_end"`
+	TimeStart            *string  `json:"time_start"`
 }
 
 // PricingPreviewEntry defines model for PricingPreviewEntry.

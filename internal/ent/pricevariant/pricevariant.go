@@ -35,6 +35,18 @@ const (
 	FieldSetInputPerM = "set_input_per_m"
 	// FieldSetOutputPerM holds the string denoting the set_output_per_m field in the database.
 	FieldSetOutputPerM = "set_output_per_m"
+	// FieldSetCacheReadPerM holds the string denoting the set_cache_read_per_m field in the database.
+	FieldSetCacheReadPerM = "set_cache_read_per_m"
+	// FieldSetCacheCreationPerM holds the string denoting the set_cache_creation_per_m field in the database.
+	FieldSetCacheCreationPerM = "set_cache_creation_per_m"
+	// FieldSetPricePerCall holds the string denoting the set_price_per_call field in the database.
+	FieldSetPricePerCall = "set_price_per_call"
+	// FieldSetImgInTokPerM holds the string denoting the set_img_in_tok_per_m field in the database.
+	FieldSetImgInTokPerM = "set_img_in_tok_per_m"
+	// FieldSetImgOutTokPerM holds the string denoting the set_img_out_tok_per_m field in the database.
+	FieldSetImgOutTokPerM = "set_img_out_tok_per_m"
+	// FieldSetPricePerImage holds the string denoting the set_price_per_image field in the database.
+	FieldSetPricePerImage = "set_price_per_image"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -57,6 +69,12 @@ var Columns = []string{
 	FieldMultBp,
 	FieldSetInputPerM,
 	FieldSetOutputPerM,
+	FieldSetCacheReadPerM,
+	FieldSetCacheCreationPerM,
+	FieldSetPricePerCall,
+	FieldSetImgInTokPerM,
+	FieldSetImgOutTokPerM,
+	FieldSetPricePerImage,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -141,6 +159,36 @@ func BySetInputPerM(opts ...sql.OrderTermOption) OrderOption {
 // BySetOutputPerM orders the results by the set_output_per_m field.
 func BySetOutputPerM(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSetOutputPerM, opts...).ToFunc()
+}
+
+// BySetCacheReadPerM orders the results by the set_cache_read_per_m field.
+func BySetCacheReadPerM(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSetCacheReadPerM, opts...).ToFunc()
+}
+
+// BySetCacheCreationPerM orders the results by the set_cache_creation_per_m field.
+func BySetCacheCreationPerM(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSetCacheCreationPerM, opts...).ToFunc()
+}
+
+// BySetPricePerCall orders the results by the set_price_per_call field.
+func BySetPricePerCall(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSetPricePerCall, opts...).ToFunc()
+}
+
+// BySetImgInTokPerM orders the results by the set_img_in_tok_per_m field.
+func BySetImgInTokPerM(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSetImgInTokPerM, opts...).ToFunc()
+}
+
+// BySetImgOutTokPerM orders the results by the set_img_out_tok_per_m field.
+func BySetImgOutTokPerM(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSetImgOutTokPerM, opts...).ToFunc()
+}
+
+// BySetPricePerImage orders the results by the set_price_per_image field.
+func BySetPricePerImage(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSetPricePerImage, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

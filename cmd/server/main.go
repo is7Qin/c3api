@@ -125,6 +125,9 @@ func main() {
 	if err := repos.EnsurePriceVariantsEffectCheck(startupCtx); err != nil {
 		fatalDB("price_variants effect check bootstrap", err)
 	}
+	if err := repos.EnsureCodexSearchSeed(startupCtx); err != nil {
+		fatalDB("codex-search price seed bootstrap", err)
+	}
 	// #14 T3a：NOTIFY 发布器（多实例广播，设计文档 §2）。实例 ID = hostname-pid-
 	// nonce（config 无实例字段，最小方案；B4-1/p2-05：容器化多实例同 hostname、
 	// pid namespace 各自 pid 1 → 纯 hostname-pid 互相碰撞 → 互把对方 NOTIFY 当
