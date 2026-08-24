@@ -65,8 +65,8 @@ const (
 	fetchBatchLimit = 2000
 	// settleBatchLimit 结算语句单窗口行数（F2-opt W2 实测调参）：语句固定成本
 	// （编排/行锁/WALK 摊派）按批摊薄——批越大每行成本越趋近纯 WAL 写入。
-	// 2000 行实测 333 行/s（固定成本主导）；50k 行同语句 <1s 级，预期 ≥30k 行/s。
-	settleBatchLimit = 50000
+	// 实测边界：本盒单语句 DML ~3-6k 行/s（IO/WAL 共享竞争下更低），批规模必须// 满足 settleTimeout(10s) 预算——50k 行实测超时停摆（生产 1170 万行脏可见性// 地图上单语句 >10s）。8000 行 ≈ 1.3-2.6s/语句，安全余量 3 倍+。
+	settleBatchLimit = 8000
 	// lagWarnFraction lag 护栏阈值 = 保留期的 80%（spec §一：超保留期 80% 高声
 	// warn——留 20% 缓冲给告警响应窗口）。
 	lagWarnFraction = 0.8
