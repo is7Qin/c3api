@@ -106,11 +106,12 @@ func TestPGUpdateUserVsDeductOnlyInterleave(t *testing.T) {
 
 	// 模拟：handler GET 后、条件写前 flusher 已消费游标扣费标记
 	snapshot := int64(100000)
-	seedUnbilled(t, repos, logFor(u.ID, "pre"))
+	seedUnbilled(t, repos, costLogFor(u.ID, "pre", 40000))
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
-	_, _, _, err := repos.DeductOnlyAndMark(ctx, u.ID, 40000, ledgerRowIDs(rows))
+	res, err := repos.SettleBalanceBatch(ctx, len(rows))
 	require.NoError(t, err)
+	require.Equal(t, int64(1), res.Marked)
 
 	// 陈旧快照条件写 → 拒绝，余额保持扣费后值（修复前：无条件写回复活 100000）
 	newBal := int64(50000)
@@ -132,11 +133,12 @@ func TestPGUpdateUserVsDeductOnlyInterleave(t *testing.T) {
 	require.Equal(t, int64(1), countLogs(t, repos, u.ID), "消费日志在（账实一致）")
 }
 
-// TestPGUpdateUserPatchConcurrentDeduct 条件写与并发扣费交错（多轮 stress，
-// F2 游标语义：每 goroutine 消费各自 unbilled 行）：条件写要么成功（New =
-// 重读 + 5000，建立在当前值上）要么 ErrConflict 重读重试——任何交错下最终
-// 余额 = 100000 + 5000 - 20×1000（成功）或 100000 - 20×1000（全冲突），扣费
-// 零丢失（修复前无条件写回会吞并发增量）。
+// TestPGUpdateUserPatchConcurrentDeduct 条件写与并发扣费交错（F2 游标语义）：
+// 排空消费 goroutine（Balance 车道结算循环）与条件写重试并发交错——条件写要么
+// 成功（New = 重读 + 5000，建立在当前值上）要么 ErrConflict 重读重试——任何
+// 交错下最终余额 = 100000 + 5000 - 20×1000（成功）或 100000 - 20×1000（全冲突），
+// 扣费零丢失（修复前无条件写回会吞并发增量）。并发窗口互斥/恰扣一次语义由
+// TestPGSettleEPQConcurrentMark 的 EPQ 守卫族承载。
 func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -144,22 +146,17 @@ func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 	const base, perDeduct, nDeducts = int64(100000), int64(1000), 20
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, base))
 
-	// 种子 nDeducts 行 unbilled（usage flusher 单写点形态），逐行分发并发消费
+	// 种子 nDeducts 行 unbilled（usage flusher 单写点形态），并发排空消费
 	for i := 0; i < nDeducts; i++ {
-		seedUnbilled(t, repos, logFor(u.ID, fmt.Sprintf("race%d", i)))
+		seedUnbilled(t, repos, costLogFor(u.ID, fmt.Sprintf("race%d", i), perDeduct))
 	}
-	all := fetchAllUnbilled(t, repos)
-	require.Len(t, all, nDeducts)
-
-	var wg sync.WaitGroup
-	wg.Add(nDeducts)
-	for i := 0; i < nDeducts; i++ {
-		go func(n int) {
-			defer wg.Done()
-			_, _, _, err := repos.DeductOnlyAndMark(ctx, u.ID, perDeduct, []int64{all[n].ID})
-			require.NoError(t, err)
-		}(i)
-	}
+	drainDone := make(chan struct{})
+	go func() {
+		defer close(drainDone)
+		drained, quarantined := drainBillingCursor(t, repos)
+		require.Equal(t, int64(nDeducts), drained)
+		require.Zero(t, quarantined)
+	}()
 	// 条件写：重读重试 ≤3（对齐 service 语义），成功后退出
 	ok := false
 	for attempt := 0; attempt < 4; attempt++ {
@@ -175,7 +172,7 @@ func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 		}
 		require.ErrorIs(t, err, repository.ErrConflict)
 	}
-	wg.Wait()
+	<-drainDone
 
 	got, err := repos.GetUser(ctx, u.ID)
 	require.NoError(t, err)

@@ -125,7 +125,7 @@ func (b *Balances) ReloadMultipliers(ctx context.Context) error {
 	return nil
 }
 
-// Set 扣费后定向刷新单用户余额（DeductOnlyAndMark 成功后调用）：已存在条目原地
+// Set 扣费后定向刷新单用户余额（结算语句成功后调用）：已存在条目原地
 // Store（O(1) 零拷贝——扣费频率 = flush 节奏）。缺失条目忽略：仅限已存在用户
 // 的余额变更（PUT/Redeem/flush 回写，预检时已在快照内恒命中）；新用户创建
 // 走全量 Reload 进快照（见 O2 接线矩阵）。

@@ -10,9 +10,10 @@ package repository_test
 // 2026-08-13 实施，滚动轮换）。statement_timeout 断言保持 PG 默认 0 = 降级
 // 回归锚：session 级 statement_timeout 与 admin 面 ScanStats 大窗口聚合实测
 // 冲突（57014，见 f1-impl-report.md）→ 不设会话级，计费路径执行时长由
-// DeductOnlyAndMark per-query 10s ctx 超时兜底（TestPGBillingDeductLockTimeout）。
-// 纯读测试（SHOW），不动表/schema——与既有 PG 测试共享测试库串行无冲突。
-// 基座约定同 pg_account_groups_test：TEST_DATABASE_URL 未设置 → t.Skip。
+// 结算语句 per-query 10s ctx 超时兜底（settleTimeout，
+// TestPGBillingDeductLockTimeout）。纯读测试（SHOW），不动表/schema——与既有
+// PG 测试共享测试库串行无冲突。基座约定同 pg_account_groups_test：
+// TEST_DATABASE_URL 未设置 → t.Skip。
 
 import (
 	"context"
@@ -46,13 +47,13 @@ func TestPGOpenPGTimeoutParams(t *testing.T) {
 	require.Equal(t, 30*time.Minute, pool.Config().MaxConnLifetime, "MaxConnLifetime 滚动轮换配置")
 }
 
-// TestPGBillingDeductLockTimeout 计费扣费在锁竞争下有限失败（F-P2-4 核心验收）：
+// TestPGBillingDeductLockTimeout 计费结算在锁竞争下有限失败（F-P2-4 核心验收）：
 // 管理员 pg_dump/长事务持锁期间 FEFO/余额 UPDATE 曾无限卡锁等待（PG 默认
 // lock_timeout=0）→ flush worker 全阻塞 → 全局计费停摆。修复后双兜底：池级
-// lock_timeout=5s 会话 GUC（锁等待 5s 即 55P03 报错回滚）+ DeductOnlyAndMark
-// per-query 10s ctx 超时（deductTimeout）。本测试模拟管理员长事务持有 users
-// 行锁，断言扣费有限时间内失败（旧行为：无限阻塞）——失败语义 = 行保持
-// unbilled 游标重放（不丢不重）。
+// lock_timeout=5s 会话 GUC（锁等待 5s 即 55P03 报错回滚）+ 结算语句 per-query
+// 10s 超时（settleTimeout）。本测试模拟管理员长事务持有 users 行锁，断言结算
+// 有限时间内失败（旧行为：无限阻塞）——失败语义 = 行保持 unbilled 游标重放
+//（不丢不重；毒行梯子不隔离：ctx 截止上抛）。
 func TestPGBillingDeductLockTimeout(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -75,12 +76,10 @@ func TestPGBillingDeductLockTimeout(t *testing.T) {
 	defer func() { _, _ = holder.Exec(ctx, "ROLLBACK") }() // nolint:errcheck
 
 	start := time.Now()
-	bal, od, _, err := repos.DeductOnlyAndMark(ctx, u.ID, 500, ledgerRowIDs(rows))
+	_, err = repos.SettleBalanceBatch(ctx, len(rows))
 	elapsed := time.Since(start)
-	t.Logf("deduct under lock contention: err=%v elapsed=%v", err, elapsed)
-	require.Error(t, err, "锁竞争下扣费必须有限失败（55P03 lock_timeout 或 ctx 截止）")
-	require.False(t, od)
-	require.Zero(t, bal)
+	t.Logf("settle under lock contention: err=%v elapsed=%v", err, elapsed)
+	require.Error(t, err, "锁竞争下结算必须有限失败（55P03 lock_timeout 或 ctx 截止）")
 	require.Less(t, elapsed, 15*time.Second, "5s lock_timeout + 10s per-query 双兜底：≤15s（旧行为无限阻塞）")
 
 	_, lagN, lagErr := repos.UnbilledLag(ctx)

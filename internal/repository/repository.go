@@ -82,8 +82,8 @@ func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxp
 // 同一构造函数；WithTx 注入 tx client + 事务驱动，fn 内所有方法调用都走 tx ——
 // 评审 I-1）。pool 进 Stats（离线聚合 SQL 直查直写自 Acquire 独立连接，不进
 // 事务；advisory lock 专用连接持锁整周期——池连接复用即丢锁）与 Billing（F2
-// ledger-cursor：DeductOnlyAndMark pgx 直连事务 + 游标 advisory lock 专用连接；
-// WithTx 传 nil → 事务内回落 ent 载体，见 billing_repo.go）。
+// ledger-cursor：结算语句 pgx 直连事务 + 游标 advisory lock 专用连接；
+// WithTx 传 nil → 事务内回落 ent 载体，见 billing_settle.go）。
 func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *Repository {
 	accounts := &AccountRepo{client: client}
 	return &Repository{
@@ -671,16 +671,16 @@ func (r *Repository) UpdateUserBalance(ctx context.Context, userID, delta int64)
 	return r.Users.UpdateUserBalance(ctx, userID, delta)
 }
 
-// DeductOnlyAndMark 单事务 FEFO 扣费 + billed 标记（F2 ledger-cursor 计费
-// flusher 消费路径；冻结 ABI-2），见 BillingRepo。
-func (r *Repository) DeductOnlyAndMark(ctx context.Context, userID, cost int64, ids []int64) (balanceAfter int64, overdrafted, quarantined bool, err error) {
-	return r.Billing.DeductOnlyAndMark(ctx, userID, cost, ids)
+// SettleBalanceBatch Balance 车道结算一个窗口（余额-only 用户；单语句单事务
+// 取批→条件扣→透支补刀→标记），见 BillingRepo（billing_settle.go）。
+func (r *Repository) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
+	return r.Billing.SettleBalanceBatch(ctx, limit)
 }
 
-// DeductGroupsAndMark chunk 单事务多用户组扣费 + 合并标记（F2-opt D3；outcomes
-// 与 groups 序一一对应），见 BillingRepo。
-func (r *Repository) DeductGroupsAndMark(ctx context.Context, groups []domain.LedgerGroup) ([]domain.LedgerGroupOutcome, error) {
-	return r.Billing.DeductGroupsAndMark(ctx, groups)
+// SettleFefoBatch Temp 车道结算一个窗口（temp-active 用户；集合化 FEFO + 差额
+// 透支补刀 + 标记一体），见 BillingRepo（billing_settle.go）。
+func (r *Repository) SettleFefoBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
+	return r.Billing.SettleFefoBatch(ctx, limit)
 }
 
 // FetchUnbilledBatch 取未扣账本批（F2 冻结 ABI-2；游标 = 部分索引 WHERE NOT billed）。
@@ -826,8 +826,8 @@ func (r *Repository) UpdateUserMaxConcurrency(ctx context.Context, userID int64,
 // ScanStats 大窗口聚合冲突——720 万行/30 天窗口实测 >10s 被 57014 杀死（从"慢
 // 返回"变"超时错误"，用户面失败语义更糟；DB 侧聚合实测仅 ~1-2s，超时主因是
 // 7.2M 行客户端 ent 解码，管理面 DB 端 GROUP BY 优化留 F-P2-2 单独评估）。降级
-// 形态：计费路径 per-query 10s 超时由 BillingRepo.DeductOnlyAndMark 的 ctx 截止
-// 实现（deductTimeout），执行时长与锁等待双有界；其余路径维持现状语义（慢
+// 形态：计费路径 per-query 10s 超时由 BillingRepo 结算语句的 ctx 截止
+// 实现（settleTimeout），执行时长与锁等待双有界；其余路径维持现状语义（慢
 // 返回，无回归）。全部实测数字见 docs/superpowers/reports/f1-impl-report.md。
 //
 // 形态：pgx DSN query 参数 → 连接启动包 → 会话级 GUC（lock_timeout 为 USERSET
@@ -878,7 +878,7 @@ func appendPoolTimeouts(dsn string) string {
 // 计费路径防卡死（F-P2-4）：OpenPG 统一给 DSN 补 lock_timeout=5s（用户 DSN
 // 未含时，appendPoolTimeouts）+ MaxConnLifetime=30m 滚动轮换。statement_timeout
 // 因全局副作用实测冲突不设会话级（见 poolTimeoutParams 注释）——计费路径执行
-// 时长由 BillingRepo.DeductOnlyAndMark 的 per-query 10s ctx 超时兜底。
+// 时长由 BillingRepo 结算语句的 per-query 10s ctx 超时兜底。
 func OpenPG(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(appendPoolTimeouts(dsn))
 	if err != nil {

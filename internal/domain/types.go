@@ -619,7 +619,7 @@ type UsageLog struct {
 }
 
 // LedgerRow 计费游标消费行（usage_logs 未扣子集的瘦身投影；spec-f2-ledger-cursor
-// ABI-1 冻结契约）：FetchUnbilledBatch 返回、按 UserID 分组进 DeductOnlyAndMark。
+// ABI-1 冻结契约）：FetchUnbilledBatch 返回、结算语句按 UserID 聚合消费。
 type LedgerRow struct {
 	ID          int64
 	UserID      int64
@@ -630,22 +630,25 @@ type LedgerRow struct {
 	Format      string
 }
 
-// LedgerGroup 计费游标消费组（spec-f2-cursor-throughput D3 单一表示，替代
-// billing 包局部 userGroup）：同批同用户行（保序）——chunk 事务内一组一次
-// deductOnlyCore。cost 恒 = Σ Rows[i].Cost（构造即和，无拆块比例公式）。
-type LedgerGroup struct {
-	UserID int64
-	Rows   []LedgerRow
+// UserBalance 定向余额对（结算语句 debited/forced RETURNING (uid, balance_after)；
+// spec-f2opt-settlement §一 oracle 必改 #3）：保住 Balances 定向 Set 的预检
+// 新鲜度（10s Reload 间隙 fail-closed 预检依赖它）。
+type UserBalance struct {
+	UserID  int64
+	Balance int64
 }
 
-// LedgerGroupOutcome 组级消费结果（DeductGroupsAndMark 返回，与 groups 序一一
-// 对应）：BalanceAfter 事务内余额回读（quarantined/cost<=0 组恒 0）；Overdrafted
-// 该组透支（标记步 od=true 集合归属依据）；Quarantined 用户缺失（跳过扣减仍
-// 标记——不变量 #1 尾语义）。
-type LedgerGroupOutcome struct {
-	BalanceAfter int64
-	Overdrafted  bool
-	Quarantined  bool
+// SettlementSummary 单车道结算语句结果（spec-f2opt-settlement 三车道拓扑；计数
+// 守卫 + 定向余额对）。BatchRows/Marked 由仓库侧做 marked==batch 计数比对守卫
+// （不齐 = 并发标记 → 整事务回滚重放）；Quarantined 为幽灵用户行数（跳扣仍标记
+// ——不变量 #1 尾语义）；Balances 为真实用户的 (uid, balance_after) 对。
+type SettlementSummary struct {
+	BatchRows    int64 // 批行数（usage_logs 取出）
+	DebitedUsers int64 // 条件扣命中用户数
+	ForcedUsers  int64 // 透支补刀用户数
+	Marked       int64 // 标记行数（守卫要求 == BatchRows）
+	Quarantined  int64 // 幽灵/隔离行数（零扣费标记退出游标）
+	Balances     []UserBalance
 }
 
 // StatBucket 小时统计桶（usage_stats 行；离线聚合 worker 的 INSERT 行形态）。

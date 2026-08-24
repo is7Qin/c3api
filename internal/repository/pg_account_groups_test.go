@@ -58,7 +58,7 @@ func newPGRepos(tb testing.TB) *repository.Repository {
 	return repos
 }
 
-// newPGReposNoPool 同一 schema 上的无池仓库（F2：DeductOnlyAndMark 双载体
+// newPGReposNoPool 同一 schema 上的无池仓库（F2：结算语句双载体
 // A/B 与等价性测试用）——pool == nil → ent txDriver 载体；与 newPGRepos
 // （pool → pgx 直连载体）共享同一测试 schema（必须先于本函数调用
 // newPGRepos 完成建表）。

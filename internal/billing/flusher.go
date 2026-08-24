@@ -19,25 +19,24 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// LedgerStore 计费游标消费面（repository.Repository 门面实现；签名 = F2 冻结
-// ABI-2 + 会话锁配套面 + F2-opt D3 chunk 事务面）。
+// LedgerStore 计费游标消费面（repository.Repository 门面实现；三车道拓扑，
+// spec-f2opt-settlement §〇-b）。
 type LedgerStore interface {
 	// AcquireBillingLock 会话级 advisory lock：专用池连接取批前获取、持有整
-	// 周期（含全部用户事务 COMMIT）后解锁释放——多实例取批互斥的唯一防线
+	// 周期（含全部车道结算事务 COMMIT）后解锁释放——多实例取批互斥的唯一防线
 	//（Momus M1：每事务 xact 锁形态下两实例可各自提交前取到同批未标记行 =
 	// 双扣资金，明令禁止）。
 	AcquireBillingLock(ctx context.Context) (release func(), ok bool, err error)
 	// FetchUnbilledBatch 取未扣账本批（WHERE NOT billed AND error_type IN
-	// ('none','abort') ORDER BY id LIMIT $n；F2-opt D1 单取批面——含 cost<=0
-	// 行，消费侧内存路由）。
+	// ('none','abort') ORDER BY id LIMIT $n）：零价扫尾取数面（D1 单取批）。
 	FetchUnbilledBatch(ctx context.Context, limit int) ([]domain.LedgerRow, error)
-	// DeductOnlyAndMark 单组事务：FEFO 扣减 → UPDATE billed=true, overdraft=$od
-	// WHERE id=ANY($ids) AND NOT billed（用户缺失 → 跳过扣减仍标记、quarantined）。
-	// F2-opt 后主路径走 DeductGroupsAndMark，本方法仅毒行行级二分机制直调。
-	DeductOnlyAndMark(ctx context.Context, userID, cost int64, ids []int64) (balanceAfter int64, overdrafted, quarantined bool, err error)
-	// DeductGroupsAndMark chunk 单事务：多用户组逐组 FEFO 扣减 + 合并标记
-	//（F2-opt D3 纯增量；outcomes 与 groups 序一一对应）。
-	DeductGroupsAndMark(ctx context.Context, groups []domain.LedgerGroup) ([]domain.LedgerGroupOutcome, error)
+	// SettleBalanceBatch Balance 车道结算一个窗口（余额-only 用户；单语句单
+	// 事务 取批→条件扣→透支补刀→标记；毒行梯子内置——重试耗尽隔离队头越行，
+	// 隔离行以 Quarantined 计数随 summary 返回）。
+	SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error)
+	// SettleFefoBatch Temp 车道结算一个窗口（temp-active 用户；集合化 FEFO +
+	// 差额透支补刀 + 标记一体，D7）。事务纪律与毒行梯子同 SettleBalanceBatch。
+	SettleFefoBatch(ctx context.Context, limit int) (domain.SettlementSummary, error)
 	// MarkBilledBulk 幂等纯标记（零价行快速路径 + 终极毒行隔离）。
 	MarkBilledBulk(ctx context.Context, ids []int64) error
 	// UnbilledLag 游标积压度量（最老 unbilled 行 created_at + 行数）。
@@ -48,7 +47,9 @@ type LedgerStore interface {
 type FlushConfig struct {
 	FlushInterval          time.Duration // 游标轮询周期（默认 250ms）
 	BalanceRefreshInterval time.Duration // 余额快照全量刷新周期
-	Workers                int           // 用户组并行消费 worker 数（0 = 单 worker）
+	// Workers 历史并行度参数（chunk 分片时代遗留；三车道语句化后消费为单语句
+	// 顺序执行，本字段仅保留 config ABI 兼容——不再影响消费行为）。
+	Workers int
 	// LogRetentionDays usage 日保留期（lag 护栏基准，cmd 接线
 	// config.Usage.LogRetentionDays）：最老 unbilled 行距今超保留期 80% → 高声
 	// Warn（停机护栏——消费停摆逼近分区 DROP 线提前可见）。<= 0 = 护栏禁用
@@ -57,14 +58,9 @@ type FlushConfig struct {
 }
 
 const (
-	// fetchBatchLimit 每次取批上限（F2-opt D6：500→2000）：排空式循环下单批
-	// 规模即单次 DB 往返的行吞吐上限；批内分组后打包 ≤chunkUsersLimit 用户/
-	// chunk，commit 数从 每用户一笔 → 每 chunk 一笔。
+	// fetchBatchLimit 每车道单窗口行数上限：结算语句 batch CTE 的 LIMIT 参数，
+	// 单次 DB 往返的行吞吐上限；零价扫尾取批同上限。
 	fetchBatchLimit = 2000
-	// chunkUsersLimit 单 chunk 用户组数上限（F2-opt D3）：一笔事务承载的用户
-	// 组数——commit 数 = ⌈组数/64⌉/分片；deductTimeout=10s 包整事务（64 用户
-	// ×~4 语句余量充足）。
-	chunkUsersLimit = 64
 	// lagWarnFraction lag 护栏阈值 = 保留期的 80%（spec §一：超保留期 80% 高声
 	// warn——留 20% 缓冲给告警响应窗口）。
 	lagWarnFraction = 0.8
@@ -88,26 +84,24 @@ var inflightAbandonGrace = 500 * time.Millisecond
 // （billed=false 出生），本 worker 只消费账本游标：
 //
 //	每周期（FlushInterval 默认 250ms）：会话级 advisory lock 取批前获取、持有
-//	整周期后释放（多实例取批互斥）→ 排空式循环（F2-opt D2）：FetchUnbilledBatch
-//	(LIMIT 2000) 内存路由（D1）——cost<=0 行一次 MarkBilledBulk 纯标记（不走
-//	FEFO 机器）；cost>0 行按 UserID 分组 → 分片 N worker 并发、片内连续组打包
-//	≤64 用户/chunk（D3）逐块 DeductGroupsAndMark 单事务（逐组 FEFO 扣减 + 合并
-//	标记原子——at-least-once 消费 + 原子 = exactly-once）→ 直至空批或 ctx 截止
-//	→ 成功定向刷新余额快照（O(1)）。
+//	整周期后释放（多实例取批互斥）→ 排空式循环（F2-opt D2）三车道顺序消费
+//	（spec-f2opt-settlement §〇-b）：Balance 车道 SettleBalanceBatch（余额-only
+//	用户，单语句单事务 取批→条件扣→透支补刀→标记）→ Temp 车道 SettleFefoBatch
+//	（temp-active 用户，集合化 FEFO——at-least-once 消费 + 单语句原子 =
+//	exactly-once）→ 零价批扫尾 MarkBilledBulk 纯标记 → 直至零进展或 ctx 截止
+//	→ 成功定向刷新余额快照（(uid,balance_after) 对 O(1) Set）。
 //
-// 毒行：chunk 结构错误 → 组为单位折半降级 → 单例组内二分重试归因（对齐 usage
-// 包 poisonBisect）→ 单行仍失败 = 毒行 → MarkBilledBulk 终极隔离 +
-// QuarantinedRows 计数 + Error——游标永不卡死；整库故障 → 行保持 unbilled 由
-// DB 天然重放（无内存回灌面）。
+// 毒行梯子每车道独立：连续失败 K 次 → 只读探针定位该车道队头行 → MarkBilledBulk
+// 终极隔离越行 + QuarantinedRows 计数 + Error——游标永不卡死；一车道毒行不影响
+// 他车道进展；整库故障 → 行保持 unbilled 由 DB 天然重放（无内存回灌面）。
 // Close 排空惯用法保持（loopDone/baseCtx/flushMu/inflightAbandonGrace）：等在途
 // 周期结束后循环消费至游标清空（预算内）或截断退出（剩余行下次启动收敛，
 // RestartConvergence）。
 type Flusher struct {
-	cfg     FlushConfig
-	store   LedgerStore
-	bal     *Balances
-	log     *logx.Logger
-	workers int
+	cfg   FlushConfig
+	store LedgerStore
+	bal   *Balances
+	log   *logx.Logger
 	// flushMu 单消费周期入口串行：ticker/Close 两处触发互斥；在途周期即其
 	// 持有者（Close 排空惯用法，与 usage 包各自声明——有意重复）。
 	flushMu    sync.Mutex
@@ -118,8 +112,8 @@ type Flusher struct {
 	baseCancel context.CancelFunc
 	// 观测原子：lastFlush 最近成功消费时刻（UnixMilli；0 = 尚未消费）；
 	// unbilledN 当前 Unbilled 行数（UnbilledLag 探测刷新，≥1s 节流——Stats().
-	// UnbilledRows 真值，允许 ≤1s 陈旧度）；quarantined 累计隔离行数（用户缺失
-	// 组 + 毒行终极隔离）；lagMs 游标积压时滞（毫秒，= 探测时刻 now − 最老
+	// UnbilledRows 真值，允许 ≤1s 陈旧度）；quarantined 累计隔离行数（幽灵用户
+	// 行 + 毒行终极隔离）；lagMs 游标积压时滞（毫秒，= 探测时刻 now − 最老
 	// unbilled 行 created_at；0 = 游标空/未探测，ABI-4 lag 族真值）；
 	// lastLag 最近 lag 探测时刻（UnixMilli；节流基准，flushMu 内读写）；
 	// lagWarned lag 护栏告警边沿（回落复位防刷屏）。
@@ -133,13 +127,8 @@ type Flusher struct {
 
 // NewFlusher 构造游标消费者（store = repository 门面；bal 余额快照定向刷新面）。
 func NewFlusher(cfg FlushConfig, store LedgerStore, bal *Balances, log *logx.Logger) *Flusher {
-	workers := cfg.Workers
-	if workers <= 0 {
-		workers = 1
-	}
 	f := &Flusher{
 		cfg: cfg, store: store, bal: bal, log: log,
-		workers:  workers,
 		loopDone: make(chan struct{}),
 	}
 	f.baseCtx, f.baseCancel = context.WithCancel(context.Background())
@@ -321,38 +310,4 @@ func (f *Flusher) Close(ctx context.Context) error {
 		}
 	})
 	return nil
-}
-
-// groupLedgerRows 按 UserID 保序分组（确定性——测试断言与分片均不依赖 map 迭代序）。
-func groupLedgerRows(rows []domain.LedgerRow) []*domain.LedgerGroup {
-	byUID := make(map[int64]*domain.LedgerGroup, 16)
-	out := make([]*domain.LedgerGroup, 0, 16)
-	for _, r := range rows {
-		g, ok := byUID[r.UserID]
-		if !ok {
-			g = &domain.LedgerGroup{UserID: r.UserID}
-			byUID[r.UserID] = g
-			out = append(out, g)
-		}
-		g.Rows = append(g.Rows, r)
-	}
-	return out
-}
-
-// groupCost 组内成本和（cost == Σ rows.Cost 不变量，逐行累加——禁止按比例公式）。
-func groupCost(rows []domain.LedgerRow) int64 {
-	var cost int64
-	for _, r := range rows {
-		cost += r.Cost
-	}
-	return cost
-}
-
-// ledgerIDs 组内行 id 序列（DeductOnlyAndMark 标记面实参）。
-func ledgerIDs(rows []domain.LedgerRow) []int64 {
-	ids := make([]int64, len(rows))
-	for i, r := range rows {
-		ids[i] = r.ID
-	}
-	return ids
 }

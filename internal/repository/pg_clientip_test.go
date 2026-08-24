@@ -100,8 +100,8 @@ func TestErrLogClientIPRoundtripPG(t *testing.T) {
 }
 
 // TestBillingCursorPreservesClientIPPG F2 游标消费不触碰 client_ip：usage
-// flusher 单写落库行带 client_ip（fullLogFor），DeductOnlyAndMark 只翻 billed/
-// overdraft 两列（SQL 层直查；全列双载体等价对比见 TestPGDeductOnlyCarrierEquivalent）。
+// flusher 单写落库行带 client_ip（fullLogFor），SettleBalanceBatch 只翻 billed/
+// overdraft 两列（SQL 层直查；全列双载体等价对比见 TestPGSettleLanesConservation）。
 func TestBillingCursorPreservesClientIPPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -113,15 +113,16 @@ func TestBillingCursorPreservesClientIPPG(t *testing.T) {
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
 
-	bal, od, _, err := repos.DeductOnlyAndMark(ctx, u.ID, 100_000, ledgerRowIDs(rows))
+	res, err := repos.SettleBalanceBatch(ctx, 10)
 	require.NoError(t, err)
-	require.False(t, od)
-	require.Equal(t, int64(900_000), bal)
+	require.Len(t, res.Balances, 1)
+	// 扣减额从行推导（cost=130，fullLogFor 默认）——旧 API 显式传参形态已退役。
+	require.Equal(t, int64(1_000_000-130), res.Balances[0].Balance)
 
 	var raw string
 	var billed bool
 	err = pool.QueryRow(ctx, `SELECT client_ip, billed FROM usage_logs WHERE request_id = 'cip-bill-1'`).Scan(&raw, &billed)
 	require.NoError(t, err)
 	require.Equal(t, "9.9.9.9", raw, "游标消费不触碰 client_ip（写面唯一归 usage flusher）")
-	require.True(t, billed, "扣费事务内 billed 翻转")
+	require.True(t, billed, "结算事务内 billed 翻转")
 }
