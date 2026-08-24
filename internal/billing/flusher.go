@@ -31,16 +31,19 @@ type LedgerStore interface {
 	// ('none','abort') ORDER BY id LIMIT $n）：零价扫尾取数面（D1 单取批）。
 	FetchUnbilledBatch(ctx context.Context, limit int) ([]domain.LedgerRow, error)
 	// SettleBalanceBatch Balance 车道结算一个窗口（余额-only 用户；单语句单
-	// 事务 取批→条件扣→透支补刀→标记；毒行梯子内置——重试耗尽隔离队头越行，
-	// 隔离行以 Quarantined 计数随 summary 返回）。
-	SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error)
+	// 事务 取批→条件扣→透支补刀→标记；桶谓词 COALESCE(user_id,0)%k=bucket——
+	// 桶级并行 wave3 D-C，K 由编排层给定）；毒行梯子内置——重试耗尽隔离该车道
+	// 该桶队头越行，隔离行以 Quarantined 计数随 summary 返回。
+	SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error)
 	// SettleFefoBatch Temp 车道结算一个窗口（temp-active 用户；集合化 FEFO +
-	// 差额透支补刀 + 标记一体，D7）。事务纪律与毒行梯子同 SettleBalanceBatch。
-	SettleFefoBatch(ctx context.Context, limit int) (domain.SettlementSummary, error)
+	// 差额透支补刀 + 标记一体，D7；桶谓词同上）。事务纪律与毒行梯子同
+	// SettleBalanceBatch。
+	SettleFefoBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error)
 	// MarkBilledBulk 幂等纯标记（零价行快速路径 + 终极毒行隔离）。
 	MarkBilledBulk(ctx context.Context, ids []int64) error
-	// UnbilledLag 游标积压度量（最老 unbilled 行 created_at + 行数）。
-	UnbilledLag(ctx context.Context) (oldestCreated time.Time, count int64, err error)
+	// UnbilledLag 游标积压度量（wave3 D-B 签名收缩：队头两步法取最老可结算行
+	// created_at，ok=false = 游标空；精确 COUNT 已删）。
+	UnbilledLag(ctx context.Context) (oldestCreated time.Time, ok bool, err error)
 }
 
 // FlushConfig 消费节奏（config.BillingConfig 映射）。
@@ -95,11 +98,11 @@ var inflightAbandonGrace = 500 * time.Millisecond
 //
 //	每周期（FlushInterval 默认 250ms）：会话级 advisory lock 取批前获取、持有
 //	整周期后释放（多实例取批互斥）→ 排空式循环（F2-opt D2）三车道顺序消费
-//	（spec-f2opt-settlement §〇-b）：Balance 车道 SettleBalanceBatch（余额-only
-//	用户，单语句单事务 取批→条件扣→透支补刀→标记）→ Temp 车道 SettleFefoBatch
-//	（temp-active 用户，集合化 FEFO——at-least-once 消费 + 单语句原子 =
-//	exactly-once）→ 零价批扫尾 MarkBilledBulk 纯标记 → 直至零进展或 ctx 截止
-//	→ 成功定向刷新余额快照（(uid,balance_after) 对 O(1) Set）。
+//	（spec-f2opt-settlement §〇-b；车道内 K 桶并行，wave3 D-C）：Balance 车道
+//	SettleBalanceBatch（余额-only 用户，单语句单事务 取批→条件扣→透支补刀→标记）
+//	→ Temp 车道 SettleFefoBatch（temp-active 用户，集合化 FEFO——at-least-once
+//	消费 + 单语句原子 = exactly-once）→ 零价批扫尾 MarkBilledBulk 纯标记 → 直至
+//	零进展或 ctx 截止 → 成功定向刷新余额快照（(uid,balance_after) 对 O(1) Set）。
 //
 // 毒行梯子每车道独立：连续失败 K 次 → 只读探针定位该车道队头行 → MarkBilledBulk
 // 终极隔离越行 + QuarantinedRows 计数 + Error——游标永不卡死；一车道毒行不影响
@@ -121,14 +124,15 @@ type Flusher struct {
 	baseCtx    context.Context // ticker 路径周期的可取消父 ctx（Close 预算到期 Cancel）
 	baseCancel context.CancelFunc
 	// 观测原子：lastFlush 最近成功消费时刻（UnixMilli；0 = 尚未消费）；
-	// unbilledN 当前 Unbilled 行数（UnbilledLag 探测刷新，≥1s 节流——Stats().
-	// UnbilledRows 真值，允许 ≤1s 陈旧度）；quarantined 累计隔离行数（幽灵用户
-	// 行 + 毒行终极隔离）；lagMs 游标积压时滞（毫秒，= 探测时刻 now − 最老
+	// unbilledN Unbilled 行数**占位恒 0**（wave3 D-B 精确 COUNT 已删——无硬消费
+	// 者，Stats().UnbilledRows 可观测性降级显式化，spec §一 D-B「仪表盘允许估算
+	// 降级」；字段保留 = ops JSON 契约 ABI 不变）；quarantined 累计隔离行数（幽灵
+	// 用户行 + 毒行终极隔离）；lagMs 游标积压时滞（毫秒，= 探测时刻 now − 最老
 	// unbilled 行 created_at；0 = 游标空/未探测，ABI-4 lag 族真值）；
 	// lastLag 最近 lag 探测时刻（UnixMilli；节流基准，flushMu 内读写）；
 	// lagWarned lag 护栏告警边沿（回落复位防刷屏）。
 	lastFlush   atomic.Int64
-	unbilledN   atomic.Int64
+	unbilledN   atomic.Int64 // 占位恒 0（D-B 降级显式化）——见上注释
 	quarantined atomic.Int64
 	lagMs       atomic.Int64
 	lastLag     atomic.Int64
@@ -212,11 +216,14 @@ func (f *Flusher) consumeCycle(ctx context.Context, drain bool) int64 {
 // 或 ctx.Err()——一批一 tick 的节奏概念废除，FlushInterval 仅在游标空时作为
 // 空转间隔。实现见 drain.go（排空消费机制面）。
 
-// refreshLag lag 护栏 + Stats 真值刷新（≥1s 节流，D2；force=true = Close 排空
-// 语境绕过节流强制刷新——防「陈旧 unbilledN==0 × n>0」提前退出排空）：最老
-// unbilled 行距今超保留期 80% → 高声 Warn（边沿触发，回落复位防刷屏）——消费
-// 停摆逼近分区 DROP 线提前可见。lag/unbilled 真值探测成功后原子写（Stats()
-// 零锁直读）。仅在 flushMu 内调用（consumeCycle 收尾）——节流检查无竞态。
+// refreshLag lag 护栏真值刷新（wave3 D-B 无计数世界重构）：force=true = Close
+// 排空语境**必刷**（绕过全部节流——Momus 维度5：退出判据新鲜度不可让渡）；非
+// force 双层节流——① lagRefreshInterval ≥1s 窗 ② 精确探针每 lagSlowEvery 个
+// 节流窗校准一次（队头两步法虽已 O(log n)，低频化保留为探针压力上限），校准窗
+// 之间 lagMs 保持上次值（陈旧度显式可接受，D-B 降级语义）。最老 unbilled 行距今
+// 超保留期 80% → 高声 Warn（边沿触发，回落复位防刷屏）——消费停摆逼近分区 DROP
+// 线提前可见。lag 真值探测成功后原子写（Stats() 零锁直读）。仅在 flushMu 内调用
+// （consumeCycle 收尾）——节流检查无竞态。
 func (f *Flusher) refreshLag(ctx context.Context, force bool) {
 	now := time.Now().UnixMilli()
 	if force {
@@ -228,18 +235,17 @@ func (f *Flusher) refreshLag(ctx context.Context, force bool) {
 		f.lagSlowCnt++
 		f.lastLag.Store(now)
 		if (f.lagSlowCnt-1)%lagSlowEvery != 0 {
-			return // 精确探针低频化：COUNT(*) 大积压下 O(unbilled) 数秒级，低频校准
+			return // 精确探针低频化：非校准窗跳过——lagMs 保持上次值（D-B 显式降级）
 		}
 	}
-	oldest, count, err := f.store.UnbilledLag(ctx)
+	oldest, ok, err := f.store.UnbilledLag(ctx)
 	if err != nil {
 		if f.log != nil && ctx.Err() == nil {
 			f.log.Warn("billing cursor lag probe failed", logx.Error(err))
 		}
 		return
 	}
-	f.unbilledN.Store(count)
-	if count == 0 || oldest.IsZero() {
+	if !ok { // 游标空（队头两步法步①零行）
 		f.lagMs.Store(0)
 		f.lagWarned.Store(false)
 		return
@@ -254,7 +260,6 @@ func (f *Flusher) refreshLag(ctx context.Context, force bool) {
 		if f.lagWarned.CompareAndSwap(false, true) && f.log != nil {
 			f.log.Warn("billing cursor lag exceeds retention guardrail, consumption stalled?",
 				logx.Any("oldest_unbilled", oldest),
-				logx.Int64("unbilled_rows", count),
 				logx.Int("log_retention_days", f.cfg.LogRetentionDays))
 		}
 		return
@@ -306,21 +311,19 @@ func (f *Flusher) Close(ctx context.Context) error {
 			if ctx.Err() != nil { // 预算到期：截断退出（剩余行保持 unbilled，重启收敛）
 				if f.log != nil {
 					f.log.Warn("billing flusher close: shutdown budget exceeded, truncated drain",
-						logx.Int64("consumed_rows", flushed), logx.Int64("remaining_rows", f.unbilledN.Load()))
+						logx.Int64("consumed_rows", flushed))
 				}
 				return
 			}
-			// drain=true：排空语境绕过 lag 节流强制刷新——unbilledN 每周期新鲜，
-			// 「陈旧 unbilledN==0 × n>0」提前退出不可能发生（Momus 维度5）。
+			// drain=true：排空语境绕过 lag 节流强制刷新（Momus 维度5——判据新鲜度）。
 			n := f.consumeCycle(ctx, true)
 			flushed += n
-			if f.unbilledN.Load() == 0 || n == 0 {
-				// 游标清空，或本周期无进展（锁他实例持有/DB 故障/预算内取消）
-				// ——退出不空转，剩余行由下周期/下次启动收敛；预算已到期 →
-				// 归因截断 Warn（consumed/remaining 行数单位一致）。
+			if n == 0 {
+				// 本周期无进展（游标清空/锁他实例持有/DB 故障/预算内取消）——退出
+				// 不空转，剩余行由下周期/下次启动收敛；预算已到期 → 归因截断 Warn。
 				if ctx.Err() != nil && f.log != nil {
 					f.log.Warn("billing flusher close: shutdown budget exceeded, truncated drain",
-						logx.Int64("consumed_rows", flushed), logx.Int64("remaining_rows", f.unbilledN.Load()))
+						logx.Int64("consumed_rows", flushed))
 				}
 				return
 			}

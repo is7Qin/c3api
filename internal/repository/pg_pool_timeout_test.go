@@ -76,13 +76,13 @@ func TestPGBillingDeductLockTimeout(t *testing.T) {
 	defer func() { _, _ = holder.Exec(ctx, "ROLLBACK") }() // nolint:errcheck
 
 	start := time.Now()
-	_, err = repos.SettleBalanceBatch(ctx, len(rows))
+	_, err = repos.SettleBalanceBatch(ctx, len(rows), 1, 0)
 	elapsed := time.Since(start)
 	t.Logf("settle under lock contention: err=%v elapsed=%v", err, elapsed)
 	require.Error(t, err, "锁竞争下结算必须有限失败（55P03 lock_timeout 或 ctx 截止）")
 	require.Less(t, elapsed, 15*time.Second, "5s lock_timeout + 10s per-query 双兜底：≤15s（旧行为无限阻塞）")
 
-	_, lagN, lagErr := repos.UnbilledLag(ctx)
+	_, lagOK, lagErr := repos.UnbilledLag(ctx)
 	require.NoError(t, lagErr)
-	require.Equal(t, int64(1), lagN, "事务回滚行保持 unbilled——游标下周期重放（不丢不重）")
+	require.True(t, lagOK, "事务回滚行保持 unbilled——游标下周期重放（不丢不重）")
 }

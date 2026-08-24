@@ -17,7 +17,9 @@ type FlusherStats struct {
 	// LagMs 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行
 	// created_at；0 = 游标空/未探测。消费停摆时此值持续增长——护栏告警同源。
 	LagMs int64 `json:"lag_ms"`
-	// UnbilledRows 当前未扣费账本行数（部分索引 WHERE NOT billed 行数）。
+	// UnbilledRows 未扣费账本行数——**wave3 D-B 降级占位恒 0**：精确 COUNT 已删
+	// （无硬消费者，spec §一 D-B「仪表盘允许估算降级显式化」）；字段保留 = ops
+	// JSON 契约 ABI 不变。积压规模以 LagMs 与 last_cycle 间接观测。
 	UnbilledRows int64 `json:"unbilled_rows"`
 	// QuarantinedRows 累计隔离行数（用户缺失组 + 毒行终极隔离——未扣费写销）。
 	QuarantinedRows int64 `json:"quarantined_rows"`

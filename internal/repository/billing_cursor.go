@@ -62,10 +62,19 @@ const fetchUnbilledSQL = `SELECT id, COALESCE(user_id, 0), cost, model,
 const markBilledBulkSQL = `UPDATE usage_logs SET billed = TRUE
 	WHERE id = ANY($1) AND NOT billed`
 
-// unbilledLagSQL lag 度量（停机护栏数据源）：
-// 部分索引最小 unbilled 行 created_at + 行数。COUNT 走部分索引；MIN(created_at)
-// 需堆取列——unbilled 集合小（正常恒近空），O(unbilled) 可接受。
-const unbilledLagSQL = `SELECT COUNT(*), MIN(created_at) FROM usage_logs WHERE NOT billed`
+// unbilledHeadIDSQL / unbilledHeadCreatedSQL 队头两步法探针（wave3 D-A/D-B，
+// spec-f2opt-wave3 §一）：步① 走部分索引 usagelog_unbilled_id 瞬时定位最老可
+// 结算行 id（谓词同结算批：cost>0 可结算子集）；步② pkey 回表取 created_at。
+// 两次 O(log n)，替代已删除的 usagelog_unbilled_created 索引（marked 步索引
+// 维护 -33%）。
+// 语义注记（D-B）：队头行 created_at 是 MIN(created_unbilled) 的**有界近似**——
+// 游标按 id 升序消费、id 与 created_at 同序（序列分配），偏差上界 = flush 缓冲
+// 延迟 + 时钟偏移（秒级），远小于保留期护栏阈值（天级）；随游标推进收敛。
+const unbilledHeadIDSQL = `SELECT id FROM usage_logs
+	WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
+	ORDER BY id LIMIT 1`
+
+const unbilledHeadCreatedSQL = `SELECT created_at FROM usage_logs WHERE id = $1`
 
 // FetchUnbilledBatch 取未扣账本批（F2 冻结 ABI-2，签名不得偏移）：LedgerRow
 // 瘦身投影（ABI-1），按 id 升序返回至多 limit 行。limit <= 0 → 空批（防御，
@@ -92,25 +101,44 @@ func (r *BillingRepo) MarkBilledBulk(ctx context.Context, ids []int64) error {
 	return err
 }
 
-// UnbilledLag 游标积压度量（F2 冻结 ABI-2，签名不得偏移）：最老 unbilled 行
-// created_at + 行数。空游标 → count=0、oldestCreated 零值。
-func (r *BillingRepo) UnbilledLag(ctx context.Context) (oldestCreated time.Time, count int64, err error) {
-	rows, err := r.queryRows(ctx, unbilledLagSQL, nil)
+// UnbilledLag 游标积压度量（wave3 D-B 签名收缩）：最老可结算行 created_at，
+// ok=false = 游标空。精确 COUNT 已删（无硬消费者——护栏本质是时间判据；
+// Stats().UnbilledRows 降级为占位 0，spec §一 D-B 显式化）。队头两步法见
+// unbilledHeadIDSQL 注释。
+func (r *BillingRepo) UnbilledLag(ctx context.Context) (oldestCreated time.Time, ok bool, err error) {
+	id, ok, err := r.probeCursorHead(ctx)
+	if err != nil || !ok {
+		return time.Time{}, false, err
+	}
+	rows, err := r.queryRows(ctx, unbilledHeadCreatedSQL, []any{id})
 	if err != nil {
-		return time.Time{}, 0, err
+		return time.Time{}, false, err
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		return time.Time{}, 0, rows.Err()
+		return time.Time{}, false, rows.Err()
 	}
-	var oldest *time.Time
-	if err := rows.Scan(&count, &oldest); err != nil {
-		return time.Time{}, 0, err
+	if err := rows.Scan(&oldestCreated); err != nil {
+		return time.Time{}, false, err
 	}
-	if oldest == nil { // 空游标：COUNT=0 且 MIN 为 NULL
-		return time.Time{}, 0, nil
+	return oldestCreated, true, nil
+}
+
+// probeCursorHead 队头两步法步①（部分索引 usagelog_unbilled_id 瞬时下降）：
+// 返回最老可结算行 id；空游标 → ok=false。形态对齐 ProbeLaneHead。
+func (r *BillingRepo) probeCursorHead(ctx context.Context) (id int64, ok bool, err error) {
+	rows, err := r.queryRows(ctx, unbilledHeadIDSQL, nil)
+	if err != nil {
+		return 0, false, err
 	}
-	return *oldest, count, nil
+	defer rows.Close()
+	if !rows.Next() {
+		return 0, false, rows.Err()
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
 }
 
 // AcquireBillingLock 抢占计费游标会话级 advisory lock（pg_try_advisory_lock；

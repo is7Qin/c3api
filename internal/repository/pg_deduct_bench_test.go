@@ -117,9 +117,9 @@ func benchDeductRounds(t *testing.T, tag string, repos *repository.Repository, t
 		start := time.Now()
 		var res domain.SettlementSummary
 		if tempRows > 0 { // temp-active：FEFO 车道谓词命中
-			res, err = repos.SettleFefoBatch(ctx, perTx)
+			res, err = repos.SettleFefoBatch(ctx, perTx, 1, 0)
 		} else {
-			res, err = repos.SettleBalanceBatch(ctx, perTx)
+			res, err = repos.SettleBalanceBatch(ctx, perTx, 1, 0)
 		}
 		d := time.Since(start)
 		require.NoError(t, err)

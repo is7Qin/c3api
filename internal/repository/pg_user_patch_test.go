@@ -109,7 +109,7 @@ func TestPGUpdateUserVsDeductOnlyInterleave(t *testing.T) {
 	seedUnbilled(t, repos, costLogFor(u.ID, "pre", 40000))
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
-	res, err := repos.SettleBalanceBatch(ctx, len(rows))
+	res, err := repos.SettleBalanceBatch(ctx, len(rows), 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.Marked)
 

@@ -679,15 +679,16 @@ func (r *Repository) UpdateUserBalance(ctx context.Context, userID, delta int64)
 }
 
 // SettleBalanceBatch Balance 车道结算一个窗口（余额-only 用户；单语句单事务
-// 取批→条件扣→透支补刀→标记），见 BillingRepo（billing_settle.go）。
-func (r *Repository) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
-	return r.Billing.SettleBalanceBatch(ctx, limit)
+// 取批→条件扣→透支补刀→标记；桶谓词 COALESCE(user_id,0)%k=bucket——桶级并行
+// wave3 D-C），见 BillingRepo（billing_settle.go）。
+func (r *Repository) SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
+	return r.Billing.SettleBalanceBatch(ctx, limit, k, bucket)
 }
 
 // SettleFefoBatch Temp 车道结算一个窗口（temp-active 用户；集合化 FEFO + 差额
-// 透支补刀 + 标记一体），见 BillingRepo（billing_settle.go）。
-func (r *Repository) SettleFefoBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
-	return r.Billing.SettleFefoBatch(ctx, limit)
+// 透支补刀 + 标记一体；桶谓词同上），见 BillingRepo（billing_settle.go）。
+func (r *Repository) SettleFefoBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
+	return r.Billing.SettleFefoBatch(ctx, limit, k, bucket)
 }
 
 // FetchUnbilledBatch 取未扣账本批（F2 冻结 ABI-2；游标 = 部分索引 WHERE NOT billed）。
@@ -700,8 +701,9 @@ func (r *Repository) MarkBilledBulk(ctx context.Context, ids []int64) error {
 	return r.Billing.MarkBilledBulk(ctx, ids)
 }
 
-// UnbilledLag 游标积压度量（最老 unbilled 行 created_at + 行数；lag 护栏数据源）。
-func (r *Repository) UnbilledLag(ctx context.Context) (oldestCreated time.Time, count int64, err error) {
+// UnbilledLag 游标积压度量（队头两步法：最老可结算行 created_at；ok=false =
+// 游标空；lag 护栏数据源，wave3 D-B 签名收缩）。
+func (r *Repository) UnbilledLag(ctx context.Context) (oldestCreated time.Time, ok bool, err error) {
 	return r.Billing.UnbilledLag(ctx)
 }
 
