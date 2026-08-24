@@ -104,6 +104,9 @@ func (s *Service) ResolvePrices(model string, promptTokens int64, tier string, a
 	if snap == nil {
 		return domain.ResolvedPrices{}, false
 	}
+	if s.tzLoc != nil {
+		at = at.In(s.tzLoc)
+	}
 	return domain.ResolveEntryPrices((*snap).entries[model], (*snap).variants[model], tier, promptTokens, at)
 }
 

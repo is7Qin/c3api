@@ -255,3 +255,26 @@ func TestLoadRejectsLegacyKeys(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "cooldown_429")
 }
+
+// D-TZ1 时区：非法 IANA 名 fail-fast，空串通过（进程本地缺省）。
+func TestServerTimeZoneValidation(t *testing.T) {
+	setenvRequired(t)
+	_, err := Load(writeConfig(t, `server = { time_zone = "Not/A_Zone" }`))
+	require.Error(t, err)
+	require.ErrorContains(t, err, "server.time_zone")
+	// 空串 = 进程本地，加载通过
+	c, err := Load(writeConfig(t, `server = { time_zone = "" }`))
+	require.NoError(t, err)
+	require.Equal(t, "", c.Server.TimeZone)
+	// 缺省（不写该键）同样通过
+	c2, err := Load(writeConfig(t, `proxy = { max_inflight = 7 }`))
+	require.NoError(t, err)
+	require.Equal(t, "", c2.Server.TimeZone)
+}
+
+func TestServerTimeZoneValidIANA(t *testing.T) {
+	setenvRequired(t)
+	c, err := Load(writeConfig(t, `server = { time_zone = "Asia/Shanghai" }`))
+	require.NoError(t, err)
+	require.Equal(t, "Asia/Shanghai", c.Server.TimeZone)
+}

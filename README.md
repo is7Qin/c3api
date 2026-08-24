@@ -142,6 +142,7 @@ The gateway loads `config.toml` (see `config.example.toml`), overlaid by `C3API_
 | `C3API_ADMIN_TOKEN` | Admin API token (optional; leave empty to disable static-token auth — `/api/admin` then accepts `platform_admin` JWTs only) |
 | `C3API_AUTH_JWT_SECRET` | JWT signing secret for user auth (required; stable across restarts and instances) |
 | `C3API_DB_DSN` | PostgreSQL DSN |
+| `C3API_SERVER_TIME_ZONE` | Deployment timezone for pricing time/day-of-week conditions (IANA name, e.g. `Asia/Shanghai`; empty = process local) |
 
 See `config.example.toml` for the full schema (server, log, admin, auth, db, proxy, upstream, limit, scheduler, usage, billing).
 

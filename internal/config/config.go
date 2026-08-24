@@ -36,6 +36,7 @@ type ServerConfig struct {
 	Addr              string        `koanf:"addr"`
 	ReadHeaderTimeout time.Duration `koanf:"read_header_timeout"`
 	MaxHeaderBytes    int           `koanf:"max_header_bytes"`
+	TimeZone          string        `koanf:"time_zone"`
 }
 
 type LogConfig struct {
@@ -277,6 +278,11 @@ func validate(c *Config) error {
 		switch p.value {
 		case "change-me", "change-me-too", "dev-admin-token", "dev-jwt-secret-for-local":
 			return fmt.Errorf("%s must not be a placeholder value (got %q); inject via C3API_ADMIN_TOKEN/C3API_AUTH_JWT_SECRET", p.path, p.value)
+		}
+	}
+	if c.Server.TimeZone != "" {
+		if _, err := time.LoadLocation(c.Server.TimeZone); err != nil {
+			return fmt.Errorf("server.time_zone: invalid IANA timezone %q: %w", c.Server.TimeZone, err)
 		}
 	}
 	return nil

@@ -345,6 +345,7 @@ type Service struct {
 	// 调用——nil = 未装配（测试/单实例），AccountUsage 返回 nil 快照）。
 	usageSnapshots CodexUsageSnapshotter
 	mailEnqueue    func(MailSendTask) error
+	tzLoc          *time.Location
 	log            *logx.Logger
 }
 
@@ -356,6 +357,10 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 	s.reloadSettings(context.Background())
 	return s
 }
+
+// SetTimeLocation 注入定价时段解释用时区（D-TZ2）：nil = 进程本地（现状），
+// 非 nil = at.In(tzLoc) 后再进 domain.ResolveEntryPrices（零热路径额外 DB/锁）。
+func (s *Service) SetTimeLocation(l *time.Location) { s.tzLoc = l }
 
 // SetMailEnqueue 注入邮件入队函数（D-W1异步化：svc 构造后回填 mailW.Enqueue——
 // 循环依赖先例 SetLocalDispatcher；未注入 → SendRegisterCode 退化为 ErrMailNotConfigured）。
