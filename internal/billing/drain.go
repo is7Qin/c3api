@@ -4,14 +4,17 @@
 
 package billing
 
-// drain.go 排空消费机制面（F2-opt v2 三车道拓扑，spec-f2opt-settlement §〇-b）：
-// 每轮顺序执行 Balance 结算语句 → Temp FEFO 结算语句 → 零价批纯标记。三车道
-// batch 谓词互斥（NOT-IN / IN temp-active）→ 同用户同周期不跨车道；会话锁内
-// 顺序执行（并行即成环）。周期编排（锁/节流/Close 协议）见 flusher.go；结算
-// 语句本体见 repository.BillingRepo.SettleBalanceBatch/SettleFefoBatch。
+// drain.go 排空消费机制面（F2-opt v2 三车道拓扑，spec-f2opt-settlement §〇-b；
+// wave3 D-C 桶级并行）：每轮顺序执行 Balance 结算 → Temp FEFO 结算 → 零价批纯
+// 标记。三车道 batch 谓词互斥（NOT-IN / IN temp-active）→ 同用户同周期不跨车道
+// （跨道并行即成环）；车道内 K 桶并行（settleLaneParallel——桶谓词
+// COALESCE(user_id,0)%K=i，桶间 uid 集合不相交 → 行锁集不相交，无死锁构造性
+// 保证）。周期编排（锁/节流/Close 协议）见 flusher.go；结算语句本体见
+// repository.BillingRepo.SettleBalanceBatch/SettleFefoBatch。
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -45,31 +48,69 @@ func (f *Flusher) drainLoop(ctx context.Context) int64 {
 	return drained
 }
 
-// consumeBatch 单轮三车道顺序消费（§〇-b）：① Balance 车道结算语句（余额-only
-// 用户）② Temp 车道集合化 FEFO 结算语句（temp-active 用户）③ 零价批 sweep
-// （FetchUnbilledBatch 余量 cost<=0 行一次 MarkBilledBulk 纯标记——吸收态/免费
-// 行零资金移动）。返回本轮退出游标的行数（0 = 全车道无进展）。
+// settleParallelism 桶级并行度（wave3 D-C 架构裁决：K 由本编排层持有——仓库
+// 方法保持 policy-free）：每车道 K 个 goroutine 各自独立 tx/独立连接并发执行
+// 同一结算语句的不同桶。K=4 起步（W2 实测单语句串行是天花板——语句内 CTE 串行
+// 执行，并行只能来自桶间）。
+const settleParallelism = 4
+
+// settleFn 单车道结算面签名（LedgerStore.SettleBalanceBatch/SettleFefoBatch
+// 共形：ctx, limit, k, bucket）。
+type settleFn func(context.Context, int, int, int) (domain.SettlementSummary, error)
+
+// consumeBatch 单轮三车道消费（§〇-b）：① Balance 车道 K 桶并行结算语句（余额-
+// only 用户）② Temp 车道集合化 FEFO 结算语句 K 桶并行（temp-active 用户）③ 零价
+// 批 sweep（FetchUnbilledBatch 余量 cost<=0 行一次 MarkBilledBulk 纯标记——吸收
+// 态/免费行零资金移动）。返回本轮退出游标的行数（0 = 全车道无进展）。
 func (f *Flusher) consumeBatch(ctx context.Context) int64 {
 	var drained int64
-	drained += f.settleLane(ctx, f.store.SettleBalanceBatch)
-	drained += f.settleLane(ctx, f.store.SettleFefoBatch)
+	drained += f.settleLaneParallel(ctx, f.store.SettleBalanceBatch)
+	drained += f.settleLaneParallel(ctx, f.store.SettleFefoBatch)
 	drained += f.sweepZeroCost(ctx)
 	return drained
 }
 
-// settleLane 单车道结算收尾：语句失败 → Warn 本车道归零（毒行梯子已在仓库侧
-// 收敛——隔离行以 Quarantined 计数随 summary 返回）；成功 → 定向余额刷新 +
-// quarantined 观测，返回退出游标行数。
-func (f *Flusher) settleLane(ctx context.Context, settle func(context.Context, int) (domain.SettlementSummary, error)) int64 {
-	s, err := settle(ctx, settleBatchLimit)
-	if err != nil {
-		if f.log != nil && ctx.Err() == nil {
-			f.log.Warn("billing settle lane failed", logx.Error(err))
-		}
-		return 0 // 行保持 unbilled，下周期重放（不丢不重）
+// settleLaneParallel 单车道 K 桶并行结算（wave3 D-C）：K goroutine 各自调用
+// settle(ctx, settleBatchLimit, K, i)（i=0..K-1，独立 tx/连接），WaitGroup 全量
+// 收敛后合并 summary——计数相加、Balances 对拼接（桶间 uid 集合按构造不相交，
+// 对拼接无重复）。错误语义：首错胜出记录 + Warn，但**等全部 goroutine 完成后才
+// 返回**（无 early-abort——他桶已提交的工作必须计入；回滚只发生在出错桶自己的
+// 事务内，他桶不受扰）。成功桶的提交是真进展：合并 summary 照常 applySettlement
+// + 返回 ΣMarked，失败桶行保持 unbilled 下周期重放（不丢不重）。
+func (f *Flusher) settleLaneParallel(ctx context.Context, settle settleFn) int64 {
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		total    domain.SettlementSummary
+		firstErr error
+	)
+	for i := 0; i < settleParallelism; i++ {
+		wg.Add(1)
+		go func(bucket int) {
+			defer wg.Done()
+			s, err := settle(ctx, settleBatchLimit, settleParallelism, bucket)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				return // 失败桶零贡献；他桶照常合并
+			}
+			total.Marked += s.Marked
+			total.BatchRows += s.BatchRows
+			total.DebitedUsers += s.DebitedUsers
+			total.ForcedUsers += s.ForcedUsers
+			total.Quarantined += s.Quarantined
+			total.Balances = append(total.Balances, s.Balances...)
+		}(i)
 	}
-	f.applySettlement(s)
-	return s.Marked
+	wg.Wait()
+	if firstErr != nil && f.log != nil && ctx.Err() == nil {
+		f.log.Warn("billing settle lane failed", logx.Error(firstErr))
+	}
+	f.applySettlement(total) // 成功桶定向余额刷新 + quarantined 观测（空批 no-op）
+	return total.Marked
 }
 
 // applySettlement 结算成功收尾：(uid,balance_after) 对定向刷新余额快照（O(1)

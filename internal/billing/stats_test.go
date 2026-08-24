@@ -32,8 +32,8 @@ func TestFlusherStats(t *testing.T) {
 	require.Zero(t, st.LagMs, "游标空 = lag 0")
 	require.Zero(t, st.QuarantinedRows)
 
-	// 600 行积压：锁外观测周期——Stats/lag 真值照常刷新（UnbilledRows = 当前
-	// 未扣费行数；行回填 1 分钟 → lag 稳健为正）。
+	// 600 行积压：锁外观测周期——Stats/lag 真值照常刷新（wave3 D-B：UnbilledRows
+	// 降级占位恒 0；行回填 1 分钟 → lag 稳健为正）。
 	for i := 1; i <= 600; i++ {
 		store.seedRow(int64(i), 1, 10, time.Now().Add(-time.Minute))
 		store.setBalance(1, 1_000_000)
@@ -41,7 +41,7 @@ func TestFlusherStats(t *testing.T) {
 	store.holdLock()
 	f.consumeCycle(context.Background(), false)
 	st = f.Stats().(FlusherStats)
-	require.Equal(t, int64(600), st.UnbilledRows, "UnbilledRows = 当前未扣费行数")
+	require.Zero(t, st.UnbilledRows, "D-B 降级：UnbilledRows 占位恒 0（精确 COUNT 已删）")
 	require.Positive(t, st.LagMs, "lag = 探测时刻 now − 最老 unbilled 行 created_at")
 	require.Zero(t, st.LastCycleUnixMs, "锁外周期不消费")
 	store.releaseLock()

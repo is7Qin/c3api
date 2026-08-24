@@ -165,11 +165,10 @@ var usageLogIndexDDLs = []string{
 	// billed 即计费游标本体——取批只扫未扣子集，行标记 billed=true 后自动退出
 	// 索引（重启天然续传，无 watermark 表）；分区表父表索引为分区索引，子分区
 	// 自动继承。ent 无部分索引表达力，仅存于本事实源。
-	// F2-opt D5（spec-f2-cursor-throughput）：lag 度量 MIN(created_at) 变索引
-	// 定位（同谓词未扣子集）；COUNT 继续走 usagelog_unbilled_id index-only，
-	// 1s 节流下可接受。不建 (id) WHERE NOT billed AND cost=0——D1 已消灭该查
-	// 询类，索引是写放大负债。
-	`CREATE INDEX usagelog_unbilled_created ON usage_logs (created_at) WHERE NOT billed`,
+	// wave3 D-A（spec-f2opt-wave3 §一）：usagelog_unbilled_created (created_at)
+	// WHERE NOT billed 已删除——唯一消费者 UnbilledLag 的 MIN(created_at) 改队头
+	// 两步法（部分 id 索引定位 + pkey 回表），marked 步索引维护 -33%。不建
+	// (id) WHERE NOT billed AND cost=0——D1 已消灭该查询类，索引是写放大负债。
 	`CREATE INDEX usagelog_unbilled_id ON usage_logs (id) WHERE NOT billed`,
 }
 

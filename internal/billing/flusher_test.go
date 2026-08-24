@@ -150,23 +150,24 @@ func (s *fakeLedgerStore) FetchUnbilledBatch(ctx context.Context, limit int) ([]
 	return out, nil
 }
 
-// SettleBalanceBatch/SettleFefoBatch 语句化结算面模拟（三车道拓扑）：车道谓词
-// 互斥（temp-active 路由）→ 候选批（id 升序 LIMIT）→ 结构错误预检（整语句失败
-// 形态）→ 按用户聚合 FEFO 消耗/spill → 条件扣/透支/幽灵隔离 → 标记。与 SQL
-// 语句语义同构（单元级；位级行为归 repository PG 测试族）。
-func (s *fakeLedgerStore) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
+// SettleBalanceBatch/SettleFefoBatch 语句化结算面模拟（三车道拓扑；wave3 D-C
+// 桶谓词同构——候选批按 COALESCE(uid,0)%k=bucket 过滤，k<=0 视为全量单桶）：
+// 车道谓词互斥（temp-active 路由）→ 候选批（id 升序 LIMIT）→ 结构错误预检（整
+// 语句失败形态）→ 按用户聚合 FEFO 消耗/spill → 条件扣/透支/幽灵隔离 → 标记。
+// 与 SQL 语句语义同构（单元级；位级行为归 repository PG 测试族）。
+func (s *fakeLedgerStore) SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.settleLocked(limit, false)
+	return s.settleLocked(limit, k, bucket, false)
 }
 
-func (s *fakeLedgerStore) SettleFefoBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
+func (s *fakeLedgerStore) SettleFefoBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.settleLocked(limit, true)
+	return s.settleLocked(limit, k, bucket, true)
 }
 
-func (s *fakeLedgerStore) settleLocked(limit int, fefo bool) (domain.SettlementSummary, error) {
+func (s *fakeLedgerStore) settleLocked(limit, k, bucket int, fefo bool) (domain.SettlementSummary, error) {
 	now := time.Now()
 	tempActive := func(uid int64) bool {
 		for _, tp := range s.temps[uid] {
@@ -184,9 +185,12 @@ func (s *fakeLedgerStore) settleLocked(limit int, fefo bool) (domain.SettlementS
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	var cands []domain.LedgerRow
-	for _, id := range ids { // 车道谓词互斥：balance NOT-IN / fefo IN temp-active
+	for _, id := range ids { // 车道谓词互斥：balance NOT-IN / fefo IN temp-active；桶谓词 uid%k=bucket（D-C）
 		r := s.rows[id]
 		if r.row.Cost <= 0 || tempActive(r.row.UserID) != fefo {
+			continue
+		}
+		if k > 0 && int(r.row.UserID)%k != bucket {
 			continue
 		}
 		cands = append(cands, r.row)
@@ -308,7 +312,7 @@ func (s *fakeLedgerStore) MarkBilledBulk(ctx context.Context, ids []int64) error
 	return nil
 }
 
-func (s *fakeLedgerStore) UnbilledLag(ctx context.Context) (time.Time, int64, error) {
+func (s *fakeLedgerStore) UnbilledLag(ctx context.Context) (time.Time, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lagProbes++
@@ -323,7 +327,7 @@ func (s *fakeLedgerStore) UnbilledLag(ctx context.Context) (time.Time, int64, er
 			oldest = r.createdAt
 		}
 	}
-	return oldest, count, nil
+	return oldest, count > 0, nil // D-B：ok = 游标非空（行数不再外泄）
 }
 
 // seedTemp 种子临时额度行（返回行 id；expiresAt 零值 = 永久 NULLS LAST）。
@@ -471,7 +475,13 @@ func TestFlusherConsumesAndMarksBilled(t *testing.T) {
 	calls := store.laneSnapshot()
 	require.NotEmpty(t, calls)
 	require.False(t, calls[0].fefo, "balance 车道先行（§〇-b 周期序）")
-	require.Equal(t, int64(3), calls[0].marked, "余额-only 用户全批 balance 车道结算")
+	var balMarked int64
+	for _, c := range calls { // wave3 D-C：车道内 K 桶并行——断言聚合到车道粒度
+		if !c.fefo {
+			balMarked += c.marked
+		}
+	}
+	require.Equal(t, int64(3), balMarked, "余额-only 用户全批 balance 车道结算（K 桶合并）")
 
 	require.True(t, store.isBilled(r1.ID), "billed 翻转")
 	require.True(t, store.isBilled(r2.ID))
@@ -755,7 +765,9 @@ func TestFlusherCloseDrainsCursor(t *testing.T) {
 	require.NoError(t, f.Close(ctx))
 
 	require.Equal(t, 0, store.unbilledCount(), "排空至游标清空")
-	require.Equal(t, 2, store.fetchCount(), "排空节奏：数据批 + 空批确认即退出（一批一 tick 废除）")
+	// wave3 D-B：unbilledN==0 提前退出臂已删（n==0 单一判据）——排空需一次额外
+	// 空批确认轮：数据批轮 + 确认轮 + 收尾空轮 = 3 次取批。
+	require.Equal(t, 3, store.fetchCount(), "排空节奏：一批一 tick 废除（D-B 多一轮空批确认）")
 	require.NoError(t, logger.Sync())
 	b, err := os.ReadFile(out)
 	require.NoError(t, err)
@@ -774,15 +786,15 @@ type blockingSettleStore struct {
 	once    sync.Once
 }
 
-func (s *blockingSettleStore) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
+func (s *blockingSettleStore) SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
 	s.once.Do(func() { close(s.started) })
 	<-ctx.Done()
 	return domain.SettlementSummary{}, ctx.Err()
 }
 
 // TestFlusherCloseTruncatesOnBudget 停机排空受 ctx 预算约束：到期 → Cancel
-// baseCtx（在途事务快速失败回滚，行保持 unbilled 不丢）+ 截断 Warn（含已消费/
-// 剩余行数），不无界阻塞停机。
+// baseCtx（在途事务快速失败回滚，行保持 unbilled 不丢）+ 截断 Warn（含已消费
+// 行数；wave3 D-B 起 remaining_rows 字段随精确 COUNT 一并删除），不无界阻塞停机。
 func TestFlusherCloseTruncatesOnBudget(t *testing.T) {
 	inner := newFakeLedgerStore()
 	store := &blockingSettleStore{fakeLedgerStore: inner, started: make(chan struct{})}
@@ -808,7 +820,7 @@ func TestFlusherCloseTruncatesOnBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(b), "shutdown budget exceeded, truncated drain")
 	require.Contains(t, string(b), `"consumed_rows":0`)
-	require.Contains(t, string(b), `"remaining_rows":2`)
+	// wave3 D-B：精确 COUNT 已删，截断 Warn 不再携带 remaining_rows 字段。
 }
 
 // ignoreCtxSettleStore SettleBalanceBatch 忽略 ctx 永久阻塞（模拟 DB 病态卡死
@@ -819,7 +831,7 @@ type ignoreCtxSettleStore struct {
 	started chan struct{}
 }
 
-func (s *ignoreCtxSettleStore) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
+func (s *ignoreCtxSettleStore) SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
 	select {
 	case s.started <- struct{}{}:
 	default:
@@ -835,14 +847,14 @@ type endlessSettleStore struct {
 	nextID int64
 }
 
-func (s *endlessSettleStore) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
+func (s *endlessSettleStore) SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
 	s.mu.Lock()
 	s.nextID++
 	id := s.nextID
 	s.rows[id] = &fakeLedgerRow{row: domain.LedgerRow{ID: id, UserID: id, Cost: 100,
 		Model: "gpt-4o", BillingTier: "auto", CallCount: 1, Format: "openai-chat"}}
 	s.mu.Unlock()
-	return s.fakeLedgerStore.SettleBalanceBatch(ctx, limit)
+	return s.fakeLedgerStore.SettleBalanceBatch(ctx, limit, k, bucket)
 }
 
 // TestFlusherCloseAbandonsInflightOnTimeout A-P2-8-2：驱动不尊重 ctx 时 Close

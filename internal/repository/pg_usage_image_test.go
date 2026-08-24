@@ -53,7 +53,7 @@ func TestPGUsageLogImageColumnsRoundTrip(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, int64(11030), rows[0].Cost, "LedgerRow 投影 cost（ImageCost 口径不变）")
 
-	res, err := repos.SettleBalanceBatch(ctx, 10)
+	res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Len(t, res.Balances, 1)
 	require.Equal(t, int64(1000000-l.Cost), res.Balances[0].Balance, "按 image 分量 cost 扣减（口径不变）")

@@ -216,7 +216,7 @@ func TestUsageLogCallColumnsBillingCursorPG(t *testing.T) {
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
 
-	res, err := repos.SettleBalanceBatch(ctx, 10)
+	res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 	require.NoError(t, err, "openai-images 行经单写点落库 + 游标消费必须成功")
 	require.Len(t, res.Balances, 1)
 	require.Equal(t, int64(999_870), res.Balances[0].Balance)
@@ -257,7 +257,7 @@ func TestUsageLogSearchBillingCursorPG(t *testing.T) {
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
 
-	res, err := repos.SettleBalanceBatch(ctx, 10)
+	res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 	require.NoError(t, err, "openai-search 行经单写点落库 + 游标消费必须成功")
 	require.Len(t, res.Balances, 1)
 	require.Equal(t, int64(999_870), res.Balances[0].Balance)

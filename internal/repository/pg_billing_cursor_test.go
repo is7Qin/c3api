@@ -125,11 +125,11 @@ func drainBillingCursor(t *testing.T, repos *repository.Repository) (drained, qu
 			t.Fatalf("drainBillingCursor: 游标 200 轮未清空——消费推进卡死")
 		}
 		var n int64
-		resB, err := repos.SettleBalanceBatch(ctx, 2000)
+		resB, err := repos.SettleBalanceBatch(ctx, 2000, 1, 0)
 		require.NoError(t, err)
 		n += resB.Marked
 		quarantined += resB.Quarantined
-		resF, err := repos.SettleFefoBatch(ctx, 2000)
+		resF, err := repos.SettleFefoBatch(ctx, 2000, 1, 0)
 		require.NoError(t, err)
 		n += resF.Marked
 		quarantined += resF.Quarantined
@@ -174,7 +174,7 @@ func TestPGBillingCursorCrashRecovery(t *testing.T) {
 	require.Equal(t, 5, cursorUnbilledCount(t, repos))
 
 	// 成功组：balance 车道窗口 LIMIT=2 按 id 升序恰吃 u1 两行（u1 先种）
-	res, err := repos.SettleBalanceBatch(ctx, 2)
+	res, err := repos.SettleBalanceBatch(ctx, 2, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), res.Marked)
 	require.Len(t, res.Balances, 1)
@@ -185,7 +185,7 @@ func TestPGBillingCursorCrashRecovery(t *testing.T) {
 	// 失败注入：已取消 ctx 上提交（崩溃瞬间语义）→ 报错且零标记
 	failCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	_, err = repos.SettleBalanceBatch(failCtx, 10)
+	_, err = repos.SettleBalanceBatch(failCtx, 10, 1, 0)
 	require.Error(t, err, "已取消 ctx 上事务开启即败")
 	require.Equal(t, 3, cursorUnbilledCount(t, repos), "失败注入零标记")
 
@@ -202,9 +202,9 @@ func TestPGBillingCursorCrashRecovery(t *testing.T) {
 	require.Equal(t, int64(1_150_000), sumBilled,
 		"Σbilled cost == 扣减凭证和 + 隔离零扣费行和")
 
-	_, lagN, err := repos.UnbilledLag(ctx)
+	_, lagOK, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, lagN)
+	require.False(t, lagOK)
 
 	// 再重放一轮：零副作用（幂等收敛终态）
 	drainedAgain, _ := drainBillingCursor(t, repos)
@@ -281,9 +281,9 @@ func TestPGBillingCursorBurstBacklog(t *testing.T) {
 	}
 
 	// lag 出数：积压可见（护栏数据源契约；oldest 落在固定种子日内）
-	oldest, lagN, err := repos.UnbilledLag(ctx)
+	oldest, lagOK, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Equal(t, int64(users*rowsPerUser), lagN)
+	require.True(t, lagOK)
 	require.False(t, oldest.IsZero())
 	require.False(t, oldest.Before(cursorSeedTime), "oldest ≥ 种子日基点")
 	require.Less(t, oldest.Sub(cursorSeedTime), time.Hour, "oldest 在种子错峰窗内")
@@ -298,9 +298,9 @@ func TestPGBillingCursorBurstBacklog(t *testing.T) {
 			fmt.Sprintf("user %d 余额精确", uid))
 	}
 	require.Zero(t, cursorUnbilledCount(t, repos))
-	oldest, lagN, err = repos.UnbilledLag(ctx)
+	oldest, lagOK, err = repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, lagN, "count 归零")
+	require.False(t, lagOK, "count 归零")
 	require.True(t, oldest.IsZero(), "oldest 零值")
 }
 
@@ -420,7 +420,7 @@ func TestPGBillingCursorMultiInstanceLock(t *testing.T) {
 	require.Equal(t, int64(1_000_000), cursorBalance(t, repos, u.ID))
 
 	// 持锁者 A 在锁内完成 balance 车道结算窗口后释放
-	res, err := repos.SettleBalanceBatch(ctx, 500)
+	res, err := repos.SettleBalanceBatch(ctx, 500, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), res.Marked)
 	require.Len(t, res.Balances, 1)
@@ -493,9 +493,9 @@ func TestPGBillingCursorCaptureOffAbsorb(t *testing.T) {
 	rows, err := repos.FetchUnbilledBatch(ctx, 100)
 	require.NoError(t, err)
 	require.Empty(t, rows, "出生吸收态不进游标")
-	_, lagN, err := repos.UnbilledLag(ctx)
+	_, lagOK, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, lagN)
+	require.False(t, lagOK)
 
 	// 消费周期零动作：真实 flusher 排空循环跑完，余额零变动、overdraft 不动
 	f := billing.NewFlusher(
@@ -545,7 +545,7 @@ func TestPGBillingCursorOverdraftWriteBack(t *testing.T) {
 	cancel()
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 2)
-	_, err := repos.SettleBalanceBatch(failCtx, 10)
+	_, err := repos.SettleBalanceBatch(failCtx, 10, 1, 0)
 	require.Error(t, err)
 	require.Equal(t, 2, cursorUnbilledCount(t, repos))
 
@@ -607,9 +607,9 @@ func TestPGBillingCursorCostZeroFastMark(t *testing.T) {
 		require.True(t, row.Billed, "id=%d 标记收敛", r.ID)
 		require.False(t, row.Overdraft, "id=%d overdraft 出生 false 保持", r.ID)
 	}
-	_, lagN, err := repos.UnbilledLag(ctx)
+	_, lagOK, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, lagN, "全游标清空")
+	require.False(t, lagOK, "全游标清空")
 }
 
 // —— 族 10：RestartConvergence ——
@@ -631,7 +631,7 @@ func TestPGBillingCursorRestartConvergence(t *testing.T) {
 	seedCursorRows(t, reposA, u2.ID, 2, 250_000)
 
 	// 停机前：实例 A 只消费队头一行（部分推进即中断）
-	res, err := reposA.SettleBalanceBatch(ctx, 1)
+	res, err := reposA.SettleBalanceBatch(ctx, 1, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.Marked)
 	require.Len(t, res.Balances, 1)
@@ -652,9 +652,9 @@ func TestPGBillingCursorRestartConvergence(t *testing.T) {
 	require.Equal(t, int64(200_000), cursorBalance(t, reposB, u1.ID))
 	require.Equal(t, int64(400_000), cursorBalance(t, reposB, u2.ID))
 	require.Zero(t, cursorUnbilledCount(t, reposB))
-	_, lagN, err := reposB.UnbilledLag(ctx)
+	_, lagOK, err := reposB.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, lagN)
+	require.False(t, lagOK)
 }
 
 // —— 族 11：CostZeroFastMarkBulk ——
@@ -693,9 +693,9 @@ func TestPGBillingCursorCostZeroFastMarkBulk(t *testing.T) {
 		require.False(t, row.Overdraft, "id=%d overdraft 出生 false 保持", id)
 		require.Zero(t, row.Cost)
 	}
-	_, lagN, err := repos.UnbilledLag(ctx)
+	_, lagOK, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, lagN)
+	require.False(t, lagOK)
 }
 
 // —— 族 12：EPQ 并发标记（最高优先新族，spec §三/oracle 必改 #1） ——
@@ -732,7 +732,7 @@ func TestPGSettleEPQConcurrentMark(t *testing.T) {
 		}
 		ch := make(chan epqResult, 1)
 		go func() {
-			res, err := repos.SettleBalanceBatch(ctx, 10)
+			res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 			ch <- epqResult{res: res, err: err}
 		}()
 		waitBlockedOnSettle(t, coord)
@@ -782,7 +782,7 @@ func TestPGSettleEPQConcurrentMark(t *testing.T) {
 		require.NoError(t, repos.UpdateUserBalance(ctx, u1.ID, -100_000))
 
 		// 本实例结算：提交态已标行在快照即退出取批——无守卫触发，余下三行恰扣一次
-		res, err := repos.SettleBalanceBatch(ctx, 10)
+		res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 		require.NoError(t, err)
 		require.Equal(t, int64(3), res.Marked)
 		byUID := map[int64]int64{}
@@ -822,7 +822,7 @@ func TestPGSettleEPQConcurrentMark(t *testing.T) {
 		}
 		ch := make(chan epqResult, 1)
 		go func() {
-			res, err := repos.SettleFefoBatch(ctx, 10)
+			res, err := repos.SettleFefoBatch(ctx, 10, 1, 0)
 			ch <- epqResult{res: res, err: err}
 		}()
 		waitBlockedOnSettle(t, coord)
@@ -906,7 +906,7 @@ func TestPGSettleLadderThreeStates(t *testing.T) {
 		}
 		ch := make(chan epqResult, 1)
 		go func() {
-			res, err := repos.SettleBalanceBatch(ctx, 10)
+			res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 			ch <- epqResult{res: res, err: err}
 		}()
 		waitBlockedOnSettle(t, coord) // 纯瞬态争用：确认阻塞后即放锁不抢标
@@ -936,7 +936,7 @@ func TestPGSettleLadderThreeStates(t *testing.T) {
 		require.Len(t, all, 2)
 		head, follower := all[0].ID, all[1].ID // 批序 = id 升序
 
-		res1, err := repos.SettleBalanceBatch(ctx, 10)
+		res1, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 		require.NoError(t, err, "梯子内部隔离成功——调用方零错误")
 		require.Equal(t, int64(1), res1.Marked, "队头行写销越行")
 		require.Equal(t, int64(1), res1.Quarantined, "隔离行计 quarantined")
@@ -951,7 +951,7 @@ func TestPGSettleLadderThreeStates(t *testing.T) {
 			"毒行从未被扣费（写销该行计费）")
 
 		// 越行推进：第二行成为新队头 → 同样隔离
-		res2, err := repos.SettleBalanceBatch(ctx, 10)
+		res2, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), res2.Marked)
 		require.Equal(t, int64(1), res2.Quarantined)
@@ -959,12 +959,12 @@ func TestPGSettleLadderThreeStates(t *testing.T) {
 		require.Zero(t, cursorUnbilledCount(t, repos), "游标永不卡死")
 
 		// 第三调用：空游标零进展退出（nil 错误零计数）
-		res3, err := repos.SettleBalanceBatch(ctx, 10)
+		res3, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 		require.NoError(t, err)
 		require.Zero(t, res3.Marked)
-		_, lagN, err := repos.UnbilledLag(ctx)
+		_, lagOK, err := repos.UnbilledLag(ctx)
 		require.NoError(t, err)
-		require.Zero(t, lagN)
+		require.False(t, lagOK)
 	})
 
 	t.Run("empty-cursor exit", func(t *testing.T) {
@@ -972,17 +972,17 @@ func TestPGSettleLadderThreeStates(t *testing.T) {
 		ensureCursorPartitions(t, repos)
 		ctx := context.Background()
 
-		resB, err := repos.SettleBalanceBatch(ctx, 10)
+		resB, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 		require.NoError(t, err)
 		require.Zero(t, resB.BatchRows)
 		require.Zero(t, resB.Marked)
-		resF, err := repos.SettleFefoBatch(ctx, 10)
+		resF, err := repos.SettleFefoBatch(ctx, 10, 1, 0)
 		require.NoError(t, err)
 		require.Zero(t, resF.BatchRows)
 		require.Zero(t, resF.Marked)
-		_, lagN, err := repos.UnbilledLag(ctx)
+		_, lagOK, err := repos.UnbilledLag(ctx)
 		require.NoError(t, err)
-		require.Zero(t, lagN)
+		require.False(t, lagOK)
 	})
 }
 
@@ -1021,7 +1021,7 @@ func TestPGBillingChunkSyncCommitOffSmoke(t *testing.T) {
 	// 行为级冒烟：结算事务含 SET LOCAL 首语句正常提交
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
-	res, err := repos.SettleBalanceBatch(ctx, 10)
+	res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.Marked)
 	require.Zero(t, cursorUnbilledCount(t, repos), "结算事务正常提交（行退出游标）")

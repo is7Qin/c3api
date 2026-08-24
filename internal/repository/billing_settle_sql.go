@@ -5,8 +5,14 @@
 package repository
 
 // billing_settle_sql.go 结算语句事实源（F2-opt v2 三车道拓扑，spec-f2opt-settlement
-// §〇-b/§一/D7）：两车道自包含 CTE + 毒行梯子队头探针。编排/事务/守卫逻辑见
-// billing_settle.go；本文件只承载 SQL 文本（纯数据表）。
+// §〇-b/§一/D7；wave3 D-C 桶级并行）：两车道自包含 CTE + 毒行梯子队头探针。
+// 编排/事务/守卫逻辑见 billing_settle.go；本文件只承载 SQL 文本（纯数据表）。
+//
+// 桶谓词（wave3 D-C）：batch/temp_pool/spill 各 CTE 追加
+// COALESCE(user_id, 0) % $2 = $3（args = [limit, K, bucket]）——桶间 uid 集合
+// 不相交 → users/temp_balances 行锁集不相交（无死锁构造性保证）。**Momus 必改
+// 落实：裸 user_id 对 NULL 匿名行取模为 NULL → 永不命中任何桶 = 游标永久搁浅，
+// 必须 COALESCE 与 batch uid 定义同构。**
 
 // settleBalanceSQL Balance 车道结算语句（§一原设计）：终 SELECT 首行为聚合哨兵
 // （uid=-1 恒一行，ORDER BY 置首），其余为 debited/forced 的 (uid,balance_after)
@@ -15,6 +21,7 @@ const settleBalanceSQL = `WITH batch AS (
 	SELECT id, COALESCE(user_id, 0) AS uid, cost
 	FROM usage_logs
 	WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
+		AND COALESCE(user_id, 0) % $2 = $3
 		AND COALESCE(user_id, 0) NOT IN (
 			SELECT user_id FROM temp_balances
 			WHERE amount > 0 AND (expires_at IS NULL OR expires_at > now()))
@@ -66,6 +73,7 @@ const settleFefoSQL = `WITH batch AS (
 	SELECT id, COALESCE(user_id, 0) AS uid, cost
 	FROM usage_logs
 	WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
+		AND COALESCE(user_id, 0) % $2 = $3
 		AND COALESCE(user_id, 0) IN (
 			SELECT user_id FROM temp_balances
 			WHERE amount > 0 AND (expires_at IS NULL OR expires_at > now()))
@@ -131,11 +139,14 @@ SELECT uid, balance_after, 0, 0, 0, 0, 0 FROM forced
 ORDER BY 1`
 
 // probeBalanceHeadSQL / probeFefoHeadSQL 毒行梯子只读探针（对应车道 batch 谓词
-// 同构，ORDER BY id LIMIT 1）：K 次连续失败后定位该车道队头行供 MarkBilledBulk
-// 写销隔离——确定性毒行纯 LIMIT 重试永不收敛（oracle 必改 #2），隔离必须命中
-// 失败车道自己的队头而非全局首行（否则误写销无辜行且毒行仍在）。
+// 同构含桶谓词——args = [K, bucket]；wave3 D-C Momus 必改：探针缺桶谓词会误中
+// 他桶队头健康行 = 错写销），ORDER BY id LIMIT 1：K 次连续失败后定位该车道该桶
+// 队头行供 MarkBilledBulk 写销隔离——确定性毒行纯 LIMIT 重试永不收敛（oracle
+// 必改 #2），隔离必须命中失败车道自己的队头而非全局首行（否则误写销无辜行且
+// 毒行仍在）。
 const probeBalanceHeadSQL = `SELECT id FROM usage_logs
 WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
+	AND COALESCE(user_id, 0) % $1 = $2
 	AND COALESCE(user_id, 0) NOT IN (
 		SELECT user_id FROM temp_balances
 		WHERE amount > 0 AND (expires_at IS NULL OR expires_at > now()))
@@ -143,6 +154,7 @@ ORDER BY id LIMIT 1`
 
 const probeFefoHeadSQL = `SELECT id FROM usage_logs
 WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
+	AND COALESCE(user_id, 0) % $1 = $2
 	AND COALESCE(user_id, 0) IN (
 		SELECT user_id FROM temp_balances
 		WHERE amount > 0 AND (expires_at IS NULL OR expires_at > now()))

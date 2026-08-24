@@ -113,7 +113,7 @@ func TestBillingCursorPreservesClientIPPG(t *testing.T) {
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
 
-	res, err := repos.SettleBalanceBatch(ctx, 10)
+	res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Len(t, res.Balances, 1)
 	// 扣减额从行推导（cost=130，fullLogFor 默认）——旧 API 显式传参形态已退役。

@@ -182,7 +182,7 @@ func TestSettleFefoOrder(t *testing.T) {
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
 
-	res, err := repos.SettleFefoBatch(ctx, 10)
+	res, err := repos.SettleFefoBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.BatchRows)
 	require.Equal(t, int64(1), res.Marked, "扣减与标记同语句原子")
@@ -204,9 +204,9 @@ func TestSettleFefoOrder(t *testing.T) {
 	require.True(t, row.Billed)
 	require.False(t, row.Overdraft, "无透支")
 
-	_, lagN, err := repos.UnbilledLag(ctx)
+	_, lagOK, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, lagN, "行退出游标")
+	require.False(t, lagOK, "行退出游标")
 }
 
 // TestSettleFefoPermanentLast FEFO 全档耗尽后扣到永久额度（NULLS LAST 排序语义）。
@@ -222,7 +222,7 @@ func TestSettleFefoPermanentLast(t *testing.T) {
 
 	seedUnbilled(t, repos, costLogFor(u.ID, "r1", 100000))
 
-	res, err := repos.SettleFefoBatch(ctx, 10)
+	res, err := repos.SettleFefoBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.Marked)
 	require.Empty(t, res.Balances, "临时额度恰好覆盖，余额不动")
@@ -247,7 +247,7 @@ func TestSettleFefoPartialLastRowAndSpill(t *testing.T) {
 	logA.Cost = 120000
 	seedUnbilled(t, repos, logA)
 
-	resA, err := repos.SettleFefoBatch(ctx, 10)
+	resA, err := repos.SettleFefoBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), resA.Marked)
 	require.Empty(t, resA.Balances, "场景 A 全额被 temp 覆盖")
@@ -266,7 +266,7 @@ func TestSettleFefoPartialLastRowAndSpill(t *testing.T) {
 	logB.Cost = 180000
 	seedUnbilled(t, repos, logB)
 
-	resB, err := repos.SettleFefoBatch(ctx, 10)
+	resB, err := repos.SettleFefoBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), resB.Marked)
 	require.Equal(t, int64(1), resB.DebitedUsers, "spill 走余额条件扣")
@@ -297,12 +297,12 @@ func TestSettleBalanceConditionalSuccess(t *testing.T) {
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
 
-	fefoRes, err := repos.SettleFefoBatch(ctx, 10)
+	fefoRes, err := repos.SettleFefoBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Zero(t, fefoRes.BatchRows, "非 temp-active 用户被 fefo 车道谓词排除")
 	require.Zero(t, fefoRes.Marked)
 
-	res, err := repos.SettleBalanceBatch(ctx, 10)
+	res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.BatchRows)
 	require.Equal(t, int64(1), res.Marked)
@@ -328,7 +328,7 @@ func TestSettleBalanceOverdraft(t *testing.T) {
 	seedUnbilled(t, repos, costLogFor(u.ID, "r1", 40000))
 	rows := fetchAllUnbilled(t, repos)
 
-	res, err := repos.SettleBalanceBatch(ctx, 10)
+	res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.ForcedUsers, "透支补刀命中")
 	require.Equal(t, int64(0), res.DebitedUsers)
@@ -358,7 +358,7 @@ func TestSettleBalanceMixedOverdraft(t *testing.T) {
 	all := fetchAllUnbilled(t, repos)
 	require.Len(t, all, 4)
 
-	res, err := repos.SettleBalanceBatch(ctx, 10)
+	res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), res.BatchRows)
 	require.Equal(t, int64(4), res.Marked, "整批一笔语句全标记")
@@ -400,7 +400,7 @@ func TestSettleBalanceGhostQuarantined(t *testing.T) {
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 2)
 
-	res, err := repos.SettleBalanceBatch(ctx, 10)
+	res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 	require.NoError(t, err, "用户缺失不报错（跳过扣减仍标记）")
 	require.Equal(t, int64(2), res.Quarantined, "幽灵行计数")
 	require.Equal(t, int64(2), res.Marked)
@@ -413,9 +413,9 @@ func TestSettleBalanceGhostQuarantined(t *testing.T) {
 		require.True(t, row.Billed, "全部 ids 标记退出游标")
 		require.False(t, row.Overdraft, "隔离路径 od 出生 false 保持")
 	}
-	_, lagN, err := repos.UnbilledLag(ctx)
+	_, lagOK, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, lagN)
+	require.False(t, lagOK)
 }
 
 // TestSettleBalanceConcurrentSameUser 并发抢同一用户：行锁串行 + 并发标记守卫
@@ -442,7 +442,7 @@ func TestSettleBalanceConcurrentSameUser(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res, err := repos.SettleBalanceBatch(ctx, 10)
+			res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 			results <- result{res: res, err: err}
 		}()
 	}
@@ -486,9 +486,9 @@ func TestPGZeroCostFastPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(50000), got.Balance, "纯标记不扣款")
 	require.Equal(t, int64(30000), tempBalanceAmount(t, repos, tp), "临时额度不动")
-	_, lagN, err := repos.UnbilledLag(ctx)
+	_, lagOK, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, lagN, "快速标记退出游标")
+	require.False(t, lagOK, "快速标记退出游标")
 }
 
 // ledgerIDsOf LedgerRow 批 → id 序列（纯标记面实参）。
@@ -500,15 +500,16 @@ func ledgerIDsOf(rows []domain.LedgerRow) []int64 {
 	return ids
 }
 
-// TestPGUnbilledLag 游标积压度量：空游标零值；种子后 count + oldest 对齐；
-// 全部标记后归零（lag 护栏数据源契约）。
+// TestPGUnbilledLag 游标积压度量（wave3 D-B 签名收缩：count → ok）：空游标
+// ok=false；种子后 ok=true + 队头 oldest 对齐；全部标记后归零（lag 护栏数据源
+// 契约）。
 func TestPGUnbilledLag(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 
-	oldest, n, err := repos.UnbilledLag(ctx)
+	oldest, ok, err := repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, n, "空游标")
+	require.False(t, ok, "空游标")
 	require.True(t, oldest.IsZero(), "空游标 oldest 零值")
 
 	old := time.Now().Add(-time.Hour).Truncate(time.Second)
@@ -520,15 +521,15 @@ func TestPGUnbilledLag(t *testing.T) {
 	seedUnbilled(t, repos, r1)
 	seedUnbilled(t, repos, r2)
 
-	oldest, n, err = repos.UnbilledLag(ctx)
+	oldest, ok, err = repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), n)
+	require.True(t, ok)
 	require.Equal(t, old.UTC(), oldest.UTC(), "最老 unbilled 行 created_at")
 
 	rows := fetchAllUnbilled(t, repos)
 	require.NoError(t, repos.MarkBilledBulk(ctx, ledgerIDsOf(rows)))
-	oldest, n, err = repos.UnbilledLag(ctx)
+	oldest, ok, err = repos.UnbilledLag(ctx)
 	require.NoError(t, err)
-	require.Zero(t, n)
+	require.False(t, ok)
 	require.True(t, oldest.IsZero(), "清空后 oldest 归零")
 }
