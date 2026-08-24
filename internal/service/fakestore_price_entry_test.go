@@ -57,7 +57,7 @@ func (f *fakeStore) DeletePriceEntryManual(_ context.Context, model string) erro
 	delete(f.priceVariants, model)
 	return nil
 }
-func (f *fakeStore) ListPriceEntries(_ context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error) {
+func (f *fakeStore) ListPriceEntries(_ context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, provider *string, model string) ([]*domain.PriceEntry, int64, error) {
 	if f.pricingListErr != nil {
 		return nil, 0, f.pricingListErr
 	}
@@ -67,6 +67,9 @@ func (f *fakeStore) ListPriceEntries(_ context.Context, q repository.ListQuery, 
 			continue
 		}
 		if mode != nil && e.Mode != *mode {
+			continue
+		}
+		if provider != nil && (e.Provider == nil || *e.Provider != *provider) {
 			continue
 		}
 		if model != "" && !containsFold(e.Model, model) {

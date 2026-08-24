@@ -1059,6 +1059,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 | `page_size` | int | 20 | 每页行数；越界（`<1` 或 `>100`）→ 400 |
 | `mode` | string | — | 筛选：`token` / `call` / `image`；非法 → 400 |
 | `source` | string | — | 筛选：`litellm` / `manual`；非法 → 400 |
+| `provider` | string | — | 筛选：厂商等值匹配（如 `openai` / `anthropic` 等）；`NULL` 行在过滤时排除（标准语义——provider 列 nullable） |
 | `model` | string | — | 模型名模糊搜索（大小写不敏感） |
 | `sort` | string | `model` | 白名单：`model` / `updated_at`；非法 → 400 |
 | `order` | string | `desc` | `asc` / `desc`；其他值 → 400 |

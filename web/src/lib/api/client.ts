@@ -176,7 +176,7 @@ export class ApiClient {
   // —— 定价（统一 prices API：mode token|call|image 覆盖旧三表）——
   syncPricing = () => this.request<components['schemas']['PricingSyncResponse']>('/pricing/sync', { method: 'POST' })
   syncPricingPreview = () => this.request<components['schemas']['PricingSyncPreviewResponse']>('/pricing/sync/preview', { method: 'POST' })
-  listPriceEntries = (p?: { page?: number; page_size?: number; mode?: string; source?: string; model?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['PriceEntryListResponse']>('/prices', { params: toQuery(p) })
+  listPriceEntries = (p?: { page?: number; page_size?: number; mode?: string; source?: string; provider?: string; model?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['PriceEntryListResponse']>('/prices', { params: toQuery(p) })
   // 模型 ID 含 "/"（openai/gpt-5.6-sol）——一律查询参数，禁路径拼接
   getPriceEntry = (model: string) => this.request<components['schemas']['PriceEntry']>('/prices/entry', { params: toQuery({ model }) })
   upsertPriceEntry = (model: string, b: components['schemas']['PriceEntryUpsert']) => this.request<components['schemas']['PriceEntry']>('/prices/entry', { method: 'PUT', params: toQuery({ model }), body: JSON.stringify(b) })

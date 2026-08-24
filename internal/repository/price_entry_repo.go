@@ -230,13 +230,16 @@ func (r *PriceEntryRepo) DeleteManual(ctx context.Context, model string) error {
 	return nil
 }
 
-func (r *PriceEntryRepo) ListPriceEntries(ctx context.Context, q ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error) {
+func (r *PriceEntryRepo) ListPriceEntries(ctx context.Context, q ListQuery, source *domain.PricingSource, mode *domain.PriceMode, provider *string, model string) ([]*domain.PriceEntry, int64, error) {
 	pred := r.client.PriceEntry.Query()
 	if source != nil {
 		pred = pred.Where(priceentry.SourceEQ(priceentry.Source(*source)))
 	}
 	if mode != nil {
 		pred = pred.Where(priceentry.ModeEQ(priceentry.Mode(*mode)))
+	}
+	if provider != nil {
+		pred = pred.Where(priceentry.ProviderEQ(*provider))
 	}
 	if model != "" {
 		pred = pred.Where(priceentry.ModelContainsFold(model))

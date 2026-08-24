@@ -1096,7 +1096,10 @@
       "errNonNegInt": "{{field}}须为非负整数",
       "errTimeFmt": "{{field}}须为 HH:MM 格式",
       "errMultRange": "{{field}}须为 0..10 之间",
-      "errNonNeg": "{{field}}须 ≥0"
+      "errNonNeg": "{{field}}须 ≥0",
+      "condCollapsed": "未配置生效条件（可选）",
+      "condConfigure": "配置条件",
+      "condCollapse": "收起"
     }
   },
   "settings": {

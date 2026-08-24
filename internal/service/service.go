@@ -232,7 +232,7 @@ type PricingStore interface {
 	UpsertPriceVariantsFromLiteLLM(ctx context.Context, variants []*domain.PriceVariant) (int, error)
 	UpsertPriceEntryManual(ctx context.Context, m *repository.PriceEntryManual) (*domain.PriceEntry, error)
 	DeletePriceEntryManual(ctx context.Context, model string) error
-	ListPriceEntries(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error)
+	ListPriceEntries(ctx context.Context, q repository.ListQuery, source *domain.PricingSource, mode *domain.PriceMode, provider *string, model string) ([]*domain.PriceEntry, int64, error)
 	GetPriceEntry(ctx context.Context, model string) (*domain.PriceEntry, error)
 	ListPriceVariants(ctx context.Context, model string) ([]*domain.PriceVariant, error)
 	ListAllPriceVariants(ctx context.Context) ([]*domain.PriceVariant, error)

@@ -60,6 +60,7 @@ const isNonNegNum = (v: string) => v === '' || (Number.isFinite(Number(v)) && Nu
 type PriceVariant = components['schemas']['PriceVariant']
 type PriceVariantUpsert = components['schemas']['PriceVariantUpsert']
 const DOW_KEYS = ['dowSun', 'dowMon', 'dowTue', 'dowWed', 'dowThu', 'dowFri', 'dowSat'] as const
+const PROVIDERS = ['openai', 'anthropic', 'azure', 'vertex_ai', 'bedrock', 'deepseek', 'mistral', 'cohere', 'xai', 'openrouter', 'groq', 'together_ai', 'fireworks_ai', 'replicate', 'huggingface', 'moonshot', 'zhipu', 'baidu', 'alibaba', 'meta', 'nvidia', 'cerebras', 'perplexity'] as const
 const TIME_RE = /^\d{2}:\d{2}$/
 const dowMaskToBools = (mask: number | null | undefined): boolean[] =>
   Array.from({ length: 7 }, (_, i) => mask != null && (mask & (1 << i)) !== 0)
@@ -128,6 +129,7 @@ function VariantsDialog({
   const [rowErr, setRowErr] = useState<string | null>(null)
   const [clearConfirm, setClearConfirm] = useState(false)
   const [effectMode, setEffectMode] = useState<'multiplier' | 'override'>('multiplier')
+  const [condOpen, setCondOpen] = useState(false)
 
   const resetEditor = () => {
     setSeqStr('')
@@ -137,6 +139,7 @@ function VariantsDialog({
     setTimeStart('')
     setTimeEnd('')
     setDowBools(Array(7).fill(false))
+    setCondOpen(false)
     setMultiplierStr('')
     setSetInputStr('')
     setSetOutputStr('')
@@ -283,6 +286,16 @@ function VariantsDialog({
     resetEditor()
   }
 
+  const collapseCond = () => {
+    setServiceTier('')
+    setCtxMinStr('')
+    setCtxMaxStr('')
+    setTimeStart('')
+    setTimeEnd('')
+    setDowBools(Array(7).fill(false))
+    setCondOpen(false)
+  }
+
   const handleEditRow = (idx: number) => {
     const r = sortedLocal[idx]
     setEditingSeq(r.seq ?? null)
@@ -293,6 +306,9 @@ function VariantsDialog({
     setTimeStart(r.time_start ?? '')
     setTimeEnd(r.time_end ?? '')
     setDowBools(dowMaskToBools(r.dow_mask))
+    const bools = dowMaskToBools(r.dow_mask)
+    const hasCond = (r.service_tier ?? '') !== '' || (r.ctx_min != null ? String(r.ctx_min) : '') !== '' || (r.ctx_max != null ? String(r.ctx_max) : '') !== '' || (r.time_start ?? '') !== '' || (r.time_end ?? '') !== '' || bools.some(Boolean)
+    setCondOpen(hasCond)
     if (r.multiplier != null) {
       setEffectMode('multiplier')
       setMultiplierStr(String(r.multiplier))
@@ -491,64 +507,74 @@ function VariantsDialog({
               )}
             </div>
 
-            {/* 条件区三组常显 */}
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">{t('pricing.variants.condRangeHint')}</p>
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupTier')}</p>
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>{t('pricing.variants.tierLabel')}</Label>
-                    <Select value={serviceTier} onValueChange={v => { setServiceTier(v === '__any' ? '' : v); setRowErr(null) }}>
-                      <SelectTrigger><SelectValue placeholder={t('pricing.variants.tierWildcard')} /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__any" label={t('pricing.variants.tierWildcard')}>{t('pricing.variants.tierWildcard')}</SelectItem>
-                        <SelectItem value="priority" label={t('pricing.variants.tierPriority')}>{t('pricing.variants.tierPriority')}</SelectItem>
-                        <SelectItem value="flex" label={t('pricing.variants.tierFlex')}>{t('pricing.variants.tierFlex')}</SelectItem>
-                        <SelectItem value="fast" label={t('pricing.variants.tierFast')}>{t('pricing.variants.tierFast')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
+            {/* 条件区收缩 */}
+            {!condOpen ? (
+              <div className="flex items-center justify-between rounded-md border border-dashed px-3 py-2">
+                <span className="text-sm text-muted-foreground">{t('pricing.variants.condCollapsed')}</span>
+                <Button variant="ghost" size="sm" onClick={() => setCondOpen(true)}>{t('pricing.variants.condConfigure')}</Button>
               </div>
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupTokenRange')}</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="var-ctx-min">{t('pricing.variants.ctxMinLabel')}</Label>
-                    <Input id="var-ctx-min" type="number" min={0} step={1} value={ctxMinStr} onChange={e => { setCtxMinStr(e.target.value); setRowErr(null) }} placeholder="0" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="var-ctx-max">{t('pricing.variants.ctxMaxLabel')}</Label>
-                    <Input id="var-ctx-max" type="number" min={0} step={1} value={ctxMaxStr} onChange={e => { setCtxMaxStr(e.target.value); setRowErr(null) }} placeholder="0" />
-                  </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">{t('pricing.variants.condRangeHint')}</p>
+                  <Button variant="ghost" size="sm" onClick={collapseCond}>{t('pricing.variants.condCollapse')}</Button>
                 </div>
-              </div>
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupWindow')}</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="var-time-start">{t('pricing.variants.timeStartLabel')}</Label>
-                    <Input id="var-time-start" value={timeStart} onChange={e => { setTimeStart(e.target.value); setRowErr(null) }} placeholder="09:00" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="var-time-end">{t('pricing.variants.timeEndLabel')}</Label>
-                    <Input id="var-time-end" value={timeEnd} onChange={e => { setTimeEnd(e.target.value); setRowErr(null) }} placeholder="18:00" />
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupTier')}</p>
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>{t('pricing.variants.tierLabel')}</Label>
+                      <Select value={serviceTier} onValueChange={v => { setServiceTier(v === '__any' ? '' : v); setRowErr(null) }}>
+                        <SelectTrigger><SelectValue placeholder={t('pricing.variants.tierWildcard')} /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__any" label={t('pricing.variants.tierWildcard')}>{t('pricing.variants.tierWildcard')}</SelectItem>
+                          <SelectItem value="priority" label={t('pricing.variants.tierPriority')}>{t('pricing.variants.tierPriority')}</SelectItem>
+                          <SelectItem value="flex" label={t('pricing.variants.tierFlex')}>{t('pricing.variants.tierFlex')}</SelectItem>
+                          <SelectItem value="fast" label={t('pricing.variants.tierFast')}>{t('pricing.variants.tierFast')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>{t('pricing.variants.dowLabel')}</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {DOW_KEYS.map((k, i) => (
-                      <label key={k} className="flex items-center gap-1.5 text-sm">
-                        <Checkbox checked={dowBools[i]} onCheckedChange={v => setDowBools(b => { const n = [...b]; n[i] = !!v; return n })} />
-                        {t(`pricing.variants.${k}`)}
-                      </label>
-                    ))}
+                  <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupTokenRange')}</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="var-ctx-min">{t('pricing.variants.ctxMinLabel')}</Label>
+                      <Input id="var-ctx-min" type="number" min={0} step={1} value={ctxMinStr} onChange={e => { setCtxMinStr(e.target.value); setRowErr(null) }} placeholder="0" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="var-ctx-max">{t('pricing.variants.ctxMaxLabel')}</Label>
+                      <Input id="var-ctx-max" type="number" min={0} step={1} value={ctxMaxStr} onChange={e => { setCtxMaxStr(e.target.value); setRowErr(null) }} placeholder="0" />
+                    </div>
                   </div>
                 </div>
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupWindow')}</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="var-time-start">{t('pricing.variants.timeStartLabel')}</Label>
+                      <Input id="var-time-start" value={timeStart} onChange={e => { setTimeStart(e.target.value); setRowErr(null) }} placeholder="09:00" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="var-time-end">{t('pricing.variants.timeEndLabel')}</Label>
+                      <Input id="var-time-end" value={timeEnd} onChange={e => { setTimeEnd(e.target.value); setRowErr(null) }} placeholder="18:00" />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>{t('pricing.variants.dowLabel')}</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {DOW_KEYS.map((k, i) => (
+                        <label key={k} className="flex items-center gap-1.5 text-sm">
+                          <Checkbox checked={dowBools[i]} onCheckedChange={v => setDowBools(b => { const n = [...b]; n[i] = !!v; return n })} />
+                          {t(`pricing.variants.${k}`)}
+                        </label>
+                      ))}
+                    </div>
+                </div>
               </div>
-            </div>
+              </div>
+            )}
 
             {rowErr && <p className="text-sm text-destructive">{rowErr}</p>}
             <div className="flex gap-2">
@@ -665,19 +691,21 @@ export default function PricingPage() {
   const [pageSize, setPageSize] = useState(20)
   const [model, setModel] = useState('')
   const [sourceFilter, setSourceFilter] = useState<'all' | PricingSource>('all')
+  const [providerFilter, setProviderFilter] = useState('all')
   const [activeSort, setActiveSort] = useState<string | null>(null)
   const [order, setOrder] = useState<SortOrder>('desc')
   const sort = activeSort ?? 'model'
   const ord = activeSort ? order : 'asc'
 
   const { data: textData, isLoading: textLoading, isError: textIsError, error: textError } = useQuery({
-    queryKey: ['prices', { mode: 'token', page, page_size: pageSize, source: sourceFilter, model, sort, order: ord }],
+    queryKey: ['prices', { mode: 'token', page, page_size: pageSize, source: sourceFilter, provider: providerFilter, model, sort, order: ord }],
     queryFn: () =>
       api.listPriceEntries({
         page,
         page_size: pageSize,
         mode: 'token',
         source: sourceFilter === 'all' ? undefined : sourceFilter,
+        provider: providerFilter === 'all' ? undefined : providerFilter,
         model: model || undefined,
         sort,
         order: ord,
@@ -691,32 +719,35 @@ export default function PricingPage() {
   const changePageSize = (s: number) => { setPageSize(s); resetPage() }
   const changeModel = (v: string) => { setModel(v); resetPage() }
   const changeSource = (v: string) => { setSourceFilter(v as 'all' | PricingSource); resetPage() }
+  const changeProvider = (v: string) => { setProviderFilter(v); resetPage() }
   const onColumnToggle = (col: string) => {
     resetPage()
     if (activeSort !== col) { setActiveSort(col); setOrder('desc') }
     else if (order === 'desc') setOrder('asc')
     else { setActiveSort(null); setOrder('desc') }
   }
-  const hasFilters = model !== '' || sourceFilter !== 'all'
-  const clearFilters = () => { setModel(''); setSourceFilter('all'); resetPage() }
+  const hasFilters = model !== '' || sourceFilter !== 'all' || providerFilter !== 'all'
+  const clearFilters = () => { setModel(''); setSourceFilter('all'); setProviderFilter('all'); resetPage() }
 
   // —— 图片价（image）状态 ——
   const [imgPage, setImgPage] = useState(1)
   const [imgPageSize, setImgPageSize] = useState(20)
   const [imgModel, setImgModel] = useState('')
   const [imgSource, setImgSource] = useState<'all' | PricingSource>('all')
+  const [imgProvider, setImgProvider] = useState('all')
   const [imgActiveSort, setImgActiveSort] = useState<string | null>(null)
   const [imgOrder, setImgOrder] = useState<SortOrder>('desc')
   const imgSort = imgActiveSort ?? 'model'
   const imgOrd = imgActiveSort ? imgOrder : 'asc'
   const { data: imgData, isLoading: imgLoading, isError: imgIsError, error: imgError } = useQuery({
-    queryKey: ['prices', { mode: 'image', page: imgPage, page_size: imgPageSize, source: imgSource, model: imgModel, sort: imgSort, order: imgOrd }],
+    queryKey: ['prices', { mode: 'image', page: imgPage, page_size: imgPageSize, source: imgSource, provider: imgProvider, model: imgModel, sort: imgSort, order: imgOrd }],
     queryFn: () =>
       api.listPriceEntries({
         page: imgPage,
         page_size: imgPageSize,
         mode: 'image',
         source: imgSource === 'all' ? undefined : imgSource,
+        provider: imgProvider === 'all' ? undefined : imgProvider,
         model: imgModel || undefined,
         sort: imgSort,
         order: imgOrd,
@@ -730,32 +761,35 @@ export default function PricingPage() {
   const imgSetPageSize = (s: number) => { setImgPageSize(s); imgReset() }
   const imgSetModel = (v: string) => { setImgModel(v); imgReset() }
   const imgSetSource = (v: string) => { setImgSource(v as 'all' | PricingSource); imgReset() }
+  const imgSetProvider = (v: string) => { setImgProvider(v); imgReset() }
   const imgToggleSort = (col: string) => {
     imgReset()
     if (imgActiveSort !== col) { setImgActiveSort(col); setImgOrder('desc') }
     else if (imgOrder === 'desc') setImgOrder('asc')
     else { setImgActiveSort(null); setImgOrder('desc') }
   }
-  const imgHasFilters = imgModel !== '' || imgSource !== 'all'
-  const imgClearFilters = () => { setImgModel(''); setImgSource('all'); imgReset() }
+  const imgHasFilters = imgModel !== '' || imgSource !== 'all' || imgProvider !== 'all'
+  const imgClearFilters = () => { setImgModel(''); setImgSource('all'); setImgProvider('all'); imgReset() }
 
   // —— 按次价（call）状态 ——
   const [fnPage, setFnPage] = useState(1)
   const [fnPageSize, setFnPageSize] = useState(20)
   const [fnModel, setFnModel] = useState('')
   const [fnSource, setFnSource] = useState<'all' | PricingSource>('all')
+  const [fnProvider, setFnProvider] = useState('all')
   const [fnActiveSort, setFnActiveSort] = useState<string | null>(null)
   const [fnOrder, setFnOrder] = useState<SortOrder>('desc')
   const fnSort = fnActiveSort ?? 'model'
   const fnOrd = fnActiveSort ? fnOrder : 'asc'
   const { data: fnData, isLoading: fnLoading, isError: fnIsError, error: fnError } = useQuery({
-    queryKey: ['prices', { mode: 'call', page: fnPage, page_size: fnPageSize, source: fnSource, model: fnModel, sort: fnSort, order: fnOrd }],
+    queryKey: ['prices', { mode: 'call', page: fnPage, page_size: fnPageSize, source: fnSource, provider: fnProvider, model: fnModel, sort: fnSort, order: fnOrd }],
     queryFn: () =>
       api.listPriceEntries({
         page: fnPage,
         page_size: fnPageSize,
         mode: 'call',
         source: fnSource === 'all' ? undefined : fnSource,
+        provider: fnProvider === 'all' ? undefined : fnProvider,
         model: fnModel || undefined,
         sort: fnSort,
         order: fnOrd,
@@ -769,14 +803,15 @@ export default function PricingPage() {
   const fnSetPageSize = (s: number) => { setFnPageSize(s); fnReset() }
   const fnSetModel = (v: string) => { setFnModel(v); fnReset() }
   const fnSetSource = (v: string) => { setFnSource(v as 'all' | PricingSource); fnReset() }
+  const fnSetProvider = (v: string) => { setFnProvider(v); fnReset() }
   const fnToggleSort = (col: string) => {
     fnReset()
     if (fnActiveSort !== col) { setFnActiveSort(col); setFnOrder('desc') }
     else if (fnOrder === 'desc') setFnOrder('asc')
     else { setFnActiveSort(null); setFnOrder('desc') }
   }
-  const fnHasFilters = fnModel !== '' || fnSource !== 'all'
-  const fnClearFilters = () => { setFnModel(''); setFnSource('all'); fnReset() }
+  const fnHasFilters = fnModel !== '' || fnSource !== 'all' || fnProvider !== 'all'
+  const fnClearFilters = () => { setFnModel(''); setFnSource('all'); setFnProvider('all'); fnReset() }
 
   // —— 价格同步 ——
   const sync = useMutation({
@@ -872,6 +907,7 @@ export default function PricingPage() {
 
   const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
   const sourceItems = Object.fromEntries([['all', t('pricing.all')], ...SOURCES.map(s => [s, t(`pricing.source.${s}`)])])
+  const providerItems = Object.fromEntries([['all', t('pricing.providerAll')], ...PROVIDERS.map(p => [p, p])])
   const delDisabledTitle = (source: PricingSource) => source === 'litellm' ? t('pricing.deleteLitellmHint') : t('pricing.deleteTitle')
   void MODE_BY_TAB
 
@@ -916,7 +952,16 @@ export default function PricingPage() {
                 {SOURCES.map(s => <SelectItem key={s} value={s} label={t(`pricing.source.${s}`)}>{t(`pricing.source.${s}`)}</SelectItem>)}
               </SelectContent>
             </Select>
-            {sourceFilter !== 'all' && (
+            <Select items={providerItems} value={providerFilter} onValueChange={changeProvider}>
+              <SelectTrigger size="default" className="w-40" aria-label={t('pricing.providerAll')}>
+                <SelectValue placeholder={t('pricing.providerAll')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" label={t('pricing.providerAll')}>{t('pricing.providerAll')}</SelectItem>
+                {PROVIDERS.map(p => <SelectItem key={p} value={p} label={p}>{p}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {(sourceFilter !== 'all' || providerFilter !== 'all') && (
               <Button variant="ghost" size="lg" onClick={clearFilters}><Filter /> {t('list.reset')}</Button>
             )}
           </ListToolbar>
@@ -1006,7 +1051,16 @@ export default function PricingPage() {
                 {SOURCES.map(s => <SelectItem key={s} value={s} label={t(`pricing.source.${s}`)}>{t(`pricing.source.${s}`)}</SelectItem>)}
               </SelectContent>
             </Select>
-            {imgSource !== 'all' && (
+            <Select items={providerItems} value={imgProvider} onValueChange={imgSetProvider}>
+              <SelectTrigger size="default" className="w-40" aria-label={t('pricing.providerAll')}>
+                <SelectValue placeholder={t('pricing.providerAll')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" label={t('pricing.providerAll')}>{t('pricing.providerAll')}</SelectItem>
+                {PROVIDERS.map(p => <SelectItem key={p} value={p} label={p}>{p}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {(imgSource !== 'all' || imgProvider !== 'all') && (
               <Button variant="ghost" size="lg" onClick={imgClearFilters}><Filter /> {t('list.reset')}</Button>
             )}
           </ListToolbar>
@@ -1094,7 +1148,16 @@ export default function PricingPage() {
                 {SOURCES.map(s => <SelectItem key={s} value={s} label={t(`pricing.source.${s}`)}>{t(`pricing.source.${s}`)}</SelectItem>)}
               </SelectContent>
             </Select>
-            {fnSource !== 'all' && (
+            <Select items={providerItems} value={fnProvider} onValueChange={fnSetProvider}>
+              <SelectTrigger size="default" className="w-40" aria-label={t('pricing.providerAll')}>
+                <SelectValue placeholder={t('pricing.providerAll')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" label={t('pricing.providerAll')}>{t('pricing.providerAll')}</SelectItem>
+                {PROVIDERS.map(p => <SelectItem key={p} value={p} label={p}>{p}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {(fnSource !== 'all' || fnProvider !== 'all') && (
               <Button variant="ghost" size="lg" onClick={fnClearFilters}><Filter /> {t('list.reset')}</Button>
             )}
           </ListToolbar>

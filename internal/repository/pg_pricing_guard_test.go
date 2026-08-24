@@ -150,7 +150,7 @@ func TestCodexSearchSeed_Idempotent_PG(t *testing.T) {
 	require.Equal(t, pe.Model, pe2.Model)
 	require.Equal(t, *pe.PricePerCall, *pe2.PricePerCall)
 	// count via List with model filter
-	rows, total, err := repos.PriceEntries.ListPriceEntries(ctx, repository.ListQuery{Limit: 10, Offset: 0}, nil, nil, domain.CodexSearchModel)
+	rows, total, err := repos.PriceEntries.ListPriceEntries(ctx, repository.ListQuery{Limit: 10, Offset: 0}, nil, nil, nil, domain.CodexSearchModel)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), total)
 	require.Len(t, rows, 1)

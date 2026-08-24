@@ -1096,7 +1096,10 @@
       "errNonNegInt": "{{field}} must be a non-negative integer",
       "errTimeFmt": "{{field}} must be in HH:MM format",
       "errMultRange": "{{field}} must be between 0 and 10",
-      "errNonNeg": "{{field}} must be ≥0"
+      "errNonNeg": "{{field}} must be ≥0",
+      "condCollapsed": "No conditions configured (optional)",
+      "condConfigure": "Configure conditions",
+      "condCollapse": "Collapse"
     }
   },
   "settings": {
