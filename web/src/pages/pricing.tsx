@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Coins, Filter, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Coins, Filter, Layers, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiUnauthorized } from '@/lib/api/client'
@@ -15,6 +15,7 @@ import { SortableHeader, type SortOrder } from '@/components/sortable-header'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -54,6 +55,392 @@ const formatUsd = (v: number | null | undefined): string => {
 }
 
 const isNonNegNum = (v: string) => v === '' || (Number.isFinite(Number(v)) && Number(v) >= 0)
+
+// ── Variants (price tier) helpers ──
+type PriceVariant = components['schemas']['PriceVariant']
+type PriceVariantUpsert = components['schemas']['PriceVariantUpsert']
+const DOW_KEYS = ['dowSun', 'dowMon', 'dowTue', 'dowWed', 'dowThu', 'dowFri', 'dowSat'] as const
+const TIME_RE = /^\d{2}:\d{2}$/
+const dowMaskToBools = (mask: number | null | undefined): boolean[] =>
+  Array.from({ length: 7 }, (_, i) => mask != null && (mask & (1 << i)) !== 0)
+const boolsToDowMask = (bools: boolean[]): number | undefined => {
+  const m = bools.reduce((acc, v, i) => (v ? acc | (1 << i) : acc), 0)
+  return m === 0 ? undefined : m
+}
+const fmtMult = (bp: number | null | undefined): string => {
+  if (bp == null) return ''
+  const v = bp / 10000
+  return `×${Number.isInteger(v) ? String(v) : v.toFixed(4).replace(/\.?0+$/, '')}`
+}
+
+function VariantsDialog({
+  model,
+  source,
+  open,
+  onOpenChange,
+}: {
+  model: string | null
+  source: PricingSource
+  open: boolean
+  onOpenChange: (o: boolean) => void
+}) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const enabled = open && !!model
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['price-variants', model],
+    queryFn: () => api.listPriceVariants(model!),
+    enabled,
+  })
+
+  // local editable copy (whole-replace semantics)
+  const [localRows, setLocalRows] = useState<PriceVariantUpsert[]>([])
+  const [editingSeq, setEditingSeq] = useState<number | null>(null)
+  const [seqStr, setSeqStr] = useState('')
+  const [serviceTier, setServiceTier] = useState('')
+  const [ctxMinStr, setCtxMinStr] = useState('')
+  const [ctxMaxStr, setCtxMaxStr] = useState('')
+  const [timeStart, setTimeStart] = useState('')
+  const [timeEnd, setTimeEnd] = useState('')
+  const [dowBools, setDowBools] = useState<boolean[]>(Array(7).fill(false))
+  const [multBpStr, setMultBpStr] = useState('')
+  const [setInputStr, setSetInputStr] = useState('')
+  const [setOutputStr, setSetOutputStr] = useState('')
+  const [rowErr, setRowErr] = useState<string | null>(null)
+  const [clearConfirm, setClearConfirm] = useState(false)
+
+  const resetEditor = () => {
+    setSeqStr('')
+    setServiceTier('')
+    setCtxMinStr('')
+    setCtxMaxStr('')
+    setTimeStart('')
+    setTimeEnd('')
+    setDowBools(Array(7).fill(false))
+    setMultBpStr('')
+    setSetInputStr('')
+    setSetOutputStr('')
+    setEditingSeq(null)
+    setRowErr(null)
+  }
+
+  // sync server rows → localRows when dialog opens / data changes
+  useEffect(() => {
+    if (!open) return
+    if (!data) return
+    const sorted = [...(data.rows ?? [])]
+      .sort((a, b) => a.Seq - b.Seq)
+      .map((r: PriceVariant): PriceVariantUpsert => ({
+        seq: r.Seq,
+        service_tier: r.ServiceTier ?? undefined,
+        ctx_min: r.CtxMin ?? undefined,
+        ctx_max: r.CtxMax ?? undefined,
+        time_start: r.TimeStart ?? undefined,
+        time_end: r.TimeEnd ?? undefined,
+        dow_mask: r.DowMask ?? undefined,
+        mult_bp: r.MultBP ?? undefined,
+        set_input_per_m: r.SetInputPerM ?? undefined,
+        set_output_per_m: r.SetOutputPerM ?? undefined,
+      }))
+    setLocalRows(sorted)
+  }, [data, open])
+
+  // clear local state on close
+  useEffect(() => {
+    if (!open) {
+      resetEditor()
+      setLocalRows([])
+      setClearConfirm(false)
+    }
+  }, [open])
+
+  const sortedLocal = [...localRows].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+
+  const condSummary = (r: PriceVariantUpsert) => {
+    const parts: string[] = []
+    if (r.service_tier) parts.push(r.service_tier)
+    if (r.ctx_min != null || r.ctx_max != null) {
+      if (r.ctx_min != null && r.ctx_max != null) parts.push(`${r.ctx_min}–${r.ctx_max}`)
+      else if (r.ctx_min != null) parts.push(`≥${r.ctx_min}`)
+      else parts.push(`≤${r.ctx_max}`)
+    }
+    if (r.time_start || r.time_end) {
+      if (r.time_start && r.time_end) parts.push(`${r.time_start}–${r.time_end}`)
+      else parts.push((r.time_start ?? r.time_end) as string)
+    }
+    if (r.dow_mask != null) {
+      const bools = dowMaskToBools(r.dow_mask)
+      const labels = bools.map((v, i) => (v ? t(`pricing.variants.${DOW_KEYS[i]}`) : null)).filter(Boolean) as string[]
+      if (labels.length) parts.push(labels.join(','))
+    }
+    return parts.length ? parts.join(' · ') : '—'
+  }
+  const effectSummary = (r: PriceVariantUpsert) => {
+    const parts: string[] = []
+    if (r.mult_bp != null) parts.push(fmtMult(r.mult_bp))
+    if (r.set_input_per_m != null) parts.push(`in $${r.set_input_per_m}/M`)
+    if (r.set_output_per_m != null) parts.push(`out $${r.set_output_per_m}/M`)
+    return parts.length ? parts.join(' · ') : '—'
+  }
+
+  const validateDraft = (): string | null => {
+    const seqNum = Number(seqStr)
+    if (!seqStr || !Number.isInteger(seqNum) || seqNum < 1) return t('pricing.variants.errSeqMin')
+    if (localRows.some(r => r.seq === seqNum && r.seq !== editingSeq)) return t('pricing.variants.seqDup', { seq: seqNum })
+    if (ctxMinStr !== '' && (!Number.isInteger(Number(ctxMinStr)) || Number(ctxMinStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMin') })
+    if (ctxMaxStr !== '' && (!Number.isInteger(Number(ctxMaxStr)) || Number(ctxMaxStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMax') })
+    if (ctxMinStr !== '' && ctxMaxStr !== '' && Number(ctxMaxStr) <= Number(ctxMinStr)) return `${t('pricing.variants.condCtxMax')} > ${t('pricing.variants.condCtxMin')}`
+    if (timeStart !== '' && !TIME_RE.test(timeStart)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeStart') })
+    if (timeEnd !== '' && !TIME_RE.test(timeEnd)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeEnd') })
+    if (multBpStr !== '') {
+      const n = Number(multBpStr)
+      if (!Number.isInteger(n) || n < 0 || n > 100000) return t('pricing.variants.errMultRange', { field: t('pricing.variants.multBp') })
+    }
+    if (setInputStr !== '' && (!Number.isFinite(Number(setInputStr)) || Number(setInputStr) < 0)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setInput') })
+    if (setOutputStr !== '' && (!Number.isFinite(Number(setOutputStr)) || Number(setOutputStr) < 0)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setOutput') })
+    if (multBpStr === '' && setInputStr === '' && setOutputStr === '') return t('pricing.variants.effectNone')
+    return null
+  }
+
+  const handleSaveRow = () => {
+    const err = validateDraft()
+    if (err) { setRowErr(err); return }
+    const seqNum = Number(seqStr)
+    const dowMask = boolsToDowMask(dowBools)
+    const upsert: PriceVariantUpsert = {
+      seq: seqNum,
+      service_tier: serviceTier || undefined,
+      ctx_min: ctxMinStr === '' ? undefined : Number(ctxMinStr),
+      ctx_max: ctxMaxStr === '' ? undefined : Number(ctxMaxStr),
+      time_start: timeStart || undefined,
+      time_end: timeEnd || undefined,
+      dow_mask: dowMask,
+      mult_bp: multBpStr === '' ? undefined : Number(multBpStr),
+      set_input_per_m: setInputStr === '' ? undefined : Number(setInputStr),
+      set_output_per_m: setOutputStr === '' ? undefined : Number(setOutputStr),
+    }
+    setLocalRows(prev => {
+      let next: PriceVariantUpsert[]
+      if (editingSeq != null) next = prev.map(r => (r.seq === editingSeq ? upsert : r))
+      else next = [...prev, upsert]
+      return next.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+    })
+    resetEditor()
+  }
+
+  const handleEditRow = (idx: number) => {
+    const r = sortedLocal[idx]
+    setEditingSeq(r.seq ?? null)
+    setSeqStr(String(r.seq ?? ''))
+    setServiceTier(r.service_tier ?? '')
+    setCtxMinStr(r.ctx_min != null ? String(r.ctx_min) : '')
+    setCtxMaxStr(r.ctx_max != null ? String(r.ctx_max) : '')
+    setTimeStart(r.time_start ?? '')
+    setTimeEnd(r.time_end ?? '')
+    setDowBools(dowMaskToBools(r.dow_mask))
+    setMultBpStr(r.mult_bp != null ? String(r.mult_bp) : '')
+    setSetInputStr(r.set_input_per_m != null ? String(r.set_input_per_m) : '')
+    setSetOutputStr(r.set_output_per_m != null ? String(r.set_output_per_m) : '')
+    setRowErr(null)
+  }
+
+  const handleRemoveRow = (seqVal: number) => {
+    setLocalRows(prev => prev.filter(r => r.seq !== seqVal))
+    if (editingSeq === seqVal) resetEditor()
+  }
+
+  const putMut = useMutation({
+    mutationFn: () => api.putPriceVariants(model!, { variants: localRows }),
+    onSuccess: () => {
+      toast.add({ title: t('pricing.variants.saved'), type: 'success' })
+      qc.invalidateQueries({ queryKey: ['price-variants', model] })
+      qc.invalidateQueries({ queryKey: ['prices'] })
+      onOpenChange(false)
+    },
+    onError: (e: Error) => toast.add({ title: e.message, type: 'error' }),
+  })
+  const delMut = useMutation({
+    mutationFn: () => api.deletePriceVariants(model!),
+    onSuccess: () => {
+      toast.add({ title: t('pricing.variants.cleared'), type: 'success' })
+      qc.invalidateQueries({ queryKey: ['price-variants', model] })
+      qc.invalidateQueries({ queryKey: ['prices'] })
+      setLocalRows([])
+      setClearConfirm(false)
+      onOpenChange(false)
+    },
+    onError: (e: Error) => toast.add({ title: e.message, type: 'error' }),
+  })
+
+  const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{model ? t('pricing.variants.title', { model }) : t('pricing.variants.title', { model: '' })}</DialogTitle>
+            <DialogDescription>{t('pricing.variants.dialogDesc')}</DialogDescription>
+          </DialogHeader>
+
+          {source === 'litellm' && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+              {t('pricing.variants.litellmWarn')}
+            </div>
+          )}
+
+          {/* list section */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">{t('pricing.variants.hint')}</span>
+              <span className="text-xs text-muted-foreground">{t('pricing.variants.countLabel', { count: sortedLocal.length })}</span>
+            </div>
+            {isLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
+              </div>
+            ) : isError ? (
+              <p className="text-sm text-destructive">{t('pricing.variants.loadFailed', { message: errMsg(error) ?? '' })}</p>
+            ) : sortedLocal.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-2">{t('pricing.variants.empty')}</p>
+            ) : (
+              <div className="overflow-hidden rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('pricing.variants.tableSeq')}</TableHead>
+                      <TableHead>{t('pricing.variants.tableCond')}</TableHead>
+                      <TableHead>{t('pricing.variants.tableEffect')}</TableHead>
+                      <TableHead className="text-right">{t('pricing.variants.tableActions')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="[&_td]:py-2">
+                    {sortedLocal.map(r => (
+                      <TableRow key={r.seq}>
+                        <TableCell className="font-mono text-sm">{r.seq}</TableCell>
+                        <TableCell className="text-xs max-w-64 truncate" title={condSummary(r)}>{condSummary(r)}</TableCell>
+                        <TableCell className="text-xs">{effectSummary(r)}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.editAction')} onClick={() => handleEditRow(sortedLocal.indexOf(r))}><Pencil className="size-3.5" /></Button>
+                            <Button variant="ghost" size="icon-sm" className="text-destructive" title={t('pricing.variants.remove')} onClick={() => handleRemoveRow(r.seq!)}><Trash2 className="size-3.5" /></Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">{t('pricing.variants.hint')}</p>
+          </div>
+
+          {/* row editor */}
+          <div className="space-y-3 rounded-lg border p-3">
+            <p className="text-sm font-medium">{editingSeq != null ? t('pricing.variants.edit') : t('pricing.variants.add')}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="var-seq">{t('pricing.variants.seqLabel')} <span className="text-destructive">*</span></Label>
+                <Input id="var-seq" type="number" min={1} step={1} value={seqStr} onChange={e => { setSeqStr(e.target.value); setRowErr(null) }} placeholder="1" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t('pricing.variants.tierLabel')}</Label>
+                <Select value={serviceTier} onValueChange={v => { setServiceTier(v === '__any' ? '' : v); setRowErr(null) }}>
+                  <SelectTrigger><SelectValue placeholder={t('pricing.variants.tierWildcard')} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__any" label={t('pricing.variants.tierWildcard')}>{t('pricing.variants.tierWildcard')}</SelectItem>
+                    <SelectItem value="priority" label="priority">priority</SelectItem>
+                    <SelectItem value="flex" label="flex">flex</SelectItem>
+                    <SelectItem value="fast" label="fast">fast</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="var-ctx-min">{t('pricing.variants.ctxMinLabel')}</Label>
+                <Input id="var-ctx-min" type="number" min={0} step={1} value={ctxMinStr} onChange={e => { setCtxMinStr(e.target.value); setRowErr(null) }} placeholder="0" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="var-ctx-max">{t('pricing.variants.ctxMaxLabel')}</Label>
+                <Input id="var-ctx-max" type="number" min={0} step={1} value={ctxMaxStr} onChange={e => { setCtxMaxStr(e.target.value); setRowErr(null) }} placeholder="0" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="var-time-start">{t('pricing.variants.timeStartLabel')}</Label>
+                <Input id="var-time-start" value={timeStart} onChange={e => { setTimeStart(e.target.value); setRowErr(null) }} placeholder="09:00" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="var-time-end">{t('pricing.variants.timeEndLabel')}</Label>
+                <Input id="var-time-end" value={timeEnd} onChange={e => { setTimeEnd(e.target.value); setRowErr(null) }} placeholder="18:00" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t('pricing.variants.dowLabel')}</Label>
+              <div className="flex flex-wrap gap-2">
+                {DOW_KEYS.map((k, i) => (
+                  <label key={k} className="flex items-center gap-1.5 text-sm">
+                    <Checkbox checked={dowBools[i]} onCheckedChange={v => setDowBools(b => { const n = [...b]; n[i] = !!v; return n })} />
+                    {t(`pricing.variants.${k}`)}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="var-mult">{t('pricing.variants.multBpLabel')}</Label>
+                <Input id="var-mult" type="number" min={0} max={100000} step={1} value={multBpStr} onChange={e => { setMultBpStr(e.target.value); setRowErr(null) }} placeholder="10000" />
+                {multBpStr !== '' && Number.isFinite(Number(multBpStr)) && (
+                  <p className="text-xs text-muted-foreground">{t('pricing.variants.multHint', { value: (Number(multBpStr) / 10000).toString() })}</p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="var-in">{t('pricing.variants.setInputLabel')}</Label>
+                <Input id="var-in" type="number" min={0} step="any" value={setInputStr} onChange={e => { setSetInputStr(e.target.value); setRowErr(null) }} placeholder="0.001" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="var-out">{t('pricing.variants.setOutputLabel')}</Label>
+                <Input id="var-out" type="number" min={0} step="any" value={setOutputStr} onChange={e => { setSetOutputStr(e.target.value); setRowErr(null) }} placeholder="0.002" />
+              </div>
+            </div>
+            {rowErr && <p className="text-sm text-destructive">{rowErr}</p>}
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={handleSaveRow}>{editingSeq != null ? t('pricing.variants.edit') : t('pricing.variants.add')}</Button>
+              {editingSeq != null && (
+                <Button variant="ghost" onClick={resetEditor}>{t('pricing.variants.cancelEdit')}</Button>
+              )}
+            </div>
+          </div>
+
+          {putMut.isError && errMsg(putMut.error) && <p className="text-sm text-destructive">{errMsg(putMut.error)}</p>}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setClearConfirm(true)} disabled={delMut.isPending || putMut.isPending} className="mr-auto">
+              {t('pricing.variants.clear')}
+            </Button>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
+            <Button onClick={() => putMut.mutate()} disabled={putMut.isPending}>
+              {putMut.isPending ? t('pricing.variants.saving') : t('pricing.variants.saveAll')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={clearConfirm} onOpenChange={o => { if (!o && !delMut.isPending) setClearConfirm(false) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('pricing.variants.clearTitle')}</DialogTitle>
+            <DialogDescription>{t('pricing.variants.clearConfirm', { model: model ?? '' })}</DialogDescription>
+          </DialogHeader>
+          {delMut.isError && errMsg(delMut.error) && <p className="text-sm text-destructive">{errMsg(delMut.error)}</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClearConfirm(false)} disabled={delMut.isPending}>{t('common.cancel')}</Button>
+            <Button variant="destructive" onClick={() => delMut.mutate()} disabled={delMut.isPending}>
+              {delMut.isPending ? t('pricing.variants.clearing') : t('pricing.variants.clear')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
 
 // —— token 表单（4 字段全可选）；call/image 各自对应字段
 interface TokenForm {
@@ -338,6 +725,9 @@ export default function PricingPage() {
   const delDisabledTitle = (source: PricingSource) => source === 'litellm' ? t('pricing.deleteLitellmHint') : t('pricing.deleteTitle')
   void MODE_BY_TAB
 
+  // —— Variants dialog (single page-level, mode-agnostic) ——
+  const [variantsTarget, setVariantsTarget] = useState<{ model: string; source: PricingSource } | null>(null)
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -430,6 +820,7 @@ export default function PricingPage() {
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source })}><Layers /></Button>
                             <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                             <Button
                               variant="ghost"
@@ -517,6 +908,7 @@ export default function PricingPage() {
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source })}><Layers /></Button>
                             <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                             <Button
                               variant="ghost"
@@ -600,6 +992,7 @@ export default function PricingPage() {
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source })}><Layers /></Button>
                             <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                             <Button
                               variant="ghost"
@@ -819,6 +1212,13 @@ export default function PricingPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <VariantsDialog
+        model={variantsTarget?.model ?? null}
+        source={(variantsTarget?.source ?? 'manual') as PricingSource}
+        open={!!variantsTarget}
+        onOpenChange={o => { if (!o) setVariantsTarget(null) }}
+      />
     </div>
   )
 }
