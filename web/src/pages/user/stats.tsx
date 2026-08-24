@@ -32,6 +32,8 @@ function defaultRange() {
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
 
+const TTFT_MAX_SPAN_MS = 7 * 24 * 3600 * 1000
+
 export default function UserStats() {
   const { t } = useTranslation()
   const [range, setRange] = useState(defaultRange)
@@ -68,10 +70,17 @@ export default function UserStats() {
     return { ...r, label, time: r.BucketTime ?? '' }
   }), [rows, granularity])
 
-  const ttftParams = useMemo(
-    () => ({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, model: debouncedModel || undefined }),
-    [range, debouncedModel]
-  )
+  const { ttftParams, ttftClamped } = useMemo(() => {
+    const toMs = new Date(range.to).getTime()
+    const origFromMs = new Date(range.from).getTime()
+    const fromMs = Math.max(origFromMs, toMs - TTFT_MAX_SPAN_MS)
+    const clamped = !Number.isNaN(origFromMs) && !Number.isNaN(toMs) && fromMs > origFromMs
+    const clampedFrom = Number.isNaN(fromMs) ? toRFC3339(range.from)! : new Date(fromMs).toISOString()
+    return {
+      ttftClamped: clamped,
+      ttftParams: { from: clampedFrom, to: toRFC3339(range.to)!, model: debouncedModel || undefined },
+    }
+  }, [range, debouncedModel])
   const ttftQ = useQuery({
     queryKey: ['user', 'stats-ttft', ttftParams],
     queryFn: () => userApi.getMyStatsTTFT(ttftParams),
@@ -223,6 +232,7 @@ export default function UserStats() {
         <CardHeader>
           <CardTitle>{t('user.stats.ttft.title')}</CardTitle>
           <CardDescription>{t('user.stats.ttft.desc')}</CardDescription>
+          {ttftClamped && <p className="text-xs text-muted-foreground">{t('user.stats.ttft.clamped')}</p>}
         </CardHeader>
         <CardContent>
           {ttftQ.isError ? (

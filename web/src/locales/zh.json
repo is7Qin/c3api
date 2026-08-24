@@ -1333,7 +1333,8 @@
         "avg": "均值",
         "p95": "P95",
         "p99": "P99",
-        "source": "来源：{{source}}"
+        "source": "来源：{{source}}",
+        "clamped": "自见 TTFT 仅支持近 7 天，已自动收窄范围。"
       }
     },
     "redemptions": {

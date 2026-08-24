@@ -1333,7 +1333,8 @@
         "avg": "Avg",
         "p95": "P95",
         "p99": "P99",
-        "source": "Source: {{source}}"
+        "source": "Source: {{source}}",
+        "clamped": "Self TTFT supports up to 7 days — range narrowed automatically."
       }
     },
     "redemptions": {

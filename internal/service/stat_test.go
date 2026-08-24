@@ -250,6 +250,13 @@ func TestQueryStatsTTFT_whenExactBranch_thenWhitelistSpanAndID(t *testing.T) {
 		From: statsTestFrom, To: statsTestFrom.Add(MaxStatsTTFTExactSpan + time.Hour),
 		EntityType: "account", EntityID: 7})
 	require.ErrorIs(t, err, ErrInvalidInput, "exact 跨度超 168h")
+	require.Contains(t, err.Error(), "exact-track limit")
+
+	_, err = svc.QueryStatsTTFT(context.Background(), TTFTQuery{
+		From: statsTestFrom, To: statsTestFrom.Add(MaxStatsTTFTExactSpan + time.Millisecond),
+		EntityType: "account", EntityID: 7})
+	require.ErrorIs(t, err, ErrInvalidInput, "exact 跨度超 168h 1ms 亦拒绝")
+	require.Contains(t, err.Error(), "exact-track limit")
 
 	sum, err = svc.QueryStatsTTFT(context.Background(), TTFTQuery{
 		From: statsTestFrom, To: statsTestFrom.Add(MaxStatsTTFTExactSpan),

@@ -155,7 +155,7 @@ func (s *Service) QueryStatsTTFT(ctx context.Context, q TTFTQuery) (*domain.TTFT
 		}
 	} else {
 		if err := validateStatsWindow(q.From, q.To, MaxStatsTTFTExactSpan); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("self/entity ttft window exceeds %s exact-track limit: %w", MaxStatsTTFTExactSpan, err)
 		}
 		if !statEntityTypes[q.EntityType] || q.EntityID == 0 {
 			return nil, ErrInvalidInput
