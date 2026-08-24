@@ -28,11 +28,17 @@ forced AS (
 	UPDATE users u SET balance = u.balance - t.delta
 	FROM totals t WHERE u.id = t.uid AND u.id NOT IN (SELECT uid FROM debited)
 	RETURNING u.id AS uid, u.balance AS balance_after),
+od_map AS (
+	SELECT uid, TRUE AS od FROM forced
+	UNION ALL
+	SELECT uid, FALSE AS od FROM debited),
 marked AS (
 	UPDATE usage_logs l SET billed = TRUE,
-		overdraft = EXISTS (
-			SELECT 1 FROM forced f JOIN batch b ON b.id = l.id WHERE f.uid = b.uid)
-	WHERE l.id IN (SELECT id FROM batch) AND NOT l.billed
+		overdraft = COALESCE(q.od, FALSE)
+	FROM (
+		SELECT b.id, b.uid, m.od
+		FROM batch b LEFT JOIN od_map m ON m.uid = b.uid) q
+	WHERE l.id = q.id AND NOT l.billed
 	RETURNING l.id),
 ghosts AS (
 	SELECT b.uid FROM batch b
@@ -96,11 +102,17 @@ forced AS (
 	UPDATE users u SET balance = u.balance - s.spill
 	FROM spill s WHERE u.id = s.uid AND u.id NOT IN (SELECT uid FROM debited)
 	RETURNING u.id AS uid, u.balance AS balance_after),
+od_map AS (
+	SELECT uid, TRUE AS od FROM forced
+	UNION ALL
+	SELECT uid, FALSE AS od FROM debited),
 marked AS (
 	UPDATE usage_logs l SET billed = TRUE,
-		overdraft = EXISTS (
-			SELECT 1 FROM forced f JOIN batch b ON b.id = l.id WHERE f.uid = b.uid)
-	WHERE l.id IN (SELECT id FROM batch) AND NOT l.billed
+		overdraft = COALESCE(q.od, FALSE)
+	FROM (
+		SELECT b.id, b.uid, m.od
+		FROM batch b LEFT JOIN od_map m ON m.uid = b.uid) q
+	WHERE l.id = q.id AND NOT l.billed
 	RETURNING l.id),
 ghosts AS (
 	SELECT b.uid FROM batch b JOIN spill s ON s.uid = b.uid

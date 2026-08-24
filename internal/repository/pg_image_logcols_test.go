@@ -13,7 +13,7 @@ package repository_test
 //     in/out + format=openai-images 落库、QueryUsages 读回、SQL 层直查
 //   - 价格列 NULL 语义（未设置 → NULL 落库、nil 读回；call_count DEFAULT 0）
 //   - F2 单写点 + 游标消费：openai-images/openai-search 行经 InsertBatch 落库
-//     （ent FormatValidator 校验通过）→ DeductOnlyAndMark 扣费标记 → SQL 层
+//     （ent FormatValidator 校验通过）→ SettleFefoBatch 扣费标记 → SQL 层
 //     直查 billed 翻转（旧 COPY 路径断言随双写删除——usage flusher 是唯一写者）
 //
 // 基座约定同 pg_logcols_test.go：newPGRepos 每测试 DROP SCHEMA 重建 + migrate

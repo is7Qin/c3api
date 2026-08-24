@@ -61,7 +61,7 @@ func (f *Flusher) consumeBatch(ctx context.Context) int64 {
 // 收敛——隔离行以 Quarantined 计数随 summary 返回）；成功 → 定向余额刷新 +
 // quarantined 观测，返回退出游标行数。
 func (f *Flusher) settleLane(ctx context.Context, settle func(context.Context, int) (domain.SettlementSummary, error)) int64 {
-	s, err := settle(ctx, fetchBatchLimit)
+	s, err := settle(ctx, settleBatchLimit)
 	if err != nil {
 		if f.log != nil && ctx.Err() == nil {
 			f.log.Warn("billing settle lane failed", logx.Error(err))

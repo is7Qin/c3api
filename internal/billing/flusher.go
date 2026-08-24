@@ -58,13 +58,23 @@ type FlushConfig struct {
 }
 
 const (
-	// fetchBatchLimit 每车道单窗口行数上限：结算语句 batch CTE 的 LIMIT 参数，
-	// 单次 DB 往返的行吞吐上限；零价扫尾取批同上限。
+	// fetchBatchLimit 零价扫/FEFO 车道取数上限（FetchUnbilledBatch 单次规模）。
 	fetchBatchLimit = 2000
+	// settleBatchLimit 结算语句单窗口行数（F2-opt W2 实测调参）：语句固定成本
+	// （编排/行锁/WALK 摊派）按批摊薄——批越大每行成本越趋近纯 WAL 写入。
+	// 2000 行实测 333 行/s（固定成本主导）；50k 行同语句 <1s 级，预期 ≥30k 行/s。
+	settleBatchLimit = 50000
 	// lagWarnFraction lag 护栏阈值 = 保留期的 80%（spec §一：超保留期 80% 高声
 	// warn——留 20% 缓冲给告警响应窗口）。
 	lagWarnFraction = 0.8
 )
+
+// lagSlowEvery 精确 lag 探针低频系数（F2-opt W2 实测调参）：COUNT(*) 在大积压
+// 下是 O(unbilled) 的 index-only 扫描——风暴后可见性地图未置位时退化为逐行堆
+// 取（6.5M 行实测 474ms+），每周期必跑吃掉 ~20% 周期预算。精确值每 lagSlowEvery
+// 个节流窗校准一次，周期间 UnbilledRows 保持上次快照、lag_ms 不更新（Close 排
+// 空 force 绕过节流保证退出判据新鲜）。var（非 const）：测试注入。
+var lagSlowEvery = 10
 
 // lagRefreshInterval lag/Stats 真值刷新节流（F2-opt D2）：距上次刷新 ≥1s 才
 // 执行——排空循环内每批一刷会放大 UnbilledLag 探测压力，Stats().UnbilledRows
@@ -122,6 +132,7 @@ type Flusher struct {
 	quarantined atomic.Int64
 	lagMs       atomic.Int64
 	lastLag     atomic.Int64
+	lagSlowCnt  int // 精确探针低频计数（仅 flushMu 内读写——consumeCycle 收尾串行）
 	lagWarned   atomic.Bool
 }
 
@@ -208,12 +219,18 @@ func (f *Flusher) consumeCycle(ctx context.Context, drain bool) int64 {
 // 零锁直读）。仅在 flushMu 内调用（consumeCycle 收尾）——节流检查无竞态。
 func (f *Flusher) refreshLag(ctx context.Context, force bool) {
 	now := time.Now().UnixMilli()
-	if !force {
+	if force {
+		f.lastLag.Store(now)
+	} else {
 		if last := f.lastLag.Load(); last != 0 && time.Duration(now-last)*time.Millisecond < lagRefreshInterval {
 			return // 节流窗内跳过（首调 lastLag==0 必刷）
 		}
+		f.lagSlowCnt++
+		f.lastLag.Store(now)
+		if (f.lagSlowCnt-1)%lagSlowEvery != 0 {
+			return // 精确探针低频化：COUNT(*) 大积压下 O(unbilled) 数秒级，低频校准
+		}
 	}
-	f.lastLag.Store(now)
 	oldest, count, err := f.store.UnbilledLag(ctx)
 	if err != nil {
 		if f.log != nil && ctx.Err() == nil {

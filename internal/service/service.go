@@ -80,7 +80,7 @@ type UserStore interface {
 	CreateTempBalance(ctx context.Context, userID int64, amount int64, expiresAt *time.Time, note *string) error
 	// ListUserTempBalances 用户侧有效临时额度（/api/user/temp-balances：amount > 0
 	// 且未过期，expires_at 升序——PG ASC 默认 NULLS LAST，永久最后，与
-	// fefoSelectSQL 扣费顺序同源）。
+	// SettleFefoBatch 扣费顺序同源）。
 	ListUserTempBalances(ctx context.Context, userID int64) ([]*domain.TempBalance, error)
 	// ListTempBalances 管理侧全量临时额度（/api/admin/temp-balances：含过期/用尽/
 	// 负扣减行——全量视角；userID 0 = 全部；sort 白名单 + 分页）。

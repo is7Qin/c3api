@@ -442,6 +442,15 @@ func restoreLagThrottle(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { lagRefreshInterval = old })
 }
 
+// restoreLagSlowEvery 注入精确探针低频系数并在测试结束还原（lagSlowEvery=1
+// → 每次非 force 调用都真探，恢复逐调用断言的确定性）。
+func restoreLagSlowEvery(t *testing.T, n int) {
+	t.Helper()
+	old := lagSlowEvery
+	lagSlowEvery = n
+	t.Cleanup(func() { lagSlowEvery = old })
+}
+
 // —— 用例 ——
 
 // TestFlusherConsumesAndMarksBilled 正常消费链：三车道顺序消费 → billed 翻转 +
@@ -616,7 +625,8 @@ func TestFlusherTwoLaneDisjointness(t *testing.T) {
 // TestFlusherLagGuardrailWarns lag 护栏：最老 unbilled 行距今超保留期 80% →
 // 高声 Warn（边沿触发）；低于阈值回落复位告警边沿（真值照常刷新）。
 func TestFlusherLagGuardrailWarns(t *testing.T) {
-	restoreLagThrottle(t, 0) // 禁节流：多周期序列每周期探测刷新（节流行为归专测）
+	restoreLagThrottle(t, 0)
+	restoreLagSlowEvery(t, 1) // 禁节流：多周期序列每周期探测刷新（节流行为归专测）
 	store := newFakeLedgerStore()
 	logger, out := newTestLogger(t)
 	store.seedRow(1, 1, 100, time.Now().Add(-20*time.Hour)) // 阈值 = 24h×80% = 19.2h
@@ -654,6 +664,7 @@ func TestFlusherLagGuardrailWarns(t *testing.T) {
 // 语义）：超龄行不告警，lag 真值照常刷新。
 func TestFlusherLagDisabled(t *testing.T) {
 	restoreLagThrottle(t, 0)
+	restoreLagSlowEvery(t, 1)
 	store := newFakeLedgerStore()
 	logger, out := newTestLogger(t)
 	store.seedRow(1, 1, 100, time.Now().Add(-100*time.Hour))
