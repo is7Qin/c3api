@@ -71,8 +71,9 @@ func (f *Flusher) consumeBatch(ctx context.Context) int64 {
 }
 
 // settleLaneParallel 单车道 K 桶并行结算（wave3 D-C）：K goroutine 各自调用
-// settle(ctx, settleBatchLimit, K, i)（i=0..K-1，独立 tx/连接），WaitGroup 全量
-// 收敛后合并 summary——计数相加、Balances 对拼接（桶间 uid 集合按构造不相交，
+// settle(ctx, ctl.limit(), K, i)（i=0..K-1，独立 tx/连接），批规模取自适应控制
+// 器当前值（batch_controller.go），调用后以实测时长/错误反馈 observe——WaitGroup
+// 全量收敛后合并 summary——计数相加、Balances 对拼接（桶间 uid 集合按构造不相交，
 // 对拼接无重复）。错误语义：首错胜出记录 + Warn，但**等全部 goroutine 完成后才
 // 返回**（无 early-abort——他桶已提交的工作必须计入；回滚只发生在出错桶自己的
 // 事务内，他桶不受扰）。成功桶的提交是真进展：合并 summary 照常 applySettlement
@@ -88,7 +89,10 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, settle settleFn) int64
 		wg.Add(1)
 		go func(bucket int) {
 			defer wg.Done()
-			s, err := settle(ctx, settleBatchLimit, settleParallelism, bucket)
+			lim := f.ctl.limit()
+			t0 := time.Now()
+			s, err := settle(ctx, lim, settleParallelism, bucket)
+			f.ctl.observe(time.Since(t0), err)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {

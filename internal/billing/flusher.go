@@ -63,9 +63,13 @@ type FlushConfig struct {
 const (
 	// fetchBatchLimit 零价扫/FEFO 车道取数上限（FetchUnbilledBatch 单次规模）。
 	fetchBatchLimit = 2000
-	// settleBatchLimit 结算语句单窗口行数（F2-opt W2 实测调参）：语句固定成本
-	// （编排/行锁/WALK 摊派）按批摊薄——批越大每行成本越趋近纯 WAL 写入。
-	// 实测边界：本盒单语句 DML ~3-6k 行/s（IO/WAL 共享竞争下更低），批规模必须// 满足 settleTimeout(10s) 预算——50k 行实测超时停摆（生产 1170 万行脏可见性// 地图上单语句 >10s）。8000 行 ≈ 1.3-2.6s/语句，安全余量 3 倍+。
+	// settleBatchLimit 结算语句单窗口行数的种子/初始值（自适应批控
+	// batchController 的起点，非固定值——见 batch_controller.go）：F2-opt W2
+	// 实测调参。语句固定成本（编排/行锁/WALK 摊派）按批摊薄——批越大每行成本
+	// 越趋近纯 WAL 写入。实测边界：本盒单语句 DML ~3-6k 行/s（IO/WAL 共享竞争
+	// 下更低），批规模必须满足 settleTimeout(10s) 预算——50000 行实测超时停摆
+	// （生产 1170 万行脏可见性地图上单语句 >10s）。8000 行 ≈ 1.3-2.6s/语句，
+	// 安全余量 3 倍+；控制器以实测时长反馈在 [500,64000] 内自适应调节。
 	settleBatchLimit = 8000
 	// lagWarnFraction lag 护栏阈值 = 保留期的 80%（spec §一：超保留期 80% 高声
 	// warn——留 20% 缓冲给告警响应窗口）。
@@ -115,6 +119,9 @@ type Flusher struct {
 	store LedgerStore
 	bal   *Balances
 	log   *logx.Logger
+	// ctl 结算批规模自适应控制器（batch_controller.go）：settleLaneParallel
+	// 各桶 goroutine 观测语句时长/错误反馈调节批规模（并发安全，内含互斥量）。
+	ctl *batchController
 	// flushMu 单消费周期入口串行：ticker/Close 两处触发互斥；在途周期即其
 	// 持有者（Close 排空惯用法，与 usage 包各自声明——有意重复）。
 	flushMu    sync.Mutex
@@ -144,6 +151,7 @@ type Flusher struct {
 func NewFlusher(cfg FlushConfig, store LedgerStore, bal *Balances, log *logx.Logger) *Flusher {
 	f := &Flusher{
 		cfg: cfg, store: store, bal: bal, log: log,
+		ctl:      newBatchController(),
 		loopDone: make(chan struct{}),
 	}
 	f.baseCtx, f.baseCancel = context.WithCancel(context.Background())
