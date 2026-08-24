@@ -37,7 +37,7 @@ const TTFT_MAX_SPAN_MS = 7 * 24 * 3600 * 1000
 export default function UserStats() {
   const { t } = useTranslation()
   const [range, setRange] = useState(defaultRange)
-  const [granularity, setGranularity] = useState<Granularity>('day')
+  const [granularity, setGranularity] = useState<Granularity>('hour')
   const [metric, setMetric] = useState<Metric>('tokens')
   const [modelInput, setModelInput] = useState('')
   const debouncedModel = useDebounced(modelInput, 300)
