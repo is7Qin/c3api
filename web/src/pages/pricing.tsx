@@ -15,6 +15,7 @@ import { SortableHeader, type SortOrder } from '@/components/sortable-header'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -374,11 +375,12 @@ function VariantsDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>{model ? t('pricing.variants.title', { model }) : t('pricing.variants.title', { model: '' })}</DialogTitle>
             <DialogDescription>{t('pricing.variants.dialogDesc')}</DialogDescription>
           </DialogHeader>
+          <ScrollArea className="flex-1 min-h-0">
 
           {source === 'litellm' && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
@@ -586,6 +588,7 @@ function VariantsDialog({
           </div>
 
           {putMut.isError && errMsg(putMut.error) && <p className="text-sm text-destructive">{errMsg(putMut.error)}</p>}
+          </ScrollArea>
 
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setClearConfirm(true)} disabled={delMut.isPending || putMut.isPending} className="mr-auto">
