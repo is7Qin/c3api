@@ -1045,9 +1045,9 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 **mode 与分量校验（PUT /prices/entry）**：`mode=token` ⇒ `input_per_m` + `output_per_m` 必填；`mode=call` ⇒ `price_per_call` 必填；`mode=image` ⇒ image 三分量至少其一；其余分量可选配。`max_input_tokens` / `max_output_tokens` / `supports_prompt_caching` 为 litellm 元数据（仅 litellm 行携带，manual 行 `nil`；查询与计费无关，信息保留在 `raw` JSONB）。
 
-**变体语义**：条件全可空=通配，多条件 AND；首条命中即停（按 seq 升序）。效果至少其一非空：`mult_bp` 万分数整单乘数（0~100000，0=免费，100000=×10），`set_input_per_m`/`set_output_per_m` 绝对覆盖（仅 input/output 受覆盖；cache 分量只受 mult_bp 影响）。DB 侧 `CHECK(mult_bp IS NOT NULL OR set_input_per_m IS NOT NULL OR set_output_per_m IS NOT NULL)` 防御空效果行。
+**变体语义**：条件全可空=通配，多条件 AND；首条命中即停（按 seq 升序）。效果至少其一非空：`multiplier` 倍数（0..10，0=免费档，上限 10=×10；API 边界倍数小数——存储 `mult_bp` 万分：存储 15000 ↔ 显示 1.5），`set_input_per_m`/`set_output_per_m` 绝对覆盖（仅 input/output 受覆盖；cache 分量只受 multiplier 影响）。DB 侧 `CHECK(mult_bp IS NOT NULL OR set_input_per_m IS NOT NULL OR set_output_per_m IS NOT NULL)` 防御空效果行。
 
-**解析与计费**：`ResolveEntryPrices` 按 entry 基底 → 首中变体 → mult_bp 全体乘（钳制 [0,100000]，溢出防御）→ set_* 绝对覆盖；`billing.CostFromResolved` 纯算术对解析后单价组计算（零分配零锁；价格快照读零 DB）。
+**解析与计费**：`ResolveEntryPrices` 按 entry 基底 → 首中变体 → multiplier 倍率（0..10，存储换算万分钳制 [0,100000] 溢出防御）全体乘 → set_* 绝对覆盖；`billing.CostFromResolved` 纯算术对解析后单价组计算（零分配零锁；价格快照读零 DB）。
 
 ### 价格列表
 
@@ -1077,7 +1077,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 `GET /api/admin/prices/variants?model={model}` — 该模型变体集（seq 升序）。
 
-`PUT /api/admin/prices/variants?model={model}` — 批量整体替换该模型变体集（请求体 `{"variants": [...]}`；空数组 = 清空）。每条 `seq` 唯一、效果至少其一（`mult_bp` ∈ [0,100000] 且 `set_*` ≥0）；非法 → 400。响应 `200` 为替换后变体集。
+`PUT /api/admin/prices/variants?model={model}` — 批量整体替换该模型变体集（请求体 `{"variants": [...]}`；空数组 = 清空）。每条 `seq` 唯一、效果至少其一（`multiplier` ∈ [0,10] 且 `set_*` ≥0，存储换算万分）；非法 → 400。响应 `200` 为替换后变体集。
 
 `DELETE /api/admin/prices/variants?model={model}` — 清空该模型变体集（等价 PUT 空数组；`200 {"deleted": true}`）。
 

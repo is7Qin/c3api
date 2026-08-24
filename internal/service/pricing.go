@@ -203,7 +203,7 @@ func (s *Service) ReplacePriceVariants(ctx context.Context, model string, varian
 			return nil, fmt.Errorf("%w: variant seq %d requires at least one effect", ErrInvalidInput, v.Seq)
 		}
 		if v.MultBP != nil && (*v.MultBP < 0 || *v.MultBP > 100000) {
-			return nil, fmt.Errorf("%w: variant seq %d mult_bp out of range [0,100000]", ErrInvalidInput, v.Seq)
+			return nil, fmt.Errorf("%w: variant seq %d multiplier must be in [0,10]", ErrInvalidInput, v.Seq)
 		}
 	}
 	// entry existence check? allow variants for non-existent model? For now allow but warn; service layer still writes.

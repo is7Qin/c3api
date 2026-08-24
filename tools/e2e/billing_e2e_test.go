@@ -407,13 +407,13 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	// e2e-mult-model 基础；API 输入 USD/1M 正常值，存储毫分）---
 	// 统一价格表契约：基础价 PUT /prices/entry?model=（token 档 input_per_m/
 	// output_per_m），矩阵档 PUT /prices/variants?model=（service_tier 替换档 /
-	// ctx_min 分段 / mult_bp 万分倍率）。模型 ID 含 "/"，一律查询参数。
+	// ctx_min 分段 / multiplier 倍数 0..10）。模型 ID 含 "/"，一律查询参数。
 	// USD/1M：prompt 100.0（$100）、completion 200.0（$200）。
 	putPrice(t, env, "e2e-model", map[string]any{
 		"input_per_m": 100.0, "output_per_m": 200.0,
 	})
 	putVariants(t, env, "e2e-model", []map[string]any{
-		{"seq": 1, "service_tier": "fast", "mult_bp": 20000},
+		{"seq": 1, "service_tier": "fast", "multiplier": 2},
 	})
 	// 变体语义 = 整单切换（旧 above 分段计价已随三表退役）：pt10/ct20 每 token
 	// 基数 in=10/out=20。
@@ -428,7 +428,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	putVariants(t, env, "e2e-matrix-model", []map[string]any{
 		{"seq": 1, "service_tier": "priority", "set_input_per_m": 150.0, "set_output_per_m": 250.0},
 		{"seq": 2, "service_tier": "flex", "set_input_per_m": 120.0, "set_output_per_m": 180.0},
-		{"seq": 3, "service_tier": "fast", "mult_bp": 20000},
+		{"seq": 3, "service_tier": "fast", "multiplier": 2},
 		// 通配长上下文兜底必须排在档位专属之后——首中即停，先匹配者赢
 		{"seq": 4, "ctx_min": 5, "set_input_per_m": 50.0, "set_output_per_m": 100.0},
 	})
@@ -482,7 +482,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	require.Equal(t, int64(480), r.Cost, "flex 档计费")
 	require.Equal(t, "flex", r.Tier)
 
-	// fast：基础档 × fast 变体 mult_bp 20000（×2）→ 1000
+	// fast：基础档 × fast 变体 multiplier 2（×2）→ 1000
 	chatReq("e2e-matrix-model", map[string]any{"service_tier": "fast"})
 	bal -= 1000
 	pollBalance(t, env, u1, bal)
@@ -765,7 +765,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 			require.Equal(t, float64(2.0), vm["SetInputPerM"], "flex 变体 SetInputPerM")
 			require.Equal(t, float64(8.0), vm["SetOutputPerM"], "flex 变体 SetOutputPerM")
 		case "fast":
-			require.Equal(t, float64(60000), vm["MultBP"], "fast 变体 ×6.0 = 60000bp")
+			require.Equal(t, float64(6), vm["multiplier"], "fast 变体 ×6.0")
 		default:
 			if vm["CtxMin"] != nil {
 				require.Equal(t, float64(256000), vm["CtxMin"], "above 分段阈值 256k tokens")
@@ -968,7 +968,7 @@ func putPrice(t *testing.T, env *e2eEnv, model string, body map[string]any) {
 }
 
 // putVariants manual 变体矩阵（断言 200）：service_tier 替换档 / ctx_min 分段 /
-// mult_bp 万分倍率，整体替换语义。
+// multiplier 倍数小数（0..10，0=免费，存储换算万分），整体替换语义。
 func putVariants(t *testing.T, env *e2eEnv, model string, variants []map[string]any) {
 	t.Helper()
 	c, rb := env.admin(http.MethodPut, "/prices/variants?model="+url.QueryEscape(model),

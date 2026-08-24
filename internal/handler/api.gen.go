@@ -1076,7 +1076,6 @@ type PriceVariant struct {
 	CtxMin        *int64    `json:"CtxMin"`
 	DowMask       *int      `json:"DowMask"`
 	Model         string    `json:"Model"`
-	MultBP        *int      `json:"MultBP"`
 	Seq           int       `json:"Seq"`
 	ServiceTier   *string   `json:"ServiceTier"`
 	SetInputPerM  *float64  `json:"SetInputPerM"`
@@ -1084,6 +1083,9 @@ type PriceVariant struct {
 	TimeEnd       *string   `json:"TimeEnd"`
 	TimeStart     *string   `json:"TimeStart"`
 	UpdatedAt     time.Time `json:"UpdatedAt"`
+
+	// Multiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）
+	Multiplier *float64 `json:"multiplier"`
 }
 
 // PriceVariantListRequest defines model for PriceVariantListRequest.
@@ -1098,10 +1100,12 @@ type PriceVariantListResponse struct {
 
 // PriceVariantUpsert defines model for PriceVariantUpsert.
 type PriceVariantUpsert struct {
-	CtxMax        *int64   `json:"ctx_max"`
-	CtxMin        *int64   `json:"ctx_min"`
-	DowMask       *int     `json:"dow_mask"`
-	MultBp        *int     `json:"mult_bp"`
+	CtxMax  *int64 `json:"ctx_max"`
+	CtxMin  *int64 `json:"ctx_min"`
+	DowMask *int   `json:"dow_mask"`
+
+	// Multiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）
+	Multiplier    *float64 `json:"multiplier"`
 	Seq           *int     `json:"seq,omitempty"`
 	ServiceTier   *string  `json:"service_tier"`
 	SetInputPerM  *float64 `json:"set_input_per_m"`

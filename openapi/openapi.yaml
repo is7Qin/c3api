@@ -2670,7 +2670,7 @@ components:
         TimeStart: { type: string, nullable: true }
         TimeEnd: { type: string, nullable: true }
         DowMask: { type: integer, nullable: true }
-        MultBP: { type: integer, nullable: true }
+        multiplier: { type: number, format: double, minimum: 0, maximum: 10, nullable: true, description: "价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）" }
         SetInputPerM: { type: number, format: double, nullable: true }
         SetOutputPerM: { type: number, format: double, nullable: true }
         CreatedAt: { type: string, format: date-time }
@@ -2684,7 +2684,7 @@ components:
         time_start: { type: string, nullable: true }
         time_end: { type: string, nullable: true }
         dow_mask: { type: integer, nullable: true }
-        mult_bp: { type: integer, nullable: true }
+        multiplier: { type: number, format: double, minimum: 0, maximum: 10, nullable: true, description: "价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）" }
         set_input_per_m: { type: number, format: double, nullable: true }
         set_output_per_m: { type: number, format: double, nullable: true }
         seq: { type: integer, minimum: 1 }
