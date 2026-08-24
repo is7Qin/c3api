@@ -84,10 +84,10 @@ func TestFlusherErrlogWorkerParallelIsolated(t *testing.T) {
 
 	require.Equal(t, 0, store.unbilledCount(), "计费游标独立排空全部 billed 行（billed 翻转）")
 	var consumed int64
-	for _, c := range store.deductSnapshot() {
-		consumed += int64(len(c.ids))
+	for _, c := range store.laneSnapshot() {
+		consumed += c.marked
 	}
-	require.Equal(t, int64(billed), consumed, "扣费事务逐组推进合计（消费不受 errlog 并行影响）")
+	require.Equal(t, int64(billed), consumed, "结算语句逐车道推进合计（消费不受 errlog 并行影响）")
 	require.Equal(t, rejected, errs.count(), "errlog worker 独立排空全部拒绝行（与 flusher 互不串路）")
 	require.Zero(t, ew.Queued(), "errlog 队列排空")
 }

@@ -110,8 +110,8 @@ func (r *UserRepo) CreateTempBalance(ctx context.Context, userID int64, amount i
 
 // ListUserTempBalances 用户侧有效临时额度（/api/user/temp-balances）：amount > 0
 // AND (expires_at IS NULL OR expires_at > now) ORDER BY expires_at ASC——PG
-// ASC 默认 NULLS LAST（永久最后），与 billing_repo.go fefoSelectSQL 语义逐条件
-// 一致（同源排序：扣费顺序 = 展示顺序，用户可见"哪个先过期"）。
+// ASC 默认 NULLS LAST（永久最后），与 billing_settle_sql.go FEFO 车道 temp_pool
+// 窗口序语义逐条件一致（同源排序：扣费顺序 = 展示顺序，用户可见"哪个先过期"）。
 func (r *UserRepo) ListUserTempBalances(ctx context.Context, userID int64) ([]*domain.TempBalance, error) {
 	rows, err := r.client.TempBalance.Query().
 		Where(tempbalance.And(

@@ -35,37 +35,44 @@ type fakeLedgerRow struct {
 	od        bool
 }
 
-// deductObs DeductOnlyAndMark 调用观测（分组/成本和断言面）。
-type deductObs struct {
-	userID, cost int64
-	ids          []int64
+// laneCall 车道结算调用观测（车道序/路由断言面）。
+type laneCall struct {
+	fefo   bool
+	marked int64
+}
+
+// fakeTemp 临时额度内存态（FEFO 消耗断言面；expiresAt 零值 = 永久 NULLS LAST）。
+type fakeTemp struct {
+	id        int64
+	amount    int64
+	expiresAt time.Time
 }
 
 // fakeLedgerStore 六方法全实现：rows 即游标真值（billed 翻转 = 退出游标），
-// balances 模拟用户余额扣减（缺失用户 = quarantined 出口），failLeft 注入结构
-// 错误（id → 剩余失败次数），failMark 注入标记面故障（整库故障形态）。全部
-// 方法持锁——-race 下多 worker 并发消费安全。
+// balances 模拟用户余额（缺失用户 = quarantined 出口），temps 模拟临时额度
+// （FEFO 车道谓词与消耗），failLeft 注入语句级结构错误（整语句失败形态），
+// failMark 注入标记面故障。全部方法持锁——-race 下安全。
 type fakeLedgerStore struct {
 	mu          sync.Mutex
 	rows        map[int64]*fakeLedgerRow
 	balances    map[int64]int64
+	temps       map[int64][]fakeTemp
+	tempSeq     int64
 	failLeft    map[int64]int
 	failMark    bool // MarkBilledBulk 恒失败（整库故障注入）
 	lockOK      bool // false → AcquireBillingLock 报错
 	lockHeld    bool // 已持有 → ok=false（互斥面）
-	fetches     int
-	lagProbes   int
-	endlessRows bool // 每次取批合成一行全新未标记行（周期预算回归——持续到达形态）
-	endlessID   int64
-	deductCalls []deductObs
-	markCalls   [][]int64
-	chunkCalls  [][]domain.LedgerGroup
+	fetches   int
+	lagProbes int
+	laneCalls []laneCall
+	markCalls [][]int64
 }
 
 func newFakeLedgerStore() *fakeLedgerStore {
 	return &fakeLedgerStore{
 		rows:     map[int64]*fakeLedgerRow{},
 		balances: map[int64]int64{},
+		temps:    map[int64][]fakeTemp{},
 		failLeft: map[int64]int{},
 		lockOK:   true,
 	}
@@ -132,13 +139,6 @@ func (s *fakeLedgerStore) FetchUnbilledBatch(ctx context.Context, limit int) ([]
 			ids = append(ids, id)
 		}
 	}
-	if s.endlessRows { // 周期预算回归：合成全新未标记行（持续到达形态——无预算则 drainLoop 永不返回）
-		s.endlessID++
-		s.rows[s.endlessID] = &fakeLedgerRow{row: domain.LedgerRow{ID: s.endlessID,
-			UserID: s.endlessID, Cost: 100, Model: "gpt-4o", BillingTier: "auto",
-			CallCount: 1, Format: "openai-chat"}}
-		ids = append(ids, s.endlessID)
-	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	if len(ids) > limit {
 		ids = ids[:limit]
@@ -150,89 +150,145 @@ func (s *fakeLedgerStore) FetchUnbilledBatch(ctx context.Context, limit int) ([]
 	return out, nil
 }
 
-func (s *fakeLedgerStore) DeductOnlyAndMark(ctx context.Context, userID, cost int64, ids []int64) (balanceAfter int64, overdrafted, quarantined bool, err error) {
+// SettleBalanceBatch/SettleFefoBatch 语句化结算面模拟（三车道拓扑）：车道谓词
+// 互斥（temp-active 路由）→ 候选批（id 升序 LIMIT）→ 结构错误预检（整语句失败
+// 形态）→ 按用户聚合 FEFO 消耗/spill → 条件扣/透支/幽灵隔离 → 标记。与 SQL
+// 语句语义同构（单元级；位级行为归 repository PG 测试族）。
+func (s *fakeLedgerStore) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, id := range ids {
-		if n := s.failLeft[id]; n > 0 {
-			s.failLeft[id] = n - 1
-			return 0, false, false, errors.New("injected structural failure")
-		}
-	}
-	s.deductCalls = append(s.deductCalls, deductObs{userID: userID, cost: cost, ids: append([]int64(nil), ids...)})
-	if cost <= 0 { // 防御路径：纯标记不扣减（对齐 deductOnlyCore 契约）
-		s.markLocked(ids, false)
-		return 0, false, false, nil
-	}
-	before, exists := s.balances[userID]
-	if !exists { // 用户缺失：跳过扣减仍标记全部 ids（不变量 #1 尾语义）
-		s.markLocked(ids, false)
-		return 0, false, true, nil
-	}
-	overdrafted = before < cost
-	s.balances[userID] = before - cost
-	s.markLocked(ids, overdrafted)
-	return s.balances[userID], overdrafted, false, nil
+	return s.settleLocked(limit, false)
 }
 
-// DeductGroupsAndMark chunk 单事务模拟（F2-opt D3；原子形态：任一组失败 =
-// 整块零变动——结构错误预检先行、余额变更收集后统一应用）。逐组记录
-// deductObs（与单组面同观测语义，flatten 断言面不变）+ chunkCalls 打包观测。
-func (s *fakeLedgerStore) DeductGroupsAndMark(ctx context.Context, groups []domain.LedgerGroup) ([]domain.LedgerGroupOutcome, error) {
+func (s *fakeLedgerStore) SettleFefoBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.chunkCalls = append(s.chunkCalls, append([]domain.LedgerGroup(nil), groups...)) // 入口记录：失败尝试亦观测
-	for _, g := range groups {                                                        // 结构错误预检：任一 id 注入失败 → 整块回滚形态
-		for _, r := range g.Rows {
-			if n := s.failLeft[r.ID]; n > 0 {
-				s.failLeft[r.ID] = n - 1
-				return nil, errors.New("injected structural failure")
+	return s.settleLocked(limit, true)
+}
+
+func (s *fakeLedgerStore) settleLocked(limit int, fefo bool) (domain.SettlementSummary, error) {
+	now := time.Now()
+	tempActive := func(uid int64) bool {
+		for _, tp := range s.temps[uid] {
+			if tp.amount > 0 && (tp.expiresAt.IsZero() || tp.expiresAt.After(now)) {
+				return true
 			}
 		}
+		return false
 	}
-	outcomes := make([]domain.LedgerGroupOutcome, len(groups))
-	pending := make(map[int64]int64, len(groups))
-	for i, g := range groups {
-		var cost int64
-		ids := make([]int64, 0, len(g.Rows))
-		for _, r := range g.Rows {
-			cost += r.Cost
-			ids = append(ids, r.ID)
+	ids := make([]int64, 0, len(s.rows))
+	for id, r := range s.rows {
+		if !r.billed {
+			ids = append(ids, id)
 		}
-		s.deductCalls = append(s.deductCalls, deductObs{userID: g.UserID, cost: cost, ids: ids})
-		if cost > 0 {
-			before, exists := s.balances[g.UserID]
-			if !exists { // 用户缺失：跳过扣减仍标记全部 ids（不变量 #1 尾语义）
-				outcomes[i].Quarantined = true
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var cands []domain.LedgerRow
+	for _, id := range ids { // 车道谓词互斥：balance NOT-IN / fefo IN temp-active
+		r := s.rows[id]
+		if r.row.Cost <= 0 || tempActive(r.row.UserID) != fefo {
+			continue
+		}
+		cands = append(cands, r.row)
+		if len(cands) >= limit {
+			break
+		}
+	}
+	res := domain.SettlementSummary{BatchRows: int64(len(cands))}
+	if len(cands) == 0 {
+		return res, nil
+	}
+	for _, r := range cands { // 结构错误预检：任一候选行注入失败 → 整语句失败形态
+		if n := s.failLeft[r.ID]; n > 0 {
+			s.failLeft[r.ID] = n - 1
+			return domain.SettlementSummary{}, errors.New("injected structural failure")
+		}
+	}
+	s.laneCalls = append(s.laneCalls, laneCall{fefo: fefo, marked: int64(len(cands))})
+	type agg struct {
+		delta int64
+		rows  []domain.LedgerRow
+	}
+	order := make([]int64, 0, 4)
+	byUID := make(map[int64]*agg, 4)
+	for _, r := range cands { // 按用户聚合（保首见序——确定性）
+		a := byUID[r.UserID]
+		if a == nil {
+			a = &agg{}
+			byUID[r.UserID] = a
+			order = append(order, r.UserID)
+		}
+		a.delta += r.Cost
+		a.rows = append(a.rows, r)
+	}
+	for _, uid := range order {
+		a := byUID[uid]
+		spill := a.delta
+		if fefo {
+			spill -= s.drawTempsLocked(uid, a.delta, now)
+		}
+		bal, exists := s.balances[uid]
+		switch {
+		case !exists: // 幽灵用户：跳扣仍标记全部行（不变量 #1 尾语义）
+			res.Quarantined += int64(len(a.rows))
+			s.markRowsLocked(a.rows, false)
+		case spill <= 0: // temp 全覆盖：零资金移动，纯标记
+			s.markRowsLocked(a.rows, false)
+		default:
+			od := bal < spill // 条件扣未命中 → 无条件透支补刀
+			s.balances[uid] = bal - spill
+			res.Balances = append(res.Balances, domain.UserBalance{UserID: uid, Balance: bal - spill})
+			if od {
+				res.ForcedUsers++
 			} else {
-				outcomes[i].Overdrafted = before < cost
-				pending[g.UserID] = before - cost
-				outcomes[i].BalanceAfter = before - cost
+				res.DebitedUsers++
 			}
+			s.markRowsLocked(a.rows, od)
 		}
 	}
-	if s.failMark {
-		return nil, errors.New("injected bulk-mark failure (DB-wide)")
-	}
-	for uid, bal := range pending {
-		s.balances[uid] = bal
-	}
-	for i, g := range groups {
-		ids := make([]int64, 0, len(g.Rows))
-		for _, r := range g.Rows {
-			ids = append(ids, r.ID)
-		}
-		s.markLocked(ids, outcomes[i].Overdrafted)
-	}
-	return outcomes, nil
+	res.Marked = res.BatchRows // fake 无并发抢标面——marked==batch 守卫恒一致
+	return res, nil
 }
 
-// markLocked 标记翻转（调用方持锁）：od 回写仅作用于本次翻转的行。
-func (s *fakeLedgerStore) markLocked(ids []int64, od bool) {
-	for _, id := range ids {
-		if r, ok := s.rows[id]; ok && !r.billed {
-			r.billed = true
-			r.od = od
+// drawTempsLocked FEFO 消耗（expires ASC NULLS LAST——零值永久排最后；返回实际
+// 消耗和，行级条件扣在单线程 fake 内恒成功）。
+func (s *fakeLedgerStore) drawTempsLocked(uid, delta int64, now time.Time) int64 {
+	tps := s.temps[uid]
+	idx := make([]int, 0, len(tps))
+	for i, tp := range tps {
+		if tp.amount > 0 && (tp.expiresAt.IsZero() || tp.expiresAt.After(now)) {
+			idx = append(idx, i)
+		}
+	}
+	sort.Slice(idx, func(a, b int) bool {
+		ia, ib := idx[a], idx[b]
+		za, zb := tps[ia].expiresAt.IsZero(), tps[ib].expiresAt.IsZero()
+		if za != zb {
+			return zb // 非 NULL 前，NULL（永久）后
+		}
+		if tps[ia].expiresAt.Equal(tps[ib].expiresAt) {
+			return tps[ia].id < tps[ib].id
+		}
+		return tps[ia].expiresAt.Before(tps[ib].expiresAt)
+	})
+	remain := delta
+	for _, i := range idx {
+		if remain <= 0 {
+			break
+		}
+		take := min(tps[i].amount, remain)
+		tps[i].amount -= take
+		remain -= take
+	}
+	return delta - remain
+}
+
+// markRowsLocked 标记翻转（调用方持锁）：od 回写仅作用于本次翻转的行。
+func (s *fakeLedgerStore) markRowsLocked(rows []domain.LedgerRow, od bool) {
+	for _, r := range rows {
+		if fr, ok := s.rows[r.ID]; ok && !fr.billed {
+			fr.billed = true
+			fr.od = od
 		}
 	}
 }
@@ -270,6 +326,34 @@ func (s *fakeLedgerStore) UnbilledLag(ctx context.Context) (time.Time, int64, er
 	return oldest, count, nil
 }
 
+// seedTemp 种子临时额度行（返回行 id；expiresAt 零值 = 永久 NULLS LAST）。
+func (s *fakeLedgerStore) seedTemp(userID, amount int64, expiresAt time.Time) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tempSeq++
+	s.temps[userID] = append(s.temps[userID], fakeTemp{id: s.tempSeq, amount: amount, expiresAt: expiresAt})
+	return s.tempSeq
+}
+
+func (s *fakeLedgerStore) tempAmount(id int64) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, tps := range s.temps {
+		for _, tp := range tps {
+			if tp.id == id {
+				return tp.amount
+			}
+		}
+	}
+	return -1
+}
+
+func (s *fakeLedgerStore) laneSnapshot() []laneCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]laneCall(nil), s.laneCalls...)
+}
+
 // —— 观测访问器（测试断言面，持锁读） ——
 
 func (s *fakeLedgerStore) isBilled(id int64) bool {
@@ -302,22 +386,10 @@ func (s *fakeLedgerStore) unbilledCount() int {
 	return n
 }
 
-func (s *fakeLedgerStore) deductSnapshot() []deductObs {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]deductObs(nil), s.deductCalls...)
-}
-
 func (s *fakeLedgerStore) markSnapshot() [][]int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([][]int64(nil), s.markCalls...)
-}
-
-func (s *fakeLedgerStore) chunkSnapshot() [][]domain.LedgerGroup {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([][]domain.LedgerGroup(nil), s.chunkCalls...)
 }
 
 func (s *fakeLedgerStore) fetchCount() int {
@@ -372,9 +444,9 @@ func restoreLagThrottle(t *testing.T, d time.Duration) {
 
 // —— 用例 ——
 
-// TestFlusherConsumesAndMarksBilled 正常消费链：取批 → 按 user 分组各一笔事务
-// （同 user 成本聚合）→ billed 翻转 + 余额精确扣减 + 余额快照定向刷新 +
-// lastFlush/unbilledN 观测推进。
+// TestFlusherConsumesAndMarksBilled 正常消费链：三车道顺序消费 → billed 翻转 +
+// 余额精确扣减（同用户成本聚合）+ 余额快照定向刷新 + lastFlush/unbilledN 观测
+// 推进。
 func TestFlusherConsumesAndMarksBilled(t *testing.T) {
 	store := newFakeLedgerStore()
 	r1 := store.seedRow(1, 1, 100, time.Now())
@@ -387,21 +459,16 @@ func TestFlusherConsumesAndMarksBilled(t *testing.T) {
 	n := f.consumeCycle(context.Background(), false)
 	require.Equal(t, int64(3), n, "整批退出游标")
 
-	calls := store.deductSnapshot()
-	require.Len(t, calls, 2, "按 user 分组两笔事务")
-	byUID := map[int64]deductObs{}
-	for _, c := range calls {
-		byUID[c.userID] = c
-	}
-	require.Equal(t, int64(400), byUID[1].cost, "同 user 成本聚合")
-	require.Equal(t, []int64{r1.ID, r2.ID}, byUID[1].ids)
-	require.Equal(t, int64(200), byUID[2].cost)
+	calls := store.laneSnapshot()
+	require.NotEmpty(t, calls)
+	require.False(t, calls[0].fefo, "balance 车道先行（§〇-b 周期序）")
+	require.Equal(t, int64(3), calls[0].marked, "余额-only 用户全批 balance 车道结算")
 
 	require.True(t, store.isBilled(r1.ID), "billed 翻转")
 	require.True(t, store.isBilled(r2.ID))
 	require.True(t, store.isBilled(r3.ID))
 	require.False(t, store.overdraftOf(r1.ID), "余额充足不透支")
-	require.Equal(t, int64(600), store.balanceOf(1), "1000-400")
+	require.Equal(t, int64(600), store.balanceOf(1), "1000-400 同用户成本聚合")
 	require.Equal(t, int64(300), store.balanceOf(2))
 
 	bal, ok := f.bal.BalanceOf(1)
@@ -431,41 +498,33 @@ func TestFlusherOverdraftFlow(t *testing.T) {
 	require.Equal(t, int64(-300), bal, "负余额刷新进快照")
 }
 
-// TestFlusherPoisonIsolated 毒行二分隔离推进：含毒行的组整体失败 → 折半重试
-// （无毒半原子推进）→ 单行毒行重试仍失败 → MarkBilledBulk 终极隔离（未扣费
-// 写销 + QuarantinedRows 计数 + Error 日志）——游标永不卡死。
-func TestFlusherPoisonIsolated(t *testing.T) {
+// TestFlusherPersistentFailureReplays 车道语句持续失败形态：Warn 归零本周期
+// （毒行梯子已在仓库侧收敛——隔离行以 Quarantined 计数随 summary 返回，见
+// repository PG 梯子族），行保持 unbilled 下周期重放，不误隔离不热旋。
+func TestFlusherPersistentFailureReplays(t *testing.T) {
 	store := newFakeLedgerStore()
 	logger, out := newTestLogger(t)
-	poison := store.seedRow(1, 7, 100, time.Now())
-	ok1 := store.seedRow(2, 7, 100, time.Now())
-	ok2 := store.seedRow(3, 7, 100, time.Now())
-	ok3 := store.seedRow(4, 7, 100, time.Now())
-	store.setBalance(7, 1000)
-	store.setFail(poison.ID, 1<<30) // 恒失败（大数近似持久毒）
-	f := newFlusherWith(store, 1, map[int64]int64{7: 1000})
+	r1 := store.seedRow(1, 1, 100, time.Now())
+	r2 := store.seedRow(2, 1, 100, time.Now())
+	store.setBalance(1, 500)
+	store.setFail(r1.ID, 1<<30)
+	store.setFail(r2.ID, 1<<30)
+	f := newFlusherWith(store, 1, map[int64]int64{1: 500})
 	f.log = logger
 
 	n := f.consumeCycle(context.Background(), false)
-	require.Equal(t, int64(4), n, "3 行扣费推进 + 1 行隔离退出 = 游标清空")
-
-	require.True(t, store.isBilled(ok1.ID) && store.isBilled(ok2.ID) && store.isBilled(ok3.ID), "无毒行照常扣费标记")
-	require.True(t, store.isBilled(poison.ID), "毒行被终极隔离标记（退出游标）")
-	require.False(t, store.overdraftOf(poison.ID))
-	require.Equal(t, int64(700), store.balanceOf(7), "毒行未扣费（写销该行计费）")
-	require.Equal(t, int64(1), f.quarantined.Load(), "QuarantinedRows 计数")
-	require.Zero(t, f.unbilledN.Load(), "游标清空（毒行不卡死）")
-
+	require.Zero(t, n, "语句失败 = 无进展")
+	require.False(t, store.isBilled(r1.ID) || store.isBilled(r2.ID), "行保持 unbilled 下周期重放")
+	require.Zero(t, f.quarantined.Load(), "编排层不隔离（隔离归仓库梯子）")
+	require.Equal(t, int64(500), store.balanceOf(1), "零扣费（不丢不重——初值原样）")
 	require.NoError(t, logger.Sync())
 	b, err := os.ReadFile(out)
 	require.NoError(t, err)
-	require.Contains(t, string(b), "poison row isolated without deduction")
-	require.Contains(t, string(b), `"level":"error"`, "止损升级 Error 级（可观测）")
-	require.Contains(t, string(b), `"usage_log_id":1`)
+	require.Contains(t, string(b), "billing settle lane failed")
 }
 
-// TestFlusherTransientFailureRetried 单行瞬态失败消歧：len==1 重试一次成功 =
-// 瞬态（DB 抖动），正常收尾不隔离不计数。
+// TestFlusherTransientFailureRetried 瞬态失败自愈：首周期语句失败归零（行保持
+// unbilled），次周期重放成功恰扣一次——不丢不重。
 func TestFlusherTransientFailureRetried(t *testing.T) {
 	store := newFakeLedgerStore()
 	row := store.seedRow(1, 1, 100, time.Now())
@@ -474,34 +533,19 @@ func TestFlusherTransientFailureRetried(t *testing.T) {
 	f := newFlusherWith(store, 1, map[int64]int64{1: 500})
 
 	n := f.consumeCycle(context.Background(), false)
-	require.Equal(t, int64(1), n)
-	require.True(t, store.isBilled(row.ID), "重试成功正常收尾")
+	require.Zero(t, n, "首周期瞬态失败无进展")
+	require.False(t, store.isBilled(row.ID))
+
+	n = f.consumeCycle(context.Background(), false)
+	require.Equal(t, int64(1), n, "次周期重放成功")
+	require.True(t, store.isBilled(row.ID))
 	require.Equal(t, int64(400), store.balanceOf(1), "恰扣一次（无重复扣费）")
 	require.Zero(t, f.quarantined.Load(), "瞬态失败不计隔离")
 }
 
-// TestFlusherWholeGroupFailureReplays 整库故障形态：两半都失败且标记面同故障
-// → 放弃本组本周期（行保持 unbilled 由 DB 天然重放），不误隔离不热旋。
-func TestFlusherWholeGroupFailureReplays(t *testing.T) {
-	store := newFakeLedgerStore()
-	r1 := store.seedRow(1, 1, 100, time.Now())
-	r2 := store.seedRow(2, 1, 100, time.Now())
-	store.setBalance(1, 500)
-	store.setFail(r1.ID, 1<<30)
-	store.setFail(r2.ID, 1<<30)
-	store.failMark = true // 标记面同故障（终极隔离也不可用）
-	f := newFlusherWith(store, 1, map[int64]int64{1: 500})
-
-	n := f.consumeCycle(context.Background(), false)
-	require.Zero(t, n, "两半都失败 = 无进展")
-	require.False(t, store.isBilled(r1.ID) || store.isBilled(r2.ID), "行保持 unbilled 下周期重放")
-	require.Zero(t, f.quarantined.Load(), "整库故障不误隔离")
-	require.Equal(t, int64(500), store.balanceOf(1), "零扣费（不丢不重——初值原样）")
-}
-
 // TestFlusherQuarantineMissingUser 用户缺失（不变量 #1 尾语义）：跳过扣减仍
-// 标记全部 ids、quarantined=true → QuarantinedRows 计数 + Warn——毒用户不卡
-// 游标。
+// 标记全部行、Quarantined 行数随 summary 返回 → QuarantinedRows 计数 + Warn
+// ——毒用户不卡游标。
 func TestFlusherQuarantineMissingUser(t *testing.T) {
 	store := newFakeLedgerStore()
 	logger, out := newTestLogger(t)
@@ -519,12 +563,11 @@ func TestFlusherQuarantineMissingUser(t *testing.T) {
 	require.NoError(t, logger.Sync())
 	b, err := os.ReadFile(out)
 	require.NoError(t, err)
-	require.Contains(t, string(b), "user missing, rows marked without deduction")
+	require.Contains(t, string(b), "rows marked without deduction")
 }
 
-// TestFlusherZeroCostFastMark cost=0 快速路径（m4 CostZeroFastMark，F2-opt D1
-// 内存路由形态）：免费/吸收态行同批取出 → 一次 MarkBilledBulk 纯标记，不进
-// FEFO 机器（零资金移动）。
+// TestFlusherZeroCostFastMark cost=0 快速路径（零价 sweep 车道）：免费/吸收态
+// 行由 sweep 一次 MarkBilledBulk 纯标记，不进结算语句（零资金移动）。
 func TestFlusherZeroCostFastMark(t *testing.T) {
 	store := newFakeLedgerStore()
 	z1 := store.seedRow(1, 1, 0, time.Now())
@@ -536,61 +579,38 @@ func TestFlusherZeroCostFastMark(t *testing.T) {
 	n := f.consumeCycle(context.Background(), false)
 	require.Equal(t, int64(3), n, "cost=0 两行纯标记 + cost>0 一行扣费")
 	require.True(t, store.isBilled(z1.ID) && store.isBilled(z2.ID), "cost=0 批量标记")
-	require.Equal(t, [][]int64{{z1.ID, z2.ID}}, store.markSnapshot(), "零价行单次 MarkBilledBulk（D1 路由）")
-	calls := store.deductSnapshot()
-	require.Len(t, calls, 1, "cost=0 不进 FEFO 机器")
-	require.Equal(t, []int64{paid.ID}, calls[0].ids, "扣费事务只含 cost>0 行")
+	require.Equal(t, [][]int64{{z1.ID, z2.ID}}, store.markSnapshot(), "零价行单次 MarkBilledBulk（sweep 车道）")
+	require.True(t, store.isBilled(paid.ID), "付费行 balance 车道扣费标记")
+	require.Equal(t, int64(900), store.balanceOf(1), "付费行恰扣一次；零价行零资金移动")
+	require.False(t, store.overdraftOf(z1.ID) || store.overdraftOf(z2.ID), "零价行 overdraft 出生 false 保持")
 }
 
-// TestFlusherChunkPackingAndDegradation chunk 打包与降级链（F2-opt D3）：多组
-// 单例 chunk 常规推进；chunk 结构错误 → 组为单位折半 → 单例组走行级二分机制
-// ——两层二分正交复用，无毒组照常推进。
-func TestFlusherChunkPackingAndDegradation(t *testing.T) {
-	t.Run("multi-group single chunk", func(t *testing.T) {
-		store := newFakeLedgerStore()
-		r1 := store.seedRow(1, 1, 100, time.Now())
-		r2 := store.seedRow(2, 1, 200, time.Now())
-		r3 := store.seedRow(3, 2, 300, time.Now())
-		store.setBalance(1, 1000)
-		store.setBalance(2, 500)
-		f := newFlusherWith(store, 1, map[int64]int64{1: 1000, 2: 500}) // 同分片：两组一 chunk
+// TestFlusherTwoLaneDisjointness 两车道互斥路由（§〇-b）：temp-active 用户恒入
+// FEFO 车道、余额-only 用户恒入 Balance 车道——同周期双种群各自结算互不越道。
+func TestFlusherTwoLaneDisjointness(t *testing.T) {
+	store := newFakeLedgerStore()
+	tempRow := store.seedRow(1, 7, 70_000, time.Now()) // temp-active：FEFO 车道
+	balRow := store.seedRow(2, 8, 30_000, time.Now())  // 余额-only：Balance 车道
+	tp := store.seedTemp(7, 50_000, time.Now().Add(time.Hour))
+	store.setBalance(7, 100_000)
+	store.setBalance(8, 100_000)
+	f := newFlusherWith(store, 1, map[int64]int64{7: 80_000, 8: 100_000})
 
-		n := f.consumeCycle(context.Background(), false)
-		require.Equal(t, int64(3), n)
-		chunks := store.chunkSnapshot()
-		require.Len(t, chunks, 1, "同分片连续组打包单 chunk")
-		require.Len(t, chunks[0], 2, "chunk 含两个用户组")
-		require.Equal(t, int64(700), store.balanceOf(1), "逐用户 Δ余额精确（1000−100−200）")
-		require.Equal(t, int64(200), store.balanceOf(2))
-		require.True(t, store.isBilled(r1.ID) && store.isBilled(r2.ID) && store.isBilled(r3.ID))
-	})
+	n := f.consumeCycle(context.Background(), false)
+	require.Equal(t, int64(2), n, "两车道同周期各自结算")
 
-	t.Run("chunk failure halves to singleton then row bisect", func(t *testing.T) {
-		store := newFakeLedgerStore()
-		logger, _ := newTestLogger(t)
-		poison := store.seedRow(1, 9, 100, time.Now())
-		okA := store.seedRow(2, 8, 100, time.Now())
-		okB := store.seedRow(3, 7, 100, time.Now())
-		store.setBalance(9, 1000)
-		store.setBalance(8, 1000)
-		store.setBalance(7, 1000)
-		store.setFail(poison.ID, 1<<30) // 恒失败毒行居 chunk 首组
-		f := newFlusherWith(store, 1, map[int64]int64{7: 1000, 8: 1000, 9: 1000})
-		f.log = logger
+	calls := store.laneSnapshot()
+	require.False(t, calls[0].fefo, "balance 车道先行")
+	require.Equal(t, int64(1), calls[0].marked, "balance 车道只吃余额-only 用户")
+	require.True(t, calls[1].fefo, "fefo 车道随后")
+	require.Equal(t, int64(1), calls[1].marked, "fefo 车道只吃 temp-active 用户")
 
-		n := f.consumeCycle(context.Background(), false)
-		require.Equal(t, int64(3), n, "毒组折半至单例隔离，邻组照常推进")
-		chunks := store.chunkSnapshot()
-		require.Len(t, chunks, 2, "降级链：整 chunk 首试 + 折半重试（单例组走单组面不再进 chunk）")
-		require.Len(t, chunks[0], 3)
-		require.Len(t, chunks[1], 2)
-		require.True(t, store.isBilled(okA.ID) && store.isBilled(okB.ID), "邻组不受毒组拖累")
-		require.True(t, store.isBilled(poison.ID), "毒行终极隔离退出游标")
-		require.Equal(t, int64(1000), store.balanceOf(9), "毒行未扣费")
-		require.Equal(t, int64(900), store.balanceOf(8))
-		require.Equal(t, int64(900), store.balanceOf(7))
-		require.Equal(t, int64(1), f.quarantined.Load())
-	})
+	// FEFO 消耗 50000 + spill 20000 条件扣 → 余额 80000；余额-only 用户直扣 30000
+	require.Equal(t, int64(80_000), store.balanceOf(7), "temp-active 用户 spill 补差精确")
+	require.Zero(t, store.tempAmount(tp), "临时额度恰被 FEFO 消耗")
+	require.Equal(t, int64(70_000), store.balanceOf(8), "余额-only 用户直扣")
+	require.True(t, store.isBilled(tempRow.ID) && store.isBilled(balRow.ID))
+	require.False(t, store.overdraftOf(tempRow.ID) || store.overdraftOf(balRow.ID))
 }
 
 // TestFlusherLagGuardrailWarns lag 护栏：最老 unbilled 行距今超保留期 80% →
@@ -669,22 +689,6 @@ func TestFlusherLagRefreshThrottle(t *testing.T) {
 	require.Equal(t, 2, store.lagProbeCount(), "drain 语境绕过节流强制刷新")
 }
 
-// TestPackChunksChunkPacking 打包策略纯函数锚（F2-opt D3）：片内连续组保序
-// 切分、≤chunkUsersLimit 用户/chunk、尾块余数、空入空出。
-func TestPackChunksChunkPacking(t *testing.T) {
-	groups := make([]*domain.LedgerGroup, chunkUsersLimit+3)
-	for i := range groups {
-		groups[i] = &domain.LedgerGroup{UserID: int64(i)}
-	}
-	chunks := packChunks(groups)
-	require.Len(t, chunks, 2)
-	require.Len(t, chunks[0], chunkUsersLimit)
-	require.Len(t, chunks[1], 3)
-	require.Equal(t, int64(0), chunks[0][0].UserID)
-	require.Equal(t, int64(chunkUsersLimit), chunks[1][0].UserID, "连续组保序切分")
-	require.Empty(t, packChunks(nil))
-}
-
 // TestFlusherLockMutualExclusion 会话锁互斥：他实例持锁（ok=false）→ 本周期
 // 跳过取批（零 fetch 零消费）；抢锁报错 → Warn + 跳过——双实例绝不重复消费
 // 同批（Momus M1 防线）。
@@ -751,18 +755,18 @@ func TestFlusherCloseDrainsCursor(t *testing.T) {
 	require.Equal(t, fetches, store.fetchCount(), "二次 Close 不再消费")
 }
 
-// blockingDeductStore DeductGroupsAndMark 阻塞至 ctx 取消（模拟慢 DB 在途 chunk
+// blockingSettleStore SettleBalanceBatch 阻塞至 ctx 取消（模拟慢 DB 在途结算
 // 事务；取消传播后快速失败——行保持 unbilled）。
-type blockingDeductStore struct {
+type blockingSettleStore struct {
 	*fakeLedgerStore
 	started chan struct{}
 	once    sync.Once
 }
 
-func (s *blockingDeductStore) DeductGroupsAndMark(ctx context.Context, groups []domain.LedgerGroup) ([]domain.LedgerGroupOutcome, error) {
+func (s *blockingSettleStore) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
 	s.once.Do(func() { close(s.started) })
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return domain.SettlementSummary{}, ctx.Err()
 }
 
 // TestFlusherCloseTruncatesOnBudget 停机排空受 ctx 预算约束：到期 → Cancel
@@ -770,7 +774,7 @@ func (s *blockingDeductStore) DeductGroupsAndMark(ctx context.Context, groups []
 // 剩余行数），不无界阻塞停机。
 func TestFlusherCloseTruncatesOnBudget(t *testing.T) {
 	inner := newFakeLedgerStore()
-	store := &blockingDeductStore{fakeLedgerStore: inner, started: make(chan struct{})}
+	store := &blockingSettleStore{fakeLedgerStore: inner, started: make(chan struct{})}
 	inner.seedRow(1, 1, 100, time.Now())
 	inner.seedRow(2, 2, 100, time.Now())
 	inner.setBalance(1, 100)
@@ -796,21 +800,38 @@ func TestFlusherCloseTruncatesOnBudget(t *testing.T) {
 	require.Contains(t, string(b), `"remaining_rows":2`)
 }
 
-// ignoreCtxDeductStore DeductGroupsAndMark 忽略 ctx 永久阻塞（模拟 DB 病态卡死
+// ignoreCtxSettleStore SettleBalanceBatch 忽略 ctx 永久阻塞（模拟 DB 病态卡死
 // ——取消路径本身被拖住的极端形态；A-P2-8-2 第二 select 兜底目标）。测试结束
 // 即弃置（在途 goroutine 无放行通道，属刻意泄漏）。
-type ignoreCtxDeductStore struct {
+type ignoreCtxSettleStore struct {
 	*fakeLedgerStore
 	started chan struct{}
 }
 
-func (s *ignoreCtxDeductStore) DeductGroupsAndMark(ctx context.Context, groups []domain.LedgerGroup) ([]domain.LedgerGroupOutcome, error) {
+func (s *ignoreCtxSettleStore) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
 	select {
 	case s.started <- struct{}{}:
 	default:
 	}
 	<-make(chan struct{}) // 永久阻塞（不响应 ctx 取消；无发送者，永不返回）
-	return nil, nil
+	return domain.SettlementSummary{}, nil
+}
+
+// endlessSettleStore 持续到达形态（周期预算回归）：每次 Balance 车道结算前合成
+// 一行全新未标记行——持续到达下每轮恒有进展，无预算的 drainLoop 永不返回。
+type endlessSettleStore struct {
+	*fakeLedgerStore
+	nextID int64
+}
+
+func (s *endlessSettleStore) SettleBalanceBatch(ctx context.Context, limit int) (domain.SettlementSummary, error) {
+	s.mu.Lock()
+	s.nextID++
+	id := s.nextID
+	s.rows[id] = &fakeLedgerRow{row: domain.LedgerRow{ID: id, UserID: id, Cost: 100,
+		Model: "gpt-4o", BillingTier: "auto", CallCount: 1, Format: "openai-chat"}}
+	s.mu.Unlock()
+	return s.fakeLedgerStore.SettleBalanceBatch(ctx, limit)
 }
 
 // TestFlusherCloseAbandonsInflightOnTimeout A-P2-8-2：驱动不尊重 ctx 时 Close
@@ -822,8 +843,8 @@ func TestFlusherCloseAbandonsInflightOnTimeout(t *testing.T) {
 	t.Cleanup(func() { inflightAbandonGrace = old })
 
 	inner := newFakeLedgerStore()
-	store := &ignoreCtxDeductStore{fakeLedgerStore: inner, started: make(chan struct{}, 1)}
-	// 两用户一组一 chunk（单例组走单组面，不进 chunk 事务面——须多组才命中阻塞点）
+	store := &ignoreCtxSettleStore{fakeLedgerStore: inner, started: make(chan struct{}, 1)}
+	// 单行即命中阻塞点（首车道结算语句调用即挂起）
 	inner.seedRow(1, 1, 100, time.Now())
 	inner.seedRow(2, 2, 100, time.Now())
 	inner.setBalance(1, 100)
@@ -865,18 +886,20 @@ func TestFlusherStartTwiceFails(t *testing.T) {
 
 // —— 排空周期预算（F2-opt G1 审计 D 面回归） ——
 
-// TestFlusherDrainCycleBudget 周期预算到期收尾：持续到达形态（每次取批合成
-// 全新未标记行）下，无预算的 drainLoop 永不返回——会话锁 + flushMu 无界持有，
-// refreshT/Balances.Reload 停摆 → 新用户预检快照缺失 402。预算注入后
-// consumeCycle 必须有限墙钟内让位收尾，且消费有进展、多批取数发生。
+// TestFlusherDrainCycleBudget 周期预算到期收尾：持续到达形态（每次 Balance 车道
+// 结算前合成全新未标记行——endlessSettleStore 包装注入）下，无预算的 drainLoop
+// 永不返回——会话锁 + flushMu 无界持有，refreshT/Balances.Reload 停摆 → 新用户
+// 预检快照缺失 402。预算注入后 consumeCycle 必须有限墙钟内让位收尾，且消费有
+// 进展、多批取数发生。
 func TestFlusherDrainCycleBudget(t *testing.T) {
 	restore := drainCycleBudget
 	drainCycleBudget = 50 * time.Millisecond
 	t.Cleanup(func() { drainCycleBudget = restore })
 
-	store := newFakeLedgerStore()
-	store.endlessRows = true
-	f := newFlusherWith(store, 2, map[int64]int64{})
+	inner := newFakeLedgerStore()
+	store := &endlessSettleStore{fakeLedgerStore: inner}
+	f := newFlusherWith(inner, 2, map[int64]int64{})
+	f.store = store // 包装注入（持续到达形态）
 
 	start := time.Now()
 	n := f.consumeCycle(context.Background(), false)
@@ -884,5 +907,5 @@ func TestFlusherDrainCycleBudget(t *testing.T) {
 
 	require.Greater(t, n, int64(0), "预算期内有真实消费进展")
 	require.Less(t, elapsed, 5*time.Second, "预算到期必须让位收尾（无预算形态本调用永不返回）")
-	require.GreaterOrEqual(t, store.fetches, 3, "多批取数发生（非单批即止）")
+	require.GreaterOrEqual(t, inner.fetches, 3, "多批取数发生（非单批即止）")
 }

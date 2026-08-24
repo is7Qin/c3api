@@ -201,7 +201,7 @@ func TestUsageLogCallColumnsRoundtripPG(t *testing.T) {
 
 // TestUsageLogCallColumnsBillingCursorPG F2 单写点 + 游标消费：format=
 // openai-images 行经 InsertBatch 落库（ent CreateBulk FormatValidator 校验通过）
-// → DeductOnlyAndMark 扣费标记——SQL 层直查 2 列 + billed 翻转（旧 COPY 路径
+// → SettleBalanceBatch 扣费标记——SQL 层直查 2 列 + billed 翻转（旧 COPY 路径
 // 断言随双写删除）。
 func TestUsageLogCallColumnsBillingCursorPG(t *testing.T) {
 	repos := newPGRepos(t)
@@ -216,10 +216,10 @@ func TestUsageLogCallColumnsBillingCursorPG(t *testing.T) {
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
 
-	bal, od, _, err := repos.DeductOnlyAndMark(ctx, u.ID, 130, ledgerRowIDs(rows))
+	res, err := repos.SettleBalanceBatch(ctx, 10)
 	require.NoError(t, err, "openai-images 行经单写点落库 + 游标消费必须成功")
-	require.False(t, od)
-	require.Equal(t, int64(999_870), bal)
+	require.Len(t, res.Balances, 1)
+	require.Equal(t, int64(999_870), res.Balances[0].Balance)
 
 	var it, ot, cnt int64
 	var perCall *int64
@@ -240,7 +240,7 @@ func TestUsageLogCallColumnsBillingCursorPG(t *testing.T) {
 
 // TestUsageLogSearchBillingCursorPG format=openai-search 单写点落库 + 游标消费
 // （spec 2026-08-13：search 端点 task 消费本枚举 + call_count 落账）：call_count=1
-// + price_per_call_millis（按次价快照）经 InsertBatch 落库 → DeductOnlyAndMark
+// + price_per_call_millis（按次价快照）经 InsertBatch 落库 → SettleBalanceBatch
 // 标记翻转。
 func TestUsageLogSearchBillingCursorPG(t *testing.T) {
 	repos := newPGRepos(t)
@@ -257,10 +257,10 @@ func TestUsageLogSearchBillingCursorPG(t *testing.T) {
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)
 
-	bal, od, _, err := repos.DeductOnlyAndMark(ctx, u.ID, 130, ledgerRowIDs(rows))
+	res, err := repos.SettleBalanceBatch(ctx, 10)
 	require.NoError(t, err, "openai-search 行经单写点落库 + 游标消费必须成功")
-	require.False(t, od)
-	require.Equal(t, int64(999_870), bal)
+	require.Len(t, res.Balances, 1)
+	require.Equal(t, int64(999_870), res.Balances[0].Balance)
 
 	var format string
 	var cnt int64

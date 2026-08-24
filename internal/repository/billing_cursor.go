@@ -7,11 +7,11 @@ package repository
 // billing_cursor.go 计费游标消费面（F2 ledger-cursor，spec 2026-08-23）：取批 /
 // 纯标记 / lag 观测 / 会话级 advisory lock。游标 = 部分索引 usagelog_unbilled_id
 // (id) WHERE NOT billed——行标记 billed=true 后自动退出索引，重启天然续传，无
-// watermark 表。扣费事务本体见 billing_repo.go（DeductOnlyAndMark）。
+// watermark 表。结算事务本体见 billing_settle.go（三车道 SettleBalanceBatch /
+// SettleFefoBatch）。
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -20,9 +20,18 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
+// rowScanner 行扫描面（entsql.Rows 与 pgx.Rows 的公共子集；两者 Close 签名
+// 不同——entsql.Close() error vs pgx.Close()，故不含 Close）。读取至 EOF
+// （rows.Err() 确认）即释放连接：行集在事务/池连接上，EOF 后连接立即可复用。
+type rowScanner interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}
+
 // billingRows 非事务查询行集句柄：rowScanner + 归一化 Close（entsql.Rows.Close()
 // error 与 pgx.Rows.Close() 签名差异在构造点收敛——rowScanner 接口因此不含
-// Close，见 billing_repo.go 注释）。
+// Close，见 billing_settle.go 注释）。
 type billingRows struct {
 	rowScanner
 	closeFunc func()
@@ -47,12 +56,6 @@ const fetchUnbilledSQL = `SELECT id, COALESCE(user_id, 0), cost, model,
 	FROM usage_logs
 	WHERE NOT billed AND error_type IN ('none', 'abort')
 	ORDER BY id LIMIT $1`
-
-// markBilledOverdraftSQL 扣费事务内标记（overdraft 回写，B2）：AND NOT billed
-// 选用部分索引；幂等语义由调用方标记步受影响行数守卫承接（见 errConcurrentMark
-// ——部分受影响不再静默成功，而是整事务回滚）。
-const markBilledOverdraftSQL = `UPDATE usage_logs SET billed = TRUE, overdraft = $1
-	WHERE id = ANY($2) AND NOT billed`
 
 // markBilledBulkSQL 纯标记（零价行快速路径 + 终极毒行隔离）：不触碰 overdraft
 // （出生 false 保持），幂等可重入。
@@ -138,27 +141,6 @@ func (r *BillingRepo) AcquireBillingLock(ctx context.Context) (release func(), o
 	}, true, nil
 }
 
-// errConcurrentMark 并发标记哨兵（锁丢失双扣防御，oracle 终审 B 面 CONCERN）：
-// DeductOnlyAndMark 标记步受影响行数少于批大小 = 他方消费者已抢先标记同批行。
-// 触发场景：会话级 advisory lock 持有连接的后端异常死亡（pg_terminate_backend/
-// OOM kill 单后端）而本实例其余池连接幸存——第二实例取锁消费重叠未标记行，本
-// 实例在途组继续提交即双扣。返回本错误使整个扣费事务回滚（余额零变动），该组
-// 行下周期由游标重放（重放时已标记行退出取批，恰扣一次）。
-var errConcurrentMark = errors.New("billing: concurrent mark detected")
-
-// markBilledExec 扣费事务内标记（DeductOnlyAndMark 第 ④ 步；overdraft 回写 B2）
-// + 并发标记守卫：affected < len(ids) → errConcurrentMark（调用方整事务回滚）。
-func markBilledExec(ctx context.Context, exe deductTx, ids []int64, overdrafted bool) error {
-	affected, err := exe.ExecAffected(ctx, markBilledOverdraftSQL, []any{overdrafted, ids})
-	if err != nil {
-		return err
-	}
-	if affected < int64(len(ids)) {
-		return fmt.Errorf("%w: marked %d/%d rows in deduct tx", errConcurrentMark, affected, len(ids))
-	}
-	return nil
-}
-
 // queryRows 非事务查询双载体分发：pool 直连优先（生产），nil 回落 ent driver
 // （New 构造的仓库/测试装配）。返回归一化 Close 的行集句柄。
 func (r *BillingRepo) queryRows(ctx context.Context, query string, args []any) (*billingRows, error) {
@@ -185,7 +167,7 @@ func (r *BillingRepo) execAffected(ctx context.Context, query string, args []any
 		}
 		return tag.RowsAffected(), nil
 	}
-	exe := &entDeductTx{drv: r.driver}
+	exe := &entSettleTx{drv: r.driver}
 	return exe.ExecAffected(ctx, query, args)
 }
 
