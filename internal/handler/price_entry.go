@@ -116,7 +116,10 @@ func (h *AdminAPI) PutPriceVariants(w http.ResponseWriter, r *http.Request, para
 			pv.TimeStart = v.TimeStart
 			pv.TimeEnd = v.TimeEnd
 			pv.DowMask = v.DowMask
-			pv.MultBP = v.MultBp
+			if v.Multiplier != nil {
+				m := normalToMult(*v.Multiplier)
+				pv.MultBP = &m
+			}
 			pv.SetInputPerM = usdToMillisPtr(v.SetInputPerM)
 			pv.SetOutputPerM = usdToMillisPtr(v.SetOutputPerM)
 			vars = append(vars, pv)
@@ -182,10 +185,15 @@ func toAPIPriceEntry(p *domain.PriceEntry) PriceEntry {
 	}
 }
 func toAPIPriceVariant(v *domain.PriceVariant) PriceVariant {
+	var mult *float64
+	if v.MultBP != nil {
+		f := multToNormal(*v.MultBP)
+		mult = &f
+	}
 	return PriceVariant{
 		Model: v.Model, Seq: v.Seq,
 		ServiceTier: v.ServiceTier, CtxMin: v.CtxMin, CtxMax: v.CtxMax,
-		TimeStart: v.TimeStart, TimeEnd: v.TimeEnd, DowMask: v.DowMask, MultBP: v.MultBP,
+		TimeStart: v.TimeStart, TimeEnd: v.TimeEnd, DowMask: v.DowMask, Multiplier: mult,
 		SetInputPerM: millisToUSDPtr(v.SetInputPerM), SetOutputPerM: millisToUSDPtr(v.SetOutputPerM),
 		CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 	}

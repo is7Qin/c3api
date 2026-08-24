@@ -67,20 +67,30 @@ const boolsToDowMask = (bools: boolean[]): number | undefined => {
   const m = bools.reduce((acc, v, i) => (v ? acc | (1 << i) : acc), 0)
   return m === 0 ? undefined : m
 }
-const fmtMult = (bp: number | null | undefined): string => {
-  if (bp == null) return ''
-  const v = bp / 10000
-  return `×${Number.isInteger(v) ? String(v) : v.toFixed(4).replace(/\.?0+$/, '')}`
+const fmtMult = (m: number | null | undefined): string => {
+  if (m == null) return ''
+  return `×${Number.isInteger(m) ? String(m) : m.toFixed(4).replace(/\.?0+$/, '')}`
+}
+
+type VariantsTarget = {
+  model: string
+  source: PricingSource
+  inputPerM: number | null | undefined
+  outputPerM: number | null | undefined
 }
 
 function VariantsDialog({
   model,
   source,
+  inputPerM,
+  outputPerM,
   open,
   onOpenChange,
 }: {
   model: string | null
   source: PricingSource
+  inputPerM: number | null | undefined
+  outputPerM: number | null | undefined
   open: boolean
   onOpenChange: (o: boolean) => void
 }) {
@@ -103,11 +113,13 @@ function VariantsDialog({
   const [timeStart, setTimeStart] = useState('')
   const [timeEnd, setTimeEnd] = useState('')
   const [dowBools, setDowBools] = useState<boolean[]>(Array(7).fill(false))
-  const [multBpStr, setMultBpStr] = useState('')
+  const [multiplierStr, setMultiplierStr] = useState('')
   const [setInputStr, setSetInputStr] = useState('')
   const [setOutputStr, setSetOutputStr] = useState('')
   const [rowErr, setRowErr] = useState<string | null>(null)
   const [clearConfirm, setClearConfirm] = useState(false)
+  const [showMore, setShowMore] = useState(false)
+  const [effectMode, setEffectMode] = useState<'multiplier' | 'override'>('multiplier')
 
   const resetEditor = () => {
     setSeqStr('')
@@ -117,11 +129,28 @@ function VariantsDialog({
     setTimeStart('')
     setTimeEnd('')
     setDowBools(Array(7).fill(false))
-    setMultBpStr('')
+    setMultiplierStr('')
     setSetInputStr('')
     setSetOutputStr('')
     setEditingSeq(null)
     setRowErr(null)
+    setShowMore(false)
+    setEffectMode('multiplier')
+  }
+
+  const toggleMore = () => {
+    setShowMore(v => {
+      if (v) {
+        // 收起时清空条件草稿态
+        setCtxMinStr('')
+        setCtxMaxStr('')
+        setTimeStart('')
+        setTimeEnd('')
+        setDowBools(Array(7).fill(false))
+        return false
+      }
+      return true
+    })
   }
 
   // sync server rows → localRows when dialog opens / data changes
@@ -138,7 +167,7 @@ function VariantsDialog({
         time_start: r.TimeStart ?? undefined,
         time_end: r.TimeEnd ?? undefined,
         dow_mask: r.DowMask ?? undefined,
-        mult_bp: r.MultBP ?? undefined,
+        multiplier: r.multiplier ?? undefined,
         set_input_per_m: r.SetInputPerM ?? undefined,
         set_output_per_m: r.SetOutputPerM ?? undefined,
       }))
@@ -177,7 +206,7 @@ function VariantsDialog({
   }
   const effectSummary = (r: PriceVariantUpsert) => {
     const parts: string[] = []
-    if (r.mult_bp != null) parts.push(fmtMult(r.mult_bp))
+    if (r.multiplier != null) parts.push(fmtMult(r.multiplier))
     if (r.set_input_per_m != null) parts.push(`in $${r.set_input_per_m}/M`)
     if (r.set_output_per_m != null) parts.push(`out $${r.set_output_per_m}/M`)
     return parts.length ? parts.join(' · ') : '—'
@@ -187,18 +216,23 @@ function VariantsDialog({
     const seqNum = Number(seqStr)
     if (!seqStr || !Number.isInteger(seqNum) || seqNum < 1) return t('pricing.variants.errSeqMin')
     if (localRows.some(r => r.seq === seqNum && r.seq !== editingSeq)) return t('pricing.variants.seqDup', { seq: seqNum })
-    if (ctxMinStr !== '' && (!Number.isInteger(Number(ctxMinStr)) || Number(ctxMinStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMin') })
-    if (ctxMaxStr !== '' && (!Number.isInteger(Number(ctxMaxStr)) || Number(ctxMaxStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMax') })
-    if (ctxMinStr !== '' && ctxMaxStr !== '' && Number(ctxMaxStr) <= Number(ctxMinStr)) return `${t('pricing.variants.condCtxMax')} > ${t('pricing.variants.condCtxMin')}`
-    if (timeStart !== '' && !TIME_RE.test(timeStart)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeStart') })
-    if (timeEnd !== '' && !TIME_RE.test(timeEnd)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeEnd') })
-    if (multBpStr !== '') {
-      const n = Number(multBpStr)
-      if (!Number.isInteger(n) || n < 0 || n > 100000) return t('pricing.variants.errMultRange', { field: t('pricing.variants.multBp') })
+    // 条件校验仅展开态执行
+    if (showMore) {
+      if (ctxMinStr !== '' && (!Number.isInteger(Number(ctxMinStr)) || Number(ctxMinStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMin') })
+      if (ctxMaxStr !== '' && (!Number.isInteger(Number(ctxMaxStr)) || Number(ctxMaxStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMax') })
+      if (ctxMinStr !== '' && ctxMaxStr !== '' && Number(ctxMaxStr) <= Number(ctxMinStr)) return `${t('pricing.variants.condCtxMax')} > ${t('pricing.variants.condCtxMin')}`
+      if (timeStart !== '' && !TIME_RE.test(timeStart)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeStart') })
+      if (timeEnd !== '' && !TIME_RE.test(timeEnd)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeEnd') })
     }
-    if (setInputStr !== '' && (!Number.isFinite(Number(setInputStr)) || Number(setInputStr) < 0)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setInput') })
-    if (setOutputStr !== '' && (!Number.isFinite(Number(setOutputStr)) || Number(setOutputStr) < 0)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setOutput') })
-    if (multBpStr === '' && setInputStr === '' && setOutputStr === '') return t('pricing.variants.effectNone')
+    if (effectMode === 'multiplier') {
+      if (multiplierStr === '') return t('pricing.variants.effectNone')
+      const n = Number(multiplierStr)
+      if (!Number.isFinite(n) || n < 0 || n > 10) return t('pricing.variants.errMultRange', { field: t('pricing.variants.multiplierLabel') })
+    } else {
+      if (setInputStr !== '' && (!Number.isFinite(Number(setInputStr)) || Number(setInputStr) < 0)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setInput') })
+      if (setOutputStr !== '' && (!Number.isFinite(Number(setOutputStr)) || Number(setOutputStr) < 0)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setOutput') })
+      if (effectMode === 'override' && setInputStr === '' && setOutputStr === '') return t('pricing.variants.effectNone')
+    }
     return null
   }
 
@@ -206,18 +240,18 @@ function VariantsDialog({
     const err = validateDraft()
     if (err) { setRowErr(err); return }
     const seqNum = Number(seqStr)
-    const dowMask = boolsToDowMask(dowBools)
+    const dowMask = showMore ? boolsToDowMask(dowBools) : undefined
     const upsert: PriceVariantUpsert = {
       seq: seqNum,
       service_tier: serviceTier || undefined,
-      ctx_min: ctxMinStr === '' ? undefined : Number(ctxMinStr),
-      ctx_max: ctxMaxStr === '' ? undefined : Number(ctxMaxStr),
-      time_start: timeStart || undefined,
-      time_end: timeEnd || undefined,
+      ctx_min: showMore && ctxMinStr !== '' ? Number(ctxMinStr) : undefined,
+      ctx_max: showMore && ctxMaxStr !== '' ? Number(ctxMaxStr) : undefined,
+      time_start: showMore && timeStart !== '' ? timeStart : undefined,
+      time_end: showMore && timeEnd !== '' ? timeEnd : undefined,
       dow_mask: dowMask,
-      mult_bp: multBpStr === '' ? undefined : Number(multBpStr),
-      set_input_per_m: setInputStr === '' ? undefined : Number(setInputStr),
-      set_output_per_m: setOutputStr === '' ? undefined : Number(setOutputStr),
+      multiplier: effectMode === 'multiplier' ? Number(multiplierStr) : undefined,
+      set_input_per_m: effectMode === 'override' && setInputStr !== '' ? Number(setInputStr) : undefined,
+      set_output_per_m: effectMode === 'override' && setOutputStr !== '' ? Number(setOutputStr) : undefined,
     }
     setLocalRows(prev => {
       let next: PriceVariantUpsert[]
@@ -238,9 +272,20 @@ function VariantsDialog({
     setTimeStart(r.time_start ?? '')
     setTimeEnd(r.time_end ?? '')
     setDowBools(dowMaskToBools(r.dow_mask))
-    setMultBpStr(r.mult_bp != null ? String(r.mult_bp) : '')
-    setSetInputStr(r.set_input_per_m != null ? String(r.set_input_per_m) : '')
-    setSetOutputStr(r.set_output_per_m != null ? String(r.set_output_per_m) : '')
+    if (r.multiplier != null) {
+      setEffectMode('multiplier')
+      setMultiplierStr(String(r.multiplier))
+      setSetInputStr('')
+      setSetOutputStr('')
+    } else {
+      setEffectMode('override')
+      setMultiplierStr('')
+      setSetInputStr(r.set_input_per_m != null ? String(r.set_input_per_m) : '')
+      setSetOutputStr(r.set_output_per_m != null ? String(r.set_output_per_m) : '')
+    }
+    // 编辑回显含任一非默认条件时强制展开
+    const hasExtra = r.ctx_min != null || r.ctx_max != null || r.time_start != null || r.time_end != null || r.dow_mask != null
+    setShowMore(hasExtra)
     setRowErr(null)
   }
 
@@ -273,6 +318,12 @@ function VariantsDialog({
   })
 
   const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
+
+  // 实时预览最终价（倍率态）
+  const previewMultVal = Number(multiplierStr)
+  const previewMultValid = multiplierStr !== '' && Number.isFinite(previewMultVal) && previewMultVal >= 0 && previewMultVal <= 10
+  const previewInput = previewMultValid && inputPerM != null ? (inputPerM * previewMultVal) : null
+  const previewOutput = previewMultValid && outputPerM != null ? (outputPerM * previewMultVal) : null
 
   return (
     <>
@@ -355,51 +406,88 @@ function VariantsDialog({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="var-ctx-min">{t('pricing.variants.ctxMinLabel')}</Label>
-                <Input id="var-ctx-min" type="number" min={0} step={1} value={ctxMinStr} onChange={e => { setCtxMinStr(e.target.value); setRowErr(null) }} placeholder="0" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="var-ctx-max">{t('pricing.variants.ctxMaxLabel')}</Label>
-                <Input id="var-ctx-max" type="number" min={0} step={1} value={ctxMaxStr} onChange={e => { setCtxMaxStr(e.target.value); setRowErr(null) }} placeholder="0" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="var-time-start">{t('pricing.variants.timeStartLabel')}</Label>
-                <Input id="var-time-start" value={timeStart} onChange={e => { setTimeStart(e.target.value); setRowErr(null) }} placeholder="09:00" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="var-time-end">{t('pricing.variants.timeEndLabel')}</Label>
-                <Input id="var-time-end" value={timeEnd} onChange={e => { setTimeEnd(e.target.value); setRowErr(null) }} placeholder="18:00" />
-              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>{t('pricing.variants.dowLabel')}</Label>
-              <div className="flex flex-wrap gap-2">
-                {DOW_KEYS.map((k, i) => (
-                  <label key={k} className="flex items-center gap-1.5 text-sm">
-                    <Checkbox checked={dowBools[i]} onCheckedChange={v => setDowBools(b => { const n = [...b]; n[i] = !!v; return n })} />
-                    {t(`pricing.variants.${k}`)}
-                  </label>
-                ))}
+
+            {/* 效果区 radio 二选一 */}
+            <div className="space-y-2">
+              <Label>{t('pricing.variants.effectModeLabel')}</Label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="radio" name="var-effect" checked={effectMode === 'multiplier'} onChange={() => setEffectMode('multiplier')} className="size-4" />
+                  {t('pricing.variants.effectMultiplier')}
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="radio" name="var-effect" checked={effectMode === 'override'} onChange={() => setEffectMode('override')} className="size-4" />
+                  {t('pricing.variants.effectOverride')}
+                </label>
               </div>
+              {effectMode === 'multiplier' ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="var-multiplier">{t('pricing.variants.multiplierLabel')}</Label>
+                  <Input id="var-multiplier" type="number" min={0} max={10} step="any" value={multiplierStr} onChange={e => { setMultiplierStr(e.target.value); setRowErr(null) }} placeholder="1.5" />
+                  {(previewInput != null || previewOutput != null) && previewMultValid && (
+                    <p className="text-xs text-muted-foreground">
+                      {previewInput != null && t('pricing.variants.finalInput', { value: previewInput.toFixed(4) })}
+                      {previewInput != null && previewOutput != null && ' · '}
+                      {previewOutput != null && t('pricing.variants.finalOutput', { value: previewOutput.toFixed(4) })}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-in">{t('pricing.variants.setInputLabel')}</Label>
+                    <Input id="var-in" type="number" min={0} step="any" value={setInputStr} onChange={e => { setSetInputStr(e.target.value); setRowErr(null) }} placeholder="0.001" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-out">{t('pricing.variants.setOutputLabel')}</Label>
+                    <Input id="var-out" type="number" min={0} step="any" value={setOutputStr} onChange={e => { setSetOutputStr(e.target.value); setRowErr(null) }} placeholder="0.002" />
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="var-mult">{t('pricing.variants.multBpLabel')}</Label>
-                <Input id="var-mult" type="number" min={0} max={100000} step={1} value={multBpStr} onChange={e => { setMultBpStr(e.target.value); setRowErr(null) }} placeholder="10000" />
-                {multBpStr !== '' && Number.isFinite(Number(multBpStr)) && (
-                  <p className="text-xs text-muted-foreground">{t('pricing.variants.multHint', { value: (Number(multBpStr) / 10000).toString() })}</p>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="var-in">{t('pricing.variants.setInputLabel')}</Label>
-                <Input id="var-in" type="number" min={0} step="any" value={setInputStr} onChange={e => { setSetInputStr(e.target.value); setRowErr(null) }} placeholder="0.001" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="var-out">{t('pricing.variants.setOutputLabel')}</Label>
-                <Input id="var-out" type="number" min={0} step="any" value={setOutputStr} onChange={e => { setSetOutputStr(e.target.value); setRowErr(null) }} placeholder="0.002" />
-              </div>
+
+            {/* 条件区渐进披露 */}
+            <div className="space-y-2">
+              <Button variant="ghost" size="sm" type="button" onClick={toggleMore}>
+                {showMore ? t('pricing.variants.lessConditions') : t('pricing.variants.moreConditions')}
+              </Button>
+              {showMore && (
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">{t('pricing.variants.condRangeHint')}</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="var-ctx-min">{t('pricing.variants.ctxMinLabel')}</Label>
+                      <Input id="var-ctx-min" type="number" min={0} step={1} value={ctxMinStr} onChange={e => { setCtxMinStr(e.target.value); setRowErr(null) }} placeholder="0" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="var-ctx-max">{t('pricing.variants.ctxMaxLabel')}</Label>
+                      <Input id="var-ctx-max" type="number" min={0} step={1} value={ctxMaxStr} onChange={e => { setCtxMaxStr(e.target.value); setRowErr(null) }} placeholder="0" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="var-time-start">{t('pricing.variants.timeStartLabel')}</Label>
+                      <Input id="var-time-start" value={timeStart} onChange={e => { setTimeStart(e.target.value); setRowErr(null) }} placeholder="09:00" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="var-time-end">{t('pricing.variants.timeEndLabel')}</Label>
+                      <Input id="var-time-end" value={timeEnd} onChange={e => { setTimeEnd(e.target.value); setRowErr(null) }} placeholder="18:00" />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>{t('pricing.variants.dowLabel')}</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {DOW_KEYS.map((k, i) => (
+                        <label key={k} className="flex items-center gap-1.5 text-sm">
+                          <Checkbox checked={dowBools[i]} onCheckedChange={v => setDowBools(b => { const n = [...b]; n[i] = !!v; return n })} />
+                          {t(`pricing.variants.${k}`)}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
+
             {rowErr && <p className="text-sm text-destructive">{rowErr}</p>}
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleSaveRow}>{editingSeq != null ? t('pricing.variants.edit') : t('pricing.variants.add')}</Button>
@@ -726,7 +814,7 @@ export default function PricingPage() {
   void MODE_BY_TAB
 
   // —— Variants dialog (single page-level, mode-agnostic) ——
-  const [variantsTarget, setVariantsTarget] = useState<{ model: string; source: PricingSource } | null>(null)
+  const [variantsTarget, setVariantsTarget] = useState<VariantsTarget | null>(null)
 
   return (
     <div className="space-y-6">
@@ -820,7 +908,7 @@ export default function PricingPage() {
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source })}><Layers /></Button>
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
                             <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                             <Button
                               variant="ghost"
@@ -908,7 +996,7 @@ export default function PricingPage() {
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source })}><Layers /></Button>
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, inputPerM: (p as unknown as PriceEntry).InputPerM, outputPerM: (p as unknown as PriceEntry).OutputPerM })}><Layers /></Button>
                             <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                             <Button
                               variant="ghost"
@@ -992,7 +1080,7 @@ export default function PricingPage() {
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source })}><Layers /></Button>
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, inputPerM: (p as unknown as PriceEntry).InputPerM, outputPerM: (p as unknown as PriceEntry).OutputPerM })}><Layers /></Button>
                             <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                             <Button
                               variant="ghost"
@@ -1216,6 +1304,8 @@ export default function PricingPage() {
       <VariantsDialog
         model={variantsTarget?.model ?? null}
         source={(variantsTarget?.source ?? 'manual') as PricingSource}
+        inputPerM={variantsTarget?.inputPerM}
+        outputPerM={variantsTarget?.outputPerM}
         open={!!variantsTarget}
         onOpenChange={o => { if (!o) setVariantsTarget(null) }}
       />

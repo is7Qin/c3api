@@ -2195,7 +2195,11 @@ export interface components {
             TimeStart?: string | null;
             TimeEnd?: string | null;
             DowMask?: number | null;
-            MultBP?: number | null;
+            /**
+             * Format: double
+             * @description 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）
+             */
+            multiplier?: number | null;
             /** Format: double */
             SetInputPerM?: number | null;
             /** Format: double */
@@ -2214,7 +2218,11 @@ export interface components {
             time_start?: string | null;
             time_end?: string | null;
             dow_mask?: number | null;
-            mult_bp?: number | null;
+            /**
+             * Format: double
+             * @description 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界倍数小数——存储 mult_bp 万分：存储 15000 ↔ 显示 1.5）
+             */
+            multiplier?: number | null;
             /** Format: double */
             set_input_per_m?: number | null;
             /** Format: double */
