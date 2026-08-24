@@ -98,6 +98,27 @@ func TestReplacePriceVariants_MultBPValidation(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidInput)
 }
 
+func TestReplacePriceVariants_CallSetPricePerCall(t *testing.T) {
+	fs := newFakeStore()
+	svc := newPricingSvc(t, fs)
+	callPrice := int64(2000)
+	_, err := svc.ReplacePriceVariants(context.Background(), "m-call", []*domain.PriceVariant{{Model: "m-call", Seq: 1, SetPricePerCall: &callPrice}})
+	require.NoError(t, err)
+	// also resolver yields that price
+	_, err = fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
+		{Model: "m-call", Mode: domain.PriceModeCall, PricePerCall: int64Ptr(1000), Source: domain.PricingSourceManual},
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
+	rp, ok := svc.ResolvePrices("m-call", 0, "auto", time.Now())
+	require.True(t, ok)
+	require.NotNil(t, rp.PricePerCall)
+	require.Equal(t, callPrice, *rp.PricePerCall)
+	// empty effect should be rejected
+	_, err = svc.ReplacePriceVariants(context.Background(), "m-call", []*domain.PriceVariant{{Model: "m-call", Seq: 2}})
+	require.ErrorIs(t, err, ErrInvalidInput)
+}
+
 func TestSyncPricingGuardsManualVariants(t *testing.T) {
 	fs := newFakeStore()
 	// create manual entry + custom variants for model X

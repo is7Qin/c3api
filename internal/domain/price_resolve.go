@@ -72,6 +72,30 @@ func ResolveEntryPrices(entry *PriceEntry, variants []*PriceVariant, tier string
 			nv := *v.SetOutputPerM
 			rp.OutputPerM = &nv
 		}
+		if v.SetCacheReadPerM != nil {
+			nv := *v.SetCacheReadPerM
+			rp.CacheReadPerM = &nv
+		}
+		if v.SetCacheCreationPerM != nil {
+			nv := *v.SetCacheCreationPerM
+			rp.CacheWritePerM = &nv
+		}
+		if v.SetPricePerCall != nil {
+			nv := *v.SetPricePerCall
+			rp.PricePerCall = &nv
+		}
+		if v.SetImgInTokPerM != nil {
+			nv := *v.SetImgInTokPerM
+			rp.ImgInTokPerM = &nv
+		}
+		if v.SetImgOutTokPerM != nil {
+			nv := *v.SetImgOutTokPerM
+			rp.ImgOutTokPerM = &nv
+		}
+		if v.SetPricePerImage != nil {
+			nv := *v.SetPricePerImage
+			rp.PricePerImage = &nv
+		}
 		break
 	}
 	return rp, true

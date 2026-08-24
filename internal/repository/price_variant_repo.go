@@ -62,7 +62,7 @@ func (r *PriceVariantRepo) ReplaceBatch(ctx context.Context, model string, varia
 	// validation: seq unique already enforced by DB, but pre-check
 	seqs := make(map[int]bool)
 	for _, v := range variants {
-		if v.MultBP == nil && v.SetInputPerM == nil && v.SetOutputPerM == nil {
+		if v.MultBP == nil && v.SetInputPerM == nil && v.SetOutputPerM == nil && v.SetCacheReadPerM == nil && v.SetCacheCreationPerM == nil && v.SetPricePerCall == nil && v.SetImgInTokPerM == nil && v.SetImgOutTokPerM == nil && v.SetPricePerImage == nil {
 			return nil, fmt.Errorf("variant seq %d: at least one effect required", v.Seq)
 		}
 		if seqs[v.Seq] {
@@ -110,6 +110,24 @@ func (r *PriceVariantRepo) ReplaceBatch(ctx context.Context, model string, varia
 		if v.SetOutputPerM != nil {
 			cre = cre.SetSetOutputPerM(*v.SetOutputPerM)
 		}
+		if v.SetCacheReadPerM != nil {
+			cre = cre.SetSetCacheReadPerM(*v.SetCacheReadPerM)
+		}
+		if v.SetCacheCreationPerM != nil {
+			cre = cre.SetSetCacheCreationPerM(*v.SetCacheCreationPerM)
+		}
+		if v.SetPricePerCall != nil {
+			cre = cre.SetSetPricePerCall(*v.SetPricePerCall)
+		}
+		if v.SetImgInTokPerM != nil {
+			cre = cre.SetSetImgInTokPerM(*v.SetImgInTokPerM)
+		}
+		if v.SetImgOutTokPerM != nil {
+			cre = cre.SetSetImgOutTokPerM(*v.SetImgOutTokPerM)
+		}
+		if v.SetPricePerImage != nil {
+			cre = cre.SetSetPricePerImage(*v.SetPricePerImage)
+		}
 		if _, err := cre.Save(ctx); err != nil {
 			_ = tx.Rollback()
 			return nil, err
@@ -130,19 +148,25 @@ func (r *PriceVariantRepo) DeleteByModel(ctx context.Context, model string) erro
 
 func toDomainVariant(v *ent.PriceVariant) *domain.PriceVariant {
 	return &domain.PriceVariant{
-		ID:            v.ID,
-		Model:         v.Model,
-		Seq:           v.Seq,
-		ServiceTier:   v.ServiceTier,
-		CtxMin:        v.CtxMin,
-		CtxMax:        v.CtxMax,
-		TimeStart:     v.TimeStart,
-		TimeEnd:       v.TimeEnd,
-		DowMask:       v.DowMask,
-		MultBP:        v.MultBp,
-		SetInputPerM:  v.SetInputPerM,
-		SetOutputPerM: v.SetOutputPerM,
-		CreatedAt:     v.CreatedAt,
-		UpdatedAt:     v.UpdatedAt,
+		ID:                   v.ID,
+		Model:                v.Model,
+		Seq:                  v.Seq,
+		ServiceTier:          v.ServiceTier,
+		CtxMin:               v.CtxMin,
+		CtxMax:               v.CtxMax,
+		TimeStart:            v.TimeStart,
+		TimeEnd:              v.TimeEnd,
+		DowMask:              v.DowMask,
+		MultBP:               v.MultBp,
+		SetInputPerM:         v.SetInputPerM,
+		SetOutputPerM:        v.SetOutputPerM,
+		SetCacheReadPerM:     v.SetCacheReadPerM,
+		SetCacheCreationPerM: v.SetCacheCreationPerM,
+		SetPricePerCall:      v.SetPricePerCall,
+		SetImgInTokPerM:      v.SetImgInTokPerM,
+		SetImgOutTokPerM:     v.SetImgOutTokPerM,
+		SetPricePerImage:     v.SetPricePerImage,
+		CreatedAt:            v.CreatedAt,
+		UpdatedAt:            v.UpdatedAt,
 	}
 }

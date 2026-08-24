@@ -122,6 +122,12 @@ func (h *AdminAPI) PutPriceVariants(w http.ResponseWriter, r *http.Request, para
 			}
 			pv.SetInputPerM = usdToMillisPtr(v.SetInputPerM)
 			pv.SetOutputPerM = usdToMillisPtr(v.SetOutputPerM)
+			pv.SetCacheReadPerM = usdToMillisPtr(v.SetCacheReadPerM)
+			pv.SetCacheCreationPerM = usdToMillisPtr(v.SetCacheCreationPerM)
+			pv.SetPricePerCall = usdPerCallToMilliPtr(v.SetPricePerCall)
+			pv.SetImgInTokPerM = usdToMillisPtr(v.SetImgInTokPerM)
+			pv.SetImgOutTokPerM = usdToMillisPtr(v.SetImgOutTokPerM)
+			pv.SetPricePerImage = usdPerImageToMilliPtr(v.SetPricePerImage)
 			vars = append(vars, pv)
 		}
 	}
@@ -195,6 +201,10 @@ func toAPIPriceVariant(v *domain.PriceVariant) PriceVariant {
 		ServiceTier: v.ServiceTier, CtxMin: v.CtxMin, CtxMax: v.CtxMax,
 		TimeStart: v.TimeStart, TimeEnd: v.TimeEnd, DowMask: v.DowMask, Multiplier: mult,
 		SetInputPerM: millisToUSDPtr(v.SetInputPerM), SetOutputPerM: millisToUSDPtr(v.SetOutputPerM),
-		CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
+		SetCacheReadPerM: millisToUSDPtr(v.SetCacheReadPerM), SetCacheCreationPerM: millisToUSDPtr(v.SetCacheCreationPerM),
+		SetPricePerCall: milliPerCallToUSDPtr(v.SetPricePerCall),
+		SetImgInTokPerM: millisToUSDPtr(v.SetImgInTokPerM), SetImgOutTokPerM: millisToUSDPtr(v.SetImgOutTokPerM),
+		SetPricePerImage: milliPerImageToUSDPtr(v.SetPricePerImage),
+		CreatedAt:        v.CreatedAt, UpdatedAt: v.UpdatedAt,
 	}
 }

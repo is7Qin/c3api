@@ -782,6 +782,11 @@ func (r *Repository) EnsurePriceVariantsEffectCheck(ctx context.Context) error {
 	return r.Partitions.EnsurePriceVariantsEffectCheck(ctx)
 }
 
+// EnsureCodexSearchSeed 幂等种子 codex-search 按次价（F-A）。
+func (r *Repository) EnsureCodexSearchSeed(ctx context.Context) error {
+	return r.Partitions.EnsureCodexSearchSeed(ctx)
+}
+
 // EnsureUsageEntityStatsPartitions usage_entity_stats 预建 [trunc(now), trunc(until)] 每日
 // 分区（retention worker 防日界竞态；分区键 bucket_time，幂等；与 usage_stats
 // 共用 StatsRetentionDays 180d 同一循环 DROP+预建）。

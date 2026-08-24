@@ -162,11 +162,11 @@ func init() {
 	pricevariantFields := schema.PriceVariant{}.Fields()
 	_ = pricevariantFields
 	// pricevariantDescCreatedAt is the schema descriptor for created_at field.
-	pricevariantDescCreatedAt := pricevariantFields[12].Descriptor()
+	pricevariantDescCreatedAt := pricevariantFields[18].Descriptor()
 	// pricevariant.DefaultCreatedAt holds the default value on creation for the created_at field.
 	pricevariant.DefaultCreatedAt = pricevariantDescCreatedAt.Default.(func() time.Time)
 	// pricevariantDescUpdatedAt is the schema descriptor for updated_at field.
-	pricevariantDescUpdatedAt := pricevariantFields[13].Descriptor()
+	pricevariantDescUpdatedAt := pricevariantFields[19].Descriptor()
 	// pricevariant.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	pricevariant.DefaultUpdatedAt = pricevariantDescUpdatedAt.Default.(func() time.Time)
 	// pricevariant.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

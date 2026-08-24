@@ -64,20 +64,26 @@ type PriceEntry struct {
 
 // PriceVariant 条件变体：模型+seq 唯一，条件全可空=通配 AND 组合。
 type PriceVariant struct {
-	ID            int64
-	Model         string
-	Seq           int
-	ServiceTier   *string // equality
-	CtxMin        *int64  // promptTokens >= min
-	CtxMax        *int64  // promptTokens < max (spec says containment; use >=min && <max or <=max? spec says ctx_min/ctx_max contain; define >=min && <=max for simplicity, test will clarify)
-	TimeStart     *string // HH:MM本地时间
-	TimeEnd       *string
-	DowMask       *int
-	MultBP        *int // 万分数
-	SetInputPerM  *int64
-	SetOutputPerM *int64
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                   int64
+	Model                string
+	Seq                  int
+	ServiceTier          *string // equality
+	CtxMin               *int64  // promptTokens >= min
+	CtxMax               *int64  // promptTokens < max (spec says containment; use >=min && <max or <=max? spec says ctx_min/ctx_max contain; define >=min && <=max for simplicity, test will clarify)
+	TimeStart            *string // HH:MM本地时间
+	TimeEnd              *string
+	DowMask              *int
+	MultBP               *int // 万分数
+	SetInputPerM         *int64
+	SetOutputPerM        *int64
+	SetCacheReadPerM     *int64
+	SetCacheCreationPerM *int64
+	SetPricePerCall      *int64
+	SetImgInTokPerM      *int64
+	SetImgOutTokPerM     *int64
+	SetPricePerImage     *int64
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 // ResolvedPrices 解析后生效单价组。

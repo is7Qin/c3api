@@ -285,6 +285,168 @@ func (_u *PriceVariantUpdate) ClearSetOutputPerM() *PriceVariantUpdate {
 	return _u
 }
 
+// SetSetCacheReadPerM sets the "set_cache_read_per_m" field.
+func (_u *PriceVariantUpdate) SetSetCacheReadPerM(v int64) *PriceVariantUpdate {
+	_u.mutation.ResetSetCacheReadPerM()
+	_u.mutation.SetSetCacheReadPerM(v)
+	return _u
+}
+
+// SetNillableSetCacheReadPerM sets the "set_cache_read_per_m" field if the given value is not nil.
+func (_u *PriceVariantUpdate) SetNillableSetCacheReadPerM(v *int64) *PriceVariantUpdate {
+	if v != nil {
+		_u.SetSetCacheReadPerM(*v)
+	}
+	return _u
+}
+
+// AddSetCacheReadPerM adds value to the "set_cache_read_per_m" field.
+func (_u *PriceVariantUpdate) AddSetCacheReadPerM(v int64) *PriceVariantUpdate {
+	_u.mutation.AddSetCacheReadPerM(v)
+	return _u
+}
+
+// ClearSetCacheReadPerM clears the value of the "set_cache_read_per_m" field.
+func (_u *PriceVariantUpdate) ClearSetCacheReadPerM() *PriceVariantUpdate {
+	_u.mutation.ClearSetCacheReadPerM()
+	return _u
+}
+
+// SetSetCacheCreationPerM sets the "set_cache_creation_per_m" field.
+func (_u *PriceVariantUpdate) SetSetCacheCreationPerM(v int64) *PriceVariantUpdate {
+	_u.mutation.ResetSetCacheCreationPerM()
+	_u.mutation.SetSetCacheCreationPerM(v)
+	return _u
+}
+
+// SetNillableSetCacheCreationPerM sets the "set_cache_creation_per_m" field if the given value is not nil.
+func (_u *PriceVariantUpdate) SetNillableSetCacheCreationPerM(v *int64) *PriceVariantUpdate {
+	if v != nil {
+		_u.SetSetCacheCreationPerM(*v)
+	}
+	return _u
+}
+
+// AddSetCacheCreationPerM adds value to the "set_cache_creation_per_m" field.
+func (_u *PriceVariantUpdate) AddSetCacheCreationPerM(v int64) *PriceVariantUpdate {
+	_u.mutation.AddSetCacheCreationPerM(v)
+	return _u
+}
+
+// ClearSetCacheCreationPerM clears the value of the "set_cache_creation_per_m" field.
+func (_u *PriceVariantUpdate) ClearSetCacheCreationPerM() *PriceVariantUpdate {
+	_u.mutation.ClearSetCacheCreationPerM()
+	return _u
+}
+
+// SetSetPricePerCall sets the "set_price_per_call" field.
+func (_u *PriceVariantUpdate) SetSetPricePerCall(v int64) *PriceVariantUpdate {
+	_u.mutation.ResetSetPricePerCall()
+	_u.mutation.SetSetPricePerCall(v)
+	return _u
+}
+
+// SetNillableSetPricePerCall sets the "set_price_per_call" field if the given value is not nil.
+func (_u *PriceVariantUpdate) SetNillableSetPricePerCall(v *int64) *PriceVariantUpdate {
+	if v != nil {
+		_u.SetSetPricePerCall(*v)
+	}
+	return _u
+}
+
+// AddSetPricePerCall adds value to the "set_price_per_call" field.
+func (_u *PriceVariantUpdate) AddSetPricePerCall(v int64) *PriceVariantUpdate {
+	_u.mutation.AddSetPricePerCall(v)
+	return _u
+}
+
+// ClearSetPricePerCall clears the value of the "set_price_per_call" field.
+func (_u *PriceVariantUpdate) ClearSetPricePerCall() *PriceVariantUpdate {
+	_u.mutation.ClearSetPricePerCall()
+	return _u
+}
+
+// SetSetImgInTokPerM sets the "set_img_in_tok_per_m" field.
+func (_u *PriceVariantUpdate) SetSetImgInTokPerM(v int64) *PriceVariantUpdate {
+	_u.mutation.ResetSetImgInTokPerM()
+	_u.mutation.SetSetImgInTokPerM(v)
+	return _u
+}
+
+// SetNillableSetImgInTokPerM sets the "set_img_in_tok_per_m" field if the given value is not nil.
+func (_u *PriceVariantUpdate) SetNillableSetImgInTokPerM(v *int64) *PriceVariantUpdate {
+	if v != nil {
+		_u.SetSetImgInTokPerM(*v)
+	}
+	return _u
+}
+
+// AddSetImgInTokPerM adds value to the "set_img_in_tok_per_m" field.
+func (_u *PriceVariantUpdate) AddSetImgInTokPerM(v int64) *PriceVariantUpdate {
+	_u.mutation.AddSetImgInTokPerM(v)
+	return _u
+}
+
+// ClearSetImgInTokPerM clears the value of the "set_img_in_tok_per_m" field.
+func (_u *PriceVariantUpdate) ClearSetImgInTokPerM() *PriceVariantUpdate {
+	_u.mutation.ClearSetImgInTokPerM()
+	return _u
+}
+
+// SetSetImgOutTokPerM sets the "set_img_out_tok_per_m" field.
+func (_u *PriceVariantUpdate) SetSetImgOutTokPerM(v int64) *PriceVariantUpdate {
+	_u.mutation.ResetSetImgOutTokPerM()
+	_u.mutation.SetSetImgOutTokPerM(v)
+	return _u
+}
+
+// SetNillableSetImgOutTokPerM sets the "set_img_out_tok_per_m" field if the given value is not nil.
+func (_u *PriceVariantUpdate) SetNillableSetImgOutTokPerM(v *int64) *PriceVariantUpdate {
+	if v != nil {
+		_u.SetSetImgOutTokPerM(*v)
+	}
+	return _u
+}
+
+// AddSetImgOutTokPerM adds value to the "set_img_out_tok_per_m" field.
+func (_u *PriceVariantUpdate) AddSetImgOutTokPerM(v int64) *PriceVariantUpdate {
+	_u.mutation.AddSetImgOutTokPerM(v)
+	return _u
+}
+
+// ClearSetImgOutTokPerM clears the value of the "set_img_out_tok_per_m" field.
+func (_u *PriceVariantUpdate) ClearSetImgOutTokPerM() *PriceVariantUpdate {
+	_u.mutation.ClearSetImgOutTokPerM()
+	return _u
+}
+
+// SetSetPricePerImage sets the "set_price_per_image" field.
+func (_u *PriceVariantUpdate) SetSetPricePerImage(v int64) *PriceVariantUpdate {
+	_u.mutation.ResetSetPricePerImage()
+	_u.mutation.SetSetPricePerImage(v)
+	return _u
+}
+
+// SetNillableSetPricePerImage sets the "set_price_per_image" field if the given value is not nil.
+func (_u *PriceVariantUpdate) SetNillableSetPricePerImage(v *int64) *PriceVariantUpdate {
+	if v != nil {
+		_u.SetSetPricePerImage(*v)
+	}
+	return _u
+}
+
+// AddSetPricePerImage adds value to the "set_price_per_image" field.
+func (_u *PriceVariantUpdate) AddSetPricePerImage(v int64) *PriceVariantUpdate {
+	_u.mutation.AddSetPricePerImage(v)
+	return _u
+}
+
+// ClearSetPricePerImage clears the value of the "set_price_per_image" field.
+func (_u *PriceVariantUpdate) ClearSetPricePerImage() *PriceVariantUpdate {
+	_u.mutation.ClearSetPricePerImage()
+	return _u
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_u *PriceVariantUpdate) SetCreatedAt(v time.Time) *PriceVariantUpdate {
 	_u.mutation.SetCreatedAt(v)
@@ -435,6 +597,60 @@ func (_u *PriceVariantUpdate) sqlSave(ctx context.Context) (_node int, err error
 	}
 	if _u.mutation.SetOutputPerMCleared() {
 		_spec.ClearField(pricevariant.FieldSetOutputPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetCacheReadPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetCacheReadPerM, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetCacheReadPerM(); ok {
+		_spec.AddField(pricevariant.FieldSetCacheReadPerM, field.TypeInt64, value)
+	}
+	if _u.mutation.SetCacheReadPerMCleared() {
+		_spec.ClearField(pricevariant.FieldSetCacheReadPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetCacheCreationPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetCacheCreationPerM, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetCacheCreationPerM(); ok {
+		_spec.AddField(pricevariant.FieldSetCacheCreationPerM, field.TypeInt64, value)
+	}
+	if _u.mutation.SetCacheCreationPerMCleared() {
+		_spec.ClearField(pricevariant.FieldSetCacheCreationPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetPricePerCall(); ok {
+		_spec.SetField(pricevariant.FieldSetPricePerCall, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetPricePerCall(); ok {
+		_spec.AddField(pricevariant.FieldSetPricePerCall, field.TypeInt64, value)
+	}
+	if _u.mutation.SetPricePerCallCleared() {
+		_spec.ClearField(pricevariant.FieldSetPricePerCall, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetImgInTokPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetImgInTokPerM, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetImgInTokPerM(); ok {
+		_spec.AddField(pricevariant.FieldSetImgInTokPerM, field.TypeInt64, value)
+	}
+	if _u.mutation.SetImgInTokPerMCleared() {
+		_spec.ClearField(pricevariant.FieldSetImgInTokPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetImgOutTokPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetImgOutTokPerM, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetImgOutTokPerM(); ok {
+		_spec.AddField(pricevariant.FieldSetImgOutTokPerM, field.TypeInt64, value)
+	}
+	if _u.mutation.SetImgOutTokPerMCleared() {
+		_spec.ClearField(pricevariant.FieldSetImgOutTokPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetPricePerImage(); ok {
+		_spec.SetField(pricevariant.FieldSetPricePerImage, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetPricePerImage(); ok {
+		_spec.AddField(pricevariant.FieldSetPricePerImage, field.TypeInt64, value)
+	}
+	if _u.mutation.SetPricePerImageCleared() {
+		_spec.ClearField(pricevariant.FieldSetPricePerImage, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(pricevariant.FieldCreatedAt, field.TypeTime, value)
@@ -719,6 +935,168 @@ func (_u *PriceVariantUpdateOne) ClearSetOutputPerM() *PriceVariantUpdateOne {
 	return _u
 }
 
+// SetSetCacheReadPerM sets the "set_cache_read_per_m" field.
+func (_u *PriceVariantUpdateOne) SetSetCacheReadPerM(v int64) *PriceVariantUpdateOne {
+	_u.mutation.ResetSetCacheReadPerM()
+	_u.mutation.SetSetCacheReadPerM(v)
+	return _u
+}
+
+// SetNillableSetCacheReadPerM sets the "set_cache_read_per_m" field if the given value is not nil.
+func (_u *PriceVariantUpdateOne) SetNillableSetCacheReadPerM(v *int64) *PriceVariantUpdateOne {
+	if v != nil {
+		_u.SetSetCacheReadPerM(*v)
+	}
+	return _u
+}
+
+// AddSetCacheReadPerM adds value to the "set_cache_read_per_m" field.
+func (_u *PriceVariantUpdateOne) AddSetCacheReadPerM(v int64) *PriceVariantUpdateOne {
+	_u.mutation.AddSetCacheReadPerM(v)
+	return _u
+}
+
+// ClearSetCacheReadPerM clears the value of the "set_cache_read_per_m" field.
+func (_u *PriceVariantUpdateOne) ClearSetCacheReadPerM() *PriceVariantUpdateOne {
+	_u.mutation.ClearSetCacheReadPerM()
+	return _u
+}
+
+// SetSetCacheCreationPerM sets the "set_cache_creation_per_m" field.
+func (_u *PriceVariantUpdateOne) SetSetCacheCreationPerM(v int64) *PriceVariantUpdateOne {
+	_u.mutation.ResetSetCacheCreationPerM()
+	_u.mutation.SetSetCacheCreationPerM(v)
+	return _u
+}
+
+// SetNillableSetCacheCreationPerM sets the "set_cache_creation_per_m" field if the given value is not nil.
+func (_u *PriceVariantUpdateOne) SetNillableSetCacheCreationPerM(v *int64) *PriceVariantUpdateOne {
+	if v != nil {
+		_u.SetSetCacheCreationPerM(*v)
+	}
+	return _u
+}
+
+// AddSetCacheCreationPerM adds value to the "set_cache_creation_per_m" field.
+func (_u *PriceVariantUpdateOne) AddSetCacheCreationPerM(v int64) *PriceVariantUpdateOne {
+	_u.mutation.AddSetCacheCreationPerM(v)
+	return _u
+}
+
+// ClearSetCacheCreationPerM clears the value of the "set_cache_creation_per_m" field.
+func (_u *PriceVariantUpdateOne) ClearSetCacheCreationPerM() *PriceVariantUpdateOne {
+	_u.mutation.ClearSetCacheCreationPerM()
+	return _u
+}
+
+// SetSetPricePerCall sets the "set_price_per_call" field.
+func (_u *PriceVariantUpdateOne) SetSetPricePerCall(v int64) *PriceVariantUpdateOne {
+	_u.mutation.ResetSetPricePerCall()
+	_u.mutation.SetSetPricePerCall(v)
+	return _u
+}
+
+// SetNillableSetPricePerCall sets the "set_price_per_call" field if the given value is not nil.
+func (_u *PriceVariantUpdateOne) SetNillableSetPricePerCall(v *int64) *PriceVariantUpdateOne {
+	if v != nil {
+		_u.SetSetPricePerCall(*v)
+	}
+	return _u
+}
+
+// AddSetPricePerCall adds value to the "set_price_per_call" field.
+func (_u *PriceVariantUpdateOne) AddSetPricePerCall(v int64) *PriceVariantUpdateOne {
+	_u.mutation.AddSetPricePerCall(v)
+	return _u
+}
+
+// ClearSetPricePerCall clears the value of the "set_price_per_call" field.
+func (_u *PriceVariantUpdateOne) ClearSetPricePerCall() *PriceVariantUpdateOne {
+	_u.mutation.ClearSetPricePerCall()
+	return _u
+}
+
+// SetSetImgInTokPerM sets the "set_img_in_tok_per_m" field.
+func (_u *PriceVariantUpdateOne) SetSetImgInTokPerM(v int64) *PriceVariantUpdateOne {
+	_u.mutation.ResetSetImgInTokPerM()
+	_u.mutation.SetSetImgInTokPerM(v)
+	return _u
+}
+
+// SetNillableSetImgInTokPerM sets the "set_img_in_tok_per_m" field if the given value is not nil.
+func (_u *PriceVariantUpdateOne) SetNillableSetImgInTokPerM(v *int64) *PriceVariantUpdateOne {
+	if v != nil {
+		_u.SetSetImgInTokPerM(*v)
+	}
+	return _u
+}
+
+// AddSetImgInTokPerM adds value to the "set_img_in_tok_per_m" field.
+func (_u *PriceVariantUpdateOne) AddSetImgInTokPerM(v int64) *PriceVariantUpdateOne {
+	_u.mutation.AddSetImgInTokPerM(v)
+	return _u
+}
+
+// ClearSetImgInTokPerM clears the value of the "set_img_in_tok_per_m" field.
+func (_u *PriceVariantUpdateOne) ClearSetImgInTokPerM() *PriceVariantUpdateOne {
+	_u.mutation.ClearSetImgInTokPerM()
+	return _u
+}
+
+// SetSetImgOutTokPerM sets the "set_img_out_tok_per_m" field.
+func (_u *PriceVariantUpdateOne) SetSetImgOutTokPerM(v int64) *PriceVariantUpdateOne {
+	_u.mutation.ResetSetImgOutTokPerM()
+	_u.mutation.SetSetImgOutTokPerM(v)
+	return _u
+}
+
+// SetNillableSetImgOutTokPerM sets the "set_img_out_tok_per_m" field if the given value is not nil.
+func (_u *PriceVariantUpdateOne) SetNillableSetImgOutTokPerM(v *int64) *PriceVariantUpdateOne {
+	if v != nil {
+		_u.SetSetImgOutTokPerM(*v)
+	}
+	return _u
+}
+
+// AddSetImgOutTokPerM adds value to the "set_img_out_tok_per_m" field.
+func (_u *PriceVariantUpdateOne) AddSetImgOutTokPerM(v int64) *PriceVariantUpdateOne {
+	_u.mutation.AddSetImgOutTokPerM(v)
+	return _u
+}
+
+// ClearSetImgOutTokPerM clears the value of the "set_img_out_tok_per_m" field.
+func (_u *PriceVariantUpdateOne) ClearSetImgOutTokPerM() *PriceVariantUpdateOne {
+	_u.mutation.ClearSetImgOutTokPerM()
+	return _u
+}
+
+// SetSetPricePerImage sets the "set_price_per_image" field.
+func (_u *PriceVariantUpdateOne) SetSetPricePerImage(v int64) *PriceVariantUpdateOne {
+	_u.mutation.ResetSetPricePerImage()
+	_u.mutation.SetSetPricePerImage(v)
+	return _u
+}
+
+// SetNillableSetPricePerImage sets the "set_price_per_image" field if the given value is not nil.
+func (_u *PriceVariantUpdateOne) SetNillableSetPricePerImage(v *int64) *PriceVariantUpdateOne {
+	if v != nil {
+		_u.SetSetPricePerImage(*v)
+	}
+	return _u
+}
+
+// AddSetPricePerImage adds value to the "set_price_per_image" field.
+func (_u *PriceVariantUpdateOne) AddSetPricePerImage(v int64) *PriceVariantUpdateOne {
+	_u.mutation.AddSetPricePerImage(v)
+	return _u
+}
+
+// ClearSetPricePerImage clears the value of the "set_price_per_image" field.
+func (_u *PriceVariantUpdateOne) ClearSetPricePerImage() *PriceVariantUpdateOne {
+	_u.mutation.ClearSetPricePerImage()
+	return _u
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_u *PriceVariantUpdateOne) SetCreatedAt(v time.Time) *PriceVariantUpdateOne {
 	_u.mutation.SetCreatedAt(v)
@@ -899,6 +1277,60 @@ func (_u *PriceVariantUpdateOne) sqlSave(ctx context.Context) (_node *PriceVaria
 	}
 	if _u.mutation.SetOutputPerMCleared() {
 		_spec.ClearField(pricevariant.FieldSetOutputPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetCacheReadPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetCacheReadPerM, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetCacheReadPerM(); ok {
+		_spec.AddField(pricevariant.FieldSetCacheReadPerM, field.TypeInt64, value)
+	}
+	if _u.mutation.SetCacheReadPerMCleared() {
+		_spec.ClearField(pricevariant.FieldSetCacheReadPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetCacheCreationPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetCacheCreationPerM, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetCacheCreationPerM(); ok {
+		_spec.AddField(pricevariant.FieldSetCacheCreationPerM, field.TypeInt64, value)
+	}
+	if _u.mutation.SetCacheCreationPerMCleared() {
+		_spec.ClearField(pricevariant.FieldSetCacheCreationPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetPricePerCall(); ok {
+		_spec.SetField(pricevariant.FieldSetPricePerCall, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetPricePerCall(); ok {
+		_spec.AddField(pricevariant.FieldSetPricePerCall, field.TypeInt64, value)
+	}
+	if _u.mutation.SetPricePerCallCleared() {
+		_spec.ClearField(pricevariant.FieldSetPricePerCall, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetImgInTokPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetImgInTokPerM, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetImgInTokPerM(); ok {
+		_spec.AddField(pricevariant.FieldSetImgInTokPerM, field.TypeInt64, value)
+	}
+	if _u.mutation.SetImgInTokPerMCleared() {
+		_spec.ClearField(pricevariant.FieldSetImgInTokPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetImgOutTokPerM(); ok {
+		_spec.SetField(pricevariant.FieldSetImgOutTokPerM, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetImgOutTokPerM(); ok {
+		_spec.AddField(pricevariant.FieldSetImgOutTokPerM, field.TypeInt64, value)
+	}
+	if _u.mutation.SetImgOutTokPerMCleared() {
+		_spec.ClearField(pricevariant.FieldSetImgOutTokPerM, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SetPricePerImage(); ok {
+		_spec.SetField(pricevariant.FieldSetPricePerImage, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSetPricePerImage(); ok {
+		_spec.AddField(pricevariant.FieldSetPricePerImage, field.TypeInt64, value)
+	}
+	if _u.mutation.SetPricePerImageCleared() {
+		_spec.ClearField(pricevariant.FieldSetPricePerImage, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(pricevariant.FieldCreatedAt, field.TypeTime, value)

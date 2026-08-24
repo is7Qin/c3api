@@ -1045,7 +1045,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 **mode 与分量校验（PUT /prices/entry）**：`mode=token` ⇒ `input_per_m` + `output_per_m` 必填；`mode=call` ⇒ `price_per_call` 必填；`mode=image` ⇒ image 三分量至少其一；其余分量可选配。`max_input_tokens` / `max_output_tokens` / `supports_prompt_caching` 为 litellm 元数据（仅 litellm 行携带，manual 行 `nil`；查询与计费无关，信息保留在 `raw` JSONB）。
 
-**变体语义**：条件全可空=通配，多条件 AND；首条命中即停（按 seq 升序）。效果至少其一非空：`multiplier` 倍数（0..10，0=免费档，上限 10=×10；API 边界倍数小数——存储 `mult_bp` 万分：存储 15000 ↔ 显示 1.5），`set_input_per_m`/`set_output_per_m` 绝对覆盖（仅 input/output 受覆盖；cache 分量只受 multiplier 影响）。DB 侧 `CHECK(mult_bp IS NOT NULL OR set_input_per_m IS NOT NULL OR set_output_per_m IS NOT NULL)` 防御空效果行。
+**变体语义**：条件全可空=通配，多条件 AND；首条命中即停（按 seq 升序）。效果至少其一非空：`multiplier` 倍数（0..10，0=免费档，上限 10=×10；API 边界倍数小数——存储 `mult_bp` 万分：存储 15000 ↔ 显示 1.5）或 8 个绝对覆盖分量：`set_input_per_m`/`set_output_per_m`/`set_cache_read_per_m`/`set_cache_creation_per_m`（token 模式）/`set_price_per_call`（call 模式）/`set_img_in_tok_per_m`/`set_img_out_tok_per_m`/`set_price_per_image`（image 模式）；倍率作用于全分量，覆盖可指任一分量。DB 侧 `CHECK(mult_bp IS NOT NULL OR set_input_per_m IS NOT NULL OR set_output_per_m IS NOT NULL OR set_cache_read_per_m IS NOT NULL OR set_cache_creation_per_m IS NOT NULL OR set_price_per_call IS NOT NULL OR set_img_in_tok_per_m IS NOT NULL OR set_img_out_tok_per_m IS NOT NULL OR set_price_per_image IS NOT NULL)`（约束名 `price_variants_effect_at_least_one_v2`，幂等升级）防御空效果行。前端按条目 `mode` 渲染对应覆盖组。
 
 **解析与计费**：`ResolveEntryPrices` 按 entry 基底 → 首中变体 → multiplier 倍率（0..10，存储换算万分钳制 [0,100000] 溢出防御）全体乘 → set_* 绝对覆盖；`billing.CostFromResolved` 纯算术对解析后单价组计算（零分配零锁；价格快照读零 DB）。
 

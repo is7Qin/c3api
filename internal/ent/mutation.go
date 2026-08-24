@@ -9737,33 +9737,45 @@ func (m *PriceEntryMutation) ResetEdge(name string) error {
 // PriceVariantMutation represents an operation that mutates the PriceVariant nodes in the graph.
 type PriceVariantMutation struct {
 	config
-	op                  Op
-	typ                 string
-	id                  *int64
-	model               *string
-	seq                 *int
-	addseq              *int
-	service_tier        *string
-	ctx_min             *int64
-	addctx_min          *int64
-	ctx_max             *int64
-	addctx_max          *int64
-	time_start          *string
-	time_end            *string
-	dow_mask            *int
-	adddow_mask         *int
-	mult_bp             *int
-	addmult_bp          *int
-	set_input_per_m     *int64
-	addset_input_per_m  *int64
-	set_output_per_m    *int64
-	addset_output_per_m *int64
-	created_at          *time.Time
-	updated_at          *time.Time
-	clearedFields       map[string]struct{}
-	done                bool
-	oldValue            func(context.Context) (*PriceVariant, error)
-	predicates          []predicate.PriceVariant
+	op                          Op
+	typ                         string
+	id                          *int64
+	model                       *string
+	seq                         *int
+	addseq                      *int
+	service_tier                *string
+	ctx_min                     *int64
+	addctx_min                  *int64
+	ctx_max                     *int64
+	addctx_max                  *int64
+	time_start                  *string
+	time_end                    *string
+	dow_mask                    *int
+	adddow_mask                 *int
+	mult_bp                     *int
+	addmult_bp                  *int
+	set_input_per_m             *int64
+	addset_input_per_m          *int64
+	set_output_per_m            *int64
+	addset_output_per_m         *int64
+	set_cache_read_per_m        *int64
+	addset_cache_read_per_m     *int64
+	set_cache_creation_per_m    *int64
+	addset_cache_creation_per_m *int64
+	set_price_per_call          *int64
+	addset_price_per_call       *int64
+	set_img_in_tok_per_m        *int64
+	addset_img_in_tok_per_m     *int64
+	set_img_out_tok_per_m       *int64
+	addset_img_out_tok_per_m    *int64
+	set_price_per_image         *int64
+	addset_price_per_image      *int64
+	created_at                  *time.Time
+	updated_at                  *time.Time
+	clearedFields               map[string]struct{}
+	done                        bool
+	oldValue                    func(context.Context) (*PriceVariant, error)
+	predicates                  []predicate.PriceVariant
 }
 
 var _ ent.Mutation = (*PriceVariantMutation)(nil)
@@ -10529,6 +10541,426 @@ func (m *PriceVariantMutation) ResetSetOutputPerM() {
 	delete(m.clearedFields, pricevariant.FieldSetOutputPerM)
 }
 
+// SetSetCacheReadPerM sets the "set_cache_read_per_m" field.
+func (m *PriceVariantMutation) SetSetCacheReadPerM(i int64) {
+	m.set_cache_read_per_m = &i
+	m.addset_cache_read_per_m = nil
+}
+
+// SetCacheReadPerM returns the value of the "set_cache_read_per_m" field in the mutation.
+func (m *PriceVariantMutation) SetCacheReadPerM() (r int64, exists bool) {
+	v := m.set_cache_read_per_m
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSetCacheReadPerM returns the old "set_cache_read_per_m" field's value of the PriceVariant entity.
+// If the PriceVariant object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PriceVariantMutation) OldSetCacheReadPerM(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSetCacheReadPerM is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSetCacheReadPerM requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSetCacheReadPerM: %w", err)
+	}
+	return oldValue.SetCacheReadPerM, nil
+}
+
+// AddSetCacheReadPerM adds i to the "set_cache_read_per_m" field.
+func (m *PriceVariantMutation) AddSetCacheReadPerM(i int64) {
+	if m.addset_cache_read_per_m != nil {
+		*m.addset_cache_read_per_m += i
+	} else {
+		m.addset_cache_read_per_m = &i
+	}
+}
+
+// AddedSetCacheReadPerM returns the value that was added to the "set_cache_read_per_m" field in this mutation.
+func (m *PriceVariantMutation) AddedSetCacheReadPerM() (r int64, exists bool) {
+	v := m.addset_cache_read_per_m
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSetCacheReadPerM clears the value of the "set_cache_read_per_m" field.
+func (m *PriceVariantMutation) ClearSetCacheReadPerM() {
+	m.set_cache_read_per_m = nil
+	m.addset_cache_read_per_m = nil
+	m.clearedFields[pricevariant.FieldSetCacheReadPerM] = struct{}{}
+}
+
+// SetCacheReadPerMCleared returns if the "set_cache_read_per_m" field was cleared in this mutation.
+func (m *PriceVariantMutation) SetCacheReadPerMCleared() bool {
+	_, ok := m.clearedFields[pricevariant.FieldSetCacheReadPerM]
+	return ok
+}
+
+// ResetSetCacheReadPerM resets all changes to the "set_cache_read_per_m" field.
+func (m *PriceVariantMutation) ResetSetCacheReadPerM() {
+	m.set_cache_read_per_m = nil
+	m.addset_cache_read_per_m = nil
+	delete(m.clearedFields, pricevariant.FieldSetCacheReadPerM)
+}
+
+// SetSetCacheCreationPerM sets the "set_cache_creation_per_m" field.
+func (m *PriceVariantMutation) SetSetCacheCreationPerM(i int64) {
+	m.set_cache_creation_per_m = &i
+	m.addset_cache_creation_per_m = nil
+}
+
+// SetCacheCreationPerM returns the value of the "set_cache_creation_per_m" field in the mutation.
+func (m *PriceVariantMutation) SetCacheCreationPerM() (r int64, exists bool) {
+	v := m.set_cache_creation_per_m
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSetCacheCreationPerM returns the old "set_cache_creation_per_m" field's value of the PriceVariant entity.
+// If the PriceVariant object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PriceVariantMutation) OldSetCacheCreationPerM(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSetCacheCreationPerM is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSetCacheCreationPerM requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSetCacheCreationPerM: %w", err)
+	}
+	return oldValue.SetCacheCreationPerM, nil
+}
+
+// AddSetCacheCreationPerM adds i to the "set_cache_creation_per_m" field.
+func (m *PriceVariantMutation) AddSetCacheCreationPerM(i int64) {
+	if m.addset_cache_creation_per_m != nil {
+		*m.addset_cache_creation_per_m += i
+	} else {
+		m.addset_cache_creation_per_m = &i
+	}
+}
+
+// AddedSetCacheCreationPerM returns the value that was added to the "set_cache_creation_per_m" field in this mutation.
+func (m *PriceVariantMutation) AddedSetCacheCreationPerM() (r int64, exists bool) {
+	v := m.addset_cache_creation_per_m
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSetCacheCreationPerM clears the value of the "set_cache_creation_per_m" field.
+func (m *PriceVariantMutation) ClearSetCacheCreationPerM() {
+	m.set_cache_creation_per_m = nil
+	m.addset_cache_creation_per_m = nil
+	m.clearedFields[pricevariant.FieldSetCacheCreationPerM] = struct{}{}
+}
+
+// SetCacheCreationPerMCleared returns if the "set_cache_creation_per_m" field was cleared in this mutation.
+func (m *PriceVariantMutation) SetCacheCreationPerMCleared() bool {
+	_, ok := m.clearedFields[pricevariant.FieldSetCacheCreationPerM]
+	return ok
+}
+
+// ResetSetCacheCreationPerM resets all changes to the "set_cache_creation_per_m" field.
+func (m *PriceVariantMutation) ResetSetCacheCreationPerM() {
+	m.set_cache_creation_per_m = nil
+	m.addset_cache_creation_per_m = nil
+	delete(m.clearedFields, pricevariant.FieldSetCacheCreationPerM)
+}
+
+// SetSetPricePerCall sets the "set_price_per_call" field.
+func (m *PriceVariantMutation) SetSetPricePerCall(i int64) {
+	m.set_price_per_call = &i
+	m.addset_price_per_call = nil
+}
+
+// SetPricePerCall returns the value of the "set_price_per_call" field in the mutation.
+func (m *PriceVariantMutation) SetPricePerCall() (r int64, exists bool) {
+	v := m.set_price_per_call
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSetPricePerCall returns the old "set_price_per_call" field's value of the PriceVariant entity.
+// If the PriceVariant object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PriceVariantMutation) OldSetPricePerCall(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSetPricePerCall is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSetPricePerCall requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSetPricePerCall: %w", err)
+	}
+	return oldValue.SetPricePerCall, nil
+}
+
+// AddSetPricePerCall adds i to the "set_price_per_call" field.
+func (m *PriceVariantMutation) AddSetPricePerCall(i int64) {
+	if m.addset_price_per_call != nil {
+		*m.addset_price_per_call += i
+	} else {
+		m.addset_price_per_call = &i
+	}
+}
+
+// AddedSetPricePerCall returns the value that was added to the "set_price_per_call" field in this mutation.
+func (m *PriceVariantMutation) AddedSetPricePerCall() (r int64, exists bool) {
+	v := m.addset_price_per_call
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSetPricePerCall clears the value of the "set_price_per_call" field.
+func (m *PriceVariantMutation) ClearSetPricePerCall() {
+	m.set_price_per_call = nil
+	m.addset_price_per_call = nil
+	m.clearedFields[pricevariant.FieldSetPricePerCall] = struct{}{}
+}
+
+// SetPricePerCallCleared returns if the "set_price_per_call" field was cleared in this mutation.
+func (m *PriceVariantMutation) SetPricePerCallCleared() bool {
+	_, ok := m.clearedFields[pricevariant.FieldSetPricePerCall]
+	return ok
+}
+
+// ResetSetPricePerCall resets all changes to the "set_price_per_call" field.
+func (m *PriceVariantMutation) ResetSetPricePerCall() {
+	m.set_price_per_call = nil
+	m.addset_price_per_call = nil
+	delete(m.clearedFields, pricevariant.FieldSetPricePerCall)
+}
+
+// SetSetImgInTokPerM sets the "set_img_in_tok_per_m" field.
+func (m *PriceVariantMutation) SetSetImgInTokPerM(i int64) {
+	m.set_img_in_tok_per_m = &i
+	m.addset_img_in_tok_per_m = nil
+}
+
+// SetImgInTokPerM returns the value of the "set_img_in_tok_per_m" field in the mutation.
+func (m *PriceVariantMutation) SetImgInTokPerM() (r int64, exists bool) {
+	v := m.set_img_in_tok_per_m
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSetImgInTokPerM returns the old "set_img_in_tok_per_m" field's value of the PriceVariant entity.
+// If the PriceVariant object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PriceVariantMutation) OldSetImgInTokPerM(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSetImgInTokPerM is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSetImgInTokPerM requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSetImgInTokPerM: %w", err)
+	}
+	return oldValue.SetImgInTokPerM, nil
+}
+
+// AddSetImgInTokPerM adds i to the "set_img_in_tok_per_m" field.
+func (m *PriceVariantMutation) AddSetImgInTokPerM(i int64) {
+	if m.addset_img_in_tok_per_m != nil {
+		*m.addset_img_in_tok_per_m += i
+	} else {
+		m.addset_img_in_tok_per_m = &i
+	}
+}
+
+// AddedSetImgInTokPerM returns the value that was added to the "set_img_in_tok_per_m" field in this mutation.
+func (m *PriceVariantMutation) AddedSetImgInTokPerM() (r int64, exists bool) {
+	v := m.addset_img_in_tok_per_m
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSetImgInTokPerM clears the value of the "set_img_in_tok_per_m" field.
+func (m *PriceVariantMutation) ClearSetImgInTokPerM() {
+	m.set_img_in_tok_per_m = nil
+	m.addset_img_in_tok_per_m = nil
+	m.clearedFields[pricevariant.FieldSetImgInTokPerM] = struct{}{}
+}
+
+// SetImgInTokPerMCleared returns if the "set_img_in_tok_per_m" field was cleared in this mutation.
+func (m *PriceVariantMutation) SetImgInTokPerMCleared() bool {
+	_, ok := m.clearedFields[pricevariant.FieldSetImgInTokPerM]
+	return ok
+}
+
+// ResetSetImgInTokPerM resets all changes to the "set_img_in_tok_per_m" field.
+func (m *PriceVariantMutation) ResetSetImgInTokPerM() {
+	m.set_img_in_tok_per_m = nil
+	m.addset_img_in_tok_per_m = nil
+	delete(m.clearedFields, pricevariant.FieldSetImgInTokPerM)
+}
+
+// SetSetImgOutTokPerM sets the "set_img_out_tok_per_m" field.
+func (m *PriceVariantMutation) SetSetImgOutTokPerM(i int64) {
+	m.set_img_out_tok_per_m = &i
+	m.addset_img_out_tok_per_m = nil
+}
+
+// SetImgOutTokPerM returns the value of the "set_img_out_tok_per_m" field in the mutation.
+func (m *PriceVariantMutation) SetImgOutTokPerM() (r int64, exists bool) {
+	v := m.set_img_out_tok_per_m
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSetImgOutTokPerM returns the old "set_img_out_tok_per_m" field's value of the PriceVariant entity.
+// If the PriceVariant object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PriceVariantMutation) OldSetImgOutTokPerM(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSetImgOutTokPerM is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSetImgOutTokPerM requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSetImgOutTokPerM: %w", err)
+	}
+	return oldValue.SetImgOutTokPerM, nil
+}
+
+// AddSetImgOutTokPerM adds i to the "set_img_out_tok_per_m" field.
+func (m *PriceVariantMutation) AddSetImgOutTokPerM(i int64) {
+	if m.addset_img_out_tok_per_m != nil {
+		*m.addset_img_out_tok_per_m += i
+	} else {
+		m.addset_img_out_tok_per_m = &i
+	}
+}
+
+// AddedSetImgOutTokPerM returns the value that was added to the "set_img_out_tok_per_m" field in this mutation.
+func (m *PriceVariantMutation) AddedSetImgOutTokPerM() (r int64, exists bool) {
+	v := m.addset_img_out_tok_per_m
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSetImgOutTokPerM clears the value of the "set_img_out_tok_per_m" field.
+func (m *PriceVariantMutation) ClearSetImgOutTokPerM() {
+	m.set_img_out_tok_per_m = nil
+	m.addset_img_out_tok_per_m = nil
+	m.clearedFields[pricevariant.FieldSetImgOutTokPerM] = struct{}{}
+}
+
+// SetImgOutTokPerMCleared returns if the "set_img_out_tok_per_m" field was cleared in this mutation.
+func (m *PriceVariantMutation) SetImgOutTokPerMCleared() bool {
+	_, ok := m.clearedFields[pricevariant.FieldSetImgOutTokPerM]
+	return ok
+}
+
+// ResetSetImgOutTokPerM resets all changes to the "set_img_out_tok_per_m" field.
+func (m *PriceVariantMutation) ResetSetImgOutTokPerM() {
+	m.set_img_out_tok_per_m = nil
+	m.addset_img_out_tok_per_m = nil
+	delete(m.clearedFields, pricevariant.FieldSetImgOutTokPerM)
+}
+
+// SetSetPricePerImage sets the "set_price_per_image" field.
+func (m *PriceVariantMutation) SetSetPricePerImage(i int64) {
+	m.set_price_per_image = &i
+	m.addset_price_per_image = nil
+}
+
+// SetPricePerImage returns the value of the "set_price_per_image" field in the mutation.
+func (m *PriceVariantMutation) SetPricePerImage() (r int64, exists bool) {
+	v := m.set_price_per_image
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSetPricePerImage returns the old "set_price_per_image" field's value of the PriceVariant entity.
+// If the PriceVariant object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PriceVariantMutation) OldSetPricePerImage(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSetPricePerImage is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSetPricePerImage requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSetPricePerImage: %w", err)
+	}
+	return oldValue.SetPricePerImage, nil
+}
+
+// AddSetPricePerImage adds i to the "set_price_per_image" field.
+func (m *PriceVariantMutation) AddSetPricePerImage(i int64) {
+	if m.addset_price_per_image != nil {
+		*m.addset_price_per_image += i
+	} else {
+		m.addset_price_per_image = &i
+	}
+}
+
+// AddedSetPricePerImage returns the value that was added to the "set_price_per_image" field in this mutation.
+func (m *PriceVariantMutation) AddedSetPricePerImage() (r int64, exists bool) {
+	v := m.addset_price_per_image
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSetPricePerImage clears the value of the "set_price_per_image" field.
+func (m *PriceVariantMutation) ClearSetPricePerImage() {
+	m.set_price_per_image = nil
+	m.addset_price_per_image = nil
+	m.clearedFields[pricevariant.FieldSetPricePerImage] = struct{}{}
+}
+
+// SetPricePerImageCleared returns if the "set_price_per_image" field was cleared in this mutation.
+func (m *PriceVariantMutation) SetPricePerImageCleared() bool {
+	_, ok := m.clearedFields[pricevariant.FieldSetPricePerImage]
+	return ok
+}
+
+// ResetSetPricePerImage resets all changes to the "set_price_per_image" field.
+func (m *PriceVariantMutation) ResetSetPricePerImage() {
+	m.set_price_per_image = nil
+	m.addset_price_per_image = nil
+	delete(m.clearedFields, pricevariant.FieldSetPricePerImage)
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *PriceVariantMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -10635,7 +11067,7 @@ func (m *PriceVariantMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *PriceVariantMutation) Fields() []string {
-	fields := make([]string, 0, 13)
+	fields := make([]string, 0, 19)
 	if m.model != nil {
 		fields = append(fields, pricevariant.FieldModel)
 	}
@@ -10668,6 +11100,24 @@ func (m *PriceVariantMutation) Fields() []string {
 	}
 	if m.set_output_per_m != nil {
 		fields = append(fields, pricevariant.FieldSetOutputPerM)
+	}
+	if m.set_cache_read_per_m != nil {
+		fields = append(fields, pricevariant.FieldSetCacheReadPerM)
+	}
+	if m.set_cache_creation_per_m != nil {
+		fields = append(fields, pricevariant.FieldSetCacheCreationPerM)
+	}
+	if m.set_price_per_call != nil {
+		fields = append(fields, pricevariant.FieldSetPricePerCall)
+	}
+	if m.set_img_in_tok_per_m != nil {
+		fields = append(fields, pricevariant.FieldSetImgInTokPerM)
+	}
+	if m.set_img_out_tok_per_m != nil {
+		fields = append(fields, pricevariant.FieldSetImgOutTokPerM)
+	}
+	if m.set_price_per_image != nil {
+		fields = append(fields, pricevariant.FieldSetPricePerImage)
 	}
 	if m.created_at != nil {
 		fields = append(fields, pricevariant.FieldCreatedAt)
@@ -10705,6 +11155,18 @@ func (m *PriceVariantMutation) Field(name string) (ent.Value, bool) {
 		return m.SetInputPerM()
 	case pricevariant.FieldSetOutputPerM:
 		return m.SetOutputPerM()
+	case pricevariant.FieldSetCacheReadPerM:
+		return m.SetCacheReadPerM()
+	case pricevariant.FieldSetCacheCreationPerM:
+		return m.SetCacheCreationPerM()
+	case pricevariant.FieldSetPricePerCall:
+		return m.SetPricePerCall()
+	case pricevariant.FieldSetImgInTokPerM:
+		return m.SetImgInTokPerM()
+	case pricevariant.FieldSetImgOutTokPerM:
+		return m.SetImgOutTokPerM()
+	case pricevariant.FieldSetPricePerImage:
+		return m.SetPricePerImage()
 	case pricevariant.FieldCreatedAt:
 		return m.CreatedAt()
 	case pricevariant.FieldUpdatedAt:
@@ -10740,6 +11202,18 @@ func (m *PriceVariantMutation) OldField(ctx context.Context, name string) (ent.V
 		return m.OldSetInputPerM(ctx)
 	case pricevariant.FieldSetOutputPerM:
 		return m.OldSetOutputPerM(ctx)
+	case pricevariant.FieldSetCacheReadPerM:
+		return m.OldSetCacheReadPerM(ctx)
+	case pricevariant.FieldSetCacheCreationPerM:
+		return m.OldSetCacheCreationPerM(ctx)
+	case pricevariant.FieldSetPricePerCall:
+		return m.OldSetPricePerCall(ctx)
+	case pricevariant.FieldSetImgInTokPerM:
+		return m.OldSetImgInTokPerM(ctx)
+	case pricevariant.FieldSetImgOutTokPerM:
+		return m.OldSetImgOutTokPerM(ctx)
+	case pricevariant.FieldSetPricePerImage:
+		return m.OldSetPricePerImage(ctx)
 	case pricevariant.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case pricevariant.FieldUpdatedAt:
@@ -10830,6 +11304,48 @@ func (m *PriceVariantMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetSetOutputPerM(v)
 		return nil
+	case pricevariant.FieldSetCacheReadPerM:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSetCacheReadPerM(v)
+		return nil
+	case pricevariant.FieldSetCacheCreationPerM:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSetCacheCreationPerM(v)
+		return nil
+	case pricevariant.FieldSetPricePerCall:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSetPricePerCall(v)
+		return nil
+	case pricevariant.FieldSetImgInTokPerM:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSetImgInTokPerM(v)
+		return nil
+	case pricevariant.FieldSetImgOutTokPerM:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSetImgOutTokPerM(v)
+		return nil
+	case pricevariant.FieldSetPricePerImage:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSetPricePerImage(v)
+		return nil
 	case pricevariant.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -10873,6 +11389,24 @@ func (m *PriceVariantMutation) AddedFields() []string {
 	if m.addset_output_per_m != nil {
 		fields = append(fields, pricevariant.FieldSetOutputPerM)
 	}
+	if m.addset_cache_read_per_m != nil {
+		fields = append(fields, pricevariant.FieldSetCacheReadPerM)
+	}
+	if m.addset_cache_creation_per_m != nil {
+		fields = append(fields, pricevariant.FieldSetCacheCreationPerM)
+	}
+	if m.addset_price_per_call != nil {
+		fields = append(fields, pricevariant.FieldSetPricePerCall)
+	}
+	if m.addset_img_in_tok_per_m != nil {
+		fields = append(fields, pricevariant.FieldSetImgInTokPerM)
+	}
+	if m.addset_img_out_tok_per_m != nil {
+		fields = append(fields, pricevariant.FieldSetImgOutTokPerM)
+	}
+	if m.addset_price_per_image != nil {
+		fields = append(fields, pricevariant.FieldSetPricePerImage)
+	}
 	return fields
 }
 
@@ -10895,6 +11429,18 @@ func (m *PriceVariantMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedSetInputPerM()
 	case pricevariant.FieldSetOutputPerM:
 		return m.AddedSetOutputPerM()
+	case pricevariant.FieldSetCacheReadPerM:
+		return m.AddedSetCacheReadPerM()
+	case pricevariant.FieldSetCacheCreationPerM:
+		return m.AddedSetCacheCreationPerM()
+	case pricevariant.FieldSetPricePerCall:
+		return m.AddedSetPricePerCall()
+	case pricevariant.FieldSetImgInTokPerM:
+		return m.AddedSetImgInTokPerM()
+	case pricevariant.FieldSetImgOutTokPerM:
+		return m.AddedSetImgOutTokPerM()
+	case pricevariant.FieldSetPricePerImage:
+		return m.AddedSetPricePerImage()
 	}
 	return nil, false
 }
@@ -10953,6 +11499,48 @@ func (m *PriceVariantMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddSetOutputPerM(v)
 		return nil
+	case pricevariant.FieldSetCacheReadPerM:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSetCacheReadPerM(v)
+		return nil
+	case pricevariant.FieldSetCacheCreationPerM:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSetCacheCreationPerM(v)
+		return nil
+	case pricevariant.FieldSetPricePerCall:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSetPricePerCall(v)
+		return nil
+	case pricevariant.FieldSetImgInTokPerM:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSetImgInTokPerM(v)
+		return nil
+	case pricevariant.FieldSetImgOutTokPerM:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSetImgOutTokPerM(v)
+		return nil
+	case pricevariant.FieldSetPricePerImage:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSetPricePerImage(v)
+		return nil
 	}
 	return fmt.Errorf("unknown PriceVariant numeric field %s", name)
 }
@@ -10987,6 +11575,24 @@ func (m *PriceVariantMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(pricevariant.FieldSetOutputPerM) {
 		fields = append(fields, pricevariant.FieldSetOutputPerM)
+	}
+	if m.FieldCleared(pricevariant.FieldSetCacheReadPerM) {
+		fields = append(fields, pricevariant.FieldSetCacheReadPerM)
+	}
+	if m.FieldCleared(pricevariant.FieldSetCacheCreationPerM) {
+		fields = append(fields, pricevariant.FieldSetCacheCreationPerM)
+	}
+	if m.FieldCleared(pricevariant.FieldSetPricePerCall) {
+		fields = append(fields, pricevariant.FieldSetPricePerCall)
+	}
+	if m.FieldCleared(pricevariant.FieldSetImgInTokPerM) {
+		fields = append(fields, pricevariant.FieldSetImgInTokPerM)
+	}
+	if m.FieldCleared(pricevariant.FieldSetImgOutTokPerM) {
+		fields = append(fields, pricevariant.FieldSetImgOutTokPerM)
+	}
+	if m.FieldCleared(pricevariant.FieldSetPricePerImage) {
+		fields = append(fields, pricevariant.FieldSetPricePerImage)
 	}
 	return fields
 }
@@ -11029,6 +11635,24 @@ func (m *PriceVariantMutation) ClearField(name string) error {
 	case pricevariant.FieldSetOutputPerM:
 		m.ClearSetOutputPerM()
 		return nil
+	case pricevariant.FieldSetCacheReadPerM:
+		m.ClearSetCacheReadPerM()
+		return nil
+	case pricevariant.FieldSetCacheCreationPerM:
+		m.ClearSetCacheCreationPerM()
+		return nil
+	case pricevariant.FieldSetPricePerCall:
+		m.ClearSetPricePerCall()
+		return nil
+	case pricevariant.FieldSetImgInTokPerM:
+		m.ClearSetImgInTokPerM()
+		return nil
+	case pricevariant.FieldSetImgOutTokPerM:
+		m.ClearSetImgOutTokPerM()
+		return nil
+	case pricevariant.FieldSetPricePerImage:
+		m.ClearSetPricePerImage()
+		return nil
 	}
 	return fmt.Errorf("unknown PriceVariant nullable field %s", name)
 }
@@ -11069,6 +11693,24 @@ func (m *PriceVariantMutation) ResetField(name string) error {
 		return nil
 	case pricevariant.FieldSetOutputPerM:
 		m.ResetSetOutputPerM()
+		return nil
+	case pricevariant.FieldSetCacheReadPerM:
+		m.ResetSetCacheReadPerM()
+		return nil
+	case pricevariant.FieldSetCacheCreationPerM:
+		m.ResetSetCacheCreationPerM()
+		return nil
+	case pricevariant.FieldSetPricePerCall:
+		m.ResetSetPricePerCall()
+		return nil
+	case pricevariant.FieldSetImgInTokPerM:
+		m.ResetSetImgInTokPerM()
+		return nil
+	case pricevariant.FieldSetImgOutTokPerM:
+		m.ResetSetImgOutTokPerM()
+		return nil
+	case pricevariant.FieldSetPricePerImage:
+		m.ResetSetPricePerImage()
 		return nil
 	case pricevariant.FieldCreatedAt:
 		m.ResetCreatedAt()

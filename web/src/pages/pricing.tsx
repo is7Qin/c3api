@@ -75,6 +75,7 @@ const fmtMult = (m: number | null | undefined): string => {
 type VariantsTarget = {
   model: string
   source: PricingSource
+  mode: 'token' | 'image' | 'call'
   inputPerM: number | null | undefined
   outputPerM: number | null | undefined
 }
@@ -82,6 +83,7 @@ type VariantsTarget = {
 function VariantsDialog({
   model,
   source,
+  mode,
   inputPerM,
   outputPerM,
   open,
@@ -89,6 +91,7 @@ function VariantsDialog({
 }: {
   model: string | null
   source: PricingSource
+  mode: 'token' | 'image' | 'call'
   inputPerM: number | null | undefined
   outputPerM: number | null | undefined
   open: boolean
@@ -116,9 +119,14 @@ function VariantsDialog({
   const [multiplierStr, setMultiplierStr] = useState('')
   const [setInputStr, setSetInputStr] = useState('')
   const [setOutputStr, setSetOutputStr] = useState('')
+  const [setCacheReadStr, setSetCacheReadStr] = useState('')
+  const [setCacheWriteStr, setSetCacheWriteStr] = useState('')
+  const [setPricePerCallStr, setSetPricePerCallStr] = useState('')
+  const [setImgInStr, setSetImgInStr] = useState('')
+  const [setImgOutStr, setSetImgOutStr] = useState('')
+  const [setPricePerImageStr, setSetPricePerImageStr] = useState('')
   const [rowErr, setRowErr] = useState<string | null>(null)
   const [clearConfirm, setClearConfirm] = useState(false)
-  const [showMore, setShowMore] = useState(false)
   const [effectMode, setEffectMode] = useState<'multiplier' | 'override'>('multiplier')
 
   const resetEditor = () => {
@@ -132,25 +140,15 @@ function VariantsDialog({
     setMultiplierStr('')
     setSetInputStr('')
     setSetOutputStr('')
+    setSetCacheReadStr('')
+    setSetCacheWriteStr('')
+    setSetPricePerCallStr('')
+    setSetImgInStr('')
+    setSetImgOutStr('')
+    setSetPricePerImageStr('')
     setEditingSeq(null)
     setRowErr(null)
-    setShowMore(false)
     setEffectMode('multiplier')
-  }
-
-  const toggleMore = () => {
-    setShowMore(v => {
-      if (v) {
-        // 收起时清空条件草稿态
-        setCtxMinStr('')
-        setCtxMaxStr('')
-        setTimeStart('')
-        setTimeEnd('')
-        setDowBools(Array(7).fill(false))
-        return false
-      }
-      return true
-    })
   }
 
   // sync server rows → localRows when dialog opens / data changes
@@ -170,6 +168,12 @@ function VariantsDialog({
         multiplier: r.multiplier ?? undefined,
         set_input_per_m: r.SetInputPerM ?? undefined,
         set_output_per_m: r.SetOutputPerM ?? undefined,
+        set_cache_read_per_m: r.SetCacheReadPerM ?? undefined,
+        set_cache_creation_per_m: r.SetCacheCreationPerM ?? undefined,
+        set_price_per_call: r.SetPricePerCall ?? undefined,
+        set_img_in_tok_per_m: r.SetImgInTokPerM ?? undefined,
+        set_img_out_tok_per_m: r.SetImgOutTokPerM ?? undefined,
+        set_price_per_image: r.SetPricePerImage ?? undefined,
       }))
     setLocalRows(sorted)
   }, [data, open])
@@ -209,6 +213,12 @@ function VariantsDialog({
     if (r.multiplier != null) parts.push(fmtMult(r.multiplier))
     if (r.set_input_per_m != null) parts.push(`in $${r.set_input_per_m}/M`)
     if (r.set_output_per_m != null) parts.push(`out $${r.set_output_per_m}/M`)
+    if (r.set_cache_read_per_m != null) parts.push(`cacheRead $${r.set_cache_read_per_m}/M`)
+    if (r.set_cache_creation_per_m != null) parts.push(`cacheWrite $${r.set_cache_creation_per_m}/M`)
+    if (r.set_price_per_call != null) parts.push(`call $${r.set_price_per_call}`)
+    if (r.set_img_in_tok_per_m != null) parts.push(`imgIn $${r.set_img_in_tok_per_m}/M`)
+    if (r.set_img_out_tok_per_m != null) parts.push(`imgOut $${r.set_img_out_tok_per_m}/M`)
+    if (r.set_price_per_image != null) parts.push(`perImg $${r.set_price_per_image}`)
     return parts.length ? parts.join(' · ') : '—'
   }
 
@@ -216,22 +226,27 @@ function VariantsDialog({
     const seqNum = Number(seqStr)
     if (!seqStr || !Number.isInteger(seqNum) || seqNum < 1) return t('pricing.variants.errSeqMin')
     if (localRows.some(r => r.seq === seqNum && r.seq !== editingSeq)) return t('pricing.variants.seqDup', { seq: seqNum })
-    // 条件校验仅展开态执行
-    if (showMore) {
-      if (ctxMinStr !== '' && (!Number.isInteger(Number(ctxMinStr)) || Number(ctxMinStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMin') })
-      if (ctxMaxStr !== '' && (!Number.isInteger(Number(ctxMaxStr)) || Number(ctxMaxStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMax') })
-      if (ctxMinStr !== '' && ctxMaxStr !== '' && Number(ctxMaxStr) <= Number(ctxMinStr)) return `${t('pricing.variants.condCtxMax')} > ${t('pricing.variants.condCtxMin')}`
-      if (timeStart !== '' && !TIME_RE.test(timeStart)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeStart') })
-      if (timeEnd !== '' && !TIME_RE.test(timeEnd)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeEnd') })
-    }
+    if (ctxMinStr !== '' && (!Number.isInteger(Number(ctxMinStr)) || Number(ctxMinStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMin') })
+    if (ctxMaxStr !== '' && (!Number.isInteger(Number(ctxMaxStr)) || Number(ctxMaxStr) < 0)) return t('pricing.variants.errNonNegInt', { field: t('pricing.variants.condCtxMax') })
+    if (ctxMinStr !== '' && ctxMaxStr !== '' && Number(ctxMaxStr) <= Number(ctxMinStr)) return `${t('pricing.variants.condCtxMax')} > ${t('pricing.variants.condCtxMin')}`
+    if (timeStart !== '' && !TIME_RE.test(timeStart)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeStart') })
+    if (timeEnd !== '' && !TIME_RE.test(timeEnd)) return t('pricing.variants.errTimeFmt', { field: t('pricing.variants.condTimeEnd') })
     if (effectMode === 'multiplier') {
       if (multiplierStr === '') return t('pricing.variants.effectNone')
       const n = Number(multiplierStr)
       if (!Number.isFinite(n) || n < 0 || n > 10) return t('pricing.variants.errMultRange', { field: t('pricing.variants.multiplierLabel') })
     } else {
-      if (setInputStr !== '' && (!Number.isFinite(Number(setInputStr)) || Number(setInputStr) < 0)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setInput') })
-      if (setOutputStr !== '' && (!Number.isFinite(Number(setOutputStr)) || Number(setOutputStr) < 0)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setOutput') })
-      if (effectMode === 'override' && setInputStr === '' && setOutputStr === '') return t('pricing.variants.effectNone')
+      const isNeg = (s: string) => s !== '' && (!Number.isFinite(Number(s)) || Number(s) < 0)
+      if (isNeg(setInputStr)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setInput') })
+      if (isNeg(setOutputStr)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setOutput') })
+      if (isNeg(setCacheReadStr)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setCacheReadLabel') })
+      if (isNeg(setCacheWriteStr)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setCacheWriteLabel') })
+      if (isNeg(setPricePerCallStr)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setPricePerCallLabel') })
+      if (isNeg(setImgInStr)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setImgInTokLabel') })
+      if (isNeg(setImgOutStr)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setImgOutTokLabel') })
+      if (isNeg(setPricePerImageStr)) return t('pricing.variants.errNonNeg', { field: t('pricing.variants.setPricePerImageLabel') })
+      const hasAny = [setInputStr, setOutputStr, setCacheReadStr, setCacheWriteStr, setPricePerCallStr, setImgInStr, setImgOutStr, setPricePerImageStr].some(s => s !== '')
+      if (!hasAny) return t('pricing.variants.effectNone')
     }
     return null
   }
@@ -240,18 +255,24 @@ function VariantsDialog({
     const err = validateDraft()
     if (err) { setRowErr(err); return }
     const seqNum = Number(seqStr)
-    const dowMask = showMore ? boolsToDowMask(dowBools) : undefined
+    const dowMask = boolsToDowMask(dowBools)
     const upsert: PriceVariantUpsert = {
       seq: seqNum,
       service_tier: serviceTier || undefined,
-      ctx_min: showMore && ctxMinStr !== '' ? Number(ctxMinStr) : undefined,
-      ctx_max: showMore && ctxMaxStr !== '' ? Number(ctxMaxStr) : undefined,
-      time_start: showMore && timeStart !== '' ? timeStart : undefined,
-      time_end: showMore && timeEnd !== '' ? timeEnd : undefined,
+      ctx_min: ctxMinStr !== '' ? Number(ctxMinStr) : undefined,
+      ctx_max: ctxMaxStr !== '' ? Number(ctxMaxStr) : undefined,
+      time_start: timeStart !== '' ? timeStart : undefined,
+      time_end: timeEnd !== '' ? timeEnd : undefined,
       dow_mask: dowMask,
       multiplier: effectMode === 'multiplier' ? Number(multiplierStr) : undefined,
       set_input_per_m: effectMode === 'override' && setInputStr !== '' ? Number(setInputStr) : undefined,
       set_output_per_m: effectMode === 'override' && setOutputStr !== '' ? Number(setOutputStr) : undefined,
+      set_cache_read_per_m: effectMode === 'override' && setCacheReadStr !== '' ? Number(setCacheReadStr) : undefined,
+      set_cache_creation_per_m: effectMode === 'override' && setCacheWriteStr !== '' ? Number(setCacheWriteStr) : undefined,
+      set_price_per_call: effectMode === 'override' && setPricePerCallStr !== '' ? Number(setPricePerCallStr) : undefined,
+      set_img_in_tok_per_m: effectMode === 'override' && setImgInStr !== '' ? Number(setImgInStr) : undefined,
+      set_img_out_tok_per_m: effectMode === 'override' && setImgOutStr !== '' ? Number(setImgOutStr) : undefined,
+      set_price_per_image: effectMode === 'override' && setPricePerImageStr !== '' ? Number(setPricePerImageStr) : undefined,
     }
     setLocalRows(prev => {
       let next: PriceVariantUpsert[]
@@ -277,15 +298,24 @@ function VariantsDialog({
       setMultiplierStr(String(r.multiplier))
       setSetInputStr('')
       setSetOutputStr('')
+      setSetCacheReadStr('')
+      setSetCacheWriteStr('')
+      setSetPricePerCallStr('')
+      setSetImgInStr('')
+      setSetImgOutStr('')
+      setSetPricePerImageStr('')
     } else {
       setEffectMode('override')
       setMultiplierStr('')
       setSetInputStr(r.set_input_per_m != null ? String(r.set_input_per_m) : '')
       setSetOutputStr(r.set_output_per_m != null ? String(r.set_output_per_m) : '')
+      setSetCacheReadStr(r.set_cache_read_per_m != null ? String(r.set_cache_read_per_m) : '')
+      setSetCacheWriteStr(r.set_cache_creation_per_m != null ? String(r.set_cache_creation_per_m) : '')
+      setSetPricePerCallStr(r.set_price_per_call != null ? String(r.set_price_per_call) : '')
+      setSetImgInStr(r.set_img_in_tok_per_m != null ? String(r.set_img_in_tok_per_m) : '')
+      setSetImgOutStr(r.set_img_out_tok_per_m != null ? String(r.set_img_out_tok_per_m) : '')
+      setSetPricePerImageStr(r.set_price_per_image != null ? String(r.set_price_per_image) : '')
     }
-    // 编辑回显含任一非默认条件时强制展开
-    const hasExtra = r.ctx_min != null || r.ctx_max != null || r.time_start != null || r.time_end != null || r.dow_mask != null
-    setShowMore(hasExtra)
     setRowErr(null)
   }
 
@@ -389,23 +419,9 @@ function VariantsDialog({
           {/* row editor */}
           <div className="space-y-3 rounded-lg border p-3">
             <p className="text-sm font-medium">{editingSeq != null ? t('pricing.variants.edit') : t('pricing.variants.add')}</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="var-seq">{t('pricing.variants.seqLabel')} <span className="text-destructive">*</span></Label>
-                <Input id="var-seq" type="number" min={1} step={1} value={seqStr} onChange={e => { setSeqStr(e.target.value); setRowErr(null) }} placeholder="1" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{t('pricing.variants.tierLabel')}</Label>
-                <Select value={serviceTier} onValueChange={v => { setServiceTier(v === '__any' ? '' : v); setRowErr(null) }}>
-                  <SelectTrigger><SelectValue placeholder={t('pricing.variants.tierWildcard')} /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__any" label={t('pricing.variants.tierWildcard')}>{t('pricing.variants.tierWildcard')}</SelectItem>
-                    <SelectItem value="priority" label="priority">priority</SelectItem>
-                    <SelectItem value="flex" label="flex">flex</SelectItem>
-                    <SelectItem value="fast" label="fast">fast</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="var-seq">{t('pricing.variants.seqLabel')} <span className="text-destructive">*</span></Label>
+              <Input id="var-seq" type="number" min={1} step={1} value={seqStr} onChange={e => { setSeqStr(e.target.value); setRowErr(null) }} placeholder="1" />
             </div>
 
             {/* 效果区 radio 二选一 */}
@@ -433,6 +449,26 @@ function VariantsDialog({
                     </p>
                   )}
                 </div>
+              ) : mode === 'call' ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="var-call">{t('pricing.variants.setPricePerCallLabel')}</Label>
+                  <Input id="var-call" type="number" min={0} step="any" value={setPricePerCallStr} onChange={e => { setSetPricePerCallStr(e.target.value); setRowErr(null) }} placeholder="0.01" />
+                </div>
+              ) : mode === 'image' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-img-in">{t('pricing.variants.setImgInTokLabel')}</Label>
+                    <Input id="var-img-in" type="number" min={0} step="any" value={setImgInStr} onChange={e => { setSetImgInStr(e.target.value); setRowErr(null) }} placeholder="0.001" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-img-out">{t('pricing.variants.setImgOutTokLabel')}</Label>
+                    <Input id="var-img-out" type="number" min={0} step="any" value={setImgOutStr} onChange={e => { setSetImgOutStr(e.target.value); setRowErr(null) }} placeholder="0.002" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-per-img">{t('pricing.variants.setPricePerImageLabel')}</Label>
+                    <Input id="var-per-img" type="number" min={0} step="any" value={setPricePerImageStr} onChange={e => { setSetPricePerImageStr(e.target.value); setRowErr(null) }} placeholder="0.02" />
+                  </div>
+                </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
@@ -443,49 +479,75 @@ function VariantsDialog({
                     <Label htmlFor="var-out">{t('pricing.variants.setOutputLabel')}</Label>
                     <Input id="var-out" type="number" min={0} step="any" value={setOutputStr} onChange={e => { setSetOutputStr(e.target.value); setRowErr(null) }} placeholder="0.002" />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-cache-read">{t('pricing.variants.setCacheReadLabel')}</Label>
+                    <Input id="var-cache-read" type="number" min={0} step="any" value={setCacheReadStr} onChange={e => { setSetCacheReadStr(e.target.value); setRowErr(null) }} placeholder="0.0005" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-cache-write">{t('pricing.variants.setCacheWriteLabel')}</Label>
+                    <Input id="var-cache-write" type="number" min={0} step="any" value={setCacheWriteStr} onChange={e => { setSetCacheWriteStr(e.target.value); setRowErr(null) }} placeholder="0.001" />
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* 条件区渐进披露 */}
-            <div className="space-y-2">
-              <Button variant="ghost" size="sm" type="button" onClick={toggleMore}>
-                {showMore ? t('pricing.variants.lessConditions') : t('pricing.variants.moreConditions')}
-              </Button>
-              {showMore && (
-                <div className="space-y-3">
-                  <p className="text-xs text-muted-foreground">{t('pricing.variants.condRangeHint')}</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="var-ctx-min">{t('pricing.variants.ctxMinLabel')}</Label>
-                      <Input id="var-ctx-min" type="number" min={0} step={1} value={ctxMinStr} onChange={e => { setCtxMinStr(e.target.value); setRowErr(null) }} placeholder="0" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="var-ctx-max">{t('pricing.variants.ctxMaxLabel')}</Label>
-                      <Input id="var-ctx-max" type="number" min={0} step={1} value={ctxMaxStr} onChange={e => { setCtxMaxStr(e.target.value); setRowErr(null) }} placeholder="0" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="var-time-start">{t('pricing.variants.timeStartLabel')}</Label>
-                      <Input id="var-time-start" value={timeStart} onChange={e => { setTimeStart(e.target.value); setRowErr(null) }} placeholder="09:00" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="var-time-end">{t('pricing.variants.timeEndLabel')}</Label>
-                      <Input id="var-time-end" value={timeEnd} onChange={e => { setTimeEnd(e.target.value); setRowErr(null) }} placeholder="18:00" />
-                    </div>
-                  </div>
+            {/* 条件区三组常显 */}
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">{t('pricing.variants.condRangeHint')}</p>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupTier')}</p>
+                <div className="grid grid-cols-1 gap-3">
                   <div className="space-y-1.5">
-                    <Label>{t('pricing.variants.dowLabel')}</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {DOW_KEYS.map((k, i) => (
-                        <label key={k} className="flex items-center gap-1.5 text-sm">
-                          <Checkbox checked={dowBools[i]} onCheckedChange={v => setDowBools(b => { const n = [...b]; n[i] = !!v; return n })} />
-                          {t(`pricing.variants.${k}`)}
-                        </label>
-                      ))}
-                    </div>
+                    <Label>{t('pricing.variants.tierLabel')}</Label>
+                    <Select value={serviceTier} onValueChange={v => { setServiceTier(v === '__any' ? '' : v); setRowErr(null) }}>
+                      <SelectTrigger><SelectValue placeholder={t('pricing.variants.tierWildcard')} /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__any" label={t('pricing.variants.tierWildcard')}>{t('pricing.variants.tierWildcard')}</SelectItem>
+                        <SelectItem value="priority" label={t('pricing.variants.tierPriority')}>{t('pricing.variants.tierPriority')}</SelectItem>
+                        <SelectItem value="flex" label={t('pricing.variants.tierFlex')}>{t('pricing.variants.tierFlex')}</SelectItem>
+                        <SelectItem value="fast" label={t('pricing.variants.tierFast')}>{t('pricing.variants.tierFast')}</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
-              )}
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupTokenRange')}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-ctx-min">{t('pricing.variants.ctxMinLabel')}</Label>
+                    <Input id="var-ctx-min" type="number" min={0} step={1} value={ctxMinStr} onChange={e => { setCtxMinStr(e.target.value); setRowErr(null) }} placeholder="0" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-ctx-max">{t('pricing.variants.ctxMaxLabel')}</Label>
+                    <Input id="var-ctx-max" type="number" min={0} step={1} value={ctxMaxStr} onChange={e => { setCtxMaxStr(e.target.value); setRowErr(null) }} placeholder="0" />
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupWindow')}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-time-start">{t('pricing.variants.timeStartLabel')}</Label>
+                    <Input id="var-time-start" value={timeStart} onChange={e => { setTimeStart(e.target.value); setRowErr(null) }} placeholder="09:00" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="var-time-end">{t('pricing.variants.timeEndLabel')}</Label>
+                    <Input id="var-time-end" value={timeEnd} onChange={e => { setTimeEnd(e.target.value); setRowErr(null) }} placeholder="18:00" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t('pricing.variants.dowLabel')}</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {DOW_KEYS.map((k, i) => (
+                      <label key={k} className="flex items-center gap-1.5 text-sm">
+                        <Checkbox checked={dowBools[i]} onCheckedChange={v => setDowBools(b => { const n = [...b]; n[i] = !!v; return n })} />
+                        {t(`pricing.variants.${k}`)}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {rowErr && <p className="text-sm text-destructive">{rowErr}</p>}
@@ -908,7 +970,7 @@ export default function PricingPage() {
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'token', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
                             <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                             <Button
                               variant="ghost"
@@ -996,7 +1058,7 @@ export default function PricingPage() {
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, inputPerM: (p as unknown as PriceEntry).InputPerM, outputPerM: (p as unknown as PriceEntry).OutputPerM })}><Layers /></Button>
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'image', inputPerM: (p as unknown as PriceEntry).InputPerM, outputPerM: (p as unknown as PriceEntry).OutputPerM })}><Layers /></Button>
                             <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                             <Button
                               variant="ghost"
@@ -1080,7 +1142,7 @@ export default function PricingPage() {
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, inputPerM: (p as unknown as PriceEntry).InputPerM, outputPerM: (p as unknown as PriceEntry).OutputPerM })}><Layers /></Button>
+                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'call', inputPerM: (p as unknown as PriceEntry).InputPerM, outputPerM: (p as unknown as PriceEntry).OutputPerM })}><Layers /></Button>
                             <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                             <Button
                               variant="ghost"
@@ -1304,6 +1366,7 @@ export default function PricingPage() {
       <VariantsDialog
         model={variantsTarget?.model ?? null}
         source={(variantsTarget?.source ?? 'manual') as PricingSource}
+        mode={(variantsTarget?.mode ?? 'token') as 'token' | 'image' | 'call'}
         inputPerM={variantsTarget?.inputPerM}
         outputPerM={variantsTarget?.outputPerM}
         open={!!variantsTarget}
