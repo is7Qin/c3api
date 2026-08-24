@@ -164,6 +164,10 @@ type TxStore interface {
 	CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
 	SetAccountGroups(ctx context.Context, accountID int64, groupIDs []int64) error
 	UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error)
+	// 价格条目删除级联（D-C1：同事务先删变体后删条目；条目删除携带 manual 源
+	// 守卫，litellm 行 → ErrConflict，守卫触发整体回滚变体零损伤；冒烟发现 2026-08-24）。
+	DeletePriceEntryManual(ctx context.Context, model string) error
+	DeletePriceVariantsByModel(ctx context.Context, model string) error
 }
 
 // WithTx 在单事务内执行 fn（评审 I-1）：ent `Tx().Client()` 模式构造 tx 版 Repository
@@ -640,6 +644,9 @@ func (r *Repository) UpsertPriceEntryManual(ctx context.Context, m *PriceEntryMa
 }
 func (r *Repository) DeletePriceEntryManual(ctx context.Context, model string) error {
 	return r.PriceEntries.DeleteManual(ctx, model)
+}
+func (r *Repository) DeletePriceVariantsByModel(ctx context.Context, model string) error {
+	return r.PriceVariants.DeleteByModel(ctx, model)
 }
 func (r *Repository) ListPriceEntries(ctx context.Context, q ListQuery, source *domain.PricingSource, mode *domain.PriceMode, model string) ([]*domain.PriceEntry, int64, error) {
 	return r.PriceEntries.ListPriceEntries(ctx, q, source, mode, model)

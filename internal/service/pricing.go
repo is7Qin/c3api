@@ -155,7 +155,16 @@ func (s *Service) UpsertPriceEntry(ctx context.Context, m *repository.PriceEntry
 }
 
 func (s *Service) DeletePriceEntry(ctx context.Context, model string) error {
-	if err := s.store.DeletePriceEntryManual(ctx, model); err != nil {
+	err := s.store.WithTx(ctx, func(tx repository.TxStore) error {
+		if err := tx.DeletePriceVariantsByModel(ctx, model); err != nil {
+			return err
+		}
+		if err := tx.DeletePriceEntryManual(ctx, model); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return mapRepoErr(err)
 	}
 	s.reloadPricing(ctx)
