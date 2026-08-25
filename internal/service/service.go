@@ -55,7 +55,9 @@ type Store interface {
 	TemplateExtStore
 	AccountExtStore
 	EmailTemplateStore
-	EmailCodeStore
+	// EmailCodeStore 不在复合面：验证码已迁 Redis（spec 2026-08-25-emailcode-
+	// redis-migration §2.2/§2.3），经 SetEmailCodeStore 独立注入，repository
+	// 实现已随 PG 验证码表卸载。
 	// WithTx 在单事务内执行 fn（评审 I-1）：真实仓库为 tx 版 Repository（全部走
 	// tx 连接）；fake 为事务语义模拟（fn 内变更先入暂存、成功提交/失败丢弃——
 	// 回滚断言的前提）。
@@ -318,7 +320,10 @@ type KeyRegistrar interface {
 }
 
 type Service struct {
-	store      Store
+	store Store
+	// emailCodes 验证码存储（Redis 实现，spec 2026-08-25-emailcode-redis-migration
+	// §2.2）：SetEmailCodeStore 回填（Set* 事后回填惯例），Redis 必选 ⇒ 非 nil。
+	emailCodes EmailCodeStore
 	sched      RuntimeProvider
 	inv        Invalidator // 管理面变更去抖失效（O2 接线矩阵；nil = 不失效）
 	pub        Publisher   // 多实例 NOTIFY 发布器（#14 T2；nil = 单实例/未装配，publish no-op）
@@ -365,6 +370,17 @@ func (s *Service) SetTimeLocation(l *time.Location) { s.tzLoc = l }
 // SetMailEnqueue 注入邮件入队函数（D-W1异步化：svc 构造后回填 mailW.Enqueue——
 // 循环依赖先例 SetLocalDispatcher；未注入 → SendRegisterCode 退化为 ErrMailNotConfigured）。
 func (s *Service) SetMailEnqueue(fn func(MailSendTask) error) { s.mailEnqueue = fn }
+
+// SetEmailCodeStore 注入验证码存储（spec 2026-08-25-emailcode-redis-migration §2.2）：
+// 实现 = verification.Store（Redis HASH）。Redis 必选依赖 ⇒ 无 nil 分支，收到
+// nil 直接 panic fail-fast（与 redisx.Open 的 Ping fail-fast 同纪律）。main 在
+// svc 构造后回填；测试经同 setter 注入 fake。
+func (s *Service) SetEmailCodeStore(store EmailCodeStore) {
+	if store == nil {
+		panic("service: SetEmailCodeStore(nil): Redis 是必选依赖，验证码存储无降级路径")
+	}
+	s.emailCodes = store
+}
 
 // SetLocalDispatcher 注入本地变更分发器（#36 本地实例即时重算）：main 装配序
 // 上 dispatcher 需要 svc（SettingsReloader）、svc 需要 dispatcher（本地分发）

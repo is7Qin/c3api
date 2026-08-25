@@ -49,6 +49,7 @@ func setMailSettings(t *testing.T, fs *fakeStore, svc *Service, m map[string]str
 func newMailService(t *testing.T, fs *fakeStore) *Service {
 	t.Helper()
 	svc := &Service{store: fs, inv: &invRecorder{}, log: nil}
+	svc.SetEmailCodeStore(fs) // 验证码迁 Redis 后独立注入面（fake 即实现，spec §3.7）
 	require.NoError(t, svc.ReloadSettings(context.Background()))
 	// momus FIX: wire mail enqueue to avoid nil-func panic; default = no-op success
 	// (tests needing real delivery override with worker-backed enqueue).
@@ -60,6 +61,7 @@ func newMailService(t *testing.T, fs *fakeStore) *Service {
 func newMailServiceWithWorker(t *testing.T, fs *fakeStore) (*Service, *MailWorker) {
 	t.Helper()
 	svc := &Service{store: fs, inv: &invRecorder{}, log: nil}
+	svc.SetEmailCodeStore(fs) // 同 newMailService：Redis 迁移后注入面
 	require.NoError(t, svc.ReloadSettings(context.Background()))
 	mw := NewMailWorker(svc)
 	// short backoff for tests

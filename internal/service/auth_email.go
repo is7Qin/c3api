@@ -33,7 +33,7 @@ func (s *Service) SendRegisterCode(ctx context.Context, email string) error {
 		return nil // suppress send, still 200 at handler
 	}
 	// 限频：updated_at <60s → 429
-	if code, err := s.store.GetEmailCode(ctx, email, string(domain.EmailCodeRegister)); err == nil && code != nil {
+	if code, err := s.emailCodes.GetEmailCode(ctx, email, string(domain.EmailCodeRegister)); err == nil && code != nil {
 		if time.Since(code.UpdatedAt) < domain.EmailCodeRateLimit {
 			return ErrTooManyRequests
 		}
@@ -45,7 +45,7 @@ func (s *Service) SendRegisterCode(ctx context.Context, email string) error {
 		return err
 	}
 	expires := time.Now().Add(domain.EmailCodeTTL)
-	if _, err := s.store.UpsertEmailCode(ctx, email, string(domain.EmailCodeRegister), sha, expires); err != nil {
+	if _, err := s.emailCodes.UpsertEmailCode(ctx, email, string(domain.EmailCodeRegister), sha, expires); err != nil {
 		return err
 	}
 	if _, _, _, _, _, _, ok := s.mailConfig(); !ok {
@@ -82,7 +82,7 @@ func (s *Service) SendForgotPasswordCode(ctx context.Context, email string) erro
 		return nil
 	}
 	// 限频
-	if code, err := s.store.GetEmailCode(ctx, email, string(domain.EmailCodeReset)); err == nil && code != nil {
+	if code, err := s.emailCodes.GetEmailCode(ctx, email, string(domain.EmailCodeReset)); err == nil && code != nil {
 		if time.Since(code.UpdatedAt) < domain.EmailCodeRateLimit {
 			return nil // suppress but still 200 at handler
 		}
@@ -97,7 +97,7 @@ func (s *Service) SendForgotPasswordCode(ctx context.Context, email string) erro
 		return nil
 	}
 	expires := time.Now().Add(domain.EmailCodeTTL)
-	if _, err := s.store.UpsertEmailCode(ctx, email, string(domain.EmailCodeReset), sha, expires); err != nil {
+	if _, err := s.emailCodes.UpsertEmailCode(ctx, email, string(domain.EmailCodeReset), sha, expires); err != nil {
 		return nil
 	}
 	if _, _, _, _, _, _, ok := s.mailConfig(); !ok {
@@ -116,7 +116,7 @@ func (s *Service) SendForgotPasswordCode(ctx context.Context, email string) erro
 
 // verifyAndConsume 校验并消费验证码（原子：校验失败递增 attempts，成功删除）。
 func (s *Service) verifyAndConsume(ctx context.Context, email, purpose, plain string) error {
-	row, err := s.store.GetEmailCode(ctx, email, purpose)
+	row, err := s.emailCodes.GetEmailCode(ctx, email, purpose)
 	if err != nil {
 		return err
 	}
@@ -124,14 +124,14 @@ func (s *Service) verifyAndConsume(ctx context.Context, email, purpose, plain st
 		return fmt.Errorf("%w: code invalid", ErrInvalidInput)
 	}
 	if time.Now().After(row.ExpiresAt) {
-		_ = s.store.DeleteEmailCode(ctx, email, purpose)
+		_ = s.emailCodes.DeleteEmailCode(ctx, email, purpose)
 		return fmt.Errorf("%w: code expired", ErrInvalidInput)
 	}
 	if row.Attempts >= domain.EmailCodeMaxAttempts {
 		return fmt.Errorf("%w: too many attempts", ErrInvalidInput)
 	}
 	if row.CodeSHA256 != hashCode(plain) {
-		newAttempts, err := s.store.IncrementEmailCodeAttempts(ctx, email, purpose)
+		newAttempts, err := s.emailCodes.IncrementEmailCodeAttempts(ctx, email, purpose)
 		if err != nil {
 			return err
 		}
@@ -141,12 +141,17 @@ func (s *Service) verifyAndConsume(ctx context.Context, email, purpose, plain st
 		return fmt.Errorf("%w: code mismatch", ErrInvalidInput)
 	}
 	// 成功消费
-	_ = s.store.DeleteEmailCode(ctx, email, purpose)
+	_ = s.emailCodes.DeleteEmailCode(ctx, email, purpose)
 	return nil
 }
 
 // RegisterUserWithCode 带验证码校验的注册入口（handler 侧根据 verif 开关分发）。
 func (s *Service) RegisterUserWithCode(ctx context.Context, email, password, code string) (*domain.User, error) {
+	// 评审补充（2026-08-26 Oracle）：email 先行校验再入验证码存储键材料；无效邮箱
+	// 终态不变（同一 ErrInvalidInput 哨兵），仅报错文案更早收敛。
+	if !validEmail(email) {
+		return nil, ErrInvalidInput
+	}
 	if password == "" || auth.ValidatePasswordLen(password) != nil {
 		return nil, ErrInvalidInput
 	}
