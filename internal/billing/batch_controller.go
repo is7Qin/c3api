@@ -58,22 +58,21 @@ func (c *batchController) limit() int {
 
 // observe 反馈一次结算观测（d = 单车道单桶整次 settle 调用时长，err = 其错误，
 // subscribed = 该语句用满限额即 summary.BatchRows ≥ lim——受 LIMIT 约束恒 ≤lim，
-// 等号 ⟺ 需求饱和）：超时立即减半（errors.Is 全链匹配包装）；成功按时长二分
-// 逼近 budget/3 边界，但**倍增必须满批且快**——快而未满批是需求不足的伪健康
-// 信号（空批棘轮回归钉），保持不倍增；慢减半不门控（部分填充+慢 = DB 层慢，
-// 与批规模无关，收缩路径不可让渡）；其他错误保持现状。调用方无需持锁。
+// 等号 ⟺ 需求饱和）：超时立即减半（errors.Is 全链匹配包装，唯一收缩触发器）；
+// 成功快且满批倍增逼近吞吐上限——快而未满批是需求不足的伪健康信号（空批棘轮
+// 回归钉），保持不倍增；慢成功保持不收缩（v2.1，spec §八：d(L)=F+c·L 固定成本
+// 主导时 d(500)≈d(64000)，slow→halve 是误归因、吞吐 ∝ L 崩溃）；其他错误保持
+// 现状。调用方无需持锁。
 func (c *batchController) observe(d time.Duration, err error, subscribed bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		c.cur /= 2 // 超时即减半，与时长/满批无关（重试恒超时 = 停摆前兆）
-	case err == nil && d >= settleTimeBudget/3:
-		c.cur /= 2 // 慢减半无条件——DB 慢是真信号
 	case err == nil && d < settleTimeBudget/3 && subscribed:
 		c.cur *= 2 // 满批且快：需求饱和 + 健康余量 → 倍增逼近吞吐上限
 	}
-	// default：他错保持；或快但未满批 = 需求不足伪健康 → 保持
+	// default：他错保持；慢成功保持（v2.1）；或快但未满批 = 需求不足伪健康 → 保持
 	if c.cur < minBatchLimit {
 		c.cur = minBatchLimit
 	} else if c.cur > maxBatchLimit {
