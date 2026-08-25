@@ -302,9 +302,9 @@ function FormFields({
                 key={f}
                 type="button"
                 size="sm"
-                variant={on ? 'secondary' : 'outline'}
+                variant={on ? 'default' : 'outline'}
                 aria-pressed={on}
-                className="rounded-full"
+                className={on ? 'rounded-full' : 'rounded-full border-muted-foreground/30'}
                 onClick={() => toggleFormat(f)}
               >
                 {FORMAT_LABELS[f]}
