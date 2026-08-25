@@ -114,3 +114,37 @@ func TestGetOpsWorkersEmailContract(t *testing.T) {
 		require.True(t, exists, "missing field %s", k)
 	}
 }
+
+// discoveryStats 模拟 discovery.Stats 的三字段形态（与 internal/discovery 的 json
+// 标签同构；字段清单同步义务见 openapi.yaml WorkerStatus.stats description）。
+type discoveryStats struct {
+	Instances         int   `json:"instances"`
+	LastTickOk        bool  `json:"last_tick_ok"`
+	ConsecutiveErrors int64 `json:"consecutive_errors"`
+}
+
+// TestGetOpsWorkersDiscoveryContract 实例发现观测契约（foundation spec §2.4）：
+// name="discovery" 条目入列，stats 解码为对象且三键齐全（alive N / last_tick_ok /
+// consecutive_errors——冻结期 instances 停走 + consecutive_errors 增长可观测）。
+func TestGetOpsWorkersDiscoveryContract(t *testing.T) {
+	h := New(nil, OpsOptions{
+		Workers: []StatsProvider{
+			fakeOpsWorker{"discovery", discoveryStats{Instances: 3, LastTickOk: true}},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+	require.Equal(t, 200, rec.Code)
+
+	var resp WorkersResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Workers, 1)
+	require.Equal(t, "discovery", resp.Workers[0].Name)
+
+	st, ok := resp.Workers[0].Stats.(map[string]any)
+	require.True(t, ok, "stats 应为对象")
+	require.Equal(t, float64(3), st["instances"])
+	require.Equal(t, true, st["last_tick_ok"])
+	require.Equal(t, float64(0), st["consecutive_errors"])
+}
