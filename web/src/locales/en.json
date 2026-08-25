@@ -784,7 +784,8 @@
       "cooldown429": "429 cooldown",
       "5xxBackoff": "5xx backoff",
       "escalate": "Escalate",
-      "recover": "Recovery"
+      "recover": "Recovery",
+      "overload503": "503 overload passthrough"
     },
     "whenFields": {
       "kind": "Event kind",
@@ -833,8 +834,16 @@
       "status": "Set status",
       "cooldown": "Cooldown",
       "weight": "Weight",
-      "transmit": "Pass through upstream text"
+      "responseCode": "Response code",
+      "customMessage": "Custom message",
+      "customMessagePlaceholder": "Upstream temporarily unavailable",
+      "responseHint": "Leave blank to pass through; backend validates 400-599 / non-empty.",
+      "passthroughHint": "Leave all blank to pass through upstream status and message unchanged.",
+      "errResponseRange": "response_code must be between 400 and 599",
+      "overrideSummary": "override {{code}}",
+      "fixedMessage": "fixed message"
     },
+    "presetOverload503": "503 overload passthrough",
     "deleteTitle": "Delete rule",
     "deleteDesc": "Delete rule \"{{name}}\"? It takes effect immediately.",
     "whenErrMutual": "{{a}} and {{b}} are mutually exclusive",

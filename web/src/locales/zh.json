@@ -784,7 +784,8 @@
       "cooldown429": "429 冷却",
       "5xxBackoff": "5xx 退避",
       "escalate": "频发升级",
-      "recover": "成功恢复"
+      "recover": "成功恢复",
+      "overload503": "503 过载透传"
     },
     "whenFields": {
       "kind": "事件类型",
@@ -833,8 +834,16 @@
       "status": "设置状态",
       "cooldown": "冷却时长",
       "weight": "权重",
-      "transmit": "透传上游原文"
+      "responseCode": "响应码覆写",
+      "customMessage": "固定文案",
+      "customMessagePlaceholder": "上游暂不可用",
+      "responseHint": "留空透传；后端校验 400-599 / 非空。",
+      "passthroughHint": "全部留空 = 上游原样透传（状态码与错误文案均不改写）",
+      "errResponseRange": "response_code 需在 400-599 之间",
+      "overrideSummary": "覆写 {{code}}",
+      "fixedMessage": "固定文案"
     },
+    "presetOverload503": "503 过载透传",
     "deleteTitle": "删除规则",
     "deleteDesc": "确定删除规则「{{name}}」？立即生效。",
     "whenErrMutual": "{{a}} and {{b}} are mutually exclusive",

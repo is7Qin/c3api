@@ -95,7 +95,8 @@ interface ThenForm {
   status: string
   cooldown: string
   weight: string
-  transmit: boolean // true = 透传上游原文（响应/日志）；false = 归一固定文案
+  responseCode: string // empty = 透传；非空 = 400-599
+  customMessage: string // empty = 透传
 }
 interface WhenForm {
   kind: string
@@ -110,7 +111,7 @@ interface FormState {
 }
 
 const emptyWhen = (): WhenForm => ({ kind: '', rows: [] })
-const emptyThen = (): ThenForm => ({ status: '', cooldown: '', weight: '', transmit: false })
+const emptyThen = (): ThenForm => ({ status: '', cooldown: '', weight: '', responseCode: '', customMessage: '' })
 const emptyForm = (): FormState => ({ name: '', priority: '', enabled: true, when: emptyWhen(), then: emptyThen() })
 
 // 数字字段：空/NaN → 不发送；其他字符串化。
@@ -142,7 +143,8 @@ function thenToForm(th: Rule['Then']): ThenForm {
   if (typeof th.status === 'string') f.status = th.status
   if (typeof th.cooldown === 'string') f.cooldown = th.cooldown
   if (th.weight !== undefined && th.weight !== null) f.weight = String(th.weight)
-  if (th.transmit === true) f.transmit = true
+  if (th.response_code !== undefined && th.response_code !== null) f.responseCode = String(th.response_code)
+  if (typeof th.custom_message === 'string') f.customMessage = th.custom_message
   return f
 }
 function toForm(r: Rule): FormState {
@@ -194,7 +196,11 @@ function toThen(f: ThenForm): Record<string, unknown> {
   if (f.cooldown) th.cooldown = f.cooldown
   const w = num(f.weight)
   if (w !== undefined) th.weight = w
-  if (f.transmit) th.transmit = true
+  if (f.responseCode !== '') {
+    const rc = Number(f.responseCode)
+    if (!Number.isNaN(rc)) th.response_code = rc
+  }
+  if (f.customMessage !== '') th.custom_message = f.customMessage
   return th
 }
 function toBody(f: FormState): RuleCreate {
@@ -208,10 +214,11 @@ interface TemplatePreset {
   then: ThenForm
 }
 const TEMPLATES: TemplatePreset[] = [
-  { id: 'cooldown429', when: { kind: '429' }, then: { status: '429', cooldown: '30s', weight: '', transmit: false } },
-  { id: '5xxBackoff', when: { kind: '5xx' }, then: { status: 'unhealthy', cooldown: '5s', weight: '', transmit: false } },
-  { id: 'escalate', when: { kind: '429', window_seconds: 60, count_429_ge: 3 }, then: { status: '429', cooldown: '5m', weight: '', transmit: false } },
-  { id: 'recover', when: { kind: 'ok' }, then: { status: 'active', cooldown: '', weight: '', transmit: false } },
+  { id: 'cooldown429', when: { kind: '429' }, then: { status: '429', cooldown: '30s', weight: '', responseCode: '', customMessage: '' } },
+  { id: '5xxBackoff', when: { kind: '5xx' }, then: { status: 'unhealthy', cooldown: '5s', weight: '', responseCode: '', customMessage: '' } },
+  { id: 'escalate', when: { kind: '429', window_seconds: 60, count_429_ge: 3 }, then: { status: '429', cooldown: '5m', weight: '', responseCode: '', customMessage: '' } },
+  { id: 'recover', when: { kind: 'ok' }, then: { status: 'active', cooldown: '', weight: '', responseCode: '', customMessage: '' } },
+  { id: 'overload503', when: { kind: '5xx', http_status: 503, error_message_contains: 'overload' }, then: { status: '', cooldown: '', weight: '', responseCode: '', customMessage: '' } },
 ]
 
 // —— 摘要渲染 ——
@@ -238,13 +245,14 @@ function WhenSummary({ w, t }: { w: Rule['When']; t: (k: string) => string }) {
   return <span className="block max-w-64 truncate text-xs" title={parts.join(' · ')}>{parts.join(' · ') || '—'}</span>
 }
 
-function ThenSummary({ th, t }: { th: Rule['Then']; t: (k: string) => string }) {
+function ThenSummary({ th, t }: { th: Rule['Then']; t: (k: string, opts?: Record<string, unknown>) => string }) {
   if (!th || Object.keys(th).length === 0) return <span className="text-muted-foreground">—</span>
   const parts: string[] = []
   if (typeof th.status === 'string') parts.push(`→${th.status}`)
   if (typeof th.cooldown === 'string') parts.push(`⏱${th.cooldown}`)
   if (typeof th.weight === 'number') parts.push(`w=${th.weight}`)
-  if (th.transmit === true) parts.push(t('rules.then.transmit'))
+  if (typeof th.response_code === 'number') parts.push(t('rules.then.overrideSummary', { code: th.response_code } as unknown as Record<string, unknown>))
+  if (typeof th.custom_message === 'string' && th.custom_message !== '') parts.push(t('rules.then.fixedMessage'))
   return <span className="block max-w-40 truncate text-xs" title={parts.join(' · ')}>{parts.join(' · ') || '—'}</span>
 }
 
@@ -345,10 +353,17 @@ export default function Rules() {
   const addDisabled = form.when.rows.length >= MAX_CONDITIONS || addOptions.length === 0
   const [addField, setAddField] = useState<WhenField | null>(null)
 
-  // 提交校验（仅检查实际会发送的条件；越界行是合法观察者语义，不阻止）：
+    // 提交校验（仅检查实际会发送的条件；越界行是合法观察者语义，不阻止）：
   // kind=ok + error_message_contains → 确定死配置（ok 事件错误信息恒空）；比例无总次数 → 缺失依赖。
   const submit = () => {
     if (!form.name.trim() || form.priority === '') return
+    if (form.then.responseCode !== '') {
+      const rc = Number(form.then.responseCode)
+      if (Number.isNaN(rc) || rc < 400 || rc > 599) {
+        setWhenErr(t('rules.then.errResponseRange'))
+        return
+      }
+    }
     const when = toWhen(form.when) as Record<string, unknown>
     const exclusivePairs: [string, string][] = [
       ['http_status', 'http_status_in'],
@@ -622,6 +637,7 @@ export default function Rules() {
             {/* 动作 then（可选组合） */}
             <div className="space-y-2">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('rules.thenTitle')}</p>
+              <p className="text-xs text-muted-foreground">{t('rules.then.passthroughHint')}</p>
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1.5">
                   <Label>{t('rules.then.status')}</Label>
@@ -646,13 +662,20 @@ export default function Rules() {
                   <Input id="rl-w" type="number" min={0} max={100} placeholder="0" value={form.then.weight} onChange={e => setThen('weight', e.target.value)} />
                 </div>
               </div>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <Checkbox
-                  checked={form.then.transmit}
-                  onCheckedChange={c => setForm(f => ({ ...f, then: { ...f.then, transmit: c === true } }))}
-                />
-                {t('rules.then.transmit')}
-              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="rl-rc">{t('rules.then.responseCode')}</Label>
+                  <Input id="rl-rc" type="number" min={400} max={599} step={1} placeholder="503" value={form.then.responseCode} onChange={e => setThen('responseCode', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="rl-cm">{t('rules.then.customMessage')}</Label>
+                  <Input id="rl-cm" placeholder={t('rules.then.customMessagePlaceholder')} value={form.then.customMessage} onChange={e => setThen('customMessage', e.target.value)} />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">{t('rules.then.responseHint')}</p>
+              {form.then.responseCode !== '' && (() => { const n = Number(form.then.responseCode); return !Number.isNaN(n) && (n < 400 || n > 599) })() && (
+                <p className="text-sm text-destructive">{t('rules.then.errResponseRange')}</p>
+              )}
               <p className="text-xs text-muted-foreground">{t('rules.thenHint')}</p>
             </div>
 
