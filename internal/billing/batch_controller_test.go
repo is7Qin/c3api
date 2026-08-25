@@ -5,10 +5,13 @@
 package billing
 
 // batch_controller_test.go 自适应批控策略单测（纯内存零 DB）：safe_batch =
-// 时间预算 / 实测每行成本 的轨迹锁定——满批门控倍增 / 减半托底 / 超时立即减半 /
-// 他错保持 / 空批棘轮回归钉（v2）/ 震荡收敛。事故参照：固定大批次在千万行脏可
-// 见性地图上单语句超 settleTimeout(10s) → 重试恒超时永久停摆（50000 批生产
-// stall）；v2 动机：空批/薄积压下「快」被误判健康 → 棘轮到 64k 陈旧最大批。
+// 时间预算 / 实测每行成本 的轨迹锁定——满批门控倍增 / 超时立即减半（唯一收缩
+// 触发器）/ 他错保持 / 空批棘轮回归钉（v2）/ 锯齿轨迹（v2.1）。事故参照：固定
+// 大批次在千万行脏可见性地图上单语句超 settleTimeout(10s) → 重试恒超时永久停摆
+// （50000 批生产 stall）；v2 动机：空批/薄积压下「快」被误判健康 → 棘轮到 64k
+// 陈旧最大批；v2.1 修订（spec-adaptive-batch-v2 §八，压测机 150-270 行/s 实测）：
+// d(L)=F+c·L 固定成本主导时 d(500)≈d(64000)，慢→减半是误归因、吞吐 ∝ L 崩溃
+// → 慢成功保持（完成了真实工作），仅超时收缩。
 
 import (
 	"context"
@@ -32,7 +35,7 @@ type ctrlStep struct {
 
 func Test_batchController_observe_policy(t *testing.T) {
 	fast := time.Millisecond // d < budget/3 ≈ 2.67s：快
-	slow := settleTimeBudget // d >= budget/3：慢 → 减半
+	slow := settleTimeBudget // d >= budget/3：慢 → 保持（v2.1：慢成功=真实工作）
 	cases := []struct {
 		name  string
 		steps []ctrlStep
@@ -48,18 +51,18 @@ func Test_batchController_observe_policy(t *testing.T) {
 			want: maxBatchLimit,
 		},
 		{
-			name: "slow halves until floored at minBatchLimit",
+			name: "slow holds regardless of subscription",
 			steps: []ctrlStep{
 				{d: slow, subscribed: true}, {d: slow, subscribed: true},
 				{d: slow, subscribed: true}, {d: slow, subscribed: true},
-				{d: slow, subscribed: true}, {d: slow, subscribed: true}, // 已到底：继续慢不再降
+				{d: slow, subscribed: true}, {d: slow, subscribed: true}, // 慢成功=完成了真实工作，恒保持（SC7）
 			},
-			want: minBatchLimit,
+			want: settleBatchLimit,
 		},
 		{
-			name:  "slow halves even when not subscribed", // 减半不门控——DB 慢是真信号
+			name:  "slow holds even when not subscribed", // 慢保持不门控——固定成本主导时 d 与批规模无关
 			steps: []ctrlStep{{d: slow}},
-			want:  settleBatchLimit / 2,
+			want:  settleBatchLimit,
 		},
 		{
 			name:  "deadline exceeded halves immediately regardless of duration and subscription",
@@ -67,9 +70,9 @@ func Test_batchController_observe_policy(t *testing.T) {
 			want:  settleBatchLimit / 2,
 		},
 		{
-			name:  "exact budget/3 boundary counts as slow",
+			name:  "exact budget/3 boundary counts as slow and holds",
 			steps: []ctrlStep{{d: settleTimeBudget / 3, subscribed: true}},
-			want:  settleBatchLimit / 2,
+			want:  settleBatchLimit,
 		},
 		{
 			name: "other non-nil error holds current value even when full",
@@ -102,26 +105,24 @@ func Test_batchController_fast_partial_never_ratchets(t *testing.T) {
 	}
 }
 
-// Test_batchController_oscillation_converges_near_budget_boundary 固定每行成本
-// 深积压模型（恒满批 subscribed=true）下震荡收敛：均衡批 eq=12000 行（该规模实
-// 测恰为预算边界），交替快/慢观测应稳定为环绕均衡的 2-周期，绝不单调漂向
-// cap/floor。
-func Test_batchController_oscillation_converges_near_budget_boundary(t *testing.T) {
-	const eq = 12000
+// Test_batchController_slow_holds_timeout_shrinks_sawtooth v2.1 锯齿轨迹钉（SC8，
+// 替代 v2 震荡收敛钉——慢不再收缩，无 2-周期收敛语义）：快满批倍增至 cap →
+// 超时一次减半（唯一收缩触发器）→ 快满批复倍增回 cap（第二次撞钳制）。确定性
+// 轨迹断言，锁死「慢保持 + 超时收缩」的锯齿稳态。
+func Test_batchController_slow_holds_timeout_shrinks_sawtooth(t *testing.T) {
 	c := newBatchController()
-	lo := max(minBatchLimit, eq/2)
-	hi := min(maxBatchLimit, eq*2)
-	var seen []int
-	for range 64 {
-		d := time.Duration(float64(settleTimeBudget) / 3 * float64(c.limit()) / eq)
-		c.observe(d, nil, true)
-		lim := c.limit()
-		seen = append(seen, lim)
-		require.GreaterOrEqual(t, lim, lo)
-		require.LessOrEqual(t, lim, hi)
+	fast := time.Millisecond
+	// 快满批 ×3 → cap
+	for range 3 {
+		c.observe(fast, nil, true)
 	}
-	// 收敛判据：末段稳定 2-周期（无漂移）。
-	n := len(seen)
-	require.Equal(t, seen[n-3], seen[n-1])
-	require.Equal(t, seen[n-4], seen[n-2])
+	require.Equal(t, maxBatchLimit, c.limit())
+	// 超时一次 → 减半
+	c.observe(time.Nanosecond, context.DeadlineExceeded, false)
+	require.Equal(t, maxBatchLimit/2, c.limit())
+	// 快满批 ×2 → 复倍增（第二次撞钳制）
+	c.observe(fast, nil, true)
+	require.Equal(t, maxBatchLimit, c.limit())
+	c.observe(fast, nil, true)
+	require.Equal(t, maxBatchLimit, c.limit())
 }
