@@ -17,7 +17,6 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
-	"github.com/is7qin/c3api/internal/ent/emailcode"
 	"github.com/is7qin/c3api/internal/ent/emailtemplate"
 	"github.com/is7qin/c3api/internal/ent/errlog"
 	"github.com/is7qin/c3api/internal/ent/group"
@@ -47,8 +46,6 @@ type Client struct {
 	Account *AccountClient
 	// AccountExt is the client for interacting with the AccountExt builders.
 	AccountExt *AccountExtClient
-	// EmailCode is the client for interacting with the EmailCode builders.
-	EmailCode *EmailCodeClient
 	// EmailTemplate is the client for interacting with the EmailTemplate builders.
 	EmailTemplate *EmailTemplateClient
 	// ErrLog is the client for interacting with the ErrLog builders.
@@ -98,7 +95,6 @@ func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.Account = NewAccountClient(c.config)
 	c.AccountExt = NewAccountExtClient(c.config)
-	c.EmailCode = NewEmailCodeClient(c.config)
 	c.EmailTemplate = NewEmailTemplateClient(c.config)
 	c.ErrLog = NewErrLogClient(c.config)
 	c.Group = NewGroupClient(c.config)
@@ -211,7 +207,6 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		config:          cfg,
 		Account:         NewAccountClient(cfg),
 		AccountExt:      NewAccountExtClient(cfg),
-		EmailCode:       NewEmailCodeClient(cfg),
 		EmailTemplate:   NewEmailTemplateClient(cfg),
 		ErrLog:          NewErrLogClient(cfg),
 		Group:           NewGroupClient(cfg),
@@ -251,7 +246,6 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		config:          cfg,
 		Account:         NewAccountClient(cfg),
 		AccountExt:      NewAccountExtClient(cfg),
-		EmailCode:       NewEmailCodeClient(cfg),
 		EmailTemplate:   NewEmailTemplateClient(cfg),
 		ErrLog:          NewErrLogClient(cfg),
 		Group:           NewGroupClient(cfg),
@@ -299,10 +293,10 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.Account, c.AccountExt, c.EmailCode, c.EmailTemplate, c.ErrLog, c.Group,
-		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
-		c.RedemptionUse, c.Rule, c.Setting, c.TempBalance, c.Template, c.TemplateExt,
-		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
+		c.Account, c.AccountExt, c.EmailTemplate, c.ErrLog, c.Group, c.GroupAssignment,
+		c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode, c.RedemptionUse, c.Rule,
+		c.Setting, c.TempBalance, c.Template, c.TemplateExt, c.UsageEntityStat,
+		c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Use(hooks...)
 	}
@@ -312,10 +306,10 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.Account, c.AccountExt, c.EmailCode, c.EmailTemplate, c.ErrLog, c.Group,
-		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
-		c.RedemptionUse, c.Rule, c.Setting, c.TempBalance, c.Template, c.TemplateExt,
-		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
+		c.Account, c.AccountExt, c.EmailTemplate, c.ErrLog, c.Group, c.GroupAssignment,
+		c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode, c.RedemptionUse, c.Rule,
+		c.Setting, c.TempBalance, c.Template, c.TemplateExt, c.UsageEntityStat,
+		c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -328,8 +322,6 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Account.mutate(ctx, m)
 	case *AccountExtMutation:
 		return c.AccountExt.mutate(ctx, m)
-	case *EmailCodeMutation:
-		return c.EmailCode.mutate(ctx, m)
 	case *EmailTemplateMutation:
 		return c.EmailTemplate.mutate(ctx, m)
 	case *ErrLogMutation:
@@ -698,139 +690,6 @@ func (c *AccountExtClient) mutate(ctx context.Context, m *AccountExtMutation) (V
 		return (&AccountExtDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown AccountExt mutation op: %q", m.Op())
-	}
-}
-
-// EmailCodeClient is a client for the EmailCode schema.
-type EmailCodeClient struct {
-	config
-}
-
-// NewEmailCodeClient returns a client for the EmailCode from the given config.
-func NewEmailCodeClient(c config) *EmailCodeClient {
-	return &EmailCodeClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `emailcode.Hooks(f(g(h())))`.
-func (c *EmailCodeClient) Use(hooks ...Hook) {
-	c.hooks.EmailCode = append(c.hooks.EmailCode, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `emailcode.Intercept(f(g(h())))`.
-func (c *EmailCodeClient) Intercept(interceptors ...Interceptor) {
-	c.inters.EmailCode = append(c.inters.EmailCode, interceptors...)
-}
-
-// Create returns a builder for creating a EmailCode entity.
-func (c *EmailCodeClient) Create() *EmailCodeCreate {
-	mutation := newEmailCodeMutation(c.config, OpCreate)
-	return &EmailCodeCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of EmailCode entities.
-func (c *EmailCodeClient) CreateBulk(builders ...*EmailCodeCreate) *EmailCodeCreateBulk {
-	return &EmailCodeCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *EmailCodeClient) MapCreateBulk(slice any, setFunc func(*EmailCodeCreate, int)) *EmailCodeCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &EmailCodeCreateBulk{err: fmt.Errorf("calling to EmailCodeClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*EmailCodeCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &EmailCodeCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for EmailCode.
-func (c *EmailCodeClient) Update() *EmailCodeUpdate {
-	mutation := newEmailCodeMutation(c.config, OpUpdate)
-	return &EmailCodeUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *EmailCodeClient) UpdateOne(_m *EmailCode) *EmailCodeUpdateOne {
-	mutation := newEmailCodeMutation(c.config, OpUpdateOne, withEmailCode(_m))
-	return &EmailCodeUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *EmailCodeClient) UpdateOneID(id int64) *EmailCodeUpdateOne {
-	mutation := newEmailCodeMutation(c.config, OpUpdateOne, withEmailCodeID(id))
-	return &EmailCodeUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for EmailCode.
-func (c *EmailCodeClient) Delete() *EmailCodeDelete {
-	mutation := newEmailCodeMutation(c.config, OpDelete)
-	return &EmailCodeDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *EmailCodeClient) DeleteOne(_m *EmailCode) *EmailCodeDeleteOne {
-	return c.DeleteOneID(_m.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *EmailCodeClient) DeleteOneID(id int64) *EmailCodeDeleteOne {
-	builder := c.Delete().Where(emailcode.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &EmailCodeDeleteOne{builder}
-}
-
-// Query returns a query builder for EmailCode.
-func (c *EmailCodeClient) Query() *EmailCodeQuery {
-	return &EmailCodeQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeEmailCode},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a EmailCode entity by its id.
-func (c *EmailCodeClient) Get(ctx context.Context, id int64) (*EmailCode, error) {
-	return c.Query().Where(emailcode.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *EmailCodeClient) GetX(ctx context.Context, id int64) *EmailCode {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *EmailCodeClient) Hooks() []Hook {
-	return c.hooks.EmailCode
-}
-
-// Interceptors returns the client interceptors.
-func (c *EmailCodeClient) Interceptors() []Interceptor {
-	return c.inters.EmailCode
-}
-
-func (c *EmailCodeClient) mutate(ctx context.Context, m *EmailCodeMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&EmailCodeCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&EmailCodeUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&EmailCodeUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&EmailCodeDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown EmailCode mutation op: %q", m.Op())
 	}
 }
 
@@ -3487,14 +3346,14 @@ func (c *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error)
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Account, AccountExt, EmailCode, EmailTemplate, ErrLog, Group, GroupAssignment,
-		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
+		Account, AccountExt, EmailTemplate, ErrLog, Group, GroupAssignment, Key,
+		PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
 		TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog, UsageStat,
 		User []ent.Hook
 	}
 	inters struct {
-		Account, AccountExt, EmailCode, EmailTemplate, ErrLog, Group, GroupAssignment,
-		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
+		Account, AccountExt, EmailTemplate, ErrLog, Group, GroupAssignment, Key,
+		PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
 		TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog, UsageStat,
 		User []ent.Interceptor
 	}

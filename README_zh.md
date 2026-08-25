@@ -120,7 +120,7 @@ cd web && pnpm install && pnpm run dev
                             ▼               ▼
                   PostgreSQL 18（状态 + NOTIFY）│
                                              ▼
-                        Redis 8（易失协调态：实例发现心跳）
+                      Redis 8（易失状态：协调 + 短时效验证码）
 ```
 
 - **单二进制**：前端经 `go:embed` 内嵌，运行时 = 一个 `server` 进程 + 挂载的配置文件。
@@ -150,7 +150,7 @@ cd web && pnpm install && pnpm run dev
 | `C3API_ADMIN_TOKEN` | 管理端 token（可选；留空 = 不启用静态 token 鉴权，`/api/admin` 仅接受 `platform_admin` JWT） |
 | `C3API_AUTH_JWT_SECRET` | 用户鉴权 JWT 密钥（必填；跨重启与多实例须稳定） |
 | `C3API_DB_DSN` | PostgreSQL 连接串 |
-| `C3API_REDIS_ADDR` | Redis 地址（必填；如 `127.0.0.1:6379`——实例发现等易失协调态） |
+| `C3API_REDIS_ADDR` | Redis 地址（必填；如 `127.0.0.1:6379`——实例发现、短时效验证码等易失状态） |
 
 完整配置项（server / log / admin / auth / db / redis / proxy / upstream / limit / scheduler / usage / billing）见 `config.example.toml`。
 
@@ -161,9 +161,9 @@ cd web && pnpm install && pnpm run dev
 
 ## 部署
 
-- `compose.yml` — 生产编排：`db`（postgres:18-alpine，数据挂载在 `deploy/data/pg`）+ `redis`（redis:8-alpine，易失协调态——不持久化）+ `app`（单容器，非 root、配置只读挂载自 `deploy/config.toml`、健康检查）。
+- `compose.yml` — 生产编排：`db`（postgres:18-alpine，数据挂载在 `deploy/data/pg`）+ `redis`（redis:8-alpine，易失状态（协调 + 短时效验证码）——不持久化）+ `app`（单容器，非 root、配置只读挂载自 `deploy/config.toml`、健康检查）。
 - `Dockerfile` — 三阶段构建（node → go → alpine），产出内嵌 UI 的静态单二进制。
-- **双必需依赖**：PostgreSQL 18（全部持久状态，唯一真相源）+ Redis 8（仅承载可丢的易失协调态——实例发现心跳；永不作为缓存层/真相源）。二者均为启动强制项。
+- **双必需依赖**：PostgreSQL 18（全部持久状态，唯一真相源）+ Redis 8（可丢的易失状态——实例发现心跳与短时效邮箱验证码；永不作为缓存层）。二者均为启动强制项；勿配 `allkeys-lru` 等淘汰策略——验证码被淘汰仅致用户重发，无害但应避免。
 
 ## 许可
 

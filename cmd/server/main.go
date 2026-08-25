@@ -41,6 +41,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/internal/snapshot"
 	"github.com/is7qin/c3api/internal/usage"
+	"github.com/is7qin/c3api/internal/verification"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/aiclient"
 	"github.com/is7qin/c3api/pkg/httpx"
@@ -277,6 +278,9 @@ func main() {
 		svcLoc = l
 	}
 	svc.SetTimeLocation(svcLoc)
+	// 验证码 Redis 存储（spec 2026-08-25-emailcode-redis-migration §2.2）：Redis
+	// 必选 ⇒ 无 nil 分支，svc 构造后回填（Set* 惯例，同 SetLocalDispatcher）。
+	svc.SetEmailCodeStore(verification.New(rdb))
 	mailW := service.NewMailWorker(svc)
 	svc.SetMailEnqueue(mailW.Enqueue)
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/

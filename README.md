@@ -121,8 +121,8 @@ Point any OpenAI/Anthropic-compatible SDK at the gateway URL — the request for
                             ▼               ▼
               PostgreSQL 18 (state + NOTIFY) │
                                              ▼
-                          Redis 8 (ephemeral coordination:
-                          instance-discovery heartbeats)
+                        Redis 8 (ephemeral: coordination +
+                        short-lived verification codes)
 ```
 
 - **Single binary**: the frontend is built and embedded via `go:embed`, so the runtime is one `server` process plus a mounted config file.
@@ -152,7 +152,7 @@ The gateway loads `config.toml` (see `config.example.toml`), overlaid by `C3API_
 | `C3API_ADMIN_TOKEN` | Admin API token (optional; leave empty to disable static-token auth — `/api/admin` then accepts `platform_admin` JWTs only) |
 | `C3API_AUTH_JWT_SECRET` | JWT signing secret for user auth (required; stable across restarts and instances) |
 | `C3API_DB_DSN` | PostgreSQL DSN |
-| `C3API_REDIS_ADDR` | Redis address (required; e.g. `127.0.0.1:6379` — instance discovery and other ephemeral coordination) |
+| `C3API_REDIS_ADDR` | Redis address (required; e.g. `127.0.0.1:6379` — instance discovery, short-lived verification codes and other ephemeral state) |
 | `C3API_SERVER_TIME_ZONE` | Deployment timezone for pricing time/day-of-week conditions (IANA name, e.g. `Asia/Shanghai`; empty = process local) |
 
 See `config.example.toml` for the full schema (server, log, admin, auth, db, redis, proxy, upstream, limit, scheduler, usage, billing).
@@ -164,9 +164,9 @@ See `config.example.toml` for the full schema (server, log, admin, auth, db, red
 
 ## Deployment
 
-- `compose.yml` — production stack: one `db` (postgres:18-alpine, bind-mounted data under `deploy/data/pg`) + one `redis` (redis:8-alpine, ephemeral coordination — no persistence) + one `app` container (non-root, read-only config mount from `deploy/config.toml`, healthcheck).
+- `compose.yml` — production stack: one `db` (postgres:18-alpine, bind-mounted data under `deploy/data/pg`) + one `redis` (redis:8-alpine, ephemeral coordination + short-lived verification codes — no persistence) + one `app` container (non-root, read-only config mount from `deploy/config.toml`, healthcheck).
 - `Dockerfile` — three-stage build (node → go → alpine), producing a single static binary with the UI embedded.
-- **Dual required dependencies**: PostgreSQL 18 (all durable state, source of record) + Redis 8 (ephemeral coordination only — instance discovery heartbeats; never a cache layer or system of record). Both are startup-mandatory.
+- **Dual required dependencies**: PostgreSQL 18 (all durable state, source of record) + Redis 8 (ephemeral coordination + short-lived email verification codes — instance discovery heartbeats and verification codes; never a cache layer). Both are startup-mandatory. Do not set an eviction policy (`allkeys-lru` etc.) for this instance: an evicted code is benign (the user just re-requests one), but keep it out of the configuration.
 
 ### GC tuning (optional, default off)
 

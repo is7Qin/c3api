@@ -42,7 +42,6 @@ type Repository struct {
 	TemplateExts   *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1；W1 数据层，消费接线 W3/W4）
 	AccountExts    *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1；W1 数据层，消费接线 W6）
 	EmailTemplates *EmailTemplateRepo // 邮件模板（email_template；邮件服务）
-	EmailCodes     *EmailCodeRepo     // 验证码（email_code；邮件服务）
 	Client         *ent.Client
 	// driver 为原始 dialect.Driver：原子资源方法/条件递增等 raw SQL 走它
 	//（ent v0.14 生成代码无 ExecContext/QueryContext，raw SQL 无客户端入口）；
@@ -106,7 +105,6 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 		TemplateExts:   &TemplateExtRepo{client: client},
 		AccountExts:    &AccountExtRepo{client: client},
 		EmailTemplates: &EmailTemplateRepo{client: client},
-		EmailCodes:     &EmailCodeRepo{client: client, driver: drv},
 		Client:         client,
 		driver:         drv,
 	}
@@ -480,7 +478,7 @@ func (r *Repository) SetSetting(ctx context.Context, key string, typ domain.Sett
 	return r.Settings.Set(ctx, key, typ, value)
 }
 
-// --- 邮件模板 / 验证码（邮件服务） ---
+// --- 邮件模板（邮件服务；验证码已迁 Redis，spec 2026-08-25-emailcode-redis-migration §2.3） ---
 
 func (r *Repository) GetEmailTemplate(ctx context.Context, purpose string) (*domain.EmailTemplate, error) {
 	return r.EmailTemplates.GetEmailTemplate(ctx, purpose)
@@ -496,22 +494,6 @@ func (r *Repository) UpsertEmailTemplate(ctx context.Context, purpose, subject, 
 
 func (r *Repository) DeleteEmailTemplate(ctx context.Context, purpose string) error {
 	return r.EmailTemplates.DeleteEmailTemplate(ctx, purpose)
-}
-
-func (r *Repository) GetEmailCode(ctx context.Context, email, purpose string) (*domain.EmailCode, error) {
-	return r.EmailCodes.GetEmailCode(ctx, email, purpose)
-}
-
-func (r *Repository) UpsertEmailCode(ctx context.Context, email, purpose, sha256 string, expiresAt time.Time) (*domain.EmailCode, error) {
-	return r.EmailCodes.UpsertEmailCode(ctx, email, purpose, sha256, expiresAt)
-}
-
-func (r *Repository) IncrementEmailCodeAttempts(ctx context.Context, email, purpose string) (int, error) {
-	return r.EmailCodes.IncrementAttempts(ctx, email, purpose)
-}
-
-func (r *Repository) DeleteEmailCode(ctx context.Context, email, purpose string) error {
-	return r.EmailCodes.DeleteEmailCode(ctx, email, purpose)
 }
 
 func (r *Repository) ListRules(ctx context.Context, enabled *bool) ([]domain.Rule, error) {

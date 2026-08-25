@@ -33,18 +33,6 @@ func (f AccountExtFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, 
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AccountExtMutation", m)
 }
 
-// The EmailCodeFunc type is an adapter to allow the use of ordinary
-// function as EmailCode mutator.
-type EmailCodeFunc func(context.Context, *ent.EmailCodeMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f EmailCodeFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.EmailCodeMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.EmailCodeMutation", m)
-}
-
 // The EmailTemplateFunc type is an adapter to allow the use of ordinary
 // function as EmailTemplate mutator.
 type EmailTemplateFunc func(context.Context, *ent.EmailTemplateMutation) (ent.Value, error)
