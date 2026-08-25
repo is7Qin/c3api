@@ -159,6 +159,22 @@ html[data-glass].dark [class~="bg-sidebar"] {
   background: var(--glass-card-dark) !important;
 }
 
+/* Glass bars: vertical light — near-solid crest fading into the frosted card,
+   like light entering a column of glass. Stops stay opaque by default so
+   non-glass mode keeps its flat solid bars. Glass mode also swaps the series
+   hue for a calmer, less saturated azure that sits well on frosted mica. */
+html[data-glass] .bar-glass-hi {
+  stop-opacity: 0.95;
+  stop-color: oklch(0.6 0.13 252);
+}
+html[data-glass] .bar-glass-lo { stop-opacity: 0.32; }
+
+html[data-glass].dark .bar-glass-hi {
+  stop-opacity: 0.9;
+  stop-color: oklch(0.73 0.11 250);
+}
+html[data-glass].dark .bar-glass-lo { stop-opacity: 0.36; }
+
 /* Fluid ambient: WebGL 流体由 FluidCanvas 渲染，此处仅保留容器与呼吸动效 */
 
 html[data-glass] [data-glass-ambient] {

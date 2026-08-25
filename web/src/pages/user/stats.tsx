@@ -170,11 +170,17 @@ export default function UserStats() {
             <ChartContainer config={chartConfig} className="h-[320px] w-full">
               {metric === 'requests' ? (
                 <BarChart accessibilityLayer data={chartData}>
+                  <defs>
+                    <linearGradient id="bar-glass-fill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--color-requests)" className="bar-glass-hi" />
+                      <stop offset="100%" stopColor="var(--color-requests)" className="bar-glass-lo" />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid vertical={false} />
                   <XAxis dataKey="label" tickCount={chartData.length} tickLine={false} tickMargin={10} axisLine={false} fontSize={12} />
                   <YAxis tickLine={false} axisLine={false} tickMargin={8} fontSize={12} allowDecimals={false} />
                   <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="requests" fill="var(--color-requests)" radius={4} />
+                  <Bar dataKey="requests" fill="url(#bar-glass-fill)" radius={4} maxBarSize={48} />
                 </BarChart>
               ) : (
                 <AreaChart accessibilityLayer data={chartData} margin={{ left: 0, right: 8 }}>
