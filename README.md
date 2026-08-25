@@ -93,6 +93,12 @@ cd web && pnpm install && pnpm run dev
 
 Point any OpenAI/Anthropic-compatible SDK at the gateway URL — the request format is selected by path, so a single base URL serves all six request formats.
 
+## Sponsors
+
+| Sponsor | About |
+| --- | --- |
+| [**ForZTN**](https://sponsorship.forztn.com/github.com/is7Qin/c3api) | Next-gen VPC-based IDC cloud panel · network/VM exchange |
+
 ## Architecture
 
 ```

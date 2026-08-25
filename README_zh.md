@@ -92,6 +92,12 @@ cd web && pnpm install && pnpm run dev
 
 任意兼容 OpenAI/Anthropic 的 SDK 指向网关地址即可——请求格式由路径决定，一个 base URL 同时服务六种请求格式。
 
+## 赞助
+
+| 赞助方 | 简介 |
+| --- | --- |
+| [**ForZTN**](https://sponsorship.forztn.com/github.com/is7Qin/c3api) | VPC 架构 IDC 云面板 · 网络/VM 交易所 |
+
 ## 架构
 
 ```
