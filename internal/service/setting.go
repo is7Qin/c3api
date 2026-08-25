@@ -149,15 +149,3 @@ func (s *Service) settingInt(key string) int64 {
 	}
 	return v
 }
-
-// ClusterInstances 集群实例数 N（settings.cluster.instances，多实例预算分摊
-// 设计文档 §3.1）：所有实例从 DB settings 读同一 N（config 文件可漂移，DB 是
-// 唯一共识源）。快照缺失/非法 → 回退 1（单实例语义；DB 无行即注册表默认）。
-// 供 T3 gate/limiter 预算分配读取；N 变更经 settings NOTIFY 传播。
-func (s *Service) ClusterInstances() int {
-	n := s.settingInt("cluster.instances")
-	if n < 1 {
-		return 1
-	}
-	return int(n)
-}

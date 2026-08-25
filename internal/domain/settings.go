@@ -31,12 +31,6 @@ var DefaultSettings = []Setting{
 		PolicyValues: []string{"passthrough", "strip", "reject"}},
 	{Key: "service_tier_policy_fast", Type: SettingTypeString, Value: "passthrough",
 		PolicyValues: []string{"passthrough", "strip", "reject"}},
-	// 集群实例数 N（#14 多实例预算分摊，设计文档 §3.1）：存 DB settings——
-	// 所有实例必须读到同一 N（config 文件各实例可漂移，DB 是唯一共识源）；
-	// N 变更走 settings NOTIFY 天然传播。service.ClusterInstances 读取，
-	// 缺失/非法回退 1（单实例语义）。Min=1：PUT 0 从"接受回退 1"强化为 400
-	// 拒绝（护栏前置；除零安全面本就由消费端双守卫覆盖，见 spec 评审）。
-	{Key: "cluster.instances", Type: SettingTypeNumber, Value: "1", Min: i64p(1)},
 	// 邮件服务（email service）：全部走运行时设置，非 config.toml。
 	{Key: "mail.enabled", Type: SettingTypeSwitch, Value: "false"},
 	{Key: "mail.register_verification", Type: SettingTypeSwitch, Value: "false"},

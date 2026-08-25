@@ -376,8 +376,9 @@ func TestDispatcherApplyFailureTolerated(t *testing.T) {
 
 // settingsNStub settings 快照桩（N 时序断言）：ReloadSettings 从 dbN 现读——
 // 模拟 DB 权威值（远端实例 UpdateSetting 已落库，本实例经 NOTIFY 触发重载）；
-// 快照值 snapN 供 auth 桩在 reload 时刻读取（模拟 ClusterInstances 现读
-// settings 快照）。
+// 快照值 snapN 供 auth 桩在 reload 时刻读取（模拟"快照先刷、reload 后行"的
+// 现读语义；cluster.instances 已删，spec 2026-08-25-redis-instance-discovery-design
+// §2.4，时序契约本身仍在）。
 type settingsNStub struct {
 	dbN   atomic.Int64 // 模拟 DB 当前值（外部变更写入）
 	snapN atomic.Int64 // 快照值（ReloadSettings 后 = dbN）
@@ -389,9 +390,9 @@ func (s *settingsNStub) ReloadSettings(ctx context.Context) error {
 }
 func (s *settingsNStub) N() int { return int(s.snapN.Load()) }
 
-// recSnapN auth 快照桩：Reload 时刻记录 settings 桩快照 N——模拟 gate.reload →
-// allocBudget 现读 ClusterInstances()（同一 settings 快照源；auth.Reload 内
-// LoadKeys/LoadUsers 之后即 gate.reload，期间快照不被改动，观测等价）。
+// recSnapN auth 快照桩：Reload 时刻记录 settings 桩快照 N——模拟 gate.reload 在
+// auth.Reload 内（LoadKeys/LoadUsers 之后）现读 provider 的时序，期间快照不被
+// 改动，观测等价。
 type recSnapN struct {
 	recSnap
 	s     *settingsNStub

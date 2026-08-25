@@ -1122,7 +1122,6 @@
       "defaults": "新用户默认资源",
       "pricingSync": "价格同步",
       "tierPolicy": "服务档位策略",
-      "cluster": "集群",
       "mail": "邮件"
     },
     "labels": {
@@ -1136,7 +1135,6 @@
       "service_tier_policy_priority": "优先档字段策略",
       "service_tier_policy_flex": "弹性档字段策略",
       "service_tier_policy_fast": "快速挡位策略",
-      "cluster.instances": "集群实例数",
       "mail.enabled": "启用邮件服务",
       "mail.register_verification": "注册邮箱验证",
       "mail.smtp_host": "SMTP 主机",
@@ -1157,7 +1155,6 @@
       "service_tier_policy_priority": "优先档字段在转发请求时的处理方式",
       "service_tier_policy_flex": "弹性档字段在转发请求时的处理方式",
       "service_tier_policy_fast": "快速挡位（fast）请求转发时字段的处理方式",
-      "cluster.instances": "集群实例数（多实例预算分摊；所有实例共识，需一致）",
       "mail.enabled": "关闭时注册直通、忘记密码空转",
       "mail.register_verification": "开启后注册需验证码（需先启用邮件并配置 host/from）",
       "mail.smtp_host": "SMTP 服务器主机名",
@@ -1260,7 +1257,10 @@
       "watermark_unix_ms": "水位位置",
       "last_buckets": "上轮桶数",
       "last_rows": "上轮明细行数",
-      "last_duration_ms": "上轮耗时 (ms)"
+      "last_duration_ms": "上轮耗时 (ms)",
+      "instances": "实例数",
+      "last_tick_ok": "最近心跳正常",
+      "consecutive_errors": "连续失败次数"
     }
   },
   "user": {

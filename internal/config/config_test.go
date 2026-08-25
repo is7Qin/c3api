@@ -15,14 +15,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setenvRequired 注入必填两密钥（auth.jwt_secret/db.dsn 校验已内聚到 Load——
-// 测试调用 Load 前必须先补环境，评审 P2-1；admin.token 已可空，仍注入保持
+// setenvRequired 注入必填密钥（auth.jwt_secret/db.dsn/redis.addr 校验已内聚到
+// Load——测试调用 Load 前必须先补环境，评审 P2-1；admin.token 已可空，仍注入保持
 // 既有用例语义）。
 func setenvRequired(t *testing.T) {
 	t.Helper()
 	t.Setenv("C3API_ADMIN_TOKEN", "test-admin-token")
 	t.Setenv("C3API_AUTH_JWT_SECRET", "test-jwt-secret")
 	t.Setenv("C3API_DB_DSN", "postgres://test")
+	t.Setenv("C3API_REDIS_ADDR", "127.0.0.1:6379")
 }
 
 // writeConfig 写临时 TOML 并返回路径（单键覆盖 + 默认值叠加场景）。
@@ -194,20 +195,25 @@ func TestLoadKeepsRetentionZeroSemantics(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsPlaceholderSecrets：4 个已知占位值 × 2 字段（精确匹配拒绝；防
-// 原样部署鉴权绕过——config_test 旧断言"change-me 合法"是缺陷守护者，已改写）。
+// TestLoadRejectsPlaceholderSecrets：4 个已知占位值 × 3 字段（精确匹配拒绝；防
+// 原样部署鉴权绕过——config_test 旧断言"change-me 合法"是缺陷守护者，已改写；
+// redis.password 复用同校验，foundation spec §2.1）。
 func TestLoadRejectsPlaceholderSecrets(t *testing.T) {
 	for _, ph := range []string{"change-me", "change-me-too", "dev-admin-token", "dev-jwt-secret-for-local"} {
-		for _, field := range []string{"admin.token", "auth.jwt_secret"} {
+		for _, field := range []string{"admin.token", "auth.jwt_secret", "redis.password"} {
 			t.Run(field+"/"+ph, func(t *testing.T) {
-				admin, jwt := "real-admin-token", "real-jwt-secret"
-				if field == "admin.token" {
+				admin, jwt, redisPwd := "real-admin-token", "real-jwt-secret", ""
+				switch field {
+				case "admin.token":
 					admin = ph
-				} else {
+				case "auth.jwt_secret":
 					jwt = ph
+				default:
+					redisPwd = ph
 				}
 				// 不设对应 env（env 会覆盖 TOML 终值）；其余必填经 TOML 提供
-				toml := fmt.Sprintf("admin = { token = %q }\nauth = { jwt_secret = %q }\ndb = { dsn = %q }", admin, jwt, "postgres://test")
+				toml := fmt.Sprintf("admin = { token = %q }\nauth = { jwt_secret = %q }\ndb = { dsn = %q }\nredis = { addr = %q, password = %q }",
+					admin, jwt, "postgres://test", "127.0.0.1:6379", redisPwd)
 				_, err := Load(writeConfig(t, toml))
 				require.Error(t, err)
 				require.ErrorContains(t, err, field)
@@ -224,8 +230,8 @@ func TestLoadRequiresSecrets(t *testing.T) {
 		path string
 		toml string
 	}{
-		{"auth.jwt_secret", "admin = { token = \"\" }\nauth = { jwt_secret = \"\" }\ndb = { dsn = \"postgres://test\" }"},
-		{"db.dsn", "admin = { token = \"\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"\" }"},
+		{"auth.jwt_secret", "admin = { token = \"\" }\nauth = { jwt_secret = \"\" }\ndb = { dsn = \"postgres://test\" }\nredis = { addr = \"127.0.0.1:6379\" }"},
+		{"db.dsn", "admin = { token = \"\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"\" }\nredis = { addr = \"127.0.0.1:6379\" }"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			_, err := Load(writeConfig(t, tc.toml))
@@ -234,7 +240,7 @@ func TestLoadRequiresSecrets(t *testing.T) {
 		})
 	}
 	// admin.token 空 + 其余必填齐 → 启动成功（空 = 不启用静态 token）
-	_, err := Load(writeConfig(t, "admin = { token = \"\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"postgres://test\" }"))
+	_, err := Load(writeConfig(t, "admin = { token = \"\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"postgres://test\" }\nredis = { addr = \"127.0.0.1:6379\" }"))
 	require.NoError(t, err)
 }
 
@@ -277,4 +283,49 @@ func TestServerTimeZoneValidIANA(t *testing.T) {
 	c, err := Load(writeConfig(t, `server = { time_zone = "Asia/Shanghai" }`))
 	require.NoError(t, err)
 	require.Equal(t, "Asia/Shanghai", c.Server.TimeZone)
+}
+
+// TestLoadRedisConfig [redis] 段（spec 2026-08-25-redis-foundation-design §2.1）：
+// addr 缺失 fatal（Redis 必选依赖，无"未启用"分支）；env 覆盖三键（首下划线惯例
+// C3API_REDIS_ADDR/PASSWORD/DB）；db<0 fatal；db=0 合法；未知键 ErrorUnused fatal。
+func TestLoadRedisConfig(t *testing.T) {
+	t.Run("addr 缺失 → fatal", func(t *testing.T) {
+		setenvRequired(t)
+		t.Setenv("C3API_REDIS_ADDR", "") // 显式清空（其余必填已就位，错误唯一归因 redis.addr）
+		_, err := Load("")
+		require.Error(t, err)
+		require.ErrorContains(t, err, "redis.addr")
+	})
+
+	t.Run("TOML 解析 + env 覆盖", func(t *testing.T) {
+		setenvRequired(t)
+		c, err := Load(writeConfig(t, `redis = { addr = "127.0.0.1:6379", password = "", db = 0 }`))
+		require.NoError(t, err)
+		require.Equal(t, "127.0.0.1:6379", c.Redis.Addr)
+		require.Equal(t, "", c.Redis.Password)
+		require.Equal(t, 0, c.Redis.DB)
+
+		t.Setenv("C3API_REDIS_ADDR", "redis:6379")
+		t.Setenv("C3API_REDIS_PASSWORD", "pw")
+		t.Setenv("C3API_REDIS_DB", "2")
+		c2, err := Load("")
+		require.NoError(t, err)
+		require.Equal(t, "redis:6379", c2.Redis.Addr, "env 覆盖 TOML/默认")
+		require.Equal(t, "pw", c2.Redis.Password)
+		require.Equal(t, 2, c2.Redis.DB)
+	})
+
+	t.Run("db 负值 → fatal", func(t *testing.T) {
+		setenvRequired(t)
+		_, err := Load(writeConfig(t, `redis = { addr = "127.0.0.1:6379", db = -1 }`))
+		require.Error(t, err)
+		require.ErrorContains(t, err, "redis.db")
+	})
+
+	t.Run("未知键 → fatal", func(t *testing.T) {
+		setenvRequired(t)
+		_, err := Load(writeConfig(t, `redis = { addr = "127.0.0.1:6379", tls = true }`))
+		require.Error(t, err)
+		require.ErrorContains(t, err, "tls")
+	})
 }

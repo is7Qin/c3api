@@ -13,10 +13,11 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// InstancesProvider 集群实例数 N 提供者（service.Service 实现 ClusterInstances；
-// 多实例预算分摊 #14 §3.1——N 存 DB settings，所有实例同源，config 文件可漂移）。
-// nil（未装配）按 N=1（单实例语义）。N 变更经 settings NOTIFY 传播，装配侧再次
-// 调用 SetInstancesProvider 即触发预算重算（§3.4）。
+// InstancesProvider 集群实例数 N 提供者（discovery.Discovery 实现 ClusterInstances；
+// 多实例预算分摊 #14 §3.1——N = Redis 心跳活体数，spec
+// 2026-08-25-redis-instance-discovery-design；原 DB settings 手工设置已删）。
+// nil（未装配）按 N=1（单实例语义）。N 在每次预算分配现读（instancesN），心跳
+// 计数变化 ≤1 tick 天然生效。
 type InstancesProvider interface {
 	ClusterInstances() int
 }

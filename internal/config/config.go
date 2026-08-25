@@ -24,6 +24,7 @@ type Config struct {
 	Admin     AdminConfig     `koanf:"admin"`
 	Auth      AuthConfig      `koanf:"auth"`
 	DB        DBConfig        `koanf:"db"`
+	Redis     RedisConfig     `koanf:"redis"`
 	Proxy     ProxyConfig     `koanf:"proxy"`
 	Upstream  UpstreamConfig  `koanf:"upstream"`
 	Limit     LimitConfig     `koanf:"limit"`
@@ -63,6 +64,17 @@ type AuthConfig struct {
 type DBConfig struct {
 	DSN      string `koanf:"dsn"`
 	MaxConns int    `koanf:"max_conns"`
+}
+
+// RedisConfig Redis 连接（spec 2026-08-25-redis-foundation-design §2.1）：Redis 自
+// 本期起为必需依赖（与 PostgreSQL 并列）——addr 必填，空 = 启动即 fatal；Ping 校验
+// 在 main 的 redisx.Open（配置层零 go-redis 依赖，纯数据）。env 覆盖
+// C3API_REDIS_ADDR / C3API_REDIS_PASSWORD / C3API_REDIS_DB（首下划线替换惯例自动
+// 成立：redis.addr 等）；未知键经 ErrorUnused 启动报错。
+type RedisConfig struct {
+	Addr     string `koanf:"addr"`
+	Password string `koanf:"password"`
+	DB       int    `koanf:"db"` // <0 非法（0 = 默认库）
 }
 
 type ProxyConfig struct {
@@ -260,12 +272,15 @@ func validate(c *Config) error {
 	for _, r := range []struct {
 		path  string
 		value string
+		hint  string // env 覆盖变量名（错误文案可归因）
 	}{
-		{"auth.jwt_secret", c.Auth.JWTSecret},
-		{"db.dsn", c.DB.DSN},
+		{"auth.jwt_secret", c.Auth.JWTSecret, "C3API_AUTH_JWT_SECRET"},
+		{"db.dsn", c.DB.DSN, "C3API_DB_DSN"},
+		// Redis 必选（foundation spec §2.1：空 = 配置缺失 → 启动即 fatal）。
+		{"redis.addr", c.Redis.Addr, "C3API_REDIS_ADDR"},
 	} {
 		if r.value == "" {
-			return fmt.Errorf("%s is required (set in config file or C3API_AUTH_JWT_SECRET/C3API_DB_DSN)", r.path)
+			return fmt.Errorf("%s is required (set in config file or %s)", r.path, r.hint)
 		}
 	}
 	for _, p := range []struct {
@@ -274,11 +289,16 @@ func validate(c *Config) error {
 	}{
 		{"admin.token", c.Admin.Token},
 		{"auth.jwt_secret", c.Auth.JWTSecret},
+		// redis.password 复用既有占位密钥校验（foundation spec §2.1）；空 = 无鉴权，合法。
+		{"redis.password", c.Redis.Password},
 	} {
 		switch p.value {
 		case "change-me", "change-me-too", "dev-admin-token", "dev-jwt-secret-for-local":
 			return fmt.Errorf("%s must not be a placeholder value (got %q); inject via C3API_ADMIN_TOKEN/C3API_AUTH_JWT_SECRET", p.path, p.value)
 		}
+	}
+	if c.Redis.DB < 0 {
+		return fmt.Errorf("redis.db must be >= 0 (got %d)", c.Redis.DB)
 	}
 	if c.Server.TimeZone != "" {
 		if _, err := time.LoadLocation(c.Server.TimeZone); err != nil {

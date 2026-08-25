@@ -26,6 +26,7 @@ import (
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/discovery"
 	"github.com/is7qin/c3api/internal/handler"
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/invalidate"
@@ -44,6 +45,7 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 	"github.com/is7qin/c3api/pkg/httpx"
 	"github.com/is7qin/c3api/pkg/logx"
+	"github.com/is7qin/c3api/pkg/redisx"
 )
 
 // version 是二进制版本注入点（REL spec 2026-08-15）：构建链 -ldflags
@@ -85,7 +87,17 @@ func main() {
 			}
 		}() // net/http/pprof 自动挂载
 	}
-	// 必填校验（admin.token/auth.jwt_secret/db.dsn）已内聚到 config.Load，此处只做错误处理。
+	// 必填校验（admin.token/auth.jwt_secret/db.dsn/redis.addr）已内聚到 config.Load，
+	// 此处只做错误处理。
+
+	// Redis 必选依赖（foundation spec 2026-08-25-redis-foundation-design §2.3）：
+	// config.Load 之后立即构造（addr 缺失已在 Load fatal；Ping 失败此处 fatal——
+	// 无"未启用"分支，消费方零 nil 容忍）。全仓唯一构造点 redisx.Open；运行期
+	// 连接丢失 ≠ 启动失败（连接池自带重连，降级语义由 discovery 定义）。
+	rdb, err := redisx.Open(redisx.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+	if err != nil {
+		fatalf("redis: %v", err)
+	}
 
 	// 启动期 DB 操作统一 30s 预算（OpenPG + ent migrate + 三分区 bootstrap）：
 	// 超时/失败经 fatalDB 明确文案（"db bootstrap timed out after 30s" 可归因）。
@@ -142,6 +154,10 @@ func main() {
 		fatalf("instance src: %v", err)
 	}
 	pub := notify.NewPublisher(pool, src, log)
+	// 实例发现（consumer spec 2026-08-25-redis-instance-discovery-design §2.2）：
+	// ZSET 心跳成员协议，活体计数即集群 N——替换手工 cluster.instances 设置。
+	// self 与 NOTIFY Src 同源（hostname-pid-nonce 生成模式复用）。
+	disco := discovery.New(rdb, src, log)
 
 	// 规则引擎先行构造（不 Reload——New 只建结构）：scheduler 构造期注册 apply 回调。
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, log)
@@ -378,10 +394,11 @@ func main() {
 	// Task 3 codex 额度快照装配：svc.AccountUsage → sdkbridge.GetUsageSnapshot
 	//（TTL 缓存/有界并发/失败冷却全在适配层——service 纯编排零基础设施）。
 	svc.SetUsageSnapshotter(codexAdapter)
-	// 多实例集群 N 注入（#14 T3b）：gate 预算 ceil(剩余/N) + limit RPM ceil(rpm/N)。
-	// svc 构造后调用（svc.ClusterInstances 读 settings 快照）；settings NOTIFY
-	// 变更 N 后再次调用即触发预算即时重算（设计 §3.4）。
-	px.SetInstancesProvider(svc)
+	// 多实例集群 N 注入（#14 T3b → discovery 接管，consumer spec §2.2）：gate 预算
+	// ceil(剩余/N) + limit RPM ceil(rpm/N)。N = Redis 心跳活体数（disco 实时读
+	// atomic），gate/limit 在每次预算分配时现读 provider（gate.go:106-121），
+	// 心跳计数变化 ≤1 tick 天然生效，无需任何 reload 触发。
+	px.SetInstancesProvider(disco)
 	// litellm 价格同步 worker：启动异步拉取一次（不阻塞启动）+ price_sync_cron
 	// 定期循环；source_url/cron 每轮从 svc 的 settings 快照现读（变更下次循环
 	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（Phase 5 计费读零 DB）。
@@ -425,6 +442,10 @@ func main() {
 	if billFlusher != nil {
 		opsWorkers = append(opsWorkers, billFlusher)
 	}
+	// discovery 实例发现观测（foundation spec §2.4）：alive N / last_tick_ok /
+	// consecutive_errors——Redis 故障冻结期在运维面可见（instances 停走 +
+	// consecutive_errors 增长）。
+	opsWorkers = append(opsWorkers, disco)
 	// /api/admin/overview + /api/admin/users-top（spec 2026-08-14）：门禁在途快照
 	// （Auth.InFlightUsers 只读访问器——零锁冷面）与 billing 游标积压 lag 族观测
 	// （flusher 直读；未装配 nil → 端点空/零值）经 OpsOptions 注入——不改
@@ -493,6 +514,10 @@ func main() {
 		wm.Register(billFlusher)
 	}
 	wm.Register(inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg, mailW) // invalidate 去抖器执行 goroutine（单 goroutine 串行）；errlog 错误明细排空在 rec 之后注册 → 反向排空先于 rec；retention/stats-agg 顺序无依赖（覆盖语义幂等，停摆窗口由追赶上限收敛）；mailW 尾部——反序排空中段关闭，无资金风险（D-W4）。billFlusher 缺位时：计费关闭，billable 行出生即 billed=true 吸收态，无未扣积压
+	// discovery 在 billFlusher 之后、listener/authSync 之前注册（foundation spec
+	// §2.3 装配序）：反向排空时 listener 先停接收、discovery 随即 ZREM 自身缩容
+	// 掉出 N，再排业务 worker——游标终扫（billFlusher 最后排空）前集群基数已收敛。
+	wm.Register(disco)
 	// listener/auth-sync 最后注册 → 反向排空最先关：停止接收/周期刷新后再排空
 	// 业务 worker（scheduler 排空回写仍会发布 NOTIFY，自播跳过、其它实例接收，
 	// 无依赖）。
@@ -548,6 +573,11 @@ func main() {
 	}
 	waitForInflight(px, shutdownCtx, log)
 	_ = wm.Shutdown(shutdownCtx)
+	// Redis 客户端最后释放（foundation spec §2.3：worker 排空完成后再关连接池——
+	// discovery 的停机 ZREM 等收尾命令都走在池上）。
+	if err := redisx.Close(rdb); err != nil {
+		log.Warn("redis client close failed", logx.Error(err))
+	}
 	log.Info("shutdown complete")
 	_ = log.Sync()
 }

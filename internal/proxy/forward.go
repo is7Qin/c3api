@@ -141,10 +141,11 @@ func (p *Proxy) SetCodex(c *sdkbridge.Codex) { p.codex = c }
 
 func (p *Proxy) Inflight() int64 { return p.inflight.Load() }
 
-// SetInstancesProvider 注入集群实例数 N 提供者（#14 多实例预算分摊；svc 构造
-// 后调用——main 装配点，T3a 接线：px.SetInstancesProvider(svc)）。转发给
-// auth（gate 预算 ceil(剩余/N)）与 limit（RPM ceil(rpm/N)）；N 变更
-// （settings NOTIFY）后再次调用即触发预算即时重算（§3.4）。
+// SetInstancesProvider 注入集群实例数 N 提供者（#14 多实例预算分摊；discovery
+// 构造后调用——main 装配点：px.SetInstancesProvider(disco)，spec
+// 2026-08-25-redis-instance-discovery-design §2.2）。转发给 auth（gate 预算
+// ceil(剩余/N)）与 limit（RPM ceil(rpm/N)）；N 在每次预算分配现读，心跳计数
+// 变化 ≤1 tick 天然生效。
 func (p *Proxy) SetInstancesProvider(inst InstancesProvider) {
 	p.auth.SetInstancesProvider(inst)
 	p.limit.SetInstancesProvider(inst)

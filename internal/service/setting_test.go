@@ -28,7 +28,6 @@ func TestUpdateSettingNumberRange(t *testing.T) {
 		{"default_user_balance", "default_user_balance", "-500", "0"},
 		{"default_user_temp_balance", "default_user_temp_balance", "-1", "0"},
 		{"default_user_temp_balance_ttl_days", "default_user_temp_balance_ttl_days", "-1", "0"},
-		{"cluster.instances", "cluster.instances", "0", "1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

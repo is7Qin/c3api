@@ -269,49 +269,22 @@ func TestReloadSettings(t *testing.T) {
 	require.Equal(t, "false", svc.settingValue("signup_enabled"), "ReloadSettings 后生效")
 }
 
-// TestClusterInstances cluster.instances 读取：默认 1；UpdateSetting 后生效；
-// 非法值回退 1（回退路径 = DB 直写绕过校验后快照重载，见末尾用例）。
-// A-P2-11 强化：PUT 0（低于注册表 Min=1）→ 400 拒绝，不再"接受回退 1"
-// （护栏前置；除零安全面本就由消费端双守卫覆盖，见 spec 评审）。
-func TestClusterInstances(t *testing.T) {
-	ctx := context.Background()
-	svc, fs, pr := newPubSvc()
-	require.Equal(t, 1, svc.ClusterInstances(), "无 DB 行 → 注册表默认 1")
-
-	_, err := svc.UpdateSetting(ctx, "cluster.instances", "3")
-	require.NoError(t, err)
-	require.True(t, pr.last().Settings, "cluster.instances 更新 → Settings:true")
-	require.Equal(t, 3, svc.ClusterInstances(), "UpdateSetting 后快照生效")
-
-	_, err = svc.UpdateSetting(ctx, "cluster.instances", "0")
-	require.ErrorIs(t, err, ErrInvalidInput, "PUT 0 → 400 拒绝（低于 Min=1）")
-	require.Equal(t, 3, svc.ClusterInstances(), "400 拒绝未落库 → 快照保持上一次合法值")
-	_, err = svc.UpdateSetting(ctx, "cluster.instances", "abc")
-	require.Error(t, err, "非数字被 UpdateSetting 类型化校验拒绝")
-	require.Equal(t, 3, svc.ClusterInstances(), "400 拒绝未落库 → 快照保持上一次合法值")
-
-	// 回退 1 路径（护栏不覆盖 DB 直写）：绕过 UpdateSetting 落库非法值 → 重载回退 1
-	_, err = fs.SetSetting(ctx, "cluster.instances", domain.SettingTypeNumber, "0")
-	require.NoError(t, err)
-	require.NoError(t, svc.ReloadSettings(ctx))
-	require.Equal(t, 1, svc.ClusterInstances(), "非法值（0）回退 1")
-}
-
 // TestUpdateSettingLocalScopeReload #36 本地实例即时重算（R2 M-1）：UpdateSetting
 // 除广播 NOTIFY（其余实例）外，还须直连本地分发器（自播 NOTIFY 被 Listener
-// Src 跳过，本地实例预算重算不能依赖 NOTIFY 回环）。修复前本测试红——本地
-// 无任何 auth.Reload 触发，N 变更后 gate 预算不重算。
+// Src 跳过，本地实例快照刷新与 scope 重载不能依赖 NOTIFY 回环）。观测键用
+// signup_enabled（cluster.instances 已随 Redis 实例发现移除，spec
+// 2026-08-25-redis-instance-discovery-design §2.4——时序契约本身不变，换键锚定）。
 func TestUpdateSettingLocalScopeReload(t *testing.T) {
 	ctx := context.Background()
 	fs := newFakeStore()
 	ld := &recLocalDispatcher{}
 	svc := &Service{store: fs, local: ld, log: nil}
 	svc.reloadSettings(ctx)
-	require.Equal(t, 1, svc.ClusterInstances(), "无 DB 行 → 默认 1")
+	require.Equal(t, "true", svc.settingValue("signup_enabled"), "无 DB 行 → 注册表默认 true")
 
-	_, err := svc.UpdateSetting(ctx, "cluster.instances", "3")
+	_, err := svc.UpdateSetting(ctx, "signup_enabled", "false")
 	require.NoError(t, err)
-	require.Equal(t, 3, svc.ClusterInstances(), "本地快照即时生效（既有行为）")
+	require.Equal(t, "false", svc.settingValue("signup_enabled"), "本地快照即时生效（既有行为）")
 	got := ld.changes()
 	require.Len(t, got, 1, "本地分发收到一次 settings 变更")
 	require.True(t, got[0].Settings, "本地分发载荷 Settings:true")

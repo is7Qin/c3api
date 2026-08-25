@@ -2918,7 +2918,7 @@ components:
       required: [name, stats]
       properties:
         name: { type: string }
-        # stats 为异构动态观测字段（9 个 worker 各形态不同，原子读计数器 +
+        # stats 为异构动态观测字段（13 个 worker 各形态不同，原子读计数器 +
         # channel 长度快照）——契约层面声明为自由 schema（任意对象），后端
         # 直出原类型（any），不做 struct→map 转换。
         #
@@ -2957,6 +2957,11 @@ components:
         #   auth-sync: running bool, last_reload_unix_ms int64（最近成功 Reload 时刻）,
         #     failures int64（Reload 失败累计）, last_failure_unix_ms int64（最近失败时刻）
         #   email: queued int（待发队列深度）, queue_cap int（队列容量 256）, sent_total int64, failed_total int64, retry_total int64, dropped_total int64, last_error string（最近一次投递失败摘要；空=无）
+        #   discovery（实例发现，spec 2026-08-25-redis-instance-discovery-design）:
+        #     instances int（当前生效集群实例数 N——Redis 心跳活体计数；故障冻结期 =
+        #     上次成功值，恒 ≥1）, last_tick_ok bool（最近心跳 tick 是否成功；false =
+        #     冻结中——Redis 不可达退化语义在运维面可见）, consecutive_errors int64
+        #     （连续失败 tick 数；恢复成功归零）
         stats:
           description: 各 worker 异构观测字段；完整字段清单见本 schema 上方 yaml 注释（与各 worker Stats() 实现同步维护）
     SnapshotState:

@@ -1122,7 +1122,6 @@
       "defaults": "New user defaults",
       "pricingSync": "Price sync",
       "tierPolicy": "Service tier policy",
-      "cluster": "Cluster",
       "mail": "Mail"
     },
     "labels": {
@@ -1136,7 +1135,6 @@
       "service_tier_policy_priority": "Priority tier field policy",
       "service_tier_policy_flex": "Flex tier field policy",
       "service_tier_policy_fast": "Fast tier field policy",
-      "cluster.instances": "Cluster instances",
       "mail.enabled": "Enable mail",
       "mail.register_verification": "Require email verification",
       "mail.smtp_host": "SMTP host",
@@ -1157,7 +1155,6 @@
       "service_tier_policy_priority": "How the priority tier field is handled when forwarding requests",
       "service_tier_policy_flex": "How the flex tier field is handled when forwarding requests",
       "service_tier_policy_fast": "How the fast tier field is handled when forwarding requests",
-      "cluster.instances": "Number of cluster instances (budget sharing; must be consistent across instances)",
       "mail.enabled": "When disabled, registration passes and forgot-password no-ops",
       "mail.register_verification": "When enabled registration requires a code (requires mail enabled + host/from)",
       "mail.smtp_host": "SMTP host",
@@ -1260,7 +1257,10 @@
       "watermark_unix_ms": "Watermark",
       "last_buckets": "Last buckets",
       "last_rows": "Last rows",
-      "last_duration_ms": "Last duration (ms)"
+      "last_duration_ms": "Last duration (ms)",
+      "instances": "Instances",
+      "last_tick_ok": "Last tick OK",
+      "consecutive_errors": "Consecutive errors"
     }
   },
   "user": {

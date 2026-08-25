@@ -165,9 +165,10 @@ func (a *Auth) Authenticate(r *http.Request) (domain.KeyMeta, bool) {
 	return meta, true
 }
 
-// SetInstancesProvider 注入集群实例数 N 提供者（#14 多实例预算分摊；svc 构造后
-// 装配——main 装配点，T3a 接线：auth.SetInstancesProvider(svc)）。N 变更
-// （settings NOTIFY）后再次调用即触发预算重算（幂等 reload，在途值继承，§3.4）。
+// SetInstancesProvider 注入集群实例数 N 提供者（#14 多实例预算分摊；discovery
+// 装配——main 装配点，spec 2026-08-25-redis-instance-discovery-design §2.2）。
+// 注入即触发预算重算（幂等 reload，在途值继承）；此后 N 在每次预算分配现读，
+// 心跳计数变化 ≤1 tick 天然生效。
 func (a *Auth) SetInstancesProvider(p InstancesProvider) {
 	a.gate.SetInstancesProvider(p)
 	a.mu.Lock()

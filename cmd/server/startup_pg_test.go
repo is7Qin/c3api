@@ -171,18 +171,22 @@ func TestStartupReloadAllPG(t *testing.T) {
 	}
 }
 
-// observingKeyRepo 包装 key loader：在加载时刻记录 settings 快照 N——观测
-// gate.reload → allocBudget 现读 ClusterInstances() 读到的 N（auth.Reload 内
-// LoadKeys/LoadUsers 之后即 gate.reload，期间 settings 快照不被改动，观测等价）。
-// svc 构造后回填（构造环：svc 需要 auth、auth 需要 loader、loader 需要 svc 观测）。
+// observingKeyRepo 包装 key loader：在加载时刻记录 settings 快照值（观测
+// gate.reload 时机——auth.Reload 内 LoadKeys/LoadUsers 之后即 gate.reload，期间
+// settings 快照不被改动，观测等价）。观测键 = price_sync_cron（导出读面
+// svc.PriceSyncCron 直读快照；cluster.instances 已随 Redis 实例发现移除，spec
+// 2026-08-25-redis-instance-discovery-design §2.4——"快照先刷、reload 后行"的时序
+// 契约与具体键无关，换键锚定）。svc 构造后回填（构造环：svc 需要 auth、auth 需要
+// loader、loader 需要 svc 观测）。
 type observingKeyRepo struct {
 	*repository.KeyRepo
 	svc  *service.Service
-	seen *atomic.Int64
+	seen *atomic.Pointer[string]
 }
 
 func (r *observingKeyRepo) LoadKeys(ctx context.Context) (map[string]domain.KeyMeta, error) {
-	r.seen.Store(int64(r.svc.ClusterInstances()))
+	v := r.svc.PriceSyncCron()
+	r.seen.Store(&v)
 	return r.KeyRepo.LoadKeys(ctx)
 }
 
@@ -192,25 +196,25 @@ type nopClients struct{}
 
 func (nopClients) InvalidateAll() {}
 
-// TestSettingsTimingPG #36 即时重算时序（R2 M-1，真实 PG 全链路）：settings
-// 旧 N → 变更新 N → auth.Reload（注册表 scope 分发）必须读到新 N——顺序保证
-// budget 按新 N 重算，而非"重算了个寂寞"。分两段：
+// TestSettingsTimingPG #36 即时重算时序（R2 M-1，真实 PG 全链路）：settings 旧值 →
+// 变更 → auth.Reload（注册表 scope 分发）必须读到新快照——顺序保证 reload 消费新
+// 值，而非"重载了个寂寞"。观测键 price_sync_cron（registry 默认 "0 3 * * *"）。
+// 分两段：
 //
-//   - 远端路径：其他实例落库 N=2 → 本实例 Apply(Change{Settings:true}) →
+//   - 远端路径：其他实例落库新 cron → 本实例 Apply(Change{Settings:true}) →
 //     settings 快照先同步刷新、auth 后重载。修复前本段红：Apply 仅 Mark 去抖
 //     （200ms 后 flush 才 ReloadSettings），reloadScopes 同步 auth.Reload 读到
-//     旧 N=1，新 N 落地后再无 gate.reload 触发（observedN 恒 1）。
-//   - 本地路径（#36 本地缺口）：UpdateSetting("cluster.instances","2") → 本地
-//     直连分发器触发 auth.Reload（自播 NOTIFY 被 Listener Src 跳过，本地实例
-//     不能依赖 NOTIFY 回环）。
+//     旧快照，新值落地后再无 gate.reload 触发（observedCron 恒旧值）。
+//   - 本地路径（#36 本地缺口）：UpdateSetting 直连本地分发器触发 auth.Reload
+//     （自播 NOTIFY 被 Listener Src 跳过，本地实例不能依赖 NOTIFY 回环）。
 //
 // inv 不 Start（settings 分支 sync 后不依赖去抖器；不 Start 使修复前形态确定性
-// 红——flush 永不执行，快照保持旧 N）。
+// 红——flush 永不执行，快照保持旧值）。
 func TestSettingsTimingPG(t *testing.T) {
 	repos := newSnapshotPGRepos(t)
 	ctx := context.Background()
 
-	// --- 种子：用户 + 组 + key（gate 预算所需）+ settings 旧 N=1 ---
+	// --- 种子：用户 + 组 + key（gate 预算所需）+ settings 旧 cron ---
 	u, err := repos.CreateUser(ctx, &domain.User{
 		Email: "timing@example.com", PasswordHash: "bcrypt-hash",
 		Role: domain.RoleUser, Status: domain.UserStatusActive, MaxConcurrency: 8,
@@ -226,7 +230,7 @@ func TestSettingsTimingPG(t *testing.T) {
 		Status: domain.KeyStatusActive, MaxConcurrency: 8, Quota: 1_000_000,
 	})
 	require.NoError(t, err)
-	_, err = repos.SetSetting(ctx, "cluster.instances", domain.SettingTypeNumber, "1")
+	_, err = repos.SetSetting(ctx, "price_sync_cron", domain.SettingTypeString, "0 3 * * *")
 	require.NoError(t, err)
 
 	// --- 构造链（与 main 装配序一致：模块构造零 reload——单一入口） ---
@@ -234,12 +238,12 @@ func TestSettingsTimingPG(t *testing.T) {
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil)
-	var seenN atomic.Int64
-	obs := &observingKeyRepo{KeyRepo: repos.Keys, seen: &seenN}
+	var seenCron atomic.Pointer[string]
+	obs := &observingKeyRepo{KeyRepo: repos.Keys, seen: &seenCron}
 	auth := proxy.NewAuth(obs, repos.Users, nil)
 	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil)
 	obs.svc = svc // 回填（首次 LoadKeys 在注册表 ReloadAll 时）
-	auth.SetInstancesProvider(svc)
+	auth.SetInstancesProvider(discoStub{})
 
 	reg := snapshot.New()
 	require.NoError(t, reg.Register(authSnapshot{auth}))
@@ -249,26 +253,36 @@ func TestSettingsTimingPG(t *testing.T) {
 	})
 	disp := &dispatcher{inv: inv, svc: svc, snapshots: reg, log: nil}
 
-	// 启动首刷：auth reload 一次，观测到旧 N=1（基线）。
-	require.Empty(t, reg.ReloadAll(ctx), "auth 快照首刷成功")
-	require.Eventually(t, func() bool { return seenN.Load() == 1 }, time.Second, 5*time.Millisecond)
+	cronSeen := func(want string) bool {
+		p := seenCron.Load()
+		return p != nil && *p == want
+	}
 
-	// --- 远端路径：其他实例落库 N=2（本实例不经 UpdateSetting）---
-	_, err = repos.SetSetting(ctx, "cluster.instances", domain.SettingTypeNumber, "2")
+	// 启动首刷：auth reload 一次，观测到旧值（基线）。
+	require.Empty(t, reg.ReloadAll(ctx), "auth 快照首刷成功")
+	require.Eventually(t, func() bool { return cronSeen("0 3 * * *") }, time.Second, 5*time.Millisecond)
+
+	// --- 远端路径：其他实例落库新值（本实例不经 UpdateSetting）---
+	_, err = repos.SetSetting(ctx, "price_sync_cron", domain.SettingTypeString, "*/5 * * * *")
 	require.NoError(t, err)
 	disp.Apply(ctx, notify.Change{Settings: true})
-	require.Eventually(t, func() bool { return seenN.Load() == 2 }, 2*time.Second, 5*time.Millisecond,
-		"远端 settings 变更：快照先同步刷新、auth.Reload 读到新 N（预算按新 N 重算）")
+	require.Eventually(t, func() bool { return cronSeen("*/5 * * * *") }, 2*time.Second, 5*time.Millisecond,
+		"远端 settings 变更：快照先同步刷新、auth.Reload 读到新快照")
 
 	// --- 本地路径（#36 本地缺口）：UpdateSetting 直连本地分发器（自播 NOTIFY
-	// 被 Listener Src 跳过，本地不能依赖回环）——本地实例亦即时重算预算。
-	// 修复前本段红：UpdateSetting 后 auth.Reload 从不触发，seenN 恒 2（上次
-	// 远端 reload 的观测值）。---
+	// 被 Listener Src 跳过，本地不能依赖回环）。修复前本段红：UpdateSetting 后
+	// auth.Reload 从不触发，seenCron 恒上次远端 reload 的观测值。---
 	svc.SetLocalDispatcher(disp)
-	_, err = svc.UpdateSetting(ctx, "cluster.instances", "3")
+	_, err = svc.UpdateSetting(ctx, "price_sync_cron", "0 9 * * *")
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { return seenN.Load() == 3 }, 2*time.Second, 5*time.Millisecond,
-		"本地 UpdateSetting：直连分发器 → auth.Reload 读到新 N=3（本地实例预算即时重算）")
+	require.Eventually(t, func() bool { return cronSeen("0 9 * * *") }, 2*time.Second, 5*time.Millisecond,
+		"本地 UpdateSetting：直连分发器 → auth.Reload 读到新快照")
 }
+
+// discoStub 最小 InstancesProvider 桩（gate 预算注入面；本测试只关心 settings
+// 时序，N 恒 1 单实例语义）。
+type discoStub struct{}
+
+func (discoStub) ClusterInstances() int { return 1 }
 
 func ptrI64Startup(v int64) *int64 { return &v }
