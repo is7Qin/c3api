@@ -119,9 +119,15 @@ type Flusher struct {
 	store LedgerStore
 	bal   *Balances
 	log   *logx.Logger
-	// ctl 结算批规模自适应控制器（batch_controller.go）：settleLaneParallel
-	// 各桶 goroutine 观测语句时长/错误反馈调节批规模（并发安全，内含互斥量）。
-	ctl *batchController
+	// balanceCtl/fefoCtl 结算批规模自适应控制器（batch_controller.go）——双车道
+	// 分治（spec-adaptive-batch-v2）：Balance 与 Fefo 各持一控制器互不污染——
+	// Fefo SQL 含窗口函数+行级条件更新，每行成本系统性更高，共享会让 Fefo 首条
+	// 语句吃进按 Balance 经济性膨胀的批（快车道先观测 → 慢车道入死地）。车道内
+	// K 桶仍共享本车道控制器（桶谓词 COALESCE%K 不相交 → 成本画像同类）。各自
+	// settleLaneParallel 的桶 goroutine 观测语句时长/错误反馈调节（并发安全，
+	// 内含互斥量）。
+	balanceCtl *batchController
+	fefoCtl    *batchController
 	// flushMu 单消费周期入口串行：ticker/Close 两处触发互斥；在途周期即其
 	// 持有者（Close 排空惯用法，与 usage 包各自声明——有意重复）。
 	flushMu    sync.Mutex
@@ -151,8 +157,9 @@ type Flusher struct {
 func NewFlusher(cfg FlushConfig, store LedgerStore, bal *Balances, log *logx.Logger) *Flusher {
 	f := &Flusher{
 		cfg: cfg, store: store, bal: bal, log: log,
-		ctl:      newBatchController(),
-		loopDone: make(chan struct{}),
+		balanceCtl: newBatchController(),
+		fefoCtl:    newBatchController(),
+		loopDone:   make(chan struct{}),
 	}
 	f.baseCtx, f.baseCancel = context.WithCancel(context.Background())
 	return f
