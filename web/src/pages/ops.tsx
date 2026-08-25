@@ -92,7 +92,8 @@ export default function Ops() {
                 <Card key={w.name}>
                   <CardHeader>
                     <CardDescription className="flex items-center gap-1.5">
-                      <Cpu className="size-4" /> {w.name}
+                      {/* worker 显示名走 i18n（ops.workers.<name>，缺 key 兜底原始标识符） */}
+                      <Cpu className="size-4" /> {t(`ops.workers.${w.name}`, { defaultValue: w.name })}
                     </CardDescription>
                   </CardHeader>
                   <CardContent>

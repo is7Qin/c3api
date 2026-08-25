@@ -1212,6 +1212,23 @@
     "noSnapshots": "暂无快照",
     "boolYes": "是",
     "boolNo": "否",
+    "workers": {
+      "invalidate": "失效去抖",
+      "scheduler": "选号调度器",
+      "rule-engine": "规则引擎",
+      "usage": "用量冲账",
+      "errlog": "错误日志",
+      "pricing-sync": "价格同步",
+      "retention": "分区保留",
+      "stats-agg": "统计聚合",
+      "billing": "账本结算",
+      "email": "邮件队列",
+      "notify": "通知监听",
+      "auth-sync": "鉴权刷新",
+      "discovery": "实例发现",
+      "conc-sync": "并发视图同步",
+      "account-conc-sync": "账号并发同步"
+    },
     "stats": {
       "dirty": "有待执行重载",
       "dirty_kinds": "脏位",

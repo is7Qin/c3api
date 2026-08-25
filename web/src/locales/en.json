@@ -1212,6 +1212,23 @@
     "noSnapshots": "No snapshots",
     "boolYes": "Yes",
     "boolNo": "No",
+    "workers": {
+      "invalidate": "Invalidation debouncer",
+      "scheduler": "Account scheduler",
+      "rule-engine": "Rule engine",
+      "usage": "Usage flusher",
+      "errlog": "Error-log auditor",
+      "pricing-sync": "Price sync",
+      "retention": "Partition retention",
+      "stats-agg": "Stats aggregation",
+      "billing": "Billing settlement",
+      "email": "Mail queue",
+      "notify": "NOTIFY listener",
+      "auth-sync": "Auth reload",
+      "discovery": "Instance discovery",
+      "conc-sync": "Gate conc-view sync",
+      "account-conc-sync": "Account conc-view sync"
+    },
     "stats": {
       "dirty": "Reload pending",
       "dirty_kinds": "Dirty kinds",
