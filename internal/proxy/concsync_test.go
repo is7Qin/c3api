@@ -411,3 +411,38 @@ func TestConcWorkerLifecycle(t *testing.T) {
 	require.NoError(t, w.Close(context.Background()))
 	require.NoError(t, w.Close(context.Background()), "Close 幂等")
 }
+
+// Stats 观测（spec conc-sync-ops-stats）：正常 tick → ok=true+条目数正确；
+// Redis 断连 → 连续失败增长 + ok=false（fail-open 静默退化的运维面唯一痕迹）。
+func TestConcWorkerStats(t *testing.T) {
+	mr, c := newTestGateRedis(t)
+	meta := domain.KeyMeta{KeyID: 1, UserID: 1, UserMaxConc: 4, HasQuota: true, Quota: 100}
+	a := newConcAuth(t, map[string]domain.KeyMeta{"h": meta})
+	g := a.gate
+	g.SetInstancesProvider(fakeInstances(2))
+	w := NewConcSyncWorker(a, c, "inst-a", nil)
+
+	// 尚无视图：ok=true（未失败）、entries=0
+	st := w.Stats().(concSyncStats)
+	require.True(t, st.LastTickOk)
+	require.Zero(t, st.ConsecutiveErrors)
+	require.Zero(t, st.TrackedEntries)
+
+	// 一次成功 tick：user 层受限在途上报 → 条目数 1；成功归零错误态
+	lvl, ok := g.acquire(meta)
+	require.True(t, ok)
+	require.Equal(t, 1, lvl) // meta 无 KeyMaxConc → 仅 user 位
+	w.tick(context.Background())
+	st = w.Stats().(concSyncStats)
+	require.True(t, st.LastTickOk)
+	require.Zero(t, st.ConsecutiveErrors)
+	require.Equal(t, int64(1), st.TrackedEntries)
+
+	// Redis 断连：冻结旧视图（entries 不变）+ 错误态可见
+	mr.Close()
+	w.tick(context.Background())
+	st = w.Stats().(concSyncStats)
+	require.False(t, st.LastTickOk)
+	require.Equal(t, int64(1), st.ConsecutiveErrors)
+	require.Equal(t, int64(1), st.TrackedEntries)
+}

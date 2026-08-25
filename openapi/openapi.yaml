@@ -2962,6 +2962,13 @@ components:
         #     上次成功值，恒 ≥1）, last_tick_ok bool（最近心跳 tick 是否成功；false =
         #     冻结中——Redis 不可达退化语义在运维面可见）, consecutive_errors int64
         #     （连续失败 tick 数；恢复成功归零）
+        #   conc-sync（并发门集群视图，spec conc-share-borrow-gate）:
+        #     last_tick_ok bool（最近同步 tick 是否成功；false=视图冻结中——
+        #     fail-open 静默退化在运维面可见）, consecutive_errors int64（连续失败
+        #     tick 数；恢复成功归零）, tracked_entries int64（clusterView 条目数
+        #     users+keys；nil 视图=0）
+        #   account-conc-sync（账号并发视图，spec conc-share-borrow-account）:
+        #     键集同 conc-sync，tracked_entries = 账号条目数
         stats:
           description: 各 worker 异构观测字段；完整字段清单见本 schema 上方 yaml 注释（与各 worker Stats() 实现同步维护）
     SnapshotState:

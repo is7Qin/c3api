@@ -1260,7 +1260,8 @@
       "last_duration_ms": "上轮耗时 (ms)",
       "instances": "实例数",
       "last_tick_ok": "最近心跳正常",
-      "consecutive_errors": "连续失败次数"
+      "consecutive_errors": "连续失败次数",
+      "tracked_entries": "视图条目数"
     }
   },
   "user": {

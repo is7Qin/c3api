@@ -70,6 +70,30 @@ type clusterView struct {
 	keys  map[int64]concSnap // key_id → 聚合快照
 }
 
+// concSyncStats ops 观测快照（handler.StatsProvider 形态，spec conc-sync-ops-stats）。
+// json 键清单同步义务：openapi.yaml WorkerStatus.stats description + web locales
+// ops.stats.*（前端缺 key 兜底显示原始字段名）。
+type concSyncStats struct {
+	LastTickOk        bool  `json:"last_tick_ok"`
+	ConsecutiveErrors int64 `json:"consecutive_errors"`
+	TrackedEntries    int64 `json:"tracked_entries"` // clusterView 条目数（users+keys；nil 视图=0）
+}
+
+// Stats worker 观测（协调面冻结可见性）：fail-open 静默退化时这是运维面唯一
+// 痕迹——视图停止换入则 last_tick_ok 翻 false、consecutive_errors 增长。
+func (w *ConcSyncWorker) Stats() any {
+	errs := w.errs.Load()
+	var tracked int64
+	if cv := w.gate.cluster.Load(); cv != nil {
+		tracked = int64(len(cv.users) + len(cv.keys))
+	}
+	return concSyncStats{
+		LastTickOk:        errs == 0,
+		ConsecutiveErrors: errs,
+		TrackedEntries:    tracked,
+	}
+}
+
 // concTarget 本 tick 的一个上报对象（受限层级且在途 > 0）。
 type concTarget struct {
 	rkey  string // Redis HASH 键

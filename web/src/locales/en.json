@@ -1260,7 +1260,8 @@
       "last_duration_ms": "Last duration (ms)",
       "instances": "Instances",
       "last_tick_ok": "Last tick OK",
-      "consecutive_errors": "Consecutive errors"
+      "consecutive_errors": "Consecutive errors",
+      "tracked_entries": "Tracked entries"
     }
   },
   "user": {

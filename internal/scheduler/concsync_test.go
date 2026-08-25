@@ -522,3 +522,32 @@ func TestAccConcWorkerLifecycle(t *testing.T) {
 	require.NoError(t, w.Close(context.Background()))
 	require.NoError(t, w.Close(context.Background()), "Close 幂等")
 }
+
+// Stats 观测（spec conc-sync-ops-stats）：与 proxy 孪生同键集；正常 tick →
+// ok=true+账号条目数；Redis 断连 → 冻结视图 + 错误态可见。
+func TestAccConcWorkerStats(t *testing.T) {
+	mr, c := newConcTestRedis(t)
+	s := newTestScheduler(t, []*domain.Account{concChatAcc(1, 4)})
+	s.SetInstancesProvider(fixedN(2))
+	w := NewConcSyncWorker(s, c, "inst-a", nil)
+
+	st := w.Stats().(concSyncStats)
+	require.True(t, st.LastTickOk)
+	require.Zero(t, st.ConsecutiveErrors)
+	require.Zero(t, st.TrackedEntries)
+
+	_, err := concSelect(s)
+	require.NoError(t, err)
+	w.tick(context.Background())
+	st = w.Stats().(concSyncStats)
+	require.True(t, st.LastTickOk)
+	require.Zero(t, st.ConsecutiveErrors)
+	require.Equal(t, int64(1), st.TrackedEntries)
+
+	mr.Close()
+	w.tick(context.Background())
+	st = w.Stats().(concSyncStats)
+	require.False(t, st.LastTickOk)
+	require.Equal(t, int64(1), st.ConsecutiveErrors)
+	require.Equal(t, int64(1), st.TrackedEntries) // 冻结视图仍在场
+}

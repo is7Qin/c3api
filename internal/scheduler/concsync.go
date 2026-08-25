@@ -165,6 +165,29 @@ func (w *AccConcSyncWorker) Close(ctx context.Context) error {
 	return nil
 }
 
+// concSyncStats ops 观测快照（handler.StatsProvider 形态，spec conc-sync-ops-stats）。
+// 与 proxy 孪生同键集；tracked_entries=账号条目数（nil 视图=0）。
+type concSyncStats struct {
+	LastTickOk        bool  `json:"last_tick_ok"`
+	ConsecutiveErrors int64 `json:"consecutive_errors"`
+	TrackedEntries    int64 `json:"tracked_entries"`
+}
+
+// Stats worker 观测（协调面冻结可见性）：fail-open 静默退化时这是运维面唯一
+// 痕迹——视图停止换入则 last_tick_ok 翻 false、consecutive_errors 增长。
+func (w *AccConcSyncWorker) Stats() any {
+	errs := w.errs.Load()
+	var tracked int64
+	if cv := w.sched.concView.Load(); cv != nil {
+		tracked = int64(len(cv.accounts))
+	}
+	return concSyncStats{
+		LastTickOk:        errs == 0,
+		ConsecutiveErrors: errs,
+		TrackedEntries:    tracked,
+	}
+}
+
 // concTarget 本 tick 的一个上报对象（在途 > 0 的账号）。
 type concTarget struct {
 	rkey string // Redis HASH 键

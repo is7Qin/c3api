@@ -458,6 +458,9 @@ func main() {
 	// consecutive_errors——Redis 故障冻结期在运维面可见（instances 停走 +
 	// consecutive_errors 增长）。
 	opsWorkers = append(opsWorkers, disco)
+	// conc-sync ×2 协调面观测（spec conc-sync-ops-stats）：fail-open 静默退化的
+	// 唯一可见痕迹——视图冻结时 last_tick_ok 翻 false、consecutive_errors 增长。
+	opsWorkers = append(opsWorkers, concSync, accConcSync)
 	// /api/admin/overview + /api/admin/users-top（spec 2026-08-14）：门禁在途快照
 	// （Auth.InFlightUsers 只读访问器——零锁冷面）与 billing 游标积压 lag 族观测
 	// （flusher 直读；未装配 nil → 端点空/零值）经 OpsOptions 注入——不改
