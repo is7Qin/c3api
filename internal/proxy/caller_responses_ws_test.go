@@ -249,7 +249,7 @@ func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(3), lg.InputTokens)
+	require.Equal(t, int64(2), lg.InputTokens, "可计费输入 = 线上 input 3 − cached 1（spec 2026-08-25 归一）")
 	require.Equal(t, int64(5), lg.OutputTokens)
 	require.Equal(t, int64(8), lg.TotalTokens)
 	require.Equal(t, int64(1), lg.CacheReadTokens, "input_tokens_details.cached_tokens")
@@ -336,7 +336,7 @@ func TestResponsesWSClientAbortRecordsUsage(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrAbort, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(3), lg.InputTokens, "断开前已嗅探的 usage 不丢")
+	require.Equal(t, int64(2), lg.InputTokens, "断开前已嗅探的 usage 不丢（可计费输入 = 3 − cached 1）")
 	require.Equal(t, int64(5), lg.OutputTokens)
 	require.Equal(t, int64(8), lg.TotalTokens)
 	require.Equal(t, lg.RequestID, store.logs[1].RequestID, "双轨行 request_id 关联")
@@ -547,7 +547,7 @@ func TestResponsesWSHandshakeUnderShortTimeout(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(3), lg.InputTokens, "短超时下正常会话 usage 嗅探照常")
+	require.Equal(t, int64(2), lg.InputTokens, "短超时下正常会话 usage 嗅探照常（可计费输入 = 3 − cached 1）")
 	require.Equal(t, int64(5), lg.OutputTokens)
 	require.Equal(t, int64(8), lg.TotalTokens)
 }
@@ -729,7 +729,7 @@ func TestSniffResponsesCompleted(t *testing.T) {
 	// 命中：completed 帧完整 usage → 5 计数正确
 	u, ok := sniffResponsesCompleted([]byte(responsesWSCompletedFrame))
 	require.True(t, ok)
-	require.Equal(t, usageTuple{it: 3, ot: 5, tt: 8, cr: 1, cc: 3}, u)
+	require.Equal(t, usageTuple{it: 2, ot: 5, tt: 8, cr: 1, cc: 3}, u, "it'=线上 input 3−cached 1（归一后）；tt 不变")
 
 	// 未命中：流式中间帧零解析直转（预筛 miss，不触达 gjson）
 	_, ok = sniffResponsesCompleted([]byte(`{"type":"response.output_text.delta","delta":"hi"}`))
@@ -858,7 +858,7 @@ func TestResponsesWSConcurrentWriteClose(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType, "正常关闭帧优先 → 成功（不得误判冷却）")
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(3), lg.InputTokens)
+	require.Equal(t, int64(2), lg.InputTokens, "可计费输入 = 3 − cached 1")
 	require.Equal(t, int64(5), lg.OutputTokens)
 	require.Equal(t, int64(8), lg.TotalTokens)
 	require.Equal(t, int64(1), lg.CacheReadTokens)
@@ -868,8 +868,8 @@ func TestResponsesWSConcurrentWriteClose(t *testing.T) {
 // --- WS service_tier 计费接入（首帧 tier 提取 + 策略 + BillingTier 落库） ---
 
 // TestResponsesWSBillingTierFast service_tier=fast（passthrough 默认）：首帧原样
-// 透传上游（含字段）；BillingTier="fast" 落库，Cost 按 fast 倍率（260 ≠ auto
-// 130）——WS 恒 auto 计费的金额错收修复钉死。
+// 透传上游（含字段）；BillingTier="fast" 落库，Cost 按 fast 倍率（240 ≠ auto
+// 120）——WS 恒 auto 计费的金额错收修复钉死。
 func TestResponsesWSBillingTierFast(t *testing.T) {
 	hooks := &fakeWSHooks{frameLimit: 1}
 	up := fakeResponsesWS(t, hooks)
@@ -896,11 +896,11 @@ func TestResponsesWSBillingTierFast(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
 	require.Equal(t, "fast", store.logs[0].BillingTier, "WS service_tier=fast → BillingTier=fast 落库")
-	require.Equal(t, int64(260), store.logs[0].Cost, "fast ×2.0：130×2 = 260 毫分（与 HTTP 同价）")
+	require.Equal(t, int64(240), store.logs[0].Cost, "fast ×2.0：120×2 = 240 毫分（与 HTTP 同价；可计费输入 it'=3−1=2 → 2×10+5×20=120 毫分，cr 车道本例无缓存价 → 0）")
 }
 
 // TestResponsesWSBillingTierAuto 无 service_tier：BillingTier="auto"（与 HTTP
-// 一致，billing_test.go:148 钉死同款语义），Cost 按基础价 130。
+// 一致，billing_test.go:148 钉死同款语义），Cost 按基础价 120。
 func TestResponsesWSBillingTierAuto(t *testing.T) {
 	up := fakeResponsesWS(t, &fakeWSHooks{frameLimit: 1})
 	defer up.Close()
@@ -921,12 +921,12 @@ func TestResponsesWSBillingTierAuto(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
 	require.Equal(t, "auto", store.logs[0].BillingTier, "WS 无 service_tier → BillingTier=auto")
-	require.Equal(t, int64(130), store.logs[0].Cost, "auto 基础价：130 毫分")
+	require.Equal(t, int64(120), store.logs[0].Cost, "auto 基础价：it'=3−1=2 → 2×10 + 输出 5×20 = 120 毫分（缓存读单独车道，本例无缓存价 → 0）")
 }
 
 // TestResponsesWSBillingTierStrip strip 策略：首帧改写点（relayResponsesWS）删
 // service_tier 字段（sjson.DeleteBytes 字节级）——上游帧不含该字段；剥离路径
-// 计费照常（tier 已提取 → fast 档 260）。
+// 计费照常（tier 已提取 → fast 档 240）。
 func TestResponsesWSBillingTierStrip(t *testing.T) {
 	hooks := &fakeWSHooks{frameLimit: 1}
 	up := fakeResponsesWS(t, hooks)
@@ -956,7 +956,7 @@ func TestResponsesWSBillingTierStrip(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
 	require.Equal(t, "fast", store.logs[0].BillingTier, "剥离路径计费照常（tier 已提取）")
-	require.Equal(t, int64(260), store.logs[0].Cost)
+	require.Equal(t, int64(240), store.logs[0].Cost, "strip 路径同归一后基础价 ×2.0：120×2 = 240")
 }
 
 // TestResponsesWSBillingTierReject reject 策略：Select 前拒绝——客户端收到 error

@@ -49,7 +49,7 @@ func TestSserelayCompletedUsageLongLine(t *testing.T) {
 			}
 		},
 	}))
-	require.Equal(t, int64(10), it, "input_tokens 提取成功（长行 Data 全量 → usage 不落空 → 计费不归零）")
+	require.Equal(t, int64(5), it, "可计费输入提取成功 = 10 − cached 5（长行 Data 全量 → usage 不落空 → 计费不归零）")
 	require.Equal(t, int64(20), ot)
 	require.Equal(t, int64(30), tt)
 	require.Equal(t, int64(5), cr, "input_tokens_details.cached_tokens")

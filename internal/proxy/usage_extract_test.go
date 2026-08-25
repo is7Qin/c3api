@@ -30,9 +30,9 @@ func TestChatStreamUsage(t *testing.T) {
 	frame := []byte(`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5},"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":2}}}`)
 	u, ok := chatStreamUsage(frame)
 	require.True(t, ok, "usage 存在 → ok")
-	require.Equal(t, int64(10), u.it)
+	require.Equal(t, int64(5), u.it, "可计费输入 = prompt − cached（spec 2026-08-25 缓存归一）")
 	require.Equal(t, int64(20), u.ot)
-	require.Equal(t, int64(30), u.tt)
+	require.Equal(t, int64(30), u.tt, "tt 线上原值——归一不改 total（数值不变量）")
 	require.Equal(t, int64(5), u.cr, "prompt_tokens_details.cached_tokens 直读")
 	require.Equal(t, int64(6), u.cc, "ephemeral 5m+1h 聚合")
 
@@ -68,9 +68,9 @@ func TestChatUsageFromResponse(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(raw), &resp))
 	require.True(t, resp.JSON.Usage.Valid())
 	pt, ct, tt, cr, cc := chatUsageFromResponse(resp.Usage)
-	require.Equal(t, int64(10), pt)
+	require.Equal(t, int64(5), pt, "可计费输入 = prompt − cached（spec 2026-08-25）")
 	require.Equal(t, int64(20), ct)
-	require.Equal(t, int64(30), tt)
+	require.Equal(t, int64(30), tt, "tt 信任上游 TotalTokens 原值")
 	require.Equal(t, int64(5), cr, "SDK PromptTokensDetails.CachedTokens 直读")
 	require.Equal(t, int64(6), cc, "RawJSON 保留上游原始字节 → ephemeral 聚合")
 
@@ -130,9 +130,9 @@ func TestResponsesStreamUsage(t *testing.T) {
 	completed := []byte(`{"type":"response.completed","response":{"id":"r","model":"m","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5}},"output":[]}}`)
 	u, ok := responsesCompletedUsage(completed)
 	require.True(t, ok)
-	require.Equal(t, int64(10), u.it)
+	require.Equal(t, int64(5), u.it, "可计费输入 = input − cached（spec 2026-08-25）")
 	require.Equal(t, int64(20), u.ot)
-	require.Equal(t, int64(30), u.tt)
+	require.Equal(t, int64(30), u.tt, "tt 线上原值——归一不改 total")
 	require.Equal(t, int64(5), u.cr, "response.usage.input_tokens_details.cached_tokens")
 	require.Zero(t, u.cc, "Responses 无 cache_creation 对象，恒 0 预期（M4）")
 
@@ -153,9 +153,9 @@ func TestResponsesTopLevelUsage(t *testing.T) {
 	completed := []byte(`{"type":"response.completed","response":{"id":"r","object":"response","status":"completed"},"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}}`)
 	u, ok := responsesTopLevelUsage(completed)
 	require.True(t, ok)
-	require.Equal(t, int64(10), u.it)
+	require.Equal(t, int64(8), u.it, "可计费输入 = input − cached（spec 2026-08-25）")
 	require.Equal(t, int64(20), u.ot)
-	require.Equal(t, int64(30), u.tt)
+	require.Equal(t, int64(30), u.tt, "tt 线上原值——归一不改 total")
 	require.Equal(t, int64(2), u.cr, "顶层 usage.input_tokens_details.cached_tokens")
 	require.Equal(t, int64(4), u.cc, "顶层 cache_creation ephemeral 5m+1h 聚合")
 
@@ -163,7 +163,7 @@ func TestResponsesTopLevelUsage(t *testing.T) {
 	composite := []byte(`{"id":"resp_001","object":"response","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2}}}`)
 	u, ok = responsesTopLevelUsage(composite)
 	require.True(t, ok)
-	require.Equal(t, int64(10), u.it)
+	require.Equal(t, int64(8), u.it)
 	require.Equal(t, int64(20), u.ot)
 	require.Equal(t, int64(30), u.tt)
 	require.Equal(t, int64(2), u.cr)
@@ -185,7 +185,7 @@ func TestSniffResponsesCompletedTop(t *testing.T) {
 	completed := []byte(`{"type":"response.completed","response":{"id":"r","object":"response","status":"completed"},"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}}`)
 	u, ok := sniffResponsesCompletedTop(completed)
 	require.True(t, ok, "completed 帧命中")
-	require.Equal(t, int64(10), u.it)
+	require.Equal(t, int64(8), u.it, "可计费输入 = input − cached（spec 2026-08-25）")
 	require.Equal(t, int64(20), u.ot)
 	require.Equal(t, int64(30), u.tt)
 	require.Equal(t, int64(2), u.cr)
@@ -213,9 +213,11 @@ func TestSniffResponsesCompletedTop(t *testing.T) {
 // —— A-1 双实现对照（改造前 gjson 版本保留为测试内对照——评审 I-1 语义等价
 // 验证） ——
 
-// 对照实现 = 改造前生产代码原样（gjson 多遍扫描）；ok = usage 存在性判定
-// （与原调用方 Type == gjson.JSON 前置检查同构：缺失/显式 null → Type Null →
-// false）。对照仅存在于测试（生产热路径已全量迁移 scanKeyValue 族）。
+// 对照实现 = 改造前生产代码原样（gjson 多遍扫描）+ deductCacheRead 归一镜像
+// （spec 2026-08-25：生产出口已施加归一，对照必须同语义——否则等价性断言失去
+// 意义）；ok = usage 存在性判定（与原调用方 Type == gjson.JSON 前置检查同构：
+// 缺失/显式 null → Type Null → false）。对照仅存在于测试（生产热路径已全量
+// 迁移 scanKeyValue 族）。
 
 func chatStreamUsageRef(data []byte) (usageTuple, bool) {
 	t := usageTuple{
@@ -226,6 +228,7 @@ func chatStreamUsageRef(data []byte) (usageTuple, bool) {
 		cc: gjson.GetBytes(data, "usage.cache_creation.ephemeral_5m_input_tokens").Int() +
 			gjson.GetBytes(data, "usage.cache_creation.ephemeral_1h_input_tokens").Int(),
 	}
+	t.it = deductCacheRead(t.it, t.cr)
 	return t, gjson.GetBytes(data, "usage").Type == gjson.JSON
 }
 
@@ -251,6 +254,7 @@ func responsesCompletedUsageRef(data []byte) (usageTuple, bool) {
 		cc: gjson.GetBytes(data, "response.usage.cache_creation.ephemeral_5m_input_tokens").Int() +
 			gjson.GetBytes(data, "response.usage.cache_creation.ephemeral_1h_input_tokens").Int(),
 	}
+	t.it = deductCacheRead(t.it, t.cr)
 	return t, gjson.GetBytes(data, "response.usage").Type == gjson.JSON
 }
 
@@ -263,6 +267,7 @@ func responsesTopLevelUsageRef(data []byte) (usageTuple, bool) {
 		cc: gjson.GetBytes(data, "usage.cache_creation.ephemeral_5m_input_tokens").Int() +
 			gjson.GetBytes(data, "usage.cache_creation.ephemeral_1h_input_tokens").Int(),
 	}
+	t.it = deductCacheRead(t.it, t.cr)
 	return t, gjson.GetBytes(data, "usage").Type == gjson.JSON
 }
 
@@ -429,11 +434,31 @@ func TestResponsesUsageFromResponse(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(raw), &resp))
 	require.True(t, resp.JSON.Usage.Valid())
 	pt, ct, tt, cr, cc := responsesUsageFromResponse(resp.Usage)
-	require.Equal(t, int64(10), pt)
+	require.Equal(t, int64(5), pt, "可计费输入 = input − cached（spec 2026-08-25）")
 	require.Equal(t, int64(20), ct)
-	require.Equal(t, int64(30), tt)
+	require.Equal(t, int64(30), tt, "tt 先按原始 in+out 定值再归一——数值不变量")
 	require.Equal(t, int64(5), cr, "SDK InputTokensDetails.CachedTokens 直读")
 	require.Zero(t, cc, "恒 0 预期（M4）")
+}
+
+// —— deductCacheRead 归一边界（spec 2026-08-25 验收 #2） ——
+
+func TestDeductCacheReadBoundaries(t *testing.T) {
+	require.Equal(t, int64(0), deductCacheRead(700, 700), "cr == it → 可计费输入 0（全量缓存命中）")
+	require.Equal(t, int64(0), deductCacheRead(500, 700), "cr > it（病态上游）→ 钳 0 防负车道")
+	require.Equal(t, int64(1000), deductCacheRead(1000, 0), "cr == 0 → 恒等")
+	require.Equal(t, int64(1000), deductCacheRead(1000, -5), "负 cr 视同缺失 → 恒等（钳底由 clamp 兜底）")
+	require.Equal(t, int64(300), deductCacheRead(1000, 700), "常规路径 it − cr")
+
+	// 流式出口级数值不变量：归一前后 TotalTokens 相等（验收 #3）
+	// fixture 为顶层 usage 形态 → 走 responsesTopLevelUsage 出口
+	frame := []byte(`{"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5}}}`)
+	u, ok := responsesTopLevelUsage(frame)
+	require.True(t, ok)
+	require.Equal(t, int64(30), u.tt, "tt 不因归一变化")
+	require.Equal(t, int64(5), u.it)
+	// 组成守恒：it' + cr 还原线上 input
+	require.Equal(t, int64(10), u.it+u.cr, "it' + cr == 线上 input_tokens")
 }
 
 // —— buildLog 接线（评审 I-2）：cr/cc → UsageLog.CacheRead/CreationTokens ——

@@ -115,12 +115,12 @@ func TestResponsesWSBillingPG(t *testing.T) {
 		FROM usage_logs WHERE format = 'openai-responses-ws' ORDER BY id DESC LIMIT 1`).
 		Scan(&it, &ot, &tt, &cr, &cc, &cost, &format, &et, &model, &billed)
 	require.NoError(t, err, "usage_logs 必须有 resp-ws 计费行")
-	require.Equal(t, int64(3), it, "input_tokens")
+	require.Equal(t, int64(2), it, "input_tokens（可计费输入 = 3 − cached 1，spec 2026-08-25 归一）")
 	require.Equal(t, int64(5), ot, "output_tokens")
 	require.Equal(t, int64(8), tt, "total_tokens")
 	require.Equal(t, int64(1), cr, "cache_read_tokens")
 	require.Equal(t, int64(3), cc, "cache_creation_tokens")
-	require.Equal(t, int64(130), cost, "3×1e7+5×2e7 每 M 毫分 = 130")
+	require.Equal(t, int64(120), cost, "it'=2：2×1e7+5×2e7 每 M 毫分 = 120")
 	require.Equal(t, "openai-responses-ws", format)
 	require.Equal(t, "none", et)
 	require.Equal(t, "gpt-4o", model)
@@ -129,7 +129,7 @@ func TestResponsesWSBillingPG(t *testing.T) {
 
 // TestResponsesWSBillingTierPG resp-ws service_tier 计费落库（真实 PG）：WS 首帧
 // 带 service_tier=fast → usage_logs.billing_tier="fast" + cost 按 fast 倍率
-// （260 ≠ auto 130）——同请求 HTTP 按档计费、WS 恒 auto 的金额错收修复钉死。
+// （240 ≠ auto 120）——同请求 HTTP 按档计费、WS 恒 auto 的金额错收修复钉死。
 func TestResponsesWSBillingTierPG(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -192,5 +192,5 @@ func TestResponsesWSBillingTierPG(t *testing.T) {
 		Scan(&cost, &billingTier)
 	require.NoError(t, err, "usage_logs 必须有 resp-ws fast 档计费行")
 	require.Equal(t, "fast", billingTier, "BillingTier=fast 落库（WS 按档计费）")
-	require.Equal(t, int64(260), cost, "fast ×2.0：130×2 = 260（≠ auto 130）")
+	require.Equal(t, int64(240), cost, "fast ×2.0：120×2 = 240（≠ auto 120；归一后基础价 it'=2）")
 }

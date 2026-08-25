@@ -410,7 +410,7 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(3), lg.InputTokens)
+	require.Equal(t, int64(2), lg.InputTokens, "可计费输入 = 线上 input 3 − cached 1（spec 2026-08-25 归一）")
 	require.Equal(t, int64(5), lg.OutputTokens)
 	require.Equal(t, int64(8), lg.TotalTokens)
 	require.Equal(t, int64(1), lg.CacheReadTokens)
