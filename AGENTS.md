@@ -92,7 +92,7 @@ cd web && pnpm install --config.node-linker=hoisted && pnpm run dev
 # 测试（镜像 CI；PG 测试需 TEST_DATABASE_URL，缺省 skip）
 docker compose -f deploy/test-compose.yml up -d        # 本地 PG :15432
 export TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/c3api_test"
-go vet ./... && go build ./... && go test -count=1 ./...
+go vet ./... && go build ./... && go test -count=1 -p 1 ./...   # -p 1 包级串行：多包并行 bootstrap 同库会撞 ent 迁移（XX000）
 
 # 代码生成漂移检查（CI contract-gen 同款）
 go generate ./internal/handler/ ./internal/ent/ && git diff --exit-code

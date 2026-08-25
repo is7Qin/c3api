@@ -32,7 +32,10 @@ jobs:
       - name: test
         env:
           TEST_DATABASE_URL: "postgres://postgres:c3api@localhost:5432/c3api_test?sslmode=disable"
-        run: go test -count=1 ./...
+        # -p 1 包级串行：多包二进制并行 bootstrap 同一 c3api_test 库时，
+        # ent 迁移目录检查会撞上他包的 DROP/重建 → XX000 could-not-open-relation
+        # （定价功能给 internal/service 引入首个 PG 测试后暴露）。
+        run: go test -count=1 -p 1 ./...
         timeout-minutes: 30
 
   contract-gen:
