@@ -36,7 +36,7 @@ c3api is in **beta**: feature-complete, but breaking changes are free to happen.
 | **Admin console** | React web UI embedded in the binary (`/app`), plus a full OpenAPI-defined admin API (`/api/admin`) |
 | **Billing & usage** | Per-user balance with pre-check deductions, FEFO temporary quotas, per-model pricing synced from litellm, daily-partitioned usage logs and statistics — billing is enabled by default (`config.example.toml` billing.enabled=true) |
 | **Rules engine** | Customizable routing, rate limiting, and 429/error backoff rules with a built-in scheduler |
-| **Multi-instance ready** | PostgreSQL-based state, `NOTIFY`-based cross-instance invalidation, zero-config horizontal scaling |
+| **Multi-instance ready** | PostgreSQL-based state, `NOTIFY`-based cross-instance invalidation, Redis-heartbeat instance discovery (cluster size auto-detected) — zero-config horizontal scaling |
 | **Single binary** | Go binary with embedded frontend, non-root Docker image, drop-in deployment |
 
 ### Request formats
@@ -115,14 +115,18 @@ Point any OpenAI/Anthropic-compatible SDK at the gateway URL — the request for
                     │   errlog / scheduler / notify │
                     │   retention / stats-agg /     │
                     │   pricing-sync / rule-engine  │
-                    │   auth-sync / invalidate      │
-                    └──────────────┼────────────────┘
-                                   ▼
-                         PostgreSQL 18 (state + NOTIFY)
+                    │   auth-sync / invalidate /    │
+                    │   discovery                   │
+                    └───────┼───────────────┼──────┘
+                            ▼               ▼
+              PostgreSQL 18 (state + NOTIFY) │
+                                             ▼
+                          Redis 8 (ephemeral coordination:
+                          instance-discovery heartbeats)
 ```
 
 - **Single binary**: the frontend is built and embedded via `go:embed`, so the runtime is one `server` process plus a mounted config file.
-- **Stateless gateway, stateful DB**: all shared state lives in PostgreSQL; instances coordinate through `NOTIFY` on the `c3api_invalidate` channel — scale horizontally by just adding instances.
+- **Stateless gateway, stateful DB**: all shared state lives in PostgreSQL; instances coordinate through `NOTIFY` on the `c3api_invalidate` channel. The cluster instance count for multi-instance budget sharing is auto-discovered via Redis heartbeats — scale horizontally by just adding instances (no manual setting).
 - **Persistent workers**: billing deduction, usage/statistics flushing, error-log auditing, partition retention, offline stats aggregation, price sync, and the rule scheduler run as long-lived workers with graceful shutdown draining.
 
 ## Performance
@@ -148,9 +152,10 @@ The gateway loads `config.toml` (see `config.example.toml`), overlaid by `C3API_
 | `C3API_ADMIN_TOKEN` | Admin API token (optional; leave empty to disable static-token auth — `/api/admin` then accepts `platform_admin` JWTs only) |
 | `C3API_AUTH_JWT_SECRET` | JWT signing secret for user auth (required; stable across restarts and instances) |
 | `C3API_DB_DSN` | PostgreSQL DSN |
+| `C3API_REDIS_ADDR` | Redis address (required; e.g. `127.0.0.1:6379` — instance discovery and other ephemeral coordination) |
 | `C3API_SERVER_TIME_ZONE` | Deployment timezone for pricing time/day-of-week conditions (IANA name, e.g. `Asia/Shanghai`; empty = process local) |
 
-See `config.example.toml` for the full schema (server, log, admin, auth, db, proxy, upstream, limit, scheduler, usage, billing).
+See `config.example.toml` for the full schema (server, log, admin, auth, db, redis, proxy, upstream, limit, scheduler, usage, billing).
 
 - **Fresh setup only (no migration path)** — schemas and configuration are not backward-compatible between versions: an upgrade means a brand-new database and a re-checked configuration (see [Status: Beta](#status-beta)).
 - **Env-only deployments** (e.g. K8s): pass `-config ""` to skip the config file entirely — the flag defaults to `config.toml`, and a missing file is a startup error.
@@ -159,9 +164,9 @@ See `config.example.toml` for the full schema (server, log, admin, auth, db, pro
 
 ## Deployment
 
-- `compose.yml` — production stack: one `db` (postgres:18-alpine, bind-mounted data under `deploy/data/pg`) + one `app` container (non-root, read-only config mount from `deploy/config.toml`, healthcheck).
+- `compose.yml` — production stack: one `db` (postgres:18-alpine, bind-mounted data under `deploy/data/pg`) + one `redis` (redis:8-alpine, ephemeral coordination — no persistence) + one `app` container (non-root, read-only config mount from `deploy/config.toml`, healthcheck).
 - `Dockerfile` — three-stage build (node → go → alpine), producing a single static binary with the UI embedded.
-- No external caching or message-bus service is required — PostgreSQL is the only dependency.
+- **Dual required dependencies**: PostgreSQL 18 (all durable state, source of record) + Redis 8 (ephemeral coordination only — instance discovery heartbeats; never a cache layer or system of record). Both are startup-mandatory.
 
 ### GC tuning (optional, default off)
 

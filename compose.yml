@@ -1,4 +1,4 @@
-# github.com/is7qin/c3api 部署编排：单应用容器（内嵌前端）+ PostgreSQL。
+# github.com/is7qin/c3api 部署编排：单应用容器（内嵌前端）+ PostgreSQL + Redis。
 # volume 全部使用目录挂载（bind mount），数据与配置落盘在宿主，便于备份与升级。
 #
 # 用法（compose 在根目录：自动发现 + 自动加载根目录 .env）：
@@ -28,6 +28,18 @@ services:
       timeout: 3s
       retries: 10
 
+  # Redis 必需依赖（与 db 并列，非 profile 可选；spec 2026-08-25-redis-foundation-design
+  # §4）：实例发现等易失协调态——可丢可重建，appendonly 关；永不作为 SoR/缓存层。
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   app:
     # 镜像双形态（REL spec 2026-08-15）：本地开发/自建用 build（下方 build 块；
     # compose 语义 image+build 并存时 build 优先）；生产用 pull——删除 build 块、
@@ -40,13 +52,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
-      # 敏感项走环境变量（config.Load 支持 C3API_ADMIN_TOKEN / C3API_DB_DSN / C3API_AUTH_JWT_SECRET 覆盖）
+      # 敏感项走环境变量（config.Load 支持 C3API_ADMIN_TOKEN / C3API_DB_DSN /
+      # C3API_AUTH_JWT_SECRET / C3API_REDIS_ADDR 覆盖）
       # admin token 可选（`:-` 空值注入空串 = 不启用静态 token，/api/admin 仅 platform_admin
       # JWT；首个注册用户自动成为 admin——无需静态 token 也能登录管理面）
       C3API_ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       C3API_AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?set AUTH_JWT_SECRET in .env (openssl rand -hex 32)}
       C3API_DB_DSN: postgres://postgres:${POSTGRES_PASSWORD:-c3api}@db:5432/c3api?sslmode=disable
+      C3API_REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
       # 可选 GC 调优（默认关闭——空值 = 不设置 = Go 默认 GOGC=100 无软上限）：
       # 高并发（50k 并发 A/B 实测，24 核）开启 GOGC=off + GOMEMLIMIT=16GiB 后
       # QPS +14.5%（25.1k→28.75k/s）、每请求 CPU -27.7%（331→239µs）、

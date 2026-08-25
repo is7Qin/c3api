@@ -36,7 +36,7 @@ c3api 处于 **beta**：功能齐全，但破坏性变更自由。
 | **管理台** | React 前端内嵌进二进制（`/app`），另有 OpenAPI 契约定义的管理 API（`/api/admin`） |
 | **计费与用量** | 用户余额预检扣费、FEFO 临时额度、litellm 价格同步的按模型计费、按日分区的用量日志与统计——计费默认开启（`config.example.toml` billing.enabled=true） |
 | **规则引擎** | 可自定义的路由、限流与 429/错误退避规则，内置调度器 |
-| **多实例就绪** | 状态全在 PostgreSQL，`NOTIFY` 跨实例失效广播，水平扩容零配置 |
+| **多实例就绪** | 状态全在 PostgreSQL，`NOTIFY` 跨实例失效广播，Redis 心跳实例发现（集群规模自动感知）——水平扩容零配置 |
 | **单二进制** | Go 二进制内嵌前端，非 root 容器镜像，即插即用部署 |
 
 ### 请求格式
@@ -114,14 +114,17 @@ cd web && pnpm install && pnpm run dev
                     │   errlog / scheduler / notify │
                     │   retention / stats-agg /     │
                     │   pricing-sync / rule-engine  │
-                    │   auth-sync / invalidate      │
-                    └──────────────┼────────────────┘
-                                   ▼
-                        PostgreSQL 18（状态 + NOTIFY）
+                    │   auth-sync / invalidate /    │
+                    │   discovery                   │
+                    └───────┼───────────────┼──────┘
+                            ▼               ▼
+                  PostgreSQL 18（状态 + NOTIFY）│
+                                             ▼
+                        Redis 8（易失协调态：实例发现心跳）
 ```
 
 - **单二进制**：前端经 `go:embed` 内嵌，运行时 = 一个 `server` 进程 + 挂载的配置文件。
-- **网关无状态、状态在 DB**：共享状态全部在 PostgreSQL，实例间经 `c3api_invalidate` 通道 `NOTIFY` 协调——加实例即扩容。
+- **网关无状态、状态在 DB**：共享状态全部在 PostgreSQL，实例间经 `c3api_invalidate` 通道 `NOTIFY` 协调；多实例预算分摊基数 N 经 Redis 心跳自动发现——加实例即扩容（无手工设置）。
 - **常驻 worker**：计费扣减、用量/统计落库、错误审计、分区保留、离线聚合、价格同步与规则调度均为长驻 worker，支持优雅停机排空。
 
 ## 性能
@@ -147,8 +150,9 @@ cd web && pnpm install && pnpm run dev
 | `C3API_ADMIN_TOKEN` | 管理端 token（可选；留空 = 不启用静态 token 鉴权，`/api/admin` 仅接受 `platform_admin` JWT） |
 | `C3API_AUTH_JWT_SECRET` | 用户鉴权 JWT 密钥（必填；跨重启与多实例须稳定） |
 | `C3API_DB_DSN` | PostgreSQL 连接串 |
+| `C3API_REDIS_ADDR` | Redis 地址（必填；如 `127.0.0.1:6379`——实例发现等易失协调态） |
 
-完整配置项（server / log / admin / auth / db / proxy / upstream / limit / scheduler / usage / billing）见 `config.example.toml`。
+完整配置项（server / log / admin / auth / db / redis / proxy / upstream / limit / scheduler / usage / billing）见 `config.example.toml`。
 
 - **仅全新部署（不适配迁移）**——表结构与配置跨版本不向后兼容：升级即全新创建数据库、从零重核对配置（见上方"状态：Beta"说明）。
 - **纯 env 部署**（如 K8s）：传 `-config ""` 完全跳过配置文件——flag 默认 config.toml，无文件即启动失败。
@@ -157,9 +161,9 @@ cd web && pnpm install && pnpm run dev
 
 ## 部署
 
-- `compose.yml` — 生产编排：`db`（postgres:18-alpine，数据挂载在 `deploy/data/pg`）+ `app`（单容器，非 root、配置只读挂载自 `deploy/config.toml`、健康检查）。
+- `compose.yml` — 生产编排：`db`（postgres:18-alpine，数据挂载在 `deploy/data/pg`）+ `redis`（redis:8-alpine，易失协调态——不持久化）+ `app`（单容器，非 root、配置只读挂载自 `deploy/config.toml`、健康检查）。
 - `Dockerfile` — 三阶段构建（node → go → alpine），产出内嵌 UI 的静态单二进制。
-- 不依赖外部缓存或消息中间件——PostgreSQL 是唯一依赖。
+- **双必需依赖**：PostgreSQL 18（全部持久状态，唯一真相源）+ Redis 8（仅承载可丢的易失协调态——实例发现心跳；永不作为缓存层/真相源）。二者均为启动强制项。
 
 ## 许可
 

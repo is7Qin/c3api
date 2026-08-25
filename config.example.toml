@@ -10,6 +10,10 @@ admin = { token = "" }
 # JWT 密钥（强制，缺失启动失败；须经 C3API_AUTH_JWT_SECRET 注入）
 auth = { jwt_secret = "" }
 db = { dsn = "postgres://user:pass@localhost:5432/c3api?sslmode=disable", max_conns = 20 } # #17：10→20（billing 8 + stats 8 worker + 余量；统计批量写已改 COPY 毫秒级短事务）
+# Redis 必需依赖（实例发现等易失协调态；spec 2026-08-25-redis-foundation-design）：
+# addr 必填，空/不可达启动即失败；env 覆盖 C3API_REDIS_ADDR / C3API_REDIS_PASSWORD
+# / C3API_REDIS_DB。password 空 = 无鉴权（占位值 change-me 等会被拒绝）；db <0 非法。
+redis = { addr = "127.0.0.1:6379", password = "", db = 0 }
 proxy = {
   max_body_size = 4194304,
   max_inflight = 50000,
