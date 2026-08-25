@@ -29,7 +29,7 @@ services:
       retries: 10
 
   # Redis 必需依赖（与 db 并列，非 profile 可选；spec 2026-08-25-redis-foundation-design
-  # §4）：实例发现等易失协调态——可丢可重建，appendonly 关；永不作为 SoR/缓存层。
+  # §4）：实例发现与短时效邮箱验证码等易失状态——可丢可重建，appendonly 关；永不作为 SoR/缓存层；勿配 allkeys-lru 等淘汰策略（验证码被淘汰仅致用户重发，无害但应避免）。
   redis:
     image: redis:8-alpine
     restart: unless-stopped
