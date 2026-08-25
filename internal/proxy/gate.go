@@ -39,6 +39,10 @@ type QuotaUsedReader interface {
 // 计数器存在性，路径与现状（无门禁）成本相当（1 次快照读 + map 查）。
 type concurrencyGate struct {
 	store atomic.Pointer[gateSnapshot]
+	// cluster 集群并发视图（concsync.go worker 双向同步换入的第二 atomic 快照，
+	// spec conc-share-borrow-gate §1.2）：超份额借位判定的对账聚合。nil / 陈旧 =
+	// 无共识 = fail-open 全额本地语义（结构性质，非错误分支）。
+	cluster atomic.Pointer[clusterView]
 	// reclaimer 复核 DB 读（NewAuth 从 loader 类型断言注入；nil = 无复核能力，
 	// 预算耗尽直接 429——与单实例现状语义一致，仅测试/未装配形态）。
 	reclaimer QuotaUsedReader
@@ -218,10 +222,18 @@ func cloneCounters[T any](m map[int64]*T) map[int64]*T {
 // release 按位释放——user 位含义 = "user 计数已 +1"，release 按位减恰一次）。
 // user 层计数与限流解耦（spec 2026-08-15：实时并发排行数据源 = users 计数器，
 // 不限并发的用户也计数）——无条件 Add(1)（排行可见），限流条件化：UserMaxConc
-// > 0 时 Load 检查超限 → Add(-1) 回滚 + 429（热路径无 CAS 循环：不限时每请求
-// 1 次原子 Add，限流时 2 次原子操作）。瞬时超限窗口可接受（展示近似，稳态由
-// 回滚保证不超限）：边界竞争多个请求同时观察超限并回滚 → 保守双拒（多拒不放
-// 行），方向安全，同 keyQuota 软门禁先例。
+// > 0 时 Load 检查超份额 → 视图判定借用 → 超限回滚 + 429（热路径无 CAS 循环：
+// 不限时每请求 1 次原子 Add，限流时 2 次原子操作）。瞬时超限窗口可接受（展示
+// 近似，稳态由回滚保证不超限）：边界竞争多个请求同时观察超限并回滚 → 保守双
+// 拒（多拒不放行），方向安全，同 keyQuota 软门禁先例。
+//
+// 份额+借用（spec conc-share-borrow-gate §1.3）：fast-path 准入按
+// concShare(limit, N) 判定；N=1 时 share=limit → 超份额分支数学上不可达（行为
+// 与单实例逐字节一致，Redis 零命令）。N≥2 超份额走视图判定（纯内存，见
+// concAllows）：新鲜视图 effective<limit 借用放行；无视图/陈旧 fail-open 按
+// 全额 limit 本地判定。key 层借用以真上限 CAS 兜底占用（casInc 竞态失败按保守
+// 双拒处理）。release 零改动零 Redis——视图由下一 tick 对账收敛。
+//
 // 两步回滚（评审 I-3）：user 成功 key 失败 → 复原 user 计数再返回失败，防泄漏。
 // 回滚竞态闭合：计数器为单一原子总量，每个 -1 与同一 goroutine 的 +1 配对
 // （acquire 回滚或 release 按 level 位恰一次）→ 恒非负、N 并发全回滚净 0。
@@ -231,7 +243,9 @@ func (g *concurrencyGate) acquire(meta domain.KeyMeta) (int, bool) {
 	if c, ok := snap.users[meta.UserID]; ok && c != nil {
 		c.Add(1) // 无条件计数（排行数据源；不限并发也计数）
 		level |= 1
-		if meta.UserMaxConc > 0 && c.Load() > int64(meta.UserMaxConc) {
+		limit := int64(meta.UserMaxConc)
+		if limit > 0 && c.Load() > int64(concShare(meta.UserMaxConc, g.instancesN())) &&
+			!g.concAllows(false, meta.UserID, limit, c.Load()) {
 			c.Add(-1) // 回滚计数（稳态不超限）
 			level &^= 1
 			return 0, false // user 层超限 → 429（计数已复原，无占用）
@@ -239,13 +253,18 @@ func (g *concurrencyGate) acquire(meta domain.KeyMeta) (int, bool) {
 	}
 	if meta.KeyMaxConc > 0 {
 		if c, ok := snap.keys[meta.KeyID]; ok && c != nil {
-			if !casInc(c, meta.KeyMaxConc) {
-				if level&1 != 0 {
-					if uc, ok := snap.users[meta.UserID]; ok {
-						uc.Add(-1) // 回滚 user 计数
+			if !casInc(c, concShare(meta.KeyMaxConc, g.instancesN())) {
+				// 超份额：视图判定借用，通过则按真上限兜底占用；拒绝或兜底
+				// CAS 竞态失败 → 两步回滚（评审 I-3，保守多拒方向安全）。
+				if !g.concAllows(true, meta.KeyID, int64(meta.KeyMaxConc), c.Load()+1) ||
+					!casInc(c, meta.KeyMaxConc) {
+					if level&1 != 0 {
+						if uc, ok := snap.users[meta.UserID]; ok {
+							uc.Add(-1) // 回滚 user 计数
+						}
 					}
+					return 0, false
 				}
-				return 0, false
 			}
 			level |= 2
 		}

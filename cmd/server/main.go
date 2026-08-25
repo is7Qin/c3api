@@ -399,6 +399,11 @@ func main() {
 	// atomic），gate/limit 在每次预算分配时现读 provider（gate.go:106-121），
 	// 心跳计数变化 ≤1 tick 天然生效，无需任何 reload 触发。
 	px.SetInstancesProvider(disco)
+	// 并发门跨实例共识 worker（spec conc-share-borrow-gate §1.5）：500ms 一条
+	// pipeline 双向同步受限层级在途 → gate 第二快照（clusterView），请求路径
+	// 零 Redis；nil/未启动 = 无视图 = 全额本地语义。self 与 NOTIFY Src /
+	// discovery 同源（同一 instanceSrc 产物，不自造第二套 ID）。
+	concSync := proxy.NewConcSyncWorker(auth, rdb, src, log)
 	// litellm 价格同步 worker：启动异步拉取一次（不阻塞启动）+ price_sync_cron
 	// 定期循环；source_url/cron 每轮从 svc 的 settings 快照现读（变更下次循环
 	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（Phase 5 计费读零 DB）。
@@ -514,6 +519,9 @@ func main() {
 		wm.Register(billFlusher)
 	}
 	wm.Register(inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg, mailW) // invalidate 去抖器执行 goroutine（单 goroutine 串行）；errlog 错误明细排空在 rec 之后注册 → 反向排空先于 rec；retention/stats-agg 顺序无依赖（覆盖语义幂等，停摆窗口由追赶上限收敛）；mailW 尾部——反序排空中段关闭，无资金风险（D-W4）。billFlusher 缺位时：计费关闭，billable 行出生即 billed=true 吸收态，无未扣积压
+	// conc-sync 业务区段尾部（spec §1.5：协调态可丢、无排空顺序依赖——停机即停
+	// tick，在途 HASH 字段 ≤4s ts 出局 + 16s EXPIRE 自灭，Close 无清理义务）。
+	wm.Register(concSync)
 	// discovery 在 billFlusher 之后、listener/authSync 之前注册（foundation spec
 	// §2.3 装配序）：反向排空时 listener 先停接收、discovery 随即 ZREM 自身缩容
 	// 掉出 N，再排业务 worker——游标终扫（billFlusher 最后排空）前集群基数已收敛。
