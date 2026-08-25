@@ -399,11 +399,18 @@ func main() {
 	// atomic），gate/limit 在每次预算分配时现读 provider（gate.go:106-121），
 	// 心跳计数变化 ≤1 tick 天然生效，无需任何 reload 触发。
 	px.SetInstancesProvider(disco)
+	// scheduler 选号侧同一 N 源（spec conc-share-borrow-account §1.1）：账号并发
+	// 份额除数 = Redis 心跳活体数，pickFrom 入口现读，心跳变化 ≤1 tick 生效。
+	sched.SetInstancesProvider(disco)
 	// 并发门跨实例共识 worker（spec conc-share-borrow-gate §1.5）：500ms 一条
 	// pipeline 双向同步受限层级在途 → gate 第二快照（clusterView），请求路径
 	// 零 Redis；nil/未启动 = 无视图 = 全额本地语义。self 与 NOTIFY Src /
 	// discovery 同源（同一 instanceSrc 产物，不自造第二套 ID）。
 	concSync := proxy.NewConcSyncWorker(auth, rdb, src, log)
+	// 账号并发份额+借用跨实例共识 worker（spec conc-share-borrow-account §2）：
+	// 协议孪生 conc-sync，命名空间 c3api:conc:a:*——500ms 一条 pipeline 双向同步
+	// 账号在途 → Scheduler.concView，选号热路径零 Redis。src 复用同源产物。
+	accConcSync := scheduler.NewConcSyncWorker(sched, rdb, src, log)
 	// litellm 价格同步 worker：启动异步拉取一次（不阻塞启动）+ price_sync_cron
 	// 定期循环；source_url/cron 每轮从 svc 的 settings 快照现读（变更下次循环
 	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（Phase 5 计费读零 DB）。
@@ -522,6 +529,8 @@ func main() {
 	// conc-sync 业务区段尾部（spec §1.5：协调态可丢、无排空顺序依赖——停机即停
 	// tick，在途 HASH 字段 ≤4s ts 出局 + 16s EXPIRE 自灭，Close 无清理义务）。
 	wm.Register(concSync)
+	// 账号层孪生同段并排（spec conc-share-borrow-account §2：同款协调态语义）。
+	wm.Register(accConcSync)
 	// discovery 在 billFlusher 之后、listener/authSync 之前注册（foundation spec
 	// §2.3 装配序）：反向排空时 listener 先停接收、discovery 随即 ZREM 自身缩容
 	// 掉出 N，再排业务 worker——游标终扫（billFlusher 最后排空）前集群基数已收敛。

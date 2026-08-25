@@ -58,6 +58,12 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 	if n == 0 {
 		return nil, false
 	}
+	// 单代纪律（spec §1.1）：除数与视图在入口各取一次、整轮扫描共用——不是微优化，
+	// 是语义要求：worker 可能在扫描中途换入新一代视图，逐候选现读会让同一请求的
+	// 不同候选用不同代视图判定（决策不连贯）。Select 的 tier1/tier2 各自调用本
+	// 方法（跨层允许换代，层级间本就独立决策）。
+	cn := s.instancesN()
+	view := s.concView.Load()
 	for i := 0; i < n; i++ {
 		a := ws.seq[int(ws.cursor.Add(1))%n]
 		// 静态字段视图一次 Load（评审 Critical 修复）：重建/权重动作以原子指针
@@ -71,8 +77,13 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 			continue
 		}
 		cur := a.concurrency.Load()
-		if cur >= int64(av.acc.MaxConcurrency) {
-			continue
+		limit := int64(av.acc.MaxConcurrency) // buildSnapshots 已归一化 ≤0→defaultMax，恒 >0
+		if cur >= int64(concShare(int(limit), cn)) {
+			if cur >= limit || !concAllows(view, av.acc.ID, limit, cur+1) {
+				continue // 视图满 / 本地已达真上限 → 换下一候选（借用拒绝=换号，非拒流）
+			}
+			// 借用放行：落入下方既有 CAS(cur, cur+1)；CAS 天然封顶竞态
+			// （双借同时过 limit−1 时第二个 CAS 必败），无需新锁
 		}
 		if a.concurrency.CompareAndSwap(cur, cur+1) {
 			mapped := model

@@ -87,11 +87,18 @@ type statusWrite struct {
 }
 
 type Scheduler struct {
-	cfg       Config
-	loader    Loader
-	rule      *rule.RuleEngine
-	log       *logx.Logger
-	store     snapshotStore
+	cfg    Config
+	loader Loader
+	rule   *rule.RuleEngine
+	log    *logx.Logger
+	store  snapshotStore
+	// concView 集群账号并发视图（concsync.go worker 换入的第二 atomic 快照，
+	// spec conc-share-borrow-account）：超份额借位判定的对账聚合。nil / 陈旧 =
+	// 无共识 = fail-open 全额本地语义（结构性质，非错误分支）。
+	concView atomic.Pointer[clusterView]
+	// instN 集群实例数 N 提供者（装配期 SetInstancesProvider 注入；nil → N=1，
+	// 见 concsync.go instancesN）。与 proxy.InstancesProvider 同名异包自持。
+	instN     atomic.Pointer[InstancesProvider]
 	reloadMu  sync.Mutex // 重建互斥（低频，不占热路径）
 	writeCh   chan statusWrite
 	timeNow   func() time.Time
