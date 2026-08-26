@@ -53,7 +53,7 @@ func TestPGOpenPGTimeoutParams(t *testing.T) {
 // lock_timeout=5s 会话 GUC（锁等待 5s 即 55P03 报错回滚）+ 结算语句 per-query
 // 10s 超时（settleTimeout）。本测试模拟管理员长事务持有 users 行锁，断言结算
 // 有限时间内失败（旧行为：无限阻塞）——失败语义 = 行保持 unbilled 游标重放
-//（不丢不重；毒行梯子不隔离：ctx 截止上抛）。
+//（不丢不重；ctx 截止上抛，行保持 unbilled）。
 func TestPGBillingDeductLockTimeout(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()

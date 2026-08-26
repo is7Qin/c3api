@@ -57,7 +57,7 @@ const fetchUnbilledSQL = `SELECT id, COALESCE(user_id, 0), cost, model,
 	WHERE NOT billed AND error_type IN ('none', 'abort')
 	ORDER BY id LIMIT $1`
 
-// markBilledBulkSQL 纯标记（零价行快速路径 + 终极毒行隔离）：不触碰 overdraft
+// markBilledBulkSQL 纯标记（仅零价行快速路径）：不触碰 overdraft
 // （出生 false 保持），幂等可重入。
 const markBilledBulkSQL = `UPDATE usage_logs SET billed = TRUE
 	WHERE id = ANY($1) AND NOT billed`
@@ -90,8 +90,8 @@ func (r *BillingRepo) FetchUnbilledBatch(ctx context.Context, limit int) ([]doma
 	return scanLedgerRows(rows)
 }
 
-// MarkBilledBulk 纯标记（F2 冻结 ABI-2，签名不得偏移）：零价行快速路径 +
-// 终极毒行隔离共用——幂等（AND NOT billed），单语句原子。行不存在/已标记 →
+// MarkBilledBulk 纯标记（F2 冻结 ABI-2，签名不得偏移）：仅零价行快速路径——
+// 幂等（AND NOT billed），单语句原子。行不存在/已标记 →
 // 静默跳过（幂等语义，不报错）。
 func (r *BillingRepo) MarkBilledBulk(ctx context.Context, ids []int64) error {
 	if len(ids) == 0 {
@@ -125,7 +125,7 @@ func (r *BillingRepo) UnbilledLag(ctx context.Context) (oldestCreated time.Time,
 }
 
 // probeCursorHead 队头两步法步①（部分索引 usagelog_unbilled_id 瞬时下降）：
-// 返回最老可结算行 id；空游标 → ok=false。形态对齐 ProbeLaneHead。
+// 返回最老可结算行 id；空游标 → ok=false。形态与车道队头探针一致。
 func (r *BillingRepo) probeCursorHead(ctx context.Context) (id int64, ok bool, err error) {
 	rows, err := r.queryRows(ctx, unbilledHeadIDSQL, nil)
 	if err != nil {
