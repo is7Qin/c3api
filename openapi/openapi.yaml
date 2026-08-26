@@ -2938,7 +2938,7 @@ components:
         #   billing（游标消费者，F2 ledger-cursor）: lag_ms int64（游标积压时滞
         #     毫秒 = 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/
         #     未探测）, unbilled_rows int64（当前未扣费账本行数）, quarantined_rows
-        #     int64（累计隔离行数——用户缺失组 + 毒行终极隔离）, last_cycle_unix_ms
+        #     int64（累计隔离行数——用户缺失组）, last_cycle_unix_ms
         #     int64（最近成功消费周期时刻）
         #   stats-agg（离线聚合 worker，spec 2026-08-14）: watermark_unix_ms int64
         #     （watermark 位置毫秒；0 = 尚未推进）, last_buckets int64（上轮写入
@@ -3067,7 +3067,7 @@ components:
       properties:
         billing_lag_ms: { type: integer, format: int64, description: 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/未探测 }
         billing_unbilled_rows: { type: integer, format: int64, description: 当前未扣费账本行数（部分索引 WHERE NOT billed） }
-        billing_quarantined_rows: { type: integer, format: int64, description: 累计隔离行数（用户缺失组 + 毒行终极隔离——未扣费写销） }
+        billing_quarantined_rows: { type: integer, format: int64, description: 累计隔离行数（用户缺失组） }
     OverviewResponse:
       type: object
       required: [summary, trend, accounts, resources, err_top, alerts]

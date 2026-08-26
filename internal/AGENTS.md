@@ -40,7 +40,7 @@ chi(internal/server/server.go)
 | pricing-sync | settings `price_sync_cron`(默认 0 3 * * *) | 启动即拉一次+gronx cron |
 | retention | 每小时 | DROP 过期日分区+预建今明；redemption_uses 有界 DELETE≤5000/轮 TTL 固定 90d |
 | stats-agg | `usage.stats_agg_interval`(5m，0=禁用) | 双区间分离：watermark 只推进到 T=now−lag，绝不推进到重算上界 R1；advisory lock 单写者 |
-| billing(条件) | `billing.flush_interval`(1s)+`balance_refresh_interval`(10s) | 账本游标消费（F2/F2-opt 三车道语句化）：排空式循环+单取批面（零价行内存路由）；Balance/Fefo 双车道 K=4 桶级并行结算语句+零价扫（SET LOCAL sync_commit=off）；batchController 以实测语句时长自适应批规模（[500,64000]，种子 8000，时间预算 8s=0.8×repo settleTimeout，见 batch_controller.go）；毒行梯子隔离；lag ≥1s 节流（Close 排空绕过） |
+| billing(条件) | `billing.flush_interval`(1s)+`balance_refresh_interval`(10s) | 账本游标消费（F2/F2-opt 三车道语句化）：排空式循环+单取批面（零价行内存路由）；Balance/Fefo 双车道 K=4 桶级并行结算语句+零价扫（SET LOCAL sync_commit=off）；batchController 以实测语句时长自适应批规模（[500,64000]，种子 8000，时间预算 8s=0.8×repo settleTimeout，见 batch_controller.go）；结算失败保持 unbilled，失败桶本周期抑制、下周期重放；lag ≥1s 节流（Close 排空绕过） |
 | notify | 阻塞 LISTEN | **专用 pgx.Conn 非池连接**(池回收会静默丢订阅)；断线退避 1s→30s，重连必 FullRefresh |
 | auth-sync | 60s 兜底 Auth.Reload | cmd/server/auth_sync.go |
 
