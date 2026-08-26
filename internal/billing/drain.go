@@ -30,14 +30,18 @@ import (
 // 单批时长。var（非 const）：测试注入；<=0 = 禁用预算。
 var drainCycleBudget = 500 * time.Millisecond
 
-// drainLoop 排空式消费（D2）：循环 三车道消费 直至零进展、周期预算到期或
-// ctx.Err()——一批一 tick 的节奏概念废除，FlushInterval 仅在游标空时作为
-// 空转间隔。
+// drainLoop 排空式消费（D2 + F7 失败闭合）：循环 三车道消费 直至零进展、
+// 周期预算到期或 ctx.Err()——F7 失败闭合要求失败 lane/bucket 在本周期内不再重试
+// （下周期 ticker 重试），健康桶继续独立提交。
 func (f *Flusher) drainLoop(ctx context.Context) int64 {
 	deadline := time.Now().Add(drainCycleBudget)
-	var drained int64
+	var (
+		drained       int64
+		failedBalance [settleParallelism]bool
+		failedFefo    [settleParallelism]bool
+	)
 	for ctx.Err() == nil {
-		n := f.consumeBatch(ctx)
+		n := f.consumeBatchFiltered(ctx, &failedBalance, &failedFefo)
 		if n == 0 {
 			return drained // 三车道全零进展：本周期收尾（不空转）
 		}
@@ -59,36 +63,32 @@ const settleParallelism = 4
 // 共形：ctx, limit, k, bucket）。
 type settleFn func(context.Context, int, int, int) (domain.SettlementSummary, error)
 
-// consumeBatch 单轮三车道消费（§〇-b）：① Balance 车道 K 桶并行结算语句（余额-
-// only 用户）② Temp 车道集合化 FEFO 结算语句 K 桶并行（temp-active 用户）③ 零价
-// 批 sweep（FetchUnbilledBatch 余量 cost<=0 行一次 MarkBilledBulk 纯标记——吸收
-// 态/免费行零资金移动）。返回本轮退出游标的行数（0 = 全车道无进展）。
-func (f *Flusher) consumeBatch(ctx context.Context) int64 {
+// consumeBatchFiltered F7 失败闭合：同 consumeBatch 但传入周期内已失败桶集合——
+// 失败桶在本周期内不再重试（下周期重试），健康桶继续。
+func (f *Flusher) consumeBatchFiltered(ctx context.Context, failedBalance, failedFefo *[settleParallelism]bool) int64 {
 	var drained int64
-	drained += f.settleLaneParallel(ctx, f.store.SettleBalanceBatch, f.balanceCtl)
-	drained += f.settleLaneParallel(ctx, f.store.SettleFefoBatch, f.fefoCtl)
+	drained += f.settleLaneParallel(ctx, "balance", f.store.SettleBalanceBatch, f.balanceCtl, failedBalance)
+	drained += f.settleLaneParallel(ctx, "fefo", f.store.SettleFefoBatch, f.fefoCtl, failedFefo)
 	drained += f.sweepZeroCost(ctx)
 	return drained
 }
 
-// settleLaneParallel 单车道 K 桶并行结算（wave3 D-C）：K goroutine 各自调用
-// settle(ctx, ctl.limit(), K, i)（i=0..K-1，独立 tx/连接），批规模取本车道专用
-// 控制器（ctl 参数——Balance/Fefo 各持其一，spec-adaptive-batch-v2 双车道分治）
-// 当前值（batch_controller.go），调用后以实测时长/错误/是否满批反馈 observe
-// （sub = BatchRows ≥ lim——满批门控倍增）——WaitGroup 全量收敛后合并 summary
-// ——计数相加、Balances 对拼接（桶间 uid 集合按构造不相交，
-// 对拼接无重复）。错误语义：首错胜出记录 + Warn，但**等全部 goroutine 完成后才
-// 返回**（无 early-abort——他桶已提交的工作必须计入；回滚只发生在出错桶自己的
-// 事务内，他桶不受扰）。成功桶的提交是真进展：合并 summary 照常 applySettlement
-// + 返回 ΣMarked，失败桶行保持 unbilled 下周期重放（不丢不重）。
-func (f *Flusher) settleLaneParallel(ctx context.Context, settle settleFn, ctl *batchController) int64 {
+// settleLaneParallel 单车道 K 桶并行结算（wave3 D-C + F7 失败闭合）：K
+// goroutine 各自调用 settle(ctx, ctl.limit(), K, i)（i=0..K-1，独立 tx/连接），
+// 批规模取本车道专用控制器当前值，调用后 observe 反馈。failed 非 nil 时跳过本
+// 周期已失败桶（不重试，下周期重试）；失败桶按 lane/bucket 粒度 Warn（F7 可观测
+// 性：lane, bucket, retry_scope=next_cycle, error）。WaitGroup 全量收敛后合并
+// summary；成功桶照常 applySettlement，失败桶零贡献且记录到 failed 集合。
+func (f *Flusher) settleLaneParallel(ctx context.Context, lane string, settle settleFn, ctl *batchController, failed *[settleParallelism]bool) int64 {
 	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
-		total    domain.SettlementSummary
-		firstErr error
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		total domain.SettlementSummary
 	)
-	for i := 0; i < settleParallelism; i++ {
+	for bucket := 0; bucket < settleParallelism; bucket++ {
+		if failed != nil && (*failed)[bucket] {
+			continue
+		}
 		wg.Add(1)
 		go func(bucket int) {
 			defer wg.Done()
@@ -100,10 +100,17 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, settle settleFn, ctl *
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				if firstErr == nil {
-					firstErr = err
+				if failed != nil {
+					failed[bucket] = true
 				}
-				return // 失败桶零贡献；他桶照常合并
+				if f.log != nil && ctx.Err() == nil {
+					f.log.Warn("billing settle lane failed",
+						logx.String("lane", lane),
+						logx.Int("bucket", bucket),
+						logx.String("retry_scope", "next_cycle"),
+						logx.Error(err))
+				}
+				return
 			}
 			total.Marked += s.Marked
 			total.BatchRows += s.BatchRows
@@ -111,13 +118,10 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, settle settleFn, ctl *
 			total.ForcedUsers += s.ForcedUsers
 			total.Quarantined += s.Quarantined
 			total.Balances = append(total.Balances, s.Balances...)
-		}(i)
+		}(bucket)
 	}
 	wg.Wait()
-	if firstErr != nil && f.log != nil && ctx.Err() == nil {
-		f.log.Warn("billing settle lane failed", logx.Error(firstErr))
-	}
-	f.applySettlement(total) // 成功桶定向余额刷新 + quarantined 观测（空批 no-op）
+	f.applySettlement(total)
 	return total.Marked
 }
 
