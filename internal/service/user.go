@@ -133,8 +133,9 @@ func (s *Service) ListTempBalances(ctx context.Context, q repository.ListQuery, 
 // ChangePassword 修改密码（/api/user/auth/change-password）：旧密码校验复用登录
 // 语义（bcrypt 校验 + 状态检查——失败 ErrInvalidCredentials 401 同登录文案
 // 防枚举）；新密码非空 + ≤72 字节（bcrypt 截断限制，注册/建用户同款校验）→
-// 非法 ErrInvalidInput 400；成功 bcrypt 重哈希落库。**不撤销既有 JWT**——
-// 无状态 token 无撤销机制，新密码下次登录生效（注释契约）。
+// 非法 ErrInvalidInput 400；成功 bcrypt 重哈希落库。**改密即撤销**（spec
+// 2026-08-25-jwt-password-revocation）：repo 单语句原子递增 token_version，
+// 成功后 inv+publish 配对刷新全部实例快照 → 该用户既有 JWT 全部 401。
 func (s *Service) ChangePassword(ctx context.Context, userID int64, old, new string) error {
 	// 新密码校验前置（廉价无 DB；非法 400 不触达旧密码判定）。
 	if new == "" || auth.ValidatePasswordLen(new) != nil {
@@ -151,7 +152,15 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, old, new str
 	if err != nil {
 		return err
 	}
-	return s.store.UpdateUserPassword(ctx, userID, hash)
+	if err := s.store.UpdateUserPassword(ctx, userID, hash); err != nil {
+		return mapRepoErr(err)
+	}
+	// 密码写成功 → token_version 已原子递增：本地去抖重载 + NOTIFY 跨实例刷
+	// 快照（inv+publish 配对为仓库层惯例——publish 单独会因 NOTIFY 自吞只靠
+	// 60s 兜底收敛；spec 2026-08-25-jwt-password-revocation §3）。
+	s.inv.Users()
+	s.publish(ctx, notify.Change{Users: true})
+	return nil
 }
 
 // GetUser 用户详情（/api/admin/users/{id} 更新前置读取）。
@@ -276,7 +285,7 @@ func (s *Service) upsertUserSnapshot(u *domain.User) {
 		return
 	}
 	if upd, ok := s.keys.(userSnapshotUpdater); ok {
-		upd.UpsertUser(u.ID, domain.UserSnapshot{Status: u.Status, Role: u.Role})
+		upd.UpsertUser(u.ID, domain.UserSnapshot{Status: u.Status, Role: u.Role, TokenVersion: u.TokenVersion})
 	}
 }
 

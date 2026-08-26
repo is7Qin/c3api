@@ -318,23 +318,40 @@ func (r *UserRepo) UpdateUser(ctx context.Context, p *UserPatch) (*domain.User, 
 	return toDomainUser(row), nil
 }
 
+// UpdateUserPassword 单语句原子改密 + JWT 撤销（spec 2026-08-25-jwt-password-
+// revocation）：SET password_hash=$new, token_version=token_version+1——服务端
+// 原子递增，不读改写（并发双改密版本号不回退；UpdateUserBalance 同款原子原语）。
+// 递增即撤销该用户全部既有 JWT（RequireJWT/adminAuth 快照比对 Claims.Ver）。
 func (r *UserRepo) UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error {
-	_, err := r.client.User.UpdateOneID(id).SetPasswordHash(passwordHash).Save(ctx)
-	return errMissingID(err, id)
+	u := sql.Update(user.Table).
+		Set(user.FieldPasswordHash, passwordHash).
+		Set(user.FieldTokenVersion, sql.ExprFunc(func(b *sql.Builder) {
+			b.Ident(user.FieldTokenVersion).WriteString(" + ").Arg(1)
+		})).
+		Where(sql.EQ(user.FieldID, id))
+	n, err := execUpdate(ctx, r.driver, u)
+	if err != nil {
+		return errMissingID(err, id)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: id=%d missing", ErrNotFound, id)
+	}
+	return nil
 }
 
-// LoadUsers 全量用户快照（Auth 内存表：RequireJWT 用户状态校验 + adminAuth
-// 快照 role 覆盖 claims（F1 降权即时生效）；用户变更走 invalidate → Reload
-// 全量刷新，不用 DB 直查）。一次查询带 status+role 两列（快照条目单次查找
-// 零分配）。
+// LoadUsers 全量用户快照（Auth 内存表：RequireJWT 用户状态校验 + token_version
+// 撤销比对 + adminAuth 快照 role 覆盖 claims（F1 降权即时生效）；用户变更走
+// invalidate → Reload 全量刷新，不用 DB 直查）。一次查询带 status+role+
+// token_version 三列（快照条目单次查找零分配；spec 2026-08-25-jwt-password-
+// revocation）。
 func (r *UserRepo) LoadUsers(ctx context.Context) (map[int64]domain.UserSnapshot, error) {
-	rows, err := r.client.User.Query().Select(user.FieldID, user.FieldStatus, user.FieldRole).All(ctx)
+	rows, err := r.client.User.Query().Select(user.FieldID, user.FieldStatus, user.FieldRole, user.FieldTokenVersion).All(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := make(map[int64]domain.UserSnapshot, len(rows))
 	for _, row := range rows {
-		out[row.ID] = domain.UserSnapshot{Status: domain.UserStatus(row.Status), Role: domain.Role(row.Role)}
+		out[row.ID] = domain.UserSnapshot{Status: domain.UserStatus(row.Status), Role: domain.Role(row.Role), TokenVersion: row.TokenVersion}
 	}
 	return out, nil
 }

@@ -59,8 +59,13 @@ func adminAuth(opts Options) func(http.Handler) http.Handler {
 				claims, err := opts.JWTIssuer.Verify(strings.TrimPrefix(authz, "Bearer "))
 				if err == nil {
 					// 快照 role 覆盖 claims.Role + 快照状态校验（单次查找零分配）
+					// + token_version 比对（spec 2026-08-25-jwt-password-revocation：
+					// platform_admin 改密后旧 JWT 同样立即失效——快照源与 RequireJWT
+					// 同一 auth.UserStatusProvider，UserSnapshot.TokenVersion 由
+					// repository.LoadUsers 透传）。
 					if sn, ok := opts.UserStatus.UserSnapshot(claims.UserID); ok &&
-						sn.Role == domain.RolePlatformAdmin && sn.Status == domain.UserStatusActive {
+						sn.Role == domain.RolePlatformAdmin && sn.Status == domain.UserStatusActive &&
+						sn.TokenVersion == claims.Ver {
 						// JWT 路径注入 claims.UserID（兑换码 created_by 用，决策 5）
 						ctx := context.WithValue(req.Context(), adminUserIDKey{}, claims.UserID)
 						next.ServeHTTP(w, req.WithContext(ctx))

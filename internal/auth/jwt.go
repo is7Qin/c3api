@@ -25,11 +25,16 @@ var (
 	ErrTokenExpired = errors.New("auth: token expired")
 )
 
-// Claims JWT 载荷：userID/email/role/exp（HS256）。
+// Claims JWT 载荷：userID/email/role/ver/exp（HS256）。Ver = 签发时的
+// users.token_version 快照（spec 2026-08-25-jwt-password-revocation）：改密/
+// 重置密码原子递增版本号，RequireJWT/adminAuth 与内存快照比对，不等 → 401
+// ——撤销该用户全部既有 JWT，无需 Redis denylist（版本语义"只认最新"，
+// 天然有界零额外读；存量票 ver 缺失解码 0 = DB 默认 0 ⇒ 升级平滑）。
 type Claims struct {
 	UserID int64  `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
+	Ver    int64  `json:"ver"`
 	jwt.RegisteredClaims
 }
 
@@ -44,13 +49,15 @@ func NewIssuer(secret string) *Issuer {
 	return &Issuer{secret: []byte(secret), ttl: DefaultTTL}
 }
 
-// Issue 签发 HS256 JWT。
-func (i *Issuer) Issue(userID int64, email, role string) (string, error) {
+// Issue 签发 HS256 JWT。ver = 用户当前 token_version（登录/注册时从
+// domain.User 透传；改密后旧版本号全部失效——撤销机制核心）。
+func (i *Issuer) Issue(userID int64, email, role string, ver int64) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		UserID: userID,
 		Email:  email,
 		Role:   role,
+		Ver:    ver,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(i.ttl)),

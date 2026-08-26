@@ -50,7 +50,7 @@ func TestPasswordLenLimit(t *testing.T) {
 
 func TestJWTIssueVerify(t *testing.T) {
 	iss := NewIssuer("test-secret")
-	token, err := iss.Issue(42, "u@example.com", string(domain.RoleUser))
+	token, err := iss.Issue(42, "u@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
 
 	claims, err := iss.Verify(token)
@@ -62,7 +62,7 @@ func TestJWTIssueVerify(t *testing.T) {
 }
 
 func TestJWTWrongSecretRejected(t *testing.T) {
-	token, err := NewIssuer("secret-a").Issue(1, "u@example.com", string(domain.RoleUser))
+	token, err := NewIssuer("secret-a").Issue(1, "u@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
 	_, err = NewIssuer("secret-b").Verify(token)
 	require.Error(t, err, "错误密钥必须拒绝")
@@ -71,7 +71,7 @@ func TestJWTWrongSecretRejected(t *testing.T) {
 
 func TestJWTExpiredRejected(t *testing.T) {
 	iss := &Issuer{secret: []byte("s"), ttl: -time.Minute} // 已过期
-	token, err := iss.Issue(1, "u@example.com", string(domain.RoleUser))
+	token, err := iss.Issue(1, "u@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
 	_, err = NewIssuer("s").Verify(token)
 	require.Error(t, err, "过期 token 必须拒绝")
@@ -81,7 +81,7 @@ func TestJWTExpiredRejected(t *testing.T) {
 }
 
 func TestJWTTamperedRejected(t *testing.T) {
-	token, err := NewIssuer("s").Issue(1, "u@example.com", string(domain.RoleUser))
+	token, err := NewIssuer("s").Issue(1, "u@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
 	_, err = NewIssuer("s").Verify(token + "x")
 	require.Error(t, err, "篡改 token 必须拒绝")
@@ -126,7 +126,7 @@ func doReq(t *testing.T, mw func(http.Handler) http.Handler, token string) *http
 
 func TestRequireJWTValid(t *testing.T) {
 	iss := NewIssuer("s")
-	token, err := iss.Issue(7, "ok@example.com", string(domain.RoleUser))
+	token, err := iss.Issue(7, "ok@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
 	mw := RequireJWT(iss, fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{7: {Status: domain.UserStatusActive}}})
 	rec := doReq(t, mw, token)
@@ -136,7 +136,7 @@ func TestRequireJWTValid(t *testing.T) {
 
 func TestRequireJWTRejects(t *testing.T) {
 	iss := NewIssuer("s")
-	token, err := iss.Issue(7, "ok@example.com", string(domain.RoleUser))
+	token, err := iss.Issue(7, "ok@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
 
 	t.Run("no header", func(t *testing.T) {
@@ -153,7 +153,7 @@ func TestRequireJWTRejects(t *testing.T) {
 	})
 	t.Run("expired", func(t *testing.T) {
 		expired := &Issuer{secret: []byte("s"), ttl: -time.Minute}
-		tok, _ := expired.Issue(7, "ok@example.com", string(domain.RoleUser))
+		tok, _ := expired.Issue(7, "ok@example.com", string(domain.RoleUser), 0)
 		rec := doReq(t, RequireJWT(iss, fakeUserStatus{}), tok)
 		require.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
@@ -171,10 +171,47 @@ func TestRequireJWTRejects(t *testing.T) {
 	})
 }
 
+// token_version 撤销机制（spec 2026-08-25-jwt-password-revocation §5.1/5.2）：
+// Issue 写入 ver → Verify 回读；快照版本与 claims.Ver 不匹配矩阵
+// （0v1 = 改密后旧票拒 / 1v0 = 快照落后拒 / 1v1 = 改密后重登新票过）。
+func TestJWTVerRoundTripAndRevocationMatrix(t *testing.T) {
+	iss := NewIssuer("s")
+	tokV0, err := iss.Issue(7, "u@example.com", string(domain.RoleUser), 0)
+	require.NoError(t, err)
+	tokV1, err := iss.Issue(7, "u@example.com", string(domain.RoleUser), 1)
+	require.NoError(t, err)
+
+	c1, err := iss.Verify(tokV0)
+	require.NoError(t, err)
+	require.Zero(t, c1.Ver, "ver=0 落入 claims（存量平滑语义：DB 默认 0）")
+	c2, err := iss.Verify(tokV1)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), c2.Ver)
+
+	for _, tc := range []struct {
+		name        string
+		token       string
+		snapshotVer int64
+		want        int
+	}{
+		{"claims ver0 vs snapshot ver1（改密 bump 后旧票）", tokV0, 1, http.StatusUnauthorized},
+		{"claims ver1 vs snapshot ver0（快照未刷新，fail-closed 同向拒绝）", tokV1, 0, http.StatusUnauthorized},
+		{"claims ver1 vs snapshot ver1（改密后重新登录新票）", tokV1, 1, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mw := RequireJWT(iss, fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{
+				7: {Status: domain.UserStatusActive, TokenVersion: tc.snapshotVer},
+			}})
+			rec := doReq(t, mw, tc.token)
+			require.Equal(t, tc.want, rec.Code)
+		})
+	}
+}
+
 func TestRequireRole(t *testing.T) {
 	iss := NewIssuer("s")
-	token, _ := iss.Issue(7, "u@example.com", string(domain.RoleUser))
-	adminToken, _ := iss.Issue(8, "a@example.com", string(domain.RolePlatformAdmin))
+	token, _ := iss.Issue(7, "u@example.com", string(domain.RoleUser), 0)
+	adminToken, _ := iss.Issue(8, "a@example.com", string(domain.RolePlatformAdmin), 0)
 	// 快照含两用户（active）——fail-closed 下快照缺失 401，本测试聚焦
 	// RequireRole 角色声明而非快照路径（快照缺失用例见 TestRequireJWTRejects）
 	mw := func(next http.Handler) http.Handler {

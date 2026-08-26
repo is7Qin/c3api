@@ -628,6 +628,7 @@ var (
 		{Name: "status", Type: field.TypeEnum, Enums: []string{"active", "disabled"}, Default: "active"},
 		{Name: "max_concurrency", Type: field.TypeInt, Default: 0},
 		{Name: "balance", Type: field.TypeInt64, Default: 0},
+		{Name: "token_version", Type: field.TypeInt64, Default: 0},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}

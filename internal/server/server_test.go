@@ -224,9 +224,9 @@ func (emptySnapshotProvider) UserSnapshot(int64) (domain.UserSnapshot, bool) {
 // 规格 Phase 3a：/admin = 静态 token OR platform_admin JWT（两个都过才拒）。
 func TestAdminAuthTokenOrPlatformJWT(t *testing.T) {
 	iss := auth.NewIssuer("secret")
-	adminTok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin))
+	adminTok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)
 	require.NoError(t, err)
-	userTok, err := iss.Issue(2, "user@example.com", string(domain.RoleUser))
+	userTok, err := iss.Issue(2, "user@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
 	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	s := NewServer(Options{
@@ -264,7 +264,7 @@ func TestAdminAuthTokenOrPlatformJWT(t *testing.T) {
 // created_by 用）；静态 admin token 路径不注入（handler 读到 0 = 系统）。
 func TestAdminUserIDContextInjection(t *testing.T) {
 	iss := auth.NewIssuer("secret")
-	tok, err := iss.Issue(7, "admin@example.com", string(domain.RolePlatformAdmin))
+	tok, err := iss.Issue(7, "admin@example.com", string(domain.RolePlatformAdmin), 0)
 	require.NoError(t, err)
 	var gotID int64
 	var gotOK bool
@@ -310,7 +310,7 @@ func TestAdminUserIDContextInjection(t *testing.T) {
 // 禁用 platform_admin 的 JWT → /admin 401（快照校验，不用 DB 直查）。
 func TestAdminPlatformJWTPartialAdmin(t *testing.T) {
 	iss := auth.NewIssuer("secret")
-	tok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin))
+	tok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)
 	require.NoError(t, err)
 	s := NewServer(Options{
 		AdminToken: "tok",
@@ -332,7 +332,7 @@ func TestAdminPlatformJWTPartialAdmin(t *testing.T) {
 // 24h TTL 过期。快照刷新 = 原地改 fake 共享 map（引用不变，中间件可见）。
 func TestAdminRoleDowngradeImmediate(t *testing.T) {
 	iss := auth.NewIssuer("secret")
-	tok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin))
+	tok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)
 	require.NoError(t, err)
 	roles := map[int64]domain.Role{1: domain.RolePlatformAdmin}
 	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
@@ -359,7 +359,7 @@ func TestAdminRoleDowngradeImmediate(t *testing.T) {
 // Reload 失败保留旧快照 / NOTIFY 丢失）→ 401，绝不放行。
 func TestAdminSnapshotMissingFailClosed(t *testing.T) {
 	iss := auth.NewIssuer("secret")
-	tok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin))
+	tok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)
 	require.NoError(t, err)
 	s := NewServer(Options{
 		AdminToken:   "tok",

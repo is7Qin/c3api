@@ -26,9 +26,11 @@ type UserAPI struct {
 	rules *rule.RuleEngine
 }
 
-// tokenIssuer JWT 签发（*auth.Issuer 实现；测试可注入替身）。
+// tokenIssuer JWT 签发（*auth.Issuer 实现；测试可注入替身）。ver = 签发时
+// users.token_version 快照（改密撤销比对源，spec 2026-08-25-jwt-password-
+// revocation）。
 type tokenIssuer interface {
-	Issue(userID int64, email, role string) (string, error)
+	Issue(userID int64, email, role string, ver int64) (string, error)
 }
 
 // New 构造契约处理器（路由由 Router 组装）。

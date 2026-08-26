@@ -1194,6 +1194,9 @@ func (f *fakeStore) UpdateUserPassword(ctx context.Context, id int64, passwordHa
 		return missingErr(id)
 	}
 	u.PasswordHash = passwordHash
+	// 镜像真实仓库单语句原子语义：改密即递增撤销版本（spec 2026-08-25-jwt-
+	// password-revocation）——流程级测试依赖此行为驱动旧票 401。
+	u.TokenVersion++
 	return nil
 }
 
