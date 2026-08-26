@@ -21,7 +21,7 @@ type FlusherStats struct {
 	// （无硬消费者，spec §一 D-B「仪表盘允许估算降级显式化」）；字段保留 = ops
 	// JSON 契约 ABI 不变。积压规模以 LagMs 与 last_cycle 间接观测。
 	UnbilledRows int64 `json:"unbilled_rows"`
-	// QuarantinedRows 累计隔离行数（用户缺失组 + 毒行终极隔离——未扣费写销）。
+	// QuarantinedRows 进程内累计用户缺失行数；不是持久化财务事实。
 	QuarantinedRows int64 `json:"quarantined_rows"`
 	// LastCycleUnixMs 最近一次成功消费周期时刻（0 = 尚未成功消费；空周期/
 	// 全失败不推进——语义沿袭 G2-4"成功落库时刻"）。

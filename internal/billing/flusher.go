@@ -33,14 +33,12 @@ type LedgerStore interface {
 	FetchUnbilledBatch(ctx context.Context, limit int) ([]domain.LedgerRow, error)
 	// SettleBalanceBatch Balance 车道结算一个窗口（余额-only 用户；单语句单
 	// 事务 取批→条件扣→透支补刀→标记；桶谓词 COALESCE(user_id,0)%k=bucket——
-	// 桶级并行 wave3 D-C，K 由编排层给定）；毒行梯子内置——重试耗尽隔离该车道
-	// 该桶队头越行，隔离行以 Quarantined 计数随 summary 返回。
+	// 桶级并行 wave3 D-C，K 由编排层给定）；结算失败保持 unbilled，由下周期重放。
 	SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error)
 	// SettleFefoBatch Temp 车道结算一个窗口（temp-active 用户；集合化 FEFO +
-	// 差额透支补刀 + 标记一体，D7；桶谓词同上）。事务纪律与毒行梯子同
-	// SettleBalanceBatch。
+	// 差额透支补刀 + 标记一体，D7；桶谓词同上）。事务失败保持 unbilled。
 	SettleFefoBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error)
-	// MarkBilledBulk 幂等纯标记（零价行快速路径 + 终极毒行隔离）。
+	// MarkBilledBulk 幂等纯标记（仅零价行快速路径）。
 	MarkBilledBulk(ctx context.Context, ids []int64) error
 	// UnbilledLag 游标积压度量（wave3 D-B 签名收缩：队头两步法取最老可结算行
 	// created_at，ok=false = 游标空；精确 COUNT 已删）。
@@ -109,9 +107,8 @@ var inflightAbandonGrace = 500 * time.Millisecond
 //	消费 + 单语句原子 = exactly-once）→ 零价批扫尾 MarkBilledBulk 纯标记 → 直至
 //	零进展或 ctx 截止 → 成功定向刷新余额快照（(uid,balance_after) 对 O(1) Set）。
 //
-// 毒行梯子每车道独立：连续失败 K 次 → 只读探针定位该车道队头行 → MarkBilledBulk
-// 终极隔离越行 + QuarantinedRows 计数 + Error——游标永不卡死；一车道毒行不影响
-// 他车道进展；整库故障 → 行保持 unbilled 由 DB 天然重放（无内存回灌面）。
+// 结算失败按 lane/bucket 独立闭合：失败桶本周期跳过、下周期重放；健康桶继续
+// 进展。整库故障 → 行保持 unbilled 由 DB 天然重放（无内存回灌面）。
 // Close 排空惯用法保持（loopDone/baseCtx/flushMu/inflightAbandonGrace）：等在途
 // 周期结束后循环消费至游标清空（预算内）或截断退出（剩余行下次启动收敛，
 // RestartConvergence）。
@@ -141,7 +138,7 @@ type Flusher struct {
 	// unbilledN Unbilled 行数**占位恒 0**（wave3 D-B 精确 COUNT 已删——无硬消费
 	// 者，Stats().UnbilledRows 可观测性降级显式化，spec §一 D-B「仪表盘允许估算
 	// 降级」；字段保留 = ops JSON 契约 ABI 不变）；quarantined 累计隔离行数（幽灵
-	// 用户行 + 毒行终极隔离）；lagMs 游标积压时滞（毫秒，= 探测时刻 now − 最老
+	// 用户行）；lagMs 游标积压时滞（毫秒，= 探测时刻 now − 最老
 	// unbilled 行 created_at；0 = 游标空/未探测，ABI-4 lag 族真值）；
 	// lastLag 最近 lag 探测时刻（UnixMilli；节流基准，flushMu 内读写）；
 	// lagWarned lag 护栏告警边沿（回落复位防刷屏）。
