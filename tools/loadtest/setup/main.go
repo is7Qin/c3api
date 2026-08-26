@@ -46,6 +46,8 @@ var (
 	accounts    = flag.Int("accounts", 5000, "number of upstream accounts")
 	groups      = flag.Int("groups", 20, "number of public groups")
 	templates   = flag.Int("templates", 6, "number of templates (random 1-20 models from the pool, formats round-robin)")
+	reuseTpls   = flag.String("reuse-template-ids", "", "comma-separated existing template ids; skip creation (multi-run setups on one DB avoid deterministic tpl-name 409)")
+	runTag      = flag.String("run-tag", "", "unique suffix for group names + user emails (multi-run setups on one DB)")
 	keysPerUser = flag.Int("keys-per-user", 1, "keys per user (each key independent name + random group)")
 	keysOut     = flag.String("keys-out", "keys.txt", "output file with one key per line")
 	workers     = flag.Int("workers", 64, "parallelism for user/key creation (bcrypt heavy)")
@@ -172,24 +174,38 @@ func main() {
 		}
 	}
 	tplStart := time.Now()
-	tplIDs := make([]int64, 0, *templates)
-	for i := 0; i < *templates; i++ {
-		f := tplFormats[(i/2)%len(tplFormats)]
-		// 名字仅 6 个唯一（3 格式 ×2），-templates > 6 会撞唯一键 409；
-		// 从第 7 个起追加序号保证唯一（名字仅装饰，压测用 ID 引用）。
-		name := fmt.Sprintf("tpl-%s", f)
-		if i%2 == 1 {
-			name += "-b"
+	var tplIDs []int64
+	if *reuseTpls != "" {
+		// 复用既有模板：模板名按格式确定性生成，同库多次 setup 二次创建必撞 409
+		for _, s := range strings.Split(*reuseTpls, ",") {
+			id, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "-reuse-template-ids: bad id %q\n", s)
+				os.Exit(2)
+			}
+			tplIDs = append(tplIDs, id)
 		}
-		if i >= len(tplFormats)*2 {
-			name += fmt.Sprintf("-%d", i)
+		fmt.Printf("templates: reuse %v (%s)\n", tplIDs, time.Since(tplStart).Round(time.Millisecond))
+	} else {
+		tplIDs = make([]int64, 0, *templates)
+		for i := 0; i < *templates; i++ {
+			f := tplFormats[(i/2)%len(tplFormats)]
+			// 名字仅 6 个唯一（3 格式 ×2），-templates > 6 会撞唯一键 409；
+			// 从第 7 个起追加序号保证唯一（名字仅装饰，压测用 ID 引用）。
+			name := fmt.Sprintf("tpl-%s", f)
+			if i%2 == 1 {
+				name += "-b"
+			}
+			if i >= len(tplFormats)*2 {
+				name += fmt.Sprintf("-%d", i)
+			}
+			var out tpl
+			admin(http.MethodPost, "/api/admin/templates", map[string]any{
+				"name": name, "base_url": upURLs[i%len(upURLs)],
+				"supported_formats": []string{f}, "models": randomModels(rng),
+			}, &out)
+			tplIDs = append(tplIDs, out.ID)
 		}
-		var out tpl
-		admin(http.MethodPost, "/api/admin/templates", map[string]any{
-			"name": name, "base_url": upURLs[i%len(upURLs)],
-			"supported_formats": []string{f}, "models": randomModels(rng),
-		}, &out)
-		tplIDs = append(tplIDs, out.ID)
 	}
 	fmt.Printf("templates: %d %v (%s)\n", len(tplIDs), tplIDs, time.Since(tplStart).Round(time.Millisecond))
 
@@ -199,7 +215,7 @@ func main() {
 	for i := 0; i < *groups; i++ {
 		var out grp
 		admin(http.MethodPost, "/api/admin/groups", map[string]any{
-			"name": fmt.Sprintf("pool-%d", i), "visibility": "public",
+			"name": fmt.Sprintf("pool-%d%s", i, *runTag), "visibility": "public",
 		}, &out)
 		groupIDs = append(groupIDs, out.ID)
 	}
@@ -249,6 +265,10 @@ func main() {
 			defer wg.Done()
 			defer func() { <-sem }()
 			email := fmt.Sprintf(user, i)
+			if *runTag != "" {
+				// 多次 setup 同库：邮箱确定性生成 → 二次运行撞唯一键；tag 后缀隔离
+				email = strings.TrimSuffix(email, "@loadtest.test") + *runTag + "@loadtest.test"
+			}
 			userBody := map[string]any{"email": email, "password": pass}
 			if bal, ok := randUSD(rng, *userBalUsd); ok {
 				userBody["balance"] = bal
