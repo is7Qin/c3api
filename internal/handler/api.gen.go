@@ -924,7 +924,7 @@ type OverviewAlerts struct {
 	// BillingLagMs 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/未探测
 	BillingLagMs int64 `json:"billing_lag_ms"`
 
-	// BillingQuarantinedRows 累计隔离行数（用户缺失组 + 毒行终极隔离——未扣费写销）
+	// BillingQuarantinedRows 累计隔离行数（用户缺失组）
 	BillingQuarantinedRows int64 `json:"billing_quarantined_rows"`
 
 	// BillingUnbilledRows 当前未扣费账本行数（部分索引 WHERE NOT billed）
