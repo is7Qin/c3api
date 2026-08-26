@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -567,9 +568,26 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
 	}
-	wm.Go(ctx, "http-server", func(ctx context.Context) {
+	// 对端存活归传输层（第一性原理：内核知道对端没在 ACK，应用层不重复发明）：
+	// listener 级 KeepAliveConfig 被所有已接受连接继承——含 WS hijacked 连接
+	// （net/http Server 不覆盖该设置）。对端死亡 → 内核断言连接失效 → 读侧报错
+	// → 既有 abort 分类链收尾落账。空闲/活跃会话同覆盖，零应用层成本。
+	// 不检测"内核活但应用冻结"（CLI 客户端罕见，接受）。
+	lc := net.ListenConfig{
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable:   true,
+			Idle:     30 * time.Second,
+			Interval: 10 * time.Second,
+			Count:    3,
+		},
+	}
+	ln, err := lc.Listen(context.Background(), "tcp", cfg.Server.Addr)
+	if err != nil {
+		fatalf("server: listen %s: %v", cfg.Server.Addr, err)
+	}
+	wm.Go(ctx, "http-server", func(_ context.Context) {
 		log.Info("server listening", logx.String("addr", cfg.Server.Addr))
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fatalf("server: %v", err)
 		}
 	})
@@ -595,6 +613,7 @@ func main() {
 	if err := httpSrv.Close(); err != nil {
 		log.Warn("http server close failed", logx.Error(err))
 	}
+	px.CloseAllWS()
 	waitForInflight(px, shutdownCtx, log)
 	_ = wm.Shutdown(shutdownCtx)
 	// Redis 客户端最后释放（foundation spec §2.3：worker 排空完成后再关连接池——

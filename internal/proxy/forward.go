@@ -82,6 +82,7 @@ type Proxy struct {
 	// wsHeartbeatInterval resp-ws 心跳间隔 seam（T4：测试缩短 200ms 验证心跳节
 	// 奏；默认 responsesWSHeartbeatInterval——New 构造，生产路径不变）。
 	wsHeartbeatInterval time.Duration
+	wsConns             *wsRegistry
 	// failover 骨架的单例 attempt/sink（D3 管线骨架化）：无状态（per-request
 	// 差异经 attemptState 按值流入——热路径零新增分配，同 callers map 惯例），
 	// New 一次性构造。
@@ -101,6 +102,7 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
 		limit: newFixedWindowLimiter(cfg.GroupKeyRPM), log: log, bill: bill, errlog: errlog,
 		wsHeartbeatInterval: responsesWSHeartbeatInterval,
+		wsConns:             newWSRegistry(),
 	}
 	// 注册表：每格式一 caller，New 时一次性构造（per-request 零分配）。
 	// 新格式（Gemini/Grok/ollama 等）= 1 个 caller 文件 + 此处一行注册。
@@ -140,6 +142,16 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 func (p *Proxy) SetCodex(c *sdkbridge.Codex) { p.codex = c }
 
 func (p *Proxy) Inflight() int64 { return p.inflight.Load() }
+
+// CloseAllWS closes all hijacked WS client connections (F3). Uses CloseNow
+// for immediate TCP close — shutdown path, no handshake. Closed sessions
+// unwind through existing classify→finish→rec.Record and inflight drops
+// naturally. Idempotent.
+func (p *Proxy) CloseAllWS() {
+	if p.wsConns != nil {
+		p.wsConns.closeAll()
+	}
+}
 
 // SetInstancesProvider 注入集群实例数 N 提供者（#14 多实例预算分摊；discovery
 // 构造后调用——main 装配点：px.SetInstancesProvider(disco)，spec

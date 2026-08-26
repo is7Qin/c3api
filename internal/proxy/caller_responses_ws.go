@@ -96,6 +96,14 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // Accept 已写出 4xx（非升级请求已在上方拦截，此处罕见）
 	}
+	// 对端存活归传输层：keepalive 策略统一在入口 listener 声明
+	// （cmd/server/main.go ListenConfig），hijacked 连接继承之。对端死亡 →
+	// 内核断言连接失效 → client-loop Read 报错 → 既有 abort 分类链。
+	// relay 状态机保持纯字节搬运+分类，不做任何存活推断。
+	// hijacked 连接不受 http.Server Shutdown/Close 管——登记进注册表，
+	// 停机时 CloseNow 确定性收尾（会话走正常 classify→finish→Record 落账）。
+	p.registerWS(client)
+	defer p.unregisterWS(client)
 	// 兜底关闭：正常路径已显式 Close（关闭握手）；CloseNow 免握手等待
 	// （对侧已死/异常时 defer 不拖 5s 关闭握手超时）。
 	defer client.CloseNow()
