@@ -6,11 +6,14 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -30,7 +33,7 @@ func (f fakeUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 	if err != nil {
 		return domain.UserSnapshot{}, false
 	}
-	return domain.UserSnapshot{Status: u.Status, Role: u.Role}, true
+	return domain.UserSnapshot{Status: u.Status, Role: u.Role, TokenVersion: u.TokenVersion}, true
 }
 
 // newTestUserRouter /user 测试路由（真实 svc + fake store + 真实 Issuer）。
@@ -136,11 +139,82 @@ func TestUserLoginDisabled(t *testing.T) {
 	rec = do(http.MethodPost, "/api/user/auth/login", `{"email":"d@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "disabled login: %s", rec.Body.String())
 
-	// 禁用用户的既有 JWT → me 401（快照校验）
-	token, err := iss.Issue(u.ID, u.Email, string(u.Role))
+	// 禁用用户的既有 JWT → me 401（快照校验；ver 0 = 注册时默认版本）
+	token, err := iss.Issue(u.ID, u.Email, string(u.Role), u.TokenVersion)
 	require.NoError(t, err)
 	rec = do(http.MethodGet, "/api/user/auth/me", "", token)
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "disabled me: %s", rec.Body.String())
+}
+
+// resetCodeSHA 验证码 SHA256（service.hashCode 同算法——email_codes.CodeSHA256
+// 比对键；handler 测试面独立小助手避免跨包引私有符号）。
+func resetCodeSHA(plain string) string {
+	h := sha256.Sum256([]byte(plain))
+	return hex.EncodeToString(h[:])
+}
+
+// 改密即撤销·自助路径（spec 2026-08-25-jwt-password-revocation §5.4 流程级）：
+// ChangePassword 成功后携带旧 token 的请求 → 401；新密码 Login → 200 新票可用。
+func TestChangePasswordRevokesOldJWT(t *testing.T) {
+	do, _, _, _ := newTestUserRouter(t)
+
+	// 注册即登录 → token A（ver = 创建默认 0）
+	rec := do(http.MethodPost, "/api/user/auth/register", `{"email":"revoke@example.com","password":"s3cret-pass"}`, "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var reg userapi.UserAuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &reg))
+	tokenA := reg.Token
+
+	// 旧 token 当前有效
+	rec = do(http.MethodGet, "/api/user/auth/me", "", tokenA)
+	require.Equal(t, http.StatusOK, rec.Code, "改密前旧 token 有效: %s", rec.Body.String())
+
+	// 自助改密（凭旧密码 + 旧 token）
+	rec = do(http.MethodPost, "/api/user/auth/change-password",
+		`{"old_password":"s3cret-pass","new_password":"n3w-secret"}`, tokenA)
+	require.Equal(t, http.StatusOK, rec.Code, "change-password: %s", rec.Body.String())
+
+	// 旧 token 立即失效（token_version 已 bump，快照 ver=1 ≠ claims.Ver=0）
+	rec = do(http.MethodGet, "/api/user/auth/me", "", tokenA)
+	require.Equal(t, http.StatusUnauthorized, rec.Code, "改密后旧 token 必须 401")
+
+	// 新密码重新登录 → 新票可用
+	rec = do(http.MethodPost, "/api/user/auth/login", `{"email":"revoke@example.com","password":"n3w-secret"}`, "")
+	require.Equal(t, http.StatusOK, rec.Code, "新密码登录: %s", rec.Body.String())
+	var login userapi.UserAuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &login))
+	rec = do(http.MethodGet, "/api/user/auth/me", "", login.Token)
+	require.Equal(t, http.StatusOK, rec.Code, "新票可用")
+}
+
+// 改密即撤销·邮箱重置路径（spec §5.4）：ResetPassword 成功后旧 token → 401；
+// 新密码 Login → 200。
+func TestResetPasswordRevokesOldJWT(t *testing.T) {
+	do, store, _, _ := newTestUserRouter(t)
+
+	rec := do(http.MethodPost, "/api/user/auth/register", `{"email":"resetrev@example.com","password":"s3cret-pass"}`, "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var reg userapi.UserAuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &reg))
+	tokenA := reg.Token
+
+	// 直播重置验证码（验证码存储 fake 即实现，spec emailcode-redis-migration §2.2）
+	code := "654321"
+	_, err := store.UpsertEmailCode(t.Context(), "resetrev@example.com",
+		string(domain.EmailCodeReset), resetCodeSHA(code), time.Now().Add(10*time.Minute))
+	require.NoError(t, err)
+
+	rec = do(http.MethodPost, "/api/user/auth/reset-password",
+		`{"email":"resetrev@example.com","code":"`+code+`","new_password":"n3w-secret"}`, "")
+	require.Equal(t, http.StatusOK, rec.Code, "reset-password: %s", rec.Body.String())
+
+	// 旧 token 立即失效
+	rec = do(http.MethodGet, "/api/user/auth/me", "", tokenA)
+	require.Equal(t, http.StatusUnauthorized, rec.Code, "重置密码后旧 token 必须 401")
+
+	// 新密码重新登录 → 可用
+	rec = do(http.MethodPost, "/api/user/auth/login", `{"email":"resetrev@example.com","password":"n3w-secret"}`, "")
+	require.Equal(t, http.StatusOK, rec.Code, "重置后新密码登录: %s", rec.Body.String())
 }
 
 // --- 管理面 settings ---

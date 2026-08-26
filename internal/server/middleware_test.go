@@ -77,9 +77,9 @@ func TestAccessLogDebugFields(t *testing.T) {
 // 非空时旧行为不变（匹配 → 通过，不匹配 → 401）。
 func TestAdminAuthEmptyTokenContract(t *testing.T) {
 	iss := auth.NewIssuer("secret")
-	adminTok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin))
+	adminTok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)
 	require.NoError(t, err)
-	userTok, err := iss.Issue(2, "user@example.com", string(domain.RoleUser))
+	userTok, err := iss.Issue(2, "user@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
 	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 

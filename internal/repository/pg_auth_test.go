@@ -72,12 +72,21 @@ func TestPGUserCRUD(t *testing.T) {
 	require.Equal(t, 3, updated.MaxConcurrency)
 	require.Equal(t, int64(12345), updated.Balance)
 
-	// UpdateUserPassword（独立路径；不影响其他字段）
+	// UpdateUserPassword（独立路径；不影响其他字段；单语句原子递增
+	// token_version——改密即撤销该用户全部 JWT，spec 2026-08-25-jwt-password-
+	// revocation §3/§5.3）
 	require.NoError(t, repos.UpdateUserPassword(ctx, u.ID, "new-hash"))
 	got2, err := repos.GetUser(ctx, u.ID)
 	require.NoError(t, err)
 	require.Equal(t, "new-hash", got2.PasswordHash)
 	require.Equal(t, domain.RolePlatformAdmin, got2.Role, "改密不动其他字段")
+	require.Equal(t, int64(1), got2.TokenVersion, "改密原子递增撤销版本（创建默认 0 → 1）")
+	// 二次改密：证明是 +1 递增而非 SET 固定值（并发双改密版本不回退）
+	require.NoError(t, repos.UpdateUserPassword(ctx, u.ID, "newer-hash"))
+	got3, err := repos.GetUser(ctx, u.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), got3.TokenVersion, "二次改密继续 +1")
+	require.Equal(t, "newer-hash", got3.PasswordHash)
 
 	// ListUsers（email 过滤 + 分页 + sort 白名单）
 	seedPGUser(t, repos, "b@example.com")
@@ -87,13 +96,13 @@ func TestPGUserCRUD(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "b@example.com", rows[0].Email)
 
-	// LoadUsers 快照（status+role 单次查找：RequireJWT 状态校验 + adminAuth
-	// 快照 role 覆盖 claims 的数据源）
+	// LoadUsers 快照（status+role+token_version 单次查找：RequireJWT 状态校验
+	// + 撤销版本比对 + adminAuth 快照 role 覆盖 claims 的数据源）
 	states, err := repos.Users.LoadUsers(ctx)
 	require.NoError(t, err)
 	require.Contains(t, states, u.ID)
-	require.Equal(t, domain.UserSnapshot{Status: domain.UserStatusDisabled, Role: domain.RolePlatformAdmin},
-		states[u.ID], "用户禁用后快照反映（status+role 一并携带）")
+	require.Equal(t, domain.UserSnapshot{Status: domain.UserStatusDisabled, Role: domain.RolePlatformAdmin, TokenVersion: 2},
+		states[u.ID], "用户禁用后快照反映（status/role/token_version 一并携带）")
 }
 
 func TestPGKeyLifecycle(t *testing.T) {

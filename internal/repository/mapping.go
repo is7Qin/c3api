@@ -15,6 +15,7 @@ func toDomainUser(u *ent.User) *domain.User {
 	return &domain.User{
 		ID: u.ID, Email: u.Email, PasswordHash: u.PasswordHash,
 		Role: domain.Role(u.Role), Status: domain.UserStatus(u.Status),
+		TokenVersion: u.TokenVersion,
 		MaxConcurrency: u.MaxConcurrency, Balance: u.Balance,
 		CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
 	}

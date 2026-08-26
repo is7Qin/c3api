@@ -57,7 +57,8 @@ func (h *UserAPI) PostUserAuthForgotPassword(w http.ResponseWriter, r *http.Requ
 	httpface.WriteJSON(w, http.StatusOK, SentResponse{Sent: true})
 }
 
-// PostUserAuthResetPassword 重置密码（验证码校验→更新密码；不撤销 JWT）。
+// PostUserAuthResetPassword 重置密码（验证码校验→更新密码；改密即撤销——
+// 该用户全部既有 JWT 401，spec 2026-08-25-jwt-password-revocation）。
 func (h *UserAPI) PostUserAuthResetPassword(w http.ResponseWriter, r *http.Request) {
 	var in ResetPasswordRequest
 	if err := decode(r, &in); err != nil {
@@ -98,7 +99,8 @@ func (h *UserAPI) GetUserAuthMe(w http.ResponseWriter, r *http.Request) {
 
 // PostUserAuthChangePassword 修改密码：旧密码校验复用登录语义（失败 401 同
 // 登录文案防枚举）+ 新密码非空/≤72 字节（非法 400）→ bcrypt 重哈希落库。
-// **不撤销既有 JWT**（无状态 token 无撤销机制——新密码下次登录生效，
+// **改密即撤销既有 JWT**（token_version 原子递增 + 快照比对——本响应返回后
+// 当前会话同样失效，需重新登录，spec 2026-08-25-jwt-password-revocation，
 // ServerInterface）。
 func (h *UserAPI) PostUserAuthChangePassword(w http.ResponseWriter, r *http.Request) {
 	var in UserAuthChangePassword
@@ -114,7 +116,9 @@ func (h *UserAPI) PostUserAuthChangePassword(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *UserAPI) writeAuthResponse(w http.ResponseWriter, u *domain.User) {
-	token, err := h.iss.Issue(u.ID, u.Email, string(u.Role))
+	// ver = 用户当前 token_version（spec 2026-08-25-jwt-password-revocation）：
+	// 签发时快照版本号，改密/重置密码递增后旧票全部 401。
+	token, err := h.iss.Issue(u.ID, u.Email, string(u.Role), u.TokenVersion)
 	if err != nil {
 		httpface.WriteErr(w, http.StatusInternalServerError, "token issuance failed")
 		return

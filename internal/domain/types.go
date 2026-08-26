@@ -83,11 +83,13 @@ func (s UserStatus) Valid() bool {
 }
 
 // UserSnapshot 用户快照条目（Auth 内存表元素：RequireJWT/adminAuth 共用，
-// 单次查找同时取 status+role——降权即时生效的 role 数据源，adminAuth 不再
-// 单独信任 claims.Role）。
+// 单次查找同时取 status+role+token_version——降权即时生效的 role 数据源，
+// adminAuth 不再单独信任 claims.Role；token_version 为 JWT 撤销比对源，
+// spec 2026-08-25-jwt-password-revocation）。
 type UserSnapshot struct {
-	Status UserStatus
-	Role   Role
+	Status        UserStatus
+	Role          Role
+	TokenVersion int64 // 签发时 Claims.Ver 与此不等 → 401（改密撤销）
 }
 
 // KeyStatus 客户端 key 状态。
@@ -479,11 +481,14 @@ func (p ProtocolConvert) Valid() bool {
 // 价格倍率按组（T3.5 修正）：挂在 group_assignment 上（GroupAssignment.
 // PriceMultiplier），用户不同组可有不同倍率——User 无倍率字段。
 type User struct {
-	ID             int64
-	Email          string
-	PasswordHash   string
-	Role           Role
-	Status         UserStatus
+	ID           int64
+	Email        string
+	PasswordHash string
+	Role         Role
+	Status       UserStatus
+	// TokenVersion JWT 撤销版本（users.token_version；改密/重置密码原子递增，
+	// 登录时写入 Claims.Ver——spec 2026-08-25-jwt-password-revocation）。
+	TokenVersion   int64
 	MaxConcurrency int
 	Balance        int64
 	CreatedAt      time.Time

@@ -50,8 +50,11 @@ func RequireJWT(iss *Issuer, users UserStatusProvider) func(http.Handler) http.H
 			// 及 Balances.BalanceOf 缺失 → 402 纪律一致。行为变化注记：启动
 			// 首刷失败（DB 挂）时 /user 全拒——/user 端点 DB-backed 反正 500，
 			// 实际影响≈0。
+			// token_version 快照比对（spec 2026-08-25-jwt-password-revocation）：
+			// claims.Ver ≠ 快照版本 → 401（改密/重置密码后该用户全部既有 JWT
+			// 立即失效；与 status 同款 fail-closed 语义——快照缺失本就拒绝）。
 			sn, ok := users.UserSnapshot(claims.UserID)
-			if !ok || sn.Status != domain.UserStatusActive {
+			if !ok || sn.Status != domain.UserStatusActive || sn.TokenVersion != claims.Ver {
 				writeUnauthorized(w)
 				return
 			}

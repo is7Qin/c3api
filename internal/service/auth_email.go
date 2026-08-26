@@ -10,6 +10,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -170,7 +171,9 @@ func (s *Service) RegisterUserWithCode(ctx context.Context, email, password, cod
 	return s.RegisterUser(ctx, email, password)
 }
 
-// ResetPassword 验证码校验后更新密码。
+// ResetPassword 验证码校验后更新密码。**重置即撤销**（spec 2026-08-25-jwt-
+// password-revocation）：repo 单语句原子递增 token_version，成功后 inv+publish
+// 配对刷新全部实例快照 → 该用户既有 JWT 全部 401，需重新登录。
 func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword string) error {
 	if !validEmail(email) {
 		return ErrInvalidInput
@@ -192,5 +195,12 @@ func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword st
 	if err != nil {
 		return err
 	}
-	return s.store.UpdateUserPassword(ctx, u.ID, hash)
+	if err := s.store.UpdateUserPassword(ctx, u.ID, hash); err != nil {
+		return err
+	}
+	// 密码写成功 → token_version 已原子递增：本地去抖重载 + NOTIFY 跨实例刷
+	// 快照（inv+publish 配对惯例同 ChangePassword；spec §3 撤销触发双路径）。
+	s.inv.Users()
+	s.publish(ctx, notify.Change{Users: true})
+	return nil
 }
