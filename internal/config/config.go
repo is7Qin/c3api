@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	_ "time/tzdata" // 单二进制内嵌 IANA 库：Alpine 运行镜像不安装 tzdata。
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/knadh/koanf/parsers/toml/v2"
