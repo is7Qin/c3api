@@ -5,8 +5,8 @@
 package billing
 
 // 计费游标消费者单测（F2 ledger-cursor，spec 2026-08-23 §四）：fake LedgerStore
-// 覆盖正常消费链（billed 翻转 + 余额断言）、毒行二分隔离推进、cost=0 批量快速
-// 标记、lag 护栏、Close 排空清空、会话锁互斥。PG 全链路归 repository 直调测试。
+// 覆盖正常消费链（billed 翻转 + 余额断言）、结算失败闭合、cost=0 批量快速标记、
+// lag 护栏、Close 排空清空、会话锁互斥。PG 全链路归 repository 直调测试。
 
 import (
 	"context"
@@ -517,9 +517,8 @@ func TestFlusherOverdraftFlow(t *testing.T) {
 	require.Equal(t, int64(-300), bal, "负余额刷新进快照")
 }
 
-// TestFlusherPersistentFailureReplays 车道语句持续失败形态：Warn 归零本周期
-// （毒行梯子已在仓库侧收敛——隔离行以 Quarantined 计数随 summary 返回，见
-// repository PG 梯子族），行保持 unbilled 下周期重放，不误隔离不热旋。
+// TestFlusherPersistentFailureReplays 车道语句持续失败形态：Warn 归零本周期，
+// 行保持 unbilled 下周期重放，不误标记不热旋。
 func TestFlusherPersistentFailureReplays(t *testing.T) {
 	store := newFakeLedgerStore()
 	logger, out := newTestLogger(t)
@@ -534,7 +533,7 @@ func TestFlusherPersistentFailureReplays(t *testing.T) {
 	n := f.consumeCycle(context.Background(), false)
 	require.Zero(t, n, "语句失败 = 无进展")
 	require.False(t, store.isBilled(r1.ID) || store.isBilled(r2.ID), "行保持 unbilled 下周期重放")
-	require.Zero(t, f.quarantined.Load(), "编排层不隔离（隔离归仓库梯子）")
+	require.Zero(t, f.quarantined.Load(), "结算失败不计入幽灵用户计数")
 	require.Equal(t, int64(500), store.balanceOf(1), "零扣费（不丢不重——初值原样）")
 	require.NoError(t, logger.Sync())
 	b, err := os.ReadFile(out)
