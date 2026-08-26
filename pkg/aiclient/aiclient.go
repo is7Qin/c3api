@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
@@ -40,14 +40,20 @@ type Config struct {
 type Factory struct {
 	hc  *http.Client
 	cfg Config
-	mu  sync.Mutex
-	byT map[int64]*TemplateClients
-	// 流式原始请求的预解析完整 URL 懒缓存（GC 削减 P2：rawPost 每请求免
-	// url.Parse+JoinPath）。键含 baseURL（评审 C1）：绕过管理 API 的直接 DB
-	// 改 base_url 后，周期同步刷新 Selection.BaseURL 即命中新键收敛到新上游——
-	// 旧键残留由 InvalidateAll（管理 API 变更）整体清空，直接 DB 变更的旧键
-	// 至多每格式一条、体积可忽略。管理 API 变更链路（invalidate 成对失效）
-	// 不受影响。
+	// 客户端与 URL 缓存：单原子快照 copy-modify-Store（同 scheduler 惯例），
+	// 读路径零锁零共享计数——评审 F6：原全局互斥锁每请求一次，万级并发下
+	// 单字缓存行弹跳。写路径（懒构建/失效）CAS 重试。
+	cc atomic.Pointer[clientCache]
+}
+
+// clientCache 不可变快照。gen 为失效代号：构建者捕获 gen 后在锁外构建，CAS
+// 存回时 gen 已变（InvalidateAll 发生）即弃件重建——等价于旧互斥锁的全序
+// 语义。byT 的客户端把 base_url 烤进构造参数而键只有模板 ID，无 gen 校验会
+// 产生"失效后陈旧客户端复活"；urls 是键的纯函数本无此害，统一用 gen 省一套
+// 心智模型。
+type clientCache struct {
+	gen  int64
+	byT  map[int64]*TemplateClients
 	urls map[urlKey]*url.URL
 }
 
@@ -58,6 +64,13 @@ type urlKey struct {
 	path       string
 }
 
+// 流式原始请求的预解析完整 URL 懒缓存（GC 削减 P2：rawPost 每请求免
+// url.Parse+JoinPath）。键含 baseURL（评审 C1）：绕过管理 API 的直接 DB
+// 改 base_url 后，周期同步刷新 Selection.BaseURL 即命中新键收敛到新上游——
+// 旧键残留由 InvalidateAll（管理 API 变更）整体清空，直接 DB 变更的旧键
+// 至多每格式一条、体积可忽略。管理 API 变更链路（invalidate 成对失效）
+// 不受影响。
+
 type TemplateClients struct {
 	chat      *openai.Client
 	responses *openai.Client
@@ -65,15 +78,28 @@ type TemplateClients struct {
 }
 
 func NewFactory(hc *http.Client, cfg Config) *Factory {
-	return &Factory{hc: hc, cfg: cfg, byT: make(map[int64]*TemplateClients), urls: make(map[urlKey]*url.URL)}
+	f := &Factory{hc: hc, cfg: cfg}
+	f.cc.Store(&clientCache{
+		gen:  0,
+		byT:  make(map[int64]*TemplateClients),
+		urls: make(map[urlKey]*url.URL),
+	})
+	return f
 }
 
 // InvalidateAll 模板变更后丢弃所有客户端与 URL 缓存（base_url 变化生效）。
+// gen 自增使在途构建者 CAS 失败弃件重建，等价旧互斥锁全序语义。
 func (f *Factory) InvalidateAll() {
-	f.mu.Lock()
-	f.byT = make(map[int64]*TemplateClients)
-	f.urls = make(map[urlKey]*url.URL)
-	f.mu.Unlock()
+	for {
+		cur := f.cc.Load()
+		if f.cc.CompareAndSwap(cur, &clientCache{
+			gen:  cur.gen + 1,
+			byT:  make(map[int64]*TemplateClients),
+			urls: make(map[urlKey]*url.URL),
+		}) {
+			return
+		}
+	}
 }
 
 // --- openai chat/completions ---
@@ -148,21 +174,35 @@ func openaiBaseURL(base string) string {
 // fullURLOf 取模板的完整请求 URL（懒缓存：键 = 模板 ID + base_url 快照 + 格式
 // 路径，首访解析后复用——同一快照收敛后复用缓存，快照变化（DB 直改 base_url
 // 周期同步）即新键解析新地址，逐请求等价于旧实现的按快照解析）。失败
-// （base 非法）返回错误。
+// （base 非法）返回错误。读路径零锁：命中直返；未命中锁外解析 + CAS-COW 回
+// 写（urls 是键的纯函数，并发未命中重复解析最后写入者胜出，无害）。
 func (f *Factory) fullURLOf(templateID int64, baseURL, path string) (*url.URL, error) {
 	k := urlKey{templateID: templateID, baseURL: baseURL, path: path}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	u := f.urls[k]
-	if u == nil {
-		var err error
-		u, err = parseFullURL(baseURL, path)
+	for {
+		cur := f.cc.Load()
+		if u := cur.urls[k]; u != nil {
+			return u, nil
+		}
+		u, err := parseFullURL(baseURL, path)
 		if err != nil {
 			return nil, err
 		}
-		f.urls[k] = u
+		if f.cc.CompareAndSwap(cur, &clientCache{gen: cur.gen, byT: cur.byT, urls: cloneURLs(cur.urls, k, u)}) {
+			return u, nil
+		}
+		// 并发插入/失效：重试，命中检查会吃掉他人已缓存的同键
 	}
-	return u, nil
+}
+
+// cloneURLs 复制 URL 快照并写入新条目（缓存规模 = 模板×格式，量级数十至百，
+// 未命中仅在预热期发生，O(n) 拷贝可忽略）。
+func cloneURLs(m map[urlKey]*url.URL, k urlKey, u *url.URL) map[urlKey]*url.URL {
+	nm := make(map[urlKey]*url.URL, len(m)+1)
+	for kk, vv := range m {
+		nm[kk] = vv
+	}
+	nm[k] = u
+	return nm
 }
 
 func parseFullURL(base, path string) (*url.URL, error) {
@@ -229,12 +269,16 @@ func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path
 }
 
 // --- 客户端懒构建（每模板最多 3 个，共享 http.Client，规格 §6.1） ---
+// 三入口同构：快照命中直返（零锁零分配）；未命中锁外构建 + CAS-COW 回写，
+// gen 变化（并发 InvalidateAll）即弃件重试——构建无 I/O，重复构建无害。
 
 func (f *Factory) chat(tpl *domain.Template) *openai.Client {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	tc := f.ensure(tpl.ID)
-	if tc.chat == nil {
+	for {
+		cur := f.cc.Load()
+		tc := cur.byT[tpl.ID]
+		if tc != nil && tc.chat != nil {
+			return tc.chat
+		}
 		c := openai.NewClient(
 			openaioption.WithBaseURL(openaiBaseURL(tpl.BaseURL)),
 			openaioption.WithHTTPClient(f.hc),
@@ -242,46 +286,75 @@ func (f *Factory) chat(tpl *domain.Template) *openai.Client {
 			// SDK 在单次调用内静默重试会让 429 背压放大并阻塞热路径。
 			openaioption.WithMaxRetries(0),
 		)
-		tc.chat = &c
+		// 字段级合并：保留快照里同模板其余已建客户端，只补本字段——
+		// 并发构建 chat+responses 时后写者不得抹掉先写者。
+		merged := &TemplateClients{}
+		if tc != nil {
+			*merged = *tc
+		}
+		merged.chat = &c
+		nm := cloneByT(cur.byT, tpl.ID, merged)
+		if f.cc.CompareAndSwap(cur, &clientCache{gen: cur.gen, byT: nm, urls: cur.urls}) {
+			return &c
+		}
 	}
-	return tc.chat
 }
 
 func (f *Factory) responses(tpl *domain.Template) *openai.Client {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	tc := f.ensure(tpl.ID)
-	if tc.responses == nil {
+	for {
+		cur := f.cc.Load()
+		tc := cur.byT[tpl.ID]
+		if tc != nil && tc.responses != nil {
+			return tc.responses
+		}
 		c := openai.NewClient(
 			openaioption.WithBaseURL(openaiBaseURL(tpl.BaseURL)),
 			openaioption.WithHTTPClient(f.hc),
 			openaioption.WithMaxRetries(0),
 		)
-		tc.responses = &c
+		merged := &TemplateClients{}
+		if tc != nil {
+			*merged = *tc
+		}
+		merged.responses = &c
+		nm := cloneByT(cur.byT, tpl.ID, merged)
+		if f.cc.CompareAndSwap(cur, &clientCache{gen: cur.gen, byT: nm, urls: cur.urls}) {
+			return &c
+		}
 	}
-	return tc.responses
 }
 
 func (f *Factory) anthropic(tpl *domain.Template) *anthropic.Client {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	tc := f.ensure(tpl.ID)
-	if tc.anthropic == nil {
+	for {
+		cur := f.cc.Load()
+		tc := cur.byT[tpl.ID]
+		if tc != nil && tc.anthropic != nil {
+			return tc.anthropic
+		}
 		c := anthropic.NewClient(
 			anthropicoption.WithBaseURL(tpl.BaseURL),
 			anthropicoption.WithHTTPClient(f.hc),
 			anthropicoption.WithMaxRetries(0),
 		)
-		tc.anthropic = &c
+		merged := &TemplateClients{}
+		if tc != nil {
+			*merged = *tc
+		}
+		merged.anthropic = &c
+		nm := cloneByT(cur.byT, tpl.ID, merged)
+		if f.cc.CompareAndSwap(cur, &clientCache{gen: cur.gen, byT: nm, urls: cur.urls}) {
+			return &c
+		}
 	}
-	return tc.anthropic
 }
 
-func (f *Factory) ensure(id int64) *TemplateClients {
-	tc, ok := f.byT[id]
-	if !ok {
-		tc = &TemplateClients{}
-		f.byT[id] = tc
+// cloneByT 复制客户端快照并写入 id 条目（调用方负责字段级合并——三字段独立
+// 懒构建，后写者必须保留先写者的字段）。
+func cloneByT(m map[int64]*TemplateClients, id int64, add *TemplateClients) map[int64]*TemplateClients {
+	nm := make(map[int64]*TemplateClients, len(m)+1)
+	for kk, vv := range m {
+		nm[kk] = vv
 	}
-	return tc
+	nm[id] = add
+	return nm
 }
