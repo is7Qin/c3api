@@ -5,7 +5,7 @@
 package repository
 
 // billing_settle_sql.go 结算语句事实源（F2-opt v2 三车道拓扑，spec-f2opt-settlement
-// §〇-b/§一/D7；wave3 D-C 桶级并行）：两车道自包含 CTE + 毒行梯子队头探针。
+// §〇-b/§一/D7；wave3 D-C 桶级并行 + F7 失败闭合）：两车道自包含 CTE（SQL 不变）。
 // 编排/事务/守卫逻辑见 billing_settle.go；本文件只承载 SQL 文本（纯数据表）。
 //
 // 桶谓词（wave3 D-C）：batch/temp_pool/spill 各 CTE 追加
@@ -137,25 +137,3 @@ SELECT uid, balance_after, 0, 0, 0, 0, 0 FROM debited
 UNION ALL
 SELECT uid, balance_after, 0, 0, 0, 0, 0 FROM forced
 ORDER BY 1`
-
-// probeBalanceHeadSQL / probeFefoHeadSQL 毒行梯子只读探针（对应车道 batch 谓词
-// 同构含桶谓词——args = [K, bucket]；wave3 D-C Momus 必改：探针缺桶谓词会误中
-// 他桶队头健康行 = 错写销），ORDER BY id LIMIT 1：K 次连续失败后定位该车道该桶
-// 队头行供 MarkBilledBulk 写销隔离——确定性毒行纯 LIMIT 重试永不收敛（oracle
-// 必改 #2），隔离必须命中失败车道自己的队头而非全局首行（否则误写销无辜行且
-// 毒行仍在）。
-const probeBalanceHeadSQL = `SELECT id FROM usage_logs
-WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
-	AND COALESCE(user_id, 0) % $1 = $2
-	AND COALESCE(user_id, 0) NOT IN (
-		SELECT user_id FROM temp_balances
-		WHERE amount > 0 AND (expires_at IS NULL OR expires_at > now()))
-ORDER BY id LIMIT 1`
-
-const probeFefoHeadSQL = `SELECT id FROM usage_logs
-WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
-	AND COALESCE(user_id, 0) % $1 = $2
-	AND COALESCE(user_id, 0) IN (
-		SELECT user_id FROM temp_balances
-		WHERE amount > 0 AND (expires_at IS NULL OR expires_at > now()))
-ORDER BY id LIMIT 1`
