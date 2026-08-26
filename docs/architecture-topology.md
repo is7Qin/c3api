@@ -93,7 +93,7 @@ flowchart LR
 | `pkg/aiclient` | openai/anthropic SDK 客户端懒构建工厂（**非唯一引用点**——proxy 各 caller 直接 import SDK 类型，第三 SDK codex-sdk 经 sdkbridge） | proxy |
 | `pkg/httpx` | 共享上游 http.Transport（连接池参数；Proxy 默认 nil 直连） | main → aiclient/sdkbridge/pricing |
 | `pkg/sserelay` | 字节级 SSE relay（帧原样透传 + Observer 旁路 + Mapper 挂载） | proxy 流式路径 |
-| `pkg/cryptox` / `pkg/logx` | key 哈希 / 结构化日志 | 各处 |
+| `pkg/cryptox` / `pkg/logx` | 客户端 key 生成（ck- 前缀随机 hex，明文落库，见 key_raw 设计） / 结构化日志 | 各处 |
 
 装配链（`cmd/server/main.go:42-556`）：config → logx → PG 池（`OpenPG` + `stdlib.OpenDBFromPool` 桥接，`main.go:83,89`）→ 三分区 bootstrap（`main.go:102-108`）→ function_price 种子（`main.go:110-115`）→ notify Publisher（`main.go:131`）→ ruleEngine/sched/rec/statsAgg/errlogW/retention（`main.go:134-167`）→ proxy.Auth（`main.go:173`）→ invalidate Debouncer（`main.go:230`）→ service（`main.go:241`）→ **snapReg 五路注册**（`main.go:248-263`）→ dispatcher（`main.go:266-271`）→ notify listener（`main.go:282`）→ authSync（`main.go:291`）→ billing Flusher + BillingHooks（`main.go:293`）→ proxy.New（`main.go:309`）→ **codexAdapter**（`main.go:322-351`：独立 transport + SetCodex）→ `SetInstancesProvider(svc)`（`main.go:355`）→ pricing SyncWorker（`main.go:363`）→ opsWorkers 观测聚合（`main.go:384-398`）→ handler/server.New（`main.go:420`）→ **snapReg.ReloadAll 统一首刷**（`main.go:443-456`，全成功置位 bootLoaded）→ worker.Manager 注册 + StartAll（`main.go:460-471`）→ HTTP 监听（`main.go:484`）→ 优雅停机链（`main.go:500-521`）。`-pprof` flag 监听失败 Warn 不 fatal（`main.go:51,69-75`）。
 

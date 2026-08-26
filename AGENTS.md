@@ -5,7 +5,7 @@
 
 ## OVERVIEW
 
-自托管 AI 网关：单 Go 二进制（内嵌 React 控制台）统一暴露六种请求格式——OpenAI Responses（REST+WS）、Anthropic Messages、Chat Completions、Images、Codex search、模型列表。无状态网关 + PostgreSQL 18 唯一依赖；跨实例失效走 NOTIFY `c3api_invalidate`。Beta 状态：schema/config 无迁移路径，升级=全新部署。
+自托管 AI 网关：单 Go 二进制（内嵌 React 控制台）统一暴露六种请求格式——OpenAI Responses（REST+WS）、Anthropic Messages、Chat Completions、Images、Codex search、模型列表。无状态网关 + 双必需依赖：PostgreSQL 18（全部持久状态）+ Redis 8（实例发现心跳 + 短时验证码，非缓存层）；跨实例失效走 NOTIFY `c3api_invalidate`。Beta 状态：schema/config 无迁移路径，升级=全新部署。
 
 ## STRUCTURE
 
@@ -14,7 +14,7 @@ cmd/server/       # 组合根：main.go 全部装配顺序；dispatcher(NOTIFY�
 internal/
   proxy/          # 热路径：guardPipeline→failoverLoop→caller_*；不变量：零 DB、零每请求锁
   handler/        # /api/admin(oapi-codegen 生成路由) + /api/user(JWT) + httpface(错误写出收敛)
-  service/        # 业务逻辑；errors 叶子包=5 哨兵错误；publish/reload 用 WithoutCancel
+  service/        # 业务逻辑；errors 叶子包=8 哨兵错误；publish/reload 用 WithoutCancel
   repository/     # pgx+ent 数据访问；日分区引导(usage_logs/err_logs/usage_stats)
   ent/            # GENERATED——禁止手改
   scheduler/      # 选号快照；copy-modify-Store 不可变视图

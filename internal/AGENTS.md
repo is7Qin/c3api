@@ -10,7 +10,7 @@
 | `repository/` | 70 | Repository 门面实现 service.Store；`WithTx`(txDriver) 让 ent 构建器与裸 SQL 同事务；OpenPG 自动补 `lock_timeout=5s`、MaxConnLifetime=30m |
 | `proxy/` | 69 | /v1/* 网关热路径（见根 CODE MAP） |
 | `handler/` | 68 | 根包=管理面(/api/admin, oapi-codegen)；`user/`=用户面(/api/user)；`httpface/`=错误写出叶子包。**没有 v1 子包——/v1 在 proxy** |
-| `service/` | 51 | 一资源一文件；`errors/` 叶子包 5 哨兵 |
+| `service/` | 51 | 一资源一文件；`errors/` 叶子包 8 哨兵 |
 | billing(14) scheduler(13) domain(12) rule(12) usage(10) protoconv(8) sdkbridge(8) pricing(8) notify(7) server(4) auth(4) invalidate(4) credential(2) config(2) snapshot(2) worker(2) | | 领域件 |
 
 ## 分层与请求流
