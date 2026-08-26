@@ -115,7 +115,7 @@ func cursorUnbilledCount(t *testing.T, repos *repository.Repository) int {
 
 // drainBillingCursor 三车道消费循环至游标清空（镜像 billing.flusher §〇-b 主路径：
 // Balance 车道 → Temp 车道 → 零价 sweep，直至单轮零进展）。返回退出游标的行数
-// 与其中 quarantined（幽灵/毒行隔离零扣费标记）行数。轮数上限 = 看门狗（有界
+// 与其中 quarantined（幽灵零扣费标记）行数。轮数上限 = 看门狗（有界
 // 收敛，替代 sleep——病态不推进时快速失败而非拖垮套件）。
 func drainBillingCursor(t *testing.T, repos *repository.Repository) (drained, quarantined int64) {
 	t.Helper()
@@ -880,11 +880,11 @@ func waitBlockedOnSettle(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
-// —— 族 13：毒行梯子三态（spec §三；梯子随迁仓库侧 settleBatch） ——
+// —— 族 13：结算失败闭合三态（spec §三；失败语义归仓库侧 settleBatch） ——
 
-// TestPGSettleLadderThreeStates 梯子三态：瞬态恢复（锁争用自愈，无隔离）/
-// K 失败隔离越行（确定性毒行）/ 空游标退出。
-func TestPGSettleLadderThreeStates(t *testing.T) {
+// TestPGSettlementFailureStates 三态：瞬态恢复（锁争用自愈）/
+// 确定性错误失败闭合 / 空游标退出。
+func TestPGSettlementFailureStates(t *testing.T) {
 	t.Run("transient recovery: lock contention self-heals", func(t *testing.T) {
 		repos := newPGRepos(t)
 		ensureCursorPartitions(t, repos)
@@ -922,49 +922,33 @@ func TestPGSettleLadderThreeStates(t *testing.T) {
 		require.Zero(t, cursorUnbilledCount(t, repos))
 	})
 
-	t.Run("K-failure isolation then advance", func(t *testing.T) {
+	t.Run("K-failure fail-closed, no write-off", func(t *testing.T) {
 		repos := newPGRepos(t)
 		ensureCursorPartitions(t, repos)
 		ctx := context.Background()
 		u := seedPGUser(t, repos, "ladder-k@example.com")
 		// 确定性毒行配方：余额贴近 int64 下界——forced 补刀 balance−delta 数值
-		// 下溢 → bigint 赋值 22003 报错，语句每次尝试恒败；MarkBilledBulk 只触
-		// usage_logs 不受毒影响 → 梯子耗尽后探针定位队头写销越行。
+		// 下溢 → bigint 赋值 22003 报错。确定性错误失败闭合，行保持
+		// unbilled 可重放。
 		require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, math.MinInt64+1))
 		seedCursorRows(t, repos, u.ID, 2, 1000)
 		all := fetchAllUnbilled(t, repos)
 		require.Len(t, all, 2)
-		head, follower := all[0].ID, all[1].ID // 批序 = id 升序
+		head, follower := all[0].ID, all[1].ID
 
-		res1, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
-		require.NoError(t, err, "梯子内部隔离成功——调用方零错误")
-		require.Equal(t, int64(1), res1.Marked, "队头行写销越行")
-		require.Equal(t, int64(1), res1.Quarantined, "隔离行计 quarantined")
-		isolated := usageLogByID(t, repos, head)
-		require.True(t, isolated.Billed, "毒队头被终极隔离标记（退出游标）")
-		require.False(t, isolated.Overdraft, "隔离路径 od 出生 false 保持")
-		remaining := fetchAllUnbilled(t, repos)
-		require.Len(t, remaining, 1, "仅毒队头被隔离，次行保持 unbilled")
-		require.Equal(t, follower, remaining[0].ID)
+		_, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
+		require.Error(t, err, "deterministic 22xxx must fail closed, no write-off")
+		require.False(t, usageLogByID(t, repos, head).Billed, "no row marked without deduction")
 		require.False(t, usageLogByID(t, repos, follower).Billed)
-		require.Equal(t, int64(math.MinInt64+1), cursorBalance(t, repos, u.ID),
-			"毒行从未被扣费（写销该行计费）")
+		require.Equal(t, 2, cursorUnbilledCount(t, repos), "failed batch remains replayable")
+		require.Equal(t, int64(math.MinInt64+1), cursorBalance(t, repos, u.ID))
 
-		// 越行推进：第二行成为新队头 → 同样隔离
-		res2, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), res2.Marked)
-		require.Equal(t, int64(1), res2.Quarantined)
-		require.True(t, usageLogByID(t, repos, follower).Billed)
-		require.Zero(t, cursorUnbilledCount(t, repos), "游标永不卡死")
-
-		// 第三调用：空游标零进展退出（nil 错误零计数）
-		res3, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
-		require.NoError(t, err)
-		require.Zero(t, res3.Marked)
-		_, lagOK, err := repos.UnbilledLag(ctx)
-		require.NoError(t, err)
-		require.False(t, lagOK)
+		// 第二次仍失败闭合（不自动推进），行仍可重放
+		_, err = repos.SettleBalanceBatch(ctx, 10, 1, 0)
+		require.Error(t, err)
+		require.False(t, usageLogByID(t, repos, head).Billed)
+		require.False(t, usageLogByID(t, repos, follower).Billed)
+		require.Equal(t, 2, cursorUnbilledCount(t, repos))
 	})
 
 	t.Run("empty-cursor exit", func(t *testing.T) {

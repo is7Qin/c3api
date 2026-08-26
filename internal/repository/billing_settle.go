@@ -18,7 +18,7 @@ package repository
 // 车道间会话锁内顺序执行（跨道并行即成环），车道内 K 桶并行（wave3 D-C——桶间
 // uid 不相交，行锁集不相交，无死锁构造性保证）。事务纪律：BEGIN → SET LOCAL
 // sync_commit=off → 执行 → marked==batch 计数比对（不齐 = 并发标记，整事务回滚）
-// → COMMIT，外层毒行梯子重试 ≤settleMaxAttempts 次、耗尽隔离队头越行。usage_logs
+// → COMMIT。结算失败保持 unbilled，由下周期重放；usage_logs
 // 明细唯一写者仍是 usage flusher（InsertBatch）；本文件只做消费。游标取批/纯标记/
 // lag/会话锁面见 billing_cursor.go，SQL 事实源见 billing_settle_sql.go。
 
@@ -27,12 +27,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -56,110 +54,58 @@ var errConcurrentMark = errors.New("billing: concurrent mark detected")
 // SettleBalanceBatch Balance 车道结算一个窗口（≤limit 行，余额-only 用户）：
 // 单语句单事务原子完成 取批→条件扣→透支补刀→标记。桶谓词 COALESCE(user_id,0)
 // % k = bucket（wave3 D-C 桶级并行——K 由调用方编排层给定，本包保持 policy-free；
-// k=1,bucket=0 = 全量单桶回归路径）。limit<=0 → 零结果 no-op。毒行梯子随迁
-// （oracle 必改 #2）：失败重试 ≤settleMaxAttempts 次，耗尽后隔离该车道该桶队头
-// 行（MarkBilledBulk 写销 + Quarantined 计数返回）——确定性毒行纯 LIMIT 重试
-// 永不收敛，游标越过继承「游标永不卡死」不变量。整个调用受 settleTimeout
-// per-query 超时约束（ctx 截止 → 回滚重放，不隔离）。
+// k=1,bucket=0 = 全量单桶回归路径）。limit<=0 → 零结果 no-op。F7 失败闭合：
+// 确定性 22xxx/23xxx 单次尝试后直接返回错误不写销；errConcurrentMark 至多重放
+// 一次，二次仍败则返回错误；瞬态/取消立即返回错误。行保持 unbilled 下周期重放。
 func (r *BillingRepo) SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
 	return r.settleBatch(ctx, limit, k, bucket, settleBalancePlan)
 }
 
 // SettleFefoBatch Temp 车道结算一个窗口（≤limit 行，temp-active 用户）：集合化
-// FEFO 消耗 + 差额透支补刀 + 标记一体（D7）。事务纪律与毒行梯子同
-// SettleBalanceBatch。
+// FEFO 消耗 + 差额透支补刀 + 标记一体（D7）。事务纪律与 SettleBalanceBatch 同
+// F7 失败闭合语义。
 func (r *BillingRepo) SettleFefoBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
 	return r.settleBatch(ctx, limit, k, bucket, settleFefoPlan)
 }
 
-// settlePlan 单车道结算执行计划：语句本体 + 毒行梯子队头探针（batch 谓词同构）
-// + 归因名（错误包装可读性；两车道共用同一梯子编排防漂移）。
+// settlePlan 单车道结算执行计划：语句本体 + 归因名（错误包装可读性）。
 type settlePlan struct {
-	sqlText  string
-	probeSQL string
-	name     string
+	sqlText string
+	name    string
 }
 
-var settleBalancePlan = settlePlan{sqlText: settleBalanceSQL, probeSQL: probeBalanceHeadSQL, name: "balance"}
-var settleFefoPlan = settlePlan{sqlText: settleFefoSQL, probeSQL: probeFefoHeadSQL, name: "fefo"}
+var settleBalancePlan = settlePlan{sqlText: settleBalanceSQL, name: "balance"}
+var settleFefoPlan = settlePlan{sqlText: settleFefoSQL, name: "fefo"}
 
-// settleMaxAttempts 毒行梯子重试上限（oracle 必改 #2）：确定性语句错误（数据/
-// 约束类）在预算内重试仍恒败 = 车道毒行 → 隔离队头越行；并发标记竞态走回滚
-// 重放；瞬态类错误（锁等待/序列化/取消）不进梯子——立即返回下周期重放。
-const settleMaxAttempts = 3
-
-// settleBatch 车道入口（两车道共用单一实现防漂移）：错误分诊三路——① 并发标记
-// 守卫（errConcurrentMark）→ 整事务已回滚零移动，预算内重放 ≤K 次（被抢标行已
-// 退出游标，重放批自然收缩恰扣一次）；② 确定性语句错误（数据异常 22xxx/完整性
-// 约束 23xxx）→ 重试 ≤K 次耗尽后隔离该车道该桶队头行——ProbeLaneHead 只读定位
-// → MarkBilledBulk 写销 → 返回隔离标记（Marked=1/Quarantined=1）；③ 其余瞬态类
-// （锁等待 55P03/死锁/序列化/取消/非 PG 错误）→ 立即上抛不隔离（wave-1「不锤击
-// 不误隔离」不变量——管理员长事务持锁绝不触发写销），行保持 unbilled 下周期
-// 重放。停机/预算到期（ctx.Err()）同样不隔离。
+// settleBatch 车道入口（F7 失败闭合）：① 成功 → 原子扣减+标记不变；②
+// errConcurrentMark → 至多一次重放，重放成功则收敛，二次仍败返回错误不写销；
+// ③ 确定性语句错误（22xxx/23xxx）→ 单次尝试后直接返回错误不写销；④ 瞬态类
+// （锁等待 55P03/死锁/序列化/取消/非 PG 错误）→ 立即返回错误不写销。所有失败
+// 行保持 unbilled 下周期重放（可重放），MarkBilledBulk 仅保留零价行路径。
 func (r *BillingRepo) settleBatch(ctx context.Context, limit, k, bucket int, plan settlePlan) (domain.SettlementSummary, error) {
 	if limit <= 0 {
 		return domain.SettlementSummary{}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, settleTimeout)
 	defer cancel()
-	var lastErr error
-	for attempt := 0; attempt < settleMaxAttempts; attempt++ {
-		res, err := r.settleOnce(ctx, limit, k, bucket, plan.sqlText)
-		if err == nil {
-			return res, nil
+	res, err := r.settleOnce(ctx, limit, k, bucket, plan.sqlText)
+	if err == nil {
+		return res, nil
+	}
+	if ctx.Err() != nil {
+		return domain.SettlementSummary{}, err
+	}
+	if errors.Is(err, errConcurrentMark) {
+		res2, err2 := r.settleOnce(ctx, limit, k, bucket, plan.sqlText)
+		if err2 == nil {
+			return res2, nil
 		}
 		if ctx.Err() != nil {
-			return domain.SettlementSummary{}, err // 停机/超时：不隔离，下周期重放
+			return domain.SettlementSummary{}, err2
 		}
-		if !errors.Is(err, errConcurrentMark) && !isDeterministicStmtErr(err) {
-			// 瞬态类：不锤击不误隔离——本周期放弃，行保持 unbilled 下周期重放。
-			return domain.SettlementSummary{}, fmt.Errorf("billing settle %s lane: %w", plan.name, err)
-		}
-		lastErr = err
+		return domain.SettlementSummary{}, fmt.Errorf("billing settle %s lane: %w", plan.name, err2)
 	}
-	head, ok, err := r.ProbeLaneHead(ctx, plan.probeSQL, k, bucket)
-	if err != nil {
-		return domain.SettlementSummary{}, fmt.Errorf("billing settle %s lane: head probe: %w", plan.name, err)
-	}
-	if !ok {
-		return domain.SettlementSummary{}, fmt.Errorf("billing settle %s lane: poison ladder exhausted after %d attempts, lane empty: %w",
-			plan.name, settleMaxAttempts, lastErr)
-	}
-	if err := r.MarkBilledBulk(ctx, []int64{head}); err != nil {
-		return domain.SettlementSummary{}, fmt.Errorf("billing settle %s lane: poison isolation failed: %w", plan.name, err)
-	}
-	// 隔离写销：该行未扣费但退出游标（Quarantined 另计——对齐 wave-1 终极隔离语义）。
-	return domain.SettlementSummary{Marked: 1, Quarantined: 1}, nil
-}
-
-// isDeterministicStmtErr 确定性语句错误判别（毒行梯子隔离门槛）：仅数据异常
-// （22xxx）/完整性约束（23xxx）类视为车道毒行——同语句重试恒败才值得写销越行；
-// 锁等待（55P03）/死锁（40P01）/序列化失败（40001）/取消（57014）等瞬态类以及
-// 非 PG 服务端错误一律按瞬态处理（不隔离）。
-func isDeterministicStmtErr(err error) bool {
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
-		return false
-	}
-	return strings.HasPrefix(pgErr.Code, "22") || strings.HasPrefix(pgErr.Code, "23")
-}
-
-// ProbeLaneHead 毒行梯子只读探针（probeSQL = 对应车道 batch 谓词同构查询，含
-// 桶谓词——args = [k, bucket]，wave3 D-C）：返回该车道该桶批队头行 id；空批 →
-// ok=false。非事务读（无锁无副作用），仅供隔离决策。
-func (r *BillingRepo) ProbeLaneHead(ctx context.Context, probeSQL string, k, bucket int) (id int64, ok bool, err error) {
-	rows, err := r.queryRows(ctx, probeSQL, []any{k, bucket})
-	if err != nil {
-		return 0, false, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return 0, false, rows.Err()
-	}
-	if err := rows.Scan(&id); err != nil {
-		return 0, false, err
-	}
-	return id, true, nil
+	return domain.SettlementSummary{}, fmt.Errorf("billing settle %s lane: %w", plan.name, err)
 }
 
 // settleOnce 单次尝试：按载体选事务路径（pool → pgx 直连；nil → ent txDriver
