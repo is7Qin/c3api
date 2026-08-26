@@ -678,7 +678,7 @@ func (r *Repository) FetchUnbilledBatch(ctx context.Context, limit int) ([]domai
 	return r.Billing.FetchUnbilledBatch(ctx, limit)
 }
 
-// MarkBilledBulk 纯标记 billed（cost=0 快速路径 + 终极毒行隔离；幂等）。
+// MarkBilledBulk 纯标记 billed（仅 cost=0 快速路径；幂等）。
 func (r *Repository) MarkBilledBulk(ctx context.Context, ids []int64) error {
 	return r.Billing.MarkBilledBulk(ctx, ids)
 }
