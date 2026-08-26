@@ -1,5 +1,4 @@
-server = { addr = ":8080", read_header_timeout = "10s", max_header_bytes = 1048576 }
-# time_zone = "Asia/Shanghai"  # 定价时段/星期判定基准时区（IANA 名；缺省=进程本地）
+server = { addr = ":8080", read_header_timeout = "10s", max_header_bytes = 1048576, time_zone = "" } # IANA 名（如 Asia/Shanghai）；空=进程本地
 log = { level = "warn", output = "stdout" }
 # 敏感项（auth.jwt_secret / db.dsn）必填，强制经 env 注入：
 #   export C3API_AUTH_JWT_SECRET=xxx / C3API_DB_DSN=xxx

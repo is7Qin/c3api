@@ -1,7 +1,7 @@
 # 生产配置模板（compose 挂载，只读）。敏感项由环境变量
 # C3API_ADMIN_TOKEN / C3API_DB_DSN / C3API_AUTH_JWT_SECRET 注入覆盖（见 compose.yml），
 # 此处留空即可。配置仅启动时读取，变更需滚动重启（无热更新）。
-server = { addr = ":18080", read_header_timeout = "10s", max_header_bytes = 1048576 }
+server = { addr = ":18080", read_header_timeout = "10s", max_header_bytes = 1048576, time_zone = "" } # IANA 名（如 Asia/Shanghai）；空=进程本地
 log = { level = "info", output = "stdout" }
 # admin.token 可选——空 = 不启用静态 token，/admin 仅接受 platform_admin JWT
 # （首个注册用户自动成为 platform_admin，注册后即可登录管理面）

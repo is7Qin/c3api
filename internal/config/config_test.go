@@ -68,6 +68,11 @@ func TestLoadFromTOML(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "test-admin-token", c.Admin.Token)
 	require.Equal(t, 500*time.Millisecond, c.Usage.FlushInterval)
+	require.Empty(t, c.Server.TimeZone, "example 的 time_zone 必须位于 server 内联表")
+
+	deploy, err := Load("../../deploy/config.toml")
+	require.NoError(t, err)
+	require.Empty(t, deploy.Server.TimeZone, "deploy 模板的 time_zone 必须位于 server 内联表")
 }
 
 // S-E（2026-08-17）：proxy.behind_cdn 可选键——缺省 = false（零伪造面默认；
@@ -283,6 +288,11 @@ func TestServerTimeZoneValidIANA(t *testing.T) {
 	c, err := Load(writeConfig(t, `server = { time_zone = "Asia/Shanghai" }`))
 	require.NoError(t, err)
 	require.Equal(t, "Asia/Shanghai", c.Server.TimeZone)
+
+	t.Setenv("C3API_SERVER_TIME_ZONE", "Asia/Taipei")
+	c, err = Load("")
+	require.NoError(t, err)
+	require.Equal(t, "Asia/Taipei", c.Server.TimeZone, "env 首下划线映射必须得到 server.time_zone")
 }
 
 // TestLoadRedisConfig [redis] 段（spec 2026-08-25-redis-foundation-design §2.1）：
