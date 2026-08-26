@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -96,7 +97,7 @@ func (w *RetentionWorker) Start(ctx context.Context) error {
 	if !w.started.CompareAndSwap(false, true) {
 		return fmt.Errorf("retention: already started")
 	}
-	go w.loop(ctx)
+	worker.GoLoop(ctx, "retention", w.log, w.loop)
 	return nil
 }
 

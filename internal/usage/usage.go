@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -137,8 +138,8 @@ func (r *Recorder) Start(ctx context.Context) error {
 		defer close(r.loopDone)
 		var wg sync.WaitGroup
 		wg.Add(2)
-		go func() { defer wg.Done(); r.logWriterLoop(ctx) }()
-		go func() { defer wg.Done(); r.quotaFlushLoop(ctx) }()
+		go func() { defer wg.Done(); worker.Loop(ctx, "usage-log", r.log, r.logWriterLoop) }()
+		go func() { defer wg.Done(); worker.Loop(ctx, "usage-quota", r.log, r.quotaFlushLoop) }()
 		wg.Wait()
 	}()
 	return nil

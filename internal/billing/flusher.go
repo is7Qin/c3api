@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -174,7 +175,7 @@ func (f *Flusher) Start(ctx context.Context) error {
 	}
 	go func() {
 		defer close(f.loopDone)
-		f.loop(ctx)
+		worker.Loop(ctx, "billing", f.log, f.loop)
 	}()
 	return nil
 }

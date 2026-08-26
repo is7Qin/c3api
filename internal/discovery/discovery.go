@@ -39,6 +39,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -73,8 +74,8 @@ const (
 // json 小写键对齐 ops/workers 契约惯例（openapi.yaml WorkerStatus.stats 清单，
 // 与其它 worker 同款 snake_case）；Go 字段名不变。
 type Stats struct {
-	Instances         int   `json:"instances"`         // 当前生效 N（含故障冻结值；≥1）
-	LastTickOk        bool  `json:"last_tick_ok"`      // 最近 tick 是否成功（false = 冻结中）
+	Instances         int   `json:"instances"`          // 当前生效 N（含故障冻结值；≥1）
+	LastTickOk        bool  `json:"last_tick_ok"`       // 最近 tick 是否成功（false = 冻结中）
 	ConsecutiveErrors int64 `json:"consecutive_errors"` // 连续失败次数（恢复归零）
 }
 
@@ -86,8 +87,8 @@ type Discovery struct {
 	self   string // 实例 ID（main 的 instanceSrc 产物，与 NOTIFY Src 同源）
 	log    *logx.Logger
 
-	n       atomic.Int32 // 活体计数（0 = 尚无有效观测，读侧 clamp 1）
-	errs    atomic.Int64 // 连续 tick 失败数（恢复归零；Stats 与测试的确定性信号）
+	n        atomic.Int32 // 活体计数（0 = 尚无有效观测，读侧 clamp 1）
+	errs     atomic.Int64 // 连续 tick 失败数（恢复归零；Stats 与测试的确定性信号）
 	lastWarn atomic.Int64 // 上次 Warn unixnano（节流窗口；仅心跳 goroutine 读写）
 	failed   atomic.Bool  // 上次 tick 失败标志（恢复 Info 只打一次）
 
@@ -118,16 +119,18 @@ func (d *Discovery) Start(_ context.Context) error {
 		d.cancel, d.done = cancel, make(chan struct{})
 		go func() {
 			defer close(d.done)
-			t := time.NewTicker(heartbeatInterval)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					d.tick(ctx)
+			worker.Loop(ctx, "discovery", d.log, func(ctx context.Context) {
+				t := time.NewTicker(heartbeatInterval)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						d.tick(ctx)
+					}
 				}
-			}
+			})
 		}()
 	})
 	return nil

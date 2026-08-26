@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -143,7 +144,7 @@ func (w *StatsAggWorker) Start(ctx context.Context) error {
 	if w.cfg.Interval <= 0 {
 		return nil // 禁用聚合（usage.stats_agg_interval = 0）
 	}
-	go w.loop(ctx)
+	worker.GoLoop(ctx, "stats-agg", w.log, w.loop)
 	return nil
 }
 

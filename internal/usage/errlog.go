@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -119,7 +120,7 @@ func (w *ErrLogWorker) Start(ctx context.Context) error {
 	}
 	go func() {
 		defer close(w.loopDone)
-		w.loop(ctx)
+		worker.Loop(ctx, "errlog", w.log, w.loop)
 	}()
 	return nil
 }

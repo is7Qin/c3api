@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -23,7 +24,7 @@ func (e *RuleEngine) Start(ctx context.Context) error {
 	if !e.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("rule-engine: already started")
 	}
-	go e.loop(ctx)
+	worker.GoLoop(ctx, "rule-engine", e.log, e.loop)
 	return nil
 }
 
@@ -78,7 +79,7 @@ func (e *RuleEngine) resetDropWarnIfDrained() {
 // 未 Start 时也可安全排空。循环本身随 Start 的 ctx 取消而退出。
 func (e *RuleEngine) Close(ctx context.Context) error {
 	done := make(chan struct{})
-	go func() {
+	worker.GoRecover("rule-engine-close", e.log, func() {
 		for {
 			select {
 			case ev := <-e.ch:
@@ -89,7 +90,7 @@ func (e *RuleEngine) Close(ctx context.Context) error {
 				return
 			}
 		}
-	}()
+	})
 	select {
 	case <-done:
 	case <-ctx.Done():

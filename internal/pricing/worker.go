@@ -13,6 +13,7 @@ import (
 	"github.com/adhocore/gronx"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -91,9 +92,14 @@ func (w *SyncWorker) Start(ctx context.Context) error {
 	if !w.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("pricing: sync worker already started")
 	}
-	w.running.Store(true) // 观测面：循环存活（cronLoop 退出复位）
-	go w.syncOnce(ctx)
-	go w.cronLoop(ctx)
+	// 观测面（running）生命周期收口在包装层：panic 重启后每次运行进出各置位
+	// 一次，标志始终与"循环是否在跑"一致（cronLoop 本体不持有该状态）。
+	worker.GoRecover("pricing-sync-once", w.log, func() { w.syncOnce(ctx) })
+	worker.GoLoop(ctx, "pricing-sync-cron", w.log, func(ctx context.Context) {
+		w.running.Store(true)
+		defer w.running.Store(false)
+		w.cronLoop(ctx)
+	})
 	return nil
 }
 
@@ -160,7 +166,6 @@ func (w *SyncWorker) syncOnce(ctx context.Context) {
 // 读，无热加载通道）→ gronx 算下次触发 → timer 到点同步。ctx 取消退出；cron
 // 非法 → Warn + 1h 后重新解析（settings 修正后自动恢复）。
 func (w *SyncWorker) cronLoop(ctx context.Context) {
-	defer w.running.Store(false) // 观测面：循环退出复位（worker 停止即观测 false）
 	for {
 		d, err := w.nextDelay()
 		if err != nil {

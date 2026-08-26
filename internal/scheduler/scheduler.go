@@ -19,6 +19,7 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -128,8 +129,8 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	if !s.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("scheduler: already started")
 	}
-	go s.syncLoop(ctx)
-	go s.writebackLoop(ctx)
+	worker.GoLoop(ctx, "scheduler-sync", s.log, s.syncLoop)
+	worker.GoLoop(ctx, "scheduler-writeback", s.log, s.writebackLoop)
 	return nil
 }
 
@@ -137,7 +138,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 // 满足 worker.Worker 契约。循环本身随 Start 的 ctx 取消而退出。
 func (s *Scheduler) Close(ctx context.Context) error {
 	done := make(chan struct{})
-	go func() {
+	worker.GoRecover("scheduler-close", s.log, func() {
 		for {
 			select {
 			case w := <-s.writeCh:
@@ -147,7 +148,7 @@ func (s *Scheduler) Close(ctx context.Context) error {
 				return
 			}
 		}
-	}()
+	})
 	select {
 	case <-done:
 	case <-ctx.Done():
@@ -220,7 +221,15 @@ func (s *Scheduler) processWrite(w statusWrite) {
 	// （buildSnapshots/InvalidateGroup 的 removeGid 就地改写），裸读与之并发是
 	// 数据竞态。回写循环非热路径，与 reload 锁竞争不敏感。
 	s.reloadMu.Lock()
-	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
+	raw := s.store.byID.Load()
+	byID, ok := raw.(map[int64]*accountSnapshot)
+	if !ok {
+		s.reloadMu.Unlock()
+		if s.log != nil {
+			s.log.Warn("scheduler writeback skipped: snapshot not loaded")
+		}
+		return
+	}
 	gidSet := make(map[int64]struct{})
 	for _, id := range okIDs {
 		if as, ok := byID[id]; ok {
@@ -857,7 +866,14 @@ func (s *Scheduler) FlushRules() {
 // errMsg 为事件错误文本（部署故障修复）：429/unhealthy 落 last_error 用——
 // 有文本用文本（域内截断 500），无文本回退既有硬编码文案（旧语义不变）。
 func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *time.Time, weight *int, errMsg string) {
-	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
+	raw := s.store.byID.Load()
+	byID, ok := raw.(map[int64]*accountSnapshot)
+	if !ok {
+		if s.log != nil {
+			s.log.Warn("scheduler apply skipped: snapshot not loaded")
+		}
+		return
+	}
 	a, ok := byID[aid]
 	if !ok {
 		return // 快照外账号（已移除/未知）：无状态可改，不投递回写

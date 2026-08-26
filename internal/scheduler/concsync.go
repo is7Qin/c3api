@@ -34,6 +34,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -131,16 +132,18 @@ func (w *AccConcSyncWorker) Start(_ context.Context) error {
 		w.cancel, w.done = cancel, make(chan struct{})
 		go func() {
 			defer close(w.done)
-			t := time.NewTicker(concSyncInterval)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					w.tick(ctx)
+			worker.Loop(ctx, "account-conc-sync", w.log, func(ctx context.Context) {
+				t := time.NewTicker(concSyncInterval)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						w.tick(ctx)
+					}
 				}
-			}
+			})
 		}()
 	})
 	return nil

@@ -46,6 +46,10 @@ chi(internal/server/server.go)
 
 排空惯用法（billing 与 usage 两包各自声明，有意重复）：loopDone + baseCtx/baseCancel + flushMu 作在途屏障 + inflightAbandonGrace 500ms。
 
+## Goroutine 监督契约（评审 2026-08-26 F2）
+
+生产代码**禁止裸 `go` 起常驻循环**——统一走 `internal/worker`：可重启循环 `worker.GoLoop`/`Loop`（panic→Error 日志带栈→5s 重启，尊重 ctx 取消）；一次性收尾 goroutine `worker.GoRecover`；既有 defer 形态的单点兜底用 `worker.CatchPanic`。可预期的失败一律 error 化（comma-ok 断言、nil 守卫），监督者只兜真正的异常残渣——panic 是 bug 的症状，别让重启掩盖该修的错误处理。
+
 ## NOTIFY 失效流
 
 `c3api_invalidate` 单通道；Change 九字段(users/templates/clients/multipliers/keys/settings/rules/groups[]/src)。发布端 >6KB 降级(丢 Groups 置 Templates=true)；Src=hostname-pid-6B随机数 防容器 pid 撞车自吞。cmd/server/dispatcher.go 做 Change→Debouncer 映射；**settings 例外走同步 ReloadSettings**（预算要读到新 N）。计费扣费路径永不发 NOTIFY。

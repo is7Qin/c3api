@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -91,6 +92,7 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, settle settleFn, ctl *
 		wg.Add(1)
 		go func(bucket int) {
 			defer wg.Done()
+			defer worker.CatchPanic("billing-bucket", f.log)
 			lim := ctl.limit()
 			t0 := time.Now()
 			s, err := settle(ctx, lim, settleParallelism, bucket)

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -165,8 +166,8 @@ func (l *Listener) Start(ctx context.Context) error {
 	go func() {
 		l.running.Store(true) // 观测面：循环存活（退出即复位）
 		defer l.running.Store(false)
-		l.run(cctx)
-		close(l.done)
+		defer close(l.done)
+		worker.Loop(cctx, "notify", l.cfg.Log, l.run)
 	}()
 	return nil
 }
