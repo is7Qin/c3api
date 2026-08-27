@@ -93,7 +93,7 @@ func TestAdminMailTemplatesRoundTrip(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "GET templates: %s", rec.Body.String())
 	var list []MailTemplate
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
-	require.Len(t, list, 2, "always 2 purposes")
+	require.Len(t, list, 3, "always 3 purposes (register_code, reset_code, balance_warning)")
 	var reg *MailTemplate
 	for i := range list {
 		if list[i].Purpose == "register_code" {
