@@ -600,8 +600,10 @@ func main() {
 	// 2) Close 强制断长连接 → 客户端断开 → recordStreamAbort → finish（断前
 	//    usage 帧照常计费）
 	// 3) waitForInflight：等在途归零（100ms 轮询；超时 Warn 继续不阻塞退出）
-	// 4) wm.Shutdown 反向排空：billingFlusher 最先（扣费 + 计费日志全量落库）
-	//    → rec 排空明细 → rule → sched
+	// 4) wm.Shutdown 反向排空：listener/authSync 最先停止接收 → disco ZREM 缩容
+	//    → accConcSync/concSync → mailW/statsAgg/retention/pricingSync → errlogW
+	//    → rec 排空明细 → rule/sched/inv → billFlusher 最后终扫游标（usage 落库后
+	//    账本完整再扣费）
 	srvCtx, cancelSrv := context.WithTimeout(shutdownCtx, 2*time.Second)
 	// G2-2（spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
 	// `_ =` 全丢弃；wm.Shutdown 内部已对 worker Close 失败 Warn，此处补齐
