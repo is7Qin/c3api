@@ -43,39 +43,109 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 	}
 	require.NotNil(t, mainFn, "main func not found")
 	var order []string
-	guarded := false
-	var walk func([]ast.Stmt, bool)
-	walk = func(list []ast.Stmt, billGuard bool) {
+	var ordered []string
+	managedFound := false
+	expansionFound := false
+	guardedBilling := false
+	guardedWarning := false
+
+	isBillGuard := func(cond ast.Expr) bool {
+		bin, ok := cond.(*ast.BinaryExpr)
+		if !ok || bin.Op.String() != "!=" {
+			return false
+		}
+		l, ok := bin.X.(*ast.Ident)
+		if !ok || l.Name != "billFlusher" {
+			return false
+		}
+		r, ok := bin.Y.(*ast.Ident)
+		return ok && r.Name == "nil"
+	}
+	isWarningGuard := func(cond ast.Expr) bool {
+		bin, ok := cond.(*ast.BinaryExpr)
+		if !ok || bin.Op.String() != "!=" {
+			return false
+		}
+		l, ok := bin.X.(*ast.Ident)
+		if !ok || l.Name != "warningW" {
+			return false
+		}
+		r, ok := bin.Y.(*ast.Ident)
+		return ok && r.Name == "nil"
+	}
+
+	var walk func([]ast.Stmt)
+	walk = func(list []ast.Stmt) {
 		for _, s := range list {
 			switch x := s.(type) {
+			case *ast.AssignStmt:
+				if len(x.Lhs) == 1 && len(x.Rhs) == 1 {
+					if lhs, ok := x.Lhs[0].(*ast.Ident); ok && lhs.Name == "managedWorkers" {
+						if ce, ok := x.Rhs[0].(*ast.CallExpr); ok {
+							if fun, ok := ce.Fun.(*ast.Ident); ok && fun.Name == "orderedWorkers" {
+								managedFound = true
+								ordered = ordered[:0]
+								for _, a := range ce.Args {
+									id, ok := a.(*ast.Ident)
+									require.True(t, ok, "orderedWorkers arg must be ident, got %T", a)
+									ordered = append(ordered, id.Name)
+								}
+							}
+						}
+					}
+				}
 			case *ast.ExprStmt:
 				ce, ok := x.X.(*ast.CallExpr)
 				if !ok || !isWmRegister(ce) {
 					continue
 				}
+				if len(ce.Args) == 1 && ce.Ellipsis != token.NoPos {
+					if id, ok := ce.Args[0].(*ast.Ident); ok && id.Name == "managedWorkers" {
+						require.True(t, managedFound, "wm.Register(managedWorkers...) without prior managedWorkers := orderedWorkers(...)")
+						require.NotEmpty(t, ordered, "orderedWorkers args empty")
+						order = append(order, ordered...)
+						expansionFound = true
+						continue
+					}
+				}
 				for _, a := range ce.Args {
 					if id, ok := a.(*ast.Ident); ok {
 						order = append(order, id.Name)
-						if id.Name == "billFlusher" && billGuard {
-							guarded = true
-						}
 					}
 				}
 			case *ast.IfStmt:
-				isGuard := false
-				if bin, ok := x.Cond.(*ast.BinaryExpr); ok && bin.Op.String() == "!=" {
-					if l, ok := bin.X.(*ast.Ident); ok && l.Name == "billFlusher" {
-						if r, ok := bin.Y.(*ast.Ident); ok && r.Name == "nil" {
-							isGuard = true
+				billGuard := isBillGuard(x.Cond)
+				warnGuard := isWarningGuard(x.Cond)
+				if billGuard || warnGuard {
+					for _, st := range x.Body.List {
+						if as, ok := st.(*ast.AssignStmt); ok && len(as.Lhs) == 1 && len(as.Rhs) == 1 {
+							if lhs, ok := as.Lhs[0].(*ast.Ident); ok {
+								if rhs, ok := as.Rhs[0].(*ast.Ident); ok {
+									if billGuard && lhs.Name == "billingWorker" && rhs.Name == "billFlusher" {
+										guardedBilling = true
+									}
+									if warnGuard && lhs.Name == "warningWorker" && rhs.Name == "warningW" {
+										guardedWarning = true
+									}
+								}
+							}
 						}
 					}
 				}
-				walk(x.Body.List, billGuard || isGuard)
+				walk(x.Body.List)
+				if x.Else != nil {
+					if blk, ok := x.Else.(*ast.BlockStmt); ok {
+						walk(blk.List)
+					}
+				}
 			}
 		}
 	}
-	walk(mainFn.Body.List, false)
-	require.True(t, guarded, "billFlusher must be under if billFlusher != nil")
+	walk(mainFn.Body.List)
+	require.True(t, managedFound, "managedWorkers := orderedWorkers(...) not found")
+	require.True(t, expansionFound, "wm.Register(managedWorkers...) expansion not found")
+	require.True(t, guardedBilling, "billingWorker = billFlusher must be under if billFlusher != nil")
+	require.True(t, guardedWarning, "warningWorker = warningW must be under if warningW != nil")
 	pos := make(map[string]int, len(order))
 	for i, n := range order {
 		_, dup := pos[n]
@@ -89,9 +159,11 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 		require.True(t, okB, "worker %s not found in %v", b, order)
 		require.Less(t, pa, pb, "expected %s before %s, got %v", a, b, order)
 	}
-	mustBefore("billFlusher", "rec")
+	mustBefore("mailW", "warningWorker")
+	mustBefore("warningWorker", "billingWorker")
+	mustBefore("billingWorker", "rec")
 	mustBefore("rec", "errlogW")
-	business := []string{"billFlusher", "inv", "sched", "ruleEngine", "rec", "errlogW", "pricingSync", "retention", "statsAgg", "mailW", "concSync", "accConcSync"}
+	business := []string{"mailW", "warningWorker", "billingWorker", "inv", "sched", "ruleEngine", "rec", "errlogW", "pricingSync", "retention", "statsAgg", "concSync", "accConcSync"}
 	for _, b := range business {
 		mustBefore(b, "disco")
 	}
