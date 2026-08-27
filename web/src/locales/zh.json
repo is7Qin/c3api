@@ -1122,7 +1122,8 @@
       "defaults": "新用户默认资源",
       "pricingSync": "价格同步",
       "tierPolicy": "服务档位策略",
-      "mail": "邮件"
+      "mail": "邮件",
+      "balanceWarning": "余额预警"
     },
     "labels": {
       "signup_enabled": "开放注册",

@@ -1122,7 +1122,8 @@
       "defaults": "New user defaults",
       "pricingSync": "Price sync",
       "tierPolicy": "Service tier policy",
-      "mail": "Mail"
+      "mail": "Mail",
+      "balanceWarning": "Balance warning"
     },
     "labels": {
       "signup_enabled": "Open signup",
