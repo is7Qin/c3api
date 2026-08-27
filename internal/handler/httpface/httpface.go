@@ -60,6 +60,8 @@ func WriteServiceErr(w http.ResponseWriter, err error) {
 		WriteErr(w, http.StatusTooManyRequests, err.Error())
 	case errors.Is(err, serviceerr.ErrMailNotConfigured):
 		WriteErr(w, http.StatusInternalServerError, err.Error())
+	case errors.Is(err, serviceerr.ErrMailChannelTestFailed):
+		WriteErr(w, http.StatusInternalServerError, err.Error())
 	default:
 		WriteErr(w, http.StatusInternalServerError, "internal error")
 	}
