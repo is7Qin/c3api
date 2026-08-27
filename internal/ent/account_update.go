@@ -229,6 +229,102 @@ func (_u *AccountUpdate) ClearFailedAt() *AccountUpdate {
 	return _u
 }
 
+// SetFailureSource sets the "failure_source" field.
+func (_u *AccountUpdate) SetFailureSource(v string) *AccountUpdate {
+	_u.mutation.SetFailureSource(v)
+	return _u
+}
+
+// SetNillableFailureSource sets the "failure_source" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableFailureSource(v *string) *AccountUpdate {
+	if v != nil {
+		_u.SetFailureSource(*v)
+	}
+	return _u
+}
+
+// ClearFailureSource clears the value of the "failure_source" field.
+func (_u *AccountUpdate) ClearFailureSource() *AccountUpdate {
+	_u.mutation.ClearFailureSource()
+	return _u
+}
+
+// SetEnabled sets the "enabled" field.
+func (_u *AccountUpdate) SetEnabled(v bool) *AccountUpdate {
+	_u.mutation.SetEnabled(v)
+	return _u
+}
+
+// SetNillableEnabled sets the "enabled" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableEnabled(v *bool) *AccountUpdate {
+	if v != nil {
+		_u.SetEnabled(*v)
+	}
+	return _u
+}
+
+// SetLifecycleRevision sets the "lifecycle_revision" field.
+func (_u *AccountUpdate) SetLifecycleRevision(v int64) *AccountUpdate {
+	_u.mutation.ResetLifecycleRevision()
+	_u.mutation.SetLifecycleRevision(v)
+	return _u
+}
+
+// SetNillableLifecycleRevision sets the "lifecycle_revision" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableLifecycleRevision(v *int64) *AccountUpdate {
+	if v != nil {
+		_u.SetLifecycleRevision(*v)
+	}
+	return _u
+}
+
+// AddLifecycleRevision adds value to the "lifecycle_revision" field.
+func (_u *AccountUpdate) AddLifecycleRevision(v int64) *AccountUpdate {
+	_u.mutation.AddLifecycleRevision(v)
+	return _u
+}
+
+// SetUpstreamCostMultiplierBp sets the "upstream_cost_multiplier_bp" field.
+func (_u *AccountUpdate) SetUpstreamCostMultiplierBp(v int) *AccountUpdate {
+	_u.mutation.ResetUpstreamCostMultiplierBp()
+	_u.mutation.SetUpstreamCostMultiplierBp(v)
+	return _u
+}
+
+// SetNillableUpstreamCostMultiplierBp sets the "upstream_cost_multiplier_bp" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableUpstreamCostMultiplierBp(v *int) *AccountUpdate {
+	if v != nil {
+		_u.SetUpstreamCostMultiplierBp(*v)
+	}
+	return _u
+}
+
+// AddUpstreamCostMultiplierBp adds value to the "upstream_cost_multiplier_bp" field.
+func (_u *AccountUpdate) AddUpstreamCostMultiplierBp(v int) *AccountUpdate {
+	_u.mutation.AddUpstreamCostMultiplierBp(v)
+	return _u
+}
+
+// SetCacheDomain sets the "cache_domain" field.
+func (_u *AccountUpdate) SetCacheDomain(v string) *AccountUpdate {
+	_u.mutation.SetCacheDomain(v)
+	return _u
+}
+
+// SetNillableCacheDomain sets the "cache_domain" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableCacheDomain(v *string) *AccountUpdate {
+	if v != nil {
+		_u.SetCacheDomain(*v)
+	}
+	return _u
+}
+
+// ClearCacheDomain clears the value of the "cache_domain" field.
+func (_u *AccountUpdate) ClearCacheDomain() *AccountUpdate {
+	_u.mutation.ClearCacheDomain()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *AccountUpdate) SetUpdatedAt(v time.Time) *AccountUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -468,6 +564,33 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.FailedAtCleared() {
 		_spec.ClearField(account.FieldFailedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.FailureSource(); ok {
+		_spec.SetField(account.FieldFailureSource, field.TypeString, value)
+	}
+	if _u.mutation.FailureSourceCleared() {
+		_spec.ClearField(account.FieldFailureSource, field.TypeString)
+	}
+	if value, ok := _u.mutation.Enabled(); ok {
+		_spec.SetField(account.FieldEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.LifecycleRevision(); ok {
+		_spec.SetField(account.FieldLifecycleRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedLifecycleRevision(); ok {
+		_spec.AddField(account.FieldLifecycleRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.UpstreamCostMultiplierBp(); ok {
+		_spec.SetField(account.FieldUpstreamCostMultiplierBp, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamCostMultiplierBp(); ok {
+		_spec.AddField(account.FieldUpstreamCostMultiplierBp, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CacheDomain(); ok {
+		_spec.SetField(account.FieldCacheDomain, field.TypeString, value)
+	}
+	if _u.mutation.CacheDomainCleared() {
+		_spec.ClearField(account.FieldCacheDomain, field.TypeString)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(account.FieldUpdatedAt, field.TypeTime, value)
@@ -818,6 +941,102 @@ func (_u *AccountUpdateOne) ClearFailedAt() *AccountUpdateOne {
 	return _u
 }
 
+// SetFailureSource sets the "failure_source" field.
+func (_u *AccountUpdateOne) SetFailureSource(v string) *AccountUpdateOne {
+	_u.mutation.SetFailureSource(v)
+	return _u
+}
+
+// SetNillableFailureSource sets the "failure_source" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableFailureSource(v *string) *AccountUpdateOne {
+	if v != nil {
+		_u.SetFailureSource(*v)
+	}
+	return _u
+}
+
+// ClearFailureSource clears the value of the "failure_source" field.
+func (_u *AccountUpdateOne) ClearFailureSource() *AccountUpdateOne {
+	_u.mutation.ClearFailureSource()
+	return _u
+}
+
+// SetEnabled sets the "enabled" field.
+func (_u *AccountUpdateOne) SetEnabled(v bool) *AccountUpdateOne {
+	_u.mutation.SetEnabled(v)
+	return _u
+}
+
+// SetNillableEnabled sets the "enabled" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableEnabled(v *bool) *AccountUpdateOne {
+	if v != nil {
+		_u.SetEnabled(*v)
+	}
+	return _u
+}
+
+// SetLifecycleRevision sets the "lifecycle_revision" field.
+func (_u *AccountUpdateOne) SetLifecycleRevision(v int64) *AccountUpdateOne {
+	_u.mutation.ResetLifecycleRevision()
+	_u.mutation.SetLifecycleRevision(v)
+	return _u
+}
+
+// SetNillableLifecycleRevision sets the "lifecycle_revision" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableLifecycleRevision(v *int64) *AccountUpdateOne {
+	if v != nil {
+		_u.SetLifecycleRevision(*v)
+	}
+	return _u
+}
+
+// AddLifecycleRevision adds value to the "lifecycle_revision" field.
+func (_u *AccountUpdateOne) AddLifecycleRevision(v int64) *AccountUpdateOne {
+	_u.mutation.AddLifecycleRevision(v)
+	return _u
+}
+
+// SetUpstreamCostMultiplierBp sets the "upstream_cost_multiplier_bp" field.
+func (_u *AccountUpdateOne) SetUpstreamCostMultiplierBp(v int) *AccountUpdateOne {
+	_u.mutation.ResetUpstreamCostMultiplierBp()
+	_u.mutation.SetUpstreamCostMultiplierBp(v)
+	return _u
+}
+
+// SetNillableUpstreamCostMultiplierBp sets the "upstream_cost_multiplier_bp" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableUpstreamCostMultiplierBp(v *int) *AccountUpdateOne {
+	if v != nil {
+		_u.SetUpstreamCostMultiplierBp(*v)
+	}
+	return _u
+}
+
+// AddUpstreamCostMultiplierBp adds value to the "upstream_cost_multiplier_bp" field.
+func (_u *AccountUpdateOne) AddUpstreamCostMultiplierBp(v int) *AccountUpdateOne {
+	_u.mutation.AddUpstreamCostMultiplierBp(v)
+	return _u
+}
+
+// SetCacheDomain sets the "cache_domain" field.
+func (_u *AccountUpdateOne) SetCacheDomain(v string) *AccountUpdateOne {
+	_u.mutation.SetCacheDomain(v)
+	return _u
+}
+
+// SetNillableCacheDomain sets the "cache_domain" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableCacheDomain(v *string) *AccountUpdateOne {
+	if v != nil {
+		_u.SetCacheDomain(*v)
+	}
+	return _u
+}
+
+// ClearCacheDomain clears the value of the "cache_domain" field.
+func (_u *AccountUpdateOne) ClearCacheDomain() *AccountUpdateOne {
+	_u.mutation.ClearCacheDomain()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *AccountUpdateOne) SetUpdatedAt(v time.Time) *AccountUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -1087,6 +1306,33 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if _u.mutation.FailedAtCleared() {
 		_spec.ClearField(account.FieldFailedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.FailureSource(); ok {
+		_spec.SetField(account.FieldFailureSource, field.TypeString, value)
+	}
+	if _u.mutation.FailureSourceCleared() {
+		_spec.ClearField(account.FieldFailureSource, field.TypeString)
+	}
+	if value, ok := _u.mutation.Enabled(); ok {
+		_spec.SetField(account.FieldEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.LifecycleRevision(); ok {
+		_spec.SetField(account.FieldLifecycleRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedLifecycleRevision(); ok {
+		_spec.AddField(account.FieldLifecycleRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.UpstreamCostMultiplierBp(); ok {
+		_spec.SetField(account.FieldUpstreamCostMultiplierBp, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamCostMultiplierBp(); ok {
+		_spec.AddField(account.FieldUpstreamCostMultiplierBp, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CacheDomain(); ok {
+		_spec.SetField(account.FieldCacheDomain, field.TypeString, value)
+	}
+	if _u.mutation.CacheDomainCleared() {
+		_spec.ClearField(account.FieldCacheDomain, field.TypeString)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(account.FieldUpdatedAt, field.TypeTime, value)

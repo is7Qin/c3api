@@ -105,6 +105,31 @@ func FailedAt(v time.Time) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldFailedAt, v))
 }
 
+// FailureSource applies equality check predicate on the "failure_source" field. It's identical to FailureSourceEQ.
+func FailureSource(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldFailureSource, v))
+}
+
+// Enabled applies equality check predicate on the "enabled" field. It's identical to EnabledEQ.
+func Enabled(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldEnabled, v))
+}
+
+// LifecycleRevision applies equality check predicate on the "lifecycle_revision" field. It's identical to LifecycleRevisionEQ.
+func LifecycleRevision(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldLifecycleRevision, v))
+}
+
+// UpstreamCostMultiplierBp applies equality check predicate on the "upstream_cost_multiplier_bp" field. It's identical to UpstreamCostMultiplierBpEQ.
+func UpstreamCostMultiplierBp(v int) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldUpstreamCostMultiplierBp, v))
+}
+
+// CacheDomain applies equality check predicate on the "cache_domain" field. It's identical to CacheDomainEQ.
+func CacheDomain(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldCacheDomain, v))
+}
+
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v time.Time) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldUpdatedAt, v))
@@ -668,6 +693,246 @@ func FailedAtIsNil() predicate.Account {
 // FailedAtNotNil applies the NotNil predicate on the "failed_at" field.
 func FailedAtNotNil() predicate.Account {
 	return predicate.Account(sql.FieldNotNull(FieldFailedAt))
+}
+
+// FailureSourceEQ applies the EQ predicate on the "failure_source" field.
+func FailureSourceEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldFailureSource, v))
+}
+
+// FailureSourceNEQ applies the NEQ predicate on the "failure_source" field.
+func FailureSourceNEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldFailureSource, v))
+}
+
+// FailureSourceIn applies the In predicate on the "failure_source" field.
+func FailureSourceIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldFailureSource, vs...))
+}
+
+// FailureSourceNotIn applies the NotIn predicate on the "failure_source" field.
+func FailureSourceNotIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldFailureSource, vs...))
+}
+
+// FailureSourceGT applies the GT predicate on the "failure_source" field.
+func FailureSourceGT(v string) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldFailureSource, v))
+}
+
+// FailureSourceGTE applies the GTE predicate on the "failure_source" field.
+func FailureSourceGTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldFailureSource, v))
+}
+
+// FailureSourceLT applies the LT predicate on the "failure_source" field.
+func FailureSourceLT(v string) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldFailureSource, v))
+}
+
+// FailureSourceLTE applies the LTE predicate on the "failure_source" field.
+func FailureSourceLTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldFailureSource, v))
+}
+
+// FailureSourceContains applies the Contains predicate on the "failure_source" field.
+func FailureSourceContains(v string) predicate.Account {
+	return predicate.Account(sql.FieldContains(FieldFailureSource, v))
+}
+
+// FailureSourceHasPrefix applies the HasPrefix predicate on the "failure_source" field.
+func FailureSourceHasPrefix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasPrefix(FieldFailureSource, v))
+}
+
+// FailureSourceHasSuffix applies the HasSuffix predicate on the "failure_source" field.
+func FailureSourceHasSuffix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasSuffix(FieldFailureSource, v))
+}
+
+// FailureSourceIsNil applies the IsNil predicate on the "failure_source" field.
+func FailureSourceIsNil() predicate.Account {
+	return predicate.Account(sql.FieldIsNull(FieldFailureSource))
+}
+
+// FailureSourceNotNil applies the NotNil predicate on the "failure_source" field.
+func FailureSourceNotNil() predicate.Account {
+	return predicate.Account(sql.FieldNotNull(FieldFailureSource))
+}
+
+// FailureSourceEqualFold applies the EqualFold predicate on the "failure_source" field.
+func FailureSourceEqualFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldEqualFold(FieldFailureSource, v))
+}
+
+// FailureSourceContainsFold applies the ContainsFold predicate on the "failure_source" field.
+func FailureSourceContainsFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldContainsFold(FieldFailureSource, v))
+}
+
+// EnabledEQ applies the EQ predicate on the "enabled" field.
+func EnabledEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldEnabled, v))
+}
+
+// EnabledNEQ applies the NEQ predicate on the "enabled" field.
+func EnabledNEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldEnabled, v))
+}
+
+// LifecycleRevisionEQ applies the EQ predicate on the "lifecycle_revision" field.
+func LifecycleRevisionEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldLifecycleRevision, v))
+}
+
+// LifecycleRevisionNEQ applies the NEQ predicate on the "lifecycle_revision" field.
+func LifecycleRevisionNEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldLifecycleRevision, v))
+}
+
+// LifecycleRevisionIn applies the In predicate on the "lifecycle_revision" field.
+func LifecycleRevisionIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldLifecycleRevision, vs...))
+}
+
+// LifecycleRevisionNotIn applies the NotIn predicate on the "lifecycle_revision" field.
+func LifecycleRevisionNotIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldLifecycleRevision, vs...))
+}
+
+// LifecycleRevisionGT applies the GT predicate on the "lifecycle_revision" field.
+func LifecycleRevisionGT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldLifecycleRevision, v))
+}
+
+// LifecycleRevisionGTE applies the GTE predicate on the "lifecycle_revision" field.
+func LifecycleRevisionGTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldLifecycleRevision, v))
+}
+
+// LifecycleRevisionLT applies the LT predicate on the "lifecycle_revision" field.
+func LifecycleRevisionLT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldLifecycleRevision, v))
+}
+
+// LifecycleRevisionLTE applies the LTE predicate on the "lifecycle_revision" field.
+func LifecycleRevisionLTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldLifecycleRevision, v))
+}
+
+// UpstreamCostMultiplierBpEQ applies the EQ predicate on the "upstream_cost_multiplier_bp" field.
+func UpstreamCostMultiplierBpEQ(v int) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldUpstreamCostMultiplierBp, v))
+}
+
+// UpstreamCostMultiplierBpNEQ applies the NEQ predicate on the "upstream_cost_multiplier_bp" field.
+func UpstreamCostMultiplierBpNEQ(v int) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldUpstreamCostMultiplierBp, v))
+}
+
+// UpstreamCostMultiplierBpIn applies the In predicate on the "upstream_cost_multiplier_bp" field.
+func UpstreamCostMultiplierBpIn(vs ...int) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldUpstreamCostMultiplierBp, vs...))
+}
+
+// UpstreamCostMultiplierBpNotIn applies the NotIn predicate on the "upstream_cost_multiplier_bp" field.
+func UpstreamCostMultiplierBpNotIn(vs ...int) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldUpstreamCostMultiplierBp, vs...))
+}
+
+// UpstreamCostMultiplierBpGT applies the GT predicate on the "upstream_cost_multiplier_bp" field.
+func UpstreamCostMultiplierBpGT(v int) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldUpstreamCostMultiplierBp, v))
+}
+
+// UpstreamCostMultiplierBpGTE applies the GTE predicate on the "upstream_cost_multiplier_bp" field.
+func UpstreamCostMultiplierBpGTE(v int) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldUpstreamCostMultiplierBp, v))
+}
+
+// UpstreamCostMultiplierBpLT applies the LT predicate on the "upstream_cost_multiplier_bp" field.
+func UpstreamCostMultiplierBpLT(v int) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldUpstreamCostMultiplierBp, v))
+}
+
+// UpstreamCostMultiplierBpLTE applies the LTE predicate on the "upstream_cost_multiplier_bp" field.
+func UpstreamCostMultiplierBpLTE(v int) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldUpstreamCostMultiplierBp, v))
+}
+
+// CacheDomainEQ applies the EQ predicate on the "cache_domain" field.
+func CacheDomainEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldCacheDomain, v))
+}
+
+// CacheDomainNEQ applies the NEQ predicate on the "cache_domain" field.
+func CacheDomainNEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldCacheDomain, v))
+}
+
+// CacheDomainIn applies the In predicate on the "cache_domain" field.
+func CacheDomainIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldCacheDomain, vs...))
+}
+
+// CacheDomainNotIn applies the NotIn predicate on the "cache_domain" field.
+func CacheDomainNotIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldCacheDomain, vs...))
+}
+
+// CacheDomainGT applies the GT predicate on the "cache_domain" field.
+func CacheDomainGT(v string) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldCacheDomain, v))
+}
+
+// CacheDomainGTE applies the GTE predicate on the "cache_domain" field.
+func CacheDomainGTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldCacheDomain, v))
+}
+
+// CacheDomainLT applies the LT predicate on the "cache_domain" field.
+func CacheDomainLT(v string) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldCacheDomain, v))
+}
+
+// CacheDomainLTE applies the LTE predicate on the "cache_domain" field.
+func CacheDomainLTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldCacheDomain, v))
+}
+
+// CacheDomainContains applies the Contains predicate on the "cache_domain" field.
+func CacheDomainContains(v string) predicate.Account {
+	return predicate.Account(sql.FieldContains(FieldCacheDomain, v))
+}
+
+// CacheDomainHasPrefix applies the HasPrefix predicate on the "cache_domain" field.
+func CacheDomainHasPrefix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasPrefix(FieldCacheDomain, v))
+}
+
+// CacheDomainHasSuffix applies the HasSuffix predicate on the "cache_domain" field.
+func CacheDomainHasSuffix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasSuffix(FieldCacheDomain, v))
+}
+
+// CacheDomainIsNil applies the IsNil predicate on the "cache_domain" field.
+func CacheDomainIsNil() predicate.Account {
+	return predicate.Account(sql.FieldIsNull(FieldCacheDomain))
+}
+
+// CacheDomainNotNil applies the NotNil predicate on the "cache_domain" field.
+func CacheDomainNotNil() predicate.Account {
+	return predicate.Account(sql.FieldNotNull(FieldCacheDomain))
+}
+
+// CacheDomainEqualFold applies the EqualFold predicate on the "cache_domain" field.
+func CacheDomainEqualFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldEqualFold(FieldCacheDomain, v))
+}
+
+// CacheDomainContainsFold applies the ContainsFold predicate on the "cache_domain" field.
+func CacheDomainContainsFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldContainsFold(FieldCacheDomain, v))
 }
 
 // UpdatedAtEQ applies the EQ predicate on the "updated_at" field.

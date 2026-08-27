@@ -255,9 +255,17 @@ type Account struct {
 	// 清 failed_at + last_error + 恢复调度，T5 细化）。调度器选号不读本字段
 	//（pickFrom 只跳 disabled——摘除必须落库 status）。
 	FailedAt  *time.Time
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
+	FailureSource *string
+	Enabled       bool
+	// LifecycleRevision 账号生命周期代际（CAS fencing：每次生命周期变化及管理员
+	// 凭据替换必须 CAS expectedRevision 并 +1；SDK 内部 OAuth 刷新不增）。
+	LifecycleRevision int64
+	// UpstreamCostMultiplierBp 采购成本倍率（basis points：10000 = 1.0x；0 = 免费）。
+	UpstreamCostMultiplierBp int
+	CacheDomain              *string
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
+	DeletedAt                *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
 	// GroupIDs 写路径（创建/更新）专用：nil = 不设置/不变；非 nil = 替换账号
 	// 全部分组（含空数组 = 清空）。读路径忽略——编辑回显走 GetAccountGroups
 	// 独立查询（toDomainAccount 不填充该字段）。
