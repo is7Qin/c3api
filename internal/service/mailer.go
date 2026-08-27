@@ -17,7 +17,9 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// RenderTemplate 渲染模板：缺行走编译内置默认；仅替换 {{code}}/{{ttl_minutes}}/{{app_name}}。
+// RenderTemplate 渲染模板：缺行走编译内置默认；替换 {{code}}/{{ttl_minutes}}/{{app_name}}
+// 以及 balance_warning 专用的 {{balance}}/{{threshold}}（仅 balance_warning 目的生效，
+// 避免 register/reset 自定义模板中的字面量 {{balance}}/{{threshold}} 被意外清空）。
 func (s *Service) RenderTemplate(ctx context.Context, purpose domain.EmailTemplatePurpose, vars map[string]string) (string, string, error) {
 	var tmpl domain.EmailTemplate
 	row, err := s.store.GetEmailTemplate(ctx, string(purpose))
@@ -29,11 +31,22 @@ func (s *Service) RenderTemplate(ctx context.Context, purpose domain.EmailTempla
 	} else {
 		tmpl = domain.DefaultEmailTemplate(purpose)
 	}
-	repl := strings.NewReplacer(
-		"{{code}}", vars["code"],
-		"{{ttl_minutes}}", vars["ttl_minutes"],
-		"{{app_name}}", vars["app_name"],
-	)
+	var repl *strings.Replacer
+	if purpose == domain.EmailTemplateBalanceWarning {
+		repl = strings.NewReplacer(
+			"{{code}}", vars["code"],
+			"{{ttl_minutes}}", vars["ttl_minutes"],
+			"{{app_name}}", vars["app_name"],
+			"{{balance}}", vars["balance"],
+			"{{threshold}}", vars["threshold"],
+		)
+	} else {
+		repl = strings.NewReplacer(
+			"{{code}}", vars["code"],
+			"{{ttl_minutes}}", vars["ttl_minutes"],
+			"{{app_name}}", vars["app_name"],
+		)
+	}
 	return repl.Replace(tmpl.Subject), repl.Replace(tmpl.BodyText), nil
 }
 
@@ -47,8 +60,8 @@ func (s *Service) ListMailTemplates(ctx context.Context) ([]*domain.EmailTemplat
 	for _, r := range rows {
 		byPurpose[string(r.Purpose)] = r
 	}
-	out := make([]*domain.EmailTemplate, 0, 2)
-	for _, p := range []domain.EmailTemplatePurpose{domain.EmailTemplateRegisterCode, domain.EmailTemplateResetCode} {
+	out := make([]*domain.EmailTemplate, 0, 3)
+	for _, p := range []domain.EmailTemplatePurpose{domain.EmailTemplateRegisterCode, domain.EmailTemplateResetCode, domain.EmailTemplateBalanceWarning} {
 		if v, ok := byPurpose[string(p)]; ok {
 			out = append(out, v)
 		} else {

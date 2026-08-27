@@ -9,13 +9,14 @@ import "time"
 type EmailTemplatePurpose string
 
 const (
-	EmailTemplateRegisterCode EmailTemplatePurpose = "register_code"
-	EmailTemplateResetCode    EmailTemplatePurpose = "reset_code"
+	EmailTemplateRegisterCode   EmailTemplatePurpose = "register_code"
+	EmailTemplateResetCode      EmailTemplatePurpose = "reset_code"
+	EmailTemplateBalanceWarning EmailTemplatePurpose = "balance_warning"
 )
 
 func (p EmailTemplatePurpose) Valid() bool {
 	switch p {
-	case EmailTemplateRegisterCode, EmailTemplateResetCode:
+	case EmailTemplateRegisterCode, EmailTemplateResetCode, EmailTemplateBalanceWarning:
 		return true
 	}
 	return false
@@ -80,6 +81,7 @@ const (
 const AppName = "c3api"
 
 // DefaultEmailTemplate 编译内置英文默认模板（占位符 {{code}}/{{ttl_minutes}}/{{app_name}}；
+// balance_warning 额外支持 {{balance}}/{{threshold}}（USD 金额）；
 // 开源项目默认英文，管理台可按语言自定义覆盖）。
 func DefaultEmailTemplate(purpose EmailTemplatePurpose) EmailTemplate {
 	switch purpose {
@@ -94,6 +96,12 @@ func DefaultEmailTemplate(purpose EmailTemplatePurpose) EmailTemplate {
 			Purpose:  EmailTemplateResetCode,
 			Subject:  "{{app_name}} password reset code",
 			BodyText: "Your password reset code is {{code}}. It expires in {{ttl_minutes}} minutes. If you did not request this, please ignore this email.",
+		}
+	case EmailTemplateBalanceWarning:
+		return EmailTemplate{
+			Purpose:  EmailTemplateBalanceWarning,
+			Subject:  "{{app_name}} balance warning",
+			BodyText: "Your balance ({{balance}}) has fallen to or below your warning threshold ({{threshold}}). Please top up to avoid service interruption.",
 		}
 	default:
 		return EmailTemplate{
