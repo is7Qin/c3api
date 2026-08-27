@@ -191,15 +191,18 @@ func runSettleStmt(ctx context.Context, exe settleTx, sqlText string, limit, k, 
 }
 
 // scanSettleResult 终 SELECT 扫描：首行聚合哨兵（uid=-1，ORDER BY 恒置首）承载
-// 五计数；其余行为 debited/forced 的定向余额对。哨兵缺失 = 语句契约破坏（防御，
-// 上抛回滚）。
+// 五计数；其余行为 debited/forced 的定向余额对，末两列仅 crossing 时携带阈值
+// 与邮箱快照。哨兵缺失 = 语句契约破坏（防御，上抛回滚）。
 func scanSettleResult(rows *billingRows) (domain.SettlementSummary, error) {
 	defer rows.Close()
 	var res domain.SettlementSummary
 	seen := false
 	for rows.Next() {
 		var uid, bal, batchN, debN, forcN, markN, ghostN int64
-		if err := rows.Scan(&uid, &bal, &batchN, &debN, &forcN, &markN, &ghostN); err != nil {
+		var warningThreshold sql.NullInt64
+		var warningEmail sql.NullString
+		if err := rows.Scan(&uid, &bal, &batchN, &debN, &forcN, &markN, &ghostN,
+			&warningThreshold, &warningEmail); err != nil {
 			return domain.SettlementSummary{}, err
 		}
 		if !seen && uid == -1 {
@@ -209,6 +212,19 @@ func scanSettleResult(rows *billingRows) (domain.SettlementSummary, error) {
 			continue
 		}
 		res.Balances = append(res.Balances, domain.UserBalance{UserID: uid, Balance: bal})
+		if warningThreshold.Valid != warningEmail.Valid {
+			return domain.SettlementSummary{}, errors.New("billing settle: incomplete balance warning row")
+		}
+		if warningThreshold.Valid {
+			res.BalanceWarnings = append(res.BalanceWarnings, domain.BalanceWarningEvent{
+				EventType:       domain.NotificationBalanceWarningCrossed,
+				EntityType:      domain.NotificationUser,
+				EntityID:        uid,
+				BalanceMillis:   bal,
+				ThresholdMillis: warningThreshold.Int64,
+				Email:           warningEmail.String,
+			})
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return domain.SettlementSummary{}, err
