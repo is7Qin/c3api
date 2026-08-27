@@ -87,8 +87,8 @@ func (s UserStatus) Valid() bool {
 // adminAuth 不再单独信任 claims.Role；token_version 为 JWT 撤销比对源，
 // spec 2026-08-25-jwt-password-revocation）。
 type UserSnapshot struct {
-	Status        UserStatus
-	Role          Role
+	Status       UserStatus
+	Role         Role
 	TokenVersion int64 // 签发时 Claims.Ver 与此不等 → 401（改密撤销）
 }
 
@@ -488,11 +488,12 @@ type User struct {
 	Status       UserStatus
 	// TokenVersion JWT 撤销版本（users.token_version；改密/重置密码原子递增，
 	// 登录时写入 Claims.Ver——spec 2026-08-25-jwt-password-revocation）。
-	TokenVersion   int64
-	MaxConcurrency int
-	Balance        int64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	TokenVersion            int64
+	MaxConcurrency          int
+	Balance                 int64
+	BalanceWarningThreshold int64
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 // Key 客户端 API key（独立表，重建 group 内嵌 key 语义）。
@@ -648,12 +649,13 @@ type UserBalance struct {
 // （不齐 = 并发标记 → 整事务回滚重放）；Quarantined 为幽灵用户行数（跳扣仍标记
 // ——不变量 #1 尾语义）；Balances 为真实用户的 (uid, balance_after) 对。
 type SettlementSummary struct {
-	BatchRows    int64 // 批行数（usage_logs 取出）
-	DebitedUsers int64 // 条件扣命中用户数
-	ForcedUsers  int64 // 透支补刀用户数
-	Marked       int64 // 标记行数（守卫要求 == BatchRows）
-	Quarantined  int64 // 幽灵/隔离行数（零扣费标记退出游标）
-	Balances     []UserBalance
+	BatchRows       int64 // 批行数（usage_logs 取出）
+	DebitedUsers    int64 // 条件扣命中用户数
+	ForcedUsers     int64 // 透支补刀用户数
+	Marked          int64 // 标记行数（守卫要求 == BatchRows）
+	Quarantined     int64 // 幽灵/隔离行数（零扣费标记退出游标）
+	Balances        []UserBalance
+	BalanceWarnings []BalanceWarningEvent
 }
 
 // StatBucket 小时统计桶（usage_stats 行；离线聚合 worker 的 INSERT 行形态）。
