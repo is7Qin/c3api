@@ -718,9 +718,27 @@ paths:
                 items: { $ref: '#/components/schemas/MailTemplate' }
         default:
           $ref: '#/components/responses/Error'
+  /mail/channel-test:
+    post:
+      operationId: PostMailChannelTest
+      tags: [templates]
+      summary: 邮件通道测试（SMTP 验证；不触及余额预警事件/阈值/冷却）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MailChannelTestRequest' }
+      responses:
+        '200':
+          description: 发送结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MailChannelTestResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   /mail/templates/{purpose}:
     parameters:
-      - { name: purpose, in: path, required: true, schema: { type: string, enum: [register_code, reset_code] } }
+      - { name: purpose, in: path, required: true, schema: { type: string, enum: [register_code, reset_code, balance_warning] } }
     put:
       operationId: PutMailTemplate
       tags: [templates]
@@ -1027,6 +1045,36 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/balance-warning-threshold:
+    get:
+      operationId: GetUserBalanceWarningThreshold
+      tags: [user]
+      summary: 获取余额预警阈值（当前用户；0 = 关闭）
+      responses:
+        '200':
+          description: 阈值
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceWarningThresholdResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: PutUserBalanceWarningThreshold
+      tags: [user]
+      summary: 设置余额预警阈值（USD；0 = 关闭；负值/非有限/正值舍入为0 拒绝）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BalanceWarningThresholdUpdate' }
+      responses:
+        '200':
+          description: 更新后阈值
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceWarningThresholdResponse' }
         default:
           $ref: '#/components/responses/Error'
   /api/user/auth/change-password:
@@ -2139,7 +2187,7 @@ components:
       type: object
       required: [purpose, subject, body_text]
       properties:
-        purpose: { type: string, enum: [register_code, reset_code] }
+        purpose: { type: string, enum: [register_code, reset_code, balance_warning] }
         subject: { type: string }
         body_text: { type: string }
         updated_at: { type: string, format: date-time, nullable: true }
@@ -2149,6 +2197,26 @@ components:
       properties:
         subject: { type: string }
         body_text: { type: string, description: "空串=还原默认（删行）" }
+    MailChannelTestRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+    MailChannelTestResponse:
+      type: object
+      required: [sent]
+      properties:
+        sent: { type: boolean }
+    BalanceWarningThresholdUpdate:
+      type: object
+      required: [balance_warning_threshold]
+      properties:
+        balance_warning_threshold: { type: number, format: double, description: "阈值 USD；0 = 关闭；内部毫分存储（1 USD = 100,000 毫分）" }
+    BalanceWarningThresholdResponse:
+      type: object
+      required: [balance_warning_threshold]
+      properties:
+        balance_warning_threshold: { type: number, format: double, description: "阈值 USD；0 = 关闭" }
     ChangePasswordResponse:
       type: object
       required: [updated]
@@ -2918,7 +2986,7 @@ components:
       required: [name, stats]
       properties:
         name: { type: string }
-        # stats 为异构动态观测字段（13 个 worker 各形态不同，原子读计数器 +
+        # stats 为异构动态观测字段（16 个 worker 各形态不同，原子读计数器 +
         # channel 长度快照）——契约层面声明为自由 schema（任意对象），后端
         # 直出原类型（any），不做 struct→map 转换。
         #
@@ -2956,7 +3024,8 @@ components:
         #   notify: running bool
         #   auth-sync: running bool, last_reload_unix_ms int64（最近成功 Reload 时刻）,
         #     failures int64（Reload 失败累计）, last_failure_unix_ms int64（最近失败时刻）
-        #   email: queued int（待发队列深度）, queue_cap int（队列容量 256）, sent_total int64, failed_total int64, retry_total int64, dropped_total int64, last_error string（最近一次投递失败摘要；空=无）
+        #   email: queued int（auth 队列深度）, queue_cap int（auth 队列容量 256）, warning_queued int（余额预警队列深度）, warning_queue_cap int（预警队列容量 256）, sent_total int64（成功投递累计）, failed_total int64（失败累计）, retry_total int64（重试累计）, dropped_total int64（队列满丢弃累计）, last_error string（最近一次投递失败的安全分类；空=无，脱敏不含原始错误明细）
+        #   notification（余额预警通知编排）: queued int（待处理队列深度）, queue_cap int（队列容量 256）, evaluated int64（已评估事件数）, admitted int64（准入队列数）, suppressed int64（前置抑制累计：参数/类型/阈值未命中）, cooldown_suppressed int64（冷却期抑制累计）, claim_failed_total int64（Redis 领取失败累计）, release_failed_total int64（Redis 释放失败累计）, dropped_total int64（队列满丢弃累计）, sent_total int64（投递成功累计）, failed_total int64（投递失败累计）, last_error string（最近一次失败的安全分类；空=无，脱敏不含原始错误明细）
         #   discovery（实例发现，spec 2026-08-25-redis-instance-discovery-design）:
         #     instances int（当前生效集群实例数 N——Redis 心跳活体计数；故障冻结期 =
         #     上次成功值，恒 ≥1）, last_tick_ok bool（最近心跳 tick 是否成功；false =
