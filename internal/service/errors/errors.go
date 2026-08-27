@@ -13,12 +13,13 @@ package serviceerr
 import "errors"
 
 var (
-	ErrNotFound           = errors.New("service: not found")
-	ErrInvalidInput       = errors.New("service: invalid input")
-	ErrConflict           = errors.New("service: conflict")
-	ErrInvalidCredentials = errors.New("service: invalid email or password")
-	ErrSignupDisabled     = errors.New("service: signup disabled")
-	ErrTooManyRequests    = errors.New("service: too many requests")
-	ErrMailNotConfigured  = errors.New("service: mail not configured")
-	ErrMailQueueFull      = errors.New("service: mail queue full")
+	ErrNotFound              = errors.New("service: not found")
+	ErrInvalidInput          = errors.New("service: invalid input")
+	ErrConflict              = errors.New("service: conflict")
+	ErrInvalidCredentials    = errors.New("service: invalid email or password")
+	ErrSignupDisabled        = errors.New("service: signup disabled")
+	ErrTooManyRequests       = errors.New("service: too many requests")
+	ErrMailNotConfigured     = errors.New("service: mail not configured")
+	ErrMailQueueFull         = errors.New("service: mail queue full")
+	ErrMailChannelTestFailed = errors.New("service: mail channel test failed")
 )
