@@ -444,6 +444,7 @@
 - `POST /user/auth/reset-password {email, code, new_password}`：凭邮件验证码重置密码（码一次性、10 分钟有效、5 次尝试上限后须重新请求；新密码校验前置）；**不撤销既有 JWT**（同修改密码语义），新密码下次登录生效。
 - `GET /user/stats`：我的用量统计（强制 `user_id` = 当前用户，防越权；字段与 `/api/admin/stats` 同契约，见「查询用量统计」章节）。
 - `GET /user/temp-balances`：我的临时额度（仅有效额度：未过期且正余额，`expires_at` 升序 FEFO 同序、永久最后；`total_usd` 合计 USD），见「临时额度 Temp Balances」章节。
+- `GET|PUT /api/user/balance-warning-threshold`：读取或设置我的永久余额预警阈值，body/响应为 `{"balance_warning_threshold": 5}`，单位 USD；`0` 关闭，负值、非有限值和正值换算后为 `0` 均为 `400`。
 - 兑换码（`/user/redemptions`）：`balance` / `temp_balance` 类型向毫分余额/临时额度充值，见「兑换码 Redemption Codes」章节。
 
 ### 用户面：修改密码
@@ -481,14 +482,20 @@
 
 - **注册验证码**：开启 `mail.register_verification` 后，注册须先调 `/user/auth/register-code` 获取 6 位码（10 分钟有效、5 次尝试上限、同邮箱 60s 限频），注册请求携带 `code` 字段；验证通过方建号。首个完成验证的注册者成为 `platform_admin`。
 - **密码重置**：忘记密码 → `/user/auth/forgot-password` 发码 → `/user/auth/reset-password` 凭码改密。码消费原子（防双花），重置后旧 JWT 存活至自然过期（≤24h）。
-- **模板系统**：两套内置中文默认模板（注册验证码/重置密码验证码，占位符 `{{code}}` / `{{ttl_minutes}}` / `{{app_name}}`），管理台可编辑覆盖、清空正文即还原默认。
+- **模板系统**：三套内置英文默认模板（注册验证码、重置密码验证码、余额预警）。验证码模板使用 `{{code}}` / `{{ttl_minutes}}` / `{{app_name}}`，`balance_warning` 使用 `{{balance}}` / `{{threshold}}`；管理台可编辑覆盖、清空正文即还原默认。
+- **余额预警**：当前用户设置永久余额阈值后，永久余额在结算后恰由高于阈值变为不高于阈值时，若 `balance_warning.enabled=true` 则尽力发送邮件（best-effort，不影响结算且不保证送达）。临时额度不参与判断；同一用户和阈值 24h 冷却期内仅投递一轮（单轮最多 3 次 SMTP 重试），最终投递失败会释放占位以便后续事件重试，并非“24h 内仅试一次”。
 
 ### 邮件模板管理（platform_admin）
 
-- `GET /api/admin/mail/templates`：列出全部用途模板（缺行自动合成内置默认，恒返回 register_code/reset_code 两条）。
+- `GET /api/admin/mail/templates`：列出全部用途模板（缺行自动合成内置默认，恒返回 `register_code`、`reset_code`、`balance_warning` 三条）。
 - `PUT /api/admin/mail/templates/{purpose}`：body `{subject, body_text}`；`body_text` 置空 = 删行还原内置默认。非法 purpose → 非 200。
+- `POST /api/admin/mail/channel-test`：body `{"email":"to@example.com"}`，用当前 SMTP 配置向指定地址发送通用测试邮件；不触发余额预警事件，不读取或改动预警阈值及冷却状态。
 
 SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置键 `mail.*`，经通用 `GET|PUT /api/admin/settings` 读写（`smtp_password` 明文回读，沿用 `upstream_key` 先例；前端以密码框呈现）。
+
+| key | 默认 | 说明 |
+|---|---|---|
+| `balance_warning.enabled` | `true` | 余额预警全局开关；`false` 时不发送预警邮件 |
 
 ### 价格倍率语义（计费生效）
 
