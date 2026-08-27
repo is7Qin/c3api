@@ -210,9 +210,11 @@ export default function SettingsPage() {
       <div><h1 className="text-2xl font-semibold tracking-tight">{t('settings.title')}</h1><p className="text-sm text-muted-foreground">{t('settings.subtitle')}</p></div>
       {isError ? <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p> : isLoading ? <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div> : data?.length === 0 ? <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground"><SettingsIcon className="size-10" /><p className="font-medium">{t('settings.emptyTitle')}</p></Card> : (
         <Tabs defaultValue="signup">
-          <TabsList className="w-full">
-            {GROUPS.map(g => <TabsTrigger key={g.id} value={g.id} className="flex-1">{t(`settings.groups.${g.id}`)}</TabsTrigger>)}
-          </TabsList>
+          <div className="max-w-full overflow-x-auto">
+            <TabsList className="w-max min-w-full">
+              {GROUPS.map(g => <TabsTrigger key={g.id} value={g.id} className="flex-1">{t(`settings.groups.${g.id}`)}</TabsTrigger>)}
+            </TabsList>
+          </div>
           {GROUPS.map(g => {
             const rows = g.keys.map(k => byKey.get(k)).filter((s): s is Setting => !!s)
             const smtpCard = rows.length > 0 && (
