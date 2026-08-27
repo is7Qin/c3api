@@ -1200,6 +1200,19 @@ func (f *fakeStore) UpdateUserPassword(ctx context.Context, id int64, passwordHa
 	return nil
 }
 
+func (f *fakeStore) UpdateUserBalanceWarningThreshold(ctx context.Context, userID int64, threshold int64) (*domain.User, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[userID]
+	if !ok {
+		return nil, 0, missingErr(userID)
+	}
+	previousThreshold := u.BalanceWarningThreshold
+	u.BalanceWarningThreshold = threshold
+	c := *u
+	return &c, previousThreshold, nil
+}
+
 // CreateTempBalance 临时额度行（注册赠品；handler 测试无断言需求，静默成功）。
 func (f *fakeStore) CreateTempBalance(ctx context.Context, userID int64, amount int64, expiresAt *time.Time, note *string) error {
 	f.mu.Lock()

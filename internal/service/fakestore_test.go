@@ -1387,6 +1387,19 @@ func (f *fakeStore) UpdateUserMaxConcurrency(ctx context.Context, userID int64, 
 	return nil
 }
 
+func (f *fakeStore) UpdateUserBalanceWarningThreshold(ctx context.Context, userID int64, threshold int64) (*domain.User, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[userID]
+	if !ok {
+		return nil, 0, missingErr(userID)
+	}
+	previousThreshold := u.BalanceWarningThreshold
+	u.BalanceWarningThreshold = threshold
+	c := *u
+	return &c, previousThreshold, nil
+}
+
 // --- 兑换码（RedemptionStore，Phase 5 计费前基础设施） ---
 
 // WithTx 事务语义模拟（评审 I-1）：fn 内变更先入暂存（fakeTx 持有主视图的
