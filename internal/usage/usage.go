@@ -17,6 +17,7 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -266,6 +267,18 @@ func (r *Recorder) flushLogs(ctx context.Context) int64 {
 				}
 				end := min(start+r.cfg.BatchSize, len(s))
 				if err := r.logs.InsertBatch(ctx, s[start:end]); err != nil {
+					if errors.Is(err, domain.ErrPartitionUnavailable) {
+						if r.log != nil {
+							from, to := partitionDateRange(s[start:])
+							fields := []logx.Field{logx.Error(err), logx.String("retry_scope", "next_flush")}
+							if !from.IsZero() {
+								fields = append(fields, logx.String("from", from.Format(time.RFC3339)), logx.String("to", to.Format(time.RFC3339)))
+							}
+							r.log.Warn("usage partition unavailable, refilled for next flush", fields...)
+						}
+						r.refillLogs(s[start:])
+						return
+					}
 					// 毒丸止损二分隔离（A-P2-8-4）：整 chunk 失败不再直接计数/
 					// 丢弃（旧实现整 chunk 500 行丢弃，单行毒丸连带 499 行；且
 					// 丢弃后立即复位不区分失败原因 → DB 持续故障时每 5 周期丢
@@ -286,7 +299,27 @@ func (r *Recorder) flushLogs(ctx context.Context) int64 {
 						r.refillLogs(s[start:])
 						return
 					}
-					poison, refill, n := r.poisonBisect(ctx, s[start:end])
+					poison, refill, n, isRouting := r.poisonBisect(ctx, s[start:end])
+					if isRouting {
+						if r.log != nil {
+							all := refill
+							if len(all) == 0 {
+								all = s[start:end]
+							}
+							from, to := partitionDateRange(all)
+							fields := []logx.Field{logx.Error(err), logx.String("retry_scope", "next_flush")}
+							if !from.IsZero() {
+								fields = append(fields, logx.String("from", from.Format(time.RFC3339)), logx.String("to", to.Format(time.RFC3339)))
+							}
+							r.log.Warn("usage partition unavailable, refilled for next flush", fields...)
+						}
+						if len(refill) > 0 {
+							r.refillLogs(refill)
+						}
+						r.refillLogs(s[end:])
+						drained.Add(n)
+						return
+					}
 					if poison != nil {
 						if r.failCounts[si] > 0 {
 							r.failCounts[si] = 0 // 毒丸定位隔离 → 计数复位
@@ -324,36 +357,68 @@ func (r *Recorder) flushLogs(ctx context.Context) int64 {
 //     二分过程的成功半落库（"其余入库"，不再整 chunk 连带丢弃）；
 //   - refill：未落库需回灌的行（两半都失败 = 整库故障时 = chunk 全部；调用方
 //     回灌不丢、不累计失败计数——DB 恢复即重试成功）；
-//   - drained：二分过程成功落库的行数。
+//   - drained：二分过程成功落库的行数；
+//   - isRouting：分区路由失败（domain.ErrPartitionUnavailable）传播——成功兄弟
+//     半已持久化，仅失败子批回灌，不产生 poison。
 //
 // 递归不变量：chunk 已知含毒（父级某半成功对照保证）。纯瞬态失败（无毒丸行）
 // 时逐层对照使最后一行被判为毒丸——len==1 分支重试该行消歧：重试成功 = 瞬态
 // 失败，该行照常落库；重试仍失败 = 毒丸行。单行 chunk（BatchSize=1）无同级半
 // 可对照，由调用方按整库故障语义回灌（防故障期误丢）。
-func (r *Recorder) poisonBisect(ctx context.Context, chunk []*domain.UsageLog) (poison *domain.UsageLog, refill []*domain.UsageLog, drained int64) {
+func (r *Recorder) poisonBisect(ctx context.Context, chunk []*domain.UsageLog) (poison *domain.UsageLog, refill []*domain.UsageLog, drained int64, isRouting bool) {
 	if len(chunk) == 1 {
 		// 同级半已成功（父级对照）：重试区分瞬态失败与毒丸行
 		if err := r.logs.InsertBatch(ctx, chunk); err == nil {
-			return nil, nil, 1
+			return nil, nil, 1, false
+		} else if errors.Is(err, domain.ErrPartitionUnavailable) {
+			return nil, chunk, 0, true
 		}
-		return chunk[0], nil, 0
+		return chunk[0], nil, 0, false
 	}
 	mid := len(chunk) / 2
 	left, right := chunk[:mid], chunk[mid:]
-	if err := r.logs.InsertBatch(ctx, left); err == nil {
-		// 左半成功 → 毒丸在右半；左半已落库，继续二分右半
-		p, rf, d := r.poisonBisect(ctx, right)
-		return p, rf, d + int64(len(left))
+	leftErr := r.logs.InsertBatch(ctx, left)
+	if leftErr == nil {
+		p, rf, d, routing := r.poisonBisect(ctx, right)
+		if routing {
+			return nil, rf, d + int64(len(left)), true
+		}
+		return p, rf, d + int64(len(left)), false
 	}
-	if err := r.logs.InsertBatch(ctx, right); err == nil {
-		// 右半成功 → 毒丸在左半；右半已落库，继续二分左半
-		p, rf, d := r.poisonBisect(ctx, left)
-		return p, rf, d + int64(len(right))
+	leftRouting := errors.Is(leftErr, domain.ErrPartitionUnavailable)
+	rightErr := r.logs.InsertBatch(ctx, right)
+	if rightErr == nil {
+		p, rf, d, routing := r.poisonBisect(ctx, left)
+		if routing {
+			return nil, rf, d + int64(len(right)), true
+		}
+		return p, rf, d + int64(len(right)), false
+	}
+	rightRouting := errors.Is(rightErr, domain.ErrPartitionUnavailable)
+	if leftRouting || rightRouting {
+		return nil, chunk, 0, true
 	}
 	// 两半都失败 → 整库故障：全部未落库行回灌（不丢），调用方不累计失败计数。
 	// （同节点双毒丸行亦归入此类：下轮 flush 整体重试仍两半都失败——继续回灌
 	// 不丢，可观测性由 pending 增长 + DB-wide Warn 覆盖。）
-	return nil, chunk, 0
+	return nil, chunk, 0, false
+}
+
+func partitionDateRange(logs []*domain.UsageLog) (time.Time, time.Time) {
+	if len(logs) == 0 {
+		return time.Time{}, time.Time{}
+	}
+	minT := logs[0].CreatedAt
+	maxT := logs[0].CreatedAt
+	for _, l := range logs[1:] {
+		if l.CreatedAt.Before(minT) {
+			minT = l.CreatedAt
+		}
+		if l.CreatedAt.After(maxT) {
+			maxT = l.CreatedAt
+		}
+	}
+	return minT, maxT
 }
 
 // refillLogs 失败/截断回灌：合并回当前 pending（锁内 append——flush 期间
