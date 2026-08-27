@@ -185,6 +185,7 @@ func (r *UserRepo) CreateUser(ctx context.Context, u *domain.User) (*domain.User
 		SetStatus(user.Status(u.Status)).
 		SetMaxConcurrency(u.MaxConcurrency).
 		SetBalance(u.Balance).
+		SetBalanceWarningThreshold(u.BalanceWarningThreshold).
 		Save(ctx)
 	if err != nil {
 		// email 唯一冲突（并发注册双过 pre-check → 一者撞 23505）→ ErrConflict
@@ -337,6 +338,46 @@ func (r *UserRepo) UpdateUserPassword(ctx context.Context, id int64, passwordHas
 		return fmt.Errorf("%w: id=%d missing", ErrNotFound, id)
 	}
 	return nil
+}
+
+// UpdateUserBalanceWarningThreshold 设置余额预警阈值（0 = 关闭），并返回本次
+// 写入前的阈值。PostgreSQL 18 old/new RETURNING 将旧值捕获与 LWW 写入合为
+// 单语句；并发写者各自拿到紧邻本次写入的前值。用户缺失 → ErrNotFound。
+func (r *UserRepo) UpdateUserBalanceWarningThreshold(ctx context.Context, userID int64, threshold int64) (*domain.User, int64, error) {
+	const q = `UPDATE "users" SET "balance_warning_threshold" = $1, "updated_at" = now() WHERE "id" = $2 RETURNING old."balance_warning_threshold", new."id", new."email", new."password_hash", new."role", new."status", new."max_concurrency", new."balance", new."balance_warning_threshold", new."token_version", new."created_at", new."updated_at"`
+	rows := &sql.Rows{}
+	if err := r.driver.Query(ctx, q, []any{threshold, userID}, rows); err != nil {
+		return nil, 0, fmt.Errorf("update user balance warning threshold: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, 0, fmt.Errorf("update user balance warning threshold: %w", err)
+		}
+		return nil, 0, fmt.Errorf("%w: id=%d missing", ErrNotFound, userID)
+	}
+	updated := &domain.User{}
+	var previousThreshold int64
+	var role, status string
+	if err := rows.Scan(
+		&previousThreshold,
+		&updated.ID,
+		&updated.Email,
+		&updated.PasswordHash,
+		&role,
+		&status,
+		&updated.MaxConcurrency,
+		&updated.Balance,
+		&updated.BalanceWarningThreshold,
+		&updated.TokenVersion,
+		&updated.CreatedAt,
+		&updated.UpdatedAt,
+	); err != nil {
+		return nil, 0, fmt.Errorf("scan updated user balance warning threshold: %w", err)
+	}
+	updated.Role = domain.Role(role)
+	updated.Status = domain.UserStatus(status)
+	return updated, previousThreshold, nil
 }
 
 // LoadUsers 全量用户快照（Auth 内存表：RequireJWT 用户状态校验 + token_version
