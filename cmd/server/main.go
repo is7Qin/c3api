@@ -352,6 +352,13 @@ func main() {
 			TierPolicy: svc.ServiceTierPolicy,
 		}
 	}
+	// warningSinkSetter 必须保持 real nil interface：billing 关闭时不得把
+	// (*billing.Flusher)(nil) 装入接口，否则条件装配会误判为已启用。
+	var warningSinkSetter balanceWarningSinkSetter
+	if billFlusher != nil {
+		warningSinkSetter = billFlusher
+	}
+	warningW := wireBalanceWarning(warningSinkSetter, rdb, svc, mailW, log)
 	px := proxy.New(proxy.Config{
 		MaxBodySize:           cfg.Proxy.MaxBodySize,
 		MaxInflight:           cfg.Proxy.MaxInflight,
@@ -444,21 +451,23 @@ func main() {
 	// 独立 Stats 契约不改 worker.Worker——装配侧类型断言聚合（各模块已持
 	// 具体引用，断言实现 handler.StatsProvider 的入列；快照注册表状态单独
 	// 经 Status 直出）。WithOps 注入，路由由契约 chi-server 生成。
-	var opsWorkers []handler.StatsProvider
-	for _, w := range []worker.Worker{inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg, mailW, listener, authSync} {
-		if s, ok := w.(handler.StatsProvider); ok {
-			opsWorkers = append(opsWorkers, s)
-		} else {
-			// G2-3（spec 2026-08-13）：断言失败 Warn 一次——StatsProvider 是约定
-			// 非强制，新 worker 忘实现时 /ops/workers 静默缺项，启动期提示（非
-			// 错误：无 Stats 的 worker 合法）。
-			log.Warn("worker does not implement StatsProvider, missing from /api/admin/ops/workers",
-				logx.String("worker", w.Name()))
-		}
+	// 同一有序切片同时供 ops 聚合与 Manager 注册，避免观测面与生命周期面漏接。
+	// optional worker 先转为 real nil interface，禁止 typed-nil 穿透条件装配。
+	var warningWorker worker.Worker
+	if warningW != nil {
+		warningWorker = warningW
 	}
+	var billingWorker worker.Worker
 	if billFlusher != nil {
-		opsWorkers = append(opsWorkers, billFlusher)
+		billingWorker = billFlusher
 	}
+	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker,
+		inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg)
+	opsCandidates := append([]worker.Worker{}, managedWorkers...)
+	opsCandidates = append(opsCandidates, listener, authSync)
+	// G2-3（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
+	// worker 合法，但启动期明确提示其不会出现在运维端点。
+	opsWorkers := statsProviders(opsCandidates, log)
 	// discovery 实例发现观测（foundation spec §2.4）：alive N / last_tick_ok /
 	// consecutive_errors——Redis 故障冻结期在运维面可见（instances 停走 +
 	// consecutive_errors 增长）。
@@ -524,24 +533,21 @@ func main() {
 	if len(errs) == 0 {
 		disp.bootLoaded.Store(true)
 	}
-	// 统一 worker 管理：顺序启动、反向排空。F2 单写点后排空语义重排
-	// （spec-f2-ledger-cursor §一）：billFlusher 首位注册 → 反向排空时**最后**
-	// 扫计费游标——rec 先排空落库日志，游标终扫看到完整账本再扣费，优雅停机
-	// 全额结算。旧世界 billing 事务自带日志 INSERT 所以最先排空（评审 I-1）；
-	// 新世界日志归 usage flusher，顺序必须反过来。
+	// 统一 worker 管理：顺序启动、反向排空。注册序 email → notification(条件)
+	// → billing(条件) → 业务 worker，保证停机时 usage recorder 先落完整账本，
+	// billing 再终扫游标，随后 notification 排空已提交告警，最后 email 排空独立
+	// 的注册/重置队列。billing 关闭时 email 仍无条件注册，管理端 channel-test 与
+	// auth 邮件行为保持独立。
 	wm := worker.New(log)
-	if billFlusher != nil {
-		wm.Register(billFlusher)
-	}
-	wm.Register(inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg, mailW) // invalidate 去抖器执行 goroutine（单 goroutine 串行）；errlog 错误明细排空在 rec 之后注册 → 反向排空先于 rec；retention/stats-agg 顺序无依赖（覆盖语义幂等，停摆窗口由追赶上限收敛）；mailW 尾部——反序排空中段关闭，无资金风险（D-W4）。billFlusher 缺位时：计费关闭，billable 行出生即 billed=true 吸收态，无未扣积压
+	wm.Register(managedWorkers...) // invalidate 去抖器执行 goroutine（单 goroutine 串行）；errlog 错误明细排空在 rec 之后注册 → 反向排空先于 rec；retention/stats-agg 顺序无依赖（覆盖语义幂等，停摆窗口由追赶上限收敛）。billFlusher 缺位时：计费关闭，billable 行出生即 billed=true 吸收态，无未扣积压
 	// conc-sync 业务区段尾部（spec §1.5：协调态可丢、无排空顺序依赖——停机即停
 	// tick，在途 HASH 字段 ≤4s ts 出局 + 16s EXPIRE 自灭，Close 无清理义务）。
 	wm.Register(concSync)
 	// 账号层孪生同段并排（spec conc-share-borrow-account §2：同款协调态语义）。
 	wm.Register(accConcSync)
-	// discovery 在 billFlusher 之后、listener/authSync 之前注册（foundation spec
+	// discovery 在业务 worker 之后、listener/authSync 之前注册（foundation spec
 	// §2.3 装配序）：反向排空时 listener 先停接收、discovery 随即 ZREM 自身缩容
-	// 掉出 N，再排业务 worker——游标终扫（billFlusher 最后排空）前集群基数已收敛。
+	// 掉出 N，再排业务 worker——billing 游标终扫前集群基数已收敛。
 	wm.Register(disco)
 	// listener/auth-sync 最后注册 → 反向排空最先关：停止接收/周期刷新后再排空
 	// 业务 worker（scheduler 排空回写仍会发布 NOTIFY，自播跳过、其它实例接收，
@@ -601,9 +607,9 @@ func main() {
 	//    usage 帧照常计费）
 	// 3) waitForInflight：等在途归零（100ms 轮询；超时 Warn 继续不阻塞退出）
 	// 4) wm.Shutdown 反向排空：listener/authSync 最先停止接收 → disco ZREM 缩容
-	//    → accConcSync/concSync → mailW/statsAgg/retention/pricingSync → errlogW
-	//    → rec 排空明细 → rule/sched/inv → billFlusher 最后终扫游标（usage 落库后
-	//    账本完整再扣费）
+	//    → accConcSync/concSync → statsAgg/retention/pricingSync/errlogW
+	//    → rec 排空明细 → rule/sched/inv → billing 终扫完整账本
+	//    → notification 排空余额告警 → email 排空 auth 邮件
 	srvCtx, cancelSrv := context.WithTimeout(shutdownCtx, 2*time.Second)
 	// G2-2（spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
 	// `_ =` 全丢弃；wm.Shutdown 内部已对 worker Close 失败 Warn，此处补齐
