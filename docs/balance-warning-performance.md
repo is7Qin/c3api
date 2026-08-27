@@ -1,6 +1,6 @@
 # Balance-warning settlement performance evidence
 
-**Date:** 2026-08-27  
+**Date:** 2026-08-27
 **Scope:** uncommitted balance-warning settlement change, measured through repository settlement commit.
 
 ## Environment and method
