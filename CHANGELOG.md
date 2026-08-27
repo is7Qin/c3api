@@ -10,6 +10,8 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ## [Unreleased]
 
+- 新增用户永久余额预警：用户可经 USD 阈值 API 设置阈值，`0` 关闭；永久余额在结算后恰跨阈值时触发，临时额度不参与。邮件为尽力发送，按用户和阈值 `24h` 冷却；提供通用 SMTP 通道测试、全局开关及 `balance_warning` 模板。
+
 ## [v0.0.1-beta.5] - 2026-08-26
 
 ### Breaking
