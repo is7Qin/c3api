@@ -273,6 +273,127 @@ func (f *fakeStore) UpdateAccount(ctx context.Context, a *domain.Account, cooldo
 	return &c, nil
 }
 
+func (f *fakeStore) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64, cooldownUntil *time.Time) (*domain.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.accs[a.ID]
+	if !ok {
+		return nil, missingErr(a.ID)
+	}
+	if cur.LifecycleRevision != expectedRevision {
+		return nil, fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, a.ID, expectedRevision)
+	}
+	c := *a
+	c.LifecycleRevision = expectedRevision + 1
+	if cooldownUntil != nil {
+		c.CooldownUntil = cooldownUntil
+	}
+	if a.Status == "active" {
+		c.FailedAt = nil
+		c.LastError = nil
+		c.FailureSource = nil
+	}
+	f.accs[a.ID] = &c
+	return &c, nil
+}
+
+func (f *fakeStore) FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.accs[id]
+	if !ok {
+		return missingErr(id)
+	}
+	if cur.LifecycleRevision != expectedRevision {
+		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
+	}
+	cur.FailedAt = &failedAt
+	cur.FailureSource = &source
+	if reason != "" {
+		cur.LastError = &reason
+	}
+	cur.LifecycleRevision = expectedRevision + 1
+	return nil
+}
+
+func (f *fakeStore) RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.accs[id]
+	if !ok {
+		return missingErr(id)
+	}
+	if cur.LifecycleRevision != expectedRevision {
+		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
+	}
+	cur.FailedAt = nil
+	cur.LastError = nil
+	cur.FailureSource = nil
+	cur.LifecycleRevision = expectedRevision + 1
+	return nil
+}
+
+func (f *fakeStore) SetAccountEnabledCAS(ctx context.Context, id int64, expectedRevision int64, enabled bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.accs[id]
+	if !ok {
+		return missingErr(id)
+	}
+	if cur.LifecycleRevision != expectedRevision {
+		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
+	}
+	cur.Enabled = enabled
+	cur.LifecycleRevision = expectedRevision + 1
+	return nil
+}
+
+func (f *fakeStore) ReplaceAccountCredentialCAS(ctx context.Context, id int64, expectedRevision int64, newKey string, newBaseURL *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.accs[id]
+	if !ok {
+		return missingErr(id)
+	}
+	if cur.LifecycleRevision != expectedRevision {
+		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
+	}
+	cur.UpstreamKey = newKey
+	cur.BaseURL = newBaseURL
+	cur.LifecycleRevision = expectedRevision + 1
+	return nil
+}
+
+func (f *fakeStore) UpdateAccountCostMultiplierCAS(ctx context.Context, id int64, expectedRevision int64, multiplier int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.accs[id]
+	if !ok {
+		return missingErr(id)
+	}
+	if cur.LifecycleRevision != expectedRevision {
+		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
+	}
+	cur.UpstreamCostMultiplierBp = multiplier
+	cur.LifecycleRevision = expectedRevision + 1
+	return nil
+}
+
+func (f *fakeStore) UpdateAccountCacheDomainCAS(ctx context.Context, id int64, expectedRevision int64, domain *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.accs[id]
+	if !ok {
+		return missingErr(id)
+	}
+	if cur.LifecycleRevision != expectedRevision {
+		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
+	}
+	cur.CacheDomain = domain
+	cur.LifecycleRevision = expectedRevision + 1
+	return nil
+}
+
 func (f *fakeStore) DeleteAccount(ctx context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1912,6 +2033,63 @@ func (f *fakeStore) WritePATKey(ctx context.Context, accountID int64, patKey str
 	}
 	e.CodexPATKey = &patKey
 	return nil
+}
+
+func (f *fakeStore) AdminWriteOAuthRotationCAS(ctx context.Context, accountID int64, expectedRevision int64, at, rt string, expiresAt *time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	acc, ok := f.accs[accountID]
+	if !ok {
+		return missingErr(accountID)
+	}
+	if acc.LifecycleRevision != expectedRevision {
+		return fmt.Errorf("%w: account_id=%d expected revision %d stale", repository.ErrConflict, accountID, expectedRevision)
+	}
+	e, ok := f.accExts[accountID]
+	if !ok {
+		return fmt.Errorf("%w: account_id=%d ext row missing", repository.ErrNotFound, accountID)
+	}
+	e.CodexOAuthToken = &at
+	e.CodexOAuthRefreshToken = &rt
+	e.CodexOAuthExpiresAt = expiresAt
+	acc.LifecycleRevision = expectedRevision + 1
+	return nil
+}
+
+func (f *fakeStore) AdminWritePATKeyCAS(ctx context.Context, accountID int64, expectedRevision int64, patKey string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	acc, ok := f.accs[accountID]
+	if !ok {
+		return missingErr(accountID)
+	}
+	if acc.LifecycleRevision != expectedRevision {
+		return fmt.Errorf("%w: account_id=%d expected revision %d stale", repository.ErrConflict, accountID, expectedRevision)
+	}
+	e, ok := f.accExts[accountID]
+	if !ok {
+		return fmt.Errorf("%w: account_id=%d ext row missing", repository.ErrNotFound, accountID)
+	}
+	e.CodexPATKey = &patKey
+	acc.LifecycleRevision = expectedRevision + 1
+	return nil
+}
+
+func (f *fakeStore) AdminUpsertAccountExtCAS(ctx context.Context, e *domain.AccountExt, expectedRevision int64) (*domain.AccountExt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	acc, ok := f.accs[e.AccountID]
+	if !ok {
+		return nil, missingErr(e.AccountID)
+	}
+	if acc.LifecycleRevision != expectedRevision {
+		return nil, fmt.Errorf("%w: account_id=%d expected revision %d stale", repository.ErrConflict, e.AccountID, expectedRevision)
+	}
+	c := *e
+	f.accExts[e.AccountID] = &c
+	acc.LifecycleRevision = expectedRevision + 1
+	cc := c
+	return &cc, nil
 }
 
 // --- 兑换码非事务面（管理端 CRUD 用；错误格式镜像真实 repo） ---

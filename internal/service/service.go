@@ -148,6 +148,13 @@ type AccountStore interface {
 	GetAccount(ctx context.Context, id int64) (*domain.Account, error)
 	ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error)
 	UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error)
+	UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64, cooldownUntil *time.Time) (*domain.Account, error)
+	FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error
+	RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error
+	SetAccountEnabledCAS(ctx context.Context, id int64, expectedRevision int64, enabled bool) error
+	ReplaceAccountCredentialCAS(ctx context.Context, id int64, expectedRevision int64, newKey string, newBaseURL *string) error
+	UpdateAccountCostMultiplierCAS(ctx context.Context, id int64, expectedRevision int64, multiplier int) error
+	UpdateAccountCacheDomainCAS(ctx context.Context, id int64, expectedRevision int64, domain *string) error
 	DeleteAccount(ctx context.Context, id int64) error
 	DeleteAccountsBatch(ctx context.Context, ids []int64) error
 	UpdateAccountsBatch(ctx context.Context, ids []int64, p repository.AccountPatch) error
@@ -183,19 +190,20 @@ type TemplateExtStore interface {
 // 先写者胜）——并发双导入同一账号不覆盖不报错。
 type AccountExtStore interface {
 	UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error)
+	AdminUpsertAccountExtCAS(ctx context.Context, e *domain.AccountExt, expectedRevision int64) (*domain.AccountExt, error)
 	TryInsertAccountExt(ctx context.Context, e *domain.AccountExt) (bool, error)
 	GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error)
 	// FindAccountExtByCodexKey 组合幂等键查重（Task B 批量导入——(codex_email,
 	// codex_account_id)；GetAccountExt 仅按 account_id，查重面不存在）；缺行 →
 	// ErrNotFound。
 	FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error)
-	// WriteOAuthRotation oauth 凭据三列部分更新（Task B 导入 updated 路径——
-	// identity/email/其余列零触碰；SDK 轮转回写 sdkbridge.RotationStore 同签名
-	// 独立面，repository.AccountExts 一实现双面）；行缺失 → ErrNotFound。
+	// WriteOAuthRotation oauth 凭据三列部分更新（SDK 轮转回写，unfenced，不增 revision）。
 	WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error
+	AdminWriteOAuthRotationCAS(ctx context.Context, accountID int64, expectedRevision int64, at, rt string, expiresAt *time.Time) error
 	// WritePATKey pat 凭据列部分更新（WriteOAuthRotation 的 pat 对称形态）；
 	// 行缺失 → ErrNotFound。
 	WritePATKey(ctx context.Context, accountID int64, patKey string) error
+	AdminWritePATKeyCAS(ctx context.Context, accountID int64, expectedRevision int64, patKey string) error
 }
 
 // EmailTemplateStore 邮件模板持久化。

@@ -53,10 +53,10 @@ type AccountPatch struct {
 	// GroupIDs nil = 不变；非 nil = 替换账号全部分组（含空数组 = 清空）。
 	GroupIDs *[]int64
 	// CooldownUntil nil = 不变；非 nil = SetCooldownUntil（管理面永不 Clear）。
-	CooldownUntil *time.Time
-	Enabled       *bool
+	CooldownUntil            *time.Time
+	Enabled                  *bool
 	UpstreamCostMultiplierBp *int
-	CacheDomain   *string // nil=不变, &""=清空, &val=落值
+	CacheDomain              *string // nil=不变, &""=清空, &val=落值
 }
 
 type GroupPatch struct {
@@ -220,6 +220,75 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 				return err
 			}
 		}
+		if p.UpstreamKey != nil || p.BaseURL != nil || (p.Status != nil && *p.Status == domain.StatusActive) {
+			for _, id := range sortedUniqueIDs(ids) {
+				row, err := client.Account.Query().Where(account.IDEQ(id)).Only(ctx)
+				if err != nil {
+					return errMissingID(err, id)
+				}
+				expected := row.LifecycleRevision
+				u := client.Account.Update().Where(account.IDEQ(id), account.LifecycleRevisionEQ(expected)).SetLifecycleRevision(expected + 1)
+				if p.Name != nil {
+					u = u.SetName(*p.Name)
+				}
+				if p.TemplateID != nil {
+					u = u.SetTemplateID(*p.TemplateID)
+				}
+				if p.UpstreamKey != nil {
+					u = u.SetUpstreamKey(*p.UpstreamKey)
+				}
+				if p.BaseURL != nil {
+					if *p.BaseURL == "" {
+						u = u.ClearBaseURL()
+					} else {
+						u = u.SetBaseURL(*p.BaseURL)
+					}
+				}
+				if p.Status != nil {
+					u = u.SetStatus(account.Status(*p.Status))
+					if *p.Status == domain.StatusActive {
+						u = u.ClearFailedAt().ClearLastError().ClearFailureSource()
+					}
+				}
+				if p.Weight != nil {
+					u = u.SetWeight(*p.Weight)
+				}
+				if p.MaxConcurrency != nil {
+					u = u.SetMaxConcurrency(*p.MaxConcurrency)
+				}
+				if p.Enabled != nil {
+					u = u.SetEnabled(*p.Enabled)
+				}
+				if p.UpstreamCostMultiplierBp != nil {
+					u = u.SetUpstreamCostMultiplierBp(*p.UpstreamCostMultiplierBp)
+				}
+				if p.CacheDomain != nil {
+					if *p.CacheDomain == "" {
+						u = u.ClearCacheDomain()
+					} else {
+						u = u.SetCacheDomain(*p.CacheDomain)
+					}
+				}
+				if p.CooldownUntil != nil {
+					u = u.SetCooldownUntil(*p.CooldownUntil)
+				}
+				n, err := u.Save(ctx)
+				if err != nil {
+					return err
+				}
+				if n == 0 {
+					return fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, id, expected)
+				}
+			}
+			if p.GroupIDs != nil {
+				for _, id := range sortedUniqueIDs(ids) {
+					if _, err := client.Account.UpdateOneID(id).ClearGroups().AddGroupIDs(*p.GroupIDs...).Save(ctx); err != nil {
+						return errMissingID(err, id)
+					}
+				}
+			}
+			return nil
+		}
 		for _, id := range sortedUniqueIDs(ids) {
 			u := client.Account.UpdateOneID(id)
 			if p.Name != nil {
@@ -232,7 +301,6 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 				u = u.SetUpstreamKey(*p.UpstreamKey)
 			}
 			if p.BaseURL != nil {
-				// 批量三态（C1）："" = 清空（落 NULL = 继承模板）；非空 = 落值。
 				if *p.BaseURL == "" {
 					u = u.ClearBaseURL()
 				} else {
@@ -242,9 +310,6 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			if p.Status != nil {
 				u = u.SetStatus(account.Status(*p.Status))
 				if *p.Status == domain.StatusActive {
-					// T5 失效恢复（管理面批量——status 枚举含 active）：status→
-					// active 隐含清 failed_at + last_error（与 UpdateAccount 单
-					// 路径同语义——恢复动作 = 状态切换）。
 					u = u.ClearFailedAt().ClearLastError()
 				}
 			}
@@ -255,8 +320,6 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 				u = u.SetMaxConcurrency(*p.MaxConcurrency)
 			}
 			if p.GroupIDs != nil {
-				// ent 无 SetGroups：ClearGroups + AddGroupIDs 实现整组替换
-				// （AddGroupIDs 内部 map 去重，重复 id 安全）。
 				u = u.ClearGroups().AddGroupIDs(*p.GroupIDs...)
 			}
 			if p.CooldownUntil != nil {

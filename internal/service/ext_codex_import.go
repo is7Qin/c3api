@@ -288,12 +288,18 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 }
 
 // updateCodexCredentials updated 路径凭据列部分更新（oauth 三列 / pat 单列——
-// identity/email/并发/权重/归属零触碰）。
+// identity/email/并发/权重/归属零触碰），管理员 fenced：CAS expectedRevision +1。
+// SDK 内部刷新继续使用 WriteOAuthRotation（unfenced）。
 func (s *Service) updateCodexCredentials(ctx context.Context, accountID int64, row codexImportRow, credType credential.Type) error {
-	if credType == credential.TypeCodexOAuth {
-		return s.store.WriteOAuthRotation(ctx, accountID, row.oauthToken, row.oauthRT, row.oauthExpires)
+	acc, err := s.store.GetAccount(ctx, accountID)
+	if err != nil {
+		return mapRepoErr(err)
 	}
-	return s.store.WritePATKey(ctx, accountID, row.patKey)
+	expected := acc.LifecycleRevision
+	if credType == credential.TypeCodexOAuth {
+		return mapRepoErr(s.store.AdminWriteOAuthRotationCAS(ctx, accountID, expected, row.oauthToken, row.oauthRT, row.oauthExpires))
+	}
+	return mapRepoErr(s.store.AdminWritePATKeyCAS(ctx, accountID, expected, row.patKey))
 }
 
 // importKeyConflictErr 唯一索引冲突 → 行级 failed 文案（并发同键兜底面：

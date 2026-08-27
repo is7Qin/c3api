@@ -258,15 +258,15 @@ func (r *AccountRepo) UpdateAccountStatus(ctx context.Context, id int64, status 
 }
 
 // SetAccountFailed 幂等写账号失效（SDK 接入 T1——统一失效回调处理链第一步）：
- // failed_at + last_error（失效原因文本，复用既有 last_error——用户裁决
- // 2026-08-13：两原因字段并存会漂移；失效后账号摘除不再被调度 → caller.go
- // 的普通失败写点不会覆盖失效原因，复用安全）首写生效——failed_at 已置（首次
- // 上报）→ 0 行不覆盖（保持首次失效时刻与原因；重复上报不重复写；T5 恢复由
- // 管理面清 failed_at + last_error）。**空 reason 不清旧值**（P3-2 评审：
- // 空原因上报不触碰既有 last_error——保持"最近错误"审计语义；调度回写携带的
- // 快照旧值与 DB 一致，不互相覆盖）。不触碰 status（与 disabled 语义分离：
- // disabled = 管理面手动禁用；调度摘除走 scheduler.FailAccount 经 loader 落库）。
- // 账号不存在 → 0 行不报错（审计性写入，无对象可写；调度摘除亦会因快照外账号 no-op）。
+// failed_at + last_error（失效原因文本，复用既有 last_error——用户裁决
+// 2026-08-13：两原因字段并存会漂移；失效后账号摘除不再被调度 → caller.go
+// 的普通失败写点不会覆盖失效原因，复用安全）首写生效——failed_at 已置（首次
+// 上报）→ 0 行不覆盖（保持首次失效时刻与原因；重复上报不重复写；T5 恢复由
+// 管理面清 failed_at + last_error）。**空 reason 不清旧值**（P3-2 评审：
+// 空原因上报不触碰既有 last_error——保持"最近错误"审计语义；调度回写携带的
+// 快照旧值与 DB 一致，不互相覆盖）。不触碰 status（与 disabled 语义分离：
+// disabled = 管理面手动禁用；调度摘除走 scheduler.FailAccount 经 loader 落库）。
+// 账号不存在 → 0 行不报错（审计性写入，无对象可写；调度摘除亦会因快照外账号 no-op）。
 func (r *AccountRepo) SetAccountFailed(ctx context.Context, id int64, failedAt time.Time, reason string) error {
 	u := r.client.Account.Update().
 		Where(account.IDEQ(id), account.FailedAtIsNil()).
@@ -390,4 +390,44 @@ func (r *AccountRepo) UpdateAccountCacheDomainCAS(ctx context.Context, id int64,
 		return fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, id, expectedRevision)
 	}
 	return nil
+}
+
+// UpdateAccountCAS 管理员全量更新（fenced）：CAS expectedRevision 并原子 +1，更新全部可变字段。
+// 用于 PUT credential/baseURL 替换及恢复场景，保证单条原子条件更新。
+func (r *AccountRepo) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64, cooldownUntil *time.Time) (*domain.Account, error) {
+	u := r.client.Account.Update().
+		Where(account.IDEQ(a.ID), account.LifecycleRevisionEQ(expectedRevision)).
+		SetName(a.Name).SetTemplateID(a.TemplateID).
+		SetUpstreamKey(a.UpstreamKey).
+		SetWeight(a.Weight).SetMaxConcurrency(a.MaxConcurrency).
+		SetStatus(account.Status(a.Status)).
+		SetEnabled(a.Enabled).
+		SetUpstreamCostMultiplierBp(a.UpstreamCostMultiplierBp).
+		SetLifecycleRevision(expectedRevision + 1)
+	if a.BaseURL != nil {
+		u = u.SetBaseURL(*a.BaseURL)
+	} else {
+		u = u.ClearBaseURL()
+	}
+	if a.CacheDomain != nil {
+		u = u.SetCacheDomain(*a.CacheDomain)
+	} else {
+		u = u.ClearCacheDomain()
+	}
+	if a.Status == domain.StatusActive {
+		u = u.ClearFailedAt().ClearLastError().ClearFailureSource()
+	}
+	if cooldownUntil != nil {
+		u = u.SetCooldownUntil(*cooldownUntil)
+	} else {
+		u = u.ClearCooldownUntil()
+	}
+	n, err := u.Save(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, a.ID, expectedRevision)
+	}
+	return r.GetAccount(ctx, a.ID)
 }

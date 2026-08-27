@@ -250,6 +250,34 @@ func (r *Repository) UpdateAccount(ctx context.Context, a *domain.Account, coold
 	return r.Accounts.UpdateAccount(ctx, a, cooldownUntil)
 }
 
+func (r *Repository) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64, cooldownUntil *time.Time) (*domain.Account, error) {
+	return r.Accounts.UpdateAccountCAS(ctx, a, expectedRevision, cooldownUntil)
+}
+
+func (r *Repository) FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error {
+	return r.Accounts.FailAccountCAS(ctx, id, expectedRevision, source, failedAt, reason)
+}
+
+func (r *Repository) RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error {
+	return r.Accounts.RecoverAccountCAS(ctx, id, expectedRevision)
+}
+
+func (r *Repository) SetAccountEnabledCAS(ctx context.Context, id int64, expectedRevision int64, enabled bool) error {
+	return r.Accounts.SetAccountEnabledCAS(ctx, id, expectedRevision, enabled)
+}
+
+func (r *Repository) ReplaceAccountCredentialCAS(ctx context.Context, id int64, expectedRevision int64, newKey string, newBaseURL *string) error {
+	return r.Accounts.ReplaceAccountCredentialCAS(ctx, id, expectedRevision, newKey, newBaseURL)
+}
+
+func (r *Repository) UpdateAccountCostMultiplierCAS(ctx context.Context, id int64, expectedRevision int64, multiplier int) error {
+	return r.Accounts.UpdateAccountCostMultiplierCAS(ctx, id, expectedRevision, multiplier)
+}
+
+func (r *Repository) UpdateAccountCacheDomainCAS(ctx context.Context, id int64, expectedRevision int64, domain *string) error {
+	return r.Accounts.UpdateAccountCacheDomainCAS(ctx, id, expectedRevision, domain)
+}
+
 func (r *Repository) DeleteAccount(ctx context.Context, id int64) error {
 	return r.Accounts.DeleteAccount(ctx, id)
 }
@@ -336,6 +364,18 @@ func (r *Repository) WriteOAuthRotation(ctx context.Context, accountID int64, at
 // 的 pat 对称形态）；行缺失 → ErrNotFound。
 func (r *Repository) WritePATKey(ctx context.Context, accountID int64, patKey string) error {
 	return r.AccountExts.WritePATKey(ctx, accountID, patKey)
+}
+
+func (r *Repository) AdminWriteOAuthRotationCAS(ctx context.Context, accountID int64, expectedRevision int64, at, rt string, expiresAt *time.Time) error {
+	return r.AccountExts.AdminWriteOAuthRotationCAS(ctx, accountID, expectedRevision, at, rt, expiresAt)
+}
+
+func (r *Repository) AdminWritePATKeyCAS(ctx context.Context, accountID int64, expectedRevision int64, patKey string) error {
+	return r.AccountExts.AdminWritePATKeyCAS(ctx, accountID, expectedRevision, patKey)
+}
+
+func (r *Repository) AdminUpsertAccountExtCAS(ctx context.Context, e *domain.AccountExt, expectedRevision int64) (*domain.AccountExt, error) {
+	return r.AccountExts.AdminUpsertAccountExtCAS(ctx, e, expectedRevision)
 }
 
 // --- 用户（Phase 3a） ---
