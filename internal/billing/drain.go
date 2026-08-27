@@ -118,6 +118,7 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, lane string, settle se
 			total.ForcedUsers += s.ForcedUsers
 			total.Quarantined += s.Quarantined
 			total.Balances = append(total.Balances, s.Balances...)
+			total.BalanceWarnings = append(total.BalanceWarnings, s.BalanceWarnings...)
 		}(bucket)
 	}
 	wg.Wait()
@@ -131,6 +132,11 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, lane string, settle se
 func (f *Flusher) applySettlement(s domain.SettlementSummary) {
 	for _, p := range s.Balances {
 		f.bal.Set(p.UserID, p.Balance)
+	}
+	if f.warningSink != nil {
+		for _, event := range s.BalanceWarnings {
+			f.warningSink.TrySubmit(event)
+		}
 	}
 	if s.Quarantined > 0 {
 		f.quarantined.Add(s.Quarantined)

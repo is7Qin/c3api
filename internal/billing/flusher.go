@@ -113,10 +113,11 @@ var inflightAbandonGrace = 500 * time.Millisecond
 // 周期结束后循环消费至游标清空（预算内）或截断退出（剩余行下次启动收敛，
 // RestartConvergence）。
 type Flusher struct {
-	cfg   FlushConfig
-	store LedgerStore
-	bal   *Balances
-	log   *logx.Logger
+	cfg         FlushConfig
+	store       LedgerStore
+	bal         *Balances
+	log         *logx.Logger
+	warningSink BalanceWarningSink
 	// balanceCtl/fefoCtl 结算批规模自适应控制器（batch_controller.go）——双车道
 	// 分治（spec-adaptive-batch-v2）：Balance 与 Fefo 各持一控制器互不污染——
 	// Fefo SQL 含窗口函数+行级条件更新，每行成本系统性更高，共享会让 Fefo 首条
@@ -163,7 +164,7 @@ func NewFlusher(cfg FlushConfig, store LedgerStore, bal *Balances, log *logx.Log
 	return f
 }
 
-// Name worker.Worker 契约（wm 按注册反向排空：flusher 最后注册最先排空）。
+// Name worker.Worker 契约（wm 按注册反向排空；具体依赖顺序由组合根声明）。
 func (f *Flusher) Name() string { return "billing" }
 
 func (f *Flusher) Start(ctx context.Context) error {
