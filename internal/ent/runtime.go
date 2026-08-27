@@ -40,14 +40,26 @@ func init() {
 	accountDescMaxConcurrency := accountFields[8].Descriptor()
 	// account.DefaultMaxConcurrency holds the default value on creation for the max_concurrency field.
 	account.DefaultMaxConcurrency = accountDescMaxConcurrency.Default.(int)
+	// accountDescEnabled is the schema descriptor for enabled field.
+	accountDescEnabled := accountFields[13].Descriptor()
+	// account.DefaultEnabled holds the default value on creation for the enabled field.
+	account.DefaultEnabled = accountDescEnabled.Default.(bool)
+	// accountDescLifecycleRevision is the schema descriptor for lifecycle_revision field.
+	accountDescLifecycleRevision := accountFields[14].Descriptor()
+	// account.DefaultLifecycleRevision holds the default value on creation for the lifecycle_revision field.
+	account.DefaultLifecycleRevision = accountDescLifecycleRevision.Default.(int64)
+	// accountDescUpstreamCostMultiplierBp is the schema descriptor for upstream_cost_multiplier_bp field.
+	accountDescUpstreamCostMultiplierBp := accountFields[15].Descriptor()
+	// account.DefaultUpstreamCostMultiplierBp holds the default value on creation for the upstream_cost_multiplier_bp field.
+	account.DefaultUpstreamCostMultiplierBp = accountDescUpstreamCostMultiplierBp.Default.(int)
 	// accountDescUpdatedAt is the schema descriptor for updated_at field.
-	accountDescUpdatedAt := accountFields[12].Descriptor()
+	accountDescUpdatedAt := accountFields[17].Descriptor()
 	// account.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	account.DefaultUpdatedAt = accountDescUpdatedAt.Default.(func() time.Time)
 	// account.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	account.UpdateDefaultUpdatedAt = accountDescUpdatedAt.UpdateDefault.(func() time.Time)
 	// accountDescCreatedAt is the schema descriptor for created_at field.
-	accountDescCreatedAt := accountFields[14].Descriptor()
+	accountDescCreatedAt := accountFields[19].Descriptor()
 	// account.DefaultCreatedAt holds the default value on creation for the created_at field.
 	account.DefaultCreatedAt = accountDescCreatedAt.Default.(func() time.Time)
 	emailtemplateFields := schema.EmailTemplate{}.Fields()

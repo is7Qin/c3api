@@ -515,6 +515,20 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 		if p.CooldownUntil != nil {
 			a.CooldownUntil = p.CooldownUntil
 		}
+		if p.Enabled != nil {
+			a.Enabled = *p.Enabled
+		}
+		if p.UpstreamCostMultiplierBp != nil {
+			a.UpstreamCostMultiplierBp = *p.UpstreamCostMultiplierBp
+		}
+		if p.CacheDomain != nil {
+			if *p.CacheDomain == "" {
+				a.CacheDomain = nil
+			} else {
+				v := *p.CacheDomain
+				a.CacheDomain = &v
+			}
+		}
 	}
 	return nil
 }

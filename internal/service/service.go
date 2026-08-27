@@ -518,6 +518,46 @@ func validateAccount(a *domain.Account) error {
 			return err
 		}
 	}
+	if a.UpstreamCostMultiplierBp < 0 {
+		return ErrInvalidInput
+	}
+	if a.CacheDomain != nil && *a.CacheDomain != "" {
+		if err := validateCacheDomain(*a.CacheDomain); err != nil {
+			return ErrInvalidInput
+		}
+	}
+	if a.LifecycleRevision < 0 {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func validateCacheDomain(s string) error {
+	if len(s) == 0 || len(s) > 253 {
+		return ErrInvalidInput
+	}
+	// Simple domain validation: labels 1-63, alnum/hyphen, not start/end with hyphen, dot separated, lowercased.
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.' {
+			continue
+		}
+		return ErrInvalidInput
+	}
+	if s[0] == '-' || s[0] == '.' || s[len(s)-1] == '-' || s[len(s)-1] == '.' {
+		return ErrInvalidInput
+	}
+	if len(s) != len(strings.Trim(s, ".")) {
+		return ErrInvalidInput
+	}
+	labels := strings.Split(s, ".")
+	for _, lab := range labels {
+		if len(lab) == 0 || len(lab) > 63 {
+			return ErrInvalidInput
+		}
+		if lab[0] == '-' || lab[len(lab)-1] == '-' {
+			return ErrInvalidInput
+		}
+	}
 	return nil
 }
 
@@ -647,6 +687,14 @@ func validateAccountPatch(p repository.AccountPatch) error {
 				return ErrInvalidInput
 			}
 			seen[id] = struct{}{}
+		}
+	}
+	if p.UpstreamCostMultiplierBp != nil && *p.UpstreamCostMultiplierBp < 0 {
+		return ErrInvalidInput
+	}
+	if p.CacheDomain != nil && *p.CacheDomain != "" {
+		if err := validateCacheDomain(*p.CacheDomain); err != nil {
+			return ErrInvalidInput
 		}
 	}
 	return nil

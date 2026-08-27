@@ -146,6 +146,11 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 		CooldownUntil: a.CooldownUntil, Weight: a.Weight, MaxConcurrency: a.MaxConcurrency,
 		LastError: a.LastError, LastUsedAt: a.LastUsedAt,
 		FailedAt:  a.FailedAt,
+		FailureSource:              a.FailureSource,
+		Enabled:                    a.Enabled,
+		LifecycleRevision:          a.LifecycleRevision,
+		UpstreamCostMultiplierBp:   a.UpstreamCostMultiplierBp,
+		CacheDomain:                a.CacheDomain,
 		CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, DeletedAt: a.DeletedAt,
 	}
 	// Ext 快照合并：仅调度器快照加载（LoadGroupsAccounts / LoadGroupAccounts

@@ -37,6 +37,16 @@ const (
 	FieldLastUsedAt = "last_used_at"
 	// FieldFailedAt holds the string denoting the failed_at field in the database.
 	FieldFailedAt = "failed_at"
+	// FieldFailureSource holds the string denoting the failure_source field in the database.
+	FieldFailureSource = "failure_source"
+	// FieldEnabled holds the string denoting the enabled field in the database.
+	FieldEnabled = "enabled"
+	// FieldLifecycleRevision holds the string denoting the lifecycle_revision field in the database.
+	FieldLifecycleRevision = "lifecycle_revision"
+	// FieldUpstreamCostMultiplierBp holds the string denoting the upstream_cost_multiplier_bp field in the database.
+	FieldUpstreamCostMultiplierBp = "upstream_cost_multiplier_bp"
+	// FieldCacheDomain holds the string denoting the cache_domain field in the database.
+	FieldCacheDomain = "cache_domain"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
 	// FieldDeletedAt holds the string denoting the deleted_at field in the database.
@@ -86,6 +96,11 @@ var Columns = []string{
 	FieldLastError,
 	FieldLastUsedAt,
 	FieldFailedAt,
+	FieldFailureSource,
+	FieldEnabled,
+	FieldLifecycleRevision,
+	FieldUpstreamCostMultiplierBp,
+	FieldCacheDomain,
 	FieldUpdatedAt,
 	FieldDeletedAt,
 	FieldCreatedAt,
@@ -112,6 +127,12 @@ var (
 	DefaultWeight int
 	// DefaultMaxConcurrency holds the default value on creation for the "max_concurrency" field.
 	DefaultMaxConcurrency int
+	// DefaultEnabled holds the default value on creation for the "enabled" field.
+	DefaultEnabled bool
+	// DefaultLifecycleRevision holds the default value on creation for the "lifecycle_revision" field.
+	DefaultLifecycleRevision int64
+	// DefaultUpstreamCostMultiplierBp holds the default value on creation for the "upstream_cost_multiplier_bp" field.
+	DefaultUpstreamCostMultiplierBp int
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
@@ -209,6 +230,31 @@ func ByLastUsedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByFailedAt orders the results by the failed_at field.
 func ByFailedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFailedAt, opts...).ToFunc()
+}
+
+// ByFailureSource orders the results by the failure_source field.
+func ByFailureSource(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFailureSource, opts...).ToFunc()
+}
+
+// ByEnabled orders the results by the enabled field.
+func ByEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldEnabled, opts...).ToFunc()
+}
+
+// ByLifecycleRevision orders the results by the lifecycle_revision field.
+func ByLifecycleRevision(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLifecycleRevision, opts...).ToFunc()
+}
+
+// ByUpstreamCostMultiplierBp orders the results by the upstream_cost_multiplier_bp field.
+func ByUpstreamCostMultiplierBp(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpstreamCostMultiplierBp, opts...).ToFunc()
+}
+
+// ByCacheDomain orders the results by the cache_domain field.
+func ByCacheDomain(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCacheDomain, opts...).ToFunc()
 }
 
 // ByUpdatedAt orders the results by the updated_at field.

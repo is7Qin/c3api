@@ -54,6 +54,9 @@ type AccountPatch struct {
 	GroupIDs *[]int64
 	// CooldownUntil nil = 不变；非 nil = SetCooldownUntil（管理面永不 Clear）。
 	CooldownUntil *time.Time
+	Enabled       *bool
+	UpstreamCostMultiplierBp *int
+	CacheDomain   *string // nil=不变, &""=清空, &val=落值
 }
 
 type GroupPatch struct {
@@ -258,6 +261,19 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			}
 			if p.CooldownUntil != nil {
 				u = u.SetCooldownUntil(*p.CooldownUntil)
+			}
+			if p.Enabled != nil {
+				u = u.SetEnabled(*p.Enabled)
+			}
+			if p.UpstreamCostMultiplierBp != nil {
+				u = u.SetUpstreamCostMultiplierBp(*p.UpstreamCostMultiplierBp)
+			}
+			if p.CacheDomain != nil {
+				if *p.CacheDomain == "" {
+					u = u.ClearCacheDomain()
+				} else {
+					u = u.SetCacheDomain(*p.CacheDomain)
+				}
 			}
 			if _, err := u.Save(ctx); err != nil {
 				return errMissingID(err, id)

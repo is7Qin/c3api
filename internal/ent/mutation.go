@@ -70,36 +70,43 @@ const (
 // AccountMutation represents an operation that mutates the Account nodes in the graph.
 type AccountMutation struct {
 	config
-	op                 Op
-	typ                string
-	id                 *int64
-	name               *string
-	base_url           *string
-	upstream_key       *string
-	status             *account.Status
-	cooldown_until     *time.Time
-	weight             *int
-	addweight          *int
-	max_concurrency    *int
-	addmax_concurrency *int
-	last_error         *string
-	last_used_at       *time.Time
-	failed_at          *time.Time
-	updated_at         *time.Time
-	deleted_at         *time.Time
-	created_at         *time.Time
-	clearedFields      map[string]struct{}
-	template           *int64
-	clearedtemplate    bool
-	groups             map[int64]struct{}
-	removedgroups      map[int64]struct{}
-	clearedgroups      bool
-	ext                map[int64]struct{}
-	removedext         map[int64]struct{}
-	clearedext         bool
-	done               bool
-	oldValue           func(context.Context) (*Account, error)
-	predicates         []predicate.Account
+	op                             Op
+	typ                            string
+	id                             *int64
+	name                           *string
+	base_url                       *string
+	upstream_key                   *string
+	status                         *account.Status
+	cooldown_until                 *time.Time
+	weight                         *int
+	addweight                      *int
+	max_concurrency                *int
+	addmax_concurrency             *int
+	last_error                     *string
+	last_used_at                   *time.Time
+	failed_at                      *time.Time
+	failure_source                 *string
+	enabled                        *bool
+	lifecycle_revision             *int64
+	addlifecycle_revision          *int64
+	upstream_cost_multiplier_bp    *int
+	addupstream_cost_multiplier_bp *int
+	cache_domain                   *string
+	updated_at                     *time.Time
+	deleted_at                     *time.Time
+	created_at                     *time.Time
+	clearedFields                  map[string]struct{}
+	template                       *int64
+	clearedtemplate                bool
+	groups                         map[int64]struct{}
+	removedgroups                  map[int64]struct{}
+	clearedgroups                  bool
+	ext                            map[int64]struct{}
+	removedext                     map[int64]struct{}
+	clearedext                     bool
+	done                           bool
+	oldValue                       func(context.Context) (*Account, error)
+	predicates                     []predicate.Account
 }
 
 var _ ent.Mutation = (*AccountMutation)(nil)
@@ -707,6 +714,252 @@ func (m *AccountMutation) ResetFailedAt() {
 	delete(m.clearedFields, account.FieldFailedAt)
 }
 
+// SetFailureSource sets the "failure_source" field.
+func (m *AccountMutation) SetFailureSource(s string) {
+	m.failure_source = &s
+}
+
+// FailureSource returns the value of the "failure_source" field in the mutation.
+func (m *AccountMutation) FailureSource() (r string, exists bool) {
+	v := m.failure_source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFailureSource returns the old "failure_source" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldFailureSource(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFailureSource is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFailureSource requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFailureSource: %w", err)
+	}
+	return oldValue.FailureSource, nil
+}
+
+// ClearFailureSource clears the value of the "failure_source" field.
+func (m *AccountMutation) ClearFailureSource() {
+	m.failure_source = nil
+	m.clearedFields[account.FieldFailureSource] = struct{}{}
+}
+
+// FailureSourceCleared returns if the "failure_source" field was cleared in this mutation.
+func (m *AccountMutation) FailureSourceCleared() bool {
+	_, ok := m.clearedFields[account.FieldFailureSource]
+	return ok
+}
+
+// ResetFailureSource resets all changes to the "failure_source" field.
+func (m *AccountMutation) ResetFailureSource() {
+	m.failure_source = nil
+	delete(m.clearedFields, account.FieldFailureSource)
+}
+
+// SetEnabled sets the "enabled" field.
+func (m *AccountMutation) SetEnabled(b bool) {
+	m.enabled = &b
+}
+
+// Enabled returns the value of the "enabled" field in the mutation.
+func (m *AccountMutation) Enabled() (r bool, exists bool) {
+	v := m.enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEnabled returns the old "enabled" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEnabled: %w", err)
+	}
+	return oldValue.Enabled, nil
+}
+
+// ResetEnabled resets all changes to the "enabled" field.
+func (m *AccountMutation) ResetEnabled() {
+	m.enabled = nil
+}
+
+// SetLifecycleRevision sets the "lifecycle_revision" field.
+func (m *AccountMutation) SetLifecycleRevision(i int64) {
+	m.lifecycle_revision = &i
+	m.addlifecycle_revision = nil
+}
+
+// LifecycleRevision returns the value of the "lifecycle_revision" field in the mutation.
+func (m *AccountMutation) LifecycleRevision() (r int64, exists bool) {
+	v := m.lifecycle_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLifecycleRevision returns the old "lifecycle_revision" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldLifecycleRevision(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLifecycleRevision is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLifecycleRevision requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLifecycleRevision: %w", err)
+	}
+	return oldValue.LifecycleRevision, nil
+}
+
+// AddLifecycleRevision adds i to the "lifecycle_revision" field.
+func (m *AccountMutation) AddLifecycleRevision(i int64) {
+	if m.addlifecycle_revision != nil {
+		*m.addlifecycle_revision += i
+	} else {
+		m.addlifecycle_revision = &i
+	}
+}
+
+// AddedLifecycleRevision returns the value that was added to the "lifecycle_revision" field in this mutation.
+func (m *AccountMutation) AddedLifecycleRevision() (r int64, exists bool) {
+	v := m.addlifecycle_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetLifecycleRevision resets all changes to the "lifecycle_revision" field.
+func (m *AccountMutation) ResetLifecycleRevision() {
+	m.lifecycle_revision = nil
+	m.addlifecycle_revision = nil
+}
+
+// SetUpstreamCostMultiplierBp sets the "upstream_cost_multiplier_bp" field.
+func (m *AccountMutation) SetUpstreamCostMultiplierBp(i int) {
+	m.upstream_cost_multiplier_bp = &i
+	m.addupstream_cost_multiplier_bp = nil
+}
+
+// UpstreamCostMultiplierBp returns the value of the "upstream_cost_multiplier_bp" field in the mutation.
+func (m *AccountMutation) UpstreamCostMultiplierBp() (r int, exists bool) {
+	v := m.upstream_cost_multiplier_bp
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpstreamCostMultiplierBp returns the old "upstream_cost_multiplier_bp" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldUpstreamCostMultiplierBp(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpstreamCostMultiplierBp is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpstreamCostMultiplierBp requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpstreamCostMultiplierBp: %w", err)
+	}
+	return oldValue.UpstreamCostMultiplierBp, nil
+}
+
+// AddUpstreamCostMultiplierBp adds i to the "upstream_cost_multiplier_bp" field.
+func (m *AccountMutation) AddUpstreamCostMultiplierBp(i int) {
+	if m.addupstream_cost_multiplier_bp != nil {
+		*m.addupstream_cost_multiplier_bp += i
+	} else {
+		m.addupstream_cost_multiplier_bp = &i
+	}
+}
+
+// AddedUpstreamCostMultiplierBp returns the value that was added to the "upstream_cost_multiplier_bp" field in this mutation.
+func (m *AccountMutation) AddedUpstreamCostMultiplierBp() (r int, exists bool) {
+	v := m.addupstream_cost_multiplier_bp
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUpstreamCostMultiplierBp resets all changes to the "upstream_cost_multiplier_bp" field.
+func (m *AccountMutation) ResetUpstreamCostMultiplierBp() {
+	m.upstream_cost_multiplier_bp = nil
+	m.addupstream_cost_multiplier_bp = nil
+}
+
+// SetCacheDomain sets the "cache_domain" field.
+func (m *AccountMutation) SetCacheDomain(s string) {
+	m.cache_domain = &s
+}
+
+// CacheDomain returns the value of the "cache_domain" field in the mutation.
+func (m *AccountMutation) CacheDomain() (r string, exists bool) {
+	v := m.cache_domain
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCacheDomain returns the old "cache_domain" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldCacheDomain(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCacheDomain is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCacheDomain requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCacheDomain: %w", err)
+	}
+	return oldValue.CacheDomain, nil
+}
+
+// ClearCacheDomain clears the value of the "cache_domain" field.
+func (m *AccountMutation) ClearCacheDomain() {
+	m.cache_domain = nil
+	m.clearedFields[account.FieldCacheDomain] = struct{}{}
+}
+
+// CacheDomainCleared returns if the "cache_domain" field was cleared in this mutation.
+func (m *AccountMutation) CacheDomainCleared() bool {
+	_, ok := m.clearedFields[account.FieldCacheDomain]
+	return ok
+}
+
+// ResetCacheDomain resets all changes to the "cache_domain" field.
+func (m *AccountMutation) ResetCacheDomain() {
+	m.cache_domain = nil
+	delete(m.clearedFields, account.FieldCacheDomain)
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (m *AccountMutation) SetUpdatedAt(t time.Time) {
 	m.updated_at = &t
@@ -997,7 +1250,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 19)
 	if m.name != nil {
 		fields = append(fields, account.FieldName)
 	}
@@ -1030,6 +1283,21 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.failed_at != nil {
 		fields = append(fields, account.FieldFailedAt)
+	}
+	if m.failure_source != nil {
+		fields = append(fields, account.FieldFailureSource)
+	}
+	if m.enabled != nil {
+		fields = append(fields, account.FieldEnabled)
+	}
+	if m.lifecycle_revision != nil {
+		fields = append(fields, account.FieldLifecycleRevision)
+	}
+	if m.upstream_cost_multiplier_bp != nil {
+		fields = append(fields, account.FieldUpstreamCostMultiplierBp)
+	}
+	if m.cache_domain != nil {
+		fields = append(fields, account.FieldCacheDomain)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, account.FieldUpdatedAt)
@@ -1070,6 +1338,16 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.LastUsedAt()
 	case account.FieldFailedAt:
 		return m.FailedAt()
+	case account.FieldFailureSource:
+		return m.FailureSource()
+	case account.FieldEnabled:
+		return m.Enabled()
+	case account.FieldLifecycleRevision:
+		return m.LifecycleRevision()
+	case account.FieldUpstreamCostMultiplierBp:
+		return m.UpstreamCostMultiplierBp()
+	case account.FieldCacheDomain:
+		return m.CacheDomain()
 	case account.FieldUpdatedAt:
 		return m.UpdatedAt()
 	case account.FieldDeletedAt:
@@ -1107,6 +1385,16 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldLastUsedAt(ctx)
 	case account.FieldFailedAt:
 		return m.OldFailedAt(ctx)
+	case account.FieldFailureSource:
+		return m.OldFailureSource(ctx)
+	case account.FieldEnabled:
+		return m.OldEnabled(ctx)
+	case account.FieldLifecycleRevision:
+		return m.OldLifecycleRevision(ctx)
+	case account.FieldUpstreamCostMultiplierBp:
+		return m.OldUpstreamCostMultiplierBp(ctx)
+	case account.FieldCacheDomain:
+		return m.OldCacheDomain(ctx)
 	case account.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
 	case account.FieldDeletedAt:
@@ -1199,6 +1487,41 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetFailedAt(v)
 		return nil
+	case account.FieldFailureSource:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFailureSource(v)
+		return nil
+	case account.FieldEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEnabled(v)
+		return nil
+	case account.FieldLifecycleRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLifecycleRevision(v)
+		return nil
+	case account.FieldUpstreamCostMultiplierBp:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpstreamCostMultiplierBp(v)
+		return nil
+	case account.FieldCacheDomain:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCacheDomain(v)
+		return nil
 	case account.FieldUpdatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -1234,6 +1557,12 @@ func (m *AccountMutation) AddedFields() []string {
 	if m.addmax_concurrency != nil {
 		fields = append(fields, account.FieldMaxConcurrency)
 	}
+	if m.addlifecycle_revision != nil {
+		fields = append(fields, account.FieldLifecycleRevision)
+	}
+	if m.addupstream_cost_multiplier_bp != nil {
+		fields = append(fields, account.FieldUpstreamCostMultiplierBp)
+	}
 	return fields
 }
 
@@ -1246,6 +1575,10 @@ func (m *AccountMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedWeight()
 	case account.FieldMaxConcurrency:
 		return m.AddedMaxConcurrency()
+	case account.FieldLifecycleRevision:
+		return m.AddedLifecycleRevision()
+	case account.FieldUpstreamCostMultiplierBp:
+		return m.AddedUpstreamCostMultiplierBp()
 	}
 	return nil, false
 }
@@ -1269,6 +1602,20 @@ func (m *AccountMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddMaxConcurrency(v)
 		return nil
+	case account.FieldLifecycleRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLifecycleRevision(v)
+		return nil
+	case account.FieldUpstreamCostMultiplierBp:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUpstreamCostMultiplierBp(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Account numeric field %s", name)
 }
@@ -1291,6 +1638,12 @@ func (m *AccountMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(account.FieldFailedAt) {
 		fields = append(fields, account.FieldFailedAt)
+	}
+	if m.FieldCleared(account.FieldFailureSource) {
+		fields = append(fields, account.FieldFailureSource)
+	}
+	if m.FieldCleared(account.FieldCacheDomain) {
+		fields = append(fields, account.FieldCacheDomain)
 	}
 	if m.FieldCleared(account.FieldDeletedAt) {
 		fields = append(fields, account.FieldDeletedAt)
@@ -1323,6 +1676,12 @@ func (m *AccountMutation) ClearField(name string) error {
 		return nil
 	case account.FieldFailedAt:
 		m.ClearFailedAt()
+		return nil
+	case account.FieldFailureSource:
+		m.ClearFailureSource()
+		return nil
+	case account.FieldCacheDomain:
+		m.ClearCacheDomain()
 		return nil
 	case account.FieldDeletedAt:
 		m.ClearDeletedAt()
@@ -1367,6 +1726,21 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldFailedAt:
 		m.ResetFailedAt()
+		return nil
+	case account.FieldFailureSource:
+		m.ResetFailureSource()
+		return nil
+	case account.FieldEnabled:
+		m.ResetEnabled()
+		return nil
+	case account.FieldLifecycleRevision:
+		m.ResetLifecycleRevision()
+		return nil
+	case account.FieldUpstreamCostMultiplierBp:
+		m.ResetUpstreamCostMultiplierBp()
+		return nil
+	case account.FieldCacheDomain:
+		m.ResetCacheDomain()
 		return nil
 	case account.FieldUpdatedAt:
 		m.ResetUpdatedAt()

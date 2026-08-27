@@ -33,6 +33,11 @@ func (Account) Fields() []ent.Field {
 		// 仅此一列；失效原因复用既有 last_error，两原因字段并存会漂移）。nil =
 		// 未失效；与 status=disabled（管理面手动禁用）语义分离，两者可并存。
 		field.Time("failed_at").Optional().Nillable(),
+		field.String("failure_source").Optional().Nillable(),
+		field.Bool("enabled").Default(true),
+		field.Int64("lifecycle_revision").Default(1),
+		field.Int("upstream_cost_multiplier_bp").Default(10000),
+		field.String("cache_domain").Optional().Nillable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 		field.Time("deleted_at").Optional().Nillable(), // 软删除时间戳（nil = 存活）；null 语义 = 未删除
 		field.Time("created_at").Default(time.Now),
