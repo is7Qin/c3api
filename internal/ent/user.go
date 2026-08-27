@@ -29,6 +29,8 @@ type User struct {
 	MaxConcurrency int `json:"max_concurrency,omitempty"`
 	// Balance holds the value of the "balance" field.
 	Balance int64 `json:"balance,omitempty"`
+	// BalanceWarningThreshold holds the value of the "balance_warning_threshold" field.
+	BalanceWarningThreshold int64 `json:"balance_warning_threshold,omitempty"`
 	// TokenVersion holds the value of the "token_version" field.
 	TokenVersion int64 `json:"token_version,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
@@ -86,7 +88,7 @@ func (*User) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case user.FieldID, user.FieldMaxConcurrency, user.FieldBalance, user.FieldTokenVersion:
+		case user.FieldID, user.FieldMaxConcurrency, user.FieldBalance, user.FieldBalanceWarningThreshold, user.FieldTokenVersion:
 			values[i] = new(sql.NullInt64)
 		case user.FieldEmail, user.FieldPasswordHash, user.FieldRole, user.FieldStatus:
 			values[i] = new(sql.NullString)
@@ -148,6 +150,12 @@ func (_m *User) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field balance", values[i])
 			} else if value.Valid {
 				_m.Balance = value.Int64
+			}
+		case user.FieldBalanceWarningThreshold:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field balance_warning_threshold", values[i])
+			} else if value.Valid {
+				_m.BalanceWarningThreshold = value.Int64
 			}
 		case user.FieldTokenVersion:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -235,6 +243,9 @@ func (_m *User) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("balance=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Balance))
+	builder.WriteString(", ")
+	builder.WriteString("balance_warning_threshold=")
+	builder.WriteString(fmt.Sprintf("%v", _m.BalanceWarningThreshold))
 	builder.WriteString(", ")
 	builder.WriteString("token_version=")
 	builder.WriteString(fmt.Sprintf("%v", _m.TokenVersion))

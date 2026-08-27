@@ -22765,34 +22765,36 @@ func (m *UsageStatMutation) ResetEdge(name string) error {
 // UserMutation represents an operation that mutates the User nodes in the graph.
 type UserMutation struct {
 	config
-	op                       Op
-	typ                      string
-	id                       *int64
-	email                    *string
-	password_hash            *string
-	role                     *user.Role
-	status                   *user.Status
-	max_concurrency          *int
-	addmax_concurrency       *int
-	balance                  *int64
-	addbalance               *int64
-	token_version            *int64
-	addtoken_version         *int64
-	created_at               *time.Time
-	updated_at               *time.Time
-	clearedFields            map[string]struct{}
-	keys                     map[int64]struct{}
-	removedkeys              map[int64]struct{}
-	clearedkeys              bool
-	temp_balances            map[int64]struct{}
-	removedtemp_balances     map[int64]struct{}
-	clearedtemp_balances     bool
-	group_assignments        map[int64]struct{}
-	removedgroup_assignments map[int64]struct{}
-	clearedgroup_assignments bool
-	done                     bool
-	oldValue                 func(context.Context) (*User, error)
-	predicates               []predicate.User
+	op                           Op
+	typ                          string
+	id                           *int64
+	email                        *string
+	password_hash                *string
+	role                         *user.Role
+	status                       *user.Status
+	max_concurrency              *int
+	addmax_concurrency           *int
+	balance                      *int64
+	addbalance                   *int64
+	balance_warning_threshold    *int64
+	addbalance_warning_threshold *int64
+	token_version                *int64
+	addtoken_version             *int64
+	created_at                   *time.Time
+	updated_at                   *time.Time
+	clearedFields                map[string]struct{}
+	keys                         map[int64]struct{}
+	removedkeys                  map[int64]struct{}
+	clearedkeys                  bool
+	temp_balances                map[int64]struct{}
+	removedtemp_balances         map[int64]struct{}
+	clearedtemp_balances         bool
+	group_assignments            map[int64]struct{}
+	removedgroup_assignments     map[int64]struct{}
+	clearedgroup_assignments     bool
+	done                         bool
+	oldValue                     func(context.Context) (*User, error)
+	predicates                   []predicate.User
 }
 
 var _ ent.Mutation = (*UserMutation)(nil)
@@ -23155,6 +23157,62 @@ func (m *UserMutation) ResetBalance() {
 	m.addbalance = nil
 }
 
+// SetBalanceWarningThreshold sets the "balance_warning_threshold" field.
+func (m *UserMutation) SetBalanceWarningThreshold(i int64) {
+	m.balance_warning_threshold = &i
+	m.addbalance_warning_threshold = nil
+}
+
+// BalanceWarningThreshold returns the value of the "balance_warning_threshold" field in the mutation.
+func (m *UserMutation) BalanceWarningThreshold() (r int64, exists bool) {
+	v := m.balance_warning_threshold
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBalanceWarningThreshold returns the old "balance_warning_threshold" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldBalanceWarningThreshold(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBalanceWarningThreshold is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBalanceWarningThreshold requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBalanceWarningThreshold: %w", err)
+	}
+	return oldValue.BalanceWarningThreshold, nil
+}
+
+// AddBalanceWarningThreshold adds i to the "balance_warning_threshold" field.
+func (m *UserMutation) AddBalanceWarningThreshold(i int64) {
+	if m.addbalance_warning_threshold != nil {
+		*m.addbalance_warning_threshold += i
+	} else {
+		m.addbalance_warning_threshold = &i
+	}
+}
+
+// AddedBalanceWarningThreshold returns the value that was added to the "balance_warning_threshold" field in this mutation.
+func (m *UserMutation) AddedBalanceWarningThreshold() (r int64, exists bool) {
+	v := m.addbalance_warning_threshold
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetBalanceWarningThreshold resets all changes to the "balance_warning_threshold" field.
+func (m *UserMutation) ResetBalanceWarningThreshold() {
+	m.balance_warning_threshold = nil
+	m.addbalance_warning_threshold = nil
+}
+
 // SetTokenVersion sets the "token_version" field.
 func (m *UserMutation) SetTokenVersion(i int64) {
 	m.token_version = &i
@@ -23479,7 +23537,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 9)
+	fields := make([]string, 0, 10)
 	if m.email != nil {
 		fields = append(fields, user.FieldEmail)
 	}
@@ -23497,6 +23555,9 @@ func (m *UserMutation) Fields() []string {
 	}
 	if m.balance != nil {
 		fields = append(fields, user.FieldBalance)
+	}
+	if m.balance_warning_threshold != nil {
+		fields = append(fields, user.FieldBalanceWarningThreshold)
 	}
 	if m.token_version != nil {
 		fields = append(fields, user.FieldTokenVersion)
@@ -23527,6 +23588,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.MaxConcurrency()
 	case user.FieldBalance:
 		return m.Balance()
+	case user.FieldBalanceWarningThreshold:
+		return m.BalanceWarningThreshold()
 	case user.FieldTokenVersion:
 		return m.TokenVersion()
 	case user.FieldCreatedAt:
@@ -23554,6 +23617,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldMaxConcurrency(ctx)
 	case user.FieldBalance:
 		return m.OldBalance(ctx)
+	case user.FieldBalanceWarningThreshold:
+		return m.OldBalanceWarningThreshold(ctx)
 	case user.FieldTokenVersion:
 		return m.OldTokenVersion(ctx)
 	case user.FieldCreatedAt:
@@ -23611,6 +23676,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetBalance(v)
 		return nil
+	case user.FieldBalanceWarningThreshold:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBalanceWarningThreshold(v)
+		return nil
 	case user.FieldTokenVersion:
 		v, ok := value.(int64)
 		if !ok {
@@ -23646,6 +23718,9 @@ func (m *UserMutation) AddedFields() []string {
 	if m.addbalance != nil {
 		fields = append(fields, user.FieldBalance)
 	}
+	if m.addbalance_warning_threshold != nil {
+		fields = append(fields, user.FieldBalanceWarningThreshold)
+	}
 	if m.addtoken_version != nil {
 		fields = append(fields, user.FieldTokenVersion)
 	}
@@ -23661,6 +23736,8 @@ func (m *UserMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedMaxConcurrency()
 	case user.FieldBalance:
 		return m.AddedBalance()
+	case user.FieldBalanceWarningThreshold:
+		return m.AddedBalanceWarningThreshold()
 	case user.FieldTokenVersion:
 		return m.AddedTokenVersion()
 	}
@@ -23685,6 +23762,13 @@ func (m *UserMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddBalance(v)
+		return nil
+	case user.FieldBalanceWarningThreshold:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddBalanceWarningThreshold(v)
 		return nil
 	case user.FieldTokenVersion:
 		v, ok := value.(int64)
@@ -23737,6 +23821,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldBalance:
 		m.ResetBalance()
+		return nil
+	case user.FieldBalanceWarningThreshold:
+		m.ResetBalanceWarningThreshold()
 		return nil
 	case user.FieldTokenVersion:
 		m.ResetTokenVersion()
