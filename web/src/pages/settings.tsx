@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MailChannelTestCard } from '@/components/mail-channel-test-card'
@@ -35,7 +36,8 @@ const GROUPS: { id: string; keys: string[] }[] = [
   { id: 'defaults', keys: ['default_user_max_concurrency', 'default_user_balance', 'default_user_temp_balance', 'default_user_temp_balance_ttl_days'] },
   { id: 'pricingSync', keys: ['price_source_url', 'price_sync_cron'] },
   { id: 'tierPolicy', keys: ['service_tier_policy_priority', 'service_tier_policy_flex', 'service_tier_policy_fast'] },
-  { id: 'mail', keys: ['mail.enabled', 'mail.register_verification', 'mail.smtp_host', 'mail.smtp_port', 'mail.smtp_username', 'mail.smtp_password', 'mail.from_address', 'mail.tls', 'balance_warning.enabled'] },
+  { id: 'mail', keys: ['mail.enabled', 'mail.register_verification', 'mail.smtp_host', 'mail.smtp_port', 'mail.smtp_username', 'mail.smtp_password', 'mail.from_address', 'mail.tls'] },
+  { id: 'balanceWarning', keys: ['balance_warning.enabled'] },
 ]
 const GROUPED_KEYS = new Set(GROUPS.flatMap(g => g.keys))
 
@@ -210,11 +212,11 @@ export default function SettingsPage() {
       <div><h1 className="text-2xl font-semibold tracking-tight">{t('settings.title')}</h1><p className="text-sm text-muted-foreground">{t('settings.subtitle')}</p></div>
       {isError ? <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p> : isLoading ? <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div> : data?.length === 0 ? <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground"><SettingsIcon className="size-10" /><p className="font-medium">{t('settings.emptyTitle')}</p></Card> : (
         <Tabs defaultValue="signup">
-          <div className="max-w-full overflow-x-auto">
+          <ScrollArea className="max-w-full [&_[data-slot=scroll-area-scrollbar][data-orientation=vertical]]:hidden" showHorizontal>
             <TabsList className="w-max min-w-full">
               {GROUPS.map(g => <TabsTrigger key={g.id} value={g.id} className="flex-1">{t(`settings.groups.${g.id}`)}</TabsTrigger>)}
             </TabsList>
-          </div>
+          </ScrollArea>
           {GROUPS.map(g => {
             const rows = g.keys.map(k => byKey.get(k)).filter((s): s is Setting => !!s)
             const smtpCard = rows.length > 0 && (
