@@ -487,12 +487,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mail/channel-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 邮件通道测试（SMTP 验证；不触及余额预警事件/阈值/冷却） */
+        post: operations["PostMailChannelTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mail/templates/{purpose}": {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                purpose: "register_code" | "reset_code";
+                purpose: "register_code" | "reset_code" | "balance_warning";
             };
             cookie?: never;
         };
@@ -711,6 +728,24 @@ export interface paths {
         /** 当前用户信息（JWT） */
         get: operations["GetUserAuthMe"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/balance-warning-threshold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 获取余额预警阈值（当前用户；0 = 关闭） */
+        get: operations["GetUserBalanceWarningThreshold"];
+        /** 设置余额预警阈值（USD；0 = 关闭；负值/非有限/正值舍入为0 拒绝） */
+        put: operations["PutUserBalanceWarningThreshold"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1667,7 +1702,7 @@ export interface components {
         };
         MailTemplate: {
             /** @enum {string} */
-            purpose: "register_code" | "reset_code";
+            purpose: "register_code" | "reset_code" | "balance_warning";
             subject: string;
             body_text: string;
             /** Format: date-time */
@@ -1677,6 +1712,27 @@ export interface components {
             subject: string;
             /** @description 空串=还原默认（删行） */
             body_text: string;
+        };
+        MailChannelTestRequest: {
+            /** Format: email */
+            email: string;
+        };
+        MailChannelTestResponse: {
+            sent: boolean;
+        };
+        BalanceWarningThresholdUpdate: {
+            /**
+             * Format: double
+             * @description 阈值 USD；0 = 关闭；内部毫分存储（1 USD = 100,000 毫分）
+             */
+            balance_warning_threshold: number;
+        };
+        BalanceWarningThresholdResponse: {
+            /**
+             * Format: double
+             * @description 阈值 USD；0 = 关闭
+             */
+            balance_warning_threshold: number;
         };
         ChangePasswordResponse: {
             updated: boolean;
@@ -2794,7 +2850,7 @@ export interface components {
             billing_unbilled_rows: number;
             /**
              * Format: int64
-             * @description 累计隔离行数（用户缺失组 + 毒行终极隔离——未扣费写销）
+             * @description 累计隔离行数（用户缺失组）
              */
             billing_quarantined_rows: number;
         };
@@ -3898,12 +3954,37 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    PostMailChannelTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MailChannelTestRequest"];
+            };
+        };
+        responses: {
+            /** @description 发送结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailChannelTestResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     PutMailTemplate: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                purpose: "register_code" | "reset_code";
+                purpose: "register_code" | "reset_code" | "balance_warning";
             };
             cookie?: never;
         };
@@ -4340,6 +4421,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["User"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetUserBalanceWarningThreshold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 阈值 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BalanceWarningThresholdResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutUserBalanceWarningThreshold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BalanceWarningThresholdUpdate"];
+            };
+        };
+        responses: {
+            /** @description 更新后阈值 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BalanceWarningThresholdResponse"];
                 };
             };
             default: components["responses"]["Error"];

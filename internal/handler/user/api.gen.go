@@ -98,6 +98,18 @@ const (
 	Hour GetUserStatsParamsGranularity = "hour"
 )
 
+// BalanceWarningThresholdResponse defines model for BalanceWarningThresholdResponse.
+type BalanceWarningThresholdResponse struct {
+	// BalanceWarningThreshold 阈值 USD；0 = 关闭
+	BalanceWarningThreshold float64 `json:"balance_warning_threshold"`
+}
+
+// BalanceWarningThresholdUpdate defines model for BalanceWarningThresholdUpdate.
+type BalanceWarningThresholdUpdate struct {
+	// BalanceWarningThreshold 阈值 USD；0 = 关闭；内部毫分存储（1 USD = 100,000 毫分）
+	BalanceWarningThreshold float64 `json:"balance_warning_threshold"`
+}
+
 // ChangePasswordResponse defines model for ChangePasswordResponse.
 type ChangePasswordResponse struct {
 	Updated bool `json:"updated"`
@@ -551,6 +563,9 @@ type PostUserAuthRegisterCodeJSONRequestBody = RegisterCodeRequest
 // PostUserAuthResetPasswordJSONRequestBody defines body for PostUserAuthResetPassword for application/json ContentType.
 type PostUserAuthResetPasswordJSONRequestBody = ResetPasswordRequest
 
+// PutUserBalanceWarningThresholdJSONRequestBody defines body for PutUserBalanceWarningThreshold for application/json ContentType.
+type PutUserBalanceWarningThresholdJSONRequestBody = BalanceWarningThresholdUpdate
+
 // PostUserKeysJSONRequestBody defines body for PostUserKeys for application/json ContentType.
 type PostUserKeysJSONRequestBody = KeyCreate
 
@@ -583,6 +598,12 @@ type ServerInterface interface {
 	// 重置密码（验证码校验→更新密码；不撤销既有 JWT）
 	// (POST /api/user/auth/reset-password)
 	PostUserAuthResetPassword(w http.ResponseWriter, r *http.Request)
+	// 获取余额预警阈值（当前用户；0 = 关闭）
+	// (GET /api/user/balance-warning-threshold)
+	GetUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request)
+	// 设置余额预警阈值（USD；0 = 关闭；负值/非有限/正值舍入为0 拒绝）
+	// (PUT /api/user/balance-warning-threshold)
+	PutUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request)
 	// 我的错误明细（err_logs 完整错误面：拒绝 + 异常双轨；强制 user_id = 当前用户，防越权）
 	// (GET /api/user/err_logs)
 	GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams)
@@ -670,6 +691,18 @@ func (_ Unimplemented) PostUserAuthRegisterCode(w http.ResponseWriter, r *http.R
 // 重置密码（验证码校验→更新密码；不撤销既有 JWT）
 // (POST /api/user/auth/reset-password)
 func (_ Unimplemented) PostUserAuthResetPassword(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 获取余额预警阈值（当前用户；0 = 关闭）
+// (GET /api/user/balance-warning-threshold)
+func (_ Unimplemented) GetUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 设置余额预警阈值（USD；0 = 关闭；负值/非有限/正值舍入为0 拒绝）
+// (PUT /api/user/balance-warning-threshold)
+func (_ Unimplemented) PutUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -855,6 +888,34 @@ func (siw *ServerInterfaceWrapper) PostUserAuthResetPassword(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostUserAuthResetPassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUserBalanceWarningThreshold operation middleware
+func (siw *ServerInterfaceWrapper) GetUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserBalanceWarningThreshold(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutUserBalanceWarningThreshold operation middleware
+func (siw *ServerInterfaceWrapper) PutUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutUserBalanceWarningThreshold(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1603,6 +1664,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/user/auth/reset-password", wrapper.PostUserAuthResetPassword)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/balance-warning-threshold", wrapper.GetUserBalanceWarningThreshold)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/user/balance-warning-threshold", wrapper.PutUserBalanceWarningThreshold)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/err_logs", wrapper.GetUserErrLogs)
