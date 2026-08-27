@@ -13,6 +13,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
+	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
 )
 
@@ -193,4 +194,135 @@ func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*d
 		return nil, err
 	}
 	return toDomainAccountExt(row), nil
+}
+
+// AdminWriteOAuthRotationCAS 管理员 OAuth 轮转（fenced）：CAS expectedRevision 并原子 +1，更新 ext 三列。
+// SDK 内部刷新继续使用 WriteOAuthRotation（unfenced，不增 revision）。
+// 使用事务保证 accounts revision 与 ext 更新原子：revision CAS 失败则 ext 不更新。
+func (r *AccountExtRepo) AdminWriteOAuthRotationCAS(ctx context.Context, accountID int64, expectedRevision int64, at, rt string, expiresAt *time.Time) error {
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // nolint:errcheck
+	// CAS accounts
+	n, err := tx.Account.Update().Where(account.IDEQ(accountID), account.LifecycleRevisionEQ(expectedRevision)).SetLifecycleRevision(expectedRevision + 1).Save(ctx)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: account_id=%d expected revision %d stale", ErrStaleRevision, accountID, expectedRevision)
+	}
+	u := tx.AccountExt.Update().Where(accountext.AccountIDEQ(accountID)).SetCodexOauthToken(at).SetCodexOauthRefreshToken(rt)
+	if expiresAt != nil {
+		u = u.SetCodexOauthExpiresAt(*expiresAt)
+	} else {
+		u = u.ClearCodexOauthExpiresAt()
+	}
+	n2, err := u.Save(ctx)
+	if err != nil {
+		return err
+	}
+	if n2 == 0 {
+		return fmt.Errorf("%w: account_id=%d ext row missing", ErrNotFound, accountID)
+	}
+	return tx.Commit()
+}
+
+// AdminWritePATKeyCAS 管理员 PAT 轮转（fenced）：同 AdminWriteOAuthRotationCAS。
+func (r *AccountExtRepo) AdminWritePATKeyCAS(ctx context.Context, accountID int64, expectedRevision int64, patKey string) error {
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	n, err := tx.Account.Update().Where(account.IDEQ(accountID), account.LifecycleRevisionEQ(expectedRevision)).SetLifecycleRevision(expectedRevision + 1).Save(ctx)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: account_id=%d expected revision %d stale", ErrStaleRevision, accountID, expectedRevision)
+	}
+	n2, err := tx.AccountExt.Update().Where(accountext.AccountIDEQ(accountID)).SetCodexPatKey(patKey).Save(ctx)
+	if err != nil {
+		return err
+	}
+	if n2 == 0 {
+		return fmt.Errorf("%w: account_id=%d ext row missing", ErrNotFound, accountID)
+	}
+	return tx.Commit()
+}
+
+// AdminUpsertAccountExtCAS 管理员 PUT /ext（fenced）：CAS revision 并原子上插入/更新 ext。
+// 用于 /accounts/{id}/ext 全量 PUT，需保证 ext 写入与 revision 递增原子。
+func (r *AccountExtRepo) AdminUpsertAccountExtCAS(ctx context.Context, e *domain.AccountExt, expectedRevision int64) (*domain.AccountExt, error) {
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	n, err := tx.Account.Update().Where(account.IDEQ(e.AccountID), account.LifecycleRevisionEQ(expectedRevision)).SetLifecycleRevision(expectedRevision + 1).Save(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("%w: account_id=%d expected revision %d stale", ErrStaleRevision, e.AccountID, expectedRevision)
+	}
+	// Upsert ext via tx
+	_, err = tx.AccountExt.Create().
+		SetAccountID(e.AccountID).
+		SetCredentialType(string(e.CredentialType)).
+		SetCodexIdentity(e.CodexIdentity).
+		SetNillableCodexOauthToken(e.CodexOAuthToken).
+		SetNillableCodexOauthRefreshToken(e.CodexOAuthRefreshToken).
+		SetNillableCodexOauthExpiresAt(e.CodexOAuthExpiresAt).
+		SetNillableCodexPatKey(e.CodexPATKey).
+		SetNillableCodexEmail(e.CodexEmail).
+		SetNillableCodexAccountID(e.CodexAccountID).
+		OnConflictColumns(accountext.FieldAccountID).
+		Update(func(u *ent.AccountExtUpsert) {
+			u.SetCredentialType(string(e.CredentialType))
+			if e.CodexIdentity != nil {
+				u.SetCodexIdentity(e.CodexIdentity)
+			} else {
+				u.ClearCodexIdentity()
+			}
+			if e.CodexOAuthToken != nil {
+				u.SetCodexOauthToken(*e.CodexOAuthToken)
+			} else {
+				u.ClearCodexOauthToken()
+			}
+			if e.CodexOAuthRefreshToken != nil {
+				u.SetCodexOauthRefreshToken(*e.CodexOAuthRefreshToken)
+			} else {
+				u.ClearCodexOauthRefreshToken()
+			}
+			if e.CodexOAuthExpiresAt != nil {
+				u.SetCodexOauthExpiresAt(*e.CodexOAuthExpiresAt)
+			} else {
+				u.ClearCodexOauthExpiresAt()
+			}
+			if e.CodexPATKey != nil {
+				u.SetCodexPatKey(*e.CodexPATKey)
+			} else {
+				u.ClearCodexPatKey()
+			}
+			if e.CodexEmail != nil {
+				u.SetCodexEmail(*e.CodexEmail)
+			} else {
+				u.ClearCodexEmail()
+			}
+			if e.CodexAccountID != nil {
+				u.SetCodexAccountID(*e.CodexAccountID)
+			} else {
+				u.ClearCodexAccountID()
+			}
+		}).ID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return r.GetAccountExt(ctx, e.AccountID)
 }

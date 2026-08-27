@@ -230,6 +230,7 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if err != nil {
 		return nil, mapRepoErr(err)
 	}
+	expectedRevision := acc.LifecycleRevision
 	// 父模板类型 = 账号类型（账号无独立 credential_type 列）
 	tpl, err := s.store.GetTemplate(ctx, acc.TemplateID)
 	if err != nil {
@@ -301,5 +302,9 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if err := validateAccountExt(e); err != nil {
 		return nil, err
 	}
-	return s.store.UpsertAccountExt(ctx, e)
+	saved, err := s.store.AdminUpsertAccountExtCAS(ctx, e, expectedRevision)
+	if err != nil {
+		return nil, mapRepoErr(err)
+	}
+	return saved, nil
 }
