@@ -75,6 +75,11 @@ func Balance(v int64) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldBalance, v))
 }
 
+// BalanceWarningThreshold applies equality check predicate on the "balance_warning_threshold" field. It's identical to BalanceWarningThresholdEQ.
+func BalanceWarningThreshold(v int64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldBalanceWarningThreshold, v))
+}
+
 // TokenVersion applies equality check predicate on the "token_version" field. It's identical to TokenVersionEQ.
 func TokenVersion(v int64) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldTokenVersion, v))
@@ -338,6 +343,46 @@ func BalanceLT(v int64) predicate.User {
 // BalanceLTE applies the LTE predicate on the "balance" field.
 func BalanceLTE(v int64) predicate.User {
 	return predicate.User(sql.FieldLTE(FieldBalance, v))
+}
+
+// BalanceWarningThresholdEQ applies the EQ predicate on the "balance_warning_threshold" field.
+func BalanceWarningThresholdEQ(v int64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldBalanceWarningThreshold, v))
+}
+
+// BalanceWarningThresholdNEQ applies the NEQ predicate on the "balance_warning_threshold" field.
+func BalanceWarningThresholdNEQ(v int64) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldBalanceWarningThreshold, v))
+}
+
+// BalanceWarningThresholdIn applies the In predicate on the "balance_warning_threshold" field.
+func BalanceWarningThresholdIn(vs ...int64) predicate.User {
+	return predicate.User(sql.FieldIn(FieldBalanceWarningThreshold, vs...))
+}
+
+// BalanceWarningThresholdNotIn applies the NotIn predicate on the "balance_warning_threshold" field.
+func BalanceWarningThresholdNotIn(vs ...int64) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldBalanceWarningThreshold, vs...))
+}
+
+// BalanceWarningThresholdGT applies the GT predicate on the "balance_warning_threshold" field.
+func BalanceWarningThresholdGT(v int64) predicate.User {
+	return predicate.User(sql.FieldGT(FieldBalanceWarningThreshold, v))
+}
+
+// BalanceWarningThresholdGTE applies the GTE predicate on the "balance_warning_threshold" field.
+func BalanceWarningThresholdGTE(v int64) predicate.User {
+	return predicate.User(sql.FieldGTE(FieldBalanceWarningThreshold, v))
+}
+
+// BalanceWarningThresholdLT applies the LT predicate on the "balance_warning_threshold" field.
+func BalanceWarningThresholdLT(v int64) predicate.User {
+	return predicate.User(sql.FieldLT(FieldBalanceWarningThreshold, v))
+}
+
+// BalanceWarningThresholdLTE applies the LTE predicate on the "balance_warning_threshold" field.
+func BalanceWarningThresholdLTE(v int64) predicate.User {
+	return predicate.User(sql.FieldLTE(FieldBalanceWarningThreshold, v))
 }
 
 // TokenVersionEQ applies the EQ predicate on the "token_version" field.
