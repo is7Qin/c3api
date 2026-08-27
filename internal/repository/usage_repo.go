@@ -10,9 +10,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -55,6 +58,30 @@ func (r *UsageRepo) InsertBatch(ctx context.Context, logs []*domain.UsageLog) er
 		builders = append(builders, buildUsageLogCreate(r.client, l))
 	}
 	_, err := r.client.UsageLog.CreateBulk(builders...).Save(ctx)
+	return mapPartitionError(err)
+}
+
+func isPartitionUnavailable(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	if pgErr.Code != "23514" {
+		return false
+	}
+	if !strings.Contains(pgErr.Message, `no partition of relation "usage_logs" found for row`) {
+		return false
+	}
+	return true
+}
+
+func mapPartitionError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if isPartitionUnavailable(err) {
+		return fmt.Errorf("%w: %w", domain.ErrPartitionUnavailable, err)
+	}
 	return err
 }
 
