@@ -29,7 +29,7 @@
 
 模板定义上游厂商：base_url、支持的请求格式集合、可服务模型集合、格式级模型覆盖与模型映射。
 
-> **破坏性变更**：`default_format` 已移除（由必填的 `supported_formats` 数组取代），`model_formats` 已移除（由反转为按格式组织的 `format_models` 取代）。旧数据未迁移，使用旧字段的客户端需按下方新结构调整。
+> **破坏性变更**：`default_format` 已移除（由必填的 `supported_formats` 数组取代），`model_formats` 已移除（由反转为按格式组织的 `format_models` 取代）。`model_mapping` 已由 `map[string]string` 破坏性替换为 `map[string]{mapped_model, mode}`（见下方模型映射合同）。旧数据未迁移，使用旧字段的客户端需按下方新结构调整；本次为 Beta 破坏性变更，升级需全新部署，无迁移路径。
 
 ### 创建模板
 
@@ -44,7 +44,10 @@
   "supported_formats": ["openai-chat", "openai-responses"],
   "models": ["gpt-4o", "gpt-4o-mini"],
   "format_models": { "openai-responses": ["gpt-4o-mini"] },
-  "model_mapping": { "gpt-4o": "gpt-4o-2024-11-20" }
+  "model_mapping": {
+    "gpt-4o": { "mapped_model": "gpt-4o-2024-11-20", "mode": "explicit" },
+    "gpt-4o-mini-cheap": { "mapped_model": "gpt-4o-mini", "mode": "implicit" }
+  }
 }
 ```
 
@@ -55,7 +58,7 @@
 | `supported_formats` | string[] | ✅ | 支持的请求格式枚举数组（至少 1 项，项枚举见上；重复/非法枚举返回 `400`） |
 | `models` | string[] | 否 | 可服务模型名集合 |
 | `format_models` | object | 否 | 格式级模型覆盖：`{格式: [模型名]}`，key 必须是 `supported_formats` 子集、模型必须是 `models` 子集（否则 `400`）；未配置的格式 = 全部 `models` |
-| `model_mapping` | object | 否 | 模型映射：`{客户端模型名: 上游实际模型名}` |
+| `model_mapping` | object | 否 | 模型映射：`{客户端模型别名: {mapped_model, mode}}`；每条为严格对象 `required: [mapped_model, mode]` 且 `additionalProperties: false`，`mode` 仅 `explicit`/`implicit`，缺失/null/空/未知/旧字符串一律 `400`，无默认值；别名与 `mapped_model` 大小写敏感，拒绝空/纯空白及首尾空白，UI 提交前 trim 并按 trim 后去重校验；恒等映射（`alias == mapped_model`）合法且保留其 `mode`） |
 
 响应 `200`：创建后的模板对象（字段为大写，见下方模板对象结构）。
 
@@ -69,13 +72,16 @@
   "SupportedFormats": ["openai-chat", "openai-responses"],
   "Models": ["gpt-4o", "gpt-4o-mini"],
   "FormatModels": { "openai-responses": ["gpt-4o-mini"] },
-  "ModelMapping": { "gpt-4o": "gpt-4o-2024-11-20" },
+  "ModelMapping": {
+    "gpt-4o": { "mapped_model": "gpt-4o-2024-11-20", "mode": "explicit" },
+    "gpt-4o-mini-cheap": { "mapped_model": "gpt-4o-mini", "mode": "implicit" }
+  },
   "CreatedAt": "2026-08-06T10:00:00Z",
   "UpdatedAt": "2026-08-06T10:00:00Z"
 }
 ```
 
-> 注意：响应字段为 **Go 默认大写命名**（`ID` / `Name` / `BaseURL`…），请求字段为 snake_case。`Models` / `FormatModels` / `ModelMapping` 为 `null` 时表示空。
+> 注意：响应字段为 **Go 默认大写命名**（`ID` / `Name` / `BaseURL`…），请求字段为 snake_case。`Models` / `FormatModels` / `ModelMapping` 为 `null` 时表示空；`ModelMapping` 元素为 `{mapped_model, mode}` 严格对象。
 
 ### 模板列表
 
@@ -123,9 +129,59 @@
 | `supported_formats` | string[] | 否 | 支持的请求格式枚举数组（至少 1 项，枚举见上；重复/非法枚举 → `400`） |
 | `models` | string[] | 否 | 可服务模型集合 |
 | `format_models` | object | 否 | 格式级模型覆盖：`{格式: [模型名]}`，key 必须是 `supported_formats` 子集（同批提供时校验）、模型必须是 `models` 子集 |
-| `model_mapping` | object | 否 | 模型映射 |
+| `model_mapping` | object | 否 | 模型映射：`null`/省略 = 保留不变（见批次三态）；提供对象 = 全量替换，`{}` = 清空；每条同创建约束（`mapped_model`+`mode` 必填，`additionalProperties: false`，无默认值） |
 
 `fields` 必须至少提供一字段；`ids` 中任一 id 不存在 → `404`（事务全败）。成功 `200`：`{"updated": 2}`。
+
+### 模型映射 Model Mapping（Beta 破坏性合同）
+
+`model_mapping` 是模板的唯一模型映射事实源，类型为 `map[string]ModelMappingEntry`，其中 `ModelMappingEntry = {mapped_model: string, mode: explicit|implicit}`。无第二列/伴生映射，无旧 `map[string]string` 兼容解析，无默认值，无迁移。
+
+**严格对象契约：**
+- 每个条目 `required: [mapped_model, mode]` 且 `additionalProperties: false`；缺失/`null`/空字符串/未知 `mode`/旧字符串形态一律 `400`。
+- `mapped_model` 与别名（key）大小写敏感；拒绝空、纯空白、首尾空白（服务层校验；UI 在提交前 trim 并按 trim 后结果拒绝重复别名）。
+- 恒等映射（`alias == mapped_model`）合法，保留其显式声明的 `mode`。
+- 持久化 JSON 严格解码：非法枚举、畸形对象、旧字符串、`null` 均返回仓库加载错误，不回退为 `explicit`；初始加载失败则无可用快照（fail-closed），运行时重载保留上一有效不可变快照并通过快照观测上报错误。
+- 空映射规范值恒为 `{}`；`PUT`/`POST` 省略等价 `{}`, `PUT` 全量替换；批次三态见下。
+
+**批次三态（`POST /api/admin/templates/batch-update`）：**
+- `fields` 未提供 `model_mapping`（省略/`null`）→ 保留不变（不触及已有映射）；
+- `fields.model_mapping` 提供对象 → 全量替换为该对象所列条目；
+- `fields.model_mapping: {}`（零条）→ 清空映射；
+- 无按行合并（no per-row merge）。
+
+**运行时身份矩阵：**
+
+| 场景 | 上游请求模型 | `UsageLog.Model` | `UsageLog.MappedModel` | 计价/预检模型 | 客户端响应模型 |
+|---|---|---|---|---|---|
+| 无映射 | request | request | 空 | request | 透传不变 |
+| explicit，目标不同 | target | request | target | target | 透传不变 |
+| explicit，恒等目标 | request | request | 空 | request | 透传不变 |
+| implicit，目标不同 | target | request | request（即客户端模型） | request | 已识别路径重写为 request |
+| implicit，恒等目标 | request | request | request | request | 已识别路径重写为 request |
+
+- `Selection.Model` 保持上游目标与规则/熔断身份；调度器仅一次 map 查找返回 `target+mode`，并导出 `UsageMappedModel`（精确写入 `UsageLog.MappedModel`）与 `ResponseModel`（仅 implicit 时为客户端请求模型，否则空），计价预检取 `UsageMappedModel` 非空即用之，否则取 `Selection.Model`。
+- 终局日志/计费以当次选中的 `Selection` 直接为准（成功、已接受流中止、客户端 499、上游 4xx、价格预检拒绝、耗尽熔断取 `lastSel`；本地预选拒绝前无选中则空）。`Search` 全路径不受 `UsageMappedModel`/`ResponseModel` 影响，沿用 `MappedModel = mappedFor(reqModel, sel.Model)` 既有行为。
+
+**可识别响应路径（仅重写已存在的字符串值，不创建缺失字段）：**
+- `model`（OpenAI Chat/Responses 等顶层）
+- `response.model`（Responses 结构）
+- `message.model`（Anthropic `message` 结构）
+- 每条 payload 中同时出现的多路径全部重写；`null`/数字/对象/数组/畸形 JSON/无关嵌套 `model`/`[DONE]`/注释/不透明字节一律不触及；HTTP 非 2xx 错误体不重写。
+
+**流式语义（无全流缓冲，逐帧改写）：**
+- REST 成功 = 上游返回 2xx 前的成功响应；SSE 成功 = 上游返回 `200` 后逐帧可识别数据帧实时改写，后续流中止不回滚已发出帧；WS 成功 = 上游接受首帧后逐帧可识别上游文本帧实时改写，二进制/不透明帧不改。
+- **SSE 顺序**：原生 `sserelay` 调用方若同时配置 `Mapper` 与 `Observer`，`Mapper` 先执行，非丢弃输出先写入客户端，再以原始未修改事件回调 `Observer`；被丢弃帧仅回调 `Observer` 不写出，写入失败则在 `Observer` 前返回；转换流式当前无 `Observer`，TTFT 与用量提取在 `Mapper` 内以原始 `ev.Data` 于 `StreamMapper.Map` 之前发生，顺序不变。已改变的 SSE 负载保留全部非 `data:` 行（`event`/`id`/`retry`/注释及顺序），仅替换逻辑 `data`，仅在真实 implicit 改写时才可能将多 `data:` 行归一为一行。
+- **WS 顺序**：上游→客户端文本帧在 `frameHook`/fatal 鉴权与用量/图片嗅探（原始字节）之后、客户端写出之前重写；显式/未映射路径不安装 mapper，不做响应扫描。
+- **转换顺序**：原始上游观测 → `ConvertResponse`/`StreamMapper` 协议转换 → 最终面向客户端输出的 implicit 重写 → 客户端写出。转换流式 `StreamMapper.Map` 可能返回零/一/多完整 SSE 帧，helper 遍历整个返回切片逐帧重写，保留帧边界/顺序/元数据与 `[DONE]` 语义。
+- 共享 helper 在 `override` 为空、无已识别字符串路径或全部值已相等时返回原切片；已改变 SSE 帧才重建。
+
+**排除项（保持现有字节/行为不变）：**
+- 标准 Images：JSON 请求按目标改写，multipart 保持字节一致的请求体/表单模型例外（不重建 multipart）；标准/Codex Images 响应不凭空新增 `model` 字段，无可识别模型字段则字节不变；计费仍按既有 Images 路径。
+- Search：完全不透明透传（客户端请求字节直达上游，响应字节直回，固定 `codex-search` 计费与既有 `MappedModel` 日志行为），不使用 `UsageMappedModel`/`ResponseModel`。
+- `/v1/models`、映射键路由别名、硬白名单成员、目标准入、调度器分层与规则语义保持不变；错误负载不重写。
+
+> **Beta 说明**：本映射合同为 Beta 破坏性变更，无兼容/迁移/旧形态/默认值/双写/清理 shim；升级需全新部署（新库），旧库残留 `model_mapping` 字符串值在加载时直接报错。
 
 ### 模板其他端点
 

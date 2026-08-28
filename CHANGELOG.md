@@ -10,6 +10,10 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ## [Unreleased]
 
+### Breaking
+
+- **模型映射契约破坏性替换（Beta，需全新部署）**：`model_mapping` 由 `map[string]string` 替换为 `map[string]{mapped_model: string, mode: explicit|implicit}` 的严格对象（`required: [mapped_model, mode]`，`additionalProperties: false`，`mode` 仅 `explicit`/`implicit`，无默认值；别名与 `mapped_model` 大小写敏感，拒绝空/纯空白/首尾空白，恒等映射合法且保留其 `mode`；空映射规范值 `{}`，`POST`/`PUT` 省略等价 `{}`, `PUT` 全量替换，`batch-update` 为三态：省略保留、提供对象全量替换、`{}` 清空，无按行合并）。运行时身份矩阵：无映射透传不变；`explicit`（含恒等）保持现行上游目标/计价/透传行为（恒等时 `MappedModel` 为空）；`implicit`（含恒等）仍向上游发送映射目标，但 `UsageLog.Model`/`MappedModel` 均记客户端请求模型、按客户端模型计价/预检、已识别响应路径（`model`/`response.model`/`message.model` 仅重写已存在字符串值，不创建缺失字段，多路径共存全重写，`[DONE]`/非 2xx/无关嵌套/`null`/数字/对象/数组/畸形/注释/不透明字节不触及）重写为客户端模型；SSE 在 `200` 后逐帧、WS 在接受首帧后逐帧、`Search` 完全不透明、标准 Images 仅 JSON 请求改写目标、multipart 不重建、响应无模型字段不新增。调度器保持一次 map 查找与现有路由/模型列表/硬白名单/规则拓扑不变，无旧形态兼容与迁移路径，升级需全新部署（旧字符串/非法对象在加载时直接报错，初始加载 fail-closed，运行时重载保留上一有效快照）。
+
 - 新增用户永久余额预警：用户可经 USD 阈值 API 设置阈值，`0` 关闭；永久余额在结算后恰跨阈值时触发，临时额度不参与。邮件为尽力发送，按用户和阈值 `24h` 冷却；提供通用 SMTP 通道测试、全局开关及 `balance_warning` 模板。
 
 ## [v0.0.1-beta.5] - 2026-08-26
