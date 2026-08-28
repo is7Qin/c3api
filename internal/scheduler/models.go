@@ -14,10 +14,10 @@ import "slices"
 // 快照，零 DB；与 Select 同读面——routes map 整体换入换出，无锁并发安全）。
 func (s *Scheduler) GroupModels(groupID int64) ([]string, bool) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return nil, false
 	}
-	gs, ok := v.groups[groupID]
+	gs, ok := v.Groups()[groupID]
 	if !ok {
 		return nil, false
 	}

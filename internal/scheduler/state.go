@@ -35,23 +35,53 @@ type snapshotStatic struct {
 	groupIDs []int64 // 账号所属全部分组（多组账号共享实例的跨组引用集；组级重载时其它组引用替换依据）
 }
 
-type accountSnapshot struct {
-	// static 静态字段视图——不可变原子发布；重建/权重动作 copy-modify-Store，
-	// 热路径 Load 一次取用（评审 Critical 修复：静态字段读全部经视图，杜绝
-	// 与重建写并发的数据竞态）。
-	static      atomic.Pointer[snapshotStatic]
+type sharedRuntime struct {
 	concurrency atomic.Int64
 	errRate     atomic.Uint64 // 定点
 	state       atomic.Pointer[accState]
 }
 
+type accountSnapshot struct {
+	// static 静态字段视图——不可变原子发布；重建/权重动作 copy-modify-Store，
+	// 热路径 Load 一次取用（评审 Critical 修复：静态字段读全部经视图，杜绝
+	// 与重建写并发的数据竞态）。发布后永不原地突变；变更账号分配全新 leaf，
+	// 旧 leaf 保持稳定（immutable leaf discipline）。
+	static atomic.Pointer[snapshotStatic]
+	runtime *sharedRuntime
+}
+
+func newAccountSnapshot(av *snapshotStatic, st *accState) *accountSnapshot {
+	rt := &sharedRuntime{}
+	rt.state.Store(st)
+	as := &accountSnapshot{runtime: rt}
+	as.static.Store(av)
+	return as
+}
+
 func (a *accountSnapshot) statePtr() *accState {
-	st := a.state.Load()
+	if a == nil || a.runtime == nil {
+		return &accState{status: domain.StatusActive}
+	}
+	st := a.runtime.state.Load()
 	if st == nil {
 		st = &accState{status: domain.StatusActive}
-		a.state.Store(st)
+		a.runtime.state.Store(st)
 	}
 	return st
+}
+
+func (a *accountSnapshot) concurrencyPtr() *atomic.Int64 {
+	if a.runtime == nil {
+		return &atomic.Int64{}
+	}
+	return &a.runtime.concurrency
+}
+
+func (a *accountSnapshot) errRatePtr() *atomic.Uint64 {
+	if a.runtime == nil {
+		return &atomic.Uint64{}
+	}
+	return &a.runtime.errRate
 }
 
 // routeKey 是预生成调度路径的桶键；model == "" 表示默认回退桶

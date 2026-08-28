@@ -610,9 +610,7 @@ func TestCloseDrainsWritebacks(t *testing.T) {
 }
 
 func mkAcc(id int64, weight int, tpl *domain.Template) *accountSnapshot {
-	a := &accountSnapshot{}
-	a.static.Store(&snapshotStatic{acc: domain.Account{ID: id, Weight: weight}, tpl: tpl})
-	a.state.Store(&accState{status: domain.StatusActive})
+	a := newAccountSnapshot(&snapshotStatic{acc: domain.Account{ID: id, Weight: weight}, tpl: tpl}, &accState{status: domain.StatusActive})
 	return a
 }
 
@@ -1592,7 +1590,7 @@ func TestReusePreservesErrCountersAcrossReload(t *testing.T) {
 	require.Equal(t, 1, before.statePtr().errCount)
 	require.NotNil(t, before.statePtr().lastError)
 	require.Equal(t, "boom", *before.statePtr().lastError)
-	require.Greater(t, float64(before.errRate.Load())/errRateScale, 0.0, "EWMA 已更新")
+	require.Greater(t, float64(before.runtime.errRate.Load())/errRateScale, 0.0, "EWMA 已更新")
 
 	// 全量重建（≤30s 定时同步 / InvalidateAllSync 同路径）
 	require.NoError(t, s.reload(context.Background()))
@@ -1601,7 +1599,7 @@ func TestReusePreservesErrCountersAcrossReload(t *testing.T) {
 	ri, _ := s.Runtime(1)
 	require.Equal(t, 1, ri.ErrCount, "errCount 跨重建保留（不归零）")
 	require.Equal(t, "boom", *after.statePtr().lastError, "lastError 跨重建保留")
-	require.Greater(t, float64(after.errRate.Load())/errRateScale, 0.0, "errRate 跨重建保留（EWMA 连续）")
+	require.Greater(t, float64(after.runtime.errRate.Load())/errRateScale, 0.0, "errRate 跨重建保留（EWMA 连续）")
 }
 
 // TestReuseConcurrencyContinuity 复用后 concurrency 保留且新请求 CAS 连续
@@ -1622,17 +1620,17 @@ func TestReuseConcurrencyContinuity(t *testing.T) {
 	require.NoError(t, s.reload(context.Background()))
 	after := reuseByID(s, 1)
 	require.Same(t, before, after, "复用实例指针不变")
-	require.Equal(t, int64(2), after.concurrency.Load(), "重建后计数保持")
+	require.Equal(t, int64(2), after.runtime.concurrency.Load(), "重建后计数保持")
 
 	// Release 命中同一实例：+1/-1 连续，不得拉负
 	s.Release(sel1.AccountID)
 	s.Release(sel2.AccountID)
-	require.Equal(t, int64(0), after.concurrency.Load(), "释放归零，不得为负")
+	require.Equal(t, int64(0), after.runtime.concurrency.Load(), "释放归零，不得为负")
 
 	// 重建后新请求 CAS 连续（同实例递增，无继承间隙窗口）
 	sel3, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
-	require.Equal(t, int64(1), after.concurrency.Load(), "重建后新请求在原子计数上连续 +1")
+	require.Equal(t, int64(1), after.runtime.concurrency.Load(), "重建后新请求在原子计数上连续 +1")
 	s.Release(sel3.AccountID)
 }
 
@@ -1645,6 +1643,7 @@ func TestReuseSyncsStaticFieldsFromDB(t *testing.T) {
 	before := reuseByID(s, 1)
 
 	// 管理面改动 DB（memLoader 与快照共享账号指针——原地改即数据源变更）
+	oldView := s.View()
 	m.mu.Lock()
 	a := m.byGroup[10][0]
 	a.Weight = 50
@@ -1654,7 +1653,9 @@ func TestReuseSyncsStaticFieldsFromDB(t *testing.T) {
 	require.NoError(t, s.reload(context.Background()))
 
 	after := reuseByID(s, 1)
-	require.Same(t, before, after, "复用实例指针不变")
+	require.NotSame(t, before, after, "new immutable leaf")
+	require.Same(t, before.runtime, after.runtime, "shared runtime")
+	require.Same(t, before, oldView.ByID()[1], "old view stable")
 	require.Equal(t, 50, after.static.Load().acc.Weight, "weight 同步 DB 新值")
 	require.Equal(t, 1, after.static.Load().acc.MaxConcurrency, "max_concurrency 同步 DB 新值")
 	ri, _ := s.Runtime(1)
@@ -1701,12 +1702,15 @@ func TestReuseGroupIDsResetOnRemoval(t *testing.T) {
 	require.ElementsMatch(t, []int64{10, 20}, before.static.Load().groupIDs, "多组账号跨组引用集完整")
 
 	// 从组 20 移除（DB 只属组 10）后全量重建：复用实例 groupIDs 重置为 [10]
+	oldView := s.View()
 	m.mu.Lock()
 	m.byGroup[20] = nil
 	m.mu.Unlock()
 	require.NoError(t, s.reload(context.Background()))
 	after := reuseByID(s, 1)
-	require.Same(t, before, after, "实例复用（非新建）")
+	require.NotSame(t, before, after, "new immutable leaf")
+	require.Same(t, before.runtime, after.runtime, "shared runtime")
+	require.Same(t, before, oldView.ByID()[1], "old view stable")
 	require.Equal(t, []int64{10}, after.static.Load().groupIDs, "旧 gid 20 不得残留")
 }
 
@@ -1729,7 +1733,7 @@ func TestInvalidateGroupReuseKeepsCounters(t *testing.T) {
 	require.Same(t, before, after, "组级重载复用旧实例（指针不变）")
 	require.Equal(t, 1, after.statePtr().errCount, "errCount 跨组级重载保留")
 	require.Equal(t, "boom", *after.statePtr().lastError, "lastError 跨组级重载保留")
-	require.Greater(t, float64(after.errRate.Load())/errRateScale, 0.0, "errRate 跨组级重载保留")
+	require.Greater(t, float64(after.runtime.errRate.Load())/errRateScale, 0.0, "errRate 跨组级重载保留")
 	require.Equal(t, []int64{10}, after.static.Load().groupIDs, "groupIDs 重建为 [10]（无残留）")
 
 	// 组级重载后仍可正常调度。冷却保留语义（2026-08-19 缺陷 2 修复：组级重载
@@ -1761,7 +1765,7 @@ func TestReuseNewAccountCreatesFresh(t *testing.T) {
 	require.NotNil(t, as2, "新账号进入 byID")
 	require.Equal(t, 2, as2.static.Load().acc.MaxConcurrency, "新账号新建分支钳制 defaultMax=2")
 	require.Equal(t, []int64{10}, as2.static.Load().groupIDs, "新账号组引用集登记")
-	require.Zero(t, as2.concurrency.Load(), "新账号计数自 0 起")
+	require.Zero(t, as2.runtime.concurrency.Load(), "新账号计数自 0 起")
 	require.Zero(t, as2.statePtr().errCount, "新账号状态全新")
 }
 

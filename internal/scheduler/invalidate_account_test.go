@@ -37,7 +37,7 @@ func TestInvalidateAccountReloadsExt(t *testing.T) {
 	require.True(t, ok, "账号仍在快照")
 	require.Same(t, extNew, got.static.Load().acc.Ext, "回写后快照条目重载新凭据（下个会话 Selection.Ext 新值）")
 	// 并发槽继承（组级重载纪律）：失效不丢在途计数
-	require.Equal(t, int64(0), got.concurrency.Load())
+	require.Equal(t, int64(0), got.runtime.concurrency.Load())
 }
 
 // TestInvalidateAccountUnknownNoop 快照外账号 / 无分组账号 → no-op 不 panic

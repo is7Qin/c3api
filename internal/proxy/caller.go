@@ -253,6 +253,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
 		return
 	}
+	defer leaseGuard(sel)
 
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=true（chat/resp/
 	// anthropic/images 走缺价预检）；尾部 Select 按 route.format（协议转换命中

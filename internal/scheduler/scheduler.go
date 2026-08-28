@@ -77,7 +77,7 @@ func (s *Selection) Release() {
 		return
 	}
 	if s.lease.released.CompareAndSwap(false, true) {
-		s.lease.acc.concurrency.Add(-1)
+		s.lease.acc.runtime.concurrency.Add(-1)
 	}
 }
 
@@ -241,13 +241,13 @@ func (s *Scheduler) processWrite(w statusWrite) {
 		okIDs = append(okIDs, ww.id)
 	}
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		if s.log != nil {
 			s.log.Warn("scheduler writeback skipped: snapshot not loaded")
 		}
 		return
 	}
-	byID := v.byID
+	byID := v.ByID()
 	gidSet := make(map[int64]struct{})
 	for _, id := range okIDs {
 		if as, ok := byID[id]; ok {
@@ -266,108 +266,102 @@ func (s *Scheduler) processWrite(w statusWrite) {
 }
 
 // reload 全量重建快照（启动/定时/InvalidateAll）— single publisher.
+// Serializes ownership before DB load so Reload cannot overwrite InvalidateGroup;
+// static update retains latest DecisionView.
 func (s *Scheduler) reload(ctx context.Context) error {
+	s.publisher.mu.Lock()
+	defer s.publisher.mu.Unlock()
 	m, err := s.loader.LoadGroupsAccounts(ctx)
 	if err != nil {
 		return err
 	}
-	s.publisher.mu.Lock()
-	defer s.publisher.mu.Unlock()
 	cur := s.view.Load()
 	var oldByID map[int64]*accountSnapshot
-	if cur != nil {
-		oldByID = cur.byID
+	var dec *DecisionView
+	if cur != nil && cur.static != nil {
+		oldByID = cur.static.byID
+		dec = cur.decision
 	}
 	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
-	s.publisher.storeLocked(groups, byID)
+	sv := &StaticView{groups: groups, byID: byID}
+	s.publisher.storeLocked(sv, dec)
 	return nil
 }
 
 // buildSnapshots 构建全量快照：**每账号一个共享实例**——多组账号在多个组
-// 快照中引用同一实例（O2 评审实证修复：此前每 (组, 账号) 一个实例，组路由
-// Select 与 byID Release 命中不同计数器 → 并发计数分裂漂移 → 槽位假满
-// "no available account"，e2e 场景 4 实证；去抖消除"每变更全量重载"后暴露）。
-// 组级重载（InvalidateGroup）依赖 groupIDs 跨组引用替换，纪律同此。
-//
-// 快照重建复用旧实例（计数器连续性，2026-08-18 裁决）：oldByID 提供上一次
-// 快照的实例（调用点 s.store.byID.Load()，reload/InvalidateGroup 均持 reloadMu，
-// 读取安全）。已存在账号**复用实例**——静态字段（acc/tpl/gid/groupIDs）DB 权威
-// 同步，动态字段（concurrency/errRate/errCount/lastError）保留内存值：
-//   - 管理面改动（weight/status/max_concurrency 等）经全量同步/组级重载生效；
-//   - err_rate/err_count 跨 ≤30s 全量同步与组级重载不清零（管理端列表展示连续）；
-//   - cooldownUntil：DB 有值同步、nil 保留内存冷却（回写丢弃/失败保底——冷却
-//     不因重建缩水，见下方 state 同步注释；2026-08-19 缺陷 2 修复）；
-//   - 实例指针不变 → 原子操作天然连续，Load-Store 间隙窗口一并消除。
-//
-// 新账号（oldByID 无）→ 新建（含 state 初始化与钳制，现状逻辑）。
-//
-// 已知竞态（评审 M-3，明示接受）：pickFrom 对 state 是盲写 Store（selection.go:85，
-// 热路径零锁刻意取舍）——本分支的 DB 权威 Store 若落在 pickFrom 的 statePtr()
-// （selection.go:66）与 state.Store(&st2)（:85）之间，pickFrom 用重建前的陈旧副本
-// 覆盖 DB 同步值（内存时间回退），≤30s 下次重建自愈——窗口指令级、不碰热路径
-// 的代价，接受。
-//
-// 静态字段发布纪律（评审 Critical 修复）：acc/tpl/gid/groupIDs 一律经
-// snapshotStatic 视图 + atomic.Pointer 整体替换（copy-modify-Store）——复用分支
-// 对已发布实例的更新与热路径无锁读（pickFrom/MarkResult/Classify）零锁并发安全，
-// 不再裸写实例字段。同加载内多组的 groupIDs 追加同样复制视图后发布。
+// 快照中引用同一实例（O2 评审实证修复）。发布后 leaves never mutate；
+// 变更账号分配全新 immutable leaf，共享 separate runtime/concurrency state，
+// old root stable。oldByID 来自旧 StaticView 的 byID（持 publisher.mu 读取安全）。
 func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[int64]*accountSnapshot) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
-	groups := make(map[int64]*groupSnapshot, len(m))
-	byID := make(map[int64]*accountSnapshot)
+	// First pass: collect per-account group membership and latest Account object.
+	type accInfo struct {
+		acc      *domain.Account
+		groupIDs []int64
+		firstGID int64
+	}
+	infoMap := make(map[int64]*accInfo)
 	for gid, accs := range m {
-		gs := &groupSnapshot{}
 		for _, a := range accs {
-			as, ok := byID[a.ID]
-			if !ok {
-				// 静态字段视图构建（复用/新建共用）：acc 整结构覆盖（含
-				// Weight/BaseURL/Ext/LastError 等全部 DB 列）+ MaxConcurrency
-				// 钳制（评审 M-2：DB=0 时不钳制 → 门禁 cur >= 0 恒真 → 账号
-				// 永久不可选）+ groupIDs 首次出现重置（评审 M-1，不得 append
-				// 旧值：账号从某组移除后旧 gid 残留 → processWrite 发布过期组、
-				// InvalidateGroup otherGids 推导错误）。
-				av := &snapshotStatic{acc: *a, tpl: a.Template, gid: gid, groupIDs: []int64{gid}}
-				if a.MaxConcurrency <= 0 {
-					av.acc.MaxConcurrency = defaultMax
-				}
-				if old, exists := oldByID[a.ID]; exists {
-					// 复用旧实例：静态字段 DB 权威同步（原子发布新视图——评审
-					// Critical 修复，杜绝与热路径无锁读的数据竞态）；动态字段
-					//（concurrency/errRate/errCount/lastError）不触碰。
-					as = old
-					as.static.Store(av)
-					// state 同步（写时复制，评审 P-1 修订）：status 以 DB 为准，
-					// errCount/lastError 等动态字段保留内存值。cooldownUntil
-					// 特殊：DB 有值 → 同步（回写成功路径，与内存一致）；DB nil
-					// → 保留内存冷却——回写丢弃/失败（队列满/DB 故障）保底：
-					// 冷却不因 ≤30s 重建缩水；管理面无清冷却操作（DB 列仅回写
-					// 镜像，非管理面输入），"DB nil 清内存冷却"无语义损失
-					//（2026-08-19 缺陷 2 修复，与 errRate 同款连续性）。
-					// cur 恒非 nil（构造即初始化）。
-					cur := as.state.Load()
-					next := *cur
+			if inf, ok := infoMap[a.ID]; ok {
+				inf.groupIDs = append(inf.groupIDs, gid)
+			} else {
+				infoMap[a.ID] = &accInfo{acc: a, groupIDs: []int64{gid}, firstGID: gid}
+			}
+		}
+	}
+	byID := make(map[int64]*accountSnapshot, len(infoMap))
+	for id, inf := range infoMap {
+		a := inf.acc
+		av := &snapshotStatic{acc: *a, tpl: a.Template, gid: inf.firstGID, groupIDs: append([]int64(nil), inf.groupIDs...)}
+		if a.MaxConcurrency <= 0 {
+			av.acc.MaxConcurrency = defaultMax
+		}
+		if old, exists := oldByID[id]; exists {
+			oldAv := old.static.Load()
+			sameBase := false
+			if oldAv != nil {
+				sameBase = (oldAv.acc.BaseURL == nil && av.acc.BaseURL == nil) || (oldAv.acc.BaseURL != nil && av.acc.BaseURL != nil && *oldAv.acc.BaseURL == *av.acc.BaseURL)
+			}
+			sameStatic := oldAv != nil && oldAv.acc.Weight == av.acc.Weight && oldAv.acc.MaxConcurrency == av.acc.MaxConcurrency && oldAv.tpl == av.tpl && groupsEqual(oldAv.groupIDs, av.groupIDs) && sameBase && oldAv.acc.UpstreamKey == av.acc.UpstreamKey
+			if sameStatic {
+				rt := old.runtime
+				if curSt := rt.state.Load(); curSt != nil {
+					next := *curSt
 					next.status = a.Status
 					if a.CooldownUntil != nil {
 						next.cooldownUntil = a.CooldownUntil
 					}
-					as.state.Store(&next)
-				} else {
-					// 新账号：新建实例（含 state 初始化）。
-					as = &accountSnapshot{}
-					as.static.Store(av)
-					as.state.Store(&accState{status: a.Status, cooldownUntil: a.CooldownUntil})
+					rt.state.Store(&next)
 				}
-				byID[a.ID] = as
-			} else {
-				// 多组账号：登记本组（共享实例的 gid = 首个组；数据同源——同一
-				// DB 行的多组引用）。视图复制后追加再发布（视图不可变纪律）。
-				st := as.static.Load()
-				ns := *st
-				ng := make([]int64, len(st.groupIDs)+1)
-				copy(ng, st.groupIDs)
-				ng[len(st.groupIDs)] = gid
-				ns.groupIDs = ng
-				as.static.Store(&ns)
+				byID[id] = old
+				continue
 			}
+			rt := old.runtime
+			curSt := rt.state.Load()
+			var next accState
+			if curSt != nil {
+				next = *curSt
+			} else {
+				next = accState{status: domain.StatusActive}
+			}
+			next.status = a.Status
+			if a.CooldownUntil != nil {
+				next.cooldownUntil = a.CooldownUntil
+			}
+			rt.state.Store(&next)
+			as := &accountSnapshot{runtime: rt}
+			as.static.Store(av)
+			byID[id] = as
+		} else {
+			st := &accState{status: a.Status, cooldownUntil: a.CooldownUntil}
+			byID[id] = newAccountSnapshot(av, st)
+		}
+	}
+	groups := make(map[int64]*groupSnapshot, len(m))
+	for gid, accs := range m {
+		gs := &groupSnapshot{}
+		for _, a := range accs {
+			as := byID[a.ID]
 			gs.accounts = append(gs.accounts, as)
 		}
 		gs.routes = buildRoutes(gs.accounts)
@@ -490,9 +484,9 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	cur := s.view.Load()
 	var m map[int64]*groupSnapshot
 	var byID map[int64]*accountSnapshot
-	if cur != nil {
-		m = cur.groups
-		byID = cur.byID
+	if cur != nil && cur.static != nil {
+		m = cur.static.groups
+		byID = cur.static.byID
 	} else {
 		m = map[int64]*groupSnapshot{}
 		byID = map[int64]*accountSnapshot{}
@@ -522,19 +516,46 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		for _, ns := range newAccs {
 			newIDs[ns.static.Load().acc.ID] = struct{}{}
 		}
+			// Track leaves needing other-group replacement for removed-but-still-present accounts.
+		removedOtherRefs := make(map[int64][]*accountSnapshot)
 		for _, os := range old.accounts {
 			ost := os.static.Load()
 			if _, stillIn := newIDs[ost.acc.ID]; stillIn {
 				continue
 			}
-			// 视图 copy-modify-Store：removeGid 就地改写切片（out := gids[:0]），
-			// 必须先复制再摘除，不得动已发布视图的 backing array。
-			ns := *ost
-			ns.groupIDs = removeGid(append([]int64(nil), ost.groupIDs...), groupID)
-			os.static.Store(&ns)
-			if len(ns.groupIDs) == 0 {
+			newGids := removeGid(append([]int64(nil), ost.groupIDs...), groupID)
+			if len(newGids) == 0 {
 				delete(newByID, ost.acc.ID)
+				continue
 			}
+			// Changed account gets new immutable static leaf sharing separate runtime, old root stable.
+			newStatic := &snapshotStatic{acc: ost.acc, tpl: ost.tpl, gid: ost.gid, groupIDs: newGids}
+			newLeaf := &accountSnapshot{runtime: os.runtime}
+			newLeaf.static.Store(newStatic)
+			newByID[ost.acc.ID] = newLeaf
+			// Record for other group replacement.
+			for _, og := range newGids {
+				removedOtherRefs[og] = append(removedOtherRefs[og], newLeaf)
+			}
+		}
+		// Apply other-group replacements for removed accounts.
+		for og, leaves := range removedOtherRefs {
+			ogp, ok := newM[og]
+			if !ok {
+				continue
+			}
+			repl := make([]*accountSnapshot, len(ogp.accounts))
+			copy(repl, ogp.accounts)
+			leafByID := make(map[int64]*accountSnapshot, len(leaves))
+			for _, lf := range leaves {
+				leafByID[lf.static.Load().acc.ID] = lf
+			}
+			for i, oas := range repl {
+				if nl, ok := leafByID[oas.static.Load().acc.ID]; ok {
+					repl[i] = nl
+				}
+			}
+			newM[og] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
 		}
 	}
 	// 新实例替换 byID + 其它组引用（多组账号：旧实例在其它组路由中的位置换成
@@ -550,18 +571,19 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		var otherGids []int64
 		nst := ns.static.Load()
 		if oa, ok := byID[nst.acc.ID]; ok {
-			if ns != oa {
-				ns.concurrency.Store(oa.concurrency.Load())
-			}
+			// Preserve other groupIDs from old immutable root.
 			for _, g := range oa.static.Load().groupIDs {
 				if g != groupID {
 					otherGids = append(otherGids, g)
 				}
 			}
+			// Share runtime: new leaf already shares oa.runtime via buildSnapshots,
+			// no extra Store needed. Ensure pointer sharing.
+			if ns.runtime != oa.runtime {
+				ns.runtime = oa.runtime
+			}
 		}
-		// 复用下 oa.groupIDs 已被 buildSnapshots 重置为 [groupID]（本组 DB 权威），
-		// otherGids 为空 → 与重建值同构（多组成员资格经 ≤30s 全量同步的 append
-		// 分支恢复——组级重载只从 DB 重载本组，其余组属内存记录）。
+		// New leaf is local (not yet published), safe to mutate static before publish.
 		nns := *nst
 		nns.groupIDs = append([]int64{groupID}, otherGids...)
 		ns.static.Store(&nns)
@@ -591,7 +613,12 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		}
 		newM[og] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
 	}
-	s.publisher.storeLocked(newM, newByID)
+	sv := &StaticView{groups: newM, byID: newByID}
+	var dec *DecisionView
+	if cur != nil {
+		dec = cur.decision
+	}
+	s.publisher.storeLocked(sv, dec)
 }
 
 // InvalidateAccount 单账号快照失效（SDK 接入 T5 §1 P3-3——轮转回写后同步
@@ -602,10 +629,10 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 // 不阻断——令牌已落库，下个会话经适配层 Auth 内存新 at 自愈）。
 func (s *Scheduler) InvalidateAccount(accountID int64) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return
 	}
-	byID := v.byID
+	byID := v.ByID()
 	as, exists := byID[accountID]
 	if !exists {
 		return
@@ -619,6 +646,23 @@ func (s *Scheduler) InvalidateAccount(accountID int64) {
 		seen[g] = struct{}{}
 		s.InvalidateGroup(g)
 	}
+}
+
+func groupsEqual(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[int64]int, len(a))
+	for _, v := range a {
+		m[v]++
+	}
+	for _, v := range b {
+		if c, ok := m[v]; !ok || c == 0 {
+			return false
+		}
+		m[v]--
+	}
+	return true
 }
 
 // removeGid 摘除 groupIDs 中的指定组（实例共享纪律：组级重载的从组移除路径）。
@@ -653,18 +697,18 @@ func (s *Scheduler) InvalidateAllSyncCtx(ctx context.Context) error { return s.r
 // 未就绪而非进程崩溃）。
 func (s *Scheduler) Runtime(accountID int64) (RuntimeInfo, bool) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return RuntimeInfo{}, false
 	}
-	a, ok := v.byID[accountID]
+	a, ok := v.ByID()[accountID]
 	if !ok {
 		return RuntimeInfo{}, false
 	}
 	st := a.statePtr()
 	return RuntimeInfo{
 		Status: st.status, CooldownUntil: st.cooldownUntil,
-		Concurrency: a.concurrency.Load(),
-		ErrRate:     float64(a.errRate.Load()) / errRateScale,
+		Concurrency: a.runtime.concurrency.Load(),
+		ErrRate:     float64(a.runtime.errRate.Load()) / errRateScale,
 		ErrCount:    st.errCount,
 	}, true
 }
@@ -687,10 +731,10 @@ type AccountRuntime struct {
 // 冷面调用（管理端聚合 + TTL 缓存摊薄），不涉请求热路径。快照未加载 → nil。
 func (s *Scheduler) Runtimes() []AccountRuntime {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return nil
 	}
-	byID := v.byID
+	byID := v.ByID()
 	out := make([]AccountRuntime, 0, len(byID))
 	for id, a := range byID {
 		av := a.static.Load()
@@ -700,8 +744,8 @@ func (s *Scheduler) Runtimes() []AccountRuntime {
 			Name:           av.acc.Name,
 			Status:         st.status,
 			MaxConcurrency: av.acc.MaxConcurrency,
-			Concurrency:    a.concurrency.Load(),
-			ErrRate:        float64(a.errRate.Load()) / errRateScale,
+			Concurrency:    a.runtime.concurrency.Load(),
+			ErrRate:        float64(a.runtime.errRate.Load()) / errRateScale,
 			ErrCount:       st.errCount,
 		})
 	}
@@ -712,11 +756,11 @@ func (s *Scheduler) Runtimes() []AccountRuntime {
 // New code should use Selection.Release which releases exact object via leaseToken.
 func (s *Scheduler) Release(accountID int64) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return
 	}
-	if a, ok := v.byID[accountID]; ok {
-		a.concurrency.Add(-1)
+	if a, ok := v.ByID()[accountID]; ok {
+		a.runtime.concurrency.Add(-1)
 	}
 }
 
@@ -733,10 +777,10 @@ func (s *Scheduler) ReleaseSelection(sel *Selection) {
 // 5xx 分流由调用点 RuleKindOf 完成）。
 func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Time, httpStatus int, errMsg string, model string) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return
 	}
-	a, ok := v.byID[accountID]
+	a, ok := v.ByID()[accountID]
 	if !ok {
 		return
 	}
@@ -785,10 +829,10 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 // 4096）；进程退出竞态（循环已死且队列满）才阻塞——可接受。
 func (s *Scheduler) FailAccount(accountID int64, reason string) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return
 	}
-	a, ok := v.byID[accountID]
+	a, ok := v.ByID()[accountID]
 	if !ok {
 		return // 快照外账号（已移除/未知）：无状态可改，不投递回写（同 apply）
 	}
@@ -800,7 +844,7 @@ func (s *Scheduler) FailAccount(accountID int64, reason string) {
 	// 仅审计内容与旧"最后写者"语义不同）。cur 恒非 nil（构造即初始化）。
 	now := s.timeNow()
 	for {
-		cur := a.state.Load()
+		cur := a.runtime.state.Load()
 		if cur.status == domain.StatusDisabled {
 			return
 		}
@@ -810,7 +854,7 @@ func (s *Scheduler) FailAccount(accountID int64, reason string) {
 			st.lastError = &t
 		}
 		st.lastUsedAt = &now
-		if !a.state.CompareAndSwap(cur, &st) {
+		if !a.runtime.state.CompareAndSwap(cur, &st) {
 			continue // 并发转换已发生——重读重试（disabled 对双方都是吸收态，必然终止）
 		}
 		s.writeCh <- statusWrite{id: accountID, status: st.status, cooldown: st.cooldownUntil, lastErr: st.lastError, weight: nil}
@@ -840,10 +884,10 @@ func RuleKindOf(httpStatus int) rule.Kind {
 // （对齐 MarkResult 早退语义——请求路径不可达；本地拒绝不进本机制）。
 func (s *Scheduler) Classify(ev rule.Event) (then domain.RuleThen, punish bool) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return domain.RuleThen{}, false
 	}
-	a, ok := v.byID[ev.AccountID]
+	a, ok := v.ByID()[ev.AccountID]
 	if !ok {
 		return domain.RuleThen{}, false
 	}
@@ -884,13 +928,13 @@ func (s *Scheduler) FlushRules() {
 // 有文本用文本（域内截断 500），无文本回退既有硬编码文案（旧语义不变）。
 func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *time.Time, weight *int, errMsg string) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		if s.log != nil {
 			s.log.Warn("scheduler apply skipped: snapshot not loaded")
 		}
 		return
 	}
-	byID := v.byID
+	byID := v.ByID()
 	a, ok := byID[aid]
 	if !ok {
 		return // 快照外账号（已移除/未知）：无状态可改，不投递回写
@@ -909,7 +953,7 @@ func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *ti
 	now := s.timeNow()
 	var next accState // CAS 成功后持有（enqueueWrite 用）
 	for {
-		cur := a.state.Load()
+		cur := a.runtime.state.Load()
 		if cur.status == domain.StatusDisabled {
 			return
 		}
@@ -924,45 +968,67 @@ func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *ti
 				next.errCount++
 				next.lastError = strPtr(errMsgOr("upstream error", errMsg))
 			case domain.StatusActive:
-				// A-5（用户裁决 2026-08-19，覆盖 C-M2）：ok 规则恢复 active 前
-				// 检查冷却——冷却未过期不得恢复（早退零副作用：不回写
-				// enqueueWrite、不更新 lastUsedAt、不触碰 errCount/lastError/
-				// EWMA——避免每 ok 事件一次纠正回写；状态自愈靠后续错误事件 +
-				// A-2 冷却保留 + A-4 展示兜底，Select 恒被冷却拦截）。冷却过期/
-				// 无冷却 → 短路 → 现状恢复。检查基于本 CAS 轮次的 cur（读-改-写
-				// 原子：并发转换使 CAS 失败重读后重新检查）。
 				if cur.cooldownUntil != nil && !cur.cooldownUntil.Before(now) {
 					return
 				}
 				next.errCount = 0
 				next.lastError = nil
 			}
-			// EWMA：α=0.2；仅状态类动作更新（ok=0、429/error=1 的 rateDelta，
-			// 纯 weight 动作不更新——I5）
 			rateDelta := 0.0
 			if *st == domain.Status429 || *st == domain.StatusUnhealthy {
 				rateDelta = 1
 			}
-			old := float64(a.errRate.Load()) / errRateScale
+			old := float64(a.runtime.errRate.Load()) / errRateScale
 			rate := 0.2*rateDelta + 0.8*old
-			a.errRate.Store(uint64(rate * errRateScale))
+			a.runtime.errRate.Store(uint64(rate * errRateScale))
 		}
 		if cooldownUntil != nil {
 			next.cooldownUntil = cooldownUntil
 		}
 		next.lastUsedAt = &now
-		if a.state.CompareAndSwap(cur, &next) {
+		if a.runtime.state.CompareAndSwap(cur, &next) {
 			break
 		}
-		// 重读重试：并发转换（FailAccount/另一 apply）已落地，循环顶早退或再转换
 	}
 	if weight != nil {
 		s.publisher.mu.Lock()
-		av := a.static.Load()
-		nv := *av
-		nv.acc.Weight = *weight
-		a.static.Store(&nv)
-		s.rebuildGroupLocked(nv.gid)
+		curView := s.view.Load()
+		if curView != nil && curView.static != nil {
+			av := a.static.Load()
+			nv := *av
+			nv.acc.Weight = *weight
+			newLeaf := &accountSnapshot{runtime: a.runtime}
+			newLeaf.static.Store(&nv)
+			oldByID := curView.static.byID
+			oldGroups := curView.static.groups
+			newByID := make(map[int64]*accountSnapshot, len(oldByID))
+			for k, vv := range oldByID {
+				if k == aid {
+					newByID[k] = newLeaf
+				} else {
+					newByID[k] = vv
+				}
+			}
+			newGroups := make(map[int64]*groupSnapshot, len(oldGroups))
+			for gid, gs := range oldGroups {
+				repl := make([]*accountSnapshot, len(gs.accounts))
+				copy(repl, gs.accounts)
+				needs := false
+				for i, acc := range repl {
+					if acc.static.Load().acc.ID == aid {
+						repl[i] = newLeaf
+						needs = true
+					}
+				}
+				if needs {
+					newGroups[gid] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
+				} else {
+					newGroups[gid] = gs
+				}
+			}
+			sv := &StaticView{groups: newGroups, byID: newByID}
+			s.publisher.storeLocked(sv, curView.decision)
+		}
 		s.publisher.mu.Unlock()
 	}
 	// 回写前复查 disabled（防 active 回写覆盖 FailAccount 并发置位）——仅对
@@ -994,20 +1060,21 @@ func (s *Scheduler) rebuildGroup(groupID int64) {
 // rebuildGroupLocked 重建单组路由（须持 publisher.mu 调用；不碰 DB/账号列表）：
 func (s *Scheduler) rebuildGroupLocked(groupID int64) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return
 	}
-	m := v.groups
+	m := v.Groups()
 	gs, ok := m[groupID]
 	if !ok {
 		return
 	}
 	newM := make(map[int64]*groupSnapshot, len(m))
-	for k, v := range m {
-		newM[k] = v
+	for k, vv := range m {
+		newM[k] = vv
 	}
 	newM[groupID] = &groupSnapshot{accounts: gs.accounts, routes: buildRoutes(gs.accounts)}
-	s.publisher.storeLocked(newM, v.byID)
+	sv := &StaticView{groups: newM, byID: v.ByID()}
+	s.publisher.storeLocked(sv, v.decision)
 }
 
 func (s *Scheduler) enqueueWrite(id int64, st accState, weight *int) {
