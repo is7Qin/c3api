@@ -332,13 +332,22 @@ func TestCodexCachePAT(t *testing.T) {
 }
 
 // TestCodexCacheConcurrentSingleFlight 同账号并发请求单飞构造：N goroutine
-// 并发首请求 → 恰一次构造入缓存（互斥锁单飞——对齐 SDK OAuth 单飞语义）；
-// 全部请求成功送达同一账号凭据。
+// 并发首请求 → 恰一次真实 codexsdk.NewHTTPClient 构造（32 并发仅一次——
+// 非指针复用表象；以实例构造计数为准，对齐 SDK OAuth 单飞语义）。
 func TestCodexCacheConcurrentSingleFlight(t *testing.T) {
 	up, c := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
 	defer up.Close()
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	a := NewCodex(nil)
+	var count atomic.Int64
+	orig := a.newHTTPClient
+	if orig == nil {
+		orig = codexsdk.NewHTTPClient
+	}
+	a.newHTTPClient = func(auth codexsdk.Auth, opts ...codexsdk.Option) *codexsdk.HTTPClient {
+		count.Add(1)
+		return orig(auth, opts...)
+	}
 
 	cred := oauthCred(7, "at-1", "rt-1")
 	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
@@ -367,7 +376,7 @@ func TestCodexCacheConcurrentSingleFlight(t *testing.T) {
 	for err := range errs {
 		require.NoError(t, err, "并发首请求全部成功")
 	}
-	// Collect distinct client identities – must be exactly one construction
+	require.Equal(t, int64(1), count.Load(), "并发单飞——恰一次真实 NewHTTPClient 构造（非复用表象）")
 	seen := make(map[*codexEntry]struct{})
 	var first *codexEntry
 	for e := range clients {
@@ -379,10 +388,76 @@ func TestCodexCacheConcurrentSingleFlight(t *testing.T) {
 	require.Len(t, seen, 1, "并发单飞构造——恰一次客户端构造（32 goroutine 共享同一 *codexEntry）")
 	require.NotNil(t, first)
 	require.Equal(t, 32, c.callsN(), "并发请求全部送达上游")
-	// Also prove sub-identity (HTTPClient) is single
 	a.mu.Lock()
 	require.Same(t, first.client, a.entries[7].client, "单飞后缓存的 HTTPClient 为同一实例")
 	a.mu.Unlock()
+}
+
+// TestCodexCacheRebuildConstructionCount 重建计数——凭据/身份变更恰一次真实
+// NewHTTPClient 构造，非每次请求。热复用零构造。
+func TestCodexCacheRebuildConstructionCount(t *testing.T) {
+	up, _ := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
+	defer up.Close()
+	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
+	a := NewCodex(nil)
+	var count atomic.Int64
+	orig := a.newHTTPClient
+	if orig == nil {
+		orig = codexsdk.NewHTTPClient
+	}
+	a.newHTTPClient = func(auth codexsdk.Auth, opts ...codexsdk.Option) *codexsdk.HTTPClient {
+		count.Add(1)
+		return orig(auth, opts...)
+	}
+	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	p := &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"}
+	cred1 := oauthCred(11, "at-1", "rt-1")
+	_, err := a.GenerateImage(context.Background(), cred1, p)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count.Load(), "首建恰一次")
+	for i := 0; i < 3; i++ {
+		_, err := a.GenerateImage(context.Background(), cred1, p)
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(1), count.Load(), "同凭据热复用零新增构造")
+	cred2 := oauthCred(11, "at-2", "rt-1")
+	_, err = a.GenerateImage(context.Background(), cred2, p)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count.Load(), "凭据变更恰一次重建")
+	for i := 0; i < 2; i++ {
+		_, err := a.GenerateImage(context.Background(), cred2, p)
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(2), count.Load(), "新凭据热复用零新增构造")
+	// 身份变更重建（Responses 面——同 cred 不同 CodexMeta → 重建一次）
+	up2, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
+	defer up2.Close()
+	a2 := NewCodex(nil)
+	var count2 atomic.Int64
+	orig2 := a2.newHTTPClient
+	if orig2 == nil {
+		orig2 = codexsdk.NewHTTPClient
+	}
+	a2.newHTTPClient = func(auth codexsdk.Auth, opts ...codexsdk.Option) *codexsdk.HTTPClient {
+		count2.Add(1)
+		return orig2(auth, opts...)
+	}
+	a2.SetTransport(newOfficialRewriteTransport(t, up2.URL))
+	cred := &domain.AccountCredential{AccountID: 12, PATKey: "pat-r"}
+	meta1 := &codexsdk.CodexMeta{InstallationID: "inst-1"}
+	meta2 := &codexsdk.CodexMeta{InstallationID: "inst-2"}
+	_, err = a2.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta1, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count2.Load(), "身份首建恰一次")
+	_, err = a2.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta1, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count2.Load(), "同身份热复用零新增构造")
+	_, err = a2.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta2, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count2.Load(), "身份变更恰一次重建")
+	_, err = a2.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta2, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count2.Load(), "新身份热复用零新增构造")
 }
 
 // TestCodexCacheEvictionOnFatal fatal → 失效剔除（T1 联动）：上报后缓存条目
