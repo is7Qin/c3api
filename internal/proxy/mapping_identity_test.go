@@ -14,6 +14,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -163,7 +164,13 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 		require.Equal(t, "gpt-4o", l.MappedModel, "4xx 行 MappedModel = 当轮选中尝试的用量身份（implicit=客户端）")
 	})
 	t.Run("首字节前 499", func(t *testing.T) {
+		started := make(chan struct{})
 		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-started:
+			default:
+				close(started)
+			}
 			select {
 			case <-time.After(time.Second):
 				w.WriteHeader(200)
@@ -179,7 +186,10 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 			`{"model":"gpt-4o","messages":[]}`)).WithContext(ctx)
 		req.Header.Set("Authorization", "Bearer ck-1")
 		rec := httptest.NewRecorder()
-		time.AfterFunc(100*time.Millisecond, cancel)
+		go func() {
+			<-started
+			cancel()
+		}()
 		p.HandleChat(rec, req)
 		require.NoError(t, p.rec.Close(context.Background()))
 		require.NoError(t, p.errlog.Close(context.Background()))
@@ -193,22 +203,23 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 			require.Equal(t, "gpt-4o", l.MappedModel, "行 %d：499 行 MappedModel = 当轮选中尝试的用量身份（implicit=客户端）", i)
 		}
 	})
-	t.Run("流中止", func(t *testing.T) {
-		up := fakeOpenAI(t, "stall-stream")
+	t.Run("已接受流中止", func(t *testing.T) {
+		up := fakeOpenAI(t, "abort-stream")
 		defer up.Close()
 		store := &captureLogStore{}
-		p := newTestProxyTplTimeoutLogs(t, mappingTpl(up.URL, implicitMapping), 1, true, 100*time.Millisecond, store, nil)
+		p := newTestProxyTplTimeoutLogs(t, mappingTpl(up.URL, implicitMapping), 1, true, 30*time.Second, store, nil)
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 			`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 		req.Header.Set("Authorization", "Bearer ck-1")
 		rec := httptest.NewRecorder()
 		p.HandleChat(rec, req)
+		p.sched.FlushRules()
 		require.NoError(t, p.rec.Close(context.Background()))
 		store.mu.Lock()
 		defer store.mu.Unlock()
 		require.Len(t, store.logs, 1, "must capture exactly one usage log")
 		l := store.logs[0]
-		require.Equal(t, domain.ErrAbort, l.ErrorType, "停滞超时按上游读失败记 ErrAbort")
+		require.Equal(t, domain.ErrAbort, l.ErrorType, "已接受流中止记 ErrAbort")
 		require.Equal(t, "gpt-4o", l.Model, "Model = 客户端请求模型")
 		require.Equal(t, "gpt-4o", l.MappedModel, "流中止行 MappedModel = 当轮选中尝试的用量身份（implicit=客户端）")
 	})
@@ -227,48 +238,108 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 	implicitD := map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-d", Mode: domain.ModelMappingModeImplicit}}
 	explicitC := map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-c", Mode: domain.ModelMappingModeExplicit}}
 	t.Run("implicit→explicit 成功", func(t *testing.T) {
-		up1 := fakeOpenAI(t, "429")
-		defer up1.Close()
-		up2 := fakeOpenAI(t, "")
-		defer up2.Close()
+		var mu sync.Mutex
+		var hits int
+		var auths []string
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			hits++
+			auths = append(auths, r.Header.Get("Authorization"))
+			n := hits
+			mu.Unlock()
+			if n == 1 {
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "c1", "object": "chat.completion",
+				"model": body["model"],
+				"usage": map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+			})
+		}))
+		defer up.Close()
 		store := &captureLogStore{}
-		p := newTestProxyTplTimeoutLogs(t, mappingTpl(up1.URL, implicitB), 1, true, 30*time.Second, store, nil)
-		tpl2 := mappingTpl(up2.URL, explicitC)
+		tpl1 := mappingTpl(up.URL, implicitB)
+		p := newTestProxyTplTimeoutLogs(t, tpl1, 1, true, 30*time.Second, store, nil)
+		p.sched.Loader().(noopLoader).accs[10][0].UpstreamKey = "sk-a1"
+		tpl2 := mappingTpl(up.URL, explicitC)
 		tpl2.ID = 2
-		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
 		p.sched.Loader().(noopLoader).accs[10] = append(p.sched.Loader().(noopLoader).accs[10], acc2)
 		require.NoError(t, p.sched.InvalidateAllSync())
-
 		rec := postChat(p, `{"model":"gpt-4o","messages":[]}`)
 		require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
 		require.NoError(t, p.rec.Close(context.Background()))
+		mu.Lock()
+		require.Equal(t, 2, hits, "必须触达两账号（首轮 429 后 failover）")
+		require.Len(t, auths, 2)
+		mu.Unlock()
+		require.ElementsMatch(t, []string{"Bearer sk-a1", "Bearer sk-a2"}, auths, "两账号均被选中")
 		store.mu.Lock()
 		defer store.mu.Unlock()
 		require.Len(t, store.logs, 1, "must capture exactly one usage log")
 		require.Equal(t, "gpt-4o", store.logs[0].Model, "Model = 客户端请求模型")
-		require.Equal(t, "upstream-c", store.logs[0].MappedModel, "成功行身份 = 终态选中账号（explicit=目标），非首轮 implicit 身份")
+		want := "upstream-c"
+		if auths[1] == "Bearer sk-a1" {
+			want = "gpt-4o"
+		}
+		require.Equal(t, want, store.logs[0].MappedModel, "成功行身份 = 终态选中账号的用量身份（按第二轮鉴权判定），非首轮身份")
 	})
 	t.Run("explicit→implicit 成功", func(t *testing.T) {
-		up1 := fakeOpenAI(t, "429")
-		defer up1.Close()
-		up2 := fakeOpenAI(t, "")
-		defer up2.Close()
+		var mu sync.Mutex
+		var hits int
+		var auths []string
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			hits++
+			auths = append(auths, r.Header.Get("Authorization"))
+			n := hits
+			mu.Unlock()
+			if n == 1 {
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "c1", "object": "chat.completion",
+				"model": body["model"],
+				"usage": map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+			})
+		}))
+		defer up.Close()
 		store := &captureLogStore{}
-		p := newTestProxyTplTimeoutLogs(t, mappingTpl(up1.URL, explicitC), 1, true, 30*time.Second, store, nil)
-		tpl2 := mappingTpl(up2.URL, implicitB)
+		tpl1 := mappingTpl(up.URL, explicitC)
+		p := newTestProxyTplTimeoutLogs(t, tpl1, 1, true, 30*time.Second, store, nil)
+		p.sched.Loader().(noopLoader).accs[10][0].UpstreamKey = "sk-a1"
+		tpl2 := mappingTpl(up.URL, implicitB)
 		tpl2.ID = 2
-		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
 		p.sched.Loader().(noopLoader).accs[10] = append(p.sched.Loader().(noopLoader).accs[10], acc2)
 		require.NoError(t, p.sched.InvalidateAllSync())
-
 		rec := postChat(p, `{"model":"gpt-4o","messages":[]}`)
 		require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
 		require.NoError(t, p.rec.Close(context.Background()))
+		mu.Lock()
+		require.Equal(t, 2, hits, "必须触达两账号（首轮 429 后 failover）")
+		require.Len(t, auths, 2)
+		mu.Unlock()
+		require.ElementsMatch(t, []string{"Bearer sk-a1", "Bearer sk-a2"}, auths, "两账号均被选中")
 		store.mu.Lock()
 		defer store.mu.Unlock()
 		require.Len(t, store.logs, 1, "must capture exactly one usage log")
 		require.Equal(t, "gpt-4o", store.logs[0].Model, "Model = 客户端请求模型")
-		require.Equal(t, "gpt-4o", store.logs[0].MappedModel, "成功行身份 = 终态选中账号（implicit=客户端），非首轮 explicit 目标")
+		want := "gpt-4o"
+		if auths[1] == "Bearer sk-a1" {
+			want = "upstream-c"
+		}
+		require.Equal(t, want, store.logs[0].MappedModel, "成功行身份 = 终态选中账号的用量身份（按第二轮鉴权判定），非首轮身份")
 	})
 	t.Run("implicit+implicit 耗尽恒客户端身份", func(t *testing.T) {
 		var mu sync.Mutex
