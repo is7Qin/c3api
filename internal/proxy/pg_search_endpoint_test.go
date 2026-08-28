@@ -67,7 +67,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
 	require.NoError(t, repos.EnsureErrLogPartitioned(ctx, time.Now()))
 
-	// 本地 mock 上游（/v1/alpha/search——SDK 派生端点）
+	// 本地 mock 上游（固定 SDK 官方端点 https://chatgpt.com/backend-api/codex/alpha/search，test transport 仅 host 重写保留官方 path）
 	up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 200, body: searchRespRaw})
 	defer up.Close()
 
