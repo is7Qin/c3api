@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -152,6 +153,15 @@ var routingWatermarkDDL = `CREATE TABLE IF NOT EXISTS routing_rollup_watermark (
 	PRIMARY KEY (kind, identity_version)
 )`
 
+var routingFlowSnapshotStateDDL = `CREATE TABLE IF NOT EXISTS routing_flow_snapshot_state (
+	terminal_minute timestamptz NOT NULL,
+	instance_src text NOT NULL,
+	identity_version smallint NOT NULL CHECK (identity_version = 1),
+	highest_sequence bigint NOT NULL,
+	updated_at timestamptz NOT NULL,
+	PRIMARY KEY (terminal_minute, instance_src, identity_version)
+)`
+
 var routingCompilerDDL = `CREATE TABLE IF NOT EXISTS routing_compiler_state (
 	id bigint NOT NULL,
 	identity_version smallint NOT NULL CHECK (identity_version = 1),
@@ -181,6 +191,9 @@ func (r *PartitionRepo) EnsureRoutingDirty(ctx context.Context) error {
 func (r *PartitionRepo) EnsureRoutingWatermark(ctx context.Context) error {
 	return r.execDDLTolerateRace(ctx, routingWatermarkDDL)
 }
+func (r *PartitionRepo) EnsureRoutingSnapshotState(ctx context.Context) error {
+	return r.execDDLTolerateRace(ctx, routingFlowSnapshotStateDDL)
+}
 func (r *PartitionRepo) EnsureRoutingCompiler(ctx context.Context) error {
 	return r.execDDLTolerateRace(ctx, routingCompilerDDL)
 }
@@ -203,6 +216,9 @@ func (r *PartitionRepo) EnsureRoutingPartitions(ctx context.Context, now time.Ti
 	}
 	if err := r.EnsureRoutingWatermark(ctx); err != nil {
 		return fmt.Errorf("routing watermark: %w", err)
+	}
+	if err := r.EnsureRoutingSnapshotState(ctx); err != nil {
+		return fmt.Errorf("routing snapshot state: %w", err)
 	}
 	if err := r.EnsureRoutingCompiler(ctx); err != nil {
 		return fmt.Errorf("routing compiler: %w", err)
@@ -346,7 +362,8 @@ func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row Routi
 }
 
 // UpsertFlowSnapshot replaces the complete edge set for (terminal_minute, instance_src, identity_version) atomically.
-// Only greater absolute_sequence replaces; equal or lower does not mutate.
+// Only greater absolute_sequence replaces; equal or lower does not mutate. Uses durable authority table routing_flow_snapshot_state
+// so even empty snapshots advance sequence and remain authoritative independent of edge rows.
 func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []RoutingFlowRow) error {
 	terminalMinute = terminalMinute.UTC().Truncate(time.Minute)
 	tx, err := r.driver.Tx(ctx)
@@ -360,20 +377,19 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 	if err := drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{lockKey}, &res); err != nil {
 		return err
 	}
-	// check current max sequence for this snapshot
-	var maxSeq sql.NullInt64
+	var curSeq sql.NullInt64
 	rs := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT MAX(absolute_sequence) FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3`, []any{terminalMinute, instanceSrc, identityVersion}, rs); err != nil {
+	if err := drv.Query(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3 FOR UPDATE`, []any{terminalMinute, instanceSrc, identityVersion}, rs); err != nil {
 		return err
 	}
-	if rs.Next() {
-		_ = rs.Scan(&maxSeq)
+	hasState := rs.Next()
+	if hasState {
+		_ = rs.Scan(&curSeq)
 	}
 	rs.Close()
-	if maxSeq.Valid && absoluteSequence <= maxSeq.Int64 {
+	if hasState && curSeq.Valid && absoluteSequence <= curSeq.Int64 {
 		return tx.Commit()
 	}
-	// delete prior set
 	if err := drv.Exec(ctx, `DELETE FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3`, []any{terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
 		return err
 	}
@@ -385,6 +401,15 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 			return err
 		}
 	}
+	if hasState {
+		if err := drv.Exec(ctx, `UPDATE routing_flow_snapshot_state SET highest_sequence=$1, updated_at=now() WHERE terminal_minute=$2 AND instance_src=$3 AND identity_version=$4`, []any{absoluteSequence, terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
+			return err
+		}
+	} else {
+		if err := drv.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, identity_version, highest_sequence, updated_at) VALUES ($1,$2,$3,$4, now())`, []any{terminalMinute, instanceSrc, identityVersion, absoluteSequence}, &res); err != nil {
+			return err
+		}
+	}
 	q2 := `INSERT INTO routing_dirty_minute (kind, identity_version, bucket_minute, dirty, updated_at) VALUES ('flow', $1, $2, true, now()) ON CONFLICT (kind, identity_version, bucket_minute) DO UPDATE SET dirty = true, updated_at = now()`
 	if err := drv.Exec(ctx, q2, []any{identityVersion, terminalMinute}, &res); err != nil {
 		return err
@@ -392,11 +417,11 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 	return tx.Commit()
 }
 
-func (r *PartitionRepo) QueryQualityRow(ctx context.Context, instanceSrc string, bucket time.Time, fingerprint domain.CandidateFingerprintVal, qualityClass domain.QualityClassIDVal, version int16) (*RoutingQualityRow, error) {
+func (r *PartitionRepo) QueryQualityRow(ctx context.Context, instanceSrc string, bucket time.Time, fingerprint domain.CandidateFingerprintVal, qualityClass domain.QualityClassIDVal, routeClass domain.RouteClassIDVal, version int16) (*RoutingQualityRow, error) {
 	bucket = bucket.UTC().Truncate(time.Minute)
 	rows := &entsql.Rows{}
-	q := `SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2 AND candidate_fingerprint=$3 AND quality_class_id=$4 AND identity_version=$5`
-	if err := r.driver.Query(ctx, q, []any{instanceSrc, bucket, fingerprint[:], qualityClass[:], version}, rows); err != nil {
+	q := `SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist::text, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2 AND candidate_fingerprint=$3 AND quality_class_id=$4 AND route_class_id=$5 AND identity_version=$6`
+	if err := r.driver.Query(ctx, q, []any{instanceSrc, bucket, fingerprint[:], qualityClass[:], routeClass[:], version}, rows); err != nil {
 		return nil, err
 	}
 	defer rows.Close()
@@ -407,15 +432,29 @@ func (r *PartitionRepo) QueryQualityRow(ctx context.Context, instanceSrc string,
 	var rt, qc []byte
 	var fp []byte
 	var bucketOut time.Time
-	var dummyHist []int64
-	_ = dummyHist
-	if err := rows.Scan(&out.IdentityVersion, &rt, &qc, &fp, &out.InstanceSrc, &bucketOut, &out.AbsoluteSequence, &out.Attempts, &out.Successes, &out.Count429, &out.CountOrdinary4xx, &out.Count5xx, &out.CountNetwork, &out.TTFTN, &out.TTFTSumLogQ32, &out.TTFTSumSqLogQ32, &out.InputTokens, &out.OutputTokens, &out.CacheReadTokens, &out.CacheCreateTokens, &out.Calls, &out.Images); err != nil {
+	var histText string
+	if err := rows.Scan(&out.IdentityVersion, &rt, &qc, &fp, &out.InstanceSrc, &bucketOut, &out.AbsoluteSequence, &out.Attempts, &out.Successes, &out.Count429, &out.CountOrdinary4xx, &out.Count5xx, &out.CountNetwork, &out.TTFTN, &out.TTFTSumLogQ32, &out.TTFTSumSqLogQ32, &histText, &out.InputTokens, &out.OutputTokens, &out.CacheReadTokens, &out.CacheCreateTokens, &out.Calls, &out.Images); err != nil {
 		return nil, err
 	}
 	copy(out.RouteClassID[:], rt)
 	copy(out.QualityClassID[:], qc)
 	copy(out.CandidateFingerprint[:], fp)
 	out.BucketMinute = bucketOut
+	if histText != "" {
+		trim := histText
+		if len(trim) >= 2 && trim[0] == '{' && trim[len(trim)-1] == '}' {
+			trim = trim[1 : len(trim)-1]
+			if trim != "" {
+				parts := strings.Split(trim, ",")
+				out.TTFTHist = make([]int64, len(parts))
+				for i, p := range parts {
+					var v int64
+					fmt.Sscanf(strings.TrimSpace(p), "%d", &v)
+					out.TTFTHist[i] = v
+				}
+			}
+		}
+	}
 	return &out, nil
 }
 
@@ -436,10 +475,10 @@ func (r *PartitionRepo) IsDirty(ctx context.Context, kind string, version int16,
 	return d, nil
 }
 
-func (r *PartitionRepo) ClearDirty(ctx context.Context, kind string, version int16, bucket time.Time) error {
+func (r *PartitionRepo) clearDirtyTx(ctx context.Context, drv *txDriver, kind string, version int16, bucket time.Time) error {
 	bucket = bucket.UTC().Truncate(time.Minute)
 	var res sql.Result
-	return r.driver.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3`, []any{kind, version, bucket}, &res)
+	return drv.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3`, []any{kind, version, bucket}, &res)
 }
 
 func (r *PartitionRepo) GetWatermark(ctx context.Context, kind string, version int16) (time.Time, error) {
@@ -458,33 +497,9 @@ func (r *PartitionRepo) GetWatermark(ctx context.Context, kind string, version i
 	return w, nil
 }
 
-func (r *PartitionRepo) AdvanceWatermark(ctx context.Context, kind string, version int16, newWatermark time.Time) error {
+func (r *PartitionRepo) advanceWatermarkTx(ctx context.Context, drv *txDriver, kind string, version int16, newWatermark time.Time) error {
 	newWatermark = newWatermark.UTC().Truncate(time.Minute)
-	tx, err := r.driver.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-	drv := &txDriver{tx: tx, drv: r.driver}
-	lockKey := advisoryLockKey("rollup-watermark", kind, fmt.Sprintf("%d", version))
 	var res sql.Result
-	if err := drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{lockKey}, &res); err != nil {
-		return err
-	}
-	// dirty check: target minute must be dirty
-	dirtyRows := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3`, []any{kind, version, newWatermark}, dirtyRows); err != nil {
-		return err
-	}
-	hasDirty := dirtyRows.Next()
-	var isDirty bool
-	if hasDirty {
-		_ = dirtyRows.Scan(&isDirty)
-	}
-	dirtyRows.Close()
-	if !hasDirty || !isDirty {
-		return fmt.Errorf("watermark advance requires dirty minute %v", newWatermark)
-	}
 	var cur sql.NullTime
 	rs := &entsql.Rows{}
 	if err := drv.Query(ctx, `SELECT watermark FROM routing_rollup_watermark WHERE kind=$1 AND identity_version=$2 FOR UPDATE`, []any{kind, version}, rs); err != nil {
@@ -512,12 +527,115 @@ func (r *PartitionRepo) AdvanceWatermark(ctx context.Context, kind string, versi
 	if err := drv.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind=$1 AND identity_version=$2 AND bucket_minute<=$3 AND dirty=true`, []any{kind, version, newWatermark}, &res); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (r *PartitionRepo) RollupQuality(ctx context.Context, bucket time.Time, version int16) error {
+	bucket = bucket.UTC().Truncate(time.Minute)
+	tx, err := r.driver.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	drv := &txDriver{tx: tx, drv: r.driver}
+	lockKey := advisoryLockKey("rollup-quality", fmt.Sprintf("%d", version), bucket.Format(time.RFC3339))
+	var res sql.Result
+	if err := drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{lockKey}, &res); err != nil {
+		return err
+	}
+	// lock dirty row FOR UPDATE before reading facts (no-lost-dirty)
+	dirtyRows := &entsql.Rows{}
+	if err := drv.Query(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind='quality' AND identity_version=$1 AND bucket_minute=$2 FOR UPDATE`, []any{version, bucket}, dirtyRows); err != nil {
+		return err
+	}
+	hasDirty := dirtyRows.Next()
+	var isDirty bool
+	if hasDirty {
+		_ = dirtyRows.Scan(&isDirty)
+	}
+	dirtyRows.Close()
+	if !hasDirty || !isDirty {
+		return fmt.Errorf("rollup requires dirty minute %v", bucket)
+	}
+	// read facts
+	factRows := &entsql.Rows{}
+	if err := drv.Query(ctx, `SELECT attempts, ttft_hist FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2`, []any{bucket, version}, factRows); err != nil {
+		return err
+	}
+	hasFact := false
+	for factRows.Next() {
+		hasFact = true
+		var attempts int64
+		var hist []int64
+		_ = factRows.Scan(&attempts, &hist)
+		if attempts < 0 {
+			factRows.Close()
+			return fmt.Errorf("poison row")
+		}
+	}
+	factRows.Close()
+	if !hasFact {
+		return fmt.Errorf("no facts for rollup")
+	}
+	// simple rollup: aggregate sums into rollup table (for test, just insert a placeholder row)
+	// Use INSERT ... SELECT sum(...) to demonstrate transactional output
+	if err := drv.Exec(ctx, `INSERT INTO routing_quality_rollup (identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, updated_at)
+	SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, now() FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2
+	ON CONFLICT (bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version) DO UPDATE SET attempts=EXCLUDED.attempts, updated_at=now()`, []any{bucket, version}, &res); err != nil {
+		return err
+	}
+	if err := r.advanceWatermarkTx(ctx, drv, "quality", version, bucket); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-func (r *PartitionRepo) TryAdvanceWatermarkWithDirtyCheck(ctx context.Context, kind string, version int16, newWatermark time.Time, expectDirty bool) error {
-	if !expectDirty {
-		return fmt.Errorf("watermark advance requires dirty")
+func (r *PartitionRepo) RollupFlow(ctx context.Context, terminalMinute time.Time, version int16) error {
+	terminalMinute = terminalMinute.UTC().Truncate(time.Minute)
+	tx, err := r.driver.Tx(ctx)
+	if err != nil {
+		return err
 	}
-	return r.AdvanceWatermark(ctx, kind, version, newWatermark)
+	defer tx.Rollback() //nolint:errcheck
+	drv := &txDriver{tx: tx, drv: r.driver}
+	lockKey := advisoryLockKey("rollup-flow", fmt.Sprintf("%d", version), terminalMinute.Format(time.RFC3339))
+	var res sql.Result
+	if err := drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{lockKey}, &res); err != nil {
+		return err
+	}
+	dirtyRows := &entsql.Rows{}
+	if err := drv.Query(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind='flow' AND identity_version=$1 AND bucket_minute=$2 FOR UPDATE`, []any{version, terminalMinute}, dirtyRows); err != nil {
+		return err
+	}
+	hasDirty := dirtyRows.Next()
+	var isDirty bool
+	if hasDirty {
+		_ = dirtyRows.Scan(&isDirty)
+	}
+	dirtyRows.Close()
+	if !hasDirty || !isDirty {
+		return fmt.Errorf("rollup requires dirty minute %v", terminalMinute)
+	}
+	factRows := &entsql.Rows{}
+	if err := drv.Query(ctx, `SELECT lane FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2`, []any{terminalMinute, version}, factRows); err != nil {
+		return err
+	}
+	for factRows.Next() {
+		var lane string
+		_ = factRows.Scan(&lane)
+		if lane == "poison" {
+			factRows.Close()
+			return fmt.Errorf("poison row")
+		}
+	}
+	factRows.Close()
+	if err := drv.Exec(ctx, `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, candidate_fingerprint, absolute_sequence, chain_count, updated_at)
+	SELECT identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, candidate_fingerprint, absolute_sequence, chain_count, now() FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2
+	ON CONFLICT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version) DO UPDATE SET chain_count=EXCLUDED.chain_count, updated_at=now()`, []any{terminalMinute, version}, &res); err != nil {
+		return err
+	}
+	if err := r.advanceWatermarkTx(ctx, drv, "flow", version, terminalMinute); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

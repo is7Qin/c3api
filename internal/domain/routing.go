@@ -276,13 +276,12 @@ func CandidateFingerprint(
 	if !credType.Valid() {
 		return CandidateFingerprintVal{}, fmt.Errorf("routing: invalid credential_type %q", credType)
 	}
-	canonicalOrigin := ""
-	if effectiveBaseURL != "" {
-		var err error
-		canonicalOrigin, err = CanonicalOrigin(effectiveBaseURL)
-		if err != nil {
-			return CandidateFingerprintVal{}, err
-		}
+	if effectiveBaseURL == "" {
+		return CandidateFingerprintVal{}, fmt.Errorf("routing: effectiveBaseURL must not be empty")
+	}
+	canonicalOrigin, err := CanonicalOrigin(effectiveBaseURL)
+	if err != nil {
+		return CandidateFingerprintVal{}, err
 	}
 	digest, err := stableCredentialDigest(credType, upstreamKey, patKey)
 	if err != nil {

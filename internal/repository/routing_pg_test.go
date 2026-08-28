@@ -160,7 +160,7 @@ func TestRoutingQualityDigestCheckPG(t *testing.T) {
 }
 
 func TestRoutingQualityDirtyPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos, _ := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
@@ -233,7 +233,7 @@ func TestRoutingFlowDimensionUniquenessPG(t *testing.T) {
 }
 
 func TestRoutingPartitionWatermarkPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
@@ -242,14 +242,14 @@ func TestRoutingPartitionWatermarkPG(t *testing.T) {
 	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-wm", "", "", "", false, "", "", "", "")
 	row := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp, InstanceSrc: "src-W", BucketMinute: now, AbsoluteSequence: 1, Attempts: 1}
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
-	// watermark advance should succeed when dirty
-	require.NoError(t, repos.Partitions.AdvanceWatermark(ctx, "quality", 1, now))
+	require.NoError(t, repos.Partitions.RollupQuality(ctx, now, 1))
 	dirty, _ := repos.Partitions.IsDirty(ctx, "quality", 1, now)
-	require.False(t, dirty, "watermark advance must clear dirty")
-	// second advance without new dirty should still succeed but we test failed/partial cannot advance if we simulate failure? We test that advancing same watermark fails
-	err := repos.Partitions.AdvanceWatermark(ctx, "quality", 1, now)
-	require.Error(t, err, "re-advancing same watermark must fail")
-	// writer after rollup must re-dirty
+	require.False(t, dirty, "rollup must clear dirty")
+	var wm time.Time
+	require.NoError(t, pool.QueryRow(ctx, `SELECT watermark FROM routing_rollup_watermark WHERE kind='quality' AND identity_version=1`).Scan(&wm))
+	require.True(t, wm.Equal(now), "watermark must advance")
+	err := repos.Partitions.RollupQuality(ctx, now, 1)
+	require.Error(t, err, "re-rollup without dirty must fail")
 	row2 := row
 	row2.AbsoluteSequence = 2
 	row2.Attempts = 2
@@ -265,17 +265,15 @@ func TestRoutingPartitionWatermarkDirtyRequiredPG(t *testing.T) {
 	next := now.Add(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, next))
-	// try to advance watermark without dirty for next minute should fail
-	err := repos.Partitions.AdvanceWatermark(ctx, "quality", 1, next)
-	require.Error(t, err, "advancing without dirty must fail")
+	err := repos.Partitions.RollupQuality(ctx, next, 1)
+	require.Error(t, err, "rollup without dirty must fail")
 	require.Contains(t, err.Error(), "dirty")
-	// ensure watermark not advanced
 	_, err = repos.Partitions.GetWatermark(ctx, "quality", 1)
-	require.Error(t, err, "watermark should not exist after failed advance")
+	require.Error(t, err, "watermark should not exist after failed rollup")
 }
 
 func TestRoutingPartitionConcurrencyPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos, _ := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
@@ -336,27 +334,178 @@ func TestRoutingPartitionRetentionPG(t *testing.T) {
 }
 
 func TestRoutingPartitionMissingPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	future := now.AddDate(0, 0, 5)
 	require.NoError(t, repos.Partitions.EnsureRoutingInstancePartitions(ctx, future, future))
 	var exists bool
-	require.NoError(t, poolQueryExists(ctx, pgTestPool(t), "routing_quality_instance_minute_"+future.Format("20060102"), &exists))
+	require.NoError(t, poolQueryExists(ctx, pool, "routing_quality_instance_minute_"+future.Format("20060102"), &exists))
 	require.True(t, exists)
 }
 
 func TestRoutingPartitionStartupPG(t *testing.T) {
-	// startup bootstrap already tested via EnsureRoutingPartitions; retention precreate via EnsureRoutingInstancePartitions
-	repos := newPGRepos(t)
+	repos, _ := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	// simulate retention worker precreate
 	tomorrow := now.AddDate(0, 0, 1)
 	require.NoError(t, repos.Partitions.EnsureRoutingInstancePartitions(ctx, tomorrow, tomorrow))
 	require.NoError(t, repos.Partitions.EnsureRoutingRollupPartitions(ctx, tomorrow, tomorrow))
+}
+
+func TestRoutingQualityFullStatsPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	rc := mustRouteClassVal(t, 7, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 99, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-full", "", "", "", false, "i1", "s1", "t1", "w1")
+	row := repository.RoutingQualityRow{
+		IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp,
+		InstanceSrc: "src-full", BucketMinute: now, AbsoluteSequence: 5, Attempts: 10, Successes: 6, Count429: 1, CountOrdinary4xx: 1, Count5xx: 1, CountNetwork: 1,
+		TTFTN: 5, TTFTSumLogQ32: 12345, TTFTSumSqLogQ32: 67890, TTFTHist: []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+		InputTokens: 1000, OutputTokens: 2000, CacheReadTokens: 300, CacheCreateTokens: 400, Calls: 7, Images: 3,
+	}
+	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
+	// query must require RouteClassID and return all stats including hist
+	got, err := repos.Partitions.QueryQualityRow(ctx, "src-full", now, fp, qc, rc, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(10), got.Attempts)
+	require.Equal(t, int64(1), got.Count429)
+	require.Equal(t, int64(5), got.TTFTN)
+	require.Equal(t, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, got.TTFTHist)
+	require.Equal(t, int64(1000), got.InputTokens)
+	// wrong route should not find
+	rc2 := mustRouteClassVal(t, 8, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	_, err = repos.Partitions.QueryQualityRow(ctx, "src-full", now, fp, qc, rc2, 1)
+	require.Error(t, err, "wrong route must not find")
+	var histText string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT ttft_hist::text FROM routing_quality_instance_minute WHERE instance_src='src-full' AND bucket_minute=$1`, now).Scan(&histText))
+	require.Equal(t, "{1,2,3,4,5,6,7,8,9,10}", histText)
+}
+
+func TestRoutingFlowEmptySnapshotPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-e", "", "", "", false, "", "", "", "")
+	rows10 := []repository.RoutingFlowRow{
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-E", ChainCount: 1},
+	}
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 10, rows10))
+	var cnt int64
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	require.Equal(t, int64(1), cnt)
+	// empty snapshot with higher sequence should delete all
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 11, nil))
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	require.Equal(t, int64(0), cnt, "empty higher seq must delete")
+	// stale seq10 must not repopulate
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 10, rows10))
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	require.Equal(t, int64(0), cnt, "stale seq10 must remain empty")
+	// seq12 repopulates
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 12, rows10))
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	require.Equal(t, int64(1), cnt, "seq12 must repopulate")
+}
+
+func TestRoutingQualityRollbackPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-poison", "", "", "", false, "", "", "", "")
+	row := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp, InstanceSrc: "src-P", BucketMinute: now, AbsoluteSequence: 1, Attempts: -1}
+	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
+	// rollup should fail due to poison and rollback dirty/watermark/output
+	err := repos.Partitions.RollupQuality(ctx, now, 1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "poison")
+	dirty, _ := repos.Partitions.IsDirty(ctx, "quality", 1, now)
+	require.True(t, dirty, "dirty must stay true after rollback")
+	_, err = repos.Partitions.GetWatermark(ctx, "quality", 1)
+	require.Error(t, err, "watermark must not advance after poison")
+	var rollCnt int64
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_quality_rollup WHERE bucket_minute=$1`, now).Scan(&rollCnt)
+	require.Equal(t, int64(0), rollCnt, "rollup output must be rolled back")
+	// fix poison and retry
+	row.Attempts = 5
+	row.AbsoluteSequence = 2
+	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
+	require.NoError(t, repos.Partitions.RollupQuality(ctx, now, 1))
+	dirty, _ = repos.Partitions.IsDirty(ctx, "quality", 1, now)
+	require.False(t, dirty)
+}
+
+func TestRoutingFlowRollbackPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-fp", "", "", "", false, "", "", "", "")
+	rows := []repository.RoutingFlowRow{
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "poison", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-PF", ChainCount: 1},
+	}
+	// insert poison flow snapshot directly via UpsertFlowSnapshot with poison lane, then rollup should detect poison
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-PF", now, 1, 1, rows))
+	err := repos.Partitions.RollupFlow(ctx, now, 1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "poison")
+	dirty, _ := repos.Partitions.IsDirty(ctx, "flow", 1, now)
+	require.True(t, dirty, "dirty must stay true after flow poison rollback")
+	var rollCnt int64
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&rollCnt)
+	require.Equal(t, int64(0), rollCnt)
+}
+
+func TestRoutingPartitionWriterRollupBarrierPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-barrier", "", "", "", false, "", "", "", "")
+	row := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp, InstanceSrc: "src-BA", BucketMinute: now, AbsoluteSequence: 1, Attempts: 1}
+	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
+	// deterministic overlap: rollup locks dirty row FOR UPDATE before reading, writer blocks on same row and re-dirties after rollup commits
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind='quality' AND identity_version=1 AND bucket_minute=$1 FOR UPDATE`, now)
+	require.NoError(t, err)
+	rollupLocked := make(chan struct{})
+	writerDone := make(chan error)
+	go func() {
+		close(rollupLocked)
+		// writer will try to upsert same bucket with higher sequence; its dirty upsert will block on the row lock held by tx
+		row2 := row
+		row2.AbsoluteSequence = 2
+		row2.Attempts = 2
+		writerDone <- repos.Partitions.UpsertQualityAndMarkDirty(context.Background(), row2)
+	}()
+	<-rollupLocked
+	time.Sleep(100 * time.Millisecond)
+	// rollup does its work and clears dirty, then commits (releasing lock)
+	_, err = tx.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind='quality' AND identity_version=1 AND bucket_minute=$1`, now)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+	select {
+	case err := <-writerDone:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("writer did not complete after rollup")
+	}
+	dirty, _ := repos.Partitions.IsDirty(ctx, "quality", 1, now)
+	require.True(t, dirty, "writer-after-read must leave dirty true for next rollup")
 }
 
 func poolQueryExists(ctx context.Context, pool *pgxpool.Pool, name string, out *bool) error {
