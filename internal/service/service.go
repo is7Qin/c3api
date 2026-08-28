@@ -502,6 +502,15 @@ func validateAccount(a *domain.Account) error {
 	if a.MaxConcurrency < 1 {
 		a.MaxConcurrency = 8
 	}
+	if a.Status == "" {
+		a.Status = domain.StatusActive
+	} else {
+		switch a.Status {
+		case domain.StatusActive, domain.StatusUnhealthy, domain.Status429, domain.StatusDisabled:
+		default:
+			return ErrInvalidInput
+		}
+	}
 	// 账号级 base_url 提供时复用 validateBaseURL（对齐模板面先例；nil/空串
 	// 跳过——create 路径空串已归一 nil，此处双保险）。
 	if a.BaseURL != nil && *a.BaseURL != "" {
