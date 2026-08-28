@@ -10,14 +10,20 @@ import (
 const (
 	DefaultMaxEntries = 100_000
 	DefaultMaxBytes   = 32 * 1024 * 1024
+	// entryCharged is a conservative per-entry upper bound that covers
+	// map bucket + heap node + key string header/data + Binding value +
+	// entry struct overhead. Fixed-size so charged == entries*entryCharged
+	// is an upper bound on actual heap usage and never underestimates.
+	// 320 * 100k = 32M <= 32MiB, so capping either dimension caps memory.
+	entryCharged = 320
 )
 
 type l1Entry struct {
-	key    string
+	key     string
 	binding Binding
-	expiry time.Time
-	size   int
-	index  int
+	expiry  time.Time
+	size    int
+	index   int
 }
 
 type expiryHeap []*l1Entry
@@ -45,13 +51,13 @@ func (h *expiryHeap) Pop() any {
 }
 
 type l1Cache struct {
-	mu        sync.Mutex
-	entries   map[string]*l1Entry
-	heap      expiryHeap
-	bytes     int
+	mu         sync.Mutex
+	entries    map[string]*l1Entry
+	heap       expiryHeap
+	bytes      int
 	maxEntries int
 	maxBytes   int
-	now       func() time.Time
+	now        func() time.Time
 }
 
 func newL1(maxEntries, maxBytes int) *l1Cache {
@@ -69,9 +75,8 @@ func newL1(maxEntries, maxBytes int) *l1Cache {
 	}
 }
 
-func estimateSize(key string, b Binding) int {
-	// rough: key + fingerprint.hex(64) + struct overhead 64
-	return len(key) + len(b.Fingerprint) + 64 + 16
+func estimateSize(_ string, _ Binding) int {
+	return entryCharged
 }
 
 func (c *l1Cache) purgeExpiredLocked(now time.Time) {
@@ -83,6 +88,20 @@ func (c *l1Cache) purgeExpiredLocked(now time.Time) {
 		heap.Pop(&c.heap)
 		delete(c.entries, top.key)
 		c.bytes -= top.size
+	}
+	if c.heap.Len() == 0 {
+		return
+	}
+	// Compact slice if capacity heavily exceeds length due to stale
+	// pops (e.g., after mass expiry). Heuristic: cap > 2*len.
+	if cap(c.heap) > 2*len(c.heap)+64 {
+		cp := make(expiryHeap, len(c.heap))
+		copy(cp, c.heap)
+		c.heap = cp
+		for i, e := range c.heap {
+			e.index = i
+		}
+		heap.Init(&c.heap)
 	}
 }
 
