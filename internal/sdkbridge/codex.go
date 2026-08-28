@@ -121,8 +121,7 @@ func NewCodex(failure FailureHandler) *Codex {
 // 错误翻译（translateError）：SDK *HTTPError → 网关侧信封错误（EnvelopeError——
 // StatusCode()/RawJSON()/Unwrap 链，网关 statusOf/upstreamErrMsg 零改动复用）；
 // fatal 五类（errors.As）→ 统一回调单次上报（双源去重）+ 原样透传（SDK 已
-// 不包装，errors.As 可命中）；RefreshError 可重试不上报。cred.BaseURL = 模板
-// base 派生完整 generations 端点（空 → SDK 内置 DefaultImagesURL）。
+// 不包装，errors.As 可命中）；RefreshError 可重试不上报。Codex 端点归 SDK 官方默认。
 func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredential, p *domain.ImageGenParams) (*domain.ImageResponse, error) {
 	e, err := a.clientFor(cred, nil, nil, "")
 	if err != nil {
@@ -255,7 +254,7 @@ func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredent
 // entryFor cred → 账号级缓存条目（构造冷面——每账号首次/凭据变更后；互斥锁
 // + 签名比对，同账号并发请求单飞构造——对齐 SDK OAuth 单飞 refresh 语义）：
 //   - 同账号复用（Auth 内 at 缓存/轮转状态保持；sig 相同直接返回）
-//   - 仅外部凭据变更（管理面导入/更新——token/rt/pat/base URL 任一变化 → sig
+//   - 仅外部凭据变更（管理面导入/更新——token/rt/pat 任一变化 → sig
 //     不同）后重建；**轮转回调写回不重建**（回调写回的是本 Auth 内部已更新
 //     的状态，重建丢 at 缓存破坏轮转连续性——写回走 T5 管理面通道，不经缓存）
 //   - 失效剔除（T1 联动）：fatal 上报后 evict，恢复后重建
@@ -309,9 +308,6 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 		return nil, err
 	}
 	var opts []codexsdk.Option
-	if cred.BaseURL != "" {
-		opts = append(opts, codexsdk.WithBaseURL(cred.BaseURL))
-	}
 	if a.transport != nil {
 		opts = append(opts, codexsdk.WithTransport(a.transport))
 	}
@@ -396,7 +392,7 @@ var usageCooldown = 60 * time.Second
 // GetUsageSnapshot 账号 codex 额度快照（ChatGPT 面 wham/usage）：cred →
 // 缓存条目（entryFor——sig 比对/重建，重建时 usage/usageAt/usageErrAt 随新
 // 条目一并清除）→ 5min TTL 命中直接返回（零上游）；未命中 → 包级 semaphore
-// （容量 8，有界并发）→ SDK GetUsage（e.client 复用——BaseURL 已带，usage
+// （容量 8，有界并发）→ SDK GetUsage（e.client 复用——官方默认端点，usage
 // 端点 SDK 内部派生，网关零拼装）→ 白名单收敛映射（fromSDKUsage）→ 写
 // e.usage + e.usageAt。失败 → 写 e.usageErrAt（60s 冷却）。
 //
@@ -611,8 +607,8 @@ func identitySig(sess *codexsdk.Session, meta *codexsdk.CodexMeta) string {
 // 取（entryFor——账号级长存：at 缓存/单飞/rt 轮换在 Auth 内，与 HTTP 面共享；
 // WS 连接本身 per-请求不缓存）→ codexsdk.Dial(ctx, auth, opts...)。opts 由
 // 网关侧组装（codex_responses_ws.go——伪装四元组 / WithPingInterval(0) /
-// WithPayloadFiltering(false) / 透传头）；cred.BaseURL 由本方法应用（完整
-// responses 端点——P3-1，与 clientFor 同款）。错误翻译（translateDialError）：
+// WithPayloadFiltering(false) / 透传头）；端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses，
+// transport 观察为 https）。错误翻译（translateDialError）：
 //   - *DialError → 信封包装（EnvelopeError——StatusCode()/RawJSON()/Unwrap
 //     链，Refreshed 语义保留：已轮转重连一次仍失败 → 网关避免双份刷新）
 //   - 裸错误（Dial 401 轮转路径 refresh 失败——client.go:391-394 透传，不包
@@ -624,11 +620,8 @@ func (a *Codex) Dial(ctx context.Context, cred *domain.AccountCredential, opts .
 	if err != nil {
 		return nil, err
 	}
-	// cred.BaseURL 由调用方路由填充（T4：aiclient fullURLOf 派生完整 responses
-	// 端点——P3-1 完整端点语义；空 → SDK 内置 DefaultResponsesURL）。与
-	// clientFor（HTTP 面）同款：适配层统一应用，调用方不再重复传 WithBaseURL。
-	if cred.BaseURL != "" {
-		opts = append(opts, codexsdk.WithBaseURL(cred.BaseURL))
+	if a.transport != nil {
+		opts = append(opts, codexsdk.WithTransport(a.transport))
 	}
 	c, err := codexsdk.Dial(ctx, e.auth, opts...)
 	if err != nil {
@@ -702,15 +695,15 @@ func atUsable(cred *domain.AccountCredential) bool {
 	return cred.OAuthExpiresAt.After(time.Now())
 }
 
-// credSig 凭据签名（重建判定）：外部凭据变更（管理面导入/更新——token/rt/pat/
-// base URL 任一变化）→ 重建。过期时刻不参与签名（构造时的初始 at 预置决策已
+// credSig 凭据签名（重建判定）：外部凭据变更（管理面导入/更新——token/rt/pat
+// 任一变化）→ 重建。过期时刻不参与签名（构造时的初始 at 预置决策已
 // 经生效；过期 at 由 SDK 401 自愈轮转，无需重建）。
 //
 // 分隔符用 \x00（评审 P3-3）："|" 在理论上可被 token 内容携带（碰撞误重建——
 // 仅多构造一次，无害但脏）；\x00 为 Go 字符串中不可现字符（OAuth token/PAT
-// base64url 字符集、base URL 经 url.Parse 拒绝控制字符——构造前校验）。
+// base64url 字符集）。
 func credSig(c *domain.AccountCredential) string {
-	return c.OAuthToken + "\x00" + c.OAuthRefreshToken + "\x00" + c.PATKey + "\x00" + c.BaseURL
+	return c.OAuthToken + "\x00" + c.OAuthRefreshToken + "\x00" + c.PATKey
 }
 
 // report 单次上报核心（双源去重——CAS 胜者上报，败者并发调用/补报路径跳过）；
