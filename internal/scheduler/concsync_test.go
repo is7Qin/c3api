@@ -61,12 +61,12 @@ func concSelect(s *Scheduler) (*Selection, error) {
 
 // concSetCur 直写账号在途计数（模拟在途，绕开 Select）。
 func concSetCur(s *Scheduler, accID int64, v int64) {
-	s.store.byID.Load().(map[int64]*accountSnapshot)[accID].concurrency.Store(v)
+	s.View().ByID()[accID].concurrency.Store(v)
 }
 
 // concCur 读账号在途计数。
 func concCur(s *Scheduler, accID int64) int64 {
-	return s.store.byID.Load().(map[int64]*accountSnapshot)[accID].concurrency.Load()
+	return s.View().ByID()[accID].concurrency.Load()
 }
 
 // A1 结构短路：N=1 时 share=limit → 超份额分支数学上不可达，Select/Release

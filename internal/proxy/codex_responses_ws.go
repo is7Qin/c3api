@@ -114,7 +114,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 //     → RuleKindOf(code) 转移（正常 failover）
 func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, dialErr error) (stop bool, lastCode int, lastErrMsg string) {
 	if errors.Is(dialErr, errCodexWSNotIntegrated) {
-		p.sched.Release(sel.AccountID)
+		sel.Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponsesWS, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexWSNotIntegrated.Error())
 		wsWriteError(client, errCodexWSNotIntegrated.Error())
 		return true, 0, ""
@@ -123,7 +123,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		msg := domain.TruncateErrMsg(dialErr.Error())
 		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, 0, domain.ErrNetwork, usageTuple{}, start))
 		l.ErrorMessage = &msg
-		p.finish(sel.AccountID, l)
+		p.finish(sel, l)
 		// fatal 用户帧固定文案（不泄 SDK 内部机制串）；:125-127 已落盘 dialErr
 		// 原文——落盘是唯一留痕。
 		wsWriteError(client, codexAuthFailedMsg)
@@ -140,7 +140,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		if em != "" {
 			l.ErrorMessage = &em
 		}
-		p.finish(sel.AccountID, l)
+		p.finish(sel, l)
 		// R-1 规则驱动（与 REST 4xx 同公式）：Classify(Kind4xx) → punish 投递 → UnifiedMessage/passthrough 帧。
 		// WS 无 HTTP 状态码，ResponseCode 维度自然无效，仅 CustomMessage 生效；DialError Refreshed=true 无特殊处理。
 		then, punish := p.sched.Classify(rule.Event{AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code, Model: sel.Model, ErrorMessage: em})
