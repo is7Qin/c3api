@@ -34,10 +34,15 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 		if err := validateCodexAccountBaseURL(templates[a.TemplateID], a.BaseURL); err != nil {
 			return err
 		}
+		status := a.Status
+		if status == "" {
+			status = domain.StatusActive
+		}
 		row, err = client.Account.Create().
 			SetName(a.Name).SetTemplateID(a.TemplateID).
 			SetNillableBaseURL(a.BaseURL).
 			SetUpstreamKey(a.UpstreamKey).
+			SetStatus(account.Status(status)).
 			SetWeight(a.Weight).SetMaxConcurrency(a.MaxConcurrency).
 			Save(ctx)
 		return err

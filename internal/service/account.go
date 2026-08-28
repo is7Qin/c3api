@@ -204,27 +204,6 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	if err := validateAccountPatch(p); err != nil {
 		return err
 	}
-	for _, id := range ids {
-		account, err := s.store.GetAccount(ctx, id)
-		if err != nil {
-			return mapRepoErr(err)
-		}
-		templateID := account.TemplateID
-		if p.TemplateID != nil {
-			templateID = *p.TemplateID
-		}
-		tpl, err := s.store.GetTemplate(ctx, templateID)
-		if err != nil {
-			return mapRepoErr(err)
-		}
-		baseURL := account.BaseURL
-		if p.BaseURL != nil {
-			baseURL = p.BaseURL
-		}
-		if isCodexCredentialType(tpl.CredentialType) && baseURL != nil && *baseURL != "" {
-			return ErrInvalidInput
-		}
-	}
 	// O2：变更前逐个查旧组 + 替换目标组并集（upstream_key 批量变更 →
 	// clients 失效）。
 	var gids []int64
