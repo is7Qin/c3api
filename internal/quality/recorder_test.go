@@ -5,6 +5,7 @@ import (
 	"math"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -245,11 +246,12 @@ func TestQualityRecorder_Reactivation_NoPendingBytesBug(t *testing.T) {
 	afterRetire := r.PendingBytes()
 	require.Equal(t, before, afterRetire)
 	cell2 := r.GetOrCreateCell(k)
-	require.Equal(t, cell, cell2)
+	require.NotEqual(t, cell, cell2)
+	require.NotSame(t, cell, cell2)
 	afterReact := r.PendingBytes()
 	require.Equal(t, before, afterReact, "reactivation must not subtract pendingBytes")
 	require.Equal(t, 1, r.ActiveCount())
-	require.Equal(t, 0, r.RetiredCount())
+	require.Equal(t, 1, r.RetiredCount())
 }
 
 func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
@@ -306,7 +308,9 @@ func TestQualityRecorder_Close_PreventsNewBegin_LetsExistingComplete(t *testing.
 	cell := r.GetOrCreateCell(k)
 	var ctx AttemptContext
 	r.InitAttemptContext(cell, &ctx)
-	require.NoError(t, r.Close())
+	done := make(chan error, 1)
+	go func() { done <- r.Close() }()
+	time.Sleep(20 * time.Millisecond)
 	cell2 := r.GetOrCreateCell(k)
 	require.Nil(t, cell2)
 	var ctx2 AttemptContext
@@ -314,6 +318,12 @@ func TestQualityRecorder_Close_PreventsNewBegin_LetsExistingComplete(t *testing.
 	require.False(t, ok)
 	tt := int64(100)
 	ctx.Complete(true, &tt, 1, 0, 0)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return after inflight drained")
+	}
 	a, _, _, _, _, _, _, _, _, _, ok2 := r.CellStats(k)
 	require.True(t, ok2)
 	require.Equal(t, int64(1), a)
