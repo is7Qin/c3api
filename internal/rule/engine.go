@@ -71,18 +71,19 @@ func kindFromString(s string) Kind {
 
 // Event 请求结果事件（由 scheduler.MarkResult 构造投递）。
 type Event struct {
-	AccountID        int64
-	TemplateID       int64
-	GroupID          *int64
-	Model            string
-	Kind             Kind
-	HTTPStatus       *int
-	ErrorMessage     string
-	ResetAt          *time.Time
-	OccurredAt       time.Time // 零值由引擎填充为当前时间
-	RouteClassID     string    // Task4 canonical RouteClassID hex; account_route scope 必须非空
-	QualityClassID   string    // Task4 Candidate QualityClassID hex; account_route scope 必须非空
-	ExpectedRevision int64     // Task1 lifecycle_revision 期望值，FailAccount CAS 用
+	AccountID            int64
+	TemplateID           int64
+	GroupID              *int64
+	Model                string
+	Kind                 Kind
+	HTTPStatus           *int
+	ErrorMessage         string
+	ResetAt              *time.Time
+	OccurredAt           time.Time // 零值由引擎填充为当前时间
+	RouteClassID         string    // Task4 canonical RouteClassID hex; account_route scope 必须非空
+	QualityClassID       string    // Task4 Candidate QualityClassID hex; account_route scope 必须非空
+	CandidateFingerprint string    // Task4 canonical candidate identity hex
+	ExpectedRevision     int64     // Task1 lifecycle_revision 期望值，FailAccount CAS 用
 }
 
 // ApplyFunc 动作应用回调（由 scheduler 注册）：st 为 nil = 不改状态（只改权重）；
@@ -96,7 +97,7 @@ type ApplyFunc func(aid int64, st *domain.AccountStatus, cooldownUntil *time.Tim
 // FailAccount: source=rule, expectedRevision 参与 CAS.
 type HealthSink interface {
 	Throttle(ev Event, th domain.ThrottleAction)
-	FailAccount(ev Event)
+	FailAccount(ev Event) error
 }
 
 // PersistItem 异步持久化队列元素（Task10 同步 Redis/DB；Task2 仅 bounded-loss 投递）。
@@ -177,15 +178,15 @@ type RuleEngine struct {
 	apply   ApplyFunc
 	applyMu sync.RWMutex
 
-	healthSink   HealthSink
-	healthMu     sync.RWMutex
-	persistCh    chan PersistItem
-	persistFn    PersistFunc
-	persistFnMu  sync.RWMutex
-	matched      atomic.Uint64
-	persistDropped atomic.Uint64
+	healthSink      HealthSink
+	healthMu        sync.RWMutex
+	persistCh       chan PersistItem
+	persistFn       PersistFunc
+	persistFnMu     sync.RWMutex
+	matched         atomic.Uint64
+	persistDropped  atomic.Uint64
 	persistFailures atomic.Uint64
-	persistPending atomic.Int64 // queued + inflight
+	persistPending  atomic.Int64 // queued + inflight
 
 	rules   []compiledRule // enabled、priority 升序（预编译）
 	rulesMu sync.RWMutex
@@ -493,7 +494,7 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			sink := e.healthSink
 			e.healthMu.RUnlock()
 			if sink != nil {
-				sink.FailAccount(ev)
+				_ = sink.FailAccount(ev)
 			}
 			e.matched.Add(1)
 			e.enqueuePersist(ev, r.Then)

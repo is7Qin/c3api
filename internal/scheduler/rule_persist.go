@@ -25,6 +25,9 @@ func NewRulePersistFunc(store rulePersistStore, latch *latchStore, pub interface
 		if !item.Then.FailAccount {
 			return nil
 		}
+		if item.Event.ExpectedRevision <= 0 {
+			return ErrMissingExpectedRevision
+		}
 		acct, err := store.GetAccount(ctx, item.Event.AccountID)
 		if err != nil {
 			if latch != nil {
@@ -33,11 +36,17 @@ func NewRulePersistFunc(store rulePersistStore, latch *latchStore, pub interface
 			return nil
 		}
 		if acct.LifecycleRevision != item.Event.ExpectedRevision {
-			return nil
+			return ErrStaleFailureRevision
 		}
-		fp := acct.UpstreamKey
-		if acct.BaseURL != nil {
-			fp += "|" + *acct.BaseURL
+		fp, ferr := candidateFingerprint(acct)
+		if ferr != nil {
+			return ferr
+		}
+		if item.Event.CandidateFingerprint == "" {
+			return ErrMissingCandidateFingerprint
+		}
+		if item.Event.CandidateFingerprint != fp {
+			return ErrCandidateFingerprintMismatch
 		}
 		// stale fingerprint fence: if latch fingerprint differs, clear old
 		if latch != nil {

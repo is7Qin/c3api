@@ -65,7 +65,8 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 		// 静态字段视图一次 Load（评审 Critical 修复）：重建/权重动作以原子指针
 		// 整体替换视图，本热路径读与低频写零锁并发安全，同量级开销。
 		av := a.static.Load()
-		if s.latch != nil && s.latch.IsLatched(av.acc.ID, accountFingerprint(&av.acc)) {
+		fp, err := candidateFingerprint(&av.acc)
+		if err == nil && s.latch != nil && s.latch.IsLatched(av.acc.ID, fp) {
 			continue
 		}
 		if s.health != nil {
@@ -107,9 +108,10 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 				AccountID: av.acc.ID, TemplateID: av.tpl.ID,
 				BaseURL: baseURL, Format: format,
 				UpstreamKey: av.acc.UpstreamKey, CredentialType: av.tpl.CredentialType, Model: mapped,
-				StripImageTools: av.tpl.StripImageTools,
-				Ext:             av.acc.Ext,
-				lease:           &leaseToken{acc: a},
+				StripImageTools:      av.tpl.StripImageTools,
+				Ext:                  av.acc.Ext,
+				CandidateFingerprint: fp,
+				lease:                &leaseToken{acc: a},
 			}, true
 		}
 	}

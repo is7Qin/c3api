@@ -131,7 +131,7 @@ func tpl(id int64, format domain.RequestFormat, models []string) *domain.Templat
 }
 
 func acc(id int64, t *domain.Template, maxConc int) *domain.Account {
-	return &domain.Account{ID: id, TemplateID: t.ID, Template: t, UpstreamKey: "k", Status: domain.StatusActive, Weight: 100, MaxConcurrency: maxConc}
+	return &domain.Account{ID: id, TemplateID: t.ID, Template: t, UpstreamKey: "k", Status: domain.StatusActive, Weight: 100, MaxConcurrency: maxConc, LifecycleRevision: 1}
 }
 
 func newSched(t *testing.T, m *memLoader) *Scheduler {

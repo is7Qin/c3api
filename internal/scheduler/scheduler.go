@@ -24,9 +24,13 @@ import (
 )
 
 var (
-	ErrGroupNotFound     = errors.New("scheduler: group not found")
-	ErrFormatUnavailable = errors.New("scheduler: no account for request format")
-	ErrNoAvailable       = errors.New("scheduler: no available account")
+	ErrGroupNotFound                = errors.New("scheduler: group not found")
+	ErrFormatUnavailable            = errors.New("scheduler: no account for request format")
+	ErrNoAvailable                  = errors.New("scheduler: no available account")
+	ErrMissingCandidateFingerprint  = errors.New("scheduler: candidate fingerprint required")
+	ErrCandidateFingerprintMismatch = errors.New("scheduler: candidate fingerprint mismatch")
+	ErrMissingExpectedRevision      = errors.New("scheduler: expected revision required")
+	ErrStaleFailureRevision         = errors.New("scheduler: stale failure revision")
 )
 
 type Config struct {
@@ -69,6 +73,7 @@ type Selection struct {
 	Model          string // 已应用模型映射
 	StripImageTools bool
 	Ext *domain.AccountExt
+	CandidateFingerprint string
 	lease *leaseToken
 }
 
@@ -313,17 +318,6 @@ func (s *Scheduler) reload(ctx context.Context) error {
 	return nil
 }
 
-func accountFingerprint(a *domain.Account) string {
-	if a == nil {
-		return ""
-	}
-	base := ""
-	if a.BaseURL != nil {
-		base = *a.BaseURL
-	}
-	return a.UpstreamKey + "|" + base + "|" + string(a.Template.CredentialType)
-}
-
 func (s *Scheduler) SetRuntimeHealth(h *RuntimeHealth) { s.health = h }
 
 func (s *Scheduler) TryLatch(accountID int64, fingerprint string, revision int64) bool {
@@ -342,7 +336,10 @@ func (s *Scheduler) IsLatched(accountID int64) bool {
 		return s.latch.IsLatched(accountID, "")
 	}
 	if as, ok := snap[accountID]; ok {
-		fp := accountFingerprint(&as.static.Load().acc)
+		fp, err := candidateFingerprint(&as.static.Load().acc)
+		if err != nil {
+			return false
+		}
 		return s.latch.IsLatched(accountID, fp)
 	}
 	return s.latch.IsLatched(accountID, "")
@@ -863,16 +860,18 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 		hp = &httpStatus
 	}
 	av := a.static.Load() // 静态字段视图一次取用（评审 Critical 修复）
+	fp, _ := candidateFingerprint(&av.acc)
 	ev := rule.Event{
-		AccountID:    accountID,
-		TemplateID:   av.acc.TemplateID,
-		GroupID:      groupIDPtr(av.gid),
-		Kind:         kind,
-		HTTPStatus:   hp,
-		Model:        model,
-		ErrorMessage: errMsg,
-		ResetAt:      resetAt,
-		OccurredAt:   s.timeNow(),
+		AccountID:            accountID,
+		TemplateID:           av.acc.TemplateID,
+		GroupID:              groupIDPtr(av.gid),
+		Kind:                 kind,
+		HTTPStatus:           hp,
+		Model:                model,
+		ErrorMessage:         errMsg,
+		ResetAt:              resetAt,
+		OccurredAt:           s.timeNow(),
+		CandidateFingerprint: fp,
 	}
 	s.rule.Enqueue(ev)
 }
@@ -922,6 +921,20 @@ func (s *Scheduler) FailAccount(accountID int64, reason string) {
 		s.writeCh <- statusWrite{id: accountID, status: st.status, cooldown: st.cooldownUntil, lastErr: st.lastError, weight: nil}
 		return
 	}
+}
+
+func (s *Scheduler) failureEvent(accountID int64, kind rule.Kind, errMsg string) rule.Event {
+	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
+	if !ok {
+		return rule.Event{AccountID: accountID, Kind: kind, ErrorMessage: errMsg}
+	}
+	a, ok := byID[accountID]
+	if !ok {
+		return rule.Event{AccountID: accountID, Kind: kind, ErrorMessage: errMsg}
+	}
+	av := a.static.Load()
+	fp, _ := candidateFingerprint(&av.acc)
+	return rule.Event{AccountID: accountID, TemplateID: av.acc.TemplateID, GroupID: groupIDPtr(av.gid), Kind: kind, ErrorMessage: errMsg, CandidateFingerprint: fp, ExpectedRevision: av.acc.LifecycleRevision}
 }
 
 // RuleKindOf 连接级/5xx 事件分流（单点 helper，分流外移到调用点——9 处

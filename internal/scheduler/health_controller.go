@@ -73,20 +73,33 @@ func (c *HealthController) Throttle(ev rule.Event, th domain.ThrottleAction) {
 	}
 }
 
-func (c *HealthController) FailAccount(ev rule.Event) {
-	fp := ""
+func (c *HealthController) FailAccount(ev rule.Event) error {
+	if ev.ExpectedRevision <= 0 {
+		return ErrMissingExpectedRevision
+	}
+	fp := ev.CandidateFingerprint
 	if c.sched != nil {
 		if snap, ok := c.sched.store.byID.Load().(map[int64]*accountSnapshot); ok {
 			if as, ok := snap[ev.AccountID]; ok {
-				fp = accountFingerprint(&as.static.Load().acc)
+				av := as.static.Load()
+				if av.acc.LifecycleRevision != ev.ExpectedRevision {
+					return ErrStaleFailureRevision
+				}
+				current, err := candidateFingerprint(&av.acc)
+				if err != nil {
+					return err
+				}
+				if fp == "" {
+					return ErrMissingCandidateFingerprint
+				}
+				if fp != current {
+					return ErrCandidateFingerprintMismatch
+				}
 			}
 		}
 	}
 	if fp == "" {
-		fp = ev.QualityClassID
-		if fp == "" {
-			fp = ev.RouteClassID
-		}
+		return ErrMissingCandidateFingerprint
 	}
 	if c.latch != nil {
 		c.latch.TryAcquire(ev.AccountID, fp, ev.ExpectedRevision)
@@ -94,6 +107,7 @@ func (c *HealthController) FailAccount(ev rule.Event) {
 	if c.sched != nil {
 		c.sched.FailAccount(ev.AccountID, ev.ErrorMessage)
 	}
+	return nil
 }
 
 func (c *HealthController) IsLatched(accountID int64, fingerprint string) bool {
