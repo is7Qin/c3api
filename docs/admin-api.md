@@ -51,7 +51,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | string | ✅ | 模板名 |
-| `base_url` | string | ✅ | 上游**根**地址（**不含 `/v1`**——`/v1` 是协议细节，网关按格式追加：openai 系拼 `/v1/...`，anthropic SDK 自带 `v1` 前缀；含尾 `/v1` 会被拒（`400`）） |
+| `base_url` | string | ✅* | 上游**根**地址（**不含 `/v1`**——`/v1` 是协议细节，网关按格式追加：openai 系拼 `/v1/...`，anthropic SDK 自带 `v1` 前缀；含尾 `/v1` 会被拒（`400`）；`codex-oauth`/`codex-pat` 模板该字段须为空（SDK 默认端点，非空 → `400`），`api_key`/`responses-special` 为可选裸根覆盖） |
 | `supported_formats` | string[] | ✅ | 支持的请求格式枚举数组（至少 1 项，项枚举见上；重复/非法枚举返回 `400`） |
 | `models` | string[] | 否 | 可服务模型名集合 |
 | `format_models` | object | 否 | 格式级模型覆盖：`{格式: [模型名]}`，key 必须是 `supported_formats` 子集、模型必须是 `models` 子集（否则 `400`）；未配置的格式 = 全部 `models` |
@@ -119,7 +119,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | string | 否 | 模板名（非空） |
-| `base_url` | string | 否 | 上游地址（合法 URL） |
+| `base_url` | string | 否 | 上游裸根地址（**不含 `/v1`**）；`codex-oauth`/`codex-pat` 模板该字段须为空（SDK 默认，非空 → `400`），`api_key`/`responses-special` 为可选覆盖（留空保持不变） |
 | `supported_formats` | string[] | 否 | 支持的请求格式枚举数组（至少 1 项，枚举见上；重复/非法枚举 → `400`） |
 | `models` | string[] | 否 | 可服务模型集合 |
 | `format_models` | object | 否 | 格式级模型覆盖：`{格式: [模型名]}`，key 必须是 `supported_formats` 子集（同批提供时校验）、模型必须是 `models` 子集 |
@@ -162,7 +162,8 @@
 |---|---|---|---|
 | `name` | string | ✅ | 账号名 |
 | `template_id` | int | ✅ | 所属模板 ID |
-| `upstream_key` | string | ✅ | 上游 API key（发送给上游鉴权） |
+| `base_url` | string | 否 | 账号级覆盖（裸根，不含 `/v1`，留空继承模板）；`codex-oauth`/`codex-pat` 关联模板须为空（SDK 默认，非空 → `400`），`api_key`/`responses-special` 为可选覆盖 |
+| `upstream_key` | string | ✅* | 上游 API key（`codex-oauth`/`codex-pat` 关联模板可为空，凭据走 `account_ext`；`api_key`/`responses-special` 必填） |
 | `status` | string | 否 | 初始状态，默认 `active` |
 | `weight` | int | 否 | 选号权重（预生成加权序列，权重比决定命中比例），默认 0 |
 | `max_concurrency` | int | 否 | 账号并发上限；`0` 时使用调度器 `default_max_concurrency` |
@@ -260,6 +261,7 @@
 |---|---|---|---|
 | `name` | string | 否 | 账号名（非空） |
 | `template_id` | int | 否 | 所属模板 ID（>0） |
+| `base_url` | string | 否 | 账号级覆盖（裸根，不含 `/v1`）；`codex-oauth`/`codex-pat` 关联模板须为空/清空（空串清空回继承，非空 → `400`），`api_key`/`responses-special` 为可选覆盖（空串清空，非空覆盖） |
 | `upstream_key` | string | 否 | 上游 API key（非空） |
 | `status` | string | 否 | 状态枚举（见上；非法枚举 → `400`） |
 | `weight` | int | 否 | 选号权重（≥0） |

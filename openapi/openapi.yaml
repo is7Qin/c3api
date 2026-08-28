@@ -1733,7 +1733,7 @@ components:
         ID: { type: integer, format: int64 }
         Name: { type: string }
         BaseURL: { type: string, description: "credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special bare root override (non-empty) or empty (default/route failure)" }
-        CredentialType: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat], description: 模板号池类型；生态三类型只支持 resp / resp-ws 格式 }
+        CredentialType: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat], description: 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式 }
         SupportedFormats:
           type: array
           items: { type: string, enum: [openai-chat, openai-responses, openai-responses-ws, openai-images, openai-search, anthropic] }
