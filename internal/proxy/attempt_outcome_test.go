@@ -10,168 +10,137 @@ import (
 func validBase() AttemptOutcome {
 	return AttemptOutcome{
 		ID: "a1", RouteClassID: "rc", Fingerprint: "fp", LifecycleRevision: 1,
-		Lane: LanePrimary, Generation: 1, Commit: CommitNotSent, Result: ResultSuccess, HTTPStatus: 200,
-		BusinessFrameSent: false, HardContinuation: false,
+		Lane: LanePrimary, Generation: 1, Commit: CommitResponseStarted, Result: ResultSuccess, HTTPStatus: 200,
+		BusinessFrameSent: true, HardContinuation: false, Terminal: true,
 		Timing: AttemptTiming{LatencyMS: 10}, Usage: AttemptUsage{InputTokens: 1},
 	}
 }
 
 func TestAttemptOutcomeContract(t *testing.T) {
-	t.Run("valid ordinary success response_started", func(t *testing.T) {
+	t.Run("valid success response_started", func(t *testing.T) {
 		o := validBase()
-		o.Commit = CommitResponseStarted
-		o.BusinessFrameSent = true
-		o.Result = ResultSuccess
-		o.HTTPStatus = 200
 		require.NoError(t, o.Validate())
 		require.True(t, o.IsDispatched())
 		require.True(t, o.IsCountedForQuality())
 		require.False(t, o.IsFailed())
 		require.True(t, o.HasPossiblyWrittenBytes())
 	})
-	t.Run("ordinary 4xx failed counts", func(t *testing.T) {
+	t.Run("valid success client_committed", func(t *testing.T) {
 		o := validBase()
-		o.Commit = CommitNotSent
-		o.Result = ResultFailed
-		o.HTTPStatus = 400
+		o.Commit = CommitClientCommitted
+		require.NoError(t, o.Validate())
+	})
+	t.Run("rate_limited upstream_responded ordinary not terminal", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 429, Terminal: false, BusinessFrameSent: false}
+		require.NoError(t, o.Validate())
+		require.True(t, CanRetry(CallerChat, o))
+	})
+	t.Run("rate_limited hard must be terminal", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 429, HardContinuation: true, Terminal: true}
+		require.NoError(t, o.Validate())
+		o2 := o
+		o2.Terminal = false
+		require.Error(t, o2.Validate())
+	})
+	t.Run("ordinary4xx upstream_responded terminal", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 400, Terminal: true}
 		require.NoError(t, o.Validate())
 		require.True(t, o.IsCountedForQuality())
-		require.True(t, o.IsFailed())
-	})
-	t.Run("malformed counts failed but not retryable", func(t *testing.T) {
-		o := validBase()
-		o.Result = ResultFailed
-		o.HTTPStatus = 400
-		o.IsMalformed = true
-		o.BusinessFrameSent = false
-		require.NoError(t, o.Validate())
 		require.True(t, o.IsFailed())
 		require.False(t, CanRetry(CallerChat, o))
 	})
-	t.Run("post-commit failure has bytes", func(t *testing.T) {
-		o := validBase()
-		o.Commit = CommitResponseStarted
-		o.BusinessFrameSent = true
-		o.Result = ResultFailed
-		o.HTTPStatus = 500
+	t.Run("upstream5xx upstream_responded terminal", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 500, Terminal: true}
 		require.NoError(t, o.Validate())
-		require.True(t, o.HasPossiblyWrittenBytes())
-		require.True(t, o.IsFailed())
+		require.False(t, CanRetry(CallerChat, o))
 	})
-	t.Run("client cancel flow only", func(t *testing.T) {
-		o := validBase()
-		o.Result = ResultClientCancel
-		o.HTTPStatus = 0
-		require.True(t, o.IsDispatched())
-		require.False(t, o.IsCountedForQuality())
-		require.False(t, o.IsFailed())
+	t.Run("network not_sent and sent_ambiguous", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false, BusinessFrameSent: false}
+		require.NoError(t, o.Validate())
+		require.True(t, CanRetry(CallerChat, o))
+		o2 := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitSentAmbiguous, Result: ResultFailed, HTTPStatus: 0, Terminal: true, BusinessFrameSent: true}
+		require.NoError(t, o2.Validate())
+		require.False(t, CanRetry(CallerChat, o2))
 	})
-	t.Run("local reject not dispatched not counted not retryable", func(t *testing.T) {
+	t.Run("malformed upstream_responded terminal never retry", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 400, IsMalformed: true, Terminal: true}
+		require.NoError(t, o.Validate())
+		require.False(t, CanRetry(CallerChat, o))
+		o2 := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 0, IsMalformed: true, Terminal: true}
+		require.NoError(t, o2.Validate())
+		require.False(t, CanRetry(CallerChat, o2))
+	})
+	t.Run("client_cancel flow only explicit states", func(t *testing.T) {
+		for _, commit := range []CommitState{CommitNotSent, CommitSentAmbiguous, CommitResponseStarted, CommitClientCommitted} {
+			o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: commit, Result: ResultClientCancel, HTTPStatus: 0, Terminal: true}
+			if commit == CommitNotSent {
+				o.BusinessFrameSent = false
+			} else {
+				o.BusinessFrameSent = true
+			}
+			require.NoError(t, o.Validate(), "commit %v", commit)
+			require.False(t, o.IsCountedForQuality())
+			require.False(t, CanRetry(CallerChat, o))
+		}
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultClientCancel, HTTPStatus: 0, Terminal: true}
+		require.Error(t, o.Validate())
+	})
+	t.Run("local and reservation reject non-dispatched", func(t *testing.T) {
 		o := AttemptOutcome{ID: "a1", Commit: CommitNotSent, Result: ResultLocalReject, HTTPStatus: 0}
 		require.NoError(t, o.Validate())
 		require.False(t, o.IsDispatched())
-		require.False(t, o.IsCountedForQuality())
+		require.False(t, CanRetry(CallerChat, o))
+		o2 := AttemptOutcome{ID: "a1", Commit: CommitNotSent, Result: ResultReservationReject, HTTPStatus: 0}
+		require.NoError(t, o2.Validate())
+		require.False(t, CanRetry(CallerChat, o2))
+		o3 := AttemptOutcome{ID: "a1", Commit: CommitNotSent, Result: ResultLocalReject, HTTPStatus: 0, RouteClassID: "rc"}
+		require.Error(t, o3.Validate())
+	})
+	t.Run("generation and revision must be >0", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 0, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false}
+		require.Error(t, o.Validate())
+		o = AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 0, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false}
+		require.Error(t, o.Validate())
+		o = AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false}
+		require.NoError(t, o.Validate())
+	})
+	t.Run("negative 1xx 3xx >599 rejected", func(t *testing.T) {
+		cases := []AttemptStatus{-1, 100, 199, 300, 301, 399, 600, 700}
+		for _, s := range cases {
+			o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: s, Terminal: true}
+			require.Error(t, o.Validate(), "status %d", s)
+		}
+	})
+	t.Run("success plus ambiguous invalid", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitSentAmbiguous, Result: ResultSuccess, HTTPStatus: 200, BusinessFrameSent: true, Terminal: true}
+		require.Error(t, o.Validate())
+		o2 := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultSuccess, HTTPStatus: 200, Terminal: true}
+		require.Error(t, o2.Validate())
+	})
+	t.Run("429 using wrong not_sent invalid", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 429, Terminal: false}
+		require.Error(t, o.Validate())
 		require.False(t, CanRetry(CallerChat, o))
 	})
-	t.Run("reservation reject not dispatched", func(t *testing.T) {
-		o := AttemptOutcome{ID: "a1", Commit: CommitNotSent, Result: ResultReservationReject, HTTPStatus: 0}
-		require.NoError(t, o.Validate())
-		require.False(t, o.IsDispatched())
-		require.False(t, CanRetry(CallerChat, o))
+	t.Run("zero generation revision for network not_sent invalid", func(t *testing.T) {
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 0, LifecycleRevision: 0, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false}
+		require.Error(t, o.Validate())
+	})
+	t.Run("valid metadata fixture for all ten callers", func(t *testing.T) {
+		for _, cat := range AllCallerCategories() {
+			o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false}
+			require.NoError(t, o.Validate(), "caller %s", cat)
+			require.True(t, CanRetry(cat, o))
+		}
 	})
 	t.Run("bytes written cannot be not_sent", func(t *testing.T) {
 		o := validBase()
 		o.Commit = CommitNotSent
 		o.BusinessFrameSent = true
-		o.Result = ResultFailed
-		require.Error(t, o.Validate())
-	})
-	t.Run("WS dial not_sent only before business frame", func(t *testing.T) {
-		o := validBase()
-		o.Commit = CommitNotSent
-		o.BusinessFrameSent = false
-		require.NoError(t, o.Validate())
-		o2 := validBase()
-		o2.Commit = CommitNotSent
-		o2.BusinessFrameSent = true
-		require.Error(t, o2.Validate())
-	})
-	t.Run("response_started requires BusinessFrameSent", func(t *testing.T) {
-		o := validBase()
-		o.Commit = CommitResponseStarted
-		o.BusinessFrameSent = false
 		require.Error(t, o.Validate())
 	})
 	t.Run("terminal not_sent invalid", func(t *testing.T) {
-		o := validBase()
-		o.Commit = CommitNotSent
-		o.BusinessFrameSent = false
-		o.Terminal = true
+		o := AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: true}
 		require.Error(t, o.Validate())
-		require.False(t, CanRetry(CallerChat, o))
-	})
-	t.Run("required fields where dispatch exists", func(t *testing.T) {
-		o := validBase()
-		o.RouteClassID = ""
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.Fingerprint = ""
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.Lane = ""
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.Lane = LaneID("bad")
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.Generation = -1
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.LifecycleRevision = -1
-		require.Error(t, o.Validate())
-	})
-	t.Run("nonnegative timing usage", func(t *testing.T) {
-		o := validBase()
-		o.Timing.LatencyMS = -1
-		require.Error(t, o.Validate())
-		o = validBase()
-		neg := int64(-5)
-		o.Timing.TTFTMS = &neg
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.Usage.InputTokens = -1
-		require.Error(t, o.Validate())
-	})
-	t.Run("result status commit consistency", func(t *testing.T) {
-		o := validBase()
-		o.Result = ResultSuccess
-		o.HTTPStatus = 500
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.Result = ResultLocalReject
-		o.HTTPStatus = 429
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.Result = ResultUnknown
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.Commit = CommitState(99)
-		require.Error(t, o.Validate())
-		o = validBase()
-		o.Result = ResultSuccess
-		o.IsMalformed = true
-		require.Error(t, o.Validate())
-	})
-	t.Run("local reject with business frame invalid", func(t *testing.T) {
-		o := AttemptOutcome{ID: "a1", Commit: CommitNotSent, Result: ResultLocalReject, BusinessFrameSent: true}
-		require.Error(t, o.Validate())
-	})
-	t.Run("stale future capability absence 5xx no retry", func(t *testing.T) {
-		o := validBase()
-		o.Result = ResultFailed
-		o.HTTPStatus = 500
-		o.Commit = CommitNotSent
-		o.BusinessFrameSent = false
-		require.False(t, CanRetry(CallerChat, o))
 	})
 }

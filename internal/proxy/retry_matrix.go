@@ -11,10 +11,7 @@ func CanRetry(cat CallerCategory, o AttemptOutcome) bool {
 	if o.Terminal {
 		return false
 	}
-	if o.Result == ResultUnknown {
-		return false
-	}
-	if o.Result == ResultLocalReject || o.Result == ResultReservationReject {
+	if o.Result == ResultLocalReject || o.Result == ResultReservationReject || o.Result == ResultUnknown {
 		return false
 	}
 	if o.Result == ResultClientCancel {
@@ -30,19 +27,19 @@ func CanRetry(cat CallerCategory, o AttemptOutcome) bool {
 	case CommitSentAmbiguous, CommitResponseStarted, CommitClientCommitted:
 		return false
 	}
-	if o.HTTPStatus == 429 {
+	// Explicit pre-response 429: must be upstream_responded, ordinary non-hard
+	if o.HTTPStatus == 429 && o.Commit == CommitUpstreamResponded {
 		if o.HardContinuation {
 			return false
 		}
-		if o.Commit == CommitNotSent && !o.BusinessFrameSent {
-			return true
-		}
-		return false
+		return true
 	}
+	// 5xx never retry (no idempotency capability)
 	if o.HTTPStatus >= 500 && o.HTTPStatus <= 599 {
 		return false
 	}
-	if o.HTTPStatus == 0 && o.Commit == CommitNotSent && !o.BusinessFrameSent && o.Result == ResultFailed {
+	// network not_sent may retry
+	if o.HTTPStatus == 0 && o.Commit == CommitNotSent && !o.BusinessFrameSent && o.Result == ResultFailed && !o.IsMalformed {
 		return true
 	}
 	return false
@@ -73,6 +70,7 @@ func outcomeForKind(kind string, cat CallerCategory, hard bool) AttemptOutcome {
 		Generation:        1,
 		HardContinuation:  hard,
 		BusinessFrameSent: false,
+		Terminal:          false,
 	}
 	switch kind {
 	case "not_sent":
@@ -80,39 +78,52 @@ func outcomeForKind(kind string, cat CallerCategory, hard bool) AttemptOutcome {
 		base.Result = ResultFailed
 		base.HTTPStatus = 0
 		base.BusinessFrameSent = false
+		base.Terminal = false
 	case "429":
-		base.Commit = CommitNotSent
+		base.Commit = CommitUpstreamResponded
 		base.Result = ResultFailed
 		base.HTTPStatus = 429
 		base.BusinessFrameSent = false
+		// Terminal explicit per hard/ordinary
+		if hard {
+			base.Terminal = true
+		} else {
+			base.Terminal = false
+		}
 	case "5xx":
-		base.Commit = CommitNotSent
+		base.Commit = CommitUpstreamResponded
 		base.Result = ResultFailed
 		base.HTTPStatus = 500
+		base.Terminal = true
 	case "sent_ambiguous":
 		base.Commit = CommitSentAmbiguous
 		base.Result = ResultFailed
 		base.HTTPStatus = 0
 		base.BusinessFrameSent = true
+		base.Terminal = true
 	case "response_started":
 		base.Commit = CommitResponseStarted
 		base.Result = ResultFailed
 		base.HTTPStatus = 500
 		base.BusinessFrameSent = true
+		base.Terminal = true
 	case "client_committed":
 		base.Commit = CommitClientCommitted
 		base.Result = ResultFailed
 		base.HTTPStatus = 200
 		base.BusinessFrameSent = true
+		base.Terminal = true
 	case "client_cancel":
 		base.Commit = CommitNotSent
 		base.Result = ResultClientCancel
 		base.HTTPStatus = 0
+		base.Terminal = true
 	case "malformed":
-		base.Commit = CommitNotSent
+		base.Commit = CommitUpstreamResponded
 		base.Result = ResultFailed
 		base.HTTPStatus = 400
 		base.IsMalformed = true
+		base.Terminal = true
 	}
 	_ = cat
 	return base

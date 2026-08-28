@@ -3,6 +3,11 @@ package proxy
 
 import "fmt"
 
+// AttemptID is a per-attempt identifier. Dispatched metadata
+// (RouteClassID/Fingerprint/Lane/Generation/LifecycleRevision) currently
+// uses placeholder values; canonical stable IDs will be provided by Task4/7/11
+// (RouteClass/QualityClass/candidate fingerprint) and wired in Task13. Do
+// not loosen to legacy Selection fields.
 type AttemptID string
 
 func (a AttemptID) Validate() error {
@@ -41,6 +46,7 @@ type CommitState int
 const (
 	CommitNotSent CommitState = iota
 	CommitSentAmbiguous
+	CommitUpstreamResponded
 	CommitResponseStarted
 	CommitClientCommitted
 )
@@ -51,6 +57,8 @@ func (c CommitState) String() string {
 		return "not_sent"
 	case CommitSentAmbiguous:
 		return "sent_ambiguous"
+	case CommitUpstreamResponded:
+		return "upstream_responded"
 	case CommitResponseStarted:
 		return "response_started"
 	case CommitClientCommitted:
@@ -62,7 +70,7 @@ func (c CommitState) String() string {
 
 func (c CommitState) Valid() bool {
 	switch c {
-	case CommitNotSent, CommitSentAmbiguous, CommitResponseStarted, CommitClientCommitted:
+	case CommitNotSent, CommitSentAmbiguous, CommitUpstreamResponded, CommitResponseStarted, CommitClientCommitted:
 		return true
 	}
 	return false
@@ -226,21 +234,47 @@ func (o AttemptOutcome) Validate() error {
 	if o.Result == ResultUnknown {
 		return fmt.Errorf("ResultUnknown is not valid")
 	}
-	if o.Terminal && o.Commit == CommitNotSent {
+	if o.Terminal && o.Commit == CommitNotSent && o.Result != ResultClientCancel {
 		return fmt.Errorf("terminal not_sent is invalid")
 	}
+	// BusinessFrameSent consistency
 	if o.Commit == CommitNotSent && o.BusinessFrameSent {
 		return fmt.Errorf("not_sent cannot have BusinessFrameSent")
 	}
 	if o.BusinessFrameSent && o.Commit == CommitNotSent {
 		return fmt.Errorf("BusinessFrameSent requires commit != not_sent")
 	}
-	if o.Commit == CommitResponseStarted || o.Commit == CommitClientCommitted {
-		if !o.BusinessFrameSent {
-			return fmt.Errorf("response_started/client_committed requires BusinessFrameSent")
-		}
+	if (o.Commit == CommitResponseStarted || o.Commit == CommitClientCommitted) && !o.BusinessFrameSent {
+		return fmt.Errorf("response_started/client_committed requires BusinessFrameSent")
 	}
-	if o.Result == ResultLocalReject || o.Result == ResultReservationReject {
+	if o.Commit == CommitUpstreamResponded && o.BusinessFrameSent {
+		return fmt.Errorf("upstream_responded cannot have BusinessFrameSent")
+	}
+	if o.Commit == CommitSentAmbiguous && !o.BusinessFrameSent {
+		return fmt.Errorf("sent_ambiguous requires BusinessFrameSent")
+	}
+	// Generation / LifecycleRevision >0 for dispatched (placeholder zero rejected; canonical values from Task4/7/11)
+	if o.IsDispatched() {
+		if o.RouteClassID == "" {
+			return fmt.Errorf("RouteClassID required for dispatched attempt")
+		}
+		if o.Fingerprint == "" {
+			return fmt.Errorf("Fingerprint required for dispatched attempt")
+		}
+		if !o.Lane.Valid() {
+			return fmt.Errorf("Lane required and must be valid for dispatched attempt")
+		}
+		if o.Generation <= 0 {
+			return fmt.Errorf("Generation must be >0")
+		}
+		if o.LifecycleRevision <= 0 {
+			return fmt.Errorf("LifecycleRevision must be >0")
+		}
+	} else {
+		// non-dispatched must have no dispatch metadata and status0 not_sent
+		if o.RouteClassID != "" || o.Fingerprint != "" || o.Lane != "" || o.Generation != 0 || o.LifecycleRevision != 0 {
+			return fmt.Errorf("non-dispatched must have no dispatch metadata")
+		}
 		if o.Commit != CommitNotSent {
 			return fmt.Errorf("local/reservation reject must be not_sent")
 		}
@@ -253,46 +287,25 @@ func (o AttemptOutcome) Validate() error {
 		if o.IsMalformed {
 			return fmt.Errorf("local/reservation reject cannot be malformed")
 		}
+		if o.Terminal {
+			return fmt.Errorf("local/reservation reject cannot be terminal")
+		}
 	}
+	// Malformed: never retry, commit upstream_responded/response_started/client_committed, never not_sent/sent_ambiguous
 	if o.IsMalformed {
 		if o.Result != ResultFailed {
 			return fmt.Errorf("malformed must be failed")
 		}
-		if o.Commit != CommitNotSent {
-			return fmt.Errorf("malformed must be not_sent")
+		switch o.Commit {
+		case CommitUpstreamResponded, CommitResponseStarted, CommitClientCommitted:
+		default:
+			return fmt.Errorf("malformed must be upstream_responded/response_started/client_committed")
 		}
-		if o.BusinessFrameSent {
-			return fmt.Errorf("malformed cannot have BusinessFrameSent")
-		}
-		if o.Result == ResultClientCancel {
-			return fmt.Errorf("malformed cannot be client_cancel")
-		}
-	}
-	if o.Result == ResultClientCancel {
-		if o.Commit != CommitNotSent && o.Commit != CommitResponseStarted {
-			// client cancel is flow-only; allow either before or after start but must not be ambiguous terminal inconsistency
-		}
-		if o.IsMalformed {
-			return fmt.Errorf("client_cancel cannot be malformed")
+		if o.Result == ResultClientCancel || o.Result == ResultLocalReject || o.Result == ResultReservationReject {
+			return fmt.Errorf("malformed cannot be cancel/local/reservation")
 		}
 	}
-	if o.IsDispatched() {
-		if o.RouteClassID == "" {
-			return fmt.Errorf("RouteClassID required for dispatched attempt")
-		}
-		if o.Fingerprint == "" {
-			return fmt.Errorf("Fingerprint required for dispatched attempt")
-		}
-		if !o.Lane.Valid() {
-			return fmt.Errorf("Lane required and must be valid for dispatched attempt")
-		}
-		if o.Generation < 0 {
-			return fmt.Errorf("Generation must be >=0")
-		}
-		if o.LifecycleRevision < 0 {
-			return fmt.Errorf("LifecycleRevision must be >=0")
-		}
-	}
+	// Timing / usage
 	if o.Timing.LatencyMS < 0 {
 		return fmt.Errorf("LatencyMS must be >=0")
 	}
@@ -302,21 +315,128 @@ func (o AttemptOutcome) Validate() error {
 	if o.Usage.InputTokens < 0 || o.Usage.OutputTokens < 0 || o.Usage.CacheReadTokens < 0 || o.Usage.CacheCreationTokens < 0 || o.Usage.CallCount < 0 {
 		return fmt.Errorf("usage tokens must be >=0")
 	}
-	if o.Result == ResultSuccess {
+	// HTTP status ranges
+	if o.HTTPStatus < 0 || o.HTTPStatus > 599 {
+		return fmt.Errorf("HTTPStatus out of range")
+	}
+	if o.HTTPStatus >= 100 && o.HTTPStatus <= 199 {
+		return fmt.Errorf("1xx status not allowed")
+	}
+	if o.HTTPStatus >= 300 && o.HTTPStatus <= 399 {
+		return fmt.Errorf("3xx status not allowed")
+	}
+	// Exhaustive result/status/commit combinations, no empty branches
+	switch o.Result {
+	case ResultSuccess:
+		if o.IsMalformed {
+			return fmt.Errorf("success cannot be malformed")
+		}
 		if o.HTTPStatus < 200 || o.HTTPStatus >= 300 {
 			return fmt.Errorf("success must have 2xx status")
 		}
-		if o.Commit != CommitResponseStarted && o.Commit != CommitClientCommitted && o.Commit != CommitNotSent {
-			// success after response started or committed; allow NotSent for immediate success? keep lenient
+		if o.Commit != CommitResponseStarted && o.Commit != CommitClientCommitted {
+			return fmt.Errorf("success must be response_started or client_committed")
 		}
-	}
-	if o.Result == ResultFailed {
-		if o.HTTPStatus == 0 && o.Commit == CommitNotSent && !o.IsMalformed {
-			// allow status 0 for network failure not_sent
+		if !o.Terminal {
+			return fmt.Errorf("success must be terminal")
 		}
+		if !o.BusinessFrameSent {
+			return fmt.Errorf("success must have BusinessFrameSent")
+		}
+	case ResultFailed:
+		if o.IsMalformed {
+			// malformed already validated above; ensure status not negative/1xx/3xx already checked
+			if o.HTTPStatus != 0 && (o.HTTPStatus < 200 || o.HTTPStatus > 599) {
+				return fmt.Errorf("malformed status invalid")
+			}
+			if o.Terminal != true {
+				return fmt.Errorf("malformed must be terminal")
+			}
+			break
+		}
+		switch {
+		case o.HTTPStatus == 429:
+			if o.Commit != CommitUpstreamResponded {
+				return fmt.Errorf("429 must be upstream_responded")
+			}
+			// terminal explicit per retryability: ordinary retryable => Terminal false, hard => true
+			if o.HardContinuation && !o.Terminal {
+				return fmt.Errorf("hard 429 must be terminal")
+			}
+			if !o.HardContinuation && o.Terminal {
+				return fmt.Errorf("ordinary 429 must not be terminal")
+			}
+		case o.HTTPStatus >= 400 && o.HTTPStatus <= 499:
+			// ordinary 4xx except 429 already handled
+			if o.Commit != CommitUpstreamResponded {
+				return fmt.Errorf("4xx must be upstream_responded")
+			}
+			if !o.Terminal {
+				return fmt.Errorf("4xx must be terminal")
+			}
+		case o.HTTPStatus >= 500 && o.HTTPStatus <= 599:
+			if o.Commit != CommitUpstreamResponded {
+				return fmt.Errorf("5xx must be upstream_responded")
+			}
+			if !o.Terminal {
+				return fmt.Errorf("5xx must be terminal")
+			}
+		case o.HTTPStatus == 0:
+			// network: only not_sent or sent_ambiguous
+			if o.Commit != CommitNotSent && o.Commit != CommitSentAmbiguous {
+				return fmt.Errorf("status0 network must be not_sent or sent_ambiguous")
+			}
+			if o.Commit == CommitSentAmbiguous && !o.Terminal {
+				return fmt.Errorf("sent_ambiguous must be terminal")
+			}
+			if o.Commit == CommitNotSent && o.Terminal {
+				return fmt.Errorf("not_sent network must not be terminal")
+			}
+		case o.HTTPStatus >= 200 && o.HTTPStatus <= 299:
+			return fmt.Errorf("failed cannot have 2xx status")
+		default:
+			// 0 already handled, 2xx handled, 4xx/5xx handled, 429 handled
+			return fmt.Errorf("failed with unexpected status %d", o.HTTPStatus)
+		}
+	case ResultClientCancel:
+		if o.IsMalformed {
+			return fmt.Errorf("client_cancel cannot be malformed")
+		}
+		if o.HTTPStatus != 0 {
+			return fmt.Errorf("client_cancel must have status 0")
+		}
+		// explicitly allowed states: not_sent, sent_ambiguous, response_started, client_committed (flow-only)
+		switch o.Commit {
+		case CommitNotSent, CommitSentAmbiguous, CommitResponseStarted, CommitClientCommitted:
+		default:
+			return fmt.Errorf("client_cancel has invalid commit %v", o.Commit)
+		}
+		if o.Commit == CommitNotSent && o.BusinessFrameSent {
+			return fmt.Errorf("client_cancel not_sent cannot have BusinessFrameSent")
+		}
+		if (o.Commit == CommitResponseStarted || o.Commit == CommitClientCommitted) && !o.BusinessFrameSent {
+			return fmt.Errorf("client_cancel response_started/committed requires BusinessFrameSent")
+		}
+		if o.Commit == CommitSentAmbiguous && !o.BusinessFrameSent {
+			return fmt.Errorf("client_cancel sent_ambiguous requires BusinessFrameSent")
+		}
+		if o.Commit == CommitUpstreamResponded {
+			return fmt.Errorf("client_cancel cannot be upstream_responded")
+		}
+		if !o.Terminal {
+			return fmt.Errorf("client_cancel must be terminal")
+		}
+	case ResultLocalReject, ResultReservationReject:
+		// already validated non-dispatched branch
+	default:
+		return fmt.Errorf("unexpected result %v", o.Result)
 	}
-	if o.Result == ResultUnknown {
-		return fmt.Errorf("unknown result")
+	// Success+ambiguous invalid
+	if o.Result == ResultSuccess && o.Commit == CommitSentAmbiguous {
+		return fmt.Errorf("success cannot be sent_ambiguous")
+	}
+	if o.Result == ResultSuccess && o.Commit == CommitUpstreamResponded {
+		return fmt.Errorf("success cannot be upstream_responded")
 	}
 	return nil
 }
