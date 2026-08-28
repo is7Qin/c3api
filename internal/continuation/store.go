@@ -2,6 +2,7 @@
 package continuation
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -26,9 +28,79 @@ const (
 )
 
 type Binding struct {
-	AccountID   int64  `json:"account_id"`
-	Fingerprint string `json:"fingerprint"` // hex 64
-	Revision    int64  `json:"revision"`
+	AccountID   int64
+	Fingerprint domain.CandidateFingerprintVal
+	Revision    int64
+	RedisAcked  bool
+}
+
+type redisWire struct {
+	AccountID   string `json:"account_id"`
+	Fingerprint string `json:"fingerprint"`
+	Revision    string `json:"revision"`
+	RedisAcked  bool   `json:"redis_acked"`
+}
+
+func (b Binding) valid() bool {
+	if b.AccountID <= 0 || b.Revision <= 0 || !b.RedisAcked {
+		return false
+	}
+	if b.Fingerprint == (domain.CandidateFingerprintVal{}) {
+		return false
+	}
+	return true
+}
+
+func parseBinding(data []byte) (Binding, bool) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return Binding{}, false
+	}
+	if len(raw) != 4 {
+		return Binding{}, false
+	}
+	if _, ok := raw["account_id"]; !ok {
+		return Binding{}, false
+	}
+	if _, ok := raw["fingerprint"]; !ok {
+		return Binding{}, false
+	}
+	if _, ok := raw["revision"]; !ok {
+		return Binding{}, false
+	}
+	if _, ok := raw["redis_acked"]; !ok {
+		return Binding{}, false
+	}
+	var w redisWire
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&w); err != nil {
+		return Binding{}, false
+	}
+	if !w.RedisAcked {
+		return Binding{}, false
+	}
+	acc, err := strconv.ParseInt(w.AccountID, 10, 64)
+	if err != nil || acc <= 0 || strconv.FormatInt(acc, 10) != w.AccountID {
+		return Binding{}, false
+	}
+	rev, err := strconv.ParseInt(w.Revision, 10, 64)
+	if err != nil || rev <= 0 || strconv.FormatInt(rev, 10) != w.Revision {
+		return Binding{}, false
+	}
+	if len(w.Fingerprint) != 64 {
+		return Binding{}, false
+	}
+	fb, err := hex.DecodeString(w.Fingerprint)
+	if err != nil || len(fb) != 32 {
+		return Binding{}, false
+	}
+	var fp domain.CandidateFingerprintVal
+	copy(fp[:], fb)
+	if fp == (domain.CandidateFingerprintVal{}) {
+		return Binding{}, false
+	}
+	return Binding{AccountID: acc, Fingerprint: fp, Revision: rev, RedisAcked: true}, true
 }
 
 func deriveHMACKey(authSecret string) ([]byte, error) {
@@ -119,7 +191,10 @@ local ok, cur = pcall(cjson.decode, v)
 if not ok or type(cur) ~= 'table' then
   return 'conflict'
 end
-if cur.account_id == tonumber(ARGV[3]) and cur.fingerprint == ARGV[4] and cur.revision == tonumber(ARGV[5]) then
+if type(cur.account_id) ~= 'string' or type(cur.fingerprint) ~= 'string' or type(cur.revision) ~= 'string' or cur.redis_acked ~= true then
+  return 'conflict'
+end
+if cur.account_id == ARGV[3] and cur.fingerprint == ARGV[4] and cur.revision == ARGV[5] then
   redis.call('EXPIRE', KEYS[1], ARGV[2])
   return 'refreshed'
 else
@@ -127,20 +202,42 @@ else
 end
 `)
 
+var luaLookup = redis.NewScript(`
+local v = redis.call('GET', KEYS[1])
+if not v then
+  return {nil, -2}
+end
+local ttl = redis.call('PTTL', KEYS[1])
+return {v, ttl}
+`)
+
 func (s *Store) CreateOrRefresh(ctx context.Context, userID, groupID int64, routeClassID domain.RouteClassIDVal, protocolTag, continuationID string, accountID int64, fingerprint domain.CandidateFingerprintVal, revision int64) (string, error) {
+	if accountID <= 0 {
+		return "", fmt.Errorf("continuation: invalid account_id %d", accountID)
+	}
+	if revision <= 0 {
+		return "", fmt.Errorf("continuation: invalid revision %d", revision)
+	}
+	if fingerprint == (domain.CandidateFingerprintVal{}) {
+		return "", fmt.Errorf("continuation: zero fingerprint")
+	}
 	rkey, err := s.RedisKey(userID, groupID, routeClassID, protocolTag, continuationID)
 	if err != nil {
 		return "", err
 	}
-	b := Binding{AccountID: accountID, Fingerprint: hex.EncodeToString(fingerprint[:]), Revision: revision}
-	payload, err := json.Marshal(b)
+	fpHex := hex.EncodeToString(fingerprint[:])
+	accStr := strconv.FormatInt(accountID, 10)
+	revStr := strconv.FormatInt(revision, 10)
+	w := redisWire{AccountID: accStr, Fingerprint: fpHex, Revision: revStr, RedisAcked: true}
+	payload, err := json.Marshal(w)
 	if err != nil {
 		return "", err
 	}
-	res, err := luaCAS.Run(ctx, s.client, []string{rkey}, string(payload), ttlSeconds, accountID, b.Fingerprint, revision).Text()
+	res, err := luaCAS.Run(ctx, s.client, []string{rkey}, string(payload), strconv.Itoa(ttlSeconds), accStr, fpHex, revStr).Text()
 	if err != nil {
 		return "", err
 	}
+	b := Binding{AccountID: accountID, Fingerprint: fingerprint, Revision: revision, RedisAcked: true}
 	switch res {
 	case "created", "refreshed":
 		s.l1.Put(rkey, b, TTL)
@@ -158,21 +255,47 @@ func (s *Store) Lookup(ctx context.Context, userID, groupID int64, routeClassID 
 		return nil, false, err
 	}
 	if b, ok := s.l1.Get(rkey); ok {
+		if !b.valid() {
+			return nil, false, nil
+		}
 		cp := b
 		return &cp, true, nil
 	}
-	val, err := s.client.Get(ctx, rkey).Result()
-	if err == redis.Nil {
-		return nil, false, nil
-	}
+	raw, err := luaLookup.Run(ctx, s.client, []string{rkey}).Slice()
 	if err != nil {
+		if err == redis.Nil {
+			return nil, false, nil
+		}
 		return nil, false, err
 	}
-	var b Binding
-	if err := json.Unmarshal([]byte(val), &b); err != nil {
+	if len(raw) != 2 {
 		return nil, false, nil
 	}
-	s.l1.Put(rkey, b, TTL)
+	if raw[0] == nil {
+		return nil, false, nil
+	}
+	val, ok := raw[0].(string)
+	if !ok {
+		return nil, false, nil
+	}
+	var pttl int64
+	switch v := raw[1].(type) {
+	case int64:
+		pttl = v
+	case int:
+		pttl = int64(v)
+	default:
+		return nil, false, nil
+	}
+	if pttl <= 0 {
+		return nil, false, nil
+	}
+	b, valid := parseBinding([]byte(val))
+	if !valid {
+		return nil, false, nil
+	}
+	remaining := time.Duration(pttl) * time.Millisecond
+	s.l1.Put(rkey, b, remaining)
 	cp := b
 	return &cp, true, nil
 }
