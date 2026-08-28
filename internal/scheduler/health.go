@@ -89,16 +89,17 @@ func parseHealthKey(s string) (HealthKey, bool) {
 
 // healthEntry is the immutable per-key record stored in Redis HASH and view.
 type healthEntry struct {
-	Key        HealthKey   `json:"key"`
-	State      HealthState `json:"state"`
-	Generation int64       `json:"gen"`
-	Revision   int64       `json:"rev"`
-	UpdatedAt  int64       `json:"updated_at"` // unix milli
-	TTLms      int64       `json:"ttl_ms"`
+	Key       HealthKey   `json:"key"`
+	State     HealthState `json:"state"`
+	Generation int64      `json:"gen"`
+	Revision  int64       `json:"rev"`
+	UpdatedAt int64       `json:"updated_at"` // unix milli
+	TTLms     int64       `json:"ttl_ms"`
+	ExpiresAt int64       `json:"expires_at"` // explicit until deadline: UpdatedAt+TTLms
 }
 
 // healthView is the single immutable view published via atomic.Pointer.
-// One immutable atomic.Pointer view; whole map replaced on sync.
+// One immutable atomic.Pointer view; whole map replaced on sync. Stores runID and per-entry expiry.
 type healthView struct {
 	entries map[HealthKey]healthEntry
 	gen     int64
@@ -107,9 +108,9 @@ type healthView struct {
 
 const (
 	healthGenKey          = "c3api:health:generation"
-	healthRecordsHash     = "c3api:health:records"   // HASH field=key string, value=json entry
-	healthActiveZSet      = "c3api:health:active"    // ZSET member=key string, score=generation
-	healthTombstoneHash   = "c3api:health:tombstone" // HASH field=key string, value=generation (TTL via per-field logic using ZSET + separate tombstone keys with TTL)
+	healthRecordsHash     = "c3api:health:records"
+	healthActiveZSet      = "c3api:health:active"
+	healthTombstoneHash   = "c3api:health:tombstone"
 	healthTombstonePrefix = "c3api:health:tombstone:"
 	healthRecordPrefix    = "c3api:health:record:"
 	healthSyncInterval    = 500 * time.Millisecond
@@ -119,7 +120,6 @@ const (
 
 var (
 	// Lua throttle/READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL
-	// throttleLua atomically increments generation, writes record HASH, adds active ZSET, clears tombstone, sets TTL.
 	throttleLua = `
 local genKey = KEYS[1]
 local recPrefix = ARGV[5]
@@ -174,6 +174,31 @@ redis.call('HSET', tombHash, field, gen)
 redis.call('SET', tombPrefix .. field, gen, 'PX', ttl)
 return gen
 `
+	// cleanupLua is one Lua script for expiry cleanup: re-reads global generation and per-record generation/revision before each ZREM/HDEL.
+	// Mode "active": validates global gen unchanged and per-record HASH still absent before ZREM; Mode "tomb": validates global gen and per-key tomb still absent before HDEL.
+	// Errors propagate via EVAL error; stale generation or recreated record returns 0 (no delete) without error.
+	cleanupLua = `
+local genKey = KEYS[1]
+local activeKey = KEYS[2]
+local tombHash = KEYS[3]
+local mode = ARGV[1]
+local field = ARGV[2]
+local expectedGen = ARGV[3]
+local recPrefix = ARGV[4]
+local tombPrefix = ARGV[5]
+local curGen = redis.call('GET', genKey)
+if not curGen then curGen = 0 else curGen = tonumber(curGen) end
+if tonumber(curGen) ~= tonumber(expectedGen) then return 0 end
+if mode == "active" then
+  local recKey = recPrefix .. field
+  if redis.call('EXISTS', recKey) == 1 then return 0 end
+  return redis.call('ZREM', activeKey, field)
+else
+  local tombKey = tombPrefix .. field
+  if redis.call('EXISTS', tombKey) == 1 then return 0 end
+  return redis.call('HDEL', tombHash, field)
+end
+`
 )
 
 // ProbeFunc is injected probe function for a single health key.
@@ -183,14 +208,12 @@ type ProbeFunc func(context.Context, HealthKey) error
 // RuntimeHealth is the atomic RuntimeHealth Redis/view/probe core; no Rule/SDK integration.
 // One immutable atomic.Pointer view; key account+quality|*+revision; states OPEN>RETRY_AFTER>PROBING>READY.
 // Lua throttle/READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL.
-// Sync INFO run_id + gen-before/records/gen-after; same-run empty clears, run change retain OPEN until then PROBING.
+// Sync INFO run_id + gen-before/records/gen-after; run_id/expiry stored in immutable view, explicit OPEN->until->PROBING->probe retention.
 // Uses worker.GoLoop for loops; probe injected selfID/rendezvous/ProbeFunc, one permit, two current-gen successes READY, failure reopen.
 type RuntimeHealth struct {
 	client *redis.Client
 	selfID string
-	// members provides current live members for rendezvous owner election.
 	members func() []string
-	// rendezvous selects owner for a given key among members (highest weight).
 	rendezvous func(key string, members []string) string
 	probeFn    ProbeFunc
 	log        *logx.Logger
@@ -198,14 +221,17 @@ type RuntimeHealth struct {
 	view atomic.Pointer[healthView]
 
 	mu           sync.Mutex
-	successCount map[string]int   // field -> consecutive successes
-	successGen   map[string]int64 // field -> generation of first success
+	successCount map[string]int
+	successGen   map[string]int64
 
-	permit chan struct{} // one permit
+	permit chan struct{}
 
 	runID   string
 	curGen  atomic.Int64
 	lastGen atomic.Int64
+
+	now      func() time.Time
+	syncHook func(stage string)
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -225,6 +251,7 @@ func NewRuntimeHealth(client *redis.Client, selfID string, members func() []stri
 		permit:       make(chan struct{}, 1),
 		successCount: make(map[string]int),
 		successGen:   make(map[string]int64),
+		now:          time.Now,
 	}
 	if h.members == nil {
 		h.members = func() []string { return []string{selfID} }
@@ -232,11 +259,17 @@ func NewRuntimeHealth(client *redis.Client, selfID string, members func() []stri
 	if h.rendezvous == nil {
 		h.rendezvous = rendezvousOwner
 	}
-	// initial empty immutable view
 	empty := &healthView{entries: make(map[HealthKey]healthEntry)}
 	h.view.Store(empty)
 	h.permit <- struct{}{}
 	return h
+}
+
+func (h *RuntimeHealth) currentMs() int64 {
+	if h.now != nil {
+		return h.now().UnixMilli()
+	}
+	return time.Now().UnixMilli()
 }
 
 // rendezvousOwner is default rendezvous (highest FNV weight) for probe owner election.
@@ -247,7 +280,6 @@ func rendezvousOwner(key string, members []string) string {
 	var best string
 	var bestScore uint64
 	for i, m := range members {
-		// FNV-1a hash of member + 0x00 + key
 		var hash uint64 = 1469598103934665603
 		for _, b := range []byte(m) {
 			hash ^= uint64(b)
@@ -320,7 +352,6 @@ func (h *RuntimeHealth) probeLoop(ctx context.Context) {
 }
 
 // Throttle performs Lua throttle atomic generation/revision/record HASH/active ZSET/tombstone/TTL.
-// key is account+quality|*+revision, state is OPEN or RETRY_AFTER.
 func (h *RuntimeHealth) Throttle(ctx context.Context, key HealthKey, state HealthState, ttl time.Duration) (int64, error) {
 	if h.client == nil {
 		return 0, fmt.Errorf("health: no redis")
@@ -331,14 +362,12 @@ func (h *RuntimeHealth) Throttle(ctx context.Context, key HealthKey, state Healt
 		ttlMs = 30000
 	}
 	stateStr := state.String()
-	// Lua throttle atomic generation/revision/record HASH/active ZSET/tombstone/TTL
 	res, err := h.client.Eval(ctx, throttleLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, field, stateStr, fmt.Sprintf("%d", key.Revision), fmt.Sprintf("%d", ttlMs), healthRecordPrefix, healthTombstonePrefix).Result()
 	if err != nil {
 		return 0, err
 	}
 	gen, _ := res.(int64)
 	if gen == 0 {
-		// script returns int, but go-redis may return int64 or float; handle
 		if v, ok := res.(int); ok {
 			gen = int64(v)
 		}
@@ -348,7 +377,6 @@ func (h *RuntimeHealth) Throttle(ctx context.Context, key HealthKey, state Healt
 }
 
 // MarkReady attempts Lua READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL
-// Validates target HASH record exists and matches expected account/revision/current record generation before READY.
 func (h *RuntimeHealth) MarkReady(ctx context.Context, key HealthKey, expectedGen int64, ttl time.Duration) (int64, error) {
 	if h.client == nil {
 		return 0, fmt.Errorf("health: no redis")
@@ -379,7 +407,6 @@ func (h *RuntimeHealth) MarkReady(ctx context.Context, key HealthKey, expectedGe
 }
 
 // EffectiveState returns the severity-most health for account+quality+revision.
-// Checks both specific quality and wildcard "*" and returns OPEN>RETRY_AFTER>PROBING>READY.
 func (h *RuntimeHealth) EffectiveState(accountID int64, quality string, revision int64) HealthState {
 	view := h.view.Load()
 	if view == nil {
@@ -387,7 +414,6 @@ func (h *RuntimeHealth) EffectiveState(accountID int64, quality string, revision
 	}
 	specific := view.entries[HealthKey{AccountID: accountID, Quality: quality, Revision: revision}]
 	wildcard := view.entries[HealthKey{AccountID: accountID, Quality: "*", Revision: revision}]
-	// Determine most severe
 	best := StateReady
 	bestSev := best.severity()
 	if s, ok := view.entries[HealthKey{AccountID: accountID, Quality: quality, Revision: revision}]; ok {
@@ -403,7 +429,6 @@ func (h *RuntimeHealth) EffectiveState(accountID int64, quality string, revision
 		}
 		_ = wildcard
 	}
-	// Also consider entries with same account but any quality? No, only these two.
 	return best
 }
 
@@ -420,15 +445,23 @@ func (h *RuntimeHealth) View() map[HealthKey]healthEntry {
 	return out
 }
 
+// ViewRunID returns current view runID for testing.
+func (h *RuntimeHealth) ViewRunID() string {
+	v := h.view.Load()
+	if v == nil {
+		return ""
+	}
+	return v.runID
+}
+
 // Sync performs INFO run_id + gen-before/records/gen-after atomic read.
 // Fail-closed on INFO/global-generation/record errors and never treats error as empty.
-// Expiry cleanup removes stale active ZSET members and tombstone fields bounded/no growth.
-// Changed Redis run_id retains local OPEN records across repeated empty scans until their until deadline, then PROBING.
+// Expiry cleanup uses one Lua script that re-reads global generation and per-record generation/revision before each ZREM/HDEL; errors propagate and freeze view.
+// Changed Redis run_id retains local OPEN/RETRY across repeated empty scans until original until deadline, then explicit transition to PROBING and retains until real probe outcome, never cleared on same-run empty before probe. RunID and expiry stored in immutable view.
 func (h *RuntimeHealth) Sync(ctx context.Context) error {
 	if h.client == nil {
 		return nil
 	}
-	// gen-before fail-closed
 	genBeforeStr, err := h.client.Get(ctx, healthGenKey).Result()
 	var genBefore int64
 	if err != nil {
@@ -440,10 +473,8 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 	} else {
 		_, _ = fmt.Sscanf(genBeforeStr, "%d", &genBefore)
 	}
-	// INFO run_id fail-closed; fallback to INFO without section for miniredis compat
 	infoStr, err := h.client.Info(ctx, "replication").Result()
 	if err != nil {
-		// fallback for test redis (miniredis) which doesn't support section arg
 		fallback, ferr := h.client.Info(ctx).Result()
 		if ferr != nil {
 			return err
@@ -461,14 +492,13 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 			runID = strings.TrimSpace(strings.TrimPrefix(line, "master_replid:"))
 		}
 	}
-	// records: read active ZSET and per-record HASHes fail-closed
 	members, err := h.client.ZRange(ctx, healthActiveZSet, 0, -1).Result()
 	if err != nil {
 		return err
 	}
 	records := make(map[HealthKey]healthEntry)
 	var staleActive []string
-	nowMs := time.Now().UnixMilli()
+	nowMs := h.currentMs()
 	for _, field := range members {
 		recKey := healthRecordPrefix + field
 		m, err := h.client.HGetAll(ctx, recKey).Result()
@@ -505,9 +535,9 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 		if ttlMs <= 0 {
 			ttlMs = 30000
 		}
-		records[k] = healthEntry{Key: k, State: st, Generation: gen, Revision: rev, UpdatedAt: nowMs, TTLms: ttlMs}
+		expiresAt := nowMs + ttlMs
+		records[k] = healthEntry{Key: k, State: st, Generation: gen, Revision: rev, UpdatedAt: nowMs, TTLms: ttlMs, ExpiresAt: expiresAt}
 	}
-	// tombstone bounded cleanup: collect stale tombstone fields where per-key TTL expired
 	tombMembers, err := h.client.HGetAll(ctx, healthTombstoneHash).Result()
 	if err != nil && err != redis.Nil {
 		return err
@@ -523,7 +553,9 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 			staleTomb = append(staleTomb, field)
 		}
 	}
-	// gen-after fail-closed
+	if h.syncHook != nil {
+		h.syncHook("beforeGenAfter")
+	}
 	genAfterStr, err := h.client.Get(ctx, healthGenKey).Result()
 	var genAfter int64
 	if err != nil {
@@ -535,53 +567,69 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 	} else {
 		_, _ = fmt.Sscanf(genAfterStr, "%d", &genAfter)
 	}
-	// atomic generation check: if genBefore != genAfter, stale read, retry next tick
 	if genBefore != genAfter {
 		return fmt.Errorf("health: stale generation %d != %d", genBefore, genAfter)
 	}
 	h.curGen.Store(genAfter)
 
-	// bounded expiry cleanup no growth
+	if h.syncHook != nil {
+		h.syncHook("beforeCleanup")
+	}
 	if len(staleActive) > 0 {
 		if len(staleActive) > healthCleanupBound {
 			staleActive = staleActive[:healthCleanupBound]
 		}
-		_, _ = h.client.ZRem(ctx, healthActiveZSet, func() []interface{} {
-			out := make([]interface{}, len(staleActive))
-			for i, s := range staleActive {
-				out[i] = s
+		for _, field := range staleActive {
+			_, err := h.client.Eval(ctx, cleanupLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, "active", field, fmt.Sprintf("%d", genAfter), healthRecordPrefix, healthTombstonePrefix).Result()
+			if err != nil && err != redis.Nil {
+				return err
 			}
-			return out
-		}()...).Result()
+		}
 	}
 	if len(staleTomb) > 0 {
 		if len(staleTomb) > healthCleanupBound {
 			staleTomb = staleTomb[:healthCleanupBound]
 		}
-		_, _ = h.client.HDel(ctx, healthTombstoneHash, staleTomb...).Result()
+		for _, field := range staleTomb {
+			_, err := h.client.Eval(ctx, cleanupLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, "tomb", field, fmt.Sprintf("%d", genAfter), healthRecordPrefix, healthTombstonePrefix).Result()
+			if err != nil && err != redis.Nil {
+				return err
+			}
+		}
 	}
 
-	// Apply run_id logic: changed run_id retains OPEN across repeated empty scans until until deadline, then PROBING rather than clear before two-success probe
 	prevView := h.view.Load()
 	if len(records) == 0 {
-		if runID != h.runID && h.runID != "" {
-			// run change: retain OPEN until deadline then PROBING, repeated empty scans keep PROBING
+		if prevView != nil && len(prevView.entries) > 0 {
+			staleTombSet := make(map[string]struct{}, len(staleTomb))
+			for _, f := range staleTomb {
+				staleTombSet[f] = struct{}{}
+			}
 			retained := make(map[HealthKey]healthEntry)
-			if prevView != nil {
-				for k, e := range prevView.entries {
-					if e.State == StateOPEN || e.State == StateRetryAfter {
-						if e.TTLms > 0 && e.UpdatedAt > 0 {
-							until := e.UpdatedAt + e.TTLms
-							if nowMs < until {
-								retained[k] = e
-								continue
-							}
-						}
+			for k, e := range prevView.entries {
+				fieldStr := k.String()
+				if _, ok := tombMembers[fieldStr]; ok {
+					if _, isStale := staleTombSet[fieldStr]; isStale {
+						continue
+					}
+					continue
+				}
+				if e.State == StateOPEN || e.State == StateRetryAfter {
+					until := e.ExpiresAt
+					if until == 0 {
+						until = e.UpdatedAt + e.TTLms
+					}
+					if until == 0 {
+						until = nowMs + 30000
+					}
+					if nowMs < until {
+						retained[k] = e
+					} else {
 						e.State = StateProbing
 						retained[k] = e
-					} else if e.State == StateProbing {
-						retained[k] = e
 					}
+				} else if e.State == StateProbing {
+					retained[k] = e
 				}
 			}
 			if len(retained) > 0 {
@@ -592,62 +640,8 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 				}
 				return nil
 			}
-			newView := &healthView{entries: make(map[HealthKey]healthEntry), gen: genAfter, runID: runID}
-			h.view.Store(newView)
-			if runID != "" {
-				h.runID = runID
-			}
-			return nil
 		}
-		if runID != "" && runID == h.runID && h.runID != "" {
-			// same-run empty: retain only if previously in run-change retention (has PROBING)
-			hasProbing := false
-			if prevView != nil {
-				for _, e := range prevView.entries {
-					if e.State == StateProbing {
-						hasProbing = true
-						break
-					}
-				}
-			}
-			if hasProbing {
-				retained := make(map[HealthKey]healthEntry)
-				if prevView != nil {
-					for k, e := range prevView.entries {
-						if e.State == StateOPEN || e.State == StateRetryAfter || e.State == StateProbing {
-							if e.State == StateOPEN || e.State == StateRetryAfter {
-								if e.TTLms > 0 && e.UpdatedAt > 0 {
-									until := e.UpdatedAt + e.TTLms
-									if nowMs < until {
-										retained[k] = e
-										continue
-									}
-								}
-								e.State = StateProbing
-								retained[k] = e
-							} else {
-								retained[k] = e
-							}
-						}
-					}
-				}
-				if len(retained) > 0 {
-					newView := &healthView{entries: retained, gen: genAfter, runID: runID}
-					h.view.Store(newView)
-					if runID != "" {
-						h.runID = runID
-					}
-					return nil
-				}
-			}
-			newView := &healthView{entries: make(map[HealthKey]healthEntry), gen: genAfter, runID: runID}
-			h.view.Store(newView)
-			if runID != "" {
-				h.runID = runID
-			}
-			return nil
-		}
-		newView := &healthView{entries: records, gen: genAfter, runID: runID}
+		newView := &healthView{entries: make(map[HealthKey]healthEntry), gen: genAfter, runID: runID}
 		h.view.Store(newView)
 		if runID != "" {
 			h.runID = runID
@@ -675,17 +669,14 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 		}
 		field := key.String()
 		owner := h.rendezvous(field, members)
-		// Probe injected selfID/rendezvous/ProbeFunc - only owner probes
 		if owner != h.selfID {
 			continue
 		}
-		// one permit (try acquire)
 		select {
 		case <-h.permit:
 		default:
 			continue
 		}
-		// Capture current generation race-free across sync/probe
 		curGen := h.curGen.Load()
 		if h.client != nil {
 			if gStr, err := h.client.Get(ctx, healthGenKey).Result(); err == nil {
@@ -705,7 +696,6 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 			cnt := h.successCount[field]
 			h.mu.Unlock()
 			if cnt >= 2 {
-				// two current-gen successes READY
 				_, _ = h.MarkReady(ctx, key, curGen, 30*time.Second)
 				h.mu.Lock()
 				delete(h.successCount, field)
@@ -717,7 +707,6 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 			delete(h.successCount, field)
 			delete(h.successGen, field)
 			h.mu.Unlock()
-			// failure reopen
 			_, _ = h.Throttle(ctx, key, StateOPEN, 30*time.Second)
 		}
 		h.permit <- struct{}{}

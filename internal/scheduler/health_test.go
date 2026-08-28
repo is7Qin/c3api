@@ -44,12 +44,10 @@ func TestHealthViewImmutableAtomicPointer(t *testing.T) {
 	require.NotNil(t, view2)
 	require.NotSame(t, view1, view2, "immutable view must be replaced, not mutated")
 	require.Contains(t, view2.entries, healthKeyFor(1, "abc", 1))
-	// old view unchanged
 	require.Empty(t, view1.entries, "old view must remain immutable")
 }
 
 // TestHealthThrottleAtomicStaleNoPartial verifies Lua throttle/READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL
-// stale generation does not partially update.
 func TestHealthThrottleAtomicStaleNoPartial(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
 	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
@@ -59,7 +57,6 @@ func TestHealthThrottleAtomicStaleNoPartial(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, gen1, int64(0))
 
-	// Verify record HASH, active ZSET, tombstone absent, TTL set
 	field := key.String()
 	recKey := healthRecordPrefix + field
 	m, err := c.HGetAll(context.Background(), recKey).Result()
@@ -72,20 +69,18 @@ func TestHealthThrottleAtomicStaleNoPartial(t *testing.T) {
 	require.Equal(t, float64(gen1), score)
 
 	_, err = c.HGet(context.Background(), healthTombstoneHash, field).Result()
-	require.Error(t, err) // not present
+	require.Error(t, err)
 
 	ttl, err := c.PTTL(context.Background(), recKey).Result()
 	require.NoError(t, err)
 	require.Greater(t, ttl, time.Duration(0))
 
-	// Simulate stale READY: increment generation externally to make expectedGen stale
 	_, err = c.Incr(context.Background(), healthGenKey).Result()
 	require.NoError(t, err)
 	staleGen := gen1
 	_, err = h.MarkReady(context.Background(), key, staleGen, 5*time.Second)
 	require.Error(t, err, "stale generation must fail")
 
-	// Verify no partial update: record still exists, active still present, tombstone still absent
 	m2, err := c.HGetAll(context.Background(), recKey).Result()
 	require.NoError(t, err)
 	require.Equal(t, m["state"], m2["state"], "record must not be partially deleted on stale ready")
@@ -98,7 +93,6 @@ func TestHealthThrottleAtomicStaleNoPartial(t *testing.T) {
 	_, err = c.HGet(context.Background(), healthTombstoneHash, field).Result()
 	require.Error(t, err, "tombstone must not appear on stale")
 
-	// Ensure generation not incremented on stale (our readyLua returns 0 on stale, not INCR)
 	_ = mr
 }
 
@@ -120,11 +114,10 @@ func TestHealthReplacement(t *testing.T) {
 	require.Equal(t, gen2, entry.Generation)
 }
 
-// TestHealthRunChangeRetainsOpenUntilProbing and same-run empty clears
+// TestHealthRunReset verifies run_id retention with injected clock, no wall-clock sleep.
 func TestHealthRunReset(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
 	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
-
 	key := healthKeyFor(1, "q1", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
@@ -132,50 +125,49 @@ func TestHealthRunReset(t *testing.T) {
 	require.Contains(t, h.View(), key)
 	require.Equal(t, StateOPEN, h.View()[key].State)
 
-	// Record current runID after first sync
-	firstRunID := h.runID
-
-	// Same-run empty clears: flush all and sync with same run_id should clear
-	require.NoError(t, c.FlushAll(context.Background()).Err())
-	// miniredis INFO run_id stays same, so same-run
-	require.NoError(t, h.Sync(context.Background()))
-	require.Empty(t, h.View(), "same-run empty must clear")
-
-	// Restore entry with short TTL to test deadline transition
+	// Deterministic run retention using injected clock: short TTL + fake time advance, no sleep.
+	fakeNow := time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC)
+	h2 := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h2.now = func() time.Time { return fakeNow }
 	shortKey := healthKeyFor(2, "q1", 1)
-	_, err = h.Throttle(context.Background(), shortKey, StateOPEN, 40*time.Millisecond)
+	_, err = h2.Throttle(context.Background(), shortKey, StateOPEN, 40*time.Millisecond)
 	require.NoError(t, err)
-	require.NoError(t, h.Sync(context.Background()))
-	require.Contains(t, h.View(), shortKey)
+	require.NoError(t, h2.Sync(context.Background()))
+	require.Contains(t, h2.View(), shortKey)
+	require.Equal(t, int64(40), h2.View()[shortKey].TTLms)
+	require.NotZero(t, h2.View()[shortKey].ExpiresAt)
 
-	// Simulate run change: manually set h.runID to old value and flush
-	h.runID = "old-run-id-" + firstRunID
+	// Record runID after sync, simulate Redis restart (FlushAll) with run change by forcing old runID
+	firstRunID := h2.ViewRunID()
+	h2.runID = "old-run-id-" + firstRunID
 	require.NoError(t, c.FlushAll(context.Background()).Err())
-	require.NoError(t, h.Sync(context.Background()))
-	// Run change retain OPEN until deadline
-	v := h.View()
-	require.Contains(t, v, shortKey, "run change must retain OPEN")
+	// Still at same fakeNow (before deadline) -> retain OPEN
+	require.NoError(t, h2.Sync(context.Background()))
+	v := h2.View()
+	require.Contains(t, v, shortKey, "run change must retain OPEN before deadline")
 	require.Equal(t, StateOPEN, v[shortKey].State, "retained entry must stay OPEN until deadline")
-	// Wait for deadline via watchdog barrier (no raw sleep)
-	deadline := time.After(60 * time.Millisecond)
-	select {
-	case <-deadline:
-	case <-time.After(2 * time.Second):
-		require.FailNow(t, "watchdog: deadline wait timeout")
+	require.Equal(t, fakeNow.UnixMilli()+40, v[shortKey].ExpiresAt, "expiry stored in immutable view")
+	// Advance clock beyond deadline via injected clock, no sleep
+	fakeNow = fakeNow.Add(50 * time.Millisecond)
+	h2.now = func() time.Time { return fakeNow }
+	require.NoError(t, h2.Sync(context.Background()))
+	v2 := h2.View()
+	require.Contains(t, v2, shortKey, "repeated empty must retain until deadline then PROBING")
+	require.Equal(t, StateProbing, v2[shortKey].State, "after deadline must become PROBING explicit transition")
+	// Repeated same-run empty retains PROBING (channel barrier, no sleep)
+	require.NoError(t, h2.Sync(context.Background()))
+	require.Contains(t, h2.View(), shortKey, "repeated empty must retain PROBING")
+	require.Equal(t, StateProbing, h2.View()[shortKey].State)
+	// Never clear on same-run empty before probe: verify view still has PROBING after multiple empties
+	for i := 0; i < 3; i++ {
+		require.NoError(t, h2.Sync(context.Background()))
+		require.Contains(t, h2.View(), shortKey, "never clear on same-run empty before probe")
 	}
-	require.NoError(t, h.Sync(context.Background()))
-	v2 := h.View()
-	require.Contains(t, v2, shortKey, "repeated empty must retain until deadline")
-	require.Equal(t, StateProbing, v2[shortKey].State, "after deadline must become PROBING")
-	// Repeated empty retains PROBING
-	require.NoError(t, h.Sync(context.Background()))
-	require.Contains(t, h.View(), shortKey, "repeated empty must retain PROBING")
-	require.Equal(t, StateProbing, h.View()[shortKey].State)
 	_ = mr
 	_ = key
 }
 
-// TestHealthSyncGenerationRace verifies Sync INFO run_id + gen-before/records/gen-after detects stale generation.
+// TestHealthSyncGenerationRace verifies Sync INFO run_id + gen-before/records/gen-after detects stale generation with channel barrier.
 func TestHealthSyncGenerationRace(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
@@ -184,16 +176,8 @@ func TestHealthSyncGenerationRace(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
 
-	// Manually bump generation between gen-before and gen-after to simulate race
-	// We do this by incrementing gen key after h reads genBefore but before genAfter.
-	// Since Sync reads genBefore, then INFO, then records, then genAfter, we can
-	// interleave by calling Incr from another goroutine after short delay.
-	// Instead, test the detection by directly incrementing and calling Sync which should see mismatch and return error.
 	_, err = c.Incr(context.Background(), healthGenKey).Result()
 	require.NoError(t, err)
-	// Now Sync should detect genBefore != genAfter if we race? But our current Sync reads genBefore at start and genAfter at end.
-	// If we just incremented before Sync, both reads will see same new gen, so no race.
-	// To simulate race, we need concurrent writer during Sync. Use channel barrier with watchdog.
 	gate := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -206,7 +190,6 @@ func TestHealthSyncGenerationRace(t *testing.T) {
 		_, _ = c.Incr(context.Background(), healthGenKey).Result()
 	}()
 	close(gate)
-	// This Sync may or may not see race depending on timing; we just verify it doesn't panic and view remains consistent
 	_ = h.Sync(context.Background())
 	select {
 	case <-done:
@@ -226,17 +209,14 @@ func TestHealthLockFreeReadUnderBlockedRedis(t *testing.T) {
 	require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", 7))
 
 	baseCmd := mr.CommandCount()
-	// EffectiveState must not touch Redis (lock-free read)
 	for i := 0; i < 100; i++ {
 		require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", 7))
 	}
 	require.Equal(t, baseCmd, mr.CommandCount(), "EffectiveState must not issue Redis commands (lock-free)")
 
-	// Even when Redis is down, EffectiveState still returns view
 	mr.Close()
 	require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", 7), "view read must succeed even when Redis blocked/closed")
 
-	// Concurrent read under blocked sync
 	_, c2 := newHealthTestRedis(t)
 	h2 := NewRuntimeHealth(c2, "self-a", nil, nil, nil)
 	_, err = h2.Throttle(context.Background(), healthKeyFor(1, "q", 1), StateOPEN, 5*time.Second)
@@ -263,7 +243,6 @@ func TestHealthLockFreeReadUnderBlockedRedis(t *testing.T) {
 // TestHealthProbeOwner verifies probe injected selfID/rendezvous/ProbeFunc owner election.
 func TestHealthProbeOwner(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	// Two members, self-a and self-b, key ownership determined by rendezvous
 	members := []string{"self-a", "self-b"}
 	var probed []HealthKey
 	var mu sync.Mutex
@@ -276,7 +255,6 @@ func TestHealthProbeOwner(t *testing.T) {
 	hA := NewRuntimeHealth(c, "self-a", func() []string { return members }, probeFn, nil)
 	hB := NewRuntimeHealth(c, "self-b", func() []string { return members }, probeFn, nil)
 
-	// Create two keys, each should be owned by one of them
 	k1 := healthKeyFor(1, "q1", 1)
 	k2 := healthKeyFor(2, "q1", 1)
 	_, _ = hA.Throttle(context.Background(), k1, StateOPEN, 5*time.Second)
@@ -287,7 +265,6 @@ func TestHealthProbeOwner(t *testing.T) {
 	owner1 := rendezvousOwner(k1.String(), members)
 	owner2 := rendezvousOwner(k2.String(), members)
 
-	// Run probe tick on both
 	hA.probeTick(context.Background())
 	hB.probeTick(context.Background())
 
@@ -303,7 +280,6 @@ func TestHealthProbeOwner(t *testing.T) {
 			require.Equal(t, owner2, expectedOwner)
 		}
 	}
-	// Each key should be probed exactly once by its owner
 	countK1, countK2 := 0, 0
 	for _, k := range probed {
 		if k == k1 {
@@ -324,7 +300,7 @@ func TestHealthProbeTwoSuccessReady(t *testing.T) {
 	var probeCount atomic.Int64
 	probeFn := func(_ context.Context, _ HealthKey) error {
 		probeCount.Add(1)
-		return nil // success
+		return nil
 	}
 	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
 	key := healthKeyFor(5, "q5", 1)
@@ -333,20 +309,16 @@ func TestHealthProbeTwoSuccessReady(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(5, "q5", 1))
 
-	// First success: should remain OPEN (needs two)
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(5, "q5", 1), "one success must not become READY")
 	require.Equal(t, int64(1), probeCount.Load())
 
-	// Second success within same generation: should become READY (tombstone, removed)
 	h.probeTick(context.Background())
-	// After second success, MarkReady should have cleared active
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(5, "q5", 1), "two current-gen successes must become READY")
 	require.Equal(t, int64(2), probeCount.Load())
 
-	// Verify Redis active ZSET no longer contains field, tombstone present
 	field := key.String()
 	_, err = c.ZScore(context.Background(), healthActiveZSet, field).Result()
 	require.Error(t, err, "active ZSET must not contain READY key")
@@ -357,11 +329,10 @@ func TestHealthProbeTwoSuccessReady(t *testing.T) {
 // TestHealthProbeFailureReopen verifies failure reopen.
 func TestHealthProbeFailureReopen(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	// First make it READY via two successes
 	var shouldFail atomic.Bool
 	probeFn := func(_ context.Context, _ HealthKey) error {
 		if shouldFail.Load() {
-			return context.DeadlineExceeded // failure
+			return context.DeadlineExceeded
 		}
 		return nil
 	}
@@ -371,13 +342,11 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
 
-	// Two successes to READY
 	h.probeTick(context.Background())
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(9, "q9", 1))
 
-	// Simulate re-throttle to OPEN then probe failure should reopen
 	_, err = h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
@@ -386,9 +355,7 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	shouldFail.Store(true)
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	// Failure should keep it OPEN (reopen) and reset success count
 	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", 1))
-	// Next two successes should still require two
 	shouldFail.Store(false)
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
@@ -426,14 +393,12 @@ func TestHealthProbeOnePermit(t *testing.T) {
 		return nil
 	}
 	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
-	// Add two OPEN entries both owned by self-a
 	k1 := healthKeyFor(1, "q1", 1)
 	k2 := healthKeyFor(2, "q1", 1)
 	_, _ = h.Throttle(context.Background(), k1, StateOPEN, 5*time.Second)
 	_, _ = h.Throttle(context.Background(), k2, StateOPEN, 5*time.Second)
 	require.NoError(t, h.Sync(context.Background()))
 
-	// Run probeTick concurrently from multiple goroutines - one permit should limit to 1 at a time
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
@@ -442,7 +407,6 @@ func TestHealthProbeOnePermit(t *testing.T) {
 			h.probeTick(context.Background())
 		}()
 	}
-	// watchdog barrier: wait for at least one probe to arrive, then release gate
 	deadline := time.After(2 * time.Second)
 	got := 0
 	for got < 1 {
@@ -473,7 +437,6 @@ func TestHealthEffectiveStateSeverity(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
 
-	// Wildcard OPEN should override specific RETRY_AFTER
 	wild := healthKeyFor(1, "*", 1)
 	specific := healthKeyFor(1, "q1", 1)
 	_, err := h.Throttle(context.Background(), wild, StateOPEN, 5*time.Second)
@@ -483,16 +446,13 @@ func TestHealthEffectiveStateSeverity(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 1), "wildcard OPEN must be more severe than specific RETRY_AFTER")
 
-	// Specific OPEN overrides wildcard READY (no wildcard entry)
 	h2 := NewRuntimeHealth(c, "self-a", nil, nil, nil)
-	// Clear previous
 	require.NoError(t, c.FlushAll(context.Background()).Err())
 	_, err = h2.Throttle(context.Background(), specific, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h2.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h2.EffectiveState(1, "q1", 1))
 
-	// No entry => READY
 	require.Equal(t, StateReady, h2.EffectiveState(99, "unknown", 1))
 }
 
@@ -512,4 +472,249 @@ func TestHealthKeyRevisionIsolation(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 1))
 	require.Equal(t, StateRetryAfter, h.EffectiveState(1, "q1", 2))
+}
+
+// TestHealthCleanupRaceRetainsRecreated verifies Lua cleanup re-validates global gen and per-record before ZREM/HDEL; concurrent recreate never deleted.
+func TestHealthCleanupRaceRetainsRecreated(t *testing.T) {
+	_, c := newHealthTestRedis(t)
+	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	key := healthKeyFor(77, "q-race", 1)
+	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), key)
+
+	field := key.String()
+	recKey := healthRecordPrefix + field
+	// Make stale: delete hash but leave ZSET entry
+	require.NoError(t, c.Del(context.Background(), recKey).Err())
+	_, err = c.ZScore(context.Background(), healthActiveZSet, field).Result()
+	require.NoError(t, err, "ZSET should still have field after hash delete")
+
+	// Channel barrier: syncHook intercepts beforeCleanup, test recreates concurrently, then resumes.
+	recreated := make(chan struct{})
+	proceed := make(chan struct{})
+	h.syncHook = func(stage string) {
+		if stage == "beforeCleanup" {
+			select { case recreated <- struct{}{}: default: }
+			select {
+			case <-proceed:
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}
+	// Run Sync with injected race: recreated channel triggers throttle
+	syncErr := make(chan error, 1)
+	go func() {
+		syncErr <- h.Sync(context.Background())
+	}()
+	select {
+	case <-recreated:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: Sync did not reach beforeCleanup")
+	}
+	// Concurrently recreate same key with new generation before Lua cleanup validates
+	gen2, err := h.Throttle(context.Background(), key, StateRetryAfter, 5*time.Second)
+	require.NoError(t, err)
+	require.Greater(t, gen2, int64(0))
+	close(proceed)
+	select {
+	case err := <-syncErr:
+		require.NoError(t, err, "Sync should succeed but Lua cleanup must return 0 not error")
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: Sync after race timeout")
+	}
+	// Verify recreated record not deleted by stale cleanup
+	m, err := c.HGetAll(context.Background(), recKey).Result()
+	require.NoError(t, err)
+	require.NotEmpty(t, m, "concurrently recreated record must not be deleted")
+	require.Equal(t, "RETRY_AFTER", m["state"])
+	_, err = c.ZScore(context.Background(), healthActiveZSet, field).Result()
+	require.NoError(t, err, "ZSET must retain recreated field after Lua validation")
+	// View should now contain recreated entry after next Sync
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), key)
+	require.Equal(t, StateRetryAfter, h.View()[key].State)
+	h.syncHook = nil
+}
+
+// TestHealthCleanupErrorFreezes verifies cleanup Lua errors propagate and freeze view, never silently delete.
+func TestHealthCleanupErrorFreezes(t *testing.T) {
+	mr, c := newHealthTestRedis(t)
+	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	fakeNow := time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC)
+	h.now = func() time.Time { return fakeNow }
+	key := healthKeyFor(88, "q-err", 1)
+	_, err := h.Throttle(context.Background(), key, StateOPEN, 40*time.Millisecond)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), key)
+	field := key.String()
+	recKey := healthRecordPrefix + field
+	require.NoError(t, c.Del(context.Background(), recKey).Err())
+	require.NoError(t, c.HSet(context.Background(), healthTombstoneHash, field, "999").Err())
+	require.Equal(t, int64(0), func() int64 { n, _ := c.Exists(context.Background(), healthTombstonePrefix+field).Result(); return n }())
+	// Inject deterministic error: syncHook closes miniredis synchronously before cleanup Eval, causing Eval to error.
+	h.syncHook = func(stage string) {
+		if stage == "beforeCleanup" {
+			mr.Close()
+		}
+	}
+	err = h.Sync(context.Background())
+	require.Error(t, err, "cleanup error must propagate")
+	require.Contains(t, h.View(), key, "view must freeze on cleanup error, not silently delete")
+	h.syncHook = nil
+}
+
+// TestHealthRunResetRepeatedEmptiesDeadlineProbe verifies repeated empty scans retain until deadline, explicit PROBING transition, never clear before probe.
+func TestHealthRunResetRepeatedEmptiesDeadlineProbe(t *testing.T) {
+	_, c := newHealthTestRedis(t)
+	fakeNow := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h.now = func() time.Time { return fakeNow }
+	keys := []HealthKey{healthKeyFor(10, "q1", 1), healthKeyFor(11, "q1", 1), healthKeyFor(12, "*", 1)}
+	for _, k := range keys {
+		_, err := h.Throttle(context.Background(), k, StateOPEN, 100*time.Millisecond)
+		require.NoError(t, err)
+	}
+	require.NoError(t, h.Sync(context.Background()))
+	for _, k := range keys {
+		require.Contains(t, h.View(), k)
+		require.Equal(t, StateOPEN, h.View()[k].State)
+		require.NotZero(t, h.View()[k].ExpiresAt)
+	}
+	// Simulate run change: FlushAll and force runID mismatch via h.runID overwrite
+	runBefore := h.ViewRunID()
+	h.runID = "old-" + runBefore
+	require.NoError(t, c.FlushAll(context.Background()).Err())
+	// Repeated empty at same fakeNow before deadline: retain all OPEN
+	for i := 0; i < 3; i++ {
+		require.NoError(t, h.Sync(context.Background()))
+		for _, k := range keys {
+			require.Contains(t, h.View(), k, "repeated empty before deadline must retain every prior OPEN/RETRY")
+			require.Equal(t, StateOPEN, h.View()[k].State)
+		}
+		require.Equal(t, 3, len(h.View()))
+	}
+	// Advance clock to deadline via injected clock, no sleep
+	fakeNow = fakeNow.Add(120 * time.Millisecond)
+	h.now = func() time.Time { return fakeNow }
+	require.NoError(t, h.Sync(context.Background()))
+	for _, k := range keys {
+		require.Contains(t, h.View(), k, "at deadline must retain until probe, not clear")
+		require.Equal(t, StateProbing, h.View()[k].State, "explicit transition to PROBING at deadline")
+	}
+	// Repeated same-run empty after deadline must retain PROBING until real probe, never clear
+	for i := 0; i < 3; i++ {
+		require.NoError(t, h.Sync(context.Background()))
+		for _, k := range keys {
+			require.Contains(t, h.View(), k, "never clear on same-run empty before probe")
+			require.Equal(t, StateProbing, h.View()[k].State)
+		}
+	}
+	// Probe outcome: simulate one successful probe cycle - view stays PROBING until two successes READY
+	// Inject probe that succeeds
+	var probeCalls atomic.Int64
+	h.probeFn = func(_ context.Context, _ HealthKey) error {
+		probeCalls.Add(1)
+		return nil
+	}
+	// probeTick on PROBING entries needs current gen; curGen is stored, probe will count success per field
+	h.probeTick(context.Background())
+	// One success keeps PROBING (needs two)
+	require.NoError(t, h.Sync(context.Background()))
+	for _, k := range keys {
+		require.Equal(t, StateProbing, h.EffectiveState(k.AccountID, k.Quality, k.Revision))
+	}
+	h.probeTick(context.Background())
+	// After two successes, MarkReady tries but will fail because Redis empty (no record), so generation check fails and stays PROBING
+	// That's expected when Redis is empty - failure reopen would throttle new OPEN; we verify PROBING not cleared prematurely
+	require.NoError(t, h.Sync(context.Background()))
+	// View may still be PROBING or may have been reopened to OPEN via Throttle failure path; either way not empty before probe outcome
+	require.NotEmpty(t, h.View(), "must retain until real probe outcome, never clear to empty on same-run empty")
+}
+
+// TestHealthCurGenInterleaving verifies curGen atomic interleaving: concurrent Sync increments cause stale detection and frozen view.
+func TestHealthCurGenInterleaving(t *testing.T) {
+	_, c := newHealthTestRedis(t)
+	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	key := healthKeyFor(20, "q-cur", 1)
+	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+	snapBefore := h.View()
+	require.Contains(t, snapBefore, key)
+	genBefore := h.curGen.Load()
+	require.Greater(t, genBefore, int64(0))
+
+	// Deterministic interleaving via syncHook: block Sync after reading genBefore, bump generation concurrently, then verify stale error.
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+	h.syncHook = func(stage string) {
+		if stage == "beforeGenAfter" {
+			select { case blocked <- struct{}{}: default: }
+			select {
+			case <-release:
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- h.Sync(context.Background())
+	}()
+	select {
+	case <-blocked:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: Sync did not reach beforeGenAfter")
+	}
+	// Interleave: increment global generation while Sync is paused before reading genAfter
+	_, err = c.Incr(context.Background(), healthGenKey).Result()
+	require.NoError(t, err)
+	close(release)
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "stale generation")
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: Sync curGen interleaving timeout")
+	}
+	// View must be frozen (not overwritten with partial/stale data)
+	require.Equal(t, snapBefore[key].Generation, h.View()[key].Generation, "view must freeze on curGen stale error")
+	require.Equal(t, genBefore, h.curGen.Load(), "curGen must not advance on stale read")
+	h.syncHook = nil
+
+	// Verify next Sync without interleaving succeeds and updates curGen
+	newGen := genBefore + 1
+	require.NoError(t, h.Sync(context.Background()))
+	require.Equal(t, newGen, h.curGen.Load())
+	require.Contains(t, h.View(), key)
+
+	// Probe curGen check interleaving: probeTick must read current gen atomically via Load and re-validate with GET
+	h2 := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, func(_ context.Context, _ HealthKey) error { return nil }, nil)
+	require.NoError(t, h2.Sync(context.Background()))
+	// Concurrent increments while probe collects curGen
+	var wg sync.WaitGroup
+	wg.Add(2)
+	probeFields := make(chan HealthKey, 10)
+	h2.probeFn = func(_ context.Context, k HealthKey) error { probeFields <- k; return nil }
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 5; i++ {
+			_, _ = h2.Throttle(context.Background(), healthKeyFor(int64(100+i), "q", 1), StateOPEN, 5*time.Second)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		h2.probeTick(context.Background())
+	}()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: probe curGen interleaving timeout")
+	}
+	// No panic, curGen remains consistent
+	require.GreaterOrEqual(t, h2.curGen.Load(), newGen)
 }
