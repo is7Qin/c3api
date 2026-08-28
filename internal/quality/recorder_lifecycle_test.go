@@ -15,7 +15,8 @@ func TestQualityRecorder_Complete_HoldsMutex_NoDeadlock(t *testing.T) {
 	require.NoError(t, err)
 	f := fp(101)
 	q := qc(101)
-	cell := r.GetOrCreateCell(f, q)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
 	var ctx AttemptContext
 	require.True(t, r.InitAttemptContext(cell, &ctx))
 	r.mu.Lock()
@@ -32,7 +33,7 @@ func TestQualityRecorder_Complete_HoldsMutex_NoDeadlock(t *testing.T) {
 	}
 	r.mu.Unlock()
 	<-done
-	a, _, _, _, _, _, _, _, _, _, ok := r.CellStats(f, q)
+	a, _, _, _, _, _, _, _, _, _, ok := r.CellStats(k)
 	require.True(t, ok)
 	require.Equal(t, int64(1), a)
 }
@@ -48,7 +49,8 @@ func TestQualityRecorder_ConcurrentRetirePinPressure(t *testing.T) {
 			defer wg.Done()
 			f := fp(byte(seed % 20))
 			q := qc(byte(seed % 20))
-			cell := r.GetOrCreateCell(f, q)
+			k := keyOf(f, q)
+			cell := r.GetOrCreateCell(k)
 			if cell == nil {
 				return
 			}
@@ -64,7 +66,7 @@ func TestQualityRecorder_ConcurrentRetirePinPressure(t *testing.T) {
 			defer wg.Done()
 			f := fp(byte(seed % 20))
 			q := qc(byte(seed % 20))
-			r.Retire(f, q)
+			r.Retire(keyOf(f, q))
 		}(i)
 	}
 	wg.Wait()
@@ -77,7 +79,8 @@ func TestQualityRecorder_CloseAdmissionRace(t *testing.T) {
 	require.NoError(t, err)
 	f := fp(110)
 	q := qc(110)
-	cell := r.GetOrCreateCell(f, q)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
 	var ctx AttemptContext
 	require.True(t, r.InitAttemptContext(cell, &ctx))
 	var wg sync.WaitGroup
@@ -89,14 +92,13 @@ func TestQualityRecorder_CloseAdmissionRace(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 20; i++ {
-			ac := r.Begin(fp(byte(120+i)), qc(byte(120+i)))
+			k2 := keyOf(fp(byte(120+i)), qc(byte(120+i)))
+			ac := r.Begin(k2)
 			if !ac.IsZero() {
 				ac.Cancel()
 			}
 		}
 	}()
-	// CloseWithContext blocks until inflight drains, so the outstanding
-	// attempt must complete before wg.Wait or the close never unblocks.
 	tt := int64(100)
 	ctx.Complete(true, &tt, 1, 0, 0)
 	wg.Wait()
@@ -104,7 +106,7 @@ func TestQualityRecorder_CloseAdmissionRace(t *testing.T) {
 	require.NoError(t, err)
 	snap := r.Snapshot()
 	require.NotNil(t, snap)
-	a, s, _, _, _, _, _, _, _, _, ok := r.CellStats(f, q)
+	a, s, _, _, _, _, _, _, _, _, ok := r.CellStats(k)
 	require.True(t, ok)
 	require.Equal(t, int64(1), a)
 	require.Equal(t, int64(1), s)
@@ -114,7 +116,7 @@ func TestQualityRecorder_CloseAdmissionRace(t *testing.T) {
 func TestQualityRecorder_SnapshotImmutability(t *testing.T) {
 	r, err := NewRecorder(50000)
 	require.NoError(t, err)
-	require.NoError(t, r.AddQualityRow(1000, fp(1), qc(1)))
+	require.NoError(t, r.AddQualityRow(1000, keyOf(fp(1), qc(1))))
 	require.NoError(t, r.AddFlowMinute(1000, [8]int64{1, 2, 3, 4, 5, 6, 7, 8}))
 	snap := r.Snapshot()
 	for _, rows := range snap.Quality {
@@ -136,13 +138,13 @@ func TestQualityRecorder_SnapshotImmutability(t *testing.T) {
 	for _, fm := range snap2.Flow {
 		require.NotEqual(t, int64(9999), fm.Count(0))
 	}
-	// final snapshot immutability after Close
 	r2, err := NewRecorder(50000)
 	require.NoError(t, err)
-	require.NoError(t, r2.AddQualityRow(2000, fp(2), qc(2)))
+	require.NoError(t, r2.AddQualityRow(2000, keyOf(fp(2), qc(2))))
 	f := fp(2)
 	q := qc(2)
-	cell := r2.GetOrCreateCell(f, q)
+	k2 := keyOf(f, q)
+	cell := r2.GetOrCreateCell(k2)
 	var ctx AttemptContext
 	require.True(t, r2.InitAttemptContext(cell, &ctx))
 	tt := int64(100)
@@ -169,7 +171,8 @@ func TestQualityRecorder_CloseWaitsZeroWithoutMissedCloseRace(t *testing.T) {
 	require.NoError(t, err)
 	f := fp(130)
 	q := qc(130)
-	cell := r.GetOrCreateCell(f, q)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
 	var ctx AttemptContext
 	require.True(t, r.InitAttemptContext(cell, &ctx))
 	done := make(chan struct{})

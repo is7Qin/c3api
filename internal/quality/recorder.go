@@ -7,6 +7,9 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 const (
@@ -14,7 +17,7 @@ const (
 	DefaultPendingCapBytes   = 256 * 1024 * 1024
 	DefaultMinuteBucketsCap  = 4096
 	EstimatedCellBytes       = 256
-	EstimatedQualityRowBytes = 256
+	EstimatedQualityRowBytes = 512
 	EstimatedFlowMinuteBytes = 4096
 	q32Scale                 = 1 << 32
 	retiredBit               = uint64(1) << 63
@@ -22,9 +25,23 @@ const (
 	inflightMask             = ^closedBit
 )
 
+// Key is the canonical routing identity of a quality cell/row: the Task4
+// unique index (identity_version, route_class_id, quality_class_id,
+// candidate_fingerprint) minus the minute bucket.
 type Key struct {
-	FP [32]byte
-	QC [32]byte
+	IdentityVersion int16
+	RouteClassID    [32]byte
+	QualityClassID  [32]byte
+	Fingerprint     [32]byte
+}
+
+func CanonicalKey(routeClassID, qualityClassID, fingerprint [32]byte) Key {
+	return Key{
+		IdentityVersion: int16(domain.RoutingIdentityVersion),
+		RouteClassID:    routeClassID,
+		QualityClassID:  qualityClassID,
+		Fingerprint:     fingerprint,
+	}
 }
 
 type Observation struct {
@@ -41,7 +58,6 @@ type Observation struct {
 	IsCancel            bool
 	IsLocal             bool
 	IsReservation       bool
-	IsMalformed         bool
 }
 
 const (
@@ -81,6 +97,7 @@ func toSqQ32(ttft int64) int64 {
 type Cell struct {
 	key          Key
 	state        atomic.Uint64
+	converged    bool
 	attempts     atomic.Int64
 	successes    atomic.Int64
 	ttftCount    atomic.Int64
@@ -159,6 +176,10 @@ func NewQualityMinute(minute int64, key Key) *QualityMinute {
 }
 func (q *QualityMinute) Minute() int64                { return q.minute }
 func (q *QualityMinute) Key() Key                     { return q.key }
+func (q *QualityMinute) IdentityVersion() int16       { return q.key.IdentityVersion }
+func (q *QualityMinute) RouteClassID() [32]byte       { return q.key.RouteClassID }
+func (q *QualityMinute) QualityClassID() [32]byte     { return q.key.QualityClassID }
+func (q *QualityMinute) Fingerprint() [32]byte        { return q.key.Fingerprint }
 func (q *QualityMinute) Attempts() int64              { return q.attempts }
 func (q *QualityMinute) SetAttempts(v int64)          { q.attempts = v }
 func (q *QualityMinute) Successes() int64             { return q.successes }
@@ -195,6 +216,28 @@ func (q *QualityMinute) SetImages(v int64)            { q.images = v }
 func (q *QualityMinute) Clone() *QualityMinute {
 	cp := *q
 	return &cp
+}
+
+// merge folds another same-identity same-minute absolute row into this one.
+func (q *QualityMinute) merge(o *QualityMinute) {
+	q.attempts += o.attempts
+	q.successes += o.successes
+	q.err429 += o.err429
+	q.err4xx += o.err4xx
+	q.err5xx += o.err5xx
+	q.errNetwork += o.errNetwork
+	q.ttftCount += o.ttftCount
+	q.sumQ32 += o.sumQ32
+	q.sumSqQ32 += o.sumSqQ32
+	for i := range q.hist {
+		q.hist[i] += o.hist[i]
+	}
+	q.inputTokens += o.inputTokens
+	q.outputTokens += o.outputTokens
+	q.cacheRead += o.cacheRead
+	q.cacheCreate += o.cacheCreate
+	q.calls += o.calls
+	q.images += o.images
 }
 
 type FlowMinute struct {
@@ -252,6 +295,7 @@ func (e errInvalid) Error() string { return string(e) }
 type Recorder struct {
 	effectiveMaxInflight int64
 	mu                   sync.Mutex
+	now                  func() time.Time
 	active               map[Key]*Cell
 	retired              []*Cell
 	retiredIndex         map[Key]int
@@ -275,6 +319,7 @@ func NewRecorder(effectiveMaxInflight int64) (*Recorder, error) {
 	}
 	return &Recorder{
 		effectiveMaxInflight: effectiveMaxInflight,
+		now:                  time.Now,
 		active:               make(map[Key]*Cell),
 		retired:              make([]*Cell, 0),
 		retiredIndex:         make(map[Key]int),
@@ -322,11 +367,10 @@ func (r *Recorder) decAdmissionAndMaybeSignal() {
 	}
 }
 
-func (r *Recorder) GetOrCreateCell(fp [32]byte, qc [32]byte) *Cell {
+func (r *Recorder) GetOrCreateCell(key Key) *Cell {
 	if r.isClosed() {
 		return nil
 	}
-	key := Key{FP: fp, QC: qc}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.isClosed() {
@@ -337,18 +381,8 @@ func (r *Recorder) GetOrCreateCell(fp [32]byte, qc [32]byte) *Cell {
 	}
 	if idx, ok := r.retiredIndex[key]; ok {
 		c := r.retired[idx]
-		if c.isRetired() && !c.isReclaimable() {
+		if !c.isReclaimable() {
 			return nil
-		}
-		if c.isReclaimable() {
-			delete(r.retiredIndex, key)
-			r.retired = append(r.retired[:idx], r.retired[idx+1:]...)
-			for i := idx; i < len(r.retired); i++ {
-				r.retiredIndex[r.retired[i].key] = i
-			}
-			r.active[key] = c
-			c.state.Store(0)
-			return c
 		}
 		delete(r.retiredIndex, key)
 		r.retired = append(r.retired[:idx], r.retired[idx+1:]...)
@@ -357,6 +391,7 @@ func (r *Recorder) GetOrCreateCell(fp [32]byte, qc [32]byte) *Cell {
 		}
 		r.active[key] = c
 		c.state.Store(0)
+		c.converged = false
 		return c
 	}
 	c := &Cell{key: key}
@@ -413,14 +448,14 @@ func (r *Recorder) NewAttemptContext(cell *Cell) *AttemptContext {
 	return &AttemptContext{cell: cell, recorder: r}
 }
 
-func (r *Recorder) Begin(fp [32]byte, qc [32]byte) *AttemptContext {
+func (r *Recorder) Begin(key Key) *AttemptContext {
 	if r.isClosed() || r.finalSnapshot.Load() != nil {
 		return &AttemptContext{recorder: r}
 	}
 	if !r.tryIncAdmission() {
 		return &AttemptContext{recorder: r}
 	}
-	cell := r.GetOrCreateCell(fp, qc)
+	cell := r.GetOrCreateCell(key)
 	if cell == nil {
 		r.decAdmissionAndMaybeSignal()
 		return &AttemptContext{recorder: r}
@@ -447,14 +482,12 @@ func (r *Recorder) tryEvictQualityLocked() bool {
 	var oldestMinute int64
 	var oldestKey Key
 	found := false
-	first := true
 	for minute, rows := range r.pendingQuality {
 		for k := range rows {
-			if first || minute < oldestMinute {
+			if !found || minute < oldestMinute {
 				oldestMinute = minute
 				oldestKey = k
 				found = true
-				first = false
 			}
 		}
 	}
@@ -465,6 +498,7 @@ func (r *Recorder) tryEvictQualityLocked() bool {
 	delete(rows, oldestKey)
 	if len(rows) == 0 {
 		delete(r.pendingQuality, oldestMinute)
+		r.minuteOverflow.Add(1)
 	}
 	r.pendingBytes.Add(-EstimatedQualityRowBytes)
 	r.qualityOverflow.Add(1)
@@ -490,8 +524,8 @@ func (r *Recorder) tryEvictFlowLocked() bool {
 	return true
 }
 
-func (r *Recorder) AddQualityRow(minute int64, fp [32]byte, qc [32]byte) error {
-	return r.EnqueueQualityMinute(&QualityMinute{minute: minute, key: Key{FP: fp, QC: qc}})
+func (r *Recorder) AddQualityRow(minute int64, key Key) error {
+	return r.EnqueueQualityMinute(NewQualityMinute(minute, key))
 }
 
 func (r *Recorder) EnqueueQualityMinute(qm *QualityMinute) error {
@@ -506,35 +540,37 @@ func (r *Recorder) EnqueueQualityMinute(qm *QualityMinute) error {
 	if r.isClosed() || r.finalSnapshot.Load() != nil {
 		return ErrCapacity
 	}
-	minute := qm.minute
-	key := qm.key
-	if rows, ok := r.pendingQuality[minute]; ok {
-		if _, ok2 := rows[key]; ok2 {
+	return r.enqueueQualityMinuteLocked(qm)
+}
+
+// enqueueQualityMinuteLocked stores a canonical absolute quality row. Duplicate
+// (minute, key) rows merge so no counted stats are lost. The conservative fixed
+// charge is validated and eviction pressure applied BEFORE the insert, so an
+// rejected row leaves the pending state untouched (no false drop).
+func (r *Recorder) enqueueQualityMinuteLocked(qm *QualityMinute) error {
+	if rows, ok := r.pendingQuality[qm.minute]; ok {
+		if existing, ok2 := rows[qm.key]; ok2 {
+			existing.merge(qm)
 			return nil
 		}
 	}
-	cp := qm.Clone()
-	if _, ok := r.pendingQuality[minute]; !ok {
-		r.pendingQuality[minute] = make(map[Key]*QualityMinute)
+	charge := int64(EstimatedQualityRowBytes)
+	if charge > r.pendingCapBytes {
+		return ErrCapacity
 	}
-	r.pendingQuality[minute][key] = cp
-	r.pendingBytes.Add(EstimatedQualityRowBytes)
-	for r.pendingBytes.Load() > r.pendingCapBytes || r.distinctMinuteCountLocked() > r.minuteCap {
-		removed := false
-		if r.tryEvictQualityLocked() {
-			removed = true
-		} else if r.tryEvictFlowLocked() {
-			removed = true
-		}
-		if !removed {
-			r.pendingBytes.Add(-EstimatedQualityRowBytes)
-			delete(r.pendingQuality[minute], key)
-			if len(r.pendingQuality[minute]) == 0 {
-				delete(r.pendingQuality, minute)
-			}
+	_, inQ := r.pendingQuality[qm.minute]
+	_, inF := r.pendingFlow[qm.minute]
+	newMinute := !inQ && !inF
+	for r.pendingBytes.Load()+charge > r.pendingCapBytes || (newMinute && r.distinctMinuteCountLocked() >= r.minuteCap) {
+		if !r.tryEvictQualityLocked() && !r.tryEvictFlowLocked() {
 			return ErrCapacity
 		}
 	}
+	if _, ok := r.pendingQuality[qm.minute]; !ok {
+		r.pendingQuality[qm.minute] = make(map[Key]*QualityMinute)
+	}
+	r.pendingQuality[qm.minute][qm.key] = qm.Clone()
+	r.pendingBytes.Add(charge)
 	return nil
 }
 
@@ -554,26 +590,21 @@ func (r *Recorder) EnqueueFlowMinute(fm *FlowMinute) error {
 	if r.isClosed() || r.finalSnapshot.Load() != nil {
 		return ErrCapacity
 	}
-	minute := fm.minute
-	if _, ok := r.pendingFlow[minute]; ok {
+	if existing, ok := r.pendingFlow[fm.minute]; ok {
+		*existing = *fm.Clone()
 		return nil
 	}
-	cp := fm.Clone()
-	r.pendingFlow[minute] = cp
-	r.pendingBytes.Add(EstimatedFlowMinuteBytes)
-	for r.pendingBytes.Load() > r.pendingCapBytes || r.distinctMinuteCountLocked() > r.minuteCap {
-		removed := false
-		if r.tryEvictQualityLocked() {
-			removed = true
-		} else if r.tryEvictFlowLocked() {
-			removed = true
-		}
-		if !removed {
-			r.pendingBytes.Add(-EstimatedFlowMinuteBytes)
-			delete(r.pendingFlow, minute)
+	charge := int64(EstimatedFlowMinuteBytes)
+	if charge > r.pendingCapBytes {
+		return ErrCapacity
+	}
+	for r.pendingBytes.Load()+charge > r.pendingCapBytes || r.distinctMinuteCountLocked() >= r.minuteCap {
+		if !r.tryEvictQualityLocked() && !r.tryEvictFlowLocked() {
 			return ErrCapacity
 		}
 	}
+	r.pendingFlow[fm.minute] = fm.Clone()
+	r.pendingBytes.Add(charge)
 	return nil
 }
 
@@ -601,7 +632,45 @@ func (r *Recorder) QualityMinute(minute int64, key Key) (*QualityMinute, bool) {
 	return qm.Clone(), true
 }
 
-func (r *Recorder) tryConvergeLocked() {}
+// convergeIfReclaimableLocked exports a fully completed cell's lifetime totals
+// as one canonical absolute QualityMinute row, exactly once per cell lifetime.
+// The row minute is the wall-clock minute of the convergence. If the pending
+// bounds reject the row, the data is dropped and counted in qualityOverflow.
+func (r *Recorder) convergeIfReclaimableLocked(c *Cell) {
+	if r.finalSnapshot.Load() != nil {
+		return
+	}
+	if !c.isRetired() || !c.isReclaimable() || c.converged {
+		return
+	}
+	c.converged = true
+	if c.attempts.Load() == 0 {
+		return
+	}
+	minute := r.now().UTC().Truncate(time.Minute).Unix()
+	qm := NewQualityMinute(minute, c.key)
+	qm.attempts = c.attempts.Load()
+	qm.successes = c.successes.Load()
+	qm.err429 = c.errClasses[ErrClass429].Load()
+	qm.err4xx = c.errClasses[ErrClass4xx].Load()
+	qm.err5xx = c.errClasses[ErrClass5xx].Load()
+	qm.errNetwork = c.errClasses[ErrClassNetwork].Load()
+	qm.ttftCount = c.ttftCount.Load()
+	qm.sumQ32 = c.sumQ32.Load()
+	qm.sumSqQ32 = c.sumSq.Load()
+	for i := range qm.hist {
+		qm.hist[i] = c.hist[i].Load()
+	}
+	qm.inputTokens = c.inputTokens.Load()
+	qm.outputTokens = c.outputTokens.Load()
+	qm.cacheRead = c.cacheRead.Load()
+	qm.cacheCreate = c.cacheCreate.Load()
+	qm.calls = c.calls.Load()
+	qm.images = c.images.Load()
+	if err := r.enqueueQualityMinuteLocked(qm); err != nil {
+		r.qualityOverflow.Add(1)
+	}
+}
 
 func (r *Recorder) unpinnedRetiredCountLocked() int {
 	n := 0
@@ -629,6 +698,7 @@ func (r *Recorder) SweepReclaim() int {
 			break
 		}
 		v := r.retired[idx]
+		r.convergeIfReclaimableLocked(v)
 		delete(r.retiredIndex, v.key)
 		r.retired = append(r.retired[:idx], r.retired[idx+1:]...)
 		for i := idx; i < len(r.retired); i++ {
@@ -640,8 +710,7 @@ func (r *Recorder) SweepReclaim() int {
 	return n
 }
 
-func (r *Recorder) Retire(fp [32]byte, qc [32]byte) {
-	key := Key{FP: fp, QC: qc}
+func (r *Recorder) Retire(key Key) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.isClosed() || r.finalSnapshot.Load() != nil {
@@ -655,6 +724,7 @@ func (r *Recorder) Retire(fp [32]byte, qc [32]byte) {
 	delete(r.active, key)
 	r.retired = append(r.retired, cell)
 	r.retiredIndex[key] = len(r.retired) - 1
+	r.convergeIfReclaimableLocked(cell)
 	r.SweepReclaimLocked()
 }
 
@@ -671,6 +741,7 @@ func (r *Recorder) SweepReclaimLocked() {
 			break
 		}
 		v := r.retired[idx]
+		r.convergeIfReclaimableLocked(v)
 		delete(r.retiredIndex, v.key)
 		r.retired = append(r.retired[:idx], r.retired[idx+1:]...)
 		for i := idx; i < len(r.retired); i++ {
@@ -732,8 +803,7 @@ func (r *Recorder) PinnedGauge() int64 {
 }
 func (r *Recorder) GlobalInflight() int64 { return int64(r.admission.Load() & inflightMask) }
 
-func (r *Recorder) CellStats(fp [32]byte, qc [32]byte) (attempts, successes, ttftCount, tokens, calls, images int64, sumQ32, sumSq int64, hist [10]int64, errClasses [4]int64, ok bool) {
-	key := Key{FP: fp, QC: qc}
+func (r *Recorder) CellStats(key Key) (attempts, successes, ttftCount, tokens, calls, images int64, sumQ32, sumSq int64, hist [10]int64, errClasses [4]int64, ok bool) {
 	r.mu.Lock()
 	var cell *Cell
 	if c, ok2 := r.active[key]; ok2 {
@@ -762,8 +832,7 @@ func (r *Recorder) CellStats(fp [32]byte, qc [32]byte) (attempts, successes, ttf
 	return cell.attempts.Load(), cell.successes.Load(), cell.ttftCount.Load(), tok, cell.calls.Load(), cell.images.Load(), cell.sumQ32.Load(), cell.sumSq.Load(), h, ec, true
 }
 
-func (r *Recorder) CellStatsDetailed(fp [32]byte, qc [32]byte) (attempts, successes, ttftCount int64, input, output, cacheRead, cacheCreate, calls, images int64, sumQ32, sumSq int64, hist [10]int64, errClasses [4]int64, ok bool) {
-	key := Key{FP: fp, QC: qc}
+func (r *Recorder) CellStatsDetailed(key Key) (attempts, successes, ttftCount int64, input, output, cacheRead, cacheCreate, calls, images int64, sumQ32, sumSq int64, hist [10]int64, errClasses [4]int64, ok bool) {
 	r.mu.Lock()
 	var cell *Cell
 	if c, ok2 := r.active[key]; ok2 {
@@ -991,6 +1060,7 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 		}
 		if c.isRetired() && c.isReclaimable() {
 			r.mu.Lock()
+			r.convergeIfReclaimableLocked(c)
 			r.SweepReclaimLocked()
 			r.mu.Unlock()
 		}
@@ -999,8 +1069,11 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 	c.attempts.Add(1)
 	if obs.Success {
 		c.successes.Add(1)
-		if obs.TTFTMs != nil && *obs.TTFTMs > 0 {
+		if obs.TTFTMs != nil {
 			v := *obs.TTFTMs
+			if v < 1 {
+				v = 1
+			}
 			c.ttftCount.Add(1)
 			c.sumQ32.Add(toQ32(v))
 			c.sumSq.Add(toSqQ32(v))
@@ -1055,6 +1128,7 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 	}
 	if c.isRetired() && c.isReclaimable() {
 		r.mu.Lock()
+		r.convergeIfReclaimableLocked(c)
 		r.SweepReclaimLocked()
 		r.mu.Unlock()
 	}
@@ -1097,6 +1171,7 @@ func (a *AttemptContext) Cancel() {
 	}
 	if a.cell.isRetired() && a.cell.isReclaimable() {
 		a.recorder.mu.Lock()
+		a.recorder.convergeIfReclaimableLocked(a.cell)
 		a.recorder.SweepReclaimLocked()
 		a.recorder.mu.Unlock()
 	}

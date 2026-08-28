@@ -7,7 +7,7 @@ func BenchmarkQualityRecorder(b *testing.B) {
 	r, _ := NewRecorder(50000)
 	f := fp(1)
 	q := qc(1)
-	cell := r.GetOrCreateCell(f, q)
+	cell := r.GetOrCreateCell(CanonicalKey(f, q, f))
 	var ctx AttemptContext
 	tt := int64(100)
 	b.ReportAllocs()
