@@ -24,8 +24,19 @@ func (e *RuleEngine) Start(ctx context.Context) error {
 	if !e.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("rule-engine: already started")
 	}
+	// Persist loop uses child context so Close can cancel and join in-flight callback.
+	persistCtx, cancel := context.WithCancel(ctx)
+	e.persistMu.Lock()
+	e.persistCtx = persistCtx
+	e.persistCancel = cancel
+	e.persistDone = make(chan struct{})
+	e.persistMu.Unlock()
 	worker.GoLoop(ctx, "rule-engine", e.log, e.loop)
-	worker.GoLoop(ctx, "rule-engine-persist", e.log, e.persistLoop)
+	// Persist loop respects persistCtx, not parent ctx directly, so Close can cancel it.
+	go func() {
+		defer close(e.persistDone)
+		e.persistLoop(persistCtx)
+	}()
 	return nil
 }
 
@@ -76,10 +87,11 @@ func (e *RuleEngine) flushPersist(ctx context.Context) {
 			fn := e.persistFn
 			e.persistFnMu.RUnlock()
 			if fn != nil {
-				if err := fn(item); err != nil {
+				if err := fn(ctx, item); err != nil && ctx.Err() == nil {
 					e.persistFailures.Add(1)
 				}
 			}
+			e.persistPending.Add(-1)
 		default:
 			return
 		}
@@ -96,10 +108,11 @@ func (e *RuleEngine) persistLoop(ctx context.Context) {
 			fn := e.persistFn
 			e.persistFnMu.RUnlock()
 			if fn != nil {
-				if err := fn(item); err != nil {
+				if err := fn(ctx, item); err != nil && ctx.Err() == nil {
 					e.persistFailures.Add(1)
 				}
 			}
+			e.persistPending.Add(-1)
 		}
 	}
 }
@@ -117,6 +130,7 @@ func (e *RuleEngine) resetDropWarnIfDrained() {
 
 // Close 排空剩余事件（限时，复用 scheduler.Close 模式）；幂等，
 // 未 Start 时也可安全排空。循环本身随 Start 的 ctx 取消而退出。
+// Fix: cancel persist loop and join in-flight callback; no callback may remain after Close.
 func (e *RuleEngine) Close(ctx context.Context) error {
 	done := make(chan struct{})
 	worker.GoRecover("rule-engine-close", e.log, func() {
@@ -138,7 +152,28 @@ func (e *RuleEngine) Close(ctx context.Context) error {
 			e.log.Warn("rule-engine close timeout, dropping queued events")
 		}
 	}
-	// 同步排空持久化队列（best-effort，有界不阻塞）。
+	// Cancel persist loop and wait for in-flight callback to finish (worker pattern).
+	e.persistMu.Lock()
+	cancel := e.persistCancel
+	doneCh := e.persistDone
+	e.persistMu.Unlock()
+	if cancel != nil {
+		cancel()
+		if doneCh != nil {
+			select {
+			case <-doneCh:
+			case <-ctx.Done():
+				if e.log != nil {
+					e.log.Warn("rule-engine persist close timeout, waiting for callback")
+				}
+				// Still wait for done to ensure no goroutine remains; bounded by ctx.
+				<-doneCh
+			}
+		}
+	}
+	// Drain any remaining persist items that were queued but not yet processed
+	// (pending already includes them; flush will decrement per item).
+	// If Start was never called, background loop never ran, so synchronously drain.
 	e.flushPersist(ctx)
 	return nil
 }

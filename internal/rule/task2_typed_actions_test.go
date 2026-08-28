@@ -264,7 +264,7 @@ func TestRuleQueueFull_PersistDroppedAndLocalBeforePersist(t *testing.T) {
 func TestRuleFailAccount_QueueFullWriteFailure(t *testing.T) {
 	e := New(Config{EventQueueSize: 16, PersistQueueSize: 4}, newFakeRuleStore(), nil)
 	// inject failing persist func
-	e.SetPersistFunc(func(item PersistItem) error { return fmt.Errorf("injected write failure") })
+	e.SetPersistFunc(func(_ context.Context, item PersistItem) error { return fmt.Errorf("injected write failure") })
 	// Need rule with FailAccount
 	e.rulesMu.Lock()
 	e.rules = []compiledRule{{Rule: domain.Rule{Name: "fail-acc", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{FailAccount: true}}}}
@@ -318,7 +318,7 @@ func TestRuleQueueFull_WorkerNonblocking(t *testing.T) {
 
 func TestRuleMetrics_FourDistinct(t *testing.T) {
 	e := New(Config{EventQueueSize: 1, PersistQueueSize: 1}, newFakeRuleStore(), nil)
-	e.SetPersistFunc(func(item PersistItem) error { return fmt.Errorf("fail") })
+	e.SetPersistFunc(func(_ context.Context, item PersistItem) error { return fmt.Errorf("fail") })
 	e.rulesMu.Lock()
 	e.rules = []compiledRule{
 		{Rule: domain.Rule{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}}}},
@@ -336,7 +336,7 @@ func TestRuleMetrics_FourDistinct(t *testing.T) {
 	// Reset matched for clear distinct check via fresh engine? Instead continue counting.
 	// Clear counts for isolated check: create fresh engine for matched part
 	e2 := New(Config{EventQueueSize: 16, PersistQueueSize: 1}, newFakeRuleStore(), nil)
-	e2.SetPersistFunc(func(item PersistItem) error { return fmt.Errorf("fail") })
+	e2.SetPersistFunc(func(_ context.Context, item PersistItem) error { return fmt.Errorf("fail") })
 	e2.rulesMu.Lock()
 	e2.rules = []compiledRule{
 		{Rule: domain.Rule{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}}}},

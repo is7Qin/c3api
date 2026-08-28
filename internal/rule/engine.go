@@ -106,7 +106,8 @@ type PersistItem struct {
 }
 
 // PersistFunc 持久化执行面（注入可失败，用于测试 write failure 计数；生产 Task10 接线 Redis/DB）。
-type PersistFunc func(item PersistItem) error
+// Task2 fix: must accept context and honor cancellation.
+type PersistFunc func(ctx context.Context, item PersistItem) error
 
 // Config 引擎配置。
 type Config struct {
@@ -184,6 +185,7 @@ type RuleEngine struct {
 	matched      atomic.Uint64
 	persistDropped atomic.Uint64
 	persistFailures atomic.Uint64
+	persistPending atomic.Int64 // queued + inflight
 
 	rules   []compiledRule // enabled、priority 升序（预编译）
 	rulesMu sync.RWMutex
@@ -194,6 +196,11 @@ type RuleEngine struct {
 
 	timeNow   func() time.Time
 	startOnce atomic.Bool
+
+	persistCtx    context.Context
+	persistCancel context.CancelFunc
+	persistDone   chan struct{}
+	persistMu     sync.Mutex
 }
 
 // New 只建结构（不加载规则、不注册 apply——分别由 Reload/SetApply 显式完成）。
@@ -249,8 +256,11 @@ func (e *RuleEngine) PersistDropped() int64 { return int64(e.persistDropped.Load
 // PersistFailures 持久化执行失败累计。
 func (e *RuleEngine) PersistFailures() int64 { return int64(e.persistFailures.Load()) }
 
-// PersistQueued 当前持久化队列积压。
-func (e *RuleEngine) PersistQueued() int { return len(e.persistCh) }
+// PersistQueued 当前持久化 pending（queued + in-flight）— fixes len(channel) lie.
+func (e *RuleEngine) PersistQueued() int { return int(e.persistPending.Load()) }
+
+// PersistQueuedChannelLen exposes raw channel length for tests (should not be used for metrics).
+func (e *RuleEngine) PersistQueuedChannelLen() int { return len(e.persistCh) }
 
 // PersistCap 持久化队列容量。
 func (e *RuleEngine) PersistCap() int { return cap(e.persistCh) }
@@ -439,6 +449,7 @@ func matchWindow(w domain.RuleWhen, wc windowSnapshot) bool {
 // Task2: whole action path remains best-effort. After match, local sink immediately,
 // then nonblocking enqueue to bounded persist queue; persist queue full or write failure
 // never blocks request/rule worker.
+// Fix: matched_actions counts only typed Throttle/FailAccount accepted (not legacy/shaping-only).
 func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 	if ev.OccurredAt.IsZero() {
 		ev.OccurredAt = e.timeNow()
@@ -466,8 +477,6 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 				continue
 			}
 		}
-		// Matched: whole action path best-effort, local sink immediate.
-		e.matched.Add(1)
 		if r.Then.Throttle != nil {
 			e.healthMu.RLock()
 			sink := e.healthSink
@@ -475,6 +484,7 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			if sink != nil {
 				sink.Throttle(ev, *r.Then.Throttle)
 			}
+			e.matched.Add(1)
 			e.enqueuePersist(ev, r.Then)
 			return
 		}
@@ -485,10 +495,12 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			if sink != nil {
 				sink.FailAccount(ev)
 			}
+			e.matched.Add(1)
 			e.enqueuePersist(ev, r.Then)
 			return
 		}
 		// Legacy path (Status/Cooldown/Weight) unchanged for intermediate compile-green.
+		// No matched increment for legacy/shaping-only.
 		st, cd, w := Apply(r.Then, ev)
 		e.applyMu.RLock()
 		fn := e.apply
@@ -496,7 +508,6 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 		if fn != nil {
 			fn(ev.AccountID, st, cd, w, ev.ErrorMessage)
 		}
-		// Legacy also participates in persist observation if needed (no typed health persist).
 		return
 	}
 }
@@ -507,9 +518,17 @@ func (e *RuleEngine) enqueuePersist(ev Event, then domain.RuleThen) {
 	}
 	select {
 	case e.persistCh <- PersistItem{Event: ev, Then: then}:
+		e.persistPending.Add(1)
 	default:
 		e.persistDropped.Add(1)
 	}
+}
+
+// persistDoneChan returns current persistDone or nil if not started.
+func (e *RuleEngine) persistDoneChan() chan struct{} {
+	e.persistMu.Lock()
+	defer e.persistMu.Unlock()
+	return e.persistDone
 }
 
 func boolPtr(b bool) *bool                                   { return &b }
