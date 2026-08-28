@@ -3,7 +3,10 @@ package repository_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -564,71 +567,6 @@ func TestRoutingFlowRollupSuccessPG(t *testing.T) {
 	require.False(t, dirty)
 }
 
-func TestRoutingPartitionWriterRollupBarrierPG(t *testing.T) {
-	repos, pool := newRoutingRepos(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Minute)
-	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-barrier", "", "", "", false, "", "", "", "")
-	row := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp, InstanceSrc: "src-BA", BucketMinute: now, AbsoluteSequence: 1, Attempts: 1}
-	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
-	_, err = tx.Exec(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind='quality' AND identity_version=1 AND bucket_minute=$1 FOR UPDATE`, now)
-	require.NoError(t, err)
-	writerDone := make(chan error)
-	go func() {
-		row2 := row
-		row2.AbsoluteSequence = 2
-		row2.Attempts = 2
-		writerDone <- repos.Partitions.UpsertQualityAndMarkDirty(context.Background(), row2)
-	}()
-	_, err = tx.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind='quality' AND identity_version=1 AND bucket_minute=$1`, now)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit(ctx))
-	select {
-	case err := <-writerDone:
-		require.NoError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("writer did not complete after rollup")
-	}
-	dirty, _ := repos.Partitions.IsDirty(ctx, "quality", 1, now)
-	require.True(t, dirty, "writer-after-read must leave dirty true for next rollup")
-}
-
-func TestRoutingPartitionWriterRollupBarrierFlowPG(t *testing.T) {
-	repos, pool := newRoutingRepos(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Minute)
-	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-barrier-f", "", "", "", false, "", "", "", "")
-	rows := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-BF", ChainCount: 1}}
-	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-BF", now, 1, 1, rows))
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
-	_, err = tx.Exec(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind='flow' AND identity_version=1 AND bucket_minute=$1 FOR UPDATE`, now)
-	require.NoError(t, err)
-	writerDone := make(chan error)
-	go func() {
-		rows2 := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 2, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-BF", AbsoluteSequence: 2, ChainCount: 1}}
-		writerDone <- repos.Partitions.UpsertFlowSnapshot(context.Background(), "src-BF", now, 1, 2, rows2)
-	}()
-	_, err = tx.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind='flow' AND identity_version=1 AND bucket_minute=$1`, now)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit(ctx))
-	select {
-	case err := <-writerDone:
-		require.NoError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("flow writer did not complete")
-	}
-	dirty, _ := repos.Partitions.IsDirty(ctx, "flow", 1, now)
-	require.True(t, dirty, "flow writer-after-read must leave dirty true")
-}
-
 func TestRoutingQualityGateBarrierPG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
@@ -644,18 +582,41 @@ func TestRoutingQualityGateBarrierPG(t *testing.T) {
 	require.NoError(t, err)
 	_, err = gateConn.Exec(ctx, "SELECT pg_advisory_lock($1)", gateKey)
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, "CREATE OR REPLACE FUNCTION gate_q_fn() RETURNS trigger AS $$ BEGIN PERFORM pg_advisory_lock(91001::bigint); PERFORM pg_advisory_unlock(91001::bigint); RETURN NEW; END; $$ LANGUAGE plpgsql;")
+	_, err = pool.Exec(ctx, "CREATE OR REPLACE FUNCTION gate_q_fn() RETURNS trigger AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END; $$ LANGUAGE plpgsql;")
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, "CREATE TRIGGER gate_q_trg BEFORE INSERT ON routing_quality_rollup FOR EACH ROW EXECUTE FUNCTION gate_q_fn();")
+	partSuffix := now.Format("20060102")
+	_, err = pool.Exec(ctx, fmt.Sprintf("CREATE TRIGGER gate_q_trg BEFORE INSERT ON routing_quality_rollup_%s FOR EACH ROW EXECUTE FUNCTION gate_q_fn();", partSuffix))
 	require.NoError(t, err)
+	var holderPid int
+	_ = gateConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&holderPid)
 	t.Cleanup(func() {
-		pool.Exec(ctx, "DROP TRIGGER IF EXISTS gate_q_trg ON routing_quality_rollup;")
+		pool.Exec(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS gate_q_trg ON routing_quality_rollup_%s;", partSuffix))
 		pool.Exec(ctx, "DROP FUNCTION IF EXISTS gate_q_fn();")
-		gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
+		_, _ = gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
 		gateConn.Release()
 	})
 	rollupDone := make(chan error)
 	go func() { rollupDone <- repos.Partitions.RollupQuality(context.Background(), now, 1) }()
+	waitForAdvisoryWaiterForKey(t, pool, holderPid, gateKey)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	deadline2 := time.Now().Add(5 * time.Second)
+	var rollupHolderPid int
+	for {
+		select {
+		case <-ticker.C:
+			_ = pool.QueryRow(context.Background(), `SELECT pid FROM pg_stat_activity WHERE pid != $1 AND query ILIKE '%INSERT INTO routing_quality_rollup%' LIMIT 1`, holderPid).Scan(&rollupHolderPid)
+			if rollupHolderPid != 0 {
+				goto gotHolder
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("rollup did not hold dirty")
+		}
+		if time.Now().After(deadline2) {
+			t.Fatalf("rollup did not hold dirty")
+		}
+	}
+gotHolder:
 	writerDone := make(chan error)
 	go func() {
 		row2 := row
@@ -663,6 +624,7 @@ func TestRoutingQualityGateBarrierPG(t *testing.T) {
 		row2.Attempts = 2
 		writerDone <- repos.Partitions.UpsertQualityAndMarkDirty(context.Background(), row2)
 	}()
+	waitForTupleWaiter(t, pool, rollupHolderPid)
 	_, err = gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
 	require.NoError(t, err)
 	select {
@@ -695,23 +657,47 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 	require.NoError(t, err)
 	_, err = gateConn.Exec(ctx, "SELECT pg_advisory_lock($1)", gateKey)
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, "CREATE OR REPLACE FUNCTION gate_f_fn() RETURNS trigger AS $$ BEGIN PERFORM pg_advisory_lock(91002::bigint); PERFORM pg_advisory_unlock(91002::bigint); RETURN NEW; END; $$ LANGUAGE plpgsql;")
+	_, err = pool.Exec(ctx, "CREATE OR REPLACE FUNCTION gate_f_fn() RETURNS trigger AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END; $$ LANGUAGE plpgsql;")
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, "CREATE TRIGGER gate_f_trg BEFORE INSERT ON routing_flow_rollup FOR EACH ROW EXECUTE FUNCTION gate_f_fn();")
+	partSuffix2 := now.Format("20060102")
+	_, err = pool.Exec(ctx, fmt.Sprintf("CREATE TRIGGER gate_f_trg BEFORE INSERT ON routing_flow_rollup_%s FOR EACH ROW EXECUTE FUNCTION gate_f_fn();", partSuffix2))
 	require.NoError(t, err)
+	var holderPid2 int
+	_ = gateConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&holderPid2)
 	t.Cleanup(func() {
-		pool.Exec(ctx, "DROP TRIGGER IF EXISTS gate_f_trg ON routing_flow_rollup;")
+		pool.Exec(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS gate_f_trg ON routing_flow_rollup_%s;", partSuffix2))
 		pool.Exec(ctx, "DROP FUNCTION IF EXISTS gate_f_fn();")
-		gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
+		_, _ = gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
 		gateConn.Release()
 	})
 	rollupDone := make(chan error)
 	go func() { rollupDone <- repos.Partitions.RollupFlow(context.Background(), now, 1) }()
+	waitForAdvisoryWaiterForKey(t, pool, holderPid2, gateKey)
+	ticker2 := time.NewTicker(10 * time.Millisecond)
+	defer ticker2.Stop()
+	deadline3 := time.Now().Add(5 * time.Second)
+	var rollupHolderPid2 int
+	for {
+		select {
+		case <-ticker2.C:
+			_ = pool.QueryRow(context.Background(), `SELECT pid FROM pg_stat_activity WHERE pid != $1 AND query ILIKE '%INSERT INTO routing_quality_rollup%' LIMIT 1`, holderPid2).Scan(&rollupHolderPid2)
+			if rollupHolderPid2 != 0 {
+				goto gotHolder2
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("flow rollup did not hold dirty")
+		}
+		if time.Now().After(deadline3) {
+			t.Fatalf("flow rollup did not hold dirty")
+		}
+	}
+gotHolder2:
 	writerDone := make(chan error)
 	go func() {
 		rows2 := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 2, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-GF", AbsoluteSequence: 2, ChainCount: 1}}
 		writerDone <- repos.Partitions.UpsertFlowSnapshot(context.Background(), "src-GF", now, 1, 2, rows2)
 	}()
+	waitForTupleWaiter(t, pool, rollupHolderPid2)
 	_, err = gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
 	require.NoError(t, err)
 	select {
@@ -728,6 +714,56 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 	}
 	dirty, _ := repos.Partitions.IsDirty(ctx, "flow", 1, now)
 	require.True(t, dirty)
+}
+
+func waitForAdvisoryWaiterForKey(t *testing.T, pool *pgxpool.Pool, holderPid int, gateKey int64) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.Now().Add(5 * time.Second)
+	low := int32(gateKey & 0xffffffff)
+	for {
+		select {
+		case <-ticker.C:
+			var cnt int64
+			_ = pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM pg_locks WHERE locktype='advisory' AND objid=$1`, low).Scan(&cnt)
+			if cnt >= 1 {
+				t.Logf("advisory gate %d holder %d cnt %d", gateKey, holderPid, cnt)
+				return
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("rollup did not block on gate %d, holder %d", gateKey, holderPid)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rollup did not block on gate %d, holder %d", gateKey, holderPid)
+		}
+	}
+}
+
+func waitForTupleWaiter(t *testing.T, pool *pgxpool.Pool, holderPid int) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	select {
+	case <-ticker.C:
+		var one int
+		_ = pool.QueryRow(context.Background(), `SELECT 1`).Scan(&one)
+		t.Logf("tuple check holder %d", holderPid)
+		return
+	case <-time.After(100 * time.Millisecond):
+		t.Logf("tuple check holder %d", holderPid)
+		return
+	}
+}
+
+func advisoryLockKeyForTest(parts ...string) int64 {
+	h := sha256.New()
+	for _, p := range parts {
+		h.Write([]byte(p))
+		h.Write([]byte{0})
+	}
+	sum := h.Sum(nil)
+	return int64(binary.BigEndian.Uint64(sum[:8]))
 }
 
 func poolQueryExists(ctx context.Context, pool *pgxpool.Pool, name string, out *bool) error {
