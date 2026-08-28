@@ -216,6 +216,8 @@ func TestTemplateCRUD(t *testing.T) {
 
 	// Update -> Tx: UPDATE + re-SELECT + Commit
 	tr.pool.ExpectBegin()
+	tr.pool.ExpectExec(q(`SELECT pg_advisory_xact_lock`)).WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
+	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
 	tr.pool.ExpectExec(q(`UPDATE "templates" SET`)).
 		WithArgs("renamed", "https://api.openai.com/v1", "api_key",
 			json.RawMessage(`["openai-chat","openai-responses"]`), json.RawMessage(`["gpt-4o"]`),
@@ -277,10 +279,14 @@ func TestAccountAndGroup(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(1)))
 
 	// Account create（账号级无 credential_type 字段）
+	tr.pool.ExpectBegin()
+	tr.pool.ExpectExec(q(`SELECT pg_advisory_xact_lock`)).WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
+	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
 	tr.pool.ExpectQuery(q(`INSERT INTO "accounts"`)).
 		WithArgs("acc1", "sk-x", account.Status("active"), int(80), int(4),
 			pgxmock.AnyArg(), pgxmock.AnyArg(), int64(1)).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(2)))
+	tr.pool.ExpectCommit()
 
 	// Group create（Phase 3a：无 key 字段，visibility 默认 public；
 	// price_multiplier 恒写入——T3.5 修正：service 归一缺省为 10000，显式 0 = 免费组；
@@ -699,10 +705,13 @@ func TestUpdateAccountsBatch(t *testing.T) {
 	st := domain.StatusActive
 
 	tr.pool.ExpectBegin()
-	// 存在性检查：ids 全部存在
-	tr.pool.ExpectQuery(q(`SELECT "accounts"."id" FROM "accounts" WHERE`)).
+	tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url FROM accounts WHERE`)).
 		WithArgs(int64(2), int64(5)).
-		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(2)).AddRow(int64(5)))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "base_url"}).
+			AddRow(int64(2), int64(1), nil).
+			AddRow(int64(5), int64(1), nil))
+	tr.pool.ExpectExec(q(`SELECT pg_advisory_xact_lock`)).WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
+	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
 	// 每个 id：UPDATE 只含 patch 提供的字段（name/status/weight + updated_at），
 	// 无 template_id/upstream_key/max_concurrency —— WithArgs 精确断言 Set 链列。
 	tr.pool.ExpectExec(q(`UPDATE "accounts" SET`)).

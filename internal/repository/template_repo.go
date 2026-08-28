@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -16,9 +17,15 @@ import (
 	"github.com/is7qin/c3api/internal/ent/template"
 )
 
-type TemplateRepo struct{ client *ent.Client }
+type TemplateRepo struct {
+	client *ent.Client
+	driver dialect.Driver
+}
 
 func (r *TemplateRepo) CreateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
+	if isCodexType(t.CredentialType) && t.BaseURL != "" {
+		return nil, fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
+	}
 	row, err := r.client.Template.Create().
 		SetName(t.Name).SetBaseURL(t.BaseURL).
 		// 全字段 Set（含 credential_type）：空串兜底在 service 层（M-1，防默认值被绕过）
@@ -92,15 +99,28 @@ func (r *TemplateRepo) ListTemplates(ctx context.Context, q ListQuery) ([]*domai
 }
 
 func (r *TemplateRepo) UpdateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
-	row, err := r.client.Template.UpdateOneID(t.ID).
-		SetName(t.Name).SetBaseURL(t.BaseURL).
-		// 全字段 Set（含 credential_type）：空串兜底在 service 层（M-1）
-		SetCredentialType(string(t.CredentialType)).
-		SetSupportedFormats(formatsToStrings(t.SupportedFormats)).
-		SetModels(t.Models).
-		SetFormatModels(formatModelsToStrings(t.FormatModels)).
-		SetModelMapping(t.ModelMapping).
-		Save(ctx)
+	var row *ent.Template
+	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+		if err := lockTemplateWrites(ctx, driver, []int64{t.ID}); err != nil {
+			return err
+		}
+		if _, err := client.Template.Get(ctx, t.ID); err != nil {
+			return errMissingID(err, t.ID)
+		}
+		if err := validateCodexTemplateUpdate(ctx, client, t); err != nil {
+			return err
+		}
+		var saveErr error
+		row, saveErr = client.Template.UpdateOneID(t.ID).
+			SetName(t.Name).SetBaseURL(t.BaseURL).
+			SetCredentialType(string(t.CredentialType)).
+			SetSupportedFormats(formatsToStrings(t.SupportedFormats)).
+			SetModels(t.Models).
+			SetFormatModels(formatModelsToStrings(t.FormatModels)).
+			SetModelMapping(t.ModelMapping).
+			Save(ctx)
+		return saveErr
+	})
 	if err != nil {
 		if sqlgraph.IsUniqueConstraintError(err) {
 			return nil, fmt.Errorf("%w: name=%q", ErrConflict, t.Name)
