@@ -167,8 +167,12 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	t.Helper()
 	accs := make(map[int64][]*domain.Account, 1)
 	for _, a := range accts {
+		baseURL := upstream
+		if isCodexCredentialType(a.credType) {
+			baseURL = ""
+		}
 		tpl := &domain.Template{
-			ID: a.tplID, Name: fmt.Sprintf("t%d", a.tplID), BaseURL: upstream,
+			ID: a.tplID, Name: fmt.Sprintf("t%d", a.tplID), BaseURL: baseURL,
 			CredentialType:   a.credType,
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
 			Models:           []string{"gpt-4o"},
