@@ -25,8 +25,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// mock 上游：usage 端点（ChatGPT 面 wham/usage——a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
-// "/codex/responses"，SDK usageEndpointFrom 派生 /wham/usage）
+// mock 上游：usage 端点（ChatGPT 面 wham/usage——固定 SDK 官方端点
+// https://chatgpt.com/backend-api/wham/usage，test transport 仅 host 重写保留官方 path）
 // ---------------------------------------------------------------------------
 
 // usageUpstreamCapture usage 端点 mock：可编程响应序列 + 并发计数（in-flight
@@ -153,7 +153,7 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "chatgpt-plus", snap.PlanType)
 	require.Equal(t, 1, c.callsN(), "首拉恰 1 次上游")
-	require.Equal(t, "/backend-api/wham/usage", c.path(0), "端点 SDK 内部派生（ChatGPT 面 wham/usage）")
+	require.Equal(t, "/backend-api/wham/usage", c.path(0), "固定 SDK 官方端点 https://chatgpt.com/backend-api/wham/usage（ChatGPT 面）")
 
 	// 命中路径零分配（T3-4）：篡改 entry.sig——命中路径若计算 credSig 比对必
 	// 触发重建重拉（calls → 2）；仍恒 1 = 命中路径不做 sig 拼接/建条目。
