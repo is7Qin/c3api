@@ -6,6 +6,7 @@
 package domain
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -234,7 +235,7 @@ func (m *ModelMappingMode) UnmarshalJSON(data []byte) error {
 }
 
 type ModelMappingEntry struct {
-	MappedModel string          `json:"mapped_model"`
+	MappedModel string           `json:"mapped_model"`
 	Mode        ModelMappingMode `json:"mode"`
 }
 
@@ -270,7 +271,7 @@ func (e *ModelMappingEntry) UnmarshalJSON(data []byte) error {
 type ModelMapping map[string]ModelMappingEntry
 
 func (m *ModelMapping) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return fmt.Errorf("model_mapping must not be null")
 	}
 	type raw ModelMapping
