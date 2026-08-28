@@ -67,14 +67,31 @@ const CREDENTIAL_BADGE_STYLES: Partial<Record<TemplateCredentialType, string>> =
   'codex-pat': 'bg-amber-500/10 text-amber-600 dark:bg-amber-400/10 dark:text-amber-400',
 }
 
+type MappingMode = components['schemas']['ModelMappingEntry']['mode']
+type BatchMappingMode = 'unchanged' | 'replace'
+type ModelMappingEntry = components['schemas']['ModelMappingEntry']
+
+function isMappingMode(v: string): v is MappingMode {
+  return v === 'explicit' || v === 'implicit'
+}
+function isBatchMappingMode(v: string): v is BatchMappingMode {
+  return v === 'unchanged' || v === 'replace'
+}
+function isModelMappingEntry(v: unknown): v is ModelMappingEntry {
+  if (!v || typeof v !== 'object') return false
+  const o = v as Record<string, unknown>
+  return typeof o['mapped_model'] === 'string' && typeof o['mode'] === 'string' && isMappingMode(o['mode'] as string)
+}
+
 // —— 多格式表单状态（supported_formats/format_models；default_format/model_formats 已废弃） ——
 interface FormatRow {
   format: TemplateFormat
   modelsText: string
 }
 interface MappingRow {
-  key: string
-  value: string
+  alias: string
+  mapped_model: string
+  mode: MappingMode
 }
 interface FormState {
   name: string
@@ -111,7 +128,11 @@ function toForm(t: Template): FormState {
       format: format as TemplateFormat,
       modelsText: (models ?? []).join(', '),
     })),
-    model_mapping: Object.entries(t.ModelMapping ?? {}).map(([key, value]) => ({ key, value })),
+    model_mapping: Object.entries(t.ModelMapping ?? {}).map(([alias, entry]) => ({
+      alias,
+      mapped_model: entry.mapped_model,
+      mode: entry.mode,
+    })),
     // 编辑回显经 GET /templates/{id}/ext 拉取填充（见 dialog 挂载 effect）
     strip_image_tools: false,
   }
@@ -128,15 +149,33 @@ function formatModelsOf(f: FormState): Record<string, string[]> {
   return out
 }
 
-function mappingOf(f: FormState): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const r of f.model_mapping) if (r.key.trim() && r.value.trim()) out[r.key.trim()] = r.value.trim()
+function mappingOf(rows: MappingRow[]): Record<string, ModelMappingEntry> {
+  const out: Record<string, ModelMappingEntry> = {}
+  for (const r of rows) {
+    const alias = r.alias.trim()
+    const target = r.mapped_model.trim()
+    out[alias] = { mapped_model: target, mode: r.mode }
+  }
   return out
+}
+
+function validateMappingRows(rows: MappingRow[], tr: (k: string, o?: Record<string, unknown>) => string): string | null {
+  const seen = new Set<string>()
+  for (const r of rows) {
+    const aliasTrim = r.alias.trim()
+    const targetTrim = r.mapped_model.trim()
+    if (!aliasTrim || !targetTrim) return tr('templates.modelMappingValidation.incomplete')
+    if (r.alias !== aliasTrim || r.mapped_model !== targetTrim) return tr('templates.modelMappingValidation.whitespace')
+    if (seen.has(aliasTrim)) return tr('templates.modelMappingValidation.duplicate', { alias: aliasTrim })
+    seen.add(aliasTrim)
+    if (r.mode !== 'explicit' && r.mode !== 'implicit') return tr('templates.modelMappingValidation.incomplete')
+  }
+  return null
 }
 
 function toBody(f: FormState): TemplateCreate {
   const format_models = formatModelsOf(f)
-  const model_mapping = mappingOf(f)
+  const model_mapping = mappingOf(f.model_mapping)
   const ct = (f.credential_type || 'api_key') as string
   return {
     name: f.name.trim(),
@@ -145,12 +184,12 @@ function toBody(f: FormState): TemplateCreate {
     supported_formats: f.supported_formats,
     models: splitList(f.modelsText),
     format_models: Object.keys(format_models).length ? format_models : undefined,
-    model_mapping: Object.keys(model_mapping).length ? model_mapping : undefined,
+    model_mapping,
   }
 }
 
-// 批量更新：仅包含已填写的字段（TemplatePatch 子集）
-function toPatch(f: FormState): TemplatePatch {
+// 批量更新：仅包含已填写的字段（TemplatePatch 子集）；model_mapping 由 batchMappingMode 控制
+function toPatch(f: FormState, batchMappingMode: BatchMappingMode): TemplatePatch {
   const patch: TemplatePatch = {}
   if (f.name.trim()) patch.name = f.name.trim()
   if (f.base_url.trim()) patch.base_url = f.base_url.trim()
@@ -159,8 +198,9 @@ function toPatch(f: FormState): TemplatePatch {
   if (models.length) patch.models = models
   const format_models = formatModelsOf(f)
   if (Object.keys(format_models).length) patch.format_models = format_models
-  const model_mapping = mappingOf(f)
-  if (Object.keys(model_mapping).length) patch.model_mapping = model_mapping
+  if (batchMappingMode === 'replace') {
+    patch.model_mapping = mappingOf(f.model_mapping)
+  }
   return patch
 }
 
@@ -185,12 +225,16 @@ function FormFields({
   error,
   batch = false,
   batchCodex = false,
+  batchMappingMode = 'unchanged',
+  setBatchMappingMode,
 }: {
   form: FormState
   setForm: (updater: (f: FormState) => FormState) => void
   error?: string | null
   batch?: boolean // 批量更新隐藏凭据类型（TemplatePatch 不支持类型变更，评审 M-2）
   batchCodex?: boolean
+  batchMappingMode?: BatchMappingMode
+  setBatchMappingMode?: (v: BatchMappingMode) => void
 }) {
   const { t } = useTranslation()
 
@@ -216,7 +260,7 @@ function FormFields({
     setForm(f => ({ ...f, model_mapping: f.model_mapping.map((r, j) => (j === i ? { ...r, ...patch } : r)) }))
   const removeMappingRow = (i: number) =>
     setForm(f => ({ ...f, model_mapping: f.model_mapping.filter((_, j) => j !== i) }))
-  const addMappingRow = () => setForm(f => ({ ...f, model_mapping: [...f.model_mapping, { key: '', value: '' }] }))
+  const addMappingRow = () => setForm(f => ({ ...f, model_mapping: [...f.model_mapping, { alias: '', mapped_model: '', mode: 'explicit' }] }))
 
   // 格式行下拉选项 = 已选 supported_formats
   const formatOptions: Record<string, string> = {}
@@ -386,34 +430,64 @@ function FormFields({
         </div>
       </div>
 
-      {/* model_mapping 动态行：客户端模型 → 上游模型 */}
+      {/* model_mapping 动态行：alias → mapped_model + mode */}
       <div className="space-y-1.5">
-        <Label>{t('templates.modelMappingLabel')}</Label>
-        <div className="space-y-1.5">
-          {form.model_mapping.map((row, i) => (
-            <div key={i} className="flex items-center gap-1.5">
-              <Input
-                className="flex-1"
-                placeholder={t('templates.clientModelPlaceholder')}
-                value={row.key}
-                onChange={e => setMappingRow(i, { key: e.target.value })}
-              />
-              <span className="text-muted-foreground">→</span>
-              <Input
-                className="flex-1"
-                placeholder={t('templates.upstreamModelPlaceholder')}
-                value={row.value}
-                onChange={e => setMappingRow(i, { value: e.target.value })}
-              />
-              <Button variant="ghost" size="icon-sm" title={t('templates.deleteRow')} onClick={() => removeMappingRow(i)}>
-                <X />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Label>{t('templates.modelMappingLabel')}</Label>
+          {batch && setBatchMappingMode && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Label className="text-xs font-normal text-muted-foreground">{t('templates.modelMappingBatchModeLabel')}</Label>
+              <Select value={batchMappingMode} onValueChange={v => { if (isBatchMappingMode(v)) setBatchMappingMode(v) }}>
+                <SelectTrigger className="h-7 w-32"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unchanged" label={t('templates.modelMappingBatchMode.unchanged')}>{t('templates.modelMappingBatchMode.unchanged')}</SelectItem>
+                  <SelectItem value="replace" label={t('templates.modelMappingBatchMode.replace')}>{t('templates.modelMappingBatchMode.replace')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+        {batch && batchMappingMode === 'unchanged' ? (
+          <p className="text-xs text-muted-foreground">{t('templates.modelMappingBatchHint')}</p>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground">{batch ? t('templates.modelMappingBatchReplaceHint') : t('templates.modelMappingHint')}</p>
+            <div className="space-y-1.5">
+              {form.model_mapping.map((row, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-1.5">
+                  <Input
+                    className="flex-1 min-w-[110px] basis-[110px]"
+                    placeholder={t('templates.clientModelPlaceholder')}
+                    value={row.alias}
+                    onChange={e => setMappingRow(i, { alias: e.target.value })}
+                    aria-label={t('templates.clientModelPlaceholder')}
+                  />
+                  <span className="shrink-0 text-muted-foreground">→</span>
+                  <Input
+                    className="flex-1 min-w-[110px] basis-[110px]"
+                    placeholder={t('templates.upstreamModelPlaceholder')}
+                    value={row.mapped_model}
+                    onChange={e => setMappingRow(i, { mapped_model: e.target.value })}
+                    aria-label={t('templates.upstreamModelPlaceholder')}
+                  />
+                  <Select value={row.mode} onValueChange={v => { if (isMappingMode(v)) setMappingRow(i, { mode: v }) }}>
+                    <SelectTrigger className="w-28 shrink-0" aria-label={t('templates.modelMappingModeLabel')}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="explicit" label={t('templates.modelMappingMode.explicit')}>{t('templates.modelMappingMode.explicit')}</SelectItem>
+                      <SelectItem value="implicit" label={t('templates.modelMappingMode.implicit')}>{t('templates.modelMappingMode.implicit')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="ghost" size="icon-sm" title={t('templates.deleteRow')} aria-label={t('templates.deleteRow')} onClick={() => removeMappingRow(i)}>
+                    <X />
+                  </Button>
+                </div>
+              ))}
+              <Button variant="outline" size="sm" onClick={addMappingRow}>
+                <Plus /> {t('templates.addMapping')}
               </Button>
             </div>
-          ))}
-          <Button variant="outline" size="sm" onClick={addMappingRow}>
-            <Plus /> {t('templates.addMapping')}
-          </Button>
-        </div>
+          </>
+        )}
       </div>
     </div>
   )
@@ -442,12 +516,16 @@ export default function Templates() {
     queryKey: ['templates', { limit, offset, name: debouncedName, sort: activeSort ?? 'id', order }],
     queryFn: () => api.listTemplates({ limit, offset, name: debouncedName || undefined, sort: activeSort ?? 'id', order }),
   })
-  const rows = data?.rows ?? []
+  const rows = useMemo(() => data?.rows ?? [], [data?.rows])
 
   // 行数据变化后清理已不存在的勾选
   useEffect(() => {
     const ids = new Set(rows.map(r => r.ID))
-    setSelected(s => s.filter(id => ids.has(id)))
+    setSelected(s => {
+      const filtered = s.filter(id => ids.has(id))
+      if (filtered.length === s.length && filtered.every((v, i) => v === s[i])) return s
+      return filtered
+    })
   }, [rows])
 
   // 筛选/排序/翻页变化 → 重置 offset 并清空选择
@@ -492,6 +570,7 @@ export default function Templates() {
 
   // —— 批量更新对话框 ——
   const [batchOpen, setBatchOpen] = useState(false)
+  const [batchMappingMode, setBatchMappingMode] = useState<BatchMappingMode>('unchanged')
   const batchResolve = useRef<((r: 'cancelled' | 'submitted') => void) | null>(null)
   // —— 删除确认 ——
   const [deleting, setDeleting] = useState<Template | null>(null)
@@ -516,8 +595,10 @@ export default function Templates() {
     setExtStrip(null)
   }
   useEffect(() => {
-    if (extTarget && !extQ.isLoading && extQ.data !== null) setExtStrip(extQ.data?.strip_image_tools ?? null)
-  }, [extTarget, extQ.isLoading, extQ.data])
+    if (!extTarget || extQ.isLoading || extQ.data === null) return
+    const target = extQ.data?.strip_image_tools ?? null
+    setExtStrip(prev => (prev === target ? prev : target))
+  }, [extTarget?.ID, extQ.isLoading, extQ.data])
   const extSave = useMutation({
     mutationFn: () => {
       const tpl = extTarget!
@@ -561,10 +642,10 @@ export default function Templates() {
     enabled: !!editing && dialogOpen && ECO_CREDENTIAL_TYPES.includes(editing?.CredentialType as TemplateCredentialType),
   })
   useEffect(() => {
-    if (editing && !templateExtEcho.isLoading) {
-      setForm(f => ({ ...f, strip_image_tools: templateExtEcho.data?.strip_image_tools ?? false }))
-    }
-  }, [editing, templateExtEcho.isLoading, templateExtEcho.data])
+    if (!editing || templateExtEcho.isLoading) return
+    const target = templateExtEcho.data?.strip_image_tools ?? false
+    setForm(f => (f.strip_image_tools === target ? f : { ...f, strip_image_tools: target }))
+  }, [editing?.ID, templateExtEcho.isLoading, templateExtEcho.data])
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
   const closeBatchUpdate = (r: 'cancelled' | 'submitted' = 'cancelled') => {
     setBatchOpen(false)
@@ -575,6 +656,7 @@ export default function Templates() {
   const openBatchUpdate = () => {
     setForm(emptyForm())
     setValidationMsg(null)
+    setBatchMappingMode('unchanged')
     setBatchOpen(true)
     return new Promise<'cancelled' | 'submitted'>(resolve => {
       batchResolve.current = resolve
@@ -640,12 +722,24 @@ export default function Templates() {
       setValidationMsg(tr('templates.formRequired'))
       return
     }
+    const mappingErr = validateMappingRows(form.model_mapping, tr)
+    if (mappingErr) {
+      setValidationMsg(mappingErr)
+      return
+    }
     save.mutate(form)
   }
 
   const submitBatch = () => {
     setValidationMsg(null)
-    const fields = toPatch(form)
+    if (batchMappingMode === 'replace') {
+      const mappingErr = validateMappingRows(form.model_mapping, tr)
+      if (mappingErr) {
+        setValidationMsg(mappingErr)
+        return
+      }
+    }
+    const fields = toPatch(form, batchMappingMode)
     if (isBatchCodex) delete (fields as Record<string, unknown>).base_url
     if (Object.keys(fields).length === 0) {
       setValidationMsg(tr('templates.batchUpdateEmpty'))
@@ -777,12 +871,17 @@ export default function Templates() {
                       </TableCell>
                       <TableCell>
                         {mappings.length === 0 ? '—' : (
-                          <div className="flex max-w-56 flex-wrap gap-1">
-                            {mappings.slice(0, 3).map(([k, v]) => (
-                              <Badge key={k} variant="outline" className="font-mono text-xs" title={`${k} → ${v}`}>
-                                {truncate(k, 10)}→{truncate(v, 10)}
-                              </Badge>
-                            ))}
+                          <div className="flex max-w-64 flex-wrap gap-1">
+                            {mappings.slice(0, 3).map(([k, raw]) => {
+                              if (!isModelMappingEntry(raw)) return null
+                              const e = raw
+                              return (
+                                <Badge key={k} variant="outline" className="font-mono text-xs" title={`${k} → ${e.mapped_model} (${e.mode})`}>
+                                  {truncate(k, 10)}→{truncate(e.mapped_model, 10)}
+                                  <span className="ml-1 rounded bg-muted px-1 text-[10px] font-sans">{tr(`templates.modelMappingMode.${e.mode}`)}</span>
+                                </Badge>
+                              )
+                            })}
                             {mappings.length > 3 && <Badge variant="outline">+{mappings.length - 3}</Badge>}
                           </div>
                         )}
@@ -849,7 +948,7 @@ export default function Templates() {
             <DialogDescription>{tr('templates.batchUpdateDesc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <FormFields form={form} setForm={setForm} batch batchCodex={isBatchCodex} />
+            <FormFields form={form} setForm={setForm} batch batchCodex={isBatchCodex} batchMappingMode={batchMappingMode} setBatchMappingMode={setBatchMappingMode} />
             {validationMsg && <p className="text-sm text-destructive">{validationMsg}</p>}
             {batchUpdate.isError && errMsg(batchUpdate.error) && (
               <p className="text-sm text-destructive">{errMsg(batchUpdate.error)}</p>
