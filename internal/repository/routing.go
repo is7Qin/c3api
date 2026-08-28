@@ -512,7 +512,7 @@ func (r *PartitionRepo) advanceWatermarkTx(ctx context.Context, drv *txDriver, k
 		cur = sql.NullTime{Time: w, Valid: true}
 	}
 	rs.Close()
-	if cur.Valid && !newWatermark.After(cur.Time) {
+	if cur.Valid && newWatermark.Before(cur.Time) {
 		return fmt.Errorf("watermark must advance")
 	}
 	if has {
@@ -557,31 +557,19 @@ func (r *PartitionRepo) RollupQuality(ctx context.Context, bucket time.Time, ver
 	if !hasDirty || !isDirty {
 		return fmt.Errorf("rollup requires dirty minute %v", bucket)
 	}
-	// read facts
+	// read facts existence (must have at least one row)
 	factRows := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT attempts, ttft_hist FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2`, []any{bucket, version}, factRows); err != nil {
+	if err := drv.Query(ctx, `SELECT 1 FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2 LIMIT 1`, []any{bucket, version}, factRows); err != nil {
 		return err
 	}
-	hasFact := false
-	for factRows.Next() {
-		hasFact = true
-		var attempts int64
-		var hist []int64
-		_ = factRows.Scan(&attempts, &hist)
-		if attempts < 0 {
-			factRows.Close()
-			return fmt.Errorf("poison row")
-		}
-	}
+	hasFact := factRows.Next()
 	factRows.Close()
 	if !hasFact {
 		return fmt.Errorf("no facts for rollup")
 	}
-	// simple rollup: aggregate sums into rollup table (for test, just insert a placeholder row)
-	// Use INSERT ... SELECT sum(...) to demonstrate transactional output
-	if err := drv.Exec(ctx, `INSERT INTO routing_quality_rollup (identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, updated_at)
-	SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, now() FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2
-	ON CONFLICT (bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version) DO UPDATE SET attempts=EXCLUDED.attempts, updated_at=now()`, []any{bucket, version}, &res); err != nil {
+	if err := drv.Exec(ctx, `INSERT INTO routing_quality_rollup (identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
+	SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, now() FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2
+	ON CONFLICT (bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version) DO UPDATE SET attempts=EXCLUDED.attempts, successes=EXCLUDED.successes, count_429=EXCLUDED.count_429, count_ordinary_4xx=EXCLUDED.count_ordinary_4xx, count_5xx=EXCLUDED.count_5xx, count_network=EXCLUDED.count_network, ttft_n=EXCLUDED.ttft_n, ttft_sum_log_q32=EXCLUDED.ttft_sum_log_q32, ttft_sumsq_log_q32=EXCLUDED.ttft_sumsq_log_q32, ttft_hist=EXCLUDED.ttft_hist, input_tokens=EXCLUDED.input_tokens, output_tokens=EXCLUDED.output_tokens, cache_read_tokens=EXCLUDED.cache_read_tokens, cache_create_tokens=EXCLUDED.cache_create_tokens, calls=EXCLUDED.calls, images=EXCLUDED.images, updated_at=now()`, []any{bucket, version}, &res); err != nil {
 		return err
 	}
 	if err := r.advanceWatermarkTx(ctx, drv, "quality", version, bucket); err != nil {
@@ -617,21 +605,17 @@ func (r *PartitionRepo) RollupFlow(ctx context.Context, terminalMinute time.Time
 		return fmt.Errorf("rollup requires dirty minute %v", terminalMinute)
 	}
 	factRows := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT lane FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2`, []any{terminalMinute, version}, factRows); err != nil {
+	if err := drv.Query(ctx, `SELECT 1 FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2 LIMIT 1`, []any{terminalMinute, version}, factRows); err != nil {
 		return err
 	}
-	for factRows.Next() {
-		var lane string
-		_ = factRows.Scan(&lane)
-		if lane == "poison" {
-			factRows.Close()
-			return fmt.Errorf("poison row")
-		}
-	}
+	hasFact := factRows.Next()
 	factRows.Close()
-	if err := drv.Exec(ctx, `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, candidate_fingerprint, absolute_sequence, chain_count, updated_at)
-	SELECT identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, candidate_fingerprint, absolute_sequence, chain_count, now() FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2
-	ON CONFLICT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version) DO UPDATE SET chain_count=EXCLUDED.chain_count, updated_at=now()`, []any{terminalMinute, version}, &res); err != nil {
+	if !hasFact {
+		return fmt.Errorf("no facts for rollup")
+	}
+	if err := drv.Exec(ctx, `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, updated_at)
+	SELECT identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, now() FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2
+	ON CONFLICT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version) DO UPDATE SET previous_account_id=EXCLUDED.previous_account_id, previous_outcome=EXCLUDED.previous_outcome, transition_reason=EXCLUDED.transition_reason, outcome=EXCLUDED.outcome, is_terminal=EXCLUDED.is_terminal, generation=EXCLUDED.generation, absolute_sequence=EXCLUDED.absolute_sequence, chain_count=EXCLUDED.chain_count, updated_at=now()`, []any{terminalMinute, version}, &res); err != nil {
 		return err
 	}
 	if err := r.advanceWatermarkTx(ctx, drv, "flow", version, terminalMinute); err != nil {
