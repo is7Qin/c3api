@@ -176,11 +176,12 @@ func TruncateErrMsg(s string) string {
 	return string(r[:ErrMsgMaxLen])
 }
 
-type ModelMappingMode string
+type ModelMappingMode uint8
 
 const (
-	ModelMappingModeExplicit ModelMappingMode = "explicit"
-	ModelMappingModeImplicit ModelMappingMode = "implicit"
+	ModelMappingModeInvalid  ModelMappingMode = 0
+	ModelMappingModeExplicit ModelMappingMode = 1
+	ModelMappingModeImplicit ModelMappingMode = 2
 )
 
 func (m ModelMappingMode) Valid() bool {
@@ -191,11 +192,26 @@ func (m ModelMappingMode) Valid() bool {
 	return false
 }
 
-func (m ModelMappingMode) MarshalJSON() ([]byte, error) {
-	if !m.Valid() {
-		return nil, fmt.Errorf("invalid ModelMappingMode %q", string(m))
+func (m ModelMappingMode) String() string {
+	switch m {
+	case ModelMappingModeExplicit:
+		return "explicit"
+	case ModelMappingModeImplicit:
+		return "implicit"
+	default:
+		return fmt.Sprintf("ModelMappingMode(%d)", uint8(m))
 	}
-	return json.Marshal(string(m))
+}
+
+func (m ModelMappingMode) MarshalJSON() ([]byte, error) {
+	switch m {
+	case ModelMappingModeExplicit:
+		return json.Marshal("explicit")
+	case ModelMappingModeImplicit:
+		return json.Marshal("implicit")
+	default:
+		return nil, fmt.Errorf("invalid ModelMappingMode %q", m.String())
+	}
 }
 
 func (m *ModelMappingMode) UnmarshalJSON(data []byte) error {
@@ -206,11 +222,14 @@ func (m *ModelMappingMode) UnmarshalJSON(data []byte) error {
 	if s == nil {
 		return fmt.Errorf("mode must not be null")
 	}
-	v := ModelMappingMode(*s)
-	if !v.Valid() {
+	switch *s {
+	case "explicit":
+		*m = ModelMappingModeExplicit
+	case "implicit":
+		*m = ModelMappingModeImplicit
+	default:
 		return fmt.Errorf("invalid mode %q", *s)
 	}
-	*m = v
 	return nil
 }
 
@@ -248,7 +267,25 @@ func (e *ModelMappingEntry) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func ValidateModelMapping(m map[string]ModelMappingEntry) error {
+type ModelMapping map[string]ModelMappingEntry
+
+func (m *ModelMapping) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return fmt.Errorf("model_mapping must not be null")
+	}
+	type raw ModelMapping
+	var tmp raw
+	if err := json.Unmarshal(data, (*map[string]ModelMappingEntry)(&tmp)); err != nil {
+		return err
+	}
+	if tmp == nil {
+		tmp = make(raw)
+	}
+	*m = ModelMapping(tmp)
+	return nil
+}
+
+func ValidateModelMapping(m ModelMapping) error {
 	for alias, entry := range m {
 		if strings.TrimSpace(alias) == "" || alias != strings.TrimSpace(alias) {
 			return fmt.Errorf("alias %q must be non-empty without leading/trailing whitespace", alias)
@@ -257,7 +294,7 @@ func ValidateModelMapping(m map[string]ModelMappingEntry) error {
 			return fmt.Errorf("mapped_model %q must be non-empty without leading/trailing whitespace", entry.MappedModel)
 		}
 		if !entry.Mode.Valid() {
-			return fmt.Errorf("mode %q must be explicit or implicit", entry.Mode)
+			return fmt.Errorf("mode %q must be explicit or implicit", entry.Mode.String())
 		}
 	}
 	return nil
@@ -271,7 +308,7 @@ type Template struct {
 	SupportedFormats []RequestFormat            // 模板支持的格式（非空、去重）
 	Models           []string                   // 可服务模型集合
 	FormatModels     map[RequestFormat][]string // 格式 → 该格式支持的模型列表；未配置 = 全部 Models
-	ModelMapping     map[string]ModelMappingEntry
+	ModelMapping     ModelMapping
 	// StripImageTools 模板级图像 tool 剥离开关（template_ext.strip_image_tools
 	// 快照合并，W4 消费；三类型 responses-special/codex-oauth/codex-pat 公共
 	// 能力）：true = response.create 帧出口剥离图像工具（tools 数组 +

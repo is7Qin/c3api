@@ -40,14 +40,25 @@ func toAPITemplate(t *domain.Template) Template {
 	}
 }
 
-func toAPIModelMapping(m map[string]domain.ModelMappingEntry) *map[string]ModelMappingEntry {
+func domainModeToAPIMode(m domain.ModelMappingMode) ModelMappingEntryMode {
+	switch m {
+	case domain.ModelMappingModeExplicit:
+		return Explicit
+	case domain.ModelMappingModeImplicit:
+		return Implicit
+	default:
+		return ModelMappingEntryMode(m.String())
+	}
+}
+
+func toAPIModelMapping(m domain.ModelMapping) *map[string]ModelMappingEntry {
 	if m == nil {
 		empty := map[string]ModelMappingEntry{}
 		return &empty
 	}
 	out := make(map[string]ModelMappingEntry, len(m))
 	for k, v := range m {
-		out[k] = ModelMappingEntry{MappedModel: v.MappedModel, Mode: ModelMappingEntryMode(v.Mode)}
+		out[k] = ModelMappingEntry{MappedModel: v.MappedModel, Mode: domainModeToAPIMode(v.Mode)}
 	}
 	return &out
 }

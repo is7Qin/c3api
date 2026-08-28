@@ -487,7 +487,7 @@ func validateTemplate(t *domain.Template) error {
 		}
 	}
 	if t.ModelMapping == nil {
-		t.ModelMapping = map[string]domain.ModelMappingEntry{}
+		t.ModelMapping = domain.ModelMapping{}
 	}
 	if err := domain.ValidateModelMapping(t.ModelMapping); err != nil {
 		return ErrInvalidInput

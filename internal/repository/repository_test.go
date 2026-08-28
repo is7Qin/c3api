@@ -185,7 +185,7 @@ func templateRow() *pgxmock.Rows {
 		AddRow(int64(1), "openai-main", "https://api.openai.com/v1", "api_key",
 			[]byte(`["openai-chat","openai-responses"]`), []byte(`["gpt-4o"]`),
 			[]byte(`{"openai-responses":["o3"]}`),
-			[]byte(`{"gpt-4o":"gpt-4o-2026-01-01"}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			[]byte(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 			time.Time{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
@@ -205,7 +205,7 @@ func TestTemplateCRUD(t *testing.T) {
 		WithArgs("openai-main", "https://api.openai.com/v1", "api_key",
 			json.RawMessage(`["openai-chat","openai-responses"]`), json.RawMessage(`["gpt-4o"]`),
 			json.RawMessage(`{"openai-responses":["o3"]}`),
-			json.RawMessage(`{"gpt-4o":"gpt-4o-2026-01-01"}`),
+			json.RawMessage(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`),
 			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(1)))
 
@@ -222,7 +222,7 @@ func TestTemplateCRUD(t *testing.T) {
 		WithArgs("renamed", "https://api.openai.com/v1", "api_key",
 			json.RawMessage(`["openai-chat","openai-responses"]`), json.RawMessage(`["gpt-4o"]`),
 			json.RawMessage(`{"openai-responses":["o3"]}`),
-			json.RawMessage(`{"gpt-4o":"gpt-4o-2026-01-01"}`),
+			json.RawMessage(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`),
 			pgxmock.AnyArg(), int64(1)).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).
@@ -485,7 +485,7 @@ func TestListTemplatesQuery(t *testing.T) {
 				AddRow(int64(1), "openai-main", "https://api.openai.com/v1",
 					[]byte(`["openai-chat","openai-responses"]`), []byte(`["gpt-4o"]`),
 					[]byte(`{"openai-responses":["o3"]}`),
-					[]byte(`{"gpt-4o":"gpt-4o-2026-01-01"}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+					[]byte(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 					time.Time{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)).
 				AddRow(int64(2), "openai-alt", "https://api.openai.com/v1",
 					[]byte(`["openai-chat"]`), []byte(`["gpt-4o-mini"]`), []byte(`{}`), []byte(`{}`),
@@ -515,7 +515,7 @@ func TestListTemplatesQuery(t *testing.T) {
 				AddRow(int64(1), "openai-main", "https://api.openai.com/v1",
 					[]byte(`["openai-chat","openai-responses"]`), []byte(`["gpt-4o"]`),
 					[]byte(`{"openai-responses":["o3"]}`),
-					[]byte(`{"gpt-4o":"gpt-4o-2026-01-01"}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+					[]byte(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 					time.Time{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
 
 		rows, total, err := tr.repos.Templates.ListTemplates(ctx(), repository.ListQuery{

@@ -35,13 +35,24 @@ func formatModelsFromBody(m *map[string][]string) map[domain.RequestFormat][]str
 	return out
 }
 
-func modelMappingFromBody(m *map[string]ModelMappingEntry) map[string]domain.ModelMappingEntry {
+func apiModeToDomain(m ModelMappingEntryMode) domain.ModelMappingMode {
+	switch m {
+	case Explicit:
+		return domain.ModelMappingModeExplicit
+	case Implicit:
+		return domain.ModelMappingModeImplicit
+	default:
+		return domain.ModelMappingModeInvalid
+	}
+}
+
+func modelMappingFromBody(m *map[string]ModelMappingEntry) domain.ModelMapping {
 	if m == nil {
 		return nil
 	}
-	out := make(map[string]domain.ModelMappingEntry, len(*m))
+	out := make(domain.ModelMapping, len(*m))
 	for k, v := range *m {
-		out[k] = domain.ModelMappingEntry{MappedModel: v.MappedModel, Mode: domain.ModelMappingMode(v.Mode)}
+		out[k] = domain.ModelMappingEntry{MappedModel: v.MappedModel, Mode: apiModeToDomain(v.Mode)}
 	}
 	return out
 }
@@ -182,7 +193,7 @@ func (h *AdminAPI) PostTemplatesBatchUpdate(w http.ResponseWriter, r *http.Reque
 // templatePatchFromBody 生成类型 fields → repo patch（nil 字段 = 不更新）。
 // 空 fields（无任何字段）视为非法输入。
 func templatePatchFromBody(f *TemplatePatch) (repository.TemplatePatch, error) {
-	var mm *map[string]domain.ModelMappingEntry
+	var mm *domain.ModelMapping
 	if f.ModelMapping != nil {
 		m := modelMappingFromBody(f.ModelMapping)
 		mm = &m

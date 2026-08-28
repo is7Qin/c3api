@@ -32,7 +32,7 @@ type Template struct {
 	// FormatModels holds the value of the "format_models" field.
 	FormatModels map[string][]string `json:"format_models,omitempty"`
 	// ModelMapping holds the value of the "model_mapping" field.
-	ModelMapping map[string]domain.ModelMappingEntry `json:"model_mapping,omitempty"`
+	ModelMapping domain.ModelMapping `json:"model_mapping,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// DeletedAt holds the value of the "deleted_at" field.

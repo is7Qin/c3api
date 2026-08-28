@@ -70,7 +70,7 @@ func (_c *TemplateCreate) SetFormatModels(v map[string][]string) *TemplateCreate
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (_c *TemplateCreate) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateCreate {
+func (_c *TemplateCreate) SetModelMapping(v domain.ModelMapping) *TemplateCreate {
 	_c.mutation.SetModelMapping(v)
 	return _c
 }
@@ -461,7 +461,7 @@ func (u *TemplateUpsert) UpdateFormatModels() *TemplateUpsert {
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (u *TemplateUpsert) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateUpsert {
+func (u *TemplateUpsert) SetModelMapping(v domain.ModelMapping) *TemplateUpsert {
 	u.Set(template.FieldModelMapping, v)
 	return u
 }
@@ -647,7 +647,7 @@ func (u *TemplateUpsertOne) UpdateFormatModels() *TemplateUpsertOne {
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (u *TemplateUpsertOne) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateUpsertOne {
+func (u *TemplateUpsertOne) SetModelMapping(v domain.ModelMapping) *TemplateUpsertOne {
 	return u.Update(func(s *TemplateUpsert) {
 		s.SetModelMapping(v)
 	})
@@ -1008,7 +1008,7 @@ func (u *TemplateUpsertBulk) UpdateFormatModels() *TemplateUpsertBulk {
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (u *TemplateUpsertBulk) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateUpsertBulk {
+func (u *TemplateUpsertBulk) SetModelMapping(v domain.ModelMapping) *TemplateUpsertBulk {
 	return u.Update(func(s *TemplateUpsert) {
 		s.SetModelMapping(v)
 	})
