@@ -189,11 +189,15 @@ const emptyForm = (): FormState => ({
   codex_email: '',
 })
 
+// Phase 4 fix: structurally clear BaseURL for Codex account rows (fallback to AccountView.Template), not just UI hide
+function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
 function toForm(a: AccountView): FormState {
+  const ct = a.Template?.CredentialType as string | undefined
+  const codex = isCodexCt(ct)
   return {
     name: a.Name ?? '',
     template_id: String(a.TemplateID ?? ''),
-    base_url: a.BaseURL ?? '', // 编辑回显（C3：toAPIAccountView 平铺携带，否则保存静默清空）
+    base_url: codex ? '' : (a.BaseURL ?? ''), // Codex: must clear stale BaseURL on load
     upstream_key: a.UpstreamKey ?? '',
     status: a.Status ?? 'active',
     weight: String(a.Weight ?? 0),
@@ -212,12 +216,13 @@ function toForm(a: AccountView): FormState {
 // PUT 全量替换：重建 AccountCreate（只带契约字段，不带运行时字段）。
 // 编辑态总是发送 group_ids（含空数组 = 清空）；创建态仅已选时发送
 // （缺省 = 无分组，语义与 null 一致）。
-function toBody(f: FormState, editing: boolean): AccountCreate {
+// Phase 4 fix: base_url must be structurally excluded for Codex (null) even if UI timing races
+function toBody(f: FormState, editing: boolean, isCodex?: boolean): AccountCreate {
   const body: AccountCreate = {
     name: f.name.trim(),
     template_id: Number(f.template_id),
-    // 空串归一 null（create/update 路径 ""/null/缺省统一 = 继承模板）
-    base_url: f.base_url.trim() || null,
+    // 空串归一 null；Codex 强制 null（SDK default, non-empty forbidden)
+    base_url: isCodex ? null : (f.base_url.trim() || null),
     upstream_key: f.upstream_key,
     status: f.status,
     weight: f.weight === '' ? 0 : Number(f.weight),
@@ -251,12 +256,13 @@ function GroupMultiSelect({ groups, value, onChange, disabled }: {
 }
 
 // 禁用/启用 quick action：取当前对象重建请求体 + status 翻转。
-// base_url 从 AccountView 取（C3——缺则 toggle PUT 全量替换静默清空）。
+// Phase 4: Codex account must not send BaseURL (force null) even if stale value remains on row
 function toggleBody(a: AccountView, next: AccountStatus): AccountCreate {
+  const codex = isCodexCt(a.Template?.CredentialType as string | undefined)
   return {
     name: a.Name ?? '',
     template_id: a.TemplateID ?? 0,
-    base_url: a.BaseURL ?? null,
+    base_url: codex ? null : (a.BaseURL ?? null),
     upstream_key: a.UpstreamKey ?? '',
     status: next,
     weight: a.Weight ?? 0,
@@ -546,14 +552,44 @@ export default function Accounts() {
     setBatchFormErr(null)
     setBatchUpdateOpen(true)
   }
+  // Phase 4: 批量有效模板判定 — 替换模板优先（fail-closed while unresolved），否则各选中账号现模板（AccountView.Template authoritative fallback + fail-closed for missing)
+  const isBatchCodex = useMemo(() => {
+    if (batchForm.template_id !== 'all') {
+      const tpl = templates.find(p => String(p.ID) === batchForm.template_id)
+      const ct = tpl?.CredentialType as string | undefined
+      if (isCodexCt(ct)) return true
+      if (ct != null) return false // found non-codex (including responses-special) -> preserve
+      // unresolved replacement template: fail closed (disable) while loading or not found
+      if (templatesQ.isLoading) return true
+      if (templatesQ.data) return true
+      return true // before first load also fail closed
+    }
+    return selected.some(id => {
+      const acc = rows.find(r => r.ID === id)
+      const ct = (acc?.Template?.CredentialType as string | undefined) ?? (templates.find(p => p.ID === acc?.TemplateID)?.CredentialType as string | undefined)
+      if (isCodexCt(ct)) return true
+      if (ct != null) return false
+      // unresolved effective template for this row -> fail closed
+      if (!acc) return true
+      return true
+    })
+  }, [batchForm.template_id, selected, rows, templates, templatesQ.isLoading, templatesQ.data])
+  useEffect(() => {
+    if (isBatchCodex && (batchForm.base_url !== '' || batchForm.clearBaseURL)) {
+      setBatchForm(f => ({ ...f, base_url: '', clearBaseURL: false }))
+    }
+  }, [isBatchCodex, batchForm.base_url, batchForm.clearBaseURL])
   const submitBatchUpdate = () => {
     const fields: AccountPatch = {}
     if (batchForm.name.trim()) fields.name = batchForm.name.trim()
     if (batchForm.upstream_key) fields.upstream_key = batchForm.upstream_key
     // base_url 批量三态（C1）：勾选清空 → "" = 清空（回继承模板）；
     // 未勾选且输入非空 → 落值；未勾选且空 → 不变（不发送）
-    if (batchForm.clearBaseURL) fields.base_url = ''
-    else if (batchForm.base_url.trim()) fields.base_url = batchForm.base_url.trim()
+    // Phase 4: 有效目标含 Codex 时禁止提交 base_url 任何值
+    if (!isBatchCodex) {
+      if (batchForm.clearBaseURL) fields.base_url = ''
+      else if (batchForm.base_url.trim()) fields.base_url = batchForm.base_url.trim()
+    }
     if (batchForm.status !== 'all') fields.status = batchForm.status
     if (batchForm.weight !== '') fields.weight = Number(batchForm.weight)
     if (batchForm.max_concurrency !== '') fields.max_concurrency = Number(batchForm.max_concurrency)
@@ -631,10 +667,20 @@ export default function Accounts() {
   // （codex_oauth_* 列组 / codex_pat_key 按模板类型分流；与「扩展配置」弹窗共用写路径）。
   const save = useMutation({
     mutationFn: async (f: FormState) => {
-      const ct = selTemplate?.CredentialType
-      const id = editing?.ID ?? (await api.createAccount(toBody(f, false))).ID
-      if (editing) await api.updateAccount(id!, toBody(f, true))
-      if (id && (ct === 'codex-oauth' || ct === 'codex-pat')) {
+      // Phase 4: compute effective CT with same priority as single-edit render: unchanged editing.Template authoritative before stale query; genuine change uses replacement lookup; unresolved fail-closed
+      const isUnchangedForF = !!(editing && String(editing.TemplateID) === String(f.template_id))
+      const tplForF = isUnchangedForF ? null : templates.find(p => String(p.ID) === String(f.template_id))
+      const effCt: string | undefined = isUnchangedForF
+        ? (editing!.Template?.CredentialType as string | undefined)
+        : (tplForF?.CredentialType as string | undefined)
+      const unresolved = !!f.template_id && effCt == null
+      const isCodexForBody = isCodexCt(effCt) || unresolved
+      const ct = effCt
+      // structurally force base_url null for Codex/unresolved even if form still stale
+      const bodyForCreate = toBody(f, false, isCodexForBody)
+      const id = editing?.ID ?? (await api.createAccount(bodyForCreate)).ID
+      if (editing) await api.updateAccount(id!, toBody(f, true, isCodexForBody))
+      if (id && isCodexCt(ct)) {
         const cur = extEcho.data
         const extBody: AccountExt = {
           account_id: id,
@@ -683,8 +729,10 @@ export default function Accounts() {
   const submit = () => {
     // 凭据必填性按模板类型分流：api_key/responses-special → upstream_key；
     // codex-oauth → codex_oauth_token；codex-pat → codex_pat_key（后端同步校验）。
+    // Use effectiveSelCt (fail-closed) so delayed template query does not bypass validation
     if (!form.name.trim() || !form.template_id) return
-    const ct = selTemplate?.CredentialType
+    if (isSelUnresolved) return // fail-closed: do not submit while unresolved
+    const ct = effectiveSelCt
     if (ct === 'codex-oauth' && !form.codex_oauth_token.trim()) return
     if (ct === 'codex-pat' && !form.codex_pat_key.trim()) return
     if (ct !== 'codex-oauth' && ct !== 'codex-pat' && !form.upstream_key) return
@@ -763,6 +811,19 @@ export default function Accounts() {
   const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
   const templateName = (a: AccountView) => a.Template?.Name ?? (a.TemplateID ? `#${a.TemplateID}` : '—')
   const selTemplate = templates.find(tp => String(tp.ID) === form.template_id)
+  // Phase 4 authoritative effective credential: when editing and template_id unchanged, embedded editing.Template is authoritative before any stale templates-query entry; only genuine ID change uses replacement lookup; unresolved replacement fail-closed.
+  const isEditingUnchanged = !!(editing && String(editing.TemplateID) === form.template_id)
+  const effectiveSelCt: string | undefined = isEditingUnchanged
+    ? (editing!.Template?.CredentialType as string | undefined)
+    : (selTemplate?.CredentialType as string | undefined)
+  const isSelUnresolved = !!form.template_id && effectiveSelCt == null
+  const isSelCodex = isCodexCt(effectiveSelCt) || isSelUnresolved
+  // Phase 4: template 切换至 Codex/ unresolved 时立即清空残留 base_url，防止隐藏字段的过期值提交
+  useEffect(() => {
+    if (isSelCodex && form.base_url !== '') {
+      setForm(f => ({ ...f, base_url: '' }))
+    }
+  }, [isSelCodex, form.base_url])
 
   return (
     <div className="space-y-6">
@@ -998,20 +1059,24 @@ export default function Accounts() {
               <Select
                 items={Object.fromEntries(templates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`]))}
                 value={form.template_id || null}
-                onValueChange={v => setForm(f => ({ ...f, template_id: String(v) }))}
+                onValueChange={v => {
+                  const tpl = templates.find(p => String(p.ID) === String(v))
+                  const isCodex = !!(tpl && CODE_CREDENTIAL_TYPES.includes(tpl.CredentialType as typeof CODE_CREDENTIAL_TYPES[number]))
+                  setForm(f => ({ ...f, template_id: String(v), base_url: isCodex ? '' : f.base_url }))
+                }}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {templates.map(tp => <SelectItem key={tp.ID} value={String(tp.ID)} label={tp.Name ?? `#${tp.ID}`}>{tp.Name ?? `#${tp.ID}`}</SelectItem>)}
                 </SelectContent>
               </Select>
-              {selTemplate && CODE_CREDENTIAL_TYPES.includes(selTemplate.CredentialType as typeof CODE_CREDENTIAL_TYPES[number]) && (
+              {isCodexCt(effectiveSelCt) && (
                 <p className="text-xs text-muted-foreground">{t('accounts.ext.credHint')}</p>
               )}
             </div>
             {/* 凭据字段按模板类型分流：codex-oauth → OAuth 列组；codex-pat → PAT Key；
                 api_key/responses-special → 上游 Key。codex 凭据保存时链式写入 account_ext */}
-            {selTemplate?.CredentialType === 'codex-oauth' ? (
+            {effectiveSelCt === 'codex-oauth' ? (
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="acc-oauth-token">{t('accounts.ext.oauthToken')}</Label>
@@ -1051,7 +1116,7 @@ export default function Accounts() {
                   />
                 </div>
               </div>
-            ) : selTemplate?.CredentialType === 'codex-pat' ? (
+            ) : effectiveSelCt === 'codex-pat' ? (
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="acc-pat">{t('accounts.ext.patKey')}</Label>
@@ -1079,18 +1144,21 @@ export default function Accounts() {
                 <Input id="acc-key" type="password" value={form.upstream_key} placeholder="sk-..." onChange={e => setForm(f => ({ ...f, upstream_key: e.target.value }))} />
               </div>
             )}
-            {/* 账号级 base_url 覆盖（所有凭据类型显示——codex 可覆盖 SDK 默认端点；
-                api_key/responses-special 为模板留空时的兜底）；留空 = 继承模板 */}
-            <div className="space-y-1.5">
-              <Label htmlFor="acc-base-url">Base URL</Label>
-              <Input
-                id="acc-base-url"
-                value={form.base_url}
-                placeholder="https://..."
-                onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
-              />
-              <p className="text-xs text-muted-foreground">{t('accounts.baseUrlHint')}</p>
-            </div>
+            {/* Phase 4: codex-oauth/pat 不可配置 BaseURL（隐藏并清空）；api_key/responses-special 保留覆盖 */}
+            {isSelCodex ? (
+              <p className="text-xs text-muted-foreground">{t('accounts.baseUrlCodexHidden')}</p>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="acc-base-url">Base URL</Label>
+                <Input
+                  id="acc-base-url"
+                  value={form.base_url}
+                  placeholder="https://..."
+                  onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">{t('accounts.baseUrlHint')}</p>
+              </div>
+            )}
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label>{t('accounts.statusLabel')}</Label>
@@ -1139,9 +1207,10 @@ export default function Accounts() {
                 save.isPending ||
                 !form.name.trim() ||
                 !form.template_id ||
-                (selTemplate?.CredentialType === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
-                (selTemplate?.CredentialType === 'codex-pat' && !form.codex_pat_key.trim()) ||
-                (selTemplate?.CredentialType !== 'codex-oauth' && selTemplate?.CredentialType !== 'codex-pat' && form.upstream_key === '') ||
+                isSelUnresolved ||
+                (effectiveSelCt === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
+                (effectiveSelCt === 'codex-pat' && !form.codex_pat_key.trim()) ||
+                (!isCodexCt(effectiveSelCt) && form.upstream_key === '') ||
                 (editing && !groupsLoaded)
               }
             >
@@ -1194,11 +1263,12 @@ export default function Accounts() {
                 id="ba-base-url"
                 value={batchForm.base_url}
                 placeholder="https://..."
+                disabled={isBatchCodex}
                 onChange={e => setBatchForm(f => ({ ...f, base_url: e.target.value }))}
               />
-              <p className="text-xs text-muted-foreground">{t('accounts.batchBaseUrlHint')}</p>
+              <p className="text-xs text-muted-foreground">{isBatchCodex ? t('accounts.batchBaseUrlCodexDisabled') : t('accounts.batchBaseUrlHint')}</p>
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
-                <Checkbox checked={batchForm.clearBaseURL} onCheckedChange={c => setBatchForm(f => ({ ...f, clearBaseURL: c === true }))} />
+                <Checkbox checked={batchForm.clearBaseURL} disabled={isBatchCodex} onCheckedChange={c => setBatchForm(f => ({ ...f, clearBaseURL: c === true }))} />
                 <span className="text-sm">{t('accounts.clearBaseUrl')}</span>
               </label>
             </div>

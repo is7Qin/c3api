@@ -182,7 +182,7 @@
     "upstreamModelPlaceholder": "Upstream model name",
     "addMapping": "Add mapping",
     "deleteRow": "Delete row",
-    "formRequired": "Fill in name & base_url and select at least one format",
+    "formRequired": "Fill in name and select at least one format",
     "batchUpdateTitle": "Batch update templates ({{count}} selected)",
     "batchUpdateDesc": "Only filled fields are updated; leave blank to keep",
     "batchUpdateEmpty": "Fill in at least one field",
@@ -200,7 +200,8 @@
       "saveSuccess": "Extensions saved",
       "loadFailed": "Failed to load extensions: {{message}}"
     },
-    "baseUrlOptional": "Optional: leave empty to use the default endpoint (SDK default for codex types; empty may fail upstream requests for api_key types)"
+    "baseUrlOptional": "For api_key / responses-special: optional bare root without /v1 (non-empty overrides); empty may fail to route. Codex OAuth/PAT must be empty (SDK default, non-empty is forbidden).",
+    "baseUrlCodexHidden": "Codex OAuth / PAT uses the SDK default endpoint — BaseURL is not used and must stay empty (non-empty will be rejected)."
   },
   "accounts": {
     "title": "Accounts",
@@ -355,8 +356,10 @@
     "groupLabel": "Groups",
     "groupHint": "Saving replaces the account's current groups. Accounts in no group are not scheduled.",
     "loadGroupsFailed": "Failed to load current groups — saving is disabled",
-    "baseUrlHint": "Optional: leave empty to inherit the template base_url",
+    "baseUrlHint": "For api_key / responses-special: leave empty to inherit template base_url. Codex OAuth/PAT must be empty (SDK default, non-empty forbidden).",
+    "baseUrlCodexHidden": "Codex OAuth / PAT uses the SDK default endpoint — BaseURL cannot be set (non-empty will be rejected).",
     "batchBaseUrlHint": "Unchecked with empty input = unchanged; checked = clear (inherit template)",
+    "batchBaseUrlCodexDisabled": "BaseURL disabled for Codex targets (non-empty forbidden, SDK default). Change target template to non-Codex to edit.",
     "clearBaseUrl": "Clear base_url",
     "batchGroupLabel": "Groups",
     "batchGroupHint": "Replaces the selected accounts' current groups — groups you don't select are removed.",
