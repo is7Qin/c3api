@@ -81,6 +81,8 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// 取消中的阻塞 Read 会直接拆连接（客户端拿不到正常关闭帧）；客户端循环
 	// 的退出由编排的分类关闭帧（Close 握手）自然解除：对端回关闭帧 → Read
 	// 返回关闭错误 → 退出。取消仅用于上游侧（上游已结束/失联，直拆无害）。
+	// implicit 响应身份：非空时重写上游→客户端 text 帧的模型字段（显式/无映射保持直通零扫描）
+	respModel := sel.ClientResponseModel(reqModel)
 	relayCtx, relayCancel := context.WithCancel(r.Context())
 	defer relayCancel()
 	endCh := make(chan struct{}, 3)
@@ -218,7 +220,11 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				ms := time.Since(start).Milliseconds()
 				ttft = &ms
 			}
-			if err := client.Write(relayCtx, typ, f); err != nil {
+			out := f
+			if typ == websocket.MessageText && respModel != "" {
+				out = rewriteResponseModelJSON(f, respModel)
+			}
+			if err := client.Write(relayCtx, typ, out); err != nil {
 				setErr(&clientErr, err)
 				exit()
 				return
