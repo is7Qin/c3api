@@ -28,7 +28,7 @@ func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at,
 	t.Helper()
 	ctx := context.Background()
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
-		Name: "t-codex-" + name, BaseURL: "https://u/v1",
+		Name: "t-codex-" + name, BaseURL: "",
 		CredentialType:   credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 	})
@@ -108,7 +108,7 @@ func TestWriteOAuthRotationMissingRowPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
-		Name: "t-rot3", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+		Name: "t-rot3", BaseURL: "", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 	})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
