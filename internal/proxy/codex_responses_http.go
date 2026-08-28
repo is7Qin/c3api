@@ -153,9 +153,13 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	if codexTurnEndedBody(resp.Raw) {
 		p.codex.ClearTurnState(sel.AccountID)
 	}
+	rawOut := resp.Raw
+	if m := sel.ClientResponseModel(reqModel); m != "" {
+		rawOut = rewriteResponseModelJSON(rawOut, m)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(resp.Raw)
+	_, _ = w.Write(rawOut)
 	// 顶层 usage（非流式低频路径）：缺失/显式 null → ok=false → 恒 0（与原
 	// gjson 缺失 = 0 等价）。
 	var it, ot, tt, cr, cc int64
@@ -206,6 +210,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		turnCallSeen       bool  // 流中轮继续信号（工具调用输出项——HOST-2 轮边界）
 		ttft               *int64
 	)
+	clientModel := sel.ClientResponseModel(reqModel)
 	// 伪装身份同非流式（META-2——codexIdentityFromExt 复用）；turn-state 透传
 	// 优先（HOST-2——客户端自带覆盖 held 注入）。
 	sess, meta := codexIdentityFromExt(sel.Ext)
@@ -239,8 +244,12 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 			ms := time.Since(start).Milliseconds()
 			ttft = &ms
 		}
+		outRaw := raw
+		if clientModel != "" {
+			outRaw = rewriteResponseModelJSON(raw, clientModel)
+		}
 		// 立即写出（回调切片仅回调期有效——不得跨回调保留）。
-		return writeCodexSSEFrame(w, raw)
+		return writeCodexSSEFrame(w, outRaw)
 	})
 	if err != nil {
 		// 客户端断开：上游已消费请求（成功），仍须记录用量（成功请求丢日志防
