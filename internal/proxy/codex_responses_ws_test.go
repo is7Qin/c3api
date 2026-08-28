@@ -483,9 +483,9 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, re.Reload(context.Background()))
 
-	// 手动装配代理（复用 newTestCodexWSProxy 装配逻辑，注入已含 custom 规则的 re）。
+	// 手动装配代理（复用 newTestCodexWSProxy 装配逻辑，注入已含 custom 规则的 re；模板 BaseURL 空 + transport host 重写到 mock）。
 	tpl := &domain.Template{
-		ID: 1, Name: "t", BaseURL: up.URL,
+		ID: 1, Name: "t", BaseURL: "",
 		CredentialType:   credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},

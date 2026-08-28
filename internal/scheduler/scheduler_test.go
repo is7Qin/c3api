@@ -1401,8 +1401,8 @@ func TestSelectCarriesAccountExt(t *testing.T) {
 		AccountID: 7, CredentialType: credential.TypeCodexOAuth,
 		CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "s1", ThreadID: "t1"},
 	}
-	// tpl() 硬编码 api_key 类型——codex 类型模板手动构造
-	tpl := &domain.Template{ID: 1, BaseURL: "https://u/v1", CredentialType: credential.TypeCodexOAuth,
+	// tpl() 硬编码 api_key 类型——codex 类型模板手动构造（SDK 固定官方端点，模板 BaseURL 空）
+	tpl := &domain.Template{ID: 1, BaseURL: "", CredentialType: credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS}, Models: []string{"gpt-4o"}}
 	a := acc(7, tpl, 4)
 	a.Ext = ext
