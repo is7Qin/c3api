@@ -49,9 +49,6 @@ func NewServer(opts Options) *Server {
 	if opts.MaxHeaderBytes == 0 {
 		opts.MaxHeaderBytes = 1 << 20
 	}
-	if opts.MaxInflight == 0 {
-		opts.MaxInflight = 50000
-	}
 	s := &Server{opts: opts}
 
 	r := chi.NewRouter()
