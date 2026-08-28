@@ -239,14 +239,6 @@ func (s *Service) ServiceTierPolicy(tier billing.Tier) billing.TierPolicyMode {
 	}
 }
 
-// ReloadImagePricing intentional dispatch point over unified snapshot (not compat shim).
-func (s *Service) ReloadImagePricing()                             { s.ReloadPricing() }
-func (s *Service) ReloadImagePricingCtx(ctx context.Context) error { return s.ReloadPricingCtx(ctx) }
-
-// ReloadFunctionPricing intentional dispatch point over unified snapshot (not compat shim).
-func (s *Service) ReloadFunctionPricing()                             { s.ReloadPricing() }
-func (s *Service) ReloadFunctionPricingCtx(ctx context.Context) error { return s.ReloadPricingCtx(ctx) }
-
 func (s *Service) SetPriceFetcher(f pricing.Fetcher) { s.priceFetcher = f }
 
 func (s *Service) SyncPricingNow(ctx context.Context) (*PricingSyncStats, error) {

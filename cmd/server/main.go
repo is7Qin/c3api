@@ -434,12 +434,9 @@ func main() {
 		Fetcher:  priceFetcher,
 		Repo:     repos,
 		Settings: svc,
-		// 三线：文本价 + image 价 + 按单元价快照一并刷新（拉取成功后同样重载
-		// 对应快照——Task A 双线 + 价格表三件套扩展）。
+		// 统一快照：拉取成功后刷新 pricing 快照（price_entries+price_variants）。
 		Reload: func() {
 			svc.ReloadPricing()
-			svc.ReloadImagePricing()
-			svc.ReloadFunctionPricing()
 		},
 		Log: log,
 	})
