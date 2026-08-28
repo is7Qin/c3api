@@ -114,7 +114,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			// errors.Is(err, context.Canceled) 即客户端断开——sserelay.normalize
 			// 已区分三类（C-P2-2）：上游停滞超时 → DeadlineExceeded 走上游错误分支。
 			if errors.Is(err, context.Canceled) {
-				p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
+				p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
 			}
 			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, u, err)
@@ -122,7 +122,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			return 0, nil, true, nil
 		}
 		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-		p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, 200, domain.ErrNone, u, start)))
+		p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), domain.FormatOpenAIImages, 200, domain.ErrNone, u, start)))
 		return 200, nil, true, nil
 	}
 
@@ -156,7 +156,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	// usage 提取（codexImagesCaller 同款形态：ii/io = image tokens，tt = 之和，
 	// img = data 数组长；gjson 输入字节直读零分配）。
 	ii, io, count := billing.ImageUsageFromResponse(data)
-	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, 200, domain.ErrNone, usageTuple{ii: ii, io: io, tt: ii + io, calls: count}, start)))
+	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), domain.FormatOpenAIImages, 200, domain.ErrNone, usageTuple{ii: ii, io: io, tt: ii + io, calls: count}, start)))
 	return 200, nil, true, nil
 }
 

@@ -115,13 +115,13 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, dialErr error) (stop bool, lastCode int, lastErrMsg string) {
 	if errors.Is(dialErr, errCodexWSNotIntegrated) {
 		p.sched.Release(sel.AccountID)
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponsesWS, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexWSNotIntegrated.Error())
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), domain.FormatOpenAIResponsesWS, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexWSNotIntegrated.Error())
 		wsWriteError(client, errCodexWSNotIntegrated.Error())
 		return true, 0, ""
 	}
 	if sdkbridge.IsFatal(dialErr) {
 		msg := domain.TruncateErrMsg(dialErr.Error())
-		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, 0, domain.ErrNetwork, usageTuple{}, start))
+		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), sel.Format, 0, domain.ErrNetwork, usageTuple{}, start))
 		l.ErrorMessage = &msg
 		p.finish(sel.AccountID, l)
 		// fatal 用户帧固定文案（不泄 SDK 内部机制串）；:125-127 已落盘 dialErr
@@ -136,7 +136,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		return false, code, domain.TruncateErrMsg(msg)
 	case code >= 400 && code < 500:
 		em := domain.TruncateErrMsg(msg)
-		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, code, domain.Err4xx, usageTuple{}, start))
+		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), sel.Format, code, domain.Err4xx, usageTuple{}, start))
 		if em != "" {
 			l.ErrorMessage = &em
 		}

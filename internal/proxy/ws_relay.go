@@ -277,7 +277,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	case relayEndUpstreamClosed:
 		_ = up.Close(websocket.StatusNormalClosure, "") // 完成关闭握手（上游已发关闭帧）
 		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrNone, u, start)))
+		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrNone, u, start)))
 		_ = client.Close(websocket.StatusNormalClosure, "")
 	case relayEndClientAbort:
 		// 客户端已死/已关闭，免握手等待
@@ -286,7 +286,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		if isNormalWSClose(endErr) {
 			code = wsCloseStatus(endErr)
 		}
-		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
+		p.finish(sel.AccountID, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
 		_ = up.Close(code, "") // 向上游传播客户端关闭
 	case relayEndUpstreamError:
 		p.recordStreamAbort(logCtx, reqID, groupID, start, sel, reqModel, u, endErr)

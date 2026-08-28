@@ -280,18 +280,20 @@ func (p *Proxy) applyFunctionBilling(l *domain.UsageLog) {
 	p.applyMultiplierLog(l, billing.CallCostFromResolved(rp, l.CallCount))
 }
 
-// buildLog 组装 UsageLog（record 与 finish 共用）。语义（评审 I-1 确认）：
-// Model = 客户端请求模型（reqModel），MappedModel = 映射后实际模型
-// （usedModel 与请求模型不同才写入，否则空 = 未映射）。u 传值（GC 削减 P6：
-// 指针逃逸 1 alloc；零值 = 无用量）。
+// buildLog 组装 UsageLog（record 与 finish 共用）。语义（Todo 3 mapping-mode
+// 修订）：Model = 客户端请求模型（reqModel），MappedModel = 调用方直填的用量
+// 映射身份（规格 §3 五行矩阵）——非 Search 选中尝试传 Selection.UsageMappedModel
+// 派生值（implicit 回填客户端模型；explicit identity/无映射为空），Search 路径
+// 传 mappedFor(reqModel, sel.Model)（既有语义不变），本地预选中拒绝传空。
+// buildLog 不再自行推断。u 传值（GC 削减 P6：指针逃逸 1 alloc；零值 = 无用量）。
 // 统一计费模型（spec 2026-08-13）：image token 分量（ii/io，images 格式专用，
 // resp 路径恒 0）并入 Input/OutputTokens（TotalTokens 口径不变）；功能调用
 // 计数（calls = 图片张数：resp 检测旁路计数 Task D 先行 / images 格式直连与
 // codex 路径 data 数组长 / 流式 completed 事件数）落 CallCount（不入 TotalTokens）。
-func (p *Proxy) buildLog(reqID string, groupID, accountID int64, reqModel, usedModel string, format domain.RequestFormat, status int, et domain.ErrorType, u usageTuple, start time.Time) *domain.UsageLog {
+func (p *Proxy) buildLog(reqID string, groupID, accountID int64, reqModel, mappedModel string, format domain.RequestFormat, status int, et domain.ErrorType, u usageTuple, start time.Time) *domain.UsageLog {
 	return &domain.UsageLog{
 		RequestID: reqID, GroupID: groupID, AccountID: accountID,
-		Model: reqModel, MappedModel: mappedFor(reqModel, usedModel), Format: format, StatusCode: status, ErrorType: et,
+		Model: reqModel, MappedModel: mappedModel, Format: format, StatusCode: status, ErrorType: et,
 		LatencyMS:   time.Since(start).Milliseconds(),
 		InputTokens: u.it + u.ii, OutputTokens: u.ot + u.io, TotalTokens: u.tt,
 		CacheReadTokens: u.cr, CacheCreationTokens: u.cc,
@@ -302,7 +304,8 @@ func (p *Proxy) buildLog(reqID string, groupID, accountID int64, reqModel, usedM
 
 // mappedFor 判定映射关系：实际使用的模型（used）非空且与请求模型（req）不同
 // → 返回映射后模型；无映射/失败路径（used 为空或与请求相同）→ 空。精确比较
-// 足够——ModelMapping 匹配语义即大小写敏感等值（selection.go）。
+// 足够——ModelMapping 匹配语义即大小写敏感等值（selection.go）。Todo 3 后仅
+// Search 终态日志消费（规格 §3：Search 不改日志/计费语义）。
 func mappedFor(req, used string) string {
 	if used != "" && used != req {
 		return used
@@ -310,13 +313,25 @@ func mappedFor(req, used string) string {
 	return ""
 }
 
+// usageIdentity 单次选中尝试的用量映射身份（UsageLog.MappedModel 直填值）：
+// Search 保持既有 mappedFor 推断（固定 codex-search 计费/日志语义，规格 §3）
+// 且不触达 Selection 身份方法；其余格式直接取 Selection.UsageMappedModel
+// （Todo 2 单查找派生，implicit 回填客户端模型）。failoverLoop 共享骨架
+// （chat+search 终态）按 format 分流。
+func usageIdentity(format domain.RequestFormat, sel *scheduler.Selection, reqModel string) string {
+	if format == domain.FormatOpenAISearch {
+		return mappedFor(reqModel, sel.Model)
+	}
+	return sel.UsageMappedModel(reqModel)
+}
+
 // record 记录一条用量日志（无并发槽的失败路径；有槽路径走 finish）。
 // ctx 提供鉴权 KeyMeta（user_id/key_id 归属；401 等鉴权失败路径无 KeyMeta）。
 // 落库路由与 finish 同走 routeLog 单写点。**本地
 // 预用量拒绝（429/402 等，见 recordRejected）不在此路径**——无用量可记的
 // 拒绝不产生明细，避免拒绝风暴打爆 pending。
-func (p *Proxy) record(ctx context.Context, reqID string, groupID, accountID int64, reqModel, usedModel string, format domain.RequestFormat, status int, et domain.ErrorType, latencyMS int64, u usageTuple, start time.Time) {
-	p.recordLog(logWithCtx(ctx, p.buildLog(reqID, groupID, accountID, reqModel, usedModel, format, status, et, u, start)))
+func (p *Proxy) record(ctx context.Context, reqID string, groupID, accountID int64, reqModel, mappedModel string, format domain.RequestFormat, status int, et domain.ErrorType, latencyMS int64, u usageTuple, start time.Time) {
+	p.recordLog(logWithCtx(ctx, p.buildLog(reqID, groupID, accountID, reqModel, mappedModel, format, status, et, u, start)))
 }
 
 // recordRejected 记录一条**本地预用量拒绝**（401 鉴权失败/额度耗尽/并发超限/
@@ -329,11 +344,11 @@ func (p *Proxy) record(ctx context.Context, reqID string, groupID, accountID int
 // 为独立瘦表 + 有界队列背压（队列满丢弃采样），风暴不淹没 DB 不爆内存——
 // 审计明细补回但不回到 usage_logs 主链路。msg 为拒绝文案（error_message 审计
 // 字段，域内截断 500）。
-func (p *Proxy) recordRejected(ctx context.Context, reqID string, groupID, accountID int64, reqModel, usedModel string, format domain.RequestFormat, status int, et domain.ErrorType, latencyMS int64, u usageTuple, start time.Time, msg string) {
+func (p *Proxy) recordRejected(ctx context.Context, reqID string, groupID, accountID int64, reqModel, mappedModel string, format domain.RequestFormat, status int, et domain.ErrorType, latencyMS int64, u usageTuple, start time.Time, msg string) {
 	if !p.cfg.UsageCapture {
 		return
 	}
-	l := logWithCtx(ctx, p.buildLog(reqID, groupID, accountID, reqModel, usedModel, format, status, et, u, start))
+	l := logWithCtx(ctx, p.buildLog(reqID, groupID, accountID, reqModel, mappedModel, format, status, et, u, start))
 	if msg != "" {
 		m := domain.TruncateErrMsg(msg)
 		l.ErrorMessage = &m
@@ -524,11 +539,12 @@ type usageTuple struct {
 // nil → tokens 全 0 → 中止路径消费不扣费；buildLog 填 l.Cost 由 finish 的
 // applyBilling 承担）。groupID 由各 caller 作用域传入（评审 M-1：此前硬编码
 // 0 → 中止路径组倍率查找恒 miss → 组倍率 ≠10000 时计费与正常路径不一致）。
+// MappedModel = 当轮选中尝试的用量身份（Todo 3：非 Search 全走本入口）。
 func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, u usageTuple, err error) {
 	if p.log != nil {
 		p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
 	}
-	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, 200, domain.ErrAbort, u, start)))
+	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), sel.Format, 200, domain.ErrAbort, u, start)))
 }
 
 func (p *Proxy) handleSelectError(w http.ResponseWriter, err error) {

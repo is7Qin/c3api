@@ -333,7 +333,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 		if strings.Contains(sdkErr, "streaming is required") {
 			// 确定性错误（重试必同结果，§5.3）：不 failover、不
 			// MarkResult（与 4xx 分支现状一致），记录后提前 return。
-			l := logWithCtx(ctx, a.p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, st.format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start))
+			l := logWithCtx(ctx, a.p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.UsageMappedModel(reqModel), st.format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start))
 			em := domain.TruncateErrMsg(sdkErr)
 			l.ErrorMessage = &em
 			a.p.finish(sel.AccountID, l)
