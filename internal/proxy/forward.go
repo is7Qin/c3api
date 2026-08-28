@@ -24,6 +24,7 @@ import (
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/usage"
@@ -58,8 +59,11 @@ type Proxy struct {
 	bill    *BillingHooks // 计费钩子；nil = 计费全关
 	// errlog 错误明细落盘 worker（分表设计；nil = 未装配——拒绝/异常路径只聚
 	// 合统计不落 err_logs 明细，测试/未装配形态）。与计费 flusher 完全解耦。
-	errlog   *usage.ErrLogWorker
-	inflight atomic.Int64
+	errlog *usage.ErrLogWorker
+	// qualityRecorder is a dormant dependency for Task13 (quality pipeline).
+	// Owned by main, reachable via composition; hot path not yet wired.
+	qualityRecorder *quality.Recorder
+	inflight        atomic.Int64
 	callers  map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
 	// imageGenerations/imageEdits images 端点调用器（Task B：同一格式
 	// openai-images 两个端点，上游子路径不同——handleFormat 按请求路径选
@@ -140,6 +144,13 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 // sdkbridge.NewCodex(统一失效回调) 后注入；nil = 未装配 → codex 类型请求
 // 501 显式拒绝）。
 func (p *Proxy) SetCodex(c *sdkbridge.Codex) { p.codex = c }
+
+// SetQualityRecorder injects the quality recorder as a dormant dependency
+// for Task13. No caller migration yet; lifecycle Close is wired in main.
+func (p *Proxy) SetQualityRecorder(r *quality.Recorder) { p.qualityRecorder = r }
+
+// QualityRecorder returns the dormant quality recorder (may be nil in tests).
+func (p *Proxy) QualityRecorder() *quality.Recorder { return p.qualityRecorder }
 
 func (p *Proxy) Inflight() int64 { return p.inflight.Load() }
 

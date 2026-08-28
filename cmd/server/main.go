@@ -501,7 +501,7 @@ func main() {
 	if err != nil {
 		fatalf("quality: %v", err)
 	}
-	_ = qualityRecorder
+	px.SetQualityRecorder(qualityRecorder)
 	srv := server.NewServer(server.Options{
 		AdminToken:        cfg.Admin.Token,
 		JWTIssuer:         iss,
@@ -629,6 +629,9 @@ func main() {
 	}
 	px.CloseAllWS()
 	waitForInflight(px, shutdownCtx, log)
+	if err := qualityRecorder.Close(); err != nil {
+		log.Warn("quality recorder close failed", logx.Error(err))
+	}
 	_ = wm.Shutdown(shutdownCtx)
 	// Redis 客户端最后释放（foundation spec §2.3：worker 排空完成后再关连接池——
 	// discovery 的停机 ZREM 等收尾命令都走在池上）。
