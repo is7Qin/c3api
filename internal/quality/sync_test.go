@@ -270,7 +270,7 @@ func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
 }
 
 func TestQualitySync_ActiveCellDeltaNotLifetime(t *testing.T) {
-	_, rdb := newMiniRedis(t)
+	mr, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
@@ -285,14 +285,14 @@ func TestQualitySync_ActiveCellDeltaNotLifetime(t *testing.T) {
 	ctx.Complete(true, &tt, 10, 1, 0)
 	// first redis publish for minute M
 	w.doRedis(context.Background())
-	// capture minuteAbs for M
+	// successful publish must ACK/remove minuteAbs (historical drain)
 	w.mu.Lock()
-	abs1 := w.minuteAbs[fixed.Unix()]
+	_, has1 := w.minuteAbs[fixed.Unix()]
 	w.mu.Unlock()
-	require.NotNil(t, abs1)
-	require.Equal(t, int64(1), abs1[k].Attempts())
+	require.False(t, has1, "successful publish must ACK minuteAbs")
+	require.GreaterOrEqual(t, len(mr.Keys()), 1)
 
-	// second attempt same minute
+	// second attempt same minute - must be delta 1, not cumulative 2, and ack again
 	var ctx2 AttemptContext
 	require.True(t, rec.InitAttemptContext(cell, &ctx2))
 	ctx2.Complete(true, &tt, 10, 1, 0)
@@ -300,9 +300,9 @@ func TestQualitySync_ActiveCellDeltaNotLifetime(t *testing.T) {
 	w.SetClock(func() time.Time { return clk })
 	w.doRedis(context.Background())
 	w.mu.Lock()
-	abs2 := w.minuteAbs[fixed.Unix()]
+	_, has2 := w.minuteAbs[fixed.Unix()]
 	w.mu.Unlock()
-	require.Equal(t, int64(2), abs2[k].Attempts(), "same minute delta must accumulate to 2, not lifetime repeat")
+	require.False(t, has2, "second publish must ACK again, retain newer delta only for next tick")
 	// next minute
 	clk = fixed.Add(time.Minute)
 	w.SetClock(func() time.Time { return clk })
@@ -311,10 +311,9 @@ func TestQualitySync_ActiveCellDeltaNotLifetime(t *testing.T) {
 	ctx3.Complete(true, &tt, 10, 1, 0)
 	w.doRedis(context.Background())
 	w.mu.Lock()
-	absNext := w.minuteAbs[fixed.Add(time.Minute).Unix()]
+	_, hasNext := w.minuteAbs[fixed.Add(time.Minute).Unix()]
 	w.mu.Unlock()
-	require.NotNil(t, absNext)
-	require.Equal(t, int64(1), absNext[k].Attempts(), "next minute must be delta 1, not lifetime 3")
+	require.False(t, hasNext, "next minute must be delta 1 and then ACK, not lifetime")
 }
 
 func TestQualitySync_PGMergeRetainsPriorAbsolute(t *testing.T) {

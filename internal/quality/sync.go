@@ -124,12 +124,14 @@ type SyncWorker struct {
 	pgMinuteAbs    map[int64]map[Key]*QualityMinute
 	committed      map[int64]map[Key]*QualityMinute
 
-	started  atomic.Bool
-	closeOnce sync.Once
-	baseCtx  context.Context
-	cancel   context.CancelFunc
-	loopDone <-chan struct{}
-	loopDoneCh chan struct{}
+	started     atomic.Bool
+	closeOnce   sync.Once
+	lifecycleMu sync.Mutex
+	closed      bool
+	baseCtx     context.Context
+	cancel      context.CancelFunc
+	loopDone    <-chan struct{}
+	loopDoneCh  chan struct{}
 	inflightAbandonGrace time.Duration
 }
 
@@ -187,6 +189,11 @@ func (w *SyncWorker) SetClock(fn func() time.Time) {
 }
 
 func (w *SyncWorker) Start(ctx context.Context) error {
+	w.lifecycleMu.Lock()
+	defer w.lifecycleMu.Unlock()
+	if w.closed {
+		return fmt.Errorf("quality-sync: closed")
+	}
 	if !w.started.CompareAndSwap(false, true) {
 		return fmt.Errorf("quality-sync: already started")
 	}
@@ -676,14 +683,16 @@ func (w *SyncWorker) doRedis(ctx context.Context) {
 		}
 		return
 	}
-	// success: ack
+	// success: ack/remove exactly published minuteAbs, retain newer contributions; historical drain once
+	for minute := range mergedByMinute {
+		delete(w.minuteAbs, minute)
+	}
 	w.lastRedis = w.clock()
 	w.stats.LastRedisMs = w.clock().Sub(start).Milliseconds()
 	w.stats.FreshnessMs = 0
 	w.stats.LastRedisError = ""
 	w.lastRedisError = ""
 	// sequences already incremented per cell; keep them
-	// minuteAbs retained as cumulative absolute for minute
 }
 
 func (w *SyncWorker) doPG(ctx context.Context) {
@@ -1139,55 +1148,70 @@ func (w *SyncWorker) Stats() SyncStats {
 }
 
 func (w *SyncWorker) Close(ctx context.Context) error {
+	w.lifecycleMu.Lock()
+	if w.closed {
+		w.lifecycleMu.Unlock()
+		return nil
+	}
+	w.closed = true
+	cancel := w.cancel
+	started := w.started.Load()
+	loopDone := w.loopDone
+	loopDoneCh := w.loopDoneCh
+	w.lifecycleMu.Unlock()
+
 	var err error
-	w.closeOnce.Do(func() {
-		if w.cancel != nil {
-			w.cancel()
+	if cancel != nil {
+		cancel()
+	}
+	if started {
+		select {
+		case <-loopDoneCh:
+		case <-loopDone:
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-time.After(2 * time.Second):
+			err = context.DeadlineExceeded
 		}
-		if w.started.Load() {
-			select {
-			case <-w.loopDoneCh:
-			case <-w.loopDone:
-			case <-ctx.Done():
-				err = ctx.Err()
-			case <-time.After(2 * time.Second):
-				err = context.DeadlineExceeded
-			}
+	}
+	drainCtx := context.WithoutCancel(ctx)
+	drainCtx, cancelDrain := context.WithTimeout(drainCtx, 5*time.Second)
+	defer cancelDrain()
+	acquired := make(chan struct{})
+	go func() {
+		w.flushMu.Lock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+		w.flushMu.Unlock()
+	case <-drainCtx.Done():
+		w.lifecycleMu.Lock()
+		c2 := w.cancel
+		w.lifecycleMu.Unlock()
+		if c2 != nil {
+			c2()
 		}
-		drainCtx := context.WithoutCancel(ctx)
-		drainCtx, cancel := context.WithTimeout(drainCtx, 5*time.Second)
-		defer cancel()
-		acquired := make(chan struct{})
-		go func() {
-			w.flushMu.Lock()
-			close(acquired)
-		}()
 		select {
 		case <-acquired:
 			w.flushMu.Unlock()
-		case <-drainCtx.Done():
-			if w.cancel != nil {
-				w.cancel()
-			}
-			select {
-			case <-acquired:
-				w.flushMu.Unlock()
-			case <-time.After(w.inflightAbandonGrace):
-				if w.log != nil {
-					w.log.Warn("quality sync close: in-flight flush not finished, abandoning")
-				}
-				err = drainCtx.Err()
-				if err == nil {
-					err = context.DeadlineExceeded
-				}
-				return
+		case <-time.After(w.inflightAbandonGrace):
+			if w.log != nil {
+				w.log.Warn("quality sync close: in-flight flush not finished, abandoning")
 			}
 			err = drainCtx.Err()
+			if err == nil {
+				err = context.DeadlineExceeded
+			}
+			return err
 		}
-		w.doPG(drainCtx)
-		if drainCtx.Err() != nil && err == nil {
+		if err == nil {
 			err = drainCtx.Err()
 		}
-	})
+	}
+	w.doPG(drainCtx)
+	if drainCtx.Err() != nil && err == nil {
+		err = drainCtx.Err()
+	}
 	return err
 }
