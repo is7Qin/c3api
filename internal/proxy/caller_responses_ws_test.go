@@ -277,7 +277,7 @@ func TestResponsesWSModelMapping(t *testing.T) {
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
-		ModelMapping:     map[string]string{"gpt-4o": "o3"},
+		ModelMapping:     map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "o3", Mode: domain.ModelMappingModeExplicit}},
 	}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, nil)
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
@@ -1043,3 +1043,4 @@ func TestResponsesWSBillingTierTypeError(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Empty(t, store.logs, "类型错误不产生任何记录（usage_logs + err_logs 均无）")
 }
+

@@ -87,8 +87,8 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 		}
 		if a.concurrency.CompareAndSwap(cur, cur+1) {
 			mapped := model
-			if m, ok := av.tpl.ModelMapping[model]; ok {
-				mapped = m
+			if e, ok := av.tpl.ModelMapping[model]; ok {
+				mapped = e.MappedModel
 			}
 			used := s.timeNow()
 			st2 := *st

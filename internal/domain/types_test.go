@@ -31,7 +31,7 @@ func TestTemplateServes(t *testing.T) {
 	tpl := &Template{
 		Models:       []string{"gpt-4o"},
 		FormatModels: map[RequestFormat][]string{FormatOpenAIResponses: {"o3"}},
-		ModelMapping: map[string]string{"claude-sonnet": "claude-sonnet-4-5"},
+		ModelMapping: map[string]ModelMappingEntry{"claude-sonnet": {MappedModel: "claude-sonnet-4-5", Mode: ModelMappingModeExplicit}},
 	}
 	require.True(t, tpl.Serves("gpt-4o"), "serves models")
 	require.True(t, tpl.Serves("o3"), "serves format_models list values")

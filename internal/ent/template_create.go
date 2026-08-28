@@ -11,6 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/template"
 	"github.com/is7qin/c3api/internal/ent/templateext"
@@ -69,7 +70,7 @@ func (_c *TemplateCreate) SetFormatModels(v map[string][]string) *TemplateCreate
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (_c *TemplateCreate) SetModelMapping(v map[string]string) *TemplateCreate {
+func (_c *TemplateCreate) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateCreate {
 	_c.mutation.SetModelMapping(v)
 	return _c
 }
@@ -460,7 +461,7 @@ func (u *TemplateUpsert) UpdateFormatModels() *TemplateUpsert {
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (u *TemplateUpsert) SetModelMapping(v map[string]string) *TemplateUpsert {
+func (u *TemplateUpsert) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateUpsert {
 	u.Set(template.FieldModelMapping, v)
 	return u
 }
@@ -646,7 +647,7 @@ func (u *TemplateUpsertOne) UpdateFormatModels() *TemplateUpsertOne {
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (u *TemplateUpsertOne) SetModelMapping(v map[string]string) *TemplateUpsertOne {
+func (u *TemplateUpsertOne) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateUpsertOne {
 	return u.Update(func(s *TemplateUpsert) {
 		s.SetModelMapping(v)
 	})
@@ -1007,7 +1008,7 @@ func (u *TemplateUpsertBulk) UpdateFormatModels() *TemplateUpsertBulk {
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (u *TemplateUpsertBulk) SetModelMapping(v map[string]string) *TemplateUpsertBulk {
+func (u *TemplateUpsertBulk) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateUpsertBulk {
 	return u.Update(func(s *TemplateUpsert) {
 		s.SetModelMapping(v)
 	})

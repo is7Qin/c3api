@@ -35,6 +35,17 @@ func formatModelsFromBody(m *map[string][]string) map[domain.RequestFormat][]str
 	return out
 }
 
+func modelMappingFromBody(m *map[string]ModelMappingEntry) map[string]domain.ModelMappingEntry {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]domain.ModelMappingEntry, len(*m))
+	for k, v := range *m {
+		out[k] = domain.ModelMappingEntry{MappedModel: v.MappedModel, Mode: domain.ModelMappingMode(v.Mode)}
+	}
+	return out
+}
+
 // PostTemplates 创建模板（ServerInterface）。
 func (h *AdminAPI) PostTemplates(w http.ResponseWriter, r *http.Request) {
 	var in TemplateCreate
@@ -50,7 +61,7 @@ func (h *AdminAPI) PostTemplates(w http.ResponseWriter, r *http.Request) {
 		SupportedFormats: formatsFromBody(in.SupportedFormats),
 		Models:           deref(in.Models),
 		FormatModels:     formatModelsFromBody(in.FormatModels),
-		ModelMapping:     deref(in.ModelMapping),
+		ModelMapping:     modelMappingFromBody(in.ModelMapping),
 	})
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
@@ -105,7 +116,7 @@ func (h *AdminAPI) PutTemplatesId(w http.ResponseWriter, r *http.Request, id int
 		SupportedFormats: formatsFromBody(in.SupportedFormats),
 		Models:           deref(in.Models),
 		FormatModels:     formatModelsFromBody(in.FormatModels),
-		ModelMapping:     deref(in.ModelMapping),
+		ModelMapping:     modelMappingFromBody(in.ModelMapping),
 	}
 	tpl.ID = id
 	updated, err := h.svc.UpdateTemplate(r.Context(), tpl)
@@ -171,11 +182,16 @@ func (h *AdminAPI) PostTemplatesBatchUpdate(w http.ResponseWriter, r *http.Reque
 // templatePatchFromBody 生成类型 fields → repo patch（nil 字段 = 不更新）。
 // 空 fields（无任何字段）视为非法输入。
 func templatePatchFromBody(f *TemplatePatch) (repository.TemplatePatch, error) {
+	var mm *map[string]domain.ModelMappingEntry
+	if f.ModelMapping != nil {
+		m := modelMappingFromBody(f.ModelMapping)
+		mm = &m
+	}
 	p := repository.TemplatePatch{
 		Name:         f.Name,
 		BaseURL:      f.BaseUrl,
 		Models:       f.Models,
-		ModelMapping: f.ModelMapping,
+		ModelMapping: mm,
 	}
 	if f.FormatModels != nil {
 		m := formatModelsFromBody(f.FormatModels)

@@ -81,6 +81,12 @@ const (
 	ResetCode      MailTemplatePurpose = "reset_code"
 )
 
+// Defines values for ModelMappingEntryMode.
+const (
+	Explicit ModelMappingEntryMode = "explicit"
+	Implicit ModelMappingEntryMode = "implicit"
+)
+
 // Defines values for PriceEntryMode.
 const (
 	PriceEntryModeCall  PriceEntryMode = "call"
@@ -916,6 +922,15 @@ type MailTemplateUpdate struct {
 	Subject  string `json:"subject"`
 }
 
+// ModelMappingEntry defines model for ModelMappingEntry.
+type ModelMappingEntry struct {
+	MappedModel string                `json:"mapped_model"`
+	Mode        ModelMappingEntryMode `json:"mode"`
+}
+
+// ModelMappingEntryMode defines model for ModelMappingEntry.Mode.
+type ModelMappingEntryMode string
+
 // OverviewAccounts 账号健康分布 + 并发水位（调度器快照同源——与账号列表运行时视图一致）
 type OverviewAccounts struct {
 	N429   int `json:"429"`
@@ -1439,14 +1454,14 @@ type Template struct {
 	CredentialType *TemplateCredentialType `json:"CredentialType,omitempty"`
 
 	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
-	DeletedAt        *time.Time                 `json:"DeletedAt"`
-	FormatModels     *map[string][]string       `json:"FormatModels,omitempty"`
-	ID               int64                      `json:"ID"`
-	ModelMapping     *map[string]string         `json:"ModelMapping,omitempty"`
-	Models           *[]string                  `json:"Models,omitempty"`
-	Name             string                     `json:"Name"`
-	SupportedFormats []TemplateSupportedFormats `json:"SupportedFormats"`
-	UpdatedAt        time.Time                  `json:"UpdatedAt"`
+	DeletedAt        *time.Time                    `json:"DeletedAt"`
+	FormatModels     *map[string][]string          `json:"FormatModels,omitempty"`
+	ID               int64                         `json:"ID"`
+	ModelMapping     *map[string]ModelMappingEntry `json:"ModelMapping,omitempty"`
+	Models           *[]string                     `json:"Models,omitempty"`
+	Name             string                        `json:"Name"`
+	SupportedFormats []TemplateSupportedFormats    `json:"SupportedFormats"`
+	UpdatedAt        time.Time                     `json:"UpdatedAt"`
 }
 
 // TemplateCredentialType 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
@@ -1461,7 +1476,7 @@ type TemplateCreate struct {
 	BaseUrl          *string                          `json:"base_url,omitempty"`
 	CredentialType   *TemplateCreateCredentialType    `json:"credential_type,omitempty"`
 	FormatModels     *map[string][]string             `json:"format_models,omitempty"`
-	ModelMapping     *map[string]string               `json:"model_mapping,omitempty"`
+	ModelMapping     *map[string]ModelMappingEntry    `json:"model_mapping,omitempty"`
 	Models           *[]string                        `json:"models,omitempty"`
 	Name             string                           `json:"name"`
 	SupportedFormats []TemplateCreateSupportedFormats `json:"supported_formats"`
@@ -1497,7 +1512,7 @@ type TemplatePatch struct {
 	// BaseUrl credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden); api_key/responses-special optional bare root override
 	BaseUrl          *string                          `json:"base_url,omitempty"`
 	FormatModels     *map[string][]string             `json:"format_models,omitempty"`
-	ModelMapping     *map[string]string               `json:"model_mapping,omitempty"`
+	ModelMapping     *map[string]ModelMappingEntry    `json:"model_mapping,omitempty"`
 	Models           *[]string                        `json:"models,omitempty"`
 	Name             *string                          `json:"name,omitempty"`
 	SupportedFormats *[]TemplatePatchSupportedFormats `json:"supported_formats,omitempty"`
