@@ -216,15 +216,25 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 	for i := 0; i < p.cfg.FailoverAttempts; i++ {
 		lastSel = sel
 		attempted = true
+		// 用量身份（Todo 3 规格 §3）：每轮当次选中解析——Search 走既有
+		// mappedFor 推断（不触达 Selection 身份方法），其余格式直取
+		// Selection.UsageMappedModel（implicit 回填客户端模型）。缺价预检
+		// 与本轮全部终态日志共用，保证同轮同身份。
+		mapped := usageIdentity(format, sel, reqModel)
 		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前
 		// 查价——计费启用时模型无价格 → 释放并发槽 + 402（不按 0 计价），零 DB
-		// （快照读）。images 格式查统一价格快照 image 分量（跳过 chat
-		// 价预检——纯 image 价模型无 token 行，chat 预检会先行
-		// 402 误杀，"image 分量定生死"轮不到执行）；其余格式照旧。
+		// （快照读）。预检模型 = 用量身份非空 ? 用量身份 : 上游目标（规格 §3：
+		// implicit 按客户端模型定价，explicit/无映射按目标）。images 格式查统一
+		// 价格快照 image 分量（跳过 chat 价预检——纯 image 价模型无 token 行，
+		// chat 预检会先行 402 误杀，"image 分量定生死"轮不到执行）；其余格式照旧。
 		if precheck {
-			if err := p.precheckPrice(format, sel.Model); err != nil {
+			priceModel := mapped
+			if priceModel == "" {
+				priceModel = sel.Model
+			}
+			if err := p.precheckPrice(format, priceModel); err != nil {
 				p.sched.Release(sel.AccountID)
-				p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errNoPrice.msg)
+				p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, mapped, format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errNoPrice.msg)
 				sink.writePrecheckRejected(w, st)
 				return
 			}
@@ -267,7 +277,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			// WS 修复性声明（gate Minor 2c）：WS 拨号/首帧转发阶段断连同样归
 			// 此分支（现状记连接级错误冷却无辜账号——统一 499 语义不冷却）。
 			if code == 0 && r.Context().Err() != nil {
-				l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start))
+				l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start))
 				msg := "client closed request before upstream response"
 				l.ErrorMessage = &msg
 				p.finish(sel.AccountID, l)
@@ -306,7 +316,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			}
 		} else {
 			// 4xx 确定性错误（统一公式 status=ResponseCode!=nil?*ResponseCode:code, msg=CustomMessage!=nil?*CustomMessage:respBody）
-			l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, format, code, domain.Err4xx, usageTuple{}, start))
+			l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, code, domain.Err4xx, usageTuple{}, start))
 			em := domain.TruncateErrMsg(string(respBody))
 			if em == "" && callErr != nil {
 				em = domain.TruncateErrMsg(callErr.Error())
@@ -378,7 +388,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 	}
 	status := passthroughStatus(then, lastCode)
 	applyPassthroughHeader(w, then, lastHdr, status)
-	l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, lastSel.Model, format, lastCode, et, usageTuple{}, start))
+	l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, usageIdentity(format, lastSel, reqModel), format, lastCode, et, usageTuple{}, start))
 	if lastErrMsg != "" {
 		l.ErrorMessage = &lastErrMsg
 	}

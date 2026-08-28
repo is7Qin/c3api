@@ -161,7 +161,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	if p.codex == nil {
 		// 适配层未装配（SetCodex 未调用）：显式 501（防 nil 误走凭据缺失 502）。
 		p.sched.Release(sel.AccountID)
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexSearchNotIntegrated.msg)
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexSearchNotIntegrated.msg)
 		writeErr(w, errCodexSearchNotIntegrated)
 		return 0, nil, true, nil
 	}
@@ -190,7 +190,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	// 2xx → 按次计费落账（call_count=1；price_per_call/cost 由 applyBilling
 	// search 分支按 PriceResolver call 档（codex-search）结算——无 token 分量）。
 	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
+	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }
 
@@ -232,6 +232,6 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	// 2xx → 按次计费落账（call_count=1；与 codex 路径同款——applyBilling
 	// search 分支结算）。
 	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
+	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }
