@@ -96,6 +96,25 @@ type FailureDeps struct {
 // 返回 DB 写错误（nil = 成功）；调度摘除为 void（快照外账号 no-op）。
 // 本函数不记日志——处理错误统一由回调侧（NewFailureHandler）记一条（P3-1
 // 评审：同一失败不得双条 Warn）。
+var ErrMissingCredentialDiscriminator = errors.New("sdkbridge: missing credential discriminator")
+
+func isCodexCredentialType(t credential.Type) bool {
+	return t == credential.TypeCodexOAuth || t == credential.TypeCodexPAT
+}
+
+func credentialTypeOf(acct *domain.Account) (credential.Type, bool) {
+	if acct == nil {
+		return "", false
+	}
+	if acct.Ext != nil && acct.Ext.CredentialType != "" {
+		return acct.Ext.CredentialType, true
+	}
+	if acct.Template != nil && acct.Template.CredentialType != "" {
+		return acct.Template.CredentialType, true
+	}
+	return "", false
+}
+
 func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal error) error {
 	if fatal == nil {
 		return nil // 防御：无错误不上报
@@ -106,10 +125,13 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 		if cs, ok := deps.Store.(casStore); ok {
 			acct, err := cs.GetAccount(ctx, accountID)
 			if err != nil {
-				deps.Latch.Clear(accountID)
-				return nil
+				return err
 			}
-			if acct.Template != nil && acct.Template.CredentialType == credential.TypeAPIKey {
+			ct, ok := credentialTypeOf(acct)
+			if !ok {
+				return ErrMissingCredentialDiscriminator
+			}
+			if !isCodexCredentialType(ct) {
 				return nil
 			}
 			fp := acct.UpstreamKey
