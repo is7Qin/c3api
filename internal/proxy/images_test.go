@@ -469,7 +469,7 @@ func TestImagesCodexNotIntegrated501(t *testing.T) {
 	}))
 	defer up.Close()
 	tpl := &domain.Template{
-		ID: 1, Name: "t", BaseURL: up.URL,
+		ID: 1, Name: "t", BaseURL: "",
 		CredentialType:   credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-1"},
@@ -506,7 +506,7 @@ func TestImagesCodexPATNotIntegrated501(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 	defer up.Close()
 	tpl := &domain.Template{
-		ID: 1, Name: "t", BaseURL: up.URL,
+		ID: 1, Name: "t", BaseURL: "",
 		CredentialType:   credential.TypeCodexPAT,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-1"},
