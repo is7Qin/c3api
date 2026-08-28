@@ -16,12 +16,6 @@ import (
 // var (not const) for test injection.
 var loopRestartDelay = 5 * time.Second
 
-// SetLoopRestartDelayForTest sets loopRestartDelay for tests.
-func SetLoopRestartDelayForTest(d time.Duration) { loopRestartDelay = d }
-
-// LoopRestartDelayForTest returns current loopRestartDelay.
-func LoopRestartDelayForTest() time.Duration { return loopRestartDelay }
-
 // Loop runs fn in the current goroutine with panic containment and restart.
 // On panic: logs Error with worker name + stack, waits loopRestartDelay
 // (respecting ctx cancellation), then restarts fn. If fn returns normally
@@ -58,9 +52,14 @@ func Loop(ctx context.Context, name string, log *logx.Logger, fn func(context.Co
 	}
 }
 
-// GoLoop spawns Loop in a new goroutine.
-func GoLoop(ctx context.Context, name string, log *logx.Logger, fn func(context.Context)) {
-	go Loop(ctx, name, log, fn)
+// GoLoop spawns Loop in a new goroutine and returns a done channel closed when Loop exits.
+func GoLoop(ctx context.Context, name string, log *logx.Logger, fn func(context.Context)) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Loop(ctx, name, log, fn)
+	}()
+	return done
 }
 
 // Recover runs fn with one-shot panic recovery and error log (no restart).

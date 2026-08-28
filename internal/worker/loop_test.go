@@ -36,12 +36,18 @@ func TestLoop_PanicsAndRestarts(t *testing.T) {
 		}
 	}
 
-	GoLoop(ctx, "test-loop-restart", logger, fn)
+	done := GoLoop(ctx, "test-loop-restart", logger, fn)
 
 	select {
 	case <-secondRun:
 	case <-time.After(2 * time.Second):
 		t.Fatal("loop did not restart after panic")
+	}
+	// Wait for Loop to exit after normal return (secondRun)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not exit after normal return")
 	}
 
 	require.NoError(t, logger.Sync())
@@ -68,7 +74,7 @@ func TestLoop_CtxCancelStopsRestarts(t *testing.T) {
 		panic("always boom")
 	}
 
-	GoLoop(ctx, "test-loop-cancel", logger, fn)
+	done := GoLoop(ctx, "test-loop-cancel", logger, fn)
 
 	require.Eventually(t, func() bool {
 		b, err := os.ReadFile(out)
@@ -76,6 +82,12 @@ func TestLoop_CtxCancelStopsRestarts(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 
 	cancel()
+	// Wait for supervised loop to exit before checking quiescence and before Cleanup restores delay
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not exit after cancel")
+	}
 
 	n1 := calls.Load()
 	// 静默期断言：等待一个重启周期+余量，确认不再有新调用（absence-proof）
@@ -98,18 +110,23 @@ func TestLoop_NormalExitNoRestart(t *testing.T) {
 	ctx := context.Background()
 
 	var calls atomic.Int32
-	done := make(chan struct{})
+	doneFn := make(chan struct{})
 	fn := func(ctx context.Context) {
 		calls.Add(1)
-		close(done)
+		close(doneFn)
 	}
 
-	GoLoop(ctx, "test-loop-normal", logger, fn)
+	loopDone := GoLoop(ctx, "test-loop-normal", logger, fn)
 
 	select {
-	case <-done:
+	case <-doneFn:
 	case <-time.After(2 * time.Second):
 		t.Fatal("loop did not run")
+	}
+	select {
+	case <-loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not exit after normal return")
 	}
 	<-time.After(50 * time.Millisecond)
 	require.Equal(t, int32(1), calls.Load())

@@ -199,7 +199,7 @@ type RuleEngine struct {
 
 	persistCtx    context.Context
 	persistCancel context.CancelFunc
-	persistDone   chan struct{}
+	persistDone   <-chan struct{}
 	persistMu     sync.Mutex
 }
 
@@ -530,7 +530,7 @@ func (e *RuleEngine) enqueuePersist(ev Event, then domain.RuleThen) {
 }
 
 // persistDoneChan returns current persistDone or nil if not started.
-func (e *RuleEngine) persistDoneChan() chan struct{} {
+func (e *RuleEngine) persistDoneChan() <-chan struct{} {
 	e.persistMu.Lock()
 	defer e.persistMu.Unlock()
 	return e.persistDone
