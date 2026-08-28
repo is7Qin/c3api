@@ -17,10 +17,10 @@ import (
 // 调用方完成请求后必须 Release + MarkResult。
 func (s *Scheduler) Select(groupID int64, format domain.RequestFormat, model string) (*Selection, error) {
 	v := s.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return nil, ErrGroupNotFound
 	}
-	groups := v.groups
+	groups := v.Groups()
 	gs, ok := groups[groupID]
 	if !ok {
 		return nil, ErrGroupNotFound
@@ -72,7 +72,7 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 		if st.cooldownUntil != nil && !st.cooldownUntil.Before(now) {
 			continue
 		}
-		cur := a.concurrency.Load()
+		cur := a.runtime.concurrency.Load()
 		limit := int64(av.acc.MaxConcurrency) // buildSnapshots 已归一化 ≤0→defaultMax，恒 >0
 		if cur >= int64(concShare(int(limit), cn)) {
 			if cur >= limit || !concAllows(view, av.acc.ID, limit, cur+1) {
@@ -81,7 +81,7 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 			// 借用放行：落入下方既有 CAS(cur, cur+1)；CAS 天然封顶竞态
 			// （双借同时过 limit−1 时第二个 CAS 必败），无需新锁
 		}
-		if a.concurrency.CompareAndSwap(cur, cur+1) {
+		if a.runtime.concurrency.CompareAndSwap(cur, cur+1) {
 			mapped := model
 			if m, ok := av.tpl.ModelMapping[model]; ok {
 				mapped = m
@@ -89,7 +89,7 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 			used := s.timeNow()
 			st2 := *st
 			st2.lastUsedAt = &used
-			a.state.Store(&st2)
+			a.runtime.state.Store(&st2)
 			baseURL := av.tpl.BaseURL
 			if av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
 				baseURL = *av.acc.BaseURL

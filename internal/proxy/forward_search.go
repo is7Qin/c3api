@@ -94,6 +94,7 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAISearch, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
 		return
 	}
+	defer leaseGuard(sel)
 
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=false（search 无缺价
 	// 预检——现状语义显式关，不给 search 新增 402）；尾部 Select 走主流 resp

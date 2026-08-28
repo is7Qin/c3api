@@ -203,13 +203,13 @@ type concTarget struct {
 // 遍历零锁安全；孤儿对象在途值由 Release 自然衰减后自动退出上报集。
 func (w *AccConcSyncWorker) collect() []concTarget {
 	v := w.sched.view.Load()
-	if v == nil {
+	if v == nil || v.StaticView() == nil {
 		return nil
 	}
-	byID := v.byID
+	byID := v.ByID()
 	targets := make([]concTarget, 0, len(byID))
 	for id, a := range byID {
-		if v := a.concurrency.Load(); v > 0 {
+		if v := a.runtime.concurrency.Load(); v > 0 {
 			targets = append(targets, concTarget{
 				rkey: concAccountPrefix + strconv.FormatInt(id, 10), id: id, val: v,
 			})

@@ -210,6 +210,18 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 		lastHdr    http.Header
 		lastBody   []byte
 	)
+	// ponytail: panic guard — any panic in attempt.call must release leased slot, otherwise concurrency leaks.
+	defer func() {
+		if rc := recover(); rc != nil {
+			if sel != nil {
+				sel.Release()
+			}
+			if lastSel != nil && lastSel != sel {
+				lastSel.Release()
+			}
+			panic(rc)
+		}
+	}()
 	// 防呆（spec：failover_attempts=0 直构绕过 validate 下限）：循环零次执行时
 	// 首次 Select 已占并发槽，耗尽路径按此标志补 Release——N>=1 恒 true，不双释放。
 	attempted := false
