@@ -24,6 +24,10 @@ func (a schedGroupPub) PublishGroups(ctx context.Context, gids []int64) {
 	_ = a.p.Publish(ctx, notify.Change{Groups: gids}) // 失败 Publisher 内部已 Warn，60s 兜底收敛
 }
 
+type settingsReloader interface {
+	ReloadSettings(ctx context.Context) error
+}
+
 // dispatcher 实现 notify.Dispatcher（#14 T3a 装配侧）：把 NOTIFY Change 转发
 // 给 invalidate 去抖器的 Mark 方法（本地/远端变更共享同一去抖窗口，天然合并
 // 去重——设计文档 §2.3）；settings 变更例外——同步 ReloadSettings 后再经快照
@@ -35,9 +39,9 @@ func (a schedGroupPub) PublishGroups(ctx context.Context, gids []int64) {
 // 是 T1 设计约束（避免依赖环），适配只能在依赖两者的最外层做。
 type dispatcher struct {
 	inv       *invalidate.Debouncer
-	svc       invalidate.SettingsReloader // *service.Service（ReloadSettings：Apply settings 分支同步刷新 + FullRefresh）
-	snapshots *snapshot.Registry          // 五路快照注册表（NOTIFY scope 分发 + 断线重连全量刷新）
-	log       *logx.Logger                // nil = 静默（测试）
+	svc       settingsReloader   // *service.Service（Apply settings 分支同步刷新 + FullRefresh）
+	snapshots *snapshot.Registry // 五路快照注册表（NOTIFY scope 分发 + 断线重连全量刷新）
+	log       *logx.Logger       // nil = 静默（测试）
 	// bootLoaded 启动首刷全成功标志（E2 启动双刷）：main 在注册表 ReloadAll
 	// 返回空 map（全部成功）后置位、wm.StartAll 之前（程序序保证监听器首连必
 	// 见标志）；FullRefresh 首个调用（= 监听器首连）CAS 消费——命中则跳过五路
@@ -94,7 +98,7 @@ func (d *dispatcher) Apply(ctx context.Context, ch notify.Change) {
 		// #36 即时重算时序（R2 M-1）：先同步刷新 settings 快照（ReloadSettings，
 		// N 立即入快照），再按 scope 精确重载声明方（auth Reload → gate.reload →
 		// allocBudget 现读 N 即时重分配预算）——顺序保证预算读到新 N。修复前
-		// d.inv.Settings() 仅 Mark（200ms 去抖后才 flush ReloadSettings），
+		// 旧实现仅 Mark（200ms 去抖后才 flush ReloadSettings），
 		// reloadScopes 同步 auth.Reload 读到旧 N = 白重算；新 N 落地后再无
 		// gate.reload 触发。settings 为低频路径，同步 DB 读可接受；去抖 Mark 由
 		// 本次同步重载取代（免 200ms 后重复 ReloadSettings），失败 Warn + 模块
