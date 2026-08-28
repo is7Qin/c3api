@@ -115,9 +115,11 @@ func TestHealthReplacement(t *testing.T) {
 }
 
 // TestHealthRunReset verifies run_id retention with injected clock, no wall-clock sleep.
+// Uses actual Redis run_id via hook, not test-mutated field.
 func TestHealthRunReset(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
 	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h.runIDHook = func(_ context.Context) (string, error) { return "run-init", nil }
 	key := healthKeyFor(1, "q1", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
@@ -125,10 +127,10 @@ func TestHealthRunReset(t *testing.T) {
 	require.Contains(t, h.View(), key)
 	require.Equal(t, StateOPEN, h.View()[key].State)
 
-	// Deterministic run retention using injected clock: short TTL + fake time advance, no sleep.
 	fakeNow := time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC)
 	h2 := NewRuntimeHealth(c, "self-a", nil, nil, nil)
 	h2.now = func() time.Time { return fakeNow }
+	h2.runIDHook = func(_ context.Context) (string, error) { return "run-1", nil }
 	shortKey := healthKeyFor(2, "q1", 1)
 	_, err = h2.Throttle(context.Background(), shortKey, StateOPEN, 40*time.Millisecond)
 	require.NoError(t, err)
@@ -137,28 +139,26 @@ func TestHealthRunReset(t *testing.T) {
 	require.Equal(t, int64(40), h2.View()[shortKey].TTLms)
 	require.NotZero(t, h2.View()[shortKey].ExpiresAt)
 
-	// Record runID after sync, simulate Redis restart (FlushAll) with run change by forcing old runID
 	firstRunID := h2.ViewRunID()
-	h2.runID = "old-run-id-" + firstRunID
+	require.Equal(t, "run-1", firstRunID)
+	h2.runIDHook = func(_ context.Context) (string, error) { return "run-2", nil }
 	require.NoError(t, c.FlushAll(context.Background()).Err())
-	// Still at same fakeNow (before deadline) -> retain OPEN
 	require.NoError(t, h2.Sync(context.Background()))
 	v := h2.View()
 	require.Contains(t, v, shortKey, "run change must retain OPEN before deadline")
 	require.Equal(t, StateOPEN, v[shortKey].State, "retained entry must stay OPEN until deadline")
 	require.Equal(t, fakeNow.UnixMilli()+40, v[shortKey].ExpiresAt, "expiry stored in immutable view")
-	// Advance clock beyond deadline via injected clock, no sleep
+	require.Equal(t, "run-1", h2.ViewRunID(), "view runID stays old during retention")
+	require.Equal(t, "run-2", h2.runID, "h.runID tracks actual Redis run_id")
 	fakeNow = fakeNow.Add(50 * time.Millisecond)
 	h2.now = func() time.Time { return fakeNow }
 	require.NoError(t, h2.Sync(context.Background()))
 	v2 := h2.View()
 	require.Contains(t, v2, shortKey, "repeated empty must retain until deadline then PROBING")
 	require.Equal(t, StateProbing, v2[shortKey].State, "after deadline must become PROBING explicit transition")
-	// Repeated same-run empty retains PROBING (channel barrier, no sleep)
 	require.NoError(t, h2.Sync(context.Background()))
 	require.Contains(t, h2.View(), shortKey, "repeated empty must retain PROBING")
 	require.Equal(t, StateProbing, h2.View()[shortKey].State)
-	// Never clear on same-run empty before probe: verify view still has PROBING after multiple empties
 	for i := 0; i < 3; i++ {
 		require.NoError(t, h2.Sync(context.Background()))
 		require.Contains(t, h2.View(), shortKey, "never clear on same-run empty before probe")
@@ -567,11 +567,13 @@ func TestHealthCleanupErrorFreezes(t *testing.T) {
 }
 
 // TestHealthRunResetRepeatedEmptiesDeadlineProbe verifies repeated empty scans retain until deadline, explicit PROBING transition, never clear before probe.
+// Uses actual Redis run_id via hook, not test-mutated field.
 func TestHealthRunResetRepeatedEmptiesDeadlineProbe(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	fakeNow := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
 	h.now = func() time.Time { return fakeNow }
+	h.runIDHook = func(_ context.Context) (string, error) { return "run-1", nil }
 	keys := []HealthKey{healthKeyFor(10, "q1", 1), healthKeyFor(11, "q1", 1), healthKeyFor(12, "*", 1)}
 	for _, k := range keys {
 		_, err := h.Throttle(context.Background(), k, StateOPEN, 100*time.Millisecond)
@@ -583,10 +585,13 @@ func TestHealthRunResetRepeatedEmptiesDeadlineProbe(t *testing.T) {
 		require.Equal(t, StateOPEN, h.View()[k].State)
 		require.NotZero(t, h.View()[k].ExpiresAt)
 	}
-	// Simulate run change: FlushAll and force runID mismatch via h.runID overwrite
 	runBefore := h.ViewRunID()
-	h.runID = "old-" + runBefore
+	require.Equal(t, "run-1", runBefore)
+	h.runIDHook = func(_ context.Context) (string, error) { return "run-2", nil }
 	require.NoError(t, c.FlushAll(context.Background()).Err())
+	require.NoError(t, h.Sync(context.Background()))
+	require.Equal(t, "run-1", h.ViewRunID(), "view stays old during retention")
+	require.Equal(t, "run-2", h.runID)
 	// Repeated empty at same fakeNow before deadline: retain all OPEN
 	for i := 0; i < 3; i++ {
 		require.NoError(t, h.Sync(context.Background()))
@@ -717,4 +722,212 @@ func TestHealthCurGenInterleaving(t *testing.T) {
 	}
 	// No panic, curGen remains consistent
 	require.GreaterOrEqual(t, h2.curGen.Load(), newGen)
+}
+
+// TestHealthMalformedGenerationStrict verifies strict parsing: malformed/overflow/negative generation strings return error and freeze view/curGen.
+func TestHealthMalformedGenerationStrict(t *testing.T) {
+	_, c := newHealthTestRedis(t)
+	fakeNow := time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC)
+	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h.now = func() time.Time { return fakeNow }
+	key := healthKeyFor(30, "q-mal", 1)
+	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+	snapBefore := h.View()
+	genBefore := h.curGen.Load()
+	require.Contains(t, snapBefore, key)
+	require.Greater(t, genBefore, int64(0))
+
+	cases := []string{"not-a-number", "12abc", "9223372036854775808", "-1", "-9223372036854775808", "  ", "1.5"}
+	for _, bad := range cases {
+		require.NoError(t, c.Set(context.Background(), healthGenKey, bad, 0).Err())
+		err = h.Sync(context.Background())
+		require.Error(t, err, "bad gen %q must error", bad)
+		require.Equal(t, genBefore, h.curGen.Load(), "curGen must freeze on malformed global gen %q", bad)
+		require.Equal(t, snapBefore[key].Generation, h.View()[key].Generation, "view must freeze on malformed global gen %q", bad)
+	}
+	require.NoError(t, c.Set(context.Background(), healthGenKey, "2", 0).Err())
+	_ = h.Sync(context.Background())
+	genReset := h.curGen.Load()
+	require.Equal(t, int64(2), genReset)
+
+	// record generation malformed via barrier injected clock
+	h2 := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h2.now = func() time.Time { return fakeNow }
+	k2 := healthKeyFor(31, "q-rec", 1)
+	_, err = h2.Throttle(context.Background(), k2, StateOPEN, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, h2.Sync(context.Background()))
+	genBefore2 := h2.curGen.Load()
+	snapBefore2 := h2.View()
+	recKey := healthRecordPrefix + k2.String()
+	require.NoError(t, c.HSet(context.Background(), recKey, "gen", "bad-gen").Err())
+	err = h2.Sync(context.Background())
+	require.Error(t, err)
+	require.Equal(t, genBefore2, h2.curGen.Load(), "curGen freeze on malformed record gen")
+	require.Equal(t, snapBefore2[k2].Generation, h2.View()[k2].Generation)
+	require.NoError(t, c.Del(context.Background(), recKey).Err())
+	require.NoError(t, c.ZRem(context.Background(), healthActiveZSet, k2.String()).Err())
+	require.NoError(t, c.Set(context.Background(), healthGenKey, "10", 0).Err())
+
+	// barrier: inject malformed between genBefore and genAfter via syncHook
+	h3 := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h3.now = func() time.Time { return fakeNow }
+	h3.runIDHook = func(_ context.Context) (string, error) { return "run-barrier", nil }
+	k3 := healthKeyFor(32, "q-barrier", 1)
+	_, err = h3.Throttle(context.Background(), k3, StateOPEN, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, h3.Sync(context.Background()))
+	genBefore3 := h3.curGen.Load()
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+	h3.syncHook = func(stage string) {
+		if stage == "beforeGenAfter" {
+			select { case blocked <- struct{}{}: default: }
+			select {
+			case <-release:
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- h3.Sync(context.Background()) }()
+	select {
+	case <-blocked:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: barrier malformed gen")
+	}
+	require.NoError(t, c.Set(context.Background(), healthGenKey, "not-a-number", 0).Err())
+	close(release)
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		require.Equal(t, genBefore3, h3.curGen.Load(), "curGen must not advance when genAfter malformed via barrier")
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: malformed barrier timeout")
+	}
+	h3.syncHook = nil
+}
+
+// TestHealthCleanupFailureCurGenUnchanged verifies candidate generation stored only after cleanup and view publish succeed.
+func TestHealthCleanupFailureCurGenUnchanged(t *testing.T) {
+	mr, c := newHealthTestRedis(t)
+	fakeNow := time.Date(2026, 8, 29, 14, 0, 0, 0, time.UTC)
+	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h.now = func() time.Time { return fakeNow }
+	key := healthKeyFor(88, "q-err2", 1)
+	_, err := h.Throttle(context.Background(), key, StateOPEN, 40*time.Millisecond)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+	genBefore := h.curGen.Load()
+	viewBefore := h.View()
+	require.Contains(t, viewBefore, key)
+	field := key.String()
+	recKey := healthRecordPrefix + field
+	require.NoError(t, c.Del(context.Background(), recKey).Err())
+	require.NoError(t, c.HSet(context.Background(), healthTombstoneHash, field, "999").Err())
+	h.syncHook = func(stage string) {
+		if stage == "beforeCleanup" {
+			mr.Close()
+		}
+	}
+	err = h.Sync(context.Background())
+	require.Error(t, err, "cleanup error must propagate")
+	require.Equal(t, genBefore, h.curGen.Load(), "curGen must not advance on cleanup failure")
+	require.Contains(t, h.View(), key, "view must freeze on cleanup failure")
+	require.Equal(t, viewBefore[key].Generation, h.View()[key].Generation)
+	h.syncHook = nil
+}
+
+// TestHealthActualRunIDChangeRepeatedEmptyDeadline verifies actual Redis run_id based retention with injected clock and barrier.
+func TestHealthActualRunIDChangeRepeatedEmptyDeadline(t *testing.T) {
+	_, c1 := newHealthTestRedis(t)
+	fakeNow := time.Date(2026, 8, 29, 15, 0, 0, 0, time.UTC)
+	h := NewRuntimeHealth(c1, "self-a", nil, nil, nil)
+	h.now = func() time.Time { return fakeNow }
+	h.runIDHook = func(_ context.Context) (string, error) { return "run-1", nil }
+	keys := []HealthKey{healthKeyFor(40, "q1", 1), healthKeyFor(41, "q1", 1)}
+	for _, k := range keys {
+		_, err := h.Throttle(context.Background(), k, StateOPEN, 100*time.Millisecond)
+		require.NoError(t, err)
+	}
+	require.NoError(t, h.Sync(context.Background()))
+	require.Equal(t, 2, len(h.View()))
+	runBefore := h.ViewRunID()
+	require.Equal(t, "run-1", runBefore)
+	h.runIDHook = func(_ context.Context) (string, error) { return "run-2", nil }
+	require.NoError(t, c1.FlushAll(context.Background()).Err())
+	barrier := make(chan struct{})
+	release := make(chan struct{})
+	h.syncHook = func(stage string) {
+		if stage == "beforeGenAfter" {
+			select { case barrier <- struct{}{}: default: }
+			select {
+			case <-release:
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- h.Sync(context.Background()) }()
+	select {
+	case <-barrier:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: run change barrier")
+	}
+	close(release)
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: run change sync timeout")
+	}
+	h.syncHook = nil
+	require.Equal(t, "run-1", h.ViewRunID(), "view stays old during retention")
+	require.Equal(t, "run-2", h.runID)
+	for _, k := range keys {
+		require.Contains(t, h.View(), k, "run-change repeated empty must retain OPEN before deadline")
+		require.Equal(t, StateOPEN, h.View()[k].State)
+	}
+	for i := 0; i < 2; i++ {
+		require.NoError(t, h.Sync(context.Background()))
+		for _, k := range keys {
+			require.Equal(t, StateOPEN, h.View()[k].State, "repeated empty before deadline retains OPEN")
+		}
+	}
+	fakeNow = fakeNow.Add(150 * time.Millisecond)
+	h.now = func() time.Time { return fakeNow }
+	require.NoError(t, h.Sync(context.Background()))
+	for _, k := range keys {
+		require.Equal(t, StateProbing, h.View()[k].State, "after ExpiresAt must become PROBING")
+	}
+	for i := 0; i < 2; i++ {
+		require.NoError(t, h.Sync(context.Background()))
+		for _, k := range keys {
+			require.Equal(t, StateProbing, h.View()[k].State, "same-run repeated empty retains PROBING until probe")
+		}
+	}
+	require.NotEmpty(t, h.View(), "never clear to empty before real probe result")
+}
+
+// TestHealthSameRunEmptyClears verifies same-run empty may clear READY/missing (no retention without run change).
+func TestHealthSameRunEmptyClears(t *testing.T) {
+	_, c := newHealthTestRedis(t)
+	fakeNow := time.Date(2026, 8, 29, 16, 0, 0, 0, time.UTC)
+	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h.now = func() time.Time { return fakeNow }
+	h.runIDHook = func(_ context.Context) (string, error) { return "run-same", nil }
+	key := healthKeyFor(50, "q-clear", 1)
+	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), key)
+	runBefore := h.ViewRunID()
+	require.Equal(t, "run-same", runBefore)
+	require.NoError(t, c.FlushAll(context.Background()).Err())
+	require.NoError(t, h.Sync(context.Background()))
+	require.NotContains(t, h.View(), key, "same-run empty must clear")
+	require.Empty(t, h.View(), "same-run empty without hasProbing must clear to empty")
+	require.Equal(t, runBefore, h.ViewRunID(), "same-run keeps same runID")
 }

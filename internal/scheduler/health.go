@@ -4,6 +4,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -104,6 +105,21 @@ type healthView struct {
 	entries map[HealthKey]healthEntry
 	gen     int64
 	runID   string
+}
+
+func parseGenStrict(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("health: empty generation")
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("health: malformed generation %q: %w", s, err)
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("health: negative generation %d", v)
+	}
+	return v, nil
 }
 
 const (
@@ -232,6 +248,7 @@ type RuntimeHealth struct {
 
 	now      func() time.Time
 	syncHook func(stage string)
+	runIDHook func(context.Context) (string, error)
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -457,7 +474,10 @@ func (h *RuntimeHealth) ViewRunID() string {
 // Sync performs INFO run_id + gen-before/records/gen-after atomic read.
 // Fail-closed on INFO/global-generation/record errors and never treats error as empty.
 // Expiry cleanup uses one Lua script that re-reads global generation and per-record generation/revision before each ZREM/HDEL; errors propagate and freeze view.
-// Changed Redis run_id retains local OPEN/RETRY across repeated empty scans until original until deadline, then explicit transition to PROBING and retains until real probe outcome, never cleared on same-run empty before probe. RunID and expiry stored in immutable view.
+// Generation strings parsed strictly; malformed/overflow/negative returns error and freezes, never become zero.
+// Candidate generation stored only after all cleanup and view publication succeed; cleanup failure leaves old curGen/view unchanged.
+// Read actual Redis run_id and compare with previous immutable view runID; retention/probe transition based on run-change event, not test-mutated field.
+// Same-run empty may clear READY/missing; run-change repeated empty retains OPEN/RETRY until original ExpiresAt then PROBING until real probe result.
 func (h *RuntimeHealth) Sync(ctx context.Context) error {
 	if h.client == nil {
 		return nil
@@ -471,25 +491,35 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 			return err
 		}
 	} else {
-		_, _ = fmt.Sscanf(genBeforeStr, "%d", &genBefore)
-	}
-	infoStr, err := h.client.Info(ctx, "replication").Result()
-	if err != nil {
-		fallback, ferr := h.client.Info(ctx).Result()
-		if ferr != nil {
+		genBefore, err = parseGenStrict(genBeforeStr)
+		if err != nil {
 			return err
 		}
-		infoStr = fallback
 	}
-	runID := ""
-	for _, line := range strings.Split(infoStr, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "run_id:") {
-			runID = strings.TrimSpace(strings.TrimPrefix(line, "run_id:"))
-			break
+	var runID string
+	if h.runIDHook != nil {
+		runID, err = h.runIDHook(ctx)
+		if err != nil {
+			return err
 		}
-		if strings.HasPrefix(line, "master_replid:") && runID == "" {
-			runID = strings.TrimSpace(strings.TrimPrefix(line, "master_replid:"))
+	} else {
+		infoStr, err := h.client.Info(ctx, "replication").Result()
+		if err != nil {
+			fallback, ferr := h.client.Info(ctx).Result()
+			if ferr != nil {
+				return err
+			}
+			infoStr = fallback
+		}
+		for _, line := range strings.Split(infoStr, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "run_id:") {
+				runID = strings.TrimSpace(strings.TrimPrefix(line, "run_id:"))
+				break
+			}
+			if strings.HasPrefix(line, "master_replid:") && runID == "" {
+				runID = strings.TrimSpace(strings.TrimPrefix(line, "master_replid:"))
+			}
 		}
 	}
 	members, err := h.client.ZRange(ctx, healthActiveZSet, 0, -1).Result()
@@ -527,8 +557,15 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 		default:
 			st = StateOPEN
 		}
-		var gen, rev, ttlMsVal int64
-		_, _ = fmt.Sscanf(m["gen"], "%d", &gen)
+		genStr := m["gen"]
+		if genStr == "" {
+			return fmt.Errorf("health: missing generation for %s", field)
+		}
+		gen, err := parseGenStrict(genStr)
+		if err != nil {
+			return err
+		}
+		var rev, ttlMsVal int64
 		_, _ = fmt.Sscanf(m["rev"], "%d", &rev)
 		_, _ = fmt.Sscanf(m["ttl"], "%d", &ttlMsVal)
 		ttlMs := ttlMsVal
@@ -565,12 +602,15 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 			return err
 		}
 	} else {
-		_, _ = fmt.Sscanf(genAfterStr, "%d", &genAfter)
+		genAfter, err = parseGenStrict(genAfterStr)
+		if err != nil {
+			return err
+		}
 	}
 	if genBefore != genAfter {
 		return fmt.Errorf("health: stale generation %d != %d", genBefore, genAfter)
 	}
-	h.curGen.Store(genAfter)
+	candidateGen := genAfter
 
 	if h.syncHook != nil {
 		h.syncHook("beforeCleanup")
@@ -580,7 +620,7 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 			staleActive = staleActive[:healthCleanupBound]
 		}
 		for _, field := range staleActive {
-			_, err := h.client.Eval(ctx, cleanupLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, "active", field, fmt.Sprintf("%d", genAfter), healthRecordPrefix, healthTombstonePrefix).Result()
+			_, err := h.client.Eval(ctx, cleanupLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, "active", field, fmt.Sprintf("%d", candidateGen), healthRecordPrefix, healthTombstonePrefix).Result()
 			if err != nil && err != redis.Nil {
 				return err
 			}
@@ -591,7 +631,7 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 			staleTomb = staleTomb[:healthCleanupBound]
 		}
 		for _, field := range staleTomb {
-			_, err := h.client.Eval(ctx, cleanupLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, "tomb", field, fmt.Sprintf("%d", genAfter), healthRecordPrefix, healthTombstonePrefix).Result()
+			_, err := h.client.Eval(ctx, cleanupLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, "tomb", field, fmt.Sprintf("%d", candidateGen), healthRecordPrefix, healthTombstonePrefix).Result()
 			if err != nil && err != redis.Nil {
 				return err
 			}
@@ -599,8 +639,31 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 	}
 
 	prevView := h.view.Load()
+	prevRunID := ""
+	if prevView != nil {
+		prevRunID = prevView.runID
+	}
+	isRunChange := prevRunID != "" && runID != "" && runID != prevRunID
 	if len(records) == 0 {
 		if prevView != nil && len(prevView.entries) > 0 {
+			if !isRunChange {
+				hasProbing := false
+				for _, e := range prevView.entries {
+					if e.State == StateProbing {
+						hasProbing = true
+						break
+					}
+				}
+				if !hasProbing {
+					newView := &healthView{entries: make(map[HealthKey]healthEntry), gen: candidateGen, runID: runID}
+					h.view.Store(newView)
+					h.curGen.Store(candidateGen)
+					if runID != "" {
+						h.runID = runID
+					}
+					return nil
+				}
+			}
 			staleTombSet := make(map[string]struct{}, len(staleTomb))
 			for _, f := range staleTomb {
 				staleTombSet[f] = struct{}{}
@@ -633,23 +696,30 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 				}
 			}
 			if len(retained) > 0 {
-				newView := &healthView{entries: retained, gen: genAfter, runID: runID}
+				viewRunID := prevRunID
+				if viewRunID == "" {
+					viewRunID = runID
+				}
+				newView := &healthView{entries: retained, gen: candidateGen, runID: viewRunID}
 				h.view.Store(newView)
+				h.curGen.Store(candidateGen)
 				if runID != "" {
 					h.runID = runID
 				}
 				return nil
 			}
 		}
-		newView := &healthView{entries: make(map[HealthKey]healthEntry), gen: genAfter, runID: runID}
+		newView := &healthView{entries: make(map[HealthKey]healthEntry), gen: candidateGen, runID: runID}
 		h.view.Store(newView)
+		h.curGen.Store(candidateGen)
 		if runID != "" {
 			h.runID = runID
 		}
 		return nil
 	}
-	newView := &healthView{entries: records, gen: genAfter, runID: runID}
+	newView := &healthView{entries: records, gen: candidateGen, runID: runID}
 	h.view.Store(newView)
+	h.curGen.Store(candidateGen)
 	if runID != "" {
 		h.runID = runID
 	}
@@ -680,7 +750,9 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 		curGen := h.curGen.Load()
 		if h.client != nil {
 			if gStr, err := h.client.Get(ctx, healthGenKey).Result(); err == nil {
-				_, _ = fmt.Sscanf(gStr, "%d", &curGen)
+				if v, err := parseGenStrict(gStr); err == nil {
+					curGen = v
+				}
 			}
 		}
 		err := h.doProbe(ctx, key)
