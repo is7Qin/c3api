@@ -379,3 +379,84 @@ func TestQualityRecorder_PinnedGaugeBoundedByEffectiveMax(t *testing.T) {
 	}
 	require.Equal(t, int64(0), r.PinnedGauge())
 }
+
+func TestQualityRecorder_GenerationFencing(t *testing.T) {
+	r, err := NewRecorder(50000)
+	require.NoError(t, err)
+	f := fp(111)
+	q := qc(111)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
+	require.NotNil(t, cell)
+	require.NotEqual(t, uint64(0), cell.gen)
+
+	var valid AttemptContext
+	require.True(t, r.InitAttemptContext(cell, &valid))
+	require.False(t, valid.IsZero())
+	require.Equal(t, cell.gen, valid.gen)
+
+	inflightBefore := r.GlobalInflight()
+	require.Equal(t, int64(1), inflightBefore)
+
+	stale := valid
+	stale.gen = valid.gen + 1
+	tt := int64(100)
+	stale.Complete(true, &tt, 10, 1, 0)
+	a, _, _, _, _, _, _, _, _, _, ok := r.CellStats(k)
+	require.True(t, ok)
+	require.Equal(t, int64(0), a)
+	require.Equal(t, inflightBefore, r.GlobalInflight(), "mismatched generation must not release")
+
+	zeroGen := valid
+	zeroGen.gen = 0
+	zeroGen.Complete(true, &tt, 10, 1, 0)
+	a2, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
+	require.Equal(t, int64(0), a2)
+	require.Equal(t, inflightBefore, r.GlobalInflight())
+
+	staleCancel := valid
+	staleCancel.gen = 9999
+	staleCancel.Cancel()
+	a3, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
+	require.Equal(t, int64(0), a3)
+	require.Equal(t, inflightBefore, r.GlobalInflight(), "mismatched Cancel must not release")
+
+	zeroCell := &Cell{key: k, owner: r.id, gen: 0}
+	var out AttemptContext
+	require.False(t, r.InitAttemptContext(zeroCell, &out))
+	require.True(t, out.IsZero())
+	require.Equal(t, inflightBefore, r.GlobalInflight(), "zero-gen pin must not change inflight")
+
+	foreignStale := AttemptContext{cell: cell, recorder: r, gen: cell.gen + 500}
+	foreignStale.CompleteObservation(Observation{Success: true, TTFTMs: &tt, Tokens: 5, Calls: 1})
+	a4, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
+	require.Equal(t, int64(0), a4)
+	require.Equal(t, inflightBefore, r.GlobalInflight())
+
+	valid.Complete(true, &tt, 10, 1, 0)
+	require.True(t, valid.IsCompleted())
+	a5, s5, _, tok5, _, _, _, _, _, _, _ := r.CellStats(k)
+	require.Equal(t, int64(1), a5)
+	require.Equal(t, int64(1), s5)
+	require.Equal(t, int64(10), tok5)
+	require.Equal(t, int64(0), r.GlobalInflight(), "valid completion must release exactly once")
+
+	valid.Complete(true, &tt, 10, 1, 0)
+	a6, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
+	require.Equal(t, int64(1), a6, "second Complete must not double record")
+	require.Equal(t, int64(0), r.GlobalInflight())
+
+	var valid2 AttemptContext
+	require.True(t, r.InitAttemptContext(cell, &valid2))
+	require.Equal(t, int64(1), r.GlobalInflight())
+	valid2.Cancel()
+	require.True(t, valid2.IsCompleted())
+	require.Equal(t, int64(0), r.GlobalInflight())
+	a7, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
+	require.Equal(t, int64(1), a7, "Cancel must not record")
+
+	staleAfter := valid2
+	staleAfter.gen = valid2.gen + 1
+	staleAfter.Cancel()
+	require.Equal(t, int64(0), r.GlobalInflight())
+}
