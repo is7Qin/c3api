@@ -37,7 +37,7 @@ func (d *Debouncer) Stats() any {
 
 // kindsNames 脏位名逗号拼接（观测可读性；Kinds 为 bitmask）。
 func kindsNames(k Kind) string {
-	names := make([]string, 0, 7)
+	names := make([]string, 0, 6)
 	for _, b := range []struct {
 		bit  Kind
 		name string
@@ -47,7 +47,6 @@ func kindsNames(k Kind) string {
 		{KindClients, "clients"},
 		{KindMultipliers, "multipliers"},
 		{KindKeys, "keys"},
-		{KindSettings, "settings"},
 		{KindRules, "rules"},
 	} {
 		if k&b.bit != 0 {
