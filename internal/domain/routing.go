@@ -16,6 +16,10 @@ import (
 
 const RoutingIdentityVersion byte = 1
 
+type RouteClassIDVal [32]byte
+type QualityClassIDVal [32]byte
+type CandidateFingerprintVal [32]byte
+
 type OperationTag string
 
 const (
@@ -102,6 +106,10 @@ func fieldBool(v bool) []byte {
 
 func IDToHex(id [32]byte) string { return hex.EncodeToString(id[:]) }
 
+func RouteClassIDHex(id RouteClassIDVal) string { return hex.EncodeToString(id[:]) }
+func QualityClassIDHex(id QualityClassIDVal) string { return hex.EncodeToString(id[:]) }
+func CandidateFPHex(id CandidateFingerprintVal) string { return hex.EncodeToString(id[:]) }
+
 func HexToID(s string) ([32]byte, error) {
 	var out [32]byte
 	if len(s) != 64 {
@@ -116,11 +124,17 @@ func HexToID(s string) ([32]byte, error) {
 }
 
 func CanonicalOrigin(raw string) (string, error) {
-	if raw == "" {
+	if strings.TrimSpace(raw) == "" {
 		return "", fmt.Errorf("routing: empty origin")
 	}
-	raw = strings.TrimSpace(raw)
-	u, err := url.Parse(raw)
+	if strings.Contains(raw, "?") {
+		return "", fmt.Errorf("routing: origin must not contain query marker %q", raw)
+	}
+	if strings.Contains(raw, "#") {
+		return "", fmt.Errorf("routing: origin must not contain fragment marker %q", raw)
+	}
+	rawTrim := strings.TrimSpace(raw)
+	u, err := url.Parse(rawTrim)
 	if err != nil {
 		return "", fmt.Errorf("routing: invalid origin %q: %w", raw, err)
 	}
@@ -134,9 +148,6 @@ func CanonicalOrigin(raw string) (string, error) {
 	if u.User != nil {
 		return "", fmt.Errorf("routing: origin must not contain userinfo %q", raw)
 	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("routing: origin must not contain query or fragment %q", raw)
-	}
 	path := u.EscapedPath()
 	if path != "" && path != "/" {
 		return "", fmt.Errorf("routing: origin must be naked root without path %q", raw)
@@ -144,7 +155,6 @@ func CanonicalOrigin(raw string) (string, error) {
 	if u.Opaque != "" {
 		return "", fmt.Errorf("routing: invalid origin %q", raw)
 	}
-	host := u.Host
 	hostname := u.Hostname()
 	if hostname == "" {
 		return "", fmt.Errorf("routing: origin missing hostname %q", raw)
@@ -158,61 +168,69 @@ func CanonicalOrigin(raw string) (string, error) {
 			return "", fmt.Errorf("routing: hostname too long %q", raw)
 		}
 	}
-	port := u.Port()
-	if port != "" {
-		if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
-			port = ""
+	portStr := u.Port()
+	var port string
+	if portStr == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
 		}
-	}
-	if port != "" {
-		host = net.JoinHostPort(hostname, port)
 	} else {
-		host = hostname
+		if _, err := fmt.Sscanf(portStr, "%d", new(int)); err != nil {
+			return "", fmt.Errorf("routing: invalid port %q", raw)
+		}
+		var p int
+		fmt.Sscanf(portStr, "%d", &p)
+		if p <= 0 || p > 65535 {
+			return "", fmt.Errorf("routing: invalid port %q", raw)
+		}
+		port = portStr
 	}
-	if u.String() != raw && strings.Contains(raw, "?") {
-		return "", fmt.Errorf("routing: origin must not contain query %q", raw)
-	}
+	host := net.JoinHostPort(hostname, port)
 	return scheme + "://" + host, nil
 }
 
-func RouteClassID(groupID int64, clientFormat RequestFormat, requestedModel string, opTag OperationTag) ([32]byte, error) {
+func RouteClassID(groupID int64, clientFormat RequestFormat, requestedModel string, opTag OperationTag) (RouteClassIDVal, error) {
 	if !clientFormat.Valid() {
-		return [32]byte{}, fmt.Errorf("routing: invalid client_format %q", clientFormat)
+		return RouteClassIDVal{}, fmt.Errorf("routing: invalid client_format %q", clientFormat)
 	}
 	if !opTag.Valid() {
-		return [32]byte{}, fmt.Errorf("routing: invalid operation_tag %q", opTag)
+		return RouteClassIDVal{}, fmt.Errorf("routing: invalid operation_tag %q", opTag)
 	}
 	if !utf8.ValidString(requestedModel) {
-		return [32]byte{}, fmt.Errorf("routing: requested_model not valid UTF-8")
+		return RouteClassIDVal{}, fmt.Errorf("routing: requested_model not valid UTF-8")
 	}
 	g := fieldInt64(groupID)
 	cf, _ := fieldString(string(clientFormat))
 	rm, _ := fieldString(requestedModel)
 	ot, _ := fieldString(string(opTag))
-	return hashFields(g, cf, rm, ot), nil
+	h := hashFields(g, cf, rm, ot)
+	return RouteClassIDVal(h), nil
 }
 
-func QualityClassID(callerKind CallerKind, upstreamFormat RequestFormat, resolvedModel string, opTag OperationTag) ([32]byte, error) {
+func QualityClassID(callerKind CallerKind, upstreamFormat RequestFormat, resolvedModel string, opTag OperationTag) (QualityClassIDVal, error) {
 	if !callerKind.Valid() {
-		return [32]byte{}, fmt.Errorf("routing: invalid caller_kind %q", callerKind)
+		return QualityClassIDVal{}, fmt.Errorf("routing: invalid caller_kind %q", callerKind)
 	}
 	if !upstreamFormat.Valid() {
-		return [32]byte{}, fmt.Errorf("routing: invalid upstream_format %q", upstreamFormat)
+		return QualityClassIDVal{}, fmt.Errorf("routing: invalid upstream_format %q", upstreamFormat)
 	}
 	if !opTag.Valid() {
-		return [32]byte{}, fmt.Errorf("routing: invalid operation_tag %q", opTag)
+		return QualityClassIDVal{}, fmt.Errorf("routing: invalid operation_tag %q", opTag)
 	}
 	if !utf8.ValidString(resolvedModel) {
-		return [32]byte{}, fmt.Errorf("routing: resolved_model not valid UTF-8")
+		return QualityClassIDVal{}, fmt.Errorf("routing: resolved_model not valid UTF-8")
 	}
 	ck, _ := fieldString(string(callerKind))
 	uf, _ := fieldString(string(upstreamFormat))
 	rm, _ := fieldString(resolvedModel)
 	ot, _ := fieldString(string(opTag))
-	return hashFields(ck, uf, rm, ot), nil
+	h := hashFields(ck, uf, rm, ot)
+	return QualityClassIDVal(h), nil
 }
 
-func stableCredentialDigest(credType credential.Type, upstreamKey string, patKey string, codexEmail string, codexAccountID string) ([]byte, error) {
+func stableCredentialDigest(credType credential.Type, upstreamKey string, patKey string) ([]byte, error) {
 	switch credType {
 	case credential.TypeAPIKey, credential.TypeResponsesSpecial:
 		if upstreamKey == "" {
@@ -231,14 +249,7 @@ func stableCredentialDigest(credType credential.Type, upstreamKey string, patKey
 		copy(b, h[:])
 		return b, nil
 	case credential.TypeCodexOAuth:
-		if codexEmail == "" && codexAccountID == "" {
-			return nil, fmt.Errorf("routing: oauth durable identity empty")
-		}
-		raw := codexEmail + "\x00" + codexAccountID
-		if !utf8.ValidString(raw) {
-			return nil, fmt.Errorf("routing: oauth identity not valid UTF-8")
-		}
-		h := sha256.Sum256([]byte(raw))
+		h := sha256.Sum256([]byte("codex-oauth-stable-v1"))
 		b := make([]byte, 32)
 		copy(b, h[:])
 		return b, nil
@@ -261,29 +272,29 @@ func CandidateFingerprint(
 	sessionID string,
 	threadID string,
 	windowID string,
-) ([32]byte, error) {
+) (CandidateFingerprintVal, error) {
 	if !credType.Valid() {
-		return [32]byte{}, fmt.Errorf("routing: invalid credential_type %q", credType)
+		return CandidateFingerprintVal{}, fmt.Errorf("routing: invalid credential_type %q", credType)
 	}
 	canonicalOrigin := ""
 	if effectiveBaseURL != "" {
 		var err error
 		canonicalOrigin, err = CanonicalOrigin(effectiveBaseURL)
 		if err != nil {
-			return [32]byte{}, err
+			return CandidateFingerprintVal{}, err
 		}
 	}
-	digest, err := stableCredentialDigest(credType, upstreamKey, patKey, codexEmail, codexAccountID)
+	digest, err := stableCredentialDigest(credType, upstreamKey, patKey)
 	if err != nil {
-		return [32]byte{}, err
+		return CandidateFingerprintVal{}, err
 	}
 	for _, s := range []string{installationID, sessionID, threadID, windowID, codexAccountID} {
 		if !utf8.ValidString(s) {
-			return [32]byte{}, fmt.Errorf("routing: codex identity field not valid UTF-8")
+			return CandidateFingerprintVal{}, fmt.Errorf("routing: codex identity field not valid UTF-8")
 		}
 	}
 	if !utf8.ValidString(canonicalOrigin) {
-		return [32]byte{}, fmt.Errorf("routing: canonical origin not valid UTF-8")
+		return CandidateFingerprintVal{}, fmt.Errorf("routing: canonical origin not valid UTF-8")
 	}
 	acc := fieldInt64(accountID)
 	tpl := fieldInt64(templateID)
@@ -295,7 +306,8 @@ func CandidateFingerprint(
 	thr, _ := fieldString(threadID)
 	win, _ := fieldString(windowID)
 	caid, _ := fieldString(codexAccountID)
-	return hashFields(acc, tpl, ct, orig, digest, strip, inst, sess, thr, win, caid), nil
+	h := hashFields(acc, tpl, ct, orig, digest, strip, inst, sess, thr, win, caid)
+	return CandidateFingerprintVal(h), nil
 }
 
 var _ = fieldUint64

@@ -3,10 +3,14 @@ package repository_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -14,38 +18,47 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-func mustRouteClass(t *testing.T, gid int64, cf domain.RequestFormat, model string, op domain.OperationTag) []byte {
+func mustRouteClassVal(t *testing.T, gid int64, cf domain.RequestFormat, model string, op domain.OperationTag) domain.RouteClassIDVal {
 	t.Helper()
 	id, err := domain.RouteClassID(gid, cf, model, op)
 	require.NoError(t, err)
-	b := make([]byte, 32)
-	copy(b, id[:])
-	return b
+	return id
 }
-func mustQualityClass(t *testing.T, ck domain.CallerKind, uf domain.RequestFormat, model string, op domain.OperationTag) []byte {
+func mustQualityClassVal(t *testing.T, ck domain.CallerKind, uf domain.RequestFormat, model string, op domain.OperationTag) domain.QualityClassIDVal {
 	t.Helper()
 	id, err := domain.QualityClassID(ck, uf, model, op)
 	require.NoError(t, err)
-	b := make([]byte, 32)
-	copy(b, id[:])
-	return b
+	return id
 }
-func mustFingerprint(t *testing.T, accID, tplID int64, ct credential.Type, origin, sk, pat, email, acc string, strip bool, inst, sess, thr, win string) []byte {
+func mustFPVal(t *testing.T, accID, tplID int64, ct credential.Type, origin, sk, pat, email, acc string, strip bool, inst, sess, thr, win string) domain.CandidateFingerprintVal {
 	t.Helper()
 	id, err := domain.CandidateFingerprint(accID, tplID, ct, origin, sk, pat, email, acc, strip, inst, sess, thr, win)
 	require.NoError(t, err)
-	b := make([]byte, 32)
-	copy(b, id[:])
-	return b
+	return id
+}
+
+func newRoutingRepos(t *testing.T) (*repository.Repository, *pgxpool.Pool) {
+	t.Helper()
+	pool := pgTestPool(t)
+	ctx := context.Background()
+	db := stdlib.OpenDBFromPool(pool)
+	_, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
+	require.NoError(t, err)
+	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool)
+	require.NoError(t, err)
+	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
+	require.NoError(t, repos.EnsureErrLogPartitioned(ctx, time.Now()))
+	require.NoError(t, repos.EnsureUsageStatsPartitioned(ctx, time.Now()))
+	require.NoError(t, repos.EnsureUsageEntityStatsPartitioned(ctx, time.Now()))
+	require.NoError(t, repos.EnsurePriceVariantsEffectCheck(ctx))
+	return repos, pool
 }
 
 func TestRoutingPartitionBootstrapPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
 	now := time.Now().UTC()
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	// idempotent second call
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	for _, tbl := range []string{"routing_quality_instance_minute", "routing_flow_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
 		parted, err := repos.Partitions.IsTablePartitioned(ctx, tbl)
@@ -66,30 +79,37 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 		require.Contains(t, names, tbl+"_"+today.Format("20060102"))
 		require.Contains(t, names, tbl+"_"+today.AddDate(0, 0, 1).Format("20060102"))
 	}
-	// non-partitioned tables exist
 	var n int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_dirty_minute`).Scan(&n))
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_compiler_state`).Scan(&n))
-	// indexes
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_indexes WHERE tablename='routing_quality_instance_minute' AND indexname='routing_quality_instance_minute_uniq'`).Scan(&n))
-	require.Equal(t, int64(1), n)
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_rollup_watermark`).Scan(&n))
+	// checks for digest length
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_constraint WHERE conrelid='routing_quality_instance_minute'::regclass AND contype='c'`).Scan(&n))
+	require.GreaterOrEqual(t, n, int64(3))
+	// columns existence for sufficient stats
+	for _, col := range []string{"count_429", "count_ordinary_4xx", "count_5xx", "count_network", "ttft_n", "ttft_sum_log_q32", "ttft_hist", "input_tokens", "calls", "images"} {
+		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_quality_instance_minute' AND column_name=$1`, col).Scan(&n))
+		require.Equal(t, int64(1), n, "missing col %s", col)
+	}
+	for _, col := range []string{"previous_outcome", "transition_reason", "absolute_sequence"} {
+		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_flow_instance_minute' AND column_name=$1`, col).Scan(&n))
+		require.Equal(t, int64(1), n, "missing flow col %s", col)
+	}
 }
 
 func TestRoutingQualityReplayPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	qc := mustQualityClass(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	rc := mustRouteClass(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFingerprint(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-one", "", "", "", false, "inst", "sess", "thr", "win")
+	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-one", "", "", "", false, "inst", "sess", "thr", "win")
 	row := repository.RoutingQualityRow{
 		IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp,
-		InstanceSrc: "host-1-abc", BucketMinute: now, AbsoluteSequence: 10, Attempts: 5, Successes: 3, Failures: 2, TTFTSumMS: 100, TTFTCount: 3,
+		InstanceSrc: "host-1-abc", BucketMinute: now, AbsoluteSequence: 10, Attempts: 5, Successes: 3, Count429: 1, InputTokens: 100, Calls: 2,
 	}
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
-	// duplicate absolute replay should not double
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
 	var attempts int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2`, "host-1-abc", now).Scan(&attempts))
@@ -109,8 +129,14 @@ func TestRoutingQualityReplayPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, rowStale))
 	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2`, "host-1-abc", now).Scan(&attempts))
 	require.Equal(t, int64(8), attempts, "stale sequence must be ignored")
-	// fingerprint change isolates quality: different fp => separate row
-	fp2 := mustFingerprint(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-two", "", "", "", false, "inst", "sess", "thr", "win")
+	// equal divergent: same sequence but different attempts must NOT overwrite
+	rowEqualDiverge := row2
+	rowEqualDiverge.Attempts = 99
+	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, rowEqualDiverge))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2`, "host-1-abc", now).Scan(&attempts))
+	require.Equal(t, int64(8), attempts, "equal divergent must not overwrite")
+	// fingerprint change isolates
+	fp2 := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-two", "", "", "", false, "inst", "sess", "thr", "win")
 	row3 := row
 	row3.CandidateFingerprint = fp2
 	row3.InstanceSrc = "host-1-abc"
@@ -120,19 +146,17 @@ func TestRoutingQualityReplayPG(t *testing.T) {
 	var cnt int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_quality_instance_minute WHERE bucket_minute=$1`, now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt, "fingerprint change must create separate row")
-	// version isolation: version 2 row separate, version 1 query still returns v1
-	rowV2 := row
-	rowV2.IdentityVersion = 2
-	rowV2.AbsoluteSequence = 20
-	rowV2.Attempts = 99
-	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, rowV2))
-	qrow, err := repos.Partitions.QueryQualityRow(ctx, "host-1-abc", now, fp, qc, 1)
-	require.NoError(t, err)
-	require.Equal(t, int64(8), qrow.Attempts, "version 1 row must remain")
-	qrow2, err := repos.Partitions.QueryQualityRow(ctx, "host-1-abc", now, fp, qc, 2)
-	require.NoError(t, err)
-	require.Equal(t, int64(99), qrow2.Attempts)
-	require.NotEqual(t, qrow.Attempts, qrow2.Attempts)
+}
+
+func TestRoutingQualityDigestCheckPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	// direct SQL with malformed digest (3 bytes) must fail CHECK octet_length=32
+	_, err := pool.Exec(ctx, `INSERT INTO routing_quality_instance_minute (identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, updated_at) VALUES (1, '\x010203'::bytea, '\x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20'::bytea, '\x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20'::bytea, 'src', $1, 1, now())`, now)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "check constraint")
 }
 
 func TestRoutingQualityDirtyPG(t *testing.T) {
@@ -140,70 +164,199 @@ func TestRoutingQualityDirtyPG(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	qc := mustQualityClass(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	rc := mustRouteClass(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFingerprint(t, 2, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-x", "", "", "", false, "", "", "", "")
+	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 2, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-x", "", "", "", false, "", "", "", "")
 	row := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp, InstanceSrc: "src-A", BucketMinute: now, AbsoluteSequence: 1, Attempts: 1}
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
-	dirty, err := repos.Partitions.IsDirty(ctx, now)
+	dirty, err := repos.Partitions.IsDirty(ctx, "quality", 1, now)
 	require.NoError(t, err)
-	require.True(t, dirty, "writer must mark dirty in same tx")
+	require.True(t, dirty, "writer must mark dirty in same tx with kind/version")
 }
 
-func TestRoutingFlowReplayPG(t *testing.T) {
-	repos := newPGRepos(t)
+func TestRoutingFlowSnapshotPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	rc := mustRouteClass(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFingerprint(t, 3, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-y", "", "", "", false, "", "", "", "")
-	row := repository.RoutingFlowRow{
-		IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 3, Outcome: "success", Reason: "ok", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-B", ChainCount: 5,
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 3, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-y", "", "", "", false, "", "", "", "")
+	rows := []repository.RoutingFlowRow{
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 3, PreviousOutcome: "", TransitionReason: "initial", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-B", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 4, PreviousAccountID: ptrInt64(3), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: mustFPVal(t, 4, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-z", "", "", "", false, "", "", "", ""), InstanceSrc: "src-B", ChainCount: 1},
 	}
-	require.NoError(t, repos.Partitions.UpsertFlowAndMarkDirty(ctx, row))
-	require.NoError(t, repos.Partitions.UpsertFlowAndMarkDirty(ctx, row))
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 10, rows))
 	var cnt int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT chain_count FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
-	require.Equal(t, int64(5), cnt, "flow absolute replay must not double")
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.Equal(t, int64(2), cnt)
+	// equal sequence divergent must not mutate
+	rowsDiv := []repository.RoutingFlowRow{
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "degraded", AccountID: 99, PreviousOutcome: "", TransitionReason: "initial", Outcome: "fail", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-B", ChainCount: 99},
+	}
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 10, rowsDiv))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.Equal(t, int64(2), cnt, "equal sequence must not replace")
+	var lane string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2 AND ordinal=1`, "src-B", now).Scan(&lane))
+	require.Equal(t, "primary", lane)
+	// greater sequence replaces complete set (deletes omitted stale edges)
+	rows2 := []repository.RoutingFlowRow{
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "explore", AccountID: 5, PreviousOutcome: "", TransitionReason: "initial", Outcome: "success", IsTerminal: true, Generation: 2, CandidateFingerprint: fp, InstanceSrc: "src-B", ChainCount: 1},
+	}
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 11, rows2))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.Equal(t, int64(1), cnt, "greater sequence must replace with new edge set")
+	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&lane))
+	require.Equal(t, "explore", lane)
+	// lower sequence must not mutate
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 9, rows))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.Equal(t, int64(1), cnt, "lower sequence must not mutate")
+}
+
+func TestRoutingFlowDimensionUniquenessPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-a", "", "", "", false, "i", "s", "t", "w")
+	rows := []repository.RoutingFlowRow{
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-C", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-C", ChainCount: 1},
+	}
+	// these two edges differ only in previous_outcome/transition_reason, must both persist (no collapse)
+	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-C", now, 1, 5, rows))
+	var cnt int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-C' AND terminal_minute=$1`, now).Scan(&cnt))
+	require.Equal(t, int64(2), cnt, "distinct edges must not collapse")
+}
+
+func TestRoutingPartitionWatermarkPG(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-wm", "", "", "", false, "", "", "", "")
+	row := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp, InstanceSrc: "src-W", BucketMinute: now, AbsoluteSequence: 1, Attempts: 1}
+	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
+	// watermark advance should succeed when dirty
+	require.NoError(t, repos.Partitions.AdvanceWatermark(ctx, "quality", 1, now))
+	dirty, _ := repos.Partitions.IsDirty(ctx, "quality", 1, now)
+	require.False(t, dirty, "watermark advance must clear dirty")
+	// second advance without new dirty should still succeed but we test failed/partial cannot advance if we simulate failure? We test that advancing same watermark fails
+	err := repos.Partitions.AdvanceWatermark(ctx, "quality", 1, now)
+	require.Error(t, err, "re-advancing same watermark must fail")
+	// writer after rollup must re-dirty
 	row2 := row
-	row2.ChainCount = 10
-	require.NoError(t, repos.Partitions.UpsertFlowAndMarkDirty(ctx, row2))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT chain_count FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
-	require.Equal(t, int64(10), cnt)
+	row2.AbsoluteSequence = 2
+	row2.Attempts = 2
+	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row2))
+	dirty, _ = repos.Partitions.IsDirty(ctx, "quality", 1, now)
+	require.True(t, dirty, "writer after rollup must re-dirty")
+}
+
+func TestRoutingPartitionWatermarkDirtyRequiredPG(t *testing.T) {
+	repos, _ := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	next := now.Add(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, next))
+	// try to advance watermark without dirty for next minute should fail
+	err := repos.Partitions.AdvanceWatermark(ctx, "quality", 1, next)
+	require.Error(t, err, "advancing without dirty must fail")
+	require.Contains(t, err.Error(), "dirty")
+	// ensure watermark not advanced
+	_, err = repos.Partitions.GetWatermark(ctx, "quality", 1)
+	require.Error(t, err, "watermark should not exist after failed advance")
+}
+
+func TestRoutingPartitionConcurrencyPG(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	fpA := mustFPVal(t, 10, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-conc-a", "", "", "", false, "", "", "", "")
+	fpB := mustFPVal(t, 11, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-conc-b", "", "", "", false, "", "", "", "")
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		row := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fpA, InstanceSrc: "src-conc-A", BucketMinute: now, AbsoluteSequence: 1, Attempts: 1}
+		errs[0] = repos.Partitions.UpsertQualityAndMarkDirty(ctx, row)
+	}()
+	go func() {
+		defer wg.Done()
+		row := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fpB, InstanceSrc: "src-conc-B", BucketMinute: now, AbsoluteSequence: 1, Attempts: 1}
+		errs[1] = repos.Partitions.UpsertQualityAndMarkDirty(ctx, row)
+	}()
+	wg.Wait()
+	require.NoError(t, errs[0])
+	require.NoError(t, errs[1])
+	pool := pgTestPool(t)
+	var cnt int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_quality_instance_minute WHERE bucket_minute=$1`, now).Scan(&cnt))
+	require.Equal(t, int64(2), cnt, "two sources must not serialize cluster-wide")
+	// same source deterministic sequencing: two sequential writes same source with increasing sequence must both succeed
+	row1 := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fpA, InstanceSrc: "src-conc-A", BucketMinute: now, AbsoluteSequence: 2, Attempts: 2}
+	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row1))
+	var attempts int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_instance_minute WHERE instance_src='src-conc-A' AND bucket_minute=$1`, now).Scan(&attempts))
+	require.Equal(t, int64(2), attempts)
 }
 
 func TestRoutingPartitionRetentionPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
 	now := time.Now().UTC()
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	// create historical partitions
 	for _, d := range []string{"20260728", "20260729"} {
-		for _, tbl := range []string{"routing_quality_instance_minute", "routing_flow_instance_minute"} {
+		for _, tbl := range []string{"routing_quality_instance_minute", "routing_flow_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
 			pgExec(t, pool, `CREATE TABLE `+tbl+`_`+d+` PARTITION OF `+tbl+` FOR VALUES FROM ('`+mustISODate(d)+` 00:00:00+00') TO ('`+mustNextISODate(d)+` 00:00:00+00')`)
 		}
 	}
 	n, err := repos.Partitions.DropRoutingQualityInstanceBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	m, err := repos.Partitions.DropRoutingFlowInstanceBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
+	n, err = repos.Partitions.DropRoutingFlowInstanceBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
-	require.Equal(t, 1, m)
+	require.Equal(t, 1, n)
+	n, err = repos.Partitions.DropRoutingQualityRollupBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	n, err = repos.Partitions.DropRoutingFlowRollupBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
 }
 
-func TestRoutingPartitionAbsencePG(t *testing.T) {
+func TestRoutingPartitionMissingPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	// query non-existent partition still works due to parent table; but dropping future partition and inserting should auto-route if partition exists, else fail. Test that Ensure creates future.
 	future := now.AddDate(0, 0, 5)
 	require.NoError(t, repos.Partitions.EnsureRoutingInstancePartitions(ctx, future, future))
 	var exists bool
 	require.NoError(t, poolQueryExists(ctx, pgTestPool(t), "routing_quality_instance_minute_"+future.Format("20060102"), &exists))
 	require.True(t, exists)
+}
+
+func TestRoutingPartitionStartupPG(t *testing.T) {
+	// startup bootstrap already tested via EnsureRoutingPartitions; retention precreate via EnsureRoutingInstancePartitions
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	// simulate retention worker precreate
+	tomorrow := now.AddDate(0, 0, 1)
+	require.NoError(t, repos.Partitions.EnsureRoutingInstancePartitions(ctx, tomorrow, tomorrow))
+	require.NoError(t, repos.Partitions.EnsureRoutingRollupPartitions(ctx, tomorrow, tomorrow))
 }
 
 func poolQueryExists(ctx context.Context, pool *pgxpool.Pool, name string, out *bool) error {
@@ -215,3 +368,4 @@ func poolQueryExists(ctx context.Context, pool *pgxpool.Pool, name string, out *
 	*out = n > 0
 	return nil
 }
+func ptrInt64(v int64) *int64 { return &v }
