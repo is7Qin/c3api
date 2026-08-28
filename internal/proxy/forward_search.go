@@ -170,15 +170,9 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 		// 免 account 0 无谓上报——与 resp/WS 路径 errCodexExtMissing 同语义）。
 		return 0, nil, false, errCodexExtMissing
 	}
-	// 凭据线：快照派生直供适配层（与 resp/images 路径同款）。cred.BaseURL =
-	// responses 完整端点（SDK Search 方法内按其尾段派生 /alpha/search——网关
-	// 零拼装）。
+	// 凭据线：快照派生直供适配层（与 resp/images 路径同款）。Codex 端点归
+	// SDK 官方默认，Search 由 SDK 在 responses 端点尾段派生 /alpha/search。
 	cred := domain.CredentialFromExt(sel.Ext)
-	full, err := p.clients.ResponsesWSURL(sel.TemplateID, sel.BaseURL)
-	if err != nil {
-		return 0, nil, false, err
-	}
-	cred.BaseURL = full
 	// 非流式超时（同 nonstreamCodexResponses 语义）：HTTPClient.Timeout 不可用
 	// ——TCP 黑洞读停滞 → 超时触发 → 连接级错误转移（failover 可转移）。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
