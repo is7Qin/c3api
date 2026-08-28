@@ -992,9 +992,9 @@ func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 const searchReqPayload = `{"id":"req_1","model":"gpt-4o","input":[{"type":"web_search_call"}],"commands":[],"settings":{},"max_output_tokens":256}`
 
 // TestCodexSearchPassthrough Search 端点（spec 2026-08-13）：统一 client 形态
-// ——clientFor 缓存客户端 → e.client.Search；URL 方法内派生（baseURL 完整
-// /v1/responses 端点 → /v1/alpha/search）；请求/响应体 opaque 零解析；PAT
-// 静态鉴权；无头注入。
+// ——clientFor 缓存客户端 → e.client.Search；固定 SDK 官方端点
+// https://chatgpt.com/backend-api/codex/alpha/search（test transport 仅 host 重写保留官方 path）；
+// 请求/响应体 opaque 零解析；PAT 静态鉴权；无头注入。
 func TestCodexSearchPassthrough(t *testing.T) {
 	const searchRaw = `{"id":"req_1","output":"o","results":[{"type":"web_search"}],"encrypted_output":"enc"}`
 	var mu sync.Mutex
@@ -1007,6 +1007,7 @@ func TestCodexSearchPassthrough(t *testing.T) {
 		auths = append(auths, r.Header.Get("Authorization"))
 		gotBody = b
 		mu.Unlock()
+		// 双路径有意：/v1/alpha/search 为 api_key/responses-special 静态路由，/backend-api/codex/alpha/search 为 Codex SDK 官方路由；mock 保留双覆盖
 		if r.URL.Path != "/v1/alpha/search" && r.URL.Path != "/backend-api/codex/alpha/search" {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -1027,7 +1028,7 @@ func TestCodexSearchPassthrough(t *testing.T) {
 	mu.Lock()
 	paths0, auths0, body0 := append([]string(nil), paths...), append([]string(nil), auths...), string(gotBody)
 	mu.Unlock()
-	require.Equal(t, []string{"/backend-api/codex/alpha/search"}, paths0, "URL 官方默认端点")
+	require.Equal(t, []string{"/backend-api/codex/alpha/search"}, paths0, "固定 SDK 官方端点 https://chatgpt.com/backend-api/codex/alpha/search（test transport 仅 host 重写保留官方 path）")
 	require.Equal(t, []string{"Bearer pat-search"}, auths0, "PAT 静态鉴权（clientFor 缓存客户端）")
 	require.Equal(t, searchReqPayload, body0, "请求体原样（零改写）")
 	// 同一 cred 二次调用：clientFor 缓存客户端直接复用（统一 client 形态——无
