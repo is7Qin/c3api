@@ -25,6 +25,7 @@ func (e *RuleEngine) Start(ctx context.Context) error {
 		return fmt.Errorf("rule-engine: already started")
 	}
 	worker.GoLoop(ctx, "rule-engine", e.log, e.loop)
+	worker.GoLoop(ctx, "rule-engine-persist", e.log, e.persistLoop)
 	return nil
 }
 
@@ -59,7 +60,46 @@ func (e *RuleEngine) Flush(ctx context.Context) {
 			e.HandleEvent(ctx, ev)
 			e.resetDropWarnIfDrained()
 		default:
+			e.flushPersist(ctx)
 			return
+		}
+	}
+}
+
+func (e *RuleEngine) flushPersist(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case item := <-e.persistCh:
+			e.persistFnMu.RLock()
+			fn := e.persistFn
+			e.persistFnMu.RUnlock()
+			if fn != nil {
+				if err := fn(item); err != nil {
+					e.persistFailures.Add(1)
+				}
+			}
+		default:
+			return
+		}
+	}
+}
+
+func (e *RuleEngine) persistLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case item := <-e.persistCh:
+			e.persistFnMu.RLock()
+			fn := e.persistFn
+			e.persistFnMu.RUnlock()
+			if fn != nil {
+				if err := fn(item); err != nil {
+					e.persistFailures.Add(1)
+				}
+			}
 		}
 	}
 }
@@ -98,6 +138,8 @@ func (e *RuleEngine) Close(ctx context.Context) error {
 			e.log.Warn("rule-engine close timeout, dropping queued events")
 		}
 	}
+	// 同步排空持久化队列（best-effort，有界不阻塞）。
+	e.flushPersist(ctx)
 	return nil
 }
 
