@@ -28,6 +28,7 @@ import (
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/discovery"
+	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/handler"
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/invalidate"
@@ -492,11 +493,20 @@ func main() {
 		},
 	})
 
+	effectiveInflight, err := config.EffectiveMaxInflight(cfg.Proxy.MaxInflight)
+	if err != nil {
+		fatalf("config: %v", err)
+	}
+	qualityRecorder, err := quality.NewRecorder(effectiveInflight)
+	if err != nil {
+		fatalf("quality: %v", err)
+	}
+	_ = qualityRecorder
 	srv := server.NewServer(server.Options{
 		AdminToken:        cfg.Admin.Token,
 		JWTIssuer:         iss,
 		UserStatus:        auth,
-		MaxInflight:       cfg.Proxy.MaxInflight,
+		MaxInflight:       effectiveInflight,
 		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
 		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
 		AdminHandler:      h.RoutesMux(),

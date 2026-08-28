@@ -305,7 +305,20 @@ func validate(c *Config) error {
 			return fmt.Errorf("server.time_zone: invalid IANA timezone %q: %w", c.Server.TimeZone, err)
 		}
 	}
+	if _, err := EffectiveMaxInflight(c.Proxy.MaxInflight); err != nil {
+		return err
+	}
 	return nil
+}
+
+func EffectiveMaxInflight(raw int64) (int64, error) {
+	if raw < 0 {
+		return 0, fmt.Errorf("proxy.max_inflight must be >= 0 (got %d)", raw)
+	}
+	if raw == 0 {
+		return 50000, nil
+	}
+	return raw, nil
 }
 
 // textUnmarshalerHookFunc 镜像 koanf v2.3.6 内部同名 hook（未导出，spec 要求完整
