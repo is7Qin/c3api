@@ -516,10 +516,15 @@ func (e *RuleEngine) enqueuePersist(ev Event, then domain.RuleThen) {
 	if e.persistCh == nil {
 		return
 	}
+	e.persistPending.Add(1)
 	select {
 	case e.persistCh <- PersistItem{Event: ev, Then: then}:
-		e.persistPending.Add(1)
+		// reserved pending stays
 	default:
+		e.persistPending.Add(-1)
+		if e.persistPending.Load() < 0 {
+			e.persistPending.Store(0)
+		}
 		e.persistDropped.Add(1)
 	}
 }

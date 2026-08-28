@@ -24,7 +24,6 @@ func (e *RuleEngine) Start(ctx context.Context) error {
 	if !e.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("rule-engine: already started")
 	}
-	// Persist loop uses child context so Close can cancel and join in-flight callback.
 	persistCtx, cancel := context.WithCancel(ctx)
 	e.persistMu.Lock()
 	e.persistCtx = persistCtx
@@ -32,10 +31,10 @@ func (e *RuleEngine) Start(ctx context.Context) error {
 	e.persistDone = make(chan struct{})
 	e.persistMu.Unlock()
 	worker.GoLoop(ctx, "rule-engine", e.log, e.loop)
-	// Persist loop respects persistCtx, not parent ctx directly, so Close can cancel it.
+	// Supervised persist loop: worker.Loop restarts on panic, persistDone closes only when ctx canceled.
 	go func() {
 		defer close(e.persistDone)
-		e.persistLoop(persistCtx)
+		worker.Loop(persistCtx, "rule-engine-persist", e.log, e.persistLoop)
 	}()
 	return nil
 }
@@ -83,15 +82,26 @@ func (e *RuleEngine) flushPersist(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case item := <-e.persistCh:
-			e.persistFnMu.RLock()
-			fn := e.persistFn
-			e.persistFnMu.RUnlock()
-			if fn != nil {
-				if err := fn(ctx, item); err != nil && ctx.Err() == nil {
-					e.persistFailures.Add(1)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						if e.log != nil {
+							e.log.Warn("persist callback panicked", logx.Any("panic", r))
+						}
+					}
+					if e.persistPending.Add(-1) < 0 {
+						e.persistPending.Store(0)
+					}
+				}()
+				e.persistFnMu.RLock()
+				fn := e.persistFn
+				e.persistFnMu.RUnlock()
+				if fn != nil {
+					if err := fn(ctx, item); err != nil && ctx.Err() == nil {
+						e.persistFailures.Add(1)
+					}
 				}
-			}
-			e.persistPending.Add(-1)
+			}()
 		default:
 			return
 		}
@@ -104,15 +114,31 @@ func (e *RuleEngine) persistLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case item := <-e.persistCh:
-			e.persistFnMu.RLock()
-			fn := e.persistFn
-			e.persistFnMu.RUnlock()
-			if fn != nil {
-				if err := fn(ctx, item); err != nil && ctx.Err() == nil {
-					e.persistFailures.Add(1)
+			func() {
+				defer func() {
+					// Release pending exactly once, even if callback panics.
+					if e.persistPending.Add(-1) < 0 {
+						e.persistPending.Store(0)
+					}
+					// Do not recover here fully; let panic propagate to worker.Loop for restart.
+					// But we already need to ensure pending released before propagate.
+					// Use recover to log then re-panic.
+					if r := recover(); r != nil {
+						if e.log != nil {
+							e.log.Warn("persist callback panicked", logx.Any("panic", r))
+						}
+						panic(r)
+					}
+				}()
+				e.persistFnMu.RLock()
+				fn := e.persistFn
+				e.persistFnMu.RUnlock()
+				if fn != nil {
+					if err := fn(ctx, item); err != nil && ctx.Err() == nil {
+						e.persistFailures.Add(1)
+					}
 				}
-			}
-			e.persistPending.Add(-1)
+			}()
 		}
 	}
 }
@@ -166,7 +192,6 @@ func (e *RuleEngine) Close(ctx context.Context) error {
 				if e.log != nil {
 					e.log.Warn("rule-engine persist close timeout, waiting for callback")
 				}
-				// Still wait for done to ensure no goroutine remains; bounded by ctx.
 				<-doneCh
 			}
 		}

@@ -16,6 +16,12 @@ import (
 // var (not const) for test injection.
 var loopRestartDelay = 5 * time.Second
 
+// SetLoopRestartDelayForTest sets loopRestartDelay for tests.
+func SetLoopRestartDelayForTest(d time.Duration) { loopRestartDelay = d }
+
+// LoopRestartDelayForTest returns current loopRestartDelay.
+func LoopRestartDelayForTest() time.Duration { return loopRestartDelay }
+
 // Loop runs fn in the current goroutine with panic containment and restart.
 // On panic: logs Error with worker name + stack, waits loopRestartDelay
 // (respecting ctx cancellation), then restarts fn. If fn returns normally
