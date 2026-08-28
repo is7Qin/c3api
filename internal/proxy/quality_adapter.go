@@ -4,13 +4,43 @@ package proxy
 import "github.com/is7qin/c3api/internal/quality"
 
 func AdaptOutcomeToObservation(o AttemptOutcome) (quality.Observation, bool) {
-	if !o.IsCountedForQuality() {
+	if o.IsMalformed {
+		obs := quality.Observation{
+			Success:             false,
+			ErrClass:            quality.ErrClass4xx,
+			InputTokens:         o.Usage.InputTokens,
+			OutputTokens:        o.Usage.OutputTokens,
+			CacheReadTokens:     o.Usage.CacheReadTokens,
+			CacheCreationTokens: o.Usage.CacheCreationTokens,
+			Tokens:              o.Usage.InputTokens + o.Usage.OutputTokens + o.Usage.CacheReadTokens + o.Usage.CacheCreationTokens,
+			Calls:               o.Usage.CallCount,
+			IsMalformed:         true,
+		}
+		return obs, true
+	}
+	if o.Result == ResultClientCancel {
+		return quality.Observation{}, false
+	}
+	if o.Result == ResultLocalReject {
+		return quality.Observation{}, false
+	}
+	if o.Result == ResultReservationReject {
+		return quality.Observation{}, false
+	}
+	if o.Result == ResultUnknown {
+		return quality.Observation{}, false
+	}
+	if !o.IsDispatched() {
 		return quality.Observation{}, false
 	}
 	obs := quality.Observation{
-		Tokens: o.Usage.InputTokens + o.Usage.OutputTokens + o.Usage.CacheReadTokens + o.Usage.CacheCreationTokens,
-		Calls:  o.Usage.CallCount,
-		Images: 0,
+		InputTokens:         o.Usage.InputTokens,
+		OutputTokens:        o.Usage.OutputTokens,
+		CacheReadTokens:     o.Usage.CacheReadTokens,
+		CacheCreationTokens: o.Usage.CacheCreationTokens,
+		Tokens:              o.Usage.InputTokens + o.Usage.OutputTokens + o.Usage.CacheReadTokens + o.Usage.CacheCreationTokens,
+		Calls:               o.Usage.CallCount,
+		Images:              0,
 	}
 	if o.Result == ResultSuccess {
 		obs.Success = true
@@ -42,6 +72,9 @@ func AdaptOutcomeToObservationWithCancel(o AttemptOutcome) quality.Observation {
 	}
 	if o.Result == ResultReservationReject {
 		return quality.Observation{IsReservation: true}
+	}
+	if o.IsMalformed {
+		return quality.Observation{IsMalformed: true, Success: false, ErrClass: quality.ErrClass4xx, InputTokens: o.Usage.InputTokens, OutputTokens: o.Usage.OutputTokens, CacheReadTokens: o.Usage.CacheReadTokens, CacheCreationTokens: o.Usage.CacheCreationTokens, Tokens: o.Usage.InputTokens + o.Usage.OutputTokens + o.Usage.CacheReadTokens + o.Usage.CacheCreationTokens, Calls: o.Usage.CallCount}
 	}
 	obs, ok := AdaptOutcomeToObservation(o)
 	if !ok {
