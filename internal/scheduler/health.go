@@ -215,6 +215,14 @@ else
   return redis.call('HDEL', tombHash, field)
 end
 `
+	fenceLua = `
+local genKey = KEYS[1]
+local expected = ARGV[1]
+local cur = redis.call('GET', genKey)
+if not cur then cur = 0 else cur = tonumber(cur) end
+if tonumber(cur) ~= tonumber(expected) then return 0 end
+return 1
+`
 )
 
 // ProbeFunc is injected probe function for a single health key.
@@ -529,6 +537,7 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 	records := make(map[HealthKey]healthEntry)
 	var staleActive []string
 	nowMs := h.currentMs()
+	prevForExpiry := h.view.Load()
 	for _, field := range members {
 		recKey := healthRecordPrefix + field
 		m, err := h.client.HGetAll(ctx, recKey).Result()
@@ -573,7 +582,15 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 			ttlMs = 30000
 		}
 		expiresAt := nowMs + ttlMs
-		records[k] = healthEntry{Key: k, State: st, Generation: gen, Revision: rev, UpdatedAt: nowMs, TTLms: ttlMs, ExpiresAt: expiresAt}
+		updatedAt := nowMs
+		if prevForExpiry != nil {
+			if prevEntry, ok := prevForExpiry.entries[k]; ok && prevEntry.Generation == gen {
+				expiresAt = prevEntry.ExpiresAt
+				updatedAt = prevEntry.UpdatedAt
+				ttlMs = prevEntry.TTLms
+			}
+		}
+		records[k] = healthEntry{Key: k, State: st, Generation: gen, Revision: rev, UpdatedAt: updatedAt, TTLms: ttlMs, ExpiresAt: expiresAt}
 	}
 	tombMembers, err := h.client.HGetAll(ctx, healthTombstoneHash).Result()
 	if err != nil && err != redis.Nil {
@@ -636,6 +653,32 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+
+	if h.syncHook != nil {
+		h.syncHook("beforePublish")
+	}
+	fenceRes, err := h.client.Eval(ctx, fenceLua, []string{healthGenKey}, fmt.Sprintf("%d", candidateGen)).Result()
+	if err != nil {
+		if err == redis.Nil {
+			fenceRes = int64(0)
+		} else {
+			return err
+		}
+	}
+	var fenceOk int64
+	switch v := fenceRes.(type) {
+	case int64:
+		fenceOk = v
+	case int:
+		fenceOk = int64(v)
+	case int32:
+		fenceOk = int64(v)
+	default:
+		fenceOk = 0
+	}
+	if fenceOk != 1 {
+		return fmt.Errorf("health: stale generation fence %d", candidateGen)
 	}
 
 	prevView := h.view.Load()
