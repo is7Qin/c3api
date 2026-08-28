@@ -49,9 +49,6 @@ type LedgerStore interface {
 type FlushConfig struct {
 	FlushInterval          time.Duration // 游标轮询周期（默认 250ms）
 	BalanceRefreshInterval time.Duration // 余额快照全量刷新周期
-	// Workers 历史并行度参数（chunk 分片时代遗留；三车道语句化后消费为单语句
-	// 顺序执行，本字段仅保留 config ABI 兼容——不再影响消费行为）。
-	Workers int
 	// LogRetentionDays usage 日保留期（lag 护栏基准，cmd 接线
 	// config.Usage.LogRetentionDays）：最老 unbilled 行距今超保留期 80% → 高声
 	// Warn（停机护栏——消费停摆逼近分区 DROP 线提前可见）。<= 0 = 护栏禁用
