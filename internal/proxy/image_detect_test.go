@@ -525,7 +525,7 @@ func TestResponsesWSCodexTypeZeroCount(t *testing.T) {
 	prices := &fakePriceLookup{
 		entries: map[string]*domain.PriceEntry{"gpt-4o": func() *domain.PriceEntry { e := proxyPricingEntry(); v := int64(5400); e.PricePerImage = &v; return e }()},
 	}
-	// SDK 路径（newTestCodexWSProxy）：模板 BaseURL = mock 上游根，账号 ext 快
+	// SDK 路径（newTestCodexWSProxy）：模板 BaseURL 空 + transport host 重写到 mock，账号 ext 快
 	// 照承载 PAT（relay 线凭据——不经 credential 注册表）。
 	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: "i"}, CodexPATKey: &pat}},
