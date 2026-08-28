@@ -25,6 +25,8 @@ const (
 	inflightMask             = ^closedBit
 )
 
+var globalRecorderID atomic.Uint64
+
 // Key is the canonical routing identity of a quality cell/row: the Task4
 // unique index (identity_version, route_class_id, quality_class_id,
 // candidate_fingerprint) minus the minute bucket.
@@ -96,6 +98,8 @@ func toSqQ32(ttft int64) int64 {
 
 type Cell struct {
 	key          Key
+	owner        uint64
+	gen          uint64
 	state        atomic.Uint64
 	converged    bool
 	attempts     atomic.Int64
@@ -293,6 +297,8 @@ type errInvalid string
 func (e errInvalid) Error() string { return string(e) }
 
 type Recorder struct {
+	id                   uint64
+	genSeq               atomic.Uint64
 	effectiveMaxInflight int64
 	mu                   sync.Mutex
 	now                  func() time.Time
@@ -318,6 +324,7 @@ func NewRecorder(effectiveMaxInflight int64) (*Recorder, error) {
 		return nil, errInvalidMaxInflight
 	}
 	return &Recorder{
+		id:                   globalRecorderID.Add(1),
 		effectiveMaxInflight: effectiveMaxInflight,
 		now:                  time.Now,
 		active:               make(map[Key]*Cell),
@@ -379,22 +386,7 @@ func (r *Recorder) GetOrCreateCell(key Key) *Cell {
 	if c, ok := r.active[key]; ok {
 		return c
 	}
-	if idx, ok := r.retiredIndex[key]; ok {
-		c := r.retired[idx]
-		if !c.isReclaimable() {
-			return nil
-		}
-		delete(r.retiredIndex, key)
-		r.retired = append(r.retired[:idx], r.retired[idx+1:]...)
-		for i := idx; i < len(r.retired); i++ {
-			r.retiredIndex[r.retired[i].key] = i
-		}
-		r.active[key] = c
-		c.state.Store(0)
-		c.converged = false
-		return c
-	}
-	c := &Cell{key: key}
+	c := &Cell{key: key, owner: r.id, gen: r.genSeq.Add(1)}
 	r.active[key] = c
 	return c
 }
@@ -421,6 +413,13 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 		atomic.StoreUint32(&out.done, 0)
 		return false
 	}
+	if cell.owner != r.id {
+		r.decAdmissionAndMaybeSignal()
+		out.cell = nil
+		out.recorder = nil
+		atomic.StoreUint32(&out.done, 0)
+		return false
+	}
 	if !cell.tryPin() {
 		r.decAdmissionAndMaybeSignal()
 		out.cell = nil
@@ -439,6 +438,10 @@ func (r *Recorder) NewAttemptContext(cell *Cell) *AttemptContext {
 		return &AttemptContext{recorder: r}
 	}
 	if !r.tryIncAdmission() {
+		return &AttemptContext{recorder: r}
+	}
+	if cell.owner != r.id {
+		r.decAdmissionAndMaybeSignal()
 		return &AttemptContext{recorder: r}
 	}
 	if !cell.tryPin() {
@@ -857,6 +860,29 @@ func (r *Recorder) CellStatsDetailed(key Key) (attempts, successes, ttftCount in
 	return cell.attempts.Load(), cell.successes.Load(), cell.ttftCount.Load(), cell.inputTokens.Load(), cell.outputTokens.Load(), cell.cacheRead.Load(), cell.cacheCreate.Load(), cell.calls.Load(), cell.images.Load(), cell.sumQ32.Load(), cell.sumSq.Load(), h, ec, true
 }
 
+func (r *Recorder) cellQualityMinute(c *Cell, minute int64) *QualityMinute {
+	qm := NewQualityMinute(minute, c.key)
+	qm.attempts = c.attempts.Load()
+	qm.successes = c.successes.Load()
+	qm.err429 = c.errClasses[ErrClass429].Load()
+	qm.err4xx = c.errClasses[ErrClass4xx].Load()
+	qm.err5xx = c.errClasses[ErrClass5xx].Load()
+	qm.errNetwork = c.errClasses[ErrClassNetwork].Load()
+	qm.ttftCount = c.ttftCount.Load()
+	qm.sumQ32 = c.sumQ32.Load()
+	qm.sumSqQ32 = c.sumSq.Load()
+	for i := range qm.hist {
+		qm.hist[i] = c.hist[i].Load()
+	}
+	qm.inputTokens = c.inputTokens.Load()
+	qm.outputTokens = c.outputTokens.Load()
+	qm.cacheRead = c.cacheRead.Load()
+	qm.cacheCreate = c.cacheCreate.Load()
+	qm.calls = c.calls.Load()
+	qm.images = c.images.Load()
+	return qm
+}
+
 func (r *Recorder) snapshotLocked() *Snapshot {
 	qCopy := make(map[int64]map[Key]*QualityMinute)
 	for m, rows := range r.pendingQuality {
@@ -869,6 +895,40 @@ func (r *Recorder) snapshotLocked() *Snapshot {
 	fCopy := make(map[int64]*FlowMinute)
 	for m, v := range r.pendingFlow {
 		fCopy[m] = v.Clone()
+	}
+	minute := r.now().UTC().Truncate(time.Minute).Unix()
+	for _, c := range r.active {
+		if c.attempts.Load() == 0 {
+			continue
+		}
+		qm := r.cellQualityMinute(c, minute)
+		if rows, ok := qCopy[minute]; ok {
+			if existing, ok2 := rows[c.key]; ok2 {
+				existing.merge(qm)
+				continue
+			}
+			rows[c.key] = qm
+		} else {
+			qCopy[minute] = map[Key]*QualityMinute{c.key: qm}
+		}
+	}
+	for _, c := range r.retired {
+		if c.converged {
+			continue
+		}
+		if c.attempts.Load() == 0 {
+			continue
+		}
+		qm := r.cellQualityMinute(c, minute)
+		if rows, ok := qCopy[minute]; ok {
+			if existing, ok2 := rows[c.key]; ok2 {
+				existing.merge(qm)
+				continue
+			}
+			rows[c.key] = qm
+		} else {
+			qCopy[minute] = map[Key]*QualityMinute{c.key: qm}
+		}
 	}
 	return &Snapshot{Quality: qCopy, Flow: fCopy}
 }
@@ -891,8 +951,9 @@ func (r *Recorder) ExportSnapshot() (map[int64]map[Key]*QualityMinute, map[int64
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	snap := r.snapshotLocked()
 	qCopy := make(map[int64]map[Key]*QualityMinute)
-	for m, rows := range r.pendingQuality {
+	for m, rows := range snap.Quality {
 		cp := make(map[Key]*QualityMinute)
 		for k, v := range rows {
 			cp[k] = v.Clone()
@@ -900,7 +961,7 @@ func (r *Recorder) ExportSnapshot() (map[int64]map[Key]*QualityMinute, map[int64
 		qCopy[m] = cp
 	}
 	fCopy := make(map[int64]*FlowMinute)
-	for m, v := range r.pendingFlow {
+	for m, v := range snap.Flow {
 		fCopy[m] = v.Clone()
 	}
 	return qCopy, fCopy
@@ -928,47 +989,7 @@ func (r *Recorder) Snapshot() *Snapshot {
 }
 
 func (r *Recorder) Close() error {
-	for {
-		a := r.admission.Load()
-		if a&closedBit != 0 {
-			break
-		}
-		if r.admission.CompareAndSwap(a, a|closedBit) {
-			break
-		}
-	}
-	if r.finalSnapshot.Load() != nil {
-		return nil
-	}
-	r.mu.Lock()
-	if r.admission.Load()&inflightMask == 0 {
-		if r.finalSnapshot.Load() == nil {
-			snap := r.snapshotLocked()
-			r.finalSnapshot.Store(snap)
-		}
-		if r.zeroCh != nil {
-			close(r.zeroCh)
-			r.zeroCh = nil
-		}
-		r.mu.Unlock()
-		return nil
-	}
-	if r.zeroCh == nil {
-		r.zeroCh = make(chan struct{})
-	}
-	if r.admission.Load()&inflightMask == 0 {
-		if r.finalSnapshot.Load() == nil {
-			snap := r.snapshotLocked()
-			r.finalSnapshot.Store(snap)
-		}
-		ch := r.zeroCh
-		close(ch)
-		r.zeroCh = nil
-		r.mu.Unlock()
-		return nil
-	}
-	r.mu.Unlock()
-	return nil
+	return r.CloseWithContext(context.Background())
 }
 
 func (r *Recorder) CloseWithContext(ctx context.Context) error {

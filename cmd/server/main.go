@@ -629,7 +629,7 @@ func main() {
 	}
 	px.CloseAllWS()
 	waitForInflight(px, shutdownCtx, log)
-	if err := qualityRecorder.Close(); err != nil {
+	if err := qualityRecorder.CloseWithContext(shutdownCtx); err != nil {
 		log.Warn("quality recorder close failed", logx.Error(err))
 	}
 	_ = wm.Shutdown(shutdownCtx)
