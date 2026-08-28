@@ -60,13 +60,7 @@ type pricingSnapshot struct{ svc *service.Service }
 func (s pricingSnapshot) Name() string     { return "pricing" }
 func (s pricingSnapshot) Scopes() []string { return nil }
 func (s pricingSnapshot) Reload(ctx context.Context) error {
-	if err := s.svc.ReloadPricingCtx(ctx); err != nil {
-		return err
-	}
-	if err := s.svc.ReloadImagePricingCtx(ctx); err != nil {
-		return err
-	}
-	return s.svc.ReloadFunctionPricingCtx(ctx)
+	return s.svc.ReloadPricingCtx(ctx)
 }
 
 // snapshotStates 注册表状态 → /api/admin/ops/workers 响应映射（LastError error
