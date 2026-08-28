@@ -77,6 +77,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var it, ot, tt, cr, cc int64
 		// TTFT 采集（首 token 时间毫秒）：与模板 caller 同构。
 		var ttft *int64
+		clientModel := sel.ClientResponseModel(reqModel)
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Mapper: func(ev sserelay.Event) ([]byte, bool) {
 				if ttft == nil {
@@ -84,6 +85,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 					ttft = &ms
 				}
 				// 用量提取走原始帧（与模板 caller 逐字同构；映射只影响写出字节）。
+				// 原始 ev.Data 在 StreamMapper 转换前提取，转换后改写不影响用量。
 				// EventName：缺 event: 名帧按 data.type 推断（非规范上游，P3）。
 				switch target {
 				case domain.FormatOpenAIResponses:
@@ -102,7 +104,14 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 						ot = anthropicDeltaOutput(ev.Data)
 					}
 				}
-				return mapper.Map(string(ev.Event), ev.Data)
+				mapped, drop := mapper.Map(string(ev.Event), ev.Data)
+				if drop {
+					return nil, true
+				}
+				if clientModel != "" {
+					mapped = rewriteConvertedFrames(mapped, clientModel)
+				}
+				return mapped, false
 			},
 		})
 		resp.Body.Close()
@@ -178,6 +187,9 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 响应转换失败 = 网关内部错误（转换器 bug/上游异常字节）；按 500 返回，
 		// 骨架按 code>=500 转移（重试同 bug 无益，但语义与现状 5xx 一致）。
 		return http.StatusInternalServerError, nil, false, fmt.Errorf("protocol response conversion failed: %w", err)
+	}
+	if rm := sel.ClientResponseModel(reqModel); rm != "" {
+		conv = rewriteResponseModelJSON(conv, rm)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
