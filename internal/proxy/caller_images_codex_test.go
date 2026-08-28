@@ -501,7 +501,7 @@ func TestImagesCodexAdapterMissing501(t *testing.T) {
 	defer up.Close()
 	store := &captureLogStore{}
 	tpl := &domain.Template{
-		ID: 1, Name: "t", BaseURL: up.URL,
+		ID: 1, Name: "t", BaseURL: "",
 		CredentialType:   credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-2"},
@@ -672,7 +672,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	codexRefreshMock(t, 200, `{"access_token":"at-new","refresh_token":"rt-new"}`)
 
 	tplCodex := &domain.Template{
-		ID: 1, Name: "codex", BaseURL: codexUp.URL,
+		ID: 1, Name: "codex", BaseURL: "",
 		CredentialType:   credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-2"},
