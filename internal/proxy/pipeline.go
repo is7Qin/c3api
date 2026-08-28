@@ -218,7 +218,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 		attempted = true
 		// 用量身份（Todo 3 规格 §3）：每轮当次选中解析——Search 走既有
 		// mappedFor 推断（不触达 Selection 身份方法），其余格式直取
-		// Selection.UsageMappedModel（implicit 回填客户端模型）。缺价预检
+		// Selection.LogMappedModel（implicit 回填客户端模型）。缺价预检
 		// 与本轮全部终态日志共用，保证同轮同身份。
 		mapped := usageIdentity(format, sel, reqModel)
 		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前

@@ -6,7 +6,7 @@ package proxy
 
 // Todo 3（model-mapping-mode）：用量身份（UsageLog.MappedModel）与缺价预检模型
 // 的逐行接线测试。规格 §3 identity matrix：
-//   - 非 Search 选中尝试：日志 MappedModel = Selection.UsageMappedModel（implicit
+//   - 非 Search 选中尝试：日志 MappedModel = Selection.LogMappedModel（implicit
 //     回填客户端模型；explicit 非 identity = 目标；explicit identity/无映射 = 空）；
 //     缺价预检模型 = 用量身份非空 ? 用量身份 : sel.Model。
 //   - Search：保持既有 mappedFor(reqModel, sel.Model) 终态日志与固定按次计费，
