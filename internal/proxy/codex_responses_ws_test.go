@@ -58,7 +58,7 @@ func newCodexWSUpstream(t *testing.T, steps []int, frameLimit int) (*httptest.Se
 		u.last = steps[len(steps)-1]
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)
 			return
 		}
@@ -250,8 +250,10 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
+	codex := sdkbridge.NewCodex(failure)
+	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, upstream))
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
-	p.SetCodex(sdkbridge.NewCodex(failure))
+	p.SetCodex(codex)
 	return p, store
 }
 
@@ -508,8 +510,10 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
+	codexWs := sdkbridge.NewCodex(failure)
+	codexWs.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, up.URL))
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
-	p.SetCodex(sdkbridge.NewCodex(failure))
+	p.SetCodex(codexWs)
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
@@ -645,7 +649,7 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 	// 3 帧后 1000 关闭（codexWSUpstream 固定事件流不含判死帧——独立 handler）
 	mu := &codexWSUpstream{last: 200, frameLimit: 3}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)
 			return
 		}
