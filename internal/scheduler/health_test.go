@@ -475,6 +475,7 @@ func TestHealthKeyRevisionIsolation(t *testing.T) {
 }
 
 // TestHealthCleanupRaceRetainsRecreated verifies Lua cleanup re-validates global gen and per-record before ZREM/HDEL; concurrent recreate never deleted.
+// With final fence at beforePublish, stale generation after cleanup must freeze old view/curGen.
 func TestHealthCleanupRaceRetainsRecreated(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
@@ -483,15 +484,15 @@ func TestHealthCleanupRaceRetainsRecreated(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
 	require.Contains(t, h.View(), key)
+	snapBefore := h.View()[key]
+	genBefore := h.curGen.Load()
 
 	field := key.String()
 	recKey := healthRecordPrefix + field
-	// Make stale: delete hash but leave ZSET entry
 	require.NoError(t, c.Del(context.Background(), recKey).Err())
 	_, err = c.ZScore(context.Background(), healthActiveZSet, field).Result()
 	require.NoError(t, err, "ZSET should still have field after hash delete")
 
-	// Channel barrier: syncHook intercepts beforeCleanup, test recreates concurrently, then resumes.
 	recreated := make(chan struct{})
 	proceed := make(chan struct{})
 	h.syncHook = func(stage string) {
@@ -503,7 +504,6 @@ func TestHealthCleanupRaceRetainsRecreated(t *testing.T) {
 			}
 		}
 	}
-	// Run Sync with injected race: recreated channel triggers throttle
 	syncErr := make(chan error, 1)
 	go func() {
 		syncErr <- h.Sync(context.Background())
@@ -513,25 +513,26 @@ func TestHealthCleanupRaceRetainsRecreated(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		require.FailNow(t, "watchdog: Sync did not reach beforeCleanup")
 	}
-	// Concurrently recreate same key with new generation before Lua cleanup validates
 	gen2, err := h.Throttle(context.Background(), key, StateRetryAfter, 5*time.Second)
 	require.NoError(t, err)
 	require.Greater(t, gen2, int64(0))
 	close(proceed)
 	select {
 	case err := <-syncErr:
-		require.NoError(t, err, "Sync should succeed but Lua cleanup must return 0 not error")
+		require.Error(t, err, "fence must detect stale generation after cleanup race and freeze")
+		require.Contains(t, err.Error(), "stale generation")
 	case <-time.After(2 * time.Second):
 		require.FailNow(t, "watchdog: Sync after race timeout")
 	}
-	// Verify recreated record not deleted by stale cleanup
+	require.Equal(t, genBefore, h.curGen.Load(), "curGen must freeze on fence stale")
+	require.Contains(t, h.View(), key, "view must freeze, not publish stale empty")
+	require.Equal(t, snapBefore.Generation, h.View()[key].Generation, "view entry must be frozen old generation")
 	m, err := c.HGetAll(context.Background(), recKey).Result()
 	require.NoError(t, err)
 	require.NotEmpty(t, m, "concurrently recreated record must not be deleted")
 	require.Equal(t, "RETRY_AFTER", m["state"])
 	_, err = c.ZScore(context.Background(), healthActiveZSet, field).Result()
-	require.NoError(t, err, "ZSET must retain recreated field after Lua validation")
-	// View should now contain recreated entry after next Sync
+	require.NoError(t, err, "ZSET must retain recreated field after Lua validation and fence")
 	require.NoError(t, h.Sync(context.Background()))
 	require.Contains(t, h.View(), key)
 	require.Equal(t, StateRetryAfter, h.View()[key].State)
@@ -930,4 +931,96 @@ func TestHealthSameRunEmptyClears(t *testing.T) {
 	require.NotContains(t, h.View(), key, "same-run empty must clear")
 	require.Empty(t, h.View(), "same-run empty without hasProbing must clear to empty")
 	require.Equal(t, runBefore, h.ViewRunID(), "same-run keeps same runID")
+}
+
+// TestHealthFenceBeforePublishFreezes verifies final fence immediately after cleanup and before publish freezes stale view.
+func TestHealthFenceBeforePublishFreezes(t *testing.T) {
+	_, c := newHealthTestRedis(t)
+	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	initialKey := healthKeyFor(60, "q-fence", 1)
+	_, err := h.Throttle(context.Background(), initialKey, StateOPEN, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), initialKey)
+	snapBefore := h.View()[initialKey]
+	genBefore := h.curGen.Load()
+	viewPtrBefore := h.view.Load()
+
+	otherKey := healthKeyFor(61, "q-fence-other", 1)
+	needFence := make(chan struct{})
+	proceed := make(chan struct{})
+	h.syncHook = func(stage string) {
+		if stage == "beforePublish" {
+			select { case needFence <- struct{}{}: default: }
+			select {
+			case <-proceed:
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}
+	syncErr := make(chan error, 1)
+	go func() { syncErr <- h.Sync(context.Background()) }()
+	select {
+	case <-needFence:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: Sync did not reach beforePublish")
+	}
+	_, err = h.Throttle(context.Background(), otherKey, StateOPEN, 5*time.Second)
+	require.NoError(t, err)
+	close(proceed)
+	select {
+	case err := <-syncErr:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "stale generation")
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: fence Sync timeout")
+	}
+	require.Equal(t, genBefore, h.curGen.Load(), "curGen must freeze on final fence")
+	require.Same(t, viewPtrBefore, h.view.Load(), "view pointer must not be replaced on fence stale")
+	require.Equal(t, snapBefore.ExpiresAt, h.View()[initialKey].ExpiresAt, "frozen view entry must retain original ExpiresAt")
+	require.NotContains(t, h.View(), otherKey, "stale view must not contain concurrently added key")
+	h.syncHook = nil
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), initialKey)
+	require.Contains(t, h.View(), otherKey)
+}
+
+// TestHealthExpiresAtNotExtended verifies repeated normal syncs do not extend OPEN/RETRY deadline via injected clock.
+func TestHealthExpiresAtNotExtended(t *testing.T) {
+	_, c := newHealthTestRedis(t)
+	fakeNow := time.Date(2026, 8, 29, 17, 0, 0, 0, time.UTC)
+	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h.now = func() time.Time { return fakeNow }
+	h.runIDHook = func(_ context.Context) (string, error) { return "run-stable", nil }
+	key := healthKeyFor(90, "q-stable", 1)
+	_, err := h.Throttle(context.Background(), key, StateOPEN, 200*time.Millisecond)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), key)
+	origExpires := h.View()[key].ExpiresAt
+	origUpdated := h.View()[key].UpdatedAt
+	require.Equal(t, fakeNow.UnixMilli()+200, origExpires)
+	for i := 0; i < 5; i++ {
+		fakeNow = fakeNow.Add(20 * time.Millisecond)
+		h.now = func() time.Time { return fakeNow }
+		require.NoError(t, h.Sync(context.Background()))
+		require.Contains(t, h.View(), key)
+		require.Equal(t, origExpires, h.View()[key].ExpiresAt, "repeated normal sync must not extend ExpiresAt")
+		require.Equal(t, origUpdated, h.View()[key].UpdatedAt, "UpdatedAt must stay stable across refreshes")
+		require.Equal(t, StateOPEN, h.View()[key].State, "state must remain OPEN before deadline")
+	}
+	fakeNow = fakeNow.Add(30 * time.Millisecond)
+	h.now = func() time.Time { return fakeNow }
+	require.NoError(t, c.FlushAll(context.Background()).Err())
+	h.runIDHook = func(_ context.Context) (string, error) { return "run-stable-2", nil }
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), key, "run-change empty must retain until original deadline")
+	require.Equal(t, origExpires, h.View()[key].ExpiresAt, "retained entry must keep original ExpiresAt")
+	require.Equal(t, StateOPEN, h.View()[key].State, "before deadline retains OPEN")
+	fakeNow = fakeNow.Add(100 * time.Millisecond)
+	h.now = func() time.Time { return fakeNow }
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), key)
+	require.Equal(t, StateProbing, h.View()[key].State, "after deadline must become PROBING")
+	require.Equal(t, origExpires, h.View()[key].ExpiresAt, "even after PROBING transition ExpiresAt stays original")
 }
