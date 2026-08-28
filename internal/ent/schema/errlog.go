@@ -36,7 +36,7 @@ func (ErrLog) Fields() []ent.Field {
 		field.Int64("key_id").Optional().Nillable(),
 		field.String("model").Default(""),
 		field.Enum("format").
-			Values("openai-chat", "openai-responses", "openai-responses-ws", "openai-images", "anthropic"),
+			Values("openai-chat", "openai-responses", "openai-responses-ws", "openai-images", "anthropic", "openai-search"),
 		field.Int("status_code").Default(0),
 		field.String("error_type").Default("none"),
 		// 错误文本：连接级 err.Error() / 4xx+ 上游 body / 拒绝文案，域内截断
