@@ -5,6 +5,7 @@
 package service
 
 import (
+	"context"
 	"os"
 	"strconv"
 	"strings"
@@ -46,40 +47,43 @@ func recoveryTestLogger(t *testing.T) (*logx.Logger, func() string) {
 // status→active 且账号此前已失效（failed_at 置位）→ 恢复操作日志留痕（单
 // 条 Info 含 account_id）；未失效账号置 active → 不留痕（恢复动作才审计）。
 func TestUpdateAccountRecoveryAuditLog(t *testing.T) {
+	ctx := context.Background()
 	fs := newFakeStore()
+	_, err := fs.CreateTemplate(ctx, &domain.Template{ID: 1, Name: "template", CredentialType: "api_key"})
+	require.NoError(t, err)
 	failed := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
 	a := &domain.Account{Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
 		Status: domain.StatusActive, Weight: 1, MaxConcurrency: 4, FailedAt: &failed}
-	created, err := fs.CreateAccount(nil, a)
+	created, err := fs.CreateAccount(ctx, a)
 	require.NoError(t, err)
 	healthy := &domain.Account{Name: "h", TemplateID: 1, UpstreamKey: "sk-h",
 		Status: domain.StatusActive, Weight: 1, MaxConcurrency: 4}
-	h2, err := fs.CreateAccount(nil, healthy)
+	h2, err := fs.CreateAccount(ctx, healthy)
 	require.NoError(t, err)
 
 	logger, read := recoveryTestLogger(t)
 	svc := &Service{store: fs, inv: &invRecorder{}, log: logger}
 
 	// 已失效账号 status→active → 恢复审计留痕
-	cur, err := svc.GetAccount(nil, created.ID)
+	cur, err := svc.GetAccount(ctx, created.ID)
 	require.NoError(t, err)
 	cur.Status = domain.StatusActive
-	_, err = svc.UpdateAccount(nil, cur)
+	_, err = svc.UpdateAccount(ctx, cur)
 	require.NoError(t, err)
 	logs := read()
 	require.Contains(t, logs, "account failure cleared (status->active)", "恢复操作审计留痕")
 	require.Contains(t, logs, `"account_id":`+strconv.FormatInt(created.ID, 10), "审计含 account_id")
 
 	// 未失效账号 status→active → 不留痕（无恢复动作）
-	cur2, err := svc.GetAccount(nil, h2.ID)
+	cur2, err := svc.GetAccount(ctx, h2.ID)
 	require.NoError(t, err)
 	cur2.Status = domain.StatusDisabled
-	_, err = svc.UpdateAccount(nil, cur2)
+	_, err = svc.UpdateAccount(ctx, cur2)
 	require.NoError(t, err)
-	cur3, err := svc.GetAccount(nil, h2.ID)
+	cur3, err := svc.GetAccount(ctx, h2.ID)
 	require.NoError(t, err)
 	cur3.Status = domain.StatusActive
-	_, err = svc.UpdateAccount(nil, cur3)
+	_, err = svc.UpdateAccount(ctx, cur3)
 	require.NoError(t, err)
 	logs2 := read()
 	require.Equal(t, 1, strings.Count(logs2, "account failure cleared (status->active)"),
@@ -89,11 +93,14 @@ func TestUpdateAccountRecoveryAuditLog(t *testing.T) {
 // TestUpdateAccountsBatchRecoveryAuditLog 批量恢复审计（T5 §4 日志面）：批量
 // status→active → 操作级恢复留痕（批量路径不做逐账号旧值比较——含 count）。
 func TestUpdateAccountsBatchRecoveryAuditLog(t *testing.T) {
+	ctx := context.Background()
 	fs := newFakeStore()
-	_, err := fs.CreateAccount(nil, &domain.Account{Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
+	_, err := fs.CreateTemplate(ctx, &domain.Template{ID: 1, Name: "template", CredentialType: "api_key"})
+	require.NoError(t, err)
+	first, err := fs.CreateAccount(ctx, &domain.Account{Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
 		Status: domain.StatusActive, Weight: 1, MaxConcurrency: 4})
 	require.NoError(t, err)
-	_, err = fs.CreateAccount(nil, &domain.Account{Name: "b", TemplateID: 1, UpstreamKey: "sk-b",
+	second, err := fs.CreateAccount(ctx, &domain.Account{Name: "b", TemplateID: 1, UpstreamKey: "sk-b",
 		Status: domain.StatusActive, Weight: 1, MaxConcurrency: 4})
 	require.NoError(t, err)
 
@@ -101,14 +108,14 @@ func TestUpdateAccountsBatchRecoveryAuditLog(t *testing.T) {
 	svc := &Service{store: fs, inv: &invRecorder{}, log: logger}
 
 	st := domain.StatusActive
-	require.NoError(t, svc.UpdateAccountsBatch(nil, []int64{1, 2}, repository.AccountPatch{Status: &st}))
+	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{first.ID, second.ID}, repository.AccountPatch{Status: &st}))
 	logs := read()
 	require.Contains(t, logs, "account failure cleared (batch status->active)", "批量恢复操作审计留痕")
 	require.Contains(t, logs, `"count":2`, "审计含批量 count")
 
 	// 非 active 批量 → 不留痕
 	st2 := domain.Status429
-	require.NoError(t, svc.UpdateAccountsBatch(nil, []int64{1}, repository.AccountPatch{Status: &st2}))
+	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{first.ID}, repository.AccountPatch{Status: &st2}))
 	logs2 := read()
 	require.Equal(t, 1, strings.Count(logs2, "account failure cleared (batch status->active)"))
 }

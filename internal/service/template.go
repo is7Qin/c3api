@@ -111,6 +111,20 @@ func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repos
 			}
 		}
 	}
+	if p.BaseURL != nil && *p.BaseURL != "" {
+		tpls, err := s.store.GetTemplatesByIDs(ctx, ids)
+		if err != nil {
+			return mapRepoErr(err)
+		}
+		if len(tpls) != len(ids) {
+			return ErrNotFound
+		}
+		for _, tpl := range tpls {
+			if isCodexCredentialType(tpl.CredentialType) {
+				return ErrInvalidInput
+			}
+		}
+	}
 	if err := mapRepoErr(s.store.UpdateTemplatesBatch(ctx, ids, p)); err != nil {
 		return err
 	}
