@@ -51,6 +51,25 @@ func (s *Scheduler) Select(groupID int64, format domain.RequestFormat, model str
 	return nil, ErrNoAvailable
 }
 
+func (s *Selection) UsageMappedModel(reqModel string) string {
+	switch s.ModelMappingMode {
+	case domain.ModelMappingModeExplicit:
+		if s.Model != reqModel {
+			return s.Model
+		}
+	case domain.ModelMappingModeImplicit:
+		return reqModel
+	}
+	return ""
+}
+
+func (s *Selection) ResponseModel(reqModel string) string {
+	if s.ModelMappingMode == domain.ModelMappingModeImplicit {
+		return reqModel
+	}
+	return ""
+}
+
 // pickFrom 沿预生成序列扫描候选：游标取模 + 动态状态检查 + CAS 抢占。
 // 扫描上限 = 序列一轮（每候选检查一次）；全不可用/全竞争失败返回 false。
 func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model string, now time.Time) (*Selection, bool) {
@@ -87,8 +106,9 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 		}
 		if a.concurrency.CompareAndSwap(cur, cur+1) {
 			mapped := model
-			if e, ok := av.tpl.ModelMapping[model]; ok {
-				mapped = e.MappedModel
+			entry, ok := av.tpl.ModelMapping[model]
+			if ok {
+				mapped = entry.MappedModel
 			}
 			used := s.timeNow()
 			st2 := *st
@@ -105,8 +125,9 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 				AccountID: av.acc.ID, TemplateID: av.tpl.ID,
 				BaseURL: baseURL, Format: format,
 				UpstreamKey: av.acc.UpstreamKey, CredentialType: av.tpl.CredentialType, Model: mapped,
-				StripImageTools: av.tpl.StripImageTools, // W4：模板快照布尔复制（热路径零 DB）
-				Ext:             av.acc.Ext,             // T2：账号扩展快照（codex 路由派生 AccountCredential；指针复制零拷贝）
+				StripImageTools:  av.tpl.StripImageTools, // W4：模板快照布尔复制（热路径零 DB）
+				ModelMappingMode: entry.Mode,
+				Ext:              av.acc.Ext, // T2：账号扩展快照（codex 路由派生 AccountCredential；指针复制零拷贝）
 			}, true
 		}
 	}

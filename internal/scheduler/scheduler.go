@@ -64,7 +64,8 @@ type Selection struct {
 	Model          string // 已应用模型映射
 	// StripImageTools 模板级图像 tool 剥离开关快照（pickFrom 从模板快照复制；
 	// 热路径布尔读 + 分支零开销；W4 消费）。
-	StripImageTools bool
+	StripImageTools  bool
+	ModelMappingMode domain.ModelMappingMode
 	// Ext 账号扩展快照（accountSnapshot 携带，快照重建随既有机制——T4 P3-4
 	// 定死路线 Selection 扩展，不做侧缓存）；codex 类型非 nil——codex 路由
 	// 按 Ext 派生 AccountCredential（T2 起）；api_key/responses-special 恒 nil。
