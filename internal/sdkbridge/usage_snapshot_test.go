@@ -25,7 +25,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// mock 上游：usage 端点（ChatGPT 面 wham/usage——cred.BaseURL = srv.URL +
+// mock 上游：usage 端点（ChatGPT 面 wham/usage——a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 // "/codex/responses"，SDK usageEndpointFrom 派生 /wham/usage）
 // ---------------------------------------------------------------------------
 
@@ -100,7 +100,7 @@ func (c *usageUpstreamCapture) path(i int) string {
 
 // usageCred 构造 usage 测试凭据（PAT——零 refresh 机制，纯 usage 面）。
 func usageCred(accountID int64, baseURL string) *domain.AccountCredential {
-	return &domain.AccountCredential{AccountID: accountID, PATKey: "pat-usage", BaseURL: baseURL}
+	return &domain.AccountCredential{AccountID: accountID, PATKey: "pat-usage"}
 }
 
 // usageOKBody 标准 usage 成功响应（全形态——含契约外 approx_*/瞬时布尔/派生
@@ -145,6 +145,7 @@ const usageOKBody = `{
 func TestCodexUsageSnapshotTTL(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
 	a := NewCodex(nil)
+	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	cred := usageCred(1, srv.URL+"/codex/responses")
 	ctx := context.Background()
 
@@ -152,7 +153,7 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "chatgpt-plus", snap.PlanType)
 	require.Equal(t, 1, c.callsN(), "首拉恰 1 次上游")
-	require.Equal(t, "/wham/usage", c.path(0), "端点 SDK 内部派生（ChatGPT 面 wham/usage）")
+	require.Equal(t, "/backend-api/wham/usage", c.path(0), "端点 SDK 内部派生（ChatGPT 面 wham/usage）")
 
 	// 命中路径零分配（T3-4）：篡改 entry.sig——命中路径若计算 credSig 比对必
 	// 触发重建重拉（calls → 2）；仍恒 1 = 命中路径不做 sig 拼接/建条目。
@@ -189,6 +190,7 @@ func TestCodexUsageSnapshotConcurrencyThrottle(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
 	c.release = make(chan struct{})
 	a := NewCodex(nil)
+	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	ctx := context.Background()
 
 	const n = 20
@@ -225,6 +227,7 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 		codexUpstreamStep{status: 200, body: usageOKBody},
 	)
 	a := NewCodex(nil)
+	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	cred := usageCred(1, srv.URL+"/codex/responses")
 	ctx := context.Background()
 
@@ -280,7 +283,11 @@ func TestCodexUsageSnapshotCancelNoCooldown(t *testing.T) {
 		mu.Unlock()
 		if first {
 			close(firstDone)
-			<-release // 挂起直到取消后放行（channel 收包）
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -288,6 +295,7 @@ func TestCodexUsageSnapshotCancelNoCooldown(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	a := NewCodex(nil)
+	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	cred := usageCred(1, srv.URL+"/codex/responses")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -327,6 +335,7 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 	release := sync.OnceFunc(func() { close(c.release) })
 	t.Cleanup(release) // 失败路径（t.Fatal 提前退出）先释放闸门——挂起 handler 不阻塞 httptest Close
 	a := NewCodex(nil)
+	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	cred := usageCred(1, srv.URL+"/codex/responses")
 	ctx := context.Background()
 
@@ -372,6 +381,7 @@ func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
 	t.Run("non_fatal_401_upstream", func(t *testing.T) {
 		srv, c := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"message":"invalid token"}}`})
 		a := NewCodex(nil)
+		a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 
 		_, err := a.GetUsageSnapshot(context.Background(), usageCred(1, srv.URL+"/codex/responses"))
 		require.ErrorIs(t, err, ErrUpstream, "非致命 401 归上游面（鉴权结论唯一来源 = SDK 致命分类）")
@@ -380,6 +390,7 @@ func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
 	t.Run("fatal_401_auth_expired", func(t *testing.T) {
 		srv, _ := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"code":"token_revoked"}}`})
 		a := NewCodex(nil)
+		a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 
 		_, err := a.GetUsageSnapshot(context.Background(), usageCred(2, srv.URL+"/codex/responses"))
 		require.ErrorIs(t, err, ErrAuthExpired, "致命 401 经 SDK 判死走统一 fatal 判定")
@@ -403,7 +414,7 @@ func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
 	a := NewCodex(nil)
 	cred := oauthCred(1, "at-ok", "rt-ok") // oauth（rotationAuth 的 Fatal 生效；PAT Fatal 为 no-op）
-	cred.BaseURL = srv.URL + "/codex/responses"
+	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	ctx := context.Background()
 
 	_, err := a.GetUsageSnapshot(ctx, cred)
@@ -444,6 +455,7 @@ func TestCodexUsageSnapshotConvergence(t *testing.T) {
 		codexUpstreamStep{status: 200, body: `{"rate_limit":{"primary_window":{"used_percent":50}},"credits":{"balance":""}}`},
 	)
 	a := NewCodex(nil)
+	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	ctx := context.Background()
 
 	snap, err := a.GetUsageSnapshot(ctx, usageCred(1, srv.URL+"/codex/responses"))
@@ -506,6 +518,7 @@ func TestCodexUsageSnapshotConvergence(t *testing.T) {
 func TestCodexUsageSnapshotEntryRebuildClears(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
 	a := NewCodex(nil)
+	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	ctx := context.Background()
 	base := usageCred(1, srv.URL+"/codex/responses")
 
