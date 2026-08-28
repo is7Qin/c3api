@@ -12,7 +12,7 @@ import (
 
 var modelRewriteSink []byte
 
-func TestRewriteResponseModelJSONRewritesEveryExistingStringPath(t *testing.T) {
+func TestResponseModelRewriteJSONRewritesEveryExistingStringPath(t *testing.T) {
 	body := []byte(`{"keep":9007199254740993,"message":{"model":"message-upstream"},"model":"root-upstream","response":{"model":"response-upstream"},"other":{"model":"untouched"}}`)
 
 	got := rewriteResponseModelJSON(body, "client-model")
@@ -20,7 +20,7 @@ func TestRewriteResponseModelJSONRewritesEveryExistingStringPath(t *testing.T) {
 	require.Equal(t, `{"keep":9007199254740993,"message":{"model":"client-model"},"model":"client-model","response":{"model":"client-model"},"other":{"model":"untouched"}}`, string(got))
 }
 
-func TestRewriteResponseModelJSONLeavesUnsupportedInputsUntouched(t *testing.T) {
+func TestResponseModelRewriteJSONLeavesUnsupportedInputsUntouched(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
@@ -45,7 +45,7 @@ func TestRewriteResponseModelJSONLeavesUnsupportedInputsUntouched(t *testing.T) 
 	}
 }
 
-func TestRewriteResponseModelJSONNoOpsReuseInputWithoutAllocations(t *testing.T) {
+func TestResponseModelRewriteJSONNoOpsReuseInputWithoutAllocations(t *testing.T) {
 	cases := []struct {
 		name, body, model string
 	}{
@@ -83,14 +83,14 @@ func TestModelStringEqualsDecodesJSONEscapes(t *testing.T) {
 	}
 }
 
-func TestRewriteResponseModelSSEPreservesMetadataCRLFAndFrames(t *testing.T) {
+func TestSSEModelRewritePreservesMetadataCRLFAndFrames(t *testing.T) {
 	src := ": before\r\nevent: response.completed\r\nid: 42\r\nretry: 1000\r\ndata: {\"response\":{\"model\":\"upstream\"},\"keep\":9007199254740993}\r\n: after\r\n\r\ndata: [DONE]\r\n\r\n"
 	want := ": before\r\nevent: response.completed\r\nid: 42\r\nretry: 1000\r\ndata: {\"response\":{\"model\":\"client-model\"},\"keep\":9007199254740993}\r\n: after\r\n\r\ndata: [DONE]\r\n\r\n"
 
 	require.Equal(t, want, rewriteModelSSEStream(t, src, "client-model"))
 }
 
-func TestRewriteResponseModelSSENormalizesMultiDataOnlyWhenChanged(t *testing.T) {
+func TestSSEModelRewriteNormalizesMultiDataOnlyWhenChanged(t *testing.T) {
 	src := "event: message\ndata: {\"message\":\n: between\ndata: {\"model\":\"upstream\"},\"x\":1}\nid: 9\n\n"
 	want := "event: message\ndata: {\"message\":{\"model\":\"client-model\"},\"x\":1}\n: between\nid: 9\n\n"
 
@@ -98,7 +98,7 @@ func TestRewriteResponseModelSSENormalizesMultiDataOnlyWhenChanged(t *testing.T)
 	require.Equal(t, src, rewriteModelSSEStream(t, src, ""))
 }
 
-func TestRewriteResponseModelSSELeavesOpaqueFramesUntouched(t *testing.T) {
+func TestSSEModelRewriteLeavesOpaqueFramesUntouched(t *testing.T) {
 	for _, src := range []string{
 		"data: [DONE]\n\n",
 		": comment\nid: opaque\nretry: 5\n\n",
@@ -109,7 +109,7 @@ func TestRewriteResponseModelSSELeavesOpaqueFramesUntouched(t *testing.T) {
 	}
 }
 
-func TestRewriteResponseModelSSENoOpsReuseInputWithoutAllocations(t *testing.T) {
+func TestSSEModelRewriteNoOpsReuseInputWithoutAllocations(t *testing.T) {
 	cases := []struct {
 		name, raw, data, model string
 	}{
@@ -132,7 +132,60 @@ func TestRewriteResponseModelSSENoOpsReuseInputWithoutAllocations(t *testing.T) 
 	}
 }
 
-func BenchmarkRewriteResponseModel(b *testing.B) {
+func TestResponseModelRewriteMapperEmptyOverrideIsNilNoScan(t *testing.T) {
+	require.Nil(t, newResponseModelRewriter(""))
+	require.Nil(t, newResponseModelSSEMapper(""))
+
+	var sinkRW func([]byte) []byte
+	allocsJSON := testing.AllocsPerRun(1000, func() {
+		sinkRW = newResponseModelRewriter("")
+	})
+	require.Nil(t, sinkRW)
+	require.Zero(t, allocsJSON)
+
+	var sinkSSE func(sserelay.Event) ([]byte, bool)
+	allocsSSE := testing.AllocsPerRun(1000, func() {
+		sinkSSE = newResponseModelSSEMapper("")
+	})
+	require.Nil(t, sinkSSE)
+	require.Zero(t, allocsSSE)
+}
+
+func TestResponseModelRewriteMapperImplicitInstallsRewriter(t *testing.T) {
+	rw := newResponseModelRewriter("client-model")
+	require.NotNil(t, rw)
+	body := []byte(`{"model":"upstream","response":{"model":"upstream"},"message":{"model":"upstream"}}`)
+	got := rw(body)
+	require.Equal(t, `{"model":"client-model","response":{"model":"client-model"},"message":{"model":"client-model"}}`, string(got))
+	require.NotSame(t, &body[0], &got[0])
+}
+
+func TestSSEModelRewriteMapperEmptyOverrideIsNilNoScan(t *testing.T) {
+	require.Nil(t, newResponseModelSSEMapper(""))
+
+	var sink func(sserelay.Event) ([]byte, bool)
+	allocs := testing.AllocsPerRun(1000, func() {
+		sink = newResponseModelSSEMapper("")
+	})
+	require.Nil(t, sink)
+	require.Zero(t, allocs)
+}
+
+func TestSSEModelRewriteMapperImplicitInstallsRewriter(t *testing.T) {
+	m := newResponseModelSSEMapper("client-model")
+	require.NotNil(t, m)
+	ev := sserelay.Event{Raw: []byte("event: message\ndata: {\"model\":\"upstream\"}\n\n"), Data: []byte(`{"model":"upstream"}`)}
+	out, drop := m(ev)
+	require.False(t, drop)
+	require.Equal(t, "event: message\ndata: {\"model\":\"client-model\"}\n\n", string(out))
+
+	ev2 := sserelay.Event{Raw: []byte("data: {\"model\":\"client-model\"}\n\n"), Data: []byte(`{"model":"client-model"}`)}
+	out2, drop2 := m(ev2)
+	require.False(t, drop2)
+	require.Same(t, &ev2.Raw[0], &out2[0])
+}
+
+func BenchmarkModelRewrite(b *testing.B) {
 	jsonNoop := []byte(`{"model":"client-model","response":{"model":"client-model"}}`)
 	jsonRewrite := []byte(`{"model":"upstream","response":{"model":"upstream"},"message":{"model":"upstream"}}`)
 	sseNoop := sserelay.Event{Raw: []byte("data: {\"model\":\"client-model\"}\n\n"), Data: []byte(`{"model":"client-model"}`)}
@@ -156,6 +209,10 @@ func BenchmarkRewriteResponseModel(b *testing.B) {
 			}
 		})
 	}
+}
+
+func BenchmarkRewriteResponseModel(b *testing.B) {
+	BenchmarkModelRewrite(b)
 }
 
 func rewriteModelSSEStream(t *testing.T, src, model string) string {
