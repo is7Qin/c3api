@@ -3,6 +3,7 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Coins, Filter, Layers, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
@@ -34,7 +35,6 @@ type PriceEntryUpsert = components['schemas']['PriceEntryUpsert']
 type PricingSource = components['schemas']['PricingSource']
 
 type TabKey = 'text' | 'image' | 'function'
-const MODE_BY_TAB: Record<TabKey, 'token' | 'image' | 'call'> = { text: 'token', image: 'image', function: 'call' }
 
 const SOURCES: PricingSource[] = ['litellm', 'manual']
 
@@ -203,11 +203,14 @@ function VariantsDialog({
     }
     if (r.time_start || r.time_end) {
       if (r.time_start && r.time_end) parts.push(`${r.time_start}–${r.time_end}`)
-      else parts.push((r.time_start ?? r.time_end) as string)
+      else {
+        const single = r.time_start ?? r.time_end
+        if (single) parts.push(single)
+      }
     }
     if (r.dow_mask != null) {
       const bools = dowMaskToBools(r.dow_mask)
-      const labels = bools.map((v, i) => (v ? t(`pricing.variants.${DOW_KEYS[i]}`) : null)).filter(Boolean) as string[]
+      const labels = bools.map((v, i) => (v ? t(`pricing.variants.${DOW_KEYS[i]}`) : null)).filter((v): v is string => v !== null)
       if (labels.length) parts.push(labels.join(','))
     }
     return parts.length ? parts.join(' · ') : '—'
@@ -364,7 +367,11 @@ function VariantsDialog({
     onError: (e: Error) => toast.add({ title: e.message, type: 'error' }),
   })
 
-  const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
+  const errMsg = (e: unknown): string | null => {
+    if (e instanceof ApiUnauthorized) return null
+    if (e instanceof Error) return e.message
+    return null
+  }
 
   // 实时预览最终价（倍率态）
   const previewMultVal = Number(multiplierStr)
@@ -684,137 +691,176 @@ function callBody(f: CallForm): PriceEntryUpsert {
   return { mode: 'call', price_per_call: Number(f.pricePerCall) }
 }
 
-export default function PricingPage() {
-  const { t } = useTranslation()
-  const qc = useQueryClient()
-  const [tab, setTab] = useState<TabKey>('text')
+type PricingMode = 'token' | 'image' | 'call'
 
-  // —— 文本价（token）状态 ——
+type PricingListState = {
+  page: number
+  pageSize: number
+  model: string
+  source: string
+  provider: string
+  activeSort: string | null
+  order: SortOrder
+  data: { total: number; rows: PriceEntry[] } | undefined
+  rows: PriceEntry[]
+  isLoading: boolean
+  isError: boolean
+  error: unknown
+  hasFilters: boolean
+  setPage: (n: number) => void
+  setPageSize: (n: number) => void
+  setModel: (v: string) => void
+  setSource: (v: string) => void
+  setProvider: (v: string) => void
+  toggleSort: (col: string) => void
+  clearFilters: () => void
+}
+
+function usePricingList(mode: PricingMode): PricingListState {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [model, setModel] = useState('')
-  const [sourceFilter, setSourceFilter] = useState<'all' | PricingSource>('all')
-  const [providerFilter, setProviderFilter] = useState('all')
+  const [source, setSource] = useState('all')
+  const [provider, setProvider] = useState('all')
   const [activeSort, setActiveSort] = useState<string | null>(null)
   const [order, setOrder] = useState<SortOrder>('desc')
   const sort = activeSort ?? 'model'
-  const ord = activeSort ? order : 'asc'
-
-  const { data: textData, isLoading: textLoading, isError: textIsError, error: textError } = useQuery({
-    queryKey: ['prices', { mode: 'token', page, page_size: pageSize, source: sourceFilter, provider: providerFilter, model, sort, order: ord }],
+  const ord: SortOrder = activeSort ? order : 'asc'
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['prices', { mode, page, page_size: pageSize, source, provider, model, sort, order: ord }],
     queryFn: () =>
       api.listPriceEntries({
         page,
         page_size: pageSize,
-        mode: 'token',
-        source: sourceFilter === 'all' ? undefined : sourceFilter,
-        provider: providerFilter === 'all' ? undefined : providerFilter,
+        mode,
+        source: source === 'all' ? undefined : source,
+        provider: provider === 'all' ? undefined : provider,
         model: model || undefined,
         sort,
         order: ord,
       }),
   })
-  const textRows = textData?.rows ?? []
+  const rows = data?.rows ?? []
   useEffect(() => {
-    if (!textLoading && !textIsError && textRows.length === 0 && page > 1) setPage(1)
-  }, [textLoading, textIsError, textRows.length, page])
-  const resetPage = () => setPage(1)
-  const changePageSize = (s: number) => { setPageSize(s); resetPage() }
-  const changeModel = (v: string) => { setModel(v); resetPage() }
-  const changeSource = (v: string) => { setSourceFilter(v as 'all' | PricingSource); resetPage() }
-  const changeProvider = (v: string) => { setProviderFilter(v); resetPage() }
-  const onColumnToggle = (col: string) => {
-    resetPage()
+    if (!isLoading && !isError && rows.length === 0 && page > 1) setPage(1)
+  }, [isLoading, isError, rows.length, page])
+  const setPageSizeWrapped = (s: number) => { setPageSize(s); setPage(1) }
+  const setModelWrapped = (v: string) => { setModel(v); setPage(1) }
+  const setSourceWrapped = (v: string) => { setSource(v); setPage(1) }
+  const setProviderWrapped = (v: string) => { setProvider(v); setPage(1) }
+  const toggleSort = (col: string) => {
+    setPage(1)
     if (activeSort !== col) { setActiveSort(col); setOrder('desc') }
     else if (order === 'desc') setOrder('asc')
     else { setActiveSort(null); setOrder('desc') }
   }
-  const hasFilters = model !== '' || sourceFilter !== 'all' || providerFilter !== 'all'
-  const clearFilters = () => { setModel(''); setSourceFilter('all'); setProviderFilter('all'); resetPage() }
-
-  // —— 图片价（image）状态 ——
-  const [imgPage, setImgPage] = useState(1)
-  const [imgPageSize, setImgPageSize] = useState(20)
-  const [imgModel, setImgModel] = useState('')
-  const [imgSource, setImgSource] = useState<'all' | PricingSource>('all')
-  const [imgProvider, setImgProvider] = useState('all')
-  const [imgActiveSort, setImgActiveSort] = useState<string | null>(null)
-  const [imgOrder, setImgOrder] = useState<SortOrder>('desc')
-  const imgSort = imgActiveSort ?? 'model'
-  const imgOrd = imgActiveSort ? imgOrder : 'asc'
-  const { data: imgData, isLoading: imgLoading, isError: imgIsError, error: imgError } = useQuery({
-    queryKey: ['prices', { mode: 'image', page: imgPage, page_size: imgPageSize, source: imgSource, provider: imgProvider, model: imgModel, sort: imgSort, order: imgOrd }],
-    queryFn: () =>
-      api.listPriceEntries({
-        page: imgPage,
-        page_size: imgPageSize,
-        mode: 'image',
-        source: imgSource === 'all' ? undefined : imgSource,
-        provider: imgProvider === 'all' ? undefined : imgProvider,
-        model: imgModel || undefined,
-        sort: imgSort,
-        order: imgOrd,
-      }),
-  })
-  const imgRows = imgData?.rows ?? []
-  useEffect(() => {
-    if (!imgLoading && !imgIsError && imgRows.length === 0 && imgPage > 1) setImgPage(1)
-  }, [imgLoading, imgIsError, imgRows.length, imgPage])
-  const imgReset = () => setImgPage(1)
-  const imgSetPageSize = (s: number) => { setImgPageSize(s); imgReset() }
-  const imgSetModel = (v: string) => { setImgModel(v); imgReset() }
-  const imgSetSource = (v: string) => { setImgSource(v as 'all' | PricingSource); imgReset() }
-  const imgSetProvider = (v: string) => { setImgProvider(v); imgReset() }
-  const imgToggleSort = (col: string) => {
-    imgReset()
-    if (imgActiveSort !== col) { setImgActiveSort(col); setImgOrder('desc') }
-    else if (imgOrder === 'desc') setImgOrder('asc')
-    else { setImgActiveSort(null); setImgOrder('desc') }
+  const hasFilters = model !== '' || source !== 'all' || provider !== 'all'
+  const clearFilters = () => { setModel(''); setSource('all'); setProvider('all'); setPage(1) }
+  return {
+    page,
+    pageSize,
+    model,
+    source,
+    provider,
+    activeSort,
+    order,
+    data,
+    rows,
+    isLoading,
+    isError,
+    error,
+    hasFilters,
+    setPage,
+    setPageSize: setPageSizeWrapped,
+    setModel: setModelWrapped,
+    setSource: setSourceWrapped,
+    setProvider: setProviderWrapped,
+    toggleSort,
+    clearFilters,
   }
-  const imgHasFilters = imgModel !== '' || imgSource !== 'all' || imgProvider !== 'all'
-  const imgClearFilters = () => { setImgModel(''); setImgSource('all'); setImgProvider('all'); imgReset() }
+}
 
-  // —— 按次价（call）状态 ——
-  const [fnPage, setFnPage] = useState(1)
-  const [fnPageSize, setFnPageSize] = useState(20)
-  const [fnModel, setFnModel] = useState('')
-  const [fnSource, setFnSource] = useState<'all' | PricingSource>('all')
-  const [fnProvider, setFnProvider] = useState('all')
-  const [fnActiveSort, setFnActiveSort] = useState<string | null>(null)
-  const [fnOrder, setFnOrder] = useState<SortOrder>('desc')
-  const fnSort = fnActiveSort ?? 'model'
-  const fnOrd = fnActiveSort ? fnOrder : 'asc'
-  const { data: fnData, isLoading: fnLoading, isError: fnIsError, error: fnError } = useQuery({
-    queryKey: ['prices', { mode: 'call', page: fnPage, page_size: fnPageSize, source: fnSource, provider: fnProvider, model: fnModel, sort: fnSort, order: fnOrd }],
-    queryFn: () =>
-      api.listPriceEntries({
-        page: fnPage,
-        page_size: fnPageSize,
-        mode: 'call',
-        source: fnSource === 'all' ? undefined : fnSource,
-        provider: fnProvider === 'all' ? undefined : fnProvider,
-        model: fnModel || undefined,
-        sort: fnSort,
-        order: fnOrd,
-      }),
-  })
-  const fnRows = fnData?.rows ?? []
-  useEffect(() => {
-    if (!fnLoading && !fnIsError && fnRows.length === 0 && fnPage > 1) setFnPage(1)
-  }, [fnLoading, fnIsError, fnRows.length, fnPage])
-  const fnReset = () => setFnPage(1)
-  const fnSetPageSize = (s: number) => { setFnPageSize(s); fnReset() }
-  const fnSetModel = (v: string) => { setFnModel(v); fnReset() }
-  const fnSetSource = (v: string) => { setFnSource(v as 'all' | PricingSource); fnReset() }
-  const fnSetProvider = (v: string) => { setFnProvider(v); fnReset() }
-  const fnToggleSort = (col: string) => {
-    fnReset()
-    if (fnActiveSort !== col) { setFnActiveSort(col); setFnOrder('desc') }
-    else if (fnOrder === 'desc') setFnOrder('asc')
-    else { setFnActiveSort(null); setFnOrder('desc') }
-  }
-  const fnHasFilters = fnModel !== '' || fnSource !== 'all' || fnProvider !== 'all'
-  const fnClearFilters = () => { setFnModel(''); setFnSource('all'); setFnProvider('all'); fnReset() }
+type PricingListShellProps = {
+  list: PricingListState
+  header: ReactNode
+  children: ReactNode
+  empty: { filterEmpty: string; emptyTitle: string; emptyDesc: string | null; newLabel: string; onNew: () => void }
+}
+
+function PricingListShell({ list, header, children, empty }: PricingListShellProps) {
+  const { t } = useTranslation()
+  const sourceItems: Record<string, string> = { all: t('pricing.all'), ...Object.fromEntries(SOURCES.map(s => [s, t(`pricing.source.${s}`)])) }
+  const providerItems: Record<string, string> = { all: t('pricing.providerAll'), ...Object.fromEntries(PROVIDERS.map(p => [p, p])) }
+  return (
+    <>
+      <ListToolbar name={list.model} onNameChange={list.setModel} placeholder={t('pricing.searchModel')}>
+        <Select items={sourceItems} value={list.source} onValueChange={list.setSource}>
+          <SelectTrigger size="default" className="w-40" aria-label={t('pricing.all')}>
+            <SelectValue placeholder={t('pricing.all')} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" label={t('pricing.all')}>{t('pricing.all')}</SelectItem>
+            {SOURCES.map(s => <SelectItem key={s} value={s} label={t(`pricing.source.${s}`)}>{t(`pricing.source.${s}`)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select items={providerItems} value={list.provider} onValueChange={list.setProvider}>
+          <SelectTrigger size="default" className="w-40" aria-label={t('pricing.providerAll')}>
+            <SelectValue placeholder={t('pricing.providerAll')} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" label={t('pricing.providerAll')}>{t('pricing.providerAll')}</SelectItem>
+            {PROVIDERS.map(p => <SelectItem key={p} value={p} label={p}>{p}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {(list.source !== 'all' || list.provider !== 'all') && (
+          <Button variant="ghost" size="lg" onClick={list.clearFilters}><Filter /> {t('list.reset')}</Button>
+        )}
+      </ListToolbar>
+
+      {list.isError ? (
+        <p className="text-sm text-destructive">{t('common.loadFailed', { message: list.error instanceof Error ? list.error.message : String(list.error) })}</p>
+      ) : list.isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}
+        </div>
+      ) : list.rows.length === 0 ? (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+          <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+            <Coins className="size-10" />
+            <p className="font-medium">{list.hasFilters ? empty.filterEmpty : empty.emptyTitle}</p>
+            {!list.hasFilters && empty.emptyDesc ? <p className="text-sm">{empty.emptyDesc}</p> : null}
+            {list.hasFilters ? (
+              <Button className="mt-2" variant="outline" onClick={list.clearFilters}><Filter /> {t('list.reset')}</Button>
+            ) : (
+              <Button className="mt-2" onClick={empty.onNew}><Plus /> {empty.newLabel}</Button>
+            )}
+          </Card>
+        </motion.div>
+      ) : (
+        <>
+          <div className="overflow-hidden rounded-lg">
+            <Table>
+              <TableHeader>
+                <TableRow>{header}</TableRow>
+              </TableHeader>
+              <TableBody className="[&_td]:py-3">{children}</TableBody>
+            </Table>
+          </div>
+          <PagePagination total={list.data?.total ?? 0} pageSize={list.pageSize} page={list.page} onPageChange={list.setPage} onPageSizeChange={list.setPageSize} />
+        </>
+      )}
+    </>
+  )
+}
+
+export default function PricingPage() {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const [tab, setTab] = useState<TabKey>('text')
+
+  const tokenList = usePricingList('token')
+  const imageList = usePricingList('image')
+  const callList = usePricingList('call')
 
   // —— 价格同步 ——
   const sync = useMutation({
@@ -908,11 +954,12 @@ export default function PricingPage() {
     onSuccess: () => { toast.add({ title: t('pricing.deleted'), type: 'success' }); qc.invalidateQueries({ queryKey: ['prices'] }); setFnDeleting(null) },
   })
 
-  const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
-  const sourceItems = Object.fromEntries([['all', t('pricing.all')], ...SOURCES.map(s => [s, t(`pricing.source.${s}`)])])
-  const providerItems = Object.fromEntries([['all', t('pricing.providerAll')], ...PROVIDERS.map(p => [p, p])])
+  const errMsg = (e: unknown): string | null => {
+    if (e instanceof ApiUnauthorized) return null
+    if (e instanceof Error) return e.message
+    return null
+  }
   const delDisabledTitle = (source: PricingSource) => source === 'litellm' ? t('pricing.deleteLitellmHint') : t('pricing.deleteTitle')
-  void MODE_BY_TAB
 
   // —— Variants dialog (single page-level, mode-agnostic) ——
   const [variantsTarget, setVariantsTarget] = useState<VariantsTarget | null>(null)
@@ -936,7 +983,7 @@ export default function PricingPage() {
         </div>
       </div>
 
-      <Tabs value={tab} onValueChange={v => v && setTab(v as TabKey)}>
+      <Tabs value={tab} onValueChange={v => { if (v === 'text' || v === 'image' || v === 'function') setTab(v) }}>
         <TabsList className="w-full">
           <TabsTrigger value="text" className="flex-1">{t('pricing.tabs.text')}</TabsTrigger>
           <TabsTrigger value="image" className="flex-1">{t('pricing.tabs.image')}</TabsTrigger>
@@ -945,291 +992,162 @@ export default function PricingPage() {
 
         {/* —— Tab 1：文本价格（token mode） —— */}
         <TabsContent value="text" className="space-y-6 pt-4">
-          <ListToolbar name={model} onNameChange={changeModel} placeholder={t('pricing.searchModel')}>
-            <Select items={sourceItems} value={sourceFilter} onValueChange={changeSource}>
-              <SelectTrigger size="default" className="w-40" aria-label={t('pricing.all')}>
-                <SelectValue placeholder={t('pricing.all')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" label={t('pricing.all')}>{t('pricing.all')}</SelectItem>
-                {SOURCES.map(s => <SelectItem key={s} value={s} label={t(`pricing.source.${s}`)}>{t(`pricing.source.${s}`)}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select items={providerItems} value={providerFilter} onValueChange={changeProvider}>
-              <SelectTrigger size="default" className="w-40" aria-label={t('pricing.providerAll')}>
-                <SelectValue placeholder={t('pricing.providerAll')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" label={t('pricing.providerAll')}>{t('pricing.providerAll')}</SelectItem>
-                {PROVIDERS.map(p => <SelectItem key={p} value={p} label={p}>{p}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            {(sourceFilter !== 'all' || providerFilter !== 'all') && (
-              <Button variant="ghost" size="lg" onClick={clearFilters}><Filter /> {t('list.reset')}</Button>
-            )}
-          </ListToolbar>
-
-          {textIsError ? (
-            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (textError as Error).message })}</p>
-          ) : textLoading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}
-            </div>
-          ) : textRows.length === 0 ? (
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
-              <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-                <Coins className="size-10" />
-                <p className="font-medium">{hasFilters ? t('pricing.filterEmpty') : t('pricing.emptyTitle')}</p>
-                {!hasFilters && <p className="text-sm">{t('pricing.emptyDesc')}</p>}
-                {hasFilters ? (
-                  <Button className="mt-2" variant="outline" onClick={clearFilters}><Filter /> {t('list.reset')}</Button>
-                ) : (
-                  <Button className="mt-2" onClick={openCreate}><Plus /> {t('pricing.new')}</Button>
-                )}
-              </Card>
-            </motion.div>
-          ) : (
-            <>
-              <div className="overflow-hidden rounded-lg">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <SortableHeader field="model" label={t('pricing.table.model')} active={activeSort === 'model'} order={order} onToggle={onColumnToggle} />
-                      <TableHead className="text-right">{t('pricing.table.prompt')}</TableHead>
-                      <TableHead className="text-right">{t('pricing.table.completion')}</TableHead>
-                      <TableHead className="text-right">{t('pricing.table.cacheRead')}</TableHead>
-                      <TableHead className="text-right">{t('pricing.table.cacheWrite')}</TableHead>
-                      <TableHead>{t('pricing.table.source')}</TableHead>
-                      <TableHead>{t('pricing.table.provider')}</TableHead>
-                      <SortableHeader field="updated_at" label={t('pricing.table.updatedAt')} active={activeSort === 'updated_at'} order={order} onToggle={onColumnToggle} />
-                      <TableHead className="text-right">{t('pricing.table.actions')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody className="[&_td]:py-3">
-                    {textRows.map(p => (
-                      <TableRow key={p.Model}>
-                        <TableCell className="max-w-48 truncate font-mono text-sm" title={p.Model}>{p.Model}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatPricePerMillion(p.InputPerM)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatPricePerMillion(p.OutputPerM)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatPricePerMillion(p.CacheReadPerM)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatPricePerMillion(p.CacheWritePerM)}</TableCell>
-                        <TableCell><SourceBadge source={p.Source} /></TableCell>
-                        <TableCell className="max-w-32 truncate" title={p.Provider ?? undefined}>{p.Provider || '—'}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'token', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
-                            <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-destructive"
-                              title={delDisabledTitle(p.Source)}
-                              onClick={() => setDeleting(p)}
-                              disabled={p.Source === 'litellm' || del.isPending}
-                            >
-                              <Trash2 />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <PagePagination total={textData?.total ?? 0} pageSize={pageSize} page={page} onPageChange={setPage} onPageSizeChange={changePageSize} />
-            </>
-          )}
+          <PricingListShell
+            list={tokenList}
+            header={
+              <>
+                <SortableHeader field="model" label={t('pricing.table.model')} active={tokenList.activeSort === 'model'} order={tokenList.order} onToggle={tokenList.toggleSort} />
+                <TableHead className="text-right">{t('pricing.table.prompt')}</TableHead>
+                <TableHead className="text-right">{t('pricing.table.completion')}</TableHead>
+                <TableHead className="text-right">{t('pricing.table.cacheRead')}</TableHead>
+                <TableHead className="text-right">{t('pricing.table.cacheWrite')}</TableHead>
+                <TableHead>{t('pricing.table.source')}</TableHead>
+                <TableHead>{t('pricing.table.provider')}</TableHead>
+                <SortableHeader field="updated_at" label={t('pricing.table.updatedAt')} active={tokenList.activeSort === 'updated_at'} order={tokenList.order} onToggle={tokenList.toggleSort} />
+                <TableHead className="text-right">{t('pricing.table.actions')}</TableHead>
+              </>
+            }
+            empty={{
+              filterEmpty: t('pricing.filterEmpty'),
+              emptyTitle: t('pricing.emptyTitle'),
+              emptyDesc: t('pricing.emptyDesc'),
+              newLabel: t('pricing.new'),
+              onNew: openCreate,
+            }}
+          >
+            {tokenList.rows.map(p => (
+              <TableRow key={p.Model}>
+                <TableCell className="max-w-48 truncate font-mono text-sm" title={p.Model}>{p.Model}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatPricePerMillion(p.InputPerM)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatPricePerMillion(p.OutputPerM)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatPricePerMillion(p.CacheReadPerM)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatPricePerMillion(p.CacheWritePerM)}</TableCell>
+                <TableCell><SourceBadge source={p.Source} /></TableCell>
+                <TableCell className="max-w-32 truncate" title={p.Provider ?? undefined}>{p.Provider || '—'}</TableCell>
+                <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'token', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
+                    <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-destructive"
+                      title={delDisabledTitle(p.Source)}
+                      onClick={() => setDeleting(p)}
+                      disabled={p.Source === 'litellm' || del.isPending}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </PricingListShell>
         </TabsContent>
 
         {/* —— Tab 2：图片价格（image mode） —— */}
         <TabsContent value="image" className="space-y-6 pt-4">
-          <ListToolbar name={imgModel} onNameChange={imgSetModel} placeholder={t('pricing.searchModel')}>
-            <Select items={sourceItems} value={imgSource} onValueChange={imgSetSource}>
-              <SelectTrigger size="default" className="w-40" aria-label={t('pricing.all')}>
-                <SelectValue placeholder={t('pricing.all')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" label={t('pricing.all')}>{t('pricing.all')}</SelectItem>
-                {SOURCES.map(s => <SelectItem key={s} value={s} label={t(`pricing.source.${s}`)}>{t(`pricing.source.${s}`)}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select items={providerItems} value={imgProvider} onValueChange={imgSetProvider}>
-              <SelectTrigger size="default" className="w-40" aria-label={t('pricing.providerAll')}>
-                <SelectValue placeholder={t('pricing.providerAll')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" label={t('pricing.providerAll')}>{t('pricing.providerAll')}</SelectItem>
-                {PROVIDERS.map(p => <SelectItem key={p} value={p} label={p}>{p}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            {(imgSource !== 'all' || imgProvider !== 'all') && (
-              <Button variant="ghost" size="lg" onClick={imgClearFilters}><Filter /> {t('list.reset')}</Button>
-            )}
-          </ListToolbar>
-
-          {imgIsError ? (
-            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (imgError as Error).message })}</p>
-          ) : imgLoading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}
-            </div>
-          ) : imgRows.length === 0 ? (
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
-              <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-                <Coins className="size-10" />
-                <p className="font-medium">{imgHasFilters ? t('pricing.image.filterEmpty') : t('pricing.image.emptyTitle')}</p>
-                {!imgHasFilters && <p className="text-sm">{t('pricing.image.emptyDesc')}</p>}
-                {imgHasFilters ? (
-                  <Button className="mt-2" variant="outline" onClick={imgClearFilters}><Filter /> {t('list.reset')}</Button>
-                ) : (
-                  <Button className="mt-2" onClick={openImageCreate}><Plus /> {t('pricing.image.new')}</Button>
-                )}
-              </Card>
-            </motion.div>
-          ) : (
-            <>
-              <div className="overflow-hidden rounded-lg">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <SortableHeader field="model" label={t('pricing.table.model')} active={imgActiveSort === 'model'} order={imgOrder} onToggle={imgToggleSort} />
-                      <TableHead className="text-right" title="USD/1M image tokens">{t('pricing.image.table.inputToken')}</TableHead>
-                      <TableHead className="text-right" title="USD/1M image tokens">{t('pricing.image.table.outputToken')}</TableHead>
-                      <TableHead className="text-right" title="USD/张">{t('pricing.image.table.perImage')}</TableHead>
-                      <TableHead>{t('pricing.table.source')}</TableHead>
-                      <TableHead>{t('pricing.table.provider')}</TableHead>
-                      <SortableHeader field="updated_at" label={t('pricing.table.updatedAt')} active={imgActiveSort === 'updated_at'} order={imgOrder} onToggle={imgToggleSort} />
-                      <TableHead className="text-right">{t('pricing.table.actions')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody className="[&_td]:py-3">
-                    {imgRows.map(p => (
-                      <TableRow key={p.Model}>
-                        <TableCell className="max-w-48 truncate font-mono text-sm" title={p.Model}>{p.Model}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatUsd(p.ImgInTokPerM)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatUsd(p.ImgOutTokPerM)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatUsd(p.PricePerImage)}</TableCell>
-                        <TableCell><SourceBadge source={p.Source} /></TableCell>
-                        <TableCell className="max-w-32 truncate" title={p.Provider ?? undefined}>{p.Provider || '—'}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'image', inputPerM: (p as unknown as PriceEntry).InputPerM, outputPerM: (p as unknown as PriceEntry).OutputPerM })}><Layers /></Button>
-                            <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-destructive"
-                              title={delDisabledTitle(p.Source)}
-                              onClick={() => setImgDeleting(p)}
-                              disabled={p.Source === 'litellm' || imgDel.isPending}
-                            >
-                              <Trash2 />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <PagePagination total={imgData?.total ?? 0} pageSize={imgPageSize} page={imgPage} onPageChange={setImgPage} onPageSizeChange={imgSetPageSize} />
-            </>
-          )}
+          <PricingListShell
+            list={imageList}
+            header={
+              <>
+                <SortableHeader field="model" label={t('pricing.table.model')} active={imageList.activeSort === 'model'} order={imageList.order} onToggle={imageList.toggleSort} />
+                <TableHead className="text-right" title="USD/1M image tokens">{t('pricing.image.table.inputToken')}</TableHead>
+                <TableHead className="text-right" title="USD/1M image tokens">{t('pricing.image.table.outputToken')}</TableHead>
+                <TableHead className="text-right" title="USD/张">{t('pricing.image.table.perImage')}</TableHead>
+                <TableHead>{t('pricing.table.source')}</TableHead>
+                <TableHead>{t('pricing.table.provider')}</TableHead>
+                <SortableHeader field="updated_at" label={t('pricing.table.updatedAt')} active={imageList.activeSort === 'updated_at'} order={imageList.order} onToggle={imageList.toggleSort} />
+                <TableHead className="text-right">{t('pricing.table.actions')}</TableHead>
+              </>
+            }
+            empty={{
+              filterEmpty: t('pricing.image.filterEmpty'),
+              emptyTitle: t('pricing.image.emptyTitle'),
+              emptyDesc: t('pricing.image.emptyDesc'),
+              newLabel: t('pricing.image.new'),
+              onNew: openImageCreate,
+            }}
+          >
+            {imageList.rows.map(p => (
+              <TableRow key={p.Model}>
+                <TableCell className="max-w-48 truncate font-mono text-sm" title={p.Model}>{p.Model}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatUsd(p.ImgInTokPerM)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatUsd(p.ImgOutTokPerM)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatUsd(p.PricePerImage)}</TableCell>
+                <TableCell><SourceBadge source={p.Source} /></TableCell>
+                <TableCell className="max-w-32 truncate" title={p.Provider ?? undefined}>{p.Provider || '—'}</TableCell>
+                <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'image', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
+                    <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-destructive"
+                      title={delDisabledTitle(p.Source)}
+                      onClick={() => setImgDeleting(p)}
+                      disabled={p.Source === 'litellm' || imgDel.isPending}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </PricingListShell>
         </TabsContent>
 
         {/* —— Tab 3：按次价格（call mode） —— */}
         <TabsContent value="function" className="space-y-6 pt-4">
-          <ListToolbar name={fnModel} onNameChange={fnSetModel} placeholder={t('pricing.searchModel')}>
-            <Select items={sourceItems} value={fnSource} onValueChange={fnSetSource}>
-              <SelectTrigger size="default" className="w-40" aria-label={t('pricing.all')}>
-                <SelectValue placeholder={t('pricing.all')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" label={t('pricing.all')}>{t('pricing.all')}</SelectItem>
-                {SOURCES.map(s => <SelectItem key={s} value={s} label={t(`pricing.source.${s}`)}>{t(`pricing.source.${s}`)}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select items={providerItems} value={fnProvider} onValueChange={fnSetProvider}>
-              <SelectTrigger size="default" className="w-40" aria-label={t('pricing.providerAll')}>
-                <SelectValue placeholder={t('pricing.providerAll')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" label={t('pricing.providerAll')}>{t('pricing.providerAll')}</SelectItem>
-                {PROVIDERS.map(p => <SelectItem key={p} value={p} label={p}>{p}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            {(fnSource !== 'all' || fnProvider !== 'all') && (
-              <Button variant="ghost" size="lg" onClick={fnClearFilters}><Filter /> {t('list.reset')}</Button>
-            )}
-          </ListToolbar>
-
-          {fnIsError ? (
-            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (fnError as Error).message })}</p>
-          ) : fnLoading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}
-            </div>
-          ) : fnRows.length === 0 ? (
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
-              <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-                <Coins className="size-10" />
-                <p className="font-medium">{fnHasFilters ? t('pricing.function.filterEmpty') : t('pricing.function.emptyTitle')}</p>
-                {!fnHasFilters && <p className="text-sm">{t('pricing.function.emptyDesc')}</p>}
-                {fnHasFilters ? (
-                  <Button className="mt-2" variant="outline" onClick={fnClearFilters}><Filter /> {t('list.reset')}</Button>
-                ) : (
-                  <Button className="mt-2" onClick={openCallCreate}><Plus /> {t('pricing.function.new')}</Button>
-                )}
-              </Card>
-            </motion.div>
-          ) : (
-            <>
-              <div className="overflow-hidden rounded-lg">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <SortableHeader field="model" label={t('pricing.table.model')} active={fnActiveSort === 'model'} order={fnOrder} onToggle={fnToggleSort} />
-                      <TableHead className="text-right" title="USD/次">{t('pricing.function.table.price')}</TableHead>
-                      <TableHead>{t('pricing.table.source')}</TableHead>
-                      <TableHead>{t('pricing.table.provider')}</TableHead>
-                      <SortableHeader field="updated_at" label={t('pricing.table.updatedAt')} active={fnActiveSort === 'updated_at'} order={fnOrder} onToggle={fnToggleSort} />
-                      <TableHead className="text-right">{t('pricing.table.actions')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody className="[&_td]:py-3">
-                    {fnRows.map(p => (
-                      <TableRow key={p.Model}>
-                        <TableCell className="max-w-48 truncate font-mono text-sm" title={p.Model}>{p.Model}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatUsd(p.PricePerCall)}</TableCell>
-                        <TableCell><SourceBadge source={p.Source} /></TableCell>
-                        <TableCell className="max-w-32 truncate" title={p.Provider ?? undefined}>{p.Provider || '—'}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'call', inputPerM: (p as unknown as PriceEntry).InputPerM, outputPerM: (p as unknown as PriceEntry).OutputPerM })}><Layers /></Button>
-                            <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-destructive"
-                              title={delDisabledTitle(p.Source)}
-                              onClick={() => setFnDeleting(p)}
-                              disabled={p.Source === 'litellm' || fnDel.isPending}
-                            >
-                              <Trash2 />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <PagePagination total={fnData?.total ?? 0} pageSize={fnPageSize} page={fnPage} onPageChange={setFnPage} onPageSizeChange={fnSetPageSize} />
-            </>
-          )}
+          <PricingListShell
+            list={callList}
+            header={
+              <>
+                <SortableHeader field="model" label={t('pricing.table.model')} active={callList.activeSort === 'model'} order={callList.order} onToggle={callList.toggleSort} />
+                <TableHead className="text-right" title="USD/次">{t('pricing.function.table.price')}</TableHead>
+                <TableHead>{t('pricing.table.source')}</TableHead>
+                <TableHead>{t('pricing.table.provider')}</TableHead>
+                <SortableHeader field="updated_at" label={t('pricing.table.updatedAt')} active={callList.activeSort === 'updated_at'} order={callList.order} onToggle={callList.toggleSort} />
+                <TableHead className="text-right">{t('pricing.table.actions')}</TableHead>
+              </>
+            }
+            empty={{
+              filterEmpty: t('pricing.function.filterEmpty'),
+              emptyTitle: t('pricing.function.emptyTitle'),
+              emptyDesc: t('pricing.function.emptyDesc'),
+              newLabel: t('pricing.function.new'),
+              onNew: openCallCreate,
+            }}
+          >
+            {callList.rows.map(p => (
+              <TableRow key={p.Model}>
+                <TableCell className="max-w-48 truncate font-mono text-sm" title={p.Model}>{p.Model}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatUsd(p.PricePerCall)}</TableCell>
+                <TableCell><SourceBadge source={p.Source} /></TableCell>
+                <TableCell className="max-w-32 truncate" title={p.Provider ?? undefined}>{p.Provider || '—'}</TableCell>
+                <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'call', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
+                    <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-destructive"
+                      title={delDisabledTitle(p.Source)}
+                      onClick={() => setFnDeleting(p)}
+                      disabled={p.Source === 'litellm' || fnDel.isPending}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </PricingListShell>
         </TabsContent>
       </Tabs>
 
@@ -1431,8 +1349,8 @@ export default function PricingPage() {
 
       <VariantsDialog
         model={variantsTarget?.model ?? null}
-        source={(variantsTarget?.source ?? 'manual') as PricingSource}
-        mode={(variantsTarget?.mode ?? 'token') as 'token' | 'image' | 'call'}
+        source={variantsTarget?.source ?? 'manual'}
+        mode={variantsTarget?.mode ?? 'token'}
         inputPerM={variantsTarget?.inputPerM}
         outputPerM={variantsTarget?.outputPerM}
         open={!!variantsTarget}
