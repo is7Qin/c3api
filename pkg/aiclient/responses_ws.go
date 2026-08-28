@@ -55,13 +55,4 @@ func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL
 	})
 }
 
-// ResponsesWSURL 取模板 resp-ws 完整端点 URL 字符串（T4 codex Dial
-// WithBaseURL 用——SDK 完整端点语义 client.go:137-144：覆盖值按完整端点直用，
-// 传裸根打 /v1 静默 404；复用 fullURLOf 的组装与懒缓存，零新代码）。
-func (f *Factory) ResponsesWSURL(templateID int64, baseURL string) (string, error) {
-	full, err := f.fullURLOf(templateID, baseURL, responsesWSPath)
-	if err != nil {
-		return "", err
-	}
-	return full.String(), nil
-}
+
