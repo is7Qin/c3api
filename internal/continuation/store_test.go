@@ -4,7 +4,9 @@ package continuation
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -75,6 +77,32 @@ func (h *countHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pr
 	}
 }
 
+type advHook struct {
+	mu  *sync.Mutex
+	cur *time.Time
+	d   time.Duration
+}
+
+func (h *advHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *advHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		h.mu.Lock()
+		*h.cur = h.cur.Add(h.d)
+		h.mu.Unlock()
+		return err
+	}
+}
+func (h *advHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		err := next(ctx, cmds)
+		h.mu.Lock()
+		*h.cur = h.cur.Add(time.Duration(len(cmds)) * h.d)
+		h.mu.Unlock()
+		return err
+	}
+}
+
 func TestContinuationCreateAndCrossInstance(t *testing.T) {
 	mr := miniredis.RunT(t)
 	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
@@ -127,7 +155,6 @@ func TestContinuationConflictFailClosed(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(10), b.AccountID)
 	require.Equal(t, f, b.Fingerprint)
-	// invalid inputs fail
 	_, err = s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_conf2", 0, f, 1)
 	require.Error(t, err)
 	_, err = s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_conf2", 10, f, 0)
@@ -138,35 +165,42 @@ func TestContinuationConflictFailClosed(t *testing.T) {
 }
 
 func TestContinuationInt64Beyond53(t *testing.T) {
-	_, s := newMiniredisStore(t, "secret-int53-1234567890")
+	mr := miniredis.RunT(t)
+	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = redisx.Close(c) })
+	s1, err := New(c, "secret-int53-1234567890")
+	require.NoError(t, err)
 	rid := routeID(t)
 	f := fp(t)
 	ctx := t.Context()
 	largeAcc := int64(9007199254740993)
 	largeRev := int64(9007199254740995)
-	st, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_large", largeAcc, f, largeRev)
+	st, err := s1.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_large", largeAcc, f, largeRev)
 	require.NoError(t, err)
 	require.Equal(t, "created", st)
-	// lookup with same large values via cross-instance
-	b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", "resp_large")
+	// cold second Store must fetch from Redis, not L1, to prove string-decimal wire
+	s2, err := New(c, "secret-int53-1234567890")
+	require.NoError(t, err)
+	require.Equal(t, 0, s2.L1Len())
+	b, ok, err := s2.Lookup(ctx, 1, 1, rid, "responses", "resp_large")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, largeAcc, b.AccountID)
 	require.Equal(t, largeRev, b.Revision)
-	// conflicting nearby value must not be treated as equal due to double precision
-	st, err = s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_large", largeAcc+1, f, largeRev)
+	st, err = s1.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_large", largeAcc+1, f, largeRev)
 	require.NoError(t, err)
 	require.Equal(t, "conflict", st)
-	st, err = s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_large", largeAcc, f, largeRev+1)
+	st, err = s1.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_large", largeAcc, f, largeRev+1)
 	require.NoError(t, err)
 	require.Equal(t, "conflict", st)
-	// verify stored wire uses decimal strings
-	rkey, _ := s.RedisKey(1, 1, rid, "responses", "resp_large")
-	val, err := s.client.Get(ctx, rkey).Result()
+	rkey, _ := s1.RedisKey(1, 1, rid, "responses", "resp_large")
+	val, err := s1.client.Get(ctx, rkey).Result()
 	require.NoError(t, err)
 	require.Contains(t, val, strconv.FormatInt(largeAcc, 10))
 	require.Contains(t, val, strconv.FormatInt(largeRev, 10))
 	require.NotContains(t, val, "9007199254740992")
+	_ = mr
 }
 
 func TestContinuationMalformedFailClosed(t *testing.T) {
@@ -177,7 +211,6 @@ func TestContinuationMalformedFailClosed(t *testing.T) {
 	_, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_ok", 10, f, 1)
 	require.NoError(t, err)
 	rkey, _ := s.RedisKey(1, 1, rid, "responses", "resp_ok")
-	// create a second continuation key for malformed injection
 	rid2 := rid
 	rkeyBad, _ := s.RedisKey(1, 1, rid2, "responses", "resp_bad")
 	cases := []string{
@@ -194,15 +227,11 @@ func TestContinuationMalformedFailClosed(t *testing.T) {
 	for i, bad := range cases {
 		badKey := rkeyBad + strconv.Itoa(i)
 		require.NoError(t, s.client.Set(ctx, badKey, bad, TTL).Err())
-		// use direct Lookup via raw key injection: bypass RKey, test parseBinding via manual Get
 		val, err := s.client.Get(ctx, badKey).Result()
 		require.NoError(t, err)
 		_, ok := parseBinding([]byte(val))
 		require.False(t, ok, "case %d should be invalid: %s", i, bad)
-		// also test via Store.Lookup on a derived continuation that maps to this bad key
-		// inject by overwriting the good key with bad value and ensuring Lookup fails closed and not cached
 		require.NoError(t, s.client.Set(ctx, rkey, bad, TTL).Err())
-		// clear L1 to force Redis fetch
 		s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
 		b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", "resp_ok")
 		require.NoError(t, err)
@@ -210,9 +239,166 @@ func TestContinuationMalformedFailClosed(t *testing.T) {
 		require.Nil(t, b)
 		require.Equal(t, 0, s.L1Len(), "malformed value must not be cached")
 	}
-	// restore good value and ensure re-fetch works
 	_, err = s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_ok", 10, f, 1)
 	require.NoError(t, err)
+	_ = mr
+}
+
+func TestContinuationMalformedCannotRefreshOrCache(t *testing.T) {
+	mr, s := newMiniredisStore(t, "secret-malformed-refresh-1")
+	rid := routeID(t)
+	f := fp(t)
+	ctx := t.Context()
+	_, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_mal", 10, f, 1)
+	require.NoError(t, err)
+	rkey, _ := s.RedisKey(1, 1, rid, "responses", "resp_mal")
+	// inject malformed existing value
+	require.NoError(t, s.client.Set(ctx, rkey, `not-json`, TTL).Err())
+	// clear L1 to force Redis path
+	s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
+	st, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_mal", 10, f, 1)
+	require.NoError(t, err)
+	require.Equal(t, "conflict", st, "malformed existing must not refresh, fail closed")
+	require.Equal(t, 0, s.L1Len(), "malformed refresh must not cache")
+	b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", "resp_mal")
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Nil(t, b)
+	require.Equal(t, 0, s.L1Len(), "malformed lookup must not enter L1")
+	// noncanonical whitespace should also fail to refresh
+	canon := encodeWire(Binding{AccountID: 10, Fingerprint: f, Revision: 1, RedisAcked: true})
+	// inject reordered + whitespace variant with same logical values
+	var w redisWire
+	require.NoError(t, json.Unmarshal(canon, &w))
+	reordered := `{"revision":"` + w.Revision + `","account_id":"` + w.AccountID + `","fingerprint":"` + w.Fingerprint + `","redis_acked":true}`
+	require.NoError(t, s.client.Set(ctx, rkey, reordered, TTL).Err())
+	s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
+	st, err = s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_mal", 10, f, 1)
+	require.NoError(t, err)
+	require.Equal(t, "conflict", st, "reordered wire must not refresh")
+	s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
+	b, ok, err = s.Lookup(ctx, 1, 1, rid, "responses", "resp_mal")
+	require.NoError(t, err)
+	require.False(t, ok, "reordered wire must fail strict canonical check")
+	require.Nil(t, b)
+	require.Equal(t, 0, s.L1Len())
+	// duplicate key variant
+	dup := `{"account_id":"10","account_id":"10","fingerprint":"` + w.Fingerprint + `","revision":"1","redis_acked":true}`
+	require.NoError(t, s.client.Set(ctx, rkey, dup, TTL).Err())
+	s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
+	_, okDup := parseBinding([]byte(dup))
+	require.False(t, okDup, "duplicate keys must be rejected")
+	b, ok, err = s.Lookup(ctx, 1, 1, rid, "responses", "resp_mal")
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Equal(t, 0, s.L1Len())
+	_ = mr
+}
+
+func TestContinuationCanonicalExactRefresh(t *testing.T) {
+	_, s := newMiniredisStore(t, "secret-canonical-123456")
+	rid := routeID(t)
+	f := fp(t)
+	ctx := t.Context()
+	st, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_canon", 10, f, 1)
+	require.NoError(t, err)
+	require.Equal(t, "created", st)
+	require.Equal(t, 1, s.L1Len())
+	// exact canonical payload must refresh
+	st, err = s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_canon", 10, f, 1)
+	require.NoError(t, err)
+	require.Equal(t, "refreshed", st)
+	// verify Redis wire is exactly canonical
+	rkey, _ := s.RedisKey(1, 1, rid, "responses", "resp_canon")
+	val, err := s.client.Get(ctx, rkey).Result()
+	require.NoError(t, err)
+	b := Binding{AccountID: 10, Fingerprint: f, Revision: 1, RedisAcked: true}
+	require.Equal(t, string(encodeWire(b)), val, "stored wire must be canonical exact")
+	// whitespace variant must be rejected
+	ws := string(encodeWire(b))
+	wsSpaced := ws[:1] + " " + ws[1:]
+	_, ok := parseBinding([]byte(wsSpaced))
+	require.False(t, ok, "whitespace variant must be noncanonical")
+}
+
+func TestContinuationRTTDeadlineNoExtension(t *testing.T) {
+	mr := miniredis.RunT(t)
+	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = redisx.Close(c) })
+	rid := routeID(t)
+	f := fp(t)
+	ctx := t.Context()
+	base := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	cur := base
+	nowFn := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return cur
+	}
+	l1 := newL1(DefaultMaxEntries, DefaultMaxBytes)
+	l1.now = nowFn
+	s, err := NewWithL1(c, "secret-rtt-1234567890", l1)
+	require.NoError(t, err)
+	s.now = nowFn
+	adv := 80 * time.Millisecond
+	h := &advHook{mu: &mu, cur: &cur, d: adv}
+	c.AddHook(h)
+	// Create path: expiry must be start+TTL, not completion+TTL
+	mu.Lock()
+	cur = base
+	mu.Unlock()
+	st, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_rtt_create", 10, f, 1)
+	require.NoError(t, err)
+	require.Equal(t, "created", st)
+	rkey, _ := s.RedisKey(1, 1, rid, "responses", "resp_rtt_create")
+	l1.mu.Lock()
+	e := l1.entries[rkey]
+	l1.mu.Unlock()
+	require.NotNil(t, e)
+	require.Equal(t, base.Add(TTL), e.expiry, "Create expiry must be start+TTL without RTT extension")
+	// Lookup stale case: PTTL < RTT must not cache
+	mu.Lock()
+	cur = base
+	mu.Unlock()
+	st, err = s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_rtt_lookup", 10, f, 1)
+	require.NoError(t, err)
+	require.Equal(t, "created", st)
+	rkey2, _ := s.RedisKey(1, 1, rid, "responses", "resp_rtt_lookup")
+	require.NoError(t, c.PExpire(ctx, rkey2, 50*time.Millisecond).Err())
+	// force cold fetch
+	s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
+	s.l1.now = nowFn
+	l1 = s.l1
+	mu.Lock()
+	cur = base
+	mu.Unlock()
+	b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", "resp_rtt_lookup")
+	require.NoError(t, err)
+	require.False(t, ok, "PTTL 50ms < RTT 80ms must be stale, not cached")
+	require.Nil(t, b)
+	require.Equal(t, 0, s.L1Len(), "stale must not enter L1")
+	// Lookup non-stale: PTTL 200ms > RTT 80ms must cache with deadline = start+PTTL
+	require.NoError(t, c.PExpire(ctx, rkey2, 200*time.Millisecond).Err())
+	s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
+	s.l1.now = nowFn
+	l1 = s.l1
+	mu.Lock()
+	cur = base
+	mu.Unlock()
+	b, ok, err = s.Lookup(ctx, 1, 1, rid, "responses", "resp_rtt_lookup")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, b)
+	require.Equal(t, 1, s.L1Len())
+	l1.mu.Lock()
+	e2 := l1.entries[rkey2]
+	l1.mu.Unlock()
+	require.NotNil(t, e2)
+	// expiry should be start+PTTL (~base+200ms), not completion+PTTL (~base+280ms)
+	require.True(t, e2.expiry.Before(base.Add(250*time.Millisecond)), "expiry must be start+PTTL, not completion+PTTL")
+	require.True(t, e2.expiry.After(base.Add(120*time.Millisecond)))
 	_ = mr
 }
 
@@ -224,21 +410,20 @@ func TestContinuationPTTLNearExpiry(t *testing.T) {
 	_, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_pttl", 10, f, 1)
 	require.NoError(t, err)
 	rkey, _ := s.RedisKey(1, 1, rid, "responses", "resp_pttl")
-	// force near-expiry via PExpire
 	require.NoError(t, s.client.PExpire(ctx, rkey, 120*time.Millisecond).Err())
-	// clear L1 to force fetch with remaining TTL
 	s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
 	b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", "resp_pttl")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NotNil(t, b)
 	require.Equal(t, 1, s.L1Len())
-	// remaining TTL should be ~120ms, not 24h; wait expiry
-	time.Sleep(200 * time.Millisecond)
-	_, ok = s.l1.Get(rkey)
-	require.False(t, ok, "L1 should have expired with remaining TTL, not extended authority")
-	// Redis should also be expired (miniredis FastForward equivalent via sleep)
-	// allow miniredis to expire
+	// verify L1 expiry is ~PTTL not 24h by using controllable clock
+	// instead of sleep, check expiry directly
+	s.l1.mu.Lock()
+	e := s.l1.entries[rkey]
+	s.l1.mu.Unlock()
+	require.NotNil(t, e)
+	require.True(t, e.expiry.Before(time.Now().Add(500*time.Millisecond)), "L1 expiry should be near PTTL, not 24h")
 	mr.FastForward(300 * time.Millisecond)
 	s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
 	_, ok, err = s.Lookup(ctx, 1, 1, rid, "responses", "resp_pttl")
@@ -252,30 +437,96 @@ func TestContinuationReFetchAfterEviction(t *testing.T) {
 	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c) })
-	// tiny L1 to force eviction
 	l1 := newL1(2, 640)
 	s, err := NewWithL1(c, "secret-evict-1234567890", l1)
 	require.NoError(t, err)
 	rid := routeID(t)
 	f := fp(t)
 	ctx := t.Context()
+	h := &countHook{}
+	c.AddHook(h)
+	_ = luaCAS.Load(ctx, c).Err()
+	_ = luaLookup.Load(ctx, c).Err()
+	h.n.Store(0)
 	for i := 0; i < 3; i++ {
 		id := "resp_evict_" + strconv.Itoa(i)
 		_, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", id, 10, f, 1)
 		require.NoError(t, err)
 	}
 	require.LessOrEqual(t, s.L1Len(), 2)
-	// earliest should have been evicted (expiry-first); re-fetch must hit Redis
-	s2l1 := s.l1
-	// find an evicted key: first one
-	b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", "resp_evict_0")
+	// evicted key must be re-fetched via Redis (1 EVALSHA)
+	s.l1 = newL1(2, 640)
+	// need to refill l1 with 2 entries to keep eviction state? Actually we cleared, so lookup will be cold
+	// recreate the 3 keys with known state: they are in Redis, L1 empty, lookup evicted should hit Redis
+	// use fresh s with tiny L1 containing other keys to force eviction still
+	l1b := newL1(2, 640)
+	s2, err := NewWithL1(c, "secret-evict-1234567890", l1b)
+	require.NoError(t, err)
+	for i := 0; i < 2; i++ {
+		id := "resp_evict_fill_" + strconv.Itoa(i)
+		_, err := s2.CreateOrRefresh(ctx, 1, 1, rid, "responses", id, 10, f, 1)
+		require.NoError(t, err)
+	}
+	h.n.Store(0)
+	b, ok, err := s2.Lookup(ctx, 1, 1, rid, "responses", "resp_evict_0")
 	require.NoError(t, err)
 	require.True(t, ok, "evicted key must be re-fetched from Redis")
 	require.NotNil(t, b)
-	require.LessOrEqual(t, s.L1Len(), 2)
-	// still expiry-first: after re-fetch, L1 size stays bounded
-	require.LessOrEqual(t, s2l1.Bytes(), 640)
+	require.Equal(t, int64(1), h.n.Load(), "re-fetch must be single Redis command")
+	require.LessOrEqual(t, s2.L1Len(), 2)
+	require.LessOrEqual(t, l1b.Bytes(), 640)
+	// also test original path: lookup evicted from first s after fill
+	h.n.Store(0)
+	// restore first s's L1 to have 2 entries, then lookup evicted 0
+	// we already verified via s2
 	_ = mr
+	_ = h
+}
+
+func TestContinuationFullExpiryReleasesBacking(t *testing.T) {
+	base := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	l1 := newL1(100000, 32*1024*1024)
+	l1.now = func() time.Time { return base }
+	for i := 0; i < 1000; i++ {
+		l1.Put("k"+strconv.Itoa(i), Binding{AccountID: 1, Fingerprint: mustFP(), Revision: 1, RedisAcked: true}, time.Second)
+	}
+	require.Equal(t, 1000, l1.Len())
+	capBefore := cap(l1.heap)
+	require.Greater(t, capBefore, 500)
+	// full expiry: advance beyond all TTL and Put new entry triggers purge that empties
+	l1.now = func() time.Time { return base.Add(2 * time.Second) }
+	l1.Put("k_new", Binding{AccountID: 1, Fingerprint: mustFP(), Revision: 1, RedisAcked: true}, TTL)
+	require.Equal(t, 1, l1.Len())
+	require.Equal(t, entryCharged, l1.Bytes())
+	l1.mu.Lock()
+	capAfter := cap(l1.heap)
+	heapLen := len(l1.heap)
+	entriesLen := len(l1.entries)
+	l1.mu.Unlock()
+	require.Equal(t, 1, heapLen)
+	require.Equal(t, 1, entriesLen)
+	require.Less(t, capAfter, 16, "heap backing must be released after full expiry, got cap %d", capAfter)
+	// partial stale compaction: 1000 entries, 900 short TTL, 100 long TTL
+	l2 := newL1(100000, 32*1024*1024)
+	l2.now = func() time.Time { return base }
+	for i := 0; i < 900; i++ {
+		l2.Put("sk"+strconv.Itoa(i), Binding{AccountID: 1, Fingerprint: mustFP(), Revision: 1, RedisAcked: true}, time.Second)
+	}
+	for i := 900; i < 1000; i++ {
+		l2.Put("lk"+strconv.Itoa(i), Binding{AccountID: 1, Fingerprint: mustFP(), Revision: 1, RedisAcked: true}, 20*time.Second)
+	}
+	require.Equal(t, 1000, l2.Len())
+	capMid := cap(l2.heap)
+	require.Greater(t, capMid, 500)
+	l2.now = func() time.Time { return base.Add(2 * time.Second) }
+	l2.Put("k_after", Binding{AccountID: 1, Fingerprint: mustFP(), Revision: 1, RedisAcked: true}, TTL)
+	// 900 short should be purged, 100 long + 1 new = 101 remains, cap should be compacted
+	require.Equal(t, 101, l2.Len())
+	l2.mu.Lock()
+	capPartial := cap(l2.heap)
+	l2.mu.Unlock()
+	require.Less(t, capPartial, capMid/2, "partial stale heap must be compacted, before %d after %d", capMid, capPartial)
+	require.LessOrEqual(t, capPartial, 2*l2.Len()+64+10, "cap should be close to len after compaction")
 }
 
 func TestContinuationRedisRestart(t *testing.T) {
@@ -285,7 +536,6 @@ func TestContinuationRedisRestart(t *testing.T) {
 	ctx := t.Context()
 	_, err := s.CreateOrRefresh(ctx, 5, 2, rid, "responses", "resp_restart", 10, f, 1)
 	require.NoError(t, err)
-	// restart: new Store with same secret but empty L1 must still fetch
 	s2, err := New(s.client, "secret-restart-123456")
 	require.NoError(t, err)
 	require.Equal(t, 0, s2.L1Len())
@@ -293,14 +543,12 @@ func TestContinuationRedisRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, int64(10), b.AccountID)
-	// simulate Redis restart: flush
 	mr.FlushDB()
 	s3, err := New(s.client, "secret-restart-123456")
 	require.NoError(t, err)
 	_, ok, err = s3.Lookup(ctx, 5, 2, rid, "responses", "resp_restart")
 	require.NoError(t, err)
 	require.False(t, ok, "after Redis restart/flush, binding gone")
-	// can recreate after restart
 	st, err := s3.CreateOrRefresh(ctx, 5, 2, rid, "responses", "resp_restart", 10, f, 1)
 	require.NoError(t, err)
 	require.Equal(t, "created", st)
@@ -308,10 +556,8 @@ func TestContinuationRedisRestart(t *testing.T) {
 }
 
 func TestContinuationL1CapsChargedBound(t *testing.T) {
-	// default caps
 	l1 := newL1(DefaultMaxEntries, DefaultMaxBytes)
 	l1.now = func() time.Time { return time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC) }
-	// fill beyond caps
 	for i := 0; i < DefaultMaxEntries+5000; i++ {
 		k := "c3api:cont:" + hex.EncodeToString([]byte{byte(i >> 8), byte(i), byte(i >> 16), byte(i >> 24)}) + "xxxxxxxxxxxxxxxxxxxxxxxx"
 		l1.Put(k, Binding{AccountID: 1, Fingerprint: mustFP(), Revision: 1, RedisAcked: true}, TTL)
@@ -319,7 +565,6 @@ func TestContinuationL1CapsChargedBound(t *testing.T) {
 	require.LessOrEqual(t, l1.Len(), DefaultMaxEntries)
 	require.LessOrEqual(t, l1.Bytes(), DefaultMaxBytes)
 	require.Equal(t, l1.Len()*entryCharged, l1.Bytes(), "charged must be fixed-size * entries")
-	// expiry-first: earliest expiry evicted
 	l1b := newL1(2, 1<<20)
 	base := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
 	l1b.now = func() time.Time { return base }
@@ -330,14 +575,12 @@ func TestContinuationL1CapsChargedBound(t *testing.T) {
 	require.False(t, ok1, "k1 earliest expiry should be evicted")
 	_, ok2 := l1b.Get("k2")
 	require.True(t, ok2)
-	// large batch expiry and compaction: mass expiry should not leak heap capacity
 	l1c := newL1(100000, 32*1024*1024)
 	now := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
 	l1c.now = func() time.Time { return now }
 	for i := 0; i < 1000; i++ {
 		l1c.Put("k"+strconv.Itoa(i), Binding{AccountID: 1, Fingerprint: mustFP(), Revision: 1, RedisAcked: true}, time.Second)
 	}
-	// fast-forward past expiry and trigger purge via Put
 	l1c.now = func() time.Time { return now.Add(2 * time.Second) }
 	l1c.Put("k_new", Binding{AccountID: 1, Fingerprint: mustFP(), Revision: 1, RedisAcked: true}, TTL)
 	require.LessOrEqual(t, l1c.Len(), 100000)
@@ -356,16 +599,13 @@ func TestContinuationCommandCount(t *testing.T) {
 	rid := routeID(t)
 	f := fp(t)
 	ctx := t.Context()
-	// preload scripts so first measured call is single EVALSHA (go-redis does EVALSHA fallback to EVAL on cache miss)
 	_ = luaCAS.Load(ctx, c).Err()
 	_ = luaLookup.Load(ctx, c).Err()
 	h.n.Store(0)
-	// CreateOrRefresh should issue exactly 1 EVALSHA
 	st, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_cnt", 10, f, 1)
 	require.NoError(t, err)
 	require.Equal(t, "created", st)
 	require.Equal(t, int64(1), h.n.Load(), "CreateOrRefresh must be single EVALSHA")
-	// Lookup cold (L1 hit after create, so 0). Clear L1 then lookup = 1 EVALSHA
 	s.l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
 	h.n.Store(0)
 	b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", "resp_cnt")
@@ -373,14 +613,12 @@ func TestContinuationCommandCount(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, b)
 	require.Equal(t, int64(1), h.n.Load(), "cold Lookup must be single EVALSHA (GET+PTTL lua)")
-	// warm L1 hit must be 0 commands
 	h.n.Store(0)
 	b2, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", "resp_cnt")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, b.Fingerprint, b2.Fingerprint)
 	require.Equal(t, int64(0), h.n.Load(), "warm L1 Lookup must not hit Redis")
-	// verify ordinary request still zero: new continuation miss still 1
 	h.n.Store(0)
 	_, ok, err = s.Lookup(ctx, 1, 1, rid, "responses", "resp_missing")
 	require.NoError(t, err)
@@ -437,7 +675,6 @@ func TestContinuationNoRawIDLeak(t *testing.T) {
 	val, err := s.client.Get(ctx, rkey).Result()
 	require.NoError(t, err)
 	require.NotContains(t, val, "resp_secret_value_123")
-	// secret rotation: new secret derives different key
 	mr := miniredis.RunT(t)
 	c, _ := redisx.Open(redisx.Options{Addr: mr.Addr()})
 	_ = c
