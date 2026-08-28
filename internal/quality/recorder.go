@@ -18,6 +18,8 @@ const (
 	EstimatedFlowMinuteBytes = 4096
 	q32Scale                 = 1 << 32
 	retiredBit               = uint64(1) << 63
+	closedBit                = uint64(1) << 63
+	inflightMask             = ^closedBit
 )
 
 type Key struct {
@@ -73,7 +75,7 @@ func toSqQ32(ttft int64) int64 {
 		ttft = 1
 	}
 	lg := math.Log(float64(ttft))
-	return int64(lg*lg*float64(q32Scale))
+	return int64(lg * lg * float64(q32Scale))
 }
 
 type Cell struct {
@@ -96,8 +98,15 @@ type Cell struct {
 }
 
 func (c *Cell) tryPin() bool {
-	c.state.Add(1)
-	return true
+	for {
+		s := c.state.Load()
+		if s&retiredBit != 0 {
+			return false
+		}
+		if c.state.CompareAndSwap(s, s+1) {
+			return true
+		}
+	}
 }
 
 func (c *Cell) retireCAS() bool {
@@ -125,63 +134,63 @@ func (c *Cell) isReclaimable() bool {
 }
 
 type QualityMinute struct {
-	minute        int64
-	key           Key
-	attempts      int64
-	successes     int64
-	err429        int64
-	err4xx        int64
-	err5xx        int64
-	errNetwork    int64
-	ttftCount     int64
-	sumQ32        int64
-	sumSqQ32      int64
-	hist          [10]int64
-	inputTokens   int64
-	outputTokens  int64
-	cacheRead     int64
-	cacheCreate   int64
-	calls         int64
-	images        int64
+	minute       int64
+	key          Key
+	attempts     int64
+	successes    int64
+	err429       int64
+	err4xx       int64
+	err5xx       int64
+	errNetwork   int64
+	ttftCount    int64
+	sumQ32       int64
+	sumSqQ32     int64
+	hist         [10]int64
+	inputTokens  int64
+	outputTokens int64
+	cacheRead    int64
+	cacheCreate  int64
+	calls        int64
+	images       int64
 }
 
 func NewQualityMinute(minute int64, key Key) *QualityMinute {
 	return &QualityMinute{minute: minute, key: key}
 }
-func (q *QualityMinute) Minute() int64 { return q.minute }
-func (q *QualityMinute) Key() Key      { return q.key }
-func (q *QualityMinute) Attempts() int64 { return q.attempts }
-func (q *QualityMinute) SetAttempts(v int64) { q.attempts = v }
-func (q *QualityMinute) Successes() int64 { return q.successes }
-func (q *QualityMinute) SetSuccesses(v int64) { q.successes = v }
-func (q *QualityMinute) Err429() int64 { return q.err429 }
-func (q *QualityMinute) SetErr429(v int64) { q.err429 = v }
-func (q *QualityMinute) Err4xx() int64 { return q.err4xx }
-func (q *QualityMinute) SetErr4xx(v int64) { q.err4xx = v }
-func (q *QualityMinute) Err5xx() int64 { return q.err5xx }
-func (q *QualityMinute) SetErr5xx(v int64) { q.err5xx = v }
-func (q *QualityMinute) ErrNetwork() int64 { return q.errNetwork }
-func (q *QualityMinute) SetErrNetwork(v int64) { q.errNetwork = v }
-func (q *QualityMinute) TTFTCount() int64 { return q.ttftCount }
-func (q *QualityMinute) SetTTFTCount(v int64) { q.ttftCount = v }
-func (q *QualityMinute) SumQ32() int64 { return q.sumQ32 }
-func (q *QualityMinute) SetSumQ32(v int64) { q.sumQ32 = v }
-func (q *QualityMinute) SumSqQ32() int64 { return q.sumSqQ32 }
-func (q *QualityMinute) SetSumSqQ32(v int64) { q.sumSqQ32 = v }
-func (q *QualityMinute) Hist() [10]int64 { return q.hist }
-func (q *QualityMinute) SetHist(h [10]int64) { q.hist = h }
-func (q *QualityMinute) InputTokens() int64 { return q.inputTokens }
-func (q *QualityMinute) SetInputTokens(v int64) { q.inputTokens = v }
-func (q *QualityMinute) OutputTokens() int64 { return q.outputTokens }
-func (q *QualityMinute) SetOutputTokens(v int64) { q.outputTokens = v }
-func (q *QualityMinute) CacheReadTokens() int64 { return q.cacheRead }
-func (q *QualityMinute) SetCacheReadTokens(v int64) { q.cacheRead = v }
-func (q *QualityMinute) CacheCreateTokens() int64 { return q.cacheCreate }
+func (q *QualityMinute) Minute() int64                { return q.minute }
+func (q *QualityMinute) Key() Key                     { return q.key }
+func (q *QualityMinute) Attempts() int64              { return q.attempts }
+func (q *QualityMinute) SetAttempts(v int64)          { q.attempts = v }
+func (q *QualityMinute) Successes() int64             { return q.successes }
+func (q *QualityMinute) SetSuccesses(v int64)         { q.successes = v }
+func (q *QualityMinute) Err429() int64                { return q.err429 }
+func (q *QualityMinute) SetErr429(v int64)            { q.err429 = v }
+func (q *QualityMinute) Err4xx() int64                { return q.err4xx }
+func (q *QualityMinute) SetErr4xx(v int64)            { q.err4xx = v }
+func (q *QualityMinute) Err5xx() int64                { return q.err5xx }
+func (q *QualityMinute) SetErr5xx(v int64)            { q.err5xx = v }
+func (q *QualityMinute) ErrNetwork() int64            { return q.errNetwork }
+func (q *QualityMinute) SetErrNetwork(v int64)        { q.errNetwork = v }
+func (q *QualityMinute) TTFTCount() int64             { return q.ttftCount }
+func (q *QualityMinute) SetTTFTCount(v int64)         { q.ttftCount = v }
+func (q *QualityMinute) SumQ32() int64                { return q.sumQ32 }
+func (q *QualityMinute) SetSumQ32(v int64)            { q.sumQ32 = v }
+func (q *QualityMinute) SumSqQ32() int64              { return q.sumSqQ32 }
+func (q *QualityMinute) SetSumSqQ32(v int64)          { q.sumSqQ32 = v }
+func (q *QualityMinute) Hist() [10]int64              { return q.hist }
+func (q *QualityMinute) SetHist(h [10]int64)          { q.hist = h }
+func (q *QualityMinute) InputTokens() int64           { return q.inputTokens }
+func (q *QualityMinute) SetInputTokens(v int64)       { q.inputTokens = v }
+func (q *QualityMinute) OutputTokens() int64          { return q.outputTokens }
+func (q *QualityMinute) SetOutputTokens(v int64)      { q.outputTokens = v }
+func (q *QualityMinute) CacheReadTokens() int64       { return q.cacheRead }
+func (q *QualityMinute) SetCacheReadTokens(v int64)   { q.cacheRead = v }
+func (q *QualityMinute) CacheCreateTokens() int64     { return q.cacheCreate }
 func (q *QualityMinute) SetCacheCreateTokens(v int64) { q.cacheCreate = v }
-func (q *QualityMinute) Calls() int64 { return q.calls }
-func (q *QualityMinute) SetCalls(v int64) { q.calls = v }
-func (q *QualityMinute) Images() int64 { return q.images }
-func (q *QualityMinute) SetImages(v int64) { q.images = v }
+func (q *QualityMinute) Calls() int64                 { return q.calls }
+func (q *QualityMinute) SetCalls(v int64)             { q.calls = v }
+func (q *QualityMinute) Images() int64                { return q.images }
+func (q *QualityMinute) SetImages(v int64)            { q.images = v }
 
 func (q *QualityMinute) Clone() *QualityMinute {
 	cp := *q
@@ -197,14 +206,32 @@ type FlowMinute struct {
 func NewFlowMinute(minute int64, edges [8]int64) *FlowMinute {
 	return &FlowMinute{minute: minute, edges: edges}
 }
-func (f *FlowMinute) Minute() int64              { return f.minute }
-func (f *FlowMinute) Edge(i int) int64           { if i < 0 || i >= 8 { return 0 }; return f.edges[i] }
-func (f *FlowMinute) SetEdge(i int, v int64)     { if i >= 0 && i < 8 { f.edges[i] = v } }
-func (f *FlowMinute) Count(i int) int64          { if i < 0 || i >= 8 { return 0 }; return f.counts[i] }
-func (f *FlowMinute) SetCount(i int, v int64)    { if i >= 0 && i < 8 { f.counts[i] = v } }
-func (f *FlowMinute) Edges() [8]int64            { return f.edges }
-func (f *FlowMinute) SetEdges(e [8]int64)        { f.edges = e }
-func (f *FlowMinute) Counts() [8]int64           { return f.counts }
+func (f *FlowMinute) Minute() int64 { return f.minute }
+func (f *FlowMinute) Edge(i int) int64 {
+	if i < 0 || i >= 8 {
+		return 0
+	}
+	return f.edges[i]
+}
+func (f *FlowMinute) SetEdge(i int, v int64) {
+	if i >= 0 && i < 8 {
+		f.edges[i] = v
+	}
+}
+func (f *FlowMinute) Count(i int) int64 {
+	if i < 0 || i >= 8 {
+		return 0
+	}
+	return f.counts[i]
+}
+func (f *FlowMinute) SetCount(i int, v int64) {
+	if i >= 0 && i < 8 {
+		f.counts[i] = v
+	}
+}
+func (f *FlowMinute) Edges() [8]int64     { return f.edges }
+func (f *FlowMinute) SetEdges(e [8]int64) { f.edges = e }
+func (f *FlowMinute) Counts() [8]int64    { return f.counts }
 func (f *FlowMinute) Clone() *FlowMinute {
 	cp := *f
 	return &cp
@@ -237,10 +264,9 @@ type Recorder struct {
 	retiredCap           int
 	pendingCapBytes      int64
 	minuteCap            int
-	closed               atomic.Bool
+	admission            atomic.Uint64
+	zeroCh               chan struct{}
 	finalSnapshot        atomic.Pointer[Snapshot]
-	globalInflight       atomic.Int64
-	closeCh              chan struct{}
 }
 
 func NewRecorder(effectiveMaxInflight int64) (*Recorder, error) {
@@ -262,14 +288,48 @@ func NewRecorder(effectiveMaxInflight int64) (*Recorder, error) {
 
 func (r *Recorder) EffectiveMaxInflight() int64 { return r.effectiveMaxInflight }
 
+func (r *Recorder) isClosed() bool { return r.admission.Load()&closedBit != 0 }
+
+func (r *Recorder) tryIncAdmission() bool {
+	for {
+		a := r.admission.Load()
+		if a&closedBit != 0 {
+			return false
+		}
+		inflight := a & inflightMask
+		if int64(inflight) >= r.effectiveMaxInflight {
+			return false
+		}
+		if r.admission.CompareAndSwap(a, a+1) {
+			return true
+		}
+	}
+}
+
+func (r *Recorder) decAdmissionAndMaybeSignal() {
+	newA := r.admission.Add(^uint64(0))
+	if newA&closedBit != 0 && newA&inflightMask == 0 {
+		r.mu.Lock()
+		if r.zeroCh != nil {
+			close(r.zeroCh)
+			r.zeroCh = nil
+		}
+		if r.finalSnapshot.Load() == nil {
+			snap := r.snapshotLocked()
+			r.finalSnapshot.Store(snap)
+		}
+		r.mu.Unlock()
+	}
+}
+
 func (r *Recorder) GetOrCreateCell(fp [32]byte, qc [32]byte) *Cell {
-	if r.closed.Load() {
+	if r.isClosed() {
 		return nil
 	}
 	key := Key{FP: fp, QC: qc}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed.Load() {
+	if r.isClosed() {
 		return nil
 	}
 	if c, ok := r.active[key]; ok {
@@ -308,7 +368,7 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 	if cell == nil || out == nil {
 		return false
 	}
-	if r.closed.Load() {
+	if r.isClosed() {
 		out.cell = nil
 		out.recorder = nil
 		atomic.StoreUint32(&out.done, 0)
@@ -320,13 +380,19 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 		atomic.StoreUint32(&out.done, 0)
 		return false
 	}
-	if !cell.tryPin() {
+	if !r.tryIncAdmission() {
 		out.cell = nil
 		out.recorder = nil
 		atomic.StoreUint32(&out.done, 0)
 		return false
 	}
-	r.globalInflight.Add(1)
+	if !cell.tryPin() {
+		r.decAdmissionAndMaybeSignal()
+		out.cell = nil
+		out.recorder = nil
+		atomic.StoreUint32(&out.done, 0)
+		return false
+	}
 	out.cell = cell
 	out.recorder = r
 	atomic.StoreUint32(&out.done, 0)
@@ -334,22 +400,36 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 }
 
 func (r *Recorder) NewAttemptContext(cell *Cell) *AttemptContext {
-	if cell == nil || r.closed.Load() || r.finalSnapshot.Load() != nil {
+	if cell == nil || r.isClosed() || r.finalSnapshot.Load() != nil {
+		return &AttemptContext{recorder: r}
+	}
+	if !r.tryIncAdmission() {
 		return &AttemptContext{recorder: r}
 	}
 	if !cell.tryPin() {
+		r.decAdmissionAndMaybeSignal()
 		return &AttemptContext{recorder: r}
 	}
-	r.globalInflight.Add(1)
 	return &AttemptContext{cell: cell, recorder: r}
 }
 
 func (r *Recorder) Begin(fp [32]byte, qc [32]byte) *AttemptContext {
-	cell := r.GetOrCreateCell(fp, qc)
-	if cell == nil {
+	if r.isClosed() || r.finalSnapshot.Load() != nil {
 		return &AttemptContext{recorder: r}
 	}
-	return r.NewAttemptContext(cell)
+	if !r.tryIncAdmission() {
+		return &AttemptContext{recorder: r}
+	}
+	cell := r.GetOrCreateCell(fp, qc)
+	if cell == nil {
+		r.decAdmissionAndMaybeSignal()
+		return &AttemptContext{recorder: r}
+	}
+	if !cell.tryPin() {
+		r.decAdmissionAndMaybeSignal()
+		return &AttemptContext{recorder: r}
+	}
+	return &AttemptContext{cell: cell, recorder: r}
 }
 
 func (r *Recorder) distinctMinuteCountLocked() int {
@@ -418,12 +498,12 @@ func (r *Recorder) EnqueueQualityMinute(qm *QualityMinute) error {
 	if qm == nil {
 		return errors.New("nil quality minute")
 	}
-	if r.closed.Load() || r.finalSnapshot.Load() != nil {
+	if r.isClosed() || r.finalSnapshot.Load() != nil {
 		return ErrCapacity
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed.Load() || r.finalSnapshot.Load() != nil {
+	if r.isClosed() || r.finalSnapshot.Load() != nil {
 		return ErrCapacity
 	}
 	minute := qm.minute
@@ -466,12 +546,12 @@ func (r *Recorder) EnqueueFlowMinute(fm *FlowMinute) error {
 	if fm == nil {
 		return errors.New("nil flow minute")
 	}
-	if r.closed.Load() || r.finalSnapshot.Load() != nil {
+	if r.isClosed() || r.finalSnapshot.Load() != nil {
 		return ErrCapacity
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed.Load() || r.finalSnapshot.Load() != nil {
+	if r.isClosed() || r.finalSnapshot.Load() != nil {
 		return ErrCapacity
 	}
 	minute := fm.minute
@@ -564,7 +644,7 @@ func (r *Recorder) Retire(fp [32]byte, qc [32]byte) {
 	key := Key{FP: fp, QC: qc}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed.Load() || r.finalSnapshot.Load() != nil {
+	if r.isClosed() || r.finalSnapshot.Load() != nil {
 		return
 	}
 	cell, ok := r.active[key]
@@ -650,7 +730,7 @@ func (r *Recorder) PinnedGauge() int64 {
 	}
 	return int64(n)
 }
-func (r *Recorder) GlobalInflight() int64 { return r.globalInflight.Load() }
+func (r *Recorder) GlobalInflight() int64 { return int64(r.admission.Load() & inflightMask) }
 
 func (r *Recorder) CellStats(fp [32]byte, qc [32]byte) (attempts, successes, ttftCount, tokens, calls, images int64, sumQ32, sumSq int64, hist [10]int64, errClasses [4]int64, ok bool) {
 	key := Key{FP: fp, QC: qc}
@@ -759,7 +839,19 @@ func (r *Recorder) ExportSnapshot() (map[int64]map[Key]*QualityMinute, map[int64
 
 func (r *Recorder) Snapshot() *Snapshot {
 	if snap := r.finalSnapshot.Load(); snap != nil {
-		return snap
+		qCopy := make(map[int64]map[Key]*QualityMinute)
+		for m, rows := range snap.Quality {
+			cp := make(map[Key]*QualityMinute)
+			for k, v := range rows {
+				cp[k] = v.Clone()
+			}
+			qCopy[m] = cp
+		}
+		fCopy := make(map[int64]*FlowMinute)
+		for m, v := range snap.Flow {
+			fCopy[m] = v.Clone()
+		}
+		return &Snapshot{Quality: qCopy, Flow: fCopy}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -767,44 +859,93 @@ func (r *Recorder) Snapshot() *Snapshot {
 }
 
 func (r *Recorder) Close() error {
-	if r.closed.Swap(true) {
+	for {
+		a := r.admission.Load()
+		if a&closedBit != 0 {
+			break
+		}
+		if r.admission.CompareAndSwap(a, a|closedBit) {
+			break
+		}
+	}
+	if r.finalSnapshot.Load() != nil {
 		return nil
 	}
 	r.mu.Lock()
-	if r.globalInflight.Load() == 0 {
-		snap := r.snapshotLocked()
-		r.finalSnapshot.Store(snap)
+	if r.admission.Load()&inflightMask == 0 {
+		if r.finalSnapshot.Load() == nil {
+			snap := r.snapshotLocked()
+			r.finalSnapshot.Store(snap)
+		}
+		if r.zeroCh != nil {
+			close(r.zeroCh)
+			r.zeroCh = nil
+		}
 		r.mu.Unlock()
 		return nil
 	}
-	r.closeCh = make(chan struct{})
+	if r.zeroCh == nil {
+		r.zeroCh = make(chan struct{})
+	}
+	if r.admission.Load()&inflightMask == 0 {
+		if r.finalSnapshot.Load() == nil {
+			snap := r.snapshotLocked()
+			r.finalSnapshot.Store(snap)
+		}
+		ch := r.zeroCh
+		close(ch)
+		r.zeroCh = nil
+		r.mu.Unlock()
+		return nil
+	}
 	r.mu.Unlock()
 	return nil
 }
 
 func (r *Recorder) CloseWithContext(ctx context.Context) error {
-	if r.closed.Swap(true) {
+	for {
+		a := r.admission.Load()
+		if a&closedBit != 0 {
+			break
+		}
+		if r.admission.CompareAndSwap(a, a|closedBit) {
+			break
+		}
+	}
+	if r.finalSnapshot.Load() != nil {
 		return nil
 	}
 	r.mu.Lock()
-	if r.globalInflight.Load() == 0 {
-		snap := r.snapshotLocked()
-		r.finalSnapshot.Store(snap)
+	if r.admission.Load()&inflightMask == 0 {
+		if r.finalSnapshot.Load() == nil {
+			snap := r.snapshotLocked()
+			r.finalSnapshot.Store(snap)
+		}
+		if r.zeroCh != nil {
+			close(r.zeroCh)
+			r.zeroCh = nil
+		}
 		r.mu.Unlock()
 		return nil
 	}
-	r.closeCh = make(chan struct{})
-	ch := r.closeCh
+	if r.zeroCh == nil {
+		r.zeroCh = make(chan struct{})
+	}
+	ch := r.zeroCh
+	if r.admission.Load()&inflightMask == 0 {
+		if r.finalSnapshot.Load() == nil {
+			snap := r.snapshotLocked()
+			r.finalSnapshot.Store(snap)
+		}
+		close(ch)
+		r.zeroCh = nil
+		r.mu.Unlock()
+		return nil
+	}
 	r.mu.Unlock()
 	select {
 	case <-ch:
 	case <-ctx.Done():
-		r.mu.Lock()
-		if r.finalSnapshot.Load() == nil && r.globalInflight.Load() == 0 {
-			snap := r.snapshotLocked()
-			r.finalSnapshot.Store(snap)
-		}
-		r.mu.Unlock()
 		return ctx.Err()
 	}
 	r.mu.Lock()
@@ -835,12 +976,12 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 	r := a.recorder
 	if obs.IsCancel || obs.IsLocal || obs.IsReservation {
 		c.state.Add(^uint64(0))
-		r.globalInflight.Add(-1)
-		if r.closed.Load() && r.globalInflight.Load() == 0 {
+		newA := r.admission.Add(^uint64(0))
+		if newA&closedBit != 0 && newA&inflightMask == 0 {
 			r.mu.Lock()
-			if r.closeCh != nil {
-				close(r.closeCh)
-				r.closeCh = nil
+			if r.zeroCh != nil {
+				close(r.zeroCh)
+				r.zeroCh = nil
 			}
 			if r.finalSnapshot.Load() == nil {
 				snap := r.snapshotLocked()
@@ -899,12 +1040,12 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 		c.images.Add(obs.Images)
 	}
 	c.state.Add(^uint64(0))
-	r.globalInflight.Add(-1)
-	if r.closed.Load() && r.globalInflight.Load() == 0 {
+	newA := r.admission.Add(^uint64(0))
+	if newA&closedBit != 0 && newA&inflightMask == 0 {
 		r.mu.Lock()
-		if r.closeCh != nil {
-			close(r.closeCh)
-			r.closeCh = nil
+		if r.zeroCh != nil {
+			close(r.zeroCh)
+			r.zeroCh = nil
 		}
 		if r.finalSnapshot.Load() == nil {
 			snap := r.snapshotLocked()
@@ -941,12 +1082,12 @@ func (a *AttemptContext) Cancel() {
 		return
 	}
 	a.cell.state.Add(^uint64(0))
-	a.recorder.globalInflight.Add(-1)
-	if a.recorder.closed.Load() && a.recorder.globalInflight.Load() == 0 {
+	newA := a.recorder.admission.Add(^uint64(0))
+	if newA&closedBit != 0 && newA&inflightMask == 0 {
 		a.recorder.mu.Lock()
-		if a.recorder.closeCh != nil {
-			close(a.recorder.closeCh)
-			a.recorder.closeCh = nil
+		if a.recorder.zeroCh != nil {
+			close(a.recorder.zeroCh)
+			a.recorder.zeroCh = nil
 		}
 		if a.recorder.finalSnapshot.Load() == nil {
 			snap := a.recorder.snapshotLocked()
