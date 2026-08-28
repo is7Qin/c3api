@@ -188,7 +188,7 @@ func TestRespImageCountZeroAlloc(t *testing.T) {
 func fakeResponsesImages(t *testing.T, output string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)
 			return
 		}
@@ -410,7 +410,7 @@ func TestProxyResponsesImageDetectStream(t *testing.T) {
 func fakeResponsesWSImages(t *testing.T, output string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)
 			return
 		}
@@ -500,7 +500,7 @@ func TestResponsesWSCodexTypeZeroCount(t *testing.T) {
 	// 独立上游；completed 帧 output 含 function_call 工具 item（无图片 item——
 	// V1-V3 实证 chatgpt.com 上游图片生成 = 客户端本地执行）。
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)
 			return
 		}

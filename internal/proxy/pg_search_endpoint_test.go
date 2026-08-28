@@ -73,7 +73,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 
 	// 落库数据：codex-pat 模板 + 组 + 账号 + account_ext（PAT）
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
-		Name: "codex-tpl", BaseURL: up.URL,
+		Name: "codex-tpl", BaseURL: "",
 		CredentialType:   credential.TypeCodexPAT,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
 		Models:           []string{"gpt-4o"},
@@ -115,6 +115,8 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
+	codex := sdkbridge.NewCodex(nil)
+	codex.SetTransport(newProxyOfficialRewriteTransport(up.URL))
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
@@ -124,7 +126,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{}},
 		Balances: bal,
 	}, nil)
-	p.SetCodex(sdkbridge.NewCodex(nil))
+	p.SetCodex(codex)
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 
@@ -135,7 +137,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(b))
 	require.Equal(t, searchRespRaw, string(b), "opaque 响应原样透传（真实凭据 e2e）")
 	require.Equal(t, 1, upc.callsN())
-	require.Equal(t, "/v1/alpha/search", upc.path(0), "SDK Search 派生打 /alpha/search 非 /responses")
+	require.Equal(t, "/backend-api/codex/alpha/search", upc.path(0), "SDK Search 官方默认")
 	require.Equal(t, "Bearer pat-pg-s", upc.auth(0), "PAT 凭据落库 → 派生直供适配层")
 	require.Equal(t, searchReqBody, string(upc.body(0)), "请求体原样送达上游")
 

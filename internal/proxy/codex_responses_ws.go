@@ -58,9 +58,7 @@ const codexAuthFailedMsg = "codex authorization failed"
 
 // dialCodexWS 组装一次 codex WS Dial（T4 §2——凭当前请求选中账号 cred）：
 //   - 凭据线：sel.Ext 快照 → AccountCredential 派生（relay 线；热路径零 DB）
-//   - WithBaseURL：**完整 responses 端点**（P3-1——SDK client.go:137-144 覆盖
-//     值按完整端点直用，传裸根打 /v1 静默 404；复用 aiclient fullURLOf 的 URL
-//     组装/缓存——ResponsesWSURL 薄封装，零新代码）
+//   - 端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses）
 //   - 伪装四元组（W1 持久化）：WithSession（握手头 + 帧内 metadata session/
 //     thread/window）+ WithCodexMeta（帧内 x-codex-installation-id——真实客户
 //     端该头不进握手头，仅帧 metadata）
@@ -81,18 +79,12 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 		return nil, errCodexExtMissing
 	}
 	cred := domain.CredentialFromExt(sel.Ext)
-	full, err := p.clients.ResponsesWSURL(sel.TemplateID, sel.BaseURL)
-	if err != nil {
-		return nil, err
-	}
-	cred.BaseURL = full
 	sess, meta := codexIdentityFromExt(sel.Ext)
 	opts := []codexsdk.Option{
 		codexsdk.WithPayloadFiltering(false), // P2-A：帧透传 1:1（白名单过滤剥合法键）
 		codexsdk.WithPingInterval(0),         // 心跳单源：编排层 30s+10s 单一所有者
 		codexsdk.WithSession(sess),           // 伪装：握手头 + 帧内 session/thread/window
 		codexsdk.WithCodexMeta(meta),         // 伪装：帧内 x-codex-installation-id 等
-		// WithBaseURL 由适配层按 cred.BaseURL 应用（与 HTTP 面 clientFor 同款）
 	}
 	for k, vs := range codexWSPassthroughHeaders(r.Header) {
 		for _, v := range vs {

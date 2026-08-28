@@ -28,6 +28,9 @@ func (s *Service) CreateAccount(ctx context.Context, a *domain.Account) (*domain
 	if a.UpstreamKey == "" && tpl.CredentialType != credential.TypeCodexOAuth && tpl.CredentialType != credential.TypeCodexPAT {
 		return nil, ErrInvalidInput
 	}
+	if isCodexCredentialType(tpl.CredentialType) && a.BaseURL != nil && *a.BaseURL != "" {
+		return nil, ErrInvalidInput
+	}
 	if a.GroupIDs != nil {
 		if err := s.checkGroupsExist(ctx, *a.GroupIDs); err != nil {
 			return nil, err // 组缺 id → 404
@@ -35,7 +38,7 @@ func (s *Service) CreateAccount(ctx context.Context, a *domain.Account) (*domain
 	}
 	created, err := s.store.CreateAccount(ctx, a)
 	if err != nil {
-		return nil, err
+		return nil, mapRepoErr(err)
 	}
 	if a.GroupIDs != nil {
 		// 创建才有 id；替换语义（含空数组 = 清空，对新建账号即无分组）。
@@ -68,16 +71,15 @@ func (s *Service) UpdateAccount(ctx context.Context, a *domain.Account) (*domain
 	if err := validateAccount(a); err != nil {
 		return nil, err
 	}
-	// upstream_key 清空仅 codex 类型允许（凭据走 account_ext）；只在必要时查
-	// 模板（非空 key 走原路径，零行为变化）。
-	if a.UpstreamKey == "" {
-		tpl, err := s.store.GetTemplate(ctx, a.TemplateID)
-		if err != nil {
-			return nil, mapRepoErr(err)
-		}
-		if tpl.CredentialType != credential.TypeCodexOAuth && tpl.CredentialType != credential.TypeCodexPAT {
-			return nil, ErrInvalidInput
-		}
+	tpl, err := s.store.GetTemplate(ctx, a.TemplateID)
+	if err != nil {
+		return nil, mapRepoErr(err)
+	}
+	if a.UpstreamKey == "" && !isCodexCredentialType(tpl.CredentialType) {
+		return nil, ErrInvalidInput
+	}
+	if isCodexCredentialType(tpl.CredentialType) && a.BaseURL != nil && *a.BaseURL != "" {
+		return nil, ErrInvalidInput
 	}
 	if a.GroupIDs != nil {
 		if err := s.checkGroupsExist(ctx, *a.GroupIDs); err != nil {
@@ -114,7 +116,7 @@ func (s *Service) UpdateAccount(ctx context.Context, a *domain.Account) (*domain
 	}
 	updated, err := s.store.UpdateAccount(ctx, a, cooldownUntil)
 	if err != nil {
-		return nil, err
+		return nil, mapRepoErr(err)
 	}
 	if recovered && s.log != nil {
 		// T5 §4 恢复操作审计（日志面）：status→active 隐含清 failed_at +

@@ -13,19 +13,14 @@ import (
 // AccountCredential 网关侧凭据传递形态（SDK 接入契约，T1 §4）：每次调用必传
 // （调度器按请求选账号）。从 AccountExt 派生（CredentialFromExt）——codex-oauth
 // → OAuthToken/OAuthRefreshToken/OAuthExpiresAt；codex-pat → PATKey。适配层
-// （T2 起）把 cred 转成 SDK Auth 账号级缓存键：同账号复用、失效剔除。
-//
-// BaseURL（T2 扩展——调用方路由按 Selection.BaseURL 填充，不参与
-// CredentialFromExt 派生——AccountExt 无模板面）：模板 base 派生后的完整
-// generations 端点（空 = SDK 内置 DefaultImagesURL）。缓存重建判定维度之一
-// （模板 base 变更 → 重建——与 aiclient InvalidateAll 同语义）。
+// （T2 起）把 cred 转成 SDK Auth 账号级缓存键：同账号复用、失效剔除。Codex
+// 数据面 URL 归 SDK 官方默认所有，网关不再派生或传递 BaseURL。
 type AccountCredential struct {
 	AccountID         int64
 	OAuthToken        string
 	OAuthRefreshToken string
 	OAuthExpiresAt    *time.Time
 	PATKey            string
-	BaseURL           string
 }
 
 // CredentialFromExt 从账号扩展行派生每次调用必传的凭据（投影语义：按类型取

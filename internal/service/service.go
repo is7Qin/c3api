@@ -437,6 +437,9 @@ func validateTemplate(t *domain.Template) error {
 	if !t.CredentialType.Valid() {
 		return ErrInvalidInput
 	}
+	if isCodexCredentialType(t.CredentialType) && t.BaseURL != "" {
+		return ErrInvalidInput
+	}
 	if t.Name == "" {
 		return ErrInvalidInput
 	}
@@ -498,6 +501,15 @@ func validateAccount(a *domain.Account) error {
 	}
 	if a.MaxConcurrency < 1 {
 		a.MaxConcurrency = 8
+	}
+	if a.Status == "" {
+		a.Status = domain.StatusActive
+	} else {
+		switch a.Status {
+		case domain.StatusActive, domain.StatusUnhealthy, domain.Status429, domain.StatusDisabled:
+		default:
+			return ErrInvalidInput
+		}
 	}
 	// 账号级 base_url 提供时复用 validateBaseURL（对齐模板面先例；nil/空串
 	// 跳过——create 路径空串已归一 nil，此处双保险）。
@@ -565,7 +577,7 @@ func validateTemplatePatch(p repository.TemplatePatch) error {
 	if p.Name != nil && *p.Name == "" {
 		return ErrInvalidInput
 	}
-	if p.BaseURL != nil {
+	if p.BaseURL != nil && *p.BaseURL != "" {
 		if err := validateBaseURL(*p.BaseURL); err != nil {
 			return err
 		}
@@ -645,6 +657,8 @@ func validateAccountPatch(p repository.AccountPatch) error {
 // （保留冲突详情，409 响应带 "name=\"x\""）。其他错误原样返回。
 func mapRepoErr(err error) error {
 	switch {
+	case errors.Is(err, repository.ErrInvalidInput):
+		return ErrInvalidInput
 	case errors.Is(err, repository.ErrNotFound):
 		detail := strings.TrimPrefix(err.Error(), repository.ErrNotFound.Error()+": ")
 		return fmt.Errorf("%w: %s", ErrNotFound, detail)
@@ -653,4 +667,8 @@ func mapRepoErr(err error) error {
 		return fmt.Errorf("%w: %s", ErrConflict, detail)
 	}
 	return err
+}
+
+func isCodexCredentialType(typ credential.Type) bool {
+	return typ == credential.TypeCodexOAuth || typ == credential.TypeCodexPAT
 }

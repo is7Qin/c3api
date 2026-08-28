@@ -102,7 +102,7 @@ func TestCodexRotationWritebackPersists(t *testing.T) {
 	a.SetRotationDeps(RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	cred.BaseURL = up.URL + "/images/generations"
+	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	expires := cred.OAuthExpiresAt
 
 	img, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
@@ -143,7 +143,7 @@ func TestCodexRotationWritebackMissingRefreshKeepsOldRT(t *testing.T) {
 	a.SetRotationDeps(RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	cred.BaseURL = up.URL + "/images/generations"
+	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
@@ -204,7 +204,7 @@ func TestCodexRotationWritebackSingleFlight(t *testing.T) {
 	a.SetRotationDeps(RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	cred.BaseURL = up.URL + "/images/generations"
+	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 
 	const n = 8
 	start := make(chan struct{})
@@ -244,7 +244,7 @@ func TestCodexRotationWritebackFailureD4Fatal(t *testing.T) {
 	a.SetRotationDeps(RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	cred.BaseURL = up.URL + "/images/generations"
+	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 
 	// R1：refresh run1 回调失败（fail#1，pending，本次 at 放行）→ 401 重试
 	// 防重试风暴不再 refresh → HTTPError 401（回写失败不阻塞请求——D4 语义）
@@ -279,7 +279,7 @@ func TestCodexRotationWritebackUnwired(t *testing.T) {
 	a := NewCodex(nil) // 未装配 rotate
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	cred.BaseURL = up.URL + "/images/generations"
+	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err, "未装配回写面不阻断轮转")
 	require.Equal(t, "Bearer at-new", up.auth(1))
@@ -295,7 +295,7 @@ func TestRotationCallExpiryNilPreserved(t *testing.T) {
 	a.SetRotationDeps(RotationDeps{Store: store})
 
 	cred := &domain.AccountCredential{AccountID: 7, OAuthToken: "at-old", OAuthRefreshToken: "rt-1"}
-	cred.BaseURL = up.URL + "/images/generations"
+	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
 	calls := store.snapshot()
@@ -318,7 +318,7 @@ func TestCodexFatalAuthPoisonAndDedup(t *testing.T) {
 	a := NewCodex(handler.add)
 
 	cred := oauthCred(7, "at-1", "rt-1")
-	cred.BaseURL = up.URL + "/images/generations"
+	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
 

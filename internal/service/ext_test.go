@@ -25,8 +25,12 @@ func seedExtTemplate(t *testing.T, svc *Service, name string, ct credential.Type
 	if len(formats) == 0 {
 		formats = []domain.RequestFormat{domain.FormatOpenAIChat}
 	}
+	baseURL := "https://u"
+	if ct == credential.TypeCodexOAuth || ct == credential.TypeCodexPAT {
+		baseURL = ""
+	}
 	tpl, err := svc.CreateTemplate(context.Background(), &domain.Template{
-		Name: name, BaseURL: "https://u", CredentialType: ct, SupportedFormats: formats,
+		Name: name, BaseURL: baseURL, CredentialType: ct, SupportedFormats: formats,
 	})
 	require.NoError(t, err)
 	return tpl
@@ -75,9 +79,13 @@ func TestTemplateCredentialTypeConstraint(t *testing.T) {
 		{domain.FormatOpenAIResponsesWS},
 	}
 	for _, ct := range []credential.Type{credential.TypeResponsesSpecial, credential.TypeCodexOAuth, credential.TypeCodexPAT} {
+		baseURL := "https://u"
+		if ct == credential.TypeCodexOAuth || ct == credential.TypeCodexPAT {
+			baseURL = ""
+		}
 		for i, fmts := range formatsCases {
 			_, err := svc.CreateTemplate(ctx, &domain.Template{
-				Name: string(ct) + "-" + strconv.Itoa(i), BaseURL: "https://u",
+				Name: string(ct) + "-" + strconv.Itoa(i), BaseURL: baseURL,
 				CredentialType: ct, SupportedFormats: fmts,
 			})
 			require.NoError(t, err, "type %s formats %v must be valid", ct, fmts)
@@ -85,7 +93,7 @@ func TestTemplateCredentialTypeConstraint(t *testing.T) {
 		// 非 resp 格式 → 400
 		for _, f := range []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatAnthropic} {
 			_, err := svc.CreateTemplate(ctx, &domain.Template{
-				Name: string(ct) + "-bad", BaseURL: "https://u",
+				Name: string(ct) + "-bad", BaseURL: baseURL,
 				CredentialType: ct, SupportedFormats: []domain.RequestFormat{f},
 			})
 			require.ErrorIs(t, err, ErrInvalidInput, "type %s format %s must be rejected", ct, f)

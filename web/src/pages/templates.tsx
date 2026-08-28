@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Boxes, Pencil, Plus, Settings2, Trash2, X } from 'lucide-react'
@@ -60,6 +60,7 @@ const CREDENTIAL_TYPES: TemplateCredentialType[] = ['api_key', 'responses-specia
 // search（service 校验前置——与 validateTemplate 白名单一致）
 const ECO_CREDENTIAL_TYPES: TemplateCredentialType[] = ['responses-special', 'codex-oauth', 'codex-pat']
 const ECO_FORMATS: TemplateFormat[] = ['openai-responses', 'openai-responses-ws', 'openai-images', 'openai-search']
+const isCodexCredential = (v: string) => v === 'codex-oauth' || v === 'codex-pat'
 const CREDENTIAL_BADGE_STYLES: Partial<Record<TemplateCredentialType, string>> = {
   'responses-special': 'bg-violet-500/10 text-violet-600 dark:bg-violet-400/10 dark:text-violet-400',
   'codex-oauth': 'bg-sky-500/10 text-sky-600 dark:bg-sky-400/10 dark:text-sky-400',
@@ -99,10 +100,11 @@ const emptyForm = (): FormState => ({
 })
 
 function toForm(t: Template): FormState {
+  const ct = t.CredentialType ?? ''
   return {
     name: t.Name ?? '',
-    base_url: t.BaseURL ?? '',
-    credential_type: t.CredentialType ?? '',
+    base_url: isCodexCredential(ct) ? '' : (t.BaseURL ?? ''),
+    credential_type: ct,
     supported_formats: [...(t.SupportedFormats ?? [])],
     modelsText: (t.Models ?? []).join(', '),
     format_models: Object.entries(t.FormatModels ?? {}).map(([format, models]) => ({
@@ -135,10 +137,11 @@ function mappingOf(f: FormState): Record<string, string> {
 function toBody(f: FormState): TemplateCreate {
   const format_models = formatModelsOf(f)
   const model_mapping = mappingOf(f)
+  const ct = (f.credential_type || 'api_key') as string
   return {
     name: f.name.trim(),
-    base_url: f.base_url.trim(),
-    credential_type: (f.credential_type || 'api_key') as TemplateCreate['credential_type'],
+    base_url: isCodexCredential(ct) ? '' : f.base_url.trim(),
+    credential_type: ct as TemplateCreate['credential_type'],
     supported_formats: f.supported_formats,
     models: splitList(f.modelsText),
     format_models: Object.keys(format_models).length ? format_models : undefined,
@@ -181,11 +184,13 @@ function FormFields({
   setForm,
   error,
   batch = false,
+  batchCodex = false,
 }: {
   form: FormState
   setForm: (updater: (f: FormState) => FormState) => void
   error?: string | null
   batch?: boolean // 批量更新隐藏凭据类型（TemplatePatch 不支持类型变更，评审 M-2）
+  batchCodex?: boolean
 }) {
   const { t } = useTranslation()
 
@@ -228,17 +233,35 @@ function FormFields({
           onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
         />
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="tpl-base">BaseURL</Label>
-        <Input
-          id="tpl-base"
-          value={form.base_url}
-          placeholder="https://api.openai.com"
-          onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
-        />
-        {/* base_url 全类型可选（2026-08-14 用户裁决）：codex 走 SDK 默认端点；api_key 留空则上游请求失败 */}
-        {!batch && <p className="text-xs text-muted-foreground">{t('templates.baseUrlOptional')}</p>}
-      </div>
+      {batch ? (
+        batchCodex ? (
+          <p className="text-xs text-muted-foreground">{t('templates.batchBaseUrlCodexDisabled')}</p>
+        ) : (
+          <div className="space-y-1.5">
+            <Label htmlFor="tpl-base">BaseURL</Label>
+            <Input
+              id="tpl-base"
+              value={form.base_url}
+              placeholder="https://api.openai.com"
+              onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
+            />
+            <p className="text-xs text-muted-foreground">{t('templates.baseUrlOptional')}</p>
+          </div>
+        )
+      ) : isCodexCredential(form.credential_type) ? (
+        <p className="text-xs text-muted-foreground">{t('templates.baseUrlCodexHidden')}</p>
+      ) : (
+        <div className="space-y-1.5">
+          <Label htmlFor="tpl-base">BaseURL</Label>
+          <Input
+            id="tpl-base"
+            value={form.base_url}
+            placeholder="https://api.openai.com"
+            onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
+          />
+          <p className="text-xs text-muted-foreground">{t('templates.baseUrlOptional')}</p>
+        </div>
+      )}
 
       {/* credential_type：一个模板 = 一种号池（非 api_key 类型走 SDK 内置端点，base_url 忽略） */}
       {!batch && (
@@ -250,12 +273,14 @@ function FormFields({
             value={form.credential_type || 'api_key'}
             onValueChange={v => setForm(f => {
               // 生态三类型：supported_formats 联动限制为 resp / resp-ws（service 校验前置）
-              if (!ECO_CREDENTIAL_TYPES.includes(v as TemplateCredentialType)) return { ...f, credential_type: v }
+              const isCodex = isCodexCredential(v)
+              if (!ECO_CREDENTIAL_TYPES.includes(v as TemplateCredentialType)) return { ...f, credential_type: v, base_url: isCodex ? '' : f.base_url }
               const supported_formats = f.supported_formats.filter(x => ECO_FORMATS.includes(x))
               const format_models = f.format_models.filter(r => ECO_FORMATS.includes(r.format))
               return {
                 ...f,
                 credential_type: v,
+                base_url: isCodex ? '' : f.base_url,
                 supported_formats: supported_formats.length ? supported_formats : [...ECO_FORMATS],
                 format_models,
               }
@@ -450,6 +475,21 @@ export default function Templates() {
   const [editing, setEditing] = useState<Template | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
+  // 批量更新时若选中任一 codex 模板则禁用 BaseURL（混合/全 Codex 均不发送已知无效请求；api_key/responses-special 保持可编辑；stale 行 fail-closed）
+  const isBatchCodex = useMemo(() => {
+    if (selected.length === 0) return false
+    return selected.some(id => {
+      const t = rows.find(r => r.ID === id)
+      if (!t) return true
+      return isCodexCredential(t.CredentialType as string)
+    })
+  }, [selected, rows])
+  useEffect(() => {
+    if (isBatchCodex && form.base_url !== '') {
+      setForm(f => ({ ...f, base_url: '' }))
+    }
+  }, [isBatchCodex, form.base_url])
+
   // —— 批量更新对话框 ——
   const [batchOpen, setBatchOpen] = useState(false)
   const batchResolve = useRef<((r: 'cancelled' | 'submitted') => void) | null>(null)
@@ -596,7 +636,6 @@ export default function Templates() {
 
   const submit = () => {
     setValidationMsg(null)
-    // base_url：codex 类型可选（SDK 默认端点），后端按类型校验必填性
     if (!form.name.trim() || form.supported_formats.length === 0) {
       setValidationMsg(tr('templates.formRequired'))
       return
@@ -607,6 +646,7 @@ export default function Templates() {
   const submitBatch = () => {
     setValidationMsg(null)
     const fields = toPatch(form)
+    if (isBatchCodex) delete (fields as Record<string, unknown>).base_url
     if (Object.keys(fields).length === 0) {
       setValidationMsg(tr('templates.batchUpdateEmpty'))
       return
@@ -809,7 +849,7 @@ export default function Templates() {
             <DialogDescription>{tr('templates.batchUpdateDesc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <FormFields form={form} setForm={setForm} batch />
+            <FormFields form={form} setForm={setForm} batch batchCodex={isBatchCodex} />
             {validationMsg && <p className="text-sm text-destructive">{validationMsg}</p>}
             {batchUpdate.isError && errMsg(batchUpdate.error) && (
               <p className="text-sm text-destructive">{errMsg(batchUpdate.error)}</p>

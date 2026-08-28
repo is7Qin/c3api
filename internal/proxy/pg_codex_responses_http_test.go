@@ -74,7 +74,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	// 落库数据：codex-pat 模板 + 组 + 账号 + account_ext（PAT 凭据 + 伪装身份
 	// 四元组持久化——META-2 断言面：HTTP 面注入 client_metadata）
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
-		Name: "codex-tpl", BaseURL: up.URL,
+		Name: "codex-tpl", BaseURL: "",
 		CredentialType:   credential.TypeCodexPAT,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
 		Models:           []string{"gpt-4o"},
@@ -122,6 +122,8 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
+	codex := sdkbridge.NewCodex(nil)
+	codex.SetTransport(newProxyOfficialRewriteTransport(up.URL))
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
@@ -131,7 +133,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,
 	}, nil)
-	p.SetCodex(sdkbridge.NewCodex(nil))
+	p.SetCodex(codex)
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 

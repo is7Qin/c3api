@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
@@ -111,9 +112,16 @@ func missingErr(id int64) error {
 	return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
 }
 
+func isFakeCodexType(typ credential.Type) bool {
+	return typ == credential.TypeCodexOAuth || typ == credential.TypeCodexPAT
+}
+
 func (f *fakeStore) CreateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if isFakeCodexType(t.CredentialType) && t.BaseURL != "" {
+		return nil, repository.ErrInvalidInput
+	}
 	if err := f.templateNameConflictLocked(0, t.Name); err != nil {
 		return nil, err
 	}
@@ -164,6 +172,19 @@ func (f *fakeStore) ListTemplates(ctx context.Context, q repository.ListQuery) (
 func (f *fakeStore) UpdateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, ok := f.tpls[t.ID]; !ok {
+		return nil, missingErr(t.ID)
+	}
+	if isFakeCodexType(t.CredentialType) {
+		if t.BaseURL != "" {
+			return nil, repository.ErrInvalidInput
+		}
+		for _, account := range f.accs {
+			if account.TemplateID == t.ID && account.BaseURL != nil && *account.BaseURL != "" {
+				return nil, repository.ErrInvalidInput
+			}
+		}
+	}
 	if err := f.templateNameConflictLocked(t.ID, t.Name); err != nil {
 		return nil, err
 	}
@@ -185,6 +206,13 @@ func (f *fakeStore) DeleteTemplate(ctx context.Context, id int64) error {
 func (f *fakeStore) CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	tpl, ok := f.tpls[a.TemplateID]
+	if !ok {
+		return nil, missingErr(a.TemplateID)
+	}
+	if isFakeCodexType(tpl.CredentialType) && a.BaseURL != nil && *a.BaseURL != "" {
+		return nil, repository.ErrInvalidInput
+	}
 	a.ID = f.nextID
 	f.nextID++
 	c := *a
@@ -217,6 +245,16 @@ func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([
 func (f *fakeStore) UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, ok := f.accs[a.ID]; !ok {
+		return nil, missingErr(a.ID)
+	}
+	tpl, ok := f.tpls[a.TemplateID]
+	if !ok {
+		return nil, missingErr(a.TemplateID)
+	}
+	if isFakeCodexType(tpl.CredentialType) && a.BaseURL != nil && *a.BaseURL != "" {
+		return nil, repository.ErrInvalidInput
+	}
 	c := *a
 	if cooldownUntil != nil {
 		c.CooldownUntil = cooldownUntil
@@ -583,6 +621,11 @@ func (f *fakeStore) UpdateTemplatesBatch(ctx context.Context, ids []int64, p rep
 		return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
 	}
 	for _, id := range ids {
+		if p.BaseURL != nil && *p.BaseURL != "" && isFakeCodexType(f.tpls[id].CredentialType) {
+			return repository.ErrInvalidInput
+		}
+	}
+	for _, id := range ids {
 		t := f.tpls[id]
 		if p.Name != nil {
 			t.Name = *p.Name
@@ -634,6 +677,24 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 			if _, ok := f.groups[gid]; !ok {
 				return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, gid)
 			}
+		}
+	}
+	for _, id := range ids {
+		a := f.accs[id]
+		templateID := a.TemplateID
+		if p.TemplateID != nil {
+			templateID = *p.TemplateID
+		}
+		tpl, ok := f.tpls[templateID]
+		if !ok {
+			return missingErr(templateID)
+		}
+		baseURL := a.BaseURL
+		if p.BaseURL != nil {
+			baseURL = p.BaseURL
+		}
+		if isFakeCodexType(tpl.CredentialType) && baseURL != nil && *baseURL != "" {
+			return repository.ErrInvalidInput
 		}
 	}
 	f.lastPatch = p

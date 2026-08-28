@@ -58,7 +58,7 @@ func newCodexWSUpstream(t *testing.T, steps []int, frameLimit int) (*httptest.Se
 		u.last = steps[len(steps)-1]
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)
 			return
 		}
@@ -198,12 +198,11 @@ func codexWSExt(accountID int64, at, rt string) *domain.AccountExt {
 // newTestCodexWSProxy 构造 codex 类型 resp-ws 测试代理：模板（credType 类型 +
 // resp-ws 格式 + gpt-4o）+ 携带 Ext 的账号（同组 10，可多账号）+ 装配适配层
 // （统一失效回调走真实 T1 处理链——fakeFailureStore 落库替身 + 真实调度器
-// FailAccount 摘除）。模板 BaseURL = mock 上游根（aiclient fullURLOf 拼完整
-// responses 端点）。bill 为计费钩子（nil = 计费全关）。
+// FailAccount 摘除）。Codex 官方默认端点 via transport 重写到 mock。bill 为计费钩子（nil = 计费全关）。
 func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
 	t.Helper()
 	tpl := &domain.Template{
-		ID: 1, Name: "t", BaseURL: upstream,
+		ID: 1, Name: "t", BaseURL: "",
 		CredentialType:   credType,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
@@ -250,8 +249,10 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
+	codex := sdkbridge.NewCodex(failure)
+	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, upstream))
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
-	p.SetCodex(sdkbridge.NewCodex(failure))
+	p.SetCodex(codex)
 	return p, store
 }
 
@@ -508,8 +509,10 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
+	codexWs := sdkbridge.NewCodex(failure)
+	codexWs.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, up.URL))
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
-	p.SetCodex(sdkbridge.NewCodex(failure))
+	p.SetCodex(codexWs)
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
@@ -645,7 +648,7 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 	// 3 帧后 1000 关闭（codexWSUpstream 固定事件流不含判死帧——独立 handler）
 	mu := &codexWSUpstream{last: 200, frameLimit: 3}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)
 			return
 		}
