@@ -151,7 +151,7 @@ func codexPATExt(accountID int64, pat string) *domain.AccountExt {
 // 型 + openai-responses 格式 + gpt-4o；mapping = 模板 ModelMapping——nil = 无
 // 映射）+ 携带 Ext 的账号（同组 10，可多账号）+ 装配适配层（统一失效回调走
 // 真实 T1 处理链——fakeFailureStore 落库替身 + 真实调度器 FailAccount 摘除）。
-// 模板 BaseURL = mock 上游根（ResponsesWSURL 拼完整 /v1/responses 端点）。
+// Codex 端点归 SDK 官方默认（transport seam 重写到 mock 上游）。
 // bill 为计费钩子（nil = 计费全关）。
 func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
 	t.Helper()
@@ -203,8 +203,10 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
+	codex := sdkbridge.NewCodex(failure)
+	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, upstream))
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
-	p.SetCodex(sdkbridge.NewCodex(failure))
+	p.SetCodex(codex)
 	return p, store
 }
 
