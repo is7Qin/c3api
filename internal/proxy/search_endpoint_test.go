@@ -45,10 +45,10 @@ type codexSearchStep struct {
 	body   string
 }
 
-// codexSearchUpstream codex search mock 上游（/v1/alpha/search 端点——SDK
-// 派生与静态裸根派生同路径）：记录路径/鉴权头/请求体/x-codex-turn-metadata；
-// 步骤按序弹出（耗尽重复最后一步）。非 /v1/alpha/search 路径 → 404（SDK 派生
-// 断言：打 search 端点而非 /responses）。
+// codexSearchUpstream codex search mock 上游（双路径有意：/v1/alpha/search 为 api_key/responses-special 静态路由，
+// /backend-api/codex/alpha/search 为 Codex SDK 官方固定端点 https://chatgpt.com/backend-api/codex/alpha/search；
+// test transport 仅 host 重写保留官方 path）：记录路径/鉴权头/请求体/x-codex-turn-metadata；
+// 步骤按序弹出（耗尽重复最后一步）。非上述双路径 → 404。
 type codexSearchUpstream struct {
 	mu     sync.Mutex
 	calls  int
@@ -161,7 +161,7 @@ func (f *fakeFunctionPriceLookup) ResolvePrices(model string, promptTokens int64
 // newTestSearchProxy 构造 search 测试代理：每账号独立模板（同组 10——
 // openai-responses 格式 + gpt-4o；混合类型组 = 多模板多账号）+ 装配适配层
 // （统一失效回调走真实 T1 处理链——fakeFailureStore 落库替身 + 真实调度器
-// FailAccount 摘除）。Codex 端点归 SDK 官方默认（transport 重写，Search 由 SDK 派生 /alpha/search）。
+// FailAccount 摘除）。Codex 端点固定 SDK 官方 https://chatgpt.com/backend-api/codex/alpha/search（test transport 仅 host 重写保留官方 path）。
 // bill 为计费钩子（nil = 计费全关）。
 func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
 	t.Helper()
@@ -352,9 +352,9 @@ func TestSearchCodexPathPassthrough(t *testing.T) {
 			require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(b))
 			require.Equal(t, searchRespRaw, string(b), "响应原样透传（SDK Search 零解析）")
 
-			// SDK 路径 wire 断言：Auth 注入 + search URL 派生（非 /responses）+ 请求体原样 + 头不转发
+			// SDK 路径 wire 断言：Auth 注入 + 固定 SDK 官方端点 https://chatgpt.com/backend-api/codex/alpha/search（test transport 仅 host 重写保留官方 path）+ 请求体原样 + 头不转发
 			require.Equal(t, 1, upc.callsN())
-			require.Equal(t, "/backend-api/codex/alpha/search", upc.path(0), "SDK Search official")
+			require.Equal(t, "/backend-api/codex/alpha/search", upc.path(0), "固定 SDK 官方端点 https://chatgpt.com/backend-api/codex/alpha/search（test transport 仅 host 重写保留官方 path）")
 			require.Equal(t, tc.auth, upc.auth(0), "codex 类型凭据经适配层 Auth 注入")
 			require.Equal(t, "", upc.turn(0), "x-codex-turn-metadata 不转发（SDK 路径）")
 			require.Equal(t, searchReqBody, string(upc.body(0)), "请求体原样（零改写——含不做 ModelMapping）")
@@ -505,7 +505,7 @@ func TestSearchFailoverCrossTypeDispatch(t *testing.T) {
 	// sel.CredentialType 重新分派**（复用旧调用器会把健康账号路由到 Ext 空凭据
 	// 路径——此处第二轮用新类型凭据成功，恰证明按新类型走了新路径）。轮次顺序
 	// 由调度器加权序列游标决定（组内两账号同权），断言集合而非顺序。
-	require.ElementsMatch(t, []string{"/backend-api/codex/alpha/search", "/v1/alpha/search"}, []string{upc.path(0), upc.path(1)}, "两路径同端点（派生一致）")
+	require.ElementsMatch(t, []string{"/backend-api/codex/alpha/search", "/v1/alpha/search"}, []string{upc.path(0), upc.path(1)}, "双路径有意：/v1/alpha/search 为 api_key 静态路由，/backend-api/codex/alpha/search 为 Codex SDK 官方路由；跨类型分派各走各路")
 	auths := []string{upc.auth(0), upc.auth(1)}
 	require.ElementsMatch(t, []string{"Bearer pat-10", "Bearer sk-upstream"}, auths,
 		"两次尝试 = codex SDK 路径 + api_key 静态路径各一次（跨类型换账号按新类型分派）")

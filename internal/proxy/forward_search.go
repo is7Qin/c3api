@@ -37,10 +37,11 @@ var errCodexSearchNotIntegrated = &formatError{status: http.StatusNotImplemented
 //     2xx 落账时结算，零余额透支扣费为产品语义，防实现期误当缺陷"修复"）
 //   - **四类型分派（用户裁决 2026-08-13）**：codex-oauth/codex-pat → codex-sdk
 //     Search（适配层 clientFor 缓存客户端直接复用——统一 client 形态；
-//     search URL 由 SDK 方法内派生，网关零拼装；Auth 注入/刷新/fatal 生命周期
+//     固定 SDK 官方端点 https://chatgpt.com/backend-api/codex/alpha/search，网关零拼装，
+//     test transport 仅 host 重写保留官方 path；Auth 注入/刷新/fatal 生命周期
 //     复用既有 SDK 面）；api_key/responses-special → 静态透传（Bearer upstream
 //     key 直连上游——aiclient 既有静态 key 通道零新增机制；URL 裸根派生
-//     base/v1/alpha/search）。组内混合类型路由允许（任一类型均可用——不再本地
+//     base/v1/alpha/search，固定 /v1/alpha/search）。组内混合类型路由允许（任一类型均可用——不再本地
 //     拒绝）
 //   - **x-codex-turn-metadata 统一不转发**（两路径均不带上游——SDK 默认头面
 //     无该头；静态 rawPostCT 构造全新 Header 只设 Content-Type + Authorization，
@@ -170,8 +171,8 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 		// 免 account 0 无谓上报——与 resp/WS 路径 errCodexExtMissing 同语义）。
 		return 0, nil, false, errCodexExtMissing
 	}
-	// 凭据线：快照派生直供适配层（与 resp/images 路径同款）。Codex 端点归
-	// SDK 官方默认，Search 由 SDK 在 responses 端点尾段派生 /alpha/search。
+	// 凭据线：快照派生直供适配层（与 resp/images 路径同款）。Codex 端点固定 SDK 官方
+	// https://chatgpt.com/backend-api/codex/alpha/search，网关零拼装（test transport 仅 host 重写保留官方 path）。
 	cred := domain.CredentialFromExt(sel.Ext)
 	// 非流式超时（同 nonstreamCodexResponses 语义）：HTTPClient.Timeout 不可用
 	// ——TCP 黑洞读停滞 → 超时触发 → 连接级错误转移（failover 可转移）。

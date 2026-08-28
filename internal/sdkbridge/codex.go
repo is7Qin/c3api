@@ -391,8 +391,8 @@ var usageCooldown = 60 * time.Second
 // GetUsageSnapshot 账号 codex 额度快照（ChatGPT 面 wham/usage）：cred →
 // 缓存条目（entryFor——sig 比对/重建，重建时 usage/usageAt/usageErrAt 随新
 // 条目一并清除）→ 5min TTL 命中直接返回（零上游）；未命中 → 包级 semaphore
-// （容量 8，有界并发）→ SDK GetUsage（e.client 复用——官方默认端点，usage
-// 端点 SDK 内部派生，网关零拼装）→ 白名单收敛映射（fromSDKUsage）→ 写
+// （容量 8，有界并发）→ SDK GetUsage（e.client 复用——固定 SDK 官方端点
+// https://chatgpt.com/backend-api/wham/usage，网关零拼装，test transport 仅 host 重写保留官方 path）→ 白名单收敛映射（fromSDKUsage）→ 写
 // e.usage + e.usageAt。失败 → 写 e.usageErrAt（60s 冷却）。
 //
 // 错误分类**纯判定零副作用**（gate Major 3——不复用 translateError：其 fatal

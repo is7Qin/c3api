@@ -38,9 +38,10 @@ var errCodexImagesNotIntegrated = &formatError{status: http.StatusNotImplemented
 // 与 api_key 直连同口径）。流式（T3）：GenerateImageStream 合成事件流 →
 // streamImageGeneration（SSE 透传/keepalive/流终+abort 计费——T3 生产接线
 // 点，同签名直赋适配层方法）。
-// codexImagesCaller 无路径字段（评审 P3-1）：上游端点由 SDK 按参数派生
-// （ImageGenParams.Images 非空 → edits，否则 generations）——与
-// imagesCaller.path（直连面拼 URL）不同，codex 面端点选择归 SDK。
+// codexImagesCaller 无路径字段（评审 P3-1）：固定 SDK 官方端点
+// https://chatgpt.com/backend-api/codex/images/generations 与
+// https://chatgpt.com/backend-api/codex/images/edits（有图 → edits，否则 generations），
+// 网关零拼装/test transport 仅 host 重写保留官方 path；与 imagesCaller.path（直连面拼 URL）不同，codex 面端点选择归 SDK。
 type codexImagesCaller struct {
 	p *Proxy
 }

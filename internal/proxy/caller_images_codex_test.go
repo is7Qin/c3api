@@ -214,8 +214,8 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 }
 
 // TestImagesCodexGenerationsOK codex-oauth 非流式生图全链路（200 真实生成
-// 形态）：适配层 SDK 直连 mock 上游（模板 base 派生 generations 端点）→ 客户
-// 端 wire 转发（data 长 + 嵌套 usage）+ 计费口径统一（CallCount 张数 /
+// 形态）：适配层 SDK 直连 mock 上游（固定 SDK 官方端点 https://chatgpt.com/backend-api/codex/images/generations，
+// test transport 仅 host 重写保留官方 path）→ 客户端 wire 转发（data 长 + 嵌套 usage）+ 计费口径统一（CallCount 张数 /
 // ImageInput/OutputTokens image tokens / ImageCost per-image 分量）。
 func TestImagesCodexGenerationsOK(t *testing.T) {
 	up, c := newCodexImageUpstream(t, codexUpStep{status: 200, body: codexTestImageResponse})
@@ -476,7 +476,7 @@ func TestImagesCodexStreamSSE(t *testing.T) {
 		"event: image_generation.completed\ndata: {\"b64_json\":\"REVG\",\"usage\":{\"input_tokens\":2,\"input_image_tokens\":1,\"output_tokens\":3,\"output_image_tokens\":2}}\n\n"
 	require.Equal(t, want, rec.Body.String(), "completed 帧 wire 形态（usage 仅末事件）")
 	require.Equal(t, 1, c.n(), "流式合成 → 上游恰好一次（非流式调）")
-	require.True(t, strings.HasSuffix(c.path(0), "/images/generations"), "SDK 派生 generations 端点")
+	require.True(t, strings.HasSuffix(c.path(0), "/images/generations"), "固定 SDK 官方端点 https://chatgpt.com/backend-api/codex/images/generations（test transport 仅 host 重写保留官方 path）")
 	require.Zero(t, recorderCalls(recorder), "成功不上报失效")
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
