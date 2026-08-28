@@ -26,6 +26,8 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
+var convertRequest = protoconv.ConvertRequest
+
 // forwardRoute 一次转发的路由信息（格式 + 调用器 + 请求体）：默认 = 客户端
 // 格式直连（零转换）；协议转换（W5）命中时替换为模板协议路由（格式/调用器/
 // 已转换请求体）。failover 循环按 route 重选号（模板协议），日志仍按客户端
@@ -232,14 +234,23 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		// 自身零分配）。ErrGroupNotFound（组不存在）仍不转换 → 404 直返。
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
 			if sel2, err2 := p.sched.Select(groupID, tgt, reqModel); err2 == nil {
-				cb, cerr := protoconv.ConvertRequest(body, conv)
+				sel2GuardActive := true
+				defer func() {
+					if sel2GuardActive {
+						if r := recover(); r != nil {
+							sel2.Release()
+							panic(r)
+						}
+					}
+				}()
+				cb, cerr := convertRequest(body, conv)
 				if cerr != nil {
-					// 本地拒绝：目标 Select 已占并发槽，必须释放（与 caller 本地
-					// 400 的 Release-only 语义一致），否则槽位永久泄漏。
 					sel2.Release()
+					sel2GuardActive = false
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: protocol conversion failed: " + cerr.Error()}})
 					return
 				}
+				sel2GuardActive = false
 				sel = sel2
 				err = nil
 				route = forwardRoute{format: tgt, caller: p.convCallers[conv], body: cb}
