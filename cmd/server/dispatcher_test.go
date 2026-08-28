@@ -156,8 +156,6 @@ func newTestDispatcher(t *testing.T) *testDispRig {
 		Balances: bal,
 		Rules:    rules,
 	})
-	inv.SetSettings(settings)
-
 	snapAuth := &recSnap{name: "auth", scopes: []string{snapshot.ScopeSettings}}
 	snapSched := &recSnap{name: "scheduler"}
 	snapRules := &recSnap{name: "rules"}
@@ -360,7 +358,6 @@ func TestDispatcherApplyFailureTolerated(t *testing.T) {
 		Rules:    &recRules2{},
 	})
 	settings := &errSettings2{}
-	inv.SetSettings(settings)
 	failSnap := &errSnap2{recSnap: recSnap{name: "auth", scopes: []string{snapshot.ScopeSettings}}}
 	reg := snapshot.New()
 	require.NoError(t, reg.Register(failSnap))
@@ -412,7 +409,7 @@ func (r *recSnapN) observedN() int { r.mu.Lock(); defer r.mu.Unlock(); return r.
 // TestDispatcherSettingsTiming settings 变更时序（R2 M-1 #36 即时重算）：
 // settings 旧 N → 远端变更落库（dbN 新 N）→ Apply(Change{Settings:true}) →
 // auth.Reload 必须读到新 N。顺序保证：settings 快照先同步刷新、scope 精确重载
-// 后执行——修复前 d.inv.Settings() 仅 Mark（去抖 200ms 后才 flush
+// 后执行——修复前仅 Mark（去抖 200ms 后才 flush
 // ReloadSettings），reloadScopes 同步 auth.Reload 读到旧 N = 白重算（新 N 落地
 // 后再无 gate.reload 触发）。本测试修复前红：auth 快照仅 reload 一次且读到旧 N
 // （observedN 恒 1）。inv 不 Start（settings 分支 sync 后不依赖去抖器；不 Start
@@ -431,7 +428,6 @@ func TestDispatcherSettingsTiming(t *testing.T) {
 		Window: time.Millisecond, Sched: &recSched2{}, Clients: &recClients2{},
 		Auth: &recAuth2{}, Balances: &recBal2{}, Rules: &recRules2{},
 	})
-	inv.SetSettings(st)
 	reg := snapshot.New()
 	require.NoError(t, reg.Register(snapAuth))
 	d := &dispatcher{inv: inv, svc: st, snapshots: reg}
@@ -465,7 +461,6 @@ func TestDispatcherFullRefresh(t *testing.T) {
 		sched := &recSched2{}
 		settings := &recSettings2{}
 		inv := invalidate.New(invalidate.Config{Window: time.Millisecond, Sched: sched, Clients: &recClients2{}, Auth: &recAuth2{}, Rules: &recRules2{}})
-		inv.SetSettings(settings)
 		snapAuth := &recSnap{name: "auth", scopes: []string{snapshot.ScopeSettings}}
 		snapSched := &recSnap{name: "scheduler"}
 		reg := snapshot.New()
@@ -483,7 +478,6 @@ func TestDispatcherFullRefresh(t *testing.T) {
 		// 注册表未装配（nil）：FullRefresh 仍重载 settings（防御性兜底）。
 		settings := &recSettings2{}
 		inv := invalidate.New(invalidate.Config{Window: time.Millisecond, Sched: &recSched2{}, Clients: &recClients2{}, Auth: &recAuth2{}})
-		inv.SetSettings(settings)
 		d := &dispatcher{inv: inv, svc: settings}
 		require.NoError(t, d.FullRefresh(context.Background()))
 		require.Equal(t, 1, settings.calls())
