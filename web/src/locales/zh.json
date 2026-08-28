@@ -202,7 +202,7 @@
     },
     "baseUrlOptional": "api_key / responses-special：可选裸根（不含 /v1，非空覆盖）；留空可能导致路由失败。codex-oauth / codex-pat 须留空（SDK 默认端点，非空将被拒绝）。",
     "baseUrlCodexHidden": "Codex OAuth / PAT 使用 SDK 默认端点——不可设置 BaseURL，须保持为空（非空将被拒绝）。",
-    "batchBaseUrlCodexDisabled": "Codex 模板已禁用 BaseURL（非空禁用，SDK 默认），混合选择不发送"
+    "batchBaseUrlCodexDisabled": "Codex 模板使用 SDK 默认端点，BaseURL 不可用，不会发送"
   },
   "accounts": {
     "title": "账号",
