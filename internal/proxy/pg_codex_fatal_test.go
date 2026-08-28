@@ -106,7 +106,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 	ext, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
 	cred := domain.CredentialFromExt(ext)
-	cred.BaseURL = up.URL + "/images/generations"
+	adapter.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, up.URL))
 	_, err = adapter.GenerateImage(ctx, &cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "refresh 被拒绝", "RefreshOAuthError 透传")
