@@ -21,7 +21,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
-		Name: "t-bu", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+		Name: "t-bu", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, ModelMapping: domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{

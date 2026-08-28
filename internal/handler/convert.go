@@ -47,14 +47,13 @@ func domainModeToAPIMode(m domain.ModelMappingMode) ModelMappingEntryMode {
 	case domain.ModelMappingModeImplicit:
 		return Implicit
 	default:
-		return ModelMappingEntryMode(m.String())
+		return ""
 	}
 }
 
 func toAPIModelMapping(m domain.ModelMapping) *map[string]ModelMappingEntry {
 	if m == nil {
-		empty := map[string]ModelMappingEntry{}
-		return &empty
+		return nil
 	}
 	out := make(map[string]ModelMappingEntry, len(m))
 	for k, v := range m {

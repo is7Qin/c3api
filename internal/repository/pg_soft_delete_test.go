@@ -102,6 +102,7 @@ func TestPGSoftDeleteUniqueHeld(t *testing.T) {
 		_, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 			Name: tpl.Name, BaseURL: "https://u2",
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+			ModelMapping:     domain.ModelMapping{},
 		})
 		require.ErrorIs(t, err, repository.ErrConflict, "软删模板名仍占唯一约束 → 同名重建 409")
 	})
@@ -185,6 +186,7 @@ func TestPGSoftDeleteBatchAtomic(t *testing.T) {
 	t2, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 		Name: "sd-batch-2", BaseURL: "https://u2",
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 
@@ -203,6 +205,7 @@ func TestPGSoftDeleteBatchAtomic(t *testing.T) {
 	t3, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 		Name: "sd-batch-3", BaseURL: "https://u3",
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	err = repos.DeleteTemplatesBatch(ctx, []int64{t3.ID, 999999})

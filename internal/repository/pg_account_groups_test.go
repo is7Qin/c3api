@@ -80,6 +80,7 @@ func seedPGTemplate(t *testing.T, repos *repository.Repository) *domain.Template
 	tpl, err := repos.Templates.CreateTemplate(context.Background(), &domain.Template{
 		Name: "t", BaseURL: "https://u/v1",
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	return tpl

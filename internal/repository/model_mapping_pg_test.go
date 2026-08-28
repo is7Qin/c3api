@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 func TestModelMappingSQLNullRejected(t *testing.T) {
@@ -66,4 +67,67 @@ func TestModelMappingSQLNullRejected(t *testing.T) {
 	pgErr = nil
 	require.True(t, errors.As(err, &pgErr))
 	require.Equal(t, "23502", pgErr.Code)
+}
+
+func TestModelMappingPGStructuredLifecycle(t *testing.T) {
+	ctx := context.Background()
+	repos := newPGRepos(t)
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	conn, err := pgx.Connect(ctx, dsn)
+	require.NoError(t, err)
+	var templateID int64
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var deleteErr error
+		if templateID != 0 {
+			_, deleteErr = conn.Exec(cleanupCtx, `DELETE FROM templates WHERE id = $1`, templateID)
+		}
+		closeErr := conn.Close(cleanupCtx)
+		require.NoError(t, deleteErr)
+		require.NoError(t, closeErr)
+	})
+
+	initial := domain.ModelMapping{
+		"explicit-id": {MappedModel: "explicit-id", Mode: domain.ModelMappingModeExplicit},
+		"implicit-id": {MappedModel: "implicit-id", Mode: domain.ModelMappingModeImplicit},
+	}
+	template, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
+		Name:             fmt.Sprintf("c3api-model-mapping-structured-%d", time.Now().UnixNano()),
+		CredentialType:   "api_key",
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+		ModelMapping:     initial,
+	})
+	require.NoError(t, err)
+	templateID = template.ID
+	fetched, err := repos.Templates.GetTemplate(ctx, template.ID)
+	require.NoError(t, err)
+	require.Equal(t, initial, fetched.ModelMapping)
+
+	updatedMapping := domain.ModelMapping{"put": {MappedModel: "put-target", Mode: domain.ModelMappingModeImplicit}}
+	template.ModelMapping = updatedMapping
+	_, err = repos.Templates.UpdateTemplate(ctx, template)
+	require.NoError(t, err)
+	fetched, err = repos.Templates.GetTemplate(ctx, template.ID)
+	require.NoError(t, err)
+	require.Equal(t, updatedMapping, fetched.ModelMapping)
+
+	name := template.Name + "-preserved"
+	require.NoError(t, repos.Templates.UpdateTemplatesBatch(ctx, []int64{template.ID}, repository.TemplatePatch{Name: &name}))
+	fetched, err = repos.Templates.GetTemplate(ctx, template.ID)
+	require.NoError(t, err)
+	require.Equal(t, updatedMapping, fetched.ModelMapping)
+
+	replacement := domain.ModelMapping{"batch": {MappedModel: "batch-target", Mode: domain.ModelMappingModeExplicit}}
+	require.NoError(t, repos.Templates.UpdateTemplatesBatch(ctx, []int64{template.ID}, repository.TemplatePatch{ModelMapping: &replacement}))
+	fetched, err = repos.Templates.GetTemplate(ctx, template.ID)
+	require.NoError(t, err)
+	require.Equal(t, replacement, fetched.ModelMapping)
+
+	empty := domain.ModelMapping{}
+	require.NoError(t, repos.Templates.UpdateTemplatesBatch(ctx, []int64{template.ID}, repository.TemplatePatch{ModelMapping: &empty}))
+	fetched, err = repos.Templates.GetTemplate(ctx, template.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched.ModelMapping)
+	require.Empty(t, fetched.ModelMapping)
 }
