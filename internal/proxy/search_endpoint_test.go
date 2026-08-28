@@ -68,7 +68,7 @@ func newCodexSearchUpstream(t *testing.T, steps ...codexSearchStep) (*httptest.S
 		c.last = steps[len(steps)-1]
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/alpha/search" {
+		if r.URL.Path != "/v1/alpha/search" && r.URL.Path != "/backend-api/codex/alpha/search" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -161,9 +161,8 @@ func (f *fakeFunctionPriceLookup) ResolvePrices(model string, promptTokens int64
 // newTestSearchProxy 构造 search 测试代理：每账号独立模板（同组 10——
 // openai-responses 格式 + gpt-4o；混合类型组 = 多模板多账号）+ 装配适配层
 // （统一失效回调走真实 T1 处理链——fakeFailureStore 落库替身 + 真实调度器
-// FailAccount 摘除）。模板 BaseURL = mock 上游根（SDK 路径 ResponsesWSURL
-// 拼完整 /v1/responses 端点，Search 方法内派生 /alpha/search；静态路径裸根
-// 派生同路径）。bill 为计费钩子（nil = 计费全关）。
+// FailAccount 摘除）。Codex 端点归 SDK 官方默认（transport 重写，Search 由 SDK 派生 /alpha/search）。
+// bill 为计费钩子（nil = 计费全关）。
 func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
 	t.Helper()
 	accs := make(map[int64][]*domain.Account, 1)
@@ -204,6 +203,8 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	})
 	store := &fakeFailureStore{}
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
+	codex := sdkbridge.NewCodex(failure)
+	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, upstream))
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{
 		QueueSize: 4096, BatchSize: 100,
 		FlushInterval: 20 * time.Millisecond,
@@ -212,7 +213,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
-	p.SetCodex(sdkbridge.NewCodex(failure))
+	p.SetCodex(codex)
 	return p, store
 }
 
@@ -349,7 +350,7 @@ func TestSearchCodexPathPassthrough(t *testing.T) {
 
 			// SDK 路径 wire 断言：Auth 注入 + search URL 派生（非 /responses）+ 请求体原样 + 头不转发
 			require.Equal(t, 1, upc.callsN())
-			require.Equal(t, "/v1/alpha/search", upc.path(0), "SDK Search 派生打 /alpha/search 非 /responses")
+			require.Equal(t, "/backend-api/codex/alpha/search", upc.path(0), "SDK Search official")
 			require.Equal(t, tc.auth, upc.auth(0), "codex 类型凭据经适配层 Auth 注入")
 			require.Equal(t, "", upc.turn(0), "x-codex-turn-metadata 不转发（SDK 路径）")
 			require.Equal(t, searchReqBody, string(upc.body(0)), "请求体原样（零改写——含不做 ModelMapping）")
@@ -500,8 +501,7 @@ func TestSearchFailoverCrossTypeDispatch(t *testing.T) {
 	// sel.CredentialType 重新分派**（复用旧调用器会把健康账号路由到 Ext 空凭据
 	// 路径——此处第二轮用新类型凭据成功，恰证明按新类型走了新路径）。轮次顺序
 	// 由调度器加权序列游标决定（组内两账号同权），断言集合而非顺序。
-	require.Equal(t, "/v1/alpha/search", upc.path(0))
-	require.Equal(t, "/v1/alpha/search", upc.path(1), "两路径同端点（派生一致）")
+	require.ElementsMatch(t, []string{"/backend-api/codex/alpha/search", "/v1/alpha/search"}, []string{upc.path(0), upc.path(1)}, "两路径同端点（派生一致）")
 	auths := []string{upc.auth(0), upc.auth(1)}
 	require.ElementsMatch(t, []string{"Bearer pat-10", "Bearer sk-upstream"}, auths,
 		"两次尝试 = codex SDK 路径 + api_key 静态路径各一次（跨类型换账号按新类型分派）")

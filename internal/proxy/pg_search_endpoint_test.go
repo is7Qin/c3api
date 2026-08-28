@@ -115,6 +115,8 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
+	codex := sdkbridge.NewCodex(nil)
+	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, up.URL))
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
@@ -124,7 +126,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{}},
 		Balances: bal,
 	}, nil)
-	p.SetCodex(sdkbridge.NewCodex(nil))
+	p.SetCodex(codex)
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 
