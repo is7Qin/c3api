@@ -62,7 +62,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 
 	// 落库：codex-oauth 模板 + 组 + 账号 + account_ext（oauth 凭据 + 身份四元组）
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
-		Name: "codex-tpl", BaseURL: "https://u/v1",
+		Name: "codex-tpl", BaseURL: "",
 		CredentialType:   credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
