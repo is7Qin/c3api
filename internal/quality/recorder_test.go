@@ -25,17 +25,20 @@ func qc(seed byte) [32]byte {
 	return b
 }
 
+func keyOf(f, q [32]byte) Key { return CanonicalKey(f, q, f) }
+
 func TestQualityRecorder_ExactOnce(t *testing.T) {
 	r, err := NewRecorder(50000)
 	require.NoError(t, err)
 	f := fp(1)
 	q := qc(1)
-	ctx := r.Begin(f, q)
+	k := keyOf(f, q)
+	ctx := r.Begin(k)
 	tt := int64(120)
 	ctx.Complete(true, &tt, 10, 1, 0)
 	ctx.Complete(true, &tt, 10, 1, 0)
 	ctx.Complete(false, nil, 0, 0, 0)
-	a, s, tc, tok, _, _, _, _, _, _, ok := r.CellStats(f, q)
+	a, s, tc, tok, _, _, _, _, _, _, ok := r.CellStats(k)
 	require.True(t, ok)
 	require.Equal(t, int64(1), a)
 	require.Equal(t, int64(1), s)
@@ -48,15 +51,15 @@ func TestQualityRecorder_PointerAPI_NoCopy(t *testing.T) {
 	require.NoError(t, err)
 	f := fp(9)
 	q := qc(9)
-	cell := r.GetOrCreateCell(f, q)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
 	require.NotNil(t, cell)
 	var ctx AttemptContext
 	ok := r.InitAttemptContext(cell, &ctx)
 	require.True(t, ok)
 	require.False(t, ctx.IsZero())
 	require.NotNil(t, ctx.cell)
-	// copied API impossible: Begin returns *AttemptContext, not value. Verify pointer signature by type.
-	var ptr *AttemptContext = r.Begin(f, q)
+	var ptr *AttemptContext = r.Begin(k)
 	require.NotNil(t, ptr)
 }
 
@@ -65,8 +68,9 @@ func TestQualityRecorder_RetireBeforePin_Race(t *testing.T) {
 	require.NoError(t, err)
 	f := fp(20)
 	q := qc(20)
-	cell := r.GetOrCreateCell(f, q)
-	r.Retire(f, q)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
+	r.Retire(k)
 	require.Equal(t, 0, r.ActiveCount())
 	require.Equal(t, 1, r.RetiredCount())
 	require.Equal(t, 0, r.PinnedRetiredCount())
@@ -82,15 +86,15 @@ func TestQualityRecorder_HotPath_NoLock_0Alloc(t *testing.T) {
 	require.NoError(t, err)
 	f := fp(30)
 	q := qc(30)
-	cell := r.GetOrCreateCell(f, q)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
 	var ctx AttemptContext
 	tt := int64(100)
-	// warm
 	for i := 0; i < 10; i++ {
 		r.InitAttemptContext(cell, &ctx)
 		ctx.Complete(true, &tt, 1, 0, 0)
 	}
-	a, _, _, _, _, _, _, _, _, _, ok := r.CellStats(f, q)
+	a, _, _, _, _, _, _, _, _, _, ok := r.CellStats(k)
 	require.True(t, ok)
 	require.Equal(t, int64(10), a)
 }
@@ -100,7 +104,8 @@ func TestQualityRecorder_ExactStats_Q32_10Hist_ErrorClasses(t *testing.T) {
 	require.NoError(t, err)
 	f := fp(40)
 	q := qc(40)
-	cell := r.GetOrCreateCell(f, q)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
 	cases := []struct {
 		success  bool
 		tt       int64
@@ -129,9 +134,7 @@ func TestQualityRecorder_ExactStats_Q32_10Hist_ErrorClasses(t *testing.T) {
 			ctx2.CompleteObservation(obs)
 		}
 	}
-	// use the successes via legacy completes already did 3 successes, need to account
-	// we did 2 successes via Init+Complete, plus 1 more success = 3 successes total attempts 6?
-	a, s, tc, tok, calls, images, sumQ32, sumSq, hist, errClasses, ok := r.CellStats(f, q)
+	a, s, tc, tok, calls, images, sumQ32, sumSq, hist, errClasses, ok := r.CellStats(k)
 	require.True(t, ok)
 	require.Equal(t, int64(6), a)
 	require.Equal(t, int64(3), s)
@@ -141,7 +144,6 @@ func TestQualityRecorder_ExactStats_Q32_10Hist_ErrorClasses(t *testing.T) {
 	require.Equal(t, int64(4), images)
 	require.NotEqual(t, int64(0), sumQ32)
 	require.NotEqual(t, int64(0), sumSq)
-	// hist has 10 bins, at least 3 bins filled
 	filled := 0
 	for _, v := range hist {
 		if v > 0 {
@@ -149,7 +151,6 @@ func TestQualityRecorder_ExactStats_Q32_10Hist_ErrorClasses(t *testing.T) {
 		}
 	}
 	require.GreaterOrEqual(t, filled, 2)
-	// error classes separate
 	require.Equal(t, int64(1), errClasses[ErrClass429])
 	require.Equal(t, int64(1), errClasses[ErrClass5xx])
 	require.Equal(t, int64(1), errClasses[ErrClassNetwork])
@@ -165,32 +166,29 @@ func TestQualityRecorder_Cancel_Local_Reservation_Exclude_PostcommitCounts(t *te
 	require.NoError(t, err)
 	f := fp(50)
 	q := qc(50)
-	cell := r.GetOrCreateCell(f, q)
-	// cancel should not count
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
 	var ctx AttemptContext
 	r.InitAttemptContext(cell, &ctx)
 	obs := Observation{IsCancel: true}
 	ctx.CompleteObservation(obs)
-	a, _, _, _, _, _, _, _, _, _, ok := r.CellStats(f, q)
+	a, _, _, _, _, _, _, _, _, _, ok := r.CellStats(k)
 	require.True(t, ok)
 	require.Equal(t, int64(0), a)
-	// local reject exclude
 	var ctx2 AttemptContext
 	r.InitAttemptContext(cell, &ctx2)
 	ctx2.CompleteObservation(Observation{IsLocal: true})
-	a2, _, _, _, _, _, _, _, _, _, _ := r.CellStats(f, q)
+	a2, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
 	require.Equal(t, int64(0), a2)
-	// reservation exclude
 	var ctx3 AttemptContext
 	r.InitAttemptContext(cell, &ctx3)
 	ctx3.CompleteObservation(Observation{IsReservation: true})
-	a3, _, _, _, _, _, _, _, _, _, _ := r.CellStats(f, q)
+	a3, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
 	require.Equal(t, int64(0), a3)
-	// postcommit failure counts
 	var ctx4 AttemptContext
 	r.InitAttemptContext(cell, &ctx4)
 	ctx4.CompleteObservation(Observation{Success: false, ErrClass: ErrClass5xx, Tokens: 5, Calls: 1, Images: 1})
-	a4, s4, _, tok4, calls4, images4, _, _, _, ec4, _ := r.CellStats(f, q)
+	a4, s4, _, tok4, calls4, images4, _, _, _, ec4, _ := r.CellStats(k)
 	require.Equal(t, int64(1), a4)
 	require.Equal(t, int64(0), s4)
 	require.Equal(t, int64(5), tok4)
@@ -210,30 +208,28 @@ func TestQualityRecorder_Retire_PinnedNeverEvicted_UnpinnedCap(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		f := fp(byte(60 + i))
 		q := qc(byte(60 + i))
-		cell := r.GetOrCreateCell(f, q)
+		k := keyOf(f, q)
+		cell := r.GetOrCreateCell(k)
 		pinned = append(pinned, cell)
 		var ctx AttemptContext
 		r.InitAttemptContext(cell, &ctx)
 		ctxs = append(ctxs, ctx)
-		r.Retire(f, q)
+		r.Retire(k)
 	}
 	require.Equal(t, 5, r.RetiredCount())
 	require.Equal(t, 5, r.PinnedRetiredCount())
 	require.Equal(t, int64(0), r.QualityOverflow())
-	// unpinned cap not applied to pinned
 	require.Equal(t, 0, r.UnpinnedRetiredCount())
-	// complete one pinned, it becomes unpinned and should trigger eviction if over cap
 	tt := int64(100)
 	ctxs[0].Complete(true, &tt, 1, 0, 0)
 	require.Equal(t, 1, r.UnpinnedRetiredCount())
-	// after release, should converge to cap 2 (evict oldest unpinned)
 	for i := 1; i < 5; i++ {
 		tt2 := int64(100)
 		ctxs[i].Complete(true, &tt2, 1, 0, 0)
 	}
 	require.LessOrEqual(t, r.UnpinnedRetiredCount(), 2)
 	require.Greater(t, r.QualityOverflow(), int64(0))
-	require.Equal(t, int64(5), r.PinnedGauge()-r.PinnedGauge()+5) // gauge was 5
+	require.Equal(t, int64(5), r.PinnedGauge()-r.PinnedGauge()+5)
 	_ = pinned
 }
 
@@ -242,13 +238,13 @@ func TestQualityRecorder_Reactivation_NoPendingBytesBug(t *testing.T) {
 	require.NoError(t, err)
 	f := fp(70)
 	q := qc(70)
-	cell := r.GetOrCreateCell(f, q)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
 	before := r.PendingBytes()
-	r.Retire(f, q)
+	r.Retire(k)
 	afterRetire := r.PendingBytes()
 	require.Equal(t, before, afterRetire)
-	// reactivate
-	cell2 := r.GetOrCreateCell(f, q)
+	cell2 := r.GetOrCreateCell(k)
 	require.Equal(t, cell, cell2)
 	afterReact := r.PendingBytes()
 	require.Equal(t, before, afterReact, "reactivation must not subtract pendingBytes")
@@ -262,18 +258,17 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 	r.minuteCap = 2
 	r.pendingCapBytes = 2 * EstimatedFlowMinuteBytes
 	for i := 0; i < 5; i++ {
-		r.AddQualityRow(int64(1000+i), fp(byte(80+i)), qc(byte(80+i)))
+		k := keyOf(fp(byte(80+i)), qc(byte(80+i)))
+		r.AddQualityRow(int64(1000+i), k)
 	}
 	require.LessOrEqual(t, r.MinuteBucketCount(), 2)
 	require.Greater(t, r.QualityOverflow(), int64(0))
-	// flow whole-minute eviction
 	for i := 0; i < 5; i++ {
 		r.AddFlowMinute(int64(2000+i), [8]int64{int64(i)})
 	}
 	require.LessOrEqual(t, r.MinuteBucketCount(), 2)
 	require.Greater(t, r.FlowOverflow(), int64(0))
 	require.Greater(t, r.MinuteOverflow(), int64(0))
-	// pendingBytes exact
 	require.LessOrEqual(t, r.PendingBytes(), r.pendingCapBytes+EstimatedFlowMinuteBytes)
 }
 
@@ -295,10 +290,8 @@ func TestQualityRecorder_FlowWholeMinute_EdgeArrayAPI(t *testing.T) {
 	fm.SetEdge(3, 999)
 	require.Equal(t, int64(999), fm.Edge(3))
 	require.Equal(t, [8]int64{0, 10, 20, 999, 40, 50, 60, 70}, fm.Edges())
-	// adding same minute should not duplicate
 	r.AddFlowMinute(minute, edges)
 	require.Equal(t, 1, r.MinuteBucketCount())
-	// eviction whole minute only
 	r.minuteCap = 1
 	r.AddFlowMinute(minute+1, edges)
 	require.LessOrEqual(t, r.MinuteBucketCount(), 1)
@@ -309,23 +302,21 @@ func TestQualityRecorder_Close_PreventsNewBegin_LetsExistingComplete(t *testing.
 	require.NoError(t, err)
 	f := fp(90)
 	q := qc(90)
-	cell := r.GetOrCreateCell(f, q)
+	k := keyOf(f, q)
+	cell := r.GetOrCreateCell(k)
 	var ctx AttemptContext
 	r.InitAttemptContext(cell, &ctx)
 	require.NoError(t, r.Close())
-	// new begin should fail
-	cell2 := r.GetOrCreateCell(f, q)
+	cell2 := r.GetOrCreateCell(k)
 	require.Nil(t, cell2)
 	var ctx2 AttemptContext
 	ok := r.InitAttemptContext(cell, &ctx2)
 	require.False(t, ok)
-	// existing should still complete (no lost minute)
 	tt := int64(100)
 	ctx.Complete(true, &tt, 1, 0, 0)
-	a, _, _, _, _, _, _, _, _, _, ok2 := r.CellStats(f, q)
+	a, _, _, _, _, _, _, _, _, _, ok2 := r.CellStats(k)
 	require.True(t, ok2)
 	require.Equal(t, int64(1), a)
-	// second close idempotent
 	require.NoError(t, r.Close())
 }
 
@@ -340,7 +331,8 @@ func TestQualityRecorder_Race(t *testing.T) {
 			defer wg.Done()
 			f := fp(byte(seed % 10))
 			q := qc(byte(seed % 10))
-			cell := r.GetOrCreateCell(f, q)
+			k := keyOf(f, q)
+			cell := r.GetOrCreateCell(k)
 			var ctx AttemptContext
 			r.InitAttemptContext(cell, &ctx)
 			tt := int64(100 + seed%50)
@@ -362,11 +354,12 @@ func TestQualityRecorder_PinnedGaugeBoundedByEffectiveMax(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		f := fp(byte(100 + i))
 		q := qc(byte(100 + i))
-		cell := r.GetOrCreateCell(f, q)
+		k := keyOf(f, q)
+		cell := r.GetOrCreateCell(k)
 		var ctx AttemptContext
 		r.InitAttemptContext(cell, &ctx)
 		ctxs = append(ctxs, ctx)
-		r.Retire(f, q)
+		r.Retire(k)
 	}
 	require.LessOrEqual(t, r.PinnedGauge(), eff)
 	require.LessOrEqual(t, int64(r.PinnedRetiredCount()), eff)
