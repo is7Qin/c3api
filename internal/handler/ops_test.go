@@ -82,21 +82,23 @@ func TestGetOpsWorkersNoSnapshots(t *testing.T) {
 	require.Empty(t, resp.Snapshots)
 }
 
-// emailStats 模拟 service.MailWorker Stats 的七字段形态（与 mailer_worker.go 的 mailStats 同构）。
+// emailStats 模拟 service.MailWorker Stats 的九字段形态（与 mailer_worker.go 的 mailStats 同构）。
 type emailStats struct {
-	Queued       int    `json:"queued"`
-	QueueCap     int    `json:"queue_cap"`
-	SentTotal    int64  `json:"sent_total"`
-	FailedTotal  int64  `json:"failed_total"`
-	RetryTotal   int64  `json:"retry_total"`
-	DroppedTotal int64  `json:"dropped_total"`
-	LastError    string `json:"last_error"`
+	Queued          int    `json:"queued"`
+	QueueCap        int    `json:"queue_cap"`
+	WarningQueued   int    `json:"warning_queued"`
+	WarningQueueCap int    `json:"warning_queue_cap"`
+	SentTotal       int64  `json:"sent_total"`
+	FailedTotal     int64  `json:"failed_total"`
+	RetryTotal      int64  `json:"retry_total"`
+	DroppedTotal    int64  `json:"dropped_total"`
+	LastError       string `json:"last_error"`
 }
 
 func TestGetOpsWorkersEmailContract(t *testing.T) {
 	h := New(nil, OpsOptions{
 		Workers: []StatsProvider{
-			fakeOpsWorker{"email", emailStats{Queued: 1, QueueCap: 256, SentTotal: 2, FailedTotal: 0, RetryTotal: 1, DroppedTotal: 0, LastError: ""}},
+			fakeOpsWorker{"email", emailStats{Queued: 1, QueueCap: 256, WarningQueued: 2, WarningQueueCap: 256, SentTotal: 3, FailedTotal: 0, RetryTotal: 1, DroppedTotal: 0, LastError: ""}},
 		},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
@@ -108,8 +110,50 @@ func TestGetOpsWorkersEmailContract(t *testing.T) {
 	require.Len(t, resp.Workers, 1)
 	require.Equal(t, "email", resp.Workers[0].Name)
 	st, ok := resp.Workers[0].Stats.(map[string]any)
-	require.True(t, ok)
-	for _, k := range []string{"queued", "queue_cap", "sent_total", "failed_total", "retry_total", "dropped_total", "last_error"} {
+	require.True(t, ok, "stats 应为对象")
+	expected := []string{"queued", "queue_cap", "warning_queued", "warning_queue_cap", "sent_total", "failed_total", "retry_total", "dropped_total", "last_error"}
+	require.Len(t, st, len(expected))
+	for _, k := range expected {
+		_, exists := st[k]
+		require.True(t, exists, "missing field %s", k)
+	}
+}
+
+// notificationStats 模拟 notification.Worker Stats 的十二字段形态（与 notification/delivery.go 的 notificationStats 同构）。
+type notificationStats struct {
+	Queued             int    `json:"queued"`
+	QueueCap           int    `json:"queue_cap"`
+	Evaluated          int64  `json:"evaluated"`
+	Admitted           int64  `json:"admitted"`
+	Suppressed         int64  `json:"suppressed"`
+	CooldownSuppressed int64  `json:"cooldown_suppressed"`
+	ClaimFailedTotal   int64  `json:"claim_failed_total"`
+	ReleaseFailedTotal int64  `json:"release_failed_total"`
+	DroppedTotal       int64  `json:"dropped_total"`
+	SentTotal          int64  `json:"sent_total"`
+	FailedTotal        int64  `json:"failed_total"`
+	LastError          string `json:"last_error"`
+}
+
+func TestGetOpsWorkersNotificationContract(t *testing.T) {
+	h := New(nil, OpsOptions{
+		Workers: []StatsProvider{
+			fakeOpsWorker{"notification", notificationStats{Queued: 1, QueueCap: 256, Evaluated: 10, Admitted: 5, Suppressed: 3, CooldownSuppressed: 2, ClaimFailedTotal: 0, ReleaseFailedTotal: 0, DroppedTotal: 0, SentTotal: 4, FailedTotal: 1, LastError: "mail_delivery_failed"}},
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+	require.Equal(t, 200, rec.Code)
+	var resp WorkersResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Workers, 1)
+	require.Equal(t, "notification", resp.Workers[0].Name)
+	st, ok := resp.Workers[0].Stats.(map[string]any)
+	require.True(t, ok, "stats 应为对象")
+	expected := []string{"queued", "queue_cap", "evaluated", "admitted", "suppressed", "cooldown_suppressed", "claim_failed_total", "release_failed_total", "dropped_total", "sent_total", "failed_total", "last_error"}
+	require.Len(t, st, len(expected))
+	for _, k := range expected {
 		_, exists := st[k]
 		require.True(t, exists, "missing field %s", k)
 	}

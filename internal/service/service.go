@@ -28,12 +28,13 @@ import (
 // 错误哨兵定义下沉 internal/service/errors（叶子包，单一真相）；此处别名
 // re-export 保持既有引用（errors.Is(err, service.ErrXxx)）同一哨兵实例语义。
 var (
-	ErrNotFound          = serviceerr.ErrNotFound
-	ErrInvalidInput      = serviceerr.ErrInvalidInput
-	ErrConflict          = serviceerr.ErrConflict
-	ErrTooManyRequests   = serviceerr.ErrTooManyRequests
-	ErrMailNotConfigured = serviceerr.ErrMailNotConfigured
-	ErrMailQueueFull     = serviceerr.ErrMailQueueFull
+	ErrNotFound              = serviceerr.ErrNotFound
+	ErrInvalidInput          = serviceerr.ErrInvalidInput
+	ErrConflict              = serviceerr.ErrConflict
+	ErrTooManyRequests       = serviceerr.ErrTooManyRequests
+	ErrMailNotConfigured     = serviceerr.ErrMailNotConfigured
+	ErrMailQueueFull         = serviceerr.ErrMailQueueFull
+	ErrMailChannelTestFailed = serviceerr.ErrMailChannelTestFailed
 )
 
 // EmailVerificationRequired 缺验证码时 400 响应的固定哨兵片段（前端发现机制）。
@@ -77,6 +78,7 @@ type UserStore interface {
 	// 原子资源更新（评审 I-1：兑换码 applier 用；普通 client 与 tx client 均可用）。
 	UpdateUserBalance(ctx context.Context, userID, delta int64) error
 	UpdateUserMaxConcurrency(ctx context.Context, userID int64, value int) error
+	UpdateUserBalanceWarningThreshold(ctx context.Context, userID int64, threshold int64) (*domain.User, int64, error)
 	// CreateTempBalance 创建临时额度行（注册赠品、兑换码兑换等；user_id 外键必
 	// 存在）。expiresAt/note 为 nil 时不落该列（nil = 永久；兑换码路径必非零）。
 	CreateTempBalance(ctx context.Context, userID int64, amount int64, expiresAt *time.Time, note *string) error
@@ -348,10 +350,11 @@ type Service struct {
 	priceFetcher pricing.Fetcher
 	// usageSnapshots codex 额度快照数据源（*sdkbridge.Codex 满足；AccountUsage
 	// 调用——nil = 未装配（测试/单实例），AccountUsage 返回 nil 快照）。
-	usageSnapshots CodexUsageSnapshotter
-	mailEnqueue    func(MailSendTask) error
-	tzLoc          *time.Location
-	log            *logx.Logger
+	usageSnapshots              CodexUsageSnapshotter
+	mailEnqueue                 func(MailSendTask) error
+	clearBalanceWarningCooldown func(context.Context, int64, int64) error
+	tzLoc                       *time.Location
+	log                         *logx.Logger
 }
 
 func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger) *Service {

@@ -46,7 +46,7 @@ export default function Ops() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t('ops.title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('ops.subtitle')}</p>
+          <p className="text-sm text-pretty break-keep text-muted-foreground">{t('ops.subtitle')}</p>
         </div>
         <div className="flex items-center gap-3">
           {opsQ.data?.generated_at && (
@@ -102,17 +102,17 @@ export default function Ops() {
                         <div key={k} className="flex items-center justify-between gap-3">
                           {/* 标签走 i18n（ops.stats.<字段>，缺 key 兜底显示原始字段名）；
                               title 保留原始 key（运维识别用，标签可翻译但 key 不译） */}
-                          <dt className="min-w-0 truncate text-xs text-muted-foreground" title={k}>
+                          <dt className="shrink-0 text-xs text-muted-foreground" title={k}>
                             {t(`ops.stats.${k}`, { defaultValue: k })}
                           </dt>
-                          <dd className="flex min-w-0 shrink-0 items-center justify-end gap-2" title={fmtStatValue(v, k)}>
+                          <dd className="flex min-w-0 items-center justify-end gap-2" title={fmtStatValue(v, k)}>
                             {typeof v === 'boolean' ? (
                               // 布尔观测位统一徽章：是（绿）/ 否（灰）
                               <Badge variant={v ? 'default' : 'secondary'} className="text-xs">
                                 {v ? t('ops.boolYes') : t('ops.boolNo')}
                               </Badge>
                             ) : (
-                              <span className="truncate font-mono text-sm tabular-nums">{fmtStatValue(v, k)}</span>
+                              <span className="min-w-0 truncate font-mono text-sm tabular-nums">{fmtStatValue(v, k)}</span>
                             )}
                           </dd>
                         </div>

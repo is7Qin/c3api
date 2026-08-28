@@ -93,6 +93,20 @@ func (_c *UserCreate) SetNillableBalance(v *int64) *UserCreate {
 	return _c
 }
 
+// SetBalanceWarningThreshold sets the "balance_warning_threshold" field.
+func (_c *UserCreate) SetBalanceWarningThreshold(v int64) *UserCreate {
+	_c.mutation.SetBalanceWarningThreshold(v)
+	return _c
+}
+
+// SetNillableBalanceWarningThreshold sets the "balance_warning_threshold" field if the given value is not nil.
+func (_c *UserCreate) SetNillableBalanceWarningThreshold(v *int64) *UserCreate {
+	if v != nil {
+		_c.SetBalanceWarningThreshold(*v)
+	}
+	return _c
+}
+
 // SetTokenVersion sets the "token_version" field.
 func (_c *UserCreate) SetTokenVersion(v int64) *UserCreate {
 	_c.mutation.SetTokenVersion(v)
@@ -237,6 +251,10 @@ func (_c *UserCreate) defaults() {
 		v := user.DefaultBalance
 		_c.mutation.SetBalance(v)
 	}
+	if _, ok := _c.mutation.BalanceWarningThreshold(); !ok {
+		v := user.DefaultBalanceWarningThreshold
+		_c.mutation.SetBalanceWarningThreshold(v)
+	}
 	if _, ok := _c.mutation.TokenVersion(); !ok {
 		v := user.DefaultTokenVersion
 		_c.mutation.SetTokenVersion(v)
@@ -280,6 +298,9 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.Balance(); !ok {
 		return &ValidationError{Name: "balance", err: errors.New(`ent: missing required field "User.balance"`)}
+	}
+	if _, ok := _c.mutation.BalanceWarningThreshold(); !ok {
+		return &ValidationError{Name: "balance_warning_threshold", err: errors.New(`ent: missing required field "User.balance_warning_threshold"`)}
 	}
 	if _, ok := _c.mutation.TokenVersion(); !ok {
 		return &ValidationError{Name: "token_version", err: errors.New(`ent: missing required field "User.token_version"`)}
@@ -346,6 +367,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Balance(); ok {
 		_spec.SetField(user.FieldBalance, field.TypeInt64, value)
 		_node.Balance = value
+	}
+	if value, ok := _c.mutation.BalanceWarningThreshold(); ok {
+		_spec.SetField(user.FieldBalanceWarningThreshold, field.TypeInt64, value)
+		_node.BalanceWarningThreshold = value
 	}
 	if value, ok := _c.mutation.TokenVersion(); ok {
 		_spec.SetField(user.FieldTokenVersion, field.TypeInt64, value)
@@ -543,6 +568,24 @@ func (u *UserUpsert) AddBalance(v int64) *UserUpsert {
 	return u
 }
 
+// SetBalanceWarningThreshold sets the "balance_warning_threshold" field.
+func (u *UserUpsert) SetBalanceWarningThreshold(v int64) *UserUpsert {
+	u.Set(user.FieldBalanceWarningThreshold, v)
+	return u
+}
+
+// UpdateBalanceWarningThreshold sets the "balance_warning_threshold" field to the value that was provided on create.
+func (u *UserUpsert) UpdateBalanceWarningThreshold() *UserUpsert {
+	u.SetExcluded(user.FieldBalanceWarningThreshold)
+	return u
+}
+
+// AddBalanceWarningThreshold adds v to the "balance_warning_threshold" field.
+func (u *UserUpsert) AddBalanceWarningThreshold(v int64) *UserUpsert {
+	u.Add(user.FieldBalanceWarningThreshold, v)
+	return u
+}
+
 // SetTokenVersion sets the "token_version" field.
 func (u *UserUpsert) SetTokenVersion(v int64) *UserUpsert {
 	u.Set(user.FieldTokenVersion, v)
@@ -728,6 +771,27 @@ func (u *UserUpsertOne) AddBalance(v int64) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateBalance() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateBalance()
+	})
+}
+
+// SetBalanceWarningThreshold sets the "balance_warning_threshold" field.
+func (u *UserUpsertOne) SetBalanceWarningThreshold(v int64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetBalanceWarningThreshold(v)
+	})
+}
+
+// AddBalanceWarningThreshold adds v to the "balance_warning_threshold" field.
+func (u *UserUpsertOne) AddBalanceWarningThreshold(v int64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.AddBalanceWarningThreshold(v)
+	})
+}
+
+// UpdateBalanceWarningThreshold sets the "balance_warning_threshold" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateBalanceWarningThreshold() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBalanceWarningThreshold()
 	})
 }
 
@@ -1089,6 +1153,27 @@ func (u *UserUpsertBulk) AddBalance(v int64) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateBalance() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateBalance()
+	})
+}
+
+// SetBalanceWarningThreshold sets the "balance_warning_threshold" field.
+func (u *UserUpsertBulk) SetBalanceWarningThreshold(v int64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetBalanceWarningThreshold(v)
+	})
+}
+
+// AddBalanceWarningThreshold adds v to the "balance_warning_threshold" field.
+func (u *UserUpsertBulk) AddBalanceWarningThreshold(v int64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.AddBalanceWarningThreshold(v)
+	})
+}
+
+// UpdateBalanceWarningThreshold sets the "balance_warning_threshold" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateBalanceWarningThreshold() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBalanceWarningThreshold()
 	})
 }
 

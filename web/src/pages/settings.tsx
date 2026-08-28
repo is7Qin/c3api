@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Settings as SettingsIcon } from 'lucide-react'
@@ -11,10 +11,13 @@ import { ApiUnauthorized } from '@/lib/api/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { MailChannelTestCard } from '@/components/mail-channel-test-card'
 import { toast } from '@/components/ui/toast'
 import type { components } from '@/lib/api/schema'
 
@@ -34,6 +37,7 @@ const GROUPS: { id: string; keys: string[] }[] = [
   { id: 'pricingSync', keys: ['price_source_url', 'price_sync_cron'] },
   { id: 'tierPolicy', keys: ['service_tier_policy_priority', 'service_tier_policy_flex', 'service_tier_policy_fast'] },
   { id: 'mail', keys: ['mail.enabled', 'mail.register_verification', 'mail.smtp_host', 'mail.smtp_port', 'mail.smtp_username', 'mail.smtp_password', 'mail.from_address', 'mail.tls'] },
+  { id: 'balanceWarning', keys: ['balance_warning.enabled'] },
 ]
 const GROUPED_KEYS = new Set(GROUPS.flatMap(g => g.keys))
 
@@ -104,33 +108,34 @@ function SettingRow({ setting }: { setting: Setting }) {
     e.preventDefault()
     doSave(submitValue())
   }
+  const controlId = `setting-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
   const control =
     typ === 'switch' ? (
-      <Switch checked={draft === 'true'} disabled={save.isPending} onCheckedChange={c => { setDraft(String(c)); doSave(String(c)) }} aria-label={t(`settings.labels.${key}`)} />
+      <Switch id={controlId} checked={draft === 'true'} disabled={save.isPending} onCheckedChange={c => { setDraft(String(c)); doSave(String(c)) }} aria-label={t(`settings.labels.${key}`)} />
     ) : isTier ? (
       <Select items={{ passthrough: t('settings.policies.passthrough'), strip: t('settings.policies.strip'), reject: t('settings.policies.reject') }} value={draft} onValueChange={v => { setDraft(v); doSave(v) }} disabled={save.isPending}>
-        <SelectTrigger className="w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
+        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
         <SelectContent>{TIER_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.policies.${v}`)}>{t(`settings.policies.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
     ) : isTls ? (
       <Select items={{ starttls: t('settings.tlsOptions.starttls'), implicit: t('settings.tlsOptions.implicit'), none: t('settings.tlsOptions.none') }} value={draft} onValueChange={v => { setDraft(v); doSave(v) }} disabled={save.isPending}>
-        <SelectTrigger className="w-56 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
+        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-56 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
         <SelectContent>{TLS_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.tlsOptions.${v}`)}>{t(`settings.tlsOptions.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
     ) : typ === 'number' ? (
-      <Input type="number" min={0} step={isUsd ? 0.00001 : 1} className="w-48 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10 text-right tabular-nums" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
+      <Input id={controlId} type="number" min={0} step={isUsd ? 0.00001 : 1} className="w-full max-w-full lg:w-48 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10 text-right tabular-nums" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
     ) : (
-      <Input type={isPassword ? 'password' : 'text'} className="w-96 max-w-full bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
+      <Input id={controlId} type={isPassword ? 'password' : 'text'} className="w-full max-w-full lg:w-96 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
     )
   return (
-    <div className="flex items-start justify-between gap-5 py-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2"><span className="text-sm font-medium">{t(`settings.labels.${key}`)}</span><code className="font-mono text-xs text-muted-foreground">{key}</code></div>
+    <div className="flex flex-col gap-3 py-3 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2"><Label htmlFor={controlId} className="text-sm font-medium">{t(`settings.labels.${key}`)}</Label><code className="font-mono text-xs text-muted-foreground">{key}</code></div>
         <p className="text-xs text-muted-foreground">{t(`settings.descs.${key}`)}</p>
-        {isUsd && !err && <p className="text-xs text-muted-foreground">{t('settings.usdHint')}</p>}
+        {isUsd && !err && <p className="text-xs text-muted-foreground"><span className="whitespace-nowrap">{t('settings.usdHint')}</span></p>}
         {err && <p className="text-xs text-destructive">{err}</p>}
       </div>
-      <div className="flex shrink-0 items-center gap-2">{control}</div>
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:w-auto lg:shrink-0 lg:justify-end">{control}</div>
     </div>
   )
 }
@@ -142,28 +147,57 @@ function MailTemplateCard({ purpose }: { purpose: string }) {
   const tmpl = (data ?? []).find(x => x.purpose === purpose) as MailTemplate | undefined
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
-  const [loaded, setLoaded] = useState(false)
-  if (tmpl && !loaded) {
-    setSubject(tmpl.subject ?? '')
-    setBody(tmpl.body_text ?? '')
-    setLoaded(true)
+  useEffect(() => {
+    if (tmpl) {
+      setSubject(tmpl.subject ?? '')
+      setBody(tmpl.body_text ?? '')
+    }
+  }, [tmpl, purpose])
+  const applyToCache = (updated: MailTemplate) => {
+    qc.setQueryData<MailTemplate[]>(['mail-templates'], prev => {
+      if (!prev) return [updated]
+      const idx = prev.findIndex(p => p.purpose === purpose)
+      if (idx === -1) return [...prev, updated]
+      const next = [...prev]
+      next[idx] = updated
+      return next
+    })
   }
   const save = useMutation({
     mutationFn: () => api.putMailTemplate(purpose, { subject, body_text: body }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['mail-templates'] }); setLoaded(false); toast.add({ title: t('settings.saved'), type: 'success' }) },
+    onSuccess: (updated: MailTemplate) => {
+      applyToCache(updated)
+      setSubject(updated.subject ?? '')
+      setBody(updated.body_text ?? '')
+      toast.add({ title: t('settings.saved'), type: 'success' })
+    },
     onError: (e: Error) => toast.add({ title: e.message, type: 'error' }),
   })
   const restore = useMutation({
     mutationFn: () => api.putMailTemplate(purpose, { subject: '', body_text: '' }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['mail-templates'] }); setLoaded(false); toast.add({ title: t('settings.restored'), type: 'success' }) },
+    onSuccess: (returned: MailTemplate) => {
+      applyToCache(returned)
+      setSubject(returned.subject ?? '')
+      setBody(returned.body_text ?? '')
+      toast.add({ title: t('settings.restored'), type: 'success' })
+    },
+    onError: (e: Error) => toast.add({ title: e.message, type: 'error' }),
   })
+  const busy = save.isPending || restore.isPending
+  const isBalance = purpose === 'balance_warning'
+  const hintKey = isBalance ? 'settings.mailTemplate.hintBalanceWarning' : 'settings.mailTemplate.hint'
+  const subjectPh = isBalance ? '{{app_name}} {{balance}} {{threshold}}' : '{{app_name}} {{code}}'
+  const bodyPh = isBalance ? '{{balance}} {{threshold}} {{app_name}}' : '{{code}} {{ttl_minutes}} {{app_name}}'
+  const subjectId = `mail-template-${purpose}-subject`
+  const bodyId = `mail-template-${purpose}-body`
+  const hintId = `mail-template-${purpose}-hint`
   return (
     <Card className="p-4 space-y-3">
       <div className="font-medium">{t(`settings.mailTemplate.${purpose}`)}</div>
-      <div className="space-y-1"><label className="text-sm">{t('settings.mailTemplate.subject')}</label><Input value={subject} onChange={e => setSubject(e.target.value)} placeholder="{{app_name}} {{code}}" /></div>
-      <div className="space-y-1"><label className="text-sm">{t('settings.mailTemplate.body')}</label><textarea className="w-full min-h-24 rounded-md border border-input bg-black/[0.04] px-3 py-2 text-sm" value={body} onChange={e => setBody(e.target.value)} placeholder="{{code}} {{ttl_minutes}} {{app_name}}" /></div>
-      <p className="text-xs text-muted-foreground">{t('settings.mailTemplate.hint')}</p>
-      <div className="flex gap-2"><Button onClick={() => save.mutate()} disabled={save.isPending}>{t('common.save')}</Button><Button variant="outline" onClick={() => restore.mutate()} disabled={restore.isPending}>{t('settings.restoreDefault')}</Button></div>
+      <div className="space-y-1"><Label htmlFor={subjectId} className="text-sm">{t('settings.mailTemplate.subject')}</Label><Input id={subjectId} value={subject} onChange={e => setSubject(e.target.value)} placeholder={subjectPh} aria-describedby={hintId} /></div>
+      <div className="space-y-1"><Label htmlFor={bodyId} className="text-sm">{t('settings.mailTemplate.body')}</Label><textarea id={bodyId} className="w-full min-h-24 rounded-md border border-input bg-black/[0.04] px-3 py-2 text-sm" value={body} onChange={e => setBody(e.target.value)} placeholder={bodyPh} aria-describedby={hintId} /></div>
+      <p id={hintId} className="text-xs text-muted-foreground">{t(hintKey)}</p>
+      <div className="flex gap-2"><Button onClick={() => { if (busy) return; save.mutate() }} disabled={busy}>{t('common.save')}</Button><Button variant="outline" onClick={() => { if (busy) return; restore.mutate() }} disabled={busy}>{t('settings.restoreDefault')}</Button></div>
     </Card>
   )
 }
@@ -178,9 +212,11 @@ export default function SettingsPage() {
       <div><h1 className="text-2xl font-semibold tracking-tight">{t('settings.title')}</h1><p className="text-sm text-muted-foreground">{t('settings.subtitle')}</p></div>
       {isError ? <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p> : isLoading ? <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div> : data?.length === 0 ? <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground"><SettingsIcon className="size-10" /><p className="font-medium">{t('settings.emptyTitle')}</p></Card> : (
         <Tabs defaultValue="signup">
-          <TabsList className="w-full">
-            {GROUPS.map(g => <TabsTrigger key={g.id} value={g.id} className="flex-1">{t(`settings.groups.${g.id}`)}</TabsTrigger>)}
-          </TabsList>
+          <ScrollArea className="max-w-full [&_[data-slot=scroll-area-scrollbar][data-orientation=vertical]]:hidden" showHorizontal>
+            <TabsList className="w-max min-w-full">
+              {GROUPS.map(g => <TabsTrigger key={g.id} value={g.id} className="flex-1">{t(`settings.groups.${g.id}`)}</TabsTrigger>)}
+            </TabsList>
+          </ScrollArea>
           {GROUPS.map(g => {
             const rows = g.keys.map(k => byKey.get(k)).filter((s): s is Setting => !!s)
             const smtpCard = rows.length > 0 && (
@@ -189,9 +225,9 @@ export default function SettingsPage() {
             return (
               <TabsContent key={g.id} value={g.id} className="space-y-4 pt-4">
                 {g.id === 'mail' ? (
-                  <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+                  <div className="grid grid-cols-1 items-start gap-4 2xl:grid-cols-2">
                     {smtpCard}
-                    <div className="space-y-4"><MailTemplateCard purpose="register_code" /><MailTemplateCard purpose="reset_code" /></div>
+                    <div className="space-y-4"><MailTemplateCard purpose="register_code" /><MailTemplateCard purpose="reset_code" /><MailTemplateCard purpose="balance_warning" /><MailChannelTestCard /></div>
                   </div>
                 ) : smtpCard}
               </TabsContent>

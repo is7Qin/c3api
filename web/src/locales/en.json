@@ -1125,7 +1125,8 @@
       "defaults": "New user defaults",
       "pricingSync": "Price sync",
       "tierPolicy": "Service tier policy",
-      "mail": "Mail"
+      "mail": "Mail",
+      "balanceWarning": "Balance warning"
     },
     "labels": {
       "signup_enabled": "Open signup",
@@ -1145,7 +1146,8 @@
       "mail.smtp_username": "SMTP username",
       "mail.smtp_password": "SMTP password",
       "mail.from_address": "From address",
-      "mail.tls": "TLS policy"
+      "mail.tls": "TLS policy",
+      "balance_warning.enabled": "Enable balance warning"
     },
     "descs": {
       "signup_enabled": "When off, the public signup channel stops accepting new users",
@@ -1165,7 +1167,8 @@
       "mail.smtp_username": "SMTP username (optional)",
       "mail.smtp_password": "SMTP password",
       "mail.from_address": "From address",
-      "mail.tls": "Connection encryption policy; defaults to SMTPS implicit TLS on port 465"
+      "mail.tls": "Connection encryption policy; defaults to SMTPS implicit TLS on port 465",
+      "balance_warning.enabled": "When off, low-balance warning emails are not sent"
     },
     "policies": {
       "passthrough": "Pass through",
@@ -1184,11 +1187,24 @@
     "mailTemplate": {
       "register_code": "Register code template",
       "reset_code": "Reset code template",
+      "balance_warning": "Balance warning template",
       "subject": "Subject",
       "body": "Body",
       "hint": "Placeholders: {{code}} {{ttl_minutes}} {{app_name}}",
+      "hintBalanceWarning": "Placeholders: {{balance}} {{threshold}} {{app_name}}",
       "restored": "Restored default",
       "saved": "Saved"
+    },
+    "mailChannelTest": {
+      "title": "Mail channel test",
+      "desc": "Send a test email with current SMTP settings",
+      "emailLabel": "Test recipient",
+      "emailPlaceholder": "test@example.com",
+      "send": "Send test",
+      "sending": "Sending…",
+      "sent": "Test email sent",
+      "failed": "Failed to send test email",
+      "invalidEmail": "Enter a valid email address"
     },
     "restored": "Restored",
     "restoreDefault": "Restore default"
@@ -1226,6 +1242,7 @@
       "stats-agg": "Stats aggregation",
       "billing": "Billing settlement",
       "email": "Mail queue",
+      "notification": "Balance warning",
       "notify": "NOTIFY listener",
       "auth-sync": "Auth reload",
       "discovery": "Instance discovery",
@@ -1241,6 +1258,14 @@
       "writeback_cap": "Writeback queue cap",
       "queued": "Queued",
       "queue_cap": "Queue cap",
+      "warning_queued": "Warning queued",
+      "warning_queue_cap": "Warning queue cap",
+      "evaluated": "Evaluated",
+      "admitted": "Admitted",
+      "suppressed": "Suppressed",
+      "cooldown_suppressed": "Cooldown suppressed",
+      "claim_failed_total": "Claim failed",
+      "release_failed_total": "Release failed",
       "dropped": "Dropped",
       "drop_warn_threshold": "Drop warn threshold",
       "pending_logs": "Pending logs",
@@ -1503,6 +1528,16 @@
       "tempPermanent": "Permanent",
       "tempNote": "Note",
       "tempEmpty": "No temporary balance",
+      "balanceWarningTitle": "Balance warning",
+      "balanceWarningDesc": "Alert when balance falls to or below this threshold",
+      "balanceWarningLabel": "Threshold (USD)",
+      "balanceWarningHint": "0 = disabled",
+      "balanceWarningDisabled": "Disabled",
+      "balanceWarningActive": "$ {{value}}",
+      "balanceWarningSave": "Save",
+      "balanceWarningSaving": "Saving…",
+      "balanceWarningSaved": "Threshold saved",
+      "balanceWarningInvalid": "Enter a valid amount (≥ 0)",
       "pwdTitle": "Change password",
       "pwdSubtitle": "Your new password takes effect next time you sign in",
       "oldPassword": "Old password",

@@ -211,11 +211,14 @@ export class ApiClient {
   redeem = (code: string) => this.request<components['schemas']['RedeemResponse']>('/redemptions', { method: 'POST', body: JSON.stringify({ code }) })
   listUserRedemptions = (p?: { page?: number; page_size?: number; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['RedemptionRecordListResponse']>('/redemptions', { params: toQuery(p) })
   getTempBalances = () => this.request<components['schemas']['TempBalancesResponse']>('/temp-balances')
+  getBalanceWarningThreshold = () => this.request<components['schemas']['BalanceWarningThresholdResponse']>('/balance-warning-threshold')
+  updateBalanceWarningThreshold = (b: components['schemas']['BalanceWarningThresholdUpdate']) => this.request<components['schemas']['BalanceWarningThresholdResponse']>('/balance-warning-threshold', { method: 'PUT', body: JSON.stringify(b) })
   changePassword = (b: components['schemas']['UserAuthChangePassword']) => this.request<components['schemas']['ChangePasswordResponse']>('/auth/change-password', { method: 'POST', body: JSON.stringify(b) })
   registerCode = (b: components['schemas']['RegisterCodeRequest']) => this.request<components['schemas']['SentResponse']>('/auth/register-code', { method: 'POST', body: JSON.stringify(b) })
   forgotPassword = (b: components['schemas']['ForgotPasswordRequest']) => this.request<components['schemas']['SentResponse']>('/auth/forgot-password', { method: 'POST', body: JSON.stringify(b) })
   resetPassword = (b: components['schemas']['ResetPasswordRequest']) => this.request<components['schemas']['ChangePasswordResponse']>('/auth/reset-password', { method: 'POST', body: JSON.stringify(b) })
   // —— 邮件模板（管理端）——
+  sendMailChannelTest = (b: components['schemas']['MailChannelTestRequest']) => this.request<components['schemas']['MailChannelTestResponse']>('/mail/channel-test', { method: 'POST', body: JSON.stringify(b) })
   getMailTemplates = () => this.request<components['schemas']['MailTemplate'][]>('/mail/templates')
   putMailTemplate = (purpose: string, b: components['schemas']['MailTemplateUpdate']) => this.request<components['schemas']['MailTemplate']>(`/mail/templates/${purpose}`, { method: 'PUT', body: JSON.stringify(b) })
 }
