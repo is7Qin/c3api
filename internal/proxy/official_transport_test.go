@@ -2,9 +2,13 @@
 package proxy
 
 import (
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -36,15 +40,66 @@ func newProxyOfficialRewriteTransportWithAssert(t *testing.T, target string) htt
 	u, err := url.Parse(target)
 	require.NoError(t, err)
 	require.Equal(t, "", u.Path, "target must be bare host without path; path preserved from official URL")
-	return roundTripperFuncProxy(func(req *http.Request) (*http.Response, error) {
-		got := req.URL.String()
-		require.True(t, proxyOfficialURLs[got], "unexpected official URL: %s", got)
-		clone := req.Clone(req.Context())
-		clone.URL.Scheme = u.Scheme
-		clone.URL.Host = u.Host
-		// preserve Path and RawQuery from official URL
-		return http.DefaultTransport.RoundTrip(clone)
-	})
+	require.Empty(t, u.RawQuery, "target must be bare host without query")
+	return &proxyOfficialRewriteTransport{targetURL: u, t: t}
+}
+
+type proxyOfficialRewriteTransport struct {
+	targetURL *url.URL
+	t         *testing.T
+}
+
+func (rt *proxyOfficialRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	got := req.URL.String()
+	if !proxyOfficialURLs[got] {
+		return nil, fmt.Errorf("unexpected official URL: %s (want one of %v)", got, proxyOfficialURLList())
+	}
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = rt.targetURL.Scheme
+	clone.URL.Host = rt.targetURL.Host
+	return http.DefaultTransport.RoundTrip(clone)
+}
+
+func proxyOfficialURLList() []string {
+	out := make([]string, 0, len(proxyOfficialURLs))
+	for k := range proxyOfficialURLs {
+		out = append(out, k)
+	}
+	return out
+}
+
+func TestProxyOfficialRewriteTransport_ConcurrentNoHangAndMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer srv.Close()
+	tr := newProxyOfficialRewriteTransportWithAssert(t, srv.URL)
+	var wg sync.WaitGroup
+	errs := make(chan error, 32)
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/codex/responses", nil)
+			_, err := tr.RoundTrip(req)
+			errs <- err
+		}()
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done); close(errs) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent proxy rewrites hung")
+	}
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/codex/responses?bad=1", nil)
+	_, err := tr.RoundTrip(req)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unexpected official URL")
 }
 
 type roundTripperFuncProxy func(*http.Request) (*http.Response, error)
