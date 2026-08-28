@@ -322,7 +322,7 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[i
 			if oldAv != nil {
 				sameBase = (oldAv.acc.BaseURL == nil && av.acc.BaseURL == nil) || (oldAv.acc.BaseURL != nil && av.acc.BaseURL != nil && *oldAv.acc.BaseURL == *av.acc.BaseURL)
 			}
-			sameStatic := oldAv != nil && oldAv.acc.Weight == av.acc.Weight && oldAv.acc.MaxConcurrency == av.acc.MaxConcurrency && oldAv.tpl == av.tpl && groupsEqual(oldAv.groupIDs, av.groupIDs) && sameBase && oldAv.acc.UpstreamKey == av.acc.UpstreamKey
+			sameStatic := oldAv != nil && oldAv.acc.Weight == av.acc.Weight && oldAv.acc.MaxConcurrency == av.acc.MaxConcurrency && oldAv.tpl == av.tpl && groupsEqual(oldAv.groupIDs, av.groupIDs) && sameBase && oldAv.acc.UpstreamKey == av.acc.UpstreamKey && oldAv.acc.Ext == av.acc.Ext
 			if sameStatic {
 				rt := old.runtime
 				if curSt := rt.state.Load(); curSt != nil {
