@@ -178,3 +178,21 @@ func rewriteResponseModelSSE(event sserelay.Event, model string) []byte {
 	}
 	return out
 }
+
+func newResponseModelRewriter(model string) func([]byte) []byte {
+	if model == "" {
+		return nil
+	}
+	return func(body []byte) []byte {
+		return rewriteResponseModelJSON(body, model)
+	}
+}
+
+func newResponseModelSSEMapper(model string) func(sserelay.Event) ([]byte, bool) {
+	if model == "" {
+		return nil
+	}
+	return func(ev sserelay.Event) ([]byte, bool) {
+		return rewriteResponseModelSSE(ev, model), false
+	}
+}
