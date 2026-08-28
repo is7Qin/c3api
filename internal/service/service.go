@@ -386,8 +386,8 @@ func (s *Service) SetEmailCodeStore(store EmailCodeStore) {
 }
 
 // SetLocalDispatcher 注入本地变更分发器（#36 本地实例即时重算）：main 装配序
-// 上 dispatcher 需要 svc（SettingsReloader）、svc 需要 dispatcher（本地分发）
-// ——构造环，svc 构造完成后回填（与 invalidate.Debouncer.SetSettings 同模式）。
+// 上 dispatcher 需要 svc、svc 需要 dispatcher（本地分发）——构造环，svc
+// 构造完成后回填。
 // 未注入 = 单实例/测试：settings 变更不做本地 scope 分发（预算重算由 60s
 // auth-sync / 下次变更兜底收敛，单实例无多实例分摊语义）。
 func (s *Service) SetLocalDispatcher(d notify.Dispatcher) { s.local = d }

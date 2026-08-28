@@ -252,8 +252,7 @@ func TestPublishNilPublisher(t *testing.T) {
 	require.NoError(t, err, "nil publisher 下业务路径正常")
 }
 
-// TestReloadSettings 公开方法（invalidate.SettingsReloader 接口）：外部落库后
-// 调用 → 快照重载生效。
+// TestReloadSettings 公开重载方法：外部落库后调用 → 快照重载生效。
 func TestReloadSettings(t *testing.T) {
 	ctx := context.Background()
 	fs := newFakeStore()
