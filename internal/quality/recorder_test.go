@@ -71,12 +71,10 @@ func TestQualityRecorder_RetireBeforePin_Race(t *testing.T) {
 	require.Equal(t, 1, r.RetiredCount())
 	require.Equal(t, 0, r.PinnedRetiredCount())
 	var ctx AttemptContext
-	require.True(t, r.InitAttemptContext(cell, &ctx))
-	require.Equal(t, 1, r.PinnedRetiredCount())
-	tt := int64(50)
-	ctx.Complete(true, &tt, 5, 1, 1)
+	require.False(t, r.InitAttemptContext(cell, &ctx))
 	require.Equal(t, 0, r.PinnedRetiredCount())
-	require.Equal(t, int64(0), r.PinnedGauge())
+	require.Equal(t, int64(0), r.GlobalInflight())
+	require.True(t, ctx.IsZero())
 }
 
 func TestQualityRecorder_HotPath_NoLock_0Alloc(t *testing.T) {
@@ -104,11 +102,11 @@ func TestQualityRecorder_ExactStats_Q32_10Hist_ErrorClasses(t *testing.T) {
 	q := qc(40)
 	cell := r.GetOrCreateCell(f, q)
 	cases := []struct {
-		success bool
-		tt      int64
-		tokens  int64
-		calls   int64
-		images  int64
+		success  bool
+		tt       int64
+		tokens   int64
+		calls    int64
+		images   int64
 		errClass int
 	}{
 		{true, 50, 10, 1, 0, ErrClassNone},
