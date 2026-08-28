@@ -76,7 +76,7 @@ func TestDrain_FailedBucketSuppressedUntilNextCycle(t *testing.T) {
 	}
 	store := newFailingBucketStore(base, "balance", 1)
 	logger, out := newTestLogger(t)
-	f := newFlusherWith(store.fakeLedgerStore, 4, map[int64]int64{4: 1000, 5: 1000, 6: 1000, 7: 1000})
+	f := newFlusherWith(store.fakeLedgerStore, map[int64]int64{4: 1000, 5: 1000, 6: 1000, 7: 1000})
 	f.store = store
 	f.log = logger
 	oldBudget := drainCycleBudget

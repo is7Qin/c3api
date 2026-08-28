@@ -52,7 +52,7 @@ func TestFlusherErrlogWorkerParallelIsolated(t *testing.T) {
 		store.seedRow(int64(i), int64(i%4+1), 100, time.Now())
 		store.setBalance(int64(i%4+1), 1_000_000)
 	}
-	f := newFlusherWith(store, 4, map[int64]int64{1: 1e9, 2: 1e9, 3: 1e9, 4: 1e9})
+	f := newFlusherWith(store, map[int64]int64{1: 1e9, 2: 1e9, 3: 1e9, 4: 1e9})
 
 	errs := &captureErrInserter{}
 	ew := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errs, nil)
