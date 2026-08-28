@@ -60,6 +60,7 @@ const CREDENTIAL_TYPES: TemplateCredentialType[] = ['api_key', 'responses-specia
 // search（service 校验前置——与 validateTemplate 白名单一致）
 const ECO_CREDENTIAL_TYPES: TemplateCredentialType[] = ['responses-special', 'codex-oauth', 'codex-pat']
 const ECO_FORMATS: TemplateFormat[] = ['openai-responses', 'openai-responses-ws', 'openai-images', 'openai-search']
+const isCodexCredential = (v: string) => v === 'codex-oauth' || v === 'codex-pat'
 const CREDENTIAL_BADGE_STYLES: Partial<Record<TemplateCredentialType, string>> = {
   'responses-special': 'bg-violet-500/10 text-violet-600 dark:bg-violet-400/10 dark:text-violet-400',
   'codex-oauth': 'bg-sky-500/10 text-sky-600 dark:bg-sky-400/10 dark:text-sky-400',
@@ -99,10 +100,11 @@ const emptyForm = (): FormState => ({
 })
 
 function toForm(t: Template): FormState {
+  const ct = t.CredentialType ?? ''
   return {
     name: t.Name ?? '',
-    base_url: t.BaseURL ?? '',
-    credential_type: t.CredentialType ?? '',
+    base_url: isCodexCredential(ct) ? '' : (t.BaseURL ?? ''),
+    credential_type: ct,
     supported_formats: [...(t.SupportedFormats ?? [])],
     modelsText: (t.Models ?? []).join(', '),
     format_models: Object.entries(t.FormatModels ?? {}).map(([format, models]) => ({
@@ -135,10 +137,11 @@ function mappingOf(f: FormState): Record<string, string> {
 function toBody(f: FormState): TemplateCreate {
   const format_models = formatModelsOf(f)
   const model_mapping = mappingOf(f)
+  const ct = (f.credential_type || 'api_key') as string
   return {
     name: f.name.trim(),
-    base_url: f.base_url.trim(),
-    credential_type: (f.credential_type || 'api_key') as TemplateCreate['credential_type'],
+    base_url: isCodexCredential(ct) ? '' : f.base_url.trim(),
+    credential_type: ct as TemplateCreate['credential_type'],
     supported_formats: f.supported_formats,
     models: splitList(f.modelsText),
     format_models: Object.keys(format_models).length ? format_models : undefined,
@@ -228,17 +231,21 @@ function FormFields({
           onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
         />
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="tpl-base">BaseURL</Label>
-        <Input
-          id="tpl-base"
-          value={form.base_url}
-          placeholder="https://api.openai.com"
-          onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
-        />
-        {/* base_url 全类型可选（2026-08-14 用户裁决）：codex 走 SDK 默认端点；api_key 留空则上游请求失败 */}
-        {!batch && <p className="text-xs text-muted-foreground">{t('templates.baseUrlOptional')}</p>}
-      </div>
+      {!batch && isCodexCredential(form.credential_type) ? null : (
+        <div className="space-y-1.5">
+          <Label htmlFor="tpl-base">BaseURL</Label>
+          <Input
+            id="tpl-base"
+            value={form.base_url}
+            placeholder="https://api.openai.com"
+            onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
+          />
+          {!batch && <p className="text-xs text-muted-foreground">{t('templates.baseUrlOptional')}</p>}
+        </div>
+      )}
+      {!batch && isCodexCredential(form.credential_type) && (
+        <p className="text-xs text-muted-foreground">{t('templates.baseUrlCodexHidden')}</p>
+      )}
 
       {/* credential_type：一个模板 = 一种号池（非 api_key 类型走 SDK 内置端点，base_url 忽略） */}
       {!batch && (
@@ -250,12 +257,14 @@ function FormFields({
             value={form.credential_type || 'api_key'}
             onValueChange={v => setForm(f => {
               // 生态三类型：supported_formats 联动限制为 resp / resp-ws（service 校验前置）
-              if (!ECO_CREDENTIAL_TYPES.includes(v as TemplateCredentialType)) return { ...f, credential_type: v }
+              const isCodex = isCodexCredential(v)
+              if (!ECO_CREDENTIAL_TYPES.includes(v as TemplateCredentialType)) return { ...f, credential_type: v, base_url: isCodex ? '' : f.base_url }
               const supported_formats = f.supported_formats.filter(x => ECO_FORMATS.includes(x))
               const format_models = f.format_models.filter(r => ECO_FORMATS.includes(r.format))
               return {
                 ...f,
                 credential_type: v,
+                base_url: isCodex ? '' : f.base_url,
                 supported_formats: supported_formats.length ? supported_formats : [...ECO_FORMATS],
                 format_models,
               }
