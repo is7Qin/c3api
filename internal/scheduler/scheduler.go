@@ -54,6 +54,11 @@ type Loader interface {
 	UpdateAccountStatus(ctx context.Context, accountID int64, status domain.AccountStatus, cooldownUntil *time.Time, lastError *string, weight *int) error
 }
 
+type leaseToken struct {
+	acc      *accountSnapshot
+	released atomic.Bool
+}
+
 type Selection struct {
 	AccountID      int64
 	TemplateID     int64
@@ -62,13 +67,25 @@ type Selection struct {
 	UpstreamKey    string
 	CredentialType credential.Type
 	Model          string // 已应用模型映射
-	// StripImageTools 模板级图像 tool 剥离开关快照（pickFrom 从模板快照复制；
-	// 热路径布尔读 + 分支零开销；W4 消费）。
 	StripImageTools bool
-	// Ext 账号扩展快照（accountSnapshot 携带，快照重建随既有机制——T4 P3-4
-	// 定死路线 Selection 扩展，不做侧缓存）；codex 类型非 nil——codex 路由
-	// 按 Ext 派生 AccountCredential（T2 起）；api_key/responses-special 恒 nil。
 	Ext *domain.AccountExt
+	lease *leaseToken
+}
+
+func (s *Selection) Release() {
+	if s == nil || s.lease == nil {
+		return
+	}
+	if s.lease.released.CompareAndSwap(false, true) {
+		s.lease.acc.concurrency.Add(-1)
+	}
+}
+
+func (s *Selection) LeaseAccountForTest() *accountSnapshot {
+	if s == nil || s.lease == nil {
+		return nil
+	}
+	return s.lease.acc
 }
 
 type RuntimeInfo struct {
@@ -92,7 +109,9 @@ type Scheduler struct {
 	loader Loader
 	rule   *rule.RuleEngine
 	log    *logx.Logger
-	store  snapshotStore
+	view atomic.Pointer[RoutingView]
+	gen  atomic.Uint64
+	publisher *routingPublisher
 	// concView 集群账号并发视图（concsync.go worker 换入的第二 atomic 快照，
 	// spec conc-share-borrow-account）：超份额借位判定的对账聚合。nil / 陈旧 =
 	// 无共识 = fail-open 全额本地语义（结构性质，非错误分支）。
@@ -100,11 +119,14 @@ type Scheduler struct {
 	// instN 集群实例数 N 提供者（装配期 SetInstancesProvider 注入；nil → N=1，
 	// 见 concsync.go instancesN）。与 proxy.InstancesProvider 同名异包自持。
 	instN     atomic.Pointer[InstancesProvider]
-	reloadMu  sync.Mutex // 重建互斥（低频，不占热路径）
+	reloadMu  sync.Mutex // legacy alias to publisher.mu; publisher serializes (one Store)
 	writeCh   chan statusWrite
 	timeNow   func() time.Time
 	startOnce atomic.Bool
 }
+
+// View returns current RoutingView root (single atomic root; structurally shared StaticView+DecisionView).
+func (s *Scheduler) View() *RoutingView { return s.view.Load() }
 
 // New 构造调度器并注册规则引擎的 apply 回调（动作应用 = 快照/EWMA/回写，见 apply）。
 // ruleEngine 必须非 nil（状态管理唯一路径；main 在 Start 前显式 Reload）。
@@ -117,6 +139,7 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logge
 		writeCh: make(chan statusWrite, 4096),
 		timeNow: time.Now,
 	}
+	s.publisher = newRoutingPublisher(s)
 	ruleEngine.SetApply(s.apply)
 	return s
 }
@@ -217,19 +240,14 @@ func (s *Scheduler) processWrite(w statusWrite) {
 		}
 		okIDs = append(okIDs, ww.id)
 	}
-	// 组 id 收集短持 reloadMu（评审 M-1）：groupIDs 的读写纪律是"仅经 reloadMu"
-	// （buildSnapshots/InvalidateGroup 的 removeGid 就地改写），裸读与之并发是
-	// 数据竞态。回写循环非热路径，与 reload 锁竞争不敏感。
-	s.reloadMu.Lock()
-	raw := s.store.byID.Load()
-	byID, ok := raw.(map[int64]*accountSnapshot)
-	if !ok {
-		s.reloadMu.Unlock()
+	v := s.view.Load()
+	if v == nil {
 		if s.log != nil {
 			s.log.Warn("scheduler writeback skipped: snapshot not loaded")
 		}
 		return
 	}
+	byID := v.byID
 	gidSet := make(map[int64]struct{})
 	for _, id := range okIDs {
 		if as, ok := byID[id]; ok {
@@ -238,7 +256,6 @@ func (s *Scheduler) processWrite(w statusWrite) {
 			}
 		}
 	}
-	s.reloadMu.Unlock()
 	if len(gidSet) > 0 && s.cfg.GroupPub != nil {
 		gids := make([]int64, 0, len(gidSet))
 		for g := range gidSet {
@@ -248,28 +265,21 @@ func (s *Scheduler) processWrite(w statusWrite) {
 	}
 }
 
-// reload 全量重建快照（启动/定时/InvalidateAll）。
+// reload 全量重建快照（启动/定时/InvalidateAll）— single publisher.
 func (s *Scheduler) reload(ctx context.Context) error {
-	s.reloadMu.Lock()
-	defer s.reloadMu.Unlock()
 	m, err := s.loader.LoadGroupsAccounts(ctx)
 	if err != nil {
 		return err
 	}
-	// oldByID = 当前快照 map（复用旧实例的查询源——计数器连续性机制，见
-	// buildSnapshots）。reload 持 reloadMu，读取安全；首刷（store 未装载）为 nil。
-	oldByID, _ := s.store.byID.Load().(map[int64]*accountSnapshot)
-	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
-	// 在途并发继承（O-2 修订）：复用后保留账号的 oa == as（同一实例指针），
-	// Store/Load 是自赋值 no-op——原子连续性天然保证（指针不变、计数不归零，
-	// 顺带消除旧继承的 Load-Store 间隙窗口）；新账号（旧 map 无）计数自 0 起，
-	// 无在途请求（新建瞬间不可能有 Release 先到）。保留循环以显式表达纪律。
-	for id, as := range byID {
-		if oa, ok := oldByID[id]; ok {
-			as.concurrency.Store(oa.concurrency.Load())
-		}
+	s.publisher.mu.Lock()
+	defer s.publisher.mu.Unlock()
+	cur := s.view.Load()
+	var oldByID map[int64]*accountSnapshot
+	if cur != nil {
+		oldByID = cur.byID
 	}
-	s.store.store(groups, byID)
+	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
+	s.publisher.storeLocked(groups, byID)
 	return nil
 }
 
@@ -468,8 +478,6 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 // 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
 // （processWrite 发布收集仍持 reloadMu——评审 M-1 纪律，无锁外裸读）。
 func (s *Scheduler) InvalidateGroup(groupID int64) {
-	s.reloadMu.Lock()
-	defer s.reloadMu.Unlock()
 	accs, err := s.loader.LoadGroupAccounts(context.Background(), groupID)
 	if err != nil {
 		if s.log != nil {
@@ -477,7 +485,18 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		}
 		return
 	}
-	m, byID := s.store.groups.Load().(map[int64]*groupSnapshot), s.store.byID.Load().(map[int64]*accountSnapshot)
+	s.publisher.mu.Lock()
+	defer s.publisher.mu.Unlock()
+	cur := s.view.Load()
+	var m map[int64]*groupSnapshot
+	var byID map[int64]*accountSnapshot
+	if cur != nil {
+		m = cur.groups
+		byID = cur.byID
+	} else {
+		m = map[int64]*groupSnapshot{}
+		byID = map[int64]*accountSnapshot{}
+	}
 	// byID 兼作复用查询源（oldByID）：组级重载同样复用旧实例——errRate/errCount
 	// 跨组级 NOTIFY 重载保留（A-2 M-4），静态字段 DB 权威同步。持 reloadMu 读取安全。
 	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, s.cfg.DefaultMaxConcurrency, byID)
@@ -531,10 +550,9 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		var otherGids []int64
 		nst := ns.static.Load()
 		if oa, ok := byID[nst.acc.ID]; ok {
-			// 在途并发继承（与 reload 同纪律，O-2 修订）：复用后 oa == ns（同一
-			// 实例），Store/Load 是自赋值 no-op——原子连续性天然保证（指针不变、
-			// 计数不归零），保留循环以显式表达纪律；新账号（旧 map 无）计数自 0 起。
-			ns.concurrency.Store(oa.concurrency.Load())
+			if ns != oa {
+				ns.concurrency.Store(oa.concurrency.Load())
+			}
 			for _, g := range oa.static.Load().groupIDs {
 				if g != groupID {
 					otherGids = append(otherGids, g)
@@ -573,7 +591,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		}
 		newM[og] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
 	}
-	s.store.store(newM, newByID)
+	s.publisher.storeLocked(newM, newByID)
 }
 
 // InvalidateAccount 单账号快照失效（SDK 接入 T5 §1 P3-3——轮转回写后同步
@@ -583,22 +601,16 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 // 步（sdkbridge 轮转回调内调用；重载失败由 InvalidateGroup 内部 Warn 记录，
 // 不阻断——令牌已落库，下个会话经适配层 Auth 内存新 at 自愈）。
 func (s *Scheduler) InvalidateAccount(accountID int64) {
-	// groupIDs 仅经 reloadMu 读写（评审 M-1 纪律——InvalidateGroup 的从组移
-	// 除路径原地改写），读快照须持锁。
-	s.reloadMu.Lock()
-	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
-	var gids []int64
-	if ok {
-		if as, exists := byID[accountID]; exists {
-			gids = append([]int64(nil), as.static.Load().groupIDs...)
-		} else {
-			ok = false // 快照外账号：无可失效条目
-		}
-	}
-	s.reloadMu.Unlock()
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return
 	}
+	byID := v.byID
+	as, exists := byID[accountID]
+	if !exists {
+		return
+	}
+	gids := append([]int64(nil), as.static.Load().groupIDs...)
 	seen := make(map[int64]struct{}, len(gids))
 	for _, g := range gids {
 		if _, dup := seen[g]; dup {
@@ -640,11 +652,11 @@ func (s *Scheduler) InvalidateAllSyncCtx(ctx context.Context) error { return s.r
 // false（同 Select 模式——裸断言在此 panic，Warn-and-serve 语义下管理端应见
 // 未就绪而非进程崩溃）。
 func (s *Scheduler) Runtime(accountID int64) (RuntimeInfo, bool) {
-	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return RuntimeInfo{}, false
 	}
-	a, ok := byID[accountID]
+	a, ok := v.byID[accountID]
 	if !ok {
 		return RuntimeInfo{}, false
 	}
@@ -674,10 +686,11 @@ type AccountRuntime struct {
 // 与账号列表运行时视图同源）。遍历 byID 快照 map（整体原子换入不可变）零锁；
 // 冷面调用（管理端聚合 + TTL 缓存摊薄），不涉请求热路径。快照未加载 → nil。
 func (s *Scheduler) Runtimes() []AccountRuntime {
-	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return nil
 	}
+	byID := v.byID
 	out := make([]AccountRuntime, 0, len(byID))
 	for id, a := range byID {
 		av := a.static.Load()
@@ -695,16 +708,22 @@ func (s *Scheduler) Runtimes() []AccountRuntime {
 	return out
 }
 
-// Release 释放并发槽（请求结束必须调用，含流式断开）。断言 ok 防御性守卫
-// （快照未加载时请求路径不可达——Release 恒在 Select 成功之后，而 Select 在
-// 快照未加载时已返回错误；守卫防未来调用序变化时 panic）。
+// Release legacy ID-based release (kept for existing tests that use ID path).
+// New code should use Selection.Release which releases exact object via leaseToken.
 func (s *Scheduler) Release(accountID int64) {
-	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return
 	}
-	if a, ok := byID[accountID]; ok {
+	if a, ok := v.byID[accountID]; ok {
 		a.concurrency.Add(-1)
+	}
+}
+
+// ReleaseSelection releases exact leased object idempotently (preferred).
+func (s *Scheduler) ReleaseSelection(sel *Selection) {
+	if sel != nil {
+		sel.Release()
 	}
 }
 
@@ -713,13 +732,11 @@ func (s *Scheduler) Release(accountID int64) {
 // kind 直接收 rule.Kind（单一 kind 概念——scheduler 不再有第二套枚举；连接级/
 // 5xx 分流由调用点 RuleKindOf 完成）。
 func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Time, httpStatus int, errMsg string, model string) {
-	// 断言 ok 防御性守卫（同 Release：MarkResult 恒在 Select 成功之后，快照未
-	// 加载时请求路径不可达；防未来调用序变化时 panic）。
-	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return
 	}
-	a, ok := byID[accountID]
+	a, ok := v.byID[accountID]
 	if !ok {
 		return
 	}
@@ -767,11 +784,11 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 // 复活），冷面阻塞可接受。writebackLoop 未启动（未 Start）时入队不阻塞（缓冲
 // 4096）；进程退出竞态（循环已死且队列满）才阻塞——可接受。
 func (s *Scheduler) FailAccount(accountID int64, reason string) {
-	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return
 	}
-	a, ok := byID[accountID]
+	a, ok := v.byID[accountID]
 	if !ok {
 		return // 快照外账号（已移除/未知）：无状态可改，不投递回写（同 apply）
 	}
@@ -822,11 +839,11 @@ func RuleKindOf(httpStatus int) rule.Kind {
 // 快照未加载/账号快照外 → (domain.RuleThen{}, false)
 // （对齐 MarkResult 早退语义——请求路径不可达；本地拒绝不进本机制）。
 func (s *Scheduler) Classify(ev rule.Event) (then domain.RuleThen, punish bool) {
-	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return domain.RuleThen{}, false
 	}
-	a, ok := byID[ev.AccountID]
+	a, ok := v.byID[ev.AccountID]
 	if !ok {
 		return domain.RuleThen{}, false
 	}
@@ -866,14 +883,14 @@ func (s *Scheduler) FlushRules() {
 // errMsg 为事件错误文本（部署故障修复）：429/unhealthy 落 last_error 用——
 // 有文本用文本（域内截断 500），无文本回退既有硬编码文案（旧语义不变）。
 func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *time.Time, weight *int, errMsg string) {
-	raw := s.store.byID.Load()
-	byID, ok := raw.(map[int64]*accountSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		if s.log != nil {
 			s.log.Warn("scheduler apply skipped: snapshot not loaded")
 		}
 		return
 	}
+	byID := v.byID
 	a, ok := byID[aid]
 	if !ok {
 		return // 快照外账号（已移除/未知）：无状态可改，不投递回写
@@ -940,22 +957,13 @@ func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *ti
 		// 重读重试：并发转换（FailAccount/另一 apply）已落地，循环顶早退或再转换
 	}
 	if weight != nil {
-		// 权重写与组路由重建同锁区（C2）：InvalidateGroup 等锁内读 acc.Weight
-		//（buildRoutes/newWeightedSeq），锁外写是数据竞态。静态字段视图
-		// copy-modify-Store（评审 Critical 修复：不得裸写已发布视图——热路径
-		// 原子 Load 读者与之并发）。
-		s.reloadMu.Lock()
+		s.publisher.mu.Lock()
 		av := a.static.Load()
 		nv := *av
 		nv.acc.Weight = *weight
 		a.static.Store(&nv)
-		// weightedSeq 是预生成缓存：权重变更必须重建该组路由序列，
-		// 否则选号仍按旧权重（I1）。
-		// 评审 I-2：多组账号共享实例只重建首个组（nv.gid）的路由——其它组的
-		// 路由保留旧权重序列，经 ≤30s 全量同步 / 账号变更组级重载自愈，
-		// 非回归（预生成序列的固有折衷：热路径零计算，代价是弱一致性窗口）。
 		s.rebuildGroupLocked(nv.gid)
-		s.reloadMu.Unlock()
+		s.publisher.mu.Unlock()
 	}
 	// 回写前复查 disabled（防 active 回写覆盖 FailAccount 并发置位）——仅对
 	// 非 disabled 动作生效：本 apply 动作即 disabled 时必须照常回写（否则
@@ -977,21 +985,19 @@ func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *ti
 }
 
 // rebuildGroup 重建单组路由的公开包装（持锁委托 rebuildGroupLocked）。
-// 当前无调用者——apply 在锁区内直调 Locked 变体；InvalidateGroup 不调
-// rebuildGroup（直调 buildRoutes）——保留作 Locked 变体的公开对偶，
-// 防未来调用点误在锁外直调 Locked 变体（acc.Weight 写读同锁纪律）。
 func (s *Scheduler) rebuildGroup(groupID int64) {
-	s.reloadMu.Lock()
-	defer s.reloadMu.Unlock()
+	s.publisher.mu.Lock()
+	defer s.publisher.mu.Unlock()
 	s.rebuildGroupLocked(groupID)
 }
 
-// rebuildGroupLocked 重建单组路由（须持 reloadMu 调用；不碰 DB/账号列表）：
-// 从 store 中现有账号快照（apply 已更新 acc.Weight）重新 buildRoutes，整体
-// 换入快照（原子替换，避免与 Select 读端并发修改同一 groupSnapshot 的数据
-// 竞争）。byID 不变（同一批 accountSnapshot 指针）。
+// rebuildGroupLocked 重建单组路由（须持 publisher.mu 调用；不碰 DB/账号列表）：
 func (s *Scheduler) rebuildGroupLocked(groupID int64) {
-	m := s.store.groups.Load().(map[int64]*groupSnapshot)
+	v := s.view.Load()
+	if v == nil {
+		return
+	}
+	m := v.groups
 	gs, ok := m[groupID]
 	if !ok {
 		return
@@ -1001,7 +1007,7 @@ func (s *Scheduler) rebuildGroupLocked(groupID int64) {
 		newM[k] = v
 	}
 	newM[groupID] = &groupSnapshot{accounts: gs.accounts, routes: buildRoutes(gs.accounts)}
-	s.store.store(newM, s.store.byID.Load().(map[int64]*accountSnapshot))
+	s.publisher.storeLocked(newM, v.byID)
 }
 
 func (s *Scheduler) enqueueWrite(id int64, st accState, weight *int) {

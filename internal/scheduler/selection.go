@@ -16,15 +16,11 @@ import (
 // + 动态状态检查（冷却/禁用/并发满，atomic 读）+ CAS 抢占。
 // 调用方完成请求后必须 Release + MarkResult。
 func (s *Scheduler) Select(groupID int64, format domain.RequestFormat, model string) (*Selection, error) {
-	// 快照未加载（首刷失败 / DB 故障启动：注册表 ReloadAll 失败仅 Warn——评审
-	// R3 M-1）：断言 ok 分支优雅失败（404 group not found），不 panic——旧启动
-	// 序在此失败 fatalf（进程退出，无流量），Warn-and-serve 语义下客户端应见
-	// 4xx 而非断连。auth/余额/pricing 空快照均安全拒绝（401/402），唯 scheduler
-	// 需此守卫。热路径零成本：断言本身既有，ok 分支仅在未加载时进入。
-	groups, ok := s.store.groups.Load().(map[int64]*groupSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return nil, ErrGroupNotFound
 	}
+	groups := v.groups
 	gs, ok := groups[groupID]
 	if !ok {
 		return nil, ErrGroupNotFound
@@ -94,9 +90,6 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 			st2 := *st
 			st2.lastUsedAt = &used
 			a.state.Store(&st2)
-			// 优先级账号级 > 模板级：仅 nil 检查 + 字符串比较（零分配——
-			// 用户裁决 2026-08-14 热路径约束）；baseURL 局部变量为值拷贝
-			//（与现 BaseURL: av.tpl.BaseURL 同成本）。
 			baseURL := av.tpl.BaseURL
 			if av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
 				baseURL = *av.acc.BaseURL
@@ -105,8 +98,9 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 				AccountID: av.acc.ID, TemplateID: av.tpl.ID,
 				BaseURL: baseURL, Format: format,
 				UpstreamKey: av.acc.UpstreamKey, CredentialType: av.tpl.CredentialType, Model: mapped,
-				StripImageTools: av.tpl.StripImageTools, // W4：模板快照布尔复制（热路径零 DB）
-				Ext:             av.acc.Ext,             // T2：账号扩展快照（codex 路由派生 AccountCredential；指针复制零拷贝）
+				StripImageTools: av.tpl.StripImageTools,
+				Ext:             av.acc.Ext,
+				lease:           &leaseToken{acc: a},
 			}, true
 		}
 	}

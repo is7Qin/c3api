@@ -204,7 +204,7 @@ func TestSelectModelPreference(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID, "model preference tier")
-	gs := s.store.groups.Load().(map[int64]*groupSnapshot)[10]
+	gs := s.View().Groups()[10]
 	rt := gs.routes[routeKey{domain.FormatOpenAIChat, "gpt-4o"}]
 	require.NotNil(t, rt)
 	require.NotNil(t, rt.tier1)
@@ -528,7 +528,7 @@ func TestWeightActionRebuildsRoutes(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, domain.StatusActive, ri.Status, "纯 weight 动作不动状态")
 	require.Zero(t, ri.ErrRate, "纯 weight 动作不更新 EWMA")
-	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
+	byID := s.View().ByID()
 	require.Equal(t, 10, byID[1].static.Load().acc.Weight, "快照权重已更新")
 
 	// 回写携带 weight
@@ -1048,8 +1048,8 @@ func TestMultiGroupSharedInstance(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {a}, 11: {a}})
 	s := newSched(t, m)
 
-	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
-	groups := s.store.groups.Load().(map[int64]*groupSnapshot)
+	byID := s.View().ByID()
+	groups := s.View().Groups()
 	require.Same(t, byID[1], groups[10].accounts[0], "组 10 路由与 byID 共享实例")
 	require.Same(t, byID[1], groups[11].accounts[0], "组 11 路由与 byID 共享实例")
 	require.ElementsMatch(t, []int64{10, 11}, byID[1].static.Load().groupIDs, "跨组引用集登记完整")
@@ -1098,8 +1098,8 @@ func TestInvalidateGroupMultiGroupShared(t *testing.T) {
 	m.mu.Unlock()
 	s.InvalidateGroup(10)
 
-	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
-	groups := s.store.groups.Load().(map[int64]*groupSnapshot)
+	byID := s.View().ByID()
+	groups := s.View().Groups()
 	require.Same(t, byID[1], groups[10].accounts[0], "重载组路由 → 新实例")
 	require.Same(t, byID[1], groups[11].accounts[0], "其它组引用 → 新实例（共享纪律）")
 
@@ -1139,8 +1139,8 @@ func TestInvalidateGroupMultiGroupRemove(t *testing.T) {
 	m.mu.Unlock()
 	s.InvalidateGroup(10)
 
-	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
-	groups := s.store.groups.Load().(map[int64]*groupSnapshot)
+	byID := s.View().ByID()
+	groups := s.View().Groups()
 	_, ok := byID[1]
 	require.True(t, ok, "仍属其它组 → byID 保留")
 	require.Equal(t, []int64{11}, byID[1].static.Load().groupIDs, "本组引用已摘除")
@@ -1163,7 +1163,7 @@ func TestInvalidateGroupMultiGroupRemove(t *testing.T) {
 	m.byGroup[11] = []*domain.Account{}
 	m.mu.Unlock()
 	s.InvalidateGroup(11)
-	_, ok = s.store.byID.Load().(map[int64]*accountSnapshot)[1]
+	_, ok = s.View().ByID()[1]
 	require.False(t, ok, "不再属于任何组 → 从 byID 删除")
 	_, ok = s.Runtime(1)
 	require.False(t, ok)
@@ -1574,7 +1574,7 @@ func TestApplyDisabledActionPersistsAcrossReload(t *testing.T) {
 
 // reuseByID 取当前 byID 快照中账号的实例（复用断言用；测试单线程访问安全）。
 func reuseByID(s *Scheduler, id int64) *accountSnapshot {
-	return s.store.byID.Load().(map[int64]*accountSnapshot)[id]
+	return s.View().ByID()[id]
 }
 
 // TestReusePreservesErrCountersAcrossReload 复用后 errRate/errCount/lastError

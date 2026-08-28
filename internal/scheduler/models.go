@@ -13,11 +13,11 @@ import "slices"
 // 冷面路径：每次请求遍历 routes 键 + 排序，零新增常驻结构（复用调度器内存
 // 快照，零 DB；与 Select 同读面——routes map 整体换入换出，无锁并发安全）。
 func (s *Scheduler) GroupModels(groupID int64) ([]string, bool) {
-	groups, ok := s.store.groups.Load().(map[int64]*groupSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return nil, false
 	}
-	gs, ok := groups[groupID]
+	gs, ok := v.groups[groupID]
 	if !ok {
 		return nil, false
 	}

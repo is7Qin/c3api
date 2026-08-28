@@ -202,10 +202,11 @@ type concTarget struct {
 // byID 是整体原子换入的不可变快照 map（重建路径复用实例指针——O-2 继承纪律），
 // 遍历零锁安全；孤儿对象在途值由 Release 自然衰减后自动退出上报集。
 func (w *AccConcSyncWorker) collect() []concTarget {
-	byID, ok := w.sched.store.byID.Load().(map[int64]*accountSnapshot)
-	if !ok {
+	v := w.sched.view.Load()
+	if v == nil {
 		return nil
 	}
+	byID := v.byID
 	targets := make([]concTarget, 0, len(byID))
 	for id, a := range byID {
 		if v := a.concurrency.Load(); v > 0 {

@@ -32,7 +32,7 @@ func TestInvalidateAccountReloadsExt(t *testing.T) {
 	m.mu.Unlock()
 
 	s.InvalidateAccount(1)
-	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
+	byID := s.View().ByID()
 	got, ok := byID[1]
 	require.True(t, ok, "账号仍在快照")
 	require.Same(t, extNew, got.static.Load().acc.Ext, "回写后快照条目重载新凭据（下个会话 Selection.Ext 新值）")
@@ -52,7 +52,7 @@ func TestInvalidateAccountUnknownNoop(t *testing.T) {
 	require.NotPanics(t, func() {
 		s.InvalidateAccount(999) // 快照外
 	})
-	byID := s.store.byID.Load().(map[int64]*accountSnapshot)
+	byID := s.View().ByID()
 	require.Same(t, ext, byID[1].static.Load().acc.Ext, "未知账号失效不影响既有快照")
 }
 

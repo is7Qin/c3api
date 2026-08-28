@@ -223,7 +223,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 		// 402 误杀，"image 分量定生死"轮不到执行）；其余格式照旧。
 		if precheck {
 			if err := p.precheckPrice(format, sel.Model); err != nil {
-				p.sched.Release(sel.AccountID)
+				sel.Release()
 				p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errNoPrice.msg)
 				sink.writePrecheckRejected(w, st)
 				return
@@ -270,7 +270,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 				l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start))
 				msg := "client closed request before upstream response"
 				l.ErrorMessage = &msg
-				p.finish(sel.AccountID, l)
+				p.finish(sel, l)
 				return
 			}
 			// 5xx：上游 body message（既有语义）。连接级/凭据错（code==0）：
@@ -314,7 +314,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			if em != "" {
 				l.ErrorMessage = &em
 			}
-			p.finish(sel.AccountID, l)
+			p.finish(sel, l)
 			then, punish := p.sched.Classify(rule.Event{
 				AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code,
 				Model: sel.Model, ErrorMessage: em,
@@ -336,9 +336,7 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			}
 			return
 		}
-		p.sched.Release(sel.AccountID)
-		// 最后一轮不再为不存在的下一次尝试预选：尾部 Select 会抢占并发槽
-		// （CAS 递增、仅 Release 递减、无回收），耗尽时永不释放 → 永久占槽。
+		sel.Release()
 		if i+1 >= p.cfg.FailoverAttempts {
 			break
 		}
@@ -348,11 +346,8 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			break
 		}
 	}
-	// 耗尽：请求已完成（上游消费了请求），以最后一次尝试的结果记一条用量（统一公式 status=ResponseCode!=nil?*ResponseCode:lastCode, msg=CustomMessage!=nil?*CustomMessage:lastBody/lastErrMsg）。
-	// 防呆释放：循环零次执行（failover_attempts=0 直构）时首次 Select 的槽从未
-	// 释放——耗尽路径补 Release；N>=1 时 attempted 恒 true（循环尾已释放，不双释放）。
 	if !attempted {
-		p.sched.Release(lastSel.AccountID)
+		lastSel.Release()
 	}
 	et := domain.Err5xx
 	switch {

@@ -123,14 +123,3 @@ type groupSnapshot struct {
 	accounts []*accountSnapshot
 	routes   map[routeKey]*route
 }
-
-// snapshotStore 整体换入换出（atomic.Value），重建不阻塞请求路径。
-type snapshotStore struct {
-	groups atomic.Value // map[int64]*groupSnapshot
-	byID   atomic.Value // map[int64]*accountSnapshot
-}
-
-func (s *snapshotStore) store(groups map[int64]*groupSnapshot, byID map[int64]*accountSnapshot) {
-	s.groups.Store(groups)
-	s.byID.Store(byID)
-}

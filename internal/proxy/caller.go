@@ -236,7 +236,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 				if cerr != nil {
 					// 本地拒绝：目标 Select 已占并发槽，必须释放（与 caller 本地
 					// 400 的 Release-only 语义一致），否则槽位永久泄漏。
-					p.sched.Release(sel2.AccountID)
+					sel2.Release()
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: protocol conversion failed: " + cerr.Error()}})
 					return
 				}
@@ -336,7 +336,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 			l := logWithCtx(ctx, a.p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, st.format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start))
 			em := domain.TruncateErrMsg(sdkErr)
 			l.ErrorMessage = &em
-			a.p.finish(sel.AccountID, l)
+			a.p.finish(sel, l)
 			// message 用 SDK 原文不加前缀（"streaming is required..." 已
 			// 自明，避免措辞重复）；type 与 4xx 分支通用回退同款（可选）。
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{

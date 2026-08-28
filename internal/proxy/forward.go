@@ -166,8 +166,10 @@ func (p *Proxy) SetInstancesProvider(inst InstancesProvider) {
 // finish 收尾：释放并发槽 + 额度扣减（后扣模型，usage 已知）+ 计费计算 +
 // 记录用量（凡持有并发槽的路径必调）。无额度 key 无内存计数器 → 扣减
 // no-op（恒 0）。落库路由统一走 routeLog（分表原则：不计费不入 usage_logs）。
-func (p *Proxy) finish(accountID int64, l *domain.UsageLog) {
-	p.sched.Release(accountID)
+func (p *Proxy) finish(sel *scheduler.Selection, l *domain.UsageLog) {
+	if sel != nil {
+		sel.Release()
+	}
 	if l != nil {
 		p.applyBilling(l)
 		p.auth.DeductQuota(l.KeyID, l.TotalTokens)
@@ -528,7 +530,7 @@ func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int
 	if p.log != nil {
 		p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
 	}
-	p.finish(sel.AccountID, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, 200, domain.ErrAbort, u, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, 200, domain.ErrAbort, u, start)))
 }
 
 func (p *Proxy) handleSelectError(w http.ResponseWriter, err error) {
