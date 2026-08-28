@@ -158,6 +158,12 @@ func ValidateWhen(w domain.RuleWhen) error {
 // 其余：status 合法枚举；cooldown 可 time.ParseDuration 解析且 > 0；weight ∈ [0,100]；
 // ResponseCode!=nil 需 400-599；CustomMessage==ptr("") 拒绝。指针即意图，nil=透传；
 // seed-4xx-400 直插 store 的 Then{} 与用户规则 Then{} 语义等价（零惩罚全透）。
+// Task2 strict typed actions:
+//   - Throttle{scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}
+//     retry_after requires use_reset=true; open requires use_reset=false and duration>0
+//     account_route scope runtime requires event RouteClassID+QualityClassID (match-time, not validation)
+//   - FailAccount bool mutually exclusive with Throttle and legacy routing fields
+// Response shaping (ResponseCode/CustomMessage) independent and may coexist with typed actions.
 func ValidateThen(t domain.RuleThen) error {
 	if t.Status != nil && !validStatus(*t.Status) {
 		return fmt.Errorf("then.status must be active/unhealthy/429/disabled, got %q", *t.Status)
@@ -179,6 +185,42 @@ func ValidateThen(t domain.RuleThen) error {
 	}
 	if t.CustomMessage != nil && *t.CustomMessage == "" {
 		return fmt.Errorf("then.custom_message must be non-empty, got %q", *t.CustomMessage)
+	}
+	if t.Throttle != nil && t.FailAccount {
+		return fmt.Errorf("then.throttle and then.fail_account are mutually exclusive")
+	}
+	if t.Throttle != nil {
+		if t.Status != nil || t.Cooldown != nil || t.Weight != nil {
+			return fmt.Errorf("then.throttle cannot be combined with legacy status/cooldown/weight")
+		}
+		th := t.Throttle
+		if th.Scope != domain.ThrottleScopeAccount && th.Scope != domain.ThrottleScopeAccountRoute {
+			return fmt.Errorf("then.throttle.scope must be account or account_route, got %q", th.Scope)
+		}
+		if th.Mode != domain.ThrottleModeRetryAfter && th.Mode != domain.ThrottleModeOpen {
+			return fmt.Errorf("then.throttle.mode must be retry_after or open, got %q", th.Mode)
+		}
+		if th.DurationMs != nil && *th.DurationMs <= 0 {
+			return fmt.Errorf("then.throttle.duration_ms must be > 0, got %d", *th.DurationMs)
+		}
+		if th.Mode == domain.ThrottleModeRetryAfter {
+			if !th.UseReset {
+				return fmt.Errorf("then.throttle.mode=retry_after requires use_reset=true")
+			}
+		}
+		if th.Mode == domain.ThrottleModeOpen {
+			if th.UseReset {
+				return fmt.Errorf("then.throttle.mode=open requires use_reset=false")
+			}
+			if th.DurationMs == nil || *th.DurationMs <= 0 {
+				return fmt.Errorf("then.throttle.mode=open requires duration_ms > 0")
+			}
+		}
+	}
+	if t.FailAccount {
+		if t.Status != nil || t.Cooldown != nil || t.Weight != nil {
+			return fmt.Errorf("then.fail_account cannot be combined with legacy status/cooldown/weight")
+		}
 	}
 	return nil
 }

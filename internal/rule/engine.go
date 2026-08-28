@@ -71,15 +71,18 @@ func kindFromString(s string) Kind {
 
 // Event 请求结果事件（由 scheduler.MarkResult 构造投递）。
 type Event struct {
-	AccountID    int64
-	TemplateID   int64
-	GroupID      *int64
-	Model        string
-	Kind         Kind
-	HTTPStatus   *int
-	ErrorMessage string
-	ResetAt      *time.Time
-	OccurredAt   time.Time // 零值由引擎填充为当前时间
+	AccountID        int64
+	TemplateID       int64
+	GroupID          *int64
+	Model            string
+	Kind             Kind
+	HTTPStatus       *int
+	ErrorMessage     string
+	ResetAt          *time.Time
+	OccurredAt       time.Time // 零值由引擎填充为当前时间
+	RouteClassID     string    // Task4 canonical RouteClassID hex; account_route scope 必须非空
+	QualityClassID   string    // Task4 Candidate QualityClassID hex; account_route scope 必须非空
+	ExpectedRevision int64     // Task1 lifecycle_revision 期望值，FailAccount CAS 用
 }
 
 // ApplyFunc 动作应用回调（由 scheduler 注册）：st 为 nil = 不改状态（只改权重）；
@@ -88,9 +91,27 @@ type Event struct {
 // 修复：scheduler 侧截断 500 后回写）。
 type ApplyFunc func(aid int64, st *domain.AccountStatus, cooldownUntil *time.Time, weight *int, errMsg string)
 
+// HealthSink typed health 动作本地 sink（Task2 compile-green seam，Task10 实现 RuntimeHealth/FailureHandler）。
+// Throttle: account 作用全 RouteClass wildcard；account_route 作用单 RouteClass.
+// FailAccount: source=rule, expectedRevision 参与 CAS.
+type HealthSink interface {
+	Throttle(ev Event, th domain.ThrottleAction)
+	FailAccount(ev Event)
+}
+
+// PersistItem 异步持久化队列元素（Task10 同步 Redis/DB；Task2 仅 bounded-loss 投递）。
+type PersistItem struct {
+	Event Event
+	Then  domain.RuleThen
+}
+
+// PersistFunc 持久化执行面（注入可失败，用于测试 write failure 计数；生产 Task10 接线 Redis/DB）。
+type PersistFunc func(item PersistItem) error
+
 // Config 引擎配置。
 type Config struct {
-	EventQueueSize int // 事件队列容量，默认 4096
+	EventQueueSize   int // 事件准入队列容量，默认 4096
+	PersistQueueSize int // 持久化同步队列容量，默认 1024
 }
 
 // defaultWindowSeconds 未配 window_seconds 的规则默认统计窗口。
@@ -155,6 +176,15 @@ type RuleEngine struct {
 	apply   ApplyFunc
 	applyMu sync.RWMutex
 
+	healthSink   HealthSink
+	healthMu     sync.RWMutex
+	persistCh    chan PersistItem
+	persistFn    PersistFunc
+	persistFnMu  sync.RWMutex
+	matched      atomic.Uint64
+	persistDropped atomic.Uint64
+	persistFailures atomic.Uint64
+
 	rules   []compiledRule // enabled、priority 升序（预编译）
 	rulesMu sync.RWMutex
 
@@ -172,12 +202,17 @@ func New(cfg Config, store repository.RuleStore, log *logx.Logger) *RuleEngine {
 	if q <= 0 {
 		q = 4096
 	}
+	pq := cfg.PersistQueueSize
+	if pq <= 0 {
+		pq = 1024
+	}
 	return &RuleEngine{
-		cfg:     cfg,
-		store:   store,
-		log:     log,
-		ch:      make(chan Event, q),
-		timeNow: time.Now,
+		cfg:       cfg,
+		store:     store,
+		log:       log,
+		ch:        make(chan Event, q),
+		persistCh: make(chan PersistItem, pq),
+		timeNow:   time.Now,
 	}
 }
 
@@ -187,6 +222,38 @@ func (e *RuleEngine) SetApply(fn ApplyFunc) {
 	defer e.applyMu.Unlock()
 	e.apply = fn
 }
+
+// SetHealthSink 注册 typed health 本地 sink（Task2 compile-green seam）。
+func (e *RuleEngine) SetHealthSink(s HealthSink) {
+	e.healthMu.Lock()
+	defer e.healthMu.Unlock()
+	e.healthSink = s
+}
+
+// SetPersistFunc 注入持久化执行面（nil = no-op success；测试可注入失败/阻塞）。
+func (e *RuleEngine) SetPersistFunc(fn PersistFunc) {
+	e.persistFnMu.Lock()
+	defer e.persistFnMu.Unlock()
+	e.persistFn = fn
+}
+
+// AdmissionDropped 有界准入队列丢弃累计（Enqueue full）。
+func (e *RuleEngine) AdmissionDropped() int64 { return int64(e.dropped.Load()) }
+
+// MatchedActions 命中 typed 或 legacy 动作计数。
+func (e *RuleEngine) MatchedActions() int64 { return int64(e.matched.Load()) }
+
+// PersistDropped 持久化同步队列满丢弃累计。
+func (e *RuleEngine) PersistDropped() int64 { return int64(e.persistDropped.Load()) }
+
+// PersistFailures 持久化执行失败累计。
+func (e *RuleEngine) PersistFailures() int64 { return int64(e.persistFailures.Load()) }
+
+// PersistQueued 当前持久化队列积压。
+func (e *RuleEngine) PersistQueued() int { return len(e.persistCh) }
+
+// PersistCap 持久化队列容量。
+func (e *RuleEngine) PersistCap() int { return cap(e.persistCh) }
 
 // NeedsOKEvents 规则表中是否存在需要 ok 事件投递的规则（when.kind 为 nil 或 "ok"）——
 // scheduler 据此条件投递（C1：种子恢复规则 kind=ok 必须投递，否则成功恢复永不触发）。
@@ -369,6 +436,9 @@ func matchWindow(w domain.RuleWhen, wc windowSnapshot) bool {
 // worker 消费循环与测试共用。命中不清零窗口计数（C2）——滑动自然衰减，
 // 升级阶梯（如 60s 内 ≥5 error → 更重惩罚）不被低阈值规则清零阻断。
 // 未命中仅更新计数。
+// Task2: whole action path remains best-effort. After match, local sink immediately,
+// then nonblocking enqueue to bounded persist queue; persist queue full or write failure
+// never blocks request/rule worker.
 func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 	if ev.OccurredAt.IsZero() {
 		ev.OccurredAt = e.timeNow()
@@ -390,6 +460,35 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 		if !matchWindow(r.When, wc) {
 			continue
 		}
+		// Typed Throttle account_route requires both IDs or rule does not match.
+		if r.Then.Throttle != nil && r.Then.Throttle.Scope == domain.ThrottleScopeAccountRoute {
+			if ev.RouteClassID == "" || ev.QualityClassID == "" {
+				continue
+			}
+		}
+		// Matched: whole action path best-effort, local sink immediate.
+		e.matched.Add(1)
+		if r.Then.Throttle != nil {
+			e.healthMu.RLock()
+			sink := e.healthSink
+			e.healthMu.RUnlock()
+			if sink != nil {
+				sink.Throttle(ev, *r.Then.Throttle)
+			}
+			e.enqueuePersist(ev, r.Then)
+			return
+		}
+		if r.Then.FailAccount {
+			e.healthMu.RLock()
+			sink := e.healthSink
+			e.healthMu.RUnlock()
+			if sink != nil {
+				sink.FailAccount(ev)
+			}
+			e.enqueuePersist(ev, r.Then)
+			return
+		}
+		// Legacy path (Status/Cooldown/Weight) unchanged for intermediate compile-green.
 		st, cd, w := Apply(r.Then, ev)
 		e.applyMu.RLock()
 		fn := e.apply
@@ -397,7 +496,19 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 		if fn != nil {
 			fn(ev.AccountID, st, cd, w, ev.ErrorMessage)
 		}
+		// Legacy also participates in persist observation if needed (no typed health persist).
 		return
+	}
+}
+
+func (e *RuleEngine) enqueuePersist(ev Event, then domain.RuleThen) {
+	if e.persistCh == nil {
+		return
+	}
+	select {
+	case e.persistCh <- PersistItem{Event: ev, Then: then}:
+	default:
+		e.persistDropped.Add(1)
 	}
 }
 
@@ -426,7 +537,14 @@ func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 		if !e.matchBasic(ev, r) {
 			continue
 		}
-		return r.Then, r.Then.Status != nil || r.Then.Weight != nil || r.Then.Cooldown != nil
+		// account_route typed throttle: missing IDs → not matched (same as HandleEvent)
+		if r.Then.Throttle != nil && r.Then.Throttle.Scope == domain.ThrottleScopeAccountRoute {
+			if ev.RouteClassID == "" || ev.QualityClassID == "" {
+				continue
+			}
+		}
+		hasPunish := r.Then.Status != nil || r.Then.Weight != nil || r.Then.Cooldown != nil || r.Then.Throttle != nil || r.Then.FailAccount
+		return r.Then, hasPunish
 	}
 	// 无规则命中 → 默认归一 502/"upstream rejected request"（安全默认，不透传）；ok 事件不归一（透传语义，成功不处理）
 	if ev.Kind == KindOK {

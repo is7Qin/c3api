@@ -755,14 +755,37 @@ type RuleWhen struct {
 	RatioFailureGE *float64 `json:"ratio_failure_ge,omitempty"`
 }
 
+type ThrottleScope string
+
+const (
+	ThrottleScopeAccount      ThrottleScope = "account"
+	ThrottleScopeAccountRoute ThrottleScope = "account_route"
+)
+
+type ThrottleMode string
+
+const (
+	ThrottleModeRetryAfter ThrottleMode = "retry_after"
+	ThrottleModeOpen       ThrottleMode = "open"
+)
+
+type ThrottleAction struct {
+	Scope      ThrottleScope `json:"scope"`
+	Mode       ThrottleMode  `json:"mode"`
+	DurationMs *int64        `json:"duration_ms,omitempty"`
+	UseReset   bool          `json:"use_reset"`
+}
+
 type RuleThen struct {
-	Status   *AccountStatus `json:"status,omitempty"`
-	Cooldown *string        `json:"cooldown,omitempty"` // time.ParseDuration 可解析的时长，如 "30s"、"5h"
-	Weight   *int           `json:"weight,omitempty"`   // 0-100
+	Status   *AccountStatus `json:"status,omitempty"` // legacy: Task27 deletes; keep for intermediate compile-green (MUST DO 5)
+	Cooldown *string        `json:"cooldown,omitempty"` // legacy
+	Weight   *int           `json:"weight,omitempty"`   // legacy
 	// ResponseCode nil=透传上游码，non-nil=覆写为指定码（400-599）；指针即意图（fresh setup，无旧 Transmit 兼容）。
 	ResponseCode *int `json:"response_code,omitempty"`
 	// CustomMessage nil=透传上游文，non-nil=覆写为固定文案（禁止空串）；指针即意图。
 	CustomMessage *string `json:"custom_message,omitempty"`
+	Throttle      *ThrottleAction `json:"throttle,omitempty"`
+	FailAccount   bool            `json:"fail_account,omitempty"`
 	// 启动 guard 检测旧列 Transmit：fresh setup 哲学，用户裁决；旧列存在则 fail-fast 需重建（本 Task 仅注释占位，DB 检测由后续迁移承载）。
 }
 

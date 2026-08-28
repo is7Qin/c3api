@@ -8,12 +8,18 @@ package rule
 // 接口——装配侧类型断言聚合（main.go），响应 typed struct 非 map。
 // 采集纪律：原子读 + len(channel)（零锁零分配，O(1)）。
 
-// RuleEngineStats 规则引擎状态（队列占用 + 事件丢弃累计）。
+// RuleEngineStats 规则引擎状态（两阶段有界队列可观测面，Task2）。
 type RuleEngineStats struct {
-	Queued            int   `json:"queued"`              // 队列积压事件数
-	QueueCap          int   `json:"queue_cap"`           // 事件队列容量（丢弃阈值）
-	Dropped           int64 `json:"dropped"`             // 队列满丢弃累计（atomic.Uint64 转 int64——JSON 数字精度）
-	DropWarnThreshold int64 `json:"drop_warn_threshold"` // 丢弃告警阈值（包级 var 直读）
+	Queued            int   `json:"queued"`               // 准入队列积压
+	QueueCap          int   `json:"queue_cap"`            // 准入容量
+	Dropped           int64 `json:"dropped"`              // alias admission_dropped
+	DropWarnThreshold int64 `json:"drop_warn_threshold"`  // 告警阈值
+	AdmissionDropped  int64 `json:"admission_dropped"`    // 准入满丢弃
+	MatchedActions    int64 `json:"matched_actions"`      // 命中计数
+	PersistQueued     int   `json:"persist_queued"`       // 持久化队列积压
+	PersistCap        int   `json:"persist_cap"`          // 持久化容量
+	PersistDropped    int64 `json:"persist_dropped"`      // 持久化满丢弃
+	PersistFailures   int64 `json:"persist_failures"`     // 持久化执行失败
 }
 
 // Stats 满足 handler.StatsProvider（独立于 worker.Worker 契约；装配链路见 internal/handler/ops.go 文件头）。
@@ -23,5 +29,11 @@ func (e *RuleEngine) Stats() any {
 		QueueCap:          cap(e.ch),
 		Dropped:           int64(e.dropped.Load()),
 		DropWarnThreshold: ruleDropWarnThreshold,
+		AdmissionDropped:  int64(e.dropped.Load()),
+		MatchedActions:    int64(e.matched.Load()),
+		PersistQueued:     len(e.persistCh),
+		PersistCap:        cap(e.persistCh),
+		PersistDropped:    int64(e.persistDropped.Load()),
+		PersistFailures:   int64(e.persistFailures.Load()),
 	}
 }
