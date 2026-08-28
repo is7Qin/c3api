@@ -1263,7 +1263,7 @@ export interface components {
             /** @description credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special bare root override (non-empty) or empty (default/route failure) */
             BaseURL: string;
             /**
-             * @description 模板号池类型；生态三类型只支持 resp / resp-ws 格式
+             * @description 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
              * @enum {string}
              */
             CredentialType?: "api_key" | "responses-special" | "codex-oauth" | "codex-pat";

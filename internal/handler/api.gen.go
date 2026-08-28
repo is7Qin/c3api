@@ -1435,7 +1435,7 @@ type Template struct {
 	BaseURL   string    `json:"BaseURL"`
 	CreatedAt time.Time `json:"CreatedAt"`
 
-	// CredentialType 模板号池类型；生态三类型只支持 resp / resp-ws 格式
+	// CredentialType 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
 	CredentialType *TemplateCredentialType `json:"CredentialType,omitempty"`
 
 	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
@@ -1449,7 +1449,7 @@ type Template struct {
 	UpdatedAt        time.Time                  `json:"UpdatedAt"`
 }
 
-// TemplateCredentialType 模板号池类型；生态三类型只支持 resp / resp-ws 格式
+// TemplateCredentialType 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
 type TemplateCredentialType string
 
 // TemplateSupportedFormats defines model for Template.SupportedFormats.
