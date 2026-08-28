@@ -60,11 +60,13 @@ func seedCodexImportTemplates(t *testing.T, repos *repository.Repository) (oauth
 	ot, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 		Name: "codex-oauth-tpl", CredentialType: credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+		ModelMapping: domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	pt, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 		Name: "codex-pat-tpl", CredentialType: credential.TypeCodexPAT,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+		ModelMapping: domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "codex-import-g", Visibility: domain.GroupVisibilityPublic})
