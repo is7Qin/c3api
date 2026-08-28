@@ -34,8 +34,7 @@ type Codex struct {
 	// transport SDK HTTPClient 上游 transport（resp HTTP 面连接池形态；nil =
 	// SDK 默认——MaxIdleConnsPerHost=2，补压测连接风暴根因）。装配点见
 	// SetTransport（main 注入 httpx 网关同形态 transport）。
-	transport     http.RoundTripper
-	newHTTPClient func(codexsdk.Auth, ...codexsdk.Option) *codexsdk.HTTPClient
+	transport http.RoundTripper
 }
 
 // SetTransport 装配 SDK HTTPClient 的上游 transport（resp 补压测修复——SDK
@@ -114,7 +113,7 @@ type codexEntry struct {
 // NewCodex 构造 codex 适配层。failure 为 T1 统一失效回调（适配层构造注册
 // WithOnAuthFatal → 回调；nil = 上报 no-op——测试替身形态）。
 func NewCodex(failure FailureHandler) *Codex {
-	return &Codex{failure: failure, entries: make(map[int64]*codexEntry), newHTTPClient: codexsdk.NewHTTPClient}
+	return &Codex{failure: failure, entries: make(map[int64]*codexEntry)}
 }
 
 // GenerateImage 非流式生图包装（T2 §1）：cred → 缓存取 HTTPClient →
@@ -318,11 +317,7 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 	sig := identitySig(sess, meta)
 	a.mu.Lock()
 	if e.client == nil || e.idSig != sig || e.appliedTurnState != turnState {
-		if a.newHTTPClient != nil {
-			e.client = a.newHTTPClient(e.auth, opts...)
-		} else {
-			e.client = codexsdk.NewHTTPClient(e.auth, opts...)
-		}
+		e.client = codexsdk.NewHTTPClient(e.auth, opts...)
 		e.idSig = sig
 		e.appliedTurnState = turnState
 	}
