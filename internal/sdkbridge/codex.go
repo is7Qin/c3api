@@ -208,8 +208,7 @@ func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, p
 
 // Search codex search 端点透传调用（spec 2026-08-13）：cred → 缓存取
 // HTTPClient（clientFor——统一 client 形态直接复用，无独立实例问题）→
-// e.client.Search(ctx, payload)（URL 方法内派生：baseURL（responses 完整端
-// 点）尾段 /responses → /alpha/search——网关零拼装；请求/响应体 opaque 零解
+// e.client.Search(ctx, payload)（官方默认端点 https://chatgpt.com/backend-api/codex/alpha/search；请求/响应体 opaque 零解
 // 析——alpha 端点实验性，上游变更网关免疫）。**无头注入**（x-codex-turn-
 // metadata 统一不转发——与 resp HTTP 路径现状一致；SDK Search 默认头面无该
 // 头）。错误翻译同 Responses（translateError——信封/fatal 统一回调双源去重/
