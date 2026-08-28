@@ -472,6 +472,8 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 // 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
 // （processWrite 发布收集仍持 reloadMu——评审 M-1 纪律，无锁外裸读）。
 func (s *Scheduler) InvalidateGroup(groupID int64) {
+	s.publisher.mu.Lock()
+	defer s.publisher.mu.Unlock()
 	accs, err := s.loader.LoadGroupAccounts(context.Background(), groupID)
 	if err != nil {
 		if s.log != nil {
@@ -479,8 +481,6 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		}
 		return
 	}
-	s.publisher.mu.Lock()
-	defer s.publisher.mu.Unlock()
 	cur := s.view.Load()
 	var m map[int64]*groupSnapshot
 	var byID map[int64]*accountSnapshot
