@@ -130,6 +130,79 @@ func TestBatchFencingCredential(t *testing.T) {
 	require.Equal(t, int64(2), got2.LifecycleRevision)
 }
 
+func TestStaleFirstExtPutLeavesNoExt(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale-first-ext", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	require.Equal(t, int64(1), acc.LifecycleRevision)
+	ext := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "sess-1", WindowID: "sess-1:0"}, CodexOAuthToken: strPtr("tok1"), CodexOAuthRefreshToken: strPtr("rt1"), CodexEmail: strPtr("e1@example.com"), CodexAccountID: strPtr("a1")}
+	// stale expected 999 should fail and leave no ext
+	_, err := repos.AccountExts.AdminUpsertAccountExtCAS(ctx, ext, 999)
+	require.ErrorIs(t, err, repository.ErrConflict)
+	_, err = repos.AccountExts.GetAccountExt(ctx, acc.ID)
+	require.ErrorIs(t, err, repository.ErrNotFound, "stale first PUT must leave no ext")
+	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)
+	require.Equal(t, int64(1), after.LifecycleRevision, "stale must not increment")
+	// correct expected should succeed
+	_, err = repos.AccountExts.AdminUpsertAccountExtCAS(ctx, ext, 1)
+	require.NoError(t, err)
+	after2, _ := repos.Accounts.GetAccount(ctx, acc.ID)
+	require.Equal(t, int64(2), after2.LifecycleRevision)
+	got, _ := repos.AccountExts.GetAccountExt(ctx, acc.ID)
+	require.Equal(t, "tok1", *got.CodexOAuthToken)
+}
+
+func TestBatchStaleSecondLeavesFirstUnchanged(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	a1, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "batch-stale-1", TemplateID: tpl.ID, UpstreamKey: "sk-1", Weight: 1, MaxConcurrency: 8})
+	a2, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "batch-stale-2", TemplateID: tpl.ID, UpstreamKey: "sk-2", Weight: 1, MaxConcurrency: 8})
+	require.Equal(t, int64(1), a1.LifecycleRevision)
+	require.Equal(t, int64(1), a2.LifecycleRevision)
+	// Set hook to make second stale: after first account's Save, concurrently increment second's revision
+	repository.BatchHook = func(id int64) {
+		if id == a1.ID {
+			// Increment a2's revision via direct CAS to make its expected stale
+			_ = repos.Accounts.ReplaceAccountCredentialCAS(context.Background(), a2.ID, 1, "sk-concurrent", nil)
+		}
+	}
+	defer func() { repository.BatchHook = nil }()
+	newKey := "sk-batch-new"
+	err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID}, repository.AccountPatch{UpstreamKey: &newKey})
+	require.ErrorIs(t, err, repository.ErrConflict, "second stale should make batch fail")
+	// First must remain unchanged (rolled back)
+	got1, _ := repos.Accounts.GetAccount(ctx, a1.ID)
+	require.Equal(t, "sk-1", got1.UpstreamKey, "first must remain unchanged due to atomic rollback")
+	require.Equal(t, int64(1), got1.LifecycleRevision)
+	got2, _ := repos.Accounts.GetAccount(ctx, a2.ID)
+	require.Equal(t, "sk-concurrent", got2.UpstreamKey, "second should be from concurrent increment, not batch")
+	require.Equal(t, int64(2), got2.LifecycleRevision)
+}
+
+func TestCombinedCredentialRecoverySingleIncrement(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "combined", TemplateID: tpl.ID, UpstreamKey: "sk-old", Weight: 1, MaxConcurrency: 8})
+	// fail to make recovery needed
+	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, acc.ID, 1, "rule", time.Now(), "boom"))
+	afterFail, _ := repos.Accounts.GetAccount(ctx, acc.ID)
+	require.Equal(t, int64(2), afterFail.LifecycleRevision)
+	require.NotNil(t, afterFail.FailedAt)
+	// Combined credential+recovery in one batch should increment exactly once (2->3)
+	newKey := "sk-new-combined"
+	statusActive := domain.StatusActive
+	err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{UpstreamKey: &newKey, Status: &statusActive})
+	require.NoError(t, err)
+	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)
+	require.Equal(t, int64(3), after.LifecycleRevision, "combined must increment exactly once, not twice")
+	require.Equal(t, "sk-new-combined", after.UpstreamKey)
+	require.Nil(t, after.FailedAt, "recovery should clear")
+	require.Nil(t, after.FailureSource)
+}
+
 func TestAdminStaleDoesNotUpdateExt(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()

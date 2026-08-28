@@ -29,6 +29,9 @@ var ErrConflict = errors.New("repository: conflict")
 // ErrInvalidInput 表示写入会破坏跨实体业务不变量。
 var ErrInvalidInput = errors.New("repository: invalid input")
 
+// BatchHook test hook for batch atomicity interleaving (nil in production).
+var BatchHook func(id int64)
+
 // --- 批量更新字段子集（nil 字段 = 不更新） ---
 
 type TemplatePatch struct {
@@ -220,77 +223,16 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 				return err
 			}
 		}
-		if p.UpstreamKey != nil || p.BaseURL != nil || (p.Status != nil && *p.Status == domain.StatusActive) {
-			for _, id := range sortedUniqueIDs(ids) {
+		fenced := p.UpstreamKey != nil || p.BaseURL != nil || (p.Status != nil && *p.Status == domain.StatusActive)
+		for _, id := range sortedUniqueIDs(ids) {
+			u := client.Account.Update().Where(account.IDEQ(id))
+			if fenced {
 				row, err := client.Account.Query().Where(account.IDEQ(id)).Only(ctx)
 				if err != nil {
 					return errMissingID(err, id)
 				}
-				expected := row.LifecycleRevision
-				u := client.Account.Update().Where(account.IDEQ(id), account.LifecycleRevisionEQ(expected)).SetLifecycleRevision(expected + 1)
-				if p.Name != nil {
-					u = u.SetName(*p.Name)
-				}
-				if p.TemplateID != nil {
-					u = u.SetTemplateID(*p.TemplateID)
-				}
-				if p.UpstreamKey != nil {
-					u = u.SetUpstreamKey(*p.UpstreamKey)
-				}
-				if p.BaseURL != nil {
-					if *p.BaseURL == "" {
-						u = u.ClearBaseURL()
-					} else {
-						u = u.SetBaseURL(*p.BaseURL)
-					}
-				}
-				if p.Status != nil {
-					u = u.SetStatus(account.Status(*p.Status))
-					if *p.Status == domain.StatusActive {
-						u = u.ClearFailedAt().ClearLastError().ClearFailureSource()
-					}
-				}
-				if p.Weight != nil {
-					u = u.SetWeight(*p.Weight)
-				}
-				if p.MaxConcurrency != nil {
-					u = u.SetMaxConcurrency(*p.MaxConcurrency)
-				}
-				if p.Enabled != nil {
-					u = u.SetEnabled(*p.Enabled)
-				}
-				if p.UpstreamCostMultiplierBp != nil {
-					u = u.SetUpstreamCostMultiplierBp(*p.UpstreamCostMultiplierBp)
-				}
-				if p.CacheDomain != nil {
-					if *p.CacheDomain == "" {
-						u = u.ClearCacheDomain()
-					} else {
-						u = u.SetCacheDomain(*p.CacheDomain)
-					}
-				}
-				if p.CooldownUntil != nil {
-					u = u.SetCooldownUntil(*p.CooldownUntil)
-				}
-				n, err := u.Save(ctx)
-				if err != nil {
-					return err
-				}
-				if n == 0 {
-					return fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, id, expected)
-				}
+				u = u.Where(account.LifecycleRevisionEQ(row.LifecycleRevision)).SetLifecycleRevision(row.LifecycleRevision + 1)
 			}
-			if p.GroupIDs != nil {
-				for _, id := range sortedUniqueIDs(ids) {
-					if _, err := client.Account.UpdateOneID(id).ClearGroups().AddGroupIDs(*p.GroupIDs...).Save(ctx); err != nil {
-						return errMissingID(err, id)
-					}
-				}
-			}
-			return nil
-		}
-		for _, id := range sortedUniqueIDs(ids) {
-			u := client.Account.UpdateOneID(id)
 			if p.Name != nil {
 				u = u.SetName(*p.Name)
 			}
@@ -310,7 +252,7 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			if p.Status != nil {
 				u = u.SetStatus(account.Status(*p.Status))
 				if *p.Status == domain.StatusActive {
-					u = u.ClearFailedAt().ClearLastError()
+					u = u.ClearFailedAt().ClearLastError().ClearFailureSource()
 				}
 			}
 			if p.Weight != nil {
@@ -340,6 +282,9 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			}
 			if _, err := u.Save(ctx); err != nil {
 				return errMissingID(err, id)
+			}
+			if BatchHook != nil && fenced {
+				BatchHook(id)
 			}
 		}
 		return nil
