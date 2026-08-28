@@ -201,7 +201,8 @@
       "loadFailed": "Failed to load extensions: {{message}}"
     },
     "baseUrlOptional": "For api_key / responses-special: optional bare root without /v1 (non-empty overrides); empty may fail to route. Codex OAuth/PAT must be empty (SDK default, non-empty is forbidden).",
-    "baseUrlCodexHidden": "Codex OAuth / PAT uses the SDK default endpoint — BaseURL is not used and must stay empty (non-empty will be rejected)."
+    "baseUrlCodexHidden": "Codex OAuth / PAT uses the SDK default endpoint — BaseURL is not used and must stay empty (non-empty will be rejected).",
+    "batchBaseUrlCodexDisabled": "BaseURL disabled for Codex templates (non-empty forbidden, SDK default). Mixed selections omit BaseURL."
   },
   "accounts": {
     "title": "Accounts",
