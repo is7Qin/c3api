@@ -86,8 +86,8 @@ func TestSelectMappingIdentities(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.wantModel, sel.Model)
 			require.Equal(t, tc.wantMode, sel.ModelMappingMode)
-			require.Equal(t, tc.wantUsage, sel.UsageMappedModel(mappingRequestModel))
-			require.Equal(t, tc.wantResponse, sel.ResponseModel(mappingRequestModel))
+			require.Equal(t, tc.wantUsage, sel.LogMappedModel(mappingRequestModel))
+			require.Equal(t, tc.wantResponse, sel.ClientResponseModel(mappingRequestModel))
 			s.Release(sel.AccountID)
 		})
 	}
@@ -113,8 +113,8 @@ func TestSelectMappingModeIsFreshForFallbackCandidate(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, tc.wantModel, sel.Model)
 		require.Equal(t, tc.wantMode, sel.ModelMappingMode)
-		require.Equal(t, tc.wantUsage, sel.UsageMappedModel(mappingRequestModel))
-		require.Equal(t, tc.wantResponse, sel.ResponseModel(mappingRequestModel))
+		require.Equal(t, tc.wantUsage, sel.LogMappedModel(mappingRequestModel))
+		require.Equal(t, tc.wantResponse, sel.ClientResponseModel(mappingRequestModel))
 		s.Release(sel.AccountID)
 	}
 }
@@ -157,8 +157,8 @@ func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {
 				selectErr = err
 				return
 			}
-			usageModel = sel.UsageMappedModel(mappingRequestModel)
-			responseModel = sel.ResponseModel(mappingRequestModel)
+			usageModel = sel.LogMappedModel(mappingRequestModel)
+			responseModel = sel.ClientResponseModel(mappingRequestModel)
 			fixtures[i].Release(sel.AccountID)
 		})
 		require.NoError(t, selectErr)
@@ -195,8 +195,8 @@ func BenchmarkSelect5000Accounts(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				benchmarkUsageModel = sel.UsageMappedModel(mappingRequestModel)
-				benchmarkResponseModel = sel.ResponseModel(mappingRequestModel)
+				benchmarkUsageModel = sel.LogMappedModel(mappingRequestModel)
+				benchmarkResponseModel = sel.ClientResponseModel(mappingRequestModel)
 				s.Release(sel.AccountID)
 			}
 		})
