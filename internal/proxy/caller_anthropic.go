@@ -58,6 +58,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 换算）。首帧后写入 ctx（logWithCtx 读取）；无首 token 路径不写入 → nil。
 		var ttft *int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
+			Mapper: newResponseModelSSEMapper(sel.ClientResponseModel(reqModel)),
 			Observer: func(ev sserelay.Event) {
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
@@ -123,6 +124,9 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return 0, nil, false, err
+	}
+	if m := sel.ClientResponseModel(reqModel); m != "" {
+		data = rewriteResponseModelJSON(data, m)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
