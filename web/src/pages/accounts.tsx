@@ -189,7 +189,6 @@ const emptyForm = (): FormState => ({
   codex_email: '',
 })
 
-// Phase 4 fix: structurally clear BaseURL for Codex account rows (fallback to AccountView.Template), not just UI hide
 function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
 function toForm(a: AccountView): FormState {
   const ct = a.Template?.CredentialType as string | undefined
@@ -216,7 +215,6 @@ function toForm(a: AccountView): FormState {
 // PUT 全量替换：重建 AccountCreate（只带契约字段，不带运行时字段）。
 // 编辑态总是发送 group_ids（含空数组 = 清空）；创建态仅已选时发送
 // （缺省 = 无分组，语义与 null 一致）。
-// Phase 4 fix: base_url must be structurally excluded for Codex (null) even if UI timing races
 function toBody(f: FormState, editing: boolean, isCodex?: boolean): AccountCreate {
   const body: AccountCreate = {
     name: f.name.trim(),
@@ -256,7 +254,7 @@ function GroupMultiSelect({ groups, value, onChange, disabled }: {
 }
 
 // 禁用/启用 quick action：取当前对象重建请求体 + status 翻转。
-// Phase 4: Codex account must not send BaseURL (force null) even if stale value remains on row
+// Codex 账号不发送 BaseURL
 function toggleBody(a: AccountView, next: AccountStatus): AccountCreate {
   const codex = isCodexCt(a.Template?.CredentialType as string | undefined)
   return {
@@ -552,7 +550,7 @@ export default function Accounts() {
     setBatchFormErr(null)
     setBatchUpdateOpen(true)
   }
-  // Phase 4: 批量有效模板判定 — 替换模板优先（fail-closed while unresolved），否则各选中账号现模板（AccountView.Template authoritative fallback + fail-closed for missing)
+  // 批量有效模板判定 — 替换模板优先，否则各选中账号现模板（账号 Template 回退，缺失时禁用）
   const isBatchCodex = useMemo(() => {
     if (batchForm.template_id !== 'all') {
       const tpl = templates.find(p => String(p.ID) === batchForm.template_id)
@@ -585,7 +583,7 @@ export default function Accounts() {
     if (batchForm.upstream_key) fields.upstream_key = batchForm.upstream_key
     // base_url 批量三态（C1）：勾选清空 → "" = 清空（回继承模板）；
     // 未勾选且输入非空 → 落值；未勾选且空 → 不变（不发送）
-    // Phase 4: 有效目标含 Codex 时禁止提交 base_url 任何值
+    // 含 Codex 时禁止提交 base_url
     if (!isBatchCodex) {
       if (batchForm.clearBaseURL) fields.base_url = ''
       else if (batchForm.base_url.trim()) fields.base_url = batchForm.base_url.trim()
@@ -667,7 +665,7 @@ export default function Accounts() {
   // （codex_oauth_* 列组 / codex_pat_key 按模板类型分流；与「扩展配置」弹窗共用写路径）。
   const save = useMutation({
     mutationFn: async (f: FormState) => {
-      // Phase 4: compute effective CT with same priority as single-edit render: unchanged editing.Template authoritative before stale query; genuine change uses replacement lookup; unresolved fail-closed
+      // 计算有效凭据：未改时以嵌入 Template 为准，变更时查替换模板，未解析时禁用
       const isUnchangedForF = !!(editing && String(editing.TemplateID) === String(f.template_id))
       const tplForF = isUnchangedForF ? null : templates.find(p => String(p.ID) === String(f.template_id))
       const effCt: string | undefined = isUnchangedForF
@@ -811,14 +809,14 @@ export default function Accounts() {
   const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
   const templateName = (a: AccountView) => a.Template?.Name ?? (a.TemplateID ? `#${a.TemplateID}` : '—')
   const selTemplate = templates.find(tp => String(tp.ID) === form.template_id)
-  // Phase 4 authoritative effective credential: when editing and template_id unchanged, embedded editing.Template is authoritative before any stale templates-query entry; only genuine ID change uses replacement lookup; unresolved replacement fail-closed.
+  // 有效凭据：编辑未改时以嵌入 Template 为准，仅 ID 变更时查替换模板，未解析时禁用
   const isEditingUnchanged = !!(editing && String(editing.TemplateID) === form.template_id)
   const effectiveSelCt: string | undefined = isEditingUnchanged
     ? (editing!.Template?.CredentialType as string | undefined)
     : (selTemplate?.CredentialType as string | undefined)
   const isSelUnresolved = !!form.template_id && effectiveSelCt == null
   const isSelCodex = isCodexCt(effectiveSelCt) || isSelUnresolved
-  // Phase 4: template 切换至 Codex/ unresolved 时立即清空残留 base_url，防止隐藏字段的过期值提交
+  // 切换至 Codex/未解析时清空残留 BaseURL
   useEffect(() => {
     if (isSelCodex && form.base_url !== '') {
       setForm(f => ({ ...f, base_url: '' }))
@@ -1144,7 +1142,7 @@ export default function Accounts() {
                 <Input id="acc-key" type="password" value={form.upstream_key} placeholder="sk-..." onChange={e => setForm(f => ({ ...f, upstream_key: e.target.value }))} />
               </div>
             )}
-            {/* Phase 4: codex-oauth/pat 不可配置 BaseURL（隐藏并清空）；api_key/responses-special 保留覆盖 */}
+            {/* Codex 不可配置 BaseURL，隐藏并清空；其他类型保留覆盖 */}
             {isSelCodex ? (
               <p className="text-xs text-muted-foreground">{t('accounts.baseUrlCodexHidden')}</p>
             ) : (
