@@ -234,7 +234,7 @@ pkg 职责边界：
 
 | worker | Name | 类型 | 节奏/背压 | 排空/停机语义 |
 |---|---|---|---|---|
-| billing.Flusher | "billing"（`internal/billing/flusher.go:118`） | ticker 批量 | `flush_interval`（1s）+ `balance_refresh_interval`（10s）；无 channel，pending map 锁内归并，`Record` 永不阻塞（`internal/billing/flusher.go:198`）；水线 1M 行 Warn（:42） | Close：等在途批次（flushMu）→ 预算内排空循环，超时 Cancel baseCtx 截断 Warn（`internal/billing/flusher.go:228-283`）；O1 复测教训：Background ctx 会拖死停机 |
+| billing.Flusher | "billing"（`internal/billing/flusher.go`） | ticker 账本游标消费 | `flush_interval`（250ms）+ `balance_refresh_interval`（10s）；会话级 advisory lock 互斥取批，Balance/FEFO 双车道语句化结算 + 零价标记，无内存 pending 队列 | Close：等在途周期（flushMu）→ 预算内持续消费至游标清空；超时 Cancel baseCtx，未结算行留在 DB 供下次启动续传 |
 | usage.Recorder | "usage"（`internal/usage/usage.go:146`） | 双 loop（logWriterLoop + quotaFlushLoop，`usage.go:132-145`） | `flush_interval` 500ms / `quota_flush_interval` 10s（**统计桶机制整体删除**，2026-08-14 离线聚合化，`usage.go:152-153`）；swap 换批 + 按 userID 取模分片 N worker（`usage.go:244-250`）；毒丸行止损 **poisonBisect 二分隔离**（`usage.go:288,319-349`，隔离行回灌不丢）；flushLogs 与 flushQuota 共用 flushMu（`usage.go:216-218`） | 同 Flusher 模式：等在途 → 预算排空 → 截断 Warn（`internal/usage/usage.go:576-629`） |
 | usage.StatsAggWorker | "stats-agg"（`internal/usage/stats_agg.go:123`） | ticker | 每周期两范围+三查询+单事务 DELETE+INSERT+watermark 重建 usage_stats（`stats_agg.go:69-80`）；advisory lock 防多实例并发（:30）；`stats_agg_interval` 默认 5m、0=禁用（:42）；追赶上限 1h（:48）、滞后 5s（:54） | 无资源需排空，Close nil（禁用/正常均安全） |
 | usage.ErrLogWorker | "errlog"（`internal/usage/errlog.go:105`） | 双队列 + ticker | 有界队列（reject 4096 / exempt 1024）+ select-default 非阻塞投递（满→丢弃计数，`internal/usage/errlog.go:147,161`）；豁免队列恒落盘；单批 500 行 / 500ms，单批超时 5s 失败即丢弃（`errlog.go:47-49,58,184-190`） | Close：置位 closed（无尾窗口静默丢）→ 等 loop → 预算内排空，超时截断并入丢弃计数（`internal/usage/errlog.go:236-287`） |
@@ -246,7 +246,7 @@ pkg 职责边界：
 | cmd/server.authSync | "auth-sync"（`cmd/server/auth_sync.go:38`） | ticker 60s | 周期全量 Reload auth 快照（NOTIFY 丢失兜底，`auth_sync.go:13-16`）；**per-attempt 30s 超时**（:26,80-84，B4-2：DB 挂起不卡死循环）+ **托管 goroutine**（:57,70，B4-3：panic 不崩进程）+ 观测面 running/lastReload/failures/lastFailure（:44-48，失败不前移 lastReload :93） | Close nil（循环随 ctx 退出，`auth_sync.go:64`） |
 | rule.RuleEngine | "rule-engine"（`internal/rule/worker.go:15`） | 事件队列 | 有界 channel 满则丢弃（dropped 计数 + **阈值告警边沿回落**——每风暴恰好一次，`worker.go:103-122`；resetDropWarnIfDrained :71-75） | Flush 同步排空（测试/优雅关闭用，`worker.go:52-64`） |
 
-**flush_workers 分片语义**（`config.example.toml:36-39` + `cmd/server/main.go:113`）：`flush_workers=8`（默认 8——多角度压测 C 项实证 2026-08-12：多用户水线告警清零、pending 斜率降 25-40%、QPS/CPU 零回退；受 db.max_conns 余量约束）——批内按 userID 取模分片（明细/额度共用：`internal/billing/flusher.go:332-342` + `internal/usage/usage.go:244-250`，bucket 机制已删），**同 key 恒同桶**（分片确定性）；分片并行非常驻 goroutine（每批新建，wg.Wait 收尾），**不是**常驻 worker。
+**usage.flush_workers 分片语义**（`config.example.toml` + `cmd/server/main.go`）：`flush_workers=8`——usage 批内按 userID 取模分片，**同 key 恒同桶**（分片确定性）；分片并行非常驻 goroutine（每批新建，wg.Wait 收尾），**不是**常驻 worker。billing 已改为三车道语句化结算，不再有 worker 数配置。
 
 ## 9. 事件流（main 现状链）
 
@@ -255,12 +255,12 @@ flowchart LR
     SVC["管理面落库成功<br/>service/scheduler 发布点"] -->|"SELECT pg_notify('c3api_invalidate',$1)"| PG[("PostgreSQL")]
     PG -->|"NOTIFY（紧凑 JSON Change）"| L["每实例 Listener<br/>internal/notify/listener.go:239-258"]
     L -->|"Src 自播跳过"| D["装配侧 Dispatcher<br/>cmd/server/dispatcher.go:72-110"]
-    D -->|"Apply → Mark 合并脏状态 +<br/>scope 分发快照注册表"| INV["invalidate.Debouncer<br/>200ms 窗口 + 后沿"]
+    D -->|"非 settings：Mark 合并脏状态"| INV["invalidate.Debouncer<br/>200ms 窗口 + 后沿"]
+    D -->|"Settings：同步 ReloadSettings"| R5["settings ReloadSettings"]
     INV -->|"reloadAll 合并重载"| R1["auth Reload"]
     INV --> R2["balances Reload"]
     INV --> R3["sched InvalidateAll / InvalidateGroup"]
     INV --> R4["clients InvalidateAll"]
-    INV --> R5["settings ReloadSettings"]
     INV --> R6["rules ReloadRules"]
     R5 -->|"ScopeSettings 精确重载"| R1
 ```
@@ -315,7 +315,7 @@ flowchart LR
 | `[limit]` | fixedWindowLimiter | group_key_rpm（0 = 关）；**cooldown_429/backoff_* 已移除**（配置含这些键将启动失败，规则引擎接管） |
 | `[scheduler]` | scheduler.Config | default_max_concurrency/sync_interval |
 | `[usage]` | usage.Recorder + StatsAggWorker + ErrLogWorker + RetentionWorker | batch_size/flush_interval/log_retention_days=30/quota_flush_interval/flush_workers=8/stats_agg_interval（默认 5m，0=禁用聚合）/errlog_queue_size=4096/errlog_batch_size=500/errlog_flush_interval=500ms/errlog_retention_days=7/stats_retention_days=180 |
-| `[billing]` | billing.NewFlusher + BillingHooks | enabled（**默认开启**——2026-08-15 用户裁决，`config.example.toml:60,69` `enabled = true`；注：`internal/config/config.go:139` 代码默认值仍 false 未同步）/flush_interval=1s/balance_refresh_interval=10s/flush_workers=8 |
+| `[billing]` | billing.NewFlusher + BillingHooks | enabled=true/flush_interval=250ms/balance_refresh_interval=10s |
 
 - 必填校验（`internal/config/config.go` Load 末尾 validate）：admin.token、auth.jwt_secret、db.dsn 缺失/占位符即 fatal（占位符精确匹配拒绝：change-me/change-me-too/dev-admin-token/dev-jwt-secret-for-local）。
 - 分区/保留/倍率等策略参数在 **DB settings 表**而非 config（`internal/domain/settings.go:10-38`）：signup 默认资源、price_source_url/price_sync_cron、service_tier_policy_*、cluster.instances。
