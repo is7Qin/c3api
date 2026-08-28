@@ -20,8 +20,6 @@
 //   - key CRUD（#14 多实例 key 缺口）→ auth 快照全量 Reload（v1 不做增量
 //     定向——单实例 auth 增量 Upsert/Delete 语义不变，多实例需全量覆盖其余
 //     实例的陈旧快照）
-//   - settings 变更（UpdateSetting）→ settings 快照重载（service 实现，
-//     cfg.Settings 未注入则跳过）
 //   - 规则 CRUD → 规则表全量重载（重载清窗口计数，全实例同步执行语义）
 //   - pricing → 现状（内部 reloadPricing，不进 invalidate）
 //
@@ -56,12 +54,6 @@ const (
 	// KindKeys key CRUD（创建/轮换/删除/改额度，#14 多实例 key 缺口）：auth
 	// 快照全量 Reload（v1 不做增量定向）。
 	KindKeys
-	// KindSettings settings 快照变更：settings 快照全量重载。生产侧死分支
-	// （仅测试引用）：dispatcher 的 settings 分支已改同步 ReloadSettings + 注册
-	// 表 scope 精确重载（#36 时序），UpdateSetting 从未经去抖器 Mark（本地直连
-	// Apply + NOTIFY 广播）。保留防御性——reloadAll 分支仍接线，未来若恢复
-	// Mark 路径可复用。
-	KindSettings
 	// KindRules 规则表变更（规则 CRUD）：规则表全量重载（重载清窗口计数，
 	// 全实例同步执行语义）。
 	KindRules
@@ -103,12 +95,6 @@ type BalancesReloader interface {
 	ReloadMultipliers(ctx context.Context) error
 }
 
-// SettingsReloader settings 快照全量重载（service.Service 实现，T2 提供；
-// 未注入 nil → reloadAll 跳过，单实例现状行为不变）。
-type SettingsReloader interface {
-	ReloadSettings(ctx context.Context) error
-}
-
 // RulesReloader 规则表全量重载（rule.RuleEngine 实现——现有签名
 // Reload(ctx) error，T2 需加 ReloadRules 适配；重载清窗口计数，全实例同步
 // 执行语义）。未注入 nil → reloadAll 跳过。
@@ -123,7 +109,6 @@ type Config struct {
 	Clients  ClientsReloader  // 必填
 	Auth     AuthReloader     // 必填
 	Balances BalancesReloader // billing.enabled=false → nil
-	Settings SettingsReloader // 可选（nil → settings 分支跳过）
 	Rules    RulesReloader    // 可选（nil → rules 分支跳过）
 	Log      *logx.Logger     // 可空（nil = 不记日志）
 }
@@ -218,11 +203,6 @@ func (d *Debouncer) Multipliers() { d.mark(KindMultipliers, nil) }
 // 其余实例的陈旧快照需全量覆盖）。供 notify Dispatcher 远端变更转发。
 func (d *Debouncer) Keys() { d.mark(KindKeys, nil) }
 
-// Settings settings 快照变更（UpdateSetting）：settings 快照全量重载。
-// 生产侧死分支（仅测试引用）：dispatcher 已改同步直连路径、UpdateSetting 从
-// 未 Mark——详见 KindSettings 常量注释。
-func (d *Debouncer) Settings() { d.mark(KindSettings, nil) }
-
 // Rules 规则表变更（规则 CRUD）：规则表全量重载（重载清窗口计数——全实例
 // 同步执行语义，NOTIFY 广播）。供 notify Dispatcher 远端变更转发。
 func (d *Debouncer) Rules() { d.mark(KindRules, nil) }
@@ -243,12 +223,6 @@ func (d *Debouncer) Accounts(gids []int64, keyChanged bool) {
 
 // Name 满足 worker.Worker 契约。
 func (d *Debouncer) Name() string { return "invalidate" }
-
-// SetSettings 后置注入 settings 重载器（#14 T3a 装配）：main 构造顺序上
-// service 在 invalidate 之后（service.New 需要去抖器做 Invalidator，去抖器
-// 需要 svc 做 SettingsReloader——构造环），svc 构造完成后回填。必须在 Start
-// 前调用（reloadAll 读 cfg，无锁）。
-func (d *Debouncer) SetSettings(r SettingsReloader) { d.cfg.Settings = r }
 
 // Start 启动执行 goroutine（幂等：重复 Start 返回错误；worker 契约）。
 func (d *Debouncer) Start(ctx context.Context) error {
@@ -337,11 +311,6 @@ func (d *Debouncer) reloadAll(st *State) {
 		// 加余额快照——key 变更不影响余额）。
 		if err := d.cfg.Auth.Reload(context.Background()); err != nil && d.cfg.Log != nil {
 			d.cfg.Log.Debug("auth reload failed", logx.Error(err))
-		}
-	}
-	if st.Kinds&KindSettings != 0 && d.cfg.Settings != nil {
-		if err := d.cfg.Settings.ReloadSettings(context.Background()); err != nil && d.cfg.Log != nil {
-			d.cfg.Log.Warn("settings reload failed", logx.Error(err))
 		}
 	}
 	if st.Kinds&KindRules != 0 && d.cfg.Rules != nil {

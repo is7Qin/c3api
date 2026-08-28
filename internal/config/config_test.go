@@ -47,7 +47,6 @@ func TestDefaults(t *testing.T) {
 	require.True(t, c.Billing.Enabled, "计费默认开（全链默认开启）")
 	require.Equal(t, 250*time.Millisecond, c.Billing.FlushInterval, "F2 游标轮询默认 250ms（spec-f2-ledger-cursor）")
 	require.Equal(t, 10*time.Second, c.Billing.BalanceRefreshInterval)
-	require.Equal(t, 8, c.Billing.FlushWorkers, "flush 并行 worker 默认 8（O1）")
 }
 
 // TestEnvOverlay 改造后保持通过：env 叠加 + duration 解析回归（原只设
@@ -258,13 +257,24 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 	require.ErrorContains(t, err, "max_infligh")
 }
 
-// TestLoadRejectsLegacyKeys：废弃字段（Cooldown429/BackoffBase/BackoffMax）已
-// 删除（不向后兼容）——显式写旧键 → ErrorUnused 启动报错。
+// TestLoadRejectsLegacyKeys：废弃字段已删除（不向后兼容）——显式写旧键 →
+// ErrorUnused 启动报错。
 func TestLoadRejectsLegacyKeys(t *testing.T) {
 	setenvRequired(t)
-	_, err := Load(writeConfig(t, `scheduler = { cooldown_429 = "1s" }`))
-	require.Error(t, err)
-	require.ErrorContains(t, err, "cooldown_429")
+	for _, tc := range []struct {
+		name string
+		toml string
+		key  string
+	}{
+		{name: "scheduler cooldown", toml: `scheduler = { cooldown_429 = "1s" }`, key: "cooldown_429"},
+		{name: "billing workers", toml: `billing = { flush_workers = 8 }`, key: "flush_workers"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, tc.toml))
+			require.Error(t, err)
+			require.ErrorContains(t, err, tc.key)
+		})
+	}
 }
 
 // D-TZ1 时区：非法 IANA 名 fail-fast，空串通过（进程本地缺省）。
