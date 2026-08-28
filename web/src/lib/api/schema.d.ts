@@ -1205,6 +1205,7 @@ export interface components {
         ErrorType: "none" | "429" | "4xx" | "5xx" | "network" | "auth" | "no_account" | "abort" | "billing";
         TemplateCreate: {
             name: string;
+            /** @description credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden, SDK default endpoint); api_key/responses-special optional bare root without /v1 (non-empty overrides, empty uses default or fails to route) */
             base_url?: string;
             /**
              * @default api_key
@@ -1224,6 +1225,7 @@ export interface components {
             /** Format: int64 */
             ID: number;
             Name: string;
+            /** @description credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special bare root override (non-empty) or empty (default/route failure) */
             BaseURL: string;
             /**
              * @description 模板号池类型；生态三类型只支持 resp / resp-ws 格式
@@ -1252,7 +1254,7 @@ export interface components {
             name: string;
             /** Format: int64 */
             template_id: number;
-            /** @description 账号级覆盖（可选）：非空优先于模板 base_url；null = 继承模板 */
+            /** @description credential-type conditional: if template is codex-oauth/codex-pat must be empty/null (non-empty forbidden, inherits SDK default); if api_key/responses-special non-empty overrides template base_url, null/empty inherits template */
             base_url?: string | null;
             upstream_key: string;
             status?: components["schemas"]["AccountStatus"];
@@ -1267,7 +1269,7 @@ export interface components {
             /** Format: int64 */
             TemplateID?: number;
             Template?: components["schemas"]["Template"];
-            /** @description 账号级覆盖：非空优先于模板 base_url；null = 继承模板 */
+            /** @description credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template */
             BaseURL?: string | null;
             UpstreamKey?: string;
             Status?: components["schemas"]["AccountStatus"];
@@ -1879,6 +1881,7 @@ export interface components {
         };
         TemplatePatch: {
             name?: string;
+            /** @description credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden); api_key/responses-special optional bare root override */
             base_url?: string;
             supported_formats?: ("openai-chat" | "openai-responses" | "openai-responses-ws" | "openai-images" | "openai-search" | "anthropic")[];
             models?: string[];
@@ -1893,7 +1896,7 @@ export interface components {
             name?: string;
             /** Format: int64 */
             template_id?: number;
-            /** @description 批量三态：空串 = 清空（回继承模板）；null/缺省 = 不变；非空 = 落值 */
+            /** @description credential-type conditional batch: if any effective target is codex-oauth/codex-pat must be empty/null (non-empty forbidden); otherwise batch tristate: empty string=clear to inherit, null/omitted=unchanged, non-empty=override */
             base_url?: string | null;
             upstream_key?: string;
             /** @enum {string} */
@@ -2794,7 +2797,7 @@ export interface components {
             billing_unbilled_rows: number;
             /**
              * Format: int64
-             * @description 累计隔离行数（用户缺失组 + 毒行终极隔离——未扣费写销）
+             * @description 累计隔离行数（用户缺失组）
              */
             billing_quarantined_rows: number;
         };

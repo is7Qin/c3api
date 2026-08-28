@@ -1655,10 +1655,10 @@ components:
       required: [name, supported_formats]
       properties:
         name: { type: string }
-        # base_url 全类型可选（2026-08-14 用户裁决）；提供时须为裸根（不含 /v1，
-        # service 校验）。空：codex 类型走 SDK 默认端点；api_key 静态透传留空
-        # 则路由时失败（管理面不拦截）。
-        base_url: { type: string }
+        # base_url 凭据类型条件（Phase 4）：codex-oauth/codex-pat 非空禁用（须空，SDK 默认端点）；
+        # api_key/responses-special 为裸根覆盖（不含 /v1，service 校验），空 = 默认/路由失败（管理面不拦截）。
+        # Shared shape retained; only description is conditional.
+        base_url: { type: string, description: "credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden, SDK default endpoint); api_key/responses-special optional bare root without /v1 (non-empty overrides, empty uses default or fails to route)" }
         # credential_type 模板级：一个模板 = 一种号池；缺省 = api_key。
         # 生态三类型（responses-special/codex-oauth/codex-pat）只支持 resp / resp-ws /
         # openai-images / openai-search 格式（service 校验）；类型化配置走 /templates/{id}/ext。
@@ -1684,7 +1684,7 @@ components:
       properties:
         ID: { type: integer, format: int64 }
         Name: { type: string }
-        BaseURL: { type: string }
+        BaseURL: { type: string, description: "credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special bare root override (non-empty) or empty (default/route failure)" }
         CredentialType: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat], description: 模板号池类型；生态三类型只支持 resp / resp-ws 格式 }
         SupportedFormats:
           type: array
@@ -1710,9 +1710,9 @@ components:
         name: { type: string }
         template_id: { type: integer, format: int64 }
         # 账号级 base_url 覆盖（路由属性，位于 upstream_key 前——用户裁决
-        # 2026-08-14）：非空 = 覆盖模板 base_url；""/null/缺省统一 = 继承模板
-        # （create 路径空串归一 nil，与批量三态语义分写）。
-        base_url: { type: string, nullable: true, description: "账号级覆盖（可选）：非空优先于模板 base_url；null = 继承模板" }
+        # 2026-08-14；Phase 4 条件：归属模板为 codex-oauth/codex-pat 时非空禁用，须空/null/缺省 = 继承模板/SDK 默认；
+        # api_key/responses-special 时非空优先于模板 base_url）。
+        base_url: { type: string, nullable: true, description: "credential-type conditional: if template is codex-oauth/codex-pat must be empty/null (non-empty forbidden, inherits SDK default); if api_key/responses-special non-empty overrides template base_url, null/empty inherits template" }
         # upstream_key：api_key/responses-special 模板必填（静态透传上游 key）；
         # codex-oauth/codex-pat 模板可选（凭据走 account_ext——创建后经
         # /accounts/{id}/ext 配置；service 按模板类型校验）。
@@ -1731,8 +1731,8 @@ components:
         Name: { type: string }
         TemplateID: { type: integer, format: int64 }
         Template: { $ref: '#/components/schemas/Template' }
-        # 账号级 base_url 覆盖（路由属性，位于 upstream_key 前）：null = 继承模板
-        BaseURL: { type: string, nullable: true, description: "账号级覆盖：非空优先于模板 base_url；null = 继承模板" }
+        # 账号级 baseURL 覆盖（Phase 4 条件：codex 模板非空禁用，须 null = 继承/SDK 默认；非 Codex 非空优先于模板）
+        BaseURL: { type: string, nullable: true, description: "credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template" }
         UpstreamKey: { type: string }
         Status: { $ref: '#/components/schemas/AccountStatus' }
         CooldownUntil: { type: string, format: date-time, nullable: true }
@@ -2360,7 +2360,7 @@ components:
       type: object
       properties:
         name: { type: string }
-        base_url: { type: string }
+        base_url: { type: string, description: "credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden); api_key/responses-special optional bare root override" }
         supported_formats:
           type: array
           minItems: 1
@@ -2381,8 +2381,8 @@ components:
       properties:
         name: { type: string }
         template_id: { type: integer, format: int64 }
-        # 批量三态定死（评审 C1）："" = 清空（落 NULL = 继承模板）；null/缺省 = 不变
-        base_url: { type: string, nullable: true, description: "批量三态：空串 = 清空（回继承模板）；null/缺省 = 不变；非空 = 落值" }
+        # 批量三态定死（评审 C1）+ Phase 4 条件：codex 模板目标非空禁用（须空/null/不变，SDK 默认）；非 Codex 三态：空串=清空/null/缺省=不变/非空=落值
+        base_url: { type: string, nullable: true, description: "credential-type conditional batch: if any effective target is codex-oauth/codex-pat must be empty/null (non-empty forbidden); otherwise batch tristate: empty string=clear to inherit, null/omitted=unchanged, non-empty=override" }
         upstream_key: { type: string }
         status: { type: string, enum: [active, unhealthy, "429", disabled] }
         weight: { type: integer }

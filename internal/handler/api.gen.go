@@ -364,7 +364,7 @@ const (
 
 // Account defines model for Account.
 type Account struct {
-	// BaseURL 账号级覆盖：非空优先于模板 base_url；null = 继承模板
+	// BaseURL credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template
 	BaseURL       *string    `json:"BaseURL"`
 	CooldownUntil *time.Time `json:"CooldownUntil"`
 	CreatedAt     *time.Time `json:"CreatedAt,omitempty"`
@@ -386,7 +386,7 @@ type Account struct {
 
 // AccountCreate defines model for AccountCreate.
 type AccountCreate struct {
-	// BaseUrl 账号级覆盖（可选）：非空优先于模板 base_url；null = 继承模板
+	// BaseUrl credential-type conditional: if template is codex-oauth/codex-pat must be empty/null (non-empty forbidden, inherits SDK default); if api_key/responses-special non-empty overrides template base_url, null/empty inherits template
 	BaseUrl        *string        `json:"base_url"`
 	GroupIds       *[]int64       `json:"group_ids,omitempty"`
 	MaxConcurrency *int           `json:"max_concurrency,omitempty"`
@@ -442,7 +442,7 @@ type AccountListResponse struct {
 
 // AccountPatch defines model for AccountPatch.
 type AccountPatch struct {
-	// BaseUrl 批量三态：空串 = 清空（回继承模板）；null/缺省 = 不变；非空 = 落值
+	// BaseUrl credential-type conditional batch: if any effective target is codex-oauth/codex-pat must be empty/null (non-empty forbidden); otherwise batch tristate: empty string=clear to inherit, null/omitted=unchanged, non-empty=override
 	BaseUrl        *string             `json:"base_url"`
 	GroupIds       *[]int64            `json:"group_ids,omitempty"`
 	MaxConcurrency *int                `json:"max_concurrency,omitempty"`
@@ -476,7 +476,7 @@ type AccountUsageItemUpstreamError string
 
 // AccountView defines model for AccountView.
 type AccountView struct {
-	// BaseURL 账号级覆盖：非空优先于模板 base_url；null = 继承模板
+	// BaseURL credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template
 	BaseURL       *string    `json:"BaseURL"`
 	CooldownUntil *time.Time `json:"CooldownUntil"`
 	CreatedAt     *time.Time `json:"CreatedAt,omitempty"`
@@ -1420,6 +1420,7 @@ type StatTrendPoint struct {
 
 // Template defines model for Template.
 type Template struct {
+	// BaseURL credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special bare root override (non-empty) or empty (default/route failure)
 	BaseURL   string    `json:"BaseURL"`
 	CreatedAt time.Time `json:"CreatedAt"`
 
@@ -1445,6 +1446,7 @@ type TemplateSupportedFormats string
 
 // TemplateCreate defines model for TemplateCreate.
 type TemplateCreate struct {
+	// BaseUrl credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden, SDK default endpoint); api_key/responses-special optional bare root without /v1 (non-empty overrides, empty uses default or fails to route)
 	BaseUrl          *string                          `json:"base_url,omitempty"`
 	CredentialType   *TemplateCreateCredentialType    `json:"credential_type,omitempty"`
 	FormatModels     *map[string][]string             `json:"format_models,omitempty"`
@@ -1481,6 +1483,7 @@ type TemplateListResponse struct {
 
 // TemplatePatch defines model for TemplatePatch.
 type TemplatePatch struct {
+	// BaseUrl credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden); api_key/responses-special optional bare root override
 	BaseUrl          *string                          `json:"base_url,omitempty"`
 	FormatModels     *map[string][]string             `json:"format_models,omitempty"`
 	ModelMapping     *map[string]string               `json:"model_mapping,omitempty"`
