@@ -454,31 +454,34 @@ func TestContinuationReFetchAfterEviction(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.LessOrEqual(t, s.L1Len(), 2)
-	// evicted key must be re-fetched via Redis (1 EVALSHA)
-	s.l1 = newL1(2, 640)
-	// need to refill l1 with 2 entries to keep eviction state? Actually we cleared, so lookup will be cold
-	// recreate the 3 keys with known state: they are in Redis, L1 empty, lookup evicted should hit Redis
-	// use fresh s with tiny L1 containing other keys to force eviction still
-	l1b := newL1(2, 640)
-	s2, err := NewWithL1(c, "secret-evict-1234567890", l1b)
-	require.NoError(t, err)
-	for i := 0; i < 2; i++ {
-		id := "resp_evict_fill_" + strconv.Itoa(i)
-		_, err := s2.CreateOrRefresh(ctx, 1, 1, rid, "responses", id, 10, f, 1)
-		require.NoError(t, err)
+	targetID := "resp_evict_0"
+	targetKey, _ := s.RedisKey(1, 1, rid, "responses", targetID)
+	_, ok := s.l1.Get(targetKey)
+	if ok {
+		found := ""
+		for i := 0; i < 3; i++ {
+			id := "resp_evict_" + strconv.Itoa(i)
+			k, _ := s.RedisKey(1, 1, rid, "responses", id)
+			if _, ok2 := s.l1.Get(k); !ok2 {
+				found = id
+				targetKey = k
+				break
+			}
+		}
+		require.NotEmpty(t, found, "one of the 3 must be evicted from original L1")
+		targetID = found
+		_, ok = s.l1.Get(targetKey)
 	}
+	require.False(t, ok, "evicted key must be absent from original L1")
+	require.False(t, func() bool { _, ok := l1.Get(targetKey); return ok }(), "target must be absent from original L1 instance")
 	h.n.Store(0)
-	b, ok, err := s2.Lookup(ctx, 1, 1, rid, "responses", "resp_evict_0")
+	b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", targetID)
 	require.NoError(t, err)
-	require.True(t, ok, "evicted key must be re-fetched from Redis")
+	require.True(t, ok, "evicted key must be re-fetched from Redis via same Store")
 	require.NotNil(t, b)
 	require.Equal(t, int64(1), h.n.Load(), "re-fetch must be single Redis command")
-	require.LessOrEqual(t, s2.L1Len(), 2)
-	require.LessOrEqual(t, l1b.Bytes(), 640)
-	// also test original path: lookup evicted from first s after fill
-	h.n.Store(0)
-	// restore first s's L1 to have 2 entries, then lookup evicted 0
-	// we already verified via s2
+	require.LessOrEqual(t, s.L1Len(), 2)
+	require.LessOrEqual(t, l1.Bytes(), 640)
 	_ = mr
 	_ = h
 }
