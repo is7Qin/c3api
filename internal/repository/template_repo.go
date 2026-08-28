@@ -26,10 +26,6 @@ func (r *TemplateRepo) CreateTemplate(ctx context.Context, t *domain.Template) (
 	if isCodexType(t.CredentialType) && t.BaseURL != "" {
 		return nil, fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
 	}
-	mm := t.ModelMapping
-	if mm == nil {
-		mm = domain.ModelMapping{}
-	}
 	row, err := r.client.Template.Create().
 		SetName(t.Name).SetBaseURL(t.BaseURL).
 		// 全字段 Set（含 credential_type）：空串兜底在 service 层（M-1，防默认值被绕过）
@@ -37,7 +33,7 @@ func (r *TemplateRepo) CreateTemplate(ctx context.Context, t *domain.Template) (
 		SetSupportedFormats(formatsToStrings(t.SupportedFormats)).
 		SetModels(t.Models).
 		SetFormatModels(formatModelsToStrings(t.FormatModels)).
-		SetModelMapping(mm).
+		SetModelMapping(t.ModelMapping).
 		Save(ctx)
 	if err != nil {
 		if sqlgraph.IsUniqueConstraintError(err) {
@@ -114,10 +110,6 @@ func (r *TemplateRepo) UpdateTemplate(ctx context.Context, t *domain.Template) (
 		if err := validateCodexTemplateUpdate(ctx, client, t); err != nil {
 			return err
 		}
-		mm := t.ModelMapping
-		if mm == nil {
-			mm = domain.ModelMapping{}
-		}
 		var saveErr error
 		row, saveErr = client.Template.UpdateOneID(t.ID).
 			SetName(t.Name).SetBaseURL(t.BaseURL).
@@ -125,7 +117,7 @@ func (r *TemplateRepo) UpdateTemplate(ctx context.Context, t *domain.Template) (
 			SetSupportedFormats(formatsToStrings(t.SupportedFormats)).
 			SetModels(t.Models).
 			SetFormatModels(formatModelsToStrings(t.FormatModels)).
-			SetModelMapping(mm).
+			SetModelMapping(t.ModelMapping).
 			Save(ctx)
 		return saveErr
 	})

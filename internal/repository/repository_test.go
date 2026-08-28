@@ -274,7 +274,7 @@ func TestAccountAndGroup(t *testing.T) {
 	// Template create（repo 全字段 Set：credential_type 空串原样写入——默认值兜底在 service 层）
 	tr.pool.ExpectQuery(q(`INSERT INTO "templates"`)).
 		WithArgs("t", "https://u/v1", "", json.RawMessage(`["anthropic"]`),
-			json.RawMessage(`null`), json.RawMessage(`{}`), json.RawMessage(`null`),
+			json.RawMessage(`null`), json.RawMessage(`{}`), json.RawMessage(`{}`),
 			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(1)))
 
@@ -364,7 +364,7 @@ func TestAccountAndGroup(t *testing.T) {
 		WillReturnRows(accountRow("429"))
 
 	tpl, err := tr.repos.Templates.CreateTemplate(ctx(), &domain.Template{
-		Name: "t", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic},
+		Name: "t", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic}, ModelMapping: domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	acc, err := tr.repos.Accounts.CreateAccount(ctx(), &domain.Account{
@@ -772,4 +772,3 @@ func TestUsageEntityStatsColumnDefsAnchor(t *testing.T) {
 }
 
 func int64Ptr(v int64) *int64 { return &v }
-

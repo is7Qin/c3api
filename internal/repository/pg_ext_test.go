@@ -96,7 +96,7 @@ func TestTemplateExtPG(t *testing.T) {
 
 	t.Run("get missing 404", func(t *testing.T) {
 		tpl2, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
-			Name: "t2", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+			Name: "t2", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, ModelMapping: domain.ModelMapping{},
 		})
 		require.NoError(t, err)
 		_, err = repos.TemplateExts.GetTemplateExt(ctx, tpl2.ID)
@@ -265,7 +265,7 @@ func TestGetTemplatesByIDsPG(t *testing.T) {
 	ctx := context.Background()
 	a := seedPGTemplate(t, repos)
 	b, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
-		Name: "t-b", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+		Name: "t-b", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, ModelMapping: domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 

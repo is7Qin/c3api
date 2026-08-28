@@ -71,6 +71,7 @@ func TestPGCodexTemplateCreateRejectsBaseURLWithoutRow(t *testing.T) {
 			_, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 				Name: name, BaseURL: baseURL, CredentialType: typ,
 				SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+				ModelMapping:     domain.ModelMapping{},
 			})
 			require.ErrorIs(t, err, repository.ErrInvalidInput)
 			rows, total, listErr := repos.Templates.ListTemplates(ctx, repository.ListQuery{Name: name})
@@ -206,6 +207,7 @@ func createPGWriteTemplate(t *testing.T, repos *repository.Repository, name stri
 	tpl, err := repos.Templates.CreateTemplate(context.Background(), &domain.Template{
 		Name: name, BaseURL: baseURL, CredentialType: typ,
 		SupportedFormats: []domain.RequestFormat{format},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	return tpl

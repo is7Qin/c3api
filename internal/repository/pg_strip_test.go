@@ -87,6 +87,7 @@ func TestPGStripSnapshotLoad(t *testing.T) {
 		tpl2, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 			Name: "t2", BaseURL: "https://u/v1",
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+			ModelMapping:     domain.ModelMapping{},
 		})
 		require.NoError(t, err)
 		g2 := seedPGGroup(t, repos, "g2")
