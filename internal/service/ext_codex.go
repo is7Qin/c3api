@@ -239,7 +239,6 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if tpl.CredentialType != e.CredentialType {
 		return nil, ErrInvalidInput // 父行（模板）类型与 ext 行类型必须一致
 	}
-	orig := *e // 首写冲突回退用（丢弃本请求生成的未用身份，回到显式输入）
 	cur, err := s.store.GetAccountExt(ctx, e.AccountID)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, mapRepoErr(err) // 非缺行错误原样上抛（不误判为首次写入）
@@ -270,28 +269,9 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 		if id.ThreadID != "" && id.WindowID == "" {
 			id.WindowID = id.ThreadID + ":0"
 		}
-		// 校验先于首写落库（B1-2）：自动生成值恒合法，早校验只命中列组违规
-		// （与已存在行校验语义无差异）——被拒凭据零残留
+		// 校验先于落库：自动生成值恒合法，早校验只命中列组违规
 		if err := validateAccountExt(e); err != nil {
 			return nil, err
-		}
-		// 首写原子性：ON CONFLICT DO NOTHING 先写者胜——冲突（并发已首写）
-		// → 回读赢者完全采用其身份（B1-3 方向 3：显式身份只在首写成功路径
-		// 生效——败者派生值不得覆盖赢者，最终身份确定）
-		inserted, err := s.store.TryInsertAccountExt(ctx, e)
-		if err != nil {
-			return nil, mapRepoErr(err)
-		}
-		if !inserted {
-			winner, gerr := s.store.GetAccountExt(ctx, e.AccountID)
-			if gerr != nil {
-				return nil, mapRepoErr(gerr)
-			}
-			*e = orig
-			e.CodexIdentity = winner.CodexIdentity // 完全采用赢者身份（单一完整四元组）
-			if e.CodexEmail == nil {
-				e.CodexEmail = winner.CodexEmail // 未提供 email → 沿用赢者（管理标识随首写者）
-			}
 		}
 	}
 	// window 恒 {thread}:0——thread 定后兜底派生（永不沿用旧 window）

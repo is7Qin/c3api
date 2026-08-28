@@ -226,6 +226,24 @@ func TestServiceStaleAccountPutNotUpdate(t *testing.T) {
 	require.Equal(t, "sk-new", afterStale.UpstreamKey)
 }
 
+func TestServiceCombinedSingleIncrement(t *testing.T) {
+	svc, repos := newCodexImportPG(t)
+	ctx := context.Background()
+	tpl := seedPGTemplateForFencing(t, repos)
+	acc, _ := svc.CreateAccount(ctx, &domain.Account{Name: "combined-svc", TemplateID: tpl.ID, UpstreamKey: "sk-old", Weight: 1, MaxConcurrency: 8})
+	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, acc.ID, 1, "rule", getFixedTime(), "boom"))
+	afterFail, _ := repos.Accounts.GetAccount(ctx, acc.ID)
+	require.Equal(t, int64(2), afterFail.LifecycleRevision)
+	// Combined credential + recovery via single UpdateAccount should increment exactly once (2->3)
+	acc2 := &domain.Account{ID: acc.ID, Name: afterFail.Name, TemplateID: afterFail.TemplateID, UpstreamKey: "sk-new-combined", Status: domain.StatusActive, Weight: afterFail.Weight, MaxConcurrency: afterFail.MaxConcurrency, Enabled: afterFail.Enabled, UpstreamCostMultiplierBp: afterFail.UpstreamCostMultiplierBp}
+	_, err := svc.UpdateAccount(ctx, acc2)
+	require.NoError(t, err)
+	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)
+	require.Equal(t, int64(3), after.LifecycleRevision, "combined must increment exactly once")
+	require.Equal(t, "sk-new-combined", after.UpstreamKey)
+	require.Nil(t, after.FailedAt)
+}
+
 func strPtr2(s string) *string { return &s }
 
 func seedPGTemplateForFencing(t *testing.T, repos *repository.Repository) *domain.Template {

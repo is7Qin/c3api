@@ -240,43 +240,7 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 		now := time.Now()
 		p.CooldownUntil = &now
 	}
-	// Fenced credential/baseURL batch: per-account CAS with revision increment
-	if p.UpstreamKey != nil || p.BaseURL != nil {
-		for _, id := range ids {
-			cur, err := s.store.GetAccount(ctx, id)
-			if err != nil {
-				return mapRepoErr(err)
-			}
-			expected := cur.LifecycleRevision
-			newKey := cur.UpstreamKey
-			if p.UpstreamKey != nil {
-				newKey = *p.UpstreamKey
-			}
-			var newBaseURL *string
-			if p.BaseURL != nil {
-				if *p.BaseURL == "" {
-					newBaseURL = nil
-				} else {
-					newBaseURL = p.BaseURL
-				}
-			} else {
-				newBaseURL = cur.BaseURL
-			}
-			if err := mapRepoErr(s.store.ReplaceAccountCredentialCAS(ctx, id, expected, newKey, newBaseURL)); err != nil {
-				return err
-			}
-		}
-		// Remove credential fields from batch patch for remaining non-credential update
-		p2 := p
-		p2.UpstreamKey = nil
-		p2.BaseURL = nil
-		hasOther := p2.Name != nil || p2.TemplateID != nil || p2.Status != nil || p2.Weight != nil || p2.MaxConcurrency != nil || p2.GroupIDs != nil || p2.CooldownUntil != nil || p2.Enabled != nil || p2.UpstreamCostMultiplierBp != nil || p2.CacheDomain != nil
-		if hasOther {
-			if err := mapRepoErr(s.store.UpdateAccountsBatch(ctx, ids, p2)); err != nil {
-				return err
-			}
-		}
-	} else if err := mapRepoErr(s.store.UpdateAccountsBatch(ctx, ids, p)); err != nil {
+	if err := mapRepoErr(s.store.UpdateAccountsBatch(ctx, ids, p)); err != nil {
 		return err
 	}
 	if p.Status != nil && *p.Status == domain.StatusActive && s.log != nil {
