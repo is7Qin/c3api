@@ -178,6 +178,24 @@
     "modelsListPlaceholder": "模型名，逗号分隔",
     "addFormatRow": "添加格式行",
     "modelMappingLabel": "模型映射（model_mapping）",
+    "modelMappingHint": "显式按上游模型计价；隐式按客户端模型计价并将响应模型名改回客户端",
+    "modelMappingModeLabel": "模式",
+    "modelMappingMode": {
+      "explicit": "显式",
+      "implicit": "隐式"
+    },
+    "modelMappingBatchModeLabel": "映射更新",
+    "modelMappingBatchMode": {
+      "unchanged": "保持不变",
+      "replace": "替换"
+    },
+    "modelMappingBatchHint": "保持不变将保留现有映射",
+    "modelMappingBatchReplaceHint": "替换将以下方行覆盖——留空即清空全部",
+    "modelMappingValidation": {
+      "incomplete": "每行映射需完整填写别名、目标与模式",
+      "whitespace": "别名与目标不能包含首尾空格",
+      "duplicate": "别名去空格后重复：{{alias}}"
+    },
     "clientModelPlaceholder": "客户端模型名",
     "upstreamModelPlaceholder": "上游模型名",
     "addMapping": "添加映射",
