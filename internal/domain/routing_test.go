@@ -12,15 +12,13 @@ import (
 func TestRoutingRouteClassGolden(t *testing.T) {
 	id, err := RouteClassID(42, FormatOpenAIChat, "gpt-4o", OpChatCompletions)
 	require.NoError(t, err)
-	require.Equal(t, "fa87b2998fb6a5b5a5a967b6def64d778f2a5a7619120205f43bfa370632b5a6", IDToHex(id))
-	// restart / order stability: recompute
+	require.Equal(t, "fa87b2998fb6a5b5a5a967b6def64d778f2a5a7619120205f43bfa370632b5a6", RouteClassIDHex(id))
 	id2, err := RouteClassID(42, FormatOpenAIChat, "gpt-4o", OpChatCompletions)
 	require.NoError(t, err)
 	require.Equal(t, id, id2)
-	// second vector
 	id3, err := RouteClassID(42, FormatOpenAIResponses, "o3", OpResponses)
 	require.NoError(t, err)
-	require.Equal(t, "cf0467b3595157fdfae2ea3940c5336d01ace0dc8035fccea09328ba68732d0f", IDToHex(id3))
+	require.Equal(t, "cf0467b3595157fdfae2ea3940c5336d01ace0dc8035fccea09328ba68732d0f", RouteClassIDHex(id3))
 }
 
 func TestRoutingRouteClassComposition(t *testing.T) {
@@ -38,7 +36,7 @@ func TestRoutingRouteClassComposition(t *testing.T) {
 func TestRoutingQualityClassGolden(t *testing.T) {
 	qid, err := QualityClassID(CallerChat, FormatOpenAIChat, "gpt-4o", OpChatCompletions)
 	require.NoError(t, err)
-	require.Equal(t, "847bba3ba902936e2c794ec31b3ad169eae8892d2881f3f86d02069d8d27897a", IDToHex(qid))
+	require.Equal(t, "847bba3ba902936e2c794ec31b3ad169eae8892d2881f3f86d02069d8d27897a", QualityClassIDHex(qid))
 }
 
 func TestRoutingQualityClassComposition(t *testing.T) {
@@ -56,13 +54,17 @@ func TestRoutingQualityClassComposition(t *testing.T) {
 func TestRoutingFingerprintGolden(t *testing.T) {
 	fp, err := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
 	require.NoError(t, err)
-	require.Equal(t, "ca2d76244667739a44428d57f493bcd3da3867eb14b0e2f1023fb55bf0d0785b", IDToHex(fp))
+	require.Equal(t, "950eabbcaf4c61629bde89e96855d9aa602ade67a086f049eed3670fa8798011", CandidateFPHex(fp))
 	fp2, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "https://api.openai.com", "", "pat_abc", "", "", false, "inst", "sess", "thr", "win")
 	require.NoError(t, err)
-	require.Equal(t, "0254f1e9d1da3b3368988be07ca9ccac41a789f6a45699ffb38ca4d034b4caa2", IDToHex(fp2))
+	require.Equal(t, "9c7021f9b5c6817d49bb8ea4dbc0a9964f1c6c6d9e0d050713af6aaff85cd9ac", CandidateFPHex(fp2))
 	fp3, err := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "install-1", "sess1", "thr1", "win1")
 	require.NoError(t, err)
-	require.Equal(t, "935e2e3afd64fb63e12b7444020435c4dc067b44224aa2ac49497c12d1b6c331", IDToHex(fp3))
+	require.Equal(t, "8a0849c54c65ebc2ac97d7da2931d47f5e80c55b3dcfdc023381a033dc9d5c8b", CandidateFPHex(fp3))
+	// email must not affect oauth fingerprint
+	fp3b, err := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "other@example.com", "acc-123", false, "install-1", "sess1", "thr1", "win1")
+	require.NoError(t, err)
+	require.Equal(t, fp3, fp3b, "oauth email must not change fingerprint")
 }
 
 func TestRoutingFingerprintInvalidation(t *testing.T) {
@@ -79,20 +81,20 @@ func TestRoutingFingerprintInvalidation(t *testing.T) {
 	require.NotEqual(t, base, changedStrip, "strip flag changes fingerprint")
 	changedInst, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst2", "sess", "thr", "win")
 	require.NotEqual(t, base, changedInst, "installation_id changes fingerprint")
-	// cost/cache/revision must NOT affect fingerprint: same inputs produce same ID even though those fields are separate; prove by calling twice with same args
+	changedSess, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess2", "thr", "win")
+	require.NotEqual(t, base, changedSess, "session_id changes fingerprint")
+	changedCodexAcc, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "other-acc", false, "inst", "sess", "thr", "win")
+	require.NotEqual(t, base, changedCodexAcc, "codex_account_id changes fingerprint")
 	same, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
 	require.Equal(t, base, same)
 }
 
 func TestRoutingFingerprintCredentialStability(t *testing.T) {
-	// OAuth rotation: same durable identity => same fingerprint despite token change (tokens not part of input)
 	fp1, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "i", "s", "t", "w")
-	fp2, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "i", "s", "t", "w")
-	require.Equal(t, fp1, fp2, "oauth same durable identity => same fingerprint")
-	// admin durable identity difference: different email => different fingerprint
-	fp3, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "other@example.com", "acc-123", false, "i", "s", "t", "w")
-	require.NotEqual(t, fp1, fp3, "oauth email changes fingerprint")
-	// PAT digest vs API key: upstreamKey change changes api_key fingerprint, pat change changes pat fingerprint
+	fp2, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "other@example.com", "acc-123", false, "i", "s", "t", "w")
+	require.Equal(t, fp1, fp2, "oauth email must not change fingerprint")
+	fp3, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "i2", "s", "t", "w")
+	require.NotEqual(t, fp1, fp3, "oauth installation change must change fingerprint")
 	fpA1, _ := CandidateFingerprint(5, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-one", "", "", "", false, "", "", "", "")
 	fpA2, _ := CandidateFingerprint(5, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-two", "", "", "", false, "", "", "", "")
 	require.NotEqual(t, fpA1, fpA2, "upstreamKey change changes api_key fingerprint")
@@ -104,22 +106,42 @@ func TestRoutingFingerprintCredentialStability(t *testing.T) {
 func TestRoutingUTF8AndURL(t *testing.T) {
 	_, err := RouteClassID(1, FormatOpenAIChat, string([]byte{0xff, 0xfe}), OpChatCompletions)
 	require.Error(t, err, "invalid UTF-8 model must be rejected")
-	_, err = RouteClassID(1, FormatOpenAIChat, "gpt-4o", OpChatCompletions)
-	require.NoError(t, err)
-	require.Equal(t, false, func() bool { _, e := CanonicalOrigin("https://api.openai.com/v1"); return e == nil }(), "base_url with path must be rejected")
 	_, err = CanonicalOrigin("https://api.openai.com/v1")
 	require.Error(t, err)
 	orig, err := CanonicalOrigin("https://API.OpenAI.COM:443/")
 	require.NoError(t, err)
-	require.Equal(t, "https://api.openai.com", orig)
+	require.Equal(t, "https://api.openai.com:443", orig)
 	orig2, err := CanonicalOrigin("http://example.com:80")
 	require.NoError(t, err)
-	require.Equal(t, "http://example.com", orig2)
+	require.Equal(t, "http://example.com:80", orig2)
+	orig3, err := CanonicalOrigin("https://api.openai.com")
+	require.NoError(t, err)
+	require.Equal(t, "https://api.openai.com:443", orig3)
+	orig4, err := CanonicalOrigin("http://[::1]/")
+	require.NoError(t, err)
+	require.Equal(t, "http://[::1]:80", orig4)
+	orig5, err := CanonicalOrigin("https://[2001:db8::1]:8443")
+	require.NoError(t, err)
+	require.Equal(t, "https://[2001:db8::1]:8443", orig5)
+	orig6, err := CanonicalOrigin("http://192.168.1.1")
+	require.NoError(t, err)
+	require.Equal(t, "http://192.168.1.1:80", orig6)
 	_, err = CanonicalOrigin("https://api.openai.com?foo=bar")
 	require.Error(t, err, "query must be rejected")
+	_, err = CanonicalOrigin("https://api.openai.com?")
+	require.Error(t, err, "empty query marker must be rejected")
+	_, err = CanonicalOrigin("https://api.openai.com#frag")
+	require.Error(t, err, "fragment must be rejected")
+	_, err = CanonicalOrigin("https://api.openai.com#")
+	require.Error(t, err, "empty fragment marker must be rejected")
+	_, err = CanonicalOrigin("")
+	require.Error(t, err, "empty origin must be rejected")
+	_, err = CanonicalOrigin("http://user:pass@api.openai.com")
+	require.Error(t, err, "userinfo must be rejected")
 	_, err = CanonicalOrigin("not-a-url")
 	require.Error(t, err)
-	// case preservation: requested_model case sensitive
+	_, err = CanonicalOrigin("https://api.openai.com:99999")
+	require.Error(t, err, "invalid port must be rejected")
 	idLower, _ := RouteClassID(1, FormatOpenAIChat, "gpt-4o", OpChatCompletions)
 	idUpper, _ := RouteClassID(1, FormatOpenAIChat, "GPT-4O", OpChatCompletions)
 	require.NotEqual(t, idLower, idUpper, "model case sensitive")
@@ -127,11 +149,11 @@ func TestRoutingUTF8AndURL(t *testing.T) {
 
 func TestRoutingHexRoundtrip(t *testing.T) {
 	id, _ := RouteClassID(99, FormatOpenAISearch, "search-model", OpSearch)
-	hexStr := IDToHex(id)
+	hexStr := RouteClassIDHex(id)
 	require.Len(t, hexStr, 64)
 	parsed, err := HexToID(hexStr)
 	require.NoError(t, err)
-	require.Equal(t, id, parsed)
+	require.Equal(t, [32]byte(id), parsed)
 	_, err = HexToID("zzzz")
 	require.Error(t, err)
 }

@@ -33,6 +33,12 @@ type PartitionManager interface {
 	DropUsageStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
 	EnsureUsageEntityStatsPartitions(ctx context.Context, now, until time.Time) error
 	DropUsageEntityStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
+	EnsureRoutingInstancePartitions(ctx context.Context, now, until time.Time) error
+	EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error
+	DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error)
+	DropRoutingFlowInstanceBefore(ctx context.Context, cutoff time.Time) (int, error)
+	DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error)
+	DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error)
 }
 
@@ -182,6 +188,26 @@ func (w *RetentionWorker) runOnce() {
 				w.log.Info("retention dropped usage_entity_stats partitions", logx.Int("count", m))
 			}
 		}
+		if _, err := w.parts.DropRoutingQualityInstanceBefore(ctx, cutoff); err != nil {
+			if w.log != nil {
+				w.log.Warn("retention drop routing_quality_instance partitions failed", logx.Error(err))
+			}
+		}
+		if _, err := w.parts.DropRoutingFlowInstanceBefore(ctx, cutoff); err != nil {
+			if w.log != nil {
+				w.log.Warn("retention drop routing_flow_instance partitions failed", logx.Error(err))
+			}
+		}
+		if _, err := w.parts.DropRoutingQualityRollupBefore(ctx, cutoff); err != nil {
+			if w.log != nil {
+				w.log.Warn("retention drop routing_quality_rollup partitions failed", logx.Error(err))
+			}
+		}
+		if _, err := w.parts.DropRoutingFlowRollupBefore(ctx, cutoff); err != nil {
+			if w.log != nil {
+				w.log.Warn("retention drop routing_flow_rollup partitions failed", logx.Error(err))
+			}
+		}
 	}
 	// redemption_uses 有界批删（F3-2）：TTL 定死 90 天（非配置项）——90 天窗口
 	// 内的兑换记录即审计证据，超窗删除不破坏审计语义。每轮至多删 5000 行
@@ -212,6 +238,16 @@ func (w *RetentionWorker) runOnce() {
 	if err := w.parts.EnsureUsageEntityStatsPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
 		if w.log != nil {
 			w.log.Warn("retention pre-create usage_entity_stats partitions failed", logx.Error(err))
+		}
+	}
+	if err := w.parts.EnsureRoutingInstancePartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
+		if w.log != nil {
+			w.log.Warn("retention pre-create routing instance partitions failed", logx.Error(err))
+		}
+	}
+	if err := w.parts.EnsureRoutingRollupPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
+		if w.log != nil {
+			w.log.Warn("retention pre-create routing rollup partitions failed", logx.Error(err))
 		}
 	}
 	w.lastPatrol.Store(now.UnixMilli())

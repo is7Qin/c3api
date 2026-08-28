@@ -121,6 +121,24 @@ func (c *countingPartitionManager) EnsureUsageStatsPartitions(ctx context.Contex
 func (c *countingPartitionManager) EnsureUsageEntityStatsPartitions(ctx context.Context, now, until time.Time) error {
 	return nil
 }
+func (c *countingPartitionManager) EnsureRoutingInstancePartitions(ctx context.Context, now, until time.Time) error {
+	return nil
+}
+func (c *countingPartitionManager) EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error {
+	return nil
+}
+func (c *countingPartitionManager) DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return 0, nil
+}
+func (c *countingPartitionManager) DropRoutingFlowInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return 0, nil
+}
+func (c *countingPartitionManager) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return 0, nil
+}
+func (c *countingPartitionManager) DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return 0, nil
+}
 func (c *countingPartitionManager) DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
 }

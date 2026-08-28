@@ -835,6 +835,25 @@ func (r *Repository) DeleteRedemptionUsesBefore(ctx context.Context, cutoff time
 	return r.Partitions.DeleteRedemptionUsesBefore(ctx, cutoff)
 }
 
+func (r *Repository) EnsureRoutingInstancePartitions(ctx context.Context, now, until time.Time) error {
+	return r.Partitions.EnsureRoutingInstancePartitions(ctx, now, until)
+}
+func (r *Repository) EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error {
+	return r.Partitions.EnsureRoutingRollupPartitions(ctx, now, until)
+}
+func (r *Repository) DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.Partitions.DropRoutingQualityInstanceBefore(ctx, cutoff)
+}
+func (r *Repository) DropRoutingFlowInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.Partitions.DropRoutingFlowInstanceBefore(ctx, cutoff)
+}
+func (r *Repository) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.Partitions.DropRoutingQualityRollupBefore(ctx, cutoff)
+}
+func (r *Repository) DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.Partitions.DropRoutingFlowRollupBefore(ctx, cutoff)
+}
+
 // LoadBalances 全量余额快照（Phase 5 计费余额预检数据源）。
 func (r *Repository) LoadBalances(ctx context.Context) (map[int64]int64, error) {
 	return r.Users.LoadBalances(ctx)

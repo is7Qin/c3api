@@ -136,6 +136,9 @@ func main() {
 	if err := repos.EnsureUsageEntityStatsPartitioned(startupCtx, time.Now()); err != nil {
 		fatalDB("usage_entity_stats partition bootstrap", err)
 	}
+	if err := repos.Partitions.EnsureRoutingPartitions(startupCtx, time.Now()); err != nil {
+		fatalDB("routing partition bootstrap", err)
+	}
 	if err := repos.EnsurePriceVariantsEffectCheck(startupCtx); err != nil {
 		fatalDB("price_variants effect check bootstrap", err)
 	}
