@@ -30,7 +30,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// mock 上游：images 端点（WithBaseURL 覆盖）+ refresh 端点（env override——
+// mock 上游：images 端点（官方默认端点 via transport rewrite）+ refresh 端点（env override——
 // 对齐 SDK 测试模式 t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE")）
 // ---------------------------------------------------------------------------
 
@@ -49,7 +49,7 @@ type codexUpstreamStep struct {
 }
 
 // newCodexUpstream 构造 images 端点 mock：响应序列按序弹出（耗尽重复最后一步）。
-// baseURL = srv.URL + "/images/generations"（SDK WithBaseURL 完整端点语义）。
+// 官方默认端点通过 transport 重写到 mock。
 func newCodexUpstream(t *testing.T, steps ...codexUpstreamStep) (*httptest.Server, *codexUpstreamCapture) {
 	t.Helper()
 	c := &codexUpstreamCapture{last: codexUpstreamStep{status: 500, body: `{}`}}
@@ -346,25 +346,43 @@ func TestCodexCacheConcurrentSingleFlight(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 32)
+	clients := make(chan *codexEntry, 32)
 	for i := 0; i < 32; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			_, err := a.GenerateImage(context.Background(), cred, p)
 			errs <- err
+			a.mu.Lock()
+			e := a.entries[7]
+			a.mu.Unlock()
+			if e != nil {
+				clients <- e
+			}
 		}()
 	}
 	wg.Wait()
 	close(errs)
+	close(clients)
 	for err := range errs {
 		require.NoError(t, err, "并发首请求全部成功")
 	}
-	a.mu.Lock()
-	require.Len(t, a.entries, 1, "并发单飞构造——恰一个缓存条目")
-	e := a.entries[7]
-	a.mu.Unlock()
-	require.NotNil(t, e)
+	// Collect distinct client identities – must be exactly one construction
+	seen := make(map[*codexEntry]struct{})
+	var first *codexEntry
+	for e := range clients {
+		if first == nil {
+			first = e
+		}
+		seen[e] = struct{}{}
+	}
+	require.Len(t, seen, 1, "并发单飞构造——恰一次客户端构造（32 goroutine 共享同一 *codexEntry）")
+	require.NotNil(t, first)
 	require.Equal(t, 32, c.callsN(), "并发请求全部送达上游")
+	// Also prove sub-identity (HTTPClient) is single
+	a.mu.Lock()
+	require.Same(t, first.client, a.entries[7].client, "单飞后缓存的 HTTPClient 为同一实例")
+	a.mu.Unlock()
 }
 
 // TestCodexCacheEvictionOnFatal fatal → 失效剔除（T1 联动）：上报后缓存条目
