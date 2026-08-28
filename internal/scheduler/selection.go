@@ -51,7 +51,7 @@ func (s *Scheduler) Select(groupID int64, format domain.RequestFormat, model str
 	return nil, ErrNoAvailable
 }
 
-func (s *Selection) UsageMappedModel(reqModel string) string {
+func (s *Selection) LogMappedModel(reqModel string) string {
 	switch s.ModelMappingMode {
 	case domain.ModelMappingModeExplicit:
 		if s.Model != reqModel {
@@ -63,7 +63,7 @@ func (s *Selection) UsageMappedModel(reqModel string) string {
 	return ""
 }
 
-func (s *Selection) ResponseModel(reqModel string) string {
+func (s *Selection) ClientResponseModel(reqModel string) string {
 	if s.ModelMappingMode == domain.ModelMappingModeImplicit {
 		return reqModel
 	}
