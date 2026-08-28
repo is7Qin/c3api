@@ -105,7 +105,7 @@ func (_u *TemplateUpdate) SetFormatModels(v map[string][]string) *TemplateUpdate
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (_u *TemplateUpdate) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateUpdate {
+func (_u *TemplateUpdate) SetModelMapping(v domain.ModelMapping) *TemplateUpdate {
 	_u.mutation.SetModelMapping(v)
 	return _u
 }
@@ -498,7 +498,7 @@ func (_u *TemplateUpdateOne) SetFormatModels(v map[string][]string) *TemplateUpd
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (_u *TemplateUpdateOne) SetModelMapping(v map[string]domain.ModelMappingEntry) *TemplateUpdateOne {
+func (_u *TemplateUpdateOne) SetModelMapping(v domain.ModelMapping) *TemplateUpdateOne {
 	_u.mutation.SetModelMapping(v)
 	return _u
 }
