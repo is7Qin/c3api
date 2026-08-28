@@ -198,12 +198,11 @@ func codexWSExt(accountID int64, at, rt string) *domain.AccountExt {
 // newTestCodexWSProxy 构造 codex 类型 resp-ws 测试代理：模板（credType 类型 +
 // resp-ws 格式 + gpt-4o）+ 携带 Ext 的账号（同组 10，可多账号）+ 装配适配层
 // （统一失效回调走真实 T1 处理链——fakeFailureStore 落库替身 + 真实调度器
-// FailAccount 摘除）。模板 BaseURL = mock 上游根（aiclient fullURLOf 拼完整
-// responses 端点）。bill 为计费钩子（nil = 计费全关）。
+// FailAccount 摘除）。Codex 官方默认端点 via transport 重写到 mock。bill 为计费钩子（nil = 计费全关）。
 func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
 	t.Helper()
 	tpl := &domain.Template{
-		ID: 1, Name: "t", BaseURL: upstream,
+		ID: 1, Name: "t", BaseURL: "",
 		CredentialType:   credType,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
