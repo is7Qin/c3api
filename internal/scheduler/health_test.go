@@ -141,21 +141,38 @@ func TestHealthRunReset(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	require.Empty(t, h.View(), "same-run empty must clear")
 
-	// Restore entry
-	_, err = h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
+	// Restore entry with short TTL to test deadline transition
+	shortKey := healthKeyFor(2, "q1", 1)
+	_, err = h.Throttle(context.Background(), shortKey, StateOPEN, 40*time.Millisecond)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
-	require.Contains(t, h.View(), key)
+	require.Contains(t, h.View(), shortKey)
 
 	// Simulate run change: manually set h.runID to old value and flush
 	h.runID = "old-run-id-" + firstRunID
 	require.NoError(t, c.FlushAll(context.Background()).Err())
 	require.NoError(t, h.Sync(context.Background()))
-	// Run change retain OPEN until then PROBING
+	// Run change retain OPEN until deadline
 	v := h.View()
-	require.Contains(t, v, key, "run change must retain OPEN")
-	require.Equal(t, StateProbing, v[key].State, "retained entry must become PROBING")
+	require.Contains(t, v, shortKey, "run change must retain OPEN")
+	require.Equal(t, StateOPEN, v[shortKey].State, "retained entry must stay OPEN until deadline")
+	// Wait for deadline via watchdog barrier (no raw sleep)
+	deadline := time.After(60 * time.Millisecond)
+	select {
+	case <-deadline:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: deadline wait timeout")
+	}
+	require.NoError(t, h.Sync(context.Background()))
+	v2 := h.View()
+	require.Contains(t, v2, shortKey, "repeated empty must retain until deadline")
+	require.Equal(t, StateProbing, v2[shortKey].State, "after deadline must become PROBING")
+	// Repeated empty retains PROBING
+	require.NoError(t, h.Sync(context.Background()))
+	require.Contains(t, h.View(), shortKey, "repeated empty must retain PROBING")
+	require.Equal(t, StateProbing, h.View()[shortKey].State)
 	_ = mr
+	_ = key
 }
 
 // TestHealthSyncGenerationRace verifies Sync INFO run_id + gen-before/records/gen-after detects stale generation.
@@ -176,17 +193,26 @@ func TestHealthSyncGenerationRace(t *testing.T) {
 	require.NoError(t, err)
 	// Now Sync should detect genBefore != genAfter if we race? But our current Sync reads genBefore at start and genAfter at end.
 	// If we just incremented before Sync, both reads will see same new gen, so no race.
-	// To simulate race, we need concurrent writer during Sync. Use channel barrier.
+	// To simulate race, we need concurrent writer during Sync. Use channel barrier with watchdog.
+	gate := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
-		// Wait for Sync to read genBefore (approx 1ms after start)
-		time.Sleep(10 * time.Millisecond)
+		defer close(done)
+		select {
+		case <-gate:
+		case <-time.After(2 * time.Second):
+			return
+		}
 		_, _ = c.Incr(context.Background(), healthGenKey).Result()
-		close(done)
 	}()
+	close(gate)
 	// This Sync may or may not see race depending on timing; we just verify it doesn't panic and view remains consistent
 	_ = h.Sync(context.Background())
-	<-done
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: concurrent incr did not complete")
+	}
 }
 
 // TestHealthLockFreeReadUnderBlockedRedis verifies EffectiveState is lock-free read under blocked Redis.
@@ -377,6 +403,8 @@ func TestHealthProbeOnePermit(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	var concurrent atomic.Int64
 	var maxConcurrent atomic.Int64
+	gate := make(chan struct{})
+	arrived := make(chan struct{}, 10)
 	probeFn := func(ctx context.Context, _ HealthKey) error {
 		cur := concurrent.Add(1)
 		for {
@@ -385,7 +413,15 @@ func TestHealthProbeOnePermit(t *testing.T) {
 				break
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case arrived <- struct{}{}:
+		default:
+		}
+		select {
+		case <-gate:
+		case <-ctx.Done():
+		case <-time.After(2 * time.Second):
+		}
 		concurrent.Add(-1)
 		return nil
 	}
@@ -406,7 +442,29 @@ func TestHealthProbeOnePermit(t *testing.T) {
 			h.probeTick(context.Background())
 		}()
 	}
-	wg.Wait()
+	// watchdog barrier: wait for at least one probe to arrive, then release gate
+	deadline := time.After(2 * time.Second)
+	got := 0
+	for got < 1 {
+		select {
+		case <-arrived:
+			got++
+		case <-deadline:
+			close(gate)
+			require.FailNow(t, "watchdog: probe did not arrive")
+		}
+	}
+	close(gate)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "watchdog: probeTick concurrent completion timeout")
+	}
 	require.LessOrEqual(t, maxConcurrent.Load(), int64(1), "one permit must limit to 1 concurrent probe")
 }
 
