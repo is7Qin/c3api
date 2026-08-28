@@ -21,8 +21,9 @@ func (User) Fields() []ent.Field {
 		field.String("password_hash"),
 		field.Enum("role").Values("platform_admin", "user").Default("user"),
 		field.Enum("status").Values("active", "disabled").Default("active"),
-		field.Int("max_concurrency").Default(0), // 0 = 不限
-		field.Int64("balance").Default(0),       // 最小单位；Phase 5 扣费
+		field.Int("max_concurrency").Default(0),             // 0 = 不限
+		field.Int64("balance").Default(0),                   // 最小单位；Phase 5 扣费
+		field.Int64("balance_warning_threshold").Default(0), // 0 = 关闭余额预警
 		// token_version JWT 撤销版本（spec 2026-08-25-jwt-password-revocation）：
 		// 改密/重置密码单语句原子递增；Claims.Ver 签发时快照，RequireJWT/adminAuth
 		// 与内存快照比对，不匹配 → 401（撤销该用户全部既有 JWT）。存量行默认 0

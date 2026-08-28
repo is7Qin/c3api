@@ -40,6 +40,8 @@ var DefaultSettings = []Setting{
 	{Key: "mail.smtp_password", Type: SettingTypeString, Value: ""},
 	{Key: "mail.from_address", Type: SettingTypeString, Value: ""},
 	{Key: "mail.tls", Type: SettingTypeString, Value: "implicit", PolicyValues: []string{"starttls", "implicit", "none"}},
+	// 余额预警全局开关（余额低于阈值时邮件通知）。
+	{Key: "balance_warning.enabled", Type: SettingTypeSwitch, Value: "true"},
 }
 
 // i64p 注册表数值值域指针辅助（Min/Max 域字面量；nil = 无限制，见 Setting 注释）。

@@ -27,6 +27,8 @@ const (
 	FieldMaxConcurrency = "max_concurrency"
 	// FieldBalance holds the string denoting the balance field in the database.
 	FieldBalance = "balance"
+	// FieldBalanceWarningThreshold holds the string denoting the balance_warning_threshold field in the database.
+	FieldBalanceWarningThreshold = "balance_warning_threshold"
 	// FieldTokenVersion holds the string denoting the token_version field in the database.
 	FieldTokenVersion = "token_version"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
@@ -73,6 +75,7 @@ var Columns = []string{
 	FieldStatus,
 	FieldMaxConcurrency,
 	FieldBalance,
+	FieldBalanceWarningThreshold,
 	FieldTokenVersion,
 	FieldCreatedAt,
 	FieldUpdatedAt,
@@ -93,6 +96,8 @@ var (
 	DefaultMaxConcurrency int
 	// DefaultBalance holds the default value on creation for the "balance" field.
 	DefaultBalance int64
+	// DefaultBalanceWarningThreshold holds the default value on creation for the "balance_warning_threshold" field.
+	DefaultBalanceWarningThreshold int64
 	// DefaultTokenVersion holds the default value on creation for the "token_version" field.
 	DefaultTokenVersion int64
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
@@ -191,6 +196,11 @@ func ByMaxConcurrency(opts ...sql.OrderTermOption) OrderOption {
 // ByBalance orders the results by the balance field.
 func ByBalance(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldBalance, opts...).ToFunc()
+}
+
+// ByBalanceWarningThreshold orders the results by the balance_warning_threshold field.
+func ByBalanceWarningThreshold(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBalanceWarningThreshold, opts...).ToFunc()
 }
 
 // ByTokenVersion orders the results by the token_version field.

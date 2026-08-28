@@ -129,6 +129,27 @@ func (_u *UserUpdate) AddBalance(v int64) *UserUpdate {
 	return _u
 }
 
+// SetBalanceWarningThreshold sets the "balance_warning_threshold" field.
+func (_u *UserUpdate) SetBalanceWarningThreshold(v int64) *UserUpdate {
+	_u.mutation.ResetBalanceWarningThreshold()
+	_u.mutation.SetBalanceWarningThreshold(v)
+	return _u
+}
+
+// SetNillableBalanceWarningThreshold sets the "balance_warning_threshold" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableBalanceWarningThreshold(v *int64) *UserUpdate {
+	if v != nil {
+		_u.SetBalanceWarningThreshold(*v)
+	}
+	return _u
+}
+
+// AddBalanceWarningThreshold adds value to the "balance_warning_threshold" field.
+func (_u *UserUpdate) AddBalanceWarningThreshold(v int64) *UserUpdate {
+	_u.mutation.AddBalanceWarningThreshold(v)
+	return _u
+}
+
 // SetTokenVersion sets the "token_version" field.
 func (_u *UserUpdate) SetTokenVersion(v int64) *UserUpdate {
 	_u.mutation.ResetTokenVersion()
@@ -369,6 +390,12 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedBalance(); ok {
 		_spec.AddField(user.FieldBalance, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.BalanceWarningThreshold(); ok {
+		_spec.SetField(user.FieldBalanceWarningThreshold, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedBalanceWarningThreshold(); ok {
+		_spec.AddField(user.FieldBalanceWarningThreshold, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.TokenVersion(); ok {
 		_spec.SetField(user.FieldTokenVersion, field.TypeInt64, value)
@@ -632,6 +659,27 @@ func (_u *UserUpdateOne) SetNillableBalance(v *int64) *UserUpdateOne {
 // AddBalance adds value to the "balance" field.
 func (_u *UserUpdateOne) AddBalance(v int64) *UserUpdateOne {
 	_u.mutation.AddBalance(v)
+	return _u
+}
+
+// SetBalanceWarningThreshold sets the "balance_warning_threshold" field.
+func (_u *UserUpdateOne) SetBalanceWarningThreshold(v int64) *UserUpdateOne {
+	_u.mutation.ResetBalanceWarningThreshold()
+	_u.mutation.SetBalanceWarningThreshold(v)
+	return _u
+}
+
+// SetNillableBalanceWarningThreshold sets the "balance_warning_threshold" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableBalanceWarningThreshold(v *int64) *UserUpdateOne {
+	if v != nil {
+		_u.SetBalanceWarningThreshold(*v)
+	}
+	return _u
+}
+
+// AddBalanceWarningThreshold adds value to the "balance_warning_threshold" field.
+func (_u *UserUpdateOne) AddBalanceWarningThreshold(v int64) *UserUpdateOne {
+	_u.mutation.AddBalanceWarningThreshold(v)
 	return _u
 }
 
@@ -905,6 +953,12 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.AddedBalance(); ok {
 		_spec.AddField(user.FieldBalance, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.BalanceWarningThreshold(); ok {
+		_spec.SetField(user.FieldBalanceWarningThreshold, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedBalanceWarningThreshold(); ok {
+		_spec.AddField(user.FieldBalanceWarningThreshold, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.TokenVersion(); ok {
 		_spec.SetField(user.FieldTokenVersion, field.TypeInt64, value)

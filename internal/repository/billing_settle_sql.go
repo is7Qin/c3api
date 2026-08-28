@@ -30,11 +30,21 @@ totals AS (SELECT uid, SUM(cost)::numeric AS delta FROM batch GROUP BY uid),
 debited AS (
 	UPDATE users u SET balance = u.balance - t.delta
 	FROM totals t WHERE u.id = t.uid AND u.balance >= t.delta
-	RETURNING u.id AS uid, u.balance AS balance_after),
+	RETURNING u.id AS uid, u.balance AS balance_after, t.delta,
+		u.balance_warning_threshold AS threshold, u.email),
 forced AS (
 	UPDATE users u SET balance = u.balance - t.delta
 	FROM totals t WHERE u.id = t.uid AND u.id NOT IN (SELECT uid FROM debited)
-	RETURNING u.id AS uid, u.balance AS balance_after),
+	RETURNING u.id AS uid, u.balance AS balance_after, t.delta,
+		u.balance_warning_threshold AS threshold, u.email),
+changed AS (
+	SELECT settled.*,
+		threshold > 0 AND balance_after + delta > threshold
+			AND balance_after <= threshold AS crossed
+	FROM (
+		SELECT uid, balance_after, delta, threshold, email FROM debited
+		UNION ALL
+		SELECT uid, balance_after, delta, threshold, email FROM forced) settled),
 od_map AS (
 	SELECT uid, TRUE AS od FROM forced
 	UNION ALL
@@ -56,11 +66,13 @@ SELECT -1::bigint, -1::bigint,
 	(SELECT COUNT(*) FROM debited)::bigint,
 	(SELECT COUNT(*) FROM forced)::bigint,
 	(SELECT COUNT(*) FROM marked)::bigint,
-	(SELECT COUNT(*) FROM ghosts)::bigint
+	(SELECT COUNT(*) FROM ghosts)::bigint,
+	NULL::bigint, NULL::text
 UNION ALL
-SELECT uid, balance_after, 0, 0, 0, 0, 0 FROM debited
-UNION ALL
-SELECT uid, balance_after, 0, 0, 0, 0, 0 FROM forced
+SELECT uid, balance_after, 0, 0, 0, 0, 0,
+	CASE WHEN crossed THEN threshold END,
+	CASE WHEN crossed THEN email END
+FROM changed
 ORDER BY 1`
 
 // settleFefoSQL Temp 车道集合化 FEFO 结算语句（D7）：FEFO 序（expires ASC NULLS
@@ -105,11 +117,21 @@ spill AS (
 debited AS (
 	UPDATE users u SET balance = u.balance - s.spill
 	FROM spill s WHERE u.id = s.uid AND u.balance >= s.spill
-	RETURNING u.id AS uid, u.balance AS balance_after),
+	RETURNING u.id AS uid, u.balance AS balance_after, s.spill AS delta,
+		u.balance_warning_threshold AS threshold, u.email),
 forced AS (
 	UPDATE users u SET balance = u.balance - s.spill
 	FROM spill s WHERE u.id = s.uid AND u.id NOT IN (SELECT uid FROM debited)
-	RETURNING u.id AS uid, u.balance AS balance_after),
+	RETURNING u.id AS uid, u.balance AS balance_after, s.spill AS delta,
+		u.balance_warning_threshold AS threshold, u.email),
+changed AS (
+	SELECT settled.*,
+		threshold > 0 AND balance_after + delta > threshold
+			AND balance_after <= threshold AS crossed
+	FROM (
+		SELECT uid, balance_after, delta, threshold, email FROM debited
+		UNION ALL
+		SELECT uid, balance_after, delta, threshold, email FROM forced) settled),
 od_map AS (
 	SELECT uid, TRUE AS od FROM forced
 	UNION ALL
@@ -131,9 +153,11 @@ SELECT -1::bigint, -1::bigint,
 	(SELECT COUNT(*) FROM debited)::bigint,
 	(SELECT COUNT(*) FROM forced)::bigint,
 	(SELECT COUNT(*) FROM marked)::bigint,
-	(SELECT COUNT(*) FROM ghosts)::bigint
+	(SELECT COUNT(*) FROM ghosts)::bigint,
+	NULL::bigint, NULL::text
 UNION ALL
-SELECT uid, balance_after, 0, 0, 0, 0, 0 FROM debited
-UNION ALL
-SELECT uid, balance_after, 0, 0, 0, 0, 0 FROM forced
+SELECT uid, balance_after, 0, 0, 0, 0, 0,
+	CASE WHEN crossed THEN threshold END,
+	CASE WHEN crossed THEN email END
+FROM changed
 ORDER BY 1`

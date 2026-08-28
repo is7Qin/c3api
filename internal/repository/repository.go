@@ -369,6 +369,10 @@ func (r *Repository) UpdateUserPassword(ctx context.Context, id int64, passwordH
 	return r.Users.UpdateUserPassword(ctx, id, passwordHash)
 }
 
+func (r *Repository) UpdateUserBalanceWarningThreshold(ctx context.Context, userID int64, threshold int64) (*domain.User, int64, error) {
+	return r.Users.UpdateUserBalanceWarningThreshold(ctx, userID, threshold)
+}
+
 // CreateTempBalance 临时额度行（注册赠品；UserRepo 扩展方法，不新增独立
 // repo 字段——避免与并行任务的门面改动冲突）。
 func (r *Repository) CreateTempBalance(ctx context.Context, userID int64, amount int64, expiresAt *time.Time, note *string) error {

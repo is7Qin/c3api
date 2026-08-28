@@ -1125,7 +1125,8 @@
       "defaults": "新用户默认资源",
       "pricingSync": "价格同步",
       "tierPolicy": "服务档位策略",
-      "mail": "邮件"
+      "mail": "邮件",
+      "balanceWarning": "余额预警"
     },
     "labels": {
       "signup_enabled": "开放注册",
@@ -1145,7 +1146,8 @@
       "mail.smtp_username": "SMTP 用户名",
       "mail.smtp_password": "SMTP 密码",
       "mail.from_address": "发件人地址",
-      "mail.tls": "TLS 策略"
+      "mail.tls": "TLS 策略",
+      "balance_warning.enabled": "启用余额预警"
     },
     "descs": {
       "signup_enabled": "关闭后公开注册通道不再受理新用户",
@@ -1165,7 +1167,8 @@
       "mail.smtp_username": "SMTP 用户名（可选）",
       "mail.smtp_password": "SMTP 密码",
       "mail.from_address": "发件人邮箱地址",
-      "mail.tls": "连接加密策略；默认 SMTPS 隐式 TLS（端口 465）"
+      "mail.tls": "连接加密策略；默认 SMTPS 隐式 TLS（端口 465）",
+      "balance_warning.enabled": "关闭后余额低于阈值时不发送预警邮件"
     },
     "policies": {
       "passthrough": "透传",
@@ -1184,11 +1187,24 @@
     "mailTemplate": {
       "register_code": "注册验证码模板",
       "reset_code": "重置密码模板",
+      "balance_warning": "余额预警模板",
       "subject": "主题",
       "body": "正文",
       "hint": "可用占位符：{{code}} {{ttl_minutes}} {{app_name}}",
+      "hintBalanceWarning": "可用占位符：{{balance}} {{threshold}} {{app_name}}",
       "restored": "已恢复默认",
       "saved": "已保存"
+    },
+    "mailChannelTest": {
+      "title": "邮件通道测试",
+      "desc": "使用当前 SMTP 配置发送一封测试邮件",
+      "emailLabel": "测试收件人",
+      "emailPlaceholder": "test@example.com",
+      "send": "发送测试",
+      "sending": "发送中…",
+      "sent": "测试邮件已发送",
+      "failed": "测试邮件发送失败",
+      "invalidEmail": "请输入有效的邮箱地址"
     },
     "restored": "已恢复默认",
     "restoreDefault": "还原默认"
@@ -1226,6 +1242,7 @@
       "stats-agg": "统计聚合",
       "billing": "账本结算",
       "email": "邮件队列",
+      "notification": "余额预警",
       "notify": "通知监听",
       "auth-sync": "鉴权刷新",
       "discovery": "实例发现",
@@ -1241,6 +1258,14 @@
       "writeback_cap": "回写队列容量",
       "queued": "队列积压",
       "queue_cap": "队列容量",
+      "warning_queued": "预警积压",
+      "warning_queue_cap": "预警容量",
+      "evaluated": "已评估",
+      "admitted": "已入队",
+      "suppressed": "已抑制",
+      "cooldown_suppressed": "冷却抑制",
+      "claim_failed_total": "认领失败",
+      "release_failed_total": "释放失败",
       "dropped": "丢弃累计",
       "drop_warn_threshold": "丢弃告警阈值",
       "pending_logs": "未落库条数",
@@ -1503,6 +1528,16 @@
       "tempPermanent": "永久",
       "tempNote": "备注",
       "tempEmpty": "无临时额度",
+      "balanceWarningTitle": "余额预警",
+      "balanceWarningDesc": "余额降至或低于该阈值时发送提醒",
+      "balanceWarningLabel": "阈值 (USD)",
+      "balanceWarningHint": "0 = 关闭",
+      "balanceWarningDisabled": "已关闭",
+      "balanceWarningActive": "$ {{value}}",
+      "balanceWarningSave": "保存",
+      "balanceWarningSaving": "保存中…",
+      "balanceWarningSaved": "阈值已保存",
+      "balanceWarningInvalid": "请输入有效金额（≥ 0）",
       "pwdTitle": "修改密码",
       "pwdSubtitle": "新密码在下次登录时生效",
       "oldPassword": "旧密码",

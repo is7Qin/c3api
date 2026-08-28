@@ -76,8 +76,9 @@ const (
 
 // Defines values for MailTemplatePurpose.
 const (
-	RegisterCode MailTemplatePurpose = "register_code"
-	ResetCode    MailTemplatePurpose = "reset_code"
+	BalanceWarning MailTemplatePurpose = "balance_warning"
+	RegisterCode   MailTemplatePurpose = "register_code"
+	ResetCode      MailTemplatePurpose = "reset_code"
 )
 
 // Defines values for PriceEntryMode.
@@ -885,6 +886,16 @@ type LogsResponse struct {
 	// NextCursor 下一页游标（本页最后一条 id）；null = 无更多行
 	NextCursor *int64     `json:"next_cursor"`
 	Rows       []UsageLog `json:"rows"`
+}
+
+// MailChannelTestRequest defines model for MailChannelTestRequest.
+type MailChannelTestRequest struct {
+	Email openapi_types.Email `json:"email"`
+}
+
+// MailChannelTestResponse defines model for MailChannelTestResponse.
+type MailChannelTestResponse struct {
+	Sent bool `json:"sent"`
 }
 
 // MailTemplate defines model for MailTemplate.
@@ -1967,6 +1978,9 @@ type PutGroupsIdJSONRequestBody = GroupCreate
 // PutGroupsIdAssignmentsJSONRequestBody defines body for PutGroupsIdAssignments for application/json ContentType.
 type PutGroupsIdAssignmentsJSONRequestBody = GroupAssignmentsBody
 
+// PostMailChannelTestJSONRequestBody defines body for PostMailChannelTest for application/json ContentType.
+type PostMailChannelTestJSONRequestBody = MailChannelTestRequest
+
 // PutMailTemplateJSONRequestBody defines body for PutMailTemplate for application/json ContentType.
 type PutMailTemplateJSONRequestBody = MailTemplateUpdate
 
@@ -2098,6 +2112,9 @@ type ServerInterface interface {
 	// 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端）
 	// (GET /keys)
 	GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams)
+	// 邮件通道测试（SMTP 验证；不触及余额预警事件/阈值/冷却）
+	// (POST /mail/channel-test)
+	PostMailChannelTest(w http.ResponseWriter, r *http.Request)
 	// 邮件模板列表（缺行自动回退内置默认）
 	// (GET /mail/templates)
 	GetMailTemplates(w http.ResponseWriter, r *http.Request)
@@ -2383,6 +2400,12 @@ func (_ Unimplemented) PutGroupsIdAssignments(w http.ResponseWriter, r *http.Req
 // 密钥列表（platform_admin 专属；脱敏，不含 key 明文——密钥明文绝不下发管理端）
 // (GET /keys)
 func (_ Unimplemented) GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 邮件通道测试（SMTP 验证；不触及余额预警事件/阈值/冷却）
+// (POST /mail/channel-test)
+func (_ Unimplemented) PostMailChannelTest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3447,6 +3470,20 @@ func (siw *ServerInterfaceWrapper) GetKeys(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetKeys(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostMailChannelTest operation middleware
+func (siw *ServerInterfaceWrapper) PostMailChannelTest(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostMailChannelTest(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5259,6 +5296,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/keys", wrapper.GetKeys)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/mail/channel-test", wrapper.PostMailChannelTest)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/mail/templates", wrapper.GetMailTemplates)

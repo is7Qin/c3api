@@ -24,6 +24,7 @@ type fakeWorker struct {
 	events  *[]string
 	mu      *sync.Mutex
 	startFn func() error
+	closeFn func() error
 }
 
 func (f *fakeWorker) Name() string { return f.name }
@@ -44,6 +45,9 @@ func (f *fakeWorker) Close(context.Context) error {
 		f.mu.Lock()
 		*f.events = append(*f.events, "close:"+f.name)
 		f.mu.Unlock()
+	}
+	if f.closeFn != nil {
+		return f.closeFn()
 	}
 	return nil
 }
@@ -116,6 +120,24 @@ func TestStartAllRollback(t *testing.T) {
 	require.Error(t, err)
 	// 回滚含失败者自身 b（其可能已部分启动资源）：反向 close:b → close:a
 	require.Equal(t, []string{"start:a", "start:b", "close:b", "close:a"}, events)
+}
+
+func TestShutdownContinuesAfterWorkerCloseError(t *testing.T) {
+	// Given
+	var events []string
+	var mu sync.Mutex
+	m := New(nil)
+	require.NoError(t, m.Register(
+		&fakeWorker{name: "later", events: &events, mu: &mu},
+		&fakeWorker{name: "failing", events: &events, mu: &mu, closeFn: func() error { return context.Canceled }},
+	))
+
+	// When
+	err := m.Shutdown(context.Background())
+
+	// Then
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, []string{"close:failing", "close:later"}, events)
 }
 
 func TestStartAllTwice(t *testing.T) {

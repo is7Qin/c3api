@@ -4,7 +4,7 @@
 
 // 用户端个人中心页：账户信息卡（me()——Email/Role/Status/MaxConcurrency/CreatedAt）
 // + 临时额度区块（/user/temp-balances——合计 USD + 有效额度列表，FEFO 序即响应序；
-// 空结果显示"无临时额度"）+ 修改密码表单（/user/auth/change-password）。
+// 空结果显示"无临时额度"）+ 余额预警（BalanceWarningCard）+ 修改密码表单（/user/auth/change-password）。
 // 单位语义：me().Balance 与 temp-balances 的 amount_usd/total_usd 均为 API 边界
 // 已换算的 USD 直显（formatUSD，勿用毫分语义的 formatCost）。
 import { useState, type ReactNode } from 'react'
@@ -13,6 +13,7 @@ import { motion } from 'framer-motion'
 import { KeyRound, Timer, UserRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, ApiUnauthorized, userApi } from '@/lib/api/client'
+import { BalanceWarningCard } from '@/components/balance-warning-card'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -28,7 +29,6 @@ const fadeUp = {
   animate: { opacity: 1, y: 0 },
 }
 
-// 账户信息行：label 左 / 值右（对齐 overview 余额卡内容形态）。
 function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
@@ -41,13 +41,9 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
 export default function UserProfile() {
   const { t } = useTranslation()
 
-  // 与 AppShell/overview 同键共享缓存（me 一次拉取全局复用）
   const meQ = useQuery({ queryKey: ['user', 'me'], queryFn: () => userApi.me() })
   const tempQ = useQuery({ queryKey: ['user', 'temp-balances'], queryFn: () => userApi.getTempBalances() })
 
-  // —— 修改密码表单（register/login 同款原生 await 提交，非 useMutation：
-  // 全局 MutationCache 401 拦截会把"旧密码错误"当会话过期登出，改密码的
-  // 401 语义需本地展示）——
   const [oldPwd, setOldPwd] = useState('')
   const [newPwd, setNewPwd] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -64,8 +60,6 @@ export default function UserProfile() {
       setOldPwd(''); setNewPwd(''); setConfirm('')
       toast.add({ title: t('user.profile.successTitle'), description: t('user.profile.successDesc'), type: 'success' })
     } catch (e) {
-      // 401 = 旧密码错误（后端防枚举同登录文案——ApiUnauthorized 非 ApiError 子类）；
-      // 400 = 新密码非法（非空且 ≤72 字节）；其余展示服务端 error 字段。
       if (e instanceof ApiUnauthorized) setErr(t('user.profile.oldPasswordWrong'))
       else if (e instanceof ApiError && e.status === 400) setErr(t('user.profile.newPasswordInvalid'))
       else setErr(e instanceof ApiError ? e.message : t('user.common.error'))
@@ -82,7 +76,6 @@ export default function UserProfile() {
       </div>
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        {/* 账户信息卡（me() 现有字段） */}
         <motion.div {...fadeUp} transition={{ duration: 0.25 }}>
           <Card className="h-full">
             <CardHeader>
@@ -118,7 +111,6 @@ export default function UserProfile() {
           </Card>
         </motion.div>
 
-        {/* 临时额度卡（/user/temp-balances：合计 USD + FEFO 序有效额度列表） */}
         <motion.div {...fadeUp} transition={{ duration: 0.25, delay: 0.06 }}>
           <Card className="h-full">
             <CardHeader>
@@ -139,7 +131,6 @@ export default function UserProfile() {
                   {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8" />)}
                 </div>
               ) : tempQ.data.rows.length === 0 ? (
-                // 空结果（无有效额度）：total 0 无展示意义，整体空态提示
                 <p className="py-6 text-center text-sm text-muted-foreground">{t('user.profile.tempEmpty')}</p>
               ) : (
                 <Table>
@@ -166,7 +157,8 @@ export default function UserProfile() {
         </motion.div>
       </div>
 
-      {/* 修改密码表单（提交成功清空 + toast；JWT 不撤销——新密码下次登录生效） */}
+      <BalanceWarningCard />
+
       <motion.div {...fadeUp} transition={{ duration: 0.25, delay: 0.12 }}>
         <Card className="max-w-xl">
           <CardHeader>
