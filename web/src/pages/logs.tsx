@@ -15,6 +15,7 @@ import { DateRangePicker } from '@/components/date-range-picker'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ERROR_TYPES, USAGE_ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, fmtDuration } from '@/components/log-display'
 import { LogPagination } from '@/components/log-pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -33,40 +34,6 @@ type ErrorType = components['schemas']['ErrorType']
 type RequestFormat = components['schemas']['RequestFormat']
 type UsageLog = components['schemas']['UsageLog']
 type ErrLog = components['schemas']['ErrLog']
-
-// 错误类型全值域（err_logs 完整错误面：拒绝 + 异常双轨）。
-const ERROR_TYPES: ErrorType[] = ['none', '429', '4xx', '5xx', 'network', 'auth', 'no_account', 'abort', 'billing']
-// usage_logs 放行面只有 none/abort 两种错误类型。
-const USAGE_ERROR_TYPES: ErrorType[] = ['none', 'abort']
-
-// brief Step 1 色板：none 绿 / 4xx 黄 / 5xx、network、abort 红 / 429 橙 / auth、no_account 灰 / billing 紫。
-const ERROR_META: Record<ErrorType, string> = {
-  none: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400',
-  '4xx': 'bg-yellow-500/10 text-yellow-600 dark:bg-yellow-400/10 dark:text-yellow-400',
-  '5xx': 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
-  network: 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
-  abort: 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
-  '429': 'bg-orange-500/10 text-orange-600 dark:bg-orange-400/10 dark:text-orange-400',
-  auth: 'bg-muted text-muted-foreground',
-  no_account: 'bg-muted text-muted-foreground',
-  billing: 'bg-violet-500/10 text-violet-600 dark:bg-violet-400/10 dark:text-violet-400',
-}
-
-function ErrorTypeBadge({ type }: { type?: ErrorType }) {
-  const { t } = useTranslation()
-  if (!type) return <span className="text-xs text-muted-foreground">—</span>
-  return <Badge className={ERROR_META[type]}>{t(`errorType.${type}`)}</Badge>
-}
-
-// 厂商/协议专有名词不翻译（与 templates.tsx 保持一致）。
-const FORMAT_LABELS: Record<RequestFormat, string> = {
-  'openai-chat': 'OpenAI Chat',
-  'openai-responses': 'OpenAI Responses',
-  'openai-responses-ws': 'OpenAI Responses (WS)',
-  'openai-images': 'OpenAI Images',
-  'openai-search': 'OpenAI Search',
-  anthropic: 'Anthropic',
-}
 
 // 表头样式（sub2api 配方）：uppercase 小字 + sticky（评审 Minor-1：必须位于
 // 纵向滚动容器内——纯 overflow-x 容器中 sticky top 不生效）。
@@ -89,9 +56,6 @@ function latencyColor(ms: number): string {
   if (ms < 15000) return 'bg-orange-500'
   return 'bg-red-500'
 }
-
-// 时长格式化：≥1000ms 用 s（保留 1 位小数），否则 ms。
-const fmtDuration = (ms: number): string => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`)
 
 // 单价格式化：每 M token 毫分 → USD/M（≥0.01 四位小数，否则六位，去尾零）。
 const fmtPricePerM = (millis: number): string => {

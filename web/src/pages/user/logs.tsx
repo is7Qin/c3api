@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card'
 import { DateRangePicker } from '@/components/date-range-picker'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ERROR_TYPES, USAGE_ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, fmtDuration } from '@/components/log-display'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { LogPagination } from '@/components/log-pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -30,40 +31,6 @@ type ErrorType = components['schemas']['ErrorType']
 // 用户面行类型（无 AccountID/TemplateID——用户级契约不含上游拓扑）。
 type UsageLog = components['schemas']['UserUsageLog']
 type ErrLog = components['schemas']['UserErrLog']
-
-// 错误类型全值域（err_logs 完整错误面：拒绝 + 异常双轨）。
-const ERROR_TYPES: ErrorType[] = ['none', '429', '4xx', '5xx', 'network', 'auth', 'no_account', 'abort', 'billing']
-// usage_logs 放行面只有 none/abort 两种错误类型。
-const USAGE_ERROR_TYPES: ErrorType[] = ['none', 'abort']
-
-// 格式标签（管理端 logs.tsx 同款）。
-const FORMAT_LABELS: Record<string, string> = {
-  'openai-chat': 'OpenAI Chat',
-  'openai-responses': 'OpenAI Responses',
-  'openai-responses-ws': 'OpenAI Responses (WS)',
-  'openai-images': 'OpenAI Images',
-  'openai-search': 'OpenAI Search',
-  anthropic: 'Anthropic',
-}
-
-// 与管理端 logs.tsx 同款色板：none 绿 / 4xx 黄 / 5xx、network、abort 红 / 429 橙 / auth、no_account 灰 / billing 紫。
-const ERROR_META: Record<ErrorType, string> = {
-  none: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400',
-  '4xx': 'bg-yellow-500/10 text-yellow-600 dark:bg-yellow-400/10 dark:text-yellow-400',
-  '5xx': 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
-  network: 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
-  abort: 'bg-red-500/10 text-red-600 dark:bg-red-400/10 dark:text-red-400',
-  '429': 'bg-orange-500/10 text-orange-600 dark:bg-orange-400/10 dark:text-orange-400',
-  auth: 'bg-muted text-muted-foreground',
-  no_account: 'bg-muted text-muted-foreground',
-  billing: 'bg-violet-500/10 text-violet-600 dark:bg-violet-400/10 dark:text-violet-400',
-}
-
-function ErrorTypeBadge({ type }: { type?: ErrorType }) {
-  const { t } = useTranslation()
-  if (!type) return <span className="text-xs text-muted-foreground">—</span>
-  return <Badge className={ERROR_META[type]}>{t(`errorType.${type}`)}</Badge>
-}
 
 // 表头样式（与管理端 logs.tsx 一致）：uppercase 小字 + sticky（位于纵向滚动容器内）。
 function Th({ className, ...props }: React.ComponentProps<typeof TableHead>) {
@@ -86,9 +53,6 @@ function latencyColor(ms: number): { dot: string; text: string } {
   return { dot: 'bg-red-500', text: 'text-red-500' }
 }
 
-// —— 格式化工具（管理端 logs.tsx 同款实现） ——
-// 耗时 ≥1000ms 用 s（一位小数），否则 ms。
-const fmtDuration = (ms: number): string => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`)
 // 单价：毫分/M → USD/M（API 边界换算 1 USD = 100,000 毫分）。
 const fmtPricePerM = (millis: number): string => {
   const usd = millis / 1e5
