@@ -1253,8 +1253,13 @@ export interface components {
                 [key: string]: string[];
             };
             model_mapping?: {
-                [key: string]: string;
+                [key: string]: components["schemas"]["ModelMappingEntry"];
             };
+        };
+        ModelMappingEntry: {
+            mapped_model: string;
+            /** @enum {string} */
+            mode: "explicit" | "implicit";
         };
         Template: {
             /** Format: int64 */
@@ -1273,7 +1278,7 @@ export interface components {
                 [key: string]: string[];
             };
             ModelMapping?: {
-                [key: string]: string;
+                [key: string]: components["schemas"]["ModelMappingEntry"];
             };
             /** Format: date-time */
             CreatedAt: string;
@@ -1945,7 +1950,7 @@ export interface components {
                 [key: string]: string[];
             };
             model_mapping?: {
-                [key: string]: string;
+                [key: string]: components["schemas"]["ModelMappingEntry"];
             };
         };
         AccountPatch: {
