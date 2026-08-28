@@ -34,9 +34,9 @@ func TestDebouncerStats(t *testing.T) {
 	require.Equal(t, 2, st.DirtyGroups)
 
 	// 多脏位合并命名。
-	d.Settings()
+	d.Rules()
 	st = d.Stats().(DebouncerStats)
-	require.Equal(t, "users,settings", st.DirtyKinds)
+	require.Equal(t, "users,rules", st.DirtyKinds)
 
 	// flush 消费后复位。
 	d.flush()
