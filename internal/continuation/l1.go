@@ -90,10 +90,11 @@ func (c *l1Cache) purgeExpiredLocked(now time.Time) {
 		c.bytes -= top.size
 	}
 	if c.heap.Len() == 0 {
+		c.entries = make(map[string]*l1Entry)
+		c.heap = nil
+		c.bytes = 0
 		return
 	}
-	// Compact slice if capacity heavily exceeds length due to stale
-	// pops (e.g., after mass expiry). Heuristic: cap > 2*len.
 	if cap(c.heap) > 2*len(c.heap)+64 {
 		cp := make(expiryHeap, len(c.heap))
 		copy(cp, c.heap)
@@ -103,6 +104,56 @@ func (c *l1Cache) purgeExpiredLocked(now time.Time) {
 		}
 		heap.Init(&c.heap)
 	}
+}
+
+func (c *l1Cache) compactIfNeededLocked() {
+	if c.heap.Len() == 0 {
+		return
+	}
+	if cap(c.heap) > 2*len(c.heap)+64 {
+		cp := make(expiryHeap, len(c.heap))
+		copy(cp, c.heap)
+		c.heap = cp
+		for i, e := range c.heap {
+			e.index = i
+		}
+		heap.Init(&c.heap)
+	}
+}
+
+func (c *l1Cache) putAt(key string, b Binding, deadline, now time.Time) {
+	if !deadline.After(now) {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.purgeExpiredLocked(now)
+	if old, ok := c.entries[key]; ok {
+		c.bytes -= old.size
+		old.binding = b
+		old.expiry = deadline
+		old.size = estimateSize(key, b)
+		c.bytes += old.size
+		heap.Fix(&c.heap, old.index)
+	} else {
+		sz := estimateSize(key, b)
+		e := &l1Entry{key: key, binding: b, expiry: deadline, size: sz}
+		c.entries[key] = e
+		heap.Push(&c.heap, e)
+		c.bytes += sz
+	}
+	for (len(c.entries) > c.maxEntries || c.bytes > c.maxBytes) && c.heap.Len() > 0 {
+		ev := heap.Pop(&c.heap).(*l1Entry)
+		delete(c.entries, ev.key)
+		c.bytes -= ev.size
+	}
+	if c.heap.Len() == 0 {
+		c.entries = make(map[string]*l1Entry)
+		c.heap = nil
+		c.bytes = 0
+		return
+	}
+	c.compactIfNeededLocked()
 }
 
 func (c *l1Cache) Get(key string) (Binding, bool) {
@@ -116,6 +167,13 @@ func (c *l1Cache) Get(key string) (Binding, bool) {
 		heap.Remove(&c.heap, e.index)
 		delete(c.entries, key)
 		c.bytes -= e.size
+		if c.heap.Len() == 0 {
+			c.entries = make(map[string]*l1Entry)
+			c.heap = nil
+			c.bytes = 0
+		} else {
+			c.compactIfNeededLocked()
+		}
 		return Binding{}, false
 	}
 	return e.binding, true
@@ -149,6 +207,13 @@ func (c *l1Cache) Put(key string, b Binding, ttl time.Duration) {
 		delete(c.entries, ev.key)
 		c.bytes -= ev.size
 	}
+	if c.heap.Len() == 0 {
+		c.entries = make(map[string]*l1Entry)
+		c.heap = nil
+		c.bytes = 0
+		return
+	}
+	c.compactIfNeededLocked()
 }
 
 func (c *l1Cache) Len() int {

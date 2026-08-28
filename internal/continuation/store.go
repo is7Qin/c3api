@@ -51,6 +51,17 @@ func (b Binding) valid() bool {
 	return true
 }
 
+func encodeWire(b Binding) []byte {
+	w := redisWire{
+		AccountID:   strconv.FormatInt(b.AccountID, 10),
+		Fingerprint: hex.EncodeToString(b.Fingerprint[:]),
+		Revision:    strconv.FormatInt(b.Revision, 10),
+		RedisAcked:  true,
+	}
+	data, _ := json.Marshal(w)
+	return data
+}
+
 func parseBinding(data []byte) (Binding, bool) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -77,6 +88,11 @@ func parseBinding(data []byte) (Binding, bool) {
 	if err := dec.Decode(&w); err != nil {
 		return Binding{}, false
 	}
+	if dec.InputOffset() < int64(len(data)) {
+		if len(bytes.TrimSpace(data[dec.InputOffset():])) != 0 {
+			return Binding{}, false
+		}
+	}
 	if !w.RedisAcked {
 		return Binding{}, false
 	}
@@ -100,7 +116,11 @@ func parseBinding(data []byte) (Binding, bool) {
 	if fp == (domain.CandidateFingerprintVal{}) {
 		return Binding{}, false
 	}
-	return Binding{AccountID: acc, Fingerprint: fp, Revision: rev, RedisAcked: true}, true
+	b := Binding{AccountID: acc, Fingerprint: fp, Revision: rev, RedisAcked: true}
+	if !bytes.Equal(encodeWire(b), data) {
+		return Binding{}, false
+	}
+	return b, true
 }
 
 func deriveHMACKey(authSecret string) ([]byte, error) {
@@ -148,6 +168,7 @@ type Store struct {
 	client  *redis.Client
 	hmacKey []byte
 	l1      *l1Cache
+	now     func() time.Time
 }
 
 func New(client *redis.Client, authSecret string) (*Store, error) {
@@ -155,7 +176,7 @@ func New(client *redis.Client, authSecret string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{client: client, hmacKey: key, l1: newL1(DefaultMaxEntries, DefaultMaxBytes)}, nil
+	return &Store{client: client, hmacKey: key, l1: newL1(DefaultMaxEntries, DefaultMaxBytes), now: time.Now}, nil
 }
 
 func NewWithL1(client *redis.Client, authSecret string, l1 *l1Cache) (*Store, error) {
@@ -166,7 +187,7 @@ func NewWithL1(client *redis.Client, authSecret string, l1 *l1Cache) (*Store, er
 	if l1 == nil {
 		l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
 	}
-	return &Store{client: client, hmacKey: key, l1: l1}, nil
+	return &Store{client: client, hmacKey: key, l1: l1, now: time.Now}, nil
 }
 
 func (s *Store) RedisKey(userID, groupID int64, routeClassID domain.RouteClassIDVal, protocolTag, continuationID string) (string, error) {
@@ -187,14 +208,7 @@ if not v then
   redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
   return 'created'
 end
-local ok, cur = pcall(cjson.decode, v)
-if not ok or type(cur) ~= 'table' then
-  return 'conflict'
-end
-if type(cur.account_id) ~= 'string' or type(cur.fingerprint) ~= 'string' or type(cur.revision) ~= 'string' or cur.redis_acked ~= true then
-  return 'conflict'
-end
-if cur.account_id == ARGV[3] and cur.fingerprint == ARGV[4] and cur.revision == ARGV[5] then
+if v == ARGV[1] then
   redis.call('EXPIRE', KEYS[1], ARGV[2])
   return 'refreshed'
 else
@@ -225,22 +239,21 @@ func (s *Store) CreateOrRefresh(ctx context.Context, userID, groupID int64, rout
 	if err != nil {
 		return "", err
 	}
-	fpHex := hex.EncodeToString(fingerprint[:])
-	accStr := strconv.FormatInt(accountID, 10)
-	revStr := strconv.FormatInt(revision, 10)
-	w := redisWire{AccountID: accStr, Fingerprint: fpHex, Revision: revStr, RedisAcked: true}
-	payload, err := json.Marshal(w)
-	if err != nil {
-		return "", err
-	}
-	res, err := luaCAS.Run(ctx, s.client, []string{rkey}, string(payload), strconv.Itoa(ttlSeconds), accStr, fpHex, revStr).Text()
-	if err != nil {
-		return "", err
-	}
 	b := Binding{AccountID: accountID, Fingerprint: fingerprint, Revision: revision, RedisAcked: true}
+	payload := encodeWire(b)
+	start := s.now()
+	res, err := luaCAS.Run(ctx, s.client, []string{rkey}, string(payload), strconv.Itoa(ttlSeconds)).Text()
+	completion := s.now()
+	if err != nil {
+		return "", err
+	}
 	switch res {
 	case "created", "refreshed":
-		s.l1.Put(rkey, b, TTL)
+		deadline := start.Add(TTL)
+		if !deadline.After(completion) {
+			return res, nil
+		}
+		s.l1.putAt(rkey, b, deadline, completion)
 		return res, nil
 	case "conflict":
 		return res, nil
@@ -261,7 +274,9 @@ func (s *Store) Lookup(ctx context.Context, userID, groupID int64, routeClassID 
 		cp := b
 		return &cp, true, nil
 	}
+	start := s.now()
 	raw, err := luaLookup.Run(ctx, s.client, []string{rkey}).Slice()
+	completion := s.now()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, false, nil
@@ -290,12 +305,15 @@ func (s *Store) Lookup(ctx context.Context, userID, groupID int64, routeClassID 
 	if pttl <= 0 {
 		return nil, false, nil
 	}
+	deadline := start.Add(time.Duration(pttl) * time.Millisecond)
+	if !deadline.After(completion) {
+		return nil, false, nil
+	}
 	b, valid := parseBinding([]byte(val))
 	if !valid {
 		return nil, false, nil
 	}
-	remaining := time.Duration(pttl) * time.Millisecond
-	s.l1.Put(rkey, b, remaining)
+	s.l1.putAt(rkey, b, deadline, completion)
 	cp := b
 	return &cp, true, nil
 }
