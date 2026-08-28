@@ -21,7 +21,7 @@ func TestFlusherStats(t *testing.T) {
 	restoreLagThrottle(t, 0)
 	restoreLagSlowEvery(t, 1) // 禁节流：每周期探测刷新（节流行为归 throttle 专测）
 	store := newFakeLedgerStore()
-	f := newFlusherWith(store, 1, map[int64]int64{1: 1_000_000})
+	f := newFlusherWith(store, map[int64]int64{1: 1_000_000})
 	require.Zero(t, f.Stats().(FlusherStats).LastCycleUnixMs, "尚未消费 = 0")
 
 	// 空游标周期：不推进 lastFlush（观测"最近何时真正消费过"）。
