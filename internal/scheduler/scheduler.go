@@ -123,6 +123,8 @@ type Scheduler struct {
 	writeCh   chan statusWrite
 	timeNow   func() time.Time
 	startOnce atomic.Bool
+	latch     *latchStore
+	health    *RuntimeHealth
 }
 
 // View returns current RoutingView root (single atomic root; structurally shared StaticView+DecisionView).
@@ -138,6 +140,7 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logge
 		log:     log,
 		writeCh: make(chan statusWrite, 4096),
 		timeNow: time.Now,
+		latch:   newLatchStore(),
 	}
 	s.publisher = newRoutingPublisher(s)
 	ruleEngine.SetApply(s.apply)
@@ -285,8 +288,67 @@ func (s *Scheduler) reload(ctx context.Context) error {
 	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
 	sv := &StaticView{groups: groups, byID: byID}
 	s.publisher.storeLocked(sv, dec)
+	if s.latch != nil {
+		for id, as := range byID {
+			av := as.static.Load()
+			if av == nil {
+				continue
+			}
+			curRev := av.acc.LifecycleRevision
+			fp, err := candidateFingerprint(&av.acc)
+			if err != nil {
+				continue
+			}
+			s.latch.ClearIfRevisionGreater(id, curRev)
+			s.latch.ClearIfFingerprintChanged(id, fp)
+		}
+		if oldByID != nil {
+			for id := range oldByID {
+				if _, ok := byID[id]; !ok {
+					s.latch.Clear(id)
+				}
+			}
+		}
+	}
 	return nil
 }
+
+func accountFingerprint(a *domain.Account) string {
+	if a == nil {
+		return ""
+	}
+	base := ""
+	if a.BaseURL != nil {
+		base = *a.BaseURL
+	}
+	return a.UpstreamKey + "|" + base + "|" + string(a.Template.CredentialType)
+}
+
+func (s *Scheduler) SetRuntimeHealth(h *RuntimeHealth) { s.health = h }
+
+func (s *Scheduler) TryLatch(accountID int64, fingerprint string, revision int64) bool {
+	if s.latch == nil {
+		return false
+	}
+	return s.latch.TryAcquire(accountID, fingerprint, revision)
+}
+
+func (s *Scheduler) IsLatched(accountID int64) bool {
+	if s.latch == nil {
+		return false
+	}
+	snap, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
+	if !ok {
+		return s.latch.IsLatched(accountID, "")
+	}
+	if as, ok := snap[accountID]; ok {
+		fp := accountFingerprint(&as.static.Load().acc)
+		return s.latch.IsLatched(accountID, fp)
+	}
+	return s.latch.IsLatched(accountID, "")
+}
+
+func (s *Scheduler) LatchStore() *latchStore { return s.latch }
 
 // buildSnapshots 构建全量快照：**每账号一个共享实例**——多组账号在多个组
 // 快照中引用同一实例（O2 评审实证修复）。发布后 leaves never mutate；

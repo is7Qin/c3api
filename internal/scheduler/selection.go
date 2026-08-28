@@ -65,6 +65,15 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 		// 静态字段视图一次 Load（评审 Critical 修复）：重建/权重动作以原子指针
 		// 整体替换视图，本热路径读与低频写零锁并发安全，同量级开销。
 		av := a.static.Load()
+		if s.latch != nil && s.latch.IsLatched(av.acc.ID, accountFingerprint(&av.acc)) {
+			continue
+		}
+		if s.health != nil {
+			rev := av.acc.LifecycleRevision
+			if s.health.EffectiveState(av.acc.ID, "*", rev) != StateReady {
+				continue
+			}
+		}
 		st := a.statePtr()
 		if st.status == domain.StatusDisabled {
 			continue
