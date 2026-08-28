@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,7 +35,6 @@ const (
 	pgMaxDuration = 2 * time.Second
 )
 
-// PGQualityWriter is a thin exact adapter over repository.PartitionRepo.
 type PGQualityWriter interface {
 	UpsertQualityAndMarkDirty(ctx context.Context, row repository.RoutingQualityRow) error
 	UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []repository.RoutingFlowRow) error
@@ -46,18 +46,21 @@ type SyncConfig struct {
 }
 
 type SyncStats struct {
-	PendingQuality int   `json:"pending_quality"`
-	PendingFlow    int   `json:"pending_flow"`
-	PendingBytes   int64 `json:"pending_bytes"`
-	LagMs          int64 `json:"lag_ms"`
-	DroppedQuality int64 `json:"dropped_quality"`
-	DroppedFlow    int64 `json:"dropped_flow"`
-	PoisonDropped  int64 `json:"poison_dropped"`
-	BatchQuality   int64 `json:"batch_quality"`
-	BatchFlow      int64 `json:"batch_flow"`
-	FreshnessMs    int64 `json:"freshness_ms"`
-	LastRedisMs    int64 `json:"last_redis_ms"`
-	LastPGMs       int64 `json:"last_pg_ms"`
+	PendingQuality int    `json:"pending_quality"`
+	PendingFlow    int    `json:"pending_flow"`
+	PendingBytes   int64  `json:"pending_bytes"`
+	LagMs          int64  `json:"lag_ms"`
+	DroppedQuality int64  `json:"dropped_quality"`
+	DroppedFlow    int64  `json:"dropped_flow"`
+	PoisonDropped  int64  `json:"poison_dropped"`
+	BatchQuality   int64  `json:"batch_quality"`
+	BatchFlow      int64  `json:"batch_flow"`
+	FreshnessMs    int64  `json:"freshness_ms"`
+	LastRedisMs    int64  `json:"last_redis_ms"`
+	LastPGMs       int64  `json:"last_pg_ms"`
+	LastRedisAttemptMs int64  `json:"last_redis_attempt_ms"`
+	LastRedisError string `json:"last_redis_error"`
+	RedisErrors    int64  `json:"redis_errors"`
 }
 
 type qRow struct {
@@ -104,16 +107,22 @@ type SyncWorker struct {
 	mu        sync.Mutex
 	flushMu   sync.Mutex
 	seq       map[int64]int64
+	redisSeq  map[int64]int64
+	pgSeq     map[int64]int64
 	stats     SyncStats
 	lastRedis time.Time
+	lastRedisAttempt time.Time
+	lastRedisError string
 	lastPG    time.Time
 	poison    atomic.Int64
 	batchQ    atomic.Int64
 	batchF    atomic.Int64
 
-	lastCell   map[Key]cellSnap
-	minuteAbs  map[int64]map[Key]*QualityMinute
-	committed  map[int64]map[Key]*QualityMinute
+	lastCell       map[Key]cellSnap
+	pgLastCell     map[Key]cellSnap
+	minuteAbs      map[int64]map[Key]*QualityMinute
+	pgMinuteAbs    map[int64]map[Key]*QualityMinute
+	committed      map[int64]map[Key]*QualityMinute
 
 	started  atomic.Bool
 	closeOnce sync.Once
@@ -145,7 +154,6 @@ func NewSyncWorker(rec *Recorder, rdb *redis.Client, pg PGQualityWriter, cfg Syn
 	}
 	cfg.BatchSize = bs
 	cfg.InstanceSrc = src
-	baseCtx, cancel := context.WithCancel(context.Background())
 	w := &SyncWorker{
 		rec:         rec,
 		rdb:         rdb,
@@ -155,14 +163,17 @@ func NewSyncWorker(rec *Recorder, rdb *redis.Client, pg PGQualityWriter, cfg Syn
 		log:         log,
 		cfg:         cfg,
 		seq:         make(map[int64]int64),
+		redisSeq:    make(map[int64]int64),
+		pgSeq:       make(map[int64]int64),
 		lastCell:    make(map[Key]cellSnap),
+		pgLastCell:  make(map[Key]cellSnap),
 		minuteAbs:   make(map[int64]map[Key]*QualityMinute),
+		pgMinuteAbs: make(map[int64]map[Key]*QualityMinute),
 		committed:   make(map[int64]map[Key]*QualityMinute),
-		baseCtx:     baseCtx,
-		cancel:      cancel,
 		loopDoneCh:  make(chan struct{}),
 		inflightAbandonGrace: 500 * time.Millisecond,
 	}
+	close(w.loopDoneCh)
 	w.loopDone = w.loopDoneCh
 	return w
 }
@@ -179,12 +190,16 @@ func (w *SyncWorker) Start(ctx context.Context) error {
 	if !w.started.CompareAndSwap(false, true) {
 		return fmt.Errorf("quality-sync: already started")
 	}
-	// single supervised serial loop
-	w.loopDone = worker.GoLoop(ctx, "quality-sync", w.log, w.loop)
-	// also close internal channel when loop exits to satisfy Close wait on unstarted
+	derived, cancel := context.WithCancel(ctx)
+	w.baseCtx = derived
+	w.cancel = cancel
+	// reset done channel for real run
+	ch := make(chan struct{})
+	w.loopDoneCh = ch
+	w.loopDone = worker.GoLoop(derived, "quality-sync", w.log, w.loop)
 	go func() {
 		<-w.loopDone
-		close(w.loopDoneCh)
+		close(ch)
 	}()
 	return nil
 }
@@ -206,13 +221,21 @@ func (w *SyncWorker) loop(ctx context.Context) {
 	}
 }
 
-func (w *SyncWorker) collectActiveDeltaLocked(minuteUnix int64) map[Key]*QualityMinute {
+func (w *SyncWorker) collectRedisDeltaLocked(curMinuteUnix int64) map[int64]map[Key]*QualityMinute {
 	if w.rec == nil {
 		return nil
 	}
 	w.rec.mu.Lock()
-	defer w.rec.mu.Unlock()
+	cells := make([]*Cell, 0, len(w.rec.active))
 	for _, c := range w.rec.active {
+		cells = append(cells, c)
+	}
+	w.rec.mu.Unlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	now := w.clock().UTC().Truncate(time.Minute).Unix()
+	// collect delta for all active cells, assign to minute bucket based on curMinuteUnix? Use current minute for new delta
+	for _, c := range cells {
 		cur := cellSnap{
 			attempts: c.attempts.Load(), successes: c.successes.Load(),
 			err429: c.errClasses[ErrClass429].Load(), err4xx: c.errClasses[ErrClass4xx].Load(),
@@ -248,17 +271,15 @@ func (w *SyncWorker) collectActiveDeltaLocked(minuteUnix int64) map[Key]*Quality
 		} else {
 			delta = cur
 		}
-		// if delta is zero skip
 		if delta.attempts == 0 && delta.successes == 0 && delta.ttftCount == 0 && delta.input == 0 && delta.output == 0 && delta.calls == 0 && delta.images == 0 && delta.err429 == 0 && delta.err4xx == 0 && delta.err5xx == 0 && delta.errNetwork == 0 {
 			w.lastCell[c.key] = cur
 			continue
 		}
 		w.lastCell[c.key] = cur
-		// accumulate into minuteAbs
-		if _, ok := w.minuteAbs[minuteUnix]; !ok {
-			w.minuteAbs[minuteUnix] = make(map[Key]*QualityMinute)
+		if _, ok := w.minuteAbs[curMinuteUnix]; !ok {
+			w.minuteAbs[curMinuteUnix] = make(map[Key]*QualityMinute)
 		}
-		m := w.minuteAbs[minuteUnix]
+		m := w.minuteAbs[curMinuteUnix]
 		if existing, ok := m[c.key]; ok {
 			existing.attempts += delta.attempts
 			existing.successes += delta.successes
@@ -279,7 +300,121 @@ func (w *SyncWorker) collectActiveDeltaLocked(minuteUnix int64) map[Key]*Quality
 			existing.calls += delta.calls
 			existing.images += delta.images
 		} else {
-			qm := NewQualityMinute(minuteUnix, c.key)
+			qm := NewQualityMinute(curMinuteUnix, c.key)
+			qm.attempts = delta.attempts
+			qm.successes = delta.successes
+			qm.err429 = delta.err429
+			qm.err4xx = delta.err4xx
+			qm.err5xx = delta.err5xx
+			qm.errNetwork = delta.errNetwork
+			qm.ttftCount = delta.ttftCount
+			qm.sumQ32 = delta.sumQ32
+			qm.sumSqQ32 = delta.sumSqQ32
+			qm.hist = delta.hist
+			qm.inputTokens = delta.input
+			qm.outputTokens = delta.output
+			qm.cacheRead = delta.cacheRead
+			qm.cacheCreate = delta.cacheCreate
+			qm.calls = delta.calls
+			qm.images = delta.images
+			m[c.key] = qm
+		}
+		_ = now
+	}
+	// return copy of all due minutes up to curMinuteUnix
+	out := make(map[int64]map[Key]*QualityMinute)
+	for minute, rows := range w.minuteAbs {
+		if minute > curMinuteUnix {
+			continue
+		}
+		cp := make(map[Key]*QualityMinute, len(rows))
+		for k, v := range rows {
+			cp[k] = v.Clone()
+		}
+		out[minute] = cp
+	}
+	return out
+}
+
+func (w *SyncWorker) collectPGDeltaLocked() map[int64]map[Key]*QualityMinute {
+	if w.rec == nil {
+		return nil
+	}
+	w.rec.mu.Lock()
+	cells := make([]*Cell, 0, len(w.rec.active))
+	for _, c := range w.rec.active {
+		cells = append(cells, c)
+	}
+	w.rec.mu.Unlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, c := range cells {
+		cur := cellSnap{
+			attempts: c.attempts.Load(), successes: c.successes.Load(),
+			err429: c.errClasses[ErrClass429].Load(), err4xx: c.errClasses[ErrClass4xx].Load(),
+			err5xx: c.errClasses[ErrClass5xx].Load(), errNetwork: c.errClasses[ErrClassNetwork].Load(),
+			ttftCount: c.ttftCount.Load(), sumQ32: c.sumQ32.Load(), sumSqQ32: c.sumSq.Load(),
+			input: c.inputTokens.Load(), output: c.outputTokens.Load(), cacheRead: c.cacheRead.Load(), cacheCreate: c.cacheCreate.Load(),
+			calls: c.calls.Load(), images: c.images.Load(),
+		}
+		for i := range cur.hist {
+			cur.hist[i] = c.hist[i].Load()
+		}
+		prev, ok := w.pgLastCell[c.key]
+		var delta cellSnap
+		if ok {
+			delta.attempts = cur.attempts - prev.attempts
+			delta.successes = cur.successes - prev.successes
+			delta.err429 = cur.err429 - prev.err429
+			delta.err4xx = cur.err4xx - prev.err4xx
+			delta.err5xx = cur.err5xx - prev.err5xx
+			delta.errNetwork = cur.errNetwork - prev.errNetwork
+			delta.ttftCount = cur.ttftCount - prev.ttftCount
+			delta.sumQ32 = cur.sumQ32 - prev.sumQ32
+			delta.sumSqQ32 = cur.sumSqQ32 - prev.sumSqQ32
+			for i := range delta.hist {
+				delta.hist[i] = cur.hist[i] - prev.hist[i]
+			}
+			delta.input = cur.input - prev.input
+			delta.output = cur.output - prev.output
+			delta.cacheRead = cur.cacheRead - prev.cacheRead
+			delta.cacheCreate = cur.cacheCreate - prev.cacheCreate
+			delta.calls = cur.calls - prev.calls
+			delta.images = cur.images - prev.images
+		} else {
+			delta = cur
+		}
+		if delta.attempts == 0 && delta.successes == 0 && delta.ttftCount == 0 && delta.input == 0 && delta.output == 0 && delta.calls == 0 && delta.images == 0 && delta.err429 == 0 && delta.err4xx == 0 && delta.err5xx == 0 && delta.errNetwork == 0 {
+			w.pgLastCell[c.key] = cur
+			continue
+		}
+		w.pgLastCell[c.key] = cur
+		minute := w.clock().UTC().Truncate(time.Minute).Unix()
+		if _, ok := w.pgMinuteAbs[minute]; !ok {
+			w.pgMinuteAbs[minute] = make(map[Key]*QualityMinute)
+		}
+		m := w.pgMinuteAbs[minute]
+		if existing, ok := m[c.key]; ok {
+			existing.attempts += delta.attempts
+			existing.successes += delta.successes
+			existing.err429 += delta.err429
+			existing.err4xx += delta.err4xx
+			existing.err5xx += delta.err5xx
+			existing.errNetwork += delta.errNetwork
+			existing.ttftCount += delta.ttftCount
+			existing.sumQ32 += delta.sumQ32
+			existing.sumSqQ32 += delta.sumSqQ32
+			for i := range existing.hist {
+				existing.hist[i] += delta.hist[i]
+			}
+			existing.inputTokens += delta.input
+			existing.outputTokens += delta.output
+			existing.cacheRead += delta.cacheRead
+			existing.cacheCreate += delta.cacheCreate
+			existing.calls += delta.calls
+			existing.images += delta.images
+		} else {
+			qm := NewQualityMinute(minute, c.key)
 			qm.attempts = delta.attempts
 			qm.successes = delta.successes
 			qm.err429 = delta.err429
@@ -299,99 +434,171 @@ func (w *SyncWorker) collectActiveDeltaLocked(minuteUnix int64) map[Key]*Quality
 			m[c.key] = qm
 		}
 	}
-	// return copy of minuteAbs for this minute
-	if m, ok := w.minuteAbs[minuteUnix]; ok {
-		cp := make(map[Key]*QualityMinute, len(m))
-		for k, v := range m {
+	out := make(map[int64]map[Key]*QualityMinute)
+	for minute, rows := range w.pgMinuteAbs {
+		cp := make(map[Key]*QualityMinute, len(rows))
+		for k, v := range rows {
 			cp[k] = v.Clone()
 		}
-		return cp
+		out[minute] = cp
 	}
-	return nil
+	return out
+}
+
+func (w *SyncWorker) ackRedisSuccess(minutes []int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, m := range minutes {
+		delete(w.minuteAbs, m)
+	}
+}
+
+func (w *SyncWorker) ackPGSuccess(minutes []int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, m := range minutes {
+		delete(w.pgMinuteAbs, m)
+	}
 }
 
 func (w *SyncWorker) doRedis(ctx context.Context) {
 	if !w.flushMu.TryLock() {
-		return
+			return
 	}
 	defer w.flushMu.Unlock()
 	start := w.clock()
-	minute := start.UTC().Truncate(time.Minute)
-	unix := minute.Unix()
 	w.mu.Lock()
-	seq := w.seq[unix] + 1
-	w.seq[unix] = seq
+	w.lastRedisAttempt = start
+	w.stats.LastRedisAttemptMs = start.UnixMilli()
 	w.mu.Unlock()
 
-	// collect active delta and merge with pendingQuality snapshot for this minute
-	activeMap := w.collectActiveDeltaLocked(unix)
-
-	w.rec.mu.Lock()
-	pendingForMinute := make(map[Key]*QualityMinute)
-	if rows, ok := w.rec.pendingQuality[unix]; ok {
-		for k, v := range rows {
-			pendingForMinute[k] = v.Clone()
-		}
+	if w.rec == nil {
+		return
 	}
-	pendingFlowForMinute, hasFlow := w.rec.pendingFlow[unix]
-	if hasFlow {
-		pendingFlowForMinute = pendingFlowForMinute.Clone()
+	// collect redis delta (non-destructive ack after success)
+	curMinute := start.UTC().Truncate(time.Minute).Unix()
+	// We need to collect delta without yet acking; our collect methods already updated minuteAbs/lastCell.
+	// To make it per-sink ack, we should not have updated lastCell before success. So we need to snapshot first, then ack after success.
+	// For backward compat, our collect already mutated. To fix per-sink, we keep copies of lastCell before mutation and revert on failure.
+	// Simplify: do snapshot collection into temp, then on success commit.
+	// For now we implement by saving copies
+	w.mu.Lock()
+	savedLastCell := make(map[Key]cellSnap, len(w.lastCell))
+	for k, v := range w.lastCell {
+		savedLastCell[k] = v
+	}
+	savedMinuteAbs := make(map[int64]map[Key]*QualityMinute)
+	for minute, rows := range w.minuteAbs {
+		cp := make(map[Key]*QualityMinute, len(rows))
+		for k, v := range rows {
+			cp[k] = v.Clone()
+		}
+		savedMinuteAbs[minute] = cp
+	}
+	w.mu.Unlock()
+
+	activeAll := w.collectRedisDeltaLocked(curMinute)
+	// also include pendingQuality for all due minutes
+	w.rec.mu.Lock()
+	pendingByMinute := make(map[int64]map[Key]*QualityMinute)
+	for minute, rows := range w.rec.pendingQuality {
+		if minute > curMinute {
+			continue
+		}
+		cp := make(map[Key]*QualityMinute, len(rows))
+		for k, v := range rows {
+			cp[k] = v.Clone()
+		}
+		pendingByMinute[minute] = cp
+	}
+	flowByMinute := make(map[int64]*FlowMinute)
+	for minute, fm := range w.rec.pendingFlow {
+		if minute > curMinute {
+			continue
+		}
+		flowByMinute[minute] = fm.Clone()
 	}
 	w.rec.mu.Unlock()
 
-	// merge pending + active delta into cells to publish
-	merged := make(map[Key]*QualityMinute)
-	for k, v := range pendingForMinute {
-		merged[k] = v.Clone()
+	// merge activeAll + pending for each minute
+	mergedByMinute := make(map[int64]map[Key]*QualityMinute)
+	for minute, rows := range pendingByMinute {
+		mergedByMinute[minute] = rows
 	}
-	for k, v := range activeMap {
-		if existing, ok := merged[k]; ok {
-			existing.merge(v)
-		} else {
-			merged[k] = v.Clone()
+	for minute, rows := range activeAll {
+		if _, ok := mergedByMinute[minute]; !ok {
+			mergedByMinute[minute] = make(map[Key]*QualityMinute)
+		}
+		for k, v := range rows {
+			if existing, ok := mergedByMinute[minute][k]; ok {
+				existing.merge(v)
+			} else {
+				mergedByMinute[minute][k] = v.Clone()
+			}
 		}
 	}
-	if len(merged) == 0 && pendingFlowForMinute == nil {
+	if len(mergedByMinute) == 0 && len(flowByMinute) == 0 {
+		// empty pass must not refresh freshness
 		w.mu.Lock()
-		w.lastRedis = start
+		// revert to saved on empty? No need, but keep saved for next attempt
+		// do not update lastRedis
 		w.mu.Unlock()
 		return
 	}
-	type redisCell struct {
-		key Key
-		qm  *QualityMinute
-	}
-	var cells []redisCell
-	for k, qm := range merged {
-		cells = append(cells, redisCell{key: k, qm: qm})
-	}
-	// budget enforcement for redis (truncate without loss, since pending remains)
-	if len(cells) > redisMaxCells {
-		cells = cells[:redisMaxCells]
-	}
-	bytesEst := 0
-	for i, c := range cells {
-		bytesEst += EstimatedQualityRowBytes
-		_ = c
-		if bytesEst > redisMaxBytes {
-			cells = cells[:i]
-			break
-		}
-		if w.clock().Sub(start) > redisMaxDuration {
-			cells = cells[:i]
-			break
-		}
-	}
 	if w.rdb == nil {
 		w.mu.Lock()
-		w.lastRedis = start
-		w.stats.LastRedisMs = w.clock().Sub(start).Milliseconds()
+		// no client: do not refresh freshness, record error
+		w.lastRedisError = "no redis client"
+		w.stats.LastRedisError = w.lastRedisError
+		w.stats.RedisErrors++
+		// revert delta ack
+		w.lastCell = savedLastCell
+		w.minuteAbs = savedMinuteAbs
+		w.mu.Unlock()
+		return
+	}
+	// budget enforcement per minute? Apply global limits across all minutes
+	type cell struct {
+		minute int64
+		key    Key
+		qm     *QualityMinute
+	}
+	var cells []cell
+	for minute, rows := range mergedByMinute {
+		for k, qm := range rows {
+			cells = append(cells, cell{minute: minute, key: k, qm: qm})
+		}
+	}
+	if len(cells) > redisMaxCells {
+		cells = cells[:redisMaxCells]
+		// revert unsent deltas? Keep them for next tick: do not ack those minutes fully
+		// For simplicity, do not ack at all on budget truncation; keep all for next
+		w.mu.Lock()
+		w.lastCell = savedLastCell
+		w.minuteAbs = savedMinuteAbs
+		w.lastRedisError = "redis budget truncated"
+		w.stats.LastRedisError = w.lastRedisError
+		w.stats.RedisErrors++
+		w.mu.Unlock()
+		return
+	}
+	bytesEst := len(cells) * EstimatedQualityRowBytes
+	if bytesEst > redisMaxBytes || w.clock().Sub(start) > redisMaxDuration {
+		w.mu.Lock()
+		w.lastCell = savedLastCell
+		w.minuteAbs = savedMinuteAbs
+		w.lastRedisError = "redis budget exceeded"
+		w.stats.LastRedisError = w.lastRedisError
+		w.stats.RedisErrors++
 		w.mu.Unlock()
 		return
 	}
 	pipe := w.rdb.Pipeline()
-	qKey := fmt.Sprintf("%s%d:%s", redisQualityPrefix, unix, w.instanceSrc)
 	for _, c := range cells {
+		w.mu.Lock()
+		seq := w.redisSeq[c.minute] + 1
+		w.redisSeq[c.minute] = seq
+		w.mu.Unlock()
 		field := hex.EncodeToString(c.key.RouteClassID[:]) + ":" + hex.EncodeToString(c.key.QualityClassID[:]) + ":" + hex.EncodeToString(c.key.Fingerprint[:])
 		val, _ := json.Marshal(map[string]any{
 			"identity_version":  c.key.IdentityVersion,
@@ -399,7 +606,7 @@ func (w *SyncWorker) doRedis(ctx context.Context) {
 			"quality_class_id":  hex.EncodeToString(c.key.QualityClassID[:]),
 			"fingerprint":       hex.EncodeToString(c.key.Fingerprint[:]),
 			"instance_src":      w.instanceSrc,
-			"bucket_minute":     unix,
+			"bucket_minute":     c.minute,
 			"absolute_sequence": seq,
 			"attempts":          c.qm.attempts,
 			"successes":         c.qm.successes,
@@ -418,34 +625,65 @@ func (w *SyncWorker) doRedis(ctx context.Context) {
 			"calls":             c.qm.calls,
 			"images":            c.qm.images,
 		})
+		qKey := fmt.Sprintf("%s%d:%s", redisQualityPrefix, c.minute, w.instanceSrc)
 		pipe.HSet(ctx, qKey, field, string(val))
+		pipe.Expire(ctx, qKey, redisTTL)
 	}
-	pipe.Expire(ctx, qKey, redisTTL)
-	// flow namespace publish
-	if hasFlow && pendingFlowForMinute != nil {
-		fKey := fmt.Sprintf("%s%d:%s", redisFlowPrefix, unix, w.instanceSrc)
-		flowVal, _ := json.Marshal(map[string]any{
-			"instance_src":      w.instanceSrc,
-			"terminal_minute":   unix,
-			"absolute_sequence": seq,
-			"edges":             pendingFlowForMinute.Edges(),
-			"counts":            pendingFlowForMinute.Counts(),
-		})
+	for minute, fm := range flowByMinute {
+		w.mu.Lock()
+		seq := w.redisSeq[minute] + 1
+		w.redisSeq[minute] = seq
+		w.mu.Unlock()
+		fKey := fmt.Sprintf("%s%d:%s", redisFlowPrefix, minute, w.instanceSrc)
+		var flowVal []byte
+		if fm.IsEmptySnapshot() {
+			flowVal, _ = json.Marshal(map[string]any{
+				"instance_src":      w.instanceSrc,
+				"terminal_minute":   minute,
+				"absolute_sequence": seq,
+				"empty":             true,
+			})
+		} else if fm.HasFlowRows() {
+			flowVal, _ = json.Marshal(map[string]any{
+				"instance_src":      w.instanceSrc,
+				"terminal_minute":   minute,
+				"absolute_sequence": seq,
+				"rows":              fm.FlowRows(),
+			})
+		} else {
+			flowVal, _ = json.Marshal(map[string]any{
+				"instance_src":      w.instanceSrc,
+				"terminal_minute":   minute,
+				"absolute_sequence": seq,
+				"edges":             fm.Edges(),
+				"counts":            fm.Counts(),
+			})
+		}
 		pipe.Set(ctx, fKey, string(flowVal), redisTTL)
 	}
 	_, err := pipe.Exec(ctx)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err != nil {
-		// degrade freshness, do not update lastRedis
+		w.lastRedisError = err.Error()
+		w.stats.LastRedisError = w.lastRedisError
+		w.stats.RedisErrors++
+		// revert per-sink ack
+		w.lastCell = savedLastCell
+		w.minuteAbs = savedMinuteAbs
 		if w.log != nil {
 			w.log.Warn("quality redis publish failed", logx.Error(err))
 		}
 		return
 	}
+	// success: ack
 	w.lastRedis = w.clock()
 	w.stats.LastRedisMs = w.clock().Sub(start).Milliseconds()
 	w.stats.FreshnessMs = 0
+	w.stats.LastRedisError = ""
+	w.lastRedisError = ""
+	// sequences already incremented per cell; keep them
+	// minuteAbs retained as cumulative absolute for minute
 }
 
 func (w *SyncWorker) doPG(ctx context.Context) {
@@ -457,11 +695,18 @@ func (w *SyncWorker) doPG(ctx context.Context) {
 	if w.rec == nil || w.pg == nil {
 		return
 	}
+	// collect PG active delta first, even if pending empty (active-only workload)
+	pgActive := w.collectPGDeltaLocked()
+	hasPendingQ := false
+	hasPendingF := false
 	w.rec.mu.Lock()
-	if len(w.rec.pendingQuality) == 0 && len(w.rec.pendingFlow) == 0 {
-		w.rec.mu.Unlock()
+	hasPendingQ = len(w.rec.pendingQuality) > 0
+	hasPendingF = len(w.rec.pendingFlow) > 0
+	w.rec.mu.Unlock()
+	if !hasPendingQ && !hasPendingF && len(pgActive) == 0 {
 		return
 	}
+	w.rec.mu.Lock()
 	pendQ := w.rec.pendingQuality
 	pendF := w.rec.pendingFlow
 	w.rec.pendingQuality = make(map[int64]map[Key]*QualityMinute)
@@ -469,32 +714,33 @@ func (w *SyncWorker) doPG(ctx context.Context) {
 	w.rec.pendingBytes.Store(0)
 	w.rec.mu.Unlock()
 
-	// active delta for PG: also include active delta accumulation similar to redis but for each minute present in pending or current minute
-	currentMinuteUnix := start.UTC().Truncate(time.Minute).Unix()
-	activeForCurrent := w.collectActiveDeltaLocked(currentMinuteUnix)
-	// merge activeForCurrent into pendQ for current minute
-	if len(activeForCurrent) > 0 {
-		if _, ok := pendQ[currentMinuteUnix]; !ok {
-			pendQ[currentMinuteUnix] = make(map[Key]*QualityMinute)
+	// merge pgActive into pendQ
+	for minute, rows := range pgActive {
+		if _, ok := pendQ[minute]; !ok {
+			pendQ[minute] = make(map[Key]*QualityMinute)
 		}
-		for k, v := range activeForCurrent {
-			if existing, ok := pendQ[currentMinuteUnix][k]; ok {
+		for k, v := range rows {
+			if existing, ok := pendQ[minute][k]; ok {
 				existing.merge(v)
 			} else {
-				pendQ[currentMinuteUnix][k] = v.Clone()
+				pendQ[minute][k] = v.Clone()
 			}
 		}
 	}
+	// pgActive already contains all due pgMinuteAbs, clear after draining into pendQ
+	w.mu.Lock()
+	w.pgMinuteAbs = make(map[int64]map[Key]*QualityMinute)
+	w.mu.Unlock()
 
-	// build qRows with budget handling
 	var allRows []qRow
 	for minute, rows := range pendQ {
 		w.mu.Lock()
-		seq := w.seq[minute] + 1
+		seq := w.pgSeq[minute] + 1
+		w.pgSeq[minute] = seq
+		// also sync global seq for backward compat
 		w.seq[minute] = seq
 		w.mu.Unlock()
 		for k, qm := range rows {
-			// merge with committed to avoid losing prior PG data
 			w.mu.Lock()
 			committedForMinute := w.committed[minute]
 			w.mu.Unlock()
@@ -509,7 +755,6 @@ func (w *SyncWorker) doPG(ctx context.Context) {
 			allRows = append(allRows, qRow{minute: minute, key: k, qm: merged, seq: seq})
 		}
 	}
-	// sort not needed, but budget enforcement must retain excess
 	var toFlush []qRow
 	var deferred []qRow
 	bytes := 0
@@ -521,31 +766,23 @@ func (w *SyncWorker) doPG(ctx context.Context) {
 		toFlush = append(toFlush, r)
 		bytes += EstimatedQualityRowBytes
 	}
-	// if allRows within budget, toFlush = allRows
-	if len(deferred) == 0 && len(toFlush) != len(allRows) {
-		// already handled
-	}
 	remainingQ := w.flushQualityBatch(ctx, toFlush, start)
-	// refill deferred (budget excess) and remaining (failed)
 	if len(deferred) > 0 {
-		// need to refill original delta, not merged, so we need to keep original rows for deferred
-		// deferred currently holds merged rows, but we should refill the original delta rows to avoid double merging next time
-		// For budget deferred, we haven't yet merged committed, so we should refill original pending rows.
-		// Simpler: collect deferred original from pendQ not merged. But we merged already, so to avoid double, refill the delta part.
 		w.refillQualityDelta(deferred, pendQ)
 	}
 	if len(remainingQ) > 0 {
 		w.refillQualityDelta(remainingQ, pendQ)
 	}
-	// flow handling
 	var flowMinutes []flowEntry
 	for minute, fm := range pendF {
 		w.mu.Lock()
-		seq := w.seq[minute] + 1
+		seq := w.pgSeq[minute] + 1
+		w.pgSeq[minute] = seq
 		w.seq[minute] = seq
 		w.mu.Unlock()
 		flowMinutes = append(flowMinutes, flowEntry{minute: minute, fm: fm, seq: seq})
 	}
+	// also include any flow that was in pgMinuteAbs? No, flow handled via pendingFlow only
 	var flowToFlush []flowEntry
 	var flowDeferred []flowEntry
 	flowBytes := 0
@@ -564,6 +801,9 @@ func (w *SyncWorker) doPG(ctx context.Context) {
 	if len(remainingF) > 0 {
 		w.refillFlow(remainingF)
 	}
+	// on failure, pg delta should be retained for next attempt; we cleared pgMinuteAbs earlier, so need to restore unflushed?
+	// Our pgActive deltas that were merged into pendQ and then deferred/failed are now in pendingQuality via refill, so they will be retried.
+	// For successful minutes, committed already updated.
 	w.mu.Lock()
 	w.lastPG = w.clock()
 	w.stats.LastPGMs = w.clock().Sub(start).Milliseconds()
@@ -579,24 +819,21 @@ func (w *SyncWorker) doPG(ctx context.Context) {
 	w.stats.PendingQuality = w.rec.MinuteBucketCount()
 	w.stats.PendingBytes = w.rec.PendingBytes()
 	w.mu.Unlock()
+	// ack PG minuteAbs on success is already cleared; on failure refill will preserve
 }
 
 func (w *SyncWorker) refillQualityDelta(rows []qRow, originalPend map[int64]map[Key]*QualityMinute) {
-	// rows are merged absolutes, but we need to refill delta (original) to avoid double counting on next flush
-	// Map from minute+key to original delta
 	for _, r := range rows {
 		delta := r.qm
 		if origRows, ok := originalPend[r.minute]; ok {
 			if orig, ok2 := origRows[r.key]; ok2 {
 				delta = orig
 			} else {
-				// this row was merged from committed+delta, so delta is difference
 				w.mu.Lock()
 				committed := w.committed[r.minute]
 				w.mu.Unlock()
 				if committed != nil {
 					if prev, ok := committed[r.key]; ok {
-						// subtract committed to get delta
 						tmp := r.qm.Clone()
 						tmp.attempts -= prev.attempts
 						tmp.successes -= prev.successes
@@ -621,7 +858,15 @@ func (w *SyncWorker) refillQualityDelta(rows []qRow, originalPend map[int64]map[
 				}
 			}
 		}
-		_ = w.rec.EnqueueQualityMinute(delta)
+		if err := w.rec.EnqueueQualityMinute(delta); err != nil {
+			// capacity drop already accounted via overflow counters, record explicitly
+			w.mu.Lock()
+			w.stats.DroppedQuality++
+			w.mu.Unlock()
+			if w.log != nil {
+				w.log.Warn("quality refill dropped due to capacity", logx.Error(err))
+			}
+		}
 	}
 }
 
@@ -647,8 +892,8 @@ func (w *SyncWorker) flushQualityBatch(ctx context.Context, rows []qRow, start t
 			chunk := shard[i:end]
 			if err := w.insertQualityChunk(ctx, chunk); err != nil {
 				if len(chunk) == 1 {
-					// single poison detection
-					if err2 := w.insertQualityChunk(ctx, chunk); err2 != nil {
+					// singleton first failure must refill; only typed row error is immediate poison
+					if isRowDataError(err) {
 						w.poison.Add(1)
 						w.mu.Lock()
 						w.stats.PoisonDropped++
@@ -671,7 +916,6 @@ func (w *SyncWorker) flushQualityBatch(ctx context.Context, rows []qRow, start t
 				failed = append(failed, shard[end:]...)
 				break
 			} else {
-				// success: update committed
 				w.mu.Lock()
 				for _, r := range chunk {
 					if _, ok := w.committed[r.minute]; !ok {
@@ -684,6 +928,14 @@ func (w *SyncWorker) flushQualityBatch(ctx context.Context, rows []qRow, start t
 		}
 	}
 	return failed
+}
+
+func isRowDataError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "check constraint") || strings.Contains(msg, "violates") || strings.Contains(msg, "invalid input") || strings.Contains(msg, "bytea") || strings.Contains(msg, "octet_length")
 }
 
 func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) error {
@@ -723,6 +975,7 @@ func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) error
 func (w *SyncWorker) bisectQuality(ctx context.Context, chunk []qRow) (poison *qRow, refill []qRow) {
 	if len(chunk) == 1 {
 		if err := w.insertQualityChunk(ctx, chunk); err != nil {
+			// in bisect context sibling success proves poison, regardless of error type
 			return &chunk[0], nil
 		}
 		return nil, nil
@@ -730,8 +983,6 @@ func (w *SyncWorker) bisectQuality(ctx context.Context, chunk []qRow) (poison *q
 	mid := len(chunk) / 2
 	left, right := chunk[:mid], chunk[mid:]
 	if err := w.insertQualityChunk(ctx, left); err == nil {
-		// left succeeded, need to handle right
-		// update committed for left
 		w.mu.Lock()
 		for _, r := range left {
 			if _, ok := w.committed[r.minute]; !ok {
@@ -781,9 +1032,32 @@ func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []reposit
 	if fm == nil {
 		return nil
 	}
+	if fm.IsEmptySnapshot() {
+		return nil
+	}
+	if fm.HasFlowRows() {
+		rows := fm.FlowRows()
+		for i := range rows {
+			rows[i].InstanceSrc = instanceSrc
+			rows[i].AbsoluteSequence = seq
+			rows[i].TerminalMinute = time.Unix(fm.Minute(), 0).UTC()
+		}
+		return rows
+	}
+	// legacy edges fallback (should not happen for new code, but preserve)
 	var out []repository.RoutingFlowRow
 	edges := fm.Edges()
 	counts := fm.Counts()
+	hasData := false
+	for i := 0; i < 8; i++ {
+		if edges[i] != 0 || counts[i] != 0 {
+			hasData = true
+			break
+		}
+	}
+	if !hasData {
+		return nil
+	}
 	for i := 0; i < 8; i++ {
 		if edges[i] == 0 && counts[i] == 0 {
 			continue
@@ -803,16 +1077,19 @@ func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []reposit
 			ChainCount:      counts[i],
 		})
 	}
-	if len(out) == 0 {
-		// preserve empty snapshot semantics via empty rows but keep sequence
-		return nil
-	}
 	return out
 }
 
 func (w *SyncWorker) refillFlow(entries []flowEntry) {
 	for _, e := range entries {
-		_ = w.rec.EnqueueFlowMinute(e.fm)
+		if err := w.rec.EnqueueFlowMinute(e.fm); err != nil {
+			w.mu.Lock()
+			w.stats.DroppedFlow++
+			w.mu.Unlock()
+			if w.log != nil {
+				w.log.Warn("flow refill dropped due to capacity", logx.Error(err))
+			}
+		}
 	}
 }
 
@@ -856,34 +1133,30 @@ func (w *SyncWorker) Stats() SyncStats {
 	if !w.lastRedis.IsZero() {
 		s.FreshnessMs = w.clock().Sub(w.lastRedis).Milliseconds()
 	}
+	s.LastRedisAttemptMs = w.lastRedisAttempt.UnixMilli()
+	s.LastRedisError = w.lastRedisError
 	return s
 }
 
 func (w *SyncWorker) Close(ctx context.Context) error {
 	var err error
 	w.closeOnce.Do(func() {
-		w.cancel()
-		// wait for loop to exit with bounded context
+		if w.cancel != nil {
+			w.cancel()
+		}
 		if w.started.Load() {
 			select {
 			case <-w.loopDoneCh:
 			case <-w.loopDone:
 			case <-ctx.Done():
+				err = ctx.Err()
 			case <-time.After(2 * time.Second):
-			}
-		} else {
-			// unstarted: ensure loopDoneCh closed safely
-			select {
-			case <-w.loopDoneCh:
-			default:
-				close(w.loopDoneCh)
+				err = context.DeadlineExceeded
 			}
 		}
-		// bounded drain with non-canceled context
 		drainCtx := context.WithoutCancel(ctx)
 		drainCtx, cancel := context.WithTimeout(drainCtx, 5*time.Second)
 		defer cancel()
-		// wait for in-flight flush
 		acquired := make(chan struct{})
 		go func() {
 			w.flushMu.Lock()
@@ -893,7 +1166,9 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 		case <-acquired:
 			w.flushMu.Unlock()
 		case <-drainCtx.Done():
-			w.cancel()
+			if w.cancel != nil {
+				w.cancel()
+			}
 			select {
 			case <-acquired:
 				w.flushMu.Unlock()
@@ -901,11 +1176,18 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 				if w.log != nil {
 					w.log.Warn("quality sync close: in-flight flush not finished, abandoning")
 				}
+				err = drainCtx.Err()
+				if err == nil {
+					err = context.DeadlineExceeded
+				}
 				return
 			}
+			err = drainCtx.Err()
 		}
-		// final drain PG
 		w.doPG(drainCtx)
+		if drainCtx.Err() != nil && err == nil {
+			err = drainCtx.Err()
+		}
 	})
 	return err
 }

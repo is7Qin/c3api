@@ -354,6 +354,9 @@ func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row Routi
 	if err := drv.Exec(ctx, q, []any{row.IdentityVersion, row.RouteClassID[:], row.QualityClassID[:], row.CandidateFingerprint[:], row.InstanceSrc, bucket, row.AbsoluteSequence, row.Attempts, row.Successes, row.Count429, row.CountOrdinary4xx, row.Count5xx, row.CountNetwork, row.TTFTN, row.TTFTSumLogQ32, row.TTFTSumSqLogQ32, row.TTFTHist, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreateTokens, row.Calls, row.Images}, &res); err != nil {
 		return err
 	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return tx.Commit()
+	}
 	q2 := `INSERT INTO routing_dirty_minute (kind, identity_version, bucket_minute, dirty, updated_at) VALUES ('quality', $1, $2, true, now()) ON CONFLICT (kind, identity_version, bucket_minute) DO UPDATE SET dirty = true, updated_at = now()`
 	if err := drv.Exec(ctx, q2, []any{row.IdentityVersion, bucket}, &res); err != nil {
 		return err
@@ -610,13 +613,24 @@ func (r *PartitionRepo) RollupFlow(ctx context.Context, terminalMinute time.Time
 	}
 	hasFact := factRows.Next()
 	factRows.Close()
+	snapRows := &entsql.Rows{}
+	hasSnap := false
 	if !hasFact {
-		return fmt.Errorf("no facts for rollup")
+		if err := drv.Query(ctx, `SELECT 1 FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND identity_version=$2 LIMIT 1`, []any{terminalMinute, version}, snapRows); err != nil {
+			return err
+		}
+		hasSnap = snapRows.Next()
+		snapRows.Close()
+		if !hasSnap {
+			return fmt.Errorf("no facts for rollup")
+		}
 	}
-	if err := drv.Exec(ctx, `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, updated_at)
+	if hasFact {
+		if err := drv.Exec(ctx, `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, updated_at)
 	SELECT identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, now() FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2
 	ON CONFLICT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version) DO UPDATE SET previous_account_id=EXCLUDED.previous_account_id, previous_outcome=EXCLUDED.previous_outcome, transition_reason=EXCLUDED.transition_reason, outcome=EXCLUDED.outcome, is_terminal=EXCLUDED.is_terminal, generation=EXCLUDED.generation, absolute_sequence=EXCLUDED.absolute_sequence, chain_count=EXCLUDED.chain_count, updated_at=now()`, []any{terminalMinute, version}, &res); err != nil {
-		return err
+			return err
+		}
 	}
 	if err := r.advanceWatermarkTx(ctx, drv, "flow", version, terminalMinute); err != nil {
 		return err

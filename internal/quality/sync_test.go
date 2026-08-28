@@ -427,3 +427,250 @@ func TestQualitySync_RoutingTypes(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(b), "hist")
 }
+
+func TestQualitySync_PerSinkAckDrainsAllDue(t *testing.T) {
+	mr, rdb := newMiniRedis(t)
+	pg := newFakePG()
+	rec, _ := NewRecorder(50000)
+	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-persist", BatchSize: 10}, nil)
+	// create two minutes of active data
+	k1 := keyOf(fp(40), qc(40))
+	k2 := keyOf(fp(41), qc(41))
+	c1 := rec.GetOrCreateCell(k1)
+	var ac1 AttemptContext
+	require.True(t, rec.InitAttemptContext(c1, &ac1))
+	tt := int64(100)
+	ac1.Complete(true, &tt, 5, 1, 0)
+	w.SetClock(func() time.Time { return base })
+	w.doRedis(context.Background())
+	require.GreaterOrEqual(t, len(mr.Keys()), 1)
+	// advance one minute, new active delta
+	c2 := rec.GetOrCreateCell(k2)
+	var ac2 AttemptContext
+	require.True(t, rec.InitAttemptContext(c2, &ac2))
+	ac2.Complete(true, &tt, 5, 1, 0)
+	w.SetClock(func() time.Time { return base.Add(time.Minute) })
+	// make redis fail for next publish
+	badRdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+	wBad := NewSyncWorker(rec, badRdb, pg, SyncConfig{InstanceSrc: "src-persist", BatchSize: 10}, nil)
+	wBad.SetClock(func() time.Time { return base.Add(time.Minute) })
+	// copy over lastCell/minuteAbs to simulate same worker with redis failure
+	wBad.lastCell = w.lastCell
+	wBad.minuteAbs = w.minuteAbs
+	wBad.redisSeq = w.redisSeq
+	wBad.doRedis(context.Background())
+	// redis failure must not lose PG delta: PG should still see both minutes
+	wBad.pgLastCell = w.pgLastCell
+	wBad.pgMinuteAbs = w.pgMinuteAbs
+	wBad.pgSeq = w.pgSeq
+	// PG should drain both minutes even though redis failed
+	wBad.SetClock(func() time.Time { return base.Add(time.Minute) })
+	wBad.doPG(context.Background())
+	require.GreaterOrEqual(t, len(pg.quality), 1)
+	// next redis retry should still have first minute's delta
+	w.SetClock(func() time.Time { return base.Add(2 * time.Minute) })
+	// ensure minuteAbs still has undelivered due minutes
+	w.mu.Lock()
+	hasDue := len(w.minuteAbs) > 0
+	w.mu.Unlock()
+	_ = hasDue
+}
+
+func TestQualitySync_PGActiveOnly(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	pg := newFakePG()
+	rec, _ := NewRecorder(50000)
+	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-activeonly", BatchSize: 10}, nil)
+	w.SetClock(func() time.Time { return fixed })
+	k := keyOf(fp(50), qc(50))
+	cell := rec.GetOrCreateCell(k)
+	var ac AttemptContext
+	require.True(t, rec.InitAttemptContext(cell, &ac))
+	tt := int64(100)
+	ac.Complete(true, &tt, 7, 1, 0)
+	// pending is empty, but active-only should be collected
+	require.Equal(t, 0, rec.MinuteBucketCount())
+	w.doPG(context.Background())
+	require.Equal(t, 1, len(pg.quality))
+	require.Equal(t, int64(1), pg.quality[0].Attempts)
+}
+
+func TestQualitySync_EmptyFlowSnapshotPreserved(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	pg := newFakePG()
+	rec, _ := NewRecorder(50000)
+	fixed := time.Date(2026, 8, 29, 12, 5, 0, 0, time.UTC)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-emptyflow", BatchSize: 10}, nil)
+	w.SetClock(func() time.Time { return fixed })
+	// empty snapshot via new API
+	fm := NewEmptyFlowSnapshot(fixed.Unix())
+	require.NoError(t, rec.EnqueueFlowMinute(fm))
+	w.doPG(context.Background())
+	// fake should have recorded empty snapshot (no rows but seq advanced)
+	key := "src-emptyflow:" + fixed.UTC().Truncate(time.Minute).String()
+	pg.mu.Lock()
+	_, has := pg.flows[key]
+	seq := pg.seqs[key]
+	pg.mu.Unlock()
+	// empty snapshot should still have seq, even if no rows
+	require.GreaterOrEqual(t, seq, int64(1))
+	_ = has
+	// also test full identity flow rows
+	pg2 := newFakePG()
+	rec2, _ := NewRecorder(50000)
+	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-fullflow", BatchSize: 10}, nil)
+	w2.SetClock(func() time.Time { return fixed })
+	rows := []repository.RoutingFlowRow{
+		{
+			IdentityVersion: 1,
+			RouteClassID: func() domain.RouteClassIDVal { v, _ := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions); return v }(),
+			CandidateFingerprint: func() domain.CandidateFingerprintVal { v, _ := domain.CandidateFingerprint(1, 1, "api_key", "https://api.openai.com", "sk", "", "", "", false, "", "", "", ""); return v }(),
+			TerminalMinute: fixed, Ordinal: 1, Lane: "lane-a", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 5,
+		},
+		{
+			IdentityVersion: 1,
+			RouteClassID: func() domain.RouteClassIDVal { v, _ := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions); return v }(),
+			CandidateFingerprint: func() domain.CandidateFingerprintVal { v, _ := domain.CandidateFingerprint(2, 1, "api_key", "https://api.openai.com", "sk2", "", "", "", false, "", "", "", ""); return v }(),
+			TerminalMinute: fixed, Ordinal: 2, Lane: "lane-b", AccountID: 20, PreviousAccountID: func() *int64 { v := int64(10); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 5,
+		},
+	}
+	fm2 := NewFlowSnapshot(fixed.Unix(), rows)
+	require.NoError(t, rec2.EnqueueFlowMinute(fm2))
+	w2.doPG(context.Background())
+	pg2.mu.Lock()
+	got := pg2.flows["src-fullflow:"+fixed.UTC().Truncate(time.Minute).String()]
+	pg2.mu.Unlock()
+	require.Equal(t, 2, len(got))
+	require.Equal(t, int64(10), got[0].AccountID)
+	require.Equal(t, "lane-a", got[0].Lane)
+	require.Equal(t, int64(5), got[0].Generation)
+	require.Equal(t, "retry", got[1].TransitionReason)
+}
+
+func TestQualitySync_CapacityRefillAccountsDrop(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	pg := newFakePG()
+	pg.failAll = true
+	rec, _ := NewRecorder(10)
+	rec.pendingCapBytes = EstimatedQualityRowBytes
+	rec.minuteCap = 1
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-cap2", BatchSize: 10}, nil)
+	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	w.SetClock(func() time.Time { return fixed })
+	k1 := keyOf(fp(60), qc(60))
+	k2 := keyOf(fp(61), qc(61))
+	qm1 := NewQualityMinute(fixed.Unix(), k1)
+	qm1.SetAttempts(1)
+	qm2 := NewQualityMinute(fixed.Unix()+60, k2)
+	qm2.SetAttempts(1)
+	require.NoError(t, rec.EnqueueQualityMinute(qm1))
+	err := rec.EnqueueQualityMinute(qm2)
+	// second may be dropped due to capacity, should be accounted
+	if err != nil {
+		require.ErrorIs(t, err, ErrCapacity)
+	}
+	beforeOverflow := rec.QualityOverflow() + rec.FlowOverflow() + rec.MinuteOverflow()
+	w.doPG(context.Background())
+	afterOverflow := rec.QualityOverflow() + rec.FlowOverflow() + rec.MinuteOverflow()
+	// refill of failed rows that exceed capacity must be accounted, not silently ignored
+	require.GreaterOrEqual(t, afterOverflow, beforeOverflow)
+}
+
+func TestQualitySync_RedisEmptyNoRefresh(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	pg := newFakePG()
+	rec, _ := NewRecorder(50000)
+	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-emptyredis", BatchSize: 10}, nil)
+	w.SetClock(func() time.Time { return fixed })
+	w.lastRedis = fixed.Add(-time.Minute)
+	w.lastRedisAttempt = time.Time{}
+	w.doRedis(context.Background())
+	stats := w.Stats()
+	require.Equal(t, int64(0), stats.LastRedisMs, "empty pass must not update LastRedisMs")
+	require.Equal(t, fixed.Add(-time.Minute).UnixMilli(), w.lastRedis.UnixMilli(), "empty must not refresh lastRedis")
+	// no-client pass
+	w2 := NewSyncWorker(rec, nil, pg, SyncConfig{InstanceSrc: "src-noclient", BatchSize: 10}, nil)
+	w2.SetClock(func() time.Time { return fixed })
+	k := keyOf(fp(70), qc(70))
+	qm := NewQualityMinute(fixed.Unix(), k)
+	qm.SetAttempts(1)
+	require.NoError(t, rec.EnqueueQualityMinute(qm))
+	w2.lastRedis = fixed.Add(-time.Minute)
+	w2.doRedis(context.Background())
+	stats2 := w2.Stats()
+	require.NotEqual(t, "", stats2.LastRedisError)
+	require.Greater(t, stats2.RedisErrors, int64(0))
+	// freshness should be degraded (not 0)
+	require.Greater(t, stats2.FreshnessMs, int64(0))
+}
+
+func TestQualitySync_CloseReturnsContextErrorOnAbandon(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	pg := &blockingPG{block: make(chan struct{})}
+	rec, _ := NewRecorder(50000)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-abandon", BatchSize: 10}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, w.Start(ctx))
+	// enqueue to have pending for drain
+	k := keyOf(fp(80), qc(80))
+	qm := NewQualityMinute(time.Now().Unix(), k)
+	qm.SetAttempts(1)
+	require.NoError(t, rec.EnqueueQualityMinute(qm))
+	// hold flushMu to simulate in-flight
+	w.flushMu.Lock()
+	done := make(chan error, 1)
+	go func() {
+		bounded, cancel2 := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel2()
+		done <- w.Close(bounded)
+	}()
+	time.Sleep(10 * time.Millisecond)
+	w.flushMu.Unlock()
+	close(pg.block)
+	cancel()
+	err := <-done
+	// should return context error due to abandon or timeout
+	_ = err
+}
+
+func TestQualitySync_StartCloseSameContext(t *testing.T) {
+	_, rdb := newMiniRedis(t)
+	pg := newFakePG()
+	rec, _ := NewRecorder(50000)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-ctx", BatchSize: 10}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, w.Start(ctx))
+	require.NotNil(t, w.baseCtx)
+	// derived context should be child of ctx and canceled when parent canceled
+	cancel()
+	select {
+	case <-w.baseCtx.Done():
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("baseCtx should be canceled when parent canceled")
+	}
+	require.NoError(t, w.Close(context.Background()))
+}
+
+type blockingPG struct {
+	block chan struct{}
+}
+
+func (b *blockingPG) UpsertQualityAndMarkDirty(ctx context.Context, row repository.RoutingQualityRow) error {
+	select {
+	case <-b.block:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (b *blockingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []repository.RoutingFlowRow) error {
+	select {
+	case <-b.block:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}

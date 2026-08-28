@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 const (
@@ -245,14 +246,27 @@ func (q *QualityMinute) merge(o *QualityMinute) {
 }
 
 type FlowMinute struct {
-	minute int64
-	edges  [8]int64
-	counts [8]int64
+	minute        int64
+	edges         [8]int64
+	counts        [8]int64
+	flowRows      []repository.RoutingFlowRow
+	emptySnapshot bool
 }
 
 func NewFlowMinute(minute int64, edges [8]int64) *FlowMinute {
 	return &FlowMinute{minute: minute, edges: edges}
 }
+
+func NewFlowSnapshot(minute int64, rows []repository.RoutingFlowRow) *FlowMinute {
+	cp := make([]repository.RoutingFlowRow, len(rows))
+	copy(cp, rows)
+	return &FlowMinute{minute: minute, flowRows: cp}
+}
+
+func NewEmptyFlowSnapshot(minute int64) *FlowMinute {
+	return &FlowMinute{minute: minute, emptySnapshot: true}
+}
+
 func (f *FlowMinute) Minute() int64 { return f.minute }
 func (f *FlowMinute) Edge(i int) int64 {
 	if i < 0 || i >= 8 {
@@ -279,8 +293,31 @@ func (f *FlowMinute) SetCount(i int, v int64) {
 func (f *FlowMinute) Edges() [8]int64     { return f.edges }
 func (f *FlowMinute) SetEdges(e [8]int64) { f.edges = e }
 func (f *FlowMinute) Counts() [8]int64    { return f.counts }
+func (f *FlowMinute) FlowRows() []repository.RoutingFlowRow {
+	if f == nil {
+		return nil
+	}
+	cp := make([]repository.RoutingFlowRow, len(f.flowRows))
+	copy(cp, f.flowRows)
+	return cp
+}
+func (f *FlowMinute) SetFlowRows(rows []repository.RoutingFlowRow) {
+	if f == nil {
+		return
+	}
+	cp := make([]repository.RoutingFlowRow, len(rows))
+	copy(cp, rows)
+	f.flowRows = cp
+	f.emptySnapshot = false
+}
+func (f *FlowMinute) IsEmptySnapshot() bool { return f != nil && f.emptySnapshot }
+func (f *FlowMinute) HasFlowRows() bool { return f != nil && (len(f.flowRows) > 0 || f.emptySnapshot) }
 func (f *FlowMinute) Clone() *FlowMinute {
 	cp := *f
+	if f.flowRows != nil {
+		cp.flowRows = make([]repository.RoutingFlowRow, len(f.flowRows))
+		copy(cp.flowRows, f.flowRows)
+	}
 	return &cp
 }
 
