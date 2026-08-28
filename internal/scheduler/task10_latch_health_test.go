@@ -66,20 +66,22 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	ls := s.LatchStore()
 	require.NotNil(t, ls)
 	ctrl := NewHealthControllerWithScheduler(nil, s)
-	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
-	ctrl.FailAccount(ev)
-	require.True(t, ls.IsLatched(1, accountFingerprint(m.byGroup[10][0])))
-	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	fp, err := candidateFingerprint(m.byGroup[10][0])
+	require.NoError(t, err)
+	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
+	require.NoError(t, ctrl.FailAccount(ev))
+	require.True(t, ls.IsLatched(1, fp))
+	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrNoAvailable)
 	// same revision reload must not clear latch
 	require.NoError(t, s.reload(context.Background()))
-	require.True(t, ls.IsLatched(1, accountFingerprint(m.byGroup[10][0])))
+	require.True(t, ls.IsLatched(1, fp))
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrNoAvailable)
 	// new revision clears latch
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))
-	require.False(t, ls.IsLatched(1, accountFingerprint(m.byGroup[10][0])))
+	require.False(t, ls.IsLatched(1, fp))
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
@@ -94,22 +96,27 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	require.NoError(t, s.reload(context.Background()))
 	ls := s.LatchStore()
 	ctrl := NewHealthControllerWithScheduler(nil, s)
-	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, ErrorMessage: "boom"}
-	ctrl.FailAccount(ev)
-	fp1 := accountFingerprint(m.byGroup[10][0])
+	fp1, err := candidateFingerprint(m.byGroup[10][0])
+	require.NoError(t, err)
+	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp1, ErrorMessage: "boom"}
+	require.NoError(t, ctrl.FailAccount(ev))
 	require.True(t, ls.IsLatched(1, fp1))
 	// fingerprint change clears old latch
 	m.byGroup[10][0].UpstreamKey = "new-key"
 	require.NoError(t, s.reload(context.Background()))
 	require.False(t, ls.IsLatched(1, fp1))
-	require.False(t, ls.IsLatched(1, accountFingerprint(m.byGroup[10][0])))
+	fpNew, err := candidateFingerprint(m.byGroup[10][0])
+	require.NoError(t, err)
+	require.False(t, ls.IsLatched(1, fpNew))
 	// re-latch with new fingerprint
 	ev2 := rule.Event{AccountID: 1, ExpectedRevision: 2, ErrorMessage: "boom2"}
 	// update revision to 2 to match new account revision? need set revision
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))
-	ctrl.FailAccount(ev2)
-	fp2 := accountFingerprint(m.byGroup[10][0])
+	fp2, err := candidateFingerprint(m.byGroup[10][0])
+	require.NoError(t, err)
+	ev2.CandidateFingerprint = fp2
+	require.NoError(t, ctrl.FailAccount(ev2))
 	require.True(t, ls.IsLatched(1, fp2))
 	// remove account clears latch
 	delete(m.byGroup, 10)
@@ -119,7 +126,9 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	m.byGroup[10] = []*domain.Account{acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}
 	m.byGroup[10][0].LifecycleRevision = 5
 	require.NoError(t, s.reload(context.Background()))
-	require.False(t, ls.IsLatched(1, accountFingerprint(m.byGroup[10][0])))
+	fpReadd, err := candidateFingerprint(m.byGroup[10][0])
+	require.NoError(t, err)
+	require.False(t, ls.IsLatched(1, fpReadd))
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	s.Release(sel.AccountID)

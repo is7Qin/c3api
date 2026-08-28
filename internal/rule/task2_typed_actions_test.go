@@ -44,7 +44,7 @@ func (f *fakeHealthSink) Throttle(ev Event, th domain.ThrottleAction) {
 	}
 }
 
-func (f *fakeHealthSink) FailAccount(ev Event) {
+func (f *fakeHealthSink) FailAccount(ev Event) error {
 	f.mu.Lock()
 	f.fails = append(f.fails, domainThrottle{Event: ev})
 	f.mu.Unlock()
@@ -52,6 +52,7 @@ func (f *fakeHealthSink) FailAccount(ev Event) {
 	case f.ch <- struct{}{}:
 	default:
 	}
+	return nil
 }
 
 func (f *fakeHealthSink) countThrottle() int {
