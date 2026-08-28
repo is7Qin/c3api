@@ -67,12 +67,8 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 	// 凭据线：快照派生直供适配层（与 WS/images 路径同款——codex 凭据为复合
 	// 结构 oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表
 	// 达不了；注册表未注册 codex 类型，见 codex_responses_ws.go 注释）。
+	// Codex 端点归 SDK 官方默认，网关不再派生 BaseURL。
 	cred := domain.CredentialFromExt(sel.Ext)
-	full, err := p.clients.ResponsesWSURL(sel.TemplateID, sel.BaseURL)
-	if err != nil {
-		return 0, nil, false, err
-	}
-	cred.BaseURL = full
 	if stream {
 		return p.streamCodexResponses(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body)
 	}
