@@ -86,9 +86,10 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	// 上游契约必填 id/model，缺失由上游 4xx 兜底，网关零新增校验）。
 	reqModel := gjson.GetBytes(body, "model").String()
 
-	// 选号：复用主流 resp 路由面（openai-responses 格式——四类型全可达；
-	// search 无独立路由，独立选号无会话绑定）。
-	sel, err := p.sched.Select(groupID, domain.FormatOpenAIResponses, reqModel)
+	// 选号：独立 search 路由（FormatOpenAISearch 透明——不应用 ModelMapping，
+	// 调度器内 search format 跳过映射；未显式声明 search 的模板经 responses 回退，
+	// 四类型全可达；独立选号无会话绑定）。
+	sel, err := p.sched.Select(groupID, domain.FormatOpenAISearch, reqModel)
 	if err != nil {
 		p.handleSelectError(w, err)
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAISearch, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
@@ -96,9 +97,10 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=false（search 无缺价
-	// 预检——现状语义显式关，不给 search 新增 402）；尾部 Select 走主流 resp
-	// 路由面（openai-responses）；耗尽 Retry-After 分支由 httpSink 判 lastCode。
-	p.failoverLoop(w, r, domain.FormatOpenAISearch, domain.FormatOpenAIResponses, reqID, groupID, start, reqModel, body, sel,
+	// 预检——现状语义显式关，不给 search 新增 402）；尾部 Select 走独立 search
+	// 路由（FormatOpenAISearch 透明——不应用映射；未显式声明经 responses 回退）；
+	// 耗尽 Retry-After 分支由 httpSink 判 lastCode。
+	p.failoverLoop(w, r, domain.FormatOpenAISearch, domain.FormatOpenAISearch, reqID, groupID, start, reqModel, body, sel,
 		attemptState{}, p.searchAttempt, p.httpSink, false)
 }
 

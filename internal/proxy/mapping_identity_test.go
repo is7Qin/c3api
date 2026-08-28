@@ -423,13 +423,15 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 	})
 }
 
-// TestSearchMappedModelPreserved Search 身份不变量（规格 §3/§5）：Search 终态
-// 日志保持既有 mappedFor(reqModel, sel.Model) 语义与固定按次计费——implicit
-// 行仍记映射目标（非客户端模型）、identity 行仍空，4xx/耗尽同理；不触达
-// Selection 身份方法。
+// TestSearchMappedModelPreserved Search 身份不变量（规格 §3/§5 透明修订）：
+// Search 终态日志保持既有 mappedFor(reqModel, sel.Model) 语义 + 固定按次计费；
+// 但调度器对 FormatOpenAISearch 透明（不应用 ModelMapping），故 sel.Model ==
+ // reqModel → mappedFor 为空（含 implicit 非 identity），identity 行同样空；
+// 不触达 Selection.LogMappedModel/ClientResponseModel。
 func TestSearchMappedModelPreserved(t *testing.T) {
-	t.Run("implicit 成功仍记映射目标", func(t *testing.T) {
-		up, _ := newCodexSearchUpstream(t, codexSearchStep{status: 200, body: searchRespRaw})
+	t.Run("implicit 成功 MappedModel 空（透明）", func(t *testing.T) {
+		up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 200, body: searchRespRaw})
+		defer up.Close()
 		store := &captureLogStore{}
 		p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream",
 			mapping: map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}}}},
@@ -442,6 +444,9 @@ func TestSearchMappedModelPreserved(t *testing.T) {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
 		require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(b))
+		// 透明：上游收客户端模型原样（不被映射改写），响应原样
+		require.Equal(t, searchReqBody, string(upc.body(0)), "search 请求体原样透传（透明，不改写 model）")
+		require.Equal(t, searchRespRaw, string(b), "search 响应原样透传")
 		require.NoError(t, p.rec.Close(context.Background()))
 		store.mu.Lock()
 		defer store.mu.Unlock()
@@ -449,7 +454,7 @@ func TestSearchMappedModelPreserved(t *testing.T) {
 		lg := store.logs[0]
 		require.Equal(t, domain.FormatOpenAISearch, lg.Format)
 		require.Equal(t, "gpt-4o", lg.Model, "Model = 客户端请求模型")
-		require.Equal(t, "upstream-b", lg.MappedModel, "Search implicit 仍记映射目标（mappedFor 语义，非客户端模型）")
+		require.Equal(t, "", lg.MappedModel, "Search 透明：MappedModel 为空（mappedFor(req, sel)==\"\" 因 sel==req）")
 		require.Equal(t, int64(2500), lg.Cost, "固定按次计费不随映射身份变化")
 	})
 	t.Run("implicit identity 成功 MappedModel 空", func(t *testing.T) {
@@ -470,8 +475,9 @@ func TestSearchMappedModelPreserved(t *testing.T) {
 		require.Equal(t, "gpt-4o", store.logs[0].Model)
 		require.Equal(t, "", store.logs[0].MappedModel, "Search identity 仍空（mappedFor 相等语义，非客户端非空）")
 	})
-	t.Run("implicit 4xx 保持既有", func(t *testing.T) {
-		up, _ := newCodexSearchUpstream(t, codexSearchStep{status: 403, body: `{"detail":"Forbidden"}`})
+	t.Run("implicit 4xx MappedModel 空（透明）", func(t *testing.T) {
+		up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 403, body: `{"detail":"Forbidden"}`})
+		defer up.Close()
 		store := &captureLogStore{}
 		p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream",
 			mapping: map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}}}},
@@ -481,16 +487,18 @@ func TestSearchMappedModelPreserved(t *testing.T) {
 		resp := postSearch(t, srv, searchReqBody, "")
 		defer resp.Body.Close()
 		require.Equal(t, http.StatusBadGateway, resp.StatusCode)
+		require.Equal(t, searchReqBody, string(upc.body(0)), "4xx 透明：请求体原样")
 		waitStoreLogs(t, store, 1)
 		store.mu.Lock()
 		defer store.mu.Unlock()
 		lg := store.logs[0]
 		require.Equal(t, domain.Err4xx, lg.ErrorType)
 		require.Equal(t, "gpt-4o", lg.Model, "Model = 客户端请求模型")
-		require.Equal(t, "upstream-b", lg.MappedModel, "Search 4xx 仍记映射目标（mappedFor 语义）")
+		require.Equal(t, "", lg.MappedModel, "Search 4xx 透明 MappedModel 为空")
 	})
-	t.Run("implicit 耗尽保持既有", func(t *testing.T) {
-		up, _ := newCodexSearchUpstream(t, codexSearchStep{status: 429, body: `{"error":{"message":"rate limited"}}`})
+	t.Run("implicit 耗尽 MappedModel 空（透明）", func(t *testing.T) {
+		up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 429, body: `{"error":{"message":"rate limited"}}`})
+		defer up.Close()
 		store := &captureLogStore{}
 		p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream",
 			mapping: map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}}}},
@@ -500,12 +508,13 @@ func TestSearchMappedModelPreserved(t *testing.T) {
 		resp := postSearch(t, srv, searchReqBody, "")
 		defer resp.Body.Close()
 		require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+		require.Equal(t, searchReqBody, string(upc.body(0)), "耗尽透明：请求体原样")
 		waitStoreLogs(t, store, 1)
 		store.mu.Lock()
 		defer store.mu.Unlock()
 		lg := store.logs[0]
 		require.Equal(t, domain.Err429, lg.ErrorType)
 		require.Equal(t, "gpt-4o", lg.Model, "Model = 客户端请求模型")
-		require.Equal(t, "upstream-b", lg.MappedModel, "Search 耗尽行仍记映射目标（mappedFor 语义，非客户端模型）")
+		require.Equal(t, "", lg.MappedModel, "Search 耗尽行透明 MappedModel 为空")
 	})
 }

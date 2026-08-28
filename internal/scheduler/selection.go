@@ -35,7 +35,17 @@ func (s *Scheduler) Select(groupID int64, format domain.RequestFormat, model str
 		rt, ok = gs.routes[routeKey{format, ""}]
 	}
 	if !ok {
-		return nil, ErrFormatUnavailable
+		// search 透明回退：历史模板仅声明 openai-responses，未显式声明 openai-search；
+		// search 复用 responses 路由池，不依赖模板新增格式声明。
+		if format == domain.FormatOpenAISearch {
+			rt, ok = gs.routes[routeKey{domain.FormatOpenAIResponses, model}]
+			if !ok {
+				rt, ok = gs.routes[routeKey{domain.FormatOpenAIResponses, ""}]
+			}
+		}
+		if !ok {
+			return nil, ErrFormatUnavailable
+		}
 	}
 	now := s.timeNow()
 	if rt.tier1 != nil {
@@ -106,9 +116,12 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 		}
 		if a.concurrency.CompareAndSwap(cur, cur+1) {
 			mapped := model
-			entry, ok := av.tpl.ModelMapping[model]
-			if ok {
-				mapped = entry.MappedModel
+			var entry domain.ModelMappingEntry
+			if format != domain.FormatOpenAISearch {
+				if e, ok := av.tpl.ModelMapping[model]; ok {
+					mapped = e.MappedModel
+					entry = e
+				}
 			}
 			used := s.timeNow()
 			st2 := *st
