@@ -32,6 +32,8 @@ package discovery
 
 import (
 	"context"
+	"hash/fnv"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -91,6 +93,8 @@ type Discovery struct {
 	errs     atomic.Int64 // 连续 tick 失败数（恢复归零；Stats 与测试的确定性信号）
 	lastWarn atomic.Int64 // 上次 Warn unixnano（节流窗口；仅心跳 goroutine 读写）
 	failed   atomic.Bool  // 上次 tick 失败标志（恢复 Info 只打一次）
+
+	members atomic.Pointer[[]string] // 不可变快照：有序 live member IDs，成功 tick 原子替换
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -172,6 +176,47 @@ func (d *Discovery) ClusterInstances() int {
 	return 1
 }
 
+// LiveMembers 返回不可变的有序 live member IDs 快照（拷贝）。冻结期返回
+// 最后一次成功 tick 的快照，未曾成功则返回空切片（ClusterInstances 仍 clamp 1）。
+func (d *Discovery) LiveMembers() []string {
+	p := d.members.Load()
+	if p == nil {
+		return nil
+	}
+	out := make([]string, len(*p))
+	copy(out, *p)
+	return out
+}
+
+// RendezvousOwner 对给定 key 在当前 live members 上做确定性 rendezvous
+// 哈希（highest weight）：h = FNV-1a(member || 0x00 || key)。空 members
+// 返回空字符串；调用方应在 Start 前 fallback 到 single-instance 逻辑。
+func (d *Discovery) RendezvousOwner(key string) string {
+	return RendezvousOwner(key, d.LiveMembers())
+}
+
+// RendezvousOwner 纯函数：给定 key 与有序 member 列表返回权重最高的 member。
+// 要求 members 已排序且去重（LiveMembers 保证）；空列表返回 ""。
+func RendezvousOwner(key string, members []string) string {
+	if len(members) == 0 {
+		return ""
+	}
+	var best string
+	var bestScore uint64
+	for i, m := range members {
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(m))
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(key))
+		v := h.Sum64()
+		if i == 0 || v > bestScore {
+			bestScore = v
+			best = m
+		}
+	}
+	return best
+}
+
 // Stats 可观测快照（handler.StatsProvider 形态；errs 是测试断言故障冻结的确定性
 // 信号——替代 time.Sleep 等待失败发生）。
 func (d *Discovery) Stats() any {
@@ -183,8 +228,9 @@ func (d *Discovery) Stats() any {
 	}
 }
 
-// tick 单条 pipeline 心跳+计数（命令按发送序执行：剪除→自刷→续期→计数，
-// ZCARD 恒含自身且不含死者）。失败走冻结语义，成功清错误态并补恢复日志。
+// tick 单条 pipeline 心跳+计数（命令按发送序执行：剪除→自刷→续期→计数→
+ // 取成员，ZCARD 恒含自身且不含死者）。失败走冻结语义（成员快照亦冻结），
+ // 成功刷新 N 与有序 members 快照并清错误态。
 func (d *Discovery) tick(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, tickTimeout)
 	defer cancel()
@@ -194,6 +240,7 @@ func (d *Discovery) tick(ctx context.Context) {
 	pipe.ZAdd(ctx, MembersKey, redis.Z{Score: float64(now), Member: d.self})
 	pipe.Expire(ctx, MembersKey, keyTTL)
 	card := pipe.ZCard(ctx, MembersKey)
+	membersCmd := pipe.ZRange(ctx, MembersKey, 0, -1)
 	if _, err := pipe.Exec(ctx); err != nil {
 		d.onTickError(err)
 		return
@@ -202,6 +249,11 @@ func (d *Discovery) tick(ctx context.Context) {
 	// 不变量的单一出处（consumer spec §2.3）。
 	n := max(card.Val(), 1)
 	d.n.Store(int32(n))
+	members := membersCmd.Val()
+	sort.Strings(members)
+	cp := make([]string, len(members))
+	copy(cp, members)
+	d.members.Store(&cp)
 	d.errs.Store(0)
 	if d.failed.CompareAndSwap(true, false) && d.log != nil {
 		d.log.Info("discovery: redis recovered, resuming heartbeat",
