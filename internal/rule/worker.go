@@ -28,14 +28,9 @@ func (e *RuleEngine) Start(ctx context.Context) error {
 	e.persistMu.Lock()
 	e.persistCtx = persistCtx
 	e.persistCancel = cancel
-	e.persistDone = make(chan struct{})
+	e.persistDone = worker.GoLoop(persistCtx, "rule-engine-persist", e.log, e.persistLoop)
 	e.persistMu.Unlock()
 	worker.GoLoop(ctx, "rule-engine", e.log, e.loop)
-	// Supervised persist loop: worker.Loop restarts on panic, persistDone closes only when ctx canceled.
-	go func() {
-		defer close(e.persistDone)
-		worker.Loop(persistCtx, "rule-engine-persist", e.log, e.persistLoop)
-	}()
 	return nil
 }
 
