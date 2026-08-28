@@ -182,7 +182,7 @@
     "upstreamModelPlaceholder": "上游模型名",
     "addMapping": "添加映射",
     "deleteRow": "删除行",
-    "formRequired": "请填写名称与 base_url，并至少选择一种请求格式",
+    "formRequired": "请填写名称并至少选择一种请求格式",
     "batchUpdateTitle": "批量更新模板（已选 {{count}} 项）",
     "batchUpdateDesc": "仅更新已填写的字段；留空表示不修改",
     "batchUpdateEmpty": "请至少填写一个字段",
@@ -200,7 +200,8 @@
       "saveSuccess": "扩展配置已保存",
       "loadFailed": "读取扩展配置失败：{{message}}"
     },
-    "baseUrlOptional": "可选：留空使用默认端点（codex 类型为 SDK 默认；api_key 类型留空将导致上游请求失败）"
+    "baseUrlOptional": "api_key / responses-special：可选裸根（不含 /v1，非空覆盖）；留空可能导致路由失败。codex-oauth / codex-pat 须留空（SDK 默认端点，非空将被拒绝）。",
+    "baseUrlCodexHidden": "Codex OAuth / PAT 使用 SDK 默认端点——不可设置 BaseURL，须保持为空（非空将被拒绝）。"
   },
   "accounts": {
     "title": "账号",
@@ -355,8 +356,10 @@
     "groupLabel": "分组",
     "groupHint": "保存后替换账号原有分组；不在任何分组中的账号不会被调度。",
     "loadGroupsFailed": "读取当前分组失败，已禁用保存",
-    "baseUrlHint": "可选：留空继承模板 base_url",
+    "baseUrlHint": "api_key / responses-special：留空继承模板 base_url。codex-oauth / codex-pat 须留空（SDK 默认，非空禁用）。",
+    "baseUrlCodexHidden": "Codex OAuth / PAT 使用 SDK 默认端点——不可设置 BaseURL，须保持为空。",
     "batchBaseUrlHint": "未勾选且留空 = 不变；勾选 = 清空（回继承模板）",
+    "batchBaseUrlCodexDisabled": "Codex 目标已禁用 BaseURL（非空禁用，SDK 默认）；改为非 Codex 模板后可编辑。",
     "clearBaseUrl": "清空 base_url",
     "batchGroupLabel": "分组",
     "batchGroupHint": "替换所选账号的原有分组——未选中的分组将被移除。",
@@ -378,7 +381,7 @@
       "threadId": "thread_id",
       "windowId": "window_id",
       "identityNote": "身份四元组：首次写入自动生成、恒定不变——只读展示",
-      "credHint": "该模板为 codex 生态类型：账号凭据在「扩展配置」中设置",
+      "credHint": "Codex 凭据在「扩展配置」中设置",
       "saveSuccess": "扩展配置已保存",
       "loadFailed": "读取扩展配置失败：{{message}}",
       "oauthTokenPlaceholder": "OAuth 访问令牌",
