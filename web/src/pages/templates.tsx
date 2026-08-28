@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Boxes, Pencil, Plus, Settings2, Trash2, X } from 'lucide-react'
@@ -184,11 +184,13 @@ function FormFields({
   setForm,
   error,
   batch = false,
+  batchCodex = false,
 }: {
   form: FormState
   setForm: (updater: (f: FormState) => FormState) => void
   error?: string | null
   batch?: boolean // 批量更新隐藏凭据类型（TemplatePatch 不支持类型变更，评审 M-2）
+  batchCodex?: boolean
 }) {
   const { t } = useTranslation()
 
@@ -231,7 +233,24 @@ function FormFields({
           onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
         />
       </div>
-      {!batch && isCodexCredential(form.credential_type) ? null : (
+      {batch ? (
+        batchCodex ? (
+          <p className="text-xs text-muted-foreground">{t('templates.batchBaseUrlCodexDisabled')}</p>
+        ) : (
+          <div className="space-y-1.5">
+            <Label htmlFor="tpl-base">BaseURL</Label>
+            <Input
+              id="tpl-base"
+              value={form.base_url}
+              placeholder="https://api.openai.com"
+              onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
+            />
+            <p className="text-xs text-muted-foreground">{t('templates.baseUrlOptional')}</p>
+          </div>
+        )
+      ) : isCodexCredential(form.credential_type) ? (
+        <p className="text-xs text-muted-foreground">{t('templates.baseUrlCodexHidden')}</p>
+      ) : (
         <div className="space-y-1.5">
           <Label htmlFor="tpl-base">BaseURL</Label>
           <Input
@@ -240,11 +259,8 @@ function FormFields({
             placeholder="https://api.openai.com"
             onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
           />
-          {!batch && <p className="text-xs text-muted-foreground">{t('templates.baseUrlOptional')}</p>}
+          <p className="text-xs text-muted-foreground">{t('templates.baseUrlOptional')}</p>
         </div>
-      )}
-      {!batch && isCodexCredential(form.credential_type) && (
-        <p className="text-xs text-muted-foreground">{t('templates.baseUrlCodexHidden')}</p>
       )}
 
       {/* credential_type：一个模板 = 一种号池（非 api_key 类型走 SDK 内置端点，base_url 忽略） */}
@@ -459,6 +475,21 @@ export default function Templates() {
   const [editing, setEditing] = useState<Template | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
+  // 批量更新时若选中任一 codex 模板则禁用 BaseURL（混合/全 Codex 均不发送已知无效请求；api_key/responses-special 保持可编辑；stale 行 fail-closed）
+  const isBatchCodex = useMemo(() => {
+    if (selected.length === 0) return false
+    return selected.some(id => {
+      const t = rows.find(r => r.ID === id)
+      if (!t) return true
+      return isCodexCredential(t.CredentialType as string)
+    })
+  }, [selected, rows])
+  useEffect(() => {
+    if (isBatchCodex && form.base_url !== '') {
+      setForm(f => ({ ...f, base_url: '' }))
+    }
+  }, [isBatchCodex, form.base_url])
+
   // —— 批量更新对话框 ——
   const [batchOpen, setBatchOpen] = useState(false)
   const batchResolve = useRef<((r: 'cancelled' | 'submitted') => void) | null>(null)
@@ -605,7 +636,6 @@ export default function Templates() {
 
   const submit = () => {
     setValidationMsg(null)
-    // base_url：codex 类型可选（SDK 默认端点），后端按类型校验必填性
     if (!form.name.trim() || form.supported_formats.length === 0) {
       setValidationMsg(tr('templates.formRequired'))
       return
@@ -616,6 +646,7 @@ export default function Templates() {
   const submitBatch = () => {
     setValidationMsg(null)
     const fields = toPatch(form)
+    if (isBatchCodex) delete (fields as Record<string, unknown>).base_url
     if (Object.keys(fields).length === 0) {
       setValidationMsg(tr('templates.batchUpdateEmpty'))
       return
@@ -818,7 +849,7 @@ export default function Templates() {
             <DialogDescription>{tr('templates.batchUpdateDesc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <FormFields form={form} setForm={setForm} batch />
+            <FormFields form={form} setForm={setForm} batch batchCodex={isBatchCodex} />
             {validationMsg && <p className="text-sm text-destructive">{validationMsg}</p>}
             {batchUpdate.isError && errMsg(batchUpdate.error) && (
               <p className="text-sm text-destructive">{errMsg(batchUpdate.error)}</p>
