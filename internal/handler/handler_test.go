@@ -71,7 +71,7 @@ func TestAdminFlow(t *testing.T) {
 		"name":"openai-main","base_url":"https://api.openai.com",
 		"supported_formats":["openai-chat","openai-responses"],"models":["gpt-4o","o3"],
 		"format_models":{"openai-responses":["o3"]},
-		"model_mapping":{"gpt-4o":"gpt-4o-2026-01-01"}}`)
+		"model_mapping":{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}}`)
 	require.Equal(t, 200, rec.Code, "create template: %s", rec.Body.String())
 	var tpl domain.Template
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpl))
@@ -152,7 +152,7 @@ func TestAdminUpdateTemplateRoundTrip(t *testing.T) {
 		"name":"openai-main","base_url":"https://api.openai.com",
 		"supported_formats":["openai-chat","openai-responses"],"models":["gpt-4o","gpt-4o-mini","o3"],
 		"format_models":{"openai-responses":["o3"]},
-		"model_mapping":{"gpt-4o":"gpt-4o-2026-01-01"}}`)
+		"model_mapping":{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}}`)
 	require.Equal(t, 200, rec.Code, "create: %s", rec.Body.String())
 	var tpl domain.Template
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpl))
@@ -165,7 +165,7 @@ func TestAdminUpdateTemplateRoundTrip(t *testing.T) {
 		"credential_type":"api_key",
 		"supported_formats":["openai-chat","anthropic"],"models":["gpt-4o","o3"],
 		"format_models":{"anthropic":["o3"]},
-		"model_mapping":{"gpt-4o":"gpt-4o-2026-06-01"}}`)
+		"model_mapping":{"gpt-4o":{"mapped_model":"gpt-4o-2026-06-01","mode":"explicit"}}}`)
 	require.Equal(t, 200, rec.Code, "update: %s", rec.Body.String())
 	var updated domain.Template
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
@@ -175,7 +175,7 @@ func TestAdminUpdateTemplateRoundTrip(t *testing.T) {
 	require.ElementsMatch(t, []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatAnthropic}, updated.SupportedFormats, "supported_formats must round-trip")
 	require.True(t, updated.FormatSupports(domain.FormatAnthropic, "o3"), "format_models must round-trip")
 	require.False(t, updated.FormatSupports(domain.FormatAnthropic, "gpt-4o"), "format_models 限制生效")
-	require.Equal(t, "gpt-4o-2026-06-01", updated.ModelMapping["gpt-4o"], "model_mapping must round-trip")
+	require.Equal(t, "gpt-4o-2026-06-01", updated.ModelMapping["gpt-4o"].MappedModel, "model_mapping must round-trip")
 
 	// GET 确认已持久化
 	rec = do(http.MethodGet, "/api/admin/templates/"+itoa(tpl.ID), "")
@@ -691,3 +691,4 @@ func TestSingleResourceMissingID(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+

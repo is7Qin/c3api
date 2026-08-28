@@ -247,7 +247,7 @@ func TestTemplateCRUD(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses},
 		Models:           []string{"gpt-4o"},
 		FormatModels:     map[domain.RequestFormat][]string{domain.FormatOpenAIResponses: {"o3"}},
-		ModelMapping:     map[string]string{"gpt-4o": "gpt-4o-2026-01-01"},
+		ModelMapping:     map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o-2026-01-01", Mode: domain.ModelMappingModeExplicit}},
 	})
 	require.NoError(t, err)
 	got, err := tr.repos.Templates.GetTemplate(ctx(), tpl.ID)
@@ -772,3 +772,4 @@ func TestUsageEntityStatsColumnDefsAnchor(t *testing.T) {
 }
 
 func int64Ptr(v int64) *int64 { return &v }
+

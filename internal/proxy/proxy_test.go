@@ -394,7 +394,7 @@ func TestProxyStreamingChatAppliesModelMapping(t *testing.T) {
 		ID: 1, Name: "t", BaseURL: srv.URL,
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-		ModelMapping: map[string]string{"gpt-4o": "gpt-4o-upstream"},
+		ModelMapping: map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o-upstream", Mode: domain.ModelMappingModeExplicit}},
 	}
 	store := &captureLogStore{}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, nil)
@@ -489,7 +489,7 @@ func TestProxyFailoverOn429(t *testing.T) {
 	// 两个账号指向同一个会 429 的上游：第一个失败后转移第二个（同样失败则最终 429）
 	up := fakeOpenAI(t, "429")
 	defer up.Close()
-	mapping := map[string]string{"gpt-4o": "gpt-4o-upstream"}
+	mapping := map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o-upstream", Mode: domain.ModelMappingModeExplicit}}
 	store := &captureLogStore{}
 	tpl1 := &domain.Template{
 		ID: 1, Name: "t", BaseURL: up.URL,
@@ -932,3 +932,5 @@ func TestProxyCredentialUnknownTypeRejectsNoUpstreamCall(t *testing.T) {
 	require.Zero(t, ri.Concurrency, "凭据错误路径也必须释放并发槽")
 	require.Zero(t, p.rec.Pending(), "网络失败行不产生明细 pending（err_logs 承载）")
 }
+
+

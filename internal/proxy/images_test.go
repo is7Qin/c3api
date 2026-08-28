@@ -138,7 +138,7 @@ func TestImagesGenerationsJSONDirect(t *testing.T) {
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-1"},
-		ModelMapping:     map[string]string{"img-1": "gpt-image-1"},
+		ModelMapping:     map[string]domain.ModelMappingEntry{"img-1": {MappedModel: "gpt-image-1", Mode: domain.ModelMappingModeExplicit}},
 	}
 	store := &captureLogStore{}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, nil)
@@ -203,7 +203,7 @@ func TestImagesMultipartHardGateSkippedAndPassthrough(t *testing.T) {
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-1"},
-		ModelMapping:     map[string]string{"img-1": "gpt-image-1"},
+		ModelMapping:     map[string]domain.ModelMappingEntry{"img-1": {MappedModel: "gpt-image-1", Mode: domain.ModelMappingModeExplicit}},
 	}
 	p := newTestProxyTplCapture(t, tpl, 1, true)
 
@@ -389,7 +389,7 @@ func TestImagesStreamingSSE(t *testing.T) {
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-1"},
-		ModelMapping:     map[string]string{"img-1": "gpt-image-1"},
+		ModelMapping:     map[string]domain.ModelMappingEntry{"img-1": {MappedModel: "gpt-image-1", Mode: domain.ModelMappingModeExplicit}},
 	}
 	p := newTestProxyTplCapture(t, tpl, 1, true)
 
@@ -603,3 +603,4 @@ func newTestImagesProxyWithBill(t *testing.T, upstream string, bill *BillingHook
 func billingBalances() *billing.Balances {
 	return billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil)
 }
+

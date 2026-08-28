@@ -195,7 +195,7 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 	// 资源计数种子：1 模板 + 1 组 + 2 用户（软删模板不计）
 	_, err := repos.Client.Template.Create().SetName("t1").SetBaseURL("https://upstream.example").
 		SetSupportedFormats([]string{"openai-chat"}).SetModels([]string{"gpt-4o"}).
-		SetFormatModels(map[string][]string{}).SetModelMapping(map[string]string{}).Save(ctx)
+		SetFormatModels(map[string][]string{}).SetModelMapping(map[string]domain.ModelMappingEntry{}).Save(ctx)
 	require.NoError(t, err)
 	_, err = repos.Client.Group.Create().SetName("g1").Save(ctx)
 	require.NoError(t, err)
@@ -542,3 +542,4 @@ func (p pgUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 	}
 	return domain.UserSnapshot{Status: u.Status, Role: u.Role}, true
 }
+

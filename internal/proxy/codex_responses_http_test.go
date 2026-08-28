@@ -153,7 +153,7 @@ func codexPATExt(accountID int64, pat string) *domain.AccountExt {
 // 真实 T1 处理链——fakeFailureStore 落库替身 + 真实调度器 FailAccount 摘除）。
 // Codex 端点归 SDK 官方默认（transport seam 重写到 mock 上游）。
 // bill 为计费钩子（nil = 计费全关）。
-func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
+func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]domain.ModelMappingEntry, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
 	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: "",
@@ -245,7 +245,7 @@ func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	store := &captureLogStore{}
 	p, _ := newTestCodexRespProxy(t, credential.TypeCodexOAuth,
 		map[int64]*domain.AccountExt{10: codexOAuthExt(10, "at-10", "rt-10")},
-		up.URL, map[string]string{"gpt-4o": "gpt-5.6"}, nil, store)
+		up.URL, map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-5.6", Mode: domain.ModelMappingModeExplicit}}, nil, store)
 
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
@@ -952,3 +952,4 @@ func TestCodexResponsesStreamClientDisconnect(t *testing.T) {
 	require.Equal(t, http.StatusOK, store.logs[0].StatusCode)
 	require.Equal(t, domain.FormatOpenAIResponses, store.logs[0].Format)
 }
+

@@ -759,7 +759,7 @@ func TestSelectFormatModelsEmptyList(t *testing.T) {
 func TestSelectMappingKeyWhitelist(t *testing.T) {
 	tplMap := &domain.Template{
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
-		ModelMapping:     map[string]string{"gpt-4o": "deepseek-chat"},
+		ModelMapping:     map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "deepseek-chat", Mode: domain.ModelMappingModeExplicit}},
 	}
 	s := newTestScheduler(t, []*domain.Account{
 		{ID: 1, TemplateID: 1, Template: tplMap, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1000},
@@ -1804,3 +1804,4 @@ func TestReuseConcurrentSelectReloadRace(t *testing.T) {
 	}()
 	wg.Wait()
 }
+

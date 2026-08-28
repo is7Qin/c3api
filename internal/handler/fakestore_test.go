@@ -643,7 +643,7 @@ func (f *fakeStore) UpdateTemplatesBatch(ctx context.Context, ids []int64, p rep
 			t.FormatModels = *p.FormatModels
 		}
 		if p.ModelMapping != nil {
-			m := make(map[string]string, len(*p.ModelMapping))
+			m := make(map[string]domain.ModelMappingEntry, len(*p.ModelMapping))
 			for k, v := range *p.ModelMapping {
 				m[k] = v
 			}

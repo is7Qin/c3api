@@ -6,7 +6,10 @@
 package domain
 
 import (
+	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -173,6 +176,93 @@ func TruncateErrMsg(s string) string {
 	return string(r[:ErrMsgMaxLen])
 }
 
+type ModelMappingMode string
+
+const (
+	ModelMappingModeExplicit ModelMappingMode = "explicit"
+	ModelMappingModeImplicit ModelMappingMode = "implicit"
+)
+
+func (m ModelMappingMode) Valid() bool {
+	switch m {
+	case ModelMappingModeExplicit, ModelMappingModeImplicit:
+		return true
+	}
+	return false
+}
+
+func (m ModelMappingMode) MarshalJSON() ([]byte, error) {
+	if !m.Valid() {
+		return nil, fmt.Errorf("invalid ModelMappingMode %q", string(m))
+	}
+	return json.Marshal(string(m))
+}
+
+func (m *ModelMappingMode) UnmarshalJSON(data []byte) error {
+	var s *string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == nil {
+		return fmt.Errorf("mode must not be null")
+	}
+	v := ModelMappingMode(*s)
+	if !v.Valid() {
+		return fmt.Errorf("invalid mode %q", *s)
+	}
+	*m = v
+	return nil
+}
+
+type ModelMappingEntry struct {
+	MappedModel string          `json:"mapped_model"`
+	Mode        ModelMappingMode `json:"mode"`
+}
+
+func (e *ModelMappingEntry) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return fmt.Errorf("model mapping entry must not be null")
+	}
+	var raw map[string]*json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["mapped_model"]; !ok {
+		return fmt.Errorf("mapped_model is required")
+	}
+	if _, ok := raw["mode"]; !ok {
+		return fmt.Errorf("mode is required")
+	}
+	if len(raw) != 2 {
+		return fmt.Errorf("additional properties not allowed")
+	}
+	type alias ModelMappingEntry
+	var tmp alias
+	if err := json.Unmarshal(data, &tmp); err != nil {
+		return err
+	}
+	if strings.TrimSpace(tmp.MappedModel) == "" || tmp.MappedModel != strings.TrimSpace(tmp.MappedModel) {
+		return fmt.Errorf("mapped_model must be non-empty without leading/trailing whitespace")
+	}
+	*e = ModelMappingEntry(tmp)
+	return nil
+}
+
+func ValidateModelMapping(m map[string]ModelMappingEntry) error {
+	for alias, entry := range m {
+		if strings.TrimSpace(alias) == "" || alias != strings.TrimSpace(alias) {
+			return fmt.Errorf("alias %q must be non-empty without leading/trailing whitespace", alias)
+		}
+		if strings.TrimSpace(entry.MappedModel) == "" || entry.MappedModel != strings.TrimSpace(entry.MappedModel) {
+			return fmt.Errorf("mapped_model %q must be non-empty without leading/trailing whitespace", entry.MappedModel)
+		}
+		if !entry.Mode.Valid() {
+			return fmt.Errorf("mode %q must be explicit or implicit", entry.Mode)
+		}
+	}
+	return nil
+}
+
 type Template struct {
 	ID               int64
 	Name             string
@@ -181,7 +271,7 @@ type Template struct {
 	SupportedFormats []RequestFormat            // 模板支持的格式（非空、去重）
 	Models           []string                   // 可服务模型集合
 	FormatModels     map[RequestFormat][]string // 格式 → 该格式支持的模型列表；未配置 = 全部 Models
-	ModelMapping     map[string]string
+	ModelMapping     map[string]ModelMappingEntry
 	// StripImageTools 模板级图像 tool 剥离开关（template_ext.strip_image_tools
 	// 快照合并，W4 消费；三类型 responses-special/codex-oauth/codex-pat 公共
 	// 能力）：true = response.create 帧出口剥离图像工具（tools 数组 +
