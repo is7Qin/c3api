@@ -610,11 +610,7 @@ func TestRoutingQualityGateBarrierPG(t *testing.T) {
 			gateConn.Release()
 		})
 	}
-	t.Cleanup(func() {
-		releaseGate()
-		pool.Exec(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS gate_q_trg ON routing_quality_rollup_%s;", partSuffix))
-		pool.Exec(context.Background(), "DROP FUNCTION IF EXISTS gate_q_fn();")
-	})
+	// failure cleanup must release gate before closing writerPool or joining writer; idempotent via sync.Once, cannot deadlock
 	rollupDone := make(chan error, 1)
 	go func() { rollupDone <- repos.Partitions.RollupQuality(context.Background(), now, 1) }()
 	rollupPid := waitForAdvisoryWaiterForKey(t, pool, holderPid, gateKey)
@@ -631,7 +627,24 @@ func TestRoutingQualityGateBarrierPG(t *testing.T) {
 	}
 	writerPool, err := pgxpool.NewWithConfig(context.Background(), writerPoolCfg)
 	require.NoError(t, err)
-	t.Cleanup(func() { writerPool.Close() })
+	var writerDoneChan chan error
+	t.Cleanup(func() {
+		// idempotent gate release before pool close and before joining blocked writer, avoids deadlock
+		releaseGate()
+		if writerDoneChan != nil {
+			select {
+			case <-writerDoneChan:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		select {
+		case <-rollupDone:
+		case <-time.After(2 * time.Second):
+		}
+		pool.Exec(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS gate_q_trg ON routing_quality_rollup_%s;", partSuffix))
+		pool.Exec(context.Background(), "DROP FUNCTION IF EXISTS gate_q_fn();")
+		writerPool.Close()
+	})
 	// ensure writer pool can create partitions (already ensured)
 	writerDB := stdlib.OpenDBFromPool(writerPool)
 	writerRepos, err := repository.NewWithPG(context.Background(), entsql.OpenDB(dialect.Postgres, writerDB), true, writerPool)
@@ -646,6 +659,7 @@ func TestRoutingQualityGateBarrierPG(t *testing.T) {
 	require.NotEqual(t, rollupPid, writerPid)
 	t.Logf("holder %d rollup %d writer %d distinct", holderPid, rollupPid, writerPid)
 	writerDone := make(chan error, 1)
+	writerDoneChan = writerDone
 	go func() {
 		row2 := row
 		row2.AbsoluteSequence = 2
@@ -709,11 +723,6 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 			gateConn2.Release()
 		})
 	}
-	t.Cleanup(func() {
-		releaseGate2()
-		pool.Exec(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS gate_f_trg ON routing_flow_rollup_%s;", partSuffix2))
-		pool.Exec(context.Background(), "DROP FUNCTION IF EXISTS gate_f_fn();")
-	})
 	rollupDone := make(chan error, 1)
 	go func() { rollupDone <- repos.Partitions.RollupFlow(context.Background(), now, 1) }()
 	rollupPid2 := waitForAdvisoryWaiterForKey(t, pool, holderPid2, gateKey)
@@ -729,7 +738,23 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 	}
 	writerPool2, err := pgxpool.NewWithConfig(context.Background(), writerPoolCfg2)
 	require.NoError(t, err)
-	t.Cleanup(func() { writerPool2.Close() })
+	var writerDoneChan2 chan error
+	t.Cleanup(func() {
+		releaseGate2()
+		if writerDoneChan2 != nil {
+			select {
+			case <-writerDoneChan2:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		select {
+		case <-rollupDone:
+		case <-time.After(2 * time.Second):
+		}
+		pool.Exec(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS gate_f_trg ON routing_flow_rollup_%s;", partSuffix2))
+		pool.Exec(context.Background(), "DROP FUNCTION IF EXISTS gate_f_fn();")
+		writerPool2.Close()
+	})
 	writerDB2 := stdlib.OpenDBFromPool(writerPool2)
 	writerRepos2, err := repository.NewWithPG(context.Background(), entsql.OpenDB(dialect.Postgres, writerDB2), true, writerPool2)
 	require.NoError(t, err)
@@ -742,6 +767,7 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 	require.NotEqual(t, rollupPid2, writerPid2)
 	t.Logf("holder %d rollup %d writer %d distinct", holderPid2, rollupPid2, writerPid2)
 	writerDone := make(chan error, 1)
+	writerDoneChan2 = writerDone
 	go func() {
 		rows2 := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 2, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-GF", AbsoluteSequence: 2, ChainCount: 1}}
 		writerDone <- writerRepos2.Partitions.UpsertFlowSnapshot(context.Background(), "src-GF", now, 1, 2, rows2)
@@ -766,6 +792,8 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 
 func waitForAdvisoryWaiterForKey(t *testing.T, pool *pgxpool.Pool, holderPid int, gateKey int64) int {
 	t.Helper()
+	classID := int32(gateKey >> 32)
+	objID := int32(gateKey)
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	deadline := time.Now().Add(5 * time.Second)
@@ -773,10 +801,10 @@ func waitForAdvisoryWaiterForKey(t *testing.T, pool *pgxpool.Pool, holderPid int
 		select {
 		case <-ticker.C:
 			var waiterPid int
-			err := pool.QueryRow(context.Background(), `SELECT pid FROM pg_locks WHERE locktype='advisory' AND NOT granted AND pid != $1 LIMIT 1`, holderPid).Scan(&waiterPid)
+			err := pool.QueryRow(context.Background(), `SELECT pid FROM pg_locks WHERE locktype='advisory' AND classid=$2 AND objid=$3 AND objsubid=1 AND NOT granted AND granted = false AND pid != $1 LIMIT 1`, holderPid, classID, objID).Scan(&waiterPid)
 			if err == nil && waiterPid != 0 {
 				require.NotEqual(t, holderPid, waiterPid, "advisory waiter must be distinct from holder")
-				t.Logf("advisory waiter pid %d holder %d gate %d", waiterPid, holderPid, gateKey)
+				t.Logf("advisory waiter pid %d holder %d gate %d classid %d objid %d", waiterPid, holderPid, gateKey, classID, objID)
 				return waiterPid
 			}
 		}
