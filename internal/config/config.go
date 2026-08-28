@@ -144,7 +144,6 @@ type BillingConfig struct {
 	Enabled                bool          `koanf:"enabled"`
 	FlushInterval          time.Duration `koanf:"flush_interval"`           // 计费游标轮询周期（F2 ledger-cursor：每周期取批消费 unbilled 账本）
 	BalanceRefreshInterval time.Duration `koanf:"balance_refresh_interval"` // 余额快照全量刷新周期
-	FlushWorkers           int           `koanf:"flush_workers"`            // 用户组并行消费 worker 数（游标分片并行）
 }
 
 func defaults() *Config {
@@ -160,7 +159,7 @@ func defaults() *Config {
 		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true},
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
-		Billing:   BillingConfig{Enabled: true, FlushInterval: 250 * time.Millisecond, BalanceRefreshInterval: 10 * time.Second, FlushWorkers: 8},
+		Billing:   BillingConfig{Enabled: true, FlushInterval: 250 * time.Millisecond, BalanceRefreshInterval: 10 * time.Second},
 	}
 }
 

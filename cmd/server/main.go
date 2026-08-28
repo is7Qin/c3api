@@ -230,8 +230,8 @@ func main() {
 	//   快照定向刷新（EffectiveMultiplier 陈旧 ≤10s 不可接受）
 	// - key CRUD（#14 T2 扩展）→ auth 快照全量 Reload（本地仍走 auth 增量
 	//   Upsert/Delete——单实例快路径；Keys() 分支覆盖远端实例的陈旧快照）
-	// - settings 变更（UpdateSetting）→ settings 快照重载（svc 实现，SetSettings
-	//   装配，见下）
+	// - settings 变更（UpdateSetting）→ dispatcher 同步重载 settings 快照并按
+	//   ScopeSettings 精确刷新声明方
 	// - 规则 CRUD → 规则表全量重载（ruleEngine.ReloadRules，重载清窗口计数——
 	//   全实例同步执行语义）
 	// - pricing → 现状（内部 reloadPricing，不进 invalidate）
@@ -316,12 +316,9 @@ func main() {
 	}
 	// #36 本地实例即时重算：settings 变更直连本地分发器（与远端 NOTIFY 同路径
 	// Apply——自播 NOTIFY 被 Src 跳过，本地实例预算重算不能依赖 NOTIFY 回环）。
-	// 装配序：dispatcher 需要 svc（SettingsReloader）、svc 需要 dispatcher（本地
-	// 分发）——构造环，svc 构造完成后回填（与 inv.SetSettings 同模式）。
+	// 装配序：dispatcher 需要 svc、svc 需要 dispatcher（本地分发）——构造环，
+	// svc 构造完成后回填。
 	svc.SetLocalDispatcher(disp)
-	// invalidate 的 settings 分支延迟绑定：service.New 需要去抖器做 Invalidator、
-	// 去抖器需要 svc 做 SettingsReloader（构造环）——svc 构造完成后、Start 前回填。
-	inv.SetSettings(svc)
 	// NOTIFY 监听 worker（Name="notify"）：独立 pgx 连接 LISTEN c3api_invalidate；
 	// 断线指数退避重连 + 重连即全量刷新（R8）；Src 跳过自播（省重复 reload）。
 	listener := notify.NewListener(notify.ListenerConfig{
@@ -342,7 +339,6 @@ func main() {
 		billFlusher = billing.NewFlusher(billing.FlushConfig{
 			FlushInterval:          cfg.Billing.FlushInterval,
 			BalanceRefreshInterval: cfg.Billing.BalanceRefreshInterval,
-			Workers:                cfg.Billing.FlushWorkers,
 			LogRetentionDays:       cfg.Usage.LogRetentionDays,
 		}, repos, billBalances, log)
 		billHooks = &proxy.BillingHooks{
@@ -434,12 +430,9 @@ func main() {
 		Fetcher:  priceFetcher,
 		Repo:     repos,
 		Settings: svc,
-		// 三线：文本价 + image 价 + 按单元价快照一并刷新（拉取成功后同样重载
-		// 对应快照——Task A 双线 + 价格表三件套扩展）。
+		// 统一快照：拉取成功后刷新 pricing 快照（price_entries+price_variants）。
 		Reload: func() {
 			svc.ReloadPricing()
-			svc.ReloadImagePricing()
-			svc.ReloadFunctionPricing()
 		},
 		Log: log,
 	})

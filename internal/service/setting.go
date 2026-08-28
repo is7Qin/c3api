@@ -102,10 +102,8 @@ func (s *Service) UpdateSetting(ctx context.Context, key, value string) (*domain
 	return set, nil
 }
 
-// ReloadSettings settings 快照全量重载（invalidate.SettingsReloader 接口实现，
-// T3 main 装配注入 invalidate.Config.Settings；供 NOTIFY settings 分支触发全
-// 实例重载）。与 UpdateSetting 内部路径同实现（reloadSettings 复用）；失败
-// 返回错误由调用方（去抖器 reloadAll）Warn。
+// ReloadSettings settings 快照全量重载。供 dispatcher 的本地变更、远端
+// NOTIFY 和断线重连 FullRefresh 共用；失败返回错误由 dispatcher/listener 记录。
 func (s *Service) ReloadSettings(ctx context.Context) error {
 	rows, err := s.store.GetAllSettings(ctx)
 	if err != nil {

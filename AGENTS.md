@@ -117,7 +117,7 @@ go run ./tools/loadtest -mode stream -addr http://127.0.0.1:8080 -key ck-xxx -co
 - **端口分裂**：单测 PG=:5432(CI)/15432(本地 compose)，e2e 默认 :15432 的 postgres 库自建 c3api_e2e
 - **worker 注册序=反序排空语义**：billFlusher 在 listener/authSync 之前注册（main.go:485-491，F2：首位注册→停机最后扫游标），动顺序前读注释
 - **typed-nil 陷阱**：invBalances 声明为接口类型非具体指针（main.go:233，2026-08-10 真实 panic 事故）
-- **循环依赖靠事后回填**：svc.SetLocalDispatcher / inv.SetSettings 是有意设计
+- **循环依赖靠事后回填**：svc.SetLocalDispatcher 是有意设计
 - **ent 迁移跳过 3 张分区表**（atlas 无法 diff），分区由幂等 bootstrap 负责、失败即 fatal
 - **chi v5.3.1 双 Mount panic**：/api/admin 用 Handle 不用 Mount；SPA NotFound 会传播进子路由需自行 404 API 前缀
 - **http.Server 无 WriteTimeout**（SSE 保护）；上游传输 Proxy:nil 显式直连（HTTP_PROXY 防劫持 C2-1）
