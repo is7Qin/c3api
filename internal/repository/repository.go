@@ -84,9 +84,9 @@ func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxp
 // ledger-cursor：结算语句 pgx 直连事务 + 游标 advisory lock 专用连接；
 // WithTx 传 nil → 事务内回落 ent 载体，见 billing_settle.go）。
 func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *Repository {
-	accounts := &AccountRepo{client: client}
+	accounts := &AccountRepo{client: client, driver: drv}
 	return &Repository{
-		Templates:      &TemplateRepo{client: client},
+		Templates:      &TemplateRepo{client: client, driver: drv},
 		Accounts:       accounts,
 		Groups:         &GroupRepo{client: client, accounts: accounts, driver: drv},
 		Users:          &UserRepo{client: client, driver: drv},

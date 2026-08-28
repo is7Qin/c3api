@@ -9,20 +9,44 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
 )
 
-type AccountRepo struct{ client *ent.Client }
+type AccountRepo struct {
+	client *ent.Client
+	driver dialect.Driver
+}
 
 func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
-	row, err := r.client.Account.Create().
-		SetName(a.Name).SetTemplateID(a.TemplateID).
-		SetNillableBaseURL(a.BaseURL). // 账号级 base_url（nil = 继承模板）
-		SetUpstreamKey(a.UpstreamKey).
-		SetWeight(a.Weight).SetMaxConcurrency(a.MaxConcurrency).
-		Save(ctx)
+	var row *ent.Account
+	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+		if err := lockTemplateWrites(ctx, driver, []int64{a.TemplateID}); err != nil {
+			return err
+		}
+		templates, err := loadTemplates(ctx, client, []int64{a.TemplateID})
+		if err != nil {
+			return err
+		}
+		if err := validateCodexAccountBaseURL(templates[a.TemplateID], a.BaseURL); err != nil {
+			return err
+		}
+		status := a.Status
+		if status == "" {
+			status = domain.StatusActive
+		}
+		row, err = client.Account.Create().
+			SetName(a.Name).SetTemplateID(a.TemplateID).
+			SetNillableBaseURL(a.BaseURL).
+			SetUpstreamKey(a.UpstreamKey).
+			SetStatus(account.Status(status)).
+			SetWeight(a.Weight).SetMaxConcurrency(a.MaxConcurrency).
+			Save(ctx)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -95,29 +119,48 @@ func toAccountStatusList(list []string) ([]account.Status, error) {
 }
 
 func (r *AccountRepo) UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error) {
-	u := r.client.Account.UpdateOneID(a.ID).
-		SetName(a.Name).SetTemplateID(a.TemplateID).
-		SetUpstreamKey(a.UpstreamKey).
-		SetWeight(a.Weight).SetMaxConcurrency(a.MaxConcurrency).
-		SetStatus(account.Status(a.Status))
-	// 账号级 base_url 全量替换语义（对齐其余字段的「全字段 Set」现状——PUT 是
-	// 全量替换：nil = 继承模板 → ClearBaseURL 清空既有覆盖；非空 → SetBaseURL。
-	// SetNillableBaseURL(nil) 是 no-op，无法表达「清空」，故显式分写）。
-	if a.BaseURL != nil {
-		u = u.SetBaseURL(*a.BaseURL)
-	} else {
-		u = u.ClearBaseURL()
-	}
-	if a.Status == domain.StatusActive {
-		// T5 失效恢复（管理面，P2-2 定死方案 b）：status→active 隐含清
-		// failed_at + last_error（恢复动作 = 状态切换，不做 openapi 字段扩展；
-		// 清字段语义对齐既有 ClearLastError——active ⇒ 未失效不变量）。
-		u = u.ClearFailedAt().ClearLastError()
-	}
-	if cooldownUntil != nil {
-		u = u.SetCooldownUntil(*cooldownUntil)
-	}
-	row, err := u.Save(ctx)
+	var row *ent.Account
+	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+		locked, err := lockAccountsForUpdate(ctx, driver, []int64{a.ID})
+		if err != nil {
+			return err
+		}
+		templateIDs := []int64{locked[0].templateID, a.TemplateID}
+		if err := lockTemplateWrites(ctx, driver, templateIDs); err != nil {
+			return err
+		}
+		templates, err := loadTemplates(ctx, client, templateIDs)
+		if err != nil {
+			return err
+		}
+		if err := validateCodexAccountBaseURL(templates[a.TemplateID], a.BaseURL); err != nil {
+			return err
+		}
+		u := client.Account.UpdateOneID(a.ID).
+			SetName(a.Name).SetTemplateID(a.TemplateID).
+			SetUpstreamKey(a.UpstreamKey).
+			SetWeight(a.Weight).SetMaxConcurrency(a.MaxConcurrency).
+			SetStatus(account.Status(a.Status))
+			// 账号级 base_url 全量替换语义（对齐其余字段的「全字段 Set」现状——PUT 是
+			// 全量替换：nil = 继承模板 → ClearBaseURL 清空既有覆盖；非空 → SetBaseURL。
+			// SetNillableBaseURL(nil) 是 no-op，无法表达「清空」，故显式分写）。
+		if a.BaseURL != nil {
+			u = u.SetBaseURL(*a.BaseURL)
+		} else {
+			u = u.ClearBaseURL()
+		}
+		if a.Status == domain.StatusActive {
+			// T5 失效恢复（管理面，P2-2 定死方案 b）：status→active 隐含清
+			// failed_at + last_error（恢复动作 = 状态切换，不做 openapi 字段扩展；
+			// 清字段语义对齐既有 ClearLastError——active ⇒ 未失效不变量）。
+			u = u.ClearFailedAt().ClearLastError()
+		}
+		if cooldownUntil != nil {
+			u = u.SetCooldownUntil(*cooldownUntil)
+		}
+		row, err = u.Save(ctx)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

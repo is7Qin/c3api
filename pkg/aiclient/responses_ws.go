@@ -36,11 +36,11 @@ func AcceptResponsesWS(w http.ResponseWriter, r *http.Request) (*websocket.Conn,
 }
 
 // ResponsesWSDial 上游 WS 拨号（aiclient 懒缓存 URL 复用，同 rawPost 惯例）：
-// 注入账号鉴权（Bearer）与 beta 头；header 为编排层透传的客户端头（hop-by-hop
-// 与网关 key 已在编排层剔除），本函数就地 Set 改写——header is consumed，
-// 调用方须传私有副本（库内 dial 会再 Clone 一次，防御边界在库，此处不再
-// Clone）。返回 resp 仅在握手失败时非 nil（含上游拒绝 body，调用方按状态码
-// 分类 429/4xx）。压缩同 Accept 侧协商。
+ // 注入账号鉴权（Bearer）与 beta 头；header 为编排层透传的客户端头（hop-by-hop
+ // 与网关 key 已在编排层剔除），本函数就地 Set 改写——header is consumed，
+ // 调用方须传私有副本（库内 dial 会再 Clone 一次，防御边界在库，此处不再
+ // Clone）。返回 resp 仅在握手失败时非 nil（含上游拒绝 body，调用方按状态码
+ // 分类 429/4xx）。压缩同 Accept 侧协商。
 func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL, key string, header http.Header) (*websocket.Conn, *http.Response, error) {
 	full, err := f.fullURLOf(templateID, baseURL, responsesWSPath)
 	if err != nil {
@@ -53,15 +53,4 @@ func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL
 		HTTPHeader:      header,
 		CompressionMode: websocket.CompressionContextTakeover,
 	})
-}
-
-// ResponsesWSURL 取模板 resp-ws 完整端点 URL 字符串（T4 codex Dial
-// WithBaseURL 用——SDK 完整端点语义 client.go:137-144：覆盖值按完整端点直用，
-// 传裸根打 /v1 静默 404；复用 fullURLOf 的组装与懒缓存，零新代码）。
-func (f *Factory) ResponsesWSURL(templateID int64, baseURL string) (string, error) {
-	full, err := f.fullURLOf(templateID, baseURL, responsesWSPath)
-	if err != nil {
-		return "", err
-	}
-	return full.String(), nil
 }

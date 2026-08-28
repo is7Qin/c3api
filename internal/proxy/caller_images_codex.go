@@ -9,12 +9,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -89,17 +87,8 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	if params.Model == "" {
 		params.Model = reqModel
 	}
-	// cred 派生（T1 已定义）：AccountExt → AccountCredential；BaseURL = 模板
-	// base 派生完整 generations 端点（空 → SDK 内置 DefaultImagesURL）。
+	// cred 派生（T1 已定义）：AccountExt → AccountCredential。Codex 端点归 SDK 官方默认。
 	cred2 := domain.CredentialFromExt(sel.Ext)
-	baseURL, err := codexImagesBaseURL(sel.BaseURL)
-	if err != nil {
-		p.sched.Release(sel.AccountID)
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, http.StatusBadRequest, domain.ErrBilling, 0, usageTuple{}, start, err.Error())
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": err.Error()}})
-		return 0, nil, true, nil
-	}
-	cred2.BaseURL = baseURL
 	if stream {
 		// 流式（T3 生产接线——同签名直赋适配层 GenerateImageStream）：参数/
 		// 凭据派生与上共用，事件流 → streamImageGeneration（SSE 透传 + 首事件
@@ -146,22 +135,6 @@ func (p *Proxy) codexImagesFor(r *http.Request) UpstreamCaller {
 		return p.codexImagesEdits
 	}
 	return p.codexImagesGenerations
-}
-
-// codexImagesBaseURL 模板 base → SDK WithBaseURL 覆盖值（**完整 generations
-// 端点直用**——SDK 语义 client.go:137-144：覆盖值按完整端点直用，edits 由尾段
-// generations→edits 派生，覆盖值必须传 generations 端点）。模板 base 空 → ""
-// （SDK 内置 DefaultImagesURL）；解析失败 → 错误（配置错误本地拒绝，与直连
-// 路径 parseFullURL 错误同语义）。
-func codexImagesBaseURL(base string) (string, error) {
-	if base == "" {
-		return "", nil
-	}
-	u, err := url.Parse(base)
-	if err != nil {
-		return "", fmt.Errorf("invalid template base URL %q: %w", base, err)
-	}
-	return u.JoinPath("images/generations").String(), nil
 }
 
 // imageParamsFromBody 请求体 → domain.ImageGenParams（T2 §2：网关解析传结构体

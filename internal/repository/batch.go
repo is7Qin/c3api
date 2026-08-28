@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -24,6 +25,9 @@ var ErrNotFound = errors.New("repository: not found")
 
 // ErrConflict 唯一约束冲突（规则 priority/name 等；service 映射 409）。
 var ErrConflict = errors.New("repository: conflict")
+
+// ErrInvalidInput 表示写入会破坏跨实体业务不变量。
+var ErrInvalidInput = errors.New("repository: invalid input")
 
 // --- 批量更新字段子集（nil 字段 = 不更新） ---
 
@@ -129,106 +133,138 @@ func (r *GroupRepo) DeleteGroupsBatch(ctx context.Context, ids []int64) error {
 // --- 批量更新（事务，全成或全败；Set 链只按 patch 非 nil 字段） ---
 
 func (r *TemplateRepo) UpdateTemplatesBatch(ctx context.Context, ids []int64, p TemplatePatch) error {
-	tx, err := r.client.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() // nolint:errcheck
-	if err := checkTemplateExist(ctx, tx.Template.Query, ids); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		u := tx.Template.UpdateOneID(id)
-		if p.Name != nil {
-			u = u.SetName(*p.Name)
+	return withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+		if err := lockTemplateWrites(ctx, driver, ids); err != nil {
+			return err
 		}
-		if p.BaseURL != nil {
-			u = u.SetBaseURL(*p.BaseURL)
+		templates, err := loadTemplates(ctx, client, ids)
+		if err != nil {
+			return err
 		}
-		if p.SupportedFormats != nil {
-			u = u.SetSupportedFormats(formatsToStrings(*p.SupportedFormats))
-		}
-		if p.Models != nil {
-			u = u.SetModels(*p.Models)
-		}
-		if p.FormatModels != nil {
-			u = u.SetFormatModels(formatModelsToStrings(*p.FormatModels))
-		}
-		if p.ModelMapping != nil {
-			u = u.SetModelMapping(*p.ModelMapping)
-		}
-		if _, err := u.Save(ctx); err != nil {
-			if sqlgraph.IsUniqueConstraintError(err) {
-				return fmt.Errorf("%w: name=%q", ErrConflict, *p.Name)
+		if p.BaseURL != nil && *p.BaseURL != "" {
+			for _, id := range ids {
+				if isCodexType(templates[id].CredentialType) {
+					return fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
+				}
 			}
-			return errMissingID(err, id)
 		}
-	}
-	return tx.Commit()
+		for _, id := range ids {
+			u := client.Template.UpdateOneID(id)
+			if p.Name != nil {
+				u = u.SetName(*p.Name)
+			}
+			if p.BaseURL != nil {
+				u = u.SetBaseURL(*p.BaseURL)
+			}
+			if p.SupportedFormats != nil {
+				u = u.SetSupportedFormats(formatsToStrings(*p.SupportedFormats))
+			}
+			if p.Models != nil {
+				u = u.SetModels(*p.Models)
+			}
+			if p.FormatModels != nil {
+				u = u.SetFormatModels(formatModelsToStrings(*p.FormatModels))
+			}
+			if p.ModelMapping != nil {
+				u = u.SetModelMapping(*p.ModelMapping)
+			}
+			if _, err := u.Save(ctx); err != nil {
+				if sqlgraph.IsUniqueConstraintError(err) && p.Name != nil {
+					return fmt.Errorf("%w: name=%q", ErrConflict, *p.Name)
+				}
+				return errMissingID(err, id)
+			}
+		}
+		return nil
+	})
 }
 
 func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p AccountPatch) error {
-	tx, err := r.client.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() // nolint:errcheck
-	if err := checkAccountExist(ctx, tx.Account.Query, ids); err != nil {
-		return err
-	}
-	// 组存在性校验：循环外一次完成（空数组跳过查询——[] = 清空，无依赖组）。
-	if p.GroupIDs != nil && len(*p.GroupIDs) > 0 {
-		if err := checkGroupExist(ctx, tx.Group.Query, *p.GroupIDs); err != nil {
+	return withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+		locked, err := lockAccountsForUpdate(ctx, driver, ids)
+		if err != nil {
 			return err
 		}
-	}
-	for _, id := range ids {
-		u := tx.Account.UpdateOneID(id)
-		if p.Name != nil {
-			u = u.SetName(*p.Name)
+		templateIDs := make([]int64, 0, len(locked)+1)
+		for _, row := range locked {
+			templateIDs = append(templateIDs, row.templateID)
 		}
 		if p.TemplateID != nil {
-			u = u.SetTemplateID(*p.TemplateID)
+			templateIDs = append(templateIDs, *p.TemplateID)
 		}
-		if p.UpstreamKey != nil {
-			u = u.SetUpstreamKey(*p.UpstreamKey)
+		if err := lockTemplateWrites(ctx, driver, templateIDs); err != nil {
+			return err
 		}
-		if p.BaseURL != nil {
-			// 批量三态（C1）："" = 清空（落 NULL = 继承模板）；非空 = 落值。
-			if *p.BaseURL == "" {
-				u = u.ClearBaseURL()
-			} else {
-				u = u.SetBaseURL(*p.BaseURL)
+		templates, err := loadTemplates(ctx, client, templateIDs)
+		if err != nil {
+			return err
+		}
+		for _, row := range locked {
+			templateID := row.templateID
+			if p.TemplateID != nil {
+				templateID = *p.TemplateID
+			}
+			baseURL := row.baseURL
+			if p.BaseURL != nil {
+				baseURL = p.BaseURL
+			}
+			if err := validateCodexAccountBaseURL(templates[templateID], baseURL); err != nil {
+				return err
 			}
 		}
-		if p.Status != nil {
-			u = u.SetStatus(account.Status(*p.Status))
-			if *p.Status == domain.StatusActive {
-				// T5 失效恢复（管理面批量——status 枚举含 active）：status→
-				// active 隐含清 failed_at + last_error（与 UpdateAccount 单
-				// 路径同语义——恢复动作 = 状态切换）。
-				u = u.ClearFailedAt().ClearLastError()
+		if p.GroupIDs != nil && len(*p.GroupIDs) > 0 {
+			if err := checkGroupExist(ctx, client.Group.Query, *p.GroupIDs); err != nil {
+				return err
 			}
 		}
-		if p.Weight != nil {
-			u = u.SetWeight(*p.Weight)
+		for _, id := range sortedUniqueIDs(ids) {
+			u := client.Account.UpdateOneID(id)
+			if p.Name != nil {
+				u = u.SetName(*p.Name)
+			}
+			if p.TemplateID != nil {
+				u = u.SetTemplateID(*p.TemplateID)
+			}
+			if p.UpstreamKey != nil {
+				u = u.SetUpstreamKey(*p.UpstreamKey)
+			}
+			if p.BaseURL != nil {
+				// 批量三态（C1）："" = 清空（落 NULL = 继承模板）；非空 = 落值。
+				if *p.BaseURL == "" {
+					u = u.ClearBaseURL()
+				} else {
+					u = u.SetBaseURL(*p.BaseURL)
+				}
+			}
+			if p.Status != nil {
+				u = u.SetStatus(account.Status(*p.Status))
+				if *p.Status == domain.StatusActive {
+					// T5 失效恢复（管理面批量——status 枚举含 active）：status→
+					// active 隐含清 failed_at + last_error（与 UpdateAccount 单
+					// 路径同语义——恢复动作 = 状态切换）。
+					u = u.ClearFailedAt().ClearLastError()
+				}
+			}
+			if p.Weight != nil {
+				u = u.SetWeight(*p.Weight)
+			}
+			if p.MaxConcurrency != nil {
+				u = u.SetMaxConcurrency(*p.MaxConcurrency)
+			}
+			if p.GroupIDs != nil {
+				// ent 无 SetGroups：ClearGroups + AddGroupIDs 实现整组替换
+				// （AddGroupIDs 内部 map 去重，重复 id 安全）。
+				u = u.ClearGroups().AddGroupIDs(*p.GroupIDs...)
+			}
+			if p.CooldownUntil != nil {
+				u = u.SetCooldownUntil(*p.CooldownUntil)
+			}
+			if _, err := u.Save(ctx); err != nil {
+				return errMissingID(err, id)
+			}
 		}
-		if p.MaxConcurrency != nil {
-			u = u.SetMaxConcurrency(*p.MaxConcurrency)
-		}
-		if p.GroupIDs != nil {
-			// ent 无 SetGroups：ClearGroups + AddGroupIDs 实现整组替换
-			// （AddGroupIDs 内部 map 去重，重复 id 安全）。
-			u = u.ClearGroups().AddGroupIDs(*p.GroupIDs...)
-		}
-		if p.CooldownUntil != nil {
-			u = u.SetCooldownUntil(*p.CooldownUntil)
-		}
-		if _, err := u.Save(ctx); err != nil {
-			return errMissingID(err, id)
-		}
-	}
-	return tx.Commit()
+		return nil
+	})
 }
 
 func (r *GroupRepo) UpdateGroupsBatch(ctx context.Context, ids []int64, p GroupPatch) error {

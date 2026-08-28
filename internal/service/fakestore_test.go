@@ -199,6 +199,19 @@ func (f *fakeStore) ListTemplates(ctx context.Context, q repository.ListQuery) (
 func (f *fakeStore) UpdateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, ok := f.tpls[t.ID]; !ok {
+		return nil, missingErr(t.ID)
+	}
+	if isCodexCredentialType(t.CredentialType) {
+		if t.BaseURL != "" {
+			return nil, repository.ErrInvalidInput
+		}
+		for _, account := range f.accs {
+			if account.TemplateID == t.ID && account.BaseURL != nil && *account.BaseURL != "" {
+				return nil, repository.ErrInvalidInput
+			}
+		}
+	}
 	if err := f.templateNameConflictLocked(t.ID, t.Name); err != nil {
 		return nil, err
 	}
@@ -389,6 +402,12 @@ func (f *fakeStore) UpdateTemplatesBatch(ctx context.Context, ids []int64, p rep
 		if !ok {
 			return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
 		}
+		if p.BaseURL != nil && *p.BaseURL != "" && isCodexCredentialType(t.CredentialType) {
+			return repository.ErrInvalidInput
+		}
+	}
+	for _, id := range ids {
+		t := f.tpls[id]
 		if p.Name != nil {
 			t.Name = *p.Name
 		}
@@ -434,6 +453,27 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 			if _, ok := f.groups[gid]; !ok {
 				return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, gid)
 			}
+		}
+	}
+	for _, id := range ids {
+		account, ok := f.accs[id]
+		if !ok {
+			return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
+		}
+		templateID := account.TemplateID
+		if p.TemplateID != nil {
+			templateID = *p.TemplateID
+		}
+		tpl, ok := f.tpls[templateID]
+		if !ok {
+			return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, templateID)
+		}
+		baseURL := account.BaseURL
+		if p.BaseURL != nil {
+			baseURL = p.BaseURL
+		}
+		if isCodexCredentialType(tpl.CredentialType) && baseURL != nil && *baseURL != "" {
+			return repository.ErrInvalidInput
 		}
 	}
 	f.lastPatch = p

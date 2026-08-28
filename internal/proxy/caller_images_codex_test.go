@@ -162,11 +162,11 @@ func codexOAuthExt(accountID int64, at, rt string) *domain.AccountExt {
 // newTestCodexProxy 构造 codex 类型 images 测试代理：模板（credType 模板级
 // 类型）+ 携带 Ext 的账号（可多账号）+ 装配适配层（统一失效回调走真实 T1
 // 处理链——fakeFailureStore 落库替身 + 真实调度器 FailAccount 摘除）。
-// 模板 BaseURL = mock 上游根（路由 join images/generations 派生完整端点）。
+// Codex 官方默认端点 via transport 重写到 mock。
 func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
 	t.Helper()
 	tpl := &domain.Template{
-		ID: 1, Name: "t", BaseURL: upstream,
+		ID: 1, Name: "t", BaseURL: "",
 		CredentialType:   credType,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-2"},
@@ -206,8 +206,10 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	// 统一失效回调（T1 装配形态）：落库替身 + 真实调度器摘除（FailAccount——
 	// 失效标记断言依赖真实摘除，路由"不重试同账号"才成立）。
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
+	codex := sdkbridge.NewCodex(failure)
+	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, upstream))
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
-	p.SetCodex(sdkbridge.NewCodex(failure))
+	p.SetCodex(codex)
 	return p, store
 }
 
@@ -238,7 +240,7 @@ func TestImagesCodexGenerationsOK(t *testing.T) {
 	require.Equal(t, int64(1), gjson.Get(body, "usage.input_tokens_details.image_tokens").Int(), "wire 嵌套 usage（计费提取同源）")
 	// cred 传递断言：账号 at 送达上游
 	require.Equal(t, "Bearer at-10", c.auth(0), "oauth 账号 access token 送达实现侧")
-	require.Equal(t, "/images/generations", c.path(0), "模板 base 派生 generations 端点")
+	require.Equal(t, "/backend-api/codex/images/generations", c.path(0), "官方端点")
 	require.Equal(t, "gpt-image-2", gjson.GetBytes(c.body(0), "model").String(), "模型（sel.Model 映射）落位")
 	require.Equal(t, "a cat", gjson.GetBytes(c.body(0), "prompt").String())
 	require.Equal(t, int64(2), gjson.GetBytes(c.body(0), "n").Int(), "n 透传")
@@ -564,7 +566,7 @@ func TestImagesCodexMultipartEdits(t *testing.T) {
 	p.HandleImagesEdits(rec, req)
 
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
-	require.Equal(t, "/images/edits", c.path(0), "edits 由 SDK 尾段派生")
+	require.Equal(t, "/backend-api/codex/images/edits", c.path(0), "官方端点")
 	b := c.body(0)
 	require.Equal(t, "gpt-image-2", gjson.GetBytes(b, "model").String())
 	require.Equal(t, "make it red", gjson.GetBytes(b, "prompt").String())
@@ -588,7 +590,7 @@ func TestImagesCodexJSONEdits(t *testing.T) {
 	p.HandleImagesEdits(rec, req)
 
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
-	require.Equal(t, "/images/edits", c.path(0))
+	require.Equal(t, "/backend-api/codex/images/edits", c.path(0))
 	require.Equal(t, "https://example.com/in.png", gjson.GetBytes(c.body(0), "images.0.image_url").String())
 	require.NoError(t, p.rec.Close(context.Background()))
 }
@@ -706,11 +708,13 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, store, nil)
 	fs := &fakeFailureStore{}
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: fs, Failer: sched, Log: nil})
+	codex := sdkbridge.NewCodex(failure)
+	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, codexUp.URL))
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, GroupKeyRPM: 0, UsageCapture: true,
 	}, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
-	p.SetCodex(sdkbridge.NewCodex(failure))
+	p.SetCodex(codex)
 
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
