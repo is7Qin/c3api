@@ -395,21 +395,31 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 	if cell == nil || out == nil {
 		return false
 	}
+	if cell.gen == 0 {
+		out.cell = nil
+		out.recorder = nil
+		out.gen = 0
+		atomic.StoreUint32(&out.done, 0)
+		return false
+	}
 	if r.isClosed() {
 		out.cell = nil
 		out.recorder = nil
+		out.gen = 0
 		atomic.StoreUint32(&out.done, 0)
 		return false
 	}
 	if r.finalSnapshot.Load() != nil {
 		out.cell = nil
 		out.recorder = nil
+		out.gen = 0
 		atomic.StoreUint32(&out.done, 0)
 		return false
 	}
 	if !r.tryIncAdmission() {
 		out.cell = nil
 		out.recorder = nil
+		out.gen = 0
 		atomic.StoreUint32(&out.done, 0)
 		return false
 	}
@@ -417,6 +427,15 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 		r.decAdmissionAndMaybeSignal()
 		out.cell = nil
 		out.recorder = nil
+		out.gen = 0
+		atomic.StoreUint32(&out.done, 0)
+		return false
+	}
+	if cell.gen == 0 {
+		r.decAdmissionAndMaybeSignal()
+		out.cell = nil
+		out.recorder = nil
+		out.gen = 0
 		atomic.StoreUint32(&out.done, 0)
 		return false
 	}
@@ -424,23 +443,25 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 		r.decAdmissionAndMaybeSignal()
 		out.cell = nil
 		out.recorder = nil
+		out.gen = 0
 		atomic.StoreUint32(&out.done, 0)
 		return false
 	}
 	out.cell = cell
 	out.recorder = r
+	out.gen = cell.gen
 	atomic.StoreUint32(&out.done, 0)
 	return true
 }
 
 func (r *Recorder) NewAttemptContext(cell *Cell) *AttemptContext {
-	if cell == nil || r.isClosed() || r.finalSnapshot.Load() != nil {
+	if cell == nil || cell.gen == 0 || r.isClosed() || r.finalSnapshot.Load() != nil {
 		return &AttemptContext{recorder: r}
 	}
 	if !r.tryIncAdmission() {
 		return &AttemptContext{recorder: r}
 	}
-	if cell.owner != r.id {
+	if cell.owner != r.id || cell.gen == 0 {
 		r.decAdmissionAndMaybeSignal()
 		return &AttemptContext{recorder: r}
 	}
@@ -448,7 +469,7 @@ func (r *Recorder) NewAttemptContext(cell *Cell) *AttemptContext {
 		r.decAdmissionAndMaybeSignal()
 		return &AttemptContext{recorder: r}
 	}
-	return &AttemptContext{cell: cell, recorder: r}
+	return &AttemptContext{cell: cell, recorder: r, gen: cell.gen}
 }
 
 func (r *Recorder) Begin(key Key) *AttemptContext {
@@ -459,7 +480,7 @@ func (r *Recorder) Begin(key Key) *AttemptContext {
 		return &AttemptContext{recorder: r}
 	}
 	cell := r.GetOrCreateCell(key)
-	if cell == nil {
+	if cell == nil || cell.gen == 0 {
 		r.decAdmissionAndMaybeSignal()
 		return &AttemptContext{recorder: r}
 	}
@@ -467,7 +488,7 @@ func (r *Recorder) Begin(key Key) *AttemptContext {
 		r.decAdmissionAndMaybeSignal()
 		return &AttemptContext{recorder: r}
 	}
-	return &AttemptContext{cell: cell, recorder: r}
+	return &AttemptContext{cell: cell, recorder: r, gen: cell.gen}
 }
 
 func (r *Recorder) distinctMinuteCountLocked() int {
@@ -1050,16 +1071,20 @@ func (r *Recorder) CloseWithContext(ctx context.Context) error {
 type AttemptContext struct {
 	cell     *Cell
 	recorder *Recorder
+	gen      uint64
 	done     uint32
 }
 
 func (a *AttemptContext) IsZero() bool { return a == nil || a.cell == nil }
 
 func (a *AttemptContext) completeCommon(obs Observation) {
-	if a == nil || a.cell == nil || a.recorder == nil {
+	if a == nil || a.cell == nil || a.recorder == nil || a.gen == 0 || a.gen != a.cell.gen || a.cell.gen == 0 {
 		return
 	}
 	if !atomic.CompareAndSwapUint32(&a.done, 0, 1) {
+		return
+	}
+	if a.gen == 0 || a.gen != a.cell.gen || a.cell.gen == 0 {
 		return
 	}
 	c := a.cell
@@ -1170,10 +1195,13 @@ func (a *AttemptContext) CompleteObservation(obs Observation) {
 }
 
 func (a *AttemptContext) Cancel() {
-	if a == nil || a.cell == nil || a.recorder == nil {
+	if a == nil || a.cell == nil || a.recorder == nil || a.gen == 0 || a.gen != a.cell.gen || a.cell.gen == 0 {
 		return
 	}
 	if !atomic.CompareAndSwapUint32(&a.done, 0, 1) {
+		return
+	}
+	if a.gen == 0 || a.gen != a.cell.gen || a.cell.gen == 0 {
 		return
 	}
 	a.cell.state.Add(^uint64(0))
