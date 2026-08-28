@@ -17,12 +17,6 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func mustJSON(t *testing.T, s string) string {
-	t.Helper()
-	require.True(t, json.Valid([]byte(s)))
-	return s
-}
-
 func newImplicitTpl(upstream string, format domain.RequestFormat, mode domain.ModelMappingMode) *domain.Template {
 	return &domain.Template{
 		ID: 1, Name: "t", BaseURL: upstream,
