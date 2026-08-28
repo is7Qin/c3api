@@ -156,7 +156,7 @@ func codexPATExt(accountID int64, pat string) *domain.AccountExt {
 func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
 	t.Helper()
 	tpl := &domain.Template{
-		ID: 1, Name: "t", BaseURL: upstream,
+		ID: 1, Name: "t", BaseURL: "",
 		CredentialType:   credType,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
 		Models:           []string{"gpt-4o"},
