@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -578,55 +579,81 @@ func TestRoutingQualityGateBarrierPG(t *testing.T) {
 	row := repository.RoutingQualityRow{IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp, InstanceSrc: "src-GQ", BucketMinute: now, AbsoluteSequence: 1, Attempts: 1}
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
 	gateKey := int64(91001)
-	gateConn, err := pool.Acquire(ctx)
+	// gate holder on dedicated pool to avoid blocking main pool's 2 connections (rollup uses ent driver sharing same pool)
+	dsnGate := os.Getenv("TEST_DATABASE_URL")
+	require.NotEmpty(t, dsnGate)
+	gatePoolCfg, err := pgxpool.ParseConfig(dsnGate)
 	require.NoError(t, err)
-	_, err = gateConn.Exec(ctx, "SELECT pg_advisory_lock($1)", gateKey)
+	gatePoolCfg.MaxConns = 1
+	gatePool, err := pgxpool.NewWithConfig(context.Background(), gatePoolCfg)
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, "CREATE OR REPLACE FUNCTION gate_q_fn() RETURNS trigger AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END; $$ LANGUAGE plpgsql;")
+	t.Cleanup(func() { gatePool.Close() })
+	gateConn, err := gatePool.Acquire(ctx)
+	require.NoError(t, err)
+	// holder transaction via gateConn
+	gateTx, err := gateConn.Begin(ctx)
+	require.NoError(t, err)
+	_, err = gateTx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", gateKey)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, "CREATE OR REPLACE FUNCTION gate_q_fn() RETURNS trigger AS $$ BEGIN PERFORM pg_advisory_xact_lock(91001::bigint); RETURN NEW; END; $$ LANGUAGE plpgsql;")
 	require.NoError(t, err)
 	partSuffix := now.Format("20060102")
 	_, err = pool.Exec(ctx, fmt.Sprintf("CREATE TRIGGER gate_q_trg BEFORE INSERT ON routing_quality_rollup_%s FOR EACH ROW EXECUTE FUNCTION gate_q_fn();", partSuffix))
 	require.NoError(t, err)
 	var holderPid int
-	_ = gateConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&holderPid)
-	t.Cleanup(func() {
-		pool.Exec(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS gate_q_trg ON routing_quality_rollup_%s;", partSuffix))
-		pool.Exec(ctx, "DROP FUNCTION IF EXISTS gate_q_fn();")
-		_, _ = gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
-		gateConn.Release()
-	})
-	rollupDone := make(chan error)
-	go func() { rollupDone <- repos.Partitions.RollupQuality(context.Background(), now, 1) }()
-	waitForAdvisoryWaiterForKey(t, pool, holderPid, gateKey)
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	deadline2 := time.Now().Add(5 * time.Second)
-	var rollupHolderPid int
-	for {
-		select {
-		case <-ticker.C:
-			_ = pool.QueryRow(context.Background(), `SELECT pid FROM pg_stat_activity WHERE pid != $1 AND query ILIKE '%INSERT INTO routing_quality_rollup%' LIMIT 1`, holderPid).Scan(&rollupHolderPid)
-			if rollupHolderPid != 0 {
-				goto gotHolder
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("rollup did not hold dirty")
-		}
-		if time.Now().After(deadline2) {
-			t.Fatalf("rollup did not hold dirty")
-		}
+	_ = gateTx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&holderPid)
+	require.NotZero(t, holderPid)
+	var gateReleased sync.Once
+	releaseGate := func() {
+		gateReleased.Do(func() {
+			_ = gateTx.Rollback(context.Background())
+			gateConn.Release()
+		})
 	}
-gotHolder:
-	writerDone := make(chan error)
+	t.Cleanup(func() {
+		releaseGate()
+		pool.Exec(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS gate_q_trg ON routing_quality_rollup_%s;", partSuffix))
+		pool.Exec(context.Background(), "DROP FUNCTION IF EXISTS gate_q_fn();")
+	})
+	rollupDone := make(chan error, 1)
+	go func() { rollupDone <- repos.Partitions.RollupQuality(context.Background(), now, 1) }()
+	rollupPid := waitForAdvisoryWaiterForKey(t, pool, holderPid, gateKey)
+	require.NotEqual(t, holderPid, rollupPid)
+	// dedicated writer pool to obtain stable writer PID and preserve production SQL path
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	require.NotEmpty(t, dsn)
+	writerPoolCfg, err := pgxpool.ParseConfig(dsn)
+	require.NoError(t, err)
+	writerPoolCfg.MaxConns = 1
+	writerPoolCfg.MinConns = 0
+	if writerPoolCfg.ConnConfig.RuntimeParams == nil {
+		writerPoolCfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	writerPool, err := pgxpool.NewWithConfig(context.Background(), writerPoolCfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { writerPool.Close() })
+	// ensure writer pool can create partitions (already ensured)
+	writerDB := stdlib.OpenDBFromPool(writerPool)
+	writerRepos, err := repository.NewWithPG(context.Background(), entsql.OpenDB(dialect.Postgres, writerDB), true, writerPool)
+	require.NoError(t, err)
+	// obtain writer PID via dedicated connection
+	writerConn, err := writerPool.Acquire(context.Background())
+	require.NoError(t, err)
+	var writerPid int
+	require.NoError(t, writerConn.QueryRow(context.Background(), "SELECT pg_backend_pid()").Scan(&writerPid))
+	writerConn.Release()
+	require.NotEqual(t, holderPid, writerPid)
+	require.NotEqual(t, rollupPid, writerPid)
+	t.Logf("holder %d rollup %d writer %d distinct", holderPid, rollupPid, writerPid)
+	writerDone := make(chan error, 1)
 	go func() {
 		row2 := row
 		row2.AbsoluteSequence = 2
 		row2.Attempts = 2
-		writerDone <- repos.Partitions.UpsertQualityAndMarkDirty(context.Background(), row2)
+		writerDone <- writerRepos.Partitions.UpsertQualityAndMarkDirty(context.Background(), row2)
 	}()
-	waitForTupleWaiter(t, pool, rollupHolderPid)
-	_, err = gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
-	require.NoError(t, err)
+	waitForWriterLock(t, pool, holderPid, rollupPid, writerPid)
+	releaseGate()
 	select {
 	case err := <-rollupDone:
 		require.NoError(t, err)
@@ -653,53 +680,74 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 	rows := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-GF", ChainCount: 1}}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-GF", now, 1, 1, rows))
 	gateKey := int64(91002)
-	gateConn, err := pool.Acquire(ctx)
+	dsnGate2 := os.Getenv("TEST_DATABASE_URL")
+	require.NotEmpty(t, dsnGate2)
+	gatePoolCfg2, err := pgxpool.ParseConfig(dsnGate2)
 	require.NoError(t, err)
-	_, err = gateConn.Exec(ctx, "SELECT pg_advisory_lock($1)", gateKey)
+	gatePoolCfg2.MaxConns = 1
+	gatePool2, err := pgxpool.NewWithConfig(context.Background(), gatePoolCfg2)
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, "CREATE OR REPLACE FUNCTION gate_f_fn() RETURNS trigger AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END; $$ LANGUAGE plpgsql;")
+	t.Cleanup(func() { gatePool2.Close() })
+	gateConn2, err := gatePool2.Acquire(ctx)
+	require.NoError(t, err)
+	gateTx, err := gateConn2.Begin(ctx)
+	require.NoError(t, err)
+	_, err = gateTx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", gateKey)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, "CREATE OR REPLACE FUNCTION gate_f_fn() RETURNS trigger AS $$ BEGIN PERFORM pg_advisory_xact_lock(91002::bigint); RETURN NEW; END; $$ LANGUAGE plpgsql;")
 	require.NoError(t, err)
 	partSuffix2 := now.Format("20060102")
 	_, err = pool.Exec(ctx, fmt.Sprintf("CREATE TRIGGER gate_f_trg BEFORE INSERT ON routing_flow_rollup_%s FOR EACH ROW EXECUTE FUNCTION gate_f_fn();", partSuffix2))
 	require.NoError(t, err)
 	var holderPid2 int
-	_ = gateConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&holderPid2)
-	t.Cleanup(func() {
-		pool.Exec(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS gate_f_trg ON routing_flow_rollup_%s;", partSuffix2))
-		pool.Exec(ctx, "DROP FUNCTION IF EXISTS gate_f_fn();")
-		_, _ = gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
-		gateConn.Release()
-	})
-	rollupDone := make(chan error)
-	go func() { rollupDone <- repos.Partitions.RollupFlow(context.Background(), now, 1) }()
-	waitForAdvisoryWaiterForKey(t, pool, holderPid2, gateKey)
-	ticker2 := time.NewTicker(10 * time.Millisecond)
-	defer ticker2.Stop()
-	deadline3 := time.Now().Add(5 * time.Second)
-	var rollupHolderPid2 int
-	for {
-		select {
-		case <-ticker2.C:
-			_ = pool.QueryRow(context.Background(), `SELECT pid FROM pg_stat_activity WHERE pid != $1 AND query ILIKE '%INSERT INTO routing_quality_rollup%' LIMIT 1`, holderPid2).Scan(&rollupHolderPid2)
-			if rollupHolderPid2 != 0 {
-				goto gotHolder2
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("flow rollup did not hold dirty")
-		}
-		if time.Now().After(deadline3) {
-			t.Fatalf("flow rollup did not hold dirty")
-		}
+	_ = gateTx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&holderPid2)
+	require.NotZero(t, holderPid2)
+	var gateReleased2 sync.Once
+	releaseGate2 := func() {
+		gateReleased2.Do(func() {
+			_ = gateTx.Rollback(context.Background())
+			gateConn2.Release()
+		})
 	}
-gotHolder2:
-	writerDone := make(chan error)
+	t.Cleanup(func() {
+		releaseGate2()
+		pool.Exec(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS gate_f_trg ON routing_flow_rollup_%s;", partSuffix2))
+		pool.Exec(context.Background(), "DROP FUNCTION IF EXISTS gate_f_fn();")
+	})
+	rollupDone := make(chan error, 1)
+	go func() { rollupDone <- repos.Partitions.RollupFlow(context.Background(), now, 1) }()
+	rollupPid2 := waitForAdvisoryWaiterForKey(t, pool, holderPid2, gateKey)
+	require.NotEqual(t, holderPid2, rollupPid2)
+	dsn2 := os.Getenv("TEST_DATABASE_URL")
+	require.NotEmpty(t, dsn2)
+	writerPoolCfg2, err := pgxpool.ParseConfig(dsn2)
+	require.NoError(t, err)
+	writerPoolCfg2.MaxConns = 1
+	writerPoolCfg2.MinConns = 0
+	if writerPoolCfg2.ConnConfig.RuntimeParams == nil {
+		writerPoolCfg2.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	writerPool2, err := pgxpool.NewWithConfig(context.Background(), writerPoolCfg2)
+	require.NoError(t, err)
+	t.Cleanup(func() { writerPool2.Close() })
+	writerDB2 := stdlib.OpenDBFromPool(writerPool2)
+	writerRepos2, err := repository.NewWithPG(context.Background(), entsql.OpenDB(dialect.Postgres, writerDB2), true, writerPool2)
+	require.NoError(t, err)
+	writerConn2, err := writerPool2.Acquire(context.Background())
+	require.NoError(t, err)
+	var writerPid2 int
+	require.NoError(t, writerConn2.QueryRow(context.Background(), "SELECT pg_backend_pid()").Scan(&writerPid2))
+	writerConn2.Release()
+	require.NotEqual(t, holderPid2, writerPid2)
+	require.NotEqual(t, rollupPid2, writerPid2)
+	t.Logf("holder %d rollup %d writer %d distinct", holderPid2, rollupPid2, writerPid2)
+	writerDone := make(chan error, 1)
 	go func() {
 		rows2 := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 2, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-GF", AbsoluteSequence: 2, ChainCount: 1}}
-		writerDone <- repos.Partitions.UpsertFlowSnapshot(context.Background(), "src-GF", now, 1, 2, rows2)
+		writerDone <- writerRepos2.Partitions.UpsertFlowSnapshot(context.Background(), "src-GF", now, 1, 2, rows2)
 	}()
-	waitForTupleWaiter(t, pool, rollupHolderPid2)
-	_, err = gateConn.Exec(ctx, "SELECT pg_advisory_unlock($1)", gateKey)
-	require.NoError(t, err)
+	waitForWriterLock(t, pool, holderPid2, rollupPid2, writerPid2)
+	releaseGate2()
 	select {
 	case err := <-rollupDone:
 		require.NoError(t, err)
@@ -716,43 +764,57 @@ gotHolder2:
 	require.True(t, dirty)
 }
 
-func waitForAdvisoryWaiterForKey(t *testing.T, pool *pgxpool.Pool, holderPid int, gateKey int64) {
+func waitForAdvisoryWaiterForKey(t *testing.T, pool *pgxpool.Pool, holderPid int, gateKey int64) int {
 	t.Helper()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	deadline := time.Now().Add(5 * time.Second)
-	low := int32(gateKey & 0xffffffff)
 	for {
 		select {
 		case <-ticker.C:
-			var cnt int64
-			_ = pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM pg_locks WHERE locktype='advisory' AND objid=$1`, low).Scan(&cnt)
-			if cnt >= 1 {
-				t.Logf("advisory gate %d holder %d cnt %d", gateKey, holderPid, cnt)
-				return
+			var waiterPid int
+			err := pool.QueryRow(context.Background(), `SELECT pid FROM pg_locks WHERE locktype='advisory' AND NOT granted AND pid != $1 LIMIT 1`, holderPid).Scan(&waiterPid)
+			if err == nil && waiterPid != 0 {
+				require.NotEqual(t, holderPid, waiterPid, "advisory waiter must be distinct from holder")
+				t.Logf("advisory waiter pid %d holder %d gate %d", waiterPid, holderPid, gateKey)
+				return waiterPid
 			}
-		case <-time.After(5 * time.Second):
-			t.Fatalf("rollup did not block on gate %d, holder %d", gateKey, holderPid)
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("rollup did not block on gate %d, holder %d", gateKey, holderPid)
+			t.Fatalf("rollup did not block on advisory gate %d holder %d", gateKey, holderPid)
 		}
 	}
 }
 
-func waitForTupleWaiter(t *testing.T, pool *pgxpool.Pool, holderPid int) {
+func waitForWriterLock(t *testing.T, pool *pgxpool.Pool, holderPid int, rollupPid int, writerPid int) {
 	t.Helper()
+	require.NotEqual(t, holderPid, rollupPid)
+	require.NotEqual(t, holderPid, writerPid)
+	require.NotEqual(t, rollupPid, writerPid)
+	t.Logf("holder %d rollup %d writer %d distinct", holderPid, rollupPid, writerPid)
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-	select {
-	case <-ticker.C:
-		var one int
-		_ = pool.QueryRow(context.Background(), `SELECT 1`).Scan(&one)
-		t.Logf("tuple check holder %d", holderPid)
-		return
-	case <-time.After(100 * time.Millisecond):
-		t.Logf("tuple check holder %d", holderPid)
-		return
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			var waitType sql.NullString
+			var waitEvent sql.NullString
+			_ = pool.QueryRow(context.Background(), `SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid=$1`, writerPid).Scan(&waitType, &waitEvent)
+			if waitType.Valid && waitType.String == "Lock" {
+				t.Logf("writer %d wait %s:%s via pg_stat_activity", writerPid, waitType.String, waitEvent.String)
+				return
+			}
+			var cnt int64
+			_ = pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM pg_locks WHERE pid=$1 AND NOT granted`, writerPid).Scan(&cnt)
+			if cnt > 0 {
+				t.Logf("writer %d ungranted pg_locks %d", writerPid, cnt)
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("writer %d did not block holder %d rollup %d", writerPid, holderPid, rollupPid)
+		}
 	}
 }
 
