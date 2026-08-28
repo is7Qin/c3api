@@ -10,9 +10,12 @@ package sdkbridge
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -40,6 +43,25 @@ type FailureStore interface {
 	SetAccountFailed(ctx context.Context, accountID int64, failedAt time.Time, reason string) error
 }
 
+type casStore interface {
+	FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error
+	GetAccount(ctx context.Context, id int64) (*domain.Account, error)
+}
+
+type groupGetter interface {
+	GetAccountGroups(ctx context.Context, accountID int64) ([]int64, error)
+}
+
+type Latcher interface {
+	TryAcquire(accountID int64, fingerprint string, revision int64) bool
+	Clear(accountID int64)
+	IsLatched(accountID int64, fingerprint string) bool
+}
+
+type GroupPublisher interface {
+	PublishGroups(ctx context.Context, gids []int64)
+}
+
 // AccountFailer 调度摘除面（*scheduler.Scheduler 满足；接口化供测试注入）。
 type AccountFailer interface {
 	// FailAccount 快照置 StatusDisabled + last_error 审计 + 经 loader 持久化
@@ -54,6 +76,8 @@ type FailureDeps struct {
 	// Log 处理错误日志（P3-1 评审：同一失败只记一条——记在回调侧
 	// NewFailureHandler，HandleFailure 不重复记）；nil = no-op。
 	Log *logx.Logger
+	Latch Latcher
+	Publisher GroupPublisher
 }
 
 // HandleFailure 网关侧失效处理链（T1 §3——统一回调装配；T2/T4 适配层在
@@ -77,10 +101,87 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 		return nil // 防御：无错误不上报
 	}
 	reason := domain.TruncateErrMsg(fatal.Error())
-	err := deps.Store.SetAccountFailed(ctx, accountID, time.Now(), reason)
+	// Unified path with latch+revision+NOTIFY when store supports CAS and latch present.
+	if deps.Latch != nil {
+		if cs, ok := deps.Store.(casStore); ok {
+			acct, err := cs.GetAccount(ctx, accountID)
+			if err != nil {
+				deps.Latch.Clear(accountID)
+				return nil
+			}
+			if acct.Template != nil && acct.Template.CredentialType == credential.TypeAPIKey {
+				return nil
+			}
+			fp := acct.UpstreamKey
+			if acct.BaseURL != nil {
+				fp += "|" + *acct.BaseURL
+			}
+			expectedRev := acct.LifecycleRevision
+			// fingerprint change fence: if latch has different fp, it will be cleared on TryAcquire path via ClearIfFingerprintChanged logic in scheduler; here we just try acquire
+			deps.Latch.TryAcquire(accountID, fp, expectedRev)
+			deps.Failer.FailAccount(accountID, reason)
+			err = cs.FailAccountCAS(ctx, accountID, expectedRev, "sdk", time.Now(), reason)
+			if err != nil {
+				if errors.Is(err, repository.ErrStaleRevision) {
+					fresh, ferr := cs.GetAccount(ctx, accountID)
+					if ferr == nil && fresh.LifecycleRevision > expectedRev {
+						deps.Latch.Clear(accountID)
+					}
+				}
+				return err
+			}
+			deps.Latch.Clear(accountID)
+			if deps.Publisher != nil {
+				if gg, ok := deps.Store.(groupGetter); ok {
+					gids, _ := gg.GetAccountGroups(ctx, accountID)
+					if len(gids) > 0 {
+						deps.Publisher.PublishGroups(context.WithoutCancel(ctx), gids)
+					}
+				}
+			}
+			return nil
+		}
+	}
+	reason2 := domain.TruncateErrMsg(fatal.Error())
+	err := deps.Store.SetAccountFailed(ctx, accountID, time.Now(), reason2)
 	// 摘除恒执行：DB 故障时内存摘除先生效，恢复后 writeback 落库（fail-closed）。
-	deps.Failer.FailAccount(accountID, reason)
+	deps.Failer.FailAccount(accountID, reason2)
 	return err
+}
+
+func RecoverAccount(ctx context.Context, deps FailureDeps, accountID int64) error {
+	cs, ok := deps.Store.(casStore)
+	if !ok {
+		return nil
+	}
+	acct, err := cs.GetAccount(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	expectedRev := acct.LifecycleRevision
+	// Recover uses current DB revision +1 then PROBING; stale callback fence: if already not failed, still CAS increment to clear?
+	// Use RecoverAccountCAS if available, else generic.
+	if rc, ok := deps.Store.(interface {
+		RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error
+	}); ok {
+		if err := rc.RecoverAccountCAS(ctx, accountID, expectedRev); err != nil {
+			return err
+		}
+	} else {
+		return nil
+	}
+	if deps.Latch != nil {
+		deps.Latch.Clear(accountID)
+	}
+	if deps.Publisher != nil {
+		if gg, ok := deps.Store.(groupGetter); ok {
+			gids, _ := gg.GetAccountGroups(ctx, accountID)
+			if len(gids) > 0 {
+				deps.Publisher.PublishGroups(context.WithoutCancel(ctx), gids)
+			}
+		}
+	}
+	return nil
 }
 
 // NewFailureHandler 构造统一失效回调（网关侧唯一失效处理入口）：适配层构造时
