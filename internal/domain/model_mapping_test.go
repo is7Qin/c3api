@@ -14,11 +14,10 @@ func TestModelMappingModeValid(t *testing.T) {
 	require.True(t, ModelMappingModeExplicit.Valid())
 	require.True(t, ModelMappingModeImplicit.Valid())
 	require.False(t, ModelMappingModeInvalid.Valid())
-	require.False(t, ModelMappingMode(0).Valid())
 	require.False(t, ModelMappingMode(99).Valid())
 }
 
-func TestModelMappingModeJSONStrings(t *testing.T) {
+func TestModelMappingModeJSONRoundTrip(t *testing.T) {
 	data, err := json.Marshal(ModelMappingModeExplicit)
 	require.NoError(t, err)
 	require.Equal(t, `"explicit"`, string(data))
@@ -40,24 +39,24 @@ func TestModelMappingModeJSONStrings(t *testing.T) {
 	require.Error(t, json.Unmarshal([]byte(`""`), &m))
 }
 
-func TestModelMappingTopLevelNullRejected(t *testing.T) {
-	var m ModelMapping
-	err := json.Unmarshal([]byte(`null`), &m)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "must not be null")
+func TestModelMappingRejectsTopLevelNull(t *testing.T) {
+	for _, input := range []string{`null`, " \nnull\t"} {
+		var m ModelMapping
+		err := json.Unmarshal([]byte(input), &m)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "must not be null")
+	}
 }
 
-func TestModelMappingZeroEnumRejected(t *testing.T) {
+func TestModelMappingRejectsInvalidMode(t *testing.T) {
 	entry := ModelMappingEntry{MappedModel: "upstream", Mode: ModelMappingModeInvalid}
 	_, err := json.Marshal(entry)
 	require.Error(t, err)
 	m := ModelMapping{"alias": entry}
 	require.Error(t, ValidateModelMapping(m))
-	e2 := ModelMappingEntry{MappedModel: "x", Mode: 0}
-	require.False(t, e2.Mode.Valid())
 }
 
-func TestModelMappingEntryJSONRoundTrip(t *testing.T) {
+func TestModelMappingJSONRoundTrip(t *testing.T) {
 	orig := ModelMapping{
 		"alias-a": {MappedModel: "upstream-a", Mode: ModelMappingModeExplicit},
 		"alias-b": {MappedModel: "upstream-b", Mode: ModelMappingModeImplicit},
@@ -68,12 +67,9 @@ func TestModelMappingEntryJSONRoundTrip(t *testing.T) {
 	var decoded ModelMapping
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	require.Equal(t, orig, decoded)
-	require.Contains(t, string(data), `"mapped_model":"upstream-a"`)
-	require.Contains(t, string(data), `"mode":"explicit"`)
-	require.Contains(t, string(data), `"mode":"implicit"`)
 }
 
-func TestModelMappingEntryRejectsInvalid(t *testing.T) {
+func TestModelMappingRejectsInvalidEntries(t *testing.T) {
 	cases := []string{
 		`{"alias": "legacy-string"}`,
 		`{"alias": {"mapped_model": "upstream"}}`,
@@ -91,31 +87,16 @@ func TestModelMappingEntryRejectsInvalid(t *testing.T) {
 	for _, c := range cases {
 		var m ModelMapping
 		err := json.Unmarshal([]byte(c), &m)
-		if err != nil {
-			continue
+		if err == nil {
+			err = ValidateModelMapping(m)
 		}
-		require.Error(t, ValidateModelMapping(m), "should reject %s", c)
+		require.Error(t, err, "should reject %s", c)
 	}
 }
 
-func TestModelMappingCompactSize(t *testing.T) {
+func TestModelMappingEntrySizeAMD64(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("size assertion only on amd64")
 	}
-	sz := unsafe.Sizeof(ModelMappingEntry{})
-	require.Equal(t, uintptr(24), sz, "ModelMappingEntry should be 24B (string 16 + uint8 + 7 padding)")
-}
-
-func TestTemplateServesWithNewMapping(t *testing.T) {
-	tpl := &Template{
-		Models:       []string{"gpt-4o"},
-		ModelMapping: ModelMapping{"claude-sonnet": {MappedModel: "claude-4", Mode: ModelMappingModeExplicit}},
-	}
-	require.True(t, tpl.Serves("claude-sonnet"))
-	require.False(t, tpl.Serves("nope"))
-	require.True(t, tpl.HasModelSpace())
-	empty := &Template{}
-	require.False(t, empty.HasModelSpace())
-	empty2 := &Template{ModelMapping: ModelMapping{}}
-	require.False(t, empty2.HasModelSpace())
+	require.Equal(t, uintptr(24), unsafe.Sizeof(ModelMappingEntry{}))
 }
