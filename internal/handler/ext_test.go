@@ -5,12 +5,17 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 // TestTemplatesIdExt 模板 ext 端点：PUT 幂等写入（strip_image_tools 三类型公共
@@ -61,7 +66,7 @@ func TestTemplatesIdExt(t *testing.T) {
 
 	// oauth 模板 + strip 开关 roundtrip（三类型公共能力）+ 幂等再写（nil 清空）
 	rec = do(http.MethodPost, "/api/admin/templates", `{
-		"name":"t-oauth","base_url":"https://u",
+		"name":"t-oauth","base_url":"",
 		"credential_type":"codex-oauth","supported_formats":["openai-responses"]}`)
 	require.Equal(t, 200, rec.Code, "create oauth template: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpl))
@@ -99,7 +104,7 @@ func TestAccountsIdExt(t *testing.T) {
 	_, _, do := newListTestRouter(t)
 
 	rec := do(http.MethodPost, "/api/admin/templates", `{
-		"name":"t-codex","base_url":"https://u",
+		"name":"t-codex","base_url":"",
 		"credential_type":"codex-oauth","supported_formats":["openai-responses"]}`)
 	require.Equal(t, 200, rec.Code, "create codex template: %s", rec.Body.String())
 	var tpl Template
@@ -148,7 +153,7 @@ func TestAccountsIdExt(t *testing.T) {
 
 	// pat 模板 + 账号：显式身份 + email（导入时人工/上游填写）→ 采用
 	rec = do(http.MethodPost, "/api/admin/templates", `{
-		"name":"t-pat","base_url":"https://u",
+		"name":"t-pat","base_url":"",
 		"credential_type":"codex-pat","supported_formats":["openai-responses"]}`)
 	require.Equal(t, 200, rec.Code, "create pat template: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpl))
@@ -188,6 +193,43 @@ func TestAccountsIdExt(t *testing.T) {
 	// 父账号缺失 → 404
 	rec = do(http.MethodPut, "/api/admin/accounts/999999/ext", `{"credential_type":"codex-pat","codex_pat_key":"p"}`)
 	require.Equal(t, 404, rec.Code, "父账号缺失 → 404: %s", rec.Body.String())
+}
+
+func TestHandlerFakeCodexWriteParity(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	apiTemplate, err := store.CreateTemplate(ctx, &domain.Template{
+		Name: "api", BaseURL: "https://api.example.com", CredentialType: credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+	})
+	require.NoError(t, err)
+	override := "https://override.example.com"
+	account, err := store.CreateAccount(ctx, &domain.Account{
+		Name: "account", TemplateID: apiTemplate.ID, BaseURL: &override,
+		UpstreamKey: "sk-test", MaxConcurrency: 8,
+	})
+	require.NoError(t, err)
+
+	codexUpdate := *apiTemplate
+	codexUpdate.CredentialType = credential.TypeCodexOAuth
+	codexUpdate.BaseURL = ""
+	_, err = store.UpdateTemplate(ctx, &codexUpdate)
+	require.ErrorIs(t, err, repository.ErrInvalidInput)
+	storedTemplate, err := store.GetTemplate(ctx, apiTemplate.ID)
+	require.NoError(t, err)
+	require.Equal(t, credential.TypeAPIKey, storedTemplate.CredentialType)
+
+	codexTemplate, err := store.CreateTemplate(ctx, &domain.Template{
+		Name: "codex", CredentialType: credential.TypeCodexPAT,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+	})
+	require.NoError(t, err)
+	err = store.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{TemplateID: &codexTemplate.ID})
+	require.ErrorIs(t, err, repository.ErrInvalidInput)
+	storedAccount, err := store.GetAccount(ctx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, apiTemplate.ID, storedAccount.TemplateID)
+	require.Equal(t, override, *storedAccount.BaseURL)
 }
 
 // TestGroupProtocolConvertAPI 分组 protocol_convert 方向集合：创建/更新
