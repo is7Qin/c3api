@@ -24,12 +24,16 @@ import (
 
 type anthropicCaller struct{ p *Proxy }
 
+// anthropicCaller 负责 Messages 的原始 SSE 转发，并分别读取 message_start/message_delta 用量。
+
 func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	if stream {
+		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model
 		reqModel := gjson.GetBytes(body, "model").String()
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
+		// 模型映射：等价 SDK 路径对 params.Model 的覆盖，命中则零分配复用原切片
 		streamBody, err := setModel(body, sel.Model)
 		if err != nil {
 			return 0, nil, false, err
@@ -47,13 +51,16 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Accel-Buffering", "no")
 		var it, ot, tt, cr, cc int64
+		// TTFT 首帧语义：首个 SSE 事件写出后回调记录毫秒，已提交流无帧则保持 nil
 		var ttft *int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Observer: func(ev sserelay.Event) {
+				// 首帧即 TTFT，Observer 在帧写出后触发，最接近客户端感知
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
 					ttft = &ms
 				}
+				// 协议用量：input/cache 在 message_start，output 在 message_delta；缺 event 名按 data.type 推断
 				switch string(ev.EventName()) {
 				case "message_start":
 					if t, ok := anthropicStartUsage(ev.Data); ok {
@@ -68,10 +75,13 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
+		// 观测器恰好一次归属：后续分支仅走 Cancel 或 Complete 之一
 		base := anthropicBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, cr, cc)
 		obs := anthropicObserver(p, sel)
 		if err != nil {
+			// 客户端取消 vs 上游停滞：Canceled 为客户端断开，DeadlineExceeded 为上游超时，后者走失败分支
 			if errors.Is(err, context.Canceled) {
+				// 已提交流用量保留：沿用断前已收到的用量，无则 0，记 200+ErrAbort 防丢日志
 				out := base
 				out.Result = ResultClientCancel
 				out.Commit = CommitResponseStarted
@@ -82,6 +92,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatAnthropic, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start)))
 				return 0, nil, true, nil
 			}
+			// 上游流中止：同样保留已收集用量，按连接级/5xx 分类
 			out := base
 			out.Result = ResultFailed
 			out.HTTPStatus = 0
@@ -115,10 +126,12 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	var params anthropic.MessageNewParams
 	if err := json.Unmarshal(body, &params); err != nil {
+		// 本地拒绝：参数校验失败，已占并发槽仅释放不计健康与用量
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 		sel.Release()
 		return 400, nil, true, nil
 	}
+	// 客户端请求模型快照：覆盖前取值用于日志与观测
 	reqModel := params.Model
 	params.Model = sel.Model
 	tpl := tplOf(sel)
@@ -135,10 +148,11 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	_, _ = w.Write(data)
 	var it, ot, tt, cr, cc int64
 	if resp.JSON.Usage.Valid() {
+		// 非流式用量：直接读取响应 usage
 		it, ot, tt, cr, cc = anthropicUsageFromResponse(resp.Usage)
 	}
 	base := anthropicBaseOutcome(reqID, groupID, sel, reqModel, start, nil, it, ot, cr, cc)
-	obs := anthropicObserver(p, sel)
+	obs := anthropicObserver(p, sel) // 恰好一次 Complete 归属
 	out := base
 	out.Result = ResultSuccess
 	out.HTTPStatus = 200
@@ -169,6 +183,7 @@ func anthropicBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection,
 	}
 }
 
+// anthropicObserver 构造恰好一次的观测器：Complete 负责健康与释放，Cancel 仅释放
 func anthropicObserver(p *Proxy, sel *scheduler.Selection) *AttemptObserver {
 	return NewAttemptObserver(nil,
 		func(o AttemptOutcome, e AttemptHealthEvent) { p.sched.MarkResult(o.AccountID, e.Kind, nil, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel) },
