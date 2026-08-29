@@ -263,7 +263,10 @@ func TestFailure_StaleFencedByCanonicalFingerprint(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 	// retry should have fenced and cleared latch, not CAS
-	require.NotEqual(t, int64(6), store.accounts[7].LifecycleRevision, "should not have CASed after fingerprint mismatch")
+	store.mu.Lock()
+	rev := store.accounts[7].LifecycleRevision
+	store.mu.Unlock()
+	require.NotEqual(t, int64(6), rev, "should not have CASed after fingerprint mismatch")
 	latch.mu.Lock()
 	_, stillLatched := latch.m[7]
 	latch.mu.Unlock()
@@ -285,7 +288,10 @@ func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrStaleFailureRevision))
 	// stale should not be retried: callCount should be 1 (no retry)
-	require.Equal(t, 0, len(retryQueue), "stale must not enqueue retry")
+	retryMu.Lock()
+	qlen := len(retryQueue)
+	retryMu.Unlock()
+	require.Equal(t, 0, qlen, "stale must not enqueue retry")
 	ResetFailureRetryForTest()
 }
 
