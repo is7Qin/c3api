@@ -14,6 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -96,19 +97,13 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 
 	if genErr != nil {
 		if !headersSent {
-			// 首帧前失败仍可用 HTTP 状态码直接返回。
-			code := statusOf(genErr)
-			commit := CommitNotSent
-			if code != 0 {
-				commit = CommitUpstreamResponded
+			if sdkbridge.IsFatal(genErr) {
+				code := statusOf(genErr)
+				if code == 0 {
+					code = http.StatusBadGateway
+				}
+				return code, upstreamBody(genErr), false, genErr
 			}
-			terminal := true
-			if code == 429 || code == 0 {
-				terminal = false
-			}
-			outcome := imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
-			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: genErr.Error()}
-			_ = observer.Complete(outcome, health)
 			return statusOf(genErr), upstreamBody(genErr), false, genErr
 		}
 		// 响应头已发出后失败只能写 SSE error 帧；客户端断开与上游错误分开处理。

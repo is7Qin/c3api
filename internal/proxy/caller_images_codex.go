@@ -75,33 +75,19 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
 	opTag := codexImagesOpTag(r)
-	observer := newCodexImagesObserver(p, sel, reqModel, opTag)
 	img, err := p.codex.GenerateImage(ctx, &cred2, params)
 	if err != nil {
-		code := statusOf(err)
-		commit := CommitNotSent
-		if code != 0 {
-			commit = CommitUpstreamResponded
+		if sdkbridge.IsFatal(err) {
+			code := statusOf(err)
+			if code == 0 {
+				code = http.StatusBadGateway
+			}
+			return code, upstreamBody(err), false, err
 		}
-		terminal := true
-		if code == 429 || code == 0 {
-			terminal = false
-		}
-		// fatal 错误由适配层统一触发账号失效，网关不再重试同账号。
-		if isCodexFatal(err) {
-			terminal = true
-			commit = CommitUpstreamResponded
-		}
-		outcome := codexImagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
-		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
-		_ = observer.Complete(outcome, health)
 		return statusOf(err), upstreamBody(err), false, err
 	}
 	wire, err := sdkbridge.MarshalImageResponse(img)
 	if err != nil {
-		outcome := codexImagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, 0, CommitNotSent, false, false, false)
-		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(0), ErrorMessage: err.Error()}
-		_ = observer.Complete(outcome, health)
 		return 0, nil, false, err
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -111,6 +97,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	ii, io, count := billing.ImageUsageFromResponse(wire)
 	usage := AttemptUsage{InputTokens: ii, OutputTokens: io, CallCount: count}
 	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}
+	observer := newCodexImagesObserver(p, sel, reqModel, opTag)
 	outcome := codexImagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
 	_ = observer.Complete(outcome, health)
@@ -147,9 +134,7 @@ func codexImagesOutcome(reqID string, sel *scheduler.Selection, reqModel string,
 }
 
 func isCodexFatal(err error) bool {
-	// sdkbridge fatal errors are those that trigger FailAccount; use errors.As with generic check
-	// rely on status code 0 + known fatal classification via helper if available; fallback to false
-	return false
+	return sdkbridge.IsFatal(err)
 }
 
 // codexImagesFor 按端点路径选择 codex 调用器。

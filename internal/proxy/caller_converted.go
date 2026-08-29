@@ -47,15 +47,10 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 
 	if stream {
 		reqModel := gjson.GetBytes(body, "model").String()
-		observer := newConvertedObserver(p, sel, reqModel, opTag)
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
 		streamBody, err := setModel(body, sel.Model)
 		if err != nil {
-			status := AttemptStatus(0)
-			outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, status, CommitNotSent, false, false, false)
-			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(0), ErrorMessage: err.Error()}
-			_ = observer.Complete(outcome, health)
 			return 0, nil, false, err
 		}
 		var resp *http.Response
@@ -66,38 +61,11 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			resp, err = p.clients.AnthMessageStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody)
 		}
 		if err != nil {
-			// 转换失败或上游错误统一交给 observer；客户端格式只影响最终响应写出。
-			code := statusOf(err)
-			var commit CommitState
-			if code == 0 {
-				commit = CommitNotSent
-			} else {
-				commit = CommitUpstreamResponded
-			}
-			terminal := true
-			if code == 429 {
-				terminal = false
-			}
-			if code == 0 {
-				terminal = false
-			}
-			outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
-			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
-			_ = observer.Complete(outcome, health)
 			return statusOf(err), upstreamBody(err), false, err
 		}
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
-			code := resp.StatusCode
-			commit := CommitUpstreamResponded
-			terminal := true
-			if code == 429 {
-				terminal = false
-			}
-			outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
-			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: string(rb)}
-			_ = observer.Complete(outcome, health)
 			return resp.StatusCode, rb, false, nil
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -140,6 +108,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		u := usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}
 		usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
+		observer := newConvertedObserver(p, sel, reqModel, opTag)
 		if err != nil {
 			// 客户端取消与上游中断区分：取消不计健康惩罚，仍需计费落账。
 			if errors.Is(err, context.Canceled) {
@@ -212,33 +181,10 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		}
 	}
 	if upstreamErr != nil {
-		observer := newConvertedObserver(p, sel, reqModel, opTag)
-		code := statusOf(upstreamErr)
-		var commit CommitState
-		if code == 0 {
-			commit = CommitNotSent
-		} else {
-			commit = CommitUpstreamResponded
-		}
-		terminal := true
-		if code == 429 {
-			terminal = false
-		}
-		if code == 0 {
-			terminal = false
-		}
-		outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
-		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: upstreamErr.Error()}
-		_ = observer.Complete(outcome, health)
 		return statusOf(upstreamErr), upstreamBody(upstreamErr), false, upstreamErr
 	}
 	conv, err := protoconv.ConvertResponse(data, c.dir)
 	if err != nil {
-		observer := newConvertedObserver(p, sel, reqModel, opTag)
-		usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
-		outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, usage, ResultFailed, 500, CommitUpstreamResponded, false, true, true)
-		health := &AttemptHealthEvent{Kind: rule.Kind5xx, ErrorMessage: err.Error()}
-		_ = observer.Complete(outcome, health)
 		return http.StatusInternalServerError, nil, false, fmt.Errorf("protocol response conversion failed: %w", err)
 	}
 	w.Header().Set("Content-Type", "application/json")
