@@ -120,12 +120,14 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		return true, 0, ""
 	}
 	if sdkbridge.IsFatal(dialErr) {
+		base := wsDispatchedBase(sel, reqModel, start)
+		out := wsOutcomeForUpstreamStatus(base, 500, usageTuple{}, nil)
+		obs := NewAttemptObserver(nil, nil, nil, nil)
+		_ = obs.Complete(out, nil)
 		msg := domain.TruncateErrMsg(dialErr.Error())
 		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, 0, domain.ErrNetwork, usageTuple{}, start))
 		l.ErrorMessage = &msg
 		p.finish(sel, l)
-		// fatal 用户帧固定文案（不泄 SDK 内部机制串）；:125-127 已落盘 dialErr
-		// 原文——落盘是唯一留痕。
 		wsWriteError(client, codexAuthFailedMsg)
 		return true, 0, ""
 	}
@@ -136,13 +138,15 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		return false, code, domain.TruncateErrMsg(msg)
 	case code >= 400 && code < 500:
 		em := domain.TruncateErrMsg(msg)
+		base := wsDispatchedBase(sel, reqModel, start)
+		out := wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
+		obs := NewAttemptObserver(nil, nil, nil, nil)
+		_ = obs.Complete(out, nil)
 		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, code, domain.Err4xx, usageTuple{}, start))
 		if em != "" {
 			l.ErrorMessage = &em
 		}
 		p.finish(sel, l)
-		// R-1 规则驱动（与 REST 4xx 同公式）：Classify(Kind4xx) → punish 投递 → UnifiedMessage/passthrough 帧。
-		// WS 无 HTTP 状态码，ResponseCode 维度自然无效，仅 CustomMessage 生效；DialError Refreshed=true 无特殊处理。
 		then, punish := p.sched.Classify(rule.Event{AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code, Model: sel.Model, ErrorMessage: em})
 		if punish {
 			p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em, sel.Model)

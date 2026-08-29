@@ -16,7 +16,6 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -268,31 +267,25 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	if ttft != nil {
 		logCtx = context.WithValue(relayCtx, ctxKeyTTFT{}, ttft)
 	}
-	// 记录全部先行、关闭帧后发：客户端"感知会话结束"与"用量记录入队"之间有
-	// 竞态窗口——若先发关闭帧，对侧读到后立刻断开/网关停机收尾（rec.Close），
-	// finish 的 Record 落在 Close 之后即丢（无消费者）。先入队再关，任何时序下
-	// 记录不丢（优雅停机"等在途归零"语义）。
 	end, endErr := relayClassify(upClose, upErr, clientErr, pingErr)
+	base := wsDispatchedBase(sel, reqModel, start)
 	switch end {
 	case relayEndUpstreamClosed:
-		_ = up.Close(websocket.StatusNormalClosure, "") // 完成关闭握手（上游已发关闭帧）
-		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-		p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrNone, u, start)))
+		_ = up.Close(websocket.StatusNormalClosure, "")
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForSuccess(base, ttft, u), sel, reqID, groupID, reqModel, start, u, ttft)
 		_ = client.Close(websocket.StatusNormalClosure, "")
 	case relayEndClientAbort:
-		// 客户端已死/已关闭，免握手等待
 		_ = client.CloseNow()
 		code := websocket.StatusGoingAway
 		if isNormalWSClose(endErr) {
 			code = wsCloseStatus(endErr)
 		}
-		p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
-		_ = up.Close(code, "") // 向上游传播客户端关闭
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForClientAbort(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft)
+		_ = up.Close(code, "")
 	case relayEndUpstreamError:
-		p.recordStreamAbort(logCtx, reqID, groupID, start, sel, reqModel, u, endErr)
-		p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(0), nil, 0, endErr.Error(), sel.Model)
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForUpstreamError(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft)
 		_ = client.Close(wsCloseStatus(endErr), "")
-		up.CloseNow() // 上游已死/失联，免握手等待
+		up.CloseNow()
 	}
 	relayCancel()
 	wg.Wait()
