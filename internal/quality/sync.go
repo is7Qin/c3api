@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -967,7 +968,19 @@ func isRowDataError(err error) bool {
 		return false
 	}
 	var rde *RowDataError
-	return errors.As(err, &rde)
+	if errors.As(err, &rde) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if len(pgErr.Code) >= 2 {
+			prefix := pgErr.Code[:2]
+			if prefix == "22" || prefix == "23" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) error {
@@ -998,6 +1011,12 @@ func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) error
 			Images:               r.qm.images,
 		}
 		if err := w.pg.UpsertQualityAndMarkDirty(ctx, row); err != nil {
+			if isRowDataError(err) {
+				var rde *RowDataError
+				if !errors.As(err, &rde) {
+					return &RowDataError{Msg: err.Error(), Cause: err}
+				}
+			}
 			return err
 		}
 	}
