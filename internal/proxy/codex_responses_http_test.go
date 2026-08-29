@@ -952,4 +952,3 @@ func TestCodexResponsesStreamClientDisconnect(t *testing.T) {
 	require.Equal(t, http.StatusOK, store.logs[0].StatusCode)
 	require.Equal(t, domain.FormatOpenAIResponses, store.logs[0].Format)
 }
-

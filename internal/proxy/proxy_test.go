@@ -932,5 +932,3 @@ func TestProxyCredentialUnknownTypeRejectsNoUpstreamCall(t *testing.T) {
 	require.Zero(t, ri.Concurrency, "凭据错误路径也必须释放并发槽")
 	require.Zero(t, p.rec.Pending(), "网络失败行不产生明细 pending（err_logs 承载）")
 }
-
-

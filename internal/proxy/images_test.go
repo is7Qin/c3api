@@ -603,4 +603,3 @@ func newTestImagesProxyWithBill(t *testing.T, upstream string, bill *BillingHook
 func billingBalances() *billing.Balances {
 	return billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil)
 }
-
