@@ -213,23 +213,38 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			if handled {
 				return 0, nil, nil, true, nil
 			}
-			// 首帧转发失败 = 上游未消费请求，保留 not-sent/retryable 信息。
 			if fwMsg == "" {
 				fwMsg = "upstream first frame write failed"
 			}
+			base := wsDispatchedBase(sel, reqModel, start)
+			obs := NewAttemptObserver(nil, nil, nil, nil)
+			_ = obs.Complete(wsOutcomeForNotSentNetwork(base, usageTuple{}), nil)
 			return 0, []byte(fwMsg), nil, false, errors.New(fwMsg)
 		}
 		if stop, code, msg := p.handleCodexDialError(r, reqID, groupID, start, sel, reqModel, st.client, dialErr); stop {
-			// 501/fatal/4xx 已收尾（错误帧 + 记录）——请求终止不转移
 			return 0, nil, nil, true, nil
 		} else {
-			// 429 → Kind429 转移；5xx（归一 lastCode 原样）/RefreshError/
-			// 网络（code 0）→ RuleKindOf(code) 转移——分类由循环统一完成。
+			base := wsDispatchedBase(sel, reqModel, start)
+			var out AttemptOutcome
+			if code == 429 {
+				out = wsOutcomeForUpstreamStatus(base, 429, usageTuple{}, nil)
+			} else if code >= 500 {
+				out = wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
+			} else if code == 0 {
+				out = wsOutcomeForNotSentNetwork(base, usageTuple{})
+			} else {
+				out = wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
+			}
+			obs := NewAttemptObserver(nil, nil, nil, nil)
+			_ = obs.Complete(out, nil)
 			return code, []byte(msg), nil, false, nil
 		}
 	}
 	cred, err := p.credentialFor(ctx, sel)
 	if err != nil {
+		base := wsDispatchedBase(sel, reqModel, start)
+		obs := NewAttemptObserver(nil, nil, nil, nil)
+		_ = obs.Complete(wsOutcomeForNotSentNetwork(base, usageTuple{}), nil)
 		return 0, []byte(domain.TruncateErrMsg(err.Error())), nil, false, err
 	}
 	// 拨号超时上限（黑洞上游接受 TCP 不回 101 → 无界等待占死并发槽）：wrapped
@@ -258,15 +273,11 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		if fwMsg == "" {
 			fwMsg = "upstream first frame write failed"
 		}
+		base2 := wsDispatchedBase(sel, reqModel, start)
+		obs2 := NewAttemptObserver(nil, nil, nil, nil)
+		_ = obs2.Complete(wsOutcomeForNotSentNetwork(base2, usageTuple{}), nil)
 		return 0, []byte(fwMsg), nil, false, errors.New(fwMsg)
 	}
-	// 拨号失败分类（与 handleFormat 的 code 分支同构）：msg 归一 = 上游 body
-	// message（B1 分通道——4xx 无则空、dialErr 全文走 callErr；0/5xx/429 保持
-	// 下方 dialErr 文本回退，纯落盘用途）。code 原样回传——5xx 归一（修复性
-	// 声明：现状 default 分支归 0 → 耗尽记 ErrNetwork + MarkResult httpStatus
-	// 0；统一为 code 原样 → et=Err5xx + httpStatus 5xx，对齐 codex 分支与
-	// HTTP 路径，规则 when http_status 匹配面恢复真实值）；非 429/4xx/5xx 的
-	// 异常状态（2xx/3xx 未升级拒绝）按现状归连接级 0。
 	code := 0
 	var msg string
 	if resp != nil {
@@ -274,18 +285,31 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		msg = upstreamErrMsg(readUpstreamBody(resp))
 		_ = resp.Body.Close()
 	}
+	base := wsDispatchedBase(sel, reqModel, start)
 	if code >= 400 && code < 500 {
-		// 4xx 分通道（B1）：respBody 只放上游 message（无则空——帧侧由 wsSink
-		// emOr 回退固定网关文案）；dialErr 全文走 callErr 通道（failoverLoop
-		// 4xx 分支以 callErr 回退落盘保全文）——SDK 拨号错误文本不再顶替进用
-		// 户可见面。
+		out := wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
+		obs := NewAttemptObserver(nil, nil, nil, nil)
+		_ = obs.Complete(out, nil)
 		return code, []byte(msg), nil, false, dialErr
 	}
 	if msg == "" {
 		msg = dialErr.Error()
 	}
 	if code < 400 || code >= 600 {
-		code = 0 // 连接级/非标准拒绝（含 2xx/3xx 未升级）→ 现状 default 分支语义
+		code = 0
+	}
+	if code == 0 {
+		out := wsOutcomeForNotSentNetwork(base, usageTuple{})
+		obs := NewAttemptObserver(nil, nil, nil, nil)
+		_ = obs.Complete(out, nil)
+	} else if code >= 500 {
+		out := wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
+		obs := NewAttemptObserver(nil, nil, nil, nil)
+		_ = obs.Complete(out, nil)
+	} else if code == 429 {
+		out := wsOutcomeForUpstreamStatus(base, 429, usageTuple{}, nil)
+		obs := NewAttemptObserver(nil, nil, nil, nil)
+		_ = obs.Complete(out, nil)
 	}
 	return code, []byte(msg), nil, false, nil
 }
