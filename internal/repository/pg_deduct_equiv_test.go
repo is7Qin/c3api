@@ -38,8 +38,8 @@ type conservationState struct {
 
 // TestPGSettleLanesConservation 两车道并集守恒 + 双载体等价。
 func TestPGSettleLanesConservation(t *testing.T) {
-	reposCopy := newPGRepos(t)      // pool → pgx 直连事务载体
-	reposEnt := newPGReposNoPool(t) // nil pool → ent txDriver 载体（同 schema）
+	reposCopy := newPGReposShared(t)      // pool → pgx 直连事务载体
+	reposEnt := newPGReposNoPoolShared(t) // nil pool → ent txDriver 载体（同 schema）
 
 	stCopy := runConservationScenario(t, "copy", reposCopy)
 	stEnt := runConservationScenario(t, "ent", reposEnt)
@@ -68,11 +68,11 @@ func runConservationScenario(t *testing.T, tag string, repos *repository.Reposit
 	seedCursorRows(t, repos, fefo.ID, 3, 60_000) // delta 180000 → drawn 150000 + spill 30000
 	z := cursorLog(fefo.ID, 0)                   // 零价行：sweep 车道吸收
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{z}))
-	seedCursorRows(t, repos, rich.ID, 2, 130_000)          // 条件扣 260000
-	seedCursorRows(t, repos, poor.ID, 2, 40_000)           // 透支 80000
-	const ghostUID = int64(910000001)                      // 幽灵：从不建行
-	seedCursorRows(t, repos, ghostUID, 2, 90_000)          // 隔离 180000
-	seedCursorRows(t, repos, 0, 1, 70_000)                 // 匿名 NULL user_id：隔离 70000
+	seedCursorRows(t, repos, rich.ID, 2, 130_000) // 条件扣 260000
+	seedCursorRows(t, repos, poor.ID, 2, 40_000)  // 透支 80000
+	const ghostUID = int64(910000001)             // 幽灵：从不建行
+	seedCursorRows(t, repos, ghostUID, 2, 90_000) // 隔离 180000
+	seedCursorRows(t, repos, 0, 1, 70_000)        // 匿名 NULL user_id：隔离 70000
 
 	all := fetchAllUnbilled(t, repos)
 	require.Len(t, all, 11)
