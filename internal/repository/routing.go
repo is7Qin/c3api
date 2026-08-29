@@ -74,7 +74,7 @@ var routingFlowInstanceColumnDefs = []string{
 var routingFlowInstanceCreateDDL = partitionedCreateDDL("routing_flow_instance_minute", "terminal_minute", routingFlowInstanceColumnDefs)
 
 var routingFlowInstanceIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_flow_instance_minute_uniq ON routing_flow_instance_minute (instance_src, terminal_minute, identity_version, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id)`,
+	`CREATE UNIQUE INDEX routing_flow_instance_minute_uniq ON routing_flow_instance_minute (instance_src, terminal_minute, identity_version, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id) NULLS NOT DISTINCT`,
 	`CREATE INDEX routing_flow_instance_minute_terminal ON routing_flow_instance_minute (terminal_minute)`,
 }
 
@@ -133,7 +133,7 @@ var routingFlowRollupColumnDefs = []string{
 var routingFlowRollupCreateDDL = partitionedCreateDDL("routing_flow_rollup", "terminal_minute", routingFlowRollupColumnDefs)
 
 var routingFlowRollupIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_flow_rollup_uniq ON routing_flow_rollup (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version)`,
+	`CREATE UNIQUE INDEX routing_flow_rollup_uniq ON routing_flow_rollup (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version) NULLS NOT DISTINCT`,
 }
 
 var routingDirtyDDL = `CREATE TABLE IF NOT EXISTS routing_dirty_minute (
@@ -397,10 +397,9 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 		return err
 	}
 	for _, row := range rows {
-		term := row.TerminalMinute.UTC().Truncate(time.Minute)
 		q := `INSERT INTO routing_flow_instance_minute (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, instance_src, absolute_sequence, chain_count, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now())`
-		if err := drv.Exec(ctx, q, []any{row.IdentityVersion, row.RouteClassID[:], term, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, row.Generation, row.CandidateFingerprint[:], row.InstanceSrc, absoluteSequence, row.ChainCount}, &res); err != nil {
+		if err := drv.Exec(ctx, q, []any{identityVersion, row.RouteClassID[:], terminalMinute, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, row.Generation, row.CandidateFingerprint[:], instanceSrc, absoluteSequence, row.ChainCount}, &res); err != nil {
 			return err
 		}
 	}
@@ -626,9 +625,15 @@ func (r *PartitionRepo) RollupFlow(ctx context.Context, terminalMinute time.Time
 		}
 	}
 	if hasFact {
+		if err := drv.Exec(ctx, `DELETE FROM routing_flow_rollup WHERE terminal_minute=$1 AND identity_version=$2`, []any{terminalMinute, version}, &res); err != nil {
+			return err
+		}
 		if err := drv.Exec(ctx, `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, updated_at)
-	SELECT identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, now() FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2
-	ON CONFLICT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version) DO UPDATE SET previous_account_id=EXCLUDED.previous_account_id, previous_outcome=EXCLUDED.previous_outcome, transition_reason=EXCLUDED.transition_reason, outcome=EXCLUDED.outcome, is_terminal=EXCLUDED.is_terminal, generation=EXCLUDED.generation, absolute_sequence=EXCLUDED.absolute_sequence, chain_count=EXCLUDED.chain_count, updated_at=now()`, []any{terminalMinute, version}, &res); err != nil {
+	SELECT identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, now() FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2`, []any{terminalMinute, version}, &res); err != nil {
+			return err
+		}
+	} else if hasSnap {
+		if err := drv.Exec(ctx, `DELETE FROM routing_flow_rollup WHERE terminal_minute=$1 AND identity_version=$2`, []any{terminalMinute, version}, &res); err != nil {
 			return err
 		}
 	}
