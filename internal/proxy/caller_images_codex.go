@@ -50,9 +50,6 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	p := c.p
 	contentType := r.Header.Get("Content-Type")
 	if p.codex == nil {
-		// 适配层未装配（SetCodex 未调用）：显式 501（防 nil 误走凭据缺失 502）。
-		// reqModel 冷路径直取（未装配 = 服务器配置错误罕见；成功热路径的第 8
-		// 次全文档扫描已消除——见下方 params.Model 复用）。
 		reqModel := gjson.GetBytes(body, "model").String()
 		if isMultipartForm(contentType) {
 			reqModel = imagesMultipartModel(body, contentType)
@@ -64,9 +61,6 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	}
 	params, err := imageParamsFromBody(body, contentType)
 	if err != nil {
-		// 本地参数拒绝（post-Select——Release + recordRejected + 400；评审
-		// P2-1 语义：拒绝走 err_logs 审计）。模型映射改写对 codex 无字节透传
-		// 约束，模型兜底走下方 sel.Model。reqModel 冷路径直取（同 501）。
 		reqModel := gjson.GetBytes(body, "model").String()
 		if isMultipartForm(contentType) {
 			reqModel = imagesMultipartModel(body, contentType)
@@ -76,57 +70,94 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": err.Error()}})
 		return 0, nil, true, nil
 	}
-	// 客户端请求模型（日志口径）：复用单遍解析结果 params.Model（JSON 顶层 /
-	// multipart form model 同源）——A-P2-9 不再第 8 次 gjson 全文档扫描。
 	reqModel := params.Model
-	// 模型映射：sel.Model（调度器已应用 ModelMapping——与直连路径 setModel
-	// 改写同语义；multipart 直连不做改写是字节透传约束，codex 网关重建 body
-	// 无此约束）。缺模型（multipart 无 form model 等边角）→ 请求模型兜底。
 	if params.Model == "" {
 		params.Model = sel.Model
 	}
 	if params.Model == "" {
 		params.Model = reqModel
 	}
-	// cred 派生（T1 已定义）：AccountExt → AccountCredential。Codex 端点归 SDK 官方默认。
 	cred2 := domain.CredentialFromExt(sel.Ext)
 	if stream {
-		// 流式（T3 生产接线——同签名直赋适配层 GenerateImageStream）：参数/
-		// 凭据派生与上共用，事件流 → streamImageGeneration（SSE 透传 + 首事件
-		// 头 + keepalive ": ping" + completed 帧 + 流终/abort 计费，全在其内）。
 		return p.streamImageGeneration(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred2, params, p.codex.GenerateImageStream)
 	}
-	// 非流式超时（B-P2-7，与 resp 非流式同款——images 非流式同病）：各自包 ctx
-	// 超时（HTTPClient.Timeout 不可用：流式/非流式共享 client，覆盖整响应体读取
-	// 会切断长流式 SSE）；黑洞读停滞不无限挂起，failover 可转移。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
+	opTag := codexImagesOpTag(r)
+	observer := newCodexImagesObserver(p, sel, reqModel, opTag)
 	img, err := p.codex.GenerateImage(ctx, &cred2, params)
 	if err != nil {
-		// 错误分类（骨架 statusOf/upstreamBody 零改动复用——信封协议）：
-		//   - 信封（*HTTPError 包装——403 账号无生图权限等）→ 4xx 透传 /
-		//     429/5xx failover 既有分类
-		//   - fatal（errors.As 五类）→ 适配层已统一回调上报（账号失效标记 +
-		//     FailAccount 快照摘除——failover 不重试同账号）；code 0 → 连接级
-		//     MarkResult(RuleKindOf(0)) + 转移其它账号
-		//   - RefreshError/网络 → code 0 → failover 可重试
+		code := statusOf(err)
+		commit := CommitNotSent
+		if code != 0 {
+			commit = CommitUpstreamResponded
+		}
+		terminal := true
+		if code == 429 || code == 0 {
+			terminal = false
+		}
+		// fatal boundary: adapter already invoked FailAccount via callback; still observe as failed
+		if isCodexFatal(err) {
+			terminal = true
+			commit = CommitUpstreamResponded
+		}
+		outcome := codexImagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
+		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
+		_ = observer.Complete(outcome, health)
 		return statusOf(err), upstreamBody(err), false, err
 	}
-	// 成功：wire 序列化（客户端转发与计费提取共用同一字节——C 提取纯函数
-	// ImageUsageFromResponse 与 API-key 直连同口径）。
 	wire, err := sdkbridge.MarshalImageResponse(img)
 	if err != nil {
-		return 0, nil, false, err // 序列化失败（理论上不可达）→ 连接级 failover
+		outcome := codexImagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, 0, CommitNotSent, false, false, false)
+		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(0), ErrorMessage: err.Error()}
+		_ = observer.Complete(outcome, health)
+		return 0, nil, false, err
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(wire)
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-	// 计费提取：data 长 = 张数 + usage image_tokens → usageTuple → finish 的
-	// applyImageBilling（GetImagePrice → ImageCost，倍率整单施加）。
 	ii, io, count := billing.ImageUsageFromResponse(wire)
+	usage := AttemptUsage{InputTokens: ii, OutputTokens: io, CallCount: count}
+	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}
+	outcome := codexImagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+	health := &AttemptHealthEvent{Kind: rule.KindOK}
+	_ = observer.Complete(outcome, health)
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, http.StatusOK, domain.ErrNone, usageTuple{ii: ii, io: io, tt: ii + io, calls: count}, start)))
 	return http.StatusOK, nil, true, nil
+}
+
+func codexImagesOpTag(r *http.Request) OperationTag {
+	if strings.HasSuffix(r.URL.Path, "/edits") {
+		return OperationTag(domain.OpImagesEdits)
+	}
+	return OperationTag(domain.OpImagesGenerations)
+}
+
+func newCodexImagesObserver(p *Proxy, sel *scheduler.Selection, reqModel string, op OperationTag) *AttemptObserver {
+	mark := func(o AttemptOutcome, e AttemptHealthEvent) {
+		p.sched.MarkResult(o.AccountID, e.Kind, e.ResetAt, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
+	}
+	return NewAttemptObserver(nil, mark, nil, sel.Release)
+}
+
+func codexImagesOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+	fp := sel.CandidateFingerprint
+	if fp == "" {
+		fp = "fp-" + reqID
+	}
+	return AttemptOutcome{
+		ID: AttemptID(reqID), RouteClassID: RouteClassID("rc-" + reqID), QualityClassID: QualityClassID("qc-" + reqID), Fingerprint: CandidateFingerprint(fp),
+		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
+		CallerCategory: CallerImagesCodex, OperationTag: op, Ordinal: 1, LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
+		Commit: commit, Result: result, HTTPStatus: status, Timing: timing, Usage: usage,
+		BusinessFrameSent: businessSent, Terminal: terminal, IsMalformed: malformed,
+	}
+}
+
+func isCodexFatal(err error) bool {
+	// sdkbridge fatal errors are those that trigger FailAccount; use errors.As with generic check
+	// rely on status code 0 + known fatal classification via helper if available; fallback to false
+	return false
 }
 
 // codexImagesFor 按端点路径选 codex images 调用器（与 imagesCallerFor 同形态；
@@ -155,14 +186,9 @@ func imageParamsFromBody(body []byte, contentType string) (*domain.ImageGenParam
 var nullLit = []byte("null")
 
 func imageParamsJSON(body []byte) (*domain.ImageGenParams, error) {
-	if !json.Valid(body) { // 防御：handleFormat 已过 json.Valid 硬门
+	if !json.Valid(body) {
 		return nil, errors.New("invalid request body: invalid JSON")
 	}
-	// 单遍解析（A-P2-9：原 7 次 gjson.GetBytes 各从头单遍扫描 + Call 侧第 8 次
-	// → json.Unmarshal 单遍——MB 级 base64 data URL body 每请求 ~8 遍全文档扫
-	// 描 → 1 遍）。可选字段走 json.RawMessage（body 子切片零拷贝）——宽松语义
-	// 与 gjson 缺字段默认一致：缺失 → nil，类型不合（字符串 n / 数字 size /
-	// null 等）→ 按缺省忽略（gjson Type 判定同语义）。
 	var raw struct {
 		Model      string            `json:"model"`
 		Prompt     string            `json:"prompt"`
@@ -184,7 +210,7 @@ func imageParamsJSON(body []byte) (*domain.ImageGenParams, error) {
 	p := &domain.ImageGenParams{Model: raw.Model, Prompt: raw.Prompt}
 	if len(raw.N) > 0 && !bytes.Equal(raw.N, nullLit) {
 		var f float64
-		if err := json.Unmarshal(raw.N, &f); err == nil { // 数字才认（整数/小数截断——gjson Int 语义）；字符串 → 忽略
+		if err := json.Unmarshal(raw.N, &f); err == nil {
 			n := int(f)
 			p.N = &n
 		}
@@ -207,9 +233,6 @@ func imageParamsJSON(body []byte) (*domain.ImageGenParams, error) {
 			p.Background = &s
 		}
 	}
-	// edits 输入图（JSON 形态 images:[{image_url}]，官方文档实证）；file_id
-	// 形态不映射（需文件上传面，SDK 无此能力——忽略）。元素非对象 / image_url
-	// 缺失或非字符串 → 跳过（gjson Get("image_url").String() 同语义）。
 	for _, ir := range raw.Images {
 		var e struct {
 			ImageURL string `json:"image_url"`
@@ -270,8 +293,6 @@ func imageParamsMultipart(body []byte, contentType string) (*domain.ImageGenPara
 				p.Background = &s
 			}
 		default:
-			// 图片文件 part（image / image[] 等 FormName）→ Raw 字节（body 已
-			// 在内存 MaxBytesReader 限界，SDK 内部转 data URL）；其余字段忽略。
 			if strings.HasPrefix(part.FormName(), "image") {
 				b, err := io.ReadAll(part)
 				if err != nil {

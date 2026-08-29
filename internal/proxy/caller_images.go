@@ -47,50 +47,58 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	p := c.p
 	contentType := r.Header.Get("Content-Type")
 	multipart := isMultipartForm(contentType)
-	// 客户端请求模型：JSON 形态 gjson 顶层提取；multipart 形态 form 字段提取
-	// （handleFormat 已提取一次用于调度——调用器侧再取一次供日志，与 chat
-	// caller 的 reqModel 提取同构；body 已在内存，零 IO）。
 	reqModel := gjson.GetBytes(body, "model").String()
 	if multipart {
 		reqModel = imagesMultipartModel(body, contentType)
 	}
-	// 模型映射改写：JSON 形态 setModel（ModelMapping 语义，与 chat 同构；
-	// 改写失败原样转发——body 已过 json.Valid，防御性兜底）；multipart 形态
-	// 不做改写（form model 字段原样透传，spec §5.1 声明）。
 	upBody := body
 	if !multipart {
 		if nb, err := setModel(body, sel.Model); err == nil {
 			upBody = nb
 		}
 	}
-	// 上游 Content-Type：multipart 保留客户端完整值（boundary 必须一致——
-	// 转发字节原样）；JSON 空串由 aiclient 补 application/json。
 	upCT := ""
 	if multipart {
 		upCT = contentType
 	}
+	opTag := OperationTag(c.op)
 
 	if stream {
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
+		observer := newImagesObserver(p, sel, reqModel, opTag)
 		resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.path, cred, upCT, upBody)
 		if err != nil {
+			code := statusOf(err)
+			commit := CommitNotSent
+			if code != 0 {
+				commit = CommitUpstreamResponded
+			}
+			terminal := true
+			if code == 429 || code == 0 {
+				terminal = false
+			}
+			outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
+			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
+			_ = observer.Complete(outcome, health)
 			return statusOf(err), upstreamBody(err), false, err
 		}
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
+			code := resp.StatusCode
+			terminal := true
+			if code == 429 {
+				terminal = false
+			}
+			outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), CommitUpstreamResponded, false, terminal, false)
+			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: string(rb)}
+			_ = observer.Complete(outcome, health)
 			return resp.StatusCode, rb, false, nil
 		}
-		// SSE 响应头与 chat 流式一致（relay 只转发字节，不代设头）
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Accel-Buffering", "no")
-		// TTFT 采集（首 chunk 时间毫秒，同 chat 流式）+ usage 提取（A-P1-2 接
-		// 线——每帧 data 走 billing.ImageStreamEvent：count 累积 + ii/io 取最后
-		// 一个 completed 帧的 usage（覆盖语义，对齐 caller_images_stream.go codex
-		// 路径口径——写成累积求和多图请求差 N 倍）；即时提取标量、不保留跨帧
-		// 切片（relay 缓冲复用纪律，relay.go:21-27）。
 		var ttft *int64
 		var imgCount, imgII, imgIO int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
@@ -101,7 +109,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 				}
 				if ok, ii, io := billing.ImageStreamEvent(ev.Data); ok {
 					imgCount++
-					imgII, imgIO = ii, io // 覆盖语义：usage 取末次 completed 帧
+					imgII, imgIO = ii, io
 				}
 			},
 		})
@@ -109,43 +117,74 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
-		// 流终落账元组（对齐 caller_images_stream.go 口径）：ii/io = image
-		// tokens、tt = 之和、img = completed 帧计数；三处落账点共用。
 		u := usageTuple{ii: imgII, io: imgIO, tt: imgII + imgIO, calls: imgCount}
+		usage := AttemptUsage{InputTokens: imgII, OutputTokens: imgIO, CallCount: imgCount}
+		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 		if err != nil {
-			// 客户端断开：上游已消费请求（成功），仍须记录用量（同 chat 语义）。
-			// errors.Is(err, context.Canceled) 即客户端断开——sserelay.normalize
-			// 已区分三类（C-P2-2）：上游停滞超时 → DeadlineExceeded 走上游错误分支。
 			if errors.Is(err, context.Canceled) {
+				outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, ttft != nil, true, false)
+				_ = observer.Cancel(outcome)
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
 			}
-			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, u, err)
-			p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(statusOf(err)), nil, statusOf(err), err.Error(), sel.Model)
+			code := statusOf(err)
+			commit := CommitUpstreamResponded
+			business := false
+			if code == 0 {
+				commit = CommitSentAmbiguous
+				business = true
+			}
+			outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false)
+			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
+			_ = observer.Complete(outcome, health)
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
-		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
+		outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+		health := &AttemptHealthEvent{Kind: rule.KindOK}
+		_ = observer.Complete(outcome, health)
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, 200, domain.ErrNone, u, start)))
 		return 200, nil, true, nil
 	}
 
-	// 非流式：直连透传——上游响应原样转发（响应零改写零损失）+ **计费提取
-	// （T2 P3-4 遗留接入）**：复用 C 的 image_usage 提取纯函数
-	// （ImageUsageFromResponse——data 长 = 张数 + usage image_tokens，与 codex
-	// 路径同口径）→ ImageCost 落账含 image 分量（压测期直连计费分量恒 0 的
-	// 收敛）。提取在已读入的转发字节上执行——零额外解析零分配。
 	resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.path, cred, upCT, upBody)
 	if err != nil {
+		observer := newImagesObserver(p, sel, reqModel, opTag)
+		code := statusOf(err)
+		commit := CommitNotSent
+		if code != 0 {
+			commit = CommitUpstreamResponded
+		}
+		terminal := true
+		if code == 429 || code == 0 {
+			terminal = false
+		}
+		outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
+		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
+		_ = observer.Complete(outcome, health)
 		return statusOf(err), upstreamBody(err), false, err
 	}
 	if resp.StatusCode != http.StatusOK {
+		observer := newImagesObserver(p, sel, reqModel, opTag)
 		rb := readUpstreamBody(resp)
 		resp.Body.Close()
+		code := resp.StatusCode
+		terminal := true
+		if code == 429 {
+			terminal = false
+		}
+		outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), CommitUpstreamResponded, false, terminal, false)
+		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: string(rb)}
+		_ = observer.Complete(outcome, health)
 		return resp.StatusCode, rb, false, nil
 	}
 	data, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
+		observer := newImagesObserver(p, sel, reqModel, opTag)
+		outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, 0, CommitNotSent, false, false, false)
+		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(0), ErrorMessage: err.Error()}
+		_ = observer.Complete(outcome, health)
 		return 0, nil, false, err
 	}
 	ct := resp.Header.Get("Content-Type")
@@ -155,12 +194,36 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-	// usage 提取（codexImagesCaller 同款形态：ii/io = image tokens，tt = 之和，
-	// img = data 数组长；gjson 输入字节直读零分配）。
 	ii, io, count := billing.ImageUsageFromResponse(data)
+	observer := newImagesObserver(p, sel, reqModel, opTag)
+	usage := AttemptUsage{InputTokens: ii, OutputTokens: io, CallCount: count}
+	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}
+	outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+	health := &AttemptHealthEvent{Kind: rule.KindOK}
+	_ = observer.Complete(outcome, health)
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, 200, domain.ErrNone, usageTuple{ii: ii, io: io, tt: ii + io, calls: count}, start)))
 	return 200, nil, true, nil
+}
+
+func newImagesObserver(p *Proxy, sel *scheduler.Selection, reqModel string, op OperationTag) *AttemptObserver {
+	mark := func(o AttemptOutcome, e AttemptHealthEvent) {
+		p.sched.MarkResult(o.AccountID, e.Kind, e.ResetAt, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
+	}
+	return NewAttemptObserver(nil, mark, nil, sel.Release)
+}
+
+func imagesOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+	fp := sel.CandidateFingerprint
+	if fp == "" {
+		fp = "fp-" + reqID
+	}
+	return AttemptOutcome{
+		ID: AttemptID(reqID), RouteClassID: RouteClassID("rc-" + reqID), QualityClassID: QualityClassID("qc-" + reqID), Fingerprint: CandidateFingerprint(fp),
+		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
+		CallerCategory: CallerImages, OperationTag: op, Ordinal: 1, LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
+		Commit: commit, Result: result, HTTPStatus: status, Timing: timing, Usage: usage,
+		BusinessFrameSent: businessSent, Terminal: terminal, IsMalformed: malformed,
+	}
 }
 
 // isMultipartForm Content-Type 是否 multipart/form-data（Task B images 双协议
