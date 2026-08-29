@@ -18,7 +18,7 @@ import (
 // TestPGGroupMultiplierDefault 组倍率默认 10000（T3.5）：Create 缺省（service
 // 归一 10000 恒写入）→ ×1；LoadGroupMultipliers 全量读出。
 func TestPGGroupMultiplierDefault(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "def-mult", Visibility: domain.GroupVisibilityPublic, PriceMultiplier: 10000})
 	require.NoError(t, err)
@@ -36,7 +36,7 @@ func TestPGGroupMultiplierDefault(t *testing.T) {
 // TestPGGroupMultiplierSetUpdate 组倍率显式设置 + 更新（T3.5）：Create 设
 // 15000 → 读回；Update 显式 0 = 免费组 → 读回 0；再改 20000 → 读回。
 func TestPGGroupMultiplierSetUpdate(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{
 		Name: "mult-g", Visibility: domain.GroupVisibilityPublic, PriceMultiplier: 15000,
@@ -63,7 +63,7 @@ func TestPGGroupMultiplierSetUpdate(t *testing.T) {
 // TestPGAssignmentMultiplierRoundtrip 用户-组专属倍率 roundtrip（T3.5 修正：
 // 按组挂载）：设置/读回/清除（nil）/再设置；同用户不同组倍率互不干扰。
 func TestPGAssignmentMultiplierRoundtrip(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	g1, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "am-g1", Visibility: domain.GroupVisibilityPublic, PriceMultiplier: 10000})
 	require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestPGAssignmentMultiplierRoundtrip(t *testing.T) {
 // TestPGLoadAssignmentMultipliers LoadAssignmentMultipliers：仅 price_multiplier
 // 非 NULL 行进入 map（存在 = 已设置；缺失 = 未设置 → 用组倍率）；撤销后行消失。
 func TestPGLoadAssignmentMultipliers(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	g1, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "lam-g1", Visibility: domain.GroupVisibilityPublic, PriceMultiplier: 10000})
 	require.NoError(t, err)
@@ -144,7 +144,7 @@ func TestPGLoadAssignmentMultipliers(t *testing.T) {
 // TestPGLoadBalances LoadBalances（T3.5 修正后仅余额——用户倍率按组挂载，
 // 由 LoadAssignmentMultipliers 单独加载）。
 func TestPGLoadBalances(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u1 := seedPGUser(t, repos, "lb1@example.com")
 	u2 := seedPGUser(t, repos, "lb2@example.com")
