@@ -4,6 +4,8 @@ package scheduler
 import (
 	"sync"
 	"sync/atomic"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // StaticView holds immutable DB-derived state: groups and byID leaves.
@@ -48,11 +50,14 @@ type decisionLeaf struct {
 	cooldownUntil *string
 }
 
-// RouteRef identifies a compiled route (group + format + model).
+// RouteRef identifies a compiled route including full route identity: group + format + model + operation + canonical RouteClassID.
+// OperationTag and RouteClassID prevent collisions between Responses/WS/images/search sharing format/model.
 type RouteRef struct {
-	GroupID int64
-	Format  string
-	Model   string
+	GroupID      int64
+	Format       string
+	Model        string
+	OperationTag string
+	RouteClassID string // hex of domain.RouteClassIDVal
 }
 
 // RouteDecision holds immutable per-route lane classification.
@@ -81,13 +86,58 @@ func (d *DecisionView) Routes() map[RouteRef]*RouteDecision {
 	return d.routes
 }
 
-// Route returns decision for a specific route.
+// Route returns decision for a specific route (compat: computes canonical identity when OperationTag/RouteClassID empty).
 func (d *DecisionView) Route(groupID int64, format string, model string) (*RouteDecision, bool) {
 	if d == nil || d.routes == nil {
 		return nil, false
 	}
+	// Fast path exact if caller built canonical ref elsewhere.
 	v, ok := d.routes[RouteRef{GroupID: groupID, Format: format, Model: model}]
+	if ok {
+		return v, ok
+	}
+	rr := RouteRefFor(groupID, format, model)
+	v, ok = d.routes[rr]
 	return v, ok
+}
+
+// RouteRefFor builds canonical RouteRef for group/format/model (fails closed on invalid -> empty RouteClassID).
+func RouteRefFor(groupID int64, format string, model string) RouteRef {
+	op := operationTagForFormat(format)
+	rc := ""
+	if rf, ok := parseRequestFormat(format); ok && op != "" {
+		if id, err := domain.RouteClassID(groupID, rf, model, op); err == nil {
+			rc = domain.RouteClassIDHex(id)
+		}
+	}
+	return RouteRef{GroupID: groupID, Format: format, Model: model, OperationTag: string(op), RouteClassID: rc}
+}
+
+func parseRequestFormat(s string) (domain.RequestFormat, bool) {
+	rf := domain.RequestFormat(s)
+	if !rf.Valid() {
+		return "", false
+	}
+	return rf, true
+}
+
+func operationTagForFormat(format string) domain.OperationTag {
+	switch domain.RequestFormat(format) {
+	case domain.FormatOpenAIChat:
+		return domain.OpChatCompletions
+	case domain.FormatOpenAIResponses:
+		return domain.OpResponses
+	case domain.FormatOpenAIResponsesWS:
+		return domain.OpResponsesWS
+	case domain.FormatAnthropic:
+		return domain.OpAnthropicMessages
+	case domain.FormatOpenAIImages:
+		return domain.OpImagesGenerations
+	case domain.FormatOpenAISearch:
+		return domain.OpSearch
+	default:
+		return ""
+	}
 }
 
 // RoutingView explicitly holds immutable *StaticView and *DecisionView.
