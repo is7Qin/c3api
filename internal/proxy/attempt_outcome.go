@@ -21,6 +21,10 @@ type RouteClassID string
 
 type CandidateFingerprint string
 
+type QualityClassID string
+
+type OperationTag string
+
 type LifecycleRevision int64
 
 type LaneID string
@@ -168,7 +172,15 @@ func (c CallerCategory) Valid() bool {
 type AttemptOutcome struct {
 	ID                AttemptID
 	RouteClassID      RouteClassID
+	QualityClassID    QualityClassID
 	Fingerprint       CandidateFingerprint
+	TemplateID        int64
+	AccountID         int64
+	RequestedModel    string
+	MappedModel       string
+	CallerCategory    CallerCategory
+	OperationTag      OperationTag
+	Ordinal           uint8
 	LifecycleRevision LifecycleRevision
 	Lane              LaneID
 	Generation        Generation
@@ -258,11 +270,35 @@ func (o AttemptOutcome) Validate() error {
 		if o.RouteClassID == "" {
 			return fmt.Errorf("RouteClassID required for dispatched attempt")
 		}
+		if o.QualityClassID == "" {
+			return fmt.Errorf("QualityClassID required for dispatched attempt")
+		}
 		if o.Fingerprint == "" {
 			return fmt.Errorf("Fingerprint required for dispatched attempt")
 		}
+		if o.TemplateID == 0 {
+			return fmt.Errorf("TemplateID required for dispatched attempt")
+		}
+		if o.AccountID == 0 {
+			return fmt.Errorf("AccountID required for dispatched attempt")
+		}
+		if o.RequestedModel == "" {
+			return fmt.Errorf("RequestedModel required for dispatched attempt")
+		}
+		if o.MappedModel == "" {
+			return fmt.Errorf("MappedModel required for dispatched attempt")
+		}
+		if !o.CallerCategory.Valid() {
+			return fmt.Errorf("CallerCategory required and must be valid for dispatched attempt")
+		}
+		if o.OperationTag == "" {
+			return fmt.Errorf("OperationTag required for dispatched attempt")
+		}
 		if !o.Lane.Valid() {
 			return fmt.Errorf("Lane required and must be valid for dispatched attempt")
+		}
+		if o.Ordinal == 0 {
+			return fmt.Errorf("Ordinal must be >0 for dispatched attempt")
 		}
 		if o.Generation <= 0 {
 			return fmt.Errorf("Generation must be >0")
@@ -270,9 +306,15 @@ func (o AttemptOutcome) Validate() error {
 		if o.LifecycleRevision <= 0 {
 			return fmt.Errorf("LifecycleRevision must be >0")
 		}
+		if o.Ordinal == 1 && o.PreviousAttemptID != nil {
+			return fmt.Errorf("PreviousAttemptID must be nil for ordinal 1")
+		}
+		if o.Ordinal > 1 && (o.PreviousAttemptID == nil || *o.PreviousAttemptID == "") {
+			return fmt.Errorf("PreviousAttemptID required for ordinal >1")
+		}
 	} else {
 		// non-dispatched must have no dispatch metadata and status0 not_sent
-		if o.RouteClassID != "" || o.Fingerprint != "" || o.Lane != "" || o.Generation != 0 || o.LifecycleRevision != 0 {
+		if o.RouteClassID != "" || o.QualityClassID != "" || o.Fingerprint != "" || o.TemplateID != 0 || o.AccountID != 0 || o.RequestedModel != "" || o.MappedModel != "" || o.CallerCategory != "" || o.OperationTag != "" || o.Lane != "" || o.Generation != 0 || o.LifecycleRevision != 0 || o.Ordinal != 0 || o.PreviousAttemptID != nil {
 			return fmt.Errorf("non-dispatched must have no dispatch metadata")
 		}
 		if o.Commit != CommitNotSent {

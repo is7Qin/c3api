@@ -70,17 +70,23 @@ func TestSelectWithPlan_ConvertedRouteUsesTargetIdentity(t *testing.T) {
 	sel2.Release()
 }
 
+func retryBase(commit CommitState, result AttemptResult, status AttemptStatus, terminal bool) AttemptOutcome {
+	return AttemptOutcome{
+		ID: "a1", RouteClassID: "rc", QualityClassID: "qc1", Fingerprint: "fp", TemplateID: 1, AccountID: 1,
+		RequestedModel: "gpt-4o", MappedModel: "gpt-4o", CallerCategory: CallerChat, OperationTag: "chat_completions", Ordinal: 1,
+		Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: commit, Result: result, HTTPStatus: status, Terminal: terminal,
+	}
+}
+
 func TestFailoverPlan_RetryGatingViaMatrix(t *testing.T) {
-	// not_sent and ordinary 429 retryable, 5xx, committed, ambiguous, client_cancel, hard, malformed not
-	// These are direct CanRetry checks but proxy must not retry from raw status where matrix forbids
-	require.True(t, CanRetry(CallerChat, AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false}))
-	require.True(t, CanRetry(CallerChat, AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 429, Terminal: false, HardContinuation: false}))
-	require.False(t, CanRetry(CallerChat, AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 500, Terminal: true}))
-	require.False(t, CanRetry(CallerChat, AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitResponseStarted, Result: ResultFailed, HTTPStatus: 500, Terminal: true, BusinessFrameSent: true}))
-	require.False(t, CanRetry(CallerChat, AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitSentAmbiguous, Result: ResultFailed, HTTPStatus: 0, Terminal: true, BusinessFrameSent: true}))
-	require.False(t, CanRetry(CallerChat, AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultClientCancel, HTTPStatus: 0, Terminal: true}))
-	require.False(t, CanRetry(CallerChat, AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 429, Terminal: true, HardContinuation: true}))
-	require.False(t, CanRetry(CallerChat, AttemptOutcome{ID: "a1", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 400, Terminal: true, IsMalformed: true}))
+	require.True(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitNotSent, ResultFailed, 0, false); return o }()))
+	require.True(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitUpstreamResponded, ResultFailed, 429, false); o.HardContinuation = false; return o }()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitUpstreamResponded, ResultFailed, 500, true); return o }()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitResponseStarted, ResultFailed, 500, true); o.BusinessFrameSent = true; return o }()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitSentAmbiguous, ResultFailed, 0, true); o.BusinessFrameSent = true; return o }()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitNotSent, ResultClientCancel, 0, true); return o }()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitUpstreamResponded, ResultFailed, 429, true); o.HardContinuation = true; return o }()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitUpstreamResponded, ResultFailed, 400, true); o.IsMalformed = true; return o }()))
 }
 
 func TestFailoverPlan_AttemptsExhaustedVsNoAvailable(t *testing.T) {

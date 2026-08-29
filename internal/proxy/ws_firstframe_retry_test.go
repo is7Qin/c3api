@@ -13,8 +13,7 @@ import (
 )
 
 func TestWSFirstFrameWriteFailureReturnNotSentRetryable(t *testing.T) {
-	// Verify outcome mapping: code 0 with callErr non-nil is retryable (not-sent)
-	require.True(t, CanRetry(CallerResponsesWS, AttemptOutcome{ID: "a", RouteClassID: "rc", Fingerprint: "fp", Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false}) == true, "not-sent must be retryable")
+	require.True(t, CanRetry(CallerResponsesWS, AttemptOutcome{ID: "a", RouteClassID: "rc", QualityClassID: "qc1", Fingerprint: "fp", TemplateID: 1, AccountID: 1, RequestedModel: "gpt-4o", MappedModel: "gpt-4o", CallerCategory: CallerResponsesWS, OperationTag: "responses_ws", Ordinal: 1, Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false}) == true, "not-sent must be retryable")
 	// Direct via helper: outcomeForPlanRetry should produce retryable for WS first-frame case
 	o := outcomeForPlanRetry(0, errors.New("upstream first frame write failed"), context.Background(), CallerResponsesWS)
 	require.Equal(t, CommitNotSent, o.Commit)

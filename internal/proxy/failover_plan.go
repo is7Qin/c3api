@@ -80,8 +80,13 @@ func outcomeForPlanRetry(code int, callErr error, ctx context.Context, cat Calle
 	// Build minimal AttemptOutcome for CanRetry decision; only not_sent and ordinary 429 are retryable
 	// Use placeholder dispatched metadata valid for CanRetry
 	base := AttemptOutcome{
-		ID: "attempt-1", RouteClassID: "rc1", Fingerprint: "fp1",
+		ID: "attempt-1", RouteClassID: "rc1", QualityClassID: "qc1", Fingerprint: "fp1",
+		TemplateID: 1, AccountID: 1, RequestedModel: "gpt-4o", MappedModel: "gpt-4o",
+		CallerCategory: cat, OperationTag: "chat_completions", Ordinal: 1,
 		Lane: LanePrimary, Generation: 1, LifecycleRevision: 1,
+	}
+	if base.CallerCategory == "" {
+		base.CallerCategory = CallerChat
 	}
 	// client cancel -> not retryable (matrix forbids)
 	if code == 0 && ctx != nil && ctx.Err() != nil {

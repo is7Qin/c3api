@@ -23,23 +23,24 @@ func TestQualityRecorder_ProductionOwnership_Wiring(t *testing.T) {
 	require.NoError(t, p.QualityRecorder().Close())
 }
 
+func dispatchBase(id string) AttemptOutcome {
+	return AttemptOutcome{
+		ID: AttemptID(id), RouteClassID: "rc1", QualityClassID: "qc1", Fingerprint: "fp1", TemplateID: 1, AccountID: 1,
+		RequestedModel: "gpt-4o", MappedModel: "gpt-4o", CallerCategory: CallerChat, OperationTag: "chat_completions", Ordinal: 1,
+		LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
+	}
+}
+
 func TestAdaptOutcomeToObservation_Pure(t *testing.T) {
 	tt := int64(120)
-	o := AttemptOutcome{
-		ID:                "id1",
-		RouteClassID:      "rc1",
-		Fingerprint:       "fp1",
-		LifecycleRevision: 1,
-		Lane:              LanePrimary,
-		Generation:        1,
-		Commit:            CommitResponseStarted,
-		Result:            ResultSuccess,
-		HTTPStatus:        200,
-		Timing:            AttemptTiming{TTFTMS: &tt},
-		Usage:             AttemptUsage{InputTokens: 10, OutputTokens: 5, CallCount: 1},
-		Terminal:          true,
-		BusinessFrameSent: true,
-	}
+	o := dispatchBase("id1")
+	o.Commit = CommitResponseStarted
+	o.Result = ResultSuccess
+	o.HTTPStatus = 200
+	o.Timing = AttemptTiming{TTFTMS: &tt}
+	o.Usage = AttemptUsage{InputTokens: 10, OutputTokens: 5, CallCount: 1}
+	o.Terminal = true
+	o.BusinessFrameSent = true
 	obs, ok := AdaptOutcomeToObservation(o)
 	require.True(t, ok)
 	require.True(t, obs.Success)
@@ -55,27 +56,33 @@ func TestAdaptOutcomeToObservation_Pure(t *testing.T) {
 	_, ok3 := AdaptOutcomeToObservation(o3)
 	require.False(t, ok3)
 	// malformed post-commit failure counts by status
-	o4 := AttemptOutcome{
-		ID: "id4", RouteClassID: "rc1", Fingerprint: "fp1", LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
-		Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 500, Terminal: true, IsMalformed: true,
-	}
+	o4 := dispatchBase("id4")
+	o4.Commit = CommitUpstreamResponded
+	o4.Result = ResultFailed
+	o4.HTTPStatus = 500
+	o4.Terminal = true
+	o4.IsMalformed = true
 	obs4, ok4 := AdaptOutcomeToObservation(o4)
 	require.True(t, ok4)
 	require.False(t, obs4.Success)
 	require.Equal(t, quality.ErrClass5xx, obs4.ErrClass)
 	// status-0 network
-	o5 := AttemptOutcome{
-		ID: "id5", RouteClassID: "rc1", Fingerprint: "fp1", LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
-		Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false,
-	}
+	o5 := dispatchBase("id5")
+	o5.Commit = CommitNotSent
+	o5.Result = ResultFailed
+	o5.HTTPStatus = 0
+	o5.Terminal = false
+	o5.BusinessFrameSent = false
 	obs5, ok5 := AdaptOutcomeToObservation(o5)
 	require.True(t, ok5)
 	require.Equal(t, quality.ErrClassNetwork, obs5.ErrClass)
 	// 429 maps to 429
-	o6 := AttemptOutcome{
-		ID: "id6", RouteClassID: "rc1", Fingerprint: "fp1", LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
-		Commit: CommitUpstreamResponded, Result: ResultFailed, HTTPStatus: 429, Terminal: false,
-	}
+	o6 := dispatchBase("id6")
+	o6.Commit = CommitUpstreamResponded
+	o6.Result = ResultFailed
+	o6.HTTPStatus = 429
+	o6.Terminal = false
+	o6.BusinessFrameSent = false
 	obs6, ok6 := AdaptOutcomeToObservation(o6)
 	require.True(t, ok6)
 	require.Equal(t, quality.ErrClass429, obs6.ErrClass)

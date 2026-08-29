@@ -64,13 +64,24 @@ func outcomeForKind(kind string, cat CallerCategory, hard bool) AttemptOutcome {
 	base := AttemptOutcome{
 		ID:                "attempt-1",
 		RouteClassID:      "rc1",
+		QualityClassID:    "qc1",
 		Fingerprint:       "fp1",
+		TemplateID:        1,
+		AccountID:         1,
+		RequestedModel:    "gpt-4o",
+		MappedModel:       "gpt-4o",
+		CallerCategory:    cat,
+		OperationTag:      "chat_completions",
+		Ordinal:           1,
 		LifecycleRevision: 1,
 		Lane:              LanePrimary,
 		Generation:        1,
 		HardContinuation:  hard,
 		BusinessFrameSent: false,
 		Terminal:          false,
+	}
+	if base.CallerCategory == "" {
+		base.CallerCategory = CallerChat
 	}
 	switch kind {
 	case "not_sent":

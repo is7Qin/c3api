@@ -54,6 +54,14 @@ func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef)
 			resolved = mapped
 		}
 		candidate.quality = qualityClassHexForWithOp(domain.RequestFormat(route.Format), resolved, domain.OperationTag(route.OperationTag))
+		candidate.templateID = candidate.static.tpl.ID
+		candidate.requestedModel = route.Model
+		candidate.mappedModel = resolved
+		candidate.routeClassID = route.RouteClassID
+		candidate.callerCategory = string(callerKindForFormat(domain.RequestFormat(route.Format)))
+		candidate.operationTag = route.OperationTag
+		candidate.lifecycleRevision = candidate.static.acc.LifecycleRevision
+		candidate.routingGeneration = v.generation
 	}
 	return p, nil
 }
