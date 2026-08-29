@@ -2,12 +2,11 @@
 package proxy
 
 import (
+	"context"
 	"encoding/hex"
 	"net/http"
 
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
-	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
@@ -23,24 +22,8 @@ func (p *Proxy) pipelineObserver(sel *scheduler.Selection, attempt scheduler.Att
 			pipelineID(attempt.CandidateFingerprint),
 		))
 	}
-	markHealth := func(outcome AttemptOutcome, event AttemptHealthEvent) {
-		if p.sched != nil {
-			_, punish := p.sched.Classify(rule.Event{AccountID: outcome.AccountID, Kind: event.Kind, HTTPStatus: healthStatus(outcome.HTTPStatus), Model: outcome.MappedModel, ErrorMessage: event.ErrorMessage})
-			if punish {
-				p.sched.MarkResult(outcome.AccountID, event.Kind, event.ResetAt, int(outcome.HTTPStatus), event.ErrorMessage, outcome.MappedModel)
-			}
-		}
-	}
 	appendFlow := p.pipelineFlowAppend
-	return NewAttemptObserver(qualityContext, markHealth, appendFlow, sel.Release), true
-}
-
-func healthStatus(status AttemptStatus) *int {
-	if status == 0 {
-		return nil
-	}
-	value := int(status)
-	return &value
+	return NewAttemptObserver(qualityContext, nil, appendFlow, nil), true
 }
 
 func pipelineID(raw string) [32]byte {
@@ -84,46 +67,22 @@ func attemptPreviousID(raw *string) *AttemptID {
 	return &id
 }
 
-func pipelineHealth(code int, message string) *AttemptHealthEvent {
-	kind := scheduler.RuleKindOf(code)
-	if code == 429 {
-		kind = rule.Kind429
-	}
-	return &AttemptHealthEvent{Kind: kind, ErrorMessage: message}
-}
-
-func (p *Proxy) completePipelineObservation(observer *AttemptObserver, outcome AttemptOutcome, health *AttemptHealthEvent) {
-	if observer == nil {
-		return
-	}
-	if outcome.Result == ResultClientCancel {
-		_ = observer.Cancel(outcome)
-		return
-	}
-	_ = observer.Complete(outcome, health)
-}
-
-func (p *Proxy) observePipelineAttempt(r *http.Request, sel *scheduler.Selection, plan *scheduler.AttemptPlan, code int, body []byte, callErr error) bool {
+func (p *Proxy) observePipelineAttempt(ctx context.Context, sel *scheduler.Selection, plan *scheduler.AttemptPlan, code int) {
 	if plan == nil {
-		return false
+		return
 	}
 	attempt, ok := plan.CurrentAttempt()
 	if !ok {
-		return false
+		return
 	}
 	observer, ok := p.pipelineObserver(sel, attempt)
 	if !ok {
-		return false
+		return
 	}
-	if code == 0 && r.Context().Err() != nil {
-		p.completePipelineObservation(observer, pipelineOutcome(attempt, 0, true, true), nil)
-		return true
+	if code == 0 && ctx.Err() != nil {
+		_ = observer.Cancel(pipelineOutcome(attempt, 0, true, true))
+		return
 	}
 	terminal := code != 0 && code != http.StatusTooManyRequests
-	message := domain.TruncateErrMsg(upstreamErrMsg(body))
-	if message == "" && callErr != nil {
-		message = domain.TruncateErrMsg(callErr.Error())
-	}
-	p.completePipelineObservation(observer, pipelineOutcome(attempt, code, false, terminal), pipelineHealth(code, message))
-	return true
+	_ = observer.Complete(pipelineOutcome(attempt, code, false, terminal), nil)
 }

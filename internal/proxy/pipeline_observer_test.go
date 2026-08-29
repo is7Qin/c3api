@@ -6,14 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/quality"
-	"github.com/is7qin/c3api/internal/rule"
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
@@ -23,41 +21,86 @@ func (handledPipelineAttempt) call(context.Context, http.ResponseWriter, *http.R
 	return http.StatusOK, nil, nil, true, nil
 }
 
-func TestPipelineObserver_preResponse429CompletesOnceAndHandledAttemptIsUntouched(t *testing.T) {
-	recorder, err := quality.NewRecorder(32)
+type rejectedPipelineAttempt struct {
+	code int
+	body []byte
+}
+
+func (a rejectedPipelineAttempt) call(context.Context, http.ResponseWriter, *http.Request, string, int64, time.Time, *scheduler.Selection, string, []byte, attemptState) (int, []byte, http.Header, bool, error) {
+	return a.code, a.body, nil, false, nil
+}
+
+func TestPipelineObserver_observedPreResponseLeavesCleanupToFailover(t *testing.T) {
+	up := fakeOpenAI(t, "")
+	defer up.Close()
+	p := newTestProxy(t, up.URL, 1)
+	sel, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, recorder.Close()) })
-	p := &Proxy{qualityRecorder: recorder}
 	attempt := scheduler.Attempt{
 		AttemptID: "req-1:1", RouteClassID: strings.Repeat("a", 64), QualityClassID: strings.Repeat("b", 64), CandidateFingerprint: strings.Repeat("c", 64),
-		TemplateID: 1, AccountID: 7, RequestedModel: "gpt-4o", MappedModel: "gpt-4o", Lane: scheduler.AttemptLanePrimary, Ordinal: 1, RoutingGeneration: 2, LifecycleRevision: 3,
+		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: "gpt-4o", MappedModel: sel.Model, Lane: scheduler.AttemptLanePrimary, Ordinal: 1, RoutingGeneration: 2, LifecycleRevision: 3,
 		CallerCategory: "chat", OperationTag: "chat_completions",
 	}
-	var healthCalls, flowCalls, releaseCalls atomic.Int32
+	flowCalls := 0
 	p.pipelineFlowAppend = func(outcome AttemptOutcome) {
 		require.Equal(t, AttemptID(attempt.AttemptID), outcome.ID)
 		require.Equal(t, uint8(1), outcome.Ordinal)
-		flowCalls.Add(1)
+		flowCalls++
 	}
-	observer, owns := p.pipelineObserver(&scheduler.Selection{}, attempt)
+	observer, owns := p.pipelineObserver(sel, attempt)
 	require.True(t, owns)
-	observer.markHealth = func(outcome AttemptOutcome, event AttemptHealthEvent) {
-		require.Equal(t, attempt.AccountID, outcome.AccountID)
-		require.Equal(t, rule.Kind429, event.Kind)
-		require.True(t, event.Retryable)
-		healthCalls.Add(1)
-	}
-	observer.release = func() { releaseCalls.Add(1) }
+	require.Nil(t, observer.markHealth, "failover classification remains the single MarkResult owner")
+	require.Nil(t, observer.release, "failover retry/finish remains the single lease release owner")
 	outcome := pipelineOutcome(attempt, 429, false, false)
-	p.completePipelineObservation(observer, outcome, pipelineHealth(429, "busy"))
-	require.Equal(t, int32(1), healthCalls.Load())
-	require.Equal(t, int32(1), flowCalls.Load())
-	require.Equal(t, int32(1), releaseCalls.Load())
+	require.NoError(t, observer.Complete(outcome, nil))
+	require.Equal(t, 1, flowCalls)
+	runtime, ok := p.sched.Runtime(sel.AccountID)
+	require.True(t, ok)
+	require.Equal(t, int64(1), runtime.Concurrency, "observer must leave the lease to failover cleanup")
+	p.cfg.FailoverAttempts = 1
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat, domain.FormatOpenAIChat, "req-1", 10, time.Now(), "gpt-4o", nil, sel, nil, attemptState{}, rejectedPipelineAttempt{code: 429}, &httpSink{}, false)
+	runtime, ok = p.sched.Runtime(sel.AccountID)
+	require.True(t, ok)
+	require.Zero(t, runtime.Concurrency, "observed exhaustion has one pipeline release owner")
+}
 
-	// The pipeline returns before creating or completing any observer for handled=true.
-	require.Equal(t, int32(1), healthCalls.Load())
-	require.Equal(t, int32(1), flowCalls.Load())
-	require.Equal(t, int32(1), releaseCalls.Load())
+func TestFailoverPipeline_observed4xxPreservesFinishAndMarkResult(t *testing.T) {
+	up := fakeUpstreamStatus(t, 401, `{"error":{"message":"balance"}}`)
+	defer up.Close()
+	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat,
+		domain.Rule{Name: "balance-401", Enabled: true, Priority: 10,
+			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(401)},
+			Then: domain.RuleThen{Status: statusPtrT(domain.StatusUnhealthy), ResponseCode: intPtrT(502), CustomMessage: strPtrT("upstream rejected request")}},
+	)
+	sel, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
+	require.NoError(t, err)
+	attempt := scheduler.Attempt{
+		AttemptID: "req-4xx:1", RouteClassID: strings.Repeat("a", 64), QualityClassID: strings.Repeat("b", 64), CandidateFingerprint: strings.Repeat("c", 64),
+		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: "gpt-4o", MappedModel: sel.Model, Lane: scheduler.AttemptLanePrimary, Ordinal: 1, RoutingGeneration: 2, LifecycleRevision: 3,
+		CallerCategory: "chat", OperationTag: "chat_completions",
+	}
+	flowCalls := 0
+	p.pipelineFlowAppend = func(AttemptOutcome) { flowCalls++ }
+	observer, owns := p.pipelineObserver(sel, attempt)
+	require.True(t, owns)
+	require.Nil(t, observer.markHealth)
+	require.Nil(t, observer.release)
+	require.NoError(t, observer.Complete(pipelineOutcome(attempt, 401, false, true), nil))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	p.failoverLoopWithPlan(rec, req, domain.FormatOpenAIChat, domain.FormatOpenAIChat, "req-4xx", 10, time.Now(), "gpt-4o", nil, sel, nil, attemptState{}, rejectedPipelineAttempt{code: 401, body: []byte(`{"error":{"message":"balance"}}`)}, &httpSink{}, false)
+
+	require.Equal(t, 1, flowCalls)
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "upstream rejected request")
+	p.sched.FlushRules()
+	runtime, ok := p.sched.Runtime(sel.AccountID)
+	require.True(t, ok)
+	require.Equal(t, 1, runtime.ErrCount, "observed 4xx has one MarkResult owner")
+	require.Equal(t, domain.StatusUnhealthy, runtime.Status)
+	require.Zero(t, runtime.Concurrency, "observed 4xx finish releases once")
 }
 
 func TestFailoverPipeline_handledTruePerformsNoSharedCleanup(t *testing.T) {
