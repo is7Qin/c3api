@@ -424,15 +424,30 @@ func (o AttemptOutcome) Validate() error {
 				return fmt.Errorf("5xx must be terminal")
 			}
 		case o.HTTPStatus == 0:
-			// network: only not_sent or sent_ambiguous
-			if o.Commit != CommitNotSent && o.Commit != CommitSentAmbiguous {
-				return fmt.Errorf("status0 network must be not_sent or sent_ambiguous")
-			}
-			if o.Commit == CommitSentAmbiguous && !o.Terminal {
-				return fmt.Errorf("sent_ambiguous must be terminal")
-			}
-			if o.Commit == CommitNotSent && o.Terminal {
-				return fmt.Errorf("not_sent network must not be terminal")
+			switch o.Commit {
+			case CommitNotSent:
+				if o.Terminal {
+					return fmt.Errorf("not_sent network must not be terminal")
+				}
+				if o.BusinessFrameSent {
+					return fmt.Errorf("not_sent cannot have BusinessFrameSent")
+				}
+			case CommitSentAmbiguous:
+				if !o.Terminal {
+					return fmt.Errorf("sent_ambiguous must be terminal")
+				}
+				if !o.BusinessFrameSent {
+					return fmt.Errorf("sent_ambiguous requires BusinessFrameSent")
+				}
+			case CommitResponseStarted, CommitClientCommitted:
+				if !o.Terminal {
+					return fmt.Errorf("response_started/client_committed network must be terminal")
+				}
+				if !o.BusinessFrameSent {
+					return fmt.Errorf("response_started/client_committed requires BusinessFrameSent")
+				}
+			default:
+				return fmt.Errorf("status0 network must be not_sent, sent_ambiguous or response_started/client_committed")
 			}
 		case o.HTTPStatus >= 200 && o.HTTPStatus <= 299:
 			return fmt.Errorf("failed cannot have 2xx status")
