@@ -1804,4 +1804,3 @@ func TestReuseConcurrentSelectReloadRace(t *testing.T) {
 	}()
 	wg.Wait()
 }
-

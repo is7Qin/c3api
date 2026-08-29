@@ -542,4 +542,3 @@ func (p pgUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 	}
 	return domain.UserSnapshot{Status: u.Status, Role: u.Role}, true
 }
-
