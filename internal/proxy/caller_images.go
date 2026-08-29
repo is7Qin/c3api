@@ -65,34 +65,13 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	if stream {
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
-		observer := newImagesObserver(p, sel, reqModel, opTag)
 		resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.path, cred, upCT, upBody)
 		if err != nil {
-			code := statusOf(err)
-			commit := CommitNotSent
-			if code != 0 {
-				commit = CommitUpstreamResponded
-			}
-			terminal := true
-			if code == 429 || code == 0 {
-				terminal = false
-			}
-			outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
-			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
-			_ = observer.Complete(outcome, health)
 			return statusOf(err), upstreamBody(err), false, err
 		}
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
-			code := resp.StatusCode
-			terminal := true
-			if code == 429 {
-				terminal = false
-			}
-			outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), CommitUpstreamResponded, false, terminal, false)
-			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: string(rb)}
-			_ = observer.Complete(outcome, health)
 			return resp.StatusCode, rb, false, nil
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -120,6 +99,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 		u := usageTuple{ii: imgII, io: imgIO, tt: imgII + imgIO, calls: imgCount}
 		usage := AttemptUsage{InputTokens: imgII, OutputTokens: imgIO, CallCount: imgCount}
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
+		observer := newImagesObserver(p, sel, reqModel, opTag)
 		if err != nil {
 			// 图像流客户端断开不触发健康惩罚；上游错误按已写出字节记录 commit 状态。
 			if errors.Is(err, context.Canceled) {
@@ -150,42 +130,16 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 
 	resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.path, cred, upCT, upBody)
 	if err != nil {
-		observer := newImagesObserver(p, sel, reqModel, opTag)
-		code := statusOf(err)
-		commit := CommitNotSent
-		if code != 0 {
-			commit = CommitUpstreamResponded
-		}
-		terminal := true
-		if code == 429 || code == 0 {
-			terminal = false
-		}
-		outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
-		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
-		_ = observer.Complete(outcome, health)
 		return statusOf(err), upstreamBody(err), false, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		observer := newImagesObserver(p, sel, reqModel, opTag)
 		rb := readUpstreamBody(resp)
 		resp.Body.Close()
-		code := resp.StatusCode
-		terminal := true
-		if code == 429 {
-			terminal = false
-		}
-		outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), CommitUpstreamResponded, false, terminal, false)
-		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: string(rb)}
-		_ = observer.Complete(outcome, health)
 		return resp.StatusCode, rb, false, nil
 	}
 	data, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
-		observer := newImagesObserver(p, sel, reqModel, opTag)
-		outcome := imagesOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, 0, CommitNotSent, false, false, false)
-		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(0), ErrorMessage: err.Error()}
-		_ = observer.Complete(outcome, health)
 		return 0, nil, false, err
 	}
 	ct := resp.Header.Get("Content-Type")
