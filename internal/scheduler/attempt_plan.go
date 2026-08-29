@@ -51,6 +51,7 @@ type Attempt struct {
 	RoutingGeneration    uint64
 	LifecycleRevision    int64
 	PreviousAttemptID    *string
+	PreviousAccountID    *int64
 	CallerCategory       string
 	OperationTag         string
 }
@@ -118,20 +119,20 @@ func (a Attempt) Validate() error {
 type AttemptReservation func(accountID int64) bool
 
 type attemptPlanCandidate struct {
-	accountID            int64
-	lane                 AttemptLane
-	account              *accountSnapshot
-	static               *snapshotStatic
-	fingerprint          string
-	quality              string
-	templateID           int64
-	requestedModel       string
-	mappedModel          string
-	routeClassID         string
-	callerCategory       string
-	operationTag         string
-	lifecycleRevision    int64
-	routingGeneration    uint64
+	accountID         int64
+	lane              AttemptLane
+	account           *accountSnapshot
+	static            *snapshotStatic
+	fingerprint       string
+	quality           string
+	templateID        int64
+	requestedModel    string
+	mappedModel       string
+	routeClassID      string
+	callerCategory    string
+	operationTag      string
+	lifecycleRevision int64
+	routingGeneration uint64
 }
 
 type AttemptPlan struct {
@@ -143,6 +144,7 @@ type AttemptPlan struct {
 	cursor         uint8
 	attempted      [MaxAttemptPlanAccounts]int64
 	attemptIDs     [MaxAttemptPlanAccounts]string
+	attempts       [MaxAttemptPlanAccounts]Attempt
 	attemptedCount uint8
 	ordinal        uint8
 }
@@ -206,6 +208,13 @@ func NewAttemptPlan(identity AttemptPlanIdentity, decision RouteDecision) *Attem
 
 func (p *AttemptPlan) Identity() AttemptPlanIdentity { return p.identity }
 
+func (p *AttemptPlan) CurrentAttempt() (Attempt, bool) {
+	if p == nil || p.attemptedCount == 0 {
+		return Attempt{}, false
+	}
+	return p.attempts[p.attemptedCount-1], true
+}
+
 func (p *AttemptPlan) Reserve(reserve AttemptReservation) (Attempt, error) {
 	return p.reserve(func(candidate attemptPlanCandidate) bool {
 		return reserve(candidate.accountID)
@@ -230,15 +239,17 @@ func (p *AttemptPlan) reserve(reserve func(attemptPlanCandidate) bool) (Attempt,
 			attemptID = fmt.Sprintf("attempt-%d", ordinal)
 		}
 		var prev *string
+		var prevAccount *int64
 		if p.ordinal > 0 && p.attemptedCount > 0 {
 			prevCopy := p.attemptIDs[p.attemptedCount-1]
 			prev = &prevCopy
+			accountCopy := p.attempted[p.attemptedCount-1]
+			prevAccount = &accountCopy
 		}
 		p.attempted[p.attemptedCount] = candidate.accountID
 		p.attemptIDs[p.attemptedCount] = attemptID
-		p.attemptedCount++
 		p.ordinal = ordinal
-		return Attempt{
+		attempt := Attempt{
 			AttemptID:            attemptID,
 			RouteClassID:         candidate.routeClassID,
 			QualityClassID:       candidate.quality,
@@ -252,9 +263,13 @@ func (p *AttemptPlan) reserve(reserve func(attemptPlanCandidate) bool) (Attempt,
 			RoutingGeneration:    candidate.routingGeneration,
 			LifecycleRevision:    candidate.lifecycleRevision,
 			PreviousAttemptID:    prev,
+			PreviousAccountID:    prevAccount,
 			CallerCategory:       candidate.callerCategory,
 			OperationTag:         candidate.operationTag,
-		}, nil
+		}
+		p.attempts[p.attemptedCount] = attempt
+		p.attemptedCount++
+		return attempt, nil
 	}
 	return Attempt{}, ErrAttemptsExhausted
 }
