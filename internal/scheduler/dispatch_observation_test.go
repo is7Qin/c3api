@@ -101,6 +101,9 @@ func TestDispatchObservation_preservesLeaseWithoutRereadingState(t *testing.T) {
 	sel, a, err := s.ReserveAttempt(plan)
 	require.NoError(t, err)
 	require.Equal(t, a.AccountID, sel.AccountID)
+	current, ok := plan.CurrentAttempt()
+	require.True(t, ok)
+	require.Equal(t, a, current)
 	require.Equal(t, a.CandidateFingerprint, sel.CandidateFingerprint)
 	require.Equal(t, a.TemplateID, sel.TemplateID)
 	// mutate view after plan creation: add new account, invalidate, but plan's dispatch must stay stable
@@ -116,6 +119,23 @@ func TestDispatchObservation_preservesLeaseWithoutRereadingState(t *testing.T) {
 	sel.Release()
 	ri, _ = s.Runtime(a.AccountID)
 	require.Equal(t, int64(0), ri.Concurrency)
+}
+
+func TestDispatchObservation_currentAttemptTracksPreviousAccount(t *testing.T) {
+	tmpl := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	s := newSched(t, newMemLoader(map[int64][]*domain.Account{10: {acc(1, tmpl, 4), acc(2, tmpl, 4)}}))
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	publishAttemptDecision(s, route, &RouteDecision{Primary: []int64{1, 2}})
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-current", UserID: 1}, route)
+	require.NoError(t, err)
+	_, first, err := s.ReserveAttempt(plan)
+	require.NoError(t, err)
+	_, second, err := s.ReserveAttempt(plan)
+	require.NoError(t, err)
+	current, ok := plan.CurrentAttempt()
+	require.True(t, ok)
+	require.Equal(t, second, current)
+	require.Equal(t, first.AccountID, *second.PreviousAccountID)
 }
 
 func requireEqualDispatchFingerprint(t *testing.T, fp string) {
