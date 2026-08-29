@@ -38,6 +38,8 @@ type DecisionView struct {
 	// For legacy builder, decisions are reflected via runtimeState but
 	// DecisionView generation still tracks publish order.
 	decisions map[int64]*decisionLeaf
+	// routes holds per-route compiled decisions (Task11). Immutable after publish.
+	routes map[RouteRef]*RouteDecision
 }
 
 type decisionLeaf struct {
@@ -46,7 +48,47 @@ type decisionLeaf struct {
 	cooldownUntil *string
 }
 
+// RouteRef identifies a compiled route (group + format + model).
+type RouteRef struct {
+	GroupID int64
+	Format  string
+	Model   string
+}
+
+// RouteDecision holds immutable per-route lane classification.
+type RouteDecision struct {
+	Primary  []int64
+	Degraded []int64
+	Explore  ExploreDecision
+}
+
+// ExploreDecision holds deterministic explore ordering.
+type ExploreDecision struct {
+	IDs        []int64
+	Weights    map[int64]int
+	Cumulative []uint64
+	Total      uint64
+	Fallback   []int64
+}
+
 func (d *DecisionView) Generation() uint64 { return d.generation }
+
+// Routes returns immutable per-route decisions (nil if none).
+func (d *DecisionView) Routes() map[RouteRef]*RouteDecision {
+	if d == nil {
+		return nil
+	}
+	return d.routes
+}
+
+// Route returns decision for a specific route.
+func (d *DecisionView) Route(groupID int64, format string, model string) (*RouteDecision, bool) {
+	if d == nil || d.routes == nil {
+		return nil, false
+	}
+	v, ok := d.routes[RouteRef{GroupID: groupID, Format: format, Model: model}]
+	return v, ok
+}
 
 // RoutingView explicitly holds immutable *StaticView and *DecisionView.
 // Single atomic root; structurally shared.
