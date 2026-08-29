@@ -108,7 +108,7 @@ func (w *SyncWorker) Start(ctx context.Context) error {
 func (w *SyncWorker) Close(ctx context.Context) error { return nil }
 
 // Sync 执行一次完整同步（fetch → 文本价 upsert → image 价 upsert → function
-// 价 upsert → reload）：worker 内部路径与后续管理端手动触发（Task 3
+// 价 upsert → reload）：worker 内部路径与后续管理端手动触发（
 // SyncPricingNow）共用；错误由调用方决定告警语义（worker 循环内 Warn 后等下
 // 个周期）。
 // 三线扩展：image 价与 function 价均与文本价独立判定、独立落库；拉取成功后

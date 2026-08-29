@@ -101,7 +101,7 @@ type codexEntry struct {
 	appliedTurnState string
 	expiresAt        *time.Time
 	reported         atomic.Bool
-	// usage 额度快照缓存（Task 3——GetUsageSnapshot 5min TTL）+ 失败冷却起点
+	// usage 额度快照缓存（GetUsageSnapshot 5min TTL）+ 失败冷却起点
 	// （60s——gate Major 2）：重建（sig 变化）随新条目一并清除；usageErr 只存
 	// 分类哨兵（ErrAuthExpired/ErrUpstream），不缓存错误体。
 	usage      *domain.CodexUsageSnapshot
@@ -261,7 +261,7 @@ func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredent
 //     不完整）不 panic（OAuthWithRotation 空 rt 构造 panic）；PAT 走 PAT(key)
 //     无此面
 //   - 重建 = 新条目构造——usage/usageAt/usageErrAt/usageErr 一并清除（对齐
-//     auth 重建；Task 3：凭据变更后快照重拉）
+	//     auth 重建；凭据变更后快照重拉）
 //
 // 条目承载 Auth（HTTP 面 GenerateImage/Stream 与 WS 面 Dial 共享——连接
 // per-请求不缓存，Auth 账号级状态跨面复用；HTTPClient 由 clientFor 懒构造）。
@@ -359,16 +359,16 @@ func (a *Codex) ClearTurnState(accountID int64) {
 	a.mu.Unlock()
 }
 
-// —— Task 3：codex 额度快照（GetUsageSnapshot——TTL 缓存 + 有界并发 + 失败冷却） ——
+// —— codex 额度快照（GetUsageSnapshot——TTL 缓存 + 有界并发 + 失败冷却） ——
 
 // ErrAuthExpired 凭据失效分类错误（GetUsageSnapshot 错误面——IsFatal 纯判定
 // 零副作用：usage 查询面不重复上报不摘除——凭据失效由会话路径（Dial/
 // Responses）经 FatalAuth 上报，防循环；凭据变更后 entry sig 重建自然恢复。
-// task 2 upstream_error 映射输入）。
+// upstream_error 映射输入）。
 var ErrAuthExpired = errors.New("codex: usage auth expired")
 
 // ErrUpstream 上游错误分类错误（GetUsageSnapshot 错误面——*HTTPError/网络/
-// RefreshError 等一律保守归本类；task 2 upstream_error 映射输入）。
+// RefreshError 等一律保守归本类；upstream_error 映射输入）。
 var ErrUpstream = errors.New("codex: usage upstream error")
 
 // usageFetchSem 快照拉取包级 semaphore（容量 8——所有调用面共享节流：管理面

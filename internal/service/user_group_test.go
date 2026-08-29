@@ -15,8 +15,8 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// newTask4Svc 构造带 fakeKeyRegistrar 的 Service（key 增量注册可断言）。
-func newTask4Svc() (*Service, *fakeStore, *fakeKeyRegistrar) {
+// newUserGroupService constructs a Service with a fake key registrar.
+func newUserGroupService() (*Service, *fakeStore, *fakeKeyRegistrar) {
 	fs := newFakeStore()
 	keys := &fakeKeyRegistrar{}
 	svc := &Service{store: fs, inv: &invRecorder{}, keys: keys, log: nil}
@@ -26,7 +26,7 @@ func newTask4Svc() (*Service, *fakeStore, *fakeKeyRegistrar) {
 // TestCreateKeyGroupEligibility key 创建组可选性：public 可建；private 未授予
 // → ErrGroupNotEligible（Is ErrInvalidInput）；授予后可建；非法参数 → 400。
 func TestCreateKeyGroupEligibility(t *testing.T) {
-	svc, fs, keys := newTask4Svc()
+	svc, fs, keys := newUserGroupService()
 	ctx := context.Background()
 
 	user, err := fs.CreateUser(ctx, &domain.User{Email: "u@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -71,7 +71,7 @@ func TestCreateKeyGroupEligibility(t *testing.T) {
 // TestKeyOwnership 越权隔离：他人 key 一律 404（Get/Update/Rotate/Delete），
 // 不泄露存在性。
 func TestKeyOwnership(t *testing.T) {
-	svc, fs, _ := newTask4Svc()
+	svc, fs, _ := newUserGroupService()
 	ctx := context.Background()
 
 	alice, err := fs.CreateUser(ctx, &domain.User{Email: "a@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -109,7 +109,7 @@ func TestKeyOwnership(t *testing.T) {
 // TestKeyUpdateFields 更新字段校验：空 name / 非法 status / 负值 → 400；
 // 变更后 Auth 增量注册。
 func TestKeyUpdateFields(t *testing.T) {
-	svc, fs, keys := newTask4Svc()
+	svc, fs, keys := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "u@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -204,7 +204,7 @@ func TestRotateKeyGetUserFailureNoDestruction(t *testing.T) {
 
 // TestSetGroupAssignments 替换语义：差集授予/撤销；非法/重复/缺失校验。
 func TestSetGroupAssignments(t *testing.T) {
-	svc, fs, _ := newTask4Svc()
+	svc, fs, _ := newUserGroupService()
 	ctx := context.Background()
 
 	u1, err := fs.CreateUser(ctx, &domain.User{Email: "a@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})

@@ -918,7 +918,7 @@ func TestSelectTierFallback(t *testing.T) {
 	s.Release(sel.AccountID)
 }
 
-// tier 回落（并发满，Task 2 评审钉死）：tier1 账号并发满 → 回落 tier2（可用性优先）。
+// tier 回落（并发满）：tier1 账号并发满 → 回落 tier2（可用性优先）。
 // 规范裁定：旧实现（并发满账号在分档前被剔除 → tier1 为空）在此场景直接
 // ErrNoAvailable 的语义不可取；新实现 tier1 序列扫描失败后必须回落 tier2。
 func TestSelectTier1FullFallsBackToTier2(t *testing.T) {
@@ -939,7 +939,7 @@ func TestSelectTier1FullFallsBackToTier2(t *testing.T) {
 	s.Release(sel2.AccountID)
 }
 
-// 并发 CAS 竞争（Task 2 评审钉死）：单账号（n=1 序列）两并发 Select，
+// 并发 CAS 竞争：单账号（n=1 序列）两并发 Select，
 // 恰一成功、另一返回 ErrNoAvailable——单遍单次 CAS 语义（败者不自旋重试，
 // 调用方重试）。屏障对齐两 goroutine 后 200 轮放大真实 CAS 冲突。
 func TestSelectConcurrentCASRace(t *testing.T) {

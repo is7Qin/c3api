@@ -1318,7 +1318,7 @@ func (f *fakeStore) SetSetting(ctx context.Context, key string, typ domain.Setti
 	return &domain.Setting{Key: key, Type: typ, Value: value}, nil
 }
 
-// --- Phase 3a Task 4：KeyStore / GroupAssignmentStore 假实现 ---
+// --- KeyStore / GroupAssignmentStore test implementations ---
 
 func (f *fakeStore) CreateKey(ctx context.Context, k *domain.Key) (*domain.Key, error) {
 	f.mu.Lock()

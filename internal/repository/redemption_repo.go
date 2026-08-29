@@ -29,7 +29,7 @@ type RedemptionRepo struct {
 // CreateCodes 批量插入兑换码（单条 INSERT 多 VALUES；全字段 Set，含 status/used_count，
 // 无默认值依赖）；code 唯一冲突 → ErrConflict（service 层重试换码，N=5）。
 // Save 返回落库行：把 DB 分配的 id/时间戳回填到入参（响应 {codes: [...]} 需
-// 完整可用——Task 3 评审发现 Exec 丢弃结果行导致响应 id=0）。
+// 完整可用——评审发现 Exec 丢弃结果行导致响应 id=0）。
 func (r *RedemptionRepo) CreateCodes(ctx context.Context, codes []*domain.RedemptionCode) error {
 	if len(codes) == 0 {
 		return nil

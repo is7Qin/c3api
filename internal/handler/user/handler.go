@@ -4,7 +4,7 @@
 
 // Package user 实现 /user 面 HTTP 处理（OpenAPI tag: user 的独立
 // ServerInterface）：认证（register/login 公开；me 及业务端点 JWT 保护）+
-// 业务端点（groups/keys/logs/stats，Phase 3a Task 4）。
+// 业务端点（groups/keys/logs/stats）。
 package user
 
 import (

@@ -16,7 +16,7 @@ import (
 // TestGetGroupAssignments 组维度读取（GET /groups/{id}/assignments）：缺失组 →
 // 404；ids 全量 + mults 只含有专属倍率的用户（nil/缺省 = 未设置省略）。
 func TestGetGroupAssignments(t *testing.T) {
-	svc, fs, _ := newTask4Svc()
+	svc, fs, _ := newUserGroupService()
 	ctx := context.Background()
 
 	u1, err := fs.CreateUser(ctx, &domain.User{Email: "ga1@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -49,7 +49,7 @@ func TestGetGroupAssignments(t *testing.T) {
 // TestGetUserGroups 用户维度读取（GET /users/{id}/groups）：缺失用户 → 404；
 // 与 TestGetGroupAssignments 对称。
 func TestGetUserGroups(t *testing.T) {
-	svc, fs, _ := newTask4Svc()
+	svc, fs, _ := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "gu@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -78,7 +78,7 @@ func TestGetUserGroups(t *testing.T) {
 // - 与组维度 GetGroupAssignments 交叉验证
 // - 表驱动：非法/重复/缺失/越界 → 400/404
 func TestSetUserGroups(t *testing.T) {
-	svc, fs, _ := newTask4Svc()
+	svc, fs, _ := newUserGroupService()
 	ctx := context.Background()
 
 	u1, err := fs.CreateUser(ctx, &domain.User{Email: "su1@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})

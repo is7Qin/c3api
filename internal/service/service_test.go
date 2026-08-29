@@ -144,7 +144,7 @@ func mustTime(s string) time.Time {
 	return t
 }
 
-// --- Task 4a: 批量删除/更新 ---
+// --- Batch deletion and update ---
 
 func seedTemplate(t *testing.T, svc *Service, name string) *domain.Template {
 	t.Helper()
@@ -521,7 +521,7 @@ func TestBatchNotFoundMapping(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-// --- Task 5：单资源删除缺 id → 404 映射（与批量语义对齐） ---
+// --- Single-resource missing-id mapping ---
 
 // TestSingleDeleteNotFoundMapping 单资源 Delete 缺 id：repo 单删缺 id 与
 // DeleteGroup 前置 Get 均经 mapRepoErr → service.ErrNotFound（消息含缺失 id，

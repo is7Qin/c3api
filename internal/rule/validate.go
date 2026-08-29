@@ -158,7 +158,7 @@ func ValidateWhen(w domain.RuleWhen) error {
 // 其余：status 合法枚举；cooldown 可 time.ParseDuration 解析且 > 0；weight ∈ [0,100]；
 // ResponseCode!=nil 需 400-599；CustomMessage==ptr("") 拒绝。指针即意图，nil=透传；
 // seed-4xx-400 直插 store 的 Then{} 与用户规则 Then{} 语义等价（零惩罚全透）。
-// Task2 strict typed actions:
+// strict typed actions:
 //   - Throttle{scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}
 //     retry_after requires use_reset=true; open requires use_reset=false and duration>0
 //     account_route scope runtime requires event RouteClassID+QualityClassID (match-time, not validation)

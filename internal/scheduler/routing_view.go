@@ -48,7 +48,7 @@ type DecisionView struct {
 	// For legacy builder, decisions are reflected via runtimeState but
 	// DecisionView generation still tracks publish order.
 	decisions map[int64]*decisionLeaf
-	// routes holds per-route compiled decisions (Task11). Immutable after publish.
+	// routes holds per-route compiled decisions. Immutable after publish.
 	routes map[RouteRef]*RouteDecision
 }
 

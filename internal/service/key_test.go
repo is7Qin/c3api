@@ -17,7 +17,7 @@ import (
 // 增量注册的 KeyMeta.ProtocolConverts 与组一致（修复前该字段恒空 → 转换方向
 // 至多 60s 不可见；CreateKey 后立即请求 404 的复现根因）。
 func TestKeyMetaProtocolConvertsIncremental(t *testing.T) {
-	svc, fs, keys := newTask4Svc()
+	svc, fs, keys := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "conv-k@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -52,7 +52,7 @@ func TestKeyMetaProtocolConvertsIncremental(t *testing.T) {
 // TestKeyMetaProtocolConvertsEmpty off 组：无转换方向 → 快照字段空（零长度
 // 切片语义——热路径 convertedRoute 对空集合零开销）。
 func TestKeyMetaProtocolConvertsEmpty(t *testing.T) {
-	svc, fs, keys := newTask4Svc()
+	svc, fs, keys := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "conv-off@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})

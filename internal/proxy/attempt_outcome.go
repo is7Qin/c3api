@@ -5,8 +5,8 @@ import "fmt"
 
 // AttemptID is a per-attempt identifier. Dispatched metadata
 // (RouteClassID/Fingerprint/Lane/Generation/LifecycleRevision) currently
-// uses placeholder values; canonical stable IDs will be provided by Task4/7/11
-// (RouteClass/QualityClass/candidate fingerprint) and wired in Task13. Do
+// uses placeholder values; canonical stable IDs will be provided by
+// (RouteClass/QualityClass/candidate fingerprint) and wired through the
 // not loosen to legacy Selection fields.
 type AttemptID string
 
@@ -265,7 +265,7 @@ func (o AttemptOutcome) Validate() error {
 	if o.Commit == CommitSentAmbiguous && !o.BusinessFrameSent {
 		return fmt.Errorf("sent_ambiguous requires BusinessFrameSent")
 	}
-	// Generation / LifecycleRevision >0 for dispatched (placeholder zero rejected; canonical values from Task4/7/11)
+	// Generation / LifecycleRevision >0 for dispatched (placeholder zero rejected; canonical values from routing dispatch)
 	if o.IsDispatched() {
 		if o.RouteClassID == "" {
 			return fmt.Errorf("RouteClassID required for dispatched attempt")

@@ -60,7 +60,7 @@ type Proxy struct {
 	// errlog 错误明细落盘 worker（分表设计；nil = 未装配——拒绝/异常路径只聚
 	// 合统计不落 err_logs 明细，测试/未装配形态）。与计费 flusher 完全解耦。
 	errlog *usage.ErrLogWorker
-	// qualityRecorder is a dormant dependency for Task13 (quality pipeline).
+	// qualityRecorder is wired by the quality pipeline.
 	// Owned by main, reachable via composition; hot path not yet wired.
 	qualityRecorder *quality.Recorder
 	inflight        atomic.Int64
@@ -146,7 +146,7 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 func (p *Proxy) SetCodex(c *sdkbridge.Codex) { p.codex = c }
 
 // SetQualityRecorder injects the quality recorder as a dormant dependency
-// for Task13. No caller migration yet; lifecycle Close is wired in main.
+// Caller migration remains separate; lifecycle Close is wired in main.
 func (p *Proxy) SetQualityRecorder(r *quality.Recorder) { p.qualityRecorder = r }
 
 // QualityRecorder returns the dormant quality recorder (may be nil in tests).
@@ -663,7 +663,7 @@ func isJSONObjectRoot(body []byte) bool {
 // setModel 把原始请求体里的 "model" 字段改写为调度器选定的上游模型名
 // （ModelMapping 已应用，见 scheduler.Select 的 Selection.Model）。原始转发
 // 必须沿用 SDK 路径 params.Model = sel.Model 的改写语义，否则映射配置在
-// 流式请求上失效（Task 3 迁移发现）。
+// 流式请求上失效（迁移发现）。
 // 短路守卫（GC 削减 P1）：model 已是目标值（gjson 字符串读取）→ 返回原切片
 // 零分配。守卫只对字符串匹配生效；null/数字/缺失/需改写走 sjson 字节级改写
 // 路径（单字段 splice，非 map 全文档往返——>2^53 整数精度无损、键序不变、

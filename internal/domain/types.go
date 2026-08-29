@@ -362,7 +362,7 @@ type ImportResult struct {
 }
 
 // CodexUsageSnapshot 账号 codex 额度快照（白名单收敛契约——spec 2026-08-18
-// Task 3：SDK UsageStatus 五块砍四留四——RateLimitReachedType（与 allowed=false
+// SDK UsageStatus 五块砍四留四——RateLimitReachedType（与 allowed=false
 // 重复的派生状态）与瞬时布尔（Allowed/LimitReached/HasCredits/Unlimited/
 // OverageLimitReached——5min 缓存下已过时）与 ApproxLocalMessages/
 // ApproxCloudMessages（[]any 未定型数组——不进契约）一律不出现）。每块 nil →
@@ -412,7 +412,7 @@ type UsageAgg struct {
 }
 
 // AccountUsageUpstreamError 上游快照失败分类标记（upstream_error 枚举——
-// task 3 sdkbridge 错误分类即映射输入：ErrAuthExpired → auth_expired、
+// sdkbridge 错误分类即映射输入：ErrAuthExpired → auth_expired、
 // ErrUpstream → upstream_unavailable；api-key 无凭据/"缺失"恒 nil，不进
 // auth_expired）。
 type AccountUsageUpstreamError string
@@ -424,7 +424,7 @@ const (
 
 // AccountUsage 账号 usage 视图 item（/api/admin/accounts/usage 统一 usage API 查询
 // 面）：Gateway 恒全量（无记录全 0——前端免补零）；Upstream 为 codex 额度快照
-// （task 3 sdkbridge；api-key/无凭据账号恒 nil）；UpstreamError 为快照失败标记
+// （sdkbridge；api-key/无凭据账号恒 nil）；UpstreamError 为快照失败标记
 // （成功/nil 上游恒 nil——"无上游能力"与"快照挂了"区分）。
 type AccountUsage struct {
 	AccountID     int64
@@ -618,7 +618,7 @@ type UsageLog struct {
 	PricePerCallMillis       *int64 // 按单元价快照（**毫分/单元**——search 每次 / 图片每张；例外单位，例外于上文"毫分/1M"口径——per-call 计费不走 /1e6 除法）；nil = 无按单元分量
 	Cost                     int64  // 毫分；错误请求（402/4xx）为 0
 	// RawCost 乘倍率前的原始成本（毫分；免费组 cost=0 但 raw 有值——"实际消耗"
-	// 只有 raw 能看）。回显面投影归 Task 2（本字段无 json tag，对齐 domain 全
+	// 只有 raw 能看）。回显面投影（本字段无 json tag，对齐 domain 全
 	// 结构惯例）。
 	RawCost     int64  // 毫分；bill 未装配/无价防御路径恒 0
 	BillingTier string // priority/flex/fast/auto；空 = 未计费路径
@@ -777,7 +777,7 @@ type ThrottleAction struct {
 }
 
 type RuleThen struct {
-	Status   *AccountStatus `json:"status,omitempty"` // legacy: Task27 deletes; keep for intermediate compile-green (MUST DO 5)
+	Status   *AccountStatus `json:"status,omitempty"` // legacy: to be removed; keep for intermediate compile-green
 	Cooldown *string        `json:"cooldown,omitempty"` // legacy
 	Weight   *int           `json:"weight,omitempty"`   // legacy
 	// ResponseCode nil=透传上游码，non-nil=覆写为指定码（400-599）；指针即意图（fresh setup，无旧 Transmit 兼容）。

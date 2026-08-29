@@ -11,9 +11,9 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// TestRuleBaseline_Task2 characterizes existing enqueue/window/first-match/response-shaping behavior
+// TestRuleBaseline characterizes existing enqueue/window/first-match/response-shaping behavior.
 // before typed Throttle/FailAccount. This is the passing baseline referenced in MUST DO 1.
-func TestRuleBaseline_Task2(t *testing.T) {
+func TestRuleBaseline(t *testing.T) {
 	// Enqueue bounded channel still best-effort admission (dropped when full)
 	e := New(Config{EventQueueSize: 1}, newFakeRuleStore(), nil)
 	e.Enqueue(Event{AccountID: 1, Kind: Kind429, OccurredAt: at(0)})

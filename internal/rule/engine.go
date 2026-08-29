@@ -80,10 +80,10 @@ type Event struct {
 	ErrorMessage         string
 	ResetAt              *time.Time
 	OccurredAt           time.Time // 零值由引擎填充为当前时间
-	RouteClassID         string    // Task4 canonical RouteClassID hex; account_route scope 必须非空
-	QualityClassID       string    // Task4 Candidate QualityClassID hex; account_route scope 必须非空
-	CandidateFingerprint string    // Task4 canonical candidate identity hex
-	ExpectedRevision     int64     // Task1 lifecycle_revision 期望值，FailAccount CAS 用
+	RouteClassID         string    // canonical RouteClassID hex; account_route scope 必须非空
+	QualityClassID       string    // Candidate QualityClassID hex; account_route scope 必须非空
+	CandidateFingerprint string    // canonical candidate identity hex
+	ExpectedRevision     int64     // lifecycle_revision 期望值，FailAccount CAS 用
 }
 
 // ApplyFunc 动作应用回调（由 scheduler 注册）：st 为 nil = 不改状态（只改权重）；
@@ -107,7 +107,7 @@ type PersistItem struct {
 }
 
 // PersistFunc is the injectable persistence execution surface.
-// Task2 fix: must accept context and honor cancellation.
+// Must accept context and honor cancellation.
 type PersistFunc func(ctx context.Context, item PersistItem) error
 
 // Config 引擎配置。
@@ -231,7 +231,7 @@ func (e *RuleEngine) SetApply(fn ApplyFunc) {
 	e.apply = fn
 }
 
-// SetHealthSink 注册 typed health 本地 sink（Task2 compile-green seam）。
+// SetHealthSink registers the typed health local sink.
 func (e *RuleEngine) SetHealthSink(s HealthSink) {
 	e.healthMu.Lock()
 	defer e.healthMu.Unlock()
@@ -447,10 +447,10 @@ func matchWindow(w domain.RuleWhen, wc windowSnapshot) bool {
 // worker 消费循环与测试共用。命中不清零窗口计数（C2）——滑动自然衰减，
 // 升级阶梯（如 60s 内 ≥5 error → 更重惩罚）不被低阈值规则清零阻断。
 // 未命中仅更新计数。
-// Task2: whole action path remains best-effort. After match, local sink immediately,
+// whole action path remains best-effort. After match, local sink immediately,
 // then nonblocking enqueue to bounded persist queue; persist queue full or write failure
 // never blocks request/rule worker.
-// Fix: matched_actions counts only typed Throttle/FailAccount accepted (not legacy/shaping-only).
+// matched_actions counts only typed Throttle/FailAccount accepted (not legacy/shaping-only).
 func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 	if ev.OccurredAt.IsZero() {
 		ev.OccurredAt = e.timeNow()

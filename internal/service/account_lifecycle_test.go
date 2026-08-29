@@ -60,8 +60,8 @@ func TestAccountValidationLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidInput)
 }
 
-func TestCodexImportTask1(t *testing.T) {
-	// Verify codex import path still works after Task1 schema changes (no regression)
+func TestCodexImport(t *testing.T) {
+	// Verify the codex import path remains functional.
 	fs := newFakeStore()
 	svc := &Service{store: fs, inv: &invRecorder{}}
 	// need templates of codex type

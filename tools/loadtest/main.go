@@ -363,7 +363,7 @@ func doRequest(client *http.Client, m *metrics, rng *rand.Rand, count bool) {
 		}
 		// 连接级失败退避（100-300ms 抖动）：Windows 监听 backlog（SOMAXCONN≈200）
 		// 下突发拨号会被 RST，无退避的立即重试会形成自持拒绝风暴
-		// （Task 9 实测：500 并发无退避 99.4% refused，150 并发无失败）。
+		// （压测实测：500 并发无退避 99.4% refused，150 并发无失败）。
 		time.Sleep(time.Duration(100+rng.IntN(200)) * time.Millisecond)
 		return
 	}

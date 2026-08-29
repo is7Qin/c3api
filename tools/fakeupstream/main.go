@@ -5,12 +5,12 @@
 // fakeupstream 模拟 OpenAI chat/completions 上游：支持流式（chunks 个事件 + usage + [DONE]）。
 // 用法: go run ./tools/fakeupstream -addr :9100 -chunks 100 -latency 20ms
 //
-// 扩展（Task 9 验收需要）：
+// 扩展：
 //   - -fail429/-fail500：按上游 key（Authorization: Bearer <key>）注入 429/5xx，
 //     用于验证调度器失败转移不产生雪崩（规格 §5.3，brief Step 4）。
 //   - /v1/messages：anthropic 官方格式的 SSE 流（event: 行 + message_start/
 //     content_block_delta/message_delta/message_stop），SDK 按 event 类型分发，
-//     纯 data 事件会被静默跳过（Task 8 修复后的网关同样按官方格式写出）。
+//     纯 data 事件会被静默跳过（修复后的网关同样按官方格式写出）。
 //   - 请求体可选字段 "chunks"（整数）：按请求覆盖 -chunks 标志（e2e 需要
 //     单个实例同时服务快速请求与长流式请求；缺省用标志值）。
 package main

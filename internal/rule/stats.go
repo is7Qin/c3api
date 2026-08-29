@@ -8,7 +8,7 @@ package rule
 // 接口——装配侧类型断言聚合（main.go），响应 typed struct 非 map。
 // 采集纪律：原子读 + len(channel)（零锁零分配，O(1)）。
 
-// RuleEngineStats 规则引擎状态（两阶段有界队列可观测面，Task2）。
+// RuleEngineStats 规则引擎状态（两阶段有界队列可观测面）。
 type RuleEngineStats struct {
 	Queued            int   `json:"queued"`               // 准入队列积压
 	QueueCap          int   `json:"queue_cap"`            // 准入容量

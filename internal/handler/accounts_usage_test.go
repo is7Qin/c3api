@@ -145,7 +145,7 @@ func TestGetAccountsUsageExplicitRange(t *testing.T) {
 	require.True(t, store.aggTo.Equal(wantTo), "显式 to 透传（%v）", store.aggTo)
 }
 
-// TestGetAccountsUsageUpstreamAssembly 响应面 upstream 装配（task 3 接线）：
+// TestGetAccountsUsageUpstreamAssembly 响应面 upstream 装配：
 // api-key → upstream:null + upstream_error:null 显式输出；codex 成功 → 快照；
 // codex fatal → auth_expired；上游失败 → upstream_unavailable；单账号失败其余
 // 正常（整响应 200）。

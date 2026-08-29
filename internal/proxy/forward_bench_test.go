@@ -22,7 +22,7 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
-// 转发热路径基准（Task 3）：完整 Proxy + fake 上游 + 固定 body，流式/非流式
+// 转发热路径基准：完整 Proxy + fake 上游 + 固定 body，流式/非流式
 // 各一。经 AIRouter 走生产分发路径（main 上 = HandleXxx，分支上 = handleFormat），
 // 与 main 基线对比 alloc/op 零增长是硬标准。
 // 基准文件随分支提交；main 基线用临时 worktree 跑同一文件（比 stash 安全）。

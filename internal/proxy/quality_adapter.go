@@ -3,7 +3,7 @@ package proxy
 
 import "github.com/is7qin/c3api/internal/quality"
 
-// AdaptOutcomeToObservation maps a canonical Task3 AttemptOutcome onto a
+// AdaptOutcomeToObservation maps a canonical AttemptOutcome onto a
 // quality Observation. The outcome must pass Validate and IsCountedForQuality;
 // cancel/local/reservation and invalid outcomes are excluded (ok=false).
 // Failures — malformed included, i.e. post-commit failures — are classified by
