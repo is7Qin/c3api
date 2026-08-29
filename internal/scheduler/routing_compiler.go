@@ -60,24 +60,25 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 			if route == nil {
 				continue
 			}
-			rr := canonicalRouteRef(gid, rk)
-			candidates := fullCandidateUnion(gs, rk)
-			filtered := filterCandidates(candidates, in.Health, in.Latched, rk)
-			if len(filtered) == 0 {
-				routes[rr] = &RouteDecision{Explore: ExploreDecision{Weights: map[int64]int{}, Fallback: []int64{}}}
-				continue
-			}
-			var rcVal domain.RouteClassIDVal
-			if rr.RouteClassID != "" {
-				if v, err := domain.HexToID(rr.RouteClassID); err == nil {
-					rcVal = domain.RouteClassIDVal(v)
+			ops := operationTagsForFormat(rk.format)
+			for _, op := range ops {
+				rr := canonicalRouteRefWithOp(gid, rk, op)
+				candidates := fullCandidateUnion(gs, rk)
+				filtered := filterCandidates(candidates, in.Health, in.Latched, rk, op)
+				if len(filtered) == 0 {
+					routes[rr] = &RouteDecision{Explore: ExploreDecision{Weights: map[int64]int{}, Fallback: []int64{}}}
+					continue
 				}
+				var rcVal domain.RouteClassIDVal
+				if rr.RouteClassID != "" {
+					if v, err := domain.HexToID(rr.RouteClassID); err == nil {
+						rcVal = domain.RouteClassIDVal(v)
+					}
+				}
+				dec := compileRouteDecision(filtered, rk, rcVal, in.Quality, in.Prices)
+				routes[rr] = dec
 			}
-			dec := compileRouteDecision(filtered, rk, rcVal, in.Quality, in.Prices)
-			routes[rr] = dec
 		}
-		// Also compile fallback routes that may exist only via default bucket but not in routes map?
-		// BuildRoutes already created all needed routeKeys; union covers empty too.
 	}
 	return &DecisionView{routes: routes}, nil
 }
@@ -107,6 +108,10 @@ func sortedRouteKeys(m map[routeKey]*route) []routeKey {
 
 func canonicalRouteRef(gid int64, rk routeKey) RouteRef {
 	op := operationTagForFormat(string(rk.format))
+	return canonicalRouteRefWithOp(gid, rk, op)
+}
+
+func canonicalRouteRefWithOp(gid int64, rk routeKey, op domain.OperationTag) RouteRef {
 	rc := ""
 	if rf, ok := parseRequestFormat(string(rk.format)); ok && op != "" {
 		if id, err := domain.RouteClassID(gid, rf, rk.model, op); err == nil {
@@ -114,4 +119,16 @@ func canonicalRouteRef(gid int64, rk routeKey) RouteRef {
 		}
 	}
 	return RouteRef{GroupID: gid, Format: string(rk.format), Model: rk.model, OperationTag: string(op), RouteClassID: rc}
+}
+
+func operationTagsForFormat(f domain.RequestFormat) []domain.OperationTag {
+	switch f {
+	case domain.FormatOpenAIImages:
+		return []domain.OperationTag{domain.OpImagesGenerations, domain.OpImagesEdits}
+	default:
+		if op := operationTagForFormat(string(f)); op != "" {
+			return []domain.OperationTag{op}
+		}
+		return nil
+	}
 }

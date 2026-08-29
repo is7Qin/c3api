@@ -22,13 +22,21 @@ func (s *StaticView) Groups() map[int64]*groupSnapshot {
 	if s == nil {
 		return nil
 	}
-	return s.groups
+	out := make(map[int64]*groupSnapshot, len(s.groups))
+	for k, v := range s.groups {
+		out[k] = v
+	}
+	return out
 }
 func (s *StaticView) ByID() map[int64]*accountSnapshot {
 	if s == nil {
 		return nil
 	}
-	return s.byID
+	out := make(map[int64]*accountSnapshot, len(s.byID))
+	for k, v := range s.byID {
+		out[k] = v
+	}
+	return out
 }
 
 // DecisionView holds immutable decision state derived from compiler/runtime.
@@ -78,12 +86,16 @@ type ExploreDecision struct {
 
 func (d *DecisionView) Generation() uint64 { return d.generation }
 
-// Routes returns immutable per-route decisions (nil if none).
+// Routes returns immutable per-route decisions (nil if none). Deep copy of map and decisions.
 func (d *DecisionView) Routes() map[RouteRef]*RouteDecision {
 	if d == nil {
 		return nil
 	}
-	return d.routes
+	out := make(map[RouteRef]*RouteDecision, len(d.routes))
+	for k, v := range d.routes {
+		out[k] = cloneRouteDecision(v)
+	}
+	return out
 }
 
 // Route returns decision for a specific route (compat: computes canonical identity when OperationTag/RouteClassID empty).
@@ -91,14 +103,50 @@ func (d *DecisionView) Route(groupID int64, format string, model string) (*Route
 	if d == nil || d.routes == nil {
 		return nil, false
 	}
-	// Fast path exact if caller built canonical ref elsewhere.
 	v, ok := d.routes[RouteRef{GroupID: groupID, Format: format, Model: model}]
 	if ok {
-		return v, ok
+		return cloneRouteDecision(v), true
 	}
 	rr := RouteRefFor(groupID, format, model)
 	v, ok = d.routes[rr]
-	return v, ok
+	if !ok {
+		return nil, false
+	}
+	return cloneRouteDecision(v), true
+}
+
+func cloneRouteDecision(in *RouteDecision) *RouteDecision {
+	if in == nil {
+		return nil
+	}
+	out := &RouteDecision{Explore: cloneExploreDecision(in.Explore)}
+	if in.Primary != nil {
+		out.Primary = append([]int64(nil), in.Primary...)
+	}
+	if in.Degraded != nil {
+		out.Degraded = append([]int64(nil), in.Degraded...)
+	}
+	return out
+}
+
+func cloneExploreDecision(in ExploreDecision) ExploreDecision {
+	out := ExploreDecision{Total: in.Total}
+	if in.IDs != nil {
+		out.IDs = append([]int64(nil), in.IDs...)
+	}
+	if in.Weights != nil {
+		out.Weights = make(map[int64]int, len(in.Weights))
+		for k, v := range in.Weights {
+			out.Weights[k] = v
+		}
+	}
+	if in.Cumulative != nil {
+		out.Cumulative = append([]uint64(nil), in.Cumulative...)
+	}
+	if in.Fallback != nil {
+		out.Fallback = append([]int64(nil), in.Fallback...)
+	}
+	return out
 }
 
 // RouteRefFor builds canonical RouteRef for group/format/model (fails closed on invalid -> empty RouteClassID).
@@ -155,13 +203,21 @@ func (v *RoutingView) Groups() map[int64]*groupSnapshot {
 	if v == nil || v.static == nil {
 		return nil
 	}
-	return v.static.groups
+	out := make(map[int64]*groupSnapshot, len(v.static.groups))
+	for k, vv := range v.static.groups {
+		out[k] = vv
+	}
+	return out
 }
 func (v *RoutingView) ByID() map[int64]*accountSnapshot {
 	if v == nil || v.static == nil {
 		return nil
 	}
-	return v.static.byID
+	out := make(map[int64]*accountSnapshot, len(v.static.byID))
+	for k, vv := range v.static.byID {
+		out[k] = vv
+	}
+	return out
 }
 
 type routingPublisher struct {
