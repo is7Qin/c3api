@@ -48,7 +48,7 @@ func (f *fakePG) UpsertQualityAndMarkDirty(_ context.Context, row repository.Rou
 	}
 	k := hex.EncodeToString(row.CandidateFingerprint[:])
 	if f.poison[k] {
-		return context.DeadlineExceeded
+		return &RowDataError{Msg: "check constraint violates quality_attempts"}
 	}
 	// sequence semantics: only greater sequence overwrites
 	mapKey := row.InstanceSrc + ":" + row.BucketMinute.String() + ":" + k

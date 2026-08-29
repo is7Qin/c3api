@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,6 +95,11 @@ type cellSnap struct {
 	images     int64
 }
 
+type cursorEntry struct {
+	snap cellSnap
+	gen  uint64
+}
+
 type SyncWorker struct {
 	rec         *Recorder
 	rdb         *redis.Client
@@ -119,8 +123,8 @@ type SyncWorker struct {
 	batchQ    atomic.Int64
 	batchF    atomic.Int64
 
-	lastCell       map[Key]cellSnap
-	pgLastCell     map[Key]cellSnap
+	lastCell       map[Key]cursorEntry
+	pgLastCell     map[Key]cursorEntry
 	minuteAbs      map[int64]map[Key]*QualityMinute
 	pgMinuteAbs    map[int64]map[Key]*QualityMinute
 	committed      map[int64]map[Key]*QualityMinute
@@ -168,8 +172,8 @@ func NewSyncWorker(rec *Recorder, rdb *redis.Client, pg PGQualityWriter, cfg Syn
 		seq:         make(map[int64]int64),
 		redisSeq:    make(map[int64]int64),
 		pgSeq:       make(map[int64]int64),
-		lastCell:    make(map[Key]cellSnap),
-		pgLastCell:  make(map[Key]cellSnap),
+		lastCell:    make(map[Key]cursorEntry),
+		pgLastCell:  make(map[Key]cursorEntry),
 		minuteAbs:   make(map[int64]map[Key]*QualityMinute),
 		pgMinuteAbs: make(map[int64]map[Key]*QualityMinute),
 		committed:   make(map[int64]map[Key]*QualityMinute),
@@ -257,33 +261,33 @@ func (w *SyncWorker) collectRedisDeltaLocked(curMinuteUnix int64) map[int64]map[
 		}
 		prev, ok := w.lastCell[c.key]
 		var delta cellSnap
-		if ok {
-			delta.attempts = cur.attempts - prev.attempts
-			delta.successes = cur.successes - prev.successes
-			delta.err429 = cur.err429 - prev.err429
-			delta.err4xx = cur.err4xx - prev.err4xx
-			delta.err5xx = cur.err5xx - prev.err5xx
-			delta.errNetwork = cur.errNetwork - prev.errNetwork
-			delta.ttftCount = cur.ttftCount - prev.ttftCount
-			delta.sumQ32 = cur.sumQ32 - prev.sumQ32
-			delta.sumSqQ32 = cur.sumSqQ32 - prev.sumSqQ32
+		if ok && prev.gen == c.gen {
+			delta.attempts = cur.attempts - prev.snap.attempts
+			delta.successes = cur.successes - prev.snap.successes
+			delta.err429 = cur.err429 - prev.snap.err429
+			delta.err4xx = cur.err4xx - prev.snap.err4xx
+			delta.err5xx = cur.err5xx - prev.snap.err5xx
+			delta.errNetwork = cur.errNetwork - prev.snap.errNetwork
+			delta.ttftCount = cur.ttftCount - prev.snap.ttftCount
+			delta.sumQ32 = cur.sumQ32 - prev.snap.sumQ32
+			delta.sumSqQ32 = cur.sumSqQ32 - prev.snap.sumSqQ32
 			for i := range delta.hist {
-				delta.hist[i] = cur.hist[i] - prev.hist[i]
+				delta.hist[i] = cur.hist[i] - prev.snap.hist[i]
 			}
-			delta.input = cur.input - prev.input
-			delta.output = cur.output - prev.output
-			delta.cacheRead = cur.cacheRead - prev.cacheRead
-			delta.cacheCreate = cur.cacheCreate - prev.cacheCreate
-			delta.calls = cur.calls - prev.calls
-			delta.images = cur.images - prev.images
+			delta.input = cur.input - prev.snap.input
+			delta.output = cur.output - prev.snap.output
+			delta.cacheRead = cur.cacheRead - prev.snap.cacheRead
+			delta.cacheCreate = cur.cacheCreate - prev.snap.cacheCreate
+			delta.calls = cur.calls - prev.snap.calls
+			delta.images = cur.images - prev.snap.images
 		} else {
 			delta = cur
 		}
 		if delta.attempts == 0 && delta.successes == 0 && delta.ttftCount == 0 && delta.input == 0 && delta.output == 0 && delta.calls == 0 && delta.images == 0 && delta.err429 == 0 && delta.err4xx == 0 && delta.err5xx == 0 && delta.errNetwork == 0 {
-			w.lastCell[c.key] = cur
+			w.lastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
 			continue
 		}
-		w.lastCell[c.key] = cur
+		w.lastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
 		if _, ok := w.minuteAbs[curMinuteUnix]; !ok {
 			w.minuteAbs[curMinuteUnix] = make(map[Key]*QualityMinute)
 		}
@@ -370,33 +374,33 @@ func (w *SyncWorker) collectPGDeltaLocked() map[int64]map[Key]*QualityMinute {
 		}
 		prev, ok := w.pgLastCell[c.key]
 		var delta cellSnap
-		if ok {
-			delta.attempts = cur.attempts - prev.attempts
-			delta.successes = cur.successes - prev.successes
-			delta.err429 = cur.err429 - prev.err429
-			delta.err4xx = cur.err4xx - prev.err4xx
-			delta.err5xx = cur.err5xx - prev.err5xx
-			delta.errNetwork = cur.errNetwork - prev.errNetwork
-			delta.ttftCount = cur.ttftCount - prev.ttftCount
-			delta.sumQ32 = cur.sumQ32 - prev.sumQ32
-			delta.sumSqQ32 = cur.sumSqQ32 - prev.sumSqQ32
+		if ok && prev.gen == c.gen {
+			delta.attempts = cur.attempts - prev.snap.attempts
+			delta.successes = cur.successes - prev.snap.successes
+			delta.err429 = cur.err429 - prev.snap.err429
+			delta.err4xx = cur.err4xx - prev.snap.err4xx
+			delta.err5xx = cur.err5xx - prev.snap.err5xx
+			delta.errNetwork = cur.errNetwork - prev.snap.errNetwork
+			delta.ttftCount = cur.ttftCount - prev.snap.ttftCount
+			delta.sumQ32 = cur.sumQ32 - prev.snap.sumQ32
+			delta.sumSqQ32 = cur.sumSqQ32 - prev.snap.sumSqQ32
 			for i := range delta.hist {
-				delta.hist[i] = cur.hist[i] - prev.hist[i]
+				delta.hist[i] = cur.hist[i] - prev.snap.hist[i]
 			}
-			delta.input = cur.input - prev.input
-			delta.output = cur.output - prev.output
-			delta.cacheRead = cur.cacheRead - prev.cacheRead
-			delta.cacheCreate = cur.cacheCreate - prev.cacheCreate
-			delta.calls = cur.calls - prev.calls
-			delta.images = cur.images - prev.images
+			delta.input = cur.input - prev.snap.input
+			delta.output = cur.output - prev.snap.output
+			delta.cacheRead = cur.cacheRead - prev.snap.cacheRead
+			delta.cacheCreate = cur.cacheCreate - prev.snap.cacheCreate
+			delta.calls = cur.calls - prev.snap.calls
+			delta.images = cur.images - prev.snap.images
 		} else {
 			delta = cur
 		}
 		if delta.attempts == 0 && delta.successes == 0 && delta.ttftCount == 0 && delta.input == 0 && delta.output == 0 && delta.calls == 0 && delta.images == 0 && delta.err429 == 0 && delta.err4xx == 0 && delta.err5xx == 0 && delta.errNetwork == 0 {
-			w.pgLastCell[c.key] = cur
+			w.pgLastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
 			continue
 		}
-		w.pgLastCell[c.key] = cur
+		w.pgLastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
 		minute := w.clock().UTC().Truncate(time.Minute).Unix()
 		if _, ok := w.pgMinuteAbs[minute]; !ok {
 			w.pgMinuteAbs[minute] = make(map[Key]*QualityMinute)
@@ -491,7 +495,7 @@ func (w *SyncWorker) doRedis(ctx context.Context) {
 	// Simplify: do snapshot collection into temp, then on success commit.
 	// For now we implement by saving copies
 	w.mu.Lock()
-	savedLastCell := make(map[Key]cellSnap, len(w.lastCell))
+	savedLastCell := make(map[Key]cursorEntry, len(w.lastCell))
 	for k, v := range w.lastCell {
 		savedLastCell[k] = v
 	}
@@ -963,11 +967,7 @@ func isRowDataError(err error) bool {
 		return false
 	}
 	var rde *RowDataError
-	if errors.As(err, &rde) {
-		return true
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "check constraint") || strings.Contains(msg, "violates") || strings.Contains(msg, "invalid input") || strings.Contains(msg, "bytea") || strings.Contains(msg, "octet_length")
+	return errors.As(err, &rde)
 }
 
 func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) error {
@@ -1007,8 +1007,10 @@ func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) error
 func (w *SyncWorker) bisectQuality(ctx context.Context, chunk []qRow) (poison *qRow, refill []qRow) {
 	if len(chunk) == 1 {
 		if err := w.insertQualityChunk(ctx, chunk); err != nil {
-			// in bisect context sibling success proves poison, regardless of error type
-			return &chunk[0], nil
+			if isRowDataError(err) {
+				return &chunk[0], nil
+			}
+			return nil, chunk
 		}
 		return nil, nil
 	}
@@ -1256,8 +1258,18 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 			err = context.DeadlineExceeded
 		}
 	}
-	drainCtx := context.WithoutCancel(ctx)
-	drainCtx, cancelDrain := context.WithTimeout(drainCtx, 5*time.Second)
+	drainCtxBase := context.WithoutCancel(ctx)
+	var cancelDrain context.CancelFunc
+	drainCtx := drainCtxBase
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout := time.Until(deadline)
+		if timeout <= 0 {
+			timeout = time.Millisecond
+		}
+		drainCtx, cancelDrain = context.WithTimeout(drainCtxBase, timeout)
+	} else {
+		drainCtx, cancelDrain = context.WithTimeout(drainCtxBase, 5*time.Second)
+	}
 	defer cancelDrain()
 	acquired := make(chan struct{})
 	go func() {
@@ -1291,9 +1303,74 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 			err = drainCtx.Err()
 		}
 	}
-	w.doPG(drainCtx)
-	if drainCtx.Err() != nil && err == nil {
-		err = drainCtx.Err()
+	drainedOnce := false
+	for {
+		if drainCtx.Err() != nil {
+			w.rec.mu.Lock()
+			qRem := 0
+			for _, rows := range w.rec.pendingQuality {
+				qRem += len(rows)
+			}
+			fRem := len(w.rec.pendingFlow)
+			w.rec.mu.Unlock()
+			w.mu.Lock()
+			pgRem := 0
+			for _, m := range w.pgMinuteAbs {
+				pgRem += len(m)
+			}
+			redisRem := 0
+			for _, m := range w.minuteAbs {
+				redisRem += len(m)
+			}
+			w.mu.Unlock()
+			total := qRem + fRem + pgRem + redisRem
+			if total > 0 {
+				remErr := fmt.Errorf("quality-sync: drain incomplete, remaining quality=%d flow=%d pg=%d redis=%d: %w", qRem, fRem, pgRem, redisRem, drainCtx.Err())
+				if err != nil {
+					return fmt.Errorf("%w; %v", err, remErr)
+				}
+				return remErr
+			}
+			if err == nil {
+				err = drainCtx.Err()
+			}
+			break
+		}
+		w.rec.mu.Lock()
+		qPending := 0
+		for _, rows := range w.rec.pendingQuality {
+			qPending += len(rows)
+		}
+		fPending := len(w.rec.pendingFlow)
+		w.rec.mu.Unlock()
+		w.mu.Lock()
+		pgPending := len(w.pgMinuteAbs)
+		redisPending := len(w.minuteAbs)
+		w.mu.Unlock()
+		if drainedOnce && qPending == 0 && fPending == 0 && pgPending == 0 && redisPending == 0 {
+			break
+		}
+		w.doRedis(drainCtx)
+		w.doPG(drainCtx)
+		drainedOnce = true
+	}
+	w.rec.mu.Lock()
+	qFinal := 0
+	for _, rows := range w.rec.pendingQuality {
+		qFinal += len(rows)
+	}
+	fFinal := len(w.rec.pendingFlow)
+	w.rec.mu.Unlock()
+	w.mu.Lock()
+	pgFinal := len(w.pgMinuteAbs)
+	redisFinal := len(w.minuteAbs)
+	w.mu.Unlock()
+	if qFinal+fFinal+pgFinal+redisFinal > 0 {
+		remErr := fmt.Errorf("quality-sync: drain incomplete, remaining quality=%d flow=%d pg=%d redis=%d", qFinal, fFinal, pgFinal, redisFinal)
+		if err != nil {
+			return fmt.Errorf("%w; %v", err, remErr)
+		}
+		return remErr
 	}
 	return err
 }
