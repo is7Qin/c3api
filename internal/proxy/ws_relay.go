@@ -20,7 +20,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// --- resp-ws relay 合一骨架（D2：relayResponsesWS/relayCodexWS 双份并发状态机
+// --- resp-ws relay 合一骨架（relayResponsesWS/relayCodexWS 双份并发状态机
 // 合一，用户裁决抽 5 方法传输接口） ---
 // 双份差异只在传输面（上游具体类型/typ 语义/每帧判死钩子），状态机段（首帧改
 // 写 → 三向 goroutine relay → 分类 → 关闭传播 → 记录）逐字同款——骨架只合一
@@ -67,7 +67,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// 副作用——relayCtx 存活 = 本退出是首因；首因到达 endCh → 编排等上游
 	// 读者退出 → 分类 → 取消对侧 → 等全部退出。
 	//
-	// I-1 竞态（评审裁决"修"）：上游关闭帧与客户端活跃写帧并发时，上游侧
+	// 上游关闭帧与客户端活跃写帧并发竞态：上游侧
 	// 错误槽 upErr 有两个并发写者——up-loop 的关闭帧（CloseError）与
 	// client-loop 的写失败（net.ErrClosed，库在解码关闭帧后 c.close() 所致）
 	// ——首写生效下 net.ErrClosed 可能先被记录 → 健康上游误判连接级错误
@@ -196,7 +196,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				return
 			}
 			if frameHook != nil {
-				frameHook(f) // codex 路径：判死帧 → FatalAuth（T5 §3 唯一跨边界点；判死帧照常透传客户端）
+				frameHook(f) // codex 路径：判死帧 → FatalAuth（唯一跨边界点，判死帧照常透传客户端）
 			}
 			// 热路径纪律：bytes.Contains 零分配预筛，命中才最小字节扫描取 usage
 			// （usage_extract.go A-1 scanKeyValue 单遍扫描零分配）；流式中间帧

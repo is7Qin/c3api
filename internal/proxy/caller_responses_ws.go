@@ -161,7 +161,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	defer leaseGuard(sel)
 
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=true（resp-ws 保留
-	// chat 价预检照常执行——评审 P2-3 裁决：纯 image 价模型经 resp 出图会被
+	// chat 价预检照常执行——纯 image 价模型经 resp 出图会被
 	// 既有预检 402，接受，职责边界清晰；共享 helper 只对 images 格式切换）；
 	// 4xx 透传统一走循环分类（finish + wsSink 错误帧，emOr 语义保持）；耗尽
 	// 固定文案由 wsSink 承载（WS 无 Retry-After/429 语义）。codex 拨号分类
@@ -186,12 +186,10 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 type wsAttempt struct{ p *Proxy }
 
 func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
-	// TODO(P22-I1): 当前 hdr 恒 nil（UpstreamCaller.Call 未回收 resp.Header），
-	// 仅 fallback 1 生效；待扩展 Header 透传后替换为真实透传
-	// （Global Constraints 豁免 fallback 保留）
+	// 当前 hdr 恒 nil，未回收上游 Header，仅 fallback 生效；后续扩展透传后替换为真实透传
 	p := a.p
 	if isCodexCredentialType(sel.CredentialType) {
-		// codex 独立 relay 变体（T4 §1）：SDK Dial 路径——快照派生 cred 直供
+		// codex 独立 relay 变体：SDK Dial 路径——快照派生 cred 直供
 		// 适配层（不经 credentialFor 单字符串路径：codex 凭据为复合结构
 		// oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表
 		// 达不了——注册表未注册 codex 类型，见 dialCodexWS 注释），伪装四元
@@ -199,7 +197,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		//（codex_responses_ws.go）。
 		up, dialErr := p.dialCodexWS(r, sel)
 		if dialErr == nil {
-			// frameHook：每帧判死嗅探（T5 §3 唯一跨边界点——读帧成功后、usage
+			// frameHook：每帧判死嗅探（唯一跨边界点——读帧成功后、usage
 			// 嗅探与 client.Write 前调用，与现状 codex_responses_ws.go:339-341
 			// 先于 354 的调用序一致）；判死帧照常透传客户端（错误事件属业务
 			// 流），会话随后由上游关闭帧自然收尾。闭包捕获 p/sel——每 relay
@@ -376,7 +374,7 @@ const (
 	relayEndUpstreamError
 )
 
-// relayClassify 错误分类（I-1 修复核心）：上游关闭帧（upClose）优先于一切——
+// relayClassify 错误分类：上游关闭帧（upClose）优先于一切——
 // 客户端循环并发写失败（net.ErrClosed）只归因网络错误槽，绝不覆盖关闭帧
 // （健康上游 + 正常关闭帧 → 恒成功）；无关闭帧时：客户端断开 → abort，
 // 其余（上游错误/失联）→ 错误。返回结束类型与收尾依据错误（abort/error
