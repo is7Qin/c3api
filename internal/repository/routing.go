@@ -629,7 +629,7 @@ func (r *PartitionRepo) RollupFlow(ctx context.Context, terminalMinute time.Time
 			return err
 		}
 		if err := drv.Exec(ctx, `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, updated_at)
-	SELECT identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, now() FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2`, []any{terminalMinute, version}, &res); err != nil {
+	SELECT identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, MAX(absolute_sequence), SUM(chain_count), now() FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2 GROUP BY identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint`, []any{terminalMinute, version}, &res); err != nil {
 			return err
 		}
 	} else if hasSnap {
