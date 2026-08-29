@@ -25,6 +25,8 @@ import (
 
 type responsesCaller struct{ p *Proxy }
 
+// responsesCaller 负责 Responses 原始字节转发、response.completed 用量提取和图像调用计数。
+
 func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	if isCodexCredentialType(sel.CredentialType) {
@@ -34,9 +36,11 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		body = stripImageTools(body)
 	}
 	if stream {
+		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model
 		reqModel := gjson.GetBytes(body, "model").String()
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
+		// 模型映射：等价 SDK 路径对 params.Model 的覆盖，命中则零分配复用原切片
 		streamBody, err := setModel(body, sel.Model)
 		if err != nil {
 			return 0, nil, false, err
@@ -54,18 +58,22 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Accel-Buffering", "no")
 		var it, ot, tt, cr, cc int64
-		var img int64
+		var img int64 // 图像调用计数旁路，仅 completed 帧最终覆盖
+		// TTFT 首帧语义：首个 SSE 事件写出后回调记录毫秒，已提交流无帧则保持 nil
 		var ttft *int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Observer: func(ev sserelay.Event) {
+				// 首帧即 TTFT，Observer 在帧写出后触发，最接近客户端感知
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
 					ttft = &ms
 				}
+				// 协议用量：仅 response.completed 事件携带 usage，缺 event 名时按 data.type 推断
 				if bytes.Equal(ev.EventName(), []byte("response.completed")) {
 					if t, ok := responsesCompletedUsage(ev.Data); ok {
 						it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
 					}
+					// 图像检测旁路：completed 帧恒在流末，最终计数覆盖
 					if respImageDetectOn(sel) {
 						img = respImageCountCompleted(ev.Data)
 					}
@@ -76,10 +84,13 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
+		// 观测器恰好一次归属：后续分支仅走 Cancel 或 Complete 之一
 		base := responsesBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, tt, cr, cc, img)
 		obs := responsesObserver(p, sel)
 		if err != nil {
+			// 客户端取消 vs 上游停滞：Canceled 为客户端断开，DeadlineExceeded 为上游超时，后者走失败分支
 			if errors.Is(err, context.Canceled) {
+				// 已提交流用量保留：沿用断前已收到的 usage 帧，无则 0，记 200+ErrAbort 防丢日志
 				out := base
 				out.Result = ResultClientCancel
 				out.Commit = CommitResponseStarted
@@ -90,6 +101,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 				return 0, nil, true, nil
 			}
+			// 上游流中止：同样保留已收集用量，按连接级/5xx 分类
 			out := base
 			out.Result = ResultFailed
 			out.HTTPStatus = 0
@@ -117,10 +129,12 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	var params responses.ResponseNewParams
 	if err := json.Unmarshal(body, &params); err != nil {
+		// 本地拒绝：参数校验失败，已占并发槽仅释放不计健康与用量
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 		sel.Release()
 		return 400, nil, true, nil
 	}
+	// 客户端请求模型快照：覆盖前取值用于日志与观测
 	reqModel := params.Model
 	params.Model = responses.ResponsesModel(sel.Model)
 	tpl := tplOf(sel)
@@ -136,15 +150,17 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 	var it, ot, tt, cr, cc int64
-	var img int64
+	var img int64 // 图像调用计数旁路
 	if resp.JSON.Usage.Valid() {
+		// 非流式用量：Responses 无 cache_creation 语义，直接读取 usage
 		it, ot, tt, cr, cc = responsesUsageFromResponse(resp.Usage)
 	}
+	// 响应侧图像检测旁路，受开关门控
 	if respImageDetectOn(sel) {
 		img = respImageCountBody([]byte(resp.RawJSON()))
 	}
 	base := responsesBaseOutcome(reqID, groupID, sel, string(reqModel), start, nil, it, ot, tt, cr, cc, img)
-	obs := responsesObserver(p, sel)
+	obs := responsesObserver(p, sel) // 恰好一次 Complete 归属
 	out := base
 	out.Result = ResultSuccess
 	out.HTTPStatus = 200
@@ -174,6 +190,7 @@ func responsesBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection,
 	}
 }
 
+// responsesObserver 构造恰好一次的观测器：Complete 负责健康与释放，Cancel 仅释放
 func responsesObserver(p *Proxy, sel *scheduler.Selection) *AttemptObserver {
 	return NewAttemptObserver(nil,
 		func(o AttemptOutcome, e AttemptHealthEvent) { p.sched.MarkResult(o.AccountID, e.Kind, nil, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel) },
@@ -181,5 +198,4 @@ func responsesObserver(p *Proxy, sel *scheduler.Selection) *AttemptObserver {
 		func() { sel.Release() },
 	)
 }
-
 
