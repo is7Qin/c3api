@@ -85,19 +85,23 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
 		if err != nil {
-			// 客户端断开与上游流中止通过 typed outcome 统一收敛，确保 exactly-one observation。
+			// 流式结束分流：仅 context.Canceled 判为客户端断开，上游停滞超时（UpstreamStreamTimeout）为 DeadlineExceeded，走上游错误分支，不可误判或 failover；
+			// 客户端断开/上游中断均经 typed outcome 统一收敛，保证 exactly-one 观测。
 			if errors.Is(err, context.Canceled) {
+				// 客户端断开：上游已消费请求，仍保留已采集的 usage/TTFT 并记 200+ErrAbort，避免成功请求丢日志。
 				base := chatDispatchedBase(sel, reqID, reqModel, start)
 				outcome := chatOutcomeForClientCancel(base, ttft != nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft)
 				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 				return 0, nil, true, nil
 			}
+			// 上游流中断：按是否已首帧（ttft != nil）区分已发送，保留已采集 usage 走网络错误观测。
 			sent := ttft != nil
 			base := chatDispatchedBase(sel, reqID, reqModel, start)
 			outcome := chatOutcomeForNetwork(base, sent, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft)
 			_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 			return 0, nil, true, nil
 		}
+		// 流式成功：携带 TTFT 与已聚合的 usage 经 typed outcome 统一记录，保证 exactly-one 观测与记录归一。
 		base := chatDispatchedBase(sel, reqID, reqModel, start)
 		outcome := chatOutcomeForSuccess(base, ttft, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
 		_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
@@ -106,9 +110,8 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 
 	var params openai.ChatCompletionNewParams
 	if err := json.Unmarshal(body, &params); err != nil {
-		// 本地拒绝（handled=true，无记录）：非流式 params 解析失败现状即
-		// 本地 400、不记日志（评审 I-1 附加缺口）。Select 已占并发槽，必须
-		// 释放（Release-only；finish(nil) 等价，直接 Release 更显式）。
+		// 本地拒绝（handled=true，无记录）：非流式 params 解析失败记本地 400，不记日志；
+		// 已占并发槽必须释放（Release-only，与 finish(nil) 等价，直接 Release 更显式）。
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 		sel.Release()
 		return 400, nil, true, nil
@@ -130,8 +133,10 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 	_, _ = w.Write(data)
 	var it, ot, tt, cr, cc int64
 	if resp.JSON.Usage.Valid() {
+		// 非流式用量：cr 直读 SDK 结构体，cc 从 RawJSON 原始字节聚合。
 		it, ot, tt, cr, cc = chatUsageFromResponse(resp.Usage)
 	}
+	// 非流式成功经 typed outcome 统一收敛，保证 exactly-one 观测与记录归一。
 	base := chatDispatchedBase(sel, reqID, reqModel, start)
 	outcome := chatOutcomeForSuccess(base, nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
 	_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
