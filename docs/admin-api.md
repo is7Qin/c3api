@@ -81,7 +81,7 @@
 }
 ```
 
-> 注意：响应字段为 **Go 默认大写命名**（`ID` / `Name` / `BaseURL`…），请求字段为 snake_case。`Models` / `FormatModels` / `ModelMapping` 为 `null` 时表示空；`ModelMapping` 元素为 `{mapped_model, mode}` 严格对象。
+> 注意：响应字段为 **Go 默认大写命名**（`ID` / `Name` / `BaseURL`…），请求字段为 snake_case。空的 `Models` / `FormatModels` / `ModelMapping` 响应值统一为 `{}`；请求中显式提供 `model_mapping: null` 返回 `400`。`ModelMapping` 元素为 `{mapped_model, mode}` 严格对象。
 
 ### 模板列表
 
