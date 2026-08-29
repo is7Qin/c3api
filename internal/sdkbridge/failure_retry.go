@@ -35,6 +35,8 @@ var (
 )
 
 func ensureFailureRetryWorker() {
+	retryMu.Lock()
+	defer retryMu.Unlock()
 	if retryShutdown {
 		return
 	}
@@ -46,22 +48,34 @@ func ensureFailureRetryWorker() {
 }
 
 func enqueueFailureRetry(deps FailureDeps, accountID int64, fp string, rev int64, reason string) {
+	retryMu.Lock()
 	if retryShutdown {
+		retryMu.Unlock()
 		return
 	}
 	if retryCtx != nil && retryCtx.Err() != nil {
+		retryMu.Unlock()
 		return
 	}
+	retryMu.Unlock()
 	ensureFailureRetryWorker()
+	retryMu.Lock()
 	if retryShutdown {
+		retryMu.Unlock()
 		return
 	}
 	if retryCtx != nil && retryCtx.Err() != nil {
+		retryMu.Unlock()
+		return
+	}
+	q := retryQueue
+	retryMu.Unlock()
+	if q == nil {
 		return
 	}
 	task := failureRetryTask{accountID: accountID, fingerprint: fp, revision: rev, reason: reason, deps: deps, attempts: 0}
 	select {
-	case retryQueue <- task:
+	case q <- task:
 	default:
 		if deps.Log != nil {
 			deps.Log.Warn("sdk failure retry queue full, dropping", logx.Int64("account_id", accountID))
@@ -70,34 +84,56 @@ func enqueueFailureRetry(deps FailureDeps, accountID int64, fp string, rev int64
 }
 
 func requeueWithBackoff(task failureRetryTask) {
+	retryMu.Lock()
 	if retryShutdown {
+		retryMu.Unlock()
 		return
 	}
 	if retryCtx != nil && retryCtx.Err() != nil {
+		retryMu.Unlock()
+		return
+	}
+	q := retryQueue
+	ctx := retryCtx
+	if q == nil || ctx == nil {
+		retryMu.Unlock()
 		return
 	}
 	backoff := backoffForAttempts(task.attempts)
+	retryMu.Unlock()
 	task.attempts++
-	go func(t failureRetryTask, d time.Duration) {
+	go func(t failureRetryTask, d time.Duration, q chan failureRetryTask, ctx context.Context) {
 		select {
-		case <-retryCtx.Done():
+		case <-ctx.Done():
 			return
 		case <-time.After(d):
 		}
+		retryMu.Lock()
 		if retryShutdown {
+			retryMu.Unlock()
 			return
 		}
 		if retryCtx != nil && retryCtx.Err() != nil {
+			retryMu.Unlock()
+			return
+		}
+		if retryQueue != q {
+			retryMu.Unlock()
+			return
+		}
+		curQ := retryQueue
+		retryMu.Unlock()
+		if curQ == nil {
 			return
 		}
 		select {
-		case retryQueue <- t:
+		case curQ <- t:
 		default:
 			if t.deps.Log != nil {
 				t.deps.Log.Warn("sdk failure retry queue full on requeue, dropping", logx.Int64("account_id", t.accountID))
 			}
 		}
-	}(task, backoff)
+	}(task, backoff, q, ctx)
 }
 
 func backoffForAttempts(attempts int) time.Duration {
@@ -117,12 +153,25 @@ func backoffForAttempts(attempts int) time.Duration {
 // failureRetryLoop supervised worker queue pattern: process lifetime until context cancel.
 // Fair queue: each task gets single attempt per loop iteration; transient failures requeue with bounded per-item backoff.
 func failureRetryLoop(ctx context.Context) {
+	retryMu.Lock()
+	q := retryQueue
+	retryMu.Unlock()
+	if q == nil {
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case task := <-retryQueue:
-			if retryCtx != nil && retryCtx.Err() != nil {
+		case task := <-q:
+			retryMu.Lock()
+			shutdown := retryShutdown
+			rCtx := retryCtx
+			retryMu.Unlock()
+			if shutdown {
+				return
+			}
+			if rCtx != nil && rCtx.Err() != nil {
 				return
 			}
 			if handleRetryOnce(ctx, task) {
@@ -213,11 +262,21 @@ func ShutdownFailureRetry() {
 
 // ResetFailureRetryForTest resets global retry state for tests (single-threaded tests only).
 func ResetFailureRetryForTest() {
+	var done <-chan struct{}
 	retryMu.Lock()
-	defer retryMu.Unlock()
 	if retryCancel != nil {
 		retryCancel()
 	}
+	done = retryDone
+	retryMu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	}
+	retryMu.Lock()
+	defer retryMu.Unlock()
 	retryShutdown = false
 	retryOnce = sync.Once{}
 	retryQueue = nil
