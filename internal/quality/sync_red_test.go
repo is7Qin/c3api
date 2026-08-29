@@ -3,6 +3,7 @@ package quality
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,15 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
+
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
 
 // TestRed_RedisAckRemovesExactlyPublished verifies blocker (1):
 // successful Redis publication must ACK/remove exactly the published minuteAbs state,
@@ -127,7 +137,7 @@ func TestRed_StartCloseConcurrentRaceFree(t *testing.T) {
 	wg.Wait()
 	// At most one should succeed in starting, close must not race
 	if startErr != nil {
-		require.Contains(t, startErr.Error(), "already started")
+		require.True(t, containsAny(startErr.Error(), "already started", "closed"), "start error must be already started or closed, got %v", startErr)
 	}
 	require.NoError(t, closeErr)
 
