@@ -27,9 +27,9 @@ import (
 // TestUsageLogClientIPRoundtripPG usage_logs client_ip 有值/NULL roundtrip
 // （QueryUsages 回填）+ SQL 层直查确认 NULL 语义 + 分区表建表含新列。
 func TestUsageLogClientIPRoundtripPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	var dataType, isNullable string
 	err := pool.QueryRow(ctx, `
@@ -69,9 +69,9 @@ func TestUsageLogClientIPRoundtripPG(t *testing.T) {
 // TestErrLogClientIPRoundtripPG err_logs client_ip 有值/NULL roundtrip
 // （QueryErrLogs 回填）+ 分区表建表含新列。
 func TestErrLogClientIPRoundtripPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	var dataType, isNullable string
 	err := pool.QueryRow(ctx, `
@@ -103,9 +103,9 @@ func TestErrLogClientIPRoundtripPG(t *testing.T) {
 // flusher 单写落库行带 client_ip（fullLogFor），SettleBalanceBatch 只翻 billed/
 // overdraft 两列（SQL 层直查；全列双载体等价对比见 TestPGSettleLanesConservation）。
 func TestBillingCursorPreservesClientIPPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	u := seedPGUser(t, repos, "cip-bill@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
