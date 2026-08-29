@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// fakes for task10
+// Test doubles for failure handling.
 type retryFakeStore struct {
 	mu        sync.Mutex
 	accounts  map[int64]*domain.Account

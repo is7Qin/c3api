@@ -92,7 +92,7 @@ type Event struct {
 // 修复：scheduler 侧截断 500 后回写）。
 type ApplyFunc func(aid int64, st *domain.AccountStatus, cooldownUntil *time.Time, weight *int, errMsg string)
 
-// HealthSink typed health 动作本地 sink（Task2 compile-green seam，Task10 实现 RuntimeHealth/FailureHandler）。
+// HealthSink typed health action sink.
 // Throttle: account 作用全 RouteClass wildcard；account_route 作用单 RouteClass.
 // FailAccount: source=rule, expectedRevision 参与 CAS.
 type HealthSink interface {
@@ -100,13 +100,13 @@ type HealthSink interface {
 	FailAccount(ev Event) error
 }
 
-// PersistItem 异步持久化队列元素（Task10 同步 Redis/DB；Task2 仅 bounded-loss 投递）。
+// PersistItem is the bounded asynchronous persistence queue item.
 type PersistItem struct {
 	Event Event
 	Then  domain.RuleThen
 }
 
-// PersistFunc 持久化执行面（注入可失败，用于测试 write failure 计数；生产 Task10 接线 Redis/DB）。
+// PersistFunc is the injectable persistence execution surface.
 // Task2 fix: must accept context and honor cancellation.
 type PersistFunc func(ctx context.Context, item PersistItem) error
 

@@ -70,4 +70,3 @@ func TestRecoverProbingSuccessClearsLatchWithBarrier(t *testing.T) {
 	}
 }
 
-
