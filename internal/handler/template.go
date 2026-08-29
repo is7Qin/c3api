@@ -5,7 +5,10 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -13,6 +16,63 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
+
+func decodeBody(r *http.Request, v any) ([]byte, error) {
+	raw, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 1<<20+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > 1<<20 {
+		return nil, errors.New("request body too large")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return raw, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return raw, errors.New("unexpected trailing data after JSON body")
+		}
+		return raw, err
+	}
+	return raw, nil
+}
+
+func isTopLevelModelMappingNull(raw []byte) bool {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return false
+	}
+	v, ok := m["model_mapping"]
+	if !ok {
+		return false
+	}
+	return string(bytes.TrimSpace(v)) == "null"
+}
+
+func isBatchModelMappingNull(raw []byte) bool {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &outer); err != nil {
+		return false
+	}
+	fieldsRaw, ok := outer["fields"]
+	if !ok {
+		return false
+	}
+	if string(bytes.TrimSpace(fieldsRaw)) == "null" {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(fieldsRaw, &fields); err != nil {
+		return false
+	}
+	v, ok := fields["model_mapping"]
+	if !ok {
+		return false
+	}
+	return string(bytes.TrimSpace(v)) == "null"
+}
 
 // formatsFromBody 契约格式数组 → 领域格式数组。
 func formatsFromBody(in []TemplateCreateSupportedFormats) []domain.RequestFormat {
@@ -60,8 +120,13 @@ func modelMappingFromBody(m *map[string]ModelMappingEntry) domain.ModelMapping {
 // PostTemplates 创建模板（ServerInterface）。
 func (h *AdminAPI) PostTemplates(w http.ResponseWriter, r *http.Request) {
 	var in TemplateCreate
-	if err := decode(r, &in); err != nil {
+	raw, err := decodeBody(r, &in)
+	if err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if isTopLevelModelMappingNull(raw) {
+		httpface.WriteErr(w, http.StatusBadRequest, "model_mapping must not be null")
 		return
 	}
 	created, err := h.svc.CreateTemplate(r.Context(), &domain.Template{
@@ -115,8 +180,13 @@ func (h *AdminAPI) GetTemplatesId(w http.ResponseWriter, r *http.Request, id int
 // PutTemplatesId 全量更新模板（ServerInterface）。
 func (h *AdminAPI) PutTemplatesId(w http.ResponseWriter, r *http.Request, id int64) {
 	var in TemplateCreate
-	if err := decode(r, &in); err != nil {
+	raw, err := decodeBody(r, &in)
+	if err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if isTopLevelModelMappingNull(raw) {
+		httpface.WriteErr(w, http.StatusBadRequest, "model_mapping must not be null")
 		return
 	}
 	tpl := &domain.Template{
@@ -169,8 +239,13 @@ func (h *AdminAPI) PostTemplatesBatchDelete(w http.ResponseWriter, r *http.Reque
 // PostTemplatesBatchUpdate 批量更新模板（fields 任意子集，ServerInterface）。
 func (h *AdminAPI) PostTemplatesBatchUpdate(w http.ResponseWriter, r *http.Request) {
 	var in BatchUpdateTemplatesBody
-	if err := decode(r, &in); err != nil {
+	raw, err := decodeBody(r, &in)
+	if err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if isBatchModelMappingNull(raw) {
+		httpface.WriteErr(w, http.StatusBadRequest, "model_mapping must not be null")
 		return
 	}
 	ids, err := normalizeIDs(in.Ids)
