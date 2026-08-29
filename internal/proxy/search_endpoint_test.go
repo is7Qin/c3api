@@ -562,16 +562,16 @@ func TestSearchIndependentSelection(t *testing.T) {
 
 // TestSearchFailoverZeroReleasesSlot 防呆（spec 纵深，与 chat 同款）：直构
 // failover_attempts=0（绕过 validate 的 >=1 下限——测试侧 p.cfg 改写等价直构）
-// 时 failover 循环零次执行，首次 Select 已占并发槽——修复前槽永不释放（组内
-// 账号耗尽后全组 429 死锁，重启才能恢复）；耗尽路径必须补 Release。N=0 时
-// lastCode=0 → ErrNetwork → 502 "Upstream request failed"。
+// 新语义 normalized 1..8/default3 → 0 归一为 3，决策未就绪时回退 legacy Select
+// 将重试至上限（500 可重试 legacy 路径），故 3 次拨号后耗尽仍 502，lease 释放
+// via 正常路径；决策就绪的 plan 路径为 1 次（500 按矩阵不重试）。
 func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
 	up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 500, body: `{}`})
 	defer up.Close()
 	store := &captureLogStore{}
 	p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},
 		up.URL, nil, store)
-	p.cfg.FailoverAttempts = 0 // 直构：绕过 validate 下限
+	p.cfg.FailoverAttempts = 0 // 直构：绕过 validate 下限 → normalized 3
 
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
@@ -580,11 +580,11 @@ func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode, "body=%s", string(b))
 	require.Contains(t, string(b), "Upstream request failed")
-	require.Equal(t, 0, upc.callsN(), "N=0 循环零次执行：无上游接触")
+	require.Equal(t, 3, upc.callsN(), "normalized N=0→3 legacy fallback: 3 dials (plan path would be 1)")
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
-	require.Zero(t, ri.Concurrency, "failover_attempts=0 首次选号占槽必须释放（防呆 Release）")
-	require.Zero(t, p.rec.Pending(), "N=0 耗尽路径失败行不产生明细 pending（err_logs 承载）")
+	require.Zero(t, ri.Concurrency, "normalized failover must release lease exactly once")
+	require.Zero(t, p.rec.Pending(), "耗尽路径失败行不产生明细 pending（err_logs 承载）")
 }
 
 // TestSearchSelectFormatUnavailable404 选号失败映射（P3-4）：组内模板不支持
