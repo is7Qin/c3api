@@ -40,17 +40,17 @@ type wsRelayTransport interface {
 }
 
 // relayWS 合一骨架：首帧模型改写（ModelMapping 语义，与 setModel 同构；首帧
-// = 请求帧非流式中间帧，亦为 W4 图像剥离的帧级预处理点；调用方已预处理
-// stripTier 删除结果——原样转发）→ 转发首帧 → 双向事件帧 1:1 relay（流式中
-// 间帧零解析零拷贝直转）→ 关闭/错误传播 → usage 记录。返回 (handled, fwMsg)：
-// handled = 请求已处理完毕（成功/客户端断开/流中止已记录）；false = 首帧转
-// 发失败（上游未消费请求），fwMsg 为截断错误文本，调用方按连接级错误转移
-// （MarkResult + Release + 重选）。
+// = 请求帧非流式中间帧，图像剥离预处理点；调用方已预处理 stripTier——原样转发）
+// → 转发首帧 → 双向事件帧 1:1 relay（流式中间帧零解析零拷贝直转）→ 关闭/错误传播
+// → usage 记录。返回 (handled, fwMsg)：handled = 请求已处理完毕（成功/客户端断开/
+// 流中止已记录）；false = 首帧转发失败（上游未消费，记 not-sent 可重试），fwMsg
+// 为截断错误文本，调用方按连接级错误转移。业务帧未送达前可重试，送达后不再迁移。
 // frameHook 可选（nil = aiclient 路径零开销——指针比较）：**读帧成功后、
 // usage 嗅探（sniffResponsesCompleted）与 client.Write 之前调用**（与现状
 // codex_responses_ws.go:339-341 先于 354 的调用序一致——codex 路径判死帧
 // FatalAuth 钩子；客户端写失败时判死帧仍触发 FatalAuth）。
 func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwMsg string) {
+	// 首帧未送达视为上游未消费，不可记业务帧已见，保留可重试语义。
 	frame := first
 	if sel.Model != "" && sel.Model != reqModel {
 		if nf, err := sjson.SetBytes(first, "model", sel.Model); err == nil {
@@ -105,9 +105,8 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		}
 		endMu.Unlock()
 	}
-	// recordClose 记录上游关闭帧（仅 CloseError）。不设 relayCtx 守卫：取消
-	// 副作用（ctx.Canceled）本就不是 CloseError，真实关闭帧永远优先于并发写
-	// 失败症状（net.ErrClosed 只进 upErr，首写覆盖不了关闭帧）。
+	// recordClose 记录上游关闭帧（仅 CloseError，仅上游读循环写入）。关闭帧优先级最高，
+	// 不设取消守卫，确保真实关闭帧不被并发写失败覆盖。
 	recordClose := func(err error) {
 		var ce websocket.CloseError
 		if !errors.As(err, &ce) {
@@ -181,14 +180,12 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	wg.Add(1)
 	go func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
 		defer wg.Done()
-		defer close(upLoopDone)                   // 编排等本读者退出后再分类（I-1 记录可见性）
+		defer close(upLoopDone)                   // 编排等本读者退出后再分类，保证记录可见性
 		defer relayRecover("up-loop", &clientErr) // panic 按身份入槽：本 goroutine 故障归客户端侧
 		for {
 			typ, f, err := up.Read(relayCtx)
 			if err != nil {
-				// 关闭帧 → 独立槽（最高权威）；其余（EOF/网络）→ upErr。
-				// 本 goroutine 是唯一解码者：关闭帧 decode+record 与客户端
-				// 循环的写失败天然并发，槽位分离使两者各归其位、互不覆盖。
+				// 读失败分类：关闭帧进独立槽优先级最高，其余网络错误进 upErr，槽位分离避免覆盖
 				var ce websocket.CloseError
 				if errors.As(err, &ce) {
 					recordClose(err)
@@ -226,10 +223,10 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	}()
 
 	wg.Add(1)
-	go func() { // 心跳：向上游周期 Ping（pong 超时 = 上游失联 → 按上游错误收尾）
+	go func() { // 心跳：向上游周期 Ping，pong 超时视为上游失联按网络错误收尾
 		defer wg.Done()
-		defer relayRecover("heartbeat", &pingErr)       // panic 按身份入槽：本 goroutine 故障归心跳错误
-		ticker := time.NewTicker(p.wsHeartbeatInterval) // seam：测试缩短验证节奏（T4）
+		defer relayRecover("heartbeat", &pingErr)       // panic 按身份入槽：心跳失败归 pingErr
+		ticker := time.NewTicker(p.wsHeartbeatInterval) // 可注入缩短以便测试
 		defer ticker.Stop()
 		for {
 			select {
@@ -249,19 +246,13 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	}()
 
 	<-endCh
-	// I-1：等上游读者退出再分类——关闭帧的 decode+record 与客户端循环的
-	// 写失败记录并发，关闭帧可能晚于首退到达；upLoopDone 保证 upClose（或
-	// 上游侧真实错误）先于分类读取可见。该等待各路径都快速收敛：关闭帧
-	// 送达 / 首退已 relayCancel（阻塞 Read 立即返回）/ 连接死亡。
+	// 等上游读者退出再分类：关闭帧解码与客户端写失败并发，upLoopDone 保证关闭帧先于分类可见
 	<-upLoopDone
 
-	// 分类与关闭传播（与 SSE caller 同构；relayClassify 纯函数可单测）：
-	//   ① 上游正常关闭（1000/1001）→ 成功 200 ErrNone + KindOK
-	//   ② 客户端断开/关闭          → 200 ErrAbort（上游已消费请求；不 MarkResult）
-	//   ③ 上游错误关闭/网络错误/心跳失联 → recordStreamAbort + 连接级分流
-	//      （RuleKindOf(0) → network）
-	// 关闭传播在取消之前：client.Close 握手本身解除客户端循环的阻塞 Read
-	// （对端回关闭帧 → Read 自然返回退出），客户端拿到正常关闭帧。
+	// 分类与关闭传播（纯函数可单测）：
+	// ① 上游正常关闭（1000/1001）→ 成功，已见业务帧；② 客户端断开 → abort，已见业务帧不计冷却；
+	// ③ 上游错误/网络错误/心跳超时 → 失败，已见业务帧但需冷却。关闭帧优先级高于读写错误。
+	// 先记录后发关闭帧：避免关闭帧先达使对端断开导致记录丢失，优雅停机需等在途归零。
 	u := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
 	logCtx := relayCtx
 	if ttft != nil {
@@ -271,21 +262,24 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	base := wsDispatchedBase(sel, reqModel, start)
 	switch end {
 	case relayEndUpstreamClosed:
-		_ = up.Close(websocket.StatusNormalClosure, "")
+		_ = up.Close(websocket.StatusNormalClosure, "") // 上游已发关闭帧，完成握手
+		// 先记录后关：业务帧已见，成功落盘后再向客户端发关闭帧
 		_ = p.reportWSOutcome(logCtx, wsOutcomeForSuccess(base, ttft, u), sel, reqID, groupID, reqModel, start, u, ttft)
 		_ = client.Close(websocket.StatusNormalClosure, "")
 	case relayEndClientAbort:
-		_ = client.CloseNow()
+		_ = client.CloseNow() // 客户端已断开，免握手等待
 		code := websocket.StatusGoingAway
 		if isNormalWSClose(endErr) {
 			code = wsCloseStatus(endErr)
 		}
+		// 客户端 abort：业务帧已见但不计冷却，向上游传播关闭
 		_ = p.reportWSOutcome(logCtx, wsOutcomeForClientAbort(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft)
 		_ = up.Close(code, "")
 	case relayEndUpstreamError:
+		// 上游错误/心跳超时：业务帧已见但连接异常，需冷却
 		_ = p.reportWSOutcome(logCtx, wsOutcomeForUpstreamError(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft)
 		_ = client.Close(wsCloseStatus(endErr), "")
-		up.CloseNow()
+		up.CloseNow() // 上游已失联，免握手等待
 	}
 	relayCancel()
 	wg.Wait()

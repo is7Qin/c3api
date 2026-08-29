@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// ws_report 聚合 WS 观测：Outcome 为单次尝试的可重试与计费视图，BusinessFrameSent
+// 标记业务帧是否已见，决定是否可迁移；Commit 区分 not-sent/已响应/已开始响应。
+
 package proxy
 
 import (
@@ -86,7 +89,7 @@ func wsOutcomeForSuccess(base AttemptOutcome, ttft *int64, u usageTuple) Attempt
 	o.Result = ResultSuccess
 	o.HTTPStatus = 200
 	o.Terminal = true
-	o.BusinessFrameSent = true
+	o.BusinessFrameSent = true // 业务帧已见，成功且不可重试
 	o.Timing.TTFTMS = ttft
 	o.Usage = wsUsageFromTuple(u)
 	return o
@@ -98,7 +101,7 @@ func wsOutcomeForClientAbort(base AttemptOutcome, u usageTuple, ttft *int64) Att
 	o.HTTPStatus = 0
 	o.Terminal = true
 	o.Commit = CommitResponseStarted
-	o.BusinessFrameSent = true
+	o.BusinessFrameSent = true // 客户端断开前已见业务帧，不计冷却
 	o.Timing.TTFTMS = ttft
 	o.Usage = wsUsageFromTuple(u)
 	return o
@@ -109,7 +112,7 @@ func wsOutcomeForUpstreamError(base AttemptOutcome, u usageTuple, ttft *int64) A
 	o.Result = ResultFailed
 	o.HTTPStatus = 0
 	o.Commit = CommitSentAmbiguous
-	o.BusinessFrameSent = true
+	o.BusinessFrameSent = true // 已见业务帧但上游异常，需冷却
 	o.Terminal = true
 	o.Timing.TTFTMS = ttft
 	o.Usage = wsUsageFromTuple(u)
@@ -121,7 +124,7 @@ func wsOutcomeForNotSentNetwork(base AttemptOutcome, u usageTuple) AttemptOutcom
 	o.Result = ResultFailed
 	o.HTTPStatus = 0
 	o.Commit = CommitNotSent
-	o.BusinessFrameSent = false
+	o.BusinessFrameSent = false // 首帧未送达未见业务帧，可重试
 	o.Terminal = false
 	o.Usage = wsUsageFromTuple(u)
 	return o
@@ -132,6 +135,7 @@ func wsOutcomeForUpstreamStatus(base AttemptOutcome, status int, u usageTuple, t
 	o.Usage = wsUsageFromTuple(u)
 	o.Timing.TTFTMS = ttft
 	if status == 429 {
+		// 429 已响应未见业务帧，可重试限流
 		o.Commit = CommitUpstreamResponded
 		o.Result = ResultFailed
 		o.HTTPStatus = 429
@@ -140,6 +144,7 @@ func wsOutcomeForUpstreamStatus(base AttemptOutcome, status int, u usageTuple, t
 		return o
 	}
 	if status >= 400 && status < 500 {
+		// 4xx 已响应未见业务帧，确定性拒绝不重试
 		o.Commit = CommitUpstreamResponded
 		o.Result = ResultFailed
 		o.HTTPStatus = AttemptStatus(status)
@@ -148,6 +153,7 @@ func wsOutcomeForUpstreamStatus(base AttemptOutcome, status int, u usageTuple, t
 		return o
 	}
 	if status >= 500 && status <= 599 {
+		// 5xx 已响应未见业务帧，需冷却
 		o.Commit = CommitUpstreamResponded
 		o.Result = ResultFailed
 		o.HTTPStatus = AttemptStatus(status)
@@ -164,6 +170,7 @@ func wsOutcomeForUpstreamStatus(base AttemptOutcome, status int, u usageTuple, t
 }
 
 func wsHealthForOutcome(o AttemptOutcome) *AttemptHealthEvent {
+	// 按 HTTP 状态与结果映射冷却类型，客户端取消不计冷却
 	var kind rule.Kind
 	switch {
 	case o.Result == ResultSuccess:
@@ -175,7 +182,7 @@ func wsHealthForOutcome(o AttemptOutcome) *AttemptHealthEvent {
 	case o.HTTPStatus >= 500:
 		kind = rule.Kind5xx
 	case o.HTTPStatus == 0:
-		kind = rule.KindNetwork
+		kind = rule.KindNetwork // 读/心跳/拨号网络失败
 	default:
 		kind = rule.KindNetwork
 	}
@@ -233,6 +240,7 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 	if outcome.Result == ResultClientCancel {
 		health = nil
 	}
+	// observer 唯一拥有释放与健康上报：release 拥有 finish/记录，markHealth 拥有冷却上报
 	markHealth := func(o AttemptOutcome, ev AttemptHealthEvent) {
 		p.sched.MarkResult(o.AccountID, ev.Kind, ev.ResetAt, int(o.HTTPStatus), ev.ErrorMessage, string(o.MappedModel))
 	}

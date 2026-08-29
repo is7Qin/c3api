@@ -120,6 +120,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		return true, 0, ""
 	}
 	if sdkbridge.IsFatal(dialErr) {
+		// fatal 鉴权失败由 SDK 统一判定并回调上报，此处仅固定文案不泄内部细节，原文仅落盘
 		base := wsDispatchedBase(sel, reqModel, start)
 		out := wsOutcomeForUpstreamStatus(base, 500, usageTuple{}, nil)
 		obs := NewAttemptObserver(nil, nil, nil, nil)
@@ -137,6 +138,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 	case code == http.StatusTooManyRequests:
 		return false, code, domain.TruncateErrMsg(msg)
 	case code >= 400 && code < 500:
+		// 4xx 确定性拒绝不转移，走规则引擎仅 CustomMessage 生效
 		em := domain.TruncateErrMsg(msg)
 		base := wsDispatchedBase(sel, reqModel, start)
 		out := wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
@@ -158,10 +160,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		}
 		return true, 0, ""
 	default:
-		// 5xx（信封）/ 裸 RefreshError / 网络（code 0）：连接级转移。5xx 归一
-		// （修复性声明）：code 原样回传（现状归 0 → 耗尽记 ErrNetwork +
-		// MarkResult httpStatus 0；统一后 et=Err5xx + httpStatus 5xx——对齐
-		// HTTP 路径与静态拨号分支）。
+		// 5xx/网络/刷新错误走连接级转移，5xx 保留原码便于规则匹配
 		return false, code, domain.TruncateErrMsg(msg)
 	}
 }
