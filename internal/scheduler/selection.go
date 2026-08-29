@@ -97,9 +97,17 @@ func (s *Scheduler) pickFrom(ws *weightedSeq, format domain.RequestFormat, model
 				mapped = m
 			}
 			used := s.timeNow()
-			st2 := *st
-			st2.lastUsedAt = &used
-			a.runtime.state.Store(&st2)
+			for {
+				curSt := a.runtime.state.Load()
+				if curSt == nil {
+					break
+				}
+				next := *curSt
+				next.lastUsedAt = &used
+				if a.runtime.state.CompareAndSwap(curSt, &next) {
+					break
+				}
+			}
 			baseURL := av.tpl.BaseURL
 			if av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
 				baseURL = *av.acc.BaseURL

@@ -5,6 +5,9 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
+var reserveHook func() // ponytail: test hook for race barrier between concurrency CAS and state CAS
+
+
 // NewAttemptPlan binds a compiled route to one immutable routing root. Dynamic
 // account state remains shared by the captured account snapshots.
 func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef) (*AttemptPlan, error) {
@@ -92,10 +95,21 @@ func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, erro
 		if !a.runtime.concurrency.CompareAndSwap(cur, cur+1) {
 			return false
 		}
+		if reserveHook != nil {
+			reserveHook()
+		}
 		used := s.timeNow()
-		st2 := *st
-		st2.lastUsedAt = &used
-		a.runtime.state.Store(&st2)
+		for {
+			curSt := a.runtime.state.Load()
+			if curSt == nil {
+				break
+			}
+			next := *curSt
+			next.lastUsedAt = &used
+			if a.runtime.state.CompareAndSwap(curSt, &next) {
+				break
+			}
+		}
 		mapped := plan.model
 		if model, ok := av.tpl.ModelMapping[plan.model]; ok {
 			mapped = model

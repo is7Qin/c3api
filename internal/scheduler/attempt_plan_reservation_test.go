@@ -103,3 +103,46 @@ func TestSchedulerNewAttemptPlanRejectsMissingExactRoute(t *testing.T) {
 	_, err := s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(10, string(domain.FormatOpenAIChat), "missing"))
 	require.ErrorIs(t, err, ErrFormatUnavailable)
 }
+
+func TestReserveAttemptPreservesConcurrentStatusUpdate(t *testing.T) {
+	tpl := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	s := newTestScheduler(t, []*domain.Account{acc(1, tpl, 10)})
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	publishAttemptDecision(s, route, &RouteDecision{Primary: []int64{1}})
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-race", UserID: 1}, route)
+	require.NoError(t, err)
+	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	s.timeNow = func() time.Time { return fixed }
+	// Barrier between concurrency CAS and state CAS
+	barrier := make(chan struct{})
+	unblock := make(chan struct{})
+	reserveHook = func() {
+		close(barrier)
+		<-unblock
+	}
+	defer func() { reserveHook = nil }()
+	done := make(chan *Selection, 1)
+	go func() {
+		sel, _, e := s.ReserveAttempt(plan)
+		require.NoError(t, e)
+		done <- sel
+	}()
+	<-barrier
+	cooldown := fixed.Add(5 * time.Minute)
+	unhealthy := domain.Status429
+	s.apply(1, &unhealthy, &cooldown, nil, "rate limited")
+	close(unblock)
+	var sel *Selection
+	select {
+	case sel = <-done:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "ReserveAttempt blocked")
+	}
+	require.NotNil(t, sel)
+	defer sel.Release()
+	st := s.View().ByID()[1].statePtr()
+	require.Equal(t, domain.Status429, st.status, "concurrent status update must be retained after reservation")
+	require.NotNil(t, st.cooldownUntil)
+	require.Equal(t, cooldown, *st.cooldownUntil)
+	require.NotNil(t, st.lastUsedAt)
+}

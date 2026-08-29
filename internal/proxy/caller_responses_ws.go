@@ -213,8 +213,11 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			if handled {
 				return 0, nil, nil, true, nil
 			}
-			// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（同拨号失败）
-			return 0, []byte(fwMsg), nil, false, nil
+			// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（显式 not-sent/retryable，Task13前保留可重试信息）
+			if fwMsg == "" {
+				fwMsg = "upstream first frame write failed"
+			}
+			return 0, []byte(fwMsg), nil, false, errors.New(fwMsg)
 		}
 		if stop, code, msg := p.handleCodexDialError(r, reqID, groupID, start, sel, reqModel, st.client, dialErr); stop {
 			// 501/fatal/4xx 已收尾（错误帧 + 记录）——请求终止不转移
@@ -227,8 +230,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 	cred, err := p.credentialFor(ctx, sel)
 	if err != nil {
-		// 凭据错误按网络错误处理（等价 handleFormat 的 code==0 语义）
-		return 0, []byte(domain.TruncateErrMsg(err.Error())), nil, false, nil
+		return 0, []byte(domain.TruncateErrMsg(err.Error())), nil, false, err
 	}
 	// 拨号超时上限（黑洞上游接受 TCP 不回 101 → 无界等待占死并发槽）：wrapped
 	// ctx 取消不向上传播（原 r.Context() 未取消）→ 超时按连接级错误转移
@@ -253,8 +255,10 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		if handled {
 			return 0, nil, nil, true, nil
 		}
-		// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（同拨号失败）
-		return 0, []byte(fwMsg), nil, false, nil
+		if fwMsg == "" {
+			fwMsg = "upstream first frame write failed"
+		}
+		return 0, []byte(fwMsg), nil, false, errors.New(fwMsg)
 	}
 	// 拨号失败分类（与 handleFormat 的 code 分支同构）：msg 归一 = 上游 body
 	// message（B1 分通道——4xx 无则空、dialErr 全文走 callErr；0/5xx/429 保持

@@ -38,7 +38,10 @@ import (
 type imagesCaller struct {
 	p    *Proxy
 	path string // 上游路径（"images/generations" | "images/edits"）
+	op   domain.OperationTag
 }
+
+func (c *imagesCaller) operationTag() domain.OperationTag { return c.op }
 
 func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
