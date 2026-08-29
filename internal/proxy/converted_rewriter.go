@@ -21,15 +21,35 @@ func rewriteConvertedFrames(src []byte, model string) []byte {
 	changed := false
 	start := 0
 	for start < len(src) {
-		idx := bytes.Index(src[start:], []byte("\n\n"))
+		frameEnd := -1
+		pos := start
+		for pos < len(src) {
+			nl := bytes.IndexByte(src[pos:], '\n')
+			if nl < 0 {
+				break
+			}
+			lineEnd := pos + nl + 1
+			contentEnd := lineEnd
+			if contentEnd > pos && src[contentEnd-1] == '\n' {
+				contentEnd--
+			}
+			if contentEnd > pos && src[contentEnd-1] == '\r' {
+				contentEnd--
+			}
+			if contentEnd == pos {
+				frameEnd = lineEnd
+				break
+			}
+			pos = lineEnd
+		}
 		var frame []byte
 		var next int
-		if idx < 0 {
+		if frameEnd < 0 {
 			frame = src[start:]
 			next = len(src)
 		} else {
-			frame = src[start : start+idx+2]
-			next = start + idx + 2
+			frame = src[start:frameEnd]
+			next = frameEnd
 		}
 		data := extractSSEData(frame)
 		ev := sserelay.Event{Raw: frame, Data: data}
@@ -44,7 +64,7 @@ func rewriteConvertedFrames(src []byte, model string) []byte {
 		} else if changed {
 			out = append(out, frame...)
 		}
-		if idx < 0 {
+		if frameEnd < 0 {
 			break
 		}
 		start = next
