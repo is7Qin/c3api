@@ -42,17 +42,19 @@ type convertedCaller struct {
 func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	client, target := clientAndTargetOf(c.dir)
+	opTag := convertedOpTag(c.dir)
 
 	if stream {
-		// 客户端请求模型：转换器保证 model 字段原样保留（补差映射），gjson
-		// 顶层提取与模板 caller 同构。
 		reqModel := gjson.GetBytes(body, "model").String()
+		observer := newConvertedObserver(p, sel, reqModel, opTag)
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
-		// 模型改写（ModelMapping 语义）：转换后请求体已含 stream:true（转换器
-		// 映射客户端 stream 标志），setModel 短路守卫与模板 caller 同构。
 		streamBody, err := setModel(body, sel.Model)
 		if err != nil {
+			status := AttemptStatus(0)
+			outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, status, CommitNotSent, false, false, false)
+			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(0), ErrorMessage: err.Error()}
+			_ = observer.Complete(outcome, health)
 			return 0, nil, false, err
 		}
 		var resp *http.Response
@@ -63,11 +65,37 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			resp, err = p.clients.AnthMessageStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody)
 		}
 		if err != nil {
+			code := statusOf(err)
+			var commit CommitState
+			if code == 0 {
+				commit = CommitNotSent
+			} else {
+				commit = CommitUpstreamResponded
+			}
+			terminal := true
+			if code == 429 {
+				terminal = false
+			}
+			if code == 0 {
+				terminal = false
+			}
+			outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
+			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
+			_ = observer.Complete(outcome, health)
 			return statusOf(err), upstreamBody(err), false, err
 		}
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
+			code := resp.StatusCode
+			commit := CommitUpstreamResponded
+			terminal := true
+			if code == 429 {
+				terminal = false
+			}
+			outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
+			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: string(rb)}
+			_ = observer.Complete(outcome, health)
 			return resp.StatusCode, rb, false, nil
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -75,7 +103,6 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		w.Header().Set("X-Accel-Buffering", "no")
 		mapper := protoconv.NewStreamMapper(c.dir)
 		var it, ot, tt, cr, cc int64
-		// TTFT 采集（首 token 时间毫秒）：与模板 caller 同构。
 		var ttft *int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Mapper: func(ev sserelay.Event) ([]byte, bool) {
@@ -83,8 +110,6 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 					ms := time.Since(start).Milliseconds()
 					ttft = &ms
 				}
-				// 用量提取走原始帧（与模板 caller 逐字同构；映射只影响写出字节）。
-				// EventName：缺 event: 名帧按 data.type 推断（非规范上游，P3）。
 				switch target {
 				case domain.FormatOpenAIResponses:
 					if bytes.Equal(ev.EventName(), []byte("response.completed")) {
@@ -109,37 +134,48 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
+		u := usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}
+		usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
+		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 		if err != nil {
-			// 客户端断开/流中止语义与模板 caller 逐字同构（recordStreamAbort +
-			// MarkResult；客户端断开 finish ErrAbort 不转移）。errors.Is(err,
-			// context.Canceled) 即客户端断开——sserelay.normalize 已区分三类
-			// （C-P2-2）：上游停滞超时 → DeadlineExceeded 走上游错误分支。
 			if errors.Is(err, context.Canceled) {
-				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start)))
+				outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, true, true, false)
+				_ = observer.Cancel(outcome)
+				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
 			}
-			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, err)
-			p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(statusOf(err)), nil, statusOf(err), err.Error(), sel.Model)
+			code := statusOf(err)
+			commit := CommitUpstreamResponded
+			business := false
+			if code == 0 {
+				commit = CommitSentAmbiguous
+				business = true
+			}
+			outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false)
+			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
+			_ = observer.Complete(outcome, health)
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
 		tt = it + ot
-		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
+		usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
+		timing = AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
+		outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+		health := &AttemptHealthEvent{Kind: rule.KindOK}
+		_ = observer.Complete(outcome, health)
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 		return 200, nil, true, nil
 	}
 
-	// 非流式：以模板协议参数解析（转换后请求体）→ SDK 调用 → 响应 JSON 反向
-	// 转换回客户端协议。reqModel 在参数覆盖前从转换体提取（model 原样保留）。
 	reqModel := gjson.GetBytes(body, "model").String()
 	var data []byte
 	var it, ot, tt, cr, cc int64
-	tpl := tplOf(sel) // 非流式 SDK 路径（流式原始请求路径免模板对象分配）
+	tpl := tplOf(sel)
 	var upstreamErr error
 	switch target {
 	case domain.FormatOpenAIResponses:
 		var params responses.ResponseNewParams
 		if err := json.Unmarshal(body, &params); err != nil {
-			// 本地拒绝（handled=true，无记录）：同 chat caller 语义。
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 			sel.Release()
 			return 400, nil, true, nil
@@ -160,7 +196,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			sel.Release()
 			return 400, nil, true, nil
 		}
-		params.Model = sel.Model // Model = string 别名
+		params.Model = sel.Model
 		var resp *anthropic.Message
 		resp, upstreamErr = p.clients.AnthMessage(ctx, tpl, cred, params)
 		if upstreamErr == nil {
@@ -171,20 +207,81 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		}
 	}
 	if upstreamErr != nil {
+		observer := newConvertedObserver(p, sel, reqModel, opTag)
+		code := statusOf(upstreamErr)
+		var commit CommitState
+		if code == 0 {
+			commit = CommitNotSent
+		} else {
+			commit = CommitUpstreamResponded
+		}
+		terminal := true
+		if code == 429 {
+			terminal = false
+		}
+		if code == 0 {
+			terminal = false
+		}
+		outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{}, ResultFailed, AttemptStatus(code), commit, false, terminal, false)
+		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: upstreamErr.Error()}
+		_ = observer.Complete(outcome, health)
 		return statusOf(upstreamErr), upstreamBody(upstreamErr), false, upstreamErr
 	}
 	conv, err := protoconv.ConvertResponse(data, c.dir)
 	if err != nil {
-		// 响应转换失败 = 网关内部错误（转换器 bug/上游异常字节）；按 500 返回，
-		// 骨架按 code>=500 转移（重试同 bug 无益，但语义与现状 5xx 一致）。
+		observer := newConvertedObserver(p, sel, reqModel, opTag)
+		usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
+		outcome := convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, usage, ResultFailed, 500, CommitUpstreamResponded, false, true, true)
+		health := &AttemptHealthEvent{Kind: rule.Kind5xx, ErrorMessage: err.Error()}
+		_ = observer.Complete(outcome, health)
 		return http.StatusInternalServerError, nil, false, fmt.Errorf("protocol response conversion failed: %w", err)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(conv)
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
+	observer := newConvertedObserver(p, sel, reqModel, opTag)
+	usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
+	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}
+	outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+	health := &AttemptHealthEvent{Kind: rule.KindOK}
+	_ = observer.Complete(outcome, health)
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 	return 200, nil, true, nil
+}
+
+func convertedOpTag(dir domain.ProtocolConvert) OperationTag {
+	client, _ := clientAndTargetOf(dir)
+	switch client {
+	case domain.FormatOpenAIChat:
+		return OperationTag(domain.OpChatCompletions)
+	case domain.FormatAnthropic:
+		return OperationTag(domain.OpAnthropicMessages)
+	case domain.FormatOpenAIResponses:
+		return OperationTag(domain.OpResponses)
+	default:
+		return OperationTag(domain.OpChatCompletions)
+	}
+}
+
+func newConvertedObserver(p *Proxy, sel *scheduler.Selection, reqModel string, op OperationTag) *AttemptObserver {
+	mark := func(o AttemptOutcome, e AttemptHealthEvent) {
+		p.sched.MarkResult(o.AccountID, e.Kind, e.ResetAt, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
+	}
+	return NewAttemptObserver(nil, mark, nil, sel.Release)
+}
+
+func convertedOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+	fp := sel.CandidateFingerprint
+	if fp == "" {
+		fp = "fp-" + reqID
+	}
+	return AttemptOutcome{
+		ID: AttemptID(reqID), RouteClassID: RouteClassID("rc-" + reqID), QualityClassID: QualityClassID("qc-" + reqID), Fingerprint: CandidateFingerprint(fp),
+		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
+		CallerCategory: CallerConverted, OperationTag: op, Ordinal: 1, LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
+		Commit: commit, Result: result, HTTPStatus: status, Timing: timing, Usage: usage,
+		BusinessFrameSent: businessSent, Terminal: terminal, IsMalformed: malformed,
+	}
 }
 
 // clientAndTargetOf 转换方向的客户端/模板协议格式（方向合法性由 W1 枚举校验
