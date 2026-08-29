@@ -16,7 +16,7 @@
 
 | 枚举 | 取值 |
 |---|---|
-| `format`（请求格式） | `openai-chat` / `openai-responses` / `anthropic` |
+| `format`（请求格式） | `openai-chat` / `openai-responses` / `openai-responses-ws` / `openai-images` / `openai-search` / `anthropic` |
 | `status`（账号） | `active` / `unhealthy` / `429` / `disabled` |
 | `error_type`（日志） | `none` / `429` / `4xx` / `5xx` / `network` / `auth` / `no_account` / `abort` / `billing`（计费拒绝 402） |
 | `type`（兑换码） | `balance`（充值余额，面值 USD）/ `concurrency`（加并发数，面值整数）/ `temp_balance`（临时余额，面值 USD，兑换后资源到期） |
