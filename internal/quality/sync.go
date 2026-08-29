@@ -693,7 +693,7 @@ func (w *SyncWorker) doRedis(ctx context.Context) {
 	w.stats.FreshnessMs = 0
 	w.stats.LastRedisError = ""
 	w.lastRedisError = ""
-	// sequences already incremented per cell; keep them
+	w.pruneLongLivedLocked(w.clock().Unix())
 }
 
 func (w *SyncWorker) doPG(ctx context.Context) {
@@ -828,6 +828,7 @@ func (w *SyncWorker) doPG(ctx context.Context) {
 	}
 	w.stats.PendingQuality = w.rec.MinuteBucketCount()
 	w.stats.PendingBytes = w.rec.PendingBytes()
+	w.pruneLongLivedLocked(w.clock().Unix())
 	w.mu.Unlock()
 	// ack PG minuteAbs on success is already cleared; on failure refill will preserve
 }
@@ -1113,12 +1114,71 @@ func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []reposit
 
 func (w *SyncWorker) refillFlow(entries []flowEntry) {
 	for _, e := range entries {
+		w.mu.Lock()
+		curSeq := w.pgSeq[e.minute]
+		w.mu.Unlock()
+		if e.seq < curSeq {
+			continue
+		}
+		w.rec.mu.Lock()
+		_, exists := w.rec.pendingFlow[e.minute]
+		w.rec.mu.Unlock()
+		if exists {
+			continue
+		}
 		if err := w.rec.EnqueueFlowMinute(e.fm); err != nil {
 			w.mu.Lock()
 			w.stats.DroppedFlow++
 			w.mu.Unlock()
 			if w.log != nil {
 				w.log.Warn("flow refill dropped due to capacity", logx.Error(err))
+			}
+		}
+	}
+}
+
+func (w *SyncWorker) pruneLongLivedLocked(nowUnix int64) {
+	w.rec.mu.Lock()
+	pending := make(map[int64]struct{}, len(w.rec.pendingQuality)+len(w.rec.pendingFlow))
+	for m := range w.rec.pendingQuality {
+		pending[m] = struct{}{}
+	}
+	for m := range w.rec.pendingFlow {
+		pending[m] = struct{}{}
+	}
+	w.rec.mu.Unlock()
+	for m := range w.minuteAbs {
+		pending[m] = struct{}{}
+	}
+	for m := range w.pgMinuteAbs {
+		pending[m] = struct{}{}
+	}
+	cutoff := nowUnix - 600
+	for m := range w.seq {
+		if m < cutoff {
+			if _, ok := pending[m]; !ok {
+				delete(w.seq, m)
+			}
+		}
+	}
+	for m := range w.redisSeq {
+		if m < cutoff {
+			if _, ok := pending[m]; !ok {
+				delete(w.redisSeq, m)
+			}
+		}
+	}
+	for m := range w.pgSeq {
+		if m < cutoff {
+			if _, ok := pending[m]; !ok {
+				delete(w.pgSeq, m)
+			}
+		}
+	}
+	for m := range w.committed {
+		if m < cutoff {
+			if _, ok := pending[m]; !ok {
+				delete(w.committed, m)
 			}
 		}
 	}
