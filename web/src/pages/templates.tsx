@@ -890,11 +890,11 @@ export default function Templates() {
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
                           {ECO_CREDENTIAL_TYPES.includes(t.CredentialType as TemplateCredentialType) && (
-                            <Button variant="ghost" size="icon-sm" title={tr('templates.ext.button')} onClick={() => openExt(t)}>
+                            <Button variant="ghost" size="icon-sm" title={tr('templates.ext.button')} aria-label={tr('templates.ext.button')} onClick={() => openExt(t)}>
                               <Settings2 />
                             </Button>
                           )}
-                          <Button variant="ghost" size="icon-sm" title={tr('common.edit')} onClick={() => openEdit(t)}>
+                          <Button variant="ghost" size="icon-sm" title={tr('common.edit')} aria-label={tr('common.edit')} onClick={() => openEdit(t)}>
                             <Pencil />
                           </Button>
                           <Button
@@ -902,6 +902,7 @@ export default function Templates() {
                             size="icon-sm"
                             className="text-destructive"
                             title={tr('common.delete')}
+                            aria-label={tr('common.delete')}
                             onClick={() => setDeleting(t)}
                           >
                             <Trash2 />
