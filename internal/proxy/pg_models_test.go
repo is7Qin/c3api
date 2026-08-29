@@ -105,6 +105,7 @@ func modelsPGFixture(t *testing.T) modelsFixture {
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses},
 		Models:           []string{"gpt-4o", "claude-3.5-sonnet"},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	tplB, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
@@ -112,6 +113,7 @@ func modelsPGFixture(t *testing.T) modelsFixture {
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIImages},
 		Models:           []string{"gpt-4o", "dall-e-3"},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	for _, a := range []*domain.Account{
@@ -304,6 +306,7 @@ func TestPGModelsReloadReflectsChanges(t *testing.T) {
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 		Models:           []string{"gpt-5"},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	accC, err := fx.repos.Accounts.CreateAccount(ctx, &domain.Account{
