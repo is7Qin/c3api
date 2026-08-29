@@ -17,9 +17,9 @@ import (
 )
 
 func TestUsageRepoInsertBatch_R1_DuplicateOnly(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	at := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, at, at))
 
@@ -35,9 +35,9 @@ func TestUsageRepoInsertBatch_R1_DuplicateOnly(t *testing.T) {
 }
 
 func TestUsageRepoInsertBatch_R2_MixedOldNew(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	at := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, at, at))
 
@@ -75,9 +75,9 @@ func TestUsageRepoInsertBatch_R2_MixedOldNew(t *testing.T) {
 }
 
 func TestUsageRepoInsertBatch_R3_BilledNotOverwritten(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	at := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, at, at))
 
@@ -97,7 +97,7 @@ func TestUsageRepoInsertBatch_R3_BilledNotOverwritten(t *testing.T) {
 }
 
 func TestUsageRepoInsertBatch_R4_PartitionUnavailable(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	at := time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC)
 	err := repos.Usages.InsertBatch(ctx, []*domain.UsageLog{usageLogFor("no-part", at)})
@@ -106,9 +106,9 @@ func TestUsageRepoInsertBatch_R4_PartitionUnavailable(t *testing.T) {
 }
 
 func TestUsageRepoInsertBatch_R5_TargetOutsideErrorNotSuppressed(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	at := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, at, at))
 
@@ -129,9 +129,9 @@ func TestUsageRepoInsertBatch_R5_TargetOutsideErrorNotSuppressed(t *testing.T) {
 }
 
 func TestUsageRepoInsertBatch_R8_ConcurrentSameBatchReplay(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	at := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, at, at))
 

@@ -21,7 +21,7 @@ import (
 // （乘倍率前 vs 计费成本）、无记录账号无键（补零由 service 层按 ids 组装）、
 // 时间过滤边界（created_at == from 含、== to 不含——半开区间）。
 func TestPGScanUsageAgg(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	a1 := seedPGAccount(t, repos, tpl.ID, "agg-a1")
@@ -70,9 +70,9 @@ func TestPGScanUsageAgg(t *testing.T) {
 // 全扫；时间窗完全落在当日分区内 → 单分区）。种子 5000 行 + ANALYZE 防计划
 // 形态 flake（pg_cursor 先例同款纪律）。
 func TestPGScanUsageAggPartitionPruning(t *testing.T) {
-	_ = newPGRepos(t) // 建 schema + 分区 bootstrap（种子经 pool 直插）
+	_ = newPGReposShared(t) // 建 schema + 分区 bootstrap（种子经 pool 直插）
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
@@ -110,7 +110,7 @@ func TestPGScanUsageAggPartitionPruning(t *testing.T) {
 		"命中分区 = 当日分区 %s（实际 %v）", "usage_logs_"+today.Format("20060102"), relations)
 
 	// pool 未注入（New 构造）→ 显式错误不静默降级（与 StatRepo 同纪律）。
-	reposNoPool := newPGReposNoPool(t)
+	reposNoPool := newPGReposNoPoolShared(t)
 	_, err = reposNoPool.ScanUsageAgg(ctx, []int64{1}, today, today.Add(time.Hour))
 	require.Error(t, err, "未注入 pgx 池（New）→ 显式错误")
 }
@@ -118,7 +118,7 @@ func TestPGScanUsageAggPartitionPruning(t *testing.T) {
 // TestPGScanUsageAggIDLimit 数量防御（N5——repo 层兜底 handler 之外调用方）：
 // >100 ids → 显式错误（ANY 参数数组规模上限），不落 SQL。
 func TestPGScanUsageAggIDLimit(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	from := time.Now().UTC().Truncate(time.Second)
 
