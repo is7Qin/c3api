@@ -56,7 +56,7 @@ func routeSupportsAccount(tpl *domain.Template, rk routeKey) bool {
 	return !tpl.HasModelSpace()
 }
 
-func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]HealthState, latched map[LatchKey]bool, rk routeKey) []*accountSnapshot {
+func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]HealthState, latched map[LatchKey]bool, rk routeKey, op domain.OperationTag) []*accountSnapshot {
 	out := make([]*accountSnapshot, 0, len(candidates))
 	for _, a := range candidates {
 		av := a.static.Load()
@@ -71,11 +71,14 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 		if fp != "" {
 			lk := LatchKey{AccountID: av.acc.ID, Fingerprint: fp, Revision: rev}
 			if latched != nil {
-				if _, ok := latched[lk]; ok {
+				if v, ok := latched[lk]; ok && v {
 					continue
 				}
 				mismatch := false
-				for k := range latched {
+				for k, v := range latched {
+					if !v {
+						continue
+					}
 					if k.AccountID == av.acc.ID && (k.Fingerprint != fp || k.Revision != rev) {
 						mismatch = true
 						break
@@ -86,9 +89,11 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 				}
 			}
 		} else if latched != nil && len(latched) > 0 {
-			// fingerprint unreadable: fail closed if any latch for this account exists
 			hasLatch := false
-			for k := range latched {
+			for k, v := range latched {
+				if !v {
+					continue
+				}
 				if k.AccountID == av.acc.ID {
 					hasLatch = true
 					break
@@ -99,25 +104,32 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 			}
 		}
 		if health != nil && len(health) > 0 {
-			qc := qualityClassHexFor(rk)
+			resolved := rk.model
+			if av.tpl != nil {
+				if m, ok := av.tpl.ModelMapping[rk.model]; ok {
+					resolved = m
+				}
+			}
+			qc := qualityClassHexForWithOp(rk.format, resolved, op)
 			hkSpec := HealthKey{AccountID: av.acc.ID, Quality: qc, Revision: rev}
 			hkWild := HealthKey{AccountID: av.acc.ID, Quality: "*", Revision: rev}
 			excluded := false
 			if st, ok := health[hkSpec]; ok && st != StateReady {
 				excluded = true
-			}
-			if !excluded {
-				if st, ok := health[hkWild]; ok && st != StateReady {
-					excluded = true
-				}
-			}
-			if !excluded {
+			} else if st, ok := health[hkWild]; ok && st != StateReady {
+				excluded = true
+			} else {
 				for hk, st := range health {
-					if hk.AccountID == av.acc.ID && hk.Revision != rev && st != StateReady {
-						excluded = true
-						break
+					if st == StateReady {
+						continue
 					}
-					if hk.AccountID == av.acc.ID && hk.Quality != qc && hk.Quality != "*" && st != StateReady {
+					if hk.AccountID != av.acc.ID {
+						continue
+					}
+					if hk.Quality != qc && hk.Quality != "*" {
+						continue
+					}
+					if hk.Revision != rev {
 						excluded = true
 						break
 					}
@@ -133,12 +145,16 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 }
 
 func qualityClassHexFor(rk routeKey) string {
-	ck := callerKindForFormat(rk.format)
 	op := operationTagForFormat(string(rk.format))
+	return qualityClassHexForWithOp(rk.format, rk.model, op)
+}
+
+func qualityClassHexForWithOp(format domain.RequestFormat, model string, op domain.OperationTag) string {
+	ck := callerKindForFormat(format)
 	if ck == "" || op == "" {
 		return ""
 	}
-	id, err := domain.QualityClassID(ck, rk.format, rk.model, op)
+	id, err := domain.QualityClassID(ck, format, model, op)
 	if err != nil {
 		return ""
 	}
@@ -175,7 +191,14 @@ func tplSupportsFormat(tpl *domain.Template, format domain.RequestFormat) bool {
 
 func compilerHealthKeyFor(acc *domain.Account, format domain.RequestFormat, model string) HealthKey {
 	rev := acc.LifecycleRevision
-	qc := qualityClassHexFor(routeKey{format: format, model: model})
+	resolved := model
+	if acc.Template != nil {
+		if m, ok := acc.Template.ModelMapping[model]; ok {
+			resolved = m
+		}
+	}
+	op := operationTagForFormat(string(format))
+	qc := qualityClassHexForWithOp(format, resolved, op)
 	return HealthKey{AccountID: acc.ID, Quality: qc, Revision: rev}
 }
 
