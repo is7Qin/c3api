@@ -32,6 +32,80 @@ import (
 // 路径同款）。
 var errCodexResponsesNotIntegrated = &formatError{status: http.StatusNotImplemented, msg: "codex responses unavailable (adapter not wired)"}
 
+var codexOutcomeCapture func(AttemptOutcome)
+
+func codexDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start time.Time, usage usageTuple, ttft *int64) AttemptOutcome {
+	fp := "fp1"
+	if sel != nil && sel.CandidateFingerprint != "" {
+		fp = sel.CandidateFingerprint
+	}
+	mapped := ""
+	accID := int64(0)
+	tplID := int64(0)
+	if sel != nil {
+		mapped = sel.Model
+		accID = sel.AccountID
+		tplID = sel.TemplateID
+	}
+	lat := time.Since(start).Milliseconds()
+	if lat < 0 {
+		lat = 0
+	}
+	return AttemptOutcome{
+		ID:                AttemptID(reqID),
+		RouteClassID:      RouteClassID("rc1"),
+		QualityClassID:    QualityClassID("qc1"),
+		Fingerprint:       CandidateFingerprint(fp),
+		TemplateID:        tplID,
+		AccountID:         accID,
+		RequestedModel:    reqModel,
+		MappedModel:       mapped,
+		CallerCategory:    CallerCodexHTTP,
+		OperationTag:      OperationTag(domain.OpResponses),
+		Ordinal:           1,
+		LifecycleRevision: LifecycleRevision(1),
+		Lane:              LanePrimary,
+		Generation:        Generation(1),
+		Timing:            AttemptTiming{LatencyMS: lat, TTFTMS: ttft},
+		Usage: AttemptUsage{
+			InputTokens: usage.it, OutputTokens: usage.ot, CacheReadTokens: usage.cr, CacheCreationTokens: usage.cc, CallCount: usage.calls,
+		},
+		HardContinuation: false,
+	}
+}
+
+func emitCodexOutcome(p *Proxy, sel *scheduler.Selection, o AttemptOutcome, healthKind rule.Kind, healthMsg string) {
+	if sel == nil {
+		return
+	}
+	var health *AttemptHealthEvent
+	if healthKind != 0 || healthMsg != "" {
+		health = &AttemptHealthEvent{Kind: healthKind, ErrorMessage: healthMsg}
+	}
+	if o.Result == ResultClientCancel {
+		health = nil
+	}
+	markHealth := func(out AttemptOutcome, ev AttemptHealthEvent) {
+		if p.sched != nil {
+			p.sched.MarkResult(out.AccountID, ev.Kind, ev.ResetAt, int(out.HTTPStatus), ev.ErrorMessage, out.MappedModel)
+		}
+	}
+	appendFlow := func(out AttemptOutcome) {
+		if codexOutcomeCapture != nil {
+			codexOutcomeCapture(out)
+		}
+	}
+	release := func() {
+		sel.Release()
+	}
+	observer := NewAttemptObserver(nil, markHealth, appendFlow, release)
+	if o.Result == ResultClientCancel {
+		_ = observer.Cancel(o)
+	} else {
+		_ = observer.Complete(o, health)
+	}
+}
+
 // callCodexResponses codex-oauth/codex-pat 类型 resp 调用（T6 §1）：非流式 →
 // 适配层 Responses（SDK 合成非流式——内部无条件 stream:true + SSE 事件聚合；
 // 网关以非流式语义消费）；流式 → StreamResponses（SDK 载荷重帧 SSE 透传）。
@@ -53,7 +127,13 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 	reqModel := gjson.GetBytes(body, "model").String()
 	if p.codex == nil {
 		// 适配层未装配（SetCodex 未调用）：显式 501（防 nil 误走凭据缺失 502）。
-		sel.Release()
+		o := codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil)
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(http.StatusNotImplemented)
+		o.Commit = CommitUpstreamResponded
+		o.Terminal = true
+		o.BusinessFrameSent = false
+		emitCodexOutcome(p, sel, o, rule.Kind5xx, errCodexResponsesNotIntegrated.msg)
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexResponsesNotIntegrated.msg)
 		writeErr(w, errCodexResponsesNotIntegrated)
 		return 0, nil, true, nil
@@ -62,6 +142,13 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 		// 配置损坏（codex 账号必有 ext 行——快照缺 account_ext 行）：本地配置
 		// 错误按连接级错误转移（失败文本落盘，耗尽 502 语义）；不上报失效（避
 		// 免 account 0 无谓上报——与 WS 路径 errCodexExtMissing 同语义）。
+		o := codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil)
+		o.Result = ResultFailed
+		o.HTTPStatus = 0
+		o.Commit = CommitNotSent
+		o.Terminal = false
+		o.BusinessFrameSent = false
+		emitCodexOutcome(p, sel, o, rule.KindNetwork, errCodexExtMissing.Error())
 		return 0, nil, false, errCodexExtMissing
 	}
 	// 凭据线：快照派生直供适配层（与 WS/images 路径同款——codex 凭据为复合
@@ -132,6 +219,14 @@ func sniffCodexTurnCallItem(f []byte) bool {
 func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
+		o := codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil)
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(400)
+		o.Commit = CommitUpstreamResponded
+		o.Terminal = true
+		o.IsMalformed = true
+		o.BusinessFrameSent = false
+		emitCodexOutcome(p, sel, o, rule.Kind4xx, err.Error())
 		return 0, nil, false, err // 本地 JSON 错误（handleFormat 已过 json.Valid 硬门——防御）
 	}
 	// 非流式超时（B-P2-7）：HTTPClient.Timeout 不可用（流式/非流式四方法共享，
@@ -146,7 +241,52 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	sess, meta := codexIdentityFromExt(sel.Ext)
 	resp, err := p.codex.Responses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r))
 	if err != nil {
-		return statusOf(err), upstreamBody(err), false, err
+		code := statusOf(err)
+		if r.Context().Err() != nil || ctx.Err() != nil {
+			o := codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil)
+			o.Result = ResultClientCancel
+			o.HTTPStatus = 0
+			o.Commit = CommitNotSent
+			o.Terminal = true
+			emitCodexOutcome(p, sel, o, 0, "")
+			return 0, nil, true, nil
+		}
+		var kind rule.Kind
+		var commit CommitState
+		var terminal bool
+		var business bool
+		var isMalformed bool
+		switch {
+		case code == 0:
+			kind = rule.KindNetwork
+			commit = CommitNotSent
+			terminal = false
+		case code == 429:
+			kind = rule.Kind429
+			commit = CommitUpstreamResponded
+			terminal = false
+		case code >= 400 && code < 500:
+			kind = rule.Kind4xx
+			commit = CommitUpstreamResponded
+			terminal = true
+		case code >= 500:
+			kind = rule.Kind5xx
+			commit = CommitUpstreamResponded
+			terminal = true
+		default:
+			kind = rule.Kind5xx
+			commit = CommitUpstreamResponded
+			terminal = true
+		}
+		o := codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil)
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(code)
+		o.Commit = commit
+		o.Terminal = terminal
+		o.BusinessFrameSent = business
+		o.IsMalformed = isMalformed
+		emitCodexOutcome(p, sel, o, kind, err.Error())
+		return code, upstreamBody(err), false, err
 	}
 	// 轮结束清除（HOST-2）：合成体成功返回必含 completed 终态——无工具调用项
 	// → 轮结束 → 清除 held（跨轮不回传；适配层已回写本次响应签发值）。
@@ -166,8 +306,15 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	if respImageDetectOn(sel) {
 		img = respImageCountBody(resp.Raw)
 	}
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
+	ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
+	o := codexDispatchBase(sel, reqModel, reqID, start, ut, nil)
+	o.Result = ResultSuccess
+	o.HTTPStatus = AttemptStatus(http.StatusOK)
+	o.Commit = CommitResponseStarted
+	o.BusinessFrameSent = true
+	o.Terminal = true
+	emitCodexOutcome(p, sel, o, rule.KindOK, "")
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }
 
@@ -196,6 +343,13 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 	defer cancel()
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
+		o := codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil)
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(400)
+		o.Commit = CommitUpstreamResponded
+		o.Terminal = true
+		o.IsMalformed = true
+		emitCodexOutcome(p, sel, o, rule.Kind4xx, err.Error())
 		return 0, nil, false, err // 本地 JSON 错误（防御——同非流式）
 	}
 	var (
@@ -246,19 +400,74 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		// 客户端断开：上游已消费请求（成功），仍须记录用量（成功请求丢日志防
 		// 线——caller_responses.go:99-104 语义）；按 abort 收尾不 MarkResult。
 		if r.Context().Err() != nil {
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
+			ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
+			o := codexDispatchBase(sel, reqModel, reqID, start, ut, ttft)
+			if framesWritten {
+				o.Result = ResultClientCancel
+				o.HTTPStatus = 0
+				o.Commit = CommitResponseStarted
+				o.BusinessFrameSent = true
+			} else {
+				o.Result = ResultClientCancel
+				o.HTTPStatus = 0
+				o.Commit = CommitNotSent
+			}
+			o.Terminal = true
+			emitCodexOutcome(p, sel, o, 0, "")
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, ut, start)))
 			return 0, nil, true, nil
 		}
 		// 首帧前信封错误（4xx 透传 / 429/5xx failover——typed 分支
 		// ResponseStreamRaw 非 200 同语义）：未写出任何帧，可返回 HTTP 状态由
 		// failover 循环分类。
 		if !framesWritten {
-			return statusOf(err), upstreamBody(err), false, err
+			code := statusOf(err)
+			var kind rule.Kind
+			var commit CommitState
+			var terminal bool
+			switch {
+			case code == 0:
+				kind = rule.KindNetwork
+				commit = CommitNotSent
+				terminal = false
+			case code == 429:
+				kind = rule.Kind429
+				commit = CommitUpstreamResponded
+				terminal = false
+			case code >= 400 && code < 500:
+				kind = rule.Kind4xx
+				commit = CommitUpstreamResponded
+				terminal = true
+			default:
+				kind = rule.Kind5xx
+				commit = CommitUpstreamResponded
+				terminal = true
+			}
+			o := codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil)
+			o.Result = ResultFailed
+			o.HTTPStatus = AttemptStatus(code)
+			o.Commit = commit
+			o.Terminal = terminal
+			emitCodexOutcome(p, sel, o, kind, err.Error())
+			return code, upstreamBody(err), false, err
 		}
 		// 上游停滞/错误（流中止）：200 已写出——recordStreamAbort + 连接级/5xx 分流
 		//（caller_responses.go:106-108 同语义）。
-		p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, err)
-		p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(statusOf(err)), nil, statusOf(err), err.Error(), sel.Model)
+		ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
+		o := codexDispatchBase(sel, reqModel, reqID, start, ut, ttft)
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(statusOf(err))
+		if o.HTTPStatus == 0 {
+			o.Commit = CommitResponseStarted
+			o.BusinessFrameSent = true
+			o.Terminal = true
+		} else {
+			o.Commit = CommitResponseStarted
+			o.BusinessFrameSent = true
+			o.Terminal = true
+		}
+		emitCodexOutcome(p, sel, o, scheduler.RuleKindOf(statusOf(err)), err.Error())
+		p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, err)
 		return 0, nil, true, nil
 	}
 	// 轮结束清除（HOST-2）：流正常结束且收到 completed 终态（usageTaken）且无
@@ -283,11 +492,26 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		framesWritten = true
 	}
 	if err := writeCodexSSEFrame(w, sseDonePayload); err != nil {
-		p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
+		ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
+		o := codexDispatchBase(sel, reqModel, reqID, start, ut, ttft)
+		o.Result = ResultClientCancel
+		o.HTTPStatus = 0
+		o.Commit = CommitResponseStarted
+		o.BusinessFrameSent = true
+		o.Terminal = true
+		emitCodexOutcome(p, sel, o, 0, "")
+		p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, ut, start)))
 		return 0, nil, true, nil
 	}
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-	p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
+	ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
+	o := codexDispatchBase(sel, reqModel, reqID, start, ut, ttft)
+	o.Result = ResultSuccess
+	o.HTTPStatus = AttemptStatus(http.StatusOK)
+	o.Commit = CommitClientCommitted
+	o.BusinessFrameSent = true
+	o.Terminal = true
+	emitCodexOutcome(p, sel, o, rule.KindOK, "")
+	p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }
 
