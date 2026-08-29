@@ -411,7 +411,7 @@ func modelSet(accs []*accountSnapshot) map[string]struct{} {
 // 映射目标（上游模型名）不复查（pickFrom 内映射）。
 func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 	routes := make(map[routeKey]*route)
-	formats := []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS, domain.FormatOpenAIImages, domain.FormatAnthropic, domain.FormatOpenAISearch}
+	formats := []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS, domain.FormatOpenAIImages, domain.FormatAnthropic}
 	for model := range modelSet(accs) {
 		for _, format := range formats {
 			var t1, t2 []*accountSnapshot

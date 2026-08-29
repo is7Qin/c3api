@@ -353,7 +353,11 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			break
 		}
 		var selErr error
-		sel, selErr = p.sched.Select(groupID, selectFormat, reqModel)
+		if format == domain.FormatOpenAISearch {
+			sel, selErr = p.sched.SelectOpaque(groupID, selectFormat, reqModel)
+		} else {
+			sel, selErr = p.sched.Select(groupID, selectFormat, reqModel)
+		}
 		if selErr != nil {
 			break
 		}
