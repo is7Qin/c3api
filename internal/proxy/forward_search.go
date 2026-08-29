@@ -87,8 +87,9 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	reqModel := gjson.GetBytes(body, "model").String()
 
 	// 选号：复用主流 resp 路由面（openai-responses 格式——四类型全可达；
-	// search 无独立路由，独立选号无会话绑定）。
-	sel, err := p.sched.Select(groupID, domain.FormatOpenAIResponses, reqModel)
+	// search 无独立路由，独立选号无会话绑定）。First selection may use new route-aware plan where request identity is available
+	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID}
+	sel, plan, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponses, reqModel, identity)
 	if err != nil {
 		p.handleSelectError(w, err)
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAISearch, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
@@ -99,7 +100,7 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=false（search 无缺价
 	// 预检——现状语义显式关，不给 search 新增 402）；尾部 Select 走主流 resp
 	// 路由面（openai-responses）；耗尽 Retry-After 分支由 httpSink 判 lastCode。
-	p.failoverLoop(w, r, domain.FormatOpenAISearch, domain.FormatOpenAIResponses, reqID, groupID, start, reqModel, body, sel,
+	p.failoverLoopWithPlan(w, r, domain.FormatOpenAISearch, domain.FormatOpenAIResponses, reqID, groupID, start, reqModel, body, sel, plan,
 		attemptState{}, p.searchAttempt, p.httpSink, false)
 }
 

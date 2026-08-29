@@ -151,7 +151,8 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 
 	// 选号（含账号并发槽抢占）：格式硬过滤由调度器路由承担（模板
 	// SupportedFormats 含 resp-ws 才建路由）。挂死客户端不占槽（槽在首帧后取）。
-	sel, err := p.sched.Select(groupID, domain.FormatOpenAIResponsesWS, reqModel)
+	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID}
+	sel, plan, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponsesWS, reqModel, identity)
 	if err != nil {
 		wsWriteError(client, selectErrorMessage(err))
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAIResponsesWS, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
@@ -166,7 +167,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// 固定文案由 wsSink 承载（WS 无 Retry-After/429 语义）。codex 拨号分类
 	//（handleCodexDialError 的 stop 分支——501/fatal/4xx 已收尾）留在
 	// wsAttempt 内（不统一 codex 4xx 收尾差异：分类代码位置 + 错误文本来源）。
-	p.failoverLoop(w, r, domain.FormatOpenAIResponsesWS, domain.FormatOpenAIResponsesWS, reqID, groupID, start, reqModel, nil, sel,
+	p.failoverLoopWithPlan(w, r, domain.FormatOpenAIResponsesWS, domain.FormatOpenAIResponsesWS, reqID, groupID, start, reqModel, nil, sel, plan,
 		attemptState{client: client, firstTyp: firstTyp, first: first, stripTier: stripTier},
 		p.wsAttempt, p.wsSink, true)
 }

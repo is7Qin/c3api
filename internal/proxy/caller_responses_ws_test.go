@@ -554,29 +554,29 @@ func TestResponsesWSHandshakeUnderShortTimeout(t *testing.T) {
 
 // TestResponsesWSFailoverZeroReleasesSlot 防呆（spec 纵深，与 chat/search 同
 // 款）：直构 failover_attempts=0（绕过 validate 的 >=1 下限——测试侧 p.cfg 改
-// 写等价直构）时 failover 循环零次执行，首次 Select 已占并发槽——修复前槽永
-// 不释放（组内账号耗尽后全组 429 死锁，重启才能恢复）；耗尽路径必须补
-// Release。N=0 时 lastCode=0 → ErrNetwork 记录 + 固定错误帧文案。
+// 写等价直构）时新语义 normalized 1..8/default3 → 0 归一为 3。codex WS 的
+// 200 成功中继时序竞态导致并发释放延迟，改用 403 确定性拒绝路径验证同一
+// normalization：1 次拨号即判 4xx 不重试，lease 经正常路径释放，旧零循环的
+// 防呆 Release 语义由正常释放覆盖。
 func TestResponsesWSFailoverZeroReleasesSlot(t *testing.T) {
-	up, hooks := newCodexWSUpstream(t, []int{200}, 0) // 循环不执行——上游不会被拨号
+	up, hooks := newCodexWSUpstream(t, []int{403}, 0)
 	defer up.Close()
 	store := &captureLogStore{}
 	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
-	p.cfg.FailoverAttempts = 0 // 直构：绕过 validate 下限
+	p.cfg.FailoverAttempts = 0 // 直构：绕过 validate 下限 → normalized 3
 
 	c := dialResponsesWS(t, srv)
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	ef := readResponsesWSFrame(t, c)
-	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "Upstream request failed", "WS 耗尽 CustomMessage（P22：N=0 时 lastCode=0→network 定制文案）")
+	require.Contains(t, string(ef), `"type":"error"`, "normalized N=0→3: 4xx path one dial")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
-	require.Equal(t, 0, hooks.upgradesN(), "N=0 循环零次执行：无上游拨号")
+	require.Equal(t, 1, hooks.upgradesN(), "normalized N=0→3: one dial")
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Zero(t, ri.Concurrency, "failover_attempts=0 首次选号占槽必须释放（防呆 Release）")
-	require.Zero(t, p.rec.Pending(), "N=0 耗尽路径失败行不产生明细 pending（err_logs 承载）")
+	require.Zero(t, ri.Concurrency, "normalized failover must release lease exactly once")
+	require.Zero(t, p.rec.Pending(), "4xx path produces no pending (err_logs)")
 }
 
 // TestResponsesWSDial4xxPassthrough 静态拨号 4xx 透传统一循环分类（行为契约：

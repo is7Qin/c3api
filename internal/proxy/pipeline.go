@@ -203,6 +203,10 @@ func applyPassthroughHeader(w http.ResponseWriter, then domain.RuleThen, hdr htt
 // 记录（recordRejected/buildLog/finish/recordLog/MarkResult）参数逐字段与三份
 // 原内联管线一致（行为契约：状态码/错误帧/Retry-After/固定文案逐字节不变）。
 func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, selectFormat domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *scheduler.Selection, st attemptState, attempt upstreamAttempt, sink pipelineSink, precheck bool) {
+	p.failoverLoopWithPlan(w, r, format, selectFormat, reqID, groupID, start, reqModel, body, sel, nil, st, attempt, sink, precheck)
+}
+
+func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, format, selectFormat domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *scheduler.Selection, plan *scheduler.AttemptPlan, st attemptState, attempt upstreamAttempt, sink pipelineSink, precheck bool) {
 	lastSel := sel
 	var (
 		lastCode   int
@@ -225,7 +229,12 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 	// 防呆（spec：failover_attempts=0 直构绕过 validate 下限）：循环零次执行时
 	// 首次 Select 已占并发槽，耗尽路径按此标志补 Release——N>=1 恒 true，不双释放。
 	attempted := false
-	for i := 0; i < p.cfg.FailoverAttempts; i++ {
+	maxAttempts := p.normalizedAttempts()
+	dispatched := 0
+	if sel != nil {
+		dispatched = 1
+	}
+	for dispatched <= maxAttempts && dispatched > 0 {
 		lastSel = sel
 		attempted = true
 		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前
@@ -348,15 +357,28 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 			}
 			return
 		}
+		// plan-aware retry gating: committed/ambiguous/client-cancel/hard-continuation do not migrate
+		// Keep Task13 boundary: use CanRetry matrix, not raw status
+		shouldRetry := true
+		if plan != nil {
+			shouldRetry = p.shouldRetryWithPlan(r.Context(), code, callErr, st, format, selectFormat)
+		}
+		if !shouldRetry {
+			sel.Release()
+			break
+		}
+		// release exactly once before retry
 		sel.Release()
-		if i+1 >= p.cfg.FailoverAttempts {
+		if dispatched >= maxAttempts {
 			break
 		}
-		var selErr error
-		sel, selErr = p.sched.Select(groupID, selectFormat, reqModel)
+		nextSel, selErr := p.selectNextWithPlan(plan, groupID, selectFormat, reqModel)
 		if selErr != nil {
+			// distinguish ErrNoAvailable vs AttemptsExhausted preserved via error; both lead to exhausted handling
 			break
 		}
+		sel = nextSel
+		dispatched++
 	}
 	if !attempted {
 		lastSel.Release()

@@ -225,15 +225,14 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		route.caller = p.imagesCallerFor(r)
 	}
 
-	sel, err := p.sched.Select(groupID, format, reqModel)
-	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable)) {
-		// 补差语义：模板已支持客户端协议 → 直接转发零转换；缺口 = 组内无客户
-		// 端协议路由（404）或路由存在但无可用账号（429——全忙/全禁用），组配置
-		// 了转换方向 → 客户端协议 → 转换 → 模板协议路由（配置方向即声明
-		// fallback 意图）。off（默认）→ 上面的 errors.Is 分支零开销（errors.Is
-		// 自身零分配）。ErrGroupNotFound（组不存在）仍不转换 → 404 直返。
+	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID}
+	sel, plan, err := p.selectWithPlan(groupID, format, reqModel, identity)
+	// converted route uses target identity when fallback
+	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable) || errors.Is(err, scheduler.ErrAttemptsExhausted)) {
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
-			if sel2, err2 := p.sched.Select(groupID, tgt, reqModel); err2 == nil {
+			// Target identity uses same request identity but target RouteClassID
+			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID}
+			if sel2, plan2, err2 := p.selectWithPlan(groupID, tgt, reqModel, targetIdentity); err2 == nil {
 				sel2GuardActive := true
 				defer func() {
 					if sel2GuardActive {
@@ -252,13 +251,20 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 				}
 				sel2GuardActive = false
 				sel = sel2
+				plan = plan2
 				err = nil
 				route = forwardRoute{format: tgt, caller: p.convCallers[conv], body: cb}
 			} else {
+				// Preserve target error (distinguish ErrNoAvailable vs AttemptsExhausted)
 				err = err2
+				if plan2 != nil {
+					plan = plan2
+				}
 			}
 		}
 	}
+	// Preserve old Select callers until migration: fallback to legacy Select if plan path didn't provide selection
+	// selectWithPlan already fell back to legacy when NewAttemptPlan failed, so err handling above covers it
 	if err != nil {
 		p.handleSelectError(w, err)
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
@@ -270,7 +276,8 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	// anthropic/images 走缺价预检）；尾部 Select 按 route.format（协议转换命中
 	// 时为模板协议路由）；记录仍按客户端 format（buildLog 参数不变）。差异
 	// 状态按值传入 attemptState（零分配——attempt/sink 为 New 构造单例）。
-	p.failoverLoop(w, r, format, route.format, reqID, groupID, start, reqModel, route.body, sel,
+	// First selection may use new route-aware plan where request identity is available
+	p.failoverLoopWithPlan(w, r, format, route.format, reqID, groupID, start, reqModel, route.body, sel, plan,
 		attemptState{format: format, routeFormat: route.format, caller: route.caller, stream: stream},
 		p.chatAttempt, p.httpSink, true)
 }
