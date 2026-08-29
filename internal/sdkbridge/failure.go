@@ -11,6 +11,8 @@ package sdkbridge
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -62,6 +64,11 @@ type GroupPublisher interface {
 	PublishGroups(ctx context.Context, gids []int64)
 }
 
+// HealthProber narrow health dependency for Recover -> PROBING.
+type HealthProber interface {
+	SetProbing(ctx context.Context, accountID int64, revision int64) error
+}
+
 // AccountFailer 调度摘除面（*scheduler.Scheduler 满足；接口化供测试注入）。
 type AccountFailer interface {
 	// FailAccount 快照置 StatusDisabled + last_error 审计 + 经 loader 持久化
@@ -78,6 +85,7 @@ type FailureDeps struct {
 	Log *logx.Logger
 	Latch Latcher
 	Publisher GroupPublisher
+	Health HealthProber
 }
 
 // HandleFailure 网关侧失效处理链（T1 §3——统一回调装配；T2/T4 适配层在
@@ -96,7 +104,14 @@ type FailureDeps struct {
 // 返回 DB 写错误（nil = 成功）；调度摘除为 void（快照外账号 no-op）。
 // 本函数不记日志——处理错误统一由回调侧（NewFailureHandler）记一条（P3-1
 // 评审：同一失败不得双条 Warn）。
-var ErrMissingCredentialDiscriminator = errors.New("sdkbridge: missing credential discriminator")
+var (
+	ErrMissingCredentialDiscriminator = errors.New("sdkbridge: missing credential discriminator")
+	ErrMissingCandidateFingerprint    = errors.New("sdkbridge: missing candidate fingerprint")
+	ErrCandidateFingerprintMismatch   = errors.New("sdkbridge: candidate fingerprint mismatch")
+	ErrMissingExpectedRevision        = errors.New("sdkbridge: missing expected revision")
+	ErrStaleFailureRevision           = errors.New("sdkbridge: stale failure revision")
+	ErrHealthUnsupported              = errors.New("sdkbridge: health unsupported")
+)
 
 func isCodexCredentialType(t credential.Type) bool {
 	return t == credential.TypeCodexOAuth || t == credential.TypeCodexPAT
@@ -113,6 +128,49 @@ func credentialTypeOf(acct *domain.Account) (credential.Type, bool) {
 		return acct.Template.CredentialType, true
 	}
 	return "", false
+}
+
+func canonicalFingerprint(acct *domain.Account) (string, error) {
+	if acct == nil || acct.Template == nil {
+		return "", ErrMissingCandidateFingerprint
+	}
+	baseURL := acct.Template.BaseURL
+	if acct.BaseURL != nil && *acct.BaseURL != "" {
+		baseURL = *acct.BaseURL
+	}
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	if strings.HasSuffix(baseURL, "/v1") {
+		baseURL = strings.TrimSuffix(baseURL, "/v1")
+	}
+	var patKey, email, codexAccountID, installationID, sessionID, threadID, windowID string
+	if acct.Ext != nil {
+		if acct.Ext.CodexPATKey != nil {
+			patKey = *acct.Ext.CodexPATKey
+		}
+		if acct.Ext.CodexEmail != nil {
+			email = *acct.Ext.CodexEmail
+		}
+		if acct.Ext.CodexAccountID != nil {
+			codexAccountID = *acct.Ext.CodexAccountID
+		}
+		if acct.Ext.CodexIdentity != nil {
+			installationID = acct.Ext.CodexIdentity.InstallationID
+			sessionID = acct.Ext.CodexIdentity.SessionID
+			threadID = acct.Ext.CodexIdentity.ThreadID
+			windowID = acct.Ext.CodexIdentity.WindowID
+		}
+	}
+	ct, ok := credentialTypeOf(acct)
+	if !ok {
+		return "", ErrMissingCredentialDiscriminator
+	}
+	fp, err := domain.CandidateFingerprint(acct.ID, acct.TemplateID, ct, baseURL, acct.UpstreamKey, patKey, email, codexAccountID, acct.Template.StripImageTools, installationID, sessionID, threadID, windowID)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrMissingCandidateFingerprint, err)
+	}
+	return domain.CandidateFPHex(fp), nil
 }
 
 func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal error) error {
@@ -134,12 +192,14 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 			if !isCodexCredentialType(ct) {
 				return nil
 			}
-			fp := acct.UpstreamKey
-			if acct.BaseURL != nil {
-				fp += "|" + *acct.BaseURL
+			fp, ferr := canonicalFingerprint(acct)
+			if ferr != nil {
+				return ferr
 			}
 			expectedRev := acct.LifecycleRevision
-			// fingerprint change fence: if latch has different fp, it will be cleared on TryAcquire path via ClearIfFingerprintChanged logic in scheduler; here we just try acquire
+			if expectedRev <= 0 {
+				return ErrMissingExpectedRevision
+			}
 			deps.Latch.TryAcquire(accountID, fp, expectedRev)
 			deps.Failer.FailAccount(accountID, reason)
 			err = cs.FailAccountCAS(ctx, accountID, expectedRev, "sdk", time.Now(), reason)
@@ -149,6 +209,12 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 					if ferr == nil && fresh.LifecycleRevision > expectedRev {
 						deps.Latch.Clear(accountID)
 					}
+					return fmt.Errorf("%w: %v", ErrStaleFailureRevision, err)
+				}
+				// fencing for fingerprint mismatch is handled via ErrCandidateFingerprintMismatch at retry time;
+				// transient errors -> enqueue retry for process lifetime, nonblocking.
+				if isTransientFailure(err) {
+					enqueueFailureRetry(deps, accountID, fp, expectedRev, reason)
 				}
 				return err
 			}
@@ -171,26 +237,47 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 	return err
 }
 
+func isTransientFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, repository.ErrStaleRevision) || errors.Is(err, ErrStaleFailureRevision) || errors.Is(err, ErrCandidateFingerprintMismatch) || errors.Is(err, ErrMissingCandidateFingerprint) || errors.Is(err, ErrMissingExpectedRevision) || errors.Is(err, ErrMissingCredentialDiscriminator) {
+		return false
+	}
+	return true
+}
+
 func RecoverAccount(ctx context.Context, deps FailureDeps, accountID int64) error {
+	if deps.Health == nil {
+		return ErrHealthUnsupported
+	}
 	cs, ok := deps.Store.(casStore)
 	if !ok {
-		return nil
+		return ErrHealthUnsupported
 	}
 	acct, err := cs.GetAccount(ctx, accountID)
 	if err != nil {
 		return err
 	}
 	expectedRev := acct.LifecycleRevision
-	// Recover uses current DB revision +1 then PROBING; stale callback fence: if already not failed, still CAS increment to clear?
-	// Use RecoverAccountCAS if available, else generic.
+	if expectedRev <= 0 {
+		return ErrMissingExpectedRevision
+	}
 	if rc, ok := deps.Store.(interface {
 		RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error
 	}); ok {
 		if err := rc.RecoverAccountCAS(ctx, accountID, expectedRev); err != nil {
+			if errors.Is(err, repository.ErrStaleRevision) {
+				return fmt.Errorf("%w: %v", ErrStaleFailureRevision, err)
+			}
 			return err
 		}
 	} else {
-		return nil
+		return ErrHealthUnsupported
+	}
+	newRev := expectedRev + 1
+	if err := deps.Health.SetProbing(ctx, accountID, newRev); err != nil {
+		return err
 	}
 	if deps.Latch != nil {
 		deps.Latch.Clear(accountID)
