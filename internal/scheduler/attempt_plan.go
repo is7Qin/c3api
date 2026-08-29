@@ -35,12 +35,18 @@ type Attempt struct {
 type AttemptReservation func(accountID int64) bool
 
 type attemptPlanCandidate struct {
-	accountID int64
-	lane      AttemptLane
+	accountID   int64
+	lane        AttemptLane
+	account     *accountSnapshot
+	static      *snapshotStatic
+	fingerprint string
+	quality     string
 }
 
 type AttemptPlan struct {
 	identity       AttemptPlanIdentity
+	format         string
+	model          string
 	candidates     [MaxAttemptPlanAccounts]attemptPlanCandidate
 	candidateCount uint8
 	cursor         uint8
@@ -109,17 +115,23 @@ func NewAttemptPlan(identity AttemptPlanIdentity, decision RouteDecision) *Attem
 func (p *AttemptPlan) Identity() AttemptPlanIdentity { return p.identity }
 
 func (p *AttemptPlan) Reserve(reserve AttemptReservation) (Attempt, error) {
+	return p.reserve(func(candidate attemptPlanCandidate) bool {
+		return reserve(candidate.accountID)
+	})
+}
+
+func (p *AttemptPlan) reserve(reserve func(attemptPlanCandidate) bool) (Attempt, error) {
 	if p.candidateCount == 0 {
 		return Attempt{}, ErrNoAvailable
 	}
 	for p.cursor < p.candidateCount {
 		candidate := p.candidates[p.cursor]
 		p.cursor++
-		p.attempted[p.attemptedCount] = candidate.accountID
-		p.attemptedCount++
-		if !reserve(candidate.accountID) {
+		if !reserve(candidate) {
 			continue
 		}
+		p.attempted[p.attemptedCount] = candidate.accountID
+		p.attemptedCount++
 		p.ordinal++
 		return Attempt{AccountID: candidate.accountID, Lane: candidate.lane, Ordinal: p.ordinal}, nil
 	}
