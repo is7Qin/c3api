@@ -23,7 +23,7 @@ import (
 )
 
 func TestPGAddQuotaUsedBatch(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "quota-batch@example.com")
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "qg", Visibility: domain.GroupVisibilityPublic})
@@ -74,7 +74,7 @@ func TestPGAddQuotaUsedBatch(t *testing.T) {
 // （与 GetKey 全行读同源）；AddQuotaUsed 增量后复核读到新值（复核协议依赖：
 // 复核时刻 SELECT quota_used 是"剩余额"判定依据）；缺失 key → ErrNotFound。
 func TestPGKeyQuotaUsed(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "quota-reclaim@example.com")
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "qg2", Visibility: domain.GroupVisibilityPublic})
