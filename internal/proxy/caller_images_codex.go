@@ -26,22 +26,13 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
-// errCodexImagesNotIntegrated 501：codex 适配层未装配（SetCodex 未调用——main
-// 装配缺失的显式拒绝，不让凭据缺失路径误报 502/network）。
+// errCodexImagesNotIntegrated 501：codex 适配层未装配。
 var errCodexImagesNotIntegrated = &formatError{status: http.StatusNotImplemented, msg: "codex image generation unavailable (adapter not wired)"}
 
-// codexImagesCaller 是 codex-oauth/codex-pat 类型的 images 端点调用器（T2 §2，
-// B 的 501 分流骨架落位）：网关解析请求体 → domain.ImageGenParams → 适配层
-// GenerateImage（SDK 直连 codex images 端点，非流式）→ 响应统一走
-// domain.ImageResponse 口径 → wire 序列化转发 + 计费提取（复用 C 的
-// image_usage 提取纯函数——data 长 = 张数 + usage image_tokens → ImageCost，
-// 与 api_key 直连同口径）。流式（T3）：GenerateImageStream 合成事件流 →
-// streamImageGeneration（SSE 透传/keepalive/流终+abort 计费——T3 生产接线
-// 点，同签名直赋适配层方法）。
-// codexImagesCaller 无路径字段（评审 P3-1）：固定 SDK 官方端点
-// https://chatgpt.com/backend-api/codex/images/generations 与
-// https://chatgpt.com/backend-api/codex/images/edits（有图 → edits，否则 generations），
-// 网关零拼装/test transport 仅 host 重写保留官方 path；与 imagesCaller.path（直连面拼 URL）不同，codex 面端点选择归 SDK。
+// codexImagesCaller 是 codex 类型的 images 端点调用器：网关解析请求体 →
+// domain.ImageGenParams → 适配层 GenerateImage → 统一 wire 序列化转发 + 计费
+// 提取（按张数与 image tokens），流式走 streamImageGeneration。
+// codex 面固定官方端点 generations/edits，选择由 SDK 决定。
 type codexImagesCaller struct {
 	p *Proxy
 }
@@ -96,7 +87,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 		if code == 429 || code == 0 {
 			terminal = false
 		}
-		// fatal boundary: adapter already invoked FailAccount via callback; still observe as failed
+		// fatal 错误由适配层统一触发账号失效，网关不再重试同账号。
 		if isCodexFatal(err) {
 			terminal = true
 			commit = CommitUpstreamResponded
@@ -116,6 +107,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(wire)
+	// 计费按响应张数与 image tokens 落账，复用直连面同口径提取。
 	ii, io, count := billing.ImageUsageFromResponse(wire)
 	usage := AttemptUsage{InputTokens: ii, OutputTokens: io, CallCount: count}
 	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}
@@ -160,8 +152,7 @@ func isCodexFatal(err error) bool {
 	return false
 }
 
-// codexImagesFor 按端点路径选 codex images 调用器（与 imagesCallerFor 同形态；
-// New 构造的调用器复用，per-request 零分配）。
+// codexImagesFor 按端点路径选择 codex 调用器。
 func (p *Proxy) codexImagesFor(r *http.Request) UpstreamCaller {
 	if strings.HasSuffix(r.URL.Path, "/edits") {
 		return p.codexImagesEdits
@@ -169,11 +160,7 @@ func (p *Proxy) codexImagesFor(r *http.Request) UpstreamCaller {
 	return p.codexImagesGenerations
 }
 
-// imageParamsFromBody 请求体 → domain.ImageGenParams（T2 §2：网关解析传结构体
-// ——SDK 不做 HTTP 协议解析）。JSON：顶层提取（model/prompt 必填；n/size/
-// quality/background 可选；edits 输入 images:[{image_url}]）；multipart：form
-// 字段（model/prompt/n/size/quality/background）+ 图片文件 part（FormName
-// image 前缀 → Raw 字节，SDK 内部转 data URL）。
+// imageParamsFromBody 将请求体解析为 ImageGenParams（JSON 与 multipart 双协议）。
 func imageParamsFromBody(body []byte, contentType string) (*domain.ImageGenParams, error) {
 	if isMultipartForm(contentType) {
 		return imageParamsMultipart(body, contentType)
@@ -181,8 +168,7 @@ func imageParamsFromBody(body []byte, contentType string) (*domain.ImageGenParam
 	return imageParamsJSON(body)
 }
 
-// nullLit JSON null 字面量（可选字段 null → 按缺省忽略——gjson Type 判定同
-// 语义；encoding/json 对 null 解到非指针值为 no-op 不报错，需显式区分）。
+// nullLit JSON null 字面量，用于区分缺省与显式 null。
 var nullLit = []byte("null")
 
 func imageParamsJSON(body []byte) (*domain.ImageGenParams, error) {

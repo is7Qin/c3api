@@ -17,13 +17,11 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// imageStreamGenerator 流式生图能力——sdkbridge.Codex.GenerateImageStream
-// 同签名（cred → Auth 缓存 / 信封包装 / fatal 统一回调全在适配层内，网关侧只
-// 消费本签名）。生产接线：codexImagesCaller stream 分支同签名直赋适配层方法
-// （T3 接线提交）；单测传 fake 替身（替身不落生产代码——调用面独立验证）。
+// imageStreamGenerator 流式生图能力，与 sdkbridge.Codex.GenerateImageStream 同签名。
 type imageStreamGenerator func(ctx context.Context, cred *domain.AccountCredential, p *domain.ImageGenParams, fn func(domain.ImageStreamEvent) error) error
 
 func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, params *domain.ImageGenParams, gen imageStreamGenerator) (int, []byte, bool, error) {
+	// 首事件前保留 HTTP 错误语义；首事件后只能写 SSE error 帧，计费使用已收集的图片和令牌。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 	defer cancel()
 
@@ -46,9 +44,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		usage       *domain.ImageUsage
 		headersSent bool
 		ttft      *int64
-		firstFrameAt *time.Time
 	)
-	_ = firstFrameAt
 	writeFrame := func(frame []byte) error {
 		if !headersSent {
 			headersSent = true
@@ -93,12 +89,14 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 	if usage != nil {
 		ii, io = usage.InputImageTokens, usage.OutputImageTokens
 	}
+	// 张数按 completed 事件计数，tokens 取末帧 usage。
 	u := usageTuple{ii: ii, io: io, tt: ii + io, calls: count}
 	usageObs := AttemptUsage{InputTokens: ii, OutputTokens: io, CallCount: count}
 	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 
 	if genErr != nil {
 		if !headersSent {
+			// 首帧前失败仍可用 HTTP 状态码直接返回。
 			code := statusOf(genErr)
 			commit := CommitNotSent
 			if code != 0 {
@@ -113,6 +111,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			_ = observer.Complete(outcome, health)
 			return statusOf(genErr), upstreamBody(genErr), false, genErr
 		}
+		// 响应头已发出后失败只能写 SSE error 帧；客户端断开与上游错误分开处理。
 		_, _ = w.Write(buildErrorFrame(streamErrMessage(genErr)))
 		flushWriter(w)
 		if r.Context().Err() != nil {
@@ -172,9 +171,7 @@ func imagesStreamOutcome(reqID string, sel *scheduler.Selection, reqModel string
 	}
 }
 
-// writeSSEHeaders 发 SSE 响应头三件套（对齐 caller_responses.go:60-62）：
-// Content-Type: text/event-stream + Cache-Control: no-cache +
-// X-Accel-Buffering: no + WriteHeader(200)。
+// writeSSEHeaders 发 SSE 响应头（text/event-stream）。
 func writeSSEHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -182,16 +179,14 @@ func writeSSEHeaders(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// flushWriter 逐事件 Flush（keepalive 后不 Flush = 假免疫；httptest 记录器
-// 支持 Flush 接口——测试可断言 Flushed 时序）。
+// flushWriter 逐事件 Flush。
 func flushWriter(w http.ResponseWriter) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
-// buildCompletedFrame completed 事件 SSE 帧（wire 形态 P2-1 定死，逐帧构造不
-// 整体缓冲）：
+// buildCompletedFrame 构造 completed 事件的 SSE 帧：
 func buildCompletedFrame(ev *domain.ImageStreamEvent) []byte {
 	var b64len int
 	if ev.B64JSON != nil {
@@ -218,7 +213,7 @@ func buildCompletedFrame(ev *domain.ImageStreamEvent) []byte {
 	return buf.Bytes()
 }
 
-// buildErrorFrame 生成失败 SSE error 帧（P2-2 wire 形态）：
+// buildErrorFrame 生成失败 SSE error 帧：
 func buildErrorFrame(message string) []byte {
 	buf := bytes.NewBuffer(make([]byte, 0, len("event: error\ndata: ")+len(message)+32))
 	buf.WriteString("event: error\ndata: ")
@@ -228,7 +223,7 @@ func buildErrorFrame(message string) []byte {
 	return buf.Bytes()
 }
 
-// streamErrMessage 错误帧 message 文案（信封/fatal 文案——T2 提取机制复用：
+// streamErrMessage 提取错误帧的 message 文案：
 func streamErrMessage(err error) string {
 	type rawJSONer interface{ RawJSON() string }
 	if rj, ok := err.(rawJSONer); ok {

@@ -24,7 +24,7 @@ import (
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
-// convertedCaller 是协议转换路径的 UpstreamCaller（W5）：请求体已由
+// convertedCaller 是协议转换路径的 UpstreamCaller：请求体已由
 // handleFormat 按方向转换（route.body，含 stream/model 字段），本实现按模板
 // 协议调用上游（与 responsesCaller/anthropicCaller 同构），响应反向转换回
 // 客户端协议：
@@ -43,6 +43,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	p := c.p
 	client, target := clientAndTargetOf(c.dir)
 	opTag := convertedOpTag(c.dir)
+	// 转换路径按目标上游协议记录用量和质量，响应再反向转换回客户端协议。
 
 	if stream {
 		reqModel := gjson.GetBytes(body, "model").String()
@@ -65,6 +66,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			resp, err = p.clients.AnthMessageStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody)
 		}
 		if err != nil {
+			// 转换失败或上游错误统一交给 observer；客户端格式只影响最终响应写出。
 			code := statusOf(err)
 			var commit CommitState
 			if code == 0 {
@@ -103,6 +105,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		w.Header().Set("X-Accel-Buffering", "no")
 		mapper := protoconv.NewStreamMapper(c.dir)
 		var it, ot, tt, cr, cc int64
+		// 首帧到达即记录 TTFT，Observer 仍按目标协议原始帧提取用量。
 		var ttft *int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Mapper: func(ev sserelay.Event) ([]byte, bool) {
@@ -138,9 +141,11 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 		if err != nil {
+			// 客户端取消与上游中断区分：取消不计健康惩罚，仍需计费落账。
 			if errors.Is(err, context.Canceled) {
 				outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, true, true, false)
 				_ = observer.Cancel(outcome)
+				// 计费落账由 p.finish 统一收口，routeLog 负责构建日志与用量。
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
 			}
@@ -245,6 +250,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
 	_ = observer.Complete(outcome, health)
+	// 计费落账与日志由 p.finish 统一收口。
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 	return 200, nil, true, nil
 }
@@ -284,7 +290,7 @@ func convertedOutcome(reqID string, sel *scheduler.Selection, reqModel string, o
 	}
 }
 
-// clientAndTargetOf 转换方向的客户端/模板协议格式（方向合法性由 W1 枚举校验
+// clientAndTargetOf 转换方向的客户端/模板协议格式（方向合法性由枚举校验
 // 保证；未知方向 → 客户端=模板=零值，仅防御）。
 func clientAndTargetOf(dir domain.ProtocolConvert) (domain.RequestFormat, domain.RequestFormat) {
 	switch dir {
