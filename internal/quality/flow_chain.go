@@ -28,8 +28,8 @@ var flowChainIncomplete atomic.Int64
 
 const processCrashLossUnobservable = true
 
-func FlowChainCapacityOverflow() int64 { return flowChainCapacityOverflow.Load() }
-func FlowChainEnqueueOverflow() int64  { return flowChainEnqueueOverflow.Load() }
+func FlowChainCapacityOverflow() int64   { return flowChainCapacityOverflow.Load() }
+func FlowChainEnqueueOverflow() int64    { return flowChainEnqueueOverflow.Load() }
 func FlowChainIncompleteObserved() int64 { return flowChainIncomplete.Load() }
 func ProcessCrashLossUnobservable() bool { return processCrashLossUnobservable }
 
@@ -175,6 +175,14 @@ func (c *FlowChain) DispatchCount() int {
 	return c.count
 }
 
+func (c *FlowChain) Dispatches() []FlowDispatch {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]FlowDispatch, c.count)
+	copy(out, c.meta[:c.count])
+	return out
+}
+
 func (c *FlowChain) HasTerminal() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -232,6 +240,27 @@ func (c *FlowChain) Complete() error {
 		return err
 	}
 	c.completed = true
+	return nil
+}
+
+func (c *FlowChain) Finalize() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.completed {
+		return errors.New("already completed")
+	}
+	if c.closed {
+		return ErrFlowChainAlreadyClosed
+	}
+	if c.count == 0 {
+		return ErrFlowChainNotTerminal
+	}
+	if !c.hasTerminal {
+		c.rows[c.count-1].IsTerminal = true
+		c.meta[c.count-1].IsTerminal = true
+		c.hasTerminal = true
+		c.terminalMinute = c.now().UTC().Truncate(time.Minute).Unix()
+	}
 	return nil
 }
 

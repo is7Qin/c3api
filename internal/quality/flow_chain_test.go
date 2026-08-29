@@ -327,3 +327,19 @@ func TestFlowChain_MetadataCompleteness(t *testing.T) {
 		}
 	}
 }
+
+func TestFlowChain_FinalizeCompletesLastDispatch(t *testing.T) {
+	rec, err := NewRecorder(32)
+	require.NoError(t, err)
+	chain := NewFlowChain(rec, time.Now)
+	require.NoError(t, chain.Append(validDispatch(1, false, nil)))
+	require.NoError(t, chain.Finalize())
+	require.NoError(t, chain.Complete())
+	require.True(t, chain.IsCompleted())
+	rows, ok := rec.FlowMinute(chain.TerminalMinute())
+	require.True(t, ok)
+	require.True(t, rows.HasFlowRows())
+	flow := chain.Dispatches()
+	require.Len(t, flow, 1)
+	require.True(t, flow[0].IsTerminal)
+}
