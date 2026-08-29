@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -17,11 +18,11 @@ type failCASStoreErr struct {
 	err error
 }
 
-func (f *failCASStoreErr) SetAccountFailed(_ context.Context, _ int64, _ interface{}, _ string) error { return nil }
+func (f *failCASStoreErr) SetAccountFailed(_ context.Context, _ int64, _ time.Time, _ string) error { return nil }
 func (f *failCASStoreErr) GetAccount(_ context.Context, _ int64) (*domain.Account, error) {
 	return nil, f.err
 }
-func (f *failCASStoreErr) FailAccountCAS(_ context.Context, _ int64, _ int64, _ string, _ interface{}, _ string) error {
+func (f *failCASStoreErr) FailAccountCAS(_ context.Context, _ int64, _ int64, _ string, _ time.Time, _ string) error {
 	return nil
 }
 
