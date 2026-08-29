@@ -309,4 +309,36 @@ func CandidateFingerprint(
 	return CandidateFingerprintVal(h), nil
 }
 
+func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
+	if a == nil || a.Template == nil {
+		return CandidateFingerprintVal{}, fmt.Errorf("routing: missing account or template")
+	}
+	baseURL := a.Template.BaseURL
+	if a.BaseURL != nil && *a.BaseURL != "" {
+		baseURL = *a.BaseURL
+	}
+	if baseURL != "" && strings.HasSuffix(baseURL, "/v1") {
+		baseURL = strings.TrimSuffix(baseURL, "/v1")
+	}
+	var patKey, email, codexAccountID, installationID, sessionID, threadID, windowID string
+	if a.Ext != nil {
+		if a.Ext.CodexPATKey != nil {
+			patKey = *a.Ext.CodexPATKey
+		}
+		if a.Ext.CodexEmail != nil {
+			email = *a.Ext.CodexEmail
+		}
+		if a.Ext.CodexAccountID != nil {
+			codexAccountID = *a.Ext.CodexAccountID
+		}
+		if a.Ext.CodexIdentity != nil {
+			installationID = a.Ext.CodexIdentity.InstallationID
+			sessionID = a.Ext.CodexIdentity.SessionID
+			threadID = a.Ext.CodexIdentity.ThreadID
+			windowID = a.Ext.CodexIdentity.WindowID
+		}
+	}
+	return CandidateFingerprint(a.ID, a.TemplateID, a.Template.CredentialType, baseURL, a.UpstreamKey, patKey, email, codexAccountID, a.Template.StripImageTools, installationID, sessionID, threadID, windowID)
+}
+
 var _ = fieldUint64
