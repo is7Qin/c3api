@@ -144,7 +144,7 @@ func TestFlowChain_TerminalMinuteUTC(t *testing.T) {
 	require.Equal(t, 1, termCount)
 }
 
-func TestFlowChain_NormalCompletionEnqueuesTask9Compatible(t *testing.T) {
+func TestFlowChain_NormalCompletionEnqueuesFlowSnapshot(t *testing.T) {
 	ResetFlowChainCountersForTest()
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestFlowChain_NormalCompletionEnqueuesTask9Compatible(t *testing.T) {
 	}
 	require.NoError(t, chain.Complete())
 	require.True(t, chain.IsCompleted())
-	// Verify Task9 compatible: NewFlowSnapshot style, HasFlowRows, FlowRows clone, minute correct
+	// Verify the snapshot shape, cloned rows, and terminal minute.
 	fm, ok := rec.FlowMinute(fixed.UTC().Truncate(time.Minute).Unix())
 	require.True(t, ok)
 	require.True(t, fm.HasFlowRows())
