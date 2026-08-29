@@ -226,7 +226,18 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	}
 
 	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID}
-	sel, plan, err := p.selectWithPlan(groupID, format, reqModel, identity)
+	var sel *scheduler.Selection
+	var plan *scheduler.AttemptPlan
+	if format == domain.FormatOpenAIImages {
+		if ic, ok := route.caller.(*imagesCaller); ok {
+			rr := scheduler.RouteRefForOp(groupID, string(format), reqModel, ic.operationTag())
+			sel, plan, err = p.selectWithPlanForRoute(rr, groupID, format, reqModel, identity)
+		} else {
+			sel, plan, err = p.selectWithPlan(groupID, format, reqModel, identity)
+		}
+	} else {
+		sel, plan, err = p.selectWithPlan(groupID, format, reqModel, identity)
+	}
 	// converted route uses target identity when fallback
 	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable) || errors.Is(err, scheduler.ErrAttemptsExhausted)) {
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {

@@ -26,16 +26,20 @@ func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model
 		return nil, nil, scheduler.ErrGroupNotFound
 	}
 	route := scheduler.RouteRefFor(groupID, string(format), model)
+	return p.selectWithPlanForRoute(route, groupID, format, model, identity)
+}
+
+func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*scheduler.Selection, *scheduler.AttemptPlan, error) {
+	if p.sched == nil {
+		return nil, nil, scheduler.ErrGroupNotFound
+	}
 	plan, err := p.sched.NewAttemptPlan(identity, route)
 	if err != nil {
-		// No compiled route or view not ready -> fallback to legacy Select to preserve compatibility and Task13 boundary
 		sel, selErr := p.sched.Select(groupID, format, model)
 		return sel, nil, selErr
 	}
 	sel, _, err := p.sched.ReserveAttempt(plan)
 	if err != nil {
-		// Distinguish ErrNoAvailable (empty plan) vs AttemptsExhausted (gated) - preserve distinction, no fallback to legacy for this route
-		// Caller (handleFormat) will handle via handleSelectError; do not silently fallback to legacy where plan existed
 		return nil, plan, err
 	}
 	return sel, plan, nil

@@ -161,6 +161,17 @@ func RouteRefFor(groupID int64, format string, model string) RouteRef {
 	return RouteRef{GroupID: groupID, Format: format, Model: model, OperationTag: string(op), RouteClassID: rc}
 }
 
+// RouteRefForOp builds canonical RouteRef for group/format/model with explicit operation tag (images edits/generations separation).
+func RouteRefForOp(groupID int64, format string, model string, op domain.OperationTag) RouteRef {
+	rc := ""
+	if rf, ok := parseRequestFormat(format); ok && op != "" && op.Valid() {
+		if id, err := domain.RouteClassID(groupID, rf, model, op); err == nil {
+			rc = domain.RouteClassIDHex(id)
+		}
+	}
+	return RouteRef{GroupID: groupID, Format: format, Model: model, OperationTag: string(op), RouteClassID: rc}
+}
+
 func parseRequestFormat(s string) (domain.RequestFormat, bool) {
 	rf := domain.RequestFormat(s)
 	if !rf.Valid() {

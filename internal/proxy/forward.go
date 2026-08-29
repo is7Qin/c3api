@@ -117,8 +117,8 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 		domain.FormatOpenAIResponses: &responsesCaller{p: p},
 		domain.FormatAnthropic:       &anthropicCaller{p: p},
 	}
-	p.imageGenerations = &imagesCaller{p: p, path: "images/generations"}
-	p.imageEdits = &imagesCaller{p: p, path: "images/edits"}
+	p.imageGenerations = &imagesCaller{p: p, path: "images/generations", op: domain.OpImagesGenerations}
+	p.imageEdits = &imagesCaller{p: p, path: "images/edits", op: domain.OpImagesEdits}
 	p.callers[domain.FormatOpenAIImages] = p.imageGenerations
 	// 协议转换路径（W5）：每方向一 convertedCaller（构造期一次性建好；
 	// 热路径分支只读 map，off 组不触达）。
@@ -546,7 +546,7 @@ func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int
 
 func (p *Proxy) handleSelectError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, scheduler.ErrNoAvailable):
+	case errors.Is(err, scheduler.ErrNoAvailable), errors.Is(err, scheduler.ErrAttemptsExhausted):
 		w.Header().Set("Retry-After", "1")
 		writeErr(w, errTooMany)
 	default:
@@ -555,12 +555,12 @@ func (p *Proxy) handleSelectError(w http.ResponseWriter, err error) {
 }
 
 // selectErrorMessage 选号失败的错误文案（HTTP 响应与 WS 错误帧共用；statusFor
-// 同款语义：格式不可用/组不存在 → 404，无可用 → 429）。
+// 同款语义：格式不可用/组不存在 → 404，无可用/耗尽可能 → 429，耗尽可能 distinct 于组不存在）。
 func selectErrorMessage(err error) string {
 	switch {
 	case errors.Is(err, scheduler.ErrFormatUnavailable):
 		return "no account supports this request format"
-	case errors.Is(err, scheduler.ErrNoAvailable):
+	case errors.Is(err, scheduler.ErrNoAvailable), errors.Is(err, scheduler.ErrAttemptsExhausted):
 		return "no available account"
 	default:
 		return "group not found"
@@ -578,6 +578,8 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, scheduler.ErrFormatUnavailable), errors.Is(err, scheduler.ErrGroupNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, scheduler.ErrAttemptsExhausted), errors.Is(err, scheduler.ErrNoAvailable):
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusTooManyRequests
 	}
