@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -939,9 +940,30 @@ func (w *SyncWorker) flushQualityBatch(ctx context.Context, rows []qRow, start t
 	return failed
 }
 
+type RowDataError struct {
+	Msg   string
+	Cause error
+}
+
+func (e *RowDataError) Error() string {
+	if e.Msg != "" {
+		return e.Msg
+	}
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
+	return "row data error"
+}
+
+func (e *RowDataError) Unwrap() error { return e.Cause }
+
 func isRowDataError(err error) bool {
 	if err == nil {
 		return false
+	}
+	var rde *RowDataError
+	if errors.As(err, &rde) {
+		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "check constraint") || strings.Contains(msg, "violates") || strings.Contains(msg, "invalid input") || strings.Contains(msg, "bytea") || strings.Contains(msg, "octet_length")
