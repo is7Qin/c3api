@@ -92,6 +92,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 		Name: "t1", BaseURL: "http://upstream.example.com", CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 		Models:           []string{"gpt-4o"},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	acc, err := repos.CreateAccount(ctx, &domain.Account{
