@@ -24,6 +24,76 @@ import (
 // 同款）。
 var errCodexSearchNotIntegrated = &formatError{status: http.StatusNotImplemented, msg: "codex search unavailable (adapter not wired)"}
 
+var searchOutcomeCapture func(AttemptOutcome)
+
+func searchDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start time.Time) AttemptOutcome {
+	fp := "fp1"
+	if sel != nil && sel.CandidateFingerprint != "" {
+		fp = sel.CandidateFingerprint
+	}
+	mapped := ""
+	accID := int64(0)
+	tplID := int64(0)
+	if sel != nil {
+		mapped = sel.Model
+		accID = sel.AccountID
+		tplID = sel.TemplateID
+	}
+	lat := time.Since(start).Milliseconds()
+	if lat < 0 {
+		lat = 0
+	}
+	return AttemptOutcome{
+		ID:                AttemptID(reqID),
+		RouteClassID:      RouteClassID("rc1"),
+		QualityClassID:    QualityClassID("qc1"),
+		Fingerprint:       CandidateFingerprint(fp),
+		TemplateID:        tplID,
+		AccountID:         accID,
+		RequestedModel:    reqModel,
+		MappedModel:       mapped,
+		CallerCategory:    CallerSearch,
+		OperationTag:      OperationTag(domain.OpSearch),
+		Ordinal:           1,
+		LifecycleRevision: LifecycleRevision(1),
+		Lane:              LanePrimary,
+		Generation:        Generation(1),
+		Timing:            AttemptTiming{LatencyMS: lat},
+		Usage:             AttemptUsage{CallCount: 0},
+		HardContinuation:  false,
+	}
+}
+
+func emitSearchOutcome(p *Proxy, sel *scheduler.Selection, o AttemptOutcome, healthKind rule.Kind, healthMsg string) {
+	if sel == nil {
+		return
+	}
+	var health *AttemptHealthEvent
+	if healthKind != 0 || healthMsg != "" {
+		health = &AttemptHealthEvent{Kind: healthKind, ErrorMessage: healthMsg}
+	}
+	if o.Result == ResultClientCancel {
+		health = nil
+	}
+	markHealth := func(out AttemptOutcome, ev AttemptHealthEvent) {
+		if p.sched != nil {
+			p.sched.MarkResult(out.AccountID, ev.Kind, ev.ResetAt, int(out.HTTPStatus), ev.ErrorMessage, out.MappedModel)
+		}
+	}
+	appendFlow := func(out AttemptOutcome) {
+		if searchOutcomeCapture != nil {
+			searchOutcomeCapture(out)
+		}
+	}
+	release := func() { sel.Release() }
+	observer := NewAttemptObserver(nil, markHealth, appendFlow, release)
+	if o.Result == ResultClientCancel {
+		_ = observer.Cancel(o)
+	} else {
+		_ = observer.Complete(o, health)
+	}
+}
+
 // HandleSearch 转发 codex /v1/alpha/search（spec 2026-08-13 v2）：codex CLI 以
 // 独立 unary POST 调 web search（模型发 web.run tool call 时触发，与主
 // /responses 流并发）。**透传语义：请求体/响应体原样**（opaque results/
@@ -162,7 +232,14 @@ func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http
 func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
 	if p.codex == nil {
 		// 适配层未装配（SetCodex 未调用）：显式 501（防 nil 误走凭据缺失 502）。
-		sel.Release()
+		o := searchDispatchBase(sel, reqModel, reqID, start)
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(http.StatusNotImplemented)
+		o.Commit = CommitUpstreamResponded
+		o.Terminal = true
+		o.BusinessFrameSent = false
+		o.Usage = AttemptUsage{CallCount: 0}
+		emitSearchOutcome(p, sel, o, rule.Kind5xx, errCodexSearchNotIntegrated.msg)
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexSearchNotIntegrated.msg)
 		writeErr(w, errCodexSearchNotIntegrated)
 		return 0, nil, true, nil
@@ -171,6 +248,13 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 		// 配置损坏（codex 账号必有 ext 行——快照缺 account_ext 行）：本地配置
 		// 错误按连接级错误转移（失败文本落盘，耗尽 502 语义）；不上报失效（避
 		// 免 account 0 无谓上报——与 resp/WS 路径 errCodexExtMissing 同语义）。
+		o := searchDispatchBase(sel, reqModel, reqID, start)
+		o.Result = ResultFailed
+		o.HTTPStatus = 0
+		o.Commit = CommitNotSent
+		o.Terminal = false
+		o.BusinessFrameSent = false
+		emitSearchOutcome(p, sel, o, rule.KindNetwork, errCodexExtMissing.Error())
 		return 0, nil, false, errCodexExtMissing
 	}
 	// 凭据线：快照派生直供适配层（与 resp/images 路径同款）。Codex 端点固定 SDK 官方
@@ -184,14 +268,59 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	// 与 resp HTTP 路径现状一致）。
 	resp, err := p.codex.Search(ctx, &cred, body)
 	if err != nil {
-		return statusOf(err), upstreamBody(err), false, err
+		if ctx.Err() != nil || r.Context().Err() != nil {
+			o := searchDispatchBase(sel, reqModel, reqID, start)
+			o.Result = ResultClientCancel
+			o.HTTPStatus = 0
+			o.Commit = CommitNotSent
+			o.Terminal = true
+			emitSearchOutcome(p, sel, o, 0, "")
+			return 0, nil, true, nil
+		}
+		code := statusOf(err)
+		var kind rule.Kind
+		var commit CommitState
+		var terminal bool
+		switch {
+		case code == 0:
+			kind = rule.KindNetwork
+			commit = CommitNotSent
+			terminal = false
+		case code == 429:
+			kind = rule.Kind429
+			commit = CommitUpstreamResponded
+			terminal = false
+		case code >= 400 && code < 500:
+			kind = rule.Kind4xx
+			commit = CommitUpstreamResponded
+			terminal = true
+		default:
+			kind = rule.Kind5xx
+			commit = CommitUpstreamResponded
+			terminal = true
+		}
+		o := searchDispatchBase(sel, reqModel, reqID, start)
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(code)
+		o.Commit = commit
+		o.Terminal = terminal
+		o.BusinessFrameSent = false
+		emitSearchOutcome(p, sel, o, kind, err.Error())
+		return code, upstreamBody(err), false, err
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp.Raw)
 	// 2xx → 按次计费落账（call_count=1；price_per_call/cost 由 applyBilling
 	// search 分支按 PriceResolver call 档（codex-search）结算——无 token 分量）。
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
+	o := searchDispatchBase(sel, reqModel, reqID, start)
+	o.Result = ResultSuccess
+	o.HTTPStatus = AttemptStatus(http.StatusOK)
+	o.Commit = CommitResponseStarted
+	o.BusinessFrameSent = true
+	o.Terminal = true
+	o.Usage = AttemptUsage{CallCount: 1}
+	emitSearchOutcome(p, sel, o, rule.KindOK, "")
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }
@@ -208,6 +337,13 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
 	cred, err := p.credentialFor(ctx, sel)
 	if err != nil {
+		o := searchDispatchBase(sel, reqModel, reqID, start)
+		o.Result = ResultFailed
+		o.HTTPStatus = 0
+		o.Commit = CommitNotSent
+		o.Terminal = false
+		o.BusinessFrameSent = false
+		emitSearchOutcome(p, sel, o, rule.KindNetwork, err.Error())
 		return 0, nil, false, err // 凭据错误按连接级处理（耗尽 502，与既有路径同语义）
 	}
 	// 非流式超时（同 codex 路径语义）：TCP 黑洞读停滞 → 超时触发 → 连接级错误
@@ -216,16 +352,78 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	defer cancel()
 	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, cred, body)
 	if err != nil {
-		return statusOf(err), upstreamBody(err), false, err
+		if ctx.Err() != nil || r.Context().Err() != nil {
+			o := searchDispatchBase(sel, reqModel, reqID, start)
+			o.Result = ResultClientCancel
+			o.HTTPStatus = 0
+			o.Commit = CommitNotSent
+			o.Terminal = true
+			emitSearchOutcome(p, sel, o, 0, "")
+			return 0, nil, true, nil
+		}
+		code := statusOf(err)
+		var kind rule.Kind
+		var commit CommitState
+		var terminal bool
+		switch {
+		case code == 0:
+			kind = rule.KindNetwork
+			commit = CommitNotSent
+			terminal = false
+		case code == 429:
+			kind = rule.Kind429
+			commit = CommitUpstreamResponded
+			terminal = false
+		case code >= 400 && code < 500:
+			kind = rule.Kind4xx
+			commit = CommitUpstreamResponded
+			terminal = true
+		default:
+			kind = rule.Kind5xx
+			commit = CommitUpstreamResponded
+			terminal = true
+		}
+		o := searchDispatchBase(sel, reqModel, reqID, start)
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(code)
+		o.Commit = commit
+		o.Terminal = terminal
+		emitSearchOutcome(p, sel, o, kind, err.Error())
+		return code, upstreamBody(err), false, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		rb := readUpstreamBody(resp)
 		resp.Body.Close()
-		return resp.StatusCode, rb, false, nil
+		code := resp.StatusCode
+		var kind rule.Kind
+		if code == 429 {
+			kind = rule.Kind429
+		} else if code >= 400 && code < 500 {
+			kind = rule.Kind4xx
+		} else {
+			kind = rule.Kind5xx
+		}
+		o := searchDispatchBase(sel, reqModel, reqID, start)
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(code)
+		o.Commit = CommitUpstreamResponded
+		if code == 429 {
+			o.Terminal = false
+		} else {
+			o.Terminal = true
+		}
+		emitSearchOutcome(p, sel, o, kind, string(rb))
+		return code, rb, false, nil
 	}
 	data, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
+		o := searchDispatchBase(sel, reqModel, reqID, start)
+		o.Result = ResultFailed
+		o.HTTPStatus = 0
+		o.Commit = CommitNotSent
+		o.Terminal = false
+		emitSearchOutcome(p, sel, o, rule.KindNetwork, err.Error())
 		return 0, nil, false, err
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -233,7 +431,14 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	_, _ = w.Write(data)
 	// 2xx → 按次计费落账（call_count=1；与 codex 路径同款——applyBilling
 	// search 分支结算）。
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
+	o := searchDispatchBase(sel, reqModel, reqID, start)
+	o.Result = ResultSuccess
+	o.HTTPStatus = AttemptStatus(http.StatusOK)
+	o.Commit = CommitResponseStarted
+	o.BusinessFrameSent = true
+	o.Terminal = true
+	o.Usage = AttemptUsage{CallCount: 1}
+	emitSearchOutcome(p, sel, o, rule.KindOK, "")
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }
