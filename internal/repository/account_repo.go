@@ -319,7 +319,7 @@ func (r *AccountRepo) RecoverAccountCAS(ctx context.Context, id int64, expectedR
 	return nil
 }
 
-// SetAccountEnabledCAS 切换 enabled 且 CAS fencing +1。Enable 不清 failure（Task1 不变量）。
+// SetAccountEnabledCAS 切换 enabled 且 CAS fencing +1。Enable 不清 failure。
 func (r *AccountRepo) SetAccountEnabledCAS(ctx context.Context, id int64, expectedRevision int64, enabled bool) error {
 	n, err := r.client.Account.Update().
 		Where(account.IDEQ(id), account.LifecycleRevisionEQ(expectedRevision)).

@@ -1506,7 +1506,7 @@ func (f *fakeStore) SetSetting(ctx context.Context, key string, typ domain.Setti
 	return &domain.Setting{Key: key, Type: typ, Value: value}, nil
 }
 
-// --- Phase 3a Task 4：KeyStore / GroupAssignmentStore 假实现 ---
+// --- KeyStore / GroupAssignmentStore 假实现 ---
 
 func (f *fakeStore) CreateKey(ctx context.Context, k *domain.Key) (*domain.Key, error) {
 	f.mu.Lock()
@@ -1742,7 +1742,7 @@ func (f *fakeStore) ListGroupsForUser(ctx context.Context, userID int64) ([]*dom
 	return out, nil
 }
 
-// --- 兑换码（RedemptionStore，Task 2 service.Store 扩展；语义与 service 包 fake 对齐） ---
+// --- 兑换码（RedemptionStore，service.Store 扩展；语义与 service 包 fake 对齐） ---
 
 // WithTx 事务语义模拟（评审 I-1）：fn 内变更先入暂存（fakeTx 持有深拷贝），
 // fn 返回 nil → 提交（整体替换主视图），返回错误 → 丢弃。持锁贯穿整个事务。

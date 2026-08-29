@@ -344,7 +344,7 @@ func TestProxyStreamingChat(t *testing.T) {
 	require.Equal(t, "", store.logs[0].MappedModel, "无映射 → MappedModel 空")
 }
 
-// 兼容性钉（Task 3）：流式转发必须原样保留上游原始字节——chat 是 data-only
+// 兼容性钉：流式转发必须原样保留上游原始字节——chat 是 data-only
 // SSE（无 event: 行），[DONE] 与 usage 字段完整透传，成功路径释放并发槽并记用量。
 func TestProxyStreamingChatPreservesRawBytes(t *testing.T) {
 	up := fakeOpenAI(t, "")
@@ -369,7 +369,7 @@ func TestProxyStreamingChatPreservesRawBytes(t *testing.T) {
 	require.Equal(t, 1, p.rec.Pending(), "成功路径必须记录一条用量")
 }
 
-// 回归（Task 3 迁移发现）：流式原始转发必须沿用 SDK 路径的模型改写语义——
+// 回归（迁移发现）：流式原始转发必须沿用 SDK 路径的模型改写语义——
 // 调度器选号时已应用 ModelMapping（sel.Model 为上游模型名），原始请求体里的
 // 客户端模型名若不改写，映射用户流式请求会打到上游不存在的模型。
 func TestProxyStreamingChatAppliesModelMapping(t *testing.T) {
@@ -420,7 +420,7 @@ func TestProxyStreamingChatAppliesModelMapping(t *testing.T) {
 	require.Equal(t, "gpt-4o-upstream", store.logs[0].MappedModel, "MappedModel = 映射后实际模型")
 }
 
-// SSE 事件级冲刷回归（Task 9 压测发现）：sseWriter 必须每事件调用 http.Flusher.Flush()。
+// SSE 事件级冲刷回归（压测发现）：sseWriter 必须每事件调用 http.Flusher.Flush()。
 // 只刷 bufio 不刷 Flusher 时，http.Server 内部 4KB 缓冲攒批放出，流式首字节
 // 延迟实测 145ms（修复后 ~1ms，见 docs/superpowers/plans/loadtest-results.md）。
 // ResponseRecorder 实现 Flusher：首个事件写出后 Flushed 必须为真。

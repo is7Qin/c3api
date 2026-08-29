@@ -141,7 +141,7 @@ func outcomeForPlanRetry(code int, callErr error, ctx context.Context, cat Calle
 func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error, st attemptState, format domain.RequestFormat, selectFormat domain.RequestFormat) bool {
 	cat := callerCategoryFor(st, format, selectFormat)
 	o := outcomeForPlanRetry(code, callErr, ctx, cat)
-	// Task13 boundary: do not silently classify from raw status where matrix forbids it -> use CanRetry
+		// Use the typed retry matrix where raw status is insufficient.
 	return CanRetry(cat, o)
 }
 

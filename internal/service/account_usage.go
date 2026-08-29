@@ -30,7 +30,7 @@ func (s *Service) SetUsageSnapshotter(u CodexUsageSnapshotter) { s.usageSnapshot
 
 // AccountUsage 账号 codex 额度快照（纯编排零基础设施——用户裁决 2026-08-18：
 // 缓存/并发节流/失败冷却全在 sdkbridge，service 只做凭据取 + 类型判定 + 调
-// 用；错误分类透传——ErrAuthExpired/ErrUpstream（sdkbridge 哨兵）供 task 2
+// 用；错误分类透传——ErrAuthExpired/ErrUpstream（sdkbridge 哨兵）供 usage projection
 // upstream_error 标记映射）。
 //
 // 数据流：store.GetAccountExt 取 ext 行（api-key 无 ext 行 → ErrNotFound →
@@ -56,7 +56,7 @@ func (s *Service) AccountUsage(ctx context.Context, accountID int64) (*domain.Co
 
 // AccountsUsage 账号 usage 批量视图（/api/admin/accounts/usage 查询面——统一
 // usage API spec 2026-08-18）：repo 单查询聚合 + 按 ids 顺序组装全量 items
-// （无记录账号补零——gateway 全 0，前端免补零）+ upstream 装配（task 3
+// （无记录账号补零——gateway 全 0，前端免补零）+ upstream 装配（usage snapshot
 // AccountUsage：api-key 无凭据 → nil 快照/nil 标记；codex 成功 → 快照/nil；
 // codex 失败 → nil/枚举标记——ErrAuthExpired → auth_expired，其余 →
 // upstream_unavailable）。

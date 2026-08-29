@@ -21,7 +21,7 @@ import (
 // 删除后 Auth 快照增量剔除（keys.deleted 含明文，不可鉴权）、列表过滤、不再
 // 注册（不复活）。
 func TestSoftDeletedKeyNotResurrectable(t *testing.T) {
-	svc, fs, keys := newTask4Svc()
+	svc, fs, keys := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "sd-k@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -57,7 +57,7 @@ func TestSoftDeletedKeyNotResurrectable(t *testing.T) {
 // assignment/SetUserGroups 逐组）；管理面 GET 详情与 GetGroupAssignments 仍
 // 200（R2 收窄——repo GET 单个不过滤的既有语义不动）。
 func TestSoftDeletedGroupUnusable(t *testing.T) {
-	svc, fs, _ := newTask4Svc()
+	svc, fs, _ := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "sd-g@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -97,7 +97,7 @@ func TestSoftDeletedGroupUnusable(t *testing.T) {
 // "group has accounts"；组未被删（deleted_at 仍 nil）、组内 key 未被删（校验
 // 在删 key 前）。
 func TestDeleteGroupWithAccountsConflict(t *testing.T) {
-	svc, fs, keys := newTask4Svc()
+	svc, fs, keys := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "f1@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -139,7 +139,7 @@ func TestDeleteGroupWithAccountsConflict(t *testing.T) {
 // 整批拒绝（预扫描先全量校验后删 key——组存 key 亡的中间态不发生）：无 key
 // 被删、组全部未被删、Auth 快照零清理。
 func TestDeleteGroupsBatchPreScanConflict(t *testing.T) {
-	svc, fs, keys := newTask4Svc()
+	svc, fs, keys := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "f1b@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -180,7 +180,7 @@ func TestDeleteGroupsBatchPreScanConflict(t *testing.T) {
 // TestUpdateKeyPatchSingleField S3-F1：单字段 PUT 只改该字段（patch 化——其余
 // 字段保持原值，不再全列写回）。
 func TestUpdateKeyPatchSingleField(t *testing.T) {
-	svc, fs, _ := newTask4Svc()
+	svc, fs, _ := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "patch1@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
@@ -207,7 +207,7 @@ func TestUpdateKeyPatchSingleField(t *testing.T) {
 // TestUpdateKeyPatchConcurrent S3-F1 -race：并发两个 PUT 改不同字段 → 各自
 // 生效（patch 化消除 lost-update——修复前全行快照写回，后写者覆盖先写者）。
 func TestUpdateKeyPatchConcurrent(t *testing.T) {
-	svc, fs, _ := newTask4Svc()
+	svc, fs, _ := newUserGroupService()
 	ctx := context.Background()
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "patchc@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})

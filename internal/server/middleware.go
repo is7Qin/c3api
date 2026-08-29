@@ -156,7 +156,7 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 // Flush 委托给内层 writer（SSE 事件级冲刷必需）。
 // 嵌入 http.ResponseWriter 只提升 Header/Write/WriteHeader 三个方法，
 // 不带 Flush——包装层不透传的话，下游 sseWriter 拿到的 Flusher 是 nil，
-// 流只能攒 4KB 缓冲批量放出，首字节延迟实测 ~145ms（Task 9 压测发现）。
+// 流只能攒 4KB 缓冲批量放出，首字节延迟实测 ~145ms（压测发现）。
 func (w *statusWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

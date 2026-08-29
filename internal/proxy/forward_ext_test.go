@@ -592,7 +592,7 @@ func TestProxyAnthropicStreaming(t *testing.T) {
 	require.Equal(t, "", lg.MappedModel, "无映射 → MappedModel 空")
 }
 
-// 兼容性钉（Task 3）：anthropic 流式转发必须保留上游原始字节——event: 行与
+// 兼容性钉：anthropic 流式转发必须保留上游原始字节——event: 行与
 // 用量字段（input_tokens/output_tokens）原样透传。
 func TestProxyAnthropicStreamingPreservesEventLines(t *testing.T) {
 	up := fakeAnthropic(t, "")

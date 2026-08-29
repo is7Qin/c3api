@@ -23,7 +23,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// newSharedRouters 共享 fakeStore 的 admin + user 双路由（Task 4 端到端：
+// newSharedRouters shares the fakeStore across admin and user routes:
 // 管理面建组/授予 → 用户面选组建 key），返回 doAdmin/doUser。
 func newSharedRouters(t *testing.T) (doAdmin, doUser func(method, path, body, token string) *httptest.ResponseRecorder, store *fakeStore) {
 	t.Helper()

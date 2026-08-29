@@ -80,7 +80,7 @@ func TestAccountUsageTypeDispatch(t *testing.T) {
 	require.Equal(t, "pat-x", creds[1].PATKey, "pat 列组派生 cred")
 }
 
-// TestAccountUsageErrorPassthrough 错误分类透传（task 2 upstream_error 映射
+// TestAccountUsageErrorPassthrough verifies upstream_error mapping.
 // 输入）：sdkbridge 哨兵原样透传。
 func TestAccountUsageErrorPassthrough(t *testing.T) {
 	svc := &Service{store: newFakeStore()}

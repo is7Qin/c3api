@@ -28,7 +28,7 @@ const (
 
 var globalRecorderID atomic.Uint64
 
-// Key is the canonical routing identity of a quality cell/row: the Task4
+// Key is the canonical routing identity of a quality cell/row: the
 // unique index (identity_version, route_class_id, quality_class_id,
 // candidate_fingerprint) minus the minute bucket.
 type Key struct {

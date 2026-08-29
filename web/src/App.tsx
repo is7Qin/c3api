@@ -94,7 +94,7 @@ function RequireAdmin() {
   return <Outlet />
 }
 
-// 401 全局拦截（Task 2→3 handoff 硬性要求）：任何 query/mutation 收到
+// 401 全局拦截：任何 query/mutation 收到
 // ApiUnauthorized（client.ts 对 401 响应的归一化）→ 清 token + 跳 /user/login。
 // 页面无需各自 onError 兜底；QueryCache/MutationCache 的 onError 在 React Query
 // v5 中对所有活跃观测者/变更统一触发（queries.retry: 0 保证每个请求只报一次）。

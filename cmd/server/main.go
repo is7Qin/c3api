@@ -403,7 +403,7 @@ func main() {
 		Log:                log,
 	})
 	px.SetCodex(codexAdapter)
-	// Task 3 codex 额度快照装配：svc.AccountUsage → sdkbridge.GetUsageSnapshot
+	// codex 额度快照装配：svc.AccountUsage → sdkbridge.GetUsageSnapshot
 	//（TTL 缓存/有界并发/失败冷却全在适配层——service 纯编排零基础设施）。
 	svc.SetUsageSnapshotter(codexAdapter)
 	// 多实例集群 N 注入（#14 T3b → discovery 接管，consumer spec §2.2）：gate 预算

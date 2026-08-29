@@ -19,7 +19,7 @@ import (
 )
 
 // 真实 PG 基座（newPGRepos；TEST_DATABASE_URL 未设置 → Skip）：
-// 兑换码 Task 1 全部测试 —— code 唯一冲突、批量生成、use 唯一约束、批量失效幂等、
+// 兑换码全部测试 —— code 唯一冲突、批量生成、use 唯一约束、批量失效幂等、
 // 条件递增并发防超卖（评审 I-2）、原子资源方法（评审 I-1）、WithTx 回滚（评审 I-1）。
 
 func codeFor(tag string, typ domain.RedemptionType, maxUses int) *domain.RedemptionCode {

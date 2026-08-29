@@ -21,7 +21,7 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-// 等价性专项（Task 2 Step 5）：骨架局部校验路径——流式/非流式 body 非 JSON、
+// 等价性专项：骨架局部校验路径——流式/非流式 body 非 JSON、
 // model 非字符串 → 本地 400（无记录、Select 前无并发槽）。
 
 func TestSkeletonChatBodyNotJSONStreamAndNonStream(t *testing.T) {
@@ -53,7 +53,7 @@ func TestSkeletonChatBodyNotJSONStreamAndNonStream(t *testing.T) {
 // 计划 I-2/等价性清单：model 非字符串（number/object）→ 400，在 Select 前、
 // 无记录。（注意：现状完整 params 解析对这类输入静默宽松——openai-go 解码
 // 不报错、model 落空走默认桶；本 400 是计划明确指定的语义收紧，既有测试
-// 无覆盖，行为偏差已在实施报告 Task 2 说明。）
+// 无覆盖，行为偏差已在实施报告说明。）
 func TestSkeletonModelNonString400(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()

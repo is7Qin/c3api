@@ -358,7 +358,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 			return
 		}
 		// plan-aware retry gating: committed/ambiguous/client-cancel/hard-continuation do not migrate
-		// Keep Task13 boundary: use CanRetry matrix, not raw status
+		// Use the typed retry matrix, not raw status.
 		shouldRetry := true
 		if plan != nil {
 			shouldRetry = p.shouldRetryWithPlan(r.Context(), code, callErr, st, format, selectFormat)

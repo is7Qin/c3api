@@ -42,7 +42,7 @@ var ErrInvalidSort = errors.New("invalid sort field")
 // sortOrder 把 ListQuery 翻译为 ent 排序项。返回 ent.Asc/ent.Desc 的原生无名类型
 // func(*sql.Selector)：各实体 Query.Order 接受同底层类型的 OrderOption（named type），
 // 计划初稿的 ent.OrderFunc 返回类型与 OrderOption 互为不同 named type 不可直接赋值，
-// 故返回无名类型（编译验证通过，见 Task 1 报告）。
+// 故返回无名类型（编译验证通过）。
 // 白名单外 sort → ErrInvalidSort；order 非 ""/asc/desc → "invalid order"；order 空 = desc。
 func (q ListQuery) sortOrder(sortFields map[string]string) (func(*sql.Selector), error) {
 	if q.Sort == "" {

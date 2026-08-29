@@ -170,7 +170,7 @@ type TxStore interface {
 
 // WithTx 在单事务内执行 fn（评审 I-1）：ent `Tx().Client()` 模式构造 tx 版 Repository
 // （复用 newRepository，注入 tx client + 事务驱动），fn 内所有方法调用（含原子资源
-// 方法）都走 tx；fn 返回错误 → 整体回滚，nil → Commit。兑换编排（Task 2）用：
+// 方法）都走 tx；fn 返回错误 → 整体回滚，nil → Commit。兑换编排用：
 // applier 必须只经 tx 面调资源更新，任一步失败（含 use 冲突/计数用尽）全部回滚。
 func (r *Repository) WithTx(ctx context.Context, fn func(TxStore) error) error {
 	tx, err := r.driver.Tx(ctx)

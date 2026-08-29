@@ -5,7 +5,7 @@
 import { Construction } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-// Task 2 占位：Task 3/4 实现各页面时整体替换。
+// 占位：实现各页面时整体替换。
 export function Placeholder({ title }: { title: string }) {
   const { t } = useTranslation()
   return (

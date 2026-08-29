@@ -125,4 +125,3 @@ func TestRulePersist_QueueFullRollbackExact(t *testing.T) {
 	require.GreaterOrEqual(t, e.PersistQueued(), 0)
 }
 
-

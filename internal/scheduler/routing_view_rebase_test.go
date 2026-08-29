@@ -17,7 +17,6 @@ func TestRoutingViewStaticUpdateRetainsLatestDecision(t *testing.T) {
 	v1 := s.View()
 	require.NotNil(t, v1)
 	dec1 := v1.DecisionView()
-	// Decision may be nil initially; ensure we create one via publishWithBase
 	if dec1 == nil {
 		s.publisher.publishWithBase(v1.Generation(), func(cur *RoutingView) *DecisionView {
 			return &DecisionView{generation: 1, decisions: map[int64]*decisionLeaf{1: {weight: 10}}}
@@ -26,7 +25,6 @@ func TestRoutingViewStaticUpdateRetainsLatestDecision(t *testing.T) {
 		dec1 = v1.DecisionView()
 	}
 	gen1 := v1.Generation()
-	// Static reload: add account 2, should retain dec1
 	m.mu.Lock()
 	m.byGroup[10] = append(m.byGroup[10], acc(2, tpl, 4))
 	m.mu.Unlock()
@@ -54,7 +52,6 @@ func TestRoutingViewDecisionStaleRebasesOntoLatestStatic(t *testing.T) {
 		baseGen = v1.Generation()
 		dec1 = v1.DecisionView()
 	}
-	// Simulate concurrent static update: add account 2
 	m.mu.Lock()
 	m.byGroup[10] = append(m.byGroup[10], acc(2, tpl, 4))
 	m.mu.Unlock()
@@ -62,11 +59,8 @@ func TestRoutingViewDecisionStaleRebasesOntoLatestStatic(t *testing.T) {
 	v2 := s.View()
 	require.NotSame(t, v1.StaticView(), v2.StaticView(), "static view updated")
 	require.Same(t, dec1, v2.DecisionView(), "static retains decision")
-
-	// Decision submit with stale base (baseGen from v1) should rebase onto latest static (v2) and replace only decision
 	staleBase := baseGen
 	s.publisher.publishWithBase(staleBase, func(cur *RoutingView) *DecisionView {
-		// cur should be latest (v2), not stale
 		require.Same(t, v2.StaticView(), cur.StaticView(), "rebase onto latest StaticView")
 		return &DecisionView{generation: cur.DecisionView().Generation() + 1, decisions: map[int64]*decisionLeaf{1: {weight: 20}}}
 	})
@@ -85,24 +79,17 @@ func TestRoutingViewPartialInvalidatePreservesOtherGroupIDs(t *testing.T) {
 	require.ElementsMatch(t, []int64{10, 20}, v1.ByID()[1].static.Load().groupIDs)
 	oldLeaf := v1.ByID()[1]
 	oldView := v1
-	// Partial InvalidateGroup 10: remove account from group 10 but keep in 20
-	// Simulate DB after removal: group 10 empty, group 20 still has a
 	m.mu.Lock()
 	m.byGroup[10] = []*domain.Account{}
 	m.mu.Unlock()
 	s.InvalidateGroup(10)
 	v2 := s.View()
 	require.NotNil(t, v2)
-	// Other groupID 20 must be preserved from old immutable root
 	require.ElementsMatch(t, []int64{20}, v2.ByID()[1].static.Load().groupIDs, "partial invalidate preserves other groupIDs")
-	// Old leaf stable
 	require.ElementsMatch(t, []int64{10, 20}, oldLeaf.static.Load().groupIDs, "old leaf stable")
 	require.Same(t, oldLeaf, oldView.ByID()[1], "old view stable")
 	require.NotSame(t, oldLeaf, v2.ByID()[1], "new leaf for changed account")
 	require.Same(t, oldLeaf.runtime, v2.ByID()[1].runtime, "shared runtime")
 }
 
-func nilContext() context.Context {
-	// Use background; scheduler reload needs context, nil is not allowed, use Background
-	return context.Background()
-}
+func nilContext() context.Context { return context.Background() }

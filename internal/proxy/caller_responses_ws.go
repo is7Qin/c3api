@@ -213,7 +213,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			if handled {
 				return 0, nil, nil, true, nil
 			}
-			// 首帧转发失败 = 上游未消费请求 → 连接级错误转移（显式 not-sent/retryable，Task13前保留可重试信息）
+			// 首帧转发失败 = 上游未消费请求，保留 not-sent/retryable 信息。
 			if fwMsg == "" {
 				fwMsg = "upstream first frame write failed"
 			}
