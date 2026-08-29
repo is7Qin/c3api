@@ -12,7 +12,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -118,55 +117,23 @@ func isCodexCredentialType(t credential.Type) bool {
 }
 
 func credentialTypeOf(acct *domain.Account) (credential.Type, bool) {
-	if acct == nil {
+	if acct == nil || acct.Template == nil {
 		return "", false
 	}
-	if acct.Ext != nil && acct.Ext.CredentialType != "" {
-		return acct.Ext.CredentialType, true
+	if acct.Template.CredentialType == "" {
+		return "", false
 	}
-	if acct.Template != nil && acct.Template.CredentialType != "" {
-		return acct.Template.CredentialType, true
-	}
-	return "", false
+	return acct.Template.CredentialType, true
 }
 
 func canonicalFingerprint(acct *domain.Account) (string, error) {
 	if acct == nil || acct.Template == nil {
-		return "", ErrMissingCandidateFingerprint
+		return "", fmt.Errorf("%w: missing account or template", ErrMissingCandidateFingerprint)
 	}
-	baseURL := acct.Template.BaseURL
-	if acct.BaseURL != nil && *acct.BaseURL != "" {
-		baseURL = *acct.BaseURL
-	}
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
-	}
-	if strings.HasSuffix(baseURL, "/v1") {
-		baseURL = strings.TrimSuffix(baseURL, "/v1")
-	}
-	var patKey, email, codexAccountID, installationID, sessionID, threadID, windowID string
-	if acct.Ext != nil {
-		if acct.Ext.CodexPATKey != nil {
-			patKey = *acct.Ext.CodexPATKey
-		}
-		if acct.Ext.CodexEmail != nil {
-			email = *acct.Ext.CodexEmail
-		}
-		if acct.Ext.CodexAccountID != nil {
-			codexAccountID = *acct.Ext.CodexAccountID
-		}
-		if acct.Ext.CodexIdentity != nil {
-			installationID = acct.Ext.CodexIdentity.InstallationID
-			sessionID = acct.Ext.CodexIdentity.SessionID
-			threadID = acct.Ext.CodexIdentity.ThreadID
-			windowID = acct.Ext.CodexIdentity.WindowID
-		}
-	}
-	ct, ok := credentialTypeOf(acct)
-	if !ok {
+	if _, ok := credentialTypeOf(acct); !ok {
 		return "", ErrMissingCredentialDiscriminator
 	}
-	fp, err := domain.CandidateFingerprint(acct.ID, acct.TemplateID, ct, baseURL, acct.UpstreamKey, patKey, email, codexAccountID, acct.Template.StripImageTools, installationID, sessionID, threadID, windowID)
+	fp, err := domain.AccountCandidateFingerprint(acct)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrMissingCandidateFingerprint, err)
 	}

@@ -61,8 +61,8 @@ func (f *fakeFailer2) FailAccount(id int64, _ string) { f.failed = append(f.fail
 func TestSDKFailSharesLatchNonCodexCannotSelfFail(t *testing.T) {
 	store := &fakeCASStore2{
 		accounts: map[int64]*domain.Account{
-			1: {ID: 1, UpstreamKey: "k1", LifecycleRevision: 1, Template: &domain.Template{CredentialType: credential.TypeAPIKey}},
-			2: {ID: 2, UpstreamKey: "k2", LifecycleRevision: 1, Template: &domain.Template{CredentialType: credential.TypeCodexOAuth}},
+			1: {ID: 1, UpstreamKey: "k1", LifecycleRevision: 1, Template: &domain.Template{CredentialType: credential.TypeAPIKey, BaseURL: "https://api.openai.com"}},
+			2: {ID: 2, UpstreamKey: "k2", LifecycleRevision: 1, Template: &domain.Template{CredentialType: credential.TypeCodexOAuth, BaseURL: "https://api.openai.com"}},
 		},
 	}
 	latch := newFakeLatch2()
@@ -78,7 +78,7 @@ func TestSDKFailSharesLatchNonCodexCannotSelfFail(t *testing.T) {
 
 func TestSDKFailStaleRevisionFence(t *testing.T) {
 	store := &fakeCASStore2{
-		accounts: map[int64]*domain.Account{1: {ID: 1, UpstreamKey: "k1", LifecycleRevision: 5, Template: &domain.Template{CredentialType: credential.TypeCodexOAuth}}},
+		accounts: map[int64]*domain.Account{1: {ID: 1, UpstreamKey: "k1", LifecycleRevision: 5, Template: &domain.Template{CredentialType: credential.TypeCodexOAuth, BaseURL: "https://api.openai.com"}}},
 	}
 	store.casErr = repository.ErrStaleRevision
 	latch := newFakeLatch2()
