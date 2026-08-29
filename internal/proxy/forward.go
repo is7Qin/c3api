@@ -62,9 +62,10 @@ type Proxy struct {
 	errlog *usage.ErrLogWorker
 	// qualityRecorder is wired by the quality pipeline.
 	// Owned by main, reachable via composition; hot path not yet wired.
-	qualityRecorder *quality.Recorder
-	inflight        atomic.Int64
-	callers  map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
+	qualityRecorder    *quality.Recorder
+	pipelineFlowAppend AttemptFlowAppend
+	inflight           atomic.Int64
+	callers            map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
 	// imageGenerations/imageEdits images 端点调用器（Task B：同一格式
 	// openai-images 两个端点，上游子路径不同——handleFormat 按请求路径选
 	// 调用器，New 一次性构造免 per-request 分配）。

@@ -254,6 +254,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		if handled {
 			return // attempt 已处理完毕（成功/客户端断开/流中止已记录；本地拒绝已写出无记录）
 		}
+		pipelineObserved := p.observePipelineAttempt(r, sel, plan, code, respBody, callErr)
 		lastCode = code
 		lastHdr = hdr
 		lastBody = respBody
@@ -273,7 +274,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 				AccountID: sel.AccountID, Kind: rule.Kind429, HTTPStatus: &code,
 				Model: sel.Model, ErrorMessage: lastErrMsg,
 			})
-			if punish {
+			if punish && !pipelineObserved {
 				p.sched.MarkResult(sel.AccountID, rule.Kind429, nil, code, lastErrMsg, sel.Model)
 			}
 		} else if code >= 500 || code == 0 {
@@ -322,7 +323,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 				AccountID: sel.AccountID, Kind: kind, HTTPStatus: hp,
 				Model: sel.Model, ErrorMessage: lastErrMsg,
 			})
-			if punish {
+			if punish && !pipelineObserved {
 				p.sched.MarkResult(sel.AccountID, kind, nil, code, lastErrMsg, sel.Model)
 			}
 		} else {
@@ -352,7 +353,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 			} else {
 				sink.writeUpstreamRejection(w, st, status, respBody)
 			}
-			if punish {
+			if punish && !pipelineObserved {
 				p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em, sel.Model)
 			}
 			return
