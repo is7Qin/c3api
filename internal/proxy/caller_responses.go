@@ -29,18 +29,20 @@ type responsesCaller struct{ p *Proxy }
 
 func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
+	// 按凭证类型分流：codex 凭证走适配层（合成与 SSE 透传），其余走原始字节透传；分流在图像剥离之前，codex 分支不剥离
 	if isCodexCredentialType(sel.CredentialType) {
 		return p.callCodexResponses(ctx, w, r, reqID, groupID, start, sel, body, stream)
 	}
+	// 图像工具剥离：受模板开关门控，内部先对 "image" 子串预筛，无命中零解析直接透传，命中才最小解析改写
 	if sel.StripImageTools {
 		body = stripImageTools(body)
 	}
 	if stream {
-		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model
+		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model；原始字节中继，上游通过 ResponseStreamRaw 直透
 		reqModel := gjson.GetBytes(body, "model").String()
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
-		// 模型映射：等价 SDK 路径对 params.Model 的覆盖，命中则零分配复用原切片
+		// 模型映射：等价 SDK 路径对 params.Model 的覆盖，客户端已带 stream:true 无需注入，命中则零分配复用原切片
 		streamBody, err := setModel(body, sel.Model)
 		if err != nil {
 			return 0, nil, false, err
@@ -134,10 +136,10 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	// 客户端请求模型快照：覆盖前取值用于日志与观测
+	// 客户端请求模型快照：覆盖前取值用于日志与观测，零额外分配
 	reqModel := params.Model
 	params.Model = responses.ResponsesModel(sel.Model)
-	tpl := tplOf(sel)
+	tpl := tplOf(sel) // 非流式走 SDK 模板路径
 	resp, err := p.clients.Response(ctx, tpl, cred, params)
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err
@@ -152,15 +154,15 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	var it, ot, tt, cr, cc int64
 	var img int64 // 图像调用计数旁路
 	if resp.JSON.Usage.Valid() {
-		// 非流式用量：Responses 无 cache_creation 语义，直接读取 usage
+		// 非流式用量：Responses 的 cache_creation 恒为 0 预期，直接读取 usage，cr/cc 同步落库
 		it, ot, tt, cr, cc = responsesUsageFromResponse(resp.Usage)
 	}
-	// 响应侧图像检测旁路，受开关门控
+	// 响应侧图像检测旁路：基于 SDK 保留的上游原始 RawJSON，与缓存用量同款 raw 消费路径，受开关门控
 	if respImageDetectOn(sel) {
 		img = respImageCountBody([]byte(resp.RawJSON()))
 	}
 	base := responsesBaseOutcome(reqID, groupID, sel, string(reqModel), start, nil, it, ot, tt, cr, cc, img)
-	obs := responsesObserver(p, sel) // 恰好一次 Complete 归属
+	obs := responsesObserver(p, sel) // 恰好一次 Complete 归属，本地释放由观测器兜底
 	out := base
 	out.Result = ResultSuccess
 	out.HTTPStatus = 200
@@ -186,16 +188,17 @@ func responsesBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection,
 		CallerCategory: CallerResponses, OperationTag: OperationTag(domain.OpResponses),
 		Ordinal: 1, Lane: LanePrimary, Generation: 1, LifecycleRevision: 1,
 		Timing: AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft},
-		Usage: AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img},
+		Usage:  AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img},
 	}
 }
 
 // responsesObserver 构造恰好一次的观测器：Complete 负责健康与释放，Cancel 仅释放
 func responsesObserver(p *Proxy, sel *scheduler.Selection) *AttemptObserver {
 	return NewAttemptObserver(nil,
-		func(o AttemptOutcome, e AttemptHealthEvent) { p.sched.MarkResult(o.AccountID, e.Kind, nil, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel) },
+		func(o AttemptOutcome, e AttemptHealthEvent) {
+			p.sched.MarkResult(o.AccountID, e.Kind, nil, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
+		},
 		func(o AttemptOutcome) {},
 		func() { sel.Release() },
 	)
 }
-

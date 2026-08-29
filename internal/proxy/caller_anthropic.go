@@ -24,16 +24,16 @@ import (
 
 type anthropicCaller struct{ p *Proxy }
 
-// anthropicCaller 负责 Messages 的原始 SSE 转发，并分别读取 message_start/message_delta 用量。
+// anthropicCaller 负责 Messages 的原始 SSE 中继，缓存用量在 message_start、输出用量在 message_delta 分别提取。
 
 func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	if stream {
-		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model
+		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model；原始字节中继，上游通过 AnthMessageStreamRaw 直透
 		reqModel := gjson.GetBytes(body, "model").String()
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
-		// 模型映射：等价 SDK 路径对 params.Model 的覆盖，命中则零分配复用原切片
+		// 模型映射：等价 SDK 路径对 params.Model 的覆盖，客户端已带 stream:true 无需注入，命中则零分配复用原切片
 		streamBody, err := setModel(body, sel.Model)
 		if err != nil {
 			return 0, nil, false, err
@@ -131,10 +131,10 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	// 客户端请求模型快照：覆盖前取值用于日志与观测
+	// 客户端请求模型快照：覆盖前取值用于日志与观测，零额外分配
 	reqModel := params.Model
 	params.Model = sel.Model
-	tpl := tplOf(sel)
+	tpl := tplOf(sel) // 非流式走 SDK 模板路径
 	resp, err := p.clients.AnthMessage(ctx, tpl, cred, params)
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err
@@ -148,11 +148,11 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	_, _ = w.Write(data)
 	var it, ot, tt, cr, cc int64
 	if resp.JSON.Usage.Valid() {
-		// 非流式用量：直接读取响应 usage
+		// 非流式用量：直接读取响应 usage，输入/缓存与输出同库
 		it, ot, tt, cr, cc = anthropicUsageFromResponse(resp.Usage)
 	}
 	base := anthropicBaseOutcome(reqID, groupID, sel, reqModel, start, nil, it, ot, cr, cc)
-	obs := anthropicObserver(p, sel) // 恰好一次 Complete 归属
+	obs := anthropicObserver(p, sel) // 恰好一次 Complete 归属，本地释放由观测器兜底
 	out := base
 	out.Result = ResultSuccess
 	out.HTTPStatus = 200
@@ -179,14 +179,16 @@ func anthropicBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection,
 		CallerCategory: CallerAnthropic, OperationTag: OperationTag(domain.OpAnthropicMessages),
 		Ordinal: 1, Lane: LanePrimary, Generation: 1, LifecycleRevision: 1,
 		Timing: AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft},
-		Usage: AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc},
+		Usage:  AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc},
 	}
 }
 
 // anthropicObserver 构造恰好一次的观测器：Complete 负责健康与释放，Cancel 仅释放
 func anthropicObserver(p *Proxy, sel *scheduler.Selection) *AttemptObserver {
 	return NewAttemptObserver(nil,
-		func(o AttemptOutcome, e AttemptHealthEvent) { p.sched.MarkResult(o.AccountID, e.Kind, nil, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel) },
+		func(o AttemptOutcome, e AttemptHealthEvent) {
+			p.sched.MarkResult(o.AccountID, e.Kind, nil, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
+		},
 		func(o AttemptOutcome) {},
 		func() { sel.Release() },
 	)
