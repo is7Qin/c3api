@@ -31,7 +31,7 @@ func newFakeSink(buf int) *fakeHealthSink {
 	return &fakeHealthSink{ch: make(chan struct{}, buf)}
 }
 
-func (f *fakeHealthSink) Throttle(ev Event, th domain.ThrottleAction) {
+func (f *fakeHealthSink) Throttle(ev Event, th domain.ThrottleAction) error {
 	f.mu.Lock()
 	f.throttles = append(f.throttles, struct {
 		ev domainThrottle
@@ -42,6 +42,7 @@ func (f *fakeHealthSink) Throttle(ev Event, th domain.ThrottleAction) {
 	case f.ch <- struct{}{}:
 	default:
 	}
+	return nil
 }
 
 func (f *fakeHealthSink) FailAccount(ev Event) error {

@@ -32,7 +32,7 @@ func TestThrottleAccountWildcard(t *testing.T) {
 	ctrl := NewHealthController(h, newLatchStore())
 	ev := rule.Event{AccountID: 1, ExpectedRevision: 5, RouteClassID: "r1", QualityClassID: "q1"}
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
-	ctrl.Throttle(ev, th)
+	require.NoError(t, ctrl.Throttle(ev, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(1, "any", 5))
 	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 5))
@@ -44,13 +44,13 @@ func TestThrottleAccountRouteRequiresIDsAndPropagation(t *testing.T) {
 	h, _, _ := newTestHealthWithLatch(t)
 	ctrl := NewHealthController(h, newLatchStore())
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
-	ctrl.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "", QualityClassID: "q1"}, th)
+	require.NoError(t, ctrl.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	ctrl.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: ""}, th)
+	require.NoError(t, ctrl.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: ""}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	ctrl.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: "q1"}, th)
+	require.NoError(t, ctrl.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(2, "q1", 3))
 	require.Equal(t, StateReady, h.EffectiveState(2, "other", 3))
@@ -155,7 +155,7 @@ func TestHealthControllerProbeAndEffectiveStateWithLatch(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		ctrl.Throttle(rule.Event{AccountID: 1, ExpectedRevision: 1}, th)
+		_ = ctrl.Throttle(rule.Event{AccountID: 1, ExpectedRevision: 1}, th)
 	}()
 	go func() {
 		defer wg.Done()

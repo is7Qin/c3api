@@ -574,12 +574,24 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		var rev, ttlMsVal int64
-		_, _ = fmt.Sscanf(m["rev"], "%d", &rev)
-		_, _ = fmt.Sscanf(m["ttl"], "%d", &ttlMsVal)
-		ttlMs := ttlMsVal
+		revStr := strings.TrimSpace(m["rev"])
+		if revStr == "" {
+			return fmt.Errorf("health: missing rev for %s", field)
+		}
+		rev, err := parseGenStrict(revStr)
+		if err != nil {
+			return fmt.Errorf("health: malformed rev for %s: %w", field, err)
+		}
+		ttlStr := strings.TrimSpace(m["ttl"])
+		if ttlStr == "" {
+			return fmt.Errorf("health: missing ttl for %s", field)
+		}
+		ttlMs, err := parseGenStrict(ttlStr)
+		if err != nil {
+			return fmt.Errorf("health: malformed ttl for %s: %w", field, err)
+		}
 		if ttlMs <= 0 {
-			ttlMs = 30000
+			return fmt.Errorf("health: invalid ttl %d for %s", ttlMs, field)
 		}
 		expiresAt := nowMs + ttlMs
 		updatedAt := nowMs

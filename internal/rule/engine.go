@@ -96,7 +96,7 @@ type ApplyFunc func(aid int64, st *domain.AccountStatus, cooldownUntil *time.Tim
 // Throttle: account 作用全 RouteClass wildcard；account_route 作用单 RouteClass.
 // FailAccount: source=rule, expectedRevision 参与 CAS.
 type HealthSink interface {
-	Throttle(ev Event, th domain.ThrottleAction)
+	Throttle(ev Event, th domain.ThrottleAction) error
 	FailAccount(ev Event) error
 }
 
@@ -483,7 +483,12 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			sink := e.healthSink
 			e.healthMu.RUnlock()
 			if sink != nil {
-				sink.Throttle(ev, *r.Then.Throttle)
+				if err := sink.Throttle(ev, *r.Then.Throttle); err != nil {
+					e.persistFailures.Add(1)
+					if e.log != nil {
+						e.log.Warn("health throttle failed", logx.Error(err))
+					}
+				}
 			}
 			e.matched.Add(1)
 			e.enqueuePersist(ev, r.Then)
