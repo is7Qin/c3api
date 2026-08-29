@@ -25,7 +25,7 @@ import (
 // TestAccountFailedColumnsPG ent schema 建列断言：accounts 表存在 failed_at
 // （timestamptz NULL）一列；不新增 failed_reason（用户裁决——原因复用 last_error）。
 func TestAccountFailedColumnsPG(t *testing.T) {
-	repos := newPGRepos(t) // 迁移建表（ent AutoMigrate 按 migrate/schema.go 建列）
+	repos := newPGReposShared(t) // shared schema 已完成一次迁移
 	ctx := context.Background()
 	require.NotNil(t, repos)
 
@@ -56,7 +56,7 @@ func TestAccountFailedColumnsPG(t *testing.T) {
 // 保持首次失效时刻与原因）+ 失效原因复用 last_error + 与 status.disabled 语义
 // 分离（不触碰 status）。
 func TestSetAccountFailedPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	a := seedPGAccount(t, repos, tpl.ID, "f1")
@@ -88,7 +88,7 @@ func TestSetAccountFailedPG(t *testing.T) {
 // 上报不触碰既有 last_error（保持"最近错误"审计语义——调度回写携带的快照旧值
 // 与 DB 一致，不互相覆盖）。
 func TestSetAccountFailedEmptyReasonPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	a := seedPGAccount(t, repos, tpl.ID, "f2")
