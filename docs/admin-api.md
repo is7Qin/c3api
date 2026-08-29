@@ -129,7 +129,7 @@
 | `supported_formats` | string[] | 否 | 支持的请求格式枚举数组（至少 1 项，枚举见上；重复/非法枚举 → `400`） |
 | `models` | string[] | 否 | 可服务模型集合 |
 | `format_models` | object | 否 | 格式级模型覆盖：`{格式: [模型名]}`，key 必须是 `supported_formats` 子集（同批提供时校验）、模型必须是 `models` 子集 |
-| `model_mapping` | object | 否 | 模型映射：`null`/省略 = 保留不变（见批次三态）；提供对象 = 全量替换，`{}` = 清空；每条同创建约束（`mapped_model`+`mode` 必填，`additionalProperties: false`，无默认值） |
+| `model_mapping` | object | 否 | 模型映射：省略 = 保留不变；显式 `null` → `400`；提供对象 = 全量替换，`{}` = 清空（见批次三态）；每条同创建约束（`mapped_model`+`mode` 必填，`additionalProperties: false`，无默认值） |
 
 `fields` 必须至少提供一字段；`ids` 中任一 id 不存在 → `404`（事务全败）。成功 `200`：`{"updated": 2}`。
 
@@ -145,7 +145,7 @@
 - 空映射规范值恒为 `{}`；`PUT`/`POST` 省略等价 `{}`, `PUT` 全量替换；批次三态见下。
 
 **批次三态（`POST /api/admin/templates/batch-update`）：**
-- `fields` 未提供 `model_mapping`（省略/`null`）→ 保留不变（不触及已有映射）；
+- `fields` 未提供 `model_mapping`（省略）→ 保留不变（不触及已有映射）；显式 `null` → `400`；
 - `fields.model_mapping` 提供对象 → 全量替换为该对象所列条目；
 - `fields.model_mapping: {}`（零条）→ 清空映射；
 - 无按行合并（no per-row merge）。
