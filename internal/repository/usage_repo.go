@@ -57,7 +57,10 @@ func (r *UsageRepo) InsertBatch(ctx context.Context, logs []*domain.UsageLog) er
 	for _, l := range logs {
 		builders = append(builders, buildUsageLogCreate(r.client, l))
 	}
-	_, err := r.client.UsageLog.CreateBulk(builders...).Save(ctx)
+	err := r.client.UsageLog.CreateBulk(builders...).
+		OnConflictColumns(usagelog.FieldRequestID, usagelog.FieldCreatedAt).
+		DoNothing().
+		Exec(ctx)
 	return mapPartitionError(err)
 }
 
