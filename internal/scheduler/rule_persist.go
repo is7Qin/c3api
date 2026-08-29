@@ -30,10 +30,7 @@ func NewRulePersistFunc(store rulePersistStore, latch *latchStore, pub interface
 		}
 		acct, err := store.GetAccount(ctx, item.Event.AccountID)
 		if err != nil {
-			if latch != nil {
-				latch.Clear(item.Event.AccountID)
-			}
-			return nil
+			return err
 		}
 		if acct.LifecycleRevision != item.Event.ExpectedRevision {
 			return ErrStaleFailureRevision

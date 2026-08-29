@@ -110,6 +110,7 @@ var (
 	ErrMissingExpectedRevision        = errors.New("sdkbridge: missing expected revision")
 	ErrStaleFailureRevision           = errors.New("sdkbridge: stale failure revision")
 	ErrHealthUnsupported              = errors.New("sdkbridge: health unsupported")
+	ErrRecoverProbingFailed           = errors.New("sdkbridge: recover probing failed after CAS")
 )
 
 func isCodexCredentialType(t credential.Type) bool {
@@ -244,7 +245,7 @@ func RecoverAccount(ctx context.Context, deps FailureDeps, accountID int64) erro
 	}
 	newRev := expectedRev + 1
 	if err := deps.Health.SetProbing(ctx, accountID, newRev); err != nil {
-		return err
+		return fmt.Errorf("%w: account %d at rev %d probing failed: %v", ErrRecoverProbingFailed, accountID, newRev, err)
 	}
 	if deps.Latch != nil {
 		deps.Latch.Clear(accountID)

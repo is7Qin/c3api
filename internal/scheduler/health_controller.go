@@ -29,7 +29,7 @@ func NewHealthControllerWithScheduler(h *RuntimeHealth, s *Scheduler) *HealthCon
 	return &HealthController{health: h, latch: s.latch, sched: s}
 }
 
-func (c *HealthController) Throttle(ev rule.Event, th domain.ThrottleAction) {
+func (c *HealthController) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 	var state HealthState
 	var ttl time.Duration
 	switch th.Mode {
@@ -55,22 +55,25 @@ func (c *HealthController) Throttle(ev rule.Event, th domain.ThrottleAction) {
 			ttl = 30 * time.Second
 		}
 	default:
-		return
+		return nil
 	}
 	key := HealthKey{AccountID: ev.AccountID, Revision: ev.ExpectedRevision}
 	if th.Scope == domain.ThrottleScopeAccount {
 		key.Quality = "*"
 	} else if th.Scope == domain.ThrottleScopeAccountRoute {
 		if ev.RouteClassID == "" || ev.QualityClassID == "" {
-			return
+			return nil
 		}
 		key.Quality = ev.QualityClassID
 	} else {
-		return
+		return nil
 	}
 	if c.health != nil {
-		_, _ = c.health.Throttle(context.Background(), key, state, ttl)
+		if _, err := c.health.Throttle(context.Background(), key, state, ttl); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (c *HealthController) FailAccount(ev rule.Event) error {
