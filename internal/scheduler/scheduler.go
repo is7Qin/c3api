@@ -64,17 +64,17 @@ type leaseToken struct {
 }
 
 type Selection struct {
-	AccountID      int64
-	TemplateID     int64
-	BaseURL        string
-	Format         domain.RequestFormat
-	UpstreamKey    string
-	CredentialType credential.Type
-	Model          string // 已应用模型映射
-	StripImageTools bool
-	Ext *domain.AccountExt
+	AccountID            int64
+	TemplateID           int64
+	BaseURL              string
+	Format               domain.RequestFormat
+	UpstreamKey          string
+	CredentialType       credential.Type
+	Model                string // 已应用模型映射
+	StripImageTools      bool
+	Ext                  *domain.AccountExt
 	CandidateFingerprint string
-	lease *leaseToken
+	lease                *leaseToken
 }
 
 func (s *Selection) Release() {
@@ -110,12 +110,12 @@ type statusWrite struct {
 }
 
 type Scheduler struct {
-	cfg    Config
-	loader Loader
-	rule   *rule.RuleEngine
-	log    *logx.Logger
-	view atomic.Pointer[RoutingView]
-	gen  atomic.Uint64
+	cfg       Config
+	loader    Loader
+	rule      *rule.RuleEngine
+	log       *logx.Logger
+	view      atomic.Pointer[RoutingView]
+	gen       atomic.Uint64
 	publisher *routingPublisher
 	// concView 集群账号并发视图（concsync.go worker 换入的第二 atomic 快照，
 	// spec conc-share-borrow-account）：超份额借位判定的对账聚合。nil / 陈旧 =
@@ -331,11 +331,15 @@ func (s *Scheduler) IsLatched(accountID int64) bool {
 	if s.latch == nil {
 		return false
 	}
-	snap, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
 		return s.latch.IsLatched(accountID, "")
 	}
-	if as, ok := snap[accountID]; ok {
+	byID := v.ByID()
+	if byID == nil {
+		return s.latch.IsLatched(accountID, "")
+	}
+	if as, ok := byID[accountID]; ok {
 		fp, err := candidateFingerprint(&as.static.Load().acc)
 		if err != nil {
 			return false
@@ -381,7 +385,7 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[i
 			if oldAv != nil {
 				sameBase = (oldAv.acc.BaseURL == nil && av.acc.BaseURL == nil) || (oldAv.acc.BaseURL != nil && av.acc.BaseURL != nil && *oldAv.acc.BaseURL == *av.acc.BaseURL)
 			}
-			sameStatic := oldAv != nil && oldAv.acc.Weight == av.acc.Weight && oldAv.acc.MaxConcurrency == av.acc.MaxConcurrency && oldAv.tpl == av.tpl && groupsEqual(oldAv.groupIDs, av.groupIDs) && sameBase && oldAv.acc.UpstreamKey == av.acc.UpstreamKey && oldAv.acc.Ext == av.acc.Ext
+			sameStatic := oldAv != nil && oldAv.acc.Weight == av.acc.Weight && oldAv.acc.MaxConcurrency == av.acc.MaxConcurrency && oldAv.tpl == av.tpl && groupsEqual(oldAv.groupIDs, av.groupIDs) && sameBase && oldAv.acc.UpstreamKey == av.acc.UpstreamKey && oldAv.acc.Ext == av.acc.Ext && oldAv.acc.LifecycleRevision == av.acc.LifecycleRevision
 			if sameStatic {
 				rt := old.runtime
 				if curSt := rt.state.Load(); curSt != nil {
@@ -575,7 +579,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		for _, ns := range newAccs {
 			newIDs[ns.static.Load().acc.ID] = struct{}{}
 		}
-			// Track leaves needing other-group replacement for removed-but-still-present accounts.
+		// Track leaves needing other-group replacement for removed-but-still-present accounts.
 		removedOtherRefs := make(map[int64][]*accountSnapshot)
 		for _, os := range old.accounts {
 			ost := os.static.Load()
@@ -924,8 +928,12 @@ func (s *Scheduler) FailAccount(accountID int64, reason string) {
 }
 
 func (s *Scheduler) failureEvent(accountID int64, kind rule.Kind, errMsg string) rule.Event {
-	byID, ok := s.store.byID.Load().(map[int64]*accountSnapshot)
-	if !ok {
+	v := s.view.Load()
+	if v == nil {
+		return rule.Event{AccountID: accountID, Kind: kind, ErrorMessage: errMsg}
+	}
+	byID := v.ByID()
+	if byID == nil {
 		return rule.Event{AccountID: accountID, Kind: kind, ErrorMessage: errMsg}
 	}
 	a, ok := byID[accountID]
