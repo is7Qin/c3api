@@ -15,8 +15,6 @@ import (
 	"github.com/openai/openai-go"
 	"github.com/tidwall/gjson"
 
-	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -87,22 +85,22 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
 		if err != nil {
-			// 客户端断开：释放槽位，无法转移。errors.Is(err, context.Canceled) 即
-			// 客户端断开——sserelay.normalize 已区分三类（C-P2-2）：父 ctx 取消 →
-			// Canceled；上游停滞超时（UpstreamStreamTimeout）→ DeadlineExceeded，
-			// 走上游错误分支（recordStreamAbort + 连接级/5xx 分流），不得当作客户端断开。
+			// 客户端断开与上游流中止通过 typed outcome 统一收敛，确保 exactly-one observation。
 			if errors.Is(err, context.Canceled) {
-				// 客户端断开：上游已消费请求（成功），仍须记录用量，否则
-				// 成功请求丢日志。与上游流中止同语义：200 + ErrAbort。
-				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIChat, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+				base := chatDispatchedBase(sel, reqID, reqModel, start)
+				outcome := chatOutcomeForClientCancel(base, ttft != nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft)
+				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 				return 0, nil, true, nil
 			}
-			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, err)
-			p.sched.MarkResult(sel.AccountID, scheduler.RuleKindOf(statusOf(err)), nil, statusOf(err), err.Error(), sel.Model)
+			sent := ttft != nil
+			base := chatDispatchedBase(sel, reqID, reqModel, start)
+			outcome := chatOutcomeForNetwork(base, sent, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft)
+			_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 			return 0, nil, true, nil
 		}
-		p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIChat, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+		base := chatDispatchedBase(sel, reqID, reqModel, start)
+		outcome := chatOutcomeForSuccess(base, ttft, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
+		_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 		return 200, nil, true, nil
 	}
 
@@ -132,11 +130,10 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 	_, _ = w.Write(data)
 	var it, ot, tt, cr, cc int64
 	if resp.JSON.Usage.Valid() {
-		// 非流式：cr 直读 SDK 结构体、cc 走 RawJSON() 原始字节 gjson 聚合
-		// （评审 I-1 方案——结构体 marshal 自证不可用）。
 		it, ot, tt, cr, cc = chatUsageFromResponse(resp.Usage)
 	}
-	p.sched.MarkResult(sel.AccountID, rule.KindOK, nil, http.StatusOK, "", sel.Model)
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIChat, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+	base := chatDispatchedBase(sel, reqID, reqModel, start)
+	outcome := chatOutcomeForSuccess(base, nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
+	_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 	return 200, nil, true, nil
 }
