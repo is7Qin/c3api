@@ -364,6 +364,94 @@ paths:
               schema: { $ref: '#/components/schemas/AccountGroupsResponse' }
         default:
           $ref: '#/components/responses/Error'
+  # ---- intelligent-routing 生命周期 fenced 端点（CAS expected_revision；
+  # 0 行命中 = revision 过期 → 409；账号缺 id → 404；成功回显新代际 Account）----
+  /accounts/{id}/recover:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      operationId: PostAccountsIdRecover
+      tags: [accounts]
+      summary: 失效恢复（fenced）：清 failed_at/last_error/failure_source + revision CAS +1 → 新代际置 PROBING 待探针
+      description: |
+        运行时失效（rule 判死/SDK fatal）后管理员确认恢复的唯一入口：CAS
+        expected_revision 命中才清失效三字段并 +1，随后对新 revision 写通配
+        PROBING（探针环接管：READY 前不吃正常流量）。expected_revision 过期 →
+        409（前端须重读账号后重试）；本端点不启用被禁用的账号（enabled 独立
+        走 /accounts/{id}/enabled）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountRecoverBody' }
+      responses:
+        '200':
+          description: 恢复后的账号（含新 LifecycleRevision）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        default:
+          $ref: '#/components/responses/Error'
+  /accounts/{id}/enabled:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      operationId: PostAccountsIdEnabled
+      tags: [accounts]
+      summary: 启用/禁用账号（fenced；enable 不清失效字段——恢复唯一入口 /recover）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountEnabledBody' }
+      responses:
+        '200':
+          description: 切换后的账号（含新 LifecycleRevision）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        default:
+          $ref: '#/components/responses/Error'
+  /accounts/{id}/cost-multiplier:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    put:
+      operationId: PutAccountsIdCostMultiplier
+      tags: [accounts]
+      summary: 更新采购成本倍率（fenced；正常值 ×0–×10，边界换算 basis points）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountCostMultiplierBody' }
+      responses:
+        '200':
+          description: 更新后的账号（含新 LifecycleRevision）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        default:
+          $ref: '#/components/responses/Error'
+  /accounts/{id}/cache-domain:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    put:
+      operationId: PutAccountsIdCacheDomain
+      tags: [accounts]
+      summary: 更新缓存域（fenced；null = 清空回账号私有域；非空 = 共享域）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountCacheDomainBody' }
+      responses:
+        '200':
+          description: 更新后的账号（含新 LifecycleRevision）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        default:
+          $ref: '#/components/responses/Error'
   /accounts/{id}/ext:
     parameters:
       - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -1775,6 +1863,10 @@ components:
         status: { $ref: '#/components/schemas/AccountStatus' }
         weight: { type: integer }
         max_concurrency: { type: integer }
+        # 缓存域（intelligent-routing 契约）：创建可带；后续变更唯一入口 =
+        # PUT /accounts/{id}/cache-domain（CAS fenced）。PUT 全量更新不携带 =
+        # 保持原值（生命周期字段由 fenced 端点独占）。
+        cache_domain: { type: string, nullable: true, description: "可选：共享缓存域（合法域名形态 ≤253；null/缺省 = 账号私有域）；仅创建可带，更新走 /accounts/{id}/cache-domain" }
         # 创建时可选：null/缺省 = 无分组；提供 = 替换语义（空数组 = 无分组）
         group_ids:
           type: array
@@ -1795,6 +1887,13 @@ components:
         MaxConcurrency: { type: integer }
         LastError: { type: string, nullable: true }
         LastUsedAt: { type: string, format: date-time, nullable: true }
+        # ---- intelligent-routing 生命周期契约（只读回显；写面 = fenced 端点）----
+        Enabled: { type: boolean, description: "管理面启停（写面 POST /accounts/{id}/enabled，CAS fenced；与运行时失效语义分离）" }
+        FailedAt: { type: string, format: date-time, nullable: true, description: "运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复唯一入口 POST /accounts/{id}/recover）" }
+        FailureSource: { type: string, nullable: true, description: "失效来源（rule/sdk 等；随 recover 清除）" }
+        LifecycleRevision: { type: integer, format: int64, description: "生命周期代际（CAS fencing：每次生命周期变化/管理员凭据替换 +1；所有 fenced 端点必须携带 expected_revision）" }
+        UpstreamCostMultiplier: { type: number, format: double, description: "采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PUT /accounts/{id}/cost-multiplier）" }
+        CacheDomain: { type: string, nullable: true, description: "共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PUT /accounts/{id}/cache-domain）" }
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
         DeletedAt: { type: string, format: date-time, nullable: true, description: 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项） }
@@ -1806,6 +1905,29 @@ components:
             concurrency: { type: integer, format: int64 }
             err_rate: { type: number, format: double }
             err_count: { type: integer }
+    AccountRecoverBody:
+      type: object
+      required: [expected_revision]
+      properties:
+        expected_revision: { type: integer, format: int64, description: "CAS 期望代际（= 读到的 LifecycleRevision）；过期 → 409" }
+    AccountEnabledBody:
+      type: object
+      required: [enabled, expected_revision]
+      properties:
+        enabled: { type: boolean }
+        expected_revision: { type: integer, format: int64, description: "CAS 期望代际；过期 → 409" }
+    AccountCostMultiplierBody:
+      type: object
+      required: [multiplier, expected_revision]
+      properties:
+        multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "采购成本倍率正常值（1 = ×1，0 = 免费，上限 ×10；边界换算 bp——2.5 ↔ 25000）；越界 → 400" }
+        expected_revision: { type: integer, format: int64, description: "CAS 期望代际；过期 → 409" }
+    AccountCacheDomainBody:
+      type: object
+      required: [expected_revision]
+      properties:
+        cache_domain: { type: string, nullable: true, description: "null/缺省 = 清空（回账号私有域）；非空 = 共享域（合法域名形态 ≤253，非法 → 400；清空不走空串）" }
+        expected_revision: { type: integer, format: int64, description: "CAS 期望代际；过期 → 409" }
     CodexUsageSnapshot:
       type: object
       description: 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度）
@@ -2318,6 +2440,15 @@ components:
             - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
             - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
             - weight：调度权重 ∈ [0,100]
+            - throttle：typed 限流动作（与 fail_account 及 legacy status/cooldown/weight 互斥；
+              response_code/custom_message 塑形可并存）——
+              {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}；
+              scope=account 作用该账号全部 RouteClass，account_route 作用单 RouteClass
+              （匹配时事件须携带账号+路由定位）；mode=retry_after 要求 use_reset=true
+              （上游 Reset 头优先，duration_ms 可选为回退）；mode=open 要求 use_reset=false
+              且 duration_ms > 0（固定摘除窗口）
+            - fail_account：true = 命中即判死（终态失效：failed_at + failure_source=rule，CAS fenced，
+              恢复唯一入口 /accounts/{id}/recover）；与 throttle 及 legacy status/cooldown/weight 互斥
             - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
             - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
             错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
@@ -2359,6 +2490,15 @@ components:
             - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
             - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
             - weight：调度权重 ∈ [0,100]
+            - throttle：typed 限流动作（与 fail_account 及 legacy status/cooldown/weight 互斥；
+              response_code/custom_message 塑形可并存）——
+              {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}；
+              scope=account 作用该账号全部 RouteClass，account_route 作用单 RouteClass
+              （匹配时事件须携带账号+路由定位）；mode=retry_after 要求 use_reset=true
+              （上游 Reset 头优先，duration_ms 可选为回退）；mode=open 要求 use_reset=false
+              且 duration_ms > 0（固定摘除窗口）
+            - fail_account：true = 命中即判死（终态失效：failed_at + failure_source=rule，CAS fenced，
+              恢复唯一入口 /accounts/{id}/recover）；与 throttle 及 legacy status/cooldown/weight 互斥
             - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
             - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
             错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
@@ -2378,7 +2518,7 @@ components:
         Then:
           type: object
           additionalProperties: true
-          description: 动作集（只读回显；字段集与语义同 RuleCreate.then——status/cooldown/weight/response_code/custom_message；全空 {} = 纯透传规则：命中后码/文双透、零惩罚）
+          description: 动作集（只读回显；字段集与语义同 RuleCreate.then——status/cooldown/weight/throttle/fail_account/response_code/custom_message；全空 {} = 纯透传规则：命中后码/文双透、零惩罚）
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
         DeletedAt: { type: string, format: date-time, nullable: true, description: 软删除时间戳；null = 存活（列表/规则引擎重载过滤已删；GET 单个可查已删项） }
