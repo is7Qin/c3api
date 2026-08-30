@@ -370,6 +370,24 @@ func main() {
 		BillingCapture:        cfg.Billing.Enabled,
 		BehindCDN:             cfg.Proxy.BehindCDN, // client_ip 供应商头识别开关（false = 直取 RemoteAddr）
 	}, sched, credential.New(), rec, clients, auth, log, billHooks, errlogW)
+	// 运行时健康投影装配（intelligent-routing lane）：key
+	// (account,QualityClassID|*,lifecycle_revision)，Redis generation/full
+	// replacement/tombstone 语义属 RuntimeHealth 核心；probe 集群 rendezvous 单
+	// owner，成员源取 discovery 活体快照（与 selfID 同源）。probe 执行面在
+	// codex 适配器构造后经 SetProbeFn 回填（装配序要求；nil probe 期间记录
+	// fail-closed 停在 OPEN/PROBING，绝不 READY）。
+	runtimeHealth := scheduler.NewRuntimeHealth(rdb, src, disco.LiveMembers, nil, log)
+	sched.SetRuntimeHealth(runtimeHealth)
+	// 规则 typed Throttle/FailAccount 双面接线：本地 HealthController 即时生效
+	//（latch fail-closed 先于持久化）；持久化走有界 persist queue——满可丢、写
+	// 失败可弃、四指标可观测（rule best-effort 契约，无 outbox）。
+	healthCtrl := scheduler.NewHealthControllerWithScheduler(runtimeHealth, sched)
+	ruleEngine.SetHealthSink(healthCtrl)
+	ruleEngine.SetPersistFunc(scheduler.NewRulePersistFunc(repos, sched.LatchStore(), schedGroupPub{pub}, log))
+	// SDK fatal 重试 worker 纳管（blocker：旧态惰性起循环且进程退出前永不
+	// join）：managed lifecycle——Start 预起 supervised 循环，Close 先于 Redis
+	// 释放 join；重试语义（backoff/fencing/进程存活期重试）原样保留。
+	retryWorker := sdkbridge.NewFailureRetryWorker(log)
 	// codex SDK 适配层装配（T2 §3——统一失效回调先落生图路径；T5 全量）：
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
 	// 调度摘除 + 审计，T1 契约）。
@@ -402,6 +420,12 @@ func main() {
 		InvalidateSnapshot: sched.InvalidateAccount,
 		Log:                log,
 	})
+	// 真实健康 probe 回填（blocker：构造期曾传 nil probe——所有 PROBING 记录
+	// 30s TTL 后恒失败，恢复流程永远到不了 READY）。探测权威 = scheduler 选号
+	// 快照（与选号门同一视图，revision fence fail-closed）；codex 凭据走 SDK
+	// 适配器 usage 快照路径（fatal 权威保持），api_key 族 GET {base}/v1/models
+	//（凭据头按格式族派生）。超时同上游请求预算。必须在 Start 前回填。
+	runtimeHealth.SetProbeFn(newHealthProber(sched.ProbeAccount, codexAdapter, hc, cfg.Proxy.UpstreamTimeout))
 	px.SetCodex(codexAdapter)
 	// codex 额度快照装配：svc.AccountUsage → sdkbridge.GetUsageSnapshot
 	//（TTL 缓存/有界并发/失败冷却全在适配层——service 纯编排零基础设施）。
@@ -475,7 +499,7 @@ func main() {
 		billingWorker = billFlusher
 	}
 	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker,
-		inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg, qualitySync)
+		inv, sched, ruleEngine, retryWorker, runtimeHealth, rec, errlogW, pricingSync, retention, statsAgg, qualitySync)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
 	// G2-3（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
