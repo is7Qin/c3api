@@ -5,11 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
@@ -18,25 +16,17 @@ import (
 )
 
 func TestModelMappingSQLNullRejected(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, dsn)
-	require.NoError(t, err)
-	repos := newPGRepos(t)
+	conn := pgSharedConn(t)
 	var templateID int64
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		var deleteErr error
 		if templateID != 0 {
-			_, deleteErr = conn.Exec(cleanupCtx, `DELETE FROM templates WHERE id = $1`, templateID)
+			_, err := conn.Exec(cleanupCtx, `DELETE FROM templates WHERE id = $1`, templateID)
+			require.NoError(t, err)
 		}
-		closeErr := conn.Close(cleanupCtx)
-		require.NoError(t, deleteErr)
-		require.NoError(t, closeErr)
 	})
 	fixtureName := fmt.Sprintf("c3api-model-mapping-null-%d", time.Now().UnixNano())
 
@@ -70,22 +60,17 @@ func TestModelMappingSQLNullRejected(t *testing.T) {
 }
 
 func TestModelMappingPGStructuredLifecycle(t *testing.T) {
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	repos := newPGRepos(t)
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	conn, err := pgx.Connect(ctx, dsn)
-	require.NoError(t, err)
+	conn := pgSharedConn(t)
 	var templateID int64
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		var deleteErr error
 		if templateID != 0 {
-			_, deleteErr = conn.Exec(cleanupCtx, `DELETE FROM templates WHERE id = $1`, templateID)
+			_, err := conn.Exec(cleanupCtx, `DELETE FROM templates WHERE id = $1`, templateID)
+			require.NoError(t, err)
 		}
-		closeErr := conn.Close(cleanupCtx)
-		require.NoError(t, deleteErr)
-		require.NoError(t, closeErr)
 	})
 
 	initial := domain.ModelMapping{

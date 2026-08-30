@@ -17,7 +17,7 @@ import (
 // TestPGCreateTempBalance 临时额度落库（真实 PostgreSQL，评审 B1 基座）：
 // user_id/amount/expires_at/note 逐字段回读；nil 可选列不落值（永久语义）。
 func TestPGCreateTempBalance(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	u := seedPGUser(t, repos, "bonus@example.com")
@@ -69,7 +69,7 @@ func TestPGCreateTempBalance(t *testing.T) {
 // TestPGCreateTempBalanceForeignKey 外键约束：user_id 不存在 → 报错
 // （注册流程先 CreateUser 拿 id，防误用孤立赠品行）。
 func TestPGCreateTempBalanceForeignKey(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	err := repos.CreateTempBalance(context.Background(), 999999, 100, nil, nil)
 	require.Error(t, err, "user_id 外键不存在必须报错")
 }

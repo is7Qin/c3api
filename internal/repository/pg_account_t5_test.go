@@ -58,7 +58,7 @@ func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at,
 // codex_email）原样保留（防 UpsertAccountExt 全量 upsert 的 ClearX 清空
 // 回归——P3-4 expiry 保旧断言）；幂等（重复回调收敛）；行缺失 → 报错。
 func TestWriteOAuthRotationPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	expires := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 	acc, ext := seedPGOAuthExt(t, repos, "rot1", "at-old", "rt-old", &expires)
@@ -91,7 +91,7 @@ func TestWriteOAuthRotationPG(t *testing.T) {
 // TestWriteOAuthRotationNilExpiryPG 保旧语义的 nil 形态：携带 nil expiry 回写
 // → codex_oauth_expires_at 写 NULL（与"未知过期"语义一致）。
 func TestWriteOAuthRotationNilExpiryPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	expires := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 	acc, _ := seedPGOAuthExt(t, repos, "rot2", "at-old", "rt-old", &expires)
@@ -106,7 +106,7 @@ func TestWriteOAuthRotationNilExpiryPG(t *testing.T) {
 // TestWriteOAuthRotationMissingRowPG 行缺失（配置损坏——codex 账号必有 ext
 // 行）→ 报错（INSERT 路径缺必填列）——D4 回调重试链接管（fail-closed）。
 func TestWriteOAuthRotationMissingRowPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 		Name: "t-rot3", BaseURL: "", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
@@ -127,7 +127,7 @@ func TestWriteOAuthRotationMissingRowPG(t *testing.T) {
 // UpdateAccountStatus 三条写路径 status→active → failed_at + last_error 双清
 // （P3-4 恢复断言）；非 active 状态 → 字段保留（不误清）。
 func TestAccountRecoveryClearsFailedPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	acc, _ := seedPGOAuthExt(t, repos, "rec1", "at", "rt", nil)
 

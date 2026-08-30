@@ -23,10 +23,8 @@ package repository_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -38,17 +36,6 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// pgExecPool 额外连接池（成员关系/断言 raw SQL 用；与 newPGRepos 同一 DSN——
-// 测试库每测试重建 schema，语句互不依赖连接）。
-func pgExecPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	pool, err := repository.OpenPG(context.Background(), dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-	return pool
-}
-
 // fillBatchSize CreateBulk 分批大小：单条多行 INSERT 的列数 × 行数必须留出
 // 65535 参数上限余量（组 2 列 → 8192 行 16k 参数；账号 7 列 → 4096 行 29k
 // 参数；4096 对两者都安全）。
@@ -56,8 +43,8 @@ const fillBatchSize = 4096
 
 // fillGroupsAccounts 填充 n 组 + n 账号：账号 i 属组 i（1:1），另全部账号加入
 // 专用 hub 组（1:1 范围外，避免成员行重复主键）。返回 (组 id 起值, 账号 id
-// 起值, hub 组 id)——id 为自增连续（每测试重建 schema），成员关系经 raw SQL
-// `SELECT id, (id-起值)+偏移` 一次写入。
+// 起值, hub 组 id)——id 为自增连续（shared 基座 TRUNCATE RESTART IDENTITY 重置
+// 序列），成员关系经 raw SQL `SELECT id, (id-起值)+偏移` 一次写入。
 // 注意：CreateBulk 自身也受 65535 参数上限约束（组 2 列、账号 ~7 列），故按
 // fillBatchSize 分批——这正说明生产中任何"全量单语句"构造都会触顶，仓库层
 // 加载必须零 IN/分片。
@@ -98,7 +85,7 @@ func fillGroupsAccounts(t *testing.T, repos *repository.Repository, tplID int64,
 	}
 	firstAccountID = accs[0].ID
 
-	pool := pgExecPool(t)
+	pool := pgSharedPool(t)
 	// 账号 i → 组 i（自增 id 连续：account_id - firstAccountID + firstGroupID）
 	_, err := pool.Exec(ctx,
 		`INSERT INTO account_groups (account_id, group_id) SELECT id, $1 + (id - $2) FROM accounts`,
@@ -117,7 +104,7 @@ func fillGroupsAccounts(t *testing.T, repos *repository.Repository, tplID int64,
 }
 
 func TestPGLoadGroupsAccountsBeyondLimit(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 
@@ -169,7 +156,7 @@ func TestPGLoadGroupsAccountsBeyondLimit(t *testing.T) {
 }
 
 func TestPGLoadGroupsAccountsNearLimit(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 
@@ -184,7 +171,7 @@ func TestPGLoadGroupsAccountsNearLimit(t *testing.T) {
 }
 
 func TestPGLoadKeysChunked(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	g := seedPGGroup(t, repos, "keys-group")
 
@@ -244,7 +231,7 @@ func TestPGLoadKeysChunked(t *testing.T) {
 }
 
 func TestPGDeactivateCodesChunked(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	const n = 66000 // > PG 参数上限：分片 UPDATE 必须全量失效

@@ -16,7 +16,7 @@ import (
 )
 
 func TestPGUpdateBalanceWarningThreshold(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	t.Run("TestPGUpdateBalanceWarningThresholdReturnsPreviousValue", func(t *testing.T) {

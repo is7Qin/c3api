@@ -21,7 +21,7 @@ import (
 // 覆盖：template/group 创建 name 唯一、单/批量改名撞已有 name、key 创建
 // key_raw 唯一（防御——随机明文理论不撞，映射保证一致性）。
 func TestUniqueConflictPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	t.Run("template create name conflict", func(t *testing.T) {

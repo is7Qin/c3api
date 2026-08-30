@@ -20,7 +20,7 @@ import (
 )
 
 func TestPGListKeysAdmin(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u1 := seedPGUser(t, repos, "keys-admin-1@example.com")
 	u2 := seedPGUser(t, repos, "keys-admin-2@example.com")

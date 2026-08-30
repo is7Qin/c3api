@@ -6,14 +6,12 @@ package repository_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
 )
 
 // ---------------------------------------------------------------------------
@@ -25,18 +23,15 @@ import (
 // TestAccountFailedColumnsPG ent schema 建列断言：accounts 表存在 failed_at
 // （timestamptz NULL）一列；不新增 failed_reason（用户裁决——原因复用 last_error）。
 func TestAccountFailedColumnsPG(t *testing.T) {
-	repos := newPGRepos(t) // 迁移建表（ent AutoMigrate 按 migrate/schema.go 建列）
+	repos := newPGReposShared(t) // shared schema 已完成一次迁移
 	ctx := context.Background()
 	require.NotNil(t, repos)
 
 	// 独立 pgx 连接直查 information_schema（ent 无客户端入口）。
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	pool, err := repository.OpenPG(ctx, dsn, 1)
-	require.NoError(t, err)
-	defer pool.Close()
+	pool := pgSharedPool(t)
 
 	rows, err := pool.Query(ctx, `SELECT column_name, is_nullable FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = 'accounts' AND column_name = 'failed_at'`)
+		WHERE table_schema = current_schema() AND table_name = 'accounts' AND column_name = 'failed_at'`)
 	require.NoError(t, err)
 	defer rows.Close()
 	type colRow struct{ Name, Nullable string }
@@ -56,7 +51,7 @@ func TestAccountFailedColumnsPG(t *testing.T) {
 // 保持首次失效时刻与原因）+ 失效原因复用 last_error + 与 status.disabled 语义
 // 分离（不触碰 status）。
 func TestSetAccountFailedPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	a := seedPGAccount(t, repos, tpl.ID, "f1")
@@ -88,7 +83,7 @@ func TestSetAccountFailedPG(t *testing.T) {
 // 上报不触碰既有 last_error（保持"最近错误"审计语义——调度回写携带的快照旧值
 // 与 DB 一致，不互相覆盖）。
 func TestSetAccountFailedEmptyReasonPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	a := seedPGAccount(t, repos, tpl.ID, "f2")
