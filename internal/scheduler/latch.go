@@ -51,6 +51,18 @@ func (l *latchStore) Clear(accountID int64) {
 	delete(l.m, accountID)
 }
 
+// Snapshot returns the live latches in compiler input form (all present keys
+// are latched=true). Owned copy; safe for concurrent readers/writers.
+func (l *latchStore) Snapshot() map[LatchKey]bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	out := make(map[LatchKey]bool, len(l.m))
+	for _, k := range l.m {
+		out[LatchKey{AccountID: k.AccountID, Fingerprint: k.Fingerprint, Revision: k.Revision}] = true
+	}
+	return out
+}
+
 func (l *latchStore) ClearIfRevisionGreater(accountID int64, currentRevision int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
