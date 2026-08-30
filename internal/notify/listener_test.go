@@ -68,13 +68,6 @@ func (f *fakeDisp) got() []Change {
 	return append([]Change(nil), f.applied...)
 }
 
-// errFullDisp FullRefresh 失败（fail-safe 验证：告警后继续消费）。
-type errFullDisp struct {
-	fakeDisp
-}
-
-func (e *errFullDisp) FullRefresh(ctx context.Context) error { return errors.New("refresh boom") }
-
 // newLRig 构造监听器 rig：plan 为连接序列（nil = 连接失败）；fake 时钟即时
 // 到期（跳过真实退避等待）。
 func newLRig(t *testing.T, src string, plan []Conn, disp *fakeDisp) *lrig {
@@ -201,15 +194,26 @@ func TestListenerParseErrorTolerated(t *testing.T) {
 	r.waitFor(func() bool { return r.disp.applyCount() == 1 })
 }
 
-// TestListenerFullRefreshError FullRefresh 失败 fail-safe：告警后仍继续消费。
+// TestListenerFullRefreshError FullRefresh 失败 = 初始化未完成：不消费、关闭
+// 当前连接、退避释放前不重连；释放后仅当下一连接 FullRefresh 成功才允许 Apply。
 func TestListenerFullRefreshError(t *testing.T) {
-	c1 := newFakeConn()
-	disp := &errFullDisp{}
-	r := newLRig(t, "", []Conn{c1}, &disp.fakeDisp)
-	r.waitFor(func() bool { return r.disp.fullCount() == 1 }) // full 调用过（虽然失败）
+	c1, c2 := newGateConn(), newGateConn()
+	disp := newGateDisp(1) // 首次失败，第二连接成功
+	rig := newGateRig(t, []*gateConn{c1, c2}, disp)
 
+	disp.waitFull(t, 1)
 	c1.ch <- notif(`{"v":1,"users":true}`)
-	r.waitFor(func() bool { return r.disp.applyCount() == 1 })
+	require.Eventually(t, func() bool { return c1.closeN.Load() == 1 },
+		2*time.Second, 5*time.Millisecond, "FullRefresh 失败必须关闭当前连接")
+	rig.waitDelay(t, time.Second)
+	require.Zero(t, disp.applyCount(), "失败后 Apply 必须为 0")
+	require.Equal(t, int32(1), rig.connectN.Load(), "timer 未释放前不得建立下一连接")
+
+	rig.release(t)
+	disp.waitFull(t, 2)
+	c2.ch <- notif(`{"v":1,"users":true}`)
+	require.Eventually(t, func() bool { return disp.applyCount() == 1 },
+		2*time.Second, 5*time.Millisecond, "下一连接 FullRefresh 成功后才允许 Apply")
 }
 
 // TestListenerCloseBeforeStart 未 Start 的 Close 安全（worker 契约）。
