@@ -265,7 +265,9 @@ type RuntimeHealth struct {
 }
 
 // NewRuntimeHealth constructs the core. members may be nil (single instance).
-// rendezvous may be nil (defaults to simple hash). probeFn may be nil (probe no-op).
+// rendezvous may be nil (defaults to simple hash). probeFn may be nil/late-
+// backfilled via SetProbeFn before Start (nil probe fails closed—records never
+// reach READY without a real probe).
 func NewRuntimeHealth(client *redis.Client, selfID string, members func() []string, probeFn ProbeFunc, log *logx.Logger) *RuntimeHealth {
 	h := &RuntimeHealth{
 		client:       client,
@@ -429,6 +431,26 @@ func (h *RuntimeHealth) MarkReady(ctx context.Context, key HealthKey, expectedGe
 	}
 	h.lastGen.Store(gen)
 	return gen, nil
+}
+
+// SetProbeFn 回填 probe 函数（装配序：runtimeHealth 先于其依赖的 codex 适配器
+// 构造——Set* 事后回填是本项目装配惯例）。必须在 Start 之前调用：Start 后
+// probe 循环并发读取 probeFn，事后回填构成数据竞争。
+func (h *RuntimeHealth) SetProbeFn(fn ProbeFunc) {
+	h.probeFn = fn
+}
+
+// SetProbing writes the wildcard PROBING record for (account, newRevision)
+// after a successful recover CAS (satisfies the recover-side health prober
+// contract). Rides the standard Throttle Lua path so generation bump, record
+// HASH, active ZSET membership and tombstone clearing stay atomic. Non-positive
+// revision is rejected fail-closed; old-revision records stay isolated by key.
+func (h *RuntimeHealth) SetProbing(ctx context.Context, accountID int64, revision int64) error {
+	if revision <= 0 {
+		return fmt.Errorf("health: invalid probing revision %d for account %d", revision, accountID)
+	}
+	_, err := h.Throttle(ctx, HealthKey{AccountID: accountID, Quality: "*", Revision: revision}, StateProbing, 30*time.Second)
+	return err
 }
 
 // EffectiveState returns the severity-most health for account+quality+revision.
