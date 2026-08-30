@@ -86,13 +86,14 @@ func TestFailoverPipeline_observed4xxPreservesFinishAndMarkResult(t *testing.T) 
 	require.True(t, owns)
 	require.Nil(t, observer.markHealth)
 	require.Nil(t, observer.release)
-	require.NoError(t, observer.Complete(pipelineOutcome(attempt, 401, false, true), nil))
+	// The observer is never completed by hand: the failover loop owns the
+	// exactly-one completion for every dispatch (plan-backed or legacy).
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	p.failoverLoopWithPlan(rec, req, domain.FormatOpenAIChat, domain.FormatOpenAIChat, "req-4xx", 10, time.Now(), "gpt-4o", nil, sel, nil, attemptState{}, rejectedPipelineAttempt{code: 401, body: []byte(`{"error":{"message":"balance"}}`)}, &httpSink{}, false)
 
-	require.Equal(t, 1, flowCalls)
+	require.Equal(t, 1, flowCalls, "the loop observes the failed dispatch exactly once")
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Contains(t, rec.Body.String(), "upstream rejected request")
 	p.sched.FlushRules()

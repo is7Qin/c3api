@@ -227,6 +227,11 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 			panic(rc)
 		}
 	}()
+	// Owner cleanup: a dispatch that ends without a terminal observation
+	// (local reject after reservation, panic mid-call) abandons its
+	// AttemptContext pin. Completed observations abandon as a no-op (CAS).
+	var openDispatch *dispatchObservation
+	defer func() { openDispatch.abandon() }()
 	// 防呆（spec：failover_attempts=0 直构绕过 validate 下限）：循环零次执行时
 	// 首次 Select 已占并发槽，耗尽路径按此标志补 Release——N>=1 恒 true，不双释放。
 	attempted := false
@@ -261,11 +266,19 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 				return
 			}
 		}
-		code, respBody, hdr, handled, callErr := attempt.call(r.Context(), w, r, reqID, groupID, start, sel, reqModel, body, st)
+		// Dispatch ownership: exactly one owner-created AttemptContext + observer
+		// per real upstream call, begun before the call and completed exactly
+		// once — by the caller (handled=true terminal) or by the loop here
+		// (handled=false classification). openDispatch tracks the unfinished one
+		// for the deferred owner cleanup.
+		callCtx, dispatch := p.beginDispatch(r.Context(), sel, plan, reqID, dispatched, reqModel, st, format, selectFormat)
+		openDispatch = dispatch
+		code, respBody, hdr, handled, callErr := attempt.call(callCtx, w, r, reqID, groupID, start, sel, reqModel, body, st)
 		if handled {
 			return // attempt 已处理完毕（成功/客户端断开/流中止已记录；本地拒绝已写出无记录）
 		}
-		p.observePipelineAttempt(r.Context(), sel, plan, code)
+		p.observeDispatchFailure(callCtx, dispatch, code)
+		openDispatch = nil
 		lastCode = code
 		lastHdr = hdr
 		lastBody = respBody
