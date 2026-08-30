@@ -6,14 +6,12 @@ package repository_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
 )
 
 // ---------------------------------------------------------------------------
@@ -30,13 +28,10 @@ func TestAccountFailedColumnsPG(t *testing.T) {
 	require.NotNil(t, repos)
 
 	// 独立 pgx 连接直查 information_schema（ent 无客户端入口）。
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	pool, err := repository.OpenPG(ctx, dsn, 1)
-	require.NoError(t, err)
-	defer pool.Close()
+	pool := pgSharedPool(t)
 
 	rows, err := pool.Query(ctx, `SELECT column_name, is_nullable FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = 'accounts' AND column_name = 'failed_at'`)
+		WHERE table_schema = current_schema() AND table_name = 'accounts' AND column_name = 'failed_at'`)
 	require.NoError(t, err)
 	defer rows.Close()
 	type colRow struct{ Name, Nullable string }
