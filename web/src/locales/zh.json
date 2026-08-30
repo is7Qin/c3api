@@ -803,10 +803,10 @@
     "whenHint": "留空 = 不限定；比例匹配需同时填写「总次数 ≥」。",
     "templates": {
       "title": "预设",
-      "cooldown429": "429 冷却",
-      "5xxBackoff": "5xx 退避",
-      "escalate": "频发升级",
-      "recover": "成功恢复",
+      "throttle429": "429 限流（Retry-After）",
+      "throttleRoute429": "429 路由级限流",
+      "escalate": "频发升级（固定开窗）",
+      "failFatal": "凭据致命摘号",
       "overload503": "503 过载透传"
     },
     "whenFields": {
@@ -851,19 +851,47 @@
       "ratioFailure": "失败比例 ≥"
     },
     "thenTitle": "执行动作（then）",
-    "thenHint": "至少一个动作；weight 范围 0-100。",
     "then": {
-      "status": "设置状态",
-      "cooldown": "冷却时长",
-      "weight": "权重",
+      "actionTitle": "路由动作",
+      "action": {
+        "none": "不惩罚",
+        "noneHint": "仅响应整形；不改账号路由。",
+        "throttle": "限流（Throttle）",
+        "throttleHint": "临时降权账号或命中路由，到期自动恢复。",
+        "fail_account": "摘除账号",
+        "fail_accountHint": "终态：锁存账号退出路由，需人工恢复。"
+      },
+      "asyncHint": "动作经有界队列异步生效；故障风暴下事件允许被丢弃。规则摘号是尽力而为，不等同 SDK 类型化 fatal 通道。",
+      "throttle": {
+        "scope": "作用域",
+        "scopeAccount": "账号",
+        "scopeAccountRoute": "账号路由",
+        "scopeAccountHint": "账号作用域：对该账号全部路由限流。",
+        "scopeAccountRouteHint": "账号路由作用域：仅限流命中的路由类；事件不带路由类时不生效。",
+        "mode": "模式",
+        "modeRetryAfter": "Retry-After",
+        "modeOpen": "固定开窗",
+        "duration": "时长（毫秒）",
+        "durationRetryHint": "Retry-After 优先使用上游 reset 窗口（use_reset=true）；无窗口时用该时长兜底（缺省 30s）。",
+        "durationOpenHint": "开窗模式必须填 duration_ms > 0；窗口按该时长固定打开。"
+      },
+      "fail": {
+        "title": "终态摘除",
+        "desc": "命中事件将以 lifecycle CAS（source=rule）锁存账号为失败；账号退出路由，直至人工恢复。",
+        "confirm": "我确认这会让账号退出路由直至恢复。"
+      },
+      "legacyEcho": "该规则含旧动作（{{keys}}）。不选 typed 动作直接保存将原样保留；选择限流或摘除账号将替换它们。",
       "responseCode": "响应码覆写",
       "customMessage": "固定文案",
       "customMessagePlaceholder": "上游暂不可用",
-      "responseHint": "留空透传；后端校验 400-599 / 非空。",
-      "passthroughHint": "全部留空 = 上游原样透传（状态码与错误文案均不改写）",
+      "responseHint": "响应整形独立，可与 typed 动作并存。留空透传；后端校验 400-599 / 非空。",
       "errResponseRange": "response_code 需在 400-599 之间",
+      "errDurationRequired": "开窗模式要求时长大于 0。",
+      "errDurationPositive": "时长必须是大于 0 的数字。",
       "overrideSummary": "覆写 {{code}}",
-      "fixedMessage": "固定文案"
+      "fixedMessage": "固定文案",
+      "summaryThrottle": "限流",
+      "summaryFail": "摘除账号"
     },
     "presetOverload503": "503 过载透传",
     "deleteTitle": "删除规则",
