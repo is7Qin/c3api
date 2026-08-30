@@ -476,9 +476,15 @@ func (w *SyncWorker) ackPGSuccess(minutes []int64) {
 
 func (w *SyncWorker) doRedis(ctx context.Context) {
 	if !w.flushMu.TryLock() {
-			return
+		return
 	}
 	defer w.flushMu.Unlock()
+	w.doRedisLocked(ctx)
+}
+
+// doRedisLocked 是 Redis 面单次 flush；调用方必须持有 flushMu（refill/回滚
+// 全程在锁内，Close 的生命周期屏障依赖这一不变量）。
+func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 	start := w.clock()
 	w.mu.Lock()
 	w.lastRedisAttempt = start
@@ -706,6 +712,12 @@ func (w *SyncWorker) doPG(ctx context.Context) {
 		return
 	}
 	defer w.flushMu.Unlock()
+	w.doPGLocked(ctx)
+}
+
+// doPGLocked 是 PG 面单次 flush（含失败 refill 回 recorder）；调用方必须持有
+// flushMu。refill 只可能发生在持锁期间，这是 Close 生命周期屏障的前提。
+func (w *SyncWorker) doPGLocked(ctx context.Context) {
 	start := w.clock()
 	if w.rec == nil || w.pg == nil {
 		return
@@ -1293,38 +1305,47 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 		drainCtx, cancelDrain = context.WithTimeout(drainCtxBase, 5*time.Second)
 	}
 	defer cancelDrain()
+	// 生命周期屏障：Close 取得 flushMu 的排他所有权并一路持有到返回。在途
+	// flush 的 refill（doRedisLocked/doPGLocked 尾部）只发生在持 flushMu 期间，
+	// 因此 Close 绝不能在 flush 仍持锁时返回——否则 shutdownTail 终态化
+	// recorder 之后，被放弃的 flush 才把 refill 打进已关闭的 recorder（静默
+	// 丢数据）。等待在实践中有界：loop ctx 已在上方 cancel，所有 sink 调用
+	// 尊重 ctx，卡住的 flush 会快速失败并释放锁。
 	acquired := make(chan struct{})
-	go func() {
+	worker.GoRecover("quality-sync-close", w.log, func() {
 		w.flushMu.Lock()
 		close(acquired)
-	}()
+	})
 	select {
 	case <-acquired:
-		w.flushMu.Unlock()
 	case <-drainCtx.Done():
-		w.lifecycleMu.Lock()
-		c2 := w.cancel
-		w.lifecycleMu.Unlock()
-		if c2 != nil {
-			c2()
-		}
+		// 超预算仍有在途 flush：Warn 一次（grace 是运维可见的阻塞告警阈值），
+		// 但绝不放弃返回——等 flush 释放 flushMu 是唯一不产生 late refill 的
+		// 出路；错误语义（incomplete drain）照常保留。
 		select {
 		case <-acquired:
-			w.flushMu.Unlock()
 		case <-time.After(w.inflightAbandonGrace):
 			if w.log != nil {
-				w.log.Warn("quality sync close: in-flight flush not finished, abandoning")
+				w.log.Warn("quality sync close: in-flight flush past grace, blocking recorder finalization until it releases")
 			}
+			<-acquired
+		}
+		if err == nil {
 			err = drainCtx.Err()
 			if err == nil {
 				err = context.DeadlineExceeded
 			}
-			return err
-		}
-		if err == nil {
-			err = drainCtx.Err()
 		}
 	}
+	// 释放 flushMu 前必须 join loop：持锁期间 loop 的 flush 尝试 TryLock 失败
+	// （不产生 refill），已 cancel 的 loop 随即退出；join 之后不存在任何还能
+	// 启动 refill 的 goroutine。
+	defer func() {
+		if started {
+			<-loopDone
+		}
+		w.flushMu.Unlock()
+	}()
 	drainedOnce := false
 	for {
 		if drainCtx.Err() != nil {
@@ -1372,8 +1393,8 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 		if drainedOnce && qPending == 0 && fPending == 0 && pgPending == 0 && redisPending == 0 {
 			break
 		}
-		w.doRedis(drainCtx)
-		w.doPG(drainCtx)
+		w.doRedisLocked(drainCtx)
+		w.doPGLocked(drainCtx)
 		drainedOnce = true
 	}
 	w.rec.mu.Lock()
