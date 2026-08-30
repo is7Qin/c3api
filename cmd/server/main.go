@@ -624,7 +624,11 @@ func main() {
 	//    → rec 排空明细 → rule/sched/inv → billing 终扫完整账本
 	//    → notification 排空余额告警 → email 排空 auth 邮件
 	//    （quality-sync 的 Close 在此链内排空 Redis/PG；PG 失败时 refill 回
-	//    recorder——recorder 必须仍开着，见下方 recorder 收尾）
+	//    recorder——recorder 必须仍开着，见 shutdown.go 的排空/refill 注释）
+	// 5) 停机尾部（worker 排空 → recorder 终态 → Redis 释放 → 终态日志）收敛
+	//    在 shutdownTail：排空失败不再 `_ =` 静默——Error 级 "shutdown
+	//    incomplete" 显式上报且不宣称 clean shutdown（review blocker
+	//    2026-08-30）。
 	srvCtx, cancelSrv := context.WithTimeout(shutdownCtx, 2*time.Second)
 	// G2-2（spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
 	// `_ =` 全丢弃；wm.Shutdown 内部已对 worker Close 失败 Warn，此处补齐
@@ -638,20 +642,7 @@ func main() {
 	}
 	px.CloseAllWS()
 	waitForInflight(px, shutdownCtx, log)
-	_ = wm.Shutdown(shutdownCtx)
-	// quality recorder 收尾必须在 wm.Shutdown 之后：SyncWorker.Close 排空
-	// Redis/PG，PG 失败时把未落库的 quality/flow refill 回 recorder pending
-	//（重试语义）；recorder 已关闭则 refill 被当容量拒绝 → 静默丢弃。
-	// 排空完成后再 finalization（封闭入口 + 终态快照）。
-	if err := qualityRecorder.CloseWithContext(shutdownCtx); err != nil {
-		log.Warn("quality recorder close failed", logx.Error(err))
-	}
-	// Redis 客户端最后释放（foundation spec §2.3：worker 排空完成后再关连接池——
-	// discovery 的停机 ZREM 等收尾命令都走在池上）。
-	if err := redisx.Close(rdb); err != nil {
-		log.Warn("redis client close failed", logx.Error(err))
-	}
-	log.Info("shutdown complete")
+	shutdownTail(shutdownCtx, wm, qualityRecorder, rdb, log)
 	_ = log.Sync()
 }
 

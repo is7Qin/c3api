@@ -61,7 +61,8 @@ func TestQualitySyncWiring(t *testing.T) {
 		syncCtor     bool // qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, ...)
 		inManaged    bool // qualitySync ∈ orderedWorkers(...) args
 		managedFound bool
-		seq          []string // ordering markers in source order
+		tailCalled   bool // main delegates the shutdown tail: shutdownTail(...)
+		seq          []string
 	)
 	appendSeq := func(m string) { seq = append(seq, m) }
 
@@ -128,6 +129,31 @@ func TestQualitySyncWiring(t *testing.T) {
 				}
 			}
 		}
+		if ce, ok := n.(*ast.CallExpr); ok {
+			if id, ok := ce.Fun.(*ast.Ident); ok && id.Name == "shutdownTail" {
+				tailCalled = true
+			}
+		}
+		return true
+	})
+
+	// 停机尾部（shutdown.go）：三步顺序调用收敛在独立函数内——排空失败在
+	// 该函数内显式 Error 上报、不宣称 clean shutdown（行为锚定见
+	// shutdown_tail_test.go）；此处锚定调用结构与顺序。
+	var tailFn *ast.FuncDecl
+	tailPath := filepath.Join(filepath.Dir(file), "shutdown.go")
+	tailSrc, err := os.ReadFile(tailPath)
+	require.NoError(t, err)
+	fTail, err := parser.ParseFile(fset, tailPath, tailSrc, parser.ParseComments)
+	require.NoError(t, err)
+	for _, d := range fTail.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == "shutdownTail" {
+			tailFn = fn
+			break
+		}
+	}
+	require.NotNil(t, tailFn, "shutdownTail func not found")
+	ast.Inspect(tailFn, func(n ast.Node) bool {
 		if _, ok := isCall(n, "qualityRecorder", "CloseWithContext"); ok {
 			appendSeq("recorder.close")
 		}
@@ -145,6 +171,7 @@ func TestQualitySyncWiring(t *testing.T) {
 	require.True(t, syncCtor, "qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, ...) not found")
 	require.True(t, managedFound, "managedWorkers := orderedWorkers(...) not found")
 	require.True(t, inManaged, "qualitySync must be registered via orderedWorkers(...) for lifecycle + ops stats")
+	require.True(t, tailCalled, "main must delegate the shutdown tail to shutdownTail(...)")
 
 	// Shutdown ordering: worker manager drain (quality-sync Close flushes and,
 	// on flush failure, refills the recorder — it must still be open) →
