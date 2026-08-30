@@ -133,6 +133,9 @@ type searchTestAcct struct {
 	credType credential.Type
 	key      string
 	ext      *domain.AccountExt
+	// mapping 模板映射（Todo 3 identity 不变量测试；nil = 无映射——既有
+	// 用例零影响）。
+	mapping map[string]domain.ModelMappingEntry
 }
 
 // fakeFunctionPriceLookup 内存按单元价快照（search 计费测试用）。镜像生产
@@ -176,6 +179,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 			CredentialType:   a.credType,
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
 			Models:           []string{"gpt-4o"},
+			ModelMapping:     a.mapping,
 		}
 		accs[10] = append(accs[10], &domain.Account{
 			ID: a.id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: a.key,

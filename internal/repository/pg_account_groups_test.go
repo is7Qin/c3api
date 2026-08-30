@@ -29,7 +29,7 @@ import (
 // 未设置 TEST_DATABASE_URL → t.Skip（不炸本地/CI 无库环境）。
 // ---------------------------------------------------------------------------
 
-func newPGRepos(tb testing.TB) *repository.Repository {
+func newPGReposFresh(tb testing.TB) *repository.Repository {
 	tb.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -58,6 +58,12 @@ func newPGRepos(tb testing.TB) *repository.Repository {
 	return repos
 }
 
+// newPGRepos 保留 fresh-schema 语义；DDL、分区、锁和性能测试依赖它。
+func newPGRepos(tb testing.TB) *repository.Repository {
+	tb.Helper()
+	return newPGReposFresh(tb)
+}
+
 // newPGReposNoPool 同一 schema 上的无池仓库（F2：结算语句双载体
 // A/B 与等价性测试用）——pool == nil → ent txDriver 载体；与 newPGRepos
 // （pool → pgx 直连载体）共享同一测试 schema（必须先于本函数调用
@@ -80,6 +86,7 @@ func seedPGTemplate(t *testing.T, repos *repository.Repository) *domain.Template
 	tpl, err := repos.Templates.CreateTemplate(context.Background(), &domain.Template{
 		Name: "t", BaseURL: "https://u/v1",
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	return tpl
@@ -104,7 +111,7 @@ func seedPGAccount(t *testing.T, repos *repository.Repository, tplID int64, name
 // TestAccountGroupsPG 账号侧分组的真实 PG 语义（替换/清空/不变/缺失 404/
 // 批量；读取经 GetAccountGroups 与 LoadGroupAccounts 双向核对）。
 func TestAccountGroupsPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	g1 := seedPGGroup(t, repos, "g1")

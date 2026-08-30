@@ -215,13 +215,21 @@ func (l *Listener) run(ctx context.Context) {
 			}
 			continue
 		}
-		attempt = 0 // 连接成功重置退避
 		// 启动首连 / 断线重连成功 → 本地刷新（覆盖断连期间 NOTIFY 丢失）。跳过
 		// 与否由 dispatcher 裁决（E2：首连且 main 启动首刷全成功 → 跳过五路
 		// ReloadAll 仅补 ReloadSettings；重连恒全量）。
-		if err := l.cfg.Dispatcher.FullRefresh(ctx); err != nil && l.cfg.Log != nil {
-			l.cfg.Log.Warn("notify full refresh failed", logx.Error(err))
+		// FullRefresh 是连接初始化闸门：非 nil = 基线不可用，禁止在本连接
+		// consume 增量——关闭换连接退避重试（设计 2026-08-29）。
+		if err := l.cfg.Dispatcher.FullRefresh(ctx); err != nil {
+			_ = conn.Close(ctx)
+			attempt++
+			l.warnf("full refresh failed", err)
+			if !l.sleep(ctx, backoffDelay(attempt, l.cfg.BackoffBase, l.cfg.BackoffMax)) {
+				return
+			}
+			continue
 		}
+		attempt = 0 // 基线建立 → 复位退避，进入消费
 		if !l.consume(ctx, conn) {
 			_ = conn.Close(ctx)
 			return // consume 返回 false = ctx 已取消 → 正常退出

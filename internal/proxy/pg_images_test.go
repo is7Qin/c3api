@@ -111,6 +111,7 @@ func setupImagesPG(t *testing.T) (*scheduler.Scheduler, int64, int64, *pgImagesU
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-1"},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	tplSpecial, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
@@ -118,6 +119,7 @@ func setupImagesPG(t *testing.T) (*scheduler.Scheduler, int64, int64, *pgImagesU
 		CredentialType:   credential.TypeResponsesSpecial,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
 		Models:           []string{"gpt-image-1"},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err, "responses-special 模板声明 openai-images 格式必须可落库（Task B 类型-格式约束扩展）")
 

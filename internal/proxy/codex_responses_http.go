@@ -138,7 +138,7 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 		o.Terminal = true
 		o.BusinessFrameSent = false
 		emitCodexOutcome(p, sel, o, rule.Kind5xx, errCodexResponsesNotIntegrated.msg)
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexResponsesNotIntegrated.msg)
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexResponsesNotIntegrated.msg)
 		writeErr(w, errCodexResponsesNotIntegrated)
 		return 0, nil, true, nil
 	}
@@ -264,7 +264,7 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	o.BusinessFrameSent = true
 	o.Terminal = true
 	emitCodexOutcome(p, sel, o, rule.KindOK, "")
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, ut, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }
 
@@ -350,7 +350,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 				o.BusinessFrameSent = true
 				o.Terminal = true
 				emitCodexOutcome(p, sel, o, 0, "")
-				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, ut, start)))
+				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, ut, start)))
 				return 0, nil, true, nil
 			}
 			return 0, nil, false, r.Context().Err()
@@ -408,7 +408,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		o.BusinessFrameSent = true
 		o.Terminal = true
 		emitCodexOutcome(p, sel, o, 0, "")
-		p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, ut, start)))
+		p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, ut, start)))
 		return 0, nil, true, nil
 	}
 	ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
@@ -419,7 +419,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 	o.BusinessFrameSent = true
 	o.Terminal = true
 	emitCodexOutcome(p, sel, o, rule.KindOK, "")
-	p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, ut, start)))
+	p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }
 

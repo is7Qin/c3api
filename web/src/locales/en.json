@@ -178,6 +178,24 @@
     "modelsListPlaceholder": "Model names, comma-separated",
     "addFormatRow": "Add format row",
     "modelMappingLabel": "Model mapping (model_mapping)",
+    "modelMappingHint": "Explicit = billed by upstream model; Implicit = billed by client model, response rewritten to client model",
+    "modelMappingModeLabel": "Mode",
+    "modelMappingMode": {
+      "explicit": "Explicit",
+      "implicit": "Implicit"
+    },
+    "modelMappingBatchModeLabel": "Mapping update",
+    "modelMappingBatchMode": {
+      "unchanged": "Unchanged",
+      "replace": "Replace"
+    },
+    "modelMappingBatchHint": "Unchanged keeps current mappings",
+    "modelMappingBatchReplaceHint": "Replace overwrites with rows below — empty clears all",
+    "modelMappingValidation": {
+      "incomplete": "Complete alias, target and mode for each mapping row",
+      "whitespace": "Alias and target must not have leading or trailing spaces",
+      "duplicate": "Duplicate alias after trimming: {{alias}}"
+    },
     "clientModelPlaceholder": "Client model name",
     "upstreamModelPlaceholder": "Upstream model name",
     "addMapping": "Add mapping",

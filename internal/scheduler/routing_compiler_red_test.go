@@ -67,7 +67,7 @@ func TestRed_Blocker1_ImagesDistinct(t *testing.T) {
 }
 
 func TestRed_Blocker2_HealthResolvedMappedModel(t *testing.T) {
-	tpl := &domain.Template{SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"req"}, ModelMapping: map[string]string{"req": "resolved"}}
+	tpl := &domain.Template{SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"req"}, ModelMapping: map[string]domain.ModelMappingEntry{"req": {MappedModel: "resolved", Mode: domain.ModelMappingModeExplicit}}}
 	acc := accWithEnabled(1, tpl, true, 10000)
 	acc.LifecycleRevision = 1
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc}})

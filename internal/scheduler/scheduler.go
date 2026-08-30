@@ -75,6 +75,7 @@ type Selection struct {
 	Ext                  *domain.AccountExt
 	CandidateFingerprint string
 	lease                *leaseToken
+	ModelMappingMode     domain.ModelMappingMode
 }
 
 func (s *Selection) Release() {
@@ -145,7 +146,7 @@ func (s *Scheduler) View() *RoutingView { return s.view.Load() }
 
 // ProbeAccount 返回健康探测用的账号快照拷贝（选号门与探测读同一权威视图：
 // Template/Ext/revision 齐备；只读拷贝，不暴露发布视图指针）。账号缺失
-//（已删/未加载）返回 ok=false——探测侧 fail-closed。
+// （已删/未加载）返回 ok=false——探测侧 fail-closed。
 func (s *Scheduler) ProbeAccount(id int64) (*domain.Account, bool) {
 	v := s.view.Load()
 	if v == nil {

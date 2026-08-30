@@ -33,11 +33,33 @@ func toAPITemplate(t *domain.Template) Template {
 		SupportedFormats: formats,
 		Models:           &t.Models,
 		FormatModels:     toAPITemplateFormatModels(t.FormatModels),
-		ModelMapping:     &t.ModelMapping,
+		ModelMapping:     toAPIModelMapping(t.ModelMapping),
 		CreatedAt:        t.CreatedAt,
 		UpdatedAt:        t.UpdatedAt,
 		DeletedAt:        t.DeletedAt, // 软删除时间戳（只读字段，入参不接收）
 	}
+}
+
+func domainModeToAPIMode(m domain.ModelMappingMode) ModelMappingEntryMode {
+	switch m {
+	case domain.ModelMappingModeExplicit:
+		return Explicit
+	case domain.ModelMappingModeImplicit:
+		return Implicit
+	default:
+		return ""
+	}
+}
+
+func toAPIModelMapping(m domain.ModelMapping) *map[string]ModelMappingEntry {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]ModelMappingEntry, len(m))
+	for k, v := range m {
+		out[k] = ModelMappingEntry{MappedModel: v.MappedModel, Mode: domainModeToAPIMode(v.Mode)}
+	}
+	return &out
 }
 
 // toAPIAccount 账号领域对象 → 契约类型（Template 字段由仓库预加载）。

@@ -14,7 +14,7 @@ import (
 )
 
 func TestPGEmailTemplateAbsentFallback(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	// no rows seeded → Get returns nil,nil (service falls back to DefaultEmailTemplate)
@@ -33,7 +33,7 @@ func TestPGEmailTemplateAbsentFallback(t *testing.T) {
 }
 
 func TestPGEmailTemplateUpsertAndDelete(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	t.Run("upsert create and overwrite", func(t *testing.T) {

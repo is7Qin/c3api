@@ -35,7 +35,7 @@ import (
 //	    p95: rank=ceil(14.25)=15 → 档4：400+(15−14)/1×400 = 800
 //	    p99: rank=ceil(14.85)=15 → 800；avg = round(1520/15) = 101
 func TestPGStatsTTFTExactVsSeed(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	h := time.Date(2026, 8, 22, 8, 0, 0, 0, time.UTC)
 	seedAggWindow(t, repos, h, h.Add(time.Hour))

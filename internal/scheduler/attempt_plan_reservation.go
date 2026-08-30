@@ -12,6 +12,7 @@ var reserveHook func() // ponytail: test hook for race barrier between concurren
 // route miss falls back to the compiled default bucket (model "")—the same
 // unknown-model semantics the legacy scan carries.
 func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef) (*AttemptPlan, error) {
+	requestedModel := route.Model
 	v := s.view.Load()
 	if v == nil || v.static == nil {
 		return nil, ErrGroupNotFound
@@ -38,7 +39,7 @@ func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef)
 	identity.RoutingGeneration = v.generation
 	p := NewAttemptPlan(identity, *decision)
 	p.format = route.Format
-	p.model = route.Model
+	p.model = requestedModel
 	p.operationTag = route.OperationTag
 	for i := uint8(0); i < p.prefixCount; i++ {
 		if !s.resolveCandidate(v, p, &p.candidates[i]) {
@@ -70,8 +71,11 @@ func (s *Scheduler) resolveCandidate(v *RoutingView, p *AttemptPlan, c *attemptP
 	}
 	c.fingerprint = fingerprint
 	resolved := p.model
-	if mapped, ok := c.static.tpl.ModelMapping[p.model]; ok {
-		resolved = mapped
+	if p.identity.ApplyModelMapping {
+		if mapped, ok := c.static.tpl.ModelMapping[p.model]; ok {
+			resolved = mapped.MappedModel
+			c.mappingMode = mapped.Mode
+		}
 	}
 	c.quality = qualityClassHexForWithOp(domain.RequestFormat(p.format), resolved, domain.OperationTag(p.operationTag))
 	c.templateID = c.static.tpl.ID
@@ -145,10 +149,6 @@ func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, erro
 				break
 			}
 		}
-		mapped := plan.model
-		if model, ok := av.tpl.ModelMapping[plan.model]; ok {
-			mapped = model
-		}
 		baseURL := av.tpl.BaseURL
 		if av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
 			baseURL = *av.acc.BaseURL
@@ -156,9 +156,10 @@ func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, erro
 		selected = &Selection{
 			AccountID: av.acc.ID, TemplateID: av.tpl.ID, BaseURL: baseURL,
 			Format: domain.RequestFormat(plan.format), UpstreamKey: av.acc.UpstreamKey,
-			CredentialType: av.tpl.CredentialType, Model: mapped,
+			CredentialType: av.tpl.CredentialType, Model: candidate.mappedModel,
 			StripImageTools: av.tpl.StripImageTools, Ext: av.acc.Ext,
 			CandidateFingerprint: candidate.fingerprint, lease: &leaseToken{acc: a},
+			ModelMappingMode: candidate.mappingMode,
 		}
 		return true
 	})

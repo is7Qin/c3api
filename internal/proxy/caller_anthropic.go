@@ -54,6 +54,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// TTFT 首帧语义：首个 SSE 事件写出后回调记录毫秒，已提交流无帧则保持 nil
 		var ttft *int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
+			Mapper: newResponseModelSSEMapper(sel.ClientResponseModel(reqModel)),
 			Observer: func(ev sserelay.Event) {
 				// 首帧即 TTFT，Observer 在帧写出后触发，最接近客户端感知
 				if ttft == nil {
@@ -89,7 +90,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				out.Terminal = true
 				out.BusinessFrameSent = true
 				_ = obs.Cancel(out)
-				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatAnthropic, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start)))
+				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start)))
 				return 0, nil, true, nil
 			}
 			// 上游流中止：同样保留已收集用量，按连接级/5xx 分类
@@ -104,7 +105,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			if p.log != nil {
 				p.log.Warn("upstream stream aborted", logx.String("request_id", reqID))
 			}
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatAnthropic, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start)))
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start)))
 			return 0, nil, true, nil
 		}
 		tt = it + ot
@@ -121,7 +122,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		out.Usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		health := &AttemptHealthEvent{Kind: rule.KindOK}
 		_ = obs.Complete(out, health)
-		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 		return 200, nil, true, nil
 	}
 	var params anthropic.MessageNewParams
@@ -143,6 +144,9 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	if err != nil {
 		return 0, nil, false, err
 	}
+	if m := sel.ClientResponseModel(reqModel); m != "" {
+		data = rewriteResponseModelJSON(data, m)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
@@ -162,7 +166,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	out.Usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
 	_ = obs.Complete(out, health)
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 	return 200, nil, true, nil
 }
 

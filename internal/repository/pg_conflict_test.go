@@ -21,18 +21,20 @@ import (
 // 覆盖：template/group 创建 name 唯一、单/批量改名撞已有 name、key 创建
 // key_raw 唯一（防御——随机明文理论不撞，映射保证一致性）。
 func TestUniqueConflictPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	t.Run("template create name conflict", func(t *testing.T) {
 		_, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 			Name: "tpl-dup", BaseURL: "https://u1",
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+			ModelMapping:     domain.ModelMapping{},
 		})
 		require.NoError(t, err)
 		_, err = repos.Templates.CreateTemplate(ctx, &domain.Template{
 			Name: "tpl-dup", BaseURL: "https://u2",
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+			ModelMapping:     domain.ModelMapping{},
 		})
 		require.ErrorIs(t, err, repository.ErrConflict, "重复 name → ErrConflict（409 语义）")
 		require.Contains(t, err.Error(), `name="tpl-dup"`, "冲突详情含 name")
@@ -50,11 +52,13 @@ func TestUniqueConflictPG(t *testing.T) {
 		t1, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 			Name: "ren-1", BaseURL: "https://u1",
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+			ModelMapping:     domain.ModelMapping{},
 		})
 		require.NoError(t, err)
 		t2, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 			Name: "ren-2", BaseURL: "https://u2",
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+			ModelMapping:     domain.ModelMapping{},
 		})
 		require.NoError(t, err)
 		t2.Name = t1.Name
@@ -67,11 +71,13 @@ func TestUniqueConflictPG(t *testing.T) {
 		t1, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 			Name: "bat-1", BaseURL: "https://u1",
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+			ModelMapping:     domain.ModelMapping{},
 		})
 		require.NoError(t, err)
 		t2, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 			Name: "bat-2", BaseURL: "https://u2",
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
+			ModelMapping:     domain.ModelMapping{},
 		})
 		require.NoError(t, err)
 		dup := t1.Name
