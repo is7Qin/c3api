@@ -5,17 +5,29 @@
 package scheduler
 
 import (
+	"errors"
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Select 按预生成调度路径（格式硬过滤 + 模型硬白名单 + 全模型账号 tier2 兜底
-// + 加权轮询序列）选号，并占用并发槽。
-// 路径在快照重建时生成（buildRoutes），本函数热路径只做 O(1) 桶查找 + 序列游标取用
-// + 动态状态检查（冷却/禁用/并发满，atomic 读）+ CAS 抢占。
+// Select 选号并占用并发槽。已编译路由执行预编译 DecisionView 计划
+// （NewAttemptPlan + ReserveAttempt：lane 顺序、完整唯一 overflow 尾、
+// reservation reject 不耗 attempt）；未编译路由（编译车道尚未装配的中间态）
+// 走 legacy 预生成序列扫描——Task27 cutover 物理删除，不构成兼容承诺。
 // 调用方完成请求后必须 Release + MarkResult。
 func (s *Scheduler) Select(groupID int64, format domain.RequestFormat, model string) (*Selection, error) {
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(groupID, string(format), model))
+	if err == nil {
+		sel, _, rerr := s.ReserveAttempt(plan)
+		if rerr != nil {
+			return nil, rerr
+		}
+		return sel, nil
+	}
+	if errors.Is(err, ErrGroupNotFound) {
+		return nil, err
+	}
 	v := s.view.Load()
 	if v == nil || v.StaticView() == nil {
 		return nil, ErrGroupNotFound

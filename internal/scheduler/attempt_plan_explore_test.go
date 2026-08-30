@@ -9,16 +9,16 @@ import (
 )
 
 func planCandidates(p *AttemptPlan) []int64 {
-	out := make([]int64, 0, p.candidateCount)
-	for i := uint8(0); i < p.candidateCount; i++ {
+	out := make([]int64, 0, p.prefixCount)
+	for i := uint8(0); i < p.prefixCount; i++ {
 		out = append(out, p.candidates[i].accountID)
 	}
 	return out
 }
 
 func planLanes(p *AttemptPlan) []AttemptLane {
-	out := make([]AttemptLane, 0, p.candidateCount)
-	for i := uint8(0); i < p.candidateCount; i++ {
+	out := make([]AttemptLane, 0, p.prefixCount)
+	for i := uint8(0); i < p.prefixCount; i++ {
 		out = append(out, p.candidates[i].lane)
 	}
 	return out
@@ -174,6 +174,20 @@ func TestExploreHash_fixedCapacityAndNoSortingAtRequestPath(t *testing.T) {
 	id := AttemptPlanIdentity{RequestID: "req-cap", UserID: 1, RouteClassID: "rc", RoutingGeneration: 1}
 	dec := RouteDecision{Primary: []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, Explore: ExploreDecision{IDs: []int64{11, 12}, Weights: map[int64]int{11: 100, 12: 100}, Cumulative: []uint64{100, 200}, Total: 200, Fallback: []int64{13, 14}}, Degraded: []int64{15}}
 	p := NewAttemptPlan(id, dec)
+	// Hot prefix is fixed-capacity; the remaining unique tail stays reachable
+	// via lazy overflow and the dispatch bound caps successful attempts at 8.
 	require.LessOrEqual(t, len(planCandidates(p)), MaxAttemptPlanAccounts)
 	require.Equal(t, MaxAttemptPlanAccounts, 8)
+	consulted := 0
+	for {
+		_, err := p.Reserve(func(int64) bool {
+			consulted++
+			return false
+		})
+		if err != nil {
+			require.ErrorIs(t, err, ErrAttemptsExhausted)
+			break
+		}
+	}
+	require.Equal(t, 14, consulted, "complete unique tail must be scanned (10 primary + explore sample + 2 fallback + 1 degraded)")
 }
