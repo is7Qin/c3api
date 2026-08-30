@@ -512,8 +512,9 @@ func TestPGUnbilledLag(t *testing.T) {
 	require.False(t, ok, "空游标")
 	require.True(t, oldest.IsZero(), "空游标 oldest 零值")
 
-	old := time.Now().Add(-time.Hour).Truncate(time.Second)
-	newer := time.Now().Truncate(time.Second)
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	old := day.Add(time.Minute)
+	newer := day.Add(2 * time.Minute)
 	r1 := logFor(1, "lag-old")
 	r1.CreatedAt = old
 	r2 := logFor(1, "lag-new")
