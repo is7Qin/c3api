@@ -7,6 +7,7 @@ package repository_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"strconv"
 	"testing"
@@ -33,8 +34,18 @@ var sharedPG struct {
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if sharedPG.db != nil {
-		_, _ = sharedPG.db.ExecContext(context.Background(), `DROP SCHEMA IF EXISTS `+sharedPGSchema()+` CASCADE`)
-		_ = sharedPG.db.Close()
+		if _, err := sharedPG.db.ExecContext(context.Background(), `DROP SCHEMA IF EXISTS `+sharedPGSchema()+` CASCADE`); err != nil {
+			fmt.Fprintf(os.Stderr, "shared PostgreSQL schema cleanup failed: %v\n", err)
+			if code == 0 {
+				code = 1
+			}
+		}
+		if err := sharedPG.db.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "shared PostgreSQL database close failed: %v\n", err)
+			if code == 0 {
+				code = 1
+			}
+		}
 	}
 	if sharedPG.pool != nil {
 		sharedPG.pool.Close()
@@ -142,8 +153,15 @@ func TestPGSharedFixtureIsolation(t *testing.T) {
 			require.Equal(t, name, rows[0].Name)
 		})
 	}
+	var currentSchema string
+	err := sharedPG.db.QueryRowContext(context.Background(), `SELECT current_schema()`).Scan(&currentSchema)
+	require.NoError(t, err)
+	require.Equal(t, sharedPGSchema(), currentSchema, "shared *sql.DB must use the shared schema")
+	count, err := sharedPG.repo.Client.Template.Query().Count(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "shared Ent client must use the shared schema")
 	var partitioned bool
-	err := sharedPG.pool.QueryRow(context.Background(), `SELECT relkind = 'p' FROM pg_class WHERE oid = 'usage_logs'::regclass`).Scan(&partitioned)
+	err = sharedPG.pool.QueryRow(context.Background(), `SELECT relkind = 'p' FROM pg_class WHERE oid = 'usage_logs'::regclass`).Scan(&partitioned)
 	require.NoError(t, err)
 	require.True(t, partitioned, "shared cleanup must preserve partition definitions")
 }
