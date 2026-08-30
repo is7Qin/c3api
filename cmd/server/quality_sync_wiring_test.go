@@ -19,7 +19,7 @@ import (
 // TestQualitySyncWiring pins the quality-sync lane assembly (Task 9):
 // recorder → SyncWorker(qualityRecorder, rdb, repos.Partitions) → worker
 // lifecycle (managedWorkers) + ops visibility, with shutdown ordering
-// recorder close → worker drain → Redis client close.
+// worker drain → recorder finalization → Redis client close.
 func TestQualitySyncWiring(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	require.True(t, ok)
@@ -146,8 +146,10 @@ func TestQualitySyncWiring(t *testing.T) {
 	require.True(t, managedFound, "managedWorkers := orderedWorkers(...) not found")
 	require.True(t, inManaged, "qualitySync must be registered via orderedWorkers(...) for lifecycle + ops stats")
 
-	// Shutdown ordering: recorder close (finalizes pending) → worker manager
-	// drain (quality-sync Close flushes) → Redis client close (last).
+	// Shutdown ordering: worker manager drain (quality-sync Close flushes and,
+	// on flush failure, refills the recorder — it must still be open) →
+	// recorder close (finalization: no further enqueue) → Redis client close
+	// (last, drain commands run on the live pool).
 	recClose := -1
 	wmShutdown := -1
 	redisClose := -1
@@ -170,6 +172,6 @@ func TestQualitySyncWiring(t *testing.T) {
 	require.GreaterOrEqual(t, recClose, 0, "qualityRecorder.CloseWithContext not found")
 	require.GreaterOrEqual(t, wmShutdown, 0, "wm.Shutdown not found")
 	require.GreaterOrEqual(t, redisClose, 0, "redisx.Close not found")
-	require.Less(t, recClose, wmShutdown, "recorder close must precede wm.Shutdown (quality-sync final flush drains recorder pending)")
-	require.Less(t, wmShutdown, redisClose, "wm.Shutdown must precede redisx.Close (flush on live pool)")
+	require.Less(t, wmShutdown, recClose, "wm.Shutdown must precede recorder close (quality-sync drain may refill the recorder on flush failure; a closed recorder rejects refill and silently drops)")
+	require.Less(t, recClose, redisClose, "recorder close must precede redisx.Close (drain runs on the live pool)")
 }

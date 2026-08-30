@@ -2986,7 +2986,7 @@ components:
       required: [name, stats]
       properties:
         name: { type: string }
-        # stats 为异构动态观测字段（16 个 worker 各形态不同，原子读计数器 +
+        # stats 为异构动态观测字段（17 个 worker 各形态不同，原子读计数器 +
         # channel 长度快照）——契约层面声明为自由 schema（任意对象），后端
         # 直出原类型（any），不做 struct→map 转换。
         #
@@ -3038,6 +3038,18 @@ components:
         #     users+keys；nil 视图=0）
         #   account-conc-sync（账号并发视图，spec conc-share-borrow-account）:
         #     键集同 conc-sync，tracked_entries = 账号条目数
+        #   quality-sync（intelligent-routing 路由质量实时同步 lane）:
+        #     pending_quality int（recorder 待落 PG 的质量行数，跨分钟桶求和）,
+        #     pending_flow int（待落 PG 的流量分钟桶数）, pending_bytes int64
+        #     （pending 保守字节账面）, lag_ms int64（最老 pending 分钟时滞毫秒；
+        #     0 = pending 空）, dropped_quality int64 / dropped_flow int64
+        #     （refill 容量拒收/溢出丢弃累计）, poison_dropped int64（毒行二分
+        #     隔离累计）, batch_quality int64（上轮 PG 写入质量行数）, batch_flow
+        #     int64（上轮 PG 写入流量分钟数）, freshness_ms int64（距最近一次
+        #     Redis 发布成功毫秒）, last_redis_ms int64 / last_pg_ms int64（上轮
+        #     Redis/PG 面耗时毫秒）, last_redis_attempt_ms int64（最近一次 Redis
+        #     发布尝试时刻；0 = 从未）, last_redis_error string（最近一次 Redis
+        #     失败文本；空 = 无）, redis_errors int64（Redis 发布失败累计）
         stats:
           description: 各 worker 异构观测字段；完整字段清单见本 schema 上方 yaml 注释（与各 worker Stats() 实现同步维护）
     SnapshotState:
