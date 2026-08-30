@@ -803,10 +803,10 @@
     "whenHint": "Leave empty = not restricted. Ratios require a total count.",
     "templates": {
       "title": "Presets",
-      "cooldown429": "429 cooldown",
-      "5xxBackoff": "5xx backoff",
-      "escalate": "Escalate",
-      "recover": "Recovery",
+      "throttle429": "429 throttle (retry-after)",
+      "throttleRoute429": "429 route throttle",
+      "escalate": "Escalate (open window)",
+      "failFatal": "Fatal credential fail",
       "overload503": "503 overload passthrough"
     },
     "whenFields": {
@@ -851,19 +851,47 @@
       "ratioFailure": "Failure ratio ≥"
     },
     "thenTitle": "Action (then)",
-    "thenHint": "At least one action required. Weight range 0-100.",
     "then": {
-      "status": "Set status",
-      "cooldown": "Cooldown",
-      "weight": "Weight",
+      "actionTitle": "Routing action",
+      "action": {
+        "none": "No penalty",
+        "noneHint": "Response shaping only; account routing untouched.",
+        "throttle": "Throttle",
+        "throttleHint": "Temporarily deprioritizes the account or the matched route, expires on its own.",
+        "fail_account": "Fail account",
+        "fail_accountHint": "Terminal: latches the account out of routing until recovery."
+      },
+      "asyncHint": "Actions apply asynchronously through a bounded queue; under failure storms events may be dropped by design. Rule-based fail is best-effort, not the SDK typed-fatal path.",
+      "throttle": {
+        "scope": "Scope",
+        "scopeAccount": "Account",
+        "scopeAccountRoute": "Account route",
+        "scopeAccountHint": "Account scope throttles the whole account across all routes.",
+        "scopeAccountRouteHint": "Route scope throttles only the matched route class; events without a route class do not trigger it.",
+        "mode": "Mode",
+        "modeRetryAfter": "Retry-After",
+        "modeOpen": "Open window",
+        "duration": "Duration (ms)",
+        "durationRetryHint": "Retry-After uses the upstream reset window (use_reset=true); this duration is the fallback when no window is present (default 30s).",
+        "durationOpenHint": "Open mode requires duration_ms > 0; the window stays open for this fixed time."
+      },
+      "fail": {
+        "title": "Terminal failure",
+        "desc": "Matching events latch the account as failed (lifecycle CAS, source=rule). It leaves routing until an operator recovers it.",
+        "confirm": "I understand this removes the account from routing until recovery."
+      },
+      "legacyEcho": "This rule carries legacy actions ({{keys}}). Saving without a typed action keeps them unchanged; choosing Throttle or Fail account replaces them.",
       "responseCode": "Response code",
       "customMessage": "Custom message",
       "customMessagePlaceholder": "Upstream temporarily unavailable",
-      "responseHint": "Leave blank to pass through; backend validates 400-599 / non-empty.",
-      "passthroughHint": "Leave all blank to pass through upstream status and message unchanged.",
+      "responseHint": "Response shaping is independent and may combine with typed actions. Leave blank to pass through; backend validates 400-599 / non-empty.",
       "errResponseRange": "response_code must be between 400 and 599",
+      "errDurationRequired": "Open mode requires a duration greater than 0.",
+      "errDurationPositive": "Duration must be a number greater than 0.",
       "overrideSummary": "override {{code}}",
-      "fixedMessage": "fixed message"
+      "fixedMessage": "fixed message",
+      "summaryThrottle": "throttle",
+      "summaryFail": "fail account"
     },
     "presetOverload503": "503 overload passthrough",
     "deleteTitle": "Delete rule",
