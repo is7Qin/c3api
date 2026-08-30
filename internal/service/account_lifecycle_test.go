@@ -66,7 +66,7 @@ func TestCodexImport(t *testing.T) {
 	fs := newFakeStore()
 	svc := &Service{store: fs, inv: &invRecorder{}}
 	// need templates of codex type
-	tplOauth, err := svc.CreateTemplate(context.Background(), &domain.Template{Name: "tpl-oauth", BaseURL: "https://u", CredentialType: "codex-oauth", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}})
+	tplOauth, err := svc.CreateTemplate(context.Background(), &domain.Template{Name: "tpl-oauth", CredentialType: "codex-oauth", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}})
 	require.NoError(t, err)
 	// import oauth
 	items := []domain.CodexOAuthImportItem{{CodexEmail: "a@example.com", CodexAccountID: "acc1", CodexOAuthToken: "tok", CodexOAuthRefreshToken: "rt"}}
