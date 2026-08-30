@@ -130,6 +130,14 @@ type Scheduler struct {
 	startOnce atomic.Bool
 	latch     *latchStore
 	health    *RuntimeHealth
+	// Compile lane (Task11 wiring): serial background compiler feeding the
+	// single routingPublisher. Request path never touches these.
+	compiler          routeCompiler
+	qualityFn         func() map[CandidateQualityKey]CandidateQualityInput
+	pricesFn          func() map[string]domain.ResolvedPrices
+	compileCh         chan struct{}
+	compileArmed      bool
+	lastDecisionBytes []byte // compile-lane owned (single serial caller)
 }
 
 // View returns current RoutingView root (single atomic root; structurally shared StaticView+DecisionView).
@@ -139,13 +147,15 @@ func (s *Scheduler) View() *RoutingView { return s.view.Load() }
 // ruleEngine 必须非 nil（状态管理唯一路径；main 在 Start 前显式 Reload）。
 func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logger) *Scheduler {
 	s := &Scheduler{
-		cfg:     cfg,
-		loader:  loader,
-		rule:    ruleEngine,
-		log:     log,
-		writeCh: make(chan statusWrite, 4096),
-		timeNow: time.Now,
-		latch:   newLatchStore(),
+		cfg:       cfg,
+		loader:    loader,
+		rule:      ruleEngine,
+		log:       log,
+		writeCh:   make(chan statusWrite, 4096),
+		timeNow:   time.Now,
+		latch:     newLatchStore(),
+		compiler:  NewRoutingCompiler(),
+		compileCh: make(chan struct{}, 1),
 	}
 	s.publisher = newRoutingPublisher(s)
 	ruleEngine.SetApply(s.apply)
@@ -162,6 +172,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	}
 	worker.GoLoop(ctx, "scheduler-sync", s.log, s.syncLoop)
 	worker.GoLoop(ctx, "scheduler-writeback", s.log, s.writebackLoop)
+	worker.GoLoop(ctx, "scheduler-compile", s.log, s.compileLoop)
 	return nil
 }
 
@@ -315,6 +326,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 			}
 		}
 	}
+	s.RequestCompile()
 	return nil
 }
 
@@ -682,6 +694,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		dec = cur.decision
 	}
 	s.publisher.storeLocked(sv, dec)
+	s.RequestCompile()
 }
 
 // InvalidateAccount 单账号快照失效（SDK 接入 T5 §1 P3-3——轮转回写后同步
@@ -1158,6 +1171,7 @@ func (s *Scheduler) rebuildGroupLocked(groupID int64) {
 	newM[groupID] = &groupSnapshot{accounts: gs.accounts, routes: buildRoutes(gs.accounts)}
 	sv := &StaticView{groups: newM, byID: v.ByID()}
 	s.publisher.storeLocked(sv, v.decision)
+	s.RequestCompile()
 }
 
 func (s *Scheduler) enqueueWrite(id int64, st accState, weight *int) {
