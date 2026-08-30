@@ -1223,7 +1223,10 @@ func (w *SyncWorker) oldestPendingMinute(q map[int64]map[Key]*QualityMinute, f m
 	return oldest
 }
 
-func (w *SyncWorker) Stats() SyncStats {
+// Stats 满足 handler.StatsProvider 契约（any 直出 JSON，ops 端点零转换）。
+func (w *SyncWorker) Stats() any { return w.statsSnapshot() }
+
+func (w *SyncWorker) statsSnapshot() SyncStats {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	s := w.stats

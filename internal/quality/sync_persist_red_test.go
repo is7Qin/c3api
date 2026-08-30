@@ -136,7 +136,7 @@ func TestQualitySync_SingletonRowDataErrorIsPoison(t *testing.T) {
 		t.Fatal("doPG did not complete")
 	}
 	require.Equal(t, int64(1), w.poison.Load(), "only proven row-specific data error may be dropped and counted poison")
-	require.Equal(t, int64(1), w.Stats().PoisonDropped)
+	require.Equal(t, int64(1), w.statsSnapshot().PoisonDropped)
 	rec.mu.Lock()
 	rowsCount := 0
 	for _, rows := range rec.pendingQuality {
