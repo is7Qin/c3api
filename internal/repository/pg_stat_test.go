@@ -612,7 +612,7 @@ func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
 // 无变化（异步）→ 周期后落库；同小时追加行 → 下周期整小时桶重建（部分小时桶
 // 跨周期不截断，P1-A）；再周期重放 → 桶值不变（幂等）。
 func TestPGStatsAsyncAggregation(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	h := time.Now().UTC().Truncate(time.Hour)
 
@@ -628,13 +628,11 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 	sum, err := repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0)
 	require.NoError(t, err)
 	require.Zero(t, sum.Requests, "Record 后 usage_stats 无变化（请求路径零统计投递）")
-	require.Zero(t, pgCount(t, pgTestPool(t), `SELECT COUNT(*) FROM usage_entity_stats`),
+	require.Zero(t, pgCount(t, pgSharedPool(t), `SELECT COUNT(*) FROM usage_entity_stats`),
 		"Record 后 usage_entity_stats 无变化")
 
 	w := usage.NewStatsAgg(usage.StatsAggConfig{Interval: 150 * time.Millisecond, Lag: 50 * time.Millisecond}, repos.Stats, nil)
-	workerCtx, stopWorker := context.WithCancel(ctx)
-	require.NoError(t, w.Start(workerCtx))
-	t.Cleanup(stopWorker)
+	require.NoError(t, w.Start(ctx))
 	t.Cleanup(func() { require.NoError(t, w.Close(context.Background())) })
 
 	// worker 周期后落库（轮询收敛——无固定 sleep）
@@ -655,7 +653,7 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(22), sum.TotalTokens, "桶由全量行重建（首批 token 不丢）")
 	// entity 半端同步落库（同批源行的 user=42 卷积——hour×model 一桶）
-	require.Equal(t, int64(1), pgCount(t, pgTestPool(t),
+	require.Equal(t, int64(1), pgCount(t, pgSharedPool(t),
 		`SELECT COUNT(*) FROM usage_entity_stats WHERE entity_type = 'user' AND entity_id = 42 AND request_count = 11`),
 		"user=42 实体桶同步重建")
 }
