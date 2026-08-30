@@ -91,10 +91,18 @@ func (s *Service) UpdateAccount(ctx context.Context, a *domain.Account) (*domain
 	// clients 失效）。查询失败 → 空集 + Warn（调度器 ≤30s 同步兜底）。
 	oldGroups, gErr := s.store.GetAccountGroups(ctx, a.ID)
 	keyChanged := false
-	recovered := false // T5 失效恢复审计：此前已失效（failed_at 置位）→ status→active 恢复
+	recovered := false // T5 失效恢复审计：此前已失效（failed_at 置位）→ status→active
 	var curForCAS *domain.Account
 	if cur, err := s.store.GetAccount(ctx, a.ID); err == nil {
 		curForCAS = cur
+		// 生命周期独占字段回填（fenced 端点所有权）：PUT 的 handler 转换面不携带
+		// enabled/采购倍率/缓存域/revision（零值），repo 全字段 Set 会把零值直接
+		// 落库 = 静默 clobber（禁用账号、倍率归 0、清缓存域）。这些字段只能经
+		// CAS 端点变更，PUT 一律以当前值覆盖入参零值。
+		a.Enabled = cur.Enabled
+		a.UpstreamCostMultiplierBp = cur.UpstreamCostMultiplierBp
+		a.CacheDomain = cur.CacheDomain
+		a.LifecycleRevision = cur.LifecycleRevision
 		keyChanged = cur.UpstreamKey != a.UpstreamKey
 		// baseURLChanged 并入 keyChanged（C2——BaseURL 构建时固化在 client 缓存
 		// 键内，非流式路径新值不生效直到失效）：按值判定（M4——nil↔"" 同值，

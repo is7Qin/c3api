@@ -378,6 +378,10 @@ func main() {
 	// fail-closed 停在 OPEN/PROBING，绝不 READY）。
 	runtimeHealth := scheduler.NewRuntimeHealth(rdb, src, disco.LiveMembers, nil, log)
 	sched.SetRuntimeHealth(runtimeHealth)
+	// 管理面 recover 端点的健康写入面（fenced CAS 成功后对新 revision 置
+	// PROBING）：svc 构造早于 runtimeHealth——Set* 事后回填先例（同
+	// SetLocalDispatcher 依赖方向）。
+	svc.SetRecoverProber(runtimeHealth)
 	// 规则 typed Throttle/FailAccount 双面接线：本地 HealthController 即时生效
 	//（latch fail-closed 先于持久化）；持久化走有界 persist queue——满可丢、写
 	// 失败可弃、四指标可观测（rule best-effort 契约，无 outbox）。

@@ -358,7 +358,10 @@ type Service struct {
 	priceFetcher pricing.Fetcher
 	// usageSnapshots codex 额度快照数据源（*sdkbridge.Codex 满足；AccountUsage
 	// 调用——nil = 未装配（测试/单实例），AccountUsage 返回 nil 快照）。
-	usageSnapshots              CodexUsageSnapshotter
+	usageSnapshots CodexUsageSnapshotter
+	// recoverProber 恢复→PROBING 健康写入面（SetRecoverProber 回填；nil = 未
+	// 装配，recover 仅完成持久恢复——调度器同步周期兜底）。
+	recoverProber               RecoverProber
 	mailEnqueue                 func(MailSendTask) error
 	clearBalanceWarningCooldown func(context.Context, int64, int64) error
 	tzLoc                       *time.Location
