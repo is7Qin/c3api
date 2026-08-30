@@ -83,6 +83,20 @@ func (o *AttemptObserver) Cancel(outcome AttemptOutcome) error {
 	return o.Complete(outcome, nil)
 }
 
+// Abandon is the deferred owner cleanup for a dispatch that ended without a
+// terminal outcome (local reject after reservation, panic mid-call). It is not
+// an observation: no quality attempt, no flow record, no health, no release —
+// it only releases the AttemptContext pin taken at dispatch time so the
+// recorder's bounded inflight cannot leak.
+func (o *AttemptObserver) Abandon() {
+	if o == nil || !o.completed.CompareAndSwap(false, true) {
+		return
+	}
+	if o.quality != nil {
+		o.quality.Cancel()
+	}
+}
+
 func (o *AttemptObserver) releaseOnce() {
 	if o.release != nil {
 		o.release()
