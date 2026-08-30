@@ -143,6 +143,26 @@ type Scheduler struct {
 // View returns current RoutingView root (single atomic root; structurally shared StaticView+DecisionView).
 func (s *Scheduler) View() *RoutingView { return s.view.Load() }
 
+// ProbeAccount 返回健康探测用的账号快照拷贝（选号门与探测读同一权威视图：
+// Template/Ext/revision 齐备；只读拷贝，不暴露发布视图指针）。账号缺失
+//（已删/未加载）返回 ok=false——探测侧 fail-closed。
+func (s *Scheduler) ProbeAccount(id int64) (*domain.Account, bool) {
+	v := s.view.Load()
+	if v == nil {
+		return nil, false
+	}
+	snap, ok := v.ByID()[id]
+	if !ok {
+		return nil, false
+	}
+	av := snap.static.Load()
+	if av == nil {
+		return nil, false
+	}
+	acc := av.acc
+	return &acc, true
+}
+
 // New 构造调度器并注册规则引擎的 apply 回调（动作应用 = 快照/EWMA/回写，见 apply）。
 // ruleEngine 必须非 nil（状态管理唯一路径；main 在 Start 前显式 Reload）。
 func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logger) *Scheduler {
