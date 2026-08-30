@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -181,12 +182,111 @@ func newTestSchedulerForPlan(t *testing.T) *scheduler.Scheduler {
 	return s
 }
 
+// chatProxy builds a proxy on group 10 with n chat accounts (IDs 1..n) all
+// pointing at the same upstream, and publishes a compiled plan over them.
+func chatProxyWithPlan(t *testing.T, upstream string, n int, primary []int64) *Proxy {
+	t.Helper()
+	p := newTestProxy(t, upstream, 1)
+	loader := p.sched.Loader().(noopLoader)
+	for id := int64(2); id <= int64(n); id++ {
+		tplx := &domain.Template{ID: id, Name: "t", BaseURL: upstream, CredentialType: "api_key", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
+		loader.accs[10] = append(loader.accs[10], &domain.Account{ID: id, TemplateID: id, Template: tplx, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4})
+	}
+	require.NoError(t, p.sched.InvalidateAllSync())
+	route := scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "gpt-4o")
+	p.sched.PublishDecisionForTest(route, &scheduler.RouteDecision{Primary: primary})
+	return p
+}
+
+func TestSelectWithPlan_StampsNormalizedMaxAttempts(t *testing.T) {
+	up := fakeOpenAI(t, "")
+	defer up.Close()
+	p := chatProxyWithPlan(t, up.URL, 2, []int64{1, 2})
+	p.cfg.FailoverAttempts = 5
+
+	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o", scheduler.AttemptPlanIdentity{RequestID: "req-stamp", UserID: 1})
+	require.NoError(t, err)
+	require.NotNil(t, plan, "compiled route must yield a plan, not a legacy fallback")
+	require.Equal(t, uint8(5), plan.Identity().MaxAttempts)
+	sel.Release()
+}
+
+func TestSelectWithPlan_LateEligibleOverflowAccount(t *testing.T) {
+	up := fakeOpenAI(t, "")
+	defer up.Close()
+	p := chatProxyWithPlan(t, up.URL, 3, []int64{1, 2, 3})
+	// Latch the first two plan candidates: the third (late in the tail) must
+	// still be reservable — no truncation, no false exhaustion.
+	loader := p.sched.Loader().(noopLoader)
+	for _, a := range loader.accs[10][:2] {
+		fp, err := scheduler.CandidateFingerprint(a)
+		require.NoError(t, err)
+		require.True(t, p.sched.TryLatch(a.ID, fp, a.LifecycleRevision))
+	}
+
+	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o", scheduler.AttemptPlanIdentity{RequestID: "req-overflow", UserID: 1})
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.Equal(t, int64(3), sel.AccountID)
+	sel.Release()
+}
+
+func TestFailoverLoop_PlanDispatchBoundedByMaxAttempts(t *testing.T) {
+	var hits int64
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"slow down"}}`))
+	}))
+	defer up.Close()
+	p := chatProxyWithPlan(t, up.URL, 4, []int64{1, 2, 3, 4})
+	p.cfg.FailoverAttempts = 2
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	require.Equal(t, int64(2), atomic.LoadInt64(&hits), "dispatch must stop at max attempts")
+	for id := int64(1); id <= 4; id++ {
+		ri, ok := p.sched.Runtime(id)
+		require.True(t, ok)
+		require.Equal(t, int64(0), ri.Concurrency, "account %d lease must be released exactly once", id)
+	}
+}
+
+// Replay safety: an upstream 5xx terminates the plan-driven failover — no
+// second dispatch, even with attempt budget left (no proven idempotency).
+func TestFailoverLoop_Plan5xxTerminatesWithoutRetry(t *testing.T) {
+	var hits int64
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"boom"}}`))
+	}))
+	defer up.Close()
+	p := chatProxyWithPlan(t, up.URL, 4, []int64{1, 2, 3, 4})
+	p.cfg.FailoverAttempts = 3
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	require.Equal(t, int64(1), atomic.LoadInt64(&hits), "5xx must not replay across accounts")
+	for id := int64(1); id <= 4; id++ {
+		ri, ok := p.sched.Runtime(id)
+		require.True(t, ok)
+		require.Equal(t, int64(0), ri.Concurrency, "account %d lease must be released exactly once", id)
+	}
+}
+
 func tplForPlan(id int64) *domain.Template {
 	return &domain.Template{ID: id, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 }
 
 func planIdentityCandidateCount(p *scheduler.AttemptPlan) int {
-	// reflection helper to read candidateCount via Reserve probing
+	// helper to probe plan capacity via Reserve (no exported candidate count)
 	cnt := 0
 	clone := *p
 	for {

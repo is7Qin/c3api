@@ -3,7 +3,6 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -33,6 +32,7 @@ func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, 
 	if p.sched == nil {
 		return nil, nil, scheduler.ErrGroupNotFound
 	}
+	identity.MaxAttempts = uint8(p.normalizedAttempts())
 	plan, err := p.sched.NewAttemptPlan(identity, route)
 	if err != nil {
 		sel, selErr := p.sched.Select(groupID, format, model)
@@ -145,17 +145,17 @@ func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error
 	return CanRetry(cat, o)
 }
 
-// selectNextWithPlan tries plan's ReserveAttempt; if plan nil fallback to legacy Select
+// selectNextWithPlan advances the request-local plan: a compiled plan's
+// verdict is final (ErrAttemptsExhausted / ErrNoAvailable propagate to the
+// exhaustion path; reservation rejects already consumed no attempt inside
+// ReserveAttempt). Only plan-less (legacy) callers fall through to Select.
 func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan, groupID int64, selectFormat domain.RequestFormat, model string) (*scheduler.Selection, error) {
 	if plan != nil {
 		sel, _, err := p.sched.ReserveAttempt(plan)
-		if err == nil {
-			return sel, nil
-		}
-		if errors.Is(err, scheduler.ErrAttemptsExhausted) || errors.Is(err, scheduler.ErrNoAvailable) {
+		if err != nil {
 			return nil, err
 		}
-		// fallback to legacy on unexpected error
+		return sel, nil
 	}
 	return p.sched.Select(groupID, selectFormat, model)
 }
