@@ -265,7 +265,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		logCtx = context.WithValue(relayCtx, ctxKeyTTFT{}, ttft)
 	}
 	end, endErr := relayClassify(upClose, upErr, clientErr, pingErr)
-	base := wsDispatchedBase(sel, reqModel, start)
+	base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))
 	switch end {
 	case relayEndUpstreamClosed:
 		_ = up.Close(websocket.StatusNormalClosure, "") // 上游已发关闭帧，完成握手

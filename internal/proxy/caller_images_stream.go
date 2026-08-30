@@ -38,8 +38,6 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			opTag = OperationTag(domain.OpImagesGenerations)
 		}
 	}
-	observer := newImagesStreamObserver(p, sel, reqModel, opTag)
-
 	var (
 		count       int64
 		usage       *domain.ImageUsage
@@ -110,8 +108,8 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		_, _ = w.Write(buildErrorFrame(streamErrMessage(genErr)))
 		flushWriter(w)
 		if r.Context().Err() != nil {
-			outcome := imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultClientCancel, 0, CommitResponseStarted, headersSent, true, false)
-			_ = observer.Cancel(outcome)
+			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultClientCancel, 0, CommitResponseStarted, headersSent, true, false))
+			p.observeDispatchOutcome(ctx, outcome, nil)
 			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
@@ -122,9 +120,9 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			commit = CommitSentAmbiguous
 			business = true
 		}
-		outcome := imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), commit, business, true, false)
+		outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), commit, business, true, false))
 		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: genErr.Error()}
-		_ = observer.Complete(outcome, health)
+		p.observeDispatchOutcome(ctx, outcome, health)
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
 		return 0, nil, true, nil
 	}
@@ -138,18 +136,11 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			timing.TTFTMS = ttft
 		}
 	}
-	outcome := imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+	outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultSuccess, 200, CommitResponseStarted, true, true, false))
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
-	_ = observer.Complete(outcome, health)
+	p.observeDispatchOutcome(ctx, outcome, health)
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrNone, u, start)))
 	return http.StatusOK, nil, true, nil
-}
-
-func newImagesStreamObserver(p *Proxy, sel *scheduler.Selection, reqModel string, op OperationTag) *AttemptObserver {
-	mark := func(o AttemptOutcome, e AttemptHealthEvent) {
-		p.sched.MarkResult(o.AccountID, e.Kind, e.ResetAt, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
-	}
-	return NewAttemptObserver(nil, mark, nil, sel.Release)
 }
 
 func imagesStreamOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {

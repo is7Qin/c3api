@@ -25,8 +25,6 @@ import (
 // 同款）。
 var errCodexSearchNotIntegrated = &formatError{status: http.StatusNotImplemented, msg: "codex search unavailable (adapter not wired)"}
 
-var searchOutcomeCapture func(AttemptOutcome)
-
 func searchDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start time.Time) AttemptOutcome {
 	fp := "fp1"
 	if sel != nil && sel.CandidateFingerprint != "" {
@@ -65,7 +63,7 @@ func searchDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start 
 	}
 }
 
-func emitSearchOutcome(p *Proxy, sel *scheduler.Selection, o AttemptOutcome, healthKind rule.Kind, healthMsg string) {
+func emitSearchOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o AttemptOutcome, healthKind rule.Kind, healthMsg string) {
 	if sel == nil {
 		return
 	}
@@ -79,23 +77,7 @@ func emitSearchOutcome(p *Proxy, sel *scheduler.Selection, o AttemptOutcome, hea
 	if o.Result == ResultClientCancel {
 		health = nil
 	}
-	markHealth := func(out AttemptOutcome, ev AttemptHealthEvent) {
-		if p.sched != nil {
-			p.sched.MarkResult(out.AccountID, ev.Kind, ev.ResetAt, int(out.HTTPStatus), ev.ErrorMessage, out.MappedModel)
-		}
-	}
-	appendFlow := func(out AttemptOutcome) {
-		if searchOutcomeCapture != nil {
-			searchOutcomeCapture(out)
-		}
-	}
-	release := func() { sel.Release() }
-	observer := NewAttemptObserver(nil, markHealth, appendFlow, release)
-	if o.Result == ResultClientCancel {
-		_ = observer.Cancel(o)
-	} else {
-		_ = observer.Complete(o, health)
-	}
+	p.observeDispatchOutcome(ctx, o, health)
 }
 
 // HandleSearch 转发 codex /v1/alpha/search：codex CLI 以
@@ -220,14 +202,15 @@ func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http
 func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
 	if p.codex == nil {
 		// 适配层未装配（SetCodex 未调用）：显式 501（防 nil 误走凭据缺失 502）。
-		o := searchDispatchBase(sel, reqModel, reqID, start)
+		o := mergeDispatchBase(ctx, searchDispatchBase(sel, reqModel, reqID, start))
 		o.Result = ResultFailed
 		o.HTTPStatus = AttemptStatus(http.StatusNotImplemented)
 		o.Commit = CommitUpstreamResponded
 		o.Terminal = true
 		o.BusinessFrameSent = false
 		o.Usage = AttemptUsage{CallCount: 0}
-		emitSearchOutcome(p, sel, o, rule.Kind5xx, errCodexSearchNotIntegrated.msg)
+		emitSearchOutcome(ctx, p, sel, o, rule.Kind5xx, errCodexSearchNotIntegrated.msg)
+		sel.Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexSearchNotIntegrated.msg)
 		writeErr(w, errCodexSearchNotIntegrated)
 		return 0, nil, true, nil
@@ -258,14 +241,14 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp.Raw)
 	// 2xx → 按次计费落账（call_count=1）
-	o := searchDispatchBase(sel, reqModel, reqID, start)
+	o := mergeDispatchBase(ctx, searchDispatchBase(sel, reqModel, reqID, start))
 	o.Result = ResultSuccess
 	o.HTTPStatus = AttemptStatus(http.StatusOK)
 	o.Commit = CommitResponseStarted
 	o.BusinessFrameSent = true
 	o.Terminal = true
 	o.Usage = AttemptUsage{CallCount: 1}
-	emitSearchOutcome(p, sel, o, rule.KindOK, "")
+	emitSearchOutcome(ctx, p, sel, o, rule.KindOK, "")
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }
@@ -310,14 +293,14 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 	// 2xx → 按次计费落账（call_count=1）
-	o := searchDispatchBase(sel, reqModel, reqID, start)
+	o := mergeDispatchBase(ctx, searchDispatchBase(sel, reqModel, reqID, start))
 	o.Result = ResultSuccess
 	o.HTTPStatus = AttemptStatus(http.StatusOK)
 	o.Commit = CommitResponseStarted
 	o.BusinessFrameSent = true
 	o.Terminal = true
 	o.Usage = AttemptUsage{CallCount: 1}
-	emitSearchOutcome(p, sel, o, rule.KindOK, "")
+	emitSearchOutcome(ctx, p, sel, o, rule.KindOK, "")
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }

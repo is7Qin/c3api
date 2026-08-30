@@ -119,12 +119,11 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		u := usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}
 		usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
-		observer := newConvertedObserver(p, sel, reqModel, opTag)
 		if err != nil {
 			// 客户端取消与上游中断区分：取消不计健康惩罚，仍需计费落账。
 			if errors.Is(err, context.Canceled) {
-				outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, true, true, false)
-				_ = observer.Cancel(outcome)
+				outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, true, true, false))
+				p.observeDispatchOutcome(ctx, outcome, nil)
 				// 计费落账由 p.finish 统一收口，routeLog 负责构建日志与用量。
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
@@ -136,18 +135,18 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				commit = CommitSentAmbiguous
 				business = true
 			}
-			outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false)
+			outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false))
 			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
-			_ = observer.Complete(outcome, health)
+			p.observeDispatchOutcome(ctx, outcome, health)
 			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
 		tt = it + ot
 		usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		timing = AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
-		outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+		outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false))
 		health := &AttemptHealthEvent{Kind: rule.KindOK}
-		_ = observer.Complete(outcome, health)
+		p.observeDispatchOutcome(ctx, outcome, health)
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 		return 200, nil, true, nil
 	}
@@ -204,12 +203,11 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(conv)
-	observer := newConvertedObserver(p, sel, reqModel, opTag)
 	usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}
-	outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+	outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false))
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
-	_ = observer.Complete(outcome, health)
+	p.observeDispatchOutcome(ctx, outcome, health)
 	// 计费落账与日志由 p.finish 统一收口。
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 	return 200, nil, true, nil
@@ -227,13 +225,6 @@ func convertedOpTag(dir domain.ProtocolConvert) OperationTag {
 	default:
 		return OperationTag(domain.OpChatCompletions)
 	}
-}
-
-func newConvertedObserver(p *Proxy, sel *scheduler.Selection, reqModel string, op OperationTag) *AttemptObserver {
-	mark := func(o AttemptOutcome, e AttemptHealthEvent) {
-		p.sched.MarkResult(o.AccountID, e.Kind, e.ResetAt, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
-	}
-	return NewAttemptObserver(nil, mark, nil, sel.Release)
 }
 
 func convertedOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {

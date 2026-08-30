@@ -187,6 +187,9 @@ type wsAttempt struct{ p *Proxy }
 
 func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	// 当前 hdr 恒 nil，未回收上游 Header，仅 fallback 生效；后续扩展透传后替换为真实透传
+	// 循环的 dispatch ctx 携带唯一 owner 观测：relay/reportWSOutcome 经
+	// r.Context() 取用（handled=true 终态由 caller 侧完成观测）。
+	r = r.WithContext(ctx)
 	p := a.p
 	if isCodexCredentialType(sel.CredentialType) {
 		// codex 独立 relay 变体：SDK Dial 路径——快照派生 cred 直供
@@ -215,9 +218,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 				fwMsg = "upstream first frame write failed"
 			}
 			// 首帧未写出表示上游尚未消费请求，保留 not-sent/retryable 语义；业务帧写出后不得迁移。
-			base := wsDispatchedBase(sel, reqModel, start)
-			obs := NewAttemptObserver(nil, nil, nil, nil)
-			_ = obs.Complete(wsOutcomeForNotSentNetwork(base, usageTuple{}), nil)
+			// 观测归循环统一（observeDispatchFailure：code 0 → not_sent failed）。
 			return 0, []byte(fwMsg), nil, false, errors.New(fwMsg)
 		}
 		if stop, code, msg := p.handleCodexDialError(r, reqID, groupID, start, sel, reqModel, st.client, dialErr); stop {
@@ -225,28 +226,13 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			return 0, nil, nil, true, nil
 		} else {
 			// 429/5xx/网络错误走 failover 转移，分类与冷却由循环统一处理
-			base := wsDispatchedBase(sel, reqModel, start)
-			var out AttemptOutcome
-			if code == 429 {
-				out = wsOutcomeForUpstreamStatus(base, 429, usageTuple{}, nil)
-			} else if code >= 500 {
-				out = wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
-			} else if code == 0 {
-				out = wsOutcomeForNotSentNetwork(base, usageTuple{})
-			} else {
-				out = wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
-			}
-			obs := NewAttemptObserver(nil, nil, nil, nil)
-			_ = obs.Complete(out, nil)
+			// （观测归 observeDispatchFailure）。
 			return code, []byte(msg), nil, false, nil
 		}
 	}
 	cred, err := p.credentialFor(ctx, sel)
 	if err != nil {
-		// 凭据获取失败，上游未消费记 not-sent 可重试，未见业务帧
-		base := wsDispatchedBase(sel, reqModel, start)
-		obs := NewAttemptObserver(nil, nil, nil, nil)
-		_ = obs.Complete(wsOutcomeForNotSentNetwork(base, usageTuple{}), nil)
+		// 凭据获取失败，上游未消费记 not-sent 可重试，未见业务帧（观测归循环）
 		return 0, []byte(domain.TruncateErrMsg(err.Error())), nil, false, err
 	}
 	// 拨号超时上限（黑洞上游接受 TCP 不回 101 → 无界等待占死并发槽）：wrapped
@@ -276,12 +262,12 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			fwMsg = "upstream first frame write failed"
 		}
 		// 首帧未写出表示上游尚未消费请求，保留 not-sent/retryable 语义；业务帧写出后不得迁移。
-		base2 := wsDispatchedBase(sel, reqModel, start)
-		obs2 := NewAttemptObserver(nil, nil, nil, nil)
-		_ = obs2.Complete(wsOutcomeForNotSentNetwork(base2, usageTuple{}), nil)
+		// 观测归循环统一（observeDispatchFailure：code 0 → not_sent failed）。
 		return 0, []byte(fwMsg), nil, false, errors.New(fwMsg)
 	}
 	// 拨号失败分类：按状态码分流，4xx 分通道，5xx 保留原码，非标准码归连接级
+	// （观测归循环统一：pipelineOutcome 按 code 给出 upstream_responded/not_sent
+	// 与 terminal 语义，与既有 WS 拨号分类一致）。
 	code := 0
 	var msg string
 	if resp != nil {
@@ -289,12 +275,8 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		msg = upstreamErrMsg(readUpstreamBody(resp))
 		_ = resp.Body.Close()
 	}
-	base := wsDispatchedBase(sel, reqModel, start)
 	if code >= 400 && code < 500 {
 		// 4xx 分通道：用户面仅上游 message，dialErr 仅落盘，帧侧回退固定文案
-		out := wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
-		obs := NewAttemptObserver(nil, nil, nil, nil)
-		_ = obs.Complete(out, nil)
 		return code, []byte(msg), nil, false, dialErr
 	}
 	if msg == "" {
@@ -302,22 +284,6 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 	if code < 400 || code >= 600 {
 		code = 0 // 连接级或非标准拒绝，归网络错误语义
-	}
-	if code == 0 {
-		// 连接级失败未见业务帧，记 not-sent 可重试
-		out := wsOutcomeForNotSentNetwork(base, usageTuple{})
-		obs := NewAttemptObserver(nil, nil, nil, nil)
-		_ = obs.Complete(out, nil)
-	} else if code >= 500 {
-		// 5xx 保留原码便于规则匹配，已响应但未见业务帧
-		out := wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
-		obs := NewAttemptObserver(nil, nil, nil, nil)
-		_ = obs.Complete(out, nil)
-	} else if code == 429 {
-		// 429 可重试限流，未见业务帧
-		out := wsOutcomeForUpstreamStatus(base, 429, usageTuple{}, nil)
-		obs := NewAttemptObserver(nil, nil, nil, nil)
-		_ = obs.Complete(out, nil)
 	}
 	return code, []byte(msg), nil, false, nil
 }

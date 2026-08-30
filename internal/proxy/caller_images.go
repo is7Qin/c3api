@@ -99,12 +99,11 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 		u := usageTuple{ii: imgII, io: imgIO, tt: imgII + imgIO, calls: imgCount}
 		usage := AttemptUsage{InputTokens: imgII, OutputTokens: imgIO, CallCount: imgCount}
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
-		observer := newImagesObserver(p, sel, reqModel, opTag)
 		if err != nil {
 			// 图像流客户端断开不触发健康惩罚；上游错误按已写出字节记录 commit 状态。
 			if errors.Is(err, context.Canceled) {
-				outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, ttft != nil, true, false)
-				_ = observer.Cancel(outcome)
+				outcome := mergeDispatchBase(ctx, imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, ttft != nil, true, false))
+				p.observeDispatchOutcome(ctx, outcome, nil)
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
 			}
@@ -115,15 +114,15 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 				commit = CommitSentAmbiguous
 				business = true
 			}
-			outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false)
+			outcome := mergeDispatchBase(ctx, imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false))
 			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
-			_ = observer.Complete(outcome, health)
+			p.observeDispatchOutcome(ctx, outcome, health)
 			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
-		outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+		outcome := mergeDispatchBase(ctx, imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false))
 		health := &AttemptHealthEvent{Kind: rule.KindOK}
-		_ = observer.Complete(outcome, health)
+		p.observeDispatchOutcome(ctx, outcome, health)
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, 200, domain.ErrNone, u, start)))
 		return 200, nil, true, nil
 	}
@@ -151,21 +150,13 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	_, _ = w.Write(data)
 	// 非流式按响应 data 长度计张数，image tokens 单独计费。
 	ii, io, count := billing.ImageUsageFromResponse(data)
-	observer := newImagesObserver(p, sel, reqModel, opTag)
 	usage := AttemptUsage{InputTokens: ii, OutputTokens: io, CallCount: count}
 	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}
-	outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+	outcome := mergeDispatchBase(ctx, imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false))
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
-	_ = observer.Complete(outcome, health)
+	p.observeDispatchOutcome(ctx, outcome, health)
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, 200, domain.ErrNone, usageTuple{ii: ii, io: io, tt: ii + io, calls: count}, start)))
 	return 200, nil, true, nil
-}
-
-func newImagesObserver(p *Proxy, sel *scheduler.Selection, reqModel string, op OperationTag) *AttemptObserver {
-	mark := func(o AttemptOutcome, e AttemptHealthEvent) {
-		p.sched.MarkResult(o.AccountID, e.Kind, e.ResetAt, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
-	}
-	return NewAttemptObserver(nil, mark, nil, sel.Release)
 }
 
 func imagesOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {

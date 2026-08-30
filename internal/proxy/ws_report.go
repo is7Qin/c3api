@@ -240,21 +240,13 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 	if outcome.Result == ResultClientCancel {
 		health = nil
 	}
-	// observer 唯一拥有释放与健康上报：release 拥有 finish/记录，markHealth 拥有冷却上报
-	markHealth := func(o AttemptOutcome, ev AttemptHealthEvent) {
-		p.sched.MarkResult(o.AccountID, ev.Kind, ev.ResetAt, int(o.HTTPStatus), ev.ErrorMessage, string(o.MappedModel))
+	// Single owner observation (quality + bounded flow) + health marking; the
+	// finish owns the lease release exactly once.
+	p.observeDispatchOutcome(ctx, outcome, health)
+	l := logWithCtx(ctx, p.buildLog(reqID, groupID, outcome.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, status, et, u, start))
+	if ttftCopy != nil {
+		l.TTFTMS = ttftCopy
 	}
-	appendFlow := func(o AttemptOutcome) {}
-	release := func() {
-		l := logWithCtx(ctx, p.buildLog(reqID, groupID, outcome.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, status, et, u, start))
-		if ttftCopy != nil {
-			l.TTFTMS = ttftCopy
-		}
-		p.finish(sel, l)
-	}
-	observer := NewAttemptObserver(nil, markHealth, appendFlow, release)
-	if outcome.Result == ResultClientCancel {
-		return observer.Cancel(outcome)
-	}
-	return observer.Complete(outcome, health)
+	p.finish(sel, l)
+	return nil
 }

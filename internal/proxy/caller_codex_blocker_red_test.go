@@ -34,12 +34,11 @@ func TestRED_CodexDerivedTimeoutIsNotClientCancel(t *testing.T) {
 
 	var mu sync.Mutex
 	var outcomes []AttemptOutcome
-	codexOutcomeCapture = func(o AttemptOutcome) {
+	p.pipelineFlowAppend = func(o AttemptOutcome) {
 		mu.Lock()
 		outcomes = append(outcomes, o)
 		mu.Unlock()
 	}
-	t.Cleanup(func() { codexOutcomeCapture = nil })
 
 	sel := selectCodexAccount(t, p, 10)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -107,12 +106,11 @@ func TestRED_SearchPreResponseMustNotDuplicate(t *testing.T) {
 	sel.Ext = nil
 	var mu sync.Mutex
 	var outcomes []AttemptOutcome
-	searchOutcomeCapture = func(o AttemptOutcome) {
+	p.pipelineFlowAppend = func(o AttemptOutcome) {
 		mu.Lock()
 		outcomes = append(outcomes, o)
 		mu.Unlock()
 	}
-	t.Cleanup(func() { searchOutcomeCapture = nil })
 	req := httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
 	code, _, handled, _ := p.callCodexSearch(req.Context(), httptest.NewRecorder(), req, "req-search", 10, time.Now(), sel, "gpt-4o", []byte(`{"model":"gpt-4o"}`))
 	require.False(t, handled)
