@@ -17,12 +17,24 @@ import (
 
 // RED tests with barriers/no sleeps, require-only.
 
-func TestCanonicalFingerprint_RemovesEmptyBaseURLFallback(t *testing.T) {
+// TestCanonicalFingerprint_NoEmptyBaseURLFallback：空 base_url 绝不 fallback
+// 到任何默认 origin（旧缺陷裁决保持）。细化后的契约（accountcred.go：codex
+// 数据面 URL 归 SDK 官方默认所有，网关不派生 BaseURL）：SDK 托管类型（codex）
+// 空 base_url 合法——凭据身份由 PAT/OAuth 输入承载，canonical fingerprint
+// 可产出（health 事件/探测的 Attempt 身份对生产 codex 账号可用）；静态路由族
+// （api_key）空 base_url = 不可路由，仍返回 typed missing identity。
+func TestCanonicalFingerprint_NoEmptyBaseURLFallback(t *testing.T) {
 	tpl := &domain.Template{ID: 10, BaseURL: "", CredentialType: credential.TypeCodexOAuth, StripImageTools: false}
 	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk-test", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
-	_, err := canonicalFingerprint(acct)
+	fp, err := canonicalFingerprint(acct)
+	require.NoError(t, err, "codex empty base_url must fingerprint via credential identity")
+	require.NotEmpty(t, fp)
+
+	tplStatic := &domain.Template{ID: 11, BaseURL: "", CredentialType: credential.TypeAPIKey}
+	acctStatic := &domain.Account{ID: 8, TemplateID: 11, Template: tplStatic, UpstreamKey: "sk-test", LifecycleRevision: 1}
+	_, err = canonicalFingerprint(acctStatic)
 	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrMissingCandidateFingerprint), "empty baseURL must return typed missing identity, not fallback to default")
+	require.True(t, errors.Is(err, ErrMissingCandidateFingerprint), "api_key empty baseURL must return typed missing identity, not fallback to default")
 }
 
 func TestCredentialDiscriminatorMatchesScheduler_TemplateAuthority(t *testing.T) {
