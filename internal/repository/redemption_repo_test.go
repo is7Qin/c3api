@@ -18,7 +18,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// 真实 PG 基座（newPGRepos；TEST_DATABASE_URL 未设置 → Skip）：
+// 真实 PG 基座（newPGReposShared；TEST_DATABASE_URL 未设置 → Skip）：
 // 兑换码 Task 1 全部测试 —— code 唯一冲突、批量生成、use 唯一约束、批量失效幂等、
 // 条件递增并发防超卖（评审 I-2）、原子资源方法（评审 I-1）、WithTx 回滚（评审 I-1）。
 
@@ -154,9 +154,9 @@ func TestRedemptionUsePG(t *testing.T) {
 // 上限 5000）。普通表无分区可 DROP——DELETE 批删路径（retention worker 周期
 // 任务内调用）。
 func TestRedemptionUseRetentionPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	// redemption_uses.code_id 有 FK → 先建码
 	code := codeFor("F3R001", domain.RedemptionTypeBalance, 20000)
