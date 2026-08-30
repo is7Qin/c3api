@@ -67,7 +67,7 @@ func TestRegression_PGConstraintIsPoisonAndTransientRefills(t *testing.T) {
 		t.Fatal("doPG constraint did not complete")
 	}
 	require.Equal(t, int64(1), w1.poison.Load())
-	require.Equal(t, int64(1), w1.Stats().PoisonDropped)
+	require.Equal(t, int64(1), w1.statsSnapshot().PoisonDropped)
 	var pgTarget *pgconn.PgError
 	require.True(t, errors.As(pgConstraint.failAll, &pgTarget))
 	pgErr := &pgconn.PgError{Code: "23514", Message: "check"}

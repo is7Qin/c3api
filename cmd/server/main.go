@@ -440,6 +440,22 @@ func main() {
 		},
 		Log: log,
 	})
+	// quality-sync lane（intelligent-routing Task 9）：500ms Redis 当前分钟绝对
+	// 快照发布 + 5s PG quality/flow UPSERT。单实例一个串行 loop（worker.GoLoop
+	// 监督），PG 写面直用 repos.Partitions（routing 分区表 absolute UPSERT+
+	// dirty 同事务）。装配在 handler 之前：opsWorkers 聚合需要该引用已存在。
+	effectiveInflight, err := config.EffectiveMaxInflight(cfg.Proxy.MaxInflight)
+	if err != nil {
+		fatalf("config: %v", err)
+	}
+	qualityRecorder, err := quality.NewRecorder(effectiveInflight)
+	if err != nil {
+		fatalf("quality: %v", err)
+	}
+	px.SetQualityRecorder(qualityRecorder)
+	// instanceSrc 与 discovery/conc-sync 同源产物（不自造第二套 ID）：跨实例
+	// merge 按 instance_src 区分，同源身份是 merge 正确性的前提。
+	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log)
 	aiRouter := proxy.AIRouter(px)
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
 	userHandler := userapi.Router(svc, iss, auth, ruleEngine)
@@ -459,7 +475,7 @@ func main() {
 		billingWorker = billFlusher
 	}
 	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker,
-		inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg)
+		inv, sched, ruleEngine, rec, errlogW, pricingSync, retention, statsAgg, qualitySync)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
 	// G2-3（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
@@ -493,15 +509,6 @@ func main() {
 		},
 	})
 
-	effectiveInflight, err := config.EffectiveMaxInflight(cfg.Proxy.MaxInflight)
-	if err != nil {
-		fatalf("config: %v", err)
-	}
-	qualityRecorder, err := quality.NewRecorder(effectiveInflight)
-	if err != nil {
-		fatalf("quality: %v", err)
-	}
-	px.SetQualityRecorder(qualityRecorder)
 	srv := server.NewServer(server.Options{
 		AdminToken:        cfg.Admin.Token,
 		JWTIssuer:         iss,

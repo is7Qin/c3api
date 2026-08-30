@@ -249,7 +249,7 @@ func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
 		}
 	}
 	require.True(t, hasFlow, "flow namespace must be published")
-	stats := w.Stats()
+	stats := w.statsSnapshot()
 	require.Equal(t, int64(0), stats.FreshnessMs, "successful publish freshness 0")
 
 	// now simulate redis error by closing
@@ -264,7 +264,7 @@ func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
 	qm2.SetAttempts(5)
 	_ = rec.EnqueueQualityMinute(qm2)
 	w2.doRedis(context.Background())
-	stats2 := w2.Stats()
+	stats2 := w2.statsSnapshot()
 	require.Greater(t, stats2.FreshnessMs, int64(0), "publish error must degrade freshness, not false success")
 	require.NotEqual(t, w2.lastRedis, clk.Add(time.Second), "failed publish must not update lastRedis")
 }
@@ -587,7 +587,7 @@ func TestQualitySync_RedisEmptyNoRefresh(t *testing.T) {
 	w.lastRedis = fixed.Add(-time.Minute)
 	w.lastRedisAttempt = time.Time{}
 	w.doRedis(context.Background())
-	stats := w.Stats()
+	stats := w.statsSnapshot()
 	require.Equal(t, int64(0), stats.LastRedisMs, "empty pass must not update LastRedisMs")
 	require.Equal(t, fixed.Add(-time.Minute).UnixMilli(), w.lastRedis.UnixMilli(), "empty must not refresh lastRedis")
 	// no-client pass
@@ -599,7 +599,7 @@ func TestQualitySync_RedisEmptyNoRefresh(t *testing.T) {
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
 	w2.lastRedis = fixed.Add(-time.Minute)
 	w2.doRedis(context.Background())
-	stats2 := w2.Stats()
+	stats2 := w2.statsSnapshot()
 	require.NotEqual(t, "", stats2.LastRedisError)
 	require.Greater(t, stats2.RedisErrors, int64(0))
 	// freshness should be degraded (not 0)
