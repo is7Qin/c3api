@@ -77,8 +77,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
 		// 观测器恰好一次归属：后续分支仅走 Cancel 或 Complete 之一
-		base := anthropicBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, cr, cc)
-		obs := anthropicObserver(p, sel)
+		base := mergeDispatchBase(ctx, anthropicBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, cr, cc))
 		if err != nil {
 			// 客户端取消 vs 上游停滞：Canceled 为客户端断开，DeadlineExceeded 为上游超时，后者走失败分支
 			if errors.Is(err, context.Canceled) {
@@ -89,7 +88,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				out.HTTPStatus = 0
 				out.Terminal = true
 				out.BusinessFrameSent = true
-				_ = obs.Cancel(out)
+				p.observeDispatchOutcome(ctx, out, nil)
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start)))
 				return 0, nil, true, nil
 			}
@@ -101,7 +100,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			out.Terminal = true
 			out.BusinessFrameSent = true
 			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(statusOf(err)), ErrorMessage: err.Error()}
-			_ = obs.Complete(out, health)
+			p.observeDispatchOutcome(ctx, out, health)
 			if p.log != nil {
 				p.log.Warn("upstream stream aborted", logx.String("request_id", reqID))
 			}
@@ -121,7 +120,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		out.BusinessFrameSent = true
 		out.Usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		health := &AttemptHealthEvent{Kind: rule.KindOK}
-		_ = obs.Complete(out, health)
+		p.observeDispatchOutcome(ctx, out, health)
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 		return 200, nil, true, nil
 	}
@@ -155,8 +154,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 非流式用量：直接读取响应 usage，输入/缓存与输出同库
 		it, ot, tt, cr, cc = anthropicUsageFromResponse(resp.Usage)
 	}
-	base := anthropicBaseOutcome(reqID, groupID, sel, reqModel, start, nil, it, ot, cr, cc)
-	obs := anthropicObserver(p, sel) // 恰好一次 Complete 归属，本地释放由观测器兜底
+	base := mergeDispatchBase(ctx, anthropicBaseOutcome(reqID, groupID, sel, reqModel, start, nil, it, ot, cr, cc))
 	out := base
 	out.Result = ResultSuccess
 	out.HTTPStatus = 200
@@ -165,7 +163,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	out.BusinessFrameSent = true
 	out.Usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
-	_ = obs.Complete(out, health)
+	p.observeDispatchOutcome(ctx, out, health)
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 	return 200, nil, true, nil
 }
@@ -185,15 +183,4 @@ func anthropicBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection,
 		Timing: AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft},
 		Usage:  AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc},
 	}
-}
-
-// anthropicObserver 构造恰好一次的观测器：Complete 负责健康与释放，Cancel 仅释放
-func anthropicObserver(p *Proxy, sel *scheduler.Selection) *AttemptObserver {
-	return NewAttemptObserver(nil,
-		func(o AttemptOutcome, e AttemptHealthEvent) {
-			p.sched.MarkResult(o.AccountID, e.Kind, nil, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
-		},
-		func(o AttemptOutcome) {},
-		func() { sel.Release() },
-	)
 }

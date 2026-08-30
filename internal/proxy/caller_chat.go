@@ -90,20 +90,20 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			// 客户端断开/上游中断均经 typed outcome 统一收敛，保证 exactly-one 观测。
 			if errors.Is(err, context.Canceled) {
 				// 客户端断开：上游已消费请求，仍保留已采集的 usage/TTFT 并记 200+ErrAbort，避免成功请求丢日志。
-				base := chatDispatchedBase(sel, reqID, reqModel, start)
+				base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 				outcome := chatOutcomeForClientCancel(base, ttft != nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft)
 				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 				return 0, nil, true, nil
 			}
 			// 上游流中断：按是否已首帧（ttft != nil）区分已发送，保留已采集 usage 走网络错误观测。
 			sent := ttft != nil
-			base := chatDispatchedBase(sel, reqID, reqModel, start)
+			base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 			outcome := chatOutcomeForNetwork(base, sent, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft)
 			_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 			return 0, nil, true, nil
 		}
 		// 流式成功：携带 TTFT 与已聚合的 usage 经 typed outcome 统一记录，保证 exactly-one 观测与记录归一。
-		base := chatDispatchedBase(sel, reqID, reqModel, start)
+		base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 		outcome := chatOutcomeForSuccess(base, ttft, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
 		_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 		return 200, nil, true, nil
@@ -141,7 +141,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		it, ot, tt, cr, cc = chatUsageFromResponse(resp.Usage)
 	}
 	// 非流式成功经 typed outcome 统一收敛，保证 exactly-one 观测与记录归一。
-	base := chatDispatchedBase(sel, reqID, reqModel, start)
+	base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 	outcome := chatOutcomeForSuccess(base, nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
 	_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 	return 200, nil, true, nil

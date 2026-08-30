@@ -116,20 +116,9 @@ func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, s
 		ctx = context.WithValue(ctx, ctxKeyTTFT{}, outcome.Timing.TTFTMS)
 	}
 	l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIChat, status, et, u, start))
-	p.applyBilling(l)
-	p.auth.DeductQuota(l.KeyID, l.TotalTokens)
-	if p.cfg.UsageCapture {
-		p.routeLog(l)
-	}
-	observer := NewAttemptObserver(nil,
-		func(o AttemptOutcome, e AttemptHealthEvent) {
-			p.sched.MarkResult(o.AccountID, e.Kind, nil, int(o.HTTPStatus), "", o.MappedModel)
-		},
-		nil,
-		func() { sel.Release() },
-	)
-	if outcome.Result == ResultClientCancel {
-		return observer.Cancel(outcome)
-	}
-	return observer.Complete(outcome, health)
+	// Single owner observation (quality + bounded flow) + health marking; the
+	// finish releases the lease exactly once.
+	p.observeDispatchOutcome(ctx, outcome, health)
+	p.finish(sel, l)
+	return nil
 }

@@ -97,10 +97,9 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	ii, io, count := billing.ImageUsageFromResponse(wire)
 	usage := AttemptUsage{InputTokens: ii, OutputTokens: io, CallCount: count}
 	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}
-	observer := newCodexImagesObserver(p, sel, reqModel, opTag)
-	outcome := codexImagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
+	outcome := mergeDispatchBase(ctx, codexImagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false))
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
-	_ = observer.Complete(outcome, health)
+	p.observeDispatchOutcome(ctx, outcome, health)
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, http.StatusOK, domain.ErrNone, usageTuple{ii: ii, io: io, tt: ii + io, calls: count}, start)))
 	return http.StatusOK, nil, true, nil
 }
@@ -110,13 +109,6 @@ func codexImagesOpTag(r *http.Request) OperationTag {
 		return OperationTag(domain.OpImagesEdits)
 	}
 	return OperationTag(domain.OpImagesGenerations)
-}
-
-func newCodexImagesObserver(p *Proxy, sel *scheduler.Selection, reqModel string, op OperationTag) *AttemptObserver {
-	mark := func(o AttemptOutcome, e AttemptHealthEvent) {
-		p.sched.MarkResult(o.AccountID, e.Kind, e.ResetAt, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
-	}
-	return NewAttemptObserver(nil, mark, nil, sel.Release)
 }
 
 func codexImagesOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {

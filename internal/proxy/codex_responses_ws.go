@@ -121,10 +121,10 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 	}
 	if sdkbridge.IsFatal(dialErr) {
 		// fatal 鉴权失败由 SDK 统一判定并回调上报，此处仅固定文案不泄内部细节，原文仅落盘
-		base := wsDispatchedBase(sel, reqModel, start)
+		base := mergeDispatchBase(r.Context(), wsDispatchedBase(sel, reqModel, start))
 		out := wsOutcomeForUpstreamStatus(base, 500, usageTuple{}, nil)
-		obs := NewAttemptObserver(nil, nil, nil, nil)
-		_ = obs.Complete(out, nil)
+		// fatal 不计额外冷却（SDK 回调已上报失效）：观测无 health，仅 quality+flow。
+		p.observeDispatchOutcome(r.Context(), out, nil)
 		msg := domain.TruncateErrMsg(dialErr.Error())
 		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 0, domain.ErrNetwork, usageTuple{}, start))
 		l.ErrorMessage = &msg
@@ -140,10 +140,10 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 	case code >= 400 && code < 500:
 		// 4xx 确定性拒绝不转移，走规则引擎仅 CustomMessage 生效
 		em := domain.TruncateErrMsg(msg)
-		base := wsDispatchedBase(sel, reqModel, start)
+		base := mergeDispatchBase(r.Context(), wsDispatchedBase(sel, reqModel, start))
 		out := wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
-		obs := NewAttemptObserver(nil, nil, nil, nil)
-		_ = obs.Complete(out, nil)
+		// 观测归 owner（quality+flow 恰一次）；冷却仍由下方 Classify→MarkResult 单点负责。
+		p.observeDispatchOutcome(r.Context(), out, nil)
 		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, code, domain.Err4xx, usageTuple{}, start))
 		if em != "" {
 			l.ErrorMessage = &em

@@ -88,8 +88,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
 		// 观测器恰好一次归属：后续分支仅走 Cancel 或 Complete 之一
-		base := responsesBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, tt, cr, cc, img)
-		obs := responsesObserver(p, sel)
+		base := mergeDispatchBase(ctx, responsesBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, tt, cr, cc, img))
 		if err != nil {
 			// 客户端取消 vs 上游停滞：Canceled 为客户端断开，DeadlineExceeded 为上游超时，后者走失败分支
 			if errors.Is(err, context.Canceled) {
@@ -100,7 +99,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				out.HTTPStatus = 0
 				out.Terminal = true
 				out.BusinessFrameSent = true
-				_ = obs.Cancel(out)
+				p.observeDispatchOutcome(ctx, out, nil)
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 				return 0, nil, true, nil
 			}
@@ -112,7 +111,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			out.Terminal = true
 			out.BusinessFrameSent = true
 			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(statusOf(err)), ErrorMessage: err.Error()}
-			_ = obs.Complete(out, health)
+			p.observeDispatchOutcome(ctx, out, health)
 			if p.log != nil {
 				p.log.Warn("upstream stream aborted", logx.String("request_id", reqID))
 			}
@@ -126,7 +125,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		out.Terminal = true
 		out.BusinessFrameSent = true
 		health := &AttemptHealthEvent{Kind: rule.KindOK}
-		_ = obs.Complete(out, health)
+		p.observeDispatchOutcome(ctx, out, health)
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 		return 200, nil, true, nil
 	}
@@ -165,8 +164,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	if respImageDetectOn(sel) {
 		img = respImageCountBody([]byte(resp.RawJSON()))
 	}
-	base := responsesBaseOutcome(reqID, groupID, sel, string(reqModel), start, nil, it, ot, tt, cr, cc, img)
-	obs := responsesObserver(p, sel) // 恰好一次 Complete 归属，本地释放由观测器兜底
+	base := mergeDispatchBase(ctx, responsesBaseOutcome(reqID, groupID, sel, string(reqModel), start, nil, it, ot, tt, cr, cc, img))
 	out := base
 	out.Result = ResultSuccess
 	out.HTTPStatus = 200
@@ -174,7 +172,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	out.Terminal = true
 	out.BusinessFrameSent = true
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
-	_ = obs.Complete(out, health)
+	p.observeDispatchOutcome(ctx, out, health)
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, string(reqModel), sel.LogMappedModel(string(reqModel)), domain.FormatOpenAIResponses, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 	return 200, nil, true, nil
 }
@@ -194,15 +192,4 @@ func responsesBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection,
 		Timing: AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft},
 		Usage:  AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img},
 	}
-}
-
-// responsesObserver 构造恰好一次的观测器：Complete 负责健康与释放，Cancel 仅释放
-func responsesObserver(p *Proxy, sel *scheduler.Selection) *AttemptObserver {
-	return NewAttemptObserver(nil,
-		func(o AttemptOutcome, e AttemptHealthEvent) {
-			p.sched.MarkResult(o.AccountID, e.Kind, nil, int(o.HTTPStatus), e.ErrorMessage, o.MappedModel)
-		},
-		func(o AttemptOutcome) {},
-		func() { sel.Release() },
-	)
 }

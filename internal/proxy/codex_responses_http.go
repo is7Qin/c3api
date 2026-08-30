@@ -33,8 +33,6 @@ import (
 // 路径同款）。
 var errCodexResponsesNotIntegrated = &formatError{status: http.StatusNotImplemented, msg: "codex responses unavailable (adapter not wired)"}
 
-var codexOutcomeCapture func(AttemptOutcome)
-
 func codexDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start time.Time, usage usageTuple, ttft *int64) AttemptOutcome {
 	fp := "fp1"
 	if sel != nil && sel.CandidateFingerprint != "" {
@@ -75,7 +73,7 @@ func codexDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start t
 	}
 }
 
-func emitCodexOutcome(p *Proxy, sel *scheduler.Selection, o AttemptOutcome, healthKind rule.Kind, healthMsg string) {
+func emitCodexOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o AttemptOutcome, healthKind rule.Kind, healthMsg string) {
 	if sel == nil {
 		return
 	}
@@ -89,25 +87,7 @@ func emitCodexOutcome(p *Proxy, sel *scheduler.Selection, o AttemptOutcome, heal
 	if o.Result == ResultClientCancel {
 		health = nil
 	}
-	markHealth := func(out AttemptOutcome, ev AttemptHealthEvent) {
-		if p.sched != nil {
-			p.sched.MarkResult(out.AccountID, ev.Kind, ev.ResetAt, int(out.HTTPStatus), ev.ErrorMessage, out.MappedModel)
-		}
-	}
-	appendFlow := func(out AttemptOutcome) {
-		if codexOutcomeCapture != nil {
-			codexOutcomeCapture(out)
-		}
-	}
-	release := func() {
-		sel.Release()
-	}
-	observer := NewAttemptObserver(nil, markHealth, appendFlow, release)
-	if o.Result == ResultClientCancel {
-		_ = observer.Cancel(o)
-	} else {
-		_ = observer.Complete(o, health)
-	}
+	p.observeDispatchOutcome(ctx, o, health)
 }
 
 // callCodexResponses codex-oauth/codex-pat 类型 resp 调用：非流式 →
@@ -131,13 +111,14 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 	reqModel := gjson.GetBytes(body, "model").String()
 	if p.codex == nil {
 		// 适配层未装配（SetCodex 未调用）：显式 501（防 nil 误走凭据缺失 502）。
-		o := codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil)
+		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil))
 		o.Result = ResultFailed
 		o.HTTPStatus = AttemptStatus(http.StatusNotImplemented)
 		o.Commit = CommitUpstreamResponded
 		o.Terminal = true
 		o.BusinessFrameSent = false
-		emitCodexOutcome(p, sel, o, rule.Kind5xx, errCodexResponsesNotIntegrated.msg)
+		emitCodexOutcome(ctx, p, sel, o, rule.Kind5xx, errCodexResponsesNotIntegrated.msg)
+		sel.Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexResponsesNotIntegrated.msg)
 		writeErr(w, errCodexResponsesNotIntegrated)
 		return 0, nil, true, nil
@@ -257,13 +238,13 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 		img = respImageCountBody(resp.Raw)
 	}
 	ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-	o := codexDispatchBase(sel, reqModel, reqID, start, ut, nil)
+	o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, nil))
 	o.Result = ResultSuccess
 	o.HTTPStatus = AttemptStatus(http.StatusOK)
 	o.Commit = CommitResponseStarted
 	o.BusinessFrameSent = true
 	o.Terminal = true
-	emitCodexOutcome(p, sel, o, rule.KindOK, "")
+	emitCodexOutcome(ctx, p, sel, o, rule.KindOK, "")
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }
@@ -343,13 +324,13 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		if r.Context().Err() != nil {
 			if framesWritten {
 				ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-				o := codexDispatchBase(sel, reqModel, reqID, start, ut, ttft)
+				o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 				o.Result = ResultClientCancel
 				o.HTTPStatus = 0
 				o.Commit = CommitResponseStarted
 				o.BusinessFrameSent = true
 				o.Terminal = true
-				emitCodexOutcome(p, sel, o, 0, "")
+				emitCodexOutcome(ctx, p, sel, o, 0, "")
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, ut, start)))
 				return 0, nil, true, nil
 			}
@@ -368,13 +349,13 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		// 上游停滞/错误（流中止）：200 已写出——recordStreamAbort + 连接级/5xx 分流
 		// 中途失败为已发送业务帧后的网络中断，记为 ResponseStarted 的失败 outcome，保留健康观测。
 		ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-		o := codexDispatchBase(sel, reqModel, reqID, start, ut, ttft)
+		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 		o.Result = ResultFailed
 		o.HTTPStatus = 0
 		o.Commit = CommitResponseStarted
 		o.BusinessFrameSent = true
 		o.Terminal = true
-		emitCodexOutcome(p, sel, o, rule.KindNetwork, err.Error())
+		emitCodexOutcome(ctx, p, sel, o, rule.KindNetwork, err.Error())
 		p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, err)
 		return 0, nil, true, nil
 	}
@@ -401,24 +382,24 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 	}
 	if err := writeCodexSSEFrame(w, sseDonePayload); err != nil {
 		ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-		o := codexDispatchBase(sel, reqModel, reqID, start, ut, ttft)
+		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 		o.Result = ResultClientCancel
 		o.HTTPStatus = 0
 		o.Commit = CommitResponseStarted
 		o.BusinessFrameSent = true
 		o.Terminal = true
-		emitCodexOutcome(p, sel, o, 0, "")
+		emitCodexOutcome(ctx, p, sel, o, 0, "")
 		p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, ut, start)))
 		return 0, nil, true, nil
 	}
 	ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-	o := codexDispatchBase(sel, reqModel, reqID, start, ut, ttft)
+	o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 	o.Result = ResultSuccess
 	o.HTTPStatus = AttemptStatus(http.StatusOK)
 	o.Commit = CommitClientCommitted
 	o.BusinessFrameSent = true
 	o.Terminal = true
-	emitCodexOutcome(p, sel, o, rule.KindOK, "")
+	emitCodexOutcome(ctx, p, sel, o, rule.KindOK, "")
 	p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }
