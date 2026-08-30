@@ -87,7 +87,7 @@ func TestAdminAndAIHandlersCoexist(t *testing.T) {
 	ai := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpface.WriteJSON(w, http.StatusOK, map[string]any{"handler": "ai", "path": r.URL.Path})
 	})
-	s := NewServer(Options{AdminToken: "tok", AdminHandler: admin, AIHandler: ai})
+	s := NewServer(Options{AdminToken: "tok", MaxInflight: 1024, AdminHandler: admin, AIHandler: ai})
 
 	for _, tc := range []struct {
 		path, auth, wantHandler string
@@ -191,6 +191,19 @@ func TestInflightLimiterRejects(t *testing.T) {
 	close(release)
 	require.Equal(t, http.StatusOK, <-firstDone)
 	require.Zero(t, s.inflight.Load())
+}
+
+// 契约回归（b881526）：server 包不再有 MaxInflight==0 → 50000 兜底——归一
+// 唯一归 config.EffectiveMaxInflight（cmd/server 装配时传入 effective 值）。
+// Options 零值 = AI 组全拒 429，测试 fixture 必须显式设值（见本文件其余用例）。
+func TestZeroMaxInflightDeniesAllNoFallback(t *testing.T) {
+	ai := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	s := NewServer(Options{AdminToken: "tok", AIHandler: ai})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, "0 = deny-all（兜底已删，回归即 fallback 复活）")
+	require.Zero(t, s.inflight.Load(), "拒绝路径不得泄漏计数")
 }
 
 // --- Phase 3a：/admin 鉴权扩展（静态 token OR platform_admin JWT）+ /user 挂载 ---
@@ -404,7 +417,7 @@ func TestWSUpgradeThroughMiddlewareChain(t *testing.T) {
 		}
 		_ = conn.Write(context.Background(), typ, msg)
 	})
-	s := NewServer(Options{AdminToken: "tok", AIHandler: ai})
+	s := NewServer(Options{AdminToken: "tok", MaxInflight: 1024, AIHandler: ai})
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
@@ -500,7 +513,7 @@ func TestRecovererUnwrittenHeaders(t *testing.T) {
 	ai := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("boom before headers")
 	})
-	s := NewServer(Options{AdminToken: "tok", AIHandler: ai})
+	s := NewServer(Options{AdminToken: "tok", MaxInflight: 1024, AIHandler: ai})
 	req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -519,7 +532,7 @@ func TestRecovererSSENotPolluted(t *testing.T) {
 		}
 		panic("sse panic after headers")
 	})
-	s := NewServer(Options{AdminToken: "tok", AIHandler: ai})
+	s := NewServer(Options{AdminToken: "tok", MaxInflight: 1024, AIHandler: ai})
 	req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -540,7 +553,7 @@ func TestRecovererSSEConnectionClosed(t *testing.T) {
 		}
 		panic("sse panic after headers")
 	})
-	s := NewServer(Options{AdminToken: "tok", AIHandler: ai})
+	s := NewServer(Options{AdminToken: "tok", MaxInflight: 1024, AIHandler: ai})
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
