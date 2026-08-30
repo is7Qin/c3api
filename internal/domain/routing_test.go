@@ -95,6 +95,29 @@ func TestRoutingFingerprintInvalidation(t *testing.T) {
 	require.Error(t, err, "empty effectiveBaseURL must be rejected")
 }
 
+// TestRoutingFingerprintCodexEmptyBaseURL（blocker：codex 凭据 base_url 合法
+// 为空——数据面 URL 归 SDK 官方默认所有，accountcred.go 契约）：SDK 托管类型
+// （codex-oauth/codex-pat）空 base_url 必须可产出 canonical fingerprint，凭据
+// 身份由 PAT/OAuth 身份输入承载；api_key 族空 base_url 仍拒绝（静态账号无
+// base_url = 不可路由）。空 base_url 下 fingerprint 仍随凭据输入变化（fencing
+// 权威不降级）；空/非空两条产线互不串扰。
+func TestRoutingFingerprintCodexEmptyBaseURL(t *testing.T) {
+	fpPAT, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "", "", "pat_abc", "", "", false, "", "", "", "")
+	require.NoError(t, err, "codex-pat with empty base_url must fingerprint")
+	require.NotEmpty(t, CandidateFPHex(fpPAT))
+	fpOAuth, err := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "", "", "", "user@example.com", "acc-123", false, "i", "s", "t", "w")
+	require.NoError(t, err, "codex-oauth with empty base_url must fingerprint")
+	require.NotEmpty(t, CandidateFPHex(fpOAuth))
+	// PAT 轮换 → fingerprint 变化（fencing 权威要求）。
+	fpPAT2, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "", "", "pat-two", "", "", false, "", "", "", "")
+	require.NoError(t, err)
+	require.NotEqual(t, fpPAT, fpPAT2, "pat change must change fingerprint")
+	// 空与非空 base_url 产线两条路径互不串扰。
+	fpPATWithBase, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "https://api.openai.com", "", "pat_abc", "", "", false, "", "", "", "")
+	require.NoError(t, err)
+	require.NotEqual(t, fpPAT, fpPATWithBase, "base_url presence must change fingerprint")
+}
+
 func TestRoutingFingerprintCredentialStability(t *testing.T) {
 	fp1, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "i", "s", "t", "w")
 	fp2, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "other@example.com", "acc-123", false, "i", "s", "t", "w")

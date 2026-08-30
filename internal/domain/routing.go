@@ -277,11 +277,23 @@ func CandidateFingerprint(
 		return CandidateFingerprintVal{}, fmt.Errorf("routing: invalid credential_type %q", credType)
 	}
 	if effectiveBaseURL == "" {
-		return CandidateFingerprintVal{}, fmt.Errorf("routing: effectiveBaseURL must not be empty")
+		// codex 凭据 base_url 合法为空：数据面 URL 归 SDK 官方默认所有
+		//（accountcred.go 契约），凭据身份由 PAT/OAuth 身份输入承载（均入
+		// digest）——空 base_url 拒绝只适用于静态路由族（api_key 无
+		// base_url = 不可路由）。
+		switch credType {
+		case credential.TypeCodexOAuth, credential.TypeCodexPAT:
+		default:
+			return CandidateFingerprintVal{}, fmt.Errorf("routing: effectiveBaseURL must not be empty")
+		}
 	}
-	canonicalOrigin, err := CanonicalOrigin(effectiveBaseURL)
-	if err != nil {
-		return CandidateFingerprintVal{}, err
+	var canonicalOrigin string
+	if effectiveBaseURL != "" {
+		var err error
+		canonicalOrigin, err = CanonicalOrigin(effectiveBaseURL)
+		if err != nil {
+			return CandidateFingerprintVal{}, err
+		}
 	}
 	digest, err := stableCredentialDigest(credType, upstreamKey, patKey)
 	if err != nil {
