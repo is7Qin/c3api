@@ -32,6 +32,10 @@ var (
 	retryBackoff    = 100 * time.Millisecond
 	retryMaxBackoff = 5 * time.Second
 	retryShutdown   bool
+	// retryWG 跟踪在途 backoff 重投 goroutine：Close join 主循环后还要等它
+	// 归零（Close ⇒ 无存活 retry goroutine——重投体对 ctx 取消即时响应，
+	// 等待近瞬时；预算耗尽按 ctx.Err() 返回由调用方 Warn）。
+	retryWG sync.WaitGroup
 )
 
 func ensureFailureRetryWorker() {
@@ -102,11 +106,13 @@ func requeueWithBackoff(task failureRetryTask) {
 	backoff := backoffForAttempts(task.attempts)
 	retryMu.Unlock()
 	task.attempts++
-	go func(t failureRetryTask, d time.Duration, q chan failureRetryTask, ctx context.Context) {
+	retryWG.Add(1)
+	worker.GoRecover("sdk-failure-retry-backoff", retryLog, func() {
+		defer retryWG.Done()
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(d):
+		case <-time.After(backoff):
 		}
 		retryMu.Lock()
 		if retryShutdown {
@@ -117,23 +123,19 @@ func requeueWithBackoff(task failureRetryTask) {
 			retryMu.Unlock()
 			return
 		}
-		if retryQueue != q {
-			retryMu.Unlock()
-			return
-		}
 		curQ := retryQueue
 		retryMu.Unlock()
 		if curQ == nil {
 			return
 		}
 		select {
-		case curQ <- t:
+		case curQ <- task:
 		default:
-			if t.deps.Log != nil {
-				t.deps.Log.Warn("sdk failure retry queue full on requeue, dropping", logx.Int64("account_id", t.accountID))
+			if task.deps.Log != nil {
+				task.deps.Log.Warn("sdk failure retry queue full on requeue, dropping", logx.Int64("account_id", task.accountID))
 			}
 		}
-	}(task, backoff, q, ctx)
+	})
 }
 
 func backoffForAttempts(attempts int) time.Duration {
@@ -242,14 +244,6 @@ func handleRetryOnce(ctx context.Context, task failureRetryTask) bool {
 	return true
 }
 
-func nextBackoff(cur time.Duration) time.Duration {
-	n := cur * 2
-	if n > retryMaxBackoff {
-		return retryMaxBackoff
-	}
-	return n
-}
-
 // ShutdownFailureRetry stops retries for process shutdown; no retry after shutdown.
 func ShutdownFailureRetry() {
 	retryMu.Lock()
@@ -257,6 +251,61 @@ func ShutdownFailureRetry() {
 	retryShutdown = true
 	if retryCancel != nil {
 		retryCancel()
+	}
+}
+
+// FailureRetryWorker adapts the process-lifetime SDK failure retry loop to the
+// managed worker contract (Name/Start/Close)：main 注册进 ordered workers，
+// Manager 反向排空时 Close 先于 Redis/client 释放执行并 join 循环——修掉
+// 旧状态"惰性起循环、永不 join"的脱管生命周期。单次生命周期契约与 worker
+// Manager 一致（Close 后 retryShutdown 恒置位，Start 不复活）。
+type FailureRetryWorker struct{ log *logx.Logger }
+
+// NewFailureRetryWorker constructs the adapter; log feeds the supervised loop.
+func NewFailureRetryWorker(log *logx.Logger) *FailureRetryWorker {
+	return &FailureRetryWorker{log: log}
+}
+
+// Name satisfies worker.Worker.
+func (w *FailureRetryWorker) Name() string { return "sdk-failure-retry" }
+
+// Start eagerly owns the retry loop (same lazy path reused as ensure — idempotent).
+func (w *FailureRetryWorker) Start(context.Context) error {
+	retryMu.Lock()
+	if !retryShutdown {
+		retryLog = w.log
+	}
+	retryMu.Unlock()
+	ensureFailureRetryWorker()
+	return nil
+}
+
+// Close shuts the retry worker down and joins the loop plus all in-flight
+// backoff requeue goroutines before returning (bounded by ctx; budget
+// exhaustion returns ctx.Err()). 重投体对 retryCancel 即时响应，等待近瞬时：
+// Close 返回 ⇒ 无存活 retry goroutine，无 Redis/PG use-after-close 窗口。
+func (w *FailureRetryWorker) Close(ctx context.Context) error {
+	ShutdownFailureRetry()
+	retryMu.Lock()
+	done := retryDone
+	retryMu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	wgDone := make(chan struct{})
+	worker.GoRecover("sdk-failure-retry-wait", w.log, func() {
+		retryWG.Wait()
+		close(wgDone)
+	})
+	select {
+	case <-wgDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -275,6 +324,9 @@ func ResetFailureRetryForTest() {
 		case <-time.After(2 * time.Second):
 		}
 	}
+	// backoff 重投 goroutine 对上方 retryCancel 即时响应——排空后再复位状态，
+	// 防旧 goroutine 写回新代 queue。
+	retryWG.Wait()
 	retryMu.Lock()
 	defer retryMu.Unlock()
 	retryShutdown = false

@@ -176,6 +176,8 @@ func newCodexAccountForRetry(id int64, rev int64) *domain.Account {
 
 func TestFailureRetry_NonblockingAndProcessLifetime(t *testing.T) {
 	ResetFailureRetryForTest()
+	oldBackoff, oldMax := retryBackoff, retryMaxBackoff
+	defer func() { retryBackoff, retryMaxBackoff = oldBackoff, oldMax }()
 	retryBackoff = 10 * time.Millisecond
 	retryMaxBackoff = 20 * time.Millisecond
 	store := &retryFakeStore{
@@ -211,6 +213,8 @@ func TestFailureRetry_NonblockingAndProcessLifetime(t *testing.T) {
 
 func TestFailureRetry_NoRetryAfterShutdown(t *testing.T) {
 	ResetFailureRetryForTest()
+	oldBackoff := retryBackoff
+	defer func() { retryBackoff = oldBackoff }()
 	retryBackoff = 10 * time.Millisecond
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: newCodexAccountForRetry(7, 1)},
