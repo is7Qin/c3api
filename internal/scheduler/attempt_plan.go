@@ -4,7 +4,6 @@ package scheduler
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -19,6 +18,10 @@ type AttemptPlanIdentity struct {
 	UserID            int64
 	RouteClassID      string
 	RoutingGeneration uint64
+	// MaxAttempts bounds successful dispatches (1..8). 0 means unset and
+	// falls back to the array bound MaxAttemptPlanAccounts; values >8 clamp
+	// to 8. The proxy stamps its normalized proxy.failover_attempts here.
+	MaxAttempts uint8
 }
 
 type AttemptLane string
@@ -135,20 +138,6 @@ type attemptPlanCandidate struct {
 	routingGeneration uint64
 }
 
-type AttemptPlan struct {
-	identity       AttemptPlanIdentity
-	format         string
-	model          string
-	candidates     [MaxAttemptPlanAccounts]attemptPlanCandidate
-	candidateCount uint8
-	cursor         uint8
-	attempted      [MaxAttemptPlanAccounts]int64
-	attemptIDs     [MaxAttemptPlanAccounts]string
-	attempts       [MaxAttemptPlanAccounts]Attempt
-	attemptedCount uint8
-	ordinal        uint8
-}
-
 const fnvOffset64 = 14695981039346656037
 const fnvPrime64 = 1099511628211
 
@@ -173,120 +162,4 @@ func ExploreHash(label, requestID string, userID int64, routeClassID string, gen
 
 func exploreHashForPlan(identity AttemptPlanIdentity, ordinal uint8) uint64 {
 	return ExploreHash("explore", identity.RequestID, identity.UserID, identity.RouteClassID, identity.RoutingGeneration, ordinal)
-}
-
-func NewAttemptPlan(identity AttemptPlanIdentity, decision RouteDecision) *AttemptPlan {
-	p := &AttemptPlan{identity: identity}
-	for _, accountID := range decision.Primary {
-		p.addCandidate(accountID, AttemptLanePrimary)
-	}
-	if len(decision.Explore.IDs) > 0 && decision.Explore.Total > 0 && len(decision.Explore.Cumulative) == len(decision.Explore.IDs) {
-		hash := exploreHashForPlan(identity, 0)
-		ticket := hash % decision.Explore.Total
-		idx := sort.Search(len(decision.Explore.Cumulative), func(i int) bool {
-			return decision.Explore.Cumulative[i] > ticket
-		})
-		if idx >= 0 && idx < len(decision.Explore.IDs) {
-			p.addCandidate(decision.Explore.IDs[idx], AttemptLaneExplore)
-		}
-		for _, accountID := range decision.Explore.Fallback {
-			p.addCandidate(accountID, AttemptLaneExplore)
-		}
-	} else {
-		if len(decision.Explore.IDs) > 0 {
-			p.addCandidate(decision.Explore.IDs[0], AttemptLaneExplore)
-		}
-		for _, accountID := range decision.Explore.Fallback {
-			p.addCandidate(accountID, AttemptLaneExplore)
-		}
-	}
-	for _, accountID := range decision.Degraded {
-		p.addCandidate(accountID, AttemptLaneDegraded)
-	}
-	return p
-}
-
-func (p *AttemptPlan) Identity() AttemptPlanIdentity { return p.identity }
-
-func (p *AttemptPlan) CurrentAttempt() (Attempt, bool) {
-	if p == nil || p.attemptedCount == 0 {
-		return Attempt{}, false
-	}
-	return p.attempts[p.attemptedCount-1], true
-}
-
-func (p *AttemptPlan) Reserve(reserve AttemptReservation) (Attempt, error) {
-	return p.reserve(func(candidate attemptPlanCandidate) bool {
-		return reserve(candidate.accountID)
-	})
-}
-
-func (p *AttemptPlan) reserve(reserve func(attemptPlanCandidate) bool) (Attempt, error) {
-	if p.candidateCount == 0 {
-		return Attempt{}, ErrNoAvailable
-	}
-	for p.cursor < p.candidateCount {
-		candidate := p.candidates[p.cursor]
-		p.cursor++
-		if !reserve(candidate) {
-			continue
-		}
-		ordinal := p.ordinal + 1
-		var attemptID string
-		if p.identity.RequestID != "" {
-			attemptID = fmt.Sprintf("%s:%d", p.identity.RequestID, ordinal)
-		} else {
-			attemptID = fmt.Sprintf("attempt-%d", ordinal)
-		}
-		var prev *string
-		var prevAccount *int64
-		if p.ordinal > 0 && p.attemptedCount > 0 {
-			prevCopy := p.attemptIDs[p.attemptedCount-1]
-			prev = &prevCopy
-			accountCopy := p.attempted[p.attemptedCount-1]
-			prevAccount = &accountCopy
-		}
-		p.attempted[p.attemptedCount] = candidate.accountID
-		p.attemptIDs[p.attemptedCount] = attemptID
-		p.ordinal = ordinal
-		attempt := Attempt{
-			AttemptID:            attemptID,
-			RouteClassID:         candidate.routeClassID,
-			QualityClassID:       candidate.quality,
-			CandidateFingerprint: candidate.fingerprint,
-			TemplateID:           candidate.templateID,
-			AccountID:            candidate.accountID,
-			RequestedModel:       candidate.requestedModel,
-			MappedModel:          candidate.mappedModel,
-			Lane:                 candidate.lane,
-			Ordinal:              ordinal,
-			RoutingGeneration:    candidate.routingGeneration,
-			LifecycleRevision:    candidate.lifecycleRevision,
-			PreviousAttemptID:    prev,
-			PreviousAccountID:    prevAccount,
-			CallerCategory:       candidate.callerCategory,
-			OperationTag:         candidate.operationTag,
-		}
-		p.attempts[p.attemptedCount] = attempt
-		p.attemptedCount++
-		return attempt, nil
-	}
-	return Attempt{}, ErrAttemptsExhausted
-}
-
-func (p *AttemptPlan) addCandidate(accountID int64, lane AttemptLane) {
-	if p.candidateCount == MaxAttemptPlanAccounts || p.contains(accountID) {
-		return
-	}
-	p.candidates[p.candidateCount] = attemptPlanCandidate{accountID: accountID, lane: lane}
-	p.candidateCount++
-}
-
-func (p *AttemptPlan) contains(accountID int64) bool {
-	for i := uint8(0); i < p.candidateCount; i++ {
-		if p.candidates[i].accountID == accountID {
-			return true
-		}
-	}
-	return false
 }

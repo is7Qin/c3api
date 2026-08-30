@@ -50,7 +50,10 @@ func TestAttemptPlan_reservesInLaneOrderAndAdvancesOrdinalOnlyOnSuccess(t *testi
 	require.Equal(t, uint8(2), second.Ordinal)
 }
 
-func TestAttemptPlan_skipsDuplicatesAndCapsAtEightAccounts(t *testing.T) {
+// The hot prefix caps at 8 materialized candidates, but the plan keeps the
+// complete unique overflow tail: every unique lane account is consulted
+// before exhaustion (truncation would fake an early AttemptsExhausted).
+func TestAttemptPlan_skipsDuplicatesAndKeepsCompleteUniqueTail(t *testing.T) {
 	plan := NewAttemptPlan(AttemptPlanIdentity{}, RouteDecision{
 		Primary:  []int64{1, 1, 2, 2, 3, 4, 5, 6, 7},
 		Degraded: []int64{8, 9},
@@ -70,7 +73,7 @@ func TestAttemptPlan_skipsDuplicatesAndCapsAtEightAccounts(t *testing.T) {
 		require.Zero(t, attempt)
 	}
 
-	require.Equal(t, []int64{1, 2, 3, 4, 5, 6, 7, 8}, got)
+	require.Equal(t, []int64{1, 2, 3, 4, 5, 6, 7, 8, 10, 9}, got)
 }
 
 func TestAttemptPlan_distinguishesNoAvailableFromAttemptsExhausted(t *testing.T) {

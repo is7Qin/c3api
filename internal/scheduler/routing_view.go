@@ -304,3 +304,19 @@ func (p *routingPublisher) publishWithBase(baseGen uint64, build func(cur *Routi
 }
 
 var _ = atomic.Pointer[RoutingView]{}
+
+// PublishDecisionForTest merges one compiled route decision into the current
+// view through the single routingPublisher. Test seam for selector/failover
+// execution (cross-package); production publish goes through the compile lane.
+func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecision) {
+	s.publisher.publishWithBase(s.gen.Load(), func(cur *RoutingView) *DecisionView {
+		routes := make(map[RouteRef]*RouteDecision)
+		if cur != nil && cur.decision != nil {
+			for k, v := range cur.decision.routes {
+				routes[k] = v
+			}
+		}
+		routes[route] = decision
+		return &DecisionView{routes: routes}
+	})
+}
