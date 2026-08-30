@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
-	"strings"
 	"time"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -442,21 +441,7 @@ func (r *PartitionRepo) QueryQualityRow(ctx context.Context, instanceSrc string,
 	copy(out.QualityClassID[:], qc)
 	copy(out.CandidateFingerprint[:], fp)
 	out.BucketMinute = bucketOut
-	if histText != "" {
-		trim := histText
-		if len(trim) >= 2 && trim[0] == '{' && trim[len(trim)-1] == '}' {
-			trim = trim[1 : len(trim)-1]
-			if trim != "" {
-				parts := strings.Split(trim, ",")
-				out.TTFTHist = make([]int64, len(parts))
-				for i, p := range parts {
-					var v int64
-					fmt.Sscanf(strings.TrimSpace(p), "%d", &v)
-					out.TTFTHist[i] = v
-				}
-			}
-		}
-	}
+	out.TTFTHist = parseRoutingHist(histText)
 	return &out, nil
 }
 
