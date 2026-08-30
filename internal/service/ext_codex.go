@@ -217,13 +217,18 @@ func fillIdentityDefaults(e *domain.AccountExt, cur *domain.AccountExt) {
 // ≠ 存量 thread → 400（B1-3 方向 2：派生值不得冒充显式值改身份）。
 // 身份四元组自动管理：无存量行 → NewCodexIdentity() 生成四元组并经
 // TryInsert（ON CONFLICT DO NOTHING 先写者胜）原子首写——并发双导入同一账号
-// 不覆盖不报错，冲突方完全采用赢者身份后走普通 upsert 写令牌（B1-3 方向 3：
+// 不覆盖不报错，冲突方完全采用赢者身份后走围栏 CAS 写令牌（B1-3 方向 3：
 // 显式身份只在首写成功路径生效）；后续写入缺省 → 沿用存量（持久复用，账号
 // 存在期间稳定）；调用方显式提供 → 采用。email 不在缺省沿用面——未提供 →
 // NULL 清空（B1-5 契约）。
 // 校验先于落库（B1-2）：window 派生 + 列组校验在 TryInsert 之前——被拒凭据
 // 零残留（400 前不写库；含 NULL window 问题同步消除）；终校验保留（冲突路径
 // 重改 e 后，早校验覆盖不到）。
+// 围栏写（d401b71）：终写必经 AdminUpsertAccountExtCAS（revision 原子递增，
+// 无绕围栏面、无双增）。并发首写参与者全部预读同一 revision——围栏过期 ≠
+// 内容冲突：CAS 败者重读最新 revision 与持久身份（漂移则再采用，恒单一完整
+// 四元组）后重试 CAS，并发首写永不返回 conflict；revision 未推进的 conflict
+// 原样上抛（非竞态冲突不重试，兼作活锁守卫）。
 // W1 不接线失效/发布。
 func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
 	acc, err := s.store.GetAccount(ctx, e.AccountID)
@@ -239,6 +244,7 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if tpl.CredentialType != e.CredentialType {
 		return nil, ErrInvalidInput // 父行（模板）类型与 ext 行类型必须一致
 	}
+	orig := *e // 首写冲突回退用（丢弃本请求生成的未用身份，回到显式输入）
 	cur, err := s.store.GetAccountExt(ctx, e.AccountID)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, mapRepoErr(err) // 非缺行错误原样上抛（不误判为首次写入）
@@ -273,6 +279,24 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 		if err := validateAccountExt(e); err != nil {
 			return nil, err
 		}
+		// 首写原子性（I2）：ON CONFLICT DO NOTHING 先写者胜——冲突（并发已
+		// 首写）→ 回读赢者完全采用其身份（B1-3 方向 3：显式身份只在首写成功
+		// 路径生效——败者派生值不得覆盖赢者，最终身份确定）
+		inserted, ierr := s.store.TryInsertAccountExt(ctx, e)
+		if ierr != nil {
+			return nil, mapRepoErr(ierr)
+		}
+		if !inserted {
+			winner, gerr := s.store.GetAccountExt(ctx, e.AccountID)
+			if gerr != nil {
+				return nil, mapRepoErr(gerr)
+			}
+			*e = orig
+			e.CodexIdentity = winner.CodexIdentity // 完全采用赢者身份（单一完整四元组）
+			if e.CodexEmail == nil {
+				e.CodexEmail = winner.CodexEmail // 未提供 email → 沿用赢者（管理标识随首写者）
+			}
+		}
 	}
 	// window 恒 {thread}:0——thread 定后兜底派生（永不沿用旧 window）
 	if e.CodexIdentity != nil && e.CodexIdentity.ThreadID != "" && e.CodexIdentity.WindowID == "" {
@@ -282,9 +306,34 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if err := validateAccountExt(e); err != nil {
 		return nil, err
 	}
-	saved, err := s.store.AdminUpsertAccountExtCAS(ctx, e, expectedRevision)
-	if err != nil {
-		return nil, mapRepoErr(err)
+	// 围栏写：CAS revision 原子递增（身份已在 TryInsert 仲裁下定型，重试
+	// 永不改身份来源——只换围栏令牌）。并发首写参与者全部预读同一 revision，
+	// 先 CAS 者胜出、其余 stale——败者重读最新 revision 与持久行（身份漂移
+	// 则完全再采用，防混搭）后重试，并发首写永不返回 conflict。revision 未
+	// 推进的 conflict 非竞态（活锁守卫），原样上抛。
+	rev := expectedRevision
+	for {
+		saved, werr := s.store.AdminUpsertAccountExtCAS(ctx, e, rev)
+		if werr == nil {
+			return saved, nil
+		}
+		if !errors.Is(werr, repository.ErrConflict) {
+			return nil, mapRepoErr(werr)
+		}
+		fresh, gerr := s.store.GetAccount(ctx, e.AccountID)
+		if gerr != nil {
+			return nil, mapRepoErr(gerr)
+		}
+		if fresh.LifecycleRevision <= rev {
+			return nil, mapRepoErr(werr) // 围栏未推进：非并发首写竞态，conflict 原样上抛
+		}
+		rev = fresh.LifecycleRevision
+		row, rerr := s.store.GetAccountExt(ctx, e.AccountID)
+		if rerr != nil && !errors.Is(rerr, repository.ErrNotFound) {
+			return nil, mapRepoErr(rerr)
+		}
+		if rerr == nil && row.CodexIdentity != nil && *row.CodexIdentity != *e.CodexIdentity {
+			e.CodexIdentity = row.CodexIdentity // 持久身份已漂移 → 完全采用（恒单一完整四元组）
+		}
 	}
-	return saved, nil
 }
