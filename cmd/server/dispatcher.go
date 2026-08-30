@@ -120,10 +120,7 @@ func (d *dispatcher) reloadScopes(ctx context.Context, scopes ...string) {
 		return
 	}
 	for name, err := range d.snapshots.Reload(ctx, scopes...) {
-		if d.log != nil {
-			d.log.Warn("snapshot scope reload failed",
-				logx.String("snapshot", name), logx.Error(err))
-		}
+		logSnapshotReloadErr(d.log, "snapshot scope reload failed", name, err)
 	}
 }
 
@@ -150,7 +147,10 @@ func (d *dispatcher) FullRefresh(ctx context.Context) error {
 		}
 	}
 	if d.snapshots != nil {
-		for _, err := range d.snapshots.ReloadAll(ctx) {
+		// 逐项先记录（helper 带 panic stack 诊断），再保持现有首错返回语义——
+		// 多 snapshot 失败诊断不因首错选择丢失。
+		for name, err := range d.snapshots.ReloadAll(ctx) {
+			logSnapshotReloadErr(d.log, "snapshot reload failed", name, err)
 			record(err)
 		}
 	}

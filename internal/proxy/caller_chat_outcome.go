@@ -115,7 +115,7 @@ func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, s
 	if outcome.Timing.TTFTMS != nil {
 		ctx = context.WithValue(ctx, ctxKeyTTFT{}, outcome.Timing.TTFTMS)
 	}
-	l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIChat, status, et, u, start))
+	l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIChat, status, et, u, start))
 	p.applyBilling(l)
 	p.auth.DeductQuota(l.KeyID, l.TotalTokens)
 	if p.cfg.UsageCapture {

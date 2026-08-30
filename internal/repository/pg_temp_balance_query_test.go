@@ -39,7 +39,7 @@ func seedPGTempBalanceRows(t *testing.T, repos *repository.Repository, userID in
 // TestPGListUserTempBalances 用户侧有效过滤：过期/用尽（amount=0）/负扣减行
 // 隐藏，永久（expires_at NULL）保留；FEFO 排序（不同到期升序 + 永久最后）。
 func TestPGListUserTempBalances(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "tb@example.com")
 
@@ -78,7 +78,7 @@ func TestPGListUserTempBalances(t *testing.T) {
 // TestPGListTempBalances 管理侧全量视角：过期/用尽/负扣减行可见；user_id 筛选；
 // sort 白名单 + order；分页 total 与行集同条件；非法 sort → ErrInvalidSort。
 func TestPGListTempBalances(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u1 := seedPGUser(t, repos, "adm1@example.com")
 	u2 := seedPGUser(t, repos, "adm2@example.com")

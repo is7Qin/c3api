@@ -250,6 +250,8 @@ func (e *e2eEnv) lastLogFor(model string) billLogRow {
 func TestBillingE2E(t *testing.T) {
 	env := &e2eEnv{t: t}
 	ctx := context.Background()
+	redisAddr := os.Getenv("C3API_REDIS_ADDR")
+	require.NotEmpty(t, redisAddr, "C3API_REDIS_ADDR is required")
 
 	// --- 0. 数据库准备：DROP + CREATE c3api_e2e ---
 	adminDSN := os.Getenv("TEST_DATABASE_URL")
@@ -307,12 +309,13 @@ log = { level = "warn", output = "stdout" }
 admin = { token = "%s" }
 auth = { jwt_secret = "%s" }
 db = { dsn = "%s", max_conns = 10 }
+redis = { addr = "%s" }
 proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 2, usage_capture = true }
 upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
 scheduler = { default_max_concurrency = 8, sync_interval = "10s" }
 usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "5s" }
 billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval = "500ms" }
-`, serverAddr, adminToken, jwtSecret, dsn)
+`, serverAddr, adminToken, jwtSecret, dsn, redisAddr)
 	cfgPath := filepath.Join(env.tmp, "config.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
 
@@ -328,7 +331,17 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		srv.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
 	}
 	require.NoError(t, srv.Start())
-	t.Cleanup(func() { _ = srv.Process.Kill() })
+	t.Cleanup(func() {
+		if srv.ProcessState != nil && srv.ProcessState.Exited() {
+			_ = srvLog.Close()
+			return
+		}
+		if srv.Process != nil {
+			_ = srv.Process.Kill()
+			_ = srv.Wait()
+		}
+		_ = srvLog.Close()
+	})
 
 	// 就绪：轮询 /api/admin/settings 直到 200（ent migrate + 分区 bootstrap 完成）。
 	// 就绪前连接被拒属正常（启动中），原始请求不中断测试；须带 admin token
@@ -355,8 +368,6 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		}
 		t.Fatalf("server 未在 60s 内就绪")
 	}
-	// 就绪后关闭日志文件句柄（Windows 上句柄未关可能阻止后续读取；退出码仍由 Wait 捕获）
-	_ = srvLog.Close()
 
 	// 失败诊断（O1 收尾）：任何场景失败 → 转储内置网关 server.log 与最新
 	// usage_logs 行（flusher 落库时序/DB 状态疑点直接可见——此前失败无日志

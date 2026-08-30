@@ -20,8 +20,8 @@ package repository_test
 //     幸存面——ScanStatsDays 继续消费 cube hist，v2.2 裁决）
 //
 // 读取面下推金标准对照在 pg_stat_query_test.go。基座约定同 pg_partition_test.go：
-// newPGRepos 每测试重建 schema + 分区 bootstrap（含 usage_entity_stats 与
-// stats_agg_watermark）。本包 PG 测试串行（无 t.Parallel——每测试 DROP SCHEMA）。
+// 共享 PID schema（newPGReposShared + 分区 bootstrap 含 usage_entity_stats 与
+// stats_agg_watermark）。本包 PG 测试串行（无 t.Parallel——TRUNCATE 清理，保留分区）。
 
 import (
 	"context"
@@ -292,9 +292,9 @@ func seedAggWindow(t *testing.T, repos *repository.Repository, from, to time.Tim
 // （cube 含 bigint[] 直方图——pgx 原生编码；entity 全测量列）+ watermark 单事务
 // 推进；pgx 直查回读全字段（ent 数组列 carve-out）。
 func TestPGStatsAggregateRangeInsert(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	now := time.Now().UTC()
 	bucket := now.Truncate(time.Hour)
 
@@ -351,7 +351,7 @@ func TestPGStatsAggregateRangeInsert(t *testing.T) {
 // 在 v2 维度下的回归）：免费组行 cost=0 raw>0 不丢；v2 同维度合并后单桶累计；
 // SummarizeStats/ScanStatsDays（overview 幸存面）raw 正确；重算幂等。
 func TestPGStatsRawCostRoundtrip(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	h := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	seedAggWindow(t, repos, h, h.Add(time.Hour))
@@ -419,7 +419,7 @@ func TestPGStatsRawCostRoundtrip(t *testing.T) {
 // 列、多模型多组、跨三小时、TTFT 全档位含顶桶），LoadAggRange 结果 vs Go 侧
 // 暴力逐行聚合，逐字段相等（含 abort 进 ec、hist 逐档）。
 func TestPGStatsAggV2CubeEquivalence(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	h := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	seedAggWindow(t, repos, h, h.Add(3*time.Hour))
@@ -496,7 +496,7 @@ func TestPGStatsAggV2CubeEquivalence(t *testing.T) {
 // （entity_id=0 行不存在）；同实体多模型拆分为多桶、跨模型合计与 cube 同源
 // 口径一致。
 func TestPGStatsAggV2EntityEquivalence(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	h := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
 	seedAggWindow(t, repos, h, h.Add(3*time.Hour))
@@ -574,7 +574,7 @@ func TestPGStatsAggV2EntityEquivalence(t *testing.T) {
 // 被 WHERE error_type <> 'abort' 排除；v2 同维度 none+abort+errlog 合并单桶时
 // ec 只计错误行。
 func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	h := time.Date(2026, 8, 14, 11, 0, 0, 0, time.UTC)
 	seedAggWindow(t, repos, h, h.Add(time.Hour))
@@ -612,7 +612,7 @@ func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
 // 无变化（异步）→ 周期后落库；同小时追加行 → 下周期整小时桶重建（部分小时桶
 // 跨周期不截断，P1-A）；再周期重放 → 桶值不变（幂等）。
 func TestPGStatsAsyncAggregation(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	h := time.Now().UTC().Truncate(time.Hour)
 
@@ -628,7 +628,7 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 	sum, err := repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0)
 	require.NoError(t, err)
 	require.Zero(t, sum.Requests, "Record 后 usage_stats 无变化（请求路径零统计投递）")
-	require.Zero(t, pgCount(t, pgTestPool(t), `SELECT COUNT(*) FROM usage_entity_stats`),
+	require.Zero(t, pgCount(t, pgSharedPool(t), `SELECT COUNT(*) FROM usage_entity_stats`),
 		"Record 后 usage_entity_stats 无变化")
 
 	w := usage.NewStatsAgg(usage.StatsAggConfig{Interval: 150 * time.Millisecond, Lag: 50 * time.Millisecond}, repos.Stats, nil)
@@ -653,7 +653,7 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(22), sum.TotalTokens, "桶由全量行重建（首批 token 不丢）")
 	// entity 半端同步落库（同批源行的 user=42 卷积——hour×model 一桶）
-	require.Equal(t, int64(1), pgCount(t, pgTestPool(t),
+	require.Equal(t, int64(1), pgCount(t, pgSharedPool(t),
 		`SELECT COUNT(*) FROM usage_entity_stats WHERE entity_type = 'user' AND entity_id = 42 AND request_count = 11`),
 		"user=42 实体桶同步重建")
 }
@@ -686,9 +686,9 @@ func waitForSummaryReq(t *testing.T, repos *repository.Repository, h time.Time, 
 // → 整事务回滚。两个方向都验：坏 cube 行拖垮好 entity 行、坏 entity 行拖垮
 // 好 cube 行（双表原子性）；修复后重跑成功。
 func TestPGStatsAggDualTableTxRollback(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	bucket := time.Now().UTC().Truncate(time.Hour)
 	wmTo := bucket.Add(15 * time.Minute)
 	far := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -735,9 +735,9 @@ func TestPGStatsAggDualTableTxRollback(t *testing.T) {
 // TestPGStatsAggIdempotentDoubleRun 幂等双跑（spec §7.11）：同范围 AggregateRange
 // 连跑两遍，双表行集与 watermark 恒等（覆盖语义——DELETE+INSERT 重放一致）。
 func TestPGStatsAggIdempotentDoubleRun(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	h := time.Date(2026, 8, 21, 8, 0, 0, 0, time.UTC)
 	seedAggWindow(t, repos, h, h.Add(time.Hour))
 
@@ -787,7 +787,7 @@ func TestPGStatsAggIdempotentDoubleRun(t *testing.T) {
 // ON CONFLICT DO NOTHING 容忍多实例并发初始化（先到先得，败者不覆盖）；已存在
 // 不重置。
 func TestPGStatsWatermarkInitConcurrent(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	t1 := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
 	t2 := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
@@ -806,7 +806,7 @@ func TestPGStatsWatermarkInitConcurrent(t *testing.T) {
 // TestPGStatsAdvisoryLock 会话级 advisory lock：首个获取者持有期间另一获取
 // 失败（ok=false）；释放后可再获取。
 func TestPGStatsAdvisoryLock(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	rel1, ok, err := repos.Stats.AcquireStatsAggLock(ctx)
@@ -827,7 +827,7 @@ func TestPGStatsAdvisoryLock(t *testing.T) {
 // 回归）：多行同区间直方图 → SummarizeStats 合并后 p50/p90/p95/p99/avg/max
 // 数值断言 + call_count/ttft 字段。
 func TestPGStatsSummarizeTTFT(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	bucket := time.Now().UTC().Truncate(time.Hour)
 
@@ -865,7 +865,7 @@ func TestPGStatsSummarizeTTFT(t *testing.T) {
 // TestPGStatsSummarizeNoData 空区间：summary 全零 + 空直方图（无 42703/扫描
 // 错误——COALESCE 空数组回落）。
 func TestPGStatsSummarizeNoData(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	bucket := time.Now().UTC().Truncate(time.Hour)
 	sum, err := repos.Stats.SummarizeStats(ctx, bucket, bucket.Add(time.Hour), 0)

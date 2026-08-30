@@ -76,7 +76,7 @@ func foldExpTrend(want map[expCubeKey]*expCube, unit string, groupID int64, mode
 // (hour/day) × 过滤组合（无过滤/group/model/叠加）的 SQL 结果 vs 对日志直接
 // 暴力聚合后折叠的金标准，逐字段相等。
 func TestPGStatsTrendPushdown(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	h := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	seedAggWindow(t, repos, h, h.Add(2*time.Hour))
@@ -123,7 +123,7 @@ func TestPGStatsTrendPushdown(t *testing.T) {
 // TestPGStatsTopPushdown top 下推（spec §7.5）：by 三种排序各自独立序 + limit
 // 截断正确；非法 by/entityType 显式报错。
 func TestPGStatsTopPushdown(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	bucket := time.Now().UTC().Truncate(time.Hour)
 
@@ -192,7 +192,7 @@ func TestPGStatsTopPushdown(t *testing.T) {
 // （spec §7.6）：不带 model = 各模型桶之和；带 model = 单模型拆分；
 // EntityType/EntityID 回填自入参；hour/day 两粒度。
 func TestPGStatsEntityTrendAndModelSplit(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	h := time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC)
 	day := h.Truncate(24 * time.Hour)

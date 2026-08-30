@@ -17,7 +17,7 @@ import (
 
 // TestManualEntryModels_PG verifies ManualEntryModels returns only manual source models.
 func TestManualEntryModels_PG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	// clean slate: create two entries via manual and litellm
 	manualModel := "pg-guard-manual-model"
@@ -35,7 +35,7 @@ func TestManualEntryModels_PG(t *testing.T) {
 // TestVariantGuard_ManualEntrySurvives_PG is the PG-mode sync guard test for F2:
 // create manual entry + custom variants for model X; simulate sync that would emit X's variants; assert admin variants survive via ManualEntryModels filtering.
 func TestVariantGuard_ManualEntrySurvives_PG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	model := "pg-variant-guard-model"
 	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000)})
@@ -81,7 +81,7 @@ func TestVariantGuard_ManualEntrySurvives_PG(t *testing.T) {
 // WithTx{DeletePriceVariantsByModel; DeletePriceEntryManual} → both tables empty.
 // 冒烟发现 2026-08-24：删条目不清变体致孤儿挂新条目。
 func TestDeletePriceEntryCascadeManual_PG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	model := "pg-cascade-manual-model"
 	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000)})
@@ -106,7 +106,7 @@ func TestDeletePriceEntryCascadeManual_PG(t *testing.T) {
 // TestVariantImageOverridesRoundTrip_PG verifies F-B: image-mode entry +
 // img overrides round-trip via ReplaceBatch + ListByModel.
 func TestVariantImageOverridesRoundTrip_PG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	model := "pg-variant-image-model"
 	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeImage, ImgInTokPerM: int64Ptr(100), ImgOutTokPerM: int64Ptr(200), PricePerImage: int64Ptr(300)})
@@ -134,7 +134,7 @@ func TestVariantImageOverridesRoundTrip_PG(t *testing.T) {
 
 // TestCodexSearchSeed_Idempotent_PG verifies F-A: seed is idempotent and source=manual.
 func TestCodexSearchSeed_Idempotent_PG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	// ensure seed runs
 	require.NoError(t, repos.EnsureCodexSearchSeed(ctx))
@@ -162,7 +162,7 @@ func TestCodexSearchSeed_Idempotent_PG(t *testing.T) {
 // TestDeletePriceEntryCascadeLitellmConflict_PG verifies D-C1 guard: litellm
 // entry+variant → same cascade → ErrConflict AND variants intact (whole tx rolled back).
 func TestDeletePriceEntryCascadeLitellmConflict_PG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	model := "pg-cascade-litellm-model"
 	_, err := repos.PriceEntries.UpsertFromLiteLLM(ctx, []*domain.PriceEntry{{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceLitellm}})

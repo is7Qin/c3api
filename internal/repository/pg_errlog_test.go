@@ -34,9 +34,9 @@ func errLogFor(reqID string, at time.Time) *domain.UsageLog {
 // TestErrLogMessageRoundtripPG err_logs error_message 有值/NULL roundtrip
 // （QueryErrLogs 读回）+ 审计字段投影。
 func TestErrLogMessageRoundtripPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	// bootstrap 建表必须含 error_message 列（varchar，无默认值 = NULL 可空）
 	var dataType string
@@ -98,9 +98,9 @@ func TestErrLogMessageRoundtripPG(t *testing.T) {
 // status_code/error_message 列；插入忽略瞬态字段（不报 42703——ent 构建器
 // 不再写该列），查询结果恒零值/nil。
 func TestUsageLogSlimColumnsPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	for _, col := range []string{"status_code", "error_message"} {
 		var n int

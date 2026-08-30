@@ -494,6 +494,12 @@ func validateTemplate(t *domain.Template) error {
 			}
 		}
 	}
+	if t.ModelMapping == nil {
+		t.ModelMapping = domain.ModelMapping{}
+	}
+	if err := domain.ValidateModelMapping(t.ModelMapping); err != nil {
+		return ErrInvalidInput
+	}
 	return nil
 }
 
@@ -651,6 +657,11 @@ func validateTemplatePatch(p repository.TemplatePatch) error {
 			if supported != nil && !supported[f] {
 				return ErrInvalidInput
 			}
+		}
+	}
+	if p.ModelMapping != nil {
+		if err := domain.ValidateModelMapping(*p.ModelMapping); err != nil {
+			return ErrInvalidInput
 		}
 	}
 	return nil

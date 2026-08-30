@@ -8,11 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -21,7 +19,7 @@ import (
 )
 
 func TestPGCodexWritesRejectBaseURLAndRemainAtomic(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	codexTemplate := createPGWriteTemplate(t, repos, "codex", credential.TypeCodexOAuth)
 	apiTemplate := createPGWriteTemplate(t, repos, "api", credential.TypeAPIKey)
@@ -62,7 +60,7 @@ func TestPGCodexWritesRejectBaseURLAndRemainAtomic(t *testing.T) {
 }
 
 func TestPGCodexTemplateCreateRejectsBaseURLWithoutRow(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	for _, typ := range []credential.Type{credential.TypeCodexOAuth, credential.TypeCodexPAT} {
@@ -71,6 +69,7 @@ func TestPGCodexTemplateCreateRejectsBaseURLWithoutRow(t *testing.T) {
 			_, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 				Name: name, BaseURL: baseURL, CredentialType: typ,
 				SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+				ModelMapping:     domain.ModelMapping{},
 			})
 			require.ErrorIs(t, err, repository.ErrInvalidInput)
 			rows, total, listErr := repos.Templates.ListTemplates(ctx, repository.ListQuery{Name: name})
@@ -82,7 +81,7 @@ func TestPGCodexTemplateCreateRejectsBaseURLWithoutRow(t *testing.T) {
 }
 
 func TestPGTemplateSwitchAndAccountURLWriteCannotViolateCodexInvariant(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	for iteration := range 20 {
@@ -111,7 +110,7 @@ func TestPGTemplateSwitchAndAccountURLWriteCannotViolateCodexInvariant(t *testin
 }
 
 func TestPGBatchAccountTemplateIDDriftCannotEscapeLockedTemplates(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	for iteration := range 20 {
@@ -137,13 +136,11 @@ func TestPGBatchAccountTemplateIDDriftCannotEscapeLockedTemplates(t *testing.T) 
 }
 
 func TestPGCancelledTemplateLockWaitRollsBackCleanly(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := createPGWriteTemplate(t, repos, "cancel-template", credential.TypeAPIKey)
 
-	conn, err := pgx.Connect(ctx, os.Getenv("TEST_DATABASE_URL"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, conn.Close(ctx)) })
+	conn := pgSharedConn(t)
 	tx, err := conn.Begin(ctx)
 	require.NoError(t, err)
 	_, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(0x4333415049540000)^tpl.ID)
@@ -206,6 +203,7 @@ func createPGWriteTemplate(t *testing.T, repos *repository.Repository, name stri
 	tpl, err := repos.Templates.CreateTemplate(context.Background(), &domain.Template{
 		Name: name, BaseURL: baseURL, CredentialType: typ,
 		SupportedFormats: []domain.RequestFormat{format},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	return tpl

@@ -28,13 +28,13 @@ import (
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/discovery"
-	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/handler"
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/invalidate"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/proxy"
+	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -558,7 +558,7 @@ func main() {
 	// 空表种子亦在此写入（失败降级 Warn——注册表 Status 可观测）。
 	errs := snapReg.ReloadAll(ctx)
 	for name, err := range errs {
-		log.Warn("snapshot initial reload failed", logx.String("snapshot", name), logx.Error(err))
+		logSnapshotReloadErr(log, "snapshot initial reload failed", name, err)
 	}
 	// E2（E-P2-4 启动双刷）：ReloadAll 返回空 map = 全部成功（snapshot.go 契约
 	// ——成功者不出现）→ 置位首连跳过标志（dispatcher.bootLoaded，wm.StartAll

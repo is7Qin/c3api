@@ -14,10 +14,7 @@ func (p *Proxy) normalizedAttempts() int {
 	if n <= 0 {
 		return 3
 	}
-	if n > 8 {
-		return 8
-	}
-	return n
+	return min(n, 8)
 }
 
 func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*scheduler.Selection, *scheduler.AttemptPlan, error) {
@@ -35,7 +32,13 @@ func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, 
 	identity.MaxAttempts = uint8(p.normalizedAttempts())
 	plan, err := p.sched.NewAttemptPlan(identity, route)
 	if err != nil {
-		sel, selErr := p.sched.Select(groupID, format, model)
+		var sel *scheduler.Selection
+		var selErr error
+		if identity.ApplyModelMapping {
+			sel, selErr = p.sched.Select(groupID, format, model)
+		} else {
+			sel, selErr = p.sched.SelectOpaque(groupID, format, model)
+		}
 		return sel, nil, selErr
 	}
 	sel, _, err := p.sched.ReserveAttempt(plan)
@@ -141,7 +144,7 @@ func outcomeForPlanRetry(code int, callErr error, ctx context.Context, cat Calle
 func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error, st attemptState, format domain.RequestFormat, selectFormat domain.RequestFormat) bool {
 	cat := callerCategoryFor(st, format, selectFormat)
 	o := outcomeForPlanRetry(code, callErr, ctx, cat)
-		// Use the typed retry matrix where raw status is insufficient.
+	// Use the typed retry matrix where raw status is insufficient.
 	return CanRetry(cat, o)
 }
 
@@ -149,13 +152,16 @@ func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error
 // verdict is final (ErrAttemptsExhausted / ErrNoAvailable propagate to the
 // exhaustion path; reservation rejects already consumed no attempt inside
 // ReserveAttempt). Only plan-less (legacy) callers fall through to Select.
-func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan, groupID int64, selectFormat domain.RequestFormat, model string) (*scheduler.Selection, error) {
+func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan, groupID int64, selectFormat domain.RequestFormat, model string, opaque bool) (*scheduler.Selection, error) {
 	if plan != nil {
 		sel, _, err := p.sched.ReserveAttempt(plan)
 		if err != nil {
 			return nil, err
 		}
 		return sel, nil
+	}
+	if opaque {
+		return p.sched.SelectOpaque(groupID, selectFormat, model)
 	}
 	return p.sched.Select(groupID, selectFormat, model)
 }

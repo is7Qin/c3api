@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -158,7 +157,7 @@ func drainBillingCursor(t *testing.T, repos *repository.Repository) (drained, qu
 // 保持 unbilled 由游标天然重放）+ 已删用户行 quarantined 路径 → 重放收敛。断言：
 // 成功组余额精确、quarantined 行 billed=true 零扣费、重放无重复（对账恒等式闭合）。
 func TestPGBillingCursorCrashRecovery(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -218,7 +217,7 @@ func TestPGBillingCursorCrashRecovery(t *testing.T) {
 // （InsertBatch）产出的 billable 行出生恒 billed=false 直至消费；消费后
 // Σ(billed=true 行 cost) == Σ 扣减凭证（逐用户余额变动精确和）。
 func TestPGBillingCursorSingleWriterNoConflict(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -263,7 +262,7 @@ func TestPGBillingCursorSingleWriterNoConflict(t *testing.T) {
 // 500 行）→ 三车道循环消费至清空 → 全量收敛 + UnbilledLag 出数（count 归零 /
 // oldest 零值）。
 func TestPGBillingCursorBurstBacklog(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -309,7 +308,7 @@ func TestPGBillingCursorBurstBacklog(t *testing.T) {
 // TestPGBillingCursorPoisonAdvance 幽灵推进：UserID=0（匿名 NULL user_id）与
 // 不存在用户行混批 → 消费推进不卡死、缺失用户行 billed=true 零扣费、正常行照扣。
 func TestPGBillingCursorPoisonAdvance(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -354,7 +353,7 @@ func TestPGBillingCursorPoisonAdvance(t *testing.T) {
 // TestPGBillingCursorAbortIncluded error_type='abort' 行照常入账：cost 口径与
 // none 一致（同额扣减、同样 billed 翻转、不透支）。
 func TestPGBillingCursorAbortIncluded(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -391,7 +390,7 @@ func TestPGBillingCursorAbortIncluded(t *testing.T) {
 // 源码守卫：billing 消费面可执行代码不得出现 pg_advisory_xact_lock（Momus M1
 // 双扣防线——每事务锁取批与标记间无互斥）。
 func TestPGBillingCursorMultiInstanceLock(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -476,7 +475,7 @@ func guardNoXactAdvisoryLock(t *testing.T) {
 // TestPGBillingCursorCaptureOffAbsorb BillingCapture=false 出生吸收态模拟：
 // InsertBatch 直接写 billed=true 行 → 游标查询返回空、消费周期零动作、余额零变动。
 func TestPGBillingCursorCaptureOffAbsorb(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -529,7 +528,7 @@ func TestPGBillingCursorCaptureOffAbsorb(t *testing.T) {
 // 非 temp-active 落 balance 车道重放走无条件透支路径 → overdraft 列回写 true +
 // 余额负值精确；重放不二次透支。
 func TestPGBillingCursorOverdraftWriteBack(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -576,7 +575,7 @@ func TestPGBillingCursorOverdraftWriteBack(t *testing.T) {
 // FEFO 车道（temp-active 用户）收敛、零价行由 sweep 纯标记（balances/temp 无变动，
 // 零资金移动）。
 func TestPGBillingCursorCostZeroFastMark(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -617,8 +616,8 @@ func TestPGBillingCursorCostZeroFastMark(t *testing.T) {
 // TestPGBillingCursorRestartConvergence 停机遗留收敛：实例 A（pgx 载体）部分
 // 消费后"停机"→ 实例 B（ent 载体，模拟重启后进程）重新消费 → 全部收敛且零重复。
 func TestPGBillingCursorRestartConvergence(t *testing.T) {
-	reposA := newPGRepos(t)       // pgx 直连事务载体
-	reposB := newPGReposNoPool(t) // nil pool → ent txDriver 载体（同 schema）
+	reposA := newPGReposShared(t)       // pgx 直连事务载体
+	reposB := newPGReposNoPoolShared(t) // nil pool → ent txDriver 载体（同 schema）
 	ensureCursorPartitions(t, reposA)
 	ctx := context.Background()
 
@@ -662,7 +661,7 @@ func TestPGBillingCursorRestartConvergence(t *testing.T) {
 // TestPGBillingCursorCostZeroFastMarkBulk bulk 标记幂等性：重复调用零副作用
 // （已标记行静默跳过、不复活不重扣、不存在 id 静默、空批 no-op）。
 func TestPGBillingCursorCostZeroFastMarkBulk(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -707,7 +706,7 @@ func TestPGBillingCursorCostZeroFastMarkBulk(t *testing.T) {
 // 状态同步（他方后端确实阻塞在行锁上），非时序假设。
 func TestPGSettleEPQConcurrentMark(t *testing.T) {
 	t.Run("balance lane mid-statement rival mark", func(t *testing.T) {
-		repos := newPGRepos(t)
+		repos := newPGReposShared(t)
 		ensureCursorPartitions(t, repos)
 		ctx := context.Background()
 		u := seedPGUser(t, repos, "epq-bal@example.com")
@@ -717,7 +716,7 @@ func TestPGSettleEPQConcurrentMark(t *testing.T) {
 		require.Len(t, rows, 3)
 		victim := rows[0].ID // 批队头（id 最小）
 
-		coord := pgTestPool(t)
+		coord := pgSharedPool(t)
 		tx, err := coord.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx) // nolint:errcheck // Commit 后 ErrTxClosed 幂等；Fatal 路径防连接泄漏卡池 Close
@@ -765,7 +764,7 @@ func TestPGSettleEPQConcurrentMark(t *testing.T) {
 	})
 
 	t.Run("pre-committed rival mark shrinks batch", func(t *testing.T) {
-		repos := newPGRepos(t)
+		repos := newPGReposShared(t)
 		ensureCursorPartitions(t, repos)
 		ctx := context.Background()
 		u1 := seedPGUser(t, repos, "epq-pre-u1@example.com")
@@ -798,7 +797,7 @@ func TestPGSettleEPQConcurrentMark(t *testing.T) {
 	})
 
 	t.Run("fefo lane mid-statement rival mark", func(t *testing.T) {
-		repos := newPGRepos(t)
+		repos := newPGReposShared(t)
 		ensureCursorPartitions(t, repos)
 		ctx := context.Background()
 		u := seedPGUser(t, repos, "epq-fefo@example.com")
@@ -809,7 +808,7 @@ func TestPGSettleEPQConcurrentMark(t *testing.T) {
 		require.Len(t, rows, 3)
 		victim := rows[0].ID
 
-		coord := pgTestPool(t)
+		coord := pgSharedPool(t)
 		tx, err := coord.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx) // nolint:errcheck // Commit 后 ErrTxClosed 幂等；Fatal 路径防连接泄漏卡池 Close
@@ -886,14 +885,14 @@ func waitBlockedOnSettle(t *testing.T, pool *pgxpool.Pool) {
 // 确定性错误失败闭合 / 空游标退出。
 func TestPGSettlementFailureStates(t *testing.T) {
 	t.Run("transient recovery: lock contention self-heals", func(t *testing.T) {
-		repos := newPGRepos(t)
+		repos := newPGReposShared(t)
 		ensureCursorPartitions(t, repos)
 		ctx := context.Background()
 		u := seedPGUser(t, repos, "ladder-t@example.com")
 		require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
 		seedCursorRows(t, repos, u.ID, 2, 100_000)
 
-		coord := pgTestPool(t)
+		coord := pgSharedPool(t)
 		tx, err := coord.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx) // nolint:errcheck // 瞬态放锁路径本就 Rollback；Fatal 路径防连接泄漏卡池 Close
@@ -923,7 +922,7 @@ func TestPGSettlementFailureStates(t *testing.T) {
 	})
 
 	t.Run("K-failure fail-closed, no write-off", func(t *testing.T) {
-		repos := newPGRepos(t)
+		repos := newPGReposShared(t)
 		ensureCursorPartitions(t, repos)
 		ctx := context.Background()
 		u := seedPGUser(t, repos, "ladder-k@example.com")
@@ -952,7 +951,7 @@ func TestPGSettlementFailureStates(t *testing.T) {
 	})
 
 	t.Run("empty-cursor exit", func(t *testing.T) {
-		repos := newPGRepos(t)
+		repos := newPGReposShared(t)
 		ensureCursorPartitions(t, repos)
 		ctx := context.Background()
 
@@ -979,7 +978,7 @@ func TestPGSettlementFailureStates(t *testing.T) {
 // 连接归还即失效（tx 外回落库默认 on——零泄漏面）；结算事务含 SET LOCAL 首
 // 语句正常提交（SET 失败 = 回滚重放的安全缺省由既有回滚族覆盖）。
 func TestPGBillingChunkSyncCommitOffSmoke(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -988,9 +987,7 @@ func TestPGBillingChunkSyncCommitOffSmoke(t *testing.T) {
 	seedCursorRows(t, repos, u.ID, 1, 10_000)
 
 	// 事务作用域断言：独立连接手工复现结算事务首语句形态
-	conn, err := pgx.Connect(ctx, os.Getenv("TEST_DATABASE_URL"))
-	require.NoError(t, err)
-	defer conn.Close(ctx)
+	conn := pgSharedConn(t)
 	var setting string
 	tx, err := conn.Begin(ctx)
 	require.NoError(t, err)
@@ -1019,7 +1016,7 @@ func TestPGBillingChunkSyncCommitOffSmoke(t *testing.T) {
 // 的行——ΣBatchRows == 全量种子、桶间余额对 uid 零重叠、逐用户恰扣一次、全部
 // 行标记。uid 由 PG serial 分配不可预置 → 运行期按 u.ID%4 归桶并要求四桶全非空。
 func TestPGSettleBucketDisjointness(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -1088,7 +1085,7 @@ func TestPGSettleBucketDisjointness(t *testing.T) {
 // 排空收敛——exactly-once（无双扣/漏扣）、守恒精确（Σbilled == Σ|Δbalance|）、
 // 游标清空。
 func TestPGSettleBucketConcurrency(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 
@@ -1133,7 +1130,7 @@ func TestPGSettleBucketConcurrency(t *testing.T) {
 // （零扣费标记、不搁浅）——裸 user_id 取模对 NULL 恒 NULL → 永不命中任何桶 =
 // 游标永久搁浅的回归面。
 func TestPGSettleBucketBoundaryNULL(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 

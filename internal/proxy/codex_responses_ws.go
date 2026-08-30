@@ -115,7 +115,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, dialErr error) (stop bool, lastCode int, lastErrMsg string) {
 	if errors.Is(dialErr, errCodexWSNotIntegrated) {
 		sel.Release()
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIResponsesWS, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexWSNotIntegrated.Error())
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexWSNotIntegrated.Error())
 		wsWriteError(client, errCodexWSNotIntegrated.Error())
 		return true, 0, ""
 	}
@@ -126,7 +126,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		obs := NewAttemptObserver(nil, nil, nil, nil)
 		_ = obs.Complete(out, nil)
 		msg := domain.TruncateErrMsg(dialErr.Error())
-		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, 0, domain.ErrNetwork, usageTuple{}, start))
+		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 0, domain.ErrNetwork, usageTuple{}, start))
 		l.ErrorMessage = &msg
 		p.finish(sel, l)
 		wsWriteError(client, codexAuthFailedMsg)
@@ -144,7 +144,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		out := wsOutcomeForUpstreamStatus(base, code, usageTuple{}, nil)
 		obs := NewAttemptObserver(nil, nil, nil, nil)
 		_ = obs.Complete(out, nil)
-		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, code, domain.Err4xx, usageTuple{}, start))
+		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, code, domain.Err4xx, usageTuple{}, start))
 		if em != "" {
 			l.ErrorMessage = &em
 		}

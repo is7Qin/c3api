@@ -64,7 +64,7 @@ func (s *pgBalanceWarningSink) snapshot() []domain.BalanceWarningEvent {
 }
 
 func TestPGBalanceWarning(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 

@@ -105,7 +105,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			if errors.Is(err, context.Canceled) {
 				outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, ttft != nil, true, false)
 				_ = observer.Cancel(outcome)
-				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
+				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
 			}
 			code := statusOf(err)
@@ -118,13 +118,13 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false)
 			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
 			_ = observer.Complete(outcome, health)
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
 		outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
 		health := &AttemptHealthEvent{Kind: rule.KindOK}
 		_ = observer.Complete(outcome, health)
-		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, 200, domain.ErrNone, u, start)))
+		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, 200, domain.ErrNone, u, start)))
 		return 200, nil, true, nil
 	}
 
@@ -157,7 +157,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	outcome := imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
 	_ = observer.Complete(outcome, health)
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAIImages, 200, domain.ErrNone, usageTuple{ii: ii, io: io, tt: ii + io, calls: count}, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, 200, domain.ErrNone, usageTuple{ii: ii, io: io, tt: ii + io, calls: count}, start)))
 	return 200, nil, true, nil
 }
 

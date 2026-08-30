@@ -13,7 +13,7 @@ import (
 )
 
 func TestSettlement_HealthyHeadLaterFailure_RemainsUnbilled(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 	healthy := seedPGUser(t, repos, "f7-healthy@example.com")
@@ -40,7 +40,7 @@ func TestSettlement_HealthyHeadLaterFailure_RemainsUnbilled(t *testing.T) {
 }
 
 func TestSettlement_SameUserAggregateFailure_RemainsUnbilled(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "f7-agg@example.com")

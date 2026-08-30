@@ -225,7 +225,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		route.caller = p.imagesCallerFor(r)
 	}
 
-	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID}
+	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true}
 	var sel *scheduler.Selection
 	var plan *scheduler.AttemptPlan
 	if format == domain.FormatOpenAIImages {
@@ -242,7 +242,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable) || errors.Is(err, scheduler.ErrAttemptsExhausted)) {
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
 			// Target identity uses same request identity but target RouteClassID
-			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID}
+			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true}
 			if sel2, plan2, err2 := p.selectWithPlan(groupID, tgt, reqModel, targetIdentity); err2 == nil {
 				sel2GuardActive := true
 				defer func() {
@@ -363,7 +363,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 		if strings.Contains(sdkErr, "streaming is required") {
 			// 确定性错误（重试必同结果，§5.3）：不 failover、不
 			// MarkResult（与 4xx 分支现状一致），记录后提前 return。
-			l := logWithCtx(ctx, a.p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, st.format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start))
+			l := logWithCtx(ctx, a.p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), st.format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start))
 			em := domain.TruncateErrMsg(sdkErr)
 			l.ErrorMessage = &em
 			a.p.finish(sel, l)

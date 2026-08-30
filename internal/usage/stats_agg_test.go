@@ -35,6 +35,29 @@ type fakeStatsAggStore struct {
 	detail     int64
 }
 
+type blockingStatsAggStore struct {
+	fakeStatsAggStore
+	entered  chan struct{}
+	release  chan struct{}
+	released chan struct{}
+}
+
+func (s *blockingStatsAggStore) AcquireStatsAggLock(ctx context.Context) (func(), bool, error) {
+	_, ok, err := s.fakeStatsAggStore.AcquireStatsAggLock(ctx)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return func() {
+		close(s.released)
+	}, true, nil
+}
+
+func (s *blockingStatsAggStore) LoadStatsAggWatermark(ctx context.Context) (time.Time, error) {
+	close(s.entered)
+	<-s.release
+	return s.fakeStatsAggStore.LoadStatsAggWatermark(ctx)
+}
+
 type aggCall struct {
 	from, to time.Time
 }
@@ -101,7 +124,7 @@ func TestStatsAggWorkerTwoRange(t *testing.T) {
 	// cycle 1：now = H+10m → 初始化 watermark = H+9m；读窗口 [H+9m, H+9m)
 	// 空——先跑初始化轮（无数据），再推进。
 	w.now = func() time.Time { return h.Add(10 * time.Minute) }
-	w.runOnce()
+	w.runOnce(context.Background())
 	_, _, wm := store.snapshot()
 	require.Equal(t, h.Add(9*time.Minute), wm, "全新库初始化 = now − 滞后")
 
@@ -110,7 +133,7 @@ func TestStatsAggWorkerTwoRange(t *testing.T) {
 	store.rows = []*domain.StatBucket{{BucketTime: h, RequestCount: 11}}
 	store.detail = 11
 	w.now = func() time.Time { return h.Add(20 * time.Minute) }
-	w.runOnce()
+	w.runOnce(context.Background())
 	calls, aggr, wm := store.snapshot()
 	require.Len(t, calls, 1)
 	require.Equal(t, h, calls[0].from, "重算范围下界 = trunc_hour(W)")
@@ -130,7 +153,7 @@ func TestStatsAggWorkerTwoRange(t *testing.T) {
 	// cycle 3：时钟前进（now = H+30m）→ 重放同范围（数据不变）→ LoadAggRange
 	// 参数一致（幂等重放：同范围重跑结果一致）。
 	w.now = func() time.Time { return h.Add(30 * time.Minute) }
-	w.runOnce()
+	w.runOnce(context.Background())
 	calls, _, _ = store.snapshot()
 	require.Len(t, calls, 2)
 	require.Equal(t, h, calls[1].from)
@@ -147,7 +170,7 @@ func TestStatsAggWorkerCatchUpLimit(t *testing.T) {
 
 	// now = 8 月 3 日：落后 2 天 → 单周期窗口钳制到 1h
 	w.now = func() time.Time { return h.Add(48 * time.Hour) }
-	w.runOnce()
+	w.runOnce(context.Background())
 	calls, aggr, wm := store.snapshot()
 	require.Len(t, calls, 1)
 	require.Equal(t, h, calls[0].from)
@@ -164,7 +187,7 @@ func TestStatsAggWorkerLockSkip(t *testing.T) {
 	t.Run("not acquired", func(t *testing.T) {
 		store := &fakeStatsAggStore{lockOK: false, wm: h}
 		w := NewStatsAgg(StatsAggConfig{Interval: time.Minute}, store, nil)
-		w.runOnce()
+		w.runOnce(context.Background())
 		calls, _, wm := store.snapshot()
 		require.Empty(t, calls, "抢锁失败不读数据")
 		require.Equal(t, h, wm, "watermark 不动")
@@ -173,7 +196,7 @@ func TestStatsAggWorkerLockSkip(t *testing.T) {
 	t.Run("lock error warns and skips", func(t *testing.T) {
 		store := &fakeStatsAggStore{lockErr: errors.New("boom")}
 		w := NewStatsAgg(StatsAggConfig{Interval: time.Minute}, store, nil)
-		w.runOnce() // 无 logger → 静默跳过（不 panic）
+		w.runOnce(context.Background()) // 无 logger → 静默跳过（不 panic）
 		calls, _, _ := store.snapshot()
 		require.Empty(t, calls)
 	})
@@ -186,7 +209,7 @@ func TestStatsAggWorkerNoDataSkip(t *testing.T) {
 	store := &fakeStatsAggStore{lockOK: true, wm: h.Add(10 * time.Minute)}
 	w := NewStatsAgg(StatsAggConfig{Interval: time.Minute, Lag: time.Minute}, store, nil)
 	w.now = func() time.Time { return h.Add(10 * time.Minute) } // T = now−lag = W
-	w.runOnce()
+	w.runOnce(context.Background())
 	calls, aggr, wm := store.snapshot()
 	require.Empty(t, calls, "无新数据不读重算范围")
 	require.Empty(t, aggr)
@@ -202,7 +225,7 @@ func TestStatsAggWorkerFailureKeepsWatermark(t *testing.T) {
 	store := &fakeStatsAggStore{lockOK: true, wm: h.Add(9 * time.Minute), aggErr: errors.New("db down")}
 	w := NewStatsAgg(StatsAggConfig{Interval: time.Minute, Lag: time.Minute}, store, nil)
 	w.now = func() time.Time { return h.Add(20 * time.Minute) }
-	w.runOnce()
+	w.runOnce(context.Background())
 	_, _, wm := store.snapshot()
 	require.Equal(t, h.Add(9*time.Minute), wm, "失败轮 watermark 不推进（重算恢复不双计）")
 	st := w.Stats().(StatsAggWorkerStats)
@@ -218,4 +241,33 @@ func TestStatsAggDisabledInterval(t *testing.T) {
 	require.NoError(t, w.Close(context.Background()))
 	calls, _, _ := store.snapshot()
 	require.Empty(t, calls, "禁用聚合不执行任何周期")
+}
+
+func TestStatsAggWorkerCloseWaitsForInFlightRun(t *testing.T) {
+	store := &blockingStatsAggStore{
+		fakeStatsAggStore: fakeStatsAggStore{lockOK: true},
+		entered:           make(chan struct{}),
+		release:           make(chan struct{}),
+		released:          make(chan struct{}),
+	}
+	w := NewStatsAgg(StatsAggConfig{Interval: time.Hour, Lag: time.Minute}, store, nil)
+	require.NoError(t, w.Start(context.Background()))
+	<-store.entered
+
+	closed := make(chan error, 1)
+	go func() { closed <- w.Close(context.Background()) }()
+	select {
+	case err := <-closed:
+		require.Failf(t, "Close returned while run was blocked", "err=%v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(store.release)
+	require.NoError(t, <-closed)
+	select {
+	case <-store.released:
+	case <-time.After(time.Second):
+		require.Fail(t, "in-flight run did not release advisory lock")
+	}
+	require.NoError(t, w.Close(context.Background()))
 }

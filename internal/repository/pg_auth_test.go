@@ -39,7 +39,7 @@ func seedPGUser(t *testing.T, repos *repository.Repository, email string) *domai
 }
 
 func TestPGUserCRUD(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	u := seedPGUser(t, repos, "a@example.com")
@@ -106,7 +106,7 @@ func TestPGUserCRUD(t *testing.T) {
 }
 
 func TestPGKeyLifecycle(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	u := seedPGUser(t, repos, "keys@example.com")
@@ -188,7 +188,7 @@ func TestPGKeyLifecycle(t *testing.T) {
 }
 
 func TestPGLoadKeysSnapshot(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	u := seedPGUser(t, repos, "snap@example.com")
@@ -249,7 +249,7 @@ func TestPGLoadKeysSnapshot(t *testing.T) {
 }
 
 func TestPGGroupAssignments(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	u1 := seedPGUser(t, repos, "u1@example.com")
@@ -294,7 +294,7 @@ func TestPGGroupAssignments(t *testing.T) {
 }
 
 func TestPGGroupVisibilityRoundTrip(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "vis", Visibility: domain.GroupVisibilityPrivate})
@@ -310,7 +310,7 @@ func TestPGGroupVisibilityRoundTrip(t *testing.T) {
 }
 
 func TestPGSettingDefaultsAndSet(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	// DB 无行 → 默认（signup_enabled=true）
@@ -358,7 +358,7 @@ func TestPGSettingDefaultsAndSet(t *testing.T) {
 }
 
 func TestPGUsageLogUserKeyRoundTrip(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	u := seedPGUser(t, repos, "log@example.com")

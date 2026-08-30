@@ -156,7 +156,7 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 
 	// 选号：复用主流 resp 路由面（openai-responses 格式——四类型全可达；
 	// search 无独立路由，独立选号无会话绑定）。
-	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID}
+	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: false}
 	sel, plan, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponses, reqModel, identity)
 	if err != nil {
 		p.handleSelectError(w, err)
@@ -169,7 +169,7 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	// 预检）；尾部 Select 走主流 resp
 	// 路由面（openai-responses）；耗尽 Retry-After 分支由 httpSink 判 lastCode。
 	p.failoverLoopWithPlan(w, r, domain.FormatOpenAISearch, domain.FormatOpenAIResponses, reqID, groupID, start, reqModel, body, sel, plan,
-		attemptState{}, p.searchAttempt, p.httpSink, false)
+		attemptState{opaqueSelection: true}, p.searchAttempt, p.httpSink, false)
 }
 
 // searchAttempt HandleSearch 的 attempt 实现（单次 codex search 上游调用，非
@@ -228,7 +228,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 		o.BusinessFrameSent = false
 		o.Usage = AttemptUsage{CallCount: 0}
 		emitSearchOutcome(p, sel, o, rule.Kind5xx, errCodexSearchNotIntegrated.msg)
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexSearchNotIntegrated.msg)
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexSearchNotIntegrated.msg)
 		writeErr(w, errCodexSearchNotIntegrated)
 		return 0, nil, true, nil
 	}
@@ -266,7 +266,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	o.Terminal = true
 	o.Usage = AttemptUsage{CallCount: 1}
 	emitSearchOutcome(p, sel, o, rule.KindOK, "")
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }
 
@@ -318,6 +318,6 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	o.Terminal = true
 	o.Usage = AttemptUsage{CallCount: 1}
 	emitSearchOutcome(p, sel, o, rule.KindOK, "")
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
 	return http.StatusOK, nil, true, nil
 }

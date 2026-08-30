@@ -6,7 +6,11 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -173,6 +177,130 @@ func TruncateErrMsg(s string) string {
 	return string(r[:ErrMsgMaxLen])
 }
 
+type ModelMappingMode uint8
+
+const (
+	ModelMappingModeInvalid  ModelMappingMode = 0
+	ModelMappingModeExplicit ModelMappingMode = 1
+	ModelMappingModeImplicit ModelMappingMode = 2
+)
+
+func (m ModelMappingMode) Valid() bool {
+	switch m {
+	case ModelMappingModeExplicit, ModelMappingModeImplicit:
+		return true
+	}
+	return false
+}
+
+func (m ModelMappingMode) String() string {
+	switch m {
+	case ModelMappingModeExplicit:
+		return "explicit"
+	case ModelMappingModeImplicit:
+		return "implicit"
+	default:
+		return fmt.Sprintf("ModelMappingMode(%d)", uint8(m))
+	}
+}
+
+func (m ModelMappingMode) MarshalJSON() ([]byte, error) {
+	switch m {
+	case ModelMappingModeExplicit:
+		return json.Marshal("explicit")
+	case ModelMappingModeImplicit:
+		return json.Marshal("implicit")
+	default:
+		return nil, fmt.Errorf("invalid ModelMappingMode %q", m.String())
+	}
+}
+
+func (m *ModelMappingMode) UnmarshalJSON(data []byte) error {
+	var s *string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == nil {
+		return fmt.Errorf("mode must not be null")
+	}
+	switch *s {
+	case "explicit":
+		*m = ModelMappingModeExplicit
+	case "implicit":
+		*m = ModelMappingModeImplicit
+	default:
+		return fmt.Errorf("invalid mode %q", *s)
+	}
+	return nil
+}
+
+type ModelMappingEntry struct {
+	MappedModel string           `json:"mapped_model"`
+	Mode        ModelMappingMode `json:"mode"`
+}
+
+func (e *ModelMappingEntry) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return fmt.Errorf("model mapping entry must not be null")
+	}
+	var raw map[string]*json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["mapped_model"]; !ok {
+		return fmt.Errorf("mapped_model is required")
+	}
+	if _, ok := raw["mode"]; !ok {
+		return fmt.Errorf("mode is required")
+	}
+	if len(raw) != 2 {
+		return fmt.Errorf("additional properties not allowed")
+	}
+	type alias ModelMappingEntry
+	var tmp alias
+	if err := json.Unmarshal(data, &tmp); err != nil {
+		return err
+	}
+	if strings.TrimSpace(tmp.MappedModel) == "" || tmp.MappedModel != strings.TrimSpace(tmp.MappedModel) {
+		return fmt.Errorf("mapped_model must be non-empty without leading/trailing whitespace")
+	}
+	*e = ModelMappingEntry(tmp)
+	return nil
+}
+
+type ModelMapping map[string]ModelMappingEntry
+
+func (m *ModelMapping) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return fmt.Errorf("model_mapping must not be null")
+	}
+	type raw ModelMapping
+	var tmp raw
+	if err := json.Unmarshal(data, (*map[string]ModelMappingEntry)(&tmp)); err != nil {
+		return err
+	}
+	if tmp == nil {
+		tmp = make(raw)
+	}
+	*m = ModelMapping(tmp)
+	return nil
+}
+
+func ValidateModelMapping(m ModelMapping) error {
+	for alias, entry := range m {
+		if strings.TrimSpace(alias) == "" || alias != strings.TrimSpace(alias) {
+			return fmt.Errorf("alias %q must be non-empty without leading/trailing whitespace", alias)
+		}
+		if strings.TrimSpace(entry.MappedModel) == "" || entry.MappedModel != strings.TrimSpace(entry.MappedModel) {
+			return fmt.Errorf("mapped_model %q must be non-empty without leading/trailing whitespace", entry.MappedModel)
+		}
+		if !entry.Mode.Valid() {
+			return fmt.Errorf("mode %q must be explicit or implicit", entry.Mode.String())
+		}
+	}
+	return nil
+}
+
 type Template struct {
 	ID               int64
 	Name             string
@@ -181,7 +309,7 @@ type Template struct {
 	SupportedFormats []RequestFormat            // 模板支持的格式（非空、去重）
 	Models           []string                   // 可服务模型集合
 	FormatModels     map[RequestFormat][]string // 格式 → 该格式支持的模型列表；未配置 = 全部 Models
-	ModelMapping     map[string]string
+	ModelMapping     ModelMapping
 	// StripImageTools 模板级图像 tool 剥离开关（template_ext.strip_image_tools
 	// 快照合并，W4 消费；三类型 responses-special/codex-oauth/codex-pat 公共
 	// 能力）：true = response.create 帧出口剥离图像工具（tools 数组 +
@@ -254,7 +382,7 @@ type Account struct {
 	// failed_at = 运行时失效，两者可并存（失效后管理员仍可手动处理；恢复 =
 	// 清 failed_at + last_error + 恢复调度，T5 细化）。调度器选号不读本字段
 	//（pickFrom 只跳 disabled——摘除必须落库 status）。
-	FailedAt  *time.Time
+	FailedAt      *time.Time
 	FailureSource *string
 	Enabled       bool
 	// LifecycleRevision 账号生命周期代际（CAS fencing：每次生命周期变化及管理员
@@ -777,13 +905,13 @@ type ThrottleAction struct {
 }
 
 type RuleThen struct {
-	Status   *AccountStatus `json:"status,omitempty"` // legacy: to be removed; keep for intermediate compile-green
+	Status   *AccountStatus `json:"status,omitempty"`   // legacy: to be removed; keep for intermediate compile-green
 	Cooldown *string        `json:"cooldown,omitempty"` // legacy
 	Weight   *int           `json:"weight,omitempty"`   // legacy
 	// ResponseCode nil=透传上游码，non-nil=覆写为指定码（400-599）；指针即意图（fresh setup，无旧 Transmit 兼容）。
 	ResponseCode *int `json:"response_code,omitempty"`
 	// CustomMessage nil=透传上游文，non-nil=覆写为固定文案（禁止空串）；指针即意图。
-	CustomMessage *string `json:"custom_message,omitempty"`
+	CustomMessage *string         `json:"custom_message,omitempty"`
 	Throttle      *ThrottleAction `json:"throttle,omitempty"`
 	FailAccount   bool            `json:"fail_account,omitempty"`
 	// 启动 guard 检测旧列 Transmit：fresh setup 哲学，用户裁决；旧列存在则 fail-fast 需重建（本 Task 仅注释占位，DB 检测由后续迁移承载）。

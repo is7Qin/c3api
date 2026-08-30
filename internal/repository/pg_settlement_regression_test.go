@@ -16,7 +16,7 @@ import (
 // Settlement regression scenarios A/E/G (B/C live in pg_settlement_failure_test.go).
 
 func TestSettlement_SuccessUnchanged(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "f7-a@example.com")
@@ -36,7 +36,7 @@ func TestSettlement_SuccessUnchanged(t *testing.T) {
 }
 
 func TestSettlement_Cancellation_NoWriteOff(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "f7-e@example.com")
@@ -60,7 +60,7 @@ func TestSettlement_Cancellation_NoWriteOff(t *testing.T) {
 }
 
 func TestSettlement_ZeroCostRegression(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "f7-g@example.com")

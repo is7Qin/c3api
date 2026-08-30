@@ -44,7 +44,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		count       int64
 		usage       *domain.ImageUsage
 		headersSent bool
-		ttft      *int64
+		ttft        *int64
 	)
 	writeFrame := func(frame []byte) error {
 		if !headersSent {
@@ -112,7 +112,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		if r.Context().Err() != nil {
 			outcome := imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultClientCancel, 0, CommitResponseStarted, headersSent, true, false)
 			_ = observer.Cancel(outcome)
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
 		code := statusOf(genErr)
@@ -125,7 +125,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		outcome := imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), commit, business, true, false)
 		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: genErr.Error()}
 		_ = observer.Complete(outcome, health)
-		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
+		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
 		return 0, nil, true, nil
 	}
 
@@ -141,7 +141,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 	outcome := imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultSuccess, 200, CommitResponseStarted, true, true, false)
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
 	_ = observer.Complete(outcome, health)
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, sel.Format, http.StatusOK, domain.ErrNone, u, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrNone, u, start)))
 	return http.StatusOK, nil, true, nil
 }
 

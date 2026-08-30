@@ -464,12 +464,12 @@ func TestDeductCacheReadBoundaries(t *testing.T) {
 // —— buildLog 接线（评审 I-2）：cr/cc → UsageLog.CacheRead/CreationTokens ——
 
 func TestBuildLogWiresCacheTokens(t *testing.T) {
-	l := (&Proxy{}).buildLog("req1", 1, 2, "m", "m", domain.FormatOpenAIChat, 200, domain.ErrNone,
+	l := (&Proxy{}).buildLog("req1", 1, 2, "m", "", domain.FormatOpenAIChat, 200, domain.ErrNone,
 		usageTuple{it: 10, ot: 20, tt: 30, cr: 4, cc: 6}, time.Now())
 	require.Equal(t, int64(4), l.CacheReadTokens)
 	require.Equal(t, int64(6), l.CacheCreationTokens)
 
-	nilU := (&Proxy{}).buildLog("req2", 1, 2, "m", "m", domain.FormatOpenAIChat, 200, domain.ErrNone, usageTuple{}, time.Now())
+	nilU := (&Proxy{}).buildLog("req2", 1, 2, "m", "", domain.FormatOpenAIChat, 200, domain.ErrNone, usageTuple{}, time.Now())
 	require.Zero(t, nilU.CacheReadTokens, "零值元组 → 0（不 panic）")
 	require.Zero(t, nilU.CacheCreationTokens)
 }
@@ -483,14 +483,19 @@ func TestMappedFor(t *testing.T) {
 	require.Equal(t, "", mappedFor("", ""), "请求模型缺失（401）→ 空")
 }
 
-// —— buildLog 模型语义（评审 I-1）：Model=客户端请求模型、MappedModel=映射后模型 ——
+// —— buildLog 模型语义（Todo 3 mapping-mode）：Model=客户端请求模型、
+// MappedModel=调用方直填用量身份（不再 mappedFor 推断）—— ——
 
 func TestBuildLogModelSemantics(t *testing.T) {
 	mapped := (&Proxy{}).buildLog("r1", 1, 2, "gpt-4o", "gpt-4o-upstream", domain.FormatOpenAIChat, 200, domain.ErrNone, usageTuple{}, time.Now())
 	require.Equal(t, "gpt-4o", mapped.Model, "Model = 客户端请求模型")
-	require.Equal(t, "gpt-4o-upstream", mapped.MappedModel, "MappedModel = 映射后实际模型")
+	require.Equal(t, "gpt-4o-upstream", mapped.MappedModel, "MappedModel = 直填用量身份（explicit 目标）")
 
-	plain := (&Proxy{}).buildLog("r2", 1, 2, "gpt-4o", "gpt-4o", domain.FormatOpenAIChat, 200, domain.ErrNone, usageTuple{}, time.Now())
+	plain := (&Proxy{}).buildLog("r2", 1, 2, "gpt-4o", "", domain.FormatOpenAIChat, 200, domain.ErrNone, usageTuple{}, time.Now())
 	require.Equal(t, "gpt-4o", plain.Model)
-	require.Equal(t, "", plain.MappedModel, "无映射 → MappedModel 空")
+	require.Equal(t, "", plain.MappedModel, "无映射/explicit identity → 调用方传空 → MappedModel 空")
+
+	implicit := (&Proxy{}).buildLog("r3", 1, 2, "gpt-4o", "gpt-4o", domain.FormatOpenAIChat, 200, domain.ErrNone, usageTuple{}, time.Now())
+	require.Equal(t, "gpt-4o", implicit.Model)
+	require.Equal(t, "gpt-4o", implicit.MappedModel, "implicit 行直填客户端模型——直传不吞（无推断）")
 }

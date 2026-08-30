@@ -40,7 +40,7 @@ type TemplatePatch struct {
 	SupportedFormats *[]domain.RequestFormat
 	Models           *[]string
 	FormatModels     *map[domain.RequestFormat][]string
-	ModelMapping     *map[string]string
+	ModelMapping     *domain.ModelMapping
 }
 
 type AccountPatch struct {

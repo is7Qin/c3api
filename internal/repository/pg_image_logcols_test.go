@@ -147,9 +147,9 @@ func imageLogFor(userID int64, requestID string) *domain.UsageLog {
 // QueryUsages 读回 + SQL 层直查；未设置路径 → call_count 0（DEFAULT）、
 // price_per_call_millis NULL/nil。
 func TestUsageLogCallColumnsRoundtripPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{
 		imageLogFor(0, "img-1"),
@@ -204,9 +204,9 @@ func TestUsageLogCallColumnsRoundtripPG(t *testing.T) {
 // → SettleBalanceBatch 扣费标记——SQL 层直查 2 列 + billed 翻转（旧 COPY 路径
 // 断言随双写删除）。
 func TestUsageLogCallColumnsBillingCursorPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	u := seedPGUser(t, repos, "imgcopy@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
 
@@ -243,9 +243,9 @@ func TestUsageLogCallColumnsBillingCursorPG(t *testing.T) {
 // + price_per_call_millis（按次价快照）经 InsertBatch 落库 → SettleBalanceBatch
 // 标记翻转。
 func TestUsageLogSearchBillingCursorPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	u := seedPGUser(t, repos, "search@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
 

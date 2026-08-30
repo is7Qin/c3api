@@ -32,9 +32,9 @@ var pgLogSnapshotCols = []struct{ name, dataType string }{
 }
 
 func TestUsageLogSnapshotColumnsRoundtripPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	// bootstrap 建表必须含 5 列（bigint，无默认值 = NULL 可空）
 	for _, c := range pgLogSnapshotCols {

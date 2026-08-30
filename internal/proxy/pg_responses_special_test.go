@@ -74,6 +74,7 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 		CredentialType:   credential.TypeResponsesSpecial,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err, "模板主列 credential_type=responses-special 落库")
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "g-rsp", Visibility: domain.GroupVisibilityPublic})

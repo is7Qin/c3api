@@ -21,7 +21,8 @@ type AttemptPlanIdentity struct {
 	// MaxAttempts bounds successful dispatches (1..8). 0 means unset and
 	// falls back to the array bound MaxAttemptPlanAccounts; values >8 clamp
 	// to 8. The proxy stamps its normalized proxy.failover_attempts here.
-	MaxAttempts uint8
+	MaxAttempts       uint8
+	ApplyModelMapping bool
 }
 
 type AttemptLane string
@@ -131,6 +132,7 @@ type attemptPlanCandidate struct {
 	templateID        int64
 	requestedModel    string
 	mappedModel       string
+	mappingMode       domain.ModelMappingMode
 	routeClassID      string
 	callerCategory    string
 	operationTag      string

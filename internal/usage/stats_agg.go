@@ -15,6 +15,7 @@ package usage
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -113,6 +114,9 @@ type StatsAggWorker struct {
 	store   StatsAggStore
 	log     *logx.Logger
 	started atomic.Bool
+	lifeMu  sync.Mutex
+	cancel  context.CancelFunc
+	done    chan struct{}
 	// now 时钟注入（默认 time.Now；测试注入固定时钟——评审 I-2 惯例：边界由
 	// 调用方 now 推导，不内部各取各的）。
 	now func() time.Time
@@ -138,26 +142,34 @@ func (w *StatsAggWorker) Name() string { return "stats-agg" }
 // Start worker.Worker 契约：Interval <= 0 = 禁用聚合（config 0 语义——不启动
 // 循环，Close 直接返回；等价于不装配本 worker）。
 func (w *StatsAggWorker) Start(ctx context.Context) error {
+	w.lifeMu.Lock()
+	defer w.lifeMu.Unlock()
 	if !w.started.CompareAndSwap(false, true) {
 		return fmt.Errorf("stats agg: already started")
 	}
 	if w.cfg.Interval <= 0 {
 		return nil // 禁用聚合（usage.stats_agg_interval = 0）
 	}
-	worker.GoLoop(ctx, "stats-agg", w.log, w.loop)
+	loopCtx, cancel := context.WithCancel(ctx)
+	w.cancel = cancel
+	w.done = make(chan struct{})
+	go func() {
+		defer close(w.done)
+		worker.Loop(loopCtx, "stats-agg", w.log, w.loop)
+	}()
 	return nil
 }
 
 func (w *StatsAggWorker) loop(ctx context.Context) {
 	t := time.NewTicker(w.cfg.Interval)
 	defer t.Stop()
-	w.runOnce() // 启动即聚合（停摆恢复/冷启动快速收敛——watermark 初始化后立即追赶）
+	w.runOnce(ctx) // 启动即聚合（停摆恢复/冷启动快速收敛——watermark 初始化后立即追赶）
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			w.runOnce()
+			w.runOnce(ctx)
 		}
 	}
 }
@@ -165,8 +177,7 @@ func (w *StatsAggWorker) loop(ctx context.Context) {
 // runOnce 单轮聚合（两范围 + 双结果集 + 单事务，见类型注释）；任一步失败 →
 // Warn + 跳过（watermark 未推进 → 下轮重试不双计）。抢锁失败 → 静默跳过
 // （其他实例在聚合，非异常）。
-func (w *StatsAggWorker) runOnce() {
-	ctx := context.Background()
+func (w *StatsAggWorker) runOnce(ctx context.Context) {
 	start := w.now()
 	release, ok, err := w.store.AcquireStatsAggLock(ctx)
 	if err != nil {
@@ -249,9 +260,22 @@ func (w *StatsAggWorker) warnErr(step string, err error) {
 	}
 }
 
-// Close 幂等（worker.Worker 契约）：无排空需求（usage_stats 由 DB 侧覆盖语义
-// 收敛，worker 停摆期间的落后窗口由重启后追赶上限分批收敛）。
-func (w *StatsAggWorker) Close(ctx context.Context) error { return nil }
+// Close 幂等（worker.Worker 契约）：取消循环并等待在途周期释放会话锁。
+func (w *StatsAggWorker) Close(ctx context.Context) error {
+	w.lifeMu.Lock()
+	cancel, done := w.cancel, w.done
+	w.lifeMu.Unlock()
+	if cancel == nil || done == nil {
+		return nil
+	}
+	cancel()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // Stats 满足 handler.StatsProvider（观测面：watermark/上轮桶数/上轮行数/上轮
 // 耗时；失败轮保留上轮值——对齐 RetentionWorker 观测纪律）。

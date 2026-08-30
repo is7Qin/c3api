@@ -185,7 +185,7 @@ func templateRow() *pgxmock.Rows {
 		AddRow(int64(1), "openai-main", "https://api.openai.com/v1", "api_key",
 			[]byte(`["openai-chat","openai-responses"]`), []byte(`["gpt-4o"]`),
 			[]byte(`{"openai-responses":["o3"]}`),
-			[]byte(`{"gpt-4o":"gpt-4o-2026-01-01"}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			[]byte(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 			time.Time{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
@@ -205,7 +205,7 @@ func TestTemplateCRUD(t *testing.T) {
 		WithArgs("openai-main", "https://api.openai.com/v1", "api_key",
 			json.RawMessage(`["openai-chat","openai-responses"]`), json.RawMessage(`["gpt-4o"]`),
 			json.RawMessage(`{"openai-responses":["o3"]}`),
-			json.RawMessage(`{"gpt-4o":"gpt-4o-2026-01-01"}`),
+			json.RawMessage(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`),
 			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(1)))
 
@@ -222,7 +222,7 @@ func TestTemplateCRUD(t *testing.T) {
 		WithArgs("renamed", "https://api.openai.com/v1", "api_key",
 			json.RawMessage(`["openai-chat","openai-responses"]`), json.RawMessage(`["gpt-4o"]`),
 			json.RawMessage(`{"openai-responses":["o3"]}`),
-			json.RawMessage(`{"gpt-4o":"gpt-4o-2026-01-01"}`),
+			json.RawMessage(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`),
 			pgxmock.AnyArg(), int64(1)).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).
@@ -247,7 +247,7 @@ func TestTemplateCRUD(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses},
 		Models:           []string{"gpt-4o"},
 		FormatModels:     map[domain.RequestFormat][]string{domain.FormatOpenAIResponses: {"o3"}},
-		ModelMapping:     map[string]string{"gpt-4o": "gpt-4o-2026-01-01"},
+		ModelMapping:     map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o-2026-01-01", Mode: domain.ModelMappingModeExplicit}},
 	})
 	require.NoError(t, err)
 	got, err := tr.repos.Templates.GetTemplate(ctx(), tpl.ID)
@@ -274,7 +274,7 @@ func TestAccountAndGroup(t *testing.T) {
 	// Template create（repo 全字段 Set：credential_type 空串原样写入——默认值兜底在 service 层）
 	tr.pool.ExpectQuery(q(`INSERT INTO "templates"`)).
 		WithArgs("t", "https://u/v1", "", json.RawMessage(`["anthropic"]`),
-			json.RawMessage(`null`), json.RawMessage(`{}`), json.RawMessage(`null`),
+			json.RawMessage(`null`), json.RawMessage(`{}`), json.RawMessage(`{}`),
 			pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(1)))
 
@@ -364,7 +364,7 @@ func TestAccountAndGroup(t *testing.T) {
 		WillReturnRows(accountRow("429"))
 
 	tpl, err := tr.repos.Templates.CreateTemplate(ctx(), &domain.Template{
-		Name: "t", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic},
+		Name: "t", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic}, ModelMapping: domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	acc, err := tr.repos.Accounts.CreateAccount(ctx(), &domain.Account{
@@ -485,7 +485,7 @@ func TestListTemplatesQuery(t *testing.T) {
 				AddRow(int64(1), "openai-main", "https://api.openai.com/v1",
 					[]byte(`["openai-chat","openai-responses"]`), []byte(`["gpt-4o"]`),
 					[]byte(`{"openai-responses":["o3"]}`),
-					[]byte(`{"gpt-4o":"gpt-4o-2026-01-01"}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+					[]byte(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 					time.Time{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)).
 				AddRow(int64(2), "openai-alt", "https://api.openai.com/v1",
 					[]byte(`["openai-chat"]`), []byte(`["gpt-4o-mini"]`), []byte(`{}`), []byte(`{}`),
@@ -515,7 +515,7 @@ func TestListTemplatesQuery(t *testing.T) {
 				AddRow(int64(1), "openai-main", "https://api.openai.com/v1",
 					[]byte(`["openai-chat","openai-responses"]`), []byte(`["gpt-4o"]`),
 					[]byte(`{"openai-responses":["o3"]}`),
-					[]byte(`{"gpt-4o":"gpt-4o-2026-01-01"}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+					[]byte(`{"gpt-4o":{"mapped_model":"gpt-4o-2026-01-01","mode":"explicit"}}`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 					time.Time{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
 
 		rows, total, err := tr.repos.Templates.ListTemplates(ctx(), repository.ListQuery{
@@ -733,42 +733,6 @@ func TestUpdateAccountsBatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 	tr.expectDone(t)
-}
-
-// TestUsageStatsV2ColumnDefsAnchor usage_stats v2 锚（repository_test 侧家族镜像；
-// 与 partition_internal_test.go TestUsageStatsColumnDefsMatchCreateDDL 同模式、
-// 只追加不改旧）：验证 v2 列集合已瘦身且 ttft_hist 保留（beta 全新库自举，无迁移）。
-func TestUsageStatsV2ColumnDefsAnchor(t *testing.T) {
-	// 镜像锚：硬编码 v2 期望列集合（与 internal/repository/partition.go
-	// usageStatsColumnDefs 事实源一致），断言在场/取反以防漂移。
-	expectedPresent := []string{"id", "bucket_time", "group_id", "model", "request_count", "error_count", "input_tokens", "output_tokens", "total_tokens", "cache_read_tokens", "cache_creation_tokens", "cost", "raw_cost", "call_count", "ttft_total_ms", "ttft_count", "ttft_max_ms", "ttft_hist", "updated_at"}
-	expectedAbsent := []string{"account_id", "template_id", "user_id", "is_error", "total_latency_ms"}
-	for _, col := range expectedPresent {
-		require.Contains(t, expectedPresent, col, "v2 必须含列 %s", col)
-	}
-	for _, col := range expectedAbsent {
-		require.NotContains(t, expectedPresent, col, "v2 不得含旧列 %s", col)
-	}
-	// 索引锚：唯一索引列序 = ON CONFLICT 目标列序
-	idx := "CREATE UNIQUE INDEX usagestat_bucket_time_group_id_model ON usage_stats (bucket_time, group_id, model)"
-	require.Contains(t, idx, "(bucket_time, group_id, model)", "唯一索引列序 = ON CONFLICT 目标列序")
-	require.NotContains(t, idx, "user_id", "v2 索引不得含 user_id")
-}
-
-// TestUsageEntityStatsColumnDefsAnchor usage_entity_stats 锚（repository_test 侧家族镜像；
-// 与 partition_internal_test.go TestUsageEntityStatsColumnDefsMatchCreateDDL 同模式、
-// 只追加不改旧）：验证新表列集合与索引双锚（13 测量列无 hist、双索引）。
-func TestUsageEntityStatsColumnDefsAnchor(t *testing.T) {
-	expectedCols := []string{"id", "bucket_time", "entity_type", "entity_id", "model", "request_count", "error_count", "call_count", "input_tokens", "output_tokens", "total_tokens", "cache_read_tokens", "cache_creation_tokens", "cost", "raw_cost", "ttft_total_ms", "ttft_count", "ttft_max_ms", "updated_at"}
-	for _, col := range []string{"bucket_time", "entity_type", "entity_id", "model", "request_count", "error_count", "updated_at"} {
-		require.Contains(t, expectedCols, col, "实体卷积表必须含列 %s", col)
-	}
-	require.NotContains(t, expectedCols, "ttft_hist", "实体卷积表无 hist 列")
-	require.Len(t, expectedCols, 19, "实体卷积表列数 = 5 维度+13 测量+updated_at（含 id）")
-	uniqueIdx := "CREATE UNIQUE INDEX usageentity_bucket_time_entity_type_entity_id_model ON usage_entity_stats (bucket_time, entity_type, entity_id, model)"
-	probeIdx := "CREATE INDEX usageentity_entity_type_entity_id_bucket_time ON usage_entity_stats (entity_type, entity_id, bucket_time)"
-	require.Contains(t, uniqueIdx, "(bucket_time, entity_type, entity_id, model)", "唯一索引列序 = ON CONFLICT 目标列序")
-	require.Contains(t, probeIdx, "(entity_type, entity_id, bucket_time)", "探测索引列序")
 }
 
 func int64Ptr(v int64) *int64 { return &v }

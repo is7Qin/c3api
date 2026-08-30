@@ -75,12 +75,16 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var it, ot, tt, cr, cc int64
 		// 首帧到达即记录 TTFT，Observer 仍按目标协议原始帧提取用量。
 		var ttft *int64
+		clientModel := sel.ClientResponseModel(reqModel)
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Mapper: func(ev sserelay.Event) ([]byte, bool) {
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
 					ttft = &ms
 				}
+				// 用量提取走原始帧（与模板 caller 逐字同构；映射只影响写出字节）。
+				// 原始 ev.Data 在 StreamMapper 转换前提取，转换后改写不影响用量。
+				// EventName：缺 event: 名帧按 data.type 推断（非规范上游，P3）。
 				switch target {
 				case domain.FormatOpenAIResponses:
 					if bytes.Equal(ev.EventName(), []byte("response.completed")) {
@@ -98,7 +102,14 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 						ot = anthropicDeltaOutput(ev.Data)
 					}
 				}
-				return mapper.Map(string(ev.Event), ev.Data)
+				mapped, drop := mapper.Map(string(ev.Event), ev.Data)
+				if drop {
+					return nil, true
+				}
+				if clientModel != "" {
+					mapped = rewriteConvertedFrames(mapped, clientModel)
+				}
+				return mapped, false
 			},
 		})
 		resp.Body.Close()
@@ -115,7 +126,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, true, true, false)
 				_ = observer.Cancel(outcome)
 				// 计费落账由 p.finish 统一收口，routeLog 负责构建日志与用量。
-				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, http.StatusOK, domain.ErrAbort, u, start)))
+				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
 			}
 			code := statusOf(err)
@@ -128,7 +139,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false)
 			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
 			_ = observer.Complete(outcome, health)
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, http.StatusOK, domain.ErrAbort, u, start)))
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
 		tt = it + ot
@@ -137,7 +148,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		outcome := convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)
 		health := &AttemptHealthEvent{Kind: rule.KindOK}
 		_ = observer.Complete(outcome, health)
-		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 		return 200, nil, true, nil
 	}
 
@@ -187,6 +198,9 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	if err != nil {
 		return http.StatusInternalServerError, nil, false, fmt.Errorf("protocol response conversion failed: %w", err)
 	}
+	if rm := sel.ClientResponseModel(reqModel); rm != "" {
+		conv = rewriteResponseModelJSON(conv, rm)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(conv)
@@ -197,7 +211,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
 	_ = observer.Complete(outcome, health)
 	// 计费落账与日志由 p.finish 统一收口。
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.Model, client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 	return 200, nil, true, nil
 }
 

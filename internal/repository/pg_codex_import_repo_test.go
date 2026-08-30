@@ -26,7 +26,7 @@ import (
 // 跨类型判定材料）；缺行 → ErrNotFound；组合键语义（同 email 多 account_id /
 // 同 account_id 多 email 互不误命中）。
 func TestFindAccountExtByCodexKeyPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 
@@ -81,7 +81,7 @@ func TestFindAccountExtByCodexKeyPG(t *testing.T) {
 // email 零触碰（与 UpsertAccountExt 全量 upsert 的 ClearX 清 NULL 面区分）；
 // 行缺失 → ErrNotFound。
 func TestWritePATKeyPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	acc := seedPGAccount(t, repos, tpl.ID, "w-pk")

@@ -26,6 +26,24 @@ func setenvRequired(t *testing.T) {
 	t.Setenv("C3API_REDIS_ADDR", "127.0.0.1:6379")
 }
 
+func clearC3APIEnv(t *testing.T) {
+	t.Helper()
+	var original []string
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "C3API_") {
+			original = append(original, kv)
+			require.NoError(t, os.Unsetenv(k))
+		}
+	}
+	t.Cleanup(func() {
+		for _, kv := range original {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				_ = os.Setenv(k, v)
+			}
+		}
+	})
+}
+
 // writeConfig 写临时 TOML 并返回路径（单键覆盖 + 默认值叠加场景）。
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
@@ -203,6 +221,7 @@ func TestLoadKeepsRetentionZeroSemantics(t *testing.T) {
 // 原样部署鉴权绕过——config_test 旧断言"change-me 合法"是缺陷守护者，已改写；
 // redis.password 复用同校验，foundation spec §2.1）。
 func TestLoadRejectsPlaceholderSecrets(t *testing.T) {
+	clearC3APIEnv(t)
 	for _, ph := range []string{"change-me", "change-me-too", "dev-admin-token", "dev-jwt-secret-for-local"} {
 		for _, field := range []string{"admin.token", "auth.jwt_secret", "redis.password"} {
 			t.Run(field+"/"+ph, func(t *testing.T) {
@@ -230,6 +249,7 @@ func TestLoadRejectsPlaceholderSecrets(t *testing.T) {
 // main.go:64-66，已内聚到 Load）。admin.token 已可空——空 = 不启用静态 token，
 // 不再报错（spec 2026-08-15）。
 func TestLoadRequiresSecrets(t *testing.T) {
+	clearC3APIEnv(t)
 	for _, tc := range []struct {
 		path string
 		toml string

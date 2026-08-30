@@ -110,7 +110,7 @@ func fetchAllUnbilled(t *testing.T, repos *repository.Repository) []domain.Ledge
 // ('none','abort') 两谓词（单取批面：零价行同批取出由消费侧路由）+ ORDER BY id
 // + LIMIT；LedgerRow 瘦身投影字段逐项断言。
 func TestPGFetchUnbilledBatchFilters(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	a := logFor(1, "f-a") // none + cost>0 → 取
@@ -165,7 +165,7 @@ func usageLogByID(t *testing.T, repos *repository.Repository, id int64) *ent.Usa
 // 已过期不参与；临时额度充足时余额不被触碰（spill=0 → 无资金移动、无余额对）；
 // 同语句 billed 翻转。
 func TestSettleFefoOrder(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "fefo@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 100000))
@@ -211,7 +211,7 @@ func TestSettleFefoOrder(t *testing.T) {
 
 // TestSettleFefoPermanentLast FEFO 全档耗尽后扣到永久额度（NULLS LAST 排序语义）。
 func TestSettleFefoPermanentLast(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "perm@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 100000))
@@ -234,7 +234,7 @@ func TestSettleFefoPermanentLast(t *testing.T) {
 // 场景 A——覆盖点落在末行中间（部分扣，剩余保留）；场景 B——临时额度不足，
 // spill 差额进余额条件扣（守恒精确：Σdrawn + Δbalance == cost）。
 func TestSettleFefoPartialLastRowAndSpill(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	// 场景 A：120000 成本 vs 30000+50000+70000 池——覆盖点在永久行内（部分扣 40000）
@@ -288,7 +288,7 @@ func TestSettleFefoPartialLastRowAndSpill(t *testing.T) {
 // 车道互斥微断言——同一用户先经 SettleFefoBatch 零命中（非 temp-active 被谓词
 // 排除），再经 SettleBalanceBatch 结算。
 func TestSettleBalanceConditionalSuccess(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "cond@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 100000))
@@ -320,7 +320,7 @@ func TestSettleBalanceConditionalSuccess(t *testing.T) {
 // TestSettleBalanceOverdraft 余额不足 → 无条件扣允许透支（负余额），overdraft
 // 回写行内（B2）。
 func TestSettleBalanceOverdraft(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "od@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 10000))
@@ -344,7 +344,7 @@ func TestSettleBalanceOverdraft(t *testing.T) {
 // TestSettleBalanceMixedOverdraft 混合透支批（替代退役 chunk 族）：od=true/false
 // 用户同批一笔语句——逐用户 Δ余额精确、overdraft 列按用户整组对齐、守恒闭合。
 func TestSettleBalanceMixedOverdraft(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	rich := seedPGUser(t, repos, "mixed-rich@example.com") // 余额充足：条件扣
 	poor := seedPGUser(t, repos, "mixed-poor@example.com") // 余额不足：透支
@@ -392,7 +392,7 @@ func TestSettleBalanceMixedOverdraft(t *testing.T) {
 // TestSettleBalanceGhostQuarantined 用户不存在 → 跳过扣减仍标记全部行、
 // Quarantined 行数返回（不变量 #1 尾语义——毒用户不卡游标）。
 func TestSettleBalanceGhostQuarantined(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	seedUnbilled(t, repos, logFor(999999, "ghost"))
@@ -422,7 +422,7 @@ func TestSettleBalanceGhostQuarantined(t *testing.T) {
 // ——恰一人整批成交（另一人空批或守卫回滚重放至空批），终态守恒精确
 // （100000 − 2×60000 = −20000），两行都标记恰一次（多实例安全语义）。
 func TestSettleBalanceConcurrentSameUser(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "conc@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 100000))
@@ -463,7 +463,7 @@ func TestSettleBalanceConcurrentSameUser(t *testing.T) {
 // TestPGZeroCostFastPath 零价快速路径：cost=0 行进取批（单取批面）→
 // MarkBilledBulk 幂等纯标记——不触碰余额/temp（不走结算语句），零资金移动。
 func TestPGZeroCostFastPath(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "zerocost@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 50000))
@@ -504,7 +504,7 @@ func ledgerIDsOf(rows []domain.LedgerRow) []int64 {
 // ok=false；种子后 ok=true + 队头 oldest 对齐；全部标记后归零（lag 护栏数据源
 // 契约）。
 func TestPGUnbilledLag(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	oldest, ok, err := repos.UnbilledLag(ctx)
@@ -512,8 +512,9 @@ func TestPGUnbilledLag(t *testing.T) {
 	require.False(t, ok, "空游标")
 	require.True(t, oldest.IsZero(), "空游标 oldest 零值")
 
-	old := time.Now().Add(-time.Hour).Truncate(time.Second)
-	newer := time.Now().Truncate(time.Second)
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	old := day.Add(time.Minute)
+	newer := day.Add(2 * time.Minute)
 	r1 := logFor(1, "lag-old")
 	r1.CreatedAt = old
 	r2 := logFor(1, "lag-new")

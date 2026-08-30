@@ -15312,7 +15312,7 @@ type TemplateMutation struct {
 	models                  *[]string
 	appendmodels            []string
 	format_models           *map[string][]string
-	model_mapping           *map[string]string
+	model_mapping           *domain.ModelMapping
 	updated_at              *time.Time
 	deleted_at              *time.Time
 	created_at              *time.Time
@@ -15679,12 +15679,12 @@ func (m *TemplateMutation) ResetFormatModels() {
 }
 
 // SetModelMapping sets the "model_mapping" field.
-func (m *TemplateMutation) SetModelMapping(value map[string]string) {
-	m.model_mapping = &value
+func (m *TemplateMutation) SetModelMapping(dm domain.ModelMapping) {
+	m.model_mapping = &dm
 }
 
 // ModelMapping returns the value of the "model_mapping" field in the mutation.
-func (m *TemplateMutation) ModelMapping() (r map[string]string, exists bool) {
+func (m *TemplateMutation) ModelMapping() (r domain.ModelMapping, exists bool) {
 	v := m.model_mapping
 	if v == nil {
 		return
@@ -15695,7 +15695,7 @@ func (m *TemplateMutation) ModelMapping() (r map[string]string, exists bool) {
 // OldModelMapping returns the old "model_mapping" field's value of the Template entity.
 // If the Template object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *TemplateMutation) OldModelMapping(ctx context.Context) (v map[string]string, err error) {
+func (m *TemplateMutation) OldModelMapping(ctx context.Context) (v domain.ModelMapping, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldModelMapping is only allowed on UpdateOne operations")
 	}
@@ -16117,7 +16117,7 @@ func (m *TemplateMutation) SetField(name string, value ent.Value) error {
 		m.SetFormatModels(v)
 		return nil
 	case template.FieldModelMapping:
-		v, ok := value.(map[string]string)
+		v, ok := value.(domain.ModelMapping)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}

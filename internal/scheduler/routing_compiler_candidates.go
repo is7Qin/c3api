@@ -107,7 +107,7 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 			resolved := rk.model
 			if av.tpl != nil {
 				if m, ok := av.tpl.ModelMapping[rk.model]; ok {
-					resolved = m
+					resolved = m.MappedModel
 				}
 			}
 			qc := qualityClassHexForWithOp(rk.format, resolved, op)
@@ -194,7 +194,7 @@ func compilerHealthKeyFor(acc *domain.Account, format domain.RequestFormat, mode
 	resolved := model
 	if acc.Template != nil {
 		if m, ok := acc.Template.ModelMapping[model]; ok {
-			resolved = m
+			resolved = m.MappedModel
 		}
 	}
 	op := operationTagForFormat(string(format))

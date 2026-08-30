@@ -20,7 +20,7 @@ import (
 // 重跑改值 → 覆盖为新值（非累加）。单写者由会话级 advisory lock 保证
 // （usage/stats_agg.go），本测试验证 AggregateRange 覆盖行为。
 func TestVariantAggregateRangeOverwrite(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	base := time.Now().UTC().Truncate(time.Hour)
 	mk := func(g, req int64) *domain.StatBucket {

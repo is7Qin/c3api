@@ -28,9 +28,9 @@ import (
 // raw>0）/ 非 billed 行（UserID==0 但 bill 装配）raw 照填 / bill 未装配 raw=0。
 // ent 建行路径（buildUsageLogCreate SetRawCost 恒落）经 InsertBatch 全量覆盖。
 func TestUsageLogRawCostRoundtripPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	// 列存在性 + 类型 + NOT NULL + DEFAULT 0 锚（建表 DDL 事实源落库等价）
 	var dataType, isNullable, def string

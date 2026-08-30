@@ -66,6 +66,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 		CredentialType:   credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
 		Models:           []string{"gpt-4o"},
+		ModelMapping:     domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "g", Visibility: domain.GroupVisibilityPublic})

@@ -246,7 +246,7 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 	}
 	appendFlow := func(o AttemptOutcome) {}
 	release := func() {
-		l := logWithCtx(ctx, p.buildLog(reqID, groupID, outcome.AccountID, reqModel, string(outcome.MappedModel), domain.FormatOpenAIResponsesWS, status, et, u, start))
+		l := logWithCtx(ctx, p.buildLog(reqID, groupID, outcome.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, status, et, u, start))
 		if ttftCopy != nil {
 			l.TTFTMS = ttftCopy
 		}
