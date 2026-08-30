@@ -23,7 +23,7 @@ import (
 // TestPGSoftDeleteListFilters 软删后列表过滤（含 count）+ GET 单个可见（含
 // deleted_at）——5 实体全覆盖。
 func TestPGSoftDeleteListFilters(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "sd-list@example.com")
 
@@ -85,7 +85,7 @@ func TestPGSoftDeleteListFilters(t *testing.T) {
 // TestPGSoftDeleteUniqueHeld 软删项仍占唯一约束：同名/同明文重建 → ErrConflict
 // （审计优先：唯一检查不加 deleted_at 过滤，与 DB 约束一致；同名重建走运维 SQL）。
 func TestPGSoftDeleteUniqueHeld(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "sd-uniq@example.com")
 
@@ -135,7 +135,7 @@ func TestPGSoftDeleteUniqueHeld(t *testing.T) {
 // GetKeyByRaw（鉴权按未找到拒绝）、LoadGroupsAccounts（调度器快照）、
 // ListRules（规则引擎 Reload 数据源——ListFilters 已锚）。
 func TestPGSoftDeleteConsumptionFilters(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "sd-consum@example.com")
 	tpl := seedPGTemplate(t, repos)
@@ -179,7 +179,7 @@ func TestPGSoftDeleteConsumptionFilters(t *testing.T) {
 // TestPGSoftDeleteBatchAtomic 批量软删：存在性检查（缺失 id → ErrNotFound）+
 // 事务原子（任一失败整体回滚——缺失 id 场景下存活项不被软删）。
 func TestPGSoftDeleteBatchAtomic(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	t1 := seedPGTemplate(t, repos)
@@ -218,7 +218,7 @@ func TestPGSoftDeleteBatchAtomic(t *testing.T) {
 // TestPGSoftDeleteGroupCascade 组删除级联：组内 key 一并软删（service 调用链
 // DeleteKeysByGroup → DeleteGroup 的仓库语义）。
 func TestPGSoftDeleteGroupCascade(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "sd-cascade@example.com")
 	g := seedPGGroup(t, repos, "sd-cascade-g")

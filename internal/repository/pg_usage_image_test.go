@@ -42,7 +42,7 @@ func imageBillLogFor(userID int64, requestID string) *domain.UsageLog {
 // price_per_call_millis=每张价、image token 并入 in/out）。任一同步点漏改
 // （COPY 列清单/行值/CreateBulk/列定义/查询映射）本测试即红。
 func TestPGUsageLogImageColumnsRoundTrip(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "img@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1000000))

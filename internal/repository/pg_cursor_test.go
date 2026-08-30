@@ -52,7 +52,7 @@ func pageWalk(t *testing.T, repos *repository.Repository, q repository.UsageQuer
 // （7 今日 + 5 明日），limit=3 翻页——id 全局单调，跨分区自然有序；
 // 结果无重复、无遗漏、严格降序（id 序 ≈ 时间序）。
 func TestPGCursorCrossPartition(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
@@ -89,7 +89,7 @@ func TestPGCursorCrossPartition(t *testing.T) {
 // TestPGCursorFilterWindowCombined 过滤（model + user）+ 时间窗 + 游标组合：
 // 三条件交集上翻页，窗外行/他过滤值行不得混入。
 func TestPGCursorFilterWindowCombined(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	base := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
@@ -122,7 +122,7 @@ func TestPGCursorFilterWindowCombined(t *testing.T) {
 // 真实 PG：种子不同 format 行 → 筛选返回正确子集；空串 = 不过滤；与 model
 // 组合 AND；无效值自然查空（与 model 同语义，契约不校验值域）。
 func TestPGFormatPredicate(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	base := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
@@ -195,7 +195,7 @@ func TestPGFormatPredicate(t *testing.T) {
 // （多取 1 探测行）；末页返回 ≤ limit 行（探测行缺省）；cursor 缺失/≤0 =
 // 首页（无 id 谓词，与 0 等价）。
 func TestPGCursorProbeLimitPlusOne(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	base := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
@@ -254,7 +254,7 @@ func errPageWalk(t *testing.T, repos *repository.Repository, q repository.ErrLog
 // 与 usage 侧同语义——跨两个日分区翻页无重复、无遗漏、严格 id 降序、与全量
 // 集合一致；status_code 过滤与游标组合只翻出命中行。
 func TestPGCursorErrLogsCrossPartition(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
@@ -342,9 +342,9 @@ func walkPlan(n *planNode, visit func(*planNode)) {
 // 是 flake。每表 5000 行（当日分区内时间散布）+ ANALYZE 后计划锁定
 // （LIMIT 21 + ORDER BY id DESC → 索引提前终止路径恒优于 Seq Scan+Sort）。
 func TestPGCursorExplainBoundedCost(t *testing.T) {
-	_ = newPGRepos(t) // 建 schema + 分区 bootstrap（种子经 pool 直插，无需 repo）
+	_ = newPGReposShared(t) // 建 schema + 分区 bootstrap（种子经 pool 直插，无需 repo）
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)

@@ -21,7 +21,7 @@ import (
 // 带旧值条件——旧值不满足（期间有扣费/并发变更）→ ErrConflict 不覆盖；
 // 缺失用户 → ErrNotFound；旧值缺失 → 显式拒绝（防未来调用方退回无条件写）。
 func TestPGUpdateUserPatchConditional(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "patch-cond@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 100000))
@@ -99,7 +99,7 @@ func TestPGUpdateUserPatchConditional(t *testing.T) {
 // （余额不复活、usage_logs 消费与余额一致）；新鲜快照条件写成功（管理员显式
 // 意图建立在当前值上）。
 func TestPGUpdateUserVsDeductOnlyInterleave(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "patch-deduct@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 100000))
@@ -140,7 +140,7 @@ func TestPGUpdateUserVsDeductOnlyInterleave(t *testing.T) {
 // 扣费零丢失（修复前无条件写回会吞并发增量）。并发窗口互斥/恰扣一次语义由
 // TestPGSettleEPQConcurrentMark 的 EPQ 守卫族承载。
 func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "patch-race@example.com")
 	const base, perDeduct, nDeducts = int64(100000), int64(1000), 20
@@ -188,7 +188,7 @@ func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 // quota_used（剥离 SetQuotaUsed）——与 AddQuotaUsed 并发交错时 Recorder 增量
 // 零丢失；返回行 QuotaUsed 为 DB 新鲜值（ent Save re-SELECT）。
 func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	u := seedPGUser(t, repos, "kquota@example.com")
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "kq", Visibility: domain.GroupVisibilityPublic})

@@ -16,7 +16,7 @@ import (
 )
 
 func TestUsageLogMissingPartitionMapsToDomain(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	far := time.Date(2099, 1, 1, 12, 0, 0, 0, time.UTC)
 	log := &domain.UsageLog{
@@ -32,6 +32,6 @@ func TestUsageLogMissingPartitionMapsToDomain(t *testing.T) {
 	require.Contains(t, err.Error(), "no partition of relation")
 	// ensure no rows persisted and original timestamp not mutated
 	require.Equal(t, far, log.CreatedAt)
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 	require.Equal(t, int64(0), pgCount(t, pool, `SELECT COUNT(*) FROM usage_logs WHERE request_id='routing-fail-1'`))
 }

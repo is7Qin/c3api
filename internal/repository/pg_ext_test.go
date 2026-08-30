@@ -32,7 +32,7 @@ func strPtrPG(s string) *string { return &s }
 // 幂等 upsert（同父 id 再写 = 单行覆盖，NULL 清空）+ FK（父模板缺失报错）+
 // 缺行 404。模板 ext 无凭据列（oauth/pat 一律在 account_ext）。
 func TestTemplateExtPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 
@@ -107,7 +107,7 @@ func TestTemplateExtPG(t *testing.T) {
 
 // TestAccountExtPG 账号 ext 两种 codex 类型各自读写 + FK + 缺行 404。
 func TestAccountExtPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	acc := seedPGAccount(t, repos, tpl.ID, "a1")
@@ -199,7 +199,7 @@ func TestAccountExtPG(t *testing.T) {
 // 缺失 → 插入（true）；已存在 → 跳过不覆盖（false）；并发双首写 → 单份身份、
 // 不报错、不覆盖。
 func TestAccountExtTryInsertPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	acc := seedPGAccount(t, repos, tpl.ID, "a-try")
@@ -261,7 +261,7 @@ func TestAccountExtTryInsertPG(t *testing.T) {
 // TestGetTemplatesByIDsPG 批量取模板（I2：UpdateTemplatesBatch 类型-格式校验
 // 用，替代逐 id N+1）：一次 IN 返回全部目标；缺失 id 不报错（数量 < 请求数）。
 func TestGetTemplatesByIDsPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	a := seedPGTemplate(t, repos)
 	b, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
@@ -289,7 +289,7 @@ func TestGetTemplatesByIDsPG(t *testing.T) {
 // TestGroupProtocolConvertPG groups.protocol_convert 方向集合：JSON 数组存取
 // roundtrip（多方向）+ 缺省 = 空数组（off）+ 更新覆盖/显式空数组清空。
 func TestGroupProtocolConvertPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	// 缺省（nil）→ 空数组（off；repo 恒写入）
@@ -358,7 +358,7 @@ func snapshotExtOf(t *testing.T, repos *repository.Repository, groupID, accountI
 // 全量（LoadGroupsAccounts）与组级（LoadGroupAccounts）两条数据源一致；无
 // ext 行 → nil；ext 更新后重载反映新值（配置经快照重载生效，请求期零 DB）。
 func TestPGAccountExtSnapshotLoad(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	g := seedPGGroup(t, repos, "g")
@@ -420,7 +420,7 @@ func TestPGAccountExtSnapshotLoad(t *testing.T) {
 // 冲突路径 ClearX 清空）+ 坏 json（手工 SQL 注入——应用路径不可达）→ ent 扫描
 // 器 Unmarshal 报错原样透传（loud failure，非 nil 静默）。
 func TestAccountExtIdentityJSONBPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	acc := seedPGAccount(t, repos, tpl.ID, "a-jsonb")
@@ -463,14 +463,14 @@ func TestAccountExtIdentityJSONBPG(t *testing.T) {
 		// 应用路径 ent 恒写合法序列化——双保险。可注入的损坏形态 = 合法 json
 		// 错类型（手工 SQL 场景，外部工具写库）→ ent 扫描器 json.Unmarshal
 		// 报错 → 查询 error 原样透传（非 nil 静默）
-		db := pgTestDB(t)
-		_, err := db.ExecContext(ctx, `UPDATE account_exts SET codex_identity = '{"installation_id": 123}' WHERE account_id = $1`, acc.ID)
+		conn := pgSharedConn(t)
+		_, err := conn.Exec(ctx, `UPDATE account_exts SET codex_identity = '{"installation_id": 123}' WHERE account_id = $1`, acc.ID)
 		require.NoError(t, err, "合法 json 错类型注入成功（测试前提）")
 		_, err = repos.AccountExts.GetAccountExt(ctx, acc.ID)
 		require.Error(t, err, "错类型 jsonb → 查询报错（loud failure）")
 		require.NotErrorIs(t, err, repository.ErrNotFound, "必须是解包错误而非缺行")
 		// 语法非法 json → PG 写路径直接拒绝（jsonb 列级校验）
-		_, err = db.ExecContext(ctx, `UPDATE account_exts SET codex_identity = '{"installation_id": 123' WHERE account_id = $1`, acc.ID)
+		_, err = conn.Exec(ctx, `UPDATE account_exts SET codex_identity = '{"installation_id": 123' WHERE account_id = $1`, acc.ID)
 		require.Error(t, err, "语法非法 jsonb → PG 写路径 loud 拒绝")
 	})
 }
@@ -479,7 +479,7 @@ func TestAccountExtIdentityJSONBPG(t *testing.T) {
 // codex_account_id)：同键第二行失败（唯一约束）；不同 codex_account_id 共存；
 // NULL 不参与唯一（同 email 双 NULL 行共存——存量管理面写入形态零回归）。
 func TestAccountExtCodexAccountIDUniquePG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 

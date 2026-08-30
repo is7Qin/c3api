@@ -18,7 +18,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// 真实 PG 基座（newPGRepos；TEST_DATABASE_URL 未设置 → Skip）：
+// 真实 PG 基座（newPGReposShared；TEST_DATABASE_URL 未设置 → Skip）：
 // 兑换码 Task 1 全部测试 —— code 唯一冲突、批量生成、use 唯一约束、批量失效幂等、
 // 条件递增并发防超卖（评审 I-2）、原子资源方法（评审 I-1）、WithTx 回滚（评审 I-1）。
 
@@ -32,7 +32,7 @@ func codeFor(tag string, typ domain.RedemptionType, maxUses int) *domain.Redempt
 // TestRedemptionCodesPG 批量生成 + 读取 + 列表（分页/筛选/sort 白名单）+
 // code 唯一冲突映射 ErrConflict。
 func TestRedemptionCodesPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	// code 唯一冲突 → ErrConflict（重复生成同 code；批量插入整体失败，无残留）
@@ -113,7 +113,7 @@ func TestRedemptionCodesPG(t *testing.T) {
 // TestRedemptionUsePG 兑换记录：CreateUse 唯一约束冲突 → ErrConflict（同 user 重复）；
 // GetUse / ListCodeUses（分页）。
 func TestRedemptionUsePG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	code := codeFor("USE001", domain.RedemptionTypeBalance, 10)
@@ -154,9 +154,9 @@ func TestRedemptionUsePG(t *testing.T) {
 // 上限 5000）。普通表无分区可 DROP——DELETE 批删路径（retention worker 周期
 // 任务内调用）。
 func TestRedemptionUseRetentionPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgSharedPool(t)
 
 	// redemption_uses.code_id 有 FK → 先建码
 	code := codeFor("F3R001", domain.RedemptionTypeBalance, 20000)
@@ -199,7 +199,7 @@ func TestRedemptionUseRetentionPG(t *testing.T) {
 
 // TestDeactivateCodesPG 批量失效：单事务、返回受影响数、已 disabled no-op 幂等。
 func TestDeactivateCodesPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	codes := []*domain.RedemptionCode{codeFor("DEA001", domain.RedemptionTypeBalance, 1),
@@ -242,7 +242,7 @@ func TestDeactivateCodesPG(t *testing.T) {
 // TestIncrementUsedConcurrentPG 条件递增防超卖（评审 I-2）：max_uses=2 的码，
 // 3 并发 IncrementUsed → 恰 2 个 true 1 个 false（DB 行锁 + WHERE 原子，不超卖）。
 func TestIncrementUsedConcurrentPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	code := codeFor("INC001", domain.RedemptionTypeBalance, 2)
@@ -292,7 +292,7 @@ func TestIncrementUsedConcurrentPG(t *testing.T) {
 // TestUserResourceUpdatePG 原子资源方法（评审 I-1）：UpdateUserBalance 并发增量不丢；
 // UpdateUserMaxConcurrency 0 特判（0 → value；非 0 → 累加）。
 func TestUserResourceUpdatePG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	u := seedPGUser(t, repos, "atomic@example.com")
@@ -340,7 +340,7 @@ func TestUserResourceUpdatePG(t *testing.T) {
 // 1) 提交路径：tx 内 建码 + 原子更新 + use + 条件递增，全落库；
 // 2) 回滚路径：fn 返回错误 → 全部无残留（含 raw SQL 原子更新，走 tx 连接）。
 func TestWithTxPG(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	t.Run("commit all ops", func(t *testing.T) {

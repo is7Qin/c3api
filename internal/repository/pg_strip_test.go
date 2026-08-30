@@ -39,7 +39,7 @@ func snapshotStripOf(t *testing.T, repos *repository.Repository, groupID, accoun
 // 无 ext 行 → false（未配置 = 关闭）；ext 更新后重载反映新值（热路径零 DB，
 // 配置经快照重载生效）。
 func TestPGStripSnapshotLoad(t *testing.T) {
-	repos := newPGRepos(t)
+	repos := newPGReposShared(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	g := seedPGGroup(t, repos, "g")
