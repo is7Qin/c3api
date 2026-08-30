@@ -251,6 +251,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{id}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 失效恢复（fenced）：清 failed_at/last_error/failure_source + revision CAS +1 → 新代际置 PROBING 待探针
+         * @description 运行时失效（rule 判死/SDK fatal）后管理员确认恢复的唯一入口：CAS
+         *     expected_revision 命中才清失效三字段并 +1，随后对新 revision 写通配
+         *     PROBING（探针环接管：READY 前不吃正常流量）。expected_revision 过期 →
+         *     409（前端须重读账号后重试）；本端点不启用被禁用的账号（enabled 独立
+         *     走 /accounts/{id}/enabled）。
+         */
+        post: operations["PostAccountsIdRecover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{id}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 启用/禁用账号（fenced；enable 不清失效字段——恢复唯一入口 /recover） */
+        post: operations["PostAccountsIdEnabled"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{id}/cost-multiplier": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 更新采购成本倍率（fenced；正常值 ×0–×10，边界换算 basis points） */
+        put: operations["PutAccountsIdCostMultiplier"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{id}/cache-domain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 更新缓存域（fenced；null = 清空回账号私有域；非空 = 共享域） */
+        put: operations["PutAccountsIdCacheDomain"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{id}/ext": {
         parameters: {
             query?: never;
@@ -1300,6 +1383,8 @@ export interface components {
             status?: components["schemas"]["AccountStatus"];
             weight?: number;
             max_concurrency?: number;
+            /** @description 可选：共享缓存域（合法域名形态 ≤253；null/缺省 = 账号私有域）；仅创建可带，更新走 /accounts/{id}/cache-domain */
+            cache_domain?: string | null;
             group_ids?: number[];
         };
         Account: {
@@ -1320,6 +1405,27 @@ export interface components {
             LastError?: string | null;
             /** Format: date-time */
             LastUsedAt?: string | null;
+            /** @description 管理面启停（写面 POST /accounts/{id}/enabled，CAS fenced；与运行时失效语义分离） */
+            Enabled?: boolean;
+            /**
+             * Format: date-time
+             * @description 运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复唯一入口 POST /accounts/{id}/recover）
+             */
+            FailedAt?: string | null;
+            /** @description 失效来源（rule/sdk 等；随 recover 清除） */
+            FailureSource?: string | null;
+            /**
+             * Format: int64
+             * @description 生命周期代际（CAS fencing：每次生命周期变化/管理员凭据替换 +1；所有 fenced 端点必须携带 expected_revision）
+             */
+            LifecycleRevision?: number;
+            /**
+             * Format: double
+             * @description 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PUT /accounts/{id}/cost-multiplier）
+             */
+            UpstreamCostMultiplier?: number;
+            /** @description 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PUT /accounts/{id}/cache-domain） */
+            CacheDomain?: string | null;
             /** Format: date-time */
             CreatedAt?: string;
             /** Format: date-time */
@@ -1336,6 +1442,42 @@ export interface components {
             /** Format: double */
             err_rate?: number;
             err_count?: number;
+        };
+        AccountRecoverBody: {
+            /**
+             * Format: int64
+             * @description CAS 期望代际（= 读到的 LifecycleRevision）；过期 → 409
+             */
+            expected_revision: number;
+        };
+        AccountEnabledBody: {
+            enabled: boolean;
+            /**
+             * Format: int64
+             * @description CAS 期望代际；过期 → 409
+             */
+            expected_revision: number;
+        };
+        AccountCostMultiplierBody: {
+            /**
+             * Format: double
+             * @description 采购成本倍率正常值（1 = ×1，0 = 免费，上限 ×10；边界换算 bp——2.5 ↔ 25000）；越界 → 400
+             */
+            multiplier: number;
+            /**
+             * Format: int64
+             * @description CAS 期望代际；过期 → 409
+             */
+            expected_revision: number;
+        };
+        AccountCacheDomainBody: {
+            /** @description null/缺省 = 清空（回账号私有域）；非空 = 共享域（合法域名形态 ≤253，非法 → 400；清空不走空串） */
+            cache_domain?: string | null;
+            /**
+             * Format: int64
+             * @description CAS 期望代际；过期 → 409
+             */
+            expected_revision: number;
         };
         /** @description 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度） */
         CodexUsageSnapshot: {
@@ -1828,6 +1970,15 @@ export interface components {
              *     - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
              *     - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
              *     - weight：调度权重 ∈ [0,100]
+             *     - throttle：typed 限流动作（与 fail_account 及 legacy status/cooldown/weight 互斥；
+             *       response_code/custom_message 塑形可并存）——
+             *       {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}；
+             *       scope=account 作用该账号全部 RouteClass，account_route 作用单 RouteClass
+             *       （匹配时事件须携带账号+路由定位）；mode=retry_after 要求 use_reset=true
+             *       （上游 Reset 头优先，duration_ms 可选为回退）；mode=open 要求 use_reset=false
+             *       且 duration_ms > 0（固定摘除窗口）
+             *     - fail_account：true = 命中即判死（终态失效：failed_at + failure_source=rule，CAS fenced，
+             *       恢复唯一入口 /accounts/{id}/recover）；与 throttle 及 legacy status/cooldown/weight 互斥
              *     - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
              *     - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
              *     错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
@@ -1870,6 +2021,15 @@ export interface components {
              *     - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
              *     - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
              *     - weight：调度权重 ∈ [0,100]
+             *     - throttle：typed 限流动作（与 fail_account 及 legacy status/cooldown/weight 互斥；
+             *       response_code/custom_message 塑形可并存）——
+             *       {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}；
+             *       scope=account 作用该账号全部 RouteClass，account_route 作用单 RouteClass
+             *       （匹配时事件须携带账号+路由定位）；mode=retry_after 要求 use_reset=true
+             *       （上游 Reset 头优先，duration_ms 可选为回退）；mode=open 要求 use_reset=false
+             *       且 duration_ms > 0（固定摘除窗口）
+             *     - fail_account：true = 命中即判死（终态失效：failed_at + failure_source=rule，CAS fenced，
+             *       恢复唯一入口 /accounts/{id}/recover）；与 throttle 及 legacy status/cooldown/weight 互斥
              *     - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
              *     - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
              *     错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
@@ -1889,7 +2049,7 @@ export interface components {
             When: {
                 [key: string]: unknown;
             };
-            /** @description 动作集（只读回显；字段集与语义同 RuleCreate.then——status/cooldown/weight/response_code/custom_message；全空 {} = 纯透传规则：命中后码/文双透、零惩罚） */
+            /** @description 动作集（只读回显；字段集与语义同 RuleCreate.then——status/cooldown/weight/throttle/fail_account/response_code/custom_message；全空 {} = 纯透传规则：命中后码/文双透、零惩罚） */
             Then: {
                 [key: string]: unknown;
             };
@@ -3430,6 +3590,114 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountGroupsResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsIdRecover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountRecoverBody"];
+            };
+        };
+        responses: {
+            /** @description 恢复后的账号（含新 LifecycleRevision） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsIdEnabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountEnabledBody"];
+            };
+        };
+        responses: {
+            /** @description 切换后的账号（含新 LifecycleRevision） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutAccountsIdCostMultiplier: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountCostMultiplierBody"];
+            };
+        };
+        responses: {
+            /** @description 更新后的账号（含新 LifecycleRevision） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutAccountsIdCacheDomain: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountCacheDomainBody"];
+            };
+        };
+        responses: {
+            /** @description 更新后的账号（含新 LifecycleRevision） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
                 };
             };
             default: components["responses"]["Error"];
