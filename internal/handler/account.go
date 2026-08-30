@@ -31,6 +31,11 @@ func accountFromBody(in AccountCreate) *domain.Account {
 	if in.BaseUrl != nil && *in.BaseUrl != "" {
 		a.BaseURL = in.BaseUrl
 	}
+	// cache_domain 空串归一 nil（同 base_url 防漂移）；仅 create 生效——PUT 的
+	// 生命周期字段由 service 以当前值覆盖（fenced 端点独占写面）。
+	if in.CacheDomain != nil && *in.CacheDomain != "" {
+		a.CacheDomain = in.CacheDomain
+	}
 	return a
 }
 
@@ -205,6 +210,68 @@ func (h *AdminAPI) PostAccountsBatchResetCooldown(w http.ResponseWriter, r *http
 		return
 	}
 	httpface.WriteJSON(w, http.StatusOK, BatchResetCooldownResponse{Reset: n})
+}
+
+// PostAccountsIdRecover 失效恢复（fenced CAS）：清失效三字段 + revision +1 →
+// 新代际置 PROBING；stale → 409（ServerInterface）。
+func (h *AdminAPI) PostAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64) {
+	var in AccountRecoverBody
+	if err := decode(r, &in); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	acc, err := h.svc.RecoverAccount(r.Context(), id, in.ExpectedRevision)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
+}
+
+// PostAccountsIdEnabled 启用/禁用账号（fenced CAS +1；enable 不清失效）（ServerInterface）。
+func (h *AdminAPI) PostAccountsIdEnabled(w http.ResponseWriter, r *http.Request, id int64) {
+	var in AccountEnabledBody
+	if err := decode(r, &in); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	acc, err := h.svc.SetAccountEnabled(r.Context(), id, in.ExpectedRevision, in.Enabled)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
+}
+
+// PutAccountsIdCostMultiplier 更新采购成本倍率（fenced CAS +1；正常值 ↔ bp
+// 边界换算，与组倍率同构）（ServerInterface）。
+func (h *AdminAPI) PutAccountsIdCostMultiplier(w http.ResponseWriter, r *http.Request, id int64) {
+	var in AccountCostMultiplierBody
+	if err := decode(r, &in); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	acc, err := h.svc.UpdateAccountCostMultiplier(r.Context(), id, in.ExpectedRevision, normalToMult(in.Multiplier))
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
+}
+
+// PutAccountsIdCacheDomain 更新缓存域（fenced CAS +1；null = 清空回私有域）（ServerInterface）。
+func (h *AdminAPI) PutAccountsIdCacheDomain(w http.ResponseWriter, r *http.Request, id int64) {
+	var in AccountCacheDomainBody
+	if err := decode(r, &in); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	acc, err := h.svc.UpdateAccountCacheDomain(r.Context(), id, in.ExpectedRevision, in.CacheDomain)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
 }
 
 // accountPatchFromBody 生成类型 fields → repo patch（nil 字段 = 不更新；

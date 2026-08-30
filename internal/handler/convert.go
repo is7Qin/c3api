@@ -83,9 +83,16 @@ func toAPIAccount(a *domain.Account) Account {
 		MaxConcurrency: &a.MaxConcurrency,
 		LastError:      a.LastError,
 		LastUsedAt:     a.LastUsedAt,
-		CreatedAt:      &a.CreatedAt,
-		UpdatedAt:      &a.UpdatedAt,
-		DeletedAt:      a.DeletedAt, // 软删除时间戳（只读字段，入参不接收）
+		// intelligent-routing 生命周期契约（只读回显；写面 = fenced 端点）
+		Enabled:                &a.Enabled,
+		FailedAt:               a.FailedAt,
+		FailureSource:          a.FailureSource,
+		LifecycleRevision:      &a.LifecycleRevision,
+		UpstreamCostMultiplier: ptr(multToNormal(a.UpstreamCostMultiplierBp)), // bp → 正常值（组倍率边界换算同构）
+		CacheDomain:            a.CacheDomain,
+		CreatedAt:              &a.CreatedAt,
+		UpdatedAt:              &a.UpdatedAt,
+		DeletedAt:              a.DeletedAt, // 软删除时间戳（只读字段，入参不接收）
 	}
 }
 
@@ -109,11 +116,18 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 		MaxConcurrency: base.MaxConcurrency,
 		LastError:      base.LastError,
 		LastUsedAt:     base.LastUsedAt,
-		CreatedAt:      base.CreatedAt,
-		UpdatedAt:      base.UpdatedAt,
-		Concurrency:    &v.Concurrency,
-		ErrRate:        &v.ErrRate,
-		ErrCount:       &v.ErrCount,
+		// 生命周期字段平铺拷贝（缺则列表编辑回显恒缺——base_url C3 同款教训）
+		Enabled:                base.Enabled,
+		FailedAt:               base.FailedAt,
+		FailureSource:          base.FailureSource,
+		LifecycleRevision:      base.LifecycleRevision,
+		UpstreamCostMultiplier: base.UpstreamCostMultiplier,
+		CacheDomain:            base.CacheDomain,
+		CreatedAt:              base.CreatedAt,
+		UpdatedAt:              base.UpdatedAt,
+		Concurrency:            &v.Concurrency,
+		ErrRate:                &v.ErrRate,
+		ErrCount:               &v.ErrCount,
 	}
 }
 
