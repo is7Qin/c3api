@@ -136,7 +136,7 @@ type SyncWorker struct {
 	closed      bool
 	baseCtx     context.Context
 	cancel      context.CancelFunc
-	loopDone    <-chan struct{}
+	loopDone    <-chan struct{} // 恒为 loopDoneCh 的只读别名（构造器与 Start 共同维持）
 	loopDoneCh  chan struct{}
 	inflightAbandonGrace time.Duration
 }
@@ -206,12 +206,15 @@ func (w *SyncWorker) Start(ctx context.Context) error {
 	derived, cancel := context.WithCancel(ctx)
 	w.baseCtx = derived
 	w.cancel = cancel
-	// reset done channel for real run
+	// reset done channel for real run；loopDone 与 loopDoneCh 保持构造器的
+	// 同一信号别名：Close join 的就是发布完成的通道，不存在异步 close(ch)
+	// 落后于 Close 返回的调度竞态。
 	ch := make(chan struct{})
 	w.loopDoneCh = ch
-	w.loopDone = worker.GoLoop(derived, "quality-sync", w.log, w.loop)
+	w.loopDone = ch
+	loopDone := worker.GoLoop(derived, "quality-sync", w.log, w.loop)
 	go func() {
-		<-w.loopDone
+		<-loopDone
 		close(ch)
 	}()
 	return nil
@@ -1275,7 +1278,6 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 	cancel := w.cancel
 	started := w.started.Load()
 	loopDone := w.loopDone
-	loopDoneCh := w.loopDoneCh
 	w.lifecycleMu.Unlock()
 
 	var err error
@@ -1284,7 +1286,6 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 	}
 	if started {
 		select {
-		case <-loopDoneCh:
 		case <-loopDone:
 		case <-ctx.Done():
 			err = ctx.Err()
