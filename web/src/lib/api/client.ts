@@ -116,6 +116,12 @@ export class ApiClient {
   deleteAccountsBatch = (ids: number[]) => this.request<components['schemas']['BatchDeleteResponse']>('/accounts/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
   updateAccountsBatch = (ids: number[], fields: components['schemas']['AccountPatch']) => this.request<components['schemas']['BatchUpdateResponse']>('/accounts/batch-update', { method: 'POST', body: JSON.stringify({ ids, fields }) })
   resetAccountsCooldown = (ids: number[]) => this.request<components['schemas']['BatchResetCooldownResponse']>('/accounts/batch-reset-cooldown', { method: 'POST', body: JSON.stringify({ ids }) })
+  // —— 账号生命周期（intelligent-routing；全部 fenced CAS：expected_revision 过期 → 409，
+  // 前端须重读账号后重试；响应回显新代际 Account）——
+  recoverAccount = (id: number, b: components['schemas']['AccountRecoverBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/recover`, { method: 'POST', body: JSON.stringify(b) })
+  setAccountEnabled = (id: number, b: components['schemas']['AccountEnabledBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/enabled`, { method: 'POST', body: JSON.stringify(b) })
+  updateAccountCostMultiplier = (id: number, b: components['schemas']['AccountCostMultiplierBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/cost-multiplier`, { method: 'PUT', body: JSON.stringify(b) })
+  updateAccountCacheDomain = (id: number, b: components['schemas']['AccountCacheDomainBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/cache-domain`, { method: 'PUT', body: JSON.stringify(b) })
   // —— 分组 ——
   listGroups = (p?: GroupListParams) => this.request<components['schemas']['GroupListResponse']>('/groups', { params: toQuery(p) })
   createGroup = (b: components['schemas']['GroupCreate']) => this.request<components['schemas']['Group']>('/groups', { method: 'POST', body: JSON.stringify(b) })
