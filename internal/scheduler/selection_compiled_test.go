@@ -10,7 +10,7 @@ import (
 )
 
 // Select executes the compiled DecisionView plan when the route is compiled:
-// lane order comes from the plan, not from the legacy weighted sequence.
+// lane order comes from the plan.
 func TestSelect_executesCompiledPlanWhenRoutePublished(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4), acc(2, tplx, 4)})
@@ -24,7 +24,7 @@ func TestSelect_executesCompiledPlanWhenRoutePublished(t *testing.T) {
 }
 
 // Once a route is compiled, reservation failure is the plan's verdict: the
-// scheduler must not silently fall through to the legacy weighted scan.
+// scheduler surfaces it unchanged, never substituting another scan.
 func TestSelect_compiledRouteReservationFailureReturnsPlanError(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4), acc(2, tplx, 4)})
@@ -40,8 +40,7 @@ func TestSelect_compiledRouteReservationFailureReturnsPlanError(t *testing.T) {
 	require.NotErrorIs(t, err, ErrNoAvailable)
 }
 
-// Unknown models fall back to the compiled default bucket (model "") before
-// the legacy path is consulted.
+// Unknown models fall back to the compiled default bucket (model "").
 func TestSelect_unknownModelUsesCompiledDefaultBucket(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, nil) // full-model template
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4)})
@@ -54,9 +53,9 @@ func TestSelect_unknownModelUsesCompiledDefaultBucket(t *testing.T) {
 	sel.Release()
 }
 
-// Without any published decision the intermediate legacy scan path keeps
-// serving (removed at the Task27 cutover, not here).
-func TestSelect_noDecisionKeepsIntermediateLegacyPath(t *testing.T) {
+// After the bootstrap compile the published plan serves Select with no
+// extra publish step.
+func TestSelect_compiledPlanServesAfterBootstrapCompile(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4)})
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
@@ -92,9 +91,14 @@ func TestReserveAttempt_fencesStaleLeafAfterStaticReplacement(t *testing.T) {
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-fence"}, route)
 	require.NoError(t, err)
 
-	// Replace account 1's static leaf (weight action rebuilds the leaf).
-	w := 50
-	s.apply(1, nil, nil, &w, "credential rotated")
+	// Replace account 1's static leaf (credential rotation rebuilds the leaf).
+	m := s.Loader().(*memLoader)
+	m.mu.Lock()
+	rotated := acc(1, tplx, 4)
+	rotated.UpstreamKey = "k1-rotated"
+	m.byGroup[10] = []*domain.Account{rotated, acc(2, tplx, 4)}
+	m.mu.Unlock()
+	s.InvalidateGroup(10)
 
 	sel, attempt, err := s.ReserveAttempt(plan)
 	require.NoError(t, err)
@@ -104,7 +108,7 @@ func TestReserveAttempt_fencesStaleLeafAfterStaticReplacement(t *testing.T) {
 }
 
 // Health/latch fencing on the plan path uses the candidate's own quality
-// class and lifecycle revision (not the wildcard-only legacy check).
+// class and lifecycle revision.
 func TestReserveAttempt_fencesHealthByQualityClassAndRevision(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4), acc(2, tplx, 4)})

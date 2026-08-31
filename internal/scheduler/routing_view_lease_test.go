@@ -36,7 +36,7 @@ func TestRoutingViewSingleRoot(t *testing.T) {
 func TestLeaseExactReleaseIdempotent(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{
-		{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4},
+		{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k1", Enabled: true, MaxConcurrency: 4},
 	})
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
@@ -124,9 +124,6 @@ func TestLeaseReloadRaceBarrier(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl, 1000)}})
 	s := newSched(t, m)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go s.writebackLoop(ctx)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -172,7 +169,7 @@ func TestRoutingViewAccSyncRuntimeGroupModelsSameRoot(t *testing.T) {
 func TestLeasePanicEarlyPath(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{
-		{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k1", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4},
+		{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k1", Enabled: true, MaxConcurrency: 4},
 	})
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)

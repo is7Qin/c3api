@@ -123,7 +123,7 @@ func TestRoutingCompilerWirePublishesCompiledView(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
-	s := newSched(t, m)
+	s := newSchedStatic(t, m)
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: qualityInput(30, 29, 100, 100),
 		2: qualityInput(30, 29, 100, 100),
@@ -321,7 +321,7 @@ func TestRoutingCompilerWireStatsCompileLane(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
-	s := newSched(t, m)
+	s := newSchedStatic(t, m)
 	fixed := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	s.timeNow = func() time.Time { return fixed }
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)

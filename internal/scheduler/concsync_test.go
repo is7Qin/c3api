@@ -84,14 +84,14 @@ func TestAccConcN1StructuralShortCircuit(t *testing.T) {
 		require.Equal(t, int64(1), sel.AccountID)
 	}
 	_, err := concSelect(s)
-	require.ErrorIs(t, err, ErrNoAvailable, "N=1 第 5 笔超限拒绝（与 main 分支同点）")
+	require.ErrorIs(t, err, ErrAttemptsExhausted, "N=1 第 5 笔超限拒绝（与 main 分支同点）")
 
 	// 视图在场（新鲜）：判定走内存读，超份额分支依旧数学不可达、同点拒绝
 	s.concView.Store(&clusterView{accounts: map[int64]concSnap{
 		1: {total: 4, selfLast: 4, at: time.Now()},
 	}})
 	_, err = concSelect(s)
-	require.ErrorIs(t, err, ErrNoAvailable, "N=1 视图路径同样同点拒绝")
+	require.ErrorIs(t, err, ErrAttemptsExhausted, "N=1 视图路径同样同点拒绝")
 
 	for range 4 {
 		s.Release(1)
@@ -135,13 +135,13 @@ func TestConcShareDynamicNInflightInheritance(t *testing.T) {
 		require.NoError(t, err, "fail-open 全额本地判定放行")
 	}
 	_, err := concSelect(s)
-	require.ErrorIs(t, err, ErrNoAvailable, "真上限 9 兜底：第 10 笔拒绝")
+	require.ErrorIs(t, err, ErrAttemptsExhausted, "真上限 9 兜底：第 10 笔拒绝")
 
 	// N→1 即时生效：share=limit=9，但真上限兜底不变（在途 9 继承，全拒）
 	n.v.Store(1)
 	for range 2 {
 		_, err := concSelect(s)
-		require.ErrorIs(t, err, ErrNoAvailable, "在途继承：满载时 N 切换不放行")
+		require.ErrorIs(t, err, ErrAttemptsExhausted, "在途继承：满载时 N 切换不放行")
 	}
 	require.Equal(t, int64(9), concCur(s, 1), "在途计数不受 N 切换影响")
 
@@ -160,7 +160,7 @@ func TestConcShareDynamicNInflightInheritance(t *testing.T) {
 }
 
 // A3 扫描语义四态（spec §1.1 判定嵌入扫描循环——借位拒绝=换号，不是拒流）：
-// 借位放行 / 视图满换号 / 全员视图满 ErrNoAvailable / 陈旧视图 fail-open。
+// 借位放行 / 视图满换号 / 全员视图满 ErrAttemptsExhausted / 陈旧视图 fail-open。
 // 两账号场景断言与加权轮询游标相位无关（任一访问序收敛同一结果）。
 func TestClusterViewScanSemantics(t *testing.T) {
 	fresh := func(total, selfLast int64) concSnap {
@@ -193,7 +193,7 @@ func TestClusterViewScanSemantics(t *testing.T) {
 	require.Equal(t, int64(2), sel.AccountID, "视图满候选被跳过换下一候选")
 	s2.Release(2)
 
-	// 态 3 全员视图满 → ErrNoAvailable：账号 1 本地达真上限、账号 2 超份额且
+	// 态 3 全员视图满 → ErrAttemptsExhausted：账号 1 本地达真上限、账号 2 超份额且
 	// 视图满（eff=4−2+3=5 ≥ 4）——借用拒绝是换号，换无可换即拒绝。
 	s3 := newTestScheduler(t, []*domain.Account{concChatAcc(1, 4), concChatAcc(2, 4)})
 	s3.SetInstancesProvider(fixedN(2))
@@ -201,10 +201,10 @@ func TestClusterViewScanSemantics(t *testing.T) {
 	concSetCur(s3, 2, 2)
 	s3.concView.Store(&clusterView{accounts: map[int64]concSnap{2: fresh(4, 2)}})
 	_, err = concSelect(s3)
-	require.ErrorIs(t, err, ErrNoAvailable)
+	require.ErrorIs(t, err, ErrAttemptsExhausted)
 
 	// 态 4 陈旧 fail-open：同态 3 的"仅账号 1 有本地余量"布局，新鲜视图下
-	// 账号 1 借位被拒 → ErrNoAvailable；视图老化后 fail-open 按「全额 limit」
+	// 账号 1 借位被拒 → ErrAttemptsExhausted；视图老化后 fail-open 按「全额 limit」
 	// 本地判定放行账号 1（唯一差异 = 视图陈旧性）。
 	s4 := newTestScheduler(t, []*domain.Account{concChatAcc(1, 4), concChatAcc(2, 4)})
 	s4.SetInstancesProvider(fixedN(2))
@@ -214,7 +214,7 @@ func TestClusterViewScanSemantics(t *testing.T) {
 		1: fresh(4, 2), 2: fresh(4, 4),
 	}})
 	_, err = concSelect(s4)
-	require.ErrorIs(t, err, ErrNoAvailable, "新鲜视图：账号 1 借位被拒、账号 2 达真上限")
+	require.ErrorIs(t, err, ErrAttemptsExhausted, "新鲜视图：账号 1 借位被拒、账号 2 达真上限")
 	s4.concView.Store(&clusterView{accounts: map[int64]concSnap{
 		1: staled(4, 2), 2: staled(4, 4),
 	}})
@@ -317,13 +317,13 @@ func TestAccConcAggregationFreshnessAndSelfLast(t *testing.T) {
 	require.Equal(t, int64(7), sel.AccountID)
 	concSetCur(s, 7, 9) // 推到真上限边缘（绕开 Select 直写）
 	_, err = concSelect(s)
-	require.ErrorIs(t, err, ErrNoAvailable, "effective=5−2+10=13 ≥ 10 拒绝")
+	require.ErrorIs(t, err, ErrAttemptsExhausted, "effective=5−2+10=13 ≥ 10 拒绝")
 	require.Equal(t, int64(9), concCur(s, 7), "拒绝笔不占槽")
 }
 
 // A5 fail-open 结构性质（spec §3/验收 §3）：miniredis 关闭 → tick 失败（errs
 // 为确定性信号）、视图冻结不换入 → 陈旧后自动退化全额放行（真上限内无
-// ErrNoAvailable 风暴）；同端口恢复 → ≤ 数 tick 换入新视图回归共识。
+// ErrAttemptsExhausted 风暴）；同端口恢复 → ≤ 数 tick 换入新视图回归共识。
 func TestAccConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
 	mr := miniredis.NewMiniRedis()
 	require.NoError(t, mr.StartAddr("127.0.0.1:0"))
@@ -370,14 +370,14 @@ func TestAccConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
 	}
 	s.concView.Store(aged)
 
-	// 陈旧 → fail-open 全额本地：真上限 6 内继续放行（无 ErrNoAvailable 风暴），
+	// 陈旧 → fail-open 全额本地：真上限 6 内继续放行（无 ErrAttemptsExhausted 风暴），
 	// 第 7 笔拒绝（本地真上限兜底不受故障影响）
 	for range 2 {
 		_, err := concSelect(s)
 		require.NoError(t, err, "fail-open 全额放行（≤6）")
 	}
 	_, err = concSelect(s)
-	require.ErrorIs(t, err, ErrNoAvailable, "真上限兜底：7 > 6 拒绝")
+	require.ErrorIs(t, err, ErrAttemptsExhausted, "真上限兜底：7 > 6 拒绝")
 	s.Release(sel.AccountID)
 	s.Release(1)
 	s.Release(1)
@@ -402,7 +402,7 @@ func TestAccConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
 	require.Eventually(t, func() bool { return s.concView.Load().accounts[1].total == 6 },
 		3*time.Second, 10*time.Millisecond, "他实例字段进聚合")
 	_, err = concSelect(s)
-	require.ErrorIs(t, err, ErrNoAvailable, "effective=6−3+4=7 ≥ 6 借位被拒（共识恢复）")
+	require.ErrorIs(t, err, ErrAttemptsExhausted, "effective=6−3+4=7 ≥ 6 借位被拒（共识恢复）")
 	s.Release(1)
 	s.Release(1)
 	s.Release(1)
@@ -491,7 +491,7 @@ func TestAccConcInheritedCounterReporting(t *testing.T) {
 		1: {total: 6, selfLast: 4, at: time.Now()},
 	}})
 	_, err = concSelect(s)
-	require.ErrorIs(t, err, ErrNoAvailable, "effective=6−4+5=7 ≥ 6 拒绝")
+	require.ErrorIs(t, err, ErrAttemptsExhausted, "effective=6−4+5=7 ≥ 6 拒绝")
 
 	for range 4 {
 		s.Release(1)

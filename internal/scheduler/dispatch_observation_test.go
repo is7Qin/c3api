@@ -108,7 +108,7 @@ func TestDispatchObservation_preservesLeaseWithoutRereadingState(t *testing.T) {
 	require.Equal(t, a.TemplateID, sel.TemplateID)
 	// mutate view after plan creation: add new account, invalidate, but plan's dispatch must stay stable
 	tmpl2 := tpl(1, domain.FormatOpenAIChat, []string{"m"})
-	m.byGroup[10] = append(m.byGroup[10], &domain.Account{ID: 99, TemplateID: 1, Template: tmpl2, UpstreamKey: "k99", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4})
+	m.byGroup[10] = append(m.byGroup[10], &domain.Account{ID: 99, TemplateID: 1, Template: tmpl2, UpstreamKey: "k99", Enabled: true, MaxConcurrency: 4})
 	require.NoError(t, s.InvalidateAllSync())
 	// attempt still validates with original generation/fingerprint, not mutated view
 	require.NoError(t, a.Validate())

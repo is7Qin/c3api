@@ -17,13 +17,7 @@ func TestRoutingViewStaticUpdateRetainsLatestDecision(t *testing.T) {
 	v1 := s.View()
 	require.NotNil(t, v1)
 	dec1 := v1.DecisionView()
-	if dec1 == nil {
-		s.publisher.publishWithBase(v1.Generation(), func(cur *RoutingView) *DecisionView {
-			return &DecisionView{generation: 1, decisions: map[int64]*decisionLeaf{1: {weight: 10}}}
-		})
-		v1 = s.View()
-		dec1 = v1.DecisionView()
-	}
+	require.NotNil(t, dec1, "newSched 已武装编译道，决策视图非空")
 	gen1 := v1.Generation()
 	m.mu.Lock()
 	m.byGroup[10] = append(m.byGroup[10], acc(2, tpl, 4))
@@ -41,17 +35,11 @@ func TestRoutingViewDecisionStaleRebasesOntoLatestStatic(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl, 4)}})
 	s := newSched(t, m)
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	v1 := s.View()
 	baseGen := v1.Generation()
 	dec1 := v1.DecisionView()
-	if dec1 == nil {
-		s.publisher.publishWithBase(baseGen, func(cur *RoutingView) *DecisionView {
-			return &DecisionView{generation: 1, decisions: map[int64]*decisionLeaf{1: {weight: 10}}}
-		})
-		v1 = s.View()
-		baseGen = v1.Generation()
-		dec1 = v1.DecisionView()
-	}
+	require.NotNil(t, dec1)
 	m.mu.Lock()
 	m.byGroup[10] = append(m.byGroup[10], acc(2, tpl, 4))
 	m.mu.Unlock()
@@ -62,12 +50,12 @@ func TestRoutingViewDecisionStaleRebasesOntoLatestStatic(t *testing.T) {
 	staleBase := baseGen
 	s.publisher.publishWithBase(staleBase, func(cur *RoutingView) *DecisionView {
 		require.Same(t, v2.StaticView(), cur.StaticView(), "rebase onto latest StaticView")
-		return &DecisionView{generation: cur.DecisionView().Generation() + 1, decisions: map[int64]*decisionLeaf{1: {weight: 20}}}
+		return &DecisionView{generation: cur.DecisionView().Generation() + 1, routes: map[RouteRef]*RouteDecision{route: {Primary: []int64{1, 2}}}}
 	})
 	v3 := s.View()
 	require.Same(t, v2.StaticView(), v3.StaticView(), "static preserved, only decision replaced")
 	require.NotSame(t, dec1, v3.DecisionView(), "decision replaced")
-	require.Equal(t, 20, v3.DecisionView().decisions[1].weight)
+	require.Equal(t, []int64{1, 2}, v3.DecisionView().routes[route].Primary)
 }
 
 func TestRoutingViewPartialInvalidatePreservesOtherGroupIDs(t *testing.T) {

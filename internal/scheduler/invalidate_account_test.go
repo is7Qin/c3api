@@ -18,7 +18,7 @@ import (
 // 携带新凭据（下个会话重载新凭据——避免旧令牌 401 额外往返）。
 func TestInvalidateAccountReloadsExt(t *testing.T) {
 	ext := &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}}
-	acc := &domain.Account{ID: 1, TemplateID: 1, Status: domain.StatusActive, Ext: ext}
+	acc := &domain.Account{ID: 1, TemplateID: 1, Enabled: true, Ext: ext}
 	byGroup := map[int64][]*domain.Account{10: {acc}}
 	m := newMemLoader(byGroup)
 	s := newSched(t, m)
@@ -44,7 +44,7 @@ func TestInvalidateAccountReloadsExt(t *testing.T) {
 // （轮转回调低频防御；失效上报同哲学——快照外无状态可改）。
 func TestInvalidateAccountUnknownNoop(t *testing.T) {
 	ext := &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}}
-	byGroup := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Status: domain.StatusActive, Ext: ext}}}
+	byGroup := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Enabled: true, Ext: ext}}}
 	m := newMemLoader(byGroup)
 	s := newSched(t, m)
 	require.NoError(t, s.InvalidateAllSync())

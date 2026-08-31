@@ -166,13 +166,11 @@ func main() {
 	// self 与 NOTIFY Src 同源（hostname-pid-nonce 生成模式复用）。
 	disco := discovery.New(rdb, src, log)
 
-	// 规则引擎先行构造（不 Reload——New 只建结构）：scheduler 构造期注册 apply 回调。
+	// 规则引擎先行构造（不 Reload——New 只建结构）。
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, log)
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: cfg.Scheduler.DefaultMaxConcurrency,
 		SyncInterval:          cfg.Scheduler.SyncInterval,
-		// 账号状态回写成功后广播受影响组（其余实例组级重载收敛分裂快照）。
-		GroupPub: schedGroupPub{pub},
 	}, repos.Groups, ruleEngine, log)
 	rec := usage.New(usage.UsageConfig{
 		BatchSize:          cfg.Usage.BatchSize,
@@ -441,7 +439,7 @@ func main() {
 	// 心跳计数变化 ≤1 tick 天然生效，无需任何 reload 触发。
 	px.SetInstancesProvider(disco)
 	// scheduler 选号侧同一 N 源（spec conc-share-borrow-account §1.1）：账号并发
-	// 份额除数 = Redis 心跳活体数，pickFrom 入口现读，心跳变化 ≤1 tick 生效。
+	// 份额除数 = Redis 心跳活体数，ReserveAttempt 入口现读，心跳变化 ≤1 tick 生效。
 	sched.SetInstancesProvider(disco)
 	// 并发门跨实例共识 worker（spec conc-share-borrow-gate §1.5）：500ms 一条
 	// pipeline 双向同步受限层级在途 → gate 第二快照（clusterView），请求路径

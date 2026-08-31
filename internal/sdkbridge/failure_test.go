@@ -67,14 +67,13 @@ func (f *fakeStore) SetAccountFailed(ctx context.Context, accountID int64, faile
 type fakeFailer struct {
 	mu        sync.Mutex
 	accountID int64
-	reason    string
 	calls     int
 }
 
-func (f *fakeFailer) FailAccount(accountID int64, reason string) {
+func (f *fakeFailer) FailAccount(accountID int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.accountID, f.reason = accountID, reason
+	f.accountID = accountID
 	f.calls++
 }
 
@@ -97,7 +96,6 @@ func TestHandleFailure(t *testing.T) {
 
 	failer.mu.Lock()
 	require.Equal(t, int64(7), failer.accountID)
-	require.Equal(t, fatal.Error(), failer.reason)
 	failer.mu.Unlock()
 }
 
@@ -119,9 +117,6 @@ func TestHandleFailureTruncatesReason(t *testing.T) {
 	store.mu.Lock()
 	require.Len(t, store.reason, 500)
 	store.mu.Unlock()
-	failer.mu.Lock()
-	require.Len(t, failer.reason, 500)
-	failer.mu.Unlock()
 }
 
 // TestHandleFailureStoreErrorFailClosed DB 写失败不阻断摘除（fail-closed）：

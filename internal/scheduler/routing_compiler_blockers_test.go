@@ -172,9 +172,9 @@ func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
 	require.NotContains(t, all4, int64(1), "stale latch rev mismatch must fail closed")
 }
 
-func TestRoutingCompilerZeroWeightUnion(t *testing.T) {
+func TestRoutingCompilerZeroMultiplierUnion(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
-	// weight 0 accounts: weightedSeq would be truncated/empty but union must still include them
+	// zero cost-multiplier accounts must still be included in the union
 	a1 := accWithEnabled(1, tpl, true, 0)
 	a2 := accWithEnabled(2, tpl, true, 0)
 	a3 := accWithEnabled(3, tpl, true, 10000)
@@ -195,11 +195,11 @@ func TestRoutingCompilerZeroWeightUnion(t *testing.T) {
 	require.True(t, ok)
 	all := append(append([]int64{}, rd.Primary...), rd.Explore.IDs...)
 	all = append(all, rd.Degraded...)
-	require.ElementsMatch(t, []int64{1, 2, 3}, all, "zero-weight accounts must be in union")
+	require.ElementsMatch(t, []int64{1, 2, 3}, all, "zero-multiplier accounts must be in union")
 }
 
 func TestRoutingCompilerOverflowUnionNotTruncated(t *testing.T) {
-	// Simulate overflow: many accounts where weightedSeq would be capped at 4096 but union must still be complete.
+	// Simulate overflow: many accounts; the compiled union must still be complete.
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	var accs []*domain.Account
 	for i := 1; i <= 10; i++ {

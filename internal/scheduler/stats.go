@@ -8,11 +8,10 @@ package scheduler
 // 接口——装配侧类型断言聚合（main.go），响应 typed struct 非 map。
 // 采集纪律：len(channel) 零成本；快照状态走 snapshot registry Status，不重复。
 
-// SchedulerStats 调度器状态（异步状态回写队列占用 + 编译道观测；快照/路由
-// 状态经注册表 Status 直出，此处不重复采集）。
+// SchedulerStats 调度器状态（编译道观测；快照/路由
+// 状态经注册表 Status 直出，此处不重复采集。legacy 状态回写队列已随
+// cutover 删除——持久状态列不存在，无回写可言）。
 type SchedulerStats struct {
-	PendingWritebacks int `json:"pending_writebacks"` // 待回写 DB 的状态写队列积压
-	WritebackCap      int `json:"writeback_cap"`      // 队列容量（满 → 丢弃 DB 回写，内存已生效）
 	// 编译道（Task18 wiring）：pending=待触发编译信号（cap 1，trailing-edge
 	// 合并是设计语义非丢弃）；last_compile_*_unix_ms=最近一次成功/失败编译
 	// 时刻（0=从未，失败保留旧视图是契约）；decision_generation/decision_routes
@@ -28,8 +27,6 @@ type SchedulerStats struct {
 // Stats 满足 handler.StatsProvider（独立于 worker.Worker 契约；装配链路见 internal/handler/ops.go 文件头）。
 func (s *Scheduler) Stats() any {
 	st := SchedulerStats{
-		PendingWritebacks:    len(s.writeCh),
-		WritebackCap:         cap(s.writeCh),
 		CompilePending:       len(s.compileCh),
 		CompileCap:           cap(s.compileCh),
 		LastCompileOKUnixMs:  s.compileOKMs.Load(),

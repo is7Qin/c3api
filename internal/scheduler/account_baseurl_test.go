@@ -12,7 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// TestSelectBaseURLPriority 钉死 pickFrom 的 base_url 优先级（账号级 > 模板级）：
+// TestSelectBaseURLPriority 钉死 Select 的 base_url 优先级（账号级 > 模板级）：
 // 账号级非空覆盖模板级；账号级 nil/空串回退模板级（热路径仅 nil 检查 +
 // 字符串比较，零分配——用户裁决 2026-08-14）。断言 Selection.BaseURL。
 func TestSelectBaseURLPriority(t *testing.T) {

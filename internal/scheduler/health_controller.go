@@ -110,7 +110,7 @@ func (c *HealthController) FailAccount(ev rule.Event) error {
 		c.latch.TryAcquire(ev.AccountID, fp, ev.ExpectedRevision)
 	}
 	if c.sched != nil {
-		c.sched.FailAccount(ev.AccountID, ev.ErrorMessage)
+		c.sched.FailAccount(ev.AccountID)
 	}
 	return nil
 }

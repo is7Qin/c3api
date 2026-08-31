@@ -2,9 +2,10 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package scheduler 实现内存优先的账号调度：规则驱动的状态管理（internal/rule 引擎
-// 事件投递 + apply 回调）、选号（格式硬过滤 + 模型硬白名单 + 全模型账号 tier2 兜底
-// + 预生成加权轮询序列）、并发槽、快照缓存与异步状态回写。规格 §5。单实例语义：运行时状态仅存内存。
+// Package scheduler 实现内存优先的账号调度：规则驱动的事件投递（internal/rule
+// 引擎——typed Throttle/FailAccount 动作）、选号（执行预编译路由计划：lane 顺序、
+// 完整唯一 overflow 尾、reservation reject 不耗 attempt）、并发槽、快照缓存。
+// 规格 §5。单实例语义：运行时状态仅存内存。
 package scheduler
 
 import (
@@ -12,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,26 +36,12 @@ var (
 type Config struct {
 	DefaultMaxConcurrency int
 	SyncInterval          time.Duration
-	// GroupPub 状态回写成功后的组级 NOTIFY 发布器（#14 T3a：多实例传播——
-	// 账号状态变更落库后广播受影响组，其余实例组级重载收敛分裂快照）。
-	// 实现 = 装配侧 adapter（main 把 notify.Publisher 适配为
-	// PublishGroups）；nil = 未装配（单实例/测试），no-op。
-	GroupPub GroupChangePublisher
-}
-
-// GroupChangePublisher 组级 NOTIFY 发布面（设计文档 §1.3 / 必改 6）：
-// apply 状态回写 DB 成功后发布受影响组 id——跨实例状态分裂的最大风险点
-// （实例 A 禁号回写，实例 B 快照仍 active 继续选号）。计费/扣费路径不发布
-// （scheduler 无扣费，全部是账号状态回写）。
-type GroupChangePublisher interface {
-	PublishGroups(ctx context.Context, gids []int64)
 }
 
 // Loader 是调度器的数据源（由 repository 实现）。
 type Loader interface {
 	LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain.Account, error)
 	LoadGroupAccounts(ctx context.Context, groupID int64) ([]*domain.Account, error)
-	UpdateAccountStatus(ctx context.Context, accountID int64, status domain.AccountStatus, cooldownUntil *time.Time, lastError *string, weight *int) error
 }
 
 type leaseToken struct {
@@ -94,20 +80,15 @@ func (s *Selection) LeaseAccountForTest() *accountSnapshot {
 	return s.lease.acc
 }
 
+// RuntimeInfo 账号运行时视图（管理端展示 + overview 聚合）。Status = 运行时
+// 调度状态（active/disabled——disabled 来自 FailAccount/failed_at 装载；临时
+// 健康细分状态在 RuntimeHealth，不在此重复）；ErrRate/ErrCount 为运行时观测
+// 投影（legacy 状态机写点已随 cutover 删除，值由后续质量统计道供给）。
 type RuntimeInfo struct {
-	Status        domain.AccountStatus
-	CooldownUntil *time.Time
-	Concurrency   int64
-	ErrRate       float64
-	ErrCount      int
-}
-
-type statusWrite struct {
-	id       int64
-	status   domain.AccountStatus
-	cooldown *time.Time
-	lastErr  *string
-	weight   *int // 权重动作随状态同批回写（nil = 不动 weight）
+	Status      domain.AccountStatus
+	Concurrency int64
+	ErrRate     float64
+	ErrCount    int
 }
 
 type Scheduler struct {
@@ -125,8 +106,6 @@ type Scheduler struct {
 	// instN 集群实例数 N 提供者（装配期 SetInstancesProvider 注入；nil → N=1，
 	// 见 concsync.go instancesN）。与 proxy.InstancesProvider 同名异包自持。
 	instN     atomic.Pointer[InstancesProvider]
-	reloadMu  sync.Mutex // legacy alias to publisher.mu; publisher serializes (one Store)
-	writeCh   chan statusWrite
 	timeNow   func() time.Time
 	startOnce atomic.Bool
 	latch     *latchStore
@@ -170,63 +149,40 @@ func (s *Scheduler) ProbeAccount(id int64) (*domain.Account, bool) {
 	return &acc, true
 }
 
-// New 构造调度器并注册规则引擎的 apply 回调（动作应用 = 快照/EWMA/回写，见 apply）。
-// ruleEngine 必须非 nil（状态管理唯一路径；main 在 Start 前显式 Reload）。
+// New 构造调度器。ruleEngine 必须非 nil（事件投递面；main 在 Start 前显式 Reload）。
 func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logger) *Scheduler {
 	s := &Scheduler{
 		cfg:       cfg,
 		loader:    loader,
 		rule:      ruleEngine,
 		log:       log,
-		writeCh:   make(chan statusWrite, 4096),
 		timeNow:   time.Now,
 		latch:     newLatchStore(),
 		compiler:  NewRoutingCompiler(),
 		compileCh: make(chan struct{}, 1),
 	}
 	s.publisher = newRoutingPublisher(s)
-	ruleEngine.SetApply(s.apply)
 	return s
 }
 
 // Name 满足 worker.Worker 契约（Global Constraints #5）。
 func (s *Scheduler) Name() string { return "scheduler" }
 
-// Start 启动定时同步与异步状态回写；重复 Start 幂等（返回错误）。
+// Start 启动定时同步；重复 Start 幂等（返回错误）。
 func (s *Scheduler) Start(ctx context.Context) error {
 	if !s.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("scheduler: already started")
 	}
 	worker.GoLoop(ctx, "scheduler-sync", s.log, s.syncLoop)
-	worker.GoLoop(ctx, "scheduler-writeback", s.log, s.writebackLoop)
 	compileDone := worker.GoLoop(ctx, "scheduler-compile", s.log, s.compileLoop)
 	s.compileDone.Store(&compileDone)
 	return nil
 }
 
-// Close 排空剩余状态回写（限时，复用 writebackLoop 的合并逻辑）并 join 编译道
-// 循环（限时，同 conc-sync/runtime-health 停机纪律——Close 后不再有编译发布）；
-// 幂等，满足 worker.Worker 契约。循环本身随 Start 的 ctx 取消而退出。
+// Close join 编译道循环（限时，同 conc-sync/runtime-health 停机纪律——Close
+// 后不再有编译发布）；幂等，满足 worker.Worker 契约。循环本身随 Start 的 ctx
+// 取消而退出。
 func (s *Scheduler) Close(ctx context.Context) error {
-	done := make(chan struct{})
-	worker.GoRecover("scheduler-close", s.log, func() {
-		for {
-			select {
-			case w := <-s.writeCh:
-				s.processWrite(w)
-			default:
-				close(done)
-				return
-			}
-		}
-	})
-	select {
-	case <-done:
-	case <-ctx.Done():
-		if s.log != nil {
-			s.log.Warn("scheduler close timeout, dropping pending writebacks")
-		}
-	}
 	if d := s.compileDone.Load(); d != nil {
 		select {
 		case <-*d:
@@ -251,74 +207,6 @@ func (s *Scheduler) syncLoop(ctx context.Context) {
 				s.log.Warn("scheduler sync failed", logx.Error(err))
 			}
 		}
-	}
-}
-
-func (s *Scheduler) writebackLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case w := <-s.writeCh:
-			s.processWrite(w)
-		}
-	}
-}
-
-// processWrite 处理一条状态回写：合并窗口内同一账号的重复写（幂等覆盖）后回写 DB。
-// 合并语义：后写覆盖先写，但 weight 例外——后写若不带 weight（statusWrite.weight=nil，
-// 纯状态动作），保留先前已入队的 weight（否则同账号 weight 写先入队、status 写后
-// 入队时合并丢 weight，DB 不持久化 → ≤30s reload 后内存回退，weight 动作被静默撤销）。
-// 全部回写成功后发布一次组级 NOTIFY（#14 T3a）：合并本批受影响组（去重，防载荷
-// 膨胀超 R9 上限）——一次回写批次一条 NOTIFY（R3）。快照外账号（已移除）跳过：
-// 无组可传播，其余实例经 ≤30s 全量同步 / 60s 兜底收敛。
-func (s *Scheduler) processWrite(w statusWrite) {
-	accs := map[int64]statusWrite{w.id: w}
-	drain := true
-	for drain {
-		select {
-		case w2 := <-s.writeCh:
-			if prev, ok := accs[w2.id]; ok && w2.weight == nil && prev.weight != nil {
-				w2.weight = prev.weight
-			}
-			accs[w2.id] = w2
-		default:
-			drain = false
-		}
-	}
-	// 先回写 DB（锁外：持 reloadMu 做 DB 往返会阻塞重载），收集回写成功的账号。
-	okIDs := make([]int64, 0, len(accs))
-	for _, ww := range accs {
-		if err := s.loader.UpdateAccountStatus(context.Background(), ww.id, ww.status, ww.cooldown, ww.lastErr, ww.weight); err != nil {
-			if s.log != nil {
-				s.log.Warn("account status writeback failed", logx.Int64("account_id", ww.id), logx.Error(err))
-			}
-			continue // 回写失败：DB 状态未变，无变更可传播
-		}
-		okIDs = append(okIDs, ww.id)
-	}
-	v := s.view.Load()
-	if v == nil || v.StaticView() == nil {
-		if s.log != nil {
-			s.log.Warn("scheduler writeback skipped: snapshot not loaded")
-		}
-		return
-	}
-	byID := v.ByID()
-	gidSet := make(map[int64]struct{})
-	for _, id := range okIDs {
-		if as, ok := byID[id]; ok {
-			for _, g := range as.static.Load().groupIDs {
-				gidSet[g] = struct{}{}
-			}
-		}
-	}
-	if len(gidSet) > 0 && s.cfg.GroupPub != nil {
-		gids := make([]int64, 0, len(gidSet))
-		for g := range gidSet {
-			gids = append(gids, g)
-		}
-		s.cfg.GroupPub.PublishGroups(context.Background(), gids)
 	}
 }
 
@@ -401,6 +289,17 @@ func (s *Scheduler) IsLatched(accountID int64) bool {
 
 func (s *Scheduler) LatchStore() *latchStore { return s.latch }
 
+// runtimeStatusFor 从可持久生命周期字段推导账号装载时的运行时初始状态：
+// failed_at 置位 = 运行时 disabled（SDK/rule 判死的持久事实；恢复唯一入口
+// /recover 清 failed_at + revision +1，重载即回 active）。持久 status 列已
+// 随 cutover 删除——运行时状态机不再从 DB 镜像复活。
+func runtimeStatusFor(a *domain.Account) domain.AccountStatus {
+	if a.FailedAt != nil {
+		return domain.StatusDisabled
+	}
+	return domain.StatusActive
+}
+
 // buildSnapshots 构建全量快照：**每账号一个共享实例**——多组账号在多个组
 // 快照中引用同一实例（O2 评审实证修复）。发布后 leaves never mutate；
 // 变更账号分配全新 immutable leaf，共享 separate runtime/concurrency state，
@@ -435,15 +334,15 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[i
 			if oldAv != nil {
 				sameBase = (oldAv.acc.BaseURL == nil && av.acc.BaseURL == nil) || (oldAv.acc.BaseURL != nil && av.acc.BaseURL != nil && *oldAv.acc.BaseURL == *av.acc.BaseURL)
 			}
-			sameStatic := oldAv != nil && oldAv.acc.Weight == av.acc.Weight && oldAv.acc.MaxConcurrency == av.acc.MaxConcurrency && oldAv.tpl == av.tpl && groupsEqual(oldAv.groupIDs, av.groupIDs) && sameBase && oldAv.acc.UpstreamKey == av.acc.UpstreamKey && oldAv.acc.Ext == av.acc.Ext && oldAv.acc.LifecycleRevision == av.acc.LifecycleRevision
+			sameStatic := oldAv != nil && oldAv.acc.MaxConcurrency == av.acc.MaxConcurrency && oldAv.tpl == av.tpl && groupsEqual(oldAv.groupIDs, av.groupIDs) && sameBase && oldAv.acc.UpstreamKey == av.acc.UpstreamKey && oldAv.acc.Ext == av.acc.Ext && oldAv.acc.LifecycleRevision == av.acc.LifecycleRevision
 			if sameStatic {
+				// 静态未变：runtime 整体保留（errRate/errCount/并发跨重载连续，
+				// A-2 M-4；status 唯一例外——failed_at 是持久事实，重载按
+				// failed_at 收敛，未失效账号的内存 disabled 不复活）。
 				rt := old.runtime
 				if curSt := rt.state.Load(); curSt != nil {
 					next := *curSt
-					next.status = a.Status
-					if a.CooldownUntil != nil {
-						next.cooldownUntil = a.CooldownUntil
-					}
+					next.status = runtimeStatusFor(a)
 					rt.state.Store(&next)
 				}
 				byID[id] = old
@@ -454,19 +353,14 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[i
 			var next accState
 			if curSt != nil {
 				next = *curSt
-			} else {
-				next = accState{status: domain.StatusActive}
 			}
-			next.status = a.Status
-			if a.CooldownUntil != nil {
-				next.cooldownUntil = a.CooldownUntil
-			}
+			next.status = runtimeStatusFor(a)
 			rt.state.Store(&next)
 			as := &accountSnapshot{runtime: rt}
 			as.static.Store(av)
 			byID[id] = as
 		} else {
-			st := &accState{status: a.Status, cooldownUntil: a.CooldownUntil}
+			st := &accState{status: runtimeStatusFor(a)}
 			byID[id] = newAccountSnapshot(av, st)
 		}
 	}
@@ -484,7 +378,7 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[i
 }
 
 // modelSet 组内所有账号模板的可服务模型并集（桶 key 的模型空间）。
-// 重建路径调用（buildSnapshots/rebuildGroupLocked 均在 reloadMu 内），静态字段
+// 重建路径调用（buildSnapshots 在 publisher.mu 内），静态字
 // 经视图读取（评审 Critical 修复后实例不再保留裸字段）。
 func modelSet(accs []*accountSnapshot) map[string]struct{} {
 	set := make(map[string]struct{})
@@ -508,10 +402,11 @@ func modelSet(accs []*accountSnapshot) map[string]struct{} {
 	return set
 }
 
-// buildRoutes 预生成 (format, model) 调度路径：格式硬过滤（FormatSupports）与
+// buildRoutes 生成 (format, model) 桶键集：格式硬过滤（FormatSupports）与
 // 模型硬白名单（Serves）都是静态信息，可完全在重建时计算。另为每个格式生成
 // 默认回退桶（model == ""）：仅含全模型账号（无模型空间），请求模型未知时
-// 兜底转发。
+// 兜底转发。桶键集是编译车道的枚举域（编译器经 fullCandidateUnion 重算候选，
+// 不消费序列——legacy 加权预生成序列已随 cutover 删除）。
 //
 // 分桶语义（模板模型硬白名单，用户裁决 2026-08-18）：
 //   - Serves(model) 命中 → tier1（不变）；
@@ -524,7 +419,7 @@ func modelSet(accs []*accountSnapshot) map[string]struct{} {
 // → 404（旧行为该格式全模型 tier2 转发，随白名单语义收窄）。
 //
 // mapping 交互：白名单只查请求模型（mapping key 即白名单别名，∈ Serves 空间），
-// 映射目标（上游模型名）不复查（pickFrom 内映射）。
+// 映射目标（上游模型名）不复查（选号内映射）。
 func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 	routes := make(map[routeKey]*route)
 	formats := []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS, domain.FormatOpenAIImages, domain.FormatAnthropic}
@@ -546,14 +441,7 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 			if len(t1) == 0 && len(t2) == 0 {
 				continue
 			}
-			rt := &route{}
-			if len(t1) > 0 {
-				rt.tier1 = newWeightedSeq(t1)
-			}
-			if len(t2) > 0 {
-				rt.tier2 = newWeightedSeq(t2)
-			}
-			routes[routeKey{format, model}] = rt
+			routes[routeKey{format, model}] = &route{}
 		}
 	}
 	for _, format := range formats {
@@ -571,7 +459,7 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 		if len(t2) == 0 {
 			continue
 		}
-		routes[routeKey{format, ""}] = &route{tier2: newWeightedSeq(t2)}
+		routes[routeKey{format, ""}] = &route{}
 	}
 	return routes
 }
@@ -581,9 +469,9 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 // 其它组引用——Select（经组路由）与 Release（经 byID）必须命中同一计数器，
 // 否则多组账号并发计数分裂漂移 → 槽位假满（O2 实证修复）。账号从组移除且
 // 不再属于任何组 → 从 byID 移除；仍属其它组 → 保留实例并摘除本组引用。
-// 静态字段（含 groupIDs）在 snapshotStatic 不可变视图中：写经 reloadMu +
+// 静态字段（含 groupIDs）在 snapshotStatic 不可变视图中：写经 publisher.mu +
 // 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
-// （processWrite 发布收集仍持 reloadMu——评审 M-1 纪律，无锁外裸读）。
+// （发布收集仍持 publisher.mu——评审 M-1 纪律，无锁外裸读）。
 func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
@@ -605,11 +493,11 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		byID = map[int64]*accountSnapshot{}
 	}
 	// byID 兼作复用查询源（oldByID）：组级重载同样复用旧实例——errRate/errCount
-	// 跨组级 NOTIFY 重载保留（A-2 M-4），静态字段 DB 权威同步。持 reloadMu 读取安全。
+	// 跨组级 NOTIFY 重载保留（A-2 M-4），静态字段 DB 权威同步。持 publisher.mu 读取安全。
 	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, s.cfg.DefaultMaxConcurrency, byID)
 	newAccs := gs[groupID].accounts
 	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
-	// 避免组级重载后 routes 为 nil（Select 预生成路径断裂）。
+	// 避免组级重载后 routes 为 nil（编译车道枚举域断裂）。
 	newM := make(map[int64]*groupSnapshot, len(m))
 	for k, v := range m {
 		newM[k] = v
@@ -820,7 +708,7 @@ func (s *Scheduler) Runtime(accountID int64) (RuntimeInfo, bool) {
 	}
 	st := a.statePtr()
 	return RuntimeInfo{
-		Status: st.status, CooldownUntil: st.cooldownUntil,
+		Status:      st.status,
 		Concurrency: a.runtime.concurrency.Load(),
 		ErrRate:     float64(a.runtime.errRate.Load()) / errRateScale,
 		ErrCount:    st.errCount,
@@ -886,7 +774,7 @@ func (s *Scheduler) ReleaseSelection(sel *Selection) {
 }
 
 // MarkResult 请求结果回流：禁用守卫（同步短路）+ 条件投递（C1）→ 规则引擎异步处理。
-// 快照/EWMA/组路由/DB 回写全部由规则命中后的 apply 回调完成（本方法不再触碰状态）。
+// 动作应用全部由规则命中后的 typed sink 完成（本方法不触碰状态）。
 // kind 直接收 rule.Kind（单一 kind 概念——scheduler 不再有第二套枚举；连接级/
 // 5xx 分流由调用点 RuleKindOf 完成）。
 func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Time, httpStatus int, errMsg string, model string) {
@@ -898,10 +786,9 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 	if !ok {
 		return
 	}
-	// 禁用账号的防复活守卫：管理端禁用后（InvalidateGroup 以 disabled 重载
-	// 快照），在途请求完成时不得投递事件把状态重置回 active 并回写 DB——否则
-	// 禁用被静默抹除、30s 同步后账号复现（评审发现）。禁用账号不参与选号，
-	// err/429 分支同样不可能合法触发于其上，统一在此短路（不投递）。
+	// 禁用账号的防复活守卫：失效/禁用置位后（failed_at 装载或 FailAccount 内存
+	// 置 disabled），在途请求完成时不得投递事件——规则可能把它恢复。禁用账号
+	// 不参与选号，err/429 分支同样不可能合法触发于其上，统一在此短路（不投递）。
 	if a.statePtr().status == domain.StatusDisabled {
 		return
 	}
@@ -932,32 +819,26 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 }
 
 // FailAccount 账号失效摘除（SDK 接入 T1——统一失效回调处理链第二步，
-// sdkbridge.HandleFailure 调用；冷面低频）：快照置 StatusDisabled + last_error
-// 审计（失效原因摘要，域内截断 500）+ 阻塞入队回写 loader 持久化（重启快照
-// 重载后仍摘除——pickFrom 只跳 disabled 不查 failed_at，仅内存摘除会复活）。
-// 复用既有机制：pickFrom 过滤器（selection.go 只跳 disabled）与 MarkResult
-// 防复活守卫（置位后快照为 disabled，在途请求结果回流短路不投递规则事件）。
-// 与规则引擎动作（apply）同构但**不投递规则事件**：直接置快照 + 回写——失效
-// 是 SDK 上报的既成事实，不参与规则状态机（规则可能把它恢复 active）。
-// 回写经既有 writeback 合并管道（后写覆盖先写）落库，与在途 apply 回写不乱序；
-// 阻塞入队区别于普通回写的"队列满丢弃"策略：失效回写必须落库（丢弃 = 重启
-// 复活），冷面阻塞可接受。writebackLoop 未启动（未 Start）时入队不阻塞（缓冲
-// 4096）；进程退出竞态（循环已死且队列满）才阻塞——可接受。
-func (s *Scheduler) FailAccount(accountID int64, reason string) {
+// sdkbridge.HandleFailure 调用；冷面低频）：快照置 StatusDisabled（运行时
+// 摘除）。持久化事实 = failed_at（同链第一步 FailAccountCAS/SetAccountFailed
+// 已落库；重启快照重载经 runtimeStatusFor 仍摘除——恢复唯一入口 /recover
+// fenced 端点清 failed_at + revision +1）。复用既有机制：选号 disabled 过滤
+// 与 MarkResult 防复活守卫（置位后快照为 disabled，在途请求结果回流短路不
+// 投递规则事件）。与规则引擎动作同构但**不投递规则事件**：失效是 SDK 上报
+// 的既成事实，不参与规则判定（规则可能把它恢复）。
+func (s *Scheduler) FailAccount(accountID int64) {
 	v := s.view.Load()
 	if v == nil || v.StaticView() == nil {
 		return
 	}
 	a, ok := v.ByID()[accountID]
 	if !ok {
-		return // 快照外账号（已移除/未知）：无状态可改，不投递回写（同 apply）
+		return // 快照外账号（已移除/未知）：无状态可改
 	}
-	// copy-on-write CAS（与 apply 同构）：快照置位对并发转换（apply）串行化——
-	// 本 CAS 先成功 → apply 的 CAS 读到 disabled 早退，不复活；apply 先成功 →
-	// 本 CAS 在 disabled 之上覆盖 disabled，终态确定。disabled 幂等早退：账号
-	// 已 disabled（规则动作先置）时直接返回——新语义：首个置位者写 lastError
-	// 审计，已 disabled 的后续失效上报不重复覆盖审计与回写（终态 disabled 不变，
-	// 仅审计内容与旧"最后写者"语义不同）。cur 恒非 nil（构造即初始化）。
+	// copy-on-write CAS：快照置位对并发转换串行化。disabled 幂等早退：账号
+	// 已 disabled（失效上报重复到达）时直接返回——终态 disabled 不变。
+	// cur 恒非 nil（构造即初始化）。失效原因审计落库由失效链 DB 步负责
+	// （last_error 列），内存态不再保留副本。
 	now := s.timeNow()
 	for {
 		cur := a.runtime.state.Load()
@@ -966,14 +847,10 @@ func (s *Scheduler) FailAccount(accountID int64, reason string) {
 		}
 		st := *cur
 		st.status = domain.StatusDisabled
-		if t := domain.TruncateErrMsg(reason); t != "" {
-			st.lastError = &t
-		}
 		st.lastUsedAt = &now
 		if !a.runtime.state.CompareAndSwap(cur, &st) {
 			continue // 并发转换已发生——重读重试（disabled 对双方都是吸收态，必然终止）
 		}
-		s.writeCh <- statusWrite{id: accountID, status: st.status, cooldown: st.cooldownUntil, lastErr: st.lastError, weight: nil}
 		return
 	}
 }
@@ -998,8 +875,8 @@ func (s *Scheduler) failureEvent(accountID int64, kind rule.Kind, errMsg string)
 
 // RuleKindOf 连接级/5xx 事件分流（单点 helper，分流外移到调用点——9 处
 // 跨包引用：failoverLoop 5xx/0 分支、ws_relay 中继失联/心跳错误、caller 各
-// statusOf(err)==0 调用点）：code==0 → network（独立冷却不吃 5xx 10m）；
-// ≥500 → 5xx；1-499 为不可达防御（调用点恒 0/≥500，4xx 走骨架透传不至此）
+// statusOf(err)==0 调用点）：code==0 → network（独立 kind，规则窗口与 5xx 各自
+// 判定）；≥500 → 5xx；1-499 为不可达防御（调用点恒 0/≥500，4xx 走骨架透传不至此）
 // → 5xx。429/4xx/ok 调用点显式传 rule.Kind429/Kind4xx/KindOK。
 func RuleKindOf(httpStatus int) rule.Kind {
 	if httpStatus == 0 {
@@ -1011,7 +888,7 @@ func RuleKindOf(httpStatus int) rule.Kind {
 // Classify 错误事件分类决策（failoverLoop 错误分支调用；对齐 MarkResult 模式
 // 的 scheduler 包装）：快照取 TemplateID/GroupID（对齐 MarkResult——调用方
 // 事件构造无快照访问）后委托规则引擎首中分类。返回 then（ResponseCode nil=透传上游码，CustomMessage nil=透传上游文，指针即意图）与 punish
-// （true = 命中规则有状态动作——Status/Weight/Cooldown 任一非 nil，应投递
+// （true = 命中规则有惩罚动作——Throttle 或 FailAccount，应投递
 // MarkResult 让 worker 精确应用——含窗口条件规则的"可能命中"保守判定）。
 // 头透传与 kind 解耦：ResponseCode==nil 且上游带 Retry-After/X-Retry-After 才透，否则不透不伪造。
 // 快照未加载/账号快照外 → (domain.RuleThen{}, false)
@@ -1038,184 +915,8 @@ func groupIDPtr(gid int64) *int64 {
 	return &gid
 }
 
-func strPtr(s string) *string { return &s }
-
-// errMsgOr 错误文本回退：errMsg 非空（且截断后非空）用它，否则用默认文案
-// （旧语义：429/error 状态机的硬编码 last_error；无文本事件保持原样）。
-func errMsgOr(def, errMsg string) string {
-	if t := domain.TruncateErrMsg(errMsg); t != "" {
-		return t
-	}
-	return def
-}
-
 // FlushRules 同步处理规则引擎队列中的全部事件（仅测试与优雅关闭用）：
 // MarkResult 为异步投递，需要立即断言快照的测试先排空队列。
 func (s *Scheduler) FlushRules() {
 	s.rule.Flush(context.Background())
-}
-
-// apply 是规则引擎的动作应用回调（New 时注册）：更新快照状态/冷却/权重、
-// EWMA（仅状态类动作）、权重变更时重建组路由（weightedSeq 预生成缓存）、
-// 异步 DB 回写。st 为 nil = 只改权重/冷却，不动状态与 EWMA。
-// errMsg 为事件错误文本（部署故障修复）：429/unhealthy 落 last_error 用——
-// 有文本用文本（域内截断 500），无文本回退既有硬编码文案（旧语义不变）。
-func (s *Scheduler) apply(aid int64, st *domain.AccountStatus, cooldownUntil *time.Time, weight *int, errMsg string) {
-	v := s.view.Load()
-	if v == nil || v.StaticView() == nil {
-		if s.log != nil {
-			s.log.Warn("scheduler apply skipped: snapshot not loaded")
-		}
-		return
-	}
-	byID := v.ByID()
-	a, ok := byID[aid]
-	if !ok {
-		return // 快照外账号（已移除/未知）：无状态可改，不投递回写
-	}
-	// 防复活（T1 P1 评审——探针确定性复现）：disabled 快照的事件回流不得覆盖
-	// 状态——规则事件可能在失效/禁用置位**之前**已入队（MarkResult 守卫只拦
-	// 置位后的新事件，拦不住入队在先的），apply 照常覆盖会把快照与 DB 回写
-	// 重置回 active/unhealthy，账号重新可调度。与 MarkResult 防复活守卫同哲学：
-	// disabled 后规则动作整体失效（含 cooldown/weight，且不投递回写——避免
-	// 旧状态经合并"后写覆盖先写"覆盖 DB 的 disabled）。
-	//
-	// copy-on-write CAS：守卫并入转换原子性——读-改-写整体对并发转换
-	// （FailAccount/另一 apply）串行化，disabled 检查后到 Store 之间无窗口；
-	// CAS 失败 = 并发转换已发生，重读重试（disabled 对双方都是吸收态，重试
-	// 必然终止）。cur 恒非 nil（构造即初始化，无 nil 分支）。
-	now := s.timeNow()
-	var next accState // CAS 成功后持有（enqueueWrite 用）
-	for {
-		cur := a.runtime.state.Load()
-		if cur.status == domain.StatusDisabled {
-			return
-		}
-		next = *cur
-		if st != nil {
-			next.status = *st
-			switch *st {
-			case domain.Status429:
-				next.errCount++
-				next.lastError = strPtr(errMsgOr("upstream 429 rate limited", errMsg))
-			case domain.StatusUnhealthy:
-				next.errCount++
-				next.lastError = strPtr(errMsgOr("upstream error", errMsg))
-			case domain.StatusActive:
-				if cur.cooldownUntil != nil && !cur.cooldownUntil.Before(now) {
-					return
-				}
-				next.errCount = 0
-				next.lastError = nil
-			}
-			rateDelta := 0.0
-			if *st == domain.Status429 || *st == domain.StatusUnhealthy {
-				rateDelta = 1
-			}
-			old := float64(a.runtime.errRate.Load()) / errRateScale
-			rate := 0.2*rateDelta + 0.8*old
-			a.runtime.errRate.Store(uint64(rate * errRateScale))
-		}
-		if cooldownUntil != nil {
-			next.cooldownUntil = cooldownUntil
-		}
-		next.lastUsedAt = &now
-		if a.runtime.state.CompareAndSwap(cur, &next) {
-			break
-		}
-	}
-	if weight != nil {
-		s.publisher.mu.Lock()
-		curView := s.view.Load()
-		if curView != nil && curView.static != nil {
-			av := a.static.Load()
-			nv := *av
-			nv.acc.Weight = *weight
-			newLeaf := &accountSnapshot{runtime: a.runtime}
-			newLeaf.static.Store(&nv)
-			oldByID := curView.static.byID
-			oldGroups := curView.static.groups
-			newByID := make(map[int64]*accountSnapshot, len(oldByID))
-			for k, vv := range oldByID {
-				if k == aid {
-					newByID[k] = newLeaf
-				} else {
-					newByID[k] = vv
-				}
-			}
-			newGroups := make(map[int64]*groupSnapshot, len(oldGroups))
-			for gid, gs := range oldGroups {
-				repl := make([]*accountSnapshot, len(gs.accounts))
-				copy(repl, gs.accounts)
-				needs := false
-				for i, acc := range repl {
-					if acc.static.Load().acc.ID == aid {
-						repl[i] = newLeaf
-						needs = true
-					}
-				}
-				if needs {
-					newGroups[gid] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
-				} else {
-					newGroups[gid] = gs
-				}
-			}
-			sv := &StaticView{groups: newGroups, byID: newByID}
-			s.publisher.storeLocked(sv, curView.decision)
-		}
-		s.publisher.mu.Unlock()
-	}
-	// 回写前复查 disabled（防 active 回写覆盖 FailAccount 并发置位）——仅对
-	// 非 disabled 动作生效：本 apply 动作即 disabled 时必须照常回写（否则
-	// disabled 只活内存 ≤30s，全量同步拉回 DB 旧值复活——规则禁用失效，bug
-	// 2026-08-18）。st == nil（纯 weight/冷却动作）保留复查（disabled 后规则
-	// 动作整体失效语义）。
-	// 原 gate M1 设计备注（位置钉扎：weight 锁区之后、紧邻 enqueueWrite）：
-	// CAS 成功后本 apply 的 active 回写仍可能晚于 FailAccount 的 disabled 回写
-	// 入队（writeback 合并"后写覆盖先写"→ DB 落 active → 重载复活）——复查与
-	// 入队指令相邻关闭全部实际可达窗口（此间 FailAccount 完成 CAS+入队则其入队
-	// 必然晚于本入队 → 通道序 [active, disabled] 合并取 disabled）；残余窗口
-	// （CAS+阻塞入队整体落进复查-入队间隙）为 spec M1b 明示接受（-race 实证可
-	// 复现、DB 可短暂落 active）。≤30s 全量同步是坏 DB 写的显形机制而非自愈
-	// 承诺；真正兜底是复查-入队相邻 + 内存终态恒 disabled。
-	if (st == nil || *st != domain.StatusDisabled) && a.statePtr().status == domain.StatusDisabled {
-		return
-	}
-	s.enqueueWrite(aid, next, weight)
-}
-
-// rebuildGroup 重建单组路由的公开包装（持锁委托 rebuildGroupLocked）。
-func (s *Scheduler) rebuildGroup(groupID int64) {
-	s.publisher.mu.Lock()
-	defer s.publisher.mu.Unlock()
-	s.rebuildGroupLocked(groupID)
-}
-
-// rebuildGroupLocked 重建单组路由（须持 publisher.mu 调用；不碰 DB/账号列表）：
-func (s *Scheduler) rebuildGroupLocked(groupID int64) {
-	v := s.view.Load()
-	if v == nil || v.StaticView() == nil {
-		return
-	}
-	m := v.Groups()
-	gs, ok := m[groupID]
-	if !ok {
-		return
-	}
-	newM := make(map[int64]*groupSnapshot, len(m))
-	for k, vv := range m {
-		newM[k] = vv
-	}
-	newM[groupID] = &groupSnapshot{accounts: gs.accounts, routes: buildRoutes(gs.accounts)}
-	sv := &StaticView{groups: newM, byID: v.ByID()}
-	s.publisher.storeLocked(sv, v.decision)
-	s.RequestCompile()
-}
-
-func (s *Scheduler) enqueueWrite(id int64, st accState, weight *int) {
-	select {
-	case s.writeCh <- statusWrite{id: id, status: st.status, cooldown: st.cooldownUntil, lastErr: st.lastError, weight: weight}:
-	default:
-		// 队列满：丢弃 DB 回写（内存状态已生效，重启后由下一次请求重新判定）
-	}
 }

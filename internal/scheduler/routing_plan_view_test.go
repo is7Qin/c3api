@@ -23,7 +23,7 @@ func TestRoutingPlan_EmptyViewIsNonNilEmptyPlan(t *testing.T) {
 
 func TestRoutingPlan_GenerationMatchesPublishedRoot(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
-	s := newTestScheduler(t, []*domain.Account{accWithEnabled(1, tplx, true, 10000)})
+	s := newTestSchedulerStatic(t, []*domain.Account{accWithEnabled(1, tplx, true, 10000)})
 	plan := s.CurrentRoutingPlan()
 	require.Equal(t, s.View().Generation(), plan.Generation)
 	require.Empty(t, plan.Routes, "static-only view has no compiled routes")
@@ -139,9 +139,9 @@ func TestRoutingPlan_CandidateMetadataMappingFingerprintQualityClass(t *testing.
 }
 
 func TestRoutingPlan_IdentityFingerprintSynthesisWhenUnderivable(t *testing.T) {
-	// tplWith has no BaseURL/credential → real fingerprint underivable; identity
-	// falls back to big-endian account ID bytes (compiler synthesis rule).
-	tplx := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	// 裸模板无 BaseURL/credential → 真实指纹不可派生；identity 回退大端账号 ID
+	// 字节（编译器合成规则）。
+	tplx := &domain.Template{SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"m"}}
 	s := newTestScheduler(t, []*domain.Account{accWithEnabled(5, tplx, true, 10000)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	s.PublishDecisionForTest(route, &RouteDecision{Primary: []int64{5}})

@@ -38,23 +38,18 @@ func (b *barrierLoader) LoadGroupAccounts(ctx context.Context, id int64) ([]*dom
 	return b.inner.LoadGroupAccounts(ctx, id)
 }
 
-func (b *barrierLoader) UpdateAccountStatus(ctx context.Context, id int64, s domain.AccountStatus, cooldown *time.Time, lastErr *string, weight *int) error {
-	return b.inner.UpdateAccountStatus(ctx, id, s, cooldown, lastErr, weight)
-}
-
+// TestInvalidateGroupSerializesLoadBarrier 验证 publisher.mu 串行化：组级重载
+// （阻塞在 loader 加载）与全量 reload + 决策发布并发时，静态视图不被陈旧数据
+// 覆盖，且最新 DecisionView 被保留（structurally shared root）。
 func TestInvalidateGroupSerializesLoadBarrier(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl, 4)}})
 	s := newSched(t, m)
 
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	v1 := s.View()
 	require.NotNil(t, v1)
-	if v1.DecisionView() == nil {
-		s.publisher.publishWithBase(v1.Generation(), func(cur *RoutingView) *DecisionView {
-			return &DecisionView{generation: 1, decisions: map[int64]*decisionLeaf{1: {weight: 10}}}
-		})
-		v1 = s.View()
-	}
+	require.NotNil(t, v1.DecisionView())
 	dec1 := v1.DecisionView()
 	require.NotNil(t, dec1)
 
@@ -100,7 +95,7 @@ func TestInvalidateGroupSerializesLoadBarrier(t *testing.T) {
 			if cur != nil && cur.DecisionView() != nil {
 				gen = cur.DecisionView().Generation()
 			}
-			return &DecisionView{generation: gen + 1, decisions: map[int64]*decisionLeaf{1: {weight: 20}}}
+			return &DecisionView{generation: gen + 1, routes: map[RouteRef]*RouteDecision{route: {Primary: []int64{1, 2}}}}
 		})
 	}()
 
@@ -137,7 +132,7 @@ func TestInvalidateGroupSerializesLoadBarrier(t *testing.T) {
 	require.True(t, found2, "group 10 must contain fresh account after serialized reload")
 	decFinal := vFinal.DecisionView()
 	require.NotNil(t, decFinal)
-	require.NotNil(t, decFinal.decisions[1])
-	require.Equal(t, 20, decFinal.decisions[1].weight, "latest DecisionView retained")
+	require.NotNil(t, decFinal.routes[route])
+	require.Equal(t, []int64{1, 2}, decFinal.routes[route].Primary, "latest DecisionView retained")
 	require.Greater(t, vFinal.Generation(), v1.Generation())
 }
