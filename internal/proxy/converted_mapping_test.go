@@ -43,7 +43,7 @@ func newConvertedMappingProxy(t *testing.T, upstream string, pcs []domain.Protoc
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
 	}}}
 	return newConvertedTestProxyAccs(t, accs, pcs)
 }
@@ -133,7 +133,7 @@ func TestConvertedMappingREST(t *testing.T) {
 					return domain.FormatAnthropic
 				}
 			}()}, ModelMapping: m}
-			accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}}}
+			accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}
 			p2 := newConvertedTestProxyAccsLogs(t, accs, []domain.ProtocolConvert{tc.dir}, store, 30*time.Second)
 			req := httptest.NewRequest(http.MethodPost, tc.clientPath, strings.NewReader(tc.clientBody))
 			req.Header.Set("Authorization", "Bearer ck-1")
@@ -297,7 +297,7 @@ func TestConvertedMappingStreamFramesViaProxy(t *testing.T) {
 		m := map[string]domain.ModelMappingEntry{"client-model": {MappedModel: "upstream-model", Mode: domain.ModelMappingModeImplicit}}
 		store := &captureLogStore{}
 		tpl := &domain.Template{ID: 1, Name: "t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, ModelMapping: m}
-		accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}}}
+		accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}
 		p := newConvertedTestProxyAccsLogs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, store, 30*time.Second)
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"client-model","messages":[{"role":"user","content":"hi"}],"stream":true}`))
 		req.Header.Set("Authorization", "Bearer ck-1")
@@ -330,7 +330,7 @@ func TestConvertedMappingFrameBoundariesMetadataAndRawOrdering(t *testing.T) {
 	m := map[string]domain.ModelMappingEntry{"client-model": {MappedModel: "upstream-model", Mode: domain.ModelMappingModeImplicit}}
 	store := &captureLogStore{}
 	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, ModelMapping: m}
-	accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}}}
+	accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}
 	p := newConvertedTestProxyAccsLogs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, store, 30*time.Second)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"client-model","messages":[{"role":"user","content":"hi"}],"stream":true}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -433,7 +433,7 @@ func TestConvertedMappingImagesSearchExclusions(t *testing.T) {
 		}))
 		defer up.Close()
 		tpl := &domain.Template{ID: 1, Name: "t", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, ModelMapping: map[string]domain.ModelMappingEntry{"client-model": {MappedModel: "upstream-model", Mode: domain.ModelMappingModeImplicit}}}
-		accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}}}
+		accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}
 		store := &captureLogStore{}
 		p := newConvertedTestProxyAccsLogs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, store, 30*time.Second)
 		req := httptest.NewRequest(http.MethodPost, "/v1/alpha/search", strings.NewReader(`{"model":"client-model","query":"hi"}`))

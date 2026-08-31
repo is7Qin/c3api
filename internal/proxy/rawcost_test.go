@@ -164,7 +164,7 @@ func TestProxyRawCostNonBilledFilled(t *testing.T) {
 		ID: 1, Name: "t", BaseURL: up.URL,
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-	}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+	}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
 	p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 0, 10), // UserID 0 → 出生吸收态（Billed=true）
 	}, map[int64][]*domain.Account{10: {acc}}, bal, store)

@@ -480,6 +480,7 @@ func blackHoleWSServer(t *testing.T) *httptest.Server {
 // wsDialTimeout（50ms，FailoverAttempts=2 → 总耗时 ~100ms 级）：超时转移
 // 必须在秒级完成（修复前此用例读帧 5s 超时即红）。
 func TestResponsesWSBlackHoleDialTimeout(t *testing.T) {
+	testHealthSink.reset()
 	old := wsDialTimeout
 	wsDialTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { wsDialTimeout = old })
@@ -500,9 +501,9 @@ func TestResponsesWSBlackHoleDialTimeout(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "黑洞超时 → 连接级/5xx 分流惩罚")
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "黑洞超时 → 连接级/5xx 分流 冷却")
 	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
 	require.NoError(t, p.rec.Close(context.Background()))
 	require.NoError(t, p.errlog.Close(context.Background()))
@@ -656,6 +657,7 @@ func TestResponsesWSDial4xxNoBodyDecoupled(t *testing.T) {
 // 骨架"提取为空直取原文"回退不丢）；耗尽记 Err429 + 状态码 429（WS 无
 // Retry-After——固定错误帧文案）。
 func TestResponsesWSDial429Failover(t *testing.T) {
+	testHealthSink.reset()
 	up, _ := newCodexWSUpstream(t, []int{429}, 0)
 	defer up.Close()
 	store := &captureLogStore{}
@@ -673,7 +675,9 @@ func TestResponsesWSDial429Failover(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.Status429, ri.Status, "429 → Kind429 冷却")
+	ths := testHealthSink.throttlesFor(1)
+	require.Len(t, ths, 1, "429 → Kind429 惩罚恰一次投递")
+	require.Equal(t, domain.ThrottleModeRetryAfter, ths[0].Mode, "seed-429 → retry_after 语义")
 	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
 	require.NoError(t, p.rec.Close(context.Background()), "Recorder 手动 flush")
 	require.NoError(t, p.errlog.Close(context.Background()), "errlog 手动 flush（失败行走 err_logs）")
@@ -693,6 +697,7 @@ func TestResponsesWSDial429Failover(t *testing.T) {
 // ErrNetwork + httpStatus 0——WS 内部与 codex 5xx 分支不一致；统一后对齐 codex
 // 分支与 HTTP 路径，规则 when 匹配面 http_status 恢复真实值）。
 func TestResponsesWSDial5xxNormalized(t *testing.T) {
+	testHealthSink.reset()
 	up, _ := newCodexWSUpstream(t, []int{500}, 0) // 非 200 升级 → 500 拒绝 + JSON 错误体
 	defer up.Close()
 	store := &captureLogStore{}
@@ -710,7 +715,7 @@ func TestResponsesWSDial5xxNormalized(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "5xx → 连接级/5xx 分流 冷却")
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "5xx → 连接级/5xx 分流惩罚")
 	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
 	require.NoError(t, p.rec.Close(context.Background()), "Recorder 手动 flush")
 	require.NoError(t, p.errlog.Close(context.Background()), "errlog 手动 flush（失败行走 err_logs）")

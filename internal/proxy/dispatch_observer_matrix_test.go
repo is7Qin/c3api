@@ -279,8 +279,10 @@ func TestAttemptObserverMatrix_retryChainOrdinalsPreserved(t *testing.T) {
 	tpl2 := &domain.Template{ID: 2, Name: "t2", BaseURL: up.URL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2,
-		UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4})
+		UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4})
 	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+
 	p.cfg.FailoverAttempts = 2
 	rec, fc := wireObserverHarness(t, p)
 
@@ -396,8 +398,10 @@ func TestAttemptObserverMatrix_postCommitFailureNoFailover(t *testing.T) {
 	tpl2 := &domain.Template{ID: 2, Name: "t2", BaseURL: up.URL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2,
-		UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4})
+		UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4})
 	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+
 	p.cfg.FailoverAttempts = 2
 	rec, fc := wireObserverHarness(t, p)
 
@@ -419,6 +423,7 @@ func TestAttemptObserverMatrix_postCommitFailureNoFailover(t *testing.T) {
 // --- failure path: loop keeps the single MarkResult owner, one observation ---
 
 func TestAttemptObserverMatrix_preResponse429SingleMarkResult(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
@@ -439,9 +444,11 @@ func TestAttemptObserverMatrix_preResponse429SingleMarkResult(t *testing.T) {
 	require.Equal(t, CommitUpstreamResponded, flow[0].Commit)
 	require.Equal(t, int64(1), snapshotQualityAttempts(rec))
 	p.sched.FlushRules()
+	// cutover 后 MarkResult 不再回写运行时状态机（RuntimeInfo.ErrCount 恒 0）：
+	// 单点投递的可观测事实 = typed sink 恰收到一次 seed-429 throttle。
+	require.Len(t, testHealthSink.throttlesFor(sel.AccountID), 1, "failover classification remains the single MarkResult owner")
 	ri, ok := p.sched.Runtime(sel.AccountID)
 	require.True(t, ok)
-	require.Equal(t, 1, ri.ErrCount, "failover classification remains the single MarkResult owner")
 	require.Zero(t, ri.Concurrency)
 	require.Zero(t, rec.GlobalInflight())
 }

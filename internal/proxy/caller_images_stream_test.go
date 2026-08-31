@@ -251,6 +251,7 @@ func TestStreamImagePreHeaderError(t *testing.T) {
 // SSE error 帧（data 含 message——信封文案）+ EOF；计费走 recordStreamAbort
 // （已收集张数落账）+ MarkResult(连接级/5xx 分流)。
 func TestStreamImagePostHeaderError(t *testing.T) {
+	testHealthSink.reset()
 	p, store := newImageStreamTestProxy(t, nil)
 	r, rec := streamImageReq(t, nil)
 	b64a := "aGVsbG8="
@@ -270,9 +271,9 @@ func TestStreamImagePostHeaderError(t *testing.T) {
 	require.Equal(t, int64(1), l.CallCount)
 	require.Equal(t, int64(5400), l.Cost, "1 张 per-image 计费")
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
-	ri, ok := p.sched.Runtime(1)
+	_, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "上游错误 MarkResult(连接级/5xx 分流)")
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "上游错误 MarkResult(连接级/5xx 分流) 惩罚")
 }
 
 // TestStreamImageAbortNoCompleted 响应头已发后失败且无 completed：已收集 0 张

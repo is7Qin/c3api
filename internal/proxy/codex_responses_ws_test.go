@@ -211,7 +211,7 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 	for id, ext := range accounts {
 		accs[10] = append(accs[10], &domain.Account{
 			ID: id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-			Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: ext,
+			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: ext,
 		})
 	}
 	rec := usage.New(usage.UsageConfig{
@@ -225,9 +225,12 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 		GroupKeyRPM:           0, UsageCapture: true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re.SetHealthSink(testHealthSink)
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
@@ -284,6 +287,7 @@ func dialResponsesWSHeaders(t *testing.T, srv *httptest.Server, h http.Header) *
 // DialError{StatusCode:0} → handleCodexDialError 既有 default 分支连接级转移
 // （零新分支）→ 耗尽错误帧 + 连接级/5xx 分流 冷却 + 并发槽释放。
 func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
+	testHealthSink.reset()
 	old := wsDialTimeout
 	wsDialTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { wsDialTimeout = old })
@@ -305,10 +309,10 @@ func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
 	require.Contains(t, string(ef), "Upstream request failed", "WS 耗尽 CustomMessage（P22 honor msg）")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
-	p.sched.FlushRules()          // MarkResult 异步投递：断言前排空
+	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
+	require.Len(t, testHealthSink.throttlesFor(10), 1, "黑洞超时 → 连接级/5xx 分流惩罚")
 	ri, ok := p.sched.Runtime(10) // codex 代理账号 ID = 组键 10（newTestCodexWSProxy）
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "黑洞超时 → 连接级/5xx 分流 冷却")
 	require.Zero(t, ri.Concurrency, "耗尽路径并发槽必须释放")
 	require.NoError(t, p.rec.Close(context.Background()))
 	waitStoreLogs(t, store, 1) // errlog 异步落袋（20ms flush；worker 由 helper cleanup 收尾，不手动 Close）
@@ -462,6 +466,7 @@ func TestCodexWSRefreshed401Terminal(t *testing.T) {
 // TestCodexWSDial401RuleCustomMessage 拨号 4xx 规则驱动文案与 punish 投递（R-1）：
 // 自定义规则（Kind4xx + HTTP 401 + CustomMessage）改写 WS 错误帧，且 MarkResult 投递使账号状态按规则更新。
 func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
+	testHealthSink.reset()
 	up, _ := newCodexWSUpstream(t, []int{401, 401}, 0)
 	defer up.Close()
 	_ = newCodexWSRefreshMock(t, codexUpStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
@@ -470,15 +475,14 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	// 定制规则引擎：种子后插入高优 CustomMessage 规则（punish=true → MarkResult 投递）。
 	frs := &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}
 	re := rule.New(rule.Config{}, frs, nil)
+	re.SetHealthSink(testHealthSink)
 	require.NoError(t, re.Reload(context.Background()))
 	kind4xx := "4xx"
 	customMsg := "dial-4xx-custom"
-	statusUnhealthy := domain.StatusUnhealthy
-	cooldown := "5s"
 	_, err := frs.CreateRule(context.Background(), domain.Rule{
 		Name: "custom-dial-401", Enabled: true, Priority: 5,
 		When: domain.RuleWhen{Kind: &kind4xx, HTTPStatus: intPtrT(401)},
-		Then: domain.RuleThen{Status: &statusUnhealthy, Cooldown: &cooldown, CustomMessage: &customMsg},
+		Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64PtrT(5000)}, CustomMessage: &customMsg},
 	})
 	require.NoError(t, err)
 	require.NoError(t, re.Reload(context.Background()))
@@ -493,12 +497,14 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	ext := codexWSExt(10, "at-10", "rt-10")
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 10, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: ext,
+		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: ext,
 	}}}
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, store, nil)
 	cfg := Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, GroupKeyRPM: 0, UsageCapture: true}
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
@@ -526,10 +532,9 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	p.sched.FlushRules()
-	ri, ok := p.sched.Runtime(10)
-	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "punish=true 必须投递 MarkResult → 规则 Status 生效")
-	require.NotNil(t, ri.CooldownUntil, "punish 规则的 Cooldown 必须生效")
+	ths := testHealthSink.throttlesFor(10)
+	require.Len(t, ths, 1, "punish=true 必须投递 MarkResult → 规则 Throttle 生效")
+	require.Equal(t, domain.ThrottleModeOpen, ths[0].Mode, "punish 规则的 Throttle 必须生效")
 }
 
 // TestCodexWSFatalNoTransfer 裸 fatal（refresh 判死 invalid_grant）→ 统一回
@@ -587,23 +592,26 @@ func TestCodexWSFatalNoTransfer(t *testing.T) {
 	require.Contains(t, *store.logs[0].ErrorMessage, "refresh 被拒绝", "落盘留痕不动——SDK 原文进 ErrorMessage")
 }
 
-// TestCodexWSRefreshErrorFailover 裸 RefreshError（refresh 5xx 耗尽）→ 正常
-// failover：账号 10 连接级转移 → 账号 20 轮转成功 → 完整会话。
-func TestCodexWSRefreshErrorFailover(t *testing.T) {
-	up, hooks := newCodexWSUpstream(t, []int{401, 401, 200}, 3)
+// TestCodexWSDial429Failover codex WS 拨号 429（可重试类）→ 跨账号 failover：
+// 账号 10 拨号 429 转移 → 账号 20 拨号成功 → 完整会话（事件流 + 回声 + 1000
+// 关闭）。证明 codex WS 面 failover 按当轮账号重新拨号、凭据不串。
+//
+// 注：裸 RefreshError（refresh 5xx 耗尽）在重试矩阵下 code 0 + 无 callErr 归
+// committed 终态，不再跨账号转移（codex WS 拨号级 failover 仅 429 类可达）。
+func TestCodexWSDial429Failover(t *testing.T) {
+	testHealthSink.reset()
+	up, hooks := newCodexWSUpstream(t, []int{429, 200}, 3)
 	defer up.Close()
-	// 账号 10 的 refresh 三次尝试全 500（退避耗尽），账号 20 的 refresh 200
-	newCodexWSRefreshMock(t,
-		codexUpStep{status: 500, body: `{}`},
-		codexUpStep{status: 500, body: `{}`},
-		codexUpStep{status: 500, body: `{}`},
-		codexUpStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`},
-	)
+	newCodexWSRefreshMock(t, codexUpStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	store := &captureLogStore{}
 	p, _ := newTestCodexWSProxy(t, credential.TypeCodexOAuth, map[int64]*domain.AccountExt{
 		10: codexWSExt(10, "at-10", "rt-10"),
 		20: codexWSExt(20, "at-20", "rt-20"),
 	}, up.URL, nil, store)
+	// 确定性车道：账号 10 先拨（429）→ 转移账号 20（200）。
+	p.sched.PublishDecisionForTest(
+		scheduler.RouteRefFor(10, string(domain.FormatOpenAIResponsesWS), ""),
+		&scheduler.RouteDecision{Primary: []int64{10, 20}})
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
@@ -623,20 +631,19 @@ func TestCodexWSRefreshErrorFailover(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	hooks.mu.Lock()
-	defer hooks.mu.Unlock()
-	require.Equal(t, 3, hooks.upgrades, "账号 A 首拨 401 + 账号 B 首拨 401 + 轮转重拨 200")
-	// 两账号先拨顺序不保证（快照 map 迭代序）——断言集合语义
-	a0 := hooks.headers[0].Get("Authorization")
-	a1 := hooks.headers[1].Get("Authorization")
-	require.Contains(t, []string{"Bearer at-10", "Bearer at-20"}, a0)
-	require.Contains(t, []string{"Bearer at-10", "Bearer at-20"}, a1)
-	require.NotEqual(t, a0, a1, "两账号各拨一次（均 401）")
-	require.Equal(t, "Bearer at-new", hooks.headers[2].Get("Authorization"), "第二轮账号 refresh 后新 at")
+	require.Equal(t, 2, hooks.upgrades, "账号 10 首拨 429 + 账号 20 转移拨号 200")
+	require.Equal(t, "Bearer at-10", hooks.headers[0].Get("Authorization"), "首拨账号 10")
+	require.Equal(t, "Bearer at-20", hooks.headers[1].Get("Authorization"), "转移后按新账号凭据重拨")
+	hooks.mu.Unlock()
+	p.sched.FlushRules()
+	require.Len(t, testHealthSink.throttlesFor(10), 1, "账号 10 429 惩罚恰一次投递")
+	require.Empty(t, testHealthSink.throttlesFor(20), "成功账号 20 不受罚")
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
 	require.Equal(t, domain.ErrNone, store.logs[0].ErrorType, "failover 后成功")
+	require.Equal(t, int64(20), store.logs[0].AccountID, "落账 = 成功尝试账号")
 }
 
 // TestCodexWSDeathFrameFatal WS 业务判死事件帧（T5 §3 唯一跨边界点）：
@@ -771,7 +778,7 @@ func TestCodexWSAdapterMissing(t *testing.T) {
 	defer up.Close()
 	store := &captureLogStore{}
 	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
-		map[int64]*domain.AccountExt{10: {AccountID: 10, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: "i"}}}, up.URL, nil, store)
+		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")}, up.URL, nil, store)
 	p.SetCodex(nil) // 模拟 main 未装配
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))

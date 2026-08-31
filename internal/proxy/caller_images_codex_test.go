@@ -175,7 +175,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	for id, ext := range accounts {
 		accs[10] = append(accs[10], &domain.Account{
 			ID: id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-			Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: ext,
+			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: ext,
 		})
 	}
 	rec := usage.New(usage.UsageConfig{
@@ -192,6 +192,8 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
@@ -289,8 +291,8 @@ func TestImagesCodexPATDirect(t *testing.T) {
 
 // TestImagesCodexCredPassing 不同账号 cred 传递断言：同一适配层两账号（不同
 // oauth at）连续请求 → 各自 at 送达上游（缓存按 accountID 隔离、互不串扰）。
-// 加权序列每账号至少出现一次（游标顺序取用）——4 请求覆盖两账号，断言双 at
-// 均送达。
+// cutover 后选号确定性（Primary 序，无加权轮转）：首轮命中账号以指纹 latch
+// 隔离，次轮独立选到另一账号——两 at 均送达，证明适配层凭据缓存按账号隔离。
 func TestImagesCodexCredPassing(t *testing.T) {
 	up, c := newCodexImageUpstream(t, codexUpStep{status: 200, body: codexTestImageResponse})
 	defer up.Close()
@@ -301,13 +303,29 @@ func TestImagesCodexCredPassing(t *testing.T) {
 		11: codexOAuthExt(11, "at-11", "rt-11"),
 	}, up.URL, nil, store)
 
-	for i := 0; i < 4; i++ {
+	loader := p.sched.Loader().(noopLoader)
+	latchAccount := func(id int64) {
+		for _, a := range loader.accs[10] {
+			if a.ID == id {
+				fp, err := scheduler.CandidateFingerprint(a)
+				require.NoError(t, err)
+				require.True(t, p.sched.TryLatch(id, fp, a.LifecycleRevision))
+			}
+		}
+	}
+	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 			`{"model":"gpt-image-2","prompt":"x"}`))
 		req.Header.Set("Authorization", "Bearer ck-1")
 		rec := httptest.NewRecorder()
 		p.HandleImagesGenerations(rec, req)
 		require.Equal(t, 200, rec.Code, "请求 %d body=%s", i, rec.Body.String())
+		// 隔离本轮命中账号，次轮独立选到另一账号。
+		used := int64(10)
+		if c.auth(i) == "Bearer at-11" {
+			used = 11
+		}
+		latchAccount(used)
 	}
 	got := map[string]bool{}
 	for _, a := range c.authsSnapshot() {
@@ -508,13 +526,15 @@ func TestImagesCodexAdapterMissing501(t *testing.T) {
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 10, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: codexOAuthExt(10, "at-10", "rt-10"),
+		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: codexOAuthExt(10, "at-10", "rt-10"),
 	}}}
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, store, nil)
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
@@ -655,17 +675,16 @@ func TestImagesCodexParamsLocal400(t *testing.T) {
 
 // TestImagesCodexMixedGroupFailoverReset P1-1 回归（评审实证）：混合类型组
 // （同组 codex-oauth + api_key 模板均服务 images 格式、同模型）codex 尝试失败
-// （5xx 可重试）→ failover 换 api_key 账号——调用器必须复位到直连 caller。
+// （429 可重试）→ failover 换 api_key 账号——调用器必须复位到直连 caller。
 // 评审前泄漏：caller 单向赋值（codex 分支不复位），api_key 尝试被错误路由到
 // codexImagesCaller → sel.Ext=nil → CredentialFromExt 空凭据 → 502 + 健康
 // api_key 账号 MarkResult(连接级/5xx 分流) 错误率污染 + 无谓失效上报（account 0）。
 //
-// 确定性说明：weightedSeq 构造 shuffle 后 cursor 按序取 seq[1], seq[0],
-// seq[1], seq[0]…——两请求内无论洗牌序，codex 先序至少一次触发 failover 路径
-// （codex 在上游 500 → api_key 200），api_key 直连每请求恰一次触达（恒 2 次）；
+// 确定性说明：plan 车道 Primary 序 [codex, api_key]（loader 列表序），codex
+// 先派 → 429 可重试 → 转移 api_key 直连成功；两请求恒 codex 先、api_key 后，
 // 修复前任一序必有一次 502，修复后恒 200。
 func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
-	codexUp, codexCap := newCodexImageUpstream(t, codexUpStep{status: 500, body: `{"error":"boom"}`})
+	codexUp, codexCap := newCodexImageUpstream(t, codexUpStep{status: 429, body: `{"error":"slow down"}`})
 	defer codexUp.Close()
 	apiUp, apiCap := fakeImagesUpstream(t, "/v1/images/generations")
 	defer apiUp.Close()
@@ -686,11 +705,11 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	accs := map[int64][]*domain.Account{10: {
 		{
 			ID: 10, TemplateID: tplCodex.ID, Template: tplCodex, UpstreamKey: "",
-			Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: codexOAuthExt(10, "at-10", "rt-10"),
+			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: codexOAuthExt(10, "at-10", "rt-10"),
 		},
 		{
 			ID: 11, TemplateID: tplAPI.ID, Template: tplAPI, UpstreamKey: "sk-upstream",
-			Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
 		},
 	}}
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, &captureLogStore{}, nil)
@@ -698,6 +717,8 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)

@@ -37,9 +37,14 @@ func TestSelectWithPlan_FirstSelectionUsesPlanWhenIdentityAvailable(t *testing.T
 	// add second account for plan lanes
 	tpl2 := &domain.Template{ID: 2, Name: "t2", BaseURL: up.URL, CredentialType: "api_key", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 	loader := p.sched.Loader().(noopLoader)
-	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4})
+	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4})
 	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+
 	schedRoute := scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "gpt-4o")
+	// 精确模型桶显式编译（默认桶由 publishTestRoutes 武装）——计划身份应携带
+	// 命中路由的 canonical RouteClassID。
+	p.sched.PublishDecisionForTest(schedRoute, &scheduler.RouteDecision{Primary: []int64{1, 2}})
 	identity := scheduler.AttemptPlanIdentity{RequestID: "req-123", UserID: 1}
 	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o", identity)
 	require.NoError(t, err)
@@ -58,9 +63,13 @@ func TestSelectWithPlan_ConvertedRouteUsesTargetIdentity(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	loader := p.sched.Loader().(noopLoader)
 	tplResp := &domain.Template{ID: 2, Name: "tr", BaseURL: up.URL, CredentialType: "api_key", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
-	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4})
+	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4})
 	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+
 	respRoute := scheduler.RouteRefFor(10, string(domain.FormatOpenAIResponses), "gpt-4o")
+	// 精确模型桶显式编译——转换路由的计划身份携带目标 canonical RouteClassID。
+	p.sched.PublishDecisionForTest(respRoute, &scheduler.RouteDecision{Primary: []int64{2}})
 	identity := scheduler.AttemptPlanIdentity{RequestID: "req-conv", UserID: 1}
 	sel2, plan2, err2 := p.selectWithPlan(10, domain.FormatOpenAIResponses, "gpt-4o", identity)
 	require.NoError(t, err2)
@@ -81,13 +90,33 @@ func retryBase(commit CommitState, result AttemptResult, status AttemptStatus, t
 
 func TestFailoverPlan_RetryGatingViaMatrix(t *testing.T) {
 	require.True(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitNotSent, ResultFailed, 0, false); return o }()))
-	require.True(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitUpstreamResponded, ResultFailed, 429, false); o.HardContinuation = false; return o }()))
+	require.True(t, CanRetry(CallerChat, func() AttemptOutcome {
+		o := retryBase(CommitUpstreamResponded, ResultFailed, 429, false)
+		o.HardContinuation = false
+		return o
+	}()))
 	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitUpstreamResponded, ResultFailed, 500, true); return o }()))
-	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitResponseStarted, ResultFailed, 500, true); o.BusinessFrameSent = true; return o }()))
-	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitSentAmbiguous, ResultFailed, 0, true); o.BusinessFrameSent = true; return o }()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome {
+		o := retryBase(CommitResponseStarted, ResultFailed, 500, true)
+		o.BusinessFrameSent = true
+		return o
+	}()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome {
+		o := retryBase(CommitSentAmbiguous, ResultFailed, 0, true)
+		o.BusinessFrameSent = true
+		return o
+	}()))
 	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitNotSent, ResultClientCancel, 0, true); return o }()))
-	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitUpstreamResponded, ResultFailed, 429, true); o.HardContinuation = true; return o }()))
-	require.False(t, CanRetry(CallerChat, func() AttemptOutcome { o := retryBase(CommitUpstreamResponded, ResultFailed, 400, true); o.IsMalformed = true; return o }()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome {
+		o := retryBase(CommitUpstreamResponded, ResultFailed, 429, true)
+		o.HardContinuation = true
+		return o
+	}()))
+	require.False(t, CanRetry(CallerChat, func() AttemptOutcome {
+		o := retryBase(CommitUpstreamResponded, ResultFailed, 400, true)
+		o.IsMalformed = true
+		return o
+	}()))
 }
 
 func TestFailoverPlan_AttemptsExhaustedVsNoAvailable(t *testing.T) {
@@ -155,8 +184,10 @@ func TestFailoverPlan_ReleaseExactlyOnceBeforeRetry(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	loader := p.sched.Loader().(noopLoader)
 	tpl2 := &domain.Template{ID: 2, Name: "t2", BaseURL: up.URL, CredentialType: "api_key", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
-	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4})
+	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4})
 	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+
 	p.cfg.FailoverAttempts = 2
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -174,7 +205,7 @@ func TestFailoverPlan_ReleaseExactlyOnceBeforeRetry(t *testing.T) {
 func newTestSchedulerForPlan(t *testing.T) *scheduler.Scheduler {
 	t.Helper()
 	tpl := &domain.Template{ID: 1, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
-	accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}}}
+	accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	s := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: 1000000000000}, noopLoader{accs: accs}, re, nil)
@@ -190,9 +221,11 @@ func chatProxyWithPlan(t *testing.T, upstream string, n int, primary []int64) *P
 	loader := p.sched.Loader().(noopLoader)
 	for id := int64(2); id <= int64(n); id++ {
 		tplx := &domain.Template{ID: id, Name: "t", BaseURL: upstream, CredentialType: "api_key", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
-		loader.accs[10] = append(loader.accs[10], &domain.Account{ID: id, TemplateID: id, Template: tplx, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4})
+		loader.accs[10] = append(loader.accs[10], &domain.Account{ID: id, TemplateID: id, Template: tplx, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4})
 	}
 	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+
 	route := scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "gpt-4o")
 	p.sched.PublishDecisionForTest(route, &scheduler.RouteDecision{Primary: primary})
 	return p

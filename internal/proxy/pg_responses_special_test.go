@@ -81,7 +81,7 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
 		Name: "a-rsp", TemplateID: tpl.ID, UpstreamKey: "sk-upstream",
-		Weight: 1, MaxConcurrency: 8,
+		MaxConcurrency: 8,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
@@ -92,6 +92,7 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, repos.Groups, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
 
 	sel, err := sched.Select(g.ID, domain.FormatOpenAIResponsesWS, "gpt-4o")
 	require.NoError(t, err, "responses-special 模板选号")

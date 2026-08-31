@@ -84,7 +84,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "g", Visibility: domain.GroupVisibilityPublic})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "codex-acc", TemplateID: tpl.ID, Weight: 100, MaxConcurrency: 4,
+		Name: "codex-acc", TemplateID: tpl.ID, MaxConcurrency: 4,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
@@ -103,6 +103,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	re := rule.New(rule.Config{}, repos.Rules, nil)
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, repos.Groups, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
 
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, g.ID),

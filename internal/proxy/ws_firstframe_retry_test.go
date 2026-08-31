@@ -33,8 +33,10 @@ func TestWSFirstFrameFailureRetriesSecondCandidateBarrier(t *testing.T) {
 	// Extend loader to have second account
 	tpl2 := tplForPlan(2)
 	loader := s.Loader().(noopLoader)
-	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "k2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 10, LifecycleRevision: 1})
+	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "k2", Enabled: true, MaxConcurrency: 10, LifecycleRevision: 1})
 	require.NoError(t, s.InvalidateAllSync())
+	publishTestRoutes(t, s)
+
 	route := scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	// Publish decision with both accounts in primary (already via reload, need manual decision publish)
 	schedRoute := route

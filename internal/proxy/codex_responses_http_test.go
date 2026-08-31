@@ -166,7 +166,7 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	for id, ext := range accounts {
 		accs[10] = append(accs[10], &domain.Account{
 			ID: id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-			Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: ext,
+			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: ext,
 		})
 	}
 	rec := usage.New(usage.UsageConfig{
@@ -180,9 +180,12 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 		GroupKeyRPM:           0, UsageCapture: true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re.SetHealthSink(testHealthSink)
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
@@ -805,6 +808,7 @@ func selectCodexAccount(t *testing.T, p *Proxy, accountID int64) *scheduler.Sele
 // 等价症状但 r.Context() 存活 = 上游侧问题）：recordStreamAbort + 连接级/5xx 分流
 // + 不补发 [DONE]；200 已写出（statusOf(err)=0 归连接级）。
 func TestCodexResponsesStreamMidstreamWriteError(t *testing.T) {
+	testHealthSink.reset()
 	up, _ := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
 	store := &captureLogStore{}
@@ -828,7 +832,7 @@ func TestCodexResponsesStreamMidstreamWriteError(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "上游流中止 → 连接级/5xx 分流")
+	require.Len(t, testHealthSink.throttlesFor(10), 1, "上游流中止 → 连接级/5xx 分流惩罚")
 	require.Zero(t, ri.Concurrency, "收尾释放并发槽")
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()

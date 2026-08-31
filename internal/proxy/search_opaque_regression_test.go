@@ -136,9 +136,11 @@ func TestSearchOpaqueMappingRegression(t *testing.T) {
 	})
 
 	t.Run("exhaustion_opaque_two_attempts", func(t *testing.T) {
+		// 429（可重试类）耗尽：转移至第二账号，两轮请求体均透明不被映射改写。
+		// （5xx 在重试矩阵下为终态不转移，多轮透明覆盖由本 429 用例承载。）
 		up, upc := newCodexSearchUpstream(t,
-			codexSearchStep{status: 500, body: `{"error":{"message":"boom"}}`},
-			codexSearchStep{status: 500, body: `{"error":{"message":"boom2"}}`},
+			codexSearchStep{status: 429, body: `{"error":{"message":"slow down"}}`},
+			codexSearchStep{status: 429, body: `{"error":{"message":"slow down 2"}}`},
 		)
 		defer up.Close()
 		store := &captureLogStore{}
@@ -151,8 +153,8 @@ func TestSearchOpaqueMappingRegression(t *testing.T) {
 		resp := postSearch(t, srv, searchReqBody, "")
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		require.Equal(t, http.StatusBadGateway, resp.StatusCode, "耗尽归一 502，body=%s", string(body))
-		require.Equal(t, 2, upc.callsN(), "500 耗尽应转移至第二账号")
+		require.Equal(t, http.StatusTooManyRequests, resp.StatusCode, "429 耗尽透传，body=%s", string(body))
+		require.Equal(t, 2, upc.callsN(), "429 耗尽应转移至第二账号")
 		for i := 0; i < upc.callsN(); i++ {
 			require.Equal(t, searchReqBody, string(upc.body(i)), "每轮请求体透明，不被映射改写 %d", i)
 		}
@@ -164,7 +166,7 @@ func TestSearchOpaqueMappingRegression(t *testing.T) {
 		require.Equal(t, domain.FormatOpenAISearch, lg.Format)
 		require.Equal(t, "gpt-4o", lg.Model)
 		require.Equal(t, "", lg.MappedModel, "耗尽行透明 MappedModel 为空")
-		require.Equal(t, domain.Err5xx, lg.ErrorType)
+		require.Equal(t, domain.Err429, lg.ErrorType)
 		require.Zero(t, lg.CallCount)
 		require.Zero(t, lg.Cost)
 		for _, id := range []int64{10, 20} {
