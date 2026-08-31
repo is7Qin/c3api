@@ -6,8 +6,7 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "check": "pnpm run check:i18n",
-    "check:i18n": "node scripts/check-i18n-keys.mjs",
-    "check:stats-chart": "node scripts/check-stats-chart.mjs",
+    "check:i18n": "i18next-cli extract --dry-run --ci",
     "dev": "vite",
     "build": "pnpm run check && tsc -b && vite build",
     "lint": "oxlint && pnpm run check",
@@ -40,6 +39,7 @@
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^6.0.4",
+    "i18next-cli": "^1.71.3",
     "openapi-typescript": "^7.13.0",
     "oxlint": "^1.75.0",
     "typescript": "^5.9.3",
