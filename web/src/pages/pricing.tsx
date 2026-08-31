@@ -533,7 +533,7 @@ function VariantsDialog({
                   <div className="grid grid-cols-1 gap-3">
                     <div className="space-y-1.5">
                       <Label>{t('pricing.variants.tierLabel')}</Label>
-                      <Select value={serviceTier} onValueChange={v => { setServiceTier(v === '__any' ? '' : v); setRowErr(null) }}>
+                      <Select value={serviceTier || '__any'} items={{ __any: t('pricing.variants.tierWildcard'), priority: t('pricing.variants.tierPriority'), flex: t('pricing.variants.tierFlex'), fast: t('pricing.variants.tierFast') }} onValueChange={v => { setServiceTier(v === '__any' ? '' : v); setRowErr(null) }}>
                         <SelectTrigger><SelectValue placeholder={t('pricing.variants.tierWildcard')} /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__any" label={t('pricing.variants.tierWildcard')}>{t('pricing.variants.tierWildcard')}</SelectItem>

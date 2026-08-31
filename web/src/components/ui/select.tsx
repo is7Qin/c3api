@@ -9,7 +9,16 @@ import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
-const Select = SelectPrimitive.Root
+type SelectProps<Value, Multiple extends boolean | undefined = false> =
+  SelectPrimitive.Root.Props<Value, Multiple> & {
+    items: NonNullable<SelectPrimitive.Root.Props<Value, Multiple>["items"]>
+  }
+
+function Select<Value, Multiple extends boolean | undefined = false>(
+  props: SelectProps<Value, Multiple>
+): React.JSX.Element {
+  return <SelectPrimitive.Root {...props} />
+}
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
@@ -21,7 +30,9 @@ function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   )
 }
 
-function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
+type SelectValueProps = Omit<SelectPrimitive.Value.Props, "children"> & { children?: never }
+
+function SelectValue({ className, ...props }: SelectValueProps) {
   return (
     <SelectPrimitive.Value
       data-slot="select-value"
@@ -118,7 +129,7 @@ function SelectItem({
   className,
   children,
   ...props
-}: SelectPrimitive.Item.Props) {
+}: SelectPrimitive.Item.Props & { label: React.ReactNode }) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
