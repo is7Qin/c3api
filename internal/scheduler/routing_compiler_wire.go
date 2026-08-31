@@ -98,11 +98,13 @@ func (s *Scheduler) compileOnce() {
 	}
 	dv, err := s.compiler.Compile(in)
 	if err != nil {
+		s.compileErrMs.Store(s.timeNow().UnixMilli())
 		if s.log != nil {
 			s.log.Warn("routing compile failed; retaining previous decision view", logx.Error(err))
 		}
 		return
 	}
+	s.compileOKMs.Store(s.timeNow().UnixMilli())
 	b := decisionViewBytes(dv)
 	if bytes.Equal(s.lastDecisionBytes, b) {
 		return

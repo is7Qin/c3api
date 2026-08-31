@@ -90,13 +90,13 @@ func parseHealthKey(s string) (HealthKey, bool) {
 
 // healthEntry is the immutable per-key record stored in Redis HASH and view.
 type healthEntry struct {
-	Key       HealthKey   `json:"key"`
-	State     HealthState `json:"state"`
-	Generation int64      `json:"gen"`
-	Revision  int64       `json:"rev"`
-	UpdatedAt int64       `json:"updated_at"` // unix milli
-	TTLms     int64       `json:"ttl_ms"`
-	ExpiresAt int64       `json:"expires_at"` // explicit until deadline: UpdatedAt+TTLms
+	Key        HealthKey   `json:"key"`
+	State      HealthState `json:"state"`
+	Generation int64       `json:"gen"`
+	Revision   int64       `json:"rev"`
+	UpdatedAt  int64       `json:"updated_at"` // unix milli
+	TTLms      int64       `json:"ttl_ms"`
+	ExpiresAt  int64       `json:"expires_at"` // explicit until deadline: UpdatedAt+TTLms
 }
 
 // healthView is the single immutable view published via atomic.Pointer.
@@ -235,9 +235,9 @@ type ProbeFunc func(context.Context, HealthKey) error
 // Sync INFO run_id + gen-before/records/gen-after; run_id/expiry stored in immutable view, explicit OPEN->until->PROBING->probe retention.
 // Uses worker.GoLoop for loops; probe injected selfID/rendezvous/ProbeFunc, one permit, two current-gen successes READY, failure reopen.
 type RuntimeHealth struct {
-	client *redis.Client
-	selfID string
-	members func() []string
+	client     *redis.Client
+	selfID     string
+	members    func() []string
 	rendezvous func(key string, members []string) string
 	probeFn    ProbeFunc
 	log        *logx.Logger
@@ -254,14 +254,22 @@ type RuntimeHealth struct {
 	curGen  atomic.Int64
 	lastGen atomic.Int64
 
-	now      func() time.Time
-	syncHook func(stage string)
+	now       func() time.Time
+	syncHook  func(stage string)
 	runIDHook func(context.Context) (string, error)
 
 	startOnce sync.Once
 	stopOnce  sync.Once
 	cancel    context.CancelFunc
-	done      chan struct{}
+	// syncDone/probeDone GoLoop 完成信号（Start 存入，Close join——同
+	// conc-sync/quality-sync 停机纪律：Close 返回后不再有循环在跑）。
+	// lastSyncOkMs/syncErrors/lastTickOk 编译道外的健康道新鲜度观测
+	//（Stats 冷路径原子读）。
+	syncDone     <-chan struct{}
+	probeDone    <-chan struct{}
+	lastSyncOkMs atomic.Int64
+	syncErrors   atomic.Int64
+	lastTickOk   atomic.Bool
 }
 
 // NewRuntimeHealth constructs the core. members may be nil (single instance).
@@ -334,19 +342,32 @@ func (h *RuntimeHealth) Start(ctx context.Context) error {
 	h.startOnce.Do(func() {
 		c, cancel := context.WithCancel(ctx)
 		h.cancel = cancel
-		h.done = make(chan struct{})
-		close(h.done)
-		_ = worker.GoLoop(c, "runtime-health-sync", h.log, h.syncLoop)
-		_ = worker.GoLoop(c, "runtime-health-probe", h.log, h.probeLoop)
+		h.syncDone = worker.GoLoop(c, "runtime-health-sync", h.log, h.syncLoop)
+		h.probeDone = worker.GoLoop(c, "runtime-health-probe", h.log, h.probeLoop)
 	})
 	return nil
 }
 
-// Close stops loops.
-func (h *RuntimeHealth) Close(_ context.Context) error {
+// Close stops loops and joins their completion signals (bounded by ctx):
+// orderly shutdown — after Close returns no sync/probe tick can still run.
+func (h *RuntimeHealth) Close(ctx context.Context) error {
 	h.stopOnce.Do(func() {
-		if h.cancel != nil {
-			h.cancel()
+		if h.cancel == nil {
+			return // 未 Start：Close 安全 no-op（worker 契约）
+		}
+		h.cancel()
+		for _, d := range []<-chan struct{}{h.syncDone, h.probeDone} {
+			if d == nil {
+				continue
+			}
+			select {
+			case <-d:
+			case <-ctx.Done():
+				if h.log != nil {
+					h.log.Warn("runtime-health close timeout, loop still running", logx.Error(ctx.Err()))
+				}
+				return
+			}
 		}
 	})
 	return nil
@@ -360,7 +381,13 @@ func (h *RuntimeHealth) syncLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			_ = h.Sync(ctx)
+			if err := h.Sync(ctx); err != nil {
+				h.syncErrors.Add(1)
+				h.lastTickOk.Store(false)
+				continue
+			}
+			h.lastSyncOkMs.Store(h.currentMs())
+			h.lastTickOk.Store(true)
 		}
 	}
 }
