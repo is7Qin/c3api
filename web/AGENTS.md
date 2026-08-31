@@ -18,7 +18,7 @@ src/
 ```bash
 pnpm install --config.node-linker=hoisted   # 本机必须 hoisted（24H2 junction 失效）
 pnpm run dev        # :5173，代理 /api 和 /v1 → localhost:18080
-pnpm run check      # i18n key + JSX UI contract 静态门禁
+pnpm run check      # i18n key 漂移门禁（i18next-cli extract --dry-run --ci，只读；配置在 i18next.config.ts）
 pnpm run build      # check && tsc -b && vite build → dist/ → go:embed
 pnpm gen:api        # openapi/openapi.yaml 变更后必跑，重生成 src/lib/api/schema.d.ts
 ```
