@@ -56,16 +56,21 @@ func (s *Scheduler) selectInternal(groupID int64, format domain.RequestFormat, m
 	return nil, ErrNoAvailable
 }
 
+// LogMappedModel returns the optional mapped_model audit value. Implicit
+// mappings intentionally look unmapped in usage logs.
 func (s *Selection) LogMappedModel(reqModel string) string {
-	switch s.ModelMappingMode {
-	case domain.ModelMappingModeExplicit:
-		if s.Model != reqModel {
-			return s.Model
-		}
-	case domain.ModelMappingModeImplicit:
-		return reqModel
+	if s.ModelMappingMode == domain.ModelMappingModeExplicit && s.Model != reqModel {
+		return s.Model
 	}
 	return ""
+}
+
+// PriceModel returns the model whose pricing applies to this selection.
+func (s *Selection) PriceModel(reqModel string) string {
+	if s.ModelMappingMode == domain.ModelMappingModeImplicit {
+		return reqModel
+	}
+	return s.Model
 }
 
 func (s *Selection) ClientResponseModel(reqModel string) string {

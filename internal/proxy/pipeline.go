@@ -218,20 +218,17 @@ func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, sel
 		attempted = true
 		// 用量身份（Todo 3 规格 §3）：每轮当次选中解析——Search 走既有
 		// mappedFor 推断（不触达 Selection 身份方法），其余格式直取
-		// Selection.LogMappedModel（implicit 回填客户端模型）。缺价预检
-		// 与本轮全部终态日志共用，保证同轮同身份。
+		// Selection.LogMappedModel（implicit 留空）。终态日志只记录 explicit
+		// 非 identity 目标；价格模型由 Selection.PriceModel 独立派生。
 		mapped := usageIdentity(format, sel, reqModel)
 		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前
 		// 查价——计费启用时模型无价格 → 释放并发槽 + 402（不按 0 计价），零 DB
-		// （快照读）。预检模型 = 用量身份非空 ? 用量身份 : 上游目标（规格 §3：
-		// implicit 按客户端模型定价，explicit/无映射按目标）。images 格式查统一
-		// 价格快照 image 分量（跳过 chat 价预检——纯 image 价模型无 token 行，
-		// chat 预检会先行 402 误杀，"image 分量定生死"轮不到执行）；其余格式照旧。
+		// （快照读）。Selection 保持模式语义：implicit 用客户端模型，explicit/
+		// 无映射用上游目标。images 格式查统一价格快照 image 分量（跳过 chat
+		// 价预检——纯 image 价模型无 token 行，chat 预检会先行 402 误杀，
+		// "image 分量定生死"轮不到执行）；其余格式照旧。
 		if precheck {
-			priceModel := mapped
-			if priceModel == "" {
-				priceModel = sel.Model
-			}
+			priceModel := sel.PriceModel(reqModel)
 			if err := p.precheckPrice(format, priceModel); err != nil {
 				p.sched.Release(sel.AccountID)
 				p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, mapped, format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errNoPrice.msg)

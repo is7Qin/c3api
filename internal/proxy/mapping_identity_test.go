@@ -6,9 +6,9 @@ package proxy
 
 // Todo 3（model-mapping-mode）：用量身份（UsageLog.MappedModel）与缺价预检模型
 // 的逐行接线测试。规格 §3 identity matrix：
-//   - 非 Search 选中尝试：日志 MappedModel = Selection.LogMappedModel（implicit
-//     回填客户端模型；explicit 非 identity = 目标；explicit identity/无映射 = 空）；
-//     缺价预检模型 = 用量身份非空 ? 用量身份 : sel.Model。
+//   - 非 Search 选中尝试：日志 MappedModel = Selection.LogMappedModel（implicit、
+//     explicit identity、无映射均为空；explicit 非 identity = 目标）；
+//     缺价预检模型独立由 Selection.PriceModel 派生。
 //   - Search：保持既有 mappedFor(reqModel, sel.Model) 终态日志与固定按次计费，
 //     不触达 Selection 身份方法。
 
@@ -50,8 +50,8 @@ func postChat(p *Proxy, body string) *httptest.ResponseRecorder {
 }
 
 // TestMappedModelIdentityMatrix 五行身份矩阵（规格 §3）：成功路径日志
-// Model = 客户端请求模型恒定；MappedModel 按模式/映射逐行判定——implicit
-// 恒回填客户端模型（含 identity 非空），explicit 仅非 identity 记目标。
+// Model = 客户端请求模型恒定；MappedModel 只记录 explicit 的非 identity 目标，
+// implicit 与无映射一样留空。
 func TestMappedModelIdentityMatrix(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -61,8 +61,8 @@ func TestMappedModelIdentityMatrix(t *testing.T) {
 		{"无映射", nil, ""},
 		{"explicit 目标不同", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeExplicit}}, "upstream-b"},
 		{"explicit identity", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o", Mode: domain.ModelMappingModeExplicit}}, ""},
-		{"implicit 目标不同", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}}, "gpt-4o"},
-		{"implicit identity", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o", Mode: domain.ModelMappingModeImplicit}}, "gpt-4o"},
+		{"implicit 目标不同", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}}, ""},
+		{"implicit identity", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o", Mode: domain.ModelMappingModeImplicit}}, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,10 +82,10 @@ func TestMappedModelIdentityMatrix(t *testing.T) {
 	}
 }
 
-// TestPrecheckPriceMappingModel 缺价预检模型逐行（规格 §3）：预检查价模型 =
-// 用量身份非空 ? 用量身份 : sel.Model——implicit 按客户端模型定价（目标无价
+// TestPrecheckPriceMappingModel 缺价预检模型逐行（规格 §3）：implicit 按
+// 客户端模型定价（目标无价
 // 不 402），explicit 按目标定价（客户端有价不救）。价格只配一侧即构成另一侧
-// 的 402 判定面；cost 数值证明实际结算价目跟走用量身份。
+// 的 402 判定面；cost 数值证明实际结算价目跟走价格模型。
 func TestPrecheckPriceMappingModel(t *testing.T) {
 	clientPriced := func() map[string]*domain.PriceEntry {
 		return map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}
@@ -108,7 +108,7 @@ func TestPrecheckPriceMappingModel(t *testing.T) {
 		{"implicit 按客户端模型预检+计价", domain.ModelMappingModeImplicit, clientPriced(), 200, 130, ""},
 		{"explicit 按目标预检（客户端有价不救）", domain.ModelMappingModeExplicit, clientPriced(), 402, 0, "upstream-b"},
 		{"explicit 按目标预检+计价", domain.ModelMappingModeExplicit, targetPriced(), 200, 1300, ""},
-		{"implicit 客户端无价 402（目标有价不救）", domain.ModelMappingModeImplicit, targetPriced(), 402, 0, "gpt-4o"},
+		{"implicit 客户端无价 402（目标有价不救）", domain.ModelMappingModeImplicit, targetPriced(), 402, 0, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -129,7 +129,7 @@ func TestPrecheckPriceMappingModel(t *testing.T) {
 			if tc.wantCode == 200 {
 				require.Len(t, store.logs, 1, "must capture exactly one usage log")
 				require.Equal(t, "gpt-4o", store.logs[0].Model, "Model = 客户端请求模型")
-				require.Equal(t, tc.wantCost, store.logs[0].Cost, "结算价目跟走用量身份（implicit=客户端 / explicit=目标）")
+				require.Equal(t, tc.wantCost, store.logs[0].Cost, "结算价目按价格模型选择（implicit=客户端 / explicit=目标）")
 			} else {
 				require.Len(t, store.logs, 1, "缺价 402 拒绝行进 err_logs（预用量拒绝无 usage_logs 明细）")
 				l := store.logs[0]
@@ -143,7 +143,7 @@ func TestPrecheckPriceMappingModel(t *testing.T) {
 
 // TestBillingModelTerminalOutcomes 非 Search 选中尝试的终态逐路径（规格 §3）：
 // 4xx 透传、首字节前 499、流中止——每条日志 MappedModel = 当轮选中尝试的
-// 用量身份（implicit 回填客户端模型，non-empty）。
+// 用量身份（implicit 留空）。
 func TestBillingModelTerminalOutcomes(t *testing.T) {
 	implicitMapping := map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}}
 	t.Run("4xx 透传", func(t *testing.T) {
@@ -161,7 +161,7 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 		l := store.logs[0]
 		require.Equal(t, domain.Err4xx, l.ErrorType)
 		require.Equal(t, "gpt-4o", l.Model, "Model = 客户端请求模型")
-		require.Equal(t, "gpt-4o", l.MappedModel, "4xx 行 MappedModel = 当轮选中尝试的用量身份（implicit=客户端）")
+		require.Equal(t, "", l.MappedModel, "implicit 4xx 行不记录 MappedModel")
 	})
 	t.Run("首字节前 499", func(t *testing.T) {
 		started := make(chan struct{})
@@ -200,7 +200,7 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 			require.Equal(t, statusClientClosedRequest, l.StatusCode, "行 %d：首字节前断连记 499", i)
 			require.Equal(t, domain.ErrAbort, l.ErrorType, "行 %d：断连记 abort", i)
 			require.Equal(t, "gpt-4o", l.Model, "行 %d：Model = 客户端请求模型", i)
-			require.Equal(t, "gpt-4o", l.MappedModel, "行 %d：499 行 MappedModel = 当轮选中尝试的用量身份（implicit=客户端）", i)
+			require.Equal(t, "", l.MappedModel, "行 %d：implicit 499 行不记录 MappedModel", i)
 		}
 	})
 	t.Run("已接受流中止", func(t *testing.T) {
@@ -221,7 +221,7 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 		l := store.logs[0]
 		require.Equal(t, domain.ErrAbort, l.ErrorType, "已接受流中止记 ErrAbort")
 		require.Equal(t, "gpt-4o", l.Model, "Model = 客户端请求模型")
-		require.Equal(t, "gpt-4o", l.MappedModel, "流中止行 MappedModel = 当轮选中尝试的用量身份（implicit=客户端）")
+		require.Equal(t, "", l.MappedModel, "implicit 流中止行不记录 MappedModel")
 	})
 }
 
@@ -230,7 +230,7 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 //   - 成功终态：上游 A 恒 429、上游 B 恒 200（账号按模板分指不同上游）——
 //     无论洗牌顺序，成功行恒为账号 2（上游 B）的用量身份。
 //   - 耗尽终态（同上游恒 429，两账号各试一次，首试账号 429 冷却后转移）：
-//     implicit+implicit（目标不同）耗尽行恒为客户端模型（与后试账号无关）；
+//     implicit+implicit（目标不同）耗尽行 MappedModel 恒空；
 //     implicit+explicit 混合经上游观察到的首个鉴权 key 判定首试账号——
 //     耗尽行身份 = 后试账号（lastSel）的用量身份。
 func TestFailoverMappingIdentityFresh(t *testing.T) {
@@ -285,7 +285,7 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 		require.Equal(t, "gpt-4o", store.logs[0].Model, "Model = 客户端请求模型")
 		want := "upstream-c"
 		if auths[1] == "Bearer sk-a1" {
-			want = "gpt-4o"
+			want = ""
 		}
 		require.Equal(t, want, store.logs[0].MappedModel, "成功行身份 = 终态选中账号的用量身份（按第二轮鉴权判定），非首轮身份")
 	})
@@ -335,13 +335,13 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 		defer store.mu.Unlock()
 		require.Len(t, store.logs, 1, "must capture exactly one usage log")
 		require.Equal(t, "gpt-4o", store.logs[0].Model, "Model = 客户端请求模型")
-		want := "gpt-4o"
+		want := ""
 		if auths[1] == "Bearer sk-a1" {
 			want = "upstream-c"
 		}
 		require.Equal(t, want, store.logs[0].MappedModel, "成功行身份 = 终态选中账号的用量身份（按第二轮鉴权判定），非首轮身份")
 	})
-	t.Run("implicit+implicit 耗尽恒客户端身份", func(t *testing.T) {
+	t.Run("implicit+implicit 耗尽日志恒空", func(t *testing.T) {
 		var mu sync.Mutex
 		var hits int
 		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -373,7 +373,7 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 		l := store.logs[0]
 		require.Equal(t, domain.Err429, l.ErrorType)
 		require.Equal(t, "gpt-4o", l.Model, "Model = 客户端请求模型")
-		require.Equal(t, "gpt-4o", l.MappedModel, "耗尽行身份 = 最后一轮 implicit 选中（客户端模型），非任何轮目标")
+		require.Equal(t, "", l.MappedModel, "implicit 耗尽行不记录 MappedModel")
 	})
 	t.Run("implicit+explicit 耗尽无泄漏", func(t *testing.T) {
 		var mu sync.Mutex
@@ -409,7 +409,7 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 		mu.Unlock()
 		require.Contains(t, []string{"Bearer sk-a1", "Bearer sk-a2"}, first, "首试账号可观察")
 		// 首试账号 429 冷却 → 转移后试另一账号；耗尽行 = 后试账号（lastSel）身份。
-		want := "gpt-4o"
+		want := ""
 		if first == "Bearer sk-a1" {
 			want = "upstream-c" // 后试 = explicit 账号 → 目标模型
 		}
@@ -426,7 +426,7 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 // TestSearchMappedModelPreserved Search 身份不变量（规格 §3/§5 透明修订）：
 // Search 终态日志保持既有 mappedFor(reqModel, sel.Model) 语义 + 固定按次计费；
 // 但调度器对 FormatOpenAISearch 透明（不应用 ModelMapping），故 sel.Model ==
- // reqModel → mappedFor 为空（含 implicit 非 identity），identity 行同样空；
+// reqModel → mappedFor 为空（含 implicit 非 identity），identity 行同样空；
 // 不触达 Selection.LogMappedModel/ClientResponseModel。
 func TestSearchMappedModelPreserved(t *testing.T) {
 	t.Run("implicit 成功 MappedModel 空（透明）", func(t *testing.T) {

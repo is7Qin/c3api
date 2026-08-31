@@ -283,7 +283,8 @@ func (p *Proxy) applyFunctionBilling(l *domain.UsageLog) {
 // buildLog 组装 UsageLog（record 与 finish 共用）。语义（Todo 3 mapping-mode
 // 修订）：Model = 客户端请求模型（reqModel），MappedModel = 调用方直填的用量
 // 映射身份（规格 §3 五行矩阵）——非 Search 选中尝试传 Selection.LogMappedModel
-// 派生值（implicit 回填客户端模型；explicit identity/无映射为空），Search 路径
+// 派生值（implicit/explicit identity/无映射为空；explicit 非 identity 记目标），
+// Search 路径
 // 传 mappedFor(reqModel, sel.Model)（既有语义不变），本地预选中拒绝传空。
 // buildLog 不再自行推断。u 传值（GC 削减 P6：指针逃逸 1 alloc；零值 = 无用量）。
 // 统一计费模型（spec 2026-08-13）：image token 分量（ii/io，images 格式专用，
@@ -316,7 +317,7 @@ func mappedFor(req, used string) string {
 // usageIdentity 单次选中尝试的用量映射身份（UsageLog.MappedModel 直填值）：
 // Search 保持既有 mappedFor 推断（固定 codex-search 计费/日志语义，规格 §3）
 // 且不触达 Selection 身份方法；其余格式直接取 Selection.LogMappedModel
-// （Todo 2 单查找派生，implicit 回填客户端模型）。failoverLoop 共享骨架
+// （Todo 2 单查找派生，implicit 留空）。failoverLoop 共享骨架
 // （chat+search 终态）按 format 分流。
 func usageIdentity(format domain.RequestFormat, sel *scheduler.Selection, reqModel string) string {
 	if format == domain.FormatOpenAISearch {
