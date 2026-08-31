@@ -109,7 +109,7 @@ export function DateTimePicker({ value, onChange, id, className }: DateTimePicke
               </SelectTrigger>
               <SelectContent className="max-h-60">
                 {HOURS.map((h) => (
-                  <SelectItem key={h} value={h}>
+                  <SelectItem key={h} value={h} label={h}>
                     {h}
                   </SelectItem>
                 ))}
@@ -129,7 +129,7 @@ export function DateTimePicker({ value, onChange, id, className }: DateTimePicke
               </SelectTrigger>
               <SelectContent className="max-h-60">
                 {MINUTES.map((m) => (
-                  <SelectItem key={m} value={m}>
+                  <SelectItem key={m} value={m} label={m}>
                     {m}
                   </SelectItem>
                 ))}

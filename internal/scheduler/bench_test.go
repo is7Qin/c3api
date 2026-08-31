@@ -39,31 +39,34 @@ type mappingSelectionCase struct {
 	wantModel    string
 	wantMode     domain.ModelMappingMode
 	wantUsage    string
+	wantPrice    string
 	wantResponse string
 }
 
 func mappingSelectionCases() []mappingSelectionCase {
 	return []mappingSelectionCase{
-		{name: "unmapped", wantModel: mappingRequestModel},
+		{name: "unmapped", wantModel: mappingRequestModel, wantPrice: mappingRequestModel},
 		{
 			name:      "explicit_target",
 			mapping:   domain.ModelMapping{mappingRequestModel: {MappedModel: mappingTargetModel, Mode: domain.ModelMappingModeExplicit}},
 			wantModel: mappingTargetModel,
 			wantMode:  domain.ModelMappingModeExplicit,
 			wantUsage: mappingTargetModel,
+			wantPrice: mappingTargetModel,
 		},
 		{
 			name:      "explicit_identity",
 			mapping:   domain.ModelMapping{mappingRequestModel: {MappedModel: mappingRequestModel, Mode: domain.ModelMappingModeExplicit}},
 			wantModel: mappingRequestModel,
 			wantMode:  domain.ModelMappingModeExplicit,
+			wantPrice: mappingRequestModel,
 		},
 		{
 			name:         "implicit_target",
 			mapping:      domain.ModelMapping{mappingRequestModel: {MappedModel: mappingTargetModel, Mode: domain.ModelMappingModeImplicit}},
 			wantModel:    mappingTargetModel,
 			wantMode:     domain.ModelMappingModeImplicit,
-			wantUsage:    mappingRequestModel,
+			wantPrice:    mappingRequestModel,
 			wantResponse: mappingRequestModel,
 		},
 		{
@@ -71,7 +74,7 @@ func mappingSelectionCases() []mappingSelectionCase {
 			mapping:      domain.ModelMapping{mappingRequestModel: {MappedModel: mappingRequestModel, Mode: domain.ModelMappingModeImplicit}},
 			wantModel:    mappingRequestModel,
 			wantMode:     domain.ModelMappingModeImplicit,
-			wantUsage:    mappingRequestModel,
+			wantPrice:    mappingRequestModel,
 			wantResponse: mappingRequestModel,
 		},
 	}
@@ -88,6 +91,7 @@ func TestSelectMappingIdentities(t *testing.T) {
 			require.Equal(t, tc.wantModel, sel.Model)
 			require.Equal(t, tc.wantMode, sel.ModelMappingMode)
 			require.Equal(t, tc.wantUsage, sel.LogMappedModel(mappingRequestModel))
+			require.Equal(t, tc.wantPrice, sel.PriceModel(mappingRequestModel))
 			require.Equal(t, tc.wantResponse, sel.ClientResponseModel(mappingRequestModel))
 			s.Release(sel.AccountID)
 		})
@@ -115,6 +119,7 @@ func TestSelectMappingModeIsFreshForFallbackCandidate(t *testing.T) {
 		require.Equal(t, tc.wantModel, sel.Model)
 		require.Equal(t, tc.wantMode, sel.ModelMappingMode)
 		require.Equal(t, tc.wantUsage, sel.LogMappedModel(mappingRequestModel))
+		require.Equal(t, tc.wantPrice, sel.PriceModel(mappingRequestModel))
 		require.Equal(t, tc.wantResponse, sel.ClientResponseModel(mappingRequestModel))
 		s.Release(sel.AccountID)
 	}
@@ -151,7 +156,7 @@ func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {
 	var control float64
 	for i, tc := range cases {
 		var selectErr error
-		var usageModel, responseModel string
+		var usageModel, priceModel, responseModel string
 		allocs := testing.AllocsPerRun(1000, func() {
 			sel, err := fixtures[i].Select(10, domain.FormatOpenAIChat, mappingRequestModel)
 			if err != nil {
@@ -159,11 +164,13 @@ func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {
 				return
 			}
 			usageModel = sel.LogMappedModel(mappingRequestModel)
+			priceModel = sel.PriceModel(mappingRequestModel)
 			responseModel = sel.ClientResponseModel(mappingRequestModel)
 			fixtures[i].Release(sel.AccountID)
 		})
 		require.NoError(t, selectErr)
 		require.Equal(t, tc.wantUsage, usageModel)
+		require.Equal(t, tc.wantPrice, priceModel)
 		require.Equal(t, tc.wantResponse, responseModel)
 		if i == 0 {
 			control = allocs

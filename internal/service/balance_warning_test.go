@@ -36,7 +36,7 @@ func newBWService(t *testing.T) (*Service, *fakeStore, *fakeInvalidatorBW) {
 	fs := newFakeStore()
 	inv := &fakeInvalidatorBW{}
 	svc := New(fs, nil, inv, nil, nil, nil, nil)
-	// Ensure settings snapshot loaded with defaults (balance_warning.enabled = true).
+	// Ensure settings snapshot loaded with defaults (balance_warning.enabled = false).
 	// New already reloads settings via GetAllSettings which includes default.
 	return svc, fs, inv
 }
@@ -94,10 +94,10 @@ func TestBalanceWarningThreshold_ValidationAndConversion(t *testing.T) {
 	require.Equal(t, int64(1), updated.BalanceWarningThreshold)
 }
 
-func TestBalanceWarningEnabled_DefaultTrue(t *testing.T) {
+func TestBalanceWarningEnabled_DefaultFalse(t *testing.T) {
 	svc, _, _ := newBWService(t)
-	// No explicit setting row => default true per registry
-	require.True(t, svc.BalanceWarningEnabled(), "default must be true")
+	// No explicit setting row => default false per registry
+	require.False(t, svc.BalanceWarningEnabled(), "default must be false")
 	// Set false via store and reload snapshot
 	ctx := context.Background()
 	_, err := svc.store.SetSetting(ctx, "balance_warning.enabled", domain.SettingTypeSwitch, "false")

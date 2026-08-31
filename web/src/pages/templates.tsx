@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
@@ -437,7 +438,7 @@ function FormFields({
           {batch && setBatchMappingMode && (
             <div className="flex flex-wrap items-center gap-1.5">
               <Label className="text-xs font-normal text-muted-foreground">{t('templates.modelMappingBatchModeLabel')}</Label>
-              <Select value={batchMappingMode} onValueChange={v => { if (isBatchMappingMode(v)) setBatchMappingMode(v) }}>
+              <Select value={batchMappingMode} items={{ unchanged: t('templates.modelMappingBatchMode.unchanged'), replace: t('templates.modelMappingBatchMode.replace') }} onValueChange={v => { if (isBatchMappingMode(v)) setBatchMappingMode(v) }}>
                 <SelectTrigger className="h-7 w-32"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="unchanged" label={t('templates.modelMappingBatchMode.unchanged')}>{t('templates.modelMappingBatchMode.unchanged')}</SelectItem>
@@ -470,7 +471,7 @@ function FormFields({
                     onChange={e => setMappingRow(i, { mapped_model: e.target.value })}
                     aria-label={t('templates.upstreamModelPlaceholder')}
                   />
-                  <Select value={row.mode} onValueChange={v => { if (isMappingMode(v)) setMappingRow(i, { mode: v }) }}>
+                  <Select value={row.mode} items={{ explicit: t('templates.modelMappingMode.explicit'), implicit: t('templates.modelMappingMode.implicit') }} onValueChange={v => { if (isMappingMode(v)) setMappingRow(i, { mode: v }) }}>
                     <SelectTrigger className="w-28 shrink-0" aria-label={t('templates.modelMappingModeLabel')}><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="explicit" label={t('templates.modelMappingMode.explicit')}>{t('templates.modelMappingMode.explicit')}</SelectItem>
@@ -803,8 +804,8 @@ export default function Templates() {
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg">
-            <Table>
+          <ScrollArea data-od-id="table-scroll-templates" className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+            <Table className="min-w-[1500px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
@@ -914,7 +915,7 @@ export default function Templates() {
                 })}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
           <Pagination total={data?.total ?? 0} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} />
         </>
       )}

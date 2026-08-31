@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { toast } from '@/components/ui/toast'
 import { formatDateTime } from '@/components/fmt'
@@ -150,8 +151,7 @@ export default function UserRedemptions() {
 
       {/* 兑换记录表 */}
       <motion.div {...fadeUp} transition={{ duration: 0.25, delay: 0.1 }}>
-        <div className="overflow-hidden rounded-lg">
-          {isError ? (
+        {isError ? (
             <p className="p-4 text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
           ) : isLoading ? (
             <div className="space-y-2 p-4">
@@ -164,7 +164,8 @@ export default function UserRedemptions() {
               <p className="text-sm">{t('user.redemptions.emptyDesc')}</p>
             </div>
           ) : (
-            <Table>
+            <ScrollArea data-od-id="table-scroll-user-redemptions" className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+            <Table className="min-w-[900px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('user.redemptions.table.code')}</TableHead>
@@ -188,8 +189,8 @@ export default function UserRedemptions() {
                 ))}
               </TableBody>
             </Table>
+            </ScrollArea>
           )}
-        </div>
         {!isLoading && !isError && (
           <PagePagination
             total={data?.total ?? 0}

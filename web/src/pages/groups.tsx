@@ -500,8 +500,8 @@ export default function Groups() {
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg">
-            <Table>
+          <ScrollArea data-od-id="table-scroll-groups" className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+            <Table className="min-w-[980px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
@@ -553,7 +553,7 @@ export default function Groups() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
           <Pagination total={data?.total ?? 0} limit={limit} offset={offset} onOffsetChange={setOffset} onLimitChange={changeLimit} />
         </>
       )}
