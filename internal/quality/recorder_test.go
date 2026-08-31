@@ -162,6 +162,40 @@ func TestQualityRecorder_ExactStats_Q32_10Hist_ErrorClasses(t *testing.T) {
 	_ = math.Log
 }
 
+// TestQualityRecorder_LiveCells pins the compile-lane accessor: cloned
+// cumulative totals per active cell, zero-attempt cells skipped, post-close
+// reads still served (final data), and no aliasing into live cells.
+func TestQualityRecorder_LiveCells(t *testing.T) {
+	r, err := NewRecorder(50000)
+	require.NoError(t, err)
+	k1 := keyOf(fp(71), qc(71))
+	k2 := keyOf(fp(72), qc(72))
+	ttft := int64(100)
+	ctx := r.Begin(k1)
+	ctx.Complete(true, &ttft, 10, 1, 0)
+	r.GetOrCreateCell(k2) // created but zero attempts → no signal
+
+	cells := r.LiveCells()
+	require.Len(t, cells, 1, "zero-attempt cell must be skipped")
+	qm, ok := cells[k1]
+	require.True(t, ok)
+	require.Equal(t, int64(1), qm.Attempts())
+	require.Equal(t, int64(1), qm.Successes())
+	require.Equal(t, int64(1), qm.TTFTCount())
+	require.Equal(t, int64(10), qm.InputTokens())
+	require.NotZero(t, qm.SumQ32())
+
+	// Clone discipline: further attempts must not mutate the returned snapshot.
+	ctx2 := r.Begin(k1)
+	ctx2.Complete(true, &ttft, 5, 0, 0)
+	require.Equal(t, int64(1), qm.Attempts(), "LiveCells returns clones, not live cells")
+	require.Equal(t, int64(2), r.LiveCells()[k1].Attempts())
+
+	// Closed recorder still answers with the retained cells.
+	require.NoError(t, r.Close())
+	require.Len(t, r.LiveCells(), 1)
+}
+
 func TestQualityRecorder_Cancel_Local_Reservation_Exclude_PostcommitCounts(t *testing.T) {
 	r, err := NewRecorder(50000)
 	require.NoError(t, err)

@@ -311,7 +311,7 @@ func (f *FlowMinute) SetFlowRows(rows []repository.RoutingFlowRow) {
 	f.emptySnapshot = false
 }
 func (f *FlowMinute) IsEmptySnapshot() bool { return f != nil && f.emptySnapshot }
-func (f *FlowMinute) HasFlowRows() bool { return f != nil && (len(f.flowRows) > 0 || f.emptySnapshot) }
+func (f *FlowMinute) HasFlowRows() bool     { return f != nil && (len(f.flowRows) > 0 || f.emptySnapshot) }
 func (f *FlowMinute) Clone() *FlowMinute {
 	cp := *f
 	if f.flowRows != nil {
@@ -1023,6 +1023,24 @@ func (r *Recorder) ExportSnapshot() (map[int64]map[Key]*QualityMinute, map[int64
 		fCopy[m] = v.Clone()
 	}
 	return qCopy, fCopy
+}
+
+// LiveCells returns cloned cumulative totals of all active cells (minute=0
+// marker; zero-attempt cells carry no signal and are skipped). Compile-lane
+// read-only accessor: called from the background routing-compile lane under
+// the recorder mutex — never from the request path. Clones never alias live
+// cells, so the caller may hold the map across cell mutation.
+func (r *Recorder) LiveCells() map[Key]*QualityMinute {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[Key]*QualityMinute, len(r.active))
+	for k, c := range r.active {
+		if c.attempts.Load() == 0 {
+			continue
+		}
+		out[k] = r.cellQualityMinute(c, 0)
+	}
+	return out
 }
 
 func (r *Recorder) Snapshot() *Snapshot {
