@@ -466,6 +466,7 @@ func TestProxyBillingPriceSnapshotCache(t *testing.T) {
 // TestProxyBillingStreamAbortCostsTokens recordStreamAbort 修复（评审 M-2）：
 // 上游停滞前已收到的 usage 帧必须参与计费（此前传 nil → tokens 全 0 → 消费不扣费）。
 func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
+	testHealthSink.reset()
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
@@ -495,7 +496,7 @@ func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "停滞超时记 连接级/5xx 分流")
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "停滞超时记 连接级/5xx 分流惩罚")
 	require.Zero(t, ri.Concurrency)
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
@@ -865,11 +866,14 @@ func newTestProxyBillingKeys(t *testing.T, keys map[string]domain.KeyMeta, accs 
 		GroupKeyRPM:           0, UsageCapture: true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re.SetHealthSink(testHealthSink)
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
@@ -909,7 +913,7 @@ func TestProxyBillingMultiplierPerGroup(t *testing.T) {
 		ID: 1, Name: "t", BaseURL: up.URL,
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-	}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+	}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
 
 	// 组 10：ck-1 → assignment ×2 → 130×2 = 260
 	p1 := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{

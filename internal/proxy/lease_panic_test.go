@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
@@ -94,17 +95,19 @@ var _ repository.RuleStore = (*leaseFakeRuleStore)(nil)
 
 func newLeaseScheduler(t *testing.T, tpl *domain.Template) *scheduler.Scheduler {
 	t.Helper()
-	loader := &leaseMemLoader{byGroup: map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}}}}
+	loader := &leaseMemLoader{byGroup: map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}}
 	store := &leaseFakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}
 	re := rule.New(rule.Config{}, store, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	s := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 2, SyncInterval: 100 * time.Hour}, loader, re, nil)
 	require.NoError(t, s.InvalidateAllSync())
+	publishTestRoutes(t, s)
+
 	return s
 }
 
 func TestLeasePanicGuardReleasesExactOnce(t *testing.T) {
-	tpl := &domain.Template{ID: 1, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"m"}}
+	tpl := &domain.Template{ID: 1, BaseURL: "http://127.0.0.1:1", CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"m"}}
 	sched := newLeaseScheduler(t, tpl)
 	sel, err := sched.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)

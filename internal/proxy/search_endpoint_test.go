@@ -183,7 +183,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 		}
 		accs[10] = append(accs[10], &domain.Account{
 			ID: a.id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: a.key,
-			Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: a.ext,
+			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: a.ext,
 		})
 	}
 	rec := usage.New(usage.UsageConfig{
@@ -200,6 +200,8 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
@@ -481,12 +483,12 @@ func TestSearchFatalMarksFailed(t *testing.T) {
 }
 
 // TestSearchFailoverCrossTypeDispatch failover 跨类型分派（P1-1 教训回归）：
-// 组内 codex-pat 账号 5xx 故障 → 换 api_key 账号 → **按新类型重新分派**（第
-// 二轮走静态透传路径——Bearer upstream key，而非复用旧 SDK 调用器把健康
-// api_key 账号路由到 Ext 空凭据路径）。
+// 组内 codex-pat 账号 429（可重试类）故障 → 换 api_key 账号 → **按新类型重新
+// 分派**（第二轮走静态透传路径——Bearer upstream key，而非复用旧 SDK 调用器把
+// 健康 api_key 账号路由到 Ext 空凭据路径）。
 func TestSearchFailoverCrossTypeDispatch(t *testing.T) {
 	up, upc := newCodexSearchUpstream(t,
-		codexSearchStep{status: 500, body: `{"error":{"message":"boom"}}`},
+		codexSearchStep{status: 429, body: `{"error":{"message":"slow down"}}`},
 		codexSearchStep{status: 200, body: searchRespRaw})
 	defer up.Close()
 	store := &captureLogStore{}
@@ -502,7 +504,7 @@ func TestSearchFailoverCrossTypeDispatch(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(b))
 	require.Equal(t, searchRespRaw, string(b))
-	require.Equal(t, 2, upc.callsN(), "5xx → 转移其它账号（恰两次上游接触）")
+	require.Equal(t, 2, upc.callsN(), "429 → 转移其它账号（恰两次上游接触）")
 
 	// 跨类型重新分派断言（P1-1 教训回归）：两轮尝试分别走两种凭据路径——SDK
 	// Search（Bearer pat-10）与静态透传（Bearer sk-upstream），且**第二轮按当轮
@@ -533,9 +535,10 @@ func TestSearchFailoverCrossTypeDispatch(t *testing.T) {
 	require.Equal(t, wantAcc, store.logs[0].AccountID, "落账 = 最后一次实际尝试账号")
 }
 
-// TestSearchIndependentSelection 独立选号断言（P2——无会话绑定）：同组两账号
-// 轮询，两次顺序请求各独立 Select、命中不同账号（无会话亲和机制——search
-// 请求自包含）。
+// TestSearchIndependentSelection 独立选号断言（P2——无会话绑定）：同组两账号，
+// 两次顺序请求各独立 Select。cutover 后选号确定性（Primary 序，无加权轮转），
+// 故以指纹 latch 隔离首轮命中账号——第二轮必须独立重选到另一账号，证明请求
+// 自包含、无会话亲和（若绑会话则第二轮仍复用首轮账号）。
 func TestSearchIndependentSelection(t *testing.T) {
 	up, _ := newCodexSearchUpstream(t, codexSearchStep{status: 200, body: searchRespRaw})
 	defer up.Close()
@@ -552,6 +555,17 @@ func TestSearchIndependentSelection(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(b))
 		resp.Body.Close()
+		// 首轮后隔离命中账号（Primary[0]=10），次轮独立选到账号 20。
+		if i == 0 {
+			loader := p.sched.Loader().(noopLoader)
+			for _, a := range loader.accs[10] {
+				if a.ID == 10 {
+					fp, ferr := scheduler.CandidateFingerprint(a)
+					require.NoError(t, ferr)
+					require.True(t, p.sched.TryLatch(10, fp, a.LifecycleRevision))
+				}
+			}
+		}
 	}
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
@@ -566,9 +580,9 @@ func TestSearchIndependentSelection(t *testing.T) {
 
 // TestSearchFailoverZeroReleasesSlot 防呆（spec 纵深，与 chat 同款）：直构
 // failover_attempts=0（绕过 validate 的 >=1 下限——测试侧 p.cfg 改写等价直构）
-// 新语义 normalized 1..8/default3 → 0 归一为 3，决策未就绪时回退 legacy Select
-// 将重试至上限（500 可重试 legacy 路径），故 3 次拨号后耗尽仍 502，lease 释放
-// via 正常路径；决策就绪的 plan 路径为 1 次（500 按矩阵不重试）。
+// 新语义 normalized 1..8/default3。plan 车道下每账号至多派发一次（候选唯一、
+// 无 legacy 重扫），单账号组 5xx 终态 → 恰 1 次拨号后耗尽 502，lease 经正常
+// 路径释放恰一次。
 func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
 	up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 500, body: `{}`})
 	defer up.Close()
@@ -584,7 +598,7 @@ func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode, "body=%s", string(b))
 	require.Contains(t, string(b), "Upstream request failed")
-	require.Equal(t, 3, upc.callsN(), "normalized N=0→3 legacy fallback: 3 dials (plan path would be 1)")
+	require.Equal(t, 1, upc.callsN(), "plan 车道单账号 5xx 终态：恰 1 次拨号（候选唯一，无 legacy 重扫）")
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "normalized failover must release lease exactly once")

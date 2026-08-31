@@ -190,7 +190,7 @@ func newTestProxyFormatLogs(t *testing.T, upstream string, format domain.Request
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
 	}}}
 	cfg := Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
@@ -199,11 +199,14 @@ func newTestProxyFormatLogs(t *testing.T, upstream string, format domain.Request
 		GroupKeyRPM:           0, UsageCapture: true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re.SetHealthSink(testHealthSink)
 	require.NoError(t, re.Reload(context.Background())) // 空表写种子
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
@@ -470,6 +473,7 @@ func TestProxyResponsesPassthrough4xx(t *testing.T) {
 
 // 回归（评审 Minor）：responses 流式 4xx 透传（上游非 200 在 relay 前检出）。
 func TestProxyResponsesStreamingPassthrough4xx(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeResponses(t, "400-stream")
 	defer up.Close()
 	p := newTestProxyFormat(t, up.URL, domain.FormatOpenAIResponses)
@@ -487,7 +491,7 @@ func TestProxyResponsesStreamingPassthrough4xx(t *testing.T) {
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
 	require.Equal(t, domain.StatusActive, ri.Status)
-	require.Nil(t, ri.CooldownUntil)
+	require.Zero(t, testHealthSink.throttleCount(), "4xx 透传不投递惩罚")
 	require.Zero(t, ri.Concurrency, "4xx 透传后并发槽必须释放")
 	require.Zero(t, p.rec.Pending(), "4xx 透传不产生明细 pending（err_logs 承载）")
 }
@@ -514,6 +518,7 @@ func TestProxyAnthropicPassthrough4xx(t *testing.T) {
 
 // 回归（评审 Minor）：anthropic 流式 4xx 透传（上游非 200 在 relay 前检出）。
 func TestProxyAnthropicStreamingPassthrough4xx(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeAnthropic(t, "400-stream")
 	defer up.Close()
 	p := newTestProxyFormat(t, up.URL, domain.FormatAnthropic)
@@ -531,7 +536,7 @@ func TestProxyAnthropicStreamingPassthrough4xx(t *testing.T) {
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
 	require.Equal(t, domain.StatusActive, ri.Status)
-	require.Nil(t, ri.CooldownUntil)
+	require.Zero(t, testHealthSink.throttleCount(), "4xx 透传不投递惩罚")
 	require.Zero(t, ri.Concurrency, "4xx 透传后并发槽必须释放")
 	require.Zero(t, p.rec.Pending(), "4xx 透传不产生明细 pending（err_logs 承载）")
 }

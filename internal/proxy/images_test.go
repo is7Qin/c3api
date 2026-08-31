@@ -513,6 +513,11 @@ func TestImagesCodexPATNotIntegrated501(t *testing.T) {
 	}
 	store := &captureLogStore{}
 	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, nil)
+	// codex-pat 候选指纹要求 PAT key（routing 契约：pat 类型空 key 不可路由）——
+	// 补 Ext 使账号可被选号，从而抵达适配层未装配的 501 显式拒绝路径。
+	p.sched.Loader().(noopLoader).accs[10][0].Ext = codexPATExt(1, "pat-key")
+	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", strings.NewReader(`{"model":"gpt-image-1"}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()

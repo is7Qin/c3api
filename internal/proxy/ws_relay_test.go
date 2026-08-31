@@ -279,9 +279,11 @@ func TestRelayWSClientAbort(t *testing.T) {
 }
 
 // TestRelayWSUpstreamError 分类路径③：上游网络错误（无关闭帧）→ 错误——记录
-// 先行（ErrAbort + 断前 usage）+ 连接级/5xx 分流 冷却（StatusUnhealthy）+ 客户端
+// 先行（ErrAbort + 断前 usage）+ 连接级/5xx 分流投递 typed throttle（运行时
+// 状态机已随 cutover 删除，RuntimeInfo.Status 恒 active/disabled 投影）+ 客户端
 // 1011 关闭 + 传输 CloseNow 直拆（上游已死免握手）。
 func TestRelayWSUpstreamError(t *testing.T) {
+	testHealthSink.reset()
 	ft := &fakeTransport{readQueue: []fakeRead{
 		{typ: websocket.MessageText, frame: []byte(responsesWSCompletedFrame)},
 		{typ: 0, err: errors.New("upstream network error")},
@@ -311,7 +313,8 @@ func TestRelayWSUpstreamError(t *testing.T) {
 	env.p.sched.FlushRules()
 	ri, ok := env.p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "上游错误 → 连接级/5xx 分流 冷却")
+	require.Equal(t, domain.StatusActive, ri.Status, "运行时状态机已删：临时健康走 typed throttle，Status 恒 active 投影")
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "上游错误 → 连接级/5xx 分流惩罚恰一次投递")
 	require.Zero(t, ri.Concurrency, "并发槽必须释放")
 }
 
@@ -403,6 +406,7 @@ func TestRelayWSFrameHookBeforeClientWrite(t *testing.T) {
 // 在 goroutine 外不可注入）→ 按身份进 upErr 槽 → 上游错误收尾：客户端 1011
 // + 传输 CloseNow + 连接级/5xx 分流 冷却（与上游网络错误同分类，不误伤）。
 func TestRelayWSClientLoopPanic(t *testing.T) {
+	testHealthSink.reset()
 	ft := &fakeTransport{panicWritesFrom: 2, readBlock: make(chan struct{})}
 	env, c, _ := newRelayWSTest(t, ft, nil,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`))
@@ -420,7 +424,8 @@ func TestRelayWSClientLoopPanic(t *testing.T) {
 	env.p.sched.FlushRules()
 	ri, ok := env.p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "panic 视为上游错误 → 连接级/5xx 分流 冷却")
+	require.Equal(t, domain.StatusActive, ri.Status, "运行时状态机已删：panic 按上游错误走 typed throttle")
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "panic 视为上游错误 → 连接级/5xx 分流惩罚恰一次投递")
 	require.Zero(t, ri.Concurrency, "并发槽必须释放")
 }
 
@@ -463,6 +468,7 @@ func TestRelayWSUpLoopPanic(t *testing.T) {
 // 心跳 goroutine panic（Ping 注入）→ 按身份进 pingErr 槽 → 上游错误收尾：
 // 客户端 1011 + 传输 CloseNow（与心跳失联同分类）。
 func TestRelayWSHeartbeatPanic(t *testing.T) {
+	testHealthSink.reset()
 	ft := &fakeTransport{pingPanic: true, readBlock: make(chan struct{})}
 	env, c, _ := newRelayWSTestHBI(t, ft, nil,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`), 50*time.Millisecond)
@@ -477,5 +483,6 @@ func TestRelayWSHeartbeatPanic(t *testing.T) {
 	env.p.sched.FlushRules()
 	ri, ok := env.p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "心跳 panic → 连接级/5xx 分流 冷却")
+	require.Equal(t, domain.StatusActive, ri.Status, "运行时状态机已删：心跳 panic 走 typed throttle")
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "心跳 panic → 连接级/5xx 分流惩罚恰一次投递")
 }

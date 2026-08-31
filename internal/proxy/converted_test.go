@@ -145,7 +145,7 @@ func newConvertedTestProxyLogs(t *testing.T, upstream string, tplFormats []domai
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
 	}}}
 	return newConvertedTestProxyAccsLogs(t, accs, pcs, logs, streamTimeout)
 }
@@ -174,6 +174,8 @@ func newConvertedTestProxyAccsLogs(t *testing.T, accs map[int64][]*domain.Accoun
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour,
 	}, logs, nil)
@@ -573,16 +575,16 @@ func TestConvertedChatToMessNonStreamingLogTotalTokens(t *testing.T) {
 
 // userScenarioAccs 用户场景组账号（2026-08-18 用户报告）：模板 A 全协议
 // full-model（无模型空间）+ 模板 B 仅 openai-responses（models 白名单
-// gpt-4o）；fullStatus 控制模板 A 账号状态（disabled = 转换回退场景，
-// active = 直连对照组）。
-func userScenarioAccs(srvURL string, fullStatus domain.AccountStatus) map[int64][]*domain.Account {
+// gpt-4o）；fullEnabled 控制模板 A 账号启用位（false = 转换回退场景，
+// true = 直连对照组）。
+func userScenarioAccs(srvURL string, fullEnabled bool) map[int64][]*domain.Account {
 	tplFull := &domain.Template{ID: 1, Name: "full-t", BaseURL: srvURL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAIResponses}}
 	tplResp := &domain.Template{ID: 2, Name: "resp-t", BaseURL: srvURL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
 	return map[int64][]*domain.Account{10: {
-		{ID: 1, TemplateID: 1, Template: tplFull, UpstreamKey: "sk-upstream", Status: fullStatus, Weight: 100, MaxConcurrency: 4},
-		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4},
+		{ID: 1, TemplateID: 1, Template: tplFull, UpstreamKey: "sk-upstream", Enabled: fullEnabled, MaxConcurrency: 4},
+		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4},
 	}}
 }
 
@@ -595,7 +597,7 @@ func TestConvertedUserScenarioDisabledFullModel(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxyAccs(t, userScenarioAccs(srv.URL, domain.StatusDisabled),
+	p := newConvertedTestProxyAccs(t, userScenarioAccs(srv.URL, false),
 		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -617,7 +619,7 @@ func TestConvertedUserScenarioFullModelActive(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
-	p := newConvertedTestProxyAccs(t, userScenarioAccs(srv.URL, domain.StatusActive),
+	p := newConvertedTestProxyAccs(t, userScenarioAccs(srv.URL, true),
 		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -646,8 +648,8 @@ func TestConvertedChatBusyFallback(t *testing.T) {
 	tplResp := &domain.Template{ID: 2, Name: "resp-t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
 	accs := map[int64][]*domain.Account{10: {
-		{ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1},
-		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4},
+		{ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 1},
+		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4},
 	}}
 	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
@@ -688,8 +690,8 @@ func TestConvertedTargetAlsoBusy429(t *testing.T) {
 	tplResp := &domain.Template{ID: 2, Name: "resp-t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
 	accs := map[int64][]*domain.Account{10: {
-		{ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream", Status: domain.StatusDisabled, Weight: 100, MaxConcurrency: 4},
-		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 1},
+		{ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream", Enabled: false, MaxConcurrency: 4},
+		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 1},
 	}}
 	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
@@ -723,7 +725,7 @@ func TestConvertedTargetFormatUnavailable404(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream",
-		Status: domain.StatusDisabled, Weight: 100, MaxConcurrency: 4,
+		Enabled: false, MaxConcurrency: 4,
 	}}}
 	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 

@@ -160,6 +160,39 @@ func (n noopLoader) UpdateAccountStatus(ctx context.Context, id int64, s domain.
 	return nil
 }
 
+// publishTestRoutes 武装 plan-only 选号面（cutover 后 Select 的唯一车道）：
+// 从调度器 Loader 读当前账号集，为每个 (组, 格式) 经 PublishDecisionForTest
+// 发布默认桶（model ""）决策——精确模型路由未命中时回落默认桶，一次发布覆盖
+// 该格式全部请求模型。候选集镜像编译车道账号门（!Enabled / failed_at 排除；
+// 全排除的格式发布空决策——ErrNoAvailable 语义与编译器一致）。账号顺序保持
+// loader 列表序（failover 测试依赖首账号先派）。
+func publishTestRoutes(tb testing.TB, s *scheduler.Scheduler) {
+	tb.Helper()
+	accs, err := s.Loader().LoadGroupsAccounts(context.Background())
+	require.NoError(tb, err)
+	for gid, list := range accs {
+		byFormat := map[string][]int64{}
+		seen := map[int64]bool{}
+		for _, a := range list {
+			if a == nil || a.Template == nil || seen[a.ID] {
+				continue
+			}
+			seen[a.ID] = true
+			for _, f := range a.Template.SupportedFormats {
+				fs := string(f)
+				if a.Enabled && a.FailedAt == nil {
+					byFormat[fs] = append(byFormat[fs], a.ID)
+				} else if _, ok := byFormat[fs]; !ok {
+					byFormat[fs] = []int64{}
+				}
+			}
+		}
+		for f, ids := range byFormat {
+			s.PublishDecisionForTest(scheduler.RouteRefFor(gid, f, ""), &scheduler.RouteDecision{Primary: ids})
+		}
+	}
+}
+
 // fakeRuleStore 内存 RuleStore：种子写入（值语义副本）。
 type fakeRuleStore struct {
 	mu    sync.Mutex
@@ -281,7 +314,7 @@ func newTestProxyTplTimeoutRec(t *testing.T, tpl *domain.Template, accountID int
 	t.Helper()
 	accs := map[int64][]*domain.Account{10: {{
 		ID: accountID, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "sk-upstream",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
 	}}}
 	cfg := Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
@@ -290,11 +323,14 @@ func newTestProxyTplTimeoutRec(t *testing.T, tpl *domain.Template, accountID int
 		GroupKeyRPM:           0, UsageCapture: usageCapture,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re.SetHealthSink(testHealthSink)
 	require.NoError(t, re.Reload(context.Background())) // 空表写种子（429/30s、error/5s、ok/active）
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)
@@ -486,6 +522,7 @@ func TestProxyAuthXAPIKey(t *testing.T) {
 }
 
 func TestProxyFailoverOn429(t *testing.T) {
+	testHealthSink.reset()
 	// 两个账号指向同一个会 429 的上游：第一个失败后转移第二个（同样失败则最终 429）
 	up := fakeOpenAI(t, "429")
 	defer up.Close()
@@ -501,10 +538,11 @@ func TestProxyFailoverOn429(t *testing.T) {
 	// 第二个账号（同样带映射，耗尽路径才能断言最后一次实际尝试的映射模型）
 	tpl2 := &domain.Template{ID: 2, Name: "t2", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}, ModelMapping: mapping}
 	sched := p.sched
-	acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+	acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
 	loader := p.sched.Loader().(noopLoader)
 	loader.accs[10] = append(loader.accs[10], acc2)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
@@ -515,15 +553,15 @@ func TestProxyFailoverOn429(t *testing.T) {
 	require.Equal(t, "1", rec.Header().Get("Retry-After"), "429 最终失败回 Retry-After")
 	// MarkResult 为异步投递：断言前排空规则队列（测试与优雅关闭用钩子）
 	sched.FlushRules()
-	// 两个账号都进入 429 冷却：Runtime 视图可查
-	ri, ok := sched.Runtime(1)
-	require.True(t, ok)
-	require.Equal(t, domain.Status429, ri.Status)
-	require.Zero(t, ri.Concurrency, "failover 后并发槽必须全部释放")
-	ri, ok = sched.Runtime(2)
-	require.True(t, ok)
-	require.Equal(t, domain.Status429, ri.Status)
-	require.Zero(t, ri.Concurrency, "failover 后并发槽必须全部释放")
+	// 两个账号都被 seed-429 惩罚：sink 各收一次 retry_after throttle
+	for _, id := range []int64{1, 2} {
+		ths := testHealthSink.throttlesFor(id)
+		require.Len(t, ths, 1, "账号 %d 429 惩罚恰一次投递", id)
+		require.Equal(t, domain.ThrottleModeRetryAfter, ths[0].Mode)
+		ri, ok := sched.Runtime(id)
+		require.True(t, ok)
+		require.Zero(t, ri.Concurrency, "failover 后并发槽必须全部释放")
+	}
 	// 耗尽路径（请求已完成）：429 失败行（Err429）不入 usage_logs——err_logs
 	// 承载（分表：失败明细归 err_logs；pending 恒 0）
 	require.Zero(t, p.rec.Pending(), "failover 耗尽失败行不产生明细 pending")
@@ -538,17 +576,21 @@ func TestProxyFailoverOn429(t *testing.T) {
 	require.Equal(t, domain.Err429, store.logs[0].ErrorType)
 }
 
-// 5xx：触发 failover 与 MarkResult(连接级/5xx 分流)；全部尝试失败最终回 502（非 429 不设 Retry-After）。
-func TestProxyFailoverOn5xx(t *testing.T) {
+// 5xx：连接级/5xx 分流投递 MarkResult（seed-5xx open 10m throttle）；重试矩阵
+// 裁定 5xx 终态不转移（无幂等能力证明）——单账号单次派发后直接耗尽 502（非 429
+// 不设 Retry-After），第二账号不被派发。
+func TestProxyTerminalOn5xx(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeOpenAI(t, "500")
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 	tpl2 := &domain.Template{ID: 2, Name: "t2", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 	sched := p.sched
-	acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+	acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
 	loader := p.sched.Loader().(noopLoader)
 	loader.accs[10] = append(loader.accs[10], acc2)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
@@ -558,14 +600,19 @@ func TestProxyFailoverOn5xx(t *testing.T) {
 	require.Equal(t, 502, rec.Code, "body=%s", rec.Body.String())
 	require.Empty(t, rec.Header().Get("Retry-After"))
 	sched.FlushRules() // MarkResult 异步投递：断言前排空
-	ri, ok := sched.Runtime(1)
-	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status)
-	require.Zero(t, ri.Concurrency, "failover 后并发槽必须全部释放")
-	ri, ok = sched.Runtime(2)
-	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status)
-	require.Zero(t, ri.Concurrency, "failover 后并发槽必须全部释放")
+	// 首账号被 seed-5xx 惩罚恰一次（open 10m throttle）；5xx 终态不转移——
+	// 第二账号从未派发，不收任何惩罚。
+	ths := testHealthSink.throttlesFor(1)
+	require.Len(t, ths, 1, "账号 1 5xx 惩罚恰一次投递")
+	require.Equal(t, domain.ThrottleModeOpen, ths[0].Mode)
+	require.NotNil(t, ths[0].DurationMs)
+	require.Equal(t, int64(10*60*1000), *ths[0].DurationMs, "seed-5xx throttle 10m")
+	require.Empty(t, testHealthSink.throttlesFor(2), "5xx 终态不转移：账号 2 不被派发")
+	for _, id := range []int64{1, 2} {
+		ri, ok := sched.Runtime(id)
+		require.True(t, ok)
+		require.Zero(t, ri.Concurrency, "failover 后并发槽必须全部释放")
+	}
 	// 耗尽路径（请求已完成）：5xx 失败行（Err5xx）不入 usage_logs——err_logs
 	// 承载（分表：失败明细归 err_logs；pending 恒 0）
 	require.Zero(t, p.rec.Pending(), "failover 耗尽失败行不产生明细 pending")
@@ -587,10 +634,11 @@ func TestProxyFailoverExhaustedNoLeak(t *testing.T) {
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 		loader.accs[10] = append(loader.accs[10], &domain.Account{
 			ID: i, TemplateID: i, Template: tpl, UpstreamKey: "sk-upstream",
-			Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
 		})
 	}
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
@@ -632,6 +680,7 @@ func TestProxyFailoverZeroReleasesSlot(t *testing.T) {
 
 // 4xx：确定性错误，透传上游状态码与原始 body、不转移（规格 §5.3），账号不进入冷却。
 func TestProxyPassthrough4xx(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeOpenAI(t, "400")
 	defer up.Close()
 	store := &captureLogStore{}
@@ -649,7 +698,7 @@ func TestProxyPassthrough4xx(t *testing.T) {
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
 	require.Equal(t, domain.StatusActive, ri.Status)
-	require.Nil(t, ri.CooldownUntil)
+	require.Zero(t, testHealthSink.throttleCount(), "4xx 透传不投递任何惩罚")
 	require.Zero(t, ri.Concurrency, "4xx 透传也必须释放并发槽")
 	// 请求已完成（上游消费了请求）：4xx 失败行不入 usage_logs——err_logs 承载
 	//（分表：失败明细归 err_logs；pending 恒 0）
@@ -667,6 +716,7 @@ func TestProxyPassthrough4xx(t *testing.T) {
 
 // 流式中止：上游在流中途发非法事件（解码失败）→ 连接级/5xx 分流 + 释放并发槽 + ErrAbort 记录。
 func TestProxyStreamAbortFreesSlot(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeOpenAI(t, "abort-stream")
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
@@ -680,17 +730,18 @@ func TestProxyStreamAbortFreesSlot(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "中止记 连接级/5xx 分流")
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "中止记 连接级/5xx 分流惩罚")
 	require.Zero(t, ri.Concurrency, "中止路径必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "中止路径记 ErrAbort 用量")
 }
 
 // 回归（评审 Critical）：流式上游停滞超过 UpstreamStreamTimeout 必须按上游错误
-// 处理——记 ErrAbort + MarkResult(连接级/5xx 分流) → 账号不健康。此前 sserelay.
+// 处理——记 ErrAbort + MarkResult(连接级/5xx 分流) → seed-5xx throttle 投递。此前 sserelay.
 // normalize 把 ctx 超时折叠为 context.Canceled，tryChat 按 errors.Is(err,
 // context.Canceled) 走了"客户端断开"分支：释放槽位但不 MarkResult、不记用量
-// （账号保持 active、Pending 0），与迁移前 SDK 路径（记 ErrAbort + 不健康）相悖。
-func TestProxyStreamTimeoutMarksUnhealthy(t *testing.T) {
+// （账号保持 active、Pending 0），与迁移前 SDK 路径（记 ErrAbort + 惩罚）相悖。
+func TestProxyStreamTimeoutMarksThrottle(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeOpenAI(t, "stall-stream")
 	defer up.Close()
 	store := &captureLogStore{}
@@ -711,7 +762,7 @@ func TestProxyStreamTimeoutMarksUnhealthy(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "停滞超时记 连接级/5xx 分流 → 不健康")
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "停滞超时记 连接级/5xx 分流惩罚")
 	require.Zero(t, ri.Concurrency, "超时中止路径必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "超时中止必须记一条 ErrAbort 用量")
 	require.NoError(t, p.rec.Close(context.Background()))
@@ -728,6 +779,7 @@ func TestProxyStreamTimeoutMarksUnhealthy(t *testing.T) {
 // active、不冷却）、并发槽释放、记一条用量。此前 fakes 的 "400" 模式只在
 // 非流式请求上触发，流式 4xx 路径没有测试覆盖。
 func TestProxyChatStreamingPassthrough4xx(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeOpenAI(t, "400-stream")
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
@@ -745,7 +797,7 @@ func TestProxyChatStreamingPassthrough4xx(t *testing.T) {
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
 	require.Equal(t, domain.StatusActive, ri.Status)
-	require.Nil(t, ri.CooldownUntil)
+	require.Zero(t, testHealthSink.throttleCount(), "4xx 透传不投递任何惩罚")
 	require.Zero(t, ri.Concurrency, "4xx 透传也必须释放并发槽")
 	require.Zero(t, p.rec.Pending(), "4xx 透传不产生明细 pending（err_logs 承载）")
 }
@@ -761,6 +813,7 @@ func (failingResponseWriter) WriteHeader(int)             {}
 // relay 无法区分"写出失败"与"上游读失败"（两者都是非 ctx 取消的错误），
 // 按控制器语义一律走 recordStreamAbort → 记一条 ErrAbort 用量。
 func TestProxyClientDisconnectFreesSlot(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	store := &captureLogStore{}
@@ -774,7 +827,7 @@ func TestProxyClientDisconnectFreesSlot(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusUnhealthy, ri.Status, "客户端断开记 连接级/5xx 分流")
+	require.Len(t, testHealthSink.throttlesFor(1), 1, "客户端断开写出失败按上游读失败惩罚")
 	require.Zero(t, ri.Concurrency, "客户端断开必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "写出失败按上游读失败处理，记 ErrAbort 用量")
 	// 评审 I-1：客户端断开（recordStreamAbort）Model=客户端请求模型
@@ -904,9 +957,9 @@ func (c customAPIKeyProvider) Credential(_ context.Context, _ credential.Credent
 	return c.val, nil
 }
 
-// 评审 M1：未知凭据类型（号池生态类型未注册）→ credentialFor 显式错误 →
-// 网络错误路径（耗尽 502，Retry-After 不设），上游不得收到任何请求——
-// 不得静默 fallback 到 api_key（fallback 是号池类型安全隐患）。
+// 评审 M1：未知凭据类型（号池生态类型未注册）在候选指纹门即被拒（credType
+// 非法 → 候选不可解析 → 选号 ErrNoAvailable）——429 无可用账号，上游不得收到
+// 任何请求，不得静默 fallback 到 api_key（fallback 是号池类型安全隐患）。
 func TestProxyCredentialUnknownTypeRejectsNoUpstreamCall(t *testing.T) {
 	var hits atomic.Int64
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -918,14 +971,14 @@ func TestProxyCredentialUnknownTypeRejectsNoUpstreamCall(t *testing.T) {
 	loader := p.sched.Loader().(noopLoader)
 	loader.accs[10][0].Template.CredentialType = credential.Type("codex_oauth")
 	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
-	require.Equal(t, http.StatusBadGateway, rec.Code, "未知凭据类型按网络错误处理 → 耗尽 502")
-	require.Empty(t, rec.Header().Get("Retry-After"), "非 429 不设 Retry-After")
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, "未知凭据类型候选指纹门拒绝 → 不可选号 429；body=%s", rec.Body.String())
 	require.Zero(t, hits.Load(), "未知类型不得 fallback：上游一个请求都不许收到")
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)

@@ -117,8 +117,8 @@ func modelsPGFixture(t *testing.T) modelsFixture {
 	})
 	require.NoError(t, err)
 	for _, a := range []*domain.Account{
-		{Name: "a-models-a", TemplateID: tplA.ID, UpstreamKey: "sk-1", Weight: 1, MaxConcurrency: 4},
-		{Name: "a-models-b", TemplateID: tplB.ID, UpstreamKey: "sk-2", Weight: 1, MaxConcurrency: 4},
+		{Name: "a-models-a", TemplateID: tplA.ID, UpstreamKey: "sk-1", MaxConcurrency: 4},
+		{Name: "a-models-b", TemplateID: tplB.ID, UpstreamKey: "sk-2", MaxConcurrency: 4},
 	} {
 		acc, err := repos.Accounts.CreateAccount(ctx, a)
 		require.NoError(t, err)
@@ -142,6 +142,8 @@ func modelsPGFixture(t *testing.T) modelsFixture {
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, repos.Groups, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	return modelsFixture{repos: repos, sched: sched, gid: g1.ID, gid2: g2.ID, userID: u.ID}
 }
 
@@ -311,15 +313,19 @@ func TestPGModelsReloadReflectsChanges(t *testing.T) {
 	require.NoError(t, err)
 	accC, err := fx.repos.Accounts.CreateAccount(ctx, &domain.Account{
 		Name: "a-models-c", TemplateID: tplC.ID, UpstreamKey: "sk-3",
-		Weight: 1, MaxConcurrency: 4,
+		MaxConcurrency: 4,
 	})
 	require.NoError(t, err)
 	require.NoError(t, fx.repos.Accounts.SetAccountGroups(ctx, accC.ID, []int64{fx.gid}))
 	require.NoError(t, fx.sched.InvalidateAllSync())
+	publishTestRoutes(t, fx.sched)
+
 	require.Equal(t, []string{"claude-3.5-sonnet", "dall-e-3", "gpt-4o", "gpt-5"}, list())
 
 	// 删：账号摘除组归属 → reload 后模型消失
 	require.NoError(t, fx.repos.Accounts.SetAccountGroups(ctx, accC.ID, []int64{}))
 	require.NoError(t, fx.sched.InvalidateAllSync())
+	publishTestRoutes(t, fx.sched)
+
 	require.Equal(t, []string{"claude-3.5-sonnet", "dall-e-3", "gpt-4o"}, list())
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 func TestPrecheckNoMapAndExplicitIdentity(t *testing.T) {
@@ -205,9 +206,11 @@ func TestExhaustionSecondAuthProof(t *testing.T) {
 	p.sched.Loader().(noopLoader).accs[10][0].UpstreamKey = "sk-a1"
 	tpl2 := mappingTpl(up.URL, explicitC)
 	tpl2.ID = 2
-	acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+	acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
 	p.sched.Loader().(noopLoader).accs[10] = append(p.sched.Loader().(noopLoader).accs[10], acc2)
 	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+
 	rec := postChat(p, `{"model":"gpt-4o","messages":[]}`)
 	require.Equal(t, 429, rec.Code, "body=%s", rec.Body.String())
 	require.NoError(t, p.rec.Close(context.Background()))
@@ -266,6 +269,11 @@ func TestPreselectionRejectionEmptyMappedModel(t *testing.T) {
 		loader := sched.Loader().(noopLoader)
 		loader.accs[10] = nil
 		require.NoError(t, sched.InvalidateAllSync())
+		// 组内零账号 = 编译器不再为该 (组, 格式) 产出路由：经测试缝发布 nil 决策
+		// 模拟重编译后的路由删除（未编译桶 → ErrFormatUnavailable → 404，与
+		// 编译器「无模板即无路由」语义一致；区别于全排除空决策的 429）。
+		sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), ""), nil)
+
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 		req.Header.Set("Authorization", "Bearer ck-1")
 		rec := httptest.NewRecorder()
@@ -319,9 +327,11 @@ func TestFailoverExhaustionHitsBothAccounts(t *testing.T) {
 	p := newTestProxyTplTimeoutLogs(t, mappingTpl(up.URL, implicit), 1, true, 30*time.Second, store, nil)
 	tpl2 := mappingTpl(up.URL, implicit)
 	tpl2.ID = 2
-	acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+	acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
 	p.sched.Loader().(noopLoader).accs[10] = append(p.sched.Loader().(noopLoader).accs[10], acc2)
 	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+
 	rec := postChat(p, `{"model":"gpt-4o","messages":[]}`)
 	require.Equal(t, 429, rec.Code)
 	require.NoError(t, p.rec.Close(context.Background()))

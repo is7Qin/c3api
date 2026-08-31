@@ -413,7 +413,7 @@ func newCodexWSProxyWithMapping(t *testing.T, upstream string, mode domain.Model
 	ext := codexWSExt(10, "at-10", "rt-10")
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 10, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: ext,
+		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: ext,
 	}}}
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
@@ -429,6 +429,8 @@ func newCodexWSProxyWithMapping(t *testing.T, upstream string, mode domain.Model
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
 	}}, noopUserLoader{}, nil)

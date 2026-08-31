@@ -82,11 +82,13 @@ func TestRegression_CodexFatalStatus0NotRetryable(t *testing.T) {
 func newImagesRegressionProxy(t *testing.T, baseURL string) (*Proxy, *scheduler.Selection) {
 	t.Helper()
 	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: baseURL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages}, Models: []string{"gpt-image-2"}}
-	accs := map[int64][]*domain.Account{10: {{ID: 99, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "sk", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}}}
+	accs := map[int64][]*domain.Account{10: {{ID: 99, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "sk", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}

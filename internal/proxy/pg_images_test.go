@@ -137,7 +137,7 @@ func setupImagesPG(t *testing.T) (*scheduler.Scheduler, int64, int64, *pgImagesU
 	} {
 		acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
 			Name: g.name, TemplateID: g.tplID, UpstreamKey: "sk-upstream",
-			Weight: 1, MaxConcurrency: 8,
+			MaxConcurrency: 8,
 		})
 		require.NoError(t, err)
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.groupID}))
@@ -149,6 +149,8 @@ func setupImagesPG(t *testing.T) (*scheduler.Scheduler, int64, int64, *pgImagesU
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, repos.Groups, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
+	publishTestRoutes(t, sched)
+
 	return sched, gAPI.ID, gSpecial.ID, up
 }
 

@@ -64,8 +64,8 @@ func benchUpstream() *httptest.Server {
 	}))
 }
 
-// benchProxy 构造完整 Proxy（与 newTestProxyTplTimeoutLogs 同构；bench 内无 *testing.T）。
-func benchProxy(upstream string) *Proxy {
+// benchProxy 构造完整 Proxy（与 newTestProxyTplTimeoutLogs 同构；tb 供测试车道发布）。
+func benchProxy(tb testing.TB, upstream string) *Proxy {
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: upstream,
 		CredentialType:   credential.TypeAPIKey,
@@ -73,7 +73,7 @@ func benchProxy(upstream string) *Proxy {
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
 	}}}
 	cfg := Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
@@ -89,6 +89,7 @@ func benchProxy(upstream string) *Proxy {
 	if err := sched.InvalidateAllSync(); err != nil {
 		panic(err)
 	}
+	publishTestRoutes(tb, sched)
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
@@ -109,7 +110,7 @@ func benchProxy(upstream string) *Proxy {
 func benchForwardChat(b *testing.B, streaming bool) {
 	up := benchUpstream()
 	defer up.Close()
-	p := benchProxy(up.URL)
+	p := benchProxy(b, up.URL)
 	r := AIRouter(p)
 	stream := "false"
 	if streaming {
