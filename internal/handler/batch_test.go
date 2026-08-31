@@ -103,8 +103,8 @@ func TestPostTemplatesBatchUpdate(t *testing.T) {
 	require.Equal(t, 400, rec.Code, "empty fields: %s", rec.Body.String())
 }
 
-// TestPostAccountsBatchUpdate 批量更新账号：成功（status=disabled 生效）/
-// group_ids 提供（替换）/ 空数组（清空）/ null（不变）/ 非法 status 400 /
+// TestPostAccountsBatchUpdate 批量更新账号：成功（max_concurrency 生效）/
+// group_ids 提供（替换）/ 空数组（清空）/ null（不变）/ 未知字段 400 /
 // 空 fields 400 / 缺 id 404。
 func TestPostAccountsBatchUpdate(t *testing.T) {
 	_, _, do := newListTestRouter(t)
@@ -125,20 +125,20 @@ func TestPostAccountsBatchUpdate(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &groupResp))
 	gID := groupResp.ID
 
-	// 成功：{"ids":[...],"fields":{"status":"disabled"}} → 200 {"updated":2}
+	// 成功：{"ids":[...],"fields":{"max_concurrency":3}} → 200 {"updated":2}
 	rec = do(http.MethodPost, "/api/admin/accounts/batch-update",
-		`{"ids":[`+itoa(ids[0])+`,`+itoa(ids[1])+`],"fields":{"status":"disabled"}}`)
+		`{"ids":[`+itoa(ids[0])+`,`+itoa(ids[1])+`],"fields":{"max_concurrency":3}}`)
 	require.Equal(t, 200, rec.Code, "batch update: %s", rec.Body.String())
 	var up BatchUpdateResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &up))
 	require.Equal(t, 2, up.Updated)
 
-	// GET 确认 status 已生效
+	// GET 确认 max_concurrency 已生效
 	rec = do(http.MethodGet, "/api/admin/accounts/"+itoa(ids[0]), "")
 	require.Equal(t, 200, rec.Code, "get: %s", rec.Body.String())
 	var acc domain.Account
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
-	require.Equal(t, domain.StatusDisabled, acc.Status)
+	require.Equal(t, 3, acc.MaxConcurrency)
 
 	// group_ids 提供 → 替换生效（回显核对）
 	rec = do(http.MethodPost, "/api/admin/accounts/batch-update",
@@ -172,10 +172,10 @@ func TestPostAccountsBatchUpdate(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ag))
 	require.Equal(t, []int64{gID}, ag.GroupIds, "null = 不变")
 
-	// 非法 status 枚举 → 400（handler 显式校验）
+	// 未知字段 → 400（严格边界：DisallowUnknownFields）
 	rec = do(http.MethodPost, "/api/admin/accounts/batch-update",
-		`{"ids":[`+itoa(ids[0])+`],"fields":{"status":"bogus"}}`)
-	require.Equal(t, 400, rec.Code, "invalid status: %s", rec.Body.String())
+		`{"ids":[`+itoa(ids[0])+`],"fields":{"not_an_account_field":1}}`)
+	require.Equal(t, 400, rec.Code, "unknown field: %s", rec.Body.String())
 
 	// 空 fields → 400
 	rec = do(http.MethodPost, "/api/admin/accounts/batch-update",

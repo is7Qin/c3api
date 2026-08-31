@@ -28,7 +28,7 @@ func probeTpl(id int64, cred credential.Type, formats ...domain.RequestFormat) *
 // 账号覆盖优先于模板——与 aiclient 取 base 同契约）。
 func probeAcc(id int64, t *domain.Template, rev int64, baseURL string) *domain.Account {
 	return &domain.Account{ID: id, TemplateID: t.ID, Template: t, UpstreamKey: "sk-probe",
-		Status: domain.StatusActive, LifecycleRevision: rev, BaseURL: &baseURL}
+		LifecycleRevision: rev, BaseURL: &baseURL}
 }
 
 // probeLookup 闭合账号表的最小 lookup 源（装配点传 sched.ProbeAccount）。

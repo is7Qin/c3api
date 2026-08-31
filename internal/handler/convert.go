@@ -17,7 +17,7 @@ import (
 // 本文件实现领域类型 → 生成的契约类型（api.gen.go）的转换。
 // oapi-codegen v2.4.1 对 required 属性生成值类型、非 required 生成指针 +
 // omitempty 字段，因此响应字段按生成类型取址/取值赋值；
-// 枚举类型（RequestFormat/AccountStatus/ErrorType）跨包需显式转换。
+// 枚举类型（RequestFormat/ErrorType）跨包需显式转换。
 
 // toAPITemplate 模板领域对象 → 契约类型。
 func toAPITemplate(t *domain.Template) Template {
@@ -64,7 +64,6 @@ func toAPIModelMapping(m domain.ModelMapping) *map[string]ModelMappingEntry {
 
 // toAPIAccount 账号领域对象 → 契约类型（Template 字段由仓库预加载）。
 func toAPIAccount(a *domain.Account) Account {
-	st := AccountStatus(a.Status)
 	var tpl *Template
 	if a.Template != nil {
 		t := toAPITemplate(a.Template)
@@ -77,9 +76,6 @@ func toAPIAccount(a *domain.Account) Account {
 		Template:       tpl,
 		BaseURL:        a.BaseURL, // 账号级覆盖（nil = 继承模板）
 		UpstreamKey:    &a.UpstreamKey,
-		Status:         &st,
-		CooldownUntil:  a.CooldownUntil,
-		Weight:         &a.Weight,
 		MaxConcurrency: &a.MaxConcurrency,
 		LastError:      a.LastError,
 		LastUsedAt:     a.LastUsedAt,
@@ -98,8 +94,6 @@ func toAPIAccount(a *domain.Account) Account {
 
 // toAPIAccountView 账号运行时视图 → 契约类型（AccountView 是平铺结构，
 // 非 allOf 嵌入：所有 Account 字段内联 + concurrency/err_rate/err_count）。
-// Status/CooldownUntil 取调度器内存合并值（A-4：列表显示与 Select 请求行为
-// 同源——回写丢失/失败时不再显示 DB 镜像的 active）。
 func toAPIAccountView(v *service.AccountView) AccountView {
 	base := toAPIAccount(v.Account)
 	return AccountView{
@@ -110,9 +104,6 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 		// BaseURL 平铺逐字段拷贝（C3——缺则列表/编辑回显恒缺，前端保存静默清空）
 		BaseURL:        base.BaseURL,
 		UpstreamKey:    base.UpstreamKey,
-		Status:         ptr(AccountStatus(v.Status)), // A-4：调度器内存权威（快照未加载时 = DB 值，与合并块同构）
-		CooldownUntil:  v.CooldownUntil,              // A-4：同上
-		Weight:         base.Weight,
 		MaxConcurrency: base.MaxConcurrency,
 		LastError:      base.LastError,
 		LastUsedAt:     base.LastUsedAt,

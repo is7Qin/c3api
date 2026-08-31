@@ -86,7 +86,7 @@ func TestAdminFlow(t *testing.T) {
 	require.Equal(t, 400, recBad.Code, "非法 credential_type 必须 400: %s", recBad.Body.String())
 
 	rec = do(http.MethodPost, "/api/admin/accounts", `{
-		"name":"acc1","template_id":`+itoa(tpl.ID)+`,"upstream_key":"sk-x","weight":80,"max_concurrency":4}`)
+		"name":"acc1","template_id":`+itoa(tpl.ID)+`,"upstream_key":"sk-x","max_concurrency":4}`)
 	require.Equal(t, 200, rec.Code, "create account: %s", rec.Body.String())
 	var acc domain.Account
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
@@ -593,31 +593,28 @@ func TestGetTemplatesParams(t *testing.T) {
 	require.Equal(t, "openai-main", body.Rows[0].Name, "row name")
 }
 
-// status 多值（逗号分隔）+ template_id 筛选参数绑定；非法枚举值 → 400
-// （openapi status 是纯 string 不校验枚举，handler 必须显式校验）。
-func TestGetAccountsStatusMulti(t *testing.T) {
+// 账号列表参数绑定（template_id 筛选）+ 未知查询参数忽略（契约无该参数时
+// 生成层不绑定、handler 不感知——请求照常 200）。
+func TestGetAccountsParamsBinding(t *testing.T) {
 	_, _, do := newListTestRouter(t)
 	rec := do(http.MethodPost, "/api/admin/templates", `{
 		"name":"openai-main","base_url":"https://api.openai.com",
 		"supported_formats":["openai-chat"]}`)
 	require.Equal(t, 200, rec.Code, "create template: %s", rec.Body.String())
 	rec = do(http.MethodPost, "/api/admin/accounts", `{
-		"name":"acc1","template_id":1,"upstream_key":"sk-x","status":"active"}`)
+		"name":"acc1","template_id":1,"upstream_key":"sk-x"}`)
 	require.Equal(t, 200, rec.Code, "create account: %s", rec.Body.String())
 
-	rec = do(http.MethodGet, "/api/admin/accounts?status=active,disabled&template_id=1", "")
+	rec = do(http.MethodGet, "/api/admin/accounts?template_id=1", "")
 	require.Equal(t, 200, rec.Code, "list: %s", rec.Body.String())
 	var body AccountListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, int64(1), body.Total, "total")
 	require.Len(t, body.Rows, 1, "rows")
 
-	// 非法 status 枚举 → 400（handoff 硬性要求：不校验会落 repo 裸 error → 500）
-	rec = do(http.MethodGet, "/api/admin/accounts?status=bogus", "")
-	require.Equal(t, 400, rec.Code, "invalid status: %s", rec.Body.String())
-	var errBody map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errBody))
-	require.Contains(t, errBody, "error", "must be ErrorResponse JSON")
+	// 契约外查询参数 → 忽略不报错（200），不是 400/500
+	rec = do(http.MethodGet, "/api/admin/accounts?bogus_param=1", "")
+	require.Equal(t, 200, rec.Code, "unknown query param ignored: %s", rec.Body.String())
 }
 
 // 非法 sort 值 → 400（service validateListQuery 白名单校验）。

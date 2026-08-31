@@ -17,7 +17,7 @@ func TestHandlerFakeStaleFencing(t *testing.T) {
 	// create template and account via fake
 	tpl, err := store.CreateTemplate(ctx, &domain.Template{Name: "tpl", BaseURL: "https://u", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}})
 	require.NoError(t, err)
-	acc, err := store.CreateAccount(ctx, &domain.Account{Name: "acc", TemplateID: tpl.ID, UpstreamKey: "sk-1", Weight: 1, MaxConcurrency: 8})
+	acc, err := store.CreateAccount(ctx, &domain.Account{Name: "acc", TemplateID: tpl.ID, UpstreamKey: "sk-1", MaxConcurrency: 8})
 	require.NoError(t, err)
 	// manually set revision to 1 for determinism (fake CreateAccount uses zero value, need to set)
 	acc.LifecycleRevision = 1
@@ -41,7 +41,7 @@ func TestHandlerFakeStaleFencing(t *testing.T) {
 	require.Equal(t, "tok1", *gotExt.CodexOAuthToken, "stale must not mutate ext")
 
 	// account credential stale
-	acc2, _ := store.CreateAccount(ctx, &domain.Account{Name: "acc2", TemplateID: tpl.ID, UpstreamKey: "sk-2", Weight: 1, MaxConcurrency: 8})
+	acc2, _ := store.CreateAccount(ctx, &domain.Account{Name: "acc2", TemplateID: tpl.ID, UpstreamKey: "sk-2", MaxConcurrency: 8})
 	acc2.LifecycleRevision = 1
 	store.accs[acc2.ID].LifecycleRevision = 1
 	require.NoError(t, store.ReplaceAccountCredentialCAS(ctx, acc2.ID, 1, "sk-new", nil))

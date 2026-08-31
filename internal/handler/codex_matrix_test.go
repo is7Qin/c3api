@@ -12,7 +12,9 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func TestAccountMinimalPutWithoutStatus(t *testing.T) {
+// TestAccountCreatePutStrictBoundary 账号创建/全量 PUT 的严格信任边界：
+// 最小字段集 PUT 正常 200；未知属性一律 400（DisallowUnknownFields），不落 500。
+func TestAccountCreatePutStrictBoundary(t *testing.T) {
 	_, _, do := newListTestRouter(t)
 
 	rec := do(http.MethodPost, "/api/admin/templates", `{"name":"t1","base_url":"https://api.example.com","supported_formats":["openai-chat"],"credential_type":"api_key"}`)
@@ -20,26 +22,26 @@ func TestAccountMinimalPutWithoutStatus(t *testing.T) {
 	var tpl domain.Template
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpl))
 
-	rec = do(http.MethodPost, "/api/admin/accounts", `{"name":"acc1","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","status":"active"}`)
-	require.Equal(t, 200, rec.Code, "create with status: %s", rec.Body.String())
+	rec = do(http.MethodPost, "/api/admin/accounts", `{"name":"acc1","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x"}`)
+	require.Equal(t, 200, rec.Code, "create account: %s", rec.Body.String())
 	var acc domain.Account
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
-	require.Equal(t, domain.StatusActive, acc.Status)
 
 	putID := strconv.FormatInt(acc.ID, 10)
 	rec = do(http.MethodPut, "/api/admin/accounts/"+putID, `{"name":"acc1","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x"}`)
-	require.Equal(t, 200, rec.Code, "minimal PUT without status must not 500: %s", rec.Body.String())
-	var updated domain.Account
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
-	require.Equal(t, domain.StatusActive, updated.Status, "omitted status must default to active")
+	require.Equal(t, 200, rec.Code, "minimal PUT must not 500: %s", rec.Body.String())
 
 	rec = do(http.MethodGet, "/api/admin/accounts/"+putID, "")
 	require.Equal(t, 200, rec.Code)
+	var updated domain.Account
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
-	require.Equal(t, domain.StatusActive, updated.Status)
+	require.Equal(t, "acc1", updated.Name)
 
-	rec = do(http.MethodPut, "/api/admin/accounts/"+putID, `{"name":"acc1","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","status":"bogus"}`)
-	require.Equal(t, 400, rec.Code, "invalid status must 400 not 500: %s", rec.Body.String())
+	rec = do(http.MethodPut, "/api/admin/accounts/"+putID, `{"name":"acc1","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","not_an_account_field":1}`)
+	require.Equal(t, 400, rec.Code, "unknown property must 400 not 500: %s", rec.Body.String())
+
+	rec = do(http.MethodPost, "/api/admin/accounts", `{"name":"acc2","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","not_an_account_field":1}`)
+	require.Equal(t, 400, rec.Code, "unknown property on create must 400 not 500: %s", rec.Body.String())
 }
 
 func TestCodexTemplateBaseURLMatrix(t *testing.T) {
