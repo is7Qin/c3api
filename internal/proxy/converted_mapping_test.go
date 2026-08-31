@@ -120,7 +120,7 @@ func TestConvertedMappingREST(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"id": "c_1", "object": "chat.completion", "model": body["model"],
 						"choices": []any{map[string]any{"index": 0, "message": map[string]any{"role": "assistant", "content": "hi"}, "finish_reason": "stop"}},
-						"usage": map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+						"usage":   map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
 					})
 				}
 			}))
@@ -156,7 +156,7 @@ func TestConvertedMappingREST(t *testing.T) {
 			store.mu.Lock()
 			defer store.mu.Unlock()
 			require.Len(t, store.logs, 1)
-			require.Equal(t, "client-model", store.logs[0].MappedModel, "implicit logs MappedModel as client")
+			require.Equal(t, "", store.logs[0].MappedModel, "implicit mapping does not record MappedModel")
 			require.Equal(t, int64(8), store.logs[0].TotalTokens)
 		})
 	}
@@ -316,7 +316,7 @@ func TestConvertedMappingStreamFramesViaProxy(t *testing.T) {
 		defer store.mu.Unlock()
 		require.Len(t, store.logs, 1)
 		require.Equal(t, int64(10), store.logs[0].TotalTokens, "raw observer extracts usage before rewrite, tokens still correct")
-		require.Equal(t, "client-model", store.logs[0].MappedModel)
+		require.Equal(t, "", store.logs[0].MappedModel)
 	})
 }
 
@@ -360,7 +360,7 @@ func TestConvertedMappingFrameBoundariesMetadataAndRawOrdering(t *testing.T) {
 	require.Equal(t, int64(7), store.logs[0].InputTokens, "input tokens extracted from raw ev.Data before rewrite")
 	require.Equal(t, int64(8), store.logs[0].OutputTokens, "output tokens extracted from raw before rewrite")
 	require.Equal(t, int64(15), store.logs[0].TotalTokens)
-	require.Equal(t, "client-model", store.logs[0].MappedModel)
+	require.Equal(t, "", store.logs[0].MappedModel)
 	src := []byte(": comment keep\nid: 1\nevent: response.completed\ndata: {\"response\":{\"model\":\"upstream-model\"}}\n\n")
 	rewritten := rewriteConvertedFrames(src, "client-model")
 	require.Contains(t, string(rewritten), ": comment keep", "rewrite helper preserves comment metadata")
