@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/ent/migrate"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -39,8 +40,8 @@ func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, *hProber, fun
 	reason := "fatal"
 	dom := "shared.example.com"
 	store.accs[1] = &domain.Account{
-		ID: 1, Name: "acc1", TemplateID: 1, UpstreamKey: "sk-a", Status: domain.StatusActive,
-		Weight: 1, MaxConcurrency: 4, Enabled: true, FailedAt: &failed, FailureSource: &src,
+		ID: 1, Name: "acc1", TemplateID: 1, UpstreamKey: "sk-a",
+		MaxConcurrency: 4, Enabled: true, FailedAt: &failed, FailureSource: &src,
 		LastError: &reason, LifecycleRevision: 5, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
 	}
 	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
@@ -186,7 +187,7 @@ func TestAccountCreateCacheDomain(t *testing.T) {
 // （wire 面无 enabled/倍率/域/revision 入口——fenced 端点所有权）。
 func TestAccountPUTPreservesLifecycle(t *testing.T) {
 	_, store, _, do := newLifecycleTestHandler(t)
-	store.accs[1].FailedAt = nil // 健康账号 PUT active 不触发 legacy 恢复 CAS 路径
+	store.accs[1].FailedAt = nil // 健康账号 PUT 直写路径
 
 	rec := do(http.MethodPut, "/api/admin/accounts/1", `{"name":"renamed","template_id":1,"upstream_key":"sk-a"}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -220,9 +221,26 @@ func TestRuleTypedActionContract(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &failed))
 	require.Equal(t, true, failed.Then["fail_account"])
 
-	// 互斥：throttle + fail_account → 400；throttle + legacy cooldown → 400
+	// 互斥：throttle + fail_account → 400；throttle + 未知键 → 400（严格边界）
 	require.Equal(t, 400, do(http.MethodPost, "/api/admin/rules", `{"name":"r-x1","priority":3,"then":{"throttle":{"scope":"account","mode":"open","duration_ms":1000,"use_reset":false},"fail_account":true}}`).Code)
-	require.Equal(t, 400, do(http.MethodPost, "/api/admin/rules", `{"name":"r-x2","priority":4,"then":{"throttle":{"scope":"account","mode":"retry_after","use_reset":true},"cooldown":"30s"}}`).Code)
+	require.Equal(t, 400, do(http.MethodPost, "/api/admin/rules", `{"name":"r-x2","priority":4,"then":{"throttle":{"scope":"account","mode":"retry_after","use_reset":true},"not_a_rule_field":"x"}}`).Code)
 	// retry_after 必须 use_reset=true
 	require.Equal(t, 400, do(http.MethodPost, "/api/admin/rules", `{"name":"r-x3","priority":5,"then":{"throttle":{"scope":"account","mode":"retry_after","use_reset":false}}}`).Code)
+}
+
+// TestAccountFreshSchemaColumns 钉死账号持久列集（fresh-only 契约）：以生成
+// schema 结构（migrate.AccountsColumns）对照允许列全集——任何列的增删都会
+// 先在这里失败，而不是散落在各消费方的隐式假设里。
+func TestAccountFreshSchemaColumns(t *testing.T) {
+	got := make([]string, 0, len(migrate.AccountsColumns))
+	for _, c := range migrate.AccountsColumns {
+		got = append(got, c.Name)
+	}
+	require.ElementsMatch(t, []string{
+		"id", "name", "template_id", "base_url", "upstream_key",
+		"max_concurrency", "last_error", "last_used_at", "failed_at",
+		"failure_source", "enabled", "lifecycle_revision",
+		"upstream_cost_multiplier_bp", "cache_domain",
+		"updated_at", "deleted_at", "created_at",
+	}, got, "账号列集必须与 fresh 契约允许全集一致")
 }

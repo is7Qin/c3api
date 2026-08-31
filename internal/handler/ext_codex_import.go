@@ -37,7 +37,6 @@ func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *h
 			CodexOAuthRefreshToken: it.CodexOauthRefreshToken,
 			CodexOAuthExpiresAt:    it.CodexOauthExpiresAt,
 			MaxConcurrency:         it.MaxConcurrency,
-			Weight:                 it.Weight,
 		}
 	}
 	res, err := h.svc.ImportCodexOAuthAccounts(r.Context(), items, &in.TemplateId, in.GroupId)
@@ -67,7 +66,6 @@ func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *htt
 			CodexAccountID: it.CodexAccountId,
 			CodexPATKey:    it.CodexPatKey,
 			MaxConcurrency: it.MaxConcurrency,
-			Weight:         it.Weight,
 		}
 	}
 	res, err := h.svc.ImportCodexPATAccounts(r.Context(), items, &in.TemplateId, in.GroupId)

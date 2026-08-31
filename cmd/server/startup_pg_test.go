@@ -70,9 +70,10 @@ func newSnapshotPGRepos(t *testing.T) *repository.Repository {
 }
 
 // TestStartupReloadAllPG 启动就绪时序：构造链完成后 registry.ReloadAll 全量
-// 首刷（并行）→ 五路快照全部可用——不依赖任何周期 ticker（scheduler 从未
-// Start，SyncInterval 小时级；Select 立即可用 = 90s/首 tick 窗口消灭断言）；
-// 各快照错误独立（全部成功 → 空错误 map）；Status 记录 5 条加载状态。
+// 首刷（并行）→ 五路快照全部可用——数据加载不依赖周期 ticker（SyncInterval
+// 小时级兜底）；Select 依赖编译道产出计划（Start 后 reload 触发信号 →
+// debounce 编译），有界等待收口。各快照错误独立（全部成功 → 空错误 map）；
+// Status 记录 5 条加载状态。
 func TestStartupReloadAllPG(t *testing.T) {
 	repos := newSnapshotPGRepos(t)
 	ctx := context.Background()
@@ -97,7 +98,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.NoError(t, err)
 	acc, err := repos.CreateAccount(ctx, &domain.Account{
 		Name: "acc-1", TemplateID: tpl.ID, UpstreamKey: "sk-upstream",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+		MaxConcurrency: 4,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.SetAccountGroups(ctx, acc.ID, []int64{g.ID})) // 成员关系独立写入（CreateAccount 不落 m2m）
@@ -115,10 +116,14 @@ func TestStartupReloadAllPG(t *testing.T) {
 	// --- 构造链（与 main 装配序一致：模块构造零 reload——单一入口） ---
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil)
 	sched := scheduler.New(scheduler.Config{
-		// 测试不 Start（零 ticker）：全部依赖注册表首刷——SyncInterval 给小时级
-		// 兜底值，防误 Start 时 0 间隔 ticker panic。
+		// sync ticker 不依赖（SyncInterval 小时级兜底）；编译道必须 Start——
+		// Select 执行预编译计划，0 间隔误配防 ticker 空转 panic。
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil)
+	sched.SetCompilerSources(nil, nil)
+	schedCtx, cancelSched := context.WithCancel(ctx)
+	t.Cleanup(cancelSched)
+	require.NoError(t, sched.Start(schedCtx))
 	auth := proxy.NewAuth(repos.Keys, repos.Users, nil)
 	balances := billing.NewBalances(repos, nil)
 	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil)
@@ -142,15 +147,22 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.True(t, ok, "auth 首刷后 key 鉴权立即可用")
 	require.Equal(t, u.ID, meta.UserID)
 
-	// scheduler：启动后立即转换请求可用（Select 不 panic、命中种子账号）。
-	sel, err := sched.Select(g.ID, domain.FormatOpenAIChat, "gpt-4o")
-	require.NoError(t, err, "scheduler 首刷后 Select 立即可用（无 ticker）")
+	// scheduler：首刷触发编译信号，编译道产出计划后 Select 命中种子账号
+	//（debounce 200ms——有界等待，非 sleep）。
+	var sel *scheduler.Selection
+	require.Eventually(t, func() bool {
+		var serr error
+		sel, serr = sched.Select(g.ID, domain.FormatOpenAIChat, "gpt-4o")
+		return serr == nil
+	}, 5*time.Second, 50*time.Millisecond, "scheduler 首刷+编译道收口后 Select 可用")
 	require.Equal(t, acc.ID, sel.AccountID)
 	require.Equal(t, tpl.ID, sel.TemplateID)
 	sched.Release(acc.ID) // 归还并发槽
 
-	// rules：空表种子已写入（状态管理唯一路径）。
-	require.True(t, ruleEngine.NeedsOKEvents(), "规则表首刷含种子（seed-ok）")
+	// rules：空表首刷已写入 typed 种子（状态管理唯一路径）。
+	seeded, err := repos.Client.Rule.Query().Count(ctx)
+	require.NoError(t, err)
+	require.Positive(t, seeded, "规则表首刷含种子")
 
 	// balances：余额快照命中。
 	bal, ok := balances.BalanceOf(u.ID)

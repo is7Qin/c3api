@@ -163,23 +163,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/accounts/batch-reset-cooldown": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 批量重置账号冷却（事务，全成或全败；status→active + cooldown_until=now） */
-        post: operations["PostAccountsBatchResetCooldown"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/accounts/batch-import-codex-oauth": {
         parameters: {
             query?: never;
@@ -1392,8 +1375,6 @@ export interface components {
         /** @enum {string} */
         RequestFormat: "openai-chat" | "openai-responses" | "openai-responses-ws" | "openai-images" | "openai-search" | "anthropic";
         /** @enum {string} */
-        AccountStatus: "active" | "unhealthy" | "429" | "disabled";
-        /** @enum {string} */
         ErrorType: "none" | "429" | "4xx" | "5xx" | "network" | "auth" | "no_account" | "abort" | "billing";
         TemplateCreate: {
             name: string;
@@ -1454,8 +1435,6 @@ export interface components {
             /** @description credential-type conditional: if template is codex-oauth/codex-pat must be empty/null (non-empty forbidden, inherits SDK default); if api_key/responses-special non-empty overrides template base_url, null/empty inherits template */
             base_url?: string | null;
             upstream_key: string;
-            status?: components["schemas"]["AccountStatus"];
-            weight?: number;
             max_concurrency?: number;
             /** @description 可选：共享缓存域（合法域名形态 ≤253；null/缺省 = 账号私有域）；仅创建可带，更新走 /accounts/{id}/cache-domain */
             cache_domain?: string | null;
@@ -1471,10 +1450,6 @@ export interface components {
             /** @description credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template */
             BaseURL?: string | null;
             UpstreamKey?: string;
-            Status?: components["schemas"]["AccountStatus"];
-            /** Format: date-time */
-            CooldownUntil?: string | null;
-            Weight?: number;
             MaxConcurrency?: number;
             LastError?: string | null;
             /** Format: date-time */
@@ -1678,8 +1653,6 @@ export interface components {
             codex_oauth_expires_at?: string;
             /** @description 可选；缺省 25（导入面裁决——非账号表默认 8）；<1 → 归 25 */
             max_concurrency?: number;
-            /** @description 可选；缺省 100；负值 → 行级 failed */
-            weight?: number;
         };
         /** @description 批量导入 codex-pat 单行（组合幂等键同上） */
         CodexPATImportItem: {
@@ -1691,8 +1664,6 @@ export interface components {
             codex_pat_key: string;
             /** @description 可选；缺省 25（导入面裁决）；<1 → 归 25 */
             max_concurrency?: number;
-            /** @description 可选；缺省 100；负值 → 行级 failed */
-            weight?: number;
         };
         /** @description 批量导入 codex-oauth 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-oauth——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed） */
         CodexOAuthImportBody: {
@@ -2039,12 +2010,9 @@ export interface components {
             };
             /**
              * @description 动作集（指针即意图：键缺省/null = 该维度透传不改）。全空对象 {} 合法 =
-             *     纯透传规则：命中后状态/冷却/权重零改动、响应码与文案双透传上游原样返回、
+             *     纯透传规则：命中后零惩罚、响应码与文案双透传上游原样返回、
              *     不计惩罚（不投递状态事件）。可用键：
-             *     - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
-             *     - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
-             *     - weight：调度权重 ∈ [0,100]
-             *     - throttle：typed 限流动作（与 fail_account 及 legacy status/cooldown/weight 互斥；
+             *     - throttle：typed 限流动作（与 fail_account 互斥；
              *       response_code/custom_message 塑形可并存）——
              *       {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}；
              *       scope=account 作用该账号全部 RouteClass，account_route 作用单 RouteClass
@@ -2052,7 +2020,7 @@ export interface components {
              *       （上游 Reset 头优先，duration_ms 可选为回退）；mode=open 要求 use_reset=false
              *       且 duration_ms > 0（固定摘除窗口）
              *     - fail_account：true = 命中即判死（终态失效：failed_at + failure_source=rule，CAS fenced，
-             *       恢复唯一入口 /accounts/{id}/recover）；与 throttle 及 legacy status/cooldown/weight 互斥
+             *       恢复唯一入口 /accounts/{id}/recover）；与 throttle 互斥
              *     - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
              *     - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
              *     错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
@@ -2090,12 +2058,9 @@ export interface components {
              * @description 动作集（指针即意图：键缺省/null = 该维度透传不改）。PUT 部分更新语义：
              *     键缺省（null/省略）= 保持原值；显式提供时整体替换该对象（显式 {} = 清空），
              *     并对合并后的完整 when/then 重新校验。全空对象 {} 合法 = 纯透传规则：
-             *     命中后状态/冷却/权重零改动、响应码与文案双透传上游原样返回、不计惩罚
+             *     命中后零惩罚、响应码与文案双透传上游原样返回、不计惩罚
              *     （不投递状态事件）。可用键：
-             *     - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
-             *     - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
-             *     - weight：调度权重 ∈ [0,100]
-             *     - throttle：typed 限流动作（与 fail_account 及 legacy status/cooldown/weight 互斥；
+             *     - throttle：typed 限流动作（与 fail_account 互斥；
              *       response_code/custom_message 塑形可并存）——
              *       {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}；
              *       scope=account 作用该账号全部 RouteClass，account_route 作用单 RouteClass
@@ -2103,7 +2068,7 @@ export interface components {
              *       （上游 Reset 头优先，duration_ms 可选为回退）；mode=open 要求 use_reset=false
              *       且 duration_ms > 0（固定摘除窗口）
              *     - fail_account：true = 命中即判死（终态失效：failed_at + failure_source=rule，CAS fenced，
-             *       恢复唯一入口 /accounts/{id}/recover）；与 throttle 及 legacy status/cooldown/weight 互斥
+             *       恢复唯一入口 /accounts/{id}/recover）；与 throttle 互斥
              *     - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
              *     - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
              *     错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
@@ -2123,7 +2088,7 @@ export interface components {
             When: {
                 [key: string]: unknown;
             };
-            /** @description 动作集（只读回显；字段集与语义同 RuleCreate.then——status/cooldown/weight/throttle/fail_account/response_code/custom_message；全空 {} = 纯透传规则：命中后码/文双透、零惩罚） */
+            /** @description 动作集（只读回显；字段集与语义同 RuleCreate.then——throttle/fail_account/response_code/custom_message；全空 {} = 纯透传规则：命中后码/文双透、零惩罚） */
             Then: {
                 [key: string]: unknown;
             };
@@ -2194,9 +2159,6 @@ export interface components {
             /** @description credential-type conditional batch: if any effective target is codex-oauth/codex-pat must be empty/null (non-empty forbidden); otherwise batch tristate: empty string=clear to inherit, null/omitted=unchanged, non-empty=override */
             base_url?: string | null;
             upstream_key?: string;
-            /** @enum {string} */
-            status?: "active" | "unhealthy" | "429" | "disabled";
-            weight?: number;
             max_concurrency?: number;
             group_ids?: number[];
         };
@@ -2217,12 +2179,6 @@ export interface components {
         };
         BatchUpdateResponse: {
             updated: number;
-        };
-        BatchResetCooldownBody: {
-            ids: number[];
-        };
-        BatchResetCooldownResponse: {
-            reset: number;
         };
         /** @enum {string} */
         RedemptionType: "balance" | "concurrency" | "temp_balance";
@@ -3559,7 +3515,6 @@ export interface operations {
                 name?: string;
                 sort?: string;
                 order?: "asc" | "desc";
-                status?: string;
                 template_id?: number;
             };
             header?: never;
@@ -3675,31 +3630,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BatchUpdateResponse"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    PostAccountsBatchResetCooldown: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BatchResetCooldownBody"];
-            };
-        };
-        responses: {
-            /** @description 重置成功 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchResetCooldownResponse"];
                 };
             };
             default: components["responses"]["Error"];

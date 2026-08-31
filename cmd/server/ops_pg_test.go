@@ -108,7 +108,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.NoError(t, err)
 	acc, err := repos.CreateAccount(ctx, &domain.Account{
 		Name: "ops-acc", TemplateID: tpl.ID, UpstreamKey: "sk-upstream",
-		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+		MaxConcurrency: 4,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
@@ -243,7 +243,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.Equal(t, float64(2), got["errlog"]["inserted"], "errlog 落盘计数与真实一致")
 	require.NotZero(t, got["retention"]["last_patrol_unix_ms"], "retention 巡检时刻已记")
 	require.Equal(t, float64(1), got["retention"]["last_dropped_log_partitions"], "DROP 分区数")
-	require.GreaterOrEqual(t, got["scheduler"]["writeback_cap"].(float64), float64(4096))
+	require.Equal(t, float64(1), got["scheduler"]["compile_cap"], "scheduler 编译道信号 cap=1（trailing-edge 合并）")
 	require.NotZero(t, got["rule-engine"]["queue_cap"].(float64))
 	// stats-agg 观测（spec 2026-08-14 §6）：watermark 与 stats_agg_watermark
 	// 表真实值一致（停摆冻结后 GET 的快照值 == 读表值——见上文前置比对）；

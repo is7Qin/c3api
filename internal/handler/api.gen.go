@@ -19,22 +19,6 @@ const (
 	AccountExtCredentialTypeCodexPat   AccountExtCredentialType = "codex-pat"
 )
 
-// Defines values for AccountPatchStatus.
-const (
-	AccountPatchStatusActive    AccountPatchStatus = "active"
-	AccountPatchStatusDisabled  AccountPatchStatus = "disabled"
-	AccountPatchStatusN429      AccountPatchStatus = "429"
-	AccountPatchStatusUnhealthy AccountPatchStatus = "unhealthy"
-)
-
-// Defines values for AccountStatus.
-const (
-	AccountStatusActive    AccountStatus = "active"
-	AccountStatusDisabled  AccountStatus = "disabled"
-	AccountStatusN429      AccountStatus = "429"
-	AccountStatusUnhealthy AccountStatus = "unhealthy"
-)
-
 // Defines values for AccountUsageItemUpstreamError.
 const (
 	AuthExpired         AccountUsageItemUpstreamError = "auth_expired"
@@ -375,9 +359,8 @@ type Account struct {
 	BaseURL *string `json:"BaseURL"`
 
 	// CacheDomain 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PUT /accounts/{id}/cache-domain）
-	CacheDomain   *string    `json:"CacheDomain"`
-	CooldownUntil *time.Time `json:"CooldownUntil"`
-	CreatedAt     *time.Time `json:"CreatedAt,omitempty"`
+	CacheDomain *string    `json:"CacheDomain"`
+	CreatedAt   *time.Time `json:"CreatedAt,omitempty"`
 
 	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
 	DeletedAt *time.Time `json:"DeletedAt"`
@@ -395,18 +378,16 @@ type Account struct {
 	LastUsedAt    *time.Time `json:"LastUsedAt"`
 
 	// LifecycleRevision 生命周期代际（CAS fencing：每次生命周期变化/管理员凭据替换 +1；所有 fenced 端点必须携带 expected_revision）
-	LifecycleRevision *int64         `json:"LifecycleRevision,omitempty"`
-	MaxConcurrency    *int           `json:"MaxConcurrency,omitempty"`
-	Name              *string        `json:"Name,omitempty"`
-	Status            *AccountStatus `json:"Status,omitempty"`
-	Template          *Template      `json:"Template,omitempty"`
-	TemplateID        *int64         `json:"TemplateID,omitempty"`
-	UpdatedAt         *time.Time     `json:"UpdatedAt,omitempty"`
+	LifecycleRevision *int64     `json:"LifecycleRevision,omitempty"`
+	MaxConcurrency    *int       `json:"MaxConcurrency,omitempty"`
+	Name              *string    `json:"Name,omitempty"`
+	Template          *Template  `json:"Template,omitempty"`
+	TemplateID        *int64     `json:"TemplateID,omitempty"`
+	UpdatedAt         *time.Time `json:"UpdatedAt,omitempty"`
 
 	// UpstreamCostMultiplier 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PUT /accounts/{id}/cost-multiplier）
 	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
 	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
-	Weight                 *int     `json:"Weight,omitempty"`
 }
 
 // AccountCacheDomainBody defines model for AccountCacheDomainBody.
@@ -433,14 +414,12 @@ type AccountCreate struct {
 	BaseUrl *string `json:"base_url"`
 
 	// CacheDomain 可选：共享缓存域（合法域名形态 ≤253；null/缺省 = 账号私有域）；仅创建可带，更新走 /accounts/{id}/cache-domain
-	CacheDomain    *string        `json:"cache_domain"`
-	GroupIds       *[]int64       `json:"group_ids,omitempty"`
-	MaxConcurrency *int           `json:"max_concurrency,omitempty"`
-	Name           string         `json:"name"`
-	Status         *AccountStatus `json:"status,omitempty"`
-	TemplateId     int64          `json:"template_id"`
-	UpstreamKey    string         `json:"upstream_key"`
-	Weight         *int           `json:"weight,omitempty"`
+	CacheDomain    *string  `json:"cache_domain"`
+	GroupIds       *[]int64 `json:"group_ids,omitempty"`
+	MaxConcurrency *int     `json:"max_concurrency,omitempty"`
+	Name           string   `json:"name"`
+	TemplateId     int64    `json:"template_id"`
+	UpstreamKey    string   `json:"upstream_key"`
 }
 
 // AccountEnabledBody defines model for AccountEnabledBody.
@@ -497,27 +476,19 @@ type AccountListResponse struct {
 // AccountPatch defines model for AccountPatch.
 type AccountPatch struct {
 	// BaseUrl credential-type conditional batch: if any effective target is codex-oauth/codex-pat must be empty/null (non-empty forbidden); otherwise batch tristate: empty string=clear to inherit, null/omitted=unchanged, non-empty=override
-	BaseUrl        *string             `json:"base_url"`
-	GroupIds       *[]int64            `json:"group_ids,omitempty"`
-	MaxConcurrency *int                `json:"max_concurrency,omitempty"`
-	Name           *string             `json:"name,omitempty"`
-	Status         *AccountPatchStatus `json:"status,omitempty"`
-	TemplateId     *int64              `json:"template_id,omitempty"`
-	UpstreamKey    *string             `json:"upstream_key,omitempty"`
-	Weight         *int                `json:"weight,omitempty"`
+	BaseUrl        *string  `json:"base_url"`
+	GroupIds       *[]int64 `json:"group_ids,omitempty"`
+	MaxConcurrency *int     `json:"max_concurrency,omitempty"`
+	Name           *string  `json:"name,omitempty"`
+	TemplateId     *int64   `json:"template_id,omitempty"`
+	UpstreamKey    *string  `json:"upstream_key,omitempty"`
 }
-
-// AccountPatchStatus defines model for AccountPatch.Status.
-type AccountPatchStatus string
 
 // AccountRecoverBody defines model for AccountRecoverBody.
 type AccountRecoverBody struct {
 	// ExpectedRevision CAS 期望代际（= 读到的 LifecycleRevision）；过期 → 409
 	ExpectedRevision int64 `json:"expected_revision"`
 }
-
-// AccountStatus defines model for AccountStatus.
-type AccountStatus string
 
 // AccountUsageItem 账号 usage 视图 item（恒 = account_ids 去重后全量；upstream 为 codex 额度快照，api-key/无凭据账号恒 null）
 type AccountUsageItem struct {
@@ -540,9 +511,8 @@ type AccountView struct {
 	BaseURL *string `json:"BaseURL"`
 
 	// CacheDomain 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PUT /accounts/{id}/cache-domain）
-	CacheDomain   *string    `json:"CacheDomain"`
-	CooldownUntil *time.Time `json:"CooldownUntil"`
-	CreatedAt     *time.Time `json:"CreatedAt,omitempty"`
+	CacheDomain *string    `json:"CacheDomain"`
+	CreatedAt   *time.Time `json:"CreatedAt,omitempty"`
 
 	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
 	DeletedAt *time.Time `json:"DeletedAt"`
@@ -560,18 +530,16 @@ type AccountView struct {
 	LastUsedAt    *time.Time `json:"LastUsedAt"`
 
 	// LifecycleRevision 生命周期代际（CAS fencing：每次生命周期变化/管理员凭据替换 +1；所有 fenced 端点必须携带 expected_revision）
-	LifecycleRevision *int64         `json:"LifecycleRevision,omitempty"`
-	MaxConcurrency    *int           `json:"MaxConcurrency,omitempty"`
-	Name              *string        `json:"Name,omitempty"`
-	Status            *AccountStatus `json:"Status,omitempty"`
-	Template          *Template      `json:"Template,omitempty"`
-	TemplateID        *int64         `json:"TemplateID,omitempty"`
-	UpdatedAt         *time.Time     `json:"UpdatedAt,omitempty"`
+	LifecycleRevision *int64     `json:"LifecycleRevision,omitempty"`
+	MaxConcurrency    *int       `json:"MaxConcurrency,omitempty"`
+	Name              *string    `json:"Name,omitempty"`
+	Template          *Template  `json:"Template,omitempty"`
+	TemplateID        *int64     `json:"TemplateID,omitempty"`
+	UpdatedAt         *time.Time `json:"UpdatedAt,omitempty"`
 
 	// UpstreamCostMultiplier 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PUT /accounts/{id}/cost-multiplier）
 	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
 	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
-	Weight                 *int     `json:"Weight,omitempty"`
 	Concurrency            *int64   `json:"concurrency,omitempty"`
 	ErrCount               *int     `json:"err_count,omitempty"`
 	ErrRate                *float64 `json:"err_rate,omitempty"`
@@ -641,16 +609,6 @@ type BatchDeleteBody struct {
 // BatchDeleteResponse defines model for BatchDeleteResponse.
 type BatchDeleteResponse struct {
 	Deleted int `json:"deleted"`
-}
-
-// BatchResetCooldownBody defines model for BatchResetCooldownBody.
-type BatchResetCooldownBody struct {
-	Ids []int64 `json:"ids"`
-}
-
-// BatchResetCooldownResponse defines model for BatchResetCooldownResponse.
-type BatchResetCooldownResponse struct {
-	Reset int `json:"reset"`
 }
 
 // BatchUpdateAccountsBody defines model for BatchUpdateAccountsBody.
@@ -725,9 +683,6 @@ type CodexOAuthImportItem struct {
 
 	// MaxConcurrency 可选；缺省 25（导入面裁决——非账号表默认 8）；<1 → 归 25
 	MaxConcurrency *int `json:"max_concurrency,omitempty"`
-
-	// Weight 可选；缺省 100；负值 → 行级 failed
-	Weight *int `json:"weight,omitempty"`
 }
 
 // CodexPATImportBody 批量导入 codex-pat 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-pat——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）
@@ -753,9 +708,6 @@ type CodexPATImportItem struct {
 
 	// MaxConcurrency 可选；缺省 25（导入面裁决）；<1 → 归 25
 	MaxConcurrency *int `json:"max_concurrency,omitempty"`
-
-	// Weight 可选；缺省 100；负值 → 行级 failed
-	Weight *int `json:"weight,omitempty"`
 }
 
 // CodexRateLimit 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01）
@@ -1514,7 +1466,7 @@ type Rule struct {
 	Name      string     `json:"Name"`
 	Priority  int        `json:"Priority"`
 
-	// Then 动作集（只读回显；字段集与语义同 RuleCreate.then——status/cooldown/weight/throttle/fail_account/response_code/custom_message；全空 {} = 纯透传规则：命中后码/文双透、零惩罚）
+	// Then 动作集（只读回显；字段集与语义同 RuleCreate.then——throttle/fail_account/response_code/custom_message；全空 {} = 纯透传规则：命中后码/文双透、零惩罚）
 	Then      map[string]interface{} `json:"Then"`
 	UpdatedAt time.Time              `json:"UpdatedAt"`
 
@@ -1529,12 +1481,9 @@ type RuleCreate struct {
 	Priority int    `json:"priority"`
 
 	// Then 动作集（指针即意图：键缺省/null = 该维度透传不改）。全空对象 {} 合法 =
-	// 纯透传规则：命中后状态/冷却/权重零改动、响应码与文案双透传上游原样返回、
+	// 纯透传规则：命中后零惩罚、响应码与文案双透传上游原样返回、
 	// 不计惩罚（不投递状态事件）。可用键：
-	// - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
-	// - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
-	// - weight：调度权重 ∈ [0,100]
-	// - throttle：typed 限流动作（与 fail_account 及 legacy status/cooldown/weight 互斥；
+	// - throttle：typed 限流动作（与 fail_account 互斥；
 	//   response_code/custom_message 塑形可并存）——
 	//   {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}；
 	//   scope=account 作用该账号全部 RouteClass，account_route 作用单 RouteClass
@@ -1542,7 +1491,7 @@ type RuleCreate struct {
 	//   （上游 Reset 头优先，duration_ms 可选为回退）；mode=open 要求 use_reset=false
 	//   且 duration_ms > 0（固定摘除窗口）
 	// - fail_account：true = 命中即判死（终态失效：failed_at + failure_source=rule，CAS fenced，
-	//   恢复唯一入口 /accounts/{id}/recover）；与 throttle 及 legacy status/cooldown/weight 互斥
+	//   恢复唯一入口 /accounts/{id}/recover）；与 throttle 互斥
 	// - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
 	// - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
 	// 错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
@@ -1580,12 +1529,9 @@ type RulePatch struct {
 	// Then 动作集（指针即意图：键缺省/null = 该维度透传不改）。PUT 部分更新语义：
 	// 键缺省（null/省略）= 保持原值；显式提供时整体替换该对象（显式 {} = 清空），
 	// 并对合并后的完整 when/then 重新校验。全空对象 {} 合法 = 纯透传规则：
-	// 命中后状态/冷却/权重零改动、响应码与文案双透传上游原样返回、不计惩罚
+	// 命中后零惩罚、响应码与文案双透传上游原样返回、不计惩罚
 	// （不投递状态事件）。可用键：
-	// - status：命中后账号目标状态，active/unhealthy/429/disabled 之一
-	// - cooldown：冷却时长，Go time.ParseDuration 可解析且 > 0（如 "30s"、"5h"）
-	// - weight：调度权重 ∈ [0,100]
-	// - throttle：typed 限流动作（与 fail_account 及 legacy status/cooldown/weight 互斥；
+	// - throttle：typed 限流动作（与 fail_account 互斥；
 	//   response_code/custom_message 塑形可并存）——
 	//   {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}；
 	//   scope=account 作用该账号全部 RouteClass，account_route 作用单 RouteClass
@@ -1593,7 +1539,7 @@ type RulePatch struct {
 	//   （上游 Reset 头优先，duration_ms 可选为回退）；mode=open 要求 use_reset=false
 	//   且 duration_ms > 0（固定摘除窗口）
 	// - fail_account：true = 命中即判死（终态失效：failed_at + failure_source=rule，CAS fenced，
-	//   恢复唯一入口 /accounts/{id}/recover）；与 throttle 及 legacy status/cooldown/weight 互斥
+	//   恢复唯一入口 /accounts/{id}/recover）；与 throttle 互斥
 	// - response_code：缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599）
 	// - custom_message：缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串）
 	// 错误响应面无任何规则命中时默认归一为 502 "upstream rejected request"
@@ -1966,7 +1912,6 @@ type GetAccountsParams struct {
 	Name       *string                 `form:"name,omitempty" json:"name,omitempty"`
 	Sort       *string                 `form:"sort,omitempty" json:"sort,omitempty"`
 	Order      *GetAccountsParamsOrder `form:"order,omitempty" json:"order,omitempty"`
-	Status     *string                 `form:"status,omitempty" json:"status,omitempty"`
 	TemplateId *int64                  `form:"template_id,omitempty" json:"template_id,omitempty"`
 }
 
@@ -2247,9 +2192,6 @@ type PostAccountsBatchImportCodexOauthJSONRequestBody = CodexOAuthImportBody
 // PostAccountsBatchImportCodexPatJSONRequestBody defines body for PostAccountsBatchImportCodexPat for application/json ContentType.
 type PostAccountsBatchImportCodexPatJSONRequestBody = CodexPATImportBody
 
-// PostAccountsBatchResetCooldownJSONRequestBody defines body for PostAccountsBatchResetCooldown for application/json ContentType.
-type PostAccountsBatchResetCooldownJSONRequestBody = BatchResetCooldownBody
-
 // PostAccountsBatchUpdateJSONRequestBody defines body for PostAccountsBatchUpdate for application/json ContentType.
 type PostAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
 
@@ -2360,9 +2302,6 @@ type ServerInterface interface {
 	// 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
 	// (POST /accounts/batch-import-codex-pat)
 	PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request)
-	// 批量重置账号冷却（事务，全成或全败；status→active + cooldown_until=now）
-	// (POST /accounts/batch-reset-cooldown)
-	PostAccountsBatchResetCooldown(w http.ResponseWriter, r *http.Request)
 	// 批量更新账号（fields 为任意字段子集）
 	// (POST /accounts/batch-update)
 	PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
@@ -2615,12 +2554,6 @@ func (_ Unimplemented) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, 
 // 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；items ≤100 原始条数；行级失败不毁整批）
 // (POST /accounts/batch-import-codex-pat)
 func (_ Unimplemented) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 批量重置账号冷却（事务，全成或全败；status→active + cooldown_until=now）
-// (POST /accounts/batch-reset-cooldown)
-func (_ Unimplemented) PostAccountsBatchResetCooldown(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3109,14 +3042,6 @@ func (siw *ServerInterfaceWrapper) GetAccounts(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// ------------- Optional query parameter "status" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "status", r.URL.Query(), &params.Status)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
-		return
-	}
-
 	// ------------- Optional query parameter "template_id" -------------
 
 	err = runtime.BindQueryParameter("form", true, false, "template_id", r.URL.Query(), &params.TemplateId)
@@ -3183,20 +3108,6 @@ func (siw *ServerInterfaceWrapper) PostAccountsBatchImportCodexPat(w http.Respon
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAccountsBatchImportCodexPat(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostAccountsBatchResetCooldown operation middleware
-func (siw *ServerInterfaceWrapper) PostAccountsBatchResetCooldown(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostAccountsBatchResetCooldown(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5857,9 +5768,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/batch-import-codex-pat", wrapper.PostAccountsBatchImportCodexPat)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/accounts/batch-reset-cooldown", wrapper.PostAccountsBatchResetCooldown)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/batch-update", wrapper.PostAccountsBatchUpdate)
