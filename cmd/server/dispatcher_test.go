@@ -530,3 +530,27 @@ func TestDispatcherFullRefreshBootFailedFallback(t *testing.T) {
 	require.Equal(t, 2, rg.snapSched.calls())
 	require.Equal(t, 2, rg.settings.calls())
 }
+
+// TestNotifyDispatcherRoutingDirtySurvivesOversizePayload 端到端（发布守卫 →
+// 去抖器 → sched 重载）验证 routing dirty 不丢：账号静态变更风暴的 Groups 载荷
+// 超 6KB → notify.Marshal 降级置 Templates=true → dispatcher.Apply → 去抖器把
+// 组级定向升格为 sched 全量重载（全量 ⊇ 组级），生产侧全量重载尾部武装
+// RequestCompile（scheduler 侧对偶见 routing_dirty_test）。断言经真实 Marshal/
+// Unmarshal 线格式往返，不直接构造降级 Change。
+func TestNotifyDispatcherRoutingDirtySurvivesOversizePayload(t *testing.T) {
+	rg := newTestDispatcher(t)
+	groups := make([]int64, 2000) // ~20KB > 6KB 守卫阈值
+	for i := range groups {
+		groups[i] = int64(10000000 + i)
+	}
+	payload := notify.Marshal(notify.Change{V: 1, Groups: groups})
+	ch, err := notify.Unmarshal(payload)
+	require.NoError(t, err)
+	require.True(t, ch.Templates, "降级载荷必须保留全量重载触发位（routing dirty 载体）")
+
+	rg.d.Apply(context.Background(), ch)
+	waitFlush(t, func() bool { f, _ := rg.sched.counts(); return f > 0 })
+	full, grp := rg.sched.counts()
+	require.Equal(t, 1, full, "routing dirty 经 sched 全量重载收敛")
+	require.Empty(t, grp, "全量 ⊇ 组级（去抖器 merge，不重复定向）")
+}

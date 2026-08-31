@@ -101,6 +101,21 @@ func TestMarshalPayloadGuard(t *testing.T) {
 	})
 }
 
+// TestNotifyRoutingDirtySurvivesPayloadGuard intelligent routing 契约：账号/
+// 静态变更是 routing dirty 的载体（Groups → sched 组级定向重载 → RequestCompile
+// 重编译决策视图）。载荷守卫 >6KB 降级丢 Groups 时，Templates=true 必须置位
+// ——sched 全量重载包含组级（去抖器 merge 语义），routing dirty 不随载荷丢失。
+func TestNotifyRoutingDirtySurvivesPayloadGuard(t *testing.T) {
+	groups := make([]int64, 2000) // ~20KB > 6KB 守卫阈值
+	for i := range groups {
+		groups[i] = int64(10000000 + i)
+	}
+	got, err := Unmarshal(Marshal(Change{V: 1, Groups: groups}))
+	require.NoError(t, err)
+	require.Nil(t, got.Groups, "超限 → 定向组列表丢弃")
+	require.True(t, got.Templates, "routing dirty 必须经全量重载触发器保留（重编译入口）")
+}
+
 // marshalRaw 不经守卫的原始序列化（守卫边界构造/断言用——守卫内部测量的就是
 // 这个长度）。
 func marshalRaw(c Change) []byte {
