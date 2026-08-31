@@ -161,13 +161,9 @@ func TestWorker_disabled_no_claim(t *testing.T) {
 			called <- struct{}{}
 			return nil
 		}
-		processed := make(chan struct{}, 1)
 		w := New(NewCooldown(client), enabled, enqueue, nil)
-		w.processedHook = func() { processed <- struct{}{} }
-		require.NoError(t, w.Start(context.Background()))
 		ev := warningEvent(30, 100000, "disabled@example.com")
-		require.True(t, w.TrySubmit(ev))
-		waitForHook(t, processed, time.Second)
+		require.False(t, w.TrySubmit(ev))
 		select {
 		case <-called:
 			require.Fail(t, "disabled must not call enqueue")
@@ -176,8 +172,11 @@ func TestWorker_disabled_no_claim(t *testing.T) {
 		exists, err := client.Exists(context.Background(), cooldownKey(ev)).Result()
 		require.NoError(t, err)
 		require.Zero(t, exists)
-		require.Equal(t, int64(1), w.Stats().(notificationStats).Suppressed)
-		require.NoError(t, w.Close(context.Background()))
+		st := w.Stats().(notificationStats)
+		require.Equal(t, int64(1), st.Suppressed)
+		require.Zero(t, st.Admitted)
+		require.Zero(t, st.DroppedTotal)
+		require.Zero(t, st.Queued)
 	}
 }
 

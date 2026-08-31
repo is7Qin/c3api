@@ -183,20 +183,15 @@ func TestWorkerDisabledMailSkipsCooldownClaim(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client, _ := newTestRedis(t)
-			processed := make(chan struct{}, 1)
 			enqueueCalled := make(chan struct{}, 1)
 			enqueue := func(domain.BalanceWarningEvent, func(error)) error {
 				enqueueCalled <- struct{}{}
 				return nil
 			}
 			w := New(NewCooldown(client), tc.enabled, enqueue, nil)
-			w.processedHook = func() { processed <- struct{}{} }
-			require.NoError(t, w.Start(context.Background()))
-			t.Cleanup(func() { _ = w.Close(context.Background()) })
 			event := warningEvent(1, 100000, "disabled@example.com")
 
-			require.True(t, w.TrySubmit(event))
-			waitForHook(t, processed, time.Second)
+			require.False(t, w.TrySubmit(event))
 
 			select {
 			case <-enqueueCalled:
@@ -207,12 +202,163 @@ func TestWorkerDisabledMailSkipsCooldownClaim(t *testing.T) {
 			require.NoError(t, err)
 			require.Zero(t, exists)
 			stats := w.Stats().(notificationStats)
+			require.Equal(t, int64(1), stats.Evaluated)
 			require.Equal(t, int64(1), stats.Suppressed)
+			require.Zero(t, stats.Admitted)
+			require.Zero(t, stats.DroppedTotal)
+			require.Zero(t, stats.Queued)
 			require.Zero(t, stats.CooldownSuppressed)
 			require.Zero(t, stats.FailedTotal)
 			require.Empty(t, stats.LastError)
 		})
 	}
+}
+
+func TestWorkerNilEnqueueSuppressesBeforeAdmission(t *testing.T) {
+	client, _ := newTestRedis(t)
+	w := New(NewCooldown(client), enabledTrue(), nil, nil)
+
+	require.False(t, w.TrySubmit(warningEvent(1, 100000, "x@example.com")))
+
+	st := w.Stats().(notificationStats)
+	require.Equal(t, int64(1), st.Evaluated)
+	require.Equal(t, int64(1), st.Suppressed)
+	require.Zero(t, st.Admitted)
+	require.Zero(t, st.DroppedTotal)
+	require.Zero(t, st.Queued)
+}
+
+func TestWorkerDisabledDoesNotOccupyQueue(t *testing.T) {
+	client, _ := newTestRedis(t)
+	var flag atomic.Bool
+	flag.Store(true)
+	w := New(NewCooldown(client), flag.Load, func(domain.BalanceWarningEvent, func(error)) error { return nil }, nil)
+	for i := 0; i < queueCap; i++ {
+		require.True(t, w.TrySubmit(warningEvent(int64(5000+i), 100000, "fill@example.com")), "fill %d must succeed", i)
+	}
+	flag.Store(false)
+
+	require.False(t, w.TrySubmit(warningEvent(9999, 100000, "disabled@example.com")))
+
+	st := w.Stats().(notificationStats)
+	require.Equal(t, queueCap, st.Queued)
+	require.Equal(t, int64(queueCap), st.Admitted)
+	require.Equal(t, int64(1), st.Suppressed)
+	require.Zero(t, st.DroppedTotal)
+}
+
+func TestWorkerDisabledSuppressionBeatsClosedDrop(t *testing.T) {
+	client, _ := newTestRedis(t)
+	w := New(NewCooldown(client), func() bool { return false }, func(domain.BalanceWarningEvent, func(error)) error { return nil }, nil)
+	require.NoError(t, w.Close(context.Background()))
+
+	require.False(t, w.TrySubmit(warningEvent(1, 100000, "closed-disabled@example.com")))
+
+	st := w.Stats().(notificationStats)
+	require.Equal(t, int64(1), st.Suppressed)
+	require.Zero(t, st.DroppedTotal)
+	require.Zero(t, st.Admitted)
+}
+
+// TestWorkerCloseWinsAfterEnabledPrecheckDrops proves the classification when the
+// enabled precheck completes with true but Close wins the admission lock first:
+// the event is dropped (w.closed observed under w.mu), not suppressed.
+//
+// Deterministic happens-before, no scheduler assumptions:
+//  1. TrySubmit runs in a goroutine; its enabled predicate blocks on closeDone.
+//  2. Close runs to completion in the test goroutine: it sets w.closed under w.mu
+//     and releases w.mu before returning (worker never started, drain is empty).
+//  3. close(closeDone) strictly orders after Close's critical section, so the
+//     predicate returns true only after w.closed is already true.
+//  4. TrySubmit then acquires w.mu and must observe w.closed -> DroppedTotal.
+func TestWorkerCloseWinsAfterEnabledPrecheckDrops(t *testing.T) {
+	client, _ := newTestRedis(t)
+	closeDone := make(chan struct{})
+	predicated := make(chan bool, 1)
+	w := New(NewCooldown(client), func() bool {
+		<-closeDone
+		v := true
+		predicated <- v
+		return v
+	}, func(domain.BalanceWarningEvent, func(error)) error { return nil }, nil)
+
+	result := make(chan bool, 1)
+	go func() { result <- w.TrySubmit(warningEvent(1, 100000, "predrop@example.com")) }()
+
+	require.NoError(t, w.Close(context.Background()))
+	close(closeDone)
+
+	select {
+	case v := <-predicated:
+		require.True(t, v, "enabled precheck must have completed with true")
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "enabled predicate did not return after Close completed")
+	}
+
+	var ok bool
+	select {
+	case ok = <-result:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "TrySubmit did not return after Close")
+	}
+	require.False(t, ok)
+	st := w.Stats().(notificationStats)
+	require.Equal(t, int64(1), st.Evaluated)
+	require.Zero(t, st.Suppressed)
+	require.Zero(t, st.Admitted)
+	require.Equal(t, int64(1), st.DroppedTotal)
+	require.Zero(t, st.Queued)
+}
+
+func TestWorkerDynamicEnableAdmitsAfterToggle(t *testing.T) {
+	client, _ := newTestRedis(t)
+	var flag atomic.Bool
+	w := New(NewCooldown(client), flag.Load, func(domain.BalanceWarningEvent, func(error)) error { return nil }, nil)
+
+	require.False(t, w.TrySubmit(warningEvent(1, 100000, "off@example.com")))
+	flag.Store(true)
+	require.True(t, w.TrySubmit(warningEvent(2, 100000, "on@example.com")))
+
+	st := w.Stats().(notificationStats)
+	require.Equal(t, int64(2), st.Evaluated)
+	require.Equal(t, int64(1), st.Suppressed)
+	require.Equal(t, int64(1), st.Admitted)
+	require.Equal(t, 1, st.Queued)
+	require.Zero(t, st.DroppedTotal)
+}
+
+func TestWorkerDisableAfterAdmissionSuppressesOnDequeue(t *testing.T) {
+	client, _ := newTestRedis(t)
+	var flag atomic.Bool
+	flag.Store(true)
+	enqueueCalled := make(chan struct{}, 1)
+	processed := make(chan struct{}, 1)
+	w := New(NewCooldown(client), flag.Load, func(domain.BalanceWarningEvent, func(error)) error {
+		enqueueCalled <- struct{}{}
+		return nil
+	}, nil)
+	ev := warningEvent(7, 100000, "race@example.com")
+	require.True(t, w.TrySubmit(ev))
+	flag.Store(false)
+
+	w.processedHook = func() { processed <- struct{}{} }
+	require.NoError(t, w.Start(context.Background()))
+	t.Cleanup(func() { _ = w.Close(context.Background()) })
+	waitForHook(t, processed, time.Second)
+
+	select {
+	case <-enqueueCalled:
+		require.Fail(t, "disabled before dequeue must not enqueue")
+	default:
+	}
+	exists, err := client.Exists(context.Background(), cooldownKey(ev)).Result()
+	require.NoError(t, err)
+	require.Zero(t, exists)
+	st := w.Stats().(notificationStats)
+	require.Equal(t, int64(1), st.Admitted)
+	require.Equal(t, int64(1), st.Suppressed)
+	require.Zero(t, st.SentTotal)
+	require.Zero(t, st.FailedTotal)
 }
 
 func TestWorkerConcurrentSameThresholdDedupedByConsumer(t *testing.T) {
