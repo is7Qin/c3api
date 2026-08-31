@@ -438,7 +438,7 @@ function FormFields({
           {batch && setBatchMappingMode && (
             <div className="flex flex-wrap items-center gap-1.5">
               <Label className="text-xs font-normal text-muted-foreground">{t('templates.modelMappingBatchModeLabel')}</Label>
-              <Select value={batchMappingMode} onValueChange={v => { if (isBatchMappingMode(v)) setBatchMappingMode(v) }}>
+              <Select value={batchMappingMode} items={{ unchanged: t('templates.modelMappingBatchMode.unchanged'), replace: t('templates.modelMappingBatchMode.replace') }} onValueChange={v => { if (isBatchMappingMode(v)) setBatchMappingMode(v) }}>
                 <SelectTrigger className="h-7 w-32"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="unchanged" label={t('templates.modelMappingBatchMode.unchanged')}>{t('templates.modelMappingBatchMode.unchanged')}</SelectItem>
@@ -471,7 +471,7 @@ function FormFields({
                     onChange={e => setMappingRow(i, { mapped_model: e.target.value })}
                     aria-label={t('templates.upstreamModelPlaceholder')}
                   />
-                  <Select value={row.mode} onValueChange={v => { if (isMappingMode(v)) setMappingRow(i, { mode: v }) }}>
+                  <Select value={row.mode} items={{ explicit: t('templates.modelMappingMode.explicit'), implicit: t('templates.modelMappingMode.implicit') }} onValueChange={v => { if (isMappingMode(v)) setMappingRow(i, { mode: v }) }}>
                     <SelectTrigger className="w-28 shrink-0" aria-label={t('templates.modelMappingModeLabel')}><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="explicit" label={t('templates.modelMappingMode.explicit')}>{t('templates.modelMappingMode.explicit')}</SelectItem>
