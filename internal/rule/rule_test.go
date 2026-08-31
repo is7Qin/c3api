@@ -97,31 +97,14 @@ func (f *fakeRuleStore) CountRules(ctx context.Context) (int64, error) {
 	return int64(len(f.rules)), nil
 }
 
-// —— 记录型 ApplyFunc ——
-
-type applied struct {
-	aid      int64
-	status   *domain.AccountStatus
-	cooldown *time.Time
-	weight   *int
-	errMsg   string
+// openThrottle 测试用 typed throttle 动作（account/open/1s）。
+func openThrottle() *domain.ThrottleAction {
+	return openThrottleMs(1000)
 }
 
-type recorder struct {
-	mu      sync.Mutex
-	applied []applied
-}
-
-func (r *recorder) fn(aid int64, st *domain.AccountStatus, cd *time.Time, w *int, errMsg string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.applied = append(r.applied, applied{aid: aid, status: st, cooldown: cd, weight: w, errMsg: errMsg})
-}
-
-func (r *recorder) get() []applied {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.applied)
+func openThrottleMs(ms int64) *domain.ThrottleAction {
+	d := ms
+	return &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: &d}
 }
 
 // —— 测试基座 ——
@@ -191,21 +174,14 @@ func TestValidateWhen(t *testing.T) {
 }
 
 func TestValidateThen(t *testing.T) {
-	status := domain.Status429
-	cooldown := "30s"
-	weight := 40
 	cases := []struct {
 		name string
 		t    domain.RuleThen
 		ok   bool
 	}{
 		{"no action pure-passthrough", domain.RuleThen{}, true},
-		{"status only", domain.RuleThen{Status: &status}, true},
-		{"cooldown only", domain.RuleThen{Cooldown: &cooldown}, true},
 		{"custom_message only", domain.RuleThen{CustomMessage: strPtr("rate limited")}, true},
 		{"response_code only 502", domain.RuleThen{ResponseCode: intPtr(502)}, true},
-		{"response_code with cooldown", domain.RuleThen{ResponseCode: intPtr(429), Cooldown: &cooldown}, true},
-		{"custom_message with cooldown", domain.RuleThen{CustomMessage: strPtr("x"), Cooldown: &cooldown}, true},
 		{"response_code 400 ok", domain.RuleThen{ResponseCode: intPtr(400)}, true},
 		{"response_code 599 ok", domain.RuleThen{ResponseCode: intPtr(599)}, true},
 		{"response_code 200 rejected", domain.RuleThen{ResponseCode: intPtr(200)}, false},
@@ -213,13 +189,8 @@ func TestValidateThen(t *testing.T) {
 		{"response_code 600 rejected", domain.RuleThen{ResponseCode: intPtr(600)}, false},
 		{"response_code -1 rejected", domain.RuleThen{ResponseCode: intPtr(-1)}, false},
 		{"custom_message empty rejected", domain.RuleThen{CustomMessage: strPtr("")}, false},
-		{"bad status", domain.RuleThen{Status: statusPtr(domain.AccountStatus("banana"))}, false},
-		{"unparseable cooldown", domain.RuleThen{Cooldown: strPtr("30x")}, false},
-		{"zero cooldown", domain.RuleThen{Cooldown: strPtr("0s")}, false},
-		{"negative cooldown", domain.RuleThen{Cooldown: strPtr("-5s")}, false},
-		{"weight over 100", domain.RuleThen{Weight: intPtr(101)}, false},
-		{"negative weight", domain.RuleThen{Weight: intPtr(-1)}, false},
-		{"weight only", domain.RuleThen{Weight: &weight}, true},
+		{"typed throttle open valid", domain.RuleThen{Throttle: openThrottle()}, true},
+		{"typed throttle + shaping valid", domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502)}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -357,43 +328,6 @@ func TestMatch(t *testing.T) {
 	}
 }
 
-func TestApply(t *testing.T) {
-	status := domain.StatusActive
-	weight := 40
-	resetAt := at(90)
-	ev := Event{AccountID: 1, Kind: Kind429, OccurredAt: at(10), ResetAt: &resetAt}
-
-	// cooldown = OccurredAt + 30s
-	st, cd, w := Apply(domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")}, ev)
-	require.NotNil(t, st)
-	require.Equal(t, domain.Status429, *st)
-	require.Equal(t, at(40), *cd)
-	require.Nil(t, w)
-
-	// cooldown 未配 + ResetAt 非 nil → ResetAt（M2 残留语义）
-	st, cd, _ = Apply(domain.RuleThen{Status: &status}, ev)
-	require.Equal(t, domain.StatusActive, *st)
-	require.Equal(t, at(90), *cd)
-
-	// cooldown 优先于 ResetAt
-	_, cd, _ = Apply(domain.RuleThen{Cooldown: strPtr("5s")}, ev)
-	require.Equal(t, at(15), *cd)
-
-	// 只改权重：status nil；无 cooldown 时 ResetAt 兜底（M2 残留语义）
-	st, cd, w = Apply(domain.RuleThen{Weight: &weight}, ev)
-	require.Nil(t, st)
-	require.Equal(t, at(90), *cd)
-	require.Equal(t, 40, *w)
-
-	// 无 cooldown 且无 ResetAt → 无冷却
-	_, cd, _ = Apply(domain.RuleThen{Weight: &weight}, Event{AccountID: 1, OccurredAt: at(10)})
-	require.Nil(t, cd)
-
-	// 非法 cooldown（校验已挡，防御性跳过）
-	_, cd, _ = Apply(domain.RuleThen{Cooldown: strPtr("bogus")}, ev)
-	require.Nil(t, cd)
-}
-
 // —— 引擎 ——
 
 func TestReloadNeedsOKEvents(t *testing.T) {
@@ -410,7 +344,7 @@ func TestReloadNeedsOKEvents(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e, _ := newTestEngine(t, domain.Rule{
 				Name: "r", Enabled: true, Priority: 10,
-				When: tc.when, Then: domain.RuleThen{Status: statusPtr(domain.StatusActive)},
+				When: tc.when, Then: domain.RuleThen{},
 			})
 			require.Equal(t, tc.needs, e.NeedsOKEvents())
 		})
@@ -422,20 +356,24 @@ func TestSeedRules(t *testing.T) {
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.Reload(context.Background()))
 
-	// 种子 6 条（fresh setup 哲学，指针即意图）：429/30s+nil/rate limited、4xx+400/nil/nil 全透、5xx+503+overload 全透、
-	// 5xx/unhealthy/10m+502/generic、network/unhealthy/5s+502/generic、ok/active，priority 10/15/16/20/25/30
-	require.Equal(t, int64(6), mustCountAny(t, st))
-	require.True(t, e.NeedsOKEvents()) // 种子含 kind=ok 恢复规则（C1）
+	// 种子 5 条（fresh setup 哲学，指针即意图）：429/throttle(retry_after,use_reset)+文不透、
+	// 4xx+400 全透、5xx+503+overload 全透、5xx/throttle(open,10m)+502/generic、
+	// network/throttle(open,5s)+502/generic，priority 10/15/16/20/25。
+	// 恢复无种子规则——RuntimeHealth 探针是唯一恢复路径。
+	require.Equal(t, int64(5), mustCountAny(t, st))
+	require.False(t, e.NeedsOKEvents()) // 无 kind=ok 种子（成功事件不驱动状态机）
 
 	rules, err := st.ListRules(context.Background(), nil)
 	require.NoError(t, err)
-	require.Len(t, rules, 6)
-	require.Equal(t, []int{10, 15, 16, 20, 25, 30}, []int{
-		rules[0].Priority, rules[1].Priority, rules[2].Priority, rules[3].Priority, rules[4].Priority, rules[5].Priority,
+	require.Len(t, rules, 5)
+	require.Equal(t, []int{10, 15, 16, 20, 25}, []int{
+		rules[0].Priority, rules[1].Priority, rules[2].Priority, rules[3].Priority, rules[4].Priority,
 	})
 	require.Equal(t, "429", *rules[0].When.Kind)
-	require.Equal(t, domain.Status429, *rules[0].Then.Status)
-	require.Equal(t, "30s", *rules[0].Then.Cooldown)
+	require.NotNil(t, rules[0].Then.Throttle)
+	require.Equal(t, domain.ThrottleScopeAccount, rules[0].Then.Throttle.Scope)
+	require.Equal(t, domain.ThrottleModeRetryAfter, rules[0].Then.Throttle.Mode)
+	require.True(t, rules[0].Then.Throttle.UseReset)
 	require.Nil(t, rules[0].Then.ResponseCode, "seed-429 码透传 nil")
 	require.NotNil(t, rules[0].Then.CustomMessage)
 	require.Equal(t, "rate limited", *rules[0].Then.CustomMessage, "seed-429 文不透 rate limited")
@@ -443,34 +381,32 @@ func TestSeedRules(t *testing.T) {
 	require.Equal(t, 400, *rules[1].When.HTTPStatus)
 	require.Nil(t, rules[1].Then.ResponseCode, "seed-4xx-400 码透传 nil")
 	require.Nil(t, rules[1].Then.CustomMessage, "seed-4xx-400 文透传 nil（全透，种子特例）")
-	require.Nil(t, rules[1].Then.Status)
-	require.Nil(t, rules[1].Then.Cooldown)
+	require.Nil(t, rules[1].Then.Throttle)
+	require.False(t, rules[1].Then.FailAccount)
 	require.Equal(t, "5xx", *rules[2].When.Kind)
 	require.Equal(t, 503, *rules[2].When.HTTPStatus)
 	require.Equal(t, "overload", *rules[2].When.ErrorMessageContains)
 	require.Nil(t, rules[2].Then.ResponseCode, "seed-5xx-503-overload 码透传 nil")
 	require.Nil(t, rules[2].Then.CustomMessage, "seed-5xx-503-overload 文透传 nil（503 overload 全透）")
-	require.Nil(t, rules[2].Then.Status)
-	require.Nil(t, rules[2].Then.Cooldown)
+	require.Nil(t, rules[2].Then.Throttle)
 	require.Equal(t, "5xx", *rules[3].When.Kind)
-	require.Equal(t, domain.StatusUnhealthy, *rules[3].Then.Status)
-	require.Equal(t, "10m", *rules[3].Then.Cooldown, "seed-5xx 冷却 10m（用户裁决）")
+	require.NotNil(t, rules[3].Then.Throttle)
+	require.Equal(t, domain.ThrottleModeOpen, rules[3].Then.Throttle.Mode)
+	require.Equal(t, int64(10*60*1000), *rules[3].Then.Throttle.DurationMs, "seed-5xx open 10m（用户裁决）")
 	require.NotNil(t, rules[3].Then.ResponseCode)
 	require.Equal(t, 502, *rules[3].Then.ResponseCode)
 	require.Equal(t, "Upstream request failed", *rules[3].Then.CustomMessage)
 	require.Equal(t, "network", *rules[4].When.Kind)
-	require.Equal(t, domain.StatusUnhealthy, *rules[4].Then.Status)
-	require.Equal(t, "5s", *rules[4].Then.Cooldown, "seed-network 冷却 5s（连接级独立，不吃 10m）")
+	require.NotNil(t, rules[4].Then.Throttle)
+	require.Equal(t, domain.ThrottleModeOpen, rules[4].Then.Throttle.Mode)
+	require.Equal(t, int64(5000), *rules[4].Then.Throttle.DurationMs, "seed-network open 5s（连接级独立，不吃 10m）")
 	require.NotNil(t, rules[4].Then.ResponseCode)
 	require.Equal(t, 502, *rules[4].Then.ResponseCode)
 	require.Equal(t, "Upstream request failed", *rules[4].Then.CustomMessage)
-	require.Equal(t, "ok", *rules[5].When.Kind)
-	require.Equal(t, domain.StatusActive, *rules[5].Then.Status)
-	require.Nil(t, rules[5].Then.Cooldown)
 
 	// 非空表不重复写种子
 	require.NoError(t, e.Reload(context.Background()))
-	require.Equal(t, int64(6), mustCountAny(t, st))
+	require.Equal(t, int64(5), mustCountAny(t, st))
 }
 
 // mustCountAny 表内规则数（接受唯一约束包装 store；种子幂等测试用）。
@@ -485,37 +421,35 @@ func TestPriorityHitOrder(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "low", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("5xx")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("5s")}},
+			Then: domain.RuleThen{Throttle: openThrottleMs(5000)}},
 		domain.Rule{Name: "high", Enabled: true, Priority: 20,
 			When: domain.RuleWhen{Kind: strPtr("5xx")},
-			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")}},
+			Then: domain.RuleThen{Throttle: openThrottleMs(30000)}},
 	)
-	var rec recorder
-	e.SetApply(rec.fn)
+	sink := newFakeSink(10)
+	e.SetHealthSink(sink)
 
 	// 两规则都命中：priority 低者首中，只执行一次
 	e.HandleEvent(context.Background(), evAt(Kind5xx, 0))
-	app := rec.get()
-	require.Len(t, app, 1)
-	require.Equal(t, domain.StatusUnhealthy, *app[0].status)
-	require.Equal(t, at(5), *app[0].cooldown)
+	require.Equal(t, 1, sink.countThrottle())
+	require.Equal(t, int64(5000), *sink.lastThrottle().DurationMs)
 
 	// ok 事件两规则都不命中
 	e.HandleEvent(context.Background(), evAt(KindOK, 1))
-	require.Len(t, rec.get(), 1)
+	require.Equal(t, 1, sink.countThrottle())
 }
 
 func TestDisabledRuleNotLoaded(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "off", Enabled: false, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("5xx")},
-		Then: domain.RuleThen{Status: statusPtr(domain.Status429)},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	var rec recorder
-	e.SetApply(rec.fn)
+	sink := newFakeSink(10)
+	e.SetHealthSink(sink)
 	require.False(t, e.NeedsOKEvents())
 	e.HandleEvent(context.Background(), evAt(Kind5xx, 0))
-	require.Empty(t, rec.get())
+	require.Equal(t, 0, sink.countThrottle())
 }
 
 // TestHitKeepsCountsThenDecays 命中不清零窗口计数（C2）：阈值 2 连续命中两次；
@@ -524,20 +458,20 @@ func TestHitKeepsCountsThenDecays(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "escalate", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("5xx"), CountFailureGE: intPtr(2), WindowSeconds: intPtr(30)},
-		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	var rec recorder
-	e.SetApply(rec.fn)
+	sink := newFakeSink(10)
+	e.SetHealthSink(sink)
 
 	e.HandleEvent(context.Background(), evAt(Kind5xx, 0)) // err=1，未命中
-	require.Empty(t, rec.get())
+	require.Equal(t, 0, sink.countThrottle())
 	e.HandleEvent(context.Background(), evAt(Kind5xx, 1)) // err=2，命中
-	require.Len(t, rec.get(), 1)
+	require.Equal(t, 1, sink.countThrottle())
 	e.HandleEvent(context.Background(), evAt(Kind5xx, 2)) // err=3（不清零），再命中
-	require.Len(t, rec.get(), 2)
+	require.Equal(t, 2, sink.countThrottle())
 
 	e.HandleEvent(context.Background(), evAt(Kind5xx, 36)) // 窗口 [6,36]：仅 +36，err=1 未命中
-	require.Len(t, rec.get(), 2)
+	require.Equal(t, 2, sink.countThrottle())
 }
 
 func TestRatioMatchWithTotalFloor(t *testing.T) {
@@ -546,32 +480,29 @@ func TestRatioMatchWithTotalFloor(t *testing.T) {
 		When: domain.RuleWhen{
 			Kind: nil, Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4), WindowSeconds: intPtr(30),
 		},
-		Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	var rec recorder
-	e.SetApply(rec.fn)
+	sink := newFakeSink(10)
+	e.SetHealthSink(sink)
 
 	// 429×2 + ok×2 → total=4、ratio=0.5 → 命中（needsOK：kind=nil → ok 计数维护）
 	e.HandleEvent(context.Background(), evAt(Kind429, 0))
 	e.HandleEvent(context.Background(), evAt(Kind429, 1))
 	e.HandleEvent(context.Background(), evAt(KindOK, 2))
 	e.HandleEvent(context.Background(), evAt(KindOK, 3))
-	app := rec.get()
-	require.Len(t, app, 1)
-	require.Equal(t, domain.Status429, *app[0].status)
-	require.Equal(t, at(33), *app[0].cooldown)
+	require.Equal(t, 1, sink.countThrottle())
 
 	// 样本不足：total=2 < 4 → 比例不参与
 	e2, _ := newTestEngine(t, domain.Rule{
 		Name: "hot2", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4), WindowSeconds: intPtr(30)},
-		Then: domain.RuleThen{Status: statusPtr(domain.Status429)},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	var rec2 recorder
-	e2.SetApply(rec2.fn)
+	sink2 := newFakeSink(10)
+	e2.SetHealthSink(sink2)
 	e2.HandleEvent(context.Background(), evAt(Kind429, 0))
 	e2.HandleEvent(context.Background(), evAt(Kind429, 1))
-	require.Empty(t, rec2.get())
+	require.Equal(t, 0, sink2.countThrottle())
 }
 
 // —— worker ——
@@ -601,17 +532,14 @@ func TestCloseDrainsQueue(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "fail", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("5xx")},
-		Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	var rec recorder
-	e.SetApply(rec.fn)
+	sink := newFakeSink(10)
+	e.SetHealthSink(sink)
 	// 未 Start：Close 直接排空
 	e.Enqueue(evAt(Kind5xx, 5))
 	require.NoError(t, e.Close(context.Background()))
-	app := rec.get()
-	require.Len(t, app, 1)
-	require.Equal(t, domain.Status429, *app[0].status)
-	require.Equal(t, at(35), *app[0].cooldown)
+	require.Equal(t, 1, sink.countThrottle())
 
 	// Close 幂等
 	require.NoError(t, e.Close(context.Background()))
@@ -621,15 +549,15 @@ func TestStartConsumesThenCloseDrains(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "fail", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("5xx")},
-		Then: domain.RuleThen{Status: statusPtr(domain.Status429)},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	var rec recorder
-	e.SetApply(rec.fn)
+	sink := newFakeSink(10)
+	e.SetHealthSink(sink)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, e.Start(ctx))
 	e.Enqueue(evAt(Kind5xx, 0))
-	require.Eventually(t, func() bool { return len(rec.get()) == 1 }, 5*time.Second, 10*time.Millisecond)
+	waitSignals(t, sink.ch, 1)
 
 	// 取消后：loop 退出，Close 排空剩余
 	cancel()
@@ -637,7 +565,7 @@ func TestStartConsumesThenCloseDrains(t *testing.T) {
 	closeCtx, closeCancel := context.WithTimeout(context.Background(), time.Second)
 	defer closeCancel()
 	require.NoError(t, e.Close(closeCtx))
-	require.Eventually(t, func() bool { return len(rec.get()) == 2 }, 5*time.Second, 10*time.Millisecond)
+	require.Equal(t, 2, sink.countThrottle())
 }
 
 // uniqueRuleStore 在 fakeRuleStore 之上施加 name/priority 唯一约束（模拟真实
@@ -662,7 +590,7 @@ func (u *uniqueRuleStore) CreateRule(ctx context.Context, r domain.Rule) (int64,
 
 // TestSeedRulesIdempotentConcurrent 多实例启动种子竞态（设计文档 R2 / 必改 10）：
 // 两引擎并发 Reload 空表 → 一方唯一约束冲突被容忍（跳过继续），双双成功，
-// 最终种子并集恰 3 条。
+// 最终种子并集恰 5 条。
 func TestSeedRulesIdempotentConcurrent(t *testing.T) {
 	st := &uniqueRuleStore{newFakeRuleStore()}
 	e1 := New(Config{}, st, nil)
@@ -675,7 +603,7 @@ func TestSeedRulesIdempotentConcurrent(t *testing.T) {
 	wg.Wait()
 	require.NoError(t, err1)
 	require.NoError(t, err2, "冲突方不得失败（唯一约束 → 跳过继续，并集收敛）")
-	require.Equal(t, int64(6), mustCountAny(t, st), "种子并集恰 6 条（不双写）")
+	require.Equal(t, int64(5), mustCountAny(t, st), "种子并集恰 5 条（不双写）")
 }
 
 // TestSeedRulesIdempotentRepeat 已种子表重复 Reload 不重写（幂等回归）。
@@ -683,9 +611,9 @@ func TestSeedRulesIdempotentRepeat(t *testing.T) {
 	st := &uniqueRuleStore{newFakeRuleStore()}
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.Reload(context.Background()))
-	require.Equal(t, int64(6), mustCountAny(t, st))
+	require.Equal(t, int64(5), mustCountAny(t, st))
 	require.NoError(t, e.Reload(context.Background()))
-	require.Equal(t, int64(6), mustCountAny(t, st), "重复 Reload 不重写种子")
+	require.Equal(t, int64(5), mustCountAny(t, st), "重复 Reload 不重写种子")
 }
 
 // TestReloadRulesAdapter ReloadRules 与 Reload 同实现（invalidate.RulesReloader
@@ -694,7 +622,7 @@ func TestReloadRulesAdapter(t *testing.T) {
 	st := newFakeRuleStore()
 	e := New(Config{}, st, nil)
 	require.NoError(t, e.ReloadRules(context.Background()))
-	require.Equal(t, int64(6), mustCountAny(t, st), "ReloadRules 空表同样写种子")
+	require.Equal(t, int64(5), mustCountAny(t, st), "ReloadRules 空表同样写种子")
 }
 
 // —— 热点修复 B：Enqueue 丢弃阈值告警（errlog 模式对齐） ——
@@ -749,23 +677,23 @@ func newTestRuleLogger(t *testing.T) (*logx.Logger, string) {
 // —— Classify（错误分类决策） ——
 
 // TestClassify 分类矩阵：遍历 enabled 规则 priority 升序首中（非窗口条件
-// 维度）；命中 → transmit = 命中规则 then.transmit、punish = 有状态动作；
-// 无命中 → (false, false)（默认归一）。
+// 维度）；命中 → then = 命中规则 then（指针即意图）、punish = typed 惩罚动作
+// （Throttle/FailAccount）；无命中 → 默认归一。
 func TestClassify(t *testing.T) {
 	http400, http401 := 400, 401
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "r4xx-401", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http401},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("30m"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
-		domain.Rule{Name: "r4xx-400-transmit", Enabled: true, Priority: 15,
+			Then: domain.RuleThen{Throttle: openThrottleMs(30 * 60 * 1000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+		domain.Rule{Name: "r4xx-400-passthrough", Enabled: true, Priority: 15,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
 			Then: domain.RuleThen{}},
 		domain.Rule{Name: "r5xx", Enabled: true, Priority: 20,
 			When: domain.RuleWhen{Kind: strPtr("5xx")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 		domain.Rule{Name: "rnet", Enabled: true, Priority: 25,
 			When: domain.RuleWhen{Kind: strPtr("network")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 	)
 	ev := func(kind Kind, code int, msg string) Event {
 		var hp *int
@@ -782,18 +710,18 @@ func TestClassify(t *testing.T) {
 	require.Equal(t, "upstream rejected request", *then.CustomMessage)
 	require.False(t, pu)
 
-	// kind=4xx + http=401 → 401 (502+generic, true)（unhealthy 30m——用户案例，指针归一）
+	// kind=4xx + http=401 → 401 (502+generic, true)（throttle open 30m——用户案例，指针归一）
 	then, pu = e.Classify(ev(Kind4xx, 401, "no balance"))
 	require.NotNil(t, then.ResponseCode)
 	require.Equal(t, 502, *then.ResponseCode, "未透传 → 归一 502")
 	require.NotNil(t, then.CustomMessage)
-	require.True(t, pu, "有状态动作 → 投递")
+	require.True(t, pu, "typed 惩罚动作 → 投递")
 
 	// kind=4xx + http=400 + passthrough → 400 (nil/nil, false)（指针 nil 即透传）
 	then, pu = e.Classify(ev(Kind4xx, 400, "bad request"))
 	require.Nil(t, then.ResponseCode, "透传规则 → ResponseCode nil")
 	require.Nil(t, then.CustomMessage, "透传规则 → CustomMessage nil")
-	require.False(t, pu, "透传-only 无状态动作")
+	require.False(t, pu, "透传-only 无惩罚动作")
 
 	// kind=5xx → 5xx (502+generic, true)
 	then, pu = e.Classify(ev(Kind5xx, 500, "boom"))
@@ -819,31 +747,27 @@ func TestClassify(t *testing.T) {
 	require.False(t, pu)
 }
 
-// TestClassifyCooldownPunish A-1 修复回归（2026-08-19 缺陷 1 直接根因）：
-// punish 判定必须含 Cooldown——cooldown-only 规则（transmit=false、status/
-// weight nil）命中后必须 punish=true，否则 429/5xx/network 分支不投递
-// MarkResult、冷却动作静默丢弃（账号恒 active、请求恒 "no available
-// account"）。矩阵：cooldown-only / 带 status（回归）/ transmit-only（回归，
-// 透传不冷却语义不变）/ transmit+cooldown 组合（评审 O-3）/ 窗口条件
-// cooldown-only（保守"可能命中"语义，与既有窗口规则测试同构）。
-func TestClassifyCooldownPunish(t *testing.T) {
-	http401, http400, http402 := 401, 400, 402
+// TestClassifyThrottlePunish punish 判定矩阵（typed 动作唯一惩罚面）：
+// throttle-only / throttle+shaping / shaping-only（punish=false 回归）/
+// fail_account / 窗口条件 throttle（保守"可能命中"语义）。
+func TestClassifyThrottlePunish(t *testing.T) {
+	http400, http402 := 400, 402
 	e, _ := newTestEngine(t,
-		domain.Rule{Name: "cd-only", Enabled: true, Priority: 10,
+		domain.Rule{Name: "th-only", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("429")},
-			Then: domain.RuleThen{Cooldown: strPtr("5h"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
-		domain.Rule{Name: "status-429", Enabled: true, Priority: 20,
-			When: domain.RuleWhen{Kind: strPtr("429"), HTTPStatus: &http401},
-			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
-		domain.Rule{Name: "transmit-only", Enabled: true, Priority: 30,
+			Then: domain.RuleThen{Throttle: openThrottleMs(5 * 60 * 60 * 1000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+		domain.Rule{Name: "fail-429", Enabled: true, Priority: 20,
+			When: domain.RuleWhen{Kind: strPtr("429"), HTTPStatus: intPtr(401)},
+			Then: domain.RuleThen{FailAccount: true, ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+		domain.Rule{Name: "shaping-only", Enabled: true, Priority: 30,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
 			Then: domain.RuleThen{}},
-		domain.Rule{Name: "transmit-cd", Enabled: true, Priority: 40,
+		domain.Rule{Name: "th-passthrough", Enabled: true, Priority: 40,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http402},
-			Then: domain.RuleThen{Cooldown: strPtr("30s")}},
-		domain.Rule{Name: "window-cd", Enabled: true, Priority: 50,
+			Then: domain.RuleThen{Throttle: openThrottle()}},
+		domain.Rule{Name: "window-th", Enabled: true, Priority: 50,
 			When: domain.RuleWhen{Kind: strPtr("5xx"), CountFailureGE: intPtr(5), WindowSeconds: intPtr(60)},
-			Then: domain.RuleThen{Cooldown: strPtr("5h"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			Then: domain.RuleThen{Throttle: openThrottleMs(5 * 60 * 60 * 1000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 	)
 	ev := func(kind Kind, code int) Event {
 		var hp *int
@@ -853,32 +777,32 @@ func TestClassifyCooldownPunish(t *testing.T) {
 		return Event{AccountID: 1, Kind: kind, HTTPStatus: hp}
 	}
 
-	// cooldown-only 规则 → punish=true，归一 502（修复前 false——缺陷 1 根因，指针归一）
+	// throttle-only 规则 → punish=true，归一 502
 	then, pu := e.Classify(ev(Kind429, 0))
 	require.NotNil(t, then.ResponseCode)
 	require.Equal(t, 502, *then.ResponseCode)
-	require.True(t, pu, "cooldown-only 规则 punish=true（漏 Cooldown → 冷却永不生效）")
+	require.True(t, pu, "throttle 规则 punish=true")
 
-	// 带 status 规则 → punish=true（回归，归一）
-	then, pu = e.Classify(ev(Kind429, http401))
+	// fail_account 规则 → punish=true
+	then, pu = e.Classify(ev(Kind429, 401))
 	require.NotNil(t, then.ResponseCode)
-	require.True(t, pu, "带 status 规则 punish=true 回归")
+	require.True(t, pu, "fail_account 规则 punish=true")
 
-	// transmit-only 规则 → punish=false（回归——透传 nil/nil 不冷却，语义不变）
+	// shaping-only 规则 → punish=false（透传 nil/nil，语义不变）
 	then, pu = e.Classify(ev(Kind4xx, http400))
-	require.Nil(t, then.ResponseCode, "transmit-only 指针 nil 透传")
+	require.Nil(t, then.ResponseCode, "shaping-only 指针 nil 透传")
 	require.Nil(t, then.CustomMessage)
-	require.False(t, pu, "transmit-only 规则 punish=false 回归")
+	require.False(t, pu, "shaping-only 规则 punish=false 回归")
 
-	// transmit+cooldown 组合 → (nil/nil passthrough, true)（评审 O-3，指针透传+冷却）
+	// throttle + 透传组合 → (nil 透传码, true)
 	then, pu = e.Classify(ev(Kind4xx, http402))
-	require.Nil(t, then.ResponseCode, "transmit+cooldown 透传码")
-	require.True(t, pu, "transmit+cooldown 组合 punish=true")
+	require.Nil(t, then.ResponseCode, "throttle+透传 透传码")
+	require.True(t, pu, "throttle+透传 组合 punish=true")
 
-	// 窗口条件 cooldown-only 规则 → 保守 punish=true（投递后 worker 窗口精确判，归一）
+	// 窗口条件 throttle 规则 → 保守 punish=true（投递后 worker 窗口精确判）
 	then, pu = e.Classify(ev(Kind5xx, 500))
 	require.NotNil(t, then.ResponseCode)
-	require.True(t, pu, "窗口条件 cooldown-only 规则 punish=true（可能命中）")
+	require.True(t, pu, "窗口条件 throttle 规则 punish=true（可能命中）")
 }
 
 // TestClassifyMessageContains message_contains 参与分类（含/不含）。
@@ -886,7 +810,7 @@ func TestClassifyMessageContains(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "balance", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), ErrorMessageContains: strPtr("balance")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+			Then: domain.RuleThen{Throttle: openThrottle()}},
 	)
 	ev := func(msg string) Event {
 		code := 401
@@ -905,7 +829,7 @@ func TestClassifyWindowRulePossibleHit(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "escalate", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("4xx"), CountFailureGE: intPtr(5), WindowSeconds: intPtr(60)},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
 	)
 	code := 401
 	then, pu := e.Classify(Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: &code, ErrorMessage: "x"})
@@ -921,19 +845,19 @@ func TestWindowErrBucket4xx5xxNetwork(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "escalate", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{CountFailureGE: intPtr(3), WindowSeconds: intPtr(30)},
-		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	var rec recorder
-	e.SetApply(rec.fn)
+	sink := newFakeSink(10)
+	e.SetHealthSink(sink)
 
 	// 1×5xx + 1×4xx + 1×network → failure 桶 = 3 → count_failure_ge=3 命中
 	//（kind 不限——只测 failure 桶计数；漏加 case 则三类事件不进桶，永不命中）
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind5xx, OccurredAt: at(0)})
-	require.Empty(t, rec.get())
+	require.Equal(t, 0, sink.countThrottle())
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind4xx, OccurredAt: at(1)})
-	require.Empty(t, rec.get())
+	require.Equal(t, 0, sink.countThrottle())
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: KindNetwork, OccurredAt: at(2)})
-	require.Len(t, rec.get(), 1, "4xx/5xx/network 三类事件全部计入 failure 桶（防呆 a）")
+	require.Equal(t, 1, sink.countThrottle(), "4xx/5xx/network 三类事件全部计入 failure 桶（防呆 a）")
 }
 
 // TestClassifyModelSemantics P2-1 最终模型三面一致：ModelMapping gpt-5->gpt-5-0611 时
@@ -963,7 +887,7 @@ func TestClassifyModelSemantics(t *testing.T) {
 	eFinal, _ := newTestEngine(t, domain.Rule{
 		Name: "final-model", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Model: strPtr(finalModel)},
-		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 	_, pu := eFinal.Classify(ev)
 	require.True(t, pu, "Classify: when.model=gpt-5-0611 命中最终模型 → punish")
@@ -976,7 +900,7 @@ func TestClassifyModelSemantics(t *testing.T) {
 	eRaw, _ := newTestEngine(t, domain.Rule{
 		Name: "raw-model", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Model: strPtr(rawModel)},
-		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 	_, pu = eRaw.Classify(ev)
 	require.False(t, pu, "Classify: when.model=gpt-5 不命中最终模型 gpt-5-0611")

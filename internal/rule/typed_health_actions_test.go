@@ -61,6 +61,13 @@ func (f *fakeHealthSink) countThrottle() int {
 	defer f.mu.Unlock()
 	return len(f.throttles)
 }
+
+// lastThrottle 返回最近一次 Throttle 调用的动作（调用方须已确认 countThrottle>0）。
+func (f *fakeHealthSink) lastThrottle() domain.ThrottleAction {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.throttles[len(f.throttles)-1].th
+}
 func (f *fakeHealthSink) countFail() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -91,10 +98,6 @@ func TestRuleThrottle_Validate_MalformedUnion(t *testing.T) {
 		ok   bool
 	}{
 		{"throttle+fail both", domain.RuleThen{Throttle: th, FailAccount: true}, false},
-		{"throttle+legacy status", domain.RuleThen{Throttle: th, Status: statusPtr(domain.Status429)}, false},
-		{"throttle+legacy cooldown", domain.RuleThen{Throttle: th, Cooldown: strPtr("30s")}, false},
-		{"throttle+legacy weight", domain.RuleThen{Throttle: th, Weight: intPtr(10)}, false},
-		{"fail+legacy status", domain.RuleThen{FailAccount: true, Status: statusPtr(domain.Status429)}, false},
 		{"throttle retry_after valid", domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, UseReset: true}}, true},
 		{"fail alone", domain.RuleThen{FailAccount: true}, true},
 	}
@@ -367,7 +370,7 @@ func TestRule_ResponseShapingUnchanged(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "shape", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("5xx")},
-		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
+		Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
 	})
 	ev := Event{AccountID: 1, Kind: Kind5xx, HTTPStatus: intPtr(500), ErrorMessage: "boom"}
 	then, punish := e.Classify(ev)

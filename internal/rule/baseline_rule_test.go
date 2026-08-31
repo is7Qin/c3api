@@ -11,8 +11,8 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// TestRuleBaseline characterizes existing enqueue/window/first-match/response-shaping behavior.
-// before typed Throttle/FailAccount. This is the passing baseline referenced in MUST DO 1.
+// TestRuleBaseline characterizes enqueue/window/first-match/response-shaping behavior
+// on typed Throttle/FailAccount actions.
 func TestRuleBaseline(t *testing.T) {
 	// Enqueue bounded channel still best-effort admission (dropped when full)
 	e := New(Config{EventQueueSize: 1}, newFakeRuleStore(), nil)
@@ -23,38 +23,36 @@ func TestRuleBaseline(t *testing.T) {
 
 	// Window first-match: two rules same kind, priority decides
 	e2, _ := newTestEngine(t,
-		domain.Rule{Name: "p10", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("5s")}},
-		domain.Rule{Name: "p20", Enabled: true, Priority: 20, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")}},
+		domain.Rule{Name: "p10", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{Throttle: openThrottleMs(5000)}},
+		domain.Rule{Name: "p20", Enabled: true, Priority: 20, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{Throttle: openThrottleMs(30000)}},
 	)
-	var rec recorder
-	e2.SetApply(rec.fn)
+	sink2 := newFakeSink(10)
+	e2.SetHealthSink(sink2)
 	e2.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind5xx, OccurredAt: at(0)})
-	got := rec.get()
-	require.Len(t, got, 1)
-	require.Equal(t, domain.StatusUnhealthy, *got[0].status)
-	require.Equal(t, at(5), *got[0].cooldown)
+	require.Equal(t, 1, sink2.countThrottle(), "首中即停，只执行一次")
+	require.Equal(t, int64(5000), *sink2.lastThrottle().DurationMs, "priority 低者先命中")
 
 	// Window threshold: count 429 >=2 in 60s
 	e3, _ := newTestEngine(t, domain.Rule{
 		Name: "win", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("429"), Count429GE: intPtr(2), WindowSeconds: intPtr(60)},
-		Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s")},
+		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	var rec3 recorder
-	e3.SetApply(rec3.fn)
+	sink3 := newFakeSink(10)
+	e3.SetHealthSink(sink3)
 	e3.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(0)})
-	require.Empty(t, rec3.get(), "below threshold should not apply")
+	require.Equal(t, 0, sink3.countThrottle(), "below threshold should not apply")
 	e3.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(1)})
-	require.Len(t, rec3.get(), 1, "threshold hit should apply")
+	require.Equal(t, 1, sink3.countThrottle(), "threshold hit should apply")
 
-	// Response shaping unchanged: passthrough vs custom via Classify (punish false for pure shaping per legacy)
+	// Response shaping unchanged: passthrough vs custom via Classify (punish false for pure shaping)
 	e4, _ := newTestEngine(t, domain.Rule{
 		Name: "shape", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},
 		Then: domain.RuleThen{ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
 	})
 	then, punish := e4.Classify(Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: intPtr(400), ErrorMessage: "x"})
-	require.False(t, punish, "pure shaping rule has no punish (legacy semantics)")
+	require.False(t, punish, "pure shaping rule has no punish")
 	require.Equal(t, 502, *then.ResponseCode)
 	require.Equal(t, "Upstream request failed", *then.CustomMessage)
 	msg, ok := UnifiedMessage(then, "x")

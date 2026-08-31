@@ -97,17 +97,17 @@ func TestValidateWhen_KindOK_Rejects_ContainsIn(t *testing.T) {
 
 func TestClassifyModelIn(t *testing.T) {
 	e := mustEngineWithRules(t,
-		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{"gpt-5-0611", "gpt-4o"}}, Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{"gpt-5-0611", "gpt-4o"}}, Then: domain.RuleThen{Throttle: openThrottle()}},
 	)
 	// hit
 	evHit := Event{Kind: Kind5xx, Model: "gpt-5-0611"}
 	then, punish := e.Classify(evHit)
-	require.NotNil(t, then.Status)
+	require.NotNil(t, then.Throttle)
 	require.True(t, punish)
 	// hit second element
 	evHit2 := Event{Kind: Kind5xx, Model: "gpt-4o"}
 	then2, _ := e.Classify(evHit2)
-	require.NotNil(t, then2.Status)
+	require.NotNil(t, then2.Throttle)
 	// miss
 	evMiss := Event{Kind: Kind5xx, Model: "gpt-5"}
 	thenMiss, punishMiss := e.Classify(evMiss)
@@ -119,7 +119,7 @@ func TestClassifyModelIn(t *testing.T) {
 
 func TestClassifyHTTPStatusIn_NilEvent(t *testing.T) {
 	e := mustEngineWithRules(t,
-		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{HTTPStatusIn: []int{500}}, Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{HTTPStatusIn: []int{500}}, Then: domain.RuleThen{Throttle: openThrottle()}},
 	)
 	// ev.HTTPStatus == nil must not panic and must not match
 	ev := Event{Kind: Kind5xx, HTTPStatus: nil}
@@ -136,13 +136,13 @@ func TestClassifyHTTPStatusIn_NilEvent(t *testing.T) {
 
 func TestClassifyHTTPStatusIn(t *testing.T) {
 	e := mustEngineWithRules(t,
-		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{HTTPStatusIn: []int{500, 502}}, Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{HTTPStatusIn: []int{500, 502}}, Then: domain.RuleThen{Throttle: openThrottle()}},
 	)
 	for _, code := range []int{500, 502} {
 		c := code
 		ev := Event{Kind: Kind5xx, HTTPStatus: &c}
 		then, _ := e.Classify(ev)
-		require.NotNil(t, then.Status, "code %d should hit", c)
+		require.NotNil(t, then.Throttle, "code %d should hit", c)
 	}
 	c503 := 503
 	evMiss := Event{Kind: Kind5xx, HTTPStatus: &c503}
@@ -153,14 +153,14 @@ func TestClassifyHTTPStatusIn(t *testing.T) {
 
 func TestClassifyErrorContainsIn(t *testing.T) {
 	e := mustEngineWithRules(t,
-		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ErrorMessageContainsIn: []string{"overload", "busy"}}, Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ErrorMessageContainsIn: []string{"overload", "busy"}}, Then: domain.RuleThen{Throttle: openThrottle()}},
 	)
 	evHit := Event{Kind: Kind5xx, ErrorMessage: "system overload now"}
 	then, _ := e.Classify(evHit)
-	require.NotNil(t, then.Status)
+	require.NotNil(t, then.Throttle)
 	evHit2 := Event{Kind: Kind5xx, ErrorMessage: "server busy please retry"}
 	then2, _ := e.Classify(evHit2)
-	require.NotNil(t, then2.Status)
+	require.NotNil(t, then2.Throttle)
 	evMiss := Event{Kind: Kind5xx, ErrorMessage: "timeout"}
 	thenMiss, _ := e.Classify(evMiss)
 	require.Equal(t, 502, *thenMiss.ResponseCode)
@@ -172,12 +172,12 @@ func TestModelIn_ThreeFaces(t *testing.T) {
 	mapped := "gpt-4o"
 	reqModel := "gpt-4"
 	e := mustEngineWithRules(t,
-		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{mapped}}, Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), ResponseCode: intPtr(502), CustomMessage: strPtr("hit")}},
+		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{mapped}}, Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("hit")}},
 	)
 	// final model = mapped => hit
 	evFinal := Event{Kind: Kind5xx, Model: mapped}
 	then, _ := e.Classify(evFinal)
-	require.NotNil(t, then.Status)
+	require.NotNil(t, then.Throttle)
 	require.Equal(t, "hit", *then.CustomMessage)
 	// reqModel not hit when final differs
 	evReq := Event{Kind: Kind5xx, Model: reqModel}
@@ -196,14 +196,14 @@ func TestClassifyCompositeAndAcrossFields(t *testing.T) {
 			When: domain.RuleWhen{
 				Kind: strPtr("5xx"), HTTPStatusIn: []int{500, 502}, ErrorMessageContainsIn: []string{"overload"},
 			},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+			Then: domain.RuleThen{Throttle: openThrottle()},
 		},
 	)
 	http500 := 500
 	// all three dimensions hit -> match
 	evHit := Event{Kind: Kind5xx, HTTPStatus: &http500, ErrorMessage: "overload"}
 	then, _ := e.Classify(evHit)
-	require.NotNil(t, then.Status)
+	require.NotNil(t, then.Throttle)
 	// kind mismatch -> miss
 	evKindMiss := Event{Kind: Kind4xx, HTTPStatus: &http500, ErrorMessage: "overload"}
 	then2, _ := e.Classify(evKindMiss)
@@ -221,14 +221,14 @@ func TestClassifyCompositeAndAcrossFields(t *testing.T) {
 
 func TestClassifyCompositePriority(t *testing.T) {
 	e := mustEngineWithRules(t,
-		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{"m1", "m2"}}, Then: domain.RuleThen{Status: statusPtr(domain.Status429), CustomMessage: strPtr("first")}},
-		domain.Rule{Name: "r2", Enabled: true, Priority: 20, When: domain.RuleWhen{ModelIn: []string{"m1"}}, Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), CustomMessage: strPtr("second")}},
+		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{"m1", "m2"}}, Then: domain.RuleThen{Throttle: openThrottle(), CustomMessage: strPtr("first")}},
+		domain.Rule{Name: "r2", Enabled: true, Priority: 20, When: domain.RuleWhen{ModelIn: []string{"m1"}}, Then: domain.RuleThen{Throttle: openThrottle(), CustomMessage: strPtr("second")}},
 	)
 	ev := Event{Kind: Kind5xx, Model: "m1"}
 	then, _ := e.Classify(ev)
 	require.NotNil(t, then.CustomMessage)
 	require.Equal(t, "first", *then.CustomMessage)
-	require.Equal(t, domain.Status429, *then.Status)
+	require.NotNil(t, then.Throttle)
 	// m2 only hits first as well but second would also match if first not exist; priority still first
 	ev2 := Event{Kind: Kind5xx, Model: "m2"}
 	then2, _ := e.Classify(ev2)
@@ -237,7 +237,7 @@ func TestClassifyCompositePriority(t *testing.T) {
 
 func TestClassifyFallbackStill502(t *testing.T) {
 	e := mustEngineWithRules(t,
-		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{"m1"}}, Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)}},
+		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{"m1"}}, Then: domain.RuleThen{Throttle: openThrottle()}},
 	)
 	ev := Event{Kind: Kind5xx, Model: "unknown"}
 	then, punish := e.Classify(ev)

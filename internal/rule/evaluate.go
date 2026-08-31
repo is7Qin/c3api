@@ -6,7 +6,6 @@ package rule
 
 import (
 	"strings"
-	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
 )
@@ -128,20 +127,4 @@ func ratioPass(numerator, total int, totalGE *int, ratio float64) bool {
 		return false
 	}
 	return float64(numerator)/float64(total) >= ratio
-}
-
-// Apply 解析 then 动作：cooldownUntil = OccurredAt + 解析后的 cooldown；
-// cooldown 未配但事件带 ResetAt 时用 ResetAt（M2 残留：resetAt 语义保留）。
-// Status 为 nil 返回 nil 状态 = 只改权重（或只改冷却）。
-func Apply(t domain.RuleThen, ev Event) (*domain.AccountStatus, *time.Time, *int) {
-	var cd *time.Time
-	if t.Cooldown != nil {
-		if d, err := time.ParseDuration(*t.Cooldown); err == nil && d > 0 {
-			c := ev.OccurredAt.Add(d)
-			cd = &c
-		}
-	} else if ev.ResetAt != nil {
-		cd = ev.ResetAt
-	}
-	return t.Status, cd, t.Weight
 }

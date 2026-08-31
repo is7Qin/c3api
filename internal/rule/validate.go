@@ -7,7 +7,6 @@ package rule
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
 )
@@ -155,31 +154,16 @@ func ValidateWhen(w domain.RuleWhen) error {
 }
 
 // ValidateThen then 动作校验：全空 Then{} 合法=纯透传（匹配后码/文双透、上游原样返回、零惩罚）；
-// 其余：status 合法枚举；cooldown 可 time.ParseDuration 解析且 > 0；weight ∈ [0,100]；
 // ResponseCode!=nil 需 400-599；CustomMessage==ptr("") 拒绝。指针即意图，nil=透传；
 // seed-4xx-400 直插 store 的 Then{} 与用户规则 Then{} 语义等价（零惩罚全透）。
 // strict typed actions:
 //   - Throttle{scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}
 //     retry_after requires use_reset=true; open requires use_reset=false and duration>0
 //     account_route scope runtime requires event RouteClassID+QualityClassID (match-time, not validation)
-//   - FailAccount bool mutually exclusive with Throttle and legacy routing fields
+//   - FailAccount bool mutually exclusive with Throttle
+//
 // Response shaping (ResponseCode/CustomMessage) independent and may coexist with typed actions.
 func ValidateThen(t domain.RuleThen) error {
-	if t.Status != nil && !validStatus(*t.Status) {
-		return fmt.Errorf("then.status must be active/unhealthy/429/disabled, got %q", *t.Status)
-	}
-	if t.Cooldown != nil {
-		d, err := time.ParseDuration(*t.Cooldown)
-		if err != nil {
-			return fmt.Errorf("then.cooldown: %w", err)
-		}
-		if d <= 0 {
-			return fmt.Errorf("then.cooldown must be > 0, got %q", *t.Cooldown)
-		}
-	}
-	if t.Weight != nil && (*t.Weight < 0 || *t.Weight > 100) {
-		return fmt.Errorf("then.weight must be in [0,100], got %d", *t.Weight)
-	}
 	if t.ResponseCode != nil && (*t.ResponseCode < 400 || *t.ResponseCode > 599) {
 		return fmt.Errorf("then.response_code must be in [400,599], got %d", *t.ResponseCode)
 	}
@@ -190,9 +174,6 @@ func ValidateThen(t domain.RuleThen) error {
 		return fmt.Errorf("then.throttle and then.fail_account are mutually exclusive")
 	}
 	if t.Throttle != nil {
-		if t.Status != nil || t.Cooldown != nil || t.Weight != nil {
-			return fmt.Errorf("then.throttle cannot be combined with legacy status/cooldown/weight")
-		}
 		th := t.Throttle
 		if th.Scope != domain.ThrottleScopeAccount && th.Scope != domain.ThrottleScopeAccountRoute {
 			return fmt.Errorf("then.throttle.scope must be account or account_route, got %q", th.Scope)
@@ -217,18 +198,5 @@ func ValidateThen(t domain.RuleThen) error {
 			}
 		}
 	}
-	if t.FailAccount {
-		if t.Status != nil || t.Cooldown != nil || t.Weight != nil {
-			return fmt.Errorf("then.fail_account cannot be combined with legacy status/cooldown/weight")
-		}
-	}
 	return nil
-}
-
-func validStatus(s domain.AccountStatus) bool {
-	switch s {
-	case domain.StatusActive, domain.StatusUnhealthy, domain.Status429, domain.StatusDisabled:
-		return true
-	}
-	return false
 }
