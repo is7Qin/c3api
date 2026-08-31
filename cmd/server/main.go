@@ -28,6 +28,7 @@ import (
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/discovery"
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler"
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/invalidate"
@@ -484,6 +485,15 @@ func main() {
 	// instanceSrc 与 discovery/conc-sync 同源产物（不自造第二套 ID）：跨实例
 	// merge 按 instance_src 区分，同源身份是 merge 正确性的前提。
 	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log)
+	// 路由编译器装配武装（Task18）：quality 源 = quality lane recorder 活体 cell
+	//（编译道后台读，零 DB、请求路径零依赖），价格源 = svc 定价快照基底解析
+	//（缺价模型缺席 → compiler costKnown=false 落 Explore）。装配必须先于
+	// snapReg.ReloadAll（scheduler 首刷 → RequestCompile，armed 才发布编译视图）
+	// 与 wm.StartAll（compileLoop 消费者）；编译失败保留旧视图是编译道契约
+	//（routing_compiler_wire.go），失败/成功新鲜度经 scheduler Stats 上运维面。
+	sched.SetCompilerSources(compilerQualitySource(qualityRecorder), func() map[string]domain.ResolvedPrices {
+		return svc.ResolvedPricesByModel(time.Now())
+	})
 	aiRouter := proxy.AIRouter(px)
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
 	userHandler := userapi.Router(svc, iss, auth, ruleEngine)
