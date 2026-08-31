@@ -553,7 +553,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 | key | 默认 | 说明 |
 |---|---|---|
-| `balance_warning.enabled` | `true` | 余额预警全局开关；`false` 时不发送预警邮件 |
+| `balance_warning.enabled` | `false` | 余额预警全局开关；`false` 时不发送预警邮件 |
 
 ### 价格倍率语义（计费生效）
 
