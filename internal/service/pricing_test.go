@@ -81,6 +81,31 @@ func TestResolvePricesWithVariant(t *testing.T) {
 	require.Equal(t, int64(150000), *rp.InputPerM)
 }
 
+// TestResolvedPricesByModel pins the compile-lane price source: full-snapshot
+// base resolution (tier "", promptTokens 0), tier-scoped variants excluded,
+// and nil before the snapshot is loaded.
+func TestResolvedPricesByModel(t *testing.T) {
+	fs := newFakeStore()
+	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil)
+	require.Nil(t, svc.ResolvedPricesByModel(time.Now()), "unloaded snapshot = nil (compile lane treats as no prices)")
+	_, err := fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
+		{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceManual},
+	})
+	require.NoError(t, err)
+	_, err = fs.ReplacePriceVariants(context.Background(), "m", []*domain.PriceVariant{
+		{Model: "m", Seq: 1, ServiceTier: strPtr("priority"), SetInputPerM: int64Ptr(150000)},
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
+
+	prices := svc.ResolvedPricesByModel(time.Now())
+	require.Len(t, prices, 1)
+	rp, ok := prices["m"]
+	require.True(t, ok)
+	require.Equal(t, int64(100000), *rp.InputPerM, "base entry price: tier-scoped variant must not apply")
+	require.Equal(t, int64(200000), *rp.OutputPerM)
+}
+
 func TestReplacePriceVariants_MultBPValidation(t *testing.T) {
 	fs := newFakeStore()
 	svc := newPricingSvc(t, fs)
