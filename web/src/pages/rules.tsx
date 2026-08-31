@@ -420,9 +420,9 @@ export default function Rules() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">{t('rules.title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('rules.subtitle')}</p>
+          <p className="text-sm text-muted-foreground text-pretty">{t('rules.subtitle')}</p>
         </div>
         <Button onClick={openCreate}><Plus /> {t('rules.new')}</Button>
       </div>
@@ -451,8 +451,8 @@ export default function Rules() {
           </Card>
         </motion.div>
       ) : (
-        <div className="overflow-hidden rounded-lg">
-          <Table>
+        <ScrollArea data-od-id="table-scroll-rules" className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+          <Table className="min-w-[1050px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
@@ -503,7 +503,7 @@ export default function Rules() {
               ))}
             </TableBody>
           </Table>
-        </div>
+        </ScrollArea>
       )}
 
       {/* —— 创建/编辑对话框 —— */}
