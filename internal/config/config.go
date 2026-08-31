@@ -83,8 +83,10 @@ type ProxyConfig struct {
 	MaxInflight           int64         `koanf:"max_inflight"`
 	UpstreamTimeout       time.Duration `koanf:"upstream_timeout"`
 	UpstreamStreamTimeout time.Duration `koanf:"upstream_stream_timeout"`
-	// FailoverAttempts 总尝试次数（含首次）——>= 1（0 启动即拒绝：failover 循环
-	// 零次执行，首次选号占用的并发槽永不释放，组内账号耗尽后全组 429 死锁）。
+	// FailoverAttempts 总尝试次数（含首次）——合法域 1..8（intelligent routing
+	// 契约：AttemptPlan 固定 [8] attempted-ID 集去重，>8 无法保证不重复选号；
+	// 0/负值启动即拒绝：failover 循环零次执行，首次选号占用的并发槽永不释放，
+	// 组内账号耗尽后全组 429 死锁）。
 	FailoverAttempts int  `koanf:"failover_attempts"`
 	UsageCapture     bool `koanf:"usage_capture"`
 	// BehindCDN 客户端 IP 识别开关（用户裁决 2026-08-17：config 文件键，非 admin
@@ -268,6 +270,12 @@ func validate(c *Config) error {
 		if n.value < 1 {
 			return fmt.Errorf("%s must be >= 1 (got %d)", n.path, n.value)
 		}
+	}
+	// proxy.failover_attempts 上限 8（intelligent routing 契约）：AttemptPlan 用
+	// 固定 [8] attempted-ID 集做跨账号去重，>8 无法保证不重复选号；启动即拒绝，
+	// 与下限 1 成对锁定合法域 1..8（默认 3）。
+	if c.Proxy.FailoverAttempts > 8 {
+		return fmt.Errorf("proxy.failover_attempts must be <= 8 (got %d)", c.Proxy.FailoverAttempts)
 	}
 	for _, r := range []struct {
 		path  string

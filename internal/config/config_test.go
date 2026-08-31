@@ -203,6 +203,24 @@ func TestLoadAcceptsFailoverAttemptsOne(t *testing.T) {
 	require.Equal(t, 1, c.Proxy.FailoverAttempts)
 }
 
+// TestLoadFailoverAttemptsRoutingCap1To8：intelligent routing 契约——failover
+// 尝试窗口为 1..8（AttemptPlan 固定 [8] attempted-ID 集，>8 无法去重保证）。
+// 8 = 最大合法值加载通过；9 / 负值启动即拒绝（错误含字段路径，fail-fast）。
+func TestLoadFailoverAttemptsRoutingCap1To8(t *testing.T) {
+	setenvRequired(t)
+	c, err := Load(writeConfig(t, `proxy = { failover_attempts = 8 }`))
+	require.NoError(t, err)
+	require.Equal(t, 8, c.Proxy.FailoverAttempts, "8 = 上限合法值")
+
+	for _, v := range []string{"9", "100", "-1"} {
+		t.Run("reject "+v, func(t *testing.T) {
+			_, err := Load(writeConfig(t, "proxy = { failover_attempts = "+v+" }"))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "proxy.failover_attempts")
+		})
+	}
+}
+
 // TestLoadKeepsRetentionZeroSemantics：retention 天数 <=0 = 不删除（文档化惯例，
 // 不得改为报错）。
 func TestLoadKeepsRetentionZeroSemantics(t *testing.T) {
