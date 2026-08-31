@@ -244,10 +244,10 @@ function toForm(a: AccountView): FormState {
 // PUT 全量替换：重建 AccountCreate（只带契约字段，不带运行时字段）。
 // 编辑态总是发送 group_ids（含空数组 = 清空）；创建态仅已选时发送
 // （缺省 = 无分组，语义与 null 一致）。
-// 遗留 status/weight 不再暴露为控件，但 PUT 是全量替换——编辑态回显当前值
-// 防静默归零（status 缺省 → 后端默认 active；weight 缺省 → 0）。
-// cache_domain 刻意不进创建表单：repo 对「创建带生命周期字段且未显式 enabled」
-// 的账号落 enabled=false（fail-closed），缓存域统一走 fenced /cache-domain。
+// 生命周期字段（enabled/采购倍率/缓存域/失效态）不在 PUT 写面——后端以
+// 当前值覆盖，变更只走 fenced 端点；cache_domain 刻意不进创建表单：repo 对
+// 「创建带生命周期字段且未显式 enabled」的账号落 enabled=false（fail-closed），
+// 缓存域统一走 fenced /cache-domain。
 function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): AccountCreate {
   const body: AccountCreate = {
     name: f.name.trim(),
@@ -256,7 +256,6 @@ function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): A
     base_url: isCodex ? null : (f.base_url.trim() || null),
     upstream_key: f.upstream_key,
     max_concurrency: f.max_concurrency === '' ? 8 : Number(f.max_concurrency),
-    ...(current ? { status: current.Status ?? 'active', weight: current.Weight ?? 0 } : {}),
   }
   if (current || f.group_ids.length > 0) body.group_ids = f.group_ids
   return body
@@ -1223,8 +1222,8 @@ export default function Accounts() {
                 <p className="text-xs text-muted-foreground">{t('accounts.baseUrlHint')}</p>
               </div>
             )}
-            {/* 遗留 status/weight 控件已移除（生命周期 = enabled/recover fenced 动作；
-                权重不再暴露——PUT 回显当前值防全量替换归零）。
+            {/* 表单只带契约字段（name/template/base_url/upstream_key/
+                max_concurrency/group_ids）；生命周期 = enabled/recover fenced 动作。
                 缓存域/倍率统一走列表内 fenced 编辑弹窗（创建带 cache_domain 会触发
                 repo fail-closed 落 enabled=false，不在创建表单暴露）。 */}
             <div className="space-y-1.5 max-w-40">
@@ -1321,7 +1320,7 @@ export default function Accounts() {
                 <span className="text-sm">{t('accounts.clearBaseUrl')}</span>
               </label>
             </div>
-            {/* 批量面同样移除遗留 status/weight（启停/恢复/倍率/缓存域为逐账号 fenced 写，不批量） */}
+            {/* 批量面只带可批量契约字段（启停/恢复/倍率/缓存域为逐账号 fenced 写，不批量） */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>{t('accounts.templateLabel')}</Label>

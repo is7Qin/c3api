@@ -42,10 +42,6 @@
     "unhealthy": "不健康",
     "disabled": "已禁用"
   },
-  "cooldown": {
-    "active": "冷却中",
-    "until": "冷却至 {time}"
-  },
   "errorType": {
     "429": "限流 429",
     "none": "正常",
@@ -371,7 +367,6 @@
     "batchUpdateTitle": "批量更新账号",
     "batchUpdateDesc": "仅填写需要修改的字段，留空表示保持原值",
     "batchUpdateEmpty": "至少填写一个字段",
-    "resetCooldown": "重置冷却",
     "state": {
       "enabled": "已启用",
       "disabled": "已禁用",
@@ -702,7 +697,6 @@
     "selected": "已选 {{count}} 项",
     "batchDelete": "批量删除",
     "batchUpdate": "批量更新",
-    "batchResetCooldown": "重置冷却",
     "reset": "重置",
     "clearSelection": "清除选择",
     "unchanged": "不修改"
@@ -710,8 +704,7 @@
   "batch": {
     "confirmDelete": "确认删除选中的 {{count}} 项？",
     "deleted": "已删除 {{count}} 项",
-    "updated": "已更新 {{count}} 项",
-    "resetCooldown": "已重置 {{count}} 个冷却"
+    "updated": "已更新 {{count}} 项"
   },
   "stats": {
     "title": "统计",
@@ -987,7 +980,6 @@
         "desc": "命中事件将以 lifecycle CAS（source=rule）锁存账号为失败；账号退出路由，直至人工恢复。",
         "confirm": "我确认这会让账号退出路由直至恢复。"
       },
-      "legacyEcho": "该规则含旧动作（{{keys}}）。不选 typed 动作直接保存将原样保留；选择限流或摘除账号将替换它们。",
       "responseCode": "响应码覆写",
       "customMessage": "固定文案",
       "customMessagePlaceholder": "上游暂不可用",

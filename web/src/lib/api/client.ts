@@ -27,7 +27,6 @@ export interface ListParams {
 }
 export type TemplateListParams = ListParams
 export interface AccountListParams extends ListParams {
-  status?: string
   template_id?: number
 }
 export type GroupListParams = ListParams
@@ -115,7 +114,6 @@ export class ApiClient {
   deleteAccount = (id: number) => this.request<components['schemas']['DeletedResponse']>(`/accounts/${id}`, { method: 'DELETE' })
   deleteAccountsBatch = (ids: number[]) => this.request<components['schemas']['BatchDeleteResponse']>('/accounts/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
   updateAccountsBatch = (ids: number[], fields: components['schemas']['AccountPatch']) => this.request<components['schemas']['BatchUpdateResponse']>('/accounts/batch-update', { method: 'POST', body: JSON.stringify({ ids, fields }) })
-  resetAccountsCooldown = (ids: number[]) => this.request<components['schemas']['BatchResetCooldownResponse']>('/accounts/batch-reset-cooldown', { method: 'POST', body: JSON.stringify({ ids }) })
   // —— 账号生命周期（intelligent-routing；全部 fenced CAS：expected_revision 过期 → 409，
   // 前端须重读账号后重试；响应回显新代际 Account）——
   recoverAccount = (id: number, b: components['schemas']['AccountRecoverBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/recover`, { method: 'POST', body: JSON.stringify(b) })
