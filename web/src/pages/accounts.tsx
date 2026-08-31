@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal, Upload } from 'lucide-react'
+import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal, Upload, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
@@ -23,14 +23,12 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
-import { StatusBadge, CooldownBadge } from '@/components/status-badge'
-import { fmtTokens, formatPercent, toRFC3339, truncate } from '@/components/fmt'
+import { fmtTokens, formatPercent, formatDateTime, toRFC3339, truncate } from '@/components/fmt'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 import { CodexImportDialog } from '@/components/codex-import/import-dialog'
@@ -38,7 +36,6 @@ import { CodexImportDialog } from '@/components/codex-import/import-dialog'
 type AccountView = components['schemas']['AccountView']
 type AccountCreate = components['schemas']['AccountCreate']
 type AccountPatch = components['schemas']['AccountPatch']
-type AccountStatus = components['schemas']['AccountStatus']
 type AccountExt = components['schemas']['AccountExt']
 type Group = components['schemas']['Group']
 
@@ -52,7 +49,7 @@ const isCodexTemplate = (a: AccountView) =>
 // 视口懒加载块大小 = 批量端点上限（accounts/usage ≤100/次）。
 const USAGE_BLOCK_SIZE = 100
 const ACCOUNTS_HIDDEN_STORAGE_KEY = 'accounts-hidden-columns'
-const ACCOUNTS_HIDDENABLE_COLS = ['name', 'template', 'status', 'weight', 'maxConcurrency', 'curConcurrency', 'errRate', 'errCount', 'lastError', 'usage'] as const
+const ACCOUNTS_HIDDENABLE_COLS = ['name', 'template', 'state', 'costMultiplier', 'cacheDomain', 'maxConcurrency', 'curConcurrency', 'errRate', 'errCount', 'lastError', 'usage'] as const
 
 function loadHiddenCols(): Set<string> {
   try {
@@ -143,6 +140,49 @@ function UsageCell({ item }: { item?: components['schemas']['AccountUsageItem'] 
   )
 }
 
+// —— 生命周期展示/校验（fenced 端点为唯一写面；UI 边界校验镜像后端，后端仍是权威）——
+// 成本倍率正常值（1 = ×1，0 = 免费，上限 ×10；bp 精度 = 4 位小数，normalToMult ×10000）。
+// 非法/越界 → null（按钮禁用，fail-closed）。
+const fmtMult = (v?: number | null): string => (v == null ? '—' : `×${Number(v.toFixed(4))}`)
+const parseMultiplier = (s: string): number | null => {
+  if (!s.trim()) return null
+  const v = Number(s)
+  if (!Number.isFinite(v) || v < 0 || v > 10) return null
+  return Math.round(v * 10000) / 10000
+}
+// 缓存域校验镜像 service.validateCacheDomain：labels 1–63（a–z/0–9/-，首尾非连字符）、
+// 点分、总长 ≤253；空 = 私有域（null，清空不走空串）。
+const CACHE_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/
+const validCacheDomain = (s: string): boolean => s.length > 0 && s.length <= 253 && CACHE_DOMAIN_RE.test(s)
+
+// 生命周期状态徽章对：管理面 enabled（契约恒回显；缺失按禁用展示——fail-closed）
+// + 运行时失效（failed_at 置位即标红，tooltip 携带来源/时刻；恢复唯一入口 recover）。
+function LifecycleBadges({ a }: { a: AccountView }) {
+  const { t } = useTranslation()
+  const enabled = a.Enabled === true
+  return (
+    <div className="flex items-center gap-1.5">
+      <Badge variant="secondary" className={cn('gap-1.5', enabled ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
+        <span className={cn('size-1.5 shrink-0 rounded-full', enabled ? 'bg-emerald-500' : 'bg-muted-foreground/60')} />
+        {t(enabled ? 'accounts.state.enabled' : 'accounts.state.disabled')}
+      </Badge>
+      {a.FailedAt && (
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex" />}>
+            <Badge variant="secondary" className="gap-1.5 text-red-600 dark:text-red-400">
+              <span className="size-1.5 shrink-0 rounded-full bg-red-500" />
+              {t('accounts.state.failed')}
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            {t('accounts.state.failedTip', { source: a.FailureSource ?? '—', time: formatDateTime(a.FailedAt) })}
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </div>
+  )
+}
+
 // RFC3339（API）→ datetime-local 'YYYY-MM-DDTHH:mm'（本地时区；DateTimePicker 值格式，'' = 未设置）
 function toLocalDT(iso: string): string {
   const d = new Date(iso)
@@ -150,18 +190,11 @@ function toLocalDT(iso: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-// 批量更新表单里 status/template_id 的「不修改」哨兵值。
-type BatchStatus = 'all' | AccountStatus
-
-const STATUSES: AccountStatus[] = ['active', 'unhealthy', '429', 'disabled']
-
 interface FormState {
   name: string
   template_id: string // Select 值统一用字符串，提交时转 number
   base_url: string // 账号级覆盖（'' = 继承模板）
   upstream_key: string
-  status: AccountStatus
-  weight: string
   max_concurrency: string
   group_ids: number[]
   // codex 凭据（按模板类型分流：codex-oauth → codex_oauth_* 组；codex-pat →
@@ -178,8 +211,6 @@ const emptyForm = (): FormState => ({
   template_id: '',
   base_url: '',
   upstream_key: '',
-  status: 'active',
-  weight: '0',
   max_concurrency: '8',
   group_ids: [],
   codex_oauth_token: '',
@@ -198,8 +229,6 @@ function toForm(a: AccountView): FormState {
     template_id: String(a.TemplateID ?? ''),
     base_url: codex ? '' : (a.BaseURL ?? ''), // Codex: must clear stale BaseURL on load
     upstream_key: a.UpstreamKey ?? '',
-    status: a.Status ?? 'active',
-    weight: String(a.Weight ?? 0),
     max_concurrency: String(a.MaxConcurrency ?? 8),
     // 编辑回显不走账号列表（I-1 方案 B）：对话框挂载时经 getAccountGroups
     // 拉取，加载完成前禁用保存（防误发 [] 清空）。codex 凭据经 ext 拉取回显。
@@ -215,18 +244,21 @@ function toForm(a: AccountView): FormState {
 // PUT 全量替换：重建 AccountCreate（只带契约字段，不带运行时字段）。
 // 编辑态总是发送 group_ids（含空数组 = 清空）；创建态仅已选时发送
 // （缺省 = 无分组，语义与 null 一致）。
-function toBody(f: FormState, editing: boolean, isCodex?: boolean): AccountCreate {
+// 遗留 status/weight 不再暴露为控件，但 PUT 是全量替换——编辑态回显当前值
+// 防静默归零（status 缺省 → 后端默认 active；weight 缺省 → 0）。
+// cache_domain 刻意不进创建表单：repo 对「创建带生命周期字段且未显式 enabled」
+// 的账号落 enabled=false（fail-closed），缓存域统一走 fenced /cache-domain。
+function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): AccountCreate {
   const body: AccountCreate = {
     name: f.name.trim(),
     template_id: Number(f.template_id),
     // 空串归一 null；Codex 强制 null（SDK default, non-empty forbidden)
     base_url: isCodex ? null : (f.base_url.trim() || null),
     upstream_key: f.upstream_key,
-    status: f.status,
-    weight: f.weight === '' ? 0 : Number(f.weight),
     max_concurrency: f.max_concurrency === '' ? 8 : Number(f.max_concurrency),
+    ...(current ? { status: current.Status ?? 'active', weight: current.Weight ?? 0 } : {}),
   }
-  if (editing || f.group_ids.length > 0) body.group_ids = f.group_ids
+  if (current || f.group_ids.length > 0) body.group_ids = f.group_ids
   return body
 }
 
@@ -253,28 +285,11 @@ function GroupMultiSelect({ groups, value, onChange, disabled }: {
   )
 }
 
-// 禁用/启用 quick action：取当前对象重建请求体 + status 翻转。
-// Codex 账号不发送 BaseURL
-function toggleBody(a: AccountView, next: AccountStatus): AccountCreate {
-  const codex = isCodexCt(a.Template?.CredentialType as string | undefined)
-  return {
-    name: a.Name ?? '',
-    template_id: a.TemplateID ?? 0,
-    base_url: codex ? null : (a.BaseURL ?? null),
-    upstream_key: a.UpstreamKey ?? '',
-    status: next,
-    weight: a.Weight ?? 0,
-    max_concurrency: a.MaxConcurrency ?? 8,
-  }
-}
-
 // 批量更新表单：空字段 = 不发送（保持原值）。
 interface BatchForm {
   name: string
   upstream_key: string
   base_url: string
-  status: BatchStatus
-  weight: string
   max_concurrency: string
   template_id: string
   group_ids: string[]
@@ -286,8 +301,6 @@ const emptyBatchForm = (): BatchForm => ({
   name: '',
   upstream_key: '',
   base_url: '',
-  status: 'all',
-  weight: '',
   max_concurrency: '',
   template_id: 'all',
   group_ids: [],
@@ -305,13 +318,12 @@ export default function Accounts() {
   const [order, setOrder] = useState<SortOrder>('desc')
   const [offset, setOffset] = useState(0)
   const [limit, setLimit] = useState(20)
-  const [statusFilter, setStatusFilter] = useState<AccountStatus[]>([])
   const [templateId, setTemplateId] = useState('all') // 'all' = 全部模板
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: [
       'accounts',
-      { limit, offset, name, sort: activeSort ?? 'id', order, status: statusFilter.join(','), template_id: templateId === 'all' ? undefined : Number(templateId) },
+      { limit, offset, name, sort: activeSort ?? 'id', order, template_id: templateId === 'all' ? undefined : Number(templateId) },
     ],
     queryFn: () =>
       api.listAccounts({
@@ -320,7 +332,6 @@ export default function Accounts() {
         name: name || undefined,
         sort: activeSort ?? 'id',
         order,
-        status: statusFilter.length > 0 ? statusFilter.join(',') : undefined,
         template_id: templateId === 'all' ? undefined : Number(templateId),
       }),
     refetchInterval: 10_000,
@@ -496,15 +507,10 @@ export default function Accounts() {
       setOrder('desc')
     }
   }
-  const toggleStatusFilter = (s: AccountStatus) => {
-    setStatusFilter(cur => (cur.includes(s) ? cur.filter(x => x !== s) : [...cur, s]))
-    resetPage()
-  }
   const changeTemplate = (v: string) => { setTemplateId(v); resetPage() }
-  const hasFilters = name !== '' || statusFilter.length > 0 || templateId !== 'all'
+  const hasFilters = name !== '' || templateId !== 'all'
   const clearFilters = () => {
     setName('')
-    setStatusFilter([])
     setTemplateId('all')
     resetPage()
   }
@@ -526,13 +532,6 @@ export default function Accounts() {
       qc.invalidateQueries({ queryKey: ['accounts'] })
       setSelected([])
       closeBatchUpdate('submitted')
-    },
-  })
-  const batchResetCooldown = useMutation({
-    mutationFn: (ids: number[]) => api.resetAccountsCooldown(ids),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['accounts'] })
-      setSelected([])
     },
   })
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
@@ -588,8 +587,6 @@ export default function Accounts() {
       if (batchForm.clearBaseURL) fields.base_url = ''
       else if (batchForm.base_url.trim()) fields.base_url = batchForm.base_url.trim()
     }
-    if (batchForm.status !== 'all') fields.status = batchForm.status
-    if (batchForm.weight !== '') fields.weight = Number(batchForm.weight)
     if (batchForm.max_concurrency !== '') fields.max_concurrency = Number(batchForm.max_concurrency)
     if (batchForm.template_id !== 'all') fields.template_id = Number(batchForm.template_id)
     if (batchForm.clearGroups) fields.group_ids = []
@@ -607,6 +604,20 @@ export default function Accounts() {
   const [form, setForm] = useState<FormState>(emptyForm())
   const [deleting, setDeleting] = useState<AccountView | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+
+  // —— 生命周期编辑弹窗（倍率/缓存域；各自独立 fenced 写，打开时取行内代际）——
+  const [multTarget, setMultTarget] = useState<AccountView | null>(null)
+  const [multValue, setMultValue] = useState('')
+  const [domainTarget, setDomainTarget] = useState<AccountView | null>(null)
+  const [domainValue, setDomainValue] = useState('')
+  const openMult = (a: AccountView) => {
+    setMultTarget(a)
+    setMultValue(String(a.UpstreamCostMultiplier ?? 1))
+  }
+  const openDomain = (a: AccountView) => {
+    setDomainTarget(a)
+    setDomainValue(a.CacheDomain ?? '')
+  }
 
   // 编辑回显（评审 I-1 方案 B）：对话框挂载时拉取当前分组；数据未到前禁用
   // 保存与分组多选（防未加载完提交误发 [] 清空）。
@@ -675,9 +686,9 @@ export default function Accounts() {
       const isCodexForBody = isCodexCt(effCt) || unresolved
       const ct = effCt
       // structurally force base_url null for Codex/unresolved even if form still stale
-      const bodyForCreate = toBody(f, false, isCodexForBody)
+      const bodyForCreate = toBody(f, null, isCodexForBody)
       const id = editing?.ID ?? (await api.createAccount(bodyForCreate)).ID
-      if (editing) await api.updateAccount(id!, toBody(f, true, isCodexForBody))
+      if (editing) await api.updateAccount(id!, toBody(f, editing, isCodexForBody))
       if (id && isCodexCt(ct)) {
         const cur = extEcho.data
         const extBody: AccountExt = {
@@ -709,10 +720,58 @@ export default function Accounts() {
       toast.add({ title: t('accounts.saveSuccess'), type: 'success' })
     },
   })
-  const toggle = useMutation({
+  // —— 生命周期 fenced 动作（CAS：expected_revision = 读到的 LifecycleRevision；
+  // 409 = 他端已变更 → 提示 + 重读列表后重试；revision 缺失 → 按钮禁用 fail-closed）——
+  const lifecycleErr = (e: unknown) => {
+    if (e instanceof ApiUnauthorized) return // 401 全局拦截收敛，不叠加 toast
+    if (e instanceof ApiError && e.status === 409) {
+      toast.add({ title: t('accounts.conflict'), type: 'error' })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      return
+    }
+    toast.add({ title: (e as Error)?.message ?? String(e), type: 'error' })
+  }
+  // 管理面启停（/enabled）：与运行时失效恢复（/recover）语义分离——enable 不清失效。
+  const setEnabled = useMutation({
     mutationFn: (a: AccountView) =>
-      api.updateAccount(a.ID!, toggleBody(a, a.Status === 'disabled' ? 'active' : 'disabled')),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
+      api.setAccountEnabled(a.ID!, { enabled: a.Enabled !== true, expected_revision: a.LifecycleRevision ?? 0 }),
+    onSuccess: (_acc, a) => {
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      toast.add({ title: t(a.Enabled !== true ? 'accounts.enableSuccess' : 'accounts.disableSuccess'), type: 'success' })
+    },
+    onError: lifecycleErr,
+  })
+  // 失效恢复唯一入口（/recover）：清 failed_at/last_error/failure_source + revision +1
+  // → 新代际 PROBING（探针环接管，READY 前不吃正常流量）。
+  const recover = useMutation({
+    mutationFn: (a: AccountView) => api.recoverAccount(a.ID!, { expected_revision: a.LifecycleRevision ?? 0 }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      toast.add({ title: t('accounts.recoverSuccess'), type: 'success' })
+    },
+    onError: lifecycleErr,
+  })
+  // 采购成本倍率（/cost-multiplier，fenced；正常值 ×0–×10，UI 边界校验镜像后端）
+  const multSave = useMutation({
+    mutationFn: (p: { id: number; multiplier: number; expectedRevision: number }) =>
+      api.updateAccountCostMultiplier(p.id, { multiplier: p.multiplier, expected_revision: p.expectedRevision }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      setMultTarget(null)
+      toast.add({ title: t('accounts.multiplier.saveSuccess'), type: 'success' })
+    },
+    onError: lifecycleErr,
+  })
+  // 缓存域（/cache-domain，fenced；空 → null = 清空回账号私有域）
+  const domainSave = useMutation({
+    mutationFn: (p: { id: number; cacheDomain: string | null; expectedRevision: number }) =>
+      api.updateAccountCacheDomain(p.id, { cache_domain: p.cacheDomain, expected_revision: p.expectedRevision }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      setDomainTarget(null)
+      toast.add({ title: t('accounts.cacheDomain.saveSuccess'), type: 'success' })
+    },
+    onError: lifecycleErr,
   })
   const remove = useMutation({
     mutationFn: (id: number) => api.deleteAccount(id),
@@ -844,30 +903,6 @@ export default function Accounts() {
         name={name}
         onNameChange={changeName}
       >
-        {/* status 多选筛选（逗号拼接传参） */}
-        <Popover>
-          <PopoverTrigger render={<Button variant="outline" size="lg" />}>
-            <Filter />
-            {statusFilter.length > 0
-              ? statusFilter.map(s => t(`status.${s}`)).join(', ')
-              : t('accounts.filterStatus')}
-          </PopoverTrigger>
-          <PopoverContent className="w-48 p-2">
-            <div className="space-y-0.5">
-              {STATUSES.map(s => (
-                <label key={s} className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted">
-                  <Checkbox checked={statusFilter.includes(s)} onCheckedChange={() => toggleStatusFilter(s)} />
-                  <span className="text-sm">{t(`status.${s}`)}</span>
-                </label>
-              ))}
-            </div>
-            {statusFilter.length > 0 && (
-              <Button variant="ghost" size="sm" className="mt-1 w-full" onClick={clearFilters}>
-                {t('list.reset')}
-              </Button>
-            )}
-          </PopoverContent>
-        </Popover>
         {/* template 精确筛选 */}
         <Select
           items={Object.fromEntries([['all', t('accounts.allTemplates')], ...templates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`])])}
@@ -913,9 +948,6 @@ export default function Accounts() {
           batchResolve.current = resolve
           openBatchUpdate()
         })}
-        onResetCooldown={async () => {
-          await batchResetCooldown.mutateAsync(selected)
-        }}
       />
 
       {isError ? (
@@ -941,7 +973,7 @@ export default function Accounts() {
         <>
           <Card className="bg-transparent border-0 shadow-none backdrop-blur-none p-0 gap-0">
           <ScrollArea className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
-            <Table ref={tableRef} containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none" className="min-w-[1080px]">
+            <Table ref={tableRef} containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none" className="min-w-[1400px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
@@ -952,15 +984,17 @@ export default function Accounts() {
                     />
                   </TableHead>
                   <SortableHeader field="id" label="ID" active={activeSort === 'id'} order={order} onToggle={onColumnToggle} />
-                  <SortableHeader field="name" label={t('accounts.table.name')} active={activeSort === 'name'} order={order} onToggle={onColumnToggle} />
-                  <SortableHeader field="template_id" label={t('accounts.table.template')} active={activeSort === 'template_id'} order={order} onToggle={onColumnToggle} />
-                  <SortableHeader field="status" label={t('accounts.table.status')} active={activeSort === 'status'} order={order} onToggle={onColumnToggle} />
-                  <SortableHeader field="weight" label={t('accounts.table.weight')} active={activeSort === 'weight'} order={order} onToggle={onColumnToggle} className="text-right [&_button]:justify-end" />
-                  <SortableHeader field="max_concurrency" label={t('accounts.table.maxConcurrency')} active={activeSort === 'max_concurrency'} order={order} onToggle={onColumnToggle} className="text-right [&_button]:justify-end" />
-                  <TableHead className="text-right">{t('accounts.table.curConcurrency')}</TableHead>
-                  <TableHead className="text-right">{t('accounts.table.errRate')}</TableHead>
-                  <TableHead className="text-right">{t('accounts.table.errCount')}</TableHead>
-                  <TableHead>{t('accounts.table.lastError')}</TableHead>
+                  {isColVisible('name') && <SortableHeader field="name" label={t('accounts.table.name')} active={activeSort === 'name'} order={order} onToggle={onColumnToggle} />}
+                  {isColVisible('template') && <SortableHeader field="template_id" label={t('accounts.table.template')} active={activeSort === 'template_id'} order={order} onToggle={onColumnToggle} />}
+                  {isColVisible('state') && <TableHead>{t('accounts.table.state')}</TableHead>}
+                  {isColVisible('maxConcurrency') && <SortableHeader field="max_concurrency" label={t('accounts.table.maxConcurrency')} active={activeSort === 'max_concurrency'} order={order} onToggle={onColumnToggle} className="text-right [&_button]:justify-end" />}
+                  {isColVisible('curConcurrency') && <TableHead className="text-right">{t('accounts.table.curConcurrency')}</TableHead>}
+                  {isColVisible('errRate') && <TableHead className="text-right">{t('accounts.table.errRate')}</TableHead>}
+                  {isColVisible('errCount') && <TableHead className="text-right">{t('accounts.table.errCount')}</TableHead>}
+                  {isColVisible('costMultiplier') && <TableHead className="text-right">{t('accounts.table.costMultiplier')}</TableHead>}
+                  {isColVisible('cacheDomain') && <TableHead>{t('accounts.table.cacheDomain')}</TableHead>}
+                  {isColVisible('revision') && <TableHead className="text-right" title={t('accounts.table.revisionHint')}>{t('accounts.table.revision')}</TableHead>}
+                  {isColVisible('lastError') && <TableHead>{t('accounts.table.lastError')}</TableHead>}
                   {isColVisible('usage') && <TableHead className="text-center">{t('accounts.table.usage')}</TableHead>}
                   <TableHead className="text-right">{t('accounts.table.actions')}</TableHead>
                 </TableRow>
@@ -972,32 +1006,50 @@ export default function Accounts() {
                       <Checkbox checked={selected.includes(a.ID!)} onCheckedChange={() => toggleRow(a.ID!)} />
                     </TableCell>
                     <TableCell className="tabular-nums">{a.ID}</TableCell>
-                    <TableCell className="max-w-32 truncate" title={a.Name}>{a.Name}</TableCell>
-                    <TableCell className="max-w-32 truncate" title={templateName(a)}>{templateName(a)}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <StatusBadge status={a.Status} />
-                        {/* A-4：冷却标识（CooldownUntil 未过期即标出，status=active 也显示） */}
-                        <CooldownBadge cooldownUntil={a.CooldownUntil} />
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{a.Weight ?? 0}</TableCell>
-                    <TableCell className="text-right tabular-nums">{a.MaxConcurrency ?? 8}</TableCell>
-                    <TableCell className="text-right tabular-nums">{a.concurrency ?? 0}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatPercent(a.err_rate)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{a.err_count ?? 0}</TableCell>
-                    <TableCell className="max-w-40">
-                      {a.LastError ? (
-                        <Tooltip>
-                          <TooltipTrigger render={<span className="block cursor-help truncate text-xs text-muted-foreground" />}>
-                            {truncate(a.LastError, 20)}
-                          </TooltipTrigger>
-                          <TooltipContent>{a.LastError}</TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
+                    {isColVisible('name') && <TableCell className="max-w-32 truncate" title={a.Name}>{a.Name}</TableCell>}
+                    {isColVisible('template') && <TableCell className="max-w-32 truncate" title={templateName(a)}>{templateName(a)}</TableCell>}
+                    {isColVisible('state') && (
+                      <TableCell>
+                        <LifecycleBadges a={a} />
+                      </TableCell>
+                    )}
+                    {isColVisible('maxConcurrency') && <TableCell className="text-right tabular-nums">{a.MaxConcurrency ?? 8}</TableCell>}
+                    {isColVisible('curConcurrency') && <TableCell className="text-right tabular-nums">{a.concurrency ?? 0}</TableCell>}
+                    {isColVisible('errRate') && <TableCell className="text-right tabular-nums">{formatPercent(a.err_rate)}</TableCell>}
+                    {isColVisible('errCount') && <TableCell className="text-right tabular-nums">{a.err_count ?? 0}</TableCell>}
+                    {isColVisible('costMultiplier') && (
+                      <TableCell
+                        className="cursor-pointer text-right tabular-nums"
+                        title={t('accounts.multiplier.hint')}
+                        onClick={() => openMult(a)}
+                      >
+                        {fmtMult(a.UpstreamCostMultiplier)}
+                      </TableCell>
+                    )}
+                    {isColVisible('cacheDomain') && (
+                      <TableCell
+                        className="max-w-40 cursor-pointer truncate"
+                        title={t('accounts.cacheDomain.hint')}
+                        onClick={() => openDomain(a)}
+                      >
+                        {a.CacheDomain ?? <span className="text-xs text-muted-foreground">{t('accounts.cacheDomain.private')}</span>}
+                      </TableCell>
+                    )}
+                    {isColVisible('revision') && <TableCell className="text-right tabular-nums text-muted-foreground">{a.LifecycleRevision ?? '—'}</TableCell>}
+                    {isColVisible('lastError') && (
+                      <TableCell className="max-w-40">
+                        {a.LastError ? (
+                          <Tooltip>
+                            <TooltipTrigger render={<span className="block cursor-help truncate text-xs text-muted-foreground" />}>
+                              {truncate(a.LastError, 20)}
+                            </TooltipTrigger>
+                            <TooltipContent>{a.LastError}</TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    )}
                     {isColVisible('usage') && (
                       <TableCell
                         className="cursor-pointer text-center"
@@ -1017,17 +1069,31 @@ export default function Accounts() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          title={a.Status === 'disabled' ? t('accounts.enable') : t('accounts.disable')}
-                          onClick={() => toggle.mutate(a)}
-                          disabled={toggle.isPending}
+                          title={a.Enabled === true ? t('accounts.disable') : t('accounts.enable')}
+                          aria-label={a.Enabled === true ? t('accounts.disable') : t('accounts.enable')}
+                          onClick={() => setEnabled.mutate(a)}
+                          disabled={setEnabled.isPending || a.LifecycleRevision == null}
                         >
-                          {a.Status === 'disabled' ? <CircleCheck /> : <Ban />}
+                          {a.Enabled === true ? <Ban /> : <CircleCheck />}
                         </Button>
+                        {/* 失效恢复与启停语义分离：仅 failed_at 置位时出现（enable 不清失效） */}
+                        {a.FailedAt && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            title={t('accounts.recover')}
+                            aria-label={t('accounts.recover')}
+                            onClick={() => recover.mutate(a)}
+                            disabled={recover.isPending || a.LifecycleRevision == null}
+                          >
+                            <RotateCcw />
+                          </Button>
+                        )}
                         {isCodexTemplate(a) && (
                           <Button variant="ghost" size="icon-sm" title={t('accounts.ext.button')} onClick={() => openExt(a)}><Settings2 /></Button>
                         )}
-                        <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(a)}><Pencil /></Button>
-                        <Button variant="ghost" size="icon-sm" className="text-destructive" title={t('common.delete')} onClick={() => setDeleting(a)}><Trash2 /></Button>
+                        <Button variant="ghost" size="icon-sm" title={t('common.edit')} aria-label={t('common.edit')} onClick={() => openEdit(a)}><Pencil /></Button>
+                        <Button variant="ghost" size="icon-sm" className="text-destructive" title={t('common.delete')} aria-label={t('common.delete')} onClick={() => setDeleting(a)}><Trash2 /></Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1157,28 +1223,13 @@ export default function Accounts() {
                 <p className="text-xs text-muted-foreground">{t('accounts.baseUrlHint')}</p>
               </div>
             )}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-1.5">
-                <Label>{t('accounts.statusLabel')}</Label>
-                <Select
-                  items={Object.fromEntries(STATUSES.map(s => [s, t(`status.${s}`)]))}
-                  value={form.status}
-                  onValueChange={v => setForm(f => ({ ...f, status: v as AccountStatus }))}
-                >
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {STATUSES.map(s => <SelectItem key={s} value={s} label={t(`status.${s}`)}>{t(`status.${s}`)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="acc-weight">{t('accounts.weightLabel')}</Label>
-                <Input id="acc-weight" type="number" min={0} value={form.weight} onChange={e => setForm(f => ({ ...f, weight: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="acc-max">{t('accounts.maxLabel')}</Label>
-                <Input id="acc-max" type="number" min={1} value={form.max_concurrency} onChange={e => setForm(f => ({ ...f, max_concurrency: e.target.value }))} />
-              </div>
+            {/* 遗留 status/weight 控件已移除（生命周期 = enabled/recover fenced 动作；
+                权重不再暴露——PUT 回显当前值防全量替换归零）。
+                缓存域/倍率统一走列表内 fenced 编辑弹窗（创建带 cache_domain 会触发
+                repo fail-closed 落 enabled=false，不在创建表单暴露）。 */}
+            <div className="space-y-1.5 max-w-40">
+              <Label htmlFor="acc-max">{t('accounts.maxLabel')}</Label>
+              <Input id="acc-max" type="number" min={1} value={form.max_concurrency} onChange={e => setForm(f => ({ ...f, max_concurrency: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
               <Label>{t('accounts.groupLabel')}</Label>
@@ -1270,21 +1321,8 @@ export default function Accounts() {
                 <span className="text-sm">{t('accounts.clearBaseUrl')}</span>
               </label>
             </div>
+            {/* 批量面同样移除遗留 status/weight（启停/恢复/倍率/缓存域为逐账号 fenced 写，不批量） */}
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>{t('accounts.statusLabel')}</Label>
-                <Select
-                  items={Object.fromEntries([['all', t('list.unchanged')], ...STATUSES.map(s => [s, t(`status.${s}`)])])}
-                  value={batchForm.status}
-                  onValueChange={v => setBatchForm(f => ({ ...f, status: v as BatchStatus }))}
-                >
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all" label={t('list.unchanged')}>{t('list.unchanged')}</SelectItem>
-                    {STATUSES.map(s => <SelectItem key={s} value={s} label={t(`status.${s}`)}>{t(`status.${s}`)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
               <div className="space-y-1.5">
                 <Label>{t('accounts.templateLabel')}</Label>
                 <Select
@@ -1298,12 +1336,6 @@ export default function Accounts() {
                     {templates.map(tp => <SelectItem key={tp.ID} value={String(tp.ID)} label={tp.Name ?? `#${tp.ID}`}>{tp.Name ?? `#${tp.ID}`}</SelectItem>)}
                   </SelectContent>
                 </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="ba-weight">{t('accounts.weightLabel')}</Label>
-                <Input id="ba-weight" type="number" min={0} value={batchForm.weight} placeholder="0" onChange={e => setBatchForm(f => ({ ...f, weight: e.target.value }))} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ba-max">{t('accounts.maxLabel')}</Label>
@@ -1535,6 +1567,75 @@ export default function Accounts() {
           </div>
           <DialogFooter className="shrink-0 rounded-b-[14px] border-t bg-muted/10 px-6 py-5">
             <Button variant="outline" onClick={() => setUsageDetail(null)}>{t('common.cancel')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* —— 采购成本倍率（fenced PUT /cost-multiplier；正常值 ×0–×10，UI 边界校验镜像
+          后端 bp 换算；409 → 提示重读重试） —— */}
+      <Dialog open={!!multTarget} onOpenChange={o => { if (!o && !multSave.isPending) setMultTarget(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('accounts.multiplier.title', { name: multTarget?.Name ?? '—', id: multTarget?.ID })}</DialogTitle>
+            <DialogDescription>{t('accounts.multiplier.desc')}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="acc-mult">{t('accounts.multiplier.label')}</Label>
+            <Input
+              id="acc-mult"
+              type="number"
+              min={0}
+              max={10}
+              step={0.0001}
+              value={multValue}
+              onChange={e => setMultValue(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">{t('accounts.multiplier.rangeHint')}</p>
+            {multValue.trim() !== '' && parseMultiplier(multValue) === null && (
+              <p className="text-sm text-destructive">{t('accounts.multiplier.invalid')}</p>
+            )}
+            <p className="text-xs text-muted-foreground">{t('accounts.lifecycleRevisionNote', { revision: multTarget?.LifecycleRevision ?? '—' })}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMultTarget(null)} disabled={multSave.isPending}>{t('common.cancel')}</Button>
+            <Button
+              onClick={() => multTarget && multSave.mutate({ id: multTarget.ID!, multiplier: parseMultiplier(multValue)!, expectedRevision: multTarget.LifecycleRevision ?? 0 })}
+              disabled={multSave.isPending || parseMultiplier(multValue) === null || multTarget?.LifecycleRevision == null}
+            >
+              {multSave.isPending ? t('common.saving') : t('common.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* —— 缓存域（fenced PUT /cache-domain；空 → null = 清空回账号私有域，不走空串） —— */}
+      <Dialog open={!!domainTarget} onOpenChange={o => { if (!o && !domainSave.isPending) setDomainTarget(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('accounts.cacheDomain.title', { name: domainTarget?.Name ?? '—', id: domainTarget?.ID })}</DialogTitle>
+            <DialogDescription>{t('accounts.cacheDomain.desc')}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="acc-domain">{t('accounts.cacheDomain.label')}</Label>
+            <Input
+              id="acc-domain"
+              value={domainValue}
+              placeholder={t('accounts.cacheDomain.placeholder')}
+              onChange={e => setDomainValue(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">{domainValue.trim() === '' ? t('accounts.cacheDomain.currentPrivate') : t('accounts.cacheDomain.currentShared')}</p>
+            {domainValue.trim() !== '' && !validCacheDomain(domainValue.trim()) && (
+              <p className="text-sm text-destructive">{t('accounts.cacheDomain.invalid')}</p>
+            )}
+            <p className="text-xs text-muted-foreground">{t('accounts.lifecycleRevisionNote', { revision: domainTarget?.LifecycleRevision ?? '—' })}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDomainTarget(null)} disabled={domainSave.isPending}>{t('common.cancel')}</Button>
+            <Button
+              onClick={() => domainTarget && domainSave.mutate({ id: domainTarget.ID!, cacheDomain: domainValue.trim() || null, expectedRevision: domainTarget.LifecycleRevision ?? 0 })}
+              disabled={domainSave.isPending || domainTarget?.LifecycleRevision == null || (domainValue.trim() !== '' && !validCacheDomain(domainValue.trim()))}
+            >
+              {domainSave.isPending ? t('common.saving') : t('common.save')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
