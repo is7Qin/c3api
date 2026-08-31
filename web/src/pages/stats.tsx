@@ -4,18 +4,22 @@
 
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { BarChart3 } from 'lucide-react'
+import { BarChart3, Workflow } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from 'recharts'
 import { api } from '@/App'
+import type { components } from '@/lib/api/schema'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { DateRangePicker } from '@/components/date-range-picker'
 import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { fmtTTFT, formatDateTime, toRFC3339 } from '@/components/fmt'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from '@/components/ui/combobox'
+import { fmtTTFT, formatCost, formatDateTime, toRFC3339, truncate } from '@/components/fmt'
 
 type Metric = 'requests' | 'tokens'
 type Granularity = 'hour' | 'day'
@@ -33,6 +37,7 @@ const pad2 = (n: number) => String(n).padStart(2, '0')
 
 export default function Stats() {
   const { t } = useTranslation()
+  const [tab, setTab] = useState<'usage' | 'routing'>('usage')
   const [range, setRange] = useState(defaultRange)
   const [granularity, setGranularity] = useState<Granularity>('hour')
   const [metric, setMetric] = useState<Metric>('tokens')
@@ -111,6 +116,13 @@ export default function Stats() {
         <h1 className="text-2xl font-semibold tracking-tight">{t('stats.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('stats.subtitle')}</p>
       </div>
+
+      <Tabs value={tab} onValueChange={v => v && setTab(v as 'usage' | 'routing')}>
+        <TabsList>
+          <TabsTrigger value="usage">{t('stats.tabUsage')}</TabsTrigger>
+          <TabsTrigger value="routing">{t('stats.tabRouting')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="usage" className="space-y-6">
 
       <Card className="p-4">
         <div className="flex flex-nowrap items-start gap-5 overflow-x-auto">
@@ -309,6 +321,421 @@ export default function Stats() {
           </Table>
         )}
       </Card>
+        </TabsContent>
+        <TabsContent value="routing" className="space-y-6">
+          <RoutingPanel range={range} setRange={setRange} />
+        </TabsContent>
+      </Tabs>
     </div>
+  )
+}
+
+// —— Routing Flow tab（Todo 22）：渲染服务端 rollup 聚合与当前计划投影。
+// 铁律：不在浏览器侧重算 Wilson 区间 / frontier 支配 / 计划编译——所有数值
+// 直出 API；守恒失败（first≠terminal）时降级为表格并显式告警，不画无效图。
+
+type PlanRoute = components['schemas']['RoutingPlanRoute']
+type FlowEdge = components['schemas']['RoutingFlowEdge']
+
+const OUTCOME_PALETTE = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
+
+const routeLabel = (r: PlanRoute) => `${r.ref.model} · ${r.ref.format} · ${r.ref.operation_tag} · g${r.ref.group_id}`
+
+function RoutingPanel({ range, setRange }: {
+  range: { from: string; to: string }
+  setRange: (r: { from: string; to: string }) => void
+}) {
+  const { t } = useTranslation()
+  const planQ = useQuery({ queryKey: ['routing-plan'], queryFn: () => api.getRoutingPlan() })
+  const routes = useMemo(() => planQ.data?.routes ?? [], [planQ.data])
+  const [picked, setPicked] = useState<string | undefined>(undefined)
+  // 选中项失效（计划换代/路由消失）→ 回落首条；空目录 = 未发布计划
+  const routeId = picked && routes.some(r => r.ref.route_class_id === picked)
+    ? picked
+    : (routes[0]?.ref.route_class_id ?? '')
+  const from = toRFC3339(range.from) ?? ''
+  const to = toRFC3339(range.to) ?? ''
+
+  const flowQ = useQuery({
+    queryKey: ['routing-flow', routeId, from, to],
+    queryFn: () => api.getRoutingFlow({ route: routeId, from, to }),
+    enabled: routeId !== '',
+  })
+  const frontierQ = useQuery({
+    queryKey: ['routing-frontier', routeId, from, to],
+    queryFn: () => api.getRoutingFrontier({ route: routeId, from, to }),
+    enabled: routeId !== '',
+  })
+
+  if (planQ.isLoading) {
+    return <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-48" />)}</div>
+  }
+  if (planQ.isError) {
+    return <p className="text-sm text-destructive">{t('common.loadFailed', { message: (planQ.error as Error).message })}</p>
+  }
+  if (routes.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+          <Workflow className="size-10" />
+          <p className="font-medium">{t('stats.routing.planEmptyTitle')}</p>
+          <p className="text-sm">{t('stats.routing.planEmptyDesc')}</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const labels = new Map(routes.map(r => [r.ref.route_class_id, routeLabel(r)]))
+  const route = routes.find(r => r.ref.route_class_id === routeId) ?? routes[0]
+
+  return (
+    <div className="space-y-6">
+      <Card className="p-4">
+        <div className="flex flex-wrap items-start gap-5">
+          <div className="w-full min-w-0 space-y-1.5 sm:w-[22rem]">
+            <Label>{t('stats.routing.route')}</Label>
+            <Combobox
+              items={routes.map(r => r.ref.route_class_id)}
+              filter={() => true}
+              autoComplete="none"
+              value={routeId || null}
+              onValueChange={v => setPicked(v ?? undefined)}
+              itemToStringLabel={v => labels.get(v) ?? v}
+            >
+              <ComboboxInput placeholder={t('stats.routing.routePlaceholder')} showClear={false} />
+              <ComboboxContent>
+                <ComboboxEmpty>{t('logs.filter.noMatch')}</ComboboxEmpty>
+                <ComboboxList>
+                  {routes.map(r => (
+                    <ComboboxItem key={r.ref.route_class_id} value={r.ref.route_class_id}>
+                      <span className="min-w-0 truncate">{routeLabel(r)}</span>
+                    </ComboboxItem>
+                  ))}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          </div>
+          <div className="w-[14rem] shrink-0 space-y-1.5">
+            <Label>{t('dateRange.label')}</Label>
+            <DateRangePicker value={range} onChange={setRange} />
+          </div>
+          <div className="flex items-center gap-2 pt-7">
+            <Badge variant="secondary" className="font-mono">{t('stats.routing.generation', { gen: planQ.data?.generation ?? 0 })}</Badge>
+            <span className="text-xs text-muted-foreground">{t('stats.routing.routesCount', { count: routes.length })}</span>
+          </div>
+        </div>
+      </Card>
+
+      <FlowCard flowQ={flowQ} />
+      <FrontierCard frontierQ={frontierQ} />
+      <PlanCard route={route} generation={planQ.data?.generation ?? 0} />
+    </div>
+  )
+}
+
+// flow 卡：守恒成立才画 (ordinal,lane)×outcome 堆叠柱；违例 → 告警 + 边表格。
+type FlowQuery = { data?: components['schemas']['RoutingFlowResponse']; isLoading: boolean; isError: boolean; error: unknown }
+
+function FlowCard({ flowQ }: { flowQ: FlowQuery }) {
+  const { t } = useTranslation()
+  const data = flowQ.data
+  const lanes = useMemo(() => data?.lanes ?? [], [data])
+  const edges = useMemo(() => lanes.flatMap(l => l.edges), [lanes])
+  const conserved = !!data && data.first_dispatch_chains === data.terminal_chains
+  const staleEdges = data ? edges.filter(e => e.generation !== data.plan_generation).length : 0
+
+  const outcomes = useMemo(() => {
+    const s = new Set<string>()
+    for (const e of edges) s.add(e.outcome)
+    return [...s].sort()
+  }, [edges])
+  const flowConfig = useMemo(() => {
+    const c: ChartConfig = {}
+    outcomes.forEach((o, i) => {
+      c[o] = { label: t(`stats.routing.outcome.${o}`, { defaultValue: o }), color: OUTCOME_PALETTE[i % OUTCOME_PALETTE.length] }
+    })
+    return c
+  }, [outcomes, t])
+  const chartData = useMemo(() => lanes.map(l => {
+    const row: Record<string, number | string> = { label: `#${l.ordinal} ${t(`stats.routing.lane.${l.lane}`, { defaultValue: l.lane })}` }
+    for (const e of l.edges) row[e.outcome] = ((row[e.outcome] as number | undefined) ?? 0) + e.chain_count
+    return row
+  }), [lanes, t])
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          {t('stats.routing.flowTitle')}
+          {data && (
+            <>
+              <Badge variant="secondary" className="font-mono">{t('stats.routing.generation', { gen: data.plan_generation })}</Badge>
+              {staleEdges > 0 && <Badge variant="outline">{t('stats.routing.staleEdges', { count: staleEdges })}</Badge>}
+            </>
+          )}
+        </CardTitle>
+        <CardDescription>{t('stats.routing.flowDesc')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {flowQ.isError ? (
+          <p className="text-sm text-destructive">{t('common.loadFailed', { message: (flowQ.error as Error).message })}</p>
+        ) : flowQ.isLoading ? (
+          <Skeleton className="h-[280px] w-full" />
+        ) : lanes.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
+            <BarChart3 className="size-10" />
+            <p className="font-medium">{t('stats.routing.flowEmptyTitle')}</p>
+            <p className="text-sm">{t('stats.routing.flowEmptyDesc')}</p>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+              <span className="text-muted-foreground">{t('stats.routing.firstDispatch')}: <span className="font-mono tabular-nums text-foreground">{data?.first_dispatch_chains.toLocaleString()}</span></span>
+              <span className="text-muted-foreground">{t('stats.routing.terminal')}: <span className="font-mono tabular-nums text-foreground">{data?.terminal_chains.toLocaleString()}</span></span>
+              <span className="text-muted-foreground">{t('stats.routing.incompleteDropped')}: <span className="font-mono tabular-nums text-foreground">{data?.incomplete_chain_dropped.toLocaleString()}</span></span>
+              <span className="text-muted-foreground">{t('stats.routing.overflowDropped')}: <span className="font-mono tabular-nums text-foreground">{data?.flow_overflow_dropped_chains.toLocaleString()}</span></span>
+              {data?.process_crash_loss_unobservable && <span className="text-xs text-muted-foreground">{t('stats.routing.crashUnobservable')}</span>}
+            </div>
+            {!conserved && (
+              <Alert variant="destructive">
+                <AlertTitle>{t('stats.routing.conservationAlertTitle')}</AlertTitle>
+                <AlertDescription>{t('stats.routing.conservationAlertDesc', { first: data?.first_dispatch_chains.toLocaleString(), terminal: data?.terminal_chains.toLocaleString() })}</AlertDescription>
+              </Alert>
+            )}
+            {conserved ? (
+              <ChartContainer config={flowConfig} className="h-[280px] w-full">
+                <BarChart accessibilityLayer data={chartData}>
+                  <CartesianGrid vertical={false} />
+                  <XAxis dataKey="label" tickLine={false} tickMargin={10} axisLine={false} fontSize={12} />
+                  <YAxis tickLine={false} axisLine={false} tickMargin={8} fontSize={12} allowDecimals={false} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <ChartLegend content={<ChartLegendContent />} />
+                  {outcomes.map(o => (
+                    <Bar key={o} dataKey={o} stackId="chains" fill={`var(--color-${o})`} radius={2} maxBarSize={48} />
+                  ))}
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <FlowEdgeTable edges={edges} />
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function FlowEdgeTable({ edges }: { edges: FlowEdge[] }) {
+  const { t } = useTranslation()
+  return (
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="text-right">{t('stats.routing.table.ordinal')}</TableHead>
+            <TableHead>{t('stats.routing.table.lane')}</TableHead>
+            <TableHead className="text-right">{t('stats.routing.table.account')}</TableHead>
+            <TableHead className="text-right">{t('stats.routing.table.previous')}</TableHead>
+            <TableHead>{t('stats.routing.table.prevOutcome')}</TableHead>
+            <TableHead>{t('stats.routing.table.reason')}</TableHead>
+            <TableHead>{t('stats.routing.table.outcome')}</TableHead>
+            <TableHead>{t('stats.routing.table.terminal')}</TableHead>
+            <TableHead className="text-right">{t('stats.routing.table.generation')}</TableHead>
+            <TableHead className="text-right">{t('stats.routing.table.chains')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody className="[&_td]:py-2.5">
+          {edges.map((e, i) => (
+            <TableRow key={i}>
+              <TableCell className="text-right tabular-nums">{e.ordinal}</TableCell>
+              <TableCell className="font-mono text-xs">{t(`stats.routing.lane.${e.lane}`, { defaultValue: e.lane })}</TableCell>
+              <TableCell className="text-right font-mono tabular-nums">{e.account_id}</TableCell>
+              <TableCell className="text-right font-mono tabular-nums">{e.previous_account_id ?? '—'}</TableCell>
+              <TableCell className="text-xs">{e.previous_outcome || '—'}</TableCell>
+              <TableCell className="text-xs">{e.transition_reason || '—'}</TableCell>
+              <TableCell className="text-xs">{t(`stats.routing.outcome.${e.outcome}`, { defaultValue: e.outcome })}</TableCell>
+              <TableCell>{e.is_terminal ? <Badge variant="outline" className="text-xs">{t('stats.routing.table.finalBadge')}</Badge> : '—'}</TableCell>
+              <TableCell className="text-right font-mono tabular-nums text-xs">{e.generation}</TableCell>
+              <TableCell className="text-right tabular-nums">{e.chain_count.toLocaleString()}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+// frontier 卡：散点（x=每次成功成本，y=成功率 Wilson LCB——均为服务端值）+
+// 全候选表（unknown/成本不可知者只呈现观测事实，不上前沿）。
+type FrontierQuery = { data?: components['schemas']['RoutingFrontierResponse']; isLoading: boolean; isError: boolean; error: unknown }
+
+function FrontierCard({ frontierQ }: { frontierQ: FrontierQuery }) {
+  const { t } = useTranslation()
+  const candidates = useMemo(() => frontierQ.data?.candidates ?? [], [frontierQ.data])
+  const plotted = useMemo(() => candidates.filter(c => c.known && c.cost_known), [candidates])
+  const scatterConfig = {
+    frontier: { label: t('stats.routing.frontierOn'), color: 'var(--chart-1)' },
+    dominated: { label: t('stats.routing.frontierDominated'), color: 'var(--chart-2)' },
+  } satisfies ChartConfig
+  const toPoint = (c: components['schemas']['RoutingFrontierCandidate']) => ({
+    cost: c.cost_per_success,
+    lcb: c.success_lcb * 100,
+    attempts: c.attempts,
+  })
+  const frontierPts = useMemo(() => plotted.filter(c => c.on_frontier).map(toPoint), [plotted])
+  const dominatedPts = useMemo(() => plotted.filter(c => !c.on_frontier).map(toPoint), [plotted])
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('stats.routing.frontierTitle')}</CardTitle>
+        <CardDescription>{t('stats.routing.frontierDesc')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {frontierQ.isError ? (
+          <p className="text-sm text-destructive">{t('common.loadFailed', { message: (frontierQ.error as Error).message })}</p>
+        ) : frontierQ.isLoading ? (
+          <Skeleton className="h-[280px] w-full" />
+        ) : candidates.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">{t('stats.routing.frontierEmpty')}</p>
+        ) : (
+          <>
+            {plotted.length > 0 && (
+              <>
+                <ChartContainer config={scatterConfig} className="h-[280px] w-full">
+                  <ScatterChart>
+                    <CartesianGrid />
+                    <XAxis type="number" dataKey="cost" name={t('stats.routing.table.costPerSuccess')} tickFormatter={(v: number) => (v > 0 ? formatCost(v) : '$0')} tickLine={false} axisLine={false} fontSize={12} />
+                    <YAxis type="number" dataKey="lcb" name={t('stats.routing.frontierLcb')} domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tickLine={false} axisLine={false} tickMargin={8} fontSize={12} />
+                    <ZAxis type="number" dataKey="attempts" range={[40, 240]} name={t('stats.routing.table.attempts')} />
+                    <ChartTooltip cursor={{ strokeDasharray: '3 3' }} content={<ChartTooltipContent />} />
+                    <Scatter name={t('stats.routing.frontierOn')} data={frontierPts} fill="var(--color-frontier)" />
+                    <Scatter name={t('stats.routing.frontierDominated')} data={dominatedPts} fill="var(--color-dominated)" fillOpacity={0.55} />
+                  </ScatterChart>
+                </ChartContainer>
+                {/* 静态两项图例（系列固定；ChartLegend 的 config 查键按显示名，
+                    散点系列名对不上 config key 会渲染空标签） */}
+                <div className="flex items-center justify-center gap-4 pt-1 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5"><span className="size-2 shrink-0 rounded-[2px] bg-(--chart-1)" />{t('stats.routing.frontierOn')}</span>
+                  <span className="flex items-center gap-1.5"><span className="size-2 shrink-0 rounded-[2px] bg-(--chart-2) opacity-55" />{t('stats.routing.frontierDominated')}</span>
+                </div>
+              </>
+            )}
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('stats.routing.table.fingerprint')}</TableHead>
+                    <TableHead className="text-right">{t('stats.routing.table.account')}</TableHead>
+                    <TableHead>{t('stats.routing.table.model')}</TableHead>
+                    <TableHead className="text-right">{t('stats.routing.table.attempts')}</TableHead>
+                    <TableHead className="text-right">{t('stats.routing.table.successRange')}</TableHead>
+                    <TableHead className="text-right">{t('stats.routing.table.ttftRange')}</TableHead>
+                    <TableHead className="text-right">{t('stats.routing.table.costPerSuccess')}</TableHead>
+                    <TableHead>{t('stats.routing.table.flags')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody className="[&_td]:py-2.5">
+                  {candidates.map(c => (
+                    <TableRow key={c.candidate_fingerprint}>
+                      <TableCell className="font-mono text-xs" title={c.candidate_fingerprint}>{truncate(c.candidate_fingerprint, 12)}</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">{c.known ? c.account_id : '—'}</TableCell>
+                      <TableCell className="text-xs">{c.known ? c.mapped_model : <span className="text-muted-foreground">{t('stats.routing.flagUnknown')}</span>}</TableCell>
+                      <TableCell className="text-right tabular-nums">{c.attempts.toLocaleString()} / {c.successes.toLocaleString()}</TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums">{`${(c.success_lcb * 100).toFixed(1)}–${(c.success_ucb * 100).toFixed(1)}%`}</TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums">{c.ttft_known ? `${fmtTTFT(c.ttft_lcb)}–${fmtTTFT(c.ttft_ucb)}` : '—'}</TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums">{c.cost_known ? formatCost(c.cost_per_success) : '—'}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {c.on_frontier && <Badge variant="default" className="text-xs">{t('stats.routing.frontierOn')}</Badge>}
+                          {c.insufficient && <Badge variant="outline" className="text-xs">{t('stats.routing.flagInsufficient')}</Badge>}
+                          {!c.known && <Badge variant="secondary" className="text-xs">{t('stats.routing.flagUnknown')}</Badge>}
+                          {c.known && !c.cost_known && <Badge variant="secondary" className="text-xs">{t('stats.routing.flagCostUnknown')}</Badge>}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// plan 卡：当前 generation 的选中路由直通序（primary/explore/degraded）+ 候选目录。
+function PlanCard({ route, generation }: { route: PlanRoute; generation: number }) {
+  const { t } = useTranslation()
+  const chips = (ids: number[], weights?: Record<string, number>) => (
+    <div className="flex flex-wrap gap-1.5">
+      {ids.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
+      {ids.map((id, i) => (
+        <span key={`${id}-${i}`} className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-black/[0.04] px-2 py-0.5 font-mono text-xs dark:border-white/10 dark:bg-white/10">
+          {i + 1}. {id}{weights ? ` ×${weights[String(id)] ?? 0}` : ''}
+        </span>
+      ))}
+    </div>
+  )
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          {t('stats.routing.planTitle')}
+          <Badge variant="secondary" className="font-mono">{t('stats.routing.generation', { gen: generation })}</Badge>
+        </CardTitle>
+        <CardDescription>{t('stats.routing.planDesc')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{t('stats.routing.planPrimary')}</div>
+            {chips(route.primary)}
+          </div>
+          <div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{t('stats.routing.planExplore')}</div>
+            {chips(route.explore.ids, route.explore.weights)}
+            <div className="mt-1 text-xs text-muted-foreground">{t('stats.routing.planExploreTotal', { total: route.explore.total.toLocaleString() })}</div>
+          </div>
+          <div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{t('stats.routing.planDegraded')}</div>
+            {chips(route.degraded)}
+            {route.explore.fallback.length > 0 && (
+              <div className="mt-1.5 text-xs text-muted-foreground">{t('stats.routing.planFallback')}</div>
+            )}
+            {chips(route.explore.fallback)}
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-right">{t('stats.routing.table.account')}</TableHead>
+                <TableHead className="text-right">{t('stats.routing.table.template')}</TableHead>
+                <TableHead className="text-right">{t('stats.routing.table.revision')}</TableHead>
+                <TableHead>{t('stats.routing.table.model')}</TableHead>
+                <TableHead>{t('stats.routing.table.qualityClass')}</TableHead>
+                <TableHead className="text-right">{t('stats.routing.table.multiplier')}</TableHead>
+                <TableHead>{t('stats.routing.table.fingerprint')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody className="[&_td]:py-2.5">
+              {route.candidates.map(c => (
+                <TableRow key={`${c.account_id}-${c.identity_fingerprint}`}>
+                  <TableCell className="text-right font-mono tabular-nums">{c.account_id}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums">{c.template_id}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums">{c.lifecycle_revision}</TableCell>
+                  <TableCell className="text-xs">{c.mapped_model || '—'}</TableCell>
+                  <TableCell className="font-mono text-xs" title={c.quality_class_id}>{truncate(c.quality_class_id, 12)}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums">{`${(c.upstream_cost_multiplier_bp / 100).toFixed(2)}×`}</TableCell>
+                  <TableCell className="font-mono text-xs" title={c.fingerprint || c.identity_fingerprint}>{truncate(c.fingerprint || c.identity_fingerprint, 12)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
