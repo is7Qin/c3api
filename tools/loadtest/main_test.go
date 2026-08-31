@@ -91,8 +91,8 @@ func TestDrainSSEFinalLineWithoutNewline(t *testing.T) {
 
 func TestRequestTemplateMatchesNewRequest(t *testing.T) {
 	buildReqTemplate()
-	got := newRequestFromTemplate("ck-test")
-	want := newLoadtestRequest(*addr, "ck-test", *mode)
+	got := newRequestFromTemplate("ck-test", -1)
+	want := newLoadtestRequest(*addr, "ck-test", *mode, "")
 	require.Equal(t, want.Method, got.Method)
 	require.Equal(t, want.URL.String(), got.URL.String())
 	require.Equal(t, "application/json", got.Header.Get("Content-Type"))
@@ -128,7 +128,7 @@ func (b *blockingBody) Read([]byte) (int, error) { <-b.done; return 0, io.EOF }
 func (b *blockingBody) Close() error { close(b.done); return nil }
 
 func TestChatRequestBodyOmitsStream(t *testing.T) {
-	req := newLoadtestRequest("http://example.test", "ck-test", "chat")
+	req := newLoadtestRequest("http://example.test", "ck-test", "chat", "")
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
 	_, ok := body["stream"]
@@ -137,10 +137,59 @@ func TestChatRequestBodyOmitsStream(t *testing.T) {
 }
 
 func TestStreamRequestBodyEnablesStream(t *testing.T) {
-	req := newLoadtestRequest("http://example.test", "ck-test", "stream")
+	req := newLoadtestRequest("http://example.test", "ck-test", "stream", "")
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
 	require.Equal(t, true, body["stream"])
+}
+
+// TestAffinityInjectsPromptCacheKey 软亲和注入：chat/responses 格式带
+// prompt_cache_key（affinity 非空），anthropic 忽略（不吃该字段）。
+func TestAffinityInjectsPromptCacheKey(t *testing.T) {
+	prevFmt := *format
+	t.Cleanup(func() { *format = prevFmt })
+
+	*format = "chat"
+	req := newLoadtestRequest("http://example.test", "ck-test", "chat", "affinity-7")
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
+	require.Equal(t, "affinity-7", body["prompt_cache_key"], "chat 注入显式亲和键")
+
+	*format = "anthropic"
+	req = newLoadtestRequest("http://example.test", "ck-test", "chat", "affinity-7")
+	require.NotContains(t, readAll(t, req), "prompt_cache_key", "anthropic 不注入（格式白名单外）")
+}
+
+// TestAffinityTemplateRotation -affinity-keys N 预构建 N 个亲和模板，
+// newRequestFromTemplate 按 idx 轮转取对应 prompt_cache_key。
+func TestAffinityTemplateRotation(t *testing.T) {
+	prevKeys, prevMode, prevFmt := *affinityKeys, *mode, *format
+	t.Cleanup(func() {
+		*affinityKeys, *mode, *format = prevKeys, prevMode, prevFmt
+		buildReqTemplate()
+	})
+	*affinityKeys, *mode, *format = 3, "chat", "chat"
+	buildReqTemplate()
+	require.Len(t, affinityTmpls, 3)
+	for i := 0; i < 3; i++ {
+		req := newRequestFromTemplate("ck-test", i)
+		b := readAll(t, req)
+		require.Contains(t, b, fmt.Sprintf("affinity-%d", i), "轮转下标 %d 命中对应亲和域", i)
+	}
+	// idx 超界取模回绕；idx<0 走无亲和单模板。
+	require.Contains(t, readAll(t, newRequestFromTemplate("ck-test", 7)), "affinity-1")
+	require.NotContains(t, readAll(t, newRequestFromTemplate("ck-test", -1)), "prompt_cache_key")
+}
+
+// readAll 读尽请求体（工具侧小辅助）。
+func readAll(t *testing.T, req *http.Request) string {
+	t.Helper()
+	if req.Body == nil {
+		return ""
+	}
+	b, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	return string(b)
 }
 
 // ---- fill 模式（管理面填充压测）----

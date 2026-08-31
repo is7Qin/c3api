@@ -2,16 +2,19 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// setup 构造多租户压测数据（Phase 3a 数据模型 + Phase 5 计费字段）：
-// 模板（三格式 × 随机模型池）→ 公开组 → 账号（分散模板/组/上游）→ 用户（可选
-// 余额/并发区间）→ 逐个登录建 key（可选多 key/并发/额度区间），key 明文写文件
-// （loadtest -keys 用）。-price-models 给随机 N 个模型 manual 定价（验证计费
-// 链路有价）；-billing-enabled 一步到位：默认余额区间 + 全部模型池定价。
+// setup 构造多租户压测数据（Phase 3a 数据模型 + Phase 5 计费字段 + intelligent
+// routing 新契约）：模板（三格式 × 随机模型池）→ 公开组 → 账号（分散模板/组/
+// 上游，可选采购成本倍率 + 共享缓存域）→ 用户（可选余额/并发区间）→ 逐个登录建
+// key（可选多 key/并发/额度区间），key 明文写文件（loadtest -keys 用）。
+// -price-models 给随机 N 个模型 manual 定价（验证计费链路有价）；-billing-enabled
+// 一步到位：默认余额区间 + 全部模型池定价；-routing-rules 播种 typed 路由规则
+// （窗口 429 → throttle、窗口 5xx → fail_account，fatal 场景演练入口）。
 //
 //	用法: go run ./tools/loadtest/setup \
 //	  -addr http://127.0.0.1:8080 -admin-token <C3API_ADMIN_TOKEN> \
 //	  -upstream http://127.0.0.1:9100 \
-//	  -users 5000 -accounts 5000 -groups 20 -keys-out keys.txt
+//	  -users 5000 -accounts 5000 -groups 20 -keys-out keys.txt \
+//	  -cost-multiplier 0.5-4 -cache-domains 64 -routing-rules
 //
 // 说明：
 //   - 模板 base_url = -upstream（裸根约定：不含 /v1，服务端校验会拒绝尾 /v1）；
@@ -19,6 +22,9 @@
 //   - 组全部 public（key 可选性无限制）；账号 upstream_key 统一 "sk-upstream"
 //   - 用户密码统一 "loadtest-pass-1"（bcrypt 校验可验证）
 //   - key 并发/额度随机区间内取值，随机值 0 = 该 key 不设限制（"随机挑选填充"）
+//   - 账号只走 intelligent-routing 新契约（无 weight/status 旧字段）：成本倍率
+//     经 PUT /accounts/{id}/cost-multiplier（fenced，创建代际恒 1 直接命中），
+//     缓存域创建即带（每第 4 个账号留私有域做对照）
 package main
 
 import (
@@ -57,6 +63,11 @@ var (
 	keyQuota    = flag.String("key-quota", "0", "key quota (tokens) random interval; random 0 = that key unlimited")
 	priceModels = flag.Int("price-models", 0, "random N models from the pool get manual pricing (0 = none)")
 	billingOn   = flag.Bool("billing-enabled", false, "fill user balances (default 10-100 USD) + price the whole model pool (billing loadtest)")
+	// intelligent-routing 新契约（无旧 weight/status）：账号采购成本倍率 + 共享
+	// 缓存域 + typed 路由规则播种。
+	costMult     = flag.String("cost-multiplier", "0", "account upstream procurement cost multiplier random interval like 0.5-4 (1 = x1, cap 10; 0 = leave all at x1); applied via PUT /accounts/{id}/cost-multiplier")
+	cacheDomains = flag.Int("cache-domains", 0, "spread accounts over N shared cache domains (cache-<i>.loadtest round-robin; every 4th account stays private); 0 = all account-private")
+	routingRules = flag.Bool("routing-rules", false, "seed typed routing rules: window-429 account throttle (retry_after) + window-5xx fail_account (fatal drill)")
 )
 
 const (
@@ -87,7 +98,11 @@ var tplFormats = []string{"openai-chat", "openai-responses", "anthropic"}
 // 响应解析用最小结构（JSON 字段名 = Go 字段名 / openapi tag，见 api.gen.go）。
 type tpl struct{ ID int64 }
 type grp struct{ ID int64 }
-type acc struct{ ID int64 }
+type acc struct {
+	ID int64
+	// 创建代际恒 1（ent default）；fenced 写端点 expected_revision 直接用。
+	LifecycleRevision int64
+}
 type usr struct{ ID int64 }
 type loginResp struct {
 	Token string `json:"token"`
@@ -141,7 +156,7 @@ func main() {
 		}
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode != 200 {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return fmt.Errorf("%s %s → %d: %s", method, path, resp.StatusCode, b)
 		}
 		if out != nil {
@@ -223,22 +238,61 @@ func main() {
 
 	// 3) 账号 ×N：模板/组随机分配（必须解耦——若模板与组同用 i%N，组 g 只会
 	// 绑到单个模板，三格式请求在非对应组 404 "no account supports this
-	// request format"；随机化后每组含全格式模板账号，且每模板都分布到多组）
+	// request format"；随机化后每组含全格式模板账号，且每模板都分布到多组）。
+	// intelligent-routing 新契约：无 weight/status 旧字段；-cache-domains 创建
+	// 即带共享域（每第 4 个留私有域对照，编译器把空域规范为账号私有），
+	// -cost-multiplier 创建后 PUT fenced 写端点（新账号代际恒 1，必命中）。
 	aStart := time.Now()
+	costMin, costMax := parseFloatRange(*costMult)
+	if *cacheDomains < 0 {
+		fmt.Fprintln(os.Stderr, "-cache-domains must be >= 0")
+		os.Exit(2)
+	}
 	for i := 0; i < *accounts; i++ {
-		var out acc
-		admin(http.MethodPost, "/api/admin/accounts", map[string]any{
-			"name":         fmt.Sprintf("acc-%d", i),
-			"template_id":  tplIDs[rng.IntN(len(tplIDs))],
+		body := map[string]any{
+			"name":        fmt.Sprintf("acc-%d", i),
+			"template_id": tplIDs[rng.IntN(len(tplIDs))],
 			"upstream_key": "sk-upstream",
 			"group_ids":    []int64{groupIDs[rng.IntN(len(groupIDs))]},
 			// max_concurrency 显式 100000：service 校验把 0 兜底为 8，
 			// 8 槽 × 1666 chat 账号 = 13k 槽 < 30k 并发 → 大量 429 选号失败
 			// （压测目标 = 网关热路径，账号槽不设限，与 §7 SQL 直插同语义）
-			"weight": 100, "max_concurrency": 100000,
-		}, &out)
+			"max_concurrency": 100000,
+		}
+		if *cacheDomains > 0 && i%4 != 0 {
+			body["cache_domain"] = fmt.Sprintf("cache-%03d.loadtest", i%*cacheDomains)
+		}
+		var out acc
+		admin(http.MethodPost, "/api/admin/accounts", body, &out)
+		if costMax > 0 {
+			m := costMin
+			if costMax > costMin {
+				m = costMin + rng.Float64()*(costMax-costMin)
+			}
+			admin(http.MethodPut, fmt.Sprintf("/api/admin/accounts/%d/cost-multiplier", out.ID), map[string]any{
+				"multiplier": m, "expected_revision": out.LifecycleRevision,
+			}, nil)
+		}
 	}
-	fmt.Printf("accounts: %d (%s)\n", *accounts, time.Since(aStart).Round(time.Millisecond))
+	fmt.Printf("accounts: %d cost=%s cache-domains=%d (%s)\n", *accounts, *costMult, *cacheDomains, time.Since(aStart).Round(time.Millisecond))
+
+	// 3b) typed 路由规则（可选）：窗口 429 → account throttle（retry_after 优先
+	// 上游 Reset）；窗口 5xx → fail_account 终态判死（fatal 场景演练）。规则
+	// name 唯一约束，-run-tag 二次运行不撞。
+	if *routingRules {
+		rStart := time.Now()
+		admin(http.MethodPost, "/api/admin/rules", map[string]any{
+			"name": "lt-throttle-429" + *runTag, "priority": 100, "enabled": true,
+			"when": map[string]any{"kind": "429", "count_429_ge": 20, "window_seconds": 60},
+			"then": map[string]any{"throttle": map[string]any{"scope": "account", "mode": "retry_after", "use_reset": true}},
+		}, nil)
+		admin(http.MethodPost, "/api/admin/rules", map[string]any{
+			"name": "lt-fail-5xx" + *runTag, "priority": 101, "enabled": true,
+			"when": map[string]any{"kind": "5xx", "count_failure_ge": 50, "window_seconds": 60},
+			"then": map[string]any{"fail_account": true},
+		}, nil)
+		fmt.Printf("routing rules: throttle-429 + fail-account-5xx (%s)\n", time.Since(rStart).Round(time.Millisecond))
+	}
 
 	// 4) manual 定价（可选）：模型池随机 N 个（billing-enabled = 全部）——
 	// 基础价 + 随机 1-2 个矩阵字段（priority/fast 等），保证计费链路有价。
@@ -390,6 +444,32 @@ func parseRange(s string) (min, max int64, ok bool) {
 		os.Exit(2)
 	}
 	return min, max, true
+}
+
+// parseFloatRange 解析浮点区间 "min-max" / 单值 "v" → (min, max)；""/"0" =
+// 不设置 (0,0)。负数、min > max 或超 API 上限 10 → 启动即退出（fenced 写端点
+// 越界只会 400，压测数据全废——提前拦）。
+func parseFloatRange(s string) (min, max float64) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, 0
+	}
+	parts := strings.SplitN(s, "-", 2)
+	parse := func(t string) float64 {
+		v, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		must(err)
+		return v
+	}
+	min = parse(parts[0])
+	max = min
+	if len(parts) == 2 {
+		max = parse(parts[1])
+	}
+	if min < 0 || max < min || max > 10 {
+		fmt.Fprintf(os.Stderr, "invalid cost-multiplier range %q: want 0 <= min <= max <= 10\n", s)
+		os.Exit(2)
+	}
+	return min, max
 }
 
 // randIntRange 解析区间并返回 [min,max] 内随机整数；""/"0" = 不设置。

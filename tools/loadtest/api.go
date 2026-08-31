@@ -211,6 +211,10 @@ func adminScenarios() []apiScenario {
 		w("overview.get", 8, "GET", func(*rand.Rand) string { return "/api/admin/overview" }, nil),
 		w("users-top.get", 4, "GET", func(*rand.Rand) string { return "/api/admin/users-top" }, nil),
 		w("ops.workers", 3, "GET", func(*rand.Rand) string { return "/api/admin/ops/workers" }, nil),
+		// intelligent-routing 观测面读（当前发布计划投影，零参数恒 200）；
+		// frontier/flow 需 64-hex route 且须在当前计划目录内——压测随机 id
+		// 恒 404，不列入常规轮转（专项验证走 e2e/setup 路径）。
+		w("routing.plan", 4, "GET", func(*rand.Rand) string { return "/api/admin/routing/plan" }, nil),
 		w("temp-balances.list", 4, "GET", func(r *rand.Rand) string { return "/api/admin/temp-balances?" + apiRandPage(r, 50) }, nil),
 		w("settings.get", 3, "GET", func(*rand.Rand) string { return "/api/admin/settings" }, nil),
 
@@ -232,9 +236,10 @@ func adminScenarios() []apiScenario {
 			}),
 		w("accounts.create", 6, "POST", func(*rand.Rand) string { return "/api/admin/accounts" },
 			func(_ *rand.Rand, tag string) any {
+				// intelligent-routing 新契约：无 weight/status 旧字段。
 				return map[string]any{"name": "acct-stress-" + tag, "template_id": *fillTplID,
 					"upstream_key": "sk-stress", "group_ids": []int64{stressGID.Load()},
-					"weight": 100, "max_concurrency": 100000}
+					"max_concurrency": 100000}
 			}),
 		w("rules.create", 5, "POST", func(*rand.Rand) string { return "/api/admin/rules" },
 			func(r *rand.Rand, tag string) any {
