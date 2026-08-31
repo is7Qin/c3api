@@ -21,9 +21,8 @@ type ctxKeyDispatch struct{}
 // the dispatch owner before the upstream call, plus the base identity the
 // caller overlays terminal facts onto. fromPlan marks plan-canonical metadata
 // (canonical IDs / ordinal / lane / generation / lifecycle revision /
-// previous linkage); until the routing compiler merges, legacy selections
-// carry loop-managed chain metadata with placeholder identity — the same
-// interim contract documented on AttemptID.
+// previous linkage) — only plan-canonical dispatches feed the request-local
+// FlowChain; legacy selections carry loop-managed identity and stay out of it.
 type dispatchObservation struct {
 	observer *AttemptObserver
 	base     AttemptOutcome
@@ -87,17 +86,17 @@ func (p *Proxy) observeDispatchOutcome(ctx context.Context, outcome AttemptOutco
 	}
 }
 
-func (p *Proxy) pipelineObserver(sel *scheduler.Selection, attempt scheduler.Attempt) (*AttemptObserver, bool) {
+func (p *Proxy) pipelineObserver(sel *scheduler.Selection, attempt scheduler.Attempt, appendFlow AttemptFlowAppend) (*AttemptObserver, bool) {
 	if sel == nil || attempt.Validate() != nil {
 		return nil, false
 	}
-	return p.observerFor(pipelineBase(attempt)), true
+	return p.observerFor(pipelineBase(attempt), appendFlow), true
 }
 
 // observerFor begins the quality AttemptContext at dispatch time and wires the
-// shared flow append seam. markHealth/release stay nil: failover classification
-// and lease release remain the loop's/caller's single owners.
-func (p *Proxy) observerFor(base AttemptOutcome) *AttemptObserver {
+// flow append seam. markHealth/release stay nil: failover classification and
+// lease release remain the loop's/caller's single owners.
+func (p *Proxy) observerFor(base AttemptOutcome, appendFlow AttemptFlowAppend) *AttemptObserver {
 	var qualityContext *quality.AttemptContext
 	if p.qualityRecorder != nil {
 		qualityContext = p.qualityRecorder.Begin(quality.CanonicalKey(
@@ -106,19 +105,117 @@ func (p *Proxy) observerFor(base AttemptOutcome) *AttemptObserver {
 			pipelineID(string(base.Fingerprint)),
 		))
 	}
-	return NewAttemptObserver(qualityContext, nil, p.pipelineFlowAppend, nil)
+	return NewAttemptObserver(qualityContext, nil, appendFlow, nil)
+}
+
+// flowChainOwner is the request-local FlowChain producer owned exclusively by
+// failoverLoopWithPlan. It exists only for plan-backed dispatched requests
+// with a wired quality recorder: legacy placeholder identity never enters a
+// chain (no synthetic rows). beginDispatch arms the current dispatch attempt;
+// the stable seam closure (one per request) appends each real dispatch
+// outcome; settle finalizes+completes a recorded chain or closes an
+// unrecorded/panicked one — exactly once per request.
+type flowChainOwner struct {
+	recorder *quality.Recorder
+	chain    *quality.FlowChain
+	tap      AttemptFlowAppend // observation seam (tests); nil in production
+	seamFn   AttemptFlowAppend // stable per-request closure
+	cur      scheduler.Attempt // identity of the dispatch in flight
+	armed    bool
+	last     quality.FlowDispatch // last appended edge (real previous outcome)
+	hasLast  bool
+	settled  bool
+}
+
+func newFlowChainOwner(recorder *quality.Recorder, tap AttemptFlowAppend) *flowChainOwner {
+	f := &flowChainOwner{recorder: recorder, tap: tap}
+	f.seamFn = f.append
+	return f
+}
+
+// arm binds the next dispatch's flow append to one real plan attempt and
+// materializes the chain: a plan-backed request that never begins a dispatch
+// (e.g. price-precheck rejection) records no flow and is never counted
+// incomplete.
+func (f *flowChainOwner) arm(attempt scheduler.Attempt) {
+	f.cur, f.armed = attempt, true
+	if f.chain == nil {
+		f.chain = quality.NewFlowChain(f.recorder, nil)
+	}
+}
+
+// disarm drops the plan binding for a legacy-fallback dispatch: its
+// placeholder identity must never reach the chain.
+func (f *flowChainOwner) disarm() {
+	f.armed = false
+}
+
+// append is the single flow seam: plan-canonical dispatches append one real
+// edge to the chain; the observation tap (when wired) sees every completed
+// outcome. Append rejections (post-terminal, overflow) are recorded by the
+// chain's own counters and never rewrite the last real edge.
+func (f *flowChainOwner) append(outcome AttemptOutcome) {
+	if f.armed {
+		var prev string
+		if f.hasLast {
+			prev = f.last.Outcome
+		}
+		d := flowDispatchFromAttempt(f.cur, outcome, prev)
+		if f.chain.Append(d) == nil {
+			f.last = d
+			f.hasLast = true
+		}
+	}
+	if f.tap != nil {
+		f.tap(outcome)
+	}
+}
+
+// settle runs once on loop exit. A chain that recorded dispatches is
+// finalized (marks the last edge terminal on exhaustion) and completed; a
+// panicked chain or one that never recorded a dispatch (abandon / no
+// terminal) is closed — the honest incomplete signal. Handled success or
+// failure always carries a terminal edge and takes the complete path.
+func (f *flowChainOwner) settle(panicked bool) {
+	if f == nil || f.settled {
+		return
+	}
+	f.settled = true
+	if f.chain == nil {
+		return // no dispatch ever began: no flow, no incomplete count
+	}
+	if panicked || !f.hasLast {
+		f.chain.Close()
+		return
+	}
+	if err := f.chain.Finalize(); err != nil {
+		f.chain.Close()
+		return
+	}
+	if err := f.chain.Complete(); err != nil {
+		f.chain.Close()
+	}
 }
 
 // beginDispatch creates the one owner observation for one real upstream
 // dispatch, before attempt.call. dispatched is the 1-based chain position.
-func (p *Proxy) beginDispatch(ctx context.Context, sel *scheduler.Selection, plan *scheduler.AttemptPlan, reqID string, dispatched int, reqModel string, st attemptState, format, selectFormat domain.RequestFormat) (context.Context, *dispatchObservation) {
+// flow is the request-local chain owner (nil for plan-less requests or when
+// no quality recorder is wired).
+func (p *Proxy) beginDispatch(ctx context.Context, sel *scheduler.Selection, plan *scheduler.AttemptPlan, flow *flowChainOwner, reqID string, dispatched int, reqModel string, st attemptState, format, selectFormat domain.RequestFormat) (context.Context, *dispatchObservation) {
 	if sel == nil {
 		return ctx, nil
+	}
+	appendFlow := p.pipelineFlowAppend
+	if flow != nil {
+		appendFlow = flow.seamFn
 	}
 	d := &dispatchObservation{}
 	if plan != nil {
 		if attempt, ok := plan.CurrentAttempt(); ok && attempt.Validate() == nil {
-			if observer, ok := p.pipelineObserver(sel, attempt); ok {
+			if flow != nil {
+				flow.arm(attempt)
+			}
+			if observer, ok := p.pipelineObserver(sel, attempt, appendFlow); ok {
 				d.observer = observer
 				d.base = pipelineBase(attempt)
 				d.fromPlan = true
@@ -126,8 +223,11 @@ func (p *Proxy) beginDispatch(ctx context.Context, sel *scheduler.Selection, pla
 		}
 	}
 	if d.observer == nil {
+		if flow != nil {
+			flow.disarm()
+		}
 		d.base = selDispatchBase(sel, reqID, dispatched, reqModel, st, format, selectFormat)
-		d.observer = p.observerFor(d.base)
+		d.observer = p.observerFor(d.base, appendFlow)
 	}
 	return context.WithValue(ctx, ctxKeyDispatch{}, d), d
 }

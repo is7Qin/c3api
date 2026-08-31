@@ -47,7 +47,7 @@ func TestPipelineObserver_observedPreResponseLeavesCleanupToFailover(t *testing.
 		require.Equal(t, uint8(1), outcome.Ordinal)
 		flowCalls++
 	}
-	observer, owns := p.pipelineObserver(sel, attempt)
+	observer, owns := p.pipelineObserver(sel, attempt, p.pipelineFlowAppend)
 	require.True(t, owns)
 	require.Nil(t, observer.markHealth, "failover classification remains the single MarkResult owner")
 	require.Nil(t, observer.release, "failover retry/finish remains the single lease release owner")
@@ -66,12 +66,13 @@ func TestPipelineObserver_observedPreResponseLeavesCleanupToFailover(t *testing.
 }
 
 func TestFailoverPipeline_observed4xxPreservesFinishAndMarkResult(t *testing.T) {
+	testHealthSink.reset()
 	up := fakeUpstreamStatus(t, 401, `{"error":{"message":"balance"}}`)
 	defer up.Close()
 	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat,
 		domain.Rule{Name: "balance-401", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(401)},
-			Then: domain.RuleThen{Status: statusPtrT(domain.StatusUnhealthy), ResponseCode: intPtrT(502), CustomMessage: strPtrT("upstream rejected request")}},
+			Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64PtrT(60 * 1000)}, ResponseCode: intPtrT(502), CustomMessage: strPtrT("upstream rejected request")}},
 	)
 	sel, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
@@ -82,7 +83,7 @@ func TestFailoverPipeline_observed4xxPreservesFinishAndMarkResult(t *testing.T) 
 	}
 	flowCalls := 0
 	p.pipelineFlowAppend = func(AttemptOutcome) { flowCalls++ }
-	observer, owns := p.pipelineObserver(sel, attempt)
+	observer, owns := p.pipelineObserver(sel, attempt, p.pipelineFlowAppend)
 	require.True(t, owns)
 	require.Nil(t, observer.markHealth)
 	require.Nil(t, observer.release)
@@ -97,10 +98,9 @@ func TestFailoverPipeline_observed4xxPreservesFinishAndMarkResult(t *testing.T) 
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Contains(t, rec.Body.String(), "upstream rejected request")
 	p.sched.FlushRules()
+	require.Len(t, testHealthSink.throttlesFor(sel.AccountID), 1, "observed 4xx has one MarkResult owner")
 	runtime, ok := p.sched.Runtime(sel.AccountID)
 	require.True(t, ok)
-	require.Equal(t, 1, runtime.ErrCount, "observed 4xx has one MarkResult owner")
-	require.Equal(t, domain.StatusUnhealthy, runtime.Status)
 	require.Zero(t, runtime.Concurrency, "observed 4xx finish releases once")
 }
 

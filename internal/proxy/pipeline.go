@@ -215,9 +215,21 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		lastHdr    http.Header
 		lastBody   []byte
 	)
+	// FlowChain ownership: this loop is the SOLE producer. One request-local
+	// chain per plan-backed dispatched request, only when the quality
+	// recorder is wired; plan-less (legacy) requests never fabricate rows.
+	// settle runs last (registered first): Finalize+Complete exactly once on
+	// recorded chains, Close exactly once on panic/abandon/no-terminal.
+	var flow *flowChainOwner
+	if plan != nil && p.qualityRecorder != nil {
+		flow = newFlowChainOwner(p.qualityRecorder, p.pipelineFlowAppend)
+	}
+	panicked := false
+	defer func() { flow.settle(panicked) }()
 	// ponytail: panic guard — any panic in attempt.call must release leased slot, otherwise concurrency leaks.
 	defer func() {
 		if rc := recover(); rc != nil {
+			panicked = true
 			if sel != nil {
 				sel.Release()
 			}
@@ -271,7 +283,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// once — by the caller (handled=true terminal) or by the loop here
 		// (handled=false classification). openDispatch tracks the unfinished one
 		// for the deferred owner cleanup.
-		callCtx, dispatch := p.beginDispatch(r.Context(), sel, plan, reqID, dispatched, reqModel, st, format, selectFormat)
+		callCtx, dispatch := p.beginDispatch(r.Context(), sel, plan, flow, reqID, dispatched, reqModel, st, format, selectFormat)
 		openDispatch = dispatch
 		code, respBody, hdr, handled, callErr := attempt.call(callCtx, w, r, reqID, groupID, start, sel, reqModel, body, st)
 		if handled {
