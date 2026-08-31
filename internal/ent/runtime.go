@@ -32,34 +32,30 @@ import (
 func init() {
 	accountFields := schema.Account{}.Fields()
 	_ = accountFields
-	// accountDescWeight is the schema descriptor for weight field.
-	accountDescWeight := accountFields[7].Descriptor()
-	// account.DefaultWeight holds the default value on creation for the weight field.
-	account.DefaultWeight = accountDescWeight.Default.(int)
 	// accountDescMaxConcurrency is the schema descriptor for max_concurrency field.
-	accountDescMaxConcurrency := accountFields[8].Descriptor()
+	accountDescMaxConcurrency := accountFields[5].Descriptor()
 	// account.DefaultMaxConcurrency holds the default value on creation for the max_concurrency field.
 	account.DefaultMaxConcurrency = accountDescMaxConcurrency.Default.(int)
 	// accountDescEnabled is the schema descriptor for enabled field.
-	accountDescEnabled := accountFields[13].Descriptor()
+	accountDescEnabled := accountFields[10].Descriptor()
 	// account.DefaultEnabled holds the default value on creation for the enabled field.
 	account.DefaultEnabled = accountDescEnabled.Default.(bool)
 	// accountDescLifecycleRevision is the schema descriptor for lifecycle_revision field.
-	accountDescLifecycleRevision := accountFields[14].Descriptor()
+	accountDescLifecycleRevision := accountFields[11].Descriptor()
 	// account.DefaultLifecycleRevision holds the default value on creation for the lifecycle_revision field.
 	account.DefaultLifecycleRevision = accountDescLifecycleRevision.Default.(int64)
 	// accountDescUpstreamCostMultiplierBp is the schema descriptor for upstream_cost_multiplier_bp field.
-	accountDescUpstreamCostMultiplierBp := accountFields[15].Descriptor()
+	accountDescUpstreamCostMultiplierBp := accountFields[12].Descriptor()
 	// account.DefaultUpstreamCostMultiplierBp holds the default value on creation for the upstream_cost_multiplier_bp field.
 	account.DefaultUpstreamCostMultiplierBp = accountDescUpstreamCostMultiplierBp.Default.(int)
 	// accountDescUpdatedAt is the schema descriptor for updated_at field.
-	accountDescUpdatedAt := accountFields[17].Descriptor()
+	accountDescUpdatedAt := accountFields[14].Descriptor()
 	// account.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	account.DefaultUpdatedAt = accountDescUpdatedAt.Default.(func() time.Time)
 	// account.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	account.UpdateDefaultUpdatedAt = accountDescUpdatedAt.UpdateDefault.(func() time.Time)
 	// accountDescCreatedAt is the schema descriptor for created_at field.
-	accountDescCreatedAt := accountFields[19].Descriptor()
+	accountDescCreatedAt := accountFields[16].Descriptor()
 	// account.DefaultCreatedAt holds the default value on creation for the created_at field.
 	account.DefaultCreatedAt = accountDescCreatedAt.Default.(func() time.Time)
 	emailtemplateFields := schema.EmailTemplate{}.Fields()

@@ -121,7 +121,7 @@ func TestListQueryValidation(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidInput, "非法 order")
 	_, _, err = svc.ListTemplates(context.Background(), repository.ListQuery{Sort: "bogus"})
 	require.ErrorIs(t, err, ErrInvalidInput, "非法 sort")
-	_, _, err = svc.ListGroups(context.Background(), repository.ListQuery{Sort: "weight"})
+	_, _, err = svc.ListGroups(context.Background(), repository.ListQuery{Sort: "max_concurrency"})
 	require.ErrorIs(t, err, ErrInvalidInput, "账号专属 sort 对分组无效")
 	_, _, err = svc.ListAccountViews(context.Background(), repository.ListQuery{Sort: "bogus"})
 	require.ErrorIs(t, err, ErrInvalidInput, "ListAccountViews 同样校验")
@@ -346,16 +346,16 @@ func TestBatchUpdateAccounts(t *testing.T) {
 	ctx := context.Background()
 	tpl := seedTemplate(t, svc, "t")
 	a := seedAccount(t, svc, tpl.ID, "a1")
-	st := domain.StatusDisabled
+	en := false
 	before := rec.total()
-	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{a.ID}, repository.AccountPatch{Status: &st}))
+	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{a.ID}, repository.AccountPatch{Enabled: &en}))
 	require.Greater(t, rec.total(), before, "批量更新成功后必须 invalidate")
 	got, err := svc.GetAccount(ctx, a.ID)
 	require.NoError(t, err)
-	require.Equal(t, domain.StatusDisabled, got.Status)
+	require.False(t, got.Enabled)
 
 	// 缺 id → repository.ErrNotFound 包装 → mapRepoErr → service.ErrNotFound（消息含缺失 id）
-	err = svc.UpdateAccountsBatch(ctx, []int64{999}, repository.AccountPatch{Status: &st})
+	err = svc.UpdateAccountsBatch(ctx, []int64{999}, repository.AccountPatch{Enabled: &en})
 	require.ErrorIs(t, err, ErrNotFound, "缺 id 必须映射 404")
 	require.Contains(t, err.Error(), "999", "404 消息含缺失 id")
 }
@@ -476,8 +476,6 @@ func TestBatchUpdatePatchValidation(t *testing.T) {
 		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{UpstreamKey: &empty}), ErrInvalidInput, "空 UpstreamKey")
 		badTID := int64(0)
 		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{TemplateID: &badTID}), ErrInvalidInput, "TemplateID <= 0")
-		badWeight := -1
-		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{Weight: &badWeight}), ErrInvalidInput, "Weight < 0")
 		badMC := 0
 		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{MaxConcurrency: &badMC}), ErrInvalidInput, "MaxConcurrency < 1")
 		// group_ids：超长 / 重复 / 元素 <= 0 → ErrInvalidInput；nil 与空数组合法

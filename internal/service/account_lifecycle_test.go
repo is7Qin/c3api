@@ -101,7 +101,7 @@ func seedLifecycleAccount(t *testing.T, fs *fakeStore) *domain.Account {
 	reason := "fatal"
 	dom := "shared.example.com"
 	acc, err := fs.CreateAccount(ctx, &domain.Account{
-		Name: "a", TemplateID: 1, UpstreamKey: "sk-a", Status: domain.StatusActive,
+		Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
 		Enabled: true, FailedAt: &failed, FailureSource: &src, LastError: &reason,
 		LifecycleRevision: 5, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
 	})
@@ -214,7 +214,7 @@ func TestUpdateAccountPreservesLifecycleFields(t *testing.T) {
 	require.NoError(t, err)
 	dom := "shared.example.com"
 	acc, err := fs.CreateAccount(ctx, &domain.Account{
-		Name: "a", TemplateID: 1, UpstreamKey: "sk-a", Status: domain.StatusActive,
+		Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
 		Enabled: true, LifecycleRevision: 5, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
 	})
 	require.NoError(t, err)
@@ -222,7 +222,7 @@ func TestUpdateAccountPreservesLifecycleFields(t *testing.T) {
 
 	// 模拟 handler 转换产物：仅路由字段，生命周期字段全零值
 	body := &domain.Account{ID: acc.ID, Name: "renamed", TemplateID: 1,
-		UpstreamKey: "sk-a", Status: domain.StatusActive, Weight: 1, MaxConcurrency: 4}
+		UpstreamKey: "sk-a", MaxConcurrency: 4}
 	_, err = svc.UpdateAccount(ctx, body)
 	require.NoError(t, err)
 

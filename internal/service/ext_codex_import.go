@@ -48,7 +48,6 @@ type codexImportRow struct {
 	oauthExpires *time.Time
 	patKey       string
 	maxConc      int // 显式归一（缺省 25——导入面裁决覆盖账号表默认 8）
-	weight       int // 显式归一（缺省 100）
 }
 
 // ImportCodexOAuthAccounts 批量导入 codex-oauth 凭据（ServerInterface 依赖面）：
@@ -135,11 +134,9 @@ func codexOAuthRow(index int, it domain.CodexOAuthImportItem) (codexImportRow, e
 	row := codexImportRow{
 		index: index, email: it.CodexEmail, accountID: it.CodexAccountID,
 		oauthToken: it.CodexOAuthToken, oauthRT: it.CodexOAuthRefreshToken, oauthExpires: expires,
-		maxConc: 25, weight: 100,
+		maxConc: 25,
 	}
-	if err := applyCodexImportConfig(&row, it.MaxConcurrency, it.Weight); err != nil {
-		return codexImportRow{}, err
-	}
+	applyCodexImportConfig(&row, it.MaxConcurrency)
 	return row, nil
 }
 
@@ -156,28 +153,18 @@ func codexPATRow(index int, it domain.CodexPATImportItem) (codexImportRow, error
 	}
 	row := codexImportRow{
 		index: index, email: it.CodexEmail, accountID: it.CodexAccountID, patKey: it.CodexPATKey,
-		maxConc: 25, weight: 100,
+		maxConc: 25,
 	}
-	if err := applyCodexImportConfig(&row, it.MaxConcurrency, it.Weight); err != nil {
-		return codexImportRow{}, err
-	}
+	applyCodexImportConfig(&row, it.MaxConcurrency)
 	return row, nil
 }
 
 // applyCodexImportConfig 配置面缺省/范围归一（对齐 validateAccount 既有边界：
-// weight < 0 → 行级失败；max_concurrency < 1 → 归一缺省——导入面 25 覆盖账号
-// 表默认 8；weight 0 合法保留）。nil = 未提供 → 缺省。
-func applyCodexImportConfig(row *codexImportRow, maxConc, weight *int) error {
+// max_concurrency < 1 → 归一缺省——导入面 25 覆盖账号表默认 8）。nil = 未提供 → 缺省。
+func applyCodexImportConfig(row *codexImportRow, maxConc *int) {
 	if maxConc != nil && *maxConc >= 1 {
 		row.maxConc = *maxConc
 	}
-	if weight != nil {
-		if *weight < 0 {
-			return errors.New("weight 不能为负")
-		}
-		row.weight = *weight
-	}
-	return nil
 }
 
 // importCodexAccounts 共享落库核心：逐行 查重 → imported（单行事务）/ updated
@@ -252,7 +239,7 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 	err = s.store.WithTx(ctx, func(tx repository.TxStore) error {
 		acc, err := tx.CreateAccount(ctx, &domain.Account{
 			Name: row.email, TemplateID: tplID,
-			Weight: row.weight, MaxConcurrency: row.maxConc, // 显式写缺省（25/100）——不依赖表默认 8
+			MaxConcurrency: row.maxConc, // 显式写缺省（25）——不依赖表默认 8
 		})
 		if err != nil {
 			return err

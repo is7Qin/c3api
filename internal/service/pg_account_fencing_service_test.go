@@ -85,12 +85,9 @@ func TestServiceExtPutFencing(t *testing.T) {
 func TestServiceAccountPutFencing(t *testing.T) {
 	svc, repos := newCodexImportPG(t)
 	ctx := context.Background()
-	tpl, _ := repos.Templates.CreateTemplate(ctx, &domain.Template{Name: "tpl-put", BaseURL: "https://u", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}})
-	require.NoError(t, nil) // placeholder
-	_ = tpl
 	// use helper seed
 	tpl2 := seedPGTemplateForFencing(t, repos)
-	acc, err := svc.CreateAccount(ctx, &domain.Account{Name: "put-fence", TemplateID: tpl2.ID, UpstreamKey: "sk-old", Weight: 1, MaxConcurrency: 8})
+	acc, err := svc.CreateAccount(ctx, &domain.Account{Name: "put-fence", TemplateID: tpl2.ID, UpstreamKey: "sk-old", MaxConcurrency: 8})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// Update with new upstream_key
@@ -102,7 +99,7 @@ func TestServiceAccountPutFencing(t *testing.T) {
 	require.Equal(t, int64(2), got.LifecycleRevision, "account PUT credential must increment")
 	// base_url change
 	base := "https://new.example.com"
-	updated2 := &domain.Account{ID: got.ID, Name: got.Name, TemplateID: got.TemplateID, UpstreamKey: got.UpstreamKey, BaseURL: &base, Weight: got.Weight, MaxConcurrency: got.MaxConcurrency, Status: got.Status, Enabled: got.Enabled, UpstreamCostMultiplierBp: got.UpstreamCostMultiplierBp, CacheDomain: got.CacheDomain}
+	updated2 := &domain.Account{ID: got.ID, Name: got.Name, TemplateID: got.TemplateID, UpstreamKey: got.UpstreamKey, BaseURL: &base, MaxConcurrency: got.MaxConcurrency, Enabled: got.Enabled, UpstreamCostMultiplierBp: got.UpstreamCostMultiplierBp, CacheDomain: got.CacheDomain}
 	updated2.Enabled = got.Enabled
 	updated2.UpstreamCostMultiplierBp = got.UpstreamCostMultiplierBp
 	_, err = svc.UpdateAccount(ctx, updated2)
@@ -118,8 +115,8 @@ func TestServiceBatchFencing(t *testing.T) {
 	svc, repos := newCodexImportPG(t)
 	ctx := context.Background()
 	tpl := seedPGTemplateForFencing(t, repos)
-	a1, _ := svc.CreateAccount(ctx, &domain.Account{Name: "batch1", TemplateID: tpl.ID, UpstreamKey: "sk-1", Weight: 1, MaxConcurrency: 8})
-	a2, _ := svc.CreateAccount(ctx, &domain.Account{Name: "batch2", TemplateID: tpl.ID, UpstreamKey: "sk-2", Weight: 1, MaxConcurrency: 8})
+	a1, _ := svc.CreateAccount(ctx, &domain.Account{Name: "batch1", TemplateID: tpl.ID, UpstreamKey: "sk-1", MaxConcurrency: 8})
+	a2, _ := svc.CreateAccount(ctx, &domain.Account{Name: "batch2", TemplateID: tpl.ID, UpstreamKey: "sk-2", MaxConcurrency: 8})
 	require.Equal(t, int64(1), a1.LifecycleRevision)
 	newKey := "sk-batch"
 	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID}, repository.AccountPatch{UpstreamKey: &newKey}))
@@ -130,23 +127,21 @@ func TestServiceBatchFencing(t *testing.T) {
 	require.Equal(t, int64(2), g2.LifecycleRevision)
 }
 
-// TestServiceRecoveryFencing verifies status active recovery increments.
+// TestServiceRecoveryFencing verifies fenced recover increments revision.
 func TestServiceRecoveryFencing(t *testing.T) {
 	svc, repos := newCodexImportPG(t)
 	ctx := context.Background()
 	tpl := seedPGTemplateForFencing(t, repos)
-	acc, _ := svc.CreateAccount(ctx, &domain.Account{Name: "rec-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	acc, _ := svc.CreateAccount(ctx, &domain.Account{Name: "rec-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	// fail via CAS
 	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, acc.ID, 1, "rule", getFixedTime(), "boom"))
 	afterFail, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NotNil(t, afterFail.FailedAt)
-	// recover via UpdateAccount status active
-	recAcc := &domain.Account{ID: acc.ID, Name: afterFail.Name, TemplateID: afterFail.TemplateID, UpstreamKey: afterFail.UpstreamKey, Status: "active", Weight: afterFail.Weight, MaxConcurrency: afterFail.MaxConcurrency, Enabled: afterFail.Enabled, UpstreamCostMultiplierBp: afterFail.UpstreamCostMultiplierBp}
-	_, err := svc.UpdateAccount(ctx, recAcc)
+	// recover via fenced endpoint（恢复唯一入口）
+	got, err := svc.RecoverAccount(ctx, acc.ID, afterFail.LifecycleRevision)
 	require.NoError(t, err)
-	afterRec, _ := repos.Accounts.GetAccount(ctx, acc.ID)
-	require.Nil(t, afterRec.FailedAt)
-	require.Equal(t, int64(3), afterRec.LifecycleRevision, "recovery must increment revision")
+	require.Nil(t, got.FailedAt)
+	require.Equal(t, int64(3), got.LifecycleRevision, "recovery must increment revision")
 }
 
 func TestServiceStaleImportNotUpdate(t *testing.T) {
@@ -211,7 +206,7 @@ func TestServiceStaleAccountPutNotUpdate(t *testing.T) {
 	svc, repos := newCodexImportPG(t)
 	ctx := context.Background()
 	tpl := seedPGTemplateForFencing(t, repos)
-	acc, _ := svc.CreateAccount(ctx, &domain.Account{Name: "stale-put", TemplateID: tpl.ID, UpstreamKey: "sk-old", Weight: 1, MaxConcurrency: 8})
+	acc, _ := svc.CreateAccount(ctx, &domain.Account{Name: "stale-put", TemplateID: tpl.ID, UpstreamKey: "sk-old", MaxConcurrency: 8})
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	acc.UpstreamKey = "sk-new"
 	_, err := svc.UpdateAccount(ctx, acc)
@@ -230,18 +225,24 @@ func TestServiceCombinedSingleIncrement(t *testing.T) {
 	svc, repos := newCodexImportPG(t)
 	ctx := context.Background()
 	tpl := seedPGTemplateForFencing(t, repos)
-	acc, _ := svc.CreateAccount(ctx, &domain.Account{Name: "combined-svc", TemplateID: tpl.ID, UpstreamKey: "sk-old", Weight: 1, MaxConcurrency: 8})
+	acc, _ := svc.CreateAccount(ctx, &domain.Account{Name: "combined-svc", TemplateID: tpl.ID, UpstreamKey: "sk-old", MaxConcurrency: 8})
 	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, acc.ID, 1, "rule", getFixedTime(), "boom"))
 	afterFail, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(2), afterFail.LifecycleRevision)
-	// Combined credential + recovery via single UpdateAccount should increment exactly once (2->3)
-	acc2 := &domain.Account{ID: acc.ID, Name: afterFail.Name, TemplateID: afterFail.TemplateID, UpstreamKey: "sk-new-combined", Status: domain.StatusActive, Weight: afterFail.Weight, MaxConcurrency: afterFail.MaxConcurrency, Enabled: afterFail.Enabled, UpstreamCostMultiplierBp: afterFail.UpstreamCostMultiplierBp}
+	// Credential PUT on a failed account: increments exactly once (2->3) and
+	// never touches failure fields — recovery is fenced-endpoint-only.
+	acc2 := &domain.Account{ID: acc.ID, Name: afterFail.Name, TemplateID: afterFail.TemplateID, UpstreamKey: "sk-new-combined", MaxConcurrency: afterFail.MaxConcurrency, Enabled: afterFail.Enabled, UpstreamCostMultiplierBp: afterFail.UpstreamCostMultiplierBp}
 	_, err := svc.UpdateAccount(ctx, acc2)
 	require.NoError(t, err)
 	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)
-	require.Equal(t, int64(3), after.LifecycleRevision, "combined must increment exactly once")
+	require.Equal(t, int64(3), after.LifecycleRevision, "PUT must increment exactly once")
 	require.Equal(t, "sk-new-combined", after.UpstreamKey)
-	require.Nil(t, after.FailedAt)
+	require.NotNil(t, after.FailedAt, "PUT 不是恢复入口——失效字段保持")
+	// Fenced recover clears failure fields with its own increment.
+	recovered, err := svc.RecoverAccount(ctx, acc.ID, after.LifecycleRevision)
+	require.NoError(t, err)
+	require.Nil(t, recovered.FailedAt)
+	require.Equal(t, int64(4), recovered.LifecycleRevision)
 }
 
 func strPtr2(s string) *string { return &s }
@@ -249,7 +250,7 @@ func strPtr2(s string) *string { return &s }
 func seedPGTemplateForFencing(t *testing.T, repos *repository.Repository) *domain.Template {
 	t.Helper()
 	ctx := context.Background()
-	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{Name: "fence-tpl", BaseURL: "https://u", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}})
+	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{Name: "fence-tpl", BaseURL: "https://u", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, ModelMapping: domain.ModelMapping{}})
 	require.NoError(t, err)
 	return tpl
 }

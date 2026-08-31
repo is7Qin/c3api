@@ -57,48 +57,6 @@ func (_c *AccountCreate) SetUpstreamKey(v string) *AccountCreate {
 	return _c
 }
 
-// SetStatus sets the "status" field.
-func (_c *AccountCreate) SetStatus(v account.Status) *AccountCreate {
-	_c.mutation.SetStatus(v)
-	return _c
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (_c *AccountCreate) SetNillableStatus(v *account.Status) *AccountCreate {
-	if v != nil {
-		_c.SetStatus(*v)
-	}
-	return _c
-}
-
-// SetCooldownUntil sets the "cooldown_until" field.
-func (_c *AccountCreate) SetCooldownUntil(v time.Time) *AccountCreate {
-	_c.mutation.SetCooldownUntil(v)
-	return _c
-}
-
-// SetNillableCooldownUntil sets the "cooldown_until" field if the given value is not nil.
-func (_c *AccountCreate) SetNillableCooldownUntil(v *time.Time) *AccountCreate {
-	if v != nil {
-		_c.SetCooldownUntil(*v)
-	}
-	return _c
-}
-
-// SetWeight sets the "weight" field.
-func (_c *AccountCreate) SetWeight(v int) *AccountCreate {
-	_c.mutation.SetWeight(v)
-	return _c
-}
-
-// SetNillableWeight sets the "weight" field if the given value is not nil.
-func (_c *AccountCreate) SetNillableWeight(v *int) *AccountCreate {
-	if v != nil {
-		_c.SetWeight(*v)
-	}
-	return _c
-}
-
 // SetMaxConcurrency sets the "max_concurrency" field.
 func (_c *AccountCreate) SetMaxConcurrency(v int) *AccountCreate {
 	_c.mutation.SetMaxConcurrency(v)
@@ -343,14 +301,6 @@ func (_c *AccountCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *AccountCreate) defaults() {
-	if _, ok := _c.mutation.Status(); !ok {
-		v := account.DefaultStatus
-		_c.mutation.SetStatus(v)
-	}
-	if _, ok := _c.mutation.Weight(); !ok {
-		v := account.DefaultWeight
-		_c.mutation.SetWeight(v)
-	}
 	if _, ok := _c.mutation.MaxConcurrency(); !ok {
 		v := account.DefaultMaxConcurrency
 		_c.mutation.SetMaxConcurrency(v)
@@ -387,17 +337,6 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.UpstreamKey(); !ok {
 		return &ValidationError{Name: "upstream_key", err: errors.New(`ent: missing required field "Account.upstream_key"`)}
-	}
-	if _, ok := _c.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Account.status"`)}
-	}
-	if v, ok := _c.mutation.Status(); ok {
-		if err := account.StatusValidator(v); err != nil {
-			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "Account.status": %w`, err)}
-		}
-	}
-	if _, ok := _c.mutation.Weight(); !ok {
-		return &ValidationError{Name: "weight", err: errors.New(`ent: missing required field "Account.weight"`)}
 	}
 	if _, ok := _c.mutation.MaxConcurrency(); !ok {
 		return &ValidationError{Name: "max_concurrency", err: errors.New(`ent: missing required field "Account.max_concurrency"`)}
@@ -464,18 +403,6 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.UpstreamKey(); ok {
 		_spec.SetField(account.FieldUpstreamKey, field.TypeString, value)
 		_node.UpstreamKey = value
-	}
-	if value, ok := _c.mutation.Status(); ok {
-		_spec.SetField(account.FieldStatus, field.TypeEnum, value)
-		_node.Status = value
-	}
-	if value, ok := _c.mutation.CooldownUntil(); ok {
-		_spec.SetField(account.FieldCooldownUntil, field.TypeTime, value)
-		_node.CooldownUntil = &value
-	}
-	if value, ok := _c.mutation.Weight(); ok {
-		_spec.SetField(account.FieldWeight, field.TypeInt, value)
-		_node.Weight = value
 	}
 	if value, ok := _c.mutation.MaxConcurrency(); ok {
 		_spec.SetField(account.FieldMaxConcurrency, field.TypeInt, value)
@@ -677,54 +604,6 @@ func (u *AccountUpsert) SetUpstreamKey(v string) *AccountUpsert {
 // UpdateUpstreamKey sets the "upstream_key" field to the value that was provided on create.
 func (u *AccountUpsert) UpdateUpstreamKey() *AccountUpsert {
 	u.SetExcluded(account.FieldUpstreamKey)
-	return u
-}
-
-// SetStatus sets the "status" field.
-func (u *AccountUpsert) SetStatus(v account.Status) *AccountUpsert {
-	u.Set(account.FieldStatus, v)
-	return u
-}
-
-// UpdateStatus sets the "status" field to the value that was provided on create.
-func (u *AccountUpsert) UpdateStatus() *AccountUpsert {
-	u.SetExcluded(account.FieldStatus)
-	return u
-}
-
-// SetCooldownUntil sets the "cooldown_until" field.
-func (u *AccountUpsert) SetCooldownUntil(v time.Time) *AccountUpsert {
-	u.Set(account.FieldCooldownUntil, v)
-	return u
-}
-
-// UpdateCooldownUntil sets the "cooldown_until" field to the value that was provided on create.
-func (u *AccountUpsert) UpdateCooldownUntil() *AccountUpsert {
-	u.SetExcluded(account.FieldCooldownUntil)
-	return u
-}
-
-// ClearCooldownUntil clears the value of the "cooldown_until" field.
-func (u *AccountUpsert) ClearCooldownUntil() *AccountUpsert {
-	u.SetNull(account.FieldCooldownUntil)
-	return u
-}
-
-// SetWeight sets the "weight" field.
-func (u *AccountUpsert) SetWeight(v int) *AccountUpsert {
-	u.Set(account.FieldWeight, v)
-	return u
-}
-
-// UpdateWeight sets the "weight" field to the value that was provided on create.
-func (u *AccountUpsert) UpdateWeight() *AccountUpsert {
-	u.SetExcluded(account.FieldWeight)
-	return u
-}
-
-// AddWeight adds v to the "weight" field.
-func (u *AccountUpsert) AddWeight(v int) *AccountUpsert {
-	u.Add(account.FieldWeight, v)
 	return u
 }
 
@@ -1034,62 +913,6 @@ func (u *AccountUpsertOne) SetUpstreamKey(v string) *AccountUpsertOne {
 func (u *AccountUpsertOne) UpdateUpstreamKey() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateUpstreamKey()
-	})
-}
-
-// SetStatus sets the "status" field.
-func (u *AccountUpsertOne) SetStatus(v account.Status) *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.SetStatus(v)
-	})
-}
-
-// UpdateStatus sets the "status" field to the value that was provided on create.
-func (u *AccountUpsertOne) UpdateStatus() *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.UpdateStatus()
-	})
-}
-
-// SetCooldownUntil sets the "cooldown_until" field.
-func (u *AccountUpsertOne) SetCooldownUntil(v time.Time) *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.SetCooldownUntil(v)
-	})
-}
-
-// UpdateCooldownUntil sets the "cooldown_until" field to the value that was provided on create.
-func (u *AccountUpsertOne) UpdateCooldownUntil() *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.UpdateCooldownUntil()
-	})
-}
-
-// ClearCooldownUntil clears the value of the "cooldown_until" field.
-func (u *AccountUpsertOne) ClearCooldownUntil() *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.ClearCooldownUntil()
-	})
-}
-
-// SetWeight sets the "weight" field.
-func (u *AccountUpsertOne) SetWeight(v int) *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.SetWeight(v)
-	})
-}
-
-// AddWeight adds v to the "weight" field.
-func (u *AccountUpsertOne) AddWeight(v int) *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.AddWeight(v)
-	})
-}
-
-// UpdateWeight sets the "weight" field to the value that was provided on create.
-func (u *AccountUpsertOne) UpdateWeight() *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.UpdateWeight()
 	})
 }
 
@@ -1598,62 +1421,6 @@ func (u *AccountUpsertBulk) SetUpstreamKey(v string) *AccountUpsertBulk {
 func (u *AccountUpsertBulk) UpdateUpstreamKey() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateUpstreamKey()
-	})
-}
-
-// SetStatus sets the "status" field.
-func (u *AccountUpsertBulk) SetStatus(v account.Status) *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.SetStatus(v)
-	})
-}
-
-// UpdateStatus sets the "status" field to the value that was provided on create.
-func (u *AccountUpsertBulk) UpdateStatus() *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.UpdateStatus()
-	})
-}
-
-// SetCooldownUntil sets the "cooldown_until" field.
-func (u *AccountUpsertBulk) SetCooldownUntil(v time.Time) *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.SetCooldownUntil(v)
-	})
-}
-
-// UpdateCooldownUntil sets the "cooldown_until" field to the value that was provided on create.
-func (u *AccountUpsertBulk) UpdateCooldownUntil() *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.UpdateCooldownUntil()
-	})
-}
-
-// ClearCooldownUntil clears the value of the "cooldown_until" field.
-func (u *AccountUpsertBulk) ClearCooldownUntil() *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.ClearCooldownUntil()
-	})
-}
-
-// SetWeight sets the "weight" field.
-func (u *AccountUpsertBulk) SetWeight(v int) *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.SetWeight(v)
-	})
-}
-
-// AddWeight adds v to the "weight" field.
-func (u *AccountUpsertBulk) AddWeight(v int) *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.AddWeight(v)
-	})
-}
-
-// UpdateWeight sets the "weight" field to the value that was provided on create.
-func (u *AccountUpsertBulk) UpdateWeight() *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.UpdateWeight()
 	})
 }
 

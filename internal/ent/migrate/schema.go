@@ -14,9 +14,6 @@ var (
 		{Name: "name", Type: field.TypeString},
 		{Name: "base_url", Type: field.TypeString, Nullable: true},
 		{Name: "upstream_key", Type: field.TypeString},
-		{Name: "status", Type: field.TypeEnum, Enums: []string{"active", "unhealthy", "429", "disabled"}, Default: "active"},
-		{Name: "cooldown_until", Type: field.TypeTime, Nullable: true},
-		{Name: "weight", Type: field.TypeInt, Default: 100},
 		{Name: "max_concurrency", Type: field.TypeInt, Default: 8},
 		{Name: "last_error", Type: field.TypeString, Nullable: true},
 		{Name: "last_used_at", Type: field.TypeTime, Nullable: true},
@@ -39,7 +36,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "accounts_templates_accounts",
-				Columns:    []*schema.Column{AccountsColumns[19]},
+				Columns:    []*schema.Column{AccountsColumns[16]},
 				RefColumns: []*schema.Column{TemplatesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},

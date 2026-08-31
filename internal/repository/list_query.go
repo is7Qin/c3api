@@ -25,16 +25,15 @@ import (
 // ListQuery 列表查询：分页/筛选/排序。Sort 为白名单内字段名（如 "name"），
 // 非法值返回 ErrInvalidSort；Order 仅 "asc"/"desc"（空 = desc）。
 type ListQuery struct {
-	Limit      int      // <=0 → 20
-	Offset     int      // <0 → 0
-	Name       string   // 模糊匹配（不区分大小写）
-	Email      string   // 用户专属：邮箱模糊匹配
-	Sort       string   // 空 → id
-	Order      string   // asc/desc；空 → desc
-	StatusList []string // 账号专属：多值 status
-	TemplateID int64    // 账号专属：0 = 不过滤
-	UserID     int64    // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
-	GroupID    int64    // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
+	Limit      int    // <=0 → 20
+	Offset     int    // <0 → 0
+	Name       string // 模糊匹配（不区分大小写）
+	Email      string // 用户专属：邮箱模糊匹配
+	Sort       string // 空 → id
+	Order      string // asc/desc；空 → desc
+	TemplateID int64  // 账号专属：0 = 不过滤
+	UserID     int64  // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
+	GroupID    int64  // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
 }
 
 var ErrInvalidSort = errors.New("invalid sort field")
@@ -69,9 +68,8 @@ var (
 	}
 	accountSortFields = map[string]string{
 		"id": account.FieldID, "name": account.FieldName, "template_id": account.FieldTemplateID,
-		"status": account.FieldStatus, "cooldown_until": account.FieldCooldownUntil,
-		"weight": account.FieldWeight, "max_concurrency": account.FieldMaxConcurrency,
-		"last_used_at": account.FieldLastUsedAt, "created_at": account.FieldCreatedAt,
+		"max_concurrency": account.FieldMaxConcurrency,
+		"last_used_at":    account.FieldLastUsedAt, "created_at": account.FieldCreatedAt,
 		"updated_at": account.FieldUpdatedAt,
 	}
 	groupSortFields = map[string]string{

@@ -75,16 +75,6 @@ func UpstreamKey(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldUpstreamKey, v))
 }
 
-// CooldownUntil applies equality check predicate on the "cooldown_until" field. It's identical to CooldownUntilEQ.
-func CooldownUntil(v time.Time) predicate.Account {
-	return predicate.Account(sql.FieldEQ(FieldCooldownUntil, v))
-}
-
-// Weight applies equality check predicate on the "weight" field. It's identical to WeightEQ.
-func Weight(v int) predicate.Account {
-	return predicate.Account(sql.FieldEQ(FieldWeight, v))
-}
-
 // MaxConcurrency applies equality check predicate on the "max_concurrency" field. It's identical to MaxConcurrencyEQ.
 func MaxConcurrency(v int) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldMaxConcurrency, v))
@@ -368,116 +358,6 @@ func UpstreamKeyEqualFold(v string) predicate.Account {
 // UpstreamKeyContainsFold applies the ContainsFold predicate on the "upstream_key" field.
 func UpstreamKeyContainsFold(v string) predicate.Account {
 	return predicate.Account(sql.FieldContainsFold(FieldUpstreamKey, v))
-}
-
-// StatusEQ applies the EQ predicate on the "status" field.
-func StatusEQ(v Status) predicate.Account {
-	return predicate.Account(sql.FieldEQ(FieldStatus, v))
-}
-
-// StatusNEQ applies the NEQ predicate on the "status" field.
-func StatusNEQ(v Status) predicate.Account {
-	return predicate.Account(sql.FieldNEQ(FieldStatus, v))
-}
-
-// StatusIn applies the In predicate on the "status" field.
-func StatusIn(vs ...Status) predicate.Account {
-	return predicate.Account(sql.FieldIn(FieldStatus, vs...))
-}
-
-// StatusNotIn applies the NotIn predicate on the "status" field.
-func StatusNotIn(vs ...Status) predicate.Account {
-	return predicate.Account(sql.FieldNotIn(FieldStatus, vs...))
-}
-
-// CooldownUntilEQ applies the EQ predicate on the "cooldown_until" field.
-func CooldownUntilEQ(v time.Time) predicate.Account {
-	return predicate.Account(sql.FieldEQ(FieldCooldownUntil, v))
-}
-
-// CooldownUntilNEQ applies the NEQ predicate on the "cooldown_until" field.
-func CooldownUntilNEQ(v time.Time) predicate.Account {
-	return predicate.Account(sql.FieldNEQ(FieldCooldownUntil, v))
-}
-
-// CooldownUntilIn applies the In predicate on the "cooldown_until" field.
-func CooldownUntilIn(vs ...time.Time) predicate.Account {
-	return predicate.Account(sql.FieldIn(FieldCooldownUntil, vs...))
-}
-
-// CooldownUntilNotIn applies the NotIn predicate on the "cooldown_until" field.
-func CooldownUntilNotIn(vs ...time.Time) predicate.Account {
-	return predicate.Account(sql.FieldNotIn(FieldCooldownUntil, vs...))
-}
-
-// CooldownUntilGT applies the GT predicate on the "cooldown_until" field.
-func CooldownUntilGT(v time.Time) predicate.Account {
-	return predicate.Account(sql.FieldGT(FieldCooldownUntil, v))
-}
-
-// CooldownUntilGTE applies the GTE predicate on the "cooldown_until" field.
-func CooldownUntilGTE(v time.Time) predicate.Account {
-	return predicate.Account(sql.FieldGTE(FieldCooldownUntil, v))
-}
-
-// CooldownUntilLT applies the LT predicate on the "cooldown_until" field.
-func CooldownUntilLT(v time.Time) predicate.Account {
-	return predicate.Account(sql.FieldLT(FieldCooldownUntil, v))
-}
-
-// CooldownUntilLTE applies the LTE predicate on the "cooldown_until" field.
-func CooldownUntilLTE(v time.Time) predicate.Account {
-	return predicate.Account(sql.FieldLTE(FieldCooldownUntil, v))
-}
-
-// CooldownUntilIsNil applies the IsNil predicate on the "cooldown_until" field.
-func CooldownUntilIsNil() predicate.Account {
-	return predicate.Account(sql.FieldIsNull(FieldCooldownUntil))
-}
-
-// CooldownUntilNotNil applies the NotNil predicate on the "cooldown_until" field.
-func CooldownUntilNotNil() predicate.Account {
-	return predicate.Account(sql.FieldNotNull(FieldCooldownUntil))
-}
-
-// WeightEQ applies the EQ predicate on the "weight" field.
-func WeightEQ(v int) predicate.Account {
-	return predicate.Account(sql.FieldEQ(FieldWeight, v))
-}
-
-// WeightNEQ applies the NEQ predicate on the "weight" field.
-func WeightNEQ(v int) predicate.Account {
-	return predicate.Account(sql.FieldNEQ(FieldWeight, v))
-}
-
-// WeightIn applies the In predicate on the "weight" field.
-func WeightIn(vs ...int) predicate.Account {
-	return predicate.Account(sql.FieldIn(FieldWeight, vs...))
-}
-
-// WeightNotIn applies the NotIn predicate on the "weight" field.
-func WeightNotIn(vs ...int) predicate.Account {
-	return predicate.Account(sql.FieldNotIn(FieldWeight, vs...))
-}
-
-// WeightGT applies the GT predicate on the "weight" field.
-func WeightGT(v int) predicate.Account {
-	return predicate.Account(sql.FieldGT(FieldWeight, v))
-}
-
-// WeightGTE applies the GTE predicate on the "weight" field.
-func WeightGTE(v int) predicate.Account {
-	return predicate.Account(sql.FieldGTE(FieldWeight, v))
-}
-
-// WeightLT applies the LT predicate on the "weight" field.
-func WeightLT(v int) predicate.Account {
-	return predicate.Account(sql.FieldLT(FieldWeight, v))
-}
-
-// WeightLTE applies the LTE predicate on the "weight" field.
-func WeightLTE(v int) predicate.Account {
-	return predicate.Account(sql.FieldLTE(FieldWeight, v))
 }
 
 // MaxConcurrencyEQ applies the EQ predicate on the "max_concurrency" field.

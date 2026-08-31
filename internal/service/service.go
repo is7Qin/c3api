@@ -147,8 +147,8 @@ type AccountStore interface {
 	CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
 	GetAccount(ctx context.Context, id int64) (*domain.Account, error)
 	ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error)
-	UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error)
-	UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64, cooldownUntil *time.Time) (*domain.Account, error)
+	UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
+	UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64) (*domain.Account, error)
 	FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error
 	RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error
 	SetAccountEnabledCAS(ctx context.Context, id int64, expectedRevision int64, enabled bool) error
@@ -513,20 +513,8 @@ func validateAccount(a *domain.Account) error {
 	if a.Name == "" || a.TemplateID <= 0 {
 		return ErrInvalidInput
 	}
-	if a.Weight < 0 {
-		return ErrInvalidInput
-	}
 	if a.MaxConcurrency < 1 {
 		a.MaxConcurrency = 8
-	}
-	if a.Status == "" {
-		a.Status = domain.StatusActive
-	} else {
-		switch a.Status {
-		case domain.StatusActive, domain.StatusUnhealthy, domain.Status429, domain.StatusDisabled:
-		default:
-			return ErrInvalidInput
-		}
 	}
 	// 账号级 base_url 提供时复用 validateBaseURL（对齐模板面先例；nil/空串
 	// 跳过——create 路径空串已归一 nil，此处双保险）。
@@ -581,7 +569,7 @@ func validateCacheDomain(s string) error {
 // listSortFields 各资源允许的 sort 白名单（与 repo 层白名单一致，双保险）。
 var listSortFields = map[string][]string{
 	"templates": {"id", "name", "base_url", "created_at", "updated_at"},
-	"accounts":  {"id", "name", "template_id", "status", "cooldown_until", "weight", "max_concurrency", "last_used_at", "created_at", "updated_at"},
+	"accounts":  {"id", "name", "template_id", "max_concurrency", "last_used_at", "created_at", "updated_at"},
 	"groups":    {"id", "name", "created_at", "updated_at"},
 	"users":     {"id", "email", "role", "status", "max_concurrency", "created_at", "updated_at"},
 	"keys":      {"id", "name", "status", "max_concurrency", "quota", "quota_used", "created_at", "updated_at"},
@@ -685,9 +673,6 @@ func validateAccountPatch(p repository.AccountPatch) error {
 		}
 	}
 	if p.TemplateID != nil && *p.TemplateID <= 0 {
-		return ErrInvalidInput
-	}
-	if p.Weight != nil && *p.Weight < 0 {
 		return ErrInvalidInput
 	}
 	if p.MaxConcurrency != nil && *p.MaxConcurrency < 1 {

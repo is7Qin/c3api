@@ -93,61 +93,6 @@ func (_u *AccountUpdate) SetNillableUpstreamKey(v *string) *AccountUpdate {
 	return _u
 }
 
-// SetStatus sets the "status" field.
-func (_u *AccountUpdate) SetStatus(v account.Status) *AccountUpdate {
-	_u.mutation.SetStatus(v)
-	return _u
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (_u *AccountUpdate) SetNillableStatus(v *account.Status) *AccountUpdate {
-	if v != nil {
-		_u.SetStatus(*v)
-	}
-	return _u
-}
-
-// SetCooldownUntil sets the "cooldown_until" field.
-func (_u *AccountUpdate) SetCooldownUntil(v time.Time) *AccountUpdate {
-	_u.mutation.SetCooldownUntil(v)
-	return _u
-}
-
-// SetNillableCooldownUntil sets the "cooldown_until" field if the given value is not nil.
-func (_u *AccountUpdate) SetNillableCooldownUntil(v *time.Time) *AccountUpdate {
-	if v != nil {
-		_u.SetCooldownUntil(*v)
-	}
-	return _u
-}
-
-// ClearCooldownUntil clears the value of the "cooldown_until" field.
-func (_u *AccountUpdate) ClearCooldownUntil() *AccountUpdate {
-	_u.mutation.ClearCooldownUntil()
-	return _u
-}
-
-// SetWeight sets the "weight" field.
-func (_u *AccountUpdate) SetWeight(v int) *AccountUpdate {
-	_u.mutation.ResetWeight()
-	_u.mutation.SetWeight(v)
-	return _u
-}
-
-// SetNillableWeight sets the "weight" field if the given value is not nil.
-func (_u *AccountUpdate) SetNillableWeight(v *int) *AccountUpdate {
-	if v != nil {
-		_u.SetWeight(*v)
-	}
-	return _u
-}
-
-// AddWeight adds value to the "weight" field.
-func (_u *AccountUpdate) AddWeight(v int) *AccountUpdate {
-	_u.mutation.AddWeight(v)
-	return _u
-}
-
 // SetMaxConcurrency sets the "max_concurrency" field.
 func (_u *AccountUpdate) SetMaxConcurrency(v int) *AccountUpdate {
 	_u.mutation.ResetMaxConcurrency()
@@ -491,11 +436,6 @@ func (_u *AccountUpdate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *AccountUpdate) check() error {
-	if v, ok := _u.mutation.Status(); ok {
-		if err := account.StatusValidator(v); err != nil {
-			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "Account.status": %w`, err)}
-		}
-	}
 	if _u.mutation.TemplateCleared() && len(_u.mutation.TemplateIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "Account.template"`)
 	}
@@ -525,21 +465,6 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.UpstreamKey(); ok {
 		_spec.SetField(account.FieldUpstreamKey, field.TypeString, value)
-	}
-	if value, ok := _u.mutation.Status(); ok {
-		_spec.SetField(account.FieldStatus, field.TypeEnum, value)
-	}
-	if value, ok := _u.mutation.CooldownUntil(); ok {
-		_spec.SetField(account.FieldCooldownUntil, field.TypeTime, value)
-	}
-	if _u.mutation.CooldownUntilCleared() {
-		_spec.ClearField(account.FieldCooldownUntil, field.TypeTime)
-	}
-	if value, ok := _u.mutation.Weight(); ok {
-		_spec.SetField(account.FieldWeight, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.AddedWeight(); ok {
-		_spec.AddField(account.FieldWeight, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.MaxConcurrency(); ok {
 		_spec.SetField(account.FieldMaxConcurrency, field.TypeInt, value)
@@ -802,61 +727,6 @@ func (_u *AccountUpdateOne) SetNillableUpstreamKey(v *string) *AccountUpdateOne 
 	if v != nil {
 		_u.SetUpstreamKey(*v)
 	}
-	return _u
-}
-
-// SetStatus sets the "status" field.
-func (_u *AccountUpdateOne) SetStatus(v account.Status) *AccountUpdateOne {
-	_u.mutation.SetStatus(v)
-	return _u
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (_u *AccountUpdateOne) SetNillableStatus(v *account.Status) *AccountUpdateOne {
-	if v != nil {
-		_u.SetStatus(*v)
-	}
-	return _u
-}
-
-// SetCooldownUntil sets the "cooldown_until" field.
-func (_u *AccountUpdateOne) SetCooldownUntil(v time.Time) *AccountUpdateOne {
-	_u.mutation.SetCooldownUntil(v)
-	return _u
-}
-
-// SetNillableCooldownUntil sets the "cooldown_until" field if the given value is not nil.
-func (_u *AccountUpdateOne) SetNillableCooldownUntil(v *time.Time) *AccountUpdateOne {
-	if v != nil {
-		_u.SetCooldownUntil(*v)
-	}
-	return _u
-}
-
-// ClearCooldownUntil clears the value of the "cooldown_until" field.
-func (_u *AccountUpdateOne) ClearCooldownUntil() *AccountUpdateOne {
-	_u.mutation.ClearCooldownUntil()
-	return _u
-}
-
-// SetWeight sets the "weight" field.
-func (_u *AccountUpdateOne) SetWeight(v int) *AccountUpdateOne {
-	_u.mutation.ResetWeight()
-	_u.mutation.SetWeight(v)
-	return _u
-}
-
-// SetNillableWeight sets the "weight" field if the given value is not nil.
-func (_u *AccountUpdateOne) SetNillableWeight(v *int) *AccountUpdateOne {
-	if v != nil {
-		_u.SetWeight(*v)
-	}
-	return _u
-}
-
-// AddWeight adds value to the "weight" field.
-func (_u *AccountUpdateOne) AddWeight(v int) *AccountUpdateOne {
-	_u.mutation.AddWeight(v)
 	return _u
 }
 
@@ -1216,11 +1086,6 @@ func (_u *AccountUpdateOne) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *AccountUpdateOne) check() error {
-	if v, ok := _u.mutation.Status(); ok {
-		if err := account.StatusValidator(v); err != nil {
-			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "Account.status": %w`, err)}
-		}
-	}
 	if _u.mutation.TemplateCleared() && len(_u.mutation.TemplateIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "Account.template"`)
 	}
@@ -1267,21 +1132,6 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.UpstreamKey(); ok {
 		_spec.SetField(account.FieldUpstreamKey, field.TypeString, value)
-	}
-	if value, ok := _u.mutation.Status(); ok {
-		_spec.SetField(account.FieldStatus, field.TypeEnum, value)
-	}
-	if value, ok := _u.mutation.CooldownUntil(); ok {
-		_spec.SetField(account.FieldCooldownUntil, field.TypeTime, value)
-	}
-	if _u.mutation.CooldownUntilCleared() {
-		_spec.ClearField(account.FieldCooldownUntil, field.TypeTime)
-	}
-	if value, ok := _u.mutation.Weight(); ok {
-		_spec.SetField(account.FieldWeight, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.AddedWeight(); ok {
-		_spec.AddField(account.FieldWeight, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.MaxConcurrency(); ok {
 		_spec.SetField(account.FieldMaxConcurrency, field.TypeInt, value)

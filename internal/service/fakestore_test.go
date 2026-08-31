@@ -271,18 +271,25 @@ func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([
 	return out, int64(len(f.accs)), nil
 }
 
-func (f *fakeStore) UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error) {
+func (f *fakeStore) UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	c := *a
-	if cooldownUntil != nil {
-		c.CooldownUntil = cooldownUntil
+	cur, ok := f.accs[a.ID]
+	if !ok {
+		return nil, missingErr(a.ID)
 	}
+	c := *a
+	// 对齐真实 repo 写面：PUT 不触碰失效字段/revision/last_used_at（fenced 所有权）
+	c.FailedAt = cur.FailedAt
+	c.LastError = cur.LastError
+	c.FailureSource = cur.FailureSource
+	c.LifecycleRevision = cur.LifecycleRevision
+	c.LastUsedAt = cur.LastUsedAt
 	f.accs[a.ID] = &c
 	return &c, nil
 }
 
-func (f *fakeStore) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64, cooldownUntil *time.Time) (*domain.Account, error) {
+func (f *fakeStore) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64) (*domain.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	cur, ok := f.accs[a.ID]
@@ -294,14 +301,11 @@ func (f *fakeStore) UpdateAccountCAS(ctx context.Context, a *domain.Account, exp
 	}
 	c := *a
 	c.LifecycleRevision = expectedRevision + 1
-	if cooldownUntil != nil {
-		c.CooldownUntil = cooldownUntil
-	}
-	if a.Status == "active" {
-		c.FailedAt = nil
-		c.LastError = nil
-		c.FailureSource = nil
-	}
+	// 对齐真实 repo：恢复唯一入口是 RecoverAccountCAS（fenced），PUT 不清失效字段
+	c.FailedAt = cur.FailedAt
+	c.LastError = cur.LastError
+	c.FailureSource = cur.FailureSource
+	c.LastUsedAt = cur.LastUsedAt
 	f.accs[a.ID] = &c
 	return &c, nil
 }
@@ -630,20 +634,11 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 				a.BaseURL = &b
 			}
 		}
-		if p.Status != nil {
-			a.Status = *p.Status
-		}
-		if p.Weight != nil {
-			a.Weight = *p.Weight
-		}
 		if p.MaxConcurrency != nil {
 			a.MaxConcurrency = *p.MaxConcurrency
 		}
 		if p.GroupIDs != nil {
 			f.accGroups[id] = slices.Clone(*p.GroupIDs)
-		}
-		if p.CooldownUntil != nil {
-			a.CooldownUntil = p.CooldownUntil
 		}
 		if p.Enabled != nil {
 			a.Enabled = *p.Enabled

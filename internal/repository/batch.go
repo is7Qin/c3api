@@ -29,9 +29,6 @@ var ErrConflict = errors.New("repository: conflict")
 // ErrInvalidInput 表示写入会破坏跨实体业务不变量。
 var ErrInvalidInput = errors.New("repository: invalid input")
 
-// BatchHook test hook for batch atomicity interleaving (nil in production).
-var BatchHook func(id int64)
-
 // --- 批量更新字段子集（nil 字段 = 不更新） ---
 
 type TemplatePatch struct {
@@ -50,13 +47,9 @@ type AccountPatch struct {
 	// BaseURL 批量三态（C1 定死）：nil = 不变；&"" = 清空（落 NULL = 继承
 	// 模板）；&非空 = 落值。
 	BaseURL        *string
-	Status         *domain.AccountStatus
-	Weight         *int
 	MaxConcurrency *int
 	// GroupIDs nil = 不变；非 nil = 替换账号全部分组（含空数组 = 清空）。
-	GroupIDs *[]int64
-	// CooldownUntil nil = 不变；非 nil = SetCooldownUntil（管理面永不 Clear）。
-	CooldownUntil            *time.Time
+	GroupIDs                 *[]int64
 	Enabled                  *bool
 	UpstreamCostMultiplierBp *int
 	CacheDomain              *string // nil=不变, &""=清空, &val=落值
@@ -223,7 +216,7 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 				return err
 			}
 		}
-		fenced := p.UpstreamKey != nil || p.BaseURL != nil || (p.Status != nil && *p.Status == domain.StatusActive)
+		fenced := p.UpstreamKey != nil || p.BaseURL != nil
 		for _, id := range sortedUniqueIDs(ids) {
 			u := client.Account.Update().Where(account.IDEQ(id))
 			if fenced {
@@ -249,23 +242,11 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 					u = u.SetBaseURL(*p.BaseURL)
 				}
 			}
-			if p.Status != nil {
-				u = u.SetStatus(account.Status(*p.Status))
-				if *p.Status == domain.StatusActive {
-					u = u.ClearFailedAt().ClearLastError().ClearFailureSource()
-				}
-			}
-			if p.Weight != nil {
-				u = u.SetWeight(*p.Weight)
-			}
 			if p.MaxConcurrency != nil {
 				u = u.SetMaxConcurrency(*p.MaxConcurrency)
 			}
 			if p.GroupIDs != nil {
 				u = u.ClearGroups().AddGroupIDs(*p.GroupIDs...)
-			}
-			if p.CooldownUntil != nil {
-				u = u.SetCooldownUntil(*p.CooldownUntil)
 			}
 			if p.Enabled != nil {
 				u = u.SetEnabled(*p.Enabled)
@@ -282,9 +263,6 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			}
 			if _, err := u.Save(ctx); err != nil {
 				return errMissingID(err, id)
-			}
-			if BatchHook != nil && fenced {
-				BatchHook(id)
 			}
 		}
 		return nil

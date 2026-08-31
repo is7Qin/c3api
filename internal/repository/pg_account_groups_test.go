@@ -102,7 +102,7 @@ func seedPGGroup(t *testing.T, repos *repository.Repository, name string) *domai
 func seedPGAccount(t *testing.T, repos *repository.Repository, tplID int64, name string) *domain.Account {
 	t.Helper()
 	a, err := repos.Accounts.CreateAccount(context.Background(), &domain.Account{
-		Name: name, TemplateID: tplID, UpstreamKey: "sk-" + name, Weight: 1, MaxConcurrency: 8,
+		Name: name, TemplateID: tplID, UpstreamKey: "sk-" + name, MaxConcurrency: 8,
 	})
 	require.NoError(t, err)
 	return a

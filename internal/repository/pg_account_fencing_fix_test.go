@@ -20,7 +20,7 @@ func TestAdminFencingImportRevision(t *testing.T) {
 	tpl := seedPGTemplate(t, repos)
 	// Simulate import path: use repository directly to mimic admin vs SDK
 	// Create account with ext via Upsert
-	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "fence-import", TemplateID: tpl.ID, UpstreamKey: "sk-1", Weight: 100, MaxConcurrency: 25})
+	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "fence-import", TemplateID: tpl.ID, UpstreamKey: "sk-1", MaxConcurrency: 25})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// create ext
@@ -52,7 +52,7 @@ func TestAdminFencingCostRevision(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	require.NoError(t, repos.Accounts.UpdateAccountCostMultiplierCAS(ctx, acc.ID, 1, 0))
 	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)
@@ -68,7 +68,7 @@ func TestAdminFencingCacheRevision(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cache-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cache-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	dom := "example.com"
 	require.NoError(t, repos.Accounts.UpdateAccountCacheDomainCAS(ctx, acc.ID, 1, &dom))
 	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)
@@ -81,7 +81,7 @@ func TestRecoverFencing(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "recover-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "recover-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	// fail via CAS
 	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, acc.ID, 1, "rule", time.Now(), "boom"))
 	afterFail, _ := repos.Accounts.GetAccount(ctx, acc.ID)
@@ -102,7 +102,7 @@ func TestFencedEnableNotClear(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "enable-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "enable-fence", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, acc.ID, 1, "sdk", time.Now(), "err"))
 	afterFail, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(2), afterFail.LifecycleRevision)
@@ -117,8 +117,8 @@ func TestBatchFencingCredential(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a1, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "b1", TemplateID: tpl.ID, UpstreamKey: "sk-1", Weight: 1, MaxConcurrency: 8})
-	a2, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "b2", TemplateID: tpl.ID, UpstreamKey: "sk-2", Weight: 1, MaxConcurrency: 8})
+	a1, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "b1", TemplateID: tpl.ID, UpstreamKey: "sk-1", MaxConcurrency: 8})
+	a2, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "b2", TemplateID: tpl.ID, UpstreamKey: "sk-2", MaxConcurrency: 8})
 	// batch update with UpstreamKey should CAS per account
 	newKey := "sk-new"
 	require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID}, repository.AccountPatch{UpstreamKey: &newKey}))
@@ -134,7 +134,7 @@ func TestStaleFirstExtPutLeavesNoExt(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale-first-ext", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale-first-ext", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	ext := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "sess-1", WindowID: "sess-1:0"}, CodexOAuthToken: strPtr("tok1"), CodexOAuthRefreshToken: strPtr("rt1"), CodexEmail: strPtr("e1@example.com"), CodexAccountID: strPtr("a1")}
 	// stale expected 999 should fail and leave no ext
@@ -153,61 +153,29 @@ func TestStaleFirstExtPutLeavesNoExt(t *testing.T) {
 	require.Equal(t, "tok1", *got.CodexOAuthToken)
 }
 
-func TestBatchStaleSecondLeavesFirstUnchanged(t *testing.T) {
+// TestBatchMissingIDRollsBackFirst 批量原子性钉：批内任一 id 缺失 → 整批失败，
+// 先写账号的凭据/revision 全部回滚。单事务 + FOR UPDATE 预锁（922c2cd）使
+// "批中途被并发 CAS 变 stale" 在锁语义下不可能发生——旧 BatchHook 交错注入面
+// 随之删除，原子性由回滚场景直接锁定。
+func TestBatchMissingIDRollsBackFirst(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a1, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "batch-stale-1", TemplateID: tpl.ID, UpstreamKey: "sk-1", Weight: 1, MaxConcurrency: 8})
-	a2, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "batch-stale-2", TemplateID: tpl.ID, UpstreamKey: "sk-2", Weight: 1, MaxConcurrency: 8})
+	a1, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "batch-rb-1", TemplateID: tpl.ID, UpstreamKey: "sk-1", MaxConcurrency: 8})
 	require.Equal(t, int64(1), a1.LifecycleRevision)
-	require.Equal(t, int64(1), a2.LifecycleRevision)
-	// Set hook to make second stale: after first account's Save, concurrently increment second's revision
-	repository.BatchHook = func(id int64) {
-		if id == a1.ID {
-			// Increment a2's revision via direct CAS to make its expected stale
-			_ = repos.Accounts.ReplaceAccountCredentialCAS(context.Background(), a2.ID, 1, "sk-concurrent", nil)
-		}
-	}
-	defer func() { repository.BatchHook = nil }()
 	newKey := "sk-batch-new"
-	err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID}, repository.AccountPatch{UpstreamKey: &newKey})
-	require.ErrorIs(t, err, repository.ErrConflict, "second stale should make batch fail")
-	// First must remain unchanged (rolled back)
+	err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, 999999999}, repository.AccountPatch{UpstreamKey: &newKey})
+	require.Error(t, err, "缺 id → 整批失败")
 	got1, _ := repos.Accounts.GetAccount(ctx, a1.ID)
 	require.Equal(t, "sk-1", got1.UpstreamKey, "first must remain unchanged due to atomic rollback")
 	require.Equal(t, int64(1), got1.LifecycleRevision)
-	got2, _ := repos.Accounts.GetAccount(ctx, a2.ID)
-	require.Equal(t, "sk-concurrent", got2.UpstreamKey, "second should be from concurrent increment, not batch")
-	require.Equal(t, int64(2), got2.LifecycleRevision)
-}
-
-func TestCombinedCredentialRecoverySingleIncrement(t *testing.T) {
-	repos := newPGRepos(t)
-	ctx := context.Background()
-	tpl := seedPGTemplate(t, repos)
-	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "combined", TemplateID: tpl.ID, UpstreamKey: "sk-old", Weight: 1, MaxConcurrency: 8})
-	// fail to make recovery needed
-	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, acc.ID, 1, "rule", time.Now(), "boom"))
-	afterFail, _ := repos.Accounts.GetAccount(ctx, acc.ID)
-	require.Equal(t, int64(2), afterFail.LifecycleRevision)
-	require.NotNil(t, afterFail.FailedAt)
-	// Combined credential+recovery in one batch should increment exactly once (2->3)
-	newKey := "sk-new-combined"
-	statusActive := domain.StatusActive
-	err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{UpstreamKey: &newKey, Status: &statusActive})
-	require.NoError(t, err)
-	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)
-	require.Equal(t, int64(3), after.LifecycleRevision, "combined must increment exactly once, not twice")
-	require.Equal(t, "sk-new-combined", after.UpstreamKey)
-	require.Nil(t, after.FailedAt, "recovery should clear")
-	require.Nil(t, after.FailureSource)
 }
 
 func TestAdminStaleDoesNotUpdateExt(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale-ext", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale-ext", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	ext := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "sess-1", WindowID: "sess-1:0"}, CodexOAuthToken: strPtr("tok1"), CodexOAuthRefreshToken: strPtr("rt1"), CodexEmail: strPtr("e@example.com"), CodexAccountID: strPtr("a1")}
 	_, _ = repos.AccountExts.UpsertAccountExt(ctx, ext)
 	require.NoError(t, repos.AccountExts.AdminWriteOAuthRotationCAS(ctx, acc.ID, 1, "tok2", "rt2", nil))

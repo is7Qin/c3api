@@ -140,18 +140,17 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 	}
 	d := &domain.Account{
 		ID: a.ID, Name: a.Name, TemplateID: a.TemplateID, Template: tpl,
-		BaseURL:       a.BaseURL, // 账号级覆盖（nil = 继承模板；快照装配指针拷贝零分配）
-		UpstreamKey:   a.UpstreamKey,
-		Status:        domain.AccountStatus(a.Status),
-		CooldownUntil: a.CooldownUntil, Weight: a.Weight, MaxConcurrency: a.MaxConcurrency,
-		LastError: a.LastError, LastUsedAt: a.LastUsedAt,
-		FailedAt:  a.FailedAt,
-		FailureSource:              a.FailureSource,
-		Enabled:                    a.Enabled,
-		LifecycleRevision:          a.LifecycleRevision,
-		UpstreamCostMultiplierBp:   a.UpstreamCostMultiplierBp,
-		CacheDomain:                a.CacheDomain,
-		CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, DeletedAt: a.DeletedAt,
+		BaseURL:        a.BaseURL, // 账号级覆盖（nil = 继承模板；快照装配指针拷贝零分配）
+		UpstreamKey:    a.UpstreamKey,
+		MaxConcurrency: a.MaxConcurrency,
+		LastError:      a.LastError, LastUsedAt: a.LastUsedAt,
+		FailedAt:                 a.FailedAt,
+		FailureSource:            a.FailureSource,
+		Enabled:                  a.Enabled,
+		LifecycleRevision:        a.LifecycleRevision,
+		UpstreamCostMultiplierBp: a.UpstreamCostMultiplierBp,
+		CacheDomain:              a.CacheDomain,
+		CreatedAt:                a.CreatedAt, UpdatedAt: a.UpdatedAt, DeletedAt: a.DeletedAt,
 	}
 	// Ext 快照合并：仅调度器快照加载（LoadGroupsAccounts / LoadGroupAccounts
 	// ——全表/子查询扫描后内存装配 Edges.Ext）会带 account_ext 边；其余路径

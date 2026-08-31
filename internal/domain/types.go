@@ -45,6 +45,9 @@ func (f RequestFormat) Valid() bool {
 	return false
 }
 
+// AccountStatus 账号运行时状态（纯内存调度视图——持久 status 列已随
+// intelligent-routing cutover 删除；生命周期 = enabled/failed_at fenced 面，
+// 临时健康 = typed throttle/RuntimeHealth）。
 type AccountStatus string
 
 const (
@@ -369,19 +372,17 @@ type Account struct {
 	// nil|非空两种形态（create 路径空串归一 nil、批量 "" 落 NULL）。
 	BaseURL        *string
 	UpstreamKey    string
-	Status         AccountStatus
-	CooldownUntil  *time.Time
-	Weight         int
 	MaxConcurrency int
 	LastError      *string
 	LastUsedAt     *time.Time
 	// FailedAt SDK 上报的运行时失效时刻（account.failed_at 列，SDK 接入 T1——
 	// 用户裁决 2026-08-13：仅此一列；失效原因复用既有 LastError，两原因字段
 	// 并存会漂移）：nil = 未失效；非 nil = 账号级终止（凭据永久失效/上游封禁/
-	// 判死）的上报时刻。与 Status=disabled 语义分离：disabled = 管理面手动禁用；
+	// 判死）的上报时刻。与 Enabled=false 语义分离：disabled = 管理面手动禁用；
 	// failed_at = 运行时失效，两者可并存（失效后管理员仍可手动处理；恢复 =
-	// 清 failed_at + last_error + 恢复调度，T5 细化）。调度器选号不读本字段
-	//（pickFrom 只跳 disabled——摘除必须落库 status）。
+	// 经 /accounts/{id}/recover fenced 端点清 failed_at + last_error）。调度器
+	// 快照装载以 failed_at 置运行时 disabled（持久 status 列已删除，摘除的
+	// 持久化事实 = failed_at 本身）。
 	FailedAt      *time.Time
 	FailureSource *string
 	Enabled       bool
@@ -453,8 +454,8 @@ type AccountExt struct {
 // CodexOAuthImportItem 批量导入 codex-oauth 单行（Task B——组合幂等键
 // codex_email + codex_account_id；token+refresh 成对必填；expires_at 可选
 // 原始 RFC3339 字符串（service 逐行解析——格式错误 → 行级 failed 非整批
-// 400；nil = 过期未知 → 401 自愈）；max_concurrency/weight 配置面——nil =
-// 缺省 25/100（导入面裁决覆盖账号表默认 8））。
+// 400；nil = 过期未知 → 401 自愈）；max_concurrency 配置面——nil =
+// 缺省 25（导入面裁决覆盖账号表默认 8））。
 type CodexOAuthImportItem struct {
 	CodexEmail             string
 	CodexAccountID         string
@@ -462,7 +463,6 @@ type CodexOAuthImportItem struct {
 	CodexOAuthRefreshToken string
 	CodexOAuthExpiresAt    *string
 	MaxConcurrency         *int
-	Weight                 *int
 }
 
 // CodexPATImportItem 批量导入 codex-pat 单行（组合键同上；pat_key 必填）。
@@ -471,7 +471,6 @@ type CodexPATImportItem struct {
 	CodexAccountID string
 	CodexPATKey    string
 	MaxConcurrency *int
-	Weight         *int
 }
 
 // ImportFailedItem 行级失败条目（index = items 原始下标——行级定位契约；
@@ -905,16 +904,12 @@ type ThrottleAction struct {
 }
 
 type RuleThen struct {
-	Status   *AccountStatus `json:"status,omitempty"`   // legacy: to be removed; keep for intermediate compile-green
-	Cooldown *string        `json:"cooldown,omitempty"` // legacy
-	Weight   *int           `json:"weight,omitempty"`   // legacy
 	// ResponseCode nil=透传上游码，non-nil=覆写为指定码（400-599）；指针即意图（fresh setup，无旧 Transmit 兼容）。
 	ResponseCode *int `json:"response_code,omitempty"`
 	// CustomMessage nil=透传上游文，non-nil=覆写为固定文案（禁止空串）；指针即意图。
 	CustomMessage *string         `json:"custom_message,omitempty"`
 	Throttle      *ThrottleAction `json:"throttle,omitempty"`
 	FailAccount   bool            `json:"fail_account,omitempty"`
-	// 启动 guard 检测旧列 Transmit：fresh setup 哲学，用户裁决；旧列存在则 fail-fast 需重建（本 Task 仅注释占位，DB 检测由后续迁移承载）。
 }
 
 type Rule struct {

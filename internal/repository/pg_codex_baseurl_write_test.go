@@ -100,7 +100,7 @@ func TestPGTemplateSwitchAndAccountURLWriteCannotViolateCodexInvariant(t *testin
 				return err
 			},
 			func() error {
-				_, err := repos.Accounts.UpdateAccount(ctx, &accountUpdate, nil)
+				_, err := repos.Accounts.UpdateAccount(ctx, &accountUpdate)
 				return err
 			},
 		)
@@ -127,7 +127,7 @@ func TestPGBatchAccountTemplateIDDriftCannotEscapeLockedTemplates(t *testing.T) 
 				return repos.Accounts.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{BaseURL: &override})
 			},
 			func() error {
-				_, err := repos.Accounts.UpdateAccount(ctx, &fullUpdate, nil)
+				_, err := repos.Accounts.UpdateAccount(ctx, &fullUpdate)
 				return err
 			},
 		)
@@ -213,7 +213,7 @@ func createPGWriteAccount(t *testing.T, repos *repository.Repository, templateID
 	t.Helper()
 	account, err := repos.Accounts.CreateAccount(context.Background(), &domain.Account{
 		Name: name, TemplateID: templateID, BaseURL: baseURL,
-		UpstreamKey: "sk-test", Weight: 1, MaxConcurrency: 8,
+		UpstreamKey: "sk-test", MaxConcurrency: 8,
 	})
 	require.NoError(t, err)
 	return account

@@ -76,10 +76,6 @@ type AccountMutation struct {
 	name                           *string
 	base_url                       *string
 	upstream_key                   *string
-	status                         *account.Status
-	cooldown_until                 *time.Time
-	weight                         *int
-	addweight                      *int
 	max_concurrency                *int
 	addmax_concurrency             *int
 	last_error                     *string
@@ -368,147 +364,6 @@ func (m *AccountMutation) OldUpstreamKey(ctx context.Context) (v string, err err
 // ResetUpstreamKey resets all changes to the "upstream_key" field.
 func (m *AccountMutation) ResetUpstreamKey() {
 	m.upstream_key = nil
-}
-
-// SetStatus sets the "status" field.
-func (m *AccountMutation) SetStatus(a account.Status) {
-	m.status = &a
-}
-
-// Status returns the value of the "status" field in the mutation.
-func (m *AccountMutation) Status() (r account.Status, exists bool) {
-	v := m.status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStatus returns the old "status" field's value of the Account entity.
-// If the Account object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountMutation) OldStatus(ctx context.Context) (v account.Status, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
-	}
-	return oldValue.Status, nil
-}
-
-// ResetStatus resets all changes to the "status" field.
-func (m *AccountMutation) ResetStatus() {
-	m.status = nil
-}
-
-// SetCooldownUntil sets the "cooldown_until" field.
-func (m *AccountMutation) SetCooldownUntil(t time.Time) {
-	m.cooldown_until = &t
-}
-
-// CooldownUntil returns the value of the "cooldown_until" field in the mutation.
-func (m *AccountMutation) CooldownUntil() (r time.Time, exists bool) {
-	v := m.cooldown_until
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCooldownUntil returns the old "cooldown_until" field's value of the Account entity.
-// If the Account object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountMutation) OldCooldownUntil(ctx context.Context) (v *time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCooldownUntil is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCooldownUntil requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCooldownUntil: %w", err)
-	}
-	return oldValue.CooldownUntil, nil
-}
-
-// ClearCooldownUntil clears the value of the "cooldown_until" field.
-func (m *AccountMutation) ClearCooldownUntil() {
-	m.cooldown_until = nil
-	m.clearedFields[account.FieldCooldownUntil] = struct{}{}
-}
-
-// CooldownUntilCleared returns if the "cooldown_until" field was cleared in this mutation.
-func (m *AccountMutation) CooldownUntilCleared() bool {
-	_, ok := m.clearedFields[account.FieldCooldownUntil]
-	return ok
-}
-
-// ResetCooldownUntil resets all changes to the "cooldown_until" field.
-func (m *AccountMutation) ResetCooldownUntil() {
-	m.cooldown_until = nil
-	delete(m.clearedFields, account.FieldCooldownUntil)
-}
-
-// SetWeight sets the "weight" field.
-func (m *AccountMutation) SetWeight(i int) {
-	m.weight = &i
-	m.addweight = nil
-}
-
-// Weight returns the value of the "weight" field in the mutation.
-func (m *AccountMutation) Weight() (r int, exists bool) {
-	v := m.weight
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWeight returns the old "weight" field's value of the Account entity.
-// If the Account object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountMutation) OldWeight(ctx context.Context) (v int, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWeight is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWeight requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWeight: %w", err)
-	}
-	return oldValue.Weight, nil
-}
-
-// AddWeight adds i to the "weight" field.
-func (m *AccountMutation) AddWeight(i int) {
-	if m.addweight != nil {
-		*m.addweight += i
-	} else {
-		m.addweight = &i
-	}
-}
-
-// AddedWeight returns the value that was added to the "weight" field in this mutation.
-func (m *AccountMutation) AddedWeight() (r int, exists bool) {
-	v := m.addweight
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetWeight resets all changes to the "weight" field.
-func (m *AccountMutation) ResetWeight() {
-	m.weight = nil
-	m.addweight = nil
 }
 
 // SetMaxConcurrency sets the "max_concurrency" field.
@@ -1250,7 +1105,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 19)
+	fields := make([]string, 0, 16)
 	if m.name != nil {
 		fields = append(fields, account.FieldName)
 	}
@@ -1262,15 +1117,6 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.upstream_key != nil {
 		fields = append(fields, account.FieldUpstreamKey)
-	}
-	if m.status != nil {
-		fields = append(fields, account.FieldStatus)
-	}
-	if m.cooldown_until != nil {
-		fields = append(fields, account.FieldCooldownUntil)
-	}
-	if m.weight != nil {
-		fields = append(fields, account.FieldWeight)
 	}
 	if m.max_concurrency != nil {
 		fields = append(fields, account.FieldMaxConcurrency)
@@ -1324,12 +1170,6 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.BaseURL()
 	case account.FieldUpstreamKey:
 		return m.UpstreamKey()
-	case account.FieldStatus:
-		return m.Status()
-	case account.FieldCooldownUntil:
-		return m.CooldownUntil()
-	case account.FieldWeight:
-		return m.Weight()
 	case account.FieldMaxConcurrency:
 		return m.MaxConcurrency()
 	case account.FieldLastError:
@@ -1371,12 +1211,6 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldBaseURL(ctx)
 	case account.FieldUpstreamKey:
 		return m.OldUpstreamKey(ctx)
-	case account.FieldStatus:
-		return m.OldStatus(ctx)
-	case account.FieldCooldownUntil:
-		return m.OldCooldownUntil(ctx)
-	case account.FieldWeight:
-		return m.OldWeight(ctx)
 	case account.FieldMaxConcurrency:
 		return m.OldMaxConcurrency(ctx)
 	case account.FieldLastError:
@@ -1437,27 +1271,6 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpstreamKey(v)
-		return nil
-	case account.FieldStatus:
-		v, ok := value.(account.Status)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStatus(v)
-		return nil
-	case account.FieldCooldownUntil:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCooldownUntil(v)
-		return nil
-	case account.FieldWeight:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWeight(v)
 		return nil
 	case account.FieldMaxConcurrency:
 		v, ok := value.(int)
@@ -1551,9 +1364,6 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *AccountMutation) AddedFields() []string {
 	var fields []string
-	if m.addweight != nil {
-		fields = append(fields, account.FieldWeight)
-	}
 	if m.addmax_concurrency != nil {
 		fields = append(fields, account.FieldMaxConcurrency)
 	}
@@ -1571,8 +1381,6 @@ func (m *AccountMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *AccountMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
-	case account.FieldWeight:
-		return m.AddedWeight()
 	case account.FieldMaxConcurrency:
 		return m.AddedMaxConcurrency()
 	case account.FieldLifecycleRevision:
@@ -1588,13 +1396,6 @@ func (m *AccountMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *AccountMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case account.FieldWeight:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddWeight(v)
-		return nil
 	case account.FieldMaxConcurrency:
 		v, ok := value.(int)
 		if !ok {
@@ -1626,9 +1427,6 @@ func (m *AccountMutation) ClearedFields() []string {
 	var fields []string
 	if m.FieldCleared(account.FieldBaseURL) {
 		fields = append(fields, account.FieldBaseURL)
-	}
-	if m.FieldCleared(account.FieldCooldownUntil) {
-		fields = append(fields, account.FieldCooldownUntil)
 	}
 	if m.FieldCleared(account.FieldLastError) {
 		fields = append(fields, account.FieldLastError)
@@ -1664,9 +1462,6 @@ func (m *AccountMutation) ClearField(name string) error {
 	switch name {
 	case account.FieldBaseURL:
 		m.ClearBaseURL()
-		return nil
-	case account.FieldCooldownUntil:
-		m.ClearCooldownUntil()
 		return nil
 	case account.FieldLastError:
 		m.ClearLastError()
@@ -1705,15 +1500,6 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldUpstreamKey:
 		m.ResetUpstreamKey()
-		return nil
-	case account.FieldStatus:
-		m.ResetStatus()
-		return nil
-	case account.FieldCooldownUntil:
-		m.ResetCooldownUntil()
-		return nil
-	case account.FieldWeight:
-		m.ResetWeight()
 		return nil
 	case account.FieldMaxConcurrency:
 		m.ResetMaxConcurrency()

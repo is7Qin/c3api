@@ -22,11 +22,9 @@ import (
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 )
 
-// GroupRepo 同时承担调度器 Loader 的账号状态回写（UpdateAccountStatus 委托 AccountRepo，
-// 由 repository.New 注入；调度器按单个 loader 对象获取数据源）。
+// GroupRepo 承担调度器 Loader 的快照数据源（LoadGroupsAccounts/LoadGroupAccounts）。
 type GroupRepo struct {
-	client   *ent.Client
-	accounts *AccountRepo
+	client *ent.Client
 	// driver 为成员关系全表扫描用（LoadGroupsAccounts；与 user_repo 同构——
 	// 普通 client 与 tx client 均可用）。
 	driver dialect.Driver
@@ -294,9 +292,4 @@ func (r *GroupRepo) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*do
 		out = append(out, toDomainAccount(a))
 	}
 	return out, nil
-}
-
-// UpdateAccountStatus 满足 scheduler.Loader：账号状态回写委托 AccountRepo。
-func (r *GroupRepo) UpdateAccountStatus(ctx context.Context, id int64, status domain.AccountStatus, cooldownUntil *time.Time, lastError *string, weight *int) error {
-	return r.accounts.UpdateAccountStatus(ctx, id, status, cooldownUntil, lastError, weight)
 }
