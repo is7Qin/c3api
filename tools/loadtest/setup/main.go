@@ -250,8 +250,8 @@ func main() {
 	}
 	for i := 0; i < *accounts; i++ {
 		body := map[string]any{
-			"name":        fmt.Sprintf("acc-%d", i),
-			"template_id": tplIDs[rng.IntN(len(tplIDs))],
+			"name":         fmt.Sprintf("acc-%d", i),
+			"template_id":  tplIDs[rng.IntN(len(tplIDs))],
 			"upstream_key": "sk-upstream",
 			"group_ids":    []int64{groupIDs[rng.IntN(len(groupIDs))]},
 			// max_concurrency 显式 100000：service 校验把 0 兜底为 8，
