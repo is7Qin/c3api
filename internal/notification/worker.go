@@ -85,6 +85,10 @@ func (w *Worker) TrySubmit(event domain.BalanceWarningEvent) bool {
 		w.suppressed.Add(1)
 		return false
 	}
+	if w.enqueue == nil || w.enabled == nil || !w.enabled() {
+		w.suppressed.Add(1)
+		return false
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {

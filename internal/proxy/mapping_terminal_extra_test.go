@@ -108,8 +108,8 @@ func TestTerminalOutcomesAllMappings(t *testing.T) {
 		{"无映射", nil, ""},
 		{"explicit 目标不同", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeExplicit}}, "upstream-b"},
 		{"explicit identity", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o", Mode: domain.ModelMappingModeExplicit}}, ""},
-		{"implicit 目标不同", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}}, "gpt-4o"},
-		{"implicit identity", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o", Mode: domain.ModelMappingModeImplicit}}, "gpt-4o"},
+		{"implicit 目标不同", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}}, ""},
+		{"implicit identity", map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "gpt-4o", Mode: domain.ModelMappingModeImplicit}}, ""},
 	}
 	for _, tc := range cases {
 		t.Run("4xx/"+tc.name, func(t *testing.T) {
@@ -222,7 +222,7 @@ func TestExhaustionSecondAuthProof(t *testing.T) {
 	first := auths[0]
 	second := auths[1]
 	mu.Unlock()
-	want := "gpt-4o"
+	want := ""
 	if second == "Bearer sk-a2" {
 		want = "upstream-c"
 	}

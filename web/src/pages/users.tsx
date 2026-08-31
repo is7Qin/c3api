@@ -382,8 +382,8 @@ export default function Users() {
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg">
-            <Table>
+          <ScrollArea data-od-id="table-scroll-users" className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+            <Table className="min-w-[900px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
               <TableHeader>
                 <TableRow>
                   <SortableHeader field="id" label="ID" active={activeSort === 'id'} order={order} onToggle={onColumnToggle} />
@@ -410,7 +410,7 @@ export default function Users() {
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(u.CreatedAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon-sm" title={t('users.tempBalances.button')} onClick={() => setTempUser(u)}><Coins /></Button>
+                        <Button variant="ghost" size="icon-sm" title={t('users.tempBalances.button')} data-od-id="users-temp-balances" onClick={() => setTempUser(u)}><Coins /></Button>
                         <Button variant="ghost" size="icon-sm" title={t('users.groups.button')} onClick={() => openGroups(u)}><UsersRound /></Button>
                         <Button
                           variant="ghost"
@@ -428,7 +428,7 @@ export default function Users() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
           <Pagination total={data?.total ?? 0} limit={limit} offset={offset} onOffsetChange={setOffset} onLimitChange={changeLimit} />
         </>
       )}
@@ -511,7 +511,7 @@ export default function Users() {
 
       {/* —— 临时额度查看：有效合计 + 全量列表（管理视角含过期/用尽） —— */}
       <Dialog open={!!tempUser} onOpenChange={o => { if (!o) { setTempUser(null) } }}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg overflow-hidden">
           <DialogHeader>
             <DialogTitle>{t('users.tempBalances.title', { name: tempUser?.Email })}</DialogTitle>
             <DialogDescription>{t('users.tempBalances.desc')}</DialogDescription>
@@ -530,7 +530,7 @@ export default function Users() {
             <p className="py-6 text-center text-sm text-muted-foreground">{t('users.tempBalances.empty')}</p>
           ) : (
             <ScrollArea className="max-h-72 rounded-md border">
-              <Table>
+              <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-right">{t('users.tempBalances.amount')}</TableHead>

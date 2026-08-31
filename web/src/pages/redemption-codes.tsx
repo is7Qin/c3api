@@ -315,8 +315,8 @@ export default function RedemptionCodes() {
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg">
-            <Table>
+          <ScrollArea data-od-id="table-scroll-redemption-codes" className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+            <Table className="min-w-[1200px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
@@ -367,7 +367,7 @@ export default function RedemptionCodes() {
                     <TableCell className="max-w-40 truncate" title={c.Remark ?? undefined}>{c.Remark || '—'}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon-sm" title={t('redemptions.uses')} onClick={() => setUsesFor(c)}>
+                        <Button variant="ghost" size="icon-sm" title={t('redemptions.uses')} data-od-id="redemption-uses" onClick={() => setUsesFor(c)}>
                           <History />
                         </Button>
                         <Button
@@ -386,7 +386,7 @@ export default function RedemptionCodes() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </ScrollArea>
           <PagePagination total={data?.total ?? 0} pageSize={pageSize} page={page} onPageChange={setPage} onPageSizeChange={changePageSize} />
         </>
       )}
@@ -516,7 +516,7 @@ export default function RedemptionCodes() {
 
       {/* —— 使用明细（审计） —— */}
       <Dialog open={!!usesFor} onOpenChange={o => { if (!o) setUsesFor(null) }}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg overflow-hidden">
           <DialogHeader>
             <DialogTitle>{t('redemptions.usesTitle', { code: usesFor?.Code })}</DialogTitle>
             <DialogDescription>{t('redemptions.usesDesc')}</DialogDescription>
@@ -531,7 +531,7 @@ export default function RedemptionCodes() {
             <p className="py-6 text-center text-sm text-muted-foreground">{t('redemptions.usesEmpty')}</p>
           ) : (
             <ScrollArea className="max-h-80 rounded-lg border">
-              <Table>
+              <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
                 <TableHeader>
                   <TableRow>
                     <TableHead>ID</TableHead>

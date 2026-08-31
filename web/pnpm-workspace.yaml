@@ -1,3 +1,5 @@
+allowBuilds:
+  '@swc/core': true
 minimumReleaseAgeExclude:
   - lucide-react@1.29.0
   - shadcn@4.16.2

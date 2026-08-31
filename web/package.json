@@ -5,10 +5,11 @@
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "scripts": {
-    "check:stats-chart": "node scripts/check-stats-chart.mjs",
+    "check": "pnpm run check:i18n",
+    "check:i18n": "i18next-cli extract --dry-run --ci",
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "build": "pnpm run check && tsc -b && vite build",
+    "lint": "oxlint && pnpm run check",
     "preview": "vite preview",
     "gen:api": "openapi-typescript ../openapi/openapi.yaml -o src/lib/api/schema.d.ts"
   },
@@ -38,6 +39,7 @@
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^6.0.4",
+    "i18next-cli": "^1.71.3",
     "openapi-typescript": "^7.13.0",
     "oxlint": "^1.75.0",
     "typescript": "^5.9.3",

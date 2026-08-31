@@ -201,19 +201,25 @@ func TestListenerFullRefreshError(t *testing.T) {
 	disp := newGateDisp(1) // 首次失败，第二连接成功
 	rig := newGateRig(t, []*gateConn{c1, c2}, disp)
 
-	disp.waitFull(t, 1)
-	c1.ch <- notif(`{"v":1,"users":true}`)
-	require.Eventually(t, func() bool { return c1.closeN.Load() == 1 },
-		2*time.Second, 5*time.Millisecond, "FullRefresh 失败必须关闭当前连接")
-	rig.waitDelay(t, time.Second)
-	require.Zero(t, disp.applyCount(), "失败后 Apply 必须为 0")
-	require.Equal(t, int32(1), rig.connectN.Load(), "timer 未释放前不得建立下一连接")
+	require.Same(t, c1, rig.recvConnect(t))
+	require.Error(t, disp.nextFull(t), "首次刷新必须失败")
+	c1.ch <- notif(`{"v":1,"users":true}`) // 失败连接的通知：永不消费
+	recvEvent(t, c1.closed, "c1 Close")    // FullRefresh 失败必须关闭当前连接
+
+	rig.waitDelay(t, time.Second) // run 挂起等退避释放，以下非阻塞检查皆确定性
+	expectNoEvent(t, c1.waiting, "失败连接 WaitForNotification")
+	expectNoEvent(t, disp.applied, "Apply")
+	expectNoEvent(t, rig.connected, "第二连接")
 
 	rig.release(t)
-	disp.waitFull(t, 2)
+	require.Same(t, c2, rig.recvConnect(t))
+	require.NoError(t, disp.nextFull(t))
+	recvEvent(t, c2.waiting, "c2 consume 进入")
 	c2.ch <- notif(`{"v":1,"users":true}`)
-	require.Eventually(t, func() bool { return disp.applyCount() == 1 },
-		2*time.Second, 5*time.Millisecond, "下一连接 FullRefresh 成功后才允许 Apply")
+	got := recvEvent(t, disp.applied, "Apply")
+	require.True(t, got.Users, "下一连接 FullRefresh 成功后才允许 Apply")
+	expectNoEvent(t, c1.waiting, "旧连接 WaitForNotification")
+	require.Len(t, disp.got(), 1)
 }
 
 // TestListenerCloseBeforeStart 未 Start 的 Close 安全（worker 契约）。
