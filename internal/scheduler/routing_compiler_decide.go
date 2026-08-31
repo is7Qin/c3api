@@ -16,24 +16,7 @@ func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC doma
 	for _, a := range filtered {
 		av := a.static.Load()
 		id := av.acc.ID
-		fp, ferr := candidateFingerprint(&av.acc)
-		var fpVal domain.CandidateFingerprintVal
-		if ferr == nil && fp != "" {
-			if v, err := domain.HexToID(fp); err == nil {
-				fpVal = domain.CandidateFingerprintVal(v)
-			}
-		} else {
-			var b [32]byte
-			b[0] = byte(id >> 56)
-			b[1] = byte(id >> 48)
-			b[2] = byte(id >> 40)
-			b[3] = byte(id >> 32)
-			b[4] = byte(id >> 24)
-			b[5] = byte(id >> 16)
-			b[6] = byte(id >> 8)
-			b[7] = byte(id)
-			fpVal = domain.CandidateFingerprintVal(b)
-		}
+		fpVal := candidateIdentityFingerprint(&av.acc)
 		key := CandidateQualityKey{RouteClassID: routeRC, Fingerprint: fpVal}
 		qin, hasQ := quality[key]
 		var cnt Counts
@@ -49,10 +32,10 @@ func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC doma
 		known := hasPrice && cnt.Successes > 0
 		var cost int64
 		if known {
-			avgIn := avgTokens(inTok, int64(cnt.Successes))
-			avgOut := avgTokens(outTok, int64(cnt.Successes))
-			avgCr := avgTokens(crTok, int64(cnt.Successes))
-			avgCc := avgTokens(ccTok, int64(cnt.Successes))
+			avgIn := AvgTokens(inTok, int64(cnt.Successes))
+			avgOut := AvgTokens(outTok, int64(cnt.Successes))
+			avgCr := AvgTokens(crTok, int64(cnt.Successes))
+			avgCc := AvgTokens(ccTok, int64(cnt.Successes))
 			raw := billing.CostFromResolved(price, avgIn, avgOut, avgCr, avgCc)
 			mult := av.acc.UpstreamCostMultiplierBp
 			if mult < 0 {
@@ -61,7 +44,7 @@ func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC doma
 			if mult > 100000 {
 				mult = 100000
 			}
-			cost = saturatingMulDiv(raw, int64(mult), 10000)
+			cost = SaturatingMulDiv(raw, int64(mult), 10000)
 			if cost < 0 {
 				cost = 0
 			}
@@ -186,7 +169,9 @@ func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC doma
 	return &RouteDecision{Primary: primaryIDs, Degraded: degradedIDs, Explore: ExploreDecision{IDs: exploreIDs, Weights: weights, Cumulative: cumulative, Total: total, Fallback: fallbackIDs}}
 }
 
-func avgTokens(sum int64, successes int64) int64 {
+// AvgTokens rounds sum/successes half-up (0 when no successes). Shared by the
+// compiler cost lane and the service quality-cost frontier (Todo 17).
+func AvgTokens(sum int64, successes int64) int64 {
 	if successes <= 0 {
 		return 0
 	}
@@ -196,7 +181,9 @@ func avgTokens(sum int64, successes int64) int64 {
 	return (sum + successes/2) / successes
 }
 
-func saturatingMulDiv(a, b, divisor int64) int64 {
+// SaturatingMulDiv computes a*b/divisor saturating at MaxInt64 on 64x64
+// overflow. Shared by the compiler cost lane and the service frontier.
+func SaturatingMulDiv(a, b, divisor int64) int64 {
 	if divisor == 0 {
 		return math.MaxInt64
 	}
