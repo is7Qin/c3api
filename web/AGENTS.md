@@ -18,7 +18,8 @@ src/
 ```bash
 pnpm install --config.node-linker=hoisted   # 本机必须 hoisted（24H2 junction 失效）
 pnpm run dev        # :5173，代理 /api 和 /v1 → localhost:18080
-pnpm run build      # tsc -b && vite build → dist/ → go:embed
+pnpm run check      # i18n key + JSX UI contract 静态门禁
+pnpm run build      # check && tsc -b && vite build → dist/ → go:embed
 pnpm gen:api        # openapi/openapi.yaml 变更后必跑，重生成 src/lib/api/schema.d.ts
 ```
 
@@ -29,6 +30,7 @@ pnpm gen:api        # openapi/openapi.yaml 变更后必跑，重生成 src/lib/a
 - **单登录态**：platform_admin JWT 同时通吃两台控制台；`lib/auth.ts` 单一 userAuth store 支撑 api(/api/admin) 与 userApi(/api/user) 两个 ApiClient 实例
 - **AppShell 不重挂载**：/app ↔ /user 切换只换 Outlet，sidebar/topbar 常驻（App.tsx:45 注释）
 - **401 全局拦截**：QueryCache/MutationCache onError 统一清 token 跳登录页，页面级不写 401 处理
+- **Select label 契约**：`SelectItem label` 只描述弹出列表；闭合态 `SelectValue` 由根节点 `Select items={value→label}` 解析。共享 wrapper 已在类型层强制 `Select.items` 与 `SelectItem.label` 必填，并禁止 `SelectValue` children；翻译 label 与动态名称都放在 `items` 映射中，Item 的 `label`/children 与其保持一致。空值使用显式 sentinel（如 `__any`/`__none`）并同时存在于 `items` 与 `SelectItem value`，不要依赖 `''` 或 placeholder 代替已选 label；业务代码只从 `@/components/ui/select` 导入
 
 ## 数据获取
 
