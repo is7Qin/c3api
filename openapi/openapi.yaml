@@ -3360,7 +3360,13 @@ components:
         #     （脏位名逗号分隔；空 = 组级定向）, dirty_groups int（组级定向账号数）,
         #     window_ms int（去抖窗口）
         #   scheduler: pending_writebacks int（待回写 DB 状态队列积压）,
-        #     writeback_cap int（队列容量；满 → 丢弃 DB 回写）
+        #     writeback_cap int（队列容量；满 → 丢弃 DB 回写）,
+        #     compile_pending int（编译道待触发信号；cap 1 trailing-edge 合并）,
+        #     compile_cap int（信号通道容量）, last_compile_ok_unix_ms int64
+        #     （最近一次成功编译时刻；0 = 从未）, last_compile_err_unix_ms
+        #     int64（最近一次失败编译时刻；0 = 从未；失败保留旧视图是契约）,
+        #     decision_generation uint64（当前发布 DecisionView 世代；0 = 未发布）,
+        #     decision_routes int（已发布路由数；0 = 编译道未发布）
         #   rule-engine: queued int（事件队列积压）, queue_cap int（容量/丢弃阈值）,
         #     dropped int64（队列满丢弃累计）, drop_warn_threshold int64（丢弃告警阈值）
         #   usage: pending_logs int64（未落库明细条数）, pending_waterline int64
@@ -3412,6 +3418,11 @@ components:
         #     Redis/PG 面耗时毫秒）, last_redis_attempt_ms int64（最近一次 Redis
         #     发布尝试时刻；0 = 从未）, last_redis_error string（最近一次 Redis
         #     失败文本；空 = 无）, redis_errors int64（Redis 发布失败累计）
+        #   runtime-health（健康投影 lane，intelligent-routing）: records int
+        #     （当前视图条目数）, open/retry_after/probing/ready int（按态分桶）,
+        #     generation int64（已同步全局健康世代）, last_sync_ok_unix_ms int64
+        #     （最近成功 Sync 时刻；0 = 从未）, sync_errors int64（Sync 失败累计
+        #     ——视图冻结的可见痕迹）, last_tick_ok bool（最近 tick 成败）
         stats:
           description: 各 worker 异构观测字段；完整字段清单见本 schema 上方 yaml 注释（与各 worker Stats() 实现同步维护）
     SnapshotState:

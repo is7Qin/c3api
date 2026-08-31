@@ -314,3 +314,106 @@ func TestRoutingCompilerWireRequestCompileNonBlocking(t *testing.T) {
 		t.Fatal("RequestCompile blocked without a consumer")
 	}
 }
+
+// --- Task18 observability: compile-lane stats + failure retention ---
+
+func TestRoutingCompilerWireStatsCompileLane(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
+	m := newMemLoader(map[int64][]*domain.Account{10: accs})
+	s := newSched(t, m)
+	fixed := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	s.timeNow = func() time.Time { return fixed }
+	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
+	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+
+	st := s.Stats().(SchedulerStats)
+	require.Equal(t, 1, st.CompileCap, "compile trigger channel is cap-1 coalescing")
+	require.Zero(t, st.CompilePending)
+	require.Zero(t, st.LastCompileOKUnixMs, "0 = never compiled")
+	require.Zero(t, st.LastCompileErrUnixMs)
+	require.Zero(t, st.DecisionRoutes, "unpublished decision view has no routes")
+
+	s.RequestCompile()
+	st = s.Stats().(SchedulerStats)
+	require.Equal(t, 1, st.CompilePending, "pending trigger visible without a consumer")
+
+	s.compileOnce()
+	st = s.Stats().(SchedulerStats)
+	require.Equal(t, fixed.UnixMilli(), st.LastCompileOKUnixMs, "success freshness = injected clock")
+	require.Zero(t, st.LastCompileErrUnixMs)
+	require.NotZero(t, st.DecisionRoutes, "published plan visible on ops face")
+	require.Equal(t, s.View().DecisionView().Generation(), st.DecisionGeneration)
+
+	// Compile failure: old view retained AND the failure is observable (freshness
+	// of the last success is not erased; the error stamp moves).
+	s.compiler = &failCompiler{err: context.DeadlineExceeded}
+	before := s.View()
+	s.compileOnce()
+	st = s.Stats().(SchedulerStats)
+	require.Same(t, before, s.View(), "compile failure must retain the exact old view")
+	require.Equal(t, fixed.UnixMilli(), st.LastCompileErrUnixMs)
+	require.Equal(t, fixed.UnixMilli(), st.LastCompileOKUnixMs, "failure does not erase last success")
+	require.NotZero(t, st.DecisionRoutes, "retained plan still published on ops face")
+}
+
+// blockingCompiler signals entry into Compile and blocks until released —
+// barrier for the Close-join contract.
+type blockingCompiler struct {
+	entered chan struct{}
+	release chan struct{}
+	inner   *RoutingCompiler
+}
+
+func (b *blockingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return b.inner.Compile(in)
+}
+
+// TestSchedulerCloseJoinsCompileLoop pins the orderly-shutdown contract:
+// Close must not return while a compile is in flight (the loop is joined,
+// same discipline as runtime-health / quality-sync). Barriers + one bounded
+// watchdog (quality-sync precedent), no sleep-race masking.
+func TestSchedulerCloseJoinsCompileLoop(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
+	s := newSched(t, newMemLoader(map[int64][]*domain.Account{10: accs}))
+	wireSources(s, nil, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	bc := &blockingCompiler{entered: make(chan struct{}, 1), release: make(chan struct{}), inner: NewRoutingCompiler()}
+	s.compiler = bc
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, s.Start(ctx))
+	s.RequestCompile()
+	<-bc.entered // compile in flight, loop cannot exit until released
+	cancel()     // base ctx gone: the loop exits only after compileOnce returns
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- s.Close(context.Background()) }()
+	select {
+	case err := <-closeDone:
+		close(bc.release)
+		t.Fatalf("Close returned while a compile was in flight: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(bc.release)
+	require.NoError(t, <-closeDone)
+	d := s.compileDone.Load()
+	require.NotNil(t, d)
+	select {
+	case <-*d:
+	default:
+		t.Fatal("compile loop still running after Close returned")
+	}
+}
+
+// TestSchedulerCloseUnstartedSafe pins the worker contract: Close before
+// Start never blocks and never panics (compileDone absent).
+func TestSchedulerCloseUnstartedSafe(t *testing.T) {
+	s := newSched(t, newMemLoader(nil))
+	require.NoError(t, s.Close(context.Background()))
+}

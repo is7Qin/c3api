@@ -139,6 +139,12 @@ type Scheduler struct {
 	compileCh         chan struct{}
 	compileArmed      bool
 	lastDecisionBytes []byte // compile-lane owned (single serial caller)
+	// compileDone 监督循环完成信号（Start 存入，Close join——同 runtime-health /
+	// conc-sync 停机纪律）；compileOKMs/compileErrMs 编译道新鲜度观测
+	//（atomic，Stats 冷路径读；unix-ms，0 = 从未发生）。
+	compileDone  atomic.Pointer[<-chan struct{}]
+	compileOKMs  atomic.Int64
+	compileErrMs atomic.Int64
 }
 
 // View returns current RoutingView root (single atomic root; structurally shared StaticView+DecisionView).
@@ -193,12 +199,14 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	}
 	worker.GoLoop(ctx, "scheduler-sync", s.log, s.syncLoop)
 	worker.GoLoop(ctx, "scheduler-writeback", s.log, s.writebackLoop)
-	worker.GoLoop(ctx, "scheduler-compile", s.log, s.compileLoop)
+	compileDone := worker.GoLoop(ctx, "scheduler-compile", s.log, s.compileLoop)
+	s.compileDone.Store(&compileDone)
 	return nil
 }
 
-// Close 排空剩余状态回写（限时，复用 writebackLoop 的合并逻辑）；幂等，
-// 满足 worker.Worker 契约。循环本身随 Start 的 ctx 取消而退出。
+// Close 排空剩余状态回写（限时，复用 writebackLoop 的合并逻辑）并 join 编译道
+// 循环（限时，同 conc-sync/runtime-health 停机纪律——Close 后不再有编译发布）；
+// 幂等，满足 worker.Worker 契约。循环本身随 Start 的 ctx 取消而退出。
 func (s *Scheduler) Close(ctx context.Context) error {
 	done := make(chan struct{})
 	worker.GoRecover("scheduler-close", s.log, func() {
@@ -217,6 +225,15 @@ func (s *Scheduler) Close(ctx context.Context) error {
 	case <-ctx.Done():
 		if s.log != nil {
 			s.log.Warn("scheduler close timeout, dropping pending writebacks")
+		}
+	}
+	if d := s.compileDone.Load(); d != nil {
+		select {
+		case <-*d:
+		case <-ctx.Done():
+			if s.log != nil {
+				s.log.Warn("scheduler close timeout, compile loop still running")
+			}
 		}
 	}
 	return nil
