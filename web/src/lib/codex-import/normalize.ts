@@ -36,8 +36,6 @@ export function normalizeRow(raw: unknown, kind: CredentialKind, index: number):
       const item: OAuthItem = { codex_email: email, codex_account_id: accountId, codex_oauth_token: token, codex_oauth_refresh_token: refresh }
       const expired = normalizeExpired(obj.expired ?? obj.codex_oauth_expires_at)
       if (expired) item.codex_oauth_expires_at = expired
-      if (typeof obj.weight === 'number' && obj.weight < 0) return { index, raw, error: 'weight 不能小于 0' }
-      if (typeof obj.weight === 'number') item.weight = obj.weight
       if (typeof obj.max_concurrency === 'number') item.max_concurrency = obj.max_concurrency
       return { index, raw, item }
     }
@@ -46,8 +44,6 @@ export function normalizeRow(raw: unknown, kind: CredentialKind, index: number):
     const key = (auth || str(obj.access_token ?? obj.codex_pat_key)).replace(/^Bearer\s+/i, '').trim()
     if (!key) return { index, raw, error: 'PAT 凭据不能为空' }
     const item: PATItem = { codex_email: email, codex_account_id: accountId, codex_pat_key: key }
-    if (typeof obj.weight === 'number' && obj.weight < 0) return { index, raw, error: 'weight 不能小于 0' }
-    if (typeof obj.weight === 'number') item.weight = obj.weight
     if (typeof obj.max_concurrency === 'number') item.max_concurrency = obj.max_concurrency
     return { index, raw, item }
   } catch (e) {

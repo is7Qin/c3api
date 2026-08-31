@@ -35,7 +35,7 @@ const KINDS = ['ok', '429', '4xx', '5xx', 'network'] as const
 // then.throttle = {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}
 //   retry_after 强制 use_reset=true（上游 reset 窗口优先，duration_ms 为兜底）；
 //   open 强制 use_reset=false 且 duration_ms>0。
-// then.fail_account = true：终态摘除（lifecycle CAS），与 throttle/legacy 互斥。
+// then.fail_account = true：终态摘除（lifecycle CAS），与 throttle 互斥。
 // use_reset 由 mode 唯一决定（校验不变量），表单不单独编辑，序列化时按 mode 派生。
 type RuleAction = 'none' | 'throttle' | 'fail_account'
 type ThrottleScope = 'account' | 'account_route'
@@ -108,7 +108,6 @@ interface ThenForm {
   responseCode: string // empty = 透传；非空 = 400-599
   customMessage: string // empty = 透传
   failConfirmed: boolean // FailAccount 终态确认闸（编辑回显已含 fail_account 时预置 true）
-  legacy: Record<string, unknown> // 旧规则 status/cooldown/weight 只读往返（不编辑不丢弃；选 typed 动作即替换）
 }
 interface WhenForm {
   kind: string
@@ -124,7 +123,7 @@ interface FormState {
 
 const emptyWhen = (): WhenForm => ({ kind: '', rows: [] })
 const emptyThrottle = (): ThrottleForm => ({ scope: 'account', mode: 'retry_after', durationMs: '' })
-const emptyThen = (): ThenForm => ({ action: 'none', throttle: emptyThrottle(), responseCode: '', customMessage: '', failConfirmed: false, legacy: {} })
+const emptyThen = (): ThenForm => ({ action: 'none', throttle: emptyThrottle(), responseCode: '', customMessage: '', failConfirmed: false })
 const emptyForm = (): FormState => ({ name: '', priority: '', enabled: true, when: emptyWhen(), then: emptyThen() })
 
 // 数字字段：空/NaN → 不发送；其他字符串化。
@@ -133,9 +132,6 @@ function num(s: string): number | undefined {
   const n = Number(s)
   return Number.isNaN(n) ? undefined : n
 }
-
-// legacy 动作键（Wave 5 cutover 后后端 strict 400；此处只读往返不编辑）。
-const LEGACY_THEN_KEYS = ['status', 'cooldown', 'weight'] as const
 
 // then.throttle（unknown）→ 表单值；结构不合（缺 scope/mode 或枚举外）视为无 typed 动作。
 function parseThrottle(v: unknown): ThrottleForm | null {
@@ -173,10 +169,6 @@ function thenToForm(th: Rule['Then']): ThenForm {
   } else if (th.fail_account === true) {
     f.action = 'fail_account'
     f.failConfirmed = true // 回显即已确认（避免编辑无关字段被确认闸卡死）
-  } else {
-    for (const k of LEGACY_THEN_KEYS) {
-      if (th[k] !== undefined) f.legacy[k] = th[k]
-    }
   }
   if (th.response_code !== undefined && th.response_code !== null) f.responseCode = String(th.response_code)
   if (typeof th.custom_message === 'string') f.customMessage = th.custom_message
@@ -235,8 +227,6 @@ function toThen(f: ThenForm): Record<string, unknown> {
     th.throttle = t
   } else if (f.action === 'fail_account') {
     th.fail_account = true
-  } else {
-    Object.assign(th, f.legacy) // 无 typed 动作时旧键原样往返（不静默丢语义）
   }
   if (f.responseCode !== '') {
     const rc = Number(f.responseCode)
@@ -294,10 +284,6 @@ function ThenSummary({ th, t }: { th: Rule['Then']; t: (k: string, opts?: Record
   const t5 = parseThrottle(th.throttle)
   if (t5) parts.push(`${t('rules.then.summaryThrottle')} ${t5.scope}/${t5.mode}${t5.durationMs ? ` ${t5.durationMs}ms` : ''}`)
   if (th.fail_account === true) parts.push(t('rules.then.summaryFail'))
-  // legacy 只读回显（编辑对话框不再提供控件；保存时原样往返）
-  if (typeof th.status === 'string') parts.push(`→${th.status}`)
-  if (typeof th.cooldown === 'string') parts.push(`⏱${th.cooldown}`)
-  if (typeof th.weight === 'number') parts.push(`w=${th.weight}`)
   if (typeof th.response_code === 'number') parts.push(t('rules.then.overrideSummary', { code: th.response_code } as unknown as Record<string, unknown>))
   if (typeof th.custom_message === 'string' && th.custom_message !== '') parts.push(t('rules.then.fixedMessage'))
   return <span className="block max-w-40 truncate text-xs" title={parts.join(' · ')}>{parts.join(' · ') || '—'}</span>
@@ -792,10 +778,6 @@ export default function Rules() {
                     </label>
                   </AlertDescription>
                 </Alert>
-              )}
-
-              {form.then.action === 'none' && Object.keys(form.then.legacy).length > 0 && (
-                <p className="text-xs text-muted-foreground">{t('rules.then.legacyEcho', { keys: Object.keys(form.then.legacy).join(', ') })}</p>
               )}
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

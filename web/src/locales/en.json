@@ -42,10 +42,6 @@
     "unhealthy": "Unhealthy",
     "disabled": "Disabled"
   },
-  "cooldown": {
-    "active": "Cooling down",
-    "until": "Cooldown until {time}"
-  },
   "errorType": {
     "429": "Rate limited 429",
     "none": "OK",
@@ -371,7 +367,6 @@
     "batchUpdateTitle": "Batch update accounts",
     "batchUpdateDesc": "Fill in only the fields to change; leave empty to keep current values",
     "batchUpdateEmpty": "Fill in at least one field",
-    "resetCooldown": "Reset cooldown",
     "state": {
       "enabled": "Enabled",
       "disabled": "Disabled",
@@ -702,7 +697,6 @@
     "selected": "{{count}} selected",
     "batchDelete": "Batch delete",
     "batchUpdate": "Batch update",
-    "batchResetCooldown": "Reset cooldown",
     "reset": "Reset",
     "clearSelection": "Clear selection",
     "unchanged": "Unchanged"
@@ -710,8 +704,7 @@
   "batch": {
     "confirmDelete": "Delete the {{count}} selected items?",
     "deleted": "Deleted {{count}} items",
-    "updated": "Updated {{count}} items",
-    "resetCooldown": "Reset {{count}} cooldowns"
+    "updated": "Updated {{count}} items"
   },
   "stats": {
     "title": "Stats",
@@ -989,7 +982,6 @@
         "desc": "Matching events latch the account as failed (lifecycle CAS, source=rule). It leaves routing until an operator recovers it.",
         "confirm": "I understand this removes the account from routing until recovery."
       },
-      "legacyEcho": "This rule carries legacy actions ({{keys}}). Saving without a typed action keeps them unchanged; choosing Throttle or Fail account replaces them.",
       "responseCode": "Response code",
       "customMessage": "Custom message",
       "customMessagePlaceholder": "Upstream temporarily unavailable",
