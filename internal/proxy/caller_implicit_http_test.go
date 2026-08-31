@@ -48,12 +48,12 @@ func TestChatImplicitRESTRewritesModel(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, "client-model", func() string {
+	require.Equal(t, "", func() string {
 		for _, l := range store.logs {
 			return l.MappedModel
 		}
 		return ""
-	}(), "implicit MappedModel = client-model per matrix")
+	}(), "implicit mapping does not record MappedModel")
 }
 
 func TestChatExplicitRESTPreservesUpstreamModel(t *testing.T) {
