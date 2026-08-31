@@ -68,6 +68,9 @@ var (
 	codesOut  = flag.String("codes-out", "", "api-admin: 生成的兑换码逐行追加此文件（供 api-user -codes-in 消费）")
 	codesIn   = flag.String("codes-in", "", "api-user: 可核销兑换码文件（追加式，进程内周期重读；多进程并跑会有重复核销 4xx 噪声）")
 	readsOnly = flag.Bool("api-reads-only", false, "api 模式只跑读场景（增长后纯读延迟对比用）")
+	// intelligent-routing 场景：prompt_cache_key 软亲和轮转（配合 setup
+	// -cache-domains 的共享域分布）。
+	affinityKeys = flag.Int("affinity-keys", 0, "stream/chat mode: rotate N prompt_cache_key affinity domains (affinity-<i>) across requests — exercises compiled cache-domain soft affinity and spill (0 = no affinity key; formats chat/responses)")
 )
 
 // keyPool 多 key 模式：每请求随机取一个（-keys 文件行）；空 = 用 -key 单 key。
@@ -274,7 +277,9 @@ func pickKey(rng *rand.Rand) string {
 // newLoadtestRequest builds the minimal request for the selected mode + format.
 // 三格式（多模板多格式压测）：chat → /v1/chat/completions（Bearer），
 // responses → /v1/responses（Bearer），anthropic → /v1/messages（x-api-key）。
-func newLoadtestRequest(base, groupKey, requestMode string) *http.Request {
+// affinity 非空且格式为 chat/responses 时注入 prompt_cache_key（软亲和一致性
+// 哈希的显式键；anthropic/images 不吃该字段，忽略）。
+func newLoadtestRequest(base, groupKey, requestMode, affinity string) *http.Request {
 	if requestMode == "models" {
 		// GET /v1/models：网关内存快照直出（零上游、零 DB），延迟口径同 chat。
 		req, _ := http.NewRequest(http.MethodGet, base+"/v1/models", nil)
@@ -289,6 +294,7 @@ func newLoadtestRequest(base, groupKey, requestMode string) *http.Request {
 		if requestMode == "stream" {
 			body = `{"model":"gpt-4o","stream":true,"input":"hi"}`
 		}
+		body = injectAffinity(body, affinity)
 	case "anthropic":
 		path = "/v1/messages"
 		body = `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`
@@ -306,6 +312,7 @@ func newLoadtestRequest(base, groupKey, requestMode string) *http.Request {
 		if requestMode == "stream" {
 			body = `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`
 		}
+		body = injectAffinity(body, affinity)
 	}
 	req, _ := http.NewRequest(http.MethodPost, base+path, bytes.NewReader([]byte(body)))
 	if *format == "anthropic" {
@@ -317,27 +324,70 @@ func newLoadtestRequest(base, groupKey, requestMode string) *http.Request {
 	return req
 }
 
+// injectAffinity 在 JSON body 顶层注入 prompt_cache_key（affinity 空 = 原样）。
+// 压测工具侧最小字符串手术：body 恒以 `{"model":...` 开头，插到首个字段后。
+func injectAffinity(body, affinity string) string {
+	if affinity == "" {
+		return body
+	}
+	return `{"prompt_cache_key":"` + affinity + `",` + body[1:]
+}
+
 // 请求模板：format×mode 在进程内固定，URL/body/固定头只构建一次；每请求
 // Clone + 换 key，避免 http.NewRequest 的 URL 解析 + body 字符串复制 +
 // 头表构建（4 万+ req/s 下是 GC 的主要来源之一，见上机 profile）。
+// affinity 模式（-affinity-keys N>0）预构建 N 个模板（每域一个 prompt_cache_key），
+// 每请求轮转取一，稳定命中编译缓存域软亲和。
 var (
-	reqTmpl  *http.Request
-	tmplBody []byte
+	reqTmpl        *http.Request
+	tmplBody       []byte
+	affinityTmpls  []*http.Request
+	affinityBodies [][]byte
 )
 
 // buildReqTemplate 按当前 flags 预构建请求模板（main 启动时调用一次）。
 func buildReqTemplate() {
-	reqTmpl = newLoadtestRequest(*addr, *key, *mode)
+	reqTmpl = newLoadtestRequest(*addr, *key, *mode, "")
 	if reqTmpl.Body != nil { // GET（models）无体
 		tmplBody, _ = io.ReadAll(reqTmpl.Body)
 	}
 	reqTmpl.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(tmplBody)), nil
 	}
+	affinityTmpls = affinityTmpls[:0]
+	affinityBodies = affinityBodies[:0]
+	if *affinityKeys > 0 {
+		for i := 0; i < *affinityKeys; i++ {
+			at := newLoadtestRequest(*addr, *key, *mode, fmt.Sprintf("affinity-%d", i))
+			var ab []byte
+			if at.Body != nil {
+				ab, _ = io.ReadAll(at.Body)
+			}
+			at.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(ab)), nil
+			}
+			affinityTmpls = append(affinityTmpls, at)
+			affinityBodies = append(affinityBodies, ab)
+		}
+	}
 }
 
 // newRequestFromTemplate 克隆模板并按 key 设置认证头（其余静态）。
-func newRequestFromTemplate(groupKey string) *http.Request {
+// affinity 模式按 idx 轮转取对应模板；idx<0 = 无亲和（单模板快路径不变）。
+func newRequestFromTemplate(groupKey string, idx int) *http.Request {
+	if idx >= 0 && len(affinityTmpls) > 0 {
+		tmpl := affinityTmpls[idx%len(affinityTmpls)]
+		ab := affinityBodies[idx%len(affinityBodies)]
+		req := tmpl.Clone(context.Background())
+		if *format == "anthropic" {
+			req.Header.Set("x-api-key", groupKey)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+groupKey)
+		}
+		req.Body = io.NopCloser(bytes.NewReader(ab))
+		req.ContentLength = int64(len(ab))
+		return req
+	}
 	req := reqTmpl.Clone(context.Background())
 	if *format == "anthropic" {
 		req.Header.Set("x-api-key", groupKey)
@@ -349,10 +399,18 @@ func newRequestFromTemplate(groupKey string) *http.Request {
 	return req
 }
 
+// affinityIdx 返回本请求的亲和模板下标（-affinity-keys 0 → -1 走单模板）。
+func affinityIdx(rng *rand.Rand) int {
+	if *affinityKeys <= 0 {
+		return -1
+	}
+	return rng.IntN(*affinityKeys)
+}
+
 // doRequest executes one request; count=true includes it in the result metrics.
 // Connection failures retain the jittered backoff used by the stream benchmark.
 func doRequest(client *http.Client, m *metrics, rng *rand.Rand, count bool) {
-	req := newRequestFromTemplate(pickKey(rng))
+	req := newRequestFromTemplate(pickKey(rng), affinityIdx(rng))
 	reqStart := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
@@ -556,9 +614,10 @@ func newFillRequest(client *http.Client, rng *rand.Rand) (req *http.Request, pre
 		req.Header.Set("Authorization", "Bearer "+lr.Token)
 		return req, ""
 	case "accounts":
+		// intelligent-routing 新契约：无 weight/status 旧字段（选号由编译器计划决定）。
 		return mk(http.MethodPost, "/api/admin/accounts", map[string]any{
 			"name": tag, "template_id": *fillTplID, "upstream_key": "sk-fill",
-			"group_ids": []int64{*fillGroupID}, "weight": 100, "max_concurrency": 100000,
+			"group_ids": []int64{*fillGroupID}, "max_concurrency": 100000,
 		}), ""
 	case "groups":
 		return mk(http.MethodPost, "/api/admin/groups", map[string]any{
