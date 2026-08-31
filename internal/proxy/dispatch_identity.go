@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
@@ -32,9 +33,10 @@ func pipelineBase(attempt scheduler.Attempt) AttemptOutcome {
 	}
 }
 
-// selDispatchBase is the legacy (pre-compiler) dispatch identity: real
-// template/account/model from the selection, loop-managed chain linkage,
-// placeholder canonical fields until routing dispatch provides them.
+// selDispatchBase is the legacy (plan-less) dispatch identity: real
+// template/account/model from the selection with loop-managed chain linkage.
+// It feeds the quality/observation path only — flow chains require
+// plan-canonical identity (see flowChainOwner).
 func selDispatchBase(sel *scheduler.Selection, reqID string, dispatched int, reqModel string, st attemptState, format, selectFormat domain.RequestFormat) AttemptOutcome {
 	fp := sel.CandidateFingerprint
 	if fp == "" {
@@ -156,4 +158,64 @@ func attemptPreviousID(raw *string) *AttemptID {
 	}
 	id := AttemptID(*raw)
 	return &id
+}
+
+// flowOutcomeToken classifies a completed dispatch into the canonical flow
+// outcome token. Only dispatched results reach the flow lane; the token is a
+// classification of the real terminal facts (Result + HTTP status), never a
+// new identity.
+func flowOutcomeToken(o AttemptOutcome) string {
+	switch o.Result {
+	case ResultSuccess:
+		return "success"
+	case ResultClientCancel:
+		return "client_cancel"
+	case ResultFailed:
+		switch {
+		case o.HTTPStatus == 429:
+			return "429"
+		case o.HTTPStatus >= 500 && o.HTTPStatus <= 599:
+			return "5xx"
+		case o.HTTPStatus == 0:
+			return "network"
+		default:
+			return "4xx"
+		}
+	default:
+		return ""
+	}
+}
+
+// flowDispatchFromAttempt projects one completed plan-backed dispatch onto
+// the canonical flow edge. Every identity field (route/quality/fingerprint/
+// template/account/models/ordinal/lane/generation/revision/previous IDs)
+// comes from the real scheduler.Attempt; terminal facts come from the
+// completed outcome. PreviousOutcome/TransitionReason are classifications of
+// the real recorded transition (empty previous outcome until a prior edge was
+// appended), never fabricated identifiers.
+func flowDispatchFromAttempt(a scheduler.Attempt, o AttemptOutcome, prevOutcome string) quality.FlowDispatch {
+	d := quality.FlowDispatch{
+		RouteClassID:      a.RouteClassID,
+		QualityClassID:    a.QualityClassID,
+		Fingerprint:       a.CandidateFingerprint,
+		TemplateID:        a.TemplateID,
+		AccountID:         a.AccountID,
+		RequestedModel:    a.RequestedModel,
+		MappedModel:       a.MappedModel,
+		Generation:        int64(a.RoutingGeneration),
+		LifecycleRevision: a.LifecycleRevision,
+		Ordinal:           a.Ordinal,
+		Lane:              string(a.Lane),
+		PreviousAttemptID: a.PreviousAttemptID,
+		PreviousAccountID: a.PreviousAccountID,
+		PreviousOutcome:   prevOutcome,
+		Outcome:           flowOutcomeToken(o),
+		IsTerminal:        o.Terminal,
+	}
+	if a.Ordinal == 1 {
+		d.TransitionReason = "initial"
+	} else {
+		d.TransitionReason = "failover"
+	}
+	return d
 }

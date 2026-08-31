@@ -267,6 +267,68 @@ func NewEmptyFlowSnapshot(minute int64) *FlowMinute {
 	return &FlowMinute{minute: minute, emptySnapshot: true}
 }
 
+// flowEdgeIdentity is the complete identity of one flow edge inside a minute
+// snapshot: every stored field except ChainCount (the summed value) and the
+// flush-time stamps (InstanceSrc/AbsoluteSequence/TerminalMinute — the minute
+// bucket is the map key). Two rows with equal identity are the same edge.
+type flowEdgeIdentity struct {
+	identityVersion int16
+	routeClassID    domain.RouteClassIDVal
+	ordinal         int16
+	lane            string
+	accountID       int64
+	previousAccount int64
+	hasPrevious     bool
+	previousOutcome string
+	transition      string
+	outcome         string
+	isTerminal      bool
+	generation      int64
+	fingerprint     domain.CandidateFingerprintVal
+}
+
+func flowEdgeIdentityOf(r repository.RoutingFlowRow) flowEdgeIdentity {
+	id := flowEdgeIdentity{
+		identityVersion: r.IdentityVersion,
+		routeClassID:    r.RouteClassID,
+		ordinal:         r.Ordinal,
+		lane:            r.Lane,
+		accountID:       r.AccountID,
+		previousOutcome: r.PreviousOutcome,
+		transition:      r.TransitionReason,
+		outcome:         r.Outcome,
+		isTerminal:      r.IsTerminal,
+		generation:      r.Generation,
+		fingerprint:     r.CandidateFingerprint,
+	}
+	if r.PreviousAccountID != nil {
+		id.previousAccount = *r.PreviousAccountID
+		id.hasPrevious = true
+	}
+	return id
+}
+
+// mergeFlowRows folds an incoming same-minute row set into the existing one by
+// complete edge identity: identical edges sum ChainCount (request
+// conservation), distinct edges remain distinct. Incoming rows lead the
+// merged order so a newer contribution is never displaced by an older one.
+func mergeFlowRows(existing, incoming []repository.RoutingFlowRow) []repository.RoutingFlowRow {
+	index := make(map[flowEdgeIdentity]int, len(incoming))
+	merged := make([]repository.RoutingFlowRow, 0, len(existing)+len(incoming))
+	for _, rows := range [][]repository.RoutingFlowRow{incoming, existing} {
+		for _, r := range rows {
+			k := flowEdgeIdentityOf(r)
+			if i, ok := index[k]; ok {
+				merged[i].ChainCount += r.ChainCount
+				continue
+			}
+			index[k] = len(merged)
+			merged = append(merged, r)
+		}
+	}
+	return merged
+}
+
 func (f *FlowMinute) Minute() int64 { return f.minute }
 func (f *FlowMinute) Edge(i int) int64 {
 	if i < 0 || i >= 8 {
@@ -652,7 +714,18 @@ func (r *Recorder) EnqueueFlowMinute(fm *FlowMinute) error {
 		return ErrCapacity
 	}
 	if existing, ok := r.pendingFlow[fm.minute]; ok {
-		*existing = *fm.Clone()
+		switch {
+		case fm.emptySnapshot:
+			// Absolute "nothing for this minute" marker: only meaningful while
+			// the bucket is still empty — conserved rows are never erased by it.
+			if len(existing.flowRows) == 0 {
+				*existing = *fm.Clone()
+			}
+		case len(fm.flowRows) > 0 && len(existing.flowRows) > 0:
+			existing.flowRows = mergeFlowRows(existing.flowRows, fm.flowRows)
+		default:
+			*existing = *fm.Clone()
+		}
 		return nil
 	}
 	charge := int64(EstimatedFlowMinuteBytes)
