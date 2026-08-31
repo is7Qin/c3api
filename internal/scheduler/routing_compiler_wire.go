@@ -141,22 +141,7 @@ func decisionViewBytes(d *DecisionView) []byte {
 	for k := range d.routes {
 		refs = append(refs, k)
 	}
-	sort.Slice(refs, func(i, j int) bool {
-		a, b := refs[i], refs[j]
-		if a.GroupID != b.GroupID {
-			return a.GroupID < b.GroupID
-		}
-		if a.Format != b.Format {
-			return a.Format < b.Format
-		}
-		if a.Model != b.Model {
-			return a.Model < b.Model
-		}
-		if a.OperationTag != b.OperationTag {
-			return a.OperationTag < b.OperationTag
-		}
-		return a.RouteClassID < b.RouteClassID
-	})
+	sort.Slice(refs, func(i, j int) bool { return lessRouteRef(refs[i], refs[j]) })
 	var buf bytes.Buffer
 	writeUvarint(&buf, uint64(len(refs)))
 	for _, ref := range refs {
