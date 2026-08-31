@@ -5,10 +5,12 @@
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "scripts": {
+    "check": "pnpm run check:i18n",
+    "check:i18n": "node scripts/check-i18n-keys.mjs",
     "check:stats-chart": "node scripts/check-stats-chart.mjs",
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "build": "pnpm run check && tsc -b && vite build",
+    "lint": "oxlint && pnpm run check",
     "preview": "vite preview",
     "gen:api": "openapi-typescript ../openapi/openapi.yaml -o src/lib/api/schema.d.ts"
   },

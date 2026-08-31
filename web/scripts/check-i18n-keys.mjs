@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
+// deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
 import fs from 'node:fs'
 const zh = JSON.parse(fs.readFileSync('src/locales/zh.json', 'utf8'))
 const en = JSON.parse(fs.readFileSync('src/locales/en.json', 'utf8'))
