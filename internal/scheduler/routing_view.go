@@ -44,18 +44,8 @@ func (s *StaticView) ByID() map[int64]*accountSnapshot {
 // latest StaticView and replace only decision.
 type DecisionView struct {
 	generation uint64
-	// decisions holds per-account decision snapshot (status/weight/cooldown)
-	// For legacy builder, decisions are reflected via runtimeState but
-	// DecisionView generation still tracks publish order.
-	decisions map[int64]*decisionLeaf
 	// routes holds per-route compiled decisions. Immutable after publish.
 	routes map[RouteRef]*RouteDecision
-}
-
-type decisionLeaf struct {
-	status        string // placeholder; actual runtime state lives in sharedRuntime
-	weight        int
-	cooldownUntil *string
 }
 
 // RouteRef identifies a compiled route including full route identity: group + format + model + operation + canonical RouteClassID.
@@ -207,8 +197,8 @@ type RoutingView struct {
 	decision   *DecisionView
 }
 
-func (v *RoutingView) Generation() uint64 { return v.generation }
-func (v *RoutingView) StaticView() *StaticView { return v.static }
+func (v *RoutingView) Generation() uint64          { return v.generation }
+func (v *RoutingView) StaticView() *StaticView     { return v.static }
 func (v *RoutingView) DecisionView() *DecisionView { return v.decision }
 func (v *RoutingView) Groups() map[int64]*groupSnapshot {
 	if v == nil || v.static == nil {

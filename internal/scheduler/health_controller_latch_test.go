@@ -59,10 +59,7 @@ func TestThrottleAccountRouteRequiresIDsAndPropagation(t *testing.T) {
 
 func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
-	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil)
-	require.NoError(t, s.reload(context.Background()))
+	s := newSched(t, m)
 	ls := s.LatchStore()
 	require.NotNil(t, ls)
 	ctrl := NewHealthControllerWithScheduler(nil, s)
@@ -71,17 +68,20 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
 	require.NoError(t, ctrl.FailAccount(ev))
 	require.True(t, ls.IsLatched(1, fp))
+	s.compileOnce() // 锁存账号从编译计划剔除 → 路由空 → ErrNoAvailable
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrNoAvailable)
 	// same revision reload must not clear latch
 	require.NoError(t, s.reload(context.Background()))
 	require.True(t, ls.IsLatched(1, fp))
+	s.compileOnce()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrNoAvailable)
 	// new revision clears latch
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))
 	require.False(t, ls.IsLatched(1, fp))
+	s.compileOnce()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
@@ -90,10 +90,7 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 
 func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
-	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil)
-	require.NoError(t, s.reload(context.Background()))
+	s := newSched(t, m)
 	ls := s.LatchStore()
 	ctrl := NewHealthControllerWithScheduler(nil, s)
 	fp1, err := candidateFingerprint(m.byGroup[10][0])
@@ -110,7 +107,6 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	require.False(t, ls.IsLatched(1, fpNew))
 	// re-latch with new fingerprint
 	ev2 := rule.Event{AccountID: 1, ExpectedRevision: 2, ErrorMessage: "boom2"}
-	// update revision to 2 to match new account revision? need set revision
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))
 	fp2, err := candidateFingerprint(m.byGroup[10][0])
@@ -129,6 +125,7 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	fpReadd, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
 	require.False(t, ls.IsLatched(1, fpReadd))
+	s.compileOnce()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	s.Release(sel.AccountID)

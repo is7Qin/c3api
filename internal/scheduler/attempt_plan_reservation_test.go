@@ -64,12 +64,10 @@ func TestSchedulerReserveAttemptUsesDynamicCandidateGates(t *testing.T) {
 	s.health.view.Store(&healthView{entries: map[HealthKey]healthEntry{
 		{AccountID: 1, Quality: "*", Revision: 1}: {State: StateOPEN},
 	}})
-	st := s.View().ByID()[3].statePtr()
-	cooldown := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	st2 := *st
-	st2.cooldownUntil = &cooldown
-	s.View().ByID()[3].runtime.state.Store(&st2)
-	s.timeNow = func() time.Time { return cooldown }
+	// 账号 3 运行时 disabled（FailAccount 语义）→ 选号门跳过。
+	st3 := *s.View().ByID()[3].statePtr()
+	st3.status = domain.StatusDisabled
+	s.View().ByID()[3].runtime.state.Store(&st3)
 
 	sel, attempt, err := s.ReserveAttempt(plan)
 	require.NoError(t, err)
@@ -104,7 +102,10 @@ func TestSchedulerNewAttemptPlanRejectsMissingExactRoute(t *testing.T) {
 	require.ErrorIs(t, err, ErrFormatUnavailable)
 }
 
-func TestReserveAttemptPreservesConcurrentStatusUpdate(t *testing.T) {
+// TestReserveAttemptPreservesConcurrentFailAccount 回归：并发 CAS 屏障下，
+// ReserveAttempt 的 lastUsedAt 写与 FailAccount 的 disabled 写互不覆盖——
+// 两者各经独立 CAS，最终态同时携带 disabled + lastUsedAt。
+func TestReserveAttemptPreservesConcurrentFailAccount(t *testing.T) {
 	tpl := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tpl, 10)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
@@ -128,9 +129,7 @@ func TestReserveAttemptPreservesConcurrentStatusUpdate(t *testing.T) {
 		done <- sel
 	}()
 	<-barrier
-	cooldown := fixed.Add(5 * time.Minute)
-	unhealthy := domain.Status429
-	s.apply(1, &unhealthy, &cooldown, nil, "rate limited")
+	s.FailAccount(1) // 并发失效摘除（disabled 终态 CAS）
 	close(unblock)
 	var sel *Selection
 	select {
@@ -141,8 +140,6 @@ func TestReserveAttemptPreservesConcurrentStatusUpdate(t *testing.T) {
 	require.NotNil(t, sel)
 	defer sel.Release()
 	st := s.View().ByID()[1].statePtr()
-	require.Equal(t, domain.Status429, st.status, "concurrent status update must be retained after reservation")
-	require.NotNil(t, st.cooldownUntil)
-	require.Equal(t, cooldown, *st.cooldownUntil)
-	require.NotNil(t, st.lastUsedAt)
+	require.Equal(t, domain.StatusDisabled, st.status, "concurrent FailAccount must be retained after reservation")
+	require.NotNil(t, st.lastUsedAt, "reservation lastUsedAt write retained")
 }

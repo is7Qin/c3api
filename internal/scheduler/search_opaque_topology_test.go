@@ -22,7 +22,7 @@ func TestSearchRouteTopologyPreserved(t *testing.T) {
 		Models:           []string{"gpt-4o"},
 		ModelMapping:     map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}},
 	}
-	a := &domain.Account{ID: 10, TemplateID: 1, Template: tpl, UpstreamKey: "k", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+	a := &domain.Account{ID: 10, TemplateID: 1, Template: tpl, UpstreamKey: "k", Enabled: true, MaxConcurrency: 4}
 	s := newTestScheduler(t, []*domain.Account{a})
 
 	// 同一快照内：Select(Responses) 应用映射，SelectOpaque(Responses) 透明
@@ -71,7 +71,7 @@ func TestSearchOpaqueDoesNotAlterEligibility(t *testing.T) {
 		Models:           []string{"gpt-4o"},
 		ModelMapping:     map[string]domain.ModelMappingEntry{"alias": {MappedModel: "gpt-4o", Mode: domain.ModelMappingModeExplicit}},
 	}
-	a := &domain.Account{ID: 10, TemplateID: 1, Template: tpl, UpstreamKey: "k", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4}
+	a := &domain.Account{ID: 10, TemplateID: 1, Template: tpl, UpstreamKey: "k", Enabled: true, MaxConcurrency: 4}
 	s := newTestScheduler(t, []*domain.Account{a})
 
 	// 普通 Responses 对 alias 命中 mapping 的 tier1 (Serves via mapping)

@@ -10,7 +10,7 @@ var reserveHook func() // ponytail: test hook for race barrier between concurren
 // NewAttemptPlan binds a compiled route to one immutable routing root. Dynamic
 // account state remains shared by the captured account snapshots. An exact
 // route miss falls back to the compiled default bucket (model "")—the same
-// unknown-model semantics the legacy scan carries.
+// unknown-model semantics as the static bucket layout.
 func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef) (*AttemptPlan, error) {
 	requestedModel := route.Model
 	v := s.view.Load()
@@ -89,7 +89,7 @@ func (s *Scheduler) resolveCandidate(v *RoutingView, p *AttemptPlan, c *attemptP
 	return true
 }
 
-// ReserveAttempt applies request-time health, latch, status, cooldown, and
+// ReserveAttempt applies request-time health, latch, status, and
 // cluster-concurrency gates to the already compiled plan. Prefix candidates
 // are additionally fenced against their captured static leaf: a leaf replaced
 // after plan build (credential rotation, revision bump, removal) is rejected,
@@ -99,7 +99,6 @@ func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, erro
 		return nil, Attempt{}, ErrNoAvailable
 	}
 	v := s.view.Load()
-	now := s.timeNow()
 	instances := s.instancesN()
 	cluster := s.concView.Load()
 	var selected *Selection
@@ -123,7 +122,7 @@ func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, erro
 			return false
 		}
 		st := a.statePtr()
-		if st.status == domain.StatusDisabled || (st.cooldownUntil != nil && !st.cooldownUntil.Before(now)) {
+		if st.status == domain.StatusDisabled {
 			return false
 		}
 		cur := a.runtime.concurrency.Load()

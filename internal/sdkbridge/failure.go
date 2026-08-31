@@ -70,9 +70,10 @@ type HealthProber interface {
 
 // AccountFailer 调度摘除面（*scheduler.Scheduler 满足；接口化供测试注入）。
 type AccountFailer interface {
-	// FailAccount 快照置 StatusDisabled + last_error 审计 + 经 loader 持久化
-	//（重启快照重载后仍摘除——pickFrom 只跳 disabled 不查 failed_at，必须落库）。
-	FailAccount(accountID int64, reason string)
+	// FailAccount 快照置 StatusDisabled（运行时摘除）。持久化事实 = failed_at
+	//（同链 DB 步落库；重启快照重载经 failed_at 仍摘除——恢复唯一入口
+	// /recover fenced 端点）。
+	FailAccount(accountID int64)
 }
 
 // FailureDeps 失效处理链依赖（main 装配：repository.Accounts + scheduler）。
@@ -81,10 +82,10 @@ type FailureDeps struct {
 	Failer AccountFailer
 	// Log 处理错误日志（P3-1 评审：同一失败只记一条——记在回调侧
 	// NewFailureHandler，HandleFailure 不重复记）；nil = no-op。
-	Log *logx.Logger
-	Latch Latcher
+	Log       *logx.Logger
+	Latch     Latcher
 	Publisher GroupPublisher
-	Health HealthProber
+	Health    HealthProber
 }
 
 // HandleFailure 网关侧失效处理链（T1 §3——统一回调装配；T2/T4 适配层在
@@ -93,9 +94,9 @@ type FailureDeps struct {
 //  1. DB 写 failed_at + last_error（失效原因文本，复用既有 last_error——用户
 //     裁决 2026-08-13：两原因字段并存会漂移；幂等：重复上报不重复写，首次
 //     失效时刻保持）
-//  2. 调度器状态置 StatusDisabled（快照摘除 + 经既有 loader 持久化 + last_error
-//     审计随回写落库）——复用既有 pickFrom 过滤器（跳 disabled）与 MarkResult
-//     防复活守卫（置位后在途请求结果短路）
+//  2. 调度器状态置 StatusDisabled（快照运行时摘除）——持久化事实 = failed_at
+//     （第 1 步/CAS 步落库；重启快照重载经 failed_at 仍摘除）；复用既有选号
+//     disabled 过滤器与 MarkResult 防复活守卫（置位后在途请求结果短路）
 //  3. 失败请求自身不在此链——由 proxy 既有分类路径处理（fatal → 连接级
 //     MarkResult 分流，failover 不重试同一账号；forward.go 语义，T1 不改动）
 //
@@ -169,7 +170,7 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 				return ErrMissingExpectedRevision
 			}
 			deps.Latch.TryAcquire(accountID, fp, expectedRev)
-			deps.Failer.FailAccount(accountID, reason)
+			deps.Failer.FailAccount(accountID)
 			err = cs.FailAccountCAS(ctx, accountID, expectedRev, "sdk", time.Now(), reason)
 			if err != nil {
 				if errors.Is(err, repository.ErrStaleRevision) {
@@ -200,8 +201,9 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 	}
 	reason2 := domain.TruncateErrMsg(fatal.Error())
 	err := deps.Store.SetAccountFailed(ctx, accountID, time.Now(), reason2)
-	// 摘除恒执行：DB 故障时内存摘除先生效，恢复后 writeback 落库（fail-closed）。
-	deps.Failer.FailAccount(accountID, reason2)
+	// 摘除恒执行：DB 故障时内存摘除先生效（持久化事实 = failed_at，DB 恢复后
+	// 同链重试落库；重启重载经 failed_at 收敛——fail-closed）。
+	deps.Failer.FailAccount(accountID)
 	return err
 }
 

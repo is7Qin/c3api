@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 )
@@ -207,6 +208,8 @@ func schedulerWithAccounts(tb testing.TB, n int, mapping domain.ModelMapping) *S
 	tb.Helper()
 	tpl := &domain.Template{
 		ID:               1,
+		BaseURL:          "https://u/v1",
+		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 		Models:           []string{mappingRequestModel},
 		ModelMapping:     mapping,
@@ -215,12 +218,14 @@ func schedulerWithAccounts(tb testing.TB, n int, mapping domain.ModelMapping) *S
 	for i := int64(1); i <= int64(n); i++ {
 		accs[10] = append(accs[10], &domain.Account{
 			ID: i, TemplateID: 1, Template: tpl, UpstreamKey: "k",
-			Status: domain.StatusActive, Weight: 100, MaxConcurrency: 100000,
+			Enabled: true, MaxConcurrency: 100000,
 		})
 	}
 	s := New(Config{DefaultMaxConcurrency: 100000, SyncInterval: time.Hour}, newMemLoader(accs), newTestRuleEngine(tb), nil)
 	if err := s.InvalidateAllSync(); err != nil {
 		tb.Fatal(err)
 	}
+	wireSources(s, nil, nil)
+	s.compileOnce()
 	return s
 }

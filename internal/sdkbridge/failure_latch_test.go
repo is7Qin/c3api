@@ -18,18 +18,20 @@ type fakeLatch2 struct {
 	m map[int64]string
 }
 
-func newFakeLatch2() *fakeLatch2 { return &fakeLatch2{m: make(map[int64]string)} }
+func newFakeLatch2() *fakeLatch2                                     { return &fakeLatch2{m: make(map[int64]string)} }
 func (f *fakeLatch2) TryAcquire(id int64, fp string, rev int64) bool { f.m[id] = fp; return true }
-func (f *fakeLatch2) Clear(id int64) { delete(f.m, id) }
-func (f *fakeLatch2) IsLatched(id int64, fp string) bool { v, ok := f.m[id]; return ok && v == fp }
+func (f *fakeLatch2) Clear(id int64)                                 { delete(f.m, id) }
+func (f *fakeLatch2) IsLatched(id int64, fp string) bool             { v, ok := f.m[id]; return ok && v == fp }
 
 type fakeCASStore2 struct {
 	accounts map[int64]*domain.Account
-	casErr error
-	groups map[int64][]int64
+	casErr   error
+	groups   map[int64][]int64
 }
 
-func (f *fakeCASStore2) SetAccountFailed(_ context.Context, id int64, _ time.Time, _ string) error { return nil }
+func (f *fakeCASStore2) SetAccountFailed(_ context.Context, id int64, _ time.Time, _ string) error {
+	return nil
+}
 func (f *fakeCASStore2) GetAccount(_ context.Context, id int64) (*domain.Account, error) {
 	a, ok := f.accounts[id]
 	if !ok {
@@ -55,8 +57,9 @@ func (f *fakeCASStore2) GetAccountGroups(_ context.Context, id int64) ([]int64, 
 	return f.groups[id], nil
 }
 
-type fakeFailer2 struct { failed []int64 }
-func (f *fakeFailer2) FailAccount(id int64, _ string) { f.failed = append(f.failed, id) }
+type fakeFailer2 struct{ failed []int64 }
+
+func (f *fakeFailer2) FailAccount(id int64) { f.failed = append(f.failed, id) }
 
 func TestSDKFailSharesLatchNonCodexCannotSelfFail(t *testing.T) {
 	store := &fakeCASStore2{

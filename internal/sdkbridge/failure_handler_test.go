@@ -71,7 +71,9 @@ func (f *retryFakeStore) FailAccountCAS(_ context.Context, id int64, expected in
 	f.callCount++
 	return nil
 }
-func (f *retryFakeStore) SetAccountFailed(_ context.Context, _ int64, _ time.Time, _ string) error { return nil }
+func (f *retryFakeStore) SetAccountFailed(_ context.Context, _ int64, _ time.Time, _ string) error {
+	return nil
+}
 func (f *retryFakeStore) GetAccountGroups(_ context.Context, id int64) ([]int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -92,8 +94,8 @@ func (f *retryFakeStore) RecoverAccountCAS(_ context.Context, id int64, expected
 }
 
 type retryFakeLatch struct {
-	mu sync.Mutex
-	m  map[int64]string
+	mu     sync.Mutex
+	m      map[int64]string
 	clears int
 }
 
@@ -119,16 +121,14 @@ func (f *retryFakeLatch) IsLatched(id int64, fp string) bool {
 }
 
 type retryFakeFailer struct {
-	mu     sync.Mutex
-	calls  int
-	reason string
+	mu    sync.Mutex
+	calls int
 }
 
-func (f *retryFakeFailer) FailAccount(_ int64, r string) {
+func (f *retryFakeFailer) FailAccount(_ int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
-	f.reason = r
 }
 
 type retryFakePublisher struct {
@@ -150,10 +150,10 @@ func (f *retryFakePublisher) PublishGroups(_ context.Context, gids []int64) {
 }
 
 type fakeHealth struct {
-	mu       sync.Mutex
-	calls    []struct{ id, rev int64 }
-	err      error
-	ch       chan struct{}
+	mu    sync.Mutex
+	calls []struct{ id, rev int64 }
+	err   error
+	ch    chan struct{}
 }
 
 func (f *fakeHealth) SetProbing(_ context.Context, id int64, rev int64) error {
@@ -161,7 +161,10 @@ func (f *fakeHealth) SetProbing(_ context.Context, id int64, rev int64) error {
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, struct{ id, rev int64 }{id, rev})
 	if f.ch != nil {
-		select { case f.ch <- struct{}{}: default: }
+		select {
+		case f.ch <- struct{}{}:
+		default:
+		}
 	}
 	return f.err
 }
@@ -182,8 +185,8 @@ func TestFailureRetry_NonblockingAndProcessLifetime(t *testing.T) {
 	retryMaxBackoff = 20 * time.Millisecond
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: newCodexAccountForRetry(7, 1)},
-		failSeq: []error{errors.New("transient db down")},
-		groups: map[int64][]int64{7: {10}},
+		failSeq:  []error{errors.New("transient db down")},
+		groups:   map[int64][]int64{7: {10}},
 	}
 	latch := newRetryFakeLatch()
 	failer := &retryFakeFailer{}
@@ -218,7 +221,7 @@ func TestFailureRetry_NoRetryAfterShutdown(t *testing.T) {
 	retryBackoff = 10 * time.Millisecond
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: newCodexAccountForRetry(7, 1)},
-		failSeq: []error{errors.New("transient")},
+		failSeq:  []error{errors.New("transient")},
 	}
 	latch := newRetryFakeLatch()
 	failer := &retryFakeFailer{}
@@ -245,7 +248,7 @@ func TestFailure_StaleFencedByCanonicalFingerprint(t *testing.T) {
 	acct := newCodexAccountForRetry(7, 5)
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: acct},
-		failSeq: []error{errors.New("transient")},
+		failSeq:  []error{errors.New("transient")},
 	}
 	latch := newRetryFakeLatch()
 	failer := &retryFakeFailer{}
@@ -284,7 +287,7 @@ func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
 	acct := newCodexAccountForRetry(7, 5)
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: acct},
-		failSeq: []error{repository.ErrStaleRevision},
+		failSeq:  []error{repository.ErrStaleRevision},
 	}
 	latch := newRetryFakeLatch()
 	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch}

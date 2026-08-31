@@ -9,7 +9,7 @@ package scheduler
 // internal/proxy/concsync.go（gate 层 user/key 先例，已合入 main@610b28e）：
 // 协议常量与 value 格式逐字一致，实现自持（proxy 已 import scheduler，反向必成环；
 // 两处重复是有意的 YAGNI——第三个消费方出现才提炼 internal/concproto）。差异点：
-// per-layer 双 map → 单 accounts 直键；判定嵌入 pickFrom 扫描循环（借位拒绝=换号，
+// per-layer 双 map → 单 accounts 直键；判定嵌入 ReserveAttempt 候选门循环（借位拒绝=换号，
 // 非拒流）。三条公理与 gate 层同款：
 //
 //  1. 选号路径 100% 本地判定、零 Redis 命令：Redis 只被本 worker 每 tick 一条
@@ -81,7 +81,7 @@ type clusterView struct {
 }
 
 // SetInstancesProvider 注入集群实例数 N（装配期 main 注入 disco；nil 清空 → N=1）。
-// N 在每次 Select 的 pickFrom 入口现读，心跳计数变化 ≤1 tick 天然生效。
+// N 在每次 Select 的 ReserveAttempt 入口现读，心跳计数变化 ≤1 tick 天然生效。
 func (s *Scheduler) SetInstancesProvider(p InstancesProvider) { s.instN.Store(&p) }
 
 // instancesN 当前集群实例数（N ≥ 1；provider 缺失/非法值 → 1）。
@@ -304,7 +304,7 @@ func concShare(limit, n int) int {
 }
 
 // concAllows 超份额借位判定（纯内存两读 + map 查找，零远程零错误分支零新增锁；
-// view 由 pickFrom 入口一次性取用——单代纪律，整轮扫描共用同一代视图）：
+// view 由 ReserveAttempt 入口一次性取用——单代纪律，整轮扫描共用同一代视图）：
 //
 //	effective = total − selfLast + L_now   —— 剔除自身滞后报告、代入本地实时值
 //	放行 ⟺ effective < limit
