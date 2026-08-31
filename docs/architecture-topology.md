@@ -128,7 +128,7 @@ flowchart LR
 - **余额预检**（`internal/proxy/caller.go:140-147`）：BillingCapture 门控快照读零 DB（滞后 ≤ balance_refresh_interval）；快照缺失/<0 且非免费组 → 402（余额 0 放行——临时额度由 FEFO 扣费消化）；免费组（EffectiveMultiplier==0）放行。
 - **并发门禁**：user → key 两级 CAS（`internal/proxy/gate.go:219-244`），key 失败回滚 user 计数；跨 reload 在途值继承。
 - **限流**：`internal/proxy/limit.go:39-56` 固定窗口 `ceil(group_key_rpm/N)`；`cooldown_429/backoff_*` 已移除（2026-08-13 用户裁决：配置含这些键将启动失败）——429 冷却与错误退避由规则引擎（种子 + `/api/admin/rules` 自定义）接管。
-- **选号**：`internal/scheduler/selection.go:17` tier1（模型硬白名单 Serves）→ tier2（仅全模型账号）→ 默认桶（仅全模型账号）；预生成加权轮询序列（零热路径计算）；协议转换只补差（`internal/proxy/caller.go:41-61` convertedRoute，off 零开销）。
+- **选号**：`internal/scheduler/selection.go` 执行后台 RoutingCompiler 预编译的不可变计划（Primary/Degraded 按编译序、Explore 按累计权重 `sort.Search` + 完整 fallback tail），逐项 RuntimeHealth 有效态 + 并发 CAS 准入；`AttemptPlan` 固定 [8] attempted-ID 集跨账号去重（failover_attempts 1..8）。请求路径零质量计算/零排序/零分配/零远程访问；协议转换只补差（`internal/proxy/caller.go:41-61` convertedRoute，off 零开销）。
 - **缺价预检**：failover 循环内每轮 `caller.go:288-293` + `precheckPrice :438-451`——images 查 image_price、其余查 pricings，缺价 402 释放槽。
 - **codex 分流**（`caller.go:303-309`）：按 `sel.CredentialType` 换 codexImagesCaller（:320-321 codex 类型跳单字符串凭据走 sel.Ext → AccountCredential 直供适配层）。
 - **流式透传**：aiclient 流式入口经 `pkg/sserelay` 字节级 relay + Observer 旁路提取 usage；C1 批次能力：EOF 末帧 flush（`relay.go:217-230`，无末尾空行上游丢 completed 帧 → cost=0 修复）、deadline watcher（`relay.go:353-376` + `middleware.go:154-156`）、normalize 错误分类（`relay.go:269-277` 三态可分）、relayBufio 池（`relay.go:86-98`）、按需武装 flush timer（`relay.go:307-323`）；WS 1:1 透传（`internal/proxy/caller_responses_ws.go:272`，心跳 :352）。
@@ -179,7 +179,7 @@ pkg 职责边界：
 
 | 表 | schema 文件 | 说明 |
 |---|---|---|
-| accounts | account.go | 上游账号（status/cooldown/max_concurrency/weight + template_id） |
+| accounts | account.go | 上游账号（enabled/failed_at/failure_source/lifecycle_revision/upstream_cost_multiplier_bp/cache_domain/max_concurrency + template_id；生命周期两轴正交，见 admin-api「生命周期模型」） |
 | account_exts | account_ext.go | 账号类型化扩展（codex oauth/pat 凭据） |
 | groups | group.go | 组（倍率、protocol_convert、key 限制） |
 | group_assignments | group_assignment.go | 用户-组关联（专属倍率） |
@@ -213,7 +213,7 @@ pkg 职责边界：
 | 快照 | 实现 | 刷新源 |
 |---|---|---|
 | auth（key/user 元数据 + gate 计数） | `internal/proxy/auth.go:68` Reload，锁内整体换 | invalidate Users/Keys + authSync 60s 周期兜底 + 启动 ReloadAll |
-| scheduler（组/账号/路由 + 并发槽） | `internal/scheduler/scheduler.go:102` snapshotStore | invalidate 全量/组级 + 30s syncLoop ticker |
+| scheduler（RoutingView：静态 + 编译决策 + 并发槽） | `internal/scheduler/scheduler.go` atomic.Pointer[RoutingView] 单根（copy-modify-Store） | invalidate 全量/组级 + 30s syncLoop ticker + 静态重载尾部 RequestCompile（200ms 去抖编译道） |
 | rules（规则表） | `internal/rule/engine.go:148` Reload | invalidate Rules + 启动 ReloadAll |
 | pricing（模型价格**三线**：pricing + image_price + function_price） | `internal/service/pricing.go:35-71` + `image_pricing.go:23` + `function_pricing.go:23` | ReloadPricing 三线（sync 成功/管理端改价后，`main.go:369-373`），**不进 invalidate**（`internal/invalidate/invalidate.go:26` 注释） |
 | balances（余额 + 倍率） | `internal/billing/balances.go:43-51`（atomic.Pointer，Set 原地 Store） | invalidate Users/Multipliers + BalanceRefreshInterval ticker（`internal/billing/flusher.go:134-145`） |
@@ -265,7 +265,7 @@ flowchart LR
     R5 -->|"ScopeSettings 精确重载"| R1
 ```
 
-- **发布**（`internal/notify/publisher.go:99-128`）：DB 写成功后 `Publish`；载荷守卫——marshal >6KB 丢 Groups 降级 Templates（full 重载，`publisher.go:36-38,74-82`）；**计费扣费路径绝不发布 NOTIFY**（每 flush 即风暴，`publisher.go:16`）；scheduler 状态回写成功后发组级 NOTIFY（`scheduler.go:226-232` + `cmd/server/dispatcher.go:17-25` adapter）。
+- **发布**（`internal/notify/publisher.go:99-128`）：DB 写成功后 `Publish`；载荷守卫——marshal >6KB 丢 Groups 降级 Templates（full 重载，`publisher.go:36-38,74-82`），**routing dirty 不丢**：账号静态变更是 routing dirty 载体，降级后 Templates=true 经 sched 全量重载尾部武装 RequestCompile（全量 ⊇ 组级，`internal/scheduler/routing_dirty_test` 钉死）；**计费扣费路径绝不发布 NOTIFY**（每 flush 即风暴，`publisher.go:16`）；scheduler 状态回写成功后发组级 NOTIFY（`scheduler.go:226-232` + `cmd/server/dispatcher.go:17-25` adapter）。
 - **监听**（`internal/notify/listener.go:85-91,239-258`）：独立单连接（非池连接——池连接会被 idle 回收导致订阅静默丢失，`listener.go:66-79`）；消费 → Unmarshal → Src 自播跳过（`listener.go:250-252`）→ `Dispatcher.Apply`；断线指数退避重连（1s→30s，`listener.go:278-287`）+ 连接成功立即 `FullRefresh`（覆盖断连期间丢失，`listener.go:218-223`，是否跳过五路由 dispatcher bootLoaded 裁决）。
 - **分发映射**（`cmd/server/dispatcher.go:72-110`）：Users → auth+余额全量；Templates → sched 全量 + clients 失效；Groups(±Clients) → sched 组级定向（upstream_key 变更带 clients 失效）；Clients 独立 → 仅客户端工厂失效；Multipliers → 余额倍率定向；Keys → auth 全量；Settings → 同步 ReloadSettings + **注册表 ScopeSettings 精确重载**（#36 预算即时重算，`dispatcher.go:93-106,114-124`）；Rules → 规则表全量重载（重载清窗口计数，全实例同步语义）。
 - **去抖**（`internal/invalidate/invalidate.go:129,262-302`）：Mark 路径零锁零 DB（atomic CAS 合并 + 非阻塞唤醒）；200ms 窗口自首次变更计时，到点 flush 一次合并重载；后沿语义（完成后再脏立即再执行）。读端永不阻塞：重载单 goroutine 串行。
@@ -310,7 +310,7 @@ flowchart LR
 | `[admin]` | server 静态 token | token |
 | `[auth]` | jwtauth.Issuer | jwt_secret（`C3API_AUTH_JWT_SECRET` 亦可） |
 | `[db]` | repository.OpenPG | dsn/max_conns（20 = billing 8 + stats 8 worker + 余量）；**F1 OpenPG 自动补丁**：lock_timeout=5s 会话级 + 计费扣费 per-query 10s 超时 + MaxConnLifetime=30m 滚动轮换——DSN 无需手工配置，用户 DSN 显式同名参数时尊重不覆盖（`config.go:56-61` + `main.go:134` 注释） |
-| `[proxy]` | proxy.New | max_body_size/max_inflight/upstream_timeout/upstream_stream_timeout/failover_attempts/usage_capture |
+| `[proxy]` | proxy.New | max_body_size/max_inflight/upstream_timeout/upstream_stream_timeout/failover_attempts（合法域 1..8，越界启动失败）/usage_capture |
 | `[upstream]` | httpx.TransportConfig | 连接池参数（max_idle_conns 8192 / per_host 2048 / force_http2 / idle_conn_timeout 90s / dial_timeout 10s，`config.example.toml:20-26`） |
 | `[limit]` | fixedWindowLimiter | group_key_rpm（0 = 关）；**cooldown_429/backoff_* 已移除**（配置含这些键将启动失败，规则引擎接管） |
 | `[scheduler]` | scheduler.Config | default_max_concurrency/sync_interval |
