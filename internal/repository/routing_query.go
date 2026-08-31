@@ -175,6 +175,16 @@ func (r *PartitionRepo) QueryFlowRollupStats(ctx context.Context, routeClass dom
 	return out, nil
 }
 
+// QueryQualityRollupStats 组合面委托（service.Store 能力探测经此达 Partitions）。
+func (r *Repository) QueryQualityRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingQualityStat, error) {
+	return r.Partitions.QueryQualityRollupStats(ctx, routeClass, identityVersion, from, to)
+}
+
+// QueryFlowRollupStats 组合面委托（同上）。
+func (r *Repository) QueryFlowRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingFlowStat, error) {
+	return r.Partitions.QueryFlowRollupStats(ctx, routeClass, identityVersion, from, to)
+}
+
 // parseRoutingHist parses a Postgres bigint[] literal ("{1,2,3}") into a slice;
 // empty/garbage-free input only ("" or "{}" → nil).
 func parseRoutingHist(text string) []int64 {
