@@ -17,6 +17,7 @@ tags:
   - name: redemptions
   - name: pricing
   - name: ops
+  - name: routing
 paths:
   /templates:
     post:
@@ -1695,6 +1696,77 @@ paths:
               schema: { $ref: '#/components/schemas/StatTTFTSummary' }
         default:
           $ref: '#/components/responses/Error'
+  # ---- intelligent-routing 观测面（Todo 17）：rollup 聚合 + 当前发布计划投影，
+  # 数据源钉死 routing_*_rollup 表与 scheduler 当前视图——绝不查 raw logs、
+  # 绝不按历史 generation 查询（plan/flow/frontier 一律对齐当前发布计划目录）。
+  /routing/flow:
+    get:
+      operationId: GetRoutingFlow
+      tags: [routing]
+      summary: 路由 flow 聚合（完整链边；按 terminal_at 归属窗口）
+      description: |
+        结构 RouteClass → (ordinal, lane) → Account → Outcome；retry 边指向
+        下一 ordinal，terminal 边即该链 Final。守恒：完整链才入 rollup，故
+        first_dispatch_chains（ordinal=1）恒等于 terminal_chains。三个丢失
+        计数是独立观测口径（本进程 quality 观测面），不得混为上游失败：
+        incomplete_chain_dropped = 本进程已观察 cleanup 缺 terminal；
+        flow_overflow_dropped_chains = 故障预算淘汰链；
+        process_crash_loss_unobservable 恒 true（硬崩缺口不可量化）。
+        窗口跨度上限 90 天（精确，超限 400）。
+      parameters:
+        - { name: route, in: query, required: true, schema: { type: string, description: 64-hex 路由类 ID（须在当前发布计划目录内；非法 hex → 400，未知 → 404） } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: flow 聚合（lanes 边分组 + 守恒计数 + 丢失三口径）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutingFlowResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /routing/frontier:
+    get:
+      operationId: GetRoutingFrontier
+      tags: [routing]
+      summary: 质量-成本前沿（rollup 质量 × 当前计划候选目录连接）
+      description: |
+        候选按窗口聚合：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本
+        （与 compiler 同数学核）。Pareto 支配只在 known 且 cost_known 候选间
+        扫描；unknown/成本不可知/样本不足者如实呈现但不上前沿。输出确定性
+        排序（前沿 → success_lcb 降序 → 成本升序 → 指纹升序）后钳到 limit。
+        窗口跨度上限 90 天（精确，超限 400）。
+      parameters:
+        - { name: route, in: query, required: true, schema: { type: string, description: 64-hex 路由类 ID（非法 hex → 400，未知 → 404） } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, default: 200, minimum: 1, maximum: 200, description: 候选条数（缺省/≤0 → 200；>200 钳到 200，不报错） } }
+      responses:
+        '200':
+          description: 前沿候选列表（已排序 + 钳制；空为 []）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutingFrontierResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /routing/plan:
+    get:
+      operationId: GetRoutingPlan
+      tags: [routing]
+      summary: 当前发布路由计划解释（只读投影，无历史 generation 参数）
+      description: |
+        当前发布 RoutingView 的防御性投影：generation + 全身份确定性路由序
+        （与发布字节守卫同序）+ primary/explore/degraded 候选发布序（序是
+        语义，不重排）+ explore 权重/累积表 + 候选静态身份。空视图 =
+        generation 0 空计划（routes 为 []），不是错误。
+      responses:
+        '200':
+          description: 当前发布计划快照
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutingPlanResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   # 管理端总览（spec 2026-08-14，用户裁决）：聚合面与实时面拆两个端点——
   # overview（一站式聚合，TTL 30s 缓存）+ users-top（实时并发排行，TTL 2s）。
   # 全冷面（聚合查询 + 门禁快照遍历）；既有端点（GetStats/GetUsageLogs/账号
@@ -3125,6 +3197,149 @@ components:
         P99MS: { type: integer, format: int64 }
         MaxMS: { type: integer, format: int64 }
         Source: { type: string, enum: [exact, sketch] }
+    # ---- intelligent-routing 观测契约（Todo 17）：lower snake_case，全字段
+    # required（值恒在，仅 previous_account_id 可 null）；空集合恒为 []。
+    RoutingFlowEdge:
+      type: object
+      description: 一条聚合边（rollup 行；完整链身份）
+      required: [ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, chain_count]
+      properties:
+        ordinal: { type: integer, description: 链内第几次尝试（1 = 首发） }
+        lane: { type: string, description: 通道（primary/explore/degraded） }
+        account_id: { type: integer, format: int64 }
+        previous_account_id: { type: integer, format: int64, nullable: true, description: 前驱账号（首发边 null） }
+        previous_outcome: { type: string, description: 前驱结局（首发边空串） }
+        transition_reason: { type: string, description: 迁移原因（failover 等；首发边空串） }
+        outcome: { type: string, description: 本边结局（success/429/4xx/5xx/network…） }
+        is_terminal: { type: boolean, description: true = 该链 Final }
+        generation: { type: integer, format: int64, description: 边所属计划代际（旧 generation 行原样携带自身值） }
+        candidate_fingerprint: { type: string, description: 候选身份指纹 hex（rollup join 键） }
+        chain_count: { type: integer, format: int64, description: 同身份链数（SUM） }
+    RoutingFlowLane:
+      type: object
+      description: (ordinal, lane) 分组；组间按 (ordinal, lane) 全序，组内保持仓储确定性行序
+      required: [ordinal, lane, edges]
+      properties:
+        ordinal: { type: integer }
+        lane: { type: string }
+        edges:
+          type: array
+          items: { $ref: '#/components/schemas/RoutingFlowEdge' }
+    RoutingFlowResponse:
+      type: object
+      required: [route_class_id, plan_generation, lanes, first_dispatch_chains, terminal_chains, incomplete_chain_dropped, flow_overflow_dropped_chains, process_crash_loss_unobservable]
+      properties:
+        route_class_id: { type: string }
+        plan_generation: { type: integer, format: int64, description: 当前发布计划 generation（边行各自 generation 不混入） }
+        lanes:
+          type: array
+          items: { $ref: '#/components/schemas/RoutingFlowLane' }
+        first_dispatch_chains: { type: integer, format: int64, description: Attempt1 = ordinal=1 链数和（守恒左端） }
+        terminal_chains: { type: integer, format: int64, description: 保留 terminal 链数和（守恒右端，恒等于 first_dispatch_chains） }
+        incomplete_chain_dropped: { type: integer, format: int64, description: 本进程已观察 cleanup 缺 terminal 的链（非上游失败） }
+        flow_overflow_dropped_chains: { type: integer, format: int64, description: 故障预算淘汰链（容量/入队拒绝；非上游失败） }
+        process_crash_loss_unobservable: { type: boolean, description: 硬崩丢失不可量化标记，恒 true }
+    RoutingFrontierCandidate:
+      type: object
+      required: [candidate_fingerprint, known, account_id, template_id, lifecycle_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, cost_per_success, cost_known, insufficient, on_frontier]
+      properties:
+        candidate_fingerprint: { type: string }
+        known: { type: boolean, description: 指纹在当前发布计划该路由候选目录内；false = 只呈现观测事实 }
+        account_id: { type: integer, format: int64, description: unknown 候选为 0 }
+        template_id: { type: integer, format: int64 }
+        lifecycle_revision: { type: integer, format: int64 }
+        quality_class_id: { type: string }
+        mapped_model: { type: string }
+        attempts: { type: integer, format: int64 }
+        successes: { type: integer, format: int64 }
+        success_lcb: { type: number, format: double, description: Wilson95 下界 }
+        success_ucb: { type: number, format: double, description: Wilson95 上界 }
+        ttft_lcb: { type: number, format: double, description: TTFT 对数区间下界（ttft_known=false 时无意义） }
+        ttft_ucb: { type: number, format: double }
+        ttft_known: { type: boolean, description: 样本量足以给出区间 }
+        cost_per_success: { type: integer, format: int64, description: 每次成功平均成本（微分，与 compiler 同式；cost_known=false 时无意义） }
+        cost_known: { type: boolean, description: known + 有成功样本 + 价格可解析 }
+        insufficient: { type: boolean, description: 样本 <30（与 explore 同门槛） }
+        on_frontier: { type: boolean, description: Pareto 非支配（仅 known 且 cost_known 间扫描） }
+    RoutingFrontierResponse:
+      type: object
+      required: [route_class_id, plan_generation, candidates]
+      properties:
+        route_class_id: { type: string }
+        plan_generation: { type: integer, format: int64 }
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/RoutingFrontierCandidate' }
+    RoutingPlanRef:
+      type: object
+      description: 路由全身份（group+format+model+operation+route class）
+      required: [group_id, format, model, operation_tag, route_class_id]
+      properties:
+        group_id: { type: integer, format: int64 }
+        format: { type: string }
+        model: { type: string }
+        operation_tag: { type: string }
+        route_class_id: { type: string }
+    RoutingPlanExplore:
+      type: object
+      description: explore 决策表（发布序 + 权重 + 累积轮盘；序是语义不重排）
+      required: [ids, weights, cumulative, total, fallback]
+      properties:
+        ids:
+          type: array
+          items: { type: integer, format: int64 }
+        weights:
+          type: object
+          additionalProperties: { type: integer }
+          description: account_id（十进制字符串键）→ 权重
+        cumulative:
+          type: array
+          items: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+        fallback:
+          type: array
+          items: { type: integer, format: int64 }
+    RoutingPlanCandidate:
+      type: object
+      description: 候选静态身份（缺叶子引用时 identity-only，其余字段零值）
+      required: [account_id, template_id, lifecycle_revision, upstream_cost_multiplier_bp, fingerprint, identity_fingerprint, mapped_model, quality_class_id]
+      properties:
+        account_id: { type: integer, format: int64 }
+        template_id: { type: integer, format: int64 }
+        lifecycle_revision: { type: integer, format: int64 }
+        upstream_cost_multiplier_bp: { type: integer, description: 采购倍率 basis points（10000 = ×1） }
+        fingerprint: { type: string, description: 真实候选指纹 hex（不可导出 = 空串） }
+        identity_fingerprint: { type: string, description: rollup join 身份指纹 hex（compiler 合成规则同源） }
+        mapped_model: { type: string }
+        quality_class_id: { type: string }
+    RoutingPlanRoute:
+      type: object
+      required: [ref, primary, explore, degraded, candidates]
+      properties:
+        ref: { $ref: '#/components/schemas/RoutingPlanRef' }
+        primary:
+          type: array
+          items: { type: integer, format: int64 }
+          description: primary 候选发布序
+        explore: { $ref: '#/components/schemas/RoutingPlanExplore' }
+        degraded:
+          type: array
+          items: { type: integer, format: int64 }
+          description: degraded 候选发布序
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/RoutingPlanCandidate' }
+          description: 通道账号并集，升序 AccountID
+    RoutingPlanResponse:
+      type: object
+      description: 当前发布计划快照（无历史 generation 查询面；空视图 = generation 0 + routes []）
+      required: [generation, routes]
+      properties:
+        generation: { type: integer, format: int64 }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RoutingPlanRoute' }
+          description: 全身份确定性路由序（与发布字节守卫同序）
     # 运维观测（/admin/ops/workers）：WorkerStatus/SnapshotState/WorkersResponse
     # 类型由本契约生成（ops tag → handler/api.gen.go + 前端 schema.d.ts），
     # handler/ops.go 唯一实现；字段清单见 WorkerStatus.stats.description。

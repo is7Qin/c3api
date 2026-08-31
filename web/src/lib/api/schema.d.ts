@@ -1239,6 +1239,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/routing/flow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 路由 flow 聚合（完整链边；按 terminal_at 归属窗口）
+         * @description 结构 RouteClass → (ordinal, lane) → Account → Outcome；retry 边指向
+         *     下一 ordinal，terminal 边即该链 Final。守恒：完整链才入 rollup，故
+         *     first_dispatch_chains（ordinal=1）恒等于 terminal_chains。三个丢失
+         *     计数是独立观测口径（本进程 quality 观测面），不得混为上游失败：
+         *     incomplete_chain_dropped = 本进程已观察 cleanup 缺 terminal；
+         *     flow_overflow_dropped_chains = 故障预算淘汰链；
+         *     process_crash_loss_unobservable 恒 true（硬崩缺口不可量化）。
+         *     窗口跨度上限 90 天（精确，超限 400）。
+         */
+        get: operations["GetRoutingFlow"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/routing/frontier": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 质量-成本前沿（rollup 质量 × 当前计划候选目录连接）
+         * @description 候选按窗口聚合：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本
+         *     （与 compiler 同数学核）。Pareto 支配只在 known 且 cost_known 候选间
+         *     扫描；unknown/成本不可知/样本不足者如实呈现但不上前沿。输出确定性
+         *     排序（前沿 → success_lcb 降序 → 成本升序 → 指纹升序）后钳到 limit。
+         *     窗口跨度上限 90 天（精确，超限 400）。
+         */
+        get: operations["GetRoutingFrontier"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/routing/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 当前发布路由计划解释（只读投影，无历史 generation 参数）
+         * @description 当前发布 RoutingView 的防御性投影：generation + 全身份确定性路由序
+         *     （与发布字节守卫同序）+ primary/explore/degraded 候选发布序（序是
+         *     语义，不重排）+ explore 权重/累积表 + 候选静态身份。空视图 =
+         *     generation 0 空计划（routes 为 []），不是错误。
+         */
+        get: operations["GetRoutingPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/overview": {
         parameters: {
             query?: never;
@@ -2852,6 +2926,188 @@ export interface components {
             MaxMS: number;
             /** @enum {string} */
             Source: "exact" | "sketch";
+        };
+        /** @description 一条聚合边（rollup 行；完整链身份） */
+        RoutingFlowEdge: {
+            /** @description 链内第几次尝试（1 = 首发） */
+            ordinal: number;
+            /** @description 通道（primary/explore/degraded） */
+            lane: string;
+            /** Format: int64 */
+            account_id: number;
+            /**
+             * Format: int64
+             * @description 前驱账号（首发边 null）
+             */
+            previous_account_id: number | null;
+            /** @description 前驱结局（首发边空串） */
+            previous_outcome: string;
+            /** @description 迁移原因（failover 等；首发边空串） */
+            transition_reason: string;
+            /** @description 本边结局（success/429/4xx/5xx/network…） */
+            outcome: string;
+            /** @description true = 该链 Final */
+            is_terminal: boolean;
+            /**
+             * Format: int64
+             * @description 边所属计划代际（旧 generation 行原样携带自身值）
+             */
+            generation: number;
+            /** @description 候选身份指纹 hex（rollup join 键） */
+            candidate_fingerprint: string;
+            /**
+             * Format: int64
+             * @description 同身份链数（SUM）
+             */
+            chain_count: number;
+        };
+        /** @description (ordinal, lane) 分组；组间按 (ordinal, lane) 全序，组内保持仓储确定性行序 */
+        RoutingFlowLane: {
+            ordinal: number;
+            lane: string;
+            edges: components["schemas"]["RoutingFlowEdge"][];
+        };
+        RoutingFlowResponse: {
+            route_class_id: string;
+            /**
+             * Format: int64
+             * @description 当前发布计划 generation（边行各自 generation 不混入）
+             */
+            plan_generation: number;
+            lanes: components["schemas"]["RoutingFlowLane"][];
+            /**
+             * Format: int64
+             * @description Attempt1 = ordinal=1 链数和（守恒左端）
+             */
+            first_dispatch_chains: number;
+            /**
+             * Format: int64
+             * @description 保留 terminal 链数和（守恒右端，恒等于 first_dispatch_chains）
+             */
+            terminal_chains: number;
+            /**
+             * Format: int64
+             * @description 本进程已观察 cleanup 缺 terminal 的链（非上游失败）
+             */
+            incomplete_chain_dropped: number;
+            /**
+             * Format: int64
+             * @description 故障预算淘汰链（容量/入队拒绝；非上游失败）
+             */
+            flow_overflow_dropped_chains: number;
+            /** @description 硬崩丢失不可量化标记，恒 true */
+            process_crash_loss_unobservable: boolean;
+        };
+        RoutingFrontierCandidate: {
+            candidate_fingerprint: string;
+            /** @description 指纹在当前发布计划该路由候选目录内；false = 只呈现观测事实 */
+            known: boolean;
+            /**
+             * Format: int64
+             * @description unknown 候选为 0
+             */
+            account_id: number;
+            /** Format: int64 */
+            template_id: number;
+            /** Format: int64 */
+            lifecycle_revision: number;
+            quality_class_id: string;
+            mapped_model: string;
+            /** Format: int64 */
+            attempts: number;
+            /** Format: int64 */
+            successes: number;
+            /**
+             * Format: double
+             * @description Wilson95 下界
+             */
+            success_lcb: number;
+            /**
+             * Format: double
+             * @description Wilson95 上界
+             */
+            success_ucb: number;
+            /**
+             * Format: double
+             * @description TTFT 对数区间下界（ttft_known=false 时无意义）
+             */
+            ttft_lcb: number;
+            /** Format: double */
+            ttft_ucb: number;
+            /** @description 样本量足以给出区间 */
+            ttft_known: boolean;
+            /**
+             * Format: int64
+             * @description 每次成功平均成本（微分，与 compiler 同式；cost_known=false 时无意义）
+             */
+            cost_per_success: number;
+            /** @description known + 有成功样本 + 价格可解析 */
+            cost_known: boolean;
+            /** @description 样本 <30（与 explore 同门槛） */
+            insufficient: boolean;
+            /** @description Pareto 非支配（仅 known 且 cost_known 间扫描） */
+            on_frontier: boolean;
+        };
+        RoutingFrontierResponse: {
+            route_class_id: string;
+            /** Format: int64 */
+            plan_generation: number;
+            candidates: components["schemas"]["RoutingFrontierCandidate"][];
+        };
+        /** @description 路由全身份（group+format+model+operation+route class） */
+        RoutingPlanRef: {
+            /** Format: int64 */
+            group_id: number;
+            format: string;
+            model: string;
+            operation_tag: string;
+            route_class_id: string;
+        };
+        /** @description explore 决策表（发布序 + 权重 + 累积轮盘；序是语义不重排） */
+        RoutingPlanExplore: {
+            ids: number[];
+            /** @description account_id（十进制字符串键）→ 权重 */
+            weights: {
+                [key: string]: number;
+            };
+            cumulative: number[];
+            /** Format: int64 */
+            total: number;
+            fallback: number[];
+        };
+        /** @description 候选静态身份（缺叶子引用时 identity-only，其余字段零值） */
+        RoutingPlanCandidate: {
+            /** Format: int64 */
+            account_id: number;
+            /** Format: int64 */
+            template_id: number;
+            /** Format: int64 */
+            lifecycle_revision: number;
+            /** @description 采购倍率 basis points（10000 = ×1） */
+            upstream_cost_multiplier_bp: number;
+            /** @description 真实候选指纹 hex（不可导出 = 空串） */
+            fingerprint: string;
+            /** @description rollup join 身份指纹 hex（compiler 合成规则同源） */
+            identity_fingerprint: string;
+            mapped_model: string;
+            quality_class_id: string;
+        };
+        RoutingPlanRoute: {
+            ref: components["schemas"]["RoutingPlanRef"];
+            /** @description primary 候选发布序 */
+            primary: number[];
+            explore: components["schemas"]["RoutingPlanExplore"];
+            /** @description degraded 候选发布序 */
+            degraded: number[];
+            /** @description 通道账号并集，升序 AccountID */
+            candidates: components["schemas"]["RoutingPlanCandidate"][];
+        };
+        /** @description 当前发布计划快照（无历史 generation 查询面；空视图 = generation 0 + routes []） */
+        RoutingPlanResponse: {
+            /** Format: int64 */
+            generation: number;
+            /** @description 全身份确定性路由序（与发布字节守卫同序） */
+            routes: components["schemas"]["RoutingPlanRoute"][];
         };
         WorkerStatus: {
             name: string;
@@ -5495,6 +5751,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatTTFTSummary"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetRoutingFlow: {
+        parameters: {
+            query: {
+                route: string;
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description flow 聚合（lanes 边分组 + 守恒计数 + 丢失三口径） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutingFlowResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetRoutingFrontier: {
+        parameters: {
+            query: {
+                route: string;
+                from: string;
+                to: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 前沿候选列表（已排序 + 钳制；空为 []） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutingFrontierResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetRoutingPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前发布计划快照 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutingPlanResponse"];
                 };
             };
             default: components["responses"]["Error"];

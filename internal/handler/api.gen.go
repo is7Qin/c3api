@@ -1326,6 +1326,183 @@ type RedemptionUseListResponse struct {
 // RequestFormat defines model for RequestFormat.
 type RequestFormat string
 
+// RoutingFlowEdge 一条聚合边（rollup 行；完整链身份）
+type RoutingFlowEdge struct {
+	AccountId int64 `json:"account_id"`
+
+	// CandidateFingerprint 候选身份指纹 hex（rollup join 键）
+	CandidateFingerprint string `json:"candidate_fingerprint"`
+
+	// ChainCount 同身份链数（SUM）
+	ChainCount int64 `json:"chain_count"`
+
+	// Generation 边所属计划代际（旧 generation 行原样携带自身值）
+	Generation int64 `json:"generation"`
+
+	// IsTerminal true = 该链 Final
+	IsTerminal bool `json:"is_terminal"`
+
+	// Lane 通道（primary/explore/degraded）
+	Lane string `json:"lane"`
+
+	// Ordinal 链内第几次尝试（1 = 首发）
+	Ordinal int `json:"ordinal"`
+
+	// Outcome 本边结局（success/429/4xx/5xx/network…）
+	Outcome string `json:"outcome"`
+
+	// PreviousAccountId 前驱账号（首发边 null）
+	PreviousAccountId *int64 `json:"previous_account_id"`
+
+	// PreviousOutcome 前驱结局（首发边空串）
+	PreviousOutcome string `json:"previous_outcome"`
+
+	// TransitionReason 迁移原因（failover 等；首发边空串）
+	TransitionReason string `json:"transition_reason"`
+}
+
+// RoutingFlowLane (ordinal, lane) 分组；组间按 (ordinal, lane) 全序，组内保持仓储确定性行序
+type RoutingFlowLane struct {
+	Edges   []RoutingFlowEdge `json:"edges"`
+	Lane    string            `json:"lane"`
+	Ordinal int               `json:"ordinal"`
+}
+
+// RoutingFlowResponse defines model for RoutingFlowResponse.
+type RoutingFlowResponse struct {
+	// FirstDispatchChains Attempt1 = ordinal=1 链数和（守恒左端）
+	FirstDispatchChains int64 `json:"first_dispatch_chains"`
+
+	// FlowOverflowDroppedChains 故障预算淘汰链（容量/入队拒绝；非上游失败）
+	FlowOverflowDroppedChains int64 `json:"flow_overflow_dropped_chains"`
+
+	// IncompleteChainDropped 本进程已观察 cleanup 缺 terminal 的链（非上游失败）
+	IncompleteChainDropped int64             `json:"incomplete_chain_dropped"`
+	Lanes                  []RoutingFlowLane `json:"lanes"`
+
+	// PlanGeneration 当前发布计划 generation（边行各自 generation 不混入）
+	PlanGeneration int64 `json:"plan_generation"`
+
+	// ProcessCrashLossUnobservable 硬崩丢失不可量化标记，恒 true
+	ProcessCrashLossUnobservable bool   `json:"process_crash_loss_unobservable"`
+	RouteClassId                 string `json:"route_class_id"`
+
+	// TerminalChains 保留 terminal 链数和（守恒右端，恒等于 first_dispatch_chains）
+	TerminalChains int64 `json:"terminal_chains"`
+}
+
+// RoutingFrontierCandidate defines model for RoutingFrontierCandidate.
+type RoutingFrontierCandidate struct {
+	// AccountId unknown 候选为 0
+	AccountId            int64  `json:"account_id"`
+	Attempts             int64  `json:"attempts"`
+	CandidateFingerprint string `json:"candidate_fingerprint"`
+
+	// CostKnown known + 有成功样本 + 价格可解析
+	CostKnown bool `json:"cost_known"`
+
+	// CostPerSuccess 每次成功平均成本（微分，与 compiler 同式；cost_known=false 时无意义）
+	CostPerSuccess int64 `json:"cost_per_success"`
+
+	// Insufficient 样本 <30（与 explore 同门槛）
+	Insufficient bool `json:"insufficient"`
+
+	// Known 指纹在当前发布计划该路由候选目录内；false = 只呈现观测事实
+	Known             bool   `json:"known"`
+	LifecycleRevision int64  `json:"lifecycle_revision"`
+	MappedModel       string `json:"mapped_model"`
+
+	// OnFrontier Pareto 非支配（仅 known 且 cost_known 间扫描）
+	OnFrontier     bool   `json:"on_frontier"`
+	QualityClassId string `json:"quality_class_id"`
+
+	// SuccessLcb Wilson95 下界
+	SuccessLcb float64 `json:"success_lcb"`
+
+	// SuccessUcb Wilson95 上界
+	SuccessUcb float64 `json:"success_ucb"`
+	Successes  int64   `json:"successes"`
+	TemplateId int64   `json:"template_id"`
+
+	// TtftKnown 样本量足以给出区间
+	TtftKnown bool `json:"ttft_known"`
+
+	// TtftLcb TTFT 对数区间下界（ttft_known=false 时无意义）
+	TtftLcb float64 `json:"ttft_lcb"`
+	TtftUcb float64 `json:"ttft_ucb"`
+}
+
+// RoutingFrontierResponse defines model for RoutingFrontierResponse.
+type RoutingFrontierResponse struct {
+	Candidates     []RoutingFrontierCandidate `json:"candidates"`
+	PlanGeneration int64                      `json:"plan_generation"`
+	RouteClassId   string                     `json:"route_class_id"`
+}
+
+// RoutingPlanCandidate 候选静态身份（缺叶子引用时 identity-only，其余字段零值）
+type RoutingPlanCandidate struct {
+	AccountId int64 `json:"account_id"`
+
+	// Fingerprint 真实候选指纹 hex（不可导出 = 空串）
+	Fingerprint string `json:"fingerprint"`
+
+	// IdentityFingerprint rollup join 身份指纹 hex（compiler 合成规则同源）
+	IdentityFingerprint string `json:"identity_fingerprint"`
+	LifecycleRevision   int64  `json:"lifecycle_revision"`
+	MappedModel         string `json:"mapped_model"`
+	QualityClassId      string `json:"quality_class_id"`
+	TemplateId          int64  `json:"template_id"`
+
+	// UpstreamCostMultiplierBp 采购倍率 basis points（10000 = ×1）
+	UpstreamCostMultiplierBp int `json:"upstream_cost_multiplier_bp"`
+}
+
+// RoutingPlanExplore explore 决策表（发布序 + 权重 + 累积轮盘；序是语义不重排）
+type RoutingPlanExplore struct {
+	Cumulative []int64 `json:"cumulative"`
+	Fallback   []int64 `json:"fallback"`
+	Ids        []int64 `json:"ids"`
+	Total      int64   `json:"total"`
+
+	// Weights account_id（十进制字符串键）→ 权重
+	Weights map[string]int `json:"weights"`
+}
+
+// RoutingPlanRef 路由全身份（group+format+model+operation+route class）
+type RoutingPlanRef struct {
+	Format       string `json:"format"`
+	GroupId      int64  `json:"group_id"`
+	Model        string `json:"model"`
+	OperationTag string `json:"operation_tag"`
+	RouteClassId string `json:"route_class_id"`
+}
+
+// RoutingPlanResponse 当前发布计划快照（无历史 generation 查询面；空视图 = generation 0 + routes []）
+type RoutingPlanResponse struct {
+	Generation int64 `json:"generation"`
+
+	// Routes 全身份确定性路由序（与发布字节守卫同序）
+	Routes []RoutingPlanRoute `json:"routes"`
+}
+
+// RoutingPlanRoute defines model for RoutingPlanRoute.
+type RoutingPlanRoute struct {
+	// Candidates 通道账号并集，升序 AccountID
+	Candidates []RoutingPlanCandidate `json:"candidates"`
+
+	// Degraded degraded 候选发布序
+	Degraded []int64 `json:"degraded"`
+
+	// Explore explore 决策表（发布序 + 权重 + 累积轮盘；序是语义不重排）
+	Explore RoutingPlanExplore `json:"explore"`
+
+	// Primary primary 候选发布序
+	Primary []int64 `json:"primary"`
+
+	// Ref 路由全身份（group+format+model+operation+route class）
+	Ref RoutingPlanRef `json:"ref"`
+}
+
 // Rule defines model for Rule.
 type Rule struct {
 	CreatedAt time.Time `json:"CreatedAt"`
@@ -1927,6 +2104,21 @@ type GetRedemptionCodesIdUsesParams struct {
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// GetRoutingFlowParams defines parameters for GetRoutingFlow.
+type GetRoutingFlowParams struct {
+	Route string    `form:"route" json:"route"`
+	From  time.Time `form:"from" json:"from"`
+	To    time.Time `form:"to" json:"to"`
+}
+
+// GetRoutingFrontierParams defines parameters for GetRoutingFrontier.
+type GetRoutingFrontierParams struct {
+	Route string    `form:"route" json:"route"`
+	From  time.Time `form:"from" json:"from"`
+	To    time.Time `form:"to" json:"to"`
+	Limit *int      `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListRulesParams defines parameters for ListRules.
 type ListRulesParams struct {
 	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty"`
@@ -2297,6 +2489,15 @@ type ServerInterface interface {
 	// 某码的兑换记录（审计；码缺失 → 404）
 	// (GET /redemption-codes/{id}/uses)
 	GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Request, id int64, params GetRedemptionCodesIdUsesParams)
+	// 路由 flow 聚合（完整链边；按 terminal_at 归属窗口）
+	// (GET /routing/flow)
+	GetRoutingFlow(w http.ResponseWriter, r *http.Request, params GetRoutingFlowParams)
+	// 质量-成本前沿（rollup 质量 × 当前计划候选目录连接）
+	// (GET /routing/frontier)
+	GetRoutingFrontier(w http.ResponseWriter, r *http.Request, params GetRoutingFrontierParams)
+	// 当前发布路由计划解释（只读投影，无历史 generation 参数）
+	// (GET /routing/plan)
+	GetRoutingPlan(w http.ResponseWriter, r *http.Request)
 	// 规则列表（enabled 过滤，priority 升序）
 	// (GET /rules)
 	ListRules(w http.ResponseWriter, r *http.Request, params ListRulesParams)
@@ -2665,6 +2866,24 @@ func (_ Unimplemented) PostRedemptionCodesIdDeactivate(w http.ResponseWriter, r 
 // 某码的兑换记录（审计；码缺失 → 404）
 // (GET /redemption-codes/{id}/uses)
 func (_ Unimplemented) GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Request, id int64, params GetRedemptionCodesIdUsesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 路由 flow 聚合（完整链边；按 terminal_at 归属窗口）
+// (GET /routing/flow)
+func (_ Unimplemented) GetRoutingFlow(w http.ResponseWriter, r *http.Request, params GetRoutingFlowParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 质量-成本前沿（rollup 质量 × 当前计划候选目录连接）
+// (GET /routing/frontier)
+func (_ Unimplemented) GetRoutingFrontier(w http.ResponseWriter, r *http.Request, params GetRoutingFrontierParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 当前发布路由计划解释（只读投影，无历史 generation 参数）
+// (GET /routing/plan)
+func (_ Unimplemented) GetRoutingPlan(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4312,6 +4531,156 @@ func (siw *ServerInterfaceWrapper) GetRedemptionCodesIdUses(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// GetRoutingFlow operation middleware
+func (siw *ServerInterfaceWrapper) GetRoutingFlow(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRoutingFlowParams
+
+	// ------------- Required query parameter "route" -------------
+
+	if paramValue := r.URL.Query().Get("route"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "route"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "route", r.URL.Query(), &params.Route)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "from" -------------
+
+	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "to" -------------
+
+	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRoutingFlow(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRoutingFrontier operation middleware
+func (siw *ServerInterfaceWrapper) GetRoutingFrontier(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRoutingFrontierParams
+
+	// ------------- Required query parameter "route" -------------
+
+	if paramValue := r.URL.Query().Get("route"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "route"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "route", r.URL.Query(), &params.Route)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "from" -------------
+
+	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "to" -------------
+
+	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRoutingFrontier(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRoutingPlan operation middleware
+func (siw *ServerInterfaceWrapper) GetRoutingPlan(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRoutingPlan(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRules operation middleware
 func (siw *ServerInterfaceWrapper) ListRules(w http.ResponseWriter, r *http.Request) {
 
@@ -5617,6 +5986,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/redemption-codes/{id}/uses", wrapper.GetRedemptionCodesIdUses)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/routing/flow", wrapper.GetRoutingFlow)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/routing/frontier", wrapper.GetRoutingFrontier)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/routing/plan", wrapper.GetRoutingPlan)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/rules", wrapper.ListRules)
