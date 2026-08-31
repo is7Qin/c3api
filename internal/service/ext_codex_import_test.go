@@ -35,10 +35,9 @@ func importFixture(t *testing.T) (*Service, *fakeStore, *invRecorder) {
 }
 
 func mcPtr(v int) *int { return &v }
-func wPtr(v int) *int  { return &v }
 
 // TestImportCodexOAuthAccountsIdempotent 幂等矩阵（oauth）：新建 → imported；
-// 同键重导 → updated（凭据更新、身份沿用、并发/权重不动）；不同键共存；批内
+// 同键重导 → updated（凭据更新、身份沿用、并发不动）；不同键共存；批内
 // 同键后者胜。
 func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 	ctx := context.Background()
@@ -71,7 +70,6 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "a@example.com", acc.Name, "name = codex_email")
 		require.Equal(t, 25, acc.MaxConcurrency, "max_concurrency 缺省 25（非 8——用户裁决红绿）")
-		require.Equal(t, 100, acc.Weight, "weight 缺省 100")
 		require.Equal(t, tplID, acc.TemplateID)
 		gs, err := store.GetAccountGroups(ctx, acc.ID)
 		require.NoError(t, err)
@@ -96,7 +94,6 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
 		require.Equal(t, 25, acc.MaxConcurrency, "并发不动")
-		require.Equal(t, 100, acc.Weight, "权重不动")
 		gs, err := store.GetAccountGroups(ctx, acc.ID)
 		require.NoError(t, err)
 		require.Equal(t, []int64{gid}, gs, "归属不动（updated 不触碰）")
@@ -161,7 +158,7 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 
 	res, err = svc.ImportCodexPATAccounts(ctx, []domain.CodexPATImportItem{
 		{CodexEmail: "p@example.com", CodexAccountID: "p-1", CodexPATKey: "pat-2",
-			MaxConcurrency: mcPtr(3), Weight: wPtr(50)},
+			MaxConcurrency: mcPtr(3)},
 	}, &tplID, nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Imported)
@@ -174,7 +171,6 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 	acc, err := store.GetAccount(ctx, ext.AccountID)
 	require.NoError(t, err)
 	require.Equal(t, 25, acc.MaxConcurrency, "updated 并发不动（显式传 3 也不动——配置面分离）")
-	require.Equal(t, 100, acc.Weight, "updated 权重不动")
 
 	// 跨类型同键：oauth 端点命中 pat 行 → 行级 failed（不跨类型混写）；
 	// oauth 端点须配 oauth 模板（模板类型匹配校验——template 1 为 codex-oauth）
@@ -196,7 +192,7 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 }
 
 // TestImportCodexRowLevelFailures 行级失败：混合批计数正确 + failed index/error；
-// 校验矩阵（必填缺失/成对/expires 格式/email 格式/weight 负值 → 行级 failed）；
+// 校验矩阵（必填缺失/成对/expires 格式/email 格式 → 行级 failed）；
 // group_id 不存在 → 行级 failed（整体回滚无孤儿）。
 func TestImportCodexRowLevelFailures(t *testing.T) {
 	ctx := context.Background()
@@ -238,16 +234,13 @@ func TestImportCodexRowLevelFailures(t *testing.T) {
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
 			{CodexEmail: "", CodexAccountID: "v3", // email 必填
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-			{CodexEmail: "v4@example.com", CodexAccountID: "v4",
-				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt", Weight: wPtr(-1)},
 		}, &tplID, nil)
 		require.NoError(t, err)
 		require.Equal(t, 0, res.Imported)
-		require.Len(t, res.Failed, 4)
+		require.Len(t, res.Failed, 3)
 		require.Contains(t, res.Failed[0].Error, "RFC3339")
 		require.Contains(t, res.Failed[1].Error, "codex_account_id")
 		require.Contains(t, res.Failed[2].Error, "codex_email")
-		require.Contains(t, res.Failed[3].Error, "weight")
 	})
 
 	t.Run("expires valid RFC3339 accepted", func(t *testing.T) {

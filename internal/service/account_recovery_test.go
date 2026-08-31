@@ -8,14 +8,12 @@ import (
 	"context"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -43,79 +41,35 @@ func recoveryTestLogger(t *testing.T) (*logx.Logger, func() string) {
 	return logger, read
 }
 
-// TestUpdateAccountRecoveryAuditLog 失效恢复审计（T5 §4 日志面）：管理面
-// status→active 且账号此前已失效（failed_at 置位）→ 恢复操作日志留痕（单
-// 条 Info 含 account_id）；未失效账号置 active → 不留痕（恢复动作才审计）。
-func TestUpdateAccountRecoveryAuditLog(t *testing.T) {
+// TestRecoverAccountAuditLog 失效恢复审计（日志面）：fenced recover 清失效三
+// 字段 → Info 留痕含 account_id + 新 revision；PUT 全量更新不是恢复入口——
+// 不触碰失效字段、不留恢复痕迹。
+func TestRecoverAccountAuditLog(t *testing.T) {
 	ctx := context.Background()
 	fs := newFakeStore()
 	_, err := fs.CreateTemplate(ctx, &domain.Template{ID: 1, Name: "template", CredentialType: "api_key"})
 	require.NoError(t, err)
 	failed := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
-	a := &domain.Account{Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
-		Status: domain.StatusActive, Weight: 1, MaxConcurrency: 4, FailedAt: &failed}
-	created, err := fs.CreateAccount(ctx, a)
-	require.NoError(t, err)
-	healthy := &domain.Account{Name: "h", TemplateID: 1, UpstreamKey: "sk-h",
-		Status: domain.StatusActive, Weight: 1, MaxConcurrency: 4}
-	h2, err := fs.CreateAccount(ctx, healthy)
+	created, err := fs.CreateAccount(ctx, &domain.Account{Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
+		MaxConcurrency: 4, Enabled: true, FailedAt: &failed, LifecycleRevision: 1})
 	require.NoError(t, err)
 
 	logger, read := recoveryTestLogger(t)
 	svc := &Service{store: fs, inv: &invRecorder{}, log: logger}
 
-	// 已失效账号 status→active → 恢复审计留痕
+	// PUT 改名 → 失效字段保持、无恢复留痕（恢复唯一入口 = fenced recover）
 	cur, err := svc.GetAccount(ctx, created.ID)
 	require.NoError(t, err)
-	cur.Status = domain.StatusActive
+	cur.Name = "renamed"
 	_, err = svc.UpdateAccount(ctx, cur)
 	require.NoError(t, err)
+	require.NotContains(t, read(), "account recovered", "PUT 不是恢复入口，不留痕")
+
+	// fenced recover → 清失效 + 审计留痕
+	got, err := svc.RecoverAccount(ctx, created.ID, cur.LifecycleRevision)
+	require.NoError(t, err)
+	require.Nil(t, got.FailedAt, "recover 清 failed_at")
 	logs := read()
-	require.Contains(t, logs, "account failure cleared (status->active)", "恢复操作审计留痕")
+	require.Contains(t, logs, "account recovered", "恢复操作审计留痕")
 	require.Contains(t, logs, `"account_id":`+strconv.FormatInt(created.ID, 10), "审计含 account_id")
-
-	// 未失效账号 status→active → 不留痕（无恢复动作）
-	cur2, err := svc.GetAccount(ctx, h2.ID)
-	require.NoError(t, err)
-	cur2.Status = domain.StatusDisabled
-	_, err = svc.UpdateAccount(ctx, cur2)
-	require.NoError(t, err)
-	cur3, err := svc.GetAccount(ctx, h2.ID)
-	require.NoError(t, err)
-	cur3.Status = domain.StatusActive
-	_, err = svc.UpdateAccount(ctx, cur3)
-	require.NoError(t, err)
-	logs2 := read()
-	require.Equal(t, 1, strings.Count(logs2, "account failure cleared (status->active)"),
-		"仅真实恢复动作留痕一次")
-}
-
-// TestUpdateAccountsBatchRecoveryAuditLog 批量恢复审计（T5 §4 日志面）：批量
-// status→active → 操作级恢复留痕（批量路径不做逐账号旧值比较——含 count）。
-func TestUpdateAccountsBatchRecoveryAuditLog(t *testing.T) {
-	ctx := context.Background()
-	fs := newFakeStore()
-	_, err := fs.CreateTemplate(ctx, &domain.Template{ID: 1, Name: "template", CredentialType: "api_key"})
-	require.NoError(t, err)
-	first, err := fs.CreateAccount(ctx, &domain.Account{Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
-		Status: domain.StatusActive, Weight: 1, MaxConcurrency: 4})
-	require.NoError(t, err)
-	second, err := fs.CreateAccount(ctx, &domain.Account{Name: "b", TemplateID: 1, UpstreamKey: "sk-b",
-		Status: domain.StatusActive, Weight: 1, MaxConcurrency: 4})
-	require.NoError(t, err)
-
-	logger, read := recoveryTestLogger(t)
-	svc := &Service{store: fs, inv: &invRecorder{}, log: logger}
-
-	st := domain.StatusActive
-	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{first.ID, second.ID}, repository.AccountPatch{Status: &st}))
-	logs := read()
-	require.Contains(t, logs, "account failure cleared (batch status->active)", "批量恢复操作审计留痕")
-	require.Contains(t, logs, `"count":2`, "审计含批量 count")
-
-	// 非 active 批量 → 不留痕
-	st2 := domain.Status429
-	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{first.ID}, repository.AccountPatch{Status: &st2}))
-	logs2 := read()
-	require.Equal(t, 1, strings.Count(logs2, "account failure cleared (batch status->active)"))
 }

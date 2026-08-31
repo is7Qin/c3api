@@ -88,7 +88,7 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 	return &Repository{
 		Templates:      &TemplateRepo{client: client, driver: drv},
 		Accounts:       accounts,
-		Groups:         &GroupRepo{client: client, accounts: accounts, driver: drv},
+		Groups:         &GroupRepo{client: client, driver: drv},
 		Users:          &UserRepo{client: client, driver: drv},
 		Keys:           &KeyRepo{client: client, driver: drv},
 		Assignments:    &GroupAssignmentRepo{client: client},
@@ -246,12 +246,12 @@ func (r *Repository) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.A
 	return r.Accounts.ListAccounts(ctx, q)
 }
 
-func (r *Repository) UpdateAccount(ctx context.Context, a *domain.Account, cooldownUntil *time.Time) (*domain.Account, error) {
-	return r.Accounts.UpdateAccount(ctx, a, cooldownUntil)
+func (r *Repository) UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
+	return r.Accounts.UpdateAccount(ctx, a)
 }
 
-func (r *Repository) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64, cooldownUntil *time.Time) (*domain.Account, error) {
-	return r.Accounts.UpdateAccountCAS(ctx, a, expectedRevision, cooldownUntil)
+func (r *Repository) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64) (*domain.Account, error) {
+	return r.Accounts.UpdateAccountCAS(ctx, a, expectedRevision)
 }
 
 func (r *Repository) FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error {

@@ -3,7 +3,6 @@
 package account
 
 import (
-	"fmt"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
@@ -23,12 +22,6 @@ const (
 	FieldBaseURL = "base_url"
 	// FieldUpstreamKey holds the string denoting the upstream_key field in the database.
 	FieldUpstreamKey = "upstream_key"
-	// FieldStatus holds the string denoting the status field in the database.
-	FieldStatus = "status"
-	// FieldCooldownUntil holds the string denoting the cooldown_until field in the database.
-	FieldCooldownUntil = "cooldown_until"
-	// FieldWeight holds the string denoting the weight field in the database.
-	FieldWeight = "weight"
 	// FieldMaxConcurrency holds the string denoting the max_concurrency field in the database.
 	FieldMaxConcurrency = "max_concurrency"
 	// FieldLastError holds the string denoting the last_error field in the database.
@@ -89,9 +82,6 @@ var Columns = []string{
 	FieldTemplateID,
 	FieldBaseURL,
 	FieldUpstreamKey,
-	FieldStatus,
-	FieldCooldownUntil,
-	FieldWeight,
 	FieldMaxConcurrency,
 	FieldLastError,
 	FieldLastUsedAt,
@@ -123,8 +113,6 @@ func ValidColumn(column string) bool {
 }
 
 var (
-	// DefaultWeight holds the default value on creation for the "weight" field.
-	DefaultWeight int
 	// DefaultMaxConcurrency holds the default value on creation for the "max_concurrency" field.
 	DefaultMaxConcurrency int
 	// DefaultEnabled holds the default value on creation for the "enabled" field.
@@ -140,34 +128,6 @@ var (
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 )
-
-// Status defines the type for the "status" enum field.
-type Status string
-
-// StatusActive is the default value of the Status enum.
-const DefaultStatus = StatusActive
-
-// Status values.
-const (
-	StatusActive    Status = "active"
-	StatusUnhealthy Status = "unhealthy"
-	Status429       Status = "429"
-	StatusDisabled  Status = "disabled"
-)
-
-func (s Status) String() string {
-	return string(s)
-}
-
-// StatusValidator is a validator for the "status" field enum values. It is called by the builders before save.
-func StatusValidator(s Status) error {
-	switch s {
-	case StatusActive, StatusUnhealthy, Status429, StatusDisabled:
-		return nil
-	default:
-		return fmt.Errorf("account: invalid enum value for status field: %q", s)
-	}
-}
 
 // OrderOption defines the ordering options for the Account queries.
 type OrderOption func(*sql.Selector)
@@ -195,21 +155,6 @@ func ByBaseURL(opts ...sql.OrderTermOption) OrderOption {
 // ByUpstreamKey orders the results by the upstream_key field.
 func ByUpstreamKey(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpstreamKey, opts...).ToFunc()
-}
-
-// ByStatus orders the results by the status field.
-func ByStatus(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldStatus, opts...).ToFunc()
-}
-
-// ByCooldownUntil orders the results by the cooldown_until field.
-func ByCooldownUntil(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCooldownUntil, opts...).ToFunc()
-}
-
-// ByWeight orders the results by the weight field.
-func ByWeight(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldWeight, opts...).ToFunc()
 }
 
 // ByMaxConcurrency orders the results by the max_concurrency field.

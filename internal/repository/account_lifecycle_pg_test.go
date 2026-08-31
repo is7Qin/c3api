@@ -16,7 +16,7 @@ func TestPGAccountCostDefaults(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost-default", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost-default", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), a.LifecycleRevision, "revision starts at 1")
 	require.True(t, a.Enabled, "enabled defaults true")
@@ -31,7 +31,7 @@ func TestPGAccountCostValidation(t *testing.T) {
 	tpl := seedPGTemplate(t, repos)
 	// Negative multiplier should be rejected via service validation, but repo also should allow? Test at repo level: direct repo create with negative should still write (service guards), but we test service path separately.
 	// Here test that cost 0, 10000, high succeed via CAS update.
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.UpdateAccountCostMultiplierCAS(ctx, a.ID, a.LifecycleRevision, 0))
 	got, err := repos.Accounts.GetAccount(ctx, a.ID)
@@ -53,7 +53,7 @@ func TestPGAccountCacheDomain(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cache", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cache", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	require.NoError(t, err)
 	shared := "cache.example.com"
 	require.NoError(t, repos.Accounts.UpdateAccountCacheDomainCAS(ctx, a.ID, a.LifecycleRevision, &shared))
@@ -71,7 +71,7 @@ func TestPGAccountLifecycleRevision(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "lifecycle", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "lifecycle", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	require.NoError(t, err)
 	rev1 := a.LifecycleRevision
 	require.Equal(t, int64(1), rev1)
@@ -109,7 +109,7 @@ func TestPGAccountRevisionStaleReject(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 1, MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
 	require.NoError(t, err)
 	rev1 := a.LifecycleRevision
 	failedAt := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)

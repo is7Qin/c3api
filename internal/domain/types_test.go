@@ -5,6 +5,9 @@
 package domain
 
 import (
+	"encoding/json"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -64,4 +67,94 @@ func TestTruncateErrMsg(t *testing.T) {
 	require.True(t, utf8.ValidString(got), "截断不得产生非法 UTF-8")
 	// 字节超限但字符数未超限 → 原样返回
 	require.Equal(t, strings.Repeat("界", 300), TruncateErrMsg(strings.Repeat("界", 300)))
+}
+
+// —— intelligent-routing cutover 领域契约锁（中性结构断言：只枚举现存契约面，
+// 契约面变更 = 显式改白名单，防止运行时调度态重新渗入持久/API 实体）——
+
+// exportedFieldNames 导出字段名升序集合（结构契约枚举用）。
+func exportedFieldNames(rt reflect.Type) []string {
+	names := make([]string, 0, rt.NumField())
+	for i := 0; i < rt.NumField(); i++ {
+		if f := rt.Field(i); f.IsExported() {
+			names = append(names, f.Name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+func TestAccountDomainContractFieldSet(t *testing.T) {
+	// 账号实体 = 持久/API 契约面；运行时调度态一律由 scheduler 内存视图承载，
+	// 不进本结构。
+	require.Equal(t, []string{
+		"BaseURL", "CacheDomain", "CreatedAt", "DeletedAt", "Enabled", "Ext",
+		"FailedAt", "FailureSource", "GroupIDs", "ID", "LastError", "LastUsedAt",
+		"LifecycleRevision", "MaxConcurrency", "Name", "Template", "TemplateID",
+		"UpdatedAt", "UpstreamCostMultiplierBp", "UpstreamKey",
+	}, exportedFieldNames(reflect.TypeOf(Account{})))
+}
+
+func TestCodexImportItemContractFieldSets(t *testing.T) {
+	// 批量导入行 = 配置面（max_concurrency）+ 凭据/身份，无调度旋钮。
+	require.Equal(t, []string{
+		"CodexAccountID", "CodexEmail", "CodexOAuthExpiresAt",
+		"CodexOAuthRefreshToken", "CodexOAuthToken", "MaxConcurrency",
+	}, exportedFieldNames(reflect.TypeOf(CodexOAuthImportItem{})))
+	require.Equal(t, []string{
+		"CodexAccountID", "CodexEmail", "CodexPATKey", "MaxConcurrency",
+	}, exportedFieldNames(reflect.TypeOf(CodexPATImportItem{})))
+}
+
+func TestAccountStatusIsRuntimeOnlyType(t *testing.T) {
+	// AccountStatus 只允许作为内存调度视图（RuntimeInfo 等）的字段类型；
+	// 账号持久/API 契约结构与规则动作契约一律不得携带该类型字段。
+	statusT := reflect.TypeOf(AccountStatus(""))
+	statusPT := reflect.TypeOf((*AccountStatus)(nil))
+	for _, v := range []any{Account{}, RuleThen{}, CodexOAuthImportItem{}, CodexPATImportItem{}} {
+		rt := reflect.TypeOf(v)
+		for i := 0; i < rt.NumField(); i++ {
+			f := rt.Field(i)
+			require.NotEqual(t, statusT, f.Type, "%s.%s", rt.Name(), f.Name)
+			require.NotEqual(t, statusPT, f.Type, "%s.%s", rt.Name(), f.Name)
+		}
+	}
+}
+
+func TestRuleThenJSONContractShape(t *testing.T) {
+	// then 的 JSON 表示（API then 对象 = then_json 落库形态）键集即契约全集；
+	// 全字段填充后 marshal 不得多键、round-trip 不得丢键。
+	rc := 502
+	msg := "upstream rejected request"
+	dur := int64(1000)
+	full := RuleThen{
+		ResponseCode:  &rc,
+		CustomMessage: &msg,
+		Throttle: &ThrottleAction{
+			Scope: ThrottleScopeAccount, Mode: ThrottleModeOpen, DurationMs: &dur,
+		},
+		FailAccount: true,
+	}
+	b, err := json.Marshal(full)
+	require.NoError(t, err)
+	var keys map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(b, &keys))
+	keyNames := make([]string, 0, len(keys))
+	for k := range keys {
+		keyNames = append(keyNames, k)
+	}
+	slices.Sort(keyNames)
+	require.Equal(t, []string{"custom_message", "fail_account", "response_code", "throttle"}, keyNames)
+	var back RuleThen
+	require.NoError(t, json.Unmarshal(b, &back))
+	require.Equal(t, full, back)
+}
+
+func TestRuleThenUnknownKeyHasNoLandingSite(t *testing.T) {
+	// 域表示无法保留契约外键（写入面的严格拒绝由 service 边界
+	// DisallowUnknownFields 承载；此处锁域结构本身无落点）。
+	var got RuleThen
+	require.NoError(t, json.Unmarshal([]byte(`{"response_code":502,"unexpected_key":"x"}`), &got))
+	rc := 502
+	require.Equal(t, RuleThen{ResponseCode: &rc}, got)
 }

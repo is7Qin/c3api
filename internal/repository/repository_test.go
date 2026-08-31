@@ -23,7 +23,6 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/repository"
@@ -189,12 +188,18 @@ func templateRow() *pgxmock.Rows {
 			time.Time{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
-func accountRow(status string) *pgxmock.Rows {
-	return pgxmock.NewRows([]string{"id", "name", "template_id", "upstream_key", "status",
-		"cooldown_until", "weight", "max_concurrency", "last_error", "last_used_at",
+func accountRow() *pgxmock.Rows {
+	// NULL 列必须用类型化 sql.Null* 零值表达：pgxmock 的 Scan 对裸 nil 直接
+	// 把 dest 槽位覆写成 nil，ent 生成码按 *sql.NullX 断言读取即炸
+	// （"unexpected type <nil>"）。
+	return pgxmock.NewRows([]string{"id", "name", "template_id", "base_url", "upstream_key",
+		"max_concurrency", "last_error", "last_used_at", "failed_at", "failure_source",
+		"enabled", "lifecycle_revision", "upstream_cost_multiplier_bp", "cache_domain",
 		"updated_at", "deleted_at", "created_at"}).
-		AddRow(int64(2), "acc1", int64(1), "sk-x", status, time.Time{}, int64(80), int64(4), "", time.Time{},
-			time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Time{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+		AddRow(int64(2), "acc1", int64(1), sql.NullString{}, "sk-x",
+			int64(4), sql.NullString{}, sql.NullTime{}, sql.NullTime{}, sql.NullString{},
+			true, int64(1), int64(10000), sql.NullString{},
+			time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), sql.NullTime{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
 func TestTemplateCRUD(t *testing.T) {
@@ -283,8 +288,8 @@ func TestAccountAndGroup(t *testing.T) {
 	tr.pool.ExpectExec(q(`SELECT pg_advisory_xact_lock`)).WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
 	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
 	tr.pool.ExpectQuery(q(`INSERT INTO "accounts"`)).
-		WithArgs("acc1", "sk-x", account.Status("active"), int(80), int(4),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), int64(1)).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(2)))
 	tr.pool.ExpectCommit()
 
@@ -313,7 +318,7 @@ func TestAccountAndGroup(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	tr.pool.ExpectQuery(q(`FROM "accounts" WHERE`)).
 		WithArgs(int64(2)).
-		WillReturnRows(accountRow("active"))
+		WillReturnRows(accountRow())
 	tr.pool.ExpectCommit()
 
 	// GetAccountGroups -> JOIN (SELECT ... FROM "account_groups" ...) 读分组 id
@@ -326,7 +331,7 @@ func TestAccountAndGroup(t *testing.T) {
 	// eager-load 的 `WHERE group_id IN (全部组 id)`——组数 >65,535 超 PG
 	// 参数上限）
 	tr.pool.ExpectQuery(q(`FROM "accounts"`)).
-		WillReturnRows(accountRow("active"))
+		WillReturnRows(accountRow())
 	tr.pool.ExpectQuery(q(`FROM "templates"`)).
 		WithArgs(int64(1)).
 		WillReturnRows(templateRow())
@@ -348,27 +353,17 @@ func TestAccountAndGroup(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"account_id", "group_id"}).
 			AddRow(int64(2), int64(3)))
 
-	// UpdateStatus -> Tx: UPDATE + re-SELECT + Commit
-	tr.pool.ExpectBegin()
-	tr.pool.ExpectExec(q(`UPDATE "accounts" SET`)).
-		WithArgs(account.Status("429"), pgxmock.AnyArg(), int64(2)).
-		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	// Account Get -> round-trip
 	tr.pool.ExpectQuery(q(`FROM "accounts" WHERE`)).
 		WithArgs(int64(2)).
-		WillReturnRows(accountRow("429"))
-	tr.pool.ExpectCommit()
-
-	// Account Get -> status persisted
-	tr.pool.ExpectQuery(q(`FROM "accounts" WHERE`)).
-		WithArgs(int64(2)).
-		WillReturnRows(accountRow("429"))
+		WillReturnRows(accountRow())
 
 	tpl, err := tr.repos.Templates.CreateTemplate(ctx(), &domain.Template{
 		Name: "t", BaseURL: "https://u/v1", SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic}, ModelMapping: domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	acc, err := tr.repos.Accounts.CreateAccount(ctx(), &domain.Account{
-		Name: "acc1", TemplateID: tpl.ID, UpstreamKey: "sk-x", Weight: 80, MaxConcurrency: 4,
+		Name: "acc1", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 4,
 	})
 	require.NoError(t, err)
 	g, err := tr.repos.Groups.CreateGroup(ctx(), &domain.Group{Name: "g1", Visibility: domain.GroupVisibilityPublic})
@@ -383,12 +378,9 @@ func TestAccountAndGroup(t *testing.T) {
 	require.Len(t, got, 1)
 	require.Equal(t, acc.ID, got[0].ID)
 	require.NotNil(t, got[0].Template)
-	// Phase 3a：LoadGroupKeys 已删除（key 独立表；LoadKeys 覆盖见真实 PG 测试
-	// pg_auth_keys_test.go）
-	require.NoError(t, tr.repos.Accounts.UpdateAccountStatus(ctx(), acc.ID, domain.Status429, nil, nil, nil))
 	a2, err := tr.repos.Accounts.GetAccount(ctx(), acc.ID)
 	require.NoError(t, err)
-	require.Equal(t, domain.Status429, a2.Status, "status persisted")
+	require.Equal(t, acc.ID, a2.ID, "account round-trip")
 	tr.expectDone(t)
 }
 
@@ -701,8 +693,8 @@ func TestDeleteTemplatesBatchRollback(t *testing.T) {
 func TestUpdateAccountsBatch(t *testing.T) {
 	tr := newRepos(t)
 	name := "renamed-acc"
-	weight := 50
-	st := domain.StatusActive
+	mc := 6
+	enabled := true
 
 	tr.pool.ExpectBegin()
 	tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url FROM accounts WHERE`)).
@@ -712,24 +704,17 @@ func TestUpdateAccountsBatch(t *testing.T) {
 			AddRow(int64(5), int64(1), nil))
 	tr.pool.ExpectExec(q(`SELECT pg_advisory_xact_lock`)).WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
 	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
-	// 每个 id：UPDATE 只含 patch 提供的字段（name/status/weight + updated_at），
-	// 无 template_id/upstream_key/max_concurrency —— WithArgs 精确断言 Set 链列。
+	// 非 fenced 批量（仅 name/max_concurrency/enabled）：每 id 一条 UPDATE，无 re-SELECT。
 	tr.pool.ExpectExec(q(`UPDATE "accounts" SET`)).
-		WithArgs(name, account.Status("active"), weight, pgxmock.AnyArg(), int64(2)).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	tr.pool.ExpectQuery(q(`FROM "accounts" WHERE`)).
-		WithArgs(int64(2)).
-		WillReturnRows(accountRow("active"))
 	tr.pool.ExpectExec(q(`UPDATE "accounts" SET`)).
-		WithArgs(name, account.Status("active"), weight, pgxmock.AnyArg(), int64(5)).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	tr.pool.ExpectQuery(q(`FROM "accounts" WHERE`)).
-		WithArgs(int64(5)).
-		WillReturnRows(accountRow("active"))
 	tr.pool.ExpectCommit()
 
 	err := tr.repos.Accounts.UpdateAccountsBatch(ctx(), []int64{2, 5}, repository.AccountPatch{
-		Name: &name, Status: &st, Weight: &weight,
+		Name: &name, MaxConcurrency: &mc, Enabled: &enabled,
 	})
 	require.NoError(t, err)
 	tr.expectDone(t)

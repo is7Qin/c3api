@@ -6,7 +6,6 @@ package service
 
 import (
 	"context"
-	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
@@ -91,14 +90,15 @@ func (s *Service) UpdateAccount(ctx context.Context, a *domain.Account) (*domain
 	// clients 失效）。查询失败 → 空集 + Warn（调度器 ≤30s 同步兜底）。
 	oldGroups, gErr := s.store.GetAccountGroups(ctx, a.ID)
 	keyChanged := false
-	recovered := false // T5 失效恢复审计：此前已失效（failed_at 置位）→ status→active
 	var curForCAS *domain.Account
 	if cur, err := s.store.GetAccount(ctx, a.ID); err == nil {
 		curForCAS = cur
 		// 生命周期独占字段回填（fenced 端点所有权）：PUT 的 handler 转换面不携带
 		// enabled/采购倍率/缓存域/revision（零值），repo 全字段 Set 会把零值直接
 		// 落库 = 静默 clobber（禁用账号、倍率归 0、清缓存域）。这些字段只能经
-		// CAS 端点变更，PUT 一律以当前值覆盖入参零值。
+		// CAS 端点变更，PUT 一律以当前值覆盖入参零值。失效字段
+		// （failed_at/last_error/failure_source）同样不在 PUT 写面——恢复唯一
+		// 入口 POST /accounts/{id}/recover（fenced）。
 		a.Enabled = cur.Enabled
 		a.UpstreamCostMultiplierBp = cur.UpstreamCostMultiplierBp
 		a.CacheDomain = cur.CacheDomain
@@ -117,35 +117,24 @@ func (s *Service) UpdateAccount(ctx context.Context, a *domain.Account) (*domain
 			newB = *a.BaseURL
 		}
 		keyChanged = keyChanged || curB != newB
-		recovered = cur.FailedAt != nil && a.Status == domain.StatusActive
-	}
-	var cooldownUntil *time.Time
-	if a.Status == domain.StatusActive {
-		now := time.Now()
-		cooldownUntil = &now
 	}
 	var updated *domain.Account
-	if keyChanged || recovered {
+	if keyChanged {
 		expected := int64(1)
 		if curForCAS != nil {
 			expected = curForCAS.LifecycleRevision
 		} else if fetched, ferr := s.store.GetAccount(ctx, a.ID); ferr == nil {
 			expected = fetched.LifecycleRevision
 		}
-		updated, err = s.store.UpdateAccountCAS(ctx, a, expected, cooldownUntil)
+		updated, err = s.store.UpdateAccountCAS(ctx, a, expected)
 		if err != nil {
 			return nil, mapRepoErr(err)
 		}
 	} else {
-		updated, err = s.store.UpdateAccount(ctx, a, cooldownUntil)
+		updated, err = s.store.UpdateAccount(ctx, a)
 		if err != nil {
 			return nil, err
 		}
-	}
-	if recovered && s.log != nil {
-		// T5 §4 恢复操作审计（日志面）：status→active 隐含清 failed_at +
-		// last_error（repo 层执行），此处留痕恢复动作。
-		s.log.Info("account failure cleared (status->active)", logx.Int64("account_id", a.ID))
 	}
 	if a.GroupIDs != nil {
 		// nil = 不变；非 nil = 替换（含空数组 = 清空）。
@@ -244,17 +233,8 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	if p.GroupIDs != nil {
 		gids = append(gids, (*p.GroupIDs)...)
 	}
-	if p.Status != nil && *p.Status == domain.StatusActive {
-		now := time.Now()
-		p.CooldownUntil = &now
-	}
 	if err := mapRepoErr(s.store.UpdateAccountsBatch(ctx, ids, p)); err != nil {
 		return err
-	}
-	if p.Status != nil && *p.Status == domain.StatusActive && s.log != nil {
-		// T5 §4 恢复操作审计（批量）：status→active 隐含清 failed_at +
-		// last_error（repo 层执行——批量路径不做逐账号旧值比较，操作级留痕）。
-		s.log.Info("account failure cleared (batch status->active)", logx.Int("count", len(ids)))
 	}
 	// 评审 I-3：nil = 未提供；空串 = 清除 upstream_key（同为变更语义）。
 	// 批量路径不做逐账号旧值比较（需 N 次 GetAccount），只要提供了
@@ -266,42 +246,6 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	return nil
 }
 
-// ResetAccountsCooldownBatch 批量重置账号冷却：validateIDs → 预取目标
-// 存在性 + 旧组并集 → 合成 patch {Status:active, CooldownUntil:now}
-// 复用 UpdateAccountsBatch（触发既有 failed_at/last_error 清理 + 新冷却写入）
-// → 恢复审计 → 组级失效 + NOTIFY。
-func (s *Service) ResetAccountsCooldownBatch(ctx context.Context, ids []int64) (int, error) {
-	if err := validateIDs(ids); err != nil {
-		return 0, err
-	}
-	var gids []int64
-	for _, id := range ids {
-		if _, err := s.store.GetAccount(ctx, id); err != nil {
-			return 0, mapRepoErr(err)
-		}
-		gs, err := s.store.GetAccountGroups(ctx, id)
-		if err != nil {
-			if s.log != nil {
-				s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(err))
-			}
-			continue
-		}
-		gids = append(gids, gs...)
-	}
-	now := time.Now()
-	st := domain.StatusActive
-	patch := repository.AccountPatch{Status: &st, CooldownUntil: &now}
-	if err := mapRepoErr(s.store.UpdateAccountsBatch(ctx, ids, patch)); err != nil {
-		return 0, err
-	}
-	if s.log != nil {
-		s.log.Info("account failure cleared (batch status->active)", logx.Int("count", len(ids)))
-	}
-	s.inv.Accounts(gids, false)
-	s.publish(ctx, notify.Change{Groups: gids})
-	return len(ids), nil
-}
-
 // groupsOf 账号分组 id 列表（nil = 无分组）。
 func groupsOf(a *domain.Account) []int64 {
 	if a.GroupIDs == nil {
@@ -310,19 +254,14 @@ func groupsOf(a *domain.Account) []int64 {
 	return *a.GroupIDs
 }
 
-// AccountView 是账号的管理端视图（含调度器运行时信息）。Status/CooldownUntil
-// 覆盖嵌入 Account 的同名字段（Go 字段提升规则：同名顶层字段遮蔽嵌入字段）：
-// 合并后列表显示 = 调度器内存权威（A-4，2026-08-19）——回写丢失/失败时内存与
-// DB 不一致，管理端显示与 Select 请求行为同源（overview 聚合早已用内存状态，
-// A-4 后列表口径与其统一）；DB 列仍是持久化镜像。JSON 键名与嵌入字段默认
-// 一致（"Status"/"CooldownUntil"，形状不变）。
+// AccountView 是账号的管理端视图（含调度器运行时信息）。运行时并发/EWMA
+// 指标与请求路径同源（快照原子读）；账号生命周期（enabled/failed_at）与失效
+// 恢复走 fenced 端点，不在视图内重复。
 type AccountView struct {
 	*domain.Account
-	Status        domain.AccountStatus `json:"Status"`
-	CooldownUntil *time.Time           `json:"CooldownUntil"`
-	Concurrency   int64                `json:"concurrency"`
-	ErrRate       float64              `json:"err_rate"`
-	ErrCount      int                  `json:"err_count"`
+	Concurrency int64   `json:"concurrency"`
+	ErrRate     float64 `json:"err_rate"`
+	ErrCount    int     `json:"err_count"`
 }
 
 // ListAccountViews 账号管理端视图（含调度器运行时信息）。handler 列表入口，
@@ -337,15 +276,10 @@ func (s *Service) ListAccountViews(ctx context.Context, q repository.ListQuery) 
 	}
 	out := make([]*AccountView, 0, len(accs))
 	for _, a := range accs {
-		// 顶层覆盖字段初始化为 DB 值（sched 未装配/快照外时回退 DB 镜像——
-		// 与嵌入字段默认序列化形状一致）
-		v := &AccountView{Account: a, Status: a.Status, CooldownUntil: a.CooldownUntil}
+		v := &AccountView{Account: a}
 		if s.sched != nil {
 			if ri, ok := s.sched.Runtime(a.ID); ok {
 				v.Concurrency, v.ErrRate, v.ErrCount = ri.Concurrency, ri.ErrRate, ri.ErrCount
-				// A-4：Status/CooldownUntil 合并调度器内存值（快照内账号必有
-				// Runtime；快照未加载时保持 DB 值——与请求路径不可达一致）
-				v.Status, v.CooldownUntil = ri.Status, ri.CooldownUntil
 			}
 		}
 		out = append(out, v)

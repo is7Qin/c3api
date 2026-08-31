@@ -25,7 +25,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 	})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "bu1", TemplateID: tpl.ID, UpstreamKey: "sk-bu1", Weight: 1, MaxConcurrency: 8,
+		Name: "bu1", TemplateID: tpl.ID, UpstreamKey: "sk-bu1", MaxConcurrency: 8,
 	})
 	require.NoError(t, err)
 
@@ -37,7 +37,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 	// 单条更新设值 → 读回
 	b := "https://acc.example.com"
 	acc.BaseURL = &b
-	updated, err := repos.Accounts.UpdateAccount(ctx, acc, nil)
+	updated, err := repos.Accounts.UpdateAccount(ctx, acc)
 	require.NoError(t, err)
 	require.NotNil(t, updated.BaseURL)
 	require.Equal(t, b, *updated.BaseURL)
@@ -48,7 +48,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 
 	// 清空：nil → NULL 往返（继承模板）
 	acc.BaseURL = nil
-	_, err = repos.Accounts.UpdateAccount(ctx, acc, nil)
+	_, err = repos.Accounts.UpdateAccount(ctx, acc)
 	require.NoError(t, err)
 	got, err = repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 
 	// --- 批量三态（C1） ---
 	acc2, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "bu2", TemplateID: tpl.ID, UpstreamKey: "sk-bu2", Weight: 1, MaxConcurrency: 8,
+		Name: "bu2", TemplateID: tpl.ID, UpstreamKey: "sk-bu2", MaxConcurrency: 8,
 	})
 	require.NoError(t, err)
 

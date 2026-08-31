@@ -772,7 +772,7 @@ func strPtr(s string) *string { return &s }
 func seedExtAccount(t *testing.T, svc *Service, tplID int64) *domain.Account {
 	t.Helper()
 	a, err := svc.CreateAccount(context.Background(), &domain.Account{
-		Name: "a", TemplateID: tplID, UpstreamKey: "sk-a", Weight: 1, MaxConcurrency: 8,
+		Name: "a", TemplateID: tplID, UpstreamKey: "sk-a", MaxConcurrency: 8,
 	})
 	require.NoError(t, err)
 	return a

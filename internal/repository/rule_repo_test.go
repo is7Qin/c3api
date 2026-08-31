@@ -20,7 +20,7 @@ import (
 // when/then JSON 的期望字节（json.Marshal 对 map 按键排序输出，与 ent 落库一致）。
 const (
 	ruleWhenJSON = `{"count_429_ge":5,"http_status":429,"kind":"http_status","ratio_429_ge":0.5,"window_seconds":60}`
-	ruleThenJSON = `{"cooldown":"30s","status":"429","weight":80}`
+	ruleThenJSON = `{"throttle":{"duration_ms":30000,"mode":"open","scope":"account","use_reset":false}}`
 )
 
 func ruleRow() *pgxmock.Rows {
@@ -39,8 +39,10 @@ func ruleCRUDWhen() domain.RuleWhen {
 }
 
 func ruleCRUDThen() domain.RuleThen {
-	st, cd, wt := domain.Status429, "30s", 80
-	return domain.RuleThen{Status: &st, Cooldown: &cd, Weight: &wt}
+	d := int64(30000)
+	return domain.RuleThen{Throttle: &domain.ThrottleAction{
+		Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: &d,
+	}}
 }
 
 func TestRuleCRUD(t *testing.T) {
@@ -106,11 +108,13 @@ func TestRuleCRUD(t *testing.T) {
 	require.Equal(t, 429, *rows[0].When.HTTPStatus, "when JSON roundtrip")
 	require.Equal(t, 5, *rows[0].When.Count429GE)
 	require.Equal(t, 0.5, *rows[0].When.Ratio429GE)
-	require.Equal(t, domain.Status429, *rows[0].Then.Status, "then JSON roundtrip")
-	require.Equal(t, "30s", *rows[0].Then.Cooldown)
-	require.Equal(t, 80, *rows[0].Then.Weight)
+	require.NotNil(t, rows[0].Then.Throttle, "then JSON roundtrip")
+	require.Equal(t, domain.ThrottleScopeAccount, rows[0].Then.Throttle.Scope)
+	require.Equal(t, domain.ThrottleModeOpen, rows[0].Then.Throttle.Mode)
+	require.Equal(t, int64(30000), *rows[0].Then.Throttle.DurationMs)
+	require.False(t, rows[0].Then.Throttle.UseReset)
 	require.Nil(t, rows[1].When.Kind, "空 {} → 全 nil 指针")
-	require.Nil(t, rows[1].Then.Status)
+	require.Nil(t, rows[1].Then.Throttle)
 
 	enabled := true
 	rows, err = tr.repos.Rules.ListRules(ctx(), &enabled)

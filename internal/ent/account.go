@@ -26,12 +26,6 @@ type Account struct {
 	BaseURL *string `json:"base_url,omitempty"`
 	// UpstreamKey holds the value of the "upstream_key" field.
 	UpstreamKey string `json:"upstream_key,omitempty"`
-	// Status holds the value of the "status" field.
-	Status account.Status `json:"status,omitempty"`
-	// CooldownUntil holds the value of the "cooldown_until" field.
-	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
-	// Weight holds the value of the "weight" field.
-	Weight int `json:"weight,omitempty"`
 	// MaxConcurrency holds the value of the "max_concurrency" field.
 	MaxConcurrency int `json:"max_concurrency,omitempty"`
 	// LastError holds the value of the "last_error" field.
@@ -111,11 +105,11 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case account.FieldEnabled:
 			values[i] = new(sql.NullBool)
-		case account.FieldID, account.FieldTemplateID, account.FieldWeight, account.FieldMaxConcurrency, account.FieldLifecycleRevision, account.FieldUpstreamCostMultiplierBp:
+		case account.FieldID, account.FieldTemplateID, account.FieldMaxConcurrency, account.FieldLifecycleRevision, account.FieldUpstreamCostMultiplierBp:
 			values[i] = new(sql.NullInt64)
-		case account.FieldName, account.FieldBaseURL, account.FieldUpstreamKey, account.FieldStatus, account.FieldLastError, account.FieldFailureSource, account.FieldCacheDomain:
+		case account.FieldName, account.FieldBaseURL, account.FieldUpstreamKey, account.FieldLastError, account.FieldFailureSource, account.FieldCacheDomain:
 			values[i] = new(sql.NullString)
-		case account.FieldCooldownUntil, account.FieldLastUsedAt, account.FieldFailedAt, account.FieldUpdatedAt, account.FieldDeletedAt, account.FieldCreatedAt:
+		case account.FieldLastUsedAt, account.FieldFailedAt, account.FieldUpdatedAt, account.FieldDeletedAt, account.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -162,25 +156,6 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field upstream_key", values[i])
 			} else if value.Valid {
 				_m.UpstreamKey = value.String
-			}
-		case account.FieldStatus:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field status", values[i])
-			} else if value.Valid {
-				_m.Status = account.Status(value.String)
-			}
-		case account.FieldCooldownUntil:
-			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field cooldown_until", values[i])
-			} else if value.Valid {
-				_m.CooldownUntil = new(time.Time)
-				*_m.CooldownUntil = value.Time
-			}
-		case account.FieldWeight:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field weight", values[i])
-			} else if value.Valid {
-				_m.Weight = int(value.Int64)
 			}
 		case account.FieldMaxConcurrency:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -324,17 +299,6 @@ func (_m *Account) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("upstream_key=")
 	builder.WriteString(_m.UpstreamKey)
-	builder.WriteString(", ")
-	builder.WriteString("status=")
-	builder.WriteString(fmt.Sprintf("%v", _m.Status))
-	builder.WriteString(", ")
-	if v := _m.CooldownUntil; v != nil {
-		builder.WriteString("cooldown_until=")
-		builder.WriteString(v.Format(time.ANSIC))
-	}
-	builder.WriteString(", ")
-	builder.WriteString("weight=")
-	builder.WriteString(fmt.Sprintf("%v", _m.Weight))
 	builder.WriteString(", ")
 	builder.WriteString("max_concurrency=")
 	builder.WriteString(fmt.Sprintf("%v", _m.MaxConcurrency))

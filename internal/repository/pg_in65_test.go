@@ -29,7 +29,6 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
-	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/key"
 	"github.com/is7qin/c3api/internal/ent/user"
@@ -75,9 +74,7 @@ func fillGroupsAccounts(t *testing.T, repos *repository.Repository, tplID int64,
 				SetName(fmt.Sprintf("acc-%d", i)).
 				SetTemplateID(tplID).
 				SetUpstreamKey("sk-upstream").
-				SetWeight(100).
-				SetMaxConcurrency(100000).
-				SetStatus(account.StatusActive))
+				SetMaxConcurrency(100000))
 		}
 		rows, err := repos.Client.Account.CreateBulk(builders...).Save(ctx)
 		require.NoError(t, err)

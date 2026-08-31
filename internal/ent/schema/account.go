@@ -21,17 +21,12 @@ func (Account) Fields() []ent.Field {
 		// 回填：旧行 NULL = 继承模板（旧行为天然成立）。
 		field.String("base_url").Optional().Nillable(),
 		field.String("upstream_key"),
-		field.Enum("status").
-			Values("active", "unhealthy", "429", "disabled").
-			Default("active"),
-		field.Time("cooldown_until").Optional().Nillable(),
-		field.Int("weight").Default(100),
 		field.Int("max_concurrency").Default(8),
 		field.String("last_error").Optional().Nillable(),
 		field.Time("last_used_at").Optional().Nillable(),
 		// failed_at SDK 上报的运行时失效时刻（SDK 接入 T1——用户裁决 2026-08-13：
 		// 仅此一列；失效原因复用既有 last_error，两原因字段并存会漂移）。nil =
-		// 未失效；与 status=disabled（管理面手动禁用）语义分离，两者可并存。
+		// 未失效；与 enabled=false（管理面手动禁用）语义分离，两者可并存。
 		field.Time("failed_at").Optional().Nillable(),
 		field.String("failure_source").Optional().Nillable(),
 		field.Bool("enabled").Default(true),
