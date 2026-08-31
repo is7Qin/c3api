@@ -379,12 +379,14 @@ function VariantsDialog({
   const previewInput = previewMultValid && inputPerM != null ? (inputPerM * previewMultVal) : null
   const previewOutput = previewMultValid && outputPerM != null ? (outputPerM * previewMultVal) : null
 
+  const variantsTitle = model ? t('pricing.variants.title', { model }) : t('pricing.variants.title', { model: '' })
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>{model ? t('pricing.variants.title', { model }) : t('pricing.variants.title', { model: '' })}</DialogTitle>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+          <DialogHeader className="min-w-0 pr-8">
+            <DialogTitle className="truncate leading-normal" title={variantsTitle}>{variantsTitle}</DialogTitle>
             <DialogDescription>{t('pricing.variants.dialogDesc')}</DialogDescription>
           </DialogHeader>
           <ScrollArea className="flex-1 min-h-0">
@@ -410,33 +412,31 @@ function VariantsDialog({
             ) : sortedLocal.length === 0 ? (
               <p className="text-sm text-muted-foreground py-2">{t('pricing.variants.empty')}</p>
             ) : (
-              <div className="overflow-hidden rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('pricing.variants.tableSeq')}</TableHead>
-                      <TableHead>{t('pricing.variants.tableCond')}</TableHead>
-                      <TableHead>{t('pricing.variants.tableEffect')}</TableHead>
-                      <TableHead className="text-right">{t('pricing.variants.tableActions')}</TableHead>
+              <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('pricing.variants.tableSeq')}</TableHead>
+                    <TableHead>{t('pricing.variants.tableCond')}</TableHead>
+                    <TableHead>{t('pricing.variants.tableEffect')}</TableHead>
+                    <TableHead className="text-right">{t('pricing.variants.tableActions')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody className="[&_td]:py-2">
+                  {sortedLocal.map(r => (
+                    <TableRow key={r.seq}>
+                      <TableCell className="font-mono text-sm">{r.seq}</TableCell>
+                      <TableCell className="text-xs max-w-64 truncate" title={condSummary(r)}>{condSummary(r)}</TableCell>
+                      <TableCell className="text-xs">{effectSummary(r)}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="icon-sm" title={t('pricing.variants.editAction')} onClick={() => handleEditRow(sortedLocal.indexOf(r))}><Pencil className="size-3.5" /></Button>
+                          <Button variant="ghost" size="icon-sm" className="text-destructive" title={t('pricing.variants.remove')} onClick={() => handleRemoveRow(r.seq!)}><Trash2 className="size-3.5" /></Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody className="[&_td]:py-2">
-                    {sortedLocal.map(r => (
-                      <TableRow key={r.seq}>
-                        <TableCell className="font-mono text-sm">{r.seq}</TableCell>
-                        <TableCell className="text-xs max-w-64 truncate" title={condSummary(r)}>{condSummary(r)}</TableCell>
-                        <TableCell className="text-xs">{effectSummary(r)}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon-sm" title={t('pricing.variants.editAction')} onClick={() => handleEditRow(sortedLocal.indexOf(r))}><Pencil className="size-3.5" /></Button>
-                            <Button variant="ghost" size="icon-sm" className="text-destructive" title={t('pricing.variants.remove')} onClick={() => handleRemoveRow(r.seq!)}><Trash2 className="size-3.5" /></Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                  ))}
+                </TableBody>
+              </Table>
             )}
             <p className="text-xs text-muted-foreground">{t('pricing.variants.hint')}</p>
           </div>
@@ -694,6 +694,7 @@ function callBody(f: CallForm): PriceEntryUpsert {
 type PricingMode = 'token' | 'image' | 'call'
 
 type PricingListState = {
+  mode: PricingMode
   page: number
   pageSize: number
   model: string
@@ -757,6 +758,7 @@ function usePricingList(mode: PricingMode): PricingListState {
   const hasFilters = model !== '' || source !== 'all' || provider !== 'all'
   const clearFilters = () => { setModel(''); setSource('all'); setProvider('all'); setPage(1) }
   return {
+    mode,
     page,
     pageSize,
     model,
@@ -838,14 +840,16 @@ function PricingListShell({ list, header, children, empty }: PricingListShellPro
         </motion.div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg">
-            <Table>
+          {/* 玻璃与滚动分离（同 logs.tsx:502 规范帧）：ScrollArea 承载外框与横向滚动，
+              Table 容器中性化；纵向滚动仍归 AppShell 主滚动区，故无本地 max-h */}
+          <ScrollArea data-od-id={`table-scroll-pricing-${list.mode}`} className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+            <Table className="min-w-[1400px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
               <TableHeader>
                 <TableRow>{header}</TableRow>
               </TableHeader>
               <TableBody className="[&_td]:py-3">{children}</TableBody>
             </Table>
-          </div>
+          </ScrollArea>
           <PagePagination total={list.data?.total ?? 0} pageSize={list.pageSize} page={list.page} onPageChange={list.setPage} onPageSizeChange={list.setPageSize} />
         </>
       )}
@@ -967,9 +971,9 @@ export default function PricingPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">{t('pricing.title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('pricing.subtitle')}</p>
+          <p className="text-sm text-muted-foreground break-keep">{t('pricing.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending}>
@@ -1027,7 +1031,7 @@ export default function PricingPage() {
                 <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'token', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
+                    <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} data-od-id="pricing-variants" onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'token', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
                     <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                     <Button
                       variant="ghost"
@@ -1081,7 +1085,7 @@ export default function PricingPage() {
                 <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'image', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
+                    <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} data-od-id="pricing-variants" onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'image', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
                     <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                     <Button
                       variant="ghost"
@@ -1131,7 +1135,7 @@ export default function PricingPage() {
                 <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(p.UpdatedAt)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'call', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
+                    <Button variant="ghost" size="icon-sm" title={t('pricing.variants.title', { model: p.Model })} data-od-id="pricing-variants" onClick={() => setVariantsTarget({ model: p.Model, source: p.Source, mode: 'call', inputPerM: p.InputPerM, outputPerM: p.OutputPerM })}><Layers /></Button>
                     <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}><Pencil /></Button>
                     <Button
                       variant="ghost"
