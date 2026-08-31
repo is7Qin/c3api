@@ -5,6 +5,7 @@
 package rule
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -12,6 +13,19 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 )
+
+// strictDecode mirrors service.decodeStrict (the trust boundary): map →
+// json.Marshal → json.Decoder with DisallowUnknownFields. Unknown JSON
+// properties are rejected there; ValidateThen/ValidateWhen only see typed values.
+func strictDecode(raw map[string]any, v any) error {
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
+}
 
 func TestValidateWhen_EmptyInRejected(t *testing.T) {
 	cases := []struct {
@@ -71,15 +85,10 @@ func TestValidateThen_PurePassthroughJSONRoundTrip(t *testing.T) {
 	// Simulate service/handler JSON path: map → json.Marshal → json.Decode with DisallowUnknownFields
 	// All-empty Then{} round-trips unchanged.
 	raw := map[string]any{}
-	b, err := json.Marshal(raw)
-	require.NoError(t, err)
 	var dec domain.RuleThen
-	// service uses decodeStrict which is Marshal(map)+DisallowUnknownFields Decode;
-	// for Then{} empty, round-trip must stay empty and valid.
-	require.NoError(t, json.Unmarshal(b, &dec))
-	require.Nil(t, dec.Status)
-	require.Nil(t, dec.Cooldown)
-	require.Nil(t, dec.Weight)
+	require.NoError(t, strictDecode(raw, &dec))
+	require.Nil(t, dec.Throttle)
+	require.False(t, dec.FailAccount)
 	require.Nil(t, dec.ResponseCode)
 	require.Nil(t, dec.CustomMessage)
 	require.NoError(t, ValidateThen(dec))
@@ -100,10 +109,32 @@ func TestValidateThen_PurePassthroughJSONRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	var rule2 domain.Rule
 	require.NoError(t, json.Unmarshal(b2, &rule2))
-	require.Nil(t, rule2.Then.Status)
+	require.Nil(t, rule2.Then.Throttle)
 	require.Nil(t, rule2.Then.ResponseCode)
 	require.Nil(t, rule2.Then.CustomMessage)
 	require.NoError(t, ValidateThen(rule2.Then))
+}
+
+// 信任边界（service decodeStrict 同款）拒绝未知 JSON 属性——then/when 皆然。
+func TestRuleThenJSON_UnknownPropertyRejected(t *testing.T) {
+	var then domain.RuleThen
+	err := strictDecode(map[string]any{"not_a_rule_field": true}, &then)
+	require.Error(t, err)
+
+	var when domain.RuleWhen
+	err = strictDecode(map[string]any{"not_a_rule_field": true}, &when)
+	require.Error(t, err)
+
+	// 合法 typed 动作经严格解码正常通过
+	var strict domain.RuleThen
+	require.NoError(t, strictDecode(map[string]any{
+		"throttle":       map[string]any{"scope": "account", "mode": "open", "duration_ms": float64(1000), "use_reset": false},
+		"response_code":  float64(502),
+		"custom_message": "Upstream request failed",
+	}, &strict))
+	require.NoError(t, ValidateThen(strict))
+	require.NotNil(t, strict.Throttle)
+	require.Equal(t, domain.ThrottleModeOpen, strict.Throttle.Mode)
 }
 
 func TestClassify_PurePassthrough_EquivalenceWithSeed(t *testing.T) {
@@ -115,9 +146,8 @@ func TestClassify_PurePassthrough_EquivalenceWithSeed(t *testing.T) {
 	})
 	ev := Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: intPtr(400), ErrorMessage: "bad request"}
 	then, punish := e.Classify(ev)
-	require.Nil(t, then.Status)
-	require.Nil(t, then.Cooldown)
-	require.Nil(t, then.Weight)
+	require.Nil(t, then.Throttle)
+	require.False(t, then.FailAccount)
 	require.Nil(t, then.ResponseCode)
 	require.Nil(t, then.CustomMessage)
 	require.False(t, punish)
@@ -125,9 +155,8 @@ func TestClassify_PurePassthrough_EquivalenceWithSeed(t *testing.T) {
 	// Seed engine for equivalence
 	seedEngine, _ := newTestEngine(t)
 	thenSeed, punishSeed := seedEngine.Classify(ev)
-	require.Nil(t, thenSeed.Status)
-	require.Nil(t, thenSeed.Cooldown)
-	require.Nil(t, thenSeed.Weight)
+	require.Nil(t, thenSeed.Throttle)
+	require.False(t, thenSeed.FailAccount)
 	require.Nil(t, thenSeed.ResponseCode)
 	require.Nil(t, thenSeed.CustomMessage)
 	require.False(t, punishSeed)
@@ -150,14 +179,11 @@ func TestClassify_PurePassthrough_HandleEventNoPunish(t *testing.T) {
 		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},
 		Then: domain.RuleThen{},
 	})
-	var rec recorder
-	e.SetApply(rec.fn)
+	sink := newFakeSink(10)
+	e.SetHealthSink(sink)
 	ev := Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: intPtr(400), OccurredAt: at(0), ErrorMessage: "bad"}
 	e.HandleEvent(nil, ev)
-	// Then{} has no status/cooldown/weight → Apply returns nils; punish=false in proxy path.
-	app := rec.get()
-	require.Len(t, app, 1)
-	require.Nil(t, app[0].status)
-	require.Nil(t, app[0].cooldown)
-	require.Nil(t, app[0].weight)
+	// Then{} has no typed action → sink never called; punish=false in proxy path.
+	require.Equal(t, 0, sink.countThrottle())
+	require.Equal(t, int64(0), e.MatchedActions())
 }

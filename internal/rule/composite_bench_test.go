@@ -71,7 +71,7 @@ func benchSubstrings(n int) []string {
 func assertHit(b *testing.B, e *RuleEngine, ev Event) {
 	b.Helper()
 	then, punish := e.Classify(ev)
-	require.NotNil(b, then.Status)
+	require.NotNil(b, then.Throttle)
 	require.True(b, punish)
 }
 
@@ -102,7 +102,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
 				When: domain.RuleWhen{Kind: strPtr("5xx"), ModelIn: models},
-				Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			ev := Event{Kind: Kind5xx, Model: hitModel}
 			assertHit(b, e, ev)
@@ -118,7 +118,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
 				When: domain.RuleWhen{Kind: strPtr("5xx"), ModelIn: models},
-				Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			ev := Event{Kind: Kind5xx, Model: missModel}
 			assertMiss(b, e, ev)
@@ -134,7 +134,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
 				When: domain.RuleWhen{Kind: strPtr("5xx"), HTTPStatusIn: statuses},
-				Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			ev := Event{Kind: Kind5xx, HTTPStatus: &hitCode}
 			assertHit(b, e, ev)
@@ -150,7 +150,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
 				When: domain.RuleWhen{Kind: strPtr("5xx"), HTTPStatusIn: statuses},
-				Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			ev := Event{Kind: Kind5xx, HTTPStatus: &missCode}
 			assertMiss(b, e, ev)
@@ -180,7 +180,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 					ModelIn:                models,
 					ErrorMessageContainsIn: subs,
 				},
-				Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			msg := fmt.Sprintf("upstream failed: %s (retryable)", subs[n-1])
 			ev := Event{Kind: Kind5xx, HTTPStatus: &hitCode, Model: models[n-1], ErrorMessage: msg}
@@ -202,7 +202,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 					ModelIn:                models,
 					ErrorMessageContainsIn: subs,
 				},
-				Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy)},
+				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			missCode := 599 // 状态维不命中 → 最先早退
 			ev := Event{Kind: Kind5xx, HTTPStatus: &missCode, Model: models[n-1], ErrorMessage: "clean timeout"}

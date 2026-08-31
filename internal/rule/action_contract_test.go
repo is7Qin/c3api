@@ -13,19 +13,7 @@ import (
 
 // Defect 1: matched_actions only for typed Throttle/FailAccount accepted.
 func TestRuleMatched_TypedOnly(t *testing.T) {
-	// Legacy status/cooldown path should not increment matched.
-	e1, _ := newTestEngine(t, domain.Rule{
-		Name: "legacy", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("5xx")},
-		Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("5s")},
-	})
-	var rec recorder
-	e1.SetApply(rec.fn)
-	e1.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind5xx, OccurredAt: at(0)})
-	require.Equal(t, int64(0), e1.MatchedActions(), "legacy match must not count toward matched_actions")
-	require.Len(t, rec.get(), 1, "legacy apply still called")
-
-	// Shaping-only (ResponseCode/CustomMessage) also must not count.
+	// Shaping-only (ResponseCode/CustomMessage) must not count.
 	e2, _ := newTestEngine(t, domain.Rule{
 		Name: "shaping", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},

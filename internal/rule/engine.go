@@ -3,9 +3,9 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // Package rule 实现规则引擎（可编排状态管理）：事件 → 有界 channel → 规则 worker
-// （priority 首中匹配）→ 状态/冷却/权重更新。scheduler.MarkResult 的硬编码状态机
-// 由本包替代：scheduler 只做禁用守卫 + 事件投递（条件投递），动作应用经 SetApply
-// 注册的回调完成（更新快照 + EWMA + 异步回写，属 scheduler 侧）。
+// （priority 首中匹配）→ typed 动作（Throttle→RuntimeHealth / FailAccount→latch+CAS）
+// + 响应整形。scheduler.MarkResult 的硬编码状态机由本包替代：scheduler 只做禁用
+// 守卫 + 事件投递（条件投递），持久状态列已随 cutover 删除。
 package rule
 
 import (
@@ -85,12 +85,6 @@ type Event struct {
 	CandidateFingerprint string    // canonical candidate identity hex
 	ExpectedRevision     int64     // lifecycle_revision 期望值，FailAccount CAS 用
 }
-
-// ApplyFunc 动作应用回调（由 scheduler 注册）：st 为 nil = 不改状态（只改权重）；
-// cooldownUntil 为 nil = 不设冷却；weight 为 nil = 不改权重。errMsg 为事件
-// 错误文本（error_message_contains 已匹配；供 last_error 落库——部署故障
-// 修复：scheduler 侧截断 500 后回写）。
-type ApplyFunc func(aid int64, st *domain.AccountStatus, cooldownUntil *time.Time, weight *int, errMsg string)
 
 // HealthSink typed health action sink.
 // Throttle: account 作用全 RouteClass wildcard；account_route 作用单 RouteClass.
@@ -175,9 +169,6 @@ type RuleEngine struct {
 	// 后回落（resetDropWarnIfDrained）——每风暴一次，不刷屏。
 	warnDropped atomic.Bool
 
-	apply   ApplyFunc
-	applyMu sync.RWMutex
-
 	healthSink      HealthSink
 	healthMu        sync.RWMutex
 	persistCh       chan PersistItem
@@ -204,7 +195,7 @@ type RuleEngine struct {
 	persistMu     sync.Mutex
 }
 
-// New 只建结构（不加载规则、不注册 apply——分别由 Reload/SetApply 显式完成）。
+// New 只建结构（不加载规则——由 Reload 显式完成）。
 func New(cfg Config, store repository.RuleStore, log *logx.Logger) *RuleEngine {
 	q := cfg.EventQueueSize
 	if q <= 0 {
@@ -224,13 +215,6 @@ func New(cfg Config, store repository.RuleStore, log *logx.Logger) *RuleEngine {
 	}
 }
 
-// SetApply 注册动作应用回调（scheduler 构造期注入；可重复调用覆盖）。
-func (e *RuleEngine) SetApply(fn ApplyFunc) {
-	e.applyMu.Lock()
-	defer e.applyMu.Unlock()
-	e.apply = fn
-}
-
 // SetHealthSink registers the typed health local sink.
 func (e *RuleEngine) SetHealthSink(s HealthSink) {
 	e.healthMu.Lock()
@@ -248,7 +232,7 @@ func (e *RuleEngine) SetPersistFunc(fn PersistFunc) {
 // AdmissionDropped 有界准入队列丢弃累计（Enqueue full）。
 func (e *RuleEngine) AdmissionDropped() int64 { return int64(e.dropped.Load()) }
 
-// MatchedActions 命中 typed 或 legacy 动作计数。
+// MatchedActions 命中 typed Throttle/FailAccount 动作计数。
 func (e *RuleEngine) MatchedActions() int64 { return int64(e.matched.Load()) }
 
 // PersistDropped 持久化同步队列满丢弃累计。
@@ -313,16 +297,20 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 }
 
 // seedRules 规则表为空时写入种子规则（fresh setup 哲学，用户裁决；kind=error
-// 旧规则不迁移——管理面重建；指针即意图 ResponseCode/CustomMessage nil=透传）：
+// 旧规则不迁移——管理面重建；指针即意图 ResponseCode/CustomMessage nil=透传；
+// 惩罚动作全部 typed throttle——持久 status/cooldown 已随 cutover 删除，
+// 临时健康由 RuntimeHealth（Redis OPEN/RETRY_AFTER + 探针恢复）唯一承载）：
 //
-//	seed-429（p10）      kind=429   → status=429 + cooldown 30s + ResponseCode nil(透429) + CustomMessage "rate limited"（码透文不透）
+//	seed-429（p10）      kind=429   → throttle(account, retry_after, use_reset) + ResponseCode nil(透429) + CustomMessage "rate limited"（码透文不透；ResetAt 缺失回落 30s 默认）
 //	seed-4xx-400（p15）  kind=4xx + http_status=400 → ResponseCode nil + CustomMessage nil（400 全透；其余 4xx 默认归一 502——无规则即归一；直插 store，其 Then{} 与用户规则 Then{} 全透语义等价）
 //	seed-5xx-503-overload（p16）kind=5xx + http_status=503 + error_message_contains="overload"（小写敏感）→ ResponseCode nil +
 //	                    CustomMessage nil（503 overload 全透——码/文原样过，不惩罚不归一；其余 503 落回 seed-5xx 归一）
-//	seed-5xx（p20）      kind=5xx   → status=unhealthy + cooldown 10m + 502/"Upstream request failed"（用户裁决归一）
-//	seed-network（p25）  kind=network → status=unhealthy + cooldown 5s + 502/"Upstream request failed"
+//	seed-5xx（p20）      kind=5xx   → throttle(account, open, 10m) + 502/"Upstream request failed"（用户裁决归一）
+//	seed-network（p25）  kind=network → throttle(account, open, 5s) + 502/"Upstream request failed"
 //	                       （连接级独立类型——原连接级 5s 语义，不吃 10m）
-//	seed-ok（p30）       kind=ok    → status=active 无冷却（恢复）
+//
+// 恢复无种子规则：RuntimeHealth 探针（OPEN/RETRY_AFTER 到期 → PROBING → 探测
+// 成功 READY）是唯一恢复路径，成功事件不再驱动状态机。
 //
 // 多实例种子幂等（设计文档 §1.5 / R2）：两实例同时空表启动 → 双双进入本方法，
 // name/priority 唯一约束（ent schema 已有）保证只有一个实例的插入成功；失败方
@@ -337,11 +325,16 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 	if n > 0 {
 		return nil
 	}
+	throttleRetry := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, UseReset: true}
+	throttleOpen := func(ms int64) *domain.ThrottleAction {
+		d := ms
+		return &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: &d}
+	}
 	seeds := []domain.Rule{
 		{
 			Name: "seed-429", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("429")},
-			Then: domain.RuleThen{Status: statusPtr(domain.Status429), Cooldown: strPtr("30s"), CustomMessage: strPtr("rate limited")},
+			Then: domain.RuleThen{Throttle: throttleRetry, CustomMessage: strPtr("rate limited")},
 		},
 		{
 			Name: "seed-4xx-400", Enabled: true, Priority: 15,
@@ -356,17 +349,12 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 		{
 			Name: "seed-5xx", Enabled: true, Priority: 20,
 			When: domain.RuleWhen{Kind: strPtr("5xx")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("10m"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
+			Then: domain.RuleThen{Throttle: throttleOpen(10 * 60 * 1000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
 		},
 		{
 			Name: "seed-network", Enabled: true, Priority: 25,
 			When: domain.RuleWhen{Kind: strPtr("network")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusUnhealthy), Cooldown: strPtr("5s"), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
-		},
-		{
-			Name: "seed-ok", Enabled: true, Priority: 30,
-			When: domain.RuleWhen{Kind: strPtr("ok")},
-			Then: domain.RuleThen{Status: statusPtr(domain.StatusActive)},
+			Then: domain.RuleThen{Throttle: throttleOpen(5000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
 		},
 	}
 	for _, s := range seeds {
@@ -443,14 +431,15 @@ func matchWindow(w domain.RuleWhen, wc windowSnapshot) bool {
 	return true
 }
 
-// HandleEvent 同步处理单个事件：窗口计数 → 逐规则 Match（首中）→ ApplyFunc。
+// HandleEvent 同步处理单个事件：窗口计数 → 逐规则 Match（首中）→ typed 动作
+// （Throttle/FailAccount→HealthSink）+ 持久化入队。
 // worker 消费循环与测试共用。命中不清零窗口计数（C2）——滑动自然衰减，
 // 升级阶梯（如 60s 内 ≥5 error → 更重惩罚）不被低阈值规则清零阻断。
 // 未命中仅更新计数。
 // whole action path remains best-effort. After match, local sink immediately,
 // then nonblocking enqueue to bounded persist queue; persist queue full or write failure
 // never blocks request/rule worker.
-// matched_actions counts only typed Throttle/FailAccount accepted (not legacy/shaping-only).
+// matched_actions counts only typed Throttle/FailAccount accepted (shaping-only matches do not count).
 func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 	if ev.OccurredAt.IsZero() {
 		ev.OccurredAt = e.timeNow()
@@ -505,15 +494,8 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			e.enqueuePersist(ev, r.Then)
 			return
 		}
-		// Legacy path (Status/Cooldown/Weight) unchanged for intermediate compile-green.
-		// No matched increment for legacy/shaping-only.
-		st, cd, w := Apply(r.Then, ev)
-		e.applyMu.RLock()
-		fn := e.apply
-		e.applyMu.RUnlock()
-		if fn != nil {
-			fn(ev.AccountID, st, cd, w, ev.ErrorMessage)
-		}
+		// Shaping-only / no-action match: first-hit wins, no state side effect
+		// (response shaping is executed by Classify on the proxy side).
 		return
 	}
 }
@@ -542,10 +524,9 @@ func (e *RuleEngine) persistDoneChan() <-chan struct{} {
 	return e.persistDone
 }
 
-func boolPtr(b bool) *bool                                   { return &b }
-func intPtr(v int) *int                                      { return &v }
-func strPtr(s string) *string                                { return &s }
-func statusPtr(s domain.AccountStatus) *domain.AccountStatus { return &s }
+func boolPtr(b bool) *bool    { return &b }
+func intPtr(v int) *int       { return &v }
+func strPtr(s string) *string { return &s }
 
 // Classify 事件分类决策（错误分支响应/投递决策——scheduler 包装调用，用户面
 // err_logs 行级脱敏亦复用）：遍历 enabled 规则（priority 升序首中），首个
@@ -554,10 +535,9 @@ func statusPtr(s domain.AccountStatus) *domain.AccountStatus { return &s }
 // 历史计数，预判不可得——按"可能命中"保守处理（不参与判定，窗口阈值由 worker
 // Match 精确裁决；prejudge 命中 → punish 保证事件投递，worker 再精确应用）。
 // 指针即意图：then.ResponseCode nil=透传上游码，non-nil=覆写；then.CustomMessage nil=透传上游文，non-nil=覆写；头透传与 kind 解耦（ResponseCode==nil 才透）。
-// 返回 then 值拷贝（调用方只读不得修改）与 punish（true = 命中规则有状态动作 Status/Weight/Cooldown 任一非 nil——应投递
-// MarkResult；漏判 Cooldown 则 cooldown-only 规则永不投递，冷却静默丢弃，
-// 2026-08-19 缺陷 1 根因）。无命中 → (domain.RuleThen{}, false)（默认归一 502+generic，安全默认
-// ——不认识的错误不透传）。
+// 返回 then 值拷贝（调用方只读不得修改）与 punish（true = 命中规则有惩罚动作
+// ——Throttle 或 FailAccount 任一非 nil/false，应投递 MarkResult 让 worker 精确
+// 应用——含窗口条件规则的"可能命中"保守判定）。
 // 零分配：仅读规则集切片（RLock 快照）+ 字符串比较。
 func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 	e.rulesMu.RLock()
@@ -573,7 +553,7 @@ func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 				continue
 			}
 		}
-		hasPunish := r.Then.Status != nil || r.Then.Weight != nil || r.Then.Cooldown != nil || r.Then.Throttle != nil || r.Then.FailAccount
+		hasPunish := r.Then.Throttle != nil || r.Then.FailAccount
 		return r.Then, hasPunish
 	}
 	// 无规则命中 → 默认归一 502/"upstream rejected request"（安全默认，不透传）；ok 事件不归一（透传语义，成功不处理）

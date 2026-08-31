@@ -13,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
@@ -57,7 +56,7 @@ func TestReloadRulesSurvivesRequestCancel(t *testing.T) {
 }
 
 func validWhen() map[string]any { return map[string]any{"kind": "5xx"} }
-func validThen() map[string]any { return map[string]any{"status": "unhealthy", "cooldown": "5s"} }
+func validThen() map[string]any { return map[string]any{"response_code": 503} }
 
 func TestCreateRule(t *testing.T) {
 	svc, _, rl := newRuleSvc()
@@ -69,8 +68,8 @@ func TestCreateRule(t *testing.T) {
 	require.Equal(t, "r1", got.Name)
 	require.True(t, got.Enabled)
 	require.Equal(t, "5xx", *got.When.Kind)
-	require.Equal(t, domain.StatusUnhealthy, *got.Then.Status)
-	require.Equal(t, "5s", *got.Then.Cooldown)
+	require.NotNil(t, got.Then.ResponseCode)
+	require.Equal(t, 503, *got.Then.ResponseCode)
 	require.Equal(t, 1, rl.calls, "规则创建后必须触发引擎 Reload")
 
 	// response_code/custom_message 契约 round-trip（指针意图，seed-400 nil/nil 形态直插，普通规则需显式 ResponseCode/CustomMessage）
@@ -83,7 +82,6 @@ func TestCreateRule(t *testing.T) {
 	require.Equal(t, 400, *got2.Then.ResponseCode)
 	require.NotNil(t, got2.Then.CustomMessage)
 	require.Equal(t, "bad request passthrough", *got2.Then.CustomMessage)
-	require.Nil(t, got2.Then.Status)
 }
 
 func TestCreateRuleRejectsUnknownWhenKey(t *testing.T) {
@@ -98,7 +96,7 @@ func TestCreateRuleRejectsUnknownWhenKey(t *testing.T) {
 
 	_, err = svc.CreateRule(context.Background(), RuleInput{
 		Name: "r2", Priority: 11, When: validWhen(),
-		Then: map[string]any{"status": "unhealthy", "bogus": true},
+		Then: map[string]any{"response_code": 503, "bogus": true},
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "then 未知键 → 400 语义")
 }
@@ -110,13 +108,12 @@ func TestCreateRuleInvalidThen(t *testing.T) {
 		Name: "r1", Priority: 10, When: validWhen(), Then: map[string]any{},
 	})
 	require.NoError(t, err, "Then{} 纯透传合法")
-	require.Nil(t, got.Then.Status)
 	require.Nil(t, got.Then.ResponseCode)
 	require.Nil(t, got.Then.CustomMessage)
 	_, err = svc.CreateRule(context.Background(), RuleInput{
-		Name: "r2", Priority: 11, When: validWhen(), Then: map[string]any{"cooldown": "0s"},
+		Name: "r2", Priority: 11, When: validWhen(), Then: map[string]any{"response_code": 999},
 	})
-	require.ErrorIs(t, err, ErrInvalidInput, "cooldown ≤ 0 → 400 语义")
+	require.ErrorIs(t, err, ErrInvalidInput, "response_code 越界 → 400 语义")
 	_, err = svc.CreateRule(context.Background(), RuleInput{
 		Name: "r3", Priority: 12, When: map[string]any{"ratio_429_ge": 0.5}, Then: validThen(),
 	})

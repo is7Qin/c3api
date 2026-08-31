@@ -50,26 +50,26 @@ func TestRulesCRUD(t *testing.T) {
 	rec := do(http.MethodPost, "/api/admin/rules", `{
 		"name":"r1","priority":10,"enabled":true,
 		"when":{"kind":"5xx"},
-		"then":{"status":"unhealthy","cooldown":"5s"}}`)
+		"then":{"throttle":{"scope":"account","mode":"retry_after","use_reset":true}}}`)
 	require.Equal(t, 201, rec.Code, "create rule: %s", rec.Body.String())
 	var created Rule
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 	require.Equal(t, "r1", created.Name)
 	require.Equal(t, 10, created.Priority)
 	require.Equal(t, "5xx", created.When["kind"], "when round-trip")
-	require.Equal(t, "unhealthy", created.Then["status"], "then round-trip")
+	require.Contains(t, created.Then, "throttle", "then round-trip")
 
 	// priority 冲突 → 409
 	rec = do(http.MethodPost, "/api/admin/rules", `{
 		"name":"r2","priority":10,
-		"when":{"kind":"ok"},"then":{"status":"active"}}`)
+		"when":{"kind":"ok"},"then":{"fail_account":true}}`)
 	require.Equal(t, 409, rec.Code, "priority conflict: %s", rec.Body.String())
 
 	// when 未知键 → 400
 	rec = do(http.MethodPost, "/api/admin/rules", `{
 		"name":"r3","priority":20,
 		"when":{"kind":"5xx","bogus":1},
-		"then":{"status":"unhealthy"}}`)
+		"then":{"fail_account":true}}`)
 	require.Equal(t, 400, rec.Code, "unknown when key: %s", rec.Body.String())
 
 	// then 空动作 → 201（纯透传规则合法，R-4：命中不改码文、零惩罚）
@@ -104,7 +104,7 @@ func TestRulesCRUD(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
 	require.Equal(t, "r1-renamed", updated.Name)
 	require.Equal(t, "5xx", updated.When["kind"], "when 未提供保持原值")
-	require.Equal(t, "5s", updated.Then["cooldown"], "then 未提供保持原值")
+	require.Contains(t, updated.Then, "throttle", "then 未提供保持原值")
 
 	// PUT 404 含 id
 	rec = do(http.MethodPut, "/api/admin/rules/999", `{"name":"x"}`)
@@ -135,7 +135,7 @@ func TestRulesDisabledToggle(t *testing.T) {
 
 	rec := do(http.MethodPost, "/api/admin/rules", `{
 		"name":"r1","priority":10,
-		"when":{"kind":"ok"},"then":{"status":"active"}}`)
+		"when":{"kind":"ok"},"then":{}}`)
 	require.Equal(t, 201, rec.Code)
 	var created Rule
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
