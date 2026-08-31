@@ -113,6 +113,29 @@ func (s *Service) ResolvePrices(model string, promptTokens int64, tier string, a
 	return domain.ResolveEntryPrices((*snap).entries[model], (*snap).variants[model], tier, promptTokens, at)
 }
 
+// ResolvedPricesByModel 编译道价格源：整张定价快照 → 模型→生效单价映射
+// （routing compiler pricesFn 的装配面）。基底解析口径：tier 空、
+// promptTokens=0、at 由调用方给定（经 tzLoc 归一，与 ResolvePrices 同纪律）；
+// 解析失败（无 entry）的模型缺席——compiler 侧 costKnown=false 落 Explore，
+// 与缺价语义一致。快照未加载返回 nil（编译道按无价处理，不 panic）。
+// 冷路径（compile lane 后台专用），O(模型数) 纯内存。
+func (s *Service) ResolvedPricesByModel(at time.Time) map[string]domain.ResolvedPrices {
+	snap := s.priceSnapshot.Load()
+	if snap == nil {
+		return nil
+	}
+	if s.tzLoc != nil {
+		at = at.In(s.tzLoc)
+	}
+	out := make(map[string]domain.ResolvedPrices, len((*snap).entries))
+	for model, entry := range (*snap).entries {
+		if rp, ok := domain.ResolveEntryPrices(entry, (*snap).variants[model], "", 0, at); ok {
+			out[model] = rp
+		}
+	}
+	return out
+}
+
 // validation helpers
 func (s *Service) UpsertPriceEntry(ctx context.Context, m *repository.PriceEntryManual) (*domain.PriceEntry, error) {
 	if m.Model == "" {
