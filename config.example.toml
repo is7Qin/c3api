@@ -20,7 +20,9 @@ proxy = {
   # 启动报错）；同源供 http.Server.ReadTimeout（slowloris 截断，见 main.go）。
   upstream_timeout = "120s",
   upstream_stream_timeout = "30m",
-  # 总尝试次数（含首次）——>= 1，0 会启动失败（拒绝死锁配置）
+  # 总尝试次数（含首次）——合法域 1..8（上限 = AttemptPlan 固定 attempted-ID
+  # 去重集容量，>8 无法保证跨账号 failover 不重复选号）；0/负值或 >8 启动即
+  # 失败（拒绝死锁/越界配置），默认 3
   failover_attempts = 3,
   usage_capture = true,
 }
@@ -39,6 +41,10 @@ scheduler = {
   default_max_concurrency = 8,
   sync_interval = "30s",
 }
+# 智能路由（intelligent routing）无独立配置段：Primary/Explore/Degraded 分层、
+# 探索比例、成本序、事故判定全部由后台 RoutingCompiler 从持久质量统计 + 采购
+# 倍率（账号 upstream_cost_multiplier_bp）+ 运行时健康派生，无固定全局 SLO 阈值
+# 可配（固定阈值跨模型/路由即假数据）。可调项在账号与规则面，非本配置文件。
 usage = {
   batch_size = 500,
   flush_interval = "500ms",

@@ -15,6 +15,7 @@ proxy = {
   max_inflight = 50000,
   upstream_timeout = "120s",
   upstream_stream_timeout = "30m",
+  # 合法域 1..8（上限 = AttemptPlan 固定去重集），0/负值或 >8 启动即失败
   failover_attempts = 3,
   usage_capture = true,
 }

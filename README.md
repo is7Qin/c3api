@@ -35,7 +35,8 @@ c3api is in **beta**: feature-complete, but breaking changes are free to happen.
 | **Template & account management** | Model templates, upstream accounts, groups, credentials, and per-template format/model allowlists |
 | **Admin console** | React web UI embedded in the binary (`/app`), plus a full OpenAPI-defined admin API (`/api/admin`) |
 | **Billing & usage** | Per-user balance with pre-check deductions, FEFO temporary quotas, per-model pricing synced from litellm, daily-partitioned usage logs and statistics — billing is enabled by default (`config.example.toml` billing.enabled=true) |
-| **Rules engine** | Customizable routing, rate limiting, and 429/error backoff rules with a built-in scheduler |
+| **Intelligent routing** | A background compiler turns durable per-attempt quality statistics (Wilson-bounded success + log-TTFT), procurement cost multipliers, cache domains, and runtime health into immutable routing plans (Primary / Explore / Degraded lanes); request selection executes the precompiled plan with distinct replay-safe failover (1–8 attempts) — no manual weights |
+| **Rules engine** | Typed `throttle` (transient runtime health) and `fail_account` (terminal) actions with count/ratio windows, plus response shaping — replaces the old hardcoded backoff; customizable via `/api/admin/rules` |
 | **Multi-instance ready** | PostgreSQL-based state, `NOTIFY`-based cross-instance invalidation, Redis-heartbeat instance discovery (cluster size auto-detected) — zero-config horizontal scaling |
 | **Single binary** | Go binary with embedded frontend, non-root Docker image, drop-in deployment |
 
@@ -111,12 +112,13 @@ Point any OpenAI/Anthropic-compatible SDK at the gateway URL — the request for
                     │  │ proxy: auth → gate →     │  │
                     │  │         route → forward  │  │
                     │  └──────────┬──────────────┘  │
-                    │   workers: billing / usage /  │
-                    │   errlog / scheduler / notify │
-                    │   retention / stats-agg /     │
-                    │   pricing-sync / rule-engine  │
-                    │   auth-sync / invalidate /    │
-                    │   discovery                   │
+                     │   workers: billing / usage /  │
+                     │   errlog / scheduler / notify │
+                     │   retention / stats-agg /     │
+                     │   pricing-sync / rule-engine  │
+                     │   quality-sync / routing      │
+                     │   compiler / auth-sync /      │
+                     │   invalidate / discovery      │
                     └───────┼───────────────┼──────┘
                             ▼               ▼
               PostgreSQL 18 (state + NOTIFY) │
@@ -127,7 +129,7 @@ Point any OpenAI/Anthropic-compatible SDK at the gateway URL — the request for
 
 - **Single binary**: the frontend is built and embedded via `go:embed`, so the runtime is one `server` process plus a mounted config file.
 - **Stateless gateway, stateful DB**: all shared state lives in PostgreSQL; instances coordinate through `NOTIFY` on the `c3api_invalidate` channel. The cluster instance count for multi-instance budget sharing is auto-discovered via Redis heartbeats — scale horizontally by just adding instances (no manual setting).
-- **Persistent workers**: billing deduction, usage/statistics flushing, error-log auditing, partition retention, offline stats aggregation, price sync, and the rule scheduler run as long-lived workers with graceful shutdown draining.
+- **Persistent workers**: billing deduction, usage/statistics flushing, error-log auditing, partition retention, offline stats aggregation, price sync, realtime quality sync, the routing plan compiler, and the rule scheduler run as long-lived workers with graceful shutdown draining.
 
 ## Performance
 

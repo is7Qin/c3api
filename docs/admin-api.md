@@ -17,7 +17,8 @@
 | 枚举 | 取值 |
 |---|---|
 | `format`（请求格式） | `openai-chat` / `openai-responses` / `openai-responses-ws` / `openai-images` / `openai-search` / `anthropic` |
-| `status`（账号） | `active` / `unhealthy` / `429` / `disabled` |
+| `failure_source`（账号失效来源） | `rule`（规则 `fail_account` 判死）/ `sdk`（凭据 fatal 判死）；`recover` 清除 |
+| 运行时健康（RuntimeHealth，非持久字段） | `READY` / `RETRY_AFTER` / `OPEN` / `PROBING`（探针单 permit）；终态 `FAILED`/`DISABLED` 来自账号生命周期，非健康机状态 |
 | `error_type`（日志） | `none` / `429` / `4xx` / `5xx` / `network` / `auth` / `no_account` / `abort` / `billing`（计费拒绝 402） |
 | `type`（兑换码） | `balance`（充值余额，面值 USD）/ `concurrency`（加并发数，面值整数）/ `temp_balance`（临时余额，面值 USD，兑换后资源到期） |
 | `status`（兑换码） | `active` / `disabled`（不可编辑，仅可失效） |
@@ -197,7 +198,7 @@
 
 ## 账号 Accounts
 
-账号绑定模板并持有上游 API key，是调度的基本单元。
+账号绑定模板并持有上游 API key，是调度的基本单元。**选号顺序不由手工权重决定**——后台 RoutingCompiler 依据持久质量统计、采购成本倍率与运行时健康编译不可变路由计划（观测面见「路由观测 Routing」）；账号面只提供三类事实：生命周期（`enabled` / `failed_at` / `failure_source` / `lifecycle_revision`）、采购成本（`upstream_cost_multiplier`）与缓存域（`cache_domain`）。
 
 ### 创建账号
 
@@ -208,8 +209,7 @@
   "name": "a1",
   "template_id": 1,
   "upstream_key": "sk-xxx",
-  "status": "active",
-  "weight": 100,
+  "cache_domain": "dc-a.example",
   "max_concurrency": 8
 }
 ```
@@ -220,9 +220,10 @@
 | `template_id` | int | ✅ | 所属模板 ID |
 | `base_url` | string | 否 | 账号级覆盖（裸根，不含 `/v1`，留空继承模板）；`codex-oauth`/`codex-pat` 关联模板须为空（SDK 默认，非空 → `400`），`api_key`/`responses-special` 为可选覆盖 |
 | `upstream_key` | string | ✅* | 上游 API key（`codex-oauth`/`codex-pat` 关联模板可为空，凭据走 `account_ext`；`api_key`/`responses-special` 必填） |
-| `status` | string | 否 | 初始状态，默认 `active` |
-| `weight` | int | 否 | 选号权重（预生成加权序列，权重比决定命中比例），默认 0 |
+| `cache_domain` | string / null | 否 | 共享缓存域（软亲和一致性哈希的域标识；合法域名形态 ≤253，非法 → `400`）；`null`/缺省 = 账号私有域。**仅创建可带**，更新走 `PUT /accounts/{id}/cache-domain`（fenced） |
 | `max_concurrency` | int | 否 | 账号并发上限；`0` 时使用调度器 `default_max_concurrency` |
+
+采购倍率创建不可带（缺省 ×1 = 存储 10000bp），写面 `PUT /accounts/{id}/cost-multiplier`（fenced）。
 
 响应 `200`：账号对象（含嵌套 `Template`）。
 
@@ -235,29 +236,42 @@
   "TemplateID": 1,
   "Template": { "...": "嵌套模板对象" },
   "UpstreamKey": "sk-xxx",
-  "Status": "active",
-  "CooldownUntil": null,
-  "Weight": 100,
   "MaxConcurrency": 8,
+  "Enabled": true,
+  "FailedAt": null,
+  "FailureSource": null,
   "LastError": null,
+  "LifecycleRevision": 1,
+  "UpstreamCostMultiplier": 1.0,
+  "CacheDomain": "dc-a.example",
   "LastUsedAt": null,
   "CreatedAt": "2026-08-06T10:00:00Z",
   "UpdatedAt": "2026-08-06T10:00:00Z"
 }
 ```
 
-### 账号状态机
+### 生命周期模型（两轴正交）
 
-| 状态 | 进入条件 | 恢复 |
+| 轴 | 字段 | 语义 |
 |---|---|---|
-| `active` | 创建/成功请求 | — |
-| `unhealthy` | 上游 5xx / 连接级错误 / 流中断 | 指数退避冷却（5s×2ⁿ，上限 5min）后自动恢复 |
-| `429` | 上游 429 | 固定冷却（默认 30s）后自动恢复 |
-| `disabled` | 管理端手动设置；或 SDK 凭据判死（codex-oauth/codex-pat 账号，`failed_at` 落库 + 调度摘除） | 手动改回（`PUT`） |
+| 启用轴 | `enabled` | 管理端启停（`POST /accounts/{id}/enabled`，fenced）。禁用 = 不参与选号；**enable 不清失效字段** |
+| 失效轴 | `failed_at` + `failure_source`（`rule`/`sdk`）+ `last_error` | 运行时终态判死（规则 `fail_account` 命中 / SDK 凭据 fatal）；恢复唯一入口 `POST /accounts/{id}/recover` |
 
-> `unhealthy` / `429` 为**健康轴**（自动退避），`disabled` 为**启用轴**（手动）。管理端 `PUT` 设 `disabled` 后，在途请求完成不会覆盖回写（防复活守卫）。
+- 两轴独立：重新启用不清失效，清除失效不覆盖管理禁用。`failed_at != null` 或 `enabled = false` 的账号不进入任何路由计划热车道，也不被自动探索复活。
+- `lifecycle_revision`：每次生命周期变化与管理员凭据替换 CAS +1；所有 fenced 端点必须携带 `expected_revision`，过期 → `409`（重读账号后重试）。SDK 内部 OAuth 自动轮转**不**递增代际（不失效在途 continuation/fatal fence）。
+- 瞬时健康（429 节流 / 短时摘除）**不落账号行**——RuntimeHealth（Redis/本地）态，随代际过期。
+- **失效恢复须知（SDK 接入账号——codex-oauth / codex-pat）**：凭据被判死后 `/recover` 只清失效字段并置 PROBING（探针环接管，READY 前不吃正常流量）——若凭据确已判死，请求面仍恒失败并再次判死。**恢复须先重新导入凭据**（`PUT /api/admin/accounts/{id}/ext`，凭据签名变化 → 适配层重建 + 代际 +1）才可真正服务——判死凭据不得在未重新导入的情况下复活。
 
-> **失效恢复须知（SDK 接入账号——codex-oauth / codex-pat）**：凭据被判死（refresh token 判死、token 端点 401、账号禁用等 SDK 判定终止）后账号置 `disabled` 摘除并写 `failed_at`。管理面将 status 改回 `active`（隐含清 `failed_at` / `last_error`）**只恢复"可调度"**——若凭据确已判死，请求面仍恒失败（适配层毒化凭据保留至凭据变更重建，失败会再次触发摘除）。**恢复须重新导入凭据**（`PUT /api/admin/accounts/{id}/ext` 更新 account_ext 后凭据签名变化 → 适配层重建）才可真正服务——这是有意设计：判死凭据不得在未重新导入的情况下复活。
+### fenced 写端点
+
+| 方法/路径 | 请求体 | 语义 |
+|---|---|---|
+| `POST /api/admin/accounts/{id}/recover` | `{expected_revision}` | 失效恢复唯一入口：清 `failed_at`/`failure_source`/`last_error` + 代际 +1 → 新代际 PROBING |
+| `POST /api/admin/accounts/{id}/enabled` | `{enabled, expected_revision}` | 启用/禁用（enable 不清失效字段） |
+| `PUT /api/admin/accounts/{id}/cost-multiplier` | `{multiplier, expected_revision}` | 采购成本倍率（正常值 `1` = ×1、`0` = 免费、上限 `10` = ×10；边界换算 basis points——存储 `25000` ↔ 显示 `2.5`；越界 → `400`）。与租户/组计费倍率（`price_multiplier`）完全独立，永不互串 |
+| `PUT /api/admin/accounts/{id}/cache-domain` | `{cache_domain, expected_revision}` | 共享缓存域；`null` = 清空回账号私有域（清空不走空串）；合法域名形态 ≤253，非法 → `400` |
+
+成功均 `200` 回显新代际账号对象；`404` 账号不存在；`409` 代际过期。
 
 ### 账号列表（含运行时视图）
 
@@ -267,10 +281,9 @@
 |---|---|---|---|
 | `limit` | int | 20 | 每页行数 |
 | `offset` | int | 0 | 分页偏移 |
-| `sort` | string | `id` | 白名单：`id` / `name` / `template_id` / `status` / `cooldown_until` / `weight` / `max_concurrency` / `last_used_at` / `created_at` / `updated_at`；非法值 → `400` |
+| `sort` | string | `id` | 白名单：`id` / `name` / `template_id` / `max_concurrency` / `last_used_at` / `created_at` / `updated_at`；非法值 → `400` |
 | `order` | string | `desc` | `asc` / `desc`；其他值 → `400` |
 | `name` | string | — | 名称模糊匹配（不区分大小写） |
-| `status` | string | — | 多值过滤，逗号分隔（如 `active,disabled`）；非法枚举 → `400` |
 | `template_id` | int | — | 按所属模板过滤 |
 
 响应 `200`：`{"total": <总数>, "rows": [...]}`。每个元素为账号对象 + 三个运行时字段（来自调度器内存快照）：
@@ -311,7 +324,7 @@
 
 `POST /api/admin/accounts/batch-update`
 
-请求体：`{"ids": [1], "fields": {"status": "disabled", "weight": 50}}`。
+请求体：`{"ids": [1], "fields": {"max_concurrency": 16}}`。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -319,18 +332,16 @@
 | `template_id` | int | 否 | 所属模板 ID（>0） |
 | `base_url` | string | 否 | 账号级覆盖（裸根，不含 `/v1`）；`codex-oauth`/`codex-pat` 关联模板须为空/清空（空串清空回继承，非空 → `400`），`api_key`/`responses-special` 为可选覆盖（空串清空，非空覆盖） |
 | `upstream_key` | string | 否 | 上游 API key（非空） |
-| `status` | string | 否 | 状态枚举（见上；非法枚举 → `400`） |
-| `weight` | int | 否 | 选号权重（≥0） |
 | `max_concurrency` | int | 否 | 并发上限（≥1） |
 
-`fields` 必须至少提供一字段；`ids` 中任一 id 不存在 → `404`（事务全败）。成功 `200`：`{"updated": 1}`。
+`fields` 必须至少提供一字段；`ids` 中任一 id 不存在 → `404`（事务全败）。成功 `200`：`{"updated": 1}`。生命周期/倍率/缓存域**不经批量面**——fenced 端点逐账号 CAS，代际不可批量盲写。
 
 ### 账号其他端点
 
 | 方法/路径 | 说明 | 响应 |
 |---|---|---|
 | `GET /api/admin/accounts/{id}` | 单个账号 | `200`：账号对象；`404` 不存在 |
-| `PUT /api/admin/accounts/{id}` | 全量更新（字段同创建；`status` 可改为 `disabled` 禁用） | `200`：更新后账号对象 |
+| `PUT /api/admin/accounts/{id}` | 全量更新（字段同创建；凭据替换 CAS 代际 +1） | `200`：更新后账号对象 |
 | `DELETE /api/admin/accounts/{id}` | 删除 | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id） |
 
 ---
@@ -844,7 +855,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 ## 规则 Rules
 
-规则引擎驱动账号状态管理（替代旧硬编码状态机）：请求结果事件按 `priority` 升序逐规则首中匹配，命中即执行 `then` 动作（状态/冷却/权重）。规则变更（增删改）即时生效（自动触发引擎重载）。
+规则引擎是路由健康政策的唯一升级通道：上游 attempt 结果事件按 `priority` 升序逐规则首中匹配，命中即执行 `then` typed 动作（`throttle` 瞬时限流 / `fail_account` 终态判死 / 响应塑形）。规则变更（增删改）即时生效（自动触发引擎重载 + NOTIFY 全实例同步）。
 
 ### 规则模型
 
@@ -854,7 +865,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 | `priority` | int | 优先级（唯一，升序匹配、首中即停） |
 | `enabled` | bool | 缺省 `true`；`false` = 停用（不参与匹配） |
 | `when` | object | 匹配条件（字段白名单，未知字段拒绝 400） |
-| `then` | object | 动作（`status`/`cooldown`/`weight` 至少一个） |
+| `then` | object | 动作集（`throttle` / `fail_account` / `response_code` / `custom_message`，见下） |
 
 `when` 字段（全部可选，nil = 不限）：
 
@@ -869,25 +880,28 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 | `count_429_ge` / `count_failure_ge` / `count_ok_ge` / `count_total_ge` | int | 窗口内计数阈值（≥0）；`count_failure_ge` 语义 = 失败事件桶（4xx/5xx/network 并入） |
 | `ratio_429_ge` / `ratio_failure_ge` | float | 窗口内比例阈值（[0,1]，**必须配 `count_total_ge`**）；`ratio_failure_ge` 分母为失败事件桶 |
 
-`then` 字段（至少一个）：
+`then` 动作（指针即意图：键缺省/null = 该维度透传不改；全空 `{}` = 纯透传规则）：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `status` | string | `active` / `unhealthy` / `429` / `disabled` |
-| `cooldown` | string | 冷却时长（`time.ParseDuration` 可解析且 >0，如 `"30s"`、`"5h"`） |
-| `weight` | int | 权重（0-100，变更立即重建该组选号序列） |
+| `throttle` | object | typed 瞬时限流：`{scope: account\|account_route, mode: retry_after\|open, duration_ms?, use_reset}`。`scope=account` 作用该账号全部 RouteClass；`account_route` 只作用命中的单 RouteClass（并**有意传播**到同账号映射同质量类的其它 RouteClass）。`mode=retry_after` 要求 `use_reset=true`（上游 Reset 头优先，`duration_ms` 可选回退）；`mode=open` 要求 `use_reset=false` 且 `duration_ms > 0`（固定摘除窗口）。到期不自动 READY——进入 PROBING 由单 permit 探针接管 |
+| `fail_account` | bool | `true` = 命中即判死（终态失效：`failed_at` + `failure_source=rule`，CAS fenced；恢复唯一入口 `POST /accounts/{id}/recover`） |
+| `response_code` | int | 缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599） |
+| `custom_message` | string | 缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串） |
 
-种子规则（规则表为空时启动自动写入）：`kind=429 → status=429 + cooldown 30s`（priority 10）、`kind=4xx + http_status=400 → transmit`（priority 15，400 透传原文）、`kind=5xx → status=unhealthy + cooldown 10m`（priority 20）、`kind=network → status=unhealthy + cooldown 5s`（priority 25，连接级独立冷却）、`kind=ok → status=active`（priority 30，无冷却）。删除全部规则后，下次引擎重载（任意规则 CRUD 或重启）会自动重新播种——规则表不会保持真空。
+`throttle` 与 `fail_account` 互斥（一条规则只出一个健康动作）。原始 429/5xx 事件本身**不直接**改变健康——只有窗口条件命中的规则才升级为 `throttle`/`fail_account`；质量统计即时吸收每次 attempt 结果，两者互不重复记账。
+
+种子规则（规则表为空时启动自动写入）：`kind=429` → 30s 瞬时节流 + 文案 "rate limited"（码透，priority 10）、`kind=4xx + http_status=400` → 全透传（priority 15）、`kind=5xx + http_status=503 + error_message_contains="overload"` → 全透传不惩罚（priority 16）、`kind=5xx` → 10m 摘除 + 502/"Upstream request failed"（priority 20）、`kind=network` → 5s 摘除 + 502/"Upstream request failed"（连接级独立冷却，priority 25）、`kind=ok` → 恢复（priority 30）。删除全部规则后，下次引擎重载（任意规则 CRUD 或重启）会自动重新播种——规则表不会保持真空。
 
 ### 事件模型与匹配语义
 
-- **事件来源**：每次请求结算（MarkResult）产生一个事件 `{kind, http_status, error_message, account_id, template_id, group_id, model, occurred_at, reset_at}`，经有界队列投递规则 worker 匹配（队列满时丢弃并告警，不阻塞请求路径）。
-- **条件投递**：仅当规则集中存在 `when.kind` 为 `nil`（任意）或 `ok` 的规则时，`ok` 事件才进入匹配；否则 ok 事件直接被跳过（性能优化）。想用 ok 事件恢复状态，必须保留 kind=ok 或全匹配规则（种子规则自带 ok 规则）。
+- **事件来源**：每次上游 dispatch attempt 终态产生一个事件 `{kind, http_status, error_message, account_id, template_id, group_id, model, occurred_at, reset_at, candidate_fingerprint}`，经有界队列投递规则 worker 匹配（队列满时丢弃并计数告警，不阻塞请求路径——**整链 best-effort 是有意契约**：风暴下允许丢事件，不丢请求）。
+- **条件投递**：仅当规则集中存在 `when.kind` 为 `nil`（任意）或 `ok` 的规则时，`ok` 事件才进入匹配；否则 ok 事件直接被跳过（性能优化）。想用 ok 事件恢复，必须保留 kind=ok 或全匹配规则（种子规则自带 ok 规则）。
 - **首中即停**：按 `priority` 升序逐规则匹配，首个命中即执行其 `then` 全部动作，不再继续。
 - **命中不清零窗口**：计数窗口为滑动窗口，命中不重置计数（自然衰减）；统计窗口固定粒度近似，误差 ≤ 一个粒度。
-- **冷却语义**：命中且 `then.cooldown` 提供 → `cooldown_until = 命中时刻 + cooldown`。`then` 只设 status 无 cooldown 时，事件自带 `reset_at`（如上游 `Retry-After`）作为冷却兜底。
-- **OK 不清除冷却**：`ok` 事件命中只恢复状态（如 `active`），**不**清除既有的 `cooldown_until`——调度器在冷却期内仍抑制该账号，避免 429 风暴后立即被打满。
-- **状态变更即时生效**：规则增删改自动触发引擎重载；`weight` 动作立即重建对应组的选号序列（无需等 sync 周期）。
+- **throttle 语义**：命中且 `then.throttle` 提供 → RuntimeHealth 状态机迁移（`READY → RETRY_AFTER|OPEN → PROBING → READY`），键 `(account, QualityClassID|wildcard, lifecycle_revision)`；跨实例 ≤1s 收敛（Redis 全量快照 + 定向事件）。到期不自动 READY——进入 PROBING 由单 permit 探针接管。
+- **fail_account 语义**：命中即走统一 FailureHandler：进程本地 fail-closed latch 先生效（本实例立即禁选，同代际静态重载不清除），PG CAS 成功才落 `failed_at` + 代际 +1 + NOTIFY（其它实例收敛；PG 写失败不重试——latch 兜底本实例，远端由其它路径收敛）。
+- **动作生效即时性**：规则增删改自动触发引擎重载（全实例同步，重载清窗口计数）；命中动作本地即时应用，持久化/跨实例同步走有界队列尽力投递（可丢，无 outbox——四类丢弃指标 ops 可见）。
 
 ### 创建规则
 
@@ -899,7 +913,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
   "priority": 40,
   "enabled": true,
   "when": { "kind": "5xx", "count_failure_ge": 5, "window_seconds": 60 },
-  "then": { "status": "unhealthy", "cooldown": "30s" }
+  "then": { "throttle": { "scope": "account", "mode": "open", "duration_ms": 30000, "use_reset": false } }
 }
 ```
 
@@ -936,10 +950,26 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 | 状态码 | 场景 |
 |---|---|
-| `400` | `when`/`then` 含未知字段、`kind` 非法、计数为负、`window_seconds` < 1、比例越界或缺 `count_total_ge`、`then` 无动作、`cooldown` 非法、`weight` 越界 |
+| `400` | `when`/`then` 含未知字段、`kind` 非法、计数为负、`window_seconds` < 1、比例越界或缺 `count_total_ge`、`then` 无动作、`throttle` 组合非法（scope/mode/duration/use_reset 真值表不满足、与 `fail_account` 并现）、`custom_message` 空串 |
 | `409` | `priority` 或 `name` 唯一冲突 |
 
-> 配置变更：`scheduler.cooldown_429` / `scheduler.backoff_base` / `scheduler.backoff_max` **已移除**（2026-08-13 用户裁决：不向后兼容）——配置含这些键将启动失败（未知键报错）。429 冷却、错误退避与恢复节奏统一由规则引擎的种子规则与自定义规则接管。
+> 配置变更：`scheduler.cooldown_429` / `scheduler.backoff_base` / `scheduler.backoff_max` **已移除**（2026-08-13 用户裁决：不向后兼容）——配置含这些键将启动失败（未知键报错）。429 节流、错误摘除与恢复节奏统一由规则引擎的种子规则与自定义 typed 动作（`throttle`/`fail_account`）接管。
+
+---
+
+## 路由观测 Routing
+
+智能路由的三只读观测端点（数据源钉死 routing rollup 表与当前发布 RoutingView——不查 raw logs、不按历史 generation 查询）：
+
+| 方法/路径 | 说明 |
+|---|---|
+| `GET /api/admin/routing/plan` | 当前发布路由计划解释：generation + 全路由 primary/explore/degraded 候选发布序 + explore 权重/累积表 + 候选静态身份。空视图 = generation 0 空计划（`routes: []`），不是错误 |
+| `GET /api/admin/routing/frontier?route=<64hex>&from&to&limit` | 质量-成本前沿（窗口 rollup × 当前计划候选连接）：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本，Pareto 前沿标记；窗口 ≤90 天，limit ≤200（超出钳制） |
+| `GET /api/admin/routing/flow?route=<64hex>&from&to` | 路由 flow 聚合（Sankey 数据）：RouteClass → (ordinal, lane) → Account → Outcome 完整链边，按 terminal_at 归属；窗口 ≤90 天 |
+
+flow 守恒与丢失口径（三者独立，不得混为上游失败）：`incomplete_chain_dropped` = 本进程已观察 cleanup 缺 terminal；`flow_overflow_dropped_chains` = 故障预算淘汰链；`process_crash_loss_unobservable` 恒 `true`（硬崩缺口不可量化）。
+
+---
 
 ## 兑换码 Redemption Codes
 
