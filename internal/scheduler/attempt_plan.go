@@ -23,6 +23,8 @@ type AttemptPlanIdentity struct {
 	// to 8. The proxy stamps its normalized proxy.failover_attempts here.
 	MaxAttempts       uint8
 	ApplyModelMapping bool
+	AffinityHash      uint64
+	HasAffinity       bool
 }
 
 type AttemptLane string
@@ -138,6 +140,11 @@ type attemptPlanCandidate struct {
 	operationTag      string
 	lifecycleRevision int64
 	routingGeneration uint64
+}
+
+type cacheAffinityCandidate struct {
+	accountID int64
+	lane      AttemptLane
 }
 
 const fnvOffset64 = 14695981039346656037
