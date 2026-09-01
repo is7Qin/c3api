@@ -75,7 +75,10 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 						rcVal = domain.RouteClassIDVal(v)
 					}
 				}
-				dec := compileRouteDecision(filtered, rk, rcVal, in.Quality, in.Prices)
+				dec, err := compileRouteDecision(filtered, rk, rcVal, in.Quality, in.Prices)
+				if err != nil {
+					return nil, err
+				}
 				routes[rr] = dec
 			}
 		}

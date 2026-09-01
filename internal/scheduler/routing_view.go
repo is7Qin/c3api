@@ -60,9 +60,11 @@ type RouteRef struct {
 
 // RouteDecision holds immutable per-route lane classification.
 type RouteDecision struct {
-	Primary  []int64
-	Degraded []int64
-	Explore  ExploreDecision
+	Primary             []int64
+	Degraded            []int64
+	Explore             ExploreDecision
+	CacheDomainRing     CacheDomainRing
+	CacheDomainAccounts []CacheDomainAccount
 }
 
 // ExploreDecision holds deterministic explore ordering.
@@ -109,12 +111,27 @@ func cloneRouteDecision(in *RouteDecision) *RouteDecision {
 	if in == nil {
 		return nil
 	}
-	out := &RouteDecision{Explore: cloneExploreDecision(in.Explore)}
+	out := &RouteDecision{
+		Explore:             cloneExploreDecision(in.Explore),
+		CacheDomainRing:     cloneCacheDomainRing(in.CacheDomainRing),
+		CacheDomainAccounts: append([]CacheDomainAccount(nil), in.CacheDomainAccounts...),
+	}
 	if in.Primary != nil {
 		out.Primary = append([]int64(nil), in.Primary...)
 	}
 	if in.Degraded != nil {
 		out.Degraded = append([]int64(nil), in.Degraded...)
+	}
+	return out
+}
+
+func cloneCacheDomainRing(in CacheDomainRing) CacheDomainRing {
+	out := CacheDomainRing{}
+	if in.Nodes != nil {
+		out.Nodes = append([]CacheDomainNode(nil), in.Nodes...)
+	}
+	if in.Domains != nil {
+		out.Domains = append([]string(nil), in.Domains...)
 	}
 	return out
 }

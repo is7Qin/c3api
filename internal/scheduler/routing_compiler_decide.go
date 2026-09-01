@@ -10,7 +10,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC domain.RouteClassIDVal, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) *RouteDecision {
+func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC domain.RouteClassIDVal, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) (*RouteDecision, error) {
 	qcs := make([]QualityCandidate, 0, len(filtered))
 	costKnown := make(map[int64]bool, len(filtered))
 	for _, a := range filtered {
@@ -166,7 +166,39 @@ func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC doma
 	if len(weights) == 0 {
 		weights = nil
 	}
-	return &RouteDecision{Primary: primaryIDs, Degraded: degradedIDs, Explore: ExploreDecision{IDs: exploreIDs, Weights: weights, Cumulative: cumulative, Total: total, Fallback: fallbackIDs}}
+	ring, _, accounts, err := compileCacheDomainPlan(filtered)
+	if err != nil {
+		return nil, err
+	}
+	return &RouteDecision{
+		Primary:             primaryIDs,
+		Degraded:            degradedIDs,
+		Explore:             ExploreDecision{IDs: exploreIDs, Weights: weights, Cumulative: cumulative, Total: total, Fallback: fallbackIDs},
+		CacheDomainRing:     ring,
+		CacheDomainAccounts: accounts,
+	}, nil
+}
+
+func compileCacheDomainPlan(filtered []*accountSnapshot) (CacheDomainRing, []string, []CacheDomainAccount, error) {
+	domains := make([]string, 0, len(filtered))
+	accounts := make([]CacheDomainAccount, 0, len(filtered))
+	seen := make(map[int64]struct{}, len(filtered))
+	for _, account := range filtered {
+		av := account.static.Load()
+		if av == nil {
+			continue
+		}
+		if _, ok := seen[av.acc.ID]; ok {
+			continue
+		}
+		seen[av.acc.ID] = struct{}{}
+		domain := cacheDomainForAccount(av.acc.ID, av.acc.CacheDomain)
+		domains = append(domains, domain)
+		accounts = append(accounts, CacheDomainAccount{AccountID: av.acc.ID, Domain: domain})
+	}
+	sort.Slice(accounts, func(i, j int) bool { return accounts[i].AccountID < accounts[j].AccountID })
+	ring, err := buildCacheDomainRing(domains)
+	return ring, append([]string(nil), ring.Domains...), accounts, err
 }
 
 // AvgTokens rounds sum/successes half-up (0 when no successes). Shared by the
