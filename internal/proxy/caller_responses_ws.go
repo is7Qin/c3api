@@ -18,6 +18,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/is7qin/c3api/internal/billing"
+	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/aiclient"
@@ -121,6 +122,11 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	reqModel := gjson.GetBytes(first, "model").String()
 	rm.AffinityHash, rm.HasAffinity = affinityIdentityFromFrame(first)
 
+	// 硬续接（WS 面）：首帧 previous_response_id 在计划就绪后解析绑定并钉选
+	// 账号（route class 取计划规范身份，与 create 侧绑定键同源）；解析失败
+	// fail-closed（错误帧承载，无 HTTP 码），零上游拨号。
+	contPrevID := gjson.GetBytes(first, "previous_response_id").String()
+
 	// service_tier 归一化 + 转发策略（首帧读后、Select 前——与 HTTP
 	// handleFormat 的 strip/reject 同位置，均先于选号；codex 分流在后，首帧
 	// 字节在共享点不被改写——strip 标记于此处、执行于 wsAttempt 首帧预处理
@@ -159,6 +165,29 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAIResponsesWS, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
 		return
 	}
+	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
+	// fail-closed（释放已占并发槽，零上游拨号）。
+	var contBinding *continuation.Binding
+	if contPrevID != "" {
+		b, ferr := p.contResolve(r.Context(), rm.meta.UserID, groupID, contProtocolWS, contPrevID, plan)
+		if ferr != nil {
+			sel.Release()
+			wsWriteError(client, ferr.msg)
+			p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAIResponsesWS, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
+			return
+		}
+		contBinding = b
+	}
+	// 续接钉选：绑定账号身份漂移/不可派生 → fail-closed（错误帧），绝不迁移。
+	if contBinding != nil {
+		pinned, ferr := p.contPin(plan, sel, contBinding)
+		if ferr != nil {
+			wsWriteError(client, ferr.msg)
+			p.recordRejected(r.Context(), reqID, groupID, contBinding.AccountID, reqModel, "", domain.FormatOpenAIResponsesWS, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
+			return
+		}
+		sel = pinned
+	}
 	defer leaseGuard(sel)
 
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=true（resp-ws 保留
@@ -169,7 +198,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	//（handleCodexDialError 的 stop 分支——501/fatal/4xx 已收尾）留在
 	// wsAttempt 内（不统一 codex 4xx 收尾差异：分类代码位置 + 错误文本来源）。
 	p.failoverLoopWithPlan(w, r, domain.FormatOpenAIResponsesWS, reqID, groupID, start, reqModel, nil, sel, plan,
-		attemptState{client: client, firstTyp: firstTyp, first: first, stripTier: stripTier},
+		attemptState{client: client, firstTyp: firstTyp, first: first, stripTier: stripTier, hardContinuation: contBinding != nil},
 		p.wsAttempt, p.wsSink, true)
 }
 

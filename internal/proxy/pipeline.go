@@ -129,6 +129,9 @@ type attemptState struct {
 	firstTyp  websocket.MessageType
 	first     []byte
 	stripTier bool
+	// hardContinuation（Responses REST/WS）：previous_response_id 钉选派生——
+	// 类型化重试矩阵对 hard 尝试恒不迁移（绑定账号失败即终态）。
+	hardContinuation bool
 }
 
 // upstreamAttempt 一次上游尝试（三格式各自实现；语义与现状循环内分类输入一
@@ -391,7 +394,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// plan-aware retry gating: committed/ambiguous/client-cancel/hard-continuation
 		// do not migrate. The typed retry matrix consumes the canonical attempt
 		// identity; without a plan there is no failover lane at all.
-		if !p.shouldRetryWithPlan(r.Context(), code, callErr, plan) {
+		if !p.shouldRetryWithPlan(r.Context(), code, callErr, plan, st.hardContinuation) {
 			sel.Release()
 			break
 		}

@@ -22,6 +22,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/is7qin/c3api/internal/billing"
+	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
@@ -64,8 +65,12 @@ type Proxy struct {
 	// Owned by main, reachable via composition; hot path not yet wired.
 	qualityRecorder    *quality.Recorder
 	pipelineFlowAppend AttemptFlowAppend
-	inflight           atomic.Int64
-	callers            map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
+	// cont is the hard-continuation binding store (internal/continuation,
+	// main 装配 SetContinuationStore 注入；nil = 未装配——Responses 请求零
+	// Redis，previous_response_id 请求 fail-closed）。
+	cont     *continuation.Store
+	inflight atomic.Int64
+	callers  map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
 	// imageGenerations/imageEdits images 端点调用器（Task B：同一格式
 	// openai-images 两个端点，上游子路径不同——handleFormat 按请求路径选
 	// 调用器，New 一次性构造免 per-request 分配）。
@@ -149,6 +154,11 @@ func (p *Proxy) SetCodex(c *sdkbridge.Codex) { p.codex = c }
 // SetQualityRecorder injects the quality recorder as a dormant dependency
 // Caller migration remains separate; lifecycle Close is wired in main.
 func (p *Proxy) SetQualityRecorder(r *quality.Recorder) { p.qualityRecorder = r }
+
+// SetContinuationStore injects the hard-continuation binding store
+// (Responses REST/WS create-ACK + previous_response_id pinning; nil = 未装配
+// ——普通请求零 Redis，continuation 请求 fail-closed)。
+func (p *Proxy) SetContinuationStore(s *continuation.Store) { p.cont = s }
 
 // QualityRecorder returns the dormant quality recorder (may be nil in tests).
 func (p *Proxy) QualityRecorder() *quality.Recorder { return p.qualityRecorder }

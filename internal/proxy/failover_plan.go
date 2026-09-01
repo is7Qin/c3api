@@ -83,8 +83,11 @@ func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, 
 
 // shouldRetryWithPlan consults the typed retry matrix with the canonical
 // identity of the attempt that just ran. Without a plan there is no attempt
-// identity and no failover: the plan-less lane does not exist.
-func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error, plan *scheduler.AttemptPlan) bool {
+// identity and no failover: the plan-less lane does not exist. hard marks a
+// hard-continuation dispatch: the bound account is the only valid target, so
+// the overlay sets HardContinuation (and the terminal-429 shape the outcome
+// contract demands) and the matrix never migrates it.
+func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error, plan *scheduler.AttemptPlan, hard bool) bool {
 	if plan == nil {
 		return false
 	}
@@ -92,7 +95,14 @@ func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error
 	if !ok {
 		return false
 	}
-	return CanRetry(CallerCategory(attempt.CallerCategory), retryOutcomeForAttempt(attempt, code, callErr, ctx))
+	o := retryOutcomeForAttempt(attempt, code, callErr, ctx)
+	if hard {
+		o.HardContinuation = true
+		if o.Result == ResultFailed && o.HTTPStatus == http.StatusTooManyRequests {
+			o.Terminal = true
+		}
+	}
+	return CanRetry(CallerCategory(attempt.CallerCategory), o)
 }
 
 // selectNextWithPlan advances the request-local plan: a compiled plan's

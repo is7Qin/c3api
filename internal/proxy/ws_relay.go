@@ -82,6 +82,20 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// 返回关闭错误 → 退出。取消仅用于上游侧（上游已结束/失联，直拆无害）。
 	// implicit 响应身份：非空时重写上游→客户端 text 帧的模型字段（显式/无映射保持直通零扫描）
 	respModel := sel.ClientResponseModel(reqModel)
+	// 硬续接（WS create 面）：store 装配且非 codex 传输时，每个 response id
+	// 在 Redis ACK 前不得转发客户端（ACK-before-visible）；codex/未装配 =
+	// 零变化零开销。
+	contTag := ""
+	if p.cont != nil && !isCodexCredentialType(sel.CredentialType) {
+		contTag = contProtocolWS
+	}
+	var (
+		contAcked    bool
+		contLastID   string
+		contPending  []wsContFrame
+		contPendingN int
+		contFail     *formatError
+	)
 	relayCtx, relayCancel := context.WithCancel(r.Context())
 	defer relayCancel()
 	endCh := make(chan struct{}, 3)
@@ -185,7 +199,17 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		defer close(upLoopDone)                   // 编排等本读者退出后再分类，保证记录可见性
 		defer relayRecover("up-loop", &clientErr) // panic 按身份入槽：本 goroutine 故障归客户端侧
 		for {
-			typ, f, err := up.Read(relayCtx)
+			// ACK 前读上限：停滞上游不得无限扣住未绑定帧（无 ACKed 绑定时
+			// 生效；ACK 后恢复无总体流超时的既有设计）。
+			readCtx := relayCtx
+			var readCancel context.CancelFunc
+			if contTag != "" && !contAcked {
+				readCtx, readCancel = context.WithTimeout(relayCtx, contWSAckTimeout)
+			}
+			typ, f, err := up.Read(readCtx)
+			if readCancel != nil {
+				readCancel()
+			}
 			if err != nil {
 				// 读失败分类：关闭帧进独立槽优先级最高，其余网络错误进 upErr，槽位分离避免覆盖
 				var ce websocket.CloseError
@@ -193,6 +217,10 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 					recordClose(err)
 				} else {
 					setErr(&upErr, err)
+					if contTag != "" && !contAcked && relayCtx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+						// ACK 期限到：id 帧未现，缓冲帧弃置 fail-closed
+						contFail = errContUnavailable
+					}
 				}
 				exit()
 				return
@@ -219,6 +247,45 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			out := f
 			if typ == websocket.MessageText && respModel != "" {
 				out = rewriteResponseModelJSON(f, respModel)
+			}
+			// 硬续接闸门（仅 responses 非 codex 传输）：id 帧在 Redis ACK 前
+			// 不得达客户端；ACK 后新 id（多轮 response.create）同样先绑后转。
+			if contTag != "" {
+				id := contFrameID(out)
+				if !contAcked {
+					if id == "" {
+						contPendingN += len(out)
+						if contPendingN > contMaxBuffer {
+							contFail = errContUnavailable
+							exit()
+							return
+						}
+						contPending = append(contPending, wsContFrame{typ: typ, frame: out})
+						continue
+					}
+					if ferr := p.contBind(r.Context(), contTag, id, groupID); ferr != nil {
+						contFail = ferr
+						exit()
+						return
+					}
+					contAcked = true
+					contLastID = id
+					for _, pf := range contPending {
+						if err := client.Write(relayCtx, pf.typ, pf.frame); err != nil {
+							setErr(&clientErr, err)
+							exit()
+							return
+						}
+					}
+					contPending, contPendingN = nil, 0
+				} else if id != "" && id != contLastID {
+					if ferr := p.contBind(r.Context(), contTag, id, groupID); ferr != nil {
+						contFail = ferr
+						exit()
+						return
+					}
+					contLastID = id
+				}
 			}
 			if err := client.Write(relayCtx, typ, out); err != nil {
 				setErr(&clientErr, err)
@@ -263,6 +330,46 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	logCtx := relayCtx
 	if ttft != nil {
 		logCtx = context.WithValue(relayCtx, ctxKeyTTFT{}, ttft)
+	}
+	if contFail != nil {
+		// 硬续接 fail-closed（WS create 面）：绑定权威不可用/冲突——缓冲帧
+		// 弃置（未绑定 id 永不达客户端），错误帧可达后收尾；已消耗用量保留
+		// 计费；网关侧失败不冷却账号（health=nil）。ACK 后新 id 绑定失败 =
+		// 帧已可见，走 sent_ambiguous 终态（与流中止同轨）。
+		wsWriteError(client, contFail.msg)
+		base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))
+		out := base
+		logStatus, logET := contFail.status, domain.Err5xx
+		if contAcked {
+			out = wsOutcomeForUpstreamError(base, u, ttft)
+			logStatus, logET = http.StatusOK, domain.ErrAbort
+		} else {
+			out.Result = ResultFailed
+			out.HTTPStatus = AttemptStatus(contFail.status)
+			out.Commit = CommitUpstreamResponded
+			out.Terminal = true
+			out.Usage = wsUsageFromTuple(u)
+			out.Timing.TTFTMS = ttft
+		}
+		p.observeDispatchOutcome(logCtx, out, nil)
+		l := logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, logStatus, logET, u, start))
+		p.finish(sel, l)
+		up.CloseNow()
+		relayCancel()
+		wg.Wait()
+		return true, ""
+	}
+	if contTag != "" && !contAcked && len(contPending) > 0 {
+		// 流结束而无 id 帧（无可续接身份）：缓冲字节安全放出（与 REST 闸门
+		// EOF 放行同轨——pending 恒无 id，放出零绑定泄漏）。
+		fctx, fcancel := context.WithTimeout(r.Context(), responsesWSCloseTimeout)
+		for _, pf := range contPending {
+			if err := client.Write(fctx, pf.typ, pf.frame); err != nil {
+				break
+			}
+		}
+		fcancel()
+		contPending = nil
 	}
 	end, endErr := relayClassify(upClose, upErr, clientErr, pingErr)
 	base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))

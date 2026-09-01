@@ -38,8 +38,10 @@ func CanRetry(cat CallerCategory, o AttemptOutcome) bool {
 	if o.HTTPStatus >= 500 && o.HTTPStatus <= 599 {
 		return false
 	}
-	// network not_sent may retry
-	if o.HTTPStatus == 0 && o.Commit == CommitNotSent && !o.BusinessFrameSent && o.Result == ResultFailed && !o.IsMalformed {
+	// network not_sent may retry — never for a hard continuation: the bound
+	// account is the only valid target, another account cannot resolve the
+	// referenced response.
+	if o.HTTPStatus == 0 && o.Commit == CommitNotSent && !o.BusinessFrameSent && o.Result == ResultFailed && !o.IsMalformed && !o.HardContinuation {
 		return true
 	}
 	return false

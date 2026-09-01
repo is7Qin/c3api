@@ -26,6 +26,7 @@ import (
 	jwtauth "github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/config"
+	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/discovery"
 	"github.com/is7qin/c3api/internal/domain"
@@ -369,6 +370,17 @@ func main() {
 		BillingCapture:        cfg.Billing.Enabled,
 		BehindCDN:             cfg.Proxy.BehindCDN, // client_ip 供应商头识别开关（false = 直取 RemoteAddr）
 	}, sched, credential.New(), rec, clients, auth, log, billHooks, errlogW)
+	// 硬续接绑定存储（Responses REST/WS create-ACK + previous_response_id
+	// 钉选）：HMAC 密钥由 auth.jwt_secret 经 HKDF 派生（同源密钥，零新增
+	// secret），Redis 复用 rdb 生命周期（store 无独立 Close——连接池归
+	// redisx 统一释放）。构造失败 = 装配失败（fail-fast；jwt_secret 非空
+	// 已由 config.Load 校验）。生产恒非 nil：普通请求零 Redis，
+	// previous_response_id 请求 fail-closed 由 proxy 内部保证。
+	contStore, err := continuation.New(rdb, cfg.Auth.JWTSecret)
+	if err != nil {
+		fatalf("continuation: %v", err)
+	}
+	px.SetContinuationStore(contStore)
 	// 运行时健康投影装配（intelligent-routing lane）：key
 	// (account,QualityClassID|*,lifecycle_revision)，Redis generation/full
 	// replacement/tombstone 语义属 RuntimeHealth 核心；probe 集群 rendezvous 单
