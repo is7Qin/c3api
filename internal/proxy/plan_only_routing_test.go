@@ -117,8 +117,8 @@ func TestShouldRetryWithPlan_PlanlessNeverRetries(t *testing.T) {
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 
-	require.False(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("network"), nil))
-	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, nil))
+	require.False(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("network"), nil, false))
+	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, nil, false))
 }
 
 func TestShouldRetryWithPlan_UsesCanonicalAttemptVerdicts(t *testing.T) {
@@ -132,17 +132,17 @@ func TestShouldRetryWithPlan_UsesCanonicalAttemptVerdicts(t *testing.T) {
 	require.NotNil(t, plan)
 	defer sel.Release()
 
-	require.True(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("dial failed"), plan),
+	require.True(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("dial failed"), plan, false),
 		"not-sent network failure is retryable")
-	require.True(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, plan),
+	require.True(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, plan, false),
 		"ordinary 429 is retryable")
-	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusInternalServerError, nil, plan),
+	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusInternalServerError, nil, plan, false),
 		"5xx never replays")
-	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusBadRequest, nil, plan))
+	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusBadRequest, nil, plan, false))
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.False(t, p.shouldRetryWithPlan(cancelled, 0, errors.New("canceled"), plan),
+	require.False(t, p.shouldRetryWithPlan(cancelled, 0, errors.New("canceled"), plan, false),
 		"client cancel is never a failover")
 }
 

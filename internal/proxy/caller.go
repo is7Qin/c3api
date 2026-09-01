@@ -20,6 +20,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/billing"
+	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -220,6 +221,15 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		}
 	}
 
+	// 硬续接（仅 Responses）：previous_response_id 把派生钉死在产出该响应的
+	// 账号上。普通请求（无续接键、其余全部格式）零 Redis。解析在计划就绪后
+	// 执行（route class 取计划规范身份，与 create 侧绑定键同源），失败一律
+	// fail-closed（missing/expired→410、Redis 不可用→503），零上游拨号。
+	contPrevID := ""
+	if format == domain.FormatOpenAIResponses {
+		contPrevID = gjson.GetBytes(body, "previous_response_id").String()
+	}
+
 	// 路由信息：格式 + 调用器 + 请求体。默认 = 客户端格式直连（零转换）；
 	// images 端点按请求路径选调用器（generations/edits 上游子路径不同）；
 	// 协议转换（W5，只补差）命中时整体替换为模板协议路由。
@@ -285,6 +295,30 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
 		return
 	}
+	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
+	// fail-closed（释放已占并发槽，零上游拨号）。
+	var contBinding *continuation.Binding
+	if contPrevID != "" {
+		b, ferr := p.contResolve(r.Context(), rm.meta.UserID, groupID, contProtocolREST, contPrevID, plan)
+		if ferr != nil {
+			sel.Release()
+			p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
+			writeErr(w, ferr)
+			return
+		}
+		contBinding = b
+	}
+	// 续接钉选：计划推进到绑定账号（其余候选释放跳过）；绑定账号身份漂移或
+	// 不可派生 → fail-closed，绝不迁移到其他账号。
+	if contBinding != nil {
+		pinned, ferr := p.contPin(plan, sel, contBinding)
+		if ferr != nil {
+			p.recordRejected(r.Context(), reqID, groupID, contBinding.AccountID, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
+			writeErr(w, ferr)
+			return
+		}
+		sel = pinned
+	}
 	defer leaseGuard(sel)
 
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=true（chat/resp/
@@ -293,7 +327,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	// format（buildLog 参数不变）。差异状态按值传入 attemptState（零分配
 	// ——attempt/sink 为 New 构造单例）。
 	p.failoverLoopWithPlan(w, r, format, reqID, groupID, start, reqModel, route.body, sel, plan,
-		attemptState{format: format, routeFormat: route.format, caller: route.caller, stream: stream},
+		attemptState{format: format, routeFormat: route.format, caller: route.caller, stream: stream, hardContinuation: contBinding != nil},
 		p.chatAttempt, p.httpSink, true)
 }
 
