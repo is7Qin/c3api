@@ -749,7 +749,7 @@
       "planEmptyTitle": "No published routing plan",
       "planEmptyDesc": "The compiler has not published a plan yet (generation 0). Routing observation appears once routes compile.",
       "flowTitle": "Dispatch flow",
-      "flowDesc": "Chain edges aggregated by (attempt, lane); segment = outcome. Server-side rollup only — nothing recomputed here.",
+      "flowDesc": "Transition Sankey from server rollup edges: route → attempt lane → account → outcome/terminal. Conservation and all counts are server-side — nothing recomputed here.",
       "staleEdges": "{{count}} edges from older generations",
       "firstDispatch": "First dispatch chains",
       "terminal": "Terminal chains",
@@ -760,6 +760,23 @@
       "conservationAlertDesc": "First-dispatch chains ({{first}}) ≠ terminal chains ({{terminal}}); the rollup window is inconsistent, so no chart is drawn. Inspect the raw edges below.",
       "flowEmptyTitle": "No routing flow in this range",
       "flowEmptyDesc": "Complete chains land in the rollup only after they terminate; adjust the window.",
+      "sankey": {
+        "title": "Routing transition flow",
+        "desc": "Sankey of server-aggregated dispatch chains: route class to attempt lane, lane to account, account to outcome; terminal chains end at a final node. Hover a lane-to-account band to see transition reasons.",
+        "chains": "Chains",
+        "reasons": "Transition reasons",
+        "prevOutcomes": "Prev outcomes",
+        "prevAccounts": "Prev accounts",
+        "firstArrival": "includes first dispatch",
+        "tableToggle": "Show edge table",
+        "kind": {
+          "route": "Route",
+          "lane": "Attempt lane",
+          "account": "Account",
+          "outcome": "Outcome",
+          "terminal": "Terminal"
+        }
+      },
       "lane": {
         "primary": "primary",
         "explore": "explore",
