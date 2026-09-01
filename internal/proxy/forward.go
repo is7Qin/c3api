@@ -438,10 +438,12 @@ type ctxKeyReqMeta struct{}
 type ctxKeyTTFT struct{}
 
 type reqMeta struct {
-	meta     domain.KeyMeta
-	tier     billing.Tier
-	hasTier  bool
-	clientIP string // 客户端 IP（guardPipeline 入口鉴权前提取；401 及全部拒绝路径带）
+	meta         domain.KeyMeta
+	tier         billing.Tier
+	hasTier      bool
+	AffinityHash uint64
+	HasAffinity  bool
+	clientIP     string // 客户端 IP（guardPipeline 入口鉴权前提取；401 及全部拒绝路径带）
 }
 
 // logWithCtx 从 ctx 读请求元数据填日志归属（user_id/key_id；context 传递
