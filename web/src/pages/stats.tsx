@@ -6,9 +6,11 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3, Workflow } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from 'recharts'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, Sankey, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from 'recharts'
 import { api } from '@/App'
 import type { components } from '@/lib/api/schema'
+import { buildFlowSankey } from '@/lib/routing-sankey'
+import { FlowSankeyLegend, FlowSankeyLinkShape, FlowSankeyNodeShape, FlowSankeyTooltip } from '@/components/routing-flow-sankey'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { DateRangePicker } from '@/components/date-range-picker'
@@ -340,8 +342,6 @@ export default function Stats() {
 type PlanRoute = components['schemas']['RoutingPlanRoute']
 type FlowEdge = components['schemas']['RoutingFlowEdge']
 
-const OUTCOME_PALETTE = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
-
 const routeLabel = (r: PlanRoute) => `${r.ref.model} · ${r.ref.format} · ${r.ref.operation_tag} · g${r.ref.group_id}`
 
 function RoutingPanel({ range, setRange }: {
@@ -436,7 +436,9 @@ function RoutingPanel({ range, setRange }: {
   )
 }
 
-// flow 卡：守恒成立才画 (ordinal,lane)×outcome 堆叠柱；违例 → 告警 + 边表格。
+// flow 卡：守恒成立才画 transition-aware Sankey（route → (ordinal,lane) → account →
+// outcome/terminal）；迁移原因挂在 lane→account 到达链的 tooltip/表格上。
+// 违例 → 告警 + 边表格。
 type FlowQuery = { data?: components['schemas']['RoutingFlowResponse']; isLoading: boolean; isError: boolean; error: unknown }
 
 function FlowCard({ flowQ }: { flowQ: FlowQuery }) {
@@ -447,23 +449,16 @@ function FlowCard({ flowQ }: { flowQ: FlowQuery }) {
   const conserved = !!data && data.first_dispatch_chains === data.terminal_chains
   const staleEdges = data ? edges.filter(e => e.generation !== data.plan_generation).length : 0
 
-  const outcomes = useMemo(() => {
-    const s = new Set<string>()
-    for (const e of edges) s.add(e.outcome)
-    return [...s].sort()
-  }, [edges])
-  const flowConfig = useMemo(() => {
-    const c: ChartConfig = {}
-    outcomes.forEach((o, i) => {
-      c[o] = { label: t(`stats.routing.outcome.${o}`, { defaultValue: o }), color: OUTCOME_PALETTE[i % OUTCOME_PALETTE.length] }
+  const sankeyData = useMemo(() => {
+    if (!data) return null
+    return buildFlowSankey(edges, {
+      route: truncate(data.route_class_id, 14),
+      lane: (ordinal, lane) => `#${ordinal} ${t(`stats.routing.lane.${lane}`, { defaultValue: lane })}`,
+      account: id => `A${id}`,
+      outcome: o => t(`stats.routing.outcome.${o}`, { defaultValue: o }),
+      terminal: o => `${t(`stats.routing.outcome.${o}`, { defaultValue: o })} · ${t('stats.routing.table.finalBadge')}`,
     })
-    return c
-  }, [outcomes, t])
-  const chartData = useMemo(() => lanes.map(l => {
-    const row: Record<string, number | string> = { label: `#${l.ordinal} ${t(`stats.routing.lane.${l.lane}`, { defaultValue: l.lane })}` }
-    for (const e of l.edges) row[e.outcome] = ((row[e.outcome] as number | undefined) ?? 0) + e.chain_count
-    return row
-  }), [lanes, t])
+  }, [data, edges, t])
 
   return (
     <Card>
@@ -483,10 +478,10 @@ function FlowCard({ flowQ }: { flowQ: FlowQuery }) {
         {flowQ.isError ? (
           <p className="text-sm text-destructive">{t('common.loadFailed', { message: (flowQ.error as Error).message })}</p>
         ) : flowQ.isLoading ? (
-          <Skeleton className="h-[280px] w-full" />
+          <Skeleton className="h-[320px] w-full" />
         ) : lanes.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
-            <BarChart3 className="size-10" />
+            <Workflow className="size-10" />
             <p className="font-medium">{t('stats.routing.flowEmptyTitle')}</p>
             <p className="text-sm">{t('stats.routing.flowEmptyDesc')}</p>
           </div>
@@ -505,19 +500,33 @@ function FlowCard({ flowQ }: { flowQ: FlowQuery }) {
                 <AlertDescription>{t('stats.routing.conservationAlertDesc', { first: data?.first_dispatch_chains.toLocaleString(), terminal: data?.terminal_chains.toLocaleString() })}</AlertDescription>
               </Alert>
             )}
-            {conserved ? (
-              <ChartContainer config={flowConfig} className="h-[280px] w-full">
-                <BarChart accessibilityLayer data={chartData}>
-                  <CartesianGrid vertical={false} />
-                  <XAxis dataKey="label" tickLine={false} tickMargin={10} axisLine={false} fontSize={12} />
-                  <YAxis tickLine={false} axisLine={false} tickMargin={8} fontSize={12} allowDecimals={false} />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <ChartLegend content={<ChartLegendContent />} />
-                  {outcomes.map(o => (
-                    <Bar key={o} dataKey={o} stackId="chains" fill={`var(--color-${o})`} radius={2} maxBarSize={48} />
-                  ))}
-                </BarChart>
-              </ChartContainer>
+            {conserved && sankeyData ? (
+              <div className="space-y-3">
+                <div className="overflow-x-auto">
+                  <ChartContainer config={{}} className="h-[320px] w-full min-w-[640px]">
+                    <Sankey
+                      accessibilityLayer
+                      data={sankeyData}
+                      node={FlowSankeyNodeShape}
+                      link={FlowSankeyLinkShape}
+                      nodeWidth={10}
+                      nodePadding={14}
+                      margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                      title={t('stats.routing.sankey.title')}
+                      desc={t('stats.routing.sankey.desc')}
+                    >
+                      <ChartTooltip content={<FlowSankeyTooltip />} />
+                    </Sankey>
+                  </ChartContainer>
+                </div>
+                <FlowSankeyLegend />
+                <details className="rounded-lg border border-border/50">
+                  <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted-foreground">
+                    {t('stats.routing.sankey.tableToggle')}
+                  </summary>
+                  <FlowEdgeTable edges={edges} />
+                </details>
+              </div>
             ) : (
               <FlowEdgeTable edges={edges} />
             )}

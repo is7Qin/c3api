@@ -749,7 +749,7 @@
       "planEmptyTitle": "暂无已发布路由计划",
       "planEmptyDesc": "编译道尚未发布计划（generation 0）；路由编译产出后此处即有观测数据。",
       "flowTitle": "派发流量",
-      "flowDesc": "按（尝试序, 通道）聚合的链边；色段=结局。全部为服务端 rollup 聚合，前端零重算。",
+      "flowDesc": "由服务端 rollup 边构建的迁移 Sankey：路由 → 尝试通道 → 账号 → 结局/终态。守恒与计数全部服务端计算，前端零重算。",
       "staleEdges": "含 {{count}} 条旧代际边",
       "firstDispatch": "首发链数",
       "terminal": "终态链数",
@@ -760,6 +760,23 @@
       "conservationAlertDesc": "首发链数（{{first}}）≠ 终态链数（{{terminal}}），窗口聚合不自洽，不绘制图表；下方为原始边明细。",
       "flowEmptyTitle": "该时间范围内无路由流量",
       "flowEmptyDesc": "完整链仅在终态后进入 rollup；可调整时间窗口。",
+      "sankey": {
+        "title": "路由迁移流向",
+        "desc": "由服务端聚合的派发链构建 Sankey：路由类 → 尝试通道 → 账号 → 结局；终态链汇入终态节点。悬停通道→账号链路可见迁移原因。",
+        "chains": "链路数",
+        "reasons": "迁移原因",
+        "prevOutcomes": "前序结局",
+        "prevAccounts": "前序账号",
+        "firstArrival": "含首发起",
+        "tableToggle": "展开边明细表",
+        "kind": {
+          "route": "路由",
+          "lane": "尝试通道",
+          "account": "账号",
+          "outcome": "结局",
+          "terminal": "终态"
+        }
+      },
       "lane": {
         "primary": "主通道",
         "explore": "探索",
