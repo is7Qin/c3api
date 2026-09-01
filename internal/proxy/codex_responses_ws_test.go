@@ -222,7 +222,7 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		GroupKeyRPM:           0, UsageCapture: true,
+		UsageCapture:          true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
@@ -496,7 +496,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 		Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4, Ext: ext,
 	}}}
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, store, nil)
-	cfg := Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, GroupKeyRPM: 0, UsageCapture: true}
+	cfg := Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true}
 	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil)

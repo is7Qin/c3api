@@ -129,7 +129,8 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		GroupKeyRPM:           0, UsageCapture: true, BillingCapture: true,
+		UsageCapture:          true,
+		BillingCapture:        true,
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
 		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,

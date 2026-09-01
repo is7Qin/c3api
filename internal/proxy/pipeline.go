@@ -101,15 +101,6 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errConcurrency.msg)
 		return nil, nil, 0, false
 	}
-	if !p.limit.Allow(groupID, time.Now()) {
-		p.inflight.Add(-1)
-		p.auth.Release(meta, level)
-		writeErr(w, errRateLimit)
-		// 架构审查 S5（用户裁决）：组限流 429 也进 err_logs（排障限流需要；
-		// 与 401 同属拒绝路径——普通队列风暴采样丢弃兜底）。
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errRateLimit.msg)
-		return nil, nil, 0, false
-	}
 	return r, rm, level, true
 }
 

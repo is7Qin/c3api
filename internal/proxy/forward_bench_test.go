@@ -79,7 +79,7 @@ func benchProxy(upstream string) *Proxy {
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		GroupKeyRPM:           0, UsageCapture: true,
+		UsageCapture:          true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	if err := re.Reload(context.Background()); err != nil {

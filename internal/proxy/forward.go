@@ -37,7 +37,6 @@ type Config struct {
 	UpstreamTimeout       time.Duration // codex 非流式上游超时（resp/images 各自包 ctx——B-P2-7；HTTPClient.Timeout 不可用：流式/非流式四方法共享，覆盖整响应体读取会切断长流式 SSE）。同源同值 cfg.Proxy.UpstreamTimeout（aiclient.Config.UpstreamTimeout 管 typed 面）
 	UpstreamStreamTimeout time.Duration // 流式 backstop（非流式超时在 aiclient.Config/cfg.Proxy.UpstreamTimeout）
 	FailoverAttempts      int
-	GroupKeyRPM           int
 	UsageCapture          bool
 	BillingCapture        bool // 计费开关（config.Billing.Enabled 映射；余额预检门控 + billable 行 Billed 出生标记取反——F2 单写点后不再路由分流）
 	// BehindCDN 客户端 IP 识别开关（config.proxy.behind_cdn 映射；clientIP
@@ -53,7 +52,6 @@ type Proxy struct {
 	rec     *usage.Recorder
 	clients *aiclient.Factory
 	auth    *Auth
-	limit   *fixedWindowLimiter
 	log     *logx.Logger
 	bill    *BillingHooks // 计费钩子；nil = 计费全关
 	// errlog 错误明细落盘 worker（分表设计；nil = 未装配——拒绝/异常路径只聚
@@ -100,7 +98,7 @@ type Proxy struct {
 func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec *usage.Recorder, clients *aiclient.Factory, auth *Auth, log *logx.Logger, bill *BillingHooks, errlog *usage.ErrLogWorker) *Proxy {
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
-		limit: newFixedWindowLimiter(cfg.GroupKeyRPM), log: log, bill: bill, errlog: errlog,
+		log: log, bill: bill, errlog: errlog,
 		wsHeartbeatInterval: responsesWSHeartbeatInterval,
 		wsConns:             newWSRegistry(),
 	}
@@ -156,11 +154,9 @@ func (p *Proxy) CloseAllWS() {
 // SetInstancesProvider 注入集群实例数 N 提供者（#14 多实例预算分摊；discovery
 // 构造后调用——main 装配点：px.SetInstancesProvider(disco)，spec
 // 2026-08-25-redis-instance-discovery-design §2.2）。转发给 auth（gate 预算
-// ceil(剩余/N)）与 limit（RPM ceil(rpm/N)）；N 在每次预算分配现读，心跳计数
-// 变化 ≤1 tick 天然生效。
+// ceil(剩余/N)）；N 在每次预算分配现读，心跳计数变化 ≤1 tick 天然生效。
 func (p *Proxy) SetInstancesProvider(inst InstancesProvider) {
 	p.auth.SetInstancesProvider(inst)
-	p.limit.SetInstancesProvider(inst)
 }
 
 // finish 收尾：释放并发槽 + 额度扣减（后扣模型，usage 已知）+ 计费计算 +
@@ -463,7 +459,6 @@ var (
 	errTooMany        = &formatError{status: http.StatusTooManyRequests, msg: "no available account"}
 	errConcurrency    = &formatError{status: http.StatusTooManyRequests, msg: "concurrency limit exceeded"}
 	errQuotaExhausted = &formatError{status: http.StatusTooManyRequests, msg: "key quota exhausted"}
-	errRateLimit      = &formatError{status: http.StatusTooManyRequests, msg: "group rate limited"}
 	errBody           = &formatError{status: http.StatusRequestEntityTooLarge, msg: "request body too large"}
 	// errUpgradeRequired 400：resp-ws 端点收到非升级请求（本地拒绝，无记录）。
 	errUpgradeRequired = &formatError{status: http.StatusBadRequest, msg: "websocket upgrade required"}
@@ -498,7 +493,6 @@ var errBodies = func() map[*formatError]encodedError {
 		errTooMany:             enc(errTooMany),
 		errConcurrency:         enc(errConcurrency),
 		errQuotaExhausted:      enc(errQuotaExhausted),
-		errRateLimit:           enc(errRateLimit),
 		errBody:                enc(errBody),
 		errNoPrice:             enc(errNoPrice),
 		errInsufficientBalance: enc(errInsufficientBalance),

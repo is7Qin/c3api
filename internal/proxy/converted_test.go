@@ -166,7 +166,7 @@ func newConvertedTestProxyAccsLogs(t *testing.T, accs map[int64][]*domain.Accoun
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: streamTimeout,
-		GroupKeyRPM:           0, UsageCapture: true,
+		UsageCapture:          true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))

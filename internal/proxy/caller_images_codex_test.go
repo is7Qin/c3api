@@ -186,7 +186,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		GroupKeyRPM:           0, UsageCapture: true,
+		UsageCapture:          true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
@@ -523,7 +523,7 @@ func TestImagesCodexAdapterMissing501(t *testing.T) {
 	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
-		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, GroupKeyRPM: 0, UsageCapture: true,
+		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,
 	}, sched, credential.New(), rec, clients, auth, nil, nil, usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, store, nil))
 	// 不调 SetCodex —— 未装配形态
 
@@ -712,7 +712,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, codexUp.URL))
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
-		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, GroupKeyRPM: 0, UsageCapture: true,
+		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,
 	}, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
 	p.SetCodex(codex)
 
