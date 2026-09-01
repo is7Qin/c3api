@@ -171,8 +171,26 @@ func decisionViewBytes(d *DecisionView) []byte {
 		}
 		writeUvarint(&buf, d.routes[ref].Explore.Total)
 		writeIDs(&buf, d.routes[ref].Explore.Fallback)
+		writeCacheDomainPlan(&buf, d.routes[ref])
 	}
 	return buf.Bytes()
+}
+
+func writeCacheDomainPlan(buf *bytes.Buffer, decision *RouteDecision) {
+	writeUvarint(buf, uint64(len(decision.CacheDomainRing.Domains)))
+	for _, domain := range decision.CacheDomainRing.Domains {
+		writeStr(buf, domain)
+	}
+	writeUvarint(buf, uint64(len(decision.CacheDomainRing.Nodes)))
+	for _, node := range decision.CacheDomainRing.Nodes {
+		writeUvarint(buf, node.Hash)
+		writeStr(buf, node.Domain)
+	}
+	writeUvarint(buf, uint64(len(decision.CacheDomainAccounts)))
+	for _, account := range decision.CacheDomainAccounts {
+		writeVarint(buf, account.AccountID)
+		writeStr(buf, account.Domain)
+	}
 }
 
 func writeUvarint(buf *bytes.Buffer, v uint64) {

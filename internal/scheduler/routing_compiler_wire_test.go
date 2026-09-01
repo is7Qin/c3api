@@ -105,7 +105,7 @@ func TestRoutingCompilerWireGoldenSHA(t *testing.T) {
 	v, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	sum := sha256.Sum256(decisionViewBytes(v))
-	require.Equal(t, "890fc14523730c5355b4e2fab4ca251f7a69a28e1b02d47f5c1f98241f453770", hexOf(sum[:]), "golden serialized DecisionView")
+	require.Equal(t, "33b00c1579d361691f4082b8a344932974efabcc7b83991c78d3dcdd79009290", hexOf(sum[:]), "golden serialized DecisionView")
 }
 
 func hexOf(b []byte) string {
