@@ -97,3 +97,94 @@ func TestRuntimeHealthCloseUnstartedSafe(t *testing.T) {
 	require.NoError(t, h.Close(context.Background()))
 	require.NoError(t, h.Close(context.Background()), "idempotent")
 }
+
+// blockingProbeHealth builds a started RuntimeHealth whose probe is parked
+// in-flight (entered closed once, released only when the test closes release).
+func blockingProbeHealth(t *testing.T) (*RuntimeHealth, chan struct{}, chan struct{}) {
+	t.Helper()
+	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var once sync.Once
+	h.SetProbeFn(func(context.Context, HealthKey) error {
+		once.Do(func() { close(entered) })
+		<-release
+		return errors.New("probe released")
+	})
+	hk := HealthKey{AccountID: 1, Quality: "*", Revision: 1}
+	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
+	require.NoError(t, h.Start(context.Background()))
+	<-entered
+	return h, entered, release
+}
+
+// TestRuntimeHealthCloseTimeoutAllowsLaterJoin pins the timeout semantics: a
+// deadline-limited Close reports the incomplete join as an error AND does not
+// permanently suppress a later Close—retry blocks until both loops exit, then
+// returns nil; a further Close after success stays an immediate no-op.
+func TestRuntimeHealthCloseTimeoutAllowsLaterJoin(t *testing.T) {
+	h, _, release := blockingProbeHealth(t)
+
+	deadCtx, dcancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer dcancel()
+	err := h.Close(deadCtx)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "deadline-limited Close must report incomplete join")
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- h.Close(context.Background()) }()
+	select {
+	case got := <-closeDone:
+		close(release)
+		t.Fatalf("retry Close returned before loops exited: %v", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-closeDone, "retry Close must join to completion")
+	select {
+	case <-h.probeDone:
+	default:
+		t.Fatal("probe loop still running after successful Close")
+	}
+	select {
+	case <-h.syncDone:
+	default:
+		t.Fatal("sync loop still running after successful Close")
+	}
+	require.NoError(t, h.Close(context.Background()), "Close after completed join stays idempotent")
+}
+
+// TestRuntimeHealthConcurrentCloseWaitsJoin pins that no concurrent Close
+// caller may report success before both loops exit: every caller independently
+// joins the done signals (bounded watchdog precedent, no sleep-as-sync).
+func TestRuntimeHealthConcurrentCloseWaitsJoin(t *testing.T) {
+	h, _, release := blockingProbeHealth(t)
+
+	const n = 4
+	errs := make([]error, n)
+	allDone := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = h.Close(context.Background())
+		}(i)
+	}
+	go func() { wg.Wait(); close(allDone) }()
+	select {
+	case <-allDone:
+		close(release)
+		t.Fatal("concurrent Close returned while probe was in flight")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	<-allDone
+	for i, err := range errs {
+		require.NoError(t, err, "Close caller %d", i)
+	}
+	select {
+	case <-h.probeDone:
+	default:
+		t.Fatal("probe loop still running after all Close returned")
+	}
+}

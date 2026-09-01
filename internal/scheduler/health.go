@@ -259,7 +259,6 @@ type RuntimeHealth struct {
 	runIDHook func(context.Context) (string, error)
 
 	startOnce sync.Once
-	stopOnce  sync.Once
 	cancel    context.CancelFunc
 	// syncDone/probeDone GoLoop 完成信号（Start 存入，Close join——同
 	// conc-sync/quality-sync 停机纪律：Close 返回后不再有循环在跑）。
@@ -349,27 +348,30 @@ func (h *RuntimeHealth) Start(ctx context.Context) error {
 }
 
 // Close stops loops and joins their completion signals (bounded by ctx):
-// orderly shutdown — after Close returns no sync/probe tick can still run.
+// orderly shutdown — a nil return guarantees no sync/probe tick can still run.
+// context.CancelFunc is idempotent, so every caller (concurrent or retry)
+// independently joins the same done signals: a deadline-limited Close reports
+// the incomplete join as an error without permanently suppressing a later
+// successful join (no stopOnce — the once would be consumed by the timeout).
 func (h *RuntimeHealth) Close(ctx context.Context) error {
-	h.stopOnce.Do(func() {
-		if h.cancel == nil {
-			return // 未 Start：Close 安全 no-op（worker 契约）
-		}
-		h.cancel()
-		for _, d := range []<-chan struct{}{h.syncDone, h.probeDone} {
-			if d == nil {
-				continue
-			}
+	if h.cancel == nil {
+		return nil // 未 Start：Close 安全 no-op（worker 契约）
+	}
+	h.cancel()
+	for _, d := range []<-chan struct{}{h.syncDone, h.probeDone} {
+		select {
+		case <-d:
+		default:
 			select {
 			case <-d:
 			case <-ctx.Done():
 				if h.log != nil {
 					h.log.Warn("runtime-health close timeout, loop still running", logx.Error(ctx.Err()))
 				}
-				return
+				return fmt.Errorf("health: close join incomplete: %w", ctx.Err())
 			}
 		}
-	})
+	}
 	return nil
 }
 
