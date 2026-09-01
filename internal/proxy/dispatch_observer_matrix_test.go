@@ -433,7 +433,7 @@ func TestAttemptObserverMatrix_preResponse429SingleMarkResult(t *testing.T) {
 		scheduler.AttemptPlanIdentity{RequestID: "req-429", UserID: 1})
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat, domain.FormatOpenAIChat,
+	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
 		"req-429", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{},
 		rejectedPipelineAttempt{code: http.StatusTooManyRequests}, &httpSink{}, false)
 
@@ -465,7 +465,7 @@ func TestAttemptObserverMatrix_panicDuringDispatchAbandonsPin(t *testing.T) {
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	require.Panics(t, func() {
-		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat, domain.FormatOpenAIChat,
+		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
 			"req-panic", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{},
 			panickingAttempt{}, &httpSink{}, false)
 	})
@@ -506,7 +506,7 @@ func TestAttemptObserverMatrix_attemptContextBeginsAtDispatch(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat, domain.FormatOpenAIChat,
+		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
 			"req-begin", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{}, att, &httpSink{}, false)
 	}()
 	got := <-inflightDuringCall

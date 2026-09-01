@@ -560,7 +560,7 @@ func main() {
 		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
 		AdminHandler:      h.RoutesMux(),
 		UserHandler:       userHandler,
-		AIHandler:         aiRouter,
+		AIHandler:         planReadyGate(sched, aiRouter),
 		WebFS:             webUI(),
 		Logger:            log,
 	})

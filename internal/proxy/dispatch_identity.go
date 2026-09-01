@@ -3,9 +3,7 @@ package proxy
 
 import (
 	"encoding/hex"
-	"strconv"
 
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
@@ -30,102 +28,6 @@ func pipelineBase(attempt scheduler.Attempt) AttemptOutcome {
 		OperationTag: OperationTag(attempt.OperationTag), Ordinal: attempt.Ordinal,
 		LifecycleRevision: LifecycleRevision(attempt.LifecycleRevision), Lane: LaneID(attempt.Lane),
 		Generation: Generation(attempt.RoutingGeneration), PreviousAttemptID: attemptPreviousID(attempt.PreviousAttemptID),
-	}
-}
-
-// selDispatchBase is the legacy (plan-less) dispatch identity: real
-// template/account/model from the selection with loop-managed chain linkage.
-// It feeds the quality/observation path only — flow chains require
-// plan-canonical identity (see flowChainOwner).
-func selDispatchBase(sel *scheduler.Selection, reqID string, dispatched int, reqModel string, st attemptState, format, selectFormat domain.RequestFormat) AttemptOutcome {
-	fp := sel.CandidateFingerprint
-	if fp == "" {
-		fp = "fp-placeholder"
-	}
-	ordinal := uint8(dispatched)
-	if ordinal < 1 {
-		ordinal = 1
-	}
-	id := AttemptID(reqID + ":1")
-	var prev *AttemptID
-	if ordinal > 1 {
-		id = AttemptID(reqID + ":" + strconv.Itoa(int(ordinal)))
-		p := AttemptID(reqID + ":" + strconv.Itoa(int(ordinal)-1))
-		prev = &p
-	}
-	mapped := sel.Model
-	if mapped == "" {
-		mapped = reqModel
-	}
-	if mapped == "" {
-		mapped = "unknown"
-	}
-	requested := reqModel
-	if requested == "" {
-		requested = mapped
-	}
-	cat := dispatchCallerCategory(sel, st, format, selectFormat)
-	return AttemptOutcome{
-		ID: id, RouteClassID: "rc1", QualityClassID: "qc1", Fingerprint: CandidateFingerprint(fp),
-		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: requested, MappedModel: mapped,
-		CallerCategory: cat, OperationTag: dispatchOperationTag(cat, st), Ordinal: ordinal,
-		LifecycleRevision: 1, Lane: LanePrimary, Generation: 1, PreviousAttemptID: prev,
-	}
-}
-
-// dispatchCallerCategory resolves the ten-way category including the
-// credential-type specializations visible at dispatch time.
-func dispatchCallerCategory(sel *scheduler.Selection, st attemptState, format, selectFormat domain.RequestFormat) CallerCategory {
-	codex := isCodexCredentialType(sel.CredentialType)
-	if _, ok := st.caller.(*convertedCaller); ok && format != selectFormat {
-		return CallerConverted
-	}
-	switch format {
-	case domain.FormatOpenAIChat:
-		return CallerChat
-	case domain.FormatOpenAIResponses:
-		if codex {
-			return CallerCodexHTTP
-		}
-		return CallerResponses
-	case domain.FormatAnthropic:
-		return CallerAnthropic
-	case domain.FormatOpenAIImages:
-		if codex {
-			return CallerImagesCodex
-		}
-		return CallerImages
-	case domain.FormatOpenAIResponsesWS:
-		if codex {
-			return CallerCodexWS
-		}
-		return CallerResponsesWS
-	case domain.FormatOpenAISearch:
-		return CallerSearch
-	default:
-		return CallerChat
-	}
-}
-
-func dispatchOperationTag(cat CallerCategory, st attemptState) OperationTag {
-	switch cat {
-	case CallerChat:
-		return OperationTag(domain.OpChatCompletions)
-	case CallerResponses, CallerCodexHTTP:
-		return OperationTag(domain.OpResponses)
-	case CallerAnthropic:
-		return OperationTag(domain.OpAnthropicMessages)
-	case CallerImages, CallerImagesCodex:
-		if ic, ok := st.caller.(*imagesCaller); ok {
-			return OperationTag(ic.operationTag())
-		}
-		return OperationTag(domain.OpImagesGenerations)
-	case CallerResponsesWS, CallerCodexWS:
-		return OperationTag(domain.OpResponsesWS)
-	case CallerSearch:
-		return OperationTag(domain.OpSearch)
-	default:
-		return OperationTag(domain.OpChatCompletions)
 	}
 }
 

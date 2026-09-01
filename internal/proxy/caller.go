@@ -277,8 +277,9 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 			}
 		}
 	}
-	// Preserve old Select callers until migration: fallback to legacy Select if plan path didn't provide selection
-	// selectWithPlan already fell back to legacy when NewAttemptPlan failed, so err handling above covers it
+	// Plan-only contract: selection succeeded only with a compiled plan and a
+	// canonical reserved attempt; any absent/invalid compiled plan lands here
+	// as a typed error and fails closed (no legacy selection lane exists).
 	if err != nil {
 		p.handleSelectError(w, err)
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
@@ -287,11 +288,11 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	defer leaseGuard(sel)
 
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=true（chat/resp/
-	// anthropic/images 走缺价预检）；尾部 Select 按 route.format（协议转换命中
-	// 时为模板协议路由）；记录仍按客户端 format（buildLog 参数不变）。差异
-	// 状态按值传入 attemptState（零分配——attempt/sink 为 New 构造单例）。
-	// First selection may use new route-aware plan where request identity is available
-	p.failoverLoopWithPlan(w, r, format, route.format, reqID, groupID, start, reqModel, route.body, sel, plan,
+	// anthropic/images 走缺价预检）；尾部推进走入口编译计划（选号时已按
+	// route.format 绑定路由，协议转换命中即目标路由）；记录仍按客户端
+	// format（buildLog 参数不变）。差异状态按值传入 attemptState（零分配
+	// ——attempt/sink 为 New 构造单例）。
+	p.failoverLoopWithPlan(w, r, format, reqID, groupID, start, reqModel, route.body, sel, plan,
 		attemptState{format: format, routeFormat: route.format, caller: route.caller, stream: stream},
 		p.chatAttempt, p.httpSink, true)
 }

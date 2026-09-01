@@ -125,11 +125,10 @@ type attemptState struct {
 	caller      UpstreamCaller       // 直连调用器（codex 分流复位基准）
 	stream      bool                 // 流式标志（读请求阶段提取，恒定）
 	// resp-ws（HandleResponsesWS）：
-	client          *websocket.Conn
-	firstTyp        websocket.MessageType
-	first           []byte
-	stripTier       bool
-	opaqueSelection bool
+	client    *websocket.Conn
+	firstTyp  websocket.MessageType
+	first     []byte
+	stripTier bool
 }
 
 // upstreamAttempt 一次上游尝试（三格式各自实现；语义与现状循环内分类输入一
@@ -193,21 +192,18 @@ func applyPassthroughHeader(w http.ResponseWriter, then domain.RuleThen, hdr htt
 	}
 }
 
-// failoverLoop 共享 failover 骨架：precheckPrice(开关) → attempt.call → 分类
-// （429 MarkResult / 5xx、0 MarkResult / 4xx finish+透传）→ Release → attempted
-// 防呆 → 尾部 Select（最后一轮不预选——防并发槽泄漏）→ 耗尽记录（et 分类 +
-// recordLog + 防呆释放）→ sink.writeExhausted。任一终态（handled/4xx/499/预检
-// 失败）已收尾，返回即请求结束。format 用于记录（客户端协议——WS 现状
-// sel.Format 与 format 恒等，统一用 format）；selectFormat 用于尾部 Select
-// （chat 协议转换命中时为模板协议路由——convertedRoute 转换补差不抽象）。
-// precheck=false 跳过缺价预检（search——现状无预检语义）。
+// failoverLoopWithPlan 共享 failover 骨架（plan-only：入口选号必经
+// selectWithPlan，尾部推进必经 plan.ReserveAttempt——无计划即无第二次派生）：
+// precheckPrice(开关) → attempt.call → 分类（429 MarkResult / 5xx、0
+// MarkResult / 4xx finish+透传）→ Release → attempted 防呆 → 尾部计划推进
+// （最后一轮不预选——防并发槽泄漏）→ 耗尽记录（et 分类 + recordLog + 防呆释
+// 放）→ sink.writeExhausted。任一终态（handled/4xx/499/预检失败）已收尾，
+// 返回即请求结束。format 用于记录（客户端协议——WS 现状 sel.Format 与
+// format 恒等，统一用 format）。precheck=false 跳过缺价预检（search——现状
+// 无预检语义）。
 // 记录（recordRejected/buildLog/finish/recordLog/MarkResult）参数逐字段与三份
 // 原内联管线一致（行为契约：状态码/错误帧/Retry-After/固定文案逐字节不变）。
-func (p *Proxy) failoverLoop(w http.ResponseWriter, r *http.Request, format, selectFormat domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *scheduler.Selection, st attemptState, attempt upstreamAttempt, sink pipelineSink, precheck bool) {
-	p.failoverLoopWithPlan(w, r, format, selectFormat, reqID, groupID, start, reqModel, body, sel, nil, st, attempt, sink, precheck)
-}
-
-func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, format, selectFormat domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *scheduler.Selection, plan *scheduler.AttemptPlan, st attemptState, attempt upstreamAttempt, sink pipelineSink, precheck bool) {
+func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *scheduler.Selection, plan *scheduler.AttemptPlan, st attemptState, attempt upstreamAttempt, sink pipelineSink, precheck bool) {
 	lastSel := sel
 	var (
 		lastCode   int
@@ -217,7 +213,8 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 	)
 	// FlowChain ownership: this loop is the SOLE producer. One request-local
 	// chain per plan-backed dispatched request, only when the quality
-	// recorder is wired; plan-less (legacy) requests never fabricate rows.
+	// recorder is wired; a dispatch without a canonical plan attempt never
+	// arms the chain and fabricates no row.
 	// settle runs last (registered first): Finalize+Complete exactly once on
 	// recorded chains, Close exactly once on panic/abandon/no-terminal.
 	var flow *flowChainOwner
@@ -280,7 +277,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// once — by the caller (handled=true terminal) or by the loop here
 		// (handled=false classification). openDispatch tracks the unfinished one
 		// for the deferred owner cleanup.
-		callCtx, dispatch := p.beginDispatch(r.Context(), sel, plan, flow, reqID, dispatched, reqModel, st, format, selectFormat)
+		callCtx, dispatch := p.beginDispatch(r.Context(), sel, plan, flow)
 		openDispatch = dispatch
 		code, respBody, hdr, handled, callErr := attempt.call(callCtx, w, r, reqID, groupID, start, sel, reqModel, body, st)
 		if handled {
@@ -391,13 +388,10 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 			}
 			return
 		}
-		// plan-aware retry gating: committed/ambiguous/client-cancel/hard-continuation do not migrate
-		// Use the typed retry matrix, not raw status.
-		shouldRetry := true
-		if plan != nil {
-			shouldRetry = p.shouldRetryWithPlan(r.Context(), code, callErr, st, format, selectFormat)
-		}
-		if !shouldRetry {
+		// plan-aware retry gating: committed/ambiguous/client-cancel/hard-continuation
+		// do not migrate. The typed retry matrix consumes the canonical attempt
+		// identity; without a plan there is no failover lane at all.
+		if !p.shouldRetryWithPlan(r.Context(), code, callErr, plan) {
 			sel.Release()
 			break
 		}
@@ -406,7 +400,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		if dispatched >= maxAttempts {
 			break
 		}
-		nextSel, selErr := p.selectNextWithPlan(plan, groupID, selectFormat, reqModel, st.opaqueSelection)
+		nextSel, selErr := p.selectNextWithPlan(plan)
 		if selErr != nil {
 			// distinguish ErrNoAvailable vs AttemptsExhausted preserved via error; both lead to exhausted handling
 			break

@@ -134,8 +134,8 @@ func newConvertedTestProxy(t *testing.T, upstream string, tplFormats []domain.Re
 // newConvertedTestProxyLogs 同 newConvertedTestProxy，但允许注入 LogInserter
 // （用量断言用捕获实现）与上游流超时（中止路径用例缩短触发）。模板为全模型
 // 账号（无模型空间）：转换路径测试覆盖解析/转换/失败语义，不测模型白名单
-// 路由——含无 model 字段请求（顶层数组转换失败用例经默认桶选号；白名单账号
-// 在硬白名单语义下对无模型请求 404，见 scheduler buildRoutes）。
+// 路由——无 model 字段请求在 plan-only 契约下 fail-closed 404（无 canonical
+// 身份即无派生，见 scheduler buildRoutes 与 reservePlanAttempt）。
 func newConvertedTestProxyLogs(t *testing.T, upstream string, tplFormats []domain.RequestFormat, pcs []domain.ProtocolConvert, logs usage.LogInserter, streamTimeout time.Duration) *Proxy {
 	t.Helper()
 	tpl := &domain.Template{
@@ -460,24 +460,24 @@ func TestConvertedMultiDirection(t *testing.T) {
 	require.Equal(t, "hi", body3["input"], "上游收到 resp 形态请求体（未转换）")
 }
 
-// TestConvertedRequestConvertFailReleasesSlot 请求体转换失败 → 本地 400，且
-// 目标选号已占的并发槽必须释放（防槽位泄漏）。
-func TestConvertedRequestConvertFailReleasesSlot(t *testing.T) {
+// TestConvertedUnconvertibleBodyFailsClosedNoSlot 顶层数组 JSON 合法
+// （json.Valid 通过）但不可转换——且不含可提取 model：plan-only 契约下选号
+// 先失败关闭（404，无 canonical 身份即无派生），转换面不再持有目标并发槽。
+func TestConvertedUnconvertibleBodyFailsClosedNoSlot(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
 	defer srv.Close()
 	p := newConvertedTestProxy(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses}, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
-	// 顶层数组 JSON 合法（json.Valid 通过）但不可转换 → ConvertRequest 报错
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`[1,2,3]`))
 	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
-	require.Equal(t, http.StatusBadRequest, rec.Code, "转换失败 → 本地 400")
+	require.Equal(t, http.StatusNotFound, rec.Code, "无 model 身份 → fail-closed 404（不派生、不转换）")
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Zero(t, ri.Concurrency, "转换失败路径释放目标选号并发槽（无泄漏）")
+	require.Zero(t, ri.Concurrency, "fail-closed 路径零并发槽占用")
 }
 
 // TestConvertedChatToMessStreamingLogTotalTokens 转换流（chat→anthropic）流式
@@ -583,7 +583,7 @@ func userScenarioAccs(srvURL string, fullEnabled bool) map[int64][]*domain.Accou
 	tplResp := &domain.Template{ID: 2, Name: "resp-t", BaseURL: srvURL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
 	return map[int64][]*domain.Account{10: {
-		{ID: 1, TemplateID: 1, Template: tplFull, UpstreamKey: "sk-upstream", Enabled: fullEnabled, MaxConcurrency: 4},
+		{ID: 1, TemplateID: 1, Template: tplFull, UpstreamKey: "sk-upstream", Enabled: fullEnabled, LifecycleRevision: 1, MaxConcurrency: 4},
 		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4},
 	}}
 }
@@ -637,8 +637,8 @@ func TestConvertedUserScenarioFullModelActive(t *testing.T) {
 // TestConvertedChatBusyFallback 全忙变体（429 语义扩展边界）：客户端路由存在
 // 但账号并发满（非 disabled）→ ErrNoAvailable → 同样转换回退。先经
 // sched.Select 直接占满 chat 账号唯一并发槽再发请求；断言转换目标账号槽位
-// 随请求结束释放（复用 TestConvertedRequestConvertFailReleasesSlot 的 Runtime
-// 断言模式）。
+// 随请求结束释放（复用 TestConvertedUnconvertibleBodyFailsClosedNoSlot 的
+// Runtime 断言模式）。
 func TestConvertedChatBusyFallback(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
