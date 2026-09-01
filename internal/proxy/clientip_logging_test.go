@@ -8,10 +8,10 @@ package proxy
 //   - on：伪造头命中 → usage/err 行带 client_ip
 //   - off：伪造头被忽略（恒 RemoteAddr 剥端口——零伪造面）
 //   - on 无头 → RemoteAddr 值
-//   - 不变量（gate M1）：401 鉴权失败（rm 创建在鉴权前）+ 429 并发超限 + 组
-//     限流 + 402 余额预检——全部拒绝路径 err_logs 行恒带 client_ip
+//   - 不变量（gate M1）：401 鉴权失败（rm 创建在鉴权前）+ 429 并发超限 +
+//     402 余额预检——全部拒绝路径 err_logs 行恒带 client_ip
 //
-// 开关经测试 seam 构造后翻转（p.cfg.BehindCDN/p.limit，同 p.auth.Upsert 先例
+// 开关经测试 seam 构造后翻转（p.cfg.BehindCDN，同 p.auth.Upsert 先例
 // ——newTestProxyTimeoutLogs 族构造函数硬编码默认关，翻转即开）。
 
 import (
@@ -110,7 +110,7 @@ func TestProxyClientIPBehindCDNNoHeaderFallback(t *testing.T) {
 	require.Equal(t, "192.0.2.1", store.logs[0].ClientIP, "on 无头 → RemoteAddr 剥端口")
 }
 
-// 不变量（gate M1）：401 鉴权失败（rm 创建在鉴权前）+ 429 并发超限 + 组限流
+// 不变量（gate M1）：401 鉴权失败（rm 创建在鉴权前）+ 429 并发超限
 // ——全部拒绝路径 err_logs 行恒带 client_ip（提取在鉴权前，recordRejected 的
 // ctx 统一带 rm）。成功路径行（无伪造头）同时断言 RemoteAddr 兜底。
 func TestProxyClientIPRejectedRowsAlwaysCarryIP(t *testing.T) {
@@ -127,21 +127,6 @@ func TestProxyClientIPRejectedRowsAlwaysCarryIP(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
-
-	// 组限流 429：窗口限额 2 → 第 3 请求拒绝（拒绝路径同断言）
-	p.cfg.GroupKeyRPM = 2
-	p.limit = newFixedWindowLimiter(2)
-	for i := 0; i < 2; i++ {
-		rc := httptest.NewRecorder()
-		p.HandleChat(rc, chatReq("ck-1"))
-		require.Equal(t, http.StatusOK, rc.Code)
-	}
-	rc := httptest.NewRecorder()
-	req3 := chatReq("ck-1")
-	req3.Header.Set("CF-Connecting-IP", "9.9.9.9")
-	p.HandleChat(rc, req3)
-	require.Equal(t, http.StatusTooManyRequests, rc.Code, "body=%s", rc.Body.String())
-	require.Contains(t, rc.Body.String(), "group rate limited")
 
 	// 429 并发超限：key 并发槽 1 → 第二在途请求拒绝（阻塞上游保持第一在途）
 	blockUp, release := blockingUpstream(t)
@@ -175,17 +160,12 @@ func TestProxyClientIPRejectedRowsAlwaysCarryIP(t *testing.T) {
 
 	store.mu.Lock()
 	byReq := map[domain.ErrorType]string{}
-	byStatus := map[int]string{}
 	for _, l := range store.logs {
 		if l.ErrorType == domain.ErrAuth {
 			byReq[l.ErrorType] = l.ClientIP
 		}
-		if l.ErrorType == domain.Err429 && l.StatusCode == http.StatusTooManyRequests {
-			byStatus[l.StatusCode] = l.ClientIP // 组限流拒绝行（成功行 ErrorType=none）
-		}
 	}
 	require.Equal(t, "9.9.9.9", byReq[domain.ErrAuth], "401 拒绝行恒带 client_ip（不变量）")
-	require.Equal(t, "9.9.9.9", byStatus[http.StatusTooManyRequests], "组限流拒绝行恒带 client_ip")
 	store.mu.Unlock()
 
 	store4.mu.Lock()

@@ -288,6 +288,7 @@ func TestLoadRejectsLegacyKeys(t *testing.T) {
 	}{
 		{name: "scheduler cooldown", toml: `scheduler = { cooldown_429 = "1s" }`, key: "cooldown_429"},
 		{name: "billing workers", toml: `billing = { flush_workers = 8 }`, key: "flush_workers"},
+		{name: "limit group rpm", toml: `limit = { group_key_rpm = 60 }`, key: "limit"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Load(writeConfig(t, tc.toml))

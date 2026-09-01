@@ -122,7 +122,8 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		GroupKeyRPM:           0, UsageCapture: true, BillingCapture: true,
+		UsageCapture:          true,
+		BillingCapture:        true,
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
 		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{}},
 		Balances: bal,

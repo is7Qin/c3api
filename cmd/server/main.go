@@ -361,7 +361,6 @@ func main() {
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
 		UpstreamStreamTimeout: cfg.Proxy.UpstreamStreamTimeout,
 		FailoverAttempts:      cfg.Proxy.FailoverAttempts,
-		GroupKeyRPM:           cfg.Limit.GroupKeyRPM,
 		UsageCapture:          cfg.Proxy.UsageCapture,
 		BillingCapture:        cfg.Billing.Enabled,
 		BehindCDN:             cfg.Proxy.BehindCDN, // client_ip 供应商头识别开关（false = 直取 RemoteAddr）

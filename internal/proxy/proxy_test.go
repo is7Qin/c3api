@@ -287,7 +287,7 @@ func newTestProxyTplTimeoutRec(t *testing.T, tpl *domain.Template, accountID int
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: streamTimeout,
-		GroupKeyRPM:           0, UsageCapture: usageCapture,
+		UsageCapture:          usageCapture,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background())) // 空表写种子（429/30s、error/5s、ok/active）
