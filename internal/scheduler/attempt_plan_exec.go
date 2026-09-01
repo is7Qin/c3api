@@ -29,6 +29,8 @@ type AttemptPlan struct {
 	walkSeg     uint8 // 0 primary, 1 explore sample, 2 explore fallback, 3 degraded, 4 done
 	walkPos     int
 	total       int
+	affinity    []cacheAffinityCandidate
+	affinityPos int
 	// attempt bookkeeping (bounded by maxAttempts ≤ 8)
 	attempted      [MaxAttemptPlanAccounts]int64
 	attemptIDs     [MaxAttemptPlanAccounts]string
@@ -78,6 +80,67 @@ func NewAttemptPlan(identity AttemptPlanIdentity, decision RouteDecision) *Attem
 	return p
 }
 
+func (p *AttemptPlan) ApplyCacheAffinity(hash uint64) bool {
+	domain, ok := p.decision.CacheDomainRing.Lookup(hash)
+	if !ok {
+		return false
+	}
+	entries := p.globalEntries()
+	preferred := make([]cacheAffinityCandidate, 0, len(entries))
+	spill := make([]cacheAffinityCandidate, 0, len(entries))
+	for _, entry := range entries {
+		candidateDomain, found := cacheDomainAccountDomain(p.decision.CacheDomainAccounts, entry.accountID)
+		if found && candidateDomain == domain {
+			preferred = append(preferred, entry)
+		} else {
+			spill = append(spill, entry)
+		}
+	}
+	p.affinity = append(preferred, spill...)
+	p.affinityPos = 0
+	p.prefixCount = 0
+	p.cursor = 0
+	p.walkSeg = 4
+	p.walkPos = 0
+	for p.prefixCount < MaxAttemptPlanAccounts {
+		candidate, ok := p.nextEntry()
+		if !ok {
+			break
+		}
+		p.candidates[p.prefixCount] = candidate
+		p.prefixCount++
+	}
+	return true
+}
+
+func (p *AttemptPlan) globalEntries() []cacheAffinityCandidate {
+	entries := make([]cacheAffinityCandidate, 0, p.total)
+	seen := make(map[int64]struct{}, p.total)
+	appendID := func(id int64, lane AttemptLane) {
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		entries = append(entries, cacheAffinityCandidate{accountID: id, lane: lane})
+	}
+	for _, id := range p.decision.Primary {
+		appendID(id, AttemptLanePrimary)
+	}
+	if p.sampleValid {
+		appendID(p.sampleID, AttemptLaneExplore)
+	}
+	for _, id := range p.decision.Explore.Fallback {
+		if p.sampleValid && id == p.sampleID {
+			continue
+		}
+		appendID(id, AttemptLaneExplore)
+	}
+	for _, id := range p.decision.Degraded {
+		appendID(id, AttemptLaneDegraded)
+	}
+	return entries
+}
+
 func (p *AttemptPlan) countTotal() {
 	n := len(p.decision.Primary) + len(p.decision.Explore.Fallback) + len(p.decision.Degraded)
 	if p.sampleValid {
@@ -109,6 +172,14 @@ func (p *AttemptPlan) seen(accountID int64) bool {
 // inside the fallback. Positions persist across calls: the whole plan scans
 // each unique candidate at most once.
 func (p *AttemptPlan) nextEntry() (attemptPlanCandidate, bool) {
+	if p.affinity != nil {
+		if p.affinityPos >= len(p.affinity) {
+			return attemptPlanCandidate{}, false
+		}
+		entry := p.affinity[p.affinityPos]
+		p.affinityPos++
+		return attemptPlanCandidate{accountID: entry.accountID, lane: entry.lane}, true
+	}
 	for p.walkSeg <= 3 {
 		switch p.walkSeg {
 		case 0:

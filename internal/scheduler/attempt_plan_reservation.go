@@ -38,6 +38,9 @@ func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef)
 	identity.RouteClassID = route.RouteClassID
 	identity.RoutingGeneration = v.generation
 	p := NewAttemptPlan(identity, *decision)
+	if identity.HasAffinity {
+		p.ApplyCacheAffinity(identity.AffinityHash)
+	}
 	p.format = route.Format
 	p.model = requestedModel
 	p.operationTag = route.OperationTag
@@ -47,6 +50,15 @@ func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef)
 		}
 	}
 	return p, nil
+}
+
+func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity, route RouteRef, keyHash uint64) (*AttemptPlan, error) {
+	plan, err := s.NewAttemptPlan(identity, route)
+	if err != nil {
+		return nil, err
+	}
+	plan.ApplyCacheAffinity(keyHash)
+	return plan, nil
 }
 
 // resolveCandidate fills one plan candidate's identity fields from the given
