@@ -73,9 +73,7 @@ func (s *fakeRollupStore) ListDirtyMinutes(_ context.Context, kind string, _ int
 		if len(out) >= limit {
 			break
 		}
-		if !b.Before(from) {
-			out = append(out, b)
-		}
+		out = append(out, b)
 	}
 	return out, nil
 }
@@ -174,25 +172,41 @@ func TestRollupWorkerSuccessBothKinds(t *testing.T) {
 	require.Equal(t, q, q2, "已滚成桶不重复")
 }
 
-// TestRollupWorkerSelectionLowerBound watermark 已存在时，选择缝以 watermark
-// 为下界（低于它的迟到脏分钟留给 watermark-ordering 车道）。
+// TestRollupWorkerSelectionLowerBound watermark 已存在时，仍按分钟升序消费
+// 全部 dirty；低于 watermark 的迟到脏分钟不能被跳过。
 func TestRollupWorkerSelectionLowerBound(t *testing.T) {
 	m0 := time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC)
 	m1 := m0.Add(time.Hour)
 	m2 := m1.Add(time.Minute)
 	store := newFakeRollupStore()
 	store.wm[rollupKindQuality] = m1
-	// m0 低于 watermark（不可滚成，必须不被选中）；m1 等于 watermark 允许重算。
+	// m0 低于 watermark，仍必须先被消费；m1 等于 watermark 允许重算。
 	store.dirty[rollupKindQuality] = []time.Time{m0, m1, m2}
 	w := newTestRollupWorker(store)
 
 	w.runOnce(context.Background())
 
 	q, _ := store.snapshot()
-	require.Equal(t, []time.Time{m1, m2}, q, "选择下界=watermark，m0 不被选中")
+	require.Equal(t, []time.Time{m0, m1, m2}, q, "迟到桶也按时间顺序消费")
 	store.mu.Lock()
 	require.Equal(t, m1, store.listFrom[rollupKindQuality])
 	store.mu.Unlock()
+}
+
+func TestRollupWorkerConsumesDirtyMinuteBelowWatermark(t *testing.T) {
+	// Given a late dirty minute below the current watermark.
+	late := time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC)
+	store := newFakeRollupStore()
+	store.wm[rollupKindQuality] = late.Add(time.Hour)
+	store.dirty[rollupKindQuality] = []time.Time{late}
+	w := newTestRollupWorker(store)
+
+	// When one rollup cycle consumes dirty minutes.
+	w.runOnce(context.Background())
+
+	// Then the older dirty minute is still rolled instead of being skipped.
+	q, _ := store.snapshot()
+	require.Equal(t, []time.Time{late}, q)
 }
 
 // TestRollupWorkerFailureRetryOrder 失败中断保序 + 下 tick 重试：m2 失败 →
