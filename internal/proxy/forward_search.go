@@ -86,8 +86,9 @@ func emitSearchOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, 
 // encrypted_output 网关零解析——alpha 端点实验性，上游变更网关免疫）。
 //
 // 与主 handleFormat 的差异（search 专属语义）：
-//   - 账号选择：body.model → Scheduler.Select(groupID, openai-responses, model)
-//     （复用主流 resp 路由面——四类型全可达；独立选号无会话绑定：search 请求自包含，上游鉴权 = 有效 Bearer，无会话亲和机制）
+//   - 账号选择：body.model → selectWithPlan(groupID, openai-responses, model,
+//     ApplyModelMapping=false)（复用主流 resp 路由面——四类型全可达；独立选号
+//     无会话绑定：search 请求自包含，上游鉴权 = 有效 Bearer，无会话亲和机制）
 //   - 不走计费预检（余额/缺价 402 均不执行——search 无预检语义；按次价在
 //     2xx 落账时结算，零余额透支扣费为产品语义）
 //   - 四类型分派（用户裁决 2026-08-13）：codex-oauth/codex-pat → codex-sdk
@@ -106,7 +107,8 @@ func emitSearchOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, 
 //     倍率）；非 2xx/网络错误 → 不计费
 //
 // 复用面：guardPipeline（鉴权/配额/并发门禁/限流序列）、
-// Select + handleSelectError、信封分类（statusOf/upstreamBody）、failoverLoop
+// selectWithPlan + handleSelectError、信封分类（statusOf/upstreamBody）、
+// failoverLoopWithPlan
 // （每轮按当轮 sel.CredentialType 重新分派——跨类型换账号复用旧调用器会把健康账号路由到错误凭据路径）、
 // recordRejected/finish/buildLog/MarkResult 全部既有机制。
 func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
@@ -148,10 +150,10 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	defer leaseGuard(sel)
 
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=false（search 无缺价
-	// 预检）；尾部 Select 走主流 resp
-	// 路由面（openai-responses）；耗尽 Retry-After 分支由 httpSink 判 lastCode。
-	p.failoverLoopWithPlan(w, r, domain.FormatOpenAISearch, domain.FormatOpenAIResponses, reqID, groupID, start, reqModel, body, sel, plan,
-		attemptState{opaqueSelection: true}, p.searchAttempt, p.httpSink, false)
+	// 预检）；尾部推进走同一 resp 路由计划（openai-responses 车道）；耗尽
+	// Retry-After 分支由 httpSink 判 lastCode。
+	p.failoverLoopWithPlan(w, r, domain.FormatOpenAISearch, reqID, groupID, start, reqModel, body, sel, plan,
+		attemptState{}, p.searchAttempt, p.httpSink, false)
 }
 
 // searchAttempt HandleSearch 的 attempt 实现（单次 codex search 上游调用，非

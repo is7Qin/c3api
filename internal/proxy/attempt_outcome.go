@@ -4,10 +4,9 @@ package proxy
 import "fmt"
 
 // AttemptID is a per-attempt identifier. Dispatched metadata
-// (RouteClassID/Fingerprint/Lane/Generation/LifecycleRevision) currently
-// uses placeholder values; canonical stable IDs will be provided by
-// (RouteClass/QualityClass/candidate fingerprint) and wired through the
-// not loosen to legacy Selection fields.
+// (RouteClassID/QualityClassID/Fingerprint/Lane/Generation/LifecycleRevision)
+// is plan-canonical: it comes from the scheduler.Attempt recorded by
+// ReserveAttempt (pipelineBase), never from placeholder values.
 type AttemptID string
 
 func (a AttemptID) Validate() error {

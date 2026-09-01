@@ -261,7 +261,7 @@ func TestFlowChainProducer_panicClosesChainAsIncomplete(t *testing.T) {
 	require.NotNil(t, plan)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	require.Panics(t, func() {
-		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat, domain.FormatOpenAIChat,
+		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
 			"req-flow-panic", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{},
 			panickingAttempt{}, &httpSink{}, false)
 	})
@@ -302,7 +302,7 @@ func TestFlowChainProducer_duplicateCompletionAppendsExactlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat, domain.FormatOpenAIChat,
+	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
 		"req-flow-dup", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{},
 		doubleCompleteAttempt{}, &httpSink{}, false)
 
@@ -313,12 +313,22 @@ func TestFlowChainProducer_duplicateCompletionAppendsExactlyOnce(t *testing.T) {
 	require.Zero(t, rec.GlobalInflight())
 }
 
-// --- no synthetic identity: plan-less dispatches never produce rows ---
-// Driven through failoverLoop (the plan-less lane, plan=nil by construction)
-// so the invariant holds regardless of whether the fixture scheduler has
-// published decisions for this route.
+// --- no synthetic identity: a plan-less dispatch produces nothing ---
+// The plan-only contract makes the legacy lane unreachable through every
+// production entry; driving the loop with a nil plan proves the seam itself
+// fabricates no rows and no observation without a canonical attempt identity.
 
-func TestFlowChainProducer_legacyRequestProducesNoRows(t *testing.T) {
+type noObservationAttempt struct{ t *testing.T }
+
+func (a noObservationAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64,
+	start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
+	a.t.Helper()
+	require.Nil(a.t, dispatchFromContext(ctx), "a plan-less dispatch must not create an owner observation")
+	sel.Release()
+	return 0, nil, nil, true, nil
+}
+
+func TestFlowChainProducer_planlessDispatchProducesNoRowsNoObservation(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -327,30 +337,23 @@ func TestFlowChainProducer_legacyRequestProducesNoRows(t *testing.T) {
 	sel, err := p.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	p.failoverLoop(httptest.NewRecorder(), req, domain.FormatOpenAIChat, domain.FormatOpenAIChat,
-		"req-flow-legacy", 10, time.Now(), "gpt-4o", nil, sel, attemptState{},
-		singleCompleteAttempt{}, &httpSink{}, false)
-	sel.Release()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
+			"req-flow-planless", 10, time.Now(), "gpt-4o", nil, sel, nil, attemptState{},
+			noObservationAttempt{t}, &httpSink{}, false)
+	}()
+	<-done
 
-	require.Empty(t, collectFlowRows(rec), "placeholder identity must never flow into production rows")
-	require.Len(t, fc.snapshot(), 1, "the legacy observation tap is unaffected")
-	require.Equal(t, int64(1), snapshotQualityAttempts(rec))
+	require.Empty(t, collectFlowRows(rec), "no plan means no canonical identity and no production rows")
+	require.Empty(t, fc.snapshot(), "no observation may be recorded without canonical identity")
+	require.Zero(t, snapshotQualityAttempts(rec))
 	require.Zero(t, quality.FlowChainIncompleteObserved())
 	require.Zero(t, rec.GlobalInflight())
-}
-
-type singleCompleteAttempt struct{}
-
-func (singleCompleteAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64,
-	start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
-	d := dispatchFromContext(ctx)
-	outcome := mergeDispatchBase(ctx, AttemptOutcome{
-		Result: ResultSuccess, HTTPStatus: 200, Commit: CommitClientCommitted,
-		BusinessFrameSent: true, Terminal: true, Timing: AttemptTiming{LatencyMS: 5},
-		CallerCategory: CallerChat, OperationTag: "chat_completions",
-	})
-	_ = d.observer.Complete(outcome, nil)
-	return 200, nil, nil, true, nil
+	ri, ok := p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Zero(t, ri.Concurrency, "lease released exactly once")
 }
 
 // --- concurrent same-minute requests: conservation across chains ---

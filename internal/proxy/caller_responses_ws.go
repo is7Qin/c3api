@@ -168,7 +168,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// 固定文案由 wsSink 承载（WS 无 Retry-After/429 语义）。codex 拨号分类
 	//（handleCodexDialError 的 stop 分支——501/fatal/4xx 已收尾）留在
 	// wsAttempt 内（不统一 codex 4xx 收尾差异：分类代码位置 + 错误文本来源）。
-	p.failoverLoopWithPlan(w, r, domain.FormatOpenAIResponsesWS, domain.FormatOpenAIResponsesWS, reqID, groupID, start, reqModel, nil, sel, plan,
+	p.failoverLoopWithPlan(w, r, domain.FormatOpenAIResponsesWS, reqID, groupID, start, reqModel, nil, sel, plan,
 		attemptState{client: client, firstTyp: firstTyp, first: first, stripTier: stripTier},
 		p.wsAttempt, p.wsSink, true)
 }

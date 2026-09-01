@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,9 +116,9 @@ func TestSkeletonStreamValueBoundaries(t *testing.T) {
 		name string
 		body string
 	}{
-		{"true", `{"stream":true,"messages":[]}`},
-		{"false", `{"stream":false,"messages":[]}`},
-		{"null", `{"stream":null,"messages":[]}`},
+		{"true", `{"model":"gpt-4o","stream":true,"messages":[]}`},
+		{"false", `{"model":"gpt-4o","stream":false,"messages":[]}`},
+		{"null", `{"model":"gpt-4o","stream":null,"messages":[]}`},
 	} {
 		t.Run("ok-"+tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
@@ -130,7 +131,8 @@ func TestSkeletonStreamValueBoundaries(t *testing.T) {
 }
 
 // model/service_tier 显式 null 放行（gate Minor 1 专项：gjson Null 语义——
-// 与缺失同零值，不得 400）。
+// 与缺失同零值，不得 400）。plan-only 契约下 model:null 无 canonical 身份 →
+// 选号 fail-closed 404（证明 null 过了解析层、未被误 400）。
 func TestSkeletonModelTierExplicitNull(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -142,7 +144,7 @@ func TestSkeletonModelTierExplicitNull(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	require.Equal(t, http.StatusNotFound, rec.Code, "null 不得 400；无身份请求 fail-closed 404, body=%s", rec.Body.String())
 }
 
 // service_tier 非字符串 → 400（tier 校验零回归：HTTP 路径显式用例——校验
@@ -217,12 +219,17 @@ func TestSkeletonLargeBodyExtraction(t *testing.T) {
 	require.Equal(t, "data:image/png;base64,"+b64, url, "MB base64 数据完整到达上游（单遍扫描不误改不截断）")
 }
 
-// 显式 null 与缺失等同（encoding/json null → 零值语义）：model:null 不得 400，
-// 走默认桶正常转发。
+// 显式 null 与缺失等同（encoding/json null → 零值语义）：model:null 不得 400；
+// plan-only 契约下无模型请求没有 canonical attempt 身份——默认桶命中的
+// Attempt 校验失败，选号 fail-closed 404（绝不以伪造身份派生请求）。
 func TestSkeletonModelNullLikeMissing(t *testing.T) {
-	up := fakeOpenAI(t, "")
+	var hits int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
 	defer up.Close()
-	// model null → 同缺失 → 全模型账号基座
+	// model null → 同缺失 → 全模型账号基座（默认桶编译存在，身份无效）
 	p := newTestProxyFullModel(t, up.URL, 1)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -230,7 +237,11 @@ func TestSkeletonModelNullLikeMissing(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer ck-1")
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	require.Equal(t, http.StatusNotFound, rec.Code, "model-less request fails closed, never 400, body=%s", rec.Body.String())
+	require.Zero(t, atomic.LoadInt32(&hits), "no dispatch without canonical identity")
+	ri, ok := p.sched.Runtime(1)
+	require.True(t, ok)
+	require.Zero(t, ri.Concurrency, "failed reservation releases its lease")
 }
 
 // 非流式 params 解析失败 → 本地 400、handled=true、无记录（评审 I-1 附加

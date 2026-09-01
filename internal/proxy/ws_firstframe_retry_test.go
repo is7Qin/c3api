@@ -4,6 +4,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,61 +13,72 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
+// wsRetryAttempt is a valid canonical resp-ws attempt identity (the shape
+// ReserveAttempt records); the retry decision consumes it via
+// retryOutcomeForAttempt — identity from the attempt, terminal facts from the
+// observed code/callErr.
+func wsRetryAttempt() scheduler.Attempt {
+	prev := "req-ws:1"
+	return scheduler.Attempt{
+		AttemptID: "req-ws:2", RouteClassID: strings.Repeat("a", 64), QualityClassID: strings.Repeat("b", 64),
+		CandidateFingerprint: strings.Repeat("c", 64), TemplateID: 3, AccountID: 9,
+		RequestedModel: "gpt-4o", MappedModel: "gpt-4o", Lane: scheduler.AttemptLanePrimary,
+		Ordinal: 2, RoutingGeneration: 5, LifecycleRevision: 4, PreviousAttemptID: &prev,
+		CallerCategory: "responses_ws", OperationTag: "responses_ws",
+	}
+}
+
 func TestWSFirstFrameWriteFailureReturnNotSentRetryable(t *testing.T) {
-	require.True(t, CanRetry(CallerResponsesWS, AttemptOutcome{ID: "a", RouteClassID: "rc", QualityClassID: "qc1", Fingerprint: "fp", TemplateID: 1, AccountID: 1, RequestedModel: "gpt-4o", MappedModel: "gpt-4o", CallerCategory: CallerResponsesWS, OperationTag: "responses_ws", Ordinal: 1, Lane: LanePrimary, Generation: 1, LifecycleRevision: 1, Commit: CommitNotSent, Result: ResultFailed, HTTPStatus: 0, Terminal: false}) == true, "not-sent must be retryable")
-	// Direct via helper: outcomeForPlanRetry should produce retryable for WS first-frame case
-	o := outcomeForPlanRetry(0, errors.New("upstream first frame write failed"), context.Background(), CallerResponsesWS)
+	a := wsRetryAttempt()
+	require.NoError(t, a.Validate())
+
+	o := retryOutcomeForAttempt(a, 0, errors.New("upstream first frame write failed"), context.Background())
 	require.Equal(t, CommitNotSent, o.Commit)
 	require.False(t, o.Terminal)
 	require.True(t, CanRetry(CallerResponsesWS, o))
+	require.Equal(t, AttemptID(a.AttemptID), o.ID, "the retry decision consumes the canonical attempt identity")
 
 	// Terminal case must not be retryable
-	o2 := outcomeForPlanRetry(0, nil, context.Background(), CallerResponsesWS)
+	o2 := retryOutcomeForAttempt(a, 0, nil, context.Background())
 	require.True(t, o2.Terminal)
 	require.False(t, CanRetry(CallerResponsesWS, o2))
 }
 
 func TestWSFirstFrameFailureRetriesSecondCandidateBarrier(t *testing.T) {
-	// Use scheduler plan directly: two candidates, first reserved then released, second must be reservable
-	// This simulates failover loop barrier where first not-sent failure retains second candidate
+	// Compiled plan over two accounts: after a first not-sent failure the
+	// second candidate must still be reservable (failover advances the plan).
 	s := newTestSchedulerForPlan(t)
-	// Extend loader to have second account
 	tpl2 := tplForPlan(2)
 	loader := s.Loader().(noopLoader)
 	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "k2", Enabled: true, MaxConcurrency: 10, LifecycleRevision: 1})
 	require.NoError(t, s.InvalidateAllSync())
 	publishTestRoutes(t, s)
 
-	route := scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
-	// Publish decision with both accounts in primary (already via reload, need manual decision publish)
-	schedRoute := route
-	_ = schedRoute
-	// Use AttemptPlan directly with two ids
-	plan := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{RequestID: "r1", UserID: 1}, scheduler.RouteDecision{Primary: []int64{1, 2}})
-	sel1, err := plan.Reserve(func(id int64) bool { return true })
+	plan, err := s.NewAttemptPlan(scheduler.AttemptPlanIdentity{RequestID: "r1", UserID: 1}, scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "gpt-4o"))
+	require.NoError(t, err)
+	sel1, a1, err := s.ReserveAttempt(plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel1.AccountID)
-	require.True(t, CanRetry(CallerResponsesWS, outcomeForPlanRetry(0, errors.New("first frame fail"), context.Background(), CallerResponsesWS)), "first frame not-sent must be retryable")
-	sel2, err := plan.Reserve(func(id int64) bool { return true })
+	require.True(t, CanRetry(CallerCategory(a1.CallerCategory), retryOutcomeForAttempt(a1, 0, errors.New("first frame fail"), context.Background())), "first frame not-sent must be retryable")
+	sel1.Release()
+	sel2, _, err := s.ReserveAttempt(plan)
 	require.NoError(t, err, "second candidate must be available after first not-sent failure")
 	require.Equal(t, int64(2), sel2.AccountID)
-	_, err = plan.Reserve(func(id int64) bool { return true })
+	sel2.Release()
+	_, _, err = s.ReserveAttempt(plan)
 	require.ErrorIs(t, err, scheduler.ErrAttemptsExhausted)
-	_ = s
 }
 
-// need to satisfy compile; not used directly.
-
 func TestWSFirstFrameAttemptReturnsCallErrPreserved(t *testing.T) {
-	// Ensure the string message is not erased: wsAttempt should return both respBody and callErr
+	// Ensure the error text path is not erased: code 0 with a callErr is a
+	// not-sent retryable classification.
+	a := wsRetryAttempt()
 	msg := "upstream first frame write failed: broken pipe"
-	err := errors.New(msg)
-	o := outcomeForPlanRetry(0, err, context.Background(), CallerResponsesWS)
+	o := retryOutcomeForAttempt(a, 0, errors.New(msg), context.Background())
 	require.Equal(t, CommitNotSent, o.Commit)
 	require.False(t, o.Terminal)
-	// Verify error text retained via callErr path, not via respBody extraction alone
 	require.True(t, CanRetry(CallerResponsesWS, o))
 	// Fallback case where callErr nil would be terminal and information erased
-	o2 := outcomeForPlanRetry(0, nil, context.Background(), CallerResponsesWS)
+	o2 := retryOutcomeForAttempt(a, 0, nil, context.Background())
 	require.True(t, o2.Terminal, "code 0 with nil callErr must not be retryable - information would be erased")
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -49,11 +50,11 @@ func TestSelectWithPlan_FirstSelectionUsesPlanWhenIdentityAvailable(t *testing.T
 	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o", identity)
 	require.NoError(t, err)
 	require.NotNil(t, sel)
-	// plan may be nil if no compiled decision (fallback to legacy Select) - preserve legacy compatibility
-	if plan != nil {
-		require.Equal(t, schedRoute.RouteClassID, plan.Identity().RouteClassID)
-		require.LessOrEqual(t, int(planIdentityCandidateCount(plan)), 8)
-	}
+	// Plan-only contract: a successful selection is plan-backed, never a
+	// plan-less selection.
+	require.NotNil(t, plan)
+	require.Equal(t, schedRoute.RouteClassID, plan.Identity().RouteClassID)
+	require.LessOrEqual(t, int(planIdentityCandidateCount(plan)), 8)
 	sel.Release()
 }
 
@@ -74,9 +75,8 @@ func TestSelectWithPlan_ConvertedRouteUsesTargetIdentity(t *testing.T) {
 	sel2, plan2, err2 := p.selectWithPlan(10, domain.FormatOpenAIResponses, "gpt-4o", identity)
 	require.NoError(t, err2)
 	require.NotNil(t, sel2)
-	if plan2 != nil {
-		require.Equal(t, respRoute.RouteClassID, plan2.Identity().RouteClassID)
-	}
+	require.NotNil(t, plan2, "plan-only contract: selection is plan-backed")
+	require.Equal(t, respRoute.RouteClassID, plan2.Identity().RouteClassID)
 	sel2.Release()
 }
 
@@ -204,7 +204,7 @@ func TestFailoverPlan_ReleaseExactlyOnceBeforeRetry(t *testing.T) {
 // helpers for plan tests
 func newTestSchedulerForPlan(t *testing.T) *scheduler.Scheduler {
 	t.Helper()
-	tpl := &domain.Template{ID: 1, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
+	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: "http://127.0.0.1:9", CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 	accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
@@ -315,7 +315,7 @@ func TestFailoverLoop_Plan5xxTerminatesWithoutRetry(t *testing.T) {
 }
 
 func tplForPlan(id int64) *domain.Template {
-	return &domain.Template{ID: id, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
+	return &domain.Template{ID: id, Name: "t", BaseURL: "http://127.0.0.1:9", CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 }
 
 func planIdentityCandidateCount(p *scheduler.AttemptPlan) int {
