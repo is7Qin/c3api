@@ -462,6 +462,28 @@ func (r *PartitionRepo) IsDirty(ctx context.Context, kind string, version int16,
 	return d, nil
 }
 
+// ListDirtyMinutes 是 rollup worker 的最小选择缝：返回 kind/version 下
+// dirty=true 且 bucket_minute >= from 的分钟（升序、至多 limit 个）。from 传
+// 当前 watermark——低于 watermark 的分钟不可能再推进状态（Rollup* 必失败
+// "watermark must advance"），留给 watermark-ordering 车道处理；等于
+// watermark 的分钟允许重算（advanceWatermarkTx 接受相等，覆盖语义幂等）。
+func (r *PartitionRepo) ListDirtyMinutes(ctx context.Context, kind string, version int16, from time.Time, limit int) ([]time.Time, error) {
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, `SELECT bucket_minute FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND dirty=true AND bucket_minute >= $3 ORDER BY bucket_minute ASC LIMIT $4`, []any{kind, version, from.UTC().Truncate(time.Minute), limit}, rows); err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []time.Time{}
+	for rows.Next() {
+		var b time.Time
+		if err := rows.Scan(&b); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func (r *PartitionRepo) clearDirtyTx(ctx context.Context, drv *txDriver, kind string, version int16, bucket time.Time) error {
 	bucket = bucket.UTC().Truncate(time.Minute)
 	var res sql.Result
