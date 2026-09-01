@@ -76,7 +76,7 @@ flowchart LR
 | `internal/repository` | ent 持久化门面，只暴露 domain 类型（`internal/repository/repository.go:13`）；分区表 DDL 独占管理 | 被所有上层依赖 |
 | `internal/domain` | 域类型 + 格式/错误分类常量（六格式 `types.go:17-34`） | 各处 |
 | `internal/ent` | ent ORM 生成代码 + schema（19 文件） | repository |
-| `internal/proxy` | **请求热路径**：鉴权/门禁/限流/选号/转发/用量路由 | 依赖 scheduler/rule/auth/credential/billing/usage/sdkbridge/protoconv |
+| `internal/proxy` | **请求热路径**：鉴权/门禁/选号/转发/用量路由 | 依赖 scheduler/rule/auth/credential/billing/usage/sdkbridge/protoconv |
 | `internal/scheduler` | 账号调度：快照/预生成路由/并发槽/异步状态回写（含组级 GroupPub 发布，`internal/scheduler/scheduler.go:34-46`） | 依赖 rule/credential；**不 import notify**（发布面接口化，`cmd/server/dispatcher.go:17-25` 装配侧粘合） |
 | `internal/rule` | 规则引擎：事件队列 worker（Name="rule-engine"）+ 状态动作 apply | scheduler 注入 apply 回调 |
 | `internal/credential` | 凭据类型注册表 + Provider 分发（api_key/responses-special/codex-oauth/codex-pat，`internal/credential/credential.go:29-46`） | proxy/scheduler 消费 |
@@ -114,8 +114,7 @@ flowchart LR
     A["Authenticate<br/>internal/proxy/auth.go:127"] --> B["QuotaExhausted<br/>本地预算快读 internal/proxy/gate.go:267"]
     B --> C["余额预检<br/>BalanceOf 快照 internal/proxy/caller.go:140"]
     C --> D["Acquire 两级并发门禁<br/>internal/proxy/gate.go:219"]
-    D --> E["固定窗口限流 Allow<br/>internal/proxy/limit.go:39"]
-    E --> F["读体 + json.Valid +<br/>gjson 提 stream/model/tier"]
+    D --> F["读体 + json.Valid +<br/>gjson 提 stream/model/tier"]
     F --> G["sched.Select 选号<br/>（含协议转换补差）"]
     G --> H["failover 循环<br/>每轮缺价预检 + codex 分流<br/>credentialFor + caller.Call"]
     H --> I["finish/record：<br/>Release + DeductQuota +<br/>计费 + routeLog 路由"]
@@ -127,12 +126,12 @@ flowchart LR
 - **配额**：`quotaExhausted`（`internal/proxy/gate.go:267-319`）本地预算两原子读；耗尽才触发 DB 复核认领（`internal/proxy/gate.go:320-374`，慢路径单飞 + 10s 失败退避）；复核公式 `budget = consumed + ceil(remaining_eff/N)`（#37 P1 收敛修正，防复核无限续额）。
 - **余额预检**（`internal/proxy/caller.go:140-147`）：BillingCapture 门控快照读零 DB（滞后 ≤ balance_refresh_interval）；快照缺失/<0 且非免费组 → 402（余额 0 放行——临时额度由 FEFO 扣费消化）；免费组（EffectiveMultiplier==0）放行。
 - **并发门禁**：user → key 两级 CAS（`internal/proxy/gate.go:219-244`），key 失败回滚 user 计数；跨 reload 在途值继承。
-- **限流**：`internal/proxy/limit.go:39-56` 固定窗口 `ceil(group_key_rpm/N)`；`cooldown_429/backoff_*` 已移除（2026-08-13 用户裁决：配置含这些键将启动失败）——429 冷却与错误退避由规则引擎（种子 + `/api/admin/rules` 自定义）接管。
+- **拒绝与退避**：key/user 两级并发门禁；账号 `max_concurrency` 归 scheduler；429 冷却与错误退避由规则引擎（种子 + `/api/admin/rules` 自定义）接管。
 - **选号**：`internal/scheduler/selection.go:17` tier1（模型硬白名单 Serves）→ tier2（仅全模型账号）→ 默认桶（仅全模型账号）；预生成加权轮询序列（零热路径计算）；协议转换只补差（`internal/proxy/caller.go:41-61` convertedRoute，off 零开销）。
 - **缺价预检**：failover 循环内每轮 `caller.go:288-293` + `precheckPrice :438-451`——images 查 image_price、其余查 pricings，缺价 402 释放槽。
 - **codex 分流**（`caller.go:303-309`）：按 `sel.CredentialType` 换 codexImagesCaller（:320-321 codex 类型跳单字符串凭据走 sel.Ext → AccountCredential 直供适配层）。
 - **流式透传**：aiclient 流式入口经 `pkg/sserelay` 字节级 relay + Observer 旁路提取 usage；C1 批次能力：EOF 末帧 flush（`relay.go:217-230`，无末尾空行上游丢 completed 帧 → cost=0 修复）、deadline watcher（`relay.go:353-376` + `middleware.go:154-156`）、normalize 错误分类（`relay.go:269-277` 三态可分）、relayBufio 池（`relay.go:86-98`）、按需武装 flush timer（`relay.go:307-323`）；WS 1:1 透传（`internal/proxy/caller_responses_ws.go:272`，心跳 :352）。
-- **usage 计费**：`finish`（`internal/proxy/forward.go:136-149`）→ `routeLog`（`forward.go:391-405`）分表路由——放行行（error_type ∈ {none, abort}）billed → Flusher / 非 billed → rec.Record；拒绝路径走 `recordRejected`（`forward.go:347`——401/429/402/限流 → err_logs 不进 usage_logs）；images/search 按次计费 `applyImageBilling`/`applyFunctionBilling`（`forward.go:252,283`，call_count）。
+- **usage 计费**：`finish`（`internal/proxy/forward.go:136-149`）→ `routeLog`（`forward.go:391-405`）分表路由——放行行（error_type ∈ {none, abort}）billed → Flusher / 非 billed → rec.Record；拒绝路径走 `recordRejected`（`forward.go:347`——401/429/402 → err_logs 不进 usage_logs）；images/search 按次计费 `applyImageBilling`/`applyFunctionBilling`（`forward.go:252,283`，call_count）。
 
 **热路径纪律**（改这里先读）：
 1. 热路径**零 DB、零 per-request 锁**（`internal/proxy/forward.go:1-3` 包注释）；所有快照读 = 内存原子（atomic.Pointer / RWMutex 读锁 / CAS）。
@@ -278,7 +277,7 @@ flowchart LR
 - **并发扣费**（`internal/repository/billing_repo.go:92-139`）：`DeductAndLog` 单事务——① FEFO 临时额度按 expires_at 升序逐行条件更新（`amount >= take` 行级防并发透支，NULL 最后即 NULLS LAST）；② 余额条件更新（`balance >= remain`），0 行 → 无条件扣允许透支，再 0 行 = 用户不存在跳过扣减仍插日志；③ 事务内回读 balanceAfter。行锁仲裁跨实例天然串行（`docs/superpowers/plans/2026-08-10-multi-instance-design.md` §1 表）。
 - **同 user 恒同桶串行分片**（`internal/billing/flusher.go:96,301-330`）：按 userID 取模分片 → 实例内同 user 串行；跨实例靠 DB 行锁。
 - **NOTIFY 跨实例**（§9 全链）：实例 ID = **hostname-pid-nonce**（crypto/rand 6B 随机，`cmd/server/main.go:118-130` 装配 + `instanceSrc` :526-536）——B4-1/p2-05 修复：容器化多实例同 hostname、pid namespace 各自 pid 1 → 纯 hostname-pid 互相碰撞 → 互把对方 NOTIFY 当自播跳过 → 失效静默全灭；自播判等 = 全串相等 `ch.Src == l.cfg.Src`（`listener.go:250-251` 注释）。
-- **额度预算分摊**（`internal/proxy/gate.go:51-87`）：`budget = consumed + ceil(remaining_eff/N)`，N 存 DB settings `cluster.instances`（`internal/domain/settings.go:36-39`，config 文件可漂移故 DB 是唯一共识源）；N 变更走 settings NOTIFY → 装配侧重调 `SetInstancesProvider` 即时重算（`cmd/server/main.go:355`）；组 RPM 同款 `ceil(rpm/N)`（`internal/proxy/limit.go:14-16`）。
+- **额度预算分摊**（`internal/proxy/gate.go:51-87`）：`budget = consumed + ceil(remaining_eff/N)`，N 存 DB settings `cluster.instances`（`internal/domain/settings.go:36-39`，config 文件可漂移故 DB 是唯一共识源）；N 变更走 settings NOTIFY → 装配侧重调 `SetInstancesProvider` 即时重算（`cmd/server/main.go:355`）。
 - **分区 DROP 幂等**（`internal/repository/partition.go:301-307,358,421-426`）：IF NOT EXISTS / IF EXISTS + 撞名 42P07/42710/23505（`isDuplicateObject` :301-307）+ **42P01 stale-DROP 窗口**（`isMissingObject` :318-324、`isBootstrapRaceError` :329-331——并发实例基于过期"未分区"判定 DROP 误删对方刚建表，由最后执行 DROP 的实例补建收敛，评审 I-1 已接受）；retention DROP 需 ACCESS EXCLUSIVE 锁与在途插入串行（`internal/usage/retention.go:60-64` 评审 I-3 注记）。
 - **失效分发 B4 兜底面**：auth-sync 60s 兜底新增 per-attempt 30s 超时（`auth_sync.go:21-26,80-94`，B4-2）+ 托管 goroutine（:37-40,57,70，B4-3）；规则重载 Background ctx 不随请求取消（`invalidate.go:347-354`，B4-4）。
 - **已知接受的竞态**（`docs/superpowers/plans/2026-08-10-multi-instance-design.md` §R2）：NOTIFY 重复投递 → mark 幂等合并；`UpdateAccountStatus` 并发 → last-writer-wins；stats Upsert 同桶累加精确；规则种子双写 → 唯一约束幂等；pricing sync 每实例独立 cron 重复 fetch（v1 接受）。
@@ -312,7 +311,6 @@ flowchart LR
 | `[db]` | repository.OpenPG | dsn/max_conns（20 = billing 8 + stats 8 worker + 余量）；**F1 OpenPG 自动补丁**：lock_timeout=5s 会话级 + 计费扣费 per-query 10s 超时 + MaxConnLifetime=30m 滚动轮换——DSN 无需手工配置，用户 DSN 显式同名参数时尊重不覆盖（`config.go:56-61` + `main.go:134` 注释） |
 | `[proxy]` | proxy.New | max_body_size/max_inflight/upstream_timeout/upstream_stream_timeout/failover_attempts/usage_capture |
 | `[upstream]` | httpx.TransportConfig | 连接池参数（max_idle_conns 8192 / per_host 2048 / force_http2 / idle_conn_timeout 90s / dial_timeout 10s，`config.example.toml:20-26`） |
-| `[limit]` | fixedWindowLimiter | group_key_rpm（0 = 关）；**cooldown_429/backoff_* 已移除**（配置含这些键将启动失败，规则引擎接管） |
 | `[scheduler]` | scheduler.Config | default_max_concurrency/sync_interval |
 | `[usage]` | usage.Recorder + StatsAggWorker + ErrLogWorker + RetentionWorker | batch_size/flush_interval/log_retention_days=30/quota_flush_interval/flush_workers=8/stats_agg_interval（默认 5m，0=禁用聚合）/errlog_queue_size=4096/errlog_batch_size=500/errlog_flush_interval=500ms/errlog_retention_days=7/stats_retention_days=180 |
 | `[billing]` | billing.NewFlusher + BillingHooks | enabled=true/flush_interval=250ms/balance_refresh_interval=10s |
@@ -328,7 +326,7 @@ flowchart LR
 2. **不计费不入 usage_logs**——usage_logs 成员资格按**放行路径语义（error_type ∈ {none, abort}）**判定，与 cost 无关。为什么：cost>0 判定会漏掉免费分组（倍率 0 成功行）与 0 token 成功行（空响应）；失败行（4xx/5xx/network）不入 usage_logs（P2a 拒绝风暴教训：每请求一条明细即无界积压与写放大源头），错误审计归 err_logs。来源：`internal/proxy/forward.go:377-391`（routeLog 注释）+ `docs/superpowers/plans/2026-08-11-errlog-task.md:12`。
 3. **表三分**——usage_logs（计费明细 30 天）/ err_logs（错误明细 7 天）/ usage_stats（聚合统计 180 天），三表独立保留期。为什么：错误审计与计费明细生命周期/查询面不同，混表使两边互相拖累（瘦身 + 短保留）。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:25` + `internal/repository/partition.go:22-31`。
 4. **分区 DROP 不 DELETE**——保留清理全部 DROP TABLE O(1)（比逐行 DELETE 快 5~6 个量级）。为什么：50k 并发量级 usage_logs ~4.3 亿行/天，逐行 DELETE 不可行；PG DELETE 不释放空间（usage_stats 180 天清理必须 DROP）。来源：`internal/repository/partition.go:22-31` + `internal/usage/retention.go:62` + `config.example.toml:55-56` 注释。
-5. **双队列豁免采样**——err_logs 按来源（provenance）分队列：豁免队列（abort/failover 已计费错误）恒落盘，普通队列（401/429/402/400/404 拒绝 + 组限流）风暴采样丢弃。为什么：不可按 error_type 推断来源（Err429/ErrBilling/ErrAuth 在拒绝类与双轨类同时出现）；已计费错误审计价值最高。来源：`internal/usage/errlog.go:10-16` + `docs/superpowers/plans/2026-08-11-errlog-task.md:10,14`。
+5. **双队列豁免采样**——err_logs 按来源（provenance）分队列：豁免队列（abort/failover 已计费错误）恒落盘，普通队列（401/429/402/400/404 拒绝）风暴采样丢弃。为什么：不可按 error_type 推断来源（Err429/ErrBilling/ErrAuth 在拒绝类与双轨类同时出现）；已计费错误审计价值最高。来源：`internal/usage/errlog.go:10-16` + `docs/superpowers/plans/2026-08-11-errlog-task.md:10,14`。
 6. **快照注册表边界（#13 已合并）**——注册表不接管模块周期 ticker、不做数据缓存、不进入请求热路径。为什么：避免双 reload 竞争与热路径锁；快照数据形态与周期刷新保持各模块自管。来源：`internal/snapshot/snapshot.go:9-19` 包注释（用户拍板 2026-08-11）。
 7. **单 worker 批量落盘（err_logs）**——无多 worker 并行必要。为什么：DB 写是瓶颈，写速率由 BatchSize/FlushInterval 钉死有界，采样兜底防积压。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:23`。
 8. **usage_logs 瘦身**——去 error_message + status_code（保留 error_type，值域收敛 none/abort）。为什么：错误排障列由 err_logs 承载（status_code integer + error_message），明细表瘦身降写放大。**2026-08-15 align 补列机制删除后无"存量库"概念**（全新建库），原"bootstrap 只加不减幂等"兼容面随之失效。来源：`internal/ent/schema/usagelog.go:33-39` + `internal/ent/schema/errlog.go:12,35`。
