@@ -463,13 +463,11 @@ func (r *PartitionRepo) IsDirty(ctx context.Context, kind string, version int16,
 }
 
 // ListDirtyMinutes 是 rollup worker 的最小选择缝：返回 kind/version 下
-// dirty=true 且 bucket_minute >= from 的分钟（升序、至多 limit 个）。from 传
-// 当前 watermark——低于 watermark 的分钟不可能再推进状态（Rollup* 必失败
-// "watermark must advance"），留给 watermark-ordering 车道处理；等于
-// watermark 的分钟允许重算（advanceWatermarkTx 接受相等，覆盖语义幂等）。
+// dirty=true 的最老分钟（升序、至多 limit 个）。from 仍作为调用方的进度
+// 观测参数保留；迟到分钟也必须先被消费，不能被更新的 watermark 跳过。
 func (r *PartitionRepo) ListDirtyMinutes(ctx context.Context, kind string, version int16, from time.Time, limit int) ([]time.Time, error) {
 	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, `SELECT bucket_minute FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND dirty=true AND bucket_minute >= $3 ORDER BY bucket_minute ASC LIMIT $4`, []any{kind, version, from.UTC().Truncate(time.Minute), limit}, rows); err != nil {
+	if err := r.driver.Query(ctx, `SELECT bucket_minute FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND dirty=true ORDER BY bucket_minute ASC LIMIT $3`, []any{kind, version, limit}, rows); err != nil {
 		return nil, err
 	}
 	defer rows.Close()
@@ -522,7 +520,10 @@ func (r *PartitionRepo) advanceWatermarkTx(ctx context.Context, drv *txDriver, k
 	}
 	rs.Close()
 	if cur.Valid && newWatermark.Before(cur.Time) {
-		return fmt.Errorf("watermark must advance")
+		if err := drv.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3 AND dirty=true`, []any{kind, version, newWatermark}, &res); err != nil {
+			return err
+		}
+		return nil
 	}
 	if has {
 		if err := drv.Exec(ctx, `UPDATE routing_rollup_watermark SET watermark=$1, updated_at=now() WHERE kind=$2 AND identity_version=$3`, []any{newWatermark, kind, version}, &res); err != nil {
@@ -533,7 +534,7 @@ func (r *PartitionRepo) advanceWatermarkTx(ctx context.Context, drv *txDriver, k
 			return err
 		}
 	}
-	if err := drv.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind=$1 AND identity_version=$2 AND bucket_minute<=$3 AND dirty=true`, []any{kind, version, newWatermark}, &res); err != nil {
+	if err := drv.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3 AND dirty=true`, []any{kind, version, newWatermark}, &res); err != nil {
 		return err
 	}
 	return nil

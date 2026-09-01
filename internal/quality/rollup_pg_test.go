@@ -134,8 +134,7 @@ func TestRollupWorkerPG(t *testing.T) {
 	require.Len(t, qStats, 1)
 	require.Equal(t, int64(8), qStats[0].Attempts, "重算覆盖（绝对值语义，非累加）")
 
-	// watermark 之下的迟到脏分钟：选择缝排除（留给 watermark-ordering 车道），
-	// 直接调 RollupQuality 必失败——worker 不制造 "watermark must advance" 死循环。
+	// watermark 之下的迟到脏分钟也必须被消费，且不能倒退 watermark。
 	late := now.Add(-time.Hour)
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, repository.RoutingQualityRow{
 		IdentityVersion: int16(domain.RoutingIdentityVersion), RouteClassID: rc, QualityClassID: qc,
@@ -144,8 +143,12 @@ func TestRollupWorkerPG(t *testing.T) {
 	}))
 	w.runOnce(ctx)
 	st3 := w.Stats().(RollupStats)
-	require.Equal(t, int64(2), st3.QualityRolled, "低于 watermark 的脏分钟不被选中")
+	require.Equal(t, int64(3), st3.QualityRolled, "低于 watermark 的脏分钟也被消费")
 	require.Zero(t, st3.Failed)
-	err = repos.Partitions.RollupQuality(ctx, late, 1)
-	require.Error(t, err, "seam 本身拒绝倒退（worker 选择缝已挡住）")
+	dirtyLate, err := repos.Partitions.IsDirty(ctx, "quality", 1, late)
+	require.NoError(t, err)
+	require.False(t, dirtyLate)
+	wmQ, err = repos.Partitions.GetWatermark(ctx, "quality", 1)
+	require.NoError(t, err)
+	require.True(t, wmQ.UTC().Truncate(time.Minute).Equal(now), "迟到桶不倒退 watermark")
 }
