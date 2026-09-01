@@ -25,7 +25,6 @@ upstream = {
   dial_timeout = "10s",
   force_http2 = true,
 }
-limit = { group_key_rpm = 0 }
 # cooldown_429 / backoff_base / backoff_max 已移除（不向后兼容）——配置含这些
 # 键将启动失败；429 冷却与错误退避由规则引擎（种子规则 +
 # /admin/rules 自定义规则）接管。
