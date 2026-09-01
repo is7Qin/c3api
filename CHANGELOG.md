@@ -16,6 +16,10 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 - 新增用户永久余额预警：用户可经 USD 阈值 API 设置阈值，`0` 关闭；永久余额在结算后恰跨阈值时触发，临时额度不参与。邮件为尽力发送，按用户和阈值 `24h` 冷却；提供通用 SMTP 通道测试、全局开关及 `balance_warning` 模板。
 
+### Added
+
+- **智能路由（intelligent routing）**：后台 RoutingCompiler（scheduler 内串行编译道，非独立 worker）把逐 attempt 的持久质量统计（Wilson 置信界成功 + 对数 TTFT）、采购成本倍率、缓存域与运行时健康编译成不可变路由计划（Primary / Explore / Degraded 车道），无手工权重。选号 plan-only：无计划外车道，AI 派生身份一律由编译计划背书；冷启动窗口（编译决策未发布）AI 流量 `503` + `Retry-After`（管理面/用户面/healthz 不受影响），无模型/模型缺失请求 fail-closed `404`（行为变更，不再以占位身份转发）；failover 跨账号去重 1–8 次。请求携带 `prompt_cache_key`/`conversation_id`/`session_id`（按优先级取首个非空；REST 单遍提体、resp-ws 首帧，search 不参与）时经一致性哈希环（每域 32 虚拟节点）定位属主缓存域并软亲和前置候选（不改候选集合与尝试上界）；跨轮次硬续聊钉位未合入，不在本条范围。`quality-sync` / `routing-rollup` worker 把实例分钟质量与 flow 数据聚合进 rollup 表（独立 `routing_rollup_watermark` 双车道，与 stats-agg 水位无关）；管理面新增三只读观测端点 `GET /api/admin/routing/plan|frontier|flow`。发布门禁：路由专项 E2E 与性能验证尚未执行，本条不构成已验证声明。
+
 ## [v0.0.1-beta.5] - 2026-08-26
 
 ### Breaking

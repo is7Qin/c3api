@@ -5,7 +5,7 @@
 ## 通用约定
 
 - **Base URL**：`http://<gateway>/api/admin`
-- **认证**：所有请求必须带 `Authorization: Bearer <admin_token>`（`config.toml` 的 `admin.token`，或环境变量 `C3API_ADMIN_TOKEN`）。缺失或错误返回 `401`。
+- **认证**：两条路径任一通过即可。静态 admin token（`Authorization: Bearer <admin_token>`，`config.toml` 的 `admin.token` / 环境变量 `C3API_ADMIN_TOKEN`；**可选项**，空 = 不启用静态 token 鉴权）或 platform_admin JWT（与 `/api/user` 面同签发，快照角色覆盖 claims）。两者皆缺失/错误、或普通 `user` 角色 JWT → `401`（详见「鉴权与 created_by 约定」）。
 - **Content-Type**：请求体与响应均为 `application/json`（`rotate-key` 等无请求体操作除外）。
 - **错误格式**：非 2xx 响应体为 `{"error": "<消息>"}`。404 的消息含缺失资源 id（如 `service: not found: id=999 missing`），便于定位。
 - **ID**：路径参数 `{id}` 为模板/账号/分组的整数 ID。
@@ -198,7 +198,7 @@
 
 ## 账号 Accounts
 
-账号绑定模板并持有上游 API key，是调度的基本单元。**选号顺序不由手工权重决定**——后台 RoutingCompiler 依据持久质量统计、采购成本倍率与运行时健康编译不可变路由计划（观测面见「路由观测 Routing」）；账号面只提供三类事实：生命周期（`enabled` / `failed_at` / `failure_source` / `lifecycle_revision`）、采购成本（`upstream_cost_multiplier`）与缓存域（`cache_domain`）。
+账号绑定模板并持有上游 API key，是调度的基本单元。**选号顺序不由手工权重决定**——后台 RoutingCompiler 依据持久质量统计、采购成本倍率、缓存域与运行时健康编译不可变路由计划（观测面与缓存亲和语义见「路由观测 Routing」）；账号面只提供三类事实：生命周期（`enabled` / `failed_at` / `failure_source` / `lifecycle_revision`）、采购成本（`upstream_cost_multiplier`）与缓存域（`cache_domain`）。
 
 ### 创建账号
 
@@ -220,7 +220,7 @@
 | `template_id` | int | ✅ | 所属模板 ID |
 | `base_url` | string | 否 | 账号级覆盖（裸根，不含 `/v1`，留空继承模板）；`codex-oauth`/`codex-pat` 关联模板须为空（SDK 默认，非空 → `400`），`api_key`/`responses-special` 为可选覆盖 |
 | `upstream_key` | string | ✅* | 上游 API key（`codex-oauth`/`codex-pat` 关联模板可为空，凭据走 `account_ext`；`api_key`/`responses-special` 必填） |
-| `cache_domain` | string / null | 否 | 共享缓存域（软亲和一致性哈希的域标识；合法域名形态 ≤253，非法 → `400`）；`null`/缺省 = 账号私有域。**仅创建可带**，更新走 `PUT /accounts/{id}/cache-domain`（fenced） |
+| `cache_domain` | string / null | 否 | 共享缓存域（软亲和一致性哈希的域标识，请求侧显式亲和键语义见「路由观测 Routing」；合法域名形态 ≤253，非法 → `400`）；`null`/缺省 = 账号私有域。**仅创建可带**，更新走 `PUT /accounts/{id}/cache-domain`（fenced） |
 | `max_concurrency` | int | 否 | 账号并发上限；`0` 时使用调度器 `default_max_concurrency` |
 
 采购倍率创建不可带（缺省 ×1 = 存储 10000bp），写面 `PUT /accounts/{id}/cost-multiplier`（fenced）。
@@ -614,7 +614,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 |---|---|
 | `200` | 分页列表（增强分页范式，与兑换码/模型价格同款） |
 | `400` | 非法 `sort` / `order` / `page_size` 越界 |
-| `401` | admin token 缺失或错误；普通 `user` 角色 JWT 访问 |
+| `401` | admin 凭据（静态 token 或 platform_admin JWT）缺失或错误；普通 `user` 角色 JWT 访问 |
 
 ### 用户面：我的临时额度
 
@@ -842,7 +842,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 ### 运维观测
 
-`GET /ops/workers`——worker 运行状态（billing / invalidate / notify / pricing / retention / usage / **stats-agg** 等，各 worker `Stats()` 原样输出）。`stats-agg`（离线聚合 worker）四字段：
+`GET /ops/workers`——worker 运行状态（billing / invalidate / notify / pricing / retention / usage / **stats-agg** / **quality-sync** / **routing-rollup** 等，各 worker `Stats()` 原样输出；路由计划编译器不是独立 worker——它是 scheduler 内的串行编译道，成功/失败新鲜度经 scheduler Stats 上报）。`stats-agg`（离线聚合 worker）四字段：
 
 | 字段 | 说明 |
 |---|---|
@@ -889,14 +889,14 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 | `response_code` | int | 缺省/null = 透传上游状态码；设置 = 覆写为指定码（400-599） |
 | `custom_message` | string | 缺省/null = 透传上游错误文案；设置 = 覆写为固定文案（禁止空串） |
 
-`throttle` 与 `fail_account` 互斥（一条规则只出一个健康动作）。原始 429/5xx 事件本身**不直接**改变健康——只有窗口条件命中的规则才升级为 `throttle`/`fail_account`；质量统计即时吸收每次 attempt 结果，两者互不重复记账。
+`throttle` 与 `fail_account` 互斥（一条规则只出一个健康动作）。原始 429/5xx 事件本身**不直接**改变健康——只有命中规则的 `then` 才产生 `throttle`/`fail_account`（种子规则是无窗口条件的单 kind 匹配，单事件即命中；自定义规则可叠加窗口阈值）；质量统计即时吸收每次 attempt 结果，两者互不重复记账。
 
-种子规则（规则表为空时启动自动写入）：`kind=429` → 30s 瞬时节流 + 文案 "rate limited"（码透，priority 10）、`kind=4xx + http_status=400` → 全透传（priority 15）、`kind=5xx + http_status=503 + error_message_contains="overload"` → 全透传不惩罚（priority 16）、`kind=5xx` → 10m 摘除 + 502/"Upstream request failed"（priority 20）、`kind=network` → 5s 摘除 + 502/"Upstream request failed"（连接级独立冷却，priority 25）、`kind=ok` → 恢复（priority 30）。删除全部规则后，下次引擎重载（任意规则 CRUD 或重启）会自动重新播种——规则表不会保持真空。
+种子规则（规则表为空时引擎重载自动写入，共 5 条）：`kind=429` → retry_after 瞬时节流（上游 Reset 头优先，缺失回落 30s）+ 文案 "rate limited"（码透传 429，priority 10）、`kind=4xx + http_status=400` → 全透传（priority 15）、`kind=5xx + http_status=503 + error_message_contains="overload"` → 全透传不惩罚（priority 16）、`kind=5xx` → 10m 摘除 + 502/"Upstream request failed"（priority 20）、`kind=network` → 5s 摘除 + 502/"Upstream request failed"（连接级独立冷却，priority 25）。**无 ok 恢复种子**：健康恢复的唯一自动路径是 RuntimeHealth 探针（RETRY_AFTER/OPEN 到期 → PROBING 单 permit 探针 → 探测成功 READY），成功事件不驱动状态机。删除全部规则后，下次引擎重载（任意规则 CRUD 或重启）会自动重新播种；播种仅看规则表**为空**——全部禁用（行仍在）不触发播种，引擎以零规则运行。
 
 ### 事件模型与匹配语义
 
 - **事件来源**：每次上游 dispatch attempt 终态产生一个事件 `{kind, http_status, error_message, account_id, template_id, group_id, model, occurred_at, reset_at, candidate_fingerprint}`，经有界队列投递规则 worker 匹配（队列满时丢弃并计数告警，不阻塞请求路径——**整链 best-effort 是有意契约**：风暴下允许丢事件，不丢请求）。
-- **条件投递**：仅当规则集中存在 `when.kind` 为 `nil`（任意）或 `ok` 的规则时，`ok` 事件才进入匹配；否则 ok 事件直接被跳过（性能优化）。想用 ok 事件恢复，必须保留 kind=ok 或全匹配规则（种子规则自带 ok 规则）。
+- **条件投递**：仅当规则集中存在 `when.kind` 为 `nil`（任意）或 `ok` 的规则时，`ok` 事件才进入匹配；否则 ok 事件直接被跳过（性能优化）。ok 事件只服务于自定义观测/恢复类规则（种子规则不含 ok 规则——健康恢复由 RuntimeHealth 探针承担，见上节）。
 - **首中即停**：按 `priority` 升序逐规则匹配，首个命中即执行其 `then` 全部动作，不再继续。
 - **命中不清零窗口**：计数窗口为滑动窗口，命中不重置计数（自然衰减）；统计窗口固定粒度近似，误差 ≤ 一个粒度。
 - **throttle 语义**：命中且 `then.throttle` 提供 → RuntimeHealth 状态机迁移（`READY → RETRY_AFTER|OPEN → PROBING → READY`），键 `(account, QualityClassID|wildcard, lifecycle_revision)`；跨实例 ≤1s 收敛（Redis 全量快照 + 定向事件）。到期不自动 READY——进入 PROBING 由单 permit 探针接管。
@@ -959,13 +959,17 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 ## 路由观测 Routing
 
-智能路由的三只读观测端点（数据源钉死 routing rollup 表与当前发布 RoutingView——不查 raw logs、不按历史 generation 查询）：
+智能路由数据链：热路径每次 attempt 终态进 quality recorder（内存归并），`quality-sync` worker 串行 loop 定期把快照 + 质量/flow 脏行 UPSERT 进实例分钟表（`routing_quality_instance_minute` / `routing_flow_instance_minute`）；`routing-rollup` worker 消费各实例脏分钟合并进全局 rollup 表（`routing_quality_rollup` / `routing_flow_rollup`），quality/flow 两道各自推进 `routing_rollup_watermark`（与 stats-agg 的 `usage_stats` 水位分表分车道，互不影响）。选号面为 **plan-only**：无计划外车道，AI 派生身份一律由编译计划背书；冷启动窗口（编译决策视图未发布）AI 流量一律 `503` + `Retry-After: 1`（管理面/用户面/healthz 不经此门，空库照常发布空决策），无模型/模型缺失请求 fail-closed `404`（不再以占位身份转发）。
+
+三只读观测端点（数据源钉死 routing rollup 表与当前发布 RoutingView——不查 raw logs、不按历史 generation 查询）：
 
 | 方法/路径 | 说明 |
 |---|---|
 | `GET /api/admin/routing/plan` | 当前发布路由计划解释：generation + 全路由 primary/explore/degraded 候选发布序 + explore 权重/累积表 + 候选静态身份。空视图 = generation 0 空计划（`routes: []`），不是错误 |
 | `GET /api/admin/routing/frontier?route=<64hex>&from&to&limit` | 质量-成本前沿（窗口 rollup × 当前计划候选连接）：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本，Pareto 前沿标记；窗口 ≤90 天，limit ≤200（超出钳制） |
 | `GET /api/admin/routing/flow?route=<64hex>&from&to` | 路由 flow 聚合（Sankey 数据）：RouteClass → (ordinal, lane) → Account → Outcome 完整链边，按 terminal_at 归属；窗口 ≤90 天 |
+
+**缓存亲和（请求级软亲和，非硬钉位）**：请求携带 `prompt_cache_key` / `conversation_id` / `session_id`（按此优先级取首个非空字符串；REST 面单遍提体扫描、responses-ws 从首帧提取，search 不参与）时，键值经 FNV-1a 哈希在一致性哈希环（每域 32 虚拟节点）上定位属主缓存域，计划内属主域候选整体前置、其余候选按原相对顺序顺延——候选集合与 1–8 次尝试上界不变。账号 `cache_domain` 相同 = 共享域（互相亲和命中），`null` = 账号私有域（仅自身可被亲和命中）。无亲和键 = 严格按计划编译原序执行。跨轮次硬续聊钉位（continuation pinning）尚未合入，本文档不作声明。
 
 flow 守恒与丢失口径（三者独立，不得混为上游失败）：`incomplete_chain_dropped` = 本进程已观察 cleanup 缺 terminal；`flow_overflow_dropped_chains` = 故障预算淘汰链；`process_crash_loss_unobservable` 恒 `true`（硬崩缺口不可量化）。
 
@@ -1240,7 +1244,7 @@ billing = { enabled = true, flush_interval = "250ms", balance_refresh_interval =
 | 状态码 | 场景 |
 |---|---|
 | `400` | 请求体非法 / 修改密码新密码为空或超 72 字节 / 路径 ID 非法 / 非法 `sort` 或 `order` / 非法 `status` 枚举 / 批量 `ids` 为空或超 100 条 / 批量 `fields` 为空 / 规则 `when`/`then` 校验失败 / 兑换码生成参数非法（`type` 非法、`value ≤ 0`、`temp_balance` 缺 `resource_expires_at`、`expires_at` 过去、`count` 越界）/ 兑换码无效（`invalid code`：不存在/失效/过期/用尽，统一不泄露细节）/ 价格负数或非负校验失败 / `fast_multiplier` 越界 / 倍率（组/用户-组专属 `price_multiplier`，正常值 `0`~`10`）越界 / `service_tier_policy_*` 非法值 / `source` 筛选非法 / `price_source_url` 未配置触发 sync |
-| `401` | admin token 缺失或错误；普通 `user` 角色 JWT 访问 `/api/admin/*` |
+| `401` | admin 凭据（静态 token 或 platform_admin JWT）缺失或错误；普通 `user` 角色 JWT 访问 `/api/admin/*` |
 | `402` | **计费拒绝**（`error_type=billing`）：模型缺价 / 余额快照缺失或 ≤ 0（AI 请求面，非管理面） |
 | `404` | 资源不存在（单资源与批量均返回，消息含缺失 id，如 `service: not found: id=999 missing`） |
 | `409` | 规则 `priority`/`name` 唯一冲突 / 兑换码重复兑换（`already redeemed`）/ 删除 litellm 价格行 |
