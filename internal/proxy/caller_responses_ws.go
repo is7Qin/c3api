@@ -119,6 +119,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reqModel := gjson.GetBytes(first, "model").String()
+	rm.AffinityHash, rm.HasAffinity = affinityIdentityFromFrame(first)
 
 	// service_tier 归一化 + 转发策略（首帧读后、Select 前——与 HTTP
 	// handleFormat 的 strip/reject 同位置，均先于选号；codex 分流在后，首帧
@@ -151,7 +152,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 
 	// 选号（含账号并发槽抢占）：格式硬过滤由调度器路由承担（模板
 	// SupportedFormats 含 resp-ws 才建路由）。挂死客户端不占槽（槽在首帧后取）。
-	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true}
+	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
 	sel, plan, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponsesWS, reqModel, identity)
 	if err != nil {
 		wsWriteError(client, selectErrorMessage(err))

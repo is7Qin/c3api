@@ -170,9 +170,12 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: invalid JSON"}})
 			return
 		}
-		var vals [3][]byte
-		scanKeys(body, streamModelTierKeys, vals[:])
+		var vals [6][]byte
+		scanKeys(body, requestAffinityKeys, vals[:])
 		streamRaw, modelRaw, tierRaw := vals[0], vals[1], vals[2]
+		affinityHash, hasAffinity := affinityIdentity(vals[3], vals[4], vals[5])
+		rm.AffinityHash = affinityHash
+		rm.HasAffinity = hasAffinity
 		switch {
 		case streamRaw == nil || bytes.Equal(streamRaw, falseBytes) || bytes.Equal(streamRaw, nullBytes):
 			stream = false
@@ -225,7 +228,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		route.caller = p.imagesCallerFor(r)
 	}
 
-	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true}
+	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
 	var sel *scheduler.Selection
 	var plan *scheduler.AttemptPlan
 	if format == domain.FormatOpenAIImages {
@@ -242,7 +245,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable) || errors.Is(err, scheduler.ErrAttemptsExhausted)) {
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
 			// Target identity uses same request identity but target RouteClassID
-			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true}
+			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
 			if sel2, plan2, err2 := p.selectWithPlan(groupID, tgt, reqModel, targetIdentity); err2 == nil {
 				sel2GuardActive := true
 				defer func() {
