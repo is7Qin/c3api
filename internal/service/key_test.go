@@ -67,3 +67,36 @@ func TestKeyMetaProtocolConvertsEmpty(t *testing.T) {
 	require.NotNil(t, last)
 	require.Empty(t, last.ProtocolConverts, "off 组 → 快照转换方向为空")
 }
+
+// TestKeyQuotaMaxSafeIntegerBoundary Todo 3：用户端 create/update 共享 service
+// 校验边界拒绝超 Number.MAX_SAFE_INTEGER（2^53−1）毫分 quota（→ ErrInvalidInput
+// → 400）；上限值本身放行，0（不限）与负数维持既有语义。
+func TestKeyQuotaMaxSafeIntegerBoundary(t *testing.T) {
+	svc, fs, _ := newTask4Svc()
+	ctx := context.Background()
+
+	u, err := fs.CreateUser(ctx, &domain.User{Email: "quota-bound@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
+	require.NoError(t, err)
+	g, err := svc.CreateGroup(ctx, "qb-g", domain.GroupVisibilityPublic, nil, nil)
+	require.NoError(t, err)
+
+	// create：上限放行、超限 400、负数 400（既有）
+	_, err = svc.CreateKey(ctx, u.ID, "qb-top", g.ID, 0, maxKeyQuotaMillis)
+	require.NoError(t, err, "quota=2^53-1 恰为前端安全整数上界，放行")
+	_, err = svc.CreateKey(ctx, u.ID, "qb-over", g.ID, 0, maxKeyQuotaMillis+1)
+	require.ErrorIs(t, err, ErrInvalidInput, "quota 超 Number.MAX_SAFE_INTEGER → 400")
+	_, err = svc.CreateKey(ctx, u.ID, "qb-neg", g.ID, 0, -1)
+	require.ErrorIs(t, err, ErrInvalidInput)
+
+	// update：同边界（nil=不改维持放行）
+	k, err := svc.CreateKey(ctx, u.ID, "qb-k", g.ID, 0, 0)
+	require.NoError(t, err)
+	over := maxKeyQuotaMillis + 1
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &over)
+	require.ErrorIs(t, err, ErrInvalidInput, "PUT quota 超限 → 400")
+	top := maxKeyQuotaMillis
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &top)
+	require.NoError(t, err, "PUT quota=上限放行")
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, nil)
+	require.NoError(t, err, "quota nil = 不改，维持放行")
+}
