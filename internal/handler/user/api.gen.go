@@ -168,10 +168,10 @@ type Key struct {
 	MaxConcurrency *int       `json:"MaxConcurrency,omitempty"`
 	Name           *string    `json:"Name,omitempty"`
 
-	// Quota 累计 token 上限；0 = 不限
+	// Quota 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
 	Quota *int64 `json:"Quota,omitempty"`
 
-	// QuotaUsed 已消耗（后扣；无额度 key 恒 0）
+	// QuotaUsed 已消耗计费金额（毫分；后扣；无额度 key 恒 0）
 	QuotaUsed *int64     `json:"QuotaUsed,omitempty"`
 	Status    *KeyStatus `json:"Status,omitempty"`
 	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
@@ -189,7 +189,7 @@ type KeyCreate struct {
 	MaxConcurrency *int   `json:"max_concurrency,omitempty"`
 	Name           string `json:"name"`
 
-	// Quota 累计 token 上限；0 = 不限
+	// Quota 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
 	Quota *int64 `json:"quota,omitempty"`
 }
 
@@ -204,10 +204,12 @@ type KeyStatus string
 
 // KeyUpdate defines model for KeyUpdate.
 type KeyUpdate struct {
-	MaxConcurrency *int       `json:"max_concurrency,omitempty"`
-	Name           *string    `json:"name,omitempty"`
-	Quota          *int64     `json:"quota,omitempty"`
-	Status         *KeyStatus `json:"status,omitempty"`
+	MaxConcurrency *int    `json:"max_concurrency,omitempty"`
+	Name           *string `json:"name,omitempty"`
+
+	// Quota 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
+	Quota  *int64     `json:"quota,omitempty"`
+	Status *KeyStatus `json:"status,omitempty"`
 }
 
 // RedeemRequest defines model for RedeemRequest.
