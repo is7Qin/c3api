@@ -98,6 +98,7 @@ type Proxy struct {
 // nil = 计费全关——现有调用点/测试兼容）。errlog 为错误明细落盘 worker
 // （分表设计；nil = 未装配——拒绝/异常路径只聚统计不落 err_logs 明细）。
 func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec *usage.Recorder, clients *aiclient.Factory, auth *Auth, log *logx.Logger, bill *BillingHooks, errlog *usage.ErrLogWorker) *Proxy {
+	auth.SetQuotaEnabled(cfg.BillingCapture)
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
 		limit: newFixedWindowLimiter(cfg.GroupKeyRPM), log: log, bill: bill, errlog: errlog,
@@ -170,7 +171,12 @@ func (p *Proxy) finish(accountID int64, l *domain.UsageLog) {
 	p.sched.Release(accountID)
 	if l != nil {
 		p.applyBilling(l)
-		p.auth.DeductQuota(l.KeyID, l.TotalTokens)
+		if p.cfg.BillingCapture {
+			delta := p.auth.DeductQuota(l.KeyID, l.Cost)
+			if delta > 0 && p.rec != nil {
+				p.rec.AddQuota(l.KeyID, delta)
+			}
+		}
 	}
 	if p.cfg.UsageCapture && l != nil {
 		p.routeLog(l)
@@ -396,7 +402,7 @@ func (p *Proxy) routeLog(l *domain.UsageLog) {
 		// true = 出生即结算吸收态（计费关闭/匿名行本就不扣，游标零消费顺带
 		// 省一次循环）；false = 待对账，billing worker 游标消费（T3）。
 		l.Billed = !(p.cfg.BillingCapture && l.UserID > 0)
-		p.rec.Record(l) // 唯一持久化入口（usage_logs 落库 + quota 累加）
+		p.rec.Record(l) // 唯一持久化入口（usage_logs 落库；quota 只走 finish 的 AddQuota）
 	}
 	if l.ErrorType != domain.ErrNone {
 		p.enqueueErrLog(l) // 全部错误明细 → err_logs（豁免通道）
