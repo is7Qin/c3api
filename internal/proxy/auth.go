@@ -60,6 +60,9 @@ func NewAuth(loader KeyLoader, users UserStatusLoader, log *logx.Logger) *Auth {
 	return a
 }
 
+// SetQuotaEnabled sets the startup quota policy before the first snapshot load.
+func (a *Auth) SetQuotaEnabled(enabled bool) { a.gate.setQuotaEnabled(enabled) }
+
 // Reload 全量刷新鉴权快照（注册表首刷/周期 auth-sync/用户变更 invalidate）：
 // keys 元数据 + 用户状态 + 门禁计数器（在途值跨 reload 继承）。
 // 失败必打 Warn（含调用方是否忽略错误——invalidate 回调等吞错路径）：加载
@@ -199,8 +202,8 @@ func (a *Auth) QuotaExhausted(meta domain.KeyMeta) bool {
 }
 
 // DeductQuota 请求结束扣减（后扣模型；usage 已知；无额度 key 无计数器 → no-op）。
-func (a *Auth) DeductQuota(keyID, tokens int64) {
-	a.gate.deductQuota(keyID, tokens)
+func (a *Auth) DeductQuota(keyID, cost int64) int64 {
+	return a.gate.deductQuota(keyID, cost)
 }
 
 // InFlightUsers 门禁在途并发只读快照（/api/admin/users-top 端点用；spec 2026-08-14

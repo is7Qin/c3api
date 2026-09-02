@@ -6,6 +6,8 @@ package proxy
 
 import (
 	"context"
+	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,7 +40,10 @@ type QuotaUsedReader interface {
 // 无额度 key（quota=0）不建 quota 条目——HasQuota 短路：检查与扣减均走
 // 计数器存在性，路径与现状（无门禁）成本相当（1 次快照读 + map 查）。
 type concurrencyGate struct {
-	store atomic.Pointer[gateSnapshot]
+	quotaEnabled        bool
+	store               atomic.Pointer[gateSnapshot]
+	snapshotMu          sync.Mutex
+	beforeQuotaMutation func()
 	// cluster 集群并发视图（concsync.go worker 双向同步换入的第二 atomic 快照，
 	// spec conc-share-borrow-gate §1.2）：超份额借位判定的对账聚合。nil / 陈旧 =
 	// 无共识 = fail-open 全额本地语义（结构性质，非错误分支）。
@@ -52,9 +57,11 @@ type concurrencyGate struct {
 }
 
 type gateSnapshot struct {
-	users  map[int64]*atomic.Int64 // user_id → 在途请求数
-	keys   map[int64]*atomic.Int64 // key_id → 在途请求数
-	quotas map[int64]*keyQuota     // key_id → 额度预算状态（无额度 key 无条目）
+	users         map[int64]*atomic.Int64 // user_id → 在途请求数
+	keys          map[int64]*atomic.Int64 // key_id → 在途请求数
+	quotas        map[int64]*keyQuota     // key_id → 额度预算状态（无额度 key 无条目）
+	quotaOps      atomic.Int64
+	quotaRetiring atomic.Bool
 }
 
 // keyQuota 单 key 额度状态（多实例本地预算模型 #14 §3.2 + #37 P1 收敛修正）：
@@ -96,13 +103,17 @@ type keyQuota struct {
 }
 
 func newConcurrencyGate(log *logx.Logger) *concurrencyGate {
-	g := &concurrencyGate{log: log}
+	g := &concurrencyGate{log: log, quotaEnabled: true}
 	g.store.Store(&gateSnapshot{
 		users:  make(map[int64]*atomic.Int64),
 		keys:   make(map[int64]*atomic.Int64),
 		quotas: make(map[int64]*keyQuota),
 	})
 	return g
+}
+
+func (g *concurrencyGate) setQuotaEnabled(enabled bool) {
+	g.quotaEnabled = enabled
 }
 
 // setReclaimer 注入复核 DB 读（NewAuth 从 loader 类型断言；构造期调用，不可变）。
@@ -130,12 +141,14 @@ func (g *concurrencyGate) instancesN() int {
 // 额度预算按最新快照重新分配（#14 §3.3：key CRUD → NOTIFY → 全实例 Reload →
 // 预算按新 quota_used 重算）。
 func (g *concurrencyGate) reload(metas map[string]domain.KeyMeta) {
+	g.snapshotMu.Lock()
+	defer g.snapshotMu.Unlock()
 	snap := &gateSnapshot{
 		users:  make(map[int64]*atomic.Int64, len(metas)),
 		keys:   make(map[int64]*atomic.Int64, len(metas)),
 		quotas: make(map[int64]*keyQuota),
 	}
-	old := g.store.Load()
+	old := g.retireSnapshot()
 	for _, meta := range metas {
 		if _, ok := snap.users[meta.UserID]; !ok {
 			c := &atomic.Int64{}
@@ -149,7 +162,7 @@ func (g *concurrencyGate) reload(metas map[string]domain.KeyMeta) {
 			kc.Store(o.Load())
 		}
 		snap.keys[meta.KeyID] = kc
-		if meta.HasQuota {
+		if g.quotaEnabled && meta.HasQuota {
 			q := &keyQuota{}
 			if o, ok := old.quotas[meta.KeyID]; ok {
 				q.consumed.Store(o.consumed.Load()) // 在途额度继承（评审提醒②）
@@ -167,7 +180,9 @@ func (g *concurrencyGate) reload(metas map[string]domain.KeyMeta) {
 // 低频管理路径，重建快照可接受）。预算随最新 meta 重分配（额度调整即时生效）；
 // 额度取消（quota→0）→ 门禁条目移除，不再拦截。
 func (g *concurrencyGate) upsert(meta domain.KeyMeta) {
-	old := g.store.Load()
+	g.snapshotMu.Lock()
+	defer g.snapshotMu.Unlock()
+	old := g.retireSnapshot()
 	snap := &gateSnapshot{
 		users:  cloneCounters(old.users),
 		keys:   cloneCounters(old.keys),
@@ -179,7 +194,7 @@ func (g *concurrencyGate) upsert(meta domain.KeyMeta) {
 	if _, ok := snap.keys[meta.KeyID]; !ok {
 		snap.keys[meta.KeyID] = &atomic.Int64{}
 	}
-	if meta.HasQuota {
+	if g.quotaEnabled && meta.HasQuota {
 		q, ok := snap.quotas[meta.KeyID]
 		if !ok {
 			q = &keyQuota{}
@@ -196,10 +211,13 @@ func (g *concurrencyGate) upsert(meta domain.KeyMeta) {
 // delete 移除 key 计数器与额度条目（user 计数保留——紧随其后的 invalidate
 // → Reload 会按剩余 key 重建；删除到 0 的用户在下一次 reload 收敛）。
 func (g *concurrencyGate) delete(keyID int64) {
+	g.snapshotMu.Lock()
+	defer g.snapshotMu.Unlock()
 	old := g.store.Load()
 	if _, ok := old.keys[keyID]; !ok {
 		return
 	}
+	old = g.retireSnapshot()
 	snap := &gateSnapshot{
 		users:  cloneCounters(old.users),
 		keys:   cloneCounters(old.keys),
@@ -216,6 +234,17 @@ func cloneCounters[T any](m map[int64]*T) map[int64]*T {
 		out[k] = v
 	}
 	return out
+}
+
+// retireSnapshot prevents a deduction accepted on the old view from being lost
+// while a management-path snapshot rebuild copies its quota counters.
+func (g *concurrencyGate) retireSnapshot() *gateSnapshot {
+	old := g.store.Load()
+	old.quotaRetiring.Store(true)
+	for old.quotaOps.Load() != 0 {
+		runtime.Gosched()
+	}
+	return old
 }
 
 // acquire 抢占门禁槽位。返回已 acquire 层级位掩码（1=user、2=key、3=两者；
@@ -294,7 +323,7 @@ func (g *concurrencyGate) release(meta domain.KeyMeta, level int) {
 // 复核是慢路径（DB 读）但单飞去重 + 原子更新 budget：热路径读永不阻塞。
 // 无额度 key 短路 false。
 func (g *concurrencyGate) quotaExhausted(meta domain.KeyMeta) bool {
-	if !meta.HasQuota {
+	if !g.quotaEnabled || !meta.HasQuota {
 		return false
 	}
 	snap := g.store.Load()
@@ -414,13 +443,28 @@ func (g *concurrencyGate) allocBudget(q *keyQuota, meta domain.KeyMeta) {
 }
 
 // deductQuota 请求结束扣减（后扣模型；无额度 key 无条目 → no-op，恒 0）。
-func (g *concurrencyGate) deductQuota(keyID, tokens int64) {
-	if keyID <= 0 || tokens <= 0 {
-		return
+func (g *concurrencyGate) deductQuota(keyID, cost int64) int64 {
+	if !g.quotaEnabled || keyID <= 0 || cost <= 0 {
+		return 0
 	}
-	snap := g.store.Load()
-	if q, ok := snap.quotas[keyID]; ok && q != nil {
-		q.consumed.Add(tokens)
+	for {
+		snap := g.store.Load()
+		if hook := g.beforeQuotaMutation; hook != nil {
+			hook()
+		}
+		snap.quotaOps.Add(1)
+		if snap.quotaRetiring.Load() || g.store.Load() != snap {
+			snap.quotaOps.Add(-1)
+			continue
+		}
+		q, ok := snap.quotas[keyID]
+		if !ok || q == nil {
+			snap.quotaOps.Add(-1)
+			return 0
+		}
+		q.consumed.Add(cost)
+		snap.quotaOps.Add(-1)
+		return cost
 	}
 }
 

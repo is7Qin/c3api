@@ -83,6 +83,48 @@ func TestGateReloadInheritsInflight(t *testing.T) {
 	require.Equal(t, int64(40), snap.quotas[1].consumed.Load())
 }
 
+func TestGateDeductQuotaSurvivesConcurrentReload(t *testing.T) {
+	// Given
+	g := newConcurrencyGate(nil)
+	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100}
+	g.reload(map[string]domain.KeyMeta{"q": meta})
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var enterOnce sync.Once
+	g.beforeQuotaMutation = func() {
+		enterOnce.Do(func() {
+			close(entered)
+			<-release
+		})
+	}
+	deductDone := make(chan int64, 1)
+	go func() { deductDone <- g.deductQuota(1, 30) }()
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("deduction did not reach the synchronization point")
+	}
+
+	// When
+	reloadDone := make(chan struct{})
+	go func() {
+		g.reload(map[string]domain.KeyMeta{"q": meta})
+		close(reloadDone)
+	}()
+	select {
+	case <-reloadDone:
+	case <-time.After(time.Second):
+		t.Fatal("reload did not publish a snapshot")
+	}
+	close(release)
+
+	// Then
+	require.Equal(t, int64(30), <-deductDone)
+	require.Equal(t, int64(30), g.store.Load().quotas[1].consumed.Load(),
+		"deduction racing reload remains in the published snapshot")
+}
+
 // 额度：检查无计数副作用、后扣、无额度 key 零成本短路（无复核能力 → 预算
 // 耗尽即 429，与单实例现状语义一致）。
 func TestGateQuotaCheckAndDeduct(t *testing.T) {
@@ -577,6 +619,32 @@ func TestGateUpsertReallocBudget(t *testing.T) {
 	_, ok := g.store.Load().quotas[1]
 	require.False(t, ok, "quota→0 移除门禁条目")
 	require.False(t, g.quotaExhausted(domain.KeyMeta{KeyID: 1, HasQuota: false}))
+}
+
+// 正数→0→正数（Todo 4 命名回归）：quota>0 阶段按最终 Cost 扣减；quota→0 阶段
+// 门禁条目移除、扣减恒 no-op（不新增 delta，DB quota_used 基线保留）；恢复
+// 正数后 reload 以 DB 快照 quota_used 为新基线继续累计（不清零、不双计）。
+func TestGateQuotaPositiveZeroPositiveKeepsBaseline(t *testing.T) {
+	g := newConcurrencyGate(nil)
+
+	// 正数阶段：quota=1000，扣 130（最终 Cost）
+	g.reload(map[string]domain.KeyMeta{"k": {KeyID: 1, HasQuota: true, Quota: 1000}})
+	require.Equal(t, int64(130), g.deductQuota(1, 130))
+	require.Equal(t, int64(130), g.store.Load().quotas[1].consumed.Load())
+
+	// 0 阶段：quota→0 → 条目移除；扣减 no-op（返回 0，无任何 atomic 可写）
+	g.upsert(domain.KeyMeta{KeyID: 1, HasQuota: false})
+	_, ok := g.store.Load().quotas[1]
+	require.False(t, ok, "quota→0 移除门禁条目")
+	require.Zero(t, g.deductQuota(1, 130), "0 阶段不产生 delta")
+	require.False(t, g.quotaExhausted(domain.KeyMeta{KeyID: 1, HasQuota: false}), "0 阶段不拦截")
+
+	// 恢复正数：DB 已回写 quota_used=130（0 阶段基线保留）→ 从该基线继续
+	g.reload(map[string]domain.KeyMeta{"k": {KeyID: 1, HasQuota: true, Quota: 1000, QuotaUsed: 130}})
+	q := g.store.Load().quotas[1]
+	require.Equal(t, int64(130), q.consumed.Load(), "恢复基线 = DB quota_used（保留 130）")
+	require.Equal(t, int64(130), g.deductQuota(1, 130))
+	require.Equal(t, int64(260), q.consumed.Load(), "从基线继续累计（130+130，非 130 亦非 0+130）")
 }
 
 // Auth.SetInstancesProvider：N 注入即触发预算重算（幂等 reload，在途继承）。
