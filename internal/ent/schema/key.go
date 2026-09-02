@@ -22,8 +22,8 @@ func (Key) Fields() []ent.Field {
 		field.String("key_raw").Unique(), // 明文常驻（长期可查看/复制；DB 泄露即明文暴露——自托管权衡）
 		field.Enum("status").Values("active", "disabled").Default("active"),
 		field.Int("max_concurrency").Default(0), // 0 = 不限
-		field.Int64("quota").Default(0),         // 累计 token 上限；0 = 不限（HasQuota 短路）
-		field.Int64("quota_used").Default(0),    // 已消耗（后扣；无额度 key 恒 0）
+		field.Int64("quota").Default(0),         // 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限（HasQuota 短路）
+		field.Int64("quota_used").Default(0),    // 已消耗计费金额（毫分；后扣；无额度 key 恒 0）
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 		field.Time("deleted_at").Optional().Nillable(), // 软删除时间戳（nil = 存活）；null 语义 = 未删除
 		field.Time("created_at").Default(time.Now),
