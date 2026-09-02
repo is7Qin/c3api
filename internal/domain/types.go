@@ -633,8 +633,8 @@ type Key struct {
 	KeyRaw         string // 明文常驻（长期可查看/复制；DB 泄露即明文暴露——自托管权衡）
 	Status         KeyStatus
 	MaxConcurrency int
-	Quota          int64 // 累计 token 上限；0 = 不限
-	QuotaUsed      int64 // 已消耗（后扣；无额度 key 恒 0）
+	Quota          int64 // 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
+	QuotaUsed      int64 // 已消耗计费金额（毫分；后扣；无额度 key 恒 0）
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	DeletedAt      *time.Time // 软删除时间戳；nil = 存活（鉴权/列表过滤；GET 单个可查已删）
@@ -680,8 +680,8 @@ type KeyMeta struct {
 	UserStatus  UserStatus
 	UserMaxConc int
 	HasQuota    bool
-	Quota       int64
-	QuotaUsed   int64 // 快照值（reload 时从 DB 读）；在途扣减走内存计数
+	Quota       int64 // 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
+	QuotaUsed   int64 // 快照值（已消耗计费金额毫分，reload 时从 DB 读）；在途扣减走内存计数
 	// ProtocolConverts 组级协议转换方向集合快照值（W5）：空 = 不转换（热路径
 	// 分支零开销）；元素 = 客户端协议 → 模板协议（补差语义，转换器
 	// internal/protoconv；多方向按客户端格式命中，同客户端格式多方向已被
