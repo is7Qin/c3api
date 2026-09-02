@@ -19,12 +19,18 @@ import (
 // ErrInvalidInput → 400）。
 var ErrGroupNotEligible = fmt.Errorf("%w: group is private and not granted to user", ErrInvalidInput)
 
+// maxKeyQuotaMillis Key quota（累计计费毫分）上限 = JavaScript
+// Number.MAX_SAFE_INTEGER（2^53−1）：用户端 UI 以 Number 承载 quota，超过即
+// 前端精度失真——API 边界直接拒绝（400），DB int64 类型不动。
+const maxKeyQuotaMillis int64 = 9007199254740991
+
 // CreateKey 用户自建 key（/api/user/keys POST）：
 // 组可选性校验（public 或已授予 private）→ 用户门禁字段写库前预取（B1-1：
 // GetUser 前置——写后注册退化为纯内存 Upsert 不可失败）→ cryptox 生成明文
 // → 落库 → Auth 增量纯内存 Upsert。明文长期可查看/复制（列表/详情回显）。
+// quota（累计计费毫分）边界：0=不限；负数或超 maxKeyQuotaMillis → 400。
 func (s *Service) CreateKey(ctx context.Context, userID int64, name string, groupID int64, maxConcurrency int, quota int64) (*domain.Key, error) {
-	if name == "" || groupID <= 0 || maxConcurrency < 0 || quota < 0 {
+	if name == "" || groupID <= 0 || maxConcurrency < 0 || quota < 0 || quota > maxKeyQuotaMillis {
 		return nil, ErrInvalidInput
 	}
 	g, err := s.checkGroupEligible(ctx, userID, groupID)
@@ -130,7 +136,7 @@ func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *stri
 	if maxConcurrency != nil && *maxConcurrency < 0 {
 		return nil, ErrInvalidInput
 	}
-	if quota != nil && *quota < 0 {
+	if quota != nil && (*quota < 0 || *quota > maxKeyQuotaMillis) {
 		return nil, ErrInvalidInput
 	}
 	if name == nil && status == nil && maxConcurrency == nil && quota == nil {
