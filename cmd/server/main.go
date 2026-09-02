@@ -202,7 +202,12 @@ func main() {
 	}, repos, log)
 
 	auth := proxy.NewAuth(repos.Keys, repos.Users, log)
-	rec.SetQuotaWriter(repos.Keys) // 额度扣减批量回写（Recorder 节奏）
+	// 额度回写器只在计费开启时注入（Todo 3）：BillingCapture=false 时 proxy finish
+	// 本就不产生 AddQuota 增量，此处等价停用 quota writer/flush 落库面；
+	// UsageCapture 与 quota 回写解耦（quota 走 Recorder 独立 flush 节奏）。
+	if cfg.Billing.Enabled {
+		rec.SetQuotaWriter(repos.Keys) // 额度扣减批量回写（Recorder 节奏）
+	}
 	hc := httpx.NewClient(httpx.TransportConfig{
 		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
