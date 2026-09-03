@@ -38,11 +38,18 @@ type fakeStore struct {
 	logs        []*domain.UsageLog
 	stats       []*domain.StatBucket
 	entityStats []*domain.EntityStatBucket
-	assign      map[int64][]int64 // groupID → 授予 user_id 列表（group_assignments 模拟）
-	assignMult  map[[2]int64]*int // (groupID, userID) → 专属价格倍率（nil = 未设置；T3.5 按组）
-	codes       map[int64]*domain.RedemptionCode
-	uses        map[int64]*domain.RedemptionUse
-	temps       []*fakeTempRow // 临时额度行（domain 无 TempBalance 类型，标量参数即全字段）
+	// lastTrendZone/lastEntityTrendZone/lastSummaryZone/lastDaysZone 统计读族
+	// 最近一次收到的请求时区（request-tz 透传断言面；fake 分组模拟恒 UTC，
+	// cube/raw 路由与时区桶界真实性由 repository PG 测试钉）。
+	lastTrendZone       *time.Location
+	lastEntityTrendZone *time.Location
+	lastSummaryZone     *time.Location
+	lastDaysZone        *time.Location
+	assign              map[int64][]int64 // groupID → 授予 user_id 列表（group_assignments 模拟）
+	assignMult          map[[2]int64]*int // (groupID, userID) → 专属价格倍率（nil = 未设置；T3.5 按组）
+	codes               map[int64]*domain.RedemptionCode
+	uses                map[int64]*domain.RedemptionUse
+	temps               []*fakeTempRow // 临时额度行（domain 无 TempBalance 类型，标量参数即全字段）
 	// pricings 模型价格（key = model，一行 = 最终生效价；manual > litellm 优先级
 	// 语义与真实仓库一致）。
 	pricings map[string]*domain.PriceEntry
@@ -765,9 +772,10 @@ func (f *fakeStore) UpdateGroupsBatch(ctx context.Context, ids []int64, p reposi
 	return nil
 }
 
-func (f *fakeStore) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string) ([]*domain.StatBucket, error) {
+func (f *fakeStore) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastTrendZone = zone // 透传断言面（分组模拟恒 UTC）
 	m := map[time.Time]*domain.StatBucket{}
 	for _, b := range f.stats {
 		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
@@ -881,9 +889,10 @@ func (f *fakeStore) StatsTop(ctx context.Context, from, to time.Time, entityType
 	return out, nil
 }
 
-func (f *fakeStore) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string) ([]*domain.EntityStatBucket, error) {
+func (f *fakeStore) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastEntityTrendZone = zone // 透传断言面（分组模拟恒 UTC）
 	m := map[time.Time]*domain.EntityStatBucket{}
 	for _, b := range f.entityStats {
 		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
@@ -984,9 +993,10 @@ func (f *fakeStore) StatsTTFTExact(ctx context.Context, from, to time.Time, enti
 
 // --- /api/admin/overview 聚合面（与真实 StatRepo 同语义：区间 + 组过滤；毫分原样） ---
 
-func (f *fakeStore) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*repository.StatSummary, error) {
+func (f *fakeStore) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastSummaryZone = zone // 透传断言面（区间 sum 与时区无关）
 	s := &repository.StatSummary{}
 	for _, b := range f.stats {
 		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
@@ -1006,9 +1016,10 @@ func (f *fakeStore) SummarizeStats(ctx context.Context, from, to time.Time, grou
 	return s, nil
 }
 
-func (f *fakeStore) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64) ([]*repository.StatDayAgg, error) {
+func (f *fakeStore) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastDaysZone = zone // 透传断言面（日分组模拟恒 UTC——真实日界由 repository PG 测试钉死）
 	day := map[string]*repository.StatDayAgg{}
 	var order []string
 	for _, b := range f.stats {
