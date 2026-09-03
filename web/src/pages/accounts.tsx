@@ -30,7 +30,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
 import { StatusBadge, CooldownBadge } from '@/components/status-badge'
-import { fmtTokens, formatPercent, toRFC3339, truncate } from '@/components/fmt'
+import { browserTimeZone, fmtTokens, formatPercent, toRFC3339, truncate } from '@/components/fmt'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 import { CodexImportDialog } from '@/components/codex-import/import-dialog'
@@ -399,8 +399,9 @@ export default function Accounts() {
 
   const usageQs = useQueries({
     queries: visibleBlocks.map(b => ({
-      queryKey: ['accounts-usage-block', b.map(r => r.ID).join(',')],
-      queryFn: () => api.listAccountsUsage(b.map(r => r.ID!)),
+      queryKey: ['accounts-usage-block', b.map(r => r.ID).join(','), browserTimeZone()],
+      // 无 from/to → 服务端按请求时区计算"当天"缺省窗（键含时区）。
+      queryFn: () => api.listAccountsUsage(b.map(r => r.ID!), { timezone: browserTimeZone() }),
       enabled: isColVisible('usage') && pageIds.length > 0,
       // staleTime = 轮询周期：切回页面/滚回视口时缓存新鲜（<10s）零请求直显，
       // 避免 staleTime=0 默认的切回突刺 refetch；过期后按轮询节奏刷新。
@@ -438,8 +439,10 @@ export default function Accounts() {
     enabled: !!usageDetail,
   })
   const statsQ = useQuery({
-    queryKey: ['account-stats-detail', usageDetail?.ID, rangeKey],
-    queryFn: () => api.getStatsEntityTrend({ entity: 'account', id: usageDetail!.ID!, from, to, granularity }),
+    // 分桶 = 按浏览器时区本地桶界聚合（30d/90d 窗跨 DST 或半小时偏移时区落在
+    // 原始行保留窗外 → 服务端 400，弹窗表格回落提示；键含时区防串台）。
+    queryKey: ['account-stats-detail', usageDetail?.ID, rangeKey, browserTimeZone()],
+    queryFn: () => api.getStatsEntityTrend({ entity: 'account', id: usageDetail!.ID!, from, to, granularity, timezone: browserTimeZone() }),
     enabled: !!usageDetail,
   })
   // 统计桶按 BucketTime 升序（spec 钉死）：后端 day 合并按 map 迭代返回无序
