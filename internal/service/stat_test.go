@@ -21,7 +21,7 @@ import (
 var statsTestFrom = time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 
 func statsTestSvc(fs *fakeStore) *Service {
-	return &Service{store: fs, inv: &invRecorder{}}
+	return &Service{store: fs, inv: &invRecorder{}, statsRawSpan: MaxStatsRawSpan}
 }
 
 // seedTrend 两小时桶同日同组同模型（day 粒度合并为 1 行、hour 保持 2 行的探针）。
