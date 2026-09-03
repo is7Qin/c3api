@@ -37,10 +37,12 @@ var statEntityCols = map[string]string{
 	statEntityKey:     "key_id",
 }
 
-// aggEntityDimCols 实体六查询共享维度列前缀（%[1]s = entity_col）。**WHERE 加
-// <entity_col> IS NOT NULL**——0 = 无主行（鉴权失败/无 key 等）不入卷积表，
-// 否则会伪造"ID=0 的实体"；这与 cube 的 COALESCE(<col>,0) 有意不对称：cube 是
-// 平台总卷（无主行归 0 组保留口径完整），实体表按 ID 钻取、ID=0 不是合法实体。
+// aggEntityDimCols 实体六查询共享维度列前缀（%[1]s = entity_col）。写侧卷积
+// 桶界恒 UTC（持久化面规范时区——浏览器时区只活在读取面，见 stat_raw_read.go
+// 与 StatsTrend 路由）。**WHERE 加 <entity_col> IS NOT NULL**——0 = 无主行
+// （鉴权失败/无 key 等）不入卷积表，否则会伪造"ID=0 的实体"；这与 cube 的
+// COALESCE(<col>,0) 有意不对称：cube 是平台总卷（无主行归 0 组保留口径完整），
+// 实体表按 ID 钻取、ID=0 不是合法实体。
 var aggEntityDimCols = `date_trunc('hour', created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
        COALESCE(%[1]s, 0), COALESCE(model, '')`
 
