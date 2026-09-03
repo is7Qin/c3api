@@ -985,12 +985,12 @@ type OverviewResponse struct {
 	// Resources 资源计数（冷面 count；模板/分组排除软删）
 	Resources OverviewResources `json:"resources"`
 
-	// Summary 今日汇总（UTC 日界；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
+	// Summary 今日汇总（请求 timezone 时区日界，缺省 UTC；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
 	Summary OverviewSummary `json:"summary"`
 	Trend   []OverviewTrend `json:"trend"`
 }
 
-// OverviewSummary 今日汇总（UTC 日界；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
+// OverviewSummary 今日汇总（请求 timezone 时区日界，缺省 UTC；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
 type OverviewSummary struct {
 	CacheReadTokens int64 `json:"cache_read_tokens"`
 
@@ -1024,7 +1024,7 @@ type OverviewSummary struct {
 	TtftP99Ms int64 `json:"ttft_p99_ms"`
 }
 
-// OverviewTrend 近 N 天日桶（SQL 侧 GROUP BY date_trunc('day', bucket_time)；UTC 日；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
+// OverviewTrend 近 N 天日桶（SQL 侧按请求 timezone 的本地日界分组，缺省 UTC；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
 type OverviewTrend struct {
 	// CallCount 按次调用（图片生成 = 张数、search = 1）
 	CallCount int64 `json:"call_count"`
@@ -1032,7 +1032,7 @@ type OverviewTrend struct {
 	// CostUsd 当日成本（USD，毫分 /1e5）
 	CostUsd float64 `json:"cost_usd"`
 
-	// Date 日桶（UTC）
+	// Date 日桶日期（请求 timezone 的本地日期，缺省 UTC）
 	Date   openapi_types.Date `json:"date"`
 	Errors int64              `json:"errors"`
 

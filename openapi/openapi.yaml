@@ -3096,7 +3096,7 @@ components:
     OverviewSummary:
       type: object
       required: [requests, errors, err_rate, cost_usd, raw_cost_usd, input_tokens, output_tokens, total_tokens, cache_read_tokens, call_count, ttft_avg_ms, ttft_max_ms, ttft_p50_ms, ttft_p90_ms, ttft_p95_ms, ttft_p99_ms]
-      description: 今日汇总（UTC 日界；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
+      description: 今日汇总（请求 timezone 时区日界，缺省 UTC；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
       properties:
         requests: { type: integer, format: int64 }
         errors: { type: integer, format: int64 }
@@ -3117,9 +3117,9 @@ components:
     OverviewTrend:
       type: object
       required: [date, requests, errors, cost_usd, raw_cost_usd, tokens, call_count, ttft_avg_ms, ttft_max_ms, ttft_p50_ms, ttft_p90_ms, ttft_p95_ms, ttft_p99_ms]
-      description: 近 N 天日桶（SQL 侧 GROUP BY date_trunc('day', bucket_time)；UTC 日；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
+      description: 近 N 天日桶（SQL 侧按请求 timezone 的本地日界分组，缺省 UTC；TTFT 指标仅含首 token 流式请求样本，无样本 = 0）
       properties:
-        date: { type: string, format: date, description: 日桶（UTC） }
+        date: { type: string, format: date, description: 日桶日期（请求 timezone 的本地日期，缺省 UTC） }
         requests: { type: integer, format: int64 }
         errors: { type: integer, format: int64 }
         cost_usd: { type: number, format: double, description: 当日成本（USD，毫分 /1e5） }
