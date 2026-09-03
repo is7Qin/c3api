@@ -546,28 +546,28 @@ func (r *Repository) QueryErrLogs(ctx context.Context, q ErrLogQuery) ([]*domain
 
 // --- /api/admin/overview 聚合面（spec 2026-08-14；SQL 侧聚合 + 冷面计数） ---
 
-func (r *Repository) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*StatSummary, error) {
-	return r.Stats.SummarizeStats(ctx, from, to, groupID)
+func (r *Repository) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*StatSummary, error) {
+	return r.Stats.SummarizeStats(ctx, from, to, groupID, zone)
 }
 
-func (r *Repository) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64) ([]*StatDayAgg, error) {
-	return r.Stats.ScanStatsDays(ctx, from, to, groupID)
+func (r *Repository) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*StatDayAgg, error) {
+	return r.Stats.ScanStatsDays(ctx, from, to, groupID, zone)
 }
 
 func (r *Repository) CountOverviewResources(ctx context.Context) (*OverviewResourceCounts, error) {
 	return r.Stats.CountOverviewResources(ctx)
 }
 
-func (r *Repository) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string) ([]*domain.StatBucket, error) {
-	return r.Stats.StatsTrend(ctx, from, to, unit, groupID, model)
+func (r *Repository) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error) {
+	return r.Stats.StatsTrend(ctx, from, to, unit, groupID, model, zone)
 }
 
 func (r *Repository) StatsTop(ctx context.Context, from, to time.Time, entityType string, by string, limit int) ([]*domain.EntityStatBucket, error) {
 	return r.Stats.StatsTop(ctx, from, to, entityType, by, limit)
 }
 
-func (r *Repository) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string) ([]*domain.EntityStatBucket, error) {
-	return r.Stats.StatsEntityTrend(ctx, from, to, unit, entityType, entityID, model)
+func (r *Repository) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error) {
+	return r.Stats.StatsEntityTrend(ctx, from, to, unit, entityType, entityID, model, zone)
 }
 
 func (r *Repository) StatsTTFTSketch(ctx context.Context, from, to time.Time, model string) (*domain.TTFTSummary, error) {
