@@ -119,7 +119,7 @@
     "waterWarning": "— near the limit, consider scaling up",
     "resourcesTitle": "Resource totals",
     "trendTitle": "Traffic trend",
-    "trendDesc": "Requests per day (UTC), last 7 days",
+    "trendDesc": "Requests per day (browser timezone), last 7 days",
     "trendEmpty": "No usage in this period",
     "usersTopTitle": "Live concurrency top",
     "usersTopDesc": "In-flight requests per user, refreshes every 10s (this instance)",
@@ -1589,4 +1589,3 @@
     "backHome": "Back to Home"
   }
 }
-
