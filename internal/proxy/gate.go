@@ -40,10 +40,10 @@ type QuotaUsedReader interface {
 // 无额度 key（quota=0）不建 quota 条目——HasQuota 短路：检查与扣减均走
 // 计数器存在性，路径与现状（无门禁）成本相当（1 次快照读 + map 查）。
 type concurrencyGate struct {
-	quotaEnabled        bool
-	store               atomic.Pointer[gateSnapshot]
-	snapshotMu          sync.Mutex
-	beforeQuotaMutation func()
+	// quotaEnabled 启动期定额策略（NewAuth 注入，构造后不可变）。
+	quotaEnabled bool
+	store        atomic.Pointer[gateSnapshot]
+	snapshotMu   sync.Mutex
 	// cluster 集群并发视图（concsync.go worker 双向同步换入的第二 atomic 快照，
 	// spec conc-share-borrow-gate §1.2）：超份额借位判定的对账聚合。nil / 陈旧 =
 	// 无共识 = fail-open 全额本地语义（结构性质，非错误分支）。
@@ -102,18 +102,14 @@ type keyQuota struct {
 	quotaUsedAtReclaim atomic.Int64
 }
 
-func newConcurrencyGate(log *logx.Logger) *concurrencyGate {
-	g := &concurrencyGate{log: log, quotaEnabled: true}
+func newConcurrencyGate(log *logx.Logger, quotaEnabled bool) *concurrencyGate {
+	g := &concurrencyGate{log: log, quotaEnabled: quotaEnabled}
 	g.store.Store(&gateSnapshot{
 		users:  make(map[int64]*atomic.Int64),
 		keys:   make(map[int64]*atomic.Int64),
 		quotas: make(map[int64]*keyQuota),
 	})
 	return g
-}
-
-func (g *concurrencyGate) setQuotaEnabled(enabled bool) {
-	g.quotaEnabled = enabled
 }
 
 // setReclaimer 注入复核 DB 读（NewAuth 从 loader 类型断言；构造期调用，不可变）。
@@ -449,9 +445,6 @@ func (g *concurrencyGate) deductQuota(keyID, cost int64) int64 {
 	}
 	for {
 		snap := g.store.Load()
-		if hook := g.beforeQuotaMutation; hook != nil {
-			hook()
-		}
 		snap.quotaOps.Add(1)
 		if snap.quotaRetiring.Load() || g.store.Load() != snap {
 			snap.quotaOps.Add(-1)

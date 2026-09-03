@@ -43,14 +43,14 @@ type Auth struct {
 // NewAuth 构造鉴权快照（空表——首载统一由快照注册表 ReloadAll 承担，单一启动
 // 入口，消灭"构造即载 + 注册表再刷"双重加载冗余；构造到首刷之间无请求流量，
 // 见 main 装配序）。
-func NewAuth(loader KeyLoader, users UserStatusLoader, log *logx.Logger) *Auth {
+func NewAuth(loader KeyLoader, users UserStatusLoader, log *logx.Logger, quotaEnabled bool) *Auth {
 	a := &Auth{
 		loader: loader,
 		users:  users,
 		log:    log,
 		keys:   make(map[string]domain.KeyMeta),
 		states: make(map[int64]domain.UserSnapshot),
-		gate:   newConcurrencyGate(log),
+		gate:   newConcurrencyGate(log, quotaEnabled),
 	}
 	// 复核 DB 读自装配：生产 loader（repository.KeyRepo）同时实现 QuotaUsedReader；
 	// 测试 fake 未实现 → 无复核能力（预算耗尽即 429，单实例现状语义）。
@@ -59,9 +59,6 @@ func NewAuth(loader KeyLoader, users UserStatusLoader, log *logx.Logger) *Auth {
 	}
 	return a
 }
-
-// SetQuotaEnabled sets the startup quota policy before the first snapshot load.
-func (a *Auth) SetQuotaEnabled(enabled bool) { a.gate.setQuotaEnabled(enabled) }
 
 // Reload 全量刷新鉴权快照（注册表首刷/周期 auth-sync/用户变更 invalidate）：
 // keys 元数据 + 用户状态 + 门禁计数器（在途值跨 reload 继承）。

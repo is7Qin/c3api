@@ -98,7 +98,6 @@ type Proxy struct {
 // nil = 计费全关——现有调用点/测试兼容）。errlog 为错误明细落盘 worker
 // （分表设计；nil = 未装配——拒绝/异常路径只聚统计不落 err_logs 明细）。
 func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec *usage.Recorder, clients *aiclient.Factory, auth *Auth, log *logx.Logger, bill *BillingHooks, errlog *usage.ErrLogWorker) *Proxy {
-	auth.SetQuotaEnabled(cfg.BillingCapture)
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
 		limit: newFixedWindowLimiter(cfg.GroupKeyRPM), log: log, bill: bill, errlog: errlog,
