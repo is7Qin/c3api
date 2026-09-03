@@ -222,7 +222,6 @@ func TestProxyQuotaExhaustedAndDeduct(t *testing.T) {
 		}},
 		Balances: bal,
 	}
-	p.auth.SetQuotaEnabled(true)
 	meta := activeKey(1, 1, 10)
 	meta.HasQuota = true
 	meta.Quota = 260 // 计费价格由测试默认 proxy helper 提供：每轮 Cost=130
