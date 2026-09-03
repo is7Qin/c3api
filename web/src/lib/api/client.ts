@@ -57,6 +57,7 @@ export interface UserStatParams {
   to: string
   granularity?: 'hour' | 'day'
   model?: string
+  timezone?: string
 }
 
 // 过滤 undefined/null/空串，返回 '' 或 '?k=v&...' 查询串。
@@ -126,9 +127,10 @@ export class ApiClient {
   getAccountGroups = (id: number) => this.request<components['schemas']['AccountGroupsResponse']>(`/accounts/${id}/groups`)
   getAccountExt = (id: number) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`)
   putAccountExt = (id: number, b: components['schemas']['AccountExt']) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`, { method: 'PUT', body: JSON.stringify(b) })
-  // —— 账号用量聚合（0e77d2a）：批量 ≤100 条；from/to 缺省 = 当天（UTC 零点 → now）。
+  // —— 账号用量聚合（0e77d2a）：批量 ≤100 条；from/to 缺省 = 当天（请求
+  //     timezone 时区当日零点 → now；显式 from/to 绝对时刻直透）。
   // codex 账号附带上游额度快照（upstream）；api-key/无凭据账号恒 null。
-  listAccountsUsage = (accountIds: number[], p?: { from?: string; to?: string }) =>
+  listAccountsUsage = (accountIds: number[], p?: { from?: string; to?: string; timezone?: string }) =>
     this.request<components['schemas']['AccountsUsageResponse']>('/accounts/usage', {
       params: toQuery({ account_ids: accountIds.join(','), ...p }),
     })
@@ -144,14 +146,15 @@ export class ApiClient {
   // —— 日志 / 统计 ——
   getUsageLogs = (p: UsageLogParams) => this.request<components['schemas']['LogsResponse']>('/usage_logs', { params: toQuery(p) })
   getErrLogs = (p: ErrLogParams) => this.request<components['schemas']['ErrLogsResponse']>('/err_logs', { params: toQuery(p) })
-  // —— 统计 v2 ——
-  getStatsTrend = (p: { from: string; to: string; granularity: 'hour' | 'day'; group_id?: number; model?: string }) =>
+  // —— 统计 v2（全部可选 `timezone`：浏览器 IANA 名——服务端按该时区聚合桶界；
+  //     top/ttft 无时间分组仅校验；显式 from/to 恒绝对时刻）——
+  getStatsTrend = (p: { from: string; to: string; granularity: 'hour' | 'day'; group_id?: number; model?: string; timezone?: string }) =>
     this.request<components['schemas']['StatTrendPoint'][]>('/stats/trend', { params: toQuery(p) })
-  getStatsTop = (p: { from: string; to: string; entity: 'account' | 'user' | 'key'; by: 'cost' | 'requests' | 'tokens'; limit?: number }) =>
+  getStatsTop = (p: { from: string; to: string; entity: 'account' | 'user' | 'key'; by: 'cost' | 'requests' | 'tokens'; limit?: number; timezone?: string }) =>
     this.request<components['schemas']['StatTopEntry'][]>('/stats/top', { params: toQuery(p) })
-  getStatsEntityTrend = (p: { entity: 'account' | 'user' | 'key'; id: number; from: string; to: string; granularity: 'hour' | 'day'; model?: string }) =>
+  getStatsEntityTrend = (p: { entity: 'account' | 'user' | 'key'; id: number; from: string; to: string; granularity: 'hour' | 'day'; model?: string; timezone?: string }) =>
     this.request<components['schemas']['StatTrendPoint'][]>('/stats/entity-trend', { params: toQuery(p) })
-  getStatsTTFT = (p: { from: string; to: string; entity?: 'account' | 'user' | 'key'; id?: number; model?: string }) =>
+  getStatsTTFT = (p: { from: string; to: string; entity?: 'account' | 'user' | 'key'; id?: number; model?: string; timezone?: string }) =>
     this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
   // —— 用户管理 ——
   listUsers = (p?: { limit?: number; offset?: number; email?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['UserListResponse']>('/users', { params: toQuery(p) })
@@ -186,7 +189,7 @@ export class ApiClient {
   deletePriceVariants = (model: string) => this.request<components['schemas']['DeletedResponse']>('/prices/variants', { method: 'DELETE', params: toQuery({ model }) })
   // —— 管理端总览（/api/admin/overview + /api/admin/users-top；聚合面 30s / 实时面 2s
   // 服务端 TTL 缓存，dashboard 轮询频率下无陈旧感）——
-  getOverview = (p?: { days?: number; group_id?: number }) => this.request<components['schemas']['OverviewResponse']>('/overview', { params: toQuery(p) })
+  getOverview = (p?: { days?: number; group_id?: number; timezone?: string }) => this.request<components['schemas']['OverviewResponse']>('/overview', { params: toQuery(p) })
   getUsersTop = (p?: { top?: number }) => this.request<components['schemas']['UsersTopResponse']>('/users-top', { params: toQuery(p) })
   // —— 运维观测（/api/admin/ops/workers；管理端专属，契约 ops tag 生成类型）——
   getOpsWorkers = () => this.request<components['schemas']['WorkersResponse']>('/ops/workers')
@@ -206,7 +209,7 @@ export class ApiClient {
   getMyUsageLogs = (p: MyUsageLogParams) => this.request<components['schemas']['UserLogsResponse']>('/usage_logs', { params: toQuery(p) })
   getMyErrLogs = (p: MyErrLogParams) => this.request<components['schemas']['UserErrLogsResponse']>('/err_logs', { params: toQuery(p) })
   getMyStats = (p: UserStatParams) => this.request<components['schemas']['StatTrendPoint'][]>('/stats', { params: toQuery(p) })
-  getMyStatsTTFT = (p: { from: string; to: string; model?: string }) =>
+  getMyStatsTTFT = (p: { from: string; to: string; model?: string; timezone?: string }) =>
     this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
   redeem = (code: string) => this.request<components['schemas']['RedeemResponse']>('/redemptions', { method: 'POST', body: JSON.stringify({ code }) })
   listUserRedemptions = (p?: { page?: number; page_size?: number; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['RedemptionRecordListResponse']>('/redemptions', { params: toQuery(p) })

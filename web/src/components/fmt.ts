@@ -15,6 +15,20 @@ export function formatDateTime(iso?: string): string {
   return d.toLocaleString('zh-CN', { hour12: false })
 }
 
+// 浏览器 IANA 时区名（request-browser-timezone-stats）：全部统计/概览/账号
+// 用量请求统一携带 `timezone` 参数，服务端按该时区聚合分组桶与缺省"当天"
+// 日界；返回桶为本地桶起点的绝对时刻，前端用 new Date 浏览器本地渲染恰一次
+// （与请求携带时区一致）。普通时刻（日志/冷却/创建时间）本就浏览器本地，
+// 语义不变。resolvedOptions().timeZone 在非 IANA 环境可能为 'UTC' 或
+// undefined——undefined 时省略参数，服务端回落 UTC（兼容缺省语义）。
+export function browserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined
+  } catch {
+    return undefined
+  }
+}
+
 // 冷却剩余时长（A-4 增量，2026-08-19）：untilISO → 人类可读剩余。向上取整秒、
 // 最小显示 1s（避免 0s 闪烁）；分段：≥24h → "Xd Xh"（10086h → "420d 6h"）、
 // ≥1h → "Xh Ym"、≥1m → "Xm Ys"、<1m → "Xs"；整除时零段省略（恰好 24h →
@@ -52,6 +66,16 @@ export function toRFC3339(v: string): string | undefined {
 
 // datetime-local 本地时间补零（YYYY-MM-DDTHH:mm）。
 const pad2 = (n: number) => String(n).padStart(2, '0')
+
+// UTC 数值偏移后缀（RFC3339 形态 " UTC+08:00"/" UTC-04:00"，取行绝对时刻的
+// 浏览器偏移）。DST fall-back 日同一墙钟小时出现两次（EDT 01:00 与 EST 01:00
+// 是两个不同绝对桶），图表 label 必须跨桶唯一（recharts category 轴按 label
+// 去重）——统计页仅对重复 label 追加本后缀，唯一 label 保持原样。
+export function localOffsetSuffix(d: Date): string {
+  const offMin = -d.getTimezoneOffset()
+  const abs = Math.abs(offMin)
+  return ` UTC${offMin < 0 ? '-' : '+'}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`
+}
 
 // 默认近 24h 日志范围（datetime-local 本地时区字面量；调用方在组件挂载时固定一次，
 // 避免渲染期时间漂移；from/to 契约必填）。
