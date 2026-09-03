@@ -2714,7 +2714,7 @@ export interface components {
             /** Format: date-time */
             generated_at: string;
         };
-        /** @description 今日汇总（UTC 日界；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
+        /** @description 今日汇总（请求 timezone 时区日界，缺省 UTC；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
         OverviewSummary: {
             /** Format: int64 */
             requests: number;
@@ -2770,11 +2770,11 @@ export interface components {
             /** Format: int64 */
             ttft_p99_ms: number;
         };
-        /** @description 近 N 天日桶（SQL 侧 GROUP BY date_trunc('day', bucket_time)；UTC 日；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
+        /** @description 近 N 天日桶（SQL 侧按请求 timezone 的本地日界分组，缺省 UTC；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
         OverviewTrend: {
             /**
              * Format: date
-             * @description 日桶（UTC）
+             * @description 日桶日期（请求 timezone 的本地日期，缺省 UTC）
              */
             date: string;
             /** Format: int64 */
