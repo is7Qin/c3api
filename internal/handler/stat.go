@@ -13,8 +13,14 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// GetStatsTrend 趋势聚合（cube）— ServerInterface。
+// GetStatsTrend 趋势聚合（cube 或原始行——按请求 `timezone` 由 repo 路由）。
+// ServerInterface。
 func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams) {
+	zone, err := resolveStatsZone(params.Timezone)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
 	// 非法 granularity 直透 service 哨兵→400（RG-BE M-1：handler 静默回落
 	// 会掩盖 normalizeGranularity 的 ErrInvalidInput，契约不一致）。
 	granularity := ""
@@ -25,6 +31,7 @@ func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params 
 		From:        params.From,
 		To:          params.To,
 		Granularity: granularity,
+		Zone:        zone,
 	}
 	if params.GroupId != nil {
 		q.GroupID = *params.GroupId
@@ -44,8 +51,14 @@ func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params 
 	httpface.WriteJSON(w, http.StatusOK, out)
 }
 
-// GetStatsTop Top 排行（entity 卷积）。
+// GetStatsTop Top 排行（entity 卷积）。排行按实体聚合、无时间桶——数值与
+// 时区无关；`timezone` 参数仅接受并校验（契约一致性：客户端统一带浏览器
+// 时区，非法名照旧 400），不进查询。
 func (h *AdminAPI) GetStatsTop(w http.ResponseWriter, r *http.Request, params GetStatsTopParams) {
+	if _, err := resolveStatsZone(params.Timezone); err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
 	limit := 20
 	if params.Limit != nil {
 		limit = *params.Limit
@@ -73,14 +86,20 @@ func (h *AdminAPI) GetStatsTop(w http.ResponseWriter, r *http.Request, params Ge
 	httpface.WriteJSON(w, http.StatusOK, out)
 }
 
-// GetStatsEntityTrend 实体趋势。
+// GetStatsEntityTrend 实体趋势（时区路由同 GetStatsTrend）。
 func (h *AdminAPI) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, params GetStatsEntityTrendParams) {
+	zone, err := resolveStatsZone(params.Timezone)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
 	q := service.EntityTrendQuery{
 		EntityType:  string(params.Entity),
 		EntityID:    params.Id,
 		From:        params.From,
 		To:          params.To,
 		Granularity: string(params.Granularity),
+		Zone:        zone,
 	}
 	if params.Model != nil {
 		q.Model = *params.Model
@@ -97,8 +116,13 @@ func (h *AdminAPI) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, p
 	httpface.WriteJSON(w, http.StatusOK, out)
 }
 
-// GetStatsTTFT TTFT 聚合（sketch/exact 双分支）。
+// GetStatsTTFT TTFT 聚合（sketch/exact 双分支）。分位数/计数为绝对区间数值
+// ——时区不改变结果；`timezone` 仅接受并校验（非法 400），不进查询、不进缓存键。
 func (h *AdminAPI) GetStatsTTFT(w http.ResponseWriter, r *http.Request, params GetStatsTTFTParams) {
+	if _, err := resolveStatsZone(params.Timezone); err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
 	q := service.TTFTQuery{
 		From: params.From,
 		To:   params.To,
