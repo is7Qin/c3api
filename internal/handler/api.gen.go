@@ -1690,6 +1690,9 @@ type WorkersResponse struct {
 	Workers     []WorkerStatus  `json:"workers"`
 }
 
+// StatsTimezone defines model for StatsTimezone.
+type StatsTimezone = string
+
 // Error defines model for Error.
 type Error = ErrorResponse
 
@@ -1712,6 +1715,15 @@ type GetAccountsUsageParams struct {
 	AccountIds string     `form:"account_ids" json:"account_ids"`
 	From       *time.Time `form:"from,omitempty" json:"from,omitempty"`
 	To         *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
 // GetErrLogsParams defines parameters for GetErrLogs.
@@ -1760,6 +1772,15 @@ type GetKeysParamsOrder string
 type GetAdminOverviewParams struct {
 	Days    *int   `form:"days,omitempty" json:"days,omitempty"`
 	GroupId *int64 `form:"group_id,omitempty" json:"group_id,omitempty"`
+
+	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
 // GetPricesParams defines parameters for GetPrices.
@@ -1851,6 +1872,15 @@ type GetStatsEntityTrendParams struct {
 	To          time.Time                            `form:"to" json:"to"`
 	Granularity GetStatsEntityTrendParamsGranularity `form:"granularity" json:"granularity"`
 	Model       *string                              `form:"model,omitempty" json:"model,omitempty"`
+
+	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
 // GetStatsEntityTrendParamsEntity defines parameters for GetStatsEntityTrend.
@@ -1866,6 +1896,15 @@ type GetStatsTopParams struct {
 	Entity GetStatsTopParamsEntity `form:"entity" json:"entity"`
 	By     GetStatsTopParamsBy     `form:"by" json:"by"`
 	Limit  *int                    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
 // GetStatsTopParamsEntity defines parameters for GetStatsTop.
@@ -1881,6 +1920,15 @@ type GetStatsTrendParams struct {
 	Granularity *GetStatsTrendParamsGranularity `form:"granularity,omitempty" json:"granularity,omitempty"`
 	GroupId     *int64                          `form:"group_id,omitempty" json:"group_id,omitempty"`
 	Model       *string                         `form:"model,omitempty" json:"model,omitempty"`
+
+	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
 // GetStatsTrendParamsGranularity defines parameters for GetStatsTrend.
@@ -1893,6 +1941,15 @@ type GetStatsTTFTParams struct {
 	Entity *GetStatsTTFTParamsEntity `form:"entity,omitempty" json:"entity,omitempty"`
 	Id     *int64                    `form:"id,omitempty" json:"id,omitempty"`
 	Model  *string                   `form:"model,omitempty" json:"model,omitempty"`
+
+	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
 // GetStatsTTFTParamsEntity defines parameters for GetStatsTTFT.
@@ -2211,7 +2268,7 @@ type ServerInterface interface {
 	// Top 排行（entity 卷积）
 	// (GET /stats/top)
 	GetStatsTop(w http.ResponseWriter, r *http.Request, params GetStatsTopParams)
-	// 趋势聚合（cube）
+	// 趋势聚合（cube/原始行——按 timezone 路由）
 	// (GET /stats/trend)
 	GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams)
 	// TTFT 聚合（sketch 或 exact）
@@ -2585,7 +2642,7 @@ func (_ Unimplemented) GetStatsTop(w http.ResponseWriter, r *http.Request, param
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 趋势聚合（cube）
+// 趋势聚合（cube/原始行——按 timezone 路由）
 // (GET /stats/trend)
 func (_ Unimplemented) GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -2900,6 +2957,14 @@ func (siw *ServerInterfaceWrapper) GetAccountsUsage(w http.ResponseWriter, r *ht
 	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "timezone" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "timezone", r.URL.Query(), &params.Timezone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "timezone", Err: err})
 		return
 	}
 
@@ -3582,6 +3647,14 @@ func (siw *ServerInterfaceWrapper) GetAdminOverview(w http.ResponseWriter, r *ht
 	err = runtime.BindQueryParameter("form", true, false, "group_id", r.URL.Query(), &params.GroupId)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "timezone" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "timezone", r.URL.Query(), &params.Timezone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "timezone", Err: err})
 		return
 	}
 
@@ -4299,6 +4372,14 @@ func (siw *ServerInterfaceWrapper) GetStatsEntityTrend(w http.ResponseWriter, r 
 		return
 	}
 
+	// ------------- Optional query parameter "timezone" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "timezone", r.URL.Query(), &params.Timezone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "timezone", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetStatsEntityTrend(w, r, params)
 	}))
@@ -4386,6 +4467,14 @@ func (siw *ServerInterfaceWrapper) GetStatsTop(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// ------------- Optional query parameter "timezone" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "timezone", r.URL.Query(), &params.Timezone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "timezone", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetStatsTop(w, r, params)
 	}))
@@ -4459,6 +4548,14 @@ func (siw *ServerInterfaceWrapper) GetStatsTrend(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// ------------- Optional query parameter "timezone" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "timezone", r.URL.Query(), &params.Timezone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "timezone", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetStatsTrend(w, r, params)
 	}))
@@ -4529,6 +4626,14 @@ func (siw *ServerInterfaceWrapper) GetStatsTTFT(w http.ResponseWriter, r *http.R
 	err = runtime.BindQueryParameter("form", true, false, "model", r.URL.Query(), &params.Model)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "timezone" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "timezone", r.URL.Query(), &params.Timezone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "timezone", Err: err})
 		return
 	}
 

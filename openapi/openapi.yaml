@@ -208,8 +208,9 @@ paths:
       summary: 账号用量聚合（统一 usage API——批量 ≤100 条；from/to 缺省 = 当天）
       parameters:
         - { name: account_ids, in: query, required: true, schema: { type: string, description: "逗号分隔账号 id（1-100 条；重复 id 自动去重——响应 item 唯一；空/非数字/超限 → 400）" } }
-        - { name: from, in: query, schema: { type: string, format: date-time, description: "RFC3339 起始（含）；缺省 = UTC 当日零点" } }
+        - { name: from, in: query, schema: { type: string, format: date-time, description: "RFC3339 起始（含）；缺省 = timezone 时区当日零点；显式值为绝对时刻，不受时区改写" } }
         - { name: to, in: query, schema: { type: string, format: date-time, description: "RFC3339 结束（不含）；缺省 = now；from > to → 400" } }
+        - $ref: '#/components/parameters/StatsTimezone'
       responses:
         '200':
           description: 账号 usage items（恒 = account_ids 去重后全量——无记录账号 gateway 全 0，前端免补零；upstream 为 codex 额度快照，api-key 无凭据恒 null）
@@ -1318,6 +1319,7 @@ paths:
         - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: granularity, in: query, schema: { type: string, enum: [hour, day], default: day } }
         - { name: model, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/StatsTimezone'
       responses:
         '200':
           description: 统计趋势点数组
@@ -1337,6 +1339,7 @@ paths:
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: model, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/StatsTimezone'
       responses:
         '200':
           description: TTFT 聚合摘要
@@ -1528,13 +1531,14 @@ paths:
     get:
       operationId: GetStatsTrend
       tags: [stats]
-      summary: 趋势聚合（cube）
+      summary: 趋势聚合（cube/原始行——按 timezone 路由）
       parameters:
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: granularity, in: query, schema: { type: string, enum: [hour, day], default: day } }
         - { name: group_id, in: query, schema: { type: integer, format: int64 } }
         - { name: model, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/StatsTimezone'
       responses:
         '200':
           description: 统计趋势点数组
@@ -1556,6 +1560,7 @@ paths:
         - { name: entity, in: query, required: true, schema: { type: string, enum: [account, user, key] } }
         - { name: by, in: query, required: true, schema: { type: string, enum: [cost, requests, tokens] } }
         - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 200 } }
+        - $ref: '#/components/parameters/StatsTimezone'
       responses:
         '200':
           description: Top 排行条目数组
@@ -1578,6 +1583,7 @@ paths:
         - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: granularity, in: query, required: true, schema: { type: string, enum: [hour, day] } }
         - { name: model, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/StatsTimezone'
       responses:
         '200':
           description: 实体趋势点数组
@@ -1599,6 +1605,7 @@ paths:
         - { name: entity, in: query, schema: { type: string, enum: [account, user, key] } }
         - { name: id, in: query, schema: { type: integer, format: int64 } }
         - { name: model, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/StatsTimezone'
       responses:
         '200':
           description: TTFT 聚合摘要
@@ -1618,15 +1625,17 @@ paths:
       summary: 管理端总览（summary USD + trend 日桶 + 账号健康 + 资源 + err_top + 计费告警）
       description: |
         一站式聚合端点（dashboard 主数据；聚合结果内部 TTL 30s 缓存，键含
-        days/group_id 与 UTC 日界——跨午夜滚转）。summary = 今日汇总（UTC 日界，
-        cost 毫分 /1e5 → USD，与价格 API 口径一致）；trend = 近 N 天日桶
-        （SQL 侧 GROUP BY date_trunc('day', bucket_time)，days 上限 30）；
-        accounts = 账号健康分布 + 并发水位（调度器快照同源）；err_top = 账号
-        维度 err_rate Top5（调度器 EWMA，name = 账号名）；alerts = billing
+        days/group_id、timezone 规范名与该时区日界——跨午夜滚转）。summary =
+        今日汇总（请求浏览器时区日界，缺省 UTC；cost 毫分 /1e5 → USD，与价格
+        API 口径一致）；trend = 近 N 天日桶（SQL 侧按请求时区日界分组；
+        DST/半小时时区扫描原始明细、窗口超保留期支持范围 → 400；days 上限
+        30）；accounts = 账号健康分布 + 并发水位（调度器快照同源）；err_top =
+        账号维度 err_rate Top5（调度器 EWMA，name = 账号名）；alerts = billing
         游标积压观测（lag 族，注入面读取）。
       parameters:
         - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 30, default: 7, description: 趋势天数（含今日；缺省 7，上限 30） } }
         - { name: group_id, in: query, schema: { type: integer, format: int64, description: 按组过滤聚合（summary/trend；缺省全局） } }
+        - $ref: '#/components/parameters/StatsTimezone'
       responses:
         '200':
           description: 总览聚合（summary/trend/accounts/resources/err_top/alerts）
@@ -1672,6 +1681,20 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 components:
+  parameters:
+    StatsTimezone:
+      name: timezone
+      in: query
+      required: false
+      description: |
+        IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+        仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+        其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+        等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+        客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+        （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+        窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+      schema: { type: string }
   responses:
     Error:
       description: 错误响应
