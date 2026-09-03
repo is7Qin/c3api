@@ -72,7 +72,7 @@ export default function Stats() {
           ? `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
           : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
         : r.BucketTime ?? '—'
-      return { ...r, label, time: r.BucketTime ?? '' }
+      return { ...r, label, time: r.BucketTime ?? '', tableLabel: formatDateTime(r.BucketTime) }
     })
     const counts = new Map<string, number>()
     for (const r of base) counts.set(r.label, (counts.get(r.label) ?? 0) + 1)
@@ -80,7 +80,9 @@ export default function Stats() {
     return base.map(r => {
       if ((counts.get(r.label) ?? 0) < 2) return r
       const d = new Date(r.time)
-      return Number.isNaN(d.getTime()) ? r : { ...r, label: r.label + localOffsetSuffix(d) }
+      return Number.isNaN(d.getTime())
+        ? r
+        : { ...r, label: r.label + localOffsetSuffix(d), tableLabel: r.tableLabel + localOffsetSuffix(d) }
     })
   }, [rows, granularity])
 
@@ -309,7 +311,7 @@ export default function Stats() {
                   )
                   : labeledRows.map(r => (
                     <TableRow key={r.time}>
-                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">{formatDateTime(r.time)}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">{r.tableLabel}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.RequestCount ?? 0}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.ErrorCount ?? 0}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.CallCount ?? 0}</TableCell>
