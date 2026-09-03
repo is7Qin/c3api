@@ -55,8 +55,8 @@ func rawBucketExpr(col, zoneParam, unit string) string {
 	if unit == "day" {
 		return "date_trunc('day', " + col + " AT TIME ZONE " + zoneParam + ") AT TIME ZONE " + zoneParam
 	}
-	return fmt.Sprintf("%s - ((extract(epoch from %s AT TIME ZONE %s))::bigint %% 3600) * interval '1 second'",
-		col, col, zoneParam)
+	return fmt.Sprintf("%s - ((extract(epoch from %s AT TIME ZONE %s) - floor(extract(epoch from %s AT TIME ZONE %s) / 3600) * 3600) * interval '1 second')",
+		col, col, zoneParam, col, zoneParam)
 }
 
 // rawUsageMeasures usage_logs 原始行测量投影——列序与 statMeasureSums（cube 读
