@@ -48,23 +48,30 @@ type OverviewData struct {
 
 // Overview 管理端总览聚合（/api/admin/overview 服务端聚合面）：
 //
-//	summary = [utcDay, utcDay+1d) 区间单行 sum（SQL 侧）；
-//	trend   = [utcDay-(days-1)d, utcDay+1d) 日桶（SQL 侧 GROUP BY
-//	          date_trunc('day', bucket_time)——usage_stats 分区键 range 毫秒级）；
+//	summary = [day, day+1本地日) 区间单行 sum（SQL 侧）；
+//	trend   = [day−(days−1)本地日, day+1本地日) 日桶（SQL 侧按请求时区日界
+//	          分组——恒整点无 DST 时区走 usage_stats cube 重组（分区键 range
+//	          毫秒级）；DST/半小时时区走原始行精确聚合，见 repository）；
 //	accounts/err_top = 调度器快照遍历（O(N) 冷面，30s 缓存摊薄）；
 //	resources = 三表冷面 count。
 //
-// utcDay 由调用方传入（handler 缓存键与聚合区间同一日界源——跨 UTC 午夜
-// 滚转不漂移）；days 已由调用方钳制 [1,30]；groupID > 0 = 按组过滤
-// summary/trend（accounts/err_top/resources 为全局面，spec 参数语义）。
-func (s *Service) Overview(ctx context.Context, utcDay time.Time, days int, groupID int64) (*OverviewData, error) {
-	from := utcDay.Add(-time.Duration(days-1) * 24 * time.Hour)
-	to := utcDay.Add(24 * time.Hour)
-	summary, err := s.store.SummarizeStats(ctx, utcDay, to, groupID)
+// day 由调用方传入（handler 缓存键与聚合区间同一日界源——请求浏览器时区本地
+// 日零点，跨午夜滚转不漂移）；日窗推进用日历 AddDate（DST 安全，绝不用固定
+// 24h 算术）；zone = handler 边界解析过的请求时区（nil/UTC = 现状 cube 路径，
+// 向后兼容；非 cube 精确时区受原始行保留期窗口 MaxStatsRawSpan 约束，超限
+// ErrInvalidInput(400) 而非静默残缺）；days 已由调用方钳制 [1,30]；groupID > 0
+// = 按组过滤 summary/trend（accounts/err_top/resources 为全局面，spec 参数语义）。
+func (s *Service) Overview(ctx context.Context, day time.Time, days int, groupID int64, zone *time.Location) (*OverviewData, error) {
+	from := day.AddDate(0, 0, -(days - 1))
+	to := day.AddDate(0, 0, 1)
+	if err := s.validateZoneSpan(zone, from, to); err != nil {
+		return nil, err
+	}
+	summary, err := s.store.SummarizeStats(ctx, day, to, groupID, zone)
 	if err != nil {
 		return nil, err
 	}
-	trend, err := s.store.ScanStatsDays(ctx, from, to, groupID)
+	trend, err := s.store.ScanStatsDays(ctx, from, to, groupID, zone)
 	if err != nil {
 		return nil, err
 	}
