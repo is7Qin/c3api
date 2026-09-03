@@ -720,7 +720,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 | 查询参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `from` / `to` | RFC3339 | 近 24 小时 | 时间范围 |
-| `granularity` | `hour` / `day` | `day` | 聚合粒度（`day` 为 UTC 日对齐，`hour` 为 UTC 小时对齐） |
+| `granularity` | `hour` / `day` | `day` | 聚合粒度；可选 `timezone`（IANA 名，通常 = 浏览器时区；空 = UTC；非法 = 400）决定桶界所在时区——显式 `from`/`to` 恒为绝对时刻，不受时区影响。DST/半小时偏移时区的分组读扫原始明细，窗口上限 8 天（对齐 err_logs 保留），超限 400；UTC 及恒整点无 DST 时区读 180 天卷积表（≤90 天） |
 | `group_id` / `account_id` / `template_id` / `user_id`(仅 `/api/admin/stats`) / `model` | int / int / int / int / string | — | 维度过滤 |
 
 响应 `200`：统计行数组（按粒度对齐的桶）：
@@ -801,12 +801,12 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 }
 ```
 
-- `summary`：今日汇总（UTC 日界），`cost_usd` 为 USD（毫分 /1e5），`ttft_*` 口径同 `/api/admin/stats`
-- `trend`：近 N 天日桶（SQL 侧按日聚合；`tokens` = input+output+cache 合并）
+- `summary`：今日汇总（请求 `timezone` 时区日界，缺省 = UTC），`cost_usd` 为 USD（毫分 /1e5），`ttft_*` 口径同 `/api/admin/stats`
+- `trend`：近 N 天日桶（SQL 侧按请求时区日界聚合；`tokens` = input+output+cache 合并；DST/半小时偏移时区扫原始明细、窗口 >8 天 = 400）
 - `accounts`：账号健康分布 + 并发水位（**调度器快照同源**——与账号列表运行时视图一致；运行时状态只在内存，DB 无第二份）
 - `err_top`：账号维度错误率 Top5（调度器 EWMA，`name` = 账号名）
 - `alerts`：billing 游标积压观测（lag 族——`billing_lag_ms` 时滞毫秒 / `billing_unbilled_rows` 未扣费行数 / `billing_quarantined_rows` 隔离行数累计）
-- 聚合结果内部 TTL 30s 缓存（键含 `days`/`group_id` 与 UTC 日界）；统计本身为离线聚合产物（≤5 分钟陈旧）
+- 聚合结果内部 TTL 30s 缓存（键含 `days`/`group_id`、请求 `timezone` 与该时区日界）；统计本身为离线聚合产物（≤5 分钟陈旧）
 
 ### 实时并发排行
 
