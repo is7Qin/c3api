@@ -254,13 +254,15 @@ type LogStore interface {
 
 type StatStore interface {
 	// /api/admin/overview 聚合面（spec 2026-08-14）：SQL 侧聚合（F-P2-2 形态——
-	// 服务端 GROUP BY 返回日桶，不拉全行客户端聚合）。
-	SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*repository.StatSummary, error)
-	ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64) ([]*repository.StatDayAgg, error)
+	// 服务端 GROUP BY 返回日桶，不拉全行客户端聚合）。zone = 请求浏览器时区
+	// （handler 边界校验；nil/UTC = 现状 cube 路径）；repo 内按
+	// domain.ZoneCubeExact 路由 cube 重组 vs 原始行精确聚合。
+	SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error)
+	ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error)
 	CountOverviewResources(ctx context.Context) (*repository.OverviewResourceCounts, error)
-	StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string) ([]*domain.StatBucket, error)
+	StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error)
 	StatsTop(ctx context.Context, from, to time.Time, entityType string, by string, limit int) ([]*domain.EntityStatBucket, error)
-	StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string) ([]*domain.EntityStatBucket, error)
+	StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error)
 	StatsTTFTSketch(ctx context.Context, from, to time.Time, model string) (*domain.TTFTSummary, error)
 	StatsTTFTExact(ctx context.Context, from, to time.Time, entityType string, entityID int64, model string) (*domain.TTFTSummary, error)
 }
@@ -354,11 +356,23 @@ type Service struct {
 	mailEnqueue                 func(MailSendTask) error
 	clearBalanceWarningCooldown func(context.Context, int64, int64) error
 	tzLoc                       *time.Location
-	log                         *logx.Logger
+	// statsRawSpan 浏览器时区原始行分组路径的窗口上限（usage_logs/err_logs
+	// 原始行保留期决定）：New 缺省 MaxStatsRawSpan（8d = errlog 默认保留 7d +
+	// 1d 日历余量），main 经 SetStatsRawSpan(min(log, errlog) 正保留) 按部署
+	// 配置换算；0 = 不限（双保留均禁用）。校验见 validateZoneSpan。
+	statsRawSpan time.Duration
+	// statsRawRetentionDays statsRawSpan 背后的正保留天数（main 传 usage_logs
+	// 与 err_logs 的最小正保留——raw 读两表，两者都须完整覆盖）：retention
+	// 兜底用——窗口起点早于保证存留的分区 cutoff 时，行已被 retention DROP，
+	// 宁 400 不静默残缺；0 = 禁用/不限（跳过兜底）。
+	statsRawRetentionDays int
+	// statsNow 当前时间源（nil = time.Now；Service 测试注入固定时钟）。
+	statsNow func() time.Time
+	log      *logx.Logger
 }
 
 func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger) *Service {
-	s := &Service{store: store, sched: sched, inv: invalidate, pub: pub, ruleReload: ruleReload, keys: keys, log: log}
+	s := &Service{store: store, sched: sched, inv: invalidate, pub: pub, ruleReload: ruleReload, keys: keys, log: log, statsRawSpan: MaxStatsRawSpan}
 	// settings 快照构造时首载（注册表不覆盖 settings——NOTIFY 处理路径
 	// ReloadSettings 保持既有行为）；pricing 快照首载统一由快照注册表
 	// ReloadAll 承担（单一启动入口，消灭"构造即载 + 注册表再刷"双重加载）。
@@ -369,6 +383,22 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 // SetTimeLocation 注入定价时段解释用时区（D-TZ2）：nil = 进程本地（现状），
 // 非 nil = at.In(tzLoc) 后再进 domain.ResolveEntryPrices（零热路径额外 DB/锁）。
 func (s *Service) SetTimeLocation(l *time.Location) { s.tzLoc = l }
+
+// SetStatsRawSpan 按部署配置换算原始行分组 horizon（main 注入 usage_logs 与
+// err_logs 两者的最小正保留天数——raw 路径读两表，horizon 必须被双方都完整
+// 覆盖）：days > 0 → (days+1)×24h 窗口上限 + days 保留兜底 cutoff（1d DST/
+// 日界日历余量——默认 7d → 8d，与 MaxStatsRawSpan 缺省同值）；days <= 0 →
+// 0 = 不限窗口且无兜底（分区保留被禁用，既无固定 horizon 也无保证存留期）。
+// 绝不把 horizon 报得比配置保留期更长——超限窗口宁 400 不静默残缺。
+func (s *Service) SetStatsRawSpan(retentionDays int) {
+	if retentionDays > 0 {
+		s.statsRawSpan = time.Duration(retentionDays+1) * 24 * time.Hour
+		s.statsRawRetentionDays = retentionDays
+		return
+	}
+	s.statsRawSpan = 0
+	s.statsRawRetentionDays = 0
+}
 
 // SetMailEnqueue 注入邮件入队函数（D-W1异步化：svc 构造后回填 mailW.Enqueue——
 // 循环依赖先例 SetLocalDispatcher；未注入 → SendRegisterCode 退化为 ErrMailNotConfigured）。
