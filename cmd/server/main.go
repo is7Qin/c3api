@@ -201,7 +201,7 @@ func main() {
 		StatsRetentionDays:  cfg.Usage.StatsRetentionDays,
 	}, repos, log)
 
-	auth := proxy.NewAuth(repos.Keys, repos.Users, log)
+	auth := proxy.NewAuth(repos.Keys, repos.Users, log, cfg.Billing.Enabled)
 	// 额度回写器只在计费开启时注入（Todo 3）：BillingCapture=false 时 proxy finish
 	// 本就不产生 AddQuota 增量，此处等价停用 quota writer/flush 落库面；
 	// UsageCapture 与 quota 回写解耦（quota 走 Recorder 独立 flush 节奏）。
