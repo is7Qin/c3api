@@ -119,7 +119,7 @@
     "waterWarning": "— 接近上限，建议扩容",
     "resourcesTitle": "资源总数",
     "trendTitle": "流量趋势",
-    "trendDesc": "近 7 天每日请求量（UTC 日界）",
+    "trendDesc": "近 7 天每日请求量（浏览器时区）",
     "trendEmpty": "该时段暂无用量",
     "usersTopTitle": "实时并发排行",
     "usersTopDesc": "每用户实时在途请求（每 10 秒刷新；本实例视角）",
@@ -1589,4 +1589,3 @@
     "backHome": "返回首页"
   }
 }
-
