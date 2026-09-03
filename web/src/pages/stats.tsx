@@ -16,7 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { fmtTTFT, formatDateTime, toRFC3339 } from '@/components/fmt'
+import { browserTimeZone, fmtTTFT, formatDateTime, localOffsetSuffix, toRFC3339 } from '@/components/fmt'
 
 type Metric = 'requests' | 'tokens'
 type Granularity = 'hour' | 'day'
@@ -48,7 +48,9 @@ export default function Stats() {
   }
 
   const params = useMemo(
-    () => ({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, granularity }),
+    // timezone = 浏览器 IANA 时区——服务端按本地桶界精确聚合；label 用
+    // new Date 本地渲染恰一次（与请求时区一致，见 fmt.browserTimeZone）。
+    () => ({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, granularity, timezone: browserTimeZone() }),
     [range, granularity]
   )
   const { data, isLoading, isError, error } = useQuery({
@@ -60,15 +62,27 @@ export default function Stats() {
   // label 必须跨桶唯一：recharts category 轴 domain 按 label 值去重，
   // 纯时分（"04:00"×5 天重复）→ domain 6-7 个 → tooltip 索引在 0-5 循环
   // （"点位置一直在前面循环"——2026-08-14 修复）；hour 粒度加日期前缀。
-  const labeledRows = useMemo(() => rows.map(r => {
-    const d = r.BucketTime ? new Date(r.BucketTime) : null
-    const label = d && !Number.isNaN(d.getTime())
-      ? granularity === 'hour'
-        ? `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
-        : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-      : r.BucketTime ?? '—'
-    return { ...r, label, time: r.BucketTime ?? '' }
-  }), [rows, granularity])
+  // DST fall-back 重复墙钟 label（01:00 出现两次 = EDT/EST 两个绝对桶）：
+  // 计数后仅对重复 label 追加数值 UTC 偏移（RFC3339 形态）消歧，唯一 label 原样。
+  const labeledRows = useMemo(() => {
+    const base = rows.map(r => {
+      const d = r.BucketTime ? new Date(r.BucketTime) : null
+      const label = d && !Number.isNaN(d.getTime())
+        ? granularity === 'hour'
+          ? `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+          : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+        : r.BucketTime ?? '—'
+      return { ...r, label, time: r.BucketTime ?? '' }
+    })
+    const counts = new Map<string, number>()
+    for (const r of base) counts.set(r.label, (counts.get(r.label) ?? 0) + 1)
+    if (![...counts.values()].some(n => n > 1)) return base
+    return base.map(r => {
+      if ((counts.get(r.label) ?? 0) < 2) return r
+      const d = new Date(r.time)
+      return Number.isNaN(d.getTime()) ? r : { ...r, label: r.label + localOffsetSuffix(d) }
+    })
+  }, [rows, granularity])
 
   // TTFT 卡片独立 query，不阻塞图表渲染
   const ttftParams = useMemo(
