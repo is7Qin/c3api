@@ -523,3 +523,23 @@ func TestPGRawEmptyWindowAndUnalignedBoundary(t *testing.T) {
 	require.True(t, bs[0].BucketTime.Equal(base.Add(12*time.Hour)), "桶起点 = 12:00Z（%v）", bs[0].BucketTime)
 	require.Equal(t, int64(1), bs[0].RequestCount)
 }
+
+// TestPGRawSubsecondHourlyBoundary 小数秒不得被 PostgreSQL numeric→bigint
+// 四舍五入推过本地小时界：09:29:59.600Z（IST 14:59:59.600）仍属 08:30Z 桶，
+// 09:30:00.400Z 属 09:30Z 桶。
+func TestPGRawSubsecondHourlyBoundary(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	require.NoError(t, err)
+	base := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
+	seedAggWindow(t, repos, base, base.Add(2*time.Hour))
+	seedRawRows(t, repos, []*domain.UsageLog{
+		usageLogRow("subsecond-before", time.Date(2026, 8, 14, 9, 29, 59, 600_000_000, time.UTC), domain.ErrNone, 1, 5, 42, 9, "m", 1, 1, 0, 0, 1, 1, 0, nil),
+		usageLogRow("subsecond-after", time.Date(2026, 8, 14, 9, 30, 0, 400_000_000, time.UTC), domain.ErrNone, 1, 5, 42, 9, "m", 1, 1, 0, 0, 1, 1, 0, nil),
+	}, nil)
+
+	got, err := repos.Stats.StatsTrend(ctx, base, base.Add(time.Hour), "hour", 0, "", ist)
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"08:30": 1, "09:30": 1}, bucketClocks(got))
+}
