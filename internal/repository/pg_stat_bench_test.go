@@ -52,7 +52,7 @@ func BenchmarkStatsTrendPushdown(b *testing.B) {
 	to := base.Add(24 * time.Hour)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		got, err := repos.Stats.StatsTrend(ctx, from, to, "day", 0, "")
+		got, err := repos.Stats.StatsTrend(ctx, from, to, "day", 0, "", time.UTC)
 		require.NoError(b, err)
 		require.Len(b, got, 30, "日桶数 = 窗口天数")
 	}
