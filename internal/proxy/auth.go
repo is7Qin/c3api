@@ -43,14 +43,14 @@ type Auth struct {
 // NewAuth 构造鉴权快照（空表——首载统一由快照注册表 ReloadAll 承担，单一启动
 // 入口，消灭"构造即载 + 注册表再刷"双重加载冗余；构造到首刷之间无请求流量，
 // 见 main 装配序）。
-func NewAuth(loader KeyLoader, users UserStatusLoader, log *logx.Logger) *Auth {
+func NewAuth(loader KeyLoader, users UserStatusLoader, log *logx.Logger, quotaEnabled bool) *Auth {
 	a := &Auth{
 		loader: loader,
 		users:  users,
 		log:    log,
 		keys:   make(map[string]domain.KeyMeta),
 		states: make(map[int64]domain.UserSnapshot),
-		gate:   newConcurrencyGate(log),
+		gate:   newConcurrencyGate(log, quotaEnabled),
 	}
 	// 复核 DB 读自装配：生产 loader（repository.KeyRepo）同时实现 QuotaUsedReader；
 	// 测试 fake 未实现 → 无复核能力（预算耗尽即 429，单实例现状语义）。
@@ -199,8 +199,8 @@ func (a *Auth) QuotaExhausted(meta domain.KeyMeta) bool {
 }
 
 // DeductQuota 请求结束扣减（后扣模型；usage 已知；无额度 key 无计数器 → no-op）。
-func (a *Auth) DeductQuota(keyID, tokens int64) {
-	a.gate.deductQuota(keyID, tokens)
+func (a *Auth) DeductQuota(keyID, cost int64) int64 {
+	return a.gate.deductQuota(keyID, cost)
 }
 
 // InFlightUsers 门禁在途并发只读快照（/api/admin/users-top 端点用；spec 2026-08-14

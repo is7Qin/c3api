@@ -155,6 +155,438 @@ func TestProxyBillingAppliesCost(t *testing.T) {
 	require.Nil(t, store.logs[0].TTFTMS, "非流式 → TTFT nil")
 }
 
+func TestProxyBilledQuotaUsesFinalCost(t *testing.T) {
+	// Given
+	up := fakeOpenAI(t, "")
+	defer up.Close()
+	store := &captureLogStore{}
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+	require.NoError(t, bal.Reload(context.Background()))
+	p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
+		"ck-1": func() domain.KeyMeta {
+			meta := activeKey(1, 1, 10)
+			meta.HasQuota = true
+			meta.Quota = 260
+			return meta
+		}(),
+	}, map[int64][]*domain.Account{10: {{
+		ID: 1, TemplateID: 1, Template: &domain.Template{
+			ID: 1, Name: "t", BaseURL: up.URL,
+			CredentialType:   credential.TypeAPIKey,
+			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+		}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+	}}}, bal, store)
+
+	// When
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer ck-1")
+		rec := httptest.NewRecorder()
+		p.HandleChat(rec, req)
+		if i < 2 {
+			require.Equal(t, http.StatusOK, rec.Code, "request %d body=%s", i+1, rec.Body.String())
+			continue
+		}
+		require.Equal(t, http.StatusTooManyRequests, rec.Code, "request %d body=%s", i+1, rec.Body.String())
+	}
+
+	// Then
+	require.NoError(t, p.rec.Close(context.Background()))
+}
+
+func TestProxyBillingDisabledSkipsKeyQuota(t *testing.T) {
+	// Given
+	meta := activeKey(1, 1, 10)
+	meta.HasQuota = true
+	meta.Quota = 1
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, false)
+	require.NoError(t, auth.Reload(context.Background()))
+
+	// When
+	got := auth.DeductQuota(meta.KeyID, 1)
+
+	// Then
+	require.Zero(t, got)
+	_, ok := auth.gate.store.Load().quotas[meta.KeyID]
+	require.False(t, ok)
+	require.False(t, auth.QuotaExhausted(meta))
+}
+
+func TestProxyNoQuotaSkipsKeyQuotaWork(t *testing.T) {
+	// Given
+	meta := activeKey(1, 1, 10)
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, true)
+	require.NoError(t, auth.Reload(context.Background()))
+
+	// When
+	got := auth.DeductQuota(meta.KeyID, 130)
+
+	// Then
+	require.Zero(t, got)
+	_, ok := auth.gate.store.Load().quotas[meta.KeyID]
+	require.False(t, ok)
+	require.False(t, auth.QuotaExhausted(meta))
+}
+
+func TestProxyZeroCostSkipsKeyQuotaWork(t *testing.T) {
+	// Given
+	meta := activeKey(1, 1, 10)
+	meta.HasQuota = true
+	meta.Quota = 100
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, true)
+	require.NoError(t, auth.Reload(context.Background()))
+
+	// When
+	got := auth.DeductQuota(meta.KeyID, 0)
+
+	// Then
+	require.Zero(t, got)
+	require.Zero(t, auth.gate.store.Load().quotas[meta.KeyID].consumed.Load())
+}
+
+func TestProxyDeductQuotaReturnsEachDelta(t *testing.T) {
+	// Given
+	meta := activeKey(1, 1, 10)
+	meta.HasQuota = true
+	meta.Quota = 500
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, true)
+	require.NoError(t, auth.Reload(context.Background()))
+
+	// When
+	first := auth.DeductQuota(meta.KeyID, 130)
+	second := auth.DeductQuota(meta.KeyID, 130)
+
+	// Then
+	require.Equal(t, int64(130), first)
+	require.Equal(t, int64(130), second)
+	require.Equal(t, int64(260), auth.gate.store.Load().quotas[meta.KeyID].consumed.Load())
+}
+
+// captureQuotaWriter 记录 AddQuotaUsed 累计 delta（proxy 面 quota 回写观测）。
+type captureQuotaWriter struct {
+	mu    sync.Mutex
+	total map[int64]int64
+}
+
+func (q *captureQuotaWriter) AddQuotaUsed(ctx context.Context, deltas map[int64]int64) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.total == nil {
+		q.total = map[int64]int64{}
+	}
+	for k, d := range deltas {
+		q.total[k] += d
+	}
+	return nil
+}
+
+// TestProxyFinishQuotaWritesBackWithoutUsageCapture Todo 3 解耦：UsageCapture=false +
+// BillingCapture=true——普通 usage 明细跳过落库，Key quota 仍经 finish 显式
+// AddQuota 独立回写；两次 Cost=130 合计 260（Record 不再推导，无双计费）。
+func TestProxyFinishQuotaWritesBackWithoutUsageCapture(t *testing.T) {
+	// Given
+	up := fakeOpenAI(t, "")
+	defer up.Close()
+	store := &captureLogStore{}
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+	require.NoError(t, bal.Reload(context.Background()))
+	p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
+		"ck-1": func() domain.KeyMeta {
+			meta := activeKey(1, 1, 10)
+			meta.HasQuota = true
+			meta.Quota = 100000
+			return meta
+		}(),
+	}, map[int64][]*domain.Account{10: {{
+		ID: 1, TemplateID: 1, Template: &domain.Template{
+			ID: 1, Name: "t", BaseURL: up.URL,
+			CredentialType:   credential.TypeAPIKey,
+			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+		}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+	}}}, bal, store)
+	q := &captureQuotaWriter{}
+	p.rec.SetQuotaWriter(q)
+	p.cfg.UsageCapture = false
+
+	// When: 两次请求（每次最终 Cost=130）
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer ck-1")
+		rec := httptest.NewRecorder()
+		p.HandleChat(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "request %d body=%s", i+1, rec.Body.String())
+	}
+	require.NoError(t, p.rec.Close(context.Background()))
+
+	// Then: 明细跳过、quota 独立回写且只计一次
+	store.mu.Lock()
+	require.Empty(t, store.logs, "UsageCapture=false → 普通 usage 明细不落库")
+	store.mu.Unlock()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	require.Equal(t, map[int64]int64{1: 260}, q.total, "quota 按最终 Cost 独立回写（130+130=260，无双计费）")
+}
+
+func TestProxyFinishBillingDisabledSkipsQuotaDeduction(t *testing.T) {
+	// Given
+	up := fakeOpenAI(t, "")
+	defer up.Close()
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+	require.NoError(t, bal.Reload(context.Background()))
+	p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
+		"ck-1": func() domain.KeyMeta {
+			meta := activeKey(1, 1, 10)
+			meta.HasQuota = true
+			meta.Quota = 500
+			return meta
+		}(),
+	}, map[int64][]*domain.Account{10: {{
+		ID: 1, TemplateID: 1, Template: &domain.Template{
+			ID: 1, Name: "t", BaseURL: up.URL,
+			CredentialType:   credential.TypeAPIKey,
+			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+		}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+	}}}, bal, &captureLogStore{})
+	q := p.auth.gate.store.Load().quotas[1]
+	p.cfg.BillingCapture = false
+	before := q.consumed.Load()
+
+	// When
+	p.finish(0, &domain.UsageLog{KeyID: 1, Cost: 130})
+
+	// Then
+	require.Equal(t, before, q.consumed.Load())
+}
+
+// quotaKeyWith 构造带额度 KeyMeta（跨路径 quota 回归统一基座：quota 足够大，
+// 断言点在 consumed 值而非拦截）。
+func quotaKeyWith(quota int64) domain.KeyMeta {
+	meta := activeKey(1, 1, 10)
+	meta.HasQuota = true
+	meta.Quota = quota
+	return meta
+}
+
+// enableKeyQuota 测试侧开启额度门禁（等价 New 期 cfg.BillingCapture=true 装配：
+// 翻转开关 + gate 策略 + 带额度 key 入快照）。
+func enableKeyQuota(t *testing.T, p *Proxy, quota int64) *proxyQuotaProbe {
+	t.Helper()
+	p.cfg.BillingCapture = true
+	p.auth.Upsert("ck-1", quotaKeyWith(quota))
+	return &proxyQuotaProbe{p: p}
+}
+
+// proxyQuotaProbe gate 内 quota 观测缝（读 consumed 原子值）。
+type proxyQuotaProbe struct{ p *Proxy }
+
+func (q *proxyQuotaProbe) consumed() int64 {
+	entry, ok := q.p.auth.gate.store.Load().quotas[1]
+	if !ok {
+		return -1 // 条目缺失（区分 0：no-op 路径应无条目或 consumed=0，调用方断言）
+	}
+	return entry.consumed.Load()
+}
+
+// TestProxyQuotaDeductedByImageCost 跨路径回归（Todo 4）：images 端点 quota
+// 按最终 Cost 后扣（per-image 5400 毫分 × 2 张 = 10800），非 TotalTokens=3——
+// 若扣减源回退 TotalTokens，consumed 恒 3，断言立即失败。
+func TestProxyQuotaDeductedByImageCost(t *testing.T) {
+	// Given：2 张图 + image_tokens usage（Cost=10800 / TotalTokens=3 可区分）
+	const body = `{"created":1720000000,"data":[{"b64_json":"QUJD"},{"b64_json":"REVG"}],"usage":{"input_tokens":2,"output_tokens":3,"input_tokens_details":{"image_tokens":1},"output_tokens_details":{"image_tokens":2}}}`
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer up.Close()
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+	require.NoError(t, bal.Reload(context.Background()))
+	store := &captureLogStore{}
+	p := newTestImagesProxyWithBill(t, up.URL, &BillingHooks{
+		Resolver: &fakeImagePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-image-1": perImagePriceRow("gpt-image-1")}},
+		Balances: bal,
+	}, store)
+	probe := enableKeyQuota(t, p, 100000)
+
+	// When
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"a cat","n":2}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleImagesGenerations(rec, req)
+
+	// Then
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	require.Equal(t, int64(10800), probe.consumed(), "images 按最终 Cost 扣额度（10800 ≠ TotalTokens 3）")
+	require.NoError(t, p.rec.Close(context.Background()))
+}
+
+// TestProxyQuotaNoDeltaOn4xxAndExhausted 跨路径回归（Todo 4）：4xx 透传（finish
+// 带零用量行 → Cost=0 → 零 delta）与上游耗尽（recordLog 路径，不经 finish）
+// 均不产生 quota 扣减。
+func TestProxyQuotaNoDeltaOn4xxAndExhausted(t *testing.T) {
+	t.Run("4xx_passthrough", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"injected 400"}}`))
+		}))
+		defer up.Close()
+		bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+		require.NoError(t, bal.Reload(context.Background()))
+		p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{"ck-1": quotaKeyWith(100000)},
+			map[int64][]*domain.Account{10: {{
+				ID: 1, TemplateID: 1, Template: &domain.Template{
+					ID: 1, Name: "t", BaseURL: up.URL,
+					CredentialType:   credential.TypeAPIKey,
+					SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+				}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+			}}}, bal, &captureLogStore{})
+		probe := &proxyQuotaProbe{p: p}
+
+		rec := httptest.NewRecorder()
+		p.HandleChat(rec, chatReq("ck-1"))
+		require.Equal(t, http.StatusBadRequest, rec.Code, "4xx 透传: body=%s", rec.Body.String())
+		require.Zero(t, probe.consumed(), "4xx 路径零 quota delta（finish 零用量行 Cost=0）")
+		require.NoError(t, p.rec.Close(context.Background()))
+	})
+
+	t.Run("upstream_exhausted", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer up.Close()
+		bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+		require.NoError(t, bal.Reload(context.Background()))
+		p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{"ck-1": quotaKeyWith(100000)},
+			map[int64][]*domain.Account{10: {{
+				ID: 1, TemplateID: 1, Template: &domain.Template{
+					ID: 1, Name: "t", BaseURL: up.URL,
+					CredentialType:   credential.TypeAPIKey,
+					SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+				}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+			}}}, bal, &captureLogStore{})
+		probe := &proxyQuotaProbe{p: p}
+
+		rec := httptest.NewRecorder()
+		p.HandleChat(rec, chatReq("ck-1"))
+		require.Equal(t, http.StatusBadGateway, rec.Code, "耗尽路径归一化 502（seed 规则）: body=%s", rec.Body.String())
+		require.Zero(t, probe.consumed(), "耗尽路径零 quota delta（recordLog 不经 finish）")
+		require.NoError(t, p.rec.Close(context.Background()))
+	})
+}
+
+// TestProxyQuotaDeductedByStreamAbortCost 跨路径回归（Todo 4）：上游流中止
+// （recordStreamAbort → finish）按已收 usage 帧的最终 Cost 扣额度（190 毫分），
+// 非 TotalTokens=12——abort 计费与 quota 同源同值。
+func TestProxyQuotaDeductedByStreamAbortCost(t *testing.T) {
+	// Given：首帧带 usage 后停滞 → UpstreamStreamTimeout(100ms) 中止
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		fl := w.(http.Flusher)
+		fmt.Fprint(w, `data: {"id":"c1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":7,"total_tokens":12}}`+"\n\n")
+		fl.Flush()
+		<-r.Context().Done()
+	}))
+	defer up.Close()
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+	require.NoError(t, bal.Reload(context.Background()))
+	tpl := &domain.Template{
+		ID: 1, Name: "t", BaseURL: up.URL,
+		CredentialType:   credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+	}
+	store := &captureLogStore{}
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 100*time.Millisecond, store, &BillingHooks{
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
+		Balances: bal,
+	})
+	probe := enableKeyQuota(t, p, 100000)
+
+	// When
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","stream":true,"messages":[]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	// Then
+	p.sched.FlushRules()
+	require.Equal(t, int64(190), probe.consumed(), "abort 按最终 Cost 扣额度（5×1e7+7×2e7=190 ≠ TotalTokens 12）")
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType)
+}
+
+// TestProxyQuotaNoDeltaOnRecordPath 跨路径回归（Todo 4）：record 入口（WS 首
+// 字节前 499 等无并发槽失败路径）即使携带 token 用量，也不产生任何 quota
+// delta——gate 不动、Recorder quota map 不新增、writer 零调用。额度 delta 唯一
+// 生产入口是 finish 的 DeductQuota→AddQuota。
+func TestProxyQuotaNoDeltaOnRecordPath(t *testing.T) {
+	// Given
+	up := fakeOpenAI(t, "")
+	defer up.Close()
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+	require.NoError(t, bal.Reload(context.Background()))
+	p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{"ck-1": quotaKeyWith(100000)},
+		map[int64][]*domain.Account{10: {{
+			ID: 1, TemplateID: 1, Template: &domain.Template{
+				ID: 1, Name: "t", BaseURL: up.URL,
+				CredentialType:   credential.TypeAPIKey,
+				SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+			}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+		}}}, bal, &captureLogStore{})
+	probe := &proxyQuotaProbe{p: p}
+	q := &captureQuotaWriter{}
+	p.rec.SetQuotaWriter(q)
+
+	// When：record 携带 TotalTokens=8 的 499/abort 行（旧实现曾从 token 推导额度）
+	p.record(context.Background(), "req-rec", 10, 1, "gpt-4o", "", domain.FormatOpenAIResponsesWS,
+		statusClientClosedRequest, domain.ErrAbort, 0, usageTuple{it: 3, ot: 5, tt: 8}, time.Now())
+	require.NoError(t, p.rec.Close(context.Background()))
+
+	// Then：三面无副作用
+	require.Zero(t, probe.consumed(), "record 不动 gate consumed")
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	require.Empty(t, q.total, "record 不产生 quota 回写 delta（Recorder 零推导）")
+}
+
+// TestProxyQuotaDeductsFinalCostAfterMultiplier 跨路径回归（Todo 4）：quota
+// 扣减源 = 倍率后最终 Cost（用户-组专属 ×2 → 每请求 260，非 raw 130）——
+// quota=520 时两笔放行第三笔 429；若误扣 raw Cost 则 consumed=260 第三笔仍放行。
+func TestProxyQuotaDeductsFinalCostAfterMultiplier(t *testing.T) {
+	// Given
+	up := fakeOpenAI(t, "")
+	defer up.Close()
+	bal := billing.NewBalances(fakeBalanceLoader{
+		m:  map[int64]int64{1: 50000},
+		am: map[billing.AssignmentKey]int{{UserID: 1, GroupID: 10}: 20000},
+	}, nil)
+	require.NoError(t, bal.Reload(context.Background()))
+	p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{"ck-1": quotaKeyWith(520)},
+		map[int64][]*domain.Account{10: {{
+			ID: 1, TemplateID: 1, Template: &domain.Template{
+				ID: 1, Name: "t", BaseURL: up.URL,
+				CredentialType:   credential.TypeAPIKey,
+				SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+			}, UpstreamKey: "sk-upstream", Status: domain.StatusActive, Weight: 100, MaxConcurrency: 4,
+		}}}, bal, &captureLogStore{})
+	probe := &proxyQuotaProbe{p: p}
+
+	// When/Then：260+260 放行，第三笔 429（无复核能力 → 耗尽即拦）
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		p.HandleChat(rec, chatReq("ck-1"))
+		require.Equal(t, http.StatusOK, rec.Code, "request %d body=%s", i+1, rec.Body.String())
+	}
+	require.Equal(t, int64(520), probe.consumed(), "倍率后 Cost 累计（260×2，非 raw 130×2）")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, chatReq("ck-1"))
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, "body=%s", rec.Body.String())
+	require.NoError(t, p.rec.Close(context.Background()))
+}
+
 // TestProxyBillingTierPriority service_tier=priority：BillingTier 归一化落日志，
 // 成本按 priority 单价档计算（210 ≠ auto 130）。
 func TestProxyBillingTierPriority(t *testing.T) {
@@ -862,7 +1294,7 @@ func newTestProxyBillingKeys(t *testing.T, keys map[string]domain.KeyMeta, accs 
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		UsageCapture:          true,
+		UsageCapture:          true, BillingCapture: true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
@@ -874,7 +1306,7 @@ func newTestProxyBillingKeys(t *testing.T, keys map[string]domain.KeyMeta, accs 
 		BatchSize: 100, FlushInterval: time.Hour,
 		QuotaFlushInterval: time.Hour,
 	}, logs, nil)
-	auth := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil)
+	auth := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil, true)
 	require.NoError(t, auth.Reload(context.Background())) // 构造不再自载——测试显式首刷（快照注册表单一入口）
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{

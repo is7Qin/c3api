@@ -73,7 +73,7 @@ type Recorder struct {
 	workers   int
 	mu        sync.Mutex // 保护 pending/quotaUsed（Record 与 flush 换批/回灌并发）
 	pending   []*domain.UsageLog
-	quotaUsed map[int64]int64 // key_id → 待回写 token 增量
+	quotaUsed map[int64]int64 // key_id → 待回写计费毫分增量（仅 AddQuota 显式正 delta 写入）
 	pendingN  atomic.Int64    // pending 明细条数（水线观测 + Close Warn 单位；换批/回灌同步增减）
 	warned    atomic.Bool     // 水线越过告警边沿（回落复位，避免重复刷屏）
 	// flushMu 单 flush 入口串行：日志 flush（flushLogs）与额度回写（flushQuota）
@@ -147,12 +147,13 @@ func (r *Recorder) Start(ctx context.Context) error {
 }
 
 // Record 记录一次放行路径明细（非 billed 行）：短锁归并 pending（无界 slice
-// append，O(1) 摊还）+ quota 原子累加——**永不阻塞**（无 channel：此前有界
-// channel cap 16384 饱和阻塞发送是 off 路径 16.4k goroutine 卡 chan send 幽灵
+// append，O(1) 摊还）——**永不阻塞**（无 channel：此前有界 channel cap 16384
+// 饱和阻塞发送是 off 路径 16.4k goroutine 卡 chan send 幽灵
 // 根因；HTTP 层过载保护由 max_inflight 兜底，pending 内存由水线 Warn 观测，
 // 崩溃丢 ≤1 flush 窗口语义不变）。热路径零额外开销：closed 检查为 1 次
-// atomic.Load（I-4）。**零统计计算**（spec 2026-08-14）：统计桶机制整体删除，
-// 锁内仅剩明细 append + quotaUsed 累加两个 O(1) 操作。
+// atomic.Load（I-4）。**零统计计算**（spec 2026-08-14）：统计桶机制整体删除。
+// **零 quota 推导**（Todo 3）：Key 额度只经 AddQuota 显式正 delta 进入，
+// Record 仅落普通 usage 明细（TotalTokens 不再参与额度累计）。
 func (r *Recorder) Record(l *domain.UsageLog) {
 	if r.closed.Load() { // Close 完成后无消费者——防御性缺口（评审 I-4）：
 		// Warn 恰好一次（不刷屏）；明细仍聚合入 pending **不丢**（驻留内存由
@@ -164,9 +165,6 @@ func (r *Recorder) Record(l *domain.UsageLog) {
 	}
 	r.mu.Lock()
 	r.pending = append(r.pending, l)
-	if l.KeyID > 0 { // quota 在线保留（独立于统计；本处累加是 quota 唯一生产增量入口——计费 worker 只动余额不动配额）
-		r.quotaUsed[l.KeyID] += l.TotalTokens
-	}
 	n := r.pendingN.Add(1)
 	r.mu.Unlock()
 	if n > pendingWaterline && r.warned.CompareAndSwap(false, true) {
@@ -176,11 +174,12 @@ func (r *Recorder) Record(l *domain.UsageLog) {
 	}
 }
 
-// AddQuota 累加 key 额度增量并入同一 quotaUsed map、同一回写路径（不回桶、
-// 不落统计）。Record 对 KeyID>0 行的累加是唯一生产增量入口（计费 worker 只动
-// 余额不动配额）；本方法是测试/手工注入面，汇入同一 map 与回写路径。
+// AddQuota 显式正 quota delta 的唯一生产入口：proxy finish 把 DeductQuota 返回的
+// 最终 Cost 实际增量并入 quotaUsed map、走同一批量回写路径（不落明细、不进统计）。
+// Record 不再从 TotalTokens 推导额度（Todo 3：quota 语义 = 累计计费毫分）；
+// keyID≤0 或非正 delta 拒绝入 map。
 func (r *Recorder) AddQuota(keyID int64, delta int64) {
-	if keyID <= 0 || delta == 0 {
+	if keyID <= 0 || delta <= 0 {
 		return
 	}
 	r.mu.Lock()

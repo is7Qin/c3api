@@ -519,11 +519,15 @@ type AdminKey struct {
 	ID             *int64     `json:"ID,omitempty"`
 	MaxConcurrency *int       `json:"MaxConcurrency,omitempty"`
 	Name           *string    `json:"Name,omitempty"`
-	Quota          *int64     `json:"Quota,omitempty"`
-	QuotaUsed      *int64     `json:"QuotaUsed,omitempty"`
-	Status         *KeyStatus `json:"Status,omitempty"`
-	UpdatedAt      *time.Time `json:"UpdatedAt,omitempty"`
-	UserID         *int64     `json:"UserID,omitempty"`
+
+	// Quota 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
+	Quota *int64 `json:"Quota,omitempty"`
+
+	// QuotaUsed 已消耗计费金额（毫分；后扣；无额度 key 恒 0）
+	QuotaUsed *int64     `json:"QuotaUsed,omitempty"`
+	Status    *KeyStatus `json:"Status,omitempty"`
+	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
+	UserID    *int64     `json:"UserID,omitempty"`
 }
 
 // AdminKeyListResponse defines model for AdminKeyListResponse.

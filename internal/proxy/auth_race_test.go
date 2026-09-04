@@ -21,7 +21,7 @@ import (
 // 修复后无竞态通过。
 func TestAuthReloadConcurrentUpsert(t *testing.T) {
 	loader := &mutKeyLoader{keys: make(map[string]domain.KeyMeta)}
-	a := NewAuth(loader, noopUserLoader{}, nil)
+	a := NewAuth(loader, noopUserLoader{}, nil, true)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 

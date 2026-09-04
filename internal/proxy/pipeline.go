@@ -69,7 +69,7 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 
 	// quota 检查在并发 acquire 之前（评审提醒①：失败无并发槽副作用；
 	// 未设置额度 key 短路零成本；预算耗尽 → gate 内 DB 复核认领后再判定）
-	if p.auth.QuotaExhausted(meta) {
+	if p.cfg.BillingCapture && meta.HasQuota && p.auth.QuotaExhausted(meta) {
 		p.inflight.Add(-1)
 		writeErr(w, errQuotaExhausted)
 		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errQuotaExhausted.msg)
