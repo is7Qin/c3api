@@ -142,6 +142,7 @@ func resetPGSharedData(t *testing.T) {
 }
 
 func TestPGSharedFixtureIsolation(t *testing.T) {
+	ensurePGShared(t)
 	for _, name := range []string{"first", "second"} {
 		t.Run(name, func(t *testing.T) {
 			repos := newPGReposShared(t)
