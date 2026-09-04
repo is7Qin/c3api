@@ -22,7 +22,7 @@ func TestAuthInFlightUsersAcquireRelease(t *testing.T) {
 		"k2": activeKeyWithMax(2, 2, 10), // user 2
 		"k3": activeKeyWithMax(3, 3, 10), // user 3
 	}}
-	a := NewAuth(loader, noopUserLoader{}, nil)
+	a := NewAuth(loader, noopUserLoader{}, nil, true)
 	require.NoError(t, a.Reload(context.Background()))
 
 	m1 := domain.KeyMeta{KeyID: 1, UserID: 1, UserMaxConc: 10, KeyMaxConc: 10,

@@ -109,6 +109,37 @@ export function formatCost(c?: number | null): string {
   return usdText(c) ?? '—'
 }
 
+// Key 额度（毫分 int64 ↔ USD 十进制字符串）。API 恒为整数毫分，UI 恒为 USD；
+// 转换只走十进制字符串 + 精确整数缩放，原始输入绝不先过 Number()。
+
+// 毫分 → USD 数字串（精确整数运算，无浮点除法）：125000 → "1.25000"。
+function quotaUsdDigits(millis: number): string {
+  const m = Math.trunc(millis)
+  return `${Math.floor(m / MILLI_CENTS_PER_USD)}.${String(m % MILLI_CENTS_PER_USD).padStart(5, '0')}`
+}
+
+// 毫分 → USD 展示串：100000 → "$1.00000"、0 → "$0.00000"（额度用量恒要展示，
+// 与 formatCost 的"0 显示 —"语义不同）。
+export function formatQuotaMillis(millis: number): string {
+  return `$${quotaUsdDigits(millis)}`
+}
+
+// 毫分 → USD 输入框预填（去尾零）：125000 → "1.25"、100000 → "1"、0 → "0"。
+export function quotaMillisToInput(millis: number): string {
+  return quotaUsdDigits(millis).replace(/\.?0+$/, '') || '0'
+}
+
+// USD 输入 → 毫分整数（int64 契约，JS 安全整数范围内）；非法返回 null（不提交）。
+// 只接受非负十进制串、最多 5 位小数；指数记法/Infinity/NaN/负数/空串全拒。
+// ≤5 位小数时 ×100000 是精确整数缩放，round-half-up 退化为无损精确乘法——
+// 正数不可能舍入为 0；缩放后超 Number.MAX_SAFE_INTEGER 拒绝。
+export function parseQuotaUSD(raw: string): number | null {
+  const m = /^(\d+)(?:\.(\d{1,5}))?$/.exec(raw.trim())
+  if (!m) return null
+  const millis = Number(m[1] + (m[2] ?? '').padEnd(5, '0'))
+  return Number.isSafeInteger(millis) ? millis : null
+}
+
 // USD 金额直接展示（API 已换算的统计面值，如 /stats、/overview 的 Cost/cost_usd）：
 // $3.25000；空值或 0 显示 —。与 formatCost（毫分语义）并存——两单位各有明确消费面。
 export function formatUSD(c?: number | null): string {

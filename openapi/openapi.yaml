@@ -2105,8 +2105,8 @@ components:
         key: { type: string, description: key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡，用户裁决） }
         Status: { $ref: '#/components/schemas/KeyStatus' }
         MaxConcurrency: { type: integer }
-        Quota: { type: integer, format: int64, description: 累计 token 上限；0 = 不限 }
-        QuotaUsed: { type: integer, format: int64, description: 已消耗（后扣；无额度 key 恒 0） }
+        Quota: { type: integer, format: int64, description: "累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限" }
+        QuotaUsed: { type: integer, format: int64, description: 已消耗计费金额（毫分；后扣；无额度 key 恒 0） }
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
         DeletedAt: { type: string, format: date-time, nullable: true, description: 软删除时间戳；null = 存活（列表/鉴权过滤已删；GET 单个可查已删项） }
@@ -2117,14 +2117,14 @@ components:
         name: { type: string }
         group_id: { type: integer, format: int64 }
         max_concurrency: { type: integer, description: 单 key 在途上限；0 = 不限 }
-        quota: { type: integer, format: int64, description: 累计 token 上限；0 = 不限 }
+        quota: { type: integer, format: int64, description: "累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限" }
     KeyUpdate:
       type: object
       properties:
         name: { type: string }
         status: { $ref: '#/components/schemas/KeyStatus' }
         max_concurrency: { type: integer }
-        quota: { type: integer, format: int64 }
+        quota: { type: integer, format: int64, description: "累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限" }
     KeyListResponse:
       type: object
       required: [total, rows]
@@ -2142,8 +2142,8 @@ components:
         Name: { type: string }
         Status: { $ref: '#/components/schemas/KeyStatus' }
         MaxConcurrency: { type: integer }
-        Quota: { type: integer, format: int64 }
-        QuotaUsed: { type: integer, format: int64 }
+        Quota: { type: integer, format: int64, description: "累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限" }
+        QuotaUsed: { type: integer, format: int64, description: 已消耗计费金额（毫分；后扣；无额度 key 恒 0） }
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
         DeletedAt: { type: string, format: date-time, nullable: true }

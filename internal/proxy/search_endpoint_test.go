@@ -202,7 +202,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	require.NoError(t, sched.InvalidateAllSync())
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
-	}}, noopUserLoader{}, nil)
+	}}, noopUserLoader{}, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{
@@ -326,6 +326,31 @@ func TestSearchFunctionPriceDefaultFallback(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
 	require.Equal(t, int64(1000), store.logs[0].Cost, "默认兜底 1000 毫分（$0.01/次）——非 0 计费")
+}
+
+// TestProxyQuotaDeductedBySearchDefaultPrice 跨路径回归（Todo 4）：search 端点
+// quota 按最终 Cost（默认按次价 1000 毫分）经 finish 后扣——search 无 token
+// 分量（TotalTokens=0），若扣减源回退 token 口径 consumed 恒 0，断言立即失败。
+func TestProxyQuotaDeductedBySearchDefaultPrice(t *testing.T) {
+	// Given：空价表 → 默认按次兜底行；带额度 key
+	up, _ := newCodexSearchUpstream(t, codexSearchStep{status: 200, body: searchRespRaw})
+	defer up.Close()
+	store := &captureLogStore{}
+	p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},
+		up.URL, searchBillingHooks(nil), store)
+	probe := enableKeyQuota(t, p, 100000)
+
+	// When
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+	resp := postSearch(t, srv, searchReqBody, "")
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Then
+	require.Equal(t, int64(1000), probe.consumed(), "search 按默认按次价 Cost 扣额度（1000 毫分）")
+	require.NoError(t, p.rec.Close(context.Background()))
 }
 
 // TestSearchCodexPathPassthrough codex-oauth/codex-pat → SDK Search 分派断言：

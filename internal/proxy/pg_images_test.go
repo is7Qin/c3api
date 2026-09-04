@@ -168,7 +168,7 @@ func newPGImagesTestProxy(t *testing.T, sched *scheduler.Scheduler, groupID int6
 	}, noopLogStore{}, nil)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		keyForGroup(groupID): activeKey(1, 1, groupID),
-	}}, noopUserLoader{}, nil)
+	}}, noopUserLoader{}, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{

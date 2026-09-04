@@ -7,6 +7,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,7 +23,7 @@ import (
 // 两级 acquire（user → key）与两步回滚（评审 I-3）：user 成功 key 失败 →
 // user 计数复原，防泄漏。
 func TestGateAcquireReleaseAndRollback(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	meta := domain.KeyMeta{KeyID: 1, UserID: 1, UserMaxConc: 2, KeyMaxConc: 1}
 	g.upsert(meta) // 种子：计数器存在后才参与门禁
 	lvl1, ok := g.acquire(meta)
@@ -47,7 +48,7 @@ func TestGateAcquireReleaseAndRollback(t *testing.T) {
 }
 
 func TestGateUserLimit(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	meta := domain.KeyMeta{KeyID: 1, UserID: 1, UserMaxConc: 1}
 	g.upsert(meta)
 	lvl, ok := g.acquire(meta)
@@ -63,7 +64,7 @@ func TestGateUserLimit(t *testing.T) {
 // 快照换入换出：在途并发/额度跨 reload 继承（复用 scheduler reload 继承教训；
 // 评审提醒②：quota_used 内存值同走继承）。
 func TestGateReloadInheritsInflight(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	meta := domain.KeyMeta{KeyID: 1, UserID: 1, UserMaxConc: 4, KeyMaxConc: 4, HasQuota: true, Quota: 100}
 	g.reload(map[string]domain.KeyMeta{"h": meta}) // 种子
 	lvl, ok := g.acquire(meta)
@@ -83,10 +84,55 @@ func TestGateReloadInheritsInflight(t *testing.T) {
 	require.Equal(t, int64(40), snap.quotas[1].consumed.Load())
 }
 
+func TestGateReloadWaitsForInflightQuota(t *testing.T) {
+	// Given
+	g := newConcurrencyGate(nil, true)
+	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100}
+	g.reload(map[string]domain.KeyMeta{"q": meta})
+	old := g.store.Load()
+	// 持有一个合成在途配额操作：reload 的 retireSnapshot 必须等待
+	// quotaOps 归零后才能发布新快照。
+	old.quotaOps.Add(1)
+
+	reloadDone := make(chan struct{})
+	go func() {
+		g.reload(map[string]domain.KeyMeta{"q": meta})
+		close(reloadDone)
+	}()
+	// 等 reload 进入 retireSnapshot（由 reload 自己设置 retiring）后释放合成那笔。
+	retiring := make(chan struct{})
+	go func() {
+		for !old.quotaRetiring.Load() {
+			runtime.Gosched()
+		}
+		close(retiring)
+	}()
+	select {
+	case <-retiring:
+	case <-time.After(time.Second):
+		t.Fatal("reload did not reach retireSnapshot")
+	}
+
+	// When：释放在途操作 → reload 完成换入新快照，再执行扣减。
+	old.quotaOps.Add(-1)
+	select {
+	case <-reloadDone:
+	case <-time.After(time.Second):
+		t.Fatal("reload did not publish a snapshot")
+	}
+	var delta int64
+	delta = g.deductQuota(1, 30)
+
+	// Then
+	require.Equal(t, int64(30), delta)
+	require.Equal(t, int64(30), g.store.Load().quotas[1].consumed.Load(),
+		"deduction updates the published snapshot")
+}
+
 // 额度：检查无计数副作用、后扣、无额度 key 零成本短路（无复核能力 → 预算
 // 耗尽即 429，与单实例现状语义一致）。
 func TestGateQuotaCheckAndDeduct(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	noQuota := domain.KeyMeta{KeyID: 2, HasQuota: false}
 	require.False(t, g.quotaExhausted(noQuota), "无额度 key 短路")
 	g.deductQuota(2, 50) // 无条目 → no-op（恒 0）
@@ -107,7 +153,7 @@ func TestGateQuotaCheckAndDeduct(t *testing.T) {
 
 // reload 后无额度 key 不建 quota 条目；reload 新 key 从快照值起算。
 func TestGateReloadQuotaBase(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	noQuota := domain.KeyMeta{KeyID: 2, HasQuota: false}
 	g.reload(map[string]domain.KeyMeta{"nq": noQuota})
 	snap := g.store.Load()
@@ -121,7 +167,7 @@ func TestGateReloadQuotaBase(t *testing.T) {
 
 // upsert/delete 增量：新 key 建条目、已存在不动在途值、删除清条目。
 func TestGateUpsertDelete(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	meta := domain.KeyMeta{KeyID: 1, UserID: 1, HasQuota: true, Quota: 10, QuotaUsed: 3}
 	g.upsert(meta)
 	require.Equal(t, int64(3), g.store.Load().quotas[1].consumed.Load(), "新 key 额度基线")
@@ -141,7 +187,7 @@ func TestGateUpsertDelete(t *testing.T) {
 // 测试）：计数与限流解耦——acquire 无条件计数 +1、level user 位恒置、release
 // 归零、快照遍历（InFlightUsers 同型读法）能读到在途值。
 func TestGateUnlimitedUserCounts(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	meta := domain.KeyMeta{KeyID: 1, UserID: 1} // UserMaxConc=0：不限并发
 	g.upsert(meta)                              // 种子：计数器存在后才参与门禁
 
@@ -175,7 +221,7 @@ func TestGateUnlimitedUserCounts(t *testing.T) {
 // goroutine 并发 acquire/release——两用户计数都在且恒非负；超限者 429 且回滚
 // 后计数正确（回滚竞态闭合验证：占满后 N 并发全回滚 → 计数净 0，不误减持锁者）。
 func TestGateMixedUnlimitedLimitedConcurrent(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	unl := domain.KeyMeta{KeyID: 1, UserID: 1}                 // 不限并发
 	lim := domain.KeyMeta{KeyID: 2, UserID: 2, UserMaxConc: 8} // 限 8
 	g.reload(map[string]domain.KeyMeta{"u": unl, "l": lim})
@@ -253,7 +299,7 @@ func TestGateMixedUnlimitedLimitedConcurrent(t *testing.T) {
 
 // 缺 key 的 key 层失败（reload 后无该 key 计数器 → 该层跳过，不误拒）。
 func TestGateMissingCounterFailOpen(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	meta := domain.KeyMeta{KeyID: 99, UserID: 99, UserMaxConc: 1, KeyMaxConc: 1}
 	lvl, ok := g.acquire(meta)
 	require.True(t, ok, "计数器缺失层跳过（fail-open）")
@@ -305,7 +351,7 @@ func (f *fakeQuotaReader) set(used int64, err error) {
 // 预算分摊分配/消耗：budget = consumed + ceil(remaining/N)；预算内放行，
 // 耗尽触发复核（无复核能力 → 429，单实例语义）。
 func TestGateBudgetSplitByN(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	g.SetInstancesProvider(fakeInstances(3))
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100, QuotaUsed: 10}
 	g.reload(map[string]domain.KeyMeta{"q": meta})
@@ -328,7 +374,7 @@ func TestGateBudgetSplitByN(t *testing.T) {
 // 快照值恰好等于 DB 时成立；生产 N=1（真 reclaimer）见
 // TestGateN1ReclaimerLagNoOverrun——429 点由 DB quota_used 决定。
 func TestGateN1EquivalentToSingleInstance(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100, QuotaUsed: 10}
 	g.reload(map[string]domain.KeyMeta{"q": meta})
 	q := g.store.Load().quotas[1]
@@ -345,7 +391,7 @@ func TestGateN1EquivalentToSingleInstance(t *testing.T) {
 // （修复前：每次复核重新分配 full remaining → 滞后窗口超跑；压测实证复核循环
 // 无限续额 14 倍）。收敛语义：本实例总放行 ≤ 初始份额 + 滞后差。
 func TestGateN1ReclaimerLagNoOverrun(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	reader := &fakeQuotaReader{used: 0} // DB 滞后：本地已扣尚未回写
 	g.setReclaimer(reader)
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100}
@@ -370,7 +416,7 @@ func TestGateN1ReclaimerLagNoOverrun(t *testing.T) {
 // → unreported = 46-30 = 16 → remaining_eff = 54 → budget = 64；DB 追上真尽
 // → 429 短路。
 func TestGateReclaimReplenishes(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	reader := &fakeQuotaReader{used: 30} // DB：已用 30（含他实例），剩余 70
 	g.setReclaimer(reader)
 	g.SetInstancesProvider(fakeInstances(3))
@@ -412,7 +458,7 @@ func TestGateReclaimReplenishes(t *testing.T) {
 
 // 复核确认真尽：exhausted 短路——后续请求 429 且不再发起复核（不双倍认领）。
 func TestGateReclaimTrueExhaustionShortCircuit(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	reader := &fakeQuotaReader{used: 100} // DB：已用 100 → 剩余 0
 	g.setReclaimer(reader)
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100}
@@ -432,7 +478,7 @@ func TestGateReclaimTrueExhaustionShortCircuit(t *testing.T) {
 // 并发复核单飞：同 key 并发到达耗尽点，只有一个进 DB（block 卡住复核者），
 // 其余按旧预算 429；复核完成后预算续额，后续请求放行。
 func TestGateReclaimSingleFlight(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	block := make(chan struct{})
 	reader := &fakeQuotaReader{used: 50, blockCh: block}
 	g.setReclaimer(reader)
@@ -464,7 +510,7 @@ func TestGateReclaimSingleFlight(t *testing.T) {
 // 预算耗尽按 429（不重复复核防风暴）；退避过期重试；DB 恢复后复核认领（#37
 // P1：本地已超 quota → 确认真尽，见尾部）。
 func TestGateReclaimDBErrorAllowAndRetry(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	reader := &fakeQuotaReader{err: errors.New("db down")}
 	g.setReclaimer(reader)
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100}
@@ -508,7 +554,7 @@ func TestGateReclaimDBErrorAllowAndRetry(t *testing.T) {
 // 扣除本地未反映消耗（unreported = consumed - 上次复核基线）→ 多次复核后总
 // 放行收敛 ≤ quota + 滞后差（实际收敛到 quota 本身），随后确认真尽 429。
 func TestGateReclaimConvergesWithLag(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	g.SetInstancesProvider(fakeInstances(2))
 	reader := &fakeQuotaReader{used: 3000} // DB 滞后固定值（一直不追上的最坏形态）
 	g.setReclaimer(reader)
@@ -533,7 +579,7 @@ func TestGateReclaimConvergesWithLag(t *testing.T) {
 // Reload 重建预算保留在途：consumed 跨 reload 继承，预算按最新快照重分配；
 // 真尽快照 → exhausted。
 func TestGateReloadRebuildBudgetKeepsInflight(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	g.SetInstancesProvider(fakeInstances(2))
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100, QuotaUsed: 40}
 	g.reload(map[string]domain.KeyMeta{"q": meta})
@@ -558,7 +604,7 @@ func TestGateReloadRebuildBudgetKeepsInflight(t *testing.T) {
 // upsert 预算随最新 meta 重分配（额度调整即时生效）：quota 上调 → budget 前移、
 // 在途 consumed 不动；quota 取消（→0）→ 门禁条目移除不再拦截。
 func TestGateUpsertReallocBudget(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 10, QuotaUsed: 3}
 	g.upsert(meta)
 	q := g.store.Load().quotas[1]
@@ -579,11 +625,37 @@ func TestGateUpsertReallocBudget(t *testing.T) {
 	require.False(t, g.quotaExhausted(domain.KeyMeta{KeyID: 1, HasQuota: false}))
 }
 
+// 正数→0→正数（Todo 4 命名回归）：quota>0 阶段按最终 Cost 扣减；quota→0 阶段
+// 门禁条目移除、扣减恒 no-op（不新增 delta，DB quota_used 基线保留）；恢复
+// 正数后 reload 以 DB 快照 quota_used 为新基线继续累计（不清零、不双计）。
+func TestGateQuotaPositiveZeroPositiveKeepsBaseline(t *testing.T) {
+	g := newConcurrencyGate(nil, true)
+
+	// 正数阶段：quota=1000，扣 130（最终 Cost）
+	g.reload(map[string]domain.KeyMeta{"k": {KeyID: 1, HasQuota: true, Quota: 1000}})
+	require.Equal(t, int64(130), g.deductQuota(1, 130))
+	require.Equal(t, int64(130), g.store.Load().quotas[1].consumed.Load())
+
+	// 0 阶段：quota→0 → 条目移除；扣减 no-op（返回 0，无任何 atomic 可写）
+	g.upsert(domain.KeyMeta{KeyID: 1, HasQuota: false})
+	_, ok := g.store.Load().quotas[1]
+	require.False(t, ok, "quota→0 移除门禁条目")
+	require.Zero(t, g.deductQuota(1, 130), "0 阶段不产生 delta")
+	require.False(t, g.quotaExhausted(domain.KeyMeta{KeyID: 1, HasQuota: false}), "0 阶段不拦截")
+
+	// 恢复正数：DB 已回写 quota_used=130（0 阶段基线保留）→ 从该基线继续
+	g.reload(map[string]domain.KeyMeta{"k": {KeyID: 1, HasQuota: true, Quota: 1000, QuotaUsed: 130}})
+	q := g.store.Load().quotas[1]
+	require.Equal(t, int64(130), q.consumed.Load(), "恢复基线 = DB quota_used（保留 130）")
+	require.Equal(t, int64(130), g.deductQuota(1, 130))
+	require.Equal(t, int64(260), q.consumed.Load(), "从基线继续累计（130+130，非 130 亦非 0+130）")
+}
+
 // Auth.SetInstancesProvider：N 注入即触发预算重算（幂等 reload，在途继承）。
 func TestAuthSetInstancesRebuildsBudget(t *testing.T) {
 	a := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"h": {KeyID: 1, HasQuota: true, Quota: 100, QuotaUsed: 20},
-	}}, noopUserLoader{}, nil)
+	}}, noopUserLoader{}, nil, true)
 	require.NoError(t, a.Reload(context.Background())) // 构造不再自载——测试显式首刷（快照注册表单一入口）
 	q := a.gate.store.Load().quotas[1]
 	require.Equal(t, int64(20+ceilDiv(80, 1)), q.budget.Load(), "N=1 初始：budget = 20 + ceil(80/1)")

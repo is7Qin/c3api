@@ -1590,12 +1590,12 @@ export interface components {
             MaxConcurrency?: number;
             /**
              * Format: int64
-             * @description 累计 token 上限；0 = 不限
+             * @description 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
              */
             Quota?: number;
             /**
              * Format: int64
-             * @description 已消耗（后扣；无额度 key 恒 0）
+             * @description 已消耗计费金额（毫分；后扣；无额度 key 恒 0）
              */
             QuotaUsed?: number;
             /** Format: date-time */
@@ -1616,7 +1616,7 @@ export interface components {
             max_concurrency?: number;
             /**
              * Format: int64
-             * @description 累计 token 上限；0 = 不限
+             * @description 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
              */
             quota?: number;
         };
@@ -1624,7 +1624,10 @@ export interface components {
             name?: string;
             status?: components["schemas"]["KeyStatus"];
             max_concurrency?: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
+             */
             quota?: number;
         };
         KeyListResponse: {
@@ -1642,9 +1645,15 @@ export interface components {
             Name?: string;
             Status?: components["schemas"]["KeyStatus"];
             MaxConcurrency?: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
+             */
             Quota?: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description 已消耗计费金额（毫分；后扣；无额度 key 恒 0）
+             */
             QuotaUsed?: number;
             /** Format: date-time */
             CreatedAt?: string;

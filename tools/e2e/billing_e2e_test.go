@@ -42,16 +42,18 @@ import (
 )
 
 const (
-	adminToken = "e2e-admin-token"
-	jwtSecret  = "e2e-jwt-secret-change-me"
-	serverAddr = "127.0.0.1:18090" // 避开本机 VPN/代理已占用端口段（18080-18089 曾被占）
-	upAddr     = "127.0.0.1:19110"
-	dbName     = "c3api_e2e"
+	adminToken  = "e2e-admin-token"
+	jwtSecret   = "e2e-jwt-secret-change-me"
+	serverAddr  = "127.0.0.1:18090" // 避开本机 VPN/代理已占用端口段（18080-18089 曾被占）
+	serverAddr2 = "127.0.0.1:18091" // 辅助实例：billing off 短路验证（独立配置/独立端口）
+	serverAddr3 = "127.0.0.1:18092" // 辅助实例：billing on + usage_capture=false 独立回写
+	upAddr      = "127.0.0.1:19110"
+	dbName      = "c3api_e2e"
 )
 
-// adminURL / aiURL 端点基址。
-func adminURL(p string) string { return "http://" + serverAddr + "/api/admin" + p }
-func aiURL(p string) string    { return "http://" + serverAddr + p }
+// adminURL / aiURL 端点基址（按 env.addr——主实例 serverAddr，辅助实例独立端口）。
+func (e *e2eEnv) adminURL(p string) string { return "http://" + e.addr + "/api/admin" + p }
+func (e *e2eEnv) aiURL(p string) string    { return "http://" + e.addr + p }
 
 // pricesFixture 本地 litellm 价格表（fakeupstream 之外的独立 httptest 服务；
 // 矩阵字段与 fetcher 精确 key 对齐，换算 ×1e11 毫分/1M tokens）。
@@ -97,15 +99,16 @@ const pricesFixture = `{
 }`
 
 type e2eEnv struct {
-	t   *testing.T
-	pg  *pgxpool.Pool // c3api_e2e 库（SQL 断言）
-	tmp string
+	t    *testing.T
+	pg   *pgxpool.Pool // c3api_e2e 库（SQL 断言）
+	tmp  string
+	addr string // 网关监听地址（主实例=serverAddr；辅助实例=18091/18092）
 }
 
 // admin 管理面请求：body nil = 无请求体；返回状态码 + 响应体。
 func (e *e2eEnv) admin(method, path string, body any) (int, string) {
 	e.t.Helper()
-	return e.req(method, adminURL(path), "Bearer "+adminToken, body)
+	return e.req(method, e.adminURL(path), "Bearer "+adminToken, body)
 }
 
 // user 用户面请求（JWT）；key 为 AI 请求（/v1）鉴权 key 时走 ai。
@@ -138,7 +141,7 @@ func (e *e2eEnv) req(method, url, auth string, body any) (int, string) {
 // aiReq AI 请求（/v1，Bearer <key> 鉴权）。
 func (e *e2eEnv) aiReq(method, path, key string, body any) (int, string) {
 	e.t.Helper()
-	return e.req(method, aiURL(path), "Bearer "+key, body)
+	return e.req(method, e.aiURL(path), "Bearer "+key, body)
 }
 
 // dbVal 单值查询。
@@ -248,7 +251,7 @@ func (e *e2eEnv) lastLogFor(model string) billLogRow {
 }
 
 func TestBillingE2E(t *testing.T) {
-	env := &e2eEnv{t: t}
+	env := &e2eEnv{t: t, addr: serverAddr}
 	ctx := context.Background()
 	redisAddr := os.Getenv("C3API_REDIS_ADDR")
 	require.NotEmpty(t, redisAddr, "C3API_REDIS_ADDR is required")
@@ -349,7 +352,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	ready := false
 	deadline := time.Now().Add(60 * time.Second)
 	for !ready && time.Now().Before(deadline) {
-		req, err := http.NewRequest(http.MethodGet, adminURL("/settings"), nil)
+		req, err := http.NewRequest(http.MethodGet, env.adminURL("/settings"), nil)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+adminToken)
 		resp, err := http.DefaultClient.Do(req)
@@ -513,7 +516,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	})
 	require.Equal(t, 200, codeResp, "gen code: %s", respBody)
 	code := jsonGet(t, respBody, "codes", 0, "Code")
-	rec, rb := env.req(http.MethodPost, aiURL("/api/user/redemptions"), "Bearer "+u2Token, map[string]any{"code": code})
+	rec, rb := env.req(http.MethodPost, env.aiURL("/api/user/redemptions"), "Bearer "+u2Token, map[string]any{"code": code})
 	require.Equal(t, 200, rec, "redeem: %s", rb)
 
 	// 请求 cost 500：临时额度优先扣（temp 500 → 0，余额不动）
@@ -876,6 +879,34 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	require.NoError(t, err)
 	require.Zero(t, nRows, "4xx 失败行不入 usage_logs（error_type 值域收敛 none/abort——错误审计归 err_logs）")
 
+	// ============ 场景 10：Key quota（billing on 按最终 Cost 后扣并耗尽；quota=0 零回写） ============
+	t.Log("场景 10：Key quota 按最终 Cost 后扣至耗尽 429；quota=0 不产生 quota 回写")
+	uQ := createUser(t, env, "quota-on@example.com", 10.0) // 1,000,000 毫分（余额远大于 quota，拦截点必在 quota）
+	_, qKey := userKeyQuota(t, env, uQ, g1, 1000)          // e2e-model 每请求 Cost=500 → 两笔耗尽
+	waitSnapshot()                                         // O2 去抖：key 入鉴权快照
+	chat(qKey, "e2e-model")
+	chat(qKey, "e2e-model")
+	pollQuotaUsed(t, env, qKey, 1000) // DB 回写收敛（quota_flush_interval=5s，有界轮询）
+	c, rbQ := env.aiReq(http.MethodPost, "/v1/chat/completions", qKey, map[string]any{
+		"model": "e2e-model", "stream": true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+	require.Equal(t, 429, c, "quota 耗尽必须 429: %s", rbQ)
+	require.Contains(t, rbQ, "key quota exhausted", "429 文案 = quota 耗尽（非并发/余额）")
+	require.Equal(t, int64(1000), env.quotaUsed(qKey), "429 拒绝不产生新 delta（quota_used 恒 1000）")
+	pollBalance(t, env, uQ, 1000000-1000) // 用户余额照常结算（quota 与余额两线独立）
+
+	// quota=0（不限）零回写：kZero 请求放行；kProbe（quota>0）随后正常回写——
+	// kProbe 的 DB 收敛即"quota flush 窗口已过"的正向屏障，此时 kZero 仍 0
+	// 才证明"无回写"而非"尚未回写"（负断言不盲等）。
+	_, kZero := userKeyQuota(t, env, uQ, g1, 0)
+	_, kProbe := userKeyQuota(t, env, uQ, g1, 100000)
+	waitSnapshot()
+	chat(kZero, "e2e-model") // 放行（quota=0 不拦截）
+	chat(kProbe, "e2e-model")
+	pollQuotaUsed(t, env, kProbe, 500) // 屏障：flush 已把 kProbe 的 500 落库
+	require.Equal(t, int64(0), env.quotaUsed(kZero), "quota=0 不产生 quota 回写（同窗口 kProbe 已回写）")
+
 	// ============ 场景 9：SIGTERM 优雅停机（流式中断 → 日志 cost 不丢） ============
 	t.Log("场景 9：优雅停机——流式中断计费完整 flush")
 	balBefore := env.balance(u1)
@@ -885,7 +916,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		req, err := http.NewRequest(http.MethodPost, aiURL("/v1/messages"), strings.NewReader(
+		req, err := http.NewRequest(http.MethodPost, env.aiURL("/v1/messages"), strings.NewReader(
 			`{"model":"e2e-matrix-model","stream":true,"max_tokens":64,"chunks":1000,`+
 				`"messages":[{"role":"user","content":"hi"}]}`))
 		require.NoError(t, err)
@@ -929,6 +960,51 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		SELECT status_code FROM err_logs WHERE request_id=$1`, rid).Scan(&dbSC)
 	require.NoError(t, err)
 	require.Greater(t, dbSC, 0, "err_logs 双轨行含 status_code 全值（错误审计面）")
+
+	// ============ 场景 11：billing off——Key quota 链路全短路（独立配置/独立端口） ============
+	// 主实例已停机；辅助实例同库同 Redis，仅 billing.enabled=false。quota=1 毫分
+	// 的 key 两笔请求均 200（gate 不建条目、不检查、不扣减、无回写）。
+	t.Log("场景 11：billing off——quota 不拒绝、不回写（独立进程验证）")
+	env2 := &e2eEnv{t: t, pg: env.pg, addr: serverAddr2, tmp: t.TempDir()}
+	srv2 := startAuxGateway(t, env2, srvBin, dsn, redisAddr, false, true)
+	uOff := createUser(t, env2, "quota-off@example.com", 0.0) // 余额 0：billing off 连余额预检一并短路
+	_, offKey := userKeyQuota(t, env2, uOff, g1, 1)           // quota=1 毫分：门禁若生效第二笔必 429
+	waitSnapshot()
+	chatOn(t, env2, offKey, "e2e-model")
+	chatOn(t, env2, offKey, "e2e-model") // 两笔 200（不因 quota=1 拒绝；Cost 亦不产生）
+	// usage 明细正常落库（UsageCapture 语义不被破坏）→ 证明 Recorder 在跑
+	pollUntil(t, "billing-off usage 明细落库", func() (bool, string) {
+		n, err := env2.dbInt(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, uOff)
+		if err != nil {
+			return false, err.Error()
+		}
+		return n == 2, fmt.Sprintf("usage_logs rows=%d want=2", n)
+	})
+	// 负断言屏障：quota_flush_interval=1s，明细已落库即已过 ≥1 个 flush 窗口，
+	// 再等 2 个窗口（有界 settle）后 quota_used 仍 0 = 恒零回写。
+	time.Sleep(2 * time.Second)
+	require.Equal(t, int64(0), env2.quotaUsed(offKey), "billing off 不产生 quota 回写")
+	require.Equal(t, int64(0), env2.balance(uOff), "billing off 不扣余额")
+	require.NoError(t, stopGracefully(srv2))
+	waitExit(t, srv2, 20*time.Second)
+
+	// ============ 场景 12：billing on + UsageCapture=false——quota 独立回写 ============
+	// 普通 usage 明细跳过（单写点 routeLog 不执行），Key quota 仍经 finish 的
+	// DeductQuota→AddQuota 独立批量回写（两线解耦的端到端形态）。
+	t.Log("场景 12：billing on + UsageCapture=false——quota 独立回写、明细跳过")
+	env3 := &e2eEnv{t: t, pg: env.pg, addr: serverAddr3, tmp: t.TempDir()}
+	srv3 := startAuxGateway(t, env3, srvBin, dsn, redisAddr, true, false)
+	uCap := createUser(t, env3, "quota-cap@example.com", 10.0)
+	_, capKey := userKeyQuota(t, env3, uCap, g1, 100000)
+	waitSnapshot()
+	chatOn(t, env3, capKey, "e2e-model")
+	pollQuotaUsed(t, env3, capKey, 500) // quota 独立回写收敛（flush 1s 节奏）
+	time.Sleep(1 * time.Second)         // 明细 flush（300ms）若有行早已落库——settle 后仍 0 = 恒跳过
+	nCap, err := env3.dbInt(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, uCap)
+	require.NoError(t, err)
+	require.Zero(t, nCap, "UsageCapture=false 普通 usage 明细不落库")
+	require.NoError(t, stopGracefully(srv3))
+	waitExit(t, srv3, 20*time.Second)
 }
 
 // ---- helpers ----
@@ -1003,16 +1079,126 @@ func userKey(t *testing.T, env *e2eEnv, userID, groupID int64) (string, string) 
 	// 登录：邮箱需还原——users 表按 id 查 email
 	email, err := env.dbVal(`SELECT email FROM users WHERE id=$1`, userID)
 	require.NoError(t, err)
-	c, rb := env.req(http.MethodPost, aiURL("/api/user/auth/login"), "", map[string]any{
+	c, rb := env.req(http.MethodPost, env.aiURL("/api/user/auth/login"), "", map[string]any{
 		"email": email, "password": "s3cret-pass",
 	})
 	require.Equal(t, 200, c, "login: %s", rb)
 	token := jsonGet(t, rb, "token").(string)
-	c, rb = env.req(http.MethodPost, aiURL("/api/user/keys"), "Bearer "+token, map[string]any{
+	c, rb = env.req(http.MethodPost, env.aiURL("/api/user/keys"), "Bearer "+token, map[string]any{
 		"name": "k-" + email, "group_id": groupID,
 	})
 	require.Equal(t, 200, c, "create key: %s", rb)
 	return token, jsonGet(t, rb, "key").(string)
+}
+
+// userKeyQuota 组内建带额度 key（quota = 累计最终计费金额上限，毫分；0 = 不限），
+// 返回 (token, key 明文)。
+func userKeyQuota(t *testing.T, env *e2eEnv, userID, groupID, quota int64) (string, string) {
+	t.Helper()
+	email, err := env.dbVal(`SELECT email FROM users WHERE id=$1`, userID)
+	require.NoError(t, err)
+	c, rb := env.req(http.MethodPost, env.aiURL("/api/user/auth/login"), "", map[string]any{
+		"email": email, "password": "s3cret-pass",
+	})
+	require.Equal(t, 200, c, "login: %s", rb)
+	token := jsonGet(t, rb, "token").(string)
+	c, rb = env.req(http.MethodPost, env.aiURL("/api/user/keys"), "Bearer "+token, map[string]any{
+		"name": "kq-" + email, "group_id": groupID, "quota": quota,
+	})
+	require.Equal(t, 200, c, "create quota key: %s", rb)
+	return token, jsonGet(t, rb, "key").(string)
+}
+
+// chatOn 对指定 env 实例发 e2e-model 流式 chat（断言 200——辅助实例用；主实例
+// 停机后闭包 chat 的 env 已失效）。
+func chatOn(t *testing.T, env *e2eEnv, key, model string) {
+	t.Helper()
+	c, rb := env.aiReq(http.MethodPost, "/v1/chat/completions", key, map[string]any{
+		"model": model, "stream": true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+	require.Equal(t, 200, c, "chat %s: %s", model, rb)
+}
+
+// quotaUsed key 的 DB quota_used（毫分）。
+func (e *e2eEnv) quotaUsed(keyRaw string) int64 {
+	e.t.Helper()
+	v, err := e.dbInt(`SELECT quota_used FROM keys WHERE key_raw=$1`, keyRaw)
+	require.NoError(e.t, err)
+	return v
+}
+
+// pollQuotaUsed 有界轮询 key 的 quota_used 收敛到期望值（quota flush 异步批量
+// 回写，禁止盲 sleep 断言正向收敛）。
+func pollQuotaUsed(t *testing.T, env *e2eEnv, keyRaw string, want int64) {
+	t.Helper()
+	pollUntil(t, fmt.Sprintf("key quota_used→%d", want), func() (bool, string) {
+		var got int64
+		err := env.pg.QueryRow(context.Background(), `SELECT quota_used FROM keys WHERE key_raw=$1`, keyRaw).Scan(&got)
+		if err != nil {
+			return false, err.Error()
+		}
+		return got == want, fmt.Sprintf("quota_used got=%d want=%d", got, want)
+	})
+}
+
+// startAuxGateway 以独立配置/独立端口启动辅助网关实例（同库同 Redis，仅翻转
+// billing.enabled 与 proxy.usage_capture；quota_flush_interval=1s 加速收敛）。
+// 返回进程句柄，调用方负责优雅停机；t.Cleanup 兜底 Kill。
+func startAuxGateway(t *testing.T, env *e2eEnv, srvBin, dsn, redisAddr string, billingOn, usageCaptureOn bool) *exec.Cmd {
+	t.Helper()
+	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
+log = { level = "warn", output = "stdout" }
+admin = { token = "%s" }
+auth = { jwt_secret = "%s" }
+db = { dsn = "%s", max_conns = 10 }
+redis = { addr = "%s" }
+proxy = { max_body_size = 4194304, max_inflight = 50000, upstream_timeout = "120s", upstream_stream_timeout = "30m", failover_attempts = 2, usage_capture = %v }
+upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeout = "90s", dial_timeout = "10s", force_http2 = false }
+scheduler = { default_max_concurrency = 8, sync_interval = "10s" }
+usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "1s" }
+billing = { enabled = %v, flush_interval = "300ms", balance_refresh_interval = "500ms" }
+`, env.addr, adminToken, jwtSecret, dsn, redisAddr, usageCaptureOn, billingOn)
+	cfgPath := filepath.Join(env.tmp, "config.toml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
+	srv := exec.Command(srvBin, "-config", cfgPath)
+	srvLog, err := os.Create(filepath.Join(env.tmp, "server.log"))
+	require.NoError(t, err)
+	srv.Stdout, srv.Stderr = srvLog, srvLog
+	if isWindows() {
+		srv.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup}
+	}
+	require.NoError(t, srv.Start())
+	t.Cleanup(func() {
+		if srv.Process != nil && (srv.ProcessState == nil || !srv.ProcessState.Exited()) {
+			_ = srv.Process.Kill()
+			_ = srv.Wait()
+		}
+		_ = srvLog.Close()
+	})
+	// 就绪：轮询 admin settings 200（migrate/分区对已建库为幂等快路径）。
+	ready := false
+	deadline := time.Now().Add(60 * time.Second)
+	for !ready && time.Now().Before(deadline) {
+		req, err := http.NewRequest(http.MethodGet, env.adminURL("/settings"), nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			ready = resp.StatusCode == http.StatusOK
+		}
+		if !ready {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	if !ready {
+		if data, err := os.ReadFile(filepath.Join(env.tmp, "server.log")); err == nil {
+			t.Fatalf("辅助网关未在 60s 内就绪（%s）:\n%s", env.addr, data)
+		}
+		t.Fatalf("辅助网关未在 60s 内就绪（%s）", env.addr)
+	}
+	return srv
 }
 
 // create POST 创建资源并取回 ID（响应 map 顶层的 ID 字段）。

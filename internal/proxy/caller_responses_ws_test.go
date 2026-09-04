@@ -924,6 +924,36 @@ func TestResponsesWSBillingTierAuto(t *testing.T) {
 	require.Equal(t, int64(120), store.logs[0].Cost, "auto 基础价：it'=3−1=2 → 2×10 + 输出 5×20 = 120 毫分（缓存读单独车道，本例无缓存价 → 0）")
 }
 
+// TestResponsesWSQuotaDeductedByFinalCost 跨路径回归（Todo 4）：resp-ws 会话
+// 结束经 finish 按最终 Cost 扣 Key 额度（auto 120 毫分，非 TotalTokens=8）——
+// WS 与 HTTP 面共用同一额度扣减源。
+func TestResponsesWSQuotaDeductedByFinalCost(t *testing.T) {
+	// Given
+	up := fakeResponsesWS(t, &fakeWSHooks{frameLimit: 1})
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxyBilling(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, nil, store)
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+	require.NoError(t, bal.Reload(context.Background()))
+	p.bill.Balances = bal // WS guard 余额预检需快照命中（BillingCapture 翻转后生效）
+	probe := enableKeyQuota(t, p, 100000)
+
+	// When：一次完整 WS 会话（created/delta/completed/echo → 关闭）
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	for i := 0; i < 4; i++ {
+		_ = readResponsesWSFrame(t, c)
+	}
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	// Then：relay 会话收尾异步于关闭帧 → 有界轮询 consumed 收敛
+	require.Eventually(t, func() bool { return probe.consumed() == 120 }, 3*time.Second, 10*time.Millisecond,
+		"WS 按最终 Cost 扣额度（120 ≠ TotalTokens 8）")
+	require.NoError(t, p.rec.Close(context.Background()))
+}
+
 // TestResponsesWSBillingTierStrip strip 策略：首帧改写点（relayResponsesWS）删
 // service_tier 字段（sjson.DeleteBytes 字节级）——上游帧不含该字段；剥离路径
 // 计费照常（tier 已提取 → fast 档 240）。
