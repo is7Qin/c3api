@@ -71,12 +71,21 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Accel-Buffering", "no")
+		// ACK-before-visible：映射帧在响应 id 的 Redis 绑定确认前不得达客户端
+		// （仅 resp_to_mess 方向 + store 装配时上闸——其余方向零闸门零分配）。
+		var gate *contGateWriter
+		var sink http.ResponseWriter = w
+		if c.dir == domain.ProtocolConvertRespToMess && p.cont != nil {
+			gate = &contGateWriter{w: w}
+			sink = gate
+		}
+		var contErr *formatError
 		mapper := protoconv.NewStreamMapper(c.dir)
 		var it, ot, tt, cr, cc int64
 		// 首帧到达即记录 TTFT，Observer 仍按目标协议原始帧提取用量。
 		var ttft *int64
 		clientModel := sel.ClientResponseModel(reqModel)
-		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
+		err = sserelay.Relay(ctx, sink, resp.Body, sserelay.Config{
 			Mapper: func(ev sserelay.Event) ([]byte, bool) {
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
@@ -109,6 +118,21 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				if clientModel != "" {
 					mapped = rewriteConvertedFrames(mapped, clientModel)
 				}
+				if gate != nil && contErr == nil {
+					released, failed := gate.gateState()
+					if failed {
+						contErr = errContUnavailable
+					} else if !released {
+						if id := contFrameID(mapped); id != "" {
+							if ferr := p.contBind(ctx, contProtocolREST, id, groupID); ferr != nil {
+								gate.markFailed()
+								contErr = ferr
+							} else {
+								gate.release()
+							}
+						}
+					}
+				}
 				return mapped, false
 			},
 		})
@@ -119,6 +143,13 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		u := usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}
 		usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
+		if contErr != nil {
+			outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(contErr.status), CommitUpstreamResponded, false, true, false))
+			p.observeDispatchOutcome(ctx, outcome, nil)
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, contErr.status, domain.ErrAbort, u, start)))
+			writeErr(w, contErr)
+			return contErr.status, nil, true, nil
+		}
 		if err != nil {
 			// 客户端取消与上游中断区分：取消不计健康惩罚，仍需计费落账。
 			if errors.Is(err, context.Canceled) {
@@ -199,6 +230,17 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	if rm := sel.ClientResponseModel(reqModel); rm != "" {
 		conv = rewriteResponseModelJSON(conv, rm)
+	}
+	if c.dir == domain.ProtocolConvertRespToMess && p.cont != nil {
+		if id := gjson.GetBytes(conv, "id").String(); id != "" {
+			if ferr := p.contBind(ctx, contProtocolREST, id, groupID); ferr != nil {
+				outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, AttemptTiming{LatencyMS: time.Since(start).Milliseconds()}, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}, ResultFailed, AttemptStatus(ferr.status), CommitUpstreamResponded, false, true, false))
+				p.observeDispatchOutcome(ctx, outcome, nil)
+				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, ferr.status, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+				writeErr(w, ferr)
+				return ferr.status, nil, true, nil
+			}
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
