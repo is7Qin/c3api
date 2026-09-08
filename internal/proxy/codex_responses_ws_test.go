@@ -610,7 +610,7 @@ func TestCodexWSDial429Failover(t *testing.T) {
 	}, up.URL, nil, store)
 	// 确定性车道：账号 10 先拨（429）→ 转移账号 20（200）。
 	p.sched.PublishDecisionForTest(
-		scheduler.RouteRefFor(10, string(domain.FormatOpenAIResponsesWS), ""),
+		scheduler.RouteRefFor(10, string(domain.FormatOpenAIResponsesWS), "gpt-4o"),
 		&scheduler.RouteDecision{Primary: []scheduler.CompiledCandidate{{AccountID: 10}, {AccountID: 20}}})
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
