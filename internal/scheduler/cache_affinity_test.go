@@ -93,20 +93,20 @@ func TestAttemptPlan_explicitAffinityPrefersDomainAndSpillsWithoutDuplicates(t *
 	a3.CacheDomain = &sharedB
 	s := newTestScheduler(t, []*domain.Account{a1, a2, a3})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
-	publishAttemptDecision(s, route, &RouteDecision{Primary: []int64{1, 2, 3}, CacheDomainRing: mustCacheDomainRing(t, []string{sharedA, sharedB}), CacheDomainAccounts: []CacheDomainAccount{{AccountID: 1, Domain: sharedA}, {AccountID: 2, Domain: sharedA}, {AccountID: 3, Domain: sharedB}}})
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1, 2, 3), CacheDomainRing: mustCacheDomainRing(t, []string{sharedA, sharedB}), CacheDomainAccounts: []CacheDomainAccount{{AccountID: 1, Domain: sharedA}, {AccountID: 2, Domain: sharedA}, {AccountID: 3, Domain: sharedB}}})
 
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-affinity", MaxAttempts: 3}, route)
 	require.NoError(t, err)
-	require.True(t, plan.ApplyCacheAffinity(CacheAffinityHashForDomain(t, plan.decision.CacheDomainRing, sharedB)))
+	require.True(t, plan.ApplyCacheAffinity(CacheAffinityHashForDomain(t, plan.route.CacheDomainRing, sharedB)))
 
 	first, attempt, err := s.ReserveAttempt(plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), attempt.AccountID)
 	first.Release()
 
-	// Given the preferred account is saturated, the complete global order is
-	// still available as spill candidates and each account is consulted once.
-	s.View().ByID()[3].runtime.concurrency.Store(1)
+	acc3, ok := s.View().Account(3)
+	require.True(t, ok)
+	acc3.runtime.concurrency.Store(1)
 	second, attempt, err := s.ReserveAttempt(plan)
 	require.NoError(t, err)
 	require.Contains(t, []int64{1, 2}, attempt.AccountID)
@@ -115,7 +115,7 @@ func TestAttemptPlan_explicitAffinityPrefersDomainAndSpillsWithoutDuplicates(t *
 }
 
 func TestAttemptPlan_noAffinityPreservesCompiledOrder(t *testing.T) {
-	plan := NewAttemptPlan(AttemptPlanIdentity{}, RouteDecision{Primary: []int64{3, 1, 2}})
+	plan := mustNewAttemptPlan(t, AttemptPlanIdentity{}, &RouteDecision{Primary: ccPrimary(3, 1, 2)})
 	var got []int64
 	_, err := plan.Reserve(func(id int64) bool {
 		got = append(got, id)
