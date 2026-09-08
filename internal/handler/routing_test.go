@@ -279,7 +279,7 @@ func Test_RoutingPlan_GenerationAndOrder(t *testing.T) {
 		{
 			Ref:      scheduler.RouteRef{GroupID: 10, Format: "openai-chat", Model: "m", OperationTag: "chat.completions", RouteClassID: domain.RouteClassIDHex(rcA)},
 			Primary:  []int64{7, 3},
-			Explore:  scheduler.ExploreDecision{IDs: []int64{2, 1}, Weights: map[int64]int{2: 3, 1: 7}, Cumulative: []uint64{3, 10}, Total: 10, Fallback: []int64{1}},
+			Explore:  scheduler.ExploreIDs{IDs: []int64{2, 1}, Weights: map[int64]int{2: 3, 1: 7}, Cumulative: []uint64{3, 10}, Total: 10, Fallback: []int64{1}},
 			Degraded: []int64{9},
 			Candidates: []scheduler.RoutingPlanCandidate{
 				{AccountID: 1, TemplateID: 11, LifecycleRevision: 2, UpstreamCostMultiplierBp: 15000, IdentityFingerprint: routingFPHex(t, 0xbb), MappedModel: "m", QualityClassID: "qc"},
