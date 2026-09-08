@@ -364,7 +364,29 @@ func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecisi
 		if decision == nil {
 			delete(routes, route)
 		} else {
-			routes[route] = s.prepareTestDecision(route, decision)
+			prepared := cloneRouteDecision(decision)
+			fill := func(in []CompiledCandidate, lane AttemptLane) []CompiledCandidate {
+				out := make([]CompiledCandidate, 0, len(in))
+				for _, candidate := range in {
+					if account, ok := cur.static.byID[candidate.AccountID]; ok && account != nil {
+						facts := buildCandidateFacts([]*accountSnapshot{account}, routeKey{format: domain.RequestFormat(route.Format), model: route.Model}, domain.OperationTag(route.OperationTag))
+						out = append(out, compileCandidate(facts[0], lane))
+					} else {
+						candidate.Lane = lane
+						out = append(out, candidate)
+					}
+				}
+				return out
+			}
+			prepared.Format = route.Format
+			prepared.RequestedModel = route.Model
+			prepared.RouteClassID = route.RouteClassID
+			prepared.CallerCategory = string(callerKindForFormat(domain.RequestFormat(route.Format)))
+			prepared.OperationTag = route.OperationTag
+			prepared.Primary = fill(prepared.Primary, AttemptLanePrimary)
+			prepared.Explore.Ordered = fill(prepared.Explore.Ordered, AttemptLaneExplore)
+			prepared.Degraded = fill(prepared.Degraded, AttemptLaneDegraded)
+			routes[route] = prepared
 		}
 		return &DecisionView{routes: routes}
 	})
