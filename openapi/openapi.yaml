@@ -3314,9 +3314,14 @@ components:
         #     int64（最近一次失败编译时刻；0 = 从未；失败保留旧视图是契约）,
         #     decision_generation uint64（当前发布 DecisionView 世代；0 = 未发布）,
         #     decision_routes int（已发布路由数；0 = 编译道未发布）
-        #   rule-engine: queued int（事件队列积压）, queue_cap int（容量/丢弃阈值）,
-        #     dropped int64（队列满丢弃累计）, drop_warn_threshold int64（丢弃告警阈值）
-        #   usage: pending_logs int64（未落库明细条数）, pending_waterline int64
+         #   rule-engine: queued int（事件队列积压）, queue_cap int（容量/丢弃阈值）,
+         #     dropped int64（队列满丢弃累计）, drop_warn_threshold int64（丢弃告警阈值）
+         #   quality-flow-owner: running bool, queued int（提交队列深度）,
+         #     queue_cap int（固定容量）, accepted int64, processed int64,
+         #     overflowed int64, edge_rows_accepted int64, edge_rows_dropped int64,
+         #     pending_minutes int, pending_bytes int64, last_merge_duration_ms int64,
+         #     residual_submissions int64, residual_rows int64, close_unix_ms int64
+         #   usage: pending_logs int64（未落库明细条数）, pending_waterline int64
         #     （水线）, warned bool（水线告警边沿）
         #   billing（游标消费者，F2 ledger-cursor）: lag_ms int64（游标积压时滞
         #     毫秒 = 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/
@@ -3363,8 +3368,10 @@ components:
         #     int64（上轮 PG 写入流量分钟数）, freshness_ms int64（距最近一次
         #     Redis 发布成功毫秒）, last_redis_ms int64 / last_pg_ms int64（上轮
         #     Redis/PG 面耗时毫秒）, last_redis_attempt_ms int64（最近一次 Redis
-        #     发布尝试时刻；0 = 从未）, last_redis_error string（最近一次 Redis
-        #     失败文本；空 = 无）, redis_errors int64（Redis 发布失败累计）
+         #     发布尝试时刻；0 = 从未）, last_redis_error string（最近一次 Redis
+         #     失败文本；空 = 无）, redis_errors int64（Redis 发布失败累计）
+         #     residual_quality int64 / residual_flow int64（关闭截止时仍在途、
+         #     已转为可观测残余的质量/流量批次数）
         #   runtime-health（健康投影 lane，intelligent-routing）: records int
         #     （当前视图条目数）, open/retry_after/probing/ready int（按态分桶）,
         #     generation int64（已同步全局健康世代）, last_sync_ok_unix_ms int64
