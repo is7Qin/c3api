@@ -2,22 +2,20 @@
 package scheduler
 
 import (
+	"fmt"
 	"math"
-	"math/bits"
 	"sort"
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC domain.RouteClassIDVal, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) (*RouteDecision, error) {
+func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeRC domain.RouteClassIDVal, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices, rr RouteRef) (*RouteDecision, error) {
 	qcs := make([]QualityCandidate, 0, len(filtered))
 	costKnown := make(map[int64]bool, len(filtered))
-	for _, a := range filtered {
-		av := a.static.Load()
-		id := av.acc.ID
-		fpVal := candidateIdentityFingerprint(&av.acc)
-		key := CandidateQualityKey{RouteClassID: routeRC, Fingerprint: fpVal}
+	for _, facts := range filtered {
+		id := facts.accountID
+		key := CandidateQualityKey{RouteClassID: routeRC, Fingerprint: facts.identityFingerprint}
 		qin, hasQ := quality[key]
 		var cnt Counts
 		var inTok, outTok, crTok, ccTok int64
@@ -37,7 +35,7 @@ func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC doma
 			avgCr := AvgTokens(crTok, int64(cnt.Successes))
 			avgCc := AvgTokens(ccTok, int64(cnt.Successes))
 			raw := billing.CostFromResolved(price, avgIn, avgOut, avgCr, avgCc)
-			mult := av.acc.UpstreamCostMultiplierBp
+			mult := facts.static.acc.UpstreamCostMultiplierBp
 			if mult < 0 {
 				mult = 0
 			}
@@ -170,66 +168,68 @@ func compileRouteDecision(filtered []*accountSnapshot, rk routeKey, routeRC doma
 	if err != nil {
 		return nil, err
 	}
-	return &RouteDecision{
-		Primary:             primaryIDs,
-		Degraded:            degradedIDs,
-		Explore:             ExploreDecision{IDs: exploreIDs, Weights: weights, Cumulative: cumulative, Total: total, Fallback: fallbackIDs},
+	caller := string(callerKindForFormat(rk.format))
+	op := domain.OperationTag(rr.OperationTag)
+	byID := make(map[int64]compilerCandidateFacts, len(filtered))
+	for _, facts := range filtered {
+		byID[facts.accountID] = facts
+	}
+	mk := func(id int64, lane AttemptLane) CompiledCandidate {
+		return compileCandidate(byID[id], lane)
+	}
+	primary := make([]CompiledCandidate, 0, len(primaryIDs))
+	for _, id := range primaryIDs {
+		primary = append(primary, mk(id, AttemptLanePrimary))
+	}
+	degraded := make([]CompiledCandidate, 0, len(degradedIDs))
+	for _, id := range degradedIDs {
+		degraded = append(degraded, mk(id, AttemptLaneDegraded))
+	}
+	ordered := make([]CompiledCandidate, 0, len(exploreIDs))
+	for _, id := range exploreIDs {
+		ordered = append(ordered, mk(id, AttemptLaneExplore))
+	}
+	if len(ordered) > int(^uint16(0)) {
+		return nil, fmt.Errorf("explore candidate count %d exceeds uint16 index range", len(ordered))
+	}
+	orderedIndex := make(map[int64]uint16, len(ordered))
+	for i, c := range ordered {
+		orderedIndex[c.AccountID] = uint16(i)
+	}
+	fallback := make([]uint16, 0, len(fallbackIDs))
+	for _, id := range fallbackIDs {
+		if idx, ok := orderedIndex[id]; ok {
+			fallback = append(fallback, idx)
+		}
+	}
+	decision := &RouteDecision{
+		Format: string(rk.format), RequestedModel: rk.model, RouteClassID: rr.RouteClassID, CallerCategory: caller, OperationTag: string(op),
+		Primary: primary, Degraded: degraded,
+		Explore:             ExploreDecision{Ordered: ordered, Weights: weights, Cumulative: cumulative, Total: total, Fallback: fallback},
 		CacheDomainRing:     ring,
 		CacheDomainAccounts: accounts,
-	}, nil
+	}
+	if err := validateRouteDecision(decision); err != nil {
+		return nil, err
+	}
+	decision.validated = true
+	return decision, nil
 }
 
-func compileCacheDomainPlan(filtered []*accountSnapshot) (CacheDomainRing, []string, []CacheDomainAccount, error) {
+func compileCacheDomainPlan(filtered []compilerCandidateFacts) (CacheDomainRing, []string, []CacheDomainAccount, error) {
 	domains := make([]string, 0, len(filtered))
 	accounts := make([]CacheDomainAccount, 0, len(filtered))
 	seen := make(map[int64]struct{}, len(filtered))
-	for _, account := range filtered {
-		av := account.static.Load()
-		if av == nil {
+	for _, facts := range filtered {
+		if _, ok := seen[facts.accountID]; ok {
 			continue
 		}
-		if _, ok := seen[av.acc.ID]; ok {
-			continue
-		}
-		seen[av.acc.ID] = struct{}{}
-		domain := cacheDomainForAccount(av.acc.ID, av.acc.CacheDomain)
+		seen[facts.accountID] = struct{}{}
+		domain := cacheDomainForAccount(facts.accountID, facts.static.acc.CacheDomain)
 		domains = append(domains, domain)
-		accounts = append(accounts, CacheDomainAccount{AccountID: av.acc.ID, Domain: domain})
+		accounts = append(accounts, CacheDomainAccount{AccountID: facts.accountID, Domain: domain})
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].AccountID < accounts[j].AccountID })
 	ring, err := buildCacheDomainRing(domains)
 	return ring, append([]string(nil), ring.Domains...), accounts, err
 }
-
-// AvgTokens rounds sum/successes half-up (0 when no successes). Shared by the
-// compiler cost lane and the service quality-cost frontier (Todo 17).
-func AvgTokens(sum int64, successes int64) int64 {
-	if successes <= 0 {
-		return 0
-	}
-	if sum > math.MaxInt64-successes/2 {
-		return sum / successes
-	}
-	return (sum + successes/2) / successes
-}
-
-// SaturatingMulDiv computes a*b/divisor saturating at MaxInt64 on 64x64
-// overflow. Shared by the compiler cost lane and the service frontier.
-func SaturatingMulDiv(a, b, divisor int64) int64 {
-	if divisor == 0 {
-		return math.MaxInt64
-	}
-	if a < 0 {
-		a = 0
-	}
-	if b < 0 {
-		b = 0
-	}
-	hi, lo := mul64(uint64(a), uint64(b))
-	if hi != 0 {
-		return math.MaxInt64
-	}
-	return int64(lo / uint64(divisor))
-}
-
-func mul64(x, y uint64) (hi, lo uint64) { hi, lo = bits.Mul64(x, y); return }

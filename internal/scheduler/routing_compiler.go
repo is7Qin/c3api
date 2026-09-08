@@ -64,9 +64,15 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 			for _, op := range ops {
 				rr := canonicalRouteRefWithOp(gid, rk, op)
 				candidates := fullCandidateUnion(gs, rk)
-				filtered := filterCandidates(candidates, in.Health, in.Latched, rk, op)
+				facts := buildCandidateFacts(candidates, rk, op)
+				filtered := filterCandidates(facts, in.Health, in.Latched)
 				if len(filtered) == 0 {
-					routes[rr] = &RouteDecision{Explore: ExploreDecision{Weights: map[int64]int{}, Fallback: []int64{}}}
+					decision := &RouteDecision{Format: string(rk.format), RequestedModel: rk.model, RouteClassID: rr.RouteClassID, CallerCategory: string(callerKindForFormat(rk.format)), OperationTag: string(op)}
+					if err := validateRouteDecision(decision); err != nil {
+						return nil, err
+					}
+					decision.validated = true
+					routes[rr] = decision
 					continue
 				}
 				var rcVal domain.RouteClassIDVal
@@ -75,7 +81,7 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 						rcVal = domain.RouteClassIDVal(v)
 					}
 				}
-				dec, err := compileRouteDecision(filtered, rk, rcVal, in.Quality, in.Prices)
+				dec, err := compileRouteDecision(filtered, rk, rcVal, in.Quality, in.Prices, rr)
 				if err != nil {
 					return nil, err
 				}
