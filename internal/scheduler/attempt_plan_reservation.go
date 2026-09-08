@@ -7,13 +7,11 @@ import (
 
 var reserveHook func() // ponytail: test hook for race barrier between concurrency CAS and state CAS
 
-// NewAttemptPlan binds a compiled route to one immutable routing root. Dynamic
-// account state remains shared by the captured account snapshots. An exact
-// route miss falls back to the compiled default bucket (model "")—the same
-// unknown-model semantics as the static bucket layout.
-func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef) (*AttemptPlan, error) {
-	requestedModel := route.Model
-	v := s.view.Load()
+// newPlanForView binds a compiled route to one already-loaded immutable
+// routing root. An exact route miss falls back to the compiled default bucket
+// (model "").
+func newPlanForView(identity AttemptPlanIdentity, route RouteRef, v *RoutingView) (*AttemptPlan, error) {
+	identity.RequestedModel = route.Model
 	if v == nil || v.static == nil {
 		return nil, ErrGroupNotFound
 	}
@@ -25,7 +23,7 @@ func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef)
 	}
 	decision, ok := v.decision.routes[route]
 	if !ok && route.Model != "" {
-		route = RouteRefFor(route.GroupID, route.Format, "")
+		route = RouteRefForOp(route.GroupID, route.Format, "", domain.OperationTag(route.OperationTag))
 		decision, ok = v.decision.routes[route]
 	}
 	if !ok || decision == nil {
@@ -34,22 +32,23 @@ func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef)
 	if _, ok := parseRequestFormat(route.Format); !ok || route.OperationTag == "" {
 		return nil, ErrFormatUnavailable
 	}
-
 	identity.RouteClassID = route.RouteClassID
 	identity.RoutingGeneration = v.generation
-	p := NewAttemptPlan(identity, *decision)
+	p, err := NewAttemptPlan(identity, decision)
+	if err != nil {
+		return nil, err
+	}
+	p.generation = v.generation
 	if identity.HasAffinity {
 		p.ApplyCacheAffinity(identity.AffinityHash)
 	}
-	p.format = route.Format
-	p.model = requestedModel
-	p.operationTag = route.OperationTag
-	for i := uint8(0); i < p.prefixCount; i++ {
-		if !s.resolveCandidate(v, p, &p.candidates[i]) {
-			continue
-		}
-	}
 	return p, nil
+}
+
+// NewAttemptPlan binds a compiled route to one immutable routing root. An
+// exact route miss falls back to the compiled default bucket (model "").
+func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef) (*AttemptPlan, error) {
+	return newPlanForView(identity, route, s.view.Load())
 }
 
 func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity, route RouteRef, keyHash uint64) (*AttemptPlan, error) {
@@ -61,76 +60,59 @@ func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity
 	return plan, nil
 }
 
-// resolveCandidate fills one plan candidate's identity fields from the given
-// routing root. Overflow candidates arrive unresolved (ID + lane only) and are
-// resolved on demand at reserve time, so scanning a long tail costs nothing
-// until a candidate is actually consulted.
-func (s *Scheduler) resolveCandidate(v *RoutingView, p *AttemptPlan, c *attemptPlanCandidate) bool {
-	if v == nil || v.static == nil {
-		return false
-	}
-	c.account = v.static.byID[c.accountID]
-	if c.account == nil {
-		return false
-	}
-	c.static = c.account.static.Load()
-	if c.static == nil || c.static.tpl == nil {
-		return false
-	}
-	fingerprint, err := candidateFingerprint(&c.static.acc)
-	if err != nil {
-		return false
-	}
-	c.fingerprint = fingerprint
-	resolved := p.model
-	if p.identity.ApplyModelMapping {
-		if mapped, ok := c.static.tpl.ModelMapping[p.model]; ok {
-			resolved = mapped.MappedModel
-			c.mappingMode = mapped.Mode
-		}
-	}
-	c.quality = qualityClassHexForWithOp(domain.RequestFormat(p.format), resolved, domain.OperationTag(p.operationTag))
-	c.templateID = c.static.tpl.ID
-	c.requestedModel = p.model
-	c.mappedModel = resolved
-	c.routeClassID = p.identity.RouteClassID
-	c.callerCategory = string(callerKindForFormat(domain.RequestFormat(p.format)))
-	c.operationTag = p.operationTag
-	c.lifecycleRevision = c.static.acc.LifecycleRevision
-	c.routingGeneration = v.generation
-	return true
-}
-
-// ReserveAttempt applies request-time health, latch, status, and
-// cluster-concurrency gates to the already compiled plan. Prefix candidates
-// are additionally fenced against their captured static leaf: a leaf replaced
-// after plan build (credential rotation, revision bump, removal) is rejected,
-// never leased from stale identity.
+// ReserveAttempt applies request-time health, latch, status and
+// cluster-concurrency gates to the compiled plan. Candidates carry immutable
+// metadata; the only per-candidate request work is O(1) gate checks and the
+// single lease CAS. Stale leaves (pointer mismatch after static replacement)
+// are rejected, never leased.
 func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, error) {
-	if plan == nil {
+	if plan == nil || plan.route == nil {
 		return nil, Attempt{}, ErrNoAvailable
 	}
-	v := s.view.Load()
+	return s.reserveOnView(plan, s.view.Load())
+}
+
+// reserveOnView runs the reservation gates against one already-loaded view.
+// A decision-generation mismatch is tolerated only before the plan has ever
+// successfully reserved (reservationStarted): the initial reservation lands
+// on the current leaves even if a decision-only republish slipped in. Once
+// execution started, a decision-only republish invalidates the session. A
+// static replacement remains eligible for the existing leaf fence, so
+// in-flight plans can move to the current leaf instead of losing their
+// fallback tail.
+func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection, Attempt, error) {
+	if plan == nil || plan.route == nil {
+		return nil, Attempt{}, ErrNoAvailable
+	}
+	if v == nil || v.static == nil {
+		return nil, Attempt{}, ErrAttemptsExhausted
+	}
+	if plan.reservationStarted && plan.generation != v.generation && !plan.hasStaticChange(v) {
+		return nil, Attempt{}, ErrAttemptsExhausted
+	}
 	instances := s.instancesN()
 	cluster := s.concView.Load()
-	var selected *Selection
-	attempt, err := plan.reserve(func(candidate *attemptPlanCandidate) bool {
-		if candidate.account == nil {
-			if !s.resolveCandidate(v, plan, candidate) {
-				return false
-			}
-		} else if v == nil || v.static == nil || v.static.byID[candidate.accountID] != candidate.account {
-			return false // stale leaf after static replacement
-		}
-		a := candidate.account
-		av := candidate.static
-		if av == nil || av.tpl == nil || candidate.fingerprint == "" {
+	applyMapping := plan.identity.ApplyModelMapping
+	attempt, candidate, err := plan.reserve(func(c CompiledCandidate) bool {
+		if c.Leaf == nil || c.Static == nil || c.Fingerprint == "" {
 			return false
 		}
-		if s.latch != nil && s.latch.IsLatched(av.acc.ID, candidate.fingerprint) {
+		if v == nil || v.static == nil || v.static.byID[c.AccountID] != c.Leaf {
 			return false
 		}
-		if s.health != nil && s.health.EffectiveState(av.acc.ID, candidate.quality, av.acc.LifecycleRevision) != StateReady {
+		a := c.Leaf
+		av := c.Static
+		if av.tpl == nil {
+			return false
+		}
+		if s.latch != nil && s.latch.IsLatched(av.acc.ID, c.Fingerprint) {
+			return false
+		}
+		q := c.Quality
+		if !applyMapping {
+			q = c.QualityRaw
+		}
+		if s.health != nil && s.health.EffectiveState(av.acc.ID, q, c.LifecycleRevision) != StateReady {
 			return false
 		}
 		st := a.statePtr()
@@ -160,22 +142,26 @@ func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, erro
 				break
 			}
 		}
-		baseURL := av.tpl.BaseURL
-		if av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
-			baseURL = *av.acc.BaseURL
-		}
-		selected = &Selection{
-			AccountID: av.acc.ID, TemplateID: av.tpl.ID, BaseURL: baseURL,
-			Format: domain.RequestFormat(plan.format), UpstreamKey: av.acc.UpstreamKey,
-			CredentialType: av.tpl.CredentialType, Model: candidate.mappedModel,
-			StripImageTools: av.tpl.StripImageTools, Ext: av.acc.Ext,
-			CandidateFingerprint: candidate.fingerprint, lease: &leaseToken{acc: a},
-			ModelMappingMode: candidate.mappingMode,
-		}
 		return true
 	})
 	if err != nil {
 		return nil, Attempt{}, err
+	}
+	mapped := candidate.MappedModel
+	mappingMode := candidate.MappingMode
+	if !applyMapping {
+		mapped = candidate.RequestedModel
+		mappingMode = domain.ModelMappingModeInvalid
+	}
+	av := candidate.Static
+	a := candidate.Leaf
+	selected := &Selection{
+		AccountID: av.acc.ID, TemplateID: av.tpl.ID, BaseURL: candidate.BaseURL,
+		Format: domain.RequestFormat(plan.route.Format), UpstreamKey: av.acc.UpstreamKey,
+		CredentialType: av.tpl.CredentialType, Model: mapped,
+		StripImageTools: av.tpl.StripImageTools, Ext: av.acc.Ext,
+		CandidateFingerprint: candidate.Fingerprint, lease: &leaseToken{acc: a},
+		ModelMappingMode: mappingMode,
 	}
 	return selected, attempt, nil
 }
