@@ -230,7 +230,7 @@ func TestFlowChainProducer_postCommitFailureSingleTerminalEdge(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
 	}, 1, true, 150*time.Millisecond, store, nil)
 	route := scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "gpt-4o")
-	p.sched.PublishDecisionForTest(route, &scheduler.RouteDecision{Primary: []int64{1}})
+	p.sched.PublishDecisionForTest(route, &scheduler.RouteDecision{Primary: []scheduler.CompiledCandidate{{AccountID: 1}}})
 	p.cfg.FailoverAttempts = 2
 	rec, _ := wireObserverHarness(t, p)
 
@@ -390,6 +390,58 @@ func TestFlowChainProducer_concurrentRequestsConserveSameMinute(t *testing.T) {
 }
 
 // --- adapter purity: only real attempt metadata reaches the edge ---
+
+// TestPipelineObserver_SettlementSurvivesStalledFlowOwner pins the async
+// contract end to end through the request pipeline: with the flow owner's
+// bounded queue full and its consumer never running (stalled), settlement
+// still completes the HTTP response without waiting, the overflow is
+// telemetry-only (quality counters keep working, chain counters record the
+// loss once), and no client-visible outcome changes. Watchdog proves
+// non-blocking; no sleeps.
+func TestPipelineObserver_SettlementSurvivesStalledFlowOwner(t *testing.T) {
+	quality.ResetFlowChainCountersForTest()
+	up := fakeOpenAI(t, "")
+	defer up.Close()
+	p := chatProxyWithPlan(t, up.URL, 2, []int64{1, 2})
+	rec, _ := wireObserverHarness(t, p)
+	owner := rec.FlowOwner()
+	// Given: the fixed queue is exhausted by a stalled consumer (never
+	// started): every request-side Submit from here on is a queue overflow.
+	for owner.Submit(2000, nil) == quality.SubmitAccepted {
+	}
+	stalled := owner.Stats().(quality.FlowOwnerStats)
+	require.Equal(t, quality.FlowOwnerQueueCap, stalled.Queued)
+
+	// When: a real plan-backed request settles on the stalled owner.
+	type outcome struct {
+		code int
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", chatBody())
+		req.Header.Set("Authorization", "Bearer ck-1")
+		p.HandleChat(w, req)
+		done <- outcome{code: w.Code}
+	}()
+	var got outcome
+	select {
+	case got = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request settlement waited on the stalled flow owner")
+	}
+
+	// Then: HTTP outcome unchanged, telemetry loss counted once, quality
+	// lane intact, no incomplete-chain mislabel.
+	require.Equal(t, 200, got.code)
+	require.Equal(t, int64(1), quality.FlowChainEnqueueOverflow(), "overflow counted once, request unaffected")
+	require.Zero(t, quality.FlowChainIncompleteObserved())
+	require.Equal(t, int64(1), snapshotQualityAttempts(rec), "quality accounting independent of flow overflow")
+	require.Zero(t, rec.GlobalInflight())
+	after := owner.Stats().(quality.FlowOwnerStats)
+	require.Equal(t, int64(1), after.Overflowed-stalled.Overflowed)
+	require.Greater(t, after.EdgeRowsDropped, int64(0))
+}
 
 func TestFlowDispatchAdapter_usesRealAttemptMetadataOnly(t *testing.T) {
 	prev := "req-x:1"
