@@ -71,6 +71,14 @@ func (r *AccountRepo) GetAccount(ctx context.Context, id int64) (*domain.Account
 	return toDomainAccount(row), nil
 }
 
+func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
+	row, err := r.client.Account.Query().Where(account.IDEQ(id)).WithTemplate().Only(ctx)
+	if err != nil {
+		return nil, errMissingID(err, id)
+	}
+	return toDomainAccount(row), nil
+}
+
 func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.Account, int64, error) {
 	// 软删除：列表默认过滤已删（count 同谓词——pred 复用）；GET 单个不过滤。
 	pred := r.client.Account.Query().Where(account.DeletedAtIsNil())
