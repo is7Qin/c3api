@@ -27,10 +27,16 @@ func TestRoutingViewSingleRoot(t *testing.T) {
 	m.byGroup[10] = append(m.byGroup[10], acc(2, tpl, 2))
 	m.mu.Unlock()
 	s.InvalidateGroup(10)
+	// Atomic publication: the old complete pair stays visible while pending.
 	v2 := s.View()
 	require.NotNil(t, v2)
-	require.Greater(t, v2.Generation(), gen1, "generation must increase")
-	require.Same(t, byID1[1], v2.ByID()[1], "identity-stable pointer for existing account")
+	require.Same(t, v1, v2, "staging must not touch the published pair")
+
+	s.compileOnce()
+	v3 := s.View()
+	require.NotNil(t, v3)
+	require.Greater(t, v3.Generation(), gen1, "paired publish bumps generation")
+	require.Same(t, byID1[1], v3.ByID()[1], "identity-stable pointer for existing account")
 }
 
 func TestLeaseExactReleaseIdempotent(t *testing.T) {
@@ -71,13 +77,18 @@ func TestLeaseSameIDReaddExactObject(t *testing.T) {
 	m.mu.Unlock()
 	s.InvalidateGroup(10)
 
+	// Atomic publication: the old pair stays visible while the removal pends.
 	_, ok := s.Runtime(1)
+	require.True(t, ok, "removal only staged, old pair retained")
+	s.compileOnce() // paired publish applies the removal
+	_, ok = s.Runtime(1)
 	require.False(t, ok, "account removed from view")
 
 	m.mu.Lock()
 	m.byGroup[10] = []*domain.Account{acc(1, tpl, 4)}
 	m.mu.Unlock()
 	s.InvalidateGroup(10)
+	s.compileOnce() // paired publish applies the re-add
 	ri, ok := s.Runtime(1)
 	require.True(t, ok)
 	require.Equal(t, int64(0), ri.Concurrency, "readded account starts 0")
@@ -111,6 +122,7 @@ func TestLeaseDeletedInFlight(t *testing.T) {
 	m.byGroup[10] = []*domain.Account{}
 	m.mu.Unlock()
 	s.InvalidateGroup(10)
+	s.compileOnce() // paired publish applies the removal
 
 	require.NotPanics(t, func() { sel.Release() })
 	v := s.View()

@@ -40,9 +40,16 @@ func wireSources(s *Scheduler, q map[CandidateQualityKey]CandidateQualityInput, 
 }
 
 func allLaneIDs(rd *RouteDecision) []int64 {
-	all := append([]int64{}, rd.Primary...)
-	all = append(all, rd.Degraded...)
-	all = append(all, rd.Explore.IDs...)
+	all := make([]int64, 0, len(rd.Primary)+len(rd.Degraded)+len(rd.Explore.Ordered))
+	for _, c := range rd.Primary {
+		all = append(all, c.AccountID)
+	}
+	for _, c := range rd.Degraded {
+		all = append(all, c.AccountID)
+	}
+	for _, c := range rd.Explore.Ordered {
+		all = append(all, c.AccountID)
+	}
 	return all
 }
 
@@ -105,7 +112,7 @@ func TestRoutingCompilerWireGoldenSHA(t *testing.T) {
 	v, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	sum := sha256.Sum256(decisionViewBytes(v))
-	require.Equal(t, "33b00c1579d361691f4082b8a344932974efabcc7b83991c78d3dcdd79009290", hexOf(sum[:]), "golden serialized DecisionView")
+	require.Equal(t, "8de1325c127d7815f11b5bba9a9634958a64c3fc099e72fa1ddde8356a66415f", hexOf(sum[:]), "golden serialized DecisionView")
 }
 
 func hexOf(b []byte) string {
@@ -135,7 +142,10 @@ func TestRoutingCompilerWirePublishesCompiledView(t *testing.T) {
 	s.compileOnce()
 
 	after := s.View()
-	require.Same(t, before.StaticView(), after.StaticView(), "static must not roll back or rebuild")
+	require.NotSame(t, before.StaticView(), after.StaticView(), "initial pairing wraps the static-only root fresh, never mutates it")
+	require.Same(t, before.ByID()[1], after.ByID()[1], "static must not roll back or rebuild: shared immutable leaves")
+	require.Equal(t, after.Generation(), after.StaticView().Generation(), "one generation for the pair")
+	require.Equal(t, after.Generation(), after.DecisionView().Generation(), "one generation for the pair")
 	require.Greater(t, after.Generation(), before.Generation(), "generation monotonic")
 	rd, ok := after.DecisionView().Routes()[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok, "compiled route must be published")
@@ -162,6 +172,86 @@ func TestRoutingCompilerWireByteEqualityNoPublish(t *testing.T) {
 	require.Greater(t, s.View().Generation(), gen1, "changed bytes must publish")
 }
 
+func TestRoutingCompilerWireStaticRootForcesPublish(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(1, tpl, true, 4)}})
+	s := newSched(t, m)
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	before := s.View()
+	oldBytes := decisionViewBytes(before.DecisionView())
+
+	m.mu.Lock()
+	m.byGroup[10] = []*domain.Account{accWithEnabled(1, tpl, true, 1)}
+	m.mu.Unlock()
+	require.NoError(t, s.reload(context.Background()))
+	reloaded := s.View()
+	// Atomic publication: staging leaves the published pair untouched.
+	require.Same(t, before, reloaded, "staging must not touch the published pair")
+	require.Same(t, before.DecisionView(), reloaded.DecisionView(), "published decision retained while pending")
+	require.Equal(t, oldBytes, decisionViewBytes(reloaded.DecisionView()), "staged static keeps detached decision bytes identical")
+
+	s.compileOnce()
+	after := s.View()
+	require.NotSame(t, reloaded.DecisionView(), after.DecisionView(), "static root identity must bypass byte cache")
+	require.Equal(t, oldBytes, decisionViewBytes(after.DecisionView()))
+	rd, ok := after.DecisionView().routes[route]
+	require.True(t, ok)
+	require.Len(t, rd.Explore.Ordered, 1)
+	require.Same(t, after.ByID()[1], rd.Explore.Ordered[0].Leaf)
+	require.Same(t, after.ByID()[1].static.Load(), rd.Explore.Ordered[0].Static)
+
+	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	require.NoError(t, err, "fresh compiled candidate must reserve after static-only reload")
+	require.Equal(t, int64(1), sel.AccountID)
+	sel.Release()
+}
+
+// TestRoutingCompilerWireInitialPairKeepsStaticOnlyRootImmutable pins the
+// published-root immutability contract: the startup static-only view is
+// staged as pending, and the paired publish wraps it fresh (shared immutable
+// maps) instead of mutating its generation in place. The old view's pointer
+// and generation are unchanged; the new pair shares one generation and its
+// lane candidates lease the current leaves.
+func TestRoutingCompilerWireInitialPairKeepsStaticOnlyRootImmutable(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(1, tpl, true, 4)}})
+	s := newSchedStatic(t, m)
+	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, m.byGroup[10])
+	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+
+	before := s.View()
+	require.NotNil(t, before)
+	require.Nil(t, before.DecisionView(), "startup is static-only")
+	oldStatic := before.StaticView()
+	require.NotNil(t, oldStatic)
+	oldGen := before.Generation()
+
+	s.compileOnce()
+	after := s.View()
+	require.NotSame(t, before, after, "paired publish replaces the view")
+	require.Equal(t, oldGen, before.Generation(), "old view generation never mutated")
+	require.Equal(t, oldGen, oldStatic.Generation(), "published root never mutated")
+	require.Equal(t, after.Generation(), after.StaticView().Generation(), "one generation for the pair")
+	require.Equal(t, after.Generation(), after.DecisionView().Generation(), "one generation for the pair")
+	require.NotSame(t, oldStatic, after.StaticView(), "fresh wrapper, shared maps")
+	require.Same(t, oldStatic.byID[1], after.ByID()[1], "wrapper shares immutable leaves")
+
+	rd, ok := after.DecisionView().routes[route]
+	require.True(t, ok)
+	require.NotEmpty(t, allLaneIDs(rd), "paired decision carries candidates")
+	for _, c := range append(append(append([]CompiledCandidate{}, rd.Primary...), rd.Explore.Ordered...), rd.Degraded...) {
+		leaf, ok := after.ByID()[c.AccountID]
+		require.True(t, ok)
+		require.Same(t, leaf, c.Leaf, "lane candidate leases the current leaf")
+	}
+
+	// No churn: recompiling the unchanged root skips publish.
+	gen := after.Generation()
+	s.compileOnce()
+	require.Equal(t, gen, s.View().Generation(), "identical inputs must not republish")
+}
+
 func TestRoutingCompilerWireCompileFailureKeepsOldView(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
@@ -178,6 +268,157 @@ func TestRoutingCompilerWireCompileFailureKeepsOldView(t *testing.T) {
 	bad := s.View()
 	require.Same(t, good, bad, "compile failure must retain the exact old view")
 	require.Equal(t, good.Generation(), bad.Generation())
+}
+
+func TestRoutingCompilerWireRejectsStaleStaticCompile(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(1, tpl, true, 4)}})
+	s := newSchedStatic(t, m)
+	wireSources(s, nil, nil)
+	bc := &blockingCompiler{entered: make(chan struct{}, 1), release: make(chan struct{}), inner: NewRoutingCompiler()}
+	s.compiler = bc
+	t.Cleanup(func() {
+		select {
+		case <-bc.release:
+		default:
+			close(bc.release)
+		}
+	})
+	old := s.View()
+	compileDone := make(chan struct{})
+	go func() {
+		s.compileOnce()
+		close(compileDone)
+	}()
+	<-bc.entered
+
+	m.mu.Lock()
+	m.byGroup[10] = []*domain.Account{accWithEnabled(1, tpl, true, 1)}
+	m.mu.Unlock()
+	s.InvalidateGroup(10)
+	current := s.View()
+	require.NotSame(t, old.StaticView(), current.StaticView())
+	select {
+	case <-s.compileCh:
+	default:
+		t.Fatal("static invalidation did not request a compile")
+	}
+
+	close(bc.release)
+	<-compileDone
+	require.Same(t, current, s.View(), "stale compile must not publish onto a newer static root")
+	select {
+	case <-s.compileCh:
+	default:
+		t.Fatal("stale compile rejection did not request a fresh compile")
+	}
+
+	s.compileOnce()
+	fresh := s.View()
+	require.NotSame(t, current, fresh)
+	require.NotNil(t, fresh.DecisionView())
+	rd, ok := fresh.DecisionView().routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
+	require.True(t, ok)
+	require.Len(t, rd.Explore.Ordered, 1)
+	require.Same(t, fresh.ByID()[1], rd.Explore.Ordered[0].Leaf)
+}
+
+// --- atomic publication: staged static pairs only with its own compile ---
+
+// TestRoutingCompilerWirePendingRetainsCompletePair pins the atomic-pair
+// contract under a compiler/publish race: while a compile is in flight, a
+// static invalidation stages pending without touching the published pair;
+// the in-flight result (compiled from the superseded root) is dropped with a
+// fresh compile requested; the next compile pairs the pending root — one
+// generation, leaves pointing into the new static.
+func TestRoutingCompilerWirePendingRetainsCompletePair(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(1, tpl, true, 4)}})
+	s := newSched(t, m)
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	old := s.View()
+	require.NotNil(t, old.DecisionView(), "setup publishes a complete pair")
+
+	bc := &blockingCompiler{entered: make(chan struct{}, 1), release: make(chan struct{}), inner: NewRoutingCompiler()}
+	s.compiler = bc
+	t.Cleanup(func() {
+		select {
+		case <-bc.release:
+		default:
+			close(bc.release)
+		}
+	})
+	compileDone := make(chan struct{})
+	go func() {
+		s.compileOnce()
+		close(compileDone)
+	}()
+	<-bc.entered // compile in flight against the published root
+
+	m.mu.Lock()
+	m.byGroup[10] = []*domain.Account{accWithEnabled(1, tpl, true, 1), accWithEnabled(2, tpl, true, 1)}
+	m.mu.Unlock()
+	s.InvalidateGroup(10)
+	during := s.View()
+	require.Same(t, old, during, "old complete pair visible while pending")
+
+	close(bc.release)
+	select {
+	case <-compileDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("superseded compile did not complete")
+	}
+	require.Same(t, old, s.View(), "superseded compile must not publish")
+	select {
+	case <-s.compileCh:
+	default:
+		t.Fatal("superseded compile did not request a fresh compile")
+	}
+
+	s.compileOnce()
+	fresh := s.View()
+	require.NotSame(t, old, fresh)
+	require.Equal(t, fresh.Generation(), fresh.StaticView().Generation(), "one generation for the pair")
+	require.Equal(t, fresh.Generation(), fresh.DecisionView().Generation(), "one generation for the pair")
+	rd, ok := fresh.DecisionView().routes[route]
+	require.True(t, ok)
+	require.Contains(t, allLaneIDs(rd), int64(2), "new account enters the paired plan")
+	for _, c := range append(append(append([]CompiledCandidate{}, rd.Primary...), rd.Explore.Ordered...), rd.Degraded...) {
+		leaf, ok := fresh.ByID()[c.AccountID]
+		require.True(t, ok)
+		require.Same(t, leaf, c.Leaf, "lane candidate leases the current leaf")
+	}
+}
+
+// TestRoutingCompilerWireCompileFailureRetainsPendingPair pins failure
+// retention with a staged root: the exact old pair and the pending root both
+// survive, and the retained pending root still pairs on the next success.
+func TestRoutingCompilerWireCompileFailureRetainsPendingPair(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(1, tpl, true, 4)}})
+	s := newSched(t, m)
+	old := s.View()
+
+	m.mu.Lock()
+	m.byGroup[10] = append(m.byGroup[10], accWithEnabled(2, tpl, true, 4))
+	m.mu.Unlock()
+	require.NoError(t, s.reload(context.Background()))
+	require.Same(t, old, s.View(), "staging retains the old pair")
+
+	s.compiler = &failCompiler{err: context.DeadlineExceeded}
+	s.compileOnce()
+	require.Same(t, old, s.View(), "compile failure retains the exact old pair")
+	require.NotNil(t, s.publisher.pending, "pending root retained for the next compile")
+	_, has2 := s.publisher.pending.byID[2]
+	require.True(t, has2, "staged account survives the failure")
+
+	s.compiler = NewRoutingCompiler()
+	s.compileOnce()
+	fresh := s.View()
+	require.NotSame(t, old, fresh)
+	require.Contains(t, fresh.ByID(), int64(2))
+	require.Equal(t, fresh.Generation(), fresh.StaticView().Generation(), "one generation for the pair")
+	require.Equal(t, fresh.Generation(), fresh.DecisionView().Generation(), "one generation for the pair")
 }
 
 // --- live health/latch wiring ---
@@ -255,7 +496,7 @@ func TestRoutingCompilerWireFullUnionOverflowTail(t *testing.T) {
 	require.Len(t, all, 12, "full union: every candidate exactly once")
 	require.ElementsMatch(t, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, all)
 	require.Len(t, rd.Explore.Fallback, 12, "overflow tail must not truncate")
-	require.Equal(t, rd.Explore.IDs, rd.Explore.Fallback, "low-sample tail covers full explore set")
+	require.Equal(t, compiledIDs(rd.Explore.Ordered), fallbackIDs(rd.Explore), "low-sample tail covers full explore set")
 }
 
 // --- debounce loop ---

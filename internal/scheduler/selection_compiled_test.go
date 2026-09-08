@@ -15,7 +15,7 @@ func TestSelect_executesCompiledPlanWhenRoutePublished(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4), acc(2, tplx, 4)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
-	publishAttemptDecision(s, route, &RouteDecision{Primary: []int64{2, 1}})
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(2, 1)})
 
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
@@ -29,8 +29,10 @@ func TestSelect_compiledRouteReservationFailureReturnsPlanError(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4), acc(2, tplx, 4)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
-	publishAttemptDecision(s, route, &RouteDecision{Primary: []int64{1}})
-	av := s.View().ByID()[1].static.Load()
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1)})
+	snap, ok := s.View().Account(1)
+	require.True(t, ok)
+	av := snap.static.Load()
 	fp, err := candidateFingerprint(&av.acc)
 	require.NoError(t, err)
 	s.latch.TryAcquire(1, fp, 1)
@@ -45,7 +47,7 @@ func TestSelect_unknownModelUsesCompiledDefaultBucket(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, nil) // full-model template
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4)})
 	def := RouteRefFor(10, string(domain.FormatOpenAIChat), "")
-	publishAttemptDecision(s, def, &RouteDecision{Primary: []int64{1}})
+	publishAttemptDecision(s, def, &RouteDecision{Primary: ccPrimary(1)})
 
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "unknown-model-xyz")
 	require.NoError(t, err)
@@ -69,7 +71,7 @@ func TestNewAttemptPlan_defaultBucketFallback(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, nil)
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4)})
 	def := RouteRefFor(10, string(domain.FormatOpenAIChat), "")
-	publishAttemptDecision(s, def, &RouteDecision{Primary: []int64{1}})
+	publishAttemptDecision(s, def, &RouteDecision{Primary: ccPrimary(1)})
 
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-def"}, RouteRefFor(10, string(domain.FormatOpenAIChat), "no-such-model"))
 	require.NoError(t, err)
@@ -81,13 +83,38 @@ func TestNewAttemptPlan_defaultBucketFallback(t *testing.T) {
 	sel.Release()
 }
 
+func TestReserveAttempt_projectsConcreteModelThroughDefaultBucket(t *testing.T) {
+	// Given
+	tplx := tpl(1, domain.FormatOpenAIChat, nil)
+	tplx.ModelMapping = domain.ModelMapping{
+		"requested-model": {MappedModel: "upstream-model", Mode: domain.ModelMappingModeExplicit},
+	}
+	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4)})
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "")
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1)})
+
+	// When
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-default-model", ApplyModelMapping: true}, RouteRefFor(10, string(domain.FormatOpenAIChat), "requested-model"))
+	require.NoError(t, err)
+	sel, attempt, err := s.ReserveAttempt(plan)
+
+	// Then
+	require.NoError(t, err)
+	require.Equal(t, "requested-model", attempt.RequestedModel)
+	require.Equal(t, "upstream-model", attempt.MappedModel)
+	require.Equal(t, qualityClassHexForWithOp(domain.FormatOpenAIChat, "upstream-model", domain.OpChatCompletions), attempt.QualityClassID)
+	require.Equal(t, "upstream-model", sel.Model)
+	require.Equal(t, domain.ModelMappingModeExplicit, sel.ModelMappingMode)
+	sel.Release()
+}
+
 // A static replacement (credential/revision change) fences the plan's captured
 // leaf: the stale candidate is rejected, never leased from the old identity.
 func TestReserveAttempt_fencesStaleLeafAfterStaticReplacement(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4), acc(2, tplx, 4)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
-	publishAttemptDecision(s, route, &RouteDecision{Primary: []int64{1, 2}})
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1, 2)})
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-fence"}, route)
 	require.NoError(t, err)
 
@@ -99,6 +126,9 @@ func TestReserveAttempt_fencesStaleLeafAfterStaticReplacement(t *testing.T) {
 	m.byGroup[10] = []*domain.Account{rotated, acc(2, tplx, 4)}
 	m.mu.Unlock()
 	s.InvalidateGroup(10)
+	// Atomic publication: the staged replacement pairs on the next compile,
+	// fencing the plan's captured leaf.
+	s.compileOnce()
 
 	sel, attempt, err := s.ReserveAttempt(plan)
 	require.NoError(t, err)
@@ -107,13 +137,95 @@ func TestReserveAttempt_fencesStaleLeafAfterStaticReplacement(t *testing.T) {
 	sel.Release()
 }
 
+// A decision-generation mismatch is tolerated only before a plan has ever
+// successfully reserved: the initial reservation after a decision-only
+// republish succeeds against the current leaves.
+func TestReserveAttempt_firstReserveSucceedsAfterDecisionRepublish(t *testing.T) {
+	// Given: a plan bound before a decision-only republish lands.
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4)})
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1)})
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-first"}, route)
+	require.NoError(t, err)
+	oldGeneration := plan.Identity().RoutingGeneration
+
+	// When: a decision-only republish lands before the first reservation.
+	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1)})
+	require.Greater(t, s.View().Generation(), oldGeneration)
+	sel, attempt, err := s.ReserveAttempt(plan)
+
+	// Then: the initial reservation succeeds — the plan never executed.
+	require.NoError(t, err)
+	require.NotNil(t, sel)
+	require.Equal(t, int64(1), attempt.AccountID)
+	require.Equal(t, int64(1), sel.AccountID)
+	sel.Release()
+}
+
+// Once a reservation has succeeded the plan is execution-started: a later
+// decision-only republish fences the next reservation, even after the lease
+// was released.
+func TestReserveAttempt_rejectsPostReleaseReserveAfterDecisionRepublish(t *testing.T) {
+	// Given: an execution-started plan (first reservation succeeded).
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4), acc(2, tplx, 4)})
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1, 2)})
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-started"}, route)
+	require.NoError(t, err)
+	sel, attempt, err := s.ReserveAttempt(plan)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), attempt.AccountID)
+	sel.Release()
+	require.True(t, plan.reservationStarted, "successful reservation marks execution start")
+
+	// When: a decision-only republish lands after execution started.
+	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1, 2)})
+	sel2, _, err := s.ReserveAttempt(plan)
+
+	// Then: the next reservation is rejected (a second candidate exists, so
+	// only the generation fence can reject here).
+	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.Nil(t, sel2)
+	account, ok := s.View().Account(2)
+	require.True(t, ok)
+	require.Zero(t, account.runtime.concurrency.Load(), "rejected reserve leases nothing")
+}
+
+// AbandonLastAttempt rewinds bookkeeping but never un-starts execution: a
+// decision-only republish after reserve+abandon still fences the next reserve.
+func TestReserveAttempt_rejectsPostAbandonReserveAfterDecisionRepublish(t *testing.T) {
+	// Given: a plan reserved once, then abandoned without dispatch.
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4), acc(2, tplx, 4)})
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1, 2)})
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-abandon"}, route)
+	require.NoError(t, err)
+	sel, attempt, err := s.ReserveAttempt(plan)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), attempt.AccountID)
+	sel.Release()
+	plan.AbandonLastAttempt()
+	require.True(t, plan.reservationStarted, "abandon must not clear execution start")
+
+	// When: a decision-only republish lands after the abandoned reservation.
+	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1, 2)})
+	sel2, _, err := s.ReserveAttempt(plan)
+
+	// Then: the next reservation is rejected.
+	require.ErrorIs(t, err, ErrAttemptsExhausted)
+	require.Nil(t, sel2)
+}
+
 // Health/latch fencing on the plan path uses the candidate's own quality
 // class and lifecycle revision.
 func TestReserveAttempt_fencesHealthByQualityClassAndRevision(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	s := newTestScheduler(t, []*domain.Account{acc(1, tplx, 4), acc(2, tplx, 4)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
-	publishAttemptDecision(s, route, &RouteDecision{Primary: []int64{1, 2}})
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1, 2)})
 	resolved := "m"
 	qc := qualityClassHexForWithOp(domain.FormatOpenAIChat, resolved, domain.OpChatCompletions)
 	s.health = &RuntimeHealth{}

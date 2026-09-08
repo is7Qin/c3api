@@ -109,6 +109,9 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	ev2 := rule.Event{AccountID: 1, ExpectedRevision: 2, ErrorMessage: "boom2"}
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))
+	// Atomic publication: the staged revision pairs on the next compile
+	// before the revision-gated FailAccount below can observe it.
+	s.compileOnce()
 	fp2, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
 	ev2.CandidateFingerprint = fp2
