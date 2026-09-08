@@ -397,9 +397,8 @@ func TestWorkerContract(t *testing.T) {
 	require.EqualError(t, s.Start(ctx), "scheduler: already started")
 }
 
-// tplWith 构造可指纹化的模板（api_key + 非空 base_url）——Select 经编译计划
-// 预留时 resolveCandidate 要求候选可派生凭据指纹，无凭据/无 base_url 的模板
-// 无法通过。需要"指纹不可派生"语义的测试自行构造裸模板。
+// tplWith 构造可指纹化的模板（api_key + 非空 base_url）。需要"指纹不可派生"
+// 语义的测试自行构造裸模板。
 func tplWith(ff domain.RequestFormat, models []string) *domain.Template {
 	return &domain.Template{BaseURL: "https://u/v1", CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{ff}, Models: models}
@@ -752,6 +751,8 @@ func TestInvalidateGroupMultiGroupRemove(t *testing.T) {
 	m.byGroup[11] = []*domain.Account{}
 	m.mu.Unlock()
 	s.InvalidateGroup(11)
+	// Atomic publication: the staged removal pairs on the next compile.
+	s.compileOnce()
 	_, ok = s.View().ByID()[1]
 	require.False(t, ok, "不再属于任何组 → 从 byID 删除")
 	_, ok = s.Runtime(1)
@@ -986,6 +987,8 @@ func TestReuseGroupIDsResetOnRemoval(t *testing.T) {
 	m.byGroup[20] = nil
 	m.mu.Unlock()
 	require.NoError(t, s.reload(context.Background()))
+	// Atomic publication: the staged removal pairs on the next compile.
+	s.compileOnce()
 	after := reuseByID(s, 1)
 	require.NotSame(t, before, after, "new immutable leaf")
 	require.Same(t, before.runtime, after.runtime, "shared runtime")
@@ -1004,6 +1007,8 @@ func TestReuseNewAccountCreatesFresh(t *testing.T) {
 	m.byGroup[10] = append(m.byGroup[10], acc(2, tplx, 0))
 	m.mu.Unlock()
 	require.NoError(t, s.reload(context.Background()))
+	// Atomic publication: the staged addition pairs on the next compile.
+	s.compileOnce()
 
 	require.Same(t, old1, reuseByID(s, 1), "已存在账号仍复用")
 	as2 := reuseByID(s, 2)
