@@ -66,7 +66,7 @@ func enrichDecision(s *Scheduler, route RouteRef, d *RouteDecision) *RouteDecisi
 		out := make([]CompiledCandidate, 0, len(cs))
 		for _, c := range cs {
 			if snap, ok := v.static.byID[c.AccountID]; ok && snap != nil {
-				facts := buildCandidateFacts([]*accountSnapshot{snap}, routeKey{format: domain.RequestFormat(route.Format), model: route.Model}, op)
+				facts := buildCandidateFacts([]*accountSnapshot{snap}, v.static.facts, routeKey{format: domain.RequestFormat(route.Format), model: route.Model}, op)
 				cc := compileCandidate(facts[0], lane)
 				if cc.Fingerprint == "" {
 					cc.Fingerprint = c.Fingerprint
