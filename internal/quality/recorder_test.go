@@ -302,7 +302,9 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		r.AddFlowMinute(int64(2000+i), [8]int64{int64(i)})
 	}
-	require.LessOrEqual(t, r.MinuteBucketCount(), 2)
+	// The flow lane is owner-bounded independently of the quality lane:
+	// each lane caps at minuteCap buckets, neither lane evicts the other.
+	require.LessOrEqual(t, r.FlowOwner().SnapshotStats().PendingMinutes, 2)
 	require.Greater(t, r.FlowOverflow(), int64(0))
 	require.Greater(t, r.MinuteOverflow(), int64(0))
 	require.LessOrEqual(t, r.PendingBytes(), r.pendingCapBytes+EstimatedFlowMinuteBytes)

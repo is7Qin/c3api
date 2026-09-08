@@ -20,6 +20,8 @@ const (
 	EstimatedCellBytes       = 256
 	EstimatedQualityRowBytes = 512
 	EstimatedFlowMinuteBytes = 4096
+	EstimatedFlowRowBytes    = 512
+	DefaultFlowRowCap        = DefaultPendingCapBytes / EstimatedFlowRowBytes
 	q32Scale                 = 1 << 32
 	retiredBit               = uint64(1) << 63
 	closedBit                = uint64(1) << 63
@@ -259,8 +261,17 @@ func NewFlowMinute(minute int64, edges [8]int64) *FlowMinute {
 
 func NewFlowSnapshot(minute int64, rows []repository.RoutingFlowRow) *FlowMinute {
 	cp := make([]repository.RoutingFlowRow, len(rows))
-	copy(cp, rows)
+	copyFlowRows(cp, rows)
 	return &FlowMinute{minute: minute, flowRows: cp}
+}
+
+// adoptFlowSnapshot wraps an already caller-owned row slice without copying.
+// Only the FlowOwner queue path uses it: Submit already deep-copied the
+// request rows into the submission, and every mergeLocked retention path
+// clones rows before storing them, so adoption cannot leak a shared slice or
+// PreviousAccountID pointer into the accumulator.
+func adoptFlowSnapshot(minute int64, rows []repository.RoutingFlowRow) *FlowMinute {
+	return &FlowMinute{minute: minute, flowRows: rows}
 }
 
 func NewEmptyFlowSnapshot(minute int64) *FlowMinute {
@@ -313,18 +324,25 @@ func flowEdgeIdentityOf(r repository.RoutingFlowRow) flowEdgeIdentity {
 // conservation), distinct edges remain distinct. Incoming rows lead the
 // merged order so a newer contribution is never displaced by an older one.
 func mergeFlowRows(existing, incoming []repository.RoutingFlowRow) []repository.RoutingFlowRow {
-	index := make(map[flowEdgeIdentity]int, len(incoming))
+	index := make(map[flowEdgeIdentity]int, len(existing)+len(incoming))
 	merged := make([]repository.RoutingFlowRow, 0, len(existing)+len(incoming))
-	for _, rows := range [][]repository.RoutingFlowRow{incoming, existing} {
-		for _, r := range rows {
-			k := flowEdgeIdentityOf(r)
-			if i, ok := index[k]; ok {
-				merged[i].ChainCount += r.ChainCount
-				continue
-			}
-			index[k] = len(merged)
-			merged = append(merged, r)
+	for _, r := range incoming {
+		k := flowEdgeIdentityOf(r)
+		if i, ok := index[k]; ok {
+			merged[i].ChainCount += r.ChainCount
+			continue
 		}
+		index[k] = len(merged)
+		merged = append(merged, r)
+	}
+	for _, r := range existing {
+		k := flowEdgeIdentityOf(r)
+		if i, ok := index[k]; ok {
+			merged[i].ChainCount += r.ChainCount
+			continue
+		}
+		index[k] = len(merged)
+		merged = append(merged, r)
 	}
 	return merged
 }
@@ -360,7 +378,7 @@ func (f *FlowMinute) FlowRows() []repository.RoutingFlowRow {
 		return nil
 	}
 	cp := make([]repository.RoutingFlowRow, len(f.flowRows))
-	copy(cp, f.flowRows)
+	copyFlowRows(cp, f.flowRows)
 	return cp
 }
 func (f *FlowMinute) SetFlowRows(rows []repository.RoutingFlowRow) {
@@ -368,7 +386,7 @@ func (f *FlowMinute) SetFlowRows(rows []repository.RoutingFlowRow) {
 		return
 	}
 	cp := make([]repository.RoutingFlowRow, len(rows))
-	copy(cp, rows)
+	copyFlowRows(cp, rows)
 	f.flowRows = cp
 	f.emptySnapshot = false
 }
@@ -378,9 +396,27 @@ func (f *FlowMinute) Clone() *FlowMinute {
 	cp := *f
 	if f.flowRows != nil {
 		cp.flowRows = make([]repository.RoutingFlowRow, len(f.flowRows))
-		copy(cp.flowRows, f.flowRows)
+		copyFlowRows(cp.flowRows, f.flowRows)
 	}
 	return &cp
+}
+
+func copyFlowRows(dst, src []repository.RoutingFlowRow) {
+	copy(dst, src)
+	for i := range dst {
+		if src[i].PreviousAccountID != nil {
+			v := *src[i].PreviousAccountID
+			dst[i].PreviousAccountID = &v
+		}
+	}
+}
+
+func cloneInt64Pointer(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	v := *value
+	return &v
 }
 
 type Snapshot struct {
@@ -408,21 +444,27 @@ type Recorder struct {
 	flowOverflow         atomic.Int64
 	minuteOverflow       atomic.Int64
 	pendingQuality       map[int64]map[Key]*QualityMinute
-	pendingFlow          map[int64]*FlowMinute
-	pendingBytes         atomic.Int64
-	retiredCap           int
-	pendingCapBytes      int64
-	minuteCap            int
-	admission            atomic.Uint64
-	zeroCh               chan struct{}
-	finalSnapshot        atomic.Pointer[Snapshot]
+	// pendingFlow 已迁入 FlowOwner（async-routing-quality-telemetry）：跨请求
+	// flow 累计器、同分钟身份归并与提交流水线的唯一 state owner 是 owner，
+	// Recorder 只保留 quality 面。flowOverflow/minuteOverflow 仍是 lane 级
+	// 原子计数，owner 的淘汰路径在此增计。
+	pendingBytes    atomic.Int64
+	retiredCap      int
+	pendingCapBytes int64
+	minuteCap       int
+	flowRowCap      int
+	flowRowBytesCap int64
+	admission       atomic.Uint64
+	zeroCh          chan struct{}
+	finalSnapshot   atomic.Pointer[Snapshot]
+	flow            *FlowOwner
 }
 
 func NewRecorder(effectiveMaxInflight int64) (*Recorder, error) {
 	if effectiveMaxInflight <= 0 {
 		return nil, errInvalidMaxInflight
 	}
-	return &Recorder{
+	r := &Recorder{
 		id:                   globalRecorderID.Add(1),
 		effectiveMaxInflight: effectiveMaxInflight,
 		now:                  time.Now,
@@ -430,16 +472,29 @@ func NewRecorder(effectiveMaxInflight int64) (*Recorder, error) {
 		retired:              make([]*Cell, 0),
 		retiredIndex:         make(map[Key]int),
 		pendingQuality:       make(map[int64]map[Key]*QualityMinute),
-		pendingFlow:          make(map[int64]*FlowMinute),
 		retiredCap:           DefaultRetiredCap,
 		pendingCapBytes:      DefaultPendingCapBytes,
 		minuteCap:            DefaultMinuteBucketsCap,
-	}, nil
+		flowRowCap:           DefaultFlowRowCap,
+		flowRowBytesCap:      DefaultPendingCapBytes,
+	}
+	r.flow = newFlowOwner(r)
+	return r, nil
 }
+
+// FlowOwner returns the managed worker exclusively owning this recorder's
+// flow lane: register it (worker.Worker) and publish it (StatsProvider)
+// beside quality-sync; reverse shutdown then closes quality-sync first and
+// the owner second (the refill dependency).
+func (r *Recorder) FlowOwner() *FlowOwner { return r.flow }
 
 func (r *Recorder) EffectiveMaxInflight() int64 { return r.effectiveMaxInflight }
 
 func (r *Recorder) isClosed() bool { return r.admission.Load()&closedBit != 0 }
+
+// finalized is the lock-free fence: closed admission or a stored final
+// snapshot rejects every further enqueue/submit.
+func (r *Recorder) finalized() bool { return r.isClosed() || r.finalSnapshot.Load() != nil }
 
 func (r *Recorder) tryIncAdmission() bool {
 	for {
@@ -465,11 +520,8 @@ func (r *Recorder) decAdmissionAndMaybeSignal() {
 			close(r.zeroCh)
 			r.zeroCh = nil
 		}
-		if r.finalSnapshot.Load() == nil {
-			snap := r.snapshotLocked()
-			r.finalSnapshot.Store(snap)
-		}
 		r.mu.Unlock()
+		r.ensureFinalSnapshot()
 	}
 }
 
@@ -590,15 +642,12 @@ func (r *Recorder) Begin(key Key) *AttemptContext {
 	return &AttemptContext{cell: cell, recorder: r, gen: cell.gen}
 }
 
+// distinctMinuteCountLocked counts quality-lane buckets. The flow lane lives
+// in the FlowOwner with an independent (but identically bounded) budget; the
+// two lanes never evict each other and no request goroutine ever waits on
+// flow reduction.
 func (r *Recorder) distinctMinuteCountLocked() int {
-	set := make(map[int64]struct{})
-	for m := range r.pendingQuality {
-		set[m] = struct{}{}
-	}
-	for m := range r.pendingFlow {
-		set[m] = struct{}{}
-	}
-	return len(set)
+	return len(r.pendingQuality)
 }
 
 func (r *Recorder) tryEvictQualityLocked() bool {
@@ -628,25 +677,6 @@ func (r *Recorder) tryEvictQualityLocked() bool {
 	return true
 }
 
-func (r *Recorder) tryEvictFlowLocked() bool {
-	if len(r.pendingFlow) == 0 {
-		return false
-	}
-	var oldest int64
-	first := true
-	for m := range r.pendingFlow {
-		if first || m < oldest {
-			oldest = m
-			first = false
-		}
-	}
-	delete(r.pendingFlow, oldest)
-	r.pendingBytes.Add(-EstimatedFlowMinuteBytes)
-	r.flowOverflow.Add(1)
-	r.minuteOverflow.Add(1)
-	return true
-}
-
 func (r *Recorder) AddQualityRow(minute int64, key Key) error {
 	return r.EnqueueQualityMinute(NewQualityMinute(minute, key))
 }
@@ -669,7 +699,9 @@ func (r *Recorder) EnqueueQualityMinute(qm *QualityMinute) error {
 // enqueueQualityMinuteLocked stores a canonical absolute quality row. Duplicate
 // (minute, key) rows merge so no counted stats are lost. The conservative fixed
 // charge is validated and eviction pressure applied BEFORE the insert, so an
-// rejected row leaves the pending state untouched (no false drop).
+// rejected row leaves the pending state untouched (no false drop). Quality
+// eviction only frees quality rows: flow minutes are owned by the FlowOwner
+// and evicted on that lane's own pressure.
 func (r *Recorder) enqueueQualityMinuteLocked(qm *QualityMinute) error {
 	if rows, ok := r.pendingQuality[qm.minute]; ok {
 		if existing, ok2 := rows[qm.key]; ok2 {
@@ -682,10 +714,9 @@ func (r *Recorder) enqueueQualityMinuteLocked(qm *QualityMinute) error {
 		return ErrCapacity
 	}
 	_, inQ := r.pendingQuality[qm.minute]
-	_, inF := r.pendingFlow[qm.minute]
-	newMinute := !inQ && !inF
+	newMinute := !inQ
 	for r.pendingBytes.Load()+charge > r.pendingCapBytes || (newMinute && r.distinctMinuteCountLocked() >= r.minuteCap) {
-		if !r.tryEvictQualityLocked() && !r.tryEvictFlowLocked() {
+		if !r.tryEvictQualityLocked() {
 			return ErrCapacity
 		}
 	}
@@ -701,55 +732,22 @@ func (r *Recorder) AddFlowMinute(minute int64, edges [8]int64) error {
 	return r.EnqueueFlowMinute(NewFlowMinute(minute, edges))
 }
 
+// EnqueueFlowMinute delegates the absolute flow-minute merge to the
+// FlowOwner (the sole state owner): the legacy edges/empty-marker forms and
+// the quality-sync failure refill enter the accumulator through this
+// ownership-transfer API, never by aliasing owner maps.
 func (r *Recorder) EnqueueFlowMinute(fm *FlowMinute) error {
 	if fm == nil {
 		return errors.New("nil flow minute")
 	}
-	if r.isClosed() || r.finalSnapshot.Load() != nil {
+	if r.finalized() {
 		return ErrCapacity
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.isClosed() || r.finalSnapshot.Load() != nil {
-		return ErrCapacity
-	}
-	if existing, ok := r.pendingFlow[fm.minute]; ok {
-		switch {
-		case fm.emptySnapshot:
-			// Absolute "nothing for this minute" marker: only meaningful while
-			// the bucket is still empty — conserved rows are never erased by it.
-			if len(existing.flowRows) == 0 {
-				*existing = *fm.Clone()
-			}
-		case len(fm.flowRows) > 0 && len(existing.flowRows) > 0:
-			existing.flowRows = mergeFlowRows(existing.flowRows, fm.flowRows)
-		default:
-			*existing = *fm.Clone()
-		}
-		return nil
-	}
-	charge := int64(EstimatedFlowMinuteBytes)
-	if charge > r.pendingCapBytes {
-		return ErrCapacity
-	}
-	for r.pendingBytes.Load()+charge > r.pendingCapBytes || r.distinctMinuteCountLocked() >= r.minuteCap {
-		if !r.tryEvictQualityLocked() && !r.tryEvictFlowLocked() {
-			return ErrCapacity
-		}
-	}
-	r.pendingFlow[fm.minute] = fm.Clone()
-	r.pendingBytes.Add(charge)
-	return nil
+	return r.flow.enqueue(fm)
 }
 
 func (r *Recorder) FlowMinute(minute int64) (*FlowMinute, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	fm, ok := r.pendingFlow[minute]
-	if !ok {
-		return nil, false
-	}
-	return fm.Clone(), true
+	return r.flow.lookup(minute)
 }
 
 func (r *Recorder) QualityMinute(minute int64, key Key) (*QualityMinute, bool) {
@@ -918,11 +916,21 @@ func (r *Recorder) PinnedRetiredCount() int {
 func (r *Recorder) QualityOverflow() int64 { return r.qualityOverflow.Load() }
 func (r *Recorder) FlowOverflow() int64    { return r.flowOverflow.Load() }
 func (r *Recorder) MinuteOverflow() int64  { return r.minuteOverflow.Load() }
-func (r *Recorder) PendingBytes() int64    { return r.pendingBytes.Load() }
+func (r *Recorder) PendingBytes() int64 {
+	return r.pendingBytes.Load() + r.flow.pendingBytesSnapshot() + r.flow.queuedBytes.Load()
+}
+
+// MinuteBucketCount reports the total distinct pending minute buckets across
+// both lanes (quality under rec.mu, flow under the owner lock — acquired
+// sequentially, never nested).
 func (r *Recorder) MinuteBucketCount() int {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.distinctMinuteCountLocked()
+	q := len(r.pendingQuality)
+	r.mu.Unlock()
+	r.flow.mu.Lock()
+	f := len(r.flow.pending)
+	r.flow.mu.Unlock()
+	return q + f
 }
 func (r *Recorder) PinnedGauge() int64 {
 	r.mu.Lock()
@@ -1014,7 +1022,11 @@ func (r *Recorder) cellQualityMinute(c *Cell, minute int64) *QualityMinute {
 	return qm
 }
 
-func (r *Recorder) snapshotLocked() *Snapshot {
+// snapshotQualityLocked projects the quality lane (pending rows plus the
+// active/retired cell projections). The flow lane is composed separately via
+// the FlowOwner snapshot API — rec.mu and owner.mu are never nested, so
+// snapshotLocked cannot build the Flow map here.
+func (r *Recorder) snapshotQualityLocked() map[int64]map[Key]*QualityMinute {
 	qCopy := make(map[int64]map[Key]*QualityMinute)
 	for m, rows := range r.pendingQuality {
 		cp := make(map[Key]*QualityMinute)
@@ -1022,10 +1034,6 @@ func (r *Recorder) snapshotLocked() *Snapshot {
 			cp[k] = v.Clone()
 		}
 		qCopy[m] = cp
-	}
-	fCopy := make(map[int64]*FlowMinute)
-	for m, v := range r.pendingFlow {
-		fCopy[m] = v.Clone()
 	}
 	minute := r.now().UTC().Truncate(time.Minute).Unix()
 	for _, c := range r.active {
@@ -1061,41 +1069,33 @@ func (r *Recorder) snapshotLocked() *Snapshot {
 			qCopy[minute] = map[Key]*QualityMinute{c.key: qm}
 		}
 	}
-	return &Snapshot{Quality: qCopy, Flow: fCopy}
+	return qCopy
+}
+
+// buildSnapshot composes both lanes with sequential (never nested) locking.
+func (r *Recorder) buildSnapshot() *Snapshot {
+	r.mu.Lock()
+	q := r.snapshotQualityLocked()
+	r.mu.Unlock()
+	return &Snapshot{Quality: q, Flow: r.flow.snapshotAll()}
+}
+
+// ensureFinalSnapshot freezes the final snapshot exactly once (CAS: the
+// first builder wins, late builders are no-ops).
+func (r *Recorder) ensureFinalSnapshot() {
+	if r.finalSnapshot.Load() != nil {
+		return
+	}
+	if err := r.flow.closeSubmitFence(context.Background()); err != nil {
+		return
+	}
+	defer r.flow.submitFence.Unlock()
+	r.finalSnapshot.CompareAndSwap(nil, r.buildSnapshot())
 }
 
 func (r *Recorder) ExportSnapshot() (map[int64]map[Key]*QualityMinute, map[int64]*FlowMinute) {
-	if snap := r.finalSnapshot.Load(); snap != nil {
-		qCopy := make(map[int64]map[Key]*QualityMinute)
-		for m, rows := range snap.Quality {
-			cp := make(map[Key]*QualityMinute)
-			for k, v := range rows {
-				cp[k] = v.Clone()
-			}
-			qCopy[m] = cp
-		}
-		fCopy := make(map[int64]*FlowMinute)
-		for m, v := range snap.Flow {
-			fCopy[m] = v.Clone()
-		}
-		return qCopy, fCopy
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	snap := r.snapshotLocked()
-	qCopy := make(map[int64]map[Key]*QualityMinute)
-	for m, rows := range snap.Quality {
-		cp := make(map[Key]*QualityMinute)
-		for k, v := range rows {
-			cp[k] = v.Clone()
-		}
-		qCopy[m] = cp
-	}
-	fCopy := make(map[int64]*FlowMinute)
-	for m, v := range snap.Flow {
-		fCopy[m] = v.Clone()
-	}
-	return qCopy, fCopy
+	snap := r.Snapshot()
+	return snap.Quality, snap.Flow
 }
 
 // LiveCells returns cloned cumulative totals of all active cells (minute=0
@@ -1116,25 +1116,26 @@ func (r *Recorder) LiveCells() map[Key]*QualityMinute {
 	return out
 }
 
+// Snapshot returns a fully cloned both-lane view: the finalized snapshot is
+// deep-copied on every read, live reads compose quality (rec.mu) and the
+// FlowOwner accumulator (drained first) with sequential locking.
 func (r *Recorder) Snapshot() *Snapshot {
 	if snap := r.finalSnapshot.Load(); snap != nil {
-		qCopy := make(map[int64]map[Key]*QualityMinute)
+		qCopy := make(map[int64]map[Key]*QualityMinute, len(snap.Quality))
 		for m, rows := range snap.Quality {
-			cp := make(map[Key]*QualityMinute)
+			cp := make(map[Key]*QualityMinute, len(rows))
 			for k, v := range rows {
 				cp[k] = v.Clone()
 			}
 			qCopy[m] = cp
 		}
-		fCopy := make(map[int64]*FlowMinute)
+		fCopy := make(map[int64]*FlowMinute, len(snap.Flow))
 		for m, v := range snap.Flow {
 			fCopy[m] = v.Clone()
 		}
 		return &Snapshot{Quality: qCopy, Flow: fCopy}
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.snapshotLocked()
+	return r.buildSnapshot()
 }
 
 func (r *Recorder) Close() error {
@@ -1155,44 +1156,32 @@ func (r *Recorder) CloseWithContext(ctx context.Context) error {
 		return nil
 	}
 	r.mu.Lock()
+	var ch chan struct{}
+	waiting := false
 	if r.admission.Load()&inflightMask == 0 {
-		if r.finalSnapshot.Load() == nil {
-			snap := r.snapshotLocked()
-			r.finalSnapshot.Store(snap)
-		}
 		if r.zeroCh != nil {
 			close(r.zeroCh)
 			r.zeroCh = nil
 		}
-		r.mu.Unlock()
-		return nil
-	}
-	if r.zeroCh == nil {
-		r.zeroCh = make(chan struct{})
-	}
-	ch := r.zeroCh
-	if r.admission.Load()&inflightMask == 0 {
-		if r.finalSnapshot.Load() == nil {
-			snap := r.snapshotLocked()
-			r.finalSnapshot.Store(snap)
+	} else {
+		if r.zeroCh == nil {
+			r.zeroCh = make(chan struct{})
 		}
-		close(ch)
-		r.zeroCh = nil
-		r.mu.Unlock()
-		return nil
+		ch = r.zeroCh
+		waiting = true
 	}
 	r.mu.Unlock()
-	select {
-	case <-ch:
-	case <-ctx.Done():
-		return ctx.Err()
+	if waiting {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	r.mu.Lock()
-	if r.finalSnapshot.Load() == nil {
-		snap := r.snapshotLocked()
-		r.finalSnapshot.Store(snap)
-	}
-	r.mu.Unlock()
+	// Finalization runs after the last lock release: buildSnapshot takes the
+	// owner lock, so it must not be nested under r.mu. A racing inflight
+	// zero-crossing calls ensureFinalSnapshot too; the CAS keeps one winner.
+	r.ensureFinalSnapshot()
 	return nil
 }
 
@@ -1226,11 +1215,8 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 				close(r.zeroCh)
 				r.zeroCh = nil
 			}
-			if r.finalSnapshot.Load() == nil {
-				snap := r.snapshotLocked()
-				r.finalSnapshot.Store(snap)
-			}
 			r.mu.Unlock()
+			r.ensureFinalSnapshot()
 		}
 		if c.isRetired() && c.isReclaimable() {
 			r.mu.Lock()
@@ -1294,11 +1280,8 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 			close(r.zeroCh)
 			r.zeroCh = nil
 		}
-		if r.finalSnapshot.Load() == nil {
-			snap := r.snapshotLocked()
-			r.finalSnapshot.Store(snap)
-		}
 		r.mu.Unlock()
+		r.ensureFinalSnapshot()
 	}
 	if c.isRetired() && c.isReclaimable() {
 		r.mu.Lock()
@@ -1340,11 +1323,8 @@ func (a *AttemptContext) Cancel() {
 			close(a.recorder.zeroCh)
 			a.recorder.zeroCh = nil
 		}
-		if a.recorder.finalSnapshot.Load() == nil {
-			snap := a.recorder.snapshotLocked()
-			a.recorder.finalSnapshot.Store(snap)
-		}
 		a.recorder.mu.Unlock()
+		a.recorder.ensureFinalSnapshot()
 	}
 	if a.cell.isRetired() && a.cell.isReclaimable() {
 		a.recorder.mu.Lock()
