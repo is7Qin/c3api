@@ -370,7 +370,7 @@ func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecisi
 				out := make([]CompiledCandidate, 0, len(in))
 				for _, candidate := range in {
 					if account, ok := cur.static.byID[candidate.AccountID]; ok && account != nil {
-						facts := buildCandidateFacts([]*accountSnapshot{account}, routeKey{format: domain.RequestFormat(route.Format), model: route.Model}, domain.OperationTag(route.OperationTag))
+						facts := buildCandidateFacts([]*accountSnapshot{account}, cur.static.facts, routeKey{format: domain.RequestFormat(route.Format), model: route.Model}, domain.OperationTag(route.OperationTag))
 						out = append(out, compileCandidate(facts[0], lane))
 					} else {
 						candidate.Lane = lane

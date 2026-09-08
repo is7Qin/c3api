@@ -97,8 +97,8 @@ func TestCompiledCandidateOwnershipDoesNotCrossRoutesOrStaticRoots(t *testing.T)
 	leaves := []*accountSnapshot{byID[1], byID[2], byID[3]}
 	rk := routeKey{format: domain.FormatOpenAIChat, model: "gpt-4o"}
 	op := domain.OpChatCompletions
-	run1 := buildCandidateFacts(leaves, rk, op)
-	run2 := buildCandidateFacts(leaves, rk, op)
+	run1 := buildCandidateFacts(leaves, sv.facts, rk, op)
+	run2 := buildCandidateFacts(leaves, sv.facts, rk, op)
 	require.Len(t, run1, 3)
 	for i := range run1 {
 		require.Equal(t, run1[i].fingerprint, run2[i].fingerprint)
@@ -119,10 +119,10 @@ func TestCompiledCandidateOwnershipDoesNotCrossRoutesOrStaticRoots(t *testing.T)
 
 	// Route-specific values stay distinct: alternate model, alternate
 	// operation, and the explicit mapping only affect their own route.
-	otherModel := buildCandidateFacts(leaves, routeKey{format: domain.FormatOpenAIChat, model: "other-model"}, op)
+	otherModel := buildCandidateFacts(leaves, sv.facts, routeKey{format: domain.FormatOpenAIChat, model: "other-model"}, op)
 	require.NotEqual(t, run1[0].mappedModel, otherModel[0].mappedModel)
 	require.NotEqual(t, run1[0].quality, otherModel[0].quality)
-	otherOp := buildCandidateFacts(leaves, rk, domain.OpResponses)
+	otherOp := buildCandidateFacts(leaves, sv.facts, rk, domain.OpResponses)
 	require.NotEqual(t, run1[0].quality, otherOp[0].quality)
 	require.Equal(t, run1[0].identityFingerprint, otherOp[0].identityFingerprint)
 	require.Equal(t, "upstream-gpt-4o", run1[2].mappedModel)
