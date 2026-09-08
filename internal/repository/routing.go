@@ -578,7 +578,29 @@ func (r *PartitionRepo) RollupQuality(ctx context.Context, bucket time.Time, ver
 		return fmt.Errorf("no facts for rollup")
 	}
 	if err := drv.Exec(ctx, `INSERT INTO routing_quality_rollup (identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
-	SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, now() FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2
+	WITH grouped AS (
+		SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute,
+			MAX(absolute_sequence) AS absolute_sequence,
+			SUM(attempts) AS attempts, SUM(successes) AS successes,
+			SUM(count_429) AS count_429, SUM(count_ordinary_4xx) AS count_ordinary_4xx,
+			SUM(count_5xx) AS count_5xx, SUM(count_network) AS count_network,
+			SUM(ttft_n) AS ttft_n, SUM(ttft_sum_log_q32) AS ttft_sum_log_q32,
+			SUM(ttft_sumsq_log_q32) AS ttft_sumsq_log_q32,
+			array_agg(ttft_hist) AS hist_rows,
+			SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+			SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_create_tokens) AS cache_create_tokens,
+			SUM(calls) AS calls, SUM(images) AS images
+		FROM routing_quality_instance_minute
+		WHERE bucket_minute=$1 AND identity_version=$2
+		GROUP BY identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute
+	)
+	SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute,
+		attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network,
+		ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32,
+		ARRAY(SELECT COALESCE(SUM(v), 0) FROM unnest(hist_rows) WITH ORDINALITY AS bins(v, ord)
+			GROUP BY ((ord - 1) % 10) ORDER BY ((ord - 1) % 10)),
+		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, now()
+	FROM grouped
 	ON CONFLICT (bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version) DO UPDATE SET attempts=EXCLUDED.attempts, successes=EXCLUDED.successes, count_429=EXCLUDED.count_429, count_ordinary_4xx=EXCLUDED.count_ordinary_4xx, count_5xx=EXCLUDED.count_5xx, count_network=EXCLUDED.count_network, ttft_n=EXCLUDED.ttft_n, ttft_sum_log_q32=EXCLUDED.ttft_sum_log_q32, ttft_sumsq_log_q32=EXCLUDED.ttft_sumsq_log_q32, ttft_hist=EXCLUDED.ttft_hist, input_tokens=EXCLUDED.input_tokens, output_tokens=EXCLUDED.output_tokens, cache_read_tokens=EXCLUDED.cache_read_tokens, cache_create_tokens=EXCLUDED.cache_create_tokens, calls=EXCLUDED.calls, images=EXCLUDED.images, updated_at=now()`, []any{bucket, version}, &res); err != nil {
 		return err
 	}
