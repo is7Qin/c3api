@@ -169,3 +169,34 @@ func TestRegression_PGChunkConstraintOnlyPoisonRowDropped(t *testing.T) {
 	require.Equal(t, 0, rem, "poison row dropped, good row persisted, no refill of poison")
 	require.Equal(t, 1, len(pg.quality))
 }
+
+func TestRegression_PGChunkMiddlePoisonDoesNotDuplicatePrefix(t *testing.T) {
+	// Given: a sequential writer persists the first row, then rejects the
+	// middle row as poison, while the final row is valid.
+	_, rdb := newMiniRedis(t)
+	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	pg := newPgRowFake()
+	k1 := keyOf(fpByte(95), qcByte(95))
+	k2 := keyOf(fpByte(96), qcByte(96))
+	k3 := keyOf(fpByte(97), qcByte(97))
+	pg.rowErr[string(k2.Fingerprint[:])] = &pgconn.PgError{Code: "23514", Message: "check constraint fails"}
+	rec, err := NewRecorder(50000)
+	require.NoError(t, err)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "regress-middle-poison", BatchSize: 10}, nil)
+	w.SetClock(func() time.Time { return fixed })
+	for i, k := range []Key{k1, k2, k3} {
+		qm := NewQualityMinute(fixed.Unix(), k)
+		qm.SetAttempts(int64(i + 1))
+		require.NoError(t, rec.EnqueueQualityMinute(qm))
+	}
+
+	// When: the whole batch is flushed and the poison row is isolated.
+	w.doPG(context.Background())
+
+	// Then: each valid row is persisted exactly once and the poison row is
+	// dropped without being refilled.
+	require.Equal(t, int64(1), w.poison.Load())
+	require.Len(t, pg.quality, 2)
+	attempts := []int64{pg.quality[0].Attempts, pg.quality[1].Attempts}
+	require.ElementsMatch(t, []int64{1, 3}, attempts)
+}
