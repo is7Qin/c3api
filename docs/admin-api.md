@@ -969,7 +969,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 | `GET /api/admin/routing/frontier?route=<64hex>&from&to&limit` | 质量-成本前沿（窗口 rollup × 当前计划候选连接）：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本，Pareto 前沿标记；窗口 ≤90 天，limit ≤200（超出钳制） |
 | `GET /api/admin/routing/flow?route=<64hex>&from&to` | 路由 flow 聚合（Sankey 数据）：RouteClass → (ordinal, lane) → Account → Outcome 完整链边，按 terminal_at 归属；窗口 ≤90 天 |
 
-**缓存亲和（请求级软亲和，非硬钉位）**：请求携带 `prompt_cache_key` / `conversation_id` / `session_id`（按此优先级取首个非空字符串；REST 面单遍提体扫描、responses-ws 从首帧提取，search 不参与）时，键值经 FNV-1a 哈希在一致性哈希环（每域 32 虚拟节点）上定位属主缓存域，计划内属主域候选整体前置、其余候选按原相对顺序顺延——候选集合与 1–8 次尝试上界不变。账号 `cache_domain` 相同 = 共享域（互相亲和命中），`null` = 账号私有域（仅自身可被亲和命中）。无亲和键 = 严格按计划编译原序执行。跨轮次硬续聊钉位（continuation pinning）尚未合入，本文档不作声明。
+**缓存亲和（请求级软亲和，非硬钉位）**：请求携带 `prompt_cache_key` / `conversation_id` / `session_id`（按此优先级取首个非空字符串；REST 面单遍提体扫描、responses-ws 从首帧提取，search 不参与）时，键值经 FNV-1a 哈希在一致性哈希环（每域 32 虚拟节点）上定位属主缓存域，计划内属主域候选整体前置、其余候选按原相对顺序顺延——候选集合与 1–8 次尝试上界不变。账号 `cache_domain` 相同 = 共享域（互相亲和命中），`null` = 账号私有域（仅自身可被亲和命中）。无亲和键 = 严格按计划编译原序执行。跨轮次硬续聊钉位（continuation pinning）见对应 continuation 接口与行为约束。
 
 flow 守恒与丢失口径（三者独立，不得混为上游失败）：`incomplete_chain_dropped` = 本进程已观察 cleanup 缺 terminal；`flow_overflow_dropped_chains` = 故障预算淘汰链；`process_crash_loss_unobservable` 恒 `true`（硬崩缺口不可量化）。
 
