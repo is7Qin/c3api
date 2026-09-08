@@ -61,9 +61,9 @@ func TestRoutingCompilerModelOperationSeparation(t *testing.T) {
 	require.True(t, ok)
 	respDec, ok := view.routes[rrResp]
 	require.True(t, ok)
-	require.Contains(t, chatDec.Primary, int64(1))
-	require.Contains(t, respDec.Primary, int64(2))
-	require.NotEqual(t, chatDec.Primary, respDec.Primary, "operation separation must give different Primary")
+	require.Contains(t, compiledAccountIDs(chatDec.Primary), int64(1))
+	require.Contains(t, compiledAccountIDs(respDec.Primary), int64(2))
+	require.NotEqual(t, compiledAccountIDs(chatDec.Primary), compiledAccountIDs(respDec.Primary), "operation separation must give different Primary")
 }
 
 func TestRoutingCompilerCandidateFingerprintSeparation(t *testing.T) {
@@ -95,8 +95,8 @@ func TestRoutingCompilerCandidateFingerprintSeparation(t *testing.T) {
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	require.Contains(t, rd.Primary, int64(1))
-	require.Contains(t, rd.Degraded, int64(2))
+	require.Contains(t, compiledAccountIDs(rd.Primary), int64(1))
+	require.Contains(t, compiledAccountIDs(rd.Degraded), int64(2))
 	// Ensure swapping fingerprint keys swaps classification
 	qSwap := make(map[CandidateQualityKey]CandidateQualityInput)
 	for _, a := range []*domain.Account{a1, a2} {
@@ -113,8 +113,8 @@ func TestRoutingCompilerCandidateFingerprintSeparation(t *testing.T) {
 	require.NoError(t, err)
 	rd2, ok := view2.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	require.Contains(t, rd2.Primary, int64(2))
-	require.Contains(t, rd2.Degraded, int64(1))
+	require.Contains(t, compiledAccountIDs(rd2.Primary), int64(2))
+	require.Contains(t, compiledAccountIDs(rd2.Degraded), int64(1))
 }
 
 func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
@@ -135,8 +135,8 @@ func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	all := append(append([]int64{}, rd.Primary...), rd.Explore.IDs...)
-	all = append(all, rd.Degraded...)
+	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
+	all = append(all, compiledAccountIDs(rd.Degraded)...)
 	require.NotContains(t, all, int64(2))
 	require.Contains(t, all, int64(1))
 	// Mismatched revision: health entry for rev 99 (stale) with OPEN should still fail closed per spec -> exclude
@@ -146,8 +146,8 @@ func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
 	require.NoError(t, err)
 	rd2, ok := view2.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	all2 := append(append([]int64{}, rd2.Primary...), rd2.Explore.IDs...)
-	all2 = append(all2, rd2.Degraded...)
+	all2 := append(append([]int64{}, compiledAccountIDs(rd2.Primary)...), compiledAccountIDs(rd2.Explore.Ordered)...)
+	all2 = append(all2, compiledAccountIDs(rd2.Degraded)...)
 	// fail-closed means stale rev OPEN still excludes account 1
 	require.NotContains(t, all2, int64(1), "stale revision mismatch must fail closed")
 	// Latch fencing: exact fingerprint+rev latched should exclude
@@ -157,8 +157,8 @@ func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
 	require.NoError(t, err)
 	rd3, ok := view3.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	all3 := append(append([]int64{}, rd3.Primary...), rd3.Explore.IDs...)
-	all3 = append(all3, rd3.Degraded...)
+	all3 := append(append([]int64{}, compiledAccountIDs(rd3.Primary)...), compiledAccountIDs(rd3.Explore.Ordered)...)
+	all3 = append(all3, compiledAccountIDs(rd3.Degraded)...)
 	require.NotContains(t, all3, int64(1))
 	// Latch mismatch rev should also fail closed
 	lkStale := LatchKey{AccountID: 1, Fingerprint: lk.Fingerprint, Revision: 99}
@@ -167,8 +167,8 @@ func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
 	require.NoError(t, err)
 	rd4, ok := view4.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	all4 := append(append([]int64{}, rd4.Primary...), rd4.Explore.IDs...)
-	all4 = append(all4, rd4.Degraded...)
+	all4 := append(append([]int64{}, compiledAccountIDs(rd4.Primary)...), compiledAccountIDs(rd4.Explore.Ordered)...)
+	all4 = append(all4, compiledAccountIDs(rd4.Degraded)...)
 	require.NotContains(t, all4, int64(1), "stale latch rev mismatch must fail closed")
 }
 
@@ -193,8 +193,8 @@ func TestRoutingCompilerZeroMultiplierUnion(t *testing.T) {
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	all := append(append([]int64{}, rd.Primary...), rd.Explore.IDs...)
-	all = append(all, rd.Degraded...)
+	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
+	all = append(all, compiledAccountIDs(rd.Degraded)...)
 	require.ElementsMatch(t, []int64{1, 2, 3}, all, "zero-multiplier accounts must be in union")
 }
 
@@ -219,8 +219,8 @@ func TestRoutingCompilerOverflowUnionNotTruncated(t *testing.T) {
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	all := append(append([]int64{}, rd.Primary...), rd.Explore.IDs...)
-	all = append(all, rd.Degraded...)
+	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
+	all = append(all, compiledAccountIDs(rd.Degraded)...)
 	require.Len(t, all, 10)
 	require.ElementsMatch(t, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, all)
 }
@@ -238,15 +238,15 @@ func TestRoutingCompilerImmutabilityDeep(t *testing.T) {
 	require.NoError(t, err)
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	// mutate underlying slices/maps should not affect other views
-	primaryCopy := append([]int64(nil), view.routes[rr].Primary...)
-	view.routes[rr].Primary = append(view.routes[rr].Primary, 999)
+	primaryCopy := compiledAccountIDs(view.routes[rr].Primary)
+	view.routes[rr].Primary = append(view.routes[rr].Primary, CompiledCandidate{AccountID: 999})
 	view.routes[rr].Explore.Weights[999] = 100
-	view.routes[rr].Explore.IDs = append(view.routes[rr].Explore.IDs, 999)
+	view.routes[rr].Explore.Ordered = append(view.routes[rr].Explore.Ordered, CompiledCandidate{AccountID: 999})
 	view2, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
-	require.Equal(t, primaryCopy, view2.routes[rr].Primary)
-	require.NotContains(t, view2.routes[rr].Explore.IDs, int64(999))
-	require.NotContains(t, view2.routes[rr].Primary, int64(999))
+	require.Equal(t, primaryCopy, compiledAccountIDs(view2.routes[rr].Primary))
+	require.NotContains(t, compiledAccountIDs(view2.routes[rr].Explore.Ordered), int64(999))
+	require.NotContains(t, compiledAccountIDs(view2.routes[rr].Primary), int64(999))
 }
 
 func TestRoutingCompilerRouteRefCollisions(t *testing.T) {
