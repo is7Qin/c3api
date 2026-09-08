@@ -132,6 +132,28 @@ func TestFailAccountMarkResultGuard(t *testing.T) {
 	require.Equal(t, domain.StatusDisabled, ri.Status, "快照保持 disabled")
 }
 
+func TestMarkResultFailAccountUsesLifecycleRevision(t *testing.T) {
+	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
+	store := &fakeRuleStore{rules: map[int64]domain.Rule{
+		1: {ID: 1, Name: "fail-5xx", Enabled: true, Priority: 1,
+			When: domain.RuleWhen{Kind: strPtr("5xx")},
+			Then: domain.RuleThen{FailAccount: true}},
+	}, next: 2}
+	re := rule.New(rule.Config{}, store, nil)
+	require.NoError(t, re.Reload(context.Background()))
+	s := New(testCfg(), m, re, nil)
+	require.NoError(t, s.reload(context.Background()))
+	wireSources(s, nil, nil)
+	re.SetHealthSink(NewHealthControllerWithScheduler(nil, s))
+
+	s.MarkResult(1, rule.Kind5xx, nil, 500, "boom", "m")
+	s.FlushRules()
+
+	runtime, ok := s.Runtime(1)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusDisabled, runtime.Status, "fail_account must receive the current lifecycle revision")
+}
+
 // TestFailAccountQueuedEventsBeforeFailure 入队在先防复活：规则事件在失效置位
 // **之前**已入队（MarkResult 时账号仍 active，守卫放行）→ FailAccount 置 disabled
 // → FlushRules 消费入队事件。typed throttle 动作落 RuntimeHealth（非 accState
