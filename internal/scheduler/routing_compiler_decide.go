@@ -35,7 +35,7 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 			avgCr := AvgTokens(crTok, int64(cnt.Successes))
 			avgCc := AvgTokens(ccTok, int64(cnt.Successes))
 			raw := billing.CostFromResolved(price, avgIn, avgOut, avgCr, avgCc)
-			mult := facts.static.acc.UpstreamCostMultiplierBp
+			mult := facts.upstreamCostMultiplierBp
 			if mult < 0 {
 				mult = 0
 			}

@@ -101,7 +101,11 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 								gate.markFailed()
 								contErr = ferr
 							} else {
-								gate.release() // ACK 已回：缓冲帧此刻才对客户端可见
+								// ACK 已回：缓冲帧此刻才对客户端可见。
+								if err := gate.release(); err != nil {
+									gate.markFailed()
+									contErr = errContUnavailable
+								}
 							}
 						}
 					}
@@ -176,7 +180,9 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		}
 		if gate.notReleased() {
 			// 流正常结束但无 id 帧（无可续接身份）：缓冲字节安全放出。
-			gate.release()
+			if err := gate.release(); err != nil {
+				contErr = errContUnavailable
+			}
 		}
 		out := base
 		out.Result = ResultSuccess
