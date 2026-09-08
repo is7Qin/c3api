@@ -80,7 +80,7 @@ type RollupWorker struct {
 	started atomic.Bool
 	lifeMu  sync.Mutex
 	cancel  context.CancelFunc
-	done    chan struct{}
+	done    <-chan struct{}
 
 	mu    sync.Mutex
 	stats RollupStats
@@ -106,11 +106,7 @@ func (w *RollupWorker) Start(ctx context.Context) error {
 	}
 	loopCtx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
-	w.done = make(chan struct{})
-	go func() {
-		defer close(w.done)
-		worker.Loop(loopCtx, "routing-rollup", w.log, w.loop)
-	}()
+	w.done = worker.GoLoop(loopCtx, "routing-rollup", w.log, w.loop)
 	return nil
 }
 
