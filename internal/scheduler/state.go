@@ -42,6 +42,7 @@ type sharedRuntime struct {
 }
 
 type accountSnapshot struct {
+	accountID int64
 	// static 静态字段视图——不可变原子发布；重建 copy-modify-Store，
 	// 热路径 Load 一次取用（评审 Critical 修复：静态字段读全部经视图，杜绝
 	// 与重建写并发的数据竞态）。发布后永不原地突变；变更账号分配全新 leaf，
@@ -53,7 +54,7 @@ type accountSnapshot struct {
 func newAccountSnapshot(av *snapshotStatic, st *accState) *accountSnapshot {
 	rt := &sharedRuntime{}
 	rt.state.Store(st)
-	as := &accountSnapshot{runtime: rt}
+	as := &accountSnapshot{accountID: av.acc.ID, runtime: rt}
 	as.static.Store(av)
 	return as
 }

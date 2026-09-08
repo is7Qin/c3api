@@ -63,7 +63,7 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 			ops := operationTagsForFormat(rk.format)
 			for _, op := range ops {
 				rr := canonicalRouteRefWithOp(gid, rk, op)
-				candidates := fullCandidateUnion(gs, rk)
+				candidates := fullCandidateUnion(gs, in.Static.facts, rk)
 				facts := buildCandidateFacts(candidates, in.Static.facts, rk, op)
 				filtered := filterCandidates(facts, in.Health, in.Latched)
 				if len(filtered) == 0 {
