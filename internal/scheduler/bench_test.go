@@ -6,7 +6,11 @@ package scheduler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"runtime"
+	"sort"
 	"testing"
 	"time"
 	"unsafe"
@@ -183,6 +187,9 @@ func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {
 var (
 	benchmarkUsageModel    string
 	benchmarkResponseModel string
+	// benchmarkCompiledRoutes sinks the compiled route count so the
+	// 5000-account compiler benchmark cannot be dead-code eliminated.
+	benchmarkCompiledRoutes int
 )
 
 // 5000 账号快照（压测场景复现）：Select 单次耗时对照（O(1) 序列取用）。
@@ -235,4 +242,119 @@ func schedulerWithAccounts(tb testing.TB, n int, mapping domain.ModelMapping) *S
 	wireSources(s, nil, nil)
 	s.compileOnce()
 	return s
+}
+
+// BenchmarkCompile5000Accounts compiles the fixed 5000-account fixture
+// (one group, one template, fixed model, nil quality/health/latch/prices)
+// against the same immutable static root every iteration. Setup stays
+// outside the timer; only RoutingCompiler.Compile is measured.
+func BenchmarkCompile5000Accounts(b *testing.B) {
+	s := schedulerWithAccounts(b, 5000, domain.ModelMapping{})
+	sv := s.View().StaticView()
+	if sv == nil {
+		b.Fatal("missing static view")
+	}
+	c := NewRoutingCompiler()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		dv, err := c.Compile(CompilerInputs{Static: sv})
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchmarkCompiledRoutes = len(dv.routes)
+	}
+}
+
+// hashCompilerFixture hashes the fixed compiler fixture: sorted account ID,
+// template ID, template base URL, credential type, lifecycle revision,
+// enabled byte 0|1, model count plus each model length+bytes, format count
+// plus each format length+bytes. Integers use binary.AppendUvarint; strings
+// use uvarint byte length; nil strings use zero length.
+func hashCompilerFixture(s *Scheduler) (string, int) {
+	sv := s.View().StaticView()
+	if sv == nil {
+		return "", 0
+	}
+	ids := make([]int64, 0, len(sv.byID))
+	for id := range sv.byID {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var buf []byte
+	appendHashStr := func(str string) {
+		buf = binary.AppendUvarint(buf, uint64(len(str)))
+		buf = append(buf, str...)
+	}
+	for _, id := range ids {
+		as := sv.byID[id]
+		if as == nil {
+			continue
+		}
+		st := as.static.Load()
+		if st == nil {
+			continue
+		}
+		acc := st.acc
+		buf = binary.AppendUvarint(buf, uint64(acc.ID))
+		buf = binary.AppendUvarint(buf, uint64(acc.TemplateID))
+		if st.tpl != nil {
+			appendHashStr(st.tpl.BaseURL)
+			appendHashStr(string(st.tpl.CredentialType))
+		} else {
+			appendHashStr("")
+			appendHashStr("")
+		}
+		buf = binary.AppendUvarint(buf, uint64(acc.LifecycleRevision))
+		if acc.Enabled {
+			buf = append(buf, 1)
+		} else {
+			buf = append(buf, 0)
+		}
+		if st.tpl != nil {
+			buf = binary.AppendUvarint(buf, uint64(len(st.tpl.Models)))
+			for _, m := range st.tpl.Models {
+				appendHashStr(m)
+			}
+			buf = binary.AppendUvarint(buf, uint64(len(st.tpl.SupportedFormats)))
+			for _, f := range st.tpl.SupportedFormats {
+				appendHashStr(string(f))
+			}
+		} else {
+			buf = binary.AppendUvarint(buf, 0)
+			buf = binary.AppendUvarint(buf, 0)
+		}
+	}
+	sum := sha256.Sum256(buf)
+	return hex.EncodeToString(sum[:]), len(ids)
+}
+
+func TestCompilerFixtureHashStable(t *testing.T) {
+	first := schedulerWithAccounts(t, 5000, domain.ModelMapping{})
+	second := schedulerWithAccounts(t, 5000, domain.ModelMapping{})
+
+	firstSum, firstCount := hashCompilerFixture(first)
+	secondSum, secondCount := hashCompilerFixture(second)
+
+	require.Equal(t, 5000, firstCount)
+	require.Equal(t, 5000, secondCount)
+	require.Equal(t, firstSum, secondSum)
+	t.Logf("compiler_fixture sha256=%s accounts=%d", firstSum, firstCount)
+}
+
+func TestCompilerFixtureHashRejectsMutation(t *testing.T) {
+	s := schedulerWithAccounts(t, 5000, domain.ModelMapping{})
+	before, _ := hashCompilerFixture(s)
+
+	snap, ok := s.View().Account(1)
+	require.True(t, ok)
+	st := snap.static.Load()
+	require.NotNil(t, st)
+	mutated := *st
+	mutated.acc.LifecycleRevision++
+	snap.static.Store(&mutated)
+
+	after, _ := hashCompilerFixture(s)
+	require.NotEqual(t, before, after)
+	t.Logf("fixture_sha256_mismatch before=%s after=%s", before, after)
 }
