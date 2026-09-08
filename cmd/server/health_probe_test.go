@@ -66,15 +66,17 @@ func TestHealthProbeRevisionFenceFailClosed(t *testing.T) {
 		7: probeAcc(7, ant, 5, "http://unused.invalid"),
 	}), codex, http.DefaultClient)
 
-	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 9, Quality: "*", Revision: 1}),
+	err := fn(context.Background(), scheduler.HealthKey{AccountID: 9, Quality: "*", Revision: 1})
+	require.ErrorIs(t, err, scheduler.ErrProbeStaleRevision,
 		"missing account must fail closed")
-	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 4}),
+	err = fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 4})
+	require.ErrorIs(t, err, scheduler.ErrProbeStaleRevision,
 		"stale revision must fail closed")
 	require.Zero(t, codex.calls)
 }
 
 // TestHealthProbeAPIKeyUsesBareRootModelsGET：api_key 族探测 = GET {base}/v1/models
-//（base_url 裸根契约 + openai 族补 /v1，aiclient 同款），鉴权 = Bearer；2xx 即健康。
+// （base_url 裸根契约 + openai 族补 /v1，aiclient 同款），鉴权 = Bearer；2xx 即健康。
 func TestHealthProbeAPIKeyUsesBareRootModelsGET(t *testing.T) {
 	var gotPath, gotAuth, gotMethod string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

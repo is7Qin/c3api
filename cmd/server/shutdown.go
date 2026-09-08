@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/redisx"
 )
+
+const qualityRecorderCloseBudget = time.Second
 
 // shutdownTail 优雅停机尾部（顺序契约：worker 反向排空 → quality recorder
 // 终态快照 → Redis 客户端释放 → 终态日志）。独立成函数：让"排空失败"成为
@@ -36,7 +39,9 @@ func shutdownTail(shutdownCtx context.Context, wm *worker.Manager, qualityRecord
 	drainErr := wm.Shutdown(shutdownCtx)
 	// recorder 收尾必须在 wm.Shutdown 之后：排空失败时 final snapshot 如实
 	// 保留未落库 pending——这不是成功排空的终态。
-	if err := qualityRecorder.CloseWithContext(shutdownCtx); err != nil {
+	recorderCtx, cancelRecorder := context.WithTimeout(context.WithoutCancel(shutdownCtx), qualityRecorderCloseBudget)
+	defer cancelRecorder()
+	if err := qualityRecorder.CloseWithContext(recorderCtx); err != nil {
 		log.Warn("quality recorder close failed", logx.Error(err))
 	}
 	// Redis 客户端最后释放（foundation spec §2.3：worker 排空完成后再关连接

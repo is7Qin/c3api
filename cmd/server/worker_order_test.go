@@ -163,7 +163,11 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 	mustBefore("warningWorker", "billingWorker")
 	mustBefore("billingWorker", "rec")
 	mustBefore("rec", "errlogW")
-	business := []string{"mailW", "warningWorker", "billingWorker", "inv", "sched", "ruleEngine", "rec", "errlogW", "pricingSync", "retention", "statsAgg", "concSync", "accConcSync"}
+	// async-routing-quality-telemetry: the flow owner is registered BEFORE
+	// quality-sync so reverse shutdown closes quality-sync first (its failed
+	// flush may still refill the owner) and the owner second.
+	mustBefore("qualityFlowOwner", "qualitySync")
+	business := []string{"mailW", "warningWorker", "billingWorker", "inv", "sched", "ruleEngine", "rec", "errlogW", "pricingSync", "retention", "statsAgg", "qualityFlowOwner", "qualitySync", "routingRollup", "concSync", "accConcSync"}
 	for _, b := range business {
 		mustBefore(b, "disco")
 	}

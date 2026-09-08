@@ -492,6 +492,13 @@ func main() {
 		fatalf("quality: %v", err)
 	}
 	px.SetQualityRecorder(qualityRecorder)
+	// quality-flow-owner（async-routing-quality-telemetry）：跨请求 flow 累计器
+	// 的唯一 state owner。请求结算只做一次不可变非阻塞 Submit，同分钟身份归并
+	// 全部离开请求 goroutine（owner 循环 / sync 消费侧）。注册必须先于
+	// qualitySync：反向排空先关 quality-sync（其失败 refill 需要 owner 仍开），
+	// 后关 owner（停提交 + 排空队列 + residual 可见）。owner 溢出只是遥测丢失，
+	// 不触碰 HTTP/failover/健康/配额/usage/计费。
+	qualityFlowOwner := qualityRecorder.FlowOwner()
 	// instanceSrc 与 discovery/conc-sync 同源产物（不自造第二套 ID）：跨实例
 	// merge 按 instance_src 区分，同源身份是 merge 正确性的前提。
 	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log)
@@ -529,7 +536,7 @@ func main() {
 		billingWorker = billFlusher
 	}
 	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker,
-		inv, sched, ruleEngine, retryWorker, runtimeHealth, rec, errlogW, pricingSync, retention, statsAgg, qualitySync, routingRollup)
+		inv, sched, ruleEngine, retryWorker, runtimeHealth, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync, routingRollup)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
 	// G2-3（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的

@@ -54,7 +54,7 @@ func (p *healthProber) probe(ctx context.Context, key scheduler.HealthKey) error
 	if !ok || acct.LifecycleRevision != key.Revision {
 		// 视图缺失（已删/未同步）或 revision 错配——fail-closed：探测失败
 		// → probeTick 重开记录，stale PROBING 不可能经错配 probe 变 READY。
-		return fmt.Errorf("health probe: account %d not healthy-routable at revision %d", key.AccountID, key.Revision)
+		return fmt.Errorf("%w: account %d not healthy-routable at revision %d", scheduler.ErrProbeStaleRevision, key.AccountID, key.Revision)
 	}
 	tpl := acct.Template
 	if tpl == nil {
