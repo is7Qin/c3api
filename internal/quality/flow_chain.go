@@ -149,7 +149,7 @@ func (c *FlowChain) Append(d FlowDispatch) error {
 		Ordinal:              int16(d.Ordinal),
 		Lane:                 d.Lane,
 		AccountID:            d.AccountID,
-		PreviousAccountID:    d.PreviousAccountID,
+		PreviousAccountID:    cloneInt64Pointer(d.PreviousAccountID),
 		PreviousOutcome:      d.PreviousOutcome,
 		TransitionReason:     d.TransitionReason,
 		Outcome:              d.Outcome,
@@ -193,98 +193,4 @@ func (c *FlowChain) TerminalMinute() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.terminalMinute
-}
-
-func (c *FlowChain) Complete() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.completed {
-		return errors.New("already completed")
-	}
-	if c.closed {
-		return ErrFlowChainAlreadyClosed
-	}
-	if !c.hasTerminal {
-		return ErrFlowChainNotTerminal
-	}
-	if c.count == 0 {
-		return errors.New("empty chain")
-	}
-	termCount := 0
-	for i := 0; i < c.count; i++ {
-		if c.rows[i].IsTerminal {
-			termCount++
-			if i != c.count-1 {
-				return errors.New("terminal must be last")
-			}
-		}
-	}
-	if termCount != 1 {
-		return errors.New("exactly one terminal required")
-	}
-	if c.recorder == nil {
-		return errors.New("no recorder")
-	}
-	rows := make([]repository.RoutingFlowRow, c.count)
-	for i := 0; i < c.count; i++ {
-		r := c.rows[i]
-		r.TerminalMinute = time.Unix(c.terminalMinute, 0).UTC()
-		r.IdentityVersion = int16(domain.RoutingIdentityVersion)
-		rows[i] = r
-	}
-	fm := NewFlowSnapshot(c.terminalMinute, rows)
-	if err := c.recorder.EnqueueFlowMinute(fm); err != nil {
-		if errors.Is(err, ErrCapacity) {
-			flowChainEnqueueOverflow.Add(1)
-		}
-		return err
-	}
-	c.completed = true
-	return nil
-}
-
-func (c *FlowChain) Finalize() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.completed {
-		return errors.New("already completed")
-	}
-	if c.closed {
-		return ErrFlowChainAlreadyClosed
-	}
-	if c.count == 0 {
-		return ErrFlowChainNotTerminal
-	}
-	if !c.hasTerminal {
-		c.rows[c.count-1].IsTerminal = true
-		c.meta[c.count-1].IsTerminal = true
-		c.hasTerminal = true
-		c.terminalMinute = c.now().UTC().Truncate(time.Minute).Unix()
-	}
-	return nil
-}
-
-func (c *FlowChain) Close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed || c.completed {
-		c.closed = true
-		return
-	}
-	c.closed = true
-	if !c.hasTerminal {
-		flowChainIncomplete.Add(1)
-	}
-}
-
-func (c *FlowChain) IsCompleted() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.completed
-}
-
-func (c *FlowChain) IsClosed() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.closed
 }

@@ -179,13 +179,18 @@ func TestFlowChain_NormalCompletionEnqueuesFlowSnapshot(t *testing.T) {
 	var _ []repository.RoutingFlowRow = rows
 }
 
-func TestFlowChain_RecorderCapacityDistinctOverflow(t *testing.T) {
+func TestFlowChain_FlowOwnerOverflowCounted(t *testing.T) {
 	ResetFlowChainCountersForTest()
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
-	// force capacity failure: pendingCapBytes smaller than one flow minute
-	rec.pendingCapBytes = 1
+	owner := rec.FlowOwner()
 	fixed := time.Date(2026, 8, 29, 12, 20, 0, 0, time.UTC)
+	// Fill the bounded submission queue (owner consumer stalled: never
+	// started) so the chain's Submit is rejected deterministically.
+	for owner.Submit(9999, nil) == SubmitAccepted {
+	}
+	st := owner.Stats().(FlowOwnerStats)
+	require.Equal(t, st.QueueCap, st.Queued, "queue bound is fixed and observable")
 	chain := NewFlowChain(rec, func() time.Time { return fixed })
 	for i := 1; i <= 2; i++ {
 		isTerm := i == 2
@@ -197,10 +202,56 @@ func TestFlowChain_RecorderCapacityDistinctOverflow(t *testing.T) {
 		require.NoError(t, chain.Append(validDispatch(uint8(i), isTerm, prev)))
 	}
 	before := FlowChainEnqueueOverflow()
-	require.Error(t, chain.Complete())
+	// Rejected submission is telemetry-only: completion still settles exactly
+	// once, while the event is counted and the quality lane stays untouched.
+	require.NoError(t, chain.Complete())
+	require.True(t, chain.IsCompleted())
 	require.Equal(t, before+1, FlowChainEnqueueOverflow())
-	// distinct from quality overflow: quality should not be incremented by flow enqueue failure
 	require.Equal(t, int64(0), rec.QualityOverflow())
+	ost := owner.Stats().(FlowOwnerStats)
+	require.Equal(t, int64(2), ost.Overflowed, "one queue-full probe + one chain rejection")
+	require.Equal(t, int64(2), ost.EdgeRowsDropped, "the chain's two edge rows are the only dropped payload")
+}
+
+// TestFlowChain_CompleteDoesNotWait pins the request-path contract: with the
+// recorder lock AND the owner's consumer merge lock held, settlement still
+// completes with exactly one immutable nonblocking submission. The old
+// synchronous path (mergeFlowRows under Recorder.mu) deadlocks here; the new
+// path never touches either lock and returns via the queue.
+func TestFlowChain_CompleteDoesNotWait(t *testing.T) {
+	ResetFlowChainCountersForTest()
+	rec, err := NewRecorder(50000)
+	require.NoError(t, err)
+	owner := rec.FlowOwner()
+	fixed := time.Date(2026, 8, 29, 12, 25, 0, 0, time.UTC)
+	chain := NewFlowChain(rec, func() time.Time { return fixed })
+	require.NoError(t, chain.Append(validDispatch(1, false, nil)))
+	require.NoError(t, chain.Append(validDispatch(2, true, func() *string { s := "a1"; return &s }())))
+
+	// Given: both consumer-side locks are held (stalled owner + recorder).
+	rec.mu.Lock()
+	owner.mu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- chain.Complete() }()
+	// Then: settlement does not wait for owner progress (watchdog, no sleep
+	// racing: 2s bound vs an instant channel send).
+	var cerr error
+	select {
+	case cerr = <-done:
+	case <-time.After(2 * time.Second):
+		owner.mu.Unlock()
+		rec.mu.Unlock()
+		t.Fatal("FlowChain.Complete waited on the stalled flow consumer")
+	}
+	require.NoError(t, cerr)
+	require.True(t, chain.IsCompleted())
+	owner.mu.Unlock()
+	rec.mu.Unlock()
+	st := owner.Stats().(FlowOwnerStats)
+	require.Equal(t, int64(1), st.Accepted, "exactly one immutable submission")
+	require.Equal(t, 1, st.Queued)
+	// A duplicate completion after acceptance remains a no-op error.
+	require.Error(t, chain.Complete())
 }
 
 func TestFlowChain_OwnerCleanupIncomplete(t *testing.T) {
