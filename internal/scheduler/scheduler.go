@@ -231,7 +231,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 		oldByID = cur.static.byID
 	}
 	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
-	sv := &StaticView{groups: groups, byID: byID}
+	sv := &StaticView{groups: groups, byID: byID, facts: attachCompilerFacts(byID)}
 	if s.latch != nil {
 		for id, as := range byID {
 			av := as.static.Load()
@@ -618,7 +618,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		}
 		newM[og] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
 	}
-	sv := &StaticView{groups: newM, byID: newByID}
+	sv := &StaticView{groups: newM, byID: newByID, facts: attachCompilerFacts(newByID)}
 	s.publisher.stageLocked(sv)
 	s.RequestCompile()
 }

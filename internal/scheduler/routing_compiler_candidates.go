@@ -57,53 +57,106 @@ func routeSupportsAccount(tpl *domain.Template, rk routeKey) bool {
 	return !tpl.HasModelSpace()
 }
 
+type compilerAccountFacts struct {
+	accountID                int64
+	templateID               int64
+	baseURL                  string
+	fingerprint              string
+	identityFingerprint      domain.CandidateFingerprintVal
+	revision                 int64
+	account                  *accountSnapshot
+	static                   *snapshotStatic
+	upstreamCostMultiplierBp int
+}
+
 type compilerCandidateFacts struct {
-	account             *accountSnapshot
-	static              *snapshotStatic
-	accountID           int64
-	revision            int64
-	templateID          int64
-	baseURL             string
-	fingerprint         string
-	identityFingerprint domain.CandidateFingerprintVal
-	requestedModel      string
-	mappedModel         string
-	mappingMode         domain.ModelMappingMode
-	quality             string
-	qualityRaw          string
+	compilerAccountFacts
+	requestedModel string
+	mappedModel    string
+	mappingMode    domain.ModelMappingMode
+	quality        string
+	qualityRaw     string
+}
+
+// deriveCompilerAccountFacts resolves the route-independent account facts
+// once per static root: identity, base URL precedence, and cost multiplier.
+// Only mapping and quality stay route-specific per buildCandidateFacts call.
+func deriveCompilerAccountFacts(account *accountSnapshot, st *snapshotStatic) compilerAccountFacts {
+	f := compilerAccountFacts{account: account, static: st}
+	if st == nil {
+		return f
+	}
+	f.accountID = st.acc.ID
+	f.revision = st.acc.LifecycleRevision
+	f.templateID = st.acc.TemplateID
+	if st.tpl != nil {
+		f.baseURL = st.tpl.BaseURL
+	}
+	if st.acc.BaseURL != nil && *st.acc.BaseURL != "" {
+		f.baseURL = *st.acc.BaseURL
+	}
+	if fp, err := candidateFingerprint(&st.acc); err == nil {
+		f.fingerprint = fp
+	}
+	f.identityFingerprint = candidateIdentityFingerprint(f.fingerprint, f.accountID)
+	f.upstreamCostMultiplierBp = st.acc.UpstreamCostMultiplierBp
+	return f
+}
+
+// attachCompilerFacts builds the static-root-owned facts map and links each
+// unpublished leaf to its entry. Published leaves already carry facts from
+// their first staging and are never rewritten here.
+func attachCompilerFacts(byID map[int64]*accountSnapshot) map[int64]compilerAccountFacts {
+	facts := make(map[int64]compilerAccountFacts, len(byID))
+	for id, account := range byID {
+		if account == nil {
+			continue
+		}
+		st := account.static.Load()
+		if st == nil {
+			continue
+		}
+		facts[id] = deriveCompilerAccountFacts(account, st)
+	}
+	for id, account := range byID {
+		if account == nil || account.compilerFacts != nil {
+			continue
+		}
+		if f, ok := facts[id]; ok {
+			fc := f
+			account.compilerFacts = &fc
+		}
+	}
+	return facts
 }
 
 func buildCandidateFacts(candidates []*accountSnapshot, rk routeKey, op domain.OperationTag) []compilerCandidateFacts {
 	facts := make([]compilerCandidateFacts, 0, len(candidates))
 	for _, account := range candidates {
-		fact := compilerCandidateFacts{account: account, requestedModel: rk.model, mappedModel: rk.model}
+		fact := compilerCandidateFacts{requestedModel: rk.model, mappedModel: rk.model}
+		var st *snapshotStatic
 		if account != nil {
-			fact.static = account.static.Load()
+			st = account.static.Load()
 		}
-		if fact.static != nil {
-			fact.accountID = fact.static.acc.ID
-			fact.revision = fact.static.acc.LifecycleRevision
-			fact.templateID = fact.static.acc.TemplateID
-			if fact.static.tpl != nil {
-				fact.baseURL = fact.static.tpl.BaseURL
-			}
-			if fact.static.acc.BaseURL != nil && *fact.static.acc.BaseURL != "" {
-				fact.baseURL = *fact.static.acc.BaseURL
-			}
-			if fp, err := candidateFingerprint(&fact.static.acc); err == nil {
-				fact.fingerprint = fp
-			}
-			fact.identityFingerprint = candidateIdentityFingerprint(fact.fingerprint, fact.accountID)
-			if fact.static.tpl != nil {
-				if mapping, ok := fact.static.tpl.ModelMapping[rk.model]; ok {
-					fact.mappedModel = mapping.MappedModel
-					fact.mappingMode = mapping.Mode
-				}
-			}
-			format := rk.format
-			fact.quality = qualityClassHexForWithOp(format, fact.mappedModel, op)
-			fact.qualityRaw = qualityClassHexForWithOp(format, fact.requestedModel, op)
+		if st == nil {
+			fact.account = account
+			facts = append(facts, fact)
+			continue
 		}
+		if cf := account.compilerFacts; cf != nil && cf.static == st {
+			fact.compilerAccountFacts = *cf
+		} else {
+			fact.compilerAccountFacts = deriveCompilerAccountFacts(account, st)
+		}
+		if st.tpl != nil {
+			if mapping, ok := st.tpl.ModelMapping[rk.model]; ok {
+				fact.mappedModel = mapping.MappedModel
+				fact.mappingMode = mapping.Mode
+			}
+		}
+		format := rk.format
+		fact.quality = qualityClassHexForWithOp(format, fact.mappedModel, op)
+		fact.qualityRaw = qualityClassHexForWithOp(format, fact.requestedModel, op)
 		facts = append(facts, fact)
 	}
 	return facts

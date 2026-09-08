@@ -14,6 +14,7 @@ type StaticView struct {
 	generation uint64
 	groups     map[int64]*groupSnapshot
 	byID       map[int64]*accountSnapshot
+	facts      map[int64]compilerAccountFacts
 }
 
 func (s *StaticView) Generation() uint64 { return s.generation }
@@ -307,7 +308,7 @@ func (p *routingPublisher) publishPairLocked(staticView *StaticView, decisionVie
 		gen = 1
 	}
 	if cur != nil && cur.static == staticView {
-		staticView = &StaticView{generation: gen, groups: staticView.groups, byID: staticView.byID}
+		staticView = &StaticView{generation: gen, groups: staticView.groups, byID: staticView.byID, facts: staticView.facts}
 	} else {
 		staticView.generation = gen
 	}
