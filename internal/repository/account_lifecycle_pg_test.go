@@ -25,6 +25,19 @@ func TestPGAccountCostDefaults(t *testing.T) {
 	require.Nil(t, a.FailureSource)
 }
 
+func TestPGGetAccountLoadsTemplateForLifecycleFencing(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	account, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "fencing-template", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
+	require.NoError(t, err)
+
+	got, err := repos.Accounts.GetAccountWithTemplate(ctx, account.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Template, "lifecycle fencing needs the template to recompute candidate identity")
+	require.Equal(t, tpl.ID, got.Template.ID)
+}
+
 func TestPGAccountCostValidation(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()

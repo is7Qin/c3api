@@ -242,6 +242,10 @@ func (r *Repository) GetAccount(ctx context.Context, id int64) (*domain.Account,
 	return r.Accounts.GetAccount(ctx, id)
 }
 
+func (r *Repository) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
+	return r.Accounts.GetAccountWithTemplate(ctx, id)
+}
+
 func (r *Repository) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.Account, int64, error) {
 	return r.Accounts.ListAccounts(ctx, q)
 }
