@@ -611,7 +611,7 @@ func TestCodexWSDial429Failover(t *testing.T) {
 	// 确定性车道：账号 10 先拨（429）→ 转移账号 20（200）。
 	p.sched.PublishDecisionForTest(
 		scheduler.RouteRefFor(10, string(domain.FormatOpenAIResponsesWS), ""),
-		&scheduler.RouteDecision{Primary: []int64{10, 20}})
+		&scheduler.RouteDecision{Primary: []scheduler.CompiledCandidate{{AccountID: 10}, {AccountID: 20}}})
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
