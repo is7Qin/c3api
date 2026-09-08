@@ -25,6 +25,11 @@ type fakePG struct {
 	failAll bool
 	poison  map[string]bool // key = hex fingerprint
 	calls   int
+	// onFlow fires synchronously at the start of UpsertFlowSnapshot (before the
+	// failAll decision), letting a test enqueue a same-minute delta exactly
+	// while a flush is in flight. Set only from the test goroutine around
+	// synchronous doPG calls.
+	onFlow func(terminalMinute time.Time, seq int64)
 }
 
 func newFakePG() *fakePG {
@@ -68,6 +73,9 @@ func (f *fakePG) UpsertQualityAndMarkDirty(_ context.Context, row repository.Rou
 }
 
 func (f *fakePG) UpsertFlowSnapshot(_ context.Context, instanceSrc string, terminalMinute time.Time, _ int16, seq int64, rows []repository.RoutingFlowRow) error {
+	if f.onFlow != nil {
+		f.onFlow(terminalMinute, seq)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -224,6 +232,38 @@ func TestQualitySync_FlowPreservesEdgeArraysAndRequeuesWholeMinute(t *testing.T)
 	w2.doPG(context.Background())
 	require.Equal(t, 1, rec2.MinuteBucketCount(), "failed flow must requeue whole minute")
 	require.Equal(t, 0, len(pg2.flows))
+}
+
+func TestQualitySync_FlowEmptyMarkerThenRowsAreLookedUpAndPersisted(t *testing.T) {
+	// Given: an empty same-minute marker followed by a non-empty contribution.
+	_, rdb := newMiniRedis(t)
+	pg := newFakePG()
+	rec, err := NewRecorder(50000)
+	require.NoError(t, err)
+	minute := time.Date(2026, 8, 29, 12, 7, 0, 0, time.UTC)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "empty-then-rows", BatchSize: 10}, nil)
+	w.SetClock(func() time.Time { return minute })
+
+	require.NoError(t, rec.EnqueueFlowMinute(NewEmptyFlowSnapshot(minute.Unix())))
+	row := flowTestRow(minute, 1, 42, "success", true)
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute.Unix(), []repository.RoutingFlowRow{row})))
+
+	// When: the owner is read and the flow minute is persisted.
+	got, ok := rec.FlowMinute(minute.Unix())
+	require.True(t, ok)
+
+	w.doPG(context.Background())
+
+	// Then: the marker is cleared and the retained row is emitted to PG.
+	require.False(t, got.IsEmptySnapshot())
+	require.Equal(t, []repository.RoutingFlowRow{row}, got.FlowRows())
+	var persisted []repository.RoutingFlowRow
+	for _, rows := range pg.flows {
+		persisted = rows
+	}
+	row.InstanceSrc = "empty-then-rows"
+	row.AbsoluteSequence = 1
+	require.Equal(t, []repository.RoutingFlowRow{row}, persisted)
 }
 
 func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
@@ -524,14 +564,26 @@ func TestQualitySync_EmptyFlowSnapshotPreserved(t *testing.T) {
 	rows := []repository.RoutingFlowRow{
 		{
 			IdentityVersion: 1,
-			RouteClassID: func() domain.RouteClassIDVal { v, _ := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions); return v }(),
-			CandidateFingerprint: func() domain.CandidateFingerprintVal { v, _ := domain.CandidateFingerprint(1, 1, "api_key", "https://api.openai.com", "sk", "", "", "", false, "", "", "", ""); return v }(),
+			RouteClassID: func() domain.RouteClassIDVal {
+				v, _ := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
+				return v
+			}(),
+			CandidateFingerprint: func() domain.CandidateFingerprintVal {
+				v, _ := domain.CandidateFingerprint(1, 1, "api_key", "https://api.openai.com", "sk", "", "", "", false, "", "", "", "")
+				return v
+			}(),
 			TerminalMinute: fixed, Ordinal: 1, Lane: "lane-a", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 5,
 		},
 		{
 			IdentityVersion: 1,
-			RouteClassID: func() domain.RouteClassIDVal { v, _ := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions); return v }(),
-			CandidateFingerprint: func() domain.CandidateFingerprintVal { v, _ := domain.CandidateFingerprint(2, 1, "api_key", "https://api.openai.com", "sk2", "", "", "", false, "", "", "", ""); return v }(),
+			RouteClassID: func() domain.RouteClassIDVal {
+				v, _ := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
+				return v
+			}(),
+			CandidateFingerprint: func() domain.CandidateFingerprintVal {
+				v, _ := domain.CandidateFingerprint(2, 1, "api_key", "https://api.openai.com", "sk2", "", "", "", false, "", "", "", "")
+				return v
+			}(),
 			TerminalMinute: fixed, Ordinal: 2, Lane: "lane-b", AccountID: 20, PreviousAccountID: func() *int64 { v := int64(10); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 5,
 		},
 	}

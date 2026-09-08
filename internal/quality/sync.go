@@ -47,21 +47,23 @@ type SyncConfig struct {
 }
 
 type SyncStats struct {
-	PendingQuality int    `json:"pending_quality"`
-	PendingFlow    int    `json:"pending_flow"`
-	PendingBytes   int64  `json:"pending_bytes"`
-	LagMs          int64  `json:"lag_ms"`
-	DroppedQuality int64  `json:"dropped_quality"`
-	DroppedFlow    int64  `json:"dropped_flow"`
-	PoisonDropped  int64  `json:"poison_dropped"`
-	BatchQuality   int64  `json:"batch_quality"`
-	BatchFlow      int64  `json:"batch_flow"`
-	FreshnessMs    int64  `json:"freshness_ms"`
-	LastRedisMs    int64  `json:"last_redis_ms"`
-	LastPGMs       int64  `json:"last_pg_ms"`
+	PendingQuality     int    `json:"pending_quality"`
+	PendingFlow        int    `json:"pending_flow"`
+	PendingBytes       int64  `json:"pending_bytes"`
+	LagMs              int64  `json:"lag_ms"`
+	DroppedQuality     int64  `json:"dropped_quality"`
+	DroppedFlow        int64  `json:"dropped_flow"`
+	PoisonDropped      int64  `json:"poison_dropped"`
+	BatchQuality       int64  `json:"batch_quality"`
+	BatchFlow          int64  `json:"batch_flow"`
+	FreshnessMs        int64  `json:"freshness_ms"`
+	LastRedisMs        int64  `json:"last_redis_ms"`
+	LastPGMs           int64  `json:"last_pg_ms"`
 	LastRedisAttemptMs int64  `json:"last_redis_attempt_ms"`
-	LastRedisError string `json:"last_redis_error"`
-	RedisErrors    int64  `json:"redis_errors"`
+	LastRedisError     string `json:"last_redis_error"`
+	RedisErrors        int64  `json:"redis_errors"`
+	ResidualQuality    int64  `json:"residual_quality"`
+	ResidualFlow       int64  `json:"residual_flow"`
 }
 
 type qRow struct {
@@ -78,22 +80,22 @@ type flowEntry struct {
 }
 
 type cellSnap struct {
-	attempts   int64
-	successes  int64
-	err429     int64
-	err4xx     int64
-	err5xx     int64
-	errNetwork int64
-	ttftCount  int64
-	sumQ32     int64
-	sumSqQ32   int64
-	hist       [10]int64
-	input      int64
-	output     int64
-	cacheRead  int64
+	attempts    int64
+	successes   int64
+	err429      int64
+	err4xx      int64
+	err5xx      int64
+	errNetwork  int64
+	ttftCount   int64
+	sumQ32      int64
+	sumSqQ32    int64
+	hist        [10]int64
+	input       int64
+	output      int64
+	cacheRead   int64
 	cacheCreate int64
-	calls      int64
-	images     int64
+	calls       int64
+	images      int64
 }
 
 type cursorEntry struct {
@@ -110,35 +112,44 @@ type SyncWorker struct {
 	log         *logx.Logger
 	cfg         SyncConfig
 
-	mu        sync.Mutex
-	flushMu   sync.Mutex
-	seq       map[int64]int64
-	redisSeq  map[int64]int64
-	pgSeq     map[int64]int64
-	stats     SyncStats
-	lastRedis time.Time
+	mu               sync.Mutex
+	flushMu          sync.Mutex
+	flushStateMu     sync.Mutex
+	flushDone        chan struct{}
+	seq              map[int64]int64
+	redisSeq         map[int64]int64
+	pgSeq            map[int64]int64
+	stats            SyncStats
+	lastRedis        time.Time
 	lastRedisAttempt time.Time
-	lastRedisError string
-	lastPG    time.Time
-	poison    atomic.Int64
-	batchQ    atomic.Int64
-	batchF    atomic.Int64
+	lastRedisError   string
+	lastPG           time.Time
+	poison           atomic.Int64
+	batchQ           atomic.Int64
+	batchF           atomic.Int64
 
-	lastCell       map[Key]cursorEntry
-	pgLastCell     map[Key]cursorEntry
-	minuteAbs      map[int64]map[Key]*QualityMinute
-	pgMinuteAbs    map[int64]map[Key]*QualityMinute
-	committed      map[int64]map[Key]*QualityMinute
+	lastCell    map[Key]cursorEntry
+	pgLastCell  map[Key]cursorEntry
+	minuteAbs   map[int64]map[Key]*QualityMinute
+	pgMinuteAbs map[int64]map[Key]*QualityMinute
+	committed   map[int64]map[Key]*QualityMinute
+	// committedFlow 是 flow 面的已提交累计快照（per minute）：UpsertFlowSnapshot
+	// 按 (minute, instance_src, identity_version) 整组替换，跨周期 delta 必须先
+	// 并入前次成功快照再写出，否则后周期会抹掉前周期链。
+	committedFlow map[int64][]repository.RoutingFlowRow
 
-	started     atomic.Bool
-	closeOnce   sync.Once
-	lifecycleMu sync.Mutex
-	closed      bool
-	baseCtx     context.Context
-	cancel      context.CancelFunc
-	loopDone    <-chan struct{} // 恒为 loopDoneCh 的只读别名（构造器与 Start 共同维持）
-	loopDoneCh  chan struct{}
+	started              atomic.Bool
+	closeOnce            sync.Once
+	lifecycleMu          sync.Mutex
+	closed               bool
+	baseCtx              context.Context
+	cancel               context.CancelFunc
+	loopDone             <-chan struct{} // 恒为 loopDoneCh 的只读别名（构造器与 Start 共同维持）
+	loopDoneCh           <-chan struct{}
 	inflightAbandonGrace time.Duration
+	closing              atomic.Bool
+	refillMu             sync.Mutex
+	refillClosed         bool
 }
 
 func GenerateInstanceSrc() string {
@@ -162,26 +173,29 @@ func NewSyncWorker(rec *Recorder, rdb *redis.Client, pg PGQualityWriter, cfg Syn
 	}
 	cfg.BatchSize = bs
 	cfg.InstanceSrc = src
+	loopDone := make(chan struct{})
+	close(loopDone)
 	w := &SyncWorker{
-		rec:         rec,
-		rdb:         rdb,
-		pg:          pg,
-		instanceSrc: src,
-		clock:       time.Now,
-		log:         log,
-		cfg:         cfg,
-		seq:         make(map[int64]int64),
-		redisSeq:    make(map[int64]int64),
-		pgSeq:       make(map[int64]int64),
-		lastCell:    make(map[Key]cursorEntry),
-		pgLastCell:  make(map[Key]cursorEntry),
-		minuteAbs:   make(map[int64]map[Key]*QualityMinute),
-		pgMinuteAbs: make(map[int64]map[Key]*QualityMinute),
-		committed:   make(map[int64]map[Key]*QualityMinute),
-		loopDoneCh:  make(chan struct{}),
+		rec:                  rec,
+		rdb:                  rdb,
+		pg:                   pg,
+		instanceSrc:          src,
+		clock:                time.Now,
+		log:                  log,
+		cfg:                  cfg,
+		seq:                  make(map[int64]int64),
+		redisSeq:             make(map[int64]int64),
+		pgSeq:                make(map[int64]int64),
+		lastCell:             make(map[Key]cursorEntry),
+		pgLastCell:           make(map[Key]cursorEntry),
+		minuteAbs:            make(map[int64]map[Key]*QualityMinute),
+		pgMinuteAbs:          make(map[int64]map[Key]*QualityMinute),
+		committed:            make(map[int64]map[Key]*QualityMinute),
+		committedFlow:        make(map[int64][]repository.RoutingFlowRow),
+		loopDoneCh:           loopDone,
 		inflightAbandonGrace: 500 * time.Millisecond,
+		flushDone:            func() chan struct{} { ch := make(chan struct{}); close(ch); return ch }(),
 	}
-	close(w.loopDoneCh)
 	w.loopDone = w.loopDoneCh
 	return w
 }
@@ -206,17 +220,9 @@ func (w *SyncWorker) Start(ctx context.Context) error {
 	derived, cancel := context.WithCancel(ctx)
 	w.baseCtx = derived
 	w.cancel = cancel
-	// reset done channel for real run；loopDone 与 loopDoneCh 保持构造器的
-	// 同一信号别名：Close join 的就是发布完成的通道，不存在异步 close(ch)
-	// 落后于 Close 返回的调度竞态。
-	ch := make(chan struct{})
-	w.loopDoneCh = ch
-	w.loopDone = ch
 	loopDone := worker.GoLoop(derived, "quality-sync", w.log, w.loop)
-	go func() {
-		<-loopDone
-		close(ch)
-	}()
+	w.loopDoneCh = loopDone
+	w.loopDone = loopDone
 	return nil
 }
 
@@ -481,7 +487,10 @@ func (w *SyncWorker) doRedis(ctx context.Context) {
 	if !w.flushMu.TryLock() {
 		return
 	}
-	defer w.flushMu.Unlock()
+	if !w.beginFlush() {
+		return
+	}
+	defer w.endFlush()
 	w.doRedisLocked(ctx)
 }
 
@@ -533,14 +542,11 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		}
 		pendingByMinute[minute] = cp
 	}
-	flowByMinute := make(map[int64]*FlowMinute)
-	for minute, fm := range w.rec.pendingFlow {
-		if minute > curMinute {
-			continue
-		}
-		flowByMinute[minute] = fm.Clone()
-	}
 	w.rec.mu.Unlock()
+	// Flow comes through the FlowOwner consumer handoff: owned clones of the
+	// due buckets (queue drained on the owner side), never an alias of the
+	// owner's accumulator.
+	flowByMinute := w.rec.flow.dueSnapshot(curMinute)
 
 	// merge activeAll + pending for each minute
 	mergedByMinute := make(map[int64]map[Key]*QualityMinute)
@@ -561,10 +567,6 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 	}
 	if len(mergedByMinute) == 0 && len(flowByMinute) == 0 {
 		// empty pass must not refresh freshness
-		w.mu.Lock()
-		// revert to saved on empty? No need, but keep saved for next attempt
-		// do not update lastRedis
-		w.mu.Unlock()
 		return
 	}
 	if w.rdb == nil {
@@ -714,8 +716,29 @@ func (w *SyncWorker) doPG(ctx context.Context) {
 	if !w.flushMu.TryLock() {
 		return
 	}
-	defer w.flushMu.Unlock()
+	if !w.beginFlush() {
+		return
+	}
+	defer w.endFlush()
 	w.doPGLocked(ctx)
+}
+
+func (w *SyncWorker) beginFlush() bool {
+	w.flushStateMu.Lock()
+	defer w.flushStateMu.Unlock()
+	if w.closing.Load() {
+		w.flushMu.Unlock()
+		return false
+	}
+	w.flushDone = make(chan struct{})
+	return true
+}
+
+func (w *SyncWorker) endFlush() {
+	w.flushStateMu.Lock()
+	close(w.flushDone)
+	w.flushStateMu.Unlock()
+	w.flushMu.Unlock()
 }
 
 // doPGLocked 是 PG 面单次 flush（含失败 refill 回 recorder）；调用方必须持有
@@ -727,20 +750,21 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 	}
 	// collect PG active delta first, even if pending empty (active-only workload)
 	pgActive := w.collectPGDeltaLocked()
+	// Flow batch arrives via the FlowOwner's ownership transfer: the whole
+	// drained accumulator map is caller-owned, pending restarts empty, and
+	// sync never reads or mutates owner maps in place. Failed/deferred
+	// entries return through EnqueueFlowMinute (the owner's merge API).
+	pendF := w.rec.flow.takePending()
 	hasPendingQ := false
-	hasPendingF := false
 	w.rec.mu.Lock()
 	hasPendingQ = len(w.rec.pendingQuality) > 0
-	hasPendingF = len(w.rec.pendingFlow) > 0
 	w.rec.mu.Unlock()
-	if !hasPendingQ && !hasPendingF && len(pgActive) == 0 {
+	if !hasPendingQ && len(pendF) == 0 && len(pgActive) == 0 {
 		return
 	}
 	w.rec.mu.Lock()
 	pendQ := w.rec.pendingQuality
-	pendF := w.rec.pendingFlow
 	w.rec.pendingQuality = make(map[int64]map[Key]*QualityMinute)
-	w.rec.pendingFlow = make(map[int64]*FlowMinute)
 	w.rec.pendingBytes.Store(0)
 	w.rec.mu.Unlock()
 
@@ -854,6 +878,14 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 }
 
 func (w *SyncWorker) refillQualityDelta(rows []qRow, originalPend map[int64]map[Key]*QualityMinute) {
+	w.refillMu.Lock()
+	defer w.refillMu.Unlock()
+	if w.refillClosed {
+		w.mu.Lock()
+		w.stats.ResidualQuality += int64(len(rows))
+		w.mu.Unlock()
+		return
+	}
 	for _, r := range rows {
 		delta := r.qm
 		if origRows, ok := originalPend[r.minute]; ok {
@@ -921,8 +953,10 @@ func (w *SyncWorker) flushQualityBatch(ctx context.Context, rows []qRow, start t
 				end = len(shard)
 			}
 			chunk := shard[i:end]
-			if err := w.insertQualityChunk(ctx, chunk); err != nil {
-				if len(chunk) == 1 {
+			unpersisted, err := w.insertQualityChunk(ctx, chunk)
+			if err != nil {
+				w.markQualityCommitted(chunk[:len(chunk)-len(unpersisted)])
+				if len(unpersisted) == 1 {
 					// singleton first failure must refill; only typed row error is immediate poison
 					if isRowDataError(err) {
 						w.poison.Add(1)
@@ -931,10 +965,10 @@ func (w *SyncWorker) flushQualityBatch(ctx context.Context, rows []qRow, start t
 						w.mu.Unlock()
 						continue
 					}
-					failed = append(failed, chunk...)
+					failed = append(failed, unpersisted...)
 					continue
 				}
-				poison, refill := w.bisectQuality(ctx, chunk)
+				poison, refill := w.bisectQuality(ctx, unpersisted)
 				if poison != nil {
 					w.poison.Add(1)
 					w.mu.Lock()
@@ -947,14 +981,7 @@ func (w *SyncWorker) flushQualityBatch(ctx context.Context, rows []qRow, start t
 				failed = append(failed, shard[end:]...)
 				break
 			} else {
-				w.mu.Lock()
-				for _, r := range chunk {
-					if _, ok := w.committed[r.minute]; !ok {
-						w.committed[r.minute] = make(map[Key]*QualityMinute)
-					}
-					w.committed[r.minute][r.key] = r.qm.Clone()
-				}
-				w.mu.Unlock()
+				w.markQualityCommitted(chunk)
 			}
 		}
 	}
@@ -998,8 +1025,8 @@ func isRowDataError(err error) bool {
 	return false
 }
 
-func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) error {
-	for _, r := range chunk {
+func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) ([]qRow, error) {
+	for i, r := range chunk {
 		row := repository.RoutingQualityRow{
 			IdentityVersion:      r.key.IdentityVersion,
 			RouteClassID:         domain.RouteClassIDVal(r.key.RouteClassID),
@@ -1029,18 +1056,31 @@ func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) error
 			if isRowDataError(err) {
 				var rde *RowDataError
 				if !errors.As(err, &rde) {
-					return &RowDataError{Msg: err.Error(), Cause: err}
+					return chunk[i:], &RowDataError{Msg: err.Error(), Cause: err}
 				}
 			}
-			return err
+			return chunk[i:], err
 		}
 	}
-	return nil
+	return nil, nil
+}
+
+func (w *SyncWorker) markQualityCommitted(rows []qRow) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, r := range rows {
+		if _, ok := w.committed[r.minute]; !ok {
+			w.committed[r.minute] = make(map[Key]*QualityMinute)
+		}
+		w.committed[r.minute][r.key] = r.qm.Clone()
+	}
 }
 
 func (w *SyncWorker) bisectQuality(ctx context.Context, chunk []qRow) (poison *qRow, refill []qRow) {
 	if len(chunk) == 1 {
-		if err := w.insertQualityChunk(ctx, chunk); err != nil {
+		unpersisted, err := w.insertQualityChunk(ctx, chunk)
+		w.markQualityCommitted(chunk[:len(chunk)-len(unpersisted)])
+		if err != nil {
 			if isRowDataError(err) {
 				return &chunk[0], nil
 			}
@@ -1050,31 +1090,19 @@ func (w *SyncWorker) bisectQuality(ctx context.Context, chunk []qRow) (poison *q
 	}
 	mid := len(chunk) / 2
 	left, right := chunk[:mid], chunk[mid:]
-	if err := w.insertQualityChunk(ctx, left); err == nil {
-		w.mu.Lock()
-		for _, r := range left {
-			if _, ok := w.committed[r.minute]; !ok {
-				w.committed[r.minute] = make(map[Key]*QualityMinute)
-			}
-			w.committed[r.minute][r.key] = r.qm.Clone()
-		}
-		w.mu.Unlock()
+	leftUnpersisted, leftErr := w.insertQualityChunk(ctx, left)
+	w.markQualityCommitted(left[:len(left)-len(leftUnpersisted)])
+	if leftErr == nil {
 		p, rf := w.bisectQuality(ctx, right)
 		return p, rf
 	}
-	if err := w.insertQualityChunk(ctx, right); err == nil {
-		w.mu.Lock()
-		for _, r := range right {
-			if _, ok := w.committed[r.minute]; !ok {
-				w.committed[r.minute] = make(map[Key]*QualityMinute)
-			}
-			w.committed[r.minute][r.key] = r.qm.Clone()
-		}
-		w.mu.Unlock()
-		p, rf := w.bisectQuality(ctx, left)
+	rightUnpersisted, rightErr := w.insertQualityChunk(ctx, right)
+	w.markQualityCommitted(right[:len(right)-len(rightUnpersisted)])
+	if rightErr == nil {
+		p, rf := w.bisectQuality(ctx, leftUnpersisted)
 		return p, rf
 	}
-	return nil, chunk
+	return nil, append(leftUnpersisted, rightUnpersisted...)
 }
 
 func (w *SyncWorker) flushFlowBatch(ctx context.Context, entries []flowEntry, start time.Time) []flowEntry {
@@ -1087,11 +1115,32 @@ func (w *SyncWorker) flushFlowBatch(ctx context.Context, entries []flowEntry, st
 			failed = append(failed, e)
 			continue
 		}
+		w.mu.Lock()
+		prev := w.committedFlow[e.minute]
+		w.mu.Unlock()
 		rows := flowRowsFromMinute(e.fm, w.instanceSrc, e.seq)
+		if prev != nil {
+			// 累计快照语义：repo 整组替换，写出必须 = 已提交 + 本周期 delta。
+			// 空标记 delta 贡献零行，永不抹掉已提交链。
+			rows = mergeFlowRows(prev, rows)
+			tm := time.Unix(e.minute, 0).UTC()
+			for i := range rows {
+				rows[i].InstanceSrc = w.instanceSrc
+				rows[i].AbsoluteSequence = e.seq
+				rows[i].TerminalMinute = tm
+			}
+		}
 		if err := w.pg.UpsertFlowSnapshot(ctx, w.instanceSrc, time.Unix(e.minute, 0).UTC(), 1, e.seq, rows); err != nil {
 			failed = append(failed, e)
 			continue
 		}
+		// committed 只在 upsert 成功后推进；失败/延迟的 delta 经 refill 重放，
+		// 下一周期再并入，不会重复计数。
+		cp := make([]repository.RoutingFlowRow, len(rows))
+		copy(cp, rows)
+		w.mu.Lock()
+		w.committedFlow[e.minute] = cp
+		w.mu.Unlock()
 	}
 	return failed
 }
@@ -1131,24 +1180,36 @@ func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []reposit
 			continue
 		}
 		out = append(out, repository.RoutingFlowRow{
-			IdentityVersion: 1,
-			TerminalMinute:  time.Unix(fm.Minute(), 0).UTC(),
-			Ordinal:         int16(i + 1),
-			Lane:            fmt.Sprintf("lane-%d", i),
-			AccountID:       edges[i],
+			IdentityVersion:  1,
+			TerminalMinute:   time.Unix(fm.Minute(), 0).UTC(),
+			Ordinal:          int16(i + 1),
+			Lane:             fmt.Sprintf("lane-%d", i),
+			AccountID:        edges[i],
 			TransitionReason: "flow",
-			Outcome:         "success",
-			IsTerminal:      true,
-			Generation:      1,
-			InstanceSrc:     instanceSrc,
+			Outcome:          "success",
+			IsTerminal:       true,
+			Generation:       1,
+			InstanceSrc:      instanceSrc,
 			AbsoluteSequence: seq,
-			ChainCount:      counts[i],
+			ChainCount:       counts[i],
 		})
 	}
 	return out
 }
 
 func (w *SyncWorker) refillFlow(entries []flowEntry) {
+	w.refillMu.Lock()
+	defer w.refillMu.Unlock()
+	if w.refillClosed {
+		var rows int64
+		for _, e := range entries {
+			rows += int64(len(e.fm.FlowRows()))
+		}
+		w.mu.Lock()
+		w.stats.ResidualFlow += rows
+		w.mu.Unlock()
+		return
+	}
 	for _, e := range entries {
 		w.mu.Lock()
 		curSeq := w.pgSeq[e.minute]
@@ -1156,12 +1217,10 @@ func (w *SyncWorker) refillFlow(entries []flowEntry) {
 		if e.seq < curSeq {
 			continue
 		}
-		w.rec.mu.Lock()
-		_, exists := w.rec.pendingFlow[e.minute]
-		w.rec.mu.Unlock()
-		if exists {
-			continue
-		}
+		// No "pending already exists" skip: a fresh same-minute delta may have
+		// arrived while this flush was in flight; EnqueueFlowMinute merges the
+		// requeued delta into it (distinct edges sum, empty marker never erases).
+		// Dropping here would lose the failed delta permanently.
 		if err := w.rec.EnqueueFlowMinute(e.fm); err != nil {
 			w.mu.Lock()
 			w.stats.DroppedFlow++
@@ -1174,15 +1233,14 @@ func (w *SyncWorker) refillFlow(entries []flowEntry) {
 }
 
 func (w *SyncWorker) pruneLongLivedLocked(nowUnix int64) {
+	pending := make(map[int64]struct{})
 	w.rec.mu.Lock()
-	pending := make(map[int64]struct{}, len(w.rec.pendingQuality)+len(w.rec.pendingFlow))
 	for m := range w.rec.pendingQuality {
 		pending[m] = struct{}{}
 	}
-	for m := range w.rec.pendingFlow {
-		pending[m] = struct{}{}
-	}
 	w.rec.mu.Unlock()
+	// Owner lane via handoff API (queued minutes included).
+	w.rec.flow.collectLiveMinutes(pending)
 	for m := range w.minuteAbs {
 		pending[m] = struct{}{}
 	}
@@ -1215,6 +1273,13 @@ func (w *SyncWorker) pruneLongLivedLocked(nowUnix int64) {
 		if m < cutoff {
 			if _, ok := pending[m]; !ok {
 				delete(w.committed, m)
+			}
+		}
+	}
+	for m := range w.committedFlow {
+		if m < cutoff {
+			if _, ok := pending[m]; !ok {
+				delete(w.committedFlow, m)
 			}
 		}
 	}
@@ -1251,10 +1316,11 @@ func (w *SyncWorker) statsSnapshot() SyncStats {
 		for _, rows := range w.rec.pendingQuality {
 			pendingQ += len(rows)
 		}
-		pendingF := len(w.rec.pendingFlow)
 		w.rec.mu.Unlock()
+		// Flow visibility goes through the owner stats API (accumulator
+		// minutes plus queued submissions); the owner owns that state.
 		s.PendingQuality = pendingQ
-		s.PendingFlow = pendingF
+		s.PendingFlow = w.rec.flow.pendingTotal()
 		s.PendingBytes = w.rec.PendingBytes()
 		s.DroppedQuality = w.rec.QualityOverflow()
 		s.DroppedFlow = w.rec.FlowOverflow()
@@ -1275,6 +1341,7 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 		return nil
 	}
 	w.closed = true
+	w.closing.Store(true)
 	cancel := w.cancel
 	started := w.started.Load()
 	loopDone := w.loopDone
@@ -1289,8 +1356,10 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 		case <-loopDone:
 		case <-ctx.Done():
 			err = ctx.Err()
-		case <-time.After(2 * time.Second):
-			err = context.DeadlineExceeded
+			w.refillMu.Lock()
+			w.refillClosed = true
+			w.refillMu.Unlock()
+			return err
 		}
 	}
 	drainCtxBase := context.WithoutCancel(ctx)
@@ -1306,47 +1375,17 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 		drainCtx, cancelDrain = context.WithTimeout(drainCtxBase, 5*time.Second)
 	}
 	defer cancelDrain()
-	// 生命周期屏障：Close 取得 flushMu 的排他所有权并一路持有到返回。在途
-	// flush 的 refill（doRedisLocked/doPGLocked 尾部）只发生在持 flushMu 期间，
-	// 因此 Close 绝不能在 flush 仍持锁时返回——否则 shutdownTail 终态化
-	// recorder 之后，被放弃的 flush 才把 refill 打进已关闭的 recorder（静默
-	// 丢数据）。等待在实践中有界：loop ctx 已在上方 cancel，所有 sink 调用
-	// 尊重 ctx，卡住的 flush 会快速失败并释放锁。
-	acquired := make(chan struct{})
-	worker.GoRecover("quality-sync-close", w.log, func() {
-		w.flushMu.Lock()
-		close(acquired)
-	})
+	w.flushStateMu.Lock()
+	flushDone := w.flushDone
+	w.flushStateMu.Unlock()
 	select {
-	case <-acquired:
-	case <-drainCtx.Done():
-		// 超预算仍有在途 flush：Warn 一次（grace 是运维可见的阻塞告警阈值），
-		// 但绝不放弃返回——等 flush 释放 flushMu 是唯一不产生 late refill 的
-		// 出路；错误语义（incomplete drain）照常保留。
-		select {
-		case <-acquired:
-		case <-time.After(w.inflightAbandonGrace):
-			if w.log != nil {
-				w.log.Warn("quality sync close: in-flight flush past grace, blocking recorder finalization until it releases")
-			}
-			<-acquired
-		}
-		if err == nil {
-			err = drainCtx.Err()
-			if err == nil {
-				err = context.DeadlineExceeded
-			}
-		}
+	case <-flushDone:
+	case <-ctx.Done():
+		w.refillMu.Lock()
+		w.refillClosed = true
+		w.refillMu.Unlock()
+		return fmt.Errorf("quality-sync: drain incomplete, remaining work is in flight: %w", ctx.Err())
 	}
-	// 释放 flushMu 前必须 join loop：持锁期间 loop 的 flush 尝试 TryLock 失败
-	// （不产生 refill），已 cancel 的 loop 随即退出；join 之后不存在任何还能
-	// 启动 refill 的 goroutine。
-	defer func() {
-		if started {
-			<-loopDone
-		}
-		w.flushMu.Unlock()
-	}()
 	drainedOnce := false
 	for {
 		if drainCtx.Err() != nil {
@@ -1355,8 +1394,8 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 			for _, rows := range w.rec.pendingQuality {
 				qRem += len(rows)
 			}
-			fRem := len(w.rec.pendingFlow)
 			w.rec.mu.Unlock()
+			fRem := w.rec.flow.pendingTotal()
 			w.mu.Lock()
 			pgRem := 0
 			for _, m := range w.pgMinuteAbs {
@@ -1385,8 +1424,8 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 		for _, rows := range w.rec.pendingQuality {
 			qPending += len(rows)
 		}
-		fPending := len(w.rec.pendingFlow)
 		w.rec.mu.Unlock()
+		fPending := w.rec.flow.pendingTotal()
 		w.mu.Lock()
 		pgPending := len(w.pgMinuteAbs)
 		redisPending := len(w.minuteAbs)
@@ -1403,8 +1442,8 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 	for _, rows := range w.rec.pendingQuality {
 		qFinal += len(rows)
 	}
-	fFinal := len(w.rec.pendingFlow)
 	w.rec.mu.Unlock()
+	fFinal := w.rec.flow.pendingTotal()
 	w.mu.Lock()
 	pgFinal := len(w.pgMinuteAbs)
 	redisFinal := len(w.minuteAbs)
@@ -1415,6 +1454,15 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 			return fmt.Errorf("%w; %v", err, remErr)
 		}
 		return remErr
+	}
+	if started {
+		select {
+		case <-loopDone:
+		case <-ctx.Done():
+			if err == nil {
+				err = ctx.Err()
+			}
+		}
 	}
 	return err
 }
