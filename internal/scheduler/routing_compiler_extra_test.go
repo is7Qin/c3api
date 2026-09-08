@@ -30,7 +30,7 @@ func TestRoutingCompilerEmptyAndAllIneligible(t *testing.T) {
 	require.True(t, ok)
 	require.Empty(t, rd.Primary)
 	require.Empty(t, rd.Degraded)
-	require.Empty(t, rd.Explore.IDs)
+	require.Empty(t, rd.Explore.Ordered)
 }
 
 func TestRoutingCompilerHealthLatchExclusion(t *testing.T) {
@@ -49,8 +49,8 @@ func TestRoutingCompilerHealthLatchExclusion(t *testing.T) {
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	all := append(append([]int64{}, rd.Primary...), rd.Explore.IDs...)
-	all = append(all, rd.Degraded...)
+	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
+	all = append(all, compiledAccountIDs(rd.Degraded)...)
 	for _, id := range all {
 		require.NotEqual(t, int64(2), id)
 		require.NotEqual(t, int64(3), id)
@@ -69,8 +69,8 @@ func TestRoutingViewRebaseWithCompiler(t *testing.T) {
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	dv, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
-	baseGen := s.View().Generation()
-	s.publisher.publishWithBase(baseGen, func(cur *RoutingView) *DecisionView {
+	base := s.View()
+	s.publisher.publishWithBase(base.Generation(), base.StaticView(), func(cur *RoutingView) *DecisionView {
 		require.NotNil(t, cur.StaticView())
 		dv.generation = cur.Generation() + 1
 		return dv
@@ -82,15 +82,17 @@ func TestRoutingViewRebaseWithCompiler(t *testing.T) {
 	m.byGroup[10] = append(m.byGroup[10], accWithEnabled(2, tpl, true, 10000))
 	m.mu.Unlock()
 	require.NoError(t, s.reload(nilContext()))
+	// Atomic publication: the staged static pairs on the next compile.
+	s.compileOnce()
 	v2 := s.View()
-	require.Same(t, v1.DecisionView(), v2.DecisionView())
+	require.NotSame(t, v1, v2, "paired publish replaces the view")
+	require.NotSame(t, v1.DecisionView(), v2.DecisionView(), "new static pairs with a fresh decision")
 	require.Contains(t, v2.ByID(), int64(2))
-	staleGen := baseGen
 	accs2 := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
 	q2 := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100)}, accs2)
 	dv2, err := c.Compile(CompilerInputs{Static: v2.StaticView(), Quality: q2, Prices: prices})
 	require.NoError(t, err)
-	s.publisher.publishWithBase(staleGen, func(cur *RoutingView) *DecisionView {
+	s.publisher.publishWithBase(v2.Generation(), v2.StaticView(), func(cur *RoutingView) *DecisionView {
 		require.Same(t, v2.StaticView(), cur.StaticView())
 		dv2.generation = cur.Generation() + 1
 		return dv2
