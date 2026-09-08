@@ -32,6 +32,8 @@ func TestInvalidateAccountReloadsExt(t *testing.T) {
 	m.mu.Unlock()
 
 	s.InvalidateAccount(1)
+	// Atomic publication: the staged rotation pairs on the next compile.
+	s.compileOnce()
 	byID := s.View().ByID()
 	got, ok := byID[1]
 	require.True(t, ok, "账号仍在快照")

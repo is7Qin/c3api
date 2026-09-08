@@ -10,7 +10,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func TestRoutingViewStaticUpdateRetainsLatestDecision(t *testing.T) {
+func TestRoutingViewStaticUpdatePublishesAtomicPair(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl, 4)}})
 	s := newSched(t, m)
@@ -18,20 +18,26 @@ func TestRoutingViewStaticUpdateRetainsLatestDecision(t *testing.T) {
 	require.NotNil(t, v1)
 	dec1 := v1.DecisionView()
 	require.NotNil(t, dec1, "newSched 已武装编译道，决策视图非空")
-	gen1 := v1.Generation()
 	m.mu.Lock()
 	m.byGroup[10] = append(m.byGroup[10], acc(2, tpl, 4))
 	m.mu.Unlock()
 	require.NoError(t, s.reload(nilContext()))
+	// Atomic publication: the old complete pair stays visible while pending.
 	v2 := s.View()
-	require.NotNil(t, v2)
-	require.Greater(t, v2.Generation(), gen1)
-	require.Same(t, dec1, v2.DecisionView(), "static update retains latest DecisionView")
-	require.NotNil(t, v2.StaticView())
-	require.Contains(t, v2.ByID(), int64(2), "new static has new account")
+	require.Same(t, v1, v2, "staging must not touch the published pair")
+	require.NotContains(t, v2.ByID(), int64(2), "new account only staged, not published")
+
+	s.compileOnce()
+	v3 := s.View()
+	require.NotSame(t, v1, v3, "paired publish replaces the view")
+	require.NotSame(t, dec1, v3.DecisionView(), "new static pairs with a fresh decision")
+	require.NotNil(t, v3.StaticView())
+	require.Contains(t, v3.ByID(), int64(2), "new static has new account")
+	require.Equal(t, v3.Generation(), v3.StaticView().Generation(), "one generation for the pair")
+	require.Equal(t, v3.Generation(), v3.DecisionView().Generation(), "one generation for the pair")
 }
 
-func TestRoutingViewDecisionStaleRebasesOntoLatestStatic(t *testing.T) {
+func TestRoutingViewDecisionStaleIsRejected(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl, 4)}})
 	s := newSched(t, m)
@@ -45,17 +51,21 @@ func TestRoutingViewDecisionStaleRebasesOntoLatestStatic(t *testing.T) {
 	m.mu.Unlock()
 	require.NoError(t, s.reload(nilContext()))
 	v2 := s.View()
-	require.NotSame(t, v1.StaticView(), v2.StaticView(), "static view updated")
-	require.Same(t, dec1, v2.DecisionView(), "static retains decision")
-	staleBase := baseGen
-	s.publisher.publishWithBase(staleBase, func(cur *RoutingView) *DecisionView {
-		require.Same(t, v2.StaticView(), cur.StaticView(), "rebase onto latest StaticView")
-		return &DecisionView{generation: cur.DecisionView().Generation() + 1, routes: map[RouteRef]*RouteDecision{route: {Primary: []int64{1, 2}}}}
+	// Atomic publication: staging leaves the published pair untouched.
+	require.Same(t, v1, v2, "staging must not touch the published pair")
+	require.Same(t, dec1, v2.DecisionView(), "published decision retained while pending")
+	called := false
+	// Publish the staged pair first so the captured base goes stale.
+	s.compileOnce()
+	v2b := s.View()
+	require.NotSame(t, v1, v2b, "paired publish replaces the view")
+	s.publisher.publishWithBase(baseGen, v1.StaticView(), func(cur *RoutingView) *DecisionView {
+		called = true
+		return &DecisionView{routes: map[RouteRef]*RouteDecision{route: {Primary: ccPrimary(1, 2)}}}
 	})
 	v3 := s.View()
-	require.Same(t, v2.StaticView(), v3.StaticView(), "static preserved, only decision replaced")
-	require.NotSame(t, dec1, v3.DecisionView(), "decision replaced")
-	require.Equal(t, []int64{1, 2}, v3.DecisionView().routes[route].Primary)
+	require.False(t, called, "stale decision must be discarded before build")
+	require.Same(t, v2b, v3, "stale publish must preserve the latest pair")
 }
 
 func TestRoutingViewPartialInvalidatePreservesOtherGroupIDs(t *testing.T) {
@@ -71,13 +81,19 @@ func TestRoutingViewPartialInvalidatePreservesOtherGroupIDs(t *testing.T) {
 	m.byGroup[10] = []*domain.Account{}
 	m.mu.Unlock()
 	s.InvalidateGroup(10)
+	// Atomic publication: the old complete pair stays visible while pending.
 	v2 := s.View()
 	require.NotNil(t, v2)
-	require.ElementsMatch(t, []int64{20}, v2.ByID()[1].static.Load().groupIDs, "partial invalidate preserves other groupIDs")
+	require.Same(t, oldView, v2, "staging must not touch the published pair")
+
+	s.compileOnce()
+	v3 := s.View()
+	require.NotSame(t, oldView, v3, "paired publish replaces the view")
+	require.ElementsMatch(t, []int64{20}, v3.ByID()[1].static.Load().groupIDs, "partial invalidate preserves other groupIDs")
 	require.ElementsMatch(t, []int64{10, 20}, oldLeaf.static.Load().groupIDs, "old leaf stable")
 	require.Same(t, oldLeaf, oldView.ByID()[1], "old view stable")
-	require.NotSame(t, oldLeaf, v2.ByID()[1], "new leaf for changed account")
-	require.Same(t, oldLeaf.runtime, v2.ByID()[1].runtime, "shared runtime")
+	require.NotSame(t, oldLeaf, v3.ByID()[1], "new leaf for changed account")
+	require.Same(t, oldLeaf.runtime, v3.ByID()[1].runtime, "shared runtime")
 }
 
 func nilContext() context.Context { return context.Background() }

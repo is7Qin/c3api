@@ -49,9 +49,7 @@ func TestInvalidateGroupSerializesLoadBarrier(t *testing.T) {
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	v1 := s.View()
 	require.NotNil(t, v1)
-	require.NotNil(t, v1.DecisionView())
-	dec1 := v1.DecisionView()
-	require.NotNil(t, dec1)
+	require.NotNil(t, v1.DecisionView(), "setup publishes a complete pair")
 
 	staleAccs := []*domain.Account{acc(1, tpl, 4)}
 	block := make(chan struct{})
@@ -84,18 +82,15 @@ func TestInvalidateGroupSerializesLoadBarrier(t *testing.T) {
 
 	reloadDone := make(chan struct{})
 	decisionDone := make(chan struct{})
+	base := s.View()
 	go func() {
 		defer close(reloadDone)
 		_ = s.reload(context.Background())
 	}()
 	go func() {
 		defer close(decisionDone)
-		s.publisher.publishWithBase(s.View().Generation(), func(cur *RoutingView) *DecisionView {
-			var gen uint64
-			if cur != nil && cur.DecisionView() != nil {
-				gen = cur.DecisionView().Generation()
-			}
-			return &DecisionView{generation: gen + 1, routes: map[RouteRef]*RouteDecision{route: {Primary: []int64{1, 2}}}}
+		s.publisher.publishWithBase(base.Generation(), base.StaticView(), func(cur *RoutingView) *DecisionView {
+			return &DecisionView{routes: map[RouteRef]*RouteDecision{route: {Primary: ccPrimary(1, 2)}}}
 		})
 	}()
 
@@ -115,12 +110,35 @@ func TestInvalidateGroupSerializesLoadBarrier(t *testing.T) {
 
 	s.loader = m
 
+	// Atomic publication: the stale group load only stages (never published);
+	// the racy decision-only publish still rebases onto the current static
+	// (same root, new generation), and the fresh full reload stays staged as
+	// pending — the old static is never torn or overwritten by stale data.
 	vFinal := s.View()
 	require.NotNil(t, vFinal)
+	require.Same(t, v1.StaticView(), vFinal.StaticView(), "staging must not touch the published static")
 	require.NotNil(t, vFinal.StaticView())
 	_, has2 := vFinal.ByID()[2]
-	require.True(t, has2, "no stale static overwrite: fresh account 2 must be present after serialized reload")
-	grp10 := vFinal.Groups()[10]
+	require.False(t, has2, "staged account 2 not yet published")
+	_, ok := vFinal.DecisionView().routes[route]
+	require.True(t, ok, "racy decision-only publish lands on the still-current static")
+	s.publisher.mu.Lock()
+	pending := s.publisher.pending
+	s.publisher.mu.Unlock()
+	require.NotNil(t, pending, "fresh reload stays staged as pending")
+	_, has2 = pending.byID[2]
+	require.True(t, has2, "no stale static overwrite: pending holds fresh account 2")
+
+	// The pending root pairs on the next compile: generations match, leaves
+	// point into the new static.
+	s.compileOnce()
+	paired := s.View()
+	require.NotSame(t, v1, paired)
+	require.Equal(t, paired.Generation(), paired.StaticView().Generation(), "one generation for the pair")
+	require.Equal(t, paired.Generation(), paired.DecisionView().Generation(), "one generation for the pair")
+	_, has2 = paired.ByID()[2]
+	require.True(t, has2, "paired publish carries fresh account 2")
+	grp10 := paired.Groups()[10]
 	require.NotNil(t, grp10)
 	found2 := false
 	for _, a := range grp10.accounts {
@@ -129,10 +147,5 @@ func TestInvalidateGroupSerializesLoadBarrier(t *testing.T) {
 			break
 		}
 	}
-	require.True(t, found2, "group 10 must contain fresh account after serialized reload")
-	decFinal := vFinal.DecisionView()
-	require.NotNil(t, decFinal)
-	require.NotNil(t, decFinal.routes[route])
-	require.Equal(t, []int64{1, 2}, decFinal.routes[route].Primary, "latest DecisionView retained")
-	require.Greater(t, vFinal.Generation(), v1.Generation())
+	require.True(t, found2, "group 10 must contain fresh account after paired publish")
 }
