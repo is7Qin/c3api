@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -64,8 +65,9 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 
 	// --- 双向 relay：三个方向各自 goroutine，首退者触发取消 ---
 	// 每个 goroutine 退出时把"本侧真实错误"记录到共享变量（仅当退出非取消
-	// 副作用——relayCtx 存活 = 本退出是首因；首因到达 endCh → 编排等上游
-	// 读者退出 → 分类 → 取消对侧 → 等全部退出。
+	// 副作用——relayCtx 存活 = 本退出是首因；首因到达 endCh → 编排取消全侧
+	// → 等上游读者与心跳退出 → endMu 快照分类 → 关闭传播解除 client-loop
+	// 的阻塞 Read → 等全部退出。
 	//
 	// 上游关闭帧与客户端活跃写帧并发竞态：上游侧
 	// 错误槽 upErr 有两个并发写者——up-loop 的关闭帧（CloseError）与
@@ -73,13 +75,17 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// ——首写生效下 net.ErrClosed 可能先被记录 → 健康上游误判连接级错误
 	// 冷却。修复：关闭帧记录到独立槽 upClose（仅 up-loop 写入、无取消守卫
 	// ——真实帧永不丢），分类时正常关闭帧优先于一切；写失败只归因网络错误
-	// 槽（无关闭帧时才判错）。upLoopDone 保证 upClose 先于分类读取可见
-	// （记录 happens-before 退出 happens-before close(upLoopDone)）。
+	// 槽（无关闭帧时才判错）。upLoopDone/hbDone 保证 upClose/pingErr 先于
+	// 分类读取可见（记录 happens-before 退出 happens-before close(done)）；
+	// 分类读取在 endMu 下快照——client-loop 唯一可能晚于快照的写者（其 Read
+	// 由分类关闭帧解除），写与快照读取同锁互斥，无数据竞争；relayCancel 先
+	// 行使这类迟到写全部落入取消守卫（合成取消错误不改判）。
 	//
 	// 关键细节：客户端循环的阻塞 Read 用 r.Context()（非 relayCtx）——库对
 	// 取消中的阻塞 Read 会直接拆连接（客户端拿不到正常关闭帧）；客户端循环
 	// 的退出由编排的分类关闭帧（Close 握手）自然解除：对端回关闭帧 → Read
-	// 返回关闭错误 → 退出。取消仅用于上游侧（上游已结束/失联，直拆无害）。
+	// 返回关闭错误 → 退出。取消仅用于上游侧（上游已结束/失联，直拆无害）；
+	// contFail 收尾无正常关闭帧可等，改写错误帧后 CloseNow 直拆解除。
 	// implicit 响应身份：非空时重写上游→客户端 text 帧的模型字段（显式/无映射保持直通零扫描）
 	respModel := sel.ClientResponseModel(reqModel)
 	// 硬续接（WS create 面）：store 装配且非 codex 传输时，每个 response id
@@ -295,9 +301,11 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		}
 	}()
 
+	hbDone := make(chan struct{})
 	wg.Add(1)
 	go func() { // 心跳：向上游周期 Ping，pong 超时视为上游失联按网络错误收尾
 		defer wg.Done()
+		defer close(hbDone)                             // 编排等本侧退出后再快照——pingErr 写入 happens-before 本关闭
 		defer relayRecover("heartbeat", &pingErr)       // panic 按身份入槽：心跳失败归 pingErr
 		ticker := time.NewTicker(p.wsHeartbeatInterval) // 可注入缩短以便测试
 		defer ticker.Stop()
@@ -319,13 +327,21 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	}()
 
 	<-endCh
-	// 等上游读者退出再分类：关闭帧解码与客户端写失败并发，upLoopDone 保证关闭帧先于分类可见
+	// 幂等取消先行：exit 的 relayCancel 滞后于 endCh 信号——先取消，此后所有
+	// 解除路径（心跳 Ping/上游读、client-loop 的 up.Write）的退出错误都落入
+	// setErr 取消守卫，合成取消错误不再改判。
+	relayCancel()
+	// 等上游读者与心跳退出再分类：关闭帧解码与客户端写失败并发，
+	// upLoopDone/hbDone 保证 upClose/pingErr 先于快照可见。
 	<-upLoopDone
+	<-hbDone
 
 	// 分类与关闭传播（纯函数可单测）：
 	// ① 上游正常关闭（1000/1001）→ 成功，已见业务帧；② 客户端断开 → abort，已见业务帧不计冷却；
 	// ③ 上游错误/网络错误/心跳超时 → 失败，已见业务帧但需冷却。关闭帧优先级高于读写错误。
 	// 先记录后发关闭帧：避免关闭帧先达使对端断开导致记录丢失，优雅停机需等在途归零。
+	// 槽读取在 endMu 下快照：client-loop 是唯一可能未退出的写者（其 Read 由
+	// 下方关闭传播解除），同锁互斥即无数据竞争。
 	u := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
 	logCtx := relayCtx
 	if ttft != nil {
@@ -336,7 +352,13 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		// 弃置（未绑定 id 永不达客户端），错误帧可达后收尾；已消耗用量保留
 		// 计费；网关侧失败不冷却账号（health=nil）。ACK 后新 id 绑定失败 =
 		// 帧已可见，走 sent_ambiguous 终态（与流中止同轨）。
-		wsWriteError(client, contFail.msg)
+		// 错误帧写出后 CloseNow 直拆：空闲客户端不回关闭握手，优雅 Close 会把
+		// 收尾挂在库内握手超时上（5s）——relay 退出不得等客户端响应，主动
+		// 拆连接解除 client-loop 的阻塞 Read 后 wg.Wait 全 join。
+		ectx, ecancel := context.WithTimeout(context.Background(), responsesWSCloseTimeout)
+		_ = client.Write(ectx, websocket.MessageText, wsErrorFrame(contFail.msg))
+		ecancel()
+		_ = client.CloseNow()
 		base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))
 		out := base
 		logStatus, logET := contFail.status, domain.Err5xx
@@ -355,7 +377,6 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		l := logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, logStatus, logET, u, start))
 		p.finish(sel, l)
 		up.CloseNow()
-		relayCancel()
 		wg.Wait()
 		return true, ""
 	}
@@ -371,7 +392,10 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		fcancel()
 		contPending = nil
 	}
-	end, endErr := relayClassify(upClose, upErr, clientErr, pingErr)
+	endMu.Lock()
+	uc, ue, ce, pe := upClose, upErr, clientErr, pingErr
+	endMu.Unlock()
+	end, endErr := relayClassify(uc, ue, ce, pe)
 	base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))
 	switch end {
 	case relayEndUpstreamClosed:
@@ -394,7 +418,20 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		_ = client.Close(wsCloseStatus(endErr), "")
 		up.CloseNow() // 上游已失联，免握手等待
 	}
-	relayCancel()
-	wg.Wait()
+	wg.Wait() // client-loop 的阻塞 Read 已被上方关闭传播/直拆解除
 	return true, ""
+}
+
+// wsErrorFrame 网关终态错误帧（与 wsWriteError 的帧形一致）。contFail 收尾
+// 自写帧后 CloseNow 直拆——不能复用 wsWriteError 的优雅 Close：空闲客户端
+// 不回关闭握手，收尾会挂在库内 5s 握手超时上。
+func wsErrorFrame(msg string) []byte {
+	b, err := json.Marshal(map[string]any{
+		"type":  "error",
+		"error": map[string]any{"message": msg},
+	})
+	if err != nil {
+		return []byte(`{"type":"error","error":{"message":"gateway error"}}`)
+	}
+	return b
 }
