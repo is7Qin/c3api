@@ -263,18 +263,23 @@ func (g *contGateWriter) markFailed() {
 
 // release flushes every buffered frame — the first point at which any byte of
 // the response (and its id) becomes visible to the client.
-func (g *contGateWriter) release() {
+func (g *contGateWriter) release() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.released {
-		return
+		return nil
 	}
 	g.released = true
 	if len(g.buf) > 0 {
-		_, _ = g.w.Write(g.buf)
+		if _, err := g.w.Write(g.buf); err != nil {
+			g.failed = true
+			g.buf = nil
+			return err
+		}
 		g.buf = nil
 	}
 	if f, ok := g.w.(http.Flusher); ok {
 		f.Flush()
 	}
+	return nil
 }

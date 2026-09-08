@@ -76,7 +76,7 @@ func (s *Scheduler) CurrentRoutingPlan() *RoutingPlan {
 			},
 			Degraded: compiledIDs(rd.Degraded),
 		}
-		route.Candidates = routePlanCandidates(rd)
+		route.Candidates = routePlanCandidates(rd, v.static.facts)
 		plan.Routes = append(plan.Routes, route)
 	}
 	return plan
@@ -106,7 +106,7 @@ func compiledIDs(cs []CompiledCandidate) []int64 {
 	return out
 }
 
-func routePlanCandidates(rd *RouteDecision) []RoutingPlanCandidate {
+func routePlanCandidates(rd *RouteDecision, facts map[int64]compilerAccountFacts) []RoutingPlanCandidate {
 	byID := make(map[int64]CompiledCandidate, 8)
 	for _, c := range rd.Primary {
 		if _, ok := byID[c.AccountID]; !ok {
@@ -134,13 +134,13 @@ func routePlanCandidates(rd *RouteDecision) []RoutingPlanCandidate {
 		rpc := RoutingPlanCandidate{
 			AccountID: id,
 		}
-		if c.Static != nil {
+		if fact, ok := facts[id]; ok && fact.account == c.Leaf && fact.static == c.Static {
 			rpc.TemplateID = c.TemplateID
 			rpc.LifecycleRevision = c.LifecycleRevision
 			rpc.Fingerprint = c.Fingerprint
 			rpc.MappedModel = c.MappedModel
 			rpc.QualityClassID = c.Quality
-			rpc.UpstreamCostMultiplierBp = c.Static.acc.UpstreamCostMultiplierBp
+			rpc.UpstreamCostMultiplierBp = fact.upstreamCostMultiplierBp
 		}
 		rpc.IdentityFingerprint = domain.CandidateFPHex(candidateIdentityFingerprint(c.Fingerprint, c.AccountID))
 		out = append(out, rpc)

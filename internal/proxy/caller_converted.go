@@ -128,7 +128,10 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 								gate.markFailed()
 								contErr = ferr
 							} else {
-								gate.release()
+								if err := gate.release(); err != nil {
+									gate.markFailed()
+									contErr = errContUnavailable
+								}
 							}
 						}
 					}
@@ -137,6 +140,15 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			},
 		})
 		resp.Body.Close()
+		if gate != nil && contErr == nil {
+			if released, failed := gate.gateState(); failed {
+				contErr = errContUnavailable
+			} else if !released {
+				if err := gate.release(); err != nil {
+					contErr = errContUnavailable
+				}
+			}
+		}
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
