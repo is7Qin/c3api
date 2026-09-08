@@ -17,6 +17,7 @@ type AttemptPlanIdentity struct {
 	RequestID         string
 	UserID            int64
 	RouteClassID      string
+	RequestedModel    string
 	RoutingGeneration uint64
 	// MaxAttempts bounds successful dispatches (1..8). 0 means unset and
 	// falls back to the array bound MaxAttemptPlanAccounts; values >8 clamp
@@ -123,29 +124,6 @@ func (a Attempt) Validate() error {
 }
 
 type AttemptReservation func(accountID int64) bool
-
-type attemptPlanCandidate struct {
-	accountID         int64
-	lane              AttemptLane
-	account           *accountSnapshot
-	static            *snapshotStatic
-	fingerprint       string
-	quality           string
-	templateID        int64
-	requestedModel    string
-	mappedModel       string
-	mappingMode       domain.ModelMappingMode
-	routeClassID      string
-	callerCategory    string
-	operationTag      string
-	lifecycleRevision int64
-	routingGeneration uint64
-}
-
-type cacheAffinityCandidate struct {
-	accountID int64
-	lane      AttemptLane
-}
 
 const fnvOffset64 = 14695981039346656037
 const fnvPrime64 = 1099511628211
