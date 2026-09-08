@@ -83,22 +83,20 @@ func (c *HealthController) FailAccount(ev rule.Event) error {
 	fp := ev.CandidateFingerprint
 	if c.sched != nil {
 		if v := c.sched.View(); v != nil {
-			if byID := v.ByID(); byID != nil {
-				if as, ok := byID[ev.AccountID]; ok {
-					av := as.static.Load()
-					if av.acc.LifecycleRevision != ev.ExpectedRevision {
-						return ErrStaleFailureRevision
-					}
-					current, err := candidateFingerprint(&av.acc)
-					if err != nil {
-						return err
-					}
-					if fp == "" {
-						return ErrMissingCandidateFingerprint
-					}
-					if fp != current {
-						return ErrCandidateFingerprintMismatch
-					}
+			if as, ok := v.Account(ev.AccountID); ok {
+				av := as.static.Load()
+				if av.acc.LifecycleRevision != ev.ExpectedRevision {
+					return ErrStaleFailureRevision
+				}
+				current, err := candidateFingerprint(&av.acc)
+				if err != nil {
+					return err
+				}
+				if fp == "" {
+					return ErrMissingCandidateFingerprint
+				}
+				if fp != current {
+					return ErrCandidateFingerprintMismatch
 				}
 			}
 		}

@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -135,6 +136,8 @@ const (
 )
 
 var (
+	ErrProbeStaleRevision = errors.New("health probe: stale revision")
+
 	// Lua throttle/READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL
 	throttleLua = `
 local genKey = KEYS[1]
@@ -885,7 +888,9 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 			delete(h.successCount, field)
 			delete(h.successGen, field)
 			h.mu.Unlock()
-			_, _ = h.Throttle(ctx, key, StateOPEN, 30*time.Second)
+			if !errors.Is(err, ErrProbeStaleRevision) {
+				_, _ = h.Throttle(ctx, key, StateOPEN, 30*time.Second)
+			}
 		}
 		h.permit <- struct{}{}
 	}
