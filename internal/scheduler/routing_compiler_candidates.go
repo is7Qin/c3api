@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"encoding/binary"
 	"sort"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -56,20 +57,68 @@ func routeSupportsAccount(tpl *domain.Template, rk routeKey) bool {
 	return !tpl.HasModelSpace()
 }
 
-func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]HealthState, latched map[LatchKey]bool, rk routeKey, op domain.OperationTag) []*accountSnapshot {
-	out := make([]*accountSnapshot, 0, len(candidates))
-	for _, a := range candidates {
-		av := a.static.Load()
-		if !av.acc.Enabled || av.acc.LifecycleRevision < 0 {
+type compilerCandidateFacts struct {
+	account             *accountSnapshot
+	static              *snapshotStatic
+	accountID           int64
+	revision            int64
+	templateID          int64
+	baseURL             string
+	fingerprint         string
+	identityFingerprint domain.CandidateFingerprintVal
+	requestedModel      string
+	mappedModel         string
+	mappingMode         domain.ModelMappingMode
+	quality             string
+	qualityRaw          string
+}
+
+func buildCandidateFacts(candidates []*accountSnapshot, rk routeKey, op domain.OperationTag) []compilerCandidateFacts {
+	facts := make([]compilerCandidateFacts, 0, len(candidates))
+	for _, account := range candidates {
+		fact := compilerCandidateFacts{account: account, requestedModel: rk.model, mappedModel: rk.model}
+		if account != nil {
+			fact.static = account.static.Load()
+		}
+		if fact.static != nil {
+			fact.accountID = fact.static.acc.ID
+			fact.revision = fact.static.acc.LifecycleRevision
+			fact.templateID = fact.static.acc.TemplateID
+			if fact.static.tpl != nil {
+				fact.baseURL = fact.static.tpl.BaseURL
+			}
+			if fact.static.acc.BaseURL != nil && *fact.static.acc.BaseURL != "" {
+				fact.baseURL = *fact.static.acc.BaseURL
+			}
+			if fp, err := candidateFingerprint(&fact.static.acc); err == nil {
+				fact.fingerprint = fp
+			}
+			fact.identityFingerprint = candidateIdentityFingerprint(fact.fingerprint, fact.accountID)
+			if fact.static.tpl != nil {
+				if mapping, ok := fact.static.tpl.ModelMapping[rk.model]; ok {
+					fact.mappedModel = mapping.MappedModel
+					fact.mappingMode = mapping.Mode
+				}
+			}
+			format := rk.format
+			fact.quality = qualityClassHexForWithOp(format, fact.mappedModel, op)
+			fact.qualityRaw = qualityClassHexForWithOp(format, fact.requestedModel, op)
+		}
+		facts = append(facts, fact)
+	}
+	return facts
+}
+
+func filterCandidates(candidates []compilerCandidateFacts, health map[HealthKey]HealthState, latched map[LatchKey]bool) []compilerCandidateFacts {
+	out := make([]compilerCandidateFacts, 0, len(candidates))
+	for _, fact := range candidates {
+		if fact.static == nil || !fact.static.acc.Enabled || fact.static.acc.LifecycleRevision < 0 {
 			continue
 		}
-		fp, err := candidateFingerprint(&av.acc)
-		if err != nil {
-			fp = ""
-		}
-		rev := av.acc.LifecycleRevision
+		fp := fact.fingerprint
+		rev := fact.revision
 		if fp != "" {
-			lk := LatchKey{AccountID: av.acc.ID, Fingerprint: fp, Revision: rev}
+			lk := LatchKey{AccountID: fact.accountID, Fingerprint: fp, Revision: rev}
 			if latched != nil {
 				if v, ok := latched[lk]; ok && v {
 					continue
@@ -79,7 +128,7 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 					if !v {
 						continue
 					}
-					if k.AccountID == av.acc.ID && (k.Fingerprint != fp || k.Revision != rev) {
+					if k.AccountID == fact.accountID && (k.Fingerprint != fp || k.Revision != rev) {
 						mismatch = true
 						break
 					}
@@ -94,7 +143,7 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 				if !v {
 					continue
 				}
-				if k.AccountID == av.acc.ID {
+				if k.AccountID == fact.accountID {
 					hasLatch = true
 					break
 				}
@@ -104,15 +153,9 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 			}
 		}
 		if health != nil && len(health) > 0 {
-			resolved := rk.model
-			if av.tpl != nil {
-				if m, ok := av.tpl.ModelMapping[rk.model]; ok {
-					resolved = m.MappedModel
-				}
-			}
-			qc := qualityClassHexForWithOp(rk.format, resolved, op)
-			hkSpec := HealthKey{AccountID: av.acc.ID, Quality: qc, Revision: rev}
-			hkWild := HealthKey{AccountID: av.acc.ID, Quality: "*", Revision: rev}
+			qc := fact.quality
+			hkSpec := HealthKey{AccountID: fact.accountID, Quality: qc, Revision: rev}
+			hkWild := HealthKey{AccountID: fact.accountID, Quality: "*", Revision: rev}
 			excluded := false
 			if st, ok := health[hkSpec]; ok && st != StateReady {
 				excluded = true
@@ -123,7 +166,7 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 					if st == StateReady {
 						continue
 					}
-					if hk.AccountID != av.acc.ID {
+					if hk.AccountID != fact.accountID {
 						continue
 					}
 					if hk.Quality != qc && hk.Quality != "*" {
@@ -139,14 +182,9 @@ func filterCandidates(candidates []*accountSnapshot, health map[HealthKey]Health
 				continue
 			}
 		}
-		out = append(out, a)
+		out = append(out, fact)
 	}
 	return out
-}
-
-func qualityClassHexFor(rk routeKey) string {
-	op := operationTagForFormat(string(rk.format))
-	return qualityClassHexForWithOp(rk.format, rk.model, op)
 }
 
 func qualityClassHexForWithOp(format domain.RequestFormat, model string, op domain.OperationTag) string {
@@ -189,20 +227,13 @@ func tplSupportsFormat(tpl *domain.Template, format domain.RequestFormat) bool {
 	return false
 }
 
-func compilerHealthKeyFor(acc *domain.Account, format domain.RequestFormat, model string) HealthKey {
-	rev := acc.LifecycleRevision
-	resolved := model
-	if acc.Template != nil {
-		if m, ok := acc.Template.ModelMapping[model]; ok {
-			resolved = m.MappedModel
+func candidateIdentityFingerprint(fingerprint string, accountID int64) domain.CandidateFingerprintVal {
+	if fingerprint != "" {
+		if v, err := domain.HexToID(fingerprint); err == nil {
+			return domain.CandidateFingerprintVal(v)
 		}
 	}
-	op := operationTagForFormat(string(format))
-	qc := qualityClassHexForWithOp(format, resolved, op)
-	return HealthKey{AccountID: acc.ID, Quality: qc, Revision: rev}
-}
-
-func compilerLatchKeyFor(acc *domain.Account) LatchKey {
-	fp, _ := candidateFingerprint(acc)
-	return LatchKey{AccountID: acc.ID, Fingerprint: fp, Revision: acc.LifecycleRevision}
+	var b [32]byte
+	binary.BigEndian.PutUint64(b[:8], uint64(accountID))
+	return domain.CandidateFingerprintVal(b)
 }
