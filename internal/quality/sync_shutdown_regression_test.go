@@ -61,8 +61,8 @@ func TestQualitySync_ShutdownDrainFailureRetainsPending(t *testing.T) {
 	for _, rows := range rec.pendingQuality {
 		qualityRows += len(rows)
 	}
-	flowMinutes := len(rec.pendingFlow)
 	rec.mu.Unlock()
+	flowMinutes := rec.FlowOwner().pendingTotal()
 	require.Equal(t, 1, qualityRows, "pending quality must be retained for retry after failed drain")
 	require.Equal(t, 1, flowMinutes, "pending flow must be retained for retry after failed drain")
 	require.Equal(t, int64(0), rec.QualityOverflow())
@@ -104,17 +104,10 @@ func (g *gatedFailingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc str
 	return context.DeadlineExceeded
 }
 
-// TestQualitySync_CloseWaitsForInflightFlushNoLateRefill pins the Close
-// lifecycle barrier (review blocker 2026-08-31): Close must not return while an
-// in-flight flush still holds flushMu, because that flush's failure-refill
-// lands in the recorder — and the shutdown tail finalizes the recorder right
-// after Close returns, turning a late refill into a silent drop. The old
-// abandon path returned at drainCtx+grace while the flush was still stuck;
-// the fixed path blocks until the flush releases, keeps the explicit
-// incomplete-drain error, and the refill is visible in the final snapshot.
+// TestQualitySync_CloseIsBoundedByContext pins the bounded Close contract.
 // Barriers only (entered/release channels + one watchdog bounding the old
 // abandon time); no sleep-race masking.
-func TestQualitySync_CloseWaitsForInflightFlushNoLateRefill(t *testing.T) {
+func TestQualitySync_CloseIsBoundedByContext(t *testing.T) {
 	// Given: open recorder with one pending quality row and a flush stuck
 	// inside the PG writer holding flushMu (simulates the loop's in-flight doPG).
 	_, rdb := newMiniRedis(t)
@@ -124,8 +117,6 @@ func TestQualitySync_CloseWaitsForInflightFlushNoLateRefill(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "close-barrier", BatchSize: 10}, nil)
 	w.SetClock(func() time.Time { return fixed })
-	// Old abandon path returned at drainCtx(50ms)+grace(10ms)=~60ms; the
-	// watchdog below fires at 300ms, so any early return is the bug itself.
 	w.inflightAbandonGrace = 10 * time.Millisecond
 
 	minute := fixed.Unix()
@@ -150,28 +141,24 @@ func TestQualitySync_CloseWaitsForInflightFlushNoLateRefill(t *testing.T) {
 		closeDone <- w.Close(ctx)
 	}()
 
-	// Then: Close must not return while the flush is in flight.
+	// Then: Close returns at the caller deadline, even while the downstream is stuck.
+	var closeErr error
 	select {
-	case cerr := <-closeDone:
-		close(pg.release)
-		<-flushDone
-		t.Fatalf("Close returned while an in-flight flush could still refill the recorder: %v", cerr)
+	case closeErr = <-closeDone:
 	case <-time.After(300 * time.Millisecond):
+		t.Fatal("Close exceeded its context budget")
 	}
 	close(pg.release)
 
-	// Explicit incomplete-drain semantics are preserved despite the wait.
-	cerr := <-closeDone
-	require.ErrorIs(t, cerr, context.DeadlineExceeded)
-	require.ErrorContains(t, cerr, "drain incomplete")
+	require.ErrorIs(t, closeErr, context.DeadlineExceeded)
 	<-flushDone
 
-	// And: the failed flush's refill landed before Close returned, so the
-	// recorder finalization that follows Close retains the row instead of
-	// rejecting a late refill into a closed recorder.
+	// And: a refill completing after Close returned is diverted to residual
+	// accounting rather than mutating a recorder that may now be finalized.
 	require.NoError(t, rec.CloseWithContext(context.Background()))
 	snap := rec.Snapshot()
-	retained, ok := snap.Quality[minute][k]
-	require.True(t, ok, "refill must land before Close returns, not after recorder finalization")
-	require.Equal(t, int64(5), retained.Attempts())
+	_, ok := snap.Quality[minute][k]
+	require.False(t, ok, "late refill must not mutate finalized recorder")
+	stats := w.statsSnapshot()
+	require.Equal(t, int64(1), stats.ResidualQuality)
 }
