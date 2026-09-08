@@ -18,6 +18,10 @@ type rulePersistStore interface {
 	GetAccountGroups(ctx context.Context, accountID int64) ([]int64, error)
 }
 
+type rulePersistTemplateStore interface {
+	GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error)
+}
+
 func NewRulePersistFunc(store rulePersistStore, latch *latchStore, pub interface {
 	PublishGroups(ctx context.Context, gids []int64)
 }, log *logx.Logger) rule.PersistFunc {
@@ -31,6 +35,14 @@ func NewRulePersistFunc(store rulePersistStore, latch *latchStore, pub interface
 		acct, err := store.GetAccount(ctx, item.Event.AccountID)
 		if err != nil {
 			return err
+		}
+		if acct.Template == nil {
+			if withTemplate, ok := store.(rulePersistTemplateStore); ok {
+				acct, err = withTemplate.GetAccountWithTemplate(ctx, item.Event.AccountID)
+				if err != nil {
+					return err
+				}
+			}
 		}
 		if acct.LifecycleRevision != item.Event.ExpectedRevision {
 			return ErrStaleFailureRevision
