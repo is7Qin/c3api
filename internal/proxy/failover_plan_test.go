@@ -3,7 +3,6 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,7 +44,7 @@ func TestSelectWithPlan_FirstSelectionUsesPlanWhenIdentityAvailable(t *testing.T
 	schedRoute := scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "gpt-4o")
 	// 精确模型桶显式编译（默认桶由 publishTestRoutes 武装）——计划身份应携带
 	// 命中路由的 canonical RouteClassID。
-	p.sched.PublishDecisionForTest(schedRoute, &scheduler.RouteDecision{Primary: []int64{1, 2}})
+	p.sched.PublishDecisionForTest(schedRoute, &scheduler.RouteDecision{Primary: []scheduler.CompiledCandidate{{AccountID: 1}, {AccountID: 2}}})
 	identity := scheduler.AttemptPlanIdentity{RequestID: "req-123", UserID: 1}
 	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o", identity)
 	require.NoError(t, err)
@@ -70,7 +69,7 @@ func TestSelectWithPlan_ConvertedRouteUsesTargetIdentity(t *testing.T) {
 
 	respRoute := scheduler.RouteRefFor(10, string(domain.FormatOpenAIResponses), "gpt-4o")
 	// 精确模型桶显式编译——转换路由的计划身份携带目标 canonical RouteClassID。
-	p.sched.PublishDecisionForTest(respRoute, &scheduler.RouteDecision{Primary: []int64{2}})
+	p.sched.PublishDecisionForTest(respRoute, &scheduler.RouteDecision{Primary: []scheduler.CompiledCandidate{{AccountID: 2}}})
 	identity := scheduler.AttemptPlanIdentity{RequestID: "req-conv", UserID: 1}
 	sel2, plan2, err2 := p.selectWithPlan(10, domain.FormatOpenAIResponses, "gpt-4o", identity)
 	require.NoError(t, err2)
@@ -126,18 +125,21 @@ func TestFailoverPlan_AttemptsExhaustedVsNoAvailable(t *testing.T) {
 	_, err := s.NewAttemptPlan(scheduler.AttemptPlanIdentity{RequestID: "r1", UserID: 1}, emptyRoute)
 	require.ErrorIs(t, err, scheduler.ErrFormatUnavailable)
 	// create empty decision plan directly
-	emptyPlan := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, scheduler.RouteDecision{})
+	emptyPlan, err := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, &scheduler.RouteDecision{})
+	require.NoError(t, err)
 	_, err = emptyPlan.Reserve(func(int64) bool { return true })
 	require.ErrorIs(t, err, scheduler.ErrNoAvailable)
 	require.NotErrorIs(t, err, scheduler.ErrAttemptsExhausted)
-	fullPlan := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, scheduler.RouteDecision{Primary: []int64{1}})
+	fullPlan, err := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, &scheduler.RouteDecision{Primary: []scheduler.CompiledCandidate{{AccountID: 1}}})
+	require.NoError(t, err)
 	_, err = fullPlan.Reserve(func(int64) bool { return false })
 	require.ErrorIs(t, err, scheduler.ErrAttemptsExhausted)
 	require.NotErrorIs(t, err, scheduler.ErrNoAvailable)
 }
 
 func TestFailoverPlan_ReservationRejectionDoesNotConsumeDispatch(t *testing.T) {
-	plan := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, scheduler.RouteDecision{Primary: []int64{1, 2, 3}})
+	plan, err := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, &scheduler.RouteDecision{Primary: []scheduler.CompiledCandidate{{AccountID: 1}, {AccountID: 2}, {AccountID: 3}}})
+	require.NoError(t, err)
 	// first reserve rejects 1, accepts 2 -> ordinal 1
 	a1, err := plan.Reserve(func(id int64) bool { return id == 2 })
 	require.NoError(t, err)
@@ -149,30 +151,19 @@ func TestFailoverPlan_ReservationRejectionDoesNotConsumeDispatch(t *testing.T) {
 	require.Equal(t, uint8(2), a2.Ordinal)
 }
 
-func TestFailoverPlan_DuplicateIDsSkipped(t *testing.T) {
-	plan := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, scheduler.RouteDecision{
-		Primary: []int64{1, 2}, Explore: scheduler.ExploreDecision{IDs: []int64{2, 3}, Weights: map[int64]int{2: 100, 3: 100}, Cumulative: []uint64{100, 200}, Total: 200, Fallback: []int64{3}}, Degraded: []int64{1, 4},
-	})
-	var ids []int64
-	for {
-		a, err := plan.Reserve(func(int64) bool { return true })
-		if errors.Is(err, scheduler.ErrAttemptsExhausted) || errors.Is(err, scheduler.ErrNoAvailable) {
-			break
-		}
-		require.NoError(t, err)
-		ids = append(ids, a.AccountID)
+func TestFailoverPlan_DuplicateIDsRejectedAtPlanBoundary(t *testing.T) {
+	// Given
+	decision := &scheduler.RouteDecision{
+		Primary: []scheduler.CompiledCandidate{{AccountID: 1}, {AccountID: 2}}, Explore: scheduler.ExploreDecision{Ordered: []scheduler.CompiledCandidate{{AccountID: 2}, {AccountID: 3}}, Weights: map[int64]int{2: 100, 3: 100}, Cumulative: []uint64{100, 200}, Total: 200, Fallback: []uint16{1}}, Degraded: []scheduler.CompiledCandidate{{AccountID: 1}, {AccountID: 4}},
 	}
-	seen := map[int64]int{}
-	for _, id := range ids {
-		seen[id]++
-	}
-	for id, cnt := range seen {
-		require.Equal(t, 1, cnt, "duplicate %d", id)
-	}
-	require.LessOrEqual(t, len(ids), 4)
-	require.Contains(t, ids, int64(1))
-	require.Contains(t, ids, int64(2))
-	require.Contains(t, ids, int64(4))
+
+	// When
+	_, err := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, decision)
+
+	// Then
+	var invalid *scheduler.InvalidRouteDecisionError
+	require.ErrorAs(t, err, &invalid)
+	require.ErrorIs(t, err, scheduler.ErrInvalidRouteDecision)
 }
 
 func TestFailoverPlan_ReleaseExactlyOnceBeforeRetry(t *testing.T) {
@@ -227,7 +218,11 @@ func chatProxyWithPlan(t *testing.T, upstream string, n int, primary []int64) *P
 	publishTestRoutes(t, p.sched)
 
 	route := scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "gpt-4o")
-	p.sched.PublishDecisionForTest(route, &scheduler.RouteDecision{Primary: primary})
+	compiled := make([]scheduler.CompiledCandidate, len(primary))
+	for i, id := range primary {
+		compiled[i] = scheduler.CompiledCandidate{AccountID: id}
+	}
+	p.sched.PublishDecisionForTest(route, &scheduler.RouteDecision{Primary: compiled})
 	return p
 }
 

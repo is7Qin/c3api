@@ -68,7 +68,11 @@ func TestHandleAnthropic_NoCompiledDecision_RejectsWithoutDispatch(t *testing.T)
 	require.Zero(t, atomic.LoadInt32(&hits), "no upstream dispatch without a plan")
 	require.Empty(t, fc.snapshot())
 	require.Zero(t, snapshotQualityAttempts(rec))
-	ri, ok := p.sched.Runtime(5)
+	// Atomic publication: the staged anthropic account stays invisible until
+	// its decision pairs, so no lease could possibly be held on it.
+	_, ok := p.sched.Runtime(5)
+	require.False(t, ok, "staged account invisible while pending")
+	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "rejected selection must not hold a lease")
 }

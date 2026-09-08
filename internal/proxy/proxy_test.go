@@ -188,9 +188,41 @@ func publishTestRoutes(tb testing.TB, s *scheduler.Scheduler) {
 			}
 		}
 		for f, ids := range byFormat {
-			s.PublishDecisionForTest(scheduler.RouteRefFor(gid, f, ""), &scheduler.RouteDecision{Primary: ids})
+			models := map[string]struct{}{}
+			for _, a := range list {
+				if a == nil || a.Template == nil {
+					continue
+				}
+				for _, model := range a.Template.Models {
+					models[model] = struct{}{}
+				}
+				for model := range a.Template.ModelMapping {
+					models[model] = struct{}{}
+				}
+			}
+			if len(models) == 0 {
+				s.PublishDecisionForTest(scheduler.RouteRefFor(gid, f, ""), &scheduler.RouteDecision{Primary: compiledCandidates(ids)})
+				if f == string(domain.FormatOpenAIImages) {
+					s.PublishDecisionForTest(scheduler.RouteRefForOp(gid, f, "", domain.OpImagesEdits), &scheduler.RouteDecision{Primary: compiledCandidates(ids)})
+				}
+				continue
+			}
+			for model := range models {
+				s.PublishDecisionForTest(scheduler.RouteRefFor(gid, f, model), &scheduler.RouteDecision{Primary: compiledCandidates(ids)})
+				if f == string(domain.FormatOpenAIImages) {
+					s.PublishDecisionForTest(scheduler.RouteRefForOp(gid, f, model, domain.OpImagesEdits), &scheduler.RouteDecision{Primary: compiledCandidates(ids)})
+				}
+			}
 		}
 	}
+}
+
+func compiledCandidates(ids []int64) []scheduler.CompiledCandidate {
+	out := make([]scheduler.CompiledCandidate, len(ids))
+	for i, id := range ids {
+		out[i] = scheduler.CompiledCandidate{AccountID: id}
+	}
+	return out
 }
 
 // fakeRuleStore 内存 RuleStore：种子写入（值语义副本）。

@@ -273,6 +273,7 @@ func TestPreselectionRejectionEmptyMappedModel(t *testing.T) {
 		// 模拟重编译后的路由删除（未编译桶 → ErrFormatUnavailable → 404，与
 		// 编译器「无模板即无路由」语义一致；区别于全排除空决策的 429）。
 		sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), ""), nil)
+		sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "gpt-4o"), nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 		req.Header.Set("Authorization", "Bearer ck-1")
