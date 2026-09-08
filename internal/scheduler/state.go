@@ -48,6 +48,10 @@ type accountSnapshot struct {
 	// 旧 leaf 保持稳定（immutable leaf discipline）。
 	static  atomic.Pointer[snapshotStatic]
 	runtime *sharedRuntime
+	// compilerFacts 是所属 StaticView 拥有的不可变账号事实的叶侧链接：
+	// 首次 staging 前一次性写入，发布后只读。复用旧 leaf 时保留原链接
+	// （静态未变则事实不变）；绝不在此重写已发布 leaf。
+	compilerFacts *compilerAccountFacts
 }
 
 func newAccountSnapshot(av *snapshotStatic, st *accState) *accountSnapshot {
