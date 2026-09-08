@@ -33,7 +33,9 @@ func (s *errGetAccountStore) FailAccountCAS(_ context.Context, id int64, expecte
 	s.casCalls++
 	return nil
 }
-func (s *errGetAccountStore) GetAccountGroups(_ context.Context, _ int64) ([]int64, error) { return nil, nil }
+func (s *errGetAccountStore) GetAccountGroups(_ context.Context, _ int64) ([]int64, error) {
+	return nil, nil
+}
 
 func TestRulePersistFailClosedOnGetAccountError(t *testing.T) {
 	store := &errGetAccountStore{
