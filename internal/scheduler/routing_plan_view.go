@@ -2,59 +2,56 @@
 package scheduler
 
 import (
-	"encoding/binary"
 	"sort"
 
 	"github.com/is7qin/c3api/internal/domain"
 )
 
 // RoutingPlan is the read-only projection of the CURRENT published routing
-// plan (Todo 17 explanation lane). One immutable RoutingView root is read
-// exactly once; everything below is a defensive deep copy — callers may hold,
-// sort and serialize it freely, published views never alias into it.
-// No request hashing, no reservation, no recompile, no dynamic filtering:
-// the projection reports what IS published, not what would be published.
+// plan. One immutable RoutingView root is read exactly once; everything below
+// is a defensive deep copy.
 type RoutingPlan struct {
 	Generation uint64
-	Routes     []RoutingPlanRoute // deterministic order (lessRouteRef)
+	Routes     []RoutingPlanRoute
 }
 
-// RoutingPlanRoute is one published route: full identity plus lane candidate
-// orders preserved exactly as compiled (primary/explore/degraded order is
-// semantic, never re-sorted here).
+// RoutingPlanRoute is one published route: full identity plus lane orders
+// preserved exactly as compiled.
 type RoutingPlanRoute struct {
 	Ref        RouteRef
 	Primary    []int64
-	Explore    ExploreDecision // defensive copy (IDs order + weights + cumulative)
+	Explore    ExploreIDs
 	Degraded   []int64
-	Candidates []RoutingPlanCandidate // union of lane accounts, ascending AccountID
+	Candidates []RoutingPlanCandidate
 }
 
-// RoutingPlanCandidate is the static identity of one lane candidate:
-// template/account/revision metadata, fingerprint (real one, "" when
-// underivable), the rollup-join identity fingerprint, mapped model for this
-// route's requested model and the derived quality class.
+// ExploreIDs is the ops-face projection of explore ordering (IDs only).
+type ExploreIDs struct {
+	IDs        []int64
+	Weights    map[int64]int
+	Cumulative []uint64
+	Total      uint64
+	Fallback   []int64
+}
+
+// RoutingPlanCandidate is the static identity of one lane candidate.
 type RoutingPlanCandidate struct {
 	AccountID                int64
 	TemplateID               int64
 	LifecycleRevision        int64
 	UpstreamCostMultiplierBp int
-	Fingerprint              string // real candidate fingerprint hex ("" if underivable)
-	IdentityFingerprint      string // rollup join identity hex (compiler synthesis rule)
+	Fingerprint              string
+	IdentityFingerprint      string
 	MappedModel              string
-	QualityClassID           string // hex quality class for (format, mapped model, op)
+	QualityClassID           string
 }
 
-// CurrentRoutingPlan projects the currently published RoutingView root into
-// an immutable snapshot. Nil scheduler / unpublished view yields an empty
-// plan (Generation 0, non-nil empty Routes) — never nil, so callers cannot
-// confuse "no view yet" with a stale generation.
 func (s *Scheduler) CurrentRoutingPlan() *RoutingPlan {
 	plan := &RoutingPlan{Routes: []RoutingPlanRoute{}}
 	if s == nil {
 		return plan
 	}
-	v := s.view.Load() // single read of the immutable root
+	v := s.view.Load()
 	if v == nil {
 		return plan
 	}
@@ -71,99 +68,83 @@ func (s *Scheduler) CurrentRoutingPlan() *RoutingPlan {
 	for _, ref := range refs {
 		rd := cloneRouteDecision(v.decision.routes[ref])
 		route := RoutingPlanRoute{
-			Ref:      ref,
-			Primary:  rd.Primary,
-			Explore:  rd.Explore,
-			Degraded: rd.Degraded,
+			Ref: ref, Primary: compiledIDs(rd.Primary),
+			Explore: ExploreIDs{
+				IDs: compiledIDs(rd.Explore.Ordered), Weights: rd.Explore.Weights,
+				Cumulative: append([]uint64(nil), rd.Explore.Cumulative...),
+				Total:      rd.Explore.Total, Fallback: fallbackIDs(rd.Explore),
+			},
+			Degraded: compiledIDs(rd.Degraded),
 		}
-		route.Candidates = routePlanCandidates(v, ref)
+		route.Candidates = routePlanCandidates(rd)
 		plan.Routes = append(plan.Routes, route)
 	}
 	return plan
 }
 
-// planCandidates builds the defensive candidate metadata for the union of
-// lane accounts (primary + explore IDs + degraded), ascending AccountID.
-// Accounts missing from the static leaves (decision rebased over a removal)
-// still appear with identity-only fields — the projection never drops a
-// published candidate reference.
-func routePlanCandidates(v *RoutingView, ref RouteRef) []RoutingPlanCandidate {
-	seen := make(map[int64]bool, len(v.decision.routes[ref].Primary))
-	ids := make([]int64, 0, 16)
-	collect := func(lane []int64) {
-		for _, id := range lane {
-			if !seen[id] {
-				seen[id] = true
-				ids = append(ids, id)
-			}
-		}
+func fallbackIDs(explore ExploreDecision) []int64 {
+	if explore.Fallback == nil {
+		return nil
 	}
-	rd := v.decision.routes[ref]
-	collect(rd.Primary)
-	collect(rd.Explore.IDs)
-	collect(rd.Degraded)
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	out := make([]RoutingPlanCandidate, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, routePlanCandidate(v, ref, id))
+	out := make([]int64, 0, len(explore.Fallback))
+	for _, idx := range explore.Fallback {
+		if int(idx) < len(explore.Ordered) {
+			out = append(out, explore.Ordered[idx].AccountID)
+		}
 	}
 	return out
 }
 
-func routePlanCandidate(v *RoutingView, ref RouteRef, id int64) RoutingPlanCandidate {
-	c := RoutingPlanCandidate{AccountID: id}
-	acc := domain.Account{ID: id} // missing leaf still joins on the ID-synthesis identity
-	var tpl *domain.Template
-	if v.static != nil {
-		if snap, ok := v.static.byID[id]; ok && snap != nil {
-			if av := snap.static.Load(); av != nil {
-				acc = av.acc
-				tpl = av.tpl
-			}
+func compiledIDs(cs []CompiledCandidate) []int64 {
+	if cs == nil {
+		return nil
+	}
+	out := make([]int64, len(cs))
+	for i, c := range cs {
+		out[i] = c.AccountID
+	}
+	return out
+}
+
+func routePlanCandidates(rd *RouteDecision) []RoutingPlanCandidate {
+	byID := make(map[int64]CompiledCandidate, 8)
+	for _, c := range rd.Primary {
+		if _, ok := byID[c.AccountID]; !ok {
+			byID[c.AccountID] = c
 		}
 	}
-	c.TemplateID = acc.TemplateID
-	c.LifecycleRevision = acc.LifecycleRevision
-	c.UpstreamCostMultiplierBp = acc.UpstreamCostMultiplierBp
-	if fp, err := CandidateFingerprint(&acc); err == nil {
-		c.Fingerprint = fp
-	}
-	c.IdentityFingerprint = domain.CandidateFPHex(candidateIdentityFingerprint(&acc))
-	c.MappedModel = resolveMappedModel(tpl, ref.Model)
-	c.QualityClassID = qualityClassHexForWithOp(domain.RequestFormat(ref.Format), c.MappedModel, domain.OperationTag(ref.OperationTag))
-	return c
-}
-
-// resolveMappedModel applies the template mapping for the requested model
-// (same rule as the compiler health-key derivation; empty requested model =
-// default bucket has no mapping).
-func resolveMappedModel(tpl *domain.Template, requested string) string {
-	if tpl == nil || requested == "" {
-		return requested
-	}
-	if e, ok := tpl.ModelMapping[requested]; ok {
-		return e.MappedModel
-	}
-	return requested
-}
-
-// candidateIdentityFingerprint is the canonical rollup-join identity: the real
-// candidate fingerprint when derivable, else big-endian account ID bytes —
-// the single synthesis rule shared by the compiler quality-key lookup and the
-// RoutingPlan projection.
-func candidateIdentityFingerprint(a *domain.Account) domain.CandidateFingerprintVal {
-	if fp, err := CandidateFingerprint(a); err == nil && fp != "" {
-		if v, err := domain.HexToID(fp); err == nil {
-			return domain.CandidateFingerprintVal(v)
+	for _, c := range rd.Explore.Ordered {
+		if _, ok := byID[c.AccountID]; !ok {
+			byID[c.AccountID] = c
 		}
 	}
-	var b [32]byte
-	binary.BigEndian.PutUint64(b[:8], uint64(a.ID))
-	return domain.CandidateFingerprintVal(b)
+	for _, c := range rd.Degraded {
+		if _, ok := byID[c.AccountID]; !ok {
+			byID[c.AccountID] = c
+		}
+	}
+	ids := make([]int64, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]RoutingPlanCandidate, 0, len(ids))
+	for _, id := range ids {
+		c := byID[id]
+		rpc := RoutingPlanCandidate{
+			AccountID: c.AccountID, TemplateID: c.TemplateID,
+			LifecycleRevision: c.LifecycleRevision, Fingerprint: c.Fingerprint,
+			MappedModel: c.MappedModel, QualityClassID: c.Quality,
+		}
+		if av := c.Static; av != nil {
+			rpc.UpstreamCostMultiplierBp = av.acc.UpstreamCostMultiplierBp
+		}
+		rpc.IdentityFingerprint = domain.CandidateFPHex(candidateIdentityFingerprint(c.Fingerprint, c.AccountID))
+		out = append(out, rpc)
+	}
+	return out
 }
 
-// lessRouteRef is the total order over full route identity (shared by the
-// publish byte guard and the plan projection route ordering).
 func lessRouteRef(a, b RouteRef) bool {
 	if a.GroupID != b.GroupID {
 		return a.GroupID < b.GroupID
