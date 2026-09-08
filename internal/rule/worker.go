@@ -94,6 +94,9 @@ func (e *RuleEngine) flushPersist(ctx context.Context) {
 				if fn != nil {
 					if err := fn(ctx, item); err != nil && ctx.Err() == nil {
 						e.persistFailures.Add(1)
+						if e.log != nil {
+							e.log.Warn("rule action persistence failed", logx.Int64("account_id", item.Event.AccountID), logx.Error(err))
+						}
 					}
 				}
 			}()
@@ -131,6 +134,9 @@ func (e *RuleEngine) persistLoop(ctx context.Context) {
 				if fn != nil {
 					if err := fn(ctx, item); err != nil && ctx.Err() == nil {
 						e.persistFailures.Add(1)
+						if e.log != nil {
+							e.log.Warn("rule action persistence failed", logx.Int64("account_id", item.Event.AccountID), logx.Error(err))
+						}
 					}
 				}
 			}()
