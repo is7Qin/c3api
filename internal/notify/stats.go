@@ -10,9 +10,10 @@ package notify
 // ListenerStats NOTIFY 监听 worker 状态（存活最小集）。
 type ListenerStats struct {
 	Running bool `json:"running"` // 监听循环存活（Start 置位、run 退出复位；原子读零锁）
+	Ready   bool `json:"ready"`   // LISTEN + FullRefresh 已完成，可作为不漏增量的启动屏障
 }
 
 // Stats 满足 handler.StatsProvider（独立于 worker.Worker 契约；装配链路见 internal/handler/ops.go 文件头）。
 func (l *Listener) Stats() any {
-	return ListenerStats{Running: l.running.Load()}
+	return ListenerStats{Running: l.running.Load(), Ready: l.ready.Load()}
 }

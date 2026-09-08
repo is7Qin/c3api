@@ -112,6 +112,9 @@ type Listener struct {
 	// running 监听循环存活标志（观测面 /ops/workers：Start 置位、run 退出复位，
 	// Stats 原子读零锁——不碰 mu）。
 	running atomic.Bool
+	// ready 仅在 LISTEN 注册且 FullRefresh 成功后置位；断连/重试/退出立即复位。
+	// Running 只表示 goroutine 存活，不能作为不会漏 NOTIFY 的启动屏障。
+	ready atomic.Bool
 }
 
 // NewListener 构造监听器。
@@ -165,7 +168,10 @@ func (l *Listener) Start(ctx context.Context) error {
 	started = true
 	go func() {
 		l.running.Store(true) // 观测面：循环存活（退出即复位）
-		defer l.running.Store(false)
+		defer func() {
+			l.ready.Store(false)
+			l.running.Store(false)
+		}()
 		defer close(l.done)
 		worker.Loop(cctx, "notify", l.cfg.Log, l.run)
 	}()
@@ -194,6 +200,7 @@ func (l *Listener) Close(ctx context.Context) error {
 func (l *Listener) run(ctx context.Context) {
 	attempt := 0
 	for {
+		l.ready.Store(false)
 		if ctx.Err() != nil {
 			return
 		}
@@ -229,6 +236,7 @@ func (l *Listener) run(ctx context.Context) {
 			}
 			continue
 		}
+		l.ready.Store(true)
 		attempt = 0 // 基线建立 → 复位退避，进入消费
 		if !l.consume(ctx, conn) {
 			_ = conn.Close(ctx)

@@ -24,14 +24,18 @@ func TestListenerStats(t *testing.T) {
 		},
 	})
 	require.False(t, l.Stats().(ListenerStats).Running, "未 Start 不存活")
+	require.False(t, l.Stats().(ListenerStats).Ready, "未 Start 未建立 LISTEN 基线")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, l.Start(ctx))
 	require.Eventually(t, func() bool { return l.Stats().(ListenerStats).Running },
 		time.Second, 5*time.Millisecond, "Start 后监听循环存活")
+	require.Eventually(t, func() bool { return l.Stats().(ListenerStats).Ready },
+		time.Second, 5*time.Millisecond, "LISTEN + FullRefresh 后 ready")
 
 	cancel()
 	require.NoError(t, l.Close(context.Background()), "Close 用独立 ctx（已取消的 Start ctx 不可复用）")
 	require.Eventually(t, func() bool { return !l.Stats().(ListenerStats).Running },
 		time.Second, 5*time.Millisecond, "循环退出后复位（原子读零锁）")
+	require.False(t, l.Stats().(ListenerStats).Ready, "循环退出后 ready 复位")
 }
