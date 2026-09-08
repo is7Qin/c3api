@@ -4,44 +4,43 @@ package scheduler
 import (
 	"fmt"
 	"sort"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
-// AttemptPlan executes one compiled RouteDecision. The first
-// MaxAttemptPlanAccounts unique candidates are materialized as the hot
-// prefix; the complete unique overflow tail stays in the immutable compiled
-// lists and is walked lazily (never truncated, never copied per request).
-// Successful dispatches are bounded by maxAttempts (1..8); reservation
-// rejects advance the scan without consuming an attempt.
+// AttemptPlan is the compact request-local session over one immutable
+// RouteDecision. It owns only cursor, selected explore/affinity state,
+// attempted identities and lifecycle bookkeeping; all candidate metadata lives
+// in the published route. The initial success inspects one candidate; later
+// candidates activate lazily after retry classification.
 type AttemptPlan struct {
-	identity     AttemptPlanIdentity
-	format       string
-	model        string
-	operationTag string
-	maxAttempts  uint8
-	// hot prefix (build-time deduplicated, ≤8 slots, fixed storage)
-	candidates  [MaxAttemptPlanAccounts]attemptPlanCandidate
-	prefixCount uint8
-	cursor      uint8
-	// overflow: immutable compiled lane lists walked lazily after the prefix
-	decision    RouteDecision
-	sampleID    int64
-	sampleValid bool
-	walkSeg     uint8 // 0 primary, 1 explore sample, 2 explore fallback, 3 degraded, 4 done
-	walkPos     int
-	total       int
-	affinity    []cacheAffinityCandidate
-	affinityPos int
-	// attempt bookkeeping (bounded by maxAttempts ≤ 8)
+	identity       AttemptPlanIdentity
+	route          *RouteDecision
+	generation     uint64
+	maxAttempts    uint8
+	sampleIdx      int
+	sampleValid    bool
+	walkSeg        uint8
+	walkPos        int
+	affinitySet    bool
+	affinityDom    string
+	affinPhase     uint8
+	total          int
+	emitted        [MaxAttemptPlanAccounts]int64
+	emittedCnt     uint8
 	attempted      [MaxAttemptPlanAccounts]int64
 	attemptIDs     [MaxAttemptPlanAccounts]string
-	attempts       [MaxAttemptPlanAccounts]Attempt
-	attemptedCount uint8
+	currentAttempt Attempt
+	attemptedCnt   uint8
 	ordinal        uint8
+	// reservationStarted is monotonic execution state: set once after the
+	// first successful reservation, never cleared (AbandonLastAttempt must
+	// not reset it — attemptedCnt rewinds, execution history does not).
+	// A decision-generation mismatch is tolerated only before execution
+	// starts; afterwards the strict fence applies.
+	reservationStarted bool
 }
 
-// normalizeMaxAttempts clamps the dispatch bound into 1..8; unset (0) means
-// "no explicit bound" and takes the array bound (the proxy always stamps its
-// normalized config value, so production plans carry an explicit bound).
 func normalizeMaxAttempts(n uint8) uint8 {
 	if n == 0 || n > MaxAttemptPlanAccounts {
 		return MaxAttemptPlanAccounts
@@ -49,227 +48,243 @@ func normalizeMaxAttempts(n uint8) uint8 {
 	return n
 }
 
-// NewAttemptPlan binds an identity to one compiled route decision:
-// Primary order, then the deterministic explore sample (FNV ticket over the
-// cumulative weights) followed by the complete explore fallback tail, then
-// Degraded order. Duplicate account IDs across lanes are deduplicated once at
-// materialization; the overflow tail is referenced, never copied.
-func NewAttemptPlan(identity AttemptPlanIdentity, decision RouteDecision) *AttemptPlan {
-	p := &AttemptPlan{identity: identity, decision: decision, maxAttempts: normalizeMaxAttempts(identity.MaxAttempts)}
-	if len(decision.Explore.IDs) > 0 && decision.Explore.Total > 0 && len(decision.Explore.Cumulative) == len(decision.Explore.IDs) {
-		hash := exploreHashForPlan(identity, 0)
-		ticket := hash % decision.Explore.Total
+// NewAttemptPlan binds an identity to one compiled route: primary order, then
+// the deterministic explore sample followed by the complete fallback tail,
+// then degraded. No per-request slices/maps; the overflow tail is walked
+// lazily and never truncated.
+func NewAttemptPlan(identity AttemptPlanIdentity, decision *RouteDecision) (*AttemptPlan, error) {
+	if decision == nil {
+		return nil, &InvalidRouteDecisionError{Field: "decision", Index: -1}
+	}
+	if !decision.validated {
+		if err := validateRouteDecision(decision); err != nil {
+			return nil, err
+		}
+	}
+	p := &AttemptPlan{identity: identity, route: decision, generation: identity.RoutingGeneration, maxAttempts: normalizeMaxAttempts(identity.MaxAttempts)}
+	if len(decision.Explore.Ordered) > 0 && decision.Explore.Total > 0 && len(decision.Explore.Cumulative) == len(decision.Explore.Ordered) {
+		ticket := exploreHashForPlan(identity, 0) % decision.Explore.Total
 		idx := sort.Search(len(decision.Explore.Cumulative), func(i int) bool {
 			return decision.Explore.Cumulative[i] > ticket
 		})
-		if idx >= 0 && idx < len(decision.Explore.IDs) {
-			p.sampleID, p.sampleValid = decision.Explore.IDs[idx], true
+		if idx >= 0 && idx < len(decision.Explore.Ordered) {
+			p.sampleIdx, p.sampleValid = idx, true
 		}
-	} else if len(decision.Explore.IDs) > 0 {
-		p.sampleID, p.sampleValid = decision.Explore.IDs[0], true
 	}
-	p.countTotal()
-	for p.prefixCount < MaxAttemptPlanAccounts {
-		candidate, ok := p.nextEntry()
-		if !ok {
-			break
-		}
-		p.candidates[p.prefixCount] = candidate
-		p.prefixCount++
+	p.total = len(decision.Primary) + len(decision.Explore.Fallback) + len(decision.Degraded)
+	if p.sampleValid {
+		p.total++
 	}
-	return p
+	return p, nil
 }
 
+// ApplyCacheAffinity arms the soft preference without materializing order:
+// the walker serves preferred-domain candidates first, then spill, preserving
+// lane order within each phase and consulting every candidate at most once.
 func (p *AttemptPlan) ApplyCacheAffinity(hash uint64) bool {
-	domain, ok := p.decision.CacheDomainRing.Lookup(hash)
+	if p == nil || p.route == nil {
+		return false
+	}
+	dom, ok := p.route.CacheDomainRing.Lookup(hash)
 	if !ok {
 		return false
 	}
-	entries := p.globalEntries()
-	preferred := make([]cacheAffinityCandidate, 0, len(entries))
-	spill := make([]cacheAffinityCandidate, 0, len(entries))
-	for _, entry := range entries {
-		candidateDomain, found := cacheDomainAccountDomain(p.decision.CacheDomainAccounts, entry.accountID)
-		if found && candidateDomain == domain {
-			preferred = append(preferred, entry)
-		} else {
-			spill = append(spill, entry)
-		}
-	}
-	p.affinity = append(preferred, spill...)
-	p.affinityPos = 0
-	p.prefixCount = 0
-	p.cursor = 0
-	p.walkSeg = 4
-	p.walkPos = 0
-	for p.prefixCount < MaxAttemptPlanAccounts {
-		candidate, ok := p.nextEntry()
-		if !ok {
-			break
-		}
-		p.candidates[p.prefixCount] = candidate
-		p.prefixCount++
-	}
+	p.affinitySet = true
+	p.affinityDom = dom
+	p.affinPhase = 0
+	p.walkSeg, p.walkPos = 0, 0
 	return true
 }
 
-func (p *AttemptPlan) globalEntries() []cacheAffinityCandidate {
-	entries := make([]cacheAffinityCandidate, 0, p.total)
-	seen := make(map[int64]struct{}, p.total)
-	appendID := func(id int64, lane AttemptLane) {
-		if _, ok := seen[id]; ok {
-			return
-		}
-		seen[id] = struct{}{}
-		entries = append(entries, cacheAffinityCandidate{accountID: id, lane: lane})
+func (p *AttemptPlan) domainOf(id int64) string {
+	d, _ := cacheDomainAccountDomain(p.route.CacheDomainAccounts, id)
+	return d
+}
+
+// next returns the next compiled candidate in virtual order, honouring the
+// affinity phases without allocation. Skips the sampled ID inside fallback.
+func (p *AttemptPlan) next() (CompiledCandidate, bool) {
+	if p == nil || p.route == nil {
+		return CompiledCandidate{}, false
 	}
-	for _, id := range p.decision.Primary {
-		appendID(id, AttemptLanePrimary)
-	}
+	var sampleID int64
 	if p.sampleValid {
-		appendID(p.sampleID, AttemptLaneExplore)
+		sampleID = p.route.Explore.Ordered[p.sampleIdx].AccountID
 	}
-	for _, id := range p.decision.Explore.Fallback {
-		if p.sampleValid && id == p.sampleID {
+	for {
+		if p.affinitySet && p.affinPhase > 1 {
+			return CompiledCandidate{}, false
+		}
+		if !p.affinitySet && p.walkSeg > 3 {
+			return CompiledCandidate{}, false
+		}
+		if p.affinitySet && p.walkSeg > 3 {
+			p.affinPhase++
+			if p.affinPhase > 1 {
+				return CompiledCandidate{}, false
+			}
+			p.walkSeg, p.walkPos = 0, 0
 			continue
 		}
-		appendID(id, AttemptLaneExplore)
+		var c CompiledCandidate
+		var ok bool
+		switch p.walkSeg {
+		case 0:
+			if p.walkPos < len(p.route.Primary) {
+				c = p.route.Primary[p.walkPos]
+				p.walkPos++
+				ok = true
+			} else {
+				p.walkSeg, p.walkPos = 1, 0
+				continue
+			}
+		case 1:
+			p.walkSeg, p.walkPos = 2, 0
+			if p.sampleValid {
+				c = p.route.Explore.Ordered[p.sampleIdx]
+				ok = true
+			} else {
+				continue
+			}
+		case 2:
+			if p.walkPos < len(p.route.Explore.Fallback) {
+				idx := p.route.Explore.Fallback[p.walkPos]
+				p.walkPos++
+				if int(idx) >= len(p.route.Explore.Ordered) {
+					continue
+				}
+				c = p.route.Explore.Ordered[idx]
+				if p.sampleValid && c.AccountID == sampleID {
+					continue
+				}
+				ok = true
+			} else {
+				p.walkSeg, p.walkPos = 3, 0
+				continue
+			}
+		case 3:
+			if p.walkPos < len(p.route.Degraded) {
+				c = p.route.Degraded[p.walkPos]
+				p.walkPos++
+				ok = true
+			} else {
+				p.walkSeg = 4
+				continue
+			}
+		}
+		if !ok {
+			continue
+		}
+		if p.affinitySet {
+			want := p.domainOf(c.AccountID) == p.affinityDom
+			if (p.affinPhase == 0) != want {
+				continue
+			}
+		}
+		duplicate := false
+		for i := uint8(0); i < p.emittedCnt; i++ {
+			if p.emitted[i] == c.AccountID {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		if p.emittedCnt < MaxAttemptPlanAccounts {
+			p.emitted[p.emittedCnt] = c.AccountID
+			p.emittedCnt++
+		}
+		return c, true
 	}
-	for _, id := range p.decision.Degraded {
-		appendID(id, AttemptLaneDegraded)
-	}
-	return entries
 }
 
-func (p *AttemptPlan) countTotal() {
-	n := len(p.decision.Primary) + len(p.decision.Explore.Fallback) + len(p.decision.Degraded)
-	if p.sampleValid {
-		n++
+func (p *AttemptPlan) projectCandidate(c CompiledCandidate) CompiledCandidate {
+	if c.RequestedModel != "" || p.identity.RequestedModel == "" {
+		return c
 	}
-	p.total = n
+	c.RequestedModel = p.identity.RequestedModel
+	c.MappedModel = c.RequestedModel
+	c.MappingMode = domain.ModelMappingModeInvalid
+	if c.Static != nil && c.Static.tpl != nil {
+		if mapping, ok := c.Static.tpl.ModelMapping[c.RequestedModel]; ok {
+			c.MappedModel = mapping.MappedModel
+			c.MappingMode = mapping.Mode
+		}
+	}
+	format := domain.RequestFormat(p.route.Format)
+	op := domain.OperationTag(p.route.OperationTag)
+	c.Quality = qualityClassHexForWithOp(format, c.MappedModel, op)
+	c.QualityRaw = qualityClassHexForWithOp(format, c.RequestedModel, op)
+	return c
 }
 
-// seen reports whether the account was already materialized into the hot
-// prefix or already consumed an attempt (overflow dedupe without a per-plan
-// seen-set allocation; the compiler guarantees lane exclusivity, so this only
-// has to catch hand-authored duplicates).
-func (p *AttemptPlan) seen(accountID int64) bool {
-	for i := uint8(0); i < p.prefixCount; i++ {
-		if p.candidates[i].accountID == accountID {
+func (p *AttemptPlan) Identity() AttemptPlanIdentity { return p.identity }
+
+func (p *AttemptPlan) hasStaticChange(v *RoutingView) bool {
+	if v == nil || v.static == nil {
+		return false
+	}
+	check := func(c CompiledCandidate) bool {
+		return c.Leaf != nil && v.static.byID[c.AccountID] != c.Leaf
+	}
+	for _, c := range p.route.Primary {
+		if check(c) {
 			return true
 		}
 	}
-	for i := uint8(0); i < p.attemptedCount; i++ {
-		if p.attempted[i] == accountID {
+	for _, c := range p.route.Explore.Ordered {
+		if check(c) {
+			return true
+		}
+	}
+	for _, c := range p.route.Degraded {
+		if check(c) {
 			return true
 		}
 	}
 	return false
 }
 
-// nextEntry walks the virtual lane concatenation (Primary, explore sample,
-// explore fallback, Degraded) lazily, skipping duplicates and the sampled ID
-// inside the fallback. Positions persist across calls: the whole plan scans
-// each unique candidate at most once.
-func (p *AttemptPlan) nextEntry() (attemptPlanCandidate, bool) {
-	if p.affinity != nil {
-		if p.affinityPos >= len(p.affinity) {
-			return attemptPlanCandidate{}, false
-		}
-		entry := p.affinity[p.affinityPos]
-		p.affinityPos++
-		return attemptPlanCandidate{accountID: entry.accountID, lane: entry.lane}, true
-	}
-	for p.walkSeg <= 3 {
-		switch p.walkSeg {
-		case 0:
-			if p.walkPos < len(p.decision.Primary) {
-				id := p.decision.Primary[p.walkPos]
-				p.walkPos++
-				if !p.seen(id) {
-					return attemptPlanCandidate{accountID: id, lane: AttemptLanePrimary}, true
-				}
-				continue
-			}
-			p.walkSeg, p.walkPos = 1, 0
-		case 1:
-			p.walkSeg, p.walkPos = 2, 0
-			if p.sampleValid && !p.seen(p.sampleID) {
-				return attemptPlanCandidate{accountID: p.sampleID, lane: AttemptLaneExplore}, true
-			}
-		case 2:
-			if p.walkPos < len(p.decision.Explore.Fallback) {
-				id := p.decision.Explore.Fallback[p.walkPos]
-				p.walkPos++
-				if id == p.sampleID && p.sampleValid {
-					continue
-				}
-				if !p.seen(id) {
-					return attemptPlanCandidate{accountID: id, lane: AttemptLaneExplore}, true
-				}
-				continue
-			}
-			p.walkSeg, p.walkPos = 3, 0
-		case 3:
-			if p.walkPos < len(p.decision.Degraded) {
-				id := p.decision.Degraded[p.walkPos]
-				p.walkPos++
-				if !p.seen(id) {
-					return attemptPlanCandidate{accountID: id, lane: AttemptLaneDegraded}, true
-				}
-				continue
-			}
-			p.walkSeg = 4
-		}
-	}
-	return attemptPlanCandidate{}, false
-}
-
-// pull returns the next candidate: materialized prefix first (resolved), then
-// the lazy overflow tail (account ID + lane only; the scheduler resolves on
-// demand so overflow costs nothing until actually scanned).
-func (p *AttemptPlan) pull() (attemptPlanCandidate, bool) {
-	if p.cursor < p.prefixCount {
-		candidate := p.candidates[p.cursor]
-		p.cursor++
-		return candidate, true
-	}
-	return p.nextEntry()
-}
-
-func (p *AttemptPlan) Identity() AttemptPlanIdentity { return p.identity }
-
 func (p *AttemptPlan) CurrentAttempt() (Attempt, bool) {
-	if p == nil || p.attemptedCount == 0 {
+	if p == nil || p.attemptedCnt == 0 {
 		return Attempt{}, false
 	}
-	return p.attempts[p.attemptedCount-1], true
+	return p.currentAttempt, true
+}
+
+// AbandonLastAttempt refunds the most recent reservation that was never
+// dispatched. The scan is not rewound.
+func (p *AttemptPlan) AbandonLastAttempt() {
+	if p == nil || p.attemptedCnt == 0 {
+		return
+	}
+	p.attemptedCnt--
+	p.ordinal--
+	p.attempted[p.attemptedCnt] = 0
+	p.attemptIDs[p.attemptedCnt] = ""
+	p.currentAttempt = Attempt{}
 }
 
 func (p *AttemptPlan) Reserve(reserve AttemptReservation) (Attempt, error) {
-	return p.reserve(func(candidate *attemptPlanCandidate) bool {
-		return reserve(candidate.accountID)
-	})
+	attempt, _, err := p.reserve(func(c CompiledCandidate) bool { return reserve(c.AccountID) })
+	return attempt, err
 }
 
-// reserve scans candidates from the current cursor. A reject advances the
-// scan but never consumes an attempt; only a successful reservation
-// increments the ordinal. ErrNoAvailable means the compiled route had zero
-// candidates; ErrAttemptsExhausted means candidates existed but the scan or
-// the 1..8 dispatch bound ran out.
-func (p *AttemptPlan) reserve(reserve func(*attemptPlanCandidate) bool) (Attempt, error) {
+func (p *AttemptPlan) reserve(reserve func(CompiledCandidate) bool) (Attempt, CompiledCandidate, error) {
 	if p.total == 0 {
-		return Attempt{}, ErrNoAvailable
+		return Attempt{}, CompiledCandidate{}, ErrNoAvailable
 	}
 	if p.ordinal >= p.maxAttempts {
-		return Attempt{}, ErrAttemptsExhausted
+		return Attempt{}, CompiledCandidate{}, ErrAttemptsExhausted
 	}
 	for {
-		candidate, ok := p.pull()
+		c, ok := p.next()
 		if !ok {
-			return Attempt{}, ErrAttemptsExhausted
+			return Attempt{}, CompiledCandidate{}, ErrAttemptsExhausted
 		}
-		if !reserve(&candidate) {
+		c = p.projectCandidate(c)
+		if !reserve(c) {
 			continue
 		}
 		ordinal := p.ordinal + 1
@@ -281,35 +296,34 @@ func (p *AttemptPlan) reserve(reserve func(*attemptPlanCandidate) bool) (Attempt
 		}
 		var prev *string
 		var prevAccount *int64
-		if p.ordinal > 0 && p.attemptedCount > 0 {
-			prevCopy := p.attemptIDs[p.attemptedCount-1]
-			prev = &prevCopy
-			accountCopy := p.attempted[p.attemptedCount-1]
-			prevAccount = &accountCopy
+		if p.ordinal > 0 && p.attemptedCnt > 0 {
+			prev = &p.attemptIDs[p.attemptedCnt-1]
+			prevAccount = &p.attempted[p.attemptedCnt-1]
 		}
-		p.attempted[p.attemptedCount] = candidate.accountID
-		p.attemptIDs[p.attemptedCount] = attemptID
+		mapped := c.MappedModel
+		if !p.identity.ApplyModelMapping {
+			mapped = c.RequestedModel
+		}
+		quality := c.Quality
+		if !p.identity.ApplyModelMapping {
+			quality = c.QualityRaw
+		}
+		p.attempted[p.attemptedCnt] = c.AccountID
+		p.attemptIDs[p.attemptedCnt] = attemptID
 		p.ordinal = ordinal
 		attempt := Attempt{
-			AttemptID:            attemptID,
-			RouteClassID:         candidate.routeClassID,
-			QualityClassID:       candidate.quality,
-			CandidateFingerprint: candidate.fingerprint,
-			TemplateID:           candidate.templateID,
-			AccountID:            candidate.accountID,
-			RequestedModel:       candidate.requestedModel,
-			MappedModel:          candidate.mappedModel,
-			Lane:                 candidate.lane,
-			Ordinal:              ordinal,
-			RoutingGeneration:    candidate.routingGeneration,
-			LifecycleRevision:    candidate.lifecycleRevision,
-			PreviousAttemptID:    prev,
-			PreviousAccountID:    prevAccount,
-			CallerCategory:       candidate.callerCategory,
-			OperationTag:         candidate.operationTag,
+			AttemptID: attemptID, RouteClassID: p.route.RouteClassID,
+			QualityClassID: quality, CandidateFingerprint: c.Fingerprint,
+			TemplateID: c.TemplateID, AccountID: c.AccountID,
+			RequestedModel: c.RequestedModel, MappedModel: mapped, Lane: c.Lane,
+			Ordinal: ordinal, RoutingGeneration: p.generation,
+			LifecycleRevision: c.LifecycleRevision,
+			PreviousAttemptID: prev, PreviousAccountID: prevAccount,
+			CallerCategory: p.route.CallerCategory, OperationTag: p.route.OperationTag,
 		}
-		p.attempts[p.attemptedCount] = attempt
-		p.attemptedCount++
-		return attempt, nil
+		p.currentAttempt = attempt
+		p.attemptedCnt++
+		p.reservationStarted = true
+		return attempt, c, nil
 	}
 }

@@ -112,12 +112,13 @@ type Scheduler struct {
 	health    *RuntimeHealth
 	// Compile lane (Task11 wiring): serial background compiler feeding the
 	// single routingPublisher. Request path never touches these.
-	compiler          routeCompiler
-	qualityFn         func() map[CandidateQualityKey]CandidateQualityInput
-	pricesFn          func() map[string]domain.ResolvedPrices
-	compileCh         chan struct{}
-	compileArmed      bool
-	lastDecisionBytes []byte // compile-lane owned (single serial caller)
+	compiler           routeCompiler
+	qualityFn          func() map[CandidateQualityKey]CandidateQualityInput
+	pricesFn           func() map[string]domain.ResolvedPrices
+	compileCh          chan struct{}
+	compileArmed       bool
+	lastDecisionBytes  []byte      // compile-lane owned (single serial caller)
+	lastCompiledStatic *StaticView // compile-lane owned; bytes alone omit static identity
 	// compileDone 监督循环完成信号（Start 存入，Close join——同 runtime-health /
 	// conc-sync 停机纪律）；compileOKMs/compileErrMs 编译道新鲜度观测
 	//（atomic，Stats 冷路径读；unix-ms，0 = 从未发生）。
@@ -137,7 +138,7 @@ func (s *Scheduler) ProbeAccount(id int64) (*domain.Account, bool) {
 	if v == nil {
 		return nil, false
 	}
-	snap, ok := v.ByID()[id]
+	snap, ok := v.Account(id)
 	if !ok {
 		return nil, false
 	}
@@ -212,7 +213,9 @@ func (s *Scheduler) syncLoop(ctx context.Context) {
 
 // reload 全量重建快照（启动/定时/InvalidateAll）— single publisher.
 // Serializes ownership before DB load so Reload cannot overwrite InvalidateGroup;
-// static update retains latest DecisionView.
+// the new static root is built from the newest staged-or-published root and
+// staged as pending — the published pair is never paired with a stale
+// decision (atomic publication: the compile lane publishes the matched pair).
 func (s *Scheduler) reload(ctx context.Context) error {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
@@ -222,14 +225,13 @@ func (s *Scheduler) reload(ctx context.Context) error {
 	}
 	cur := s.view.Load()
 	var oldByID map[int64]*accountSnapshot
-	var dec *DecisionView
-	if cur != nil && cur.static != nil {
+	if s.publisher.pending != nil {
+		oldByID = s.publisher.pending.byID
+	} else if cur != nil && cur.static != nil {
 		oldByID = cur.static.byID
-		dec = cur.decision
 	}
 	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
 	sv := &StaticView{groups: groups, byID: byID}
-	s.publisher.storeLocked(sv, dec)
 	if s.latch != nil {
 		for id, as := range byID {
 			av := as.static.Load()
@@ -252,6 +254,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 			}
 		}
 	}
+	s.publisher.stageLocked(sv)
 	s.RequestCompile()
 	return nil
 }
@@ -273,11 +276,7 @@ func (s *Scheduler) IsLatched(accountID int64) bool {
 	if v == nil {
 		return s.latch.IsLatched(accountID, "")
 	}
-	byID := v.ByID()
-	if byID == nil {
-		return s.latch.IsLatched(accountID, "")
-	}
-	if as, ok := byID[accountID]; ok {
+	if as, ok := v.Account(accountID); ok {
 		fp, err := candidateFingerprint(&as.static.Load().acc)
 		if err != nil {
 			return false
@@ -469,6 +468,8 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 // 其它组引用——Select（经组路由）与 Release（经 byID）必须命中同一计数器，
 // 否则多组账号并发计数分裂漂移 → 槽位假满（O2 实证修复）。账号从组移除且
 // 不再属于任何组 → 从 byID 移除；仍属其它组 → 保留实例并摘除本组引用。
+// 新静态根基于最新 staged-or-published 根合并后 stage 为 pending（原子发布：
+// 编译车道发布配对），已发布的完整 pair 在此期间保持可见。
 // 静态字段（含 groupIDs）在 snapshotStatic 不可变视图中：写经 publisher.mu +
 // 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
 // （发布收集仍持 publisher.mu——评审 M-1 纪律，无锁外裸读）。
@@ -485,7 +486,10 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	cur := s.view.Load()
 	var m map[int64]*groupSnapshot
 	var byID map[int64]*accountSnapshot
-	if cur != nil && cur.static != nil {
+	if s.publisher.pending != nil {
+		m = s.publisher.pending.groups
+		byID = s.publisher.pending.byID
+	} else if cur != nil && cur.static != nil {
 		m = cur.static.groups
 		byID = cur.static.byID
 	} else {
@@ -615,11 +619,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		newM[og] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
 	}
 	sv := &StaticView{groups: newM, byID: newByID}
-	var dec *DecisionView
-	if cur != nil {
-		dec = cur.decision
-	}
-	s.publisher.storeLocked(sv, dec)
+	s.publisher.stageLocked(sv)
 	s.RequestCompile()
 }
 
@@ -634,8 +634,7 @@ func (s *Scheduler) InvalidateAccount(accountID int64) {
 	if v == nil || v.StaticView() == nil {
 		return
 	}
-	byID := v.ByID()
-	as, exists := byID[accountID]
+	as, exists := v.Account(accountID)
 	if !exists {
 		return
 	}
@@ -702,7 +701,7 @@ func (s *Scheduler) Runtime(accountID int64) (RuntimeInfo, bool) {
 	if v == nil || v.StaticView() == nil {
 		return RuntimeInfo{}, false
 	}
-	a, ok := v.ByID()[accountID]
+	a, ok := v.Account(accountID)
 	if !ok {
 		return RuntimeInfo{}, false
 	}
@@ -761,7 +760,7 @@ func (s *Scheduler) Release(accountID int64) {
 	if v == nil || v.StaticView() == nil {
 		return
 	}
-	if a, ok := v.ByID()[accountID]; ok {
+	if a, ok := v.Account(accountID); ok {
 		a.runtime.concurrency.Add(-1)
 	}
 }
@@ -782,7 +781,7 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 	if v == nil || v.StaticView() == nil {
 		return
 	}
-	a, ok := v.ByID()[accountID]
+	a, ok := v.Account(accountID)
 	if !ok {
 		return
 	}
@@ -807,6 +806,7 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 		AccountID:            accountID,
 		TemplateID:           av.acc.TemplateID,
 		GroupID:              groupIDPtr(av.gid),
+		ExpectedRevision:     av.acc.LifecycleRevision,
 		Kind:                 kind,
 		HTTPStatus:           hp,
 		Model:                model,
@@ -831,7 +831,7 @@ func (s *Scheduler) FailAccount(accountID int64) {
 	if v == nil || v.StaticView() == nil {
 		return
 	}
-	a, ok := v.ByID()[accountID]
+	a, ok := v.Account(accountID)
 	if !ok {
 		return // 快照外账号（已移除/未知）：无状态可改
 	}
@@ -860,11 +860,7 @@ func (s *Scheduler) failureEvent(accountID int64, kind rule.Kind, errMsg string)
 	if v == nil {
 		return rule.Event{AccountID: accountID, Kind: kind, ErrorMessage: errMsg}
 	}
-	byID := v.ByID()
-	if byID == nil {
-		return rule.Event{AccountID: accountID, Kind: kind, ErrorMessage: errMsg}
-	}
-	a, ok := byID[accountID]
+	a, ok := v.Account(accountID)
 	if !ok {
 		return rule.Event{AccountID: accountID, Kind: kind, ErrorMessage: errMsg}
 	}
@@ -898,7 +894,7 @@ func (s *Scheduler) Classify(ev rule.Event) (then domain.RuleThen, punish bool) 
 	if v == nil || v.StaticView() == nil {
 		return domain.RuleThen{}, false
 	}
-	a, ok := v.ByID()[ev.AccountID]
+	a, ok := v.Account(ev.AccountID)
 	if !ok {
 		return domain.RuleThen{}, false
 	}

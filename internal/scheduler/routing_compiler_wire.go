@@ -75,18 +75,37 @@ func debounceWait(ctx context.Context, window time.Duration, ch <-chan struct{})
 	}
 }
 
-// compileOnce collects live inputs, compiles, and publishes through the
-// single routingPublisher only when the canonical bytes changed. A compile
-// error retains the current view untouched (no publish, no byte update).
+// compileOnce collects live inputs, compiles against exactly one static root,
+// and publishes through the single routingPublisher. A staged root takes
+// precedence over the published root; the compile itself runs outside
+// publisher.mu. Publish pairs the compiled decision with the static root it
+// was compiled from: a newer staging supersedes the result (dropped, with a
+// fresh compile requested). Byte-identical decisions skip publish unless the
+// static root identity changed. A compile error retains the exact old
+// published pair and the pending root.
 // Called from the serial compile lane (or synchronously in tests);
-// lastDecisionBytes is owned by that single lane.
+// lastDecisionBytes/lastCompiledStatic are owned by that single lane.
 func (s *Scheduler) compileOnce() {
+	s.publisher.mu.Lock()
 	cur := s.view.Load()
-	if cur == nil || cur.static == nil {
+	pendingSnap := s.publisher.pending
+	target := pendingSnap
+	if target == nil && cur != nil {
+		target = cur.static
+	}
+	var baseGen uint64
+	var baseStatic *StaticView
+	if cur != nil {
+		baseGen = cur.generation
+		baseStatic = cur.static
+	}
+	s.publisher.mu.Unlock()
+
+	if target == nil {
 		return
 	}
 	in := CompilerInputs{
-		Static:  cur.static,
+		Static:  target,
 		Health:  s.compilerHealthSnapshot(),
 		Latched: s.latch.Snapshot(),
 	}
@@ -106,11 +125,30 @@ func (s *Scheduler) compileOnce() {
 	}
 	s.compileOKMs.Store(s.timeNow().UnixMilli())
 	b := decisionViewBytes(dv)
-	if bytes.Equal(s.lastDecisionBytes, b) {
+
+	s.publisher.mu.Lock()
+	if s.publisher.pending != pendingSnap {
+		// A newer staging superseded this result: keep it pending and re-arm.
+		s.publisher.mu.Unlock()
+		s.RequestCompile()
 		return
 	}
-	s.publisher.publishWithBase(cur.generation, func(*RoutingView) *DecisionView { return dv })
-	s.lastDecisionBytes = b
+	if bytes.Equal(s.lastDecisionBytes, b) && s.lastCompiledStatic == target {
+		s.publisher.mu.Unlock()
+		return
+	}
+	if pendingSnap != nil {
+		published := s.publisher.publishPairLocked(target, dv)
+		s.lastDecisionBytes = b
+		s.lastCompiledStatic = published
+		s.publisher.mu.Unlock()
+		return
+	}
+	s.publisher.mu.Unlock()
+	if s.publisher.publishWithBase(baseGen, baseStatic, func(*RoutingView) *DecisionView { return dv }) {
+		s.lastDecisionBytes = b
+		s.lastCompiledStatic = target
+	}
 }
 
 // compilerHealthSnapshot converts the live RuntimeHealth view into compiler
@@ -132,9 +170,9 @@ func (s *Scheduler) compilerHealthSnapshot() map[HealthKey]HealthState {
 }
 
 // decisionViewBytes encodes the routes of a DecisionView into canonical
-// deterministic bytes: routes sorted by full RouteRef identity, lane IDs in
-// published order, weights sorted by account ID. Used as the publish
-// byte-equality guard; generation is excluded (publish order, not content).
+// deterministic bytes: routes sorted by full RouteRef identity, compiled
+// lanes in published order with request-independent metadata, weights sorted
+// by account ID. Used as the publish byte-equality guard.
 func decisionViewBytes(d *DecisionView) []byte {
 	if d == nil {
 		return nil
@@ -147,31 +185,37 @@ func decisionViewBytes(d *DecisionView) []byte {
 	var buf bytes.Buffer
 	writeUvarint(&buf, uint64(len(refs)))
 	for _, ref := range refs {
+		rd := d.routes[ref]
 		writeVarint(&buf, ref.GroupID)
 		writeStr(&buf, ref.Format)
 		writeStr(&buf, ref.Model)
 		writeStr(&buf, ref.OperationTag)
 		writeStr(&buf, ref.RouteClassID)
-		writeIDs(&buf, d.routes[ref].Primary)
-		writeIDs(&buf, d.routes[ref].Degraded)
-		writeIDs(&buf, d.routes[ref].Explore.IDs)
-		ids := make([]int64, 0, len(d.routes[ref].Explore.Weights))
-		for id := range d.routes[ref].Explore.Weights {
+		writeStr(&buf, rd.Format)
+		writeStr(&buf, rd.RequestedModel)
+		writeStr(&buf, rd.RouteClassID)
+		writeStr(&buf, rd.CallerCategory)
+		writeStr(&buf, rd.OperationTag)
+		writeCompiled(&buf, rd.Primary)
+		writeCompiled(&buf, rd.Degraded)
+		writeCompiled(&buf, rd.Explore.Ordered)
+		ids := make([]int64, 0, len(rd.Explore.Weights))
+		for id := range rd.Explore.Weights {
 			ids = append(ids, id)
 		}
 		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 		writeUvarint(&buf, uint64(len(ids)))
 		for _, id := range ids {
 			writeVarint(&buf, id)
-			writeVarint(&buf, int64(d.routes[ref].Explore.Weights[id]))
+			writeVarint(&buf, int64(rd.Explore.Weights[id]))
 		}
-		writeUvarint(&buf, uint64(len(d.routes[ref].Explore.Cumulative)))
-		for _, c := range d.routes[ref].Explore.Cumulative {
+		writeUvarint(&buf, uint64(len(rd.Explore.Cumulative)))
+		for _, c := range rd.Explore.Cumulative {
 			writeUvarint(&buf, c)
 		}
-		writeUvarint(&buf, d.routes[ref].Explore.Total)
-		writeIDs(&buf, d.routes[ref].Explore.Fallback)
-		writeCacheDomainPlan(&buf, d.routes[ref])
+		writeUvarint(&buf, rd.Explore.Total)
+		writeCompiledIndices(&buf, rd.Explore.Ordered, rd.Explore.Fallback)
+		writeCacheDomainPlan(&buf, rd)
 	}
 	return buf.Bytes()
 }
@@ -206,9 +250,32 @@ func writeStr(buf *bytes.Buffer, s string) {
 	buf.WriteString(s)
 }
 
-func writeIDs(buf *bytes.Buffer, ids []int64) {
-	writeUvarint(buf, uint64(len(ids)))
-	for _, id := range ids {
-		writeVarint(buf, id)
+func writeCompiled(buf *bytes.Buffer, cs []CompiledCandidate) {
+	writeUvarint(buf, uint64(len(cs)))
+	for _, c := range cs {
+		writeCompiledCandidate(buf, c)
 	}
+}
+
+func writeCompiledIndices(buf *bytes.Buffer, cs []CompiledCandidate, indexes []uint16) {
+	writeUvarint(buf, uint64(len(indexes)))
+	for _, idx := range indexes {
+		if int(idx) < len(cs) {
+			writeCompiledCandidate(buf, cs[idx])
+		}
+	}
+}
+
+func writeCompiledCandidate(buf *bytes.Buffer, c CompiledCandidate) {
+	writeVarint(buf, c.AccountID)
+	writeStr(buf, string(c.Lane))
+	writeVarint(buf, c.TemplateID)
+	writeStr(buf, c.BaseURL)
+	writeStr(buf, c.Fingerprint)
+	writeStr(buf, c.RequestedModel)
+	writeStr(buf, c.MappedModel)
+	writeStr(buf, string(c.MappingMode))
+	writeStr(buf, c.Quality)
+	writeStr(buf, c.QualityRaw)
+	writeVarint(buf, c.LifecycleRevision)
 }

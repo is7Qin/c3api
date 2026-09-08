@@ -3,7 +3,6 @@ package scheduler
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/is7qin/c3api/internal/domain"
 )
@@ -39,46 +38,60 @@ func (s *StaticView) ByID() map[int64]*accountSnapshot {
 	return out
 }
 
-// DecisionView holds immutable decision state derived from compiler/runtime.
-// Static updates retain latest DecisionView; decision submits rebase onto
-// latest StaticView and replace only decision.
-type DecisionView struct {
-	generation uint64
-	// routes holds per-route compiled decisions. Immutable after publish.
-	routes map[RouteRef]*RouteDecision
+func (s *StaticView) Account(id int64) (*accountSnapshot, bool) {
+	if s == nil {
+		return nil, false
+	}
+	a, ok := s.byID[id]
+	return a, ok
 }
 
-// RouteRef identifies a compiled route including full route identity: group + format + model + operation + canonical RouteClassID.
-// OperationTag and RouteClassID prevent collisions between Responses/WS/images/search sharing format/model.
+// DecisionView holds immutable decision state derived from compiler/runtime.
+type DecisionView struct {
+	generation uint64
+	routes     map[RouteRef]*RouteDecision
+}
+
+// RouteRef identifies a compiled route: group + format + model + operation + canonical RouteClassID.
 type RouteRef struct {
 	GroupID      int64
 	Format       string
 	Model        string
 	OperationTag string
-	RouteClassID string // hex of domain.RouteClassIDVal
+	RouteClassID string
 }
 
-// RouteDecision holds immutable per-route lane classification.
+// RouteDecision is the immutable published route: compiled candidates own all
+// request-independent metadata; the request path only carries a cursor.
 type RouteDecision struct {
-	Primary             []int64
-	Degraded            []int64
+	Format              string
+	RequestedModel      string
+	RouteClassID        string
+	CallerCategory      string
+	OperationTag        string
+	Primary             []CompiledCandidate
+	Degraded            []CompiledCandidate
 	Explore             ExploreDecision
 	CacheDomainRing     CacheDomainRing
 	CacheDomainAccounts []CacheDomainAccount
+	// validated is set only by the compiler. Defensive clones intentionally
+	// clear it so callers cannot mutate a clone past the plan boundary.
+	validated bool
 }
 
-// ExploreDecision holds deterministic explore ordering.
+// ExploreDecision holds deterministic explore ordering over compiled candidates.
 type ExploreDecision struct {
-	IDs        []int64
+	Ordered    []CompiledCandidate
 	Weights    map[int64]int
 	Cumulative []uint64
 	Total      uint64
-	Fallback   []int64
+	// Fallback indexes Ordered. The compiler rejects explore tables larger than
+	// uint16, so every index is in range for the immutable canonical table.
+	Fallback []uint16
 }
 
 func (d *DecisionView) Generation() uint64 { return d.generation }
 
-// Routes returns immutable per-route decisions (nil if none). Deep copy of map and decisions.
 func (d *DecisionView) Routes() map[RouteRef]*RouteDecision {
 	if d == nil {
 		return nil
@@ -90,7 +103,6 @@ func (d *DecisionView) Routes() map[RouteRef]*RouteDecision {
 	return out
 }
 
-// Route returns decision for a specific route (compat: computes canonical identity when OperationTag/RouteClassID empty).
 func (d *DecisionView) Route(groupID int64, format string, model string) (*RouteDecision, bool) {
 	if d == nil || d.routes == nil {
 		return nil, false
@@ -112,15 +124,14 @@ func cloneRouteDecision(in *RouteDecision) *RouteDecision {
 		return nil
 	}
 	out := &RouteDecision{
+		Format:         in.Format,
+		RequestedModel: in.RequestedModel, RouteClassID: in.RouteClassID,
+		CallerCategory: in.CallerCategory, OperationTag: in.OperationTag,
+		Primary: cloneCompiled(in.Primary), Degraded: cloneCompiled(in.Degraded),
 		Explore:             cloneExploreDecision(in.Explore),
 		CacheDomainRing:     cloneCacheDomainRing(in.CacheDomainRing),
 		CacheDomainAccounts: append([]CacheDomainAccount(nil), in.CacheDomainAccounts...),
-	}
-	if in.Primary != nil {
-		out.Primary = append([]int64(nil), in.Primary...)
-	}
-	if in.Degraded != nil {
-		out.Degraded = append([]int64(nil), in.Degraded...)
+		validated:           false,
 	}
 	return out
 }
@@ -137,9 +148,9 @@ func cloneCacheDomainRing(in CacheDomainRing) CacheDomainRing {
 }
 
 func cloneExploreDecision(in ExploreDecision) ExploreDecision {
-	out := ExploreDecision{Total: in.Total}
-	if in.IDs != nil {
-		out.IDs = append([]int64(nil), in.IDs...)
+	out := ExploreDecision{Total: in.Total, Ordered: cloneCompiled(in.Ordered)}
+	if in.Fallback != nil {
+		out.Fallback = append([]uint16(nil), in.Fallback...)
 	}
 	if in.Weights != nil {
 		out.Weights = make(map[int64]int, len(in.Weights))
@@ -150,13 +161,9 @@ func cloneExploreDecision(in ExploreDecision) ExploreDecision {
 	if in.Cumulative != nil {
 		out.Cumulative = append([]uint64(nil), in.Cumulative...)
 	}
-	if in.Fallback != nil {
-		out.Fallback = append([]int64(nil), in.Fallback...)
-	}
 	return out
 }
 
-// RouteRefFor builds canonical RouteRef for group/format/model (fails closed on invalid -> empty RouteClassID).
 func RouteRefFor(groupID int64, format string, model string) RouteRef {
 	op := operationTagForFormat(format)
 	rc := ""
@@ -168,7 +175,6 @@ func RouteRefFor(groupID int64, format string, model string) RouteRef {
 	return RouteRef{GroupID: groupID, Format: format, Model: model, OperationTag: string(op), RouteClassID: rc}
 }
 
-// RouteRefForOp builds canonical RouteRef for group/format/model with explicit operation tag (images edits/generations separation).
 func RouteRefForOp(groupID int64, format string, model string, op domain.OperationTag) RouteRef {
 	rc := ""
 	if rf, ok := parseRequestFormat(format); ok && op != "" && op.Valid() {
@@ -207,7 +213,6 @@ func operationTagForFormat(format string) domain.OperationTag {
 }
 
 // RoutingView explicitly holds immutable *StaticView and *DecisionView.
-// Single atomic root; structurally shared.
 type RoutingView struct {
 	generation uint64
 	static     *StaticView
@@ -238,92 +243,129 @@ func (v *RoutingView) ByID() map[int64]*accountSnapshot {
 	return out
 }
 
+func (v *RoutingView) Account(id int64) (*accountSnapshot, bool) {
+	if v == nil || v.static == nil {
+		return nil, false
+	}
+	return v.static.Account(id)
+}
+
 type routingPublisher struct {
 	mu    sync.Mutex
 	sched *Scheduler
+	// pending is the staged static root awaiting a paired compile+publish.
+	// Control plane only (reload/InvalidateGroup stage, the serial compile
+	// lane consumes); guarded by mu. Nil means the published view is current.
+	pending *StaticView
 }
 
-func newRoutingPublisher(s *Scheduler) *routingPublisher {
-	return &routingPublisher{sched: s}
+func newRoutingPublisher(s *Scheduler) *routingPublisher { return &routingPublisher{sched: s} }
+
+// stageLocked records sv as the staged root awaiting a paired compile. The
+// published pair is left untouched when complete; otherwise the static root
+// is published alone (nil decision, fail-closed) so static faces stay warm
+// until the first paired publish. Caller must hold p.mu.
+func (p *routingPublisher) stageLocked(sv *StaticView) {
+	p.pending = sv
+	cur := p.sched.view.Load()
+	if cur == nil || cur.static == nil || cur.decision == nil {
+		p.publishInitialStaticLocked(sv)
+	}
 }
 
-func (p *routingPublisher) storeLocked(staticView *StaticView, decisionView *DecisionView) {
+// publishInitialStaticLocked publishes a static-only view (nil decision,
+// fail-closed) for initial startup so static faces stay warm until the first
+// paired publish. The root must be unpublished; its generation is assigned
+// once here and never mutated afterwards. Caller must hold p.mu.
+func (p *routingPublisher) publishInitialStaticLocked(sv *StaticView) {
 	var gen uint64
 	if cur := p.sched.view.Load(); cur != nil {
 		gen = cur.generation + 1
 	} else {
 		gen = 1
 	}
-	// Ensure generation monotonic for sub-views.
-	if staticView != nil && staticView.generation == 0 {
+	sv.generation = gen
+	nv := &RoutingView{generation: gen, static: sv, decision: nil}
+	p.sched.view.Store(nv)
+	p.sched.gen.Store(gen)
+}
+
+// publishPairLocked publishes a matched static+decision pair under one fresh
+// generation shared by both roots and the view, then clears the staged root.
+// A published root is never mutated: when the staged root is already the
+// published static-only root, a fresh wrapper sharing the same immutable
+// maps is published instead (leaf pointers identical), otherwise the
+// unpublished staged root gets its generation assigned once. Returns the
+// published static root for byte-cache identity. Caller must hold p.mu with
+// pending == staticView (verified by the compile lane before publishing).
+func (p *routingPublisher) publishPairLocked(staticView *StaticView, decisionView *DecisionView) *StaticView {
+	cur := p.sched.view.Load()
+	var gen uint64
+	if cur != nil {
+		gen = cur.generation + 1
+	} else {
+		gen = 1
+	}
+	if cur != nil && cur.static == staticView {
+		staticView = &StaticView{generation: gen, groups: staticView.groups, byID: staticView.byID}
+	} else {
 		staticView.generation = gen
 	}
-	if decisionView != nil && decisionView.generation == 0 {
+	if decisionView != nil {
 		decisionView.generation = gen
 	}
 	nv := &RoutingView{generation: gen, static: staticView, decision: decisionView}
 	p.sched.view.Store(nv)
 	p.sched.gen.Store(gen)
+	p.pending = nil
+	return staticView
 }
 
-func (p *routingPublisher) publishFull(groups map[int64]*groupSnapshot, byID map[int64]*accountSnapshot) {
+func (p *routingPublisher) publishWithBase(baseGen uint64, baseStatic *StaticView, build func(cur *RoutingView) *DecisionView) bool {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	cur := p.sched.view.Load()
-	var dec *DecisionView
-	if cur != nil {
-		dec = cur.decision
+	if cur == nil || cur.static == nil || cur.generation != baseGen || cur.static != baseStatic {
+		p.mu.Unlock()
+		p.sched.RequestCompile()
+		return false
 	}
-	sv := &StaticView{groups: groups, byID: byID}
-	p.storeLocked(sv, dec)
-}
-
-func (p *routingPublisher) publishStaticWithDecisionRetention(groups map[int64]*groupSnapshot, byID map[int64]*accountSnapshot) {
-	p.mu.Lock()
 	defer p.mu.Unlock()
-	cur := p.sched.view.Load()
-	var dec *DecisionView
-	if cur != nil {
-		dec = cur.decision
-	}
-	sv := &StaticView{groups: groups, byID: byID}
-	p.storeLocked(sv, dec)
-}
-
-func (p *routingPublisher) publishWithBase(baseGen uint64, build func(cur *RoutingView) *DecisionView) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	cur := p.sched.view.Load()
-	var curGen uint64
-	if cur != nil {
-		curGen = cur.generation
-	}
-	_ = curGen
-	_ = baseGen
-	// Rebase: always build decision from latest static, not stale base's static.
-	// If caller captured stale RoutingView, we ignore its static and use cur.static.
 	newDec := build(cur)
-	var sv *StaticView
-	if cur != nil {
-		sv = cur.static
-	}
-	p.storeLocked(sv, newDec)
+	// Decision-only refresh on the same root: the fresh decision gets the new
+	// generation once; the published static root is never touched.
+	gen := cur.generation + 1
+	newDec.generation = gen
+	nv := &RoutingView{generation: gen, static: cur.static, decision: newDec}
+	p.sched.view.Store(nv)
+	p.sched.gen.Store(gen)
+	return true
 }
 
-var _ = atomic.Pointer[RoutingView]{}
-
-// PublishDecisionForTest merges one compiled route decision into the current
-// view through the single routingPublisher. Test seam for selector/failover
-// execution (cross-package); production publish goes through the compile lane.
 func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecision) {
-	s.publisher.publishWithBase(s.gen.Load(), func(cur *RoutingView) *DecisionView {
+	// Flush any staged static root through the compile lane first so the
+	// test decision pairs with the freshest static root.
+	s.publisher.mu.Lock()
+	staged := s.publisher.pending != nil
+	s.publisher.mu.Unlock()
+	if staged {
+		s.compileOnce()
+	}
+	base := s.View()
+	if base == nil {
+		return
+	}
+	s.publisher.publishWithBase(base.Generation(), base.StaticView(), func(cur *RoutingView) *DecisionView {
 		routes := make(map[RouteRef]*RouteDecision)
 		if cur != nil && cur.decision != nil {
 			for k, v := range cur.decision.routes {
 				routes[k] = v
 			}
 		}
-		routes[route] = decision
+		if decision == nil {
+			delete(routes, route)
+		} else {
+			routes[route] = s.prepareTestDecision(route, decision)
+		}
 		return &DecisionView{routes: routes}
 	})
 }
