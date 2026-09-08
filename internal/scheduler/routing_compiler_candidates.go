@@ -133,11 +133,7 @@ func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]comp
 			facts = append(facts, fact)
 			continue
 		}
-		if cf, ok := rootFacts[st.acc.ID]; ok && cf.account == account && cf.static == st {
-			fact.compilerAccountFacts = cf
-		} else {
-			fact.compilerAccountFacts = deriveCompilerAccountFacts(account, st)
-		}
+		fact.compilerAccountFacts = rootFacts[st.acc.ID]
 		if st.tpl != nil {
 			if mapping, ok := st.tpl.ModelMapping[rk.model]; ok {
 				fact.mappedModel = mapping.MappedModel

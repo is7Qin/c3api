@@ -251,7 +251,7 @@ func TestRoutingCompiler_candidateFactsStayConsistentAcrossFilterAndCompile(t *t
 	op := domain.OpChatCompletions
 
 	// When
-	facts := buildCandidateFacts([]*accountSnapshot{snapshot}, nil, route, op)
+	facts := buildCandidateFacts([]*accountSnapshot{snapshot}, s.View().StaticView().facts, route, op)
 	filtered := filterCandidates(facts, nil, nil)
 	routeClass, err := domain.RouteClassID(10, route.format, route.model, op)
 	require.NoError(t, err)
