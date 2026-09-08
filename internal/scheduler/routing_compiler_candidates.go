@@ -7,7 +7,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func fullCandidateUnion(gs *groupSnapshot, rk routeKey) []*accountSnapshot {
+func fullCandidateUnion(gs *groupSnapshot, rootFacts map[int64]compilerAccountFacts, rk routeKey) []*accountSnapshot {
 	if gs == nil {
 		return nil
 	}
@@ -16,14 +16,18 @@ func fullCandidateUnion(gs *groupSnapshot, rk routeKey) []*accountSnapshot {
 		if a == nil {
 			continue
 		}
-		tpl := a.static.Load().tpl
+		fact, ok := rootFacts[a.accountID]
+		if !ok || fact.account != a || fact.static == nil {
+			continue
+		}
+		tpl := fact.static.tpl
 		if tpl == nil {
 			continue
 		}
 		if !routeSupportsAccount(tpl, rk) {
 			continue
 		}
-		id := a.static.Load().acc.ID
+		id := fact.accountID
 		if _, ok := seen[id]; !ok {
 			seen[id] = a
 		}
@@ -124,18 +128,19 @@ func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]comp
 	facts := make([]compilerCandidateFacts, 0, len(candidates))
 	for _, account := range candidates {
 		fact := compilerCandidateFacts{requestedModel: rk.model, mappedModel: rk.model}
-		var st *snapshotStatic
-		if account != nil {
-			st = account.static.Load()
-		}
-		if st == nil {
+		if account == nil {
 			fact.account = account
 			facts = append(facts, fact)
 			continue
 		}
-		fact.compilerAccountFacts = rootFacts[st.acc.ID]
-		if st.tpl != nil {
-			if mapping, ok := st.tpl.ModelMapping[rk.model]; ok {
+		cf, ok := rootFacts[account.accountID]
+		if !ok || cf.account != account || cf.static == nil {
+			facts = append(facts, fact)
+			continue
+		}
+		fact.compilerAccountFacts = cf
+		if cf.static.tpl != nil {
+			if mapping, ok := cf.static.tpl.ModelMapping[rk.model]; ok {
 				fact.mappedModel = mapping.MappedModel
 				fact.mappingMode = mapping.Mode
 			}

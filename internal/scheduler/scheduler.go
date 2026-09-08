@@ -355,7 +355,7 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[i
 			}
 			next.status = runtimeStatusFor(a)
 			rt.state.Store(&next)
-			as := &accountSnapshot{runtime: rt}
+			as := &accountSnapshot{accountID: av.acc.ID, runtime: rt}
 			as.static.Store(av)
 			byID[id] = as
 		} else {
@@ -535,7 +535,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 			}
 			// Changed account gets new immutable static leaf sharing separate runtime, old root stable.
 			newStatic := &snapshotStatic{acc: ost.acc, tpl: ost.tpl, gid: ost.gid, groupIDs: newGids}
-			newLeaf := &accountSnapshot{runtime: os.runtime}
+			newLeaf := &accountSnapshot{accountID: ost.acc.ID, runtime: os.runtime}
 			newLeaf.static.Store(newStatic)
 			newByID[ost.acc.ID] = newLeaf
 			// Record for other group replacement.
