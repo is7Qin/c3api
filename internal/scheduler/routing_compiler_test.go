@@ -73,6 +73,25 @@ func buildQuality(gid int64, format domain.RequestFormat, model string, m map[in
 	return out
 }
 
+func compilerHealthKeyFor(acc *domain.Account, format domain.RequestFormat, model string) HealthKey {
+	resolved := model
+	if acc.Template != nil {
+		if mapping, ok := acc.Template.ModelMapping[model]; ok {
+			resolved = mapping.MappedModel
+		}
+	}
+	return HealthKey{
+		AccountID: acc.ID,
+		Quality:   qualityClassHexForWithOp(format, resolved, operationTagForFormat(string(format))),
+		Revision:  acc.LifecycleRevision,
+	}
+}
+
+func compilerLatchKeyFor(acc *domain.Account) LatchKey {
+	fp, _ := candidateFingerprint(acc)
+	return LatchKey{AccountID: acc.ID, Fingerprint: fp, Revision: acc.LifecycleRevision}
+}
+
 func TestRoutingCompilerDeterministicMapOrder(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	price := domain.ResolvedPrices{InputPerM: pricePtr(1000), OutputPerM: pricePtr(1000)}
@@ -98,7 +117,7 @@ func TestRoutingCompilerDeterministicMapOrder(t *testing.T) {
 	require.True(t, ok1)
 	require.True(t, ok2)
 	require.Equal(t, d1.Primary, d2.Primary)
-	require.Equal(t, d1.Explore.IDs, d2.Explore.IDs)
+	require.Equal(t, compiledAccountIDs(d1.Explore.Ordered), compiledAccountIDs(d2.Explore.Ordered))
 	require.Equal(t, d1.Explore.Cumulative, d2.Explore.Cumulative)
 	require.Equal(t, d1.Degraded, d2.Degraded)
 }
@@ -123,20 +142,20 @@ func TestRoutingCompilerLaneClassificationAndWeightsTail(t *testing.T) {
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	all := append(append([]int64{}, rd.Primary...), rd.Explore.IDs...)
-	all = append(all, rd.Degraded...)
+	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
+	all = append(all, compiledAccountIDs(rd.Degraded)...)
 	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
 	require.Equal(t, []int64{1, 2, 3}, all)
 	require.Len(t, rd.Primary, 1)
-	require.Contains(t, rd.Primary, int64(1))
+	require.Contains(t, compiledAccountIDs(rd.Primary), int64(1))
 	require.Len(t, rd.Degraded, 1)
-	require.Contains(t, rd.Degraded, int64(2))
-	require.Len(t, rd.Explore.IDs, 1)
-	require.Contains(t, rd.Explore.IDs, int64(3))
+	require.Contains(t, compiledAccountIDs(rd.Degraded), int64(2))
+	require.Len(t, rd.Explore.Ordered, 1)
+	require.Contains(t, compiledAccountIDs(rd.Explore.Ordered), int64(3))
 	require.NotEmpty(t, rd.Explore.Cumulative)
-	require.Equal(t, len(rd.Explore.IDs), len(rd.Explore.Cumulative))
+	require.Equal(t, len(rd.Explore.Ordered), len(rd.Explore.Cumulative))
 	require.NotZero(t, rd.Explore.Total)
-	require.Equal(t, rd.Explore.IDs, rd.Explore.Fallback)
+	require.Equal(t, compiledAccountIDs(rd.Explore.Ordered), fallbackIDs(rd.Explore))
 	for i := 1; i < len(rd.Explore.Cumulative); i++ {
 		require.Greater(t, rd.Explore.Cumulative[i], rd.Explore.Cumulative[i-1])
 	}
@@ -161,7 +180,7 @@ func TestRoutingCompilerCostTieBreakDeterministic(t *testing.T) {
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	require.Equal(t, []int64{1, 2, 3}, rd.Primary)
+	require.Equal(t, []int64{1, 2, 3}, compiledAccountIDs(rd.Primary))
 }
 
 func TestRoutingCompilerMissingPriceUnknown(t *testing.T) {
@@ -182,7 +201,7 @@ func TestRoutingCompilerMissingPriceUnknown(t *testing.T) {
 	require.True(t, ok)
 	require.Empty(t, rd.Primary)
 	require.Empty(t, rd.Degraded)
-	require.Len(t, rd.Explore.IDs, 2)
+	require.Len(t, rd.Explore.Ordered, 2)
 }
 
 func TestRoutingCompilerInvalidInputs(t *testing.T) {
@@ -202,7 +221,7 @@ func TestRoutingCompilerInvalidInputs(t *testing.T) {
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	require.NotEmpty(t, rd.Explore.IDs)
+	require.NotEmpty(t, rd.Explore.Ordered)
 }
 
 func TestRoutingCompilerImmutability(t *testing.T) {
@@ -221,12 +240,12 @@ func TestRoutingCompilerImmutability(t *testing.T) {
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
-	orig := append([]int64(nil), view.routes[rr].Primary...)
+	orig := append([]int64(nil), compiledAccountIDs(view.routes[rr].Primary)...)
 	q[qualityKeyFor(10, domain.FormatOpenAIChat, "m", accs[0])] = CandidateQualityInput{Counts: Counts{Attempts: 100, Successes: 100}}
 	prices["m"] = domain.ResolvedPrices{InputPerM: pricePtr(9999)}
-	require.Equal(t, orig, view.routes[rr].Primary)
+	require.Equal(t, orig, compiledAccountIDs(view.routes[rr].Primary))
 	if len(orig) > 0 {
-		view.routes[rr].Primary[0] = 999
+		view.routes[rr].Primary[0] = CompiledCandidate{AccountID: 999}
 	}
 	view2, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: math.Log(100) * 30, SumSq: math.Log(100) * math.Log(100) * 30}, InputTokens: 100, OutputTokens: 100},
@@ -235,4 +254,3 @@ func TestRoutingCompilerImmutability(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, view.routes[rr].Primary, view2.routes[rr].Primary)
 }
-
