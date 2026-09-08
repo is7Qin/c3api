@@ -132,12 +132,15 @@ func routePlanCandidates(rd *RouteDecision) []RoutingPlanCandidate {
 	for _, id := range ids {
 		c := byID[id]
 		rpc := RoutingPlanCandidate{
-			AccountID: c.AccountID, TemplateID: c.TemplateID,
-			LifecycleRevision: c.LifecycleRevision, Fingerprint: c.Fingerprint,
-			MappedModel: c.MappedModel, QualityClassID: c.Quality,
+			AccountID: id,
 		}
-		if av := c.Static; av != nil {
-			rpc.UpstreamCostMultiplierBp = av.acc.UpstreamCostMultiplierBp
+		if c.Static != nil {
+			rpc.TemplateID = c.TemplateID
+			rpc.LifecycleRevision = c.LifecycleRevision
+			rpc.Fingerprint = c.Fingerprint
+			rpc.MappedModel = c.MappedModel
+			rpc.QualityClassID = c.Quality
+			rpc.UpstreamCostMultiplierBp = c.Static.acc.UpstreamCostMultiplierBp
 		}
 		rpc.IdentityFingerprint = domain.CandidateFPHex(candidateIdentityFingerprint(c.Fingerprint, c.AccountID))
 		out = append(out, rpc)
