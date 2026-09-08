@@ -158,7 +158,7 @@ func filterCandidates(candidates []compilerCandidateFacts, health map[HealthKey]
 		if fact.static == nil || !fact.static.acc.Enabled || fact.static.acc.LifecycleRevision < 0 {
 			continue
 		}
-		if fact.static.tpl == nil || !fact.static.tpl.CredentialType.Valid() {
+		if fact.static.tpl == nil || (fact.static.tpl.CredentialType != "" && !fact.static.tpl.CredentialType.Valid()) {
 			continue
 		}
 		fp := fact.fingerprint
