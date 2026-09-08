@@ -1,13 +1,16 @@
-# repository 测试用独立 PostgreSQL（评审 B1：真实 PG 测试基座，测试代码在
-# internal/repository/pg_account_groups_test.go，TEST_DATABASE_URL 驱动）。
+# repository 测试用独立 PostgreSQL + Redis（评审 B1：真实 PG 测试基座，测试代码在
+# internal/repository/pg_account_groups_test.go，TEST_DATABASE_URL 驱动；网关
+# 双必需依赖中的 Redis 由本栈一并供给——e2e 网关启动即需 Redis）。
 #
 # 用法：
 #   docker compose -f deploy/test-compose.yml up -d
 #   TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test \
 #     go test ./internal/repository/ -run PG -v
+#   C3API_REDIS_ADDR=127.0.0.1:16379 \
+#     go test -tags e2e -run TestRoutingSmoke ./tools/e2e -v -timeout 600s
 #   docker compose -f deploy/test-compose.yml down
 #
-# 与生产 compose.yml 隔离：独立端口 15432、独立库名，不挂数据卷（可随时重建）。
+# 与生产 compose.yml 隔离：独立端口 15432/16379、独立库名，不挂数据卷（可随时重建）。
 
 services:
   db:
@@ -21,6 +24,19 @@ services:
       - "15432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d c3api_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    # 一次性测试基座：无持久化卷、不设 eviction policy（网关只用心跳/验证码/
+    # 分钟桶等易失协调态；e2e 以 redis.db 逻辑库隔离命名空间）。
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
