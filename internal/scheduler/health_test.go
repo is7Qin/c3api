@@ -365,6 +365,29 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	require.Equal(t, StateReady, h.EffectiveState(9, "q9", 1))
 }
 
+func TestHealthProbeStaleRevisionDoesNotReopen(t *testing.T) {
+	mr, c := newHealthTestRedis(t)
+	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, func(_ context.Context, _ HealthKey) error {
+		return ErrProbeStaleRevision
+	}, nil)
+	key := healthKeyFor(10, "q10", 1)
+	_, err := h.Throttle(context.Background(), key, StateOPEN, 100*time.Millisecond)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+
+	genBefore := h.curGen.Load()
+	field := key.String()
+	h.probeTick(context.Background())
+	require.Equal(t, genBefore, h.curGen.Load(), "stale probe must not rearm the old revision")
+	require.NoError(t, h.Sync(context.Background()))
+
+	mr.FastForward(200 * time.Millisecond)
+	require.NoError(t, h.Sync(context.Background()))
+	_, err = c.ZScore(context.Background(), healthActiveZSet, field).Result()
+	require.Error(t, err, "stale health record must expire instead of being refreshed")
+	require.NotContains(t, h.View(), key)
+}
+
 // TestHealthProbeOnePermit verifies one permit limits concurrent probes.
 func TestHealthProbeOnePermit(t *testing.T) {
 	_, c := newHealthTestRedis(t)
@@ -497,7 +520,10 @@ func TestHealthCleanupRaceRetainsRecreated(t *testing.T) {
 	proceed := make(chan struct{})
 	h.syncHook = func(stage string) {
 		if stage == "beforeCleanup" {
-			select { case recreated <- struct{}{}: default: }
+			select {
+			case recreated <- struct{}{}:
+			default:
+			}
 			select {
 			case <-proceed:
 			case <-time.After(2 * time.Second):
@@ -658,7 +684,10 @@ func TestHealthCurGenInterleaving(t *testing.T) {
 	release := make(chan struct{})
 	h.syncHook = func(stage string) {
 		if stage == "beforeGenAfter" {
-			select { case blocked <- struct{}{}: default: }
+			select {
+			case blocked <- struct{}{}:
+			default:
+			}
 			select {
 			case <-release:
 			case <-time.After(2 * time.Second):
@@ -785,7 +814,10 @@ func TestHealthMalformedGenerationStrict(t *testing.T) {
 	release := make(chan struct{})
 	h3.syncHook = func(stage string) {
 		if stage == "beforeGenAfter" {
-			select { case blocked <- struct{}{}: default: }
+			select {
+			case blocked <- struct{}{}:
+			default:
+			}
 			select {
 			case <-release:
 			case <-time.After(2 * time.Second):
@@ -863,7 +895,10 @@ func TestHealthActualRunIDChangeRepeatedEmptyDeadline(t *testing.T) {
 	release := make(chan struct{})
 	h.syncHook = func(stage string) {
 		if stage == "beforeGenAfter" {
-			select { case barrier <- struct{}{}: default: }
+			select {
+			case barrier <- struct{}{}:
+			default:
+			}
 			select {
 			case <-release:
 			case <-time.After(2 * time.Second):
@@ -951,7 +986,10 @@ func TestHealthFenceBeforePublishFreezes(t *testing.T) {
 	proceed := make(chan struct{})
 	h.syncHook = func(stage string) {
 		if stage == "beforePublish" {
-			select { case needFence <- struct{}{}: default: }
+			select {
+			case needFence <- struct{}{}:
+			default:
+			}
 			select {
 			case <-proceed:
 			case <-time.After(2 * time.Second):
