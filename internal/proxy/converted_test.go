@@ -12,17 +12,20 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
+	"github.com/is7qin/c3api/pkg/redisx"
 )
 
 // --- 协议转换路径（W5）接线测试 ---
@@ -756,4 +759,214 @@ func TestConvertedGroupNotFoundNoConvert(t *testing.T) {
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	require.Contains(t, rec.Body.String(), "group not found")
+}
+
+// --- 硬续接绑定（resp_to_mess 转换路径）---
+
+// convContUpstream anthropic 假上游：/v1/messages 非流式 JSON / SSE 流均携带
+// 给定 message id，命中计数。
+func convContUpstream(t *testing.T, msgID string, hits *atomic.Int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if b, _ := body["stream"].(bool); b {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(200)
+			fl := w.(http.Flusher)
+			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":%q,\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"content\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n", msgID)
+			fl.Flush()
+			fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n")
+			fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+			fl.Flush()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": msgID, "type": "message", "role": "assistant", "model": "claude",
+			"content": []any{map[string]any{"type": "text", "text": "hi"}},
+			"usage":   map[string]any{"input_tokens": 3, "output_tokens": 5},
+		})
+	}))
+}
+
+// convAcc anthropic 全模型账号（模板 BaseURL 即上游）。
+func convAcc(id int64, tpl *domain.Template) *domain.Account {
+	bu := tpl.BaseURL
+	return &domain.Account{ID: id, TemplateID: tpl.ID, Template: tpl, BaseURL: &bu, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+}
+
+func convTpl(id int64, url string) *domain.Template {
+	return &domain.Template{ID: id, Name: "ct", BaseURL: url, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic}}
+}
+
+// convContProxy resp_to_mess 转换代理 + 续接 store 装配（nil = 未装配）。
+func convContProxy(t *testing.T, accs map[int64][]*domain.Account, store *continuation.Store) *Proxy {
+	t.Helper()
+	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertRespToMess})
+	if store != nil {
+		p.SetContinuationStore(store)
+	}
+	return p
+}
+
+// convContLookup 转换路径绑定键：客户端协议是 Responses（tag=responses），但
+// 计划规范 route class 是转换目标（anthropic）身份。
+func convContLookup(t *testing.T, s *continuation.Store, contID string) (*continuation.Binding, bool) {
+	t.Helper()
+	b, ok, err := s.Lookup(context.Background(), 1, 10, contRouteID(t, domain.FormatAnthropic, "", domain.OpAnthropicMessages), contProtocolREST, contID)
+	require.NoError(t, err)
+	return b, ok
+}
+
+func TestConvertedRespToMessJSONBindsContinuation(t *testing.T) {
+	_, s, hook := contFixture(t)
+	var hits atomic.Int32
+	up := convContUpstream(t, "msg_cv_1", &hits)
+	defer up.Close()
+	tpl := convTpl(1, up.URL)
+	p := convContProxy(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, s)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	w := httptest.NewRecorder()
+	p.HandleResponses(w, req)
+
+	require.Equal(t, 200, w.Code)
+	require.Contains(t, w.Body.String(), "msg_cv_1")
+	require.EqualValues(t, 1, hook.n.Load(), "one bind command per converted Responses request")
+	b, ok := convContLookup(t, s, "msg_cv_1")
+	require.True(t, ok, "converted response id must be bound before visibility")
+	require.Equal(t, int64(1), b.AccountID)
+	require.Equal(t, int64(1), b.Revision)
+}
+
+func TestConvertedRespToMessStreamACKBeforeVisible(t *testing.T) {
+	_, s, hook := contFixture(t)
+	var hits atomic.Int32
+	up := convContUpstream(t, "msg_cv_stream", &hits)
+	defer up.Close()
+	tpl := convTpl(1, up.URL)
+	p := convContProxy(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, s)
+
+	gate := make(chan struct{})
+	hook.setGate(gate)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi","stream":true}`))
+		req.Header.Set("Authorization", "Bearer ck-1")
+		p.HandleResponses(w, req)
+	}()
+
+	<-hook.started // 转换后 response.created 帧的 id 绑定 EVALSHA 在途…
+	require.Empty(t, w.Body.String(), "映射帧不得先于 Redis ACK 可见")
+	close(gate)
+	<-done
+	require.Contains(t, w.Body.String(), "msg_cv_stream", "ACK 后全流放出")
+	require.Contains(t, w.Body.String(), "response.completed")
+	_, ok := convContLookup(t, s, "msg_cv_stream")
+	require.True(t, ok)
+}
+
+func TestConvertedRespToMessJSONBindFailClosed(t *testing.T) {
+	mr, s, _ := contFixture(t)
+	var hits atomic.Int32
+	up := convContUpstream(t, "msg_cv_dead", &hits)
+	defer up.Close()
+	tpl := convTpl(1, up.URL)
+	p := convContProxy(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, s)
+
+	oldTO := contOpTimeout
+	contOpTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { contOpTimeout = oldTO })
+	mr.Close() // Redis 故障：绑定 fail-closed，转换响应弃置
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	w := httptest.NewRecorder()
+	p.HandleResponses(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.NotContains(t, w.Body.String(), "msg_cv_dead", "未绑定 id 不得泄漏")
+	require.EqualValues(t, 1, hits.Load(), "绑定失败终态不迁移、不重播")
+}
+
+func TestConvertedRespToMessStreamBindFailClosed(t *testing.T) {
+	mr, s, _ := contFixture(t)
+	var hits atomic.Int32
+	up := convContUpstream(t, "msg_cv_sdead", &hits)
+	defer up.Close()
+	tpl := convTpl(1, up.URL)
+	p := convContProxy(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, s)
+
+	oldTO := contOpTimeout
+	contOpTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { contOpTimeout = oldTO })
+	mr.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi","stream":true}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	w := httptest.NewRecorder()
+	p.HandleResponses(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "闸门未放 → 归一错误可达")
+	require.NotContains(t, w.Body.String(), "msg_cv_sdead", "缓冲帧必须弃置")
+	require.NotContains(t, w.Body.String(), "response.created")
+}
+
+func TestConvertedNonResponsesClientZeroRedis(t *testing.T) {
+	_, s, hook := contFixture(t)
+	var hits atomic.Int32
+	up := convContUpstream(t, "msg_cv_chat", &hits)
+	defer up.Close()
+	tpl := convTpl(1, up.URL)
+	p := newConvertedTestProxyAccs(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, []domain.ProtocolConvert{domain.ProtocolConvertChatToMess})
+	p.SetContinuationStore(s)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	w := httptest.NewRecorder()
+	p.HandleChat(w, req)
+
+	require.Equal(t, 200, w.Code)
+	require.Zero(t, hook.n.Load(), "非 Responses 客户端转换路径零 Redis、零闸门")
+}
+
+func TestConvertedRespToMessContinuationPinsBoundAccount(t *testing.T) {
+	mr, s1, _ := contFixture(t)
+	c2, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = redisx.Close(c2) })
+	s2, err := continuation.New(c2, "cont-test-secret-0123456789")
+	require.NoError(t, err)
+
+	var hits1, hits2 atomic.Int32
+	up1 := convContUpstream(t, "msg_gen_1", &hits1)
+	defer up1.Close()
+	up2 := convContUpstream(t, "msg_other_2", &hits2)
+	defer up2.Close()
+	tpl1, tpl2 := convTpl(1, up1.URL), convTpl(2, up2.URL)
+	acc1, acc2 := convAcc(1, tpl1), convAcc(2, tpl2)
+
+	p1 := convContProxy(t, map[int64][]*domain.Account{10: {acc1, acc2}}, s1)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	w := httptest.NewRecorder()
+	p1.HandleResponses(w, req)
+	require.Equal(t, 200, w.Code)
+	require.EqualValues(t, 1, hits1.Load())
+
+	// 续接（另一实例、acc2 优先计划）：必须钉回绑定账号 acc1，绝不迁移。
+	p2 := convContProxy(t, map[int64][]*domain.Account{10: {acc2, acc1}}, s2)
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"again","previous_response_id":"msg_gen_1"}`))
+	req2.Header.Set("Authorization", "Bearer ck-1")
+	w2 := httptest.NewRecorder()
+	p2.HandleResponses(w2, req2)
+
+	require.Equal(t, 200, w2.Code, "body=%s", w2.Body.String())
+	require.EqualValues(t, 0, hits2.Load(), "钉选续接不得触碰未绑定偏好账号")
+	require.EqualValues(t, 2, hits1.Load(), "续接必须派发到绑定账号")
 }

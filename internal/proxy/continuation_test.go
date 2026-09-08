@@ -142,7 +142,11 @@ func contProxy(t *testing.T, format domain.RequestFormat, accs []*domain.Account
 		ids = append(ids, a.ID)
 	}
 	for _, m := range tpl.Models {
-		sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(format), m), &scheduler.RouteDecision{Primary: ids})
+	compiled := make([]scheduler.CompiledCandidate, len(ids))
+	for i, id := range ids {
+		compiled[i] = scheduler.CompiledCandidate{AccountID: id}
+	}
+	sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(format), m), &scheduler.RouteDecision{Primary: compiled})
 	}
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil)
 	require.NoError(t, auth.Reload(context.Background()))
@@ -222,6 +226,20 @@ func contLookupBinding(t *testing.T, s *continuation.Store, tag string, contID s
 	return b, ok
 }
 
+// --- frame id extraction (ACK gate prefilter) ---
+
+func TestContFrameID(t *testing.T) {
+	// nested response object id (created/in_progress/completed events)
+	require.Equal(t, "resp_nested", contFrameID([]byte(`{"type":"response.created","response":{"id":"resp_nested","model":"gpt-4o"}}`)))
+	// flat response_id (delta events) must pass the prefilter, not just the parser
+	require.Equal(t, "resp_flat", contFrameID([]byte(`{"type":"response.output_text.delta","response_id":"resp_flat"}`)))
+	// id-less frames and malformed payloads extract nothing
+	require.Empty(t, contFrameID([]byte(`{"type":"response.output_text.delta","delta":"hi"}`)))
+	require.Empty(t, contFrameID([]byte(`{"type":"response.refusal.delta","item_id":"ctr_1"}`)))
+	require.Empty(t, contFrameID([]byte(`not json at all`)))
+	require.Empty(t, contFrameID([]byte(`{"id"`)))
+}
+
 // --- REST create side ---
 
 func TestContinuationRESTCreateACKCanonicalIdentity(t *testing.T) {
@@ -237,6 +255,9 @@ func TestContinuationRESTCreateACKCanonicalIdentity(t *testing.T) {
 	p.HandleResponses(w, contResponsesReq(`{"model":"gpt-4o","input":"hi"}`))
 	require.Equal(t, 200, w.Code)
 	require.Contains(t, w.Body.String(), "resp_create_1")
+	// Counted BEFORE the verification lookup: the store is Redis-authoritative
+	// (no L1), so the test's own Lookup would add a command of its own.
+	require.Equal(t, int64(1), hook.n.Load(), "one create command per Responses request (warm scripts)")
 
 	b, ok := contLookupBinding(t, s, contProtocolREST, "resp_create_1")
 	require.True(t, ok, "created response id must be bound before visibility")
@@ -245,7 +266,6 @@ func TestContinuationRESTCreateACKCanonicalIdentity(t *testing.T) {
 	wantFP, err := domain.AccountCandidateFingerprint(contAcc(1, tpl, "sk-acc1", up.URL))
 	require.NoError(t, err)
 	require.Equal(t, wantFP, b.Fingerprint, "binding fingerprint must be the canonical candidate fingerprint")
-	require.Equal(t, int64(1), hook.n.Load(), "one create command per Responses request (warm scripts)")
 }
 
 func TestContinuationOrdinaryRequestsZeroRedis(t *testing.T) {
@@ -359,6 +379,43 @@ func TestContinuationCrossInstancePin(t *testing.T) {
 	require.EqualValues(t, 0, hits2.Load(), "pinned continuation must not touch the preferred-but-unbound account")
 	require.EqualValues(t, 2, hits1.Load(), "continuation must dispatch to the bound account")
 	require.Equal(t, "Bearer sk-acc1", auth1.Load().(string))
+}
+
+// failover_attempts=1: the initial unbound reservation and every skipped
+// unbound candidate must not consume the single attempt slot — the pin scan
+// reaches the bound account behind them (regression: skipped reservations
+// burned ordinal, so the bound candidate failed closed with 409).
+func TestContinuationMaxAttemptsOneReachesBoundAccount(t *testing.T) {
+	mr, s1, _ := contFixture(t)
+	c2, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = redisx.Close(c2) })
+	s2, err := continuation.New(c2, "cont-test-secret-0123456789")
+	require.NoError(t, err)
+
+	var hits1, hits2 atomic.Int32
+	var auth1, auth2 atomic.Value
+	up1 := contUpstream(t, "resp_single", "sk-acc1", "", &hits1, &auth1)
+	defer up1.Close()
+	up2 := contUpstream(t, "resp_other", "sk-acc2", "", &hits2, &auth2)
+	defer up2.Close()
+	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: up1.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	acc1 := contAcc(1, tpl, "sk-acc1", up1.URL)
+	acc2 := contAcc(2, tpl, "sk-acc2", up2.URL)
+
+	p1 := contProxy(t, domain.FormatOpenAIResponses, []*domain.Account{acc1, acc2}, s1)
+	w := httptest.NewRecorder()
+	p1.HandleResponses(w, contResponsesReq(`{"model":"gpt-4o","input":"hi"}`))
+	require.Equal(t, 200, w.Code)
+	require.EqualValues(t, 1, hits1.Load())
+
+	p2 := contProxy(t, domain.FormatOpenAIResponses, []*domain.Account{acc2, acc1}, s2) // plan prefers acc2
+	p2.cfg.FailoverAttempts = 1
+	w2 := httptest.NewRecorder()
+	p2.HandleResponses(w2, contResponsesReq(`{"model":"gpt-4o","input":"again","previous_response_id":"resp_single"}`))
+	require.Equal(t, 200, w2.Code, "body=%s", w2.Body.String())
+	require.EqualValues(t, 0, hits2.Load(), "the single attempt slot belongs to the bound account, never the unbound preference")
+	require.EqualValues(t, 2, hits1.Load(), "continuation must dispatch to the bound account")
 }
 
 func TestContinuationMissingFailClosed(t *testing.T) {

@@ -125,9 +125,11 @@ func (p *Proxy) contResolve(ctx context.Context, userID, groupID int64, protocol
 
 // contPin advances the request plan until the reserved attempt carries the
 // binding's account/fingerprint/revision. Reservations for other accounts are
-// released and skipped (the plan is walked, never re-selected); the bound
-// account itself mutating (fingerprint/revision drift) or being undispatchable
-// fails closed — a hard continuation never migrates.
+// released, refunded (AbandonLastAttempt: a skipped unbound candidate never
+// consumes maxAttempts/ordinal — it was never dispatched) and skipped (the
+// plan is walked, never re-selected); the bound account itself mutating
+// (fingerprint/revision drift) or being undispatchable fails closed — a hard
+// continuation never migrates.
 func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *scheduler.Selection, b *continuation.Binding) (*scheduler.Selection, *formatError) {
 	for {
 		attempt, ok := plan.CurrentAttempt()
@@ -140,6 +142,7 @@ func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *scheduler.Selection, b
 			return nil, errContStale
 		}
 		sel.Release()
+		plan.AbandonLastAttempt()
 		next, err := p.selectNextWithPlan(plan)
 		if err != nil {
 			return nil, errContStale
@@ -153,7 +156,7 @@ func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *scheduler.Selection, b
 // response_id (delta events). bytes.Contains prefilter keeps non-id frames
 // zero-parse (hot-path discipline).
 func contFrameID(frame []byte) string {
-	if !bytes.Contains(frame, []byte(`"id"`)) {
+	if !bytes.Contains(frame, []byte(`"id"`)) && !bytes.Contains(frame, []byte(`"response_id"`)) {
 		return ""
 	}
 	if id := gjson.GetBytes(frame, "response.id").String(); id != "" {
