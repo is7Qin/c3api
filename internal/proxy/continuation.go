@@ -192,38 +192,33 @@ func (g *contGateWriter) Header() http.Header { return g.w.Header() }
 
 func (g *contGateWriter) WriteHeader(code int) {
 	g.mu.Lock()
-	released := g.released
-	g.mu.Unlock()
-	if released {
+	defer g.mu.Unlock()
+	if g.released {
 		g.w.WriteHeader(code)
 	}
 }
 
 func (g *contGateWriter) Write(b []byte) (int, error) {
 	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.released {
-		g.mu.Unlock()
 		return g.w.Write(b)
 	}
 	if g.failed {
-		g.mu.Unlock()
 		return 0, errContUnavailable
 	}
 	if len(g.buf)+len(b) > contMaxBuffer {
 		g.failed = true
-		g.mu.Unlock()
 		return 0, errContUnavailable
 	}
 	g.buf = append(g.buf, b...)
-	g.mu.Unlock()
 	return len(b), nil
 }
 
 func (g *contGateWriter) Flush() {
 	g.mu.Lock()
-	released := g.released
-	g.mu.Unlock()
-	if !released {
+	defer g.mu.Unlock()
+	if !g.released {
 		return
 	}
 	if f, ok := g.w.(http.Flusher); ok {
