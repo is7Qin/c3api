@@ -41,16 +41,6 @@ type redisWire struct {
 	RedisAcked  bool   `json:"redis_acked"`
 }
 
-func (b Binding) valid() bool {
-	if b.AccountID <= 0 || b.Revision <= 0 || !b.RedisAcked {
-		return false
-	}
-	if b.Fingerprint == (domain.CandidateFingerprintVal{}) {
-		return false
-	}
-	return true
-}
-
 func encodeWire(b Binding) []byte {
 	w := redisWire{
 		AccountID:   strconv.FormatInt(b.AccountID, 10),
@@ -167,7 +157,6 @@ func hmacTruncate128(key, data []byte) []byte {
 type Store struct {
 	client  *redis.Client
 	hmacKey []byte
-	l1      *l1Cache
 	now     func() time.Time
 }
 
@@ -176,18 +165,7 @@ func New(client *redis.Client, authSecret string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{client: client, hmacKey: key, l1: newL1(DefaultMaxEntries, DefaultMaxBytes), now: time.Now}, nil
-}
-
-func NewWithL1(client *redis.Client, authSecret string, l1 *l1Cache) (*Store, error) {
-	key, err := deriveHMACKey(authSecret)
-	if err != nil {
-		return nil, err
-	}
-	if l1 == nil {
-		l1 = newL1(DefaultMaxEntries, DefaultMaxBytes)
-	}
-	return &Store{client: client, hmacKey: key, l1: l1, now: time.Now}, nil
+	return &Store{client: client, hmacKey: key, now: time.Now}, nil
 }
 
 func (s *Store) RedisKey(userID, groupID int64, routeClassID domain.RouteClassIDVal, protocolTag, continuationID string) (string, error) {
@@ -241,21 +219,12 @@ func (s *Store) CreateOrRefresh(ctx context.Context, userID, groupID int64, rout
 	}
 	b := Binding{AccountID: accountID, Fingerprint: fingerprint, Revision: revision, RedisAcked: true}
 	payload := encodeWire(b)
-	start := s.now()
 	res, err := luaCAS.Run(ctx, s.client, []string{rkey}, string(payload), strconv.Itoa(ttlSeconds)).Text()
-	completion := s.now()
 	if err != nil {
 		return "", err
 	}
 	switch res {
-	case "created", "refreshed":
-		deadline := start.Add(TTL)
-		if !deadline.After(completion) {
-			return res, nil
-		}
-		s.l1.putAt(rkey, b, deadline, completion)
-		return res, nil
-	case "conflict":
+	case "created", "refreshed", "conflict":
 		return res, nil
 	default:
 		return res, fmt.Errorf("continuation: unexpected lua result %q", res)
@@ -266,13 +235,6 @@ func (s *Store) Lookup(ctx context.Context, userID, groupID int64, routeClassID 
 	rkey, err := s.RedisKey(userID, groupID, routeClassID, protocolTag, continuationID)
 	if err != nil {
 		return nil, false, err
-	}
-	if b, ok := s.l1.Get(rkey); ok {
-		if !b.valid() {
-			return nil, false, nil
-		}
-		cp := b
-		return &cp, true, nil
 	}
 	start := s.now()
 	raw, err := luaLookup.Run(ctx, s.client, []string{rkey}).Slice()
@@ -305,6 +267,8 @@ func (s *Store) Lookup(ctx context.Context, userID, groupID int64, routeClassID 
 	if pttl <= 0 {
 		return nil, false, nil
 	}
+	// Freshness: the key must still be alive at command completion, measured
+	// from the pre-command clock sample (no RTT extension).
 	deadline := start.Add(time.Duration(pttl) * time.Millisecond)
 	if !deadline.After(completion) {
 		return nil, false, nil
@@ -313,10 +277,6 @@ func (s *Store) Lookup(ctx context.Context, userID, groupID int64, routeClassID 
 	if !valid {
 		return nil, false, nil
 	}
-	s.l1.putAt(rkey, b, deadline, completion)
 	cp := b
 	return &cp, true, nil
 }
-
-func (s *Store) L1Len() int   { return s.l1.Len() }
-func (s *Store) L1Bytes() int { return s.l1.Bytes() }
