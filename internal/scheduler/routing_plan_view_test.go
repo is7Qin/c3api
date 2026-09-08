@@ -29,7 +29,7 @@ func TestRoutingPlan_GenerationMatchesPublishedRoot(t *testing.T) {
 	require.Empty(t, plan.Routes, "static-only view has no compiled routes")
 
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
-	s.PublishDecisionForTest(route, &RouteDecision{Primary: []int64{1}})
+	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1)})
 	plan = s.CurrentRoutingPlan()
 	require.Equal(t, s.View().Generation(), plan.Generation)
 	require.Len(t, plan.Routes, 1)
@@ -48,17 +48,17 @@ func TestRoutingPlan_RouteOrderDeterministicAndLaneOrderPreserved(t *testing.T) 
 	antRoute := RouteRefFor(10, string(domain.FormatAnthropic), "m")
 	grpRoute := RouteRefFor(20, string(domain.FormatOpenAIChat), "m")
 	// Publish in scrambled order; projection must sort by full RouteRef identity.
-	s.PublishDecisionForTest(grpRoute, &RouteDecision{Primary: []int64{1}})
-	s.PublishDecisionForTest(antRoute, &RouteDecision{Primary: []int64{2}})
+	s.PublishDecisionForTest(grpRoute, &RouteDecision{Primary: ccPrimary(1)})
+	s.PublishDecisionForTest(antRoute, &RouteDecision{Primary: ccPrimary(2)})
 	s.PublishDecisionForTest(chatRoute, &RouteDecision{
-		Primary:  []int64{3, 1}, // lane order is semantic — never re-sorted
-		Degraded: []int64{2},
+		Primary:  ccPrimary(3, 1), // lane order is semantic — never re-sorted
+		Degraded: ccDegraded(2),
 		Explore: ExploreDecision{
-			IDs:        []int64{2, 3},
+			Ordered:    ccExplore(2, 3),
 			Weights:    map[int64]int{2: 40, 3: 60},
 			Cumulative: []uint64{40, 100},
 			Total:      100,
-			Fallback:   []int64{3, 2},
+			Fallback:   fallbackIndexes(1, 0),
 		},
 	})
 
@@ -85,8 +85,8 @@ func TestRoutingPlan_DefensiveCopyNoAliasIntoPublishedView(t *testing.T) {
 	s := newTestScheduler(t, []*domain.Account{accWithEnabled(1, tplx, true, 10000), accWithEnabled(2, tplx, true, 10000)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	s.PublishDecisionForTest(route, &RouteDecision{
-		Primary: []int64{1, 2},
-		Explore: ExploreDecision{IDs: []int64{2}, Weights: map[int64]int{2: 7}, Cumulative: []uint64{7}, Total: 7},
+		Primary: ccPrimary(1, 2),
+		Explore: ExploreDecision{Ordered: ccExplore(2), Weights: map[int64]int{2: 7}, Cumulative: []uint64{7}, Total: 7},
 	})
 
 	first := s.CurrentRoutingPlan()
@@ -104,7 +104,7 @@ func TestRoutingPlan_DefensiveCopyNoAliasIntoPublishedView(t *testing.T) {
 	// The published decision itself is untouched.
 	rd, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIChat), "m")
 	require.True(t, ok)
-	require.Equal(t, []int64{1, 2}, rd.Primary)
+	require.Equal(t, []int64{1, 2}, compiledAccountIDs(rd.Primary))
 }
 
 func TestRoutingPlan_CandidateMetadataMappingFingerprintQualityClass(t *testing.T) {
@@ -118,7 +118,7 @@ func TestRoutingPlan_CandidateMetadataMappingFingerprintQualityClass(t *testing.
 	a.TemplateID = 7
 	s := newTestScheduler(t, []*domain.Account{a})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "req")
-	s.PublishDecisionForTest(route, &RouteDecision{Primary: []int64{1}})
+	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1)})
 
 	plan := s.CurrentRoutingPlan()
 	cand := plan.Routes[0].Candidates[0]
@@ -144,7 +144,7 @@ func TestRoutingPlan_IdentityFingerprintSynthesisWhenUnderivable(t *testing.T) {
 	tplx := &domain.Template{SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"m"}}
 	s := newTestScheduler(t, []*domain.Account{accWithEnabled(5, tplx, true, 10000)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
-	s.PublishDecisionForTest(route, &RouteDecision{Primary: []int64{5}})
+	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(5)})
 
 	plan := s.CurrentRoutingPlan()
 	cand := plan.Routes[0].Candidates[0]
@@ -160,7 +160,7 @@ func TestRoutingPlan_MissingStaticLeafKeepsReference(t *testing.T) {
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	// Lane references an account absent from the static leaves (stale decision
 	// rebased over a removal): the projection keeps the reference, identity-only.
-	s.PublishDecisionForTest(route, &RouteDecision{Primary: []int64{1, 404}})
+	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1, 404)})
 
 	plan := s.CurrentRoutingPlan()
 	require.Len(t, plan.Routes[0].Candidates, 2)
@@ -171,4 +171,30 @@ func TestRoutingPlan_MissingStaticLeafKeepsReference(t *testing.T) {
 	var b [32]byte
 	binary.BigEndian.PutUint64(b[:8], 404)
 	require.Equal(t, hex.EncodeToString(b[:]), ghost.IdentityFingerprint)
+}
+
+func TestRoutingPlan_FallbackOnlyExploreCandidateIsProjected(t *testing.T) {
+	// Given
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	s := newTestScheduler(t, []*domain.Account{
+		accWithEnabled(7, tplx, true, 10000),
+		accWithEnabled(8, tplx, true, 10000),
+	})
+	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	s.PublishDecisionForTest(route, &RouteDecision{Explore: ExploreDecision{
+		Ordered:  ccExplore(7, 8),
+		Fallback: fallbackIndexes(1),
+	}})
+
+	// When
+	plan := s.CurrentRoutingPlan()
+
+	// Then
+	require.Len(t, plan.Routes, 1)
+	require.Equal(t, []int64{7, 8}, plan.Routes[0].Explore.IDs)
+	require.Equal(t, []int64{8}, plan.Routes[0].Explore.Fallback)
+	require.Equal(t, []int64{7, 8}, []int64{
+		plan.Routes[0].Candidates[0].AccountID,
+		plan.Routes[0].Candidates[1].AccountID,
+	})
 }
