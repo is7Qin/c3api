@@ -143,6 +143,49 @@ func TestStreamRequestBodyEnablesStream(t *testing.T) {
 	require.Equal(t, true, body["stream"])
 }
 
+// TestImagesStreamRequestBody images 双形态：-mode stream → JSON 带 stream:true
+// （网关 scanKeys 探测后走 SSE 透传）；-mode chat → 非流式 JSON 原样（无 stream
+// 键，data 数组计图计费路径不变）。
+func TestImagesStreamRequestBody(t *testing.T) {
+	prevFmt := *format
+	t.Cleanup(func() { *format = prevFmt })
+	*format = "images"
+
+	req := newLoadtestRequest("http://example.test", "ck-test", "stream", "")
+	require.Equal(t, "http://example.test/v1/images/generations", req.URL.String())
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
+	require.Equal(t, true, body["stream"], "stream 模式必须发 stream:true")
+
+	req = newLoadtestRequest("http://example.test", "ck-test", "chat", "")
+	body = map[string]any{} // 重置：Decode 进非 nil map 是合并语义
+	require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
+	_, ok := body["stream"]
+	require.False(t, ok, "非流式 images 保持原 JSON 契约（不带 stream）")
+}
+
+// TestDoRequestImagesStreamDrainsTerminal 压测端对 Images SSE 终态的排空：
+// completed 帧 + [DONE] 终帧的流正常计成功（首字节采样入直方图、零错误）。
+func TestDoRequestImagesStreamDrainsTerminal(t *testing.T) {
+	prevMode, prevFmt := *mode, *format
+	*mode, *format = "stream", "images"
+	t.Cleanup(func() { *mode, *format = prevMode, prevFmt })
+	srv, _ := connCountingServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"image_generation.completed\",\"data\":[{\"b64_json\":\"QUJD\"}]}\n\n")
+		fl.Flush()
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		fl.Flush()
+	})
+	useAddr(t, srv.URL) // 改 addr 后重建模板（模板按 flags 构建）
+	m := &metrics{errDetail: make(map[string]int64)}
+	doRequest(&http.Client{Timeout: 5 * time.Second}, m, rand.New(rand.NewPCG(1, 1)), true)
+	require.Equal(t, int64(1), m.total.Load())
+	require.Equal(t, int64(0), m.errs.Load())
+	require.GreaterOrEqual(t, p99(m), int64(0), "成功流必须入首字节直方图")
+}
+
 // TestAffinityInjectsPromptCacheKey 软亲和注入：chat/responses 格式带
 // prompt_cache_key（affinity 非空），anthropic 忽略（不吃该字段）。
 func TestAffinityInjectsPromptCacheKey(t *testing.T) {

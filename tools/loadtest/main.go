@@ -228,6 +228,10 @@ func main() {
 
 	wg.Wait()
 	result := fmt.Sprintf("\n=== RESULT ===\nmode=%s\n", *mode)
+	if *mode == "stream" || *mode == "chat" {
+		// 模型请求模式带 format（images 的 JSON/SSE 两形态结果必须可区分归档）。
+		result += fmt.Sprintf("format=%s\n", *format)
+	}
 	if *mode == "fill" {
 		result += fmt.Sprintf("fill_type=%s\n", *fillType)
 	}
@@ -302,10 +306,14 @@ func newLoadtestRequest(base, groupKey, requestMode, affinity string) *http.Requ
 			body = `{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 		}
 	case "images":
-		// images generations：非流式 JSON（data 数组计图计费）；流式变体需
-		// 上游 SSE 帧规格支持，fakeupstream 未实现——压测覆盖非流式。
+		// images generations：-mode chat = 非流式 JSON（data 数组计图计费）；
+		// -mode stream = stream:true → 网关 SSE 透传（image_generation.completed
+		// 帧 + [DONE] 终帧，fakeupstream 已支持同口径 wire 形态）。
 		path = "/v1/images/generations"
 		body = `{"model":"gpt-image-1","prompt":"a cat","n":1,"size":"1024x1024"}`
+		if requestMode == "stream" {
+			body = `{"model":"gpt-image-1","prompt":"a cat","n":1,"size":"1024x1024","stream":true}`
+		}
 	default: // chat
 		path = "/v1/chat/completions"
 		body = `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
