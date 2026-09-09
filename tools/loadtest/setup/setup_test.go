@@ -83,3 +83,47 @@ func TestPickModelsDistinct(t *testing.T) {
 	}
 	require.Len(t, seen, 20)
 }
+
+// TestModelsForFormat Given 轮流格式集与固定种子的 rng，When 生成模板模型集，Then
+// 每格式必含 tools/loadtest 该格式固定的请求模型（不重复、随机覆盖 1-20 保留）。
+func TestModelsForFormat(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 1))
+	require.Contains(t, tplFormats, "openai-images") // images 进格式轮流
+	for _, f := range tplFormats {
+		req := tplRequiredModel[f]
+		require.NotEmpty(t, req, f) // 池外模型（gpt-image-1）也须有必含项
+		require.Contains(t, modelPool, req, "billing-enabled must price every fixed loadtest model")
+		for i := 0; i < 50; i++ {
+			models := modelsForFormat(rng, f)
+			require.Contains(t, models, req)
+			seen := map[string]bool{}
+			for _, m := range models {
+				seen[m] = true
+			}
+			require.Len(t, seen, len(models)) // 必含模型不重复
+			require.GreaterOrEqual(t, len(models), 1)
+			require.LessOrEqual(t, len(models), 21) // 随机 1-20 + 必含至多 1
+		}
+	}
+}
+
+func TestPricingBodyForModel(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 1))
+	image := pricingBodyForModel(rng, "gpt-image-1")
+	require.Equal(t, "image", image["mode"])
+	require.Contains(t, image, "price_per_image")
+
+	token := pricingBodyForModel(rng, "gpt-4o")
+	require.Equal(t, "token", token["mode"])
+	require.Contains(t, token, "input_per_m")
+}
+
+func TestCacheDomainForAccount(t *testing.T) {
+	domain, shared := cacheDomainForAccount(5, 8)
+	require.True(t, shared)
+	require.Equal(t, "cache-005.loadtest", domain)
+
+	domain, shared = cacheDomainForAccount(4, 8)
+	require.False(t, shared)
+	require.Empty(t, domain)
+}
