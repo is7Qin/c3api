@@ -69,7 +69,7 @@ jobs:
             goarch: amd64
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod # 显式装齐（评审 P3-A：runner 预装 Go 不保证与 go.mod 匹配）
       - name: Build and pack
