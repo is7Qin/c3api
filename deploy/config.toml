@@ -11,12 +11,22 @@ admin = { token = "" }
 auth = { jwt_secret = "" }
 db = { dsn = "", max_conns = 20 }
 proxy = {
+  # 请求体上限（字节，4 MiB）：读 body 时 http.MaxBytesReader 强制，超出即中断
+  # 并按 413 类错误拒绝（含 vision base64 图片的大请求需相应调大）。
   max_body_size = 4194304,
+  # 全局在途请求上限（并发闸门，中间件层）：超限的新请求立即 429，不排队。
+  # 0 = server 侧兜底为 50000（配置下限不校验，见 config.go validate 注释）。
   max_inflight = 50000,
   upstream_timeout = "120s",
   upstream_stream_timeout = "30m",
   failover_attempts = 3,
   usage_capture = true,
+  # 反代/CDN 之后部署时置 true：client_ip 按序采信 CF-Connecting-IP →
+  # True-Client-IP → X-Real-IP。false（默认）完全不读这些头直取 RemoteAddr——
+  # compose + 前置代理拓扑下只会记到内网对端（如 172.18.0.1），审计无意义。
+  # 置 true 的前提是源站端口只对代理开放（防火墙封直连）；若本机直连公网
+  # 暴露，改回 false——头可被客户端自填，client_ip 仅为尽力而为的排障标识。
+  behind_cdn = false,
 }
 upstream = {
   max_idle_conns = 8192,

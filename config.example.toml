@@ -14,7 +14,11 @@ db = { dsn = "postgres://user:pass@localhost:5432/c3api?sslmode=disable", max_co
 # / C3API_REDIS_DB。password 空 = 无鉴权（占位值 change-me 等会被拒绝）；db <0 非法。
 redis = { addr = "127.0.0.1:6379", password = "", db = 0 }
 proxy = {
+  # 请求体上限（字节，4 MiB）：读 body 时 http.MaxBytesReader 强制，超出即中断
+  # 并按 413 类错误拒绝（含 vision base64 图片的大请求需相应调大）。
   max_body_size = 4194304,
+  # 全局在途请求上限（并发闸门，中间件层）：超限的新请求立即 429，不排队。
+  # 0 = server 侧兜底为 50000（配置下限不校验，见 config.go validate 注释）。
   max_inflight = 50000,
   # upstream_timeout 保留段名（改名 proxy_timeout 会使旧键无字段对应 → ErrorUnused
   # 启动报错）；同源供 http.Server.ReadTimeout（slowloris 截断，见 main.go）。
@@ -23,6 +27,15 @@ proxy = {
   # 总尝试次数（含首次）——>= 1，0 会启动失败（拒绝死锁配置）
   failover_attempts = 3,
   usage_capture = true,
+  # client_ip（usage_logs / err_logs 审计列）提取方式：true = 按序采信
+  # CF-Connecting-IP → True-Client-IP → X-Real-IP（首个非空值），全空回退
+  # RemoteAddr；false（默认）= 完全不读这些头，直取 RemoteAddr 剥端口（零伪造面）。
+  # nginx/Caddy/compose 网桥之后部署须置 true，否则 client_ip 只会是代理内网地址
+  # （如 172.18.0.1）；代理侧需自行写真实 IP 头（如 nginx
+  # proxy_set_header X-Real-IP $remote_addr）——X-Forwarded-For 不被解析。
+  # 置 true 的前提是源站端口只对代理开放（防火墙封直连）：网关直连公网暴露时
+  # 客户端可自填这些头，须改回 false。client_ip 始终只是排障标识，非安全边界。
+  behind_cdn = false,
 }
 upstream = {
   max_idle_conns = 8192,
