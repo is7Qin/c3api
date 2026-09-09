@@ -113,6 +113,11 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			},
 		})
 		resp.Body.Close()
+		if err == nil && gate != nil && gate.notReleased() {
+			if releaseErr := gate.release(); releaseErr != nil {
+				contErr = errContUnavailable
+			}
+		}
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
@@ -177,12 +182,6 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			}
 			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 			return 0, nil, true, nil
-		}
-		if gate.notReleased() {
-			// 流正常结束但无 id 帧（无可续接身份）：缓冲字节安全放出。
-			if err := gate.release(); err != nil {
-				contErr = errContUnavailable
-			}
 		}
 		out := base
 		out.Result = ResultSuccess
