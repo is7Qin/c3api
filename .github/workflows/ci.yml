@@ -50,7 +50,7 @@ jobs:
         run: go generate ./internal/handler/ ./internal/ent/
       - name: no drift in api.gen.go / ent generated code
         run: git diff --exit-code -- internal/handler/api.gen.go internal/handler/user/api.gen.go internal/ent
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.20.0
       - uses: actions/setup-node@v4
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.20.0
       - uses: actions/setup-node@v4
