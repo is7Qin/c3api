@@ -356,7 +356,9 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		// 收尾挂在库内握手超时上（5s）——relay 退出不得等客户端响应，主动
 		// 拆连接解除 client-loop 的阻塞 Read 后 wg.Wait 全 join。
 		ectx, ecancel := context.WithTimeout(context.Background(), responsesWSCloseTimeout)
-		_ = client.Write(ectx, websocket.MessageText, wsErrorFrame(contFail.msg))
+		if err := client.Write(ectx, websocket.MessageText, wsErrorFrame(contFail.msg)); err != nil && p.log != nil {
+			p.log.Warn("continuation error frame write failed", logx.String("request_id", reqID), logx.Error(err))
+		}
 		ecancel()
 		_ = client.CloseNow()
 		base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))

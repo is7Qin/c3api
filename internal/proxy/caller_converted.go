@@ -140,7 +140,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			},
 		})
 		resp.Body.Close()
-		if gate != nil && contErr == nil {
+		if err == nil && gate != nil && contErr == nil {
 			if released, failed := gate.gateState(); failed {
 				contErr = errContUnavailable
 			} else if !released {
