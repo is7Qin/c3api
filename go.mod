@@ -4,10 +4,10 @@ go 1.26.5
 
 require (
 	entgo.io/ent v0.14.6
-	github.com/adhocore/gronx v1.20.1
+	github.com/adhocore/gronx v1.20.3
 	github.com/anthropics/anthropic-sdk-go v1.62.0
 	github.com/coder/websocket v1.8.15
-	github.com/go-chi/chi/v5 v5.3.1
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
@@ -29,7 +29,7 @@ require (
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/redis/go-redis/v9 v9.22.0
-	github.com/wneessen/go-mail v0.8.0
+	github.com/wneessen/go-mail v0.8.1
 )
 
 require (
