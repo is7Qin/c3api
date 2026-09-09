@@ -3,9 +3,10 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // setup 构造多租户压测数据（Phase 3a 数据模型 + Phase 5 计费字段 + intelligent
-// routing 新契约）：模板（三格式 × 随机模型池）→ 公开组 → 账号（分散模板/组/
-// 上游，可选采购成本倍率 + 共享缓存域）→ 用户（可选余额/并发区间）→ 逐个登录建
-// key（可选多 key/并发/额度区间），key 明文写文件（loadtest -keys 用）。
+// routing 新契约）：模板（四格式 × 随机模型池 + loadtest 固定请求模型必含）→
+// 公开组 → 账号（分散模板/组/上游，可选采购成本倍率 + 共享缓存域）→ 用户（可选
+// 余额/并发区间）→ 逐个登录建 key（可选多 key/并发/额度区间），key 明文写文件
+// （loadtest -keys 用）。
 // -price-models 给随机 N 个模型 manual 定价（验证计费链路有价）；-billing-enabled
 // 一步到位：默认余额区间 + 全部模型池定价；-routing-rules 播种 typed 路由规则
 // （窗口 429 → throttle、窗口 5xx → fail_account，fatal 场景演练入口）。
@@ -22,9 +23,9 @@
 //   - 组全部 public（key 可选性无限制）；账号 upstream_key 统一 "sk-upstream"
 //   - 用户密码统一 "loadtest-pass-1"（bcrypt 校验可验证）
 //   - key 并发/额度随机区间内取值，随机值 0 = 该 key 不设限制（"随机挑选填充"）
-//   - 账号只走 intelligent-routing 新契约（无 weight/status 旧字段）：成本倍率
-//     经 PUT /accounts/{id}/cost-multiplier（fenced，创建代际恒 1 直接命中），
-//     缓存域创建即带（每第 4 个账号留私有域做对照）
+//   - 账号只走 intelligent-routing 新契约（无 weight/status 旧字段）：成本倍率和
+//     缓存域均经 fenced PUT 更新（创建代际恒 1 直接命中）；每第 4 个账号留私有
+//     域做对照。
 package main
 
 import (
@@ -37,6 +38,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,7 +53,7 @@ var (
 	users       = flag.Int("users", 5000, "number of users")
 	accounts    = flag.Int("accounts", 5000, "number of upstream accounts")
 	groups      = flag.Int("groups", 20, "number of public groups")
-	templates   = flag.Int("templates", 6, "number of templates (random 1-20 models from the pool, formats round-robin)")
+	templates   = flag.Int("templates", 8, "number of templates (random 1-20 models + format required model, formats round-robin)")
 	reuseTpls   = flag.String("reuse-template-ids", "", "comma-separated existing template ids; skip creation (multi-run setups on one DB avoid deterministic tpl-name 409)")
 	runTag      = flag.String("run-tag", "", "unique suffix for group names + user emails (multi-run setups on one DB)")
 	keysPerUser = flag.Int("keys-per-user", 1, "keys per user (each key independent name + random group)")
@@ -79,7 +81,7 @@ const (
 // 模板 models 集合与 manual 定价键；不含 "/" 保证 URL 路径段安全）。
 var modelPool = []string{
 	"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
-	"gpt-4-turbo", "gpt-3.5-turbo", "gpt-5", "gpt-5-mini", "gpt-5.6-sol",
+	"gpt-4-turbo", "gpt-3.5-turbo", "gpt-image-1", "gpt-5", "gpt-5-mini", "gpt-5.6-sol",
 	"o1", "o1-mini", "o3", "o3-mini",
 	"claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
 	"claude-3-opus-20240229", "claude-3-7-sonnet-20250219",
@@ -92,8 +94,17 @@ var modelPool = []string{
 	"mistral-large-latest", "mistral-medium", "mixtral-8x7b-instruct",
 }
 
-// tplFormats 模板格式轮流序：默认 6 个模板 = 每格式 ×2（-b 后缀配对，与旧行为一致）。
-var tplFormats = []string{"openai-chat", "openai-responses", "anthropic"}
+// tplFormats 模板格式轮流序：默认 8 个模板 = 每格式 ×2（-b 后缀配对）。
+var tplFormats = []string{"openai-chat", "openai-responses", "anthropic", "openai-images"}
+
+// tplRequiredModel 每格式 tools/loadtest 固定的请求模型（newLoadtestRequest）。
+// 模板 models 必须包含它——否则固定模型压测只有随机命中该模型的少数账号可选。
+var tplRequiredModel = map[string]string{
+	"openai-chat":      "gpt-4o",
+	"openai-responses": "gpt-4o",
+	"anthropic":        "claude-3-5-sonnet-20241022",
+	"openai-images":    "gpt-image-1",
+}
 
 // 响应解析用最小结构（JSON 字段名 = Go 字段名 / openapi tag，见 api.gen.go）。
 type tpl struct{ ID int64 }
@@ -176,7 +187,7 @@ func main() {
 	}
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 1))
 
-	// 1) 模板（-templates 个；三格式轮流 ×2 配对，随机 1-20 模型；多上游轮流 base_url）
+	// 1) 模板（-templates 个；四格式轮流 ×2 配对，随机 1-20 模型 + 格式必含模型；多上游轮流 base_url）
 	upURLs := []string{*upstream}
 	if *upstreams != "" {
 		upURLs = strings.Split(*upstreams, ",")
@@ -205,7 +216,7 @@ func main() {
 		tplIDs = make([]int64, 0, *templates)
 		for i := 0; i < *templates; i++ {
 			f := tplFormats[(i/2)%len(tplFormats)]
-			// 名字仅 6 个唯一（3 格式 ×2），-templates > 6 会撞唯一键 409；
+			// 名字仅 8 个唯一（4 格式 ×2），-templates > 8 会撞唯一键 409；
 			// 从第 7 个起追加序号保证唯一（名字仅装饰，压测用 ID 引用）。
 			name := fmt.Sprintf("tpl-%s", f)
 			if i%2 == 1 {
@@ -217,7 +228,7 @@ func main() {
 			var out tpl
 			admin(http.MethodPost, "/api/admin/templates", map[string]any{
 				"name": name, "base_url": upURLs[i%len(upURLs)],
-				"supported_formats": []string{f}, "models": randomModels(rng),
+				"supported_formats": []string{f}, "models": modelsForFormat(rng, f),
 			}, &out)
 			tplIDs = append(tplIDs, out.ID)
 		}
@@ -239,9 +250,9 @@ func main() {
 	// 3) 账号 ×N：模板/组随机分配（必须解耦——若模板与组同用 i%N，组 g 只会
 	// 绑到单个模板，三格式请求在非对应组 404 "no account supports this
 	// request format"；随机化后每组含全格式模板账号，且每模板都分布到多组）。
-	// intelligent-routing 新契约：无 weight/status 旧字段；-cache-domains 创建
-	// 即带共享域（每第 4 个留私有域对照，编译器把空域规范为账号私有），
-	// -cost-multiplier 创建后 PUT fenced 写端点（新账号代际恒 1，必命中）。
+	// intelligent-routing 新契约：无 weight/status 旧字段；-cache-domains 在创建
+	// active 账号后经 fenced PUT 写共享域（每第 4 个留私有域对照），避免创建体
+	// 的显式生命周期字段触发 disabled 分支；-cost-multiplier 同样 fenced 更新。
 	aStart := time.Now()
 	costMin, costMax := parseFloatRange(*costMult)
 	if *cacheDomains < 0 {
@@ -259,19 +270,24 @@ func main() {
 			// （压测目标 = 网关热路径，账号槽不设限，与 §7 SQL 直插同语义）
 			"max_concurrency": 100000,
 		}
-		if *cacheDomains > 0 && i%4 != 0 {
-			body["cache_domain"] = fmt.Sprintf("cache-%03d.loadtest", i%*cacheDomains)
-		}
 		var out acc
 		admin(http.MethodPost, "/api/admin/accounts", body, &out)
+		if cacheDomain, ok := cacheDomainForAccount(i, *cacheDomains); ok {
+			var updated acc
+			admin(http.MethodPut, fmt.Sprintf("/api/admin/accounts/%d/cache-domain", out.ID), map[string]any{
+				"cache_domain": cacheDomain, "expected_revision": out.LifecycleRevision,
+			}, &updated)
+			out.LifecycleRevision = updated.LifecycleRevision
+		}
 		if costMax > 0 {
 			m := costMin
 			if costMax > costMin {
 				m = costMin + rng.Float64()*(costMax-costMin)
 			}
+			var updated acc
 			admin(http.MethodPut, fmt.Sprintf("/api/admin/accounts/%d/cost-multiplier", out.ID), map[string]any{
 				"multiplier": m, "expected_revision": out.LifecycleRevision,
-			}, nil)
+			}, &updated)
 		}
 	}
 	fmt.Printf("accounts: %d cost=%s cache-domains=%d (%s)\n", *accounts, *costMult, *cacheDomains, time.Since(aStart).Round(time.Millisecond))
@@ -298,7 +314,7 @@ func main() {
 	// 基础价 + 随机 1-2 个矩阵字段（priority/fast 等），保证计费链路有价。
 	pStart := time.Now()
 	for _, model := range pickModels(rng, *priceModels) {
-		admin(http.MethodPut, "/api/admin/prices/entry?model="+url.QueryEscape(model), randomPricingBody(rng), nil)
+		admin(http.MethodPut, "/api/admin/prices/entry?model="+url.QueryEscape(model), pricingBodyForModel(rng, model), nil)
 	}
 	fmt.Printf("pricing: %d models (%s)\n", *priceModels, time.Since(pStart).Round(time.Millisecond))
 
@@ -398,6 +414,23 @@ func randomModels(rng *rand.Rand) []string {
 	return pickModels(rng, 1+rng.IntN(20))
 }
 
+func cacheDomainForAccount(index, domains int) (string, bool) {
+	if domains <= 0 || index%4 == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("cache-%03d.loadtest", index%domains), true
+}
+
+// modelsForFormat 模板模型集 = randomModels 随机覆盖 + 该格式 loadtest 固定请求
+// 模型必含（随机集已含则不重复追加）。
+func modelsForFormat(rng *rand.Rand, format string) []string {
+	models := randomModels(rng)
+	if req, ok := tplRequiredModel[format]; ok && !slices.Contains(models, req) {
+		models = append(models, req)
+	}
+	return models
+}
+
 // randomPricingBody token 档基础价（input_per_m/output_per_m，USD/1M tokens——
 // API 契约 float 直发，handler usdToMillis ×1e5 落库毫分）+ 随机 1-2 个可选
 // 缓存字段（cache_read/cache_write，真实模型常见有价）。注意：主价单位 USD
@@ -419,6 +452,16 @@ func randomPricingBody(rng *rand.Rand) map[string]any {
 		extras[idx]()
 	}
 	return body
+}
+
+func pricingBodyForModel(rng *rand.Rand, model string) map[string]any {
+	if model == "gpt-image-1" {
+		return map[string]any{
+			"mode":            "image",
+			"price_per_image": 0.01 + rng.Float64()*0.04,
+		}
+	}
+	return randomPricingBody(rng)
 }
 
 // parseRange 解析 "min-max" / 单值 "v" → (min, max)；""/"0" = 不设置，
