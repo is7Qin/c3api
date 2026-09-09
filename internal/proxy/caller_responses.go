@@ -147,7 +147,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				out.HTTPStatus = 0
 				out.Terminal = true
 				out.BusinessFrameSent = true
-				if gate.notReleased() {
+				if gate != nil && gate.notReleased() {
 					// 闸门未放 = 客户端实际未见任何帧（not_sent 语义）
 					out.Commit = CommitNotSent
 					out.BusinessFrameSent = false
@@ -156,7 +156,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 				return 0, nil, true, nil
 			}
-			if gate.notReleased() {
+			if gate != nil && gate.notReleased() {
 				// id 帧前上游停滞/断流：无字节可见 → 归一 502 错误可达，终态。
 				out := base
 				out.Result = ResultFailed
