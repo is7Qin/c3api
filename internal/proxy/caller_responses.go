@@ -113,7 +113,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			},
 		})
 		resp.Body.Close()
-		if err == nil && gate != nil && gate.notReleased() {
+		if err == nil && gate != nil && contErr == nil && gate.notReleased() {
 			if releaseErr := gate.release(); releaseErr != nil {
 				contErr = errContUnavailable
 			}

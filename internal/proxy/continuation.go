@@ -261,7 +261,7 @@ func (g *contGateWriter) markFailed() {
 func (g *contGateWriter) release() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.released {
+	if g.released || g.failed {
 		return nil
 	}
 	g.released = true
