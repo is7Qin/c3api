@@ -11,8 +11,14 @@
 //   - /v1/messages：anthropic 官方格式的 SSE 流（event: 行 + message_start/
 //     content_block_delta/message_delta/message_stop），SDK 按 event 类型分发，
 //     纯 data 事件会被静默跳过（修复后的网关同样按官方格式写出）。
+//   - /v1/images/generations：stream:true 时回网关兼容 Images SSE（每张图一个
+//     image_generation.completed data 帧 + 末帧 usage + [DONE] 终帧）。
 //   - 请求体可选字段 "chunks"（整数）：按请求覆盖 -chunks 标志（e2e 需要
 //     单个实例同时服务快速请求与长流式请求；缺省用标志值）。
+//   - 请求审计面 GET /_audit：环形缓冲记录每请求的（path、上游 key、model、
+//     prompt_cache_key、终态码、时刻），注入失败同样如实入账——intelligent-
+//     routing e2e 据此归因"哪个账号/哪条路由真实处理了请求"。key 均为测试
+//     合成值，非真实凭据。
 package main
 
 import (
@@ -48,15 +54,23 @@ func main() {
 	f500 := splitKeys(*fail500)
 	f400 := splitKeys(*fail400)
 
+	http.HandleFunc("/_audit", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(audit.snapshot())
+	})
+	http.HandleFunc("/v1/models", modelsHandler)
+
 	http.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		if code := failIfInjected(w, r, f429, f500, f400); code != 0 {
 			return
 		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			audit.add(r, nil, 400)
 			w.WriteHeader(400)
 			return
 		}
+		audit.add(r, body, 200)
 		stream, _ := body["stream"].(bool)
 		if !stream {
 			w.Header().Set("Content-Type", "application/json")
@@ -93,14 +107,17 @@ func main() {
 		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			audit.add(r, nil, 400)
 			w.WriteHeader(400)
 			return
 		}
+		audit.add(r, body, 200)
+		responseID := nextResponseID()
 		stream, _ := body["stream"].(bool)
 		if !stream {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": "rsp_1", "object": "response", "status": "completed",
+				"id": responseID, "object": "response", "status": "completed",
 				"output": []any{},
 				"usage":  map[string]any{"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
 			})
@@ -120,7 +137,7 @@ func main() {
 		writeData(map[string]any{
 			"type": "response.completed",
 			"response": map[string]any{
-				"id": "rsp_1", "object": "response", "status": "completed",
+				"id": responseID, "object": "response", "status": "completed",
 				"model": "gpt-4o", "output": []any{},
 				"usage": map[string]any{"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
 			},
@@ -137,9 +154,11 @@ func main() {
 		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			audit.add(r, nil, 400)
 			w.WriteHeader(400)
 			return
 		}
+		audit.add(r, body, 200)
 		stream, _ := body["stream"].(bool)
 		if !stream {
 			w.Header().Set("Content-Type", "application/json")
@@ -189,35 +208,20 @@ func main() {
 		writeAnthropic("message_stop", map[string]any{"type": "message_stop"})
 	})
 
-	// openai images 格式（generations）：非流式 JSON，data 数组按请求 n 回显——
-	// 网关按 data 长度数图计费（ImageCost），size/model 取自请求体不回显校验。
+	// openai images 格式（generations）：非流式 JSON + 流式 SSE（见 imagesHandler）。
 	http.HandleFunc("/v1/images/generations", func(w http.ResponseWriter, r *http.Request) {
-		if code := failIfInjected(w, r, f429, f500, f400); code != 0 {
-			return
-		}
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			w.WriteHeader(400)
-			return
-		}
-		n := 1
-		if v, ok := body["n"].(float64); ok && v >= 1 && v <= 10 {
-			n = int(v)
-		}
-		data := make([]map[string]any, n)
-		for i := range data {
-			data[i] = map[string]any{"url": fmt.Sprintf("https://fake.invalid/img-%d.png", i)}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"created": time.Now().Unix(),
-			"data":    data,
-		})
+		imagesHandler(w, r, imagesOpts{latency: *latency, f429: f429, f500: f500, f400: f400})
 	})
 
 	log.Printf("fake upstream on %s (chunks=%d latency=%s fail429=%v fail500=%v fail400=%v)",
 		*addr, *chunks, *latency, f429, f500, f400)
 	log.Fatal(http.ListenAndServe(*addr, nil))
+}
+
+func modelsHandler(w http.ResponseWriter, r *http.Request) {
+	audit.add(r, nil, http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": []any{}})
 }
 
 func splitKeys(s string) map[string]bool {
@@ -231,21 +235,24 @@ func splitKeys(s string) map[string]bool {
 }
 
 // failIfInjected 命中注入 key 则直接写 400/429/500 并返回状态码（0 = 未命中）。
+// 注入拒绝同样入审计（真实账目：该请求确实到达了本上游、由该 key 归因）。
 func failIfInjected(w http.ResponseWriter, r *http.Request, f429, f500, f400 map[string]bool) int {
-	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	key = strings.TrimSpace(key)
+	key := upstreamKey(r)
 	switch {
 	case f429[key]:
+		audit.add(r, nil, http.StatusTooManyRequests)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(`{"error":{"message":"injected 429","type":"rate_limit_error"}}`))
 		return http.StatusTooManyRequests
 	case f500[key]:
+		audit.add(r, nil, http.StatusInternalServerError)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"message":"injected 500","type":"server_error"}}`))
 		return http.StatusInternalServerError
 	case f400[key]:
+		audit.add(r, nil, http.StatusBadRequest)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":{"message":"injected 400","type":"invalid_request_error"}}`))
