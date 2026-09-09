@@ -215,8 +215,8 @@ func Load(path string) (*Config, error) {
 //
 // 明确排除：retention 天数（<=0 = 不删除，文档化惯例）、int 型钳位字段
 // （BatchSize/FlushWorkers/ErrLogQueueSize/ErrLogBatchSize）、
-// Proxy.MaxInflight（server 侧 0→50000 兜底，proxy 消费语义未核实——
-// 范围外）。
+// Proxy.MaxInflight（唯一消费方是 server 中间件，0 由 server 侧兜底为 50000——
+// 无死锁/静默失效面）。
 func validate(c *Config) error {
 	for _, d := range []struct {
 		path      string

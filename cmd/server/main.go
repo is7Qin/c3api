@@ -375,7 +375,6 @@ func main() {
 	warningW := wireBalanceWarning(warningSinkSetter, rdb, svc, mailW, log)
 	px := proxy.New(proxy.Config{
 		MaxBodySize:           cfg.Proxy.MaxBodySize,
-		MaxInflight:           cfg.Proxy.MaxInflight,
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
 		UpstreamStreamTimeout: cfg.Proxy.UpstreamStreamTimeout,
 		FailoverAttempts:      cfg.Proxy.FailoverAttempts,

@@ -33,7 +33,6 @@ import (
 
 type Config struct {
 	MaxBodySize           int64
-	MaxInflight           int64
 	UpstreamTimeout       time.Duration // codex 非流式上游超时（resp/images 各自包 ctx——B-P2-7；HTTPClient.Timeout 不可用：流式/非流式四方法共享，覆盖整响应体读取会切断长流式 SSE）。同源同值 cfg.Proxy.UpstreamTimeout（aiclient.Config.UpstreamTimeout 管 typed 面）
 	UpstreamStreamTimeout time.Duration // 流式 backstop（非流式超时在 aiclient.Config/cfg.Proxy.UpstreamTimeout）
 	FailoverAttempts      int
