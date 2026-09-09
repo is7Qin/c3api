@@ -386,6 +386,9 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		fctx, fcancel := context.WithTimeout(r.Context(), responsesWSCloseTimeout)
 		for _, pf := range contPending {
 			if err := client.Write(fctx, pf.typ, pf.frame); err != nil {
+				endMu.Lock()
+				clientErr = err
+				endMu.Unlock()
 				break
 			}
 		}
