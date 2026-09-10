@@ -319,34 +319,6 @@ func flowEdgeIdentityOf(r repository.RoutingFlowRow) flowEdgeIdentity {
 	return id
 }
 
-// mergeFlowRows folds an incoming same-minute row set into the existing one by
-// complete edge identity: identical edges sum ChainCount (request
-// conservation), distinct edges remain distinct. Incoming rows lead the
-// merged order so a newer contribution is never displaced by an older one.
-func mergeFlowRows(existing, incoming []repository.RoutingFlowRow) []repository.RoutingFlowRow {
-	index := make(map[flowEdgeIdentity]int, len(existing)+len(incoming))
-	merged := make([]repository.RoutingFlowRow, 0, len(existing)+len(incoming))
-	for _, r := range incoming {
-		k := flowEdgeIdentityOf(r)
-		if i, ok := index[k]; ok {
-			merged[i].ChainCount += r.ChainCount
-			continue
-		}
-		index[k] = len(merged)
-		merged = append(merged, r)
-	}
-	for _, r := range existing {
-		k := flowEdgeIdentityOf(r)
-		if i, ok := index[k]; ok {
-			merged[i].ChainCount += r.ChainCount
-			continue
-		}
-		index[k] = len(merged)
-		merged = append(merged, r)
-	}
-	return merged
-}
-
 func (f *FlowMinute) Minute() int64 { return f.minute }
 func (f *FlowMinute) Edge(i int) int64 {
 	if i < 0 || i >= 8 {

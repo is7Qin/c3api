@@ -3,7 +3,6 @@ package quality
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -14,85 +13,78 @@ import (
 
 func TestRed_FlowStaleRequeueSequenceAware(t *testing.T) {
 	_, rdb := newMiniRedis(t)
-	failingPG := &typedFakePG{failAll: context.DeadlineExceeded}
+	pg := newFakePG()
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, failingPG, SyncConfig{InstanceSrc: "red-flow-stale", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-stale", BatchSize: 10}, nil)
 	w.SetClock(func() time.Time { return fixed })
+	owner := rec.FlowOwner()
 
-	// Prepare initial flow snapshot for minute M with old edges
+	// Old edges A retained for minute M.
 	m := fixed.Unix()
 	fmOld := NewFlowSnapshot(m, []repository.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 1, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
 	})
 	require.NoError(t, rec.EnqueueFlowMinute(fmOld))
 
-	// barrier: doPG will attempt and fail, invoking refill
-	barrier := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		<-barrier
-		w.doPG(context.Background())
-		close(done)
-	}()
-	close(barrier)
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("doPG did not finish")
-	}
-	// After failure, old should be refilled (pending still has it)
-	_, hasOldAfterFail := rec.FlowMinute(m)
-	require.True(t, hasOldAfterFail, "failed flow must be refilled for retry")
+	// Acquire lease L1 for the minute.
+	_, tok1, ok := owner.snapshotForPG(m)
+	require.True(t, ok, "dirty minute must offer a lease")
 
-	// Now enqueue newer snapshot for same minute while pg still failing
+	// Same-minute merge B during the lease: folds into the live accumulator,
+	// bumps the version, stays dirty, exceeds the captured watermark.
 	fmNew := NewFlowSnapshot(m, []repository.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 2, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 2, ChainCount: 99},
 	})
-	// Advance pgSeq to simulate newer sequence already assigned via prior success path
-	// To emulate sequence-aware, we will manually bump pgSeq as doPG would have done
-	w.mu.Lock()
-	prevSeq := w.pgSeq[m]
-	w.pgSeq[m] = prevSeq + 5
-	curSeq := w.pgSeq[m]
-	w.mu.Unlock()
 	require.NoError(t, rec.EnqueueFlowMinute(fmNew))
 
-	// Attempt refill of stale old entry with old seq should NOT overwrite newer
-	staleEntry := flowEntry{minute: m, fm: fmOld, seq: prevSeq + 1}
-	// Barrier to ensure concurrent refill does not overwrite
-	refillDone := make(chan struct{})
-	go func() {
-		w.refillFlow([]flowEntry{staleEntry})
-		close(refillDone)
-	}()
-	select {
-	case <-refillDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("refill did not finish")
-	}
+	// L1 released on the failure path without ack.
+	require.True(t, owner.releasePG(tok1), "release settles the live lease")
+
+	// The L1 token is now stale: ack and release are no-ops that change no
+	// watermark, flag, lease, dirty state, or counter.
+	require.False(t, owner.ackPG(tok1), "stale lease token must not ack after release")
+	require.False(t, owner.releasePG(tok1), "stale lease token must not release twice")
+
+	// Retry acquires a fresh lease identity; the stale L1 ack stays a no-op
+	// even while the newer lease is active.
+	_, tok2, ok := owner.snapshotForPG(m)
+	require.True(t, ok, "dirty minute must offer a retry lease")
+	require.NotEqual(t, tok1.leaseID, tok2.leaseID, "retry carries a fresh lease identity at the same version")
+	require.False(t, owner.ackPG(tok1), "stale ack must not settle beside a newer lease")
+
+	// Owner still holds both contributions exactly once, old-first.
 	fmAfter, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	rows := fmAfter.FlowRows()
-	require.Equal(t, int64(2), rows[0].AccountID, "stale failed requeue must not overwrite newer snapshot (sequence-aware)")
+	require.Len(t, rows, 2, "post-snapshot merge must be covered by the retry, never duplicated")
+	require.Equal(t, int64(1), rows[0].AccountID)
+	require.Equal(t, int64(2), rows[1].AccountID)
+	require.Equal(t, int64(1), rows[0].ChainCount)
+	require.Equal(t, int64(99), rows[1].ChainCount)
 
-	// Also verify that stale seq < curSeq is dropped
-	require.Greater(t, curSeq, staleEntry.seq, "test setup ensures stale seq < cur seq")
-	var wg sync.WaitGroup
-	wg.Add(2)
-	// concurrent newer enqueue vs stale refill race
-	go func() {
-		defer wg.Done()
-		w.refillFlow([]flowEntry{{minute: m, fm: fmOld, seq: staleEntry.seq}})
-	}()
-	go func() {
-		defer wg.Done()
-		_ = rec.EnqueueFlowMinute(fmNew)
-	}()
-	wg.Wait()
-	fmFinal, _ := rec.FlowMinute(m)
-	require.Equal(t, int64(2), fmFinal.FlowRows()[0].AccountID, "concurrent stale refill must not win over newer")
+	// L2 ack succeeds; the minute is clean with no next candidate.
+	require.True(t, owner.ackPG(tok2))
+	require.Empty(t, owner.pgCandidateMinutes(), "clean minute offers no next candidate")
+
+	// Sync level: a clean minute persists nothing further; later deltas
+	// persist the full cumulative snapshot with advancing sequence.
+	w.doPG(context.Background())
+	require.Empty(t, pg.flows, "clean minute must not re-persist")
+	rowC := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 3, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 3, ChainCount: 7}
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m, []repository.RoutingFlowRow{rowC})))
+	w.doPG(context.Background())
+	rowD := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 4, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 4, ChainCount: 11}
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m, []repository.RoutingFlowRow{rowD})))
+	w.doPG(context.Background())
+	key := "red-flow-stale:" + fixed.UTC().Truncate(time.Minute).String()
+	pg.mu.Lock()
+	got := pg.flows[key]
+	seq := pg.seqs[key]
+	pg.mu.Unlock()
+	require.Len(t, got, 4, "retry persists the full cumulative snapshot, not a delta")
+	require.Equal(t, int64(2), seq, "durable sequence advances per successful snapshot")
 }
 
 // TestRed_FlowCumulativeSnapshotAcrossCycles locks the cross-cycle contract:
@@ -170,8 +162,9 @@ func TestRed_FlowFailedRequeueNoDuplicate(t *testing.T) {
 	rowA := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "primary", AccountID: 11, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 3}
 	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m, []repository.RoutingFlowRow{rowA})))
 	w.doPG(context.Background())
-	_, requeued := rec.FlowMinute(m)
-	require.True(t, requeued, "failed delta must be requeued")
+	failed, retained := rec.FlowMinute(m)
+	require.True(t, retained, "failed delta must stay dirty-retained for next-cycle retry")
+	require.Equal(t, int64(3), failed.FlowRows()[0].ChainCount, "failed cycle must not duplicate the delta")
 
 	// retry succeeds: A persisted exactly once (chain count 3, not 6)
 	pg.failAll = false
@@ -205,11 +198,12 @@ func TestRed_FlowFailedRequeueNoDuplicate(t *testing.T) {
 	require.Equal(t, int64(5), counts[22])
 }
 
-// TestRed_FlowRefillMergesConcurrentSameMinuteDelta locks the refill race: when
-// D1's upsert fails AND a fresh same-minute D2 lands in pendingFlow during that
-// very call, the refill must merge D1 back in (EnqueueFlowMinute sums distinct
-// edges) instead of skipping on "pending already exists" — skipping drops D1
-// permanently. The next successful cycle must persist A+B exactly once.
+// TestRed_FlowRefillMergesConcurrentSameMinuteDelta locks the post-snapshot
+// merge race: when D1's upsert fails AND a fresh same-minute D2 lands while
+// that very call is in flight, D2 folds into the live leased accumulator
+// (version bumps, stays dirty) instead of being lost. There is no refill:
+// the failed lease releases, the state stays dirty, and the next successful
+// cycle persists A+B exactly once.
 func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
@@ -226,12 +220,23 @@ func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	rowB := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
 	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m, []repository.RoutingFlowRow{rowA})))
 
-	// barrier: D2 enters pendingFlow exactly while D1's upsert is failing
+	// barrier: D2 merges into the live accumulator exactly while D1's upsert
+	// is failing (lease active, snapshot already materialized).
 	pg.onFlow = func(time.Time, int64) {
 		_ = rec.EnqueueFlowMinute(NewFlowSnapshot(m, []repository.RoutingFlowRow{rowB}))
 	}
 	w.doPG(context.Background())
 	pg.onFlow = nil
+
+	// the failed cycle leaves A+B merged dirty-retained, each counted once.
+	merged, ok := rec.FlowMinute(m)
+	require.True(t, ok, "failed cycle must leave the merged state dirty-retained")
+	survived := make(map[int64]int64)
+	for _, r := range merged.FlowRows() {
+		survived[r.AccountID] += r.ChainCount
+	}
+	require.Equal(t, int64(3), survived[11], "D1 must survive the failed flush")
+	require.Equal(t, int64(5), survived[22], "D2 must fold into the leased minute exactly once")
 
 	// retry succeeds: must carry the merged D1+D2, each counted once
 	pg.failAll = false
@@ -245,7 +250,7 @@ func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	for _, r := range got {
 		counts[r.AccountID] += r.ChainCount
 	}
-	require.Len(t, got, 2, "refill must merge D1 into concurrent pending D2, not drop it")
+	require.Len(t, got, 2, "retry must persist the merged D1+D2, each exactly once")
 	require.Equal(t, int64(3), counts[11], "D1 must survive the failed flush")
 	require.Equal(t, int64(5), counts[22], "D2 must be conserved exactly once")
 }
@@ -343,16 +348,20 @@ func TestRed_BoundPruneLongLivedMaps(t *testing.T) {
 	redisSeqLen := len(w.redisSeq)
 	pgSeqLen := len(w.pgSeq)
 	committedLen := len(w.committed)
-	committedFlowLen := len(w.committedFlow)
 	minuteAbsLen := len(w.minuteAbs)
 	w.mu.Unlock()
-	// Without pruning, these would be ~20 entries (one per minute)
-	// With pruning, old minutes (< cutoff and not pending) must be removed, so len should be bounded < 20
+	// Without pruning, these would be ~20 entries (one per minute).
+	// With pruning, old minutes (< cutoff and not unsettled) must be removed,
+	// so len should be bounded < 20. The flow accumulator itself is retained
+	// under the owner (no detach); only unsettled minutes pin sequences.
+	// pgSeq is deliberately retained (never pruned) so later same-minute
+	// mutations continue the sequence instead of restarting into the
+	// repository greater-sequence fence; it pins nothing and ⊆ live minutes
+	// plus history, so only its presence (not its size) is asserted here.
 	require.Less(t, seqLen, 20, "seq map must be pruned after successful publication without losing pending")
 	require.Less(t, redisSeqLen, 20, "redisSeq must be pruned")
-	require.Less(t, pgSeqLen, 20, "pgSeq must be pruned")
+	require.GreaterOrEqual(t, pgSeqLen, 20, "pgSeq must be retained for sequence fencing")
 	require.Less(t, committedLen, 20, "committed must be pruned")
-	require.Less(t, committedFlowLen, 20, "committedFlow accumulator must be pruned under the same policy")
 	require.Equal(t, 0, minuteAbsLen, "minuteAbs must be drained after success")
 
 	// Verify pending data not lost: create new minute after prune and ensure it still publishes
