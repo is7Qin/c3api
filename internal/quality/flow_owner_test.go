@@ -190,12 +190,13 @@ func TestFlowOwner_SameMinuteRowCapAccountsDroppedRows(t *testing.T) {
 	require.Equal(t, int64(3), stats.EdgeRowsDropped)
 }
 
-// TestFlowOwner_QueuedBytesReconcileOnDrain pins the byte accounting that the
-// stats refactor must preserve exactly: queued backlog charges
-// len(rows)*EstimatedFlowRowBytes, a consumer drain moves it to the
-// per-minute charge with zero loss/double-count, and taking the bucket
-// releases everything.
-func TestFlowOwner_QueuedBytesReconcileOnDrain(t *testing.T) {
+// TestFlowOwner_SnapshotAckRetainsCumulativeOwner pins the byte accounting
+// the old detached handoff used to cover, under the retained-owner
+// model: queued backlog charges len(rows)*EstimatedFlowRowBytes, a consumer
+// drain moves it to the live charge without loss or double count, and a
+// snapshot/ack cycle leaves the cumulative owner state retained and clean
+// with no next candidate.
+func TestFlowOwner_SnapshotAckRetainsCumulativeOwner(t *testing.T) {
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
 	owner := rec.FlowOwner()
@@ -207,11 +208,18 @@ func TestFlowOwner_QueuedBytesReconcileOnDrain(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, fm.FlowRows(), 2)
 	require.Equal(t, int64(0), owner.queuedBytes.Load())
-	require.Equal(t, int64(EstimatedFlowMinuteBytes), owner.SnapshotStats().PendingBytes,
-		"drain converts queue bytes to the minute charge without loss or double count")
-	taken := owner.takePending()
-	require.Len(t, taken, 1, "takePending transfers ownership of the bucket")
-	require.Equal(t, int64(0), owner.SnapshotStats().PendingBytes)
+	require.Equal(t, int64(EstimatedFlowMinuteBytes+2*EstimatedFlowRowBytes), owner.SnapshotStats().PendingBytes,
+		"drain converts queue bytes to the live charge without loss or double count")
+	snap, tok, ok := owner.snapshotForPG(100)
+	require.True(t, ok, "dirty minute must offer exactly one snapshot")
+	require.Len(t, snap.FlowRows(), 2)
+	require.True(t, owner.ackPG(tok), "clean ack settles the lease")
+	after, ok := rec.FlowMinute(100)
+	require.True(t, ok, "snapshot/ack retains the cumulative owner state")
+	require.Len(t, after.FlowRows(), 2)
+	require.Empty(t, owner.pgCandidateMinutes(), "clean minute offers no next candidate")
+	require.Equal(t, int64(EstimatedFlowMinuteBytes+2*EstimatedFlowRowBytes), owner.SnapshotStats().PendingBytes,
+		"ack keeps the live charge stable")
 }
 
 // TestFlowOwner_EnqueueDoesNotAliasInputRows locks the invariant that makes

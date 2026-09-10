@@ -73,12 +73,6 @@ type qRow struct {
 	seq    int64
 }
 
-type flowEntry struct {
-	minute int64
-	fm     *FlowMinute
-	seq    int64
-}
-
 type cellSnap struct {
 	attempts    int64
 	successes   int64
@@ -133,10 +127,6 @@ type SyncWorker struct {
 	minuteAbs   map[int64]map[Key]*QualityMinute
 	pgMinuteAbs map[int64]map[Key]*QualityMinute
 	committed   map[int64]map[Key]*QualityMinute
-	// committedFlow 是 flow 面的已提交累计快照（per minute）：UpsertFlowSnapshot
-	// 按 (minute, instance_src, identity_version) 整组替换，跨周期 delta 必须先
-	// 并入前次成功快照再写出，否则后周期会抹掉前周期链。
-	committedFlow map[int64][]repository.RoutingFlowRow
 
 	started              atomic.Bool
 	closeOnce            sync.Once
@@ -191,7 +181,6 @@ func NewSyncWorker(rec *Recorder, rdb *redis.Client, pg PGQualityWriter, cfg Syn
 		minuteAbs:            make(map[int64]map[Key]*QualityMinute),
 		pgMinuteAbs:          make(map[int64]map[Key]*QualityMinute),
 		committed:            make(map[int64]map[Key]*QualityMinute),
-		committedFlow:        make(map[int64][]repository.RoutingFlowRow),
 		loopDoneCh:           loopDone,
 		inflightAbandonGrace: 500 * time.Millisecond,
 		flushDone:            func() chan struct{} { ch := make(chan struct{}); close(ch); return ch }(),
@@ -543,10 +532,11 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		pendingByMinute[minute] = cp
 	}
 	w.rec.mu.Unlock()
-	// Flow comes through the FlowOwner consumer handoff: owned clones of the
-	// due buckets (queue drained on the owner side), never an alias of the
-	// owner's accumulator.
-	flowByMinute := w.rec.flow.dueSnapshot(curMinute)
+	// Flow comes through the FlowOwner snapshot handoff one minute at a time:
+	// each payload is deep-owned, published synchronously, and released
+	// before the next snapshot, so at most one O(R) flow payload is live
+	// under flushMu. Read-only: no lease, no ack, owner retention untouched.
+	flowIDs := w.rec.flow.redisCandidateMinutes(curMinute)
 
 	// merge activeAll + pending for each minute
 	mergedByMinute := make(map[int64]map[Key]*QualityMinute)
@@ -565,7 +555,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 			}
 		}
 	}
-	if len(mergedByMinute) == 0 && len(flowByMinute) == 0 {
+	if len(mergedByMinute) == 0 && len(flowIDs) == 0 {
 		// empty pass must not refresh freshness
 		return
 	}
@@ -653,7 +643,29 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		pipe.HSet(ctx, qKey, field, string(val))
 		pipe.Expire(ctx, qKey, redisTTL)
 	}
-	for minute, fm := range flowByMinute {
+	if len(cells) > 0 {
+		if _, err := pipe.Exec(ctx); err != nil {
+			w.mu.Lock()
+			w.lastRedisError = err.Error()
+			w.stats.LastRedisError = w.lastRedisError
+			w.stats.RedisErrors++
+			// revert per-sink ack
+			w.lastCell = savedLastCell
+			w.minuteAbs = savedMinuteAbs
+			if w.log != nil {
+				w.log.Warn("quality redis publish failed", logx.Error(err))
+			}
+			w.mu.Unlock()
+			return
+		}
+	}
+	// Flow publishes one minute at a time: each snapshot payload is consumed
+	// synchronously by its own publish and released before the next snapshot.
+	for _, minute := range flowIDs {
+		fm := w.rec.flow.snapshotForRedis(minute)
+		if fm == nil {
+			continue
+		}
 		w.mu.Lock()
 		seq := w.redisSeq[minute] + 1
 		w.redisSeq[minute] = seq
@@ -683,23 +695,22 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 				"counts":            fm.Counts(),
 			})
 		}
-		pipe.Set(ctx, fKey, string(flowVal), redisTTL)
+		fm = nil
+		if err := w.rdb.Set(ctx, fKey, string(flowVal), redisTTL).Err(); err != nil {
+			w.mu.Lock()
+			w.lastRedisError = err.Error()
+			w.stats.LastRedisError = w.lastRedisError
+			w.stats.RedisErrors++
+			w.mu.Unlock()
+			if w.log != nil {
+				w.log.Warn("quality redis flow publish failed", logx.Error(err))
+			}
+			return
+		}
+		flowVal = nil
 	}
-	_, err := pipe.Exec(ctx)
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if err != nil {
-		w.lastRedisError = err.Error()
-		w.stats.LastRedisError = w.lastRedisError
-		w.stats.RedisErrors++
-		// revert per-sink ack
-		w.lastCell = savedLastCell
-		w.minuteAbs = savedMinuteAbs
-		if w.log != nil {
-			w.log.Warn("quality redis publish failed", logx.Error(err))
-		}
-		return
-	}
 	// success: ack/remove exactly published minuteAbs, retain newer contributions; historical drain once
 	for minute := range mergedByMinute {
 		delete(w.minuteAbs, minute)
@@ -741,8 +752,8 @@ func (w *SyncWorker) endFlush() {
 	w.flushMu.Unlock()
 }
 
-// doPGLocked 是 PG 面单次 flush（含失败 refill 回 recorder）；调用方必须持有
-// flushMu。refill 只可能发生在持锁期间，这是 Close 生命周期屏障的前提。
+// doPGLocked 是 PG 面单次 flush；调用方必须持有 flushMu。flow 面是版本化
+// snapshot/ack：失败无 ack、无 refill，owner 状态保持 dirty 下周期重试。
 func (w *SyncWorker) doPGLocked(ctx context.Context) {
 	start := w.clock()
 	if w.rec == nil || w.pg == nil {
@@ -750,16 +761,16 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 	}
 	// collect PG active delta first, even if pending empty (active-only workload)
 	pgActive := w.collectPGDeltaLocked()
-	// Flow batch arrives via the FlowOwner's ownership transfer: the whole
-	// drained accumulator map is caller-owned, pending restarts empty, and
-	// sync never reads or mutates owner maps in place. Failed/deferred
-	// entries return through EnqueueFlowMinute (the owner's merge API).
-	pendF := w.rec.flow.takePending()
+	// Flow arrives via the owner's versioned snapshot/ack handoff: sync
+	// snapshots one dirty minute at a time, writes the full cumulative
+	// snapshot with replacement UpsertFlowSnapshot, and settles through the
+	// lease token. Sync never owns flow rows and never mutates owner maps.
+	flowIDs := w.rec.flow.pgCandidateMinutes()
 	hasPendingQ := false
 	w.rec.mu.Lock()
 	hasPendingQ = len(w.rec.pendingQuality) > 0
 	w.rec.mu.Unlock()
-	if !hasPendingQ && len(pendF) == 0 && len(pgActive) == 0 {
+	if !hasPendingQ && len(flowIDs) == 0 && len(pgActive) == 0 {
 		return
 	}
 	w.rec.mu.Lock()
@@ -827,33 +838,49 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 	if len(remainingQ) > 0 {
 		w.refillQualityDelta(remainingQ, pendQ)
 	}
-	var flowMinutes []flowEntry
-	for minute, fm := range pendF {
-		w.mu.Lock()
-		seq := w.pgSeq[minute] + 1
-		w.pgSeq[minute] = seq
-		w.seq[minute] = seq
-		w.mu.Unlock()
-		flowMinutes = append(flowMinutes, flowEntry{minute: minute, fm: fm, seq: seq})
-	}
-	// also include any flow that was in pgMinuteAbs? No, flow handled via pendingFlow only
-	var flowToFlush []flowEntry
-	var flowDeferred []flowEntry
-	flowBytes := 0
-	for i, fe := range flowMinutes {
-		if len(flowToFlush) >= pgMaxRows || flowBytes+EstimatedFlowMinuteBytes > pgMaxBytes || w.clock().Sub(start) > pgMaxDuration {
-			flowDeferred = append(flowDeferred, flowMinutes[i:]...)
+	// Flow flushes one minute at a time through the versioned snapshot/ack
+	// handoff. An empty-only dirty minute still calls UpsertFlowSnapshot with
+	// a zero-row set so durable sequence advances; the call is never skipped.
+	// On failure, deferral, expiry, or unwind the lease is released exactly
+	// once with no ack and no refill: the owner state stays dirty and the
+	// next cycle retries. Each candidate is attempted at most once per cycle.
+	// The payload is consumed synchronously in its single repo call and all
+	// references are dropped before the next snapshot.
+	var batchFlow int64
+	for _, minute := range flowIDs {
+		if w.clock().Sub(start) > pgMaxDuration {
 			break
 		}
-		flowToFlush = append(flowToFlush, fe)
-		flowBytes += EstimatedFlowMinuteBytes
-	}
-	remainingF := w.flushFlowBatch(ctx, flowToFlush, start)
-	if len(flowDeferred) > 0 {
-		w.refillFlow(flowDeferred)
-	}
-	if len(remainingF) > 0 {
-		w.refillFlow(remainingF)
+		snap, tok, ok := w.rec.flow.snapshotForPG(minute)
+		if !ok {
+			continue
+		}
+		settled := false
+		func() {
+			defer func() {
+				if !settled {
+					w.rec.flow.releasePG(tok)
+				}
+			}()
+			w.mu.Lock()
+			seq := w.pgSeq[minute] + 1
+			w.pgSeq[minute] = seq
+			// also sync global seq for backward compat
+			w.seq[minute] = seq
+			w.mu.Unlock()
+			rows := flowRowsFromMinute(snap, w.instanceSrc, seq)
+			if err := w.pg.UpsertFlowSnapshot(ctx, w.instanceSrc, time.Unix(minute, 0).UTC(), 1, seq, rows); err != nil {
+				rows = nil
+				w.rec.flow.releasePG(tok)
+				settled = true
+				return
+			}
+			rows = nil
+			w.rec.flow.ackPG(tok)
+			settled = true
+			batchFlow++
+		}()
+		snap = nil
 	}
 	// on failure, pg delta should be retained for next attempt; we cleared pgMinuteAbs earlier, so need to restore unflushed?
 	// Our pgActive deltas that were merged into pendQ and then deferred/failed are now in pendingQuality via refill, so they will be retried.
@@ -862,8 +889,8 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 	w.lastPG = w.clock()
 	w.stats.LastPGMs = w.clock().Sub(start).Milliseconds()
 	w.stats.BatchQuality = int64(len(toFlush) - len(remainingQ))
-	w.stats.BatchFlow = int64(len(flowToFlush) - len(remainingF))
-	oldest := w.oldestPendingMinute(pendQ, pendF)
+	w.stats.BatchFlow = batchFlow
+	oldest := w.oldestPendingMinute(pendQ, flowIDs)
 	if oldest != 0 {
 		w.stats.LagMs = w.clock().Sub(time.Unix(oldest, 0)).Milliseconds()
 		if w.stats.LagMs < 0 {
@@ -1105,46 +1132,6 @@ func (w *SyncWorker) bisectQuality(ctx context.Context, chunk []qRow) (poison *q
 	return nil, append(leftUnpersisted, rightUnpersisted...)
 }
 
-func (w *SyncWorker) flushFlowBatch(ctx context.Context, entries []flowEntry, start time.Time) []flowEntry {
-	if len(entries) == 0 {
-		return nil
-	}
-	var failed []flowEntry
-	for _, e := range entries {
-		if w.clock().Sub(start) > pgMaxDuration {
-			failed = append(failed, e)
-			continue
-		}
-		w.mu.Lock()
-		prev := w.committedFlow[e.minute]
-		w.mu.Unlock()
-		rows := flowRowsFromMinute(e.fm, w.instanceSrc, e.seq)
-		if prev != nil {
-			// 累计快照语义：repo 整组替换，写出必须 = 已提交 + 本周期 delta。
-			// 空标记 delta 贡献零行，永不抹掉已提交链。
-			rows = mergeFlowRows(prev, rows)
-			tm := time.Unix(e.minute, 0).UTC()
-			for i := range rows {
-				rows[i].InstanceSrc = w.instanceSrc
-				rows[i].AbsoluteSequence = e.seq
-				rows[i].TerminalMinute = tm
-			}
-		}
-		if err := w.pg.UpsertFlowSnapshot(ctx, w.instanceSrc, time.Unix(e.minute, 0).UTC(), 1, e.seq, rows); err != nil {
-			failed = append(failed, e)
-			continue
-		}
-		// committed 只在 upsert 成功后推进；失败/延迟的 delta 经 refill 重放，
-		// 下一周期再并入，不会重复计数。
-		cp := make([]repository.RoutingFlowRow, len(rows))
-		copy(cp, rows)
-		w.mu.Lock()
-		w.committedFlow[e.minute] = cp
-		w.mu.Unlock()
-	}
-	return failed
-}
-
 func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []repository.RoutingFlowRow {
 	if fm == nil {
 		return nil
@@ -1197,41 +1184,6 @@ func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []reposit
 	return out
 }
 
-func (w *SyncWorker) refillFlow(entries []flowEntry) {
-	w.refillMu.Lock()
-	defer w.refillMu.Unlock()
-	if w.refillClosed {
-		var rows int64
-		for _, e := range entries {
-			rows += int64(len(e.fm.FlowRows()))
-		}
-		w.mu.Lock()
-		w.stats.ResidualFlow += rows
-		w.mu.Unlock()
-		return
-	}
-	for _, e := range entries {
-		w.mu.Lock()
-		curSeq := w.pgSeq[e.minute]
-		w.mu.Unlock()
-		if e.seq < curSeq {
-			continue
-		}
-		// No "pending already exists" skip: a fresh same-minute delta may have
-		// arrived while this flush was in flight; EnqueueFlowMinute merges the
-		// requeued delta into it (distinct edges sum, empty marker never erases).
-		// Dropping here would lose the failed delta permanently.
-		if err := w.rec.EnqueueFlowMinute(e.fm); err != nil {
-			w.mu.Lock()
-			w.stats.DroppedFlow++
-			w.mu.Unlock()
-			if w.log != nil {
-				w.log.Warn("flow refill dropped due to capacity", logx.Error(err))
-			}
-		}
-	}
-}
-
 func (w *SyncWorker) pruneLongLivedLocked(nowUnix int64) {
 	pending := make(map[int64]struct{})
 	w.rec.mu.Lock()
@@ -1239,8 +1191,10 @@ func (w *SyncWorker) pruneLongLivedLocked(nowUnix int64) {
 		pending[m] = struct{}{}
 	}
 	w.rec.mu.Unlock()
-	// Owner lane via handoff API (queued minutes included).
-	w.rec.flow.collectLiveMinutes(pending)
+	// Owner lane via handoff API: only dirty-or-leased (unsettled) minutes pin
+	// sequences. Clean retained reconstruction state needs no future snapshot
+	// and pins nothing.
+	w.rec.flow.collectUnsettledMinutes(pending)
 	for m := range w.minuteAbs {
 		pending[m] = struct{}{}
 	}
@@ -1262,13 +1216,12 @@ func (w *SyncWorker) pruneLongLivedLocked(nowUnix int64) {
 			}
 		}
 	}
-	for m := range w.pgSeq {
-		if m < cutoff {
-			if _, ok := pending[m]; !ok {
-				delete(w.pgSeq, m)
-			}
-		}
-	}
+	// pgSeq is deliberately never pruned: the repository guards replacement
+	// with greater-sequence fencing, so a restarted sequence would be ignored
+	// while ack still clears dirty — silently losing the contribution until
+	// some later merge. Retaining one small entry per minute ever snapshotted
+	// preserves fencing across prune; growth is tens of bytes per active
+	// minute, negligible beside the retained owner state itself.
 	for m := range w.committed {
 		if m < cutoff {
 			if _, ok := pending[m]; !ok {
@@ -1276,16 +1229,9 @@ func (w *SyncWorker) pruneLongLivedLocked(nowUnix int64) {
 			}
 		}
 	}
-	for m := range w.committedFlow {
-		if m < cutoff {
-			if _, ok := pending[m]; !ok {
-				delete(w.committedFlow, m)
-			}
-		}
-	}
 }
 
-func (w *SyncWorker) oldestPendingMinute(q map[int64]map[Key]*QualityMinute, f map[int64]*FlowMinute) int64 {
+func (w *SyncWorker) oldestPendingMinute(q map[int64]map[Key]*QualityMinute, flowIDs []int64) int64 {
 	var oldest int64
 	first := true
 	for m := range q {
@@ -1294,7 +1240,7 @@ func (w *SyncWorker) oldestPendingMinute(q map[int64]map[Key]*QualityMinute, f m
 			first = false
 		}
 	}
-	for m := range f {
+	for _, m := range flowIDs {
 		if first || m < oldest {
 			oldest = m
 			first = false
@@ -1317,10 +1263,12 @@ func (w *SyncWorker) statsSnapshot() SyncStats {
 			pendingQ += len(rows)
 		}
 		w.rec.mu.Unlock()
-		// Flow visibility goes through the owner stats API (accumulator
-		// minutes plus queued submissions); the owner owns that state.
+		// Flow visibility goes through the owner stats API; PendingFlow is the
+		// bounded pgWorkTotal (queued pre-seal work plus dirty unleased
+		// minutes plus active leases), so clean retained reconstruction
+		// state neither blocks Close nor inflates pending work.
 		s.PendingQuality = pendingQ
-		s.PendingFlow = w.rec.flow.pendingTotal()
+		s.PendingFlow = w.rec.flow.pgWorkTotal()
 		s.PendingBytes = w.rec.PendingBytes()
 		s.DroppedQuality = w.rec.QualityOverflow()
 		s.DroppedFlow = w.rec.FlowOverflow()
@@ -1346,6 +1294,14 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 	started := w.started.Load()
 	loopDone := w.loopDone
 	w.lifecycleMu.Unlock()
+
+	// Shutdown sealing with revocation runs on every terminal path below:
+	// after normal drain attempts sealPG drains queued pre-seal submissions,
+	// revokes every active lease, and moves all unconfirmed accepted credits
+	// to residual exactly once. Late ack/release after seal is a no-op.
+	if w.rec != nil && w.rec.flow != nil {
+		defer w.rec.flow.sealPG()
+	}
 
 	var err error
 	if cancel != nil {
@@ -1395,7 +1351,7 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 				qRem += len(rows)
 			}
 			w.rec.mu.Unlock()
-			fRem := w.rec.flow.pendingTotal()
+			fRem := w.rec.flow.pgWorkTotal()
 			w.mu.Lock()
 			pgRem := 0
 			for _, m := range w.pgMinuteAbs {
@@ -1425,7 +1381,7 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 			qPending += len(rows)
 		}
 		w.rec.mu.Unlock()
-		fPending := w.rec.flow.pendingTotal()
+		fPending := w.rec.flow.pgWorkTotal()
 		w.mu.Lock()
 		pgPending := len(w.pgMinuteAbs)
 		redisPending := len(w.minuteAbs)
@@ -1443,7 +1399,7 @@ func (w *SyncWorker) Close(ctx context.Context) error {
 		qFinal += len(rows)
 	}
 	w.rec.mu.Unlock()
-	fFinal := w.rec.flow.pendingTotal()
+	fFinal := w.rec.flow.pgWorkTotal()
 	w.mu.Lock()
 	pgFinal := len(w.pgMinuteAbs)
 	redisFinal := len(w.minuteAbs)

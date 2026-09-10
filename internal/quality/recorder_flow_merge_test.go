@@ -77,7 +77,7 @@ func TestRecorder_FlowSameMinuteDistinctEdgesStayDistinct(t *testing.T) {
 	require.True(t, ok)
 	rows := fm.FlowRows()
 	require.Len(t, rows, 3, "distinct edges remain distinct")
-	require.Equal(t, int64(30), rows[0].AccountID, "incoming contribution leads the merged order")
+	require.Equal(t, int64(10), rows[0].AccountID, "first inserted account stays first in old-first order")
 	var sum int64
 	for _, row := range rows {
 		sum += row.ChainCount
@@ -92,12 +92,28 @@ func TestRecorder_FlowSameMinuteMergeKeepsCapacityAccounting(t *testing.T) {
 	require.NoError(t, r.EnqueueFlowMinute(NewFlowSnapshot(minute.Unix(), []repository.RoutingFlowRow{
 		flowTestRow(minute, 1, 10, "success", true),
 	})))
-	bytesAfterFirst := r.PendingBytes()
+	// liveCharge is the minute charge plus identity charges: one retained
+	// identity costs exactly one minute charge plus one identity charge.
+	require.Equal(t, int64(EstimatedFlowMinuteBytes+EstimatedFlowRowBytes), r.PendingBytes())
 	require.NoError(t, r.EnqueueFlowMinute(NewFlowSnapshot(minute.Unix(), []repository.RoutingFlowRow{
 		flowTestRow(minute, 1, 20, "success", true),
 	})))
 	require.Equal(t, 1, r.MinuteBucketCount(), "same-minute merge must not open a new bucket")
-	require.Equal(t, bytesAfterFirst, r.PendingBytes(), "same-minute merge must not re-charge the minute")
+	require.Equal(t, int64(EstimatedFlowMinuteBytes+2*EstimatedFlowRowBytes), r.PendingBytes(),
+		"a distinct identity adds exactly one identity charge")
+	// A duplicate same-minute merge folds in place and adds no new identity
+	// charge.
+	require.NoError(t, r.EnqueueFlowMinute(NewFlowSnapshot(minute.Unix(), []repository.RoutingFlowRow{
+		flowTestRow(minute, 1, 10, "success", true),
+	})))
+	require.Equal(t, 1, r.MinuteBucketCount(), "duplicate merge must not open a new bucket")
+	require.Equal(t, int64(EstimatedFlowMinuteBytes+2*EstimatedFlowRowBytes), r.PendingBytes(),
+		"duplicate merge must not re-charge the minute")
+	fm, ok := r.FlowMinute(minute.Unix())
+	require.True(t, ok)
+	rows := fm.FlowRows()
+	require.Len(t, rows, 2)
+	require.Equal(t, int64(2), rows[0].ChainCount, "duplicate folds sum")
 }
 
 func TestRecorder_FlowEmptySnapshotNeverErasesConservedRows(t *testing.T) {

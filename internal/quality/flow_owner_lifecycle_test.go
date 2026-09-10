@@ -5,38 +5,62 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-func TestMergeFlowRowsBounded_InputIndependence(t *testing.T) {
+func TestFlowAccumulator_InputIndependence(t *testing.T) {
 	prevIn, prevEx := int64(1), int64(2)
 	incoming := []repository.RoutingFlowRow{ownerTestRow(10)}
 	incoming[0].PreviousAccountID = &prevIn
 	existing := []repository.RoutingFlowRow{ownerTestRow(20)}
 	existing[0].PreviousAccountID = &prevEx
-	merged, dropped := mergeFlowRowsBounded(existing, incoming, 8, 16*EstimatedFlowRowBytes)
-	require.Zero(t, dropped)
+	rec, err := NewRecorder(10)
+	require.NoError(t, err)
+	fixed := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	rec.now = func() time.Time { return fixed }
+	minute := fixed.Truncate(time.Minute).Unix()
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute, existing)))
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute, incoming)))
+	got, ok := rec.FlowMinute(minute)
+	require.True(t, ok)
+	merged := got.FlowRows()
 	require.Len(t, merged, 2)
-	require.LessOrEqual(t, cap(merged), 8)
-	require.Equal(t, int64(10), merged[0].AccountID)
+	require.Equal(t, int64(20), merged[0].AccountID, "old-first order keeps the first-inserted identity first")
+	require.Equal(t, int64(10), merged[1].AccountID)
 	incoming[0].ChainCount = 999
 	existing[0].ChainCount = 999
 	prevIn = 42
 	prevEx = 43
-	require.Equal(t, int64(1), merged[0].ChainCount)
+	require.Equal(t, int64(1), merged[0].ChainCount, "mutating input rows must not change retained counts")
 	require.Equal(t, int64(1), merged[1].ChainCount)
-	require.Equal(t, int64(1), *merged[0].PreviousAccountID)
-	require.Equal(t, int64(2), *merged[1].PreviousAccountID)
-	full := []repository.RoutingFlowRow{ownerTestRow(30)}
+	require.Equal(t, int64(2), *merged[0].PreviousAccountID)
+	require.Equal(t, int64(1), *merged[1].PreviousAccountID)
+}
+
+func TestFlowAccumulator_SameMinuteRowCapDropsOnlyIncoming(t *testing.T) {
+	rec, err := NewRecorder(10)
+	require.NoError(t, err)
+	rec.flowRowCap = 2
+	rec.flowRowBytesCap = 2 * EstimatedFlowRowBytes
+	fixed := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	rec.now = func() time.Time { return fixed }
+	minute := fixed.Truncate(time.Minute).Unix()
+	kept := []repository.RoutingFlowRow{ownerTestRow(30)}
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute, kept)))
 	over := []repository.RoutingFlowRow{ownerTestRow(40), ownerTestRow(50), ownerTestRow(60)}
-	kept, dropped := mergeFlowRowsBounded(full, over, 2, 16*EstimatedFlowRowBytes)
-	require.Equal(t, int64(1), dropped)
-	require.Len(t, kept, 2)
-	require.Equal(t, int64(40), kept[0].AccountID)
-	require.Equal(t, int64(50), kept[1].AccountID)
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute, over)))
+	got, ok := rec.FlowMinute(minute)
+	require.True(t, ok)
+	rows := got.FlowRows()
+	require.Len(t, rows, 2, "only the over-cap incoming identities drop; conserved state untouched")
+	require.Equal(t, int64(30), rows[0].AccountID)
+	require.Equal(t, int64(40), rows[1].AccountID)
+	stats := rec.FlowOwner().SnapshotStats()
+	require.Equal(t, int64(2), stats.EdgeRowsDropped, "exactly the two over-cap identities are classified dropped")
 }
 
 func TestFlowOwner_CloseIdempotentAndJoins(t *testing.T) {

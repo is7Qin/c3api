@@ -3,10 +3,10 @@
 // docs/superpowers/specs/async-routing-quality-telemetry.md): the flow owner
 // is the SOLE state owner of the cross-request flow accumulator. Request
 // settlement performs one immutable, nonblocking Submit; all same-minute
-// identity reduction (mergeFlowRows) happens off the request goroutine —
-// either in the owner loop or in consumer-side handoff calls (quality-sync,
-// recorder snapshots). Owner overflow is telemetry loss only: it never
-// touches HTTP, failover, health, quota, usage, or billing.
+// identity reduction (in-place identity fold) happens off the request
+// goroutine — either in the owner loop or in consumer-side handoff calls
+// (quality-sync, recorder snapshots). Owner overflow is telemetry loss only:
+// it never touches HTTP, failover, health, quota, usage, or billing.
 //
 // Lock discipline (deadlock fence): o.mu and rec.mu are NEVER held
 // simultaneously in either direction. Composite reads (recorder snapshots,
@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/worker"
@@ -46,10 +47,13 @@ const (
 )
 
 // flowSubmission owns deep-copied request rows: no request-backed slice or
-// pointer may reach the owner state.
+// pointer may reach the owner state. residual is stamped at the submit-fence
+// recheck: true means residual-tagged, never a PG candidate and never counted
+// in queuedPG.
 type flowSubmission struct {
-	minute int64
-	rows   []repository.RoutingFlowRow
+	minute   int64
+	rows     []repository.RoutingFlowRow
+	residual bool
 }
 
 // FlowOwnerStats is the typed Stats() payload served on
@@ -86,11 +90,34 @@ type FlowOwner struct {
 	// pendingCapBytes) stay on the Recorder as shared lane config:
 	// immutable after construction in production, test-written only from
 	// the same goroutine before concurrent use.
-	submitFence  sync.RWMutex
-	mu           sync.Mutex
-	pending      map[int64]*FlowMinute
+	submitFence sync.RWMutex
+	mu          sync.Mutex
+	// pending is the single-owner cumulative state: one identity-indexed
+	// accumulator per minute holding the full cumulative ChainCount.
+	pending map[int64]*flowMinuteAccumulator
+	// pendingBytes is liveCharge (minute charges plus identity charges),
+	// maintained incrementally under mu with invariant liveCharge <=
+	// rec.pendingCapBytes. FlowOwnerStats.PendingBytes is liveCharge plus
+	// queued charge.
 	pendingBytes int64
-	mergeDropped int64
+
+	// nextIncarnation and nextLeaseID are owner-wide monotonic counters
+	// (start at 0, never reused, never reset). nextLeaseID is independent of
+	// the per-minute version so a release without mutation still retires the
+	// lease identity. pgSealed is set once by sealPG and never cleared.
+	nextIncarnation uint64
+	nextLeaseID     uint64
+	pgSealed        atomic.Bool
+	// queuedPG bounds Close-drain work without scanning the channel: Submit
+	// increments it only for successfully queued pre-seal accepted-class
+	// submissions, and the owner drain decrements it once per drained
+	// pre-seal submission; residual-tagged queued submissions never touch it.
+	queuedPG atomic.Int64
+	// clock is the explicit owner clock for the late-arrival horizon. Nil in
+	// production (admission stays total: cold-start and replay tolerant);
+	// tests inject a fixed clock to make the 600-second old-absent admission
+	// rejection deterministic. Written only before concurrent use.
+	clock func() time.Time
 
 	running             atomic.Bool
 	accepted            atomic.Int64
@@ -120,7 +147,7 @@ func newFlowOwner(rec *Recorder) *FlowOwner {
 	o := &FlowOwner{
 		rec:        rec,
 		queue:      make(chan flowSubmission, FlowOwnerQueueCap),
-		pending:    make(map[int64]*FlowMinute),
+		pending:    make(map[int64]*flowMinuteAccumulator),
 		submitDone: make(chan struct{}),
 	}
 	done := make(chan struct{})
@@ -171,9 +198,13 @@ func (o *FlowOwner) Submit(minute int64, rows []repository.RoutingFlowRow) Submi
 		o.edgeRowsDropped.Add(int64(len(rows)))
 		return SubmitClosed
 	}
+	sealed := o.pgSealed.Load()
 	select {
-	case o.queue <- flowSubmission{minute: minute, rows: own}:
+	case o.queue <- flowSubmission{minute: minute, rows: own, residual: sealed}:
 		o.accepted.Add(1)
+		if !sealed {
+			o.queuedPG.Add(1)
+		}
 		return SubmitAccepted
 	default:
 		o.queuedBytes.Add(-charge)

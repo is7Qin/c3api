@@ -196,12 +196,13 @@ func TestShutdownTail_IncompleteQualitySyncDrainNotClaimedClean(t *testing.T) {
 }
 
 // TestShutdownTail_CleanDrainClaimsShutdownComplete 反向锚定同一契约的
-// 成功路径：排空真实落 PG fake（clean 宣称属实），终态快照为空，
+// 成功路径：排空真实落 PG fake（clean 宣称属实），终态 quality 快照为空而
+// flow 快照保留已落库的 clean 分钟（单 owner 累计语义：成功不再 detach），
 // "shutdown complete" 在场且无 error 级日志。
 func TestShutdownTail_CleanDrainClaimsShutdownComplete(t *testing.T) {
 	// Given: 健康 PG fake——quality-sync 的 Close 排空将把 pending 真实
 	// 写入 fake。
-	wm, rec, rdb, pg, _, log, logPath := newShutdownFixture(t, nil)
+	wm, rec, rdb, pg, minute, log, logPath := newShutdownFixture(t, nil)
 
 	// When: 停机尾部运行（排空一次通过，无需超时预算）。
 	shutdownTail(context.Background(), wm, rec, rdb, log)
@@ -213,11 +214,15 @@ func TestShutdownTail_CleanDrainClaimsShutdownComplete(t *testing.T) {
 	require.Equal(t, int64(1), pg.rows[0].Successes)
 	require.NotZero(t, pg.flows, "pending flow minute must be flushed to PG on clean drain")
 
-	// And: 终态快照为空（无未落库残留），clean 宣称在场，无 error 级日志。
+	// And: 终态 quality 快照为空（无未落库残留），flow 快照保留已落库的
+	// clean 分钟供诊断，clean 宣称在场，无 error 级日志。
 	snap := rec.Snapshot()
 	require.NotNil(t, snap)
 	require.Empty(t, snap.Quality)
-	require.Empty(t, snap.Flow)
+	require.Len(t, snap.Flow, 1, "final snapshot retains the clean flow minute for diagnostics")
+	fm, ok := snap.Flow[minute]
+	require.True(t, ok, "retained clean minute must be addressable by its minute")
+	require.Equal(t, [8]int64{5, 0, 0, 0, 0, 0, 0, 0}, fm.Edges(), "retained minute preserves the submitted edge arrays")
 
 	lines := readShutdownLog(t, logPath)
 	var msgs []string

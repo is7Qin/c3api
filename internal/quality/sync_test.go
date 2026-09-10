@@ -222,7 +222,7 @@ func TestQualitySync_FlowPreservesEdgeArraysAndRequeuesWholeMinute(t *testing.T)
 	}
 	require.True(t, found[100] || found[0], "counts must be actual")
 
-	// failed flow requeues whole minute
+	// failed flow stays dirty-retained for next-cycle retry (no requeue)
 	pg2 := newFakePG()
 	rec2, _ := NewRecorder(50000)
 	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-flow2", BatchSize: 10}, nil)
@@ -230,7 +230,7 @@ func TestQualitySync_FlowPreservesEdgeArraysAndRequeuesWholeMinute(t *testing.T)
 	require.NoError(t, rec2.EnqueueFlowMinute(fm.Clone()))
 	pg2.failAll = true
 	w2.doPG(context.Background())
-	require.Equal(t, 1, rec2.MinuteBucketCount(), "failed flow must requeue whole minute")
+	require.Equal(t, 1, rec2.MinuteBucketCount(), "failed flow must stay dirty-retained for retry")
 	require.Equal(t, 0, len(pg2.flows))
 }
 
