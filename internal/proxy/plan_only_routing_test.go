@@ -40,11 +40,12 @@ func TestSelectWithPlan_NoCompiledDecision_FailsClosedWithTypedError(t *testing.
 	p := newTestProxy(t, up.URL, 1)
 	addAnthropicStaticNoDecision(t, p, up.URL)
 
-	sel, plan, err := p.selectWithPlan(10, domain.FormatAnthropic, "claude-x",
+	sel, plan, _, err := p.selectWithPlan(10, domain.FormatAnthropic, "claude-x",
 		scheduler.AttemptPlanIdentity{RequestID: "req-noplan", UserID: 1})
 	require.ErrorIs(t, err, scheduler.ErrFormatUnavailable)
 	require.Nil(t, sel, "no selection may be produced without a compiled plan")
-	require.Nil(t, plan)
+	// v4-S1: the session is a stack value — the error path yields its zero value.
+	require.Equal(t, scheduler.AttemptPlan{}, plan)
 }
 
 func TestHandleAnthropic_NoCompiledDecision_RejectsWithoutDispatch(t *testing.T) {
@@ -111,7 +112,7 @@ func TestSelectNextWithPlan_PlanlessHasNoLegacyLane(t *testing.T) {
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 
-	sel, err := p.selectNextWithPlan(nil)
+	sel, _, err := p.selectNextWithPlan(nil)
 	require.ErrorIs(t, err, scheduler.ErrNoAvailable)
 	require.Nil(t, sel, "a plan-less failover step must never select")
 }
@@ -121,8 +122,9 @@ func TestShouldRetryWithPlan_PlanlessNeverRetries(t *testing.T) {
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 
-	require.False(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("network"), nil, false))
-	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, nil, false))
+	// v4-S1: attempt identity threads by value — the zero attempt has no failover lane.
+	require.False(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("network"), scheduler.Attempt{}, false))
+	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, scheduler.Attempt{}, false))
 }
 
 func TestShouldRetryWithPlan_UsesCanonicalAttemptVerdicts(t *testing.T) {
@@ -130,23 +132,24 @@ func TestShouldRetryWithPlan_UsesCanonicalAttemptVerdicts(t *testing.T) {
 	defer up.Close()
 	p := chatProxyWithPlan(t, up.URL, 2, []int64{1, 2})
 
-	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
+	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-retry", UserID: 1})
 	require.NoError(t, err)
-	require.NotNil(t, plan)
+	// v4-S1: the session is a stack value — bound identity echoes the request.
+	require.Equal(t, "req-retry", plan.Identity().RequestID)
 	defer sel.Release()
 
-	require.True(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("dial failed"), plan, false),
+	require.True(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("dial failed"), attempt, false),
 		"not-sent network failure is retryable")
-	require.True(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, plan, false),
+	require.True(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, attempt, false),
 		"ordinary 429 is retryable")
-	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusInternalServerError, nil, plan, false),
+	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusInternalServerError, nil, attempt, false),
 		"5xx never replays")
-	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusBadRequest, nil, plan, false))
+	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusBadRequest, nil, attempt, false))
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.False(t, p.shouldRetryWithPlan(cancelled, 0, errors.New("canceled"), plan, false),
+	require.False(t, p.shouldRetryWithPlan(cancelled, 0, errors.New("canceled"), attempt, false),
 		"client cancel is never a failover")
 }
 
@@ -155,12 +158,14 @@ func TestRetryOutcomeForAttempt_CarriesCanonicalIdentity(t *testing.T) {
 	defer up.Close()
 	p := chatProxyWithPlan(t, up.URL, 2, []int64{1, 2})
 
-	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
+	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-ident", UserID: 1})
 	require.NoError(t, err)
 	defer sel.Release()
-	attempt, ok := plan.CurrentAttempt()
+	// v4-S1: the threaded settle value and the session derivation coincide.
+	current, ok := plan.CurrentAttempt()
 	require.True(t, ok)
+	require.Equal(t, attempt, current)
 	require.NoError(t, attempt.Validate())
 
 	o := retryOutcomeForAttempt(attempt, http.StatusTooManyRequests, nil, context.Background())
@@ -226,8 +231,10 @@ func TestFailoverLoopWithPlan_PlanlessAdvancesNoFurtherDispatch(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+	// v4-S1: zero session + zero attempt — a retryable 429 carries no identity
+	// to advance on, so the loop still stops after exactly one dispatch.
 		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
-			"req-noplan-loop", 10, time.Now(), "gpt-4o", nil, sel, nil, attemptState{},
+			"req-noplan-loop", 10, time.Now(), "gpt-4o", nil, sel, scheduler.AttemptPlan{}, scheduler.Attempt{}, attemptState{},
 			reject429Attempt{calls: &calls}, &httpSink{}, false)
 	}()
 	<-done

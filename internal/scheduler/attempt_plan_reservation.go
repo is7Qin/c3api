@@ -7,54 +7,60 @@ import (
 
 var reserveHook func() // ponytail: test hook for race barrier between concurrency CAS and state CAS
 
-// newPlanForView binds a compiled route to one already-loaded immutable
+// selectSessionForView binds a compiled route to one already-loaded immutable
 // routing root. An exact route miss falls back to the compiled default bucket
-// (model "").
-func newPlanForView(identity AttemptPlanIdentity, route RouteRef, v *RoutingView) (*AttemptPlan, error) {
+// (model ""). The session is a stack value — never boxed.
+//
+// v4-S2: key-normalized lookup — the query key zeroes RouteClassID before map
+// access (the old direct exact-match on the full key including hex is deleted,
+// not kept as a fast path). RouteClassID is borrowed from the found
+// RouteDecision (the stored per-route field IS the intern); the session never
+// computes hex.
+func selectSessionForView(identity AttemptPlanIdentity, route RouteRef, v *RoutingView) (AttemptPlan, error) {
 	identity.RequestedModel = route.Model
 	if v == nil || v.static == nil {
-		return nil, ErrGroupNotFound
+		return AttemptPlan{}, ErrGroupNotFound
 	}
 	if _, ok := v.static.groups[route.GroupID]; !ok {
-		return nil, ErrGroupNotFound
+		return AttemptPlan{}, ErrGroupNotFound
 	}
 	if v.decision == nil {
-		return nil, ErrFormatUnavailable
+		return AttemptPlan{}, ErrFormatUnavailable
 	}
-	decision, ok := v.decision.routes[route]
+	decision, ok := v.decision.routes[normRouteRef(route)]
 	if !ok && route.Model != "" {
-		route = RouteRefForOp(route.GroupID, route.Format, "", domain.OperationTag(route.OperationTag))
-		decision, ok = v.decision.routes[route]
+		decision, ok = v.decision.routes[RouteRefForOp(route.GroupID, route.Format, "", domain.OperationTag(route.OperationTag))]
 	}
 	if !ok || decision == nil {
-		return nil, ErrFormatUnavailable
+		return AttemptPlan{}, ErrFormatUnavailable
 	}
 	if _, ok := parseRequestFormat(route.Format); !ok || route.OperationTag == "" {
-		return nil, ErrFormatUnavailable
+		return AttemptPlan{}, ErrFormatUnavailable
 	}
-	identity.RouteClassID = route.RouteClassID
+	identity.RouteClassID = decision.RouteClassID
 	identity.RoutingGeneration = v.generation
-	p, err := NewAttemptPlan(identity, decision)
+	sess, err := newSelectSession(identity, decision)
 	if err != nil {
-		return nil, err
+		return AttemptPlan{}, err
 	}
-	p.generation = v.generation
+	sess.generation = v.generation
 	if identity.HasAffinity {
-		p.ApplyCacheAffinity(identity.AffinityHash)
+		sess.ApplyCacheAffinity(identity.AffinityHash)
 	}
-	return p, nil
+	return sess, nil
 }
 
 // NewAttemptPlan binds a compiled route to one immutable routing root. An
 // exact route miss falls back to the compiled default bucket (model "").
-func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef) (*AttemptPlan, error) {
-	return newPlanForView(identity, route, s.view.Load())
+// Stack value return — the request path never boxes the session.
+func (s *Scheduler) NewAttemptPlan(identity AttemptPlanIdentity, route RouteRef) (AttemptPlan, error) {
+	return selectSessionForView(identity, route, s.view.Load())
 }
 
-func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity, route RouteRef, keyHash uint64) (*AttemptPlan, error) {
+func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity, route RouteRef, keyHash uint64) (AttemptPlan, error) {
 	plan, err := s.NewAttemptPlan(identity, route)
 	if err != nil {
-		return nil, err
+		return AttemptPlan{}, err
 	}
 	plan.ApplyCacheAffinity(keyHash)
 	return plan, nil
@@ -65,6 +71,11 @@ func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity
 // metadata; the only per-candidate request work is O(1) gate checks and the
 // single lease CAS. Stale leaves (pointer mismatch after static replacement)
 // are rejected, never leased.
+//
+// Boundary preserved (v4-S2): the (Selection, Attempt) VALUE shape is
+// unchanged — only the session carriage moved from heap box to stack value.
+// The session pointer here is a stack pointer that never escapes: ReserveAttempt
+// retains nothing across calls.
 func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, error) {
 	if plan == nil || plan.route == nil {
 		return nil, Attempt{}, ErrNoAvailable
@@ -80,6 +91,9 @@ func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, erro
 // static replacement remains eligible for the existing leaf fence, so
 // in-flight plans can move to the current leaf instead of losing their
 // fallback tail.
+//
+// v4-S3: the generation fence consults the session-cached static verdict
+// (single fence-site entry) instead of scanning per attempt.
 func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection, Attempt, error) {
 	if plan == nil || plan.route == nil {
 		return nil, Attempt{}, ErrNoAvailable
@@ -87,7 +101,7 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 	if v == nil || v.static == nil {
 		return nil, Attempt{}, ErrAttemptsExhausted
 	}
-	if plan.reservationStarted && plan.generation != v.generation && !plan.hasStaticChange(v) {
+	if plan.reservationStarted && plan.generation != v.generation && !plan.cachedStaticVerdict(v) {
 		return nil, Attempt{}, ErrAttemptsExhausted
 	}
 	instances := s.instancesN()

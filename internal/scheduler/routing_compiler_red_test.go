@@ -54,9 +54,10 @@ func TestRed_Blocker1_ImagesDistinct(t *testing.T) {
 	require.NoError(t, err)
 	rcGenHex := domain.RouteClassIDHex(genRC)
 	rcEditHex := domain.RouteClassIDHex(editRC)
-	rrGen := RouteRef{GroupID: 10, Format: string(domain.FormatOpenAIImages), Model: "m", OperationTag: string(domain.OpImagesGenerations), RouteClassID: rcGenHex}
-	rrEdit := RouteRef{GroupID: 10, Format: string(domain.FormatOpenAIImages), Model: "m", OperationTag: string(domain.OpImagesEdits), RouteClassID: rcEditHex}
-	require.NotEqual(t, rrGen.RouteClassID, rrEdit.RouteClassID)
+	// v4-S2: lookups ride normalized keys; op-distinctness lives in the interned hex.
+	require.NotEqual(t, rcGenHex, rcEditHex)
+	rrGen := RouteRefForOp(10, string(domain.FormatOpenAIImages), "m", domain.OpImagesGenerations)
+	rrEdit := RouteRefForOp(10, string(domain.FormatOpenAIImages), "m", domain.OpImagesEdits)
 	dGen, ok := view.Routes()[rrGen]
 	require.True(t, ok, "generations route must exist")
 	dEdit, ok := view.Routes()[rrEdit]

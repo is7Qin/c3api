@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/worker"
@@ -137,13 +138,25 @@ func TestOpsWorkersQualityFlowOwner(t *testing.T) {
 		_, exists := st[k]
 		require.True(t, exists, "missing field %s", k)
 	}
-	require.Equal(t, float64(quality.FlowOwnerQueueCap), st["queue_cap"], "fixed capacity 8192 published")
+	// v3-F1: no queue remains — queue_cap publishes the total counter-cell
+	// capacity (64 shards x per-shard slots) and queued counts accepted-
+	// not-yet-folded facts (zero when idle).
+	require.Greater(t, st["queue_cap"], float64(0), "cell capacity published")
 	require.Equal(t, float64(0), st["queued"])
 
-	// Shape stability after real traffic: one accepted submission is
-	// visible as queued/accepted without any drain.
-	require.Equal(t, quality.SubmitAccepted, owner.Submit(1000, nil))
+	// Shape stability after real traffic: one folded fact is visible as
+	// accepted/edge_rows_accepted without any tick.
+	var route domain.RouteClassIDVal
+	var fp domain.CandidateFingerprintVal
+	route[0], fp[0] = 7, 9
+	owner.FoldChain(1000, 1, func(_ int) (
+		domain.RouteClassIDVal, domain.CandidateFingerprintVal,
+		int64, int64, int64, uint8, string, string, string, bool, bool,
+	) {
+		return route, fp, 11, 0, 1, 1, "primary", "success", "", true, false
+	})
 	st2 := owner.Stats().(quality.FlowOwnerStats)
 	require.Equal(t, int64(1), st2.Accepted)
-	require.Equal(t, 1, st2.Queued)
+	require.Equal(t, int64(1), st2.EdgeRowsAccepted)
+	require.Equal(t, 1, st2.Queued, "unfolded fact visible as queued work")
 }

@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func planCandidates(p *AttemptPlan) []int64 {
-	cp := *p
+func planCandidates(p AttemptPlan) []int64 {
+	cp := p
 	cp.walkSeg, cp.walkPos = 0, 0
 	cp.affinPhase = 0
 	if cp.sampleValid {
@@ -33,8 +33,8 @@ func planCandidates(p *AttemptPlan) []int64 {
 	return out
 }
 
-func planLanes(p *AttemptPlan) []AttemptLane {
-	cp := *p
+func planLanes(p AttemptPlan) []AttemptLane {
+	cp := p
 	cp.walkSeg, cp.walkPos = 0, 0
 	cp.affinPhase = 0
 	out := []AttemptLane{}

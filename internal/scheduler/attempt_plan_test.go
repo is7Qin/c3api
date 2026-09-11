@@ -15,11 +15,11 @@ func TestAttemptPlan_preservesRequestIdentityAndFixedStorage(t *testing.T) {
 	plan := mustNewAttemptPlan(t, identity, &RouteDecision{Primary: ccPrimary(1)})
 
 	require.Equal(t, identity, plan.Identity())
-	field, ok := reflect.TypeOf(*plan).FieldByName("attempted")
+	field, ok := reflect.TypeOf(plan).FieldByName("attempted")
 	require.True(t, ok)
 	require.Equal(t, reflect.Array, field.Type.Kind())
 	require.Equal(t, MaxAttemptPlanAccounts, field.Type.Len())
-	require.NotContains(t, reflect.TypeOf(*plan).String(), "map[")
+	require.NotContains(t, reflect.TypeOf(plan).String(), "map[")
 }
 
 func TestNewAttemptPlan_initializesGenerationFromIdentity(t *testing.T) {

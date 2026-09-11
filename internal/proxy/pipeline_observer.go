@@ -4,7 +4,9 @@ package proxy
 import (
 	"context"
 	"net/http"
+	"time"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
@@ -106,56 +108,207 @@ func (p *Proxy) observerFor(base AttemptOutcome, appendFlow AttemptFlowAppend) *
 	return NewAttemptObserver(qualityContext, nil, appendFlow, nil)
 }
 
-// flowChainOwner is the request-local FlowChain producer owned exclusively by
+// foldOwner is the request-local fold-at-source producer owned exclusively by
 // failoverLoopWithPlan. It exists only for plan-backed dispatched requests
 // with a wired quality recorder: beginDispatch arms it with the real
-// scheduler.Attempt, so no synthetic row can enter a chain. beginDispatch
+// scheduler.Attempt, so no synthetic fact can enter the cells. beginDispatch
 // arms the current dispatch attempt; the stable seam closure (one per
-// request) appends each real dispatch outcome; settle finalizes+completes a
-// recorded chain or closes an unrecorded/panicked one — exactly once per
-// request.
-type flowChainOwner struct {
+// request) stashes each real dispatch outcome as a packed fact; settle emits
+// the chain once through the completion walk or records the honest
+// incomplete signal — exactly once per request. The stash holds minimal facts
+// only (decoded IDs + §4 codes extracted at arm/append time — no Attempt, no
+// token strings); facts fold directly into the owner's counter cells at
+// settle.
+type foldOwner struct {
 	recorder *quality.Recorder
-	chain    *quality.FlowChain
 	tap      AttemptFlowAppend // observation seam (tests); nil in production
-	seamFn   AttemptFlowAppend // stable per-request closure
-	cur      scheduler.Attempt // identity of the dispatch in flight
+	seamFn   AttemptFlowAppend // stable per-request closure (one capture, reused by every dispatch)
+	route    [32]byte         // plan-constant identity (attempt_plan_exec.go:315), decoded per arm
+	gen      uint64           // plan-constant generation (attempt_plan_exec.go:319), bound per arm
+	cur      packedArm        // identity of the dispatch in flight
 	armed    bool
-	last     quality.FlowDispatch // last appended edge (real previous outcome)
+	edges    [8]packedEdge // packed stash, cap-8 (attempt 9+ counts cap-overflow)
+	nedges   int
 	hasLast  bool
+	lastOut  uint8 // last stashed outcome code (real previous outcome)
 	settled  bool
 }
 
-func newFlowChainOwner(recorder *quality.Recorder, tap AttemptFlowAppend) *flowChainOwner {
-	f := &flowChainOwner{recorder: recorder, tap: tap}
+// packedArm is the in-flight dispatch identity: the walk inputs extracted
+// from the real plan attempt at arm time (pointers dereferenced, lane coded,
+// hex decoded — nothing referencing scheduler memory survives the arm).
+type packedArm struct {
+	fp       [32]byte
+	account  int64
+	prevAcct int64
+	ordinal  uint8
+	lane     uint8
+	hasPrev  bool
+}
+
+// packedEdge is one stashed dispatch: the walk inputs only. Terminality is
+// force-marked final at settle (option (a)).
+type packedEdge struct {
+	fp      [32]byte
+	account int64
+	prev    int64
+	ordinal uint8
+	lane    uint8
+	outcome uint8
+	flags   uint8 // bit0 terminal, bit1 hasPrev
+}
+
+const (
+	foldEdgeTerminal uint8 = 1 << iota
+	foldEdgeHasPrev
+)
+
+// Proxy-local §4 outcome codes (the walk consumes the token strings, so the
+// stash codes map back 1:1 at settle, including code 6=`client_cancel`
+// verbatim per Amendment A1 — census byte-identity requires it: the old tree
+// writes client_cancel verbatim and folding it into error would corrupt
+// PG/dashboards. Code 0 is the empty token, which the walk drops exactly as
+// today.
+const (
+	foldOutEmpty uint8 = iota
+	foldOutSuccess
+	foldOutError
+	foldOut4xx
+	foldOut429
+	foldOut5xx
+	foldOutNetwork
+	foldOutClientCancel
+)
+
+// Proxy-local §4 lane codes. Code 3 is unknown: settle emits "" so the walk
+// drops the edge exactly as today (unknown lane string fails the codebook).
+const (
+	foldLanePrimaryCode uint8 = iota
+	foldLaneExploreCode
+	foldLaneDegradedCode
+	foldLaneUnknownCode
+)
+
+func foldLaneCodeOf(lane scheduler.AttemptLane) uint8 {
+	switch lane {
+	case scheduler.AttemptLanePrimary:
+		return foldLanePrimaryCode
+	case scheduler.AttemptLaneExplore:
+		return foldLaneExploreCode
+	case scheduler.AttemptLaneDegraded:
+		return foldLaneDegradedCode
+	}
+	return foldLaneUnknownCode
+}
+
+func foldLaneTokenOf(code uint8) string {
+	switch code {
+	case foldLanePrimaryCode:
+		return "primary"
+	case foldLaneExploreCode:
+		return "explore"
+	case foldLaneDegradedCode:
+		return "degraded"
+	}
+	return ""
+}
+
+func foldOutcomeCodeOf(token string) uint8 {
+	switch token {
+	case "success":
+		return foldOutSuccess
+	case "error":
+		return foldOutError
+	case "client_cancel":
+		return foldOutClientCancel
+	case "4xx":
+		return foldOut4xx
+	case "429":
+		return foldOut429
+	case "5xx":
+		return foldOut5xx
+	case "network":
+		return foldOutNetwork
+	}
+	return foldOutEmpty
+}
+
+func foldOutcomeTokenOf(code uint8) string {
+	switch code {
+	case foldOutSuccess:
+		return "success"
+	case foldOutError:
+		return "error"
+	case foldOut4xx:
+		return "4xx"
+	case foldOut429:
+		return "429"
+	case foldOut5xx:
+		return "5xx"
+	case foldOutNetwork:
+		return "network"
+	case foldOutClientCancel:
+		return "client_cancel"
+	}
+	return ""
+}
+
+func newFoldOwner(recorder *quality.Recorder, tap AttemptFlowAppend) *foldOwner {
+	f := &foldOwner{recorder: recorder, tap: tap}
 	f.seamFn = f.append
 	return f
 }
 
-// arm binds the next dispatch's flow append to one real plan attempt and
-// materializes the chain: a plan-backed request that never begins a dispatch
-// (e.g. price-precheck rejection) records no flow and is never counted
-// incomplete.
-func (f *flowChainOwner) arm(attempt scheduler.Attempt) {
-	f.cur, f.armed = attempt, true
-	if f.chain == nil {
-		f.chain = quality.NewFlowChain(f.recorder, nil)
+// arm binds the next dispatch's flow append to one real plan attempt: a
+// plan-backed request that never begins a dispatch (e.g. price-precheck
+// rejection) records no flow and is never counted incomplete. Walk inputs are
+// extracted now (pointers dereferenced, lane coded, hex decoded) so the stash
+// never references scheduler memory.
+func (f *foldOwner) arm(attempt scheduler.Attempt) {
+	f.route = pipelineID(attempt.RouteClassID)
+	f.gen = attempt.RoutingGeneration
+	f.cur = packedArm{
+		fp:       pipelineID(attempt.CandidateFingerprint),
+		account:  attempt.AccountID,
+		ordinal:  attempt.Ordinal,
+		lane:     foldLaneCodeOf(attempt.Lane),
+		hasPrev:  attempt.PreviousAccountID != nil,
 	}
+	if attempt.PreviousAccountID != nil {
+		f.cur.prevAcct = *attempt.PreviousAccountID
+	}
+	f.armed = true
 }
 
-// append is the single flow seam: plan-canonical dispatches append one real
-// edge to the chain; the observation tap (when wired) sees every completed
-// outcome. Append rejections (post-terminal, overflow) are recorded by the
-// chain's own counters and never rewrite the last real edge.
-func (f *flowChainOwner) append(outcome AttemptOutcome) {
+// append is the single flow seam: plan-canonical dispatches stash one real
+// edge; the observation tap (when wired) sees every completed outcome.
+// Stash rejections (beyond cap-8) are counted at the same site by the
+// owner's cap-overflow counter and never rewrite the last real edge.
+func (f *foldOwner) append(outcome AttemptOutcome) {
 	if f.armed {
-		var prev string
-		if f.hasLast {
-			prev = f.last.Outcome
-		}
-		d := flowDispatchFromAttempt(f.cur, outcome, prev)
-		if f.chain.Append(d) == nil {
-			f.last = d
+		code := foldOutcomeCodeOf(flowOutcomeToken(outcome))
+		if f.nedges >= len(f.edges) {
+			if f.recorder != nil {
+				f.recorder.FlowOwner().NoteCapOverflow()
+			}
+		} else {
+			e := packedEdge{
+				fp:      f.cur.fp,
+				account: f.cur.account,
+				prev:    f.cur.prevAcct,
+				ordinal: f.cur.ordinal,
+				lane:    f.cur.lane,
+				outcome: code,
+			}
+			if outcome.Terminal {
+				e.flags |= foldEdgeTerminal
+			}
+			if f.cur.hasPrev {
+				e.flags |= foldEdgeHasPrev
+			}
+			f.edges[f.nedges] = e
+			f.nedges++
+			f.lastOut = code
 			f.hasLast = true
 		}
 	}
@@ -164,43 +317,93 @@ func (f *flowChainOwner) append(outcome AttemptOutcome) {
 	}
 }
 
-// settle runs once on loop exit. A chain that recorded dispatches is
-// finalized (marks the last edge terminal on exhaustion) and completed; a
-// panicked chain or one that never recorded a dispatch (abandon / no
-// terminal) is closed — the honest incomplete signal. Handled success or
-// failure always carries a terminal edge and takes the complete path.
-func (f *flowChainOwner) settle(panicked bool) {
+// settle runs once on loop exit. A chain that recorded dispatches is emitted
+// through the completion walk (the last edge force-marked terminal on
+// exhaustion, minute bucket minted once); an armed-but-empty, panicked, or
+// terminal-less chain takes the Close rows (incomplete iff nonterminal).
+// Handled success or failure always carries a terminal edge and emits.
+func (f *foldOwner) settle(panicked bool) {
 	if f == nil || f.settled {
 		return
 	}
 	f.settled = true
-	if f.chain == nil {
-		return // no dispatch ever began: no flow, no incomplete count
+	owner := foldRecorderOwner(f.recorder)
+	if f.nedges == 0 {
+		// Never recorded a dispatch: armed-but-abandoned closes as the
+		// honest incomplete signal; never-armed records nothing at all.
+		if f.armed && owner != nil {
+			owner.NoteIncompleteChain()
+		}
+		return
+	}
+	terminal := false
+	for i := 0; i < f.nedges; i++ {
+		if f.edges[i].flags&foldEdgeTerminal != 0 {
+			terminal = true
+		}
 	}
 	if panicked || !f.hasLast {
-		f.chain.Close()
+		if !terminal && owner != nil {
+			owner.NoteIncompleteChain()
+		}
 		return
 	}
-	if err := f.chain.Finalize(); err != nil {
-		f.chain.Close()
+	if owner == nil {
 		return
 	}
-	if err := f.chain.Complete(); err != nil {
-		f.chain.Close()
+	if !terminal {
+		f.edges[f.nedges-1].flags |= foldEdgeTerminal
 	}
+	bucket := clockMinute()
+	routeVal := domain.RouteClassIDVal(f.route)
+	gen := int64(f.gen)
+	owner.FoldChain(bucket, f.nedges, func(i int) (
+		route domain.RouteClassIDVal,
+		fp domain.CandidateFingerprintVal,
+		accountID, prevAccount, generation int64,
+		ordinal uint8,
+		lane, outcome, prevOutcome string,
+		isTerminal, hasPrev bool,
+	) {
+		e := f.edges[i]
+		route = routeVal
+		fp = domain.CandidateFingerprintVal(e.fp)
+		accountID = e.account
+		generation = gen
+		ordinal = e.ordinal
+		lane = foldLaneTokenOf(e.lane)
+		outcome = foldOutcomeTokenOf(e.outcome)
+		if i > 0 {
+			prevOutcome = foldOutcomeTokenOf(f.edges[i-1].outcome)
+		}
+		isTerminal = e.flags&foldEdgeTerminal != 0
+		if e.flags&foldEdgeHasPrev != 0 {
+			prevAccount = e.prev
+			hasPrev = true
+		}
+		return
+	})
 }
+
+func foldRecorderOwner(recorder *quality.Recorder) *quality.FlowOwner {
+	if recorder == nil {
+		return nil
+	}
+	return recorder.FlowOwner()
+}
+
+// clockMinute mints the completion minute bucket (once per settle — every
+// fact of the chain carries the identical bucket, so no cross-minute
+// scatter at expansion).
+func clockMinute() int64 { return time.Now().UTC().Truncate(time.Minute).Unix() }
 
 // beginDispatch creates the one owner observation for one real upstream
 // dispatch, before attempt.call. The observation exists only on the plan's
-// canonical attempt identity: a dispatch without a plan (or without a valid
-// recorded attempt) gets no observation and no flow binding — nothing is
-// ever recorded under a fabricated identity.
-func (p *Proxy) beginDispatch(ctx context.Context, sel *scheduler.Selection, plan *scheduler.AttemptPlan, flow *flowChainOwner) (context.Context, *dispatchObservation) {
-	if sel == nil || plan == nil {
-		return ctx, nil
-	}
-	attempt, ok := plan.CurrentAttempt()
-	if !ok {
+// canonical attempt identity (threaded settle value — v4-S1): a dispatch
+// without a valid recorded attempt gets no observation and no flow binding —
+// nothing is ever recorded under a fabricated identity.
+func (p *Proxy) beginDispatch(ctx context.Context, sel *scheduler.Selection, attempt scheduler.Attempt, flow *foldOwner) (context.Context, *dispatchObservation) {
+	if sel == nil {
 		return ctx, nil
 	}
 	appendFlow := p.pipelineFlowAppend

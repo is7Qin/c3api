@@ -99,7 +99,7 @@ func TestAttemptPlan_explicitAffinityPrefersDomainAndSpillsWithoutDuplicates(t *
 	require.NoError(t, err)
 	require.True(t, plan.ApplyCacheAffinity(CacheAffinityHashForDomain(t, plan.route.CacheDomainRing, sharedB)))
 
-	first, attempt, err := s.ReserveAttempt(plan)
+	first, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), attempt.AccountID)
 	first.Release()
@@ -107,7 +107,7 @@ func TestAttemptPlan_explicitAffinityPrefersDomainAndSpillsWithoutDuplicates(t *
 	acc3, ok := s.View().Account(3)
 	require.True(t, ok)
 	acc3.runtime.concurrency.Store(1)
-	second, attempt, err := s.ReserveAttempt(plan)
+	second, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Contains(t, []int64{1, 2}, attempt.AccountID)
 	require.NotEqual(t, int64(3), attempt.AccountID)

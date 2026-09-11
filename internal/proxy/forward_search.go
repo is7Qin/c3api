@@ -141,7 +141,7 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	// 选号：复用主流 resp 路由面（openai-responses 格式——四类型全可达；
 	// search 无独立路由，独立选号无会话绑定）。
 	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: false}
-	sel, plan, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponses, reqModel, identity)
+	sel, plan, attempt, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponses, reqModel, identity)
 	if err != nil {
 		p.handleSelectError(w, err)
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAISearch, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
@@ -152,7 +152,7 @@ func (p *Proxy) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	// failover 循环（共享骨架，见 pipeline.go）：precheck=false（search 无缺价
 	// 预检）；尾部推进走同一 resp 路由计划（openai-responses 车道）；耗尽
 	// Retry-After 分支由 httpSink 判 lastCode。
-	p.failoverLoopWithPlan(w, r, domain.FormatOpenAISearch, reqID, groupID, start, reqModel, body, sel, plan,
+	p.failoverLoopWithPlan(w, r, domain.FormatOpenAISearch, reqID, groupID, start, reqModel, body, sel, plan, attempt,
 		attemptState{}, p.searchAttempt, p.httpSink, false)
 }
 

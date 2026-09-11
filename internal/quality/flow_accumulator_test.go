@@ -141,9 +141,13 @@ func TestRed_FlowInFlightPGStateCannotBeDisplaced(t *testing.T) {
 	}()
 	redFlowWait(t, pg.entered, "in-flight PG upsert")
 	_, ok := rec.FlowOwner().lookup(m)
-	require.True(t, ok, "in-flight PG minute must remain owner-visible under cap pressure")
-	require.ErrorIs(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m+60, []repository.RoutingFlowRow{ownerTestRow(22)})),
-		ErrCapacity, "a new minute cannot be admitted while the capped minute is retained")
+	require.True(t, ok, "in-flight PG minute must remain owner-visible")
+	// v3-F1: pressure eviction is deleted (no-eviction exactness) — the new
+	// minute is admitted beside the leased one, displacing nothing.
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m+60, []repository.RoutingFlowRow{ownerTestRow(22)})),
+		"a new minute is admitted without displacing the in-flight minute")
+	_, ok = rec.FlowOwner().lookup(m + 60)
+	require.True(t, ok)
 	close(release)
 	redFlowWait(t, done, "blocked doPG")
 }
@@ -165,7 +169,9 @@ func TestRed_FlowSyncCloseSealsLaterSubmissionResidual(t *testing.T) {
 
 	before := rec.FlowOwner().SnapshotStats()
 	m := fixed.Truncate(time.Minute).Unix()
-	require.Equal(t, SubmitAccepted, rec.FlowOwner().Submit(m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	// v3-F1: the Submit queue is gone; the post-seal request walk folds the
+	// same row residual through FoldChain.
+	foldOneRow(t, rec.FlowOwner(), m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	after := rec.FlowOwner().SnapshotStats()
@@ -253,7 +259,8 @@ func TestRed_FlowSyncCloseLoopDoneTimeoutSealsLaterSubmissionResidual(t *testing
 	require.Error(t, w.Close(ctx), "expired Close against a never-finishing loop must take the ctx.Done branch")
 
 	before := rec.FlowOwner().SnapshotStats()
-	require.Equal(t, SubmitAccepted, rec.FlowOwner().Submit(m, []repository.RoutingFlowRow{ownerTestRow(12)}))
+	// v3-F1: Submit successor — same row through the request walk.
+	foldOneRow(t, rec.FlowOwner(), m, ownerTestRow(12))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	after := rec.FlowOwner().SnapshotStats()
@@ -289,7 +296,8 @@ func TestRed_FlowSyncCloseFlushDoneTimeoutSealsLaterSubmissionResidual(t *testin
 
 	before := rec.FlowOwner().SnapshotStats()
 	m := fixed.Truncate(time.Minute).Unix()
-	require.Equal(t, SubmitAccepted, rec.FlowOwner().Submit(m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	// v3-F1: Submit successor — same row through the request walk.
+	foldOneRow(t, rec.FlowOwner(), m, ownerTestRow(12))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	after := rec.FlowOwner().SnapshotStats()
@@ -471,44 +479,42 @@ func TestRed_FlowCandidatesOldestFirst(t *testing.T) {
 	require.Equal(t, []int64{base, base + 60, base + 120}, owner.pgCandidateMinutes())
 }
 
-// TestRed_FlowLeaseEvictionPressure: a leased minute survives eviction
-// pressure while unleased victims are chosen; after release the minute is
-// evictable again with exact bucket accounting.
+// TestRed_FlowLeaseEvictionPressure: a leased minute is never displaced by a
+// newcomer; after release both minutes coexist with exact accounting.
+// v3-F1: pressure eviction is deleted (no-eviction exactness) — retargeted
+// from evict-the-victim to retain-both.
 func TestRed_FlowLeaseEvictionPressure(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner := redFlowLeaseOwner(t, fixed)
-	rec.minuteCap = 1
 	m1 := fixed.Truncate(time.Minute).Unix()
 	m2 := m1 + 60
 	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m1, []repository.RoutingFlowRow{ownerTestRow(11)})))
 	_, tok1, ok := owner.snapshotForPG(m1)
 	require.True(t, ok)
 	before := owner.SnapshotStats()
-	require.ErrorIs(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})),
-		ErrCapacity, "leased minute is never evictable")
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})),
+		"newcomer is admitted beside the leased minute")
 	_, ok = rec.FlowMinute(m1)
-	require.True(t, ok, "leased minute survives pressure")
+	require.True(t, ok, "leased minute is never displaced")
 	_, ok = rec.FlowMinute(m2)
-	require.False(t, ok, "new minute cannot displace the leased minute")
+	require.True(t, ok, "newcomer coexists")
 	mid := owner.SnapshotStats()
-	require.Equal(t, before.EdgeRowsAccepted, mid.EdgeRowsAccepted)
-	require.Equal(t, before.EdgeRowsDropped+1, mid.EdgeRowsDropped)
+	require.Equal(t, before.EdgeRowsAccepted+1, mid.EdgeRowsAccepted, "admitted newcomer folds exactly")
+	require.Equal(t, before.EdgeRowsDropped, mid.EdgeRowsDropped)
 	require.True(t, owner.releasePG(tok1))
 	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})))
 	_, ok = rec.FlowMinute(m1)
-	require.False(t, ok, "released never-persisted minute is evictable under pressure")
+	require.True(t, ok, "released minute stays retained — no eviction exists to displace it")
 	_, ok = rec.FlowMinute(m2)
 	require.True(t, ok)
 	after := owner.SnapshotStats()
-	require.Equal(t, mid.EdgeRowsAccepted, after.EdgeRowsAccepted, "eviction of never-persisted consumer credits moves no accepted bucket")
+	require.Equal(t, mid.EdgeRowsAccepted+1, after.EdgeRowsAccepted, "re-enqueued row folds exactly")
 	require.Equal(t, mid.EdgeRowsDropped, after.EdgeRowsDropped)
-	require.Greater(t, rec.FlowOverflow(), int64(0), "eviction bumps the lane overflow counter")
-	require.Greater(t, rec.MinuteOverflow(), int64(0), "eviction bumps the minute overflow counter")
 }
 
 // TestRed_FlowStaleLeaseIDNoop: a stale token from any prior lease is a no-op
-// for ack and release even when the version is unchanged; a recreated minute
-// gets a fresh incarnation so the stale token stays a no-op.
+// for ack and release even when the version is unchanged; the monotonic lease
+// identity alone retires it (no incarnation exists without eviction).
 func TestRed_FlowStaleLeaseIDNoop(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner := redFlowLeaseOwner(t, fixed)
@@ -524,18 +530,22 @@ func TestRed_FlowStaleLeaseIDNoop(t *testing.T) {
 	require.NotEqual(t, tok1.leaseID, tok2.leaseID, "independent leaseID never repeats")
 	require.True(t, owner.releasePG(tok2))
 
-	// Recreate the minute under pressure: fresh incarnation, stale token dead.
-	rec.minuteCap = 1
+	// v3-F1: no eviction exists — the minute is retained and merges; the
+	// stale token stays dead by lease identity alone (no incarnation needed).
 	m2 := m + 60
 	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})))
 	_, ok = rec.FlowMinute(m)
-	require.False(t, ok, "unleased never-persisted minute evicted under pressure")
+	require.True(t, ok, "unleased minute stays retained without eviction")
 	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m, []repository.RoutingFlowRow{ownerTestRow(33)})))
-	require.False(t, owner.ackPG(tok2), "stale token cannot ack a recreated incarnation")
-	require.False(t, owner.releasePG(tok2), "stale token cannot release a recreated incarnation")
+	require.False(t, owner.ackPG(tok2), "stale token cannot ack beside a newer lease")
+	require.False(t, owner.releasePG(tok2), "stale token cannot release beside a newer lease")
 	fm, ok := rec.FlowMinute(m)
 	require.True(t, ok)
-	require.Equal(t, int64(33), fm.FlowRows()[0].AccountID, "recreated minute holds only new state")
+	byAccount := make(map[int64]bool)
+	for _, r := range fm.FlowRows() {
+		byAccount[r.AccountID] = true
+	}
+	require.True(t, byAccount[11] && byAccount[33], "retained minute accumulates exactly")
 }
 
 // TestRed_FlowAckReleaseExactOnce: every path settles the lease exactly once —
@@ -590,7 +600,8 @@ func TestRed_FlowCleanRetainedNotBlockingClose(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	rec, owner, m := redFlowSealOwner(t)
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	// v3-F1: Submit successor — same row through the request walk.
+	foldOneRow(t, owner, m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
@@ -610,7 +621,8 @@ func TestRed_FlowCleanRetainedNotBlockingClose(t *testing.T) {
 // seal.
 func TestRed_FlowSealRevokesLeaseLateAckReleaseNoop(t *testing.T) {
 	rec, owner, m := redFlowSealOwner(t)
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	// v3-F1: Submit successor — same row through the request walk.
+	foldOneRow(t, owner, m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	_, tok, ok := owner.snapshotForPG(m)
@@ -645,18 +657,21 @@ func TestRed_FlowCloseResidualEquation(t *testing.T) {
 	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-equation", BatchSize: 10}, nil)
 	w.SetClock(func() time.Time { return fixed })
 
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12), ownerTestRow(13)}))
+	// v3-F1: Submit successor — one walk call carries the three rows; event
+	// units count three accepted facts (not one submission).
+	foldRows(t, owner, m, ownerTestRow(11), ownerTestRow(12), ownerTestRow(13))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	w.doPG(context.Background())
 	mid := owner.SnapshotStats()
-	require.Equal(t, int64(1), mid.Accepted)
-	require.Equal(t, int64(1), mid.Processed)
+	require.Equal(t, int64(3), mid.Accepted)
+	require.Equal(t, int64(3), mid.Processed)
 	require.Equal(t, int64(0), mid.ResidualSubmissions)
 	require.Equal(t, int64(3), mid.EdgeRowsAccepted+mid.EdgeRowsDropped+mid.ResidualRows)
 
 	require.NoError(t, w.Close(context.Background()))
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(21), ownerTestRow(22)}))
+	// v3-F1: post-seal walk folds residual with identical counting.
+	foldRows(t, owner, m, ownerTestRow(21), ownerTestRow(22))
 	_, ok = rec.FlowMinute(m)
 	require.True(t, ok)
 	after := owner.SnapshotStats()
@@ -669,26 +684,31 @@ func TestRed_FlowCloseResidualEquation(t *testing.T) {
 	require.Equal(t, int64(2), after.ResidualRows)
 }
 
-// TestRed_FlowQueuedPGReconcilesAroundSeal: pre-seal queued submissions
-// increment queuedPG, seal-time and post-seal residual tagging never does,
-// and full drain returns it to zero.
+// TestRed_FlowQueuedPGReconcilesAroundSeal: pre-seal folds are Close-drain
+// work at minute granularity; seal drains and sweeps to zero; post-seal
+// residual folds never become work.
+// v3-F1: the Submit queue (and queuedPG) is deleted by the §5.1 DELETION
+// LIST — retargeted from per-submission queue units to fold/equation units.
 func TestRed_FlowQueuedPGReconcilesAroundSeal(t *testing.T) {
 	rec, owner, m := redFlowSealOwner(t)
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(11)}))
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(12)}))
-	require.Equal(t, 2, owner.pgWorkTotal(), "pre-seal queued submissions increment queuedPG")
+	foldRows(t, owner, m, ownerTestRow(11))
+	foldRows(t, owner, m, ownerTestRow(12))
+	require.Equal(t, 1, owner.pgWorkTotal(), "pre-seal undrained folds are Close-drain work")
+	_, ok := rec.FlowMinute(m)
+	require.True(t, ok)
+	require.Equal(t, 1, owner.pgWorkTotal(), "one dirty minute is one unit of work")
 	owner.sealPG()
-	require.Equal(t, 0, owner.pgWorkTotal(), "seal drain returns queuedPG to zero")
+	require.Equal(t, 0, owner.pgWorkTotal(), "seal revokes candidacy and zeroes the bound")
 	after := owner.SnapshotStats()
-	require.Equal(t, int64(2), after.Processed, "seal drains pre-seal submissions as accepted merges")
+	require.Equal(t, int64(2), after.Processed, "seal folds pre-seal facts")
 	require.Equal(t, int64(0), after.ResidualSubmissions)
 	require.Equal(t, int64(0), after.EdgeRowsAccepted, "seal sweep moves all unconfirmed accepted credits to residual")
 	require.Equal(t, int64(2), after.ResidualRows)
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(13)}))
-	require.Equal(t, 0, owner.pgWorkTotal(), "post-seal residual tagging never increments queuedPG")
-	_, ok := rec.FlowMinute(m)
+	foldRows(t, owner, m, ownerTestRow(13))
+	require.Equal(t, 0, owner.pgWorkTotal(), "post-seal residual folds never become work")
+	_, ok = rec.FlowMinute(m)
 	require.True(t, ok)
-	require.Equal(t, 0, owner.pgWorkTotal(), "full drain returns queuedPG to zero")
+	require.Equal(t, 0, owner.pgWorkTotal())
 	final := owner.SnapshotStats()
 	require.Equal(t, int64(2), final.Processed)
 	require.Equal(t, int64(1), final.ResidualSubmissions)
@@ -701,7 +721,8 @@ func TestRed_FlowQueuedPGReconcilesAroundSeal(t *testing.T) {
 // submissions changes only row classes, never submission counters.
 func TestRed_FlowSubmissionCountersAroundSeal(t *testing.T) {
 	rec, owner, m := redFlowSealOwner(t)
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	// v3-F1: Submit successor — same row through the request walk.
+	foldOneRow(t, owner, m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	before := owner.SnapshotStats()
@@ -730,7 +751,8 @@ func redFlowPersistedMinute(t *testing.T, now time.Time, rows []repository.Routi
 	owner := rec.FlowOwner()
 	m := now.Truncate(time.Minute).Unix()
 	for _, row := range rows {
-		require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{row}))
+		// v3-F1: Submit successor — same rows through the request walk.
+		foldOneRow(t, owner, m, row)
 	}
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -741,90 +763,91 @@ func redFlowPersistedMinute(t *testing.T, now time.Time, rows []repository.Routi
 	return rec, owner, w, pg, m
 }
 
-// TestRed_FlowEvictionReclassifiesOnlyUnpersisted: eviction of a persisted
-// minute after the cutoff reclassifies only totalAccepted -
-// persistedWatermark via the exact section 9 bucket transitions; persisted
-// accepted history and counters remain unchanged.
+// TestRed_FlowEvictionReclassifiesOnlyUnpersisted: with no eviction the
+// persisted minute and every newcomer stay retained past the cutoff with
+// counters untouched — the tick drain is the sole reclamation, never
+// pressure.
+// v3-F1: pressure eviction is deleted (no-eviction exactness) — retargeted
+// from reclassify-the-victim to retain-everything.
 func TestRed_FlowEvictionReclassifiesOnlyUnpersisted(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12), ownerTestRow(13)})
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(14), ownerTestRow(15)}))
+	// v3-F1: Submit successor — same rows through the request walk.
+	foldRows(t, owner, m, ownerTestRow(14), ownerTestRow(15))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	before := owner.SnapshotStats()
 	require.Equal(t, int64(5), before.EdgeRowsAccepted)
 
-	// Past the cutoff the persisted minute becomes evictable; only the two
-	// unpersisted credits move accepted->dropped.
-	rec.now = func() time.Time { return fixed.Add(11 * time.Minute) }
-	rec.minuteCap = 1
-	m2 := fixed.Add(11 * time.Minute).Truncate(time.Minute).Unix()
+	// The persisted minute stays retained without any clock advance; the
+	// newcomer is admitted beside it — nothing reclassifies, nothing evicts.
+	m2 := m + 60
 	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(21)})))
 	_, ok = rec.FlowMinute(m)
-	require.False(t, ok, "post-cutoff persisted minute evicted under pressure")
+	require.True(t, ok, "post-cutoff persisted minute stays retained without eviction")
 	_, ok = rec.FlowMinute(m2)
-	require.True(t, ok)
+	require.True(t, ok, "newcomer admitted beside retained history")
 	after := owner.SnapshotStats()
-	require.Equal(t, int64(3), after.EdgeRowsAccepted, "persisted accepted history is never rewritten")
-	require.Equal(t, int64(2), after.EdgeRowsDropped-before.EdgeRowsDropped, "only unpersisted credits reclassify")
-	require.Greater(t, rec.FlowOverflow(), int64(0))
-	require.Greater(t, rec.MinuteOverflow(), int64(0))
+	require.Equal(t, int64(6), after.EdgeRowsAccepted, "every offered row folds exactly")
+	require.Equal(t, before.EdgeRowsDropped, after.EdgeRowsDropped, "no reclassification without eviction")
+	require.Zero(t, rec.FlowOverflow())
+	require.Zero(t, rec.MinuteOverflow())
 
-	// Never-persisted queue-path credits reclassify fully accepted->dropped.
-	rec.minuteCap = 1
+	// Further minutes accumulate likewise.
 	m3 := m2 + 60
-	require.Equal(t, SubmitAccepted, owner.Submit(m3, []repository.RoutingFlowRow{ownerTestRow(31)}))
+	foldOneRow(t, owner, m3, ownerTestRow(31))
 	_, ok = rec.FlowMinute(m3)
 	require.True(t, ok)
-	preEvict := owner.SnapshotStats()
+	preSecond := owner.SnapshotStats()
 	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m3+60, []repository.RoutingFlowRow{ownerTestRow(41)})))
 	_, ok = rec.FlowMinute(m3)
-	require.False(t, ok, "never-persisted minute evicted under pressure")
-	postEvict := owner.SnapshotStats()
-	require.Equal(t, preEvict.EdgeRowsAccepted-1, postEvict.EdgeRowsAccepted)
-	require.Equal(t, preEvict.EdgeRowsDropped+1, postEvict.EdgeRowsDropped)
-	require.GreaterOrEqual(t, postEvict.EdgeRowsAccepted, int64(0))
-	require.GreaterOrEqual(t, postEvict.EdgeRowsDropped, int64(0))
+	require.True(t, ok, "never-persisted minute stays retained without eviction")
+	postSecond := owner.SnapshotStats()
+	require.Equal(t, preSecond.EdgeRowsAccepted+1, postSecond.EdgeRowsAccepted)
+	require.Equal(t, preSecond.EdgeRowsDropped, postSecond.EdgeRowsDropped)
 }
 
-// TestRed_FlowPersistedSurvivesEviction: a clean persisted minute before the
-// cutoff survives pressure; the newcomer is rejected with exact counters.
+// TestRed_FlowPersistedSurvivesEviction: a clean persisted minute is
+// retained; the newcomer is admitted beside it with exact counters.
+// v3-F1: pressure eviction is deleted — retargeted from reject-the-newcomer
+// to admit-beside-retained.
 func TestRed_FlowPersistedSurvivesEviction(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11)})
-	rec.minuteCap = 1
 	m2 := fixed.Add(time.Minute).Truncate(time.Minute).Unix()
 	before := owner.SnapshotStats()
-	require.ErrorIs(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})),
-		ErrCapacity, "persisted baseline is eviction-ineligible before the cutoff")
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})),
+		"newcomer admitted beside the retained baseline")
 	fm, ok := rec.FlowMinute(m)
-	require.True(t, ok, "clean persisted minute survives pressure")
+	require.True(t, ok, "clean persisted minute stays retained")
 	require.Len(t, fm.FlowRows(), 1)
 	_, ok = rec.FlowMinute(m2)
-	require.False(t, ok)
+	require.True(t, ok)
 	after := owner.SnapshotStats()
-	require.Equal(t, before.EdgeRowsAccepted, after.EdgeRowsAccepted)
-	require.Equal(t, before.EdgeRowsDropped+1, after.EdgeRowsDropped)
+	require.Equal(t, before.EdgeRowsAccepted+1, after.EdgeRowsAccepted)
+	require.Equal(t, before.EdgeRowsDropped, after.EdgeRowsDropped)
 }
 
 // TestRed_FlowDirtyPersistedProtectedBeforeCutoff: a dirty everPersisted
-// minute survives pressure before the cutoff.
+// minute accumulates exactly with newcomers admitted beside it.
+// v3-F1: pressure eviction is deleted — retargeted from reject-the-newcomer
+// to admit-and-conserve.
 func TestRed_FlowDirtyPersistedProtectedBeforeCutoff(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12)})
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(13)}))
+	// v3-F1: Submit successor — same row through the request walk.
+	foldOneRow(t, owner, m, ownerTestRow(13))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
-	rec.minuteCap = 1
 	m2 := fixed.Add(time.Minute).Truncate(time.Minute).Unix()
-	require.ErrorIs(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})),
-		ErrCapacity, "dirty everPersisted minute survives pressure before the cutoff")
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})),
+		"newcomer admitted beside dirty history")
 	fm, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	require.Len(t, fm.FlowRows(), 3, "dirty persisted accumulation conserved")
 	after := owner.SnapshotStats()
-	require.Equal(t, int64(3), after.EdgeRowsAccepted)
-	require.Equal(t, int64(1), after.EdgeRowsDropped)
+	require.Equal(t, int64(4), after.EdgeRowsAccepted)
+	require.Zero(t, after.EdgeRowsDropped)
 }
 
 // TestRed_FlowEmptyPersistedProtectedBeforeCutoff: an empty-snapshot-persisted
@@ -843,34 +866,32 @@ func TestRed_FlowEmptyPersistedProtectedBeforeCutoff(t *testing.T) {
 	w.SetClock(func() time.Time { return fixed })
 	w.doPG(context.Background())
 	require.Empty(t, owner.pgCandidateMinutes())
-	rec.minuteCap = 1
 	m2 := fixed.Add(time.Minute).Truncate(time.Minute).Unix()
-	require.ErrorIs(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})),
-		ErrCapacity, "empty-snapshot-persisted minute survives pressure before the cutoff")
+	// v3-F1: pressure eviction is deleted — the empty minute stays retained
+	// and the newcomer is admitted beside it.
+	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(m2, []repository.RoutingFlowRow{ownerTestRow(22)})))
 	fm, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	require.True(t, fm.IsEmptySnapshot())
 }
 
-// TestRed_FlowPersistedHistoryProtected: a clean persisted minute survives
-// repeated pressure with history intact and exact newcomer drop counts.
+// TestRed_FlowPersistedHistoryProtected: a clean persisted minute stays
+// retained across newcomers with history intact and exact counts.
+// v3-F1: pressure eviction is deleted — retargeted from reject-newcomers to
+// admit-all-and-conserve.
 func TestRed_FlowPersistedHistoryProtected(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12)})
-	rec.minuteCap = 1
 	for i := int64(1); i <= 3; i++ {
 		mn := fixed.Add(time.Duration(i) * time.Minute).Truncate(time.Minute).Unix()
-		require.ErrorIs(t, rec.EnqueueFlowMinute(NewFlowSnapshot(mn, []repository.RoutingFlowRow{ownerTestRow(100 + i)})),
-			ErrCapacity)
+		require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(mn, []repository.RoutingFlowRow{ownerTestRow(100 + i)})))
 	}
 	fm, ok := rec.FlowMinute(m)
-	require.True(t, ok, "clean persisted history survives repeated pressure")
+	require.True(t, ok, "clean persisted history stays retained")
 	require.Len(t, fm.FlowRows(), 2)
 	after := owner.SnapshotStats()
-	require.Equal(t, int64(2), after.EdgeRowsAccepted, "persisted history never rewritten")
-	require.Equal(t, int64(3), after.EdgeRowsDropped, "each rejected newcomer counted exactly once")
-	require.GreaterOrEqual(t, after.EdgeRowsAccepted, int64(0))
-	require.GreaterOrEqual(t, after.EdgeRowsDropped, int64(0))
+	require.Equal(t, int64(5), after.EdgeRowsAccepted, "every offered row folds exactly")
+	require.Zero(t, after.EdgeRowsDropped)
 }
 
 // Redis focused tests: one-minute-at-a-time read-only publish with at most
@@ -1013,7 +1034,9 @@ func TestRed_FlowPreviousAccountOwnershipBoundaries(t *testing.T) {
 	previous := int64(7)
 	row := ownerTestRow(11)
 	row.PreviousAccountID = &previous
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{row}))
+	// v3-F1: Submit successor — the fact carries the value; no pointee is
+	// retained anywhere on the path.
+	foldOneRow(t, owner, m, row)
 	previous = 99
 	fm, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -1085,8 +1108,9 @@ func TestWorkerManager_ReverseShutdownInflightFlowPGSealedNoop(t *testing.T) {
 	w.SetClock(func() time.Time { return fixed })
 	m := fixed.Truncate(time.Minute).Unix()
 
-	// One accepted submission drained before the in-flight flush.
-	require.Equal(t, SubmitAccepted, owner.Submit(m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+	// One accepted fact folded before the in-flight flush.
+	// v3-F1: Submit successor — same row through the request walk.
+	foldOneRow(t, owner, m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 
@@ -1113,11 +1137,8 @@ func TestWorkerManager_ReverseShutdownInflightFlowPGSealedNoop(t *testing.T) {
 		t.Fatal("manager shutdown did not return past the sealed worker")
 	}
 	require.Error(t, shutdownErr, "drain-incomplete Close surfaces through the manager")
-	select {
-	case <-owner.loopDone:
-	case <-time.After(10 * time.Second):
-		t.Fatal("owner loop did not join after manager shutdown")
-	}
+	// v3-F1: no owner loop remains (nothing is queued), so there is no loop
+	// to join — owner.Close is synchronous; the seal above already ran.
 	sealedStats := owner.SnapshotStats()
 	sealedRows := mustFlowRows(t, rec, m)
 
@@ -1170,9 +1191,12 @@ func TestRed_FlowPostSealEnqueueStaysResidual(t *testing.T) {
 	fme, ok := rec.FlowMinute(m + 120)
 	require.True(t, ok)
 	require.Equal(t, legacyEdges, fme.Edges(), "post-seal legacy edges preserved")
-	require.Equal(t, before.EdgeRowsAccepted, after.EdgeRowsAccepted, "no accepted-class state after seal")
+	// v3-F1: seal sweeps the unconfirmed pre-seal credit (accepted 1 -> 0,
+	// residual +1) and the post-seal fold lands residual (+1) — no
+	// accepted-class state survives seal either way.
+	require.Equal(t, int64(0), after.EdgeRowsAccepted, "seal leaves no accepted-class state")
 	require.Equal(t, before.EdgeRowsDropped, after.EdgeRowsDropped)
-	require.Equal(t, before.ResidualRows+1, after.ResidualRows, "exactly the offered row reclassified residual")
+	require.Equal(t, before.ResidualRows+2, after.ResidualRows, "swept credit plus the post-seal residual fold")
 	require.Equal(t, before.Processed, after.Processed, "consumer path touches no submission counters")
 	require.Equal(t, before.ResidualSubmissions, after.ResidualSubmissions)
 	require.Empty(t, owner.redisCandidateMinutes(m+3600), "no post-seal publish candidacy")

@@ -13,12 +13,15 @@ import (
 // reservation reject 不耗 attempt）。legacy 预生成加权序列扫描已随
 // cutover 物理删除——未编译路由（编译车道尚未产出该桶）直接 ErrFormatUnavailable。
 // 调用方完成请求后必须 Release + MarkResult。
+//
+// v4-S1: the session is a stack value; the scheduler call takes a stack
+// pointer that never escapes (nothing retained across calls).
 func (s *Scheduler) Select(groupID int64, format domain.RequestFormat, model string) (*Selection, error) {
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{ApplyModelMapping: true}, RouteRefFor(groupID, string(format), model))
 	if err != nil {
 		return nil, err
 	}
-	sel, _, rerr := s.ReserveAttempt(plan)
+	sel, _, rerr := s.ReserveAttempt(&plan)
 	if rerr != nil {
 		return nil, rerr
 	}
@@ -31,7 +34,7 @@ func (s *Scheduler) SelectOpaque(groupID int64, format domain.RequestFormat, mod
 	if err != nil {
 		return nil, err
 	}
-	sel, _, reserveErr := s.ReserveAttempt(plan)
+	sel, _, reserveErr := s.ReserveAttempt(&plan)
 	return sel, reserveErr
 }
 

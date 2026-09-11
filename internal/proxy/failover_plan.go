@@ -21,28 +21,33 @@ func (p *Proxy) normalizedAttempts() int {
 // dispatch is plan-backed: an absent compiled plan fails closed through the
 // typed selection error path (handleSelectError/statusFor), never a second
 // selection lane.
-func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*scheduler.Selection, *scheduler.AttemptPlan, error) {
+//
+// v4-S1: the plan is a stack selectSession value (never boxed); the settled
+// Attempt is threaded by value alongside it, so no path value-returns
+// CurrentAttempt on the hot path — identity is projected once at settle/arm
+// and read downstream.
+func (p *Proxy) selectWithPlan(groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*scheduler.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
 	if p.sched == nil {
-		return nil, nil, scheduler.ErrGroupNotFound
+		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, scheduler.ErrGroupNotFound
 	}
 	route := scheduler.RouteRefFor(groupID, string(format), model)
 	return p.selectWithPlanForRoute(route, groupID, format, model, identity)
 }
 
-func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*scheduler.Selection, *scheduler.AttemptPlan, error) {
+func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, format domain.RequestFormat, model string, identity scheduler.AttemptPlanIdentity) (*scheduler.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
 	if p.sched == nil {
-		return nil, nil, scheduler.ErrGroupNotFound
+		return nil, scheduler.AttemptPlan{}, scheduler.Attempt{}, scheduler.ErrGroupNotFound
 	}
 	identity.MaxAttempts = uint8(p.normalizedAttempts())
 	plan, err := p.sched.NewAttemptPlan(identity, route)
 	if err != nil {
-		return nil, nil, err
+		return nil, plan, scheduler.Attempt{}, err
 	}
-	sel, err := p.reservePlanAttempt(plan)
+	sel, attempt, err := p.reservePlanAttempt(&plan)
 	if err != nil {
-		return nil, plan, err
+		return nil, plan, scheduler.Attempt{}, err
 	}
-	return sel, plan, nil
+	return sel, plan, attempt, nil
 }
 
 // reservePlanAttempt advances one plan dispatch and enforces the canonical
@@ -51,16 +56,16 @@ func (p *Proxy) selectWithPlanForRoute(route scheduler.RouteRef, groupID int64, 
 // route/quality/model identity, so the lease is released and the selection
 // fails closed as format-unavailable — never dispatched under a fabricated
 // identity.
-func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*scheduler.Selection, error) {
+func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*scheduler.Selection, scheduler.Attempt, error) {
 	sel, attempt, err := p.sched.ReserveAttempt(plan)
 	if err != nil {
-		return nil, err
+		return nil, scheduler.Attempt{}, err
 	}
 	if attempt.Validate() != nil {
 		sel.Release()
-		return nil, scheduler.ErrFormatUnavailable
+		return nil, scheduler.Attempt{}, scheduler.ErrFormatUnavailable
 	}
-	return sel, nil
+	return sel, attempt, nil
 }
 
 // retryOutcomeForAttempt projects the real plan-canonical attempt identity
@@ -82,17 +87,14 @@ func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, 
 }
 
 // shouldRetryWithPlan consults the typed retry matrix with the canonical
-// identity of the attempt that just ran. Without a plan there is no attempt
-// identity and no failover: the plan-less lane does not exist. hard marks a
-// hard-continuation dispatch: the bound account is the only valid target, so
-// the overlay sets HardContinuation (and the terminal-429 shape the outcome
-// contract demands) and the matrix never migrates it.
-func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error, plan *scheduler.AttemptPlan, hard bool) bool {
-	if plan == nil {
-		return false
-	}
-	attempt, ok := plan.CurrentAttempt()
-	if !ok {
+// identity of the attempt that just ran (threaded settle value — v4-S1: no
+// CurrentAttempt on the hot path). Without attempt identity there is no
+// failover. hard marks a hard-continuation dispatch: the bound account is the
+// only valid target, so the overlay sets HardContinuation (and the
+// terminal-429 shape the outcome contract demands) and the matrix never
+// migrates it.
+func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error, attempt scheduler.Attempt, hard bool) bool {
+	if attempt.AttemptID == "" || attempt.AccountID == 0 {
 		return false
 	}
 	o := retryOutcomeForAttempt(attempt, code, callErr, ctx)
@@ -109,7 +111,8 @@ func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error
 // verdict is final (ErrAttemptsExhausted / ErrNoAvailable propagate to the
 // exhaustion path; reservation rejects consumed no attempt inside
 // ReserveAttempt). There is no plan-less fall-through — a nil plan has no
-// selection lane and fails closed.
-func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan) (*scheduler.Selection, error) {
+// selection lane and fails closed. The settled Attempt threads alongside the
+// selection (v4-S1 session-local projection).
+func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan) (*scheduler.Selection, scheduler.Attempt, error) {
 	return p.reservePlanAttempt(plan)
 }

@@ -112,7 +112,9 @@ func TestRoutingCompilerWireGoldenSHA(t *testing.T) {
 	v, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	sum := sha256.Sum256(decisionViewBytes(v))
-	require.Equal(t, "8de1325c127d7815f11b5bba9a9634958a64c3fc099e72fa1ddde8356a66415f", hexOf(sum[:]), "golden serialized DecisionView")
+	// v4-S2: table keys are normalized (hex lives in the interned decision
+	// values) — golden regenerated for the normalized key form.
+	require.Equal(t, "e407ad25ead1264eb82967a38c669322b27b8da78116394e390e5384eb525b73", hexOf(sum[:]), "golden serialized DecisionView")
 }
 
 func hexOf(b []byte) string {

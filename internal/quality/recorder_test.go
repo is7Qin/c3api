@@ -300,14 +300,16 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 	require.LessOrEqual(t, r.MinuteBucketCount(), 2)
 	require.Greater(t, r.QualityOverflow(), int64(0))
 	for i := 0; i < 5; i++ {
-		r.AddFlowMinute(int64(2000+i), [8]int64{int64(i)})
+		r.AddFlowMinute(int64(2000+i), [8]int64{int64(i + 1)})
 	}
-	// The flow lane is owner-bounded independently of the quality lane:
-	// each lane caps at minuteCap buckets, neither lane evicts the other.
-	require.LessOrEqual(t, r.FlowOwner().SnapshotStats().PendingMinutes, 2)
-	require.Greater(t, r.FlowOverflow(), int64(0))
+	// v3-F1: the flow lane has no minute cap and no pressure eviction — all
+	// five legacy minutes stay retained with zero loss counters. Only the
+	// quality lane above stays bounded.
+	require.Equal(t, 5, r.FlowOwner().SnapshotStats().PendingMinutes)
+	require.Equal(t, int64(0), r.FlowOverflow())
+	// MinuteOverflow stays quality-owned: the quality evictions above bump
+	// it; the flow lane contributes nothing without eviction.
 	require.Greater(t, r.MinuteOverflow(), int64(0))
-	require.LessOrEqual(t, r.PendingBytes(), r.pendingCapBytes+EstimatedFlowMinuteBytes)
 }
 
 func TestQualityRecorder_FlowWholeMinute_EdgeArrayAPI(t *testing.T) {
@@ -330,9 +332,10 @@ func TestQualityRecorder_FlowWholeMinute_EdgeArrayAPI(t *testing.T) {
 	require.Equal(t, [8]int64{0, 10, 20, 999, 40, 50, 60, 70}, fm.Edges())
 	r.AddFlowMinute(minute, edges)
 	require.Equal(t, 1, r.MinuteBucketCount())
-	r.minuteCap = 1
+	// v3-F1: no minute-cap eviction — the newcomer is admitted beside the
+	// retained minute.
 	r.AddFlowMinute(minute+1, edges)
-	require.LessOrEqual(t, r.MinuteBucketCount(), 1)
+	require.Equal(t, 2, r.MinuteBucketCount())
 }
 
 func TestQualityRecorder_Close_PreventsNewBegin_LetsExistingComplete(t *testing.T) {

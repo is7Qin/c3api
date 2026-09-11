@@ -429,12 +429,12 @@ func TestAttemptObserverMatrix_preResponse429SingleMarkResult(t *testing.T) {
 	p := newTestProxy(t, up.URL, 1)
 	p.cfg.FailoverAttempts = 1
 	rec, fc := wireObserverHarness(t, p)
-	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
+	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-429", UserID: 1})
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
-		"req-429", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{},
+		"req-429", 10, time.Now(), "gpt-4o", nil, sel, plan, attempt, attemptState{},
 		rejectedPipelineAttempt{code: http.StatusTooManyRequests}, &httpSink{}, false)
 
 	flow := fc.snapshot()
@@ -460,13 +460,13 @@ func TestAttemptObserverMatrix_panicDuringDispatchAbandonsPin(t *testing.T) {
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 	rec, fc := wireObserverHarness(t, p)
-	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
+	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-panic", UserID: 1})
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	require.Panics(t, func() {
 		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
-			"req-panic", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{},
+			"req-panic", 10, time.Now(), "gpt-4o", nil, sel, plan, attempt, attemptState{},
 			panickingAttempt{}, &httpSink{}, false)
 	})
 	require.Empty(t, fc.snapshot(), "panic without a terminal outcome must not fabricate flow")
@@ -491,7 +491,7 @@ func TestAttemptObserverMatrix_attemptContextBeginsAtDispatch(t *testing.T) {
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 	rec, fc := wireObserverHarness(t, p)
-	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
+	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-begin", UserID: 1})
 	require.NoError(t, err)
 
@@ -507,7 +507,7 @@ func TestAttemptObserverMatrix_attemptContextBeginsAtDispatch(t *testing.T) {
 	go func() {
 		defer close(done)
 		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
-			"req-begin", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{}, att, &httpSink{}, false)
+			"req-begin", 10, time.Now(), "gpt-4o", nil, sel, plan, attempt, attemptState{}, att, &httpSink{}, false)
 	}()
 	got := <-inflightDuringCall
 	// The barrier attempt returns handled=true without completing the observer;

@@ -159,7 +159,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// 选号（含账号并发槽抢占）：格式硬过滤由调度器路由承担（模板
 	// SupportedFormats 含 resp-ws 才建路由）。挂死客户端不占槽（槽在首帧后取）。
 	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
-	sel, plan, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponsesWS, reqModel, identity)
+	sel, plan, attempt, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponsesWS, reqModel, identity)
 	if err != nil {
 		wsWriteError(client, selectErrorMessage(err))
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", domain.FormatOpenAIResponsesWS, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
@@ -169,7 +169,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// fail-closed（释放已占并发槽，零上游拨号）。
 	var contBinding *continuation.Binding
 	if contPrevID != "" {
-		b, ferr := p.contResolve(r.Context(), rm.meta.UserID, groupID, contProtocolWS, contPrevID, plan)
+		b, ferr := p.contResolve(r.Context(), rm.meta.UserID, groupID, contProtocolWS, contPrevID, attempt)
 		if ferr != nil {
 			sel.Release()
 			wsWriteError(client, ferr.msg)
@@ -180,13 +180,13 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	}
 	// 续接钉选：绑定账号身份漂移/不可派生 → fail-closed（错误帧），绝不迁移。
 	if contBinding != nil {
-		pinned, ferr := p.contPin(plan, sel, contBinding)
+		pinned, pinnedAttempt, ferr := p.contPin(&plan, sel, attempt, contBinding)
 		if ferr != nil {
 			wsWriteError(client, ferr.msg)
 			p.recordRejected(r.Context(), reqID, groupID, contBinding.AccountID, reqModel, "", domain.FormatOpenAIResponsesWS, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
 			return
 		}
-		sel = pinned
+		sel, attempt = pinned, pinnedAttempt
 	}
 	defer leaseGuard(sel)
 
@@ -197,7 +197,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// 固定文案由 wsSink 承载（WS 无 Retry-After/429 语义）。codex 拨号分类
 	//（handleCodexDialError 的 stop 分支——501/fatal/4xx 已收尾）留在
 	// wsAttempt 内（不统一 codex 4xx 收尾差异：分类代码位置 + 错误文本来源）。
-	p.failoverLoopWithPlan(w, r, domain.FormatOpenAIResponsesWS, reqID, groupID, start, reqModel, nil, sel, plan,
+	p.failoverLoopWithPlan(w, r, domain.FormatOpenAIResponsesWS, reqID, groupID, start, reqModel, nil, sel, plan, attempt,
 		attemptState{client: client, firstTyp: firstTyp, first: first, stripTier: stripTier, hardContinuation: contBinding != nil},
 		p.wsAttempt, p.wsSink, true)
 }
