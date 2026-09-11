@@ -4,7 +4,6 @@ package proxy
 import (
 	"encoding/hex"
 
-	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
@@ -88,36 +87,7 @@ func flowOutcomeToken(o AttemptOutcome) string {
 	}
 }
 
-// flowDispatchFromAttempt projects one completed plan-backed dispatch onto
-// the canonical flow edge. Every identity field (route/quality/fingerprint/
-// template/account/models/ordinal/lane/generation/revision/previous IDs)
-// comes from the real scheduler.Attempt; terminal facts come from the
-// completed outcome. PreviousOutcome/TransitionReason are classifications of
-// the real recorded transition (empty previous outcome until a prior edge was
-// appended), never fabricated identifiers.
-func flowDispatchFromAttempt(a scheduler.Attempt, o AttemptOutcome, prevOutcome string) quality.FlowDispatch {
-	d := quality.FlowDispatch{
-		RouteClassID:      a.RouteClassID,
-		QualityClassID:    a.QualityClassID,
-		Fingerprint:       a.CandidateFingerprint,
-		TemplateID:        a.TemplateID,
-		AccountID:         a.AccountID,
-		RequestedModel:    a.RequestedModel,
-		MappedModel:       a.MappedModel,
-		Generation:        int64(a.RoutingGeneration),
-		LifecycleRevision: a.LifecycleRevision,
-		Ordinal:           a.Ordinal,
-		Lane:              string(a.Lane),
-		PreviousAttemptID: a.PreviousAttemptID,
-		PreviousAccountID: a.PreviousAccountID,
-		PreviousOutcome:   prevOutcome,
-		Outcome:           flowOutcomeToken(o),
-		IsTerminal:        o.Terminal,
-	}
-	if a.Ordinal == 1 {
-		d.TransitionReason = "initial"
-	} else {
-		d.TransitionReason = "failover"
-	}
-	return d
-}
+// flowDispatchFromAttempt is superseded by the fold-at-source stash
+// (foldOwner.append): dispatch attempt data flows into stack fact values at
+// settle instead of heap Dispatch rows. The outcome token mapping above is
+// the single token source.

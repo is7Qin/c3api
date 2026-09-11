@@ -48,7 +48,7 @@ func TestAttemptPlan_overflowTailFullyScannedBeforeExhaustion(t *testing.T) {
 		Primary:  ccPrimary(primary...),
 		Degraded: ccDegraded(13, 14),
 	})
-	got, err := reserveAll(t, p, func(int64) bool { return false })
+	got, err := reserveAll(t, &p, func(int64) bool { return false })
 	require.ErrorIs(t, err, ErrAttemptsExhausted)
 	require.NotErrorIs(t, err, ErrNoAvailable)
 	want := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}

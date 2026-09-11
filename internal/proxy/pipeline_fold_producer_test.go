@@ -21,7 +21,9 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-// --- flow-chain producer harness: plan-backed proxy + recorder + tap ---
+// --- fold producer harness: plan-backed proxy + recorder + tap ---
+// v3-F1: the FlowChain box is deleted; the producer stash folds the same
+// edges through the completion walk with identical counting.
 
 func collectFlowRows(rec *quality.Recorder) []repository.RoutingFlowRow {
 	var out []repository.RoutingFlowRow
@@ -61,7 +63,7 @@ func doChat(t *testing.T, p *Proxy) *httptest.ResponseRecorder {
 
 // --- success: one canonical terminal edge, conserved into the recorder ---
 
-func TestFlowChainProducer_planBackedSuccessEnqueuesCanonicalRow(t *testing.T) {
+func TestFoldProducer_planBackedSuccessEnqueuesCanonicalRow(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -94,7 +96,7 @@ func TestFlowChainProducer_planBackedSuccessEnqueuesCanonicalRow(t *testing.T) {
 
 // --- retry 429 → success: two edges, real previous linkage ---
 
-func TestFlowChainProducer_retry429ThenSuccessConservesChain(t *testing.T) {
+func TestFoldProducer_retry429ThenSuccessConservesChain(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	var calls atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +138,7 @@ func TestFlowChainProducer_retry429ThenSuccessConservesChain(t *testing.T) {
 
 // --- exhaustion: the last real edge is finalized, never fabricated ---
 
-func TestFlowChainProducer_exhaustionFinalizesLastEdge(t *testing.T) {
+func TestFoldProducer_exhaustionFinalizesLastEdge(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -160,7 +162,7 @@ func TestFlowChainProducer_exhaustionFinalizesLastEdge(t *testing.T) {
 
 // --- handled failure (4xx): terminal edge, complete path, not incomplete ---
 
-func TestFlowChainProducer_handledFailureCompletesNotIncomplete(t *testing.T) {
+func TestFoldProducer_handledFailureCompletesNotIncomplete(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -182,7 +184,7 @@ func TestFlowChainProducer_handledFailureCompletesNotIncomplete(t *testing.T) {
 
 // --- client cancel: in flow, excluded from quality ---
 
-func TestFlowChainProducer_clientCancelIsFlowOnly(t *testing.T) {
+func TestFoldProducer_clientCancelIsFlowOnly(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -199,6 +201,8 @@ func TestFlowChainProducer_clientCancelIsFlowOnly(t *testing.T) {
 
 	rows := collectFlowRows(rec)
 	require.Len(t, rows, 1, "client cancel must be included in flow")
+	// v3-F1 Amendment A1: the cancel edge keeps its census string verbatim
+	// (old tree writes client_cancel; error-folding would corrupt PG rows).
 	require.Equal(t, "client_cancel", rows[0].Outcome)
 	require.True(t, rows[0].IsTerminal)
 	require.Zero(t, snapshotQualityAttempts(rec), "client cancel must stay out of the quality denominator")
@@ -208,7 +212,7 @@ func TestFlowChainProducer_clientCancelIsFlowOnly(t *testing.T) {
 
 // --- post-commit failure: single terminal edge, quality lowered ---
 
-func TestFlowChainProducer_postCommitFailureSingleTerminalEdge(t *testing.T) {
+func TestFoldProducer_postCommitFailureSingleTerminalEdge(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	release := make(chan struct{})
 	defer close(release)
@@ -249,20 +253,21 @@ func TestFlowChainProducer_postCommitFailureSingleTerminalEdge(t *testing.T) {
 
 // --- panic: chain closed exactly once as incomplete, no rows ---
 
-func TestFlowChainProducer_panicClosesChainAsIncomplete(t *testing.T) {
+func TestFoldProducer_panicClosesChainAsIncomplete(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	p := chatProxyWithPlan(t, up.URL, 2, []int64{1, 2})
 	rec, fc := wireObserverHarness(t, p)
-	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
+	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-flow-panic", UserID: 1})
 	require.NoError(t, err)
-	require.NotNil(t, plan)
+	// v4-S1: the session is a stack value — bound identity echoes the request.
+	require.Equal(t, "req-flow-panic", plan.Identity().RequestID)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	require.Panics(t, func() {
 		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
-			"req-flow-panic", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{},
+			"req-flow-panic", 10, time.Now(), "gpt-4o", nil, sel, plan, attempt, attemptState{},
 			panickingAttempt{}, &httpSink{}, false)
 	})
 	require.Empty(t, collectFlowRows(rec), "a panicked chain must not enqueue rows")
@@ -291,19 +296,20 @@ func (doubleCompleteAttempt) call(ctx context.Context, w http.ResponseWriter, r 
 	return 200, nil, nil, true, nil
 }
 
-func TestFlowChainProducer_duplicateCompletionAppendsExactlyOnce(t *testing.T) {
+func TestFoldProducer_duplicateCompletionAppendsExactlyOnce(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	p := chatProxyWithPlan(t, up.URL, 2, []int64{1, 2})
 	rec, _ := wireObserverHarness(t, p)
-	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
+	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-flow-dup", UserID: 1})
 	require.NoError(t, err)
-	require.NotNil(t, plan)
+	// v4-S1: the session is a stack value — bound identity echoes the request.
+	require.Equal(t, "req-flow-dup", plan.Identity().RequestID)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
-		"req-flow-dup", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{},
+		"req-flow-dup", 10, time.Now(), "gpt-4o", nil, sel, plan, attempt, attemptState{},
 		doubleCompleteAttempt{}, &httpSink{}, false)
 
 	rows := collectFlowRows(rec)
@@ -328,7 +334,7 @@ func (a noObservationAttempt) call(ctx context.Context, w http.ResponseWriter, r
 	return 0, nil, nil, true, nil
 }
 
-func TestFlowChainProducer_planlessDispatchProducesNoRowsNoObservation(t *testing.T) {
+func TestFoldProducer_planlessDispatchProducesNoRowsNoObservation(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -341,7 +347,7 @@ func TestFlowChainProducer_planlessDispatchProducesNoRowsNoObservation(t *testin
 	go func() {
 		defer close(done)
 		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
-			"req-flow-planless", 10, time.Now(), "gpt-4o", nil, sel, nil, attemptState{},
+			"req-flow-planless", 10, time.Now(), "gpt-4o", nil, sel, scheduler.AttemptPlan{}, scheduler.Attempt{}, attemptState{},
 			noObservationAttempt{t}, &httpSink{}, false)
 	}()
 	<-done
@@ -358,7 +364,7 @@ func TestFlowChainProducer_planlessDispatchProducesNoRowsNoObservation(t *testin
 
 // --- concurrent same-minute requests: conservation across chains ---
 
-func TestFlowChainProducer_concurrentRequestsConserveSameMinute(t *testing.T) {
+func TestFoldProducer_concurrentRequestsConserveSameMinute(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -391,28 +397,20 @@ func TestFlowChainProducer_concurrentRequestsConserveSameMinute(t *testing.T) {
 
 // --- adapter purity: only real attempt metadata reaches the edge ---
 
-// TestPipelineObserver_SettlementSurvivesStalledFlowOwner pins the async
-// contract end to end through the request pipeline: with the flow owner's
-// bounded queue full and its consumer never running (stalled), settlement
-// still completes the HTTP response without waiting, the overflow is
-// telemetry-only (quality counters keep working, chain counters record the
-// loss once), and no client-visible outcome changes. Watchdog proves
-// non-blocking; no sleeps.
-func TestPipelineObserver_SettlementSurvivesStalledFlowOwner(t *testing.T) {
+// TestPipelineObserver_SettlementNeverBlocksOnFlowFold pins the request-path
+// contract end to end through the request pipeline: folding is a bounded
+// synchronous walk of stack facts (no queue, no consumer to stall), so
+// settlement completes with exactly-once conservation and zero loss.
+// v3-F1: the stalled-queue test is deleted with the Submit queue (§5.1
+// DELETION LIST) — retargeted from survive-the-stall to never-blocks.
+func TestPipelineObserver_SettlementNeverBlocksOnFlowFold(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	p := chatProxyWithPlan(t, up.URL, 2, []int64{1, 2})
 	rec, _ := wireObserverHarness(t, p)
-	owner := rec.FlowOwner()
-	// Given: the fixed queue is exhausted by a stalled consumer (never
-	// started): every request-side Submit from here on is a queue overflow.
-	for owner.Submit(2000, nil) == quality.SubmitAccepted {
-	}
-	stalled := owner.Stats().(quality.FlowOwnerStats)
-	require.Equal(t, quality.FlowOwnerQueueCap, stalled.Queued)
 
-	// When: a real plan-backed request settles on the stalled owner.
+	// When: a real plan-backed request settles.
 	type outcome struct {
 		code int
 	}
@@ -428,22 +426,27 @@ func TestPipelineObserver_SettlementSurvivesStalledFlowOwner(t *testing.T) {
 	select {
 	case got = <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("request settlement waited on the stalled flow owner")
+		t.Fatal("request settlement waited on the flow fold")
 	}
 
-	// Then: HTTP outcome unchanged, telemetry loss counted once, quality
-	// lane intact, no incomplete-chain mislabel.
+	// Then: HTTP outcome unchanged, every edge conserved exactly once,
+	// quality lane intact, no incomplete-chain mislabel, zero loss.
 	require.Equal(t, 200, got.code)
-	require.Equal(t, int64(1), quality.FlowChainEnqueueOverflow(), "overflow counted once, request unaffected")
+	rows := collectFlowRows(rec)
+	require.Len(t, rows, 1)
+	require.Equal(t, int64(1), rows[0].ChainCount)
 	require.Zero(t, quality.FlowChainIncompleteObserved())
-	require.Equal(t, int64(1), snapshotQualityAttempts(rec), "quality accounting independent of flow overflow")
+	require.Zero(t, quality.FlowChainEnqueueOverflow(), "fold-at-source has no queue to overflow")
+	require.Equal(t, int64(1), snapshotQualityAttempts(rec), "quality accounting independent of the flow fold")
 	require.Zero(t, rec.GlobalInflight())
-	after := owner.Stats().(quality.FlowOwnerStats)
-	require.Equal(t, int64(1), after.Overflowed-stalled.Overflowed)
-	require.Greater(t, after.EdgeRowsDropped, int64(0))
 }
 
-func TestFlowDispatchAdapter_usesRealAttemptMetadataOnly(t *testing.T) {
+func TestFoldStash_usesRealAttemptMetadataOnly(t *testing.T) {
+	// v3-F1: flowDispatchFromAttempt/FlowDispatch are deleted with the box;
+	// the same real-attempt-metadata contract now holds on the stash→fact
+	// mapping — identity from the real scheduler.Attempt, terminal facts
+	// from the completed outcome, previous linkage from the real recorded
+	// transition.
 	prev := "req-x:1"
 	prevAcct := int64(7)
 	a := scheduler.Attempt{
@@ -455,32 +458,40 @@ func TestFlowDispatchAdapter_usesRealAttemptMetadataOnly(t *testing.T) {
 		CallerCategory: "chat", OperationTag: "chat_completions",
 	}
 	require.NoError(t, a.Validate())
+	rec, err := quality.NewRecorder(50000)
+	require.NoError(t, err)
+	f := newFoldOwner(rec, nil)
+	f.arm(a)
 	o := pipelineBase(a)
 	o.Result = ResultFailed
 	o.HTTPStatus = 503
 	o.Commit = CommitUpstreamResponded
 	o.Terminal = true
+	f.append(o)
+	f.settle(false)
 
-	d := flowDispatchFromAttempt(a, o, "429")
-	require.Equal(t, a.RouteClassID, d.RouteClassID)
-	require.Equal(t, a.QualityClassID, d.QualityClassID)
-	require.Equal(t, a.CandidateFingerprint, d.Fingerprint)
-	require.Equal(t, a.TemplateID, d.TemplateID)
-	require.Equal(t, a.AccountID, d.AccountID)
-	require.Equal(t, a.RequestedModel, d.RequestedModel)
-	require.Equal(t, a.MappedModel, d.MappedModel)
-	require.Equal(t, int64(a.RoutingGeneration), d.Generation)
-	require.Equal(t, a.LifecycleRevision, d.LifecycleRevision)
-	require.Equal(t, a.Ordinal, d.Ordinal)
-	require.Equal(t, string(a.Lane), d.Lane)
-	require.Equal(t, a.PreviousAttemptID, d.PreviousAttemptID)
-	require.Equal(t, a.PreviousAccountID, d.PreviousAccountID)
-	require.Equal(t, "429", d.PreviousOutcome)
-	require.Equal(t, "failover", d.TransitionReason)
-	require.Equal(t, "5xx", d.Outcome)
-	require.True(t, d.IsTerminal)
+	rows := collectFlowRows(rec)
+	require.Len(t, rows, 1, "one stashed dispatch emits exactly one edge")
+	r := rows[0]
+	require.Equal(t, a.AccountID, r.AccountID)
+	require.EqualValues(t, a.Ordinal, r.Ordinal)
+	require.Equal(t, string(a.Lane), r.Lane)
+	require.Equal(t, int64(a.RoutingGeneration), r.Generation)
+	require.NotNil(t, r.PreviousAccountID, "previous linkage comes from the real attempt")
+	require.Equal(t, prevAcct, *r.PreviousAccountID)
+	require.Empty(t, r.PreviousOutcome, "no prior edge stashed means no previous outcome")
+	require.Equal(t, "5xx", r.Outcome)
+	require.Equal(t, "failover", r.TransitionReason)
+	require.True(t, r.IsTerminal)
 
-	rc, err := hex.DecodeString(d.RouteClassID)
+	var wantRoute domain.RouteClassIDVal
+	decoded, err := hex.DecodeString(a.RouteClassID)
 	require.NoError(t, err)
-	require.Len(t, rc, 32)
+	copy(wantRoute[:], decoded)
+	require.Equal(t, wantRoute, r.RouteClassID, "route class must be the real compiled identity")
+	var wantFP domain.CandidateFingerprintVal
+	decodedFP, err := hex.DecodeString(a.CandidateFingerprint)
+	require.NoError(t, err)
+	copy(wantFP[:], decodedFP)
+	require.Equal(t, wantFP, r.CandidateFingerprint, "fingerprint must be real, never synthetic")
 }

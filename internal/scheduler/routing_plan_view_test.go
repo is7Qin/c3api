@@ -33,8 +33,15 @@ func TestRoutingPlan_GenerationMatchesPublishedRoot(t *testing.T) {
 	plan = s.CurrentRoutingPlan()
 	require.Equal(t, s.View().Generation(), plan.Generation)
 	require.Len(t, plan.Routes, 1)
-	require.Equal(t, route, plan.Routes[0].Ref)
-	require.NotEmpty(t, route.RouteClassID, "RouteRefFor must carry canonical route class hex")
+	// v4-S2: the query key stays normalized; the projected Ref carries the
+	// interned per-route hex so the admin API bytes are unchanged.
+	rd, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIChat), "m")
+	require.True(t, ok)
+	require.NotEmpty(t, rd.RouteClassID)
+	want := route
+	want.RouteClassID = rd.RouteClassID
+	require.Equal(t, want, plan.Routes[0].Ref)
+	require.NotEmpty(t, plan.Routes[0].Ref.RouteClassID, "projected Ref must carry the interned route class hex")
 }
 
 func TestRoutingPlan_RouteOrderDeterministicAndLaneOrderPreserved(t *testing.T) {
@@ -64,8 +71,14 @@ func TestRoutingPlan_RouteOrderDeterministicAndLaneOrderPreserved(t *testing.T) 
 
 	plan := s.CurrentRoutingPlan()
 	require.Len(t, plan.Routes, 3)
-	require.Equal(t, []RouteRef{antRoute, chatRoute, grpRoute},
-		[]RouteRef{plan.Routes[0].Ref, plan.Routes[1].Ref, plan.Routes[2].Ref},
+	// v4-S2: order compares on the normalized key; the interned hex rides the
+	// projected Refs (asserted non-empty below).
+	gotRefs := []RouteRef{plan.Routes[0].Ref, plan.Routes[1].Ref, plan.Routes[2].Ref}
+	for i := range gotRefs {
+		require.NotEmpty(t, gotRefs[i].RouteClassID)
+		gotRefs[i] = normRouteRef(gotRefs[i])
+	}
+	require.Equal(t, []RouteRef{antRoute, chatRoute, grpRoute}, gotRefs,
 		"routes sorted by (group, format, model, op, route-class)")
 
 	chat := plan.Routes[1]

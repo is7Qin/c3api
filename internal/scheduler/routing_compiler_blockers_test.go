@@ -56,11 +56,14 @@ func TestRoutingCompilerModelOperationSeparation(t *testing.T) {
 	require.NoError(t, err)
 	rrChat := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	rrResp := RouteRefFor(10, string(domain.FormatOpenAIResponses), "m")
-	require.NotEqual(t, rrChat.RouteClassID, rrResp.RouteClassID)
 	chatDec, ok := view.routes[rrChat]
 	require.True(t, ok)
 	respDec, ok := view.routes[rrResp]
 	require.True(t, ok)
+	// v4-S2: op separation lives in the interned per-route hex, not the normalized key.
+	require.NotEmpty(t, chatDec.RouteClassID)
+	require.NotEmpty(t, respDec.RouteClassID)
+	require.NotEqual(t, chatDec.RouteClassID, respDec.RouteClassID)
 	require.Contains(t, compiledAccountIDs(chatDec.Primary), int64(1))
 	require.Contains(t, compiledAccountIDs(respDec.Primary), int64(2))
 	require.NotEqual(t, compiledAccountIDs(chatDec.Primary), compiledAccountIDs(respDec.Primary), "operation separation must give different Primary")
@@ -260,12 +263,15 @@ func TestRoutingCompilerRouteRefCollisions(t *testing.T) {
 	require.NoError(t, err)
 	rrResp := RouteRefFor(10, string(domain.FormatOpenAIResponses), "m")
 	rrWS := RouteRefFor(10, string(domain.FormatOpenAIResponsesWS), "m")
-	require.NotEqual(t, rrResp.RouteClassID, rrWS.RouteClassID)
 	require.NotEqual(t, rrResp.OperationTag, rrWS.OperationTag)
-	_, ok1 := view.routes[rrResp]
-	_, ok2 := view.routes[rrWS]
+	respDec, ok1 := view.routes[rrResp]
+	wsDec, ok2 := view.routes[rrWS]
 	require.True(t, ok1)
 	require.True(t, ok2)
+	// v4-S2: op-distinctness lives in the interned per-route hex, not the normalized key.
+	require.NotEmpty(t, respDec.RouteClassID)
+	require.NotEmpty(t, wsDec.RouteClassID)
+	require.NotEqual(t, respDec.RouteClassID, wsDec.RouteClassID)
 	// Images generations vs edits also distinct
 	rrGen := RouteRef{GroupID: 10, Format: string(domain.FormatOpenAIImages), Model: "m", OperationTag: string(domain.OpImagesGenerations)}
 	rcGen, _ := domain.RouteClassID(10, domain.FormatOpenAIImages, "m", domain.OpImagesGenerations)

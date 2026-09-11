@@ -206,7 +206,7 @@ func applyPassthroughHeader(w http.ResponseWriter, then domain.RuleThen, hdr htt
 // 无预检语义）。
 // 记录（recordRejected/buildLog/finish/recordLog/MarkResult）参数逐字段与三份
 // 原内联管线一致（行为契约：状态码/错误帧/Retry-After/固定文案逐字节不变）。
-func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *scheduler.Selection, plan *scheduler.AttemptPlan, st attemptState, attempt upstreamAttempt, sink pipelineSink, precheck bool) {
+func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, body []byte, sel *scheduler.Selection, plan scheduler.AttemptPlan, attempt scheduler.Attempt, st attemptState, upstream upstreamAttempt, sink pipelineSink, precheck bool) {
 	lastSel := sel
 	var (
 		lastCode   int
@@ -214,15 +214,16 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		lastHdr    http.Header
 		lastBody   []byte
 	)
-	// FlowChain ownership: this loop is the SOLE producer. One request-local
-	// chain per plan-backed dispatched request, only when the quality
-	// recorder is wired; a dispatch without a canonical plan attempt never
-	// arms the chain and fabricates no row.
-	// settle runs last (registered first): Finalize+Complete exactly once on
-	// recorded chains, Close exactly once on panic/abandon/no-terminal.
-	var flow *flowChainOwner
-	if plan != nil && p.qualityRecorder != nil {
-		flow = newFlowChainOwner(p.qualityRecorder, p.pipelineFlowAppend)
+	// Fold-at-source ownership: this loop is the SOLE producer. One
+	// request-local stash per plan-backed dispatched request, only when the
+	// quality recorder is wired; a dispatch without a canonical plan attempt
+	// never arms the stash and fabricates no fact.
+	// settle runs last (registered first): the completion walk emits exactly
+	// once on recorded chains, or records the Close-row signal on
+	// panic/abandon/no-terminal.
+	var flow *foldOwner
+	if p.qualityRecorder != nil {
+		flow = newFoldOwner(p.qualityRecorder, p.pipelineFlowAppend)
 	}
 	panicked := false
 	defer func() { flow.settle(panicked) }()
@@ -280,9 +281,9 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// once — by the caller (handled=true terminal) or by the loop here
 		// (handled=false classification). openDispatch tracks the unfinished one
 		// for the deferred owner cleanup.
-		callCtx, dispatch := p.beginDispatch(r.Context(), sel, plan, flow)
+		callCtx, dispatch := p.beginDispatch(r.Context(), sel, attempt, flow)
 		openDispatch = dispatch
-		code, respBody, hdr, handled, callErr := attempt.call(callCtx, w, r, reqID, groupID, start, sel, reqModel, body, st)
+		code, respBody, hdr, handled, callErr := upstream.call(callCtx, w, r, reqID, groupID, start, sel, reqModel, body, st)
 		if handled {
 			return // attempt 已处理完毕（成功/客户端断开/流中止已记录；本地拒绝已写出无记录）
 		}
@@ -394,7 +395,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// plan-aware retry gating: committed/ambiguous/client-cancel/hard-continuation
 		// do not migrate. The typed retry matrix consumes the canonical attempt
 		// identity; without a plan there is no failover lane at all.
-		if !p.shouldRetryWithPlan(r.Context(), code, callErr, plan, st.hardContinuation) {
+		if !p.shouldRetryWithPlan(r.Context(), code, callErr, attempt, st.hardContinuation) {
 			sel.Release()
 			break
 		}
@@ -403,12 +404,12 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		if dispatched >= maxAttempts {
 			break
 		}
-		nextSel, selErr := p.selectNextWithPlan(plan)
+		nextSel, nextAttempt, selErr := p.selectNextWithPlan(&plan)
 		if selErr != nil {
 			// distinguish ErrNoAvailable vs AttemptsExhausted preserved via error; both lead to exhausted handling
 			break
 		}
-		sel = nextSel
+		sel, attempt = nextSel, nextAttempt
 		dispatched++
 	}
 	if !attempted {

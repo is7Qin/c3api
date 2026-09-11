@@ -33,11 +33,13 @@ func TestPipelineObserver_observedPreResponseLeavesCleanupToFailover(t *testing.
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
-	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
+	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-1", UserID: 1})
 	require.NoError(t, err)
-	attempt, ok := plan.CurrentAttempt()
+	// v4-S1: the threaded settle value and the session derivation coincide.
+	current, ok := plan.CurrentAttempt()
 	require.True(t, ok)
+	require.Equal(t, attempt, current)
 	flowCalls := 0
 	p.pipelineFlowAppend = func(outcome AttemptOutcome) {
 		require.Equal(t, AttemptID(attempt.AttemptID), outcome.ID)
@@ -56,7 +58,7 @@ func TestPipelineObserver_observedPreResponseLeavesCleanupToFailover(t *testing.
 	require.Equal(t, int64(1), runtime.Concurrency, "observer must leave the lease to failover cleanup")
 	p.cfg.FailoverAttempts = 1
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat, "req-1", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{}, rejectedPipelineAttempt{code: 429}, &httpSink{}, false)
+	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat, "req-1", 10, time.Now(), "gpt-4o", nil, sel, plan, attempt, attemptState{}, rejectedPipelineAttempt{code: 429}, &httpSink{}, false)
 	runtime, ok = p.sched.Runtime(sel.AccountID)
 	require.True(t, ok)
 	require.Zero(t, runtime.Concurrency, "observed exhaustion has one pipeline release owner")
@@ -71,11 +73,13 @@ func TestFailoverPipeline_observed4xxPreservesFinishAndMarkResult(t *testing.T) 
 			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(401)},
 			Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64PtrT(60 * 1000)}, ResponseCode: intPtrT(502), CustomMessage: strPtrT("upstream rejected request")}},
 	)
-	sel, plan, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
+	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-4xx", UserID: 1})
 	require.NoError(t, err)
-	attempt, ok := plan.CurrentAttempt()
+	// v4-S1: the threaded settle value and the session derivation coincide.
+	current, ok := plan.CurrentAttempt()
 	require.True(t, ok)
+	require.Equal(t, attempt, current)
 	flowCalls := 0
 	p.pipelineFlowAppend = func(AttemptOutcome) { flowCalls++ }
 	observer, owns := p.pipelineObserver(sel, attempt, p.pipelineFlowAppend)
@@ -87,7 +91,7 @@ func TestFailoverPipeline_observed4xxPreservesFinishAndMarkResult(t *testing.T) 
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	p.failoverLoopWithPlan(rec, req, domain.FormatOpenAIChat, "req-4xx", 10, time.Now(), "gpt-4o", nil, sel, plan, attemptState{}, rejectedPipelineAttempt{code: 401, body: []byte(`{"error":{"message":"balance"}}`)}, &httpSink{}, false)
+	p.failoverLoopWithPlan(rec, req, domain.FormatOpenAIChat, "req-4xx", 10, time.Now(), "gpt-4o", nil, sel, plan, attempt, attemptState{}, rejectedPipelineAttempt{code: 401, body: []byte(`{"error":{"message":"balance"}}`)}, &httpSink{}, false)
 
 	require.Equal(t, 1, flowCalls, "the loop observes the failed dispatch exactly once")
 	require.Equal(t, http.StatusBadGateway, rec.Code)
@@ -103,5 +107,7 @@ func TestFailoverPipeline_handledTruePerformsNoSharedCleanup(t *testing.T) {
 	p := &Proxy{}
 	p.pipelineFlowAppend = func(AttemptOutcome) { t.Fatal("handled attempt must not append flow") }
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	p.failoverLoopWithPlan(httptest.NewRecorder(), req, "chat", "req-handled", 1, time.Now(), "gpt-4o", nil, &scheduler.Selection{}, nil, attemptState{}, handledPipelineAttempt{}, &httpSink{}, false)
+	// v4-S1: the session and attempt thread by value — zero values here prove
+	// a handled terminal performs no shared cleanup without any identity.
+	p.failoverLoopWithPlan(httptest.NewRecorder(), req, "chat", "req-handled", 1, time.Now(), "gpt-4o", nil, &scheduler.Selection{}, scheduler.AttemptPlan{}, scheduler.Attempt{}, attemptState{}, handledPipelineAttempt{}, &httpSink{}, false)
 }

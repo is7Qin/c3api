@@ -261,63 +261,22 @@ func NewFlowMinute(minute int64, edges [8]int64) *FlowMinute {
 
 func NewFlowSnapshot(minute int64, rows []repository.RoutingFlowRow) *FlowMinute {
 	cp := make([]repository.RoutingFlowRow, len(rows))
-	copyFlowRows(cp, rows)
+	for i := range rows {
+		cp[i] = rows[i]
+		if rows[i].PreviousAccountID != nil {
+			v := *rows[i].PreviousAccountID
+			cp[i].PreviousAccountID = &v
+		}
+	}
 	return &FlowMinute{minute: minute, flowRows: cp}
-}
-
-// adoptFlowSnapshot wraps an already caller-owned row slice without copying.
-// Only the FlowOwner queue path uses it: Submit already deep-copied the
-// request rows into the submission, and every mergeLocked retention path
-// clones rows before storing them, so adoption cannot leak a shared slice or
-// PreviousAccountID pointer into the accumulator.
-func adoptFlowSnapshot(minute int64, rows []repository.RoutingFlowRow) *FlowMinute {
-	return &FlowMinute{minute: minute, flowRows: rows}
 }
 
 func NewEmptyFlowSnapshot(minute int64) *FlowMinute {
 	return &FlowMinute{minute: minute, emptySnapshot: true}
 }
 
-// flowEdgeIdentity is the complete identity of one flow edge inside a minute
-// snapshot: every stored field except ChainCount (the summed value) and the
-// flush-time stamps (InstanceSrc/AbsoluteSequence/TerminalMinute — the minute
-// bucket is the map key). Two rows with equal identity are the same edge.
-type flowEdgeIdentity struct {
-	identityVersion int16
-	routeClassID    domain.RouteClassIDVal
-	ordinal         int16
-	lane            string
-	accountID       int64
-	previousAccount int64
-	hasPrevious     bool
-	previousOutcome string
-	transition      string
-	outcome         string
-	isTerminal      bool
-	generation      int64
-	fingerprint     domain.CandidateFingerprintVal
-}
-
-func flowEdgeIdentityOf(r repository.RoutingFlowRow) flowEdgeIdentity {
-	id := flowEdgeIdentity{
-		identityVersion: r.IdentityVersion,
-		routeClassID:    r.RouteClassID,
-		ordinal:         r.Ordinal,
-		lane:            r.Lane,
-		accountID:       r.AccountID,
-		previousOutcome: r.PreviousOutcome,
-		transition:      r.TransitionReason,
-		outcome:         r.Outcome,
-		isTerminal:      r.IsTerminal,
-		generation:      r.Generation,
-		fingerprint:     r.CandidateFingerprint,
-	}
-	if r.PreviousAccountID != nil {
-		id.previousAccount = *r.PreviousAccountID
-		id.hasPrevious = true
-	}
-	return id
-}
+// flowEdgeIdentity is superseded by the packed attemptFact key (fold_fact.go):
+// identity is codes plus fixed-size byte arrays, never strings.
 
 func (f *FlowMinute) Minute() int64 { return f.minute }
 func (f *FlowMinute) Edge(i int) int64 {
@@ -350,7 +309,13 @@ func (f *FlowMinute) FlowRows() []repository.RoutingFlowRow {
 		return nil
 	}
 	cp := make([]repository.RoutingFlowRow, len(f.flowRows))
-	copyFlowRows(cp, f.flowRows)
+	for i := range f.flowRows {
+		cp[i] = f.flowRows[i]
+		if f.flowRows[i].PreviousAccountID != nil {
+			v := *f.flowRows[i].PreviousAccountID
+			cp[i].PreviousAccountID = &v
+		}
+	}
 	return cp
 }
 func (f *FlowMinute) SetFlowRows(rows []repository.RoutingFlowRow) {
@@ -358,7 +323,13 @@ func (f *FlowMinute) SetFlowRows(rows []repository.RoutingFlowRow) {
 		return
 	}
 	cp := make([]repository.RoutingFlowRow, len(rows))
-	copyFlowRows(cp, rows)
+	for i := range rows {
+		cp[i] = rows[i]
+		if rows[i].PreviousAccountID != nil {
+			v := *rows[i].PreviousAccountID
+			cp[i].PreviousAccountID = &v
+		}
+	}
 	f.flowRows = cp
 	f.emptySnapshot = false
 }
@@ -368,27 +339,15 @@ func (f *FlowMinute) Clone() *FlowMinute {
 	cp := *f
 	if f.flowRows != nil {
 		cp.flowRows = make([]repository.RoutingFlowRow, len(f.flowRows))
-		copyFlowRows(cp.flowRows, f.flowRows)
-	}
-	return &cp
-}
-
-func copyFlowRows(dst, src []repository.RoutingFlowRow) {
-	copy(dst, src)
-	for i := range dst {
-		if src[i].PreviousAccountID != nil {
-			v := *src[i].PreviousAccountID
-			dst[i].PreviousAccountID = &v
+		for i := range f.flowRows {
+			cp.flowRows[i] = f.flowRows[i]
+			if f.flowRows[i].PreviousAccountID != nil {
+				v := *f.flowRows[i].PreviousAccountID
+				cp.flowRows[i].PreviousAccountID = &v
+			}
 		}
 	}
-}
-
-func cloneInt64Pointer(value *int64) *int64 {
-	if value == nil {
-		return nil
-	}
-	v := *value
-	return &v
+	return &cp
 }
 
 type Snapshot struct {
@@ -424,8 +383,6 @@ type Recorder struct {
 	retiredCap      int
 	pendingCapBytes int64
 	minuteCap       int
-	flowRowCap      int
-	flowRowBytesCap int64
 	admission       atomic.Uint64
 	zeroCh          chan struct{}
 	finalSnapshot   atomic.Pointer[Snapshot]
@@ -447,8 +404,6 @@ func NewRecorder(effectiveMaxInflight int64) (*Recorder, error) {
 		retiredCap:           DefaultRetiredCap,
 		pendingCapBytes:      DefaultPendingCapBytes,
 		minuteCap:            DefaultMinuteBucketsCap,
-		flowRowCap:           DefaultFlowRowCap,
-		flowRowBytesCap:      DefaultPendingCapBytes,
 	}
 	r.flow = newFlowOwner(r)
 	return r, nil
@@ -889,7 +844,7 @@ func (r *Recorder) QualityOverflow() int64 { return r.qualityOverflow.Load() }
 func (r *Recorder) FlowOverflow() int64    { return r.flowOverflow.Load() }
 func (r *Recorder) MinuteOverflow() int64  { return r.minuteOverflow.Load() }
 func (r *Recorder) PendingBytes() int64 {
-	return r.pendingBytes.Load() + r.flow.pendingBytesSnapshot() + r.flow.queuedBytes.Load()
+	return r.pendingBytes.Load() + r.flow.pendingBytesSnapshot()
 }
 
 // MinuteBucketCount reports the total distinct pending minute buckets across
@@ -899,10 +854,7 @@ func (r *Recorder) MinuteBucketCount() int {
 	r.mu.Lock()
 	q := len(r.pendingQuality)
 	r.mu.Unlock()
-	r.flow.mu.Lock()
-	f := len(r.flow.pending)
-	r.flow.mu.Unlock()
-	return q + f
+	return q + r.flow.minuteCount()
 }
 func (r *Recorder) PinnedGauge() int64 {
 	r.mu.Lock()
@@ -1058,10 +1010,6 @@ func (r *Recorder) ensureFinalSnapshot() {
 	if r.finalSnapshot.Load() != nil {
 		return
 	}
-	if err := r.flow.closeSubmitFence(context.Background()); err != nil {
-		return
-	}
-	defer r.flow.submitFence.Unlock()
 	r.finalSnapshot.CompareAndSwap(nil, r.buildSnapshot())
 }
 

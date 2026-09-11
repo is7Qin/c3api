@@ -92,6 +92,12 @@ func TestRecorder_FlowSameMinuteMergeKeepsCapacityAccounting(t *testing.T) {
 	require.NoError(t, r.EnqueueFlowMinute(NewFlowSnapshot(minute.Unix(), []repository.RoutingFlowRow{
 		flowTestRow(minute, 1, 10, "success", true),
 	})))
+	// v3-F1: the live charge accrues at the tick-owned fold, not at ingestion —
+	// unfolded cells carry no minute/entry charge; the first read folds them.
+	require.Equal(t, int64(0), r.PendingBytes(), "unfolded cells carry no live charge")
+	fmLive, ok := r.FlowMinute(minute.Unix())
+	require.True(t, ok)
+	require.Len(t, fmLive.FlowRows(), 1)
 	// liveCharge is the minute charge plus identity charges: one retained
 	// identity costs exactly one minute charge plus one identity charge.
 	require.Equal(t, int64(EstimatedFlowMinuteBytes+EstimatedFlowRowBytes), r.PendingBytes())
@@ -99,6 +105,8 @@ func TestRecorder_FlowSameMinuteMergeKeepsCapacityAccounting(t *testing.T) {
 		flowTestRow(minute, 1, 20, "success", true),
 	})))
 	require.Equal(t, 1, r.MinuteBucketCount(), "same-minute merge must not open a new bucket")
+	_, ok = r.FlowMinute(minute.Unix())
+	require.True(t, ok)
 	require.Equal(t, int64(EstimatedFlowMinuteBytes+2*EstimatedFlowRowBytes), r.PendingBytes(),
 		"a distinct identity adds exactly one identity charge")
 	// A duplicate same-minute merge folds in place and adds no new identity

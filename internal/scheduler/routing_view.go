@@ -165,25 +165,40 @@ func cloneExploreDecision(in ExploreDecision) ExploreDecision {
 	return out
 }
 
+// v4-S2: key-normalized route lookup — the key carries NO RouteClassID hex.
+// The hex lived here as a per-request recompute (sha256 + hex encode on every
+// select); the steady-state path only borrows the interned per-route hex from
+// the found RouteDecision. Publish sites birth the intern once per route via
+// routeClassHex; map keys on both sides stay normalized.
 func RouteRefFor(groupID int64, format string, model string) RouteRef {
-	op := operationTagForFormat(format)
-	rc := ""
-	if rf, ok := parseRequestFormat(format); ok && op != "" {
-		if id, err := domain.RouteClassID(groupID, rf, model, op); err == nil {
-			rc = domain.RouteClassIDHex(id)
-		}
-	}
-	return RouteRef{GroupID: groupID, Format: format, Model: model, OperationTag: string(op), RouteClassID: rc}
+	return RouteRef{GroupID: groupID, Format: format, Model: model, OperationTag: string(operationTagForFormat(format))}
 }
 
 func RouteRefForOp(groupID int64, format string, model string, op domain.OperationTag) RouteRef {
-	rc := ""
-	if rf, ok := parseRequestFormat(format); ok && op != "" && op.Valid() {
-		if id, err := domain.RouteClassID(groupID, rf, model, op); err == nil {
-			rc = domain.RouteClassIDHex(id)
-		}
+	return RouteRef{GroupID: groupID, Format: format, Model: model, OperationTag: string(op)}
+}
+
+// normRouteRef zeroes RouteClassID before map access: the single
+// normalization spelling shared by query and publish sites, so a key carrying
+// a stale hex can never miss the normalized table.
+func normRouteRef(r RouteRef) RouteRef {
+	r.RouteClassID = ""
+	return r
+}
+
+// routeClassHex births the interned per-route hex ONCE per published route
+// (v4-S2): steady-state selection borrows RouteDecision.RouteClassID and
+// never computes.
+func routeClassHex(groupID int64, format string, model string, op domain.OperationTag) string {
+	rf, ok := parseRequestFormat(format)
+	if !ok || op == "" || !op.Valid() {
+		return ""
 	}
-	return RouteRef{GroupID: groupID, Format: format, Model: model, OperationTag: string(op), RouteClassID: rc}
+	id, err := domain.RouteClassID(groupID, rf, model, op)
+	if err != nil {
+		return ""
+	}
+	return domain.RouteClassIDHex(id)
 }
 
 func parseRequestFormat(s string) (domain.RequestFormat, bool) {
@@ -343,6 +358,8 @@ func (p *routingPublisher) publishWithBase(baseGen uint64, baseStatic *StaticVie
 }
 
 func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecision) {
+	// v4-S2: the publish key stays normalized; the intern is born per route below.
+	route = normRouteRef(route)
 	// Flush any staged static root through the compile lane first so the
 	// test decision pairs with the freshest static root.
 	s.publisher.mu.Lock()
@@ -379,9 +396,11 @@ func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecisi
 				}
 				return out
 			}
-			prepared.Format = route.Format
-			prepared.RequestedModel = route.Model
-			prepared.RouteClassID = route.RouteClassID
+		prepared.Format = route.Format
+		prepared.RequestedModel = route.Model
+		// v4-S2: birth the interned hex once per published route; the query
+		// key stays normalized (RouteClassID "").
+		prepared.RouteClassID = routeClassHex(route.GroupID, route.Format, route.Model, domain.OperationTag(route.OperationTag))
 			prepared.CallerCategory = string(callerKindForFormat(domain.RequestFormat(route.Format)))
 			prepared.OperationTag = route.OperationTag
 			prepared.Primary = fill(prepared.Primary, AttemptLanePrimary)

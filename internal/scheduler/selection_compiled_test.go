@@ -75,11 +75,16 @@ func TestNewAttemptPlan_defaultBucketFallback(t *testing.T) {
 
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-def"}, RouteRefFor(10, string(domain.FormatOpenAIChat), "no-such-model"))
 	require.NoError(t, err)
-	require.Equal(t, def.RouteClassID, plan.Identity().RouteClassID)
-	sel, attempt, err := s.ReserveAttempt(plan)
+	// v4-S2: the query key stays normalized; RouteClassID is borrowed from
+	// the interned default-bucket decision.
+	defDec, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIChat), "")
+	require.True(t, ok)
+	require.NotEmpty(t, defDec.RouteClassID)
+	require.Equal(t, defDec.RouteClassID, plan.Identity().RouteClassID)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt.AccountID)
-	require.Equal(t, def.RouteClassID, attempt.RouteClassID)
+	require.Equal(t, defDec.RouteClassID, attempt.RouteClassID)
 	sel.Release()
 }
 
@@ -96,7 +101,7 @@ func TestReserveAttempt_projectsConcreteModelThroughDefaultBucket(t *testing.T) 
 	// When
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-default-model", ApplyModelMapping: true}, RouteRefFor(10, string(domain.FormatOpenAIChat), "requested-model"))
 	require.NoError(t, err)
-	sel, attempt, err := s.ReserveAttempt(plan)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 
 	// Then
 	require.NoError(t, err)
@@ -130,7 +135,7 @@ func TestReserveAttempt_fencesStaleLeafAfterStaticReplacement(t *testing.T) {
 	// fencing the plan's captured leaf.
 	s.compileOnce()
 
-	sel, attempt, err := s.ReserveAttempt(plan)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), attempt.AccountID, "stale leaf must be fenced out")
 	require.Equal(t, int64(2), sel.AccountID)
@@ -153,7 +158,7 @@ func TestReserveAttempt_firstReserveSucceedsAfterDecisionRepublish(t *testing.T)
 	// When: a decision-only republish lands before the first reservation.
 	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1)})
 	require.Greater(t, s.View().Generation(), oldGeneration)
-	sel, attempt, err := s.ReserveAttempt(plan)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 
 	// Then: the initial reservation succeeds — the plan never executed.
 	require.NoError(t, err)
@@ -174,7 +179,7 @@ func TestReserveAttempt_rejectsPostReleaseReserveAfterDecisionRepublish(t *testi
 	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1, 2)})
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-started"}, route)
 	require.NoError(t, err)
-	sel, attempt, err := s.ReserveAttempt(plan)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt.AccountID)
 	sel.Release()
@@ -182,7 +187,7 @@ func TestReserveAttempt_rejectsPostReleaseReserveAfterDecisionRepublish(t *testi
 
 	// When: a decision-only republish lands after execution started.
 	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1, 2)})
-	sel2, _, err := s.ReserveAttempt(plan)
+	sel2, _, err := s.ReserveAttempt(&plan)
 
 	// Then: the next reservation is rejected (a second candidate exists, so
 	// only the generation fence can reject here).
@@ -203,7 +208,7 @@ func TestReserveAttempt_rejectsPostAbandonReserveAfterDecisionRepublish(t *testi
 	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1, 2)})
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-abandon"}, route)
 	require.NoError(t, err)
-	sel, attempt, err := s.ReserveAttempt(plan)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt.AccountID)
 	sel.Release()
@@ -212,7 +217,7 @@ func TestReserveAttempt_rejectsPostAbandonReserveAfterDecisionRepublish(t *testi
 
 	// When: a decision-only republish lands after the abandoned reservation.
 	s.PublishDecisionForTest(route, &RouteDecision{Primary: ccPrimary(1, 2)})
-	sel2, _, err := s.ReserveAttempt(plan)
+	sel2, _, err := s.ReserveAttempt(&plan)
 
 	// Then: the next reservation is rejected.
 	require.ErrorIs(t, err, ErrAttemptsExhausted)
@@ -235,7 +240,7 @@ func TestReserveAttempt_fencesHealthByQualityClassAndRevision(t *testing.T) {
 
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-h"}, route)
 	require.NoError(t, err)
-	sel, attempt, err := s.ReserveAttempt(plan)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), attempt.AccountID)
 	sel.Release()

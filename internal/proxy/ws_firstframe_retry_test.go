@@ -56,16 +56,16 @@ func TestWSFirstFrameFailureRetriesSecondCandidateBarrier(t *testing.T) {
 
 	plan, err := s.NewAttemptPlan(scheduler.AttemptPlanIdentity{RequestID: "r1", UserID: 1}, scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "gpt-4o"))
 	require.NoError(t, err)
-	sel1, a1, err := s.ReserveAttempt(plan)
+	sel1, a1, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel1.AccountID)
 	require.True(t, CanRetry(CallerCategory(a1.CallerCategory), retryOutcomeForAttempt(a1, 0, errors.New("first frame fail"), context.Background())), "first frame not-sent must be retryable")
 	sel1.Release()
-	sel2, _, err := s.ReserveAttempt(plan)
+	sel2, _, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err, "second candidate must be available after first not-sent failure")
 	require.Equal(t, int64(2), sel2.AccountID)
 	sel2.Release()
-	_, _, err = s.ReserveAttempt(plan)
+	_, _, err = s.ReserveAttempt(&plan)
 	require.ErrorIs(t, err, scheduler.ErrAttemptsExhausted)
 }
 

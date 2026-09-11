@@ -240,23 +240,24 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 
 	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
 	var sel *scheduler.Selection
-	var plan *scheduler.AttemptPlan
+	var plan scheduler.AttemptPlan
+	var attempt scheduler.Attempt
 	if format == domain.FormatOpenAIImages {
 		if ic, ok := route.caller.(*imagesCaller); ok {
 			rr := scheduler.RouteRefForOp(groupID, string(format), reqModel, ic.operationTag())
-			sel, plan, err = p.selectWithPlanForRoute(rr, groupID, format, reqModel, identity)
+			sel, plan, attempt, err = p.selectWithPlanForRoute(rr, groupID, format, reqModel, identity)
 		} else {
-			sel, plan, err = p.selectWithPlan(groupID, format, reqModel, identity)
+			sel, plan, attempt, err = p.selectWithPlan(groupID, format, reqModel, identity)
 		}
 	} else {
-		sel, plan, err = p.selectWithPlan(groupID, format, reqModel, identity)
+		sel, plan, attempt, err = p.selectWithPlan(groupID, format, reqModel, identity)
 	}
 	// converted route uses target identity when fallback
 	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable) || errors.Is(err, scheduler.ErrAttemptsExhausted)) {
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
 			// Target identity uses same request identity but target RouteClassID
 			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
-			if sel2, plan2, err2 := p.selectWithPlan(groupID, tgt, reqModel, targetIdentity); err2 == nil {
+			if sel2, plan2, attempt2, err2 := p.selectWithPlan(groupID, tgt, reqModel, targetIdentity); err2 == nil {
 				sel2GuardActive := true
 				defer func() {
 					if sel2GuardActive {
@@ -274,16 +275,12 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 					return
 				}
 				sel2GuardActive = false
-				sel = sel2
-				plan = plan2
+				sel, plan, attempt = sel2, plan2, attempt2
 				err = nil
 				route = forwardRoute{format: tgt, caller: p.convCallers[conv], body: cb}
 			} else {
 				// Preserve target error (distinguish ErrNoAvailable vs AttemptsExhausted)
 				err = err2
-				if plan2 != nil {
-					plan = plan2
-				}
 			}
 		}
 	}
@@ -299,7 +296,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	// fail-closed（释放已占并发槽，零上游拨号）。
 	var contBinding *continuation.Binding
 	if contPrevID != "" {
-		b, ferr := p.contResolve(r.Context(), rm.meta.UserID, groupID, contProtocolREST, contPrevID, plan)
+		b, ferr := p.contResolve(r.Context(), rm.meta.UserID, groupID, contProtocolREST, contPrevID, attempt)
 		if ferr != nil {
 			sel.Release()
 			p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
@@ -311,13 +308,13 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	// 续接钉选：计划推进到绑定账号（其余候选释放跳过）；绑定账号身份漂移或
 	// 不可派生 → fail-closed，绝不迁移到其他账号。
 	if contBinding != nil {
-		pinned, ferr := p.contPin(plan, sel, contBinding)
+		pinned, pinnedAttempt, ferr := p.contPin(&plan, sel, attempt, contBinding)
 		if ferr != nil {
 			p.recordRejected(r.Context(), reqID, groupID, contBinding.AccountID, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
 			writeErr(w, ferr)
 			return
 		}
-		sel = pinned
+		sel, attempt = pinned, pinnedAttempt
 	}
 	defer leaseGuard(sel)
 
@@ -326,7 +323,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	// route.format 绑定路由，协议转换命中即目标路由）；记录仍按客户端
 	// format（buildLog 参数不变）。差异状态按值传入 attemptState（零分配
 	// ——attempt/sink 为 New 构造单例）。
-	p.failoverLoopWithPlan(w, r, format, reqID, groupID, start, reqModel, route.body, sel, plan,
+	p.failoverLoopWithPlan(w, r, format, reqID, groupID, start, reqModel, route.body, sel, plan, attempt,
 		attemptState{format: format, routeFormat: route.format, caller: route.caller, stream: stream, hardContinuation: contBinding != nil},
 		p.chatAttempt, p.httpSink, true)
 }

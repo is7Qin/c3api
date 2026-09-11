@@ -30,10 +30,15 @@ func TestSchedulerNewAttemptPlanReservesExactCompiledRoute(t *testing.T) {
 
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-1", UserID: 7}, route)
 	require.NoError(t, err)
-	require.Equal(t, route.RouteClassID, plan.Identity().RouteClassID)
+	// v4-S2: the query key stays normalized; RouteClassID is borrowed from
+	// the interned published decision.
+	dec, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIChat), "m")
+	require.True(t, ok)
+	require.NotEmpty(t, dec.RouteClassID)
+	require.Equal(t, dec.RouteClassID, plan.Identity().RouteClassID)
 	require.Equal(t, s.View().Generation(), plan.Identity().RoutingGeneration)
 
-	sel, attempt, err := s.ReserveAttempt(plan)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt.AccountID)
 	require.Equal(t, AttemptLanePrimary, attempt.Lane)
@@ -78,7 +83,7 @@ func TestSchedulerReserveAttemptUsesDynamicCandidateGates(t *testing.T) {
 	st3.status = domain.StatusDisabled
 	acc3.runtime.state.Store(&st3)
 
-	sel, attempt, err := s.ReserveAttempt(plan)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), attempt.AccountID)
 	require.Equal(t, int64(4), sel.AccountID)
@@ -100,7 +105,7 @@ func TestSchedulerReserveAttemptUsesClusterBorrowSnapshotOnce(t *testing.T) {
 	require.True(t, ok)
 	acc1.runtime.concurrency.Store(1)
 
-	sel, attempt, err := s.ReserveAttempt(plan)
+	sel, attempt, err := s.ReserveAttempt(&plan)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), attempt.AccountID)
 	require.Equal(t, int64(1), sel.AccountID)
@@ -135,7 +140,7 @@ func TestReserveAttemptPreservesConcurrentFailAccount(t *testing.T) {
 	defer func() { reserveHook = nil }()
 	done := make(chan *Selection, 1)
 	go func() {
-		sel, _, e := s.ReserveAttempt(plan)
+		sel, _, e := s.ReserveAttempt(&plan)
 		require.NoError(t, e)
 		done <- sel
 	}()

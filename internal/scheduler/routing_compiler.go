@@ -63,6 +63,9 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 			ops := operationTagsForFormat(rk.format)
 			for _, op := range ops {
 				rr := canonicalRouteRefWithOp(gid, rk, op)
+				// v4-S2: the table key stays normalized (no hex); the
+				// decision value keeps rr.RouteClassID as the interned hex.
+				key := normRouteRef(rr)
 				candidates := fullCandidateUnion(gs, in.Static.facts, rk)
 				facts := buildCandidateFacts(candidates, in.Static.facts, rk, op)
 				filtered := filterCandidates(facts, in.Health, in.Latched)
@@ -72,7 +75,7 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 						return nil, err
 					}
 					decision.validated = true
-					routes[rr] = decision
+					routes[key] = decision
 					continue
 				}
 				var rcVal domain.RouteClassIDVal
@@ -85,7 +88,7 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 				if err != nil {
 					return nil, err
 				}
-				routes[rr] = dec
+				routes[key] = dec
 			}
 		}
 	}
@@ -113,11 +116,6 @@ func sortedRouteKeys(m map[routeKey]*route) []routeKey {
 		return keys[i].model < keys[j].model
 	})
 	return keys
-}
-
-func canonicalRouteRef(gid int64, rk routeKey) RouteRef {
-	op := operationTagForFormat(string(rk.format))
-	return canonicalRouteRefWithOp(gid, rk, op)
 }
 
 func canonicalRouteRefWithOp(gid int64, rk routeKey, op domain.OperationTag) RouteRef {

@@ -572,7 +572,7 @@ func TestQualitySync_EmptyFlowSnapshotPreserved(t *testing.T) {
 				v, _ := domain.CandidateFingerprint(1, 1, "api_key", "https://api.openai.com", "sk", "", "", "", false, "", "", "", "")
 				return v
 			}(),
-			TerminalMinute: fixed, Ordinal: 1, Lane: "lane-a", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 5,
+			TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 5,
 		},
 		{
 			IdentityVersion: 1,
@@ -584,7 +584,9 @@ func TestQualitySync_EmptyFlowSnapshotPreserved(t *testing.T) {
 				v, _ := domain.CandidateFingerprint(2, 1, "api_key", "https://api.openai.com", "sk2", "", "", "", false, "", "", "", "")
 				return v
 			}(),
-			TerminalMinute: fixed, Ordinal: 2, Lane: "lane-b", AccountID: 20, PreviousAccountID: func() *int64 { v := int64(10); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 5,
+			// v3-F1: test-only lane-a/lane-b strings are not codes — tests
+			// use real lanes; "init"/"retry" still round-trip exactly.
+			TerminalMinute: fixed, Ordinal: 2, Lane: "explore", AccountID: 20, PreviousAccountID: func() *int64 { v := int64(10); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 5,
 		},
 	}
 	fm2 := NewFlowSnapshot(fixed.Unix(), rows)
@@ -595,7 +597,7 @@ func TestQualitySync_EmptyFlowSnapshotPreserved(t *testing.T) {
 	pg2.mu.Unlock()
 	require.Equal(t, 2, len(got))
 	require.Equal(t, int64(10), got[0].AccountID)
-	require.Equal(t, "lane-a", got[0].Lane)
+	require.Equal(t, "primary", got[0].Lane)
 	require.Equal(t, int64(5), got[0].Generation)
 	require.Equal(t, "retry", got[1].TransitionReason)
 }
