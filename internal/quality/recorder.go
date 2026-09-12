@@ -255,26 +255,6 @@ type FlowMinute struct {
 	emptySnapshot bool
 }
 
-func NewFlowMinute(minute int64, edges [8]int64) *FlowMinute {
-	return &FlowMinute{minute: minute, edges: edges}
-}
-
-func NewFlowSnapshot(minute int64, rows []repository.RoutingFlowRow) *FlowMinute {
-	cp := make([]repository.RoutingFlowRow, len(rows))
-	for i := range rows {
-		cp[i] = rows[i]
-		if rows[i].PreviousAccountID != nil {
-			v := *rows[i].PreviousAccountID
-			cp[i].PreviousAccountID = &v
-		}
-	}
-	return &FlowMinute{minute: minute, flowRows: cp}
-}
-
-func NewEmptyFlowSnapshot(minute int64) *FlowMinute {
-	return &FlowMinute{minute: minute, emptySnapshot: true}
-}
-
 // flowEdgeIdentity is superseded by the packed attemptFact key (fold_fact.go):
 // identity is codes plus fixed-size byte arrays, never strings.
 
@@ -301,9 +281,8 @@ func (f *FlowMinute) SetCount(i int, v int64) {
 		f.counts[i] = v
 	}
 }
-func (f *FlowMinute) Edges() [8]int64     { return f.edges }
-func (f *FlowMinute) SetEdges(e [8]int64) { f.edges = e }
-func (f *FlowMinute) Counts() [8]int64    { return f.counts }
+func (f *FlowMinute) Edges() [8]int64  { return f.edges }
+func (f *FlowMinute) Counts() [8]int64 { return f.counts }
 func (f *FlowMinute) FlowRows() []repository.RoutingFlowRow {
 	if f == nil {
 		return nil
@@ -653,24 +632,6 @@ func (r *Recorder) enqueueQualityMinuteLocked(qm *QualityMinute) error {
 	r.pendingQuality[qm.minute][qm.key] = qm.Clone()
 	r.pendingBytes.Add(charge)
 	return nil
-}
-
-func (r *Recorder) AddFlowMinute(minute int64, edges [8]int64) error {
-	return r.EnqueueFlowMinute(NewFlowMinute(minute, edges))
-}
-
-// EnqueueFlowMinute delegates the absolute flow-minute merge to the
-// FlowOwner (the sole state owner): the legacy edges/empty-marker forms and
-// the quality-sync failure refill enter the accumulator through this
-// ownership-transfer API, never by aliasing owner maps.
-func (r *Recorder) EnqueueFlowMinute(fm *FlowMinute) error {
-	if fm == nil {
-		return errors.New("nil flow minute")
-	}
-	if r.finalized() {
-		return ErrCapacity
-	}
-	return r.flow.enqueue(fm)
 }
 
 func (r *Recorder) FlowMinute(minute int64) (*FlowMinute, bool) {

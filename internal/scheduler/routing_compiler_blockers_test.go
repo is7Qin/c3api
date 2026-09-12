@@ -121,6 +121,10 @@ func TestRoutingCompilerCandidateFingerprintSeparation(t *testing.T) {
 }
 
 func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
+	// v5-§5.1A (COMPILED-HEALTH-FREE): live health/latch state must NOT leak
+	// into compilation — the compiled plan includes every statically eligible
+	// candidate; serving gates live solely in reserveOnView (pinned unmodified
+	// by TestSchedulerReserveAttemptUsesDynamicCandidateGates).
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
 	accs[0].LifecycleRevision = 1
@@ -131,48 +135,36 @@ func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100)}, accs)
 	c := NewRoutingCompiler()
-	// Health fencing: specific quality OPEN should exclude; wrong revision should also fail closed
+	// v5-§5.1A: live OPEN health on account 2 (exact + stale-revision entries
+	// alike) must NOT exclude — compile is health-free.
+	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
 	hkGood := compilerHealthKeyFor(accs[1], domain.FormatOpenAIChat, "m")
-	health := map[HealthKey]HealthState{hkGood: StateOPEN}
-	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Health: health})
+	hkStale := HealthKey{AccountID: 1, Quality: compilerHealthKeyFor(accs[0], domain.FormatOpenAIChat, "m").Quality, Revision: 99}
+	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{
+		hkGood:  {Key: hkGood, State: StateOPEN},
+		hkStale: {Key: hkStale, State: StateOPEN},
+	}})
+	s.SetRuntimeHealth(h)
+	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
 	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
 	all = append(all, compiledAccountIDs(rd.Degraded)...)
-	require.NotContains(t, all, int64(2))
-	require.Contains(t, all, int64(1))
-	// Mismatched revision: health entry for rev 99 (stale) with OPEN should still fail closed per spec -> exclude
-	hkStale := HealthKey{AccountID: 1, Quality: compilerHealthKeyFor(accs[0], domain.FormatOpenAIChat, "m").Quality, Revision: 99}
-	healthStale := map[HealthKey]HealthState{hkStale: StateOPEN}
-	view2, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Health: healthStale})
+	require.Contains(t, all, int64(1), "stale-revision OPEN must not exclude post-v5")
+	require.Contains(t, all, int64(2), "exact OPEN must not exclude post-v5")
+	// v5-§5.1A: live latch on account 1 (stale-revision — the old fail-closed
+	// case) must NOT exclude either.
+	lk := compilerLatchKeyFor(accs[0])
+	require.True(t, s.TryLatch(accs[0].ID, lk.Fingerprint, 99))
+	view2, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rd2, ok := view2.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
 	all2 := append(append([]int64{}, compiledAccountIDs(rd2.Primary)...), compiledAccountIDs(rd2.Explore.Ordered)...)
 	all2 = append(all2, compiledAccountIDs(rd2.Degraded)...)
-	// fail-closed means stale rev OPEN still excludes account 1
-	require.NotContains(t, all2, int64(1), "stale revision mismatch must fail closed")
-	// Latch fencing: exact fingerprint+rev latched should exclude
-	lk := compilerLatchKeyFor(accs[0])
-	latched := map[LatchKey]bool{lk: true}
-	view3, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Latched: latched})
-	require.NoError(t, err)
-	rd3, ok := view3.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
-	require.True(t, ok)
-	all3 := append(append([]int64{}, compiledAccountIDs(rd3.Primary)...), compiledAccountIDs(rd3.Explore.Ordered)...)
-	all3 = append(all3, compiledAccountIDs(rd3.Degraded)...)
-	require.NotContains(t, all3, int64(1))
-	// Latch mismatch rev should also fail closed
-	lkStale := LatchKey{AccountID: 1, Fingerprint: lk.Fingerprint, Revision: 99}
-	latchedStale := map[LatchKey]bool{lkStale: true}
-	view4, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Latched: latchedStale})
-	require.NoError(t, err)
-	rd4, ok := view4.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
-	require.True(t, ok)
-	all4 := append(append([]int64{}, compiledAccountIDs(rd4.Primary)...), compiledAccountIDs(rd4.Explore.Ordered)...)
-	all4 = append(all4, compiledAccountIDs(rd4.Degraded)...)
-	require.NotContains(t, all4, int64(1), "stale latch rev mismatch must fail closed")
+	require.Contains(t, all2, int64(1), "latched account stays compiled post-v5")
+	require.Contains(t, all2, int64(2))
 }
 
 func TestRoutingCompilerZeroMultiplierUnion(t *testing.T) {

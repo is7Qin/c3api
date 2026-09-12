@@ -29,8 +29,8 @@ func BenchmarkQualityRecorder(b *testing.B) {
 
 // BenchmarkFlowOwnerDuplicateMergeSteadyState preloads an owner with a fixed
 // retained distinct identity count outside the measured section, then folds
-// one fixed 8-row duplicate chain per op through the synchronous
-// enqueue(NewFlowSnapshot(...)) seam. B/op is the gate (independent of the
+// one fixed 8-row duplicate chain per op through the live cell fold.
+// B/op is the gate (independent of the
 // retained count); allocs/op is secondary evidence.
 func BenchmarkFlowOwnerDuplicateMergeSteadyState(b *testing.B) {
 	fixed := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
@@ -42,7 +42,7 @@ func BenchmarkFlowOwnerDuplicateMergeSteadyState(b *testing.B) {
 				b.Fatal(err)
 			}
 			for i := 0; i < retained; i++ {
-				if err := rec.EnqueueFlowMinute(NewFlowSnapshot(minute, []repository.RoutingFlowRow{flowTestRow(fixed, 1, int64(i), "success", true)})); err != nil {
+				if err := foldConsumerRows(rec.FlowOwner(), minute, []repository.RoutingFlowRow{flowTestRow(fixed, 1, int64(i), "success", true)}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -53,7 +53,7 @@ func BenchmarkFlowOwnerDuplicateMergeSteadyState(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = rec.EnqueueFlowMinute(NewFlowSnapshot(minute, dup))
+				_ = foldConsumerRows(rec.FlowOwner(), minute, dup)
 			}
 		})
 	}

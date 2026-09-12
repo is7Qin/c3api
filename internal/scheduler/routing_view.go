@@ -15,6 +15,9 @@ type StaticView struct {
 	groups     map[int64]*groupSnapshot
 	byID       map[int64]*accountSnapshot
 	facts      map[int64]compilerAccountFacts
+	// routeIndex maps events to affected routes (v5-C2). Born at stage with
+	// the root, dies with it, read-only between (compile-lane-owned).
+	routeIndex *compileRouteIndex
 }
 
 func (s *StaticView) Generation() uint64 { return s.generation }
@@ -51,6 +54,16 @@ func (s *StaticView) Account(id int64) (*accountSnapshot, bool) {
 type DecisionView struct {
 	generation uint64
 	routes     map[RouteRef]*RouteDecision
+	// whole marks view-WHOLENESS (v5 scope-loss fix, §5.2): true ONLY when
+	// every route was recomputed by a full-compile/full-fallback fire; a
+	// scoped-carry publish marks false (partial) by conservative default —
+	// even a scoped fire that recomputed everything stays partial unless it
+	// proves full coverage (proof rule: affected ⊇ the target index's full
+	// route set; the lane does not attempt the proof). Orthogonal to
+	// atomicity: publish stays one-generation matched-pair atomic either
+	// way. Owner: compile lane (publisher pair). Lifecycle: born at publish,
+	// immutable afterwards (read lock-free by the backstop tick).
+	whole bool
 }
 
 // RouteRef identifies a compiled route: group + format + model + operation + canonical RouteClassID.
@@ -323,7 +336,7 @@ func (p *routingPublisher) publishPairLocked(staticView *StaticView, decisionVie
 		gen = 1
 	}
 	if cur != nil && cur.static == staticView {
-		staticView = &StaticView{generation: gen, groups: staticView.groups, byID: staticView.byID, facts: staticView.facts}
+		staticView = &StaticView{generation: gen, groups: staticView.groups, byID: staticView.byID, facts: staticView.facts, routeIndex: staticView.routeIndex}
 	} else {
 		staticView.generation = gen
 	}
@@ -396,11 +409,11 @@ func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecisi
 				}
 				return out
 			}
-		prepared.Format = route.Format
-		prepared.RequestedModel = route.Model
-		// v4-S2: birth the interned hex once per published route; the query
-		// key stays normalized (RouteClassID "").
-		prepared.RouteClassID = routeClassHex(route.GroupID, route.Format, route.Model, domain.OperationTag(route.OperationTag))
+			prepared.Format = route.Format
+			prepared.RequestedModel = route.Model
+			// v4-S2: birth the interned hex once per published route; the query
+			// key stays normalized (RouteClassID "").
+			prepared.RouteClassID = routeClassHex(route.GroupID, route.Format, route.Model, domain.OperationTag(route.OperationTag))
 			prepared.CallerCategory = string(callerKindForFormat(domain.RequestFormat(route.Format)))
 			prepared.OperationTag = route.OperationTag
 			prepared.Primary = fill(prepared.Primary, AttemptLanePrimary)

@@ -59,6 +59,36 @@ func foldRows(t *testing.T, o *FlowOwner, minute int64, rows ...repository.Routi
 	})
 }
 
+// foldConsumerRows folds consumer rows through the live cell path
+// (v3-hygiene: the synchronous EnqueueFlowMinute seam is deleted — zero
+// production callers — so tests drive the same rowToSeed/makeFact/addFact
+// primitive the request walk lands on, with identical facts, deltas, and
+// class counters. Post-seal folds land residual exactly like the sealed
+// consumer path did; closed/finalized recorders reject with ErrCapacity).
+func foldConsumerRows(o *FlowOwner, minute int64, rows []repository.RoutingFlowRow) error {
+	if o.closed.Load() || o.rec.finalized() {
+		return ErrCapacity
+	}
+	for _, row := range rows {
+		seed, delta, err := rowToSeed(row)
+		if err != nil {
+			return err
+		}
+		f, err := makeFact(seed, minute)
+		if err != nil {
+			return err
+		}
+		if o.sealed.Load() {
+			f.residual = true
+		}
+		if !o.addFact(f, delta) {
+			o.edgeRowsDropped.Add(delta)
+			o.overflowed.Add(delta)
+		}
+	}
+	return nil
+}
+
 type foldScriptEdge struct {
 	route      domain.RouteClassIDVal
 	fp         domain.CandidateFingerprintVal
@@ -179,7 +209,7 @@ func TestFoldCounterFidelity_DeterministicIncrementsEqualChainCounts(t *testing.
 			// Three-edge chain: nonterminal linkage plus a terminal
 			// edge, each folded `times` events. Transition is derived
 			// by the walk (ordinal 1 -> init, else failover); explicit
-			// transition codes ride the consumer seam below.
+			// transition codes ride the consumer-row fold below.
 			times := 1 + seq%2
 			chain := []foldScriptEdge{
 				{route: foldVal(1), fp: foldFP(byte(seq)), account: int64(1000 + seq), generation: 7, ordinal: 1, lane: lane, outcome: outcome, terminal: false, times: times},
@@ -190,14 +220,14 @@ func TestFoldCounterFidelity_DeterministicIncrementsEqualChainCounts(t *testing.
 			total += int64(3 * times)
 		}
 	}
-	// Consumer-seam rows ride the same facts with explicit transitions:
+	// Consumer rows ride the same facts with explicit transitions:
 	// the old-alias "init", "retry", "flow", "plan", plus a rule-ok outcome.
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(bucket, []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), bucket, []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 1, Lane: "primary", AccountID: 91, TransitionReason: "init", Outcome: "ok", IsTerminal: true, Generation: 1, CandidateFingerprint: foldFP(9), ChainCount: 4},
 		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 2, Lane: "explore", AccountID: 92, PreviousAccountID: func() *int64 { v := int64(91); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "error", IsTerminal: true, Generation: 1, CandidateFingerprint: foldFP(9), ChainCount: 2},
 		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 2, Lane: "degraded", AccountID: 93, PreviousAccountID: func() *int64 { v := int64(91); return &v }(), PreviousOutcome: "429", TransitionReason: "flow", Outcome: "4xx", IsTerminal: false, Generation: 1, CandidateFingerprint: foldFP(9), ChainCount: 3},
 		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 3, Lane: "primary", AccountID: 94, PreviousAccountID: func() *int64 { v := int64(93); return &v }(), PreviousOutcome: "4xx", TransitionReason: "plan", Outcome: "5xx", IsTerminal: true, Generation: 1, CandidateFingerprint: foldFP(9), ChainCount: 1},
-	})))
+	}))
 	total += 10
 
 	want := foldScript(t, owner, bucket, chains)
@@ -385,8 +415,9 @@ func TestFoldCounterFidelity_ConcurrentAddsAreExact(t *testing.T) {
 }
 
 // TestFoldCounterFidelity_ZeroOverflowAtGate is the provisioning proof: mixed
-// request-walk, consumer-seam, legacy, and marker traffic leaves every
-// overflow counter at zero.
+// request-walk and consumer-seam traffic leaves every overflow counter at
+// zero. (v3-hygiene: the legacy-edges and empty-marker halves are deleted
+// with the consumer seam — no live writer exists for either.)
 func TestFoldCounterFidelity_ZeroOverflowAtGate(t *testing.T) {
 	ResetFlowChainCountersForTest()
 	rec, err := NewRecorder(50000)
@@ -402,11 +433,9 @@ func TestFoldCounterFidelity_ZeroOverflowAtGate(t *testing.T) {
 		}
 		return foldVal(6), foldFP(6), 81, 80, 1, 2, "explore", "429", "success", true, true
 	})
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(bucket, []repository.RoutingFlowRow{
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), bucket, []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: foldVal(6), Ordinal: 1, Lane: "degraded", AccountID: 82, TransitionReason: "plan", Outcome: "5xx", IsTerminal: true, Generation: 3, CandidateFingerprint: foldFP(6), ChainCount: 1},
-	})))
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowMinute(bucket+60, [8]int64{1, 2})))
-	require.NoError(t, rec.EnqueueFlowMinute(NewEmptyFlowSnapshot(bucket+120)))
+	}))
 
 	st := owner.SnapshotStats()
 	require.Equal(t, int64(3), st.EdgeRowsAccepted)

@@ -27,9 +27,9 @@ import (
 // from the rewindable history with FRESH backing per derived pointer, never
 // aliasing session slots.
 type selectSession struct {
-	identity AttemptPlanIdentity
-	route    *RouteDecision
-	generation uint64
+	identity    AttemptPlanIdentity
+	route       *RouteDecision
+	generation  uint64
 	maxAttempts uint8
 	sampleIdx   int
 	sampleValid bool

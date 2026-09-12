@@ -86,26 +86,30 @@ func TestRed_Blocker2_HealthResolvedMappedModel(t *testing.T) {
 		{RouteClassID: routeRC, Fingerprint: fpVal}: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900},
 	}
 	c := NewRoutingCompiler()
-	// Health entry for resolved model should exclude.
+	// v5-§5.1A: health maps are deleted from inputs — the resolved-model
+	// candidate compiles regardless of live OPEN health; serving gates live in
+	// reserveOnView.
 	callerKind := callerKindForFormat(domain.FormatOpenAIChat)
 	op := operationTagForFormat(string(domain.FormatOpenAIChat))
 	qcResolved, _ := domain.QualityClassID(callerKind, domain.FormatOpenAIChat, "resolved", op)
 	qcRequested, _ := domain.QualityClassID(callerKind, domain.FormatOpenAIChat, "req", op)
 	require.NotEqual(t, domain.QualityClassIDHex(qcResolved), domain.QualityClassIDHex(qcRequested))
 	hkResolved := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcResolved), Revision: 1}
-	health := map[HealthKey]HealthState{hkResolved: StateOPEN}
-	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Health: health})
+	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hkResolved: {Key: hkResolved, State: StateOPEN}}})
+	s.SetRuntimeHealth(h)
+	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "req")
 	rd, ok := view.Routes()[rr]
 	require.True(t, ok)
 	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
 	all = append(all, compiledAccountIDs(rd.Degraded)...)
-	require.NotContains(t, all, int64(1), "health with resolved model must exclude")
-	// Health entry for requested (unmapped) quality must NOT exclude when candidate maps to resolved.
+	require.Contains(t, all, int64(1), "resolved-model OPEN health must not exclude post-v5")
+	// Requested-quality OPEN likewise inert.
 	hkRequested := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcRequested), Revision: 1}
-	health2 := map[HealthKey]HealthState{hkRequested: StateOPEN}
-	view2, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Health: health2})
+	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hkRequested: {Key: hkRequested, State: StateOPEN}}})
+	view2, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rd2, ok := view2.Routes()[rr]
 	require.True(t, ok)
@@ -138,9 +142,13 @@ func TestRed_Blocker3_UnrelatedQualityNotExclude(t *testing.T) {
 	qcM1, _ := domain.QualityClassID(callerKind, domain.FormatOpenAIChat, "m1", op)
 	qcM2, _ := domain.QualityClassID(callerKind, domain.FormatOpenAIChat, "m2", op)
 	require.NotEqual(t, domain.QualityClassIDHex(qcM1), domain.QualityClassIDHex(qcM2))
+	// v5-§5.1A: unrelated-quality OPEN is inert (health deleted from inputs);
+	// inclusion holds with or without the live entry.
 	hkOther := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcM2), Revision: 1}
-	health := map[HealthKey]HealthState{hkOther: StateOPEN}
-	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Health: health})
+	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hkOther: {Key: hkOther, State: StateOPEN}}})
+	s.SetRuntimeHealth(h)
+	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "m1")
 	rd, ok := view.Routes()[rr]
@@ -170,23 +178,17 @@ func TestRed_Blocker4_LatchedFalseNoExclude(t *testing.T) {
 	}
 	c := NewRoutingCompiler()
 	lk := compilerLatchKeyFor(acc)
-	latchedFalse := map[LatchKey]bool{lk: false}
-	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Latched: latchedFalse})
+	// v5-§5.1A: latch maps are deleted from inputs — live latched state (false
+	// or true) never excludes from compilation.
+	require.True(t, s.TryLatch(acc.ID, lk.Fingerprint, lk.Revision))
+	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	rd, ok := view.Routes()[rr]
 	require.True(t, ok)
 	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
 	all = append(all, compiledAccountIDs(rd.Degraded)...)
-	require.Contains(t, all, int64(1), "latched false must not exclude")
-	latchedTrue := map[LatchKey]bool{lk: true}
-	view2, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Latched: latchedTrue})
-	require.NoError(t, err)
-	rd2, ok := view2.Routes()[rr]
-	require.True(t, ok)
-	all2 := append(append([]int64{}, compiledAccountIDs(rd2.Primary)...), compiledAccountIDs(rd2.Explore.Ordered)...)
-	all2 = append(all2, compiledAccountIDs(rd2.Degraded)...)
-	require.NotContains(t, all2, int64(1), "latched true must exclude")
+	require.Contains(t, all, int64(1), "live latch must not exclude post-v5")
 }
 
 func TestRed_Blocker5_ViewImmutability(t *testing.T) {
@@ -253,7 +255,7 @@ func TestRoutingCompiler_candidateFactsStayConsistentAcrossFilterAndCompile(t *t
 
 	// When
 	facts := buildCandidateFacts([]*accountSnapshot{snapshot}, s.View().StaticView().facts, route, op)
-	filtered := filterCandidates(facts, nil, nil)
+	filtered := filterCandidates(facts)
 	routeClass, err := domain.RouteClassID(10, route.format, route.model, op)
 	require.NoError(t, err)
 	rr := RouteRefForOp(10, string(route.format), route.model, op)
@@ -283,6 +285,6 @@ func TestRoutingCompiler_candidateFactsStayConsistentAcrossFilterAndCompile(t *t
 	require.Equal(t, facts[0].quality, compiled[0].Quality)
 	require.Equal(t, facts[0].qualityRaw, compiled[0].QualityRaw)
 
-	health := map[HealthKey]HealthState{{AccountID: facts[0].accountID, Quality: facts[0].quality, Revision: facts[0].revision}: StateOPEN}
-	require.Empty(t, filterCandidates(facts, health, nil))
+	// v5-§5.1A: health OPEN no longer filters — the same facts compile through.
+	require.Len(t, filterCandidates(facts), 1)
 }

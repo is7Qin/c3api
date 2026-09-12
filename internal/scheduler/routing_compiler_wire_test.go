@@ -426,6 +426,11 @@ func TestRoutingCompilerWireCompileFailureRetainsPendingPair(t *testing.T) {
 // --- live health/latch wiring ---
 
 func TestRoutingCompilerWireHealthLatchExclusion(t *testing.T) {
+	// v5-§5.1A (COMPILED-HEALTH-FREE): live OPEN health + live latch must NOT
+	// exclude from the compiled plan — serving exclusion lives solely in
+	// reserveOnView (identical gates per attempt, strictly fresher). The
+	// compiled plan therefore carries all three accounts while Select (via
+	// reserve gates) serves only the ungated one.
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000), accWithEnabled(3, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
@@ -445,13 +450,18 @@ func TestRoutingCompilerWireHealthLatchExclusion(t *testing.T) {
 	s.compileOnce()
 	rd, ok := s.View().DecisionView().Routes()[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	all := allLaneIDs(rd)
-	require.Contains(t, all, int64(1))
-	require.NotContains(t, all, int64(2), "live health OPEN must exclude via wiring")
-	require.NotContains(t, all, int64(3), "live latch must exclude via wiring")
+	require.ElementsMatch(t, []int64{1, 2, 3}, allLaneIDs(rd), "compiled plan is health/latch-free post-v5")
+
+	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
+	require.NoError(t, err, "reserve gates skip 2 and 3 within the same request")
+	require.Equal(t, int64(1), sel.AccountID, "only the ungated account serves")
+	sel.Release()
 }
 
 func TestRoutingCompilerWireResolvedModelQualityIdentity(t *testing.T) {
+	// v5-§5.1A: resolved-model OPEN health no longer excludes the mapped
+	// candidate from compilation; reserveOnView still skips it at serve time,
+	// so Select exhausts on the single gated candidate.
 	tpl := &domain.Template{SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"req"}, ModelMapping: map[string]domain.ModelMappingEntry{"req": {MappedModel: "resolved", Mode: domain.ModelMappingModeExplicit}}}
 	acc := accWithEnabled(1, tpl, true, 10000)
 	acc.LifecycleRevision = 1
@@ -473,7 +483,9 @@ func TestRoutingCompilerWireResolvedModelQualityIdentity(t *testing.T) {
 	s.compileOnce()
 	rd, ok := s.View().DecisionView().Routes()[RouteRefFor(10, string(domain.FormatOpenAIChat), "req")]
 	require.True(t, ok)
-	require.NotContains(t, allLaneIDs(rd), int64(1), "resolved-model health must exclude mapped candidate")
+	require.Contains(t, allLaneIDs(rd), int64(1), "resolved-model health must not exclude post-v5")
+	_, err := s.Select(10, domain.FormatOpenAIChat, "req")
+	require.Error(t, err, "reserve gate skips the only candidate at serve time")
 }
 
 // --- full candidate union + overflow tail through wiring ---

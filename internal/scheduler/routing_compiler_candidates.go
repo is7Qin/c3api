@@ -153,7 +153,16 @@ func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]comp
 	return facts
 }
 
-func filterCandidates(candidates []compilerCandidateFacts, health map[HealthKey]HealthState, latched map[LatchKey]bool) []compilerCandidateFacts {
+// filterCandidates keeps statically eligible candidates only.
+//
+// v5-§5.1A (COMPILED-HEALTH-FREE): the health/latch branches are DELETED —
+// serving gates live solely in the live reserveOnView path
+// (attempt_plan_reservation.go: latch, mapping-aware EffectiveState,
+// StatusDisabled, plus leaf-freshness and concurrency CAS), which applies the
+// identical gates per attempt, strictly fresher, with skip-and-continue.
+// Compiled health additionally churned generations and invalidated in-flight
+// plans — deleting the class removes a harm (anti-harm clause).
+func filterCandidates(candidates []compilerCandidateFacts) []compilerCandidateFacts {
 	out := make([]compilerCandidateFacts, 0, len(candidates))
 	for _, fact := range candidates {
 		if fact.static == nil || !fact.static.acc.Enabled || fact.static.acc.LifecycleRevision < 0 {
@@ -161,73 +170,6 @@ func filterCandidates(candidates []compilerCandidateFacts, health map[HealthKey]
 		}
 		if fact.static.tpl == nil || (fact.static.tpl.CredentialType != "" && !fact.static.tpl.CredentialType.Valid()) {
 			continue
-		}
-		fp := fact.fingerprint
-		rev := fact.revision
-		if fp != "" {
-			lk := LatchKey{AccountID: fact.accountID, Fingerprint: fp, Revision: rev}
-			if latched != nil {
-				if v, ok := latched[lk]; ok && v {
-					continue
-				}
-				mismatch := false
-				for k, v := range latched {
-					if !v {
-						continue
-					}
-					if k.AccountID == fact.accountID && (k.Fingerprint != fp || k.Revision != rev) {
-						mismatch = true
-						break
-					}
-				}
-				if mismatch {
-					continue
-				}
-			}
-		} else if latched != nil && len(latched) > 0 {
-			hasLatch := false
-			for k, v := range latched {
-				if !v {
-					continue
-				}
-				if k.AccountID == fact.accountID {
-					hasLatch = true
-					break
-				}
-			}
-			if hasLatch {
-				continue
-			}
-		}
-		if health != nil && len(health) > 0 {
-			qc := fact.quality
-			hkSpec := HealthKey{AccountID: fact.accountID, Quality: qc, Revision: rev}
-			hkWild := HealthKey{AccountID: fact.accountID, Quality: "*", Revision: rev}
-			excluded := false
-			if st, ok := health[hkSpec]; ok && st != StateReady {
-				excluded = true
-			} else if st, ok := health[hkWild]; ok && st != StateReady {
-				excluded = true
-			} else {
-				for hk, st := range health {
-					if st == StateReady {
-						continue
-					}
-					if hk.AccountID != fact.accountID {
-						continue
-					}
-					if hk.Quality != qc && hk.Quality != "*" {
-						continue
-					}
-					if hk.Revision != rev {
-						excluded = true
-						break
-					}
-				}
-			}
-			if excluded {
-				continue
-			}
 		}
 		out = append(out, fact)
 	}

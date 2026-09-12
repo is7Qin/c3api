@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 func fp(seed byte) [32]byte {
@@ -299,8 +301,13 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 	}
 	require.LessOrEqual(t, r.MinuteBucketCount(), 2)
 	require.Greater(t, r.QualityOverflow(), int64(0))
+	// v3-hygiene: the legacy edges-array vehicle is deleted — the flow lane
+	// carries live consumer rows instead. Five distinct minutes fold and
+	// drain into five retained shells.
 	for i := 0; i < 5; i++ {
-		r.AddFlowMinute(int64(2000+i), [8]int64{int64(i + 1)})
+		require.NoError(t, foldConsumerRows(r.FlowOwner(), int64(2000+i), []repository.RoutingFlowRow{ownerTestRow(int64(i + 1))}))
+		_, ok := r.FlowMinute(int64(2000 + i))
+		require.True(t, ok)
 	}
 	// v3-F1: the flow lane has no minute cap and no pressure eviction — all
 	// five legacy minutes stay retained with zero loss counters. Only the
@@ -310,32 +317,6 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 	// MinuteOverflow stays quality-owned: the quality evictions above bump
 	// it; the flow lane contributes nothing without eviction.
 	require.Greater(t, r.MinuteOverflow(), int64(0))
-}
-
-func TestQualityRecorder_FlowWholeMinute_EdgeArrayAPI(t *testing.T) {
-	r, err := NewRecorder(50000)
-	require.NoError(t, err)
-	var edges [8]int64
-	for i := range edges {
-		edges[i] = int64(i * 10)
-	}
-	minute := int64(3000)
-	r.AddFlowMinute(minute, edges)
-	fm, ok := r.FlowMinute(minute)
-	require.True(t, ok)
-	require.Equal(t, minute, fm.Minute())
-	for i := 0; i < 8; i++ {
-		require.Equal(t, int64(i*10), fm.Edge(i))
-	}
-	fm.SetEdge(3, 999)
-	require.Equal(t, int64(999), fm.Edge(3))
-	require.Equal(t, [8]int64{0, 10, 20, 999, 40, 50, 60, 70}, fm.Edges())
-	r.AddFlowMinute(minute, edges)
-	require.Equal(t, 1, r.MinuteBucketCount())
-	// v3-F1: no minute-cap eviction — the newcomer is admitted beside the
-	// retained minute.
-	r.AddFlowMinute(minute+1, edges)
-	require.Equal(t, 2, r.MinuteBucketCount())
 }
 
 func TestQualityRecorder_Close_PreventsNewBegin_LetsExistingComplete(t *testing.T) {

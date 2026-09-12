@@ -216,6 +216,68 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 	return out, nil
 }
 
+// compileStalenessSQL is the single §9-A1 read-only aggregate pass: one
+// statement, nine scalar subqueries, no new columns/tables/keys/indexes
+// (schema frozen). Soft deletes mirror the snapshot inclusion (deleted_at IS
+// NULL); membership/ext rows are count-only. Known limit: an exact membership
+// swap (remove one, add one — same COUNT) is probe-invisible; membership moves
+// always ride NOTIFY → InvalidateGroup in-app, and disconnect gaps ride
+// reconnect FullRefresh, so the probe stays a backstop, never the primary
+// carrier. Freshness maxima ride
+// MAX(updated_at) on exactly the three tables whose ent schemas maintain it
+// (account.go:36, group.go:29, template.go:26 — UpdateDefault(time.Now), so
+// every ent write path bumps it, including the general UpdateAccount path that
+// sets keys/URLs/concurrency WITHOUT bumping lifecycle_revision). The other
+// two tables have no maintained timestamp — verified, not assumed: account_groups
+// is an ent m2m edge table (no schema file, no time columns; edge rows are
+// immutable (account_id, group_id) pairs — insert/delete only, so COUNT is
+// complete and every move additionally rides NOTIFY → InvalidateGroup in-app);
+// account_exts carries no time columns at all (account_ext.go:23-44) and every
+// service ext write co-bumps the parent account's lifecycle_revision in the
+// same transaction (ext_codex_repo.go), so ext content edits are rev-covered
+// and COUNT covers ext insert/delete. COALESCE pins empty tables to epoch
+// (never NULL — the tuple must compare exact).
+const compileStalenessSQL = `SELECT` +
+	` (SELECT COUNT(*) FROM accounts WHERE deleted_at IS NULL),` +
+	` (SELECT COALESCE(MAX(lifecycle_revision), 0) FROM accounts WHERE deleted_at IS NULL),` +
+	` (SELECT COALESCE(MAX(updated_at), 'epoch'::timestamptz) FROM accounts WHERE deleted_at IS NULL),` +
+	` (SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL),` +
+	` (SELECT COALESCE(MAX(updated_at), 'epoch'::timestamptz) FROM groups WHERE deleted_at IS NULL),` +
+	` (SELECT COUNT(*) FROM templates WHERE deleted_at IS NULL),` +
+	` (SELECT COALESCE(MAX(updated_at), 'epoch'::timestamptz) FROM templates WHERE deleted_at IS NULL),` +
+	` (SELECT COUNT(*) FROM account_groups),` +
+	` (SELECT COUNT(*) FROM account_exts)`
+
+// CompileStalenessSnapshot runs the §9-A1 probe tuple (counts + freshness
+// maxima) for the scheduler backstop. Colocated with LoadGroupsAccounts: same
+// tables, same driver-seam convention (zero IN parameters — the O3 65,535
+// discipline), same soft-delete predicates. The scheduler consumes the tuple
+// only — no SQL, no pool ever enters the lane.
+func (r *GroupRepo) CompileStalenessSnapshot(ctx context.Context) (domain.CompileStaleness, error) {
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, compileStalenessSQL, []any{}, rows); err != nil {
+		return domain.CompileStaleness{}, fmt.Errorf("compile staleness snapshot: %w", err)
+	}
+	defer rows.Close()
+	var out domain.CompileStaleness
+	var accountsUpdated, groupsUpdated, templatesUpdated time.Time
+	if !rows.Next() {
+		return domain.CompileStaleness{}, fmt.Errorf("compile staleness snapshot: no rows")
+	}
+	if err := rows.Scan(&out.Accounts, &out.MaxLifecycleRevision, &accountsUpdated,
+		&out.Groups, &groupsUpdated, &out.Templates, &templatesUpdated,
+		&out.Memberships, &out.Exts); err != nil {
+		return domain.CompileStaleness{}, fmt.Errorf("compile staleness snapshot (scan): %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.CompileStaleness{}, fmt.Errorf("compile staleness snapshot: %w", err)
+	}
+	out.AccountsUpdatedAtNano = accountsUpdated.UnixNano()
+	out.GroupsUpdatedAtNano = groupsUpdated.UnixNano()
+	out.TemplatesUpdatedAtNano = templatesUpdated.UnixNano()
+	return out, nil
+}
+
 // LoadGroupMultipliers 全量组倍率快照（id → 万分数；groups.price_multiplier
 // NOT NULL 默认 10000——每行都有值；billing.Balances.Reload 调用）。独立方法
 // 不并入 LoadGroupsAccounts（后者是账号路由快照，语义/带宽不同）。

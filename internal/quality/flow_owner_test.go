@@ -150,7 +150,7 @@ func TestFlowMinute_SetFlowRowsCopiesPreviousAccountPointer(t *testing.T) {
 	previous := int64(7)
 	rows := []repository.RoutingFlowRow{ownerTestRow(11)}
 	rows[0].PreviousAccountID = &previous
-	fm := NewFlowMinute(100, [8]int64{})
+	fm := &FlowMinute{minute: 100}
 
 	// When
 	fm.SetFlowRows(rows)
@@ -212,18 +212,19 @@ func TestFlowOwner_SnapshotAckRetainsCumulativeOwner(t *testing.T) {
 		"ack keeps the live charge stable")
 }
 
-// TestFlowOwner_EnqueueDoesNotAliasInputRows locks the invariant that keeps
-// the fold exact: enqueue reverse-maps the caller's rows into value facts
+// TestFlowOwner_FoldDoesNotAliasInputRows locks the invariant that keeps
+// the fold exact: folding reverse-maps the caller's rows into value facts
 // immediately, retaining no slice or PreviousAccountID pointer, on either
 // the new-bucket or the same-minute path. (v3-F1: mergeLocked is deleted;
-// the cell fold replaces it.)
-func TestFlowOwner_EnqueueDoesNotAliasInputRows(t *testing.T) {
+// the cell fold replaces it. v3-hygiene: the EnqueueFlowMinute vehicle is
+// deleted; the live cell fold carries the same rows.)
+func TestFlowOwner_FoldDoesNotAliasInputRows(t *testing.T) {
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
 	previous := int64(7)
 	incoming := []repository.RoutingFlowRow{ownerTestRow(11)}
 	incoming[0].PreviousAccountID = &previous
-	require.NoError(t, rec.EnqueueFlowMinute(&FlowMinute{minute: 100, flowRows: incoming}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), 100, incoming))
 	incoming[0].AccountID = 99
 	incoming[0].ChainCount = 99
 	previous = 55
@@ -234,7 +235,7 @@ func TestFlowOwner_EnqueueDoesNotAliasInputRows(t *testing.T) {
 	require.Equal(t, int64(1), rows[0].ChainCount, "mutating input rows must not change retained counts")
 	require.Equal(t, int64(7), *rows[0].PreviousAccountID, "retained rows must not alias the caller's pointers")
 	second := []repository.RoutingFlowRow{ownerTestRow(12)}
-	require.NoError(t, rec.EnqueueFlowMinute(&FlowMinute{minute: 100, flowRows: second}))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), 100, second))
 	second[0].AccountID = 98
 	after, ok := rec.FlowMinute(100)
 	require.True(t, ok)
