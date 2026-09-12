@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pashagolub/pgxmock/v4"
+	"github.com/pashagolub/pgxmock/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
