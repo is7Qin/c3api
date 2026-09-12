@@ -68,15 +68,15 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
 	require.NoError(t, ctrl.FailAccount(ev))
 	require.True(t, ls.IsLatched(1, fp))
-	s.compileOnce() // 锁存账号从编译计划剔除 → 路由空 → ErrNoAvailable
+	s.compileOnce() // v5-§5.1A: 锁存账号保留在编译计划内 → reserve 门跳过 → ErrAttemptsExhausted（旧“路由空 → ErrNoAvailable”已废止）
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrNoAvailable)
+	require.ErrorIs(t, err, ErrAttemptsExhausted)
 	// same revision reload must not clear latch
 	require.NoError(t, s.reload(context.Background()))
 	require.True(t, ls.IsLatched(1, fp))
 	s.compileOnce()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.ErrorIs(t, err, ErrNoAvailable)
+	require.ErrorIs(t, err, ErrAttemptsExhausted)
 	// new revision clears latch
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))

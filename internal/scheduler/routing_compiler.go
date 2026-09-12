@@ -30,12 +30,16 @@ type LatchKey struct {
 }
 
 // CompilerInputs is immutable deterministic inputs.
+//
+// v5-§5.1A (COMPILED-HEALTH-FREE): Health/Latched fields are DELETED —
+// compiled-health snapshots invalidated in-flight plans via generation churn
+// while serving never needed them (reserveOnView owns latch + EffectiveState
+// + StatusDisabled per attempt, strictly fresher). Positive trigger rule =
+// static + price + quality ONLY.
 type CompilerInputs struct {
 	Static  *StaticView
 	Quality map[CandidateQualityKey]CandidateQualityInput
 	Prices  map[string]domain.ResolvedPrices
-	Health  map[HealthKey]HealthState
-	Latched map[LatchKey]bool
 }
 
 // RoutingCompiler is stateless compiler.
@@ -66,33 +70,53 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 				// v4-S2: the table key stays normalized (no hex); the
 				// decision value keeps rr.RouteClassID as the interned hex.
 				key := normRouteRef(rr)
-				candidates := fullCandidateUnion(gs, in.Static.facts, rk)
-				facts := buildCandidateFacts(candidates, in.Static.facts, rk, op)
-				filtered := filterCandidates(facts, in.Health, in.Latched)
-				if len(filtered) == 0 {
-					decision := &RouteDecision{Format: string(rk.format), RequestedModel: rk.model, RouteClassID: rr.RouteClassID, CallerCategory: string(callerKindForFormat(rk.format)), OperationTag: string(op)}
-					if err := validateRouteDecision(decision); err != nil {
-						return nil, err
-					}
-					decision.validated = true
-					routes[key] = decision
-					continue
-				}
-				var rcVal domain.RouteClassIDVal
-				if rr.RouteClassID != "" {
-					if v, err := domain.HexToID(rr.RouteClassID); err == nil {
-						rcVal = domain.RouteClassIDVal(v)
-					}
-				}
-				dec, err := compileRouteDecision(filtered, rk, rcVal, in.Quality, in.Prices, rr)
+				dec, err := c.compileSingleRoute(in.Static, gid, rk, op, in.Quality, in.Prices)
 				if err != nil {
 					return nil, err
+				}
+				if dec == nil {
+					continue
 				}
 				routes[key] = dec
 			}
 		}
 	}
 	return &DecisionView{routes: routes}, nil
+}
+
+// compileSingleRoute compiles exactly one route (group × routeKey × op) — the
+// shared per-route body behind both the full Compile loop and the v5-C2
+// scoped path, so scoped output equals the full-recompile oracle bit-for-bit
+// by construction. Returns (nil, nil) when the route is gone from the static
+// root (scoped caller drops it; the full loop skips it as before).
+func (c *RoutingCompiler) compileSingleRoute(static *StaticView, gid int64, rk routeKey, op domain.OperationTag, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) (*RouteDecision, error) {
+	gs := static.groups[gid]
+	if gs == nil {
+		return nil, nil
+	}
+	route := gs.routes[rk]
+	if route == nil {
+		return nil, nil
+	}
+	rr := canonicalRouteRefWithOp(gid, rk, op)
+	candidates := fullCandidateUnion(gs, static.facts, rk)
+	facts := buildCandidateFacts(candidates, static.facts, rk, op)
+	filtered := filterCandidates(facts)
+	if len(filtered) == 0 {
+		decision := &RouteDecision{Format: string(rk.format), RequestedModel: rk.model, RouteClassID: rr.RouteClassID, CallerCategory: string(callerKindForFormat(rk.format)), OperationTag: string(op)}
+		if err := validateRouteDecision(decision); err != nil {
+			return nil, err
+		}
+		decision.validated = true
+		return decision, nil
+	}
+	var rcVal domain.RouteClassIDVal
+	if rr.RouteClassID != "" {
+		if v, err := domain.HexToID(rr.RouteClassID); err == nil {
+			rcVal = domain.RouteClassIDVal(v)
+		}
+	}
+	return compileRouteDecision(filtered, rk, rcVal, quality, prices, rr)
 }
 
 func sortedGroupIDs(m map[int64]*groupSnapshot) []int64 {

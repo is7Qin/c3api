@@ -31,8 +31,7 @@ import (
 )
 
 const (
-	minuteWidth           = time.Minute
-	flowLateCutoffSeconds = 600
+	minuteWidth = time.Minute
 	// foldShellRetainSeconds bounds tick-owned shell retention: clean
 	// unleased shells older than this behind the newest observed minute are
 	// reclaimed (their counts are durable in PG — clean means acked). The
@@ -104,12 +103,10 @@ func (o *FlowOwner) drainFoldLocked() {
 	o.cells.drain(curMinute, seq, func(f attemptFact, count int64) {
 		// No absent-shell age guard here by design (v3-F1 review finding 3,
 		// disputed with evidence): admission is replay-tolerant — buckets are
-		// minted at completion or carried from live FlowMinutes, so production
-		// has no ancient-minute producer, and the ingest seams already refuse
-		// old-absent minutes when the owner clock is explicit
-		// (fold_consume.go admissionCutoff). A drain-time refusal would break
-		// the pinned replay contract (TestQualitySync_EmptyFlowSnapshotPreserved
-		// ingests fixed old minutes under a live clock). Zero-count entries
+		// minted at completion or carried from live cells, so production
+		// has no ancient-minute producer. A drain-time refusal would break
+		// the pinned replay contract (fixed old minutes fold under a live
+		// clock). Zero-count entries
 		// are deleted at fold, so a rebuilt shell always carries the folded
 		// counts — never an empty shell over PG-held cumulatives.
 		shell := o.getOrCreateShell(f.minuteBucket)
@@ -161,7 +158,7 @@ func materializeShell(shell *foldShell) *FlowMinute {
 		minute:        shell.minute,
 		edges:         shell.edges,
 		counts:        shell.counts8,
-		emptySnapshot: shell.emptyMarked && len(shell.counts) == 0 && !hasLegacyCounts(shell),
+		emptySnapshot: shell.emptyMarked && len(shell.counts) == 0,
 	}
 	if len(shell.counts) > 0 {
 		fm.flowRows = make([]repository.RoutingFlowRow, 0, len(shell.counts))
@@ -239,17 +236,4 @@ func materializeShell(shell *foldShell) *FlowMinute {
 		})
 	}
 	return fm
-}
-
-func hasLegacyCounts(shell *foldShell) bool {
-	return anyLegacyCounts(shell.edges, shell.counts8)
-}
-
-func anyLegacyCounts(edges, counts [8]int64) bool {
-	for i := 0; i < 8; i++ {
-		if edges[i] != 0 || counts[i] != 0 {
-			return true
-		}
-	}
-	return false
 }

@@ -194,48 +194,50 @@ func TestQualitySync_PGBisectPreservesDBWideAndDropsOnlyPoison(t *testing.T) {
 	require.Equal(t, int64(0), w3.poison.Load())
 }
 
-func TestQualitySync_FlowPreservesEdgeArraysAndRequeuesWholeMinute(t *testing.T) {
+func TestQualitySync_FlowPreservesRowsAndRequeuesWholeMinute(t *testing.T) {
+	// v3-hygiene: the legacy edges-array vehicle is deleted — the same sync
+	// contract (full-minute persist, dirty-retained retry) rides live rows.
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-flow", BatchSize: 10}, nil)
 	w.SetClock(func() time.Time { return fixed })
-	edges := [8]int64{10, 20, 30, 40, 50, 60, 70, 80}
-	fm := NewFlowMinute(fixed.Unix(), edges)
-	for i := 0; i < 8; i++ {
-		fm.SetCount(i, int64(i*100))
-	}
-	require.NoError(t, rec.EnqueueFlowMinute(fm))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
+		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 100},
+		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 2, Lane: "explore", AccountID: 20, TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 200},
+	}))
 	w.doPG(context.Background())
 	require.GreaterOrEqual(t, len(pg.flows), 1)
 	var got []repository.RoutingFlowRow
 	for _, rows := range pg.flows {
 		got = rows
 	}
-	require.GreaterOrEqual(t, len(got), 2, "must carry complete edge arrays, not single fabricated row")
+	require.GreaterOrEqual(t, len(got), 2, "must carry complete rows, not a single fabricated row")
 	found := make(map[int64]bool)
 	for _, row := range got {
 		found[row.ChainCount] = true
-		require.NotEqual(t, int64(1), row.AccountID, "should not fabricate account1")
-		require.NotEqual(t, "primary", row.Lane, "should not fabricate primary for all")
 	}
-	require.True(t, found[100] || found[0], "counts must be actual")
+	require.True(t, found[100] && found[200], "counts must be actual")
 
 	// failed flow stays dirty-retained for next-cycle retry (no requeue)
 	pg2 := newFakePG()
 	rec2, _ := NewRecorder(50000)
 	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-flow2", BatchSize: 10}, nil)
 	w2.SetClock(func() time.Time { return fixed })
-	require.NoError(t, rec2.EnqueueFlowMinute(fm.Clone()))
+	require.NoError(t, foldConsumerRows(rec2.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
+		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 100},
+	}))
 	pg2.failAll = true
 	w2.doPG(context.Background())
 	require.Equal(t, 1, rec2.MinuteBucketCount(), "failed flow must stay dirty-retained for retry")
 	require.Equal(t, 0, len(pg2.flows))
 }
 
-func TestQualitySync_FlowEmptyMarkerThenRowsAreLookedUpAndPersisted(t *testing.T) {
-	// Given: an empty same-minute marker followed by a non-empty contribution.
+func TestQualitySync_FlowRowsAreLookedUpAndPersisted(t *testing.T) {
+	// Given: a non-empty contribution for the minute.
+	// (v3-hygiene: the empty-marker half is deleted with the consumer seam —
+	// no live writer exists for it.)
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	rec, err := NewRecorder(50000)
@@ -244,9 +246,8 @@ func TestQualitySync_FlowEmptyMarkerThenRowsAreLookedUpAndPersisted(t *testing.T
 	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "empty-then-rows", BatchSize: 10}, nil)
 	w.SetClock(func() time.Time { return minute })
 
-	require.NoError(t, rec.EnqueueFlowMinute(NewEmptyFlowSnapshot(minute.Unix())))
 	row := flowTestRow(minute, 1, 42, "success", true)
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute.Unix(), []repository.RoutingFlowRow{row})))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{row}))
 
 	// When: the owner is read and the flow minute is persisted.
 	got, ok := rec.FlowMinute(minute.Unix())
@@ -254,7 +255,7 @@ func TestQualitySync_FlowEmptyMarkerThenRowsAreLookedUpAndPersisted(t *testing.T
 
 	w.doPG(context.Background())
 
-	// Then: the marker is cleared and the retained row is emitted to PG.
+	// Then: the retained row is emitted to PG.
 	require.False(t, got.IsEmptySnapshot())
 	require.Equal(t, []repository.RoutingFlowRow{row}, got.FlowRows())
 	var persisted []repository.RoutingFlowRow
@@ -278,8 +279,11 @@ func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
 	qm := NewQualityMinute(fixed.Unix(), k)
 	qm.SetAttempts(10)
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
-	edges := [8]int64{1, 2, 3, 4, 5, 6, 7, 8}
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowMinute(fixed.Unix(), edges)))
+	// v3-hygiene: the legacy edges-array vehicle is deleted — a live row
+	// carries the flow publish instead.
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
+		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 7, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
+	}))
 	w.doRedis(context.Background())
 	require.GreaterOrEqual(t, len(mr.Keys()), 2, "should publish quality and flow")
 	hasFlow := false
@@ -536,27 +540,12 @@ func TestQualitySync_PGActiveOnly(t *testing.T) {
 	require.Equal(t, int64(1), pg.quality[0].Attempts)
 }
 
-func TestQualitySync_EmptyFlowSnapshotPreserved(t *testing.T) {
+func TestQualitySync_FullIdentityFlowRowsPreserved(t *testing.T) {
+	// v3-hygiene: the empty-snapshot half is deleted with the consumer seam
+	// (no live writer exists for it) — the full-identity rows half remains.
 	_, rdb := newMiniRedis(t)
-	pg := newFakePG()
-	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 5, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-emptyflow", BatchSize: 10}, nil)
-	w.SetClock(func() time.Time { return fixed })
-	// empty snapshot via new API
-	fm := NewEmptyFlowSnapshot(fixed.Unix())
-	require.NoError(t, rec.EnqueueFlowMinute(fm))
-	w.doPG(context.Background())
-	// fake should have recorded empty snapshot (no rows but seq advanced)
-	key := "src-emptyflow:" + fixed.UTC().Truncate(time.Minute).String()
-	pg.mu.Lock()
-	_, has := pg.flows[key]
-	seq := pg.seqs[key]
-	pg.mu.Unlock()
-	// empty snapshot should still have seq, even if no rows
-	require.GreaterOrEqual(t, seq, int64(1))
-	_ = has
-	// also test full identity flow rows
+	// test full identity flow rows
 	pg2 := newFakePG()
 	rec2, _ := NewRecorder(50000)
 	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-fullflow", BatchSize: 10}, nil)
@@ -589,8 +578,7 @@ func TestQualitySync_EmptyFlowSnapshotPreserved(t *testing.T) {
 			TerminalMinute: fixed, Ordinal: 2, Lane: "explore", AccountID: 20, PreviousAccountID: func() *int64 { v := int64(10); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 5,
 		},
 	}
-	fm2 := NewFlowSnapshot(fixed.Unix(), rows)
-	require.NoError(t, rec2.EnqueueFlowMinute(fm2))
+	require.NoError(t, foldConsumerRows(rec2.FlowOwner(), fixed.Unix(), rows))
 	w2.doPG(context.Background())
 	pg2.mu.Lock()
 	got := pg2.flows["src-fullflow:"+fixed.UTC().Truncate(time.Minute).String()]

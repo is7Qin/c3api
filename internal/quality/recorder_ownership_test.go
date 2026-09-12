@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 func TestQualityRecorder_OwnershipForeignCellRejected(t *testing.T) {
@@ -141,7 +143,9 @@ func TestQualityRecorder_SnapshotDeepCopyLifecycle(t *testing.T) {
 	r, err := NewRecorder(50000)
 	require.NoError(t, err)
 	require.NoError(t, r.AddQualityRow(1000, keyOf(fp(9), qc(9))))
-	require.NoError(t, r.AddFlowMinute(1000, [8]int64{1, 2, 3, 4, 5, 6, 7, 8}))
+	// v3-hygiene: the legacy edges-array vehicle is deleted — a live
+	// consumer row populates the flow minute instead.
+	require.NoError(t, foldConsumerRows(r.FlowOwner(), 1000, []repository.RoutingFlowRow{ownerTestRow(11)}))
 	snap := r.Snapshot()
 	for _, rows := range snap.Quality {
 		for _, qm := range rows {

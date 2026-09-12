@@ -39,8 +39,11 @@ func TestQualitySync_ShutdownDrainFailureRetainsPending(t *testing.T) {
 	qm.SetAttempts(3)
 	qm.SetSuccesses(1)
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
-	edges := [8]int64{7, 0, 0, 0, 0, 0, 0, 0}
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowMinute(minute, edges)))
+	// v3-hygiene: the legacy edges-array vehicle is deleted — a live row
+	// with the same leading account carries the shutdown-drain contract.
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, []repository.RoutingFlowRow{
+		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 7, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
+	}))
 
 	// When: worker Close runs under a bounded budget (exactly what the worker
 	// manager drain does during graceful shutdown), before the recorder is
@@ -82,7 +85,8 @@ func TestQualitySync_ShutdownDrainFailureRetainsPending(t *testing.T) {
 	require.Equal(t, int64(1), retained.Successes())
 	fm, ok := snap.Flow[minute]
 	require.True(t, ok, "final snapshot must retain the pending flow minute")
-	require.Equal(t, edges, fm.Edges())
+	require.Len(t, fm.FlowRows(), 1, "final snapshot must retain the pending flow row")
+	require.Equal(t, int64(7), fm.FlowRows()[0].AccountID)
 }
 
 // gatedFailingPG signals entry on the first quality upsert, blocks there until

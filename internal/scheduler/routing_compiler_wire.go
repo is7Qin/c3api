@@ -85,7 +85,14 @@ func debounceWait(ctx context.Context, window time.Duration, ch <-chan struct{})
 // published pair and the pending root.
 // Called from the serial compile lane (or synchronously in tests);
 // lastDecisionBytes/lastCompiledStatic are owned by that single lane.
+//
+// v5-C1/C2: the lane drains fire-owned scope, unites it with lane-local
+// quality/price diffs, and recompiles ONLY affected routes (pointer reuse,
+// whole-snapshot atomic publish); unknown/unscoped causes take the
+// full-fidelity fallback with recorded reason. exec/observe boundary: compile
+// EXECUTES off-path; request observation only READS the published view.
 func (s *Scheduler) compileOnce() {
+	scopes, scopeOverflow := s.drainCompileScopes()
 	s.publisher.mu.Lock()
 	cur := s.view.Load()
 	pendingSnap := s.publisher.pending
@@ -95,19 +102,21 @@ func (s *Scheduler) compileOnce() {
 	}
 	var baseGen uint64
 	var baseStatic *StaticView
+	var carry *DecisionView
 	if cur != nil {
 		baseGen = cur.generation
 		baseStatic = cur.static
+		carry = cur.decision
 	}
 	s.publisher.mu.Unlock()
 
 	if target == nil {
 		return
 	}
+	// v5-§5.1A: compiled-health-free — Health/Latched DELETED from inputs
+	// (and from filterCandidates); serving gates live solely in reserveOnView.
 	in := CompilerInputs{
-		Static:  target,
-		Health:  s.compilerHealthSnapshot(),
-		Latched: s.latch.Snapshot(),
+		Static: target,
 	}
 	if s.qualityFn != nil {
 		in.Quality = s.qualityFn()
@@ -115,7 +124,40 @@ func (s *Scheduler) compileOnce() {
 	if s.pricesFn != nil {
 		in.Prices = s.pricesFn()
 	}
-	dv, err := s.compiler.Compile(in)
+	fire := &compileFire{input: in, carry: carry, scopes: scopes, overflow: scopeOverflow}
+	wantFull, fullCause := s.resolveCompileScope(fire)
+	var dv *DecisionView
+	var err error
+	if wantFull {
+		dv, err = s.compiler.Compile(in)
+		if err == nil {
+			// Full-fidelity path: every route recomputed — the view is whole.
+			if dv != nil {
+				dv.whole = true
+			}
+			total := 0
+			if target.routeIndex != nil {
+				total = target.routeIndex.totalRoutes
+			}
+			s.recordCompileFallback(fullCause, len(fire.scopes), len(fire.affected), total)
+		}
+	} else {
+		dv, err = s.compileScopedRoutes(fire)
+		if err == errScopedUnsupported {
+			dv, err = s.compiler.Compile(in)
+			if err == nil {
+				// Full-fidelity path: every route recomputed — the view is whole.
+				if dv != nil {
+					dv.whole = true
+				}
+				total := 0
+				if target.routeIndex != nil {
+					total = target.routeIndex.totalRoutes
+				}
+				s.recordCompileFallback(fallbackCompilerSeam, len(fire.scopes), len(fire.affected), total)
+			}
+		}
+	}
 	if err != nil {
 		s.compileErrMs.Store(s.timeNow().UnixMilli())
 		if s.log != nil {
@@ -128,8 +170,10 @@ func (s *Scheduler) compileOnce() {
 
 	s.publisher.mu.Lock()
 	if s.publisher.pending != pendingSnap {
-		// A newer staging superseded this result: keep it pending and re-arm.
+		// A newer staging superseded this result: the fire's drained scopes
+		// are lane work that must not evaporate — return them before re-arm.
 		s.publisher.mu.Unlock()
+		s.requeueCompileScopes(fire.scopes, fire.overflow)
 		s.RequestCompile()
 		return
 	}
@@ -149,24 +193,6 @@ func (s *Scheduler) compileOnce() {
 		s.lastDecisionBytes = b
 		s.lastCompiledStatic = target
 	}
-}
-
-// compilerHealthSnapshot converts the live RuntimeHealth view into compiler
-// input. The view is already the pruned authoritative set (sync loop owns
-// expiry), so entries pass through as-is.
-func (s *Scheduler) compilerHealthSnapshot() map[HealthKey]HealthState {
-	if s.health == nil {
-		return nil
-	}
-	v := s.health.View()
-	if len(v) == 0 {
-		return nil
-	}
-	out := make(map[HealthKey]HealthState, len(v))
-	for k, e := range v {
-		out[k] = e.State
-	}
-	return out
 }
 
 // decisionViewBytes encodes the routes of a DecisionView into canonical

@@ -1148,40 +1148,11 @@ func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []reposit
 		}
 		return rows
 	}
-	// legacy edges fallback (should not happen for new code, but preserve)
-	var out []repository.RoutingFlowRow
-	edges := fm.Edges()
-	counts := fm.Counts()
-	hasData := false
-	for i := 0; i < 8; i++ {
-		if edges[i] != 0 || counts[i] != 0 {
-			hasData = true
-			break
-		}
-	}
-	if !hasData {
-		return nil
-	}
-	for i := 0; i < 8; i++ {
-		if edges[i] == 0 && counts[i] == 0 {
-			continue
-		}
-		out = append(out, repository.RoutingFlowRow{
-			IdentityVersion:  1,
-			TerminalMinute:   time.Unix(fm.Minute(), 0).UTC(),
-			Ordinal:          int16(i + 1),
-			Lane:             fmt.Sprintf("lane-%d", i),
-			AccountID:        edges[i],
-			TransitionReason: "flow",
-			Outcome:          "success",
-			IsTerminal:       true,
-			Generation:       1,
-			InstanceSrc:      instanceSrc,
-			AbsoluteSequence: seq,
-			ChainCount:       counts[i],
-		})
-	}
-	return out
+	// No rows and no empty marker: nothing to persist. (The legacy
+	// edges-array fallback is deleted with the consumer seam — shell
+	// edges/counts have no writer, so this point always carried zeros and
+	// returned nil.)
+	return nil
 }
 
 func (w *SyncWorker) pruneLongLivedLocked(nowUnix int64) {

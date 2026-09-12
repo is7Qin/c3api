@@ -106,8 +106,8 @@ func fieldBool(v bool) []byte {
 
 func IDToHex(id [32]byte) string { return hex.EncodeToString(id[:]) }
 
-func RouteClassIDHex(id RouteClassIDVal) string { return hex.EncodeToString(id[:]) }
-func QualityClassIDHex(id QualityClassIDVal) string { return hex.EncodeToString(id[:]) }
+func RouteClassIDHex(id RouteClassIDVal) string        { return hex.EncodeToString(id[:]) }
+func QualityClassIDHex(id QualityClassIDVal) string    { return hex.EncodeToString(id[:]) }
 func CandidateFPHex(id CandidateFingerprintVal) string { return hex.EncodeToString(id[:]) }
 
 func HexToID(s string) ([32]byte, error) {
@@ -354,3 +354,20 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 }
 
 var _ = fieldUint64
+
+// CompileStaleness is the §9-A1 probe tuple: the snapshot-source table counts
+// plus per-table freshness maxima. UpdatedAt nanos ride as int64 (UnixNano —
+// exact == comparison; time.Time carries location/monotonic hazards). Owner:
+// repository (sole producer, GroupRepo.CompileStalenessSnapshot); the compile
+// lane maps it 1:1 and never queries for it. Lifecycle: fire-owned.
+type CompileStaleness struct {
+	Accounts               int64
+	MaxLifecycleRevision   int64
+	AccountsUpdatedAtNano  int64
+	Groups                 int64
+	GroupsUpdatedAtNano    int64
+	Templates              int64
+	TemplatesUpdatedAtNano int64
+	Memberships            int64
+	Exts                   int64
+}

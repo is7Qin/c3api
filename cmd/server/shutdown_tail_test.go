@@ -17,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/worker"
@@ -134,8 +135,16 @@ func newShutdownFixture(t *testing.T, fail error) (wm *worker.Manager, rec *qual
 	qm.SetAttempts(3)
 	qm.SetSuccesses(1)
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
-	edges := [8]int64{5, 0, 0, 0, 0, 0, 0, 0}
-	require.NoError(t, rec.EnqueueFlowMinute(quality.NewFlowMinute(minute, edges)))
+	// v3-hygiene: edges-array ingestion is deleted — stage the pending flow
+	// minute through the live FoldChain path (single terminal success edge),
+	// exactly as production's proxy fold owner emits it.
+	route, err := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
+	require.NoError(t, err)
+	fp, err := domain.CandidateFingerprint(1, 1, "api_key", "https://api.openai.com", "sk-upstream", "", "", "", false, "", "", "", "")
+	require.NoError(t, err)
+	rec.FlowOwner().FoldChain(minute, 1, func(i int) (domain.RouteClassIDVal, domain.CandidateFingerprintVal, int64, int64, int64, uint8, string, string, string, bool, bool) {
+		return route, fp, 10, 0, 5, 1, "primary", "success", "", true, false
+	})
 
 	log, logPath = newShutdownTestLogger(t)
 	wm = worker.New(log)
@@ -222,7 +231,15 @@ func TestShutdownTail_CleanDrainClaimsShutdownComplete(t *testing.T) {
 	require.Len(t, snap.Flow, 1, "final snapshot retains the clean flow minute for diagnostics")
 	fm, ok := snap.Flow[minute]
 	require.True(t, ok, "retained clean minute must be addressable by its minute")
-	require.Equal(t, [8]int64{5, 0, 0, 0, 0, 0, 0, 0}, fm.Edges(), "retained minute preserves the submitted edge arrays")
+	// v3-hygiene: rows are the live representation (edges-array input deleted) —
+	// the retained minute carries the single folded success edge.
+	rows := fm.FlowRows()
+	require.Len(t, rows, 1, "retained minute preserves the folded edge")
+	require.Equal(t, int64(10), rows[0].AccountID)
+	require.Equal(t, "success", rows[0].Outcome)
+	require.Equal(t, "primary", rows[0].Lane)
+	require.Equal(t, int64(5), rows[0].Generation)
+	require.Equal(t, int64(1), rows[0].ChainCount)
 
 	lines := readShutdownLog(t, logPath)
 	var msgs []string

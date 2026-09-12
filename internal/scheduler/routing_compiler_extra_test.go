@@ -23,17 +23,27 @@ func TestRoutingCompilerEmptyAndAllIneligible(t *testing.T) {
 	qraw := map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100)}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", qraw, accs2)
 	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
-	health := map[HealthKey]HealthState{compilerHealthKeyFor(accs2[1], domain.FormatOpenAIChat, "m"): StateOPEN}
-	view, err = c.Compile(CompilerInputs{Static: s2.View().StaticView(), Quality: q, Prices: prices, Health: health, Latched: map[LatchKey]bool{}})
+	// v5-§5.1A: OPEN health no longer excludes account 2 — only the statically
+	// disabled account 1 stays out. Serving gates live in reserveOnView.
+	hk := compilerHealthKeyFor(accs2[1], domain.FormatOpenAIChat, "m")
+	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
+	s2.SetRuntimeHealth(h)
+	view, err = c.Compile(CompilerInputs{Static: s2.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
-	require.Empty(t, rd.Primary)
-	require.Empty(t, rd.Degraded)
-	require.Empty(t, rd.Explore.Ordered)
+	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
+	all = append(all, compiledAccountIDs(rd.Degraded)...)
+	require.NotContains(t, all, int64(1), "statically disabled stays out")
+	require.Contains(t, all, int64(2), "OPEN health must not exclude post-v5")
 }
 
 func TestRoutingCompilerHealthLatchExclusion(t *testing.T) {
+	// v5-§5.1A (COMPILED-HEALTH-FREE): live OPEN health + live latch must NOT
+	// exclude from compilation — all three statically eligible accounts stay
+	// in the plan; reserveOnView owns serving exclusion (suite-pinned
+	// unmodified by TestSchedulerReserveAttemptUsesDynamicCandidateGates).
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000), accWithEnabled(3, tpl, true, 10000)}
@@ -43,19 +53,19 @@ func TestRoutingCompilerHealthLatchExclusion(t *testing.T) {
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", qraw, accs)
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	c := NewRoutingCompiler()
-	health := map[HealthKey]HealthState{compilerHealthKeyFor(accs[1], domain.FormatOpenAIChat, "m"): StateOPEN}
-	latched := map[LatchKey]bool{compilerLatchKeyFor(accs[2]): true}
-	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices, Health: health, Latched: latched})
+	hk := compilerHealthKeyFor(accs[1], domain.FormatOpenAIChat, "m")
+	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
+	s.SetRuntimeHealth(h)
+	lk := compilerLatchKeyFor(accs[2])
+	require.True(t, s.TryLatch(accs[2].ID, lk.Fingerprint, lk.Revision))
+	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
 	require.True(t, ok)
 	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
 	all = append(all, compiledAccountIDs(rd.Degraded)...)
-	for _, id := range all {
-		require.NotEqual(t, int64(2), id)
-		require.NotEqual(t, int64(3), id)
-	}
-	require.Contains(t, all, int64(1))
+	require.ElementsMatch(t, []int64{1, 2, 3}, all)
 }
 
 func TestRoutingViewRebaseWithCompiler(t *testing.T) {

@@ -173,6 +173,7 @@ func main() {
 		DefaultMaxConcurrency: cfg.Scheduler.DefaultMaxConcurrency,
 		SyncInterval:          cfg.Scheduler.SyncInterval,
 	}, repos.Groups, ruleEngine, log)
+	sched.SetStalenessProbe(repos.Groups) // v5-F1 (§9-A2): backstop tick consumes the repo-owned O(1) tuple; no pool enters the compile lane.
 	rec := usage.New(usage.UsageConfig{
 		BatchSize:          cfg.Usage.BatchSize,
 		FlushInterval:      cfg.Usage.FlushInterval,

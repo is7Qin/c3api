@@ -119,6 +119,18 @@ type Scheduler struct {
 	compileArmed       bool
 	lastDecisionBytes  []byte      // compile-lane owned (single serial caller)
 	lastCompiledStatic *StaticView // compile-lane owned; bytes alone omit static identity
+	// v5 event-driven compile lane (single mechanism replacing the
+	// unconditional rebuild; owners+lifecycles in compile_event.go):
+	scopeCh       chan scopedCompileReq                         // compile-lane-owned, fire-owned payloads
+	scopeOverflow atomic.Bool                                   // set on scopeCh drop, consumed per fire
+	lastQuality   map[CandidateQualityKey]CandidateQualityInput // compile-lane-owned dynamic baselines
+	lastPrices    map[string]domain.ResolvedPrices
+	lastProbe     atomic.Pointer[compileProbeCounts] // tick-lane staleness baseline (refresh-first)
+	// stalenessProbe supplies the O(1) §4 counter tuple for the backstop;
+	// nil = unwired → fail-safe full reload preserves the SLO by construction.
+	stalenessProbe func(context.Context) (compileProbeCounts, error)
+	fallbackCount  atomic.Uint64
+	lastFallback   atomic.Pointer[fallbackReason]
 	// compileDone 监督循环完成信号（Start 存入，Close join——同 runtime-health /
 	// conc-sync 停机纪律）；compileOKMs/compileErrMs 编译道新鲜度观测
 	//（atomic，Stats 冷路径读；unix-ms，0 = 从未发生）。
@@ -161,6 +173,7 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logge
 		latch:     newLatchStore(),
 		compiler:  NewRoutingCompiler(),
 		compileCh: make(chan struct{}, 1),
+		scopeCh:   make(chan scopedCompileReq, scopeChCap),
 	}
 	s.publisher = newRoutingPublisher(s)
 	return s
@@ -204,9 +217,10 @@ func (s *Scheduler) syncLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := s.reload(ctx); err != nil && s.log != nil {
-				s.log.Warn("scheduler sync failed", logx.Error(err))
-			}
+			// v5-C1: the tick is a staleness backstop (O(1) probe, full work
+			// only on mismatch). The unconditional reload-on-every-tick
+			// default path is DELETED outright.
+			s.backstopTick(ctx)
 		}
 	}
 }
@@ -219,6 +233,8 @@ func (s *Scheduler) syncLoop(ctx context.Context) {
 func (s *Scheduler) reload(ctx context.Context) error {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
+	// v5-C1: refresh-first baseline (never after — see refreshProbeBaseline).
+	s.refreshProbeBaseline(ctx)
 	m, err := s.loader.LoadGroupsAccounts(ctx)
 	if err != nil {
 		return err
@@ -231,7 +247,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 		oldByID = cur.static.byID
 	}
 	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
-	sv := &StaticView{groups: groups, byID: byID, facts: attachCompilerFacts(byID)}
+	sv := newStaticView(groups, byID)
 	if s.latch != nil {
 		for id, as := range byID {
 			av := as.static.Load()
@@ -255,6 +271,9 @@ func (s *Scheduler) reload(ctx context.Context) error {
 		}
 	}
 	s.publisher.stageLocked(sv)
+	// v5-C1/C2: a full staging covers every route — the lane takes the
+	// full-fidelity fallback. Scope-first, then wake.
+	s.enqueueCompileScope(nil, nil, scopeCauseFullStage)
 	s.RequestCompile()
 	return nil
 }
@@ -476,6 +495,8 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
+	// v5-C1: refresh-first baseline (never after — see refreshProbeBaseline).
+	s.refreshProbeBaseline(context.Background())
 	accs, err := s.loader.LoadGroupAccounts(context.Background(), groupID)
 	if err != nil {
 		if s.log != nil {
@@ -516,6 +537,10 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	// 评审 M-2：先建 新组账号ID 索引再单遍扫描——嵌套循环对 50k 大组批量删
 	// 25k 是 ≈1.25e9 次比较 ≈1s 停顿（去抖单 goroutine 内拉大所有失效延迟/
 	// 新用户 402 窗口），索引后 O(旧组大小)。
+	// v5-C2: staged groups bound the scoped fire — the reloaded group plus
+	// every other group sharing its accounts (their snapshots are rebuilt
+	// with the new leaves, so their routes must recompute too).
+	scopeGroups := []int64{groupID}
 	if old, ok := m[groupID]; ok {
 		newIDs := make(map[int64]struct{}, len(newAccs))
 		for _, ns := range newAccs {
@@ -545,6 +570,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		}
 		// Apply other-group replacements for removed accounts.
 		for og, leaves := range removedOtherRefs {
+			scopeGroups = append(scopeGroups, og)
 			ogp, ok := newM[og]
 			if !ok {
 				continue
@@ -609,6 +635,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		}
 	}
 	for og, ref := range otherRefs {
+		scopeGroups = append(scopeGroups, og)
 		repl := make([]*accountSnapshot, len(ref.gs.accounts))
 		copy(repl, ref.gs.accounts)
 		for _, ns := range newAccs {
@@ -618,8 +645,11 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		}
 		newM[og] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
 	}
-	sv := &StaticView{groups: newM, byID: newByID, facts: attachCompilerFacts(newByID)}
+	sv := newStaticView(newM, newByID)
 	s.publisher.stageLocked(sv)
+	// v5-C1/C2: this staging touches exactly scopeGroups — the lane recomputes
+	// only their routes. Scope-first, then wake.
+	s.enqueueCompileScope(scopeGroups, nil, scopeCauseGroup)
 	s.RequestCompile()
 }
 

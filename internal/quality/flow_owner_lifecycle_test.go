@@ -23,8 +23,8 @@ func TestFlowAccumulator_InputIndependence(t *testing.T) {
 	fixed := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	rec.now = func() time.Time { return fixed }
 	minute := fixed.Truncate(time.Minute).Unix()
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute, existing)))
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute, incoming)))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, existing))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, incoming))
 	got, ok := rec.FlowMinute(minute)
 	require.True(t, ok)
 	merged := got.FlowRows()
@@ -53,9 +53,9 @@ func TestFlowAccumulator_NoRowCapFoldsExactly(t *testing.T) {
 	rec.now = func() time.Time { return fixed }
 	minute := fixed.Truncate(time.Minute).Unix()
 	kept := []repository.RoutingFlowRow{ownerTestRow(30)}
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute, kept)))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, kept))
 	over := []repository.RoutingFlowRow{ownerTestRow(40), ownerTestRow(50), ownerTestRow(60)}
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(minute, over)))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, over))
 	got, ok := rec.FlowMinute(minute)
 	require.True(t, ok)
 	rows := got.FlowRows()
@@ -121,13 +121,18 @@ func TestRecorder_CloseFoldRaceConservesExactly(t *testing.T) {
 	require.Equal(t, stats.Accepted, stats.Processed+stats.ResidualSubmissions)
 }
 
-func TestRecorder_FinalizationRejectsLateFlowEnqueue(t *testing.T) {
+func TestRecorder_FinalizationDropsLateFlowFold(t *testing.T) {
+	// v3-hygiene: the EnqueueFlowMinute rejection contract moves to the
+	// live walk closed-gate — post-finalization folds land nowhere and count
+	// dropped (same precedent as TestFlowOwner_FoldRejectsAfterRecorderFinalization).
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
-	require.NoError(t, rec.EnqueueFlowMinute(NewFlowSnapshot(100, []repository.RoutingFlowRow{ownerTestRow(11)})))
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), 100, []repository.RoutingFlowRow{ownerTestRow(11)}))
 	require.NoError(t, rec.Close())
-	err = rec.EnqueueFlowMinute(NewFlowSnapshot(100, []repository.RoutingFlowRow{ownerTestRow(12)}))
-	require.ErrorIs(t, err, ErrCapacity)
+	foldOneRow(t, rec.FlowOwner(), 100, ownerTestRow(12))
+	stats := rec.FlowOwner().SnapshotStats()
+	require.Equal(t, int64(1), stats.EdgeRowsDropped, "late fold counts dropped")
+	require.Equal(t, int64(1), stats.EdgeRowsAccepted, "late fold accepts nothing")
 	fm, ok := rec.FlowMinute(100)
 	require.True(t, ok)
 	rows := fm.FlowRows()
