@@ -36,6 +36,12 @@ var (
 type Config struct {
 	DefaultMaxConcurrency int
 	SyncInterval          time.Duration
+	// StalenessProbe 是 C1 backstop 探针的 tuple 供应商（repo 层实现，
+	// 如 GroupRepo.CompileStalenessSnapshot；接口在 compile_backstop.go
+	// 定义，赋值即满足，无需命名类型）。构造期传入，nil = 不接线
+	// （backstop 保持 fail-safe 全量 reload）。装配后不可变—— probes
+	// 不支持运行时替换（换源 = 重建 Scheduler）。
+	StalenessProbe stalenessQuerier
 }
 
 // Loader 是调度器的数据源（由 repository 实现）。
@@ -163,6 +169,7 @@ func (s *Scheduler) ProbeAccount(id int64) (*domain.Account, bool) {
 }
 
 // New 构造调度器。ruleEngine 必须非 nil（事件投递面；main 在 Start 前显式 Reload）。
+// cfg.StalenessProbe 为空保持探针解线（backstop fail-safe 全量 reload）。
 func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logger) *Scheduler {
 	s := &Scheduler{
 		cfg:       cfg,
@@ -176,6 +183,16 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logge
 		scopeCh:   make(chan scopedCompileReq, scopeChCap),
 	}
 	s.publisher = newRoutingPublisher(s)
+	if cfg.StalenessProbe != nil {
+		q := cfg.StalenessProbe
+		s.stalenessProbe = func(ctx context.Context) (compileProbeCounts, error) {
+			snap, err := q.CompileStalenessSnapshot(ctx)
+			if err != nil {
+				return compileProbeCounts{}, err
+			}
+			return snapshotToProbeCounts(snap), nil
+		}
+	}
 	return s
 }
 

@@ -144,8 +144,7 @@ const usageOKBody = `{
 // （若计算签名必触发重建 → 重拉）。
 func TestCodexUsageSnapshotTTL(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := usageCred(1, srv.URL+"/codex/responses")
 	ctx := context.Background()
 
@@ -189,8 +188,7 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 func TestCodexUsageSnapshotConcurrencyThrottle(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
 	c.release = make(chan struct{})
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	ctx := context.Background()
 
 	const n = 20
@@ -226,8 +224,7 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 		codexUpstreamStep{status: 500, body: `{"error":{"message":"boom"}}`},
 		codexUpstreamStep{status: 200, body: usageOKBody},
 	)
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := usageCred(1, srv.URL+"/codex/responses")
 	ctx := context.Background()
 
@@ -294,8 +291,7 @@ func TestCodexUsageSnapshotCancelNoCooldown(t *testing.T) {
 		_, _ = w.Write([]byte(usageOKBody))
 	}))
 	t.Cleanup(srv.Close)
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := usageCred(1, srv.URL+"/codex/responses")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -334,8 +330,7 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 	c.release = make(chan struct{}) // handler 积住直至放行
 	release := sync.OnceFunc(func() { close(c.release) })
 	t.Cleanup(release) // 失败路径（t.Fatal 提前退出）先释放闸门——挂起 handler 不阻塞 httptest Close
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := usageCred(1, srv.URL+"/codex/responses")
 	ctx := context.Background()
 
@@ -380,8 +375,7 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
 	t.Run("non_fatal_401_upstream", func(t *testing.T) {
 		srv, c := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"message":"invalid token"}}`})
-		a := NewCodex(nil)
-		a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+		a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 
 		_, err := a.GetUsageSnapshot(context.Background(), usageCred(1, srv.URL+"/codex/responses"))
 		require.ErrorIs(t, err, ErrUpstream, "非致命 401 归上游面（鉴权结论唯一来源 = SDK 致命分类）")
@@ -389,8 +383,7 @@ func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
 	})
 	t.Run("fatal_401_auth_expired", func(t *testing.T) {
 		srv, _ := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"code":"token_revoked"}}`})
-		a := NewCodex(nil)
-		a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+		a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 
 		_, err := a.GetUsageSnapshot(context.Background(), usageCred(2, srv.URL+"/codex/responses"))
 		require.ErrorIs(t, err, ErrAuthExpired, "致命 401 经 SDK 判死走统一 fatal 判定")
@@ -401,7 +394,7 @@ func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
 // （errCredentialIncomplete——凭据不完整）→ ErrAuthExpired（不落 default 归
 // ErrUpstream）。
 func TestCodexUsageSnapshotEntryErrAuthExpired(t *testing.T) {
-	a := NewCodex(nil)
+	a := NewCodex(nil, nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 7, OAuthToken: "at"} // 无 rt 无 PAT
 	_, err := a.GetUsageSnapshot(context.Background(), cred)
 	require.ErrorIs(t, err, ErrAuthExpired, "oauth 缺 rt 凭据 → ErrAuthExpired（入口错误分类）")
@@ -412,9 +405,8 @@ func TestCodexUsageSnapshotEntryErrAuthExpired(t *testing.T) {
 // 且 entry 不被摘除（后续调用仍命中冷却零上游）。
 func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
-	a := NewCodex(nil)
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := oauthCred(1, "at-ok", "rt-ok") // oauth（rotationAuth 的 Fatal 生效；PAT Fatal 为 no-op）
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	ctx := context.Background()
 
 	_, err := a.GetUsageSnapshot(ctx, cred)
@@ -454,8 +446,7 @@ func TestCodexUsageSnapshotConvergence(t *testing.T) {
 		codexUpstreamStep{status: 200, body: `{"plan_type":"plan"}`},
 		codexUpstreamStep{status: 200, body: `{"rate_limit":{"primary_window":{"used_percent":50}},"credits":{"balance":""}}`},
 	)
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	ctx := context.Background()
 
 	snap, err := a.GetUsageSnapshot(ctx, usageCred(1, srv.URL+"/codex/responses"))
@@ -517,8 +508,7 @@ func TestCodexUsageSnapshotConvergence(t *testing.T) {
 // 重拉）；TTL 过期 + sig 变化 → entry 重建 → 快照缓存随新条目清除 → 重拉。
 func TestCodexUsageSnapshotEntryRebuildClears(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	ctx := context.Background()
 	base := usageCred(1, srv.URL+"/codex/responses")
 

@@ -24,7 +24,7 @@ type TransportConfig struct {
 	// Proxy 上游请求代理函数（nil = 直连，默认）。不再隐式装配
 	// http.ProxyFromEnvironment——HTTP_PROXY 设了会静默改道全部上游请求
 	//（含 x-api-key/Authorization 凭据，WS 升级大概率失败），压测行为随
-	// 环境漂移。装配方（main NewClient / SetTransport 两处）显式决定。
+	// 环境漂移。装配方（main NewClient / codexAdapter 构造期 transport 两处）显式决定。
 	Proxy func(*http.Request) (*url.URL, error)
 }
 

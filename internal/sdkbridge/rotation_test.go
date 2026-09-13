@@ -98,11 +98,9 @@ func TestCodexRotationWritebackPersists(t *testing.T) {
 	up := newRotationUpstream(t, "at-old")
 	refresh := newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	store := &fakeRotationStore{}
-	a := NewCodex(nil)
-	a.SetRotationDeps(RotationDeps{Store: store})
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	expires := cred.OAuthExpiresAt
 
 	img, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
@@ -139,11 +137,9 @@ func TestCodexRotationWritebackMissingRefreshKeepsOldRT(t *testing.T) {
 	// refresh 响应缺 refresh_token（auth_oauth.go:402-406 字段均可选）
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new"}`})
 	store := &fakeRotationStore{}
-	a := NewCodex(nil)
-	a.SetRotationDeps(RotationDeps{Store: store})
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
@@ -200,11 +196,9 @@ func TestCodexRotationWritebackSingleFlight(t *testing.T) {
 	t.Cleanup(rsrv.Close)
 	t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", rsrv.URL)
 	store := &fakeRotationStore{}
-	a := NewCodex(nil)
-	a.SetRotationDeps(RotationDeps{Store: store})
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 
 	const n = 8
 	start := make(chan struct{})
@@ -240,11 +234,9 @@ func TestCodexRotationWritebackFailureD4Fatal(t *testing.T) {
 	)
 	handler := &recordingHandler{}
 	store := &fakeRotationStore{err: errors.New("db down")}
-	a := NewCodex(handler.add)
-	a.SetRotationDeps(RotationDeps{Store: store})
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, up.URL), RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 
 	// R1：refresh run1 回调失败（fail#1，pending，本次 at 放行）→ 401 重试
 	// 防重试风暴不再 refresh → HTTPError 401（回写失败不阻塞请求——D4 语义）
@@ -271,15 +263,14 @@ func TestCodexRotationWritebackFailureD4Fatal(t *testing.T) {
 	require.Len(t, store.snapshot(), 3, "回调三次失败（run1 新回调 + run2 pending 重试 + run2 新回调）——同一 (at, rt) 幂等重试")
 }
 
-// TestCodexRotationWritebackUnwired 回写面未装配（SetRotationDeps 未调用——
+// TestCodexRotationWritebackUnwired 回写面未装配（RotationDeps 零值——
 // 测试/旧装配形态）：轮转正常进行，回写 no-op 不 panic。
 func TestCodexRotationWritebackUnwired(t *testing.T) {
 	up := newRotationUpstream(t, "at-old")
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
-	a := NewCodex(nil) // 未装配 rotate
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{}) // 未装配 rotate
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err, "未装配回写面不阻断轮转")
 	require.Equal(t, "Bearer at-new", up.auth(1))
@@ -291,11 +282,9 @@ func TestRotationCallExpiryNilPreserved(t *testing.T) {
 	up := newRotationUpstream(t, "at-old")
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	store := &fakeRotationStore{}
-	a := NewCodex(nil)
-	a.SetRotationDeps(RotationDeps{Store: store})
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{Store: store})
 
 	cred := &domain.AccountCredential{AccountID: 7, OAuthToken: "at-old", OAuthRefreshToken: "rt-1"}
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
 	calls := store.snapshot()
@@ -315,10 +304,9 @@ func TestCodexFatalAuthPoisonAndDedup(t *testing.T) {
 	up, _ := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
 	defer up.Close()
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 
 	cred := oauthCred(7, "at-1", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
 
@@ -345,7 +333,7 @@ func TestCodexFatalAuthPoisonAndDedup(t *testing.T) {
 // no-op 不 panic（条目不存在 = 并发 fatal 已上报剔除，上报已由胜者完成）。
 func TestCodexFatalAuthNilAndMissing(t *testing.T) {
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, nil, RotationDeps{})
 	require.NotPanics(t, func() {
 		a.FatalAuth(7, nil)
 		a.FatalAuth(999, &codexsdk.AuthPermanentlyRevokedError{Code: "token_revoked"})

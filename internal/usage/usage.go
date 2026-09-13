@@ -36,6 +36,8 @@ type UsageConfig struct {
 	// StatsAggInterval 离线聚合周期（spec 2026-08-14；config usage.stats_agg_
 	// interval，默认 5m；0 = 禁用聚合——不装配聚合 worker 的等价语义）。
 	StatsAggInterval time.Duration
+	// QuotaWriter 额度回写器（构造期传入；nil = 关闭回写）。装配后不可变。
+	QuotaWriter QuotaWriter
 }
 
 type LogInserter interface {
@@ -113,6 +115,7 @@ func New(cfg UsageConfig, logs LogInserter, log *logx.Logger) *Recorder {
 		logs:       logs,
 		log:        log,
 		workers:    workers,
+		quota:      cfg.QuotaWriter,
 		failCounts: make([]int, workers),
 		quotaUsed:  make(map[int64]int64),
 		loopDone:   make(chan struct{}),
@@ -121,12 +124,9 @@ func New(cfg UsageConfig, logs LogInserter, log *logx.Logger) *Recorder {
 	return r
 }
 
-// SetQuotaWriter 注入额度回写器（装配期调用；nil = 关闭回写）。
-func (r *Recorder) SetQuotaWriter(q QuotaWriter) {
-	r.mu.Lock()
-	r.quota = q
-	r.mu.Unlock()
-}
+// (SetQuotaWriter setter deleted by hygiene: quota writer is a construction-time
+// dependency — see Config.QuotaWriter. A post-construction setter leaves the
+// recorder observably incomplete between New and Set.)
 
 // Name 满足 worker.Worker 契约（Global Constraints #5）；重复 Start 幂等。
 func (r *Recorder) Name() string { return "usage" }

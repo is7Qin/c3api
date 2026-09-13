@@ -75,8 +75,9 @@ func TestRecorderFlushesLogs(t *testing.T) {
 func TestQuotaAccumulatesOnRecord(t *testing.T) {
 	ls := &memLogStore{}
 	q := &fakeQuotaWriter{}
-	r := New(testCfg(), ls, nil)
-	r.SetQuotaWriter(q)
+	cfg := testCfg()
+	cfg.QuotaWriter = q
+	r := New(cfg, ls, nil)
 	now := time.Now()
 
 	// 非 billed 放行行：Record 累加 quota
@@ -121,8 +122,7 @@ func (q *failOnceQuotaWriter) AddQuotaUsed(ctx context.Context, deltas map[int64
 func TestQuotaFailureRefills(t *testing.T) {
 	q := &failOnceQuotaWriter{}
 	q.fail.Store(true)
-	r := New(UsageConfig{BatchSize: 10}, &memLogStore{}, nil)
-	r.SetQuotaWriter(q)
+	r := New(UsageConfig{BatchSize: 10, QuotaWriter: q}, &memLogStore{}, nil)
 	r.AddQuota(1, 10)
 	r.AddQuota(2, 20)
 
@@ -650,11 +650,11 @@ func usageTestLogger(t *testing.T) (*logx.Logger, string) {
 // 本测试仅覆盖 quota 专用 flush（统计桶截断断言随之删除）。
 func TestFlushQuotaTruncatesOnBudget(t *testing.T) {
 	newRec := func(q *fakeQuotaWriter, log *logx.Logger) *Recorder {
-		r := New(UsageConfig{BatchSize: 100}, &memLogStore{}, log)
+		cfg := UsageConfig{BatchSize: 100}
 		if q != nil {
-			r.SetQuotaWriter(q)
+			cfg.QuotaWriter = q
 		}
-		return r
+		return New(cfg, &memLogStore{}, log)
 	}
 	rec := func(r *Recorder, keyID int64) {
 		r.AddQuota(keyID, 1)
@@ -729,8 +729,7 @@ func TestFlushQuotaTruncatesOnBudget(t *testing.T) {
 // → 恰好 3 次 AddQuotaUsed（500/500/100）。
 func TestQuotaFlushBatchedWrites(t *testing.T) {
 	q := &fakeQuotaWriter{}
-	r := New(UsageConfig{BatchSize: 10}, &memLogStore{}, nil)
-	r.SetQuotaWriter(q)
+	r := New(UsageConfig{BatchSize: 10, QuotaWriter: q}, &memLogStore{}, nil)
 	for i := int64(1); i <= 1100; i++ {
 		r.AddQuota(i, 1)
 	}
@@ -747,8 +746,7 @@ func TestCloseDrainsFully(t *testing.T) {
 	logger, out := usageTestLogger(t)
 	ls := &countLogStore{}
 	q := &fakeQuotaWriter{}
-	r := New(UsageConfig{BatchSize: 500, Workers: 2}, ls, logger)
-	r.SetQuotaWriter(q)
+	r := New(UsageConfig{BatchSize: 500, Workers: 2, QuotaWriter: q}, ls, logger)
 	now := time.Now().Truncate(time.Hour)
 	for i := 0; i < 1200; i++ {
 		r.Record(&domain.UsageLog{RequestID: "x", UserID: int64(i % 50), GroupID: 1, Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, TotalTokens: 1, KeyID: 1, CreatedAt: now})
@@ -772,8 +770,7 @@ func TestCloseDrainsFully(t *testing.T) {
 // remaining 条数单位一致）+ 额度面同样截断 Warn——不静默提前返回。
 func TestCloseTruncatesOnBudget(t *testing.T) {
 	logger, out := usageTestLogger(t)
-	r := New(UsageConfig{BatchSize: 10, Workers: 1}, &countLogStore{}, logger)
-	r.SetQuotaWriter(&fakeQuotaWriter{}) // 额度面截断 Warn 的前提（nil writer 无告警面）
+	r := New(UsageConfig{BatchSize: 10, Workers: 1, QuotaWriter: &fakeQuotaWriter{}}, &countLogStore{}, logger) // 额度面截断 Warn 的前提（nil writer 无告警面）
 	now := time.Now().Truncate(time.Hour)
 	for i := 0; i < 5; i++ {
 		r.Record(&domain.UsageLog{RequestID: "x", UserID: 1, GroupID: 1, Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, TotalTokens: 1, KeyID: 1, CreatedAt: now})

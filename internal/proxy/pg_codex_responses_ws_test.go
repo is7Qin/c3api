@@ -125,8 +125,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
-	codex := sdkbridge.NewCodex(nil)
-	codex.SetTransport(newProxyOfficialRewriteTransport(up.URL))
+	codex := sdkbridge.NewCodex(nil, newProxyOfficialRewriteTransport(up.URL), sdkbridge.RotationDeps{})
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,

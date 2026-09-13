@@ -54,23 +54,10 @@ func snapshotToProbeCounts(s domain.CompileStaleness) compileProbeCounts {
 	}
 }
 
-// SetStalenessProbe wires the C1 backstop probe to a repository-backed tuple
-// supplier (production: repos.Groups, passed once at the cmd/server
-// construction site). Nil supplier = no-op (scheduler stays unwired and the
-// backstop keeps its fail-safe full reload); this is the single exported seam
-// symbol authorized by §9-A2. Assembly-time only (before Start).
-func (s *Scheduler) SetStalenessProbe(q stalenessQuerier) {
-	if q == nil {
-		return
-	}
-	s.stalenessProbe = func(ctx context.Context) (compileProbeCounts, error) {
-		snap, err := q.CompileStalenessSnapshot(ctx)
-		if err != nil {
-			return compileProbeCounts{}, err
-		}
-		return snapshotToProbeCounts(snap), nil
-	}
-}
+// (SetStalenessProbe setter deleted by hygiene: probe supplier arrives via
+// Config.StalenessProbe at construction. A post-construction setter for a
+// construction-time dependency is temporal coupling — the object is incomplete
+// between New and Set. Nil field = unwired, same fail-safe as before.)
 
 // publishedViewWhole reports whether the published decision is whole (every
 // route recomputed by a full fire). A missing view or missing decision counts

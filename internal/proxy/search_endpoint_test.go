@@ -213,8 +213,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	})
 	store := &fakeFailureStore{}
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
-	codex := sdkbridge.NewCodex(failure)
-	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, upstream))
+	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{
 		QueueSize: 4096, BatchSize: 100,
 		FlushInterval: 20 * time.Millisecond,
