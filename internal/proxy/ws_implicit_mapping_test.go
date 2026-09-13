@@ -449,8 +449,7 @@ func newCodexWSProxyWithMapping(t *testing.T, upstream string, mode domain.Model
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	codex := sdkbridge.NewCodex(failure)
-	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, upstream))
+	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
 	p.SetCodex(codex)
 	return p, store

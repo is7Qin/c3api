@@ -172,13 +172,14 @@ func main() {
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: cfg.Scheduler.DefaultMaxConcurrency,
 		SyncInterval:          cfg.Scheduler.SyncInterval,
+		StalenessProbe:        repos.Groups,
 	}, repos.Groups, ruleEngine, log)
-	sched.SetStalenessProbe(repos.Groups) // v5-F1 (§9-A2): backstop tick consumes the repo-owned O(1) tuple; no pool enters the compile lane.
 	rec := usage.New(usage.UsageConfig{
 		BatchSize:          cfg.Usage.BatchSize,
 		FlushInterval:      cfg.Usage.FlushInterval,
 		QuotaFlushInterval: cfg.Usage.QuotaFlushInterval, // quota 增量批量回写 cadence
 		Workers:            cfg.Usage.FlushWorkers,
+		QuotaWriter:        repos.Keys, // 额度扣减批量回写（Recorder 节奏）
 	}, repos.Usages, log)
 	// 离线聚合 worker（spec 2026-08-14 使用量统计离线聚合化）：独立 goroutine
 	// 每周期从 usage_logs/err_logs 重建 usage_stats（两范围 + 三查询 + 单事务
@@ -207,7 +208,6 @@ func main() {
 	}, repos, log)
 
 	auth := proxy.NewAuth(repos.Keys, repos.Users, log)
-	rec.SetQuotaWriter(repos.Keys) // 额度扣减批量回写（Recorder 节奏）
 	hc := httpx.NewClient(httpx.TransportConfig{
 		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
@@ -406,32 +406,24 @@ func main() {
 	retryWorker := sdkbridge.NewFailureRetryWorker(log)
 	// codex SDK 适配层装配（T2 §3——统一失效回调先落生图路径；T5 全量）：
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
-	// 调度摘除 + 审计，T1 契约）。
+	// 调度摘除 + 审计，T1 契约）。transport/rotation 同构造期一次给齐（构造后
+	// 不存在半装配形态）：transport 用 httpx 网关同形态（SDK 默认
+	// MaxIdleConnsPerHost=2 有压测连接风暴史；Proxy=nil 直连防劫持 C2-1）；
+	// rotation Upsert 部分更新（codex_oauth_token/refresh/expires_at 保旧）+
+	// 回写后失效调度器 AccountExt 快照条目（下个会话重载新凭据）。
 	codexAdapter := sdkbridge.NewCodex(sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{
 		Store:  repos.Accounts,
 		Failer: sched,
 		Log:    log,
-	}))
-	// SDK HTTPClient 上游 transport（resp 补压测修复——SDK 默认 transport
-	// MaxIdleConnsPerHost=2 连接风暴，压测 profile ~12% CPU）：连接池参数与
-	// 网关既有 client 同形态（同一 httpx 构造 helper + cfg.Upstream 同源），
-	// MaxConnsPerHost 显式上界对齐 MaxIdleConnsPerHost（防单上游连接失控；
-	// 网关既有 client 不设 = 不限，压测验证形态保持）。
-	codexAdapter.SetTransport(httpx.NewTransport(httpx.TransportConfig{
+	}), httpx.NewTransport(httpx.TransportConfig{
 		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
 		MaxConnsPerHost:     cfg.Upstream.MaxIdleConnsPerHost,
 		IdleConnTimeout:     cfg.Upstream.IdleConnTimeout,
 		DialTimeout:         cfg.Upstream.DialTimeout,
 		ForceHTTP2:          cfg.Upstream.ForceHTTP2,
-		// Proxy 显式直连（C2-1，与网关既有 client 同纪律）：SDK 上游请求
-		// 不走环境代理——凭据与 WS 升级不受 HTTP_PROXY 静默改道。
-		Proxy: nil,
-	}))
-	// T5 §1 轮转回写面装配：WithOnTokenRotated → account_ext 部分更新 upsert
-	//（codex_oauth_token + codex_oauth_refresh_token + codex_oauth_expires_at 保旧）+ 失效调度器
-	// AccountExt 内存快照条目（P3-3——下个会话重载新凭据；不重建 Auth 缓存）。
-	codexAdapter.SetRotationDeps(sdkbridge.RotationDeps{
+		Proxy:               nil,
+	}), sdkbridge.RotationDeps{
 		Store:              repos.AccountExts,
 		InvalidateSnapshot: sched.InvalidateAccount,
 		Log:                log,

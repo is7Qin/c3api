@@ -261,10 +261,9 @@ func TestCodexCacheReuseAndRebuild(t *testing.T) {
 	defer up.Close()
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 
 	cred := oauthCred(7, "at-1", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 
 	p := &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"}
 	img, err := a.GenerateImage(context.Background(), cred, p)
@@ -281,7 +280,6 @@ func TestCodexCacheReuseAndRebuild(t *testing.T) {
 
 	// 凭据更新（管理面导入/更新——at 变更）→ 重建
 	cred2 := oauthCred(7, "at-2", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err = a.GenerateImage(context.Background(), cred2, p)
 	require.NoError(t, err)
 	require.NotSame(t, e1.client, a.entries[7].client, "凭据更新 → 重建")
@@ -289,7 +287,6 @@ func TestCodexCacheReuseAndRebuild(t *testing.T) {
 
 	// rt 变更同样触发重建
 	cred3 := oauthCred(7, "at-2", "rt-2")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err = a.GenerateImage(context.Background(), cred3, p)
 	require.NoError(t, err)
 	e2 := a.entries[7].client
@@ -303,7 +300,6 @@ func TestCodexCacheReuseAndRebuild(t *testing.T) {
 
 	// pat 变更（OAuth→PAT 切换）→ 重建（pat 维度）
 	cred4 := &domain.AccountCredential{AccountID: 7, PATKey: "pat-new"}
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err = a.GenerateImage(context.Background(), cred4, p)
 	require.NoError(t, err)
 	require.NotSame(t, e2, a.entries[7].client, "pat 变更 → 重建")
@@ -317,10 +313,9 @@ func TestCodexCachePAT(t *testing.T) {
 	up, c := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
 	defer up.Close()
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-1"}
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	p := &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"}
 	_, err := a.GenerateImage(context.Background(), cred, p)
 	require.NoError(t, err)
@@ -337,10 +332,9 @@ func TestCodexCacheConcurrentReuse(t *testing.T) {
 	up, c := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
 	defer up.Close()
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
-	a := NewCodex(nil)
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 
 	cred := oauthCred(7, "at-1", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	p := &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"}
 
 	var wg sync.WaitGroup
@@ -389,10 +383,9 @@ func TestCodexCacheEvictionOnFatal(t *testing.T) {
 	defer up.Close()
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 
 	cred := oauthCred(7, "at-1", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	p := &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"}
 	_, err := a.GenerateImage(context.Background(), cred, p)
 	require.Error(t, err)
@@ -419,10 +412,9 @@ func TestCodexEnvelopeHTTPError(t *testing.T) {
 	defer up.Close()
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 
 	cred := oauthCred(7, "at-1", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
 
@@ -467,10 +459,9 @@ func TestCodexFatalDedupCallbackAndErrorsAs(t *testing.T) {
 	defer up.Close()
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 
 	cred := oauthCred(7, "at-1", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
 	var ap *codexsdk.AuthPermanentlyRevokedError
@@ -500,11 +491,10 @@ func TestCodexRefreshErrorNotReported(t *testing.T) {
 	// refresh 恒 500（可重试类——非 fatal）
 	newCodexMockRefresh(t, codexUpstreamStep{status: 500, body: `{}`})
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 
 	// 无初始 at（OAuthToken 空 → 首请求前用 rt 换取 → refresh 失败）
 	cred := &domain.AccountCredential{AccountID: 7, OAuthRefreshToken: "rt-1"}
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
 	var re *codexsdk.RefreshError
@@ -518,7 +508,7 @@ func TestCodexRefreshErrorNotReported(t *testing.T) {
 // panic 被构造前校验拦截）。
 func TestCodexEmptyRefreshTokenNoPanic(t *testing.T) {
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 7, OAuthToken: "at-1"} // rt 缺失
 
 	require.NotPanics(t, func() {
@@ -541,11 +531,10 @@ func TestCodexInitialATPreset(t *testing.T) {
 	up, c := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
 	defer up.Close()
 	refresh := newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-fresh","refresh_token":"rt-new"}`})
-	a := NewCodex(nil)
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 
 	// 未过期 → 预置 at：上游直接收到 at-1，refresh 零调用
 	cred := oauthCred(7, "at-1", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
 	require.Equal(t, "Bearer at-1", c.auth(0), "未过期 at 预置——首请求直接用")
@@ -556,7 +545,6 @@ func TestCodexInitialATPreset(t *testing.T) {
 	cred2 := &domain.AccountCredential{
 		AccountID: 7, OAuthToken: "at-expired", OAuthRefreshToken: "rt-2", OAuthExpiresAt: &expired,
 	}
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err = a.GenerateImage(context.Background(), cred2, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
 	require.Equal(t, "Bearer at-fresh", c.auth(1), "过期 at 不预置——rt 换取的新 at 生效")
@@ -564,7 +552,6 @@ func TestCodexInitialATPreset(t *testing.T) {
 
 	// nil 过期时刻（未知）→ 视为可用预置
 	cred3 := &domain.AccountCredential{AccountID: 7, OAuthToken: "at-3", OAuthRefreshToken: "rt-3"}
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
 	_, err = a.GenerateImage(context.Background(), cred3, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
 	require.Equal(t, "Bearer at-3", c.auth(2), "未知过期时刻 → 预置（401 自愈兜底）")
@@ -593,10 +580,9 @@ func TestCodex401RotationSuccess(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-rotated","refresh_token":"rt-new"}`})
-	a := NewCodex(nil)
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 
 	cred := oauthCred(7, "at-old", "rt-1")
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
 	img, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
 	require.Len(t, img.Data, 2)
@@ -610,7 +596,7 @@ func TestCodex401RotationSuccess(t *testing.T) {
 // TestCodexNilParamsAndNetwork SDK 参数校验错误透传（Model/Prompt 必填——
 // 网关已前置校验，防御断言）与网络错误（连接级——code 0 分类由网关侧承担）。
 func TestCodexNilParamsAndNetwork(t *testing.T) {
-	a := NewCodex(nil)
+	a := NewCodex(nil, nil, RotationDeps{})
 	cred := oauthCred(7, "at-1", "rt-1")
 	// removed BaseURL (unreachable test, no transport)
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{})
@@ -623,7 +609,7 @@ func TestCodexNilParamsAndNetwork(t *testing.T) {
 // 适配层每请求构造失败都上报，链自限）。
 func TestCodexIncompleteNotReportedTwice(t *testing.T) {
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
+	a := NewCodex(handler.add, nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 7}
 	for i := 0; i < 3; i++ {
 		_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
@@ -757,8 +743,7 @@ func respCred(accountID int64, at, rt string) *domain.AccountCredential {
 func TestCodexResponsesAggregateNonstream(t *testing.T) {
 	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-resp"}
 
 	resp, err := a.Responses(context.Background(), cred, []byte(`{"model":"gpt-5.6","input":"hi"}`), nil, nil, "")
@@ -788,8 +773,7 @@ func TestCodexResponsesAggregateNonstream(t *testing.T) {
 func TestCodexResponsesIdentityMetadata(t *testing.T) {
 	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-id"}
 	sess := &codexsdk.Session{SessionID: "sess-1", ThreadID: "thread-1", WindowID: "thread-1:0"}
 	meta := &codexsdk.CodexMeta{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "thread-1", WindowID: "thread-1:0"}
@@ -813,8 +797,7 @@ func TestCodexResponsesIdentityMetadata(t *testing.T) {
 func TestCodexResponsesIdentityPassthroughTurnID(t *testing.T) {
 	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-t"}
 
 	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m","client_metadata":{"turn_id":"tid-keep"}}`), nil, nil, "")
@@ -827,8 +810,7 @@ func TestCodexResponsesIdentityPassthroughTurnID(t *testing.T) {
 func TestCodexStreamResponsesIdentityMetadata(t *testing.T) {
 	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-si"}
 
 	err := a.StreamResponses(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, &codexsdk.CodexMeta{InstallationID: "inst-s"}, "", func(raw []byte) error { return nil })
@@ -844,8 +826,7 @@ func TestCodexStreamResponsesIdentityMetadata(t *testing.T) {
 func TestCodexResponsesIdentityChangeRebuild(t *testing.T) {
 	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-r"}
 	meta1 := &codexsdk.CodexMeta{InstallationID: "inst-1"}
 	meta2 := &codexsdk.CodexMeta{InstallationID: "inst-2"}
@@ -875,8 +856,7 @@ func TestCodexResponsesIdentityChangeRebuild(t *testing.T) {
 func TestCodexStreamResponsesPassthrough(t *testing.T) {
 	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-s"}
 
 	var got []string
@@ -902,8 +882,7 @@ func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
 		codexRespStep{status: 200, events: []string{t6RespCreated, `{"type":"output_item.done","item":` + t6RespCallItem + `}`, t6RespDone}, turnState: "ts-1"},
 		codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-ts"}
 
 	// 首请求（轮首）：未带 turn-state → 上游签发 ts-1 → held 回写
@@ -930,8 +909,7 @@ func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
 	up, c := newCodexRespUpstream(t,
 		codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-up"})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-pt"}
 
 	// 先构造条目（首调用建 entry——无 held 无客户端值）
@@ -958,8 +936,7 @@ func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
 func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-1"})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-rt"}
 
 	// 首调用（无 held）：无头客户端
@@ -1016,8 +993,7 @@ func TestCodexSearchPassthrough(t *testing.T) {
 		_, _ = w.Write([]byte(searchRaw))
 	}))
 	t.Cleanup(srv.Close)
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-search"}
 
 	resp, err := a.Search(context.Background(), cred, []byte(searchReqPayload))
@@ -1050,8 +1026,7 @@ func TestCodexSearchEnvelope4xx(t *testing.T) {
 		_, _ = w.Write([]byte(`{"detail":"Forbidden"}`))
 	}))
 	t.Cleanup(srv.Close)
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-4xx"}
 
 	_, err := a.Search(context.Background(), cred, []byte(`{}`))
@@ -1068,8 +1043,7 @@ func TestCodexResponsesEnvelope4xx(t *testing.T) {
 	up, _ := newCodexRespUpstream(t, codexRespStep{status: 403, body: `{"detail":"Forbidden"}`})
 	defer up.Close()
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-4xx"}
 
 	_, err := a.Responses(context.Background(), cred, []byte(`{}`), nil, nil, "")
@@ -1108,8 +1082,7 @@ func TestCodexResponses401Rotate(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	rm := newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := respCred(7, "at-old", "rt-1")
 
 	resp, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
@@ -1132,8 +1105,7 @@ func TestCodexResponsesFatal(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := respCred(7, "at-old", "rt-1")
 
 	_, err := a.Responses(context.Background(), cred, []byte(`{}`), nil, nil, "")
@@ -1154,8 +1126,7 @@ func TestCodexResponsesFatal(t *testing.T) {
 func TestCodexStreamResponsesFnError(t *testing.T) {
 	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, up.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-fn"}
 
 	sentinel := errors.New("client write failed")
@@ -1224,8 +1195,7 @@ func TestCodexTransportPoolReuse(t *testing.T) {
 		return baseDial(ctx, network, addr)
 	}
 	t.Cleanup(tr.CloseIdleConnections) // 防跨测试连接泄漏（spec 验收 6）
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransportWithDial(t, srv.URL, tr))
+	a := NewCodex(nil, newOfficialRewriteTransportWithDial(t, srv.URL, tr), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-pool"}
 	p := &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"}
 
@@ -1403,8 +1373,7 @@ func dialCred(accountID int64) *domain.AccountCredential {
 // 立后 Send/Recv 帧回声往返（帧透传面）。
 func TestCodexDialPATSuccess(t *testing.T) {
 	srv, up := newCodexWSUpstream(t, 200)
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-1"}
 	c, err := a.Dial(context.Background(), cred, codexsdk.WithPingInterval(0), codexsdk.WithPayloadFiltering(false))
 	require.NoError(t, err)
@@ -1429,8 +1398,7 @@ func TestCodexDialPATSuccess(t *testing.T) {
 // StatusCode/Unwrap 链——PAT 不轮转 Refreshed 恒 false）。
 func TestCodexDialErrorEnvelope(t *testing.T) {
 	srv, _ := newCodexWSUpstream(t, 401)
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-1"}
 	_, err := a.Dial(context.Background(), cred)
 	require.Error(t, err)
@@ -1448,8 +1416,7 @@ func TestCodexDialErrorEnvelope(t *testing.T) {
 func TestCodexDialOAuthRotationSuccess(t *testing.T) {
 	srv, up := newCodexWSUpstream(t, 401, 200)
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := dialCred(7)
 	c, err := a.Dial(context.Background(), cred, codexsdk.WithPingInterval(0))
 	require.NoError(t, err)
@@ -1467,8 +1434,7 @@ func TestCodexDialOAuthRotationSuccess(t *testing.T) {
 func TestCodexDialOAuthRefreshedEnvelope(t *testing.T) {
 	srv, up := newCodexWSUpstream(t, 401, 401)
 	rm := newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := dialCred(7)
 	_, err := a.Dial(context.Background(), cred)
 	require.Error(t, err)
@@ -1487,8 +1453,7 @@ func TestCodexDialRefreshFatalBare(t *testing.T) {
 	srv, up := newCodexWSUpstream(t, 401)
 	newCodexMockRefresh(t, codexUpstreamStep{status: 401, body: `{"error":"invalid_grant"}`})
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := dialCred(7)
 	_, err := a.Dial(context.Background(), cred)
 	require.Error(t, err)
@@ -1505,8 +1470,7 @@ func TestCodexDialRefreshErrorBare(t *testing.T) {
 	srv, up := newCodexWSUpstream(t, 401)
 	rm := newCodexMockRefresh(t) // 默认 500 重复
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(handler.add, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := dialCred(7)
 	_, err := a.Dial(context.Background(), cred)
 	require.Error(t, err)
@@ -1549,8 +1513,7 @@ func TestCodexIsFatal(t *testing.T) {
 func TestCodexDialAuthCacheReuse(t *testing.T) {
 	srv, up := newCodexWSUpstream(t, 200, 200)
 	rm := newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
-	a := NewCodex(nil)
-	a.SetTransport(newOfficialRewriteTransport(t, srv.URL))
+	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := dialCred(7)
 	c1, err := a.Dial(context.Background(), cred, codexsdk.WithPingInterval(0))
 	require.NoError(t, err)

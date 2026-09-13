@@ -252,8 +252,7 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	codex := sdkbridge.NewCodex(failure)
-	codex.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, upstream))
+	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
 	p.SetCodex(codex)
 	return p, store
@@ -515,8 +514,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	codexWs := sdkbridge.NewCodex(failure)
-	codexWs.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, up.URL))
+	codexWs := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, up.URL), sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
 	p.SetCodex(codexWs)
 

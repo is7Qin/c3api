@@ -103,13 +103,12 @@ func TestCodexFatalChainPG(t *testing.T) {
 	require.NoError(t, sched.Start(sctx))
 	t.Cleanup(scancel)
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: repos.Accounts, Failer: sched, Log: nil})
-	adapter := sdkbridge.NewCodex(failure)
+	adapter := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, up.URL), sdkbridge.RotationDeps{})
 
 	// 触发：fatal（refresh 判死）→ 统一回调全链路
 	ext, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
 	cred := domain.CredentialFromExt(ext)
-	adapter.SetTransport(newProxyOfficialRewriteTransportWithAssert(t, up.URL))
 	_, err = adapter.GenerateImage(ctx, &cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "refresh 被拒绝", "RefreshOAuthError 透传")

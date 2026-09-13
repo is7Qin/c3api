@@ -274,20 +274,21 @@ func (f *fakeStalenessSource) CompileStalenessSnapshot(context.Context) (domain.
 }
 
 // TestCompileEvent_ProbeSnapshotMappingIsExact pins the post-layering seam
-// contract: SetStalenessProbe maps the repository tuple onto the lane tuple
-// field-exact (including the updated_at nanos that close the out-of-band
-// content-edit gap) and propagates supplier errors to the fail-safe path.
+// contract: the Config-wired probe supplier maps the repository tuple onto
+// the lane tuple field-exact (including the updated_at nanos that close the
+// out-of-band content-edit gap) and propagates supplier errors to the
+// fail-safe path.
 func TestCompileEvent_ProbeSnapshotMappingIsExact(t *testing.T) {
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), newMemLoader(nil), re, nil)
-	snap := domain.CompileStaleness{
+	cfg := testCfg()
+	cfg.StalenessProbe = &fakeStalenessSource{snap: domain.CompileStaleness{
 		Accounts: 3, MaxLifecycleRevision: 9, AccountsUpdatedAtNano: 11,
 		Groups: 2, GroupsUpdatedAtNano: 22,
 		Templates: 4, TemplatesUpdatedAtNano: 44,
 		Memberships: 5, Exts: 6,
-	}
-	s.SetStalenessProbe(&fakeStalenessSource{snap: snap})
+	}}
+	s := New(cfg, newMemLoader(nil), re, nil)
 	require.NotNil(t, s.stalenessProbe)
 	c, err := s.stalenessProbe(context.Background())
 	require.NoError(t, err)
@@ -298,8 +299,9 @@ func TestCompileEvent_ProbeSnapshotMappingIsExact(t *testing.T) {
 		memberships: 5, exts: 6,
 	}, c)
 
-	sErr := New(testCfg(), newMemLoader(nil), re, nil)
-	sErr.SetStalenessProbe(&fakeStalenessSource{err: context.DeadlineExceeded})
+	cfgErr := testCfg()
+	cfgErr.StalenessProbe = &fakeStalenessSource{err: context.DeadlineExceeded}
+	sErr := New(cfgErr, newMemLoader(nil), re, nil)
 	require.NotNil(t, sErr.stalenessProbe)
 	_, err = sErr.stalenessProbe(context.Background())
 	require.ErrorIs(t, err, context.DeadlineExceeded)

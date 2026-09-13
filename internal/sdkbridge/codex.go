@@ -31,20 +31,15 @@ type Codex struct {
 	rotate  RotationStore         // T5 轮转回写落库面；nil = 不落库（测试/未装配）
 	inval   func(accountID int64) // T5 P3-3 回写后失效账号快照条目（下个会话重载新凭据）；nil = 不失效
 	log     *logx.Logger          // T5 回写/失效错误日志；nil = 不记
-	// transport SDK HTTPClient 上游 transport（resp HTTP 面连接池形态；nil =
-	// SDK 默认——MaxIdleConnsPerHost=2，补压测连接风暴根因）。装配点见
-	// SetTransport（main 注入 httpx 网关同形态 transport）。
+	// transport SDK HTTPClient 上游 transport（构造期传入；nil = SDK 默认——
+	// MaxIdleConnsPerHost=2，补压测连接风暴根因，生产传 httpx 网关同形态）。
 	transport http.RoundTripper
 }
 
-// SetTransport 装配 SDK HTTPClient 的上游 transport（resp 补压测修复——SDK
-// 默认 transport MaxIdleConnsPerHost=2，压测 profile ~12% CPU 连接风暴；main
-// 装配 httpx.NewTransport(网关同形态连接池参数)。构造期一次（冷面），热路径
-// 零影响；nil = SDK 默认（测试形态）。httpx 默认 Proxy=nil 直连（C2-1 防劫持
-// ——环境代理不静默改道 SDK 上游请求，main 装配传 nil 同网关既有 client）。
-func (a *Codex) SetTransport(rt http.RoundTripper) {
-	a.transport = rt
-}
+// (SetTransport setter deleted by hygiene: transport is a construction-time
+// dependency — see NewCodex. A post-construction setter leaves the adapter
+// observably half-built between New and Set, with cached clients already
+// keyed to the wrong transport.)
 
 // RotationStore 轮转回写落库面（repository.AccountExtRepo 满足；接口化供测试
 // 注入与装配侧解耦）。部分更新 upsert——仅 codex_oauth_token/
@@ -65,13 +60,7 @@ type RotationDeps struct {
 	Log *logx.Logger
 }
 
-// SetRotationDeps 装配轮转回写面（T5 §1；Store nil = 回调不落库——测试形态）。
-// 与 failure 回调（构造时注册）分离：回写面冷面低频，main 装配点独立。
-func (a *Codex) SetRotationDeps(deps RotationDeps) {
-	a.rotate = deps.Store
-	a.inval = deps.InvalidateSnapshot
-	a.log = deps.Log
-}
+// (SetRotationDeps setter deleted by hygiene: same reason — see NewCodex.)
 
 // codexEntry 单账号缓存条目：Auth（HTTP/WS 双面共享——at 缓存/单飞/rt 轮换
 // 在 SDK Auth 内）+ HTTPClient（HTTP 面懒构造，nil = 未构造）+ 重建判定签名
@@ -111,9 +100,19 @@ type codexEntry struct {
 }
 
 // NewCodex 构造 codex 适配层。failure 为 T1 统一失效回调（适配层构造注册
-// WithOnAuthFatal → 回调；nil = 上报 no-op——测试替身形态）。
-func NewCodex(failure FailureHandler) *Codex {
-	return &Codex{failure: failure, entries: make(map[int64]*codexEntry)}
+// WithOnAuthFatal → 回调；nil = 上报 no-op——测试替身形态）；transport 为 SDK
+// HTTPClient 上游 transport（nil = SDK 默认；生产传 httpx 网关同形态）；
+// rotation 为 T5 轮转回写面（零值 = 不落库/不失效/不记，测试与未装配形态）。
+// 三者皆为构造期依赖，一次给齐——构造后不存在“半装配”的 Codex。
+func NewCodex(failure FailureHandler, transport http.RoundTripper, rotation RotationDeps) *Codex {
+	return &Codex{
+		failure:   failure,
+		transport: transport,
+		rotate:    rotation.Store,
+		inval:     rotation.InvalidateSnapshot,
+		log:       rotation.Log,
+		entries:   make(map[int64]*codexEntry),
+	}
 }
 
 // GenerateImage 非流式生图包装（T2 §1）：cred → 缓存取 HTTPClient →
@@ -261,7 +260,7 @@ func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredent
 //     不完整）不 panic（OAuthWithRotation 空 rt 构造 panic）；PAT 走 PAT(key)
 //     无此面
 //   - 重建 = 新条目构造——usage/usageAt/usageErrAt/usageErr 一并清除（对齐
-	//     auth 重建；凭据变更后快照重拉）
+//     auth 重建；凭据变更后快照重拉）
 //
 // 条目承载 Auth（HTTP 面 GenerateImage/Stream 与 WS 面 Dial 共享——连接
 // per-请求不缓存，Auth 账号级状态跨面复用；HTTPClient 由 clientFor 懒构造）。

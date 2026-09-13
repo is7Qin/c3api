@@ -89,16 +89,19 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	}
 	unwired := New(testCfg(), newMemLoader(nil), newRuleEngine(t), nil)
 	require.Nil(t, unwired.stalenessProbe, "seam default must be unwired (nil-probe fail-safe)")
-	unwired.SetStalenessProbe(nil)
-	require.Nil(t, unwired.stalenessProbe, "nil supplier must not wire the probe")
+	nilCfg := testCfg()
+	nilCfg.StalenessProbe = nil
+	stillUnwired := New(nilCfg, newMemLoader(nil), newRuleEngine(t), nil)
+	require.Nil(t, stillUnwired.stalenessProbe, "explicit nil supplier must not wire the probe")
 
 	// --- production-equivalent wiring: counting loader + real repository tuple ---
 	memTpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	memAccs := []*domain.Account{accWithEnabled(1, memTpl, true, 10000), accWithEnabled(2, memTpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: memAccs})
 	cl := &countingLoader{inner: m}
-	s := New(testCfg(), cl, newRuleEngine(t), nil)
-	s.SetStalenessProbe(repos.Groups)
+	wiredCfg := testCfg()
+	wiredCfg.StalenessProbe = repos.Groups
+	s := New(wiredCfg, cl, newRuleEngine(t), nil)
 	require.NotNil(t, s.stalenessProbe, "wired scheduler must carry the probe — the nil-probe branch is unreachable from production wiring")
 	require.NoError(t, s.reload(ctx))
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
@@ -156,6 +159,6 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	require.True(t, ok)
 	mainSrc, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "cmd", "server", "main.go"))
 	require.NoError(t, err)
-	require.Contains(t, string(mainSrc), "sched.SetStalenessProbe(repos.Groups)",
-		"production must wire the repo-backed probe at the construction site (§9-A2 sole call-site)")
+	require.Contains(t, string(mainSrc), "StalenessProbe:        repos.Groups,",
+		"production must wire the repo-backed probe in the scheduler Config literal (§9-A2 sole call-site)")
 }
