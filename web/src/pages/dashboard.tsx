@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { StatusBadge } from '@/components/status-badge'
-import { fmtTTFT, formatPercent, truncate } from '@/components/fmt'
+import { browserTimeZone, fmtTTFT, formatPercent, truncate } from '@/components/fmt'
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -28,7 +28,7 @@ const cardGrid = 'grid grid-cols-1 gap-5 *:data-[slot=card]:bg-linear-to-t *:dat
 // errTop 柱图数据行（账号维度——name = 账号名）。
 type ErrRow = { name: string; err_rate: number; err_count: number }
 
-// trend 日桶行（date = UTC 日 YYYY-MM-DD）。
+// trend 日桶行（date = 请求 `timezone` 时区的本地日 YYYY-MM-DD；缺省 UTC）。
 type TrendRow = { date: string; requests: number; cost_usd: number; errors: number; tokens: number }
 
 // 大数紧凑格式（用户裁决 2026-08-14）：≥1e9 → X.XX B、≥1e6 → X.XX M，否则千分位。
@@ -42,7 +42,7 @@ export default function Dashboard() {
   const { t } = useTranslation()
   // 总览聚合面 30s 轮询（服务端 TTL 30s 缓存）+ 实时并发排行 10s 轮询（服务端
   // TTL 2s 缓存）——两端点轮询频率各自独立（spec 2026-08-14 §3）。
-  const overviewQ = useQuery({ queryKey: ['overview'], queryFn: () => api.getOverview(), refetchInterval: 30_000 })
+  const overviewQ = useQuery({ queryKey: ['overview', browserTimeZone()], queryFn: () => api.getOverview({ timezone: browserTimeZone() }), refetchInterval: 30_000 })
   const usersTopQ = useQuery({ queryKey: ['users-top'], queryFn: () => api.getUsersTop(), refetchInterval: 10_000 })
 
   const ov = overviewQ.data

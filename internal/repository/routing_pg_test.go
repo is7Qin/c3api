@@ -610,6 +610,9 @@ func TestRoutingQualityGateBarrierPG(t *testing.T) {
 			gateConn.Release()
 		})
 	}
+	// register immediately: a failure before the late cleanup below would otherwise leave
+	// gateConn acquired and hang gatePool.Close until the package timeout (masking the error)
+	t.Cleanup(releaseGate)
 	// failure cleanup must release gate before closing writerPool or joining writer; idempotent via sync.Once, cannot deadlock
 	rollupDone := make(chan error, 1)
 	go func() { rollupDone <- repos.Partitions.RollupQuality(context.Background(), now, 1) }()

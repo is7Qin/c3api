@@ -131,7 +131,7 @@ func TestPGStatsTTFTExactVsSeed(t *testing.T) {
 // cubeHistOf 读回窗口内合并直方图（断言辅助——锚定档位分布推导）。
 func cubeHistOf(t *testing.T, repos *repository.Repository, from, to time.Time) []int64 {
 	t.Helper()
-	sum, err := repos.Stats.SummarizeStats(context.Background(), from, to, 0)
+	sum, err := repos.Stats.SummarizeStats(context.Background(), from, to, 0, time.UTC)
 	require.NoError(t, err)
 	return sum.TTFTHist
 }

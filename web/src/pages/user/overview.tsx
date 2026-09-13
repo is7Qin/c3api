@@ -15,7 +15,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { StatusBadge } from '@/components/status-badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatDateTime, formatUSD } from '@/components/fmt'
+import { browserTimeZone, formatDateTime, formatUSD } from '@/components/fmt'
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -39,8 +39,8 @@ export default function UserOverview() {
   // limit 1 仅取 total（KeyListResponse.total），不用拉全量
   const keysQ = useQuery({ queryKey: ['user', 'keys'], queryFn: () => userApi.listUserKeys({ limit: 1 }) })
   const statsQ = useQuery({
-    queryKey: ['user', 'stats', { from, to, granularity: 'day' }],
-    queryFn: () => userApi.getMyStats({ from, to, granularity: 'day' }),
+    queryKey: ['user', 'stats', { from, to, granularity: 'day', timezone: browserTimeZone() }],
+    queryFn: () => userApi.getMyStats({ from, to, granularity: 'day', timezone: browserTimeZone() }),
   })
 
   // 最近 7 天汇总：请求数 / 总 token / 成本（/user/stats 的 Cost 已 USD → formatUSD）

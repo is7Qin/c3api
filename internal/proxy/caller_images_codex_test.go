@@ -186,7 +186,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		GroupKeyRPM:           0, UsageCapture: true,
+		UsageCapture:          true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
@@ -196,7 +196,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
-	}}, noopUserLoader{}, nil)
+	}}, noopUserLoader{}, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{
@@ -536,13 +536,13 @@ func TestImagesCodexAdapterMissing501(t *testing.T) {
 
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
-	}}, noopUserLoader{}, nil)
+	}}, noopUserLoader{}, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
-		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, GroupKeyRPM: 0, UsageCapture: true,
+		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,
 	}, sched, credential.New(), rec, clients, auth, nil, nil, usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, store, nil))
 	// 不调 SetCodex —— 未装配形态
 
@@ -720,7 +720,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
-	}}, noopUserLoader{}, nil)
+	}}, noopUserLoader{}, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
@@ -731,7 +731,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, codexUp.URL), sdkbridge.RotationDeps{})
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
-		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, GroupKeyRPM: 0, UsageCapture: true,
+		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,
 	}, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
 	p.SetCodex(codex)
 

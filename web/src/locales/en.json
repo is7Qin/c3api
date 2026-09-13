@@ -115,7 +115,7 @@
     "waterWarning": "— near the limit, consider scaling up",
     "resourcesTitle": "Resource totals",
     "trendTitle": "Traffic trend",
-    "trendDesc": "Requests per day (UTC), last 7 days",
+    "trendDesc": "Requests per day (browser timezone), last 7 days",
     "trendEmpty": "No usage in this period",
     "usersTopTitle": "Live concurrency top",
     "usersTopDesc": "In-flight requests per user, refreshes every 10s (this instance)",
@@ -1605,8 +1605,8 @@
       "groupEmpty": "No selectable groups; contact the administrator",
       "maxLabel": "Max concurrency",
       "maxHint": "0 = unlimited",
-      "quotaLabel": "Quota (cumulative tokens)",
-      "quotaHint": "0 = unlimited",
+      "quotaLabel": "Quota (cumulative spend limit, USD)",
+      "quotaHint": "Up to 5 decimals; 0 = unlimited",
       "statusLabel": "Status",
       "deleteTitle": "Delete key",
       "deleteDesc": "Delete key \"{{name}}\"? It will be invalidated immediately.",
@@ -1619,7 +1619,7 @@
       "rotatedDesc": "Your new plaintext key is ready — view and copy it anytime from the key list",
       "secretTitle": "Plaintext key",
       "secretHint": "View and copy it anytime from the key list",
-      "formInvalid": "Check the form: name and group are required; numbers must be non-negative integers"
+      "formInvalid": "Check the form: name and group are required; concurrency must be a non-negative integer; quota must be a non-negative USD amount with at most 5 decimals"
     },
     "logs": {
       "title": "Logs",
@@ -1797,4 +1797,3 @@
     "backHome": "Back to Home"
   }
 }
-

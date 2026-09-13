@@ -393,10 +393,10 @@ func TestPGStatsRawCostRoundtrip(t *testing.T) {
 
 	// 落盘 → overview 幸存读取面
 	require.NoError(t, repos.Stats.AggregateRange(ctx, h, h.Add(time.Hour), h.Add(30*time.Minute), rows, nil))
-	sum, err := repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0)
+	sum, err := repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0, time.UTC)
 	require.NoError(t, err)
 	require.Equal(t, int64(840), sum.RawCost, "summary SUM(raw_cost)（840+0）")
-	days, err := repos.Stats.ScanStatsDays(ctx, h, h.Add(time.Hour), 0)
+	days, err := repos.Stats.ScanStatsDays(ctx, h, h.Add(time.Hour), 0, time.UTC)
 	require.NoError(t, err)
 	require.Len(t, days, 1)
 	require.Equal(t, int64(840), days[0].RawCost, "日桶 SUM(raw_cost)")
@@ -625,7 +625,7 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 	require.NoError(t, repos.Usages.InsertBatch(ctx, logs1))
 
 	// 异步语义：worker 周期前两表无变化
-	sum, err := repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0)
+	sum, err := repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0, time.UTC)
 	require.NoError(t, err)
 	require.Zero(t, sum.Requests, "Record 后 usage_stats 无变化（请求路径零统计投递）")
 	require.Zero(t, pgCount(t, pgSharedPool(t), `SELECT COUNT(*) FROM usage_entity_stats`),
@@ -649,7 +649,7 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 
 	// 幂等重放：无新行再周期 → 桶值不变（不双计）
 	waitForSummaryReq(t, repos, h, 11, "重放同范围结果一致")
-	sum, err = repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0)
+	sum, err = repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0, time.UTC)
 	require.NoError(t, err)
 	require.Equal(t, int64(22), sum.TotalTokens, "桶由全量行重建（首批 token 不丢）")
 	// entity 半端同步落库（同批源行的 user=42 卷积——hour×model 一桶）
@@ -668,7 +668,7 @@ func waitForSummaryReq(t *testing.T, repos *repository.Repository, h time.Time, 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		sum, err := repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0)
+		sum, err := repos.Stats.SummarizeStats(ctx, h, h.Add(time.Hour), 0, time.UTC)
 		cancel()
 		if err == nil && sum.Requests == want {
 			return
@@ -845,7 +845,7 @@ func TestPGStatsSummarizeTTFT(t *testing.T) {
 				Cost: 50, RawCost: 150, TTFTTotalMS: 180, TTFTCount: 5, TTFTMaxMS: 60, TTFTHist: hist},
 		}, nil))
 
-	sum, err := repos.Stats.SummarizeStats(ctx, bucket, bucket.Add(time.Hour), 0)
+	sum, err := repos.Stats.SummarizeStats(ctx, bucket, bucket.Add(time.Hour), 0, time.UTC)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), sum.Requests)
 	require.Equal(t, int64(450), sum.RawCost, "raw_cost 跨行合并（300+150）")
@@ -868,7 +868,7 @@ func TestPGStatsSummarizeNoData(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
 	bucket := time.Now().UTC().Truncate(time.Hour)
-	sum, err := repos.Stats.SummarizeStats(ctx, bucket, bucket.Add(time.Hour), 0)
+	sum, err := repos.Stats.SummarizeStats(ctx, bucket, bucket.Add(time.Hour), 0, time.UTC)
 	require.NoError(t, err)
 	require.Zero(t, sum.Requests)
 	require.Zero(t, sum.CallCount)
@@ -877,7 +877,7 @@ func TestPGStatsSummarizeNoData(t *testing.T) {
 	require.Zero(t, sum.TTFTPercentileMS(0.95), "无样本 → 0")
 	require.Zero(t, sum.TTFTAvgMS())
 	require.Equal(t, make([]int64, 10), sum.TTFTHist, "空直方图合并 = 全零 10 档")
-	trend, err := repos.Stats.ScanStatsDays(ctx, bucket, bucket.Add(24*time.Hour), 0)
+	trend, err := repos.Stats.ScanStatsDays(ctx, bucket, bucket.Add(24*time.Hour), 0, time.UTC)
 	require.NoError(t, err)
 	require.Empty(t, trend, "无日桶")
 }

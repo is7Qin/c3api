@@ -104,7 +104,7 @@ func TestPGStatsTrendPushdown(t *testing.T) {
 	}{{"hour-all", "hour", 0, ""}, {"day-all", "day", 0, ""},
 		{"hour-group1", "hour", 1, ""}, {"day-model-gpt4o", "day", 0, "gpt-4o"},
 		{"hour-group1-claude", "hour", 1, "claude-x"}, {"day-group2", "day", 2, ""}} {
-		got, err := repos.Stats.StatsTrend(ctx, h, h.Add(2*time.Hour), tc.unit, tc.groupID, tc.model)
+		got, err := repos.Stats.StatsTrend(ctx, h, h.Add(2*time.Hour), tc.unit, tc.groupID, tc.model, time.UTC)
 		require.NoError(t, err, "%s", tc.name)
 		exp := foldExpTrend(want, tc.unit, tc.groupID, tc.model)
 		require.Len(t, got, len(exp), "%s: 桶数一致", tc.name)
@@ -116,7 +116,7 @@ func TestPGStatsTrendPushdown(t *testing.T) {
 	}
 
 	// 非法 unit 显式报错（白名单——禁字符串直插的守门断言）
-	_, err := repos.Stats.StatsTrend(ctx, h, h.Add(time.Hour), "week", 0, "")
+	_, err := repos.Stats.StatsTrend(ctx, h, h.Add(time.Hour), "week", 0, "", time.UTC)
 	require.Error(t, err)
 }
 
@@ -216,7 +216,7 @@ func TestPGStatsEntityTrendAndModelSplit(t *testing.T) {
 	from, to := h, h.Add(2*time.Hour)
 
 	// hour 无 model：两桶 = 各小时 m1+m2 之和
-	got, err := repos.Stats.StatsEntityTrend(ctx, from, to, "hour", "account", 7, "")
+	got, err := repos.Stats.StatsEntityTrend(ctx, from, to, "hour", "account", 7, "", time.UTC)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	require.Equal(t, h, got[0].BucketTime.UTC())
@@ -227,14 +227,14 @@ func TestPGStatsEntityTrendAndModelSplit(t *testing.T) {
 	require.Equal(t, int64(7), got[0].EntityID)
 
 	// hour 带 model=m1：只回 m1 拆分桶
-	got, err = repos.Stats.StatsEntityTrend(ctx, from, to, "hour", "account", 7, "m1")
+	got, err = repos.Stats.StatsEntityTrend(ctx, from, to, "hour", "account", 7, "m1", time.UTC)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	require.Equal(t, int64(3), got[0].RequestCount, "hour0 仅 m1")
 	require.Equal(t, int64(4), got[1].RequestCount, "hour1 仅 m1")
 
 	// day 无 model：单日桶 = 全部之和（拆分合并守恒）
-	got, err = repos.Stats.StatsEntityTrend(ctx, day, day.Add(24*time.Hour), "day", "account", 7, "")
+	got, err = repos.Stats.StatsEntityTrend(ctx, day, day.Add(24*time.Hour), "day", "account", 7, "", time.UTC)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Equal(t, day, got[0].BucketTime.UTC())
@@ -242,8 +242,8 @@ func TestPGStatsEntityTrendAndModelSplit(t *testing.T) {
 	require.Equal(t, int64(1800), got[0].Cost)
 
 	// 白名单守门：非法 unit / entityType 显式报错
-	_, err = repos.Stats.StatsEntityTrend(ctx, from, to, "month", "account", 7, "")
+	_, err = repos.Stats.StatsEntityTrend(ctx, from, to, "month", "account", 7, "", time.UTC)
 	require.Error(t, err)
-	_, err = repos.Stats.StatsEntityTrend(ctx, from, to, "hour", "template", 7, "")
+	_, err = repos.Stats.StatsEntityTrend(ctx, from, to, "hour", "template", 7, "", time.UTC)
 	require.Error(t, err)
 }

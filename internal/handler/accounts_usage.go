@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
@@ -18,17 +17,24 @@ import (
 // GetAccountsUsage 账号用量聚合（/api/admin/accounts/usage——统一 usage API 查询
 // 面 spec 2026-08-18，ServerInterface）。参数解析与校验在 handler 层：
 // account_ids 逗号分隔必填（非数字/空/去重后 >100 → 400）；from/to RFC3339
-// 可选——缺省 = 当天（from=UTC 当日零点、to=now，"当天"语义单点，经 h.now
-// 可注入时钟）；from > to → 400。响应 items 恒 = account_ids 去重后全量
-// （无记录账号 gateway 全 0——前端免补零），顺序 = 去重后顺序。
+// 可选——缺省 = 当天（from=请求浏览器时区当日零点（`timezone` 参数，缺省
+// UTC）、to=now，"当天"语义单点，经 h.now 可注入时钟）；显式 from/to 为绝对
+// 时刻直透，不做任何时区改写；from > to → 400。响应 items 恒 = account_ids
+// 去重后全量（无记录账号 gateway 全 0——前端免补零），顺序 = 去重后顺序。
+// 底层读 usage_logs 原始行绝对区间——本端点时区只影响缺省日界，不影响数值。
 func (h *AdminAPI) GetAccountsUsage(w http.ResponseWriter, r *http.Request, params GetAccountsUsageParams) {
+	zone, err := resolveStatsZone(params.Timezone)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
 	ids, err := parseAccountIDs(params.AccountIds)
 	if err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	now := h.now()
-	from := now.UTC().Truncate(24 * time.Hour) // UTC 当日零点（"当天"缺省单点）
+	from := dayStart(now, zone) // 请求时区当日零点（"当天"缺省单点）
 	to := now
 	if params.From != nil {
 		from = *params.From

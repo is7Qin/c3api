@@ -16,13 +16,19 @@ import (
 )
 
 // GET /api/admin/overview 管理端总览（spec 2026-08-14）：一站式聚合端点——
-// summary（今日 UTC 日界，cost 毫分 /1e5 → USD）+ trend（近 N 天日桶，SQL
-// 侧 GROUP BY）+ accounts（调度器快照健康分布/并发水位）+ resources（三表
-// 冷面 count）+ err_top（账号维度 EWMA Top5）+ alerts（billing 游标积压
-// lag 族注入面）。全冷面（聚合查询 + 快照遍历）；内部 TTL 30s 缓存，键含
-// days/group_id + UTC 日界（summary"今日"跨午夜滚转——缓存键带日界分量）；
-// 无 singleflight（dashboard 单消费者，P3 声明接受）。
+// summary（今日请求浏览器时区日界，cost 毫分 /1e5 → USD）+ trend（近 N 天日
+// 桶，SQL 侧按请求时区分组）+ accounts（调度器快照健康分布/并发水位）+
+// resources（三表冷面 count）+ err_top（账号维度 EWMA Top5）+ alerts（billing
+// 游标积压 lag 族注入面）。全冷面（聚合查询 + 快照遍历）；内部 TTL 30s 缓存，
+// 键含 days/group_id + 请求时区规范名 + 该时区日界（summary"今日"跨午夜滚转
+// 且不同浏览器时区结果各异——两分量都进键，无进程级时区）；无 singleflight
+// （dashboard 单消费者，P3 声明接受）。
 func (h *AdminAPI) GetAdminOverview(w http.ResponseWriter, r *http.Request, params GetAdminOverviewParams) {
+	zone, err := resolveStatsZone(params.Timezone)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
 	days := deref(params.Days)
 	if days < 1 {
 		days = 7 // 缺省 7（契约 default；nil/非法回落缺省）
@@ -31,13 +37,13 @@ func (h *AdminAPI) GetAdminOverview(w http.ResponseWriter, r *http.Request, para
 		days = 30
 	}
 	groupID := deref(params.GroupId)
-	utcDay := h.now().UTC().Truncate(24 * time.Hour) // 缓存键与聚合区间同一日界源
-	key := fmt.Sprintf("o:%d:%d:%s", days, groupID, utcDay.Format("2006-01-02"))
+	day := dayStart(h.now(), zone) // 缓存键与聚合区间同一日界源（请求时区）
+	key := fmt.Sprintf("o:%d:%d:%s:%s", days, groupID, zone.String(), day.Format("2006-01-02"))
 	if v, ok := h.overviewCache.get(key); ok {
 		httpface.WriteJSON(w, http.StatusOK, v)
 		return
 	}
-	data, err := h.svc.Overview(r.Context(), utcDay, days, groupID)
+	data, err := h.svc.Overview(r.Context(), day, days, groupID, zone)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -128,7 +134,8 @@ func errRateOf(requests, errors int64) float64 {
 	return float64(errors) / float64(requests)
 }
 
-// openapiDate time.Time → 契约 Date（UTC 日桶序列化为 YYYY-MM-DD）。
+// openapiDate time.Time → 契约 Date（日桶按其自身时区序列化为 YYYY-MM-DD——
+// 读取面已 .In(请求时区)，故墙钟分量 = 浏览器时区日界）。
 func openapiDate(t time.Time) openapi_types.Date {
 	return openapi_types.Date{Time: t}
 }

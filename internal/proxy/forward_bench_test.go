@@ -79,7 +79,7 @@ func benchProxy(tb testing.TB, upstream string) *Proxy {
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		GroupKeyRPM:           0, UsageCapture: true,
+		UsageCapture:          true,
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	if err := re.Reload(context.Background()); err != nil {
@@ -96,7 +96,7 @@ func benchProxy(tb testing.TB, upstream string) *Proxy {
 	}, noopLogStore{}, nil)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
-	}}, noopUserLoader{}, nil)
+	}}, noopUserLoader{}, nil, true)
 	if err := auth.Reload(context.Background()); err != nil { // 构造不再自载——显式首刷（快照注册表单一入口）
 		panic(err)
 	}
