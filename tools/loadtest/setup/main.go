@@ -62,7 +62,7 @@ var (
 	userBalUsd  = flag.String("user-balance-usd", "0", "user balance USD random interval like 1-100 (0 = don't fill)")
 	userMaxCC   = flag.String("user-max-concurrency", "0", "user max_concurrency random interval like 4-16 (0 = don't set)")
 	keyMaxCC    = flag.String("key-max-concurrency", "0", "key max_concurrency random interval (0 = don't set)")
-	keyQuota    = flag.String("key-quota", "0", "key quota (tokens) random interval; random 0 = that key unlimited")
+	keyQuota    = flag.String("key-quota", "0", "key quota random interval, accumulated billed cost in 毫分 (1 USD = 100,000 毫分); random 0 = that key unlimited")
 	priceModels = flag.Int("price-models", 0, "random N models from the pool get manual pricing (0 = none)")
 	billingOn   = flag.Bool("billing-enabled", false, "fill user balances (default 10-100 USD) + price the whole model pool (billing loadtest)")
 	// intelligent-routing 新契约（无旧 weight/status）：账号采购成本倍率 + 共享

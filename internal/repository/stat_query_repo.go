@@ -8,7 +8,10 @@ package repository
 // /stats/entity-trend、/stats/ttft 四端点的存储查询族——全部 SQL 下推聚合
 // （服务端 GROUP BY/date_trunc/percentile_cont，不拉全行客户端聚合）。
 // 动态片段仅两处且均过白名单映射（unit ∈ hour|day、by ∈ cost|requests|tokens、
-// entityType ∈ account|user|key）——禁字符串直插。
+// entityType ∈ account|user|key）——禁字符串直插。trend/entity-trend 分组
+// 边界按请求浏览器时区（$n 绑定，缺省 UTC；domain.ZoneCubeExact == false
+// ——窗口界劈开卷积行、DST/半小时时区——转 stat_raw_read.go 原始行精确聚合）；
+// top/ttft 无分组，保持绝对区间语义。
 
 import (
 	"context"
@@ -47,22 +50,31 @@ const statMeasureSums = `COALESCE(sum(request_count), 0)::bigint,
 	COALESCE(sum(ttft_count), 0)::bigint,
 	COALESCE(max(ttft_max_ms), 0)::bigint`
 
-// StatsTrend cube 时间趋势下推（date_trunc(unit) 服务端分组；unit ∈ hour|day；
-// groupID > 0 / model 非空 = 过滤，零值 = 不过滤）。返回桶只含时间维度 + 测量
-// 列（TTFTHist 恒 nil——直方图草图走 StatsTTFTSketch，趋势面不拖数组列）。
-func (r *StatRepo) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string) ([]*domain.StatBucket, error) {
+// StatsTrend 时间趋势（unit ∈ hour|day；groupID > 0 / model 非空 = 过滤，零值 =
+// 不过滤）。zone = 请求浏览器时区（handler 边界校验；nil/UTC = cube 路径现状，
+// 向后兼容）：窗口双界 UTC 整点对齐且时区恒整点无 DST（domain.ZoneCubeExact）
+// 时由 cube 按 $zone 本地墙钟重组（桶与本地桶界严格对齐 → 精确）；否则
+// （界劈开卷积行 / DST / 半小时）走 rawTrend 原始行逐行聚合（精确且不塌缩
+// fall-back 重复小时，见 stat_raw_read.go）。返回桶 .In(zone)：绝对
+// 时刻 = 本地桶起点，墙钟分量 = 请求时区。返回桶只含时间维度 + 测量列
+// （TTFTHist 恒 nil——直方图草图走 StatsTTFTSketch，趋势面不拖数组列）。
+func (r *StatRepo) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error) {
 	if r.pool == nil {
 		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot query stats trend")
 	}
-	trunc, ok := statsTrendUnits[unit]
-	if !ok {
+	zone = locOrUTC(zone)
+	if _, ok := statsTrendUnits[unit]; !ok {
 		return nil, fmt.Errorf("stat repo: StatsTrend: unknown unit %q", unit)
 	}
-	sql := `SELECT date_trunc('` + trunc + `', bucket_time AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+	if !domain.ZoneCubeExact(zone, from, to) {
+		return r.rawTrend(ctx, from, to, unit, rawZoneFilter{groupID: groupID, model: model}, zone)
+	}
+	trunc := statsTrendUnits[unit]
+	sql := `SELECT date_trunc('` + trunc + `', bucket_time AT TIME ZONE $3) AT TIME ZONE $3,
 	` + statMeasureSums + `
 FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
-	args := []any{from, to}
-	n := 3
+	args := []any{from, to, zoneName(zone)}
+	n := 4
 	if groupID > 0 {
 		sql += fmt.Sprintf(` AND "group_id" = $%d`, n)
 		args = append(args, groupID)
@@ -86,6 +98,7 @@ FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
 			&b.Cost, &b.RawCost, &b.CallCount, &b.TTFTTotalMS, &b.TTFTCount, &b.TTFTMaxMS); err != nil {
 			return nil, err
 		}
+		b.BucketTime = b.BucketTime.In(zone)
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -93,7 +106,8 @@ FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
 
 // StatsTop 实体排行下推（usage_entity_stats 按 entity_type 分组求和后按 by 排
 // 序取前 limit；by/entityType 白名单映射，禁字符串直插）。返回桶含实体维度 +
-// 测量列（BucketTime 零值——排行无时间维度）。
+// 测量列（BucketTime 零值——排行无时间维度）。绝对区间聚合、无时间分组——
+// 时区不改变数值，恒走本 cube 路径（request-tz 契约仅要求 handler 校验参数）。
 func (r *StatRepo) StatsTop(ctx context.Context, from, to time.Time, entityType string, by string, limit int) ([]*domain.EntityStatBucket, error) {
 	if r.pool == nil {
 		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot query stats top")
@@ -130,27 +144,34 @@ LIMIT $4`
 	return out, rows.Err()
 }
 
-// StatsEntityTrend 单实体时间趋势下推（强制实体过滤 + 可选 model 过滤；unit ∈
-// hour|day）。返回桶含时间维度 + 测量列（EntityType/EntityID 回填自入参——
-// GROUP BY 仅时间，SQL 不回实体列）。
-func (r *StatRepo) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string) ([]*domain.EntityStatBucket, error) {
+// StatsEntityTrend 单实体时间趋势（强制实体过滤 + 可选 model 过滤；unit ∈
+// hour|day）。时区路由同 StatsTrend：恒整点无 DST → cube $zone 本地墙钟重组
+// （$5 绑定），DST/半小时 → rawEntityTrend 原始行精确聚合。返回桶 .In(zone)。
+// 返回桶含时间维度 + 测量列（EntityType/EntityID 回填自入参——GROUP BY 仅
+// 时间，SQL 不回实体列）。
+func (r *StatRepo) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error) {
 	if r.pool == nil {
 		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot query entity trend")
 	}
-	trunc, ok := statsTrendUnits[unit]
-	if !ok {
+	zone = locOrUTC(zone)
+	if _, ok := statsTrendUnits[unit]; !ok {
 		return nil, fmt.Errorf("stat repo: StatsEntityTrend: unknown unit %q", unit)
 	}
-	if _, ok := statEntityCols[entityType]; !ok {
+	col, ok := statEntityCols[entityType]
+	if !ok {
 		return nil, fmt.Errorf("stat repo: StatsEntityTrend: unknown entity type %q", entityType)
 	}
-	sql := `SELECT date_trunc('` + trunc + `', bucket_time AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+	if !domain.ZoneCubeExact(zone, from, to) {
+		return r.rawEntityTrend(ctx, from, to, unit, entityType, entityID, rawZoneFilter{model: model, entityCol: col, entityID: entityID}, zone)
+	}
+	trunc := statsTrendUnits[unit]
+	sql := `SELECT date_trunc('` + trunc + `', bucket_time AT TIME ZONE $5) AT TIME ZONE $5,
 	` + statMeasureSums + `
 FROM "usage_entity_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2
 	AND "entity_type" = $3 AND "entity_id" = $4`
-	args := []any{from, to, entityType, entityID}
+	args := []any{from, to, entityType, entityID, zoneName(zone)}
 	if model != "" {
-		sql += ` AND "model" = $5`
+		sql += ` AND "model" = $6`
 		args = append(args, model)
 	}
 	sql += ` GROUP BY 1 ORDER BY 1`
@@ -167,6 +188,7 @@ FROM "usage_entity_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2
 			&b.Cost, &b.RawCost, &b.CallCount, &b.TTFTTotalMS, &b.TTFTCount, &b.TTFTMaxMS); err != nil {
 			return nil, err
 		}
+		b.BucketTime = b.BucketTime.In(zone)
 		out = append(out, b)
 	}
 	return out, rows.Err()

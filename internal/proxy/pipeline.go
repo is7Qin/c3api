@@ -69,7 +69,7 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 
 	// quota 检查在并发 acquire 之前（评审提醒①：失败无并发槽副作用；
 	// 未设置额度 key 短路零成本；预算耗尽 → gate 内 DB 复核认领后再判定）
-	if p.auth.QuotaExhausted(meta) {
+	if p.cfg.BillingCapture && meta.HasQuota && p.auth.QuotaExhausted(meta) {
 		p.inflight.Add(-1)
 		writeErr(w, errQuotaExhausted)
 		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errQuotaExhausted.msg)
@@ -99,15 +99,6 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 		p.inflight.Add(-1)
 		writeErr(w, errConcurrency)
 		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errConcurrency.msg)
-		return nil, nil, 0, false
-	}
-	if !p.limit.Allow(groupID, time.Now()) {
-		p.inflight.Add(-1)
-		p.auth.Release(meta, level)
-		writeErr(w, errRateLimit)
-		// 架构审查 S5（用户裁决）：组限流 429 也进 err_logs（排障限流需要；
-		// 与 401 同属拒绝路径——普通队列风暴采样丢弃兜底）。
-		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errRateLimit.msg)
 		return nil, nil, 0, false
 	}
 	return r, rm, level, true

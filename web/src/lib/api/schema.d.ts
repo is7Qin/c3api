@@ -1161,7 +1161,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 趋势聚合（cube） */
+        /** 趋势聚合（cube/原始行——按 timezone 路由） */
         get: operations["GetStatsTrend"];
         put?: never;
         post?: never;
@@ -1306,11 +1306,12 @@ export interface paths {
         /**
          * 管理端总览（summary USD + trend 日桶 + 账号健康 + 资源 + err_top + 计费告警）
          * @description 一站式聚合端点（dashboard 主数据；聚合结果内部 TTL 30s 缓存，键含
-         *     days/group_id 与 UTC 日界——跨午夜滚转）。summary = 今日汇总（UTC 日界，
-         *     cost 毫分 /1e5 → USD，与价格 API 口径一致）；trend = 近 N 天日桶
-         *     （SQL 侧 GROUP BY date_trunc('day', bucket_time)，days 上限 30）；
-         *     accounts = 账号健康分布 + 并发水位（调度器快照同源）；err_top = 账号
-         *     维度 err_rate Top5（调度器 EWMA，name = 账号名）；alerts = billing
+         *     days/group_id、timezone 规范名与该时区日界——跨午夜滚转）。summary =
+         *     今日汇总（请求浏览器时区日界，缺省 UTC；cost 毫分 /1e5 → USD，与价格
+         *     API 口径一致）；trend = 近 N 天日桶（SQL 侧按请求时区日界分组；
+         *     DST/半小时时区扫描原始明细、窗口超保留期支持范围 → 400；days 上限
+         *     30）；accounts = 账号健康分布 + 并发水位（调度器快照同源）；err_top =
+         *     账号维度 err_rate Top5（调度器 EWMA，name = 账号名）；alerts = billing
          *     游标积压观测（lag 族，注入面读取）。
          */
         get: operations["GetAdminOverview"];
@@ -1776,12 +1777,12 @@ export interface components {
             MaxConcurrency?: number;
             /**
              * Format: int64
-             * @description 累计 token 上限；0 = 不限
+             * @description 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
              */
             Quota?: number;
             /**
              * Format: int64
-             * @description 已消耗（后扣；无额度 key 恒 0）
+             * @description 已消耗计费金额（毫分；后扣；无额度 key 恒 0）
              */
             QuotaUsed?: number;
             /** Format: date-time */
@@ -1802,7 +1803,7 @@ export interface components {
             max_concurrency?: number;
             /**
              * Format: int64
-             * @description 累计 token 上限；0 = 不限
+             * @description 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
              */
             quota?: number;
         };
@@ -1810,7 +1811,10 @@ export interface components {
             name?: string;
             status?: components["schemas"]["KeyStatus"];
             max_concurrency?: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
+             */
             quota?: number;
         };
         KeyListResponse: {
@@ -1828,9 +1832,15 @@ export interface components {
             Name?: string;
             Status?: components["schemas"]["KeyStatus"];
             MaxConcurrency?: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
+             */
             Quota?: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description 已消耗计费金额（毫分；后扣；无额度 key 恒 0）
+             */
             QuotaUsed?: number;
             /** Format: date-time */
             CreatedAt?: string;
@@ -3085,7 +3095,7 @@ export interface components {
             /** Format: date-time */
             generated_at: string;
         };
-        /** @description 今日汇总（UTC 日界；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
+        /** @description 今日汇总（请求 timezone 时区日界，缺省 UTC；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
         OverviewSummary: {
             /** Format: int64 */
             requests: number;
@@ -3141,11 +3151,11 @@ export interface components {
             /** Format: int64 */
             ttft_p99_ms: number;
         };
-        /** @description 近 N 天日桶（SQL 侧 GROUP BY date_trunc('day', bucket_time)；UTC 日；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
+        /** @description 近 N 天日桶（SQL 侧按请求 timezone 的本地日界分组，缺省 UTC；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
         OverviewTrend: {
             /**
              * Format: date
-             * @description 日桶（UTC）
+             * @description 日桶日期（请求 timezone 的本地日期，缺省 UTC）
              */
             date: string;
             /** Format: int64 */
@@ -3275,7 +3285,18 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /**
+         * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+         *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+         *     其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+         *     等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+         *     客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+         *     （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+         *     窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+         */
+        StatsTimezone: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -3566,6 +3587,16 @@ export interface operations {
                 account_ids: string;
                 from?: string;
                 to?: string;
+                /**
+                 * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+                 *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+                 *     其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+                 *     等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+                 *     客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+                 *     （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+                 *     窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+                 */
+                timezone?: components["parameters"]["StatsTimezone"];
             };
             header?: never;
             path?: never;
@@ -5273,6 +5304,16 @@ export interface operations {
                 to: string;
                 granularity?: "hour" | "day";
                 model?: string;
+                /**
+                 * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+                 *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+                 *     其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+                 *     等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+                 *     客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+                 *     （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+                 *     窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+                 */
+                timezone?: components["parameters"]["StatsTimezone"];
             };
             header?: never;
             path?: never;
@@ -5298,6 +5339,16 @@ export interface operations {
                 from: string;
                 to: string;
                 model?: string;
+                /**
+                 * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+                 *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+                 *     其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+                 *     等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+                 *     客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+                 *     （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+                 *     窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+                 */
+                timezone?: components["parameters"]["StatsTimezone"];
             };
             header?: never;
             path?: never;
@@ -5585,6 +5636,16 @@ export interface operations {
                 granularity?: "hour" | "day";
                 group_id?: number;
                 model?: string;
+                /**
+                 * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+                 *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+                 *     其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+                 *     等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+                 *     客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+                 *     （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+                 *     窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+                 */
+                timezone?: components["parameters"]["StatsTimezone"];
             };
             header?: never;
             path?: never;
@@ -5612,6 +5673,16 @@ export interface operations {
                 entity: "account" | "user" | "key";
                 by: "cost" | "requests" | "tokens";
                 limit?: number;
+                /**
+                 * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+                 *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+                 *     其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+                 *     等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+                 *     客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+                 *     （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+                 *     窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+                 */
+                timezone?: components["parameters"]["StatsTimezone"];
             };
             header?: never;
             path?: never;
@@ -5640,6 +5711,16 @@ export interface operations {
                 to: string;
                 granularity: "hour" | "day";
                 model?: string;
+                /**
+                 * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+                 *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+                 *     其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+                 *     等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+                 *     客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+                 *     （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+                 *     窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+                 */
+                timezone?: components["parameters"]["StatsTimezone"];
             };
             header?: never;
             path?: never;
@@ -5667,6 +5748,16 @@ export interface operations {
                 entity?: "account" | "user" | "key";
                 id?: number;
                 model?: string;
+                /**
+                 * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+                 *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+                 *     其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+                 *     等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+                 *     客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+                 *     （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+                 *     窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+                 */
+                timezone?: components["parameters"]["StatsTimezone"];
             };
             header?: never;
             path?: never;
@@ -5763,6 +5854,16 @@ export interface operations {
             query?: {
                 days?: number;
                 group_id?: number;
+                /**
+                 * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+                 *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
+                 *     其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
+                 *     等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
+                 *     客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
+                 *     （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
+                 *     窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+                 */
+                timezone?: components["parameters"]["StatsTimezone"];
             };
             header?: never;
             path?: never;

@@ -28,7 +28,6 @@ type Config struct {
 	Redis     RedisConfig     `koanf:"redis"`
 	Proxy     ProxyConfig     `koanf:"proxy"`
 	Upstream  UpstreamConfig  `koanf:"upstream"`
-	Limit     LimitConfig     `koanf:"limit"`
 	Scheduler SchedulerConfig `koanf:"scheduler"`
 	Usage     UsageConfig     `koanf:"usage"`
 	Billing   BillingConfig   `koanf:"billing"`
@@ -104,10 +103,6 @@ type UpstreamConfig struct {
 	IdleConnTimeout     time.Duration `koanf:"idle_conn_timeout"`
 	DialTimeout         time.Duration `koanf:"dial_timeout"`
 	ForceHTTP2          bool          `koanf:"force_http2"`
-}
-
-type LimitConfig struct {
-	GroupKeyRPM int `koanf:"group_key_rpm"`
 }
 
 // SchedulerConfig 注意：cooldown_429 / backoff_base / backoff_max 已删除
@@ -221,9 +216,9 @@ func Load(path string) (*Config, error) {
 //     以 change-me 开头的合法随机值，派生占位由"空值 + 强制 env"形态兜底）。
 //
 // 明确排除：retention 天数（<=0 = 不删除，文档化惯例）、int 型钳位字段
-// （BatchSize/FlushWorkers/ErrLogQueueSize/ErrLogBatchSize）、Limit.GroupKeyRPM
-// （出厂 0）、Proxy.MaxInflight（server 侧 0→50000 兜底，proxy 消费语义未核实——
-// 范围外）。
+// （BatchSize/FlushWorkers/ErrLogQueueSize/ErrLogBatchSize）、
+// Proxy.MaxInflight（唯一消费方是 server 中间件，0 由 server 侧兜底为 50000——
+// 无死锁/静默失效面）。
 func validate(c *Config) error {
 	for _, d := range []struct {
 		path      string

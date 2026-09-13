@@ -18,7 +18,7 @@ package usage
 //     （已计费错误审计价值最高；落库失败 → 回灌重试（下轮 flush/停机预算内），
 //     仅本队列自身溢出才丢——排空 1k/s 下正常不可达）。
 //   - 普通队列（rejectQ）：**拒绝行**（recordRejected：401/429/402/400/404 本地
-//     拒绝 + 组限流）——风暴采样丢弃面。
+//     拒绝）——风暴采样丢弃面。
 //
 // 不变式（架构审查 A2 固化）：err_logs ⊇ usage_logs 全部错误行（双轨行永不
 // 采样）∪ 采样后的拒绝行；丢弃计数（DroppedReject/DroppedExempt）即统计面
@@ -143,7 +143,7 @@ func (w *ErrLogWorker) loop(ctx context.Context) {
 }
 
 // EnqueueRejected 投递一条**拒绝行**（recordRejected：401/429/402/400/404 本地
-// 拒绝 + 组限流）：普通队列——风暴采样丢弃面（非阻塞 select-default；丢弃
+// 拒绝）：普通队列——风暴采样丢弃面（非阻塞 select-default；丢弃
 // 计数 DroppedReject 原子累加，供指标/日志对账）。
 func (w *ErrLogWorker) EnqueueRejected(l *domain.UsageLog) {
 	w.enqueue(w.rejectQ, l, &w.droppedReject, &w.warnReject, errlogDropWarnThreshold)

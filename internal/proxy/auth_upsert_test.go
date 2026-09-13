@@ -14,7 +14,7 @@ import (
 
 // TestAuthUpsertUserImmediate 本地增量插入后 RequireJWT 依赖的 UserSnapshot 立即可查。
 func TestAuthUpsertUserImmediate(t *testing.T) {
-	a := NewAuth(nil, nil, nil)
+	a := NewAuth(nil, nil, nil, true)
 	// 初始空快照 → 查找缺失 → 401 fail-closed
 	_, ok := a.UserSnapshot(42)
 	require.False(t, ok)
@@ -35,7 +35,7 @@ func TestAuthUpsertUserImmediate(t *testing.T) {
 
 // TestAuthUpsertUserDoesNotClobberOthers 多用户互不影响。
 func TestAuthUpsertUserDoesNotClobberOthers(t *testing.T) {
-	a := NewAuth(nil, nil, nil)
+	a := NewAuth(nil, nil, nil, true)
 	a.UpsertUser(1, domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RoleUser})
 	a.UpsertUser(2, domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RolePlatformAdmin})
 

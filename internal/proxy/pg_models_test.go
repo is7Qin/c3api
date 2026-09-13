@@ -155,8 +155,8 @@ func newPGModelsTestProxy(t *testing.T, sched *scheduler.Scheduler, auth *Auth, 
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		GroupKeyRPM:           0, UsageCapture: true,
-		BillingCapture: bill != nil,
+		UsageCapture:          true,
+		BillingCapture:        bill != nil,
 	}
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
@@ -174,7 +174,7 @@ func newPGModelsTestProxy(t *testing.T, sched *scheduler.Scheduler, auth *Auth, 
 // modelsAuth 从真实 PG keys/users 构建并首刷鉴权快照（NewAuth 构造不再自载）。
 func modelsAuth(t *testing.T, repos *repository.Repository) *Auth {
 	t.Helper()
-	a := NewAuth(repos.Keys, repos.Users, nil)
+	a := NewAuth(repos.Keys, repos.Users, nil, true)
 	require.NoError(t, a.Reload(context.Background()))
 	return a
 }

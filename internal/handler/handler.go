@@ -24,16 +24,20 @@ type AdminAPI struct {
 	svc *service.Service
 	ops OpsOptions // 运维观测装配（GetOpsWorkers 用；变参注入，零值 = 端点返回空）
 	// overview/users-top 聚合面缓存（spec 2026-08-14 TTL：30s/2s——dashboard
-	// 轮询频率下无陈旧感；键含参数与 UTC 日界；无 singleflight）。
+	// 轮询频率下无陈旧感；键含参数、请求时区与本地日界；无 singleflight）。
 	overviewCache *ttlCache
 	usersTopCache *ttlCache
 	// now 可注入时钟（默认 time.Now；测试注入断言缓存键日界滚转）。
 	now func() time.Time
+	// 无统计时区字段：`timezone` 每请求解析（stats_zone.go），进程零可变时区。
 }
 
 // New 构造契约处理器（路由由 HandlerWithOptions 生成）。
 // ops 变参：GetOpsWorkers 的 worker 引用在组合根（cmd/server/main.go）持有，
 // 由装配面注入；缺省零值 = 端点返回空（测试/无运维装配场景零改动）。
+// 统计时区不是进程态：每请求 `timezone` 参数在 handler 边界解析
+// （resolveStatsZone，stats_zone.go），AdminAPI 绝不持有 Location
+// （request-browser-timezone-stats——无进程级可变得时区）。
 func New(svc *service.Service, ops ...OpsOptions) *AdminAPI {
 	var o OpsOptions
 	if len(ops) > 0 {

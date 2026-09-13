@@ -44,7 +44,7 @@ func newTestGateRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 // newConcAuth 构造已 Reload 的 Auth（keys 快照就位 → gate 计数器与受限元数据可查）。
 func newConcAuth(t *testing.T, keys map[string]domain.KeyMeta) *Auth {
 	t.Helper()
-	a := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil)
+	a := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil, true)
 	require.NoError(t, a.Reload(context.Background()))
 	return a
 }
@@ -154,7 +154,7 @@ func TestShareDynamicNInflightInheritance(t *testing.T) {
 // T3 视图判定边界：total−selfLast+L_now 公式两侧、无视图/条目缺失/视图陈旧
 // fail-open 全额本地。
 func TestClusterViewJudgmentBoundaries(t *testing.T) {
-	g := newConcurrencyGate(nil)
+	g := newConcurrencyGate(nil, true)
 
 	// 无视图：fail-open 全额本地（lnow ≤ limit 放行 / > limit 拒绝）
 	require.True(t, g.concAllows(false, 1, 6, 6))

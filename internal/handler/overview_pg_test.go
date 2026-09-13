@@ -110,13 +110,13 @@ type countingStore struct {
 	emailCalls atomic.Int64 // ListUserEmails
 }
 
-func (c *countingStore) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*repository.StatSummary, error) {
+func (c *countingStore) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
 	c.statAggs.Add(1)
-	return c.Store.SummarizeStats(ctx, from, to, groupID)
+	return c.Store.SummarizeStats(ctx, from, to, groupID, zone)
 }
-func (c *countingStore) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64) ([]*repository.StatDayAgg, error) {
+func (c *countingStore) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
 	c.statAggs.Add(1)
-	return c.Store.ScanStatsDays(ctx, from, to, groupID)
+	return c.Store.ScanStatsDays(ctx, from, to, groupID, zone)
 }
 func (c *countingStore) CountOverviewResources(ctx context.Context) (*repository.OverviewResourceCounts, error) {
 	c.statAggs.Add(1)
@@ -486,11 +486,12 @@ func TestPGUsersTopCacheHitAndEmpty(t *testing.T) {
 }
 
 // TestPGOverviewTrendUTCDayBoundary 非 UTC 会话日界回归（评审 P2-1）：trend
-// 日桶必须按 UTC 日界分组（与 summary 的 Go 侧 UTC 区间一致）。bug 形态：
-// date_trunc('day', timestamptz) 按会话 TimeZone 截断——America/New_York
-// （UTC-4/5）会话下 UTC 00:30 的桶会落入前一日桶（date 标签偏移一天）。
-// 用独立 NY 会话池构造第二仓库跑真实趋势 SQL；先断言会话 TZ 生效（防
-// options 参数静默失效 → 测试真空退化）。
+// 日桶必须按统计时区日界分组（未配置 = UTC；与 summary 的 Go 侧统计时区区间
+// 一致）。bug 形态：date_trunc('day', timestamptz) 按会话 TimeZone 截断——
+// America/New_York（UTC-4/5）会话下 UTC 00:30 的桶会落入前一日桶（date 标签
+// 偏移一天）。本用例用默认 UTC 装配 + 独立 NY 会话池跑真实趋势 SQL；先断言
+// 会话 TZ 生效（防 options 参数静默失效 → 测试真空退化）。配置时区驱动分组的
+// 正向断言在 repository/pg_stat_zone_test.go。
 func TestPGOverviewTrendUTCDayBoundary(t *testing.T) {
 	now := time.Now().UTC()
 	day0 := now.Truncate(24 * time.Hour)
@@ -522,9 +523,10 @@ func TestPGOverviewTrendUTCDayBoundary(t *testing.T) {
 	nyRepos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, nyDB), false, nyPool)
 	require.NoError(t, err)
 
-	tr, err := nyRepos.Stats.ScanStatsDays(ctx, day0.Add(-24*time.Hour), day0.Add(24*time.Hour), 0)
+	tr, err := nyRepos.Stats.ScanStatsDays(ctx, day0.Add(-24*time.Hour), day0.Add(24*time.Hour), 0, time.UTC)
 	require.NoError(t, err)
 	// 修复前：NY 会话下 UTC 00:30 桶落前一日 → 1 桶且日期错位；修复后 2 桶按 UTC 日界
+	// （请求缺省 timezone = UTC——绑定参数支配，会话 TimeZone 不泄漏）。
 	require.Len(t, tr, 2, "NY 会话下仍按 UTC 日界分桶")
 	require.Equal(t, day0.Add(-24*time.Hour).Format("2006-01-02"), tr[0].Date.Format("2006-01-02"))
 	require.Equal(t, int64(3), tr[0].Requests)

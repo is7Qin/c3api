@@ -79,7 +79,8 @@ type StatsAggWorkerStats struct {
 //	读窗口 [W, T)：W = watermark，T = now − 滞后——只推进 watermark，不直接
 //	              用于 DELETE（部分小时桶边界问题，见下）
 //	重算范围 [R0, R1) = [trunc_hour(W), trunc_hour(T) + 1h)——DELETE + SELECT
-//	              共同边界（cube 与 entity 两表同范围）
+//	              共同边界（cube 与 entity 两表同范围；小时界恒 UTC——
+//	              持久化面规范 UTC，浏览器时区只活在读取面 SQL 绑定参数里）
 //	LoadAggRange(R0, R1) → AggregateRange(R0, R1, T, cube, entity) 单事务落盘
 //
 // **两范围分离（评审 P1-A，核心正确性）**：小时桶是部分完成的桶（跨多周期

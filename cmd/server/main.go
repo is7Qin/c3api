@@ -94,6 +94,17 @@ func main() {
 	}
 	// 必填校验（admin.token/auth.jwt_secret/db.dsn/redis.addr）已内聚到 config.Load，
 	// 此处只做错误处理。
+	// server.time_zone 仅服务定价/规则时间条件（pricing 保持既有 nil/进程本地
+	// 回落语义）——统计读取时区是请求级参数（浏览器 IANA 名，handler 边界解析），
+	// 绝不从此配置派生任何进程级统计时区（request-browser-timezone-stats）。
+	var svcLoc *time.Location
+	if cfg.Server.TimeZone != "" {
+		l, err := time.LoadLocation(cfg.Server.TimeZone)
+		if err != nil {
+			fatalf("server.time_zone: invalid IANA timezone %q: %v", cfg.Server.TimeZone, err)
+		}
+		svcLoc = l
+	}
 
 	// Redis 必选依赖（foundation spec 2026-08-25-redis-foundation-design §2.3）：
 	// config.Load 之后立即构造（addr 缺失已在 Load fatal；Ping 失败此处 fatal——
@@ -121,6 +132,8 @@ func main() {
 	if err != nil {
 		fatalDB("migrate", err)
 	}
+	// 统计桶界时区不在装配面：持久化恒规范 UTC，浏览器时区逐请求解析注入
+	// （handler → service → repository 方法参数），无进程级可变状态。
 	// usage_logs/err_logs/usage_stats 分区 bootstrap（Phase 5 T4.5 + 分表设计 +
 	// 用户裁决 2026-08-11 三表统一分区机制）：ent migrate 已跳过三表
 	// （migrateHookExcludesPartitioned——atlas 对分区表 diff 规划期必失败，实测
@@ -174,12 +187,19 @@ func main() {
 		SyncInterval:          cfg.Scheduler.SyncInterval,
 		StalenessProbe:        repos.Groups,
 	}, repos.Groups, ruleEngine, log)
+	// 额度回写器只在计费开启时注入（Todo 3）：BillingCapture=false 时 proxy finish
+	// 本就不产生 AddQuota 增量，此处等价停用 quota writer/flush 落库面；
+	// UsageCapture 与 quota 回写解耦（quota 走 Recorder 独立 flush 节奏）。
+	var quotaWriter usage.QuotaWriter
+	if cfg.Billing.Enabled {
+		quotaWriter = repos.Keys // 额度扣减批量回写（Recorder 节奏）
+	}
 	rec := usage.New(usage.UsageConfig{
 		BatchSize:          cfg.Usage.BatchSize,
 		FlushInterval:      cfg.Usage.FlushInterval,
 		QuotaFlushInterval: cfg.Usage.QuotaFlushInterval, // quota 增量批量回写 cadence
 		Workers:            cfg.Usage.FlushWorkers,
-		QuotaWriter:        repos.Keys, // 额度扣减批量回写（Recorder 节奏）
+		QuotaWriter:        quotaWriter,
 	}, repos.Usages, log)
 	// 离线聚合 worker（spec 2026-08-14 使用量统计离线聚合化）：独立 goroutine
 	// 每周期从 usage_logs/err_logs 重建 usage_stats（两范围 + 三查询 + 单事务
@@ -207,7 +227,7 @@ func main() {
 		StatsRetentionDays:  cfg.Usage.StatsRetentionDays,
 	}, repos, log)
 
-	auth := proxy.NewAuth(repos.Keys, repos.Users, log)
+	auth := proxy.NewAuth(repos.Keys, repos.Users, log, cfg.Billing.Enabled)
 	hc := httpx.NewClient(httpx.TransportConfig{
 		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
@@ -275,15 +295,15 @@ func main() {
 	// ruleReload 独立于 invalidate：规则 CRUD 后全量重载（重载会重置窗口计数，
 	// 不能随模板/账号/分组等任意资源变更触发）。
 	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log)
-	var svcLoc *time.Location
-	if cfg.Server.TimeZone != "" {
-		l, err := time.LoadLocation(cfg.Server.TimeZone)
-		if err != nil {
-			fatalf("server.time_zone: invalid IANA timezone %q: %v", cfg.Server.TimeZone, err)
-		}
-		svcLoc = l
+	svc.SetTimeLocation(svcLoc) // pricing 条件时区（空配置 = nil → 进程本地，语义不变）
+	// 浏览器时区原始行分组 horizon 跟随 raw 双表（usage_logs + err_logs 都
+	// 被读）的最小正保留：一个 <=0 取另一个，双禁用 → 不限；缺省 errlog
+	// 7d < log 30d → 8d 窗口。统计读时区本身是请求级参数，不进装配面。
+	rawDays := cfg.Usage.ErrLogRetentionDays
+	if d := cfg.Usage.LogRetentionDays; d > 0 && (rawDays <= 0 || d < rawDays) {
+		rawDays = d
 	}
-	svc.SetTimeLocation(svcLoc)
+	svc.SetStatsRawSpan(rawDays)
 	// 验证码 Redis 存储（spec 2026-08-25-emailcode-redis-migration §2.2）：Redis
 	// 必选 ⇒ 无 nil 分支，svc 构造后回填（Set* 惯例，同 SetLocalDispatcher）。
 	svc.SetEmailCodeStore(verification.New(rdb))
@@ -362,11 +382,9 @@ func main() {
 	warningW := wireBalanceWarning(warningSinkSetter, rdb, svc, mailW, log)
 	px := proxy.New(proxy.Config{
 		MaxBodySize:           cfg.Proxy.MaxBodySize,
-		MaxInflight:           cfg.Proxy.MaxInflight,
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
 		UpstreamStreamTimeout: cfg.Proxy.UpstreamStreamTimeout,
 		FailoverAttempts:      cfg.Proxy.FailoverAttempts,
-		GroupKeyRPM:           cfg.Limit.GroupKeyRPM,
 		UsageCapture:          cfg.Proxy.UsageCapture,
 		BillingCapture:        cfg.Billing.Enabled,
 		BehindCDN:             cfg.Proxy.BehindCDN, // client_ip 供应商头识别开关（false = 直取 RemoteAddr）

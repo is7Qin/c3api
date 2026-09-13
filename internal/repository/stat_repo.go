@@ -140,7 +140,9 @@ func (d *StatDayAgg) TTFTPercentileMS(p float64) int64 {
 // 归零——GROUP BY 位置引用与 INSERT NOT NULL 一致（无主行归 0 组保留——cube
 // 是平台总卷；与实体卷积表的 IS NOT NULL 丢弃语义有意不对称，见
 // stat_entity_agg.go）；model 列两表均 NOT NULL，COALESCE 防御性保留（spec
-// SQL 形状钉死）。小时桶 UTC 墙钟截断——会话 TimeZone 无关，与 usage_stats
+// SQL 形状钉死）。小时桶 UTC 墙钟截断——持久化面规范 UTC（浏览器时区只活在
+// 读取面：固定整点无 DST 时区在 cube 上 AT TIME ZONE 重组，其余走
+// stat_raw_read.go 原始行精确聚合），会话 TimeZone 无关，与 usage_stats
 // 分区键对齐。
 var aggDimCols = `date_trunc('hour', created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
        COALESCE(group_id, 0), COALESCE(model, '')`
@@ -511,7 +513,8 @@ type StatSummary struct {
 	TTFTHist        []int64 // 合并后 10 档（len = 10；array_agg + Go 逐元素合并）
 }
 
-// StatDayAgg 单日聚合行（trend 日桶；date = UTC 日界）。TTFT 字段同
+// StatDayAgg 单日聚合行（trend 日桶；Date = 请求浏览器时区日界起点的绝对
+// 时刻，读取面已 .In(zone)——序列化墙钟分量 = 请求时区日界）。TTFT 字段同
 // StatSummary（日桶直方图合并 + Go 侧插值）。
 type StatDayAgg struct {
 	Date        time.Time
@@ -547,14 +550,16 @@ var statSummarySQL = `SELECT COALESCE(sum(request_count), 0)::bigint,
 	COALESCE(ARRAY_AGG(ttft_hist) FILTER (WHERE ttft_hist IS NOT NULL), ARRAY[]::bigint[][])
 FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
 
-// statTrendSQL 日桶聚合（overview trend：近 N 天日桶；SQL 侧 GROUP BY
-// date_trunc('day', bucket_time)——usage_stats 分区键，range 毫秒级）。直方图
-// 每行 array_agg 带回，Go 侧逐元素合并。WHERE 后可追加组过滤（占位 $3），
-// GROUP BY/ORDER BY 尾段单独常量（statTrendTailSQL）——过滤条件必须插在
-// GROUP BY 之前。日界固定 UTC（评审 P2-1）：date_trunc('day', timestamptz) 按
-// 会话 TimeZone 截断——非 UTC 会话下日桶边界与 summary 的 Go 侧 UTC 区间错位。
-// 先 AT TIME ZONE 'UTC' 取 UTC 墙钟再截断、再转回 timestamptz（会话无关）。
-var statTrendSQL = `SELECT date_trunc('day', "bucket_time" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+// statTrendSQL 日桶聚合 cube 读路径（overview trend：近 N 天日桶；SQL 侧
+// GROUP BY date_trunc('day', bucket_time)——usage_stats 分区键，range 毫秒级）。
+// 直方图每行 array_agg 带回，Go 侧逐元素合并。请求时区名绑定 $3（UTC 时即
+// 'UTC'，与旧字面量逐位等值）；WHERE 后可追加组过滤（占位 $4），GROUP BY/
+// ORDER BY 尾段单独常量（statTrendTailSQL）——过滤条件必须插在 GROUP BY 之前。
+// 会话 TimeZone 无关（评审 P2-1）：先 AT TIME ZONE $3 取本地墙钟再截断、再转回
+// timestamptz。仅当 domain.ZoneCubeExact 判定（双界 UTC 整点对齐且该时区在窗口
+// 内恒整点无 DST）时走本路径（小时桶与本地日界严格对齐——重组精确）；否则走
+// stat_raw_read.go 原始行精确聚合。
+var statTrendSQL = `SELECT date_trunc('day', "bucket_time" AT TIME ZONE $3) AT TIME ZONE $3,
 	COALESCE(sum(request_count), 0)::bigint,
 	COALESCE(sum(error_count), 0)::bigint,
 	COALESCE(sum(total_tokens), 0)::bigint,
@@ -570,12 +575,19 @@ FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
 // statTrendTailSQL 日桶聚合尾段（GROUP BY 1 ORDER BY 1——组过滤拼接后追加）。
 var statTrendTailSQL = ` GROUP BY 1 ORDER BY 1`
 
-// SummarizeStats 区间聚合单行（SQL 侧 sum；overview summary——今日汇总同查
-// 形态：单行不拉行）。groupID > 0 = 按组过滤（0 = 全局）。pool 未注入
+// SummarizeStats 区间聚合单行（overview summary）。zone = 请求浏览器时区
+// （handler 边界已校验；nil = UTC）：窗口在恒整点无 DST 时区（含 UTC）下
+// cube 小时行与本地日界严格对齐 → cube 区间 sum（绝对区间 SQL，无分组）；
+// 否则（DST/半小时偏移）cube 小时行会被本地边界切开、重组不精确 → 原始
+// usage_logs+err_logs 绝对区间 sum（stat_raw_read.go，语义与 cube 写侧两
+// 查询完全一致）。groupID > 0 = 按组过滤（0 = 全局）。pool 未注入
 // （非 NewWithPG 构造）→ 显式错误（不静默降级）。
-func (r *StatRepo) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64) (*StatSummary, error) {
+func (r *StatRepo) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*StatSummary, error) {
 	if r.pool == nil {
 		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot aggregate overview summary")
+	}
+	if !domain.ZoneCubeExact(zone, from, to) {
+		return r.rawSummary(ctx, from, to, groupID)
 	}
 	sql := statSummarySQL
 	args := []any{from, to}
@@ -599,17 +611,24 @@ func (r *StatRepo) SummarizeStats(ctx context.Context, from, to time.Time, group
 	return s, nil
 }
 
-// ScanStatsDays 日桶聚合（SQL 侧 GROUP BY date_trunc('day', bucket_time)；
-// overview trend——服务端分组，不拉全行客户端聚合）。groupID > 0 = 按组
-// 过滤（0 = 全局）。
-func (r *StatRepo) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64) ([]*StatDayAgg, error) {
+// ScanStatsDays 日桶聚合（overview trend——服务端分组，不拉全行客户端聚合）。
+// zone = 请求浏览器时区（nil = UTC）：恒整点无 DST 时区走 cube 日重组
+// （statTrendSQL，$3 绑定时区名，小时桶与本地日界严格对齐）；DST/半小时
+// 偏移时区走原始行按本地日界精确聚合（stat_raw_read.go）。返回日桶
+// .In(zone)：绝对时刻 = 本地日界起点，墙钟分量 = 请求时区日期。groupID > 0 =
+// 按组过滤（0 = 全局）。
+func (r *StatRepo) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*StatDayAgg, error) {
 	if r.pool == nil {
 		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot aggregate overview trend")
 	}
+	zone = locOrUTC(zone)
+	if !domain.ZoneCubeExact(zone, from, to) {
+		return r.rawScanStatsDays(ctx, from, to, groupID, zone)
+	}
 	sql := statTrendSQL
-	args := []any{from, to}
+	args := []any{from, to, zoneName(zone)}
 	if groupID > 0 {
-		sql += ` AND "group_id" = $3` // 组过滤插在 GROUP BY 之前（见 statTrendTailSQL）
+		sql += ` AND "group_id" = $4` // 组过滤插在 GROUP BY 之前（见 statTrendTailSQL）
 		args = append(args, groupID)
 	}
 	sql += statTrendTailSQL
@@ -626,6 +645,7 @@ func (r *StatRepo) ScanStatsDays(ctx context.Context, from, to time.Time, groupI
 			&d.CallCount, &d.TTFTTotalMS, &d.TTFTCount, &d.TTFTMaxMS, &rawHist); err != nil {
 			return nil, err
 		}
+		d.Date = d.Date.In(zone) // 桶时刻不变，墙钟分量 = 请求时区日界
 		d.TTFTHist = make([]int64, len(ttftHistBounds))
 		for _, h := range rawHist {
 			mergeHist(d.TTFTHist, h)

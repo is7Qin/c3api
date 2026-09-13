@@ -34,7 +34,7 @@ func (s *hUsageSnap) GetUsageSnapshot(ctx context.Context, cred *domain.AccountC
 }
 
 // newUsageTestHandler /api/admin/accounts/usage 专用测试装配（h.now 注入 + 可编程
-// 快照数据源）。
+// 快照数据源）。请求时区经 `timezone` 查询参数注入（request-tz：无装配级时区）。
 func newUsageTestHandler(t *testing.T, now time.Time, snap *hUsageSnap) (*AdminAPI, *fakeStore) {
 	t.Helper()
 	store := newFakeStore()
@@ -88,9 +88,9 @@ func TestGetAccountsUsageValidation(t *testing.T) {
 	}
 }
 
-// TestGetAccountsUsageDefaultsAndOrdering 缺省时间注入（from=UTC 当日零点、
-// to=now——h.now 注入固定时钟，无真实 now 漂移）+ items 顺序 = 去重后
-// account_ids 顺序 + 聚合与全量补零。
+// TestGetAccountsUsageDefaultsAndOrdering 缺省时间注入（from=统计时区当日零点，
+// 未配置 = UTC；to=now——h.now 注入固定时钟，无真实 now 漂移）+ items 顺序 =
+// 去重后 account_ids 顺序 + 聚合与全量补零。
 func TestGetAccountsUsageDefaultsAndOrdering(t *testing.T) {
 	now := time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC)
 	h, store := newUsageTestHandler(t, now, &hUsageSnap{})

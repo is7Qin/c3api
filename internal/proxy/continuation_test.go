@@ -148,7 +148,7 @@ func contProxy(t *testing.T, format domain.RequestFormat, accs []*domain.Account
 	}
 	sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(format), m), &scheduler.RouteDecision{Primary: compiled})
 	}
-	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil)
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	clients := aiclient.NewFactory(&http.Client{Transport: http.DefaultTransport}, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, noopErrLogStore{}, nil)

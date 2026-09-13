@@ -15,6 +15,42 @@ export function formatDateTime(iso?: string): string {
   return d.toLocaleString('zh-CN', { hour12: false })
 }
 
+// 浏览器 IANA 时区名（request-browser-timezone-stats）：全部统计/概览/账号
+// 用量请求统一携带 `timezone` 参数，服务端按该时区聚合分组桶与缺省"当天"
+// 日界；返回桶为本地桶起点的绝对时刻，前端用 new Date 浏览器本地渲染恰一次
+// （与请求携带时区一致）。普通时刻（日志/冷却/创建时间）本就浏览器本地，
+// 语义不变。resolvedOptions().timeZone 在非 IANA 环境可能为 'UTC' 或
+// undefined——undefined 时省略参数，服务端回落 UTC（兼容缺省语义）。
+export function browserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined
+  } catch {
+    return undefined
+  }
+}
+
+// 冷却剩余时长（A-4 增量，2026-08-19）：untilISO → 人类可读剩余。向上取整秒、
+// 最小显示 1s（避免 0s 闪烁）；分段：≥24h → "Xd Xh"（10086h → "420d 6h"）、
+// ≥1h → "Xh Ym"、≥1m → "Xm Ys"、<1m → "Xs"；整除时零段省略（恰好 24h →
+// "1d"）。空值/非法/已过期 → null（调用方不渲染）。不做实时倒计时——列表
+// refetchInterval 轮询重算（用户裁决）。
+export function formatRemaining(untilISO?: string | null): string | null {
+  if (!untilISO) return null
+  const until = new Date(untilISO)
+  if (Number.isNaN(until.getTime())) return null
+  const ms = until.getTime() - Date.now()
+  if (ms <= 0) return null
+  const totalSec = Math.ceil(ms / 1000)
+  const d = Math.floor(totalSec / 86400)
+  const h = Math.floor((totalSec % 86400) / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`
+  return `${s}s`
+}
+
 // 超长文本截断（title/末尾省略），适合表格单元格。
 export function truncate(s: string | undefined | null, n = 16): string {
   if (!s) return '—'
@@ -30,6 +66,16 @@ export function toRFC3339(v: string): string | undefined {
 
 // datetime-local 本地时间补零（YYYY-MM-DDTHH:mm）。
 const pad2 = (n: number) => String(n).padStart(2, '0')
+
+// UTC 数值偏移后缀（RFC3339 形态 " UTC+08:00"/" UTC-04:00"，取行绝对时刻的
+// 浏览器偏移）。DST fall-back 日同一墙钟小时出现两次（EDT 01:00 与 EST 01:00
+// 是两个不同绝对桶），图表 label 必须跨桶唯一（recharts category 轴按 label
+// 去重）——统计页仅对重复 label 追加本后缀，唯一 label 保持原样。
+export function localOffsetSuffix(d: Date): string {
+  const offMin = -d.getTimezoneOffset()
+  const abs = Math.abs(offMin)
+  return ` UTC${offMin < 0 ? '-' : '+'}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`
+}
 
 // 默认近 24h 日志范围（datetime-local 本地时区字面量；调用方在组件挂载时固定一次，
 // 避免渲染期时间漂移；from/to 契约必填）。
@@ -61,6 +107,37 @@ function usdText(c?: number | null): string | null {
 // 计费成本：毫分 → USD 字符串，如 $3.25000 / $0.00001（5 位保 1 毫分可见）；空值或 0 显示 —。
 export function formatCost(c?: number | null): string {
   return usdText(c) ?? '—'
+}
+
+// Key 额度（毫分 int64 ↔ USD 十进制字符串）。API 恒为整数毫分，UI 恒为 USD；
+// 转换只走十进制字符串 + 精确整数缩放，原始输入绝不先过 Number()。
+
+// 毫分 → USD 数字串（精确整数运算，无浮点除法）：125000 → "1.25000"。
+function quotaUsdDigits(millis: number): string {
+  const m = Math.trunc(millis)
+  return `${Math.floor(m / MILLI_CENTS_PER_USD)}.${String(m % MILLI_CENTS_PER_USD).padStart(5, '0')}`
+}
+
+// 毫分 → USD 展示串：100000 → "$1.00000"、0 → "$0.00000"（额度用量恒要展示，
+// 与 formatCost 的"0 显示 —"语义不同）。
+export function formatQuotaMillis(millis: number): string {
+  return `$${quotaUsdDigits(millis)}`
+}
+
+// 毫分 → USD 输入框预填（去尾零）：125000 → "1.25"、100000 → "1"、0 → "0"。
+export function quotaMillisToInput(millis: number): string {
+  return quotaUsdDigits(millis).replace(/\.?0+$/, '') || '0'
+}
+
+// USD 输入 → 毫分整数（int64 契约，JS 安全整数范围内）；非法返回 null（不提交）。
+// 只接受非负十进制串、最多 5 位小数；指数记法/Infinity/NaN/负数/空串全拒。
+// ≤5 位小数时 ×100000 是精确整数缩放，round-half-up 退化为无损精确乘法——
+// 正数不可能舍入为 0；缩放后超 Number.MAX_SAFE_INTEGER 拒绝。
+export function parseQuotaUSD(raw: string): number | null {
+  const m = /^(\d+)(?:\.(\d{1,5}))?$/.exec(raw.trim())
+  if (!m) return null
+  const millis = Number(m[1] + (m[2] ?? '').padEnd(5, '0'))
+  return Number.isSafeInteger(millis) ? millis : null
 }
 
 // USD 金额直接展示（API 已换算的统计面值，如 /stats、/overview 的 Cost/cost_usd）：

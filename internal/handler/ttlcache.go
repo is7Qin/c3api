@@ -12,7 +12,7 @@ import (
 // ttlCache 极简 TTL 缓存（overview/users-top 聚合面专用；spec 2026-08-14：
 // TTL 语义 = dashboard 轮询频率下无陈旧感——overview 30s / users-top 2s）。
 // 无 singleflight（P3 声明接受：dashboard 单消费者，重复聚合由 TTL 摊薄）。
-// 键由调用方构造（含参数与 UTC 日界——summary"今日"跨午夜滚转）。
+// 键由调用方构造（含参数、请求时区与该时区日界——summary"今日"跨午夜滚转）。
 // 过期惰性清除（get 命中过期项即删——条目数 ≤ 参数组合数，无后台清扫）。
 type ttlCache struct {
 	mu    sync.Mutex

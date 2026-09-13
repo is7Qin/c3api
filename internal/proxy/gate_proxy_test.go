@@ -208,15 +208,23 @@ func TestProxyUserConcurrencyAcrossKeys(t *testing.T) {
 	waitGateUser(t, p, 1, 0)
 }
 
-// quota 门禁：后扣模型——两轮请求累计（每轮 total_tokens=2... 用 usage 断言
-// 8？见 fakeOpenAI）后超限 → 下一请求 429 "key quota exhausted"。
+// quota 门禁：后扣模型——两轮请求累计最终 Cost=130 后超限 → 下一请求 429。
 func TestProxyQuotaExhaustedAndDeduct(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
+	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil)
+	require.NoError(t, bal.Reload(context.Background()))
+	p.cfg.BillingCapture = true
+	p.bill = &BillingHooks{
+		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{
+			"gpt-4o": proxyPricingEntry(),
+		}},
+		Balances: bal,
+	}
 	meta := activeKey(1, 1, 10)
 	meta.HasQuota = true
-	meta.Quota = 10 // fakeOpenAI 非流式 total_tokens=8
+	meta.Quota = 260 // 计费价格由测试默认 proxy helper 提供：每轮 Cost=130
 	p.auth.Upsert("ck-1", meta)
 
 	for i := 0; i < 2; i++ {
@@ -224,14 +232,14 @@ func TestProxyQuotaExhaustedAndDeduct(t *testing.T) {
 		p.HandleChat(rec, chatReq("ck-1"))
 		require.Equal(t, http.StatusOK, rec.Code, "第 %d 轮: %s", i+1, rec.Body.String())
 	}
-	// 内存已扣 16 ≥ 10 → 429
+	// 内存已扣 260 ≥ 260 → 429
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, chatReq("ck-1"))
 	require.Equal(t, http.StatusTooManyRequests, rec.Code, "body=%s", rec.Body.String())
 	require.Contains(t, rec.Body.String(), "key quota exhausted")
 	// 429 不计入扣减（检查在 acquire 前，纯读）
 	snap := p.auth.gate.store.Load()
-	require.Equal(t, int64(16), snap.quotas[1].consumed.Load())
+	require.Equal(t, int64(260), snap.quotas[1].consumed.Load())
 }
 
 // 无额度 key：无 quota 条目、零扣减（恒 0）、不误拒。

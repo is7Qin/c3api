@@ -108,7 +108,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, g.ID),
-	}}, noopUserLoader{}, nil)
+	}}, noopUserLoader{}, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// 计费钩子：价格快照 + 余额快照；单写点：billable 行经 rec → repos.Usages
@@ -130,7 +130,8 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
-		GroupKeyRPM:           0, UsageCapture: true, BillingCapture: true,
+		UsageCapture:          true,
+		BillingCapture:        true,
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
 		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,

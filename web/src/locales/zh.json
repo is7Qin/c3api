@@ -115,7 +115,7 @@
     "waterWarning": "— 接近上限，建议扩容",
     "resourcesTitle": "资源总数",
     "trendTitle": "流量趋势",
-    "trendDesc": "近 7 天每日请求量（UTC 日界）",
+    "trendDesc": "近 7 天每日请求量（浏览器时区）",
     "trendEmpty": "该时段暂无用量",
     "usersTopTitle": "实时并发排行",
     "usersTopDesc": "每用户实时在途请求（每 10 秒刷新；本实例视角）",
@@ -1605,8 +1605,8 @@
       "groupEmpty": "暂无可选分组，请联系管理员",
       "maxLabel": "最大并发",
       "maxHint": "0 = 不限",
-      "quotaLabel": "额度（累计 token 上限）",
-      "quotaHint": "0 = 不限",
+      "quotaLabel": "额度（累计花费上限，USD）",
+      "quotaHint": "最多 5 位小数；0 = 不限",
       "statusLabel": "状态",
       "deleteTitle": "删除 Key",
       "deleteDesc": "确认删除 Key「{{name}}」？删除后立即失效。",
@@ -1619,7 +1619,7 @@
       "rotatedDesc": "新 Key 明文已生成，可在列表随时查看与复制",
       "secretTitle": "Key 明文",
       "secretHint": "可随时在 Key 列表查看与复制",
-      "formInvalid": "请检查表单：名称与分组必填，数字须为非负整数"
+      "formInvalid": "请检查表单：名称与分组必填，并发须为非负整数，额度须为最多 5 位小数的非负金额（USD）"
     },
     "logs": {
       "title": "日志",
@@ -1797,4 +1797,3 @@
     "backHome": "返回首页"
   }
 }
-

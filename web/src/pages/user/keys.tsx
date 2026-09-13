@@ -20,7 +20,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { formatDateTime } from '@/components/fmt'
+import { formatDateTime, formatQuotaMillis, parseQuotaUSD, quotaMillisToInput } from '@/components/fmt'
 import type { components } from '@/lib/api/schema'
 
 type Key = components['schemas']['Key']
@@ -41,7 +41,7 @@ interface CreateForm {
 const emptyCreateForm = (): CreateForm => ({ name: '', group_id: '', max_concurrency: '', quota: '' })
 
 // 编辑表单（KeyUpdate 全可选）：name/status 必有值总是发送（读改写幂等）；
-// 数值字段 '' = 不发送（后端视为未提供，保持不变）。
+// 数值字段 '' = 不发送（后端视为未提供，保持不变）。quota 以 USD 字符串编辑。
 interface EditForm {
   name: string
   status: KeyStatus
@@ -54,13 +54,18 @@ function toEditForm(k: Key): EditForm {
     name: k.Name ?? '',
     status: k.Status ?? 'active',
     max_concurrency: k.MaxConcurrency == null ? '' : String(k.MaxConcurrency),
-    quota: k.Quota == null ? '' : String(k.Quota),
+    quota: k.Quota == null ? '' : quotaMillisToInput(k.Quota),
   }
 }
 
-// 数值字段校验：'' 或非负整数（0 = 不限）。
+// 并发数校验：'' 或非负整数（0 = 不限）。
 function validNumber(s: string): boolean {
   return s === '' || (Number.isInteger(Number(s)) && Number(s) >= 0)
+}
+
+// 额度校验：'' 不发送；否则须为可精确换算的 USD 十进制串（≤5 位小数）。
+function validQuota(s: string): boolean {
+  return s === '' || parseQuotaUSD(s) !== null
 }
 
 // 列表行明文展示：短展示头 8 尾 4 省略中间（title 悬停全文）+ 行内复制按钮
@@ -132,7 +137,8 @@ export default function UserKeys() {
     mutationFn: (f: CreateForm) => {
       const body: KeyCreate = { name: f.name.trim(), group_id: Number(f.group_id) }
       if (f.max_concurrency !== '') body.max_concurrency = Number(f.max_concurrency)
-      if (f.quota !== '') body.quota = Number(f.quota)
+      const quotaMillis = parseQuotaUSD(f.quota)
+      if (quotaMillis != null) body.quota = quotaMillis
       return userApi.createUserKey(body)
     },
     onSuccess: res => {
@@ -153,7 +159,7 @@ export default function UserKeys() {
   }
   const submitCreate = () => {
     const f = createForm
-    if (!f.name.trim() || !f.group_id || !validNumber(f.max_concurrency) || !validNumber(f.quota)) {
+    if (!f.name.trim() || !f.group_id || !validNumber(f.max_concurrency) || !validQuota(f.quota)) {
       setCreateErr(t('user.keys.formInvalid'))
       return
     }
@@ -181,13 +187,14 @@ export default function UserKeys() {
     setEditOpen(true)
   }
   const submitEdit = () => {
-    if (!editForm.name.trim() || !validNumber(editForm.max_concurrency) || !validNumber(editForm.quota)) {
+    if (!editForm.name.trim() || !validNumber(editForm.max_concurrency) || !validQuota(editForm.quota)) {
       setEditErr(t('user.keys.formInvalid'))
       return
     }
     const body: KeyUpdate = { name: editForm.name.trim(), status: editForm.status }
     if (editForm.max_concurrency !== '') body.max_concurrency = Number(editForm.max_concurrency)
-    if (editForm.quota !== '') body.quota = Number(editForm.quota)
+    const quotaMillis = parseQuotaUSD(editForm.quota)
+    if (quotaMillis != null) body.quota = quotaMillis
     update.mutate({ id: editing!.ID!, body })
   }
 
@@ -229,6 +236,19 @@ export default function UserKeys() {
 
   const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
 
+  // 额度展示（表格单元格与移动卡片共用）：毫分 → USD，0 = 不限。
+  const quotaText = (k: Key) =>
+    `${formatQuotaMillis(k.QuotaUsed ?? 0)} / ${k.Quota ? formatQuotaMillis(k.Quota) : t('user.keys.unlimited')}`
+
+  // 行操作组（表格单元格与移动卡片共用）。
+  const renderActions = (k: Key) => (
+    <div className="flex justify-end gap-1">
+      <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(k)}><Pencil /></Button>
+      <Button variant="ghost" size="icon-sm" title={t('user.keys.rotate')} onClick={() => openRotate(k)} disabled={rotate.isPending}><RefreshCcw /></Button>
+      <Button variant="ghost" size="icon-sm" className="text-destructive" title={t('common.delete')} onClick={() => openDelete(k)} disabled={del.isPending}><Trash2 /></Button>
+    </div>
+  )
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -256,7 +276,7 @@ export default function UserKeys() {
         </motion.div>
       ) : (
         <>
-          <ScrollArea data-od-id="table-scroll-user-keys" className="rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+          <ScrollArea data-od-id="table-scroll-user-keys" className="max-sm:hidden rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
             <Table className="min-w-[1050px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
               <TableHeader>
                 <TableRow>
@@ -282,22 +302,30 @@ export default function UserKeys() {
                     <TableCell className="text-right tabular-nums">
                       {k.MaxConcurrency == null ? '—' : k.MaxConcurrency === 0 ? t('user.overview.unlimited') : k.MaxConcurrency}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {k.Quota ? `${k.QuotaUsed ?? 0} / ${k.Quota}` : t('user.keys.unlimited')}
-                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{quotaText(k)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(k.CreatedAt)}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(k)}><Pencil /></Button>
-                        <Button variant="ghost" size="icon-sm" title={t('user.keys.rotate')} onClick={() => openRotate(k)} disabled={rotate.isPending}><RefreshCcw /></Button>
-                        <Button variant="ghost" size="icon-sm" className="text-destructive" title={t('common.delete')} onClick={() => openDelete(k)} disabled={del.isPending}><Trash2 /></Button>
-                      </div>
-                    </TableCell>
+                    <TableCell className="text-right">{renderActions(k)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </ScrollArea>
+          {/* 移动端（<sm）紧凑卡片行：名称/状态/Key/额度/操作全可见，无横向滚动。 */}
+          <div className="space-y-2 sm:hidden">
+            {rows.map(k => (
+              <Card key={k.ID} size="sm" className="px-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate font-medium" title={k.Name}>{k.Name ?? '—'}</span>
+                  <StatusBadge status={k.Status} />
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <KeyCell raw={k.key} />
+                  <span className="shrink-0 tabular-nums">{quotaText(k)}</span>
+                </div>
+                {renderActions(k)}
+              </Card>
+            ))}
+          </div>
           <Pagination total={data?.total ?? 0} limit={limit} offset={offset} onOffsetChange={setOffset} onLimitChange={changeLimit} />
         </>
       )}
@@ -343,7 +371,7 @@ export default function UserKeys() {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="uk-quota">{t('user.keys.quotaLabel')}</Label>
-                    <Input id="uk-quota" type="number" min={0} value={createForm.quota} onChange={e => updateCreate({ quota: e.target.value })} />
+                    <Input id="uk-quota" type="number" min={0} step="0.00001" value={createForm.quota} onChange={e => updateCreate({ quota: e.target.value })} />
                     <p className="text-xs text-muted-foreground">{t('user.keys.quotaHint')}</p>
                   </div>
                 </div>
@@ -390,7 +418,7 @@ export default function UserKeys() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="uk-equota">{t('user.keys.quotaLabel')}</Label>
-                <Input id="uk-equota" type="number" min={0} value={editForm.quota} onChange={e => setEditForm(f => ({ ...f, quota: e.target.value }))} />
+                <Input id="uk-equota" type="number" min={0} step="0.00001" value={editForm.quota} onChange={e => setEditForm(f => ({ ...f, quota: e.target.value }))} />
                 <p className="text-xs text-muted-foreground">{t('user.keys.quotaHint')}</p>
               </div>
             </div>

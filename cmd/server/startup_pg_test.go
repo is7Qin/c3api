@@ -124,7 +124,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	schedCtx, cancelSched := context.WithCancel(ctx)
 	t.Cleanup(cancelSched)
 	require.NoError(t, sched.Start(schedCtx))
-	auth := proxy.NewAuth(repos.Keys, repos.Users, nil)
+	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
 	balances := billing.NewBalances(repos, nil)
 	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil)
 
@@ -253,7 +253,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	}, repos.Groups, ruleEngine, nil)
 	var seenCron atomic.Pointer[string]
 	obs := &observingKeyRepo{KeyRepo: repos.Keys, seen: &seenCron}
-	auth := proxy.NewAuth(obs, repos.Users, nil)
+	auth := proxy.NewAuth(obs, repos.Users, nil, true)
 	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil)
 	obs.svc = svc // 回填（首次 LoadKeys 在注册表 ReloadAll 时）
 	auth.SetInstancesProvider(discoStub{})

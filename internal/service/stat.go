@@ -46,6 +46,21 @@ const (
 	// ttftQueryBudget TTFT 冷查询预算上界（P3 实测最坏 ~7s；30s 为宽裕封顶
 	// ——配合 WithoutCancel 脱钩 leader 取消，见 QueryStatsTTFT 注释）。
 	ttftQueryBudget = 30 * time.Second
+
+	// MaxStatsRawSpan 浏览器时区原始行分组路径窗口上限的缺省值（step 7 裁决：
+	// 支持 horizon 对齐既有关于保留期，宁可 400 不静默残缺）。非精确时区或
+	// 窗口界劈开卷积行的分组读走 usage_logs + err_logs 原始行（repository
+	// stat_raw_read.go）——受 usage.log_retention_days（默认 30d）与
+	// usage.errlog_retention_days（默认 7d，日级分区 + 1 天 DST/日界余量）
+	// 双重约束；取两者都完整覆盖的最保守窗口 8 天（7d errlog + 1d DST 日历
+	// 余量——overview 7 日窗在 fall-back 日本地跨度 24h+1h×7 ≤ 8d）。实际
+	// horizon 由 Service.statsRawSpan 承载（New 缺省本值，main 经
+	// SetStatsRawSpan(min(log, errlog) 正保留) 换算部署配置——配置更短
+	// 则更严，配置更长不放水超出本文档化的保守窗口之外仍按 days+1 计）。恒
+	// 整点无 DST 时区且双界对齐（含 UTC 缺省）走 cube 重组，窗口维持
+	// MaxStatsTrendSpan（90d，cube 保留 180d）。部署若把 errlog/usage 保留期
+	// 调低，老桶自然缺行——OpenAPI 描述与 repository 注释均文档化该耦合。
+	MaxStatsRawSpan = 8 * 24 * time.Hour
 )
 
 // statEntityTypes 实体类型白名单（与 repository.statEntityCols 键集一致——
@@ -56,15 +71,18 @@ var statEntityTypes = map[string]bool{"account": true, "user": true, "key": true
 var statTopByKeys = map[string]bool{"cost": true, "requests": true, "tokens": true}
 
 // TrendQuery /stats/trend 入参（GroupID > 0 / Model 非空 = 过滤，零值不过滤）。
+// Zone = handler 边界解析过的请求浏览器时区（nil = UTC；绝不接受未校验字符串）。
 type TrendQuery struct {
 	From        time.Time
 	To          time.Time
 	Granularity string // hour|day；空 = day
 	GroupID     int64
 	Model       string
+	Zone        *time.Location
 }
 
 // TopQuery /stats/top 入参（EntityType ∈ account|user|key；By ∈ cost|requests|tokens）。
+// 排行按实体维度分组、无时间桶——恒走 cube 绝对区间查询，Zone 不参与数值。
 type TopQuery struct {
 	From       time.Time
 	To         time.Time
@@ -73,7 +91,8 @@ type TopQuery struct {
 	Limit      int // ≤0 → 20；>200 裁剪到 200
 }
 
-// EntityTrendQuery /stats/entity-trend 入参（强制实体过滤 + 可选 Model）。
+// EntityTrendQuery /stats/entity-trend 入参（强制实体过滤 + 可选 Model）。Zone
+// 语义同 TrendQuery。
 type EntityTrendQuery struct {
 	EntityType  string
 	EntityID    int64
@@ -81,6 +100,7 @@ type EntityTrendQuery struct {
 	To          time.Time
 	Granularity string // hour|day；空 = day
 	Model       string
+	Zone        *time.Location
 }
 
 // TTFTQuery /stats/ttft 入参。EntityType 空 = 平台级 sketch 分支（cube hist
@@ -93,16 +113,20 @@ type TTFTQuery struct {
 	Model      string
 }
 
-// QueryStatsTrend cube 时间趋势（校验顺序：必填 → to>from → 跨度 → 粒度白名单）。
+// QueryStatsTrend 时间趋势（校验顺序：必填 → to>from → 跨度 → 粒度白名单 →
+// 非 cube 时区原始行 horizon）。
 func (s *Service) QueryStatsTrend(ctx context.Context, q TrendQuery) ([]*domain.StatBucket, error) {
 	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
+		return nil, err
+	}
+	if err := s.validateZoneSpan(q.Zone, q.From, q.To); err != nil {
 		return nil, err
 	}
 	unit, err := normalizeGranularity(q.Granularity)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.StatsTrend(ctx, q.From, q.To, unit, q.GroupID, q.Model)
+	return s.store.StatsTrend(ctx, q.From, q.To, unit, q.GroupID, q.Model, q.Zone)
 }
 
 // QueryStatsTop 实体排行（limit 归一化后透传；排序键/实体类型白名单前置拦截）。
@@ -129,6 +153,9 @@ func (s *Service) QueryEntityTrend(ctx context.Context, q EntityTrendQuery) ([]*
 	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
 		return nil, err
 	}
+	if err := s.validateZoneSpan(q.Zone, q.From, q.To); err != nil {
+		return nil, err
+	}
 	unit, err := normalizeGranularity(q.Granularity)
 	if err != nil {
 		return nil, err
@@ -136,7 +163,7 @@ func (s *Service) QueryEntityTrend(ctx context.Context, q EntityTrendQuery) ([]*
 	if !statEntityTypes[q.EntityType] {
 		return nil, ErrInvalidInput
 	}
-	return s.store.StatsEntityTrend(ctx, q.From, q.To, unit, q.EntityType, q.EntityID, q.Model)
+	return s.store.StatsEntityTrend(ctx, q.From, q.To, unit, q.EntityType, q.EntityID, q.Model, q.Zone)
 }
 
 // QueryStatsTTFT TTFT 分位数卡片，双分支独立上限（Momus M5）：
@@ -218,6 +245,55 @@ func normalizeGranularity(g string) (string, error) {
 	default:
 		return "", ErrInvalidInput
 	}
+}
+
+// ResolveTimeZone 统计请求 `timezone` 查询参数边界解析（request-browser-timezone-stats）：
+// 缺省/空 → UTC（兼容旧客户端）；IANA 名经 time.LoadLocation 校验；未知名 /
+// Go 特有的 "Local"（无 PG 对应物，绝不能进 AT TIME ZONE 绑定）→
+// ErrInvalidInput（httpface 400）。返回已解析 *time.Location（携带规范名，
+// 下游只见类型化值，永不见原始串）；进程零全局态，Location 不可变。
+func ResolveTimeZone(raw string) (*time.Location, error) {
+	if raw == "" {
+		return time.UTC, nil
+	}
+	loc, err := time.LoadLocation(raw)
+	if err != nil || loc == time.Local {
+		return nil, fmt.Errorf("service: invalid timezone %q: %w", raw, ErrInvalidInput)
+	}
+	return loc, nil
+}
+
+// validateZoneSpan 原始行分组路径双闸门（step 7 裁决 + 保留兜底）：窗口无法
+// 由 cube 精确重组（界非 UTC 整点劈开卷积小时行，或 DST 偏移漂移 / :30/:45
+// 偏移，domain.ZoneCubeExact == false——与 repository 读面路由同一谓词，校验
+// 与执行永不判岐）时，读走 usage_logs/err_logs 原始行，受保留期双重约束：
+//   - 窗口跨度 > s.statsRawSpan（缺省 MaxStatsRawSpan，main 按双表最小正保留
+//     配置换算）→ 显式 400；statsRawSpan == 0（保留禁用）= 不限；
+//   - from 早于保证存留的 UTC 分区 cutoff（now−statsRawRetentionDays 的日界
+//     截断，与 retention worker DROP 同一保守语义）→ 显式 400——短历史窗口
+//     即使不触跨度上限，起点分区也可能已被 DROP，静默缺行比超窗更危险；
+//     保留禁用（days <= 0）跳过该兜底；to 超出 now 的未来窗不因此拒绝。
+//
+// cube 可精确窗口恒零成本放行。绝不静默返回残缺桶。
+func (s *Service) validateZoneSpan(zone *time.Location, from, to time.Time) error {
+	if domain.ZoneCubeExact(zone, from, to) {
+		return nil
+	}
+	if s.statsRawSpan > 0 && to.Sub(from) > s.statsRawSpan {
+		return fmt.Errorf("service: timezone %v grouping over raw logs supports windows up to %s: %w", zone, s.statsRawSpan, ErrInvalidInput)
+	}
+	if s.statsRawRetentionDays > 0 {
+		now := time.Now
+		if s.statsNow != nil {
+			now = s.statsNow
+		}
+		cutoff := now().AddDate(0, 0, -s.statsRawRetentionDays).UTC().Truncate(24 * time.Hour)
+		if from.Before(cutoff) {
+			return fmt.Errorf("service: timezone %v grouping over raw logs starts before retained partitions (cutoff %s, retention %dd): %w",
+				zone, cutoff.Format(time.RFC3339), s.statsRawRetentionDays, ErrInvalidInput)
+		}
+	}
+	return nil
 }
 
 // —— stats.ttft TTL 缓存（spec-ttft-cache-2026-08-23）——
