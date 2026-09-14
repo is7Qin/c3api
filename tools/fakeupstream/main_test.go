@@ -109,6 +109,33 @@ func TestImagesHandler_injectionStillAppliesToStream(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "image_generation.completed")
 }
 
+// TestChatStreamFirstChunkPaced 是缺陷 C 的回归：首帧必须按 latency 限速
+// （首帧延迟 = 上游 TTFB = 生产 TTFT）。写后限速使首帧恒 ~0ms，生产经毫秒
+// 截断（0→钳 1）+ log(1)=0 后 durable TTFT 和恒零、frontier 全员谎报 1ms。
+// 首字节计时器直接度量首次 Write 时刻（总量计时含尾睡，会把未限速的首帧
+// 误判为通过）；50ms 量级远离调度抖动，下界断言无 flake 面。
+func TestChatStreamFirstChunkPaced(t *testing.T) {
+	rec := &firstByteRecorder{ResponseRecorder: httptest.NewRecorder(), start: time.Now(), first: -1}
+	writeChatStream(rec, rec, 50*time.Millisecond, 3)
+	require.GreaterOrEqual(t, int64(rec.first), int64(50*time.Millisecond), "首字节必须被限速（TTFB 现实化）：%v", rec.first)
+	frames := sseDataLines(rec.Body.String())
+	require.Len(t, frames, 4, "3 chunk + [DONE]")
+	require.Equal(t, "[DONE]", frames[3])
+}
+
+type firstByteRecorder struct {
+	*httptest.ResponseRecorder
+	start time.Time
+	first time.Duration
+}
+
+func (f *firstByteRecorder) Write(p []byte) (int, error) {
+	if f.first < 0 {
+		f.first = time.Since(f.start)
+	}
+	return f.ResponseRecorder.Write(p)
+}
+
 // TestImagesHandler_streamLatencyPaced latency>0 时逐帧限速（压测长流形态）；
 // 0 = 不限速（单测不睡）。
 func TestImagesHandler_streamLatencyPaced(t *testing.T) {

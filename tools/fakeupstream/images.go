@@ -74,6 +74,7 @@ func imagesHandler(w http.ResponseWriter, r *http.Request, o imagesOpts) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	fl := w.(http.Flusher)
 	for i := 0; i < n; i++ {
+		time.Sleep(o.latency)
 		frame := imageCompletedFrame{
 			Type: "image_generation.completed",
 			Data: []map[string]any{{"b64_json": fmt.Sprintf("QUJD%03d", i)}},
@@ -88,7 +89,6 @@ func imagesHandler(w http.ResponseWriter, r *http.Request, o imagesOpts) {
 		data, _ := json.Marshal(frame)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		fl.Flush()
-		time.Sleep(o.latency)
 	}
 	fmt.Fprint(w, "data: [DONE]\n\n")
 	fl.Flush()
