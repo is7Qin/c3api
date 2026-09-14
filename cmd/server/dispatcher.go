@@ -24,14 +24,19 @@ func (a schedGroupPub) PublishGroups(ctx context.Context, gids []int64) {
 	_ = a.p.Publish(ctx, notify.Change{Groups: gids}) // 失败 Publisher 内部已 Warn，60s 兜底收敛
 }
 
-type settingsReloader interface {
+// svcReloader dispatcher 的配置类直连面（不经去抖器）：settings 同步重载
+// （#36 时序见 Apply）；pricing 同步重载（settings 同款低频路径——发布端已
+// 本地重载，此处仅对端收敛，缺价 402 窗口不等重启）。
+type svcReloader interface {
 	ReloadSettings(ctx context.Context) error
+	ReloadPricingCtx(ctx context.Context) error
 }
 
 // dispatcher 实现 notify.Dispatcher（#14 T3a 装配侧）：把 NOTIFY Change 转发
 // 给 invalidate 去抖器的 Mark 方法（本地/远端变更共享同一去抖窗口，天然合并
-// 去重——设计文档 §2.3）；settings 变更例外——同步 ReloadSettings 后再经快照
-// 注册表按 scope 精确重载（#36：N 变更/auth 预算即时生效，时序见 Apply）；
+// 去重——设计文档 §2.3）；settings/pricing 变更例外——settings 同步
+// ReloadSettings 后再经快照注册表按 scope 精确重载（#36：N 变更/auth 预算
+// 即时生效，时序见 Apply）；pricing 同步 ReloadPricingCtx（settings 同款直连）；
 // FullRefresh 经注册表全量刷新（监听器连接成功兜底，R8；首连跳过见
 // FullRefresh 注释——E2 启动双刷）。
 //
@@ -39,7 +44,7 @@ type settingsReloader interface {
 // 是 T1 设计约束（避免依赖环），适配只能在依赖两者的最外层做。
 type dispatcher struct {
 	inv       *invalidate.Debouncer
-	svc       settingsReloader   // *service.Service（Apply settings 分支同步刷新 + FullRefresh）
+	svc       svcReloader        // *service.Service（Apply settings/pricing 分支同步刷新 + FullRefresh）
 	snapshots *snapshot.Registry // 五路快照注册表（NOTIFY scope 分发 + 断线重连全量刷新）
 	log       *logx.Logger       // nil = 静默（测试）
 	// bootLoaded 启动首刷全成功标志（E2 启动双刷）：main 在注册表 ReloadAll
@@ -67,6 +72,7 @@ type dispatcher struct {
 //     同步重载取代）+ 注册表按 ScopeSettings 精确重载声明方（当前 = auth：
 //     gate 预算按新 N 重算，#36）
 //   - Rules → Rules()：规则表全量重载（重载清窗口计数，全实例同步语义）
+//   - Pricing → 同步 ReloadPricingCtx（对端定价快照全量；settings 同款直连）
 //
 // 合并语义：Templates + Groups 同窗（载荷守卫降级 full）→ 去抖器 merge 后
 // 组级被全量包含跳过，语义仍正确。除 settings 分支（同步 ReloadSettings 一
@@ -110,6 +116,13 @@ func (d *dispatcher) Apply(ctx context.Context, ch notify.Change) {
 	}
 	if ch.Rules {
 		d.inv.Rules()
+	}
+	if ch.Pricing {
+		// 定价快照：与 settings 同款同步直连（低频路径，不去抖；发布端已本地
+		// 重载，此处对端收敛）。失败 Warn + pricing-sync 周期兜底。
+		if err := d.svc.ReloadPricingCtx(ctx); err != nil && d.log != nil {
+			d.log.Warn("pricing reload failed", logx.Error(err))
+		}
 	}
 }
 

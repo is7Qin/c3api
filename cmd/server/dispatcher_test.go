@@ -78,8 +78,9 @@ func (r *recBal2) relCalls() int  { r.mu.Lock(); defer r.mu.Unlock(); return r.r
 func (r *recBal2) multCalls() int { r.mu.Lock(); defer r.mu.Unlock(); return r.mult }
 
 type recSettings2 struct {
-	mu sync.Mutex
-	n  int
+	mu       sync.Mutex
+	n        int
+	pricingN int
 }
 
 func (r *recSettings2) ReloadSettings(ctx context.Context) error {
@@ -89,6 +90,16 @@ func (r *recSettings2) ReloadSettings(ctx context.Context) error {
 	return nil
 }
 func (r *recSettings2) calls() int { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
+
+// ReloadPricingCtx D1：定价变更走 dispatcher 直连（settings 同款同步路径，
+// 不入去抖器），复用同一 fake 目标记录调用。
+func (r *recSettings2) ReloadPricingCtx(ctx context.Context) error {
+	r.mu.Lock()
+	r.pricingN++
+	r.mu.Unlock()
+	return nil
+}
+func (r *recSettings2) pricingCalls() int { r.mu.Lock(); defer r.mu.Unlock(); return r.pricingN }
 
 type recRules2 struct {
 	mu sync.Mutex
@@ -267,6 +278,14 @@ func TestDispatcherApplyMapping(t *testing.T) {
 		require.Equal(t, 1, rg.rules.calls(), "rules → 规则表全量重载")
 	})
 
+	t.Run("Pricing", func(t *testing.T) {
+		rg := newTestDispatcher(t)
+		rg.d.Apply(context.Background(), notify.Change{Pricing: true})
+		// 与 settings 同款：同步直连 svc.ReloadPricingCtx，不入去抖器。
+		require.Equal(t, 1, rg.settings.pricingCalls(), "pricing → 定价快照全量重载（同步直连）")
+		require.Equal(t, 0, rg.settings.calls(), "pricing 不触发 settings 重载")
+	})
+
 	t.Run("DegradedFullWithGroups", func(t *testing.T) {
 		rg := newTestDispatcher(t)
 		// 载荷守卫降级形态（Groups 超限 → Templates=true，R9）：组级被全量包含
@@ -291,6 +310,7 @@ func TestDispatcherApplyMapping(t *testing.T) {
 		require.Equal(t, 0, rg.bal.multCalls())
 		require.Equal(t, 0, rg.settings.calls())
 		require.Equal(t, 0, rg.rules.calls())
+		require.Equal(t, 0, rg.settings.pricingCalls())
 		require.Equal(t, 0, rg.snapAuth.calls(), "空变更不触发注册表 scope 重载")
 	})
 }
@@ -386,6 +406,9 @@ func (s *settingsNStub) ReloadSettings(ctx context.Context) error {
 	return nil
 }
 func (s *settingsNStub) N() int { return int(s.snapN.Load()) }
+
+// ReloadPricingCtx pricing 直连面（settings 同款）；本桩不关心定价，no-op。
+func (s *settingsNStub) ReloadPricingCtx(ctx context.Context) error { return nil }
 
 // recSnapN auth 快照桩：Reload 时刻记录 settings 桩快照 N——模拟 gate.reload 在
 // auth.Reload 内（LoadKeys/LoadUsers 之后）现读 provider 的时序，期间快照不被
