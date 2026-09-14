@@ -241,44 +241,46 @@ func TestFailureRetry_NoRetryAfterShutdown(t *testing.T) {
 	ResetFailureRetryForTest()
 }
 
+// TestFailure_StaleFencedByCanonicalFingerprint pins the identity fence: a retry
+// task whose captured fingerprint no longer matches the stored account must be
+// dropped (no CAS) and must clear the latch. Driven directly through
+// handleRetryOnce — the retry loop's first attempt has no backoff, so routing
+// this through HandleFailure+queue races both the latch assertion and the store
+// mutation (observed as a load-flaky rev==6 under `-race` stress).
 func TestFailure_StaleFencedByCanonicalFingerprint(t *testing.T) {
-	ResetFailureRetryForTest()
-	retryBackoff = 10 * time.Millisecond
-	// account with initial fingerprint A
 	acct := newCodexAccountForRetry(7, 5)
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: acct},
 		failSeq:  []error{errors.New("transient")},
 	}
-	latch := newRetryFakeLatch()
-	failer := &retryFakeFailer{}
-	deps := FailureDeps{Store: store, Failer: failer, Latch: latch}
 	fpBefore, err := canonicalFingerprint(acct)
 	require.NoError(t, err)
-	// trigger failure with initial fingerprint
-	err = HandleFailure(context.Background(), deps, 7, errors.New("fatal"))
-	require.Error(t, err)
-	require.Contains(t, latch.m, int64(7))
-	require.Equal(t, fpBefore, latch.m[7])
-	// mutate DB fingerprint before retry: change canonical base URL (affects CodexOAuth fingerprint)
+	latch := newRetryFakeLatch()
+	require.True(t, latch.TryAcquire(7, fpBefore, 5), "HandleFailure's acquire step")
+	pubCh := make(chan struct{}, 1)
+	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch, Publisher: &retryFakePublisher{ch: pubCh}}
+
+	// Mutate the stored identity before the retry attempt: change the canonical
+	// base URL (affects the CodexOAuth fingerprint).
 	store.mu.Lock()
 	newURL := "https://changed.example.com"
 	store.accounts[7].BaseURL = &newURL
 	store.mu.Unlock()
-	// wait for retry to attempt and fence
-	select {
-	case <-time.After(300 * time.Millisecond):
-	}
-	// retry should have fenced and cleared latch, not CAS
+
+	requeued := handleRetryOnce(context.Background(), failureRetryTask{
+		accountID: 7, fingerprint: fpBefore, revision: 5, reason: "fatal", deps: deps,
+	})
+	require.False(t, requeued, "fingerprint mismatch must fully fence, never requeue")
 	store.mu.Lock()
 	rev := store.accounts[7].LifecycleRevision
 	store.mu.Unlock()
 	require.NotEqual(t, int64(6), rev, "should not have CASed after fingerprint mismatch")
-	latch.mu.Lock()
-	_, stillLatched := latch.m[7]
-	latch.mu.Unlock()
-	require.False(t, stillLatched, "stale fingerprint must clear latch and fence")
-	ResetFailureRetryForTest()
+	select {
+	case <-pubCh:
+		require.FailNow(t, "fenced retry must not publish")
+	default:
+	}
+	require.False(t, latch.IsLatched(7, fpBefore), "stale fingerprint must clear latch and fence")
 }
 
 func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
