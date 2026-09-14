@@ -162,6 +162,51 @@ func TestAssetsNoDirectoryListing(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "console.log(1)")
 }
 
+// 回归 D3（SPA 深链 404）：AI 面曾用 Mount("/", …) 注册 /* 通配，吞掉所有
+// 未匹配路径——/app、/user 深链绕行 AI 组后落到子路由默认 404（根 SPA
+// fallback 不可达），冷启动时更会被 planReadyGate 误判 503（控制台不可达）。
+// AI 面实际只占 /v1/*（proxy.AIRouter），必须以静态前缀挂载。本用例显式同时
+// 装配 AIHandler + WebFS——此前无此组合用例，是 D3 漏网的原因。
+func TestSPADeepLinksWithAIHandlerMounted(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte(`<html>app</html>`)},
+	}
+	// 门替身：AI 面一律 503（模拟计划未就绪）；SPA 页面绝不允许吃这个 503。
+	ai := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	s := NewServer(Options{AdminToken: "tok", MaxInflight: 1024, AIHandler: ai, WebFS: fsys})
+
+	for _, p := range []string{"/app", "/app/accounts", "/app/ops", "/user", "/user/login", "/user/keys"} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		req.Header.Set("Accept", "text/html")
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "深链 %s 必须回 index.html（不得被 AI 通配吞掉/误吃门 503）", p)
+		require.Equal(t, "text/html; charset=utf-8", rec.Header().Get("Content-Type"), "path %s", p)
+		require.Contains(t, rec.Body.String(), "<html>app</html>", "path %s", p)
+	}
+
+	// AI 面仍进入 AIHandler（替身表现为 503）——挂载改动不得放行 AI 路径。
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, "/v1/* 必须仍进入 AIHandler")
+
+	// 非浏览器导航（无 Accept: text/html）的未知路径 → 404，不回 index.html。
+	req = httptest.NewRequest(http.MethodGet, "/app/accounts", nil)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	// 未知 API 路径 → 404（SPA fallback 不得吞 API 面）。
+	req = httptest.NewRequest(http.MethodGet, "/api/nope", nil)
+	req.Header.Set("Accept", "text/html")
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
 // 规格 §10.6：全局在途上限，超限立即 429 + Retry-After: 1。
 func TestInflightLimiterRejects(t *testing.T) {
 	release := make(chan struct{})
