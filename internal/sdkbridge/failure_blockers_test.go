@@ -77,12 +77,12 @@ func strPtrBlockers(s string) *string { v := s; return &v }
 // per-ID faking store for HOL test
 
 type holStore struct {
-	mu         sync.Mutex
-	accounts   map[int64]*domain.Account
-	seq        map[int64][]error
-	calls      map[int64]int
-	pubs       map[int64]chan struct{}
-	groups     map[int64][]int64
+	mu       sync.Mutex
+	accounts map[int64]*domain.Account
+	seq      map[int64][]error
+	calls    map[int64]int
+	pubs     map[int64]chan struct{}
+	groups   map[int64][]int64
 }
 
 func (f *holStore) GetAccount(_ context.Context, id int64) (*domain.Account, error) {
@@ -134,7 +134,9 @@ func (f *holStore) FailAccountCAS(_ context.Context, id int64, expected int64, _
 	a.LifecycleRevision = expected + 1
 	return nil
 }
-func (f *holStore) SetAccountFailed(_ context.Context, _ int64, _ time.Time, _ string) error { return nil }
+func (f *holStore) SetAccountFailed(_ context.Context, _ int64, _ time.Time, _ string) error {
+	return nil
+}
 func (f *holStore) GetAccountGroups(_ context.Context, id int64) ([]int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -232,83 +234,96 @@ func TestRetryHOLFairness_SecondTaskNotStarved(t *testing.T) {
 	ResetFailureRetryForTest()
 }
 
+// TestRetryStaleFencedAfterReAdd_MustNotDisableReadded pins the generation/identity
+// fence of the SDK failure-retry path: a task captured at failure time must be
+// dropped — never CAS'd, never published — once the account was removed and re-added
+// with a new revision and identity, and the process-local latch must be cleared so
+// the re-added account becomes selectable again.
+//
+// Driven directly through handleRetryOnce with the exact task HandleFailure would
+// have enqueued. The retry loop's FIRST attempt has no backoff (enqueue → immediate
+// dequeue), so driving this through the queue races the test's own setup and flakes
+// under load. Enqueue/HOL-fairness behavior is covered by
+// TestRetryHOLFairness_SecondTaskNotStarved.
 func TestRetryStaleFencedAfterReAdd_MustNotDisableReadded(t *testing.T) {
-	ResetFailureRetryForTest()
-	retryBackoff = 10 * time.Millisecond
 	tpl := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth}
-	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
+	origURL := "https://api.openai.com"
+	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", BaseURL: &origURL, LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
 	store := &holStore{
 		accounts: map[int64]*domain.Account{7: acct},
-		seq:      map[int64][]error{7: {errors.New("transient")}},
 		groups:   map[int64][]int64{7: {10}},
 	}
+	staleFP, err := canonicalFingerprint(acct)
+	require.NoError(t, err)
 	latch := newRetryFakeLatch()
+	require.True(t, latch.TryAcquire(7, staleFP, 1), "HandleFailure's acquire step")
 	pubCh := make(chan struct{}, 1)
-	pub := &retryFakePublisher{ch: pubCh}
-	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch, Publisher: pub}
-	err := HandleFailure(context.Background(), deps, 7, errors.New("fatal"))
-	require.Error(t, err)
-	// barrier: latch acquired
-	require.Contains(t, latch.m, int64(7))
+	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch, Publisher: &retryFakePublisher{ch: pubCh}}
 
-	// Simulate remove/re-add: bump revision and change identity before retry fires
+	// Simulate remove/re-add: bump revision and change identity before the retry fires.
 	store.mu.Lock()
 	store.accounts[7].LifecycleRevision = 5
 	newURL := "https://changed.example.com"
 	store.accounts[7].BaseURL = &newURL
 	store.mu.Unlock()
 
-	// barrier for retry to attempt and fence: wait via time.After channel, not sleep polling
-	select {
-	case <-pubCh:
-		require.FailNow(t, "fenced retry must not publish for stale re-added account")
-	case <-time.After(300 * time.Millisecond):
-	}
+	requeued := handleRetryOnce(context.Background(), failureRetryTask{
+		accountID: 7, fingerprint: staleFP, revision: 1, reason: "fatal", deps: deps,
+	})
+	require.False(t, requeued, "stale task must be fully fenced, never requeued")
 	store.mu.Lock()
 	rev := store.accounts[7].LifecycleRevision
 	store.mu.Unlock()
 	require.Equal(t, int64(5), rev, "stale retry must not CAS re-added account (generation fencing)")
-	latch.mu.Lock()
-	_, latched := latch.m[7]
-	latch.mu.Unlock()
-	require.False(t, latched, "stale retry must clear latch for fencing")
-	ResetFailureRetryForTest()
+	select {
+	case <-pubCh:
+		require.FailNow(t, "fenced retry must not publish for stale re-added account")
+	default:
+	}
+	require.False(t, latch.IsLatched(7, staleFP), "stale retry must clear latch for fencing")
 }
 
+// TestRetryStaleFencedWhenDeleted_MustNotDisableReaddedSameID pins the deletion
+// fence: a retry task enqueued before the account was deleted must be dropped
+// (latch cleared, nothing CAS'd, nothing published) and must stay fenced when the
+// same ID is re-added with a new revision. Driven directly through handleRetryOnce
+// for the same reason as the sibling re-add test (queue's first attempt has no
+// backoff and would race this test's setup).
 func TestRetryStaleFencedWhenDeleted_MustNotDisableReaddedSameID(t *testing.T) {
-	ResetFailureRetryForTest()
-	retryBackoff = 10 * time.Millisecond
 	tpl := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth}
-	now := time.Now()
-	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
-	store := &holStore{accounts: map[int64]*domain.Account{7: acct}, seq: map[int64][]error{7: {errors.New("transient")}}, groups: map[int64][]int64{7: {10}}}
+	origURL := "https://api.openai.com"
+	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", BaseURL: &origURL, LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
+	store := &holStore{accounts: map[int64]*domain.Account{7: acct}, groups: map[int64][]int64{7: {10}}}
+	staleFP, err := canonicalFingerprint(acct)
+	require.NoError(t, err)
 	latch := newRetryFakeLatch()
-	pub := &retryFakePublisher{ch: make(chan struct{}, 1)}
-	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch, Publisher: pub}
-	require.Error(t, HandleFailure(context.Background(), deps, 7, errors.New("fatal")))
-	// mark deleted before retry
+	require.True(t, latch.TryAcquire(7, staleFP, 1), "HandleFailure's acquire step")
+	pubCh := make(chan struct{}, 1)
+	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch, Publisher: &retryFakePublisher{ch: pubCh}}
+	task := failureRetryTask{accountID: 7, fingerprint: staleFP, revision: 1, reason: "fatal", deps: deps}
+
+	// Mark deleted before the retry runs.
+	now := time.Now()
 	store.mu.Lock()
 	store.accounts[7].DeletedAt = &now
 	store.mu.Unlock()
-	select {
-	case <-time.After(200 * time.Millisecond):
-	}
-	latch.mu.Lock()
-	_, latched := latch.m[7]
-	latch.mu.Unlock()
-	require.False(t, latched, "deleted account retry must be fenced and clear latch")
-	// re-add same ID cleared deleted flag with new revision
+	require.False(t, handleRetryOnce(context.Background(), task), "deleted account task must be fenced")
+	require.False(t, latch.IsLatched(7, staleFP), "deleted account retry must be fenced and clear latch")
+
+	// Re-add same ID (deleted flag cleared, new revision): the old task must still
+	// not CAS it.
 	store.mu.Lock()
 	store.accounts[7].DeletedAt = nil
 	store.accounts[7].LifecycleRevision = 10
 	store.mu.Unlock()
-	// ensure old retry does not later CAS the re-added account
-	select {
-	case <-time.After(200 * time.Millisecond):
-	}
+	require.False(t, handleRetryOnce(context.Background(), task), "stale task must stay fenced after re-add")
 	store.mu.Lock()
 	rev := store.accounts[7].LifecycleRevision
 	store.mu.Unlock()
 	require.Equal(t, int64(10), rev, "re-added same-ID account must not be disabled by stale callback")
-	ResetFailureRetryForTest()
+	select {
+	case <-pubCh:
+		require.FailNow(t, "fenced retry must not publish for deleted/re-added account")
+	default:
+	}
 }
