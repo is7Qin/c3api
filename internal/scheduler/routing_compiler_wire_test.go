@@ -35,8 +35,8 @@ func (c *countingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 }
 
 func wireSources(s *Scheduler, q map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) {
-	s.SetCompilerSources(func() map[CandidateQualityKey]CandidateQualityInput { return q },
-		func() map[string]domain.ResolvedPrices { return prices })
+	s.SetWindowedQualitySource(func(time.Time) WindowedQuality { return WindowedQuality{Current: q} })
+	s.SetPricesSource(func() map[string]domain.ResolvedPrices { return prices })
 }
 
 func allLaneIDs(rd *RouteDecision) []int64 {
@@ -114,7 +114,13 @@ func TestRoutingCompilerWireGoldenSHA(t *testing.T) {
 	sum := sha256.Sum256(decisionViewBytes(v))
 	// v4-S2: table keys are normalized (hex lives in the interned decision
 	// values) — golden regenerated for the normalized key form.
-	require.Equal(t, "e407ad25ead1264eb82967a38c669322b27b8da78116394e390e5384eb525b73", hexOf(sum[:]), "golden serialized DecisionView")
+	// Explore-share wiring: the serialized form now carries ExploreBP per
+	// route (1 primary + 1 unknown of 2 eligible → 100+ceil(400*1/2)=300bp)
+	// — golden regenerated for the bp-carrying form.
+	// Incident wiring: the serialized form now carries the expose-only
+	// incident mark per route (zero here — no baseline/evaluator in this
+	// direct compile) — golden regenerated for the incident-carrying form.
+	require.Equal(t, "985be50a3bfde2c065a4543a678a0c48848ce2ed58f5a6e196853aa6e5eb6e09", hexOf(sum[:]), "golden serialized DecisionView")
 }
 
 func hexOf(b []byte) string {

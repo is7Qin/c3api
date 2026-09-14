@@ -107,6 +107,7 @@ var routingQualityRollupCreateDDL = partitionedCreateDDL("routing_quality_rollup
 
 var routingQualityRollupIndexDDLs = []string{
 	`CREATE UNIQUE INDEX routing_quality_rollup_uniq ON routing_quality_rollup (bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version)`,
+	`CREATE INDEX routing_quality_rollup_candidate ON routing_quality_rollup (route_class_id, candidate_fingerprint, bucket_minute DESC)`,
 }
 
 var routingFlowRollupColumnDefs = []string{
@@ -480,12 +481,6 @@ func (r *PartitionRepo) ListDirtyMinutes(ctx context.Context, kind string, versi
 		out = append(out, b)
 	}
 	return out, rows.Err()
-}
-
-func (r *PartitionRepo) clearDirtyTx(ctx context.Context, drv *txDriver, kind string, version int16, bucket time.Time) error {
-	bucket = bucket.UTC().Truncate(time.Minute)
-	var res sql.Result
-	return drv.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3`, []any{kind, version, bucket}, &res)
 }
 
 func (r *PartitionRepo) GetWatermark(ctx context.Context, kind string, version int16) (time.Time, error) {

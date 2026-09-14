@@ -715,3 +715,40 @@ func (b *blockingPG) UpsertFlowSnapshot(ctx context.Context, instanceSrc string,
 		return ctx.Err()
 	}
 }
+
+// TestQualitySync_PersistedQualityNotifiesCompiler 是缺陷 B 的回归：quality-sync
+// 的 PG 落库边界是质量 influx 的事件驱动编译触发点——成功落库 ≥1 新质量行必须
+// 调用编译通知（装配期接 scheduler.RequestCompile，非阻塞、下游去抖收敛）；空
+// 刷（无新行）必须静默，否则静默期重编译退化为定周全量（违 §9）。同时锁定缺陷
+// C 的生产写面：2ms TTFT 经生产路径（Begin→Complete→delta→PG 行）和必须非零。
+func TestQualitySync_PersistedQualityNotifiesCompiler(t *testing.T) {
+	pg := newFakePG()
+	rec, err := NewRecorder(50000)
+	require.NoError(t, err)
+	w := NewSyncWorker(rec, nil, pg, SyncConfig{InstanceSrc: "src-notify", BatchSize: 10}, nil)
+	var calls int
+	w.SetOnQualityPersisted(func() { calls++ })
+	// 空刷：无新质量行 → 静默。
+	w.doPG(context.Background())
+	require.Equal(t, 0, calls, "空刷（无新质量行）不得惊动编译道")
+	require.Empty(t, pg.quality)
+
+	// 生产路径观测：2ms TTFT 成功。
+	k := keyOf(fp(41), qc(41))
+	tt := int64(2)
+	actx := rec.Begin(k)
+	actx.Complete(true, &tt, 10, 1, 0)
+	w.doPG(context.Background())
+	require.Equal(t, 1, calls, "落库 ≥1 新质量行必须触发编译")
+	require.Len(t, pg.quality, 1)
+	require.Equal(t, int64(1), pg.quality[0].Attempts)
+	require.Equal(t, int64(1), pg.quality[0].TTFTN)
+	require.NotZero(t, pg.quality[0].TTFTSumLogQ32, "2ms TTFT 对数和必须非零")
+	require.NotZero(t, pg.quality[0].TTFTSumSqLogQ32, "2ms TTFT 平方和必须非零")
+
+	// 同分钟追加密集：再次落库 → 再次通知（去抖是编译道职责，非本层）。
+	actx2 := rec.Begin(k)
+	actx2.Complete(true, &tt, 10, 1, 0)
+	w.doPG(context.Background())
+	require.Equal(t, 2, calls, "第二批新质量行必须再次触发编译")
+}

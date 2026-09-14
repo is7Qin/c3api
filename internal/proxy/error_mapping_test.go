@@ -24,6 +24,9 @@ func TestSelectErrorMapping_AttemptsExhaustedDistinct(t *testing.T) {
 
 	require.Equal(t, http.StatusNotFound, statusFor(scheduler.ErrFormatUnavailable))
 	require.Equal(t, "no account supports this request format", selectErrorMessage(scheduler.ErrFormatUnavailable))
+
+	require.Equal(t, http.StatusServiceUnavailable, statusFor(scheduler.ErrPlanNotReady))
+	require.Equal(t, "routing plan not ready", selectErrorMessage(scheduler.ErrPlanNotReady))
 }
 
 func TestHandleSelectErrorAttemptsExhaustedRESTSearchWS(t *testing.T) {
@@ -42,5 +45,13 @@ func TestHandleSelectErrorAttemptsExhaustedRESTSearchWS(t *testing.T) {
 		p.handleSelectError(rec, err)
 		require.Equal(t, http.StatusNotFound, rec.Code)
 		require.Contains(t, rec.Body.String(), "group not found")
+	}
+	for _, err := range []error{scheduler.ErrPlanNotReady} {
+		rec := httptest.NewRecorder()
+		p := &Proxy{}
+		p.handleSelectError(rec, err)
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+		require.Equal(t, "1", rec.Header().Get("Retry-After"))
+		require.Contains(t, rec.Body.String(), "routing plan not ready")
 	}
 }

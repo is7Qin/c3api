@@ -17,14 +17,15 @@ import (
 )
 
 // TestRoutingCompilerWiring pins the Task18 production arming: main.go must
-// call sched.SetCompilerSources with the real quality lane source
-// (compilerQualitySource(qualityRecorder)) and the real pricing snapshot
-// source (svc.ResolvedPricesByModel), BEFORE snapReg.ReloadAll (initial
-// scheduler reload must fire an armed compile) and BEFORE wm.StartAll (the
-// compileLoop consumer starts with the scheduler worker). Without a real
-// caller the compiler stays dormant (compileArmed=false) — this test is the
-// anti-dormancy gate. It also pins the unique scheduler snapshot registration
-// (one publisher, one registry entry — the registry rejects duplicate names).
+// call sched.SetWindowedQualitySource with the windowed provider
+// (NewWindowedQualityProvider(qualityRecorder, ...)) and sched.SetPricesSource
+// with the real pricing snapshot source (svc.ResolvedPricesByModel), BEFORE
+// snapReg.ReloadAll (initial scheduler reload must fire an armed compile) and
+// BEFORE wm.StartAll (the compileLoop consumer starts with the scheduler
+// worker). Without a real caller the compiler stays dormant
+// (compileArmed=false) — this test is the anti-dormancy gate. It also pins
+// the unique scheduler snapshot registration (one publisher, one registry
+// entry — the registry rejects duplicate names).
 func TestRoutingCompilerWiring(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	require.True(t, ok)
@@ -44,7 +45,8 @@ func TestRoutingCompilerWiring(t *testing.T) {
 	require.NotNil(t, mainFn, "main func not found")
 
 	var (
-		setSourcesPos token.Pos
+		setQualityPos token.Pos
+		setPricesPos  token.Pos
 		qualityArgOK  bool
 		pricesArgOK   bool
 		reloadAllPos  token.Pos
@@ -71,17 +73,21 @@ func TestRoutingCompilerWiring(t *testing.T) {
 			return true
 		}
 		switch {
-		case id.Name == "sched" && se.Sel.Name == "SetCompilerSources":
-			setSourcesPos = ce.Pos()
-			if len(ce.Args) == 2 {
+		case id.Name == "sched" && se.Sel.Name == "SetWindowedQualitySource":
+			setQualityPos = ce.Pos()
+			if len(ce.Args) == 1 {
 				if inner, ok := ce.Args[0].(*ast.CallExpr); ok {
-					if fun, ok := inner.Fun.(*ast.Ident); ok && fun.Name == "compilerQualitySource" && len(inner.Args) == 1 {
+					if fun, ok := inner.Fun.(*ast.Ident); ok && fun.Name == "NewWindowedQualityProvider" && len(inner.Args) == 2 {
 						if a, ok := inner.Args[0].(*ast.Ident); ok && a.Name == "qualityRecorder" {
 							qualityArgOK = true
 						}
 					}
 				}
-				if fl, ok := ce.Args[1].(*ast.FuncLit); ok {
+			}
+		case id.Name == "sched" && se.Sel.Name == "SetPricesSource":
+			setPricesPos = ce.Pos()
+			if len(ce.Args) == 1 {
+				if fl, ok := ce.Args[0].(*ast.FuncLit); ok {
 					ast.Inspect(fl, func(x ast.Node) bool {
 						if c2, ok := x.(*ast.CallExpr); ok {
 							if se2, ok := c2.Fun.(*ast.SelectorExpr); ok {
@@ -102,12 +108,15 @@ func TestRoutingCompilerWiring(t *testing.T) {
 		return true
 	})
 
-	require.True(t, setSourcesPos.IsValid(), "sched.SetCompilerSources(...) not found in main.go — compiler must have a real production caller")
-	require.True(t, qualityArgOK, "quality source must be compilerQualitySource(qualityRecorder)")
+	require.True(t, setQualityPos.IsValid(), "sched.SetWindowedQualitySource(...) not found in main.go — compiler must have a real production caller")
+	require.True(t, setPricesPos.IsValid(), "sched.SetPricesSource(...) not found in main.go")
+	require.True(t, qualityArgOK, "quality source must be NewWindowedQualityProvider(qualityRecorder, ...)")
 	require.True(t, pricesArgOK, "prices source must call svc.ResolvedPricesByModel")
 	require.True(t, reloadAllPos.IsValid(), "snapReg.ReloadAll not found")
 	require.True(t, startAllPos.IsValid(), "wm.StartAll not found")
-	require.Less(t, int(setSourcesPos), int(reloadAllPos), "SetCompilerSources must precede snapReg.ReloadAll (initial reload fires the armed compile)")
-	require.Less(t, int(setSourcesPos), int(startAllPos), "SetCompilerSources must precede wm.StartAll (assembly-time contract)")
+	require.Less(t, int(setQualityPos), int(reloadAllPos), "SetWindowedQualitySource must precede snapReg.ReloadAll (initial reload fires the armed compile)")
+	require.Less(t, int(setPricesPos), int(reloadAllPos), "SetPricesSource must precede snapReg.ReloadAll")
+	require.Less(t, int(setQualityPos), int(startAllPos), "SetWindowedQualitySource must precede wm.StartAll (assembly-time contract)")
+	require.Less(t, int(setPricesPos), int(startAllPos), "SetPricesSource must precede wm.StartAll")
 	require.Equal(t, 1, schedSnapLits, "scheduler snapshot registered exactly once (unique publisher/registry)")
 }

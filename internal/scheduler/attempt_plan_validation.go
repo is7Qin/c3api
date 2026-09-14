@@ -4,6 +4,7 @@ package scheduler
 import (
 	"errors"
 	"fmt"
+	"slices"
 )
 
 var ErrInvalidRouteDecision = errors.New("scheduler: invalid route decision")
@@ -29,6 +30,9 @@ func (e *InvalidRouteDecisionError) Unwrap() error { return ErrInvalidRouteDecis
 func validateRouteDecision(decision *RouteDecision) error {
 	if decision == nil {
 		return &InvalidRouteDecisionError{Field: "decision", Index: -1}
+	}
+	if err := validateRouteIncident(decision.Incident); err != nil {
+		return err
 	}
 	for i, candidate := range decision.Primary {
 		if containsCandidateID(decision.Primary[:i], candidate.AccountID) {
@@ -56,6 +60,9 @@ func validateRouteDecision(decision *RouteDecision) error {
 		}
 	}
 	explore := decision.Explore
+	if explore.ExploreBP < 0 || explore.ExploreBP > 10000 {
+		return &InvalidRouteDecisionError{Field: "explore.bp"}
+	}
 	if len(explore.Ordered) == 0 {
 		if len(explore.Weights) != 0 || len(explore.Cumulative) != 0 || explore.Total != 0 || len(explore.Fallback) != 0 {
 			return &InvalidRouteDecisionError{Field: "explore.empty"}
@@ -90,10 +97,5 @@ func validateRouteDecision(decision *RouteDecision) error {
 }
 
 func containsCandidateID(candidates []CompiledCandidate, accountID int64) bool {
-	for _, candidate := range candidates {
-		if candidate.AccountID == accountID {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(candidates, func(c CompiledCandidate) bool { return c.AccountID == accountID })
 }

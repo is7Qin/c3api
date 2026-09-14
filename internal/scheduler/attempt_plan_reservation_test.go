@@ -118,6 +118,32 @@ func TestSchedulerNewAttemptPlanRejectsMissingExactRoute(t *testing.T) {
 	require.ErrorIs(t, err, ErrFormatUnavailable)
 }
 
+// Compile-lag sentinel: static faces warm but no decision published yet →
+// ErrPlanNotReady (503 at the proxy); genuinely unroutable shapes keep their
+// 404 sentinels. Uses the static-only constructor (compile lane never ran).
+func TestSchedulerNewAttemptPlanPlanNotReady(t *testing.T) {
+	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	s := newTestSchedulerStatic(t, []*domain.Account{acc(1, tplx, 1)})
+	_, err := s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(10, string(domain.FormatOpenAIChat), "m"))
+	require.ErrorIs(t, err, ErrPlanNotReady)
+	require.NotErrorIs(t, err, ErrFormatUnavailable)
+	_, err = s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(99, string(domain.FormatOpenAIChat), "m"))
+	require.ErrorIs(t, err, ErrGroupNotFound)
+
+	// After the first paired publish the same route binds normally, and an
+	// unroutable model keeps ErrFormatUnavailable (404).
+	wireSources(s, nil, nil)
+	s.compileOnce()
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-ready"}, RouteRefFor(10, string(domain.FormatOpenAIChat), "m"))
+	require.NoError(t, err)
+	sel, _, rerr := s.ReserveAttempt(&plan)
+	require.NoError(t, rerr)
+	require.Equal(t, int64(1), sel.AccountID)
+	sel.Release()
+	_, err = s.NewAttemptPlan(AttemptPlanIdentity{}, RouteRefFor(10, string(domain.FormatOpenAIChat), "missing"))
+	require.ErrorIs(t, err, ErrFormatUnavailable)
+}
+
 // TestReserveAttemptPreservesConcurrentFailAccount 回归：并发 CAS 屏障下，
 // ReserveAttempt 的 lastUsedAt 写与 FailAccount 的 disabled 写互不覆盖——
 // 两者各经独立 CAS，最终态同时携带 disabled + lastUsedAt。

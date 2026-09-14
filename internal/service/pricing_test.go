@@ -81,6 +81,33 @@ func TestResolvePricesWithVariant(t *testing.T) {
 	require.Equal(t, int64(150000), *rp.InputPerM)
 }
 
+// TestPricingChangeNotifiesCompiler 是缺陷 B 价格面的回归：定价写面
+// （Upsert/Delete/Variants/手动 sync）是编译道价格输入的唯一变更源——解析
+// 价格真实变化必须通知编译（装配期接 scheduler.RequestCompile）；同值写
+// （解析价格不变）必须静默，否则每次同值 PUT 都驱逐一次全量重编译。
+func TestPricingChangeNotifiesCompiler(t *testing.T) {
+	fs := newFakeStore()
+	svc := newPricingSvc(t, fs)
+	var calls int
+	svc.SetCompileNotifier(func() { calls++ })
+	ctx := context.Background()
+
+	_, err := svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100), OutputPerM: int64Ptr(200)})
+	require.NoError(t, err)
+	require.Equal(t, 1, calls, "真实价格变化必须通知编译")
+
+	_, err = svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100), OutputPerM: int64Ptr(200)})
+	require.NoError(t, err)
+	require.Equal(t, 1, calls, "同值 PUT（解析价格不变）必须静默")
+
+	_, err = svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(300), OutputPerM: int64Ptr(200)})
+	require.NoError(t, err)
+	require.Equal(t, 2, calls, "价格变更必须再次通知编译")
+
+	require.NoError(t, svc.DeletePriceEntry(ctx, "m"))
+	require.Equal(t, 3, calls, "价格删除必须通知编译")
+}
+
 // TestResolvedPricesByModel pins the compile-lane price source: full-snapshot
 // base resolution (tier "", promptTokens 0), tier-scoped variants excluded,
 // and nil before the snapshot is loaded.

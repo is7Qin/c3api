@@ -959,14 +959,14 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 ## 路由观测 Routing
 
-智能路由数据链：热路径每次 attempt 终态进 quality recorder（内存归并），`quality-sync` worker 串行 loop 定期把快照 + 质量/flow 脏行 UPSERT 进实例分钟表（`routing_quality_instance_minute` / `routing_flow_instance_minute`）；`routing-rollup` worker 消费各实例脏分钟合并进全局 rollup 表（`routing_quality_rollup` / `routing_flow_rollup`），quality/flow 两道各自推进 `routing_rollup_watermark`（与 stats-agg 的 `usage_stats` 水位分表分车道，互不影响）。选号面为 **plan-only**：无计划外车道，AI 派生身份一律由编译计划背书；冷启动窗口（编译决策视图未发布）AI 流量一律 `503` + `Retry-After: 1`（管理面/用户面/healthz 不经此门，空库照常发布空决策），无模型/模型缺失请求 fail-closed `404`（不再以占位身份转发）。
+智能路由数据链：热路径每次 attempt 终态进 quality recorder（内存归并），`quality-sync` worker 串行 loop 定期把快照 + 质量/flow 脏行 UPSERT 进实例分钟表（`routing_quality_instance_minute` / `routing_flow_instance_minute`）；`routing-rollup` worker 消费各实例脏分钟合并进全局 rollup 表（`routing_quality_rollup` / `routing_flow_rollup`），quality/flow 两道各自推进 `routing_rollup_watermark`（与 stats-agg 的 `usage_stats` 水位分表分车道，互不影响）。选号面为 **plan-only**：无计划外车道，AI 派生身份一律由编译计划背书；冷启动窗口（编译决策视图未发布）与编译滞后窗口（静态已装载、该路由桶尚未编出 → `ErrPlanNotReady`）AI 流量一律 `503` + `Retry-After: 1`（管理面/用户面/healthz 不经此门，空库照常发布空决策）；仅真正不可路由（模型未映射/格式无候选/组不存在）fail-closed `404`（不再以占位身份转发）。
 
 三只读观测端点（数据源钉死 routing rollup 表与当前发布 RoutingView——不查 raw logs、不按历史 generation 查询）：
 
 | 方法/路径 | 说明 |
 |---|---|
-| `GET /api/admin/routing/plan` | 当前发布路由计划解释：generation + 全路由 primary/explore/degraded 候选发布序 + explore 权重/累积表 + 候选静态身份。空视图 = generation 0 空计划（`routes: []`），不是错误 |
-| `GET /api/admin/routing/frontier?route=<64hex>&from&to&limit` | 质量-成本前沿（窗口 rollup × 当前计划候选连接）：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本，Pareto 前沿标记；窗口 ≤90 天，limit ≤200（超出钳制） |
+| `GET /api/admin/routing/plan` | 当前发布路由计划解释：generation + 全路由 primary/explore/degraded 候选发布序 + explore 权重/累积表 + 候选静态身份。空视图 = generation 0 空计划（`routes: []`），不是错误。稳态探索份额 ExploreBP（无 Primary=10000bp；否则 100+min(400, ⌈400×unknown/eligible⌉)bp，上限 500bp）编入计划，请求侧按 canonical 哈希 + 该份额每请求定车道。每路由附带事故状态 `incident`（`active/kind{domin|model|both}/comparable/degraded/domains/evaluated_minute`，detect+surface——不改车道、不节流、不探针；ops `scheduler` 卡 `active_incidents` 计数） |
+| `GET /api/admin/routing/frontier?route=<64hex>&from&to&limit` | 质量-成本前沿（窗口 rollup × 当前计划候选连接）：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本，Pareto 前沿标记；窗口 ≤90 天，limit ≤200（超出钳制）。TTFT 区间仅由流式首 token 样本贡献（非流式/失败不计入 `ttft_n`） |
 | `GET /api/admin/routing/flow?route=<64hex>&from&to` | 路由 flow 聚合（Sankey 数据）：RouteClass → (ordinal, lane) → Account → Outcome 完整链边，按 terminal_at 归属；窗口 ≤90 天 |
 
 **缓存亲和（请求级软亲和，非硬钉位）**：请求携带 `prompt_cache_key` / `conversation_id` / `session_id`（按此优先级取首个非空字符串；REST 面单遍提体扫描、responses-ws 从首帧提取，search 不参与）时，键值经 FNV-1a 哈希在一致性哈希环（每域 32 虚拟节点）上定位属主缓存域，计划内属主域候选整体前置、其余候选按原相对顺序顺延——候选集合与 1–8 次尝试上界不变。账号 `cache_domain` 相同 = 共享域（互相亲和命中），`null` = 账号私有域（仅自身可被亲和命中）。无亲和键 = 严格按计划编译原序执行。跨轮次硬续聊钉位（continuation pinning）见对应 continuation 接口与行为约束。

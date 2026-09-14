@@ -1515,6 +1515,8 @@
       "lastCompileOk": "最近编译",
       "lastCompileErr": "最近失败",
       "compilePending": "待触发 / 容量",
+      "activeIncidents": "活跃事故",
+      "lastIncidentEval": "事故评估",
       "freshness": "新鲜度",
       "lag": "积压时滞",
       "pending": "积压（质+流）",
@@ -1533,7 +1535,8 @@
       "incidentPoison": "毒行隔离",
       "incidentWatermarkInit": "水位未推进",
       "incidentTickFailed": "最近心跳失败",
-      "incidentSyncErrors": "同步失败累计"
+      "incidentSyncErrors": "同步失败累计",
+      "planIncident": "{{kind}} 事故 · 组 {{group}} · {{model}} · 退化 {{degraded}}/{{comparable}}"
     }
   },
   "user": {

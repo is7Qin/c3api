@@ -3067,6 +3067,24 @@ export interface components {
             degraded: number[];
             /** @description 通道账号并集，升序 AccountID */
             candidates: components["schemas"]["RoutingPlanCandidate"][];
+            incident: components["schemas"]["RoutingPlanIncident"];
+        };
+        /** @description 路由 expose-only 事故标记（detect+surface：不改通道、不节流、不探针；零值 = 无事故） */
+        RoutingPlanIncident: {
+            active: boolean;
+            /** @description "domain"|"model"|"both"（inactive 时为空串） */
+            kind: string;
+            /** @description 可比候选数（current/baseline attempts≥30 且 TTFT≥30） */
+            comparable: number;
+            /** @description 退化候选数（Wilson 成功区间不重叠） */
+            degraded: number;
+            /** @description 可比去重 failure-domain 数 */
+            domains: number;
+            /**
+             * Format: int64
+             * @description 证据分钟 M（unix 秒；窗口边界可由 M 推导）
+             */
+            evaluated_minute: number;
         };
         /** @description 当前发布计划快照（无历史 generation 查询面；空视图 = generation 0 + routes []） */
         RoutingPlanResponse: {

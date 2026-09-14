@@ -364,6 +364,9 @@ type Service struct {
 	// recoverProber 恢复→PROBING 健康写入面（SetRecoverProber 回填；nil = 未
 	// 装配，recover 仅完成持久恢复——调度器同步周期兜底）。
 	recoverProber               RecoverProber
+	// compileNotify 路由编译触发面（SetCompileNotifier 回填；nil = 未装配，
+	// 定价写面静默——仅编译道装配后有效。调用方承诺非阻塞，见 pricing.go）。
+	compileNotify func()
 	mailEnqueue                 func(MailSendTask) error
 	clearBalanceWarningCooldown func(context.Context, int64, int64) error
 	tzLoc                       *time.Location
@@ -437,10 +440,9 @@ func (s *Service) SetLocalDispatcher(d notify.Dispatcher) { s.local = d }
 // 后调用。失败忽略——NOTIFY 是事件提示，丢一条由 60s 周期兜底收敛（Publisher
 // 内部已 Warn），不回滚业务。pub 为 nil（T2 过渡：main 未装配）→ no-op；
 // T3 main 装配后必非 nil。
-// 空 Change（评审 I-1）：全字段为空（Users/Templates/Clients/Multipliers/
-// Keys/Settings/Rules 全 false 且 Groups 空）→ 判空跳过不 Publish（no-op）。
-// CreateAccount 无 GroupIDs / UpdateAccount 无变更的空载荷在此统一覆盖（与
-// O2 inv.Accounts 空集 no-op 同语义）。
+// 空 Change（评审 I-1）：notify.Change.IsEmpty()（7 变更位全 false 且 Groups
+// 空）→ 判空跳过不 Publish（no-op）。CreateAccount 无 GroupIDs / UpdateAccount
+// 无变更的空载荷在此统一覆盖（与 O2 inv.Accounts 空集 no-op 同语义）。
 // 发布脱离请求 ctx（评审 I-2）：请求 ctx 取消（客户端断开）不吞 NOTIFY——
 // context.WithoutCancel 剥离取消/超时信号仅继承值；NOTIFY 是连接写无悬挂
 // 风险，发布必须到最后一个字节。
@@ -448,8 +450,7 @@ func (s *Service) publish(ctx context.Context, ch notify.Change) {
 	if s.pub == nil {
 		return
 	}
-	if !ch.Users && !ch.Templates && !ch.Clients && !ch.Multipliers &&
-		!ch.Keys && !ch.Settings && !ch.Rules && len(ch.Groups) == 0 {
+	if ch.IsEmpty() {
 		return // 空 Change：无任何变更语义（评审 I-1）
 	}
 	_ = s.pub.Publish(context.WithoutCancel(ctx), ch)
@@ -467,6 +468,23 @@ func validateBaseURL(base string) error {
 		return ErrInvalidInput
 	}
 	return nil
+}
+
+// dedupFormats supported_formats 非空+枚举合法+去重校验，返回去重集合（供
+// FormatModels 跨字段子集校验复用）。validateTemplate / validateTemplatePatch
+// 共用——两者语义一致（空列表非法；patch 侧 nil=未提供由调用方先行跳过）。
+func dedupFormats(fs []domain.RequestFormat) (map[domain.RequestFormat]bool, error) {
+	if len(fs) == 0 {
+		return nil, ErrInvalidInput
+	}
+	seen := make(map[domain.RequestFormat]bool, len(fs))
+	for _, f := range fs {
+		if !f.Valid() || seen[f] {
+			return nil, ErrInvalidInput
+		}
+		seen[f] = true
+	}
+	return seen, nil
 }
 
 func validateTemplate(t *domain.Template) error {
@@ -492,15 +510,9 @@ func validateTemplate(t *domain.Template) error {
 			return err
 		}
 	}
-	if len(t.SupportedFormats) == 0 {
-		return ErrInvalidInput
-	}
-	seen := make(map[domain.RequestFormat]bool, len(t.SupportedFormats))
-	for _, f := range t.SupportedFormats {
-		if !f.Valid() || seen[f] {
-			return ErrInvalidInput
-		}
-		seen[f] = true
+	seen, err := dedupFormats(t.SupportedFormats)
+	if err != nil {
+		return err
 	}
 	// 类型-格式约束（W1 + Task B/D 扩展）：responses-special/codex-oauth/codex-pat
 	// 类型模板支持 resp / resp-ws / openai-images / openai-search 格式（images 直连
@@ -659,15 +671,10 @@ func validateTemplatePatch(p repository.TemplatePatch) error {
 	}
 	var supported map[domain.RequestFormat]bool
 	if p.SupportedFormats != nil {
-		if len(*p.SupportedFormats) == 0 {
-			return ErrInvalidInput
-		}
-		supported = make(map[domain.RequestFormat]bool, len(*p.SupportedFormats))
-		for _, f := range *p.SupportedFormats {
-			if !f.Valid() || supported[f] {
-				return ErrInvalidInput
-			}
-			supported[f] = true
+		var err error
+		supported, err = dedupFormats(*p.SupportedFormats)
+		if err != nil {
+			return err
 		}
 	}
 	if p.FormatModels != nil {

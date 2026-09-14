@@ -120,7 +120,8 @@ func TestStartupReloadAllPG(t *testing.T) {
 		// Select 执行预编译计划，0 间隔误配防 ticker 空转 panic。
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil)
-	sched.SetCompilerSources(nil, nil)
+	sched.SetWindowedQualitySource(nil)
+	sched.SetPricesSource(nil)
 	schedCtx, cancelSched := context.WithCancel(ctx)
 	t.Cleanup(cancelSched)
 	require.NoError(t, sched.Start(schedCtx))

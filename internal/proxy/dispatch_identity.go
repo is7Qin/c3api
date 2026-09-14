@@ -49,10 +49,6 @@ func dispatchFailureOutcome(base AttemptOutcome, code int, clientCancel, termina
 	return outcome
 }
 
-func pipelineOutcome(attempt scheduler.Attempt, code int, clientCancel bool, terminal bool) AttemptOutcome {
-	return dispatchFailureOutcome(pipelineBase(attempt), code, clientCancel, terminal)
-}
-
 func attemptPreviousID(raw *string) *AttemptID {
 	if raw == nil {
 		return nil

@@ -35,7 +35,7 @@ c3api 处于 **beta**：功能齐全，但破坏性变更自由。
 | **模板与账号管理** | 模型模板、上游账号、分组、凭证，以及按模板的格式/模型白名单 |
 | **管理台** | React 前端内嵌进二进制（`/app`），另有 OpenAPI 契约定义的管理 API（`/api/admin`） |
 | **计费与用量** | 用户余额预检扣费、FEFO 临时额度、litellm 价格同步的按模型计费、按日分区的用量日志与统计——计费默认开启（`config.example.toml` billing.enabled=true） |
-| **智能路由** | 后台编译器把逐 attempt 的持久质量统计（Wilson 置信成功 + 对数 TTFT）、采购成本倍率、缓存域与运行时健康编译成不可变路由计划（Primary / Explore / Degraded 车道）；选号 plan-only（无计划外车道，冷启动计划未发布窗口 AI 流量 503），执行预编译计划并做跨账号去重的 replay-safe failover（1–8 次尝试）；请求携带 `prompt_cache_key` / `conversation_id` / `session_id` 时按缓存域软亲和。无手工权重 |
+| **智能路由** | 后台编译器把逐 attempt 的持久质量统计（Wilson 置信成功 + 对数 TTFT）、采购成本倍率、缓存域与运行时健康编译成不可变路由计划（Primary / Explore / Degraded 车道）；稳态保留 1–5% 探索份额持续采样非 Primary 候选；选号 plan-only（无计划外车道，冷启动计划未发布窗口 AI 流量 503），执行预编译计划并做跨账号去重的 replay-safe failover（1–8 次尝试）；请求携带 `prompt_cache_key` / `conversation_id` / `session_id` 时按缓存域软亲和。无手工权重 |
 | **规则引擎** | typed 的 `throttle`（瞬时运行时健康）与 `fail_account`（终态判死）动作，支持计数/比例窗口与响应塑形——取代旧硬编码退避，可经 `/api/admin/rules` 自定义 |
 | **多实例就绪** | 状态全在 PostgreSQL，`NOTIFY` 跨实例失效广播，Redis 心跳实例发现（集群规模自动感知）——水平扩容零配置 |
 | **单二进制** | Go 二进制内嵌前端，非 root 容器镜像，即插即用部署 |

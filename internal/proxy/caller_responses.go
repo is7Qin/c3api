@@ -271,7 +271,7 @@ func responsesBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection,
 		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
 		CallerCategory: CallerResponses, OperationTag: OperationTag(domain.OpResponses),
 		Ordinal: 1, Lane: LanePrimary, Generation: 1, LifecycleRevision: 1,
-		Timing: AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft},
+		Timing: AttemptTiming{LatencyMS: max(time.Since(start).Milliseconds(), 0), TTFTMS: ttft},
 		Usage:  AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img},
 	}
 }

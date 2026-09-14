@@ -140,6 +140,12 @@ type SyncWorker struct {
 	closing              atomic.Bool
 	refillMu             sync.Mutex
 	refillClosed         bool
+	// onQualityPersisted 是质量 influx 的事件驱动编译触发（缺陷 B 修复）：
+	// PG 落库边界成功持久 ≥1 新质量行后同步调用（装配期接
+	// scheduler.RequestCompile——非阻塞 select/default，下游 200ms 去抖收敛）。
+	// 空刷/失败/纯 flow 刷不调用。调用在 worker loop goroutine 上，无新
+	// goroutine、无轮询、无请求路径成本；nil = 未装配（既有测试/降级）。
+	onQualityPersisted func()
 }
 
 func GenerateInstanceSrc() string {
@@ -195,6 +201,15 @@ func (w *SyncWorker) SetClock(fn func() time.Time) {
 	if fn != nil {
 		w.clock = fn
 	}
+}
+
+// SetOnQualityPersisted 注入质量落库编译触发（装配期回填，SetClock 同款：
+// 可选观测式回调，nil = 未装配）。调用方（scheduler.RequestCompile）必须
+// 非阻塞——本调用在 PG flush 同步路径上。
+func (w *SyncWorker) SetOnQualityPersisted(fn func()) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onQualityPersisted = fn
 }
 
 func (w *SyncWorker) Start(ctx context.Context) error {
@@ -312,6 +327,7 @@ func (w *SyncWorker) collectRedisDeltaLocked(curMinuteUnix int64) map[int64]map[
 			existing.images += delta.images
 		} else {
 			qm := NewQualityMinute(curMinuteUnix, c.key)
+			qm.gen = c.gen
 			qm.attempts = delta.attempts
 			qm.successes = delta.successes
 			qm.err429 = delta.err429
@@ -426,6 +442,7 @@ func (w *SyncWorker) collectPGDeltaLocked() map[int64]map[Key]*QualityMinute {
 			existing.images += delta.images
 		} else {
 			qm := NewQualityMinute(minute, c.key)
+			qm.gen = c.gen
 			qm.attempts = delta.attempts
 			qm.successes = delta.successes
 			qm.err429 = delta.err429
@@ -454,22 +471,6 @@ func (w *SyncWorker) collectPGDeltaLocked() map[int64]map[Key]*QualityMinute {
 		out[minute] = cp
 	}
 	return out
-}
-
-func (w *SyncWorker) ackRedisSuccess(minutes []int64) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	for _, m := range minutes {
-		delete(w.minuteAbs, m)
-	}
-}
-
-func (w *SyncWorker) ackPGSuccess(minutes []int64) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	for _, m := range minutes {
-		delete(w.pgMinuteAbs, m)
-	}
 }
 
 func (w *SyncWorker) doRedis(ctx context.Context) {
@@ -900,7 +901,16 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 	w.stats.PendingQuality = w.rec.MinuteBucketCount()
 	w.stats.PendingBytes = w.rec.PendingBytes()
 	w.pruneLongLivedLocked(w.clock().Unix())
+	// 缺陷 B 触发：本轮实际持久的新质量行数（预算截断的 deferred 已 refill，
+	// 未计入；失败行同样未计入）。>0 = 真实质量 influx → 编译通知；空刷/
+	// 纯 flow 刷静默。回调在锁外调用（RequestCompile 非阻塞，但不持 worker
+	// 锁进下游是纪律）。
+	persistedQuality := int64(len(toFlush) - len(remainingQ))
+	notify := w.onQualityPersisted
 	w.mu.Unlock()
+	if persistedQuality > 0 && notify != nil {
+		notify()
+	}
 	// ack PG minuteAbs on success is already cleared; on failure refill will preserve
 }
 
@@ -1099,7 +1109,17 @@ func (w *SyncWorker) markQualityCommitted(rows []qRow) {
 		if _, ok := w.committed[r.minute]; !ok {
 			w.committed[r.minute] = make(map[Key]*QualityMinute)
 		}
+		// Live-seam feedback: the increment newly persisted for this
+		// (minute, key) absolute (merged minus the previous absolute, clamped)
+		// is exactly what UnflushedMinutes must henceforth exclude.
+		inc := r.qm.Clone()
+		if prev, ok := w.committed[r.minute][r.key]; ok && prev != nil {
+			inc.subClamped(prev)
+		}
 		w.committed[r.minute][r.key] = r.qm.Clone()
+		if w.rec != nil {
+			w.rec.MarkEmitted(r.key, inc)
+		}
 	}
 }
 

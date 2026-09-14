@@ -88,6 +88,9 @@ type RouteDecision struct {
 	Explore             ExploreDecision
 	CacheDomainRing     CacheDomainRing
 	CacheDomainAccounts []CacheDomainAccount
+	// Incident is the expose-only mark (detect + surface: never reorders
+	// lanes, never throttles, never probes). Zero = no incident.
+	Incident RouteIncident
 	// validated is set only by the compiler. Defensive clones intentionally
 	// clear it so callers cannot mutate a clone past the plan boundary.
 	validated bool
@@ -102,6 +105,13 @@ type ExploreDecision struct {
 	// Fallback indexes Ordered. The compiler rejects explore tables larger than
 	// uint16, so every index is in range for the immutable canonical table.
 	Fallback []uint16
+	// ExploreBP is the compiled steady-state exploration share in basis
+	// points (0..10000) from ExploreBP(eligible, unknown, primaryCount):
+	// 10000 when no Primary serves, 100 when nothing is unknown, capped at
+	// 500 otherwise. The select path serves the explore sample first with
+	// probability ExploreBP/10000 (canonical lane hash), primary-first
+	// otherwise. Zero (hand-built/test decisions) means primary-first.
+	ExploreBP int
 }
 
 func (d *DecisionView) Generation() uint64 { return d.generation }
@@ -145,6 +155,7 @@ func cloneRouteDecision(in *RouteDecision) *RouteDecision {
 		Explore:             cloneExploreDecision(in.Explore),
 		CacheDomainRing:     cloneCacheDomainRing(in.CacheDomainRing),
 		CacheDomainAccounts: append([]CacheDomainAccount(nil), in.CacheDomainAccounts...),
+		Incident:            in.Incident,
 		validated:           false,
 	}
 	return out
@@ -162,7 +173,7 @@ func cloneCacheDomainRing(in CacheDomainRing) CacheDomainRing {
 }
 
 func cloneExploreDecision(in ExploreDecision) ExploreDecision {
-	out := ExploreDecision{Total: in.Total, Ordered: cloneCompiled(in.Ordered)}
+	out := ExploreDecision{Total: in.Total, Ordered: cloneCompiled(in.Ordered), ExploreBP: in.ExploreBP}
 	if in.Fallback != nil {
 		out.Fallback = append([]uint16(nil), in.Fallback...)
 	}

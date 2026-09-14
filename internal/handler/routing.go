@@ -144,6 +144,14 @@ func toAPIRoutingPlan(plan *scheduler.RoutingPlan) RoutingPlanResponse {
 				Fallback:   nonNilIDs(rt.Explore.Fallback),
 			},
 			Candidates: make([]RoutingPlanCandidate, 0, len(rt.Candidates)),
+			Incident: RoutingPlanIncident{
+				Active:          rt.Incident.Active,
+				Kind:            rt.Incident.Kind,
+				Comparable:      rt.Incident.Comparable,
+				Degraded:        rt.Incident.Degraded,
+				Domains:         rt.Incident.Domains,
+				EvaluatedMinute: rt.Incident.EvaluatedMinute,
+			},
 		})
 		r := &out.Routes[len(out.Routes)-1]
 		for _, c := range rt.Candidates {

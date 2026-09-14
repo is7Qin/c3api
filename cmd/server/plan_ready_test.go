@@ -39,9 +39,6 @@ func (readyLoader) LoadGroupsAccounts(context.Context) (map[int64][]*domain.Acco
 func (readyLoader) LoadGroupAccounts(context.Context, int64) ([]*domain.Account, error) {
 	return nil, nil
 }
-func (readyLoader) UpdateAccountStatus(context.Context, int64, domain.AccountStatus, *time.Time, *string, *int) error {
-	return nil
-}
 
 func newReadyScheduler(t *testing.T) *scheduler.Scheduler {
 	t.Helper()

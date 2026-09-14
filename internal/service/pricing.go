@@ -5,16 +5,19 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -48,7 +51,35 @@ type priceSnapshot struct {
 
 const pricingReloadPage = 1000
 
-func (s *Service) ReloadPricing() { s.reloadPricing(context.Background()) }
+// SetCompileNotifier 注入路由编译触发（装配期回填，SetRecoverProber 同款：
+// 可选函数面，nil = 未装配）。生产装配 scheduler.RequestCompile（非阻塞
+// select/default，下游 200ms 去抖收敛）——定价写面只在解析价格真实变化时
+// 调用，同值写静默。
+func (s *Service) SetCompileNotifier(fn func()) { s.compileNotify = fn }
+
+// ReloadPricingAndNotifyCompiler 快照重载 + 编译通知（定价写面统一出口）：
+// 重载前后解析价格不变 → 静默（同值 PUT 不驱逐重编译）；变化 → 非阻塞通知。
+// 管理面冷路径，O(模型数) 纯内存比较。
+func (s *Service) ReloadPricingAndNotifyCompiler() {
+	s.reloadPricingAndNotifyCompiler(context.Background())
+}
+
+func (s *Service) reloadPricingAndNotifyCompiler(ctx context.Context) {
+	// 未装配编译通知面 = 纯重载（测试/降级路径），连 before 快照都省了。
+	if s.compileNotify == nil {
+		s.reloadPricing(ctx)
+		return
+	}
+	at := time.Now()
+	before := s.ResolvedPricesByModel(at)
+	s.reloadPricing(ctx)
+	after := s.ResolvedPricesByModel(at)
+	// 相等性唯一主人是编译道（scheduler.EqualResolvedPrices）：service 不再
+	// 手写对偶比较，字段增减自动跟随。
+	if !maps.EqualFunc(before, after, scheduler.EqualResolvedPrices) {
+		s.compileNotify()
+	}
+}
 func (s *Service) ReloadPricingCtx(ctx context.Context) error {
 	m, err := s.loadPricingSnapshot(ctx)
 	if err != nil {
@@ -95,7 +126,7 @@ func (s *Service) loadPricingSnapshot(ctx context.Context) (*priceSnapshot, erro
 		vMap[v.Model] = append(vMap[v.Model], v)
 	}
 	for _, lst := range vMap {
-		sort.Slice(lst, func(i, j int) bool { return lst[i].Seq < lst[j].Seq })
+		slices.SortFunc(lst, func(a, b *domain.PriceVariant) int { return cmp.Compare(a.Seq, b.Seq) })
 	}
 	return &priceSnapshot{entries: entriesMap, variants: vMap}, nil
 }
@@ -179,7 +210,7 @@ func (s *Service) UpsertPriceEntry(ctx context.Context, m *repository.PriceEntry
 	if err != nil {
 		return nil, err
 	}
-	s.reloadPricing(ctx)
+	s.reloadPricingAndNotifyCompiler(ctx)
 	return p, nil
 }
 
@@ -196,7 +227,7 @@ func (s *Service) DeletePriceEntry(ctx context.Context, model string) error {
 	if err != nil {
 		return mapRepoErr(err)
 	}
-	s.reloadPricing(ctx)
+	s.reloadPricingAndNotifyCompiler(ctx)
 	return nil
 }
 
@@ -240,7 +271,7 @@ func (s *Service) ReplacePriceVariants(ctx context.Context, model string, varian
 	if err != nil {
 		return nil, err
 	}
-	s.reloadPricing(ctx)
+	s.reloadPricingAndNotifyCompiler(ctx)
 	return out, nil
 }
 
@@ -282,7 +313,7 @@ func (s *Service) SyncPricingNow(ctx context.Context) (*PricingSyncStats, error)
 	entries := res.PriceEntries
 	n, err := s.store.UpsertPriceEntriesFromLiteLLM(ctx, entries)
 	if err != nil {
-		s.reloadPricing(ctx)
+		s.reloadPricingAndNotifyCompiler(ctx)
 		return nil, err
 	}
 	if len(res.Variants) > 0 {
@@ -292,13 +323,12 @@ func (s *Service) SyncPricingNow(ctx context.Context) (*PricingSyncStats, error)
 			for _, m := range manualModels {
 				manualSet[m] = struct{}{}
 			}
-			tmp := filtered[:0]
-			for _, v := range filtered {
-				if _, isManual := manualSet[v.Model]; !isManual {
-					tmp = append(tmp, v)
-				}
-			}
-			filtered = tmp
+			// 手工定价优先：过滤掉 liteLLM 的同名变体（in-place，与原 retain
+			// 循环同语义——DeleteFunc 额外把尾部清零）。
+			filtered = slices.DeleteFunc(filtered, func(v *domain.PriceVariant) bool {
+				_, isManual := manualSet[v.Model]
+				return isManual
+			})
 		}
 		if len(filtered) > 0 {
 			if verr := func() error {
@@ -309,7 +339,7 @@ func (s *Service) SyncPricingNow(ctx context.Context) (*PricingSyncStats, error)
 			}
 		}
 	}
-	s.reloadPricing(ctx)
+	s.reloadPricingAndNotifyCompiler(ctx)
 	if err != nil {
 		return nil, err
 	}

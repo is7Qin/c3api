@@ -1515,6 +1515,8 @@
       "lastCompileOk": "Last compile",
       "lastCompileErr": "Last failure",
       "compilePending": "Pending / cap",
+      "activeIncidents": "Active incidents",
+      "lastIncidentEval": "Last incident eval",
       "freshness": "Freshness",
       "lag": "Lag",
       "pending": "Pending (q+f)",
@@ -1533,7 +1535,8 @@
       "incidentPoison": "poison quarantined",
       "incidentWatermarkInit": "watermark not advanced",
       "incidentTickFailed": "last tick failed",
-      "incidentSyncErrors": "sync errors"
+      "incidentSyncErrors": "sync errors",
+      "planIncident": "{{kind}} incident · group {{group}} · {{model}} · {{degraded}}/{{comparable}} degraded"
     }
   },
   "user": {
