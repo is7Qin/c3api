@@ -3,8 +3,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,10 +53,9 @@ func (f *fakeCodexProber) GetUsageSnapshot(_ context.Context, cred *domain.Accou
 	return &domain.CodexUsageSnapshot{}, nil
 }
 
-func probeFn(t *testing.T, lookup func(int64) (*domain.Account, bool), codex codexUsageProber,
-	hc *http.Client) scheduler.ProbeFunc {
+func probeFn(t *testing.T, lookup func(int64) (*domain.Account, bool), codex codexUsageProber) scheduler.ProbeFunc {
 	t.Helper()
-	return newHealthProber(lookup, codex, hc, 5*time.Second)
+	return newHealthProber(lookup, codex, 5*time.Second)
 }
 
 // TestHealthProbeRevisionFenceFailClosed：账号缺失（已删/未加载）与 revision
@@ -64,7 +65,7 @@ func TestHealthProbeRevisionFenceFailClosed(t *testing.T) {
 	codex := &fakeCodexProber{}
 	fn := probeFn(t, probeLookup(map[int64]*domain.Account{
 		7: probeAcc(7, ant, 5, "http://unused.invalid"),
-	}), codex, http.DefaultClient)
+	}), codex)
 
 	err := fn(context.Background(), scheduler.HealthKey{AccountID: 9, Quality: "*", Revision: 1})
 	require.ErrorIs(t, err, scheduler.ErrProbeStaleRevision,
@@ -75,90 +76,51 @@ func TestHealthProbeRevisionFenceFailClosed(t *testing.T) {
 	require.Zero(t, codex.calls)
 }
 
-// TestHealthProbeAPIKeyUsesBareRootModelsGET：api_key 族探测 = GET {base}/v1/models
-// （base_url 裸根契约 + openai 族补 /v1，aiclient 同款），鉴权 = Bearer；2xx 即健康。
-func TestHealthProbeAPIKeyUsesBareRootModelsGET(t *testing.T) {
-	var gotPath, gotAuth, gotMethod string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotAuth, gotMethod = r.URL.Path, r.Header.Get("Authorization"), r.Method
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer upstream.Close()
-
-	chat := probeTpl(1, credential.TypeAPIKey, domain.FormatOpenAIChat)
-	fn := probeFn(t, probeLookup(map[int64]*domain.Account{
-		7: probeAcc(7, chat, 3, upstream.URL),
-	}), nil, upstream.Client())
-
-	require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 3}))
-	require.Equal(t, http.MethodGet, gotMethod)
-	require.Equal(t, "/v1/models", gotPath, "probe must hit bare-root /v1/models")
-	require.Equal(t, "Bearer sk-probe", gotAuth, "openai-family probe must use Bearer auth")
-}
-
-// TestHealthProbeAnthropicUsesXAPIKey：anthropic 格式族模板探测用 x-api-key +
-// anthropic-version（上游真实鉴权面），非 Bearer。
-func TestHealthProbeAnthropicUsesXAPIKey(t *testing.T) {
-	var gotXKey, gotVer, gotAuth string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotXKey = r.Header.Get("x-api-key")
-		gotVer = r.Header.Get("anthropic-version")
-		gotAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer upstream.Close()
-
-	ant := probeTpl(2, credential.TypeAPIKey, domain.FormatAnthropic)
-	fn := probeFn(t, probeLookup(map[int64]*domain.Account{
-		7: probeAcc(7, ant, 1, upstream.URL),
-	}), nil, upstream.Client())
-
-	require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 1}))
-	require.Equal(t, "sk-probe", gotXKey, "anthropic probe must use x-api-key")
-	require.NotEmpty(t, gotVer, "anthropic probe must send anthropic-version")
-	require.Empty(t, gotAuth, "anthropic probe must not set Authorization")
-}
-
-// TestHealthProbeUpstreamRejectedStatusOnly：非 2xx = 探测失败（重开记录）；
-// 错误只含状态码不含上游 body（防内部信息外溢——错误原文不透传契约）。
-func TestHealthProbeUpstreamRejectedStatusOnly(t *testing.T) {
+// TestHealthProbeAPIKeyFamilyNoNetworkNoop（owner 裁决）：api_key/responses-special
+// 无合成探测面——GET /v1/models 探针已删除（端点级限流下 models-200 与
+// chat-429 无关，不可靠）；探测视为通过且绝不打任何网络请求，恢复由时间窗 +
+// 真实流量判定。
+func TestHealthProbeAPIKeyFamilyNoNetworkNoop(t *testing.T) {
+	var hits atomic.Int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("SECRET-INTERNAL-DETAIL"))
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
 
-	chat := probeTpl(1, credential.TypeAPIKey, domain.FormatOpenAIChat)
-	fn := probeFn(t, probeLookup(map[int64]*domain.Account{
-		7: probeAcc(7, chat, 1, upstream.URL),
-	}), nil, upstream.Client())
-
-	err := fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 1})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "503", "probe error must carry the status code as verdict")
-	require.NotContains(t, err.Error(), "SECRET-INTERNAL-DETAIL", "upstream body must not leak into probe errors")
+	for _, tc := range []struct {
+		name string
+		cred credential.Type
+		fmt  domain.RequestFormat
+	}{
+		{"api_key", credential.TypeAPIKey, domain.FormatOpenAIChat},
+		{"responses-special", credential.TypeResponsesSpecial, domain.FormatOpenAIResponses},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tpl := probeTpl(1, tc.cred, tc.fmt)
+			fn := probeFn(t, probeLookup(map[int64]*domain.Account{
+				7: probeAcc(7, tpl, 3, upstream.URL),
+			}), nil)
+			require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 3}),
+				"api_key 族探测视为通过（无合成探测面）")
+		})
+	}
+	require.Zero(t, hits.Load(), "api_key 族探测不得发起任何网络请求")
 }
 
 // TestHealthProbeCodexRoutesToAdapter：codex 凭据类型（oauth/pat）探测必须走
-// SDK 适配层 usage 快照路径（凭据栈权威），不打通用 models GET，凭据带账号 ID。
+// SDK 适配层 usage 快照路径（凭据栈权威），凭据带账号 ID。
 func TestHealthProbeCodexRoutesToAdapter(t *testing.T) {
-	var upstreamHits int
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		upstreamHits++
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer upstream.Close()
 	codex := &fakeCodexProber{}
 
 	pat := probeTpl(3, credential.TypeCodexPAT, domain.FormatOpenAIResponses)
 	fn := probeFn(t, probeLookup(map[int64]*domain.Account{
-		11: probeAcc(11, pat, 2, upstream.URL),
-	}), codex, upstream.Client())
+		11: probeAcc(11, pat, 2, "http://unused.invalid"),
+	}), codex)
 
 	require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", Revision: 2}))
 	require.Equal(t, 1, codex.calls, "codex credential probe must route to the SDK adapter")
 	require.Equal(t, int64(11), codex.got.AccountID, "probe credential must carry the account id")
-	require.Zero(t, upstreamHits, "codex probe must not hit the generic models endpoint")
 }
 
 // TestHealthProbeNilCodexAdapterFailClosed：codex 凭据但适配器未装配 → 探测
@@ -167,7 +129,7 @@ func TestHealthProbeNilCodexAdapterFailClosed(t *testing.T) {
 	pat := probeTpl(3, credential.TypeCodexPAT, domain.FormatOpenAIResponses)
 	fn := probeFn(t, probeLookup(map[int64]*domain.Account{
 		11: probeAcc(11, pat, 2, "http://unused.invalid"),
-	}), nil, http.DefaultClient)
+	}), nil)
 
 	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", Revision: 2}))
 }
@@ -178,31 +140,51 @@ func TestHealthProbeUnknownCredTypeExplicitError(t *testing.T) {
 	weird := probeTpl(9, credential.Type("bogus"), domain.FormatOpenAIChat)
 	fn := probeFn(t, probeLookup(map[int64]*domain.Account{
 		7: probeAcc(7, weird, 1, "http://unused.invalid"),
-	}), nil, http.DefaultClient)
+	}), nil)
 
 	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 1}))
 }
 
-// TestHealthProbeRecoverySurface 端到端恢复面（真实适配器 + miniredis +
-// Start/Close 生命周期）：PROBING → 两次上游成功 → READY；上游失败 → 重开。
-// Eventually 有界收口（probe tick 1s，等待上限 8s），Close 必须 join 双循环。
-func TestHealthProbeRecoverySurface(t *testing.T) {
-	var upFail atomic.Bool
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if upFail.Load() {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer up.Close()
+// controllableCodexProber 可切换失败态的 codex 探测替身（并发安全——探测在
+// RuntimeHealth 循环 goroutine 执行）。
+type controllableCodexProber struct {
+	mu    sync.Mutex
+	calls int
+	fail  bool
+}
 
-	chat := probeTpl(1, credential.TypeAPIKey, domain.FormatOpenAIChat)
+func (f *controllableCodexProber) GetUsageSnapshot(_ context.Context, _ *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.fail {
+		return nil, errors.New("probe upstream failure")
+	}
+	return &domain.CodexUsageSnapshot{}, nil
+}
+func (f *controllableCodexProber) setFail(v bool) {
+	f.mu.Lock()
+	f.fail = v
+	f.mu.Unlock()
+}
+func (f *controllableCodexProber) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// TestHealthProbeRecoverySurface 端到端恢复面（真实适配器 + miniredis +
+// Start/Close 生命周期）：codex 族可探（api_key 族已无合成探测面）——PROBING
+// → 两次探测成功 → READY；探测失败 → 重开。Eventually 有界收口（probe tick
+// 1s，等待上限 8s），Close 必须 join 双循环。
+func TestHealthProbeRecoverySurface(t *testing.T) {
+	codex := &controllableCodexProber{}
+	pat := probeTpl(3, credential.TypeCodexPAT, domain.FormatOpenAIResponses)
 	c := newAssemblyRedis(t)
 	h := scheduler.NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil, nil)
 	h.SetProbeFn(newHealthProber(probeLookup(map[int64]*domain.Account{
-		1: probeAcc(1, chat, 5, up.URL),
-	}), nil, up.Client(), time.Second))
+		1: probeAcc(1, pat, 5, "http://unused.invalid"),
+	}), codex, time.Second))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -214,14 +196,19 @@ func TestHealthProbeRecoverySurface(t *testing.T) {
 	})
 
 	require.NoError(t, h.SetProbing(context.Background(), 1, 5))
+	// 先等探针真正跑满两次（同 gen 两次成功才 READY；也排除视图尚未同步时
+	// EffectiveState 空视图默认 READY 的假阳性），再等 READY 落定。
+	require.Eventually(t, func() bool {
+		return codex.callCount() >= 2
+	}, 8*time.Second, 200*time.Millisecond, "probe must be dispatched twice (two current-gen successes)")
 	require.Eventually(t, func() bool {
 		return scheduler.StateReady == h.EffectiveState(1, "*", 5)
-	}, 8*time.Second, 200*time.Millisecond, "two upstream successes must reach READY via the real probe adapter")
+	}, 8*time.Second, 200*time.Millisecond, "two probe successes must reach READY via the real probe adapter")
 
-	// 再入 PROBING 后上游持续 5xx：探测失败 → 重开，不得 READY。
-	upFail.Store(true)
+	// 再入 PROBING 后探测持续失败：重开，不得 READY。
+	codex.setFail(true)
 	require.NoError(t, h.SetProbing(context.Background(), 1, 5))
 	require.Eventually(t, func() bool {
 		return scheduler.StateOPEN == h.EffectiveState(1, "*", 5)
-	}, 8*time.Second, 200*time.Millisecond, "upstream failure must reopen the record")
+	}, 8*time.Second, 200*time.Millisecond, "probe failure must reopen the record")
 }

@@ -237,6 +237,9 @@ type ProbeFunc func(context.Context, HealthKey) error
 // Lua throttle/READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL.
 // Sync INFO run_id + gen-before/records/gen-after; run_id/expiry stored in immutable view, explicit OPEN->until->PROBING->probe retention.
 // Uses worker.GoLoop for loops; probe injected selfID/rendezvous/ProbeFunc, one permit, two current-gen successes READY, failure reopen.
+// 探针不变量：probeTick 只探测 StateProbing 条目；OPEN/RETRY_AFTER 在其窗口内永不
+// 被探测（窗口跑满 TTL，到期处理权在 Sync retention 转换逻辑，本循环不碰）；
+// PROBING 条目只来自 recover 链路 SetProbing 与 Sync 保留转换。
 type RuntimeHealth struct {
 	client     *redis.Client
 	selfID     string
@@ -836,6 +839,7 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 }
 
 // probeTick performs one probe cycle: owner check via rendezvous, one permit, two current-gen successes READY, failure reopen.
+// 只探测 StateProbing（OPEN/RETRY_AFTER 窗口内永不探测——跑满 TTL，到期由 Sync 转换；本函数不做到期处理）。
 func (h *RuntimeHealth) probeTick(ctx context.Context) {
 	view := h.view.Load()
 	if view == nil {
@@ -843,7 +847,8 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 	}
 	members := h.members()
 	for key, entry := range view.entries {
-		if entry.State != StateOPEN && entry.State != StateRetryAfter && entry.State != StateProbing {
+		// 窗口 honored：OPEN/RETRY_AFTER 跑满 TTL，不经探针提前清除。
+		if entry.State != StateProbing {
 			continue
 		}
 		field := key.String()

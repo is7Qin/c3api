@@ -61,7 +61,8 @@ func TestRuntimeHealthCloseJoinsProbeLoop(t *testing.T) {
 		return errors.New("probe released")
 	})
 	hk := HealthKey{AccountID: 1, Quality: "*", Revision: 1}
-	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
+	// 探针只服务 PROBING（T1 窗口 honored）——以 PROBING 构造在飞探测夹具。
+	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateProbing}}})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, h.Start(ctx))
@@ -112,7 +113,8 @@ func blockingProbeHealth(t *testing.T) (*RuntimeHealth, chan struct{}, chan stru
 		return errors.New("probe released")
 	})
 	hk := HealthKey{AccountID: 1, Quality: "*", Revision: 1}
-	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
+	// 探针只服务 PROBING（T1 窗口 honored）——以 PROBING 构造在飞探测夹具。
+	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateProbing}}})
 	require.NoError(t, h.Start(context.Background()))
 	<-entered
 	return h, entered, release

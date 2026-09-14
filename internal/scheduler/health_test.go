@@ -257,8 +257,9 @@ func TestHealthProbeOwner(t *testing.T) {
 
 	k1 := healthKeyFor(1, "q1", 1)
 	k2 := healthKeyFor(2, "q1", 1)
-	_, _ = hA.Throttle(context.Background(), k1, StateOPEN, 5*time.Second)
-	_, _ = hA.Throttle(context.Background(), k2, StateOPEN, 5*time.Second)
+	// 探针只服务 PROBING（T1 窗口 honored）——可探条目以 PROBING 构造。
+	_, _ = hA.Throttle(context.Background(), k1, StateProbing, 5*time.Second)
+	_, _ = hA.Throttle(context.Background(), k2, StateProbing, 5*time.Second)
 	require.NoError(t, hA.Sync(context.Background()))
 	require.NoError(t, hB.Sync(context.Background()))
 
@@ -304,14 +305,14 @@ func TestHealthProbeTwoSuccessReady(t *testing.T) {
 	}
 	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
 	key := healthKeyFor(5, "q5", 1)
-	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
+	_, err := h.Throttle(context.Background(), key, StateProbing, 5*time.Second) // T1：探针只服务 PROBING
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(5, "q5", 1))
+	require.Equal(t, StateProbing, h.EffectiveState(5, "q5", 1))
 
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(5, "q5", 1), "one success must not become READY")
+	require.Equal(t, StateProbing, h.EffectiveState(5, "q5", 1), "one success must not become READY（仍在 PROBING）")
 	require.Equal(t, int64(1), probeCount.Load())
 
 	h.probeTick(context.Background())
@@ -326,6 +327,35 @@ func TestHealthProbeTwoSuccessReady(t *testing.T) {
 	require.NoError(t, err, "tombstone must exist after READY")
 }
 
+// TestHealthProbeWindowHonoredNoEarlyProbe（owner 裁决 T1）：OPEN/RETRY_AFTER
+// 在其窗口内永不被探测——probeTick 只服务 PROBING 条目；窗口跑满 TTL，到期
+// 处理权归 Sync retention，本循环不碰。
+func TestHealthProbeWindowHonoredNoEarlyProbe(t *testing.T) {
+	_, c := newHealthTestRedis(t)
+	var probeCount atomic.Int64
+	probeFn := func(_ context.Context, _ HealthKey) error {
+		probeCount.Add(1)
+		return nil
+	}
+	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
+
+	kOpen := healthKeyFor(1, "q1", 1)
+	kRetry := healthKeyFor(2, "q2", 1)
+	_, err := h.Throttle(context.Background(), kOpen, StateOPEN, 5*time.Second)
+	require.NoError(t, err)
+	_, err = h.Throttle(context.Background(), kRetry, StateRetryAfter, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+
+	for i := 0; i < 5; i++ {
+		h.probeTick(context.Background())
+	}
+	require.Zero(t, probeCount.Load(), "窗口内 OPEN/RETRY_AFTER 绝不被探测（不得提前清除）")
+	require.NoError(t, h.Sync(context.Background()))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 1))
+	require.Equal(t, StateRetryAfter, h.EffectiveState(2, "q2", 1))
+}
+
 // TestHealthProbeFailureReopen verifies failure reopen.
 func TestHealthProbeFailureReopen(t *testing.T) {
 	_, c := newHealthTestRedis(t)
@@ -338,7 +368,9 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	}
 	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
 	key := healthKeyFor(9, "q9", 1)
-	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
+	// 探针只服务 PROBING（T1：OPEN/RETRY_AFTER 窗口内不探测）——可探条目以
+	// PROBING 构造。
+	_, err := h.Throttle(context.Background(), key, StateProbing, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
 
@@ -347,19 +379,29 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(9, "q9", 1))
 
-	_, err = h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
+	// 再入 PROBING；探测失败 → 重开为 OPEN（30s）。
+	_, err = h.Throttle(context.Background(), key, StateProbing, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", 1))
 
 	shouldFail.Store(true)
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", 1))
+	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", 1), "探测失败必须重开")
+
+	// 重开后的 OPEN 窗口内不探测（T1）：重复 probeTick 状态不变。
 	shouldFail.Store(false)
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", 1), "after failure, needs two fresh successes")
+	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", 1), "OPEN 窗口内不得被探测（T1）")
+
+	// 窗口结束再入 PROBING：一次成功不足、两次才 READY。
+	_, err = h.Throttle(context.Background(), key, StateProbing, 5*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, h.Sync(context.Background()))
+	h.probeTick(context.Background())
+	require.NoError(t, h.Sync(context.Background()))
+	require.Equal(t, StateProbing, h.EffectiveState(9, "q9", 1), "after failure, needs two fresh successes")
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(9, "q9", 1))
@@ -371,7 +413,7 @@ func TestHealthProbeStaleRevisionDoesNotReopen(t *testing.T) {
 		return ErrProbeStaleRevision
 	}, nil)
 	key := healthKeyFor(10, "q10", 1)
-	_, err := h.Throttle(context.Background(), key, StateOPEN, 100*time.Millisecond)
+	_, err := h.Throttle(context.Background(), key, StateProbing, 100*time.Millisecond) // T1：探针只服务 PROBING
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
 
@@ -385,7 +427,9 @@ func TestHealthProbeStaleRevisionDoesNotReopen(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	_, err = c.ZScore(context.Background(), healthActiveZSet, field).Result()
 	require.Error(t, err, "stale health record must expire instead of being refreshed")
-	require.NotContains(t, h.View(), key)
+	// T1 后 PROBING 条目按保留语义留在视图（等真实探测结果），不得过期即清除。
+	require.Contains(t, h.View(), key)
+	require.Equal(t, StateProbing, h.View()[key].State)
 }
 
 // TestHealthProbeOnePermit verifies one permit limits concurrent probes.
@@ -418,8 +462,9 @@ func TestHealthProbeOnePermit(t *testing.T) {
 	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
 	k1 := healthKeyFor(1, "q1", 1)
 	k2 := healthKeyFor(2, "q1", 1)
-	_, _ = h.Throttle(context.Background(), k1, StateOPEN, 5*time.Second)
-	_, _ = h.Throttle(context.Background(), k2, StateOPEN, 5*time.Second)
+	// 探针只服务 PROBING（T1 窗口 honored）。
+	_, _ = h.Throttle(context.Background(), k1, StateProbing, 5*time.Second)
+	_, _ = h.Throttle(context.Background(), k2, StateProbing, 5*time.Second)
 	require.NoError(t, h.Sync(context.Background()))
 
 	var wg sync.WaitGroup
@@ -736,7 +781,7 @@ func TestHealthCurGenInterleaving(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 5; i++ {
-			_, _ = h2.Throttle(context.Background(), healthKeyFor(int64(100+i), "q", 1), StateOPEN, 5*time.Second)
+			_, _ = h2.Throttle(context.Background(), healthKeyFor(int64(100+i), "q", 1), StateProbing, 5*time.Second) // T1：探针只服务 PROBING（本段验证 probeTick 与 gen 递增并发）
 		}
 	}()
 	go func() {
