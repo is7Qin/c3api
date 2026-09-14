@@ -21,8 +21,12 @@
 //     定向——单实例 auth 增量 Upsert/Delete 语义不变，多实例需全量覆盖其余
 //     实例的陈旧快照）
 //   - 规则 CRUD → 规则表全量重载（重载清窗口计数，全实例同步执行语义）
-//   - 定价快照变更 → dispatcher 直连 svc.ReloadPricingCtx（settings 同款：
-//     低频同步路径，不入本去抖器）
+//   - 本地 settings 变更（UpdateSetting）→ 去抖器 KindSettings → auth 快照
+//     全量 Reload（gate 预算按新 N 重算；settings 快照本身由发布端同步刷新，
+//     本 mark 只承担 scope 声明方重载）；远端 NOTIFY settings → dispatcher
+//     同步 ReloadSettings + scope 声明方（保持现状）
+//   - 定价快照变更 → dispatcher 直连 svc.ReloadPricingCtx（低频同步路径，
+//     不入本去抖器）
 //
 // 读端永不阻塞：重载在单 goroutine 串行执行；各实体快照原子替换由实体自身
 // 保证（scheduler snapshotStore / Balances atomic.Pointer / Auth RWMutex 换
@@ -58,6 +62,11 @@ const (
 	// KindRules 规则表变更（规则 CRUD）：规则表全量重载（重载清窗口计数，
 	// 全实例同步执行语义）。
 	KindRules
+	// KindSettings settings 变更（UpdateSetting）→ auth 快照全量 Reload
+	// （gate 预算按新 N 重算）；settings 快照本身由发布端同步刷新
+	// （service.UpdateSetting）/远端 dispatcher 各自负责——本 mark 只承担
+	// scope 声明方（当前 = auth，snapshots.go:30）重载。
+	KindSettings
 )
 
 // State 一次到点执行的合并脏集合（同窗口多实体变更并集）。
@@ -208,6 +217,12 @@ func (d *Debouncer) Keys() { d.mark(KindKeys, nil) }
 // 同步执行语义，NOTIFY 广播）。供 notify Dispatcher 远端变更转发。
 func (d *Debouncer) Rules() { d.mark(KindRules, nil) }
 
+// Settings settings 变更（UpdateSetting）→ auth 快照全量 Reload（gate 预算
+// 按新 N 重算；≤200ms 去抖窗口与其余 Kind 一致）；settings 快照本身由发布端
+// 同步刷新（service.UpdateSetting）/远端 dispatcher 各自负责——本 mark 只承担
+// scope 声明方（当前 = auth，snapshots.go:30）重载。
+func (d *Debouncer) Settings() { d.mark(KindSettings, nil) }
+
 // Accounts 账号变更（创建/更新/删除/批量）：sched 组级定向重载受影响组
 // （gids；与全量位同窗口时被包含跳过）；keyChanged（upstream_key 变更）→
 // clients 失效。gids 空且 keyChanged=false（无分组账号变更）→ 无任何快照
@@ -278,18 +293,23 @@ func (d *Debouncer) flush() {
 
 // reloadAll 按接线矩阵执行一次合并重载（评审 M-1）：
 // 用户 → auth + 余额全量（加载在锁外——Auth.Reload 内部构建后整体换；
-// 余额 Reload 构建后原子换指针）；模板 → sched 全量 + clients；组级 → sched
+// 余额 Reload 构建后原子换指针）；key/本地 settings → 仅 auth 全量（不碰
+// 余额快照）；模板 → sched 全量 + clients；组级 → sched
 // InvalidateGroup 逐个（full 位存在时被包含跳过）；组倍率 → 余额倍率定向
 // 刷新。全部 fail-safe：Warn + 保留旧快照（调度器 ≤30s 同步 /
 // BalanceRefreshInterval ticker 兜底收敛）。
 func (d *Debouncer) reloadAll(st *State) {
-	if st.Kinds&KindUsers != 0 {
+	if st.Kinds&(KindUsers|KindKeys|KindSettings) != 0 {
+		// auth 快照全量：用户 CRUD/余额变更（KindUsers）与 key CRUD（KindKeys，
+		// #14 多实例 key 缺口——key 变更不影响余额）与本地 settings 变更
+		// （KindSettings：settings 快照已由发布端同步刷新，此处只重载 scope
+		// 声明方 = auth，gate 预算按新 N 重算）共用同一调用。
 		// Auth.Reload 内部已对失败打 Warn（覆盖 NewAuth 启动/无 logger 调用方），
 		// 此处 Debug 防双 Warn（评审 I-3）；错误本身仍由内部 Warn 报告。
 		if err := d.cfg.Auth.Reload(context.Background()); err != nil && d.cfg.Log != nil {
 			d.cfg.Log.Debug("auth reload failed", logx.Error(err))
 		}
-		if d.cfg.Balances != nil {
+		if st.Kinds&KindUsers != 0 && d.cfg.Balances != nil {
 			_ = d.cfg.Balances.Reload(context.Background()) // fail-safe：内部 Warn + 保留旧快照
 		}
 	}
@@ -306,13 +326,6 @@ func (d *Debouncer) reloadAll(st *State) {
 	}
 	if st.Kinds&KindMultipliers != 0 && d.cfg.Balances != nil {
 		_ = d.cfg.Balances.ReloadMultipliers(context.Background()) // fail-safe：内部 Warn + 保留旧快照
-	}
-	if st.Kinds&KindKeys != 0 {
-		// key CRUD 缺口：auth 快照全量（与 KindUsers 的 auth 分支同一调用；不
-		// 加余额快照——key 变更不影响余额）。
-		if err := d.cfg.Auth.Reload(context.Background()); err != nil && d.cfg.Log != nil {
-			d.cfg.Log.Debug("auth reload failed", logx.Error(err))
-		}
 	}
 	if st.Kinds&KindRules != 0 && d.cfg.Rules != nil {
 		// B4-4/p2-12：规则快照无周期兜底（对照 auth 60s / sched 30s / balances

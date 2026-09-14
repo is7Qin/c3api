@@ -30,6 +30,7 @@ func (f *fakeInvalidatorBW) Users()                     { f.users++ }
 func (f *fakeInvalidatorBW) Templates()                 {}
 func (f *fakeInvalidatorBW) Accounts(_ []int64, _ bool) {}
 func (f *fakeInvalidatorBW) Multipliers()               {}
+func (f *fakeInvalidatorBW) Settings()                  {}
 
 func newBWService(t *testing.T) (*Service, *fakeStore, *fakeInvalidatorBW) {
 	t.Helper()

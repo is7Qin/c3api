@@ -20,7 +20,7 @@ type RecoverProber interface {
 }
 
 // SetRecoverProber 注入恢复健康写入器（Set* 事后回填惯例——runtimeHealth 构造
-// 晚于 svc，与 SetLocalDispatcher 同依赖方向）。
+// 晚于 svc）。
 func (s *Service) SetRecoverProber(p RecoverProber) { s.recoverProber = p }
 
 // RecoverAccount 生命周期 fenced 恢复：CAS expectedRevision 清失效三字段

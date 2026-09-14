@@ -25,7 +25,7 @@ chi(internal/server/server.go)
 ```
 
 - **domain 是万能依赖汇**：60+ 文件引用，业务层(scheduler/proxy/service)只依赖它取共享类型
-- **Service 注入模式**：不逐仓注入——一个复合 `Store` 接口(repository.Repository 实现)；构造 `New(store, sched, inv, pub, ruleReload, keys, log)`；循环依赖用 Set* 事后回填(SetLocalDispatcher/SetPriceFetcher/SetUsageSnapshotter)；读路径状态=4 个 atomic.Pointer 快照(settings/pricing/imagePrice/functionPrice)
+- **Service 注入模式**：不逐仓注入——一个复合 `Store` 接口(repository.Repository 实现)；构造 `New(store, sched, inv, pub, ruleReload, keys, log)`；**禁止新增 Set* 事后回填**（构造环结构性消除：抽组件按序构造或走既有直连路径；settings 本地生效已回归 invalidate KindSettings，`svc.SetLocalDispatcher` 已删），存量回填（SetPriceFetcher/SetUsageSnapshotter 等）在清理队列；读路径状态=4 个 atomic.Pointer 快照(settings/pricing/imagePrice/functionPrice)
 - **角色模型仅两级** platform_admin|user；空表首个注册者自动 platform_admin；JWT HS256 TTL 24h，快照 status fail-closed
 
 ## 常驻 Worker（注册序=反序排空序，main.go:476-486）

@@ -8,7 +8,6 @@ import (
 	"context"
 	"slices"
 	"strconv"
-	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
@@ -37,8 +36,8 @@ var serviceTierPolicyKeys = func() map[string][]string {
 // key ∈ 内置注册表（未知 key → 400）；switch 必须 true/false；number 必须
 // 数字且落在注册表 Min/Max 值域内（负值/越界 → 400）；带 PolicyValues 枚举
 // 域的条目（service_tier_policy_*）必须命中枚举。更新成功后同步内存快照——
-// 注册等读路径即时生效；本地直连分发器按 scope 精确重载（#36 auth gate 预算
-// 按新 N 即时重算）+ NOTIFY 广播其余实例。
+// 注册等读路径即时生效；本地即时重算走统一去抖通道（inv.Settings：auth 快照
+// 全量 Reload，gate 预算按新 N 重算）+ NOTIFY 广播其余实例。
 func (s *Service) UpdateSetting(ctx context.Context, key, value string) (*domain.Setting, error) {
 	def := domain.DefaultSetting(key)
 	if def == nil {
@@ -85,19 +84,12 @@ func (s *Service) UpdateSetting(ctx context.Context, key, value string) (*domain
 		return nil, err
 	}
 	s.reloadSettings(ctx)
-	// #36 本地实例即时重算（R2 M-1）：自播 NOTIFY 被 Listener Src 跳过，本地
-	// settings 变更必须直连分发器——与远端 NOTIFY 同路径（Apply：同步
-	// ReloadSettings + 注册表 ScopeSettings 精确重载 auth，gate 预算按新 N
-	// 重算）。本地快照已由上方 reloadSettings 刷新，Apply 内 ReloadSettings
-	// 是幂等重复（settings 低频路径，可接受；单一分发入口防本地/远端行为
-	// 漂移）。30s 超时包裹本地直连链（合后清单：裸 WithoutCancel 无界——DB
-	// 悬挂时 admin PUT 永久挂起、处理 goroutine 堆积；超时/请求取消中止本地
-	// 收敛，由 NOTIFY/60s 周期兜底刷新补齐）。nil = 未装配 no-op。
-	if s.local != nil {
-		relCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		s.local.Apply(relCtx, notify.Change{Settings: true})
-	}
+	// 本地即时重算走统一去抖通道：settings 快照已由上方 reloadSettings 同步
+	// 刷新（新 N 先入快照），KindSettings 触发 auth 快照全量 Reload（gate
+	// 预算按新 N 重算；≤200ms 去抖窗口与其余 Kind 一致）。#36 顺序不变量：
+	// settings 快照刷新必须先于 auth.Reload。远端实例由 NOTIFY → dispatcher.Apply
+	// 同步 ReloadSettings + scope 重载（保持）。
+	s.inv.Settings()
 	s.publish(ctx, notify.Change{Settings: true}) // 其余实例 settings 快照重载（#14 多实例）
 	return set, nil
 }

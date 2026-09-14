@@ -219,11 +219,12 @@ func (nopClients) InvalidateAll() {}
 //     settings 快照先同步刷新、auth 后重载。修复前本段红：Apply 仅 Mark 去抖
 //     （200ms 后 flush 才 ReloadSettings），reloadScopes 同步 auth.Reload 读到
 //     旧快照，新值落地后再无 gate.reload 触发（observedCron 恒旧值）。
-//   - 本地路径（#36 本地缺口）：UpdateSetting 直连本地分发器触发 auth.Reload
-//     （自播 NOTIFY 被 Listener Src 跳过，本地实例不能依赖 NOTIFY 回环）。
+//   - 本地路径：UpdateSetting → settings 快照同步刷新 + inv.Settings()
+//     去抖 mark → auth 快照全量 Reload 读到新快照（≤200ms 窗口内收敛，
+//     与其余 Kind 同窗口语义）。
 //
-// inv 不 Start（settings 分支 sync 后不依赖去抖器；不 Start 使修复前形态确定性
-// 红——flush 永不执行，快照保持旧值）。
+// inv 必须 Start（本地路径经去抖器 flush 生效；窗口 1ms，时序仍由 Eventually
+// 锚定，无 sleep）。
 func TestSettingsTimingPG(t *testing.T) {
 	repos := newSnapshotPGRepos(t)
 	ctx := context.Background()
@@ -255,16 +256,19 @@ func TestSettingsTimingPG(t *testing.T) {
 	var seenCron atomic.Pointer[string]
 	obs := &observingKeyRepo{KeyRepo: repos.Keys, seen: &seenCron}
 	auth := proxy.NewAuth(obs, repos.Users, nil, true)
-	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil)
+	inv := invalidate.New(invalidate.Config{
+		Window: time.Millisecond, Sched: sched, Clients: nopClients{},
+		Auth: auth, Rules: ruleEngine,
+	})
+	invCtx, stopInv := context.WithCancel(ctx)
+	t.Cleanup(stopInv)
+	require.NoError(t, inv.Start(invCtx))
+	svc := service.New(repos, sched, inv, nil, ruleEngine, auth, nil)
 	obs.svc = svc // 回填（首次 LoadKeys 在注册表 ReloadAll 时）
 	auth.SetInstancesProvider(discoStub{})
 
 	reg := snapshot.New()
 	require.NoError(t, reg.Register(authSnapshot{auth}))
-	inv := invalidate.New(invalidate.Config{
-		Window: time.Millisecond, Sched: sched, Clients: nopClients{},
-		Auth: auth, Rules: ruleEngine,
-	})
 	disp := &dispatcher{inv: inv, svc: svc, snapshots: reg, log: nil}
 
 	cronSeen := func(want string) bool {
@@ -283,14 +287,13 @@ func TestSettingsTimingPG(t *testing.T) {
 	require.Eventually(t, func() bool { return cronSeen("*/5 * * * *") }, 2*time.Second, 5*time.Millisecond,
 		"远端 settings 变更：快照先同步刷新、auth.Reload 读到新快照")
 
-	// --- 本地路径（#36 本地缺口）：UpdateSetting 直连本地分发器（自播 NOTIFY
-	// 被 Listener Src 跳过，本地不能依赖回环）。修复前本段红：UpdateSetting 后
-	// auth.Reload 从不触发，seenCron 恒上次远端 reload 的观测值。---
-	svc.SetLocalDispatcher(disp)
+	// --- 本地路径：UpdateSetting → 快照同步刷新 + 去抖器 KindSettings →
+	// auth.Reload 读到新快照（自播 NOTIFY 被 Listener Src 跳过，本地收敛不
+	// 依赖 NOTIFY 回环——走与远端同目标的统一去抖通道）。---
 	_, err = svc.UpdateSetting(ctx, "price_sync_cron", "0 9 * * *")
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return cronSeen("0 9 * * *") }, 2*time.Second, 5*time.Millisecond,
-		"本地 UpdateSetting：直连分发器 → auth.Reload 读到新快照")
+		"本地 UpdateSetting：统一去抖通道 → auth.Reload 读到新快照")
 }
 
 // discoStub 最小 InstancesProvider 桩（gate 预算注入面；本测试只关心 settings
