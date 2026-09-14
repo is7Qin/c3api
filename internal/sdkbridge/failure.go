@@ -199,8 +199,7 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 			return nil
 		}
 	}
-	reason2 := domain.TruncateErrMsg(fatal.Error())
-	err := deps.Store.SetAccountFailed(ctx, accountID, time.Now(), reason2)
+	err := deps.Store.SetAccountFailed(ctx, accountID, time.Now(), reason)
 	// 摘除恒执行：DB 故障时内存摘除先生效（持久化事实 = failed_at，DB 恢复后
 	// 同链重试落库；重启重载经 failed_at 收敛——fail-closed）。
 	deps.Failer.FailAccount(accountID)

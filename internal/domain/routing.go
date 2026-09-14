@@ -104,8 +104,6 @@ func fieldBool(v bool) []byte {
 	return []byte{0}
 }
 
-func IDToHex(id [32]byte) string { return hex.EncodeToString(id[:]) }
-
 func RouteClassIDHex(id RouteClassIDVal) string        { return hex.EncodeToString(id[:]) }
 func QualityClassIDHex(id QualityClassIDVal) string    { return hex.EncodeToString(id[:]) }
 func CandidateFPHex(id CandidateFingerprintVal) string { return hex.EncodeToString(id[:]) }
