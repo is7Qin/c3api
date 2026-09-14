@@ -15,6 +15,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -66,8 +67,11 @@ func (s *Service) ReloadPricingAndNotifyCompiler() {
 
 func (s *Service) reloadPricingAndNotifyCompiler(ctx context.Context) {
 	// 未装配编译通知面 = 纯重载（测试/降级路径），连 before 快照都省了。
+	// 定价写面统一出口：全部 6 处写面（5 手工写面 + pricing sync worker 的
+	// Reload 回调）汇聚于此；跨实例传播不依赖编译通知的变化检测，无条件发布。
 	if s.compileNotify == nil {
 		s.reloadPricing(ctx)
+		s.publish(ctx, notify.Change{Pricing: true})
 		return
 	}
 	at := time.Now()
@@ -79,6 +83,9 @@ func (s *Service) reloadPricingAndNotifyCompiler(ctx context.Context) {
 	if !maps.EqualFunc(before, after, scheduler.EqualResolvedPrices) {
 		s.compileNotify()
 	}
+	// 跨实例传播不依赖上面的变化检测：同值写本地静默编译，但对端实例仍需
+	// 重载（快照内容一致则重载无害）。
+	s.publish(ctx, notify.Change{Pricing: true})
 }
 func (s *Service) ReloadPricingCtx(ctx context.Context) error {
 	m, err := s.loadPricingSnapshot(ctx)

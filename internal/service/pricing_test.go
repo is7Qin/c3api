@@ -217,3 +217,48 @@ func TestSyncPricingGuardsManualVariants(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.PricingSourceManual, pe.Source)
 }
+
+// TestPricingWritePublishesPricingChange D1 定价跨实例失效：定价写面经统一
+// 出口 reloadPricingAndNotifyCompiler 发布 Change{Pricing:true}（编译通知装配
+// 与否均发布——跨实例传播不依赖变化检测）；ReloadPricingCtx（启动/FullRefresh
+// 路径）保持 publish-free。
+func TestPricingWritePublishesPricingChange(t *testing.T) {
+	ctx := context.Background()
+	manual := &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100), OutputPerM: int64Ptr(200)}
+
+	t.Run("降级路径（compileNotify nil）仍发布", func(t *testing.T) {
+		svc, _, pr := newPubSvc()
+		_, err := svc.UpsertPriceEntry(ctx, manual)
+		require.NoError(t, err)
+		got := pr.last()
+		require.NotNil(t, got)
+		require.True(t, got.Pricing, "定价写面 → Pricing:true")
+		require.Equal(t, 1, pr.total(), "一次写面一条 NOTIFY")
+	})
+
+	t.Run("装配路径（compileNotify 非 nil）仍发布", func(t *testing.T) {
+		svc, _, pr := newPubSvc()
+		svc.SetCompileNotifier(func() {})
+		_, err := svc.UpsertPriceEntry(ctx, manual)
+		require.NoError(t, err)
+		got := pr.last()
+		require.NotNil(t, got)
+		require.True(t, got.Pricing, "装配路径同样发布（不依赖变化检测）")
+	})
+
+	t.Run("DeletePriceEntry 发布", func(t *testing.T) {
+		svc, _, pr := newPubSvc()
+		_, err := svc.UpsertPriceEntry(ctx, manual)
+		require.NoError(t, err)
+		require.NoError(t, svc.DeletePriceEntry(ctx, "m"))
+		got := pr.last()
+		require.NotNil(t, got)
+		require.True(t, got.Pricing, "删除写面 → Pricing:true")
+	})
+
+	t.Run("ReloadPricingCtx 不发布", func(t *testing.T) {
+		svc, _, pr := newPubSvc()
+		require.NoError(t, svc.ReloadPricingCtx(ctx))
+		require.Equal(t, 0, pr.total(), "启动/FullRefresh 路径保持 publish-free")
+	})
+}

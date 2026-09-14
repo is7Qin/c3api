@@ -23,6 +23,7 @@ func TestChangeRoundtrip(t *testing.T) {
 		Keys:        true,
 		Settings:    true,
 		Rules:       true,
+		Pricing:     true,
 		Groups:      []int64{12, 34, 56},
 		Src:         "i-1",
 	}
@@ -154,4 +155,12 @@ func groupsForTarget(t *testing.T, target int) []int64 {
 func TestUnmarshalInvalid(t *testing.T) {
 	_, err := Unmarshal([]byte(`{not json`))
 	require.Error(t, err)
+}
+
+// TestChangePricingIsEmpty D1 定价跨实例失效：Pricing 置位 → 非空载荷
+// （publish 前置放行）；零值 → 仍空。
+func TestChangePricingIsEmpty(t *testing.T) {
+	require.False(t, Change{Pricing: true}.IsEmpty(), "Pricing:true 必须非空")
+	require.True(t, Change{}.IsEmpty(), "零值仍空")
+	require.False(t, Change{V: 1, Pricing: true}.IsEmpty(), "V 不参与判定")
 }

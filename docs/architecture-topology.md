@@ -214,7 +214,7 @@ pkg 职责边界：
 | auth（key/user 元数据 + gate 计数） | `internal/proxy/auth.go:68` Reload，锁内整体换 | invalidate Users/Keys + authSync 60s 周期兜底 + 启动 ReloadAll |
 | scheduler（RoutingView：静态 + 编译决策 + 并发槽） | `internal/scheduler/scheduler.go` atomic.Pointer[RoutingView] 单根（copy-modify-Store） | invalidate 全量/组级 + 30s syncLoop ticker + 静态重载尾部 RequestCompile（200ms 去抖编译道） |
 | rules（规则表） | `internal/rule/engine.go:148` Reload | invalidate Rules + 启动 ReloadAll |
-| pricing（模型价格**三线**：pricing + image_price + function_price） | `internal/service/pricing.go:35-71` + `image_pricing.go:23` + `function_pricing.go:23` | ReloadPricing 三线（sync 成功/管理端改价后，`main.go:369-373`），**不进 invalidate**（`internal/invalidate/invalidate.go:26` 注释） |
+| pricing（模型价格**三线**：pricing + image_price + function_price） | `internal/service/pricing.go:35-71` + `image_pricing.go:23` + `function_pricing.go:23` | ReloadPricing 三线（sync 成功/管理端改价后，`main.go:369-373`）+ NOTIFY Pricing → dispatcher 同步 ReloadPricingCtx（settings 同款，D1 跨实例失效） |
 | balances（余额 + 倍率） | `internal/billing/balances.go:43-51`（atomic.Pointer，Set 原地 Store） | invalidate Users/Multipliers + BalanceRefreshInterval ticker（`internal/billing/flusher.go:134-145`） |
 | settings | `internal/service/setting.go:95` ReloadSettings | invalidate Settings + 启动（**自身不进注册表**，`main.go:242-248` 注释） |
 | credential.Registry | `internal/credential/credential.go`（类型注册表 + Provider 分发，无快照语义） | 静态注册 |

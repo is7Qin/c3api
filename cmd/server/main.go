@@ -259,7 +259,8 @@ func main() {
 	//   ScopeSettings 精确刷新声明方
 	// - 规则 CRUD → 规则表全量重载（ruleEngine.ReloadRules，重载清窗口计数——
 	//   全实例同步执行语义）
-	// - pricing → 现状（内部 reloadPricing，不进 invalidate）
+	// - 定价快照变更 → 对端同步 ReloadPricingCtx（dispatcher 直连，settings
+	//   同款；缺价 402 窗口跨实例收敛）
 	// 去抖窗口 200ms：管理面变更生效延迟 ≤ 窗口 + 一次重载时长；后沿语义
 	// （评审 C-6：完成后又脏立即再执行，不按固定间隔 throttle——不与长 reload
 	// 重叠）。读端永不阻塞：Mark 路径零锁零 DB，重载单 goroutine 串行（消除

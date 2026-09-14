@@ -21,7 +21,8 @@
 //     定向——单实例 auth 增量 Upsert/Delete 语义不变，多实例需全量覆盖其余
 //     实例的陈旧快照）
 //   - 规则 CRUD → 规则表全量重载（重载清窗口计数，全实例同步执行语义）
-//   - pricing → 现状（内部 reloadPricing，不进 invalidate）
+//   - 定价快照变更 → dispatcher 直连 svc.ReloadPricingCtx（settings 同款：
+//     低频同步路径，不入本去抖器）
 //
 // 读端永不阻塞：重载在单 goroutine 串行执行；各实体快照原子替换由实体自身
 // 保证（scheduler snapshotStore / Balances atomic.Pointer / Auth RWMutex 换
