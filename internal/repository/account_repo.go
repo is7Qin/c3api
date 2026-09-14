@@ -51,9 +51,10 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 		if a.LifecycleRevision != 0 {
 			b = b.SetLifecycleRevision(a.LifecycleRevision)
 		}
-		if !a.Enabled && (a.LifecycleRevision != 0 || a.UpstreamCostMultiplierBp != 0 || a.FailureSource != nil || a.CacheDomain != nil) {
-			b = b.SetEnabled(false)
-		}
+		// 新建账号恒默认启用（enabled DB 默认 true）：创建面无 Enabled 字段
+		// （启停唯一入口是 fenced POST /accounts/{id}/enabled），零值 false
+		// 不能解读为显式禁用——此前按"带生命周期字段即显式落 false"会把所有
+		// 创建即带域/带倍率的账号静默置 disabled，使其永不进入路由候选。
 		row, err = b.Save(ctx)
 		return err
 	})
