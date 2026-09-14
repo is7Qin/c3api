@@ -17,7 +17,7 @@ import (
 
 // invCall 一次 Invalidator 调用记录。
 type invCall struct {
-	kind string // users / templates / accounts / multipliers
+	kind string // users / templates / accounts / multipliers / settings
 	gids []int64
 	key  bool
 }
@@ -27,12 +27,21 @@ type invCall struct {
 type invRecorder struct {
 	mu    sync.Mutex
 	calls []invCall
+	// onSettings Settings() mark 时同步回调（#36 顺序不变量断言：回调内读
+	// settings 快照必须已见新值——reloadSettings 先于 inv.Settings）。
+	onSettings func()
 }
 
 func (r *invRecorder) Users()     { r.record("users", nil, false) }
 func (r *invRecorder) Templates() { r.record("templates", nil, false) }
 func (r *invRecorder) Multipliers() {
 	r.record("multipliers", nil, false)
+}
+func (r *invRecorder) Settings() {
+	r.record("settings", nil, false)
+	if r.onSettings != nil {
+		r.onSettings()
+	}
 }
 func (r *invRecorder) Accounts(gids []int64, keyChanged bool) {
 	r.record("accounts", gids, keyChanged)
@@ -248,5 +257,20 @@ func TestInvalidatorMatrix(t *testing.T) {
 		name := "renamed"
 		require.NoError(t, svc.UpdateGroupsBatch(ctx, []int64{g.ID}, repository.GroupPatch{Name: &name}))
 		require.Equal(t, before, rec.total(), "GroupPatch 无倍率字段 → 不触发失效（矩阵：仅倍率变更走 Multipliers）")
+	})
+
+	t.Run("UpdateSetting → Settings() 且快照先刷新（#36 顺序不变量）", func(t *testing.T) {
+		fs := newFakeStore()
+		rec := &invRecorder{}
+		svc := &Service{store: fs, inv: rec, log: nil}
+		svc.reloadSettings(ctx)
+		require.Equal(t, "true", svc.settingValue("signup_enabled"), "无 DB 行 → 注册表默认 true")
+		var seenAtMark string
+		rec.onSettings = func() { seenAtMark = svc.settingValue("signup_enabled") }
+		_, err := svc.UpdateSetting(ctx, "signup_enabled", "false")
+		require.NoError(t, err)
+		require.Equal(t, 1, rec.countKind("settings"), "UpdateSetting → Settings() 一次")
+		require.Equal(t, "false", seenAtMark, "mark 时新值已入快照（reloadSettings 先于 inv.Settings）")
+		require.Equal(t, 1, rec.total(), "settings 变更不触发其他 Kind")
 	})
 }

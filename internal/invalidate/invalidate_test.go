@@ -442,6 +442,25 @@ func TestNewBranchesMerge(t *testing.T) {
 	}
 }
 
+// TestSettingsBranch KindSettings 分支：auth 全量 1 次，其余目标不动（余额
+// 快照/settings 快照由发布端同步刷新，本分支只承担 scope 声明方重载）。
+func TestSettingsBranch(t *testing.T) {
+	r := newRig(t, &recAuth{})
+	gen := r.clock.genNow()
+	r.d.Settings()
+	r.clock.waitTimer(t, gen)
+	r.clock.fire()
+	waitCalls(t, r.auth.calls, 1)
+	if got := r.auth.calls(); got != 1 {
+		t.Fatalf("settings 只应 auth 全量 1 次，got %d", got)
+	}
+	if r.bal.relCalls() != 0 || r.bal.multCalls() != 0 || r.sched.fullCalls() != 0 ||
+		len(r.sched.groupCalls()) != 0 || r.cl.calls() != 0 || r.rules.calls() != 0 {
+		t.Fatalf("settings 不得碰其他目标：bal=%d mult=%d schedFull=%d groups=%v clients=%d rules=%d",
+			r.bal.relCalls(), r.bal.multCalls(), r.sched.fullCalls(), r.sched.groupCalls(), r.cl.calls(), r.rules.calls())
+	}
+}
+
 // TestNewBranchesNilReloader rules reloader 未注入（nil）→ 分支跳过，不 panic。
 func TestNewBranchesNilReloader(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

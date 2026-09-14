@@ -295,6 +295,11 @@ type Invalidator interface {
 	// 删除与 group_assignment CRUD——新倍率须即刻进快照）：余额倍率快照定向
 	// 刷新（EffectiveMultiplier 陈旧 ≤10s 不可接受）。
 	Multipliers()
+	// Settings settings 变更（UpdateSetting）：scope 声明方（auth）快照重载
+	// （gate 预算按新 N 重算；≤200ms 去抖窗口与其余 Kind 一致）；settings
+	// 快照由 UpdateSetting 自身同步刷新后才 mark（#36 顺序不变量：快照刷新
+	// 先于 auth.Reload）。
+	Settings()
 }
 
 // NopInvalidator 无效化 no-op（测试与无关路径）。
@@ -304,6 +309,7 @@ func (NopInvalidator) Users()                 {}
 func (NopInvalidator) Templates()             {}
 func (NopInvalidator) Accounts([]int64, bool) {}
 func (NopInvalidator) Multipliers()           {}
+func (NopInvalidator) Settings()              {}
 
 // RuleReloader 由 rule.RuleEngine 实现：规则 CRUD 后全量重载（invalidate 钩子）。
 // 独立于通用 invalidate——规则重载会重置窗口计数，不能随任意资源变更触发。
@@ -341,14 +347,6 @@ type Service struct {
 	pub        Publisher   // 多实例 NOTIFY 发布器（#14 T2；nil = 单实例/未装配，publish no-op）
 	ruleReload RuleReloader
 	keys       KeyRegistrar
-	// local 本地变更分发器（#36 即时重算）：实现 = cmd/server dispatcher
-	// （notify.Dispatcher 接口——notify 不 import service，接口定义在 notify
-	// 包、装配侧实现，与 Invalidator/Publisher 同依赖方向）。settings 变更
-	// 本地直连 Apply（与远端 NOTIFY 同路径：同步 ReloadSettings + 注册表
-	// scope 精确重载 auth，gate 预算按新 N 重算）——自播 NOTIFY 被 Listener
-	// Src 跳过，本地实例不能依赖 NOTIFY 回环。nil = 未装配（单实例/测试）
-	// no-op。
-	local notify.Dispatcher
 	// settings 设置全量内存快照（默认值 + DB 覆盖）：公开读路径（注册等）
 	// 零 DB 直读；仅管理面 UpdateSetting 后重载（低频，无锁）。
 	settings atomic.Pointer[map[string]*domain.Setting]
@@ -363,10 +361,10 @@ type Service struct {
 	usageSnapshots CodexUsageSnapshotter
 	// recoverProber 恢复→PROBING 健康写入面（SetRecoverProber 回填；nil = 未
 	// 装配，recover 仅完成持久恢复——调度器同步周期兜底）。
-	recoverProber               RecoverProber
+	recoverProber RecoverProber
 	// compileNotify 路由编译触发面（SetCompileNotifier 回填；nil = 未装配，
 	// 定价写面静默——仅编译道装配后有效。调用方承诺非阻塞，见 pricing.go）。
-	compileNotify func()
+	compileNotify               func()
 	mailEnqueue                 func(MailSendTask) error
 	clearBalanceWarningCooldown func(context.Context, int64, int64) error
 	tzLoc                       *time.Location
@@ -414,8 +412,8 @@ func (s *Service) SetStatsRawSpan(retentionDays int) {
 	s.statsRawRetentionDays = 0
 }
 
-// SetMailEnqueue 注入邮件入队函数（D-W1异步化：svc 构造后回填 mailW.Enqueue——
-// 循环依赖先例 SetLocalDispatcher；未注入 → SendRegisterCode 退化为 ErrMailNotConfigured）。
+// SetMailEnqueue 注入邮件入队函数（D-W1异步化：mailW 由 svc 构造、构造后回填
+// Enqueue——Set* 事后回填惯例；未注入 → SendRegisterCode 退化为 ErrMailNotConfigured）。
 func (s *Service) SetMailEnqueue(fn func(MailSendTask) error) { s.mailEnqueue = fn }
 
 // SetEmailCodeStore 注入验证码存储（spec 2026-08-25-emailcode-redis-migration §2.2）：
@@ -428,13 +426,6 @@ func (s *Service) SetEmailCodeStore(store EmailCodeStore) {
 	}
 	s.emailCodes = store
 }
-
-// SetLocalDispatcher 注入本地变更分发器（#36 本地实例即时重算）：main 装配序
-// 上 dispatcher 需要 svc、svc 需要 dispatcher（本地分发）——构造环，svc
-// 构造完成后回填。
-// 未注入 = 单实例/测试：settings 变更不做本地 scope 分发（预算重算由 60s
-// auth-sync / 下次变更兜底收敛，单实例无多实例分摊语义）。
-func (s *Service) SetLocalDispatcher(d notify.Dispatcher) { s.local = d }
 
 // publish 发布一条 NOTIFY 变更（#14 T2）：与现有 inv.* 调用点并排，DB 写成功
 // 后调用。失败忽略——NOTIFY 是事件提示，丢一条由 60s 周期兜底收敛（Publisher
