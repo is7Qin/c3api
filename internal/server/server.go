@@ -89,14 +89,21 @@ func NewServer(opts Options) *Server {
 	r.Group(func(r chi.Router) {
 		r.Use(inflightLimiter(opts.MaxInflight, &s.inflight))
 		if opts.AIHandler != nil {
-			r.Mount("/", opts.AIHandler)
+			// AI 面路由全部位于 /v1/*（proxy.AIRouter）。必须用 Handle 静态前缀
+			// 挂载而非 Mount("/", …)：Mount("/") 注册 /* 通配吞掉一切未匹配路径，
+			// SPA 深链（/app、/user）与任意非 API 路径会误入 AI 组——D3：冷启动
+			// 未发布计划时经 planReadyGate 变 503（控制台不可达）、计划就绪后落
+			// AI 子路由默认 404；且 planReadyGate 包装后不再是 *chi.Mux，chi 的
+			// NotFound 子路由传播（updateSubRoutes 的 Routes 断言）失效，根 SPA
+			// fallback 永远不可达。
+			r.Handle("/v1/*", opts.AIHandler)
 		}
 	})
 
 	// 静态资源 + SPA fallback：必须在 admin/AI/healthz 之后注册。
-	// 说明：chi 的 NotFound() 会向已 Mount 的子路由传播（updateSubRoutes），
-	// 因此这里在 Mount("/", AIHandler) 之后设置 NotFound，AI 路由的未匹配
-	// 路径会进入同一 fallback；/api/admin/* 经 Handle 注册不受影响。
+	// AI 面无通配挂载（见上），未匹配路径到达本层 NotFound：未知 API（/api/*
+	// 除 admin/user 外）直接 404，其余路径仅对浏览器导航（Accept: text/html）
+	// 回 index.html；/v1/*、/assets/*、/favicon.svg 由各自静态路由吸收。
 	if opts.WebFS != nil {
 		web := webFSNoDirs{fs: opts.WebFS} // 目录请求 → 404（不渲染 HTML 目录列表）
 		r.Handle("/assets/*", http.FileServerFS(web))
