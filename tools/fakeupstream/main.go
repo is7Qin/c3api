@@ -82,21 +82,7 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		fl := w.(http.Flusher)
-		for i := 0; i < bodyChunks(body, *chunks); i++ {
-			chunk := map[string]any{
-				"id": "c1", "object": "chat.completion.chunk",
-				"choices": []map[string]any{{"delta": map[string]any{"content": "x"}, "index": 0}},
-			}
-			if i == bodyChunks(body, *chunks)-1 {
-				chunk["usage"] = map[string]any{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
-			}
-			data, _ := json.Marshal(chunk)
-			fmt.Fprintf(w, "data: %s\n\n", data)
-			fl.Flush()
-			time.Sleep(*latency)
-		}
-		fmt.Fprint(w, "data: [DONE]\n\n")
-		fl.Flush()
+		writeChatStream(w, fl, *latency, bodyChunks(body, *chunks))
 	})
 
 	// openai responses 格式（Responses API）：非流式 JSON + 流式 SSE
@@ -131,8 +117,8 @@ func main() {
 			fl.Flush()
 		}
 		for i := 0; i < bodyChunks(body, *chunks); i++ {
-			writeData(map[string]any{"type": "response.output_text.delta", "delta": "x"})
 			time.Sleep(*latency)
+			writeData(map[string]any{"type": "response.output_text.delta", "delta": "x"})
 		}
 		writeData(map[string]any{
 			"type": "response.completed",
@@ -179,6 +165,8 @@ func main() {
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			fl.Flush()
 		}
+		// 首事件同样限速（TTFB 现实化，缺陷 C 同因）。
+		time.Sleep(*latency)
 		writeAnthropic("message_start", map[string]any{
 			"type": "message_start",
 			"message": map[string]any{
@@ -193,11 +181,11 @@ func main() {
 			"content_block": map[string]any{"type": "text", "text": ""},
 		})
 		for i := 0; i < bodyChunks(body, *chunks); i++ {
+			time.Sleep(*latency)
 			writeAnthropic("content_block_delta", map[string]any{
 				"type": "content_block_delta", "index": 0,
 				"delta": map[string]any{"type": "text_delta", "text": "x"},
 			})
-			time.Sleep(*latency)
 		}
 		writeAnthropic("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
 		writeAnthropic("message_delta", map[string]any{
@@ -216,6 +204,28 @@ func main() {
 	log.Printf("fake upstream on %s (chunks=%d latency=%s fail429=%v fail500=%v fail400=%v)",
 		*addr, *chunks, *latency, f429, f500, f400)
 	log.Fatal(http.ListenAndServe(*addr, nil))
+}
+
+// writeChatStream chat 流式 SSE：n 个 chunk（末块带 usage）+ [DONE] 终帧。
+// 逐帧按 latency 限速——限速在写出前（含首帧）：首帧延迟即上游 TTFB，生产
+// TTFT 按此采集；写后限速会使首帧恒 ~0ms，经毫秒截断 + log(1)=0 后 durable
+// TTFT 和恒零、frontier 全员谎报 1ms（缺陷 C）。
+func writeChatStream(w http.ResponseWriter, fl http.Flusher, latency time.Duration, n int) {
+	for i := 0; i < n; i++ {
+		time.Sleep(latency)
+		chunk := map[string]any{
+			"id": "c1", "object": "chat.completion.chunk",
+			"choices": []map[string]any{{"delta": map[string]any{"content": "x"}, "index": 0}},
+		}
+		if i == n-1 {
+			chunk["usage"] = map[string]any{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+		}
+		data, _ := json.Marshal(chunk)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		fl.Flush()
+	}
+	fmt.Fprint(w, "data: [DONE]\n\n")
+	fl.Flush()
 }
 
 func modelsHandler(w http.ResponseWriter, r *http.Request) {
