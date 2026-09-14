@@ -891,7 +891,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 `throttle` 与 `fail_account` 互斥（一条规则只出一个健康动作）。原始 429/5xx 事件本身**不直接**改变健康——只有命中规则的 `then` 才产生 `throttle`/`fail_account`（种子规则是无窗口条件的单 kind 匹配，单事件即命中；自定义规则可叠加窗口阈值）；质量统计即时吸收每次 attempt 结果，两者互不重复记账。
 
-种子规则（规则表为空时引擎重载自动写入，共 5 条）：`kind=429` → retry_after 瞬时节流（上游 Reset 头优先，缺失回落 30s）+ 文案 "rate limited"（码透传 429，priority 10）、`kind=4xx + http_status=400` → 全透传（priority 15）、`kind=5xx + http_status=503 + error_message_contains="overload"` → 全透传不惩罚（priority 16）、`kind=5xx` → 10m 摘除 + 502/"Upstream request failed"（priority 20）、`kind=network` → 5s 摘除 + 502/"Upstream request failed"（连接级独立冷却，priority 25）。**无 ok 恢复种子**：健康恢复的唯一自动路径是 RuntimeHealth 探针（RETRY_AFTER/OPEN 到期 → PROBING 单 permit 探针 → 探测成功 READY），成功事件不驱动状态机。删除全部规则后，下次引擎重载（任意规则 CRUD 或重启）会自动重新播种；播种仅看规则表**为空**——全部禁用（行仍在）不触发播种，引擎以零规则运行。
+种子规则（规则表为空时引擎重载自动写入，共 5 条）：`kind=429` → retry_after 瞬时节流（上游 Reset 头优先，缺失回落 30s）+ 文案 "rate limited"（码透传 429，priority 10）、`kind=4xx + http_status=400` → 全透传（priority 15）、`kind=5xx + http_status=503 + error_message_contains="overload"` → 全透传不惩罚（priority 16）、`kind=5xx` → 10m 摘除 + 502/"Upstream request failed"（priority 20）、`kind=network` → 5s 摘除 + 502/"Upstream request failed"（连接级独立冷却，priority 25）。**无 ok 恢复种子**：健康恢复的唯一自动路径是 RuntimeHealth 探针——OPEN/RETRY_AFTER 窗口内不探测（跑满 TTL，到期按 Sync 保留规则回归：多数直接回 READY 交还真实流量，保留转换才进 PROBING）；探针只服务 PROBING 条目（recover 生命周期 SetProbing + 保留转换），单 permit、两次成功 READY。api_key 族无合成探测面（/v1/models 与流量无关，已删除——PROBING 视为通过，恢复由时间窗+真实流量判定），codex 族走 SDK usage 快照。成功事件不驱动状态机。删除全部规则后，下次引擎重载（任意规则 CRUD 或重启）会自动重新播种；播种仅看规则表**为空**——全部禁用（行仍在）不触发播种，引擎以零规则运行。
 
 ### 事件模型与匹配语义
 

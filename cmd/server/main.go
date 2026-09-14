@@ -450,9 +450,10 @@ func main() {
 	// 真实健康 probe 回填（blocker：构造期曾传 nil probe——所有 PROBING 记录
 	// 30s TTL 后恒失败，恢复流程永远到不了 READY）。探测权威 = scheduler 选号
 	// 快照（与选号门同一视图，revision fence fail-closed）；codex 凭据走 SDK
-	// 适配器 usage 快照路径（fatal 权威保持），api_key 族 GET {base}/v1/models
-	//（凭据头按格式族派生）。超时同上游请求预算。必须在 Start 前回填。
-	runtimeHealth.SetProbeFn(newHealthProber(sched.ProbeAccount, codexAdapter, hc, cfg.Proxy.UpstreamTimeout))
+	// 适配器 usage 快照路径（fatal 权威保持）；api_key 族无合成探测面（owner
+	// 裁决：/v1/models 与流量无关，已删除——探测视为通过，恢复由时间窗+真实
+	// 流量判定）。超时同上游请求预算。必须在 Start 前回填。
+	runtimeHealth.SetProbeFn(newHealthProber(sched.ProbeAccount, codexAdapter, cfg.Proxy.UpstreamTimeout))
 	px.SetCodex(codexAdapter)
 	// codex 额度快照装配：svc.AccountUsage → sdkbridge.GetUsageSnapshot
 	//（TTL 缓存/有界并发/失败冷却全在适配层——service 纯编排零基础设施）。
