@@ -192,3 +192,30 @@ func TestPGAccountBatchAndImport(t *testing.T) {
 	got, _ := repos.Accounts.GetAccount(ctx, a1.ID)
 	require.Nil(t, got.CacheDomain)
 }
+
+// TestPGCreateAccountWithDomainStaysEnabled 是缺陷 A 的回归：创建即带
+// cache_domain（或采购倍率）的账号必须与无域创建一致默认启用——创建面没有
+// Enabled 字段（fenced 端点独占），repo 不得以零值 Enabled=false 为由在带
+// 生命周期字段时显式落 disabled，否则账号静默永不进入路由候选（6/6 黑洞）。
+func TestPGCreateAccountWithDomainStaysEnabled(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	dom := "dx.example"
+	created, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-domain", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, CacheDomain: &dom})
+	require.NoError(t, err)
+	require.True(t, created.Enabled, "创建即带域必须默认启用（回显）")
+	got, err := repos.Accounts.GetAccount(ctx, created.ID)
+	require.NoError(t, err)
+	require.True(t, got.Enabled, "创建即带域必须默认启用（落库）")
+	require.NotNil(t, got.CacheDomain)
+	require.Equal(t, dom, *got.CacheDomain)
+
+	costly, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, UpstreamCostMultiplierBp: 25000})
+	require.NoError(t, err)
+	require.True(t, costly.Enabled, "创建即带采购倍率必须默认启用（回显）")
+	gotCost, err := repos.Accounts.GetAccount(ctx, costly.ID)
+	require.NoError(t, err)
+	require.True(t, gotCost.Enabled, "创建即带采购倍率必须默认启用（落库）")
+	require.Equal(t, 25000, gotCost.UpstreamCostMultiplierBp)
+}
