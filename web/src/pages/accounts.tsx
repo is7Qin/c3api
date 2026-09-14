@@ -197,6 +197,12 @@ interface FormState {
   upstream_key: string
   max_concurrency: string
   group_ids: number[]
+  // 生命周期表单项（创建/编辑对话框直配；提交时链式 fenced 写）：
+  // cost_multiplier 字符串形态（默认 '1' = ×1），提交前经 parseMultiplier
+  // 校验（0–10，bp 4 位小数）；cache_domain 空串 = 账号私有域（创建随
+  // POST body 直带，编辑走 fenced /cache-domain）。
+  cost_multiplier: string
+  cache_domain: string
   // codex 凭据（按模板类型分流：codex-oauth → codex_oauth_* 组；codex-pat →
   // codex_pat_key；与 account_ext 字段对应——保存时链式写入扩展配置）
   codex_oauth_token: string
@@ -213,6 +219,8 @@ const emptyForm = (): FormState => ({
   upstream_key: '',
   max_concurrency: '8',
   group_ids: [],
+  cost_multiplier: '1',
+  cache_domain: '',
   codex_oauth_token: '',
   codex_oauth_refresh_token: '',
   codex_oauth_expires_at: '',
@@ -232,7 +240,10 @@ function toForm(a: AccountView): FormState {
     max_concurrency: String(a.MaxConcurrency ?? 8),
     // 编辑回显不走账号列表（I-1 方案 B）：对话框挂载时经 getAccountGroups
     // 拉取，加载完成前禁用保存（防误发 [] 清空）。codex 凭据经 ext 拉取回显。
+    // 生命周期回显：倍率缺失按 ×1，缓存域缺失（null）按空串（= 私有域）。
     group_ids: [],
+    cost_multiplier: String(a.UpstreamCostMultiplier ?? 1),
+    cache_domain: a.CacheDomain ?? '',
     codex_oauth_token: '',
     codex_oauth_refresh_token: '',
     codex_oauth_expires_at: '',
@@ -244,10 +255,9 @@ function toForm(a: AccountView): FormState {
 // PUT 全量替换：重建 AccountCreate（只带契约字段，不带运行时字段）。
 // 编辑态总是发送 group_ids（含空数组 = 清空）；创建态仅已选时发送
 // （缺省 = 无分组，语义与 null 一致）。
-// 生命周期字段（enabled/采购倍率/缓存域/失效态）不在 PUT 写面——后端以
-// 当前值覆盖，变更只走 fenced 端点；cache_domain 刻意不进创建表单：repo 对
-// 「创建带生命周期字段且未显式 enabled」的账号落 enabled=false（fail-closed），
-// 缓存域统一走 fenced /cache-domain。
+// 生命周期写面分离：倍率只走 fenced /cost-multiplier（创建/编辑皆链式补写）；
+// cache_domain 创建随 POST body 直带（非空才带，空 = 私有域缺省），编辑走
+// fenced /cache-domain——PUT 本体不带（后端以当前值保留）。
 function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): AccountCreate {
   const body: AccountCreate = {
     name: f.name.trim(),
@@ -258,6 +268,10 @@ function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): A
     max_concurrency: f.max_concurrency === '' ? 8 : Number(f.max_concurrency),
   }
   if (current || f.group_ids.length > 0) body.group_ids = f.group_ids
+  if (!current) {
+    const d = f.cache_domain.trim()
+    if (d) body.cache_domain = d
+  }
   return body
 }
 
@@ -676,8 +690,21 @@ export default function Accounts() {
 
   // 表单直填凭据：codex 类型账号本体（upstream_key 可空）+ 链式 PUT account_ext
   // （codex_oauth_* 列组 / codex_pat_key 按模板类型分流；与「扩展配置」弹窗共用写路径）。
+  // 生命周期链式写（创建/编辑表单直配倍率与缓存域）：
+  // 创建：POST（cache_domain 非空随 body 直带）→ 仅倍率 ≠ ×1 时 fenced
+  //   PUT /cost-multiplier（revision 取 POST 响应；×0 免费只能走这条腿）；
+  // 编辑：PUT 本体 → 仅变化项 fenced（倍率先、缓存域后），每腿用上一响应
+  //   返回的 fresh revision 链式 CAS。
+  // 返回 null = 全成功；返回非空字符串 = 部分成功（已精确定位失败腿，前腿
+  // 已落盘）——onSuccess 关窗 + error toast，不伪装全成功；主干失败仍 throw
+  // 走内联错误展示（对话框保持打开可重试）。
   const save = useMutation({
-    mutationFn: async (f: FormState) => {
+    mutationFn: async (f: FormState): Promise<string | null> => {
+      const mult = parseMultiplier(f.cost_multiplier)
+      if (mult === null) throw new Error(t('accounts.multiplier.invalid'))
+      const domTrim = f.cache_domain.trim()
+      if (domTrim !== '' && !validCacheDomain(domTrim)) throw new Error(t('accounts.cacheDomain.invalid'))
+      const newDom = domTrim === '' ? null : domTrim
       // 计算有效凭据：未改时以嵌入 Template 为准，变更时查替换模板，未解析时禁用
       const isUnchangedForF = !!(editing && String(editing.TemplateID) === String(f.template_id))
       const tplForF = isUnchangedForF ? null : templates.find(p => String(p.ID) === String(f.template_id))
@@ -687,11 +714,11 @@ export default function Accounts() {
       const unresolved = !!f.template_id && effCt == null
       const isCodexForBody = isCodexCt(effCt) || unresolved
       const ct = effCt
-      // structurally force base_url null for Codex/unresolved even if form still stale
-      const bodyForCreate = toBody(f, null, isCodexForBody)
-      const id = editing?.ID ?? (await api.createAccount(bodyForCreate)).ID
-      if (editing) await api.updateAccount(id!, toBody(f, editing, isCodexForBody))
-      if (id && isCodexCt(ct)) {
+      // fenced 腿失败明细：409 走 conflict 文案（列表已在 onSuccess 刷新），其余透后端原文
+      const legDetail = (e: unknown) =>
+        e instanceof ApiError && e.status === 409 ? t('accounts.conflict') : ((e as Error)?.message ?? String(e))
+      const saveCodexExt = async (id: number) => {
+        if (!(id && isCodexCt(ct))) return
         const cur = extEcho.data
         const extBody: AccountExt = {
           account_id: id,
@@ -715,11 +742,64 @@ export default function Accounts() {
         }
         await api.putAccountExt(id, extBody)
       }
+      if (!editing) {
+        // 创建：POST（cache_domain 非空已随 body）→ 倍率 ≠ ×1 才补 fenced 腿
+        // structurally force base_url null for Codex/unresolved even if form still stale
+        const created = await api.createAccount(toBody(f, null, isCodexForBody))
+        let partial: string | null = null
+        if (mult !== 1) {
+          try {
+            await api.updateAccountCostMultiplier(created.ID!, {
+              multiplier: mult,
+              expected_revision: created.LifecycleRevision ?? 0,
+            })
+          } catch (e) {
+            partial = t('accounts.createMultFailed', { message: legDetail(e) })
+          }
+        }
+        await saveCodexExt(created.ID!)
+        return partial
+      }
+      // 编辑：PUT 本体（生命周期字段后端保留当前值）→ 仅变化项 fenced，
+      // 倍率先、缓存域后，每腿用上一响应的 fresh revision 链式 CAS
+      const id = editing.ID!
+      const updated = await api.updateAccount(id, toBody(f, editing, isCodexForBody))
+      let revision = updated.LifecycleRevision
+      const normMult = (v?: number | null) => Math.round((v ?? 1) * 10000) / 10000
+      let multDone = false
+      if (mult !== normMult(editing.UpstreamCostMultiplier)) {
+        try {
+          const after = await api.updateAccountCostMultiplier(id, {
+            multiplier: mult,
+            expected_revision: revision ?? 0,
+          })
+          revision = after.LifecycleRevision ?? revision
+          multDone = true
+        } catch (e) {
+          return t('accounts.editMultFailed', { message: legDetail(e) })
+        }
+      }
+      if (newDom !== (editing.CacheDomain ?? null)) {
+        try {
+          await api.updateAccountCacheDomain(id, {
+            cache_domain: newDom,
+            expected_revision: revision ?? 0,
+          })
+        } catch (e) {
+          return t('accounts.editDomainFailed', {
+            multDone: multDone ? t('accounts.editDomainMultDone') : '',
+            message: legDetail(e),
+          })
+        }
+      }
+      await saveCodexExt(id)
+      return null
     },
-    onSuccess: () => {
+    onSuccess: (partial) => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
       setDialogOpen(false)
-      toast.add({ title: t('accounts.saveSuccess'), type: 'success' })
+      if (partial) toast.add({ title: partial, type: 'error' })
+      else toast.add({ title: t('accounts.saveSuccess'), type: 'success' })
     },
   })
   // —— 生命周期 fenced 动作（CAS：expected_revision = 读到的 LifecycleRevision；
@@ -791,6 +871,9 @@ export default function Accounts() {
     // Use effectiveSelCt (fail-closed) so delayed template query does not bypass validation
     if (!form.name.trim() || !form.template_id) return
     if (isSelUnresolved) return // fail-closed: do not submit while unresolved
+    if (parseMultiplier(form.cost_multiplier) === null) return
+    const domTrim = form.cache_domain.trim()
+    if (domTrim !== '' && !validCacheDomain(domTrim)) return
     const ct = effectiveSelCt
     if (ct === 'codex-oauth' && !form.codex_oauth_token.trim()) return
     if (ct === 'codex-pat' && !form.codex_pat_key.trim()) return
@@ -1225,13 +1308,42 @@ export default function Accounts() {
                 <p className="text-xs text-muted-foreground">{t('accounts.baseUrlHint')}</p>
               </div>
             )}
-            {/* 表单只带契约字段（name/template/base_url/upstream_key/
-                max_concurrency/group_ids）；生命周期 = enabled/recover fenced 动作。
-                缓存域/倍率统一走列表内 fenced 编辑弹窗（创建带 cache_domain 会触发
-                repo fail-closed 落 enabled=false，不在创建表单暴露）。 */}
+            {/* 生命周期直配（创建/编辑表单）：倍率默认 ×1，缓存域留空 =
+                账号私有域。提交时链式 fenced 写（创建：cache_domain 随 POST，
+                倍率 ≠ ×1 补一腿；编辑：仅变化项，倍率先、域后）；列表行内
+                fenced 弹窗保留（点击倍率/缓存域单元格）。 */}
             <div className="space-y-1.5 max-w-40">
               <Label htmlFor="acc-max">{t('accounts.maxLabel')}</Label>
               <Input id="acc-max" type="number" min={1} value={form.max_concurrency} onChange={e => setForm(f => ({ ...f, max_concurrency: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5 max-w-40">
+              <Label htmlFor="acc-form-mult">{t('accounts.multiplier.label')}</Label>
+              <Input
+                id="acc-form-mult"
+                type="number"
+                min={0}
+                max={10}
+                step={0.0001}
+                value={form.cost_multiplier}
+                onChange={e => setForm(f => ({ ...f, cost_multiplier: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">{t('accounts.multiplier.rangeHint')}</p>
+              {form.cost_multiplier.trim() !== '' && parseMultiplier(form.cost_multiplier) === null && (
+                <p className="text-sm text-destructive">{t('accounts.multiplier.invalid')}</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="acc-form-domain">{t('accounts.cacheDomain.label')}</Label>
+              <Input
+                id="acc-form-domain"
+                value={form.cache_domain}
+                placeholder={t('accounts.cacheDomain.placeholder')}
+                onChange={e => setForm(f => ({ ...f, cache_domain: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">{form.cache_domain.trim() === '' ? t('accounts.cacheDomain.currentPrivate') : t('accounts.cacheDomain.currentShared')}</p>
+              {form.cache_domain.trim() !== '' && !validCacheDomain(form.cache_domain.trim()) && (
+                <p className="text-sm text-destructive">{t('accounts.cacheDomain.invalid')}</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label>{t('accounts.groupLabel')}</Label>
@@ -1259,6 +1371,8 @@ export default function Accounts() {
                 !form.name.trim() ||
                 !form.template_id ||
                 isSelUnresolved ||
+                parseMultiplier(form.cost_multiplier) === null ||
+                (form.cache_domain.trim() !== '' && !validCacheDomain(form.cache_domain.trim())) ||
                 (effectiveSelCt === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
                 (effectiveSelCt === 'codex-pat' && !form.codex_pat_key.trim()) ||
                 (!isCodexCt(effectiveSelCt) && form.upstream_key === '') ||
