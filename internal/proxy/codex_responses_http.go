@@ -46,10 +46,7 @@ func codexDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start t
 		accID = sel.AccountID
 		tplID = sel.TemplateID
 	}
-	lat := time.Since(start).Milliseconds()
-	if lat < 0 {
-		lat = 0
-	}
+	lat := max(time.Since(start).Milliseconds(), 0)
 	return AttemptOutcome{
 		ID:                AttemptID(reqID),
 		RouteClassID:      RouteClassID("rc1"),

@@ -23,6 +23,8 @@ type RoutingPlanRoute struct {
 	Explore    ExploreIDs
 	Degraded   []int64
 	Candidates []RoutingPlanCandidate
+	// Incident is the expose-only mark projected from the route decision.
+	Incident RouteIncident
 }
 
 // ExploreIDs is the ops-face projection of explore ordering (IDs only).
@@ -78,6 +80,7 @@ func (s *Scheduler) CurrentRoutingPlan() *RoutingPlan {
 				Total:      rd.Explore.Total, Fallback: fallbackIDs(rd.Explore),
 			},
 			Degraded: compiledIDs(rd.Degraded),
+			Incident: rd.Incident,
 		}
 		route.Candidates = routePlanCandidates(rd, v.static.facts)
 		plan.Routes = append(plan.Routes, route)

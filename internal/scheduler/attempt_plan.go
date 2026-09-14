@@ -135,7 +135,6 @@ func ExploreHash(label, requestID string, userID int64, routeClassID string, gen
 			h ^= uint64(s[i])
 			h *= fnvPrime64
 		}
-		h ^= 0
 		h *= fnvPrime64
 	}
 	writeString(label)
@@ -149,4 +148,13 @@ func ExploreHash(label, requestID string, userID int64, routeClassID string, gen
 
 func exploreHashForPlan(identity AttemptPlanIdentity, ordinal uint8) uint64 {
 	return ExploreHash("explore", identity.RequestID, identity.UserID, identity.RouteClassID, identity.RoutingGeneration, ordinal)
+}
+
+// laneHashForPlan draws the per-request lane decision (charter Task 12:
+// hash(lane)%10000 selects the lane). The "lane" label keeps it an
+// independent draw from the "explore" sample ticket: lane pick and sample
+// pick never couple. Zero-alloc FNV-1a64 over the canonical identity tuple,
+// so all instances decide identically with no seed and no coordination.
+func laneHashForPlan(identity AttemptPlanIdentity) uint64 {
+	return ExploreHash("lane", identity.RequestID, identity.UserID, identity.RouteClassID, identity.RoutingGeneration, 0)
 }

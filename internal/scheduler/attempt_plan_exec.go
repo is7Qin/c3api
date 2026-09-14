@@ -33,6 +33,13 @@ type selectSession struct {
 	maxAttempts uint8
 	sampleIdx   int
 	sampleValid bool
+	// exploreFirst is the per-request lane decision (charter Task 6/12):
+	// true serves the explore sample before Primary, false Primary first.
+	// primaryServed tracks the primary lane inside the walk so the
+	// explore-first chain runs sample → primary → fallback → degraded
+	// exactly once per affinity phase. Stack scalars, zero heap.
+	exploreFirst  bool
+	primaryServed bool
 	walkSeg     uint8
 	walkPos     int
 	affinitySet bool
@@ -84,8 +91,11 @@ func normalizeMaxAttempts(n uint8) uint8 {
 
 // newSelectSession binds an identity to one compiled route: primary order,
 // then the deterministic explore sample followed by the complete fallback
-// tail, then degraded. Stack value, zero heap; no per-request slices/maps;
-// the overflow tail is walked lazily and never truncated.
+// tail, then degraded — unless the compiled exploration share elects
+// explore-first for this request (laneHashForPlan % 10000 < ExploreBP), in
+// which case the sample leads and Primary follows. Stack value, zero heap;
+// no per-request slices/maps; the overflow tail is walked lazily and never
+// truncated.
 func newSelectSession(identity AttemptPlanIdentity, decision *RouteDecision) (selectSession, error) {
 	if decision == nil {
 		return selectSession{}, &InvalidRouteDecisionError{Field: "decision", Index: -1}
@@ -104,6 +114,22 @@ func newSelectSession(identity AttemptPlanIdentity, decision *RouteDecision) (se
 		if idx >= 0 && idx < len(decision.Explore.Ordered) {
 			p.sampleIdx, p.sampleValid = idx, true
 		}
+	}
+	// Steady-state exploration share: one lane draw per request at session
+	// construction (re-rolling per attempt would break the deterministic
+	// failover walk order and the tried[] dedup). No Primary → explore-first
+	// (cold start unchanged — the primary lane is empty either way); no
+	// sample or unset share → primary-first.
+	if p.sampleValid {
+		switch {
+		case len(decision.Primary) == 0 || decision.Explore.ExploreBP >= 10000:
+			p.exploreFirst = true
+		case decision.Explore.ExploreBP > 0:
+			p.exploreFirst = laneHashForPlan(identity)%10000 < uint64(decision.Explore.ExploreBP)
+		}
+	}
+	if p.exploreFirst {
+		p.walkSeg = 1
 	}
 	p.total = len(decision.Primary) + len(decision.Explore.Fallback) + len(decision.Degraded)
 	if p.sampleValid {
@@ -135,13 +161,24 @@ func (p *selectSession) ApplyCacheAffinity(hash uint64) bool {
 	p.affinitySet = true
 	p.affinityHash = hash
 	p.affinPhase = 0
-	p.walkSeg, p.walkPos = 0, 0
+	p.resetWalk()
 	return true
 }
 
 func (p *selectSession) domainOf(id int64) string {
 	d, _ := cacheDomainAccountDomain(p.route.CacheDomainAccounts, id)
 	return d
+}
+
+// resetWalk re-arms the lane walk for an affinity phase: the explore-first
+// lane decision applies per phase, so both the preferred-domain sweep and
+// the spill sweep lead with the same lane.
+func (p *selectSession) resetWalk() {
+	p.walkSeg, p.walkPos = 0, 0
+	p.primaryServed = false
+	if p.exploreFirst {
+		p.walkSeg = 1
+	}
 }
 
 // candidateAt fetches the candidate at one walk position without advancing
@@ -211,7 +248,7 @@ func (p *selectSession) next() (CompiledCandidate, bool) {
 			if p.affinPhase > 1 {
 				return CompiledCandidate{}, false
 			}
-			p.walkSeg, p.walkPos = 0, 0
+			p.resetWalk()
 			continue
 		}
 		var c CompiledCandidate
@@ -222,17 +259,34 @@ func (p *selectSession) next() (CompiledCandidate, bool) {
 		case 0:
 			if p.walkPos < len(p.route.Primary) {
 				if c, ok = p.candidateAt(0, p.walkPos); !ok {
-					p.walkSeg, p.walkPos = 1, 0
+					p.primaryServed = true
+					if p.exploreFirst {
+						p.walkSeg, p.walkPos = 2, 0
+					} else {
+						p.walkSeg, p.walkPos = 1, 0
+					}
 					continue
 				}
 				seg, pos = 0, p.walkPos
 				p.walkPos++
 			} else {
-				p.walkSeg, p.walkPos = 1, 0
+				p.primaryServed = true
+				if p.exploreFirst {
+					p.walkSeg, p.walkPos = 2, 0
+				} else {
+					p.walkSeg, p.walkPos = 1, 0
+				}
 				continue
 			}
 		case 1:
-			p.walkSeg, p.walkPos = 2, 0
+			// Explore-first sessions serve the sample before Primary;
+			// primary-first sessions serve it after. Either way the sample
+			// yields exactly once (tried[] dedups any revisit).
+			if p.exploreFirst && !p.primaryServed {
+				p.walkSeg, p.walkPos = 0, 0
+			} else {
+				p.walkSeg, p.walkPos = 2, 0
+			}
 			if p.sampleValid {
 				if c, ok = p.candidateAt(1, 0); !ok {
 					continue

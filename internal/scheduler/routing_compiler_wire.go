@@ -22,12 +22,18 @@ type routeCompiler interface {
 	Compile(in CompilerInputs) (*DecisionView, error)
 }
 
-// SetCompilerSources injects the dynamic quality/pricing input providers.
-// Assembly-time only (before Start), like SetRuntimeHealth; wiring the real
-// sources (quality sync, pricing snapshot) into these is Task18's job.
-// Arming enables reload-triggered compiles.
-func (s *Scheduler) SetCompilerSources(quality func() map[CandidateQualityKey]CandidateQualityInput, prices func() map[string]domain.ResolvedPrices) {
-	s.qualityFn = quality
+// SetWindowedQualitySource injects the windowed quality provider (settled PG
+// merged with live minute buckets; see quality_provider.go). Assembly-time
+// only (before Start). Arming enables reload-triggered compiles.
+func (s *Scheduler) SetWindowedQualitySource(provider func(time.Time) WindowedQuality) {
+	s.windowedQualityFn = provider
+	s.compileArmed = true
+}
+
+// SetPricesSource injects the dynamic pricing input provider.
+// Assembly-time only (before Start). Arming enables reload-triggered
+// compiles.
+func (s *Scheduler) SetPricesSource(prices func() map[string]domain.ResolvedPrices) {
 	s.pricesFn = prices
 	s.compileArmed = true
 }
@@ -93,6 +99,11 @@ func debounceWait(ctx context.Context, window time.Duration, ch <-chan struct{})
 // EXECUTES off-path; request observation only READS the published view.
 func (s *Scheduler) compileOnce() {
 	scopes, scopeOverflow := s.drainCompileScopes()
+	// now is read ONCE per fire (single-M discipline): the fire-minute stamp
+	// below and the windowed provider share it, so a boundary straddle can
+	// never split one fire across two minutes.
+	fireNow := s.timeNow()
+	s.lastFireMinute.Store(fireNow.UTC().Truncate(time.Minute).Unix())
 	s.publisher.mu.Lock()
 	cur := s.view.Load()
 	pendingSnap := s.publisher.pending
@@ -115,17 +126,26 @@ func (s *Scheduler) compileOnce() {
 	}
 	// v5-§5.1A: compiled-health-free — Health/Latched DELETED from inputs
 	// (and from filterCandidates); serving gates live solely in reserveOnView.
+	// now is the fire's single clock read above, threaded through the
+	// windowed provider (single-M discipline: settled reads, live filter,
+	// incident minute).
+	now := fireNow
 	in := CompilerInputs{
 		Static: target,
 	}
-	if s.qualityFn != nil {
-		in.Quality = s.qualityFn()
+	if s.windowedQualityFn != nil {
+		wq := s.windowedQualityFn(now)
+		in.Quality = wq.Current
+		in.Baseline = wq.Baseline
+		in.EvaluatedMinute = wq.SettledBoundary.Unix()
 	}
+	in.IncidentEval = s.incidentEvaluator()
 	if s.pricesFn != nil {
 		in.Prices = s.pricesFn()
 	}
 	fire := &compileFire{input: in, carry: carry, scopes: scopes, overflow: scopeOverflow}
 	wantFull, fullCause := s.resolveCompileScope(fire)
+	tookFull := wantFull
 	var dv *DecisionView
 	var err error
 	if wantFull {
@@ -145,6 +165,7 @@ func (s *Scheduler) compileOnce() {
 		dv, err = s.compileScopedRoutes(fire)
 		if err == errScopedUnsupported {
 			dv, err = s.compiler.Compile(in)
+			tookFull = true
 			if err == nil {
 				// Full-fidelity path: every route recomputed — the view is whole.
 				if dv != nil {
@@ -166,6 +187,13 @@ func (s *Scheduler) compileOnce() {
 		return
 	}
 	s.compileOKMs.Store(s.timeNow().UnixMilli())
+	// Incident lane bookkeeping: full compiles prune routes gone from static
+	// facts; every successful fire refreshes the expose-only counters.
+	if tookFull && dv != nil {
+		s.incidents.pruneAlive(dv.routes)
+	}
+	s.incidentActive.Store(int64(s.incidents.activeCount()))
+	s.incidentEvalMs.Store(s.timeNow().UnixMilli())
 	b := decisionViewBytes(dv)
 
 	s.publisher.mu.Lock()
@@ -192,6 +220,16 @@ func (s *Scheduler) compileOnce() {
 	if s.publisher.publishWithBase(baseGen, baseStatic, func(*RoutingView) *DecisionView { return dv }) {
 		s.lastDecisionBytes = b
 		s.lastCompiledStatic = target
+	}
+}
+
+// incidentEvaluator builds the lane's per-fire incident closure over the
+// serial-lane-owned tracker. Full and scoped fires share it, so scoped output
+// equals the full-recompile oracle bit-for-bit by construction (frozen
+// evaluations reuse stored state without burning streaks).
+func (s *Scheduler) incidentEvaluator() IncidentEvalFunc {
+	return func(route RouteRef, vote incidentVote, minute int64) RouteIncident {
+		return s.incidents.evaluate(route, vote, minute)
 	}
 }
 
@@ -240,10 +278,27 @@ func decisionViewBytes(d *DecisionView) []byte {
 			writeUvarint(&buf, c)
 		}
 		writeUvarint(&buf, rd.Explore.Total)
+		writeVarint(&buf, int64(rd.Explore.ExploreBP))
 		writeCompiledIndices(&buf, rd.Explore.Ordered, rd.Explore.Fallback)
 		writeCacheDomainPlan(&buf, rd)
+		writeIncident(&buf, rd.Incident)
 	}
 	return buf.Bytes()
+}
+
+// writeIncident encodes the expose-only mark in fixed field order (sorted
+// routes + fixed order = deterministic flips).
+func writeIncident(buf *bytes.Buffer, inc RouteIncident) {
+	if inc.Active {
+		writeUvarint(buf, 1)
+	} else {
+		writeUvarint(buf, 0)
+	}
+	writeStr(buf, inc.Kind)
+	writeUvarint(buf, uint64(inc.Comparable))
+	writeUvarint(buf, uint64(inc.Degraded))
+	writeUvarint(buf, uint64(inc.Domains))
+	writeVarint(buf, inc.EvaluatedMinute)
 }
 
 func writeCacheDomainPlan(buf *bytes.Buffer, decision *RouteDecision) {

@@ -3,9 +3,7 @@ package repository_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/binary"
 	"fmt"
 	"os"
 	"sync"
@@ -63,7 +61,6 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	for _, tbl := range []string{"routing_quality_instance_minute", "routing_flow_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
 		parted, err := repos.Partitions.IsTablePartitioned(ctx, tbl)
@@ -847,16 +844,6 @@ func waitForWriterLock(t *testing.T, pool *pgxpool.Pool, holderPid int, rollupPi
 			t.Fatalf("writer %d did not block holder %d rollup %d", writerPid, holderPid, rollupPid)
 		}
 	}
-}
-
-func advisoryLockKeyForTest(parts ...string) int64 {
-	h := sha256.New()
-	for _, p := range parts {
-		h.Write([]byte(p))
-		h.Write([]byte{0})
-	}
-	sum := h.Sum(nil)
-	return int64(binary.BigEndian.Uint64(sum[:8]))
 }
 
 func poolQueryExists(ctx context.Context, pool *pgxpool.Pool, name string, out *bool) error {

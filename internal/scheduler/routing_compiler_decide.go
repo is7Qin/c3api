@@ -82,6 +82,11 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 	cl.Primary = newPrimary
 	cl.Degraded = newDegraded
 	sort.Slice(cl.Explore, func(i, j int) bool { return cl.Explore[i].AccountID < cl.Explore[j].AccountID })
+	// Steady-state exploration share (charter Task 6): computed from the
+	// window inputs already read — eligible route candidates, unknown
+	// (low-sample, incl. cost-unknown demotees) and serving primaries.
+	// No Primary → 10000bp (all explore); unknown==0 → 100bp; cap 500bp.
+	exploreBP := ExploreBP(len(filtered), len(cl.Explore), len(cl.Primary))
 	weights := make(map[int64]int, len(cl.Explore))
 	var exploreCandidates []ExploreCandidate
 	for _, qc := range cl.Explore {
@@ -205,7 +210,7 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 	decision := &RouteDecision{
 		Format: string(rk.format), RequestedModel: rk.model, RouteClassID: rr.RouteClassID, CallerCategory: caller, OperationTag: string(op),
 		Primary: primary, Degraded: degraded,
-		Explore:             ExploreDecision{Ordered: ordered, Weights: weights, Cumulative: cumulative, Total: total, Fallback: fallback},
+		Explore:             ExploreDecision{Ordered: ordered, Weights: weights, Cumulative: cumulative, Total: total, Fallback: fallback, ExploreBP: exploreBP},
 		CacheDomainRing:     ring,
 		CacheDomainAccounts: accounts,
 	}

@@ -577,15 +577,21 @@ func (p *Proxy) handleSelectError(w http.ResponseWriter, err error) {
 	case errors.Is(err, scheduler.ErrNoAvailable), errors.Is(err, scheduler.ErrAttemptsExhausted):
 		w.Header().Set("Retry-After", "1")
 		writeErr(w, errTooMany)
+	case errors.Is(err, scheduler.ErrPlanNotReady):
+		w.Header().Set("Retry-After", "1")
+		writeErr(w, &formatError{status: http.StatusServiceUnavailable, msg: selectErrorMessage(err)})
 	default:
 		writeErr(w, &formatError{status: statusFor(err), msg: selectErrorMessage(err)})
 	}
 }
 
 // selectErrorMessage 选号失败的错误文案（HTTP 响应与 WS 错误帧共用；statusFor
-// 同款语义：格式不可用/组不存在 → 404，无可用/耗尽可能 → 429，耗尽可能 distinct 于组不存在）。
+// 同款语义：格式不可用/组不存在 → 404，无可用/耗尽可能 → 429，计划未就绪 →
+// 503（编译滞后，可重试），耗尽可能 distinct 于组不存在）。
 func selectErrorMessage(err error) string {
 	switch {
+	case errors.Is(err, scheduler.ErrPlanNotReady):
+		return "routing plan not ready"
 	case errors.Is(err, scheduler.ErrFormatUnavailable):
 		return "no account supports this request format"
 	case errors.Is(err, scheduler.ErrNoAvailable), errors.Is(err, scheduler.ErrAttemptsExhausted):
@@ -604,6 +610,8 @@ const statusClientClosedRequest = 499
 
 func statusFor(err error) int {
 	switch {
+	case errors.Is(err, scheduler.ErrPlanNotReady):
+		return http.StatusServiceUnavailable
 	case errors.Is(err, scheduler.ErrFormatUnavailable), errors.Is(err, scheduler.ErrGroupNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, scheduler.ErrAttemptsExhausted), errors.Is(err, scheduler.ErrNoAvailable):

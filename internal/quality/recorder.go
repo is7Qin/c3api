@@ -23,9 +23,10 @@ const (
 	EstimatedFlowRowBytes    = 512
 	DefaultFlowRowCap        = DefaultPendingCapBytes / EstimatedFlowRowBytes
 	q32Scale                 = 1 << 32
-	retiredBit               = uint64(1) << 63
-	closedBit                = uint64(1) << 63
-	inflightMask             = ^closedBit
+	// topBit is the shared top-bit flag position for both state words
+	// (cell retired, admission closed) — one position, not two layouts.
+	topBit       = uint64(1) << 63
+	inflightMask = ^topBit
 )
 
 var globalRecorderID atomic.Uint64
@@ -85,18 +86,22 @@ func histIndex(ttft int64) int {
 }
 
 func toQ32(ttft int64) int64 {
-	if ttft < 1 {
-		ttft = 1
-	}
-	return int64(math.Log(float64(ttft)) * float64(q32Scale))
+	return int64(logTTFT(ttft) * float64(q32Scale))
 }
 
 func toSqQ32(ttft int64) int64 {
+	lg := logTTFT(ttft)
+	return int64(lg * lg * float64(q32Scale))
+}
+
+// logTTFT is the shared log-TTFT core: ln(max(ttft,1)) — sub-ms inputs clamp
+// to 1, matching the ms schema floor (defect-C note: a zero input would make
+// log(1)*2^32 == 0 exactly, indistinguishable from missing data).
+func logTTFT(ttft int64) float64 {
 	if ttft < 1 {
 		ttft = 1
 	}
-	lg := math.Log(float64(ttft))
-	return int64(lg * lg * float64(q32Scale))
+	return math.Log(float64(ttft))
 }
 
 type Cell struct {
@@ -124,7 +129,7 @@ type Cell struct {
 func (c *Cell) tryPin() bool {
 	for {
 		s := c.state.Load()
-		if s&retiredBit != 0 {
+		if s&topBit != 0 {
 			return false
 		}
 		if c.state.CompareAndSwap(s, s+1) {
@@ -136,30 +141,31 @@ func (c *Cell) tryPin() bool {
 func (c *Cell) retireCAS() bool {
 	for {
 		s := c.state.Load()
-		if s&retiredBit != 0 {
+		if s&topBit != 0 {
 			return false
 		}
-		if c.state.CompareAndSwap(s, s|retiredBit) {
+		if c.state.CompareAndSwap(s, s|topBit) {
 			return true
 		}
 	}
 }
 
 func (c *Cell) inflight() uint64 {
-	return c.state.Load() &^ retiredBit
+	return c.state.Load() &^ topBit
 }
 
 func (c *Cell) isRetired() bool {
-	return c.state.Load()&retiredBit != 0
+	return c.state.Load()&topBit != 0
 }
 
 func (c *Cell) isReclaimable() bool {
-	return c.state.Load() == retiredBit
+	return c.state.Load() == topBit
 }
 
 type QualityMinute struct {
 	minute       int64
 	key          Key
+	gen          uint64 // owning cell generation at row creation (0 = external/hand-made row)
 	attempts     int64
 	successes    int64
 	err429       int64
@@ -183,6 +189,8 @@ func NewQualityMinute(minute int64, key Key) *QualityMinute {
 }
 func (q *QualityMinute) Minute() int64                { return q.minute }
 func (q *QualityMinute) Key() Key                     { return q.key }
+func (q *QualityMinute) Gen() uint64                  { return q.gen }
+func (q *QualityMinute) SetGen(g uint64)              { q.gen = g }
 func (q *QualityMinute) IdentityVersion() int16       { return q.key.IdentityVersion }
 func (q *QualityMinute) RouteClassID() [32]byte       { return q.key.RouteClassID }
 func (q *QualityMinute) QualityClassID() [32]byte     { return q.key.QualityClassID }
@@ -354,6 +362,12 @@ type Recorder struct {
 	flowOverflow         atomic.Int64
 	minuteOverflow       atomic.Int64
 	pendingQuality       map[int64]map[Key]*QualityMinute
+	// emitted tracks per-key cumulative PG-flushed totals for the live seam
+	// (UnflushedMinutes): the sync worker reports each successfully persisted
+	// absolute increment via MarkEmitted, so the current partial minute is
+	// cell totals minus already-emitted rows. Gen-scoped (see live_window.go);
+	// pruned to active keys on every UnflushedMinutes call.
+	emitted map[Key]emittedEntry
 	// pendingFlow 已迁入 FlowOwner（async-routing-quality-telemetry）：跨请求
 	// flow 累计器、同分钟身份归并与提交流水线的唯一 state owner 是 owner，
 	// Recorder 只保留 quality 面。flowOverflow/minuteOverflow 仍是 lane 级
@@ -380,6 +394,7 @@ func NewRecorder(effectiveMaxInflight int64) (*Recorder, error) {
 		retired:              make([]*Cell, 0),
 		retiredIndex:         make(map[Key]int),
 		pendingQuality:       make(map[int64]map[Key]*QualityMinute),
+		emitted:              make(map[Key]emittedEntry),
 		retiredCap:           DefaultRetiredCap,
 		pendingCapBytes:      DefaultPendingCapBytes,
 		minuteCap:            DefaultMinuteBucketsCap,
@@ -396,7 +411,7 @@ func (r *Recorder) FlowOwner() *FlowOwner { return r.flow }
 
 func (r *Recorder) EffectiveMaxInflight() int64 { return r.effectiveMaxInflight }
 
-func (r *Recorder) isClosed() bool { return r.admission.Load()&closedBit != 0 }
+func (r *Recorder) isClosed() bool { return r.admission.Load()&topBit != 0 }
 
 // finalized is the lock-free fence: closed admission or a stored final
 // snapshot rejects every further enqueue/submit.
@@ -405,7 +420,7 @@ func (r *Recorder) finalized() bool { return r.isClosed() || r.finalSnapshot.Loa
 func (r *Recorder) tryIncAdmission() bool {
 	for {
 		a := r.admission.Load()
-		if a&closedBit != 0 {
+		if a&topBit != 0 {
 			return false
 		}
 		inflight := a & inflightMask
@@ -420,7 +435,7 @@ func (r *Recorder) tryIncAdmission() bool {
 
 func (r *Recorder) decAdmissionAndMaybeSignal() {
 	newA := r.admission.Add(^uint64(0))
-	if newA&closedBit != 0 && newA&inflightMask == 0 {
+	if newA&topBit != 0 && newA&inflightMask == 0 {
 		r.mu.Lock()
 		if r.zeroCh != nil {
 			close(r.zeroCh)
@@ -669,6 +684,7 @@ func (r *Recorder) convergeIfReclaimableLocked(c *Cell) {
 	}
 	minute := r.now().UTC().Truncate(time.Minute).Unix()
 	qm := NewQualityMinute(minute, c.key)
+	qm.gen = c.gen
 	qm.attempts = c.attempts.Load()
 	qm.successes = c.successes.Load()
 	qm.err429 = c.errClasses[ErrClass429].Load()
@@ -698,34 +714,6 @@ func (r *Recorder) unpinnedRetiredCountLocked() int {
 		if c.isReclaimable() {
 			n++
 		}
-	}
-	return n
-}
-
-func (r *Recorder) SweepReclaim() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	n := 0
-	for r.unpinnedRetiredCountLocked() > r.retiredCap {
-		idx := -1
-		for i, c := range r.retired {
-			if c.isReclaimable() {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			break
-		}
-		v := r.retired[idx]
-		r.convergeIfReclaimableLocked(v)
-		delete(r.retiredIndex, v.key)
-		r.retired = append(r.retired[:idx], r.retired[idx+1:]...)
-		for i := idx; i < len(r.retired); i++ {
-			r.retiredIndex[r.retired[i].key] = i
-		}
-		r.qualityOverflow.Add(1)
-		n++
 	}
 	return n
 }
@@ -859,33 +847,9 @@ func (r *Recorder) CellStats(key Key) (attempts, successes, ttftCount, tokens, c
 	return cell.attempts.Load(), cell.successes.Load(), cell.ttftCount.Load(), tok, cell.calls.Load(), cell.images.Load(), cell.sumQ32.Load(), cell.sumSq.Load(), h, ec, true
 }
 
-func (r *Recorder) CellStatsDetailed(key Key) (attempts, successes, ttftCount int64, input, output, cacheRead, cacheCreate, calls, images int64, sumQ32, sumSq int64, hist [10]int64, errClasses [4]int64, ok bool) {
-	r.mu.Lock()
-	var cell *Cell
-	if c, ok2 := r.active[key]; ok2 {
-		cell = c
-		ok = true
-	} else if idx, ok2 := r.retiredIndex[key]; ok2 {
-		cell = r.retired[idx]
-		ok = true
-	}
-	r.mu.Unlock()
-	if !ok || cell == nil {
-		return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, [10]int64{}, [4]int64{}, false
-	}
-	var h [10]int64
-	for i := range h {
-		h[i] = cell.hist[i].Load()
-	}
-	var ec [4]int64
-	for i := range ec {
-		ec[i] = cell.errClasses[i].Load()
-	}
-	return cell.attempts.Load(), cell.successes.Load(), cell.ttftCount.Load(), cell.inputTokens.Load(), cell.outputTokens.Load(), cell.cacheRead.Load(), cell.cacheCreate.Load(), cell.calls.Load(), cell.images.Load(), cell.sumQ32.Load(), cell.sumSq.Load(), h, ec, true
-}
-
 func (r *Recorder) cellQualityMinute(c *Cell, minute int64) *QualityMinute {
 	qm := NewQualityMinute(minute, c.key)
+	qm.gen = c.gen
 	qm.attempts = c.attempts.Load()
 	qm.successes = c.successes.Load()
 	qm.err429 = c.errClasses[ErrClass429].Load()
@@ -974,11 +938,6 @@ func (r *Recorder) ensureFinalSnapshot() {
 	r.finalSnapshot.CompareAndSwap(nil, r.buildSnapshot())
 }
 
-func (r *Recorder) ExportSnapshot() (map[int64]map[Key]*QualityMinute, map[int64]*FlowMinute) {
-	snap := r.Snapshot()
-	return snap.Quality, snap.Flow
-}
-
 // LiveCells returns cloned cumulative totals of all active cells (minute=0
 // marker; zero-attempt cells carry no signal and are skipped). Compile-lane
 // read-only accessor: called from the background routing-compile lane under
@@ -1026,10 +985,10 @@ func (r *Recorder) Close() error {
 func (r *Recorder) CloseWithContext(ctx context.Context) error {
 	for {
 		a := r.admission.Load()
-		if a&closedBit != 0 {
+		if a&topBit != 0 {
 			break
 		}
-		if r.admission.CompareAndSwap(a, a|closedBit) {
+		if r.admission.CompareAndSwap(a, a|topBit) {
 			break
 		}
 	}
@@ -1090,7 +1049,7 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 	if obs.IsCancel || obs.IsLocal || obs.IsReservation {
 		c.state.Add(^uint64(0))
 		newA := r.admission.Add(^uint64(0))
-		if newA&closedBit != 0 && newA&inflightMask == 0 {
+		if newA&topBit != 0 && newA&inflightMask == 0 {
 			r.mu.Lock()
 			if r.zeroCh != nil {
 				close(r.zeroCh)
@@ -1155,7 +1114,7 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 	}
 	c.state.Add(^uint64(0))
 	newA := r.admission.Add(^uint64(0))
-	if newA&closedBit != 0 && newA&inflightMask == 0 {
+	if newA&topBit != 0 && newA&inflightMask == 0 {
 		r.mu.Lock()
 		if r.zeroCh != nil {
 			close(r.zeroCh)
@@ -1198,7 +1157,7 @@ func (a *AttemptContext) Cancel() {
 	}
 	a.cell.state.Add(^uint64(0))
 	newA := a.recorder.admission.Add(^uint64(0))
-	if newA&closedBit != 0 && newA&inflightMask == 0 {
+	if newA&topBit != 0 && newA&inflightMask == 0 {
 		a.recorder.mu.Lock()
 		if a.recorder.zeroCh != nil {
 			close(a.recorder.zeroCh)

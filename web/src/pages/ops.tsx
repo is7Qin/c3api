@@ -40,9 +40,25 @@ export default function Ops() {
     queryFn: () => api.getOpsWorkers(),
     refetchInterval: 10_000,
   })
+  // 发布计划事故（与 stats 页共享 ['routing-plan'] 缓存键）：只取 active
+  // incident 行，渲染进编译道既有 incidents 列表，不另起面板。
+  const planQ = useQuery({
+    queryKey: ['routing-plan'],
+    queryFn: () => api.getRoutingPlan(),
+    refetchInterval: 10_000,
+  })
 
   const workers = opsQ.data?.workers ?? []
   const snapshots = opsQ.data?.snapshots ?? []
+  const planIncidents = (planQ.data?.routes ?? [])
+    .filter(r => r.incident?.active)
+    .map(r => ({
+      kind: r.incident.kind,
+      group: r.ref.group_id,
+      model: r.ref.model,
+      degraded: r.incident.degraded,
+      comparable: r.incident.comparable,
+    }))
 
   return (
     <div className="space-y-6">
@@ -57,7 +73,7 @@ export default function Ops() {
               {t('ops.generatedAt', { time: new Date(opsQ.data.generated_at).toLocaleTimeString() })}
             </span>
           )}
-          <Button variant="outline" size="sm" onClick={() => opsQ.refetch()} disabled={opsQ.isFetching}>
+          <Button variant="outline" size="sm" onClick={() => { opsQ.refetch(); planQ.refetch() }} disabled={opsQ.isFetching}>
             <RefreshCw className={`size-4 ${opsQ.isFetching ? 'animate-spin' : ''}`} />
             {t('ops.refresh')}
           </Button>
@@ -88,7 +104,7 @@ export default function Ops() {
         <>
           {/* 路由观测四道（compiler/quality-sync/rollup/runtime-health）：新鲜度 +
               事故计数直出 worker stats 字段，前端零重算；缺道 = 未装配，不渲染占位 */}
-          <RoutingLanes workers={workers} />
+          <RoutingLanes workers={workers} planIncidents={planIncidents} />
 
           {/* Workers：每 worker 一卡，stats 通用 key-value 渲染 */}
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
@@ -208,7 +224,9 @@ const laneNum = (s: Record<string, unknown> | undefined, k: string): number | un
 const laneStr = (s: Record<string, unknown> | undefined, k: string): string =>
   typeof s?.[k] === 'string' ? (s[k] as string) : ''
 
-function RoutingLanes({ workers }: { workers: WorkerEntry[] }) {
+type PlanIncidentBadge = { kind: string; group: number; model: string; degraded: number; comparable: number }
+
+function RoutingLanes({ workers, planIncidents }: { workers: WorkerEntry[]; planIncidents: PlanIncidentBadge[] }) {
   const { t } = useTranslation()
   const byName = (n: string) => {
     const w = workers.find(x => x.name === n)
@@ -224,6 +242,7 @@ function RoutingLanes({ workers }: { workers: WorkerEntry[] }) {
   if (compiler) {
     const okMs = laneNum(compiler, 'last_compile_ok_unix_ms') ?? 0
     const errMs = laneNum(compiler, 'last_compile_err_unix_ms') ?? 0
+    const evalMs = laneNum(compiler, 'last_incident_eval_unix_ms') ?? 0
     lanes.push({
       key: 'compiler', stats: compiler,
       rows: [
@@ -232,8 +251,15 @@ function RoutingLanes({ workers }: { workers: WorkerEntry[] }) {
         [t('ops.routing.lastCompileOk'), fmtStatValue(okMs, 'last_compile_ok_unix_ms')],
         [t('ops.routing.lastCompileErr'), fmtStatValue(errMs, 'last_compile_err_unix_ms')],
         [t('ops.routing.compilePending'), `${laneNum(compiler, 'compile_pending') ?? 0} / ${laneNum(compiler, 'compile_cap') ?? 0}`],
+        [t('ops.routing.activeIncidents'), (laneNum(compiler, 'active_incidents') ?? 0).toLocaleString()],
+        [t('ops.routing.lastIncidentEval'), fmtStatValue(evalMs, 'last_incident_eval_unix_ms')],
       ],
-      incidents: errMs > 0 && errMs >= okMs ? [t('ops.routing.incidentCompileFailed')] : [],
+      incidents: [
+        ...(errMs > 0 && errMs >= okMs ? [t('ops.routing.incidentCompileFailed')] : []),
+        ...planIncidents.map(p => t('ops.routing.planIncident', {
+          kind: p.kind, group: p.group, model: p.model, degraded: p.degraded, comparable: p.comparable,
+        })),
+      ],
     })
   }
   if (quality) {

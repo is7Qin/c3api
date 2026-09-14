@@ -328,3 +328,40 @@ func Test_RoutingPlan_EmptyViewIsNotError(t *testing.T) {
 	require.True(t, strings.Contains(rec.Body.String(), `"generation":0`))
 	require.Contains(t, rec.Body.String(), `"routes":[]`, "空计划 routes 必须是 [] 而非 null")
 }
+
+func Test_RoutingPlan_Incident(t *testing.T) {
+	plan := &scheduler.RoutingPlan{Generation: 7, Routes: []scheduler.RoutingPlanRoute{
+		{
+			Ref:      scheduler.RouteRef{GroupID: 10, Format: "openai-chat", Model: "m", OperationTag: "chat.completions", RouteClassID: "rc-a"},
+			Primary:  []int64{1},
+			Incident: scheduler.RouteIncident{Active: true, Kind: "domain", Comparable: 3, Degraded: 2, Domains: 1, EvaluatedMinute: 1757745600},
+		},
+		{
+			Ref:     scheduler.RouteRef{GroupID: 20, Format: "openai-chat", Model: "m", OperationTag: "chat.completions", RouteClassID: "rc-b"},
+			Primary: []int64{4},
+		},
+	}}
+	h := routingRouter(&routingStore{fakeStore: newFakeStore()}, plan)
+
+	rec := doGET(t, h, "/api/admin/routing/plan")
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var res RoutingPlanResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+	require.Len(t, res.Routes, 2)
+
+	active := res.Routes[0].Incident
+	require.True(t, active.Active)
+	require.Equal(t, "domain", active.Kind)
+	require.Equal(t, 3, active.Comparable)
+	require.Equal(t, 2, active.Degraded)
+	require.Equal(t, 1, active.Domains)
+	require.Equal(t, int64(1757745600), active.EvaluatedMinute)
+
+	quiet := res.Routes[1].Incident
+	require.False(t, quiet.Active)
+	require.Equal(t, "", quiet.Kind)
+	require.Equal(t, 0, quiet.Comparable)
+	require.Equal(t, 0, quiet.Degraded)
+	require.Equal(t, 0, quiet.Domains)
+	require.Equal(t, int64(0), quiet.EvaluatedMinute)
+}

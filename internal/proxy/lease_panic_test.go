@@ -35,9 +35,6 @@ func (m *leaseMemLoader) LoadGroupAccounts(ctx context.Context, id int64) ([]*do
 	defer m.mu.Unlock()
 	return m.byGroup[id], nil
 }
-func (m *leaseMemLoader) UpdateAccountStatus(ctx context.Context, id int64, status domain.AccountStatus, cooldown *time.Time, lastErr *string, weight *int) error {
-	return nil
-}
 
 type leaseFakeRuleStore struct {
 	mu    sync.Mutex

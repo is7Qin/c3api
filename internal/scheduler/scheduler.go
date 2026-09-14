@@ -24,8 +24,15 @@ import (
 )
 
 var (
-	ErrGroupNotFound                = errors.New("scheduler: group not found")
-	ErrFormatUnavailable            = errors.New("scheduler: no account for request format")
+	ErrGroupNotFound     = errors.New("scheduler: group not found")
+	ErrFormatUnavailable = errors.New("scheduler: no account for request format")
+	// ErrPlanNotReady is the compile-lag sentinel: the group exists in the
+	// static view but no compiled decision has published yet (static staged
+	// ahead of the compile lane, e.g. cold start before the first paired
+	// publish). Distinct from ErrFormatUnavailable (genuinely unsupported
+	// format/model — no static bucket, never routable): not-ready retries
+	// after ~1s (503 + Retry-After), unroutable does not (404).
+	ErrPlanNotReady                 = errors.New("scheduler: routing plan not ready")
 	ErrNoAvailable                  = errors.New("scheduler: no available account")
 	ErrMissingCandidateFingerprint  = errors.New("scheduler: candidate fingerprint required")
 	ErrCandidateFingerprintMismatch = errors.New("scheduler: candidate fingerprint mismatch")
@@ -119,7 +126,7 @@ type Scheduler struct {
 	// Compile lane (Task11 wiring): serial background compiler feeding the
 	// single routingPublisher. Request path never touches these.
 	compiler           routeCompiler
-	qualityFn          func() map[CandidateQualityKey]CandidateQualityInput
+	windowedQualityFn  func(time.Time) WindowedQuality
 	pricesFn           func() map[string]domain.ResolvedPrices
 	compileCh          chan struct{}
 	compileArmed       bool
@@ -130,6 +137,7 @@ type Scheduler struct {
 	scopeCh       chan scopedCompileReq                         // compile-lane-owned, fire-owned payloads
 	scopeOverflow atomic.Bool                                   // set on scopeCh drop, consumed per fire
 	lastQuality   map[CandidateQualityKey]CandidateQualityInput // compile-lane-owned dynamic baselines
+	lastBaseline  map[CandidateQualityKey]Counts                // compile-lane-owned incident baseline
 	lastPrices    map[string]domain.ResolvedPrices
 	lastProbe     atomic.Pointer[compileProbeCounts] // tick-lane staleness baseline (refresh-first)
 	// stalenessProbe supplies the O(1) §4 counter tuple for the backstop;
@@ -143,6 +151,19 @@ type Scheduler struct {
 	compileDone  atomic.Pointer[<-chan struct{}]
 	compileOKMs  atomic.Int64
 	compileErrMs atomic.Int64
+	// Incident lane (serial compile lane only; expose-only, never forks
+	// routing): per-route state machine + evaluation counters (atomics for
+	// the Stats cold path; unix-ms, 0 = 从未发生）。
+	incidents      *incidentTracker
+	incidentActive atomic.Int64
+	incidentEvalMs atomic.Int64
+	// lastFireMinute tracks the UTC minute of the last compileOnce fire
+	// (unix, 0 = never). The sync tick fires the lane when the wall minute
+	// advanced without any fire — windowed inputs are a function of M, so a
+	// quiet boundary crossing can newly expose settled minutes with no other
+	// trigger. Conditional (lane-quiet boundary only) + byte-guarded publish:
+	// never an unconditional periodic recompile.
+	lastFireMinute atomic.Int64
 }
 
 // View returns current RoutingView root (single atomic root; structurally shared StaticView+DecisionView).
@@ -181,6 +202,7 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logge
 		compiler:  NewRoutingCompiler(),
 		compileCh: make(chan struct{}, 1),
 		scopeCh:   make(chan scopedCompileReq, scopeChCap),
+		incidents: newIncidentTracker(),
 	}
 	s.publisher = newRoutingPublisher(s)
 	if cfg.StalenessProbe != nil {
@@ -238,8 +260,25 @@ func (s *Scheduler) syncLoop(ctx context.Context) {
 			// only on mismatch). The unconditional reload-on-every-tick
 			// default path is DELETED outright.
 			s.backstopTick(ctx)
+			// Windowed inputs are a function of M: a lane-quiet boundary
+			// crossing can newly expose settled minutes with no other
+			// trigger, so the tick fires the lane then (conditional +
+			// byte-guarded, never periodic-unconditional).
+			s.fireOnMinuteAdvance()
 		}
 	}
+}
+
+// fireOnMinuteAdvance signals the compile lane when the UTC minute advanced
+// since the last compileOnce fire. Busy lanes never trip it (every fire
+// restamps); quiet lanes fire at most once per boundary. Pre-arming it is a
+// no-op via RequestCompile's armed gate.
+func (s *Scheduler) fireOnMinuteAdvance() {
+	m := s.timeNow().UTC().Truncate(time.Minute).Unix()
+	if m <= s.lastFireMinute.Load() {
+		return
+	}
+	s.RequestCompile()
 }
 
 // reload 全量重建快照（启动/定时/InvalidateAll）— single publisher.

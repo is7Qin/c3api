@@ -16,10 +16,7 @@ func chatDispatchedBase(sel *scheduler.Selection, reqID string, reqModel string,
 	if fp == "" {
 		fp = "fp-placeholder"
 	}
-	lat := time.Since(start).Milliseconds()
-	if lat < 0 {
-		lat = 0
-	}
+	lat := max(time.Since(start).Milliseconds(), 0)
 	return AttemptOutcome{
 		ID:                AttemptID(reqID + ":1"),
 		RouteClassID:      "rc1",

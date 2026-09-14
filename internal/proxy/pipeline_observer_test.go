@@ -50,7 +50,7 @@ func TestPipelineObserver_observedPreResponseLeavesCleanupToFailover(t *testing.
 	require.True(t, owns)
 	require.Nil(t, observer.markHealth, "failover classification remains the single MarkResult owner")
 	require.Nil(t, observer.release, "failover retry/finish remains the single lease release owner")
-	outcome := pipelineOutcome(attempt, 429, false, false)
+	outcome := dispatchFailureOutcome(pipelineBase(attempt), 429, false, false)
 	require.NoError(t, observer.Complete(outcome, nil))
 	require.Equal(t, 1, flowCalls)
 	runtime, ok := p.sched.Runtime(sel.AccountID)

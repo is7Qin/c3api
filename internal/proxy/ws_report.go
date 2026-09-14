@@ -21,10 +21,7 @@ func wsCallerCategory(sel *scheduler.Selection) CallerCategory {
 }
 
 func wsDispatchedBase(sel *scheduler.Selection, reqModel string, start time.Time) AttemptOutcome {
-	lat := time.Since(start).Milliseconds()
-	if lat < 0 {
-		lat = 0
-	}
+	lat := max(time.Since(start).Milliseconds(), 0)
 	mapped := sel.Model
 	if mapped == "" {
 		mapped = reqModel
@@ -50,9 +47,6 @@ func wsDispatchedBase(sel *scheduler.Selection, reqModel string, start time.Time
 			rc = RouteClassID("rc-" + sel.CandidateFingerprint)
 		}
 		qc = QualityClassID("qc-" + sel.CandidateFingerprint[:1])
-		if qc == "" {
-			qc = QualityClassID("qc-ws")
-		}
 	}
 	return AttemptOutcome{
 		ID:                AttemptID("attempt-ws-1"),

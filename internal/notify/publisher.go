@@ -72,6 +72,15 @@ type Change struct {
 	Src string `json:"src,omitempty"`
 }
 
+// IsEmpty 空载荷判定：7 个变更位全 false 且 Groups 为空。V/Src 不参与判定——
+// V 恒存在（json 无 omitempty），Src 由 Publisher 发布时自动填充，调用方
+// 构造时均为空。service.publish 用此前置跳过无意义 NOTIFY（评审 I-1：
+// CreateAccount 无 GroupIDs / UpdateAccount 无变更的空载荷统一覆盖）。
+func (c Change) IsEmpty() bool {
+	return !c.Users && !c.Templates && !c.Clients && !c.Multipliers &&
+		!c.Keys && !c.Settings && !c.Rules && len(c.Groups) == 0
+}
+
 // Marshal 序列化 Change（含载荷守卫）：估算 marshal 后长度 > maxPayloadBytes
 // → 丢弃 Groups 并置 Templates=true（降级 sched 全量重载——sched 全量包含
 // 组级重载，语义仍正确）。

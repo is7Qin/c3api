@@ -117,6 +117,16 @@ func diffRouteInputs[K comparable, V any](fresh, last map[K]V, equal func(a, b V
 	return out
 }
 
+// refsForQualityKey maps a (route, fingerprint) quality key to its affected
+// route via the target index (hex→single route). Shared by the current and
+// baseline diffs.
+func refsForQualityKey(k CandidateQualityKey, idx *compileRouteIndex) []RouteRef {
+	if ref, ok := idx.rcRoutes[domain.RouteClassIDHex(k.RouteClassID)]; ok {
+		return []RouteRef{ref}
+	}
+	return nil
+}
+
 // diffCompilerQuality maps fresh-vs-last quality keys to affected routes via
 // the target index. The lane pulls the full maps each fire (as before) and
 // diffs against the snapshot it already holds; quality-sync/pricing producers
@@ -124,19 +134,23 @@ func diffRouteInputs[K comparable, V any](fresh, last map[K]V, equal func(a, b V
 func diffCompilerQuality(fresh, last map[CandidateQualityKey]CandidateQualityInput, idx *compileRouteIndex) map[RouteRef]struct{} {
 	return diffRouteInputs(fresh, last,
 		func(a, b CandidateQualityInput) bool { return a == b },
-		func(k CandidateQualityKey, idx *compileRouteIndex) []RouteRef {
-			if ref, ok := idx.rcRoutes[domain.RouteClassIDHex(k.RouteClassID)]; ok {
-				return []RouteRef{ref}
-			}
-			return nil
-		}, idx)
+		refsForQualityKey, idx)
+}
+
+// diffCompilerBaseline maps fresh-vs-last incident baseline keys to affected
+// routes. Counts hold floats but never NaN (provider conversions are finite
+// and fail-closed), so == is an exact change detector like the quality diff.
+func diffCompilerBaseline(fresh, last map[CandidateQualityKey]Counts, idx *compileRouteIndex) map[RouteRef]struct{} {
+	return diffRouteInputs(fresh, last,
+		func(a, b Counts) bool { return a == b },
+		refsForQualityKey, idx)
 }
 
 // diffCompilerPrices maps fresh-vs-last per-model prices to affected routes.
 // Pointers are dereferenced: every pull births fresh pointers, so == would
 // report phantom changes on every fire.
 func diffCompilerPrices(fresh, last map[string]domain.ResolvedPrices, idx *compileRouteIndex) map[RouteRef]struct{} {
-	return diffRouteInputs(fresh, last, equalResolvedPrices,
+	return diffRouteInputs(fresh, last, EqualResolvedPrices,
 		func(model string, idx *compileRouteIndex) []RouteRef { return idx.modelRoutes[model] }, idx)
 }
 
@@ -147,9 +161,11 @@ func int64PtrEqual(a, b *int64) bool {
 	return *a == *b
 }
 
-// equalResolvedPrices compares resolved prices by value across every price
+// EqualResolvedPrices compares resolved prices by value across every price
 // field the compiler consumes (billing.CostFromResolved inputs + routing).
-func equalResolvedPrices(a, b domain.ResolvedPrices) bool {
+// Single owner of the compiler price surface: service reuses this for its
+// reload change gate instead of a hand-rolled counterpart.
+func EqualResolvedPrices(a, b domain.ResolvedPrices) bool {
 	if a.Mode != b.Mode {
 		return false
 	}
@@ -251,12 +267,17 @@ func (s *Scheduler) resolveCompileScope(f *compileFire) (bool, string) {
 	// copies — producers hand fresh maps per pull), so a fire that wakes for
 	// any reason also picks up dynamic drift in the same pass.
 	qRefs := diffCompilerQuality(f.input.Quality, s.lastQuality, idx)
+	bRefs := diffCompilerBaseline(f.input.Baseline, s.lastBaseline, idx)
 	pRefs := diffCompilerPrices(f.input.Prices, s.lastPrices, idx)
 	s.lastQuality = shallowCopyMap(f.input.Quality)
+	s.lastBaseline = shallowCopyMap(f.input.Baseline)
 	s.lastPrices = shallowCopyMap(f.input.Prices)
 
-	affected := make(map[RouteRef]struct{}, len(qRefs)+len(pRefs)+len(f.scopes))
+	affected := make(map[RouteRef]struct{}, len(qRefs)+len(bRefs)+len(pRefs)+len(f.scopes))
 	for ref := range qRefs {
+		affected[ref] = struct{}{}
+	}
+	for ref := range bRefs {
 		affected[ref] = struct{}{}
 	}
 	for ref := range pRefs {
@@ -316,7 +337,7 @@ func shallowCopyMap[K comparable, V any](in map[K]V) map[K]V {
 // recompute. Only *RoutingCompiler implements it; test doubles take the
 // full-fidelity fallback, preserving their exact legacy behavior.
 type scopedRouteCompiler interface {
-	compileSingleRoute(static *StaticView, gid int64, rk routeKey, op domain.OperationTag, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) (*RouteDecision, error)
+	compileSingleRoute(in CompilerInputs, gid int64, rk routeKey, op domain.OperationTag) (*RouteDecision, error)
 }
 
 // errScopedUnsupported is the defensive seam failure inside
@@ -347,7 +368,7 @@ func (s *Scheduler) compileScopedRoutes(f *compileFire) (*DecisionView, error) {
 	for ref := range f.affected {
 		rk := routeKey{format: domain.RequestFormat(ref.Format), model: ref.Model}
 		op := domain.OperationTag(ref.OperationTag)
-		dec, err := src.compileSingleRoute(f.input.Static, ref.GroupID, rk, op, f.input.Quality, f.input.Prices)
+		dec, err := src.compileSingleRoute(f.input, ref.GroupID, rk, op)
 		if err != nil {
 			return nil, err
 		}

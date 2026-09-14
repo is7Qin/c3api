@@ -484,11 +484,11 @@ func main() {
 		Fetcher:  priceFetcher,
 		Repo:     repos,
 		Settings: svc,
-		// 统一快照：拉取成功后刷新 pricing 快照（price_entries+price_variants）。
-		Reload: func() {
-			svc.ReloadPricing()
-		},
-		Log: log,
+		// 统一快照：拉取成功后刷新 pricing 快照（price_entries+price_variants），
+		// 快照变化同时按需惊动路由编译（同值同步静默——比较在 service 内，
+		// 编译道经 lane-local diff 定作用域）。
+		Reload: svc.ReloadPricingAndNotifyCompiler,
+		Log:    log,
 	})
 	// quality-sync lane（intelligent-routing Task 9）：500ms Redis 当前分钟绝对
 	// 快照发布 + 5s PG quality/flow UPSERT。单实例一个串行 loop（worker.GoLoop
@@ -513,19 +513,25 @@ func main() {
 	// instanceSrc 与 discovery/conc-sync 同源产物（不自造第二套 ID）：跨实例
 	// merge 按 instance_src 区分，同源身份是 merge 正确性的前提。
 	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log)
+	// 缺陷 B 质量面：PG 落库边界成功持久新质量行 → 事件驱动编译（非阻塞、
+	// 下游去抖收敛；空刷/失败静默，无定周全量）。价格面见 pricingSync.Reload。
+	qualitySync.SetOnQualityPersisted(sched.RequestCompile)
+	svc.SetCompileNotifier(sched.RequestCompile)
 	// routing rollup worker：消费 quality-sync 落在 instance 分钟表的脏分钟，经
 	// repository 既有 RollupQuality/RollupFlow 缝滚成 rollup 表（单桶事务、状态
 	// 成功后推进、失败保 dirty 下 tick 重试，见 quality/rollup.go）。routing
 	// 观测读面（flow/frontier）钉死 rollup 表——缺本 lane 生产聚合永远为空。
 	// 请求路径零参与；无内存队列，停机零排空义务（DB 即队列）。
 	routingRollup := quality.NewRollupWorker(repos.Partitions, quality.RollupConfig{}, log)
-	// 路由编译器装配武装（Task18）：quality 源 = quality lane recorder 活体 cell
-	//（编译道后台读，零 DB、请求路径零依赖），价格源 = svc 定价快照基底解析
-	//（缺价模型缺席 → compiler costKnown=false 落 Explore）。装配必须先于
-	// snapReg.ReloadAll（scheduler 首刷 → RequestCompile，armed 才发布编译视图）
-	// 与 wm.StartAll（compileLoop 消费者）；编译失败保留旧视图是编译道契约
-	//（routing_compiler_wire.go），失败/成功新鲜度经 scheduler Stats 上运维面。
-	sched.SetCompilerSources(compilerQualitySource(qualityRecorder), func() map[string]domain.ResolvedPrices {
+	// 路由编译器装配武装（Task18）：quality 源 = M 缓存窗口 provider（settled
+	// PG 分钟 + recorder 未落库活体行合并，基线仅 PG；见 routing_sources.go），
+	// 价格源 = svc 定价快照基底解析（缺价模型缺席 → compiler costKnown=false
+	// 落 Explore）。装配必须先于 snapReg.ReloadAll（scheduler 首刷 →
+	// RequestCompile，armed 才发布编译视图）与 wm.StartAll（compileLoop
+	// 消费者）；编译失败保留旧视图是编译道契约（routing_compiler_wire.go），
+	// 失败/成功新鲜度经 scheduler Stats 上运维面。
+	sched.SetWindowedQualitySource(NewWindowedQualityProvider(qualityRecorder, repos.Partitions))
+	sched.SetPricesSource(func() map[string]domain.ResolvedPrices {
 		return svc.ResolvedPricesByModel(time.Now())
 	})
 	aiRouter := proxy.AIRouter(px)

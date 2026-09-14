@@ -132,7 +132,12 @@ func TestFailoverPlan_AttemptsExhaustedVsNoAvailable(t *testing.T) {
 	s := newTestSchedulerForPlan(t)
 	emptyRoute := scheduler.RouteRefFor(10, string(domain.FormatOpenAIChat), "missing")
 	_, err := s.NewAttemptPlan(scheduler.AttemptPlanIdentity{RequestID: "r1", UserID: 1}, emptyRoute)
-	require.ErrorIs(t, err, scheduler.ErrFormatUnavailable)
+	// Sentinel update (plan-not-ready): this scheduler is static-only (no
+	// compiled decision ever published), so the miss is compile lag, not an
+	// unroutable model — ErrPlanNotReady (503), not ErrFormatUnavailable.
+	// The genuinely-unroutable 404 is locked by scheduler_test.go:456,471,490,534
+	// on compiled schedulers.
+	require.ErrorIs(t, err, scheduler.ErrPlanNotReady)
 	// create empty decision plan directly
 	emptyPlan, err := scheduler.NewAttemptPlan(scheduler.AttemptPlanIdentity{}, &scheduler.RouteDecision{})
 	require.NoError(t, err)

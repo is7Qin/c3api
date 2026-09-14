@@ -156,9 +156,6 @@ func (n noopLoader) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 func (n noopLoader) LoadGroupAccounts(ctx context.Context, id int64) ([]*domain.Account, error) {
 	return n.accs[id], nil
 }
-func (n noopLoader) UpdateAccountStatus(ctx context.Context, id int64, s domain.AccountStatus, c *time.Time, e *string, w *int) error {
-	return nil
-}
 
 // publishTestRoutes 武装 plan-only 选号面（cutover 后 Select 的唯一车道）：
 // 从调度器 Loader 读当前账号集，为每个 (组, 格式) 经 PublishDecisionForTest

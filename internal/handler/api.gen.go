@@ -1424,6 +1424,26 @@ type RoutingPlanExplore struct {
 	Weights map[string]int `json:"weights"`
 }
 
+// RoutingPlanIncident 路由 expose-only 事故标记（detect+surface：不改通道、不节流、不探针；零值 = 无事故）
+type RoutingPlanIncident struct {
+	Active bool `json:"active"`
+
+	// Comparable 可比候选数（current/baseline attempts≥30 且 TTFT≥30）
+	Comparable int `json:"comparable"`
+
+	// Degraded 退化候选数（Wilson 成功区间不重叠）
+	Degraded int `json:"degraded"`
+
+	// Domains 可比去重 failure-domain 数
+	Domains int `json:"domains"`
+
+	// EvaluatedMinute 证据分钟 M（unix 秒；窗口边界可由 M 推导）
+	EvaluatedMinute int64 `json:"evaluated_minute"`
+
+	// Kind "domain"|"model"|"both"（inactive 时为空串）
+	Kind string `json:"kind"`
+}
+
 // RoutingPlanRef 路由全身份（group+format+model+operation+route class）
 type RoutingPlanRef struct {
 	Format       string `json:"format"`
@@ -1451,6 +1471,9 @@ type RoutingPlanRoute struct {
 
 	// Explore explore 决策表（发布序 + 权重 + 累积轮盘；序是语义不重排）
 	Explore RoutingPlanExplore `json:"explore"`
+
+	// Incident 路由 expose-only 事故标记（detect+surface：不改通道、不节流、不探针；零值 = 无事故）
+	Incident RoutingPlanIncident `json:"incident"`
 
 	// Primary primary 候选发布序
 	Primary []int64 `json:"primary"`

@@ -47,21 +47,6 @@ func CanRetry(cat CallerCategory, o AttemptOutcome) bool {
 	return false
 }
 
-func RetryMatrixGolden() map[CallerCategory]map[string]bool {
-	cats := AllCallerCategories()
-	kinds := []string{"not_sent", "429", "5xx", "sent_ambiguous", "response_started", "client_committed", "client_cancel", "malformed"}
-	out := make(map[CallerCategory]map[string]bool)
-	for _, cat := range cats {
-		m := make(map[string]bool)
-		for _, k := range kinds {
-			o := outcomeForKind(k, cat, false)
-			m[k] = CanRetry(cat, o)
-		}
-		out[cat] = m
-	}
-	return out
-}
-
 func outcomeForKind(kind string, cat CallerCategory, hard bool) AttemptOutcome {
 	base := AttemptOutcome{
 		ID:                "attempt-1",
@@ -81,9 +66,6 @@ func outcomeForKind(kind string, cat CallerCategory, hard bool) AttemptOutcome {
 		HardContinuation:  hard,
 		BusinessFrameSent: false,
 		Terminal:          false,
-	}
-	if base.CallerCategory == "" {
-		base.CallerCategory = CallerChat
 	}
 	switch kind {
 	case "not_sent":
@@ -138,6 +120,5 @@ func outcomeForKind(kind string, cat CallerCategory, hard bool) AttemptOutcome {
 		base.IsMalformed = true
 		base.Terminal = true
 	}
-	_ = cat
 	return base
 }

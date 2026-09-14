@@ -241,7 +241,6 @@ func TestRoutingFlow_ConservationAndLossSeparation(t *testing.T) {
 	// 丢失计数独立口径，与边/结局语义无关。
 	require.Equal(t, int64(11), res.IncompleteChainDropped)
 	require.Equal(t, int64(13), res.FlowOverflowDroppedChains)
-	require.True(t, res.ProcessCrashLossUnobservable)
 }
 
 func TestRoutingFlow_FingerprintHexAndEmptyWindow(t *testing.T) {

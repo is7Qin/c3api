@@ -25,7 +25,9 @@ func selectSessionForView(identity AttemptPlanIdentity, route RouteRef, v *Routi
 		return AttemptPlan{}, ErrGroupNotFound
 	}
 	if v.decision == nil {
-		return AttemptPlan{}, ErrFormatUnavailable
+		// Static faces are warm but the compile lane has not published any
+		// decision yet: compile lag, not an unroutable request.
+		return AttemptPlan{}, ErrPlanNotReady
 	}
 	decision, ok := v.decision.routes[normRouteRef(route)]
 	if !ok && route.Model != "" {

@@ -11,7 +11,14 @@ import (
 
 func planCandidates(p AttemptPlan) []int64 {
 	cp := p
+	// Mirror session-construction walk init (explore-first sessions start
+	// at the sample segment): a bare walkSeg=0 reset would skip the sample
+	// for explore-first plans and mis-walk them.
 	cp.walkSeg, cp.walkPos = 0, 0
+	cp.primaryServed = false
+	if cp.exploreFirst && cp.sampleValid {
+		cp.walkSeg = 1
+	}
 	cp.affinPhase = 0
 	if cp.sampleValid {
 		// sampleIdx already set; keep
@@ -35,7 +42,12 @@ func planCandidates(p AttemptPlan) []int64 {
 
 func planLanes(p AttemptPlan) []AttemptLane {
 	cp := p
+	// Same walk-init mirror as planCandidates (see above).
 	cp.walkSeg, cp.walkPos = 0, 0
+	cp.primaryServed = false
+	if cp.exploreFirst && cp.sampleValid {
+		cp.walkSeg = 1
+	}
 	cp.affinPhase = 0
 	out := []AttemptLane{}
 	for {

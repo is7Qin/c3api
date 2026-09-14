@@ -3286,7 +3286,7 @@ components:
         quality_class_id: { type: string }
     RoutingPlanRoute:
       type: object
-      required: [ref, primary, explore, degraded, candidates]
+      required: [ref, primary, explore, degraded, candidates, incident]
       properties:
         ref: { $ref: '#/components/schemas/RoutingPlanRef' }
         primary:
@@ -3302,6 +3302,18 @@ components:
           type: array
           items: { $ref: '#/components/schemas/RoutingPlanCandidate' }
           description: 通道账号并集，升序 AccountID
+        incident: { $ref: '#/components/schemas/RoutingPlanIncident' }
+    RoutingPlanIncident:
+      type: object
+      description: 路由 expose-only 事故标记（detect+surface：不改通道、不节流、不探针；零值 = 无事故）
+      required: [active, kind, comparable, degraded, domains, evaluated_minute]
+      properties:
+        active: { type: boolean }
+        kind: { type: string, description: '"domain"|"model"|"both"（inactive 时为空串）' }
+        comparable: { type: integer, description: 可比候选数（current/baseline attempts≥30 且 TTFT≥30） }
+        degraded: { type: integer, description: 退化候选数（Wilson 成功区间不重叠） }
+        domains: { type: integer, description: 可比去重 failure-domain 数 }
+        evaluated_minute: { type: integer, format: int64, description: 证据分钟 M（unix 秒；窗口边界可由 M 推导） }
     RoutingPlanResponse:
       type: object
       description: 当前发布计划快照（无历史 generation 查询面；空视图 = generation 0 + routes []）
