@@ -121,7 +121,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 	reqModel := params.Model
 	params.Model = sel.Model
 	tpl := tplOf(sel) // 非流式 SDK 路径（GC 削减 P6：流式原始请求路径已免模板对象分配）
-	resp, err := p.clients.ChatCompletion(ctx, tpl, cred, params)
+	resp, err := p.clients.ChatCompletion(ctx, tpl, cred, params, r.Header)
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err
 	}
