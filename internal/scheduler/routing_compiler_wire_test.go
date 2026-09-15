@@ -447,10 +447,10 @@ func TestRoutingCompilerWireHealthLatchExclusion(t *testing.T) {
 	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
 
 	// Account 2 OPEN via live RuntimeHealth view; account 3 latched.
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	hk := compilerHealthKeyFor(accs[1], domain.FormatOpenAIChat, "m")
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
-	s.SetRuntimeHealth(h)
+	s.health = h
 	require.True(t, s.TryLatch(accs[2].ID, compilerLatchKeyFor(accs[2]).Fingerprint, accs[2].LifecycleRevision))
 
 	s.compileOnce()
@@ -481,10 +481,10 @@ func TestRoutingCompilerWireResolvedModelQualityIdentity(t *testing.T) {
 
 	op := operationTagForFormat(string(domain.FormatOpenAIChat))
 	qcResolved, _ := domain.QualityClassID(callerKindForFormat(domain.FormatOpenAIChat), domain.FormatOpenAIChat, "resolved", op)
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	hk := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcResolved), Revision: 1}
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
-	s.SetRuntimeHealth(h)
+	s.health = h
 
 	s.compileOnce()
 	rd, ok := s.View().DecisionView().Routes()[RouteRefFor(10, string(domain.FormatOpenAIChat), "req")]

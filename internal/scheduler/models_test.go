@@ -20,7 +20,7 @@ func TestGroupModels(t *testing.T) {
 	// 快照未加载（构造后未 reload——atomic.Value 零值断言失败）→ false
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), newMemLoader(nil), re, nil)
+	s := New(testCfg(), newMemLoader(nil), re, nil, nil)
 	_, ok := s.GroupModels(10)
 	require.False(t, ok, "快照未加载 → false（同 Select 的 ErrGroupNotFound 守卫）")
 

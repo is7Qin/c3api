@@ -181,14 +181,13 @@ func TestHealthProbeRecoverySurface(t *testing.T) {
 	codex := &controllableCodexProber{}
 	pat := probeTpl(3, credential.TypeCodexPAT, domain.FormatOpenAIResponses)
 	c := newAssemblyRedis(t)
-	h := scheduler.NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil, nil)
-	h.SetProbeFn(newHealthProber(probeLookup(map[int64]*domain.Account{
-		1: probeAcc(1, pat, 5, "http://unused.invalid"),
-	}), codex, time.Second))
+	h := scheduler.NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	require.NoError(t, h.Start(ctx))
+	require.NoError(t, h.Start(ctx, newHealthProber(probeLookup(map[int64]*domain.Account{
+		1: probeAcc(1, pat, 5, "http://unused.invalid"),
+	}), codex, time.Second)))
 	t.Cleanup(func() {
 		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer closeCancel()

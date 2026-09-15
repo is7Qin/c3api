@@ -32,7 +32,7 @@ func healthKeyFor(acc int64, quality string, rev int64) HealthKey {
 func TestHealthViewImmutableAtomicPointer(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
 	_ = mr
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	view1 := h.view.Load()
 	require.NotNil(t, view1)
 	require.Empty(t, view1.entries)
@@ -50,7 +50,7 @@ func TestHealthViewImmutableAtomicPointer(t *testing.T) {
 // TestHealthThrottleAtomicStaleNoPartial verifies Lua throttle/READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL
 func TestHealthThrottleAtomicStaleNoPartial(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 
 	key := healthKeyFor(10, "q1", 5)
 	gen1, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
@@ -99,7 +99,7 @@ func TestHealthThrottleAtomicStaleNoPartial(t *testing.T) {
 // TestHealthReplacement verifies replacement semantics: second throttle on same key overwrites with new generation.
 func TestHealthReplacement(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	key := healthKeyFor(1, "q1", 1)
 	gen1, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestHealthReplacement(t *testing.T) {
 // Uses actual Redis run_id via hook, not test-mutated field.
 func TestHealthRunReset(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	h.runIDHook = func(_ context.Context) (string, error) { return "run-init", nil }
 	key := healthKeyFor(1, "q1", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
@@ -128,7 +128,7 @@ func TestHealthRunReset(t *testing.T) {
 	require.Equal(t, StateOPEN, h.View()[key].State)
 
 	fakeNow := time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC)
-	h2 := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h2 := NewRuntimeHealth(c, "self-a", nil, nil)
 	h2.now = func() time.Time { return fakeNow }
 	h2.runIDHook = func(_ context.Context) (string, error) { return "run-1", nil }
 	shortKey := healthKeyFor(2, "q1", 1)
@@ -170,7 +170,7 @@ func TestHealthRunReset(t *testing.T) {
 // TestHealthSyncGenerationRace verifies Sync INFO run_id + gen-before/records/gen-after detects stale generation with channel barrier.
 func TestHealthSyncGenerationRace(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	key := healthKeyFor(1, "q1", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestHealthSyncGenerationRace(t *testing.T) {
 // TestHealthLockFreeReadUnderBlockedRedis verifies EffectiveState is lock-free read under blocked Redis.
 func TestHealthLockFreeReadUnderBlockedRedis(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	key := healthKeyFor(42, "qual1", 7)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
@@ -218,7 +218,7 @@ func TestHealthLockFreeReadUnderBlockedRedis(t *testing.T) {
 	require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", 7), "view read must succeed even when Redis blocked/closed")
 
 	_, c2 := newHealthTestRedis(t)
-	h2 := NewRuntimeHealth(c2, "self-a", nil, nil, nil)
+	h2 := NewRuntimeHealth(c2, "self-a", nil, nil)
 	_, err = h2.Throttle(context.Background(), healthKeyFor(1, "q", 1), StateOPEN, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h2.Sync(context.Background()))
@@ -252,8 +252,10 @@ func TestHealthProbeOwner(t *testing.T) {
 		mu.Unlock()
 		return nil
 	}
-	hA := NewRuntimeHealth(c, "self-a", func() []string { return members }, probeFn, nil)
-	hB := NewRuntimeHealth(c, "self-b", func() []string { return members }, probeFn, nil)
+	hA := NewRuntimeHealth(c, "self-a", func() []string { return members }, nil)
+	hB := NewRuntimeHealth(c, "self-b", func() []string { return members }, nil)
+	hA.probeFn = probeFn
+	hB.probeFn = probeFn
 
 	k1 := healthKeyFor(1, "q1", 1)
 	k2 := healthKeyFor(2, "q1", 1)
@@ -303,7 +305,8 @@ func TestHealthProbeTwoSuccessReady(t *testing.T) {
 		probeCount.Add(1)
 		return nil
 	}
-	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
+	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
+	h.probeFn = probeFn
 	key := healthKeyFor(5, "q5", 1)
 	_, err := h.Throttle(context.Background(), key, StateProbing, 5*time.Second) // T1：探针只服务 PROBING
 	require.NoError(t, err)
@@ -337,7 +340,8 @@ func TestHealthProbeWindowHonoredNoEarlyProbe(t *testing.T) {
 		probeCount.Add(1)
 		return nil
 	}
-	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
+	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
+	h.probeFn = probeFn
 
 	kOpen := healthKeyFor(1, "q1", 1)
 	kRetry := healthKeyFor(2, "q2", 1)
@@ -366,7 +370,8 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 		}
 		return nil
 	}
-	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
+	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
+	h.probeFn = probeFn
 	key := healthKeyFor(9, "q9", 1)
 	// 探针只服务 PROBING（T1：OPEN/RETRY_AFTER 窗口内不探测）——可探条目以
 	// PROBING 构造。
@@ -409,9 +414,10 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 
 func TestHealthProbeStaleRevisionDoesNotReopen(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, func(_ context.Context, _ HealthKey) error {
+	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
+	h.probeFn = func(_ context.Context, _ HealthKey) error {
 		return ErrProbeStaleRevision
-	}, nil)
+	}
 	key := healthKeyFor(10, "q10", 1)
 	_, err := h.Throttle(context.Background(), key, StateProbing, 100*time.Millisecond) // T1：探针只服务 PROBING
 	require.NoError(t, err)
@@ -459,7 +465,8 @@ func TestHealthProbeOnePermit(t *testing.T) {
 		concurrent.Add(-1)
 		return nil
 	}
-	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, probeFn, nil)
+	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
+	h.probeFn = probeFn
 	k1 := healthKeyFor(1, "q1", 1)
 	k2 := healthKeyFor(2, "q1", 1)
 	// 探针只服务 PROBING（T1 窗口 honored）。
@@ -503,7 +510,7 @@ func TestHealthProbeOnePermit(t *testing.T) {
 // TestHealthEffectiveStateSeverity verifies OPEN>RETRY_AFTER>PROBING>READY and wildcard vs specific.
 func TestHealthEffectiveStateSeverity(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 
 	wild := healthKeyFor(1, "*", 1)
 	specific := healthKeyFor(1, "q1", 1)
@@ -514,7 +521,7 @@ func TestHealthEffectiveStateSeverity(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 1), "wildcard OPEN must be more severe than specific RETRY_AFTER")
 
-	h2 := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h2 := NewRuntimeHealth(c, "self-a", nil, nil)
 	require.NoError(t, c.FlushAll(context.Background()).Err())
 	_, err = h2.Throttle(context.Background(), specific, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
@@ -527,7 +534,7 @@ func TestHealthEffectiveStateSeverity(t *testing.T) {
 // TestHealthKeyRevisionIsolation verifies key includes revision.
 func TestHealthKeyRevisionIsolation(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	k1 := healthKeyFor(1, "q1", 1)
 	k2 := healthKeyFor(1, "q1", 2)
 	_, err := h.Throttle(context.Background(), k1, StateOPEN, 5*time.Second)
@@ -546,7 +553,7 @@ func TestHealthKeyRevisionIsolation(t *testing.T) {
 // With final fence at beforePublish, stale generation after cleanup must freeze old view/curGen.
 func TestHealthCleanupRaceRetainsRecreated(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	key := healthKeyFor(77, "q-race", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
@@ -613,7 +620,7 @@ func TestHealthCleanupRaceRetainsRecreated(t *testing.T) {
 // TestHealthCleanupErrorFreezes verifies cleanup Lua errors propagate and freeze view, never silently delete.
 func TestHealthCleanupErrorFreezes(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	fakeNow := time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC)
 	h.now = func() time.Time { return fakeNow }
 	key := healthKeyFor(88, "q-err", 1)
@@ -643,7 +650,7 @@ func TestHealthCleanupErrorFreezes(t *testing.T) {
 func TestHealthRunResetRepeatedEmptiesDeadlineProbe(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	fakeNow := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	h.now = func() time.Time { return fakeNow }
 	h.runIDHook = func(_ context.Context) (string, error) { return "run-1", nil }
 	keys := []HealthKey{healthKeyFor(10, "q1", 1), healthKeyFor(11, "q1", 1), healthKeyFor(12, "*", 1)}
@@ -714,7 +721,7 @@ func TestHealthRunResetRepeatedEmptiesDeadlineProbe(t *testing.T) {
 // TestHealthCurGenInterleaving verifies curGen atomic interleaving: concurrent Sync increments cause stale detection and frozen view.
 func TestHealthCurGenInterleaving(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	key := healthKeyFor(20, "q-cur", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
@@ -771,7 +778,7 @@ func TestHealthCurGenInterleaving(t *testing.T) {
 	require.Contains(t, h.View(), key)
 
 	// Probe curGen check interleaving: probeTick must read current gen atomically via Load and re-validate with GET
-	h2 := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, func(_ context.Context, _ HealthKey) error { return nil }, nil)
+	h2 := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
 	require.NoError(t, h2.Sync(context.Background()))
 	// Concurrent increments while probe collects curGen
 	var wg sync.WaitGroup
@@ -803,7 +810,7 @@ func TestHealthCurGenInterleaving(t *testing.T) {
 func TestHealthMalformedGenerationStrict(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	fakeNow := time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	h.now = func() time.Time { return fakeNow }
 	key := healthKeyFor(30, "q-mal", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
@@ -828,7 +835,7 @@ func TestHealthMalformedGenerationStrict(t *testing.T) {
 	require.Equal(t, int64(2), genReset)
 
 	// record generation malformed via barrier injected clock
-	h2 := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h2 := NewRuntimeHealth(c, "self-a", nil, nil)
 	h2.now = func() time.Time { return fakeNow }
 	k2 := healthKeyFor(31, "q-rec", 1)
 	_, err = h2.Throttle(context.Background(), k2, StateOPEN, 5*time.Second)
@@ -847,7 +854,7 @@ func TestHealthMalformedGenerationStrict(t *testing.T) {
 	require.NoError(t, c.Set(context.Background(), healthGenKey, "10", 0).Err())
 
 	// barrier: inject malformed between genBefore and genAfter via syncHook
-	h3 := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h3 := NewRuntimeHealth(c, "self-a", nil, nil)
 	h3.now = func() time.Time { return fakeNow }
 	h3.runIDHook = func(_ context.Context) (string, error) { return "run-barrier", nil }
 	k3 := healthKeyFor(32, "q-barrier", 1)
@@ -892,7 +899,7 @@ func TestHealthMalformedGenerationStrict(t *testing.T) {
 func TestHealthCleanupFailureCurGenUnchanged(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
 	fakeNow := time.Date(2026, 8, 29, 14, 0, 0, 0, time.UTC)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	h.now = func() time.Time { return fakeNow }
 	key := healthKeyFor(88, "q-err2", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 40*time.Millisecond)
@@ -922,7 +929,7 @@ func TestHealthCleanupFailureCurGenUnchanged(t *testing.T) {
 func TestHealthActualRunIDChangeRepeatedEmptyDeadline(t *testing.T) {
 	_, c1 := newHealthTestRedis(t)
 	fakeNow := time.Date(2026, 8, 29, 15, 0, 0, 0, time.UTC)
-	h := NewRuntimeHealth(c1, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c1, "self-a", nil, nil)
 	h.now = func() time.Time { return fakeNow }
 	h.runIDHook = func(_ context.Context) (string, error) { return "run-1", nil }
 	keys := []HealthKey{healthKeyFor(40, "q1", 1), healthKeyFor(41, "q1", 1)}
@@ -996,7 +1003,7 @@ func TestHealthActualRunIDChangeRepeatedEmptyDeadline(t *testing.T) {
 func TestHealthSameRunEmptyClears(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	fakeNow := time.Date(2026, 8, 29, 16, 0, 0, 0, time.UTC)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	h.now = func() time.Time { return fakeNow }
 	h.runIDHook = func(_ context.Context) (string, error) { return "run-same", nil }
 	key := healthKeyFor(50, "q-clear", 1)
@@ -1016,7 +1023,7 @@ func TestHealthSameRunEmptyClears(t *testing.T) {
 // TestHealthFenceBeforePublishFreezes verifies final fence immediately after cleanup and before publish freezes stale view.
 func TestHealthFenceBeforePublishFreezes(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	initialKey := healthKeyFor(60, "q-fence", 1)
 	_, err := h.Throttle(context.Background(), initialKey, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
@@ -1072,7 +1079,7 @@ func TestHealthFenceBeforePublishFreezes(t *testing.T) {
 func TestHealthExpiresAtNotExtended(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	fakeNow := time.Date(2026, 8, 29, 17, 0, 0, 0, time.UTC)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	h.now = func() time.Time { return fakeNow }
 	h.runIDHook = func(_ context.Context) (string, error) { return "run-stable", nil }
 	key := healthKeyFor(90, "q-stable", 1)

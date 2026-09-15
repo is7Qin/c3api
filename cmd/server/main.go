@@ -182,11 +182,16 @@ func main() {
 
 	// 规则引擎先行构造（不 Reload——New 只建结构）。
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, log)
+	// 运行时健康投影先建（intelligent-routing lane）：只依赖 rdb/src/disco
+	// 活体快照（与 selfID 同源），无 probe——probe 是 Start 期依赖（codex 适配器
+	// 就绪后构造真 probe，经 healthWorker 在 Start 期一次性交接，无回填）。
+	// sched 构造即持 health（构造注入，无 Set* 回填）。
+	runtimeHealth := scheduler.NewRuntimeHealth(rdb, src, disco.LiveMembers, log)
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: cfg.Scheduler.DefaultMaxConcurrency,
 		SyncInterval:          cfg.Scheduler.SyncInterval,
 		StalenessProbe:        repos.Groups,
-	}, repos.Groups, ruleEngine, log)
+	}, repos.Groups, ruleEngine, runtimeHealth, log)
 	// 额度回写器只在计费开启时注入（Todo 3）：BillingCapture=false 时 proxy finish
 	// 本就不产生 AddQuota 增量，此处等价停用 quota writer/flush 落库面；
 	// UsageCapture 与 quota 回写解耦（quota 走 Recorder 独立 flush 节奏）。
@@ -397,16 +402,8 @@ func main() {
 		fatalf("continuation: %v", err)
 	}
 	px.SetContinuationStore(contStore)
-	// 运行时健康投影装配（intelligent-routing lane）：key
-	// (account,QualityClassID|*,lifecycle_revision)，Redis generation/full
-	// replacement/tombstone 语义属 RuntimeHealth 核心；probe 集群 rendezvous 单
-	// owner，成员源取 discovery 活体快照（与 selfID 同源）。probe 执行面在
-	// codex 适配器构造后经 SetProbeFn 回填（装配序要求；nil probe 期间记录
-	// fail-closed 停在 OPEN/PROBING，绝不 READY）。
-	runtimeHealth := scheduler.NewRuntimeHealth(rdb, src, disco.LiveMembers, nil, log)
-	sched.SetRuntimeHealth(runtimeHealth)
 	// 管理面 recover 端点的健康写入面（fenced CAS 成功后对新 revision 置
-	// PROBING）：svc 构造早于 runtimeHealth——Set* 事后回填惯例。
+	// PROBING）：runtimeHealth 先建，svc 侧直连注入（构造序 natural，无回填）。
 	svc.SetRecoverProber(runtimeHealth)
 	// 规则 typed Throttle/FailAccount 双面接线：本地 HealthController 即时生效
 	//（latch fail-closed 先于持久化）；持久化走有界 persist queue——满可丢、写
@@ -442,13 +439,14 @@ func main() {
 		InvalidateSnapshot: sched.InvalidateAccount,
 		Log:                log,
 	})
-	// 真实健康 probe 回填（blocker：构造期曾传 nil probe——所有 PROBING 记录
+	// 真实健康 probe 构造（blocker：构造期曾传 nil probe——所有 PROBING 记录
 	// 30s TTL 后恒失败，恢复流程永远到不了 READY）。探测权威 = scheduler 选号
 	// 快照（与选号门同一视图，revision fence fail-closed）；codex 凭据走 SDK
 	// 适配器 usage 快照路径（fatal 权威保持）；api_key 族无合成探测面（owner
 	// 裁决：/v1/models 与流量无关，已删除——探测视为通过，恢复由时间窗+真实
-	// 流量判定）。超时同上游请求预算。必须在 Start 前回填。
-	runtimeHealth.SetProbeFn(newHealthProber(sched.ProbeAccount, codexAdapter, cfg.Proxy.UpstreamTimeout))
+	// 流量判定）。超时同上游请求预算。probe 经 healthWorker 在 Start 期一次性
+	// 交给 runtimeHealth（Start 前记录 fail-closed 停在 OPEN/PROBING，绝不 READY）。
+	probe := newHealthProber(sched.ProbeAccount, codexAdapter, cfg.Proxy.UpstreamTimeout)
 	px.SetCodex(codexAdapter)
 	// codex 额度快照装配：svc.AccountUsage → sdkbridge.GetUsageSnapshot
 	//（TTL 缓存/有界并发/失败冷却全在适配层——service 纯编排零基础设施）。
@@ -549,8 +547,11 @@ func main() {
 	if billFlusher != nil {
 		billingWorker = billFlusher
 	}
+	// health 启动适配：真 probe 在 Start 期一次性交接（位置与 Name 不变——
+	// 注册序=反序排空语义与 worker_order_test 的 ident 断言依赖）。
+	healthW := healthWorker{h: runtimeHealth, probe: probe}
 	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker,
-		inv, sched, ruleEngine, retryWorker, runtimeHealth, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync, routingRollup)
+		inv, sched, ruleEngine, retryWorker, healthW, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync, routingRollup)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
 	// G2-3（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的

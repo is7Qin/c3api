@@ -19,7 +19,7 @@ func TestHealthControllerThrottlePropagatesRedisError(t *testing.T) {
 	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c) })
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	ctrl := NewHealthController(h, newLatchStore())
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000)}
 	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, RouteClassID: "r1", QualityClassID: "q1"}
@@ -34,7 +34,7 @@ func TestHealthControllerThrottlePropagatesRedisError(t *testing.T) {
 func TestHealthControllerThrottleSuccessWithBarrier(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
 	_ = mr
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	ctrl := NewHealthController(h, newLatchStore())
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(3000)}
 	done := make(chan error, 1)

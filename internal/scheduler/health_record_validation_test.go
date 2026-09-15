@@ -12,7 +12,7 @@ import (
 func TestSyncStrictRevMalformedFreezes(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	fakeNow := time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	h.now = func() time.Time { return fakeNow }
 	key := healthKeyFor(30, "q-strict-rev", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
@@ -46,7 +46,7 @@ func TestSyncStrictRevMalformedFreezes(t *testing.T) {
 func TestSyncStrictTTLMalformedFreezes(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	fakeNow := time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	h.now = func() time.Time { return fakeNow }
 	key := healthKeyFor(31, "q-strict-ttl", 1)
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)

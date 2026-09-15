@@ -137,14 +137,14 @@ func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
 	c := NewRoutingCompiler()
 	// v5-§5.1A: live OPEN health on account 2 (exact + stale-revision entries
 	// alike) must NOT exclude — compile is health-free.
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	hkGood := compilerHealthKeyFor(accs[1], domain.FormatOpenAIChat, "m")
 	hkStale := HealthKey{AccountID: 1, Quality: compilerHealthKeyFor(accs[0], domain.FormatOpenAIChat, "m").Quality, Revision: 99}
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{
 		hkGood:  {Key: hkGood, State: StateOPEN},
 		hkStale: {Key: hkStale, State: StateOPEN},
 	}})
-	s.SetRuntimeHealth(h)
+	s.health = h
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]

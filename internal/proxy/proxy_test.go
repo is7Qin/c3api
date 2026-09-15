@@ -356,7 +356,7 @@ func newTestProxyTplTimeoutRec(t *testing.T, tpl *domain.Template, accountID int
 	require.NoError(t, re.Reload(context.Background())) // 空表写种子（429/30s、error/5s、ok/active）
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, noopLoader{accs: accs}, re, nil)
+	}, noopLoader{accs: accs}, re, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

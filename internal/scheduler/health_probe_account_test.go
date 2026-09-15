@@ -4,6 +4,7 @@ package scheduler
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -31,24 +32,29 @@ func TestSchedulerProbeAccountComposesSnapshotAuthority(t *testing.T) {
 	require.False(t, ok, "unknown account must fail-closed for the probe")
 }
 
-// TestRuntimeHealthSetProbeFnBackfillsProbe：装配序里 RuntimeHealth 先于其
-// 依赖（codex 适配器构造需要 Health 进 FailureDeps）——Set* 事后回填是项目
-// 装配惯例。契约：nil probe 恒失败（fail-closed）；回填后 doProbe 分发到注入
-// 函数；必须在 Start 之前调用（Start 后 probe 循环并发读 probeFn，事后回填
-// 构成数据竞争）。
-func TestRuntimeHealthSetProbeFnBackfillsProbe(t *testing.T) {
+// TestRuntimeHealthStartInjectsProbe：probe 是 Start 期依赖（组合根在
+// sched/codex 就绪后构造真 probe，Start 期一次性交接，无回填）。契约：nil
+// probe 恒失败（fail-closed）；Start 交接后 doProbe 分发到注入函数。
+func TestRuntimeHealthStartInjectsProbe(t *testing.T) {
 	_, c := newHealthTestRedis(t)
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 
 	err := h.doProbe(context.Background(), HealthKey{AccountID: 1, Quality: "*", Revision: 2})
 	require.Error(t, err, "nil probe must fail-closed")
 
 	called := false
-	h.SetProbeFn(func(_ context.Context, key HealthKey) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, h.Start(ctx, func(_ context.Context, key HealthKey) error {
 		require.Equal(t, int64(1), key.AccountID)
 		called = true
 		return nil
+	}))
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer closeCancel()
+		require.NoError(t, h.Close(closeCtx))
 	})
 	require.NoError(t, h.doProbe(context.Background(), HealthKey{AccountID: 1, Quality: "*", Revision: 2}))
-	require.True(t, called, "backfilled probe fn must be dispatched by doProbe")
+	require.True(t, called, "Start-injected probe fn must be dispatched by doProbe")
 }

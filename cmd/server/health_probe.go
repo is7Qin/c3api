@@ -36,12 +36,26 @@ type healthProber struct {
 }
 
 // newHealthProber 构造适配器并返回 scheduler.ProbeFunc 形态（装配点经
-// RuntimeHealth.SetProbeFn 回填，必须在 Start 之前）。
+// healthWorker 在 Start 期一次性交给 RuntimeHealth）。
 func newHealthProber(lookup func(accountID int64) (*domain.Account, bool), codex codexUsageProber,
 	timeout time.Duration) scheduler.ProbeFunc {
 	p := &healthProber{lookup: lookup, codex: codex, timeout: timeout}
 	return p.probe
 }
+
+// healthWorker 适配 RuntimeHealth 启动：probe 是 Start 期依赖（组合根在
+// sched/codex 就绪后构造），适配器让 worker.Manager 契约不变、Name 保持
+// "runtime-health"（注册序=反序排空语义依赖）。Stats 原样透出——ops 运维面
+// 不因适配掉线。
+type healthWorker struct {
+	h     *scheduler.RuntimeHealth
+	probe scheduler.ProbeFunc
+}
+
+func (w healthWorker) Name() string                    { return w.h.Name() }
+func (w healthWorker) Stats() any                      { return w.h.Stats() }
+func (w healthWorker) Start(ctx context.Context) error { return w.h.Start(ctx, w.probe) }
+func (w healthWorker) Close(ctx context.Context) error { return w.h.Close(ctx) }
 
 func (p *healthProber) probe(ctx context.Context, key scheduler.HealthKey) error {
 	cctx, cancel := context.WithTimeout(ctx, p.timeout)

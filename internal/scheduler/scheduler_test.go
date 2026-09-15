@@ -132,7 +132,7 @@ func newSched(t *testing.T, m *memLoader) *Scheduler {
 	t.Helper()
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil)
+	s := New(testCfg(), m, re, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
@@ -151,7 +151,7 @@ func newSchedStatic(t *testing.T, m *memLoader) *Scheduler {
 	t.Helper()
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil)
+	s := New(testCfg(), m, re, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	return s
 }
@@ -240,7 +240,7 @@ func TestSelectUnknownGroup(t *testing.T) {
 // TestSelectNilStoreNoPanic 快照未加载（首刷失败）时 Select 优雅失败而非 panic。
 func TestSelectNilStoreNoPanic(t *testing.T) {
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
-	s := New(testCfg(), newMemLoader(nil), re, nil) // 不 reload：模拟首刷失败
+	s := New(testCfg(), newMemLoader(nil), re, nil, nil) // 不 reload：模拟首刷失败
 	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrGroupNotFound)
 }
@@ -813,7 +813,7 @@ func TestRequestPathZeroLoaderCalls(t *testing.T) {
 	cl := &countingLoader{inner: inner}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), cl, re, nil)
+	s := New(testCfg(), cl, re, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
@@ -871,7 +871,7 @@ func TestSchedulerClassify(t *testing.T) {
 	require.NoError(t, err)
 	re := rule.New(rule.Config{}, rstore, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil)
+	s := New(testCfg(), m, re, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 
 	// 400 → 全透

@@ -26,9 +26,9 @@ func TestRoutingCompilerEmptyAndAllIneligible(t *testing.T) {
 	// v5-§5.1A: OPEN health no longer excludes account 2 — only the statically
 	// disabled account 1 stays out. Serving gates live in reserveOnView.
 	hk := compilerHealthKeyFor(accs2[1], domain.FormatOpenAIChat, "m")
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
-	s2.SetRuntimeHealth(h)
+	s2.health = h
 	view, err = c.Compile(CompilerInputs{Static: s2.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
@@ -54,9 +54,9 @@ func TestRoutingCompilerHealthLatchExclusion(t *testing.T) {
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	c := NewRoutingCompiler()
 	hk := compilerHealthKeyFor(accs[1], domain.FormatOpenAIChat, "m")
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
-	s.SetRuntimeHealth(h)
+	s.health = h
 	lk := compilerLatchKeyFor(accs[2])
 	require.True(t, s.TryLatch(accs[2].ID, lk.Fingerprint, lk.Revision))
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})

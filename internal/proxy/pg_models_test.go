@@ -140,7 +140,7 @@ func modelsPGFixture(t *testing.T) modelsFixture {
 	require.NoError(t, re.Reload(ctx)) // 空表写种子（同 newTestProxyTplTimeoutRec）
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, repos.Groups, re, nil)
+	}, repos.Groups, re, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

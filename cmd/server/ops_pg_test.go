@@ -127,7 +127,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil)
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, repos.Groups, ruleEngine, nil)
+	}, repos.Groups, ruleEngine, nil, nil)
 	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
 	balances := billing.NewBalances(repos, nil)
 	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil)

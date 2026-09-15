@@ -119,7 +119,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 		// sync ticker 不依赖（SyncInterval 小时级兜底）；编译道必须 Start——
 		// Select 执行预编译计划，0 间隔误配防 ticker 空转 panic。
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, repos.Groups, ruleEngine, nil)
+	}, repos.Groups, ruleEngine, nil, nil)
 	sched.SetWindowedQualitySource(nil)
 	sched.SetPricesSource(nil)
 	schedCtx, cancelSched := context.WithCancel(ctx)
@@ -252,7 +252,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil)
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, repos.Groups, ruleEngine, nil)
+	}, repos.Groups, ruleEngine, nil, nil)
 	var seenCron atomic.Pointer[string]
 	obs := &observingKeyRepo{KeyRepo: repos.Keys, seen: &seenCron}
 	auth := proxy.NewAuth(obs, repos.Users, nil, true)
