@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
@@ -969,8 +970,8 @@ func TestCodexWSHeartbeatCadence(t *testing.T) {
 // --- 纯函数单测 ---
 
 // TestCodexWSPassthroughHeaders 透传面单测：hop-by-hop/网关 key 剔除（复用
-// wsPassthroughHeaders）+ session 头族 + OpenAI-Beta 剔除（P3-7/P3-8）；其余
-// 原样。
+// wsPassthroughHeaders）+ 伪装身份项剔除（session 头族 + OpenAI-Beta +
+// User-Agent，P3-7/P3-8 与 C5）；其余原样。
 func TestCodexWSPassthroughHeaders(t *testing.T) {
 	h := http.Header{
 		"Connection":          {"upgrade"},
@@ -994,7 +995,78 @@ func TestCodexWSPassthroughHeaders(t *testing.T) {
 	require.Empty(t, out.Get("X-Codex-Window-Id"))
 	require.Empty(t, out.Get("OpenAI-Beta"))
 	require.Equal(t, "codex-1.2.3", out.Get("X-Client-Version"))
-	require.Equal(t, "ua", out.Get("User-Agent"))
+	// 伪装身份契约（C5 翻转）：客户端 UA 不得穿透 SDK 伪装默认 ⇒ 被剔。补 map
+	// 槽位断言：只断言 Get 会被「字面槽位残留、Get 查空槽」的假绿放过。
+	require.Empty(t, out.Get("User-Agent"))
+	_, ok := out["User-Agent"]
+	require.False(t, ok, "User-Agent 必须不存在于 codex 透传产物（map 槽位级断言）")
+}
+
+// TestCodexWSPassthroughHeaders_StripsUAAndOriginator R4（纯函数）：codex 额外
+// 清单 7 项逐个剔除（伪装身份契约，不因 spec §9-2「协议协商头允许覆盖」而放宽），
+// 非冲突面客户端头仍原样透传。每条都按 §2b「构造纪律」补 map 槽位断言。
+func TestCodexWSPassthroughHeaders_StripsUAAndOriginator(t *testing.T) {
+	h := http.Header{
+		"User-Agent":          {"curl/8.7.1"},
+		"Originator":          {"evil-vscode"},
+		"Session-Id":          {"s"},
+		"Thread-Id":           {"t"},
+		"X-Client-Request-Id": {"c"},
+		"X-Codex-Window-Id":   {"w"},
+		"Openai-Beta":         {"responses_websockets=2025-01-01"},
+		"X-Client-Version":    {"codex-1.2.3"},
+		"X-Opencode-Session":  {"oc-1"},
+	}
+	out := codexWSPassthroughHeaders(h)
+	for _, k := range []string{"User-Agent", "Originator", "Session-Id", "Thread-Id",
+		"X-Client-Request-Id", "X-Codex-Window-Id", "Openai-Beta"} {
+		require.Empty(t, out.Get(k), "伪装身份项 %s 必须被剔", k)
+		_, ok := out[k]
+		require.False(t, ok, "伪装身份项 %s 必须不存在（map 槽位级断言，防 Get 掩盖字面键残留）", k)
+	}
+	require.Equal(t, []string{"codex-1.2.3"}, out["X-Client-Version"], "非冲突面客户端头仍透传")
+	require.Equal(t, []string{"oc-1"}, out["X-Opencode-Session"], "自定义 session 头仍透传")
+}
+
+// TestCodexWSUpstreamSeesDisguisedUA R4（端到端）：客户端带 curl UA + 伪造
+// Originator ⇒ 上游握手看到的是 SDK 自己的伪装默认值。断言引库内常量
+// codexsdk.DefaultCodexUserAgent / DefaultOriginator，绝不把指纹字符串抄进用例
+// （它是随 SDK 版本漂移的值，硬编码必成腐化点）。
+//
+// 机理（本用例存在的理由）：dialCodexWS 把 codexWSPassthroughHeaders 的产物逐个
+// 喂 codexsdk.WithHeader；SDK 侧 buildHeaders 先设伪装默认（client.go:305-306），
+// 再对 WithHeader 的值先 Del 后加（:327-331）⇒ 客户端 UA 会顶掉伪装默认。所以
+// 「网关侧把 UA 剔掉」正是让 SDK 默认伪装值得以保留的那一步，网关不需要另设 UA。
+func TestCodexWSUpstreamSeesDisguisedUA(t *testing.T) {
+	up, hooks := newCodexWSUpstream(t, []int{200}, 3)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, _ := newTestCodexWSProxy(t, credential.TypeCodexOAuth,
+		map[int64]*domain.AccountExt{10: codexWSExt(10, "at-10", "rt-10")}, up.URL, nil, store)
+
+	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+	defer srv.Close()
+	c := dialResponsesWSHeaders(t, srv, http.Header{
+		"Authorization": {"Bearer ck-1"},
+		"User-Agent":    {"curl/8.7.1"},
+		"Originator":    {"evil-vscode"},
+	})
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	// 事件流 3 帧（created/delta/completed）+ 1 回声——只需握手头被上游观测即可。
+	for i := 0; i < 4; i++ {
+		readResponsesWSFrame(t, c)
+	}
+
+	hooks.mu.Lock()
+	defer hooks.mu.Unlock()
+	require.NotEmpty(t, hooks.headers, "上游握手未被观测")
+	got := hooks.headers[0]
+	require.Equal(t, codexsdk.DefaultCodexUserAgent, got.Get("User-Agent"),
+		"上游必须看到 SDK 伪装默认 UA（客户端 curl UA 已被剔）")
+	require.Equal(t, codexsdk.DefaultOriginator, got.Get("Originator"),
+		"上游必须看到 SDK 伪装默认 originator")
 }
 
 // TestCodexIdentityFromExt 伪装四元组组装：ext 身份 → Session/CodexMeta 映射
