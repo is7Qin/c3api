@@ -363,8 +363,9 @@ type Service struct {
 	// recoverProber 恢复→PROBING 健康写入面（New 经 ServiceDeps.RecoverProber
 	// 注入；nil = 未装配，recover 仅完成持久恢复——调度器同步周期兜底）。
 	recoverProber RecoverProber
-	// compileNotify 路由编译触发面（SetCompileNotifier 回填；nil = 未装配，
-	// 定价写面静默——仅编译道装配后有效。调用方承诺非阻塞，见 pricing.go）。
+	// compileNotify 路由编译触发面（New 经 ServiceDeps.CompileNotify
+	// 一次性注入；nil = 未装配，定价写面静默——仅编译道装配后有效。
+	// 调用方承诺非阻塞，见 pricing.go）。
 	compileNotify               func()
 	mailEnqueue                 func(MailSendTask) error
 	clearBalanceWarningCooldown func(context.Context, int64, int64) error
@@ -387,9 +388,11 @@ type Service struct {
 
 // ServiceDeps New 的尾部一次性依赖（W1-T1：SetEmailCodeStore /
 // SetTimeLocation / SetStatsRawSpan / SetBalanceWarningCooldownCleaner /
-// SetRecoverProber 五个事后回填折叠进构造，零语义变化——各字段 nil/零值语义
-// 与原 setter 完全一致）。尾部 struct 而非 5 个位置参数：New 本就 7 参，
-// 位置参数会冲到 12 个（>3 参 smell），具名字段自文档且调用点可只填所需。
+// SetRecoverProber 五个事后回填折叠进构造，W2-T2：编译通知回填
+// 折叠进构造——零语义变化，各字段 nil/零值语义与原 setter 完全一致）。
+// 尾部 struct 而非位置参数：New 本就 7 参，位置参数会冲到 12+ 个（>3 参
+// smell），具名字段自文档且调用点可只填所需（新增 CompileNotify 字段零
+// 调用点 churn：缺省 nil = 未装配静默，与原 setter 未调用同语义）。
 type ServiceDeps struct {
 	// EmailCodeStore 验证码存储（Redis 实现，必选依赖）：nil 直接 panic
 	// fail-fast（与原 SetEmailCodeStore 同纪律——生产误接线必须启动即炸，
@@ -411,6 +414,11 @@ type ServiceDeps struct {
 	// RecoverProber 恢复→PROBING 健康写入面：nil = 跳过 PROBING 写
 	// （调度器同步周期兜底收敛）。
 	RecoverProber RecoverProber
+	// CompileNotify 路由编译触发面（定价写面统一出口的 notify 回调）：
+	// nil = 未装配（测试/降级路径），定价写面纯重载 + 仍发布 NOTIFY，
+	// 同值写静默纪律见 reloadPricingAndNotifyCompiler。生产装配
+	// scheduler.RequestCompile（func 值注入，无 import 环）。
+	CompileNotify func()
 }
 
 func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger, deps ServiceDeps) *Service {
@@ -419,6 +427,7 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 	}
 	s := &Service{store: store, sched: sched, inv: invalidate, pub: pub, ruleReload: ruleReload, keys: keys, log: log,
 		emailCodes: deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,
+		compileNotify:               deps.CompileNotify,
 		clearBalanceWarningCooldown: deps.ClearBalanceWarningCooldown}
 	if deps.StatsRawRetentionDays > 0 {
 		s.statsRawSpan = time.Duration(deps.StatsRawRetentionDays+1) * 24 * time.Hour

@@ -23,7 +23,7 @@ import (
 // When: loader 新增组 20 账号 → reload（全量）；随后组内加账号 → InvalidateGroup；
 // Then: 两条重载路径各武装一次触发，compileOnce 后发布视图覆盖新路由/新账号。
 // 另见缺陷 B 修复：质量 influx（quality-sync PG 落库边界构造器注入 onPersisted）
-// 与定价写面（service SetCompileNotifier + 变化门控）各有专用事件触发，不再
+// 与定价写面（ServiceDeps.CompileNotify + 变化门控）各有专用事件触发，不再
 // 依赖静态重载尾部收敛；backstop 探针仍只覆盖静态聚合（质量/价格差由 lane-local
 // diff 定作用域）。
 func TestNotifyRoutingDirtyReloadRepublishesCompiledPlan(t *testing.T) {
