@@ -252,9 +252,6 @@ func (o AttemptOutcome) Validate() error {
 	if o.Commit == CommitNotSent && o.BusinessFrameSent {
 		return fmt.Errorf("not_sent cannot have BusinessFrameSent")
 	}
-	if o.BusinessFrameSent && o.Commit == CommitNotSent {
-		return fmt.Errorf("BusinessFrameSent requires commit != not_sent")
-	}
 	if (o.Commit == CommitResponseStarted || o.Commit == CommitClientCommitted) && !o.BusinessFrameSent {
 		return fmt.Errorf("response_started/client_committed requires BusinessFrameSent")
 	}
@@ -428,15 +425,9 @@ func (o AttemptOutcome) Validate() error {
 				if o.Terminal {
 					return fmt.Errorf("not_sent network must not be terminal")
 				}
-				if o.BusinessFrameSent {
-					return fmt.Errorf("not_sent cannot have BusinessFrameSent")
-				}
 			case CommitSentAmbiguous:
 				if !o.Terminal {
 					return fmt.Errorf("sent_ambiguous must be terminal")
-				}
-				if !o.BusinessFrameSent {
-					return fmt.Errorf("sent_ambiguous requires BusinessFrameSent")
 				}
 			case CommitResponseStarted, CommitClientCommitted:
 				if !o.Terminal {
@@ -466,18 +457,6 @@ func (o AttemptOutcome) Validate() error {
 		case CommitNotSent, CommitSentAmbiguous, CommitResponseStarted, CommitClientCommitted:
 		default:
 			return fmt.Errorf("client_cancel has invalid commit %v", o.Commit)
-		}
-		if o.Commit == CommitNotSent && o.BusinessFrameSent {
-			return fmt.Errorf("client_cancel not_sent cannot have BusinessFrameSent")
-		}
-		if (o.Commit == CommitResponseStarted || o.Commit == CommitClientCommitted) && !o.BusinessFrameSent {
-			return fmt.Errorf("client_cancel response_started/committed requires BusinessFrameSent")
-		}
-		if o.Commit == CommitSentAmbiguous && !o.BusinessFrameSent {
-			return fmt.Errorf("client_cancel sent_ambiguous requires BusinessFrameSent")
-		}
-		if o.Commit == CommitUpstreamResponded {
-			return fmt.Errorf("client_cancel cannot be upstream_responded")
 		}
 		if !o.Terminal {
 			return fmt.Errorf("client_cancel must be terminal")

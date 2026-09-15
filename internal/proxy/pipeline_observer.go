@@ -123,9 +123,9 @@ type foldOwner struct {
 	recorder *quality.Recorder
 	tap      AttemptFlowAppend // observation seam (tests); nil in production
 	seamFn   AttemptFlowAppend // stable per-request closure (one capture, reused by every dispatch)
-	route    [32]byte         // plan-constant identity (attempt_plan_exec.go:315), decoded per arm
-	gen      uint64           // plan-constant generation (attempt_plan_exec.go:319), bound per arm
-	cur      packedArm        // identity of the dispatch in flight
+	route    [32]byte          // plan-constant identity (attempt_plan_exec.go:315), decoded per arm
+	gen      uint64            // plan-constant generation (attempt_plan_exec.go:319), bound per arm
+	cur      packedArm         // identity of the dispatch in flight
 	armed    bool
 	edges    [8]packedEdge // packed stash, cap-8 (attempt 9+ counts cap-overflow)
 	nedges   int
@@ -190,68 +190,57 @@ const (
 )
 
 func foldLaneCodeOf(lane scheduler.AttemptLane) uint8 {
-	switch lane {
-	case scheduler.AttemptLanePrimary:
-		return foldLanePrimaryCode
-	case scheduler.AttemptLaneExplore:
-		return foldLaneExploreCode
-	case scheduler.AttemptLaneDegraded:
-		return foldLaneDegradedCode
+	if code, ok := foldLaneCodes[lane]; ok {
+		return code
 	}
 	return foldLaneUnknownCode
 }
 
-func foldLaneTokenOf(code uint8) string {
-	switch code {
-	case foldLanePrimaryCode:
-		return "primary"
-	case foldLaneExploreCode:
-		return "explore"
-	case foldLaneDegradedCode:
-		return "degraded"
-	}
-	return ""
+func foldLaneTokenOf(code uint8) string { return foldLaneTokens[code] }
+
+// foldLaneCodes maps the plan lane to the packed stash code. Unknown lanes
+// fall to foldLaneUnknownCode (non-zero, so comma-ok is required — a plain
+// map read would silently yield primary).
+var foldLaneCodes = map[scheduler.AttemptLane]uint8{
+	scheduler.AttemptLanePrimary:  foldLanePrimaryCode,
+	scheduler.AttemptLaneExplore:  foldLaneExploreCode,
+	scheduler.AttemptLaneDegraded: foldLaneDegradedCode,
 }
 
-func foldOutcomeCodeOf(token string) uint8 {
-	switch token {
-	case "success":
-		return foldOutSuccess
-	case "error":
-		return foldOutError
-	case "client_cancel":
-		return foldOutClientCancel
-	case "4xx":
-		return foldOut4xx
-	case "429":
-		return foldOut429
-	case "5xx":
-		return foldOut5xx
-	case "network":
-		return foldOutNetwork
-	}
-	return foldOutEmpty
+// foldLaneTokens is the reverse map; unknown codes fall to "" (zero value),
+// so the walk drops the edge exactly as the previous switch default.
+var foldLaneTokens = map[uint8]string{
+	foldLanePrimaryCode:  "primary",
+	foldLaneExploreCode:  "explore",
+	foldLaneDegradedCode: "degraded",
 }
 
-func foldOutcomeTokenOf(code uint8) string {
-	switch code {
-	case foldOutSuccess:
-		return "success"
-	case foldOutError:
-		return "error"
-	case foldOut4xx:
-		return "4xx"
-	case foldOut429:
-		return "429"
-	case foldOut5xx:
-		return "5xx"
-	case foldOutNetwork:
-		return "network"
-	case foldOutClientCancel:
-		return "client_cancel"
-	}
-	return ""
+func foldOutcomeCodeOf(token string) uint8 { return foldOutcomeCodes[token] }
+
+func foldOutcomeTokenOf(code uint8) string { return foldOutcomeTokens[code] }
+
+// foldOutcomeCodes maps the canonical flow token (flowOutcomeToken stays the
+// single source) to the packed stash code. Unknown tokens fall to
+// foldOutEmpty (the zero value), exactly as the previous switch default.
+var foldOutcomeCodes = map[string]uint8{
+	"success":       foldOutSuccess,
+	"error":         foldOutError,
+	"client_cancel": foldOutClientCancel,
+	"4xx":           foldOut4xx,
+	"429":           foldOut429,
+	"5xx":           foldOut5xx,
+	"network":       foldOutNetwork,
 }
+
+// foldOutcomeTokens is the reverse map, built once from the forward map so
+// the pairing cannot drift; unknown codes fall to "" (zero value), as before.
+var foldOutcomeTokens = func() map[uint8]string {
+	m := make(map[uint8]string, len(foldOutcomeCodes))
+	for tok, code := range foldOutcomeCodes {
+		m[code] = tok
+	}
+	return m
+}()
 
 func newFoldOwner(recorder *quality.Recorder, tap AttemptFlowAppend) *foldOwner {
 	f := &foldOwner{recorder: recorder, tap: tap}
@@ -268,11 +257,11 @@ func (f *foldOwner) arm(attempt scheduler.Attempt) {
 	f.route = pipelineID(attempt.RouteClassID)
 	f.gen = attempt.RoutingGeneration
 	f.cur = packedArm{
-		fp:       pipelineID(attempt.CandidateFingerprint),
-		account:  attempt.AccountID,
-		ordinal:  attempt.Ordinal,
-		lane:     foldLaneCodeOf(attempt.Lane),
-		hasPrev:  attempt.PreviousAccountID != nil,
+		fp:      pipelineID(attempt.CandidateFingerprint),
+		account: attempt.AccountID,
+		ordinal: attempt.Ordinal,
+		lane:    foldLaneCodeOf(attempt.Lane),
+		hasPrev: attempt.PreviousAccountID != nil,
 	}
 	if attempt.PreviousAccountID != nil {
 		f.cur.prevAcct = *attempt.PreviousAccountID
