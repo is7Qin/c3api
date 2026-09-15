@@ -27,7 +27,7 @@ func TestMailWorker_auth_queue_precedes_warning_backlog(t *testing.T) {
 		"mail.from_address": "from@example.com",
 		"mail.tls":          "none",
 	})
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	warning := domain.BalanceWarningEvent{EntityID: 1, Email: "warning@example.com", BalanceMillis: 1, ThresholdMillis: 2}
 	require.NoError(t, mw.EnqueueBalanceWarning(warning, nil))
 	require.NoError(t, mw.EnqueueBalanceWarning(warning, nil))
@@ -51,7 +51,7 @@ func TestMailWorker_auth_arriving_after_warning_selection_precedes_warning(t *te
 		"mail.from_address": "from@example.com",
 		"mail.tls":          "none",
 	})
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	selected := make(chan struct{})
 	release := make(chan struct{})
 	mw.testWarningSelected = func() {
@@ -81,7 +81,7 @@ func TestMailWorker_auth_arriving_after_warning_selection_precedes_warning(t *te
 
 func TestMailWorker_warning_queue_does_not_consume_auth_capacity(t *testing.T) {
 	svc := newMailService(t, newFakeStore())
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	event := domain.BalanceWarningEvent{EntityID: 1, Email: "warning@example.com", BalanceMillis: 1, ThresholdMillis: 2}
 	for range mailWarningQueueCap {
 		require.NoError(t, mw.EnqueueBalanceWarning(event, nil))
@@ -95,7 +95,7 @@ func TestMailWorker_warning_queue_does_not_consume_auth_capacity(t *testing.T) {
 
 func TestMailWorker_auth_queue_does_not_consume_warning_capacity(t *testing.T) {
 	svc := newMailService(t, newFakeStore())
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	for range mailQueueCap {
 		require.NoError(t, mw.Enqueue(MailSendTask{To: "auth@example.com", Purpose: domain.EmailTemplateRegisterCode}))
 	}

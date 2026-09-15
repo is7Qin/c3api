@@ -11,6 +11,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
+	"github.com/is7qin/c3api/internal/settingssnap"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -94,19 +95,19 @@ func (s *Service) UpdateSetting(ctx context.Context, key, value string) (*domain
 	return set, nil
 }
 
+// ensureSnap 字面量 Service 兼容（测试绕过 New 直构 struct）：settings
+// 为空时按 New 同语义自建（store 同源，无分叉——生产恒经 New 非空）。
+func (s *Service) ensureSnap() *settingssnap.Snapshot {
+	if s.settings == nil {
+		s.settings = settingssnap.New(s.store, s.log)
+	}
+	return s.settings
+}
+
 // ReloadSettings settings 快照全量重载。供 dispatcher 的本地变更、远端
 // NOTIFY 和断线重连 FullRefresh 共用；失败返回错误由 dispatcher/listener 记录。
 func (s *Service) ReloadSettings(ctx context.Context) error {
-	rows, err := s.store.GetAllSettings(ctx)
-	if err != nil {
-		return err
-	}
-	m := make(map[string]*domain.Setting, len(rows))
-	for _, st := range rows {
-		m[st.Key] = st
-	}
-	s.settings.Store(&m)
-	return nil
+	return s.ensureSnap().Reload(ctx)
 }
 
 // reloadSettings 全量重载设置快照（New 初始化 + UpdateSetting 后调用）。
@@ -120,22 +121,11 @@ func (s *Service) reloadSettings(ctx context.Context) {
 
 // settingValue 快照查值：缺失（含快照未初始化）返回空串。
 func (s *Service) settingValue(key string) string {
-	m := s.settings.Load()
-	if m == nil {
-		return ""
-	}
-	if st, ok := (*m)[key]; ok {
-		return st.Value
-	}
-	return ""
+	return s.settings.Value(key)
 }
 
 // settingInt 快照数值读取：缺失/解析失败 → 0（UpdateSetting 已做类型化
 // 校验，此处仅防御性兜底；解析失败按 0 = 不送/不限语义）。
 func (s *Service) settingInt(key string) int64 {
-	v, err := strconv.ParseInt(s.settingValue(key), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return v
+	return s.settings.Int(key)
 }

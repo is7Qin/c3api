@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/settingssnap"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // MailSendTask 邮件发送任务（明文 code 仅瞬态内存+通道，不落日志/不落库）。
@@ -38,10 +40,21 @@ var (
 	mailRetryBackoff = []time.Duration{2 * time.Second, 8 * time.Second}
 )
 
+// MailDeps MailWorker 构造依赖（B3 根因重开——窄面构造，零事后回填）：
+// Settings 与 Service 同源共享单个 *settingssnap.Snapshot（单指针，NOTIFY
+// 只刷一处，无双快照分叉）；Templates 与 Service.store 同源。
+type MailDeps struct {
+	Log       *logx.Logger
+	Settings  *settingssnap.Snapshot
+	Templates TemplateLoader
+}
+
 // MailWorker serializes auth and warning mail through one sender. Auth work has
 // strict priority until warning delivery enters SMTP, where it is non-preemptive.
 type MailWorker struct {
-	svc       *Service
+	log       *logx.Logger
+	settings  *settingssnap.Snapshot
+	templates TemplateLoader
 	ch        chan MailSendTask
 	warningCh chan BalanceWarningMailTask
 
@@ -65,9 +78,11 @@ type MailWorker struct {
 	testDrainStarted    func()
 }
 
-func NewMailWorker(svc *Service) *MailWorker {
+func NewMailWorker(d MailDeps) *MailWorker {
 	return &MailWorker{
-		svc:        svc,
+		log:        d.Log,
+		settings:   d.Settings,
+		templates:  d.Templates,
 		ch:         make(chan MailSendTask, mailQueueCap),
 		warningCh:  make(chan BalanceWarningMailTask, mailWarningQueueCap),
 		senderDone: make(chan struct{}),

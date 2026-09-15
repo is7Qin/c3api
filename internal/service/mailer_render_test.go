@@ -100,10 +100,10 @@ func TestMailConfigAndTLSMapping(t *testing.T) {
 			"signup_enabled": "true", "mail.register_verification": "true",
 			"mail.enabled": "false", "mail.smtp_host": "h", "mail.from_address": "f@a.com", "mail.smtp_port": "587", "mail.tls": "none",
 		})
-		mw := NewMailWorker(svc)
+		mw := newTestMailWorker(svc)
 		require.NoError(t, mw.Start(context.Background()))
 		t.Cleanup(func() { _ = mw.Close(context.Background()) })
-		svc.SetMailEnqueue(mw.Enqueue)
+		svc.mailEnqueue = mw.Enqueue
 		require.ErrorIs(t, svc.SendRegisterCode(context.Background(), "a@b.com"), ErrMailNotConfigured)
 
 		setMailSettings(t, fs, svc, map[string]string{

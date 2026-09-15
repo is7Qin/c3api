@@ -59,7 +59,7 @@ func TestMailWorker_warning_render_panic_completes_once_and_loop_restarts(t *tes
 	// Given
 	useZeroMailBackoff(t)
 	svc, stub := newPanicOnceMailService(t)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	t.Cleanup(func() { require.NoError(t, mw.Close(context.Background())) })
 	first := newWarningCompletionRecorder()
 	require.NoError(t, mw.EnqueueBalanceWarning(testWarningEvent(), first.complete))
@@ -95,7 +95,7 @@ func TestMailWorker_warning_callback_panic_runs_once_and_loop_restarts(t *testin
 		"mail.from_address": "from@example.com",
 		"mail.tls":          "none",
 	})
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	t.Cleanup(func() { require.NoError(t, mw.Close(context.Background())) })
 	var firstCalls atomic.Int64
 	firstCalled := make(chan struct{})
@@ -127,7 +127,7 @@ func TestMailWorker_close_before_start_recovers_auth_drain_panic(t *testing.T) {
 	// Given
 	useZeroMailBackoff(t)
 	svc, _ := newPanicOnceMailService(t)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Enqueue(MailSendTask{To: "auth@example.com", Purpose: domain.EmailTemplateRegisterCode}))
 
 	// When
@@ -143,7 +143,7 @@ func TestMailWorker_close_recovers_warning_drain_panic_and_completes_once(t *tes
 	// Given
 	useZeroMailBackoff(t)
 	svc, _ := newPanicOnceMailService(t)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	recorder := newWarningCompletionRecorder()
 	require.NoError(t, mw.EnqueueBalanceWarning(testWarningEvent(), recorder.complete))
 
@@ -161,7 +161,7 @@ func TestMailWorker_concurrent_close_callers_share_drain_panic_error(t *testing.
 	// Given
 	useZeroMailBackoff(t)
 	svc, _ := newPanicOnceMailService(t)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Enqueue(MailSendTask{To: "auth@example.com", Purpose: domain.EmailTemplateRegisterCode}))
 	drainStarted := make(chan struct{})
 	releaseDrain := make(chan struct{})

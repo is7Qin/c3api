@@ -48,8 +48,8 @@ func (w *MailWorker) process(ctx context.Context, t MailSendTask) {
 			return
 		} else {
 			lastErr = err
-			if w.svc != nil && w.svc.log != nil {
-				w.svc.log.Error("mail deliver failed",
+			if w.log != nil {
+				w.log.Error("mail deliver failed",
 					logx.String("purpose", string(t.Purpose)),
 					logx.Int("attempt", attempt+1),
 					logx.String("failure_category", mailFailureCategory(err)),
@@ -152,7 +152,7 @@ func (w *MailWorker) storeMailFailure(err error) {
 }
 
 func (w *MailWorker) deliver(ctx context.Context, t MailSendTask) error {
-	host, port, username, password, fromAddr, tlsPolicy, ok := w.svc.mailConfig()
+	host, port, username, password, fromAddr, tlsPolicy, ok := w.settings.MailConfig()
 	if !ok {
 		return ErrMailNotConfigured
 	}
@@ -161,10 +161,15 @@ func (w *MailWorker) deliver(ctx context.Context, t MailSendTask) error {
 		vars["balance"] = strconv.FormatFloat(float64(t.BalanceMillis)/1e5, 'f', 2, 64)
 		vars["threshold"] = strconv.FormatFloat(float64(t.ThresholdMillis)/1e5, 'f', 2, 64)
 	}
-	subj, body, err := w.svc.RenderTemplate(ctx, t.Purpose, vars)
-	if err != nil {
-		return err
+	var row *domain.EmailTemplate
+	if w.templates != nil {
+		r, err := w.templates.GetEmailTemplate(ctx, string(t.Purpose))
+		if err != nil {
+			return err
+		}
+		row = r
 	}
+	subj, body := RenderMailTemplate(row, t.Purpose, vars)
 	opts := []mail.Option{mail.WithPort(port), mail.WithTimeout(mailSendTimeout)}
 	switch tlsPolicy {
 	case "implicit":
@@ -195,8 +200,8 @@ func (w *MailWorker) deliver(ctx context.Context, t MailSendTask) error {
 	if err := client.DialAndSendWithContext(sendCtx, msg); err != nil {
 		return err
 	}
-	if w.svc != nil && w.svc.log != nil {
-		w.svc.log.Info("mail sent", logx.String("purpose", string(t.Purpose)))
+	if w.log != nil {
+		w.log.Info("mail sent", logx.String("purpose", string(t.Purpose)))
 	}
 	return nil
 }
