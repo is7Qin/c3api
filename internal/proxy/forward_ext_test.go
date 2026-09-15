@@ -223,7 +223,7 @@ func newTestProxyFormatLogs(t *testing.T, upstream string, format domain.Request
 	// errlog worker（分表设计）：错误明细与 usage_logs 共用捕获 store（错误路径
 	// 断言经 p.errlog.Close 显式排空）；成功路径不投递。
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errLogStoreFrom(logs), nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
+	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{})
 }
 
 func TestProxyResponsesNonStreaming(t *testing.T) {

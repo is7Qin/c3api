@@ -375,7 +375,7 @@ func newTestProxyTplTimeoutRec(t *testing.T, tpl *domain.Template, accountID int
 		errWriter = noopErrLogStore{}
 	}
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errWriter, nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
+	return New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{})
 }
 
 func TestProxyStreamingChat(t *testing.T) {

@@ -94,7 +94,7 @@ func newImagesRegressionProxy(t *testing.T, baseURL string) (*Proxy, *scheduler.
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, &captureLogStore{}, nil)
-	p := New(Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true}, sched, credential.New(), rec, clients, auth, nil, nil, nil)
+	p := New(Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true}, sched, credential.New(), rec, clients, auth, nil, nil, nil, Deps{})
 	p.imageGenerations = &imagesCaller{p: p, path: "images/generations", op: domain.OpImagesGenerations}
 	sel, err := sched.Select(10, domain.FormatOpenAIImages, "gpt-image-2")
 	require.NoError(t, err)

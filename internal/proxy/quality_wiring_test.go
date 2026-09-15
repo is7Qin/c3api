@@ -16,8 +16,7 @@ func TestQualityRecorder_ProductionOwnership_Wiring(t *testing.T) {
 	r, err := quality.NewRecorder(eff)
 	require.NoError(t, err)
 	// proxy ownership via composition.
-	p := &Proxy{}
-	p.SetQualityRecorder(r)
+	p := New(Config{}, nil, nil, nil, nil, nil, nil, nil, nil, Deps{Recorder: r})
 	require.Same(t, r, p.QualityRecorder())
 	// lifecycle Close wired
 	require.NoError(t, p.QualityRecorder().Close())

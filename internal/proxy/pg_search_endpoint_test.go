@@ -127,8 +127,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
 		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{}},
 		Balances: bal,
-	}, nil)
-	p.SetCodex(codex)
+	}, nil, Deps{Codex: codex})
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 

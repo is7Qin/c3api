@@ -63,7 +63,7 @@ type Proxy struct {
 	qualityRecorder    *quality.Recorder
 	pipelineFlowAppend AttemptFlowAppend
 	// cont is the hard-continuation binding store (internal/continuation,
-	// main 装配 SetContinuationStore 注入；nil = 未装配——Responses 请求零
+	// main 经 Deps.Continuation 注入；nil = 未装配——Responses 请求零
 	// Redis，previous_response_id 请求 fail-closed）。
 	cont     *continuation.Store
 	inflight atomic.Int64
@@ -83,7 +83,7 @@ type Proxy struct {
 	// 恒不触达（handleFormat 分支）。
 	convCallers map[domain.ProtocolConvert]UpstreamCaller
 	// codex SDK 适配层（T2 §1——cred → Auth 缓存 / GenerateImage / 信封 /
-	// fatal 统一回调全在适配层；main 装配 SetCodex 注入，nil = 未装配 → codex
+	// fatal 统一回调全在适配层；main 经 Deps.Codex 注入，nil = 未装配 → codex
 	// 类型 501 显式拒绝——防 nil 误走凭据缺失 502）。
 	codex *sdkbridge.Codex
 	// wsHeartbeatInterval resp-ws 心跳间隔 seam（T4：测试缩短 200ms 验证心跳节
@@ -100,14 +100,31 @@ type Proxy struct {
 	wsSink        pipelineSink
 }
 
+// Deps New 的尾部一次性协作者（W1-T2：SetCodex / SetQualityRecorder /
+// SetContinuationStore 三个事后回填折叠进构造，零语义变化——各字段 nil 语义
+// 与原 setter 完全一致：Codex nil → codex 类型请求 501 显式拒绝；Recorder
+// nil → 休眠依赖；Continuation nil → continuation 请求 fail-closed）。尾部
+// struct 而非 3 个位置参数：New 本就 9 参，位置参数会冲到 12 个（>3 参
+// smell），具名字段自文档且调用点可只填所需（ServiceDeps 同款）。
+type Deps struct {
+	// Codex codex SDK 适配层（nil = 未装配 → codex 类型请求 501）。
+	Codex *sdkbridge.Codex
+	// Recorder 质量记录器（休眠依赖；nil = 未装配）。
+	Recorder *quality.Recorder
+	// Continuation 硬续接绑定存储（nil = 未装配 → continuation 请求 fail-closed）。
+	Continuation *continuation.Store
+}
+
 // New 构造代理。creds 为凭据注册表（评审 M2：直接参数注入，编译期强制；
 // 不用 Config 字段——避免 nil 运行时才炸）。bill 为计费钩子（Phase 5；
 // nil = 计费全关——现有调用点/测试兼容）。errlog 为错误明细落盘 worker
 // （分表设计；nil = 未装配——拒绝/异常路径只聚统计不落 err_logs 明细）。
-func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec *usage.Recorder, clients *aiclient.Factory, auth *Auth, log *logx.Logger, bill *BillingHooks, errlog *usage.ErrLogWorker) *Proxy {
+// deps 为尾部一次性协作者（W1-T2；零值 = 三者皆未装配，各 nil 语义见 Deps）。
+func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec *usage.Recorder, clients *aiclient.Factory, auth *Auth, log *logx.Logger, bill *BillingHooks, errlog *usage.ErrLogWorker, deps Deps) *Proxy {
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
 		log: log, bill: bill, errlog: errlog,
+		codex: deps.Codex, qualityRecorder: deps.Recorder, cont: deps.Continuation,
 		wsHeartbeatInterval: responsesWSHeartbeatInterval,
 		wsConns:             newWSRegistry(),
 	}
@@ -142,20 +159,6 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 	p.wsSink = &wsSink{}
 	return p
 }
-
-// SetCodex 注入 codex SDK 适配层（T2 §3 装配点——main 构造
-// sdkbridge.NewCodex(统一失效回调) 后注入；nil = 未装配 → codex 类型请求
-// 501 显式拒绝）。
-func (p *Proxy) SetCodex(c *sdkbridge.Codex) { p.codex = c }
-
-// SetQualityRecorder injects the quality recorder as a dormant dependency
-// Caller migration remains separate; lifecycle Close is wired in main.
-func (p *Proxy) SetQualityRecorder(r *quality.Recorder) { p.qualityRecorder = r }
-
-// SetContinuationStore injects the hard-continuation binding store
-// (Responses REST/WS create-ACK + previous_response_id pinning; nil = 未装配
-// ——普通请求零 Redis，continuation 请求 fail-closed)。
-func (p *Proxy) SetContinuationStore(s *continuation.Store) { p.cont = s }
 
 // QualityRecorder returns the dormant quality recorder (may be nil in tests).
 func (p *Proxy) QualityRecorder() *quality.Recorder { return p.qualityRecorder }

@@ -168,7 +168,7 @@ func newPGModelsTestProxy(t *testing.T, sched *scheduler.Scheduler, auth *Auth, 
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, noopErrLogStore{}, nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
+	return New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{})
 }
 
 // modelsAuth 从真实 PG keys/users 构建并首刷鉴权快照（NewAuth 构造不再自载）。

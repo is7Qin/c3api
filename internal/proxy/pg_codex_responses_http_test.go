@@ -134,8 +134,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	}, sched, credential.New(), rec, clients, auth, nil, &BillingHooks{
 		Resolver: &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}},
 		Balances: bal,
-	}, nil)
-	p.SetCodex(codex)
+	}, nil, Deps{Codex: codex})
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 

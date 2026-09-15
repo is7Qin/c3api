@@ -209,8 +209,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	// 失效标记断言依赖真实摘除，路由"不重试同账号"才成立）。
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
 	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
-	p.SetCodex(codex)
+	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
 	return p, store
 }
 
@@ -543,8 +542,8 @@ func TestImagesCodexAdapterMissing501(t *testing.T) {
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,
-	}, sched, credential.New(), rec, clients, auth, nil, nil, usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, store, nil))
-	// 不调 SetCodex —— 未装配形态
+	}, sched, credential.New(), rec, clients, auth, nil, nil, usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, store, nil), Deps{})
+	// Deps 零值 —— 未装配形态
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 		`{"model":"gpt-image-2","prompt":"x"}`))
@@ -732,8 +731,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,
-	}, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
-	p.SetCodex(codex)
+	}, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
 
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(

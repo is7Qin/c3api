@@ -390,15 +390,8 @@ func main() {
 		warningSinkSetter = billFlusher
 	}
 	warningW := wireBalanceWarning(warningSinkSetter, bwCooldown, svc, mailW, log)
-	px := proxy.New(proxy.Config{
-		MaxBodySize:           cfg.Proxy.MaxBodySize,
-		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
-		UpstreamStreamTimeout: cfg.Proxy.UpstreamStreamTimeout,
-		FailoverAttempts:      cfg.Proxy.FailoverAttempts,
-		UsageCapture:          cfg.Proxy.UsageCapture,
-		BillingCapture:        cfg.Billing.Enabled,
-		BehindCDN:             cfg.Proxy.BehindCDN, // client_ip 供应商头识别开关（false = 直取 RemoteAddr）
-	}, sched, credential.New(), rec, clients, auth, log, billHooks, errlogW)
+	// W1-T2：三协作者一律 px 之前构造、经 proxy.Deps 一次注入（构造重排，
+	// 零语义变化——各构造失败仍 fail-fast，nil 语义由 proxy 内部保持）。
 	// 硬续接绑定存储（Responses REST/WS create-ACK + previous_response_id
 	// 钉选）：HMAC 密钥由 auth.jwt_secret 经 HKDF 派生（同源密钥，零新增
 	// secret），Redis 复用 rdb 生命周期（store 无独立 Close——连接池归
@@ -409,17 +402,6 @@ func main() {
 	if err != nil {
 		fatalf("continuation: %v", err)
 	}
-	px.SetContinuationStore(contStore)
-	// 规则 typed Throttle/FailAccount 双面接线：本地 HealthController 即时生效
-	//（latch fail-closed 先于持久化）；持久化走有界 persist queue——满可丢、写
-	// 失败可弃、四指标可观测（rule best-effort 契约，无 outbox）。
-	healthCtrl := scheduler.NewHealthControllerWithScheduler(runtimeHealth, sched)
-	ruleEngine.SetHealthSink(healthCtrl)
-	ruleEngine.SetPersistFunc(scheduler.NewRulePersistFunc(repos, sched.LatchStore(), schedGroupPub{pub}, log))
-	// SDK fatal 重试 worker 纳管（blocker：旧态惰性起循环且进程退出前永不
-	// join）：managed lifecycle——Start 预起 supervised 循环，Close 先于 Redis
-	// 释放 join；重试语义（backoff/fencing/进程存活期重试）原样保留。
-	retryWorker := sdkbridge.NewFailureRetryWorker(log)
 	// codex SDK 适配层装配（T2 §3——统一失效回调先落生图路径；T5 全量）：
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
 	// 调度摘除 + 审计，T1 契约）。transport/rotation 同构造期一次给齐（构造后
@@ -444,6 +426,41 @@ func main() {
 		InvalidateSnapshot: sched.InvalidateAccount,
 		Log:                log,
 	})
+	// quality-sync lane（intelligent-routing Task 9）：500ms Redis 当前分钟绝对
+	// 快照发布 + 5s PG quality/flow UPSERT。单实例一个串行 loop（worker.GoLoop
+	// 监督），PG 写面直用 repos.Partitions（routing 分区表 absolute UPSERT+
+	// dirty 同事务）。装配在 handler 之前：opsWorkers 聚合需要该引用已存在。
+	effectiveInflight, err := config.EffectiveMaxInflight(cfg.Proxy.MaxInflight)
+	if err != nil {
+		fatalf("config: %v", err)
+	}
+	qualityRecorder, err := quality.NewRecorder(effectiveInflight)
+	if err != nil {
+		fatalf("quality: %v", err)
+	}
+	px := proxy.New(proxy.Config{
+		MaxBodySize:           cfg.Proxy.MaxBodySize,
+		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
+		UpstreamStreamTimeout: cfg.Proxy.UpstreamStreamTimeout,
+		FailoverAttempts:      cfg.Proxy.FailoverAttempts,
+		UsageCapture:          cfg.Proxy.UsageCapture,
+		BillingCapture:        cfg.Billing.Enabled,
+		BehindCDN:             cfg.Proxy.BehindCDN, // client_ip 供应商头识别开关（false = 直取 RemoteAddr）
+	}, sched, credential.New(), rec, clients, auth, log, billHooks, errlogW, proxy.Deps{
+		Codex:        codexAdapter,
+		Recorder:     qualityRecorder,
+		Continuation: contStore,
+	})
+	// 规则 typed Throttle/FailAccount 双面接线：本地 HealthController 即时生效
+	//（latch fail-closed 先于持久化）；持久化走有界 persist queue——满可丢、写
+	// 失败可弃、四指标可观测（rule best-effort 契约，无 outbox）。
+	healthCtrl := scheduler.NewHealthControllerWithScheduler(runtimeHealth, sched)
+	ruleEngine.SetHealthSink(healthCtrl)
+	ruleEngine.SetPersistFunc(scheduler.NewRulePersistFunc(repos, sched.LatchStore(), schedGroupPub{pub}, log))
+	// SDK fatal 重试 worker 纳管（blocker：旧态惰性起循环且进程退出前永不
+	// join）：managed lifecycle——Start 预起 supervised 循环，Close 先于 Redis
+	// 释放 join；重试语义（backoff/fencing/进程存活期重试）原样保留。
+	retryWorker := sdkbridge.NewFailureRetryWorker(log)
 	// 真实健康 probe 构造（blocker：构造期曾传 nil probe——所有 PROBING 记录
 	// 30s TTL 后恒失败，恢复流程永远到不了 READY）。探测权威 = scheduler 选号
 	// 快照（与选号门同一视图，revision fence fail-closed）；codex 凭据走 SDK
@@ -452,7 +469,6 @@ func main() {
 	// 流量判定）。超时同上游请求预算。probe 经 healthWorker 在 Start 期一次性
 	// 交给 runtimeHealth（Start 前记录 fail-closed 停在 OPEN/PROBING，绝不 READY）。
 	probe := newHealthProber(sched.ProbeAccount, codexAdapter, cfg.Proxy.UpstreamTimeout)
-	px.SetCodex(codexAdapter)
 	// codex 额度快照装配：svc.AccountUsage → sdkbridge.GetUsageSnapshot
 	//（TTL 缓存/有界并发/失败冷却全在适配层——service 纯编排零基础设施）。
 	svc.SetUsageSnapshotter(codexAdapter)
@@ -490,19 +506,6 @@ func main() {
 		Reload: svc.ReloadPricingAndNotifyCompiler,
 		Log:    log,
 	})
-	// quality-sync lane（intelligent-routing Task 9）：500ms Redis 当前分钟绝对
-	// 快照发布 + 5s PG quality/flow UPSERT。单实例一个串行 loop（worker.GoLoop
-	// 监督），PG 写面直用 repos.Partitions（routing 分区表 absolute UPSERT+
-	// dirty 同事务）。装配在 handler 之前：opsWorkers 聚合需要该引用已存在。
-	effectiveInflight, err := config.EffectiveMaxInflight(cfg.Proxy.MaxInflight)
-	if err != nil {
-		fatalf("config: %v", err)
-	}
-	qualityRecorder, err := quality.NewRecorder(effectiveInflight)
-	if err != nil {
-		fatalf("quality: %v", err)
-	}
-	px.SetQualityRecorder(qualityRecorder)
 	// quality-flow-owner（async-routing-quality-telemetry）：跨请求 flow 累计器
 	// 的唯一 state owner。请求结算只做一次不可变非阻塞 Submit，同分钟身份归并
 	// 全部离开请求 goroutine（owner 循环 / sync 消费侧）。注册必须先于
