@@ -43,7 +43,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.ChatCompletionStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody)
+		resp, err := p.clients.ChatCompletionStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
