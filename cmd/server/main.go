@@ -472,9 +472,6 @@ func main() {
 	// 流量判定）。超时同上游请求预算。probe 经 healthWorker 在 Start 期一次性
 	// 交给 runtimeHealth（Start 前记录 fail-closed 停在 OPEN/PROBING，绝不 READY）。
 	probe := newHealthProber(sched.ProbeAccount, codexAdapter, cfg.Proxy.UpstreamTimeout)
-	// codex 额度快照装配：svc.AccountUsage → sdkbridge.GetUsageSnapshot
-	//（TTL 缓存/有界并发/失败冷却全在适配层——service 纯编排零基础设施）。
-	svc.SetUsageSnapshotter(codexAdapter)
 	// 多实例集群 N 注入（#14 T3b → discovery 接管，consumer spec §2.2）：gate 预算
 	// ceil(剩余/N) + limit RPM ceil(rpm/N)。N = Redis 心跳活体数（disco 实时读
 	// atomic），gate/limit 在每次预算分配时现读 provider（gate.go:106-121），
@@ -581,6 +578,8 @@ func main() {
 	// service.New 签名（main.go:376-390 注入先例）。
 	h := handler.New(svc, handler.OpsOptions{
 		Workers:       opsWorkers,
+		UsageSnap:     codexAdapter, // codex 额度快照：handler fan-out 经构造直调（TTL 缓存/有界并发/失败冷却全在适配层）
+		Log:           log,          // fan-out 未知上游错误 Warn
 		Snapshots:     func() []handler.SnapshotState { return snapshotStates(snapReg.Status()) },
 		InFlightUsers: auth.InFlightUsers,
 		BillingAlerts: func() handler.BillingAlerts {

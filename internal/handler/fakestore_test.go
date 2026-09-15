@@ -72,6 +72,9 @@ type fakeStore struct {
 	aggIDs  []int64
 	aggFrom time.Time
 	aggTo   time.Time
+	// accExtErr 注入 GetAccountExt 非 ErrNotFound 故障（per-account；store
+	// 故障隔离断言用——对齐 service 侧 fakeStore 同名字段）。
+	accExtErr map[int64]error
 }
 
 func newFakeStore() *fakeStore {
@@ -90,6 +93,7 @@ func newFakeStore() *fakeStore {
 		tplExts:        make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
 		emailTemplates: make(map[string]*domain.EmailTemplate),
 		emailCodes:     make(map[string]*domain.EmailCode),
+		accExtErr:      make(map[int64]error),
 		nextID:         1,
 	}
 }
@@ -532,6 +536,9 @@ func (f *fakeStore) TryInsertAccountExt(ctx context.Context, e *domain.AccountEx
 func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err, ok := f.accExtErr[accountID]; ok {
+		return nil, err
+	}
 	e, ok := f.accExts[accountID]
 	if !ok {
 		return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)

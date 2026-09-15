@@ -15,6 +15,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // AdminAPI 实现生成的 ServerInterface（契约层唯一实现）。
@@ -23,6 +24,12 @@ import (
 type AdminAPI struct {
 	svc *service.Service
 	ops OpsOptions // 运维观测装配（GetOpsWorkers 用；变参注入，零值 = 端点返回空）
+	// usageSnap codex 额度快照数据源（W2-T3：service 侧回填删除后，调用方
+	// （GetAccountsUsage fan-out）经构造直调适配器；nil = 未装配 → codex
+	// 账号返回 null 快照，不 panic，与旧 nil 回填语义一致）。
+	usageSnap CodexUsageProber
+	// log fan-out 未知上游错误 Warn（nil = 静默；生产经 OpsOptions 注入）。
+	log *logx.Logger
 	// overview/users-top 聚合面缓存（spec 2026-08-14 TTL：30s/2s——dashboard
 	// 轮询频率下无陈旧感；键含参数、请求时区与本地日界；无 singleflight）。
 	overviewCache *ttlCache
@@ -46,6 +53,8 @@ func New(svc *service.Service, ops ...OpsOptions) *AdminAPI {
 	return &AdminAPI{
 		svc:           svc,
 		ops:           o,
+		usageSnap:     o.UsageSnap,
+		log:           o.Log,
 		overviewCache: newTTLCache(30 * time.Second),
 		usersTopCache: newTTLCache(2 * time.Second),
 		now:           time.Now,
