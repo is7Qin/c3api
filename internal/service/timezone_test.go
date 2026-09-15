@@ -49,21 +49,21 @@ func TestResolvePrices_TimeZone_Differential(t *testing.T) {
 	require.Equal(t, 2, *rp.VariantSeq, "nil tzLoc should not match Monday 07:30 window")
 
 	// tzLoc=Asia/Shanghai => 07:30 Monday inside window => seq1
-	svc.SetTimeLocation(locShanghai)
+	svc.tzLoc = locShanghai
 	rp2, ok := svc.ResolvePrices("tz-model", 0, "", atUTC)
 	require.True(t, ok)
 	require.NotNil(t, rp2.VariantSeq)
 	require.Equal(t, 1, *rp2.VariantSeq, "Asia/Shanghai should match Monday 07:30 window")
 
 	// also verify UTC explicit does NOT match (same as nil but via location)
-	svc.SetTimeLocation(time.UTC)
+	svc.tzLoc = time.UTC
 	rp3, ok := svc.ResolvePrices("tz-model", 0, "", atUTC)
 	require.True(t, ok)
 	require.NotNil(t, rp3.VariantSeq)
 	require.Equal(t, 2, *rp3.VariantSeq, "UTC should not match Monday window")
 
 	// reset to nil again = process-local fallback (same as initial)
-	svc.SetTimeLocation(nil)
+	svc.tzLoc = nil
 	rp4, ok := svc.ResolvePrices("tz-model", 0, "", atUTC)
 	require.True(t, ok)
 	require.NotNil(t, rp4.VariantSeq)
@@ -92,7 +92,7 @@ func TestResolvePrices_TimeZone_TimeOnly(t *testing.T) {
 	rp, _ := svc.ResolvePrices("tz-time-model", 0, "", atUTC)
 	require.Equal(t, 2, *rp.VariantSeq)
 	// Shanghai => 07:30 in window
-	svc.SetTimeLocation(locShanghai)
+	svc.tzLoc = locShanghai
 	rp2, _ := svc.ResolvePrices("tz-time-model", 0, "", atUTC)
 	require.Equal(t, 1, *rp2.VariantSeq)
 }

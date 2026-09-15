@@ -52,8 +52,8 @@ type priceSnapshot struct {
 
 const pricingReloadPage = 1000
 
-// SetCompileNotifier 注入路由编译触发（装配期回填，SetRecoverProber 同款：
-// 可选函数面，nil = 未装配）。生产装配 scheduler.RequestCompile（非阻塞
+// SetCompileNotifier 注入路由编译触发（装配期回填：可选函数面，
+// nil = 未装配）。生产装配 scheduler.RequestCompile（非阻塞
 // select/default，下游 200ms 去抖收敛）——定价写面只在解析价格真实变化时
 // 调用，同值写静默。
 func (s *Service) SetCompileNotifier(fn func()) { s.compileNotify = fn }

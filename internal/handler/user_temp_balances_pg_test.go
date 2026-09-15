@@ -56,7 +56,7 @@ func newUserTempPGRouter(t *testing.T) (*repository.Repository, func(method, pat
 	require.NoError(t, err)
 	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
 	require.NoError(t, err)
-	svc := service.New(repos, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	svc := service.New(repos, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})
 	iss := auth.NewIssuer("test-secret")
 	router := userapi.Router(svc, iss, pgUserStatus{repos: repos}, nil)
 	do := func(method, path, body, token string) *httptest.ResponseRecorder {

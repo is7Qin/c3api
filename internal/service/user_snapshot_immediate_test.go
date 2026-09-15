@@ -81,7 +81,7 @@ func TestRegisterUser_ImmediateUserSnapshot(t *testing.T) {
 	fs := newFakeStore()
 	auth := newFakeAuthUpsert()
 	rec := &invRecorder{}
-	svc := New(fs, nil, rec, nil, nil, auth, nil)
+	svc := New(fs, nil, rec, nil, nil, auth, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	// 注册前 settings 默认 signup_enabled=true（fakeStore 未设 → DefaultSetting 回退）
 
 	u, err := svc.RegisterUser(context.Background(), "reg@example.com", "pw12345678")

@@ -18,7 +18,7 @@ import (
 
 func newPricingSvc(t *testing.T, fs *fakeStore) *Service {
 	t.Helper()
-	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil)
+	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
 	return svc
 }
@@ -113,7 +113,7 @@ func TestPricingChangeNotifiesCompiler(t *testing.T) {
 // and nil before the snapshot is loaded.
 func TestResolvedPricesByModel(t *testing.T) {
 	fs := newFakeStore()
-	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil)
+	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	require.Nil(t, svc.ResolvedPricesByModel(time.Now()), "unloaded snapshot = nil (compile lane treats as no prices)")
 	_, err := fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
 		{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceManual},

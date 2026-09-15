@@ -182,10 +182,10 @@ func TestQueryStatsTrend_windowAlignmentHorizon(t *testing.T) {
 	}
 }
 
-// TestSetStatsRawSpan horizon 随配置换算（"绝不比配置更乐观"）：retention 7d
-// → 8d 缺省同值；3d → 4d（更短窗 400 提前）；0/负 → 不限（保留禁用无固定
-// horizon，跨 DST 长窗放行）。
-func TestSetStatsRawSpan(t *testing.T) {
+// TestNewStatsRawRetentionDays horizon 随配置换算（"绝不比配置更乐观"）：
+// retention 7d → 8d 缺省同值；3d → 4d（更短窗 400 提前）；0/负 → 不限
+// （保留禁用无固定 horizon，跨 DST 长窗放行）。保留天数经构造参数注入。
+func TestNewStatsRawRetentionDays(t *testing.T) {
 	ny, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 	oct := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC) // NY 秋退在窗内 → raw
@@ -204,8 +204,8 @@ func TestSetStatsRawSpan(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := statsTestSvc(newFakeStore())
-			svc.SetStatsRawSpan(tc.retention)
+			svc := New(newFakeStore(), nil, &invRecorder{}, nil, nil, nil, nil,
+				ServiceDeps{EmailCodeStore: testEmailCodes, StatsRawRetentionDays: tc.retention})
 			// 固定时钟到窗口起点：本测钉的是跨度换算，保留兜底（cutoff =
 			// now−days 日界）恰好不构成拒绝——兜底自身由
 			// TestQueryStatsTrend_rawRetentionCutoff 单独钉死。
@@ -249,8 +249,8 @@ func TestQueryStatsTrend_rawRetentionCutoff(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := statsTestSvc(newFakeStore())
-			svc.SetStatsRawSpan(tc.retention)
+			svc := New(newFakeStore(), nil, &invRecorder{}, nil, nil, nil, nil,
+				ServiceDeps{EmailCodeStore: testEmailCodes, StatsRawRetentionDays: tc.retention})
 			svc.statsNow = func() time.Time { return now }
 			_, err := svc.QueryStatsTrend(context.Background(), TrendQuery{
 				From: tc.from, To: tc.from.Add(day), Granularity: "day", Zone: tc.zone,

@@ -59,7 +59,7 @@ func TestRegisterUserBootstrapFirstAdminPG(t *testing.T) {
 	repos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, db), true, pool)
 	require.NoError(t, err)
 
-	svc := New(repos, nil, NopInvalidator{}, nil, nil, nil, nil)
+	svc := New(repos, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 
 	first, err := svc.RegisterUser(ctx, "first@example.com", "s3cret-pass")
 	require.NoError(t, err)

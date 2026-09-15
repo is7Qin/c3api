@@ -19,10 +19,6 @@ type RecoverProber interface {
 	SetProbing(ctx context.Context, accountID int64, revision int64) error
 }
 
-// SetRecoverProber 注入恢复健康写入器（Set* 事后回填惯例——runtimeHealth 构造
-// 晚于 svc）。
-func (s *Service) SetRecoverProber(p RecoverProber) { s.recoverProber = p }
-
 // RecoverAccount 生命周期 fenced 恢复：CAS expectedRevision 清失效三字段
 // （failed_at/last_error/failure_source）并 +1 → 新 revision 写 PROBING（best
 // effort，失败仅 Warn——恢复已持久，探针环由同步周期兜底）→ 组级失效 + NOTIFY。

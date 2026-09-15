@@ -66,7 +66,7 @@ func TestRegisterUserConcurrentDuplicateEmail(t *testing.T) {
 	fs := newRegisterRaceStore()
 	// New 直接装配（newSnapshotSvc 收 *fakeStore，raceStore 是嵌入式 store）：
 	// settings 快照默认 signup_enabled=true、temp_balance=0（不插赠品行）。
-	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil)
+	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	ctx := context.Background()
 
 	const email = "race@example.com"

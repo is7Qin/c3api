@@ -28,7 +28,7 @@ import (
 func newSharedRouters(t *testing.T) (doAdmin, doUser func(method, path, body, token string) *httptest.ResponseRecorder, store *fakeStore) {
 	t.Helper()
 	store = newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
 
 	// admin 路由（静态 token 中间件，模拟 server 层 /admin 鉴权）
 	adminH := New(svc)

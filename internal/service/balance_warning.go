@@ -17,12 +17,6 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// SetBalanceWarningCooldownCleaner injects the Redis-backed known-key cleanup
-// used only after a successful preference change. Nil leaves cleanup disabled.
-func (s *Service) SetBalanceWarningCooldownCleaner(clear func(context.Context, int64, int64) error) {
-	s.clearBalanceWarningCooldown = clear
-}
-
 func (s *Service) UpdateBalanceWarningThreshold(ctx context.Context, userID int64, thresholdUSD float64) (*domain.User, error) {
 	if math.IsNaN(thresholdUSD) || math.IsInf(thresholdUSD, 0) {
 		return nil, ErrInvalidInput

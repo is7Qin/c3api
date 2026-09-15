@@ -130,7 +130,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	}, repos.Groups, ruleEngine, nil, nil)
 	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
 	balances := billing.NewBalances(repos, nil)
-	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil)
+	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour,
 	}, repos.Usages, nil)

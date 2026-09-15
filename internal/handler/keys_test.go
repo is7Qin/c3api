@@ -27,7 +27,7 @@ import (
 // 无 key/key_raw 键、密钥明文不出现在响应体）+ 越权 401。
 func TestGetKeys(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件

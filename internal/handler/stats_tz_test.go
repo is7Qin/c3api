@@ -57,7 +57,7 @@ func statsTZOverview(t *testing.T, now time.Time) (*AdminAPI, *windowStore, *cou
 	}
 	w := &windowStore{Store: fake}
 	cnt := &countingStore{Store: w}
-	svc := service.New(cnt, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	svc := service.New(cnt, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})
 	h := New(svc)
 	h.now = func() time.Time { return now }
 	return h, w, cnt
@@ -207,7 +207,8 @@ func TestStatsEndpointsZoneThreading(t *testing.T) {
 	cst, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	fake := newFakeStore()
-	svc := service.New(fake, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	svc := service.New(fake, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil,
+		service.ServiceDeps{EmailCodeStore: fake, StatsRawRetentionDays: 7}) // 7d → 8d 缺省 horizon（旧 New 默认）
 	h := New(svc)
 
 	from, to := "2026-08-17T00:00:00Z", "2026-08-18T00:00:00Z"

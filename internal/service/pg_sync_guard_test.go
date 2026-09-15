@@ -37,7 +37,7 @@ func newPGServiceRepos(t *testing.T) (*repository.Repository, *Service) {
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, "DELETE FROM price_entries")
 	require.NoError(t, err)
-	svc := New(repo, nil, NopInvalidator{}, nil, nil, nil, nil)
+	svc := New(repo, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	require.NoError(t, svc.ReloadPricingCtx(ctx))
 	return repo, svc
 }

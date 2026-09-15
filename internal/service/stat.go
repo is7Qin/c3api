@@ -54,8 +54,8 @@ const (
 	// usage.errlog_retention_days（默认 7d，日级分区 + 1 天 DST/日界余量）
 	// 双重约束；取两者都完整覆盖的最保守窗口 8 天（7d errlog + 1d DST 日历
 	// 余量——overview 7 日窗在 fall-back 日本地跨度 24h+1h×7 ≤ 8d）。实际
-	// horizon 由 Service.statsRawSpan 承载（New 缺省本值，main 经
-	// SetStatsRawSpan(min(log, errlog) 正保留) 换算部署配置——配置更短
+	// horizon 由 Service.statsRawSpan 承载（New 经 ServiceDeps.
+	// StatsRawRetentionDays(min(log, errlog) 正保留) 换算部署配置——配置更短
 	// 则更严，配置更长不放水超出本文档化的保守窗口之外仍按 days+1 计）。恒
 	// 整点无 DST 时区且双界对齐（含 UTC 缺省）走 cube 重组，窗口维持
 	// MaxStatsTrendSpan（90d，cube 保留 180d）。部署若把 errlog/usage 保留期

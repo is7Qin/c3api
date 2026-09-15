@@ -57,7 +57,7 @@ type routingSched struct {
 func (r routingSched) CurrentRoutingPlan() *scheduler.RoutingPlan { return r.plan }
 
 func routingRouter(store *routingStore, plan *scheduler.RoutingPlan) http.Handler {
-	svc := service.New(store, routingSched{plan: plan}, service.NopInvalidator{}, nil, nil, nil, nil)
+	svc := service.New(store, routingSched{plan: plan}, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
 	r := chi.NewRouter()
 	r.Mount("/", New(svc).Router())
 	return r

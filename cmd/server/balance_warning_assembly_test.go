@@ -17,15 +17,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/billing"
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler"
+	"github.com/is7qin/c3api/internal/notification"
 	"github.com/is7qin/c3api/internal/worker"
 )
 
 type fakeBalanceWarningService struct {
 	enabled         bool
 	mailConfigCalls int
-	clearCooldown   func(context.Context, int64, int64) error
 }
 
 func (s *fakeBalanceWarningService) BalanceWarningEnabled() bool { return s.enabled }
@@ -35,12 +34,11 @@ func (s *fakeBalanceWarningService) MailConfig() (string, int, string, string, s
 	return "smtp.example.com", 465, "user", "secret", "from@example.com", "implicit", true
 }
 
-func (*fakeBalanceWarningService) RenderTemplate(context.Context, domain.EmailTemplatePurpose, map[string]string) (string, string, error) {
-	return "subject", "body", nil
-}
+func TestWireBalanceWarningReturnsNilWhenBillingSinkAbsent(t *testing.T) {
+	svc := &fakeBalanceWarningService{}
+	worker := wireBalanceWarning(nil, notification.NewCooldown(newAssemblyRedis(t)), svc, nil, nil)
 
-func (s *fakeBalanceWarningService) SetBalanceWarningCooldownCleaner(clear func(context.Context, int64, int64) error) {
-	s.clearCooldown = clear
+	require.Nil(t, worker)
 }
 
 type capturingWarningSinkSetter struct {
@@ -83,19 +81,11 @@ func newAssemblyRedis(t *testing.T) *redis.Client {
 	return client
 }
 
-func TestWireBalanceWarningReturnsNilWhenBillingSinkAbsent(t *testing.T) {
-	svc := &fakeBalanceWarningService{}
-	worker := wireBalanceWarning(nil, newAssemblyRedis(t), svc, nil, nil)
-
-	require.Nil(t, worker)
-	require.NotNil(t, svc.clearCooldown)
-}
-
 func TestWireBalanceWarningConstructsWorkerAndSetsBillingSink(t *testing.T) {
 	setter := &capturingWarningSinkSetter{}
 	svc := &fakeBalanceWarningService{enabled: true}
 
-	warningWorker := wireBalanceWarning(setter, newAssemblyRedis(t), svc, nil, nil)
+	warningWorker := wireBalanceWarning(setter, notification.NewCooldown(newAssemblyRedis(t)), svc, nil, nil)
 
 	require.NotNil(t, warningWorker)
 	require.Same(t, warningWorker, setter.sink)
@@ -150,7 +140,7 @@ func TestOrderedWorkersKeepsEmailAndOmitsWarningWhenBillingDisabled(t *testing.T
 
 func TestStatsProvidersMakesConditionalWarningVisibleToOps(t *testing.T) {
 	setter := &capturingWarningSinkSetter{}
-	warningWorker := wireBalanceWarning(setter, newAssemblyRedis(t), &fakeBalanceWarningService{enabled: true}, nil, nil)
+	warningWorker := wireBalanceWarning(setter, notification.NewCooldown(newAssemblyRedis(t)), &fakeBalanceWarningService{enabled: true}, nil, nil)
 	email := &lifecycleWorker{name: "email", events: &[]string{}, mu: &sync.Mutex{}}
 	workers := orderedWorkers(email, warningWorker, nil)
 	api := handler.New(nil, handler.OpsOptions{Workers: statsProviders(workers, nil)})

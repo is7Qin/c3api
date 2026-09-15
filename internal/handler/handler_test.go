@@ -5,6 +5,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -37,10 +38,32 @@ func (f *fakeKeys) Upsert(hash string, meta domain.KeyMeta) {
 }
 func (f *fakeKeys) Delete(hash string) { f.deleted = append(f.deleted, hash) }
 
+// testEmailCodes 无行为 service.EmailCodeStore（service.New 必选依赖的测试
+// 占位：被测路径不触验证码面；验证码行为由 newTestUserRouter 经 fake 真实现覆盖）。
+var testEmailCodes service.EmailCodeStore = testEmailCodeStore{}
+
+type testEmailCodeStore struct{}
+
+func (testEmailCodeStore) GetEmailCode(ctx context.Context, email, purpose string) (*domain.EmailCode, error) {
+	return nil, service.ErrNotFound
+}
+
+func (testEmailCodeStore) UpsertEmailCode(ctx context.Context, email, purpose, sha256 string, expiresAt time.Time) (*domain.EmailCode, error) {
+	return &domain.EmailCode{Email: email}, nil
+}
+
+func (testEmailCodeStore) IncrementEmailCodeAttempts(ctx context.Context, email, purpose string) (int, error) {
+	return 0, nil
+}
+
+func (testEmailCodeStore) DeleteEmailCode(ctx context.Context, email, purpose string) error {
+	return nil
+}
+
 func newTestHandler(t *testing.T) *AdminAPI {
 	t.Helper()
 	store := newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
 	return New(svc)
 }
 
@@ -308,7 +331,7 @@ func TestGetErrLogsRequiresFromTo(t *testing.T) {
 // error_type/error_message/billing_tier 全值）。
 func TestGetErrLogs(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
