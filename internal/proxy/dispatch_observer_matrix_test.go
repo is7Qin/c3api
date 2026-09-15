@@ -78,182 +78,191 @@ func requireExactlyOneSuccessObservation(t *testing.T, rec *quality.Recorder, fc
 
 // --- per-category success: one owner observation feeding quality + flow ---
 
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_chat(t *testing.T) {
-	up := fakeOpenAI(t, "")
-	defer up.Close()
-	p := newTestProxy(t, up.URL, 1)
-	rec, fc := wireObserverHarness(t, p)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
-		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer ck-1")
-	rec2 := httptest.NewRecorder()
-	p.HandleChat(rec2, req)
-	require.Equal(t, 200, rec2.Code)
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerChat)
-	ri, ok := p.sched.Runtime(1)
-	require.True(t, ok)
-	require.Zero(t, ri.Concurrency, "success releases the lease exactly once")
-}
-
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_responses(t *testing.T) {
-	up := fakeResponsesOutcome(t, "")
-	defer up.Close()
-	store := &captureLogStore{}
-	p := newTestProxyResponses(t, up.URL, 1, store)
-	rec, fc := wireObserverHarness(t, p)
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi"}`))
-	req.Header.Set("Authorization", "Bearer ck-1")
-	rec2 := httptest.NewRecorder()
-	p.HandleResponses(rec2, req)
-	require.Equal(t, 200, rec2.Code)
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerResponses)
-}
-
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_anthropic(t *testing.T) {
-	up := fakeAnthropicOutcome(t, "")
-	defer up.Close()
-	store := &captureLogStore{}
-	p := newTestProxyAnthropicCapture(t, up.URL, 1, store)
-	rec, fc := wireObserverHarness(t, p)
-	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
-		`{"model":"gpt-4o","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer ck-1")
-	rec2 := httptest.NewRecorder()
-	p.HandleAnthropic(rec2, req)
-	require.Equal(t, 200, rec2.Code)
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerAnthropic)
-}
-
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_converted(t *testing.T) {
-	up := &capturedUpstream{}
-	srv := up.srv(t)
-	defer srv.Close()
-	store := &captureLogStore{}
-	p := newConvertedTestProxyLogs(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses},
-		[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, store, 30*time.Second)
-	rec, fc := wireObserverHarness(t, p)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
-		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
-	req.Header.Set("Authorization", "Bearer ck-1")
-	rec2 := httptest.NewRecorder()
-	p.HandleChat(rec2, req)
-	require.Equal(t, 200, rec2.Code)
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerConverted)
-}
-
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_images(t *testing.T) {
-	up, _ := fakeImagesUpstream(t, "/v1/images/generations")
-	defer up.Close()
-	p, _ := newTestImagesProxy(t, up.URL, nil)
-	rec, fc := wireObserverHarness(t, p)
-	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
-		`{"model":"gpt-image-1","prompt":"a cat","n":2}`))
-	req.Header.Set("Authorization", "Bearer ck-1")
-	rec2 := httptest.NewRecorder()
-	p.HandleImagesGenerations(rec2, req)
-	require.Equal(t, 200, rec2.Code)
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerImages)
-}
-
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_imagesCodex(t *testing.T) {
-	up, _ := newCodexImageUpstream(t, codexUpStep{status: 200, body: codexTestImageResponse})
-	defer up.Close()
-	pat := "pat-key-1"
-	ext := &domain.AccountExt{
-		AccountID: 11, CredentialType: credential.TypeCodexPAT,
-		CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-" + strings.Repeat("1", 32)},
-		CodexPATKey:   &pat,
+func TestAttemptObserverMatrix_successFeedsQualityAndFlow(t *testing.T) {
+	tests := []struct {
+		name  string
+		cat   CallerCategory
+		drive func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T))
+	}{
+		{name: "chat", cat: CallerChat, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			up := fakeOpenAI(t, "")
+			defer up.Close()
+			p := newTestProxy(t, up.URL, 1)
+			rec, fc := wireObserverHarness(t, p)
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+				`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+			req.Header.Set("Authorization", "Bearer ck-1")
+			rec2 := httptest.NewRecorder()
+			p.HandleChat(rec2, req)
+			require.Equal(t, 200, rec2.Code)
+			return rec, fc, func(t *testing.T) {
+				ri, ok := p.sched.Runtime(1)
+				require.True(t, ok)
+				require.Zero(t, ri.Concurrency, "success releases the lease exactly once")
+			}
+		}},
+		{name: "responses", cat: CallerResponses, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			up := fakeResponsesOutcome(t, "")
+			defer up.Close()
+			store := &captureLogStore{}
+			p := newTestProxyResponses(t, up.URL, 1, store)
+			rec, fc := wireObserverHarness(t, p)
+			req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi"}`))
+			req.Header.Set("Authorization", "Bearer ck-1")
+			rec2 := httptest.NewRecorder()
+			p.HandleResponses(rec2, req)
+			require.Equal(t, 200, rec2.Code)
+			return rec, fc, nil
+		}},
+		{name: "anthropic", cat: CallerAnthropic, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			up := fakeAnthropicOutcome(t, "")
+			defer up.Close()
+			store := &captureLogStore{}
+			p := newTestProxyAnthropicCapture(t, up.URL, 1, store)
+			rec, fc := wireObserverHarness(t, p)
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(
+				`{"model":"gpt-4o","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
+			req.Header.Set("Authorization", "Bearer ck-1")
+			rec2 := httptest.NewRecorder()
+			p.HandleAnthropic(rec2, req)
+			require.Equal(t, 200, rec2.Code)
+			return rec, fc, nil
+		}},
+		{name: "converted", cat: CallerConverted, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			up := &capturedUpstream{}
+			srv := up.srv(t)
+			defer srv.Close()
+			store := &captureLogStore{}
+			p := newConvertedTestProxyLogs(t, srv.URL, []domain.RequestFormat{domain.FormatOpenAIResponses},
+				[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, store, 30*time.Second)
+			rec, fc := wireObserverHarness(t, p)
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+				`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+			req.Header.Set("Authorization", "Bearer ck-1")
+			rec2 := httptest.NewRecorder()
+			p.HandleChat(rec2, req)
+			require.Equal(t, 200, rec2.Code)
+			return rec, fc, nil
+		}},
+		{name: "images", cat: CallerImages, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			up, _ := fakeImagesUpstream(t, "/v1/images/generations")
+			defer up.Close()
+			p, _ := newTestImagesProxy(t, up.URL, nil)
+			rec, fc := wireObserverHarness(t, p)
+			req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
+				`{"model":"gpt-image-1","prompt":"a cat","n":2}`))
+			req.Header.Set("Authorization", "Bearer ck-1")
+			rec2 := httptest.NewRecorder()
+			p.HandleImagesGenerations(rec2, req)
+			require.Equal(t, 200, rec2.Code)
+			return rec, fc, nil
+		}},
+		{name: "imagesCodex", cat: CallerImagesCodex, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			up, _ := newCodexImageUpstream(t, codexUpStep{status: 200, body: codexTestImageResponse})
+			defer up.Close()
+			pat := "pat-key-1"
+			ext := &domain.AccountExt{
+				AccountID: 11, CredentialType: credential.TypeCodexPAT,
+				CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-" + strings.Repeat("1", 32)},
+				CodexPATKey:   &pat,
+			}
+			store := &captureLogStore{}
+			p, _ := newTestCodexProxy(t, credential.TypeCodexPAT, map[int64]*domain.AccountExt{11: ext}, up.URL, nil, store)
+			rec, fc := wireObserverHarness(t, p)
+			req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
+				`{"model":"gpt-image-2","prompt":"x"}`))
+			req.Header.Set("Authorization", "Bearer ck-1")
+			rec2 := httptest.NewRecorder()
+			p.HandleImagesGenerations(rec2, req)
+			require.Equal(t, 200, rec2.Code, "body=%s", rec2.Body.String())
+			return rec, fc, nil
+		}},
+		{name: "codexHTTP", cat: CallerCodexHTTP, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			up, _ := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
+			defer up.Close()
+			store := &captureLogStore{}
+			p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
+				map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")}, up.URL, nil, nil, store)
+			rec, fc := wireObserverHarness(t, p)
+			srv := httptest.NewServer(AIRouter(p))
+			defer srv.Close()
+			resp := postResponses(t, srv, `{"model":"gpt-4o","input":"hi"}`)
+			defer resp.Body.Close()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			return rec, fc, nil
+		}},
+		{name: "search", cat: CallerSearch, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			up, _ := newCodexSearchUpstream(t, codexSearchStep{status: 200, body: searchRespRaw})
+			defer up.Close()
+			store := &captureLogStore{}
+			p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},
+				up.URL, searchBillingHooks(nil), store)
+			rec, fc := wireObserverHarness(t, p)
+			srv := httptest.NewServer(AIRouter(p))
+			defer srv.Close()
+			resp := postSearch(t, srv, searchReqBody, "")
+			defer resp.Body.Close()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			return rec, fc, nil
+		}},
+		{name: "responsesWS", cat: CallerResponsesWS, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			hooks := &fakeWSHooks{frameLimit: 1}
+			up := fakeResponsesWS(t, hooks)
+			defer up.Close()
+			tpl := &domain.Template{
+				ID: 1, Name: "t", BaseURL: up.URL,
+				CredentialType:   credential.TypeAPIKey,
+				SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
+				Models:           []string{"gpt-4o"},
+			}
+			store := &captureLogStore{}
+			p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, nil)
+			rec, fc := wireObserverHarness(t, p)
+			srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+			defer srv.Close()
+			c := dialResponsesWS(t, srv)
+			defer c.CloseNow()
+			require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+				[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+			for i := 0; i < 4; i++ {
+				_ = readResponsesWSFrame(t, c)
+			}
+			readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+			return rec, fc, nil
+		}},
+		{name: "codexWS", cat: CallerCodexWS, drive: func(t *testing.T) (*quality.Recorder, *flowCapture, func(t *testing.T)) {
+			up, _ := newCodexWSUpstream(t, []int{200}, 1)
+			pat := "pat-1"
+			store := &captureLogStore{}
+			p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
+				map[int64]*domain.AccountExt{10: {
+					AccountID: 10, CredentialType: credential.TypeCodexPAT,
+					CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-" + strings.Repeat("2", 32)},
+					CodexPATKey:   &pat,
+				}}, up.URL, nil, store)
+			rec, fc := wireObserverHarness(t, p)
+			srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+			defer srv.Close()
+			c := dialResponsesWS(t, srv)
+			defer c.CloseNow()
+			require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+				[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+			for i := 0; i < 4; i++ {
+				_ = readResponsesWSFrame(t, c)
+			}
+			readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+			return rec, fc, nil
+		}},
 	}
-	store := &captureLogStore{}
-	p, _ := newTestCodexProxy(t, credential.TypeCodexPAT, map[int64]*domain.AccountExt{11: ext}, up.URL, nil, store)
-	rec, fc := wireObserverHarness(t, p)
-	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
-		`{"model":"gpt-image-2","prompt":"x"}`))
-	req.Header.Set("Authorization", "Bearer ck-1")
-	rec2 := httptest.NewRecorder()
-	p.HandleImagesGenerations(rec2, req)
-	require.Equal(t, 200, rec2.Code, "body=%s", rec2.Body.String())
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerImagesCodex)
-}
-
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_codexHTTP(t *testing.T) {
-	up, _ := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
-	defer up.Close()
-	store := &captureLogStore{}
-	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
-		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")}, up.URL, nil, nil, store)
-	rec, fc := wireObserverHarness(t, p)
-	srv := httptest.NewServer(AIRouter(p))
-	defer srv.Close()
-	resp := postResponses(t, srv, `{"model":"gpt-4o","input":"hi"}`)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerCodexHTTP)
-}
-
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_search(t *testing.T) {
-	up, _ := newCodexSearchUpstream(t, codexSearchStep{status: 200, body: searchRespRaw})
-	defer up.Close()
-	store := &captureLogStore{}
-	p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},
-		up.URL, searchBillingHooks(nil), store)
-	rec, fc := wireObserverHarness(t, p)
-	srv := httptest.NewServer(AIRouter(p))
-	defer srv.Close()
-	resp := postSearch(t, srv, searchReqBody, "")
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerSearch)
-}
-
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_responsesWS(t *testing.T) {
-	hooks := &fakeWSHooks{frameLimit: 1}
-	up := fakeResponsesWS(t, hooks)
-	defer up.Close()
-	tpl := &domain.Template{
-		ID: 1, Name: "t", BaseURL: up.URL,
-		CredentialType:   credential.TypeAPIKey,
-		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS},
-		Models:           []string{"gpt-4o"},
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, fc, extra := tc.drive(t)
+			requireExactlyOneSuccessObservation(t, rec, fc, tc.cat)
+			if extra != nil {
+				extra(t)
+			}
+		})
 	}
-	store := &captureLogStore{}
-	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, store, nil)
-	rec, fc := wireObserverHarness(t, p)
-	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
-	defer srv.Close()
-	c := dialResponsesWS(t, srv)
-	defer c.CloseNow()
-	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
-		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	for i := 0; i < 4; i++ {
-		_ = readResponsesWSFrame(t, c)
-	}
-	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerResponsesWS)
-}
-
-func TestAttemptObserverMatrix_successFeedsQualityAndFlow_codexWS(t *testing.T) {
-	up, _ := newCodexWSUpstream(t, []int{200}, 1)
-	pat := "pat-1"
-	store := &captureLogStore{}
-	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
-		map[int64]*domain.AccountExt{10: {
-			AccountID: 10, CredentialType: credential.TypeCodexPAT,
-			CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-" + strings.Repeat("2", 32)},
-			CodexPATKey:   &pat,
-		}}, up.URL, nil, store)
-	rec, fc := wireObserverHarness(t, p)
-	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
-	defer srv.Close()
-	c := dialResponsesWS(t, srv)
-	defer c.CloseNow()
-	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
-		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	for i := 0; i < 4; i++ {
-		_ = readResponsesWSFrame(t, c)
-	}
-	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
-	requireExactlyOneSuccessObservation(t, rec, fc, CallerCodexWS)
 }
 
 // --- retry chain: ordinals + previous linkage preserved through flow ---
