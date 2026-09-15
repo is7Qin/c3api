@@ -104,27 +104,84 @@ func (f *Factory) InvalidateAll() {
 
 // --- openai chat/completions ---
 
-// ChatCompletion 非流式调用（内部注入鉴权头 + 超时）。
-func (f *Factory) ChatCompletion(ctx context.Context, tpl *domain.Template, key string, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+// ChatCompletion 非流式调用（内部注入鉴权头 + 超时）。客户端头经 relayOptions
+// 如实上行（同 raw 面：只过全仓唯一清单 relayDeny，不做任何映射），账号鉴权头
+// 在末位写 ⇒ 网关声明后写覆盖赢（不变量 #5）。
+func (f *Factory) ChatCompletion(ctx context.Context, tpl *domain.Template, key string, params openai.ChatCompletionNewParams, in http.Header) (*openai.ChatCompletion, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.cfg.UpstreamTimeout)
 	defer cancel()
-	return f.chat(tpl).Chat.Completions.New(ctx, params, openaioption.WithHeader("Authorization", "Bearer "+key))
+	opts := append(relayOptions(in), openaioption.WithHeader("Authorization", "Bearer "+key))
+	return f.chat(tpl).Chat.Completions.New(ctx, params, opts...)
 }
 
 // --- openai responses ---
 
-func (f *Factory) Response(ctx context.Context, tpl *domain.Template, key string, params responses.ResponseNewParams) (*responses.Response, error) {
+// Response 非流式调用（openai responses 格式）；头策略同 ChatCompletion。
+func (f *Factory) Response(ctx context.Context, tpl *domain.Template, key string, params responses.ResponseNewParams, in http.Header) (*responses.Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.cfg.UpstreamTimeout)
 	defer cancel()
-	return f.responses(tpl).Responses.New(ctx, params, openaioption.WithHeader("Authorization", "Bearer "+key))
+	opts := append(relayOptions(in), openaioption.WithHeader("Authorization", "Bearer "+key))
+	return f.responses(tpl).Responses.New(ctx, params, opts...)
 }
 
 // --- anthropic messages ---
 
-func (f *Factory) AnthMessage(ctx context.Context, tpl *domain.Template, key string, params anthropic.MessageNewParams) (*anthropic.Message, error) {
+// AnthMessage 非流式调用（anthropic messages 格式）；头策略同 ChatCompletion，
+// 但走 anthropic 自己的 option 包（两包互不兼容 ⇒ 两个 helper，共用同一份
+// RelayHeaders 产物，绝不设第二份清单）。
+func (f *Factory) AnthMessage(ctx context.Context, tpl *domain.Template, key string, params anthropic.MessageNewParams, in http.Header) (*anthropic.Message, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.cfg.UpstreamTimeout)
 	defer cancel()
-	return f.anthropic(tpl).Messages.New(ctx, params, anthropicoption.WithHeader("x-api-key", key))
+	opts := append(relayAnthropicOptions(in), anthropicoption.WithHeader("x-api-key", key))
+	return f.anthropic(tpl).Messages.New(ctx, params, opts...)
+}
+
+// relayOptions 把 relay 产物转成 openai SDK 的请求选项：单值键 WithHeader；
+// 多值键首个 WithHeader + 其余逐个 WithHeaderAdd。
+//
+// 多值必须分开写：WithHeader 内部是 Header.Set（openai-go
+// option/requestoption.go:111），一律 WithHeader 会把同键两值压成只剩末值 =
+// 静默丢客户端事实；WithHeaderAdd 是 Header.Add（:120）。
+//
+// 位置即语义：SDK 先设自己的默认头（requestconfig.go:155-164，含
+// User-Agent: OpenAI/Go <ver>），再 cfg.Apply(opts...) ⇒ 这里产出的 WithHeader
+// 压过 SDK 默认（客户端 UA 顶掉 SDK UA 属 §9-2「允许覆盖」裁决）。
+func relayOptions(in http.Header) []openaioption.RequestOption {
+	relayed := RelayHeaders(in)
+	if len(relayed) == 0 {
+		return nil
+	}
+	opts := make([]openaioption.RequestOption, 0, len(relayed))
+	for k, vs := range relayed {
+		if len(vs) == 0 {
+			continue
+		}
+		opts = append(opts, openaioption.WithHeader(k, vs[0]))
+		for _, v := range vs[1:] {
+			opts = append(opts, openaioption.WithHeaderAdd(k, v))
+		}
+	}
+	return opts
+}
+
+// relayAnthropicOptions relayOptions 的 anthropic 对应体（同一份 RelayHeaders，
+// WithHeader/WithHeaderAdd 语义与 openai 包一致：option/requestoption.go:229,238）。
+func relayAnthropicOptions(in http.Header) []anthropicoption.RequestOption {
+	relayed := RelayHeaders(in)
+	if len(relayed) == 0 {
+		return nil
+	}
+	opts := make([]anthropicoption.RequestOption, 0, len(relayed))
+	for k, vs := range relayed {
+		if len(vs) == 0 {
+			continue
+		}
+		opts = append(opts, anthropicoption.WithHeader(k, vs[0]))
+		for _, v := range vs[1:] {
+			opts = append(opts, anthropicoption.WithHeaderAdd(k, v))
+		}
+	}
+	return opts
 }
 
 // --- 流式原始请求（SSE relay 用） ---

@@ -135,7 +135,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	reqModel := params.Model
 	params.Model = sel.Model
 	tpl := tplOf(sel) // 非流式走 SDK 模板路径
-	resp, err := p.clients.AnthMessage(ctx, tpl, cred, params)
+	resp, err := p.clients.AnthMessage(ctx, tpl, cred, params, r.Header)
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err
 	}
