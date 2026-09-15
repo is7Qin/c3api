@@ -33,7 +33,7 @@ func benchEngine(b *testing.B, rules ...domain.Rule) *RuleEngine {
 			b.Fatal(err)
 		}
 	}
-	e := New(Config{}, st, nil)
+	e := New(Config{}, st, nil, nil, nil)
 	if err := e.Reload(context.Background()); err != nil {
 		b.Fatal(err)
 	}

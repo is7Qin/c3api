@@ -14,7 +14,7 @@ import (
 )
 
 func TestRuleEngineStats(t *testing.T) {
-	e := New(Config{EventQueueSize: 2}, newFakeRuleStore(), nil)
+	e := New(Config{EventQueueSize: 2}, newFakeRuleStore(), nil, nil, nil)
 	st := e.Stats().(RuleEngineStats)
 	require.Zero(t, st.Queued)
 	require.Equal(t, 2, st.QueueCap)

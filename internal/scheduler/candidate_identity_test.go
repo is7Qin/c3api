@@ -11,6 +11,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
 )
 
@@ -42,7 +43,7 @@ func TestRulePersistRejectsStaleOrMismatchedFailureIdentity(t *testing.T) {
 	store := &failurePersistStore{account: a}
 	fp, err := candidateFingerprint(a)
 	require.NoError(t, err)
-	persist := NewRulePersistFunc(store, newLatchStore(), nil, nil)
+	persist := NewRulePersistFunc(store, latch.NewLatchStore(), nil, nil)
 
 	for _, tc := range []struct {
 		name  string

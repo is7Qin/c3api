@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
 )
 
@@ -58,9 +59,9 @@ func (m *persistLoader) LoadGroupAccounts(ctx context.Context, id int64) ([]*dom
 // reload 产出静态视图后武装编译道并同步编译，Select 走编译计划。
 func newSchedLoader(t *testing.T, m Loader) *Scheduler {
 	t.Helper()
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil, nil)
+	s := New(testCfg(), m, re, nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
@@ -139,12 +140,15 @@ func TestMarkResultFailAccountUsesLifecycleRevision(t *testing.T) {
 			When: domain.RuleWhen{Kind: strPtr("5xx")},
 			Then: domain.RuleThen{FailAccount: true}},
 	}, next: 2}
-	re := rule.New(rule.Config{}, store, nil)
+	// 构造期接线（无回填）：latch/hub 先行 → sink → rule → sched（New 内订阅）。
+	ls := latch.NewLatchStore()
+	hub := latch.NewHub()
+	sink := NewLatchSink(nil, ls, hub)
+	re := rule.New(rule.Config{}, store, nil, sink, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil, nil)
+	s := New(testCfg(), m, re, nil, nil, ls, hub)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
-	re.SetHealthSink(NewHealthControllerWithScheduler(nil, s))
 
 	s.MarkResult(1, rule.Kind5xx, nil, 500, "boom", "m")
 	s.FlushRules()

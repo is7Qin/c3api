@@ -174,13 +174,12 @@ func TestClassify_PurePassthrough_EquivalenceWithSeed(t *testing.T) {
 }
 
 func TestClassify_PurePassthrough_HandleEventNoPunish(t *testing.T) {
-	e, _ := newTestEngine(t, domain.Rule{
+	sink := newFakeSink(10)
+	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "user-passthrough", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},
 		Then: domain.RuleThen{},
 	})
-	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
 	ev := Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: intPtr(400), OccurredAt: at(0), ErrorMessage: "bad"}
 	e.HandleEvent(nil, ev)
 	// Then{} has no typed action → sink never called; punish=false in proxy path.

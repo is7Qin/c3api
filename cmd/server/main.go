@@ -33,6 +33,7 @@ import (
 	"github.com/is7qin/c3api/internal/handler"
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/invalidate"
+	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/notification"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/pricing"
@@ -181,18 +182,24 @@ func main() {
 	// self 与 NOTIFY Src 同源（hostname-pid-nonce 生成模式复用）。
 	disco := discovery.New(rdb, src, log)
 
-	// 规则引擎先行构造（不 Reload——New 只建结构）。
-	ruleEngine := rule.New(rule.Config{}, repos.Rules, log)
 	// 运行时健康投影先建（intelligent-routing lane）：只依赖 rdb/src/disco
 	// 活体快照（与 selfID 同源），无 probe——probe 是 Start 期依赖（codex 适配器
 	// 就绪后构造真 probe，经 healthWorker 在 Start 期一次性交接，无回填）。
 	// sched 构造即持 health（构造注入，无 Set* 回填）。
 	runtimeHealth := scheduler.NewRuntimeHealth(rdb, src, disco.LiveMembers, log)
+	// 锁存一等组件（B18/B19 根因重开）：main 拥有 LatchStore + Hub 各恰好一次，
+	// 经构造参出借——latch→hub→sink→persistFn→ruleEngine→sched 序，无 Set* 回填。
+	latchStore := latch.NewLatchStore()
+	hub := latch.NewHub()
+	latchSink := scheduler.NewLatchSink(runtimeHealth, latchStore, hub)
+	persistFn := scheduler.NewRulePersistFunc(repos, latchStore, schedGroupPub{pub}, log)
+	// 规则引擎构造（不 Reload——New 只建结构；sink/persist 一次性注入）。
+	ruleEngine := rule.New(rule.Config{}, repos.Rules, log, latchSink, persistFn)
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: cfg.Scheduler.DefaultMaxConcurrency,
 		SyncInterval:          cfg.Scheduler.SyncInterval,
 		StalenessProbe:        repos.Groups,
-	}, repos.Groups, ruleEngine, runtimeHealth, log)
+	}, repos.Groups, ruleEngine, runtimeHealth, log, latchStore, hub)
 	// 额度回写器只在计费开启时注入（Todo 3）：BillingCapture=false 时 proxy finish
 	// 本就不产生 AddQuota 增量，此处等价停用 quota writer/flush 落库面；
 	// UsageCapture 与 quota 回写解耦（quota 走 Recorder 独立 flush 节奏）。
@@ -470,26 +477,9 @@ func main() {
 		Recorder:     qualityRecorder,
 		Continuation: contStore,
 	})
-	// 规则 typed Throttle/FailAccount 双面接线：本地 HealthController 即时生效
-	//（latch fail-closed 先于持久化）；持久化走有界 persist queue——满可丢、写
-	// 失败可弃、四指标可观测（rule best-effort 契约，无 outbox）。
-	// B18/B19 DEFER（ponytail: 2026-09-14）：RuleEngine.SetHealthSink/SetPersistFunc
-	// 暂不清掉——不是遗漏，是构造环真实存在：
-	// - scheduler.New 要求 ruleEngine 非 nil（事件投递面；nil 在首个 MarkResult/
-	//   Classify/FlushRules 即解引用 panic，见 internal/scheduler/scheduler.go），
-	//   故 rule.New 必须先于 scheduler.New；
-	// - 而 sink 要 sched（NewHealthControllerWithScheduler 共享 s.latch 并做
-	//   revision 围栏 + sched.FailAccount 内存摘除），persistFn 要 sched.LatchStore()，
-	//   故两者只能在 sched 之后构造。
-	// - latch 提前抽出只解 B19 不解 B18：无 sched 的 sink 丢围栏+摘除（降级，非等价
-	//   重排）；persist-queue 搬出 RuleEngine 是 epic（worker 生命周期+四指标全搬），
-	//   非 minimal fix；新增窄接口 late-bind 违反"禁新增回填"纪律（2026-09-14）。
-	// 重开条件：(1) owner 豁免恰好一个 AttachRuleEngine 窄接口；或 (2) 批准 latch
-	// 一等组件 + HealthController 拆分（latch-only sink + sched-dispatch 装饰器）
-	// epic。在此之前保持恰好一次接线（rule_wiring_test.go 断言），勿加第三个 setter。
-	healthCtrl := scheduler.NewHealthControllerWithScheduler(runtimeHealth, sched)
-	ruleEngine.SetHealthSink(healthCtrl)
-	ruleEngine.SetPersistFunc(scheduler.NewRulePersistFunc(repos, sched.LatchStore(), schedGroupPub{pub}, log))
+	// 规则 typed Throttle/FailAccount 双面已在构造期接线（latch fail-closed
+	// 先于持久化；持久化走有界 persist queue——满可丢、写失败可弃、四指标可观测，
+	// rule best-effort 契约，无 outbox）。接线唯一性由 rule_wiring_test.go 钉死。
 	// SDK fatal 重试 worker 纳管（blocker：旧态惰性起循环且进程退出前永不
 	// join）：managed lifecycle——Start 预起 supervised 循环，Close 先于 Redis
 	// 释放 join；重试语义（backoff/fencing/进程存活期重试）原样保留。

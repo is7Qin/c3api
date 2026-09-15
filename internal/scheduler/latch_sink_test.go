@@ -11,28 +11,45 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/pkg/redisx"
 )
 
-func newTestHealthWithLatch(t *testing.T) (*RuntimeHealth, *latchStore, *miniredis.Miniredis) {
+func newTestHealthWithLatch(t *testing.T) (*RuntimeHealth, *latch.LatchStore, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c) })
 	h := NewRuntimeHealth(c, "self-a", nil, nil)
-	ls := newLatchStore()
+	ls := latch.NewLatchStore()
 	return h, ls, mr
+}
+
+// newSchedWithLatch 构造期接线版 newSched（无回填）：latch/hub 先行 → sink →
+// rule → sched（New 内订阅 onRuleFailure），与 main 装配序一致。
+func newSchedWithLatch(t *testing.T, m *memLoader) (*Scheduler, *latch.LatchStore, *LatchSink) {
+	t.Helper()
+	ls := latch.NewLatchStore()
+	hub := latch.NewHub()
+	sink := NewLatchSink(nil, ls, hub)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, sink, nil)
+	require.NoError(t, re.Reload(context.Background()))
+	s := New(testCfg(), m, re, nil, nil, ls, hub)
+	require.NoError(t, s.reload(context.Background()))
+	wireSources(s, nil, nil)
+	s.compileOnce()
+	return s, ls, sink
 }
 
 func TestThrottleAccountWildcard(t *testing.T) {
 	h, _, mr := newTestHealthWithLatch(t)
 	_ = mr
-	ctrl := NewHealthController(h, newLatchStore())
+	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
 	ev := rule.Event{AccountID: 1, ExpectedRevision: 5, RouteClassID: "r1", QualityClassID: "q1"}
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
-	require.NoError(t, ctrl.Throttle(ev, th))
+	require.NoError(t, sink.Throttle(ev, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(1, "any", 5))
 	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 5))
@@ -42,15 +59,15 @@ func TestThrottleAccountWildcard(t *testing.T) {
 
 func TestThrottleAccountRouteRequiresIDsAndPropagation(t *testing.T) {
 	h, _, _ := newTestHealthWithLatch(t)
-	ctrl := NewHealthController(h, newLatchStore())
+	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
-	require.NoError(t, ctrl.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "", QualityClassID: "q1"}, th))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	require.NoError(t, ctrl.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: ""}, th))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: ""}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	require.NoError(t, ctrl.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: "q1"}, th))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(2, "q1", 3))
 	require.Equal(t, StateReady, h.EffectiveState(2, "other", 3))
@@ -59,14 +76,11 @@ func TestThrottleAccountRouteRequiresIDsAndPropagation(t *testing.T) {
 
 func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
-	s := newSched(t, m)
-	ls := s.LatchStore()
-	require.NotNil(t, ls)
-	ctrl := NewHealthControllerWithScheduler(nil, s)
+	s, ls, sink := newSchedWithLatch(t, m)
 	fp, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
 	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
-	require.NoError(t, ctrl.FailAccount(ev))
+	require.NoError(t, sink.FailAccount(ev))
 	require.True(t, ls.IsLatched(1, fp))
 	s.compileOnce() // v5-§5.1A: 锁存账号保留在编译计划内 → reserve 门跳过 → ErrAttemptsExhausted（旧“路由空 → ErrNoAvailable”已废止）
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
@@ -90,13 +104,11 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 
 func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
-	s := newSched(t, m)
-	ls := s.LatchStore()
-	ctrl := NewHealthControllerWithScheduler(nil, s)
+	s, ls, sink := newSchedWithLatch(t, m)
 	fp1, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
 	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp1, ErrorMessage: "boom"}
-	require.NoError(t, ctrl.FailAccount(ev))
+	require.NoError(t, sink.FailAccount(ev))
 	require.True(t, ls.IsLatched(1, fp1))
 	// fingerprint change clears old latch
 	m.byGroup[10][0].UpstreamKey = "new-key"
@@ -115,7 +127,7 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	fp2, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
 	ev2.CandidateFingerprint = fp2
-	require.NoError(t, ctrl.FailAccount(ev2))
+	require.NoError(t, sink.FailAccount(ev2))
 	require.True(t, ls.IsLatched(1, fp2))
 	// remove account clears latch
 	delete(m.byGroup, 10)
@@ -134,28 +146,27 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	s.Release(sel.AccountID)
 }
 
-func TestHealthControllerProbeAndEffectiveStateWithLatch(t *testing.T) {
+func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {
 	mr := miniredis.RunT(t)
 	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c) })
 	h := NewRuntimeHealth(c, "self-a", nil, nil)
-	ls := newLatchStore()
-	ctrl := NewHealthController(h, ls)
+	ls := latch.NewLatchStore()
+	hub := latch.NewHub()
+	sink := NewLatchSink(h, ls, hub)
 	// barrier for concurrent throttle and select
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil, nil)
-	s.latch = ls
-	s.health = h
+	s := New(testCfg(), m, re, h, nil, ls, hub)
 	require.NoError(t, s.reload(context.Background()))
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(3000), UseReset: false}
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_ = ctrl.Throttle(rule.Event{AccountID: 1, ExpectedRevision: 1}, th)
+		_ = sink.Throttle(rule.Event{AccountID: 1, ExpectedRevision: 1}, th)
 	}()
 	go func() {
 		defer wg.Done()

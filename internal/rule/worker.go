@@ -88,9 +88,7 @@ func (e *RuleEngine) flushPersist(ctx context.Context) {
 						e.persistPending.Store(0)
 					}
 				}()
-				e.persistFnMu.RLock()
 				fn := e.persistFn
-				e.persistFnMu.RUnlock()
 				if fn != nil {
 					if err := fn(ctx, item); err != nil && ctx.Err() == nil {
 						e.persistFailures.Add(1)
@@ -128,9 +126,7 @@ func (e *RuleEngine) persistLoop(ctx context.Context) {
 						panic(r)
 					}
 				}()
-				e.persistFnMu.RLock()
 				fn := e.persistFn
-				e.persistFnMu.RUnlock()
 				if fn != nil {
 					if err := fn(ctx, item); err != nil && ctx.Err() == nil {
 						e.persistFailures.Add(1)

@@ -25,7 +25,7 @@ import (
 // newTestRuleEngine 空规则引擎（bench 不依赖规则路径，满足 New 的非 nil 要求）。
 func newTestRuleEngine(tb testing.TB) *rule.RuleEngine {
 	tb.Helper()
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	if err := re.Reload(context.Background()); err != nil {
 		tb.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func schedulerWithAccounts(tb testing.TB, n int, mapping domain.ModelMapping) *S
 			Enabled: true, MaxConcurrency: 100000,
 		})
 	}
-	s := New(Config{DefaultMaxConcurrency: 100000, SyncInterval: time.Hour}, newMemLoader(accs), newTestRuleEngine(tb), nil, nil)
+	s := New(Config{DefaultMaxConcurrency: 100000, SyncInterval: time.Hour}, newMemLoader(accs), newTestRuleEngine(tb), nil, nil, nil, nil)
 	if err := s.InvalidateAllSync(); err != nil {
 		tb.Fatal(err)
 	}

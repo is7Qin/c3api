@@ -224,10 +224,9 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 		UpstreamStreamTimeout: 30 * time.Second,
 		UsageCapture:          true,
 	}
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
-	re.SetHealthSink(testHealthSink)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil)
+	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -472,8 +471,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 
 	// 定制规则引擎：种子后插入高优 CustomMessage 规则（punish=true → MarkResult 投递）。
 	frs := &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}
-	re := rule.New(rule.Config{}, frs, nil)
-	re.SetHealthSink(testHealthSink)
+	re := rule.New(rule.Config{}, frs, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	kind4xx := "4xx"
 	customMsg := "dial-4xx-custom"
@@ -499,7 +497,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	}}}
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, store, nil)
 	cfg := Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true}
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil)
+	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

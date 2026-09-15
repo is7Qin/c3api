@@ -124,10 +124,10 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.NoError(t, err)
 
 	// --- 构造链（与 main 装配序一致：模块构造零 reload——单一入口） ---
-	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil)
+	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, repos.Groups, ruleEngine, nil, nil)
+	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
 	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
 	balances := billing.NewBalances(repos, nil)
 	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})

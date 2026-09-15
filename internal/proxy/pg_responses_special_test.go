@@ -86,11 +86,11 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background())) // 空表写种子（同 newTestProxyTplTimeoutRec）
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, repos.Groups, re, nil, nil)
+	}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

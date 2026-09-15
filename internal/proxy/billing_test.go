@@ -1295,12 +1295,11 @@ func newTestProxyBillingKeys(t *testing.T, keys map[string]domain.KeyMeta, accs 
 		UpstreamStreamTimeout: 30 * time.Second,
 		UsageCapture:          true, BillingCapture: true,
 	}
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
-	re.SetHealthSink(testHealthSink)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, noopLoader{accs: accs}, re, nil, nil)
+	}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

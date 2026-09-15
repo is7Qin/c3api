@@ -130,9 +130,9 @@ func acc(id int64, t *domain.Template, maxConc int) *domain.Account {
 // 路由直接 ErrFormatUnavailable）。
 func newSched(t *testing.T, m *memLoader) *Scheduler {
 	t.Helper()
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil, nil)
+	s := New(testCfg(), m, re, nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
@@ -149,9 +149,9 @@ func newTestScheduler(t *testing.T, accs []*domain.Account) *Scheduler {
 // wireSources+compileOnce 验证未编译→已编译的转换）。
 func newSchedStatic(t *testing.T, m *memLoader) *Scheduler {
 	t.Helper()
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil, nil)
+	s := New(testCfg(), m, re, nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	return s
 }
@@ -239,8 +239,8 @@ func TestSelectUnknownGroup(t *testing.T) {
 
 // TestSelectNilStoreNoPanic 快照未加载（首刷失败）时 Select 优雅失败而非 panic。
 func TestSelectNilStoreNoPanic(t *testing.T) {
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
-	s := New(testCfg(), newMemLoader(nil), re, nil, nil) // 不 reload：模拟首刷失败
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
+	s := New(testCfg(), newMemLoader(nil), re, nil, nil, nil, nil) // 不 reload：模拟首刷失败
 	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrGroupNotFound)
 }
@@ -813,9 +813,9 @@ func TestRequestPathZeroLoaderCalls(t *testing.T) {
 	tpl := tpl(1, domain.FormatOpenAIResponsesWS, []string{"gpt-4o"})
 	inner := newMemLoader(map[int64][]*domain.Account{10: {acc(7, tpl, 4)}})
 	cl := &countingLoader{inner: inner}
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), cl, re, nil, nil)
+	s := New(testCfg(), cl, re, nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
@@ -871,9 +871,9 @@ func TestSchedulerClassify(t *testing.T) {
 		Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: &dur}, ResponseCode: intPtr(502), CustomMessage: strPtr("upstream rejected request")},
 	})
 	require.NoError(t, err)
-	re := rule.New(rule.Config{}, rstore, nil)
+	re := rule.New(rule.Config{}, rstore, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil, nil)
+	s := New(testCfg(), m, re, nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 
 	// 400 → 全透

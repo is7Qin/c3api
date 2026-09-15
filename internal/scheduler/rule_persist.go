@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -22,7 +23,7 @@ type rulePersistTemplateStore interface {
 	GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error)
 }
 
-func NewRulePersistFunc(store rulePersistStore, latch *latchStore, pub interface {
+func NewRulePersistFunc(store rulePersistStore, latchStore *latch.LatchStore, pub interface {
 	PublishGroups(ctx context.Context, gids []int64)
 }, log *logx.Logger) rule.PersistFunc {
 	return func(ctx context.Context, item rule.PersistItem) error {
@@ -58,9 +59,9 @@ func NewRulePersistFunc(store rulePersistStore, latch *latchStore, pub interface
 			return ErrCandidateFingerprintMismatch
 		}
 		// stale fingerprint fence: if latch fingerprint differs, clear old
-		if latch != nil {
-			// latch already acquired in HealthController; verify still latched
-			if !latch.IsLatched(item.Event.AccountID, fp) {
+		if latchStore != nil {
+			// latch already acquired in LatchSink; verify still latched
+			if !latchStore.IsLatched(item.Event.AccountID, fp) {
 				return nil
 			}
 		}
@@ -71,14 +72,14 @@ func NewRulePersistFunc(store rulePersistStore, latch *latchStore, pub interface
 		err = store.FailAccountCAS(ctx, item.Event.AccountID, item.Event.ExpectedRevision, "rule", time.Now(), reason)
 		if err != nil {
 			if errors.Is(err, repository.ErrStaleRevision) {
-				if fresh, ferr := store.GetAccount(ctx, item.Event.AccountID); ferr == nil && fresh.LifecycleRevision > item.Event.ExpectedRevision && latch != nil {
-					latch.Clear(item.Event.AccountID)
+				if fresh, ferr := store.GetAccount(ctx, item.Event.AccountID); ferr == nil && fresh.LifecycleRevision > item.Event.ExpectedRevision && latchStore != nil {
+					latchStore.Clear(item.Event.AccountID)
 				}
 			}
 			return err
 		}
-		if latch != nil {
-			latch.Clear(item.Event.AccountID)
+		if latchStore != nil {
+			latchStore.Clear(item.Event.AccountID)
 		}
 		if pub != nil {
 			gids, _ := store.GetAccountGroups(ctx, item.Event.AccountID)

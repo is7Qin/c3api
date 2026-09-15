@@ -58,9 +58,9 @@ func (m *memLoader) probeCounts() compileProbeCounts {
 func newProbedSched(t *testing.T, m *memLoader, q map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) (*Scheduler, *countingLoader) {
 	t.Helper()
 	cl := &countingLoader{inner: m}
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), cl, re, nil, nil)
+	s := New(testCfg(), cl, re, nil, nil, nil, nil)
 	s.stalenessProbe = func(context.Context) (compileProbeCounts, error) { return m.probeCounts(), nil }
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, q, prices)
@@ -279,7 +279,7 @@ func (f *fakeStalenessSource) CompileStalenessSnapshot(context.Context) (domain.
 // out-of-band content-edit gap) and propagates supplier errors to the
 // fail-safe path.
 func TestCompileEvent_ProbeSnapshotMappingIsExact(t *testing.T) {
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	cfg := testCfg()
 	cfg.StalenessProbe = &fakeStalenessSource{snap: domain.CompileStaleness{
@@ -288,7 +288,7 @@ func TestCompileEvent_ProbeSnapshotMappingIsExact(t *testing.T) {
 		Templates: 4, TemplatesUpdatedAtNano: 44,
 		Memberships: 5, Exts: 6,
 	}}
-	s := New(cfg, newMemLoader(nil), re, nil, nil)
+	s := New(cfg, newMemLoader(nil), re, nil, nil, nil, nil)
 	require.NotNil(t, s.stalenessProbe)
 	c, err := s.stalenessProbe(context.Background())
 	require.NoError(t, err)
@@ -301,7 +301,7 @@ func TestCompileEvent_ProbeSnapshotMappingIsExact(t *testing.T) {
 
 	cfgErr := testCfg()
 	cfgErr.StalenessProbe = &fakeStalenessSource{err: context.DeadlineExceeded}
-	sErr := New(cfgErr, newMemLoader(nil), re, nil, nil)
+	sErr := New(cfgErr, newMemLoader(nil), re, nil, nil, nil, nil)
 	require.NotNil(t, sErr.stalenessProbe)
 	_, err = sErr.stalenessProbe(context.Background())
 	require.ErrorIs(t, err, context.DeadlineExceeded)

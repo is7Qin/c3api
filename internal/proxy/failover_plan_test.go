@@ -211,9 +211,9 @@ func newTestSchedulerForPlan(t *testing.T) *scheduler.Scheduler {
 	t.Helper()
 	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: "http://127.0.0.1:9", CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 	accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: 1000000000000}, noopLoader{accs: accs}, re, nil, nil)
+	s := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: 1000000000000}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, s.InvalidateAllSync())
 	return s
 }

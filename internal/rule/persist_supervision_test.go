@@ -15,18 +15,15 @@ import (
 
 func TestRulePersist_PanicContainedAndNextProcessed(t *testing.T) {
 	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
-	e := New(Config{EventQueueSize: 16, PersistQueueSize: 4}, newFakeRuleStore(), nil)
-	e.rulesMu.Lock()
-	e.rules = []compiledRule{{Rule: domain.Rule{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: th}}}}
-	e.rulesMu.Unlock()
 	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
-
 	var calls atomic.Int32
-	e.SetPersistFunc(func(ctx context.Context, item PersistItem) error {
+	e := New(Config{EventQueueSize: 16, PersistQueueSize: 4}, newFakeRuleStore(), nil, sink, func(ctx context.Context, item PersistItem) error {
 		calls.Add(1)
 		panic("injected panic for test")
 	})
+	e.rulesMu.Lock()
+	e.rules = []compiledRule{{Rule: domain.Rule{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: th}}}}
+	e.rulesMu.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, e.Start(ctx))
@@ -49,13 +46,11 @@ func TestRulePersist_PanicContainedAndNextProcessed(t *testing.T) {
 
 func TestRulePersist_NeverNegativeUnderLoad(t *testing.T) {
 	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
-	e := New(Config{EventQueueSize: 64, PersistQueueSize: 8}, newFakeRuleStore(), nil)
+	sink := newFakeSink(64)
+	e := New(Config{EventQueueSize: 64, PersistQueueSize: 8}, newFakeRuleStore(), nil, sink, func(ctx context.Context, item PersistItem) error { return nil })
 	e.rulesMu.Lock()
 	e.rules = []compiledRule{{Rule: domain.Rule{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: th}}}}
 	e.rulesMu.Unlock()
-	sink := newFakeSink(64)
-	e.SetHealthSink(sink)
-	e.SetPersistFunc(func(ctx context.Context, item PersistItem) error { return nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, e.Start(ctx))
 	t.Cleanup(func() {
@@ -101,12 +96,11 @@ func TestRulePersist_NeverNegativeUnderLoad(t *testing.T) {
 
 func TestRulePersist_QueueFullRollbackExact(t *testing.T) {
 	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
-	e := New(Config{EventQueueSize: 16, PersistQueueSize: 1}, newFakeRuleStore(), nil)
+	sink := newFakeSink(10)
+	e := New(Config{EventQueueSize: 16, PersistQueueSize: 1}, newFakeRuleStore(), nil, sink, nil)
 	e.rulesMu.Lock()
 	e.rules = []compiledRule{{Rule: domain.Rule{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: th}}}}
 	e.rulesMu.Unlock()
-	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
 	// No Start, so persist not consumed; pending reflects queued only
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(0)})
 	t.Logf("after first pending=%d chlen=%d", e.PersistQueued(), e.PersistQueuedChannelLen())
@@ -124,4 +118,3 @@ func TestRulePersist_QueueFullRollbackExact(t *testing.T) {
 	require.Equal(t, 0, e.PersistQueued())
 	require.GreaterOrEqual(t, e.PersistQueued(), 0)
 }
-

@@ -136,12 +136,12 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.NoError(t, err)
 
 	// --- 构造链（与 main 装配序一致：模块构造零 reload——单一入口） ---
-	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil)
+	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	sched := scheduler.New(scheduler.Config{
 		// sync ticker 不依赖（SyncInterval 小时级兜底）；编译道必须 Start——
 		// Select 执行预编译计划，0 间隔误配防 ticker 空转 panic。
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, repos.Groups, ruleEngine, nil, nil)
+	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
 	schedCtx, cancelSched := context.WithCancel(ctx)
 	t.Cleanup(cancelSched)
 	// 编译源 Start 期结构注入（空源 = 字段缺席但已武装，与旧双 setter(nil)
@@ -271,10 +271,10 @@ func TestSettingsTimingPG(t *testing.T) {
 	require.NoError(t, err)
 
 	// --- 构造链（与 main 装配序一致：模块构造零 reload——单一入口） ---
-	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil)
+	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, repos.Groups, ruleEngine, nil, nil)
+	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
 	var seenCron atomic.Pointer[string]
 	obs := &observingKeyRepo{KeyRepo: repos.Keys, seen: &seenCron}
 	auth := proxy.NewAuth(obs, repos.Users, nil, true)
