@@ -6,11 +6,6 @@ package main
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -21,23 +16,8 @@ import (
 // lifecycle (managedWorkers) + ops visibility, with shutdown ordering
 // worker drain → recorder finalization → Redis client close.
 func TestQualitySyncWiring(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok)
-	srcPath := filepath.Join(filepath.Dir(file), "main.go")
-	src, err := os.ReadFile(srcPath)
-	require.NoError(t, err)
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, srcPath, src, parser.ParseComments)
-	require.NoError(t, err)
-
-	var mainFn *ast.FuncDecl
-	for _, d := range f.Decls {
-		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "main" && fn.Recv == nil {
-			mainFn = fn
-			break
-		}
-	}
-	require.NotNil(t, mainFn, "main func not found")
+	_, f := parseMainGo(t)
+	mainFn := findFuncDecl(t, f, "main")
 
 	isCall := func(n ast.Node, recv, sel string) (*ast.CallExpr, bool) {
 		ce, ok := n.(*ast.CallExpr)
@@ -161,19 +141,8 @@ func TestQualitySyncWiring(t *testing.T) {
 	// 停机尾部（shutdown.go）：三步顺序调用收敛在独立函数内——排空失败在
 	// 该函数内显式 Error 上报、不宣称 clean shutdown（行为锚定见
 	// shutdown_tail_test.go）；此处锚定调用结构与顺序。
-	var tailFn *ast.FuncDecl
-	tailPath := filepath.Join(filepath.Dir(file), "shutdown.go")
-	tailSrc, err := os.ReadFile(tailPath)
-	require.NoError(t, err)
-	fTail, err := parser.ParseFile(fset, tailPath, tailSrc, parser.ParseComments)
-	require.NoError(t, err)
-	for _, d := range fTail.Decls {
-		if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == "shutdownTail" {
-			tailFn = fn
-			break
-		}
-	}
-	require.NotNil(t, tailFn, "shutdownTail func not found")
+	_, fTail := parseSrcFile(t, "shutdown.go")
+	tailFn := findFuncDecl(t, fTail, "shutdownTail")
 	ast.Inspect(tailFn, func(n ast.Node) bool {
 		if _, ok := isCall(n, "qualityRecorder", "CloseWithContext"); ok {
 			appendSeq("recorder.close")

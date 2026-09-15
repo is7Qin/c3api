@@ -418,9 +418,17 @@ func (r *blockingReader) Read(p []byte) (int, error) { <-r.ch; return 0, io.EOF 
 type ctxBlockingReader struct {
 	ctx context.Context
 	ch  chan struct{}
+	// entered 非空时 Read 入口非阻塞投递一次（测试等它再取消的确定性屏障）。
+	entered chan struct{}
 }
 
 func (r *ctxBlockingReader) Read(p []byte) (int, error) {
+	if r.entered != nil {
+		select {
+		case r.entered <- struct{}{}:
+		default:
+		}
+	}
 	select {
 	case <-r.ctx.Done():
 		return 0, r.ctx.Err()
@@ -447,10 +455,15 @@ func TestRelayTimeoutClassifiesAsDeadlineExceeded(t *testing.T) {
 func TestRelayCancelClassifiesAsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rd := &ctxBlockingReader{ctx: ctx, ch: make(chan struct{})}
+	entered := make(chan struct{}, 1)
+	rd := &ctxBlockingReader{ctx: ctx, ch: make(chan struct{}), entered: entered}
 	errCh := make(chan error, 1)
 	go func() { errCh <- Relay(ctx, httptest.NewRecorder(), rd, Config{}) }()
-	time.Sleep(10 * time.Millisecond) // 确保已阻塞在 Read 后再取消（读侧取消路径）
+	select {
+	case <-entered: // 确定性屏障：Relay 已进入 Read 阻塞后再取消（读侧取消路径）
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "relay 未进入 Read")
+	}
 	cancel()
 	select {
 	case err := <-errCh:

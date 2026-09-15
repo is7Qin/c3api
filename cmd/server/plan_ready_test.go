@@ -8,9 +8,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -81,10 +78,7 @@ func TestPlanReadyGate_blocksAITrafficUntilCompiledPlanPublished(t *testing.T) {
 }
 
 // main.go 装配契约：AIHandler 必须经 planReadyGate 包装（冷启动不裸放行）。
+// 安全相关接线钉：经共享 helper 做文本锚定，断言本身完整保留（R2）。
 func TestMainWiresPlanReadyGate(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok)
-	src, err := os.ReadFile(filepath.Join(filepath.Dir(file), "main.go"))
-	require.NoError(t, err)
-	require.Contains(t, string(src), "AIHandler:         planReadyGate(sched, aiRouter)", "AI surface must be gated on compiled-plan readiness")
+	require.Contains(t, readMainSrc(t), "AIHandler:         planReadyGate(sched, aiRouter)", "AI surface must be gated on compiled-plan readiness")
 }

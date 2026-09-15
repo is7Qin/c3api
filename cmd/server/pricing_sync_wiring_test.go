@@ -6,11 +6,6 @@ package main
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,14 +17,7 @@ import (
 // via the constructor (OpsOptions.PricingSync), never via a service setter.
 // Preview membership comes from the same constructor (SyncWorkerConfig.Snapshot).
 func TestPricingSyncCtorWiring(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok)
-	srcPath := filepath.Join(filepath.Dir(file), "main.go")
-	src, err := os.ReadFile(srcPath)
-	require.NoError(t, err)
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, srcPath, src, parser.ParseComments)
-	require.NoError(t, err)
+	_, f := parseMainGo(t)
 
 	opsPricingSync := false
 	workerSnapshot := false

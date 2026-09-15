@@ -110,12 +110,14 @@ func TestRulePersist_PendingAndJoin(t *testing.T) {
 	closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer closeCancel()
 	// Unblock callback concurrently with Close wait: close will wait for callback, callback needs unblock or ctx.
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		close(unblock)
-	}()
+	// 确定性汇合：callback 已在 started 屏障后阻塞（上文已等到启动信号），
+	// Close 在独立 goroutine 走 join 路径；任一唤醒路径（unblock 放行 /
+	// Close Ctx 取消）事后断言一致，直接放行，无需睡眠排序。
+	closeErr := make(chan error, 1)
 	startClose := time.Now()
-	require.NoError(t, e.Close(closeCtx))
+	go func() { closeErr <- e.Close(closeCtx) }()
+	close(unblock)
+	require.NoError(t, <-closeErr)
 	elapsed := time.Since(startClose)
 	require.Less(t, elapsed, 2*time.Second, "Close must join promptly")
 
