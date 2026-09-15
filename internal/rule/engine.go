@@ -170,10 +170,8 @@ type RuleEngine struct {
 	warnDropped atomic.Bool
 
 	healthSink      HealthSink
-	healthMu        sync.RWMutex
 	persistCh       chan PersistItem
 	persistFn       PersistFunc
-	persistFnMu     sync.RWMutex
 	matched         atomic.Uint64
 	persistDropped  atomic.Uint64
 	persistFailures atomic.Uint64
@@ -195,8 +193,10 @@ type RuleEngine struct {
 	persistMu     sync.Mutex
 }
 
-// New 只建结构（不加载规则——由 Reload 显式完成）。
-func New(cfg Config, store repository.RuleStore, log *logx.Logger) *RuleEngine {
+// New 只建结构（不加载规则——由 Reload 显式完成）。sink/persist 经构造
+// 一次性注入（nil = 沿用跳过语义）：装配后不可变，无 Set* 回填——构造环
+// 已结构性消除（latch/hub 先行，见 cmd/server/main.go 装配序）。
+func New(cfg Config, store repository.RuleStore, log *logx.Logger, sink HealthSink, persist PersistFunc) *RuleEngine {
 	q := cfg.EventQueueSize
 	if q <= 0 {
 		q = 4096
@@ -206,27 +206,15 @@ func New(cfg Config, store repository.RuleStore, log *logx.Logger) *RuleEngine {
 		pq = 1024
 	}
 	return &RuleEngine{
-		cfg:       cfg,
-		store:     store,
-		log:       log,
-		ch:        make(chan Event, q),
-		persistCh: make(chan PersistItem, pq),
-		timeNow:   time.Now,
+		cfg:        cfg,
+		store:      store,
+		log:        log,
+		healthSink: sink,
+		persistFn:  persist,
+		ch:         make(chan Event, q),
+		persistCh:  make(chan PersistItem, pq),
+		timeNow:    time.Now,
 	}
-}
-
-// SetHealthSink registers the typed health local sink.
-func (e *RuleEngine) SetHealthSink(s HealthSink) {
-	e.healthMu.Lock()
-	defer e.healthMu.Unlock()
-	e.healthSink = s
-}
-
-// SetPersistFunc 注入持久化执行面（nil = no-op success；测试可注入失败/阻塞）。
-func (e *RuleEngine) SetPersistFunc(fn PersistFunc) {
-	e.persistFnMu.Lock()
-	defer e.persistFnMu.Unlock()
-	e.persistFn = fn
 }
 
 // AdmissionDropped 有界准入队列丢弃累计（Enqueue full）。
@@ -468,9 +456,7 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			}
 		}
 		if r.Then.Throttle != nil {
-			e.healthMu.RLock()
 			sink := e.healthSink
-			e.healthMu.RUnlock()
 			if sink != nil {
 				if err := sink.Throttle(ev, *r.Then.Throttle); err != nil {
 					e.persistFailures.Add(1)
@@ -484,9 +470,7 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			return
 		}
 		if r.Then.FailAccount {
-			e.healthMu.RLock()
 			sink := e.healthSink
-			e.healthMu.RUnlock()
 			if sink != nil {
 				_ = sink.FailAccount(ev)
 			}

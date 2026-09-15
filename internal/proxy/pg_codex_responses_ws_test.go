@@ -101,8 +101,8 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 
 	// 调度器接真实 loader（repos.Groups——LoadGroupsAccounts 快照含 Ext
 	// eager-load；请求期零 DB）
-	re := rule.New(rule.Config{}, repos.Rules, nil)
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, repos.Groups, re, nil, nil)
+	re := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
+	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

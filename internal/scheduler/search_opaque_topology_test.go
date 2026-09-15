@@ -87,10 +87,10 @@ func TestSearchOpaqueDoesNotAlterEligibility(t *testing.T) {
 	s.Release(sel2.AccountID)
 
 	// buildRoutes must not have Search entry regardless of mapping
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	loader := newMemLoader(map[int64][]*domain.Account{10: {a}})
-	ns := New(testCfg(), loader, re, nil, nil)
+	ns := New(testCfg(), loader, re, nil, nil, nil, nil)
 	require.NoError(t, ns.reload(context.Background()))
 	groups := ns.View().Groups()
 	gs := groups[10]

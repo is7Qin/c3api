@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/latch"
 )
 
 func accWithEnabled(id int64, tpl *domain.Template, enabled bool, mult int) *domain.Account {
@@ -87,9 +88,9 @@ func compilerHealthKeyFor(acc *domain.Account, format domain.RequestFormat, mode
 	}
 }
 
-func compilerLatchKeyFor(acc *domain.Account) LatchKey {
+func compilerLatchKeyFor(acc *domain.Account) latch.LatchKey {
 	fp, _ := candidateFingerprint(acc)
-	return LatchKey{AccountID: acc.ID, Fingerprint: fp, Revision: acc.LifecycleRevision}
+	return latch.LatchKey{AccountID: acc.ID, Fingerprint: fp, Revision: acc.LifecycleRevision}
 }
 
 func TestRoutingCompilerDeterministicMapOrder(t *testing.T) {

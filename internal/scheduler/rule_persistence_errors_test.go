@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
 )
 
@@ -44,11 +45,11 @@ func TestRulePersistFailClosedOnGetAccountError(t *testing.T) {
 		},
 		err: errors.New("transient db down"),
 	}
-	latch := newLatchStore()
-	// acquire latch first to simulate HealthController acquired
-	latch.TryAcquire(7, "fp-ignored", 3)
-	require.True(t, latch.IsLatched(7, "fp-ignored"))
-	fn := NewRulePersistFunc(store, latch, nil, nil)
+	latchStore := latch.NewLatchStore()
+	// acquire latch first to simulate LatchSink acquired
+	latchStore.TryAcquire(7, "fp-ignored", 3)
+	require.True(t, latchStore.IsLatched(7, "fp-ignored"))
+	fn := NewRulePersistFunc(store, latchStore, nil, nil)
 	item := rule.PersistItem{
 		Event: rule.Event{AccountID: 7, ExpectedRevision: 3, CandidateFingerprint: "fp", ErrorMessage: "boom"},
 		Then:  domain.RuleThen{FailAccount: true},
@@ -63,6 +64,6 @@ func TestRulePersistFailClosedOnGetAccountError(t *testing.T) {
 		require.FailNow(t, "barrier timeout")
 	}
 	require.Error(t, err, "GetAccount read error must propagate, not silent success")
-	require.True(t, latch.IsLatched(7, "fp-ignored"), "latch must not be cleared on GetAccount error (fail-closed)")
+	require.True(t, latchStore.IsLatched(7, "fp-ignored"), "latch must not be cleared on GetAccount error (fail-closed)")
 	require.Equal(t, 0, store.casCalls, "must not CAS after GetAccount error")
 }

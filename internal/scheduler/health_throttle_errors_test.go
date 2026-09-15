@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/pkg/redisx"
 )
@@ -20,12 +21,12 @@ func TestHealthControllerThrottlePropagatesRedisError(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c) })
 	h := NewRuntimeHealth(c, "self-a", nil, nil)
-	ctrl := NewHealthController(h, newLatchStore())
+	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000)}
 	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, RouteClassID: "r1", QualityClassID: "q1"}
 	// barrier: ensure Redis error propagates via returned error, not discarded
 	mr.Close()
-	err = ctrl.Throttle(ev, th)
+	err = sink.Throttle(ev, th)
 	require.Error(t, err, "throttle must propagate Redis error, never discard")
 	// local fail-closed: after Redis error, sync view must not be assumed succeeded
 	// EffectiveState still READY because Sync failed, but throttle call returned error observable
@@ -35,11 +36,11 @@ func TestHealthControllerThrottleSuccessWithBarrier(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
 	_ = mr
 	h := NewRuntimeHealth(c, "self-a", nil, nil)
-	ctrl := NewHealthController(h, newLatchStore())
+	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(3000)}
 	done := make(chan error, 1)
 	go func() {
-		done <- ctrl.Throttle(rule.Event{AccountID: 9, ExpectedRevision: 1}, th)
+		done <- sink.Throttle(rule.Event{AccountID: 9, ExpectedRevision: 1}, th)
 	}()
 	select {
 	case err := <-done:

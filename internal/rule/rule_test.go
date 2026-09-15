@@ -119,12 +119,19 @@ func evAt(kind Kind, sec int) Event {
 
 func newTestEngine(t *testing.T, rules ...domain.Rule) (*RuleEngine, *fakeRuleStore) {
 	t.Helper()
+	return newTestEngineWithSink(t, nil, nil, rules...)
+}
+
+// newTestEngineWithSink 同 newTestEngine，sink/persist 经构造一次性注入
+// （无 Set* 回填——构造后不可变）。
+func newTestEngineWithSink(t *testing.T, sink HealthSink, persist PersistFunc, rules ...domain.Rule) (*RuleEngine, *fakeRuleStore) {
+	t.Helper()
 	st := newFakeRuleStore()
 	for _, r := range rules {
 		_, err := st.CreateRule(context.Background(), r)
 		require.NoError(t, err)
 	}
-	e := New(Config{}, st, nil)
+	e := New(Config{}, st, nil, sink, persist)
 	require.NoError(t, e.Reload(context.Background()))
 	return e, st
 }
@@ -353,7 +360,7 @@ func TestReloadNeedsOKEvents(t *testing.T) {
 
 func TestSeedRules(t *testing.T) {
 	st := newFakeRuleStore()
-	e := New(Config{}, st, nil)
+	e := New(Config{}, st, nil, nil, nil)
 	require.NoError(t, e.Reload(context.Background()))
 
 	// 种子 5 条（fresh setup 哲学，指针即意图）：429/throttle(retry_after,use_reset)+文不透、
@@ -418,7 +425,8 @@ func mustCountAny(t *testing.T, st repository.RuleStore) int64 {
 }
 
 func TestPriorityHitOrder(t *testing.T) {
-	e, _ := newTestEngine(t,
+	sink := newFakeSink(10)
+	e, _ := newTestEngineWithSink(t, sink, nil,
 		domain.Rule{Name: "low", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: strPtr("5xx")},
 			Then: domain.RuleThen{Throttle: openThrottleMs(5000)}},
@@ -426,8 +434,6 @@ func TestPriorityHitOrder(t *testing.T) {
 			When: domain.RuleWhen{Kind: strPtr("5xx")},
 			Then: domain.RuleThen{Throttle: openThrottleMs(30000)}},
 	)
-	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
 
 	// 两规则都命中：priority 低者首中，只执行一次
 	e.HandleEvent(context.Background(), evAt(Kind5xx, 0))
@@ -440,13 +446,12 @@ func TestPriorityHitOrder(t *testing.T) {
 }
 
 func TestDisabledRuleNotLoaded(t *testing.T) {
-	e, _ := newTestEngine(t, domain.Rule{
+	sink := newFakeSink(10)
+	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "off", Enabled: false, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("5xx")},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
 	require.False(t, e.NeedsOKEvents())
 	e.HandleEvent(context.Background(), evAt(Kind5xx, 0))
 	require.Equal(t, 0, sink.countThrottle())
@@ -455,13 +460,12 @@ func TestDisabledRuleNotLoaded(t *testing.T) {
 // TestHitKeepsCountsThenDecays 命中不清零窗口计数（C2）：阈值 2 连续命中两次；
 // 滑动衰减后（[0,5) 桶整体滑出 30s 窗口）阈值重新可达。
 func TestHitKeepsCountsThenDecays(t *testing.T) {
-	e, _ := newTestEngine(t, domain.Rule{
+	sink := newFakeSink(10)
+	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "escalate", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("5xx"), CountFailureGE: intPtr(2), WindowSeconds: intPtr(30)},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
 
 	e.HandleEvent(context.Background(), evAt(Kind5xx, 0)) // err=1，未命中
 	require.Equal(t, 0, sink.countThrottle())
@@ -475,15 +479,14 @@ func TestHitKeepsCountsThenDecays(t *testing.T) {
 }
 
 func TestRatioMatchWithTotalFloor(t *testing.T) {
-	e, _ := newTestEngine(t, domain.Rule{
+	sink := newFakeSink(10)
+	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "hot-account", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{
 			Kind: nil, Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4), WindowSeconds: intPtr(30),
 		},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
 
 	// 429×2 + ok×2 → total=4、ratio=0.5 → 命中（needsOK：kind=nil → ok 计数维护）
 	e.HandleEvent(context.Background(), evAt(Kind429, 0))
@@ -493,13 +496,12 @@ func TestRatioMatchWithTotalFloor(t *testing.T) {
 	require.Equal(t, 1, sink.countThrottle())
 
 	// 样本不足：total=2 < 4 → 比例不参与
-	e2, _ := newTestEngine(t, domain.Rule{
+	sink2 := newFakeSink(10)
+	e2, _ := newTestEngineWithSink(t, sink2, nil, domain.Rule{
 		Name: "hot2", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4), WindowSeconds: intPtr(30)},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	sink2 := newFakeSink(10)
-	e2.SetHealthSink(sink2)
 	e2.HandleEvent(context.Background(), evAt(Kind429, 0))
 	e2.HandleEvent(context.Background(), evAt(Kind429, 1))
 	require.Equal(t, 0, sink2.countThrottle())
@@ -508,12 +510,12 @@ func TestRatioMatchWithTotalFloor(t *testing.T) {
 // —— worker ——
 
 func TestName(t *testing.T) {
-	e := New(Config{}, newFakeRuleStore(), nil)
+	e := New(Config{}, newFakeRuleStore(), nil, nil, nil)
 	require.Equal(t, "rule-engine", e.Name())
 }
 
 func TestEnqueueFullDrops(t *testing.T) {
-	e := New(Config{EventQueueSize: 1}, newFakeRuleStore(), nil)
+	e := New(Config{EventQueueSize: 1}, newFakeRuleStore(), nil, nil, nil)
 	e.Enqueue(evAt(Kind5xx, 0)) // 占满
 	require.Equal(t, uint64(0), e.dropped.Load())
 	e.Enqueue(evAt(Kind5xx, 1)) // 满 → 丢弃
@@ -523,19 +525,18 @@ func TestEnqueueFullDrops(t *testing.T) {
 }
 
 func TestStartTwice(t *testing.T) {
-	e := New(Config{}, newFakeRuleStore(), nil)
+	e := New(Config{}, newFakeRuleStore(), nil, nil, nil)
 	require.NoError(t, e.Start(context.Background()))
 	require.Error(t, e.Start(context.Background()))
 }
 
 func TestCloseDrainsQueue(t *testing.T) {
-	e, _ := newTestEngine(t, domain.Rule{
+	sink := newFakeSink(10)
+	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "fail", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("5xx")},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
 	// 未 Start：Close 直接排空
 	e.Enqueue(evAt(Kind5xx, 5))
 	require.NoError(t, e.Close(context.Background()))
@@ -546,13 +547,12 @@ func TestCloseDrainsQueue(t *testing.T) {
 }
 
 func TestStartConsumesThenCloseDrains(t *testing.T) {
-	e, _ := newTestEngine(t, domain.Rule{
+	sink := newFakeSink(10)
+	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "fail", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: strPtr("5xx")},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, e.Start(ctx))
@@ -593,8 +593,8 @@ func (u *uniqueRuleStore) CreateRule(ctx context.Context, r domain.Rule) (int64,
 // 最终种子并集恰 5 条。
 func TestSeedRulesIdempotentConcurrent(t *testing.T) {
 	st := &uniqueRuleStore{newFakeRuleStore()}
-	e1 := New(Config{}, st, nil)
-	e2 := New(Config{}, st, nil)
+	e1 := New(Config{}, st, nil, nil, nil)
+	e2 := New(Config{}, st, nil, nil, nil)
 	var wg sync.WaitGroup
 	var err1, err2 error
 	wg.Add(2)
@@ -609,7 +609,7 @@ func TestSeedRulesIdempotentConcurrent(t *testing.T) {
 // TestSeedRulesIdempotentRepeat 已种子表重复 Reload 不重写（幂等回归）。
 func TestSeedRulesIdempotentRepeat(t *testing.T) {
 	st := &uniqueRuleStore{newFakeRuleStore()}
-	e := New(Config{}, st, nil)
+	e := New(Config{}, st, nil, nil, nil)
 	require.NoError(t, e.Reload(context.Background()))
 	require.Equal(t, int64(5), mustCountAny(t, st))
 	require.NoError(t, e.Reload(context.Background()))
@@ -620,7 +620,7 @@ func TestSeedRulesIdempotentRepeat(t *testing.T) {
 // 适配）：空表可种子、非空表加载。
 func TestReloadRulesAdapter(t *testing.T) {
 	st := newFakeRuleStore()
-	e := New(Config{}, st, nil)
+	e := New(Config{}, st, nil, nil, nil)
 	require.NoError(t, e.ReloadRules(context.Background()))
 	require.Equal(t, int64(5), mustCountAny(t, st), "ReloadRules 空表同样写种子")
 }
@@ -635,7 +635,7 @@ func TestEnqueueDropWarnEdge(t *testing.T) {
 	ruleDropWarnThreshold = 50
 	t.Cleanup(func() { ruleDropWarnThreshold = old })
 
-	e := New(Config{EventQueueSize: 8}, newFakeRuleStore(), nil)
+	e := New(Config{EventQueueSize: 8}, newFakeRuleStore(), nil, nil, nil)
 	logger, out := newTestRuleLogger(t)
 	e.log = logger
 
@@ -842,13 +842,12 @@ func TestClassifyWindowRulePossibleHit(t *testing.T) {
 // Kind4xx/Kind5xx/KindNetwork 事件必须进 failure 桶——count_failure_ge 规则经
 // 完整引擎路径命中（漏加 case 则静默失真）。
 func TestWindowErrBucket4xx5xxNetwork(t *testing.T) {
-	e, _ := newTestEngine(t, domain.Rule{
+	sink := newFakeSink(10)
+	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "escalate", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{CountFailureGE: intPtr(3), WindowSeconds: intPtr(30)},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
-	sink := newFakeSink(10)
-	e.SetHealthSink(sink)
 
 	// 1×5xx + 1×4xx + 1×network → failure 桶 = 3 → count_failure_ge=3 命中
 	//（kind 不限——只测 failure 桶计数；漏加 case 则三类事件不进桶，永不命中）

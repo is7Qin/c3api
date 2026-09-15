@@ -18,6 +18,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -121,7 +122,7 @@ type Scheduler struct {
 	instN     atomic.Pointer[InstancesProvider]
 	timeNow   func() time.Time
 	startOnce atomic.Bool
-	latch     *latchStore
+	latch     *latch.LatchStore
 	health    *RuntimeHealth
 	// Compile lane (Task11 wiring): serial background compiler feeding the
 	// single routingPublisher. Request path never touches these.
@@ -192,8 +193,14 @@ func (s *Scheduler) ProbeAccount(id int64) (*domain.Account, bool) {
 // New 构造调度器。ruleEngine 必须非 nil（事件投递面；main 在 Start 前显式 Reload）。
 // h 为运行时健康投影（构造注入，无 Set* 回填）：nil 允许——无健康面场景
 // （测试/纯选号）refill 热路径经 s.health != nil 守卫跳过健康门。
+// latch/hub 为锁存一等组件（main 拥有、构造出借，无回填）：latch nil 则自建
+// （保测试兼容）；hub 非 nil 即在 New 内订阅 onRuleFailure（首个 MarkResult
+// 前完成——装配序保证），nil = 不订阅（无规则摘除面的纯选号测试）。
 // cfg.StalenessProbe 为空保持探针解线（backstop fail-safe 全量 reload）。
-func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealth, log *logx.Logger) *Scheduler {
+func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealth, log *logx.Logger, latchStore *latch.LatchStore, hub *latch.Hub) *Scheduler {
+	if latchStore == nil {
+		latchStore = latch.NewLatchStore()
+	}
 	s := &Scheduler{
 		cfg:       cfg,
 		loader:    loader,
@@ -201,11 +208,14 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealt
 		health:    h,
 		log:       log,
 		timeNow:   time.Now,
-		latch:     newLatchStore(),
+		latch:     latchStore,
 		compiler:  NewRoutingCompiler(),
 		compileCh: make(chan struct{}, 1),
 		scopeCh:   make(chan scopedCompileReq, scopeChCap),
 		incidents: newIncidentTracker(),
+	}
+	if hub != nil {
+		hub.Subscribe(s.onRuleFailure)
 	}
 	s.publisher = newRoutingPublisher(s)
 	if cfg.StalenessProbe != nil {
@@ -366,7 +376,7 @@ func (s *Scheduler) IsLatched(accountID int64) bool {
 	return s.latch.IsLatched(accountID, "")
 }
 
-func (s *Scheduler) LatchStore() *latchStore { return s.latch }
+func (s *Scheduler) LatchStore() *latch.LatchStore { return s.latch }
 
 // runtimeStatusFor 从可持久生命周期字段推导账号装载时的运行时初始状态：
 // failed_at 置位 = 运行时 disabled（SDK/rule 判死的持久事实；恢复唯一入口

@@ -18,9 +18,9 @@ import (
 // 组缺失 → false；跨格式去重 + 字典序稳定排序；空组 → 空列表 ok。
 func TestGroupModels(t *testing.T) {
 	// 快照未加载（构造后未 reload——atomic.Value 零值断言失败）→ false
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), newMemLoader(nil), re, nil, nil)
+	s := New(testCfg(), newMemLoader(nil), re, nil, nil, nil, nil)
 	_, ok := s.GroupModels(10)
 	require.False(t, ok, "快照未加载 → false（同 Select 的 ErrGroupNotFound 守卫）")
 

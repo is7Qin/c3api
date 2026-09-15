@@ -93,9 +93,9 @@ func TestCodexFatalChainPG(t *testing.T) {
 
 	// 真实失效链：适配层（统一回调）→ T1 HandleFailure（SetAccountFailed 直写
 	// PG + FailAccount 快照摘除 + 经 writebackLoop 落库 status=disabled）
-	re := rule.New(rule.Config{}, repos.Rules, nil)
+	re := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	require.NoError(t, re.Reload(ctx))
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, repos.Groups, re, nil, nil)
+	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

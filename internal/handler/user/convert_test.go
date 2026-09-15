@@ -63,7 +63,7 @@ func newTestUserAPI(t *testing.T, rules ...domain.Rule) *UserAPI {
 		_, err := st.CreateRule(context.Background(), r)
 		require.NoError(t, err)
 	}
-	e := rule.New(rule.Config{}, st, nil)
+	e := rule.New(rule.Config{}, st, nil, nil, nil)
 	require.NoError(t, e.Reload(context.Background()))
 	return &UserAPI{rules: e}
 }

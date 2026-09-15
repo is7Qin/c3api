@@ -83,15 +83,15 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	// --- seam default, explicitly: New leaves the probe unwired, nil is a no-op ---
 	newRuleEngine := func(t *testing.T) *rule.RuleEngine {
 		t.Helper()
-		re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
+		re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 		require.NoError(t, re.Reload(ctx))
 		return re
 	}
-	unwired := New(testCfg(), newMemLoader(nil), newRuleEngine(t), nil, nil)
+	unwired := New(testCfg(), newMemLoader(nil), newRuleEngine(t), nil, nil, nil, nil)
 	require.Nil(t, unwired.stalenessProbe, "seam default must be unwired (nil-probe fail-safe)")
 	nilCfg := testCfg()
 	nilCfg.StalenessProbe = nil
-	stillUnwired := New(nilCfg, newMemLoader(nil), newRuleEngine(t), nil, nil)
+	stillUnwired := New(nilCfg, newMemLoader(nil), newRuleEngine(t), nil, nil, nil, nil)
 	require.Nil(t, stillUnwired.stalenessProbe, "explicit nil supplier must not wire the probe")
 
 	// --- production-equivalent wiring: counting loader + real repository tuple ---
@@ -101,7 +101,7 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	cl := &countingLoader{inner: m}
 	wiredCfg := testCfg()
 	wiredCfg.StalenessProbe = repos.Groups
-	s := New(wiredCfg, cl, newRuleEngine(t), nil, nil)
+	s := New(wiredCfg, cl, newRuleEngine(t), nil, nil, nil, nil)
 	require.NotNil(t, s.stalenessProbe, "wired scheduler must carry the probe — the nil-probe branch is unreachable from production wiring")
 	require.NoError(t, s.reload(ctx))
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
