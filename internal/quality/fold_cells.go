@@ -105,8 +105,14 @@ func (t *foldCellTable) resetCellsForTest(shardCap int) {
 
 func foldShardOf(accountID int64) int { return int(uint64(accountID) & foldShardMask) }
 
-// foldHash is FNV-1a over the packed key bytes. Fixed-size stack encoding —
-// zero alloc, no strings, no crypto.
+// foldHash is hand-rolled FNV-1a over the packed key bytes — deliberately NOT
+// hash/fnv: the digest would round-trip through the hash.Hash64 interface
+// (a New64a + a Write per field + Sum64, with per-call interface dispatch),
+// while this inlined loop mixes each field while encoding it, single-pass
+// over fixed-size stack bytes (no strings, no crypto). Measured zero-alloc
+// either way (TestTmpFoldHashZeroAlloc, since removed); the hand-rolled form
+// stays for the inlined single pass on the fold hot path, not for an alloc
+// delta.
 func foldHash(f attemptFact) uint64 {
 	const (
 		offset = 14695981039346656037

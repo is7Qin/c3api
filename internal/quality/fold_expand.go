@@ -43,17 +43,14 @@ const (
 )
 
 // foldShell is the tick-owned cumulative state for one minute: per-edge
-// counts keyed by the packed fact, legacy whole-minute arrays preserved
-// verbatim, the empty marker, and the lease/version/dirty handshake the
-// sync flush settles through. Zero-count entries are deleted at fold time
-// (hygiene); cumulative counts are otherwise retained until the minute is
-// clean, past the horizon, and unleased (tick reclamation — the sole
-// reclamation alongside cell clear-after-expansion).
+// counts keyed by the packed fact, the empty marker, and the lease/version/
+// dirty handshake the sync flush settles through. Zero-count entries are
+// deleted at fold time (hygiene); cumulative counts are otherwise retained
+// until the minute is clean, past the horizon, and unleased (tick
+// reclamation — the sole reclamation alongside cell clear-after-expansion).
 type foldShell struct {
 	minute      int64
 	counts      map[attemptFact]int64
-	edges       [8]int64
-	counts8     [8]int64
 	emptyMarked bool
 
 	leased  bool
@@ -156,8 +153,6 @@ func (o *FlowOwner) drainFoldLocked() {
 func materializeShell(shell *foldShell) *FlowMinute {
 	fm := &FlowMinute{
 		minute:        shell.minute,
-		edges:         shell.edges,
-		counts:        shell.counts8,
 		emptySnapshot: shell.emptyMarked && len(shell.counts) == 0,
 	}
 	if len(shell.counts) > 0 {

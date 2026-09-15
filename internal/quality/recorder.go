@@ -257,8 +257,6 @@ func (q *QualityMinute) merge(o *QualityMinute) {
 
 type FlowMinute struct {
 	minute        int64
-	edges         [8]int64
-	counts        [8]int64
 	flowRows      []repository.RoutingFlowRow
 	emptySnapshot bool
 }
@@ -267,30 +265,6 @@ type FlowMinute struct {
 // identity is codes plus fixed-size byte arrays, never strings.
 
 func (f *FlowMinute) Minute() int64 { return f.minute }
-func (f *FlowMinute) Edge(i int) int64 {
-	if i < 0 || i >= 8 {
-		return 0
-	}
-	return f.edges[i]
-}
-func (f *FlowMinute) SetEdge(i int, v int64) {
-	if i >= 0 && i < 8 {
-		f.edges[i] = v
-	}
-}
-func (f *FlowMinute) Count(i int) int64 {
-	if i < 0 || i >= 8 {
-		return 0
-	}
-	return f.counts[i]
-}
-func (f *FlowMinute) SetCount(i int, v int64) {
-	if i >= 0 && i < 8 {
-		f.counts[i] = v
-	}
-}
-func (f *FlowMinute) Edges() [8]int64  { return f.edges }
-func (f *FlowMinute) Counts() [8]int64 { return f.counts }
 func (f *FlowMinute) FlowRows() []repository.RoutingFlowRow {
 	if f == nil {
 		return nil
