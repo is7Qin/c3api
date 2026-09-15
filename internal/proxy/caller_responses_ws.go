@@ -437,30 +437,30 @@ func headerHasToken(h http.Header, key, token string) bool {
 	return false
 }
 
-// wsPassthroughHeaders 客户端头透传（WS 握手面，显式契约）：透传是 WS 面
-// 有意行为——上游依赖客户端特征头（User-Agent/Origin/自定义头）做校验与
-// 路由，SDK 伪装研究完成前此面不动。剔除面 = 连接级 hop-by-hop 头
-// （Connection/Upgrade/Sec-WebSocket-*/Host/Content-Length，其中
-// Sec-WebSocket-Protocol 透传会让上游协商网关不支持的子协议 → 握手失败）
-// + 网关凭据（Authorization/x-api-key 同载网关 key——auth.go 任一非空即鉴权，
-// 不得直通上游；账号鉴权由 aiclient 注入）。codex 面 codexWSPassthroughHeaders
-// 委托本函数（再剔 session 头族 + OpenAI-Beta），本表变更双面自动覆盖。
-// HTTP 面零透传（rawPostCT 只设 Content-Type + 账号鉴权头，客户端原始头不达
-// 上游）同属有意契约——与 WS 面不对称是裁决非遗漏，互引见
-// pkg/aiclient/aiclient.go rawPostCT。其余头原样透传。
+// wsPassthroughHeaders 客户端头透传（WS 握手面）：薄封装，剔除面 = 全仓唯一
+// 一份清单 pkg/aiclient.relayDeny（经 aiclient.RelayHeaders），本函数不再自带
+// 任何字面量——raw / typed / WS 三个面共用同一份，加项只改 relay.go 一处。
+//
+// 清单含四类会因网关存在而撒谎的头：连接级 hop-by-hop（含 Sec-WebSocket-*：
+// 透传会让上游协商网关不支持的子协议 → 握手失败；Authorization/x-api-key 同载
+// 网关 key——auth.go 任一非空即鉴权，不得直通上游，账号鉴权由 aiclient 注入）、
+// 实体级、寻址、凭据/多租户，另加 Accept-Encoding（透传后上游回 gzip 裸流 ⇒
+// usage 抽取静默拿到压缩字节 = 漏计费）。其余头原样透传。
+//
+// 两个行为细节由 RelayHeaders 保证，别在本地重新实现：① 输出键一律规范形
+// （codex 面 out.Del("OpenAI-Beta") 只规范化实参，槽位形不统一时那句会落空）；
+// ② 含 CR/LF/NUL/DEL/<0x20-非-TAB 的单个值被丢（脏值进 Transport 会让整个请求
+// Do 失败 = 一个脏头拖死一次调用）。
+//
+// codex 面 codexWSPassthroughHeaders 委托本函数（再剔 session 头族 + OpenAI-Beta
+// + 伪装身份项），清单变更双面自动覆盖。HTTP 面（raw/typed）走同一份清单，
+// 唯余的不对称是 codex 伪装面额外清单（见 codexWSPassthroughHeaders）。
+//
+// 产物是每次新建的 map，调用方可直接 Set/Del（ResponsesWSDial 就地 Set 鉴权与
+// beta 头即依赖此）。禁止对产物调用 Add：干净键与入站共享底层 slice，cap>1 时
+// Add 会写进入站数组（见 relay.go 调用方契约）。
 func wsPassthroughHeaders(h http.Header) http.Header {
-	out := make(http.Header, len(h))
-	for k, v := range h {
-		switch http.CanonicalHeaderKey(k) {
-		case "Connection", "Upgrade",
-			"Sec-Websocket-Key", "Sec-Websocket-Version",
-			"Sec-Websocket-Protocol", "Sec-Websocket-Extensions",
-			"Host", "Content-Length", "Authorization", "X-Api-Key":
-			continue
-		}
-		out[k] = v
-	}
-	return out
+	return aiclient.RelayHeaders(h)
 }
 
 // wsWriteError 向已升级客户端发送 error 事件帧后关闭（WS 无 HTTP 状态码，

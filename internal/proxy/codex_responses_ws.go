@@ -215,7 +215,7 @@ func codexIdentityFromExt(ext *domain.AccountExt) (sess codexsdk.Session, meta c
 }
 
 // codexWSPassthroughHeaders codex 路径透传头：在
-// wsPassthroughHeaders 剔除面（hop-by-hop + 网关 key Authorization）之上再剔
+// wsPassthroughHeaders 剔除面（= 全仓唯一清单 pkg/aiclient.relayDeny）之上再剔
 // 除 session 头族（session-id/thread-id/x-client-request-id/x-codex-window-id
 // ——SDK WithHeader 先删后加覆盖默认头，直通会覆盖伪装身份四元组）及
 // OpenAI-Beta（客户端可覆盖网关默认 beta 版本——与 aiclient 路径强制覆盖语义
