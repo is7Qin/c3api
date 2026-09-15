@@ -87,9 +87,9 @@ func TestResolvePricesWithVariant(t *testing.T) {
 // （解析价格不变）必须静默，否则每次同值 PUT 都驱逐一次全量重编译。
 func TestPricingChangeNotifiesCompiler(t *testing.T) {
 	fs := newFakeStore()
-	svc := newPricingSvc(t, fs)
 	var calls int
-	svc.SetCompileNotifier(func() { calls++ })
+	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes, CompileNotify: func() { calls++ }})
+	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
 	ctx := context.Background()
 
 	_, err := svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100), OutputPerM: int64Ptr(200)})
@@ -238,7 +238,7 @@ func TestPricingWritePublishesPricingChange(t *testing.T) {
 
 	t.Run("装配路径（compileNotify 非 nil）仍发布", func(t *testing.T) {
 		svc, _, pr := newPubSvc()
-		svc.SetCompileNotifier(func() {})
+		svc.compileNotify = func() {}
 		_, err := svc.UpsertPriceEntry(ctx, manual)
 		require.NoError(t, err)
 		got := pr.last()

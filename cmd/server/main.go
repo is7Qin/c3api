@@ -313,14 +313,16 @@ func main() {
 	// wireBalanceWarning 共用同一实例。
 	bwCooldown := notification.NewCooldown(rdb)
 	// svc 一次性装配（W1-T1：定价时区/原始行 horizon/验证码存储/预警清理/
-	// recover→PROBING 全部构造参数——空时区配置 = nil → 进程本地，语义不变；
-	// 验证码 Redis 必选 ⇒ 无 nil 分支，误接线 New 内 panic）。
+	// recover→PROBING 全部构造参数；W2-T2：路由编译触发 CompileNotify 同步
+	// 构造注入（sched 先于 svc 存在，func 值无 import 环）——空时区配置 = nil
+	// → 进程本地，语义不变；验证码 Redis 必选 ⇒ 无 nil 分支，误接线 New 内 panic）。
 	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log, service.ServiceDeps{
 		EmailCodeStore:              verification.New(rdb),
 		TimeLocation:                svcLoc,
 		StatsRawRetentionDays:       rawDays,
 		ClearBalanceWarningCooldown: bwCooldown.Clear,
 		RecoverProber:               runtimeHealth,
+		CompileNotify:               sched.RequestCompile,
 	})
 	mailW := service.NewMailWorker(svc)
 	svc.SetMailEnqueue(mailW.Enqueue)
@@ -518,9 +520,9 @@ func main() {
 	// merge 按 instance_src 区分，同源身份是 merge 正确性的前提。
 	// 缺陷 B 质量面：PG 落库边界成功持久新质量行 → 事件驱动编译（非阻塞、
 	// 下游去抖收敛；空刷/失败静默，无定周全量）。构造器注入（nil = 未装配）；
-	// 价格面见 pricingSync.Reload。
+	// 价格面见 pricingSync.Reload（service 内经 ServiceDeps.CompileNotify
+	// 变化门控后通知编译）。
 	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log, sched.RequestCompile)
-	svc.SetCompileNotifier(sched.RequestCompile)
 	// routing rollup worker：消费 quality-sync 落在 instance 分钟表的脏分钟，经
 	// repository 既有 RollupQuality/RollupFlow 缝滚成 rollup 表（单桶事务、状态
 	// 成功后推进、失败保 dirty 下 tick 重试，见 quality/rollup.go）。routing
