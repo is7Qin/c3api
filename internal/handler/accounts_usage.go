@@ -5,14 +5,25 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/sdkbridge"
+	"github.com/is7qin/c3api/pkg/logx"
 )
+
+// CodexUsageProber codex 额度快照数据源（*sdkbridge.Codex 满足——组合根经
+// OpsOptions.UsageSnap 构造注入；接口化供测试注入）。
+type CodexUsageProber interface {
+	GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error)
+}
 
 // GetAccountsUsage 账号用量聚合（/api/admin/accounts/usage——统一 usage API 查询
 // 面 spec 2026-08-18，ServerInterface）。参数解析与校验在 handler 层：
@@ -46,16 +57,69 @@ func (h *AdminAPI) GetAccountsUsage(w http.ResponseWriter, r *http.Request, para
 		httpface.WriteErr(w, http.StatusBadRequest, "from must be before to")
 		return
 	}
-	items, err := h.svc.AccountsUsage(r.Context(), ids, from, to)
+	items, err := h.svc.AccountsGatewayUsage(r.Context(), ids, from, to)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
+	h.assembleUpstream(r.Context(), items)
 	out := make([]AccountUsageItem, 0, len(items))
 	for _, it := range items {
 		out = append(out, toAPIAccountUsageItem(it))
 	}
 	httpface.WriteJSON(w, http.StatusOK, AccountsUsageResponse{Items: out})
+}
+
+// assembleUpstream upstream 栏装配（W2-T3：原 service.AccountsUsage 后半段
+// 整体搬迁——行为逐分支一致）：逐账号凭据组装（svc.AccountUsageCredential：
+// api-key/非 codex → nil cred → null 快照/null 标记；store 故障 → 已在
+// service 侧 Warn + null/null）→ codex 账号调 prober（nil prober = 未装配
+// → null 快照，与旧 service nil-setter 降级一致）→ sdkbridge 哨兵映射
+// upstream_error（ErrAuthExpired → auth_expired，ErrUpstream →
+// upstream_unavailable；未知错误 → Warn + null/null，不误标）。
+//
+// 失败语义：单账号快照失败不整批失败（其余账号照常）；批内 errgroup 有界
+// 并发（8——与 sdkbridge usageFetchSem 容量对齐：上游并发仍由适配层恒保
+// ≤8，此处仅并行化编排的 DB 往返/调用分发）；结果按 ids 顺序（goroutine
+// 按 index 写 items，保序）。
+func (h *AdminAPI) assembleUpstream(ctx context.Context, items []domain.AccountUsage) {
+	var g errgroup.Group
+	g.SetLimit(8) // 批内并行度（与 sdkbridge usageFetchSem 语义对齐）
+	for i := range items {
+		i := i
+		g.Go(func() error {
+			cred, err := h.svc.AccountUsageCredential(ctx, items[i].AccountID)
+			if err != nil {
+				return nil // store 故障（service 侧已 Warn）→ null/null，不误标
+			}
+			if cred == nil {
+				return nil // 非 codex（api-key 无凭据）→ null 快照/null 标记
+			}
+			if h.usageSnap == nil {
+				return nil // 未装配 → null 快照（旧 nil-setter 降级语义）
+			}
+			snap, err := h.usageSnap.GetUsageSnapshot(ctx, cred)
+			switch {
+			case err == nil:
+				items[i].Upstream = snap
+			case errors.Is(err, sdkbridge.ErrAuthExpired):
+				e := domain.UpstreamErrorAuthExpired
+				items[i].UpstreamError = &e
+			case errors.Is(err, sdkbridge.ErrUpstream):
+				e := domain.UpstreamErrorUpstreamUnavailable
+				items[i].UpstreamError = &e
+			default:
+				// 未知上游错误 → 不误标：null/null（ctx 取消为请求已死信号，
+				// 不记 Warn）。
+				if ctx.Err() == nil && h.log != nil {
+					h.log.Warn("accounts usage: account upstream lookup failed", logx.Int64("account_id", items[i].AccountID), logx.Error(err))
+				}
+			}
+			return nil
+		})
+	}
+	// 内部分支恒 nil（单账号失败只记标记）——Wait 仅作在途屏障。
+	_ = g.Wait()
 }
 
 // parseAccountIDs 解析逗号分隔 account_ids（非数字 → 错误）；1-100 条校验 +

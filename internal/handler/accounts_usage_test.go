@@ -7,10 +7,12 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,8 +24,8 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// hUsageSnap 逐账号可编程快照数据源（handler 装配矩阵注入面——service
-// CodexUsageSnapshotter 接口）。
+// hUsageSnap 逐账号可编程快照数据源（handler 装配矩阵注入面——handler
+// CodexUsageProber 接口，经 OpsOptions.UsageSnap 构造注入）。
 type hUsageSnap struct {
 	snaps map[int64]*domain.CodexUsageSnapshot
 	errs  map[int64]error
@@ -35,12 +37,11 @@ func (s *hUsageSnap) GetUsageSnapshot(ctx context.Context, cred *domain.AccountC
 
 // newUsageTestHandler /api/admin/accounts/usage 专用测试装配（h.now 注入 + 可编程
 // 快照数据源）。请求时区经 `timezone` 查询参数注入（request-tz：无装配级时区）。
-func newUsageTestHandler(t *testing.T, now time.Time, snap *hUsageSnap) (*AdminAPI, *fakeStore) {
+func newUsageTestHandler(t *testing.T, now time.Time, snap CodexUsageProber) (*AdminAPI, *fakeStore) {
 	t.Helper()
 	store := newFakeStore()
 	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
-	svc.SetUsageSnapshotter(snap)
-	h := New(svc)
+	h := New(svc, OpsOptions{UsageSnap: snap})
 	h.now = func() time.Time { return now }
 	return h, store
 }
@@ -196,5 +197,133 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 	require.Nil(t, resp.Items[3].Upstream)
 	require.NotNil(t, resp.Items[3].UpstreamError)
 	require.Equal(t, AccountUsageItemUpstreamError("upstream_unavailable"), *resp.Items[3].UpstreamError)
+}
+
+// TestGetAccountsUsageNilProber 未装配降级（UsageSnap nil = 旧 service
+// nil-setter 语义）：codex 账号 → upstream/upstream_error 双 null（不 panic，
+// 不整批失败）。生产组合根恒装配 codexAdapter，此路径生产不可达。
+func TestGetAccountsUsageNilProber(t *testing.T) {
+	now := time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC)
+	h, store := newUsageTestHandler(t, now, nil)
+	store.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
+
+	rec := getUsage(h, "account_ids=1")
+	require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
+	var resp AccountsUsageResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Items, 1)
+	require.Nil(t, resp.Items[0].Upstream, "未装配 → codex 账号 null 快照")
+	require.Nil(t, resp.Items[0].UpstreamError)
+}
+
+// TestAssembleUpstreamStoreErrorIsolated store 故障隔离（T2-2，原 service 侧
+// 用例搬迁）：GetAccountExt 非 ErrNotFound 错误 → 该账号 upstream null +
+// upstream_error null（不误标上游问题）+ 批内其余账号正常。
+func TestAssembleUpstreamStoreErrorIsolated(t *testing.T) {
+	h, store := newUsageTestHandler(t, time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC), &hUsageSnap{
+		snaps: map[int64]*domain.CodexUsageSnapshot{1: {PlanType: "chatgpt-plus"}},
+	})
+	store.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
+	store.accExtErr[2] = errors.New("store down") // 非 ErrNotFound store 故障
+
+	items := []domain.AccountUsage{{AccountID: 1}, {AccountID: 2}}
+	h.assembleUpstream(context.Background(), items)
+	require.NotNil(t, items[0].Upstream, "其余账号正常")
+	require.Nil(t, items[0].UpstreamError)
+	require.Nil(t, items[1].Upstream, "store 故障账号 → null 快照")
+	require.Nil(t, items[1].UpstreamError, "store 故障账号 → null 标记（不误标上游问题）")
+}
+
+// gatedSnap 批内并行装配注入面：并发在途计数 + 闸门（第 2 个并发调用到达即
+// close twoInFlight 信号——断言并行实际发生，channel 同步禁 sleep）。
+type gatedSnap struct {
+	mu          sync.Mutex
+	inflight    int
+	maxInFlight int
+	signaled    bool
+	twoInFlight chan struct{}
+	release     chan struct{}
+	snaps       map[int64]*domain.CodexUsageSnapshot
+	errs        map[int64]error
+}
+
+func (g *gatedSnap) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
+	g.mu.Lock()
+	g.inflight++
+	if g.inflight > g.maxInFlight {
+		g.maxInFlight = g.inflight
+	}
+	// 首达 2 即发信号（inflight 可因闸门放行后回落再回升——仅首次 close）
+	if g.inflight == 2 && !g.signaled {
+		g.signaled = true
+		close(g.twoInFlight)
+	}
+	g.mu.Unlock()
+	<-g.release
+	g.mu.Lock()
+	g.inflight--
+	g.mu.Unlock()
+	return g.snaps[cred.AccountID], g.errs[cred.AccountID]
+}
+
+func (g *gatedSnap) max() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.maxInFlight
+}
+
+// TestAssembleUpstreamParallel 批内并行装配（T2-1/N1，原 service 侧用例搬迁）：
+// N 账号 errgroup 有界并发（8）——闸门证明 ≥2 账号快照并发在途（串行装配恒
+// 1）；结果正确 + 顺序 = ids 顺序稳定 + 单账号失败不整批失败。
+func TestAssembleUpstreamParallel(t *testing.T) {
+	snap := &gatedSnap{
+		twoInFlight: make(chan struct{}),
+		release:     make(chan struct{}),
+		snaps:       map[int64]*domain.CodexUsageSnapshot{},
+		errs:        map[int64]error{4: sdkbridge.ErrAuthExpired}, // 单账号失败
+	}
+	for i := int64(1); i <= 8; i++ {
+		snap.snaps[i] = &domain.CodexUsageSnapshot{PlanType: "chatgpt-plus"}
+	}
+	h, store := newUsageTestHandler(t, time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC), snap)
+	for i := int64(1); i <= 8; i++ {
+		store.accExts[i] = &domain.AccountExt{AccountID: i, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
+	}
+	items := make([]domain.AccountUsage, 0, 8)
+	for i := int64(1); i <= 8; i++ {
+		items = append(items, domain.AccountUsage{AccountID: i})
+	}
+
+	release := sync.OnceFunc(func() { close(snap.release) })
+	t.Cleanup(release) // 失败路径防 goroutine 泄漏
+	done := make(chan struct{})
+	go func() {
+		h.assembleUpstream(context.Background(), items)
+		close(done)
+	}()
+
+	select {
+	case <-snap.twoInFlight:
+		// 并行实际发生
+	case <-time.After(5 * time.Second):
+		t.Fatal("批内装配未并行（5s 内无 ≥2 并发在途）")
+	}
+	release()
+	<-done
+
+	require.GreaterOrEqual(t, snap.max(), 2, "批内快照装配并行（errgroup 有界并发）")
+	for i, it := range items {
+		require.Equal(t, int64(i+1), it.AccountID, "items 顺序 = ids 顺序（并行装配保序）")
+	}
+	for i := range items {
+		if items[i].AccountID == 4 {
+			require.Nil(t, items[i].Upstream)
+			require.NotNil(t, items[i].UpstreamError)
+			require.Equal(t, domain.UpstreamErrorAuthExpired, *items[i].UpstreamError)
+			continue
+		}
+		require.NotNil(t, items[i].Upstream, "账号 %d 快照正常", items[i].AccountID)
+		require.Nil(t, items[i].UpstreamError)
+	}
 }
 func strPtr(s string) *string { return &s }

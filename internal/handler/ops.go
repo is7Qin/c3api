@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // GET /api/admin/ops/workers 运维观测端点（spec 2026-08-11；用户裁决并入管理面）：
@@ -48,6 +49,12 @@ type OpsOptions struct {
 	// BillingAlerts 计费告警面（/api/admin/overview alerts 段；实现 = billing
 	// 游标消费者 lag 族观测直读（F2 ledger-cursor）。nil = 未装配 → alerts 全零）。
 	BillingAlerts func() BillingAlerts
+	// UsageSnap codex 额度快照数据源（W2-T3：/api/admin/accounts/usage 的
+	// upstream 栏经构造直调（*sdkbridge.Codex 满足）；nil = 未装配 → codex
+	// 账号 null 快照，与旧 service nil-setter 降级语义一致）。
+	UsageSnap CodexUsageProber
+	// Log fan-out 未知上游错误 Warn（nil = 静默；生产由组合根注入）。
+	Log *logx.Logger
 }
 
 // BillingAlerts overview.alerts 数据（billing 游标积压 lag 族三真值原样直出

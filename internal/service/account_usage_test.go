@@ -6,7 +6,7 @@ package service
 
 import (
 	"context"
-	"sync"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,83 +14,58 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
-// fakeUsageSnapshotter 快照数据源替身（断言收参 + 可编程返回——service 纯编排
-// 测试注入面）。
-type fakeUsageSnapshotter struct {
-	mu    sync.Mutex
-	creds []*domain.AccountCredential
-	snap  *domain.CodexUsageSnapshot
-	err   error
-}
-
-func (f *fakeUsageSnapshotter) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.creds = append(f.creds, cred)
-	return f.snap, f.err
-}
-
-func (f *fakeUsageSnapshotter) calls() []*domain.AccountCredential {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.creds
-}
-
-// TestAccountUsageTypeDispatch 账号类型判定矩阵（数据流——凭据取 + 类型判定 +
-// 调用）：api-key（无 ext 行）→ nil 快照零 sdkbridge 调用；codex-oauth/
-// codex-pat → 调用（cred 直传断言收参）。
-func TestAccountUsageTypeDispatch(t *testing.T) {
-	fake := &fakeUsageSnapshotter{snap: &domain.CodexUsageSnapshot{PlanType: "chatgpt-plus"}}
+// TestAccountUsageCredentialDispatch 凭据组装判定矩阵（纯数据面零上游调用）：
+// api-key（无 ext 行）→ nil/nil；codex-oauth → oauth 列组派生 cred；
+// codex-pat → pat 列组派生 cred；ext 行存在但凭据全空 → nil/nil。
+func TestAccountUsageCredentialDispatch(t *testing.T) {
 	svc := &Service{store: newFakeStore()}
-	svc.SetUsageSnapshotter(fake)
 	ctx := context.Background()
 
-	// api-key：无 ext 行 → GetAccountExt ErrNotFound → nil 快照零调用
-	snap, err := svc.AccountUsage(ctx, 1)
+	// api-key：无 ext 行 → GetAccountExt ErrNotFound → nil/nil
+	cred, err := svc.AccountUsageCredential(ctx, 1)
 	require.NoError(t, err)
-	require.Nil(t, snap, "api-key（无 ext 行）→ nil 快照")
-	require.Empty(t, fake.calls(), "零 sdkbridge 调用")
+	require.Nil(t, cred, "api-key（无 ext 行）→ 无上游能力")
 
-	// codex-oauth：ext 行 → cred 直传
+	// codex-oauth：ext 行 → oauth 列组派生 cred
 	exp := time.Now().Add(time.Hour)
 	f := svc.store.(*fakeStore)
 	f.accExts[2] = &domain.AccountExt{
 		AccountID: 2, CredentialType: credential.TypeCodexOAuth,
 		CodexOAuthToken: strPtr("at"), CodexOAuthRefreshToken: strPtr("rt"), CodexOAuthExpiresAt: &exp,
 	}
-	snap, err = svc.AccountUsage(ctx, 2)
+	cred, err = svc.AccountUsageCredential(ctx, 2)
 	require.NoError(t, err)
-	require.Equal(t, "chatgpt-plus", snap.PlanType, "快照透传")
-	creds := fake.calls()
-	require.Len(t, creds, 1)
-	require.Equal(t, int64(2), creds[0].AccountID)
-	require.Equal(t, "at", creds[0].OAuthToken)
-	require.Equal(t, "rt", creds[0].OAuthRefreshToken, "oauth 列组派生 cred")
+	require.NotNil(t, cred)
+	require.Equal(t, int64(2), cred.AccountID)
+	require.Equal(t, "at", cred.OAuthToken)
+	require.Equal(t, "rt", cred.OAuthRefreshToken, "oauth 列组派生 cred")
 
 	// codex-pat：pat 列组派生 cred
 	f.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-x")}
-	snap, err = svc.AccountUsage(ctx, 3)
+	cred, err = svc.AccountUsageCredential(ctx, 3)
 	require.NoError(t, err)
-	require.NotNil(t, snap)
-	creds = fake.calls()
-	require.Len(t, creds, 2)
-	require.Equal(t, "pat-x", creds[1].PATKey, "pat 列组派生 cred")
+	require.NotNil(t, cred)
+	require.Equal(t, "pat-x", cred.PATKey, "pat 列组派生 cred")
+
+	// ext 行存在但凭据全空 → nil/nil（防御分支）
+	f.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT}
+	cred, err = svc.AccountUsageCredential(ctx, 4)
+	require.NoError(t, err)
+	require.Nil(t, cred, "凭据全空 → 无上游能力")
 }
 
-// TestAccountUsageErrorPassthrough verifies upstream_error mapping.
-// 输入）：sdkbridge 哨兵原样透传。
-func TestAccountUsageErrorPassthrough(t *testing.T) {
+// TestAccountUsageCredentialStoreError store 故障透传（T2-2）：GetAccountExt
+// 非 ErrNotFound 错误 → 非 nil 错误 + nil 凭据（handler 侧记 null/null，
+// 不误标上游问题）。
+func TestAccountUsageCredentialStoreError(t *testing.T) {
 	svc := &Service{store: newFakeStore()}
 	ctx := context.Background()
 	f := svc.store.(*fakeStore)
-	f.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-x")}
+	f.accExtErr[1] = errors.New("store down") // 非 ErrNotFound store 故障
 
-	for _, want := range []error{sdkbridge.ErrAuthExpired, sdkbridge.ErrUpstream} {
-		svc.SetUsageSnapshotter(&fakeUsageSnapshotter{err: want})
-		_, err := svc.AccountUsage(ctx, 1)
-		require.ErrorIs(t, err, want, "分类错误原样透传")
-	}
+	cred, err := svc.AccountUsageCredential(ctx, 1)
+	require.Error(t, err, "store 故障透错")
+	require.Nil(t, cred)
 }

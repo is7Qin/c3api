@@ -357,9 +357,6 @@ type Service struct {
 	// （SyncPricingNow）与 cron worker 共享同一实例（main 装配注入；nil 时
 	// SyncPricingNow 返回错误——启动配置缺失，不应发生）。
 	priceFetcher pricing.Fetcher
-	// usageSnapshots codex 额度快照数据源（*sdkbridge.Codex 满足；AccountUsage
-	// 调用——nil = 未装配（测试/单实例），AccountUsage 返回 nil 快照）。
-	usageSnapshots CodexUsageSnapshotter
 	// recoverProber 恢复→PROBING 健康写入面（New 经 ServiceDeps.RecoverProber
 	// 注入；nil = 未装配，recover 仅完成持久恢复——调度器同步周期兜底）。
 	recoverProber RecoverProber
