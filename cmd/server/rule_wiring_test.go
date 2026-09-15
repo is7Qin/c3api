@@ -6,11 +6,6 @@ package main
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -21,22 +16,8 @@ import (
 // 前写的静默竞态源（sink/persistFn 是裸字段赋值，无 CAS）；recover→PROBING
 // 写入面（RecoverProber）经 service.New 的 ServiceDeps 恰好注入一次。
 func TestRuleHealthWiringOnce(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok)
-	srcPath := filepath.Join(filepath.Dir(file), "main.go")
-	src, err := os.ReadFile(srcPath)
-	require.NoError(t, err)
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, srcPath, src, parser.ParseComments)
-	require.NoError(t, err)
-	var mainFn *ast.FuncDecl
-	for _, d := range f.Decls {
-		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "main" && fn.Recv == nil {
-			mainFn = fn
-			break
-		}
-	}
-	require.NotNil(t, mainFn, "main func not found")
+	_, f := parseMainGo(t)
+	mainFn := findFuncDecl(t, f, "main")
 
 	counts := map[string]int{
 		"ruleEngine.SetHealthSink":  0,

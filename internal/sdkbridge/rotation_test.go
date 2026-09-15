@@ -56,10 +56,11 @@ func (f *fakeRotationStore) snapshot() []rotationCall {
 // 判死 token_expired，触发 SDK 自动轮转）；其余 → 200 成功响应。与
 // TestCodex401RotationSuccess 的计数法区别：并发测试下按凭据判别确定性。
 type rotationUpstream struct {
-	mu    sync.Mutex
-	calls int
-	auths []string
-	URL   string
+	mu     sync.Mutex
+	calls  int
+	auths  []string
+	URL    string
+	onCall func() // 测试钩子：每次命中上游时（互斥区外）调用，单飞屏障用
 }
 
 func newRotationUpstream(t *testing.T, atOld string) *rotationUpstream {
@@ -70,7 +71,11 @@ func newRotationUpstream(t *testing.T, atOld string) *rotationUpstream {
 		u.mu.Lock()
 		u.calls++
 		u.auths = append(u.auths, auth)
+		hook := u.onCall
 		u.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
 		if auth != "Bearer "+atOld {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(okImageResponse))
@@ -182,13 +187,30 @@ func (u *rotationUpstream401Always) callsN() int {
 // 一次 SDK 单飞 refresh（同账号轮转回调串行——auth_oauth.go:217-244）→
 // RotationStore 恰一次写入。
 func TestCodexRotationWritebackSingleFlight(t *testing.T) {
+	const n = 8
 	up := newRotationUpstream(t, "at-old")
-	// refresh 慢响应（100ms）扩大单飞窗口：全部 N 请求在 leader refresh 完成
-	// 前命中 401 并加入单飞（等待者共享 leader 轮转结果）
+	// 确定性汇合屏障：refresh 不返回，直到 N 路请求全部命中上游 401 并
+	// 加入单飞——替代睡眠撑大的单飞窗口；超时兜底放行防死锁并事后断言。
+	arrived := make(chan struct{}, n)
+	up.onCall = func() {
+		select {
+		case arrived <- struct{}{}:
+		default:
+		}
+	}
+	var refreshTimedOut atomic.Bool
 	var refreshCalls atomic.Int64
 	rsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		refreshCalls.Add(1)
-		time.Sleep(100 * time.Millisecond)
+		joined := true
+		for i := 0; joined && i < n; i++ {
+			select {
+			case <-arrived:
+			case <-time.After(10 * time.Second):
+				refreshTimedOut.Store(true)
+				joined = false
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte(`{"access_token":"at-new","refresh_token":"rt-new"}`))
@@ -200,7 +222,6 @@ func TestCodexRotationWritebackSingleFlight(t *testing.T) {
 
 	cred := oauthCred(7, "at-old", "rt-1")
 
-	const n = 8
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	errs := make([]error, n)
@@ -219,6 +240,7 @@ func TestCodexRotationWritebackSingleFlight(t *testing.T) {
 		require.NoError(t, err, "请求 %d 必须成功（单飞共享轮转结果）", i)
 	}
 	require.Equal(t, int64(1), refreshCalls.Load(), "单飞恰一次 refresh")
+	require.False(t, refreshTimedOut.Load(), "汇合屏障超时：N 路请求未全部到达上游")
 	require.Len(t, store.snapshot(), 1, "并发单飞不重复回写——同账号轮转回调串行")
 }
 

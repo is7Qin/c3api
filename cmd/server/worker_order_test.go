@@ -6,11 +6,7 @@ package main
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,22 +22,8 @@ func isWmRegister(ce *ast.CallExpr) bool {
 }
 
 func TestWorkerRegistrationPartialOrder(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok)
-	srcPath := filepath.Join(filepath.Dir(file), "main.go")
-	src, err := os.ReadFile(srcPath)
-	require.NoError(t, err)
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, srcPath, src, parser.ParseComments)
-	require.NoError(t, err)
-	var mainFn *ast.FuncDecl
-	for _, d := range f.Decls {
-		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "main" && fn.Recv == nil {
-			mainFn = fn
-			break
-		}
-	}
-	require.NotNil(t, mainFn, "main func not found")
+	_, f := parseMainGo(t)
+	mainFn := findFuncDecl(t, f, "main")
 	var order []string
 	var ordered []string
 	managedFound := false
