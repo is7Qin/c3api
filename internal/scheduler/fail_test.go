@@ -60,7 +60,7 @@ func newSchedLoader(t *testing.T, m Loader) *Scheduler {
 	t.Helper()
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil)
+	s := New(testCfg(), m, re, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
@@ -141,7 +141,7 @@ func TestMarkResultFailAccountUsesLifecycleRevision(t *testing.T) {
 	}, next: 2}
 	re := rule.New(rule.Config{}, store, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil)
+	s := New(testCfg(), m, re, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	re.SetHealthSink(NewHealthControllerWithScheduler(nil, s))

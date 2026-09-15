@@ -190,12 +190,15 @@ func (s *Scheduler) ProbeAccount(id int64) (*domain.Account, bool) {
 }
 
 // New 构造调度器。ruleEngine 必须非 nil（事件投递面；main 在 Start 前显式 Reload）。
+// h 为运行时健康投影（构造注入，无 Set* 回填）：nil 允许——无健康面场景
+// （测试/纯选号）refill 热路径经 s.health != nil 守卫跳过健康门。
 // cfg.StalenessProbe 为空保持探针解线（backstop fail-safe 全量 reload）。
-func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, log *logx.Logger) *Scheduler {
+func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealth, log *logx.Logger) *Scheduler {
 	s := &Scheduler{
 		cfg:       cfg,
 		loader:    loader,
 		rule:      ruleEngine,
+		health:    h,
 		log:       log,
 		timeNow:   time.Now,
 		latch:     newLatchStore(),
@@ -333,8 +336,6 @@ func (s *Scheduler) reload(ctx context.Context) error {
 	s.RequestCompile()
 	return nil
 }
-
-func (s *Scheduler) SetRuntimeHealth(h *RuntimeHealth) { s.health = h }
 
 func (s *Scheduler) TryLatch(accountID int64, fingerprint string, revision int64) bool {
 	if s.latch == nil {

@@ -60,7 +60,7 @@ func newProbedSched(t *testing.T, m *memLoader, q map[CandidateQualityKey]Candid
 	cl := &countingLoader{inner: m}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), cl, re, nil)
+	s := New(testCfg(), cl, re, nil, nil)
 	s.stalenessProbe = func(context.Context) (compileProbeCounts, error) { return m.probeCounts(), nil }
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, q, prices)
@@ -288,7 +288,7 @@ func TestCompileEvent_ProbeSnapshotMappingIsExact(t *testing.T) {
 		Templates: 4, TemplatesUpdatedAtNano: 44,
 		Memberships: 5, Exts: 6,
 	}}
-	s := New(cfg, newMemLoader(nil), re, nil)
+	s := New(cfg, newMemLoader(nil), re, nil, nil)
 	require.NotNil(t, s.stalenessProbe)
 	c, err := s.stalenessProbe(context.Background())
 	require.NoError(t, err)
@@ -301,7 +301,7 @@ func TestCompileEvent_ProbeSnapshotMappingIsExact(t *testing.T) {
 
 	cfgErr := testCfg()
 	cfgErr.StalenessProbe = &fakeStalenessSource{err: context.DeadlineExceeded}
-	sErr := New(cfgErr, newMemLoader(nil), re, nil)
+	sErr := New(cfgErr, newMemLoader(nil), re, nil, nil)
 	require.NotNil(t, sErr.stalenessProbe)
 	_, err = sErr.stalenessProbe(context.Background())
 	require.ErrorIs(t, err, context.DeadlineExceeded)

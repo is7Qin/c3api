@@ -95,9 +95,9 @@ func TestRed_Blocker2_HealthResolvedMappedModel(t *testing.T) {
 	qcRequested, _ := domain.QualityClassID(callerKind, domain.FormatOpenAIChat, "req", op)
 	require.NotEqual(t, domain.QualityClassIDHex(qcResolved), domain.QualityClassIDHex(qcRequested))
 	hkResolved := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcResolved), Revision: 1}
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hkResolved: {Key: hkResolved, State: StateOPEN}}})
-	s.SetRuntimeHealth(h)
+	s.health = h
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "req")
@@ -145,9 +145,9 @@ func TestRed_Blocker3_UnrelatedQualityNotExclude(t *testing.T) {
 	// v5-§5.1A: unrelated-quality OPEN is inert (health deleted from inputs);
 	// inclusion holds with or without the live entry.
 	hkOther := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcM2), Revision: 1}
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hkOther: {Key: hkOther, State: StateOPEN}}})
-	s.SetRuntimeHealth(h)
+	s.health = h
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "m1")

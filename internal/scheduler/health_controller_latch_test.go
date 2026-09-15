@@ -21,7 +21,7 @@ func newTestHealthWithLatch(t *testing.T) (*RuntimeHealth, *latchStore, *minired
 	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c) })
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	ls := newLatchStore()
 	return h, ls, mr
 }
@@ -139,14 +139,14 @@ func TestHealthControllerProbeAndEffectiveStateWithLatch(t *testing.T) {
 	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c) })
-	h := NewRuntimeHealth(c, "self-a", nil, nil, nil)
+	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	ls := newLatchStore()
 	ctrl := NewHealthController(h, ls)
 	// barrier for concurrent throttle and select
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil)
+	s := New(testCfg(), m, re, nil, nil)
 	s.latch = ls
 	s.health = h
 	require.NoError(t, s.reload(context.Background()))

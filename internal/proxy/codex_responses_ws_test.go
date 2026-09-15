@@ -227,7 +227,7 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	re.SetHealthSink(testHealthSink)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
+	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -500,7 +500,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	}}}
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, store, nil)
 	cfg := Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true}
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
+	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

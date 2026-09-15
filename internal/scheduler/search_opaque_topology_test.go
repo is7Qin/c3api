@@ -90,7 +90,7 @@ func TestSearchOpaqueDoesNotAlterEligibility(t *testing.T) {
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	loader := newMemLoader(map[int64][]*domain.Account{10: {a}})
-	ns := New(testCfg(), loader, re, nil)
+	ns := New(testCfg(), loader, re, nil, nil)
 	require.NoError(t, ns.reload(context.Background()))
 	groups := ns.View().Groups()
 	gs := groups[10]

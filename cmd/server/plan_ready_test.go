@@ -43,7 +43,7 @@ func (readyLoader) LoadGroupAccounts(context.Context, int64) ([]*domain.Account,
 func newReadyScheduler(t *testing.T) *scheduler.Scheduler {
 	t.Helper()
 	re := rule.New(rule.Config{}, readyRuleStore{}, nil)
-	return scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, readyLoader{}, re, nil)
+	return scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, readyLoader{}, re, nil, nil)
 }
 
 // 冷启动就绪门：编译计划（DecisionView）发布前 AI 流量 503 拒入，发布后

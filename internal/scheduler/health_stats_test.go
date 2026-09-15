@@ -18,7 +18,7 @@ import (
 // the live view, generation, and freshness/error counters (0/false = never
 // ticked).
 func TestRuntimeHealthStats(t *testing.T) {
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	st := h.Stats().(RuntimeHealthStats)
 	require.Zero(t, st.Records)
 	require.False(t, st.LastTickOK, "no tick yet")
@@ -51,21 +51,21 @@ func TestRuntimeHealthStats(t *testing.T) {
 // Close must not return while a probe is in flight (both loops joined).
 // Barriers + one bounded watchdog (quality-sync precedent), no sleeps-as-sync.
 func TestRuntimeHealthCloseJoinsProbeLoop(t *testing.T) {
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	var once sync.Once
-	h.SetProbeFn(func(context.Context, HealthKey) error {
+	probe := func(context.Context, HealthKey) error {
 		once.Do(func() { close(entered) })
 		<-release
 		return errors.New("probe released")
-	})
+	}
 	hk := HealthKey{AccountID: 1, Quality: "*", Revision: 1}
 	// 探针只服务 PROBING（T1 窗口 honored）——以 PROBING 构造在飞探测夹具。
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateProbing}}})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	require.NoError(t, h.Start(ctx))
+	require.NoError(t, h.Start(ctx, probe))
 	<-entered // probe in flight; the loop cannot exit until released
 	cancel()
 
@@ -94,7 +94,7 @@ func TestRuntimeHealthCloseJoinsProbeLoop(t *testing.T) {
 // TestRuntimeHealthCloseUnstartedSafe pins the worker contract: Close before
 // Start is a no-op (cancel absent), never blocks.
 func TestRuntimeHealthCloseUnstartedSafe(t *testing.T) {
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	require.NoError(t, h.Close(context.Background()))
 	require.NoError(t, h.Close(context.Background()), "idempotent")
 }
@@ -103,19 +103,19 @@ func TestRuntimeHealthCloseUnstartedSafe(t *testing.T) {
 // in-flight (entered closed once, released only when the test closes release).
 func blockingProbeHealth(t *testing.T) (*RuntimeHealth, chan struct{}, chan struct{}) {
 	t.Helper()
-	h := NewRuntimeHealth(nil, "self", nil, nil, nil)
+	h := NewRuntimeHealth(nil, "self", nil, nil)
 	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	var once sync.Once
-	h.SetProbeFn(func(context.Context, HealthKey) error {
+	probe := func(context.Context, HealthKey) error {
 		once.Do(func() { close(entered) })
 		<-release
 		return errors.New("probe released")
-	})
+	}
 	hk := HealthKey{AccountID: 1, Quality: "*", Revision: 1}
 	// 探针只服务 PROBING（T1 窗口 honored）——以 PROBING 构造在飞探测夹具。
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateProbing}}})
-	require.NoError(t, h.Start(context.Background()))
+	require.NoError(t, h.Start(context.Background(), probe))
 	<-entered
 	return h, entered, release
 }

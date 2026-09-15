@@ -130,7 +130,7 @@ func contProxy(t *testing.T, format domain.RequestFormat, accs []*domain.Account
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	re.SetHealthSink(testHealthSink)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, loader, re, nil)
+	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, loader, re, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 	// Production compiler publishes per-model route buckets (scheduler.go
@@ -142,11 +142,11 @@ func contProxy(t *testing.T, format domain.RequestFormat, accs []*domain.Account
 		ids = append(ids, a.ID)
 	}
 	for _, m := range tpl.Models {
-	compiled := make([]scheduler.CompiledCandidate, len(ids))
-	for i, id := range ids {
-		compiled[i] = scheduler.CompiledCandidate{AccountID: id}
-	}
-	sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(format), m), &scheduler.RouteDecision{Primary: compiled})
+		compiled := make([]scheduler.CompiledCandidate, len(ids))
+		for i, id := range ids {
+			compiled[i] = scheduler.CompiledCandidate{AccountID: id}
+		}
+		sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(format), m), &scheduler.RouteDecision{Primary: compiled})
 	}
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))

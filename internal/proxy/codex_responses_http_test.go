@@ -182,7 +182,7 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil)
 	re.SetHealthSink(testHealthSink)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil)
+	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

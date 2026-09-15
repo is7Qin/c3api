@@ -126,7 +126,7 @@ func newTestProxyRules(t *testing.T, upstream string, format domain.RequestForma
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
-	}, noopLoader{accs: accs}, re, nil)
+	}, noopLoader{accs: accs}, re, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

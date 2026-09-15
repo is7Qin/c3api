@@ -236,7 +236,9 @@ type ProbeFunc func(context.Context, HealthKey) error
 // One immutable atomic.Pointer view; key account+quality|*+revision; states OPEN>RETRY_AFTER>PROBING>READY.
 // Lua throttle/READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL.
 // Sync INFO run_id + gen-before/records/gen-after; run_id/expiry stored in immutable view, explicit OPEN->until->PROBING->probe retention.
-// Uses worker.GoLoop for loops; probe injected selfID/rendezvous/ProbeFunc, one permit, two current-gen successes READY, failure reopen.
+// Uses worker.GoLoop for loops; selfID/rendezvous injected at construction, probe
+// injected once at Start (loop spawn 前单次交接——循环启动后只读，无回填读写竞态）;
+// one permit, two current-gen successes READY, failure reopen.
 // 探针不变量：probeTick 只探测 StateProbing 条目；OPEN/RETRY_AFTER 在其窗口内永不
 // 被探测（窗口跑满 TTL，到期处理权在 Sync retention 转换逻辑，本循环不碰）；
 // PROBING 条目只来自 recover 链路 SetProbing 与 Sync 保留转换。
@@ -278,15 +280,14 @@ type RuntimeHealth struct {
 }
 
 // NewRuntimeHealth constructs the core. members may be nil (single instance).
-// rendezvous may be nil (defaults to simple hash). probeFn may be nil/late-
-// backfilled via SetProbeFn before Start (nil probe fails closed—records never
-// reach READY without a real probe).
-func NewRuntimeHealth(client *redis.Client, selfID string, members func() []string, probeFn ProbeFunc, log *logx.Logger) *RuntimeHealth {
+// rendezvous may be nil (defaults to simple hash). probe 不在此处注入——它是
+// Start 期依赖（组合根在 sched/codex 就绪后构造真 probe，Start 期一次性交接）；
+// Start 前 nil probe fail-closed（doProbe 恒失败，记录停在 OPEN/PROBING，绝不 READY）。
+func NewRuntimeHealth(client *redis.Client, selfID string, members func() []string, log *logx.Logger) *RuntimeHealth {
 	h := &RuntimeHealth{
 		client:       client,
 		selfID:       selfID,
 		members:      members,
-		probeFn:      probeFn,
 		log:          log,
 		permit:       make(chan struct{}, 1),
 		successCount: make(map[string]int),
@@ -343,8 +344,12 @@ func rendezvousOwner(key string, members []string) string {
 func (h *RuntimeHealth) Name() string { return "runtime-health" }
 
 // Start launches sync and probe loops via worker.GoLoop, no raw go/Sleep/Background.
-func (h *RuntimeHealth) Start(ctx context.Context) error {
+// probe 是 Start 期依赖：循环 spawn 之前单次交接（h.probeFn = probe），循环
+// 启动后只读——Start 后不存在回填写入，消除回填读写竞态。nil probe 保持
+// fail-closed（doProbe 恒失败）。
+func (h *RuntimeHealth) Start(ctx context.Context, probe ProbeFunc) error {
 	h.startOnce.Do(func() {
+		h.probeFn = probe
 		c, cancel := context.WithCancel(ctx)
 		h.cancel = cancel
 		h.syncDone = worker.GoLoop(c, "runtime-health-sync", h.log, h.syncLoop)
@@ -466,13 +471,6 @@ func (h *RuntimeHealth) MarkReady(ctx context.Context, key HealthKey, expectedGe
 	}
 	h.lastGen.Store(gen)
 	return gen, nil
-}
-
-// SetProbeFn 回填 probe 函数（装配序：runtimeHealth 先于其依赖的 codex 适配器
-// 构造——Set* 事后回填是本项目装配惯例）。必须在 Start 之前调用：Start 后
-// probe 循环并发读取 probeFn，事后回填构成数据竞争。
-func (h *RuntimeHealth) SetProbeFn(fn ProbeFunc) {
-	h.probeFn = fn
 }
 
 // SetProbing writes the wildcard PROBING record for (account, newRevision)
