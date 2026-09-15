@@ -126,7 +126,7 @@ func newShutdownFixture(t *testing.T, fail error) (wm *worker.Manager, rec *qual
 	require.NoError(t, err)
 
 	fixed := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	w := quality.NewSyncWorker(rec, rdb, pg, quality.SyncConfig{InstanceSrc: "shutdown-tail-test", BatchSize: 10}, nil)
+	w := quality.NewSyncWorker(rec, rdb, pg, quality.SyncConfig{InstanceSrc: "shutdown-tail-test", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
 	minute = fixed.Unix()

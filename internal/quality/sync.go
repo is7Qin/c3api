@@ -158,7 +158,7 @@ func GenerateInstanceSrc() string {
 	return fmt.Sprintf("%s-%d-%s", host, os.Getpid(), hex.EncodeToString(b))
 }
 
-func NewSyncWorker(rec *Recorder, rdb *redis.Client, pg PGQualityWriter, cfg SyncConfig, log *logx.Logger) *SyncWorker {
+func NewSyncWorker(rec *Recorder, rdb *redis.Client, pg PGQualityWriter, cfg SyncConfig, log *logx.Logger, onPersisted func()) *SyncWorker {
 	src := cfg.InstanceSrc
 	if src == "" {
 		src = GenerateInstanceSrc()
@@ -179,6 +179,7 @@ func NewSyncWorker(rec *Recorder, rdb *redis.Client, pg PGQualityWriter, cfg Syn
 		clock:                time.Now,
 		log:                  log,
 		cfg:                  cfg,
+		onQualityPersisted:   onPersisted,
 		seq:                  make(map[int64]int64),
 		redisSeq:             make(map[int64]int64),
 		pgSeq:                make(map[int64]int64),
@@ -201,15 +202,6 @@ func (w *SyncWorker) SetClock(fn func() time.Time) {
 	if fn != nil {
 		w.clock = fn
 	}
-}
-
-// SetOnQualityPersisted 注入质量落库编译触发（装配期回填，SetClock 同款：
-// 可选观测式回调，nil = 未装配）。调用方（scheduler.RequestCompile）必须
-// 非阻塞——本调用在 PG flush 同步路径上。
-func (w *SyncWorker) SetOnQualityPersisted(fn func()) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.onQualityPersisted = fn
 }
 
 func (w *SyncWorker) Start(ctx context.Context) error {

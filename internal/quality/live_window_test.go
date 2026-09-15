@@ -118,7 +118,7 @@ func TestRecorderUnflushedMinutesPostFlushExclusion(t *testing.T) {
 	liveComplete(t, r, k, false, 0, 3)
 
 	pg := newFakePG()
-	w := NewSyncWorker(r, nil, pg, SyncConfig{InstanceSrc: "src-live", BatchSize: 500}, nil)
+	w := NewSyncWorker(r, nil, pg, SyncConfig{InstanceSrc: "src-live", BatchSize: 500}, nil, nil)
 	w.SetClock(func() time.Time { return liveFixed })
 	w.doPG(context.Background())
 	require.Len(t, pg.quality, 1, "one absolute row flushed")
@@ -154,7 +154,7 @@ func TestRecorderUnflushedMinutesFailedFlushStaysLive(t *testing.T) {
 
 	pg := newFakePG()
 	pg.failAll = true
-	w := NewSyncWorker(r, nil, pg, SyncConfig{InstanceSrc: "src-live-fail", BatchSize: 500}, nil)
+	w := NewSyncWorker(r, nil, pg, SyncConfig{InstanceSrc: "src-live-fail", BatchSize: 500}, nil, nil)
 	w.SetClock(func() time.Time { return liveFixed })
 	w.doPG(context.Background())
 	require.Empty(t, pg.quality)
@@ -215,7 +215,7 @@ func TestRecorderUnflushedMinutesGenRotation(t *testing.T) {
 	liveComplete(t, r, k, true, 100, 10)
 
 	pg := newFakePG()
-	w := NewSyncWorker(r, nil, pg, SyncConfig{InstanceSrc: "src-live-gen", BatchSize: 500}, nil)
+	w := NewSyncWorker(r, nil, pg, SyncConfig{InstanceSrc: "src-live-gen", BatchSize: 500}, nil, nil)
 	w.SetClock(func() time.Time { return liveFixed })
 	w.doPG(context.Background())
 	require.Len(t, pg.quality, 1)

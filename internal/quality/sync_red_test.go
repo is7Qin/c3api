@@ -31,7 +31,7 @@ func TestRed_RedisAckRemovesExactlyPublished(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-ack1", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-ack1", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return base })
 
 	k1 := keyOf(fp(101), qc(101))
@@ -81,7 +81,7 @@ func TestRed_RedisAckRemovesExactlyPublished(t *testing.T) {
 	// Prepare two minutes worth of data: one for baseNext and one historical
 	// Use barrier to ensure both drain
 	rec2, _ := NewRecorder(50000)
-	w2 := NewSyncWorker(rec2, rdb, pg, SyncConfig{InstanceSrc: "red-ack2", BatchSize: 10}, nil)
+	w2 := NewSyncWorker(rec2, rdb, pg, SyncConfig{InstanceSrc: "red-ack2", BatchSize: 10}, nil, nil)
 	// Use active path: create cells for both minutes via clock tricks
 	w2.SetClock(func() time.Time { return base })
 	cellH := rec2.GetOrCreateCell(kHist)
@@ -114,7 +114,7 @@ func TestRed_StartCloseConcurrentRaceFree(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-lifecycle", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-lifecycle", BatchSize: 10}, nil, nil)
 
 	barrier := make(chan struct{})
 	var wg sync.WaitGroup
@@ -166,7 +166,7 @@ func TestRed_CloseWaitsForStartedLoop(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-wait", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-wait", BatchSize: 10}, nil, nil)
 	require.NoError(t, w.Start(context.Background()))
 	// loop should be running
 	require.NotNil(t, w.loopDone)

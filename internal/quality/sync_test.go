@@ -109,7 +109,7 @@ func TestQualitySync_QualityPendingSwapRetainsBudgetExceeded(t *testing.T) {
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	clk := fixed
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-budget", BatchSize: 5}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-budget", BatchSize: 5}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 	// fill beyond pg budget: 30 rows across 3 minutes
 	for i := 0; i < 30; i++ {
@@ -131,7 +131,7 @@ func TestQualitySync_QualityPendingSwapRetainsBudgetExceeded(t *testing.T) {
 	// now test budget defer: create many rows and ensure deferred retained
 	pg2 := newFakePG()
 	rec2, _ := NewRecorder(50000)
-	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-budget2", BatchSize: 5}, nil)
+	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-budget2", BatchSize: 5}, nil, nil)
 	w2.SetClock(func() time.Time { return clk })
 	for i := 0; i < 5; i++ {
 		k := keyOf(fp(byte(20+i)), qc(byte(20+i)))
@@ -157,7 +157,7 @@ func TestQualitySync_PGBisectPreservesDBWideAndDropsOnlyPoison(t *testing.T) {
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	clk := fixed
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-poison", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-poison", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 	k1 := keyOf(fp(1), qc(1))
 	k2 := keyOf(fp(2), qc(2))
@@ -178,7 +178,7 @@ func TestQualitySync_PGBisectPreservesDBWideAndDropsOnlyPoison(t *testing.T) {
 	// DB-wide failure: all rows refill
 	pg3 := newFakePG()
 	rec3, _ := NewRecorder(50000)
-	w3 := NewSyncWorker(rec3, rdb, pg3, SyncConfig{InstanceSrc: "src-dbwide", BatchSize: 10}, nil)
+	w3 := NewSyncWorker(rec3, rdb, pg3, SyncConfig{InstanceSrc: "src-dbwide", BatchSize: 10}, nil, nil)
 	w3.SetClock(func() time.Time { return clk })
 	require.NoError(t, rec3.EnqueueQualityMinute(qm1.Clone()))
 	require.NoError(t, rec3.EnqueueQualityMinute(qm2.Clone()))
@@ -201,7 +201,7 @@ func TestQualitySync_FlowPreservesRowsAndRequeuesWholeMinute(t *testing.T) {
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-flow", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-flow", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 100},
@@ -223,7 +223,7 @@ func TestQualitySync_FlowPreservesRowsAndRequeuesWholeMinute(t *testing.T) {
 	// failed flow stays dirty-retained for next-cycle retry (no requeue)
 	pg2 := newFakePG()
 	rec2, _ := NewRecorder(50000)
-	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-flow2", BatchSize: 10}, nil)
+	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-flow2", BatchSize: 10}, nil, nil)
 	w2.SetClock(func() time.Time { return fixed })
 	require.NoError(t, foldConsumerRows(rec2.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 100},
@@ -243,7 +243,7 @@ func TestQualitySync_FlowRowsAreLookedUpAndPersisted(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	minute := time.Date(2026, 8, 29, 12, 7, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "empty-then-rows", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "empty-then-rows", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return minute })
 
 	row := flowTestRow(minute, 1, 42, "success", true)
@@ -273,7 +273,7 @@ func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	clk := fixed
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-redis", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-redis", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 	k := keyOf(fp(5), qc(5))
 	qm := NewQualityMinute(fixed.Unix(), k)
@@ -300,7 +300,7 @@ func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
 	mr.Close()
 	// need fresh rdb that fails
 	badRdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
-	w2 := NewSyncWorker(rec, badRdb, pg, SyncConfig{InstanceSrc: "src-redis2", BatchSize: 10}, nil)
+	w2 := NewSyncWorker(rec, badRdb, pg, SyncConfig{InstanceSrc: "src-redis2", BatchSize: 10}, nil, nil)
 	w2.SetClock(func() time.Time { return clk.Add(time.Second) })
 	// ensure lastRedis is set
 	w2.lastRedis = clk
@@ -319,7 +319,7 @@ func TestQualitySync_ActiveCellDeltaNotLifetime(t *testing.T) {
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	clk := fixed
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-delta", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-delta", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 	k := keyOf(fp(9), qc(9))
 	cell := rec.GetOrCreateCell(k)
@@ -366,7 +366,7 @@ func TestQualitySync_PGMergeRetainsPriorAbsolute(t *testing.T) {
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	clk := fixed
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-merge", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-merge", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 	k := keyOf(fp(11), qc(11))
 	qm1 := NewQualityMinute(fixed.Unix(), k)
@@ -396,7 +396,7 @@ func TestQualitySync_CloseDrainAndUnstartedSafe(t *testing.T) {
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-close", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-close", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	k := keyOf(fp(12), qc(12))
 	qm := NewQualityMinute(fixed.Unix(), k)
@@ -410,7 +410,7 @@ func TestQualitySync_CloseDrainAndUnstartedSafe(t *testing.T) {
 	// started close with barrier
 	pg2 := newFakePG()
 	rec2, _ := NewRecorder(50000)
-	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-close2", BatchSize: 10}, nil)
+	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-close2", BatchSize: 10}, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, w2.Start(ctx))
 	qm2 := NewQualityMinute(fixed.Unix(), keyOf(fp(13), qc(13)))
@@ -436,7 +436,7 @@ func TestQualitySync_RefillRespectsCapacity(t *testing.T) {
 	rec, _ := NewRecorder(10)
 	rec.pendingCapBytes = 2 * EstimatedQualityRowBytes
 	rec.minuteCap = 2
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-cap", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-cap", BatchSize: 10}, nil, nil)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	w.SetClock(func() time.Time { return fixed })
 	// fill capacity
@@ -476,7 +476,7 @@ func TestQualitySync_PerSinkAckDrainsAllDue(t *testing.T) {
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
 	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-persist", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-persist", BatchSize: 10}, nil, nil)
 	// create two minutes of active data
 	k1 := keyOf(fp(40), qc(40))
 	k2 := keyOf(fp(41), qc(41))
@@ -496,7 +496,7 @@ func TestQualitySync_PerSinkAckDrainsAllDue(t *testing.T) {
 	w.SetClock(func() time.Time { return base.Add(time.Minute) })
 	// make redis fail for next publish
 	badRdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
-	wBad := NewSyncWorker(rec, badRdb, pg, SyncConfig{InstanceSrc: "src-persist", BatchSize: 10}, nil)
+	wBad := NewSyncWorker(rec, badRdb, pg, SyncConfig{InstanceSrc: "src-persist", BatchSize: 10}, nil, nil)
 	wBad.SetClock(func() time.Time { return base.Add(time.Minute) })
 	// copy over lastCell/minuteAbs to simulate same worker with redis failure
 	wBad.lastCell = w.lastCell
@@ -525,7 +525,7 @@ func TestQualitySync_PGActiveOnly(t *testing.T) {
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-activeonly", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-activeonly", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	k := keyOf(fp(50), qc(50))
 	cell := rec.GetOrCreateCell(k)
@@ -548,7 +548,7 @@ func TestQualitySync_FullIdentityFlowRowsPreserved(t *testing.T) {
 	// test full identity flow rows
 	pg2 := newFakePG()
 	rec2, _ := NewRecorder(50000)
-	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-fullflow", BatchSize: 10}, nil)
+	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-fullflow", BatchSize: 10}, nil, nil)
 	w2.SetClock(func() time.Time { return fixed })
 	rows := []repository.RoutingFlowRow{
 		{
@@ -597,7 +597,7 @@ func TestQualitySync_CapacityRefillAccountsDrop(t *testing.T) {
 	rec, _ := NewRecorder(10)
 	rec.pendingCapBytes = EstimatedQualityRowBytes
 	rec.minuteCap = 1
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-cap2", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-cap2", BatchSize: 10}, nil, nil)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	w.SetClock(func() time.Time { return fixed })
 	k1 := keyOf(fp(60), qc(60))
@@ -624,7 +624,7 @@ func TestQualitySync_RedisEmptyNoRefresh(t *testing.T) {
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-emptyredis", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-emptyredis", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	w.lastRedis = fixed.Add(-time.Minute)
 	w.lastRedisAttempt = time.Time{}
@@ -633,7 +633,7 @@ func TestQualitySync_RedisEmptyNoRefresh(t *testing.T) {
 	require.Equal(t, int64(0), stats.LastRedisMs, "empty pass must not update LastRedisMs")
 	require.Equal(t, fixed.Add(-time.Minute).UnixMilli(), w.lastRedis.UnixMilli(), "empty must not refresh lastRedis")
 	// no-client pass
-	w2 := NewSyncWorker(rec, nil, pg, SyncConfig{InstanceSrc: "src-noclient", BatchSize: 10}, nil)
+	w2 := NewSyncWorker(rec, nil, pg, SyncConfig{InstanceSrc: "src-noclient", BatchSize: 10}, nil, nil)
 	w2.SetClock(func() time.Time { return fixed })
 	k := keyOf(fp(70), qc(70))
 	qm := NewQualityMinute(fixed.Unix(), k)
@@ -652,7 +652,7 @@ func TestQualitySync_CloseReturnsContextErrorOnAbandon(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	pg := &blockingPG{block: make(chan struct{})}
 	rec, _ := NewRecorder(50000)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-abandon", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-abandon", BatchSize: 10}, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, w.Start(ctx))
 	// enqueue to have pending for drain
@@ -681,7 +681,7 @@ func TestQualitySync_StartCloseSameContext(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-ctx", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-ctx", BatchSize: 10}, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, w.Start(ctx))
 	require.NotNil(t, w.baseCtx)
@@ -725,9 +725,8 @@ func TestQualitySync_PersistedQualityNotifiesCompiler(t *testing.T) {
 	pg := newFakePG()
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
-	w := NewSyncWorker(rec, nil, pg, SyncConfig{InstanceSrc: "src-notify", BatchSize: 10}, nil)
 	var calls int
-	w.SetOnQualityPersisted(func() { calls++ })
+	w := NewSyncWorker(rec, nil, pg, SyncConfig{InstanceSrc: "src-notify", BatchSize: 10}, nil, func() { calls++ })
 	// 空刷：无新质量行 → 静默。
 	w.doPG(context.Background())
 	require.Equal(t, 0, calls, "空刷（无新质量行）不得惊动编译道")

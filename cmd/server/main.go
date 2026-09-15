@@ -515,10 +515,10 @@ func main() {
 	qualityFlowOwner := qualityRecorder.FlowOwner()
 	// instanceSrc 与 discovery/conc-sync 同源产物（不自造第二套 ID）：跨实例
 	// merge 按 instance_src 区分，同源身份是 merge 正确性的前提。
-	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log)
 	// 缺陷 B 质量面：PG 落库边界成功持久新质量行 → 事件驱动编译（非阻塞、
-	// 下游去抖收敛；空刷/失败静默，无定周全量）。价格面见 pricingSync.Reload。
-	qualitySync.SetOnQualityPersisted(sched.RequestCompile)
+	// 下游去抖收敛；空刷/失败静默，无定周全量）。构造器注入（nil = 未装配）；
+	// 价格面见 pricingSync.Reload。
+	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log, sched.RequestCompile)
 	svc.SetCompileNotifier(sched.RequestCompile)
 	// routing rollup worker：消费 quality-sync 落在 instance 分钟表的脏分钟，经
 	// repository 既有 RollupQuality/RollupFlow 缝滚成 rollup 表（单桶事务、状态

@@ -47,7 +47,7 @@ func TestRegression_PGConstraintIsPoisonAndTransientRefills(t *testing.T) {
 	pgConstraint.failAll = &pgconn.PgError{Code: "23514", Message: "check constraint violates: octet_length"}
 	rec1, err := NewRecorder(50000)
 	require.NoError(t, err)
-	w1 := NewSyncWorker(rec1, rdb, pgConstraint, SyncConfig{InstanceSrc: "regress-constraint-poison", BatchSize: 10}, nil)
+	w1 := NewSyncWorker(rec1, rdb, pgConstraint, SyncConfig{InstanceSrc: "regress-constraint-poison", BatchSize: 10}, nil, nil)
 	w1.SetClock(func() time.Time { return fixed })
 	k1 := keyOf(fpByte(91), qcByte(91))
 	qm1 := NewQualityMinute(fixed.Unix(), k1)
@@ -90,7 +90,7 @@ func TestRegression_PGConstraintIsPoisonAndTransientRefills(t *testing.T) {
 	pgTransient.failAll = &pgconn.PgError{Code: "40P01", Message: "deadlock detected"}
 	rec2, err := NewRecorder(50000)
 	require.NoError(t, err)
-	w2 := NewSyncWorker(rec2, rdb, pgTransient, SyncConfig{InstanceSrc: "regress-transient-refill", BatchSize: 10}, nil)
+	w2 := NewSyncWorker(rec2, rdb, pgTransient, SyncConfig{InstanceSrc: "regress-transient-refill", BatchSize: 10}, nil, nil)
 	w2.SetClock(func() time.Time { return fixed })
 	k2 := keyOf(fpByte(92), qcByte(92))
 	qm2 := NewQualityMinute(fixed.Unix(), k2)
@@ -138,7 +138,7 @@ func TestRegression_PGChunkConstraintOnlyPoisonRowDropped(t *testing.T) {
 	pg.rowErr[string(k1.Fingerprint[:])] = &pgconn.PgError{Code: "23514", Message: "check constraint fails"}
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "regress-chunk-poison", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "regress-chunk-poison", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	qm1 := NewQualityMinute(fixed.Unix(), k1)
 	qm1.SetAttempts(1)
@@ -182,7 +182,7 @@ func TestRegression_PGChunkMiddlePoisonDoesNotDuplicatePrefix(t *testing.T) {
 	pg.rowErr[string(k2.Fingerprint[:])] = &pgconn.PgError{Code: "23514", Message: "check constraint fails"}
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "regress-middle-poison", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "regress-middle-poison", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	for i, k := range []Key{k1, k2, k3} {
 		qm := NewQualityMinute(fixed.Unix(), k)

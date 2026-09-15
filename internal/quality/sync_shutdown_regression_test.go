@@ -30,7 +30,7 @@ func TestQualitySync_ShutdownDrainFailureRetainsPending(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "shutdown-drain-fail", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "shutdown-drain-fail", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
 	minute := fixed.Unix()
@@ -119,7 +119,7 @@ func TestQualitySync_CloseIsBoundedByContext(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "close-barrier", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "close-barrier", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	w.inflightAbandonGrace = 10 * time.Millisecond
 
