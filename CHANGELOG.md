@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each release). The first beta is `v0.0.1-beta.1`; concrete numbers for later releases are decided at tag time.
 
+## [Unreleased]
+
+### Changed
+
+- **Client request headers now reach upstream on every face (behaviour change, deliberate)**: the gateway no longer drops all client headers on the HTTP faces. Custom and session-style headers (for example `X-Opencode-Session`, `X-Claude-Code-Session-Id`, `Session-Id`), plus client-reported protocol headers such as `Anthropic-Version` and `OpenAI-Beta`, are relayed verbatim — a client's own protocol declaration may override the SDK/gateway default. Previously the raw and typed HTTP paths forwarded nothing but the endpoint `Content-Type` and the account credential, while the WebSocket handshake path relayed everything its own 10-item list permitted; all faces now share one mechanism.
+- **Stripped on the way out, everywhere**: connection-level hop-by-hop headers (`Connection`, `Upgrade`, `Te`, `Trailer`, `Keep-Alive`, `Proxy-*`, `Sec-WebSocket-*`), entity-level headers describing a body the gateway may rewrite (`Content-Length`, `Content-Type`, `Content-Encoding`, `Transfer-Encoding`), `Host`, credential and cross-tenant carriers (`Authorization`, `X-Api-Key`, `Cookie`), and `Accept-Encoding`. That last one is a billing guard: relaying a client's `gzip` makes upstream return a compressed body that usage extraction and model rewriting would silently read as plain JSON. The list is a single structural deny list in `pkg/aiclient/relay.go`, is not configurable, and is not extendable without review.
+- **Header values containing CR, LF, NUL, DEL or other control bytes are dropped per value** instead of being allowed to fail the entire upstream request.
+- **Codex accounts: a client can no longer override the disguised identity.** Client `User-Agent` and `Originator` could previously punch through the codex disguise headers on the WebSocket face; they are now stripped alongside the existing session-header family, so upstream always sees the disguise values the SDK sets.
+
 ## [v0.0.1-beta.6] - 2026-09-10
 
 ### Breaking
