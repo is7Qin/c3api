@@ -18,7 +18,9 @@ type failCASStoreErr struct {
 	err error
 }
 
-func (f *failCASStoreErr) SetAccountFailed(_ context.Context, _ int64, _ time.Time, _ string) error { return nil }
+func (f *failCASStoreErr) SetAccountFailed(_ context.Context, _ int64, _ time.Time, _ string) error {
+	return nil
+}
 func (f *failCASStoreErr) GetAccount(_ context.Context, _ int64) (*domain.Account, error) {
 	return nil, f.err
 }
