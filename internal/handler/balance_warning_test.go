@@ -23,7 +23,7 @@ import (
 
 func TestUserBalanceWarningThreshold_Handler(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil)
+	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
 	// seed user
 	u, err := store.CreateUser(nil, &domain.User{Email: "u@example.com", PasswordHash: "x", Role: domain.RoleUser, Status: domain.UserStatusActive})
 	require.NoError(t, err)
@@ -128,7 +128,7 @@ func (a *bwAuthedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func TestMailChannelTest_IsolationAndAuth(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil)
+	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
 	adminAPI := New(svc)
 	u, err := store.CreateUser(nil, &domain.User{Email: "u2@example.com", PasswordHash: "x", Role: domain.RoleUser, Status: domain.UserStatusActive, Balance: 50000, BalanceWarningThreshold: 100000})
 	require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestMailChannelTest_IsolationAndAuth(t *testing.T) {
 
 func TestUserBalanceWarningThreshold_OverflowViaHandler(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil)
+	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
 	u, err := store.CreateUser(nil, &domain.User{Email: "ovh@example.com", PasswordHash: "x", Role: domain.RoleUser, Status: domain.UserStatusActive, BalanceWarningThreshold: 500000})
 	require.NoError(t, err)
 	iss := auth.NewIssuer("test-secret-bw")
@@ -213,7 +213,7 @@ func (f fakeAdminStatus) UserSnapshot(id int64) (domain.UserSnapshot, bool) {
 
 func TestMailChannelTest_AdminAuthViaServer(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil)
+	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
 	adminAPI := New(svc)
 	iss := auth.NewIssuer("test-secret")
 	adminTok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)

@@ -40,7 +40,7 @@ func TestUpdateBalanceWarningThreshold_DisableClearsOldCooldown(t *testing.T) {
 	require.NoError(t, err)
 
 	cooldown := newBalanceWarningCooldown(t)
-	svc.SetBalanceWarningCooldownCleaner(cooldown.Clear)
+	svc.clearBalanceWarningCooldown = cooldown.Clear
 	event := domain.BalanceWarningEvent{EntityID: created.ID, ThresholdMillis: 100_000}
 	_, claimed, err := cooldown.TryClaim(ctx, event)
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestUpdateBalanceWarningThreshold_ChangeClearsOnlyOldCooldown(t *testing.T)
 	})
 	require.NoError(t, err)
 	cooldown := newBalanceWarningCooldown(t)
-	svc.SetBalanceWarningCooldownCleaner(cooldown.Clear)
+	svc.clearBalanceWarningCooldown = cooldown.Clear
 	oldEvent := domain.BalanceWarningEvent{EntityID: created.ID, ThresholdMillis: 100_000}
 	newEvent := domain.BalanceWarningEvent{EntityID: created.ID, ThresholdMillis: 200_000}
 	_, claimed, err := cooldown.TryClaim(ctx, oldEvent)
@@ -97,7 +97,7 @@ func TestUpdateBalanceWarningThreshold_SameValueKeepsCooldown(t *testing.T) {
 	})
 	require.NoError(t, err)
 	cooldown := newBalanceWarningCooldown(t)
-	svc.SetBalanceWarningCooldownCleaner(cooldown.Clear)
+	svc.clearBalanceWarningCooldown = cooldown.Clear
 	event := domain.BalanceWarningEvent{EntityID: created.ID, ThresholdMillis: 100_000}
 	_, claimed, err := cooldown.TryClaim(ctx, event)
 	require.NoError(t, err)
@@ -122,10 +122,10 @@ func TestUpdateBalanceWarningThreshold_CleanupFailureDoesNotFailUpdate(t *testin
 	})
 	require.NoError(t, err)
 	var cleanupCalls int
-	svc.SetBalanceWarningCooldownCleaner(func(context.Context, int64, int64) error {
+	svc.clearBalanceWarningCooldown = func(context.Context, int64, int64) error {
 		cleanupCalls++
 		return errors.New("redis unavailable")
-	})
+	}
 
 	updated, err := svc.UpdateBalanceWarningThreshold(ctx, created.ID, 0)
 	require.NoError(t, err)

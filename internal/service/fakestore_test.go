@@ -139,6 +139,28 @@ func newFakeStore() *fakeStore {
 	}
 }
 
+// testEmailCodes 无行为 EmailCodeStore（New 必选依赖的测试占位：被测路径
+// 不触验证码面；验证码行为由 mailer 测试经 fake 真实现覆盖）。
+var testEmailCodes EmailCodeStore = testEmailCodeStore{}
+
+type testEmailCodeStore struct{}
+
+func (testEmailCodeStore) GetEmailCode(ctx context.Context, email, purpose string) (*domain.EmailCode, error) {
+	return nil, ErrNotFound
+}
+
+func (testEmailCodeStore) UpsertEmailCode(ctx context.Context, email, purpose, sha256 string, expiresAt time.Time) (*domain.EmailCode, error) {
+	return &domain.EmailCode{Email: email}, nil
+}
+
+func (testEmailCodeStore) IncrementEmailCodeAttempts(ctx context.Context, email, purpose string) (int, error) {
+	return 0, nil
+}
+
+func (testEmailCodeStore) DeleteEmailCode(ctx context.Context, email, purpose string) error {
+	return nil
+}
+
 // DeleteKeysByGroup 满足 KeyStore（组删除前置清理；返回被删明文列表）。
 // 镜像真实 repo 原子 SQL 语义：只软删未删 key（deleted_at IS NULL）并返回其
 // 明文；已软删 key 不动（其明文此前已从 Auth 移除）。

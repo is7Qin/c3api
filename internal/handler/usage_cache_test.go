@@ -30,7 +30,7 @@ func TestGetUsageLogsCacheTokens(t *testing.T) {
 		CacheReadTokens: 4, CacheCreationTokens: 2,
 		CreatedAt: time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC),
 	}}
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
+	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件

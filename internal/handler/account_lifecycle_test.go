@@ -44,9 +44,9 @@ func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, *hProber, fun
 		MaxConcurrency: 4, Enabled: true, FailedAt: &failed, FailureSource: &src,
 		LastError: &reason, LifecycleRevision: 5, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
 	}
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
 	prober := &hProber{}
-	svc.SetRecoverProber(prober)
+	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil,
+		service.ServiceDeps{EmailCodeStore: store, RecoverProber: prober})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Mount("/", h.Router())

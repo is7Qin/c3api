@@ -118,8 +118,7 @@ func TestRecoverAccountFenced(t *testing.T) {
 	acc := seedLifecycleAccount(t, fs)
 	prober := &fakeRecoverProber{}
 	inv := &invRecorder{}
-	svc := &Service{store: fs, inv: inv}
-	svc.SetRecoverProber(prober)
+	svc := &Service{store: fs, inv: inv, recoverProber: prober}
 
 	got, err := svc.RecoverAccount(ctx, acc.ID, 5)
 	require.NoError(t, err)

@@ -45,6 +45,28 @@ import (
 // snapshotTestSchema 本测试专用 schema（同一数据库内隔离命名空间）。
 const snapshotTestSchema = "snapshot_test"
 
+// testEmailCodes 无行为 EmailCodeStore（service.New 必选依赖的测试占位：
+// PG 装配测试不触验证码面；验证码行为由 service/handler 的 fake 真实现覆盖）。
+var testEmailCodes service.EmailCodeStore = testEmailCodeStore{}
+
+type testEmailCodeStore struct{}
+
+func (testEmailCodeStore) GetEmailCode(ctx context.Context, email, purpose string) (*domain.EmailCode, error) {
+	return nil, service.ErrNotFound
+}
+
+func (testEmailCodeStore) UpsertEmailCode(ctx context.Context, email, purpose, sha256 string, expiresAt time.Time) (*domain.EmailCode, error) {
+	return &domain.EmailCode{Email: email}, nil
+}
+
+func (testEmailCodeStore) IncrementEmailCodeAttempts(ctx context.Context, email, purpose string) (int, error) {
+	return 0, nil
+}
+
+func (testEmailCodeStore) DeleteEmailCode(ctx context.Context, email, purpose string) error {
+	return nil
+}
+
 func newSnapshotPGRepos(t *testing.T) *repository.Repository {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -127,7 +149,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.NoError(t, sched.Start(schedCtx))
 	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
 	balances := billing.NewBalances(repos, nil)
-	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil)
+	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})
 
 	reg := snapshot.New()
 	for _, s := range []snapshot.Snapshot{
@@ -263,7 +285,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	invCtx, stopInv := context.WithCancel(ctx)
 	t.Cleanup(stopInv)
 	require.NoError(t, inv.Start(invCtx))
-	svc := service.New(repos, sched, inv, nil, ruleEngine, auth, nil)
+	svc := service.New(repos, sched, inv, nil, ruleEngine, auth, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})
 	obs.svc = svc // 回填（首次 LoadKeys 在注册表 ReloadAll 时）
 	auth.SetInstancesProvider(discoStub{})
 

@@ -33,6 +33,7 @@ import (
 	"github.com/is7qin/c3api/internal/handler"
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/invalidate"
+	"github.com/is7qin/c3api/internal/notification"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/proxy"
@@ -301,8 +302,6 @@ func main() {
 	})
 	// ruleReload 独立于 invalidate：规则 CRUD 后全量重载（重载会重置窗口计数，
 	// 不能随模板/账号/分组等任意资源变更触发）。
-	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log)
-	svc.SetTimeLocation(svcLoc) // pricing 条件时区（空配置 = nil → 进程本地，语义不变）
 	// 浏览器时区原始行分组 horizon 跟随 raw 双表（usage_logs + err_logs 都
 	// 被读）的最小正保留：一个 <=0 取另一个，双禁用 → 不限；缺省 errlog
 	// 7d < log 30d → 8d 窗口。统计读时区本身是请求级参数，不进装配面。
@@ -310,10 +309,19 @@ func main() {
 	if d := cfg.Usage.LogRetentionDays; d > 0 && (rawDays <= 0 || d < rawDays) {
 		rawDays = d
 	}
-	svc.SetStatsRawSpan(rawDays)
-	// 验证码 Redis 存储（spec 2026-08-25-emailcode-redis-migration §2.2）：Redis
-	// 必选 ⇒ 无 nil 分支，svc 构造后回填（Set* 事后回填惯例）。
-	svc.SetEmailCodeStore(verification.New(rdb))
+	// 余额预警已知键清理（Redis）：构造期一次建好，ServiceDeps 与
+	// wireBalanceWarning 共用同一实例。
+	bwCooldown := notification.NewCooldown(rdb)
+	// svc 一次性装配（W1-T1：定价时区/原始行 horizon/验证码存储/预警清理/
+	// recover→PROBING 全部构造参数——空时区配置 = nil → 进程本地，语义不变；
+	// 验证码 Redis 必选 ⇒ 无 nil 分支，误接线 New 内 panic）。
+	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log, service.ServiceDeps{
+		EmailCodeStore:              verification.New(rdb),
+		TimeLocation:                svcLoc,
+		StatsRawRetentionDays:       rawDays,
+		ClearBalanceWarningCooldown: bwCooldown.Clear,
+		RecoverProber:               runtimeHealth,
+	})
 	mailW := service.NewMailWorker(svc)
 	svc.SetMailEnqueue(mailW.Enqueue)
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
@@ -381,7 +389,7 @@ func main() {
 	if billFlusher != nil {
 		warningSinkSetter = billFlusher
 	}
-	warningW := wireBalanceWarning(warningSinkSetter, rdb, svc, mailW, log)
+	warningW := wireBalanceWarning(warningSinkSetter, bwCooldown, svc, mailW, log)
 	px := proxy.New(proxy.Config{
 		MaxBodySize:           cfg.Proxy.MaxBodySize,
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
@@ -402,9 +410,6 @@ func main() {
 		fatalf("continuation: %v", err)
 	}
 	px.SetContinuationStore(contStore)
-	// 管理面 recover 端点的健康写入面（fenced CAS 成功后对新 revision 置
-	// PROBING）：runtimeHealth 先建，svc 侧直连注入（构造序 natural，无回填）。
-	svc.SetRecoverProber(runtimeHealth)
 	// 规则 typed Throttle/FailAccount 双面接线：本地 HealthController 即时生效
 	//（latch fail-closed 先于持久化）；持久化走有界 persist queue——满可丢、写
 	// 失败可弃、四指标可观测（rule best-effort 契约，无 outbox）。

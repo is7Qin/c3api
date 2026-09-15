@@ -36,7 +36,7 @@ func newBWService(t *testing.T) (*Service, *fakeStore, *fakeInvalidatorBW) {
 	t.Helper()
 	fs := newFakeStore()
 	inv := &fakeInvalidatorBW{}
-	svc := New(fs, nil, inv, nil, nil, nil, nil)
+	svc := New(fs, nil, inv, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	// Ensure settings snapshot loaded with defaults (balance_warning.enabled = false).
 	// New already reloads settings via GetAllSettings which includes default.
 	return svc, fs, inv

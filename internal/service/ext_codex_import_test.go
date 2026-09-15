@@ -30,7 +30,7 @@ func importFixture(t *testing.T) (*Service, *fakeStore, *invRecorder) {
 	g := &domain.Group{ID: 7, Name: "g", Visibility: domain.GroupVisibilityPublic}
 	store.groups[7] = g
 	rec := &invRecorder{}
-	svc := New(store, nil, rec, nil, nil, nil, nil)
+	svc := New(store, nil, rec, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	return svc, store, rec
 }
 
@@ -431,7 +431,7 @@ func TestImportCodexInvalidateOnce(t *testing.T) {
 	store2 := newFakeStore()
 	store2.tpls[1] = &domain.Template{ID: 1, Name: "t", CredentialType: credential.TypeCodexOAuth}
 	rec2 := &invRecorder{}
-	svc2 := New(store2, nil, rec2, nil, nil, nil, nil)
+	svc2 := New(store2, nil, rec2, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	bad := "bad"
 	_, err = svc2.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "z@example.com", CodexAccountID: "z", CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt", CodexOAuthExpiresAt: &bad},

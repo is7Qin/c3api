@@ -50,7 +50,7 @@ func newCodexImportPG(t *testing.T) (*Service, *repository.Repository) {
 	require.NoError(t, err)
 	repos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, db), true, pool)
 	require.NoError(t, err)
-	svc := New(repos, nil, NopInvalidator{}, nil, nil, nil, nil)
+	svc := New(repos, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	return svc, repos
 }
 

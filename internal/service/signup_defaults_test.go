@@ -18,7 +18,7 @@ import (
 // newSnapshotSvc 构造带 settings 快照的 Service（New 初始化 = 真实装配路径；
 // 其余既有测试直构 Service，快照为零值不影响非设置路径）。
 func newSnapshotSvc(fs *fakeStore) *Service {
-	return New(fs, nil, NopInvalidator{}, nil, nil, nil, nil)
+	return New(fs, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 }
 
 // TestSettingsSnapshotInitAndReload 快照：New 后可用（注册表默认值）→

@@ -5,10 +5,6 @@
 package main
 
 import (
-	"context"
-
-	"github.com/redis/go-redis/v9"
-
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/handler"
 	"github.com/is7qin/c3api/internal/notification"
@@ -20,16 +16,15 @@ import (
 type balanceWarningService interface {
 	BalanceWarningEnabled() bool
 	MailConfig() (host string, port int, username, password, fromAddr, tlsPolicy string, ok bool)
-	SetBalanceWarningCooldownCleaner(func(context.Context, int64, int64) error)
 }
 
 type balanceWarningSinkSetter interface {
 	SetBalanceWarningSink(billing.BalanceWarningSink)
 }
 
-func wireBalanceWarning(setter balanceWarningSinkSetter, rdb *redis.Client, svc balanceWarningService, mailW *service.MailWorker, log *logx.Logger) *notification.Worker {
-	cooldown := notification.NewCooldown(rdb)
-	svc.SetBalanceWarningCooldownCleaner(cooldown.Clear)
+// wireBalanceWarning 组装余额预警 worker：cooldown 由 main 构造期一次建好
+// （ServiceDeps 与此共用同一实例），此处只做 worker 接线。
+func wireBalanceWarning(setter balanceWarningSinkSetter, cooldown *notification.Cooldown, svc balanceWarningService, mailW *service.MailWorker, log *logx.Logger) *notification.Worker {
 	if setter == nil {
 		return nil
 	}

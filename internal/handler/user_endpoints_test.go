@@ -41,8 +41,7 @@ func (f fakeUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *httptest.ResponseRecorder, *fakeStore, *auth.Issuer, *service.Service) {
 	t.Helper()
 	store := newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil)
-	svc.SetEmailCodeStore(store) // 验证码迁 Redis 后独立注入面（fake 即实现，spec §2.2）
+	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
 	mw := service.NewMailWorker(svc)
 	require.NoError(t, mw.Start(t.Context()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })

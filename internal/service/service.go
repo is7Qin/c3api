@@ -57,8 +57,8 @@ type Store interface {
 	AccountExtStore
 	EmailTemplateStore
 	// EmailCodeStore 不在复合面：验证码已迁 Redis（spec 2026-08-25-emailcode-
-	// redis-migration §2.2/§2.3），经 SetEmailCodeStore 独立注入，repository
-	// 实现已随 PG 验证码表卸载。
+	// redis-migration §2.2/§2.3），经 New 的 ServiceDeps.EmailCodeStore 独立注入，
+	// repository 实现已随 PG 验证码表卸载。
 	// WithTx 在单事务内执行 fn（评审 I-1）：真实仓库为 tx 版 Repository（全部走
 	// tx 连接）；fake 为事务语义模拟（fn 内变更先入暂存、成功提交/失败丢弃——
 	// 回滚断言的前提）。
@@ -340,7 +340,8 @@ type KeyRegistrar interface {
 type Service struct {
 	store Store
 	// emailCodes 验证码存储（Redis 实现，spec 2026-08-25-emailcode-redis-migration
-	// §2.2）：SetEmailCodeStore 回填（Set* 事后回填惯例），Redis 必选 ⇒ 非 nil。
+	// §2.2）：New 经 ServiceDeps.EmailCodeStore 一次性注入，Redis 必选 ⇒ 非 nil
+	//（nil panic fail-fast）。
 	emailCodes EmailCodeStore
 	sched      RuntimeProvider
 	inv        Invalidator // 管理面变更去抖失效（O2 接线矩阵；nil = 不失效）
@@ -359,8 +360,8 @@ type Service struct {
 	// usageSnapshots codex 额度快照数据源（*sdkbridge.Codex 满足；AccountUsage
 	// 调用——nil = 未装配（测试/单实例），AccountUsage 返回 nil 快照）。
 	usageSnapshots CodexUsageSnapshotter
-	// recoverProber 恢复→PROBING 健康写入面（SetRecoverProber 回填；nil = 未
-	// 装配，recover 仅完成持久恢复——调度器同步周期兜底）。
+	// recoverProber 恢复→PROBING 健康写入面（New 经 ServiceDeps.RecoverProber
+	// 注入；nil = 未装配，recover 仅完成持久恢复——调度器同步周期兜底）。
 	recoverProber RecoverProber
 	// compileNotify 路由编译触发面（SetCompileNotifier 回填；nil = 未装配，
 	// 定价写面静默——仅编译道装配后有效。调用方承诺非阻塞，见 pricing.go）。
@@ -369,9 +370,10 @@ type Service struct {
 	clearBalanceWarningCooldown func(context.Context, int64, int64) error
 	tzLoc                       *time.Location
 	// statsRawSpan 浏览器时区原始行分组路径的窗口上限（usage_logs/err_logs
-	// 原始行保留期决定）：New 缺省 MaxStatsRawSpan（8d = errlog 默认保留 7d +
-	// 1d 日历余量），main 经 SetStatsRawSpan(min(log, errlog) 正保留) 按部署
-	// 配置换算；0 = 不限（双保留均禁用）。校验见 validateZoneSpan。
+	// 原始行保留期决定）：New 经 ServiceDeps.StatsRawRetentionDays 换算（>0 →
+	// (days+1)×24h 窗口上限 + days 保留兜底；<=0 → 0 = 不限窗口且无兜底，
+	// 分区保留被禁用，既无固定 horizon 也无保证存留期；换算细节与"宁 400
+	// 不静默残缺"见 New）。校验见 validateZoneSpan。
 	statsRawSpan time.Duration
 	// statsRawRetentionDays statsRawSpan 背后的正保留天数（main 传 usage_logs
 	// 与 err_logs 的最小正保留——raw 读两表，两者都须完整覆盖）：retention
@@ -383,8 +385,48 @@ type Service struct {
 	log      *logx.Logger
 }
 
-func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger) *Service {
-	s := &Service{store: store, sched: sched, inv: invalidate, pub: pub, ruleReload: ruleReload, keys: keys, log: log, statsRawSpan: MaxStatsRawSpan}
+// ServiceDeps New 的尾部一次性依赖（W1-T1：SetEmailCodeStore /
+// SetTimeLocation / SetStatsRawSpan / SetBalanceWarningCooldownCleaner /
+// SetRecoverProber 五个事后回填折叠进构造，零语义变化——各字段 nil/零值语义
+// 与原 setter 完全一致）。尾部 struct 而非 5 个位置参数：New 本就 7 参，
+// 位置参数会冲到 12 个（>3 参 smell），具名字段自文档且调用点可只填所需。
+type ServiceDeps struct {
+	// EmailCodeStore 验证码存储（Redis 实现，必选依赖）：nil 直接 panic
+	// fail-fast（与原 SetEmailCodeStore 同纪律——生产误接线必须启动即炸，
+	// 无降级路径）。
+	EmailCodeStore EmailCodeStore
+	// TimeLocation 定价时段解释用时区（D-TZ2）：nil = 进程本地（现状），
+	// 非 nil = at.In(tzLoc) 后再进 domain.ResolveEntryPrices（零热路径额外 DB/锁）。
+	TimeLocation *time.Location
+	// StatsRawRetentionDays 原始行分组 horizon 背后的正保留天数（main 传
+	// usage_logs 与 err_logs 的最小正保留——raw 读两表，两者都须完整覆盖）：
+	// >0 → (days+1)×24h 窗口上限 + days 保留兜底 cutoff（1d DST/日界日历
+	// 余量——默认 7d → 8d，与 MaxStatsRawSpan 缺省同值）；<=0 → 0 = 不限
+	// 窗口且无兜底（分区保留被禁用）。绝不把 horizon 报得比配置保留期更长
+	// ——超限窗口宁 400 不静默残缺。
+	StatsRawRetentionDays int
+	// ClearBalanceWarningCooldown 余额预警偏好变更后的 Redis 已知键清理：
+	// nil = 禁用清理（仅做偏好持久化）。
+	ClearBalanceWarningCooldown func(context.Context, int64, int64) error
+	// RecoverProber 恢复→PROBING 健康写入面：nil = 跳过 PROBING 写
+	// （调度器同步周期兜底收敛）。
+	RecoverProber RecoverProber
+}
+
+func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger, deps ServiceDeps) *Service {
+	if deps.EmailCodeStore == nil {
+		panic("service: New(nil EmailCodeStore): Redis 是必选依赖，验证码存储无降级路径")
+	}
+	s := &Service{store: store, sched: sched, inv: invalidate, pub: pub, ruleReload: ruleReload, keys: keys, log: log,
+		emailCodes: deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,
+		clearBalanceWarningCooldown: deps.ClearBalanceWarningCooldown}
+	if deps.StatsRawRetentionDays > 0 {
+		s.statsRawSpan = time.Duration(deps.StatsRawRetentionDays+1) * 24 * time.Hour
+		s.statsRawRetentionDays = deps.StatsRawRetentionDays
+	} else {
+		s.statsRawSpan = 0
+		s.statsRawRetentionDays = 0
+	}
 	// settings 快照构造时首载（注册表不覆盖 settings——NOTIFY 处理路径
 	// ReloadSettings 保持既有行为）；pricing 快照首载统一由快照注册表
 	// ReloadAll 承担（单一启动入口，消灭"构造即载 + 注册表再刷"双重加载）。
@@ -392,40 +434,9 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 	return s
 }
 
-// SetTimeLocation 注入定价时段解释用时区（D-TZ2）：nil = 进程本地（现状），
-// 非 nil = at.In(tzLoc) 后再进 domain.ResolveEntryPrices（零热路径额外 DB/锁）。
-func (s *Service) SetTimeLocation(l *time.Location) { s.tzLoc = l }
-
-// SetStatsRawSpan 按部署配置换算原始行分组 horizon（main 注入 usage_logs 与
-// err_logs 两者的最小正保留天数——raw 路径读两表，horizon 必须被双方都完整
-// 覆盖）：days > 0 → (days+1)×24h 窗口上限 + days 保留兜底 cutoff（1d DST/
-// 日界日历余量——默认 7d → 8d，与 MaxStatsRawSpan 缺省同值）；days <= 0 →
-// 0 = 不限窗口且无兜底（分区保留被禁用，既无固定 horizon 也无保证存留期）。
-// 绝不把 horizon 报得比配置保留期更长——超限窗口宁 400 不静默残缺。
-func (s *Service) SetStatsRawSpan(retentionDays int) {
-	if retentionDays > 0 {
-		s.statsRawSpan = time.Duration(retentionDays+1) * 24 * time.Hour
-		s.statsRawRetentionDays = retentionDays
-		return
-	}
-	s.statsRawSpan = 0
-	s.statsRawRetentionDays = 0
-}
-
 // SetMailEnqueue 注入邮件入队函数（D-W1异步化：mailW 由 svc 构造、构造后回填
 // Enqueue——Set* 事后回填惯例；未注入 → SendRegisterCode 退化为 ErrMailNotConfigured）。
 func (s *Service) SetMailEnqueue(fn func(MailSendTask) error) { s.mailEnqueue = fn }
-
-// SetEmailCodeStore 注入验证码存储（spec 2026-08-25-emailcode-redis-migration §2.2）：
-// 实现 = verification.Store（Redis HASH）。Redis 必选依赖 ⇒ 无 nil 分支，收到
-// nil 直接 panic fail-fast（与 redisx.Open 的 Ping fail-fast 同纪律）。main 在
-// svc 构造后回填；测试经同 setter 注入 fake。
-func (s *Service) SetEmailCodeStore(store EmailCodeStore) {
-	if store == nil {
-		panic("service: SetEmailCodeStore(nil): Redis 是必选依赖，验证码存储无降级路径")
-	}
-	s.emailCodes = store
-}
 
 // publish 发布一条 NOTIFY 变更（#14 T2）：与现有 inv.* 调用点并排，DB 写成功
 // 后调用。失败忽略——NOTIFY 是事件提示，丢一条由 60s 周期兜底收敛（Publisher
