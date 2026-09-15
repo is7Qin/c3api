@@ -134,24 +134,24 @@ func (f *Factory) AnthMessage(ctx context.Context, tpl *domain.Template, key str
 // 签名收 (templateID, baseURL) 而非 *domain.Template（GC 削减 P6：调用方免
 // tplOf 每请求模板对象分配；URL 在 Factory.urls 懒缓存，键含 base_url 快照）。
 
-func (f *Factory) ChatCompletionStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, "chat/completions", "Bearer "+key, body)
+func (f *Factory) ChatCompletionStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPost(ctx, templateID, baseURL, "chat/completions", "Bearer "+key, body, in)
 }
 
-func (f *Factory) ResponseStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, "responses", "Bearer "+key, body)
+func (f *Factory) ResponseStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPost(ctx, templateID, baseURL, "responses", "Bearer "+key, body, in)
 }
 
 // SearchRaw codex search 端点直连透传（spec 2026-08-13：api_key/responses-
 // special 静态路径——Bearer upstream key 直连上游，复用既有静态 key 通道零新
 // 机制）。URL 派生 = 裸根 + /v1/alpha/search（openaiBaseURL 约定——与 responses
 // 端点 base/v1/responses 尾段 → /alpha/search 派生同语义，见 parseFullURL）。
-func (f *Factory) SearchRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, "alpha/search", "Bearer "+key, body)
+func (f *Factory) SearchRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPost(ctx, templateID, baseURL, "alpha/search", "Bearer "+key, body, in)
 }
 
-func (f *Factory) AnthMessageStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, "v1/messages", key, body)
+func (f *Factory) AnthMessageStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPost(ctx, templateID, baseURL, "v1/messages", key, body, in)
 }
 
 // --- openai images（Task B 直连面） ---
@@ -160,8 +160,8 @@ func (f *Factory) AnthMessageStreamRaw(ctx context.Context, templateID int64, ba
 // application/json。无 SDK 参数路径——直连语义 = 原始请求原样转发（响应
 // 零改写零损失；上游路径 /v1/images/generations|edits 由调用方传 path）。
 
-func (f *Factory) ImagesRaw(ctx context.Context, templateID int64, baseURL, path, key, contentType string, body []byte) (*http.Response, error) {
-	return f.rawPostCT(ctx, templateID, baseURL, path, "Bearer "+key, contentType, body)
+func (f *Factory) ImagesRaw(ctx context.Context, templateID int64, baseURL, path, key, contentType string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPostCT(ctx, templateID, baseURL, path, "Bearer "+key, contentType, body, in)
 }
 
 // openaiBaseURL 规范化 openai 系 SDK 的 BaseURL：openai-go 约定 BaseURL 含 /v1
@@ -231,18 +231,20 @@ func parseFullURL(base, path string) (*url.URL, error) {
 // *http.Request，免 NewRequestWithContext 的内部分配；GetBody 保留重定向
 // 语义，WithContext 保留 ctx 取消语义）。auth 为 Authorization 值
 // （anthropic 用 x-api-key，传 key 本身）。
-func (f *Factory) rawPost(ctx context.Context, templateID int64, baseURL, path, auth string, body []byte) (*http.Response, error) {
-	return f.rawPostCT(ctx, templateID, baseURL, path, auth, "", body)
+func (f *Factory) rawPost(ctx context.Context, templateID int64, baseURL, path, auth string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPostCT(ctx, templateID, baseURL, path, auth, "", body, in)
 }
 
 // rawPostCT rawPost 的 Content-Type 定制变体（Task B images multipart 需要
 // 完整 multipart/form-data Content-Type——含 boundary；contentType 空 →
 // application/json，与 rawPost 逐字节等价）。
-// 零透传为契约：HTTP 面只设 Content-Type 与账号鉴权头（Authorization /
-// anthropic 用 x-api-key 传 key 本身），客户端原始头一律不达上游——与 WS 面
-// 透传的差异是有意边界非遗漏（WS 面契约见 internal/proxy/caller_responses_ws.go
-// wsPassthroughHeaders），SDK 伪装研究完成前此面不动。
-func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path, auth, contentType string, body []byte) (*http.Response, error) {
+// 零**映射**为契约：出栈头 = RelayHeaders(in) − relayDeny + 网关自身声明
+// （Content-Type 按端点、账号鉴权头 Authorization / anthropic 用 x-api-key 传
+// key 本身）。网关不把客户端头翻译成上游头，也不丢弃除 relayDeny 之外的客户
+// 端头；in 为 nil 时出栈只剩网关声明（与 relay 前的现状逐字节等价）。清单与
+// 根规则见 relay.go（WS 面共用同一份，见 internal/proxy/caller_responses_ws.go
+// wsPassthroughHeaders）。
+func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path, auth, contentType string, body []byte, in http.Header) (*http.Response, error) {
 	full, err := f.fullURLOf(templateID, baseURL, path)
 	if err != nil {
 		return nil, err
@@ -250,7 +252,7 @@ func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path
 	req := &http.Request{
 		Method:        http.MethodPost,
 		URL:           full,
-		Header:        make(http.Header),
+		Header:        RelayHeaders(in),
 		Body:          io.NopCloser(bytes.NewReader(body)),
 		ContentLength: int64(len(body)),
 		GetBody:       func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil },
