@@ -324,6 +324,22 @@ func main() {
 		RecoverProber:               runtimeHealth,
 		CompileNotify:               sched.RequestCompile,
 	})
+	// B3 DEFER（ponytail: 2026-09-14）：svc.SetMailEnqueue 暂不清掉——
+	// 不是遗漏，是构造环真实存在（sizing 见
+	// .omo/evidence/backfill-cleanup/b3-sizing-2026-09-14.md）：
+	// - 双向依赖：mailW := NewMailWorker(svc) 需要 svc（deliver 要
+	//   mailConfig/settings 快照 + RenderTemplate/store + log），而 svc 要
+	//   mailW.Enqueue（auth_email.go 经 mailEnqueue 异步入队）——无论谁先
+	//   构造，另一方的值都不存在，纯 ctor 排序无解。
+	// - 窄接口抽取只解一半：log 可提（New 前已存在）、RenderTemplate 可提
+	//   （store 在 svc 之前就绪），但 mailConfig 读 svc 自有的 settings
+	//   atomic 快照（56 处触点/13 文件共享，New 首载 + NOTIFY ReloadSettings
+	//   重载）——抽出来要么双快照分叉（NOTIFY 只刷一处即语义变更），要么搬走
+	//   Service 共有状态（非 minimal fix）；新增窄接口 late-bind 违反"禁新增
+	//   回填"纪律（2026-09-14）。
+	// 重开条件：(1) settings 快照提升为一等组件（svc 与 mailW 同源订阅
+	//   ReloadSettings）；或 (2) owner 豁免恰好一个 AttachMailEnqueue 窄接口。
+	// 在此之前保持恰好一次接线，勿加第二个 setter。
 	mailW := service.NewMailWorker(svc)
 	svc.SetMailEnqueue(mailW.Enqueue)
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
