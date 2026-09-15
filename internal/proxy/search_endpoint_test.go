@@ -221,8 +221,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
-	p.SetCodex(codex)
+	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
 	return p, store
 }
 

@@ -146,5 +146,5 @@ func newPGTestProxy(t *testing.T, sched *scheduler.Scheduler, groupID int64) *Pr
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, noopErrLogStore{}, nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
+	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{})
 }

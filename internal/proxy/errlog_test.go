@@ -78,7 +78,7 @@ func newTestProxyWarn(t *testing.T, upstream string, accountID int64, format dom
 	// errlog worker（分表设计）：错误明细与 usage_logs 共用捕获 store——错误
 	// 文本断言经 p.errlog.Close 显式排空后同 store 读取。
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errLogStoreFrom(logs), nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, logger, nil, errlogW)
+	return New(cfg, sched, credential.New(), rec, clients, auth, logger, nil, errlogW, Deps{})
 }
 
 // 连接级失败（fake 上游断连）：耗尽路径 usage log ErrorMessage = err.Error()

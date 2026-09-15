@@ -163,7 +163,7 @@ func newRelayWSTestHBI(t *testing.T, ft *fakeTransport, frameHook func([]byte), 
 		p.wsHeartbeatInterval = hbi
 	}
 	if store != nil {
-		p.SetContinuationStore(store)
+		p.cont = store
 	}
 	sel, err := p.sched.Select(10, domain.FormatOpenAIResponsesWS, "gpt-4o")
 	require.NoError(t, err, "Select 必须成功（真实抢槽——finish 的 Release 与之平衡）")

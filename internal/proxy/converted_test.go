@@ -193,7 +193,7 @@ func newConvertedTestProxyAccsLogs(t *testing.T, accs map[int64][]*domain.Accoun
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, nil)
+	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, nil, Deps{})
 }
 
 // TestConvertedChatToRespStreaming 客户端 chat 流式 → 上游 resp 流 →
@@ -806,7 +806,7 @@ func convContProxy(t *testing.T, accs map[int64][]*domain.Account, store *contin
 	t.Helper()
 	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertRespToMess})
 	if store != nil {
-		p.SetContinuationStore(store)
+		p.cont = store
 	}
 	return p
 }
@@ -924,7 +924,7 @@ func TestConvertedNonResponsesClientZeroRedis(t *testing.T) {
 	defer up.Close()
 	tpl := convTpl(1, up.URL)
 	p := newConvertedTestProxyAccs(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, []domain.ProtocolConvert{domain.ProtocolConvertChatToMess})
-	p.SetContinuationStore(s)
+	p.cont = s
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`))
 	req.Header.Set("Authorization", "Bearer ck-1")

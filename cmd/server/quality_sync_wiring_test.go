@@ -57,7 +57,7 @@ func TestQualitySyncWiring(t *testing.T) {
 
 	var (
 		recorderCtor bool // qualityRecorder, err := quality.NewRecorder(...)
-		recorderSet  bool // px.SetQualityRecorder(qualityRecorder)
+		recorderSet  bool // proxy.Deps{Recorder: qualityRecorder} wired into proxy.New(...)
 		syncCtor     bool // qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, ...)
 		inManaged    bool // qualitySync ∈ orderedWorkers(...) args
 		managedFound bool
@@ -109,8 +109,20 @@ func TestQualitySyncWiring(t *testing.T) {
 				}
 			}
 		}
-		if _, ok := isCall(n, "px", "SetQualityRecorder"); ok {
-			recorderSet = true
+		if cl, ok := n.(*ast.CompositeLit); ok {
+			if se, ok := cl.Type.(*ast.SelectorExpr); ok && se.Sel.Name == "Deps" {
+				if x, ok := se.X.(*ast.Ident); ok && x.Name == "proxy" {
+					for _, e := range cl.Elts {
+						if kv, ok := e.(*ast.KeyValueExpr); ok {
+							if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "Recorder" {
+								if v, ok := kv.Value.(*ast.Ident); ok && v.Name == "qualityRecorder" {
+									recorderSet = true
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 		if as, ok := n.(*ast.AssignStmt); ok && len(as.Lhs) == 1 && len(as.Rhs) == 1 {
 			if lhs, ok := as.Lhs[0].(*ast.Ident); ok && lhs.Name == "qualitySync" {
@@ -167,7 +179,7 @@ func TestQualitySyncWiring(t *testing.T) {
 	})
 
 	require.True(t, recorderCtor, "qualityRecorder := quality.NewRecorder(...) not found")
-	require.True(t, recorderSet, "px.SetQualityRecorder(qualityRecorder) not found")
+	require.True(t, recorderSet, "proxy.Deps{Recorder: qualityRecorder} not found (must be wired via constructor, no setters)")
 	require.True(t, syncCtor, "qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, ...) not found")
 	require.True(t, managedFound, "managedWorkers := orderedWorkers(...) not found")
 	require.True(t, inManaged, "qualitySync must be registered via orderedWorkers(...) for lifecycle + ops stats")

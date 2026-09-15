@@ -139,7 +139,7 @@ func newTestProxyRules(t *testing.T, upstream string, format domain.RequestForma
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second,
 	})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, noopErrLogStore{}, nil)
-	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
+	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{})
 }
 
 // fakeUpstreamStatus 按模式返回固定状态码 + body 的假上游（错误分类矩阵用）。

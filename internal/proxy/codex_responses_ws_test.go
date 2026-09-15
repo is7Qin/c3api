@@ -253,8 +253,7 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
 	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW)
-	p.SetCodex(codex)
+	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
 	return p, store
 }
 
@@ -515,8 +514,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
 	codexWs := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, up.URL), sdkbridge.RotationDeps{})
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW)
-	p.SetCodex(codexWs)
+	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codexWs})
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
@@ -777,7 +775,7 @@ func TestCodexWSAdapterMissing(t *testing.T) {
 	store := &captureLogStore{}
 	p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")}, up.URL, nil, store)
-	p.SetCodex(nil) // 模拟 main 未装配
+	p.codex = nil // 模拟 main 未装配
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()

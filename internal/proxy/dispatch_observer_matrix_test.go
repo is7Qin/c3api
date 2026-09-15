@@ -45,7 +45,7 @@ func wireObserverHarness(t *testing.T, p *Proxy) (*quality.Recorder, *flowCaptur
 	rec, err := quality.NewRecorder(64)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rec.Close() })
-	p.SetQualityRecorder(rec)
+	p.qualityRecorder = rec
 	fc := &flowCapture{}
 	p.pipelineFlowAppend = fc.append
 	return rec, fc
