@@ -17,15 +17,17 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// RenderTemplate 渲染模板：缺行走编译内置默认；替换 {{code}}/{{ttl_minutes}}/{{app_name}}
+// TemplateLoader 邮件模板加载面（Service.store 与 MailWorker 同源：repos/fake
+// 均满足；Service.RenderTemplate 与 MailWorker 共用 RenderMailTemplate 纯函数）。
+type TemplateLoader interface {
+	GetEmailTemplate(ctx context.Context, purpose string) (*domain.EmailTemplate, error)
+}
+
+// RenderMailTemplate 纯渲染：缺行走编译内置默认；替换 {{code}}/{{ttl_minutes}}/{{app_name}}
 // 以及 balance_warning 专用的 {{balance}}/{{threshold}}（仅 balance_warning 目的生效，
 // 避免 register/reset 自定义模板中的字面量 {{balance}}/{{threshold}} 被意外清空）。
-func (s *Service) RenderTemplate(ctx context.Context, purpose domain.EmailTemplatePurpose, vars map[string]string) (string, string, error) {
+func RenderMailTemplate(row *domain.EmailTemplate, purpose domain.EmailTemplatePurpose, vars map[string]string) (string, string) {
 	var tmpl domain.EmailTemplate
-	row, err := s.store.GetEmailTemplate(ctx, string(purpose))
-	if err != nil {
-		return "", "", err
-	}
 	if row != nil {
 		tmpl = *row
 	} else {
@@ -47,7 +49,19 @@ func (s *Service) RenderTemplate(ctx context.Context, purpose domain.EmailTempla
 			"{{app_name}}", vars["app_name"],
 		)
 	}
-	return repl.Replace(tmpl.Subject), repl.Replace(tmpl.BodyText), nil
+	return repl.Replace(tmpl.Subject), repl.Replace(tmpl.BodyText)
+}
+
+// RenderTemplate 渲染模板：缺行走编译内置默认；替换 {{code}}/{{ttl_minutes}}/{{app_name}}
+// 以及 balance_warning 专用的 {{balance}}/{{threshold}}（仅 balance_warning 目的生效，
+// 避免 register/reset 自定义模板中的字面量 {{balance}}/{{threshold}} 被意外清空）。
+func (s *Service) RenderTemplate(ctx context.Context, purpose domain.EmailTemplatePurpose, vars map[string]string) (string, string, error) {
+	row, err := s.store.GetEmailTemplate(ctx, string(purpose))
+	if err != nil {
+		return "", "", err
+	}
+	subj, body := RenderMailTemplate(row, purpose, vars)
+	return subj, body, nil
 }
 
 // ListMailTemplates 管理面列表（DB 行与默认合成，缺行用默认回填）。
@@ -96,20 +110,11 @@ func (s *Service) UpdateMailTemplate(ctx context.Context, purpose, subject, body
 }
 
 func (s *Service) mailEnabled() bool {
-	return s.settingValue("mail.enabled") == "true"
+	return s.settings.Value("mail.enabled") == "true"
 }
 
 func (s *Service) mailConfig() (host string, port int, username, password, fromAddr, tlsPolicy string, ok bool) {
-	host = s.settingValue("mail.smtp_host")
-	fromAddr = s.settingValue("mail.from_address")
-	if s.settingValue("mail.enabled") != "true" || host == "" || fromAddr == "" {
-		return "", 0, "", "", "", "", false
-	}
-	port64, err := strconv.Atoi(s.settingValue("mail.smtp_port"))
-	if err != nil || port64 < 1 || port64 > 65535 {
-		return "", 0, "", "", "", "", false
-	}
-	return host, port64, s.settingValue("mail.smtp_username"), s.settingValue("mail.smtp_password"), fromAddr, s.settingValue("mail.tls"), true
+	return s.settings.MailConfig()
 }
 
 // generateCode 生成 6 位数字验证码及其 sha256 hex。

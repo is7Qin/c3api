@@ -22,6 +22,7 @@ import (
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/internal/settingssnap"
 )
 
 // fakeUserStatus 快照 provider（测试替身：直读 fake store 当前状态，
@@ -41,11 +42,12 @@ func (f fakeUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *httptest.ResponseRecorder, *fakeStore, *auth.Issuer, *service.Service) {
 	t.Helper()
 	store := newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
-	mw := service.NewMailWorker(svc)
+	// main 装配序（先快照 → worker → svc 一次注入，零回填）。
+	snap := settingssnap.New(store, nil)
+	mw := service.NewMailWorker(service.MailDeps{Settings: snap, Templates: store})
+	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store, MailEnqueue: mw.Enqueue, SettingsSnapshot: snap})
 	require.NoError(t, mw.Start(t.Context()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
-	svc.SetMailEnqueue(mw.Enqueue)
 	iss := auth.NewIssuer("test-secret")
 	router := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil)
 	do := func(method, path, body, token string) *httptest.ResponseRecorder {

@@ -21,6 +21,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
 	serviceerr "github.com/is7qin/c3api/internal/service/errors"
+	"github.com/is7qin/c3api/internal/settingssnap"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -347,9 +348,11 @@ type Service struct {
 	pub        Publisher   // 多实例 NOTIFY 发布器（#14 T2；nil = 单实例/未装配，publish no-op）
 	ruleReload RuleReloader
 	keys       KeyRegistrar
-	// settings 设置全量内存快照（默认值 + DB 覆盖）：公开读路径（注册等）
-	// 零 DB 直读；仅管理面 UpdateSetting 后重载（低频，无锁）。
-	settings atomic.Pointer[map[string]*domain.Setting]
+	// settings 设置全量内存快照（默认值 + DB 覆盖）：Service 与 MailWorker
+	// 同源共享单个 *settingssnap.Snapshot（B3 根因重开——单指针，无双快照
+	// 分叉；NOTIFY 只刷这一处）。公开读路径零 DB 直读；仅管理面
+	// UpdateSetting 后重载（低频，无锁）。
+	settings *settingssnap.Snapshot
 	// priceSnapshot 统一价格快照：entries + variants
 	priceSnapshot atomic.Pointer[priceSnapshot]
 	// recoverProber 恢复→PROBING 健康写入面（New 经 ServiceDeps.RecoverProber
@@ -411,6 +414,14 @@ type ServiceDeps struct {
 	// 同值写静默纪律见 reloadPricingAndNotifyCompiler。生产装配
 	// scheduler.RequestCompile（func 值注入，无 import 环）。
 	CompileNotify func()
+	// MailEnqueue 邮件异步入队面（auth_email.go 经此入队；nil = 未装配 →
+	// SendRegisterCode 退化为 ErrMailNotConfigured）。生产经构造一次性注入
+	// mailW.Enqueue（B3 根因重开——构造参数，零事后回填）。
+	MailEnqueue func(MailSendTask) error
+	// SettingsSnapshot settings 快照共享指针（B3 根因重开）：生产由 main
+	// 一次构造、Service 与 MailWorker 同源共享；nil = New 内自建（测试/
+	// 字面量 Service 兼容——各测自有快照，无跨实例语义）。
+	SettingsSnapshot *settingssnap.Snapshot
 }
 
 func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger, deps ServiceDeps) *Service {
@@ -420,7 +431,13 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 	s := &Service{store: store, sched: sched, inv: invalidate, pub: pub, ruleReload: ruleReload, keys: keys, log: log,
 		emailCodes: deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,
 		compileNotify:               deps.CompileNotify,
+		mailEnqueue:                 deps.MailEnqueue,
 		clearBalanceWarningCooldown: deps.ClearBalanceWarningCooldown}
+	if deps.SettingsSnapshot != nil {
+		s.settings = deps.SettingsSnapshot
+	} else {
+		s.settings = settingssnap.New(store, log)
+	}
 	if deps.StatsRawRetentionDays > 0 {
 		s.statsRawSpan = time.Duration(deps.StatsRawRetentionDays+1) * 24 * time.Hour
 		s.statsRawRetentionDays = deps.StatsRawRetentionDays
@@ -434,10 +451,6 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 	s.reloadSettings(context.Background())
 	return s
 }
-
-// SetMailEnqueue 注入邮件入队函数（D-W1异步化：mailW 由 svc 构造、构造后回填
-// Enqueue——Set* 事后回填惯例；未注入 → SendRegisterCode 退化为 ErrMailNotConfigured）。
-func (s *Service) SetMailEnqueue(fn func(MailSendTask) error) { s.mailEnqueue = fn }
 
 // publish 发布一条 NOTIFY 变更（#14 T2）：与现有 inv.* 调用点并排，DB 写成功
 // 后调用。失败忽略——NOTIFY 是事件提示，丢一条由 60s 周期兜底收敛（Publisher

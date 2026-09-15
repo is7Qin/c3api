@@ -25,7 +25,7 @@ func useZeroMailBackoff(t *testing.T) {
 }
 
 func TestMailWorker_lifecycle_rejects_repeated_start_and_start_after_close(t *testing.T) {
-	mw := NewMailWorker(newMailService(t, newFakeStore()))
+	mw := newTestMailWorker(newMailService(t, newFakeStore()))
 	require.NoError(t, mw.Start(context.Background()))
 	require.Error(t, mw.Start(context.Background()))
 	require.NoError(t, mw.Close(context.Background()))
@@ -33,7 +33,7 @@ func TestMailWorker_lifecycle_rejects_repeated_start_and_start_after_close(t *te
 }
 
 func TestMailWorker_close_before_start_and_double_close_drain_once(t *testing.T) {
-	mw := NewMailWorker(newMailService(t, newFakeStore()))
+	mw := newTestMailWorker(newMailService(t, newFakeStore()))
 	var drains atomic.Int64
 	mw.testDrainStarted = func() { drains.Add(1) }
 
@@ -43,7 +43,7 @@ func TestMailWorker_close_before_start_and_double_close_drain_once(t *testing.T)
 }
 
 func TestMailWorker_concurrent_close_drains_once(t *testing.T) {
-	mw := NewMailWorker(newMailService(t, newFakeStore()))
+	mw := newTestMailWorker(newMailService(t, newFakeStore()))
 	var drains atomic.Int64
 	mw.testDrainStarted = func() { drains.Add(1) }
 
@@ -70,7 +70,7 @@ func TestMailWorker_concurrent_close_drains_once(t *testing.T) {
 
 func TestMailWorker_start_racing_close_is_single_lifecycle(t *testing.T) {
 	for range 64 {
-		mw := NewMailWorker(newMailService(t, newFakeStore()))
+		mw := newTestMailWorker(newMailService(t, newFakeStore()))
 		start := make(chan struct{})
 		var startErr, closeErr error
 		var wait sync.WaitGroup
@@ -98,7 +98,7 @@ func TestMailWorker_start_racing_close_is_single_lifecycle(t *testing.T) {
 
 func TestMailWorker_close_wait_for_sender_is_bounded_by_caller_context(t *testing.T) {
 	useZeroMailBackoff(t)
-	mw := NewMailWorker(newMailService(t, newFakeStore()))
+	mw := newTestMailWorker(newMailService(t, newFakeStore()))
 	selected := make(chan struct{})
 	release := make(chan struct{})
 	mw.testWarningSelected = func() {
@@ -132,7 +132,7 @@ func TestMailWorker_close_wait_for_sender_is_bounded_by_caller_context(t *testin
 func TestMailWorker_admissions_racing_close_have_terminal_outcomes(t *testing.T) {
 	useZeroMailBackoff(t)
 	for range 64 {
-		mw := NewMailWorker(newMailService(t, newFakeStore()))
+		mw := newTestMailWorker(newMailService(t, newFakeStore()))
 		recorder := newWarningCompletionRecorder()
 		start := make(chan struct{})
 		var authErr, warningErr, closeErr error

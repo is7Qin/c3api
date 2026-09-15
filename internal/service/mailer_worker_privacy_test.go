@@ -56,7 +56,7 @@ func TestMailWorker_auth_failure_observability_uses_safe_category(t *testing.T) 
 		"mail.from_address": "from@example.com",
 		"mail.tls":          "none",
 	})
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	recipient := "private-recipient@example.com"
 	mw.process(context.Background(), MailSendTask{To: recipient, Purpose: domain.EmailTemplateRegisterCode, Code: "private-code", TTLMin: 10})
 
@@ -72,7 +72,7 @@ func TestMailWorker_auth_failure_observability_uses_safe_category(t *testing.T) 
 }
 
 func TestMailWorker_warning_failure_preserves_error_and_sanitizes_last_error(t *testing.T) {
-	mw := NewMailWorker(newMailService(t, newFakeStore()))
+	mw := newTestMailWorker(newMailService(t, newFakeStore()))
 	synthetic := errors.New("dial secret.smtp.internal for private-recipient@example.com: rejected")
 
 	returned := mw.warningFailure(synthetic)
@@ -98,7 +98,7 @@ func TestMailWorker_success_log_omits_delivery_details(t *testing.T) {
 		"mail.from_address": "from@example.com",
 		"mail.tls":          "none",
 	})
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	recipient := "private-success@example.com"
 
 	require.NoError(t, mw.deliver(context.Background(), MailSendTask{To: recipient, Purpose: domain.EmailTemplateRegisterCode, Code: "private-success-code", TTLMin: 10}))

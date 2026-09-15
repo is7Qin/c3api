@@ -23,9 +23,9 @@ func (w *MailWorker) Start(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	w.started = true
 	w.cancel = cancel
-	worker.GoRecover("email", w.svc.log, func() {
+	worker.GoRecover("email", w.log, func() {
 		defer close(w.senderDone)
-		worker.Loop(runCtx, "email", w.svc.log, w.loop)
+		worker.Loop(runCtx, "email", w.log, w.loop)
 	})
 	return nil
 }

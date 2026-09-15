@@ -58,7 +58,7 @@ func TestMailWorker_warning_success_completes_once_with_nil(t *testing.T) {
 		"mail.from_address": "from@example.com",
 		"mail.tls":          "none",
 	})
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	recorder := newWarningCompletionRecorder()
 	require.NoError(t, mw.EnqueueBalanceWarning(testWarningEvent(), recorder.complete))
 	require.NoError(t, mw.Start(context.Background()))
@@ -79,7 +79,7 @@ func TestMailWorker_warning_final_failure_completes_once_with_error(t *testing.T
 		"mail.from_address": "from@example.com",
 		"mail.tls":          "none",
 	})
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	recorder := newWarningCompletionRecorder()
 	require.NoError(t, mw.EnqueueBalanceWarning(testWarningEvent(), recorder.complete))
 	require.NoError(t, mw.Start(context.Background()))
@@ -91,7 +91,7 @@ func TestMailWorker_warning_final_failure_completes_once_with_error(t *testing.T
 
 func TestMailWorker_selected_warning_cancellation_completes_once(t *testing.T) {
 	useZeroMailBackoff(t)
-	mw := NewMailWorker(newMailService(t, newFakeStore()))
+	mw := newTestMailWorker(newMailService(t, newFakeStore()))
 	selected := make(chan struct{})
 	release := make(chan struct{})
 	mw.testWarningSelected = func() {
@@ -117,7 +117,7 @@ func TestMailWorker_selected_warning_cancellation_completes_once(t *testing.T) {
 }
 
 func TestMailWorker_warning_admission_drop_completes_once(t *testing.T) {
-	mw := NewMailWorker(newMailService(t, newFakeStore()))
+	mw := newTestMailWorker(newMailService(t, newFakeStore()))
 	for range mailWarningQueueCap {
 		require.NoError(t, mw.EnqueueBalanceWarning(testWarningEvent(), nil))
 	}
@@ -134,7 +134,7 @@ func TestMailWorker_warning_admission_drop_completes_once(t *testing.T) {
 }
 
 func TestMailWorker_warning_admission_after_close_completes_once(t *testing.T) {
-	mw := NewMailWorker(newMailService(t, newFakeStore()))
+	mw := newTestMailWorker(newMailService(t, newFakeStore()))
 	require.NoError(t, mw.Close(context.Background()))
 	recorder := newWarningCompletionRecorder()
 
@@ -180,7 +180,7 @@ func TestMailWorker_warning_smtp_cancellation_completes_once(t *testing.T) {
 		"mail.from_address": "from@example.com",
 		"mail.tls":          "none",
 	})
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
 	recorder := newWarningCompletionRecorder()
 	require.NoError(t, mw.EnqueueBalanceWarning(testWarningEvent(), recorder.complete))
@@ -202,7 +202,7 @@ func TestMailWorker_warning_smtp_cancellation_completes_once(t *testing.T) {
 }
 
 func TestMailWorker_drain_timeout_drops_auth_and_completes_warnings_once(t *testing.T) {
-	mw := NewMailWorker(newMailService(t, newFakeStore()))
+	mw := newTestMailWorker(newMailService(t, newFakeStore()))
 	first := newWarningCompletionRecorder()
 	second := newWarningCompletionRecorder()
 	require.NoError(t, mw.Enqueue(MailSendTask{To: "auth@example.com", Purpose: domain.EmailTemplateRegisterCode}))

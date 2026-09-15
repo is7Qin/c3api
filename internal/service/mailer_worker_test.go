@@ -92,10 +92,10 @@ func TestMailWorkerRetrySuccessAfterTwoFails(t *testing.T) {
 
 	fs := newFakeStore()
 	svc := newMailService(t, fs)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Start(context.Background()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
-	svc.SetMailEnqueue(mw.Enqueue)
+	svc.mailEnqueue = mw.Enqueue
 
 	stub := newFlakyStub(t, 2)
 	port := flakyPort(stub)
@@ -138,10 +138,10 @@ func TestMailWorkerAllFailFailedAndLastErr(t *testing.T) {
 
 	fs := newFakeStore()
 	svc := newMailService(t, fs)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Start(context.Background()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
-	svc.SetMailEnqueue(mw.Enqueue)
+	svc.mailEnqueue = mw.Enqueue
 
 	stub := newSMTPStub(t, true) // hang -> timeout each attempt
 	_ = stub
@@ -168,7 +168,7 @@ func TestMailWorkerAllFailFailedAndLastErr(t *testing.T) {
 func TestMailWorkerQueueFullDropped(t *testing.T) {
 	fs := newFakeStore()
 	svc := newMailService(t, fs)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	// Do NOT start -> ch not drained, fill to capacity
 	for i := 0; i < mailQueueCap; i++ {
 		require.NoError(t, mw.Enqueue(MailSendTask{To: "a@example.com", Purpose: domain.EmailTemplateRegisterCode, Code: "123456", TTLMin: 10}))
@@ -181,7 +181,7 @@ func TestMailWorkerQueueFullDropped(t *testing.T) {
 func TestMailWorkerCloseThenEnqueueDropped(t *testing.T) {
 	fs := newFakeStore()
 	svc := newMailService(t, fs)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Start(context.Background()))
 	require.NoError(t, mw.Close(context.Background()))
 	err := mw.Enqueue(MailSendTask{To: "after@example.com", Purpose: domain.EmailTemplateRegisterCode, Code: "111111", TTLMin: 10})
@@ -198,7 +198,7 @@ func TestMailWorkerShutdownDrain(t *testing.T) {
 
 	fs := newFakeStore()
 	svc := newMailService(t, fs)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Start(context.Background()))
 	stub := newSMTPStub(t, false)
 	port := stubPort(stub)
@@ -242,7 +242,7 @@ done:
 func TestMailWorkerEnqueueAfterQuitDroppedCount(t *testing.T) {
 	fs := newFakeStore()
 	svc := newMailService(t, fs)
-	mw := NewMailWorker(svc)
+	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Start(context.Background()))
 	// close then try many enqueues, all dropped
 	require.NoError(t, mw.Close(context.Background()))

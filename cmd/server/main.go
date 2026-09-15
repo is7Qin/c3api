@@ -45,6 +45,7 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/server"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/internal/settingssnap"
 	"github.com/is7qin/c3api/internal/snapshot"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/internal/verification"
@@ -323,6 +324,15 @@ func main() {
 	// recover→PROBING 全部构造参数；W2-T2：路由编译触发 CompileNotify 同步
 	// 构造注入（sched 先于 svc 存在，func 值无 import 环）——空时区配置 = nil
 	// → 进程本地，语义不变；验证码 Redis 必选 ⇒ 无 nil 分支，误接线 New 内 panic）。
+	// B3 根因重开：settings 快照提升为一等组件——main 先构造单个共享
+	// *settingssnap.Snapshot（首载失败仅 Warn，由 Snapshot.Load 调用方保持
+	// fail-safe），mailW 与 svc 同源共享该指针（NOTIFY 只刷一处，无分叉）；
+	// mailW.Enqueue 经 ServiceDeps.MailEnqueue 一次注入，零 Set* 回填。
+	settingsSnap := settingssnap.New(repos, log)
+	if err := settingsSnap.Load(context.Background()); err != nil && log != nil {
+		log.Warn("settings snapshot initial load failed", logx.Error(err))
+	}
+	mailW := service.NewMailWorker(service.MailDeps{Log: log, Settings: settingsSnap, Templates: repos})
 	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log, service.ServiceDeps{
 		EmailCodeStore:              verification.New(rdb),
 		TimeLocation:                svcLoc,
@@ -330,25 +340,9 @@ func main() {
 		ClearBalanceWarningCooldown: bwCooldown.Clear,
 		RecoverProber:               runtimeHealth,
 		CompileNotify:               sched.RequestCompile,
+		MailEnqueue:                 mailW.Enqueue,
+		SettingsSnapshot:            settingsSnap,
 	})
-	// B3 DEFER（ponytail: 2026-09-14）：svc.SetMailEnqueue 暂不清掉——
-	// 不是遗漏，是构造环真实存在（sizing 见
-	// .omo/evidence/backfill-cleanup/b3-sizing-2026-09-14.md）：
-	// - 双向依赖：mailW := NewMailWorker(svc) 需要 svc（deliver 要
-	//   mailConfig/settings 快照 + RenderTemplate/store + log），而 svc 要
-	//   mailW.Enqueue（auth_email.go 经 mailEnqueue 异步入队）——无论谁先
-	//   构造，另一方的值都不存在，纯 ctor 排序无解。
-	// - 窄接口抽取只解一半：log 可提（New 前已存在）、RenderTemplate 可提
-	//   （store 在 svc 之前就绪），但 mailConfig 读 svc 自有的 settings
-	//   atomic 快照（56 处触点/13 文件共享，New 首载 + NOTIFY ReloadSettings
-	//   重载）——抽出来要么双快照分叉（NOTIFY 只刷一处即语义变更），要么搬走
-	//   Service 共有状态（非 minimal fix）；新增窄接口 late-bind 违反"禁新增
-	//   回填"纪律（2026-09-14）。
-	// 重开条件：(1) settings 快照提升为一等组件（svc 与 mailW 同源订阅
-	//   ReloadSettings）；或 (2) owner 豁免恰好一个 AttachMailEnqueue 窄接口。
-	// 在此之前保持恰好一次接线，勿加第二个 setter。
-	mailW := service.NewMailWorker(svc)
-	svc.SetMailEnqueue(mailW.Enqueue)
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据
 	// （零 DB），首刷统一在构造链完成后执行（见下 ReloadAll——单一启动入口，

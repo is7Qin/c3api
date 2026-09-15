@@ -20,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/settingssnap"
 )
 
 // test helper: set settings snapshot via fakeStore + reload.
@@ -49,27 +50,31 @@ func setMailSettings(t *testing.T, fs *fakeStore, svc *Service, m map[string]str
 func newMailService(t *testing.T, fs *fakeStore) *Service {
 	t.Helper()
 	// 验证码存储经构造参数注入（fake 即实现，spec §3.7）。
-	svc := New(fs, nil, &invRecorder{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: fs})
+	svc := New(fs, nil, &invRecorder{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: fs, MailEnqueue: func(MailSendTask) error { return nil }})
 	require.NoError(t, svc.ReloadSettings(context.Background()))
-	// momus FIX: wire mail enqueue to avoid nil-func panic; default = no-op success
-	// (tests needing real delivery override with worker-backed enqueue).
-	svc.SetMailEnqueue(func(MailSendTask) error { return nil })
 	return svc
+}
+
+// newTestMailWorker 与 svc 同源共享快照的测试构造（生产对应 main 装配序——
+// 单个共享 *settingssnap.Snapshot；svc.store 即 Templates 同源）。
+func newTestMailWorker(svc *Service) *MailWorker {
+	return NewMailWorker(MailDeps{Log: svc.log, Settings: svc.settings, Templates: svc.store})
 }
 
 // newMailServiceWithWorker wires a real MailWorker with short backoff for async tests.
 func newMailServiceWithWorker(t *testing.T, fs *fakeStore) (*Service, *MailWorker) {
 	t.Helper()
-	svc := New(fs, nil, &invRecorder{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: fs})
+	// main 装配序（先快照 → worker → svc 一次注入，零回填）。
+	snap := settingssnap.New(fs, nil)
+	mw := NewMailWorker(MailDeps{Settings: snap, Templates: fs})
+	svc := New(fs, nil, &invRecorder{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: fs, MailEnqueue: mw.Enqueue, SettingsSnapshot: snap})
 	require.NoError(t, svc.ReloadSettings(context.Background()))
-	mw := NewMailWorker(svc)
 	// short backoff for tests
 	origBackoff := mailRetryBackoff
 	mailRetryBackoff = []time.Duration{10 * time.Millisecond, 20 * time.Millisecond}
 	t.Cleanup(func() { mailRetryBackoff = origBackoff })
 	require.NoError(t, mw.Start(context.Background()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
-	svc.SetMailEnqueue(mw.Enqueue)
 	return svc, mw
 }
 
