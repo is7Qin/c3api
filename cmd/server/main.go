@@ -506,10 +506,11 @@ func main() {
 	// litellm 价格同步 worker：启动异步拉取一次（不阻塞启动）+ price_sync_cron
 	// 定期循环；source_url/cron 每轮从 svc 的 settings 快照现读（变更下次循环
 	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（Phase 5 计费读零 DB）。
-	// fetcher 与 svc 共享同一实例（手动 sync 端点 /api/admin/pricing/sync 同路径）。
+	// 手动 sync/preview 端点（/api/admin/pricing/sync）直调同一 worker（W3-T2：
+	// service 侧 SetPriceFetcher 回填已删——fetcher 唯一主人是本 worker，经
+	// SyncWorkerConfig 一次性构造注入）；预览 membership 读 svc 定价快照。
 	// log：A-P2-12 方案 A 多档位 Warn 目标（nil 则静默——不传即退化为无告警）。
 	priceFetcher := pricing.NewFetcher(hc, log)
-	svc.SetPriceFetcher(priceFetcher)
 	pricingSync := pricing.NewSyncWorker(pricing.SyncWorkerConfig{
 		Fetcher:  priceFetcher,
 		Repo:     repos,
@@ -518,7 +519,9 @@ func main() {
 		// 快照变化同时按需惊动路由编译（同值同步静默——比较在 service 内，
 		// 编译道经 lane-local diff 定作用域）。
 		Reload: svc.ReloadPricingAndNotifyCompiler,
-		Log:    log,
+		// 预览 membership：svc 定价快照（nil 快照 = 全量 ToAdd）。
+		Snapshot: svc,
+		Log:      log,
 	})
 	// quality-flow-owner（async-routing-quality-telemetry）：跨请求 flow 累计器
 	// 的唯一 state owner。请求结算只做一次不可变非阻塞 Submit，同分钟身份归并
@@ -598,6 +601,7 @@ func main() {
 	h := handler.New(svc, handler.OpsOptions{
 		Workers:       opsWorkers,
 		UsageSnap:     codexAdapter, // codex 额度快照：handler fan-out 经构造直调（TTL 缓存/有界并发/失败冷却全在适配层）
+		PricingSync:   pricingSync,  // 价格手动同步/预览：sync 端点经构造直调 worker（W3-T2，零 service 中介）
 		Log:           log,          // fan-out 未知上游错误 Warn
 		Snapshots:     func() []handler.SnapshotState { return snapshotStates(snapReg.Status()) },
 		InFlightUsers: auth.InFlightUsers,

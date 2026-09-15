@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -28,6 +29,10 @@ type AdminAPI struct {
 	// （GetAccountsUsage fan-out）经构造直调适配器；nil = 未装配 → codex
 	// 账号返回 null 快照，不 panic，与旧 nil 回填语义一致）。
 	usageSnap CodexUsageProber
+	// pricingSync 价格手动同步/预览编排面（W3-T2：service 侧回填删除后，
+	// sync/preview 端点经构造直调 worker；nil = 未装配 → 端点 500，不 panic，
+	// 与旧 nil-fetcher 降级语义一致）。
+	pricingSync *pricing.SyncWorker
 	// log fan-out 未知上游错误 Warn（nil = 静默；生产经 OpsOptions 注入）。
 	log *logx.Logger
 	// overview/users-top 聚合面缓存（spec 2026-08-14 TTL：30s/2s——dashboard
@@ -54,6 +59,7 @@ func New(svc *service.Service, ops ...OpsOptions) *AdminAPI {
 		svc:           svc,
 		ops:           o,
 		usageSnap:     o.UsageSnap,
+		pricingSync:   o.PricingSync,
 		log:           o.Log,
 		overviewCache: newTTLCache(30 * time.Second),
 		usersTopCache: newTTLCache(2 * time.Second),
