@@ -609,7 +609,11 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 	// synchronously by its own publish and released before the next snapshot.
 	for _, minute := range flowIDs {
 		fm := w.rec.flow.snapshotForRedis(minute)
-		if fm == nil {
+		if fm == nil || !fm.HasFlowRows() {
+			// No rows and no empty marker (e.g. net-zero folds): nothing
+			// to publish. The legacy zero edges/counts payload had no
+			// consumer (no reader of the flow namespace exists) and is
+			// skipped instead of published.
 			continue
 		}
 		w.mu.Lock()
@@ -625,20 +629,12 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 				"absolute_sequence": seq,
 				"empty":             true,
 			})
-		} else if fm.HasFlowRows() {
-			flowVal, _ = json.Marshal(map[string]any{
-				"instance_src":      w.instanceSrc,
-				"terminal_minute":   minute,
-				"absolute_sequence": seq,
-				"rows":              fm.FlowRows(),
-			})
 		} else {
 			flowVal, _ = json.Marshal(map[string]any{
 				"instance_src":      w.instanceSrc,
 				"terminal_minute":   minute,
 				"absolute_sequence": seq,
-				"edges":             fm.Edges(),
-				"counts":            fm.Counts(),
+				"rows":              fm.FlowRows(),
 			})
 		}
 		fm = nil

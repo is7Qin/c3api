@@ -153,8 +153,7 @@ func TestQualityRecorder_SnapshotDeepCopyLifecycle(t *testing.T) {
 		}
 	}
 	for _, fm := range snap.Flow {
-		fm.SetCount(0, 7777)
-		fm.SetEdge(0, 7777)
+		fm.SetFlowRows([]repository.RoutingFlowRow{ownerTestRow(7777)})
 	}
 	snap2 := r.Snapshot()
 	for _, rows := range snap2.Quality {
@@ -163,7 +162,8 @@ func TestQualityRecorder_SnapshotDeepCopyLifecycle(t *testing.T) {
 		}
 	}
 	for _, fm := range snap2.Flow {
-		require.NotEqual(t, int64(7777), fm.Count(0))
-		require.NotEqual(t, int64(7777), fm.Edge(0))
+		for _, row := range fm.FlowRows() {
+			require.NotEqual(t, int64(7777), row.AccountID)
+		}
 	}
 }

@@ -130,8 +130,7 @@ func TestQualityRecorder_SnapshotImmutability(t *testing.T) {
 		}
 	}
 	for _, fm := range snap.Flow {
-		fm.SetCount(0, 9999)
-		fm.SetEdge(0, 9999)
+		fm.SetFlowRows([]repository.RoutingFlowRow{ownerTestRow(9999)})
 	}
 	snap2 := r.Snapshot()
 	for _, rows := range snap2.Quality {
@@ -140,7 +139,9 @@ func TestQualityRecorder_SnapshotImmutability(t *testing.T) {
 		}
 	}
 	for _, fm := range snap2.Flow {
-		require.NotEqual(t, int64(9999), fm.Count(0))
+		for _, row := range fm.FlowRows() {
+			require.NotEqual(t, int64(9999), row.AccountID)
+		}
 	}
 	r2, err := NewRecorder(50000)
 	require.NoError(t, err)

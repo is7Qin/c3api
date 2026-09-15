@@ -135,12 +135,10 @@ func (d *DecisionView) Route(groupID int64, format string, model string) (*Route
 	if d == nil || d.routes == nil {
 		return nil, false
 	}
-	v, ok := d.routes[RouteRef{GroupID: groupID, Format: format, Model: model}]
-	if ok {
-		return cloneRouteDecision(v), true
-	}
-	rr := RouteRefFor(groupID, format, model)
-	v, ok = d.routes[rr]
+	// Single canonical accessor: published keys always carry the
+	// format-derived OperationTag (compiler/publish normalize), so a raw
+	// empty-op probe could only hit keys that can never be published.
+	v, ok := d.routes[RouteRefFor(groupID, format, model)]
 	if !ok {
 		return nil, false
 	}

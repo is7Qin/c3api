@@ -28,6 +28,10 @@ type RoutingPlanRoute struct {
 }
 
 // ExploreIDs is the ops-face projection of explore ordering (IDs only).
+// ExploreBP (the steady-state exploration share in basis points) is
+// deliberately NOT projected: it is an internal select-path tuning parameter,
+// and exposing it would churn the openapi contract (RoutingPlanExplore +
+// regen) and the console schema for no ops need.
 type ExploreIDs struct {
 	IDs        []int64
 	Weights    map[int64]int
