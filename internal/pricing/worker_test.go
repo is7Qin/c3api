@@ -63,6 +63,9 @@ type fakeUpserter struct {
 	errVar   error
 	callsVar int
 	varRows  []*domain.PriceVariant
+	// manual ManualEntryModels 返回（SyncNow 变体守卫用；nil = 无手工模型）。
+	manual    []string
+	errManual error
 }
 
 func (u *fakeUpserter) UpsertPriceEntriesFromLiteLLM(ctx context.Context, rows []*domain.PriceEntry) (int, error) {
@@ -78,6 +81,12 @@ func (u *fakeUpserter) UpsertPriceVariantsFromLiteLLM(ctx context.Context, rows 
 	u.callsVar++
 	u.varRows = rows
 	return u.nVar, u.errVar
+}
+
+func (u *fakeUpserter) ManualEntryModels(ctx context.Context) ([]string, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.manual, u.errManual
 }
 
 func (u *fakeUpserter) count() int {

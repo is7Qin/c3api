@@ -18,7 +18,6 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
-	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
 	serviceerr "github.com/is7qin/c3api/internal/service/errors"
@@ -353,10 +352,6 @@ type Service struct {
 	settings atomic.Pointer[map[string]*domain.Setting]
 	// priceSnapshot 统一价格快照：entries + variants
 	priceSnapshot atomic.Pointer[priceSnapshot]
-	// priceFetcher 价格拉取器（pricing.Fetcher 实现）：管理端手动 sync
-	// （SyncPricingNow）与 cron worker 共享同一实例（main 装配注入；nil 时
-	// SyncPricingNow 返回错误——启动配置缺失，不应发生）。
-	priceFetcher pricing.Fetcher
 	// recoverProber 恢复→PROBING 健康写入面（New 经 ServiceDeps.RecoverProber
 	// 注入；nil = 未装配，recover 仅完成持久恢复——调度器同步周期兜底）。
 	recoverProber RecoverProber

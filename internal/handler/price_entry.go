@@ -10,8 +10,8 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/repository"
-	"github.com/is7qin/c3api/internal/service"
 )
 
 func (h *AdminAPI) GetPrices(w http.ResponseWriter, r *http.Request, params GetPricesParams) {
@@ -163,9 +163,13 @@ func (h *AdminAPI) DeletePriceVariants(w http.ResponseWriter, r *http.Request, p
 }
 
 func (h *AdminAPI) PostPricingSync(w http.ResponseWriter, r *http.Request) {
-	stats, err := h.svc.SyncPricingNow(r.Context())
+	if h.pricingSync == nil {
+		httpface.WriteServiceErr(w, errors.New("pricing: fetcher not injected"))
+		return
+	}
+	stats, err := h.pricingSync.SyncNow(r.Context())
 	if err != nil {
-		if errors.Is(err, service.ErrPriceFetch) {
+		if errors.Is(err, pricing.ErrPriceFetch) {
 			httpface.WriteErr(w, http.StatusBadGateway, "pricing sync failed")
 			return
 		}
@@ -178,7 +182,11 @@ func (h *AdminAPI) PostPricingSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminAPI) PostPricingSyncPreview(w http.ResponseWriter, r *http.Request) {
-	preview, err := h.svc.PreviewPricingSync(r.Context())
+	if h.pricingSync == nil {
+		httpface.WriteServiceErr(w, errors.New("pricing: fetcher not injected"))
+		return
+	}
+	preview, err := h.pricingSync.Preview(r.Context())
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return

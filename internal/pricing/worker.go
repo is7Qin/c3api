@@ -33,9 +33,11 @@ type SettingReader interface {
 
 // Upserter 拉取价落库（*repository.Repository 实现；500/批独立事务 + manual
 // 行级互斥 WHERE source != 'manual'，部分成功可接受）。统一单表 + 变体批量。
+// ManualEntryModels 供手动 SyncNow 变体守卫（手工定价优先）；cron Sync 不用。
 type Upserter interface {
 	UpsertPriceEntriesFromLiteLLM(ctx context.Context, rows []*domain.PriceEntry) (int, error)
 	UpsertPriceVariantsFromLiteLLM(ctx context.Context, variants []*domain.PriceVariant) (int, error)
+	ManualEntryModels(ctx context.Context) ([]string, error)
 }
 
 // SyncWorkerConfig SyncWorker 装配参数。
@@ -46,7 +48,10 @@ type SyncWorkerConfig struct {
 	// Reload 同步成功后刷新 service pricing 快照（svc.ReloadPricing）；nil 可
 	// 用（纯落库不刷新快照，装配时必传真实实现）。
 	Reload func()
-	Log    *logx.Logger // nil 可用（静默）
+	// Snapshot 预览 membership 源（service 定价快照实现；nil = 未装配 →
+	// Preview 按快照未加载处理，全量 ToAdd）。
+	Snapshot SnapshotReader
+	Log      *logx.Logger // nil 可用（静默）
 }
 
 // SyncWorker 模型价格同步 worker（worker.Worker 契约）：启动异步拉取一次 +
@@ -57,6 +62,7 @@ type SyncWorker struct {
 	repo     Upserter
 	settings SettingReader
 	reload   func()
+	snapshot SnapshotReader
 	log      *logx.Logger
 	// now/wait 可注入（测试）：now 固定时间基准（cron 数学确定性）；wait 替代
 	// 真实 timer（测试免等真实时间）。默认实现见 waitReal。
@@ -75,7 +81,7 @@ type SyncWorker struct {
 func NewSyncWorker(cfg SyncWorkerConfig) *SyncWorker {
 	w := &SyncWorker{
 		fetch: cfg.Fetcher, repo: cfg.Repo, settings: cfg.Settings,
-		reload: cfg.Reload, log: cfg.Log,
+		reload: cfg.Reload, snapshot: cfg.Snapshot, log: cfg.Log,
 		now:  time.Now,
 		wait: waitReal,
 	}
@@ -108,9 +114,9 @@ func (w *SyncWorker) Start(ctx context.Context) error {
 func (w *SyncWorker) Close(ctx context.Context) error { return nil }
 
 // Sync 执行一次完整同步（fetch → 文本价 upsert → image 价 upsert → function
-// 价 upsert → reload）：worker 内部路径与后续管理端手动触发（
-// SyncPricingNow）共用；错误由调用方决定告警语义（worker 循环内 Warn 后等下
-// 个周期）。
+// 价 upsert → reload）：cron 循环内部路径；管理端手动触发走 SyncNow（含
+// manual 变体守卫 + 统计，见 manual.go）；错误由调用方决定告警语义（worker
+// 循环内 Warn 后等下个周期）。
 // 三线扩展：image 价与 function 价均与文本价独立判定、独立落库；拉取成功后
 // 同样刷新对应快照（Reload 装配点由调用方聚合 pricing + image + function
 // 三重载）。

@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -42,6 +43,10 @@ func newPGServiceRepos(t *testing.T) (*repository.Repository, *Service) {
 	return repo, svc
 }
 
+// TestSyncPricingGuardsManualVariants_PG 手工变体守卫的 PG 真库回归（W3-T2 后经
+// pricing.SyncWorker 驱动：worker 持 fetcher+repo+settings+reload+snapshot，
+// service 只出 settings 快照与快照 membership）：手工模型变体存活且 entry 保持
+// manual；新模型落库且快照可解析（reload/publish/notify 链真实跑过）。
 func TestSyncPricingGuardsManualVariants_PG(t *testing.T) {
 	_, svc := newPGServiceRepos(t)
 	ctx := context.Background()
@@ -54,16 +59,21 @@ func TestSyncPricingGuardsManualVariants_PG(t *testing.T) {
 	// set price_source_url for sync
 	_, err = svc.store.(*repository.Repository).Settings.Set(ctx, "price_source_url", domain.SettingTypeString, "http://example.com/prices.json")
 	require.NoError(t, err)
-	// also need price_sync_cron? not needed for SyncPricingNow
-	// fake fetcher emits variants for guard model
+	// fake fetcher emits variants for guard model + a brand-new model
 	fetcher := &fakePriceFetcher{res: &pricing.FetchResult{
-		PriceEntries: []*domain.PriceEntry{{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(999), OutputPerM: int64Ptr(999), Source: domain.PricingSourceLitellm}},
-		Variants:     []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: intPtr(20000)}},
+		PriceEntries: []*domain.PriceEntry{
+			{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(999), OutputPerM: int64Ptr(999), Source: domain.PricingSourceLitellm},
+			{Model: "pg-svc-new-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(1000), OutputPerM: int64Ptr(2000), Source: domain.PricingSourceLitellm},
+		},
+		Variants: []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: intPtr(20000)}},
 	}}
-	svc.SetPriceFetcher(fetcher)
-	// also need to ensure priceSnapshot reload after sync
-	_, err = svc.SyncPricingNow(ctx)
+	w := pricing.NewSyncWorker(pricing.SyncWorkerConfig{
+		Fetcher: fetcher, Repo: svc.store.(*repository.Repository), Settings: svc,
+		Reload: svc.ReloadPricingAndNotifyCompiler, Snapshot: svc, Log: nil,
+	})
+	stats, err := w.SyncNow(ctx)
 	require.NoError(t, err)
+	require.Equal(t, 2, stats.Rows)
 	// admin variants must survive
 	vars, err := svc.ListPriceVariants(ctx, model)
 	require.NoError(t, err)
@@ -74,4 +84,7 @@ func TestSyncPricingGuardsManualVariants_PG(t *testing.T) {
 	pe, err := svc.GetPriceEntry(ctx, model)
 	require.NoError(t, err)
 	require.Equal(t, domain.PricingSourceManual, pe.Source)
+	// new model landed AND snapshot reloaded (reload chain ran)
+	_, ok := svc.ResolvePrices("pg-svc-new-model", 0, "auto", time.Now())
+	require.True(t, ok, "sync 成功必须刷新快照（reload/publish/notify 链）")
 }

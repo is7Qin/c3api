@@ -174,50 +174,6 @@ func TestReplacePriceVariants_CallSetPricePerCall(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidInput)
 }
 
-func TestSyncPricingGuardsManualVariants(t *testing.T) {
-	fs := newFakeStore()
-	// create manual entry + custom variants for model X
-	_, err := fs.UpsertPriceEntryManual(context.Background(), &repository.PriceEntryManual{Model: "guard-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000)})
-	require.NoError(t, err)
-	mult := 5000
-	_, err = fs.ReplacePriceVariants(context.Background(), "guard-model", []*domain.PriceVariant{{Model: "guard-model", Seq: 99, MultBP: &mult}})
-	require.NoError(t, err)
-	// also create a litellm model that should be overwritten
-	_, err = fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{{Model: "litellm-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceLitellm}})
-	require.NoError(t, err)
-	svc := newPricingSvc(t, fs)
-	// settings needed for SyncPricingNow
-	_, err = fs.SetSetting(context.Background(), "price_source_url", domain.SettingTypeString, "http://example.com/prices.json")
-	require.NoError(t, err)
-	// fake fetcher emits variants for both models: guard-model's variants should be dropped, litellm-model's should be applied
-	fetcher := &fakePriceFetcher{res: &pricing.FetchResult{
-		PriceEntries: []*domain.PriceEntry{{Model: "guard-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(999), OutputPerM: int64Ptr(999), Source: domain.PricingSourceLitellm}},
-		Variants: []*domain.PriceVariant{
-			{Model: "guard-model", Seq: 1, MultBP: intPtr(20000)},
-			{Model: "litellm-model", Seq: 1, MultBP: intPtr(30000)},
-		},
-	}}
-	svc.SetPriceFetcher(fetcher)
-	_, err = svc.SyncPricingNow(context.Background())
-	require.NoError(t, err)
-	// guard-model variants must survive (seq 99), not replaced by fetcher's seq 1
-	vars, err := fs.ListPriceVariants(context.Background(), "guard-model")
-	require.NoError(t, err)
-	require.Len(t, vars, 1)
-	require.Equal(t, 99, vars[0].Seq)
-	require.Equal(t, 5000, *vars[0].MultBP)
-	// litellm-model variants should be applied
-	vars2, err := fs.ListPriceVariants(context.Background(), "litellm-model")
-	require.NoError(t, err)
-	require.Len(t, vars2, 1)
-	require.Equal(t, 1, vars2[0].Seq)
-	require.Equal(t, 30000, *vars2[0].MultBP)
-	// entry for guard-model must remain manual (not overwritten)
-	pe, err := fs.GetPriceEntry(context.Background(), "guard-model")
-	require.NoError(t, err)
-	require.Equal(t, domain.PricingSourceManual, pe.Source)
-}
-
 // TestPricingWritePublishesPricingChange D1 定价跨实例失效：定价写面经统一
 // 出口 reloadPricingAndNotifyCompiler 发布 Change{Pricing:true}（编译通知装配
 // 与否均发布——跨实例传播不依赖变化检测）；ReloadPricingCtx（启动/FullRefresh
