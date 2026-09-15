@@ -76,7 +76,7 @@ func TestQualitySync_SingletonTransientMustRefill(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-singleton-transient", BatchSize: 1}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-singleton-transient", BatchSize: 1}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
 	barrier := make(chan struct{})
@@ -115,7 +115,7 @@ func TestQualitySync_SingletonRowDataErrorIsPoison(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-singleton-poison", BatchSize: 1}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-singleton-poison", BatchSize: 1}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
 	barrier := make(chan struct{})
@@ -153,7 +153,7 @@ func TestQualitySync_MixedActivePendingRefillExactlyOnce(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, blockPG, SyncConfig{InstanceSrc: "red-mixed", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, blockPG, SyncConfig{InstanceSrc: "red-mixed", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
 	// pending component

@@ -59,6 +59,7 @@ func TestQualitySyncWiring(t *testing.T) {
 		recorderCtor bool // qualityRecorder, err := quality.NewRecorder(...)
 		recorderSet  bool // proxy.Deps{Recorder: qualityRecorder} wired into proxy.New(...)
 		syncCtor     bool // qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, ...)
+		syncNotify   bool // ctor 尾参 = sched.RequestCompile（缺陷 B 事件驱动编译，构造器注入、无回填）
 		inManaged    bool // qualitySync ∈ orderedWorkers(...) args
 		managedFound bool
 		tailCalled   bool // main delegates the shutdown tail: shutdownTail(...)
@@ -136,6 +137,14 @@ func TestQualitySyncWiring(t *testing.T) {
 							if ok0 && a0.Name == "qualityRecorder" && ok1 && a1.Name == "rdb" && partitions {
 								syncCtor = true
 							}
+							// 缺陷 B 接线必须走构造器尾参（回填已删）：第 6 参 == sched.RequestCompile。
+							if len(ce.Args) == 6 {
+								if sel, ok := ce.Args[5].(*ast.SelectorExpr); ok && sel.Sel.Name == "RequestCompile" {
+									if id, ok := sel.X.(*ast.Ident); ok && id.Name == "sched" {
+										syncNotify = true
+									}
+								}
+							}
 						}
 					}
 				}
@@ -181,6 +190,7 @@ func TestQualitySyncWiring(t *testing.T) {
 	require.True(t, recorderCtor, "qualityRecorder := quality.NewRecorder(...) not found")
 	require.True(t, recorderSet, "proxy.Deps{Recorder: qualityRecorder} not found (must be wired via constructor, no setters)")
 	require.True(t, syncCtor, "qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, ...) not found")
+	require.True(t, syncNotify, "quality.NewSyncWorker(..., sched.RequestCompile) not found (must be injected via constructor, no setters)")
 	require.True(t, managedFound, "managedWorkers := orderedWorkers(...) not found")
 	require.True(t, inManaged, "qualitySync must be registered via orderedWorkers(...) for lifecycle + ops stats")
 	require.True(t, tailCalled, "main must delegate the shutdown tail to shutdownTail(...)")

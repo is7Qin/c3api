@@ -105,7 +105,7 @@ func TestRed_FlowOwnerRetainsCumulativeAfterPGSuccess(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-retain", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-retain", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
 	m := fixed.Truncate(time.Minute).Unix()
@@ -129,7 +129,7 @@ func TestRed_FlowInFlightPGStateCannotBeDisplaced(t *testing.T) {
 	require.NoError(t, err)
 	rec.minuteCap = 1
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-inflight", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-inflight", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
 	m := fixed.Truncate(time.Minute).Unix()
@@ -163,7 +163,7 @@ func TestRed_FlowSyncCloseSealsLaterSubmissionResidual(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-seal", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-seal", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	require.NoError(t, w.Close(context.Background()))
 
@@ -245,7 +245,7 @@ func TestRed_FlowSyncCloseLoopDoneTimeoutSealsLaterSubmissionResidual(t *testing
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, c, pg, SyncConfig{InstanceSrc: "red-flow-loopdone", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, c, pg, SyncConfig{InstanceSrc: "red-flow-loopdone", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	m := fixed.Truncate(time.Minute).Unix()
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
@@ -284,7 +284,7 @@ func TestRed_FlowSyncCloseFlushDoneTimeoutSealsLaterSubmissionResidual(t *testin
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-flushdone", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-flushdone", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
 	w.flushMu.Lock()
@@ -521,7 +521,7 @@ func TestRed_FlowAckReleaseExactOnce(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	pg.failAll = true
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-exactonce", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-exactonce", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	w.doPG(context.Background())
 	require.NotEmpty(t, owner.pgCandidateMinutes(), "released minute retries next cycle")
@@ -553,7 +553,7 @@ func TestRed_FlowCleanRetainedNotBlockingClose(t *testing.T) {
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-cleanclose", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-cleanclose", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	w.doPG(context.Background())
 	require.Equal(t, 0, owner.pgWorkTotal(), "clean retained state contributes no Close work")
@@ -602,7 +602,7 @@ func TestRed_FlowCloseResidualEquation(t *testing.T) {
 	pg := newFakePG()
 	rec, owner, m := redFlowSealOwner(t)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-equation", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-equation", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
 	// v3-F1: Submit successor — one walk call carries the three rows; event
@@ -704,7 +704,7 @@ func redFlowPersistedMinute(t *testing.T, now time.Time, rows []repository.Routi
 	}
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-cutoff", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-cutoff", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return now })
 	w.doPG(context.Background())
 	require.Empty(t, owner.pgCandidateMinutes(), "setup minute must persist clean")
@@ -845,7 +845,7 @@ func TestRed_FlowRedisOneLivePayload(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec.now = func() time.Time { return fixed }
 	owner := rec.FlowOwner()
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-redispayload", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-redispayload", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	base := fixed.Truncate(time.Minute).Unix()
 	for _, m := range []int64{base - 120, base - 60, base} {
@@ -913,7 +913,7 @@ func TestRed_FlowPayloadLifetimeSingleLive(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec.now = func() time.Time { return fixed }
 	owner := rec.FlowOwner()
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-lifetime", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-lifetime", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	base := fixed.Truncate(time.Minute).Unix()
 	minutes := []int64{base, base + 60, base + 120}
@@ -950,7 +950,7 @@ func TestRed_FlowPreviousAccountOwnershipBoundaries(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec.now = func() time.Time { return fixed }
 	owner := rec.FlowOwner()
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-prevacct", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-prevacct", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	m := fixed.Truncate(time.Minute).Unix()
 
@@ -1027,7 +1027,7 @@ func TestWorkerManager_ReverseShutdownInflightFlowPGSealedNoop(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec.now = func() time.Time { return fixed }
 	owner := rec.FlowOwner()
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-mgrseal", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-mgrseal", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	m := fixed.Truncate(time.Minute).Unix()
 
@@ -1132,7 +1132,7 @@ func TestRed_FlowPruneRetainsSequenceFencing(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec.now = func() time.Time { return fixed }
 	clk := fixed
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-seqfence", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-seqfence", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 	m := fixed.Truncate(time.Minute).Unix()
 	key := "red-flow-seqfence:" + fixed.UTC().Truncate(time.Minute).String()

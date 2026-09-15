@@ -17,7 +17,7 @@ func TestRed_FlowStaleRequeueSequenceAware(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-stale", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-stale", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 	owner := rec.FlowOwner()
 
@@ -96,7 +96,7 @@ func TestRed_FlowCumulativeSnapshotAcrossCycles(t *testing.T) {
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	clk := fixed
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-cum", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-cum", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 
 	m := fixed.Unix()
@@ -153,7 +153,7 @@ func TestRed_FlowFailedRequeueNoDuplicate(t *testing.T) {
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	clk := fixed
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-retry", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-retry", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 
 	m := fixed.Unix()
@@ -210,7 +210,7 @@ func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	require.NoError(t, err)
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	clk := fixed
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-refill-race", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-refill-race", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 
 	m := fixed.Unix()
@@ -259,7 +259,7 @@ func TestRed_BoundPruneLongLivedMaps(t *testing.T) {
 	rec, err := NewRecorder(50000)
 	require.NoError(t, err)
 	base := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)
-	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-prune", BatchSize: 10}, nil)
+	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-prune", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return base })
 
 	// Simulate many distinct minutes of successful publication to grow maps
