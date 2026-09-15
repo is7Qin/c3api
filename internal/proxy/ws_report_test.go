@@ -2,6 +2,7 @@
 package proxy
 
 import (
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
 func selForWSReport() *scheduler.Selection {
@@ -127,4 +129,42 @@ func TestWSReport_headersAndLimitsPreserved(t *testing.T) {
 	require.Empty(t, ch.Get("Session-Id"))
 	require.Empty(t, ch.Get("OpenAI-Beta"))
 	require.Equal(t, "ua", ch.Get("User-Agent"))
+}
+
+// TestWSPassthroughEqualsSharedRelayList R3b：把「WS 面剔除面 = 全仓唯一那份
+// 清单」钉成等价断言，零字面量复制（清单内容自身的正确性由 pkg/aiclient 侧的
+// R1/R3a 承担，两者不可互替）。
+//
+// 已知代价：C4 落地当下 wsPassthroughHeaders 就是 `return aiclient.RelayHeaders(h)`，
+// 本式同义反复。它的价值是漂移防线——日后有人在 WS 面重新加回本地剔除逻辑
+// （v6 之前两份真相漂移的成因）时立刻红。relayDeny 日后加项，此式自动覆盖。
+//
+// h 故意含非规范形键与脏值：canonicalize 由 RelayHeaders 内部统一做，手工构造的
+// "authorization" 若绕过规范化就会把凭据写上线（实测：删掉 canonicalize 的那版
+// Header.Write 输出 `authorization: Bearer gateway-key`）。
+func TestWSPassthroughEqualsSharedRelayList(t *testing.T) {
+	h := http.Header{
+		"authorization":   {"Bearer gateway-key"},
+		"Cookie":          {"tenant=leak"},
+		"Accept-Encoding": {"gzip"},
+		"Te":              {"trailers"},
+		"X-Dirty-Value":   {"ok\r\ninjected"},
+		"X-Mixed-Values":  {"good", "bad\x00here"},
+		"X-Ok":            {"keep"},
+	}
+	require.Equal(t, aiclient.RelayHeaders(h), wsPassthroughHeaders(h),
+		"WS 面必须与共享清单逐键逐值等价")
+
+	// 等价式在 C4 当下是同义反复，故再钉三条**非自反**断言（§2b「另加一例非规范
+	// 形键仍被剔」那条）：手工构造的小写 authorization 必须被规范化后命中清单；
+	// 值卫生在 WS 面是新行为（此前无），整键值全脏则该键不出现、混合键只丢脏值。
+	// 删掉 canonicalize 时第一条会红（实测：那版 Header.Write 会把凭据写上线）。
+	out := wsPassthroughHeaders(h)
+	_, ok := out["authorization"]
+	require.False(t, ok, "非规范形凭据键不得原样残留")
+	_, ok = out["Authorization"]
+	require.False(t, ok, "非规范形凭据键必须被提升后命中清单剔除")
+	_, ok = out["X-Dirty-Value"]
+	require.False(t, ok, "值全脏的键必须整键不出现（WS 面此前无值卫生）")
+	require.Equal(t, []string{"good"}, out["X-Mixed-Values"], "混合键只丢脏的那个值")
 }
