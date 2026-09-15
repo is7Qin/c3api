@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -239,230 +240,207 @@ func (w *SyncWorker) loop(ctx context.Context) {
 	}
 }
 
+// snapshotActiveCells 抓取 recorder 当前活跃 cell 列表（快照后即放 rec 锁；
+// 调用方随后持 w.mu 操作各自 sink 的 cursor/分钟桶，per-sink ack 语义不变）。
+func snapshotActiveCells(rec *Recorder) []*Cell {
+	if rec == nil {
+		return nil
+	}
+	rec.mu.Lock()
+	cells := make([]*Cell, 0, len(rec.active))
+	for _, c := range rec.active {
+		cells = append(cells, c)
+	}
+	rec.mu.Unlock()
+	return cells
+}
+
+func snapCell(c *Cell) cellSnap {
+	cur := cellSnap{
+		attempts: c.attempts.Load(), successes: c.successes.Load(),
+		err429: c.errClasses[ErrClass429].Load(), err4xx: c.errClasses[ErrClass4xx].Load(),
+		err5xx: c.errClasses[ErrClass5xx].Load(), errNetwork: c.errClasses[ErrClassNetwork].Load(),
+		ttftCount: c.ttftCount.Load(), sumQ32: c.sumQ32.Load(), sumSqQ32: c.sumSq.Load(),
+		input: c.inputTokens.Load(), output: c.outputTokens.Load(), cacheRead: c.cacheRead.Load(), cacheCreate: c.cacheCreate.Load(),
+		calls: c.calls.Load(), images: c.images.Load(),
+	}
+	for i := range cur.hist {
+		cur.hist[i] = c.hist[i].Load()
+	}
+	return cur
+}
+
+// diffCellSnap 计算相对 prev 的增量；无 prev 或 gen 变化（retire/rebuild）时全量即增量。
+func diffCellSnap(cur cellSnap, prev cursorEntry, ok bool, gen uint64) cellSnap {
+	if !ok || prev.gen != gen {
+		return cur
+	}
+	var delta cellSnap
+	delta.attempts = cur.attempts - prev.snap.attempts
+	delta.successes = cur.successes - prev.snap.successes
+	delta.err429 = cur.err429 - prev.snap.err429
+	delta.err4xx = cur.err4xx - prev.snap.err4xx
+	delta.err5xx = cur.err5xx - prev.snap.err5xx
+	delta.errNetwork = cur.errNetwork - prev.snap.errNetwork
+	delta.ttftCount = cur.ttftCount - prev.snap.ttftCount
+	delta.sumQ32 = cur.sumQ32 - prev.snap.sumQ32
+	delta.sumSqQ32 = cur.sumSqQ32 - prev.snap.sumSqQ32
+	for i := range delta.hist {
+		delta.hist[i] = cur.hist[i] - prev.snap.hist[i]
+	}
+	delta.input = cur.input - prev.snap.input
+	delta.output = cur.output - prev.snap.output
+	delta.cacheRead = cur.cacheRead - prev.snap.cacheRead
+	delta.cacheCreate = cur.cacheCreate - prev.snap.cacheCreate
+	delta.calls = cur.calls - prev.snap.calls
+	delta.images = cur.images - prev.snap.images
+	return delta
+}
+
+func (d cellSnap) isZero() bool {
+	return d.attempts == 0 && d.successes == 0 && d.ttftCount == 0 && d.input == 0 && d.output == 0 && d.calls == 0 && d.images == 0 && d.err429 == 0 && d.err4xx == 0 && d.err5xx == 0 && d.errNetwork == 0
+}
+
+// addTo 把增量累加进已存在的分钟行（merge 语义与原内联块一致）。
+func (d cellSnap) addTo(qm *QualityMinute) {
+	qm.attempts += d.attempts
+	qm.successes += d.successes
+	qm.err429 += d.err429
+	qm.err4xx += d.err4xx
+	qm.err5xx += d.err5xx
+	qm.errNetwork += d.errNetwork
+	qm.ttftCount += d.ttftCount
+	qm.sumQ32 += d.sumQ32
+	qm.sumSqQ32 += d.sumSqQ32
+	for i := range qm.hist {
+		qm.hist[i] += d.hist[i]
+	}
+	qm.inputTokens += d.input
+	qm.outputTokens += d.output
+	qm.cacheRead += d.cacheRead
+	qm.cacheCreate += d.cacheCreate
+	qm.calls += d.calls
+	qm.images += d.images
+}
+
+func newQualityMinuteFromDelta(minute int64, key Key, gen uint64, d cellSnap) *QualityMinute {
+	qm := NewQualityMinute(minute, key)
+	qm.gen = gen
+	qm.attempts = d.attempts
+	qm.successes = d.successes
+	qm.err429 = d.err429
+	qm.err4xx = d.err4xx
+	qm.err5xx = d.err5xx
+	qm.errNetwork = d.errNetwork
+	qm.ttftCount = d.ttftCount
+	qm.sumQ32 = d.sumQ32
+	qm.sumSqQ32 = d.sumSqQ32
+	qm.hist = d.hist
+	qm.inputTokens = d.input
+	qm.outputTokens = d.output
+	qm.cacheRead = d.cacheRead
+	qm.cacheCreate = d.cacheCreate
+	qm.calls = d.calls
+	qm.images = d.images
+	return qm
+}
+
+// accumulateDelta 把单 cell 增量并入分钟桶（新建桶/新建行/累加旧行三分支与原内联一致）。
+func accumulateDelta(dst map[int64]map[Key]*QualityMinute, minute int64, key Key, gen uint64, d cellSnap) {
+	m, ok := dst[minute]
+	if !ok {
+		m = make(map[Key]*QualityMinute)
+		dst[minute] = m
+	}
+	if existing, ok := m[key]; ok {
+		d.addTo(existing)
+	} else {
+		m[key] = newQualityMinuteFromDelta(minute, key, gen, d)
+	}
+}
+
+func cloneKeyMap(src map[Key]*QualityMinute) map[Key]*QualityMinute {
+	cp := make(map[Key]*QualityMinute, len(src))
+	for k, v := range src {
+		cp[k] = v.Clone()
+	}
+	return cp
+}
+
+func cloneMinuteMap(src map[int64]map[Key]*QualityMinute) map[int64]map[Key]*QualityMinute {
+	out := make(map[int64]map[Key]*QualityMinute, len(src))
+	for minute, rows := range src {
+		out[minute] = cloneKeyMap(rows)
+	}
+	return out
+}
+
+func cloneMinuteMapUpto(src map[int64]map[Key]*QualityMinute, upto int64) map[int64]map[Key]*QualityMinute {
+	out := make(map[int64]map[Key]*QualityMinute, len(src))
+	for minute, rows := range src {
+		if minute > upto {
+			continue
+		}
+		out[minute] = cloneKeyMap(rows)
+	}
+	return out
+}
+
+// foldMinuteMap 把 src 各分钟行并入 dst（同 key merge，不同 key 深拷贝；
+// 与原 doRedis/doPG 内联合并块逐字同义）。
+func foldMinuteMap(dst, src map[int64]map[Key]*QualityMinute) {
+	for minute, rows := range src {
+		if _, ok := dst[minute]; !ok {
+			dst[minute] = make(map[Key]*QualityMinute)
+		}
+		for k, v := range rows {
+			if existing, ok := dst[minute][k]; ok {
+				existing.merge(v)
+			} else {
+				dst[minute][k] = v.Clone()
+			}
+		}
+	}
+}
+
 func (w *SyncWorker) collectRedisDeltaLocked(curMinuteUnix int64) map[int64]map[Key]*QualityMinute {
 	if w.rec == nil {
 		return nil
 	}
-	w.rec.mu.Lock()
-	cells := make([]*Cell, 0, len(w.rec.active))
-	for _, c := range w.rec.active {
-		cells = append(cells, c)
-	}
-	w.rec.mu.Unlock()
+	cells := snapshotActiveCells(w.rec)
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	now := w.clock().UTC().Truncate(time.Minute).Unix()
-	// collect delta for all active cells, assign to minute bucket based on curMinuteUnix? Use current minute for new delta
 	for _, c := range cells {
-		cur := cellSnap{
-			attempts: c.attempts.Load(), successes: c.successes.Load(),
-			err429: c.errClasses[ErrClass429].Load(), err4xx: c.errClasses[ErrClass4xx].Load(),
-			err5xx: c.errClasses[ErrClass5xx].Load(), errNetwork: c.errClasses[ErrClassNetwork].Load(),
-			ttftCount: c.ttftCount.Load(), sumQ32: c.sumQ32.Load(), sumSqQ32: c.sumSq.Load(),
-			input: c.inputTokens.Load(), output: c.outputTokens.Load(), cacheRead: c.cacheRead.Load(), cacheCreate: c.cacheCreate.Load(),
-			calls: c.calls.Load(), images: c.images.Load(),
-		}
-		for i := range cur.hist {
-			cur.hist[i] = c.hist[i].Load()
-		}
+		cur := snapCell(c)
 		prev, ok := w.lastCell[c.key]
-		var delta cellSnap
-		if ok && prev.gen == c.gen {
-			delta.attempts = cur.attempts - prev.snap.attempts
-			delta.successes = cur.successes - prev.snap.successes
-			delta.err429 = cur.err429 - prev.snap.err429
-			delta.err4xx = cur.err4xx - prev.snap.err4xx
-			delta.err5xx = cur.err5xx - prev.snap.err5xx
-			delta.errNetwork = cur.errNetwork - prev.snap.errNetwork
-			delta.ttftCount = cur.ttftCount - prev.snap.ttftCount
-			delta.sumQ32 = cur.sumQ32 - prev.snap.sumQ32
-			delta.sumSqQ32 = cur.sumSqQ32 - prev.snap.sumSqQ32
-			for i := range delta.hist {
-				delta.hist[i] = cur.hist[i] - prev.snap.hist[i]
-			}
-			delta.input = cur.input - prev.snap.input
-			delta.output = cur.output - prev.snap.output
-			delta.cacheRead = cur.cacheRead - prev.snap.cacheRead
-			delta.cacheCreate = cur.cacheCreate - prev.snap.cacheCreate
-			delta.calls = cur.calls - prev.snap.calls
-			delta.images = cur.images - prev.snap.images
-		} else {
-			delta = cur
-		}
-		if delta.attempts == 0 && delta.successes == 0 && delta.ttftCount == 0 && delta.input == 0 && delta.output == 0 && delta.calls == 0 && delta.images == 0 && delta.err429 == 0 && delta.err4xx == 0 && delta.err5xx == 0 && delta.errNetwork == 0 {
-			w.lastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
-			continue
-		}
+		delta := diffCellSnap(cur, prev, ok, c.gen)
 		w.lastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
-		if _, ok := w.minuteAbs[curMinuteUnix]; !ok {
-			w.minuteAbs[curMinuteUnix] = make(map[Key]*QualityMinute)
-		}
-		m := w.minuteAbs[curMinuteUnix]
-		if existing, ok := m[c.key]; ok {
-			existing.attempts += delta.attempts
-			existing.successes += delta.successes
-			existing.err429 += delta.err429
-			existing.err4xx += delta.err4xx
-			existing.err5xx += delta.err5xx
-			existing.errNetwork += delta.errNetwork
-			existing.ttftCount += delta.ttftCount
-			existing.sumQ32 += delta.sumQ32
-			existing.sumSqQ32 += delta.sumSqQ32
-			for i := range existing.hist {
-				existing.hist[i] += delta.hist[i]
-			}
-			existing.inputTokens += delta.input
-			existing.outputTokens += delta.output
-			existing.cacheRead += delta.cacheRead
-			existing.cacheCreate += delta.cacheCreate
-			existing.calls += delta.calls
-			existing.images += delta.images
-		} else {
-			qm := NewQualityMinute(curMinuteUnix, c.key)
-			qm.gen = c.gen
-			qm.attempts = delta.attempts
-			qm.successes = delta.successes
-			qm.err429 = delta.err429
-			qm.err4xx = delta.err4xx
-			qm.err5xx = delta.err5xx
-			qm.errNetwork = delta.errNetwork
-			qm.ttftCount = delta.ttftCount
-			qm.sumQ32 = delta.sumQ32
-			qm.sumSqQ32 = delta.sumSqQ32
-			qm.hist = delta.hist
-			qm.inputTokens = delta.input
-			qm.outputTokens = delta.output
-			qm.cacheRead = delta.cacheRead
-			qm.cacheCreate = delta.cacheCreate
-			qm.calls = delta.calls
-			qm.images = delta.images
-			m[c.key] = qm
-		}
-		_ = now
-	}
-	// return copy of all due minutes up to curMinuteUnix
-	out := make(map[int64]map[Key]*QualityMinute)
-	for minute, rows := range w.minuteAbs {
-		if minute > curMinuteUnix {
+		if delta.isZero() {
 			continue
 		}
-		cp := make(map[Key]*QualityMinute, len(rows))
-		for k, v := range rows {
-			cp[k] = v.Clone()
-		}
-		out[minute] = cp
+		accumulateDelta(w.minuteAbs, curMinuteUnix, c.key, c.gen, delta)
 	}
-	return out
+	return cloneMinuteMapUpto(w.minuteAbs, curMinuteUnix)
 }
 
 func (w *SyncWorker) collectPGDeltaLocked() map[int64]map[Key]*QualityMinute {
 	if w.rec == nil {
 		return nil
 	}
-	w.rec.mu.Lock()
-	cells := make([]*Cell, 0, len(w.rec.active))
-	for _, c := range w.rec.active {
-		cells = append(cells, c)
-	}
-	w.rec.mu.Unlock()
+	cells := snapshotActiveCells(w.rec)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for _, c := range cells {
-		cur := cellSnap{
-			attempts: c.attempts.Load(), successes: c.successes.Load(),
-			err429: c.errClasses[ErrClass429].Load(), err4xx: c.errClasses[ErrClass4xx].Load(),
-			err5xx: c.errClasses[ErrClass5xx].Load(), errNetwork: c.errClasses[ErrClassNetwork].Load(),
-			ttftCount: c.ttftCount.Load(), sumQ32: c.sumQ32.Load(), sumSqQ32: c.sumSq.Load(),
-			input: c.inputTokens.Load(), output: c.outputTokens.Load(), cacheRead: c.cacheRead.Load(), cacheCreate: c.cacheCreate.Load(),
-			calls: c.calls.Load(), images: c.images.Load(),
-		}
-		for i := range cur.hist {
-			cur.hist[i] = c.hist[i].Load()
-		}
+		cur := snapCell(c)
 		prev, ok := w.pgLastCell[c.key]
-		var delta cellSnap
-		if ok && prev.gen == c.gen {
-			delta.attempts = cur.attempts - prev.snap.attempts
-			delta.successes = cur.successes - prev.snap.successes
-			delta.err429 = cur.err429 - prev.snap.err429
-			delta.err4xx = cur.err4xx - prev.snap.err4xx
-			delta.err5xx = cur.err5xx - prev.snap.err5xx
-			delta.errNetwork = cur.errNetwork - prev.snap.errNetwork
-			delta.ttftCount = cur.ttftCount - prev.snap.ttftCount
-			delta.sumQ32 = cur.sumQ32 - prev.snap.sumQ32
-			delta.sumSqQ32 = cur.sumSqQ32 - prev.snap.sumSqQ32
-			for i := range delta.hist {
-				delta.hist[i] = cur.hist[i] - prev.snap.hist[i]
-			}
-			delta.input = cur.input - prev.snap.input
-			delta.output = cur.output - prev.snap.output
-			delta.cacheRead = cur.cacheRead - prev.snap.cacheRead
-			delta.cacheCreate = cur.cacheCreate - prev.snap.cacheCreate
-			delta.calls = cur.calls - prev.snap.calls
-			delta.images = cur.images - prev.snap.images
-		} else {
-			delta = cur
-		}
-		if delta.attempts == 0 && delta.successes == 0 && delta.ttftCount == 0 && delta.input == 0 && delta.output == 0 && delta.calls == 0 && delta.images == 0 && delta.err429 == 0 && delta.err4xx == 0 && delta.err5xx == 0 && delta.errNetwork == 0 {
-			w.pgLastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
+		delta := diffCellSnap(cur, prev, ok, c.gen)
+		w.pgLastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
+		if delta.isZero() {
 			continue
 		}
-		w.pgLastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
-		minute := w.clock().UTC().Truncate(time.Minute).Unix()
-		if _, ok := w.pgMinuteAbs[minute]; !ok {
-			w.pgMinuteAbs[minute] = make(map[Key]*QualityMinute)
-		}
-		m := w.pgMinuteAbs[minute]
-		if existing, ok := m[c.key]; ok {
-			existing.attempts += delta.attempts
-			existing.successes += delta.successes
-			existing.err429 += delta.err429
-			existing.err4xx += delta.err4xx
-			existing.err5xx += delta.err5xx
-			existing.errNetwork += delta.errNetwork
-			existing.ttftCount += delta.ttftCount
-			existing.sumQ32 += delta.sumQ32
-			existing.sumSqQ32 += delta.sumSqQ32
-			for i := range existing.hist {
-				existing.hist[i] += delta.hist[i]
-			}
-			existing.inputTokens += delta.input
-			existing.outputTokens += delta.output
-			existing.cacheRead += delta.cacheRead
-			existing.cacheCreate += delta.cacheCreate
-			existing.calls += delta.calls
-			existing.images += delta.images
-		} else {
-			qm := NewQualityMinute(minute, c.key)
-			qm.gen = c.gen
-			qm.attempts = delta.attempts
-			qm.successes = delta.successes
-			qm.err429 = delta.err429
-			qm.err4xx = delta.err4xx
-			qm.err5xx = delta.err5xx
-			qm.errNetwork = delta.errNetwork
-			qm.ttftCount = delta.ttftCount
-			qm.sumQ32 = delta.sumQ32
-			qm.sumSqQ32 = delta.sumSqQ32
-			qm.hist = delta.hist
-			qm.inputTokens = delta.input
-			qm.outputTokens = delta.output
-			qm.cacheRead = delta.cacheRead
-			qm.cacheCreate = delta.cacheCreate
-			qm.calls = delta.calls
-			qm.images = delta.images
-			m[c.key] = qm
-		}
+		accumulateDelta(w.pgMinuteAbs, w.clock().UTC().Truncate(time.Minute).Unix(), c.key, c.gen, delta)
 	}
-	out := make(map[int64]map[Key]*QualityMinute)
-	for minute, rows := range w.pgMinuteAbs {
-		cp := make(map[Key]*QualityMinute, len(rows))
-		for k, v := range rows {
-			cp[k] = v.Clone()
-		}
-		out[minute] = cp
-	}
-	return out
+	return cloneMinuteMap(w.pgMinuteAbs)
 }
 
 func (w *SyncWorker) doRedis(ctx context.Context) {
@@ -496,18 +474,8 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 	// Simplify: do snapshot collection into temp, then on success commit.
 	// For now we implement by saving copies
 	w.mu.Lock()
-	savedLastCell := make(map[Key]cursorEntry, len(w.lastCell))
-	for k, v := range w.lastCell {
-		savedLastCell[k] = v
-	}
-	savedMinuteAbs := make(map[int64]map[Key]*QualityMinute)
-	for minute, rows := range w.minuteAbs {
-		cp := make(map[Key]*QualityMinute, len(rows))
-		for k, v := range rows {
-			cp[k] = v.Clone()
-		}
-		savedMinuteAbs[minute] = cp
-	}
+	savedLastCell := maps.Clone(w.lastCell)
+	savedMinuteAbs := cloneMinuteMap(w.minuteAbs)
 	w.mu.Unlock()
 
 	activeAll := w.collectRedisDeltaLocked(curMinute)
@@ -518,11 +486,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		if minute > curMinute {
 			continue
 		}
-		cp := make(map[Key]*QualityMinute, len(rows))
-		for k, v := range rows {
-			cp[k] = v.Clone()
-		}
-		pendingByMinute[minute] = cp
+		pendingByMinute[minute] = cloneKeyMap(rows)
 	}
 	w.rec.mu.Unlock()
 	// Flow comes through the FlowOwner snapshot handoff one minute at a time:
@@ -536,18 +500,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 	for minute, rows := range pendingByMinute {
 		mergedByMinute[minute] = rows
 	}
-	for minute, rows := range activeAll {
-		if _, ok := mergedByMinute[minute]; !ok {
-			mergedByMinute[minute] = make(map[Key]*QualityMinute)
-		}
-		for k, v := range rows {
-			if existing, ok := mergedByMinute[minute][k]; ok {
-				existing.merge(v)
-			} else {
-				mergedByMinute[minute][k] = v.Clone()
-			}
-		}
-	}
+	foldMinuteMap(mergedByMinute, activeAll)
 	if len(mergedByMinute) == 0 && len(flowIDs) == 0 {
 		// empty pass must not refresh freshness
 		return
@@ -773,18 +726,7 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 	w.rec.mu.Unlock()
 
 	// merge pgActive into pendQ
-	for minute, rows := range pgActive {
-		if _, ok := pendQ[minute]; !ok {
-			pendQ[minute] = make(map[Key]*QualityMinute)
-		}
-		for k, v := range rows {
-			if existing, ok := pendQ[minute][k]; ok {
-				existing.merge(v)
-			} else {
-				pendQ[minute][k] = v.Clone()
-			}
-		}
-	}
+	foldMinuteMap(pendQ, pgActive)
 	// pgActive already contains all due pgMinuteAbs, clear after draining into pendQ
 	w.mu.Lock()
 	w.pgMinuteAbs = make(map[int64]map[Key]*QualityMinute)

@@ -59,6 +59,8 @@ func compileCandidate(facts compilerCandidateFacts, lane AttemptLane) CompiledCa
 }
 
 // cloneCompiled copies a compiled slice without aliasing the published array.
+// append(nil) 语义是故意的：空非 nil 输入归一化为 nil（TestRed_Blocker5_ViewImmutability
+// 钉住该语义），故不用 slices.Clone（它会保留空非 nil）。
 func cloneCompiled(in []CompiledCandidate) []CompiledCandidate {
 	if in == nil {
 		return nil

@@ -313,6 +313,49 @@ func advisoryLockKey(parts ...string) int64 {
 	return int64(binary.BigEndian.Uint64(sum[:8]))
 }
 
+// advisoryLockTx 在事务内取分钟级 pg_advisory_xact_lock（upsert/rollup 两对共用）。
+func advisoryLockTx(ctx context.Context, drv *txDriver, parts ...string) error {
+	var res sql.Result
+	return drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{advisoryLockKey(parts...)}, &res)
+}
+
+// markDirtyMinuteTx 置分钟脏位（upsert 对共用；调用方传各自的 kind/分钟，SQL 形状一致）。
+func markDirtyMinuteTx(ctx context.Context, drv *txDriver, kind string, version int16, minute time.Time) error {
+	var res sql.Result
+	return drv.Exec(ctx, `INSERT INTO routing_dirty_minute (kind, identity_version, bucket_minute, dirty, updated_at) VALUES ($1, $2, $3, true, now()) ON CONFLICT (kind, identity_version, bucket_minute) DO UPDATE SET dirty = true, updated_at = now()`, []any{kind, version, minute}, &res)
+}
+
+// requireDirtyMinuteTx 锁脏行（FOR UPDATE）并要求存在且 dirty（rollup 对共用；
+// 防丢脏语义不变：读 facts 前先锁脏行）。
+func requireDirtyMinuteTx(ctx context.Context, drv *txDriver, kind string, version int16, minute time.Time) error {
+	dirtyRows := &entsql.Rows{}
+	if err := drv.Query(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3 FOR UPDATE`, []any{kind, version, minute}, dirtyRows); err != nil {
+		return err
+	}
+	hasDirty := dirtyRows.Next()
+	var isDirty bool
+	if hasDirty {
+		_ = dirtyRows.Scan(&isDirty)
+	}
+	dirtyRows.Close()
+	if !hasDirty || !isDirty {
+		return fmt.Errorf("rollup requires dirty minute %v", minute)
+	}
+	return nil
+}
+
+// minuteHasFactsTx 存在性探针（SELECT 1 … LIMIT 1）；调用方传各自原 SQL
+// （表/分钟列不同），无插值拼接风险。
+func minuteHasFactsTx(ctx context.Context, drv *txDriver, query string, args []any) (bool, error) {
+	factRows := &entsql.Rows{}
+	if err := drv.Query(ctx, query, args, factRows); err != nil {
+		return false, err
+	}
+	hasFact := factRows.Next()
+	factRows.Close()
+	return hasFact, nil
+}
+
 func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row RoutingQualityRow) error {
 	tx, err := r.driver.Tx(ctx)
 	if err != nil {
@@ -321,11 +364,10 @@ func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row Routi
 	defer tx.Rollback() //nolint:errcheck
 	drv := &txDriver{tx: tx, drv: r.driver}
 	bucket := row.BucketMinute.UTC().Truncate(time.Minute)
-	lockKey := advisoryLockKey("quality", fmt.Sprintf("%d", row.IdentityVersion), bucket.Format(time.RFC3339), row.InstanceSrc)
-	var res sql.Result
-	if err := drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{lockKey}, &res); err != nil {
+	if err := advisoryLockTx(ctx, drv, "quality", fmt.Sprintf("%d", row.IdentityVersion), bucket.Format(time.RFC3339), row.InstanceSrc); err != nil {
 		return err
 	}
+	var res sql.Result
 	q := `INSERT INTO routing_quality_instance_minute (identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
 	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23, now())
 	ON CONFLICT (instance_src, bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version) DO UPDATE SET
@@ -357,8 +399,7 @@ func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row Routi
 	if n, _ := res.RowsAffected(); n == 0 {
 		return tx.Commit()
 	}
-	q2 := `INSERT INTO routing_dirty_minute (kind, identity_version, bucket_minute, dirty, updated_at) VALUES ('quality', $1, $2, true, now()) ON CONFLICT (kind, identity_version, bucket_minute) DO UPDATE SET dirty = true, updated_at = now()`
-	if err := drv.Exec(ctx, q2, []any{row.IdentityVersion, bucket}, &res); err != nil {
+	if err := markDirtyMinuteTx(ctx, drv, "quality", row.IdentityVersion, bucket); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -375,11 +416,10 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 	}
 	defer tx.Rollback() //nolint:errcheck
 	drv := &txDriver{tx: tx, drv: r.driver}
-	lockKey := advisoryLockKey("flow", fmt.Sprintf("%d", identityVersion), terminalMinute.Format(time.RFC3339), instanceSrc)
-	var res sql.Result
-	if err := drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{lockKey}, &res); err != nil {
+	if err := advisoryLockTx(ctx, drv, "flow", fmt.Sprintf("%d", identityVersion), terminalMinute.Format(time.RFC3339), instanceSrc); err != nil {
 		return err
 	}
+	var res sql.Result
 	var curSeq sql.NullInt64
 	rs := &entsql.Rows{}
 	if err := drv.Query(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3 FOR UPDATE`, []any{terminalMinute, instanceSrc, identityVersion}, rs); err != nil {
@@ -412,8 +452,7 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 			return err
 		}
 	}
-	q2 := `INSERT INTO routing_dirty_minute (kind, identity_version, bucket_minute, dirty, updated_at) VALUES ('flow', $1, $2, true, now()) ON CONFLICT (kind, identity_version, bucket_minute) DO UPDATE SET dirty = true, updated_at = now()`
-	if err := drv.Exec(ctx, q2, []any{identityVersion, terminalMinute}, &res); err != nil {
+	if err := markDirtyMinuteTx(ctx, drv, "flow", identityVersion, terminalMinute); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -543,35 +582,22 @@ func (r *PartitionRepo) RollupQuality(ctx context.Context, bucket time.Time, ver
 	}
 	defer tx.Rollback() //nolint:errcheck
 	drv := &txDriver{tx: tx, drv: r.driver}
-	lockKey := advisoryLockKey("rollup-quality", fmt.Sprintf("%d", version), bucket.Format(time.RFC3339))
-	var res sql.Result
-	if err := drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{lockKey}, &res); err != nil {
+	if err := advisoryLockTx(ctx, drv, "rollup-quality", fmt.Sprintf("%d", version), bucket.Format(time.RFC3339)); err != nil {
 		return err
 	}
 	// lock dirty row FOR UPDATE before reading facts (no-lost-dirty)
-	dirtyRows := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind='quality' AND identity_version=$1 AND bucket_minute=$2 FOR UPDATE`, []any{version, bucket}, dirtyRows); err != nil {
+	if err := requireDirtyMinuteTx(ctx, drv, "quality", version, bucket); err != nil {
 		return err
-	}
-	hasDirty := dirtyRows.Next()
-	var isDirty bool
-	if hasDirty {
-		_ = dirtyRows.Scan(&isDirty)
-	}
-	dirtyRows.Close()
-	if !hasDirty || !isDirty {
-		return fmt.Errorf("rollup requires dirty minute %v", bucket)
 	}
 	// read facts existence (must have at least one row)
-	factRows := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT 1 FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2 LIMIT 1`, []any{bucket, version}, factRows); err != nil {
+	hasFact, err := minuteHasFactsTx(ctx, drv, `SELECT 1 FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2 LIMIT 1`, []any{bucket, version})
+	if err != nil {
 		return err
 	}
-	hasFact := factRows.Next()
-	factRows.Close()
 	if !hasFact {
 		return fmt.Errorf("no facts for rollup")
 	}
+	var res sql.Result
 	if err := drv.Exec(ctx, `INSERT INTO routing_quality_rollup (identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
 	WITH grouped AS (
 		SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute,
@@ -613,42 +639,28 @@ func (r *PartitionRepo) RollupFlow(ctx context.Context, terminalMinute time.Time
 	}
 	defer tx.Rollback() //nolint:errcheck
 	drv := &txDriver{tx: tx, drv: r.driver}
-	lockKey := advisoryLockKey("rollup-flow", fmt.Sprintf("%d", version), terminalMinute.Format(time.RFC3339))
-	var res sql.Result
-	if err := drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{lockKey}, &res); err != nil {
+	if err := advisoryLockTx(ctx, drv, "rollup-flow", fmt.Sprintf("%d", version), terminalMinute.Format(time.RFC3339)); err != nil {
 		return err
 	}
-	dirtyRows := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind='flow' AND identity_version=$1 AND bucket_minute=$2 FOR UPDATE`, []any{version, terminalMinute}, dirtyRows); err != nil {
+	if err := requireDirtyMinuteTx(ctx, drv, "flow", version, terminalMinute); err != nil {
 		return err
 	}
-	hasDirty := dirtyRows.Next()
-	var isDirty bool
-	if hasDirty {
-		_ = dirtyRows.Scan(&isDirty)
-	}
-	dirtyRows.Close()
-	if !hasDirty || !isDirty {
-		return fmt.Errorf("rollup requires dirty minute %v", terminalMinute)
-	}
-	factRows := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT 1 FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2 LIMIT 1`, []any{terminalMinute, version}, factRows); err != nil {
+	hasFact, err := minuteHasFactsTx(ctx, drv, `SELECT 1 FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2 LIMIT 1`, []any{terminalMinute, version})
+	if err != nil {
 		return err
 	}
-	hasFact := factRows.Next()
-	factRows.Close()
-	snapRows := &entsql.Rows{}
 	hasSnap := false
 	if !hasFact {
-		if err := drv.Query(ctx, `SELECT 1 FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND identity_version=$2 LIMIT 1`, []any{terminalMinute, version}, snapRows); err != nil {
-			return err
+		var snapErr error
+		hasSnap, snapErr = minuteHasFactsTx(ctx, drv, `SELECT 1 FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND identity_version=$2 LIMIT 1`, []any{terminalMinute, version})
+		if snapErr != nil {
+			return snapErr
 		}
-		hasSnap = snapRows.Next()
-		snapRows.Close()
 		if !hasSnap {
 			return fmt.Errorf("no facts for rollup")
 		}
 	}
+	var res sql.Result
 	if hasFact {
 		if err := drv.Exec(ctx, `DELETE FROM routing_flow_rollup WHERE terminal_minute=$1 AND identity_version=$2`, []any{terminalMinute, version}, &res); err != nil {
 			return err
