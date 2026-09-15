@@ -128,7 +128,11 @@ func TestWSReport_headersAndLimitsPreserved(t *testing.T) {
 	ch := codexWSPassthroughHeaders(map[string][]string{"Session-Id": {"s"}, "OpenAI-Beta": {"x"}, "User-Agent": {"ua"}})
 	require.Empty(t, ch.Get("Session-Id"))
 	require.Empty(t, ch.Get("OpenAI-Beta"))
-	require.Equal(t, "ua", ch.Get("User-Agent"))
+	// 伪装身份契约（C5 翻转）：客户端 UA 不得穿透 SDK 伪装默认 ⇒ 被剔（补 map
+	// 槽位断言，理由同 codex_responses_ws_test.go 那条）。
+	require.Empty(t, ch.Get("User-Agent"))
+	_, ok := ch["User-Agent"]
+	require.False(t, ok, "User-Agent 必须不存在（map 槽位级断言）")
 }
 
 // TestWSPassthroughEqualsSharedRelayList R3b：把「WS 面剔除面 = 全仓唯一那份

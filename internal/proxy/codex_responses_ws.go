@@ -67,8 +67,8 @@ const codexAuthFailedMsg = "codex authorization failed"
 //     max_output_tokens/api/user/metadata 等合法顶层键（过滤后为空整帧不入网）——
 //     与双向帧透传 1:1 等价直接矛盾；关闭过滤与 client_metadata 伪装注入独立
 //     （prepareFrame client.go:513-579——关闭后注入仍生效）
-//   - 透传头：codexWSPassthroughHeaders——session 头族 +
-//     OpenAI-Beta 已剔除，其余可透传
+//   - 透传头：codexWSPassthroughHeaders——伪装身份七元组（session 头族 +
+//     OpenAI-Beta + User-Agent/Originator）已剔除，其余可透传
 //
 // 错误经适配层翻译（DialError → 信封 + Refreshed；裸 fatal → 统一回调上报）。
 func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsdk.Client, error) {
@@ -216,14 +216,28 @@ func codexIdentityFromExt(ext *domain.AccountExt) (sess codexsdk.Session, meta c
 
 // codexWSPassthroughHeaders codex 路径透传头：在
 // wsPassthroughHeaders 剔除面（= 全仓唯一清单 pkg/aiclient.relayDeny）之上再剔
-// 除 session 头族（session-id/thread-id/x-client-request-id/x-codex-window-id
-// ——SDK WithHeader 先删后加覆盖默认头，直通会覆盖伪装身份四元组）及
-// OpenAI-Beta（客户端可覆盖网关默认 beta 版本——与 aiclient 路径强制覆盖语义
-// 不对称；beta 为协议面关键值，错配可致上游拒连）。其余头原样透传。
+// 除伪装身份七元组：session 头族（session-id/thread-id/x-client-request-id/
+// x-codex-window-id——SDK WithHeader 先删后加覆盖默认头，直通会覆盖伪装身份
+// 四元组）、OpenAI-Beta（客户端可覆盖网关默认 beta 版本——与 aiclient 路径强制
+// 覆盖语义不对称；beta 为协议面关键值，错配可致上游拒连）、以及 UA 面的
+// User-Agent 与 Originator。
+//
+// 这 7 项是**伪装身份契约**，不因 spec §9-2「客户端自报协议头允许覆盖」而放宽
+// （§9-2 裁的是 anthropic-version/openai-beta 那类协议协商头，与伪装身份无关；
+// 清单里的 OpenAI-Beta 属本契约，不因此挪进 relayDeny）。
+//
+// UA/Originator 的剔除机理与 typed 面相反，别照抄 typed 的 WithHeaderAdd 教训：
+// dialCodexWS 把本函数产物逐个喂 codexsdk.WithHeader，SDK 侧 buildHeaders 先设
+// 伪装默认（client.go:305-306）、再对 WithHeader 的值先 Del 后加（:327-331）
+// ⇒ 客户端值会顶掉伪装默认。所以在网关侧剔掉它，正是让 SDK 自己的默认伪装值得
+// 以保留的那一步；网关不得另设 UA。
+//
+// 其余头原样透传。
 func codexWSPassthroughHeaders(h http.Header) http.Header {
 	out := wsPassthroughHeaders(h)
 	for _, k := range []string{
 		"Session-Id", "Thread-Id", "X-Client-Request-Id", "X-Codex-Window-Id", "OpenAI-Beta",
+		"User-Agent", "Originator",
 	} {
 		out.Del(k)
 	}
