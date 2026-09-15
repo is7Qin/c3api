@@ -411,7 +411,7 @@ func TestPGBillingCursorMultiInstanceLock(t *testing.T) {
 	// 在持锁窗口内跳过：首周期 ok=false → n==0 即退——行不被消费、余额不动
 	flusherB := billing.NewFlusher(
 		billing.FlushConfig{FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour},
-		repos, billing.NewBalances(repos, nil), nil)
+		repos, billing.NewBalances(repos, nil), nil, nil)
 	skipCtx, skipCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer skipCancel()
 	require.NoError(t, flusherB.Close(skipCtx))
@@ -430,7 +430,7 @@ func TestPGBillingCursorMultiInstanceLock(t *testing.T) {
 	// 释放后实例 C 抢锁成功并消费：游标已空 → 无第二次扣减（多实例无双扣）
 	flusherC := billing.NewFlusher(
 		billing.FlushConfig{FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour},
-		repos, billing.NewBalances(repos, nil), nil)
+		repos, billing.NewBalances(repos, nil), nil, nil)
 	drainCtx, drainCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer drainCancel()
 	require.NoError(t, flusherC.Close(drainCtx))
@@ -499,7 +499,7 @@ func TestPGBillingCursorCaptureOffAbsorb(t *testing.T) {
 	// 消费周期零动作：真实 flusher 排空循环跑完，余额零变动、overdraft 不动
 	f := billing.NewFlusher(
 		billing.FlushConfig{FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour},
-		repos, billing.NewBalances(repos, nil), nil)
+		repos, billing.NewBalances(repos, nil), nil, nil)
 	drainCtx, drainCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer drainCancel()
 	require.NoError(t, f.Close(drainCtx))
@@ -1104,7 +1104,7 @@ func TestPGSettleBucketConcurrency(t *testing.T) {
 
 	f := billing.NewFlusher(
 		billing.FlushConfig{FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour},
-		repos, billing.NewBalances(repos, nil), nil)
+		repos, billing.NewBalances(repos, nil), nil, nil)
 	drainCtx, drainCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer drainCancel()
 	require.NoError(t, f.Close(drainCtx))

@@ -5,7 +5,6 @@
 package main
 
 import (
-	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/handler"
 	"github.com/is7qin/c3api/internal/notification"
 	"github.com/is7qin/c3api/internal/service"
@@ -18,23 +17,17 @@ type balanceWarningService interface {
 	MailConfig() (host string, port int, username, password, fromAddr, tlsPolicy string, ok bool)
 }
 
-type balanceWarningSinkSetter interface {
-	SetBalanceWarningSink(billing.BalanceWarningSink)
-}
-
 // wireBalanceWarning 组装余额预警 worker：cooldown 由 main 构造期一次建好
-// （ServiceDeps 与此共用同一实例），此处只做 worker 接线。
-func wireBalanceWarning(setter balanceWarningSinkSetter, cooldown *notification.Cooldown, svc balanceWarningService, mailW *service.MailWorker, log *logx.Logger) *notification.Worker {
-	if setter == nil {
-		return nil
-	}
+// （ServiceDeps 与此共用同一实例），此处只做 worker 接线。恒返回非 nil
+// worker——billing 关闭时不调用（main 的 cfg.Billing.Enabled 分支持有调用权，
+// "disabled → 无 worker/无 flusher" 由该分支拥有；旧 setter==nil 守卫随
+// 事后回填机制一并删除）。
+func wireBalanceWarning(cooldown *notification.Cooldown, svc balanceWarningService, mailW *service.MailWorker, log *logx.Logger) *notification.Worker {
 	var enqueue notification.WarningMailEnqueue
 	if mailW != nil {
 		enqueue = mailW.EnqueueBalanceWarning
 	}
-	warningWorker := notification.New(cooldown, balanceWarningEnabled(svc), enqueue, log)
-	setter.SetBalanceWarningSink(warningWorker)
-	return warningWorker
+	return notification.New(cooldown, balanceWarningEnabled(svc), enqueue, log)
 }
 
 func balanceWarningEnabled(svc balanceWarningService) func() bool {

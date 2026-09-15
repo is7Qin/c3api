@@ -11,5 +11,5 @@ type BalanceWarningSink interface {
 	TrySubmit(domain.BalanceWarningEvent) bool
 }
 
-// SetBalanceWarningSink injects the composition-time warning sink. TrySubmit must not block.
-func (f *Flusher) SetBalanceWarningSink(sink BalanceWarningSink) { f.warningSink = sink }
+// BalanceWarningSink 由 NewFlusher 构造期一次注入（ctor 参数，禁止事后回填）。
+// TrySubmit 必须非阻塞；nil sink = 事件丢弃（R10，见 drain.go applySettlement 守卫）。

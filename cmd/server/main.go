@@ -366,16 +366,24 @@ func main() {
 	// 收敛；现状 auth 无周期 reload，是兜底缺口——auth-sync worker 补位。
 	// T3b 在其 Reload 内接入 N 与预算重分配，本 worker 侧无需再改）。
 	authSync := newAuthSync(auth, 0, log)
+	var warningW *notification.Worker
 	if cfg.Billing.Enabled {
 		// F2 ledger-cursor（spec 2026-08-23）：游标消费者——不再注入 rec（内存
 		// pending 队列已删，billable 行由 usage flusher 单写落库 billed=false，
 		// 本 worker 只消费账本游标）；LogRetentionDays 接线 lag 护栏（最老
 		// unbilled 行超保留期 80% 高声 Warn）。
+		// 构造序反转（W2-T1）：warning worker 先建、flusher 后建——sink 经
+		// NewFlusher 构造参数一次注入，禁止事后回填。warningW 为具体非 nil
+		// *notification.Worker（notification.New 恒非 nil，nil cooldown 即
+		// panic），无 typed-nil 风险；旧 "real nil interface" 守卫保护的是
+		// 相反方向（flusher→setter 接口装箱），随 setter 删除而失效、此处
+		// 不再需要。billing 关闭 → warningW/billFlusher 均为 nil（与旧分支一致）。
+		warningW = wireBalanceWarning(bwCooldown, svc, mailW, log)
 		billFlusher = billing.NewFlusher(billing.FlushConfig{
 			FlushInterval:          cfg.Billing.FlushInterval,
 			BalanceRefreshInterval: cfg.Billing.BalanceRefreshInterval,
 			LogRetentionDays:       cfg.Usage.LogRetentionDays,
-		}, repos, billBalances, log)
+		}, repos, billBalances, log, warningW)
 		billHooks = &proxy.BillingHooks{
 			Resolver:   svc,
 			Balances:   billBalances,
@@ -383,13 +391,6 @@ func main() {
 			TierPolicy: svc.ServiceTierPolicy,
 		}
 	}
-	// warningSinkSetter 必须保持 real nil interface：billing 关闭时不得把
-	// (*billing.Flusher)(nil) 装入接口，否则条件装配会误判为已启用。
-	var warningSinkSetter balanceWarningSinkSetter
-	if billFlusher != nil {
-		warningSinkSetter = billFlusher
-	}
-	warningW := wireBalanceWarning(warningSinkSetter, bwCooldown, svc, mailW, log)
 	// W1-T2：三协作者一律 px 之前构造、经 proxy.Deps 一次注入（构造重排，
 	// 零语义变化——各构造失败仍 fail-fast，nil 语义由 proxy 内部保持）。
 	// 硬续接绑定存储（Responses REST/WS create-ACK + previous_response_id
