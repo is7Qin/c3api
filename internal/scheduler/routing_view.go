@@ -2,10 +2,22 @@
 package scheduler
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/is7qin/c3api/internal/domain"
 )
+
+// cloneSnapMap 浅拷贝快照 map（语义与原各手写循环逐字一致：恒返回非 nil
+// map，nil 输入得空 map；调用方依赖非 nil——见 routing_compiler_extra_test.go:90
+// 的 NotNil 断言，故不用 maps.Clone 其 nil→nil 语义）。
+func cloneSnapMap[K comparable, V any](in map[K]V) map[K]V {
+	out := make(map[K]V, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
 
 // StaticView holds immutable DB-derived state: groups and byID leaves.
 // Published leaves never mutate; changed account gets new immutable leaf
@@ -25,21 +37,13 @@ func (s *StaticView) Groups() map[int64]*groupSnapshot {
 	if s == nil {
 		return nil
 	}
-	out := make(map[int64]*groupSnapshot, len(s.groups))
-	for k, v := range s.groups {
-		out[k] = v
-	}
-	return out
+	return cloneSnapMap(s.groups)
 }
 func (s *StaticView) ByID() map[int64]*accountSnapshot {
 	if s == nil {
 		return nil
 	}
-	out := make(map[int64]*accountSnapshot, len(s.byID))
-	for k, v := range s.byID {
-		out[k] = v
-	}
-	return out
+	return cloneSnapMap(s.byID)
 }
 
 func (s *StaticView) Account(id int64) (*accountSnapshot, bool) {
@@ -178,10 +182,7 @@ func cloneExploreDecision(in ExploreDecision) ExploreDecision {
 		out.Fallback = append([]uint16(nil), in.Fallback...)
 	}
 	if in.Weights != nil {
-		out.Weights = make(map[int64]int, len(in.Weights))
-		for k, v := range in.Weights {
-			out.Weights[k] = v
-		}
+		out.Weights = maps.Clone(in.Weights)
 	}
 	if in.Cumulative != nil {
 		out.Cumulative = append([]uint64(nil), in.Cumulative...)
@@ -266,21 +267,13 @@ func (v *RoutingView) Groups() map[int64]*groupSnapshot {
 	if v == nil || v.static == nil {
 		return nil
 	}
-	out := make(map[int64]*groupSnapshot, len(v.static.groups))
-	for k, vv := range v.static.groups {
-		out[k] = vv
-	}
-	return out
+	return cloneSnapMap(v.static.groups)
 }
 func (v *RoutingView) ByID() map[int64]*accountSnapshot {
 	if v == nil || v.static == nil {
 		return nil
 	}
-	out := make(map[int64]*accountSnapshot, len(v.static.byID))
-	for k, vv := range v.static.byID {
-		out[k] = vv
-	}
-	return out
+	return cloneSnapMap(v.static.byID)
 }
 
 func (v *RoutingView) Account(id int64) (*accountSnapshot, bool) {
@@ -397,11 +390,11 @@ func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecisi
 		return
 	}
 	s.publisher.publishWithBase(base.Generation(), base.StaticView(), func(cur *RoutingView) *DecisionView {
-		routes := make(map[RouteRef]*RouteDecision)
+		var routes map[RouteRef]*RouteDecision
 		if cur != nil && cur.decision != nil {
-			for k, v := range cur.decision.routes {
-				routes[k] = v
-			}
+			routes = cloneSnapMap(cur.decision.routes)
+		} else {
+			routes = make(map[RouteRef]*RouteDecision)
 		}
 		if decision == nil {
 			delete(routes, route)
