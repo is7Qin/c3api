@@ -69,4 +69,3 @@ func TestRecoverProbingSuccessClearsLatchWithBarrier(t *testing.T) {
 		require.FailNow(t, "publish barrier timeout")
 	}
 }
-

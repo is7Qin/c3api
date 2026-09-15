@@ -17,7 +17,7 @@ type failureRetryTask struct {
 	fingerprint string
 	revision    int64
 	reason      string
-	deps      FailureDeps
+	deps        FailureDeps
 	attempts    int
 }
 
