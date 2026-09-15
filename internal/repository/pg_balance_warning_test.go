@@ -169,8 +169,7 @@ func TestPGBalanceWarning(t *testing.T) {
 		balances := billing.NewBalances(repos, nil)
 		require.NoError(t, balances.Reload(ctx))
 		sink := &pgBalanceWarningSink{}
-		flusher := billing.NewFlusher(billing.FlushConfig{FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour}, repos, balances, nil)
-		flusher.SetBalanceWarningSink(sink)
+		flusher := billing.NewFlusher(billing.FlushConfig{FlushInterval: time.Hour, BalanceRefreshInterval: time.Hour}, repos, balances, nil, sink)
 		drainCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 		require.NoError(t, flusher.Close(drainCtx))

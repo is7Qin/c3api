@@ -149,10 +149,11 @@ type Flusher struct {
 	lagWarned   atomic.Bool
 }
 
-// NewFlusher 构造游标消费者（store = repository 门面；bal 余额快照定向刷新面）。
-func NewFlusher(cfg FlushConfig, store LedgerStore, bal *Balances, log *logx.Logger) *Flusher {
+// NewFlusher 构造游标消费者（store = repository 门面；bal 余额快照定向刷新面；
+// sink = 预警事件接收端——worker 先建、flusher 后建的构造序反转产物；nil = 丢弃事件）。
+func NewFlusher(cfg FlushConfig, store LedgerStore, bal *Balances, log *logx.Logger, sink BalanceWarningSink) *Flusher {
 	f := &Flusher{
-		cfg: cfg, store: store, bal: bal, log: log,
+		cfg: cfg, store: store, bal: bal, log: log, warningSink: sink,
 		balanceCtl: newBatchController(),
 		fefoCtl:    newBatchController(),
 		loopDone:   make(chan struct{}),

@@ -39,9 +39,8 @@ func (s *recordingBalanceWarningSink) snapshot() []domain.BalanceWarningEvent {
 
 func TestSettleLaneParallelHandsOffWarningsOnlyFromSuccessfulCommits(t *testing.T) {
 	store := newFakeLedgerStore()
-	f := newFlusherWith(store, map[int64]int64{4: 1_000, 5: 1_000})
 	sink := &recordingBalanceWarningSink{accept: true}
-	f.SetBalanceWarningSink(sink)
+	f := newFlusherWith(store, map[int64]int64{4: 1_000, 5: 1_000}, sink)
 	committed := domain.BalanceWarningEvent{EventType: domain.NotificationBalanceWarningCrossed, EntityType: domain.NotificationUser, EntityID: 4, BalanceMillis: 900, ThresholdMillis: 900, Email: "committed@example.com"}
 	uncommitted := domain.BalanceWarningEvent{EventType: domain.NotificationBalanceWarningCrossed, EntityType: domain.NotificationUser, EntityID: 5, BalanceMillis: 900, ThresholdMillis: 900, Email: "rolled-back@example.com"}
 	settle := func(_ context.Context, _, _, bucket int) (domain.SettlementSummary, error) {
@@ -76,9 +75,8 @@ func TestSettleLaneParallelHandsOffWarningsOnlyFromSuccessfulCommits(t *testing.
 
 func TestApplySettlementIgnoresWarningSinkDrop(t *testing.T) {
 	store := newFakeLedgerStore()
-	f := newFlusherWith(store, map[int64]int64{1: 1_000})
 	sink := &recordingBalanceWarningSink{}
-	f.SetBalanceWarningSink(sink)
+	f := newFlusherWith(store, map[int64]int64{1: 1_000}, sink)
 	event := domain.BalanceWarningEvent{EventType: domain.NotificationBalanceWarningCrossed, EntityType: domain.NotificationUser, EntityID: 1, BalanceMillis: 900, ThresholdMillis: 900, Email: "drop@example.com"}
 
 	f.applySettlement(domain.SettlementSummary{Balances: []domain.UserBalance{{UserID: 1, Balance: 900}}, BalanceWarnings: []domain.BalanceWarningEvent{event}})
