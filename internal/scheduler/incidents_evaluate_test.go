@@ -329,10 +329,12 @@ func incidentLaneFixture(t *testing.T) (*Scheduler, *memLoader, map[CandidateQua
 	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(1000)}}
 	s, _ := newProbedSched(t, m, q, prices)
 	boundary := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
-	s.SetWindowedQualitySource(func(time.Time) WindowedQuality {
-		return WindowedQuality{Current: q, Baseline: base, SettledBoundary: boundary}
-	})
-	s.SetPricesSource(func() map[string]domain.ResolvedPrices { return prices })
+	s.sources = &CompilerSources{
+		Quality: func(time.Time) WindowedQuality {
+			return WindowedQuality{Current: q, Baseline: base, SettledBoundary: boundary}
+		},
+		Prices: func() map[string]domain.ResolvedPrices { return prices },
+	}
 	return s, m, q, base, prices, boundary.Unix()
 }
 

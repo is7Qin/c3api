@@ -142,11 +142,11 @@ func TestStartupReloadAllPG(t *testing.T) {
 		// Select 执行预编译计划，0 间隔误配防 ticker 空转 panic。
 		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil, nil)
-	sched.SetWindowedQualitySource(nil)
-	sched.SetPricesSource(nil)
 	schedCtx, cancelSched := context.WithCancel(ctx)
 	t.Cleanup(cancelSched)
-	require.NoError(t, sched.Start(schedCtx))
+	// 编译源 Start 期结构注入（空源 = 字段缺席但已武装，与旧双 setter(nil)
+	// 等价：编译道照常发布计划，质量/价格输入为空）。
+	require.NoError(t, sched.Start(schedCtx, &scheduler.CompilerSources{}))
 	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
 	balances := billing.NewBalances(repos, nil)
 	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})

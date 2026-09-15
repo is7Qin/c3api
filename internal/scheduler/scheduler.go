@@ -125,11 +125,11 @@ type Scheduler struct {
 	health    *RuntimeHealth
 	// Compile lane (Task11 wiring): serial background compiler feeding the
 	// single routingPublisher. Request path never touches these.
+	// sources 是 Start 期结构注入的编译双源（W3-T1；nil = 未装配，armed 门
+	// no-op）：装配期一次性写入（Start 存入后起循环），此后只读。
 	compiler           routeCompiler
-	windowedQualityFn  func(time.Time) WindowedQuality
-	pricesFn           func() map[string]domain.ResolvedPrices
+	sources            *CompilerSources
 	compileCh          chan struct{}
-	compileArmed       bool
 	lastDecisionBytes  []byte      // compile-lane owned (single serial caller)
 	lastCompiledStatic *StaticView // compile-lane owned; bytes alone omit static identity
 	// v5 event-driven compile lane (single mechanism replacing the
@@ -224,11 +224,15 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealt
 // Name 满足 worker.Worker 契约（Global Constraints #5）。
 func (s *Scheduler) Name() string { return "scheduler" }
 
-// Start 启动定时同步；重复 Start 幂等（返回错误）。
-func (s *Scheduler) Start(ctx context.Context) error {
+// Start 启动定时同步；编译源是 Start 期依赖（W3-T1 结构注入，取代已删的
+// 双 setter）：src 非 nil 即武装编译道（reload/分钟边界/质量/价格触发经
+// armed 门放行），nil = 未装配 legacy 形态（触发 no-op，绝不发布编译视
+// 图）。重复 Start 幂等（返回错误）。
+func (s *Scheduler) Start(ctx context.Context, src *CompilerSources) error {
 	if !s.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("scheduler: already started")
 	}
+	s.sources = src
 	worker.GoLoop(ctx, "scheduler-sync", s.log, s.syncLoop)
 	compileDone := worker.GoLoop(ctx, "scheduler-compile", s.log, s.compileLoop)
 	s.compileDone.Store(&compileDone)

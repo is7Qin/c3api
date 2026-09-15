@@ -383,7 +383,9 @@ func TestMarkResultDisabledStaysDisabled(t *testing.T) {
 	require.NoError(t, s.Close(context.Background()))
 }
 
-// TestWorkerContract 满足 worker.Worker 契约：Name + 幂等 Start。
+// TestWorkerContract Start 幂等 + 源武装：非 nil 源即武装（RequestCompile
+// 放行），重复 Start 报错。worker.Worker 契约由 cmd/server schedWorker 适配
+// 器承担（*Scheduler.Start 携带源参数，不再直接满足该接口）。
 func TestWorkerContract(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 4)}})
@@ -393,8 +395,8 @@ func TestWorkerContract(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	require.NoError(t, s.Start(ctx))
-	require.EqualError(t, s.Start(ctx), "scheduler: already started")
+	require.NoError(t, s.Start(ctx, &CompilerSources{}))
+	require.EqualError(t, s.Start(ctx, &CompilerSources{}), "scheduler: already started")
 }
 
 // tplWith 构造可指纹化的模板（api_key + 非空 base_url）。需要"指纹不可派生"

@@ -100,7 +100,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 	publishTestRoutes(t, sched)
 
 	sctx, scancel := context.WithCancel(ctx)
-	require.NoError(t, sched.Start(sctx))
+	require.NoError(t, sched.Start(sctx, nil))
 	t.Cleanup(scancel)
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: repos.Accounts, Failer: sched, Log: nil})
 	adapter := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, up.URL), sdkbridge.RotationDeps{})
