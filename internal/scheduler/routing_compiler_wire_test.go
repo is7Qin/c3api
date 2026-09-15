@@ -35,8 +35,10 @@ func (c *countingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 }
 
 func wireSources(s *Scheduler, q map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) {
-	s.SetWindowedQualitySource(func(time.Time) WindowedQuality { return WindowedQuality{Current: q} })
-	s.SetPricesSource(func() map[string]domain.ResolvedPrices { return prices })
+	s.sources = &CompilerSources{
+		Quality: func(time.Time) WindowedQuality { return WindowedQuality{Current: q} },
+		Prices:  func() map[string]domain.ResolvedPrices { return prices },
+	}
 }
 
 func allLaneIDs(rd *RouteDecision) []int64 {
@@ -643,12 +645,15 @@ func TestSchedulerCloseJoinsCompileLoop(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
 	s := newSched(t, newMemLoader(map[int64][]*domain.Account{10: accs}))
-	wireSources(s, nil, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
 	bc := &blockingCompiler{entered: make(chan struct{}, 1), release: make(chan struct{}), inner: NewRoutingCompiler()}
 	s.compiler = bc
 
 	ctx, cancel := context.WithCancel(context.Background())
-	require.NoError(t, s.Start(ctx))
+	require.NoError(t, s.Start(ctx, &CompilerSources{
+		Prices: func() map[string]domain.ResolvedPrices {
+			return map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+		},
+	}))
 	s.RequestCompile()
 	<-bc.entered // compile in flight, loop cannot exit until released
 	cancel()     // base ctx gone: the loop exits only after compileOnce returns

@@ -540,17 +540,19 @@ func main() {
 	// 观测读面（flow/frontier）钉死 rollup 表——缺本 lane 生产聚合永远为空。
 	// 请求路径零参与；无内存队列，停机零排空义务（DB 即队列）。
 	routingRollup := quality.NewRollupWorker(repos.Partitions, quality.RollupConfig{}, log)
-	// 路由编译器装配武装（Task18）：quality 源 = M 缓存窗口 provider（settled
-	// PG 分钟 + recorder 未落库活体行合并，基线仅 PG；见 routing_sources.go），
-	// 价格源 = svc 定价快照基底解析（缺价模型缺席 → compiler costKnown=false
-	// 落 Explore）。装配必须先于 snapReg.ReloadAll（scheduler 首刷 →
-	// RequestCompile，armed 才发布编译视图）与 wm.StartAll（compileLoop
-	// 消费者）；编译失败保留旧视图是编译道契约（routing_compiler_wire.go），
+	// 路由编译源装配（W3-T1：双 setter 已删，编译双源 Start 期结构注入）：
+	// quality 源 = M 缓存窗口 provider（settled PG 分钟 + recorder 未落库活体
+	// 行合并，基线仅 PG；见 routing_sources.go），价格源 = svc 定价快照基底
+	// 解析（缺价模型缺席 → compiler costKnown=false 落 Explore）。两源一次性
+	// 给齐 both-or-nothing，经 schedWorker 在 Start 期交接（healthWorker R1
+	// 先例）；编译失败保留旧视图是编译道契约（routing_compiler_wire.go），
 	// 失败/成功新鲜度经 scheduler Stats 上运维面。
-	sched.SetWindowedQualitySource(NewWindowedQualityProvider(qualityRecorder, repos.Partitions))
-	sched.SetPricesSource(func() map[string]domain.ResolvedPrices {
-		return svc.ResolvedPricesByModel(time.Now())
-	})
+	schedSrc := &scheduler.CompilerSources{
+		Quality: NewWindowedQualityProvider(qualityRecorder, repos.Partitions),
+		Prices: func() map[string]domain.ResolvedPrices {
+			return svc.ResolvedPricesByModel(time.Now())
+		},
+	}
 	aiRouter := proxy.AIRouter(px)
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
 	userHandler := userapi.Router(svc, iss, auth, ruleEngine)
@@ -572,8 +574,11 @@ func main() {
 	// health 启动适配：真 probe 在 Start 期一次性交接（位置与 Name 不变——
 	// 注册序=反序排空语义与 worker_order_test 的 ident 断言依赖）。
 	healthW := healthWorker{h: runtimeHealth, probe: probe}
+	// 编译源启动适配（W3-T1：双 setter 已删）：同一位置同一顺序注册 schedW
+	// （Name="scheduler" 不变）——反序排空语义与 worker_order_test 断言依赖。
+	schedW := schedWorker{s: sched, src: schedSrc}
 	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker,
-		inv, sched, ruleEngine, retryWorker, healthW, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync, routingRollup)
+		inv, schedW, ruleEngine, retryWorker, healthW, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync, routingRollup)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
 	// G2-3（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的

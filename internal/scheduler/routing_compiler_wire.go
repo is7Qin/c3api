@@ -22,27 +22,20 @@ type routeCompiler interface {
 	Compile(in CompilerInputs) (*DecisionView, error)
 }
 
-// SetWindowedQualitySource injects the windowed quality provider (settled PG
-// merged with live minute buckets; see quality_provider.go). Assembly-time
-// only (before Start). Arming enables reload-triggered compiles.
-func (s *Scheduler) SetWindowedQualitySource(provider func(time.Time) WindowedQuality) {
-	s.windowedQualityFn = provider
-	s.compileArmed = true
-}
-
-// SetPricesSource injects the dynamic pricing input provider.
-// Assembly-time only (before Start). Arming enables reload-triggered
-// compiles.
-func (s *Scheduler) SetPricesSource(prices func() map[string]domain.ResolvedPrices) {
-	s.pricesFn = prices
-	s.compileArmed = true
+// CompilerSources 是编译道的双输入源（W3-T1：SetWindowedQualitySource /
+// SetPricesSource 双回填已删，改为 Start 期结构注入）。两源一次性给齐
+// （both-or-nothing）；nil 字段按缺席处理（compileOnce 跳过）；nil 整体 =
+// 未装配（RequestCompile armed 门 no-op，fireOnMinuteAdvance 同理）。
+type CompilerSources struct {
+	Quality func(time.Time) WindowedQuality
+	Prices  func() map[string]domain.ResolvedPrices
 }
 
 // RequestCompile signals the compile lane (non-blocking; coalesced by the
-// debounce window). No-op until sources are armed so legacy/unwired
-// schedulers never publish compiled views.
+// debounce window). No-op until sources are armed (Start received non-nil)
+// so legacy/unwired schedulers never publish compiled views.
 func (s *Scheduler) RequestCompile() {
-	if !s.compileArmed {
+	if s.sources == nil {
 		return
 	}
 	select {
@@ -133,15 +126,16 @@ func (s *Scheduler) compileOnce() {
 	in := CompilerInputs{
 		Static: target,
 	}
-	if s.windowedQualityFn != nil {
-		wq := s.windowedQualityFn(now)
+	src := s.sources
+	if src != nil && src.Quality != nil {
+		wq := src.Quality(now)
 		in.Quality = wq.Current
 		in.Baseline = wq.Baseline
 		in.EvaluatedMinute = wq.SettledBoundary.Unix()
 	}
 	in.IncidentEval = s.incidentEvaluator()
-	if s.pricesFn != nil {
-		in.Prices = s.pricesFn()
+	if src != nil && src.Prices != nil {
+		in.Prices = src.Prices()
 	}
 	fire := &compileFire{input: in, carry: carry, scopes: scopes, overflow: scopeOverflow}
 	wantFull, fullCause := s.resolveCompileScope(fire)

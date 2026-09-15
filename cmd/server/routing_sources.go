@@ -12,6 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/worker"
 )
 
 // windowSettledBackend is the narrow PG face the windowed provider needs
@@ -115,3 +116,28 @@ func NewWindowedQualityProvider(rec *quality.Recorder, parts windowSettledBacken
 		&recorderWindowLive{rec: rec},
 	)
 }
+
+// schedWorker 适配 Scheduler 启动（W3-T1，healthWorker R1 先例）：编译双源
+// 是 Start 期依赖（qualityRecorder 与 svc 都在 sched 之后就绪），适配器让
+// worker.Manager 契约不变、Name 保持 "scheduler"（注册序=反序排空语义依
+// 赖）。Stats 原样透出——ops 运维面不因适配掉线。Start 期交接编译源并触发
+// 一次初始编译：ReloadAll 先于 StartAll，装配前重载处于未武装态，触发在此
+// 补齐——首个编译视图仍在启动后即刻发布（plan-ready 门语义不变）；未装配
+// （src nil）时触发是 armed 门内的 no-op。
+type schedWorker struct {
+	s   *scheduler.Scheduler
+	src *scheduler.CompilerSources
+}
+
+var _ worker.Worker = schedWorker{}
+
+func (w schedWorker) Name() string { return w.s.Name() }
+func (w schedWorker) Stats() any   { return w.s.Stats() }
+func (w schedWorker) Start(ctx context.Context) error {
+	if err := w.s.Start(ctx, w.src); err != nil {
+		return err
+	}
+	w.s.RequestCompile()
+	return nil
+}
+func (w schedWorker) Close(ctx context.Context) error { return w.s.Close(ctx) }
