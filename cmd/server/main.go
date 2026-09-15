@@ -457,6 +457,20 @@ func main() {
 	// 规则 typed Throttle/FailAccount 双面接线：本地 HealthController 即时生效
 	//（latch fail-closed 先于持久化）；持久化走有界 persist queue——满可丢、写
 	// 失败可弃、四指标可观测（rule best-effort 契约，无 outbox）。
+	// B18/B19 DEFER（ponytail: 2026-09-14）：RuleEngine.SetHealthSink/SetPersistFunc
+	// 暂不清掉——不是遗漏，是构造环真实存在：
+	// - scheduler.New 要求 ruleEngine 非 nil（事件投递面；nil 在首个 MarkResult/
+	//   Classify/FlushRules 即解引用 panic，见 internal/scheduler/scheduler.go），
+	//   故 rule.New 必须先于 scheduler.New；
+	// - 而 sink 要 sched（NewHealthControllerWithScheduler 共享 s.latch 并做
+	//   revision 围栏 + sched.FailAccount 内存摘除），persistFn 要 sched.LatchStore()，
+	//   故两者只能在 sched 之后构造。
+	// - latch 提前抽出只解 B19 不解 B18：无 sched 的 sink 丢围栏+摘除（降级，非等价
+	//   重排）；persist-queue 搬出 RuleEngine 是 epic（worker 生命周期+四指标全搬），
+	//   非 minimal fix；新增窄接口 late-bind 违反"禁新增回填"纪律（2026-09-14）。
+	// 重开条件：(1) owner 豁免恰好一个 AttachRuleEngine 窄接口；或 (2) 批准 latch
+	// 一等组件 + HealthController 拆分（latch-only sink + sched-dispatch 装饰器）
+	// epic。在此之前保持恰好一次接线（rule_wiring_test.go 断言），勿加第三个 setter。
 	healthCtrl := scheduler.NewHealthControllerWithScheduler(runtimeHealth, sched)
 	ruleEngine.SetHealthSink(healthCtrl)
 	ruleEngine.SetPersistFunc(scheduler.NewRulePersistFunc(repos, sched.LatchStore(), schedGroupPub{pub}, log))
