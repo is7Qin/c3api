@@ -279,6 +279,20 @@ func (f *FlowMinute) FlowRows() []repository.RoutingFlowRow {
 	}
 	return cp
 }
+
+// flowRowsOwned 返回内部行切片本身（不做拷贝）。**仅限独占产物**：只允许
+// 用于 snapshotForRedis / snapshotForPG 产出的 *FlowMinute（materializeShell
+// 每次新建、不与该分钟所有者共享），且消费方在同一调用内同步消费
+// （json.Marshal / repo Upsert）后立即丢弃该 fm。调用方可以原地改写行字段
+// （flowRowsFromMinute 会写 InstanceSrc/AbsoluteSequence/TerminalMinute flush
+// 戳——独占下原地写安全）。持有来源或跨调用保留的场景必须走 FlowRows()。
+func (f *FlowMinute) flowRowsOwned() []repository.RoutingFlowRow {
+	if f == nil {
+		return nil
+	}
+	return f.flowRows
+}
+
 func (f *FlowMinute) SetFlowRows(rows []repository.RoutingFlowRow) {
 	if f == nil {
 		return

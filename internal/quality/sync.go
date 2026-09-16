@@ -553,41 +553,40 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		w.mu.Unlock()
 		return
 	}
-	pipe := w.rdb.Pipeline()
+	// 单缓冲编码：所有 cell 的 field/value 追加进同一 []byte，HSet 以子切片
+	// 引用（只读使用；Exec 前不写缓冲 → 引用有效）。旧路径每 cell 一次
+	// map+json.Marshal+4×hex.EncodeToString，是本进程第一大分配源。
+	type cellOut struct {
+		minute int64
+		field  []byte
+		val    []byte
+	}
+	outs := make([]cellOut, 0, len(cells))
+	var buf []byte
+	buf = make([]byte, 0, len(cells)*EstimatedQualityRowBytes)
 	for _, c := range cells {
+		fieldStart := len(buf)
+		buf = appendQualityField(buf, c.key)
+		field := buf[fieldStart:len(buf)]
 		w.mu.Lock()
 		seq := w.redisSeq[c.minute] + 1
 		w.redisSeq[c.minute] = seq
 		w.mu.Unlock()
-		field := hex.EncodeToString(c.key.RouteClassID[:]) + ":" + hex.EncodeToString(c.key.QualityClassID[:]) + ":" + hex.EncodeToString(c.key.Fingerprint[:])
-		val, _ := json.Marshal(map[string]any{
-			"identity_version":  c.key.IdentityVersion,
-			"route_class_id":    hex.EncodeToString(c.key.RouteClassID[:]),
-			"quality_class_id":  hex.EncodeToString(c.key.QualityClassID[:]),
-			"fingerprint":       hex.EncodeToString(c.key.Fingerprint[:]),
-			"instance_src":      w.instanceSrc,
-			"bucket_minute":     c.minute,
-			"absolute_sequence": seq,
-			"attempts":          c.qm.attempts,
-			"successes":         c.qm.successes,
-			"count_429":         c.qm.err429,
-			"count_4xx":         c.qm.err4xx,
-			"count_5xx":         c.qm.err5xx,
-			"count_network":     c.qm.errNetwork,
-			"ttft_n":            c.qm.ttftCount,
-			"ttft_sum_q32":      c.qm.sumQ32,
-			"ttft_sumsq_q32":    c.qm.sumSqQ32,
-			"ttft_hist":         c.qm.hist[:],
-			"input_tokens":      c.qm.inputTokens,
-			"output_tokens":     c.qm.outputTokens,
-			"cache_read":        c.qm.cacheRead,
-			"cache_create":      c.qm.cacheCreate,
-			"calls":             c.qm.calls,
-			"images":            c.qm.images,
-		})
-		qKey := fmt.Sprintf("%s%d:%s", redisQualityPrefix, c.minute, w.instanceSrc)
-		pipe.HSet(ctx, qKey, field, string(val))
-		pipe.Expire(ctx, qKey, redisTTL)
+		valStart := len(buf)
+		buf = appendQualityCellJSON(buf, w.instanceSrc, c.minute, seq, c.key, c.qm)
+		outs = append(outs, cellOut{minute: c.minute, field: field, val: buf[valStart:len(buf)]})
+	}
+	pipe := w.rdb.Pipeline()
+	keyOfMinute := make(map[int64]string, 4)
+	for _, o := range outs {
+		qKey, ok := keyOfMinute[o.minute]
+		if !ok {
+			qKey = fmt.Sprintf("%s%d:%s", redisQualityPrefix, o.minute, w.instanceSrc)
+			keyOfMinute[o.minute] = qKey
+			// Expire 每 (minute, instance) 键每轮一次：旧实现每 cell 一发。
+			pipe.Expire(ctx, qKey, redisTTL)
+		}
+		pipe.HSet(ctx, qKey, o.field, o.val)
 	}
 	if len(cells) > 0 {
 		if _, err := pipe.Exec(ctx); err != nil {
@@ -634,7 +633,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 				"instance_src":      w.instanceSrc,
 				"terminal_minute":   minute,
 				"absolute_sequence": seq,
-				"rows":              fm.FlowRows(),
+				"rows":              fm.flowRowsOwned(),
 			})
 		}
 		fm = nil
@@ -1090,7 +1089,9 @@ func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []reposit
 		return nil
 	}
 	if fm.HasFlowRows() {
-		rows := fm.FlowRows()
+		// 独占产物（snapshotForPG）→ 免去 FlowRows 的二次深拷；下面的 flush
+		// 戳原地改写在该产物被同步消费后立即丢弃的前提下安全。
+		rows := fm.flowRowsOwned()
 		for i := range rows {
 			rows[i].InstanceSrc = instanceSrc
 			rows[i].AbsoluteSequence = seq
