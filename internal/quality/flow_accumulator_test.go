@@ -967,7 +967,8 @@ func TestRed_FlowPreviousAccountOwnershipBoundaries(t *testing.T) {
 
 	snap, tok, ok := owner.snapshotForPG(m)
 	require.True(t, ok)
-	*fm.FlowRows()[0].PreviousAccountID = 42
+	// 独占产物（snapshotForPG）可以被消费方原地改写：materializeShell 新建
+	// 行与全新 pointee，改它不得触达 owner 保留态。
 	*snap.FlowRows()[0].PreviousAccountID = 43
 	fm2, ok := rec.FlowMinute(m)
 	require.True(t, ok)

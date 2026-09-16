@@ -265,28 +265,18 @@ type FlowMinute struct {
 // identity is codes plus fixed-size byte arrays, never strings.
 
 func (f *FlowMinute) Minute() int64 { return f.minute }
-func (f *FlowMinute) FlowRows() []repository.RoutingFlowRow {
-	if f == nil {
-		return nil
-	}
-	cp := make([]repository.RoutingFlowRow, len(f.flowRows))
-	for i := range f.flowRows {
-		cp[i] = f.flowRows[i]
-		if f.flowRows[i].PreviousAccountID != nil {
-			v := *f.flowRows[i].PreviousAccountID
-			cp[i].PreviousAccountID = &v
-		}
-	}
-	return cp
-}
 
-// flowRowsOwned 返回内部行切片本身（不做拷贝）。**仅限独占产物**：只允许
-// 用于 snapshotForRedis / snapshotForPG 产出的 *FlowMinute（materializeShell
-// 每次新建、不与该分钟所有者共享），且消费方在同一调用内同步消费
-// （json.Marshal / repo Upsert）后立即丢弃该 fm。调用方可以原地改写行字段
-// （flowRowsFromMinute 会写 InstanceSrc/AbsoluteSequence/TerminalMinute flush
-// 戳——独占下原地写安全）。持有来源或跨调用保留的场景必须走 FlowRows()。
-func (f *FlowMinute) flowRowsOwned() []repository.RoutingFlowRow {
+// FlowRows 返回该分钟的行切片（内部存储，不做拷贝）。所有权契约：
+//   - 保留态分钟（Recorder/FlowOwner 持有）返回的行**只读**——调用方不得改写、
+//     不得长期别名；需要独立副本时自行 clone；
+//   - 独占产物（snapshotForRedis / snapshotForPG 的 materializeShell 输出，与该
+//     分钟所有者不共享）可原地改写——flowRowsFromMinute 会写
+//     InstanceSrc/AbsoluteSequence/TerminalMinute flush 戳——但必须同步消费后
+//     立即丢弃该 *FlowMinute。
+//
+// 旧版逐次深拷贝访问器已删：发布/flush 路径全部走独占产物，逐次拷贝纯属多余
+// （压测 heap：FlowRows 深拷 0.69GB/战役），且拷贝掩盖了所有权语义。
+func (f *FlowMinute) FlowRows() []repository.RoutingFlowRow {
 	if f == nil {
 		return nil
 	}
