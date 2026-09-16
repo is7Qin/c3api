@@ -424,3 +424,26 @@ func TestDoRequestNon200DrainsBodyForReuse(t *testing.T) {
 		})
 	}
 }
+
+// TestDoRequestRecordsDialAndConnWait httptrace 建连观测：首请求真实拨号记 dial，
+// 次请求复用 keep-alive 只记 conn_wait；两请求都必须有 conn_wait 样本。
+func TestDoRequestRecordsDialAndConnWait(t *testing.T) {
+	srv, _ := connCountingServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		_, _ = fmt.Fprint(w, "data: {\"ok\":true}\n\n")
+		fl.Flush()
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		fl.Flush()
+	})
+	useAddr(t, srv.URL)
+	m := &metrics{errDetail: make(map[string]int64)}
+	client := &http.Client{Timeout: 5 * time.Second}
+	rng := rand.New(rand.NewPCG(1, 1))
+	doRequest(client, m, rng, true)
+	doRequest(client, m, rng, true)
+	require.Equal(t, int64(2), m.total.Load())
+	require.Equal(t, int64(2), m.connWaitN.Load(), "每次取连接都要有 conn_wait 样本")
+	require.GreaterOrEqual(t, m.dialN.Load(), int64(1), "首请求真实拨号必须记录")
+	require.LessOrEqual(t, m.dialN.Load(), int64(2), "复用后不应再拨号")
+}
