@@ -446,3 +446,25 @@ func TestConcWorkerStats(t *testing.T) {
 	require.Equal(t, int64(1), st.ConsecutiveErrors)
 	require.Equal(t, int64(1), st.TrackedEntries)
 }
+
+// BenchmarkConcCollectAllocs collect 的每 tick 分配（5000 键、5% 受限）：
+// 旧实现浅拷全表 []KeyMeta（~400KB/tick @5000 键）+ 全尺寸 seenU/targets；
+// 新实现零表拷贝、seenU 惰性小尺寸、targets 复用。
+func BenchmarkConcCollectAllocs(b *testing.B) {
+	keys := make(map[string]domain.KeyMeta, 5000)
+	for i := 0; i < 5000; i++ {
+		keys["ck-"+strconv.Itoa(i)] = domain.KeyMeta{
+			KeyID: int64(i + 1), UserID: int64(i/5 + 1),
+			KeyMaxConc: 8, UserMaxConc: 16,
+		}
+	}
+	a := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil, true)
+	if err := a.Reload(context.Background()); err != nil {
+		b.Fatal(err)
+	}
+	w := NewConcSyncWorker(a, nil, "inst", nil)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = w.collect()
+	}
+}

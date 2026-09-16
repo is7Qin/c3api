@@ -14,7 +14,6 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -113,8 +112,12 @@ type ConcSyncWorker struct {
 	gate   *concurrencyGate // 计数器读 + clusterView 换入点
 	log    *logx.Logger
 
-	errs      atomic.Int64 // 连续 tick 失败数（恢复归零；测试确定性信号）
-	lastWarn  atomic.Int64 // 上次 Warn unixnano（仅 sync goroutine 读写）
+	errs     atomic.Int64 // 连续 tick 失败数（恢复归零；测试确定性信号）
+	lastWarn atomic.Int64 // 上次 Warn unixnano（仅 sync goroutine 读写）
+	// targets 是 collect 的复用暂存（tick 串行单所有者）：旧实现每 500ms
+	// 把整张 keys 表浅拷成 []KeyMeta 再过滤，是压测 heap 里 collect 0.98GB
+	// 的来源；直接边扫描边出目标后，拷贝消失，只剩活跃目标的切片复用。
+	targets   []concTarget
 	startOnce sync.Once
 	stopOnce  sync.Once
 	cancel    context.CancelFunc
@@ -181,24 +184,23 @@ func (w *ConcSyncWorker) Close(ctx context.Context) error {
 // 值现读 gate 计数器原子。多 key 同用户只报一次（user 层按 uid 聚合计数）。
 func (w *ConcSyncWorker) collect() []concTarget {
 	a := w.auth
-	a.mu.RLock()
-	metas := make([]domain.KeyMeta, 0, len(a.keys))
-	for _, m := range a.keys {
-		metas = append(metas, m)
-	}
-	a.mu.RUnlock()
-
 	snap := w.gate.store.Load()
-	targets := make([]concTarget, 0, len(metas))
-	seenU := make(map[int64]bool, len(metas))
-	for _, m := range metas {
-		if m.UserMaxConc > 0 && !seenU[m.UserID] {
-			seenU[m.UserID] = true
-			if c := snap.users[m.UserID]; c != nil {
-				if v := c.Load(); v > 0 {
-					targets = append(targets, concTarget{
-						rkey: concUserPrefix + strconv.FormatInt(m.UserID, 10), id: m.UserID, val: v,
-					})
+	targets := w.targets[:0]
+	var seenU map[int64]bool
+	a.mu.RLock()
+	for _, m := range a.keys {
+		if m.UserMaxConc > 0 {
+			if seenU == nil {
+				seenU = make(map[int64]bool, 32)
+			}
+			if !seenU[m.UserID] {
+				seenU[m.UserID] = true
+				if c := snap.users[m.UserID]; c != nil {
+					if v := c.Load(); v > 0 {
+						targets = append(targets, concTarget{
+							rkey: concUserPrefix + strconv.FormatInt(m.UserID, 10), id: m.UserID, val: v,
+						})
+					}
 				}
 			}
 		}
@@ -212,6 +214,8 @@ func (w *ConcSyncWorker) collect() []concTarget {
 			}
 		}
 	}
+	a.mu.RUnlock()
+	w.targets = targets
 	return targets
 }
 
