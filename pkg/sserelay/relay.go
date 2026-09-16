@@ -84,9 +84,8 @@ func (e Event) EventName() []byte {
 type Observer func(Event)
 
 type Config struct {
-	FlushBytes    int           // 缓冲达到该值立即 flush；0 时默认 4096
-	FlushInterval time.Duration // 从 relay 启动起以固定间隔触发 timer flush（仅 pending > 0 时实际 flush）；0 时默认 1ms
-	Observer      Observer
+	FlushBytes int // 缓冲达到该值立即 flush；0 时默认 4096
+	Observer   Observer
 	// Mapper 可选的逐帧转换器（协议转换 W5）：nil = 原样转发（热路径零开销，
 	// 单帧一次 nil 判定）。非 nil 时每帧先经 Mapper 变换再写出；Observer 仍见
 	// 原始帧（用量提取不因转换失真）。drop=true → 帧丢弃不写出。映射帧字节
@@ -102,19 +101,17 @@ type relay struct {
 	fl  http.Flusher
 	cfg Config
 
-	mu       sync.Mutex // 保护 bw/pending/timer
-	pending  int        // 累计写入字节；阈值/timer/结束残余 flush 后归零（首事件 latency flush 不归零，其字节继续计入阈值）
+	mu       sync.Mutex // 保护 bw/pending
+	pending  int        // 累计写入字节；阈值/drain/结束残余 flush 后归零（首事件 latency flush 不归零，其字节继续计入阈值）
 	lastTick time.Time
 
-	timer      *time.Timer
-	timerArmed bool           // 按需武装：仅当存在待 flush 数据时 timer 才在跑（瞬时短流零 timer 开销）
-	stopFlush  chan struct{}  // 关闭后 timer goroutine 与 deadline watcher 退出
-	wg         sync.WaitGroup // timer/deadline 两 goroutine 汇合（替代 timerDone/deadlineDone chan——纯退出汇合语义，WaitGroup 等价且免每流 2 个 makechan；spec 2026-08-15-gc-opt-ab B-1）
+	stopWatch chan struct{}  // 关闭后 deadline watcher 退出
+	wg        sync.WaitGroup // deadline watcher 汇合（替代 deadlineDone chan；spec 2026-08-15-gc-opt-ab B-1）
 }
 
 // relayBufio 池化的 bufio 读写器（每流各 8KB；GC 削减 P6：免每流 2×8KB 新建
-// + 直接压 sizeclass；流结束 Reset(nil) 解除对 dst/src 的引用后归还——timer
-// goroutine 在 stopFlushTimer 汇合后才归还，无并发复用）。
+// + 直接压 sizeclass；流结束 Reset(nil) 解除对 dst/src 的引用后归还——watcher
+// goroutine 在 stopWatcher 汇合后才归还，无并发复用）。
 type relayBufio struct {
 	bw *bufio.Writer
 	br *bufio.Reader
@@ -134,9 +131,6 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 	if cfg.FlushBytes <= 0 {
 		cfg.FlushBytes = 4096
 	}
-	if cfg.FlushInterval <= 0 {
-		cfg.FlushInterval = time.Millisecond
-	}
 	rb := relayBufioPool.Get().(*relayBufio)
 	rb.bw.Reset(dst)
 	rb.br.Reset(&ctxReader{ctx: ctx, r: src})
@@ -145,17 +139,16 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 		w:         dst,
 		bw:        rb.bw,
 		br:        rb.br,
-		stopFlush: make(chan struct{}),
+		stopWatch: make(chan struct{}),
 	}
 	r.fl, _ = dst.(http.Flusher)
-	// 两 goroutine 启动前 Add——此后 wg.Wait 恒安全（无 Add/Wait 竞态）
-	r.wg.Add(2)
-	r.startFlushTimer()
+	// goroutine 启动前 Add——此后 wg.Wait 恒安全（无 Add/Wait 竞态）
+	r.wg.Add(1)
 	r.startDeadlineWatcher()
 
 	err := r.run()
-	r.stopFlushTimer()
-	// 读循环退出后（timer 已停、goroutine 已退出）再 flush 残余并归还 writer；
+	r.stopWatcher()
+	// 读循环退出（watcher 已汇合）后再 flush 残余并归还 writer；
 	// 仅实际仍有缓冲字节时才 flush（首事件已 flush 后无残余，不产生多余 Flush）
 	r.mu.Lock()
 	if r.bw.Buffered() > 0 {
@@ -217,10 +210,9 @@ func (r *relay) run() error {
 	}
 	for {
 		// flush-on-drain：读缓冲已空 ⟹ 下一次 ReadSlice 将因等新数据而阻塞。
-		// 此刻先 flush 已写入的完整帧——同一读批的多帧合并为一次写系统调用，
-		// 且比 ~1ms timer flush 更早（延迟不增反降）；flush 后顺手停掉刚装载
-		// 的 timer，消除逐帧 timer 唤醒（write 里装载、本处卸载，往返 µs 级，
-		// timer 实际不再触发）。
+		// 此刻先 flush 已写入的完整帧——同一读批的多帧合并为一次写系统调用。
+		// 这是稳态唯一 flush 触发点（另有阈值与结束残余两条）；旧逐帧 1ms
+		// timer 机制已整体删除（每流一次 timer 火 + goroutine 唤醒）。
 		if br.Buffered() == 0 {
 			if err := r.drainFlush(); err != nil {
 				return err
@@ -358,63 +350,27 @@ func (r *relay) write(p []byte) error {
 	if r.pending >= r.cfg.FlushBytes {
 		return r.flushLocked()
 	}
-	// 按需武装 flush timer（后备路径）：稳态下真正的 flush 发生在 run() 顶部
-	// 的 drainFlush——读缓冲耗尽、即将阻塞等新数据时同步 flush，并在同一迭代
-	// 内 Stop 掉这里刚武装的 timer（装载/卸载往返 µs 级，timer 实际不触发）。
-	// timer 仅覆盖"离开 drain 检查后、下一次 ReadSlice 前"的窄窗口，仍是"有
-	// 数据才武装"：瞬时短流（上游秒回、首事件已 flush）绝无 timer 开销——
-	// 否则每流一个 1ms 周期 timer + goroutine，万级并发流 = 每秒千万次 timer
-	// 唤醒（50k 并发上机实测：timers.run 26% + timer 锁 16%，吞吐 11.9k/s→3k/s）。
-	r.armFlushTimerLocked()
+	// 无定时器：flush 只由三处触发——阈值（上）、run() 顶部的 drainFlush
+	// （读缓冲耗尽、即将阻塞等新数据时同步 flush 完整帧）、结束残余 flush。
+	// 每次 write 后 run() 必回到 drain 检查或结束路径，故不存在"写后无人
+	// flush"的窗口；逐帧 1ms timer 机制（每流一次 timer 火 + goroutine 唤醒，
+	// 50k 并发实测 timers.run 26% + timer 锁 16%）随 flush-on-drain 一并删除。
 	return nil
 }
 
-// armFlushTimerLocked 武装 flush timer（一次写入只武装一次；触发后由 timer
-// goroutine 置回未武装，下次写入按需重新武装）。
-func (r *relay) armFlushTimerLocked() {
-	if !r.timerArmed {
-		r.timerArmed = true
-		r.timer.Reset(r.cfg.FlushInterval)
-	}
-}
-
-func (r *relay) startFlushTimer() {
-	r.timer = time.NewTimer(time.Hour)
-	r.timer.Stop() // 初始未武装（见 armFlushTimerLocked 注释）
-	go func() {
-		defer r.wg.Done()
-		for {
-			select {
-			case <-r.ctx.Done():
-				return
-			case <-r.stopFlush:
-				return
-			case <-r.timer.C:
-				r.mu.Lock()
-				_ = r.flushLocked() // 触发时必有待 flush 数据（武装前提），pending 归零
-				r.timerArmed = false
-				r.mu.Unlock()
-			}
-		}
-	}()
-}
-
-func (r *relay) stopFlushTimer() {
-	r.timer.Stop()
-	close(r.stopFlush) // 唤醒阻塞在 select 上的 timer goroutine 与 deadline watcher
-	r.wg.Wait()        // 两 goroutine 全汇合后才允许释放 writer（close 保证两 select 必然唤醒退出；各 goroutine 退出路径唯一——select 任一分支 return 即 Done 恰好一次）
+func (r *relay) stopWatcher() {
+	close(r.stopWatch) // 唤醒阻塞在 select 上的 deadline watcher
+	r.wg.Wait()        // 汇合后才允许释放 writer（close 保证 select 必然唤醒退出；退出路径唯一——select 任一分支 return 即 Done 恰好一次）
 }
 
 // startDeadlineWatcher 写侧 deadline 与 ctx.Done 联动（C-P2-1 方案 1）：
 // "取消 = 写失败 = 正常退出"——半开客户端上阻塞的写（bw.Flush 持 r.mu、
 // 无 ctx 感知，全库无 SetWriteDeadline）在 deadline 处失败返回，flushFrame
-// 传播 → run 正常退出；无此联动则 run + timer 双 goroutine 永久泄漏
-// （每流 2 goroutine + 2×8KB 池化 bufio）。
-// 独立 goroutine 而非挂 timer goroutine（方案 2 失效窗口：timer 已消费 C
-// 后阻塞在 r.mu.Lock/flush 时，ctx.Done 无法唤醒锁等待者）；本 goroutine
-// 永不触碰 r.mu，取消必然可达。设置后即退出；流正常结束时由 stopFlush
-// 唤醒退出（net/http 在 handler 返回后自行复位 conn 写 deadline，无残留
-// 影响 keep-alive 复用）。
+// 传播 → run 正常退出；无此联动则 run + watcher 永久泄漏（每流 2 goroutine
+// + 2×8KB 池化 bufio）。
+// 本 goroutine 永不触碰 r.mu，取消必然可达。设置后即退出；流正常结束时由
+// stopWatch 唤醒退出（net/http 在 handler 返回后自行复位 conn 写 deadline，
+// 无残留影响 keep-alive 复用）。
 func (r *relay) startDeadlineWatcher() {
 	go func() {
 		defer r.wg.Done()
@@ -425,16 +381,16 @@ func (r *relay) startDeadlineWatcher() {
 			// （无 Unwrap 的包装层 = ErrNotSupported，C-P2-1 前置修复：
 			// middleware.statusWriter.Unwrap）。
 			_ = http.NewResponseController(r.w).SetWriteDeadline(time.Now())
-		case <-r.stopFlush:
+		case <-r.stopWatch:
 		}
 	}()
 }
 
-// flushLocked 批量 flush（阈值 / timer / 结束残余触发）：pending > 0 时执行
+// flushLocked 批量 flush（阈值 / drain / 结束残余触发）：pending > 0 时执行
 // bw.Flush + fl.Flush，并把 pending 归零，使事件重新累积批量（spec 规则 2/3）。
 // 不检查 bw.Buffered()：>= 8192B 的帧走 bufio 直写路径时缓冲为空但确实有数据
 // 待 flush，bw.Flush 对空缓冲是廉价 no-op，随后仍需 fl.Flush 把数据推给对端。
-// 错误返回给写路径上报；timer goroutine 与退出路径忽略（客户端断开不可恢复）。
+// 错误返回给写路径上报；drain/退出路径忽略（客户端断开不可恢复）。
 func (r *relay) flushLocked() error {
 	if r.pending <= 0 {
 		return nil
@@ -460,18 +416,13 @@ func (r *relay) flushNoResetLocked() error {
 	return nil
 }
 
-// drainFlush flush-on-drain：读缓冲耗尽、即将阻塞等新数据前调用。flush 已
-// 写入的完整帧（同一读批多帧 = 一次写系统调用），并停掉 write 里刚装载的
-// flush timer——装载与卸载在同一循环迭代内往返（µs 级），稳态下 timer 不再
-// 真正触发（旧路径：每帧一次 1ms timer 火 = 每流 50 次/秒的 timer+goroutine
-// 唤醒）。空 pending 时 flushLocked 为 no-op，但 timer 仍要停（避免空转）。
+// drainFlush flush-on-drain：读缓冲耗尽、即将阻塞等新数据前调用，flush 已
+// 写入的完整帧（同一读批多帧 = 一次写系统调用）。这是稳态下的唯一 flush
+// 触发点（另有阈值与结束残余两条）；旧逐帧 1ms timer 机制已随此前置语义
+// 一并删除——drain 比 timer 更早、更强。空 pending 为 no-op。
 func (r *relay) drainFlush() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.timerArmed {
-		r.timer.Stop()
-		r.timerArmed = false
-	}
 	if r.pending <= 0 {
 		return nil
 	}
