@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"strconv"
 	"sync"
@@ -98,6 +97,23 @@ type cursorEntry struct {
 	gen  uint64
 }
 
+// cellOut 是一个 cell 的 pipeline 参数视图：field/val 是 worker cellBuf 的
+// 子切片（仅在 Exec 前有效，见 doRedisLocked 的编码段注释）。
+type cellOut struct {
+	minute int64
+	field  []byte
+	val    []byte
+}
+
+// lastCellUndo 是 Redis 游标推进的撤销记录：仅记录本次实际变更的键（no-op
+// 赋值直接跳过），撤销 = 逆向回放。切片随 worker 复用——替代旧路径每轮
+// maps.Clone(整张游标表)（实测 587MB/窗口，且成本随进程寿命增长）。
+type lastCellUndo struct {
+	key  Key
+	prev cursorEntry
+	had  bool
+}
+
 type SyncWorker struct {
 	rec         *Recorder
 	rdb         *redis.Client
@@ -131,6 +147,15 @@ type SyncWorker struct {
 	// flowBuf 是 Redis flow 发布的复用 wrapper 缓冲（worker 单线程 + flushMu
 	// 保护；rows 数组 JSON 由 FlowOwner 按 (minute, version) 缓存提供）。
 	flowBuf []byte
+	// cellBuf/cellOuts 是 Redis cell 发布的复用编码缓冲与 pipeline 参数切片
+	// （worker 单线程 + flushMu 串行；cellOuts 的 field/val 是 cellBuf 子切片，
+	// 每轮重填）。旧路径每轮新建（万级 cell × ~700B + 增长，实测 flat
+	// 4.42GB/窗口，占该窗口 21%）。
+	cellBuf  []byte
+	cellOuts []cellOut
+	// redisUndo 是 Redis 游标推进的撤销日志（复用切片；每轮 flush 起始清空、
+	// 失败逆向回放、成功丢弃）。见 lastCellUndo。
+	redisUndo []lastCellUndo
 
 	started              atomic.Bool
 	closeOnce            sync.Once
@@ -413,17 +438,36 @@ func (w *SyncWorker) collectRedisDeltaLocked(curMinuteUnix int64) map[int64]map[
 	cells := snapshotActiveCells(w.rec)
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.redisUndo = w.redisUndo[:0] // 本轮 flush 的撤销日志起点
 	for _, c := range cells {
 		cur := snapCell(c)
 		prev, ok := w.lastCell[c.key]
 		delta := diffCellSnap(cur, prev, ok, c.gen)
-		w.lastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
+		if !ok || prev.snap != cur || prev.gen != c.gen {
+			// 仅在真实变更时记录撤销并推进；no-op 赋值跳过（少写少记）。
+			w.redisUndo = append(w.redisUndo, lastCellUndo{key: c.key, prev: prev, had: ok})
+			w.lastCell[c.key] = cursorEntry{snap: cur, gen: c.gen}
+		}
 		if delta.isZero() {
 			continue
 		}
 		accumulateDelta(w.minuteAbs, curMinuteUnix, c.key, c.gen, delta)
 	}
 	return cloneMinuteMapUpto(w.minuteAbs, curMinuteUnix)
+}
+
+// revertRedisCursorLocked 逆向回放本轮 flush 的游标撤销日志（调用方须持有
+// w.mu；失败路径专用）。成功路径无需回放——日志在下轮 collect 起点清空。
+func (w *SyncWorker) revertRedisCursorLocked() {
+	for i := len(w.redisUndo) - 1; i >= 0; i-- {
+		u := w.redisUndo[i]
+		if u.had {
+			w.lastCell[u.key] = u.prev
+		} else {
+			delete(w.lastCell, u.key)
+		}
+	}
+	w.redisUndo = w.redisUndo[:0]
 }
 
 func (w *SyncWorker) collectPGDeltaLocked() map[int64]map[Key]*QualityMinute {
@@ -469,15 +513,10 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 	if w.rec == nil {
 		return
 	}
-	// collect redis delta (non-destructive ack after success)
 	curMinute := start.UTC().Truncate(time.Minute).Unix()
-	// We need to collect delta without yet acking; our collect methods already updated minuteAbs/lastCell.
-	// To make it per-sink ack, we should not have updated lastCell before success. So we need to snapshot first, then ack after success.
-	// For backward compat, our collect already mutated. To fix per-sink, we keep copies of lastCell before mutation and revert on failure.
-	// Simplify: do snapshot collection into temp, then on success commit.
-	// For now we implement by saving copies
+	// minuteAbs 的每轮克隆保留（pending 集小、撤销语义含对象内容快照）；
+	// lastCell 改为撤销日志（collectRedisDeltaLocked 内记录、失败逆向回放）。
 	w.mu.Lock()
-	savedLastCell := maps.Clone(w.lastCell)
 	savedMinuteAbs := cloneMinuteMap(w.minuteAbs)
 	w.mu.Unlock()
 
@@ -515,7 +554,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		w.stats.LastRedisError = w.lastRedisError
 		w.stats.RedisErrors++
 		// revert delta ack
-		w.lastCell = savedLastCell
+		w.revertRedisCursorLocked()
 		w.minuteAbs = savedMinuteAbs
 		w.mu.Unlock()
 		return
@@ -537,7 +576,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		// revert unsent deltas? Keep them for next tick: do not ack those minutes fully
 		// For simplicity, do not ack at all on budget truncation; keep all for next
 		w.mu.Lock()
-		w.lastCell = savedLastCell
+		w.revertRedisCursorLocked()
 		w.minuteAbs = savedMinuteAbs
 		w.lastRedisError = "redis budget truncated"
 		w.stats.LastRedisError = w.lastRedisError
@@ -548,7 +587,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 	bytesEst := len(cells) * EstimatedQualityRowBytes
 	if bytesEst > redisMaxBytes || w.clock().Sub(start) > redisMaxDuration {
 		w.mu.Lock()
-		w.lastCell = savedLastCell
+		w.revertRedisCursorLocked()
 		w.minuteAbs = savedMinuteAbs
 		w.lastRedisError = "redis budget exceeded"
 		w.stats.LastRedisError = w.lastRedisError
@@ -556,17 +595,11 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		w.mu.Unlock()
 		return
 	}
-	// 单缓冲编码：所有 cell 的 field/value 追加进同一 []byte，HSet 以子切片
-	// 引用（只读使用；Exec 前不写缓冲 → 引用有效）。旧路径每 cell 一次
-	// map+json.Marshal+4×hex.EncodeToString，是本进程第一大分配源。
-	type cellOut struct {
-		minute int64
-		field  []byte
-		val    []byte
-	}
-	outs := make([]cellOut, 0, len(cells))
-	var buf []byte
-	buf = make([]byte, 0, len(cells)*EstimatedQualityRowBytes)
+	// 单缓冲编码：所有 cell 的 field/value 追加进同一 []byte（worker 复用缓冲，
+	// 跨 flush 保容量），HSet 以子切片引用（只读使用；Exec 前不写缓冲 → 引用
+	// 有效）。旧路径每轮新建缓冲并增长 + 全新 outs 切片（实测 flat 4.42GB/窗口）。
+	outs := w.cellOuts[:0]
+	buf := w.cellBuf[:0]
 	for _, c := range cells {
 		fieldStart := len(buf)
 		buf = appendQualityField(buf, c.key)
@@ -579,6 +612,8 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		buf = appendQualityCellJSON(buf, w.instanceSrc, c.minute, seq, c.key, c.qm)
 		outs = append(outs, cellOut{minute: c.minute, field: field, val: buf[valStart:len(buf)]})
 	}
+	w.cellOuts = outs
+	w.cellBuf = buf
 	pipe := w.rdb.Pipeline()
 	keyOfMinute := make(map[int64]string, 4)
 	for _, o := range outs {
@@ -598,7 +633,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 			w.stats.LastRedisError = w.lastRedisError
 			w.stats.RedisErrors++
 			// revert per-sink ack
-			w.lastCell = savedLastCell
+			w.revertRedisCursorLocked()
 			w.minuteAbs = savedMinuteAbs
 			if w.log != nil {
 				w.log.Warn("quality redis publish failed", logx.Error(err))
@@ -658,6 +693,8 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 	for minute := range mergedByMinute {
 		delete(w.minuteAbs, minute)
 	}
+	// 游标推进随成功落定：撤销日志丢弃（下轮 collect 起点亦会清空，这里显式结算）。
+	w.redisUndo = w.redisUndo[:0]
 	w.lastRedis = w.clock()
 	w.stats.LastRedisMs = w.clock().Sub(start).Milliseconds()
 	w.stats.FreshnessMs = 0
