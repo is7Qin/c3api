@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	_ "net/http/pprof"
@@ -183,11 +184,7 @@ func main() {
 			defer wg.Done()
 			// 每 worker 独立 transport（池容量 1 即够——稳态恒 1 条连接）：
 			// 避免共享 transport 的连接池锁竞争（#19）；参数同全局版。
-			transport := &http.Transport{
-				MaxIdleConns:        1,
-				MaxIdleConnsPerHost: 1,
-				IdleConnTimeout:     90 * time.Second,
-			}
+			transport := newLoadTransport(m)
 			client := &http.Client{Timeout: 10 * time.Minute, Transport: transport}
 			if isAPI {
 				// api 模式：worker 自含循环（登录/预热/计时段都在内）。
@@ -430,35 +427,49 @@ func affinityIdx(rng *rand.Rand) int {
 	return rng.IntN(*affinityKeys)
 }
 
+// newLoadTransport 每 worker 独立 transport（#19：连接池锁零竞争）+ 建连观测。
+// dial 统计由自持 DialContext 完成（语义与 http 默认 dialer 一致：30s 超时、
+// 30s keepalive）——httptrace 的 Connect* 回调由 transport 拨号 goroutine
+// 调用，实测高并发回环下偶发不触发（tcpConns=1 而回调零记录），统计不可信；
+// 自持 dialer 记录在发起拨号的同一调用栈内，确定性成立。GotConn（conn_wait）
+// 仍走 httptrace：与请求同 goroutine，确定性成立。
+func newLoadTransport(m *metrics) *http.Transport {
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	return &http.Transport{
+		MaxIdleConns:        1,
+		MaxIdleConnsPerHost: 1,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			t0 := time.Now()
+			conn, err := dialer.DialContext(ctx, network, addr)
+			if err == nil {
+				d := time.Since(t0)
+				m.dialN.Add(1)
+				m.dialUS.Add(d.Microseconds())
+				if d > time.Second {
+					m.dialSlow.Add(1)
+				}
+			}
+			return conn, err
+		},
+	}
+}
+
 // doRequest executes one request; count=true includes it in the result metrics.
 // Connection failures retain the jittered backoff used by the stream benchmark.
 func doRequest(client *http.Client, m *metrics, rng *rand.Rand, count bool) {
 	req := newRequestFromTemplate(pickKey(rng), affinityIdx(rng))
 	reqStart := time.Now()
-	// 建连观测：ConnectStart/Done 仅真实拨号时触发（Keep-Alive 复用不记 dial）；
-	// GotConn 每次取连接都触发，reqStart→GotConn 含拨号等待与连接池排队。
-	var dialStart time.Time
-	var dialDur time.Duration
+	// 建连等待观测：GotConn 每次取连接都触发（与请求同 goroutine，确定性），
+	// reqStart→GotConn 含 dial 等待与连接池排队；dial 本身由 transport 的
+	// DialContext 记录（见 newLoadTransport）。
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
-		ConnectStart: func(_, _ string) { dialStart = time.Now() },
-		ConnectDone: func(_, _ string, err error) {
-			if err == nil {
-				dialDur = time.Since(dialStart)
-			}
-		},
 		GotConn: func(httptrace.GotConnInfo) {
 			m.connWaitN.Add(1)
 			m.connWaitMS.Add(time.Since(reqStart).Milliseconds())
 		},
 	}))
 	resp, err := client.Do(req)
-	if dialDur > 0 {
-		m.dialN.Add(1)
-		m.dialUS.Add(dialDur.Microseconds())
-		if dialDur > time.Second {
-			m.dialSlow.Add(1)
-		}
-	}
 	if err != nil {
 		if count {
 			m.errs.Add(1)
