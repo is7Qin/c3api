@@ -206,7 +206,7 @@ func (s *Scheduler) compileOnce() {
 	}
 	s.incidentActive.Store(int64(s.incidents.activeCount()))
 	s.incidentEvalMs.Store(s.timeNow().UnixMilli())
-	b := decisionViewBytes(dv)
+	b := s.decisionEnc.encode(dv)
 
 	s.publisher.mu.Lock()
 	if s.publisher.pending != pendingSnap {
@@ -223,14 +223,14 @@ func (s *Scheduler) compileOnce() {
 	}
 	if pendingSnap != nil {
 		published := s.publisher.publishPairLocked(target, dv)
-		s.lastDecisionBytes = b
+		s.lastDecisionBytes = append(s.lastDecisionBytes[:0], b...)
 		s.lastCompiledStatic = published
 		s.publisher.mu.Unlock()
 		return
 	}
 	s.publisher.mu.Unlock()
 	if s.publisher.publishWithBase(baseGen, baseStatic, func(*RoutingView) *DecisionView { return dv }) {
-		s.lastDecisionBytes = b
+		s.lastDecisionBytes = append(s.lastDecisionBytes[:0], b...)
 		s.lastCompiledStatic = target
 	}
 }
@@ -245,57 +245,74 @@ func (s *Scheduler) incidentEvaluator() IncidentEvalFunc {
 	}
 }
 
-// decisionViewBytes encodes the routes of a DecisionView into canonical
-// deterministic bytes: routes sorted by full RouteRef identity, compiled
-// lanes in published order with request-independent metadata, weights sorted
-// by account ID. Used as the publish byte-equality guard.
+// decisionEncoder 是编译道单所有者（compileOnce 串行调用）的复用编码器：
+// refs/ids 暂存与输出缓冲跨 fire 复用，varint 零分配——把旧路径的
+// "每 fire 新缓冲增长（可达数十 MB 容量）+ 每整数一次小分配"压成稳态零分配。
+type decisionEncoder struct {
+	buf  bytes.Buffer
+	refs []RouteRef
+	ids  []int64
+}
+
+// decisionViewBytes 编码为规范字节（测试与一次性调用面；每次新建编码器）。
+// 编译道热路径用 decisionEncoder.encode 复用缓冲与暂存。
 func decisionViewBytes(d *DecisionView) []byte {
+	var e decisionEncoder
+	return e.encode(d)
+}
+
+// encode encodes the routes of a DecisionView into canonical deterministic
+// bytes: routes sorted by full RouteRef identity, compiled lanes in published
+// order with request-independent metadata, weights sorted by account ID. Used
+// as the publish byte-equality guard. Returned bytes alias the encoder buffer
+// (valid until the next encode) — retain via copy.
+func (e *decisionEncoder) encode(d *DecisionView) []byte {
 	if d == nil {
 		return nil
 	}
-	refs := make([]RouteRef, 0, len(d.routes))
+	e.refs = e.refs[:0]
 	for k := range d.routes {
-		refs = append(refs, k)
+		e.refs = append(e.refs, k)
 	}
-	sort.Slice(refs, func(i, j int) bool { return lessRouteRef(refs[i], refs[j]) })
-	var buf bytes.Buffer
-	writeUvarint(&buf, uint64(len(refs)))
-	for _, ref := range refs {
+	sort.Slice(e.refs, func(i, j int) bool { return lessRouteRef(e.refs[i], e.refs[j]) })
+	e.buf.Reset()
+	writeUvarint(&e.buf, uint64(len(e.refs)))
+	for _, ref := range e.refs {
 		rd := d.routes[ref]
-		writeVarint(&buf, ref.GroupID)
-		writeStr(&buf, ref.Format)
-		writeStr(&buf, ref.Model)
-		writeStr(&buf, ref.OperationTag)
-		writeStr(&buf, ref.RouteClassID)
-		writeStr(&buf, rd.Format)
-		writeStr(&buf, rd.RequestedModel)
-		writeStr(&buf, rd.RouteClassID)
-		writeStr(&buf, rd.CallerCategory)
-		writeStr(&buf, rd.OperationTag)
-		writeCompiled(&buf, rd.Primary)
-		writeCompiled(&buf, rd.Degraded)
-		writeCompiled(&buf, rd.Explore.Ordered)
-		ids := make([]int64, 0, len(rd.Explore.Weights))
+		writeVarint(&e.buf, ref.GroupID)
+		writeStr(&e.buf, ref.Format)
+		writeStr(&e.buf, ref.Model)
+		writeStr(&e.buf, ref.OperationTag)
+		writeStr(&e.buf, ref.RouteClassID)
+		writeStr(&e.buf, rd.Format)
+		writeStr(&e.buf, rd.RequestedModel)
+		writeStr(&e.buf, rd.RouteClassID)
+		writeStr(&e.buf, rd.CallerCategory)
+		writeStr(&e.buf, rd.OperationTag)
+		writeCompiled(&e.buf, rd.Primary)
+		writeCompiled(&e.buf, rd.Degraded)
+		writeCompiled(&e.buf, rd.Explore.Ordered)
+		e.ids = e.ids[:0]
 		for id := range rd.Explore.Weights {
-			ids = append(ids, id)
+			e.ids = append(e.ids, id)
 		}
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-		writeUvarint(&buf, uint64(len(ids)))
-		for _, id := range ids {
-			writeVarint(&buf, id)
-			writeVarint(&buf, int64(rd.Explore.Weights[id]))
+		sort.Slice(e.ids, func(i, j int) bool { return e.ids[i] < e.ids[j] })
+		writeUvarint(&e.buf, uint64(len(e.ids)))
+		for _, id := range e.ids {
+			writeVarint(&e.buf, id)
+			writeVarint(&e.buf, int64(rd.Explore.Weights[id]))
 		}
-		writeUvarint(&buf, uint64(len(rd.Explore.Cumulative)))
+		writeUvarint(&e.buf, uint64(len(rd.Explore.Cumulative)))
 		for _, c := range rd.Explore.Cumulative {
-			writeUvarint(&buf, c)
+			writeUvarint(&e.buf, c)
 		}
-		writeUvarint(&buf, rd.Explore.Total)
-		writeVarint(&buf, int64(rd.Explore.ExploreBP))
-		writeCompiledIndices(&buf, rd.Explore.Ordered, rd.Explore.Fallback)
-		writeCacheDomainPlan(&buf, rd)
-		writeIncident(&buf, rd.Incident)
+		writeUvarint(&e.buf, rd.Explore.Total)
+		writeVarint(&e.buf, int64(rd.Explore.ExploreBP))
+		writeCompiledIndices(&e.buf, rd.Explore.Ordered, rd.Explore.Fallback)
+		writeCacheDomainPlan(&e.buf, rd)
+		writeIncident(&e.buf, rd.Incident)
 	}
-	return buf.Bytes()
+	return e.buf.Bytes()
 }
 
 // writeIncident encodes the expose-only mark in fixed field order (sorted
@@ -330,12 +347,17 @@ func writeCacheDomainPlan(buf *bytes.Buffer, decision *RouteDecision) {
 	}
 }
 
+// writeUvarint 把 uvarint 写进缓冲：栈上数组编码后一次 Write——旧实现
+// binary.AppendUvarint(nil, v) 每次分配一个小切片（视图级编码实测 27 万
+// allocs/op 的主源）。
 func writeUvarint(buf *bytes.Buffer, v uint64) {
-	buf.Write(binary.AppendUvarint(nil, v))
+	var tmp [binary.MaxVarintLen64]byte
+	buf.Write(tmp[:binary.PutUvarint(tmp[:], v)])
 }
 
 func writeVarint(buf *bytes.Buffer, v int64) {
-	buf.Write(binary.AppendVarint(nil, v))
+	var tmp [binary.MaxVarintLen64]byte
+	buf.Write(tmp[:binary.PutVarint(tmp[:], v)])
 }
 
 func writeStr(buf *bytes.Buffer, s string) {

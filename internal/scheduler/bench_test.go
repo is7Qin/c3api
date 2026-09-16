@@ -358,3 +358,38 @@ func TestCompilerFixtureHashRejectsMutation(t *testing.T) {
 	require.NotEqual(t, before, after)
 	t.Logf("fixture_sha256_mismatch before=%s after=%s", before, after)
 }
+
+// BenchmarkDecisionViewBytes encodes the 5000-account fixture's decision view
+// (the per-fire publish byte-guard payload). 5000 candidates × ~10 fields
+// exercises the varint/string encoder at full width.
+func BenchmarkDecisionViewBytes(b *testing.B) {
+	s := schedulerWithAccounts(b, 5000, domain.ModelMapping{})
+	dv := s.View().DecisionView()
+	if dv == nil {
+		b.Fatal("missing decision view")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkDecisionBytes = len(decisionViewBytes(dv))
+	}
+}
+
+var benchmarkDecisionBytes int
+
+// BenchmarkDecisionViewEncodeReused measures the production path: the
+// lane-owned encoder reuses its output buffer and refs/ids scratch across
+// fires (steady-state zero allocation).
+func BenchmarkDecisionViewEncodeReused(b *testing.B) {
+	s := schedulerWithAccounts(b, 5000, domain.ModelMapping{})
+	dv := s.View().DecisionView()
+	if dv == nil {
+		b.Fatal("missing decision view")
+	}
+	var e decisionEncoder
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkDecisionBytes = len(e.encode(dv))
+	}
+}
