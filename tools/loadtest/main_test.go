@@ -425,8 +425,10 @@ func TestDoRequestNon200DrainsBodyForReuse(t *testing.T) {
 	}
 }
 
-// TestDoRequestRecordsDialAndConnWait httptrace 建连观测：首请求真实拨号记 dial，
+// TestDoRequestRecordsDialAndConnWait 建连观测：首请求真实拨号记 dial，
 // 次请求复用 keep-alive 只记 conn_wait；两请求都必须有 conn_wait 样本。
+// dial 由 newLoadTransport 的自持 DialContext 记录（确定性；httptrace 的
+// Connect* 回调在拨号 goroutine 上偶发丢失，已弃用）。
 func TestDoRequestRecordsDialAndConnWait(t *testing.T) {
 	srv, _ := connCountingServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -438,7 +440,7 @@ func TestDoRequestRecordsDialAndConnWait(t *testing.T) {
 	})
 	useAddr(t, srv.URL)
 	m := &metrics{errDetail: make(map[string]int64)}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: newLoadTransport(m)}
 	rng := rand.New(rand.NewPCG(1, 1))
 	doRequest(client, m, rng, true)
 	doRequest(client, m, rng, true)
