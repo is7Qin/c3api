@@ -311,7 +311,7 @@ func TestEventNameAnchorZeroAlloc(t *testing.T) {
 
 func TestRelayFirstEventFlushesImmediately(t *testing.T) {
 	fr := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
-	require.NoError(t, relayStream(fr, "data: {\"a\":1}\n\n", Config{FlushBytes: 4096, FlushInterval: time.Hour}))
+	require.NoError(t, relayStream(fr, "data: {\"a\":1}\n\n", Config{FlushBytes: 4096}))
 	require.True(t, fr.Flushed, "首个事件必须触发 Flush")
 	require.Equal(t, int32(1), fr.flushed.Load())
 }
@@ -326,13 +326,13 @@ func TestRelayBatchesUntilThreshold(t *testing.T) {
 		src.WriteString(strings.Repeat("y", 2048))
 		src.WriteString("\n\n")
 	}
-	require.NoError(t, relayStream(fr, src.String(), Config{FlushBytes: 4096, FlushInterval: time.Hour}))
+	require.NoError(t, relayStream(fr, src.String(), Config{FlushBytes: 4096}))
 	// 首事件 1 次 + 第 2 事件攒满阈值 1 次 + 流结束残余 1 次
 	require.Equal(t, int32(3), fr.flushed.Load())
 }
 
 // stagedReader 依次返回 chunks，之后阻塞在 block 上：用于构造"流仍存活、
-// 停在 Read 上、没有下一帧"的场景，让 timer 成为唯一可能的 flush 来源。
+// 停在 Read 上、没有下一帧"的场景。
 type stagedReader struct {
 	chunks [][]byte
 	block  chan struct{}
@@ -349,18 +349,17 @@ func (s *stagedReader) Read(p []byte) (int, error) {
 	return 0, io.EOF
 }
 
-// TestRelayFlushedBeforeBlockingRead 钉住 flush-on-drain 取代旧 timer 兜底：
-// 源在发出帧后阻塞时，帧字节必须在 relay 阻塞于下一次 Read 之前就已 flush —
-// drain 在读缓冲边界同步执行（首帧走即时 flush，后续帧走 drainFlush），
-// 因此不再需要一次 timer 火把字节推出；timer 在 drain 时停掉，稳态零 timer
-// 唤醒（旧测试 TestRelayTimerFlushesWithoutNextEvent 钉的是"第 2 次 flush
-// 只能来自 timer"，机制变更后该空 flush 不再存在）。
+// TestRelayFlushedBeforeBlockingRead 钉住 flush-on-drain 语义：源在发出帧后
+// 阻塞时，帧字节必须在 relay 阻塞于下一次 Read 之前就已 flush——阻塞发生在
+// drain（读缓冲边界同步 flush）之后；逐帧 timer 机制已删，不存在"等一次
+// timer 火才把字节推出"的路径（旧测试 TestRelayTimerFlushesWithoutNextEvent
+// 钉的正是那种 timer 兜底，机制删除后该空 flush 不再存在）。
 func TestRelayFlushedBeforeBlockingRead(t *testing.T) {
 	fr := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
 	src := &stagedReader{chunks: [][]byte{[]byte("data: x\n\n")}, block: make(chan struct{})}
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Relay(context.Background(), fr, src, Config{FlushBytes: 4096, FlushInterval: 20 * time.Millisecond})
+		errCh <- Relay(context.Background(), fr, src, Config{FlushBytes: 4096})
 	}()
 	// 首事件即时 flush。
 	require.Eventually(t, func() bool { return fr.flushed.Load() >= 1 }, time.Second, time.Millisecond)
@@ -370,9 +369,9 @@ func TestRelayFlushedBeforeBlockingRead(t *testing.T) {
 		t.Fatalf("relay exited while source was still blocked: %v", err)
 	default:
 	}
-	// 远超 FlushInterval 的窗口内不得再出现空 flush（timer 已在 drain 停掉）。
+	// 静置窗口内不得再出现任何 flush（没有 timer，也没有第二次空 flush）。
 	time.Sleep(60 * time.Millisecond)
-	require.Equal(t, int32(1), fr.flushed.Load(), "drain must not leave a redundant timer flush behind")
+	require.Equal(t, int32(1), fr.flushed.Load(), "no flush source may fire while blocked")
 	close(src.block)
 	require.NoError(t, <-errCh)
 }
@@ -483,8 +482,8 @@ func TestRelayCancelClassifiesAsCanceled(t *testing.T) {
 // deadClientWriter 模拟半开客户端（进程死亡、无 FIN/RST 收包）：Write 永久
 // 阻塞，直到 SetWriteDeadline 被调用（ctx 取消联动）才失败返回——"取消 =
 // 写失败 = 正常退出"的唯一路径。实现退化（deadline 无独立 watcher，永不被
-// 设置）时 Write 永不返回 → Relay 挂死 → 测试超时失败（兜底抓住方案 2 类
-// 失效：timer goroutine 阻塞在 r.mu 上时 ctx.Done 无法唤醒锁等待者）。
+// 设置）时 Write 永不返回 → Relay 挂死 → 测试超时失败（兜底抓住联动失效类
+// 缺陷：阻塞写持 r.mu、无 ctx 感知）。
 type deadClientWriter struct {
 	entered    chan struct{} // Write 已进入阻塞（测试等它再取消）
 	deadlineCh chan struct{} // SetWriteDeadline 已调用 → 放行 Write
@@ -509,8 +508,8 @@ func (w *deadClientWriter) SetWriteDeadline(time.Time) error {
 }
 
 // TestRelayCancelUnblocksDeadClientWrite C-P2-1 回归：半开客户端（写阻塞）
-// → ctx 取消后必须写失败退出且无 goroutine 泄漏（run + timer + watcher
-// 全汇合——Relay 返回即 stopFlushTimer 已 join 全部内部 goroutine）。
+// → ctx 取消后必须写失败退出且无 goroutine 泄漏（run + watcher 全汇合——
+// Relay 返回即 stopWatcher 已 join 全部内部 goroutine）。
 func TestRelayCancelUnblocksDeadClientWrite(t *testing.T) {
 	wr := &deadClientWriter{entered: make(chan struct{}, 1), deadlineCh: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -546,14 +545,6 @@ func TestRelayNoFlusherStillWrites(t *testing.T) {
 	require.Equal(t, "data: x\n\n", wr.buf.String())
 }
 
-func TestRelayTimerGoroutineExits(t *testing.T) {
-	// 大量短流：每流 timer 必须退出，-race 下无泄漏/竞争
-	for i := 0; i < 200; i++ {
-		rec := httptest.NewRecorder()
-		require.NoError(t, relayStream(rec, "data: x\n\n", Config{FlushInterval: time.Millisecond}))
-	}
-}
-
 func TestRelayConcurrentStreams(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
@@ -561,7 +552,7 @@ func TestRelayConcurrentStreams(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			rec := httptest.NewRecorder()
-			require.NoError(t, relayStream(rec, "data: x\n\ndata: y\n\n", Config{FlushBytes: 1024, FlushInterval: time.Millisecond}))
+			require.NoError(t, relayStream(rec, "data: x\n\ndata: y\n\n", Config{FlushBytes: 1024}))
 		}()
 	}
 	wg.Wait()
@@ -569,7 +560,7 @@ func TestRelayConcurrentStreams(t *testing.T) {
 
 // TestRelayDrainFlushCoalescesFrames 钉住 flush-on-drain 契约：同一读批的
 // 多帧在缓冲耗尽时合并为至多 2 次 flush（首帧即时 flush + drain flush），
-// 而非逐帧 flush。drain 还会停掉刚装载的 timer（稳态零 timer 火）。
+// 而非逐帧 flush；已无任何定时 flush 来源（timer 机制整体删除）。
 func TestRelayDrainFlushCoalescesFrames(t *testing.T) {
 	var sb strings.Builder
 	const frames = 64
@@ -577,7 +568,7 @@ func TestRelayDrainFlushCoalescesFrames(t *testing.T) {
 		sb.WriteString("data: {\"i\":1}\n\n")
 	}
 	rec := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
-	require.NoError(t, relayStream(rec, sb.String(), Config{FlushInterval: time.Millisecond}))
+	require.NoError(t, relayStream(rec, sb.String(), Config{}))
 	require.Equal(t, sb.String(), rec.Body.String())
 	require.LessOrEqual(t, rec.flushed.Load(), int32(2), "batch must coalesce to <=2 flushes")
 	require.GreaterOrEqual(t, rec.flushed.Load(), int32(1), "bytes must be flushed")

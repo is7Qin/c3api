@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 )
 
 // 100 个 chunk 的典型高频流（对应压测 fakeupstream 100 × 20ms 的流形态）
@@ -28,7 +27,7 @@ func sseStream100() string {
 func BenchmarkRelay100Chunks(b *testing.B) {
 	src := sseStream100()
 	var sink bytes.Buffer
-	cfg := Config{FlushBytes: 4096, FlushInterval: time.Millisecond}
+	cfg := Config{FlushBytes: 4096}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		sink.Reset()
@@ -71,8 +70,8 @@ func sseFrames(n, size int) []byte {
 }
 
 // BenchmarkRelayShortStream 短流形态（fakeup chunks=1 / 快速单事件流）：单帧
-// 即 EOF，走首事件立即 flush 路径。衡量每流固定开销（池化 bufio 取还、timer
-// 创建+goroutine 启停、deadline watcher、锁、首 flush 全链）。
+// 即 EOF，走首事件立即 flush 路径。衡量每流固定开销（池化 bufio 取还、
+// deadline watcher、锁、首 flush 全链）。
 // dst 跨迭代复用（Reset 保容量）：sink 增长分配不计入 relay 成本。
 func BenchmarkRelayShortStream(b *testing.B) {
 	src := sseFrames(1, 200)
@@ -88,7 +87,7 @@ func BenchmarkRelayShortStream(b *testing.B) {
 }
 
 // BenchmarkRelayTokenStream 生产长流形态：500 × ~230B token 帧持续到达，
-// 4KB 阈值批量 + 1ms timer 批量生效区间。
+// 4KB 阈值批量与 drain flush 生效区间。
 func BenchmarkRelayTokenStream(b *testing.B) {
 	src := sseFrames(500, 180)
 	dst := &benchFlusher{hdr: http.Header{}}
@@ -116,7 +115,7 @@ func BenchmarkRelayBulk16K(b *testing.B) {
 }
 
 // BenchmarkIOCopyFloor 同负载 io.Copy 下限：理想 dumb pipe 的 CPU/alloc 基线，
-// 用于计算 Relay 相对裸拷贝的开销倍数（含帧解析/Observer 视图/timer 机制）。
+// 用于计算 Relay 相对裸拷贝的开销倍数（含帧解析/Observer 视图/drain 机制）。
 func BenchmarkIOCopyFloor(b *testing.B) {
 	src := sseFrames(500, 180)
 	sink := &bytes.Buffer{}
