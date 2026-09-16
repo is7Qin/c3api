@@ -146,6 +146,10 @@ type Scheduler struct {
 	stalenessProbe func(context.Context) (compileProbeCounts, error)
 	fallbackCount  atomic.Uint64
 	lastFallback   atomic.Pointer[fallbackReason]
+	// skipCount counts no-work fires (fireSkip): the wake's entire input was
+	// identical to the last successful compile, so the compile was elided.
+	// Distinct from fallbackCount (which counts real FULL recomputes).
+	skipCount atomic.Uint64
 	// compileDone 监督循环完成信号（Start 存入，Close join——同 runtime-health /
 	// conc-sync 停机纪律）；compileOKMs/compileErrMs 编译道新鲜度观测
 	//（atomic，Stats 冷路径读；unix-ms，0 = 从未发生）。

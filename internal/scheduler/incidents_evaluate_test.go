@@ -469,3 +469,35 @@ func TestCompileMinuteAdvanceTrigger(t *testing.T) {
 	s.fireOnMinuteAdvance()
 	require.Len(t, s.compileCh, 1)
 }
+
+// TestRouteIncidentMinuteAdvanceRecheckSkips pins the one behavioral delta of
+// the no-work fire: an M-advance recheck with identical evidence maps skips,
+// so an ACTIVE incident keeps its EvaluatedMinute frozen (scoped fires already
+// freeze unaffected routes' stamps by design) and stays Active — identical
+// evidence can neither escalate nor recover, so no verdict is lost.
+func TestRouteIncidentMinuteAdvanceRecheckSkips(t *testing.T) {
+	s, _, q, base, prices, minute := incidentLaneFixture(t)
+	s.InvalidateGroup(10)
+	s.compileOnce()
+	ref10 := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	first := s.View().DecisionView().routes[ref10].Incident
+	require.True(t, first.Active)
+	gen := s.View().Generation()
+	skips := s.skipCount.Load()
+
+	// The settled boundary advances; evidence maps stay identical — a pure
+	// recheck with nothing left to compile.
+	next := time.Date(2026, time.August, 29, 12, 1, 0, 0, time.UTC)
+	s.sources = &CompilerSources{
+		Quality: func(time.Time) WindowedQuality {
+			return WindowedQuality{Current: q, Baseline: base, SettledBoundary: next}
+		},
+		Prices: func() map[string]domain.ResolvedPrices { return prices },
+	}
+	s.compileOnce()
+	require.Equal(t, skips+1, s.skipCount.Load(), "identical evidence at the next minute is a no-work fire")
+	require.Equal(t, gen, s.View().Generation(), "skip publishes nothing")
+	after := s.View().DecisionView().routes[ref10].Incident
+	require.Equal(t, first, after, "incident stands: no recovery/escalation on identical evidence")
+	require.Equal(t, minute, after.EvaluatedMinute, "stamp frozen by the skip")
+}
