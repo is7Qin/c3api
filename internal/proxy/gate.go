@@ -179,27 +179,36 @@ func (g *concurrencyGate) upsert(meta domain.KeyMeta) {
 	g.snapshotMu.Lock()
 	defer g.snapshotMu.Unlock()
 	old := g.retireSnapshot()
-	snap := &gateSnapshot{
-		users:  cloneCounters(old.users),
-		keys:   cloneCounters(old.keys),
-		quotas: cloneCounters(old.quotas),
+	// COW 最小克隆：快照不变式 = 已发布映射从不原地写；只有真正要写的映射
+	// 才克隆（新增 user/key 条目、配额增删）。旧实现无条件克隆三张表，在
+	// 5000 键规模下每次配额刷新都是 O(N) 分配（压测 heap：cloneCounters
+	// flat 2.50%）。未触及的映射直接共享旧表——计数推进走指针原子量，
+	// 映射本身在别处也从不原地改。
+	users := old.users
+	if _, ok := users[meta.UserID]; !ok {
+		users = cloneCounters(users)
+		users[meta.UserID] = &atomic.Int64{}
 	}
-	if _, ok := snap.users[meta.UserID]; !ok {
-		snap.users[meta.UserID] = &atomic.Int64{}
+	keys := old.keys
+	if _, ok := keys[meta.KeyID]; !ok {
+		keys = cloneCounters(keys)
+		keys[meta.KeyID] = &atomic.Int64{}
 	}
-	if _, ok := snap.keys[meta.KeyID]; !ok {
-		snap.keys[meta.KeyID] = &atomic.Int64{}
-	}
+	quotas := old.quotas
+	snap := &gateSnapshot{users: users, keys: keys, quotas: quotas}
 	if g.quotaEnabled && meta.HasQuota {
-		q, ok := snap.quotas[meta.KeyID]
-		if !ok {
-			q = &keyQuota{}
+		if _, ok := quotas[meta.KeyID]; !ok {
+			quotas = cloneCounters(quotas)
+			q := &keyQuota{}
 			q.consumed.Store(meta.QuotaUsed)
-			snap.quotas[meta.KeyID] = q
+			quotas[meta.KeyID] = q
+			snap.quotas = quotas
 		}
-		g.allocBudget(q, meta) // 配额调整即时生效（在途 consumed 不动）
-	} else {
-		delete(snap.quotas, meta.KeyID)
+		g.allocBudget(snap.quotas[meta.KeyID], meta) // 配额调整即时生效（在途 consumed 不动）
+	} else if _, ok := quotas[meta.KeyID]; ok {
+		quotas = cloneCounters(quotas)
+		delete(quotas, meta.KeyID)
+		snap.quotas = quotas
 	}
 	g.store.Store(snap)
 }
@@ -214,14 +223,15 @@ func (g *concurrencyGate) delete(keyID int64) {
 		return
 	}
 	old = g.retireSnapshot()
-	snap := &gateSnapshot{
-		users:  cloneCounters(old.users),
-		keys:   cloneCounters(old.keys),
-		quotas: cloneCounters(old.quotas),
+	// 同 upsert：只有被删除项所在的映射才克隆，users 表整体共享。
+	keys := cloneCounters(old.keys)
+	delete(keys, keyID)
+	quotas := old.quotas
+	if _, ok := quotas[keyID]; ok {
+		quotas = cloneCounters(quotas)
+		delete(quotas, keyID)
 	}
-	delete(snap.keys, keyID)
-	delete(snap.quotas, keyID)
-	g.store.Store(snap)
+	g.store.Store(&gateSnapshot{users: old.users, keys: keys, quotas: quotas})
 }
 
 func cloneCounters[T any](m map[int64]*T) map[int64]*T {
