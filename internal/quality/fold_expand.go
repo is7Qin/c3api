@@ -152,12 +152,13 @@ func (o *FlowOwner) drainFoldLocked() {
 	}
 }
 
-// materializeShell projects one shell into a fresh *FlowMinute tick scratch:
-// per-edge counts become rows with ChainCount = the exact folded sum, sorted
-// deterministically (ordinal, lane, account, linkage, outcome…). The scratch
-// is allocated fresh per tick and GC-freed after Upsert — never pooled, never
-// request-visible. TerminalMinute/InstanceSrc/AbsoluteSequence are flush
-// stamps applied by flowRowsFromMinute, as today.
+// materializeShell projects one shell into a fresh *FlowMinute payload
+// scratch: per-edge counts become rows with ChainCount = the exact folded sum,
+// sorted deterministically (ordinal, lane, account, linkage, outcome…). The
+// scratch is allocated fresh per payload build (PG lease / Redis payload
+// version) and GC-freed after use — never pooled, never request-visible.
+// TerminalMinute/InstanceSrc/AbsoluteSequence are flush stamps applied by
+// flowRowsFromMinute, as today.
 func materializeShell(shell *foldShell) *FlowMinute {
 	fm := &FlowMinute{
 		minute:        shell.minute,
