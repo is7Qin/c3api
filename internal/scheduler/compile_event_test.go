@@ -226,9 +226,11 @@ func TestCompileEvent_AccountsScopeResolvesViaMembership(t *testing.T) {
 	require.Contains(t, allLaneIDs(rd20), int64(4), "scoped group picks up the newcomer")
 }
 
-// TestCompileEvent_FallbackRecorded pins the full-fidelity fallback: an
-// unscoped wakeup and a scope-channel overflow both take FULL recompile with
-// a recorded reason (counter + cause/scope-size/route-count).
+// TestCompileEvent_FallbackRecorded pins the full-fidelity fallback for the
+// cause that must ALWAYS stay exact: a scope-channel overflow degrades to FULL
+// recompile with a recorded reason (counter + cause/scope-size/route-count).
+// The idle recheck (same root, zero drift) is NOT a fallback any more — it is
+// a no-work fire; see TestCompileEvent_IdleRecheckSkips.
 func TestCompileEvent_FallbackRecorded(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
@@ -237,16 +239,6 @@ func TestCompileEvent_FallbackRecorded(t *testing.T) {
 	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
 	s, _ := newProbedSched(t, m, q, prices)
 	base := s.fallbackCount.Load()
-	gen := s.View().Generation()
-
-	// Unscoped wakeup: no scope, no staging, no drift → FULL + recorded.
-	s.compileOnce()
-	require.Equal(t, base+1, s.fallbackCount.Load())
-	reason := s.lastFallback.Load()
-	require.NotNil(t, reason)
-	require.Equal(t, fallbackUnscoped, reason.cause)
-	require.Zero(t, reason.scopeEntries)
-	require.Equal(t, gen, s.View().Generation(), "byte-identical fallback must not publish")
 
 	// Overflow: burst past scopeChCap degrades to FULL + recorded (exact,
 	// never a miss).
@@ -254,8 +246,8 @@ func TestCompileEvent_FallbackRecorded(t *testing.T) {
 		s.enqueueCompileScope([]int64{999}, nil, scopeCauseGroup)
 	}
 	s.compileOnce()
-	require.Equal(t, base+2, s.fallbackCount.Load())
-	reason = s.lastFallback.Load()
+	require.Equal(t, base+1, s.fallbackCount.Load())
+	reason := s.lastFallback.Load()
 	require.NotNil(t, reason)
 	require.Equal(t, fallbackScopeOverflow, reason.cause)
 	require.NotZero(t, reason.totalRoutes)
@@ -305,4 +297,73 @@ func TestCompileEvent_ProbeSnapshotMappingIsExact(t *testing.T) {
 	require.NotNil(t, sErr.stalenessProbe)
 	_, err = sErr.stalenessProbe(context.Background())
 	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// TestCompileEvent_IdleRecheckSkips pins the no-work fire: when the fire's
+// entire input (static root + quality/baseline/price maps) is identical to the
+// last successful compile, the M-advance recheck compiles NOTHING — no
+// rebuild, no publish, no fallback record; the skip is counted separately from
+// the full-fidelity fallback.
+func TestCompileEvent_IdleRecheckSkips(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
+	m := newMemLoader(map[int64][]*domain.Account{10: accs})
+	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	s, _ := newProbedSched(t, m, q, prices)
+	base := s.fallbackCount.Load()
+	gen := s.View().Generation()
+	reason := s.lastFallback.Load()
+
+	s.compileOnce()
+	require.Equal(t, base, s.fallbackCount.Load(), "a no-work fire is not a fallback")
+	require.Same(t, reason, s.lastFallback.Load(), "no fallback reason recorded on skip")
+	require.Equal(t, uint64(1), s.skipCount.Load(), "skip is counted separately")
+	require.Equal(t, gen, s.View().Generation(), "skip publishes nothing")
+}
+
+// TestCompileEvent_SkipThenDriftDetected pins that a skip advances only the
+// lane baselines, so the NEXT fire still catches dynamic drift: identical
+// inputs skip, a changed quality map takes the scoped path (neither skip nor
+// full fallback).
+func TestCompileEvent_SkipThenDriftDetected(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
+	m := newMemLoader(map[int64][]*domain.Account{10: accs})
+	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	s, _ := newProbedSched(t, m, q, prices)
+
+	s.compileOnce()
+	require.Equal(t, uint64(1), s.skipCount.Load())
+
+	q2 := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(31, 29, 100, 100)}, accs)
+	wireSources(s, q2, prices)
+	fallbacks := s.fallbackCount.Load()
+	s.compileOnce()
+	require.Equal(t, uint64(1), s.skipCount.Load(), "drift must not skip")
+	require.Equal(t, fallbacks, s.fallbackCount.Load(), "drift is scoped work, not a full fallback")
+}
+
+// TestCompileEvent_SkipRetainsFullForFirstCompileAndStagedRoot pins the two
+// FULL-retaining conditions around the skip: a first compile has no carry, and
+// a freshly staged root is not the root of the last successful compile.
+func TestCompileEvent_SkipRetainsFullForFirstCompileAndStagedRoot(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
+	m := newMemLoader(map[int64][]*domain.Account{10: accs})
+	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	s, _ := newProbedSched(t, m, q, prices)
+	require.Equal(t, uint64(1), s.fallbackCount.Load(), "first compile (no carry) is FULL")
+	require.Zero(t, s.skipCount.Load())
+
+	require.NoError(t, s.reload(context.Background()))
+	s.compileOnce()
+	require.Equal(t, uint64(2), s.fallbackCount.Load(), "a staged root recompiles in full")
+	require.Zero(t, s.skipCount.Load())
+
+	s.compileOnce()
+	require.Equal(t, uint64(1), s.skipCount.Load(), "only the idle recheck skips")
+	require.Equal(t, uint64(2), s.fallbackCount.Load())
 }

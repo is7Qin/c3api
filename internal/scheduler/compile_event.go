@@ -42,6 +42,27 @@ const (
 	fallbackNoCarry       = "no-carry"
 )
 
+// compileFireMode is how one fire proceeds. Single owner: resolveCompileScope.
+type compileFireMode uint8
+
+const (
+	// fireScoped recomputes ONLY affected routes (pointer reuse, whole-snapshot
+	// atomic publish downstream).
+	fireScoped compileFireMode = iota
+	// fireFull is the full-fidelity fallback: every route recomputed, reason
+	// recorded via recordCompileFallback.
+	fireFull
+	// fireSkip is a no-work fire: the fire's entire input (static root +
+	// quality/baseline/price maps) is identical to the last successful
+	// compile's, so recompiling provably reproduces the published bytes (the
+	// byte-guard at the publish seam proves this on every fire already).
+	// Canonical source: the M-advance recheck (scheduler.fireOnMinuteAdvance)
+	// — it must still wake the lane so the diffs can catch newly settled
+	// minutes, but with zero drift the compile itself is pure waste (13MB
+	// alloc per rebuild measured, once per minute on an idle gateway).
+	fireSkip
+)
+
 // scopeChCap bounds burst scope backlog; overflow degrades to the exact full
 // fallback (never a miss). Producers never block either way.
 const scopeChCap = 16
@@ -255,17 +276,25 @@ func (s *Scheduler) recordCompileFallback(cause string, scopeEntries, affectedRo
 }
 
 // resolveCompileScope unites channel scopes with lane-local quality/price
-// diffs into the fire's affected route set. Returns wantFull for the
-// full-fidelity fallback (unknown/unscoped cause, overflow, full-stage mark,
-// compiler seam, missing carry). Positive trigger rule (v5-§5.1A): static +
-// price + quality ONLY — health/latch deltas never enter the index and never
-// enqueue work.
-func (s *Scheduler) resolveCompileScope(f *compileFire) (bool, string) {
+// diffs into the fire's affected route set. Returns the fire mode
+// (scoped/full/skip) plus the recorded fallback cause when full.
+//
+// Ordering is load-bearing: overflow and full-stage marks outrank everything;
+// the compiler-seam and missing-carry guards follow, and ONLY THEN the no-work
+// test. Seam/carry must precede the skip — a compiler without the scoped seam
+// (test doubles and any non-scoped implementation) or a lane without a
+// published carry has an exact-full contract that skipping would silently turn
+// into a no-op.
+//
+// Positive trigger rule (v5-§5.1A): static + price + quality ONLY — health/
+// latch deltas never enter the index and never enqueue work.
+func (s *Scheduler) resolveCompileScope(f *compileFire) (compileFireMode, string) {
 	target := f.input.Static
 	idx := target.routeIndex
 	// Lane-local diffs first: baselines track the last PULLED inputs (shallow
 	// copies — producers hand fresh maps per pull), so a fire that wakes for
-	// any reason also picks up dynamic drift in the same pass.
+	// any reason also picks up dynamic drift in the same pass. They advance on
+	// every fire — including a skip — so the next diff stays exact.
 	qRefs := diffCompilerQuality(f.input.Quality, s.lastQuality, idx)
 	bRefs := diffCompilerBaseline(f.input.Baseline, s.lastBaseline, idx)
 	pRefs := diffCompilerPrices(f.input.Prices, s.lastPrices, idx)
@@ -303,21 +332,29 @@ func (s *Scheduler) resolveCompileScope(f *compileFire) (bool, string) {
 	f.affected = affected
 	switch {
 	case f.overflow:
-		return true, fallbackScopeOverflow
+		return fireFull, fallbackScopeOverflow
 	case hasFullMark || idx == nil:
-		return true, fallbackFullStage
-	case len(affected) == 0:
-		// Unknown/unscoped wakeup (publish retry, supersede re-arm, bare
-		// RequestCompile): FULL recompile + recorded reason.
-		return true, fallbackUnscoped
+		return fireFull, fallbackFullStage
 	}
 	if _, ok := s.compiler.(scopedRouteCompiler); !ok {
-		return true, fallbackCompilerSeam
+		return fireFull, fallbackCompilerSeam
 	}
 	if f.carry == nil {
-		return true, fallbackNoCarry
+		return fireFull, fallbackNoCarry
 	}
-	return false, ""
+	if len(affected) == 0 {
+		// Pure recheck: same static root as the last successful compile and
+		// zero dynamic drift — no route can change, so the compile (13MB alloc
+		// measured) is pure waste. Every OTHER unscoped wake carries work the
+		// diffs cannot see (a newly staged root — target != lastCompiledStatic
+		// via reload/InvalidateGroup staging — or a bare re-arm) and keeps the
+		// exact full-fidelity fallback.
+		if target == s.lastCompiledStatic {
+			return fireSkip, ""
+		}
+		return fireFull, fallbackUnscoped
+	}
+	return fireScoped, ""
 }
 
 // shallowCopyMap snapshots a pulled input map so later producer-side mutation

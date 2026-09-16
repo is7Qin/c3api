@@ -27,6 +27,10 @@ type SchedulerStats struct {
 	// fire that evaluated incidents (0 = 从未发生）.
 	ActiveIncidents        int   `json:"active_incidents"`
 	LastIncidentEvalUnixMs int64 `json:"last_incident_eval_unix_ms"`
+	// SkippedCompiles = no-work fires elided because every compile input was
+	// identical to the last successful compile (the M-advance recheck path).
+	// Expose-only; NOT a fallback and NOT a recompile.
+	SkippedCompiles uint64 `json:"skipped_compiles"`
 }
 
 // Stats 满足 handler.StatsProvider（独立于 worker.Worker 契约；装配链路见 internal/handler/ops.go 文件头）。
@@ -38,6 +42,7 @@ func (s *Scheduler) Stats() any {
 		LastCompileErrUnixMs:   s.compileErrMs.Load(),
 		ActiveIncidents:        int(s.incidentActive.Load()),
 		LastIncidentEvalUnixMs: s.incidentEvalMs.Load(),
+		SkippedCompiles:        s.skipCount.Load(),
 	}
 	if v := s.view.Load(); v != nil && v.decision != nil {
 		st.DecisionGeneration = v.decision.generation

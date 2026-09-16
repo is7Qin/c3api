@@ -88,7 +88,9 @@ func debounceWait(ctx context.Context, window time.Duration, ch <-chan struct{})
 // v5-C1/C2: the lane drains fire-owned scope, unites it with lane-local
 // quality/price diffs, and recompiles ONLY affected routes (pointer reuse,
 // whole-snapshot atomic publish); unknown/unscoped causes take the
-// full-fidelity fallback with recorded reason. exec/observe boundary: compile
+// full-fidelity fallback with recorded reason; a fire whose inputs are
+// identical to the last successful compile (same static root, zero drift)
+// takes fireSkip and compiles nothing at all. exec/observe boundary: compile
 // EXECUTES off-path; request observation only READS the published view.
 func (s *Scheduler) compileOnce() {
 	scopes, scopeOverflow := s.drainCompileScopes()
@@ -138,11 +140,27 @@ func (s *Scheduler) compileOnce() {
 		in.Prices = src.Prices()
 	}
 	fire := &compileFire{input: in, carry: carry, scopes: scopes, overflow: scopeOverflow}
-	wantFull, fullCause := s.resolveCompileScope(fire)
-	tookFull := wantFull
+	mode, fullCause := s.resolveCompileScope(fire)
+	if mode == fireSkip {
+		// No-op recheck (the M-advance wake with zero drift): inputs are
+		// identical to the last successful compile, so the compile is elided.
+		// Not a fallback and not a success: no decision is produced, so the
+		// compile-ok / incident-eval stamps stay untouched.
+		s.skipCount.Add(1)
+		if s.log != nil && s.log.DebugEnabled() {
+			total := 0
+			if target.routeIndex != nil {
+				total = target.routeIndex.totalRoutes
+			}
+			s.log.Debug("compile skipped: inputs identical to last successful compile",
+				logx.Int("total_routes", total))
+		}
+		return
+	}
+	tookFull := mode == fireFull
 	var dv *DecisionView
 	var err error
-	if wantFull {
+	if mode == fireFull {
 		dv, err = s.compiler.Compile(in)
 		if err == nil {
 			// Full-fidelity path: every route recomputed — the view is whole.
