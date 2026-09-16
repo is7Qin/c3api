@@ -683,3 +683,37 @@ func TestSchedulerCloseUnstartedSafe(t *testing.T) {
 	s := newSched(t, newMemLoader(nil))
 	require.NoError(t, s.Close(context.Background()))
 }
+
+// TestDecisionEncoderReuseNoContamination 复用编码器（编译道热路径）跨 fire
+// 不得互相污染：同一 encoder 交替编码两个视图，结果必须与一次性编码器逐字节
+// 一致（refs/ids 暂存与输出缓冲的 Reset 正确性；返回字节 alias 缓冲，消费方
+// 需自行拷贝——生产路径以 append 复用 lastDecisionBytes）。
+func TestDecisionEncoderReuseNoContamination(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
+	m := newMemLoader(map[int64][]*domain.Account{10: accs})
+	s := newSched(t, m)
+	c := NewRoutingCompiler()
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	logged := math.Log(100)
+	full := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
+		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
+		2: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
+	}, accs)
+	thin := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
+		1: {Counts: Counts{Attempts: 10, Successes: 5}, InputTokens: 500, OutputTokens: 500},
+	}, accs)
+	vFull, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: full, Prices: prices})
+	require.NoError(t, err)
+	vThin, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: thin, Prices: prices})
+	require.NoError(t, err)
+
+	var e decisionEncoder
+	gotFull := append([]byte(nil), e.encode(vFull)...)
+	gotThin := append([]byte(nil), e.encode(vThin)...)
+	gotFull2 := append([]byte(nil), e.encode(vFull)...)
+	require.Equal(t, decisionViewBytes(vFull), gotFull)
+	require.Equal(t, decisionViewBytes(vThin), gotThin)
+	require.Equal(t, gotFull, gotFull2, "reuse must not contaminate a later encode of the same view")
+	require.NotEqual(t, gotFull, gotThin, "different views must not collide")
+}

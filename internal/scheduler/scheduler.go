@@ -131,8 +131,9 @@ type Scheduler struct {
 	compiler           routeCompiler
 	sources            *CompilerSources
 	compileCh          chan struct{}
-	lastDecisionBytes  []byte      // compile-lane owned (single serial caller)
-	lastCompiledStatic *StaticView // compile-lane owned; bytes alone omit static identity
+	decisionEnc        decisionEncoder // compile-lane owned scratch (serial caller; buffers reused across fires)
+	lastDecisionBytes  []byte          // compile-lane owned retain copy of the last published encoding (capacity reused via append)
+	lastCompiledStatic *StaticView     // compile-lane owned; bytes alone omit static identity
 	// v5 event-driven compile lane (single mechanism replacing the
 	// unconditional rebuild; owners+lifecycles in compile_event.go):
 	scopeCh       chan scopedCompileReq                         // compile-lane-owned, fire-owned payloads
