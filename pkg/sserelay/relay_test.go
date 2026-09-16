@@ -156,10 +156,10 @@ func TestRelayCommentLinesNotInData(t *testing.T) {
 }
 
 // TestRelayLongLineForkPoint8186 spec #4：精确分叉点——payload=8186B 时行总长
-// 8193B（"data: " 6B + 8186B + "\n"）：chunk1 = 8192B（ErrBufferFull、无 \n），
-// chunk2 = 孤立 "\n" 尾 chunk。孤立 \n 是续行终止符而非帧分隔空行——空行
-// flush 必须 gating 于 !inLine，否则尾 chunk 触发一次空帧 flush
-// （flushes=2+空帧）。断言单帧 flush、Data 全量、无多余空帧。
+// 8193B（"data: " 6B + 8186B + "\n"）：头 8192B 恰为缓冲整数倍（4KB 读缓冲
+// 分两段 ErrBufferFull、均无 \n），尾 chunk = 孤立 "\n"。孤立 \n 是续行终止符
+// 而非帧分隔空行——空行 flush 必须 gating 于 !inLine，否则尾 chunk 触发一次
+// 空帧 flush（flushes=2+空帧）。断言单帧 flush、Data 全量、无多余空帧。
 func TestRelayLongLineForkPoint8186(t *testing.T) {
 	payload := strings.Repeat("x", 8186)
 	src := "data: " + payload + "\n\n"
