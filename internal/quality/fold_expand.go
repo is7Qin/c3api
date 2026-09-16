@@ -61,6 +61,14 @@ type foldShell struct {
 	everPersisted      bool
 	acceptedContrib    int64
 	persistedWatermark int64
+
+	// redisBlob 缓存该分钟 Redis 载荷的 rows 数组 JSON。内容只依赖
+	// (minute, counts)：行集由 counts 确定性物化（排序固定）、时间戳取自
+	// minute——版本不匹配即失效（fold 的 version++ 无需显式清缓存）。
+	// Owner: FlowOwner（o.mu 保护）。背景：旧路径每 tick 对每个保留分钟
+	// 重物化+重编码（实测 doRedis cum 58% 中 json.Marshal 43% + materialize 15%）。
+	redisBlob        []byte
+	redisBlobVersion uint64
 }
 
 // foldSnapshotToken binds minute, lease identity, captured version, and the

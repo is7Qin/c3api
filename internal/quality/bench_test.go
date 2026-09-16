@@ -58,3 +58,32 @@ func BenchmarkFlowOwnerDuplicateMergeSteadyState(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkFlowRedisPayload：缓存路径（生产）vs 旧"每发布重物化+json.Marshal"
+// 路径（snapshotForRedis 仍保留，作为对照）。夹具 = 单分钟 2000 行。
+func BenchmarkFlowRedisPayload(b *testing.B) {
+	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	rec, err := NewRecorder(50000)
+	if err != nil {
+		b.Fatal(err)
+	}
+	rec.now = func() time.Time { return fixed }
+	owner := rec.FlowOwner()
+	m := fixed.Truncate(time.Minute).Unix()
+	rows := make([]repository.RoutingFlowRow, 0, 2000)
+	for i := int64(1); i <= 2000; i++ {
+		rows = append(rows, ownerTestRow(i))
+	}
+	if err := foldConsumerRows(owner, m, rows); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		blob, _, _ := owner.redisPayload(m)
+		sinkFlowBlob = len(blob)
+	}
+}
+
+var sinkFlowBlob int

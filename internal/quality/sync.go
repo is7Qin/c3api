@@ -5,11 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -128,6 +128,9 @@ type SyncWorker struct {
 	minuteAbs   map[int64]map[Key]*QualityMinute
 	pgMinuteAbs map[int64]map[Key]*QualityMinute
 	committed   map[int64]map[Key]*QualityMinute
+	// flowBuf 是 Redis flow 发布的复用 wrapper 缓冲（worker 单线程 + flushMu
+	// 保护；rows 数组 JSON 由 FlowOwner 按 (minute, version) 缓存提供）。
+	flowBuf []byte
 
 	started              atomic.Bool
 	closeOnce            sync.Once
@@ -604,11 +607,13 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 			return
 		}
 	}
-	// Flow publishes one minute at a time: each snapshot payload is consumed
-	// synchronously by its own publish and released before the next snapshot.
+	// Flow publishes one minute at a time. rows 数组 JSON 由 FlowOwner 按
+	// (minute, shell version) 缓存（redisPayload）——同一版本的每 tick 序号心跳
+	// 重发布只重拼小 wrapper；wrapper 手写进复用缓冲（旧路径此处
+	// map[string]any+json.Marshal 是本方法最大分配源）。只读：无 lease、无 ack。
 	for _, minute := range flowIDs {
-		fm := w.rec.flow.snapshotForRedis(minute)
-		if fm == nil || !fm.HasFlowRows() {
+		blob, state, ok := w.rec.flow.redisPayload(minute)
+		if !ok || state == flowPayloadNone {
 			// No rows and no empty marker (e.g. net-zero folds): nothing
 			// to publish. The legacy zero edges/counts payload had no
 			// consumer (no reader of the flow namespace exists) and is
@@ -620,24 +625,22 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		w.redisSeq[minute] = seq
 		w.mu.Unlock()
 		fKey := fmt.Sprintf("%s%d:%s", redisFlowPrefix, minute, w.instanceSrc)
-		var flowVal []byte
-		if fm.IsEmptySnapshot() {
-			flowVal, _ = json.Marshal(map[string]any{
-				"instance_src":      w.instanceSrc,
-				"terminal_minute":   minute,
-				"absolute_sequence": seq,
-				"empty":             true,
-			})
+		buf := w.flowBuf[:0]
+		buf = append(buf, `{"instance_src":`...)
+		buf = strconv.AppendQuote(buf, w.instanceSrc)
+		buf = append(buf, `,"terminal_minute":`...)
+		buf = strconv.AppendInt(buf, minute, 10)
+		buf = append(buf, `,"absolute_sequence":`...)
+		buf = strconv.AppendInt(buf, seq, 10)
+		if state == flowPayloadEmpty {
+			buf = append(buf, `,"empty":true}`...)
 		} else {
-			flowVal, _ = json.Marshal(map[string]any{
-				"instance_src":      w.instanceSrc,
-				"terminal_minute":   minute,
-				"absolute_sequence": seq,
-				"rows":              fm.FlowRows(),
-			})
+			buf = append(buf, `,"rows":`...)
+			buf = append(buf, blob...)
+			buf = append(buf, '}')
 		}
-		fm = nil
-		if err := w.rdb.Set(ctx, fKey, string(flowVal), redisTTL).Err(); err != nil {
+		w.flowBuf = buf
+		if err := w.rdb.Set(ctx, fKey, buf, redisTTL).Err(); err != nil {
 			w.mu.Lock()
 			w.lastRedisError = err.Error()
 			w.stats.LastRedisError = w.lastRedisError
@@ -648,7 +651,6 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 			}
 			return
 		}
-		flowVal = nil
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
