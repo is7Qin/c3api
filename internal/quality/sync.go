@@ -633,7 +633,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 				"instance_src":      w.instanceSrc,
 				"terminal_minute":   minute,
 				"absolute_sequence": seq,
-				"rows":              fm.flowRowsOwned(),
+				"rows":              fm.FlowRows(),
 			})
 		}
 		fm = nil
@@ -1091,7 +1091,7 @@ func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []reposit
 	if fm.HasFlowRows() {
 		// 独占产物（snapshotForPG）→ 免去 FlowRows 的二次深拷；下面的 flush
 		// 戳原地改写在该产物被同步消费后立即丢弃的前提下安全。
-		rows := fm.flowRowsOwned()
+		rows := fm.FlowRows()
 		for i := range rows {
 			rows[i].InstanceSrc = instanceSrc
 			rows[i].AbsoluteSequence = seq

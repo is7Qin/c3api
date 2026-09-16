@@ -50,46 +50,14 @@ func encodeTestMinute(k Key) *QualityMinute {
 	return qm
 }
 
-// legacyQualityCellMap 冻结旧发布路径的 map 字面量（sync.go 历史版本）：
-// parity 测试与基准的 oracle，防止"改完两边一起错"。
-func legacyQualityCellMap(instanceSrc string, minute, seq int64, k Key, qm *QualityMinute) map[string]any {
-	return map[string]any{
-		"identity_version":  k.IdentityVersion,
-		"route_class_id":    hex.EncodeToString(k.RouteClassID[:]),
-		"quality_class_id":  hex.EncodeToString(k.QualityClassID[:]),
-		"fingerprint":       hex.EncodeToString(k.Fingerprint[:]),
-		"instance_src":      instanceSrc,
-		"bucket_minute":     minute,
-		"absolute_sequence": seq,
-		"attempts":          qm.attempts,
-		"successes":         qm.successes,
-		"count_429":         qm.err429,
-		"count_4xx":         qm.err4xx,
-		"count_5xx":         qm.err5xx,
-		"count_network":     qm.errNetwork,
-		"ttft_n":            qm.ttftCount,
-		"ttft_sum_q32":      qm.sumQ32,
-		"ttft_sumsq_q32":    qm.sumSqQ32,
-		"ttft_hist":         qm.hist[:],
-		"input_tokens":      qm.inputTokens,
-		"output_tokens":     qm.outputTokens,
-		"cache_read":        qm.cacheRead,
-		"cache_create":      qm.cacheCreate,
-		"calls":             qm.calls,
-		"images":            qm.images,
-	}
-}
-
-// TestAppendQualityCellJSONMatchesLegacyMarshal 逐字段等价：手写编码 vs 旧
-// map[string]any+json.Marshal 的 JSON 语义必须一致（对象键序无语义）。
-func TestAppendQualityCellJSONMatchesLegacyMarshal(t *testing.T) {
+// TestAppendQualityCellJSONGolden 冻结编码字节（下游按 JSON 解析；金字节防格式
+// 漂移）。旧 map+json.Marshal 实现与其 oracle 已删——不保留 legacy 参照物；
+// 若需改格式，必须同步更新 golden 并在提交信息里给出理由。
+func TestAppendQualityCellJSONGolden(t *testing.T) {
 	k := encodeTestKey(0x21)
 	qm := encodeTestMinute(k)
-	got := appendQualityCellJSON(nil, "host-4242-deadbeef", 1789000060, 7, k, qm)
-
-	want, err := json.Marshal(legacyQualityCellMap("host-4242-deadbeef", 1789000060, 7, k, qm))
-	require.NoError(t, err)
-	require.JSONEq(t, string(want), string(got))
+	const want = `{"identity_version":33,"route_class_id":"2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40","quality_class_id":"cfcecdcccbcac9c8c7c6c5c4c3c2c1c0bfbebdbcbbbab9b8b7b6b5b4b3b2b1b0","fingerprint":"636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c","instance_src":"host-4242-deadbeef","bucket_minute":1789000060,"absolute_sequence":7,"attempts":11,"successes":9,"count_429":1,"count_4xx":2,"count_5xx":3,"count_network":4,"ttft_n":7,"ttft_sum_q32":123456789,"ttft_sumsq_q32":-987654321,"ttft_hist":[1000,2000,3000,4000,5000,6000,7000,8000,9000,10000],"input_tokens":123,"output_tokens":456,"cache_read":789,"cache_create":321,"calls":5,"images":2}`
+	require.Equal(t, want, string(appendQualityCellJSON(nil, "host-4242-deadbeef", 1789000060, 7, k, qm)))
 }
 
 // TestAppendQualityFieldMatchesHexJoin field 三段小写 hex 用 ":" 拼接，
@@ -120,21 +88,6 @@ func TestAppendQualityCellJSONReusedBuffer(t *testing.T) {
 	}
 }
 
-// BenchmarkQualityCellLegacyMarshal vs BenchmarkQualityCellAppendHTTPSet：
-// 旧发布路径（map+json.Marshal+4×hex+逐 cell 字符串）vs 手写编码（调用方
-// 缓冲 + 子切片引用）。证据用途：验证 P1 修复的 allocs/op 降幅。
-func BenchmarkQualityCellLegacyMarshal(b *testing.B) {
-	k := encodeTestKey(0x21)
-	qm := encodeTestMinute(k)
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		field := hex.EncodeToString(k.RouteClassID[:]) + ":" + hex.EncodeToString(k.QualityClassID[:]) + ":" + hex.EncodeToString(k.Fingerprint[:])
-		val, _ := json.Marshal(legacyQualityCellMap("host-4242-deadbeef", 1789000060, int64(i), k, qm))
-		sinkField = field
-		sinkVal = string(val)
-	}
-}
-
 func BenchmarkQualityCellAppend(b *testing.B) {
 	k := encodeTestKey(0x21)
 	qm := encodeTestMinute(k)
@@ -151,8 +104,4 @@ func BenchmarkQualityCellAppend(b *testing.B) {
 	}
 }
 
-var (
-	sinkField string
-	sinkVal   string
-	sinkBytes []byte
-)
+var sinkBytes []byte
