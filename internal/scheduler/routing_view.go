@@ -274,6 +274,25 @@ func (v *RoutingView) ByID() map[int64]*accountSnapshot {
 	return cloneSnapMap(v.static.byID)
 }
 
+// byIDReadOnly / groupsReadOnly 返回内部不可变 map 本身（零拷贝，只读）。
+// 架构不变量：已发布静态视图从不原地写（copy-modify-Store；叶子 runtime 计数
+// 走原子量），因此包内热路径（per-tick 账号并发同步、per-request 模型列表）
+// 可安全只读遍历/单键查。公共 ByID()/Groups() 保留浅拷贝契约（防包外误改，
+// red 测试钉住）；此处刻意不返回给包外调用方。
+func (v *RoutingView) byIDReadOnly() map[int64]*accountSnapshot {
+	if v == nil || v.static == nil {
+		return nil
+	}
+	return v.static.byID
+}
+
+func (v *RoutingView) groupsReadOnly() map[int64]*groupSnapshot {
+	if v == nil || v.static == nil {
+		return nil
+	}
+	return v.static.groups
+}
+
 func (v *RoutingView) Account(id int64) (*accountSnapshot, bool) {
 	if v == nil || v.static == nil {
 		return nil, false

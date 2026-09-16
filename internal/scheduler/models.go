@@ -17,7 +17,7 @@ func (s *Scheduler) GroupModels(groupID int64) ([]string, bool) {
 	if v == nil || v.StaticView() == nil {
 		return nil, false
 	}
-	gs, ok := v.Groups()[groupID]
+	gs, ok := v.groupsReadOnly()[groupID]
 	if !ok {
 		return nil, false
 	}

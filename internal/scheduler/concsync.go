@@ -206,7 +206,7 @@ func (w *AccConcSyncWorker) collect() []concTarget {
 	if v == nil || v.StaticView() == nil {
 		return nil
 	}
-	byID := v.ByID()
+	byID := v.byIDReadOnly()
 	targets := make([]concTarget, 0, len(byID))
 	for id, a := range byID {
 		if v := a.runtime.concurrency.Load(); v > 0 {
