@@ -573,3 +573,17 @@ func TestRelayDrainFlushCoalescesFrames(t *testing.T) {
 	require.LessOrEqual(t, rec.flushed.Load(), int32(2), "batch must coalesce to <=2 flushes")
 	require.GreaterOrEqual(t, rec.flushed.Load(), int32(1), "bytes must be flushed")
 }
+
+// TestRelayPooledFrameBufferDoesNotLeak 帧缓冲池化后的隔离 pin：前一条流的
+// 长帧不得残留在后继短流的输出里（Reset + 池复用正确性）。
+func TestRelayPooledFrameBufferDoesNotLeak(t *testing.T) {
+	long := "data: " + strings.Repeat("x", 3000) + "\n\n"
+	rec1 := httptest.NewRecorder()
+	require.NoError(t, relayStream(rec1, long, Config{}))
+	require.Equal(t, long, rec1.Body.String())
+
+	short := "data: s\n\n"
+	rec2 := httptest.NewRecorder()
+	require.NoError(t, relayStream(rec2, short, Config{}))
+	require.Equal(t, short, rec2.Body.String(), "pooled frame buffer must be reset per stream")
+}

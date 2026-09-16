@@ -94,12 +94,13 @@ type Config struct {
 }
 
 type relay struct {
-	ctx context.Context
-	w   http.ResponseWriter // 原始 dst：取消联动设写侧 deadline（C-P2-1 方案 1）
-	bw  *bufio.Writer
-	br  *bufio.Reader
-	fl  http.Flusher
-	cfg Config
+	ctx   context.Context
+	w     http.ResponseWriter // 原始 dst：取消联动设写侧 deadline（C-P2-1 方案 1）
+	bw    *bufio.Writer
+	br    *bufio.Reader
+	frame *bytes.Buffer // 当前帧原始字节（池化复用；归属 relayBufio）
+	fl    http.Flusher
+	cfg   Config
 
 	mu       sync.Mutex // 保护 bw/pending
 	pending  int        // 累计写入字节；阈值/drain/结束残余 flush 后归零（首事件 latency flush 不归零，其字节继续计入阈值）
@@ -109,19 +110,28 @@ type relay struct {
 	wg        sync.WaitGroup // deadline watcher 汇合（替代 deadlineDone chan；spec 2026-08-15-gc-opt-ab B-1）
 }
 
-// relayBufio 池化的 bufio 读写器（每流各 8KB；GC 削减 P6：免每流 2×8KB 新建
-// + 直接压 sizeclass；流结束 Reset(nil) 解除对 dst/src 的引用后归还——watcher
-// goroutine 在 stopWatcher 汇合后才归还，无并发复用）。
+// relayBufio 池化的逐流缓冲组：读/写 bufio + 帧组装缓冲。尺寸按语义水位取，
+// 不按"越大越快"直觉取：
+//   - 写缓冲 4KB = FlushBytes 默认水位——drain-flush 后写缓冲最多盛一个读批
+//     （通常一帧）就被冲掉，8KB 容量 99% 是浪费；≥4KB 的单帧走 bufio 直写
+//     旁路，不受缓冲大小影响；
+//   - 读缓冲 4KB——SSE 帧 ~60B、行 ≤4KB 直读；>4KB 行走 ErrBufferFull 续片
+//     路径（与 8KB 时同一状态机，只是分段更多）；
+//   - 帧缓冲随组复用（Reset 保容量），消除每流一次 bytes.Buffer 增长分配。
+//
+// 流结束 Reset(nil) 解除对 dst/src 的引用后归还——watcher goroutine 在
+// stopWatcher 汇合后才归还，无并发复用。
 type relayBufio struct {
-	bw *bufio.Writer
-	br *bufio.Reader
+	bw    *bufio.Writer
+	br    *bufio.Reader
+	frame bytes.Buffer
 }
 
 var relayBufioPool = sync.Pool{
 	New: func() any {
 		return &relayBufio{
-			bw: bufio.NewWriterSize(nil, 8192),
-			br: bufio.NewReaderSize(nil, 8192),
+			bw: bufio.NewWriterSize(nil, 4096),
+			br: bufio.NewReaderSize(nil, 4096),
 		}
 	},
 }
@@ -134,11 +144,13 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 	rb := relayBufioPool.Get().(*relayBufio)
 	rb.bw.Reset(dst)
 	rb.br.Reset(&ctxReader{ctx: ctx, r: src})
+	rb.frame.Reset()
 	r := &relay{
 		ctx: ctx, cfg: cfg,
 		w:         dst,
 		bw:        rb.bw,
 		br:        rb.br,
+		frame:     &rb.frame,
 		stopWatch: make(chan struct{}),
 	}
 	r.fl, _ = dst.(http.Flusher)
@@ -155,9 +167,15 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 		_ = r.flushLocked()
 	}
 	r.mu.Unlock()
-	// 归还池（先解除对 dst/src 的引用，防池内残留大对象引用链）
+	// 归还池（先解除对 dst/src 的引用，防池内残留大对象引用链）；帧缓冲
+	// Reset 保容量复用，但单次超长帧（>64KB，如大 base64 图）不把池容量
+	// 永久抬走——超限直接弃用该切片，池内重建小缓冲。
 	rb.bw.Reset(nil)
 	rb.br.Reset(nil)
+	rb.frame.Reset()
+	if rb.frame.Cap() > 64<<10 {
+		rb.frame = bytes.Buffer{}
+	}
 	relayBufioPool.Put(rb)
 	return err
 }
@@ -179,11 +197,11 @@ func (c *ctxReader) Read(p []byte) (int, error) {
 
 func (r *relay) run() error {
 	br := r.br
+	frame := r.frame // 池化帧缓冲（每流 Reset 复用，免每次 bytes.Buffer 增长分配）
 	var (
-		frame  bytes.Buffer // 当前帧原始字节
-		data   []byte       // 当前帧 data payload（合并）
-		event  []byte       // 当前帧 event 字段
-		inLine bool         // 当前行未结束（上次 ReadSlice 返回 ErrBufferFull ⟹ true；chunk 以 \n 结尾 ⟹ false）
+		data   []byte // 当前帧 data payload（合并）
+		event  []byte // 当前帧 event 字段
+		inLine bool   // 当前行未结束（上次 ReadSlice 返回 ErrBufferFull ⟹ true；chunk 以 \n 结尾 ⟹ false）
 	)
 	flushFrame := func() error {
 		out := frame.Bytes()
