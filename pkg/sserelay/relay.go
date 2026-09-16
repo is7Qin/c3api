@@ -358,11 +358,13 @@ func (r *relay) write(p []byte) error {
 	if r.pending >= r.cfg.FlushBytes {
 		return r.flushLocked()
 	}
-	// 按需武装 flush timer：仅当有待 flush 数据时 timer 才运行。**瞬时短流
-	// （上游秒回、首事件已 flush）绝无 timer 开销**——否则每流一个 1ms 周期
-	// timer + goroutine，万级并发流 = 每秒千万次 timer 唤醒，runtime 计时器
-	// 堆 + 锁打满 CPU（50k 并发上机实测：timers.run 26% + timer 锁 16%，
-	// 吞吐从 11.9k/s 崩到 3k/s 的死亡螺旋；短流 ~1ms 结束所以旧行为不炸）。
+	// 按需武装 flush timer（后备路径）：稳态下真正的 flush 发生在 run() 顶部
+	// 的 drainFlush——读缓冲耗尽、即将阻塞等新数据时同步 flush，并在同一迭代
+	// 内 Stop 掉这里刚武装的 timer（装载/卸载往返 µs 级，timer 实际不触发）。
+	// timer 仅覆盖"离开 drain 检查后、下一次 ReadSlice 前"的窄窗口，仍是"有
+	// 数据才武装"：瞬时短流（上游秒回、首事件已 flush）绝无 timer 开销——
+	// 否则每流一个 1ms 周期 timer + goroutine，万级并发流 = 每秒千万次 timer
+	// 唤醒（50k 并发上机实测：timers.run 26% + timer 锁 16%，吞吐 11.9k/s→3k/s）。
 	r.armFlushTimerLocked()
 	return nil
 }
