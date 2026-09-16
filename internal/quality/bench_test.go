@@ -59,8 +59,8 @@ func BenchmarkFlowOwnerDuplicateMergeSteadyState(b *testing.B) {
 	}
 }
 
-// BenchmarkFlowRedisPayload：缓存路径（生产）vs 旧"每发布重物化+json.Marshal"
-// 路径（snapshotForRedis 仍保留，作为对照）。夹具 = 单分钟 2000 行。
+// BenchmarkFlowRedisPayload：生产缓存路径——同一 (minute, version) 重发布只
+// 重拼 wrapper（rows JSON 命中缓存，零分配）。夹具 = 单分钟 2000 行。
 func BenchmarkFlowRedisPayload(b *testing.B) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, err := NewRecorder(50000)

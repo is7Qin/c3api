@@ -269,7 +269,7 @@ func (f *FlowMinute) Minute() int64 { return f.minute }
 // FlowRows 返回该分钟的行切片（内部存储，不做拷贝）。所有权契约：
 //   - 保留态分钟（Recorder/FlowOwner 持有）返回的行**只读**——调用方不得改写、
 //     不得长期别名；需要独立副本时自行 clone；
-//   - 独占产物（snapshotForRedis / snapshotForPG 的 materializeShell 输出，与该
+//   - 独占产物（snapshotForPG / redisPayload 的 materializeShell 输出，与该
 //     分钟所有者不共享）可原地改写——flowRowsFromMinute 会写
 //     InstanceSrc/AbsoluteSequence/TerminalMinute flush 戳——但必须同步消费后
 //     立即丢弃该 *FlowMinute。

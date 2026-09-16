@@ -256,9 +256,9 @@ func (t *foldCellTable) drain(curMinute int64, seq uint64, fn func(f attemptFact
 // growIfNeeded discards stale probe runs by reallocating shards that
 // overflowed or exceed the load factor, up to the normative max. Post-drain
 // every count is already folded, so reallocation drops keys freely (nothing
-// to conserve). TICK-ONLY: called from the two tick expansions
-// (snapshotForPG/snapshotForRedis), never from diagnostic reads and never
-// from the request path.
+// to conserve). TICK-ONLY: called from the two tick-side payload paths
+// (snapshotForPG lease / redisPayload 载荷构建), never from diagnostic reads
+// and never from the request path.
 func (t *foldCellTable) growIfNeeded() {
 	for i := range t.shards {
 		s := &t.shards[i]

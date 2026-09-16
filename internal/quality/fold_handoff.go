@@ -27,8 +27,8 @@ const (
 // version) 缓存 rows 数组 JSON：同一版本重发布（保留分钟的每 tick 序号心跳）
 // 只重拼小 wrapper，不再重物化/重编码。state 语义与旧调用面一致：
 // flowPayloadNone = 无行且无空标记（跳过），flowPayloadRows = blob 为 rows
-// JSON，flowPayloadEmpty = 空快照标记。ok=false 对齐 snapshotForRedis 的 nil
-// （已 seal 或分钟未知）。只读：无 lease、无 ack，owner 保留态不动。
+// JSON，flowPayloadEmpty = 空快照标记。ok=false = 已 seal 或分钟未知（无载荷
+// 可发布）。只读：无 lease、无 ack，owner 保留态不动。
 //
 // Caller-facing。编码在锁外进行：materialize 必须在锁内读 shell.counts，
 // 但 json 编码只依赖物化快照；仅当版本未变才写回缓存（否则返回本次编码，
