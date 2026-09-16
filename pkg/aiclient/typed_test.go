@@ -149,9 +149,13 @@ func TestTypedRelayMultiValueFidelity(t *testing.T) {
 	require.Equal(t, []string{"v1", "v2"}, built["Anthropic-Beta"], "anthropic option 包同样不得压掉第二个值")
 }
 
-// TestTypedRelayNilInKeepsSDKDefaults typed 面 in=nil 时不得凭空造头（与 raw 面
-// 同构）：出栈只剩 SDK 自己的默认 + 网关鉴权声明，且不含 User-Agent 键（护栏 G1
-// 的 typed 对应项——只断键不存在，默认 UA 字面值随 SDK 版本漂）。
+// TestTypedRelayNilInKeepsSDKDefaults typed 面 in=nil 时不得凭空造出客户端头：
+// 断言只覆盖「网关这一层没造东西」——自定义头键不存在 + 鉴权声明仍是账号 key。
+//
+// 注意它**不是** raw 面护栏 G1 的对应项：G1 断言出栈不含 User-Agent 键，typed 面
+// 结构上做不到（SDK 在 cfg.Apply 之前就写了自己的默认 UA，RoundTripper 视图必然
+// 看到 `OpenAI/Go …`，其字面值随 SDK 版本漂）。"网关不凭空造 UA" 由 raw 面 G1
+// 守住；typed 面若将来出现网关自造 UA，这条测试拦不住，是已知覆盖边界。
 func TestTypedRelayNilInKeepsSDKDefaults(t *testing.T) {
 	srv := typedUpstream(t)
 	defer srv.Close()
