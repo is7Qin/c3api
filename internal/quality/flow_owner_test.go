@@ -3,7 +3,10 @@ package quality
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -246,4 +249,41 @@ func TestFlowOwner_FoldDoesNotAliasInputRows(t *testing.T) {
 	}
 	require.True(t, sawTwelve, "same-minute merge must deep-copy the incoming row")
 	require.True(t, sawEleven, "same-minute merge must keep the conserved row")
+}
+
+// TestFlowOwnerRedisPayloadCached 钉住 (minute, shell version) 缓存契约：
+// 同版本重发布复用同一 blob（免重物化/重编码）；新 fold 版本推进后缓存失效
+// 且内容反映新行；未知分钟 ok=false。
+func TestFlowOwnerRedisPayloadCached(t *testing.T) {
+	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	rec, owner := redFlowLeaseOwner(t, fixed)
+	m := fixed.Truncate(time.Minute).Unix()
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
+
+	blob1, state, ok := owner.redisPayload(m)
+	require.True(t, ok)
+	require.Equal(t, flowPayloadRows, state)
+	require.NotEmpty(t, blob1)
+	var rows1 []map[string]any
+	require.NoError(t, json.Unmarshal(blob1, &rows1))
+	require.Len(t, rows1, 1)
+
+	blob2, state2, ok := owner.redisPayload(m)
+	require.True(t, ok)
+	require.Equal(t, flowPayloadRows, state2)
+	require.Equal(t, blob1, blob2)
+	require.Equal(t, reflect.ValueOf(blob1).Pointer(), reflect.ValueOf(blob2).Pointer(),
+		"same version must reuse the cached blob")
+
+	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(12)}))
+	blob3, _, ok := owner.redisPayload(m)
+	require.True(t, ok)
+	require.NotEqual(t, reflect.ValueOf(blob1).Pointer(), reflect.ValueOf(blob3).Pointer(),
+		"version bump must invalidate the cache")
+	var rows3 []map[string]any
+	require.NoError(t, json.Unmarshal(blob3, &rows3))
+	require.Len(t, rows3, 2, "refreshed blob must carry both folded rows")
+
+	_, _, ok = owner.redisPayload(m + 60)
+	require.False(t, ok, "unknown minute must not report a payload")
 }

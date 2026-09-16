@@ -10,8 +10,70 @@ package quality
 // cycle. Only the expansion source changed (cells, not chains).
 
 import (
+	"encoding/json"
 	"sort"
 )
+
+// flowPayloadState 是 redisPayload 的返回态：无内容 / rows 载荷 / 空快照标记。
+type flowPayloadState uint8
+
+const (
+	flowPayloadNone flowPayloadState = iota
+	flowPayloadRows
+	flowPayloadEmpty
+)
+
+// redisPayload 返回某分钟 Redis flow 发布的载荷片段，并按 (minute, shell
+// version) 缓存 rows 数组 JSON：同一版本重发布（保留分钟的每 tick 序号心跳）
+// 只重拼小 wrapper，不再重物化/重编码。state 语义与旧调用面一致：
+// flowPayloadNone = 无行且无空标记（跳过），flowPayloadRows = blob 为 rows
+// JSON，flowPayloadEmpty = 空快照标记。ok=false 对齐 snapshotForRedis 的 nil
+// （已 seal 或分钟未知）。只读：无 lease、无 ack，owner 保留态不动。
+//
+// Caller-facing。编码在锁外进行：materialize 必须在锁内读 shell.counts，
+// 但 json 编码只依赖物化快照；仅当版本未变才写回缓存（否则返回本次编码，
+// 内容与快照时点一致）。
+func (o *FlowOwner) redisPayload(minute int64) (blob []byte, state flowPayloadState, ok bool) {
+	o.mu.Lock()
+	o.drainFoldLocked()
+	o.cells.growIfNeeded()
+	if o.sealed.Load() {
+		o.mu.Unlock()
+		return nil, flowPayloadNone, false
+	}
+	shell, found := o.shells[minute]
+	if !found {
+		o.mu.Unlock()
+		return nil, flowPayloadNone, false
+	}
+	switch {
+	case shell.emptyMarked && len(shell.counts) == 0:
+		o.mu.Unlock()
+		return nil, flowPayloadEmpty, true
+	case len(shell.counts) == 0:
+		o.mu.Unlock()
+		return nil, flowPayloadNone, true
+	case shell.redisBlob != nil && shell.redisBlobVersion == shell.version:
+		blob = shell.redisBlob
+		o.mu.Unlock()
+		return blob, flowPayloadRows, true
+	}
+	version := shell.version
+	fm := materializeShell(shell)
+	o.mu.Unlock()
+	encoded, err := json.Marshal(fm.FlowRows())
+	if err != nil {
+		// 纯结构体数组编码不会失败；fail closed 为"无可发布"。
+		return nil, flowPayloadNone, true
+	}
+	o.mu.Lock()
+	if shell.version == version && !o.sealed.Load() {
+		shell.redisBlob = encoded
+		shell.redisBlobVersion = version
+	}
+	o.mu.Unlock()
+	return encoded, flowPayloadRows, true
+}
 
 // pgCandidateMinutes returns dirty, unleased, PG-open minute IDs in
 // deterministic oldest-first order (draining first, so every folded fact is
@@ -83,24 +145,6 @@ func (o *FlowOwner) snapshotForPG(minute int64) (*FlowMinute, foldSnapshotToken,
 		acceptedWatermark: shell.acceptedContrib,
 	}
 	return materializeShell(shell), tok, true
-}
-
-// snapshotForRedis deep-materializes exactly one retained minute with
-// read-only semantics: no lease, no ack, owner retention untouched.
-// Tick expansion grows here. Caller-facing.
-func (o *FlowOwner) snapshotForRedis(minute int64) *FlowMinute {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.drainFoldLocked()
-	o.cells.growIfNeeded()
-	if o.sealed.Load() {
-		return nil
-	}
-	shell, ok := o.shells[minute]
-	if !ok {
-		return nil
-	}
-	return materializeShell(shell)
 }
 
 // matchLeaseLocked is the two-field identity match (minute plus activeLeaseID
