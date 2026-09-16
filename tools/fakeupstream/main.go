@@ -211,17 +211,25 @@ func main() {
 // TTFT 按此采集；写后限速会使首帧恒 ~0ms，经毫秒截断 + log(1)=0 后 durable
 // TTFT 和恒零、frontier 全员谎报 1ms（缺陷 C）。
 func writeChatStream(w http.ResponseWriter, fl http.Flusher, latency time.Duration, n int) {
+	// 帧预编码：100 帧里 99 帧字节恒定，仅末帧带 usage —— 逐帧 map+Marshal 在
+	// 10k 流压测下是上游模拟器的主要 CPU 成本（实测 1.5-3.2 核）。按请求编码
+	// 2 次、逐帧单写，线格式与旧实现逐字节一致。
+	base := map[string]any{
+		"id": "c1", "object": "chat.completion.chunk",
+		"choices": []map[string]any{{"delta": map[string]any{"content": "x"}, "index": 0}},
+	}
+	raw, _ := json.Marshal(base)
+	frame := append(append([]byte("data: "), raw...), '\n', '\n')
+	base["usage"] = map[string]any{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+	rawLast, _ := json.Marshal(base)
+	last := append(append([]byte("data: "), rawLast...), '\n', '\n')
 	for i := 0; i < n; i++ {
 		time.Sleep(latency)
-		chunk := map[string]any{
-			"id": "c1", "object": "chat.completion.chunk",
-			"choices": []map[string]any{{"delta": map[string]any{"content": "x"}, "index": 0}},
-		}
+		data := frame
 		if i == n-1 {
-			chunk["usage"] = map[string]any{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+			data = last
 		}
-		data, _ := json.Marshal(chunk)
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = w.Write(data)
 		fl.Flush()
 	}
 	fmt.Fprint(w, "data: [DONE]\n\n")

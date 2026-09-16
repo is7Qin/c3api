@@ -34,6 +34,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"net/http/httptrace"
 	_ "net/http/pprof"
 	"net/url"
 	"os"
@@ -88,8 +89,15 @@ type metrics struct {
 	// 30k 并发下每请求抢同一把锁（最大热点）；p99 遍历数组同样无锁。
 	samples        [sampleBuckets]atomic.Int64 // stream 首字节延迟采样：10ms/桶
 	latencySamples [sampleBuckets]atomic.Int64 // chat 完整响应延迟采样：10ms/桶
-	mu             sync.Mutex                  // 仅保护 errDetail（错误路径低频，0 错误零锁）
-	errDetail      map[string]int64
+	// dial/建连观测（httptrace）：建连拥塞（SYN 丢/accept 排队）是压测夹具
+	// 与网关之间最容易失明的一段——goroutine dump 与首字节直方图都看不到它。
+	dialN      atomic.Int64 // 真实新建连接数（Keep-Alive 复用不计）
+	dialUS     atomic.Int64 // dial 累计微秒
+	dialSlow   atomic.Int64 // dial >1s 计数（建连拥塞信号）
+	connWaitN  atomic.Int64 // GotConn 样本数（新建+复用）
+	connWaitMS atomic.Int64 // reqStart → GotConn 累计毫秒
+	mu         sync.Mutex   // 仅保护 errDetail（错误路径低频，0 错误零锁）
+	errDetail  map[string]int64
 }
 
 func (m *metrics) addErr(detail string) {
@@ -231,6 +239,13 @@ func main() {
 	if *mode == "stream" || *mode == "chat" {
 		// 模型请求模式带 format（images 的 JSON/SSE 两形态结果必须可区分归档）。
 		result += fmt.Sprintf("format=%s\n", *format)
+		if n := m.dialN.Load(); n > 0 {
+			result += fmt.Sprintf("dial_n=%d dial_avg_ms=%.2f dial_gt1s=%d\n",
+				n, float64(m.dialUS.Load())/float64(n)/1000, m.dialSlow.Load())
+		}
+		if n := m.connWaitN.Load(); n > 0 {
+			result += fmt.Sprintf("conn_wait_n=%d conn_wait_avg_ms=%d\n", n, m.connWaitMS.Load()/n)
+		}
 	}
 	if *mode == "fill" {
 		result += fmt.Sprintf("fill_type=%s\n", *fillType)
@@ -420,7 +435,30 @@ func affinityIdx(rng *rand.Rand) int {
 func doRequest(client *http.Client, m *metrics, rng *rand.Rand, count bool) {
 	req := newRequestFromTemplate(pickKey(rng), affinityIdx(rng))
 	reqStart := time.Now()
+	// 建连观测：ConnectStart/Done 仅真实拨号时触发（Keep-Alive 复用不记 dial）；
+	// GotConn 每次取连接都触发，reqStart→GotConn 含拨号等待与连接池排队。
+	var dialStart time.Time
+	var dialDur time.Duration
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+		ConnectStart: func(_, _ string) { dialStart = time.Now() },
+		ConnectDone: func(_, _ string, err error) {
+			if err == nil {
+				dialDur = time.Since(dialStart)
+			}
+		},
+		GotConn: func(httptrace.GotConnInfo) {
+			m.connWaitN.Add(1)
+			m.connWaitMS.Add(time.Since(reqStart).Milliseconds())
+		},
+	}))
 	resp, err := client.Do(req)
+	if dialDur > 0 {
+		m.dialN.Add(1)
+		m.dialUS.Add(dialDur.Microseconds())
+		if dialDur > time.Second {
+			m.dialSlow.Add(1)
+		}
+	}
 	if err != nil {
 		if count {
 			m.errs.Add(1)
