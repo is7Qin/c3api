@@ -349,23 +349,30 @@ func (s *stagedReader) Read(p []byte) (int, error) {
 	return 0, io.EOF
 }
 
-func TestRelayTimerFlushesWithoutNextEvent(t *testing.T) {
+// TestRelayFlushedBeforeBlockingRead 钉住 flush-on-drain 取代旧 timer 兜底：
+// 源在发出帧后阻塞时，帧字节必须在 relay 阻塞于下一次 Read 之前就已 flush —
+// drain 在读缓冲边界同步执行（首帧走即时 flush，后续帧走 drainFlush），
+// 因此不再需要一次 timer 火把字节推出；timer 在 drain 时停掉，稳态零 timer
+// 唤醒（旧测试 TestRelayTimerFlushesWithoutNextEvent 钉的是"第 2 次 flush
+// 只能来自 timer"，机制变更后该空 flush 不再存在）。
+func TestRelayFlushedBeforeBlockingRead(t *testing.T) {
 	fr := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
 	src := &stagedReader{chunks: [][]byte{[]byte("data: x\n\n")}, block: make(chan struct{})}
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- Relay(context.Background(), fr, src, Config{FlushBytes: 4096, FlushInterval: 20 * time.Millisecond})
 	}()
-	// 首事件立即 flush
+	// 首事件即时 flush。
 	require.Eventually(t, func() bool { return fr.flushed.Load() >= 1 }, time.Second, time.Millisecond)
-	// 源仍阻塞在 Read、relay 未退出：期间没有下一帧，2nd flush 只能来自 timer
+	// 源阻塞在 Read 上：relay 未退出。
 	select {
 	case err := <-errCh:
-		t.Fatalf("relay 在源阻塞期间提前退出: %v", err)
+		t.Fatalf("relay exited while source was still blocked: %v", err)
 	default:
 	}
-	require.Eventually(t, func() bool { return fr.flushed.Load() >= 2 }, 200*time.Millisecond, 5*time.Millisecond)
-	// 解除阻塞，流正常结束
+	// 远超 FlushInterval 的窗口内不得再出现空 flush（timer 已在 drain 停掉）。
+	time.Sleep(60 * time.Millisecond)
+	require.Equal(t, int32(1), fr.flushed.Load(), "drain must not leave a redundant timer flush behind")
 	close(src.block)
 	require.NoError(t, <-errCh)
 }
@@ -558,4 +565,20 @@ func TestRelayConcurrentStreams(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestRelayDrainFlushCoalescesFrames 钉住 flush-on-drain 契约：同一读批的
+// 多帧在缓冲耗尽时合并为至多 2 次 flush（首帧即时 flush + drain flush），
+// 而非逐帧 flush。drain 还会停掉刚装载的 timer（稳态零 timer 火）。
+func TestRelayDrainFlushCoalescesFrames(t *testing.T) {
+	var sb strings.Builder
+	const frames = 64
+	for i := 0; i < frames; i++ {
+		sb.WriteString("data: {\"i\":1}\n\n")
+	}
+	rec := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
+	require.NoError(t, relayStream(rec, sb.String(), Config{FlushInterval: time.Millisecond}))
+	require.Equal(t, sb.String(), rec.Body.String())
+	require.LessOrEqual(t, rec.flushed.Load(), int32(2), "batch must coalesce to <=2 flushes")
+	require.GreaterOrEqual(t, rec.flushed.Load(), int32(1), "bytes must be flushed")
 }

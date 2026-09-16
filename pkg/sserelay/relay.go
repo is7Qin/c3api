@@ -216,6 +216,16 @@ func (r *relay) run() error {
 		return nil
 	}
 	for {
+		// flush-on-drain：读缓冲已空 ⟹ 下一次 ReadSlice 将因等新数据而阻塞。
+		// 此刻先 flush 已写入的完整帧——同一读批的多帧合并为一次写系统调用，
+		// 且比 ~1ms timer flush 更早（延迟不增反降）；flush 后顺手停掉刚装载
+		// 的 timer，消除逐帧 timer 唤醒（write 里装载、本处卸载，往返 µs 级，
+		// timer 实际不再触发）。
+		if br.Buffered() == 0 {
+			if err := r.drainFlush(); err != nil {
+				return err
+			}
+		}
 		// 空行 = 帧结束
 		line, err := br.ReadSlice('\n')
 		if len(line) > 0 {
@@ -446,4 +456,28 @@ func (r *relay) flushNoResetLocked() error {
 		r.fl.Flush()
 	}
 	return nil
+}
+
+// drainFlush flush-on-drain：读缓冲耗尽、即将阻塞等新数据前调用。flush 已
+// 写入的完整帧（同一读批多帧 = 一次写系统调用），并停掉 write 里刚装载的
+// flush timer——装载与卸载在同一循环迭代内往返（µs 级），稳态下 timer 不再
+// 真正触发（旧路径：每帧一次 1ms timer 火 = 每流 50 次/秒的 timer+goroutine
+// 唤醒）。空 pending 时 flushLocked 为 no-op，但 timer 仍要停（避免空转）。
+func (r *relay) drainFlush() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.timerArmed {
+		r.timer.Stop()
+		r.timerArmed = false
+	}
+	if r.pending <= 0 {
+		return nil
+	}
+	if r.bw.Buffered() == 0 {
+		// 字节已由首帧即时 flush 写出（flushNoResetLocked 不清零 pending，
+		// 只是账面）：仅清账，不再触发空 Flush。
+		r.pending = 0
+		return nil
+	}
+	return r.flushLocked()
 }
