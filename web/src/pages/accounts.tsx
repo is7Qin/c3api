@@ -724,6 +724,8 @@ export default function Accounts() {
           account_id: id,
           credential_type: ct,
           codex_email: (f.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
+          // PUT 全列更新：缺省字段按 NULL 落盘——account id 回显原值防清空（与 email/identity 同例）
+          codex_account_id: cur?.codex_account_id ?? null,
           ...(ct === 'codex-oauth'
             ? {
                 codex_oauth_token: f.codex_oauth_token.trim() || null,
@@ -924,6 +926,8 @@ export default function Accounts() {
         account_id: a.ID,
         credential_type: ct,
         codex_email: extForm.codex_email.trim() || null,
+        // PUT 全列更新：缺省字段按 NULL 落盘——account id 回显原值防清空（与 identity 同例）
+        codex_account_id: cur?.codex_account_id ?? null,
         // 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key（其余置 NULL）
         ...(ct === 'codex-oauth'
           ? {
