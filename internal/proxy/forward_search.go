@@ -94,9 +94,9 @@ func emitSearchOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, 
 //     复用既有 SDK 面）；api_key/responses-special → 静态透传（Bearer upstream
 //     key 直连上游；URL 裸根派生
 //     base/v1/alpha/search，固定 /v1/alpha/search）。组内混合类型路由允许
-//   - x-codex-turn-metadata 统一不转发（两路径均不带上游——SDK 默认头面
-//     无该头；静态 rawPostCT 构造全新 Header 只设 Content-Type + Authorization，
-//     与主流静态路径现状一致）
+//   - x-codex-turn-metadata：静态路径如实透传，SDK 路径不转发——静态
+//     rawPostCT 现收 r.Header 过 RelayHeaders，该键不在全仓唯一清单 relayDeny
+//     ⇒ 客户端带就发（与主流静态路径同源）；SDK 路径结构上不采客户端头
 //   - 不做 ModelMapping 改写：请求体原样 = 映射对 search
 //     不生效（上游收客户端模型名）——零解析是显式约束
 //   - 计费：2xx → usage_logs 行（format=openai-search + call_count=1 +
@@ -225,7 +225,8 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	// 非流式超时：TCP 黑洞读停滞 → 超时触发 → 连接级错误转移
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	// 无头注入：x-codex-turn-metadata 统一不转发
+	// SDK 路径结构上不采客户端头：x-codex-turn-metadata 到此不转发（静态路径
+	// 走 RelayHeaders，该键如实透传——见 callStaticSearch）
 	resp, err := p.codex.Search(ctx, &cred, body)
 	if err != nil {
 		if r.Context().Err() != nil {
@@ -258,7 +259,8 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 // base/v1/responses 同款派生语义，尾段即 /alpha/search）。错误信封 = 原始
 // HTTP 状态 + body 透传
 //
-// 无客户端头透传（x-codex-turn-metadata 统一不转发）
+// 客户端头如实透传（x-codex-turn-metadata 不在 relayDeny ⇒ 客户端带就发；
+// 仍不转发的那条只剩上面的 SDK 路径）
 func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte) (int, []byte, bool, error) {
 	cred, err := p.credentialFor(ctx, sel)
 	if err != nil {
@@ -268,7 +270,7 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	// 转移
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, cred, body)
+	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, cred, body, r.Header)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
