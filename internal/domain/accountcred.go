@@ -21,6 +21,9 @@ type AccountCredential struct {
 	OAuthRefreshToken string
 	OAuthExpiresAt    *time.Time
 	PATKey            string
+	// CodexAccountID 上游账号/空间标识（ChatGPT-Account-ID 头——SDK 内部注入面；
+	// 空 = 不发头，向后兼容）。落库点定值（导入行/单账号保存派生），热路径只读。
+	CodexAccountID string
 }
 
 // CredentialFromExt 从账号扩展行派生每次调用必传的凭据（投影语义：按类型取
@@ -32,6 +35,10 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 		return AccountCredential{}
 	}
 	c := AccountCredential{AccountID: e.AccountID}
+	// 账号标识两类型共通投影（网关账号身份头——与凭据列组正交）。
+	if e.CodexAccountID != nil {
+		c.CodexAccountID = *e.CodexAccountID
+	}
 	switch e.CredentialType {
 	case credential.TypeCodexOAuth:
 		if e.CodexOAuthToken != nil {
