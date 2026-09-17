@@ -327,8 +327,9 @@ func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
 // TestCodexWSMockRotateRefreshSuccess 端到端主流程（oauth）：升级 401 → SDK
 // 单飞 refresh（真端点 mock）→ 重拨 200 → 完整会话（事件流 + 回声 + 关闭）
 // + usage 嗅探计费（5 计数与 aiclient 路径逐字节一致）+ 伪装四元组握手头断
-// 言 + 透传面（客户端头保留 / session 头族 + OpenAI-Beta 剔除 / 网关 key 不
-// 泄漏）+ 帧内 client_metadata 注入断言。
+// 言 + 客户端头一律不递（spec §12：session 头族/OpenAI-Beta 不得顶掉账号身份，
+// 自定义头如 X-Client-Version 也不得出现）+ 网关 key 不泄漏 + 帧内
+// client_metadata 注入断言。
 func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	up, hooks := newCodexWSUpstream(t, []int{401, 200}, 3)
 	defer up.Close()
@@ -339,8 +340,9 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
-	// 客户端带伪装冲突面头（session 头族 + OpenAI-Beta 旧版本）——必须被剔除
-	//（P3-7/P3-8），不能覆盖账号伪装身份；X-Client-Version 正常透传。
+	// 客户端带伪装冲突面头（session 头族 + OpenAI-Beta 旧版本）与自定义头——按
+	// spec §12 一律不递上游：前者不得覆盖账号伪装身份（P3-7/P3-8），后者
+	//（X-Client-Version）自该裁决起也不再透传（见下方断言）。
 	c := dialResponsesWSHeaders(t, srv, http.Header{
 		"Authorization":       {"Bearer ck-1"},
 		"X-Client-Version":    {"codex-1.2.3"},
@@ -382,7 +384,7 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	// 握手面断言（P3-5 伪装头）：两次升级（401 首拨 + 轮转后重拨），账号鉴权
 	// 注入（首拨旧 at / 重拨新 at——轮转生效）；网关 key 不泄漏；伪装四元组头
 	// = ext 身份（客户端 rogue 头被剔除）；OpenAI-Beta = 网关默认（rogue 被剔
-	// 除）；X-Client-Version 透传。
+	// 除）；客户端自定义头（如 X-Client-Version）自 spec §12 起一律不递。
 	hooks.mu.Lock()
 	defer hooks.mu.Unlock()
 	require.Equal(t, 2, hooks.upgrades, "401 轮转：首拨 + 重拨一次")
@@ -395,7 +397,9 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	require.Equal(t, ext.CodexIdentity.ThreadID, h.Get("X-Client-Request-Id"), "x-client-request-id 缺省 = thread-id")
 	require.Equal(t, ext.CodexIdentity.WindowID, h.Get("X-Codex-Window-Id"), "window-id = {thread}:0")
 	require.Equal(t, "responses_websockets="+aiclient.ResponsesWSBetaHeader, h.Get("OpenAI-Beta"), "网关默认 beta（rogue 已剔除）")
-	require.Equal(t, "codex-1.2.3", h.Get("X-Client-Version"), "非冲突面客户端头透传")
+	// spec §12：codex 面只发 SDK 自己写的头 ⇒ 客户端 X-Client-Version 不再透传
+	//（旧断言是「非冲突面客户端头透传」，属旧契约）。
+	require.Empty(t, h.Get("X-Client-Version"), "codex 面不得递客户端头（spec §12）")
 	require.NotEqual(t, "Bearer ck-1", h.Get("Authorization"), "网关 key 不得直通上游")
 
 	// 帧内 client_metadata 注入（伪装四元组帧级面——真实 codex 客户端语义）
@@ -969,90 +973,38 @@ func TestCodexWSHeartbeatCadence(t *testing.T) {
 
 // --- 纯函数单测 ---
 
-// TestCodexWSPassthroughHeaders 透传面单测：hop-by-hop/网关 key 剔除（复用
-// wsPassthroughHeaders）+ 伪装身份项剔除（session 头族 + OpenAI-Beta +
-// User-Agent，P3-7/P3-8 与 C5）；其余原样。
-func TestCodexWSPassthroughHeaders(t *testing.T) {
+// TestCodexWSClientHeadersForwardsNothing codex WS 面的透传契约（spec §12 裁决）：
+// 该面**只发 SDK 自己写的头**，客户端头一个都不递 —— 不是「剔一份清单、剩下的透传」。
+// 因此对一份尽量全的入站头（伪装身份族 / beta / 自定义 / 入站足迹 / 网关自身写入 /
+// hop-by-hop）断言产物**恒为空集**。旧断言「X-Client-Version 仍透传」属旧契约
+// （透传 + 剔 7 项），已按新裁决翻转。
+func TestCodexWSClientHeadersForwardsNothing(t *testing.T) {
 	h := http.Header{
-		"Connection":          {"upgrade"},
-		"Sec-Websocket-Key":   {"k"},
-		"Authorization":       {"Bearer ck-1"},
-		"Session-Id":          {"s"},
-		"Thread-Id":           {"t"},
-		"X-Client-Request-Id": {"c"},
-		"X-Codex-Window-Id":   {"w"},
-		"OpenAI-Beta":         {"responses_websockets=2025-01-01"},
-		"X-Client-Version":    {"codex-1.2.3"},
-		"User-Agent":          {"ua"},
-		// R7（spec §10）：入站足迹 9 键必须出现在夹具里，否则下面的「不得进入
-		// 握手头」断言是靠「输入本来就没有」通过的假绿。
-		"X-Forwarded-For":   {"203.0.113.9"},
-		"X-Real-Ip":         {"203.0.113.9"},
-		"Cf-Connecting-Ip":  {"203.0.113.9"},
-		"True-Client-Ip":    {"203.0.113.9"},
-		"Forwarded":         {"for=203.0.113.9"},
-		"X-Forwarded-Host":  {"api.example.com"},
-		"X-Forwarded-Proto": {"https"},
-		"X-Forwarded-Port":  {"8443"},
-		"Via":               {"1.1 internal-gateway"},
-		// R8（spec §11）：网关自身关联 id 与连接级协商同样必须在夹具里。
-		"X-Request-Id": {"req-1"},
-		"Expect":       {"100-continue"},
+		"Connection": {"upgrade"}, "Sec-Websocket-Key": {"k"}, "Authorization": {"Bearer ck-1"},
+		"Session-Id": {"s"}, "Thread-Id": {"t"}, "X-Client-Request-Id": {"c"}, "X-Codex-Window-Id": {"w"},
+		"OpenAI-Beta":             {"responses_websockets=2025-01-01"},
+		"X-Client-Version":        {"codex-1.2.3"},
+		"X-Opencode-Session":      {"oc-1"},
+		"User-Agent":              {"curl/8.7.1"},
+		"Originator":              {"Zed"},
+		"X-Client-Originator":     {"Zed"},
+		"X-Stainless-Retry-Count": {"0"},
+		"Anthropic-Version":       {"2023-06-01"},
 	}
-	out := codexWSPassthroughHeaders(h)
-	require.Empty(t, out.Get("Connection"))
-	require.Empty(t, out.Get("Sec-Websocket-Key"))
-	require.Empty(t, out.Get("Authorization"))
-	require.Empty(t, out.Get("Session-Id"))
-	require.Empty(t, out.Get("Thread-Id"))
-	require.Empty(t, out.Get("X-Client-Request-Id"))
-	require.Empty(t, out.Get("X-Codex-Window-Id"))
-	require.Empty(t, out.Get("OpenAI-Beta"))
-	require.Equal(t, "codex-1.2.3", out.Get("X-Client-Version"))
-	// R7（spec §10）：入站足迹 9 键同样不得进入 codex 握手头（客户端 IP / 转发
-	// 路径类头描述入站连接，而伪装身份面向上游声明的身份由 SDK 决定）。
 	for _, k := range inboundFootprintWS {
-		require.Empty(t, out.Get(k), "入站足迹项 %s 必须被剔", k)
-		_, ok := out[k]
-		require.False(t, ok, "入站足迹项 %s 必须不存在（map 槽位级断言）", k)
+		h[k] = []string{"203.0.113.9"}
 	}
-	// R8（spec §11）：网关自身写过的 X-Request-Id 与 Expect 也不得进握手头。
 	for _, k := range gatewayStrippedExtraWS {
-		require.Empty(t, out.Get(k), "%s 必须被剔（spec §11）", k)
-		_, ok := out[k]
-		require.False(t, ok, "%s 必须不存在（map 槽位级断言）", k)
+		h[k] = []string{"client-value"}
 	}
-	// 伪装身份契约（C5 翻转）：客户端 UA 不得穿透 SDK 伪装默认 ⇒ 被剔。补 map
-	// 槽位断言：只断言 Get 会被「字面槽位残留、Get 查空槽」的假绿放过。
-	require.Empty(t, out.Get("User-Agent"))
-	_, ok := out["User-Agent"]
-	require.False(t, ok, "User-Agent 必须不存在于 codex 透传产物（map 槽位级断言）")
-}
 
-// TestCodexWSPassthroughHeaders_StripsUAAndOriginator R4（纯函数）：codex 额外
-// 清单 7 项逐个剔除（伪装身份契约，不因 spec §9-2「协议协商头允许覆盖」而放宽），
-// 非冲突面客户端头仍原样透传。每条都按 §2b「构造纪律」补 map 槽位断言。
-func TestCodexWSPassthroughHeaders_StripsUAAndOriginator(t *testing.T) {
-	h := http.Header{
-		"User-Agent":          {"curl/8.7.1"},
-		"Originator":          {"evil-vscode"},
-		"Session-Id":          {"s"},
-		"Thread-Id":           {"t"},
-		"X-Client-Request-Id": {"c"},
-		"X-Codex-Window-Id":   {"w"},
-		"Openai-Beta":         {"responses_websockets=2025-01-01"},
-		"X-Client-Version":    {"codex-1.2.3"},
-		"X-Opencode-Session":  {"oc-1"},
-	}
-	out := codexWSPassthroughHeaders(h)
-	for _, k := range []string{"User-Agent", "Originator", "Session-Id", "Thread-Id",
-		"X-Client-Request-Id", "X-Codex-Window-Id", "Openai-Beta"} {
-		require.Empty(t, out.Get(k), "伪装身份项 %s 必须被剔", k)
+	out := codexWSClientHeaders(h)
+	require.Empty(t, out, "codex 面不得递任何客户端头（spec §12：握手头全由 SDK 负责）")
+	// 逐键 map 槽位断言：即便日后实现退化成「过滤」而不是空集，也不许残留任何入站键。
+	for k := range h {
 		_, ok := out[k]
-		require.False(t, ok, "伪装身份项 %s 必须不存在（map 槽位级断言，防 Get 掩盖字面键残留）", k)
+		require.False(t, ok, "入站键 %s 不得出现在 codex 面产物里", k)
 	}
-	require.Equal(t, []string{"codex-1.2.3"}, out["X-Client-Version"], "非冲突面客户端头仍透传")
-	require.Equal(t, []string{"oc-1"}, out["X-Opencode-Session"], "自定义 session 头仍透传")
 }
 
 // TestCodexWSUpstreamSeesDisguisedUA R4（端到端）：客户端带 curl UA + 伪造
@@ -1060,7 +1012,7 @@ func TestCodexWSPassthroughHeaders_StripsUAAndOriginator(t *testing.T) {
 // codexsdk.DefaultCodexUserAgent / DefaultOriginator，绝不把指纹字符串抄进用例
 // （它是随 SDK 版本漂移的值，硬编码必成腐化点）。
 //
-// 机理（本用例存在的理由）：dialCodexWS 把 codexWSPassthroughHeaders 的产物逐个
+// 机理（本用例存在的理由）：dialCodexWS 把 codexWSClientHeaders 的产物逐个
 // 喂 codexsdk.WithHeader；SDK 侧 buildHeaders 先设伪装默认（client.go:305-306），
 // 再对 WithHeader 的值先 Del 后加（:327-331）⇒ 客户端 UA 会顶掉伪装默认。所以
 // 「网关侧把 UA 剔掉」正是让 SDK 默认伪装值得以保留的那一步，网关不需要另设 UA。
@@ -1073,10 +1025,21 @@ func TestCodexWSUpstreamSeesDisguisedUA(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
+	// 客户端把「伪装身份族 + 自定义头 + footprint + 网关自身写入」一并塞进来：按 spec §12
+	// 裁决，codex 面只发 SDK 自己写的头，这些一个都不该到上游。
 	c := dialResponsesWSHeaders(t, srv, http.Header{
-		"Authorization": {"Bearer ck-1"},
-		"User-Agent":    {"curl/8.7.1"},
-		"Originator":    {"evil-vscode"},
+		"Authorization":       {"Bearer ck-1"},
+		"User-Agent":          {"curl/8.7.1"},
+		"Originator":          {"evil-vscode"},
+		"Session-Id":          {"client-session"},
+		"Thread-Id":           {"client-thread"},
+		"X-Client-Request-Id": {"client-req"},
+		"X-Codex-Window-Id":   {"client-window"},
+		"OpenAI-Beta":         {"responses_websockets=1999-01-01"},
+		"X-Client-Version":    {"codex-1.2.3"},
+		"X-Opencode-Session":  {"oc-1"},
+		"X-Client-Originator": {"Zed"},
+		"X-Request-Id":        {"req-1"},
 	})
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
@@ -1094,6 +1057,28 @@ func TestCodexWSUpstreamSeesDisguisedUA(t *testing.T) {
 		"上游必须看到 SDK 伪装默认 UA（客户端 curl UA 已被剔）")
 	require.Equal(t, codexsdk.DefaultOriginator, got.Get("Originator"),
 		"上游必须看到 SDK 伪装默认 originator")
+	// spec §12：客户端头一律不递。分两类断言 ——
+	// ① 纯客户端键（SDK 永不写）：必须整键不出现（X-Client-Version / X-Opencode-Session
+	//    过去是透传的，属旧契约）。
+	for _, k := range []string{"X-Client-Version", "X-Opencode-Session", "X-Client-Originator", "X-Request-Id"} {
+		require.Empty(t, got.Get(k), "codex 面不得把客户端头 %s 递给上游（spec §12）", k)
+		_, ok := got[k]
+		require.False(t, ok, "客户端头 %s 不得出现在上游握手头里（map 槽位级断言）", k)
+	}
+	// ② 身份族键：SDK 会依账号 ext 自己写（网关身份）⇒ 断言的是「不是客户端那个值」，
+	//    而不是「不存在」（写成不存在会与 SDK 的正常行为冲突）。
+	for _, tc := range []struct{ key, clientVal string }{
+		{"Session-Id", "client-session"},
+		{"Thread-Id", "client-thread"},
+		{"X-Client-Request-Id", "client-req"},
+		{"X-Codex-Window-Id", "client-window"},
+	} {
+		require.NotEqual(t, tc.clientVal, got.Get(tc.key),
+			"身份族 %s 必须由 SDK 依账号 ext 写，客户端值不得顶掉（spec §12）", tc.key)
+	}
+	// OpenAI-Beta 同理：由 SDK 自己写网关 beta 值，客户端值不得顶掉。
+	require.NotEmpty(t, got.Get("OpenAI-Beta"), "beta 头由 SDK 写，必须存在")
+	require.NotContains(t, got.Get("OpenAI-Beta"), "1999-01-01", "客户端 beta 值不得顶掉 SDK 的")
 }
 
 // TestCodexIdentityFromExt 伪装四元组组装：ext 身份 → Session/CodexMeta 映射

@@ -125,14 +125,12 @@ func TestWSReport_headersAndLimitsPreserved(t *testing.T) {
 	require.Empty(t, h.Get("Authorization"))
 	require.Empty(t, h.Get("X-Api-Key"))
 	require.Equal(t, "v1", h.Get("X-Client-Version"))
-	ch := codexWSPassthroughHeaders(map[string][]string{"Session-Id": {"s"}, "OpenAI-Beta": {"x"}, "User-Agent": {"ua"}})
-	require.Empty(t, ch.Get("Session-Id"))
-	require.Empty(t, ch.Get("OpenAI-Beta"))
-	// 伪装身份契约（C5 翻转）：客户端 UA 不得穿透 SDK 伪装默认 ⇒ 被剔（补 map
-	// 槽位断言，理由同 codex_responses_ws_test.go 那条）。
-	require.Empty(t, ch.Get("User-Agent"))
-	_, ok := ch["User-Agent"]
-	require.False(t, ok, "User-Agent 必须不存在（map 槽位级断言）")
+	// codex 面（spec §12 裁决）：只发 SDK 自己写的头 ⇒ 客户端头产物恒为空集
+	// （旧契约是「剔 7 项伪装身份族，其余透传」，今天是「完全不透传」）。
+	ch := codexWSClientHeaders(map[string][]string{
+		"Session-Id": {"s"}, "OpenAI-Beta": {"x"}, "User-Agent": {"ua"}, "X-Client-Version": {"v1"},
+	})
+	require.Empty(t, ch, "codex 面不得递任何客户端头（spec §12）")
 }
 
 // inboundFootprintWS 入站足迹 9 键（规范形，spec §10 + `X-Forwarded-Port`）：两端 WS 面必须一律剔除。
@@ -152,16 +150,17 @@ var inboundFootprintWS = []string{
 // （`Expect`）—— 两端 WS 面同样不得带（spec §11；理由同 pkg/aiclient 侧那张表）。
 var gatewayStrippedExtraWS = []string{"X-Request-Id", "Expect"}
 
-// TestWSPassthroughStripsInboundFootprint R7 WS 两面（spec §10）：两个面的握手头
-// 里都不得带客户端 IP / 转发路径类头。codex 面委托 wsPassthroughHeaders，本用例
-// 分别点名两面，防止日后有人在 codex 面重新加回本地逻辑时只覆盖一半。
+// TestWSPassthroughStripsInboundFootprint R7 WS 两面（spec §10、§12）：静态面剔掉
+// 客户端 IP / 转发路径类头、其余按 default-allow 透传；**codex 面自 spec §12 起完全
+// 不透传客户端头**（只发 SDK 自己写的），故该面断言产物为空集、连哨兵都不该出现。
 func TestWSPassthroughStripsInboundFootprint(t *testing.T) {
 	for _, tc := range []struct {
-		face string
-		fn   func(http.Header) http.Header
+		face        string
+		fn          func(http.Header) http.Header
+		wantNothing bool // codex 面：整集为空（spec §12）
 	}{
-		{"responses-ws-static", wsPassthroughHeaders},
-		{"codex-ws", codexWSPassthroughHeaders},
+		{"responses-ws-static", wsPassthroughHeaders, false},
+		{"codex-ws", codexWSClientHeaders, true},
 	} {
 		in := http.Header{"X-Opencode-Session": {"oc-1"}} // 哨兵：允许面不受影响
 		for _, k := range inboundFootprintWS {
@@ -180,6 +179,10 @@ func TestWSPassthroughStripsInboundFootprint(t *testing.T) {
 			require.Empty(t, out.Get(k), "%s：%s 不得进入握手头（spec §11）", tc.face, k)
 			_, ok := out[k]
 			require.False(t, ok, "%s：%s 必须整键不出现（map 槽位级断言）", tc.face, k)
+		}
+		if tc.wantNothing {
+			require.Empty(t, out, "%s：不得递任何客户端头（spec §12）", tc.face)
+			continue
 		}
 		require.Equal(t, []string{"oc-1"}, out["X-Opencode-Session"], "%s：哨兵键仍须透传", tc.face)
 	}
