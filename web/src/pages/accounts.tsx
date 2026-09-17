@@ -210,6 +210,7 @@ interface FormState {
   codex_oauth_expires_at: string
   codex_pat_key: string
   codex_email: string
+  codex_account_id: string
 }
 
 const emptyForm = (): FormState => ({
@@ -226,6 +227,7 @@ const emptyForm = (): FormState => ({
   codex_oauth_expires_at: '',
   codex_pat_key: '',
   codex_email: '',
+  codex_account_id: '',
 })
 
 function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
@@ -249,6 +251,7 @@ function toForm(a: AccountView): FormState {
     codex_oauth_expires_at: '',
     codex_pat_key: '',
     codex_email: '',
+    codex_account_id: '',
   }
 }
 
@@ -673,6 +676,7 @@ export default function Accounts() {
         codex_oauth_expires_at: d.codex_oauth_expires_at ? toLocalDT(d.codex_oauth_expires_at) : '',
         codex_pat_key: d.codex_pat_key ?? '',
         codex_email: d.codex_email ?? '',
+        codex_account_id: d.codex_account_id ?? '',
       }))
     }
   }, [editing, extEcho.isLoading, extEcho.data])
@@ -724,8 +728,8 @@ export default function Accounts() {
           account_id: id,
           credential_type: ct,
           codex_email: (f.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
-          // PUT 全列更新：缺省字段按 NULL 落盘——account id 回显原值防清空（与 email/identity 同例）
-          codex_account_id: cur?.codex_account_id ?? null,
+          // PUT 全列更新：缺省字段按 NULL 落盘——account id 优先用表单手填值，空则回显原值防清空
+          codex_account_id: f.codex_account_id.trim() || cur?.codex_account_id || null,
           ...(ct === 'codex-oauth'
             ? {
                 codex_oauth_token: f.codex_oauth_token.trim() || null,
@@ -885,7 +889,7 @@ export default function Accounts() {
 
   // —— 扩展配置（codex-oauth/codex-pat 模板；GET 404 = 无 ext 行 → 空表单，credential_type 预填模板类型） ——
   const [extTarget, setExtTarget] = useState<AccountView | null>(null)
-  const [extForm, setExtForm] = useState({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '' })
+  const [extForm, setExtForm] = useState({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '', codex_account_id: '' })
   const extQ = useQuery({
     queryKey: ['account-ext', extTarget?.ID],
     queryFn: async () => {
@@ -900,7 +904,7 @@ export default function Accounts() {
   })
   const openExt = (a: AccountView) => {
     setExtTarget(a)
-    setExtForm({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '' })
+    setExtForm({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '', codex_account_id: '' })
   }
   // 读回显填充（404/无数据 = 保持空表单）
   useEffect(() => {
@@ -912,6 +916,7 @@ export default function Accounts() {
         codex_oauth_expires_at: d.codex_oauth_expires_at ? toLocalDT(d.codex_oauth_expires_at) : '',
         codex_pat_key: d.codex_pat_key ?? '',
         codex_email: d.codex_email ?? '',
+        codex_account_id: d.codex_account_id ?? '',
       })
     }
   }, [extTarget, extQ.isLoading, extQ.data])
@@ -926,8 +931,8 @@ export default function Accounts() {
         account_id: a.ID,
         credential_type: ct,
         codex_email: extForm.codex_email.trim() || null,
-        // PUT 全列更新：缺省字段按 NULL 落盘——account id 回显原值防清空（与 identity 同例）
-        codex_account_id: cur?.codex_account_id ?? null,
+        // PUT 全列更新：缺省字段按 NULL 落盘——account id 优先用表单手填值，空则回显原值防清空
+        codex_account_id: extForm.codex_account_id.trim() || cur?.codex_account_id || null,
         // 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key（其余置 NULL）
         ...(ct === 'codex-oauth'
           ? {
@@ -1297,6 +1302,18 @@ export default function Accounts() {
                 <Input id="acc-key" type="password" value={form.upstream_key} placeholder="sk-..." onChange={e => setForm(f => ({ ...f, upstream_key: e.target.value }))} />
               </div>
             )}
+            {isCodexCt(effectiveSelCt) && (
+              <div className="space-y-1.5">
+                <Label htmlFor="acc-account-id">{t('accounts.ext.accountId')}</Label>
+                <Input
+                  id="acc-account-id"
+                  value={form.codex_account_id}
+                  placeholder={t('accounts.ext.accountIdPlaceholder')}
+                  onChange={e => setForm(f => ({ ...f, codex_account_id: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">{t('accounts.ext.accountIdHint')}</p>
+              </div>
+            )}
             {/* Codex 不可配置 BaseURL，隐藏并清空；其他类型保留覆盖 */}
             {isSelCodex ? (
               <p className="text-xs text-muted-foreground">{t('accounts.baseUrlCodexHidden')}</p>
@@ -1510,6 +1527,16 @@ export default function Accounts() {
                 placeholder={t('accounts.ext.emailPlaceholder')}
                 onChange={e => setExtForm(f => ({ ...f, codex_email: e.target.value }))}
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="acc-ext-account-id">{t('accounts.ext.accountId')}</Label>
+              <Input
+                id="acc-ext-account-id"
+                value={extForm.codex_account_id}
+                placeholder={t('accounts.ext.accountIdPlaceholder')}
+                onChange={e => setExtForm(f => ({ ...f, codex_account_id: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">{t('accounts.ext.accountIdHint')}</p>
             </div>
             {extCredentialType === 'codex-oauth' ? (
               <>
