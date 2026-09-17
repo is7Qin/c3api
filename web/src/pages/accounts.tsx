@@ -729,7 +729,7 @@ export default function Accounts() {
           credential_type: ct,
           codex_email: (f.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
           // PUT 全列更新：缺省字段按 NULL 落盘——account id 优先用表单手填值，空则回显原值防清空
-          codex_account_id: f.codex_account_id.trim() || cur?.codex_account_id || null,
+          codex_account_id: f.codex_account_id?.trim() || cur?.codex_account_id || null,
           ...(ct === 'codex-oauth'
             ? {
                 codex_oauth_token: f.codex_oauth_token.trim() || null,
@@ -932,7 +932,7 @@ export default function Accounts() {
         credential_type: ct,
         codex_email: extForm.codex_email.trim() || null,
         // PUT 全列更新：缺省字段按 NULL 落盘——account id 优先用表单手填值，空则回显原值防清空
-        codex_account_id: extForm.codex_account_id.trim() || cur?.codex_account_id || null,
+        codex_account_id: extForm.codex_account_id?.trim() || cur?.codex_account_id || null,
         // 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key（其余置 NULL）
         ...(ct === 'codex-oauth'
           ? {
@@ -1397,7 +1397,10 @@ export default function Accounts() {
                 (effectiveSelCt === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
                 (effectiveSelCt === 'codex-pat' && !form.codex_pat_key.trim()) ||
                 (!isCodexCt(effectiveSelCt) && form.upstream_key === '') ||
-                (editing && !groupsLoaded)
+                (editing && !groupsLoaded) ||
+                // codex 编辑时 ext 回显未到先禁用保存：echo 行 cur 为 undefined
+                // 会使 account id 回退到 null，PUT 全列更新将清空已存值（groups 同款门禁）
+                (editing && isSelCodex && extEcho.isLoading)
               }
             >
               {save.isPending ? t('common.saving') : editing ? t('common.saveChanges') : t('common.create')}
