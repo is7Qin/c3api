@@ -15,8 +15,8 @@ package aiclient
 
 import "net/http"
 
-// relayDeny 是全仓唯一的剔除清单（29 键，6 类：连接级 12 + 实体级 4 + 寻址 1
-// + 凭据/多租户 3 + 传输协商 1 + 入站足迹 8）。
+// relayDeny 是全仓唯一的剔除清单（32 键，7 类：连接级 13 + 实体级 4 + 寻址 1
+// + 凭据/多租户 3 + 传输协商 1 + 入站足迹 9 + 网关自身写入 1）。
 //
 // 键必须是 http.CanonicalHeaderKey 的规范形：本表是普通 map 查表（不像
 // Header.Get/Del 会规范化实参），含缩写的键写错大小写能编译、但静默永不命中。
@@ -40,6 +40,18 @@ import "net/http"
 // 的那批，文档与宣传不得写成「防 IP 泄漏」。另：网关自身审计不受影响 ——
 // internal/proxy/clientip.go 的 clientIP() 读的是**入站** r.Header，而 RelayHeaders
 // 产新 map、从不回写入站。
+//
+// 网关自身写入类（spec §11，2026-09-16 第二轮裁决）：`X-Request-Id` —— **网关自己写
+// 过它**（`internal/server/middleware.go` 的最外层 accessLog：客户端带了就沿用原值，
+// 没带就生成 uuid 再 Set），因此递上游要么把网关内部关联 id 泄漏给第三方，要么让
+// 客户端往上游注入一个网关不校验的值。注意它与落库用的
+// `internal/proxy/caller.go` `newReqID()` **不是同一个 id**（后者不写回 r.Header）。
+//
+// `Expect` 进连接级（spec §11）：它是**这条入站连接上的协商**（客户端在问「你会不会先
+// 回 100」），对上游无语义价值；且实测在本仓 Transport（`pkg/httpx` 显式
+// `ExpectContinueTimeout = 1s`）下，**不发 100 Continue 的上游会让每个带此头的请求
+// 多付 ~1.001s**（合规上游带/不带均 ~1ms）⇒ 客户端可注入的延迟放大器。RFC 9110
+// §7.6.1 的 hop-by-hop 名单未列它，归入本类用的是同一把尺子：描述这条入站连接。
 var relayDeny = map[string]struct{}{
 	// 连接级（RFC 9110 §7.6.1 hop-by-hop）
 	"Connection":               {},
@@ -54,6 +66,9 @@ var relayDeny = map[string]struct{}{
 	"Sec-Websocket-Version":    {},
 	"Sec-Websocket-Protocol":   {},
 	"Sec-Websocket-Extensions": {},
+	// 连接级补充（spec §11）：Expect —— 入站连接上的 100-continue 协商；透传后本仓
+	// Transport 会对不发 interim 的上游等满 ExpectContinueTimeout（1s，实测 +1.001s）。
+	"Expect": {},
 	// 实体级（body 可能被网关就地重写：setModel / 协议转换 / images 双协议）
 	"Content-Length":    {},
 	"Content-Type":      {},
@@ -77,7 +92,11 @@ var relayDeny = map[string]struct{}{
 	"Forwarded":         {},
 	"X-Forwarded-Host":  {},
 	"X-Forwarded-Proto": {},
+	"X-Forwarded-Port":  {},
 	"Via":               {},
+	// 网关自身写入（spec §11）：X-Request-Id —— 最外层中间件写过它（客户端值或
+	// 网关生成的 uuid），递上游 = 泄漏网关内部关联 id / 让客户端注入未校验值。
+	"X-Request-Id": {},
 }
 
 // RelayHeaders 把入站客户端头收敛为出栈上游头：剔除 relayDeny 与脏值，其余

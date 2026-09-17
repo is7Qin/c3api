@@ -984,7 +984,7 @@ func TestCodexWSPassthroughHeaders(t *testing.T) {
 		"OpenAI-Beta":         {"responses_websockets=2025-01-01"},
 		"X-Client-Version":    {"codex-1.2.3"},
 		"User-Agent":          {"ua"},
-		// R7（spec §10）：入站足迹 8 键必须出现在夹具里，否则下面的「不得进入
+		// R7（spec §10）：入站足迹 9 键必须出现在夹具里，否则下面的「不得进入
 		// 握手头」断言是靠「输入本来就没有」通过的假绿。
 		"X-Forwarded-For":   {"203.0.113.9"},
 		"X-Real-Ip":         {"203.0.113.9"},
@@ -993,7 +993,11 @@ func TestCodexWSPassthroughHeaders(t *testing.T) {
 		"Forwarded":         {"for=203.0.113.9"},
 		"X-Forwarded-Host":  {"api.example.com"},
 		"X-Forwarded-Proto": {"https"},
+		"X-Forwarded-Port":  {"8443"},
 		"Via":               {"1.1 internal-gateway"},
+		// R8（spec §11）：网关自身关联 id 与连接级协商同样必须在夹具里。
+		"X-Request-Id": {"req-1"},
+		"Expect":       {"100-continue"},
 	}
 	out := codexWSPassthroughHeaders(h)
 	require.Empty(t, out.Get("Connection"))
@@ -1005,12 +1009,18 @@ func TestCodexWSPassthroughHeaders(t *testing.T) {
 	require.Empty(t, out.Get("X-Codex-Window-Id"))
 	require.Empty(t, out.Get("OpenAI-Beta"))
 	require.Equal(t, "codex-1.2.3", out.Get("X-Client-Version"))
-	// R7（spec §10）：入站足迹 8 键同样不得进入 codex 握手头（客户端 IP / 转发
+	// R7（spec §10）：入站足迹 9 键同样不得进入 codex 握手头（客户端 IP / 转发
 	// 路径类头描述入站连接，而伪装身份面向上游声明的身份由 SDK 决定）。
 	for _, k := range inboundFootprintWS {
 		require.Empty(t, out.Get(k), "入站足迹项 %s 必须被剔", k)
 		_, ok := out[k]
 		require.False(t, ok, "入站足迹项 %s 必须不存在（map 槽位级断言）", k)
+	}
+	// R8（spec §11）：网关自身写过的 X-Request-Id 与 Expect 也不得进握手头。
+	for _, k := range gatewayStrippedExtraWS {
+		require.Empty(t, out.Get(k), "%s 必须被剔（spec §11）", k)
+		_, ok := out[k]
+		require.False(t, ok, "%s 必须不存在（map 槽位级断言）", k)
 	}
 	// 伪装身份契约（C5 翻转）：客户端 UA 不得穿透 SDK 伪装默认 ⇒ 被剔。补 map
 	// 槽位断言：只断言 Get 会被「字面槽位残留、Get 查空槽」的假绿放过。

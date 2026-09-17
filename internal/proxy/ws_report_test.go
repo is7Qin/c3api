@@ -135,18 +135,22 @@ func TestWSReport_headersAndLimitsPreserved(t *testing.T) {
 	require.False(t, ok, "User-Agent 必须不存在（map 槽位级断言）")
 }
 
-// inboundFootprintWS 入站足迹 8 键（规范形，spec §10）：两端 WS 面必须一律剔除。
+// inboundFootprintWS 入站足迹 9 键（规范形，spec §10 + `X-Forwarded-Port`）：两端 WS 面必须一律剔除。
 //
 // 刻意在本包里独立列一遍、不复用 pkg/aiclient 的表：断言必须是**独立期望**，
 // 若直接引用被测清单，清单写错时测试会跟着一起错。分工是 R3b 的等价式管「两个
-// 面共用同一份清单」，本条管「这份清单确实剔了这 8 项」。
+// 面共用同一份清单」，本条管「这份清单确实剔了这些项」。
 //
 // 拼写陷阱同 pkg/aiclient 侧：`X-Real-Ip`/`Cf-Connecting-Ip`/`True-Client-Ip`
 // 的常见写法（X-Real-IP/CF-Connecting-IP/True-Client-IP）不是规范形。
 var inboundFootprintWS = []string{
 	"X-Forwarded-For", "X-Real-Ip", "Cf-Connecting-Ip", "True-Client-Ip",
-	"Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto", "Via",
+	"Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "Via",
 }
+
+// gatewayStrippedExtraWS 网关自身写过的关联 id（`X-Request-Id`）与连接级协商
+// （`Expect`）—— 两端 WS 面同样不得带（spec §11；理由同 pkg/aiclient 侧那张表）。
+var gatewayStrippedExtraWS = []string{"X-Request-Id", "Expect"}
 
 // TestWSPassthroughStripsInboundFootprint R7 WS 两面（spec §10）：两个面的握手头
 // 里都不得带客户端 IP / 转发路径类头。codex 面委托 wsPassthroughHeaders，本用例
@@ -163,11 +167,19 @@ func TestWSPassthroughStripsInboundFootprint(t *testing.T) {
 		for _, k := range inboundFootprintWS {
 			in[k] = []string{"203.0.113.9"}
 		}
+		for _, k := range gatewayStrippedExtraWS {
+			in[k] = []string{"client-value"}
+		}
 		out := tc.fn(in.Clone())
 		for _, k := range inboundFootprintWS {
 			require.Empty(t, out.Get(k), "%s：入站足迹头 %s 不得进入握手头", tc.face, k)
 			_, ok := out[k]
 			require.False(t, ok, "%s：入站足迹头 %s 必须整键不出现（map 槽位级断言）", tc.face, k)
+		}
+		for _, k := range gatewayStrippedExtraWS {
+			require.Empty(t, out.Get(k), "%s：%s 不得进入握手头（spec §11）", tc.face, k)
+			_, ok := out[k]
+			require.False(t, ok, "%s：%s 必须整键不出现（map 槽位级断言）", tc.face, k)
 		}
 		require.Equal(t, []string{"oc-1"}, out["X-Opencode-Session"], "%s：哨兵键仍须透传", tc.face)
 	}

@@ -189,6 +189,9 @@ func TestTypedRelayStripsInboundFootprint(t *testing.T) {
 	for _, k := range inboundFootprintCanonical {
 		in[k] = []string{"203.0.113.9"}
 	}
+	for _, k := range gatewayStrippedExtra {
+		in[k] = []string{"client-value"}
+	}
 	_, err := f.ChatCompletion(context.Background(), tpl, "sk-foot", openai.ChatCompletionNewParams{
 		Model:    "gpt-4o",
 		Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("x")},
@@ -199,6 +202,10 @@ func TestTypedRelayStripsInboundFootprint(t *testing.T) {
 	for _, k := range inboundFootprintCanonical {
 		_, ok := built[k]
 		require.False(t, ok, "入站足迹头 %s 不得进入 typed 面出栈头（map 槽位级断言）", k)
+	}
+	for _, k := range gatewayStrippedExtra {
+		_, ok := built[k]
+		require.False(t, ok, "%s 不得进入 typed 面出栈头（spec §11 map 槽位级断言）", k)
 	}
 	require.Equal(t, []string{"oc-1"}, built["X-Opencode-Session"], "哨兵键仍须透传")
 	require.Equal(t, "Bearer sk-foot", built.Get("Authorization"), "账号凭据仍在 relay 之后写（不变量 #5）")
