@@ -434,7 +434,7 @@ type AccountEnabledBody struct {
 type AccountExt struct {
 	AccountId *int64 `json:"account_id,omitempty"`
 
-	// CodexAccountId 上游账号/空间标识（Task B 导入必填；本 task 仅声明）
+	// CodexAccountId 上游账号/空间标识；可留空——导入/单账号保存时自动识别（OAuth token claims 离线解析 / PAT whoami 查询）；识别失败：导入行拒绝、单账号保存留空且下次保存重试
 	CodexAccountId *string `json:"codex_account_id"`
 
 	// CodexEmail 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空）
