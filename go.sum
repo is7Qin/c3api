@@ -69,6 +69,10 @@ github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8i
 github.com/invopop/jsonschema v0.14.0/go.mod h1:ygm6C2EaVNMBDPpaPlnOA2pFAxBnxGjFlMZABxm9n2I=
 github.com/is7Qin/codex-sdk v0.0.0-20260828093315-817e85a1c7fa h1:PsnRh6bDGNnRPM1I9CBS9rCIa7lVUGbVCHXoOHX4eF8=
 github.com/is7Qin/codex-sdk v0.0.0-20260828093315-817e85a1c7fa/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
+github.com/is7Qin/codex-sdk v0.0.0-20260917143040-9328634227ee h1:qEAmW8fEm0p/iogPEmTApnk67XEFNtHx7eoCv+XSFXE=
+github.com/is7Qin/codex-sdk v0.0.0-20260917143040-9328634227ee/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
+github.com/is7Qin/codex-sdk v0.0.0-20260917150348-d37578cd66e0 h1:mL/Ksh9/AULh9lWu5Zp0uybUHMCRUiQrdAMDPu+i7Sk=
+github.com/is7Qin/codex-sdk v0.0.0-20260917150348-d37578cd66e0/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=

@@ -23,7 +23,7 @@ func TestCredentialFromExt(t *testing.T) {
 		e := &AccountExt{
 			AccountID: 7, CredentialType: credential.TypeCodexOAuth,
 			CodexOAuthToken: strP("at"), CodexOAuthRefreshToken: strP("rt"), CodexOAuthExpiresAt: &exp,
-			CodexPATKey: strP("patshould-not-leak"),
+			CodexPATKey: strP("patshould-not-leak"), CodexAccountID: strP("acc-7"),
 		}
 		c := CredentialFromExt(e)
 		require.Equal(t, int64(7), c.AccountID)
@@ -31,6 +31,7 @@ func TestCredentialFromExt(t *testing.T) {
 		require.Equal(t, "rt", c.OAuthRefreshToken)
 		require.Equal(t, exp, *c.OAuthExpiresAt)
 		require.Empty(t, c.PATKey, "oauth 类型不得投影 pat 列")
+		require.Equal(t, "acc-7", c.CodexAccountID, "账号标识两类型共通投影")
 	})
 
 	t.Run("codex-pat 取 pat 列组", func(t *testing.T) {
@@ -38,6 +39,7 @@ func TestCredentialFromExt(t *testing.T) {
 			AccountID: 8, CredentialType: credential.TypeCodexPAT,
 			CodexPATKey:     strP("pk"),
 			CodexOAuthToken: strP("at-should-not-leak"),
+			CodexAccountID:  strP("acc-8"),
 		}
 		c := CredentialFromExt(e)
 		require.Equal(t, int64(8), c.AccountID)
@@ -45,6 +47,7 @@ func TestCredentialFromExt(t *testing.T) {
 		require.Empty(t, c.OAuthToken, "pat 类型不得投影 oauth 列")
 		require.Empty(t, c.OAuthRefreshToken)
 		require.Nil(t, c.OAuthExpiresAt)
+		require.Equal(t, "acc-8", c.CodexAccountID, "账号标识两类型共通投影")
 	})
 
 	t.Run("oauth nil 列投影为空值", func(t *testing.T) {
