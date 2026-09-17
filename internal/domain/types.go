@@ -437,8 +437,9 @@ type CodexIdentity struct {
 // SessionID/ThreadID UUIDv7 会话级（恒等 thread==session）；WindowID =
 // {thread_id}:0（导入时生成后恒定不变——零递增零状态）。nil = 未配置。
 // 凭据列组按类型约束（service 校验）：oauth 只允许 CodexOAuth* 列组；pat
-// 只允许 CodexPATKey。CodexAccountID 为上游账号/空间标识（Task B 批量导入
-// 必填；本 task 仅建结构——管理面写入能力 Task B 接线）。
+// 只允许 CodexPATKey。CodexAccountID 为上游账号/空间标识（可留空：导入/单账号
+// 保存时自动识别——OAuth token claims 离线解析 / PAT whoami；识别失败时导入行
+// 拒绝、单账号保存留空并下次重试）。
 type AccountExt struct {
 	AccountID              int64
 	CredentialType         credential.Type
@@ -448,7 +449,7 @@ type AccountExt struct {
 	CodexOAuthExpiresAt    *time.Time     // 凭据：oauth 访问令牌过期时间
 	CodexPATKey            *string        // 凭据：pat
 	CodexEmail             *string        // 管理标识：账号登录邮箱（导入时人工/上游提供，非自动生成，可空）
-	CodexAccountID         *string        // 上游账号/空间标识（Task B 导入必填；可空）
+	CodexAccountID         *string        // 上游账号/空间标识（可留空——导入/保存时自动识别；识别失败：导入行拒绝、保存留空）
 }
 
 // CodexOAuthImportItem 批量导入 codex-oauth 单行（Task B——组合幂等键

@@ -38,8 +38,8 @@ func (AccountExt) Fields() []ent.Field {
 		// codex 账号登录邮箱（管理面标识；导入时由人工/上游提供，非自动生成——
 		// NewCodexIdentity 不生成 codex_email，只生成身份四元组；可空）
 		field.String("codex_email").Optional().Nillable(),
-		// 上游账号/空间标识（Task B 批量导入必填；本 task 仅建列 + 组合唯一——
-		// NULL 不参与唯一）
+		// 上游账号/空间标识（可留空——导入/保存时自动识别：OAuth claims / PAT
+		// whoami；组合唯一见 Indexes——NULL 不参与唯一）
 		field.String("codex_account_id").Optional().Nillable(),
 	}
 }
@@ -57,9 +57,9 @@ func (AccountExt) Edges() []ent.Edge {
 func (AccountExt) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("account_id").Unique(), // 1:1（upsert 冲突列）
-		// 幂等组合键（Task B 批量导入按 (codex_email, codex_account_id) 定位）：
+		// 幂等组合键（批量导入按 (codex_email, codex_account_id) 定位）：
 		// NULL 不参与唯一（PG 语义）——两行同 email 但 codex_account_id 全 NULL
-		// 可共存（存量管理面写入形态）；导入必填由 Task B service 校验保证。
+		// 可共存；非空由 service 校验保证（缺省先自动识别，仍空才拒绝导入行）。
 		index.Fields("codex_email", "codex_account_id").Unique(),
 	}
 }
