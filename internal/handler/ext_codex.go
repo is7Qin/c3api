@@ -5,11 +5,13 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // —— 账号类型化鉴权扩展（account_ext 1:1；codex 专用——codex_identity jsonb
@@ -64,12 +66,69 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 			WindowID:       deref(in.CodexIdentity.WindowId),
 		}
 	}
+	// account id 后置补全（P1 可留空语义——保存后自动识别）：入参空才补；派生
+	// 失败不阻塞保存（留空落库 → 下次保存重试）。
+	if e.CodexAccountID == nil || *e.CodexAccountID == "" {
+		if id := h.deriveCodexAccountID(r.Context(), e); id != "" {
+			e.CodexAccountID = &id
+		}
+	}
 	saved, err := h.svc.UpsertAccountExt(r.Context(), e)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
 	httpface.WriteJSON(w, http.StatusOK, toAPIAccountExt(saved))
+}
+
+// deriveCodexAccountID 单账号保存 account id 后置补全（管理面派生点之二，另一
+// 为批量导入行处理——spec §7.0-6，派生点唯一在落库，热路径零解析零出站）：
+// OAuth 经离线 JWT claims 解析（sdkbridge 纯函数，过期 AT 亦可解）；PAT 经
+// whoami 在线查询（sdkbridge 薄包装）。请求凭据非空时只认请求凭据——派生失败
+// 即空，**不回退存量行**（旧 id 绑新凭据 = 全错身份）；仅请求凭据为空才回退存
+// 量行。任何失败 → ""（不阻塞保存，留空 → 下次保存重试）。
+func (h *AdminAPI) deriveCodexAccountID(ctx context.Context, e *domain.AccountExt) string {
+	switch e.CredentialType {
+	case credential.TypeCodexOAuth:
+		if tok := deref(e.CodexOAuthToken); tok != "" {
+			if id, ok := sdkbridge.DeriveCodexAccountID(tok); ok {
+				return id
+			}
+			return "" // 非空不可派生 → 空（旧 id 不得绑新凭据）
+		}
+		if id, ok := sdkbridge.DeriveCodexAccountID(h.storedCodexCredential(ctx, e.AccountID, true)); ok {
+			return id
+		}
+		return ""
+	case credential.TypeCodexPAT:
+		if key := deref(e.CodexPATKey); key != "" {
+			if id, err := sdkbridge.FetchPATAccountID(ctx, key); err == nil && id != "" {
+				return id
+			}
+			return "" // 非空 key 查无 → 空（旧 id 不得绑新凭据）
+		}
+		if key := h.storedCodexCredential(ctx, e.AccountID, false); key != "" {
+			if id, err := sdkbridge.FetchPATAccountID(ctx, key); err == nil && id != "" {
+				return id
+			}
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+// storedCodexCredential 读存量行凭据（请求体未带凭据时的回退源；无行/失败 →
+// ""——首写/存量缺失即无回退）。
+func (h *AdminAPI) storedCodexCredential(ctx context.Context, accountID int64, oauth bool) string {
+	cur, err := h.svc.GetAccountExt(ctx, accountID)
+	if err != nil || cur == nil {
+		return ""
+	}
+	if oauth {
+		return deref(cur.CodexOAuthToken)
+	}
+	return deref(cur.CodexPATKey)
 }
 
 // toAPIAccountExt 账号 ext 领域对象 → 契约类型（account_id 只读，响应带）。

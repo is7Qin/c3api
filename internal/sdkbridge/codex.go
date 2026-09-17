@@ -653,12 +653,17 @@ func (a *Codex) translateDialError(e *codexEntry, err error) error {
 //     内分类后同走 OnAuthFatal 禁用链路（毒化 + 单次上报，与 OAuth 双源去重共用）
 //   - 空 rt（oauth 缺 refresh_token）→ 上报失效（凭据不完整）并返回错误，不
 //     panic
+//   - 账号标识：DB 显式值经 WithOAuthAccountID/WithPATAccountID 透传（SDK 不
+//     派生——派生点唯一在落库，管理面导入行/单账号保存）；空 = 不发头。变更 →
+//     credSig 变化 → 客户端重建（账号身份变更语义）
 func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexsdk.Auth, error) {
 	if cred.PATKey != "" {
 		return codexsdk.PAT(cred.PATKey,
 			// 统一回调装配（与 OAuth 同源）：SDK 判死（PAT 401 致命体分类）→
 			// reportFatal 上报禁用（双源去重单次）
 			codexsdk.WithPATOnAuthFatal(func(fatal error) { a.reportFatal(e, fatal) }),
+			// 账号标识（DB 显式值——SDK 不派生；空 = 不发头，向后兼容）
+			codexsdk.WithPATAccountID(cred.CodexAccountID),
 		), nil
 	}
 	if cred.OAuthRefreshToken == "" {
@@ -674,6 +679,8 @@ func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexs
 	if atUsable(cred) {
 		opts = append(opts, codexsdk.WithInitialAccessToken(cred.OAuthToken))
 	}
+	// 账号标识（DB 显式值——SDK 不派生；空 = 不发头，向后兼容）
+	opts = append(opts, codexsdk.WithOAuthAccountID(cred.CodexAccountID))
 	return codexsdk.OAuthWithRotation(cred.OAuthRefreshToken, opts...), nil
 }
 
@@ -693,15 +700,15 @@ func atUsable(cred *domain.AccountCredential) bool {
 	return cred.OAuthExpiresAt.After(time.Now())
 }
 
-// credSig 凭据签名（重建判定）：外部凭据变更（管理面导入/更新——token/rt/pat
-// 任一变化）→ 重建。过期时刻不参与签名（构造时的初始 at 预置决策已
+// credSig 凭据签名（重建判定）：外部凭据变更（管理面导入/更新——token/rt/pat/
+// account id 任一变化）→ 重建。过期时刻不参与签名（构造时的初始 at 预置决策已
 // 经生效；过期 at 由 SDK 401 自愈轮转，无需重建）。
 //
 // 分隔符用 \x00（评审 P3-3）："|" 在理论上可被 token 内容携带（碰撞误重建——
 // 仅多构造一次，无害但脏）；\x00 为 Go 字符串中不可现字符（OAuth token/PAT
 // base64url 字符集）。
 func credSig(c *domain.AccountCredential) string {
-	return c.OAuthToken + "\x00" + c.OAuthRefreshToken + "\x00" + c.PATKey
+	return c.OAuthToken + "\x00" + c.OAuthRefreshToken + "\x00" + c.PATKey + "\x00" + c.CodexAccountID
 }
 
 // report 单次上报核心（双源去重——CAS 胜者上报，败者并发调用/补报路径跳过）；
