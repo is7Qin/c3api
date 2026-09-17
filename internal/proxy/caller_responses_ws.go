@@ -226,8 +226,9 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		// 适配层（不经 credentialFor 单字符串路径：codex 凭据为复合结构
 		// oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表
 		// 达不了——注册表未注册 codex 类型，见 dialCodexWS 注释），伪装四元
-		// 组 + 头部族剥离 + 心跳单源全部在 dialCodexWS/codexTransport
-		//（codex_responses_ws.go）。
+		// 组 + 心跳单源全部在 dialCodexWS/codexTransport（codex_responses_ws.go）；
+		// 该面**不递任何客户端头**（spec §12：只发 SDK 自己写的头，见
+		// codexWSClientHeaders），故不存在"头部族剥离清单"这种东西。
 		up, dialErr := p.dialCodexWS(r, sel)
 		if dialErr == nil {
 			// frameHook：每帧判死嗅探（唯一跨边界点——读帧成功后、usage
@@ -458,9 +459,9 @@ func headerHasToken(h http.Header, key, token string) bool {
 // ② 含 CR/LF/NUL/DEL/<0x20-非-TAB 的单个值被丢（脏值进 Transport 会让整个请求
 // Do 失败 = 一个脏头拖死一次调用）。
 //
-// codex 面 codexWSPassthroughHeaders 委托本函数（再剔 session 头族 + OpenAI-Beta
-// + 伪装身份项），清单变更双面自动覆盖。HTTP 面（raw/typed）走同一份清单，
-// 唯余的不对称是 codex 伪装面额外清单（见 codexWSPassthroughHeaders）。
+// **codex WS 面自 spec §12 起不再复用本函数**：该面只发 SDK 自己写的头，客户端头
+// 一律不递（见 codexWSClientHeaders）—— 那是比"剔清单"更强的契约，故不存在
+// "额外剔除清单"这种不对称。HTTP 面（raw/typed）与本面走同一份 relayDeny。
 //
 // 产物是每次新建的 map，调用方可直接 Set/Del（ResponsesWSDial 就地 Set 鉴权与
 // beta 头即依赖此）。禁止对产物调用 Add：干净键与入站共享底层 slice，cap>1 时
