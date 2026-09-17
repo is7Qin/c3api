@@ -62,13 +62,6 @@ func (s *Service) ImportCodexOAuthAccounts(ctx context.Context, items []domain.C
 	res := &domain.ImportResult{}
 	rows := make([]codexImportRow, 0, len(items))
 	for i, it := range items {
-		// account id 缺省补全（放宽 = 允许缺省提供：离线 JWT claims 派生——
-		// 派生点唯一在落库，热路径零解析；仍空 → 行级必填校验照常 failed）。
-		if it.CodexAccountID == "" && s.deriveOAuthAccountID != nil {
-			if id, ok := s.deriveOAuthAccountID(it.CodexOAuthToken); ok {
-				it.CodexAccountID = id
-			}
-		}
 		row, err := codexOAuthRow(i, it)
 		if err != nil {
 			res.Failed = append(res.Failed, domain.ImportFailedItem{Index: i, Error: err.Error()})
@@ -89,13 +82,6 @@ func (s *Service) ImportCodexPATAccounts(ctx context.Context, items []domain.Cod
 	res := &domain.ImportResult{}
 	rows := make([]codexImportRow, 0, len(items))
 	for i, it := range items {
-		// account id 缺省补全（放宽 = 允许缺省提供：whoami 在线查询——管理面
-		// 唯一出站派生点，热路径零出站；失败/仍空 → 行级必填校验照常 failed）。
-		if it.CodexAccountID == "" && it.CodexPATKey != "" && s.fetchPATAccountID != nil {
-			if id, err := s.fetchPATAccountID(ctx, it.CodexPATKey); err == nil && id != "" {
-				it.CodexAccountID = id
-			}
-		}
 		row, err := codexPATRow(i, it)
 		if err != nil {
 			res.Failed = append(res.Failed, domain.ImportFailedItem{Index: i, Error: err.Error()})
@@ -127,9 +113,8 @@ func (s *Service) checkCodexImportTemplate(ctx context.Context, tplID *int64, en
 }
 
 // codexOAuthRow oauth 行类型特定校验 → 共享行形态（失败返回行级错误文案）。
-// account id 缺省补全在调用方先行（ImportCodexOAuthAccounts 循环内派生），此
-// 处仍按必填校验（补全后仍空 → 行级 failed——放宽 = 允许缺省提供，不等于允许
-// 空入库，幂等键 email+account_id 语义不变）。
+// codex_account_id 必填（缺省补全由 handler 导入映射层先行；补全后仍空 → 行级
+// failed——放宽 = 允许缺省提供，不等于允许空入库，幂等键 email+account_id 不变）。
 func codexOAuthRow(index int, it domain.CodexOAuthImportItem) (codexImportRow, error) {
 	if !validEmail(it.CodexEmail) {
 		return codexImportRow{}, errors.New("codex_email 必填且须为合法邮箱")
@@ -158,8 +143,7 @@ func codexOAuthRow(index int, it domain.CodexOAuthImportItem) (codexImportRow, e
 }
 
 // codexPATRow pat 行类型特定校验 → 共享行形态（失败返回行级错误文案）。
-// account id 缺省补全在调用方先行（ImportCodexPATAccounts 循环内 whoami），此
-// 处仍按必填校验（语义同 oauth 行）。
+// codex_account_id 必填（缺省补全由 handler 导入映射层先行；语义同 oauth 行）。
 func codexPATRow(index int, it domain.CodexPATImportItem) (codexImportRow, error) {
 	if !validEmail(it.CodexEmail) {
 		return codexImportRow{}, errors.New("codex_email 必填且须为合法邮箱")

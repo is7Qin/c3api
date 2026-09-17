@@ -342,10 +342,6 @@ func main() {
 		CompileNotify:               sched.RequestCompile,
 		MailEnqueue:                 mailW.Enqueue,
 		SettingsSnapshot:            settingsSnap,
-		// codex account id 落库派生（spec §7.0-6）：OAuth 离线解析 + PAT
-		// whoami——func 值注入，无 import 环（分层纪律见 service usage_wiring_test）。
-		DeriveOAuthAccountID: sdkbridge.DeriveCodexAccountID,
-		FetchPATAccountID:    sdkbridge.FetchPATAccountID,
 	})
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据

@@ -9,6 +9,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // —— codex 凭据批量导入（Task B：batch-import-codex-oauth / batch-import-codex-pat；
@@ -30,9 +31,17 @@ func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *h
 	}
 	items := make([]domain.CodexOAuthImportItem, len(in.Items))
 	for i, it := range in.Items {
+		accountID := it.CodexAccountId
+		if accountID == "" && it.CodexOauthToken != "" {
+			// account id 缺省补全（spec §7.0-6 放宽：允许缺省提供，不等于允许空
+			// 入库——JWT claims 离线解析；仍空 → service 行级必填校验照常 failed）。
+			if id, ok := sdkbridge.DeriveCodexAccountID(it.CodexOauthToken); ok {
+				accountID = id
+			}
+		}
 		items[i] = domain.CodexOAuthImportItem{
 			CodexEmail:             it.CodexEmail,
-			CodexAccountID:         it.CodexAccountId,
+			CodexAccountID:         accountID,
 			CodexOAuthToken:        it.CodexOauthToken,
 			CodexOAuthRefreshToken: it.CodexOauthRefreshToken,
 			CodexOAuthExpiresAt:    it.CodexOauthExpiresAt,
@@ -61,9 +70,17 @@ func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *htt
 	}
 	items := make([]domain.CodexPATImportItem, len(in.Items))
 	for i, it := range in.Items {
+		accountID := it.CodexAccountId
+		if accountID == "" && it.CodexPatKey != "" {
+			// account id 缺省补全（whoami 在线查询——管理面唯一出站派生点，热路径
+			// 零出站；失败/仍空 → service 行级必填校验照常 failed）。
+			if id, err := sdkbridge.FetchPATAccountID(r.Context(), it.CodexPatKey); err == nil {
+				accountID = id
+			}
+		}
 		items[i] = domain.CodexPATImportItem{
 			CodexEmail:     it.CodexEmail,
-			CodexAccountID: it.CodexAccountId,
+			CodexAccountID: accountID,
 			CodexPATKey:    it.CodexPatKey,
 			MaxConcurrency: it.MaxConcurrency,
 		}
