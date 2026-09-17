@@ -441,11 +441,14 @@ func headerHasToken(h http.Header, key, token string) bool {
 // 一份清单 pkg/aiclient.relayDeny（经 aiclient.RelayHeaders），本函数不再自带
 // 任何字面量——raw / typed / WS 三个面共用同一份，加项只改 relay.go 一处。
 //
-// 清单含四类会因网关存在而撒谎的头：连接级 hop-by-hop（含 Sec-WebSocket-*：
+// 清单含六类会因网关存在而撒谎的头：连接级 hop-by-hop（含 Sec-WebSocket-*：
 // 透传会让上游协商网关不支持的子协议 → 握手失败；Authorization/x-api-key 同载
 // 网关 key——auth.go 任一非空即鉴权，不得直通上游，账号鉴权由 aiclient 注入）、
-// 实体级、寻址、凭据/多租户，另加 Accept-Encoding（透传后上游回 gzip 裸流 ⇒
-// usage 抽取静默拿到压缩字节 = 漏计费）。其余头原样透传。
+// 实体级、寻址、凭据/多租户、传输协商（Accept-Encoding：透传后上游回 gzip 裸流
+// ⇒ usage 抽取静默拿到压缩字节 = 漏计费）、**入站足迹**（客户端 IP / 转发路径：
+// `X-Forwarded-*`/`X-Real-IP`/`CF-Connecting-IP`/`True-Client-IP`/`Forwarded`/`Via`
+// —— 描述的是**入站**这条链，而出站对端是网关自己，且网关不像正规反向代理那样
+// 追加自己的观测 ⇒ 透传等于把客户端可控值当代理生成的足迹送出去）。其余头原样透传。
 //
 // 两个行为细节由 RelayHeaders 保证，别在本地重新实现：① 输出键一律规范形
 // （codex 面 out.Del("OpenAI-Beta") 只规范化实参，槽位形不统一时那句会落空）；
