@@ -268,3 +268,37 @@ func TestRawRelayNoUserAgentWhenClientSendsNone(t *testing.T) {
 	require.False(t, ok, "客户端没带 UA 时网关不得凭空造出 User-Agent 键")
 	require.Equal(t, []string{"oc-1"}, built["X-Opencode-Session"])
 }
+
+// TestRawRelayStripsInboundFootprint R7 raw 面（spec §10）：客户端 IP / 转发路径
+// 类头不得达上游。断言分两层——网关自建出栈头（headerCapture）整键不出现，
+// 上游服务端视图同样看不到（客户端确实把它们发过来了，故服务端为空只可能是剔掉）。
+func TestRawRelayStripsInboundFootprint(t *testing.T) {
+	var gotSrv atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSrv.Store(r.Header.Clone())
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: x\n\n"))
+	}))
+	defer srv.Close()
+
+	capRt := &headerCapture{base: srv.Client().Transport}
+	f := NewFactory(&http.Client{Transport: capRt}, Config{})
+	in := http.Header{"X-Opencode-Session": {"oc-1"}}
+	for _, k := range inboundFootprintCanonical {
+		in[k] = []string{"203.0.113.9"}
+	}
+	resp, err := f.ChatCompletionStreamRaw(context.Background(), 1, srv.URL, "sk-test",
+		[]byte(`{"stream":true}`), in)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	srvHdr := gotSrv.Load().(http.Header)
+	built := capRt.headers(t)
+	for _, k := range inboundFootprintCanonical {
+		_, ok := built[k]
+		require.False(t, ok, "入站足迹头 %s 不得出现在出栈头（map 槽位级断言）", k)
+		_, ok = srvHdr[k]
+		require.False(t, ok, "入站足迹头 %s 不得达上游（服务端视图）", k)
+	}
+	require.Equal(t, []string{"oc-1"}, built["X-Opencode-Session"], "哨兵键仍须透传")
+}

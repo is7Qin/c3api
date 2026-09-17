@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// 本文件承载全仓唯一一份上游请求头剔除清单与透传规则（spec v7）。
+// 本文件承载全仓唯一一份上游请求头剔除清单与透传规则（spec v7，含 §10 增补裁决）。
 //
 // 根规则：网关不做「客户端头 → 上游头」的翻译或映射；它只删除那些会因为自己的
 // 存在而撒谎的头——连接级（描述这条入站连接，不是出站连接）、实体级（描述这个
@@ -15,8 +15,8 @@ package aiclient
 
 import "net/http"
 
-// relayDeny 是全仓唯一的剔除清单（21 键，5 类：连接级 12 + 实体级 4 + 寻址 1
-// + 凭据/多租户 3 + 传输协商 1）。
+// relayDeny 是全仓唯一的剔除清单（29 键，6 类：连接级 12 + 实体级 4 + 寻址 1
+// + 凭据/多租户 3 + 传输协商 1 + 入站足迹 8）。
 //
 // 键必须是 http.CanonicalHeaderKey 的规范形：本表是普通 map 查表（不像
 // Header.Get/Del 会规范化实参），含缩写的键写错大小写能编译、但静默永不命中。
@@ -26,6 +26,20 @@ import "net/http"
 // OpenAI-Beta、User-Agent、Originator 及一切自定义头。Accept-Encoding 必须进
 // 表：透传后上游回 gzip 裸流，setModel/usage 抽取/model 重写会静默拿到压缩
 // 字节 = 漏计费。
+//
+// 入站足迹类（spec §10，2026-09-16 增补）：这些头描述**入站**这条链——对端是谁、
+// 原始 host/scheme 是什么、沿途经过哪些节点——而出站的对端是网关自己、URL 还被
+// 重写。判据与 Host 同源，属结构判据而非语义级例外。关键事实：网关**不像正常
+// 反向代理那样追加自己的观测**（nginx 写 $proxy_add_x_forwarded_for；RFC 9110
+// §7.6.3 要求中间节点在 Via 里追加自身条目），所以透传出去的是一份「客户端完全
+// 可控、却长得像代理生成」的足迹 ⇒ 上游若据此做地理/风控/审计，等于网关替客户端
+// 洗了个身份。
+//
+// ⚠ 这一类**不是安全边界**：default-allow 仍在，客户端把同样的信息塞进 X-Client-Ip
+// 或任意自定义头照样到达上游；本类只挡掉「最常见、且在上游眼里长得最像可信元数据」
+// 的那批，文档与宣传不得写成「防 IP 泄漏」。另：网关自身审计不受影响 ——
+// internal/proxy/clientip.go 的 clientIP() 读的是**入站** r.Header，而 RelayHeaders
+// 产新 map、从不回写入站。
 var relayDeny = map[string]struct{}{
 	// 连接级（RFC 9110 §7.6.1 hop-by-hop）
 	"Connection":               {},
@@ -53,6 +67,17 @@ var relayDeny = map[string]struct{}{
 	"Cookie":        {},
 	// 传输协商
 	"Accept-Encoding": {},
+	// 入站足迹（spec §10）：客户端 IP / 转发路径 —— 描述的是入站连接，别再说它「对网关不透明」。
+	// ⚠ 后三个键的规范形与常见写法不同（不是 X-Real-IP / CF-Connecting-IP / True-Client-IP）：
+	// 写常见写法能编译但永不命中；R1 的规范形遍历与 R7 的「清单不得收录常见写法」互为夹逼。
+	"X-Forwarded-For":   {},
+	"X-Real-Ip":         {},
+	"Cf-Connecting-Ip":  {},
+	"True-Client-Ip":    {},
+	"Forwarded":         {},
+	"X-Forwarded-Host":  {},
+	"X-Forwarded-Proto": {},
+	"Via":               {},
 }
 
 // RelayHeaders 把入站客户端头收敛为出栈上游头：剔除 relayDeny 与脏值，其余

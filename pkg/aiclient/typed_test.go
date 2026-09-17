@@ -173,3 +173,33 @@ func TestTypedRelayNilInKeepsSDKDefaults(t *testing.T) {
 	require.False(t, ok, "in=nil 时不得凭空造出客户端头")
 	require.Equal(t, "Bearer sk-nil", built.Get("Authorization"))
 }
+
+// TestTypedRelayStripsInboundFootprint R7 typed 面（spec §10）：客户端 IP / 转发
+// 路径类头不得达上游。断言打在网关自建出栈头（headerCapture）——SDK 走的是同一个
+// 注入的 http.Client，但 net/http 的 Request.write 会在 RoundTripper 之后补
+// User-Agent/Accept-Encoding，服务端视图不足以证明「网关没发」（见 C2 实测教训）。
+func TestTypedRelayStripsInboundFootprint(t *testing.T) {
+	srv := typedUpstream(t)
+	defer srv.Close()
+	capRt := &headerCapture{base: srv.Client().Transport}
+	f := NewFactory(&http.Client{Transport: capRt}, Config{UpstreamTimeout: 5 * time.Second})
+	tpl := &domain.Template{ID: 4, BaseURL: srv.URL}
+
+	in := http.Header{"X-Opencode-Session": {"oc-1"}} // 哨兵：允许面不受影响
+	for _, k := range inboundFootprintCanonical {
+		in[k] = []string{"203.0.113.9"}
+	}
+	_, err := f.ChatCompletion(context.Background(), tpl, "sk-foot", openai.ChatCompletionNewParams{
+		Model:    "gpt-4o",
+		Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("x")},
+	}, in)
+	require.NoError(t, err)
+
+	built := capRt.headers(t)
+	for _, k := range inboundFootprintCanonical {
+		_, ok := built[k]
+		require.False(t, ok, "入站足迹头 %s 不得进入 typed 面出栈头（map 槽位级断言）", k)
+	}
+	require.Equal(t, []string{"oc-1"}, built["X-Opencode-Session"], "哨兵键仍须透传")
+	require.Equal(t, "Bearer sk-foot", built.Get("Authorization"), "账号凭据仍在 relay 之后写（不变量 #5）")
+}
