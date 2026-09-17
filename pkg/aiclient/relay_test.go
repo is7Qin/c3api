@@ -13,7 +13,7 @@ import (
 
 // denyKeyCount 清单长度的显式断言（防清单扩容这类越界改动静默通过：改
 // relayDeny 必须同时显式改本常量，让那次扩容在 diff 里可见）。
-const denyKeyCount = 29
+const denyKeyCount = 32
 
 // TestRelayHeadersAllowSide R1（允许面）：自定义头与协议协商头原样送达 +
 // relayDeny 键形防线（写错大小写＝能编译但永不命中，本断言是唯一机器防线）。
@@ -26,7 +26,6 @@ func TestRelayHeadersAllowSide(t *testing.T) {
 		"Openai-Beta":                {"advanced-tool-use-2025-11-18"},
 		"Originator":                 {"codex_cli_rs"},
 		"User-Agent":                 {"curl/8.7.1"},
-		"X-Request-Id":               {"req-1"},
 		"X-Stainless-Retry-Count":    {"0"},
 		"Anthropic-Dangerous-Skills": {"preview"},
 	}
@@ -80,7 +79,7 @@ func TestRelayHeadersValueHygiene(t *testing.T) {
 }
 
 // TestRelayHeadersDenySide R3a（剔除面 + 形状行为清单）：遍历 relayDeny 全部
-// 29 键逐个断言被剔，并钉住计划 §1 原型实测的 8 项行为。
+// 32 键逐个断言被剔，并钉住计划 §1 原型实测的 8 项行为。
 func TestRelayHeadersDenySide(t *testing.T) {
 	// ① nil → 非 nil 空 map（rawPostCT 随后 req.Header.Set，nil map 会 panic）。
 	nilOut := RelayHeaders(nil)
@@ -149,8 +148,8 @@ func TestRelayHeadersDenySide(t *testing.T) {
 	require.Len(t, v, 0)
 }
 
-// inboundFootprintCanonical 入站足迹 8 键（规范形，spec §10 增补裁决）：描述
-// **入站**连接/对端的头，网关向上游一律剔除。
+// inboundFootprintCanonical 入站足迹 9 键（规范形，spec §10 增补裁决 + `X-Forwarded-Port`）：
+// 描述**入站**连接/对端的头，网关向上游一律剔除。
 //
 // 三处与本表常见写法不同，别“顺手修正”：`X-Real-Ip`（不是 `X-Real-IP`）、
 // `Cf-Connecting-Ip`（不是 `CF-Connecting-IP`）、`True-Client-Ip`（不是
@@ -158,8 +157,19 @@ func TestRelayHeadersDenySide(t *testing.T) {
 // 不像 Header.Get 会规范化实参），清单里写成常见写法能编译但永不命中。
 var inboundFootprintCanonical = []string{
 	"X-Forwarded-For", "X-Real-Ip", "Cf-Connecting-Ip", "True-Client-Ip",
-	"Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto", "Via",
+	"Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "Via",
 }
+
+// gatewayStrippedExtra 另两个必剔项（2026-09-16 第二轮裁决）：
+//   - `X-Request-Id`：**网关自己写过它**（`internal/server/middleware.go` 最外层
+//     `accessLog`：客户端带了就沿用原值、没带就生成 uuid 再 `Set`）⇒ 递上游要么把
+//     网关内部关联 id 泄漏给第三方，要么让客户端往上游注入一个不被校验的值。注意
+//     它与落库用的 `internal/proxy/caller.go` `newReqID()` **不是同一个 id**。
+//   - `Expect`：**连接级协商**（客户端在问「你这条连接会不会先回 100」），实测在
+//     本仓 Transport（`pkg/httpx` 显式 `ExpectContinueTimeout = 1s`）下：合规上游
+//     带/不带都是 ~1ms，**不发 100 Continue 的上游则每次多付 ~1.001s**（两轮一致）
+//     ⇒ 客户端可注入的延迟放大器，且对上游无语义价值。
+var gatewayStrippedExtra = []string{"X-Request-Id", "Expect"}
 
 // TestRelayHeadersInboundFootprint R7（spec §10）：客户端 IP / 转发路径类头不得
 // 达上游；两向夹住「非规范形写法」这个静默失效点（清单侧不得收录常见写法，
@@ -192,6 +202,26 @@ func TestRelayHeadersInboundFootprint(t *testing.T) {
 		rogue[wrong] = []string{"203.0.113.9"}
 	}
 	require.Len(t, RelayHeaders(rogue), 0, "非规范形拼写的入站足迹头必须被规范化后命中清单")
+}
+
+// TestRelayHeadersStripsGatewayWrittenAndExpect R8（spec §11）：网关自身写过的关联 id
+// （`X-Request-Id`）与连接级协商（`Expect`）同样不得达上游。两者理由不同，各自成条：
+// 前者是「不要把网关内部关联键（或客户端未校验值）递给第三方」，后者是实测出来的
+// 客户端可注入 +1s 延迟（非合规上游），详见 `gatewayStrippedExtra` 的注释。
+func TestRelayHeadersStripsGatewayWrittenAndExpect(t *testing.T) {
+	in := http.Header{"X-Opencode-Session": {"oc-1"}} // 哨兵：允许面不受影响
+	for _, k := range gatewayStrippedExtra {
+		require.Equal(t, k, http.CanonicalHeaderKey(k), "本表必须是规范形拼写")
+		in[k] = []string{"client-value"}
+	}
+	out := RelayHeaders(in)
+	for _, k := range gatewayStrippedExtra {
+		require.Empty(t, out.Get(k), "%s 不得达上游（spec §11）", k)
+		_, ok := out[k]
+		require.False(t, ok, "%s 必须整键不出现（map 槽位级断言）", k)
+	}
+	require.Equal(t, []string{"oc-1"}, out["X-Opencode-Session"], "哨兵键不得被误剔")
+	require.Len(t, out, 1)
 }
 
 // BenchmarkRelayHeaders 精确门：20 键 × 1 值 allocs/op ≤ 4；20 键 × 8 值的

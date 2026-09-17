@@ -287,6 +287,9 @@ func TestRawRelayStripsInboundFootprint(t *testing.T) {
 	for _, k := range inboundFootprintCanonical {
 		in[k] = []string{"203.0.113.9"}
 	}
+	for _, k := range gatewayStrippedExtra {
+		in[k] = []string{"client-value"}
+	}
 	resp, err := f.ChatCompletionStreamRaw(context.Background(), 1, srv.URL, "sk-test",
 		[]byte(`{"stream":true}`), in)
 	require.NoError(t, err)
@@ -299,6 +302,12 @@ func TestRawRelayStripsInboundFootprint(t *testing.T) {
 		require.False(t, ok, "入站足迹头 %s 不得出现在出栈头（map 槽位级断言）", k)
 		_, ok = srvHdr[k]
 		require.False(t, ok, "入站足迹头 %s 不得达上游（服务端视图）", k)
+	}
+	for _, k := range gatewayStrippedExtra {
+		_, ok := built[k]
+		require.False(t, ok, "%s 不得出现在出栈头（网关自身关联 id / 连接级协商，spec §11）", k)
+		_, ok = srvHdr[k]
+		require.False(t, ok, "%s 不得达上游（服务端视图）", k)
 	}
 	require.Equal(t, []string{"oc-1"}, built["X-Opencode-Session"], "哨兵键仍须透传")
 }
