@@ -84,28 +84,31 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 // deriveCodexAccountID 单账号保存 account id 后置补全（管理面派生点之二，另一
 // 为批量导入行处理——spec §7.0-6，派生点唯一在落库，热路径零解析零出站）：
 // OAuth 经离线 JWT claims 解析（sdkbridge 纯函数，过期 AT 亦可解）；PAT 经
-// whoami 在线查询（sdkbridge 薄包装）。凭据源优先请求体、其次存量行；任何失
-// 败 → ""（不阻塞保存，留空 → 下次保存重试）。
+// whoami 在线查询（sdkbridge 薄包装）。请求凭据非空时只认请求凭据——派生失败
+// 即空，**不回退存量行**（旧 id 绑新凭据 = 全错身份）；仅请求凭据为空才回退存
+// 量行。任何失败 → ""（不阻塞保存，留空 → 下次保存重试）。
 func (h *AdminAPI) deriveCodexAccountID(ctx context.Context, e *domain.AccountExt) string {
 	switch e.CredentialType {
 	case credential.TypeCodexOAuth:
-		// 请求凭据优先（空/不可派生 → 存量行回退；离线纯函数零出站）。
-		if id, ok := sdkbridge.DeriveCodexAccountID(deref(e.CodexOAuthToken)); ok {
-			return id
+		if tok := deref(e.CodexOAuthToken); tok != "" {
+			if id, ok := sdkbridge.DeriveCodexAccountID(tok); ok {
+				return id
+			}
+			return "" // 非空不可派生 → 空（旧 id 不得绑新凭据）
 		}
 		if id, ok := sdkbridge.DeriveCodexAccountID(h.storedCodexCredential(ctx, e.AccountID, true)); ok {
 			return id
 		}
 		return ""
 	case credential.TypeCodexPAT:
-		// 请求 key 优先（缺省/查询无值 → 存量行回退；失败仍不阻塞）。
 		if key := deref(e.CodexPATKey); key != "" {
 			if id, err := sdkbridge.FetchPATAccountID(ctx, key); err == nil && id != "" {
 				return id
 			}
+			return "" // 非空 key 查无 → 空（旧 id 不得绑新凭据）
 		}
 		if key := h.storedCodexCredential(ctx, e.AccountID, false); key != "" {
-			if id, err := sdkbridge.FetchPATAccountID(ctx, key); err == nil {
+			if id, err := sdkbridge.FetchPATAccountID(ctx, key); err == nil && id != "" {
 				return id
 			}
 		}

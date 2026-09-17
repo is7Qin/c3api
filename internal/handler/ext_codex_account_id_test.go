@@ -5,6 +5,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // —— 单账号 ext 保存 account id 后置补全（spec §7.0-6 / §7.2：可留空，保存后
@@ -72,15 +76,14 @@ func TestPutAccountsExtDerivesOAuthAccountID(t *testing.T) {
 		require.Equal(t, "acc-save-1", *ext.CodexAccountId, "派生值持久化")
 	})
 
-	t.Run("stored row backs up underivable request token", func(t *testing.T) {
-		// 存量行持有可派生 JWT-A；请求换不可派生 token → 存量回退补全 id。
+	t.Run("non-empty underivable request token never binds stored id", func(t *testing.T) {
+		// 存量行持有 JWT-A/id-A；请求换不可派生 token → 空（旧 id 不得绑新凭据）。
 		rec := do(http.MethodPut, "/api/admin/accounts/"+itoa64(id)+"/ext",
 			`{"credential_type":"codex-oauth","codex_oauth_token":"opaque-rotated","codex_oauth_refresh_token":"rt2"}`)
 		require.Equal(t, 200, rec.Code, "put ext: %s", rec.Body.String())
 		var ext AccountExt
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ext))
-		require.NotNil(t, ext.CodexAccountId)
-		require.Equal(t, "acc-save-1", *ext.CodexAccountId, "请求凭据不可派生 → 存量行回退")
+		require.Nil(t, ext.CodexAccountId, "请求凭据非空不可派生 → 不回退存量旧值")
 	})
 
 	t.Run("derivation failure keeps save successful and empty", func(t *testing.T) {
@@ -94,26 +97,27 @@ func TestPutAccountsExtDerivesOAuthAccountID(t *testing.T) {
 	})
 }
 
+// extCodexPATAccount 建 pat 模板 + 账号，返回账号 id。
+func extCodexPATAccount(t *testing.T, do func(method, path, body string) *httptest.ResponseRecorder) int64 {
+	t.Helper()
+	n := extCodexNameSeq.Add(1)
+	rec := do(http.MethodPost, "/api/admin/templates", fmt.Sprintf(`{
+		"name":"t-codex-pat-acctid-%d","base_url":"",
+		"credential_type":"codex-pat","supported_formats":["openai-responses"]}`, n))
+	require.Equal(t, 200, rec.Code, "create template: %s", rec.Body.String())
+	var tpl Template
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpl))
+	rec = do(http.MethodPost, "/api/admin/accounts",
+		`{"name":"acc-pat-acctid-`+itoa64(n)+`","template_id":`+itoa64(tpl.ID)+`,"upstream_key":"sk-x"}`)
+	require.Equal(t, 200, rec.Code, "create account: %s", rec.Body.String())
+	var acc Account
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
+	return *acc.ID
+}
+
 // TestPutAccountsExtDerivesPATAccountID PAT 保存空 account id：whoami 成功 →
 // 补全并持久化；whoami 失败 → 保存成功且留空。
 func TestPutAccountsExtDerivesPATAccountID(t *testing.T) {
-	newPATAccount := func(t *testing.T, do func(method, path, body string) *httptest.ResponseRecorder) int64 {
-		t.Helper()
-		n := extCodexNameSeq.Add(1)
-		rec := do(http.MethodPost, "/api/admin/templates", fmt.Sprintf(`{
-			"name":"t-codex-pat-acctid-%d","base_url":"",
-			"credential_type":"codex-pat","supported_formats":["openai-responses"]}`, n))
-		require.Equal(t, 200, rec.Code, "create template: %s", rec.Body.String())
-		var tpl Template
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tpl))
-		rec = do(http.MethodPost, "/api/admin/accounts",
-			`{"name":"acc-pat-acctid-`+itoa64(n)+`","template_id":`+itoa64(tpl.ID)+`,"upstream_key":"sk-x"}`)
-		require.Equal(t, 200, rec.Code, "create account: %s", rec.Body.String())
-		var acc Account
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
-		return *acc.ID
-	}
-
 	t.Run("whoami success derives and persists", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -123,7 +127,7 @@ func TestPutAccountsExtDerivesPATAccountID(t *testing.T) {
 		t.Setenv("CODEX_AUTHAPI_BASE_URL", srv.URL)
 
 		_, _, do := newListTestRouter(t)
-		id := newPATAccount(t, do)
+		id := extCodexPATAccount(t, do)
 		rec := do(http.MethodPut, "/api/admin/accounts/"+itoa64(id)+"/ext",
 			`{"credential_type":"codex-pat","codex_pat_key":"pat-save-1"}`)
 		require.Equal(t, 200, rec.Code, "put ext: %s", rec.Body.String())
@@ -147,12 +151,47 @@ func TestPutAccountsExtDerivesPATAccountID(t *testing.T) {
 		t.Setenv("CODEX_AUTHAPI_BASE_URL", srv.URL)
 
 		_, _, do := newListTestRouter(t)
-		id := newPATAccount(t, do)
+		id := extCodexPATAccount(t, do)
 		rec := do(http.MethodPut, "/api/admin/accounts/"+itoa64(id)+"/ext",
 			`{"credential_type":"codex-pat","codex_pat_key":"pat-bad"}`)
 		require.Equal(t, 200, rec.Code, "put ext: %s", rec.Body.String())
 		var ext AccountExt
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ext))
 		require.Nil(t, ext.CodexAccountId, "whoami 失败不阻塞保存，留空")
+	})
+}
+
+// TestDeriveCodexAccountIDEmptyRequestFallsBackToStored 请求凭据为空 → 存量行回
+// 退成功。列组校验要求凭据非空（空凭据走 HTTP 必 400），故经 helper 直调验证，
+// 不走 HTTP。
+func TestDeriveCodexAccountIDEmptyRequestFallsBackToStored(t *testing.T) {
+	h, _, do := newListTestRouter(t)
+	ctx := context.Background()
+
+	t.Run("oauth empty token falls back to stored row", func(t *testing.T) {
+		id := extCodexOAuthAccount(t, do)
+		rec := do(http.MethodPut, "/api/admin/accounts/"+itoa64(id)+"/ext",
+			`{"credential_type":"codex-oauth","codex_oauth_token":"`+extCodexAccountJWT(t, "acc-fallback-1")+`","codex_oauth_refresh_token":"rt"}`)
+		require.Equal(t, 200, rec.Code, "seed: %s", rec.Body.String())
+
+		got := h.deriveCodexAccountID(ctx, &domain.AccountExt{AccountID: id, CredentialType: credential.TypeCodexOAuth})
+		require.Equal(t, "acc-fallback-1", got, "请求凭据为空 → 存量行回退")
+	})
+
+	t.Run("pat empty key falls back to stored row", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"email":"u@example.com","chatgpt_account_id":"acc-fallback-pat-1"}`))
+		}))
+		defer srv.Close()
+		t.Setenv("CODEX_AUTHAPI_BASE_URL", srv.URL)
+
+		id := extCodexPATAccount(t, do)
+		rec := do(http.MethodPut, "/api/admin/accounts/"+itoa64(id)+"/ext",
+			`{"credential_type":"codex-pat","codex_pat_key":"pat-seed-1"}`)
+		require.Equal(t, 200, rec.Code, "seed: %s", rec.Body.String())
+
+		got := h.deriveCodexAccountID(ctx, &domain.AccountExt{AccountID: id, CredentialType: credential.TypeCodexPAT})
+		require.Equal(t, "acc-fallback-pat-1", got, "请求凭据为空 → 存量行回退")
 	})
 }
