@@ -361,15 +361,7 @@ type Service struct {
 	// compileNotify 路由编译触发面（New 经 ServiceDeps.CompileNotify
 	// 一次性注入；nil = 未装配，定价写面静默——仅编译道装配后有效。
 	// 调用方承诺非阻塞，见 pricing.go）。
-	compileNotify func()
-	// deriveOAuthAccountID OAuth account id 离线派生（纯函数注入——service 不
-	// 直引 codex-sdk/sdkbridge，见 usage_wiring_test.go 分层纪律；生产接
-	// sdkbridge.DeriveCodexAccountID；nil = 未装配 → 不派生，空缺行级 failed）。
-	deriveOAuthAccountID func(token string) (string, bool)
-	// fetchPATAccountID PAT account id 在线查询（whoami——管理面唯一出站派生
-	// 点，热路径零调用；生产接 sdkbridge.FetchPATAccountID；nil = 未装配 →
-	// 不查询，空缺行级 failed）。
-	fetchPATAccountID           func(ctx context.Context, patKey string) (string, error)
+	compileNotify               func()
 	mailEnqueue                 func(MailSendTask) error
 	clearBalanceWarningCooldown func(context.Context, int64, int64) error
 	tzLoc                       *time.Location
@@ -422,15 +414,6 @@ type ServiceDeps struct {
 	// 同值写静默纪律见 reloadPricingAndNotifyCompiler。生产装配
 	// scheduler.RequestCompile（func 值注入，无 import 环）。
 	CompileNotify func()
-	// DeriveOAuthAccountID OAuth account id 离线派生（纯函数）：codex 批量导入
-	// 行 codex_account_id 缺省时补全（JWT claims 离线解析，过期 AT 亦可解）。
-	// nil = 未装配 → 不派生（缺省行级 failed 不变）。生产接
-	// sdkbridge.DeriveCodexAccountID（func 值注入，无 import 环）。
-	DeriveOAuthAccountID func(token string) (string, bool)
-	// FetchPATAccountID PAT account id 在线查询（whoami）：codex 批量导入行
-	// codex_account_id 缺省时补全。nil = 未装配 → 不查询（缺省行级 failed
-	// 不变）。生产接 sdkbridge.FetchPATAccountID（func 值注入，无 import 环）。
-	FetchPATAccountID func(ctx context.Context, patKey string) (string, error)
 	// MailEnqueue 邮件异步入队面（auth_email.go 经此入队；nil = 未装配 →
 	// SendRegisterCode 退化为 ErrMailNotConfigured）。生产经构造一次性注入
 	// mailW.Enqueue（B3 根因重开——构造参数，零事后回填）。
@@ -448,8 +431,6 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 	s := &Service{store: store, sched: sched, inv: invalidate, pub: pub, ruleReload: ruleReload, keys: keys, log: log,
 		emailCodes: deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,
 		compileNotify:               deps.CompileNotify,
-		deriveOAuthAccountID:        deps.DeriveOAuthAccountID,
-		fetchPATAccountID:           deps.FetchPATAccountID,
 		mailEnqueue:                 deps.MailEnqueue,
 		clearBalanceWarningCooldown: deps.ClearBalanceWarningCooldown}
 	if deps.SettingsSnapshot != nil {
