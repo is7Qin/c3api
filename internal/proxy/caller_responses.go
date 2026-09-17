@@ -47,7 +47,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.ResponseStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody)
+		resp, err := p.clients.ResponseStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -205,7 +205,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	reqModel := params.Model
 	params.Model = responses.ResponsesModel(sel.Model)
 	tpl := tplOf(sel) // 非流式走 SDK 模板路径
-	resp, err := p.clients.Response(ctx, tpl, cred, params)
+	resp, err := p.clients.Response(ctx, tpl, cred, params, r.Header)
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err
 	}

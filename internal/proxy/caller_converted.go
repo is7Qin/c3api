@@ -56,9 +56,9 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var resp *http.Response
 		switch target {
 		case domain.FormatOpenAIResponses:
-			resp, err = p.clients.ResponseStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody)
+			resp, err = p.clients.ResponseStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
 		case domain.FormatAnthropic:
-			resp, err = p.clients.AnthMessageStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody)
+			resp, err = p.clients.AnthMessageStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
 		}
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
@@ -209,7 +209,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		}
 		params.Model = responses.ResponsesModel(sel.Model)
 		var resp *responses.Response
-		resp, upstreamErr = p.clients.Response(ctx, tpl, cred, params)
+		resp, upstreamErr = p.clients.Response(ctx, tpl, cred, params, r.Header)
 		if upstreamErr == nil {
 			data, upstreamErr = json.Marshal(resp)
 			if resp.JSON.Usage.Valid() {
@@ -225,7 +225,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		}
 		params.Model = sel.Model
 		var resp *anthropic.Message
-		resp, upstreamErr = p.clients.AnthMessage(ctx, tpl, cred, params)
+		resp, upstreamErr = p.clients.AnthMessage(ctx, tpl, cred, params, r.Header)
 		if upstreamErr == nil {
 			data, upstreamErr = json.Marshal(resp)
 			if resp.JSON.Usage.Valid() {

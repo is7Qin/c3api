@@ -54,7 +54,7 @@ type codexSearchUpstream struct {
 	calls  int
 	paths  []string
 	auths  []string
-	turns  []string // x-codex-turn-metadata 头值（统一不转发断言）
+	turns  []string // x-codex-turn-metadata 头值（静态路径如实透传 / SDK 路径不转发断言）
 	bodies [][]byte
 	steps  []codexSearchStep
 	last   codexSearchStep
@@ -229,7 +229,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 func i64ptr(v int64) *int64 { return &v }
 
 // postSearch 向网关发 /v1/alpha/search 请求（Bearer ck-1 + 可选
-// x-codex-turn-metadata——统一不转发断言面）。
+// x-codex-turn-metadata——静态路径的如实透传断言面）。
 func postSearch(t *testing.T, srv *httptest.Server, body string, turnMetadata string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/alpha/search", strings.NewReader(body))
@@ -261,7 +261,8 @@ func searchBillingHooks(fn *fakeFunctionPriceLookup) *BillingHooks {
 
 // TestSearchStaticPassthroughBilling api_key 静态透传（分派断言 + 透传断言 +
 // 计费断言）：Bearer upstream key 直连上游、URL 裸根派生 /v1/alpha/search、
-// 请求体/响应体原样（opaque results 不解析）、x-codex-turn-metadata 不转发；
+// 请求体/响应体原样（opaque results 不解析）、x-codex-turn-metadata 如实透传
+// （客户端头不经翻译不映射，只过全仓唯一一份 relayDeny；该键不在清单）；
 // 2xx → format=openai-search + call_count=1 + price_per_call_millis（表行价
 // 2500）+ cost=2500（applyBilling search 分支非 0 计费断言）。
 func TestSearchStaticPassthroughBilling(t *testing.T) {
@@ -281,11 +282,11 @@ func TestSearchStaticPassthroughBilling(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(b))
 	require.Equal(t, searchRespRaw, string(b), "响应原样透传（opaque results/encrypted_output 不解析）")
 
-	// 静态路径 wire 断言：Bearer upstream key + 派生 URL + 请求体原样 + 头不转发
+	// 静态路径 wire 断言：Bearer upstream key + 派生 URL + 请求体原样 + 客户端头如实透传
 	require.Equal(t, 1, upc.callsN())
 	require.Equal(t, "/v1/alpha/search", upc.path(0), "URL 裸根派生 base/v1/alpha/search")
 	require.Equal(t, "Bearer sk-upstream", upc.auth(0), "api_key 静态透传——Bearer upstream key 直连")
-	require.Equal(t, "", upc.turn(0), "x-codex-turn-metadata 不转发（静态路径）")
+	require.Equal(t, "turn-123", upc.turn(0), "x-codex-turn-metadata 如实透传（静态路径——不在 relayDeny）")
 	require.Equal(t, searchReqBody, string(upc.body(0)), "请求体原样送达上游")
 
 	// 2xx 计费落账断言（applyBilling search 分支——非 0 计费）
