@@ -231,6 +231,8 @@ const emptyForm = (): FormState => ({
 })
 
 function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
+// PUT 全列更新：account id 优先用表单手填值，空则回显原值防清空
+const codexAccountIdBody = (val: string, cur?: string | null) => val.trim() || cur || null
 function toForm(a: AccountView): FormState {
   const ct = a.Template?.CredentialType as string | undefined
   const codex = isCodexCt(ct)
@@ -728,8 +730,8 @@ export default function Accounts() {
           account_id: id,
           credential_type: ct,
           codex_email: (f.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
-          // PUT 全列更新：缺省字段按 NULL 落盘——account id 优先用表单手填值，空则回显原值防清空
-          codex_account_id: f.codex_account_id?.trim() || cur?.codex_account_id || null,
+          // PUT 全列更新：缺省字段按 NULL 落盘
+          codex_account_id: codexAccountIdBody(f.codex_account_id, cur?.codex_account_id),
           ...(ct === 'codex-oauth'
             ? {
                 codex_oauth_token: f.codex_oauth_token.trim() || null,
@@ -931,8 +933,8 @@ export default function Accounts() {
         account_id: a.ID,
         credential_type: ct,
         codex_email: extForm.codex_email.trim() || null,
-        // PUT 全列更新：缺省字段按 NULL 落盘——account id 优先用表单手填值，空则回显原值防清空
-        codex_account_id: extForm.codex_account_id?.trim() || cur?.codex_account_id || null,
+        // PUT 全列更新：缺省字段按 NULL 落盘
+        codex_account_id: codexAccountIdBody(extForm.codex_account_id, cur?.codex_account_id),
         // 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key（其余置 NULL）
         ...(ct === 'codex-oauth'
           ? {
@@ -1311,7 +1313,6 @@ export default function Accounts() {
                   placeholder={t('accounts.ext.accountIdPlaceholder')}
                   onChange={e => setForm(f => ({ ...f, codex_account_id: e.target.value }))}
                 />
-                <p className="text-xs text-muted-foreground">{t('accounts.ext.accountIdHint')}</p>
               </div>
             )}
             {/* Codex 不可配置 BaseURL，隐藏并清空；其他类型保留覆盖 */}
@@ -1539,7 +1540,6 @@ export default function Accounts() {
                 placeholder={t('accounts.ext.accountIdPlaceholder')}
                 onChange={e => setExtForm(f => ({ ...f, codex_account_id: e.target.value }))}
               />
-              <p className="text-xs text-muted-foreground">{t('accounts.ext.accountIdHint')}</p>
             </div>
             {extCredentialType === 'codex-oauth' ? (
               <>
