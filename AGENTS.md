@@ -69,7 +69,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 ## ANTI-PATTERNS（本项目明令禁止）
 
 1. 业务代码直接 import zap——日志只走 `pkg/logx`（logx.go:5）
-2. 网关做**配置驱动**的「客户端头→上游头」映射——透传 = default-allow + 全仓唯一一份 `relayDeny`（`pkg/aiclient/relay.go`），该清单不可被配置穿透，扩容须过同级评审；`Authorization`/`X-Api-Key`/`Cookie`/`Accept-Encoding` 必剔（前三=凭据与跨租户态，后者=上游回 gzip 裸流会静默打断 usage 抽取）；**入站足迹**（`X-Forwarded-For`/`X-Real-IP`/`CF-Connecting-IP`/`True-Client-IP`/`Forwarded`/`X-Forwarded-Host`/`X-Forwarded-Proto`/`X-Forwarded-Port`/`Via`）同样必剔——它们描述**入站**连接而不是出站，且网关不像正规反向代理那样追加自己的观测（写进清单须用规范形：`X-Real-Ip`/`Cf-Connecting-Ip`/`True-Client-Ip`，写常见写法能编译但永不命中）。另外两项也必剔：`Expect`（入站连接上的 100-continue 协商；透传后本仓 Transport 的 `ExpectContinueTimeout=1s` 会让不发 interim 的上游每次多付 ~1s，属客户端可注入的延迟放大器）与 `X-Request-Id`（**网关自己写过**它——最外层 accessLog 客户端带了就沿用、没带就生成 uuid ⇒ 递上游等于泄漏网关内部关联 id 或让客户端注入未校验值）。但别把这条当安全边界：清单是 deny-list，`X-Client-IP` 之类自定义键照旧达上游，文档不得写成「防 IP 泄漏」。raw/typed/WS 静态三面机制已对称；**codex WS 面更严**：该面只发 SDK 自己写的头，客户端头一律不递（`codexWSClientHeaders` 恒空集，spec §12）
+2. 网关做**配置驱动**的「客户端头→上游头」映射——透传 = default-allow + 全仓唯一一份 `relayDeny`（详见 `pkg/aiclient/relay.go`，不可被配置穿透，扩容须过同级评审）；必剔 `Authorization`/`X-Api-Key`/`Cookie`/`Accept-Encoding`（凭据/跨租户态/gzip 漏计费）与入站足迹族（`X-Forwarded-*`/`Forwarded`/`Via` 等——描述**入站**连接，网关亦不追加自身观测；写清单须用规范形 `X-Real-Ip`/`Cf-Connecting-Ip`/`True-Client-Ip`，常见写法能编译但永不命中）及 `Expect`（入站 100-continue 协商，客户端可注入的延迟放大器）/`X-Request-Id`（网关自己写过，递上游=泄漏内部关联 id 或让客户端注入未校验值）。deny-list 不是安全边界（`X-Client-IP` 等自定义键照旧达上游，不得宣传为「防 IP 泄漏」）。codex WS 面不喂任何客户端头（握手头仅来自 SDK，spec §12）。
 3. 未知账号类型静默 fallback 到 api_key——显式报错（forward.go:736）
 4. 裸写 scheduler 已发布快照视图——必须 copy-modify-Store（scheduler.go:921）；disabled 账号不得被在途事件复活
 5. 响应后副作用跑在请求 ctx 上——NOTIFY 发布/规则重载必须 `context.WithoutCancel`；但裸 WithoutCancel 无界，本地 Apply 包 30s 超时（setting.go:79）

@@ -90,7 +90,7 @@ type metrics struct {
 	// 30k 并发下每请求抢同一把锁（最大热点）；p99 遍历数组同样无锁。
 	samples        [sampleBuckets]atomic.Int64 // stream 首字节延迟采样：10ms/桶
 	latencySamples [sampleBuckets]atomic.Int64 // chat 完整响应延迟采样：10ms/桶
-	// dial/建连观测（httptrace）：建连拥塞（SYN 丢/accept 排队）是压测夹具
+	// dial/建连观测（自持 DialContext 计 dial，httptrace 只供 GotConn）：建连拥塞（SYN 丢/accept 排队）是压测夹具
 	// 与网关之间最容易失明的一段——goroutine dump 与首字节直方图都看不到它。
 	dialN      atomic.Int64 // 真实新建连接数（Keep-Alive 复用不计）
 	dialUS     atomic.Int64 // dial 累计微秒

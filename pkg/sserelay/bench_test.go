@@ -100,7 +100,7 @@ func BenchmarkRelayTokenStream(b *testing.B) {
 	}
 }
 
-// BenchmarkRelayBulk16K 大帧直写形态：8 × 16KB 帧，越过 8KB bufio 缓冲触发
+// BenchmarkRelayBulk16K 大帧直写形态：8 × 16KB 帧，越过 4KB bufio 缓冲触发
 // bufio 直写路径（绕过 bw 缓冲拷贝）。
 func BenchmarkRelayBulk16K(b *testing.B) {
 	src := sseFrames(8, 16000)

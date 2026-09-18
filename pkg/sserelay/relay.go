@@ -102,9 +102,9 @@ type relay struct {
 	fl    http.Flusher
 	cfg   Config
 
-	mu       sync.Mutex // 保护 bw/pending
-	pending  int        // 累计写入字节；阈值/drain/结束残余 flush 后归零（首事件 latency flush 不归零，其字节继续计入阈值）
-	lastTick time.Time
+	mu           sync.Mutex // 保护 bw/pending/firstFlushed
+	pending      int        // 累计写入字节；阈值/drain/结束残余 flush 后归零（首事件 latency flush 不归零，其字节继续计入阈值）
+	firstFlushed bool       // 首帧已即时 flush（替代 timer 时代的 lastTick IsZero 判定）
 
 	stopWatch chan struct{}  // 关闭后 deadline watcher 退出
 	wg        sync.WaitGroup // deadline watcher 汇合（替代 deadlineDone chan；spec 2026-08-15-gc-opt-ab B-1）
@@ -241,8 +241,8 @@ func (r *relay) run() error {
 		if len(line) > 0 {
 			frame.Write(line)
 			if inLine {
-				// 续片（>8KB 长行）：原始 line 去尾 \n\r 直接并入 data，不经
-				// splitField——续片内容不可按字段解析（可能含冒号）；>8KB
+				// 续片（>4KB 长行）：原始 line 去尾 \n\r 直接并入 data，不经
+				// splitField——续片内容不可按字段解析（可能含冒号）；>4KB
 				// event 行会并入 data，真实上游 event 恒短，已知限制
 				v := line
 				for len(v) > 0 && (v[len(v)-1] == '\n' || v[len(v)-1] == '\r') {
@@ -356,9 +356,8 @@ func (r *relay) write(p []byte) error {
 		return err
 	}
 	r.pending += len(p)
-	first := r.lastTick.IsZero()
-	r.lastTick = time.Now()
-	if first {
+	if !r.firstFlushed {
+		r.firstFlushed = true
 		// 首事件立即 flush，保证首字节延迟；不重置 pending——首事件字节仍计入
 		// 阈值，后续小事件可叠加触发一次批量 flush（区分于阈值 flush 的归零语义）
 		if err := r.flushNoResetLocked(); err != nil {
@@ -384,8 +383,8 @@ func (r *relay) stopWatcher() {
 // startDeadlineWatcher 写侧 deadline 与 ctx.Done 联动（C-P2-1 方案 1）：
 // "取消 = 写失败 = 正常退出"——半开客户端上阻塞的写（bw.Flush 持 r.mu、
 // 无 ctx 感知，全库无 SetWriteDeadline）在 deadline 处失败返回，flushFrame
-// 传播 → run 正常退出；无此联动则 run + watcher 永久泄漏（每流 2 goroutine
-// + 2×8KB 池化 bufio）。
+// 传播 → run 正常退出；无此联动则 run + watcher 永久泄漏（每流 1 goroutine
+// + 2×4KB 池化 bufio）。
 // 本 goroutine 永不触碰 r.mu，取消必然可达。设置后即退出；流正常结束时由
 // stopWatch 唤醒退出（net/http 在 handler 返回后自行复位 conn 写 deadline，
 // 无残留影响 keep-alive 复用）。
@@ -406,7 +405,7 @@ func (r *relay) startDeadlineWatcher() {
 
 // flushLocked 批量 flush（阈值 / drain / 结束残余触发）：pending > 0 时执行
 // bw.Flush + fl.Flush，并把 pending 归零，使事件重新累积批量（spec 规则 2/3）。
-// 不检查 bw.Buffered()：>= 8192B 的帧走 bufio 直写路径时缓冲为空但确实有数据
+// 不检查 bw.Buffered()：>= 4096B 的帧走 bufio 直写路径时缓冲为空但确实有数据
 // 待 flush，bw.Flush 对空缓冲是廉价 no-op，随后仍需 fl.Flush 把数据推给对端。
 // 错误返回给写路径上报；drain/退出路径忽略（客户端断开不可恢复）。
 func (r *relay) flushLocked() error {

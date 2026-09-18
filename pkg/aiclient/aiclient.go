@@ -136,8 +136,10 @@ func (f *Factory) AnthMessage(ctx context.Context, tpl *domain.Template, key str
 	return f.anthropic(tpl).Messages.New(ctx, params, opts...)
 }
 
-// relayOptions 把 relay 产物转成 openai SDK 的请求选项：单值键 WithHeader；
-// 多值键首个 WithHeader + 其余逐个 WithHeaderAdd。
+// relayOpts 把 relay 产物转成 SDK 请求选项：单值键 WithHeader；多值键首个
+// WithHeader + 其余逐个 WithHeaderAdd。openai 与 anthropic 的 option 包互不
+// 兼容 ⇒ 以 withHeader/withHeaderAdd 函数参数收敛同一循环（同一份 RelayHeaders
+// 产物，绝不设第二份清单）。
 //
 // 多值必须分开写：WithHeader 内部是 Header.Set（openai-go
 // option/requestoption.go:111），一律 WithHeader 会把同键两值压成只剩末值 =
@@ -146,42 +148,34 @@ func (f *Factory) AnthMessage(ctx context.Context, tpl *domain.Template, key str
 // 位置即语义：SDK 先设自己的默认头（requestconfig.go:155-164，含
 // User-Agent: OpenAI/Go <ver>），再 cfg.Apply(opts...) ⇒ 这里产出的 WithHeader
 // 压过 SDK 默认（客户端 UA 顶掉 SDK UA 属 §9-2「允许覆盖」裁决）。
-func relayOptions(in http.Header) []openaioption.RequestOption {
+func relayOpts[T any](in http.Header, withHeader func(string, string) T, withHeaderAdd func(string, string) T) []T {
 	relayed := RelayHeaders(in)
 	if len(relayed) == 0 {
 		return nil
 	}
-	opts := make([]openaioption.RequestOption, 0, len(relayed))
+	opts := make([]T, 0, len(relayed))
 	for k, vs := range relayed {
 		if len(vs) == 0 {
 			continue
 		}
-		opts = append(opts, openaioption.WithHeader(k, vs[0]))
+		opts = append(opts, withHeader(k, vs[0]))
 		for _, v := range vs[1:] {
-			opts = append(opts, openaioption.WithHeaderAdd(k, v))
+			opts = append(opts, withHeaderAdd(k, v))
 		}
 	}
 	return opts
 }
 
-// relayAnthropicOptions relayOptions 的 anthropic 对应体（同一份 RelayHeaders，
-// WithHeader/WithHeaderAdd 语义与 openai 包一致：option/requestoption.go:229,238）。
+// relayOptions openai 面：relayOpts 的 openai 实例化。
+func relayOptions(in http.Header) []openaioption.RequestOption {
+	return relayOpts(in, openaioption.WithHeader, openaioption.WithHeaderAdd)
+}
+
+// relayAnthropicOptions anthropic 面：relayOpts 的 anthropic 实例化（同一份
+// RelayHeaders，WithHeader/WithHeaderAdd 语义与 openai 包一致：
+// option/requestoption.go:229,238）。
 func relayAnthropicOptions(in http.Header) []anthropicoption.RequestOption {
-	relayed := RelayHeaders(in)
-	if len(relayed) == 0 {
-		return nil
-	}
-	opts := make([]anthropicoption.RequestOption, 0, len(relayed))
-	for k, vs := range relayed {
-		if len(vs) == 0 {
-			continue
-		}
-		opts = append(opts, anthropicoption.WithHeader(k, vs[0]))
-		for _, v := range vs[1:] {
-			opts = append(opts, anthropicoption.WithHeaderAdd(k, v))
-		}
-	}
-	return opts
+	return relayOpts(in, anthropicoption.WithHeader, anthropicoption.WithHeaderAdd)
 }
 
 // --- 流式原始请求（SSE relay 用） ---
@@ -299,8 +293,7 @@ func (f *Factory) rawPost(ctx context.Context, templateID int64, baseURL, path, 
 // （Content-Type 按端点、账号鉴权头 Authorization / anthropic 用 x-api-key 传
 // key 本身）。网关不把客户端头翻译成上游头，也不丢弃除 relayDeny 之外的客户
 // 端头；in 为 nil 时出栈只剩网关声明（与 relay 前的现状逐字节等价）。清单与
-// 根规则见 relay.go（WS 面共用同一份，见 internal/proxy/caller_responses_ws.go
-// wsPassthroughHeaders）。
+// 根规则见 relay.go（WS 静态面直接调 RelayHeaders，共用同一份）。
 func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path, auth, contentType string, body []byte, in http.Header) (*http.Response, error) {
 	full, err := f.fullURLOf(templateID, baseURL, path)
 	if err != nil {
