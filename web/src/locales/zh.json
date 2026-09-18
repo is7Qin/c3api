@@ -429,7 +429,6 @@
       "emailPlaceholder": "选填",
       "accountId": "账号 ID",
       "accountIdPlaceholder": "选填，留空保存后自动识别",
-      "accountIdHint": "可留空，保存后自动识别（OAuth 解析 / PAT 查询）",
       "installationId": "installation_id",
       "sessionId": "session_id",
       "threadId": "thread_id",
