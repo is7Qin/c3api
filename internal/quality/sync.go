@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strconv"
 	"sync"
@@ -403,17 +404,6 @@ func cloneMinuteMap(src map[int64]map[Key]*QualityMinute) map[int64]map[Key]*Qua
 	return out
 }
 
-func cloneMinuteMapUpto(src map[int64]map[Key]*QualityMinute, upto int64) map[int64]map[Key]*QualityMinute {
-	out := make(map[int64]map[Key]*QualityMinute, len(src))
-	for minute, rows := range src {
-		if minute > upto {
-			continue
-		}
-		out[minute] = cloneKeyMap(rows)
-	}
-	return out
-}
-
 // foldMinuteMap 把 src 各分钟行并入 dst（同 key merge，不同 key 深拷贝；
 // 与原 doRedis/doPG 内联合并块逐字同义）。
 func foldMinuteMap(dst, src map[int64]map[Key]*QualityMinute) {
@@ -453,7 +443,19 @@ func (w *SyncWorker) collectRedisDeltaLocked(curMinuteUnix int64) map[int64]map[
 		}
 		accumulateDelta(w.minuteAbs, curMinuteUnix, c.key, c.gen, delta)
 	}
-	return cloneMinuteMapUpto(w.minuteAbs, curMinuteUnix)
+	// 浅过滤视图（Upto 语义保留、值零拷贝）：foldMinuteMap 只读 src（新 key
+	// Clone 进 dst、旧 key merge 只读），且消费与本 flush 同步——flushMu 串行
+	// 各 flush，minuteAbs 仅 w.mu 下变异（本函数内 accumulateDelta / 成功 ack
+	// 删除 / 失败整体回放），fold 窗口内无并发改写。回滚仍靠调用方的
+	// savedMinuteAbs 深拷贝，此处不复制值。
+	out := make(map[int64]map[Key]*QualityMinute, len(w.minuteAbs))
+	for minute, rows := range w.minuteAbs {
+		if minute > curMinuteUnix {
+			continue
+		}
+		out[minute] = rows
+	}
+	return out
 }
 
 // revertRedisCursorLocked 逆向回放本轮 flush 的游标撤销日志（调用方须持有
@@ -487,7 +489,10 @@ func (w *SyncWorker) collectPGDeltaLocked() map[int64]map[Key]*QualityMinute {
 		}
 		accumulateDelta(w.pgMinuteAbs, w.clock().UTC().Truncate(time.Minute).Unix(), c.key, c.gen, delta)
 	}
-	return cloneMinuteMap(w.pgMinuteAbs)
+	// 浅拷贝外层、共享内层值（同 collectRedisDeltaLocked 的安全论证：fold 只读
+	// src；pgMinuteAbs 仅 w.mu 下变异，flushMu 串行消费；doPGLocked 随即整体
+	// 替换 pgMinuteAbs，视图不逃逸）。
+	return maps.Clone(w.pgMinuteAbs)
 }
 
 func (w *SyncWorker) doRedis(ctx context.Context) {
@@ -560,15 +565,15 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		return
 	}
 	// budget enforcement per minute? Apply global limits across all minutes
-	type cell struct {
+	type outCell struct {
 		minute int64
 		key    Key
 		qm     *QualityMinute
 	}
-	var cells []cell
+	var cells []outCell
 	for minute, rows := range mergedByMinute {
 		for k, qm := range rows {
-			cells = append(cells, cell{minute: minute, key: k, qm: qm})
+			cells = append(cells, outCell{minute: minute, key: k, qm: qm})
 		}
 	}
 	if len(cells) > redisMaxCells {

@@ -447,9 +447,10 @@ func TestConcWorkerStats(t *testing.T) {
 	require.Equal(t, int64(1), st.TrackedEntries)
 }
 
-// BenchmarkConcCollectAllocs collect 的每 tick 分配（5000 键、5% 受限）：
+// BenchmarkConcCollectAllocs collect 的每 tick 分配（5000 键、5% 置在途=3）：
 // 旧实现浅拷全表 []KeyMeta（~400KB/tick @5000 键）+ 全尺寸 seenU/targets；
-// 新实现零表拷贝、seenU 惰性小尺寸、targets 复用。
+// 新实现零表拷贝、seenU 惰性小尺寸、targets 复用。零在途恒走 empty-targets
+// 空形态，故播种在途后才度量真实 targets 路径。
 func BenchmarkConcCollectAllocs(b *testing.B) {
 	keys := make(map[string]domain.KeyMeta, 5000)
 	for i := 0; i < 5000; i++ {
@@ -463,7 +464,21 @@ func BenchmarkConcCollectAllocs(b *testing.B) {
 		b.Fatal(err)
 	}
 	w := NewConcSyncWorker(a, nil, "inst", nil)
+	snap := a.gate.store.Load()
+	for i := 0; i < 250; i++ {
+		if c, ok := snap.keys[int64(i+1)]; ok && c != nil {
+			c.Store(3)
+		}
+		if u, ok := snap.users[int64(i/5+1)]; ok && u != nil {
+			u.Store(3)
+		}
+	}
 	b.ReportAllocs()
+	// 形态钉：250 key + 50 user targets，空形态回归即炸。
+	if got := len(w.collect()); got != 300 {
+		b.Fatalf("targets shape regressed: got %d, want 300", got)
+	}
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = w.collect()
 	}
