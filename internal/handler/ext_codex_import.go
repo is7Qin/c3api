@@ -33,8 +33,8 @@ func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *h
 	for i, it := range in.Items {
 		accountID := it.CodexAccountId
 		if accountID == "" && it.CodexOauthToken != "" {
-			// account id 缺省补全（spec §7.0-6 放宽：允许缺省提供，不等于允许空
-			// 入库——JWT claims 离线解析；仍空 → service 行级必填校验照常 failed）。
+			// account id 缺省补全（JWT claims 离线解析；完整语义见 sdkbridge/codex_account_id.go；
+			// 仍空 → service 行级必填校验照常 failed）。
 			if id, ok := sdkbridge.DeriveCodexAccountID(it.CodexOauthToken); ok {
 				accountID = id
 			}
@@ -72,9 +72,9 @@ func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *htt
 	for i, it := range in.Items {
 		accountID := it.CodexAccountId
 		if accountID == "" && it.CodexPatKey != "" {
-			// account id 缺省补全（whoami 在线查询——管理面唯一出站派生点，热路径
-			// 零出站；失败/仍空 → service 行级必填校验照常 failed）。
-			if id, err := sdkbridge.FetchPATAccountID(r.Context(), it.CodexPatKey); err == nil {
+			// account id 缺省补全（whoami 在线查询；完整语义见 sdkbridge/codex_account_id.go；
+			// 失败/仍空 → service 行级必填校验照常 failed）。
+			if id, err := sdkbridge.FetchPATAccountID(r.Context(), it.CodexPatKey); err == nil && id != "" {
 				accountID = id
 			}
 		}

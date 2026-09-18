@@ -35,13 +35,15 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 		return AccountCredential{}
 	}
 	c := AccountCredential{AccountID: e.AccountID}
-	switch e.CredentialType {
-	case credential.TypeCodexOAuth:
-		// 账号标识 codex 两类型各自投影（非 codex 类型不带——调用方按类型分
-		// 流，非本类型的列不触达）。
+	// 账号标识 codex 两类型统一投影（非 codex 类型不带——调用方按类型分流，
+	// 非本类型的列不触达）。
+	if e.CredentialType == credential.TypeCodexOAuth || e.CredentialType == credential.TypeCodexPAT {
 		if e.CodexAccountID != nil {
 			c.CodexAccountID = *e.CodexAccountID
 		}
+	}
+	switch e.CredentialType {
+	case credential.TypeCodexOAuth:
 		if e.CodexOAuthToken != nil {
 			c.OAuthToken = *e.CodexOAuthToken
 		}
@@ -50,9 +52,6 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 		}
 		c.OAuthExpiresAt = e.CodexOAuthExpiresAt
 	case credential.TypeCodexPAT:
-		if e.CodexAccountID != nil {
-			c.CodexAccountID = *e.CodexAccountID
-		}
 		if e.CodexPATKey != nil {
 			c.PATKey = *e.CodexPATKey
 		}
