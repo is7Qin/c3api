@@ -6,7 +6,6 @@ package handler
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,18 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// —— codex 批量导入 account id 缺省补全（spec §7.0-6：handler 导入映射层先行
-// 派生——OAuth JWT claims 离线解析 / PAT whoami；仍空 → service 原文案行级
-// failed；派生点唯一在管理面落库链，热路径零解析零出站） ——
-
-// importAccountJWT 构造含 chatgpt_account_id claim 的 JWT（离线解析只解 payload，
-// 不验签）。
-func importAccountJWT(t *testing.T, accountID string) string {
-	t.Helper()
-	enc := base64.RawURLEncoding.EncodeToString
-	return enc([]byte(`{"alg":"none"}`)) + "." +
-		enc([]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"`+accountID+`"}}`)) + ".sig"
-}
+// —— codex 批量导入 account id 缺省补全（完整语义见 sdkbridge/codex_account_id.go；
+// 仍空 → service 原文案行级 failed） ——
 
 // TestImportCodexOAuthDerivesAccountID OAuth 行空 account id：JWT claim 可派生 →
 // 导入并落库派生值；不可派生 → 行级 failed（既有 "codex_account_id 必填" 原文案）。
@@ -38,7 +27,7 @@ func TestImportCodexOAuthDerivesAccountID(t *testing.T) {
 		h, store, tplID, _ := codexImportTestAPI(t)
 		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
 			"items": [{"codex_email":"d@example.com","codex_account_id":"",
-				"codex_oauth_token":"`+importAccountJWT(t, "acc-derived-1")+`","codex_oauth_refresh_token":"rt-1"}],
+				"codex_oauth_token":"`+extCodexAccountJWT(t, "acc-derived-1")+`","codex_oauth_refresh_token":"rt-1"}],
 			"template_id": `+itoa(tplID)+`}`)
 		require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
 		var out ImportResult
