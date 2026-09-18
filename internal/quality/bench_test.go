@@ -59,8 +59,11 @@ func BenchmarkFlowOwnerDuplicateMergeSteadyState(b *testing.B) {
 	}
 }
 
-// BenchmarkFlowRedisPayload：生产缓存路径——同一 (minute, version) 重发布只
-// 重拼 wrapper（rows JSON 命中缓存，零分配）。夹具 = 单分钟 2000 行。
+// BenchmarkFlowRedisPayload：生产缓存路径。夹具 = 单分钟 2000 行。
+// hot = 同一 (minute, version) 重发布只重拼 wrapper（rows JSON 命中缓存）；
+// cold = 每 op 先失效 rows JSON 缓存，重走 materialize + Marshal（线上同分钟
+// 首发形态；version 不动，无需重 fold）。单臂循环会恒命中其一，拆开后冷路径
+// 成本才被钉住。
 func BenchmarkFlowRedisPayload(b *testing.B) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, err := NewRecorder(50000)
@@ -78,12 +81,27 @@ func BenchmarkFlowRedisPayload(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		blob, _, _ := owner.redisPayload(m)
-		sinkFlowBlob = len(blob)
-	}
+	b.Run("hot", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			blob, _, _ := owner.redisPayload(m)
+			sinkFlowBlob = len(blob)
+		}
+	})
+	b.Run("cold", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			owner.mu.Lock()
+			if sh, ok := owner.shells[m]; ok {
+				sh.redisBlob = nil
+			}
+			owner.mu.Unlock()
+			blob, _, _ := owner.redisPayload(m)
+			sinkFlowBlob = len(blob)
+		}
+	})
 }
 
 var sinkFlowBlob int

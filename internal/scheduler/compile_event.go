@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"errors"
+	"maps"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -298,9 +299,9 @@ func (s *Scheduler) resolveCompileScope(f *compileFire) (compileFireMode, string
 	qRefs := diffCompilerQuality(f.input.Quality, s.lastQuality, idx)
 	bRefs := diffCompilerBaseline(f.input.Baseline, s.lastBaseline, idx)
 	pRefs := diffCompilerPrices(f.input.Prices, s.lastPrices, idx)
-	s.lastQuality = shallowCopyMap(f.input.Quality)
-	s.lastBaseline = shallowCopyMap(f.input.Baseline)
-	s.lastPrices = shallowCopyMap(f.input.Prices)
+	s.lastQuality = maps.Clone(f.input.Quality)
+	s.lastBaseline = maps.Clone(f.input.Baseline)
+	s.lastPrices = maps.Clone(f.input.Prices)
 
 	affected := make(map[RouteRef]struct{}, len(qRefs)+len(bRefs)+len(pRefs)+len(f.scopes))
 	for ref := range qRefs {
@@ -355,19 +356,6 @@ func (s *Scheduler) resolveCompileScope(f *compileFire) (compileFireMode, string
 		return fireFull, fallbackUnscoped
 	}
 	return fireScoped, ""
-}
-
-// shallowCopyMap snapshots a pulled input map so later producer-side mutation
-// cannot rewrite the lane baseline.
-func shallowCopyMap[K comparable, V any](in map[K]V) map[K]V {
-	if in == nil {
-		return nil
-	}
-	out := make(map[K]V, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
 }
 
 // scopedRouteCompiler is the per-route seam for affected-routes-only
