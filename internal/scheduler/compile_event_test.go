@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"context"
+	"maps"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -155,7 +156,7 @@ func TestCompileEvent_ScopeIdentityPointerReuseAndOracle(t *testing.T) {
 	// Group-10-only edit: append (a1 object kept, so its key/fingerprint and
 	// quality entry are bit-identical — the diff names only the newcomer).
 	a3 := accWithEnabled(3, tpl, true, 10000)
-	q2 := shallowCopyMap(q1)
+	q2 := maps.Clone(q1)
 	for k, v := range buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{3: qualityInput(30, 29, 100, 100)}, []*domain.Account{a1, a3}) {
 		if _, ok := q2[k]; !ok {
 			q2[k] = v
