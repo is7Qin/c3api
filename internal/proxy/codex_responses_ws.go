@@ -68,7 +68,7 @@ const codexAuthFailedMsg = "codex authorization failed"
 //     与双向帧透传 1:1 等价直接矛盾；关闭过滤与 client_metadata 伪装注入独立
 //     （prepareFrame client.go:513-579——关闭后注入仍生效）
 //   - 透传头：**无**（spec §12）—— 该面只发 SDK 自己写的头，客户端头一律不递；
-//     codexWSClientHeaders 恒返回空集，是这件事的唯一审查落点
+//     握手头仅来自 SDK（伪装身份、beta、session 四元组、Authorization）。
 //
 // 错误经适配层翻译（DialError → 信封 + Refreshed；裸 fatal → 统一回调上报）。
 func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsdk.Client, error) {
@@ -87,13 +87,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 		codexsdk.WithCodexMeta(meta),         // 伪装：帧内 x-codex-installation-id 等
 	}
 	// 裁决（spec §12）：codex 面不透传任何客户端头，握手头全由 SDK 生成（伪装身份、
-	// beta、session 四元组、Authorization）。保留本次喂入：若 codexWSClientHeaders
-	// 日后开了例外，这里自动生效，无需在调用点另加 WithHeader。
-	for k, vs := range codexWSClientHeaders(r.Header) {
-		for _, v := range vs {
-			opts = append(opts, codexsdk.WithHeader(k, v))
-		}
-	}
+	// beta、session 四元组、Authorization）；此处不喂任何客户端头。
 	// 拨号超时上限同款（黑洞上游不回 101）：超时 → SDK dialStatus(nil)=0 →
 	// DialError{StatusCode:0} → handleCodexDialError 既有 default 分支连接级
 	// 转移（零新分支；wrapped ctx 取消不向上传播，不落 499）。
@@ -216,22 +210,6 @@ func codexIdentityFromExt(ext *domain.AccountExt) (sess codexsdk.Session, meta c
 	}
 	return sess, meta
 }
-
-// codexWSClientHeaders codex WS 面的客户端头透传面 —— 按裁决（spec §12）**恒为空**。
-//
-// 该面的握手头**完全由 SDK 负责**：伪装身份（User-Agent/Originator）、OpenAI-Beta、
-// session 四元组、Authorization 全部由 codexsdk 依账号身份与网关配置生成；客户端头
-// 一个都不递。
-//
-// 旧实现（复用 wsPassthroughHeaders 再剔「伪装身份七元组」）方向就不对：那是
-// 「剔一份清单、剩下的透传」，清单漏一项就漏一个头，且被剔剩的仍是客户端可控值
-// （实测：X-Client-Version / X-Opencode-Session 会直达 codex 上游）。裁决改成
-// 「只发 SDK 自己写的头」后，这一面不再有「透传面」这个概念。
-//
-// 保留本函数与 dialCodexWS 的喂入循环，是为这件事留**唯一审查落点**：日后若确要开
-// 某个例外，必须改这里并同步 spec，而不是在调用点悄悄加 codexsdk.WithHeader。
-// 入参有意忽略：签名保留让「这里本可透传、但我们不透传」在调用点可见。
-func codexWSClientHeaders(http.Header) http.Header { return nil }
 
 // codexTransport 上游侧 *codexsdk.Client 的 wsRelayTransport 适配（codex 路
 // 径）：typ 语义与现状 relayCodexWS 同款——Send 忽略 typ 恒 text（SDK Send

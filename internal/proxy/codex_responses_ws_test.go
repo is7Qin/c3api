@@ -973,49 +973,14 @@ func TestCodexWSHeartbeatCadence(t *testing.T) {
 
 // --- 纯函数单测 ---
 
-// TestCodexWSClientHeadersForwardsNothing codex WS 面的透传契约（spec §12 裁决）：
-// 该面**只发 SDK 自己写的头**，客户端头一个都不递 —— 不是「剔一份清单、剩下的透传」。
-// 因此对一份尽量全的入站头（伪装身份族 / beta / 自定义 / 入站足迹 / 网关自身写入 /
-// hop-by-hop）断言产物**恒为空集**。旧断言「X-Client-Version 仍透传」属旧契约
-// （透传 + 剔 7 项），已按新裁决翻转。
-func TestCodexWSClientHeadersForwardsNothing(t *testing.T) {
-	h := http.Header{
-		"Connection": {"upgrade"}, "Sec-Websocket-Key": {"k"}, "Authorization": {"Bearer ck-1"},
-		"Session-Id": {"s"}, "Thread-Id": {"t"}, "X-Client-Request-Id": {"c"}, "X-Codex-Window-Id": {"w"},
-		"OpenAI-Beta":             {"responses_websockets=2025-01-01"},
-		"X-Client-Version":        {"codex-1.2.3"},
-		"X-Opencode-Session":      {"oc-1"},
-		"User-Agent":              {"curl/8.7.1"},
-		"Originator":              {"Zed"},
-		"X-Client-Originator":     {"Zed"},
-		"X-Stainless-Retry-Count": {"0"},
-		"Anthropic-Version":       {"2023-06-01"},
-	}
-	for _, k := range inboundFootprintWS {
-		h[k] = []string{"203.0.113.9"}
-	}
-	for _, k := range gatewayStrippedExtraWS {
-		h[k] = []string{"client-value"}
-	}
-
-	out := codexWSClientHeaders(h)
-	require.Empty(t, out, "codex 面不得递任何客户端头（spec §12：握手头全由 SDK 负责）")
-	// 逐键 map 槽位断言：即便日后实现退化成「过滤」而不是空集，也不许残留任何入站键。
-	for k := range h {
-		_, ok := out[k]
-		require.False(t, ok, "入站键 %s 不得出现在 codex 面产物里", k)
-	}
-}
-
 // TestCodexWSUpstreamSeesDisguisedUA R4（端到端）：客户端带 curl UA + 伪造
 // Originator ⇒ 上游握手看到的是 SDK 自己的伪装默认值。断言引库内常量
 // codexsdk.DefaultCodexUserAgent / DefaultOriginator，绝不把指纹字符串抄进用例
 // （它是随 SDK 版本漂移的值，硬编码必成腐化点）。
 //
-// 机理（本用例存在的理由）：dialCodexWS 把 codexWSClientHeaders 的产物逐个
-// 喂 codexsdk.WithHeader；SDK 侧 buildHeaders 先设伪装默认（client.go:305-306），
-// 再对 WithHeader 的值先 Del 后加（:327-331）⇒ 客户端 UA 会顶掉伪装默认。所以
-// 「网关侧把 UA 剔掉」正是让 SDK 默认伪装值得以保留的那一步，网关不需要另设 UA。
+// 机理（本用例存在的理由）：dialCodexWS 不喂任何客户端头；SDK 侧 buildHeaders
+// 设伪装默认（client.go:305-306），客户端 UA 无从顶掉。所以「网关侧不递 UA」
+// 正是让 SDK 默认伪装值得以保留的那一步，网关不需要另设 UA。
 func TestCodexWSUpstreamSeesDisguisedUA(t *testing.T) {
 	up, hooks := newCodexWSUpstream(t, []int{200}, 3)
 	defer up.Close()
