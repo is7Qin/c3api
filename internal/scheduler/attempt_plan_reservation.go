@@ -128,7 +128,7 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		if !applyMapping {
 			q = c.QualityRaw
 		}
-		if s.health != nil && s.health.EffectiveState(av.acc.ID, q, c.LifecycleRevision) != StateReady {
+		if s.health != nil && s.health.EffectiveState(av.acc.ID, q, c.IdentityRevision) != StateReady {
 			return false
 		}
 		st := a.statePtr()

@@ -83,7 +83,7 @@ func (p *Proxy) contBind(ctx context.Context, protocolTag, respID string, groupI
 	defer cancel()
 	st, err := p.cont.CreateOrRefresh(opCtx, rm.meta.UserID, groupID,
 		domain.RouteClassIDVal(pipelineID(string(d.base.RouteClassID))), protocolTag, respID,
-		d.base.AccountID, fp, int64(d.base.LifecycleRevision))
+		d.base.AccountID, fp, int64(d.base.IdentityRevision))
 	if err != nil {
 		return errContUnavailable
 	}
@@ -136,7 +136,7 @@ func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *scheduler.Selection, a
 	for {
 		if attempt.AccountID == b.AccountID {
 			if attempt.CandidateFingerprint == hex.EncodeToString(b.Fingerprint[:]) &&
-				attempt.LifecycleRevision == b.Revision {
+				attempt.IdentityRevision == b.IdentityRevision {
 				return sel, attempt, nil
 			}
 			sel.Release()

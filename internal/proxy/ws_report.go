@@ -49,21 +49,21 @@ func wsDispatchedBase(sel *scheduler.Selection, reqModel string, start time.Time
 		qc = QualityClassID("qc-" + sel.CandidateFingerprint[:1])
 	}
 	return AttemptOutcome{
-		ID:                AttemptID("attempt-ws-1"),
-		RouteClassID:      rc,
-		QualityClassID:    qc,
-		Fingerprint:       fp,
-		TemplateID:        sel.TemplateID,
-		AccountID:         sel.AccountID,
-		RequestedModel:    req,
-		MappedModel:       mapped,
-		CallerCategory:    cat,
-		OperationTag:      OperationTag(string(domain.OpResponsesWS)),
-		Ordinal:           1,
-		LifecycleRevision: 1,
-		Lane:              LanePrimary,
-		Generation:        1,
-		Timing:            AttemptTiming{LatencyMS: lat},
+		ID:               AttemptID("attempt-ws-1"),
+		RouteClassID:     rc,
+		QualityClassID:   qc,
+		Fingerprint:      fp,
+		TemplateID:       sel.TemplateID,
+		AccountID:        sel.AccountID,
+		RequestedModel:   req,
+		MappedModel:      mapped,
+		CallerCategory:   cat,
+		OperationTag:     OperationTag(string(domain.OpResponsesWS)),
+		Ordinal:          1,
+		IdentityRevision: 1, // synthetic placeholder K; not part of the continuation (I,K) comparison (see AttemptOutcome.IdentityRevision)
+		Lane:             LanePrimary,
+		Generation:       1,
+		Timing:           AttemptTiming{LatencyMS: lat},
 	}
 }
 

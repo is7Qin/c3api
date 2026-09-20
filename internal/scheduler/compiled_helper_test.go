@@ -26,7 +26,7 @@ func testCC(lane AttemptLane, ids ...int64) []CompiledCandidate {
 		out = append(out, CompiledCandidate{
 			AccountID: id, Lane: lane, TemplateID: 1, BaseURL: "https://u/v1",
 			Fingerprint: fmt.Sprintf("fp-%d", id), RequestedModel: "m", MappedModel: "m",
-			Quality: "q", QualityRaw: "q", LifecycleRevision: 1,
+			Quality: "q", QualityRaw: "q", IdentityRevision: 1,
 		})
 	}
 	return out

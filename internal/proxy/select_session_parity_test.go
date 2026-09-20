@@ -92,7 +92,7 @@ func TestSelectSessionParity_hardContinuationPin(t *testing.T) {
 	require.NoError(t, err)
 	probeSel2.Release()
 	require.Equal(t, int64(2), bound.AccountID)
-	b := &continuation.Binding{AccountID: 2, Fingerprint: parityFP(t, bound.CandidateFingerprint), Revision: bound.LifecycleRevision}
+	b := &continuation.Binding{AccountID: 2, Fingerprint: parityFP(t, bound.CandidateFingerprint), IdentityRevision: bound.IdentityRevision}
 
 	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-pin", UserID: 1})
@@ -113,7 +113,7 @@ func TestSelectSessionParity_hardContinuationPin(t *testing.T) {
 	sel2, plan2, attempt2, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-pin-stale", UserID: 1})
 	require.NoError(t, err)
-	stale := &continuation.Binding{AccountID: attempt2.AccountID, Fingerprint: parityFP(t, attempt2.CandidateFingerprint), Revision: attempt2.LifecycleRevision + 1}
+	stale := &continuation.Binding{AccountID: attempt2.AccountID, Fingerprint: parityFP(t, attempt2.CandidateFingerprint), IdentityRevision: attempt2.IdentityRevision + 1}
 	_, _, ferr = p.contPin(&plan2, sel2, attempt2, stale)
 	require.NotNil(t, ferr)
 }

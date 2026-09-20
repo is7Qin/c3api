@@ -288,7 +288,7 @@ func TestAttemptObserverMatrix_retryChainOrdinalsPreserved(t *testing.T) {
 	tpl2 := &domain.Template{ID: 2, Name: "t2", BaseURL: up.URL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2,
-		UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4})
+		UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4})
 	require.NoError(t, p.sched.InvalidateAllSync())
 	publishTestRoutes(t, p.sched)
 
@@ -407,7 +407,7 @@ func TestAttemptObserverMatrix_postCommitFailureNoFailover(t *testing.T) {
 	tpl2 := &domain.Template{ID: 2, Name: "t2", BaseURL: up.URL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2,
-		UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4})
+		UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4})
 	require.NoError(t, p.sched.InvalidateAllSync())
 	publishTestRoutes(t, p.sched)
 

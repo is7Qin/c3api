@@ -183,7 +183,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 		}
 		accs[10] = append(accs[10], &domain.Account{
 			ID: a.id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: a.key,
-			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: a.ext,
+			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: a.ext,
 		})
 	}
 	rec := usage.New(usage.UsageConfig{
@@ -586,7 +586,7 @@ func TestSearchIndependentSelection(t *testing.T) {
 				if a.ID == 10 {
 					fp, ferr := scheduler.CandidateFingerprint(a)
 					require.NoError(t, ferr)
-					require.True(t, p.sched.TryLatch(10, fp, a.LifecycleRevision))
+					require.True(t, p.sched.TryLatch(10, fp, a.IdentityRevision))
 				}
 			}
 		}

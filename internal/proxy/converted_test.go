@@ -148,7 +148,7 @@ func newConvertedTestProxyLogs(t *testing.T, upstream string, tplFormats []domai
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream",
-		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+		Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 	}}}
 	return newConvertedTestProxyAccsLogs(t, accs, pcs, logs, streamTimeout)
 }
@@ -586,8 +586,8 @@ func userScenarioAccs(srvURL string, fullEnabled bool) map[int64][]*domain.Accou
 	tplResp := &domain.Template{ID: 2, Name: "resp-t", BaseURL: srvURL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
 	return map[int64][]*domain.Account{10: {
-		{ID: 1, TemplateID: 1, Template: tplFull, UpstreamKey: "sk-upstream", Enabled: fullEnabled, LifecycleRevision: 1, MaxConcurrency: 4},
-		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4},
+		{ID: 1, TemplateID: 1, Template: tplFull, UpstreamKey: "sk-upstream", Enabled: fullEnabled, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4},
+		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4},
 	}}
 }
 
@@ -651,8 +651,8 @@ func TestConvertedChatBusyFallback(t *testing.T) {
 	tplResp := &domain.Template{ID: 2, Name: "resp-t", BaseURL: srv.URL, CredentialType: credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
 	accs := map[int64][]*domain.Account{10: {
-		{ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 1},
-		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4},
+		{ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 1},
+		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4},
 	}}
 	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
@@ -694,7 +694,7 @@ func TestConvertedTargetAlsoBusy429(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
 	accs := map[int64][]*domain.Account{10: {
 		{ID: 1, TemplateID: 1, Template: tplChat, UpstreamKey: "sk-upstream", Enabled: false, MaxConcurrency: 4},
-		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 1},
+		{ID: 2, TemplateID: 2, Template: tplResp, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 1},
 	}}
 	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp})
 
@@ -794,7 +794,7 @@ func convContUpstream(t *testing.T, msgID string, hits *atomic.Int32) *httptest.
 // convAcc anthropic 全模型账号（模板 BaseURL 即上游）。
 func convAcc(id int64, tpl *domain.Template) *domain.Account {
 	bu := tpl.BaseURL
-	return &domain.Account{ID: id, TemplateID: tpl.ID, Template: tpl, BaseURL: &bu, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+	return &domain.Account{ID: id, TemplateID: tpl.ID, Template: tpl, BaseURL: &bu, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}
 }
 
 func convTpl(id int64, url string) *domain.Template {
@@ -839,7 +839,7 @@ func TestConvertedRespToMessJSONBindsContinuation(t *testing.T) {
 	b, ok := convContLookup(t, s, "msg_cv_1")
 	require.True(t, ok, "converted response id must be bound before visibility")
 	require.Equal(t, int64(1), b.AccountID)
-	require.Equal(t, int64(1), b.Revision)
+	require.Equal(t, int64(1), b.IdentityRevision)
 }
 
 func TestConvertedRespToMessStreamACKBeforeVisible(t *testing.T) {

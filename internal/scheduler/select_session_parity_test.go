@@ -82,8 +82,8 @@ func TestSelectSessionParity_responsesExploreDegraded(t *testing.T) {
 	s := parityScheduler(t, []*domain.Account{acc(1, tplx, 8), acc(2, tplx, 8), acc(3, tplx, 8), acc(4, tplx, 8)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIResponses), "m")
 	publishAttemptDecision(s, route, &RouteDecision{
-		Primary: ccPrimary(1),
-		Explore: ExploreDecision{Ordered: ccExplore(2, 3), Weights: map[int64]int{2: 1, 3: 1}, Cumulative: []uint64{1, 2}, Total: 2, Fallback: fallbackIndexes(0, 1)},
+		Primary:  ccPrimary(1),
+		Explore:  ExploreDecision{Ordered: ccExplore(2, 3), Weights: map[int64]int{2: 1, 3: 1}, Cumulative: []uint64{1, 2}, Total: 2, Fallback: fallbackIndexes(0, 1)},
 		Degraded: ccDegraded(4),
 	})
 	var got []string

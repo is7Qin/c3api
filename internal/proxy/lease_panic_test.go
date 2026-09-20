@@ -92,7 +92,7 @@ var _ repository.RuleStore = (*leaseFakeRuleStore)(nil)
 
 func newLeaseScheduler(t *testing.T, tpl *domain.Template) *scheduler.Scheduler {
 	t.Helper()
-	loader := &leaseMemLoader{byGroup: map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}}}}
+	loader := &leaseMemLoader{byGroup: map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}}}}
 	store := &leaseFakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}
 	re := rule.New(rule.Config{}, store, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))

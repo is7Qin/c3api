@@ -40,9 +40,9 @@ type selectSession struct {
 	// exactly once per affinity phase. Stack scalars, zero heap.
 	exploreFirst  bool
 	primaryServed bool
-	walkSeg     uint8
-	walkPos     int
-	affinitySet bool
+	walkSeg       uint8
+	walkPos       int
+	affinitySet   bool
 	// v4-S1: hashed affinity key only — the affinityDom heap string is deleted.
 	// The domain string is borrowed per next() call from the route-owned ring.
 	affinityHash uint64
@@ -504,7 +504,7 @@ func (p *selectSession) buildAttempt(c CompiledCandidate, ordinal uint8, attempt
 		TemplateID: c.TemplateID, AccountID: c.AccountID,
 		RequestedModel: c.RequestedModel, MappedModel: mapped, Lane: c.Lane,
 		Ordinal: ordinal, RoutingGeneration: p.generation,
-		LifecycleRevision: c.LifecycleRevision,
+		IdentityRevision:  c.IdentityRevision,
 		PreviousAttemptID: prev, PreviousAccountID: prevAccount,
 		CallerCategory: p.route.CallerCategory, OperationTag: p.route.OperationTag,
 	}

@@ -392,5 +392,5 @@ func writeCompiledCandidate(buf *bytes.Buffer, c CompiledCandidate) {
 	writeStr(buf, string(c.MappingMode))
 	writeStr(buf, c.Quality)
 	writeStr(buf, c.QualityRaw)
-	writeVarint(buf, c.LifecycleRevision)
+	writeVarint(buf, c.IdentityRevision)
 }

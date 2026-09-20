@@ -18,7 +18,7 @@ var proxyOfficialURLs = map[string]bool{
 	"https://chatgpt.com/backend-api/codex/alpha/search":       true,
 	"https://chatgpt.com/backend-api/codex/images/generations": true,
 	"https://chatgpt.com/backend-api/codex/images/edits":       true,
-	"https://chatgpt.com/backend-api/wham/usage":                true,
+	"https://chatgpt.com/backend-api/wham/usage":               true,
 }
 
 func newProxyOfficialRewriteTransport(target string) http.RoundTripper {

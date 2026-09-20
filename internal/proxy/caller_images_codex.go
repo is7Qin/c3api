@@ -119,7 +119,7 @@ func codexImagesOutcome(reqID string, sel *scheduler.Selection, reqModel string,
 	return AttemptOutcome{
 		ID: AttemptID(reqID), RouteClassID: RouteClassID("rc-" + reqID), QualityClassID: QualityClassID("qc-" + reqID), Fingerprint: CandidateFingerprint(fp),
 		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
-		CallerCategory: CallerImagesCodex, OperationTag: op, Ordinal: 1, LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
+		CallerCategory: CallerImagesCodex, OperationTag: op, Ordinal: 1, IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
 		Commit: commit, Result: result, HTTPStatus: status, Timing: timing, Usage: usage,
 		BusinessFrameSent: businessSent, Terminal: terminal, IsMalformed: malformed,
 	}

@@ -60,7 +60,7 @@ func mergeDispatchBase(ctx context.Context, own AttemptOutcome) AttemptOutcome {
 	merged.RequestedModel = d.base.RequestedModel
 	merged.MappedModel = d.base.MappedModel
 	merged.Ordinal = d.base.Ordinal
-	merged.LifecycleRevision = d.base.LifecycleRevision
+	merged.IdentityRevision = d.base.IdentityRevision
 	merged.Lane = d.base.Lane
 	merged.Generation = d.base.Generation
 	merged.PreviousAttemptID = d.base.PreviousAttemptID

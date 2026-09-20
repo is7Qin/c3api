@@ -166,7 +166,7 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	for id, ext := range accounts {
 		accs[10] = append(accs[10], &domain.Account{
 			ID: id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: ext,
+			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: ext,
 		})
 	}
 	rec := usage.New(usage.UsageConfig{

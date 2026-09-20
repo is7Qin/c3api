@@ -44,7 +44,7 @@ type ExploreIDs struct {
 type RoutingPlanCandidate struct {
 	AccountID                int64
 	TemplateID               int64
-	LifecycleRevision        int64
+	IdentityRevision         int64
 	UpstreamCostMultiplierBp int
 	Fingerprint              string
 	IdentityFingerprint      string
@@ -146,7 +146,7 @@ func routePlanCandidates(rd *RouteDecision, facts map[int64]compilerAccountFacts
 		}
 		if fact, ok := facts[id]; ok && fact.account == c.Leaf && fact.static == c.Static {
 			rpc.TemplateID = c.TemplateID
-			rpc.LifecycleRevision = c.LifecycleRevision
+			rpc.IdentityRevision = c.IdentityRevision
 			rpc.Fingerprint = c.Fingerprint
 			rpc.MappedModel = c.MappedModel
 			rpc.QualityClassID = c.Quality

@@ -413,7 +413,7 @@ func newCodexWSProxyWithMapping(t *testing.T, upstream string, mode domain.Model
 	ext := codexWSExt(10, "at-10", "rt-10")
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 10, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: ext,
+		Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: ext,
 	}}}
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,

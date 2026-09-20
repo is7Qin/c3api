@@ -453,7 +453,7 @@ func TestFoldStash_usesRealAttemptMetadataOnly(t *testing.T) {
 		AttemptID: "req-x:2", RouteClassID: strings.Repeat("a", 64), QualityClassID: strings.Repeat("b", 64),
 		CandidateFingerprint: strings.Repeat("c", 64), TemplateID: 3, AccountID: 9,
 		RequestedModel: "gpt-4o", MappedModel: "gpt-4o-0806", Lane: scheduler.AttemptLaneExplore,
-		Ordinal: 2, RoutingGeneration: 5, LifecycleRevision: 4,
+		Ordinal: 2, RoutingGeneration: 5, IdentityRevision: 4,
 		PreviousAttemptID: &prev, PreviousAccountID: &prevAcct,
 		CallerCategory: "chat", OperationTag: "chat_completions",
 	}
