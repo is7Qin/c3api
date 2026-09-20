@@ -105,8 +105,8 @@ func routingFixturePlan(t *testing.T) (*scheduler.RoutingPlan, string) {
 	plan := &scheduler.RoutingPlan{Generation: 7, Routes: []scheduler.RoutingPlanRoute{{
 		Ref: scheduler.RouteRef{GroupID: 10, Format: string(domain.FormatOpenAIChat), Model: "m", OperationTag: string(domain.OpChatCompletions), RouteClassID: idHex},
 		Candidates: []scheduler.RoutingPlanCandidate{
-			{AccountID: 1, TemplateID: 11, LifecycleRevision: 3, IdentityFingerprint: routingFPHex(t, 0xaa), MappedModel: "m"},
-			{AccountID: 2, TemplateID: 12, LifecycleRevision: 4, IdentityFingerprint: routingFPHex(t, 0xbb), MappedModel: "mapped-b"},
+			{AccountID: 1, TemplateID: 11, IdentityRevision: 3, IdentityFingerprint: routingFPHex(t, 0xaa), MappedModel: "m"},
+			{AccountID: 2, TemplateID: 12, IdentityRevision: 4, IdentityFingerprint: routingFPHex(t, 0xbb), MappedModel: "mapped-b"},
 		},
 	}}}
 	return plan, idHex
@@ -219,7 +219,7 @@ func Test_RoutingFrontier_Mapping(t *testing.T) {
 	require.True(t, known.Known)
 	require.Equal(t, int64(1), known.AccountId)
 	require.Equal(t, int64(11), known.TemplateId)
-	require.Equal(t, int64(3), known.LifecycleRevision)
+	require.Equal(t, int64(3), known.IdentityRevision)
 	require.Equal(t, "m", known.MappedModel)
 	require.Equal(t, int64(40), known.Attempts)
 	require.False(t, known.CostKnown, "无价格表 → cost_known=false")
@@ -234,7 +234,7 @@ func Test_RoutingFrontier_Mapping(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
 	require.Len(t, raw.Candidates[0], 18)
-	for _, key := range []string{"candidate_fingerprint", "known", "account_id", "template_id", "lifecycle_revision",
+	for _, key := range []string{"candidate_fingerprint", "known", "account_id", "template_id", "identity_revision",
 		"quality_class_id", "mapped_model", "attempts", "successes", "success_lcb", "success_ucb",
 		"ttft_lcb", "ttft_ucb", "ttft_known", "cost_per_success", "cost_known", "insufficient", "on_frontier"} {
 		require.Contains(t, raw.Candidates[0], key)
@@ -282,7 +282,7 @@ func Test_RoutingPlan_GenerationAndOrder(t *testing.T) {
 			Explore:  scheduler.ExploreIDs{IDs: []int64{2, 1}, Weights: map[int64]int{2: 3, 1: 7}, Cumulative: []uint64{3, 10}, Total: 10, Fallback: []int64{1}},
 			Degraded: []int64{9},
 			Candidates: []scheduler.RoutingPlanCandidate{
-				{AccountID: 1, TemplateID: 11, LifecycleRevision: 2, UpstreamCostMultiplierBp: 15000, IdentityFingerprint: routingFPHex(t, 0xbb), MappedModel: "m", QualityClassID: "qc"},
+				{AccountID: 1, TemplateID: 11, IdentityRevision: 2, UpstreamCostMultiplierBp: 15000, IdentityFingerprint: routingFPHex(t, 0xbb), MappedModel: "m", QualityClassID: "qc"},
 			},
 		},
 		{

@@ -30,23 +30,26 @@ const (
 type Binding struct {
 	AccountID   int64
 	Fingerprint domain.CandidateFingerprintVal
-	Revision    int64
-	RedisAcked  bool
+	// IdentityRevision 是**身份代际 K**（identity_revision），不是客户端 CAS
+	// 令牌 C（lifecycle_revision）。绑定按 (I=指纹, K) 围栏在途续跑；
+	// C 只围栏管理员写入，与绑定身份无关。
+	IdentityRevision int64
+	RedisAcked       bool
 }
 
 type redisWire struct {
-	AccountID   string `json:"account_id"`
-	Fingerprint string `json:"fingerprint"`
-	Revision    string `json:"revision"`
-	RedisAcked  bool   `json:"redis_acked"`
+	AccountID        string `json:"account_id"`
+	Fingerprint      string `json:"fingerprint"`
+	IdentityRevision string `json:"identity_revision"`
+	RedisAcked       bool   `json:"redis_acked"`
 }
 
 func encodeWire(b Binding) []byte {
 	w := redisWire{
-		AccountID:   strconv.FormatInt(b.AccountID, 10),
-		Fingerprint: hex.EncodeToString(b.Fingerprint[:]),
-		Revision:    strconv.FormatInt(b.Revision, 10),
-		RedisAcked:  true,
+		AccountID:        strconv.FormatInt(b.AccountID, 10),
+		Fingerprint:      hex.EncodeToString(b.Fingerprint[:]),
+		IdentityRevision: strconv.FormatInt(b.IdentityRevision, 10),
+		RedisAcked:       true,
 	}
 	data, _ := json.Marshal(w)
 	return data
@@ -66,7 +69,7 @@ func parseBinding(data []byte) (Binding, bool) {
 	if _, ok := raw["fingerprint"]; !ok {
 		return Binding{}, false
 	}
-	if _, ok := raw["revision"]; !ok {
+	if _, ok := raw["identity_revision"]; !ok {
 		return Binding{}, false
 	}
 	if _, ok := raw["redis_acked"]; !ok {
@@ -90,8 +93,8 @@ func parseBinding(data []byte) (Binding, bool) {
 	if err != nil || acc <= 0 || strconv.FormatInt(acc, 10) != w.AccountID {
 		return Binding{}, false
 	}
-	rev, err := strconv.ParseInt(w.Revision, 10, 64)
-	if err != nil || rev <= 0 || strconv.FormatInt(rev, 10) != w.Revision {
+	rev, err := strconv.ParseInt(w.IdentityRevision, 10, 64)
+	if err != nil || rev <= 0 || strconv.FormatInt(rev, 10) != w.IdentityRevision {
 		return Binding{}, false
 	}
 	if len(w.Fingerprint) != 64 {
@@ -106,7 +109,7 @@ func parseBinding(data []byte) (Binding, bool) {
 	if fp == (domain.CandidateFingerprintVal{}) {
 		return Binding{}, false
 	}
-	b := Binding{AccountID: acc, Fingerprint: fp, Revision: rev, RedisAcked: true}
+	b := Binding{AccountID: acc, Fingerprint: fp, IdentityRevision: rev, RedisAcked: true}
 	if !bytes.Equal(encodeWire(b), data) {
 		return Binding{}, false
 	}
@@ -203,12 +206,12 @@ local ttl = redis.call('PTTL', KEYS[1])
 return {v, ttl}
 `)
 
-func (s *Store) CreateOrRefresh(ctx context.Context, userID, groupID int64, routeClassID domain.RouteClassIDVal, protocolTag, continuationID string, accountID int64, fingerprint domain.CandidateFingerprintVal, revision int64) (string, error) {
+func (s *Store) CreateOrRefresh(ctx context.Context, userID, groupID int64, routeClassID domain.RouteClassIDVal, protocolTag, continuationID string, accountID int64, fingerprint domain.CandidateFingerprintVal, identityRevision int64) (string, error) {
 	if accountID <= 0 {
 		return "", fmt.Errorf("continuation: invalid account_id %d", accountID)
 	}
-	if revision <= 0 {
-		return "", fmt.Errorf("continuation: invalid revision %d", revision)
+	if identityRevision <= 0 {
+		return "", fmt.Errorf("continuation: invalid identity revision %d", identityRevision)
 	}
 	if fingerprint == (domain.CandidateFingerprintVal{}) {
 		return "", fmt.Errorf("continuation: zero fingerprint")
@@ -217,7 +220,7 @@ func (s *Store) CreateOrRefresh(ctx context.Context, userID, groupID int64, rout
 	if err != nil {
 		return "", err
 	}
-	b := Binding{AccountID: accountID, Fingerprint: fingerprint, Revision: revision, RedisAcked: true}
+	b := Binding{AccountID: accountID, Fingerprint: fingerprint, IdentityRevision: identityRevision, RedisAcked: true}
 	payload := encodeWire(b)
 	res, err := luaCAS.Run(ctx, s.client, []string{rkey}, string(payload), strconv.Itoa(ttlSeconds)).Text()
 	if err != nil {

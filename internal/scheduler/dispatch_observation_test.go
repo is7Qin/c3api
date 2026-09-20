@@ -36,7 +36,7 @@ func TestDispatchObservation_requiresCompleteMetadata(t *testing.T) {
 	require.True(t, a2.Lane.Valid())
 	require.Equal(t, uint8(1), a2.Ordinal)
 	require.NotZero(t, a2.RoutingGeneration)
-	require.NotZero(t, a2.LifecycleRevision)
+	require.NotZero(t, a2.IdentityRevision)
 	require.Nil(t, a2.PreviousAttemptID)
 	require.True(t, a2.CallerCategory != "")
 	require.True(t, a2.OperationTag != "")
@@ -77,7 +77,7 @@ func TestDispatchObservation_requiresCompleteMetadata(t *testing.T) {
 	bad.RoutingGeneration = 0
 	require.Error(t, bad.Validate())
 	bad = a2
-	bad.LifecycleRevision = 0
+	bad.IdentityRevision = 0
 	require.Error(t, bad.Validate())
 	bad = a2
 	bad.CallerCategory = ""

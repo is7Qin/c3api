@@ -137,7 +137,7 @@ func TestRoutingPlan_CandidateMetadataMappingFingerprintQualityClass(t *testing.
 	cand := plan.Routes[0].Candidates[0]
 	require.Equal(t, int64(1), cand.AccountID)
 	require.Equal(t, int64(7), cand.TemplateID)
-	require.Equal(t, int64(1), cand.LifecycleRevision)
+	require.Equal(t, int64(1), cand.IdentityRevision)
 	require.Equal(t, 12345, cand.UpstreamCostMultiplierBp)
 	require.Equal(t, "resolved", cand.MappedModel)
 

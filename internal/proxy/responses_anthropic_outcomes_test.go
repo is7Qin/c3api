@@ -109,7 +109,7 @@ func newTestProxyResponses(t *testing.T, upstream string, accountID int64, logs 
 	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: upstream,
-		CredentialType: credential.TypeAPIKey,
+		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"},
 	}
 	return newTestProxyTplTimeoutLogs(t, tpl, accountID, true, 30*time.Second, logs, nil)
@@ -119,7 +119,7 @@ func newTestProxyAnthropicCapture(t *testing.T, upstream string, accountID int64
 	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: upstream,
-		CredentialType: credential.TypeAPIKey,
+		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic}, Models: []string{"gpt-4o"},
 	}
 	return newTestProxyTplTimeoutLogs(t, tpl, accountID, true, 30*time.Second, logs, nil)

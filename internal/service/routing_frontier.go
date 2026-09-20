@@ -43,20 +43,23 @@ type RoutingFrontierCandidate struct {
 	Known                bool
 	AccountID            int64
 	TemplateID           int64
-	LifecycleRevision    int64
-	QualityClassID       string
-	MappedModel          string
-	Attempts             int64
-	Successes            int64
-	SuccessLCB           float64
-	SuccessUCB           float64
-	TTFTLCB              float64
-	TTFTUCB              float64
-	TTFTKnown            bool
-	CostPerSuccess       int64
-	CostKnown            bool
-	Insufficient         bool
-	OnFrontier           bool
+	// IdentityRevision 候选内容代际 K（编译器事实与 wire 同源）。注意：这不是
+	// 客户端 CAS 令牌 C（lifecycle_revision）——C 只围栏管理员写入，与候选
+	// 内容身份无关，不得在此暴露为「代际」。
+	IdentityRevision int64
+	QualityClassID   string
+	MappedModel      string
+	Attempts         int64
+	Successes        int64
+	SuccessLCB       float64
+	SuccessUCB       float64
+	TTFTLCB          float64
+	TTFTUCB          float64
+	TTFTKnown        bool
+	CostPerSuccess   int64
+	CostKnown        bool
+	Insufficient     bool
+	OnFrontier       bool
 }
 
 // RoutingFrontierResult frontier 查询结果（候选已排序 + 钳制）。
@@ -114,7 +117,7 @@ func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQue
 			c.Known = true
 			c.AccountID = planCand.AccountID
 			c.TemplateID = planCand.TemplateID
-			c.LifecycleRevision = planCand.LifecycleRevision
+			c.IdentityRevision = planCand.IdentityRevision
 			c.QualityClassID = planCand.QualityClassID
 			c.MappedModel = planCand.MappedModel
 			c.CostPerSuccess, c.CostKnown = s.frontierCost(route.Ref.Model, row, planCand.UpstreamCostMultiplierBp, now)

@@ -104,7 +104,7 @@ func toAPIRoutingFrontier(res *service.RoutingFrontierResult) RoutingFrontierRes
 			Known:                c.Known,
 			AccountId:            c.AccountID,
 			TemplateId:           c.TemplateID,
-			LifecycleRevision:    c.LifecycleRevision,
+			IdentityRevision:     c.IdentityRevision,
 			QualityClassId:       c.QualityClassID,
 			MappedModel:          c.MappedModel,
 			Attempts:             c.Attempts,
@@ -158,7 +158,7 @@ func toAPIRoutingPlan(plan *scheduler.RoutingPlan) RoutingPlanResponse {
 			r.Candidates = append(r.Candidates, RoutingPlanCandidate{
 				AccountId:                c.AccountID,
 				TemplateId:               c.TemplateID,
-				LifecycleRevision:        c.LifecycleRevision,
+				IdentityRevision:         c.IdentityRevision,
 				UpstreamCostMultiplierBp: c.UpstreamCostMultiplierBp,
 				Fingerprint:              c.Fingerprint,
 				IdentityFingerprint:      c.IdentityFingerprint,

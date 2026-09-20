@@ -72,6 +72,6 @@ func TestDispatchObservation_proxyDispatchImmutability(t *testing.T) {
 	bad.Generation = 0
 	require.Error(t, bad.Validate())
 	bad = o
-	bad.LifecycleRevision = 0
+	bad.IdentityRevision = 0
 	require.Error(t, bad.Validate())
 }

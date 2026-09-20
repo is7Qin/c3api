@@ -175,7 +175,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	for id, ext := range accounts {
 		accs[10] = append(accs[10], &domain.Account{
 			ID: id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: ext,
+			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: ext,
 		})
 	}
 	rec := usage.New(usage.UsageConfig{
@@ -307,7 +307,7 @@ func TestImagesCodexCredPassing(t *testing.T) {
 			if a.ID == id {
 				fp, err := scheduler.CandidateFingerprint(a)
 				require.NoError(t, err)
-				require.True(t, p.sched.TryLatch(id, fp, a.LifecycleRevision))
+				require.True(t, p.sched.TryLatch(id, fp, a.IdentityRevision))
 			}
 		}
 	}
@@ -524,7 +524,7 @@ func TestImagesCodexAdapterMissing501(t *testing.T) {
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 10, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
-		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: codexOAuthExt(10, "at-10", "rt-10"),
+		Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: codexOAuthExt(10, "at-10", "rt-10"),
 	}}}
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, store, nil)
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
@@ -703,11 +703,11 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	accs := map[int64][]*domain.Account{10: {
 		{
 			ID: 10, TemplateID: tplCodex.ID, Template: tplCodex, UpstreamKey: "",
-			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: codexOAuthExt(10, "at-10", "rt-10"),
+			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: codexOAuthExt(10, "at-10", "rt-10"),
 		},
 		{
 			ID: 11, TemplateID: tplAPI.ID, Template: tplAPI, UpstreamKey: "sk-upstream",
-			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 		},
 	}}
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, &captureLogStore{}, nil)

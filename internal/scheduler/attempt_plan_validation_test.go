@@ -40,8 +40,8 @@ func TestNewAttemptPlan_rejectsDuplicateAndOutOfRangeFallbackIndexes(t *testing.
 		t.Run(tt.name, func(t *testing.T) {
 			// Given
 			decision := &RouteDecision{Explore: ExploreDecision{
-				Ordered:  ccExplore(10, 11),
-				Weights:  map[int64]int{10: 1, 11: 1}, Cumulative: []uint64{1, 2}, Total: 2,
+				Ordered: ccExplore(10, 11),
+				Weights: map[int64]int{10: 1, 11: 1}, Cumulative: []uint64{1, 2}, Total: 2,
 				Fallback: tt.fallback,
 			}}
 

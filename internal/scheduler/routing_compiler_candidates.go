@@ -61,11 +61,14 @@ func routeSupportsAccount(tpl *domain.Template, rk routeKey) bool {
 }
 
 type compilerAccountFacts struct {
-	accountID                int64
-	templateID               int64
-	baseURL                  string
-	fingerprint              string
-	identityFingerprint      domain.CandidateFingerprintVal
+	accountID           int64
+	templateID          int64
+	baseURL             string
+	fingerprint         string
+	identityFingerprint domain.CandidateFingerprintVal
+	// revision is the candidate content generation = the account's
+	// identity_revision (K), NOT the client lifecycle token (C): C is
+	// unrelated to compiled content identity (spec §5.7(c)).
 	revision                 int64
 	account                  *accountSnapshot
 	static                   *snapshotStatic
@@ -90,7 +93,7 @@ func deriveCompilerAccountFacts(account *accountSnapshot, st *snapshotStatic) co
 		return f
 	}
 	f.accountID = st.acc.ID
-	f.revision = st.acc.LifecycleRevision
+	f.revision = st.acc.IdentityRevision
 	f.templateID = st.acc.TemplateID
 	if st.tpl != nil {
 		f.baseURL = st.tpl.BaseURL
@@ -165,7 +168,9 @@ func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]comp
 func filterCandidates(candidates []compilerCandidateFacts) []compilerCandidateFacts {
 	out := make([]compilerCandidateFacts, 0, len(candidates))
 	for _, fact := range candidates {
-		if fact.static == nil || !fact.static.acc.Enabled || fact.static.acc.LifecycleRevision < 0 {
+		// The `< 0` arm is dead defence: identity_revision is a non-negative
+		// generation (>=1 in practice), unlike the lifecycle token it replaced.
+		if fact.static == nil || !fact.static.acc.Enabled || fact.static.acc.IdentityRevision < 0 {
 			continue
 		}
 		if fact.static.tpl == nil || (fact.static.tpl.CredentialType != "" && !fact.static.tpl.CredentialType.Valid()) {

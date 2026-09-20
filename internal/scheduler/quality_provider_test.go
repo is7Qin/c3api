@@ -82,14 +82,14 @@ func TestWindowedQualityProvider(t *testing.T) {
 	settled := &fakeSettledSource{
 		cur: []WindowSettledCurrent{{
 			Key:             k,
-			Attempts:         30,
-			Successes:        21,
-			TTFTN:            20,
-			SumLogQ32:        q32(logged) * 20,
-			SumSqQ32:         q32(logged*logged) * 20,
-			InputTokens:      300,
-			OutputTokens:     150,
-			CacheReadTokens:  10,
+			Attempts:        30,
+			Successes:       21,
+			TTFTN:           20,
+			SumLogQ32:       q32(logged) * 20,
+			SumSqQ32:        q32(logged*logged) * 20,
+			InputTokens:     300,
+			OutputTokens:    150,
+			CacheReadTokens: 10,
 		}},
 		base: map[CandidateQualityKey]WindowSettledBaseline{
 			k: {Key: k, Attempts: 60, Successes: 55},

@@ -56,7 +56,7 @@ type Attempt struct {
 	Lane                 AttemptLane
 	Ordinal              uint8
 	RoutingGeneration    uint64
-	LifecycleRevision    int64
+	IdentityRevision     int64
 	PreviousAttemptID    *string
 	PreviousAccountID    *int64
 	CallerCategory       string
@@ -97,8 +97,8 @@ func (a Attempt) Validate() error {
 	if a.RoutingGeneration == 0 {
 		return fmt.Errorf("RoutingGeneration must be >0")
 	}
-	if a.LifecycleRevision <= 0 {
-		return fmt.Errorf("LifecycleRevision must be >0")
+	if a.IdentityRevision <= 0 {
+		return fmt.Errorf("IdentityRevision must be >0")
 	}
 	if a.CallerCategory == "" {
 		return fmt.Errorf("CallerCategory required")

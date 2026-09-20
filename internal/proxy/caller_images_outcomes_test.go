@@ -71,7 +71,7 @@ func TestImagesOutcomes_exactlyOneObservation(t *testing.T) {
 	base := AttemptOutcome{
 		ID: AttemptID("a1"), RouteClassID: RouteClassID("rc1"), QualityClassID: QualityClassID("qc1"), Fingerprint: CandidateFingerprint("fp1"),
 		TemplateID: 1, AccountID: 1, RequestedModel: "m", MappedModel: "m", CallerCategory: CallerImages, OperationTag: OperationTag(domain.OpImagesGenerations),
-		Ordinal: 1, LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
+		Ordinal: 1, IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
 		Commit: CommitResponseStarted, Result: ResultSuccess, HTTPStatus: 200, Timing: AttemptTiming{LatencyMS: 1}, Usage: AttemptUsage{CallCount: 1},
 		BusinessFrameSent: true, Terminal: true,
 	}
@@ -120,7 +120,7 @@ func TestImagesOutcomes_clientCancelSkipsHealth(t *testing.T) {
 	o := AttemptOutcome{
 		ID: AttemptID("c1"), RouteClassID: RouteClassID("rc1"), QualityClassID: QualityClassID("qc1"), Fingerprint: CandidateFingerprint("fp1"),
 		TemplateID: 1, AccountID: 1, RequestedModel: "m", MappedModel: "m", CallerCategory: CallerImages, OperationTag: OperationTag(domain.OpImagesGenerations),
-		Ordinal: 1, LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
+		Ordinal: 1, IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
 		Commit: CommitNotSent, Result: ResultClientCancel, HTTPStatus: 0, Timing: AttemptTiming{}, Usage: AttemptUsage{}, Terminal: true,
 	}
 	require.NoError(t, o.Validate())

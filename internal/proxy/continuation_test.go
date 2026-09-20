@@ -112,7 +112,7 @@ func contRouteID(t *testing.T, format domain.RequestFormat, model string, op dom
 // contAcc builds a responses-capable account fixture (fingerprint-stable).
 func contAcc(id int64, tpl *domain.Template, key, baseURL string) *domain.Account {
 	bu := baseURL
-	return &domain.Account{ID: id, TemplateID: tpl.ID, Template: tpl, BaseURL: &bu, UpstreamKey: key, Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+	return &domain.Account{ID: id, TemplateID: tpl.ID, Template: tpl, BaseURL: &bu, UpstreamKey: key, Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}
 }
 
 // contProxy builds a Responses (or resp-ws) proxy over the given accounts with
@@ -258,7 +258,7 @@ func TestContinuationRESTCreateACKCanonicalIdentity(t *testing.T) {
 	b, ok := contLookupBinding(t, s, contProtocolREST, "resp_create_1")
 	require.True(t, ok, "created response id must be bound before visibility")
 	require.Equal(t, int64(1), b.AccountID)
-	require.Equal(t, int64(1), b.Revision)
+	require.Equal(t, int64(1), b.IdentityRevision)
 	wantFP, err := domain.AccountCandidateFingerprint(contAcc(1, tpl, "sk-acc1", up.URL))
 	require.NoError(t, err)
 	require.Equal(t, wantFP, b.Fingerprint, "binding fingerprint must be the canonical candidate fingerprint")
@@ -474,14 +474,24 @@ func TestContinuationRevisionStaleFailClosed(t *testing.T) {
 	p.HandleResponses(w, contResponsesReq(`{"model":"gpt-4o","input":"hi"}`))
 	require.Equal(t, 200, w.Code)
 
-	// Account identity mutates (revision bump): the binding is now stale.
+	// C 是客户端 CAS 令牌，**不是**身份代际：只推进 C 不得使绑定失效
+	// （四代模型：绑定按 (I=指纹, K) 围栏，C 只围栏管理员写入）。
 	acc.LifecycleRevision = 2
+	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+	wC := httptest.NewRecorder()
+	p.HandleResponses(wC, contResponsesReq(`{"model":"gpt-4o","input":"hi","previous_response_id":"resp_rev"}`))
+	require.Equal(t, 200, wC.Code, "C bump must not fence the continuation binding")
+	require.EqualValues(t, 2, hits.Load(), "C bump must still dispatch on the bound account")
+
+	// K（身份代际）推进才使绑定失效：陈旧绑定 fail closed 且不再派发。
+	acc.IdentityRevision = 2
 	require.NoError(t, p.sched.InvalidateAllSync())
 	publishTestRoutes(t, p.sched)
 	w2 := httptest.NewRecorder()
 	p.HandleResponses(w2, contResponsesReq(`{"model":"gpt-4o","input":"hi","previous_response_id":"resp_rev"}`))
 	require.Equal(t, http.StatusConflict, w2.Code)
-	require.EqualValues(t, 1, hits.Load(), "stale revision must fail closed without dispatch")
+	require.EqualValues(t, 2, hits.Load(), "stale identity revision must fail closed without dispatch")
 }
 
 func TestContinuationCreateConflictFailClosed(t *testing.T) {
@@ -675,7 +685,7 @@ func TestContinuationWSCreateACK(t *testing.T) {
 	b, ok := contLookupBinding(t, s, contProtocolWS, "rsp_ws_1")
 	require.True(t, ok, "WS response id must be bound before frames reach the client")
 	require.Equal(t, int64(1), b.AccountID)
-	require.Equal(t, int64(1), b.Revision)
+	require.Equal(t, int64(1), b.IdentityRevision)
 }
 
 func TestContinuationWSPinAndMissingFailClosed(t *testing.T) {

@@ -36,7 +36,7 @@ func foldCompletionAttempt(ordinal uint8, prevAcct *int64) scheduler.Attempt {
 		Lane:                 scheduler.AttemptLanePrimary,
 		Ordinal:              ordinal,
 		RoutingGeneration:    5,
-		LifecycleRevision:    4,
+		IdentityRevision:     4,
 		PreviousAttemptID:    prevID,
 		PreviousAccountID:    prevAcct,
 		CallerCategory:       "chat",

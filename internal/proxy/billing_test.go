@@ -174,7 +174,7 @@ func TestProxyBilledQuotaUsesFinalCost(t *testing.T) {
 			ID: 1, Name: "t", BaseURL: up.URL,
 			CredentialType:   credential.TypeAPIKey,
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 	}}}, bal, store)
 
 	// When
@@ -303,7 +303,7 @@ func TestProxyFinishQuotaWritesBackWithoutUsageCapture(t *testing.T) {
 			ID: 1, Name: "t", BaseURL: up.URL,
 			CredentialType:   credential.TypeAPIKey,
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 	}}}, bal, store, q)
 	p.cfg.UsageCapture = false
 
@@ -344,7 +344,7 @@ func TestProxyFinishBillingDisabledSkipsQuotaDeduction(t *testing.T) {
 			ID: 1, Name: "t", BaseURL: up.URL,
 			CredentialType:   credential.TypeAPIKey,
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 	}}}, bal, &captureLogStore{})
 	q := p.auth.gate.store.Load().quotas[1]
 	p.cfg.BillingCapture = false
@@ -437,7 +437,7 @@ func TestProxyQuotaNoDeltaOn4xxAndExhausted(t *testing.T) {
 					ID: 1, Name: "t", BaseURL: up.URL,
 					CredentialType:   credential.TypeAPIKey,
 					SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-				}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+				}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 			}}}, bal, &captureLogStore{})
 		probe := &proxyQuotaProbe{p: p}
 
@@ -461,7 +461,7 @@ func TestProxyQuotaNoDeltaOn4xxAndExhausted(t *testing.T) {
 					ID: 1, Name: "t", BaseURL: up.URL,
 					CredentialType:   credential.TypeAPIKey,
 					SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-				}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+				}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 			}}}, bal, &captureLogStore{})
 		probe := &proxyQuotaProbe{p: p}
 
@@ -534,7 +534,7 @@ func TestProxyQuotaNoDeltaOnRecordPath(t *testing.T) {
 				ID: 1, Name: "t", BaseURL: up.URL,
 				CredentialType:   credential.TypeAPIKey,
 				SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-			}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+			}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 		}}}, bal, &captureLogStore{}, q)
 	probe := &proxyQuotaProbe{p: p}
 
@@ -568,7 +568,7 @@ func TestProxyQuotaDeductsFinalCostAfterMultiplier(t *testing.T) {
 				ID: 1, Name: "t", BaseURL: up.URL,
 				CredentialType:   credential.TypeAPIKey,
 				SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-			}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+			}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 		}}}, bal, &captureLogStore{})
 	probe := &proxyQuotaProbe{p: p}
 
@@ -1347,7 +1347,7 @@ func TestProxyBillingMultiplierPerGroup(t *testing.T) {
 		ID: 1, Name: "t", BaseURL: up.URL,
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-	}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+	}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}
 
 	// 组 10：ck-1 → assignment ×2 → 130×2 = 260
 	p1 := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{

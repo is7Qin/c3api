@@ -122,7 +122,12 @@ func tpl(id int64, format domain.RequestFormat, models []string) *domain.Templat
 }
 
 func acc(id int64, t *domain.Template, maxConc int) *domain.Account {
-	return &domain.Account{ID: id, TemplateID: t.ID, Template: t, UpstreamKey: "k", Enabled: true, MaxConcurrency: maxConc, LifecycleRevision: 1}
+	// IdentityRevision 必须与生产不变量一致：schema 的 identity_revision 是
+	// Default(1)（internal/ent/schema/account.go），真实账号 K 恒 >= 1。
+	// 测试若构造 K=0，验证的就是一个**生产不可能存在**的状态——而 K=0 恰是
+	// Attempt.Validate() 明确拒绝的值（identity_revision <= 0 报错），fixture
+	// 于是与不变量打架，谁先断言决定成败。镜像 DB 默认值。
+	return &domain.Account{ID: id, TemplateID: t.ID, Template: t, UpstreamKey: "k", Enabled: true, MaxConcurrency: maxConc, LifecycleRevision: 1, IdentityRevision: 1}
 }
 
 // newSched 构造已加载快照且已武装编译道的调度器：reload 产出静态视图，

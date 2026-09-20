@@ -19,7 +19,11 @@ func ownershipFixture(t *testing.T) *Scheduler {
 	t2 := tpl(2, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	a2 := acc(2, t2, 100000)
 	a2.BaseURL = strPtr("https://override/v1")
-	a2.LifecycleRevision = 2
+	// 候选内容代际是 K（identity_revision），不是客户端 CAS 令牌 C
+	// （routing_compiler_candidates.go：f.revision = st.acc.IdentityRevision）。
+	// 本行原本设 LifecycleRevision，在 P5 改名后已与 f.revision 脱钩——留着
+	// 只会让「代际流动」这条断言退化为对 0 的比较。
+	a2.IdentityRevision = 2
 	a2.UpstreamCostMultiplierBp = 8000
 	t3 := tpl(3, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	t3.ModelMapping = domain.ModelMapping{
@@ -76,7 +80,7 @@ func TestCompiledCandidateOwnershipDoesNotCrossRoutesOrStaticRoots(t *testing.T)
 		st := leaf.static.Load()
 		require.Equal(t, id, f.accountID)
 		require.Equal(t, st.acc.TemplateID, f.templateID)
-		require.Equal(t, st.acc.LifecycleRevision, f.revision)
+		require.Equal(t, st.acc.IdentityRevision, f.revision)
 		require.Equal(t, st.acc.UpstreamCostMultiplierBp, f.upstreamCostMultiplierBp)
 		wantBase := st.tpl.BaseURL
 		if st.acc.BaseURL != nil && *st.acc.BaseURL != "" {

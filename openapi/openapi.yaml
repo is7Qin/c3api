@@ -3213,13 +3213,13 @@ components:
         process_crash_loss_unobservable: { type: boolean, description: 硬崩丢失不可量化标记，恒 true }
     RoutingFrontierCandidate:
       type: object
-      required: [candidate_fingerprint, known, account_id, template_id, lifecycle_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, cost_per_success, cost_known, insufficient, on_frontier]
+      required: [candidate_fingerprint, known, account_id, template_id, identity_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, cost_per_success, cost_known, insufficient, on_frontier]
       properties:
         candidate_fingerprint: { type: string }
         known: { type: boolean, description: 指纹在当前发布计划该路由候选目录内；false = 只呈现观测事实 }
         account_id: { type: integer, format: int64, description: unknown 候选为 0 }
         template_id: { type: integer, format: int64 }
-        lifecycle_revision: { type: integer, format: int64 }
+        identity_revision: { type: integer, format: int64, description: "候选内容代际 K（identity_revision）——非客户端 CAS 令牌 C（lifecycle_revision）；C 只围栏管理员写入" }
         quality_class_id: { type: string }
         mapped_model: { type: string }
         attempts: { type: integer, format: int64 }
@@ -3274,11 +3274,11 @@ components:
     RoutingPlanCandidate:
       type: object
       description: 候选静态身份（缺叶子引用时 identity-only，其余字段零值）
-      required: [account_id, template_id, lifecycle_revision, upstream_cost_multiplier_bp, fingerprint, identity_fingerprint, mapped_model, quality_class_id]
+      required: [account_id, template_id, identity_revision, upstream_cost_multiplier_bp, fingerprint, identity_fingerprint, mapped_model, quality_class_id]
       properties:
         account_id: { type: integer, format: int64 }
         template_id: { type: integer, format: int64 }
-        lifecycle_revision: { type: integer, format: int64 }
+        identity_revision: { type: integer, format: int64, description: "候选内容代际 K（identity_revision）——与编译器事实、wire 同源；非客户端 CAS 令牌 C" }
         upstream_cost_multiplier_bp: { type: integer, description: 采购倍率 basis points（10000 = ×1） }
         fingerprint: { type: string, description: 真实候选指纹 hex（不可导出 = 空串） }
         identity_fingerprint: { type: string, description: rollup join 身份指纹 hex（compiler 合成规则同源） }

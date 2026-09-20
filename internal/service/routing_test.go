@@ -94,9 +94,9 @@ func routingFixturePlan() (*scheduler.RoutingPlan, string, scheduler.RoutingPlan
 	route := scheduler.RoutingPlanRoute{
 		Ref: scheduler.RouteRef{GroupID: 10, Format: string(domain.FormatOpenAIChat), Model: "m", OperationTag: string(domain.OpChatCompletions), RouteClassID: idHex},
 		Candidates: []scheduler.RoutingPlanCandidate{
-			{AccountID: 1, TemplateID: 11, LifecycleRevision: 3, UpstreamCostMultiplierBp: 10000, IdentityFingerprint: fpA, MappedModel: "m"},
-			{AccountID: 2, TemplateID: 12, LifecycleRevision: 4, UpstreamCostMultiplierBp: 15000, IdentityFingerprint: fpB, MappedModel: "mapped-b"},
-			{AccountID: 3, TemplateID: 13, LifecycleRevision: 1, UpstreamCostMultiplierBp: 30000, IdentityFingerprint: fpC, MappedModel: "m"},
+			{AccountID: 1, TemplateID: 11, IdentityRevision: 3, UpstreamCostMultiplierBp: 10000, IdentityFingerprint: fpA, MappedModel: "m"},
+			{AccountID: 2, TemplateID: 12, IdentityRevision: 4, UpstreamCostMultiplierBp: 15000, IdentityFingerprint: fpB, MappedModel: "mapped-b"},
+			{AccountID: 3, TemplateID: 13, IdentityRevision: 1, UpstreamCostMultiplierBp: 30000, IdentityFingerprint: fpC, MappedModel: "m"},
 		},
 	}
 	return &scheduler.RoutingPlan{Generation: 7, Routes: []scheduler.RoutingPlanRoute{route}}, idHex, route
@@ -335,7 +335,7 @@ func TestRoutingFrontier_Semantics(t *testing.T) {
 	require.True(t, a.Known)
 	require.Equal(t, int64(1), a.AccountID)
 	require.Equal(t, int64(11), a.TemplateID)
-	require.Equal(t, int64(3), a.LifecycleRevision)
+	require.Equal(t, int64(3), a.IdentityRevision)
 	require.Equal(t, "m", a.MappedModel)
 	require.False(t, a.Insufficient)
 	require.True(t, a.TTFTKnown)

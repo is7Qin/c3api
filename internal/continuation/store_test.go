@@ -115,7 +115,7 @@ func TestContinuationCreateAndCrossInstance(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(10), b.AccountID)
 	require.Equal(t, f, b.Fingerprint)
-	require.Equal(t, int64(5), b.Revision)
+	require.Equal(t, int64(5), b.IdentityRevision)
 	require.True(t, b.RedisAcked)
 	st, err = s1.CreateOrRefresh(ctx, 100, 1, rid, "responses", "resp_abc", 10, f, 5)
 	require.NoError(t, err)
@@ -176,7 +176,7 @@ func TestContinuationInt64Beyond53(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, largeAcc, b.AccountID)
-	require.Equal(t, largeRev, b.Revision)
+	require.Equal(t, largeRev, b.IdentityRevision)
 	st, err = s1.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_large", largeAcc+1, f, largeRev)
 	require.NoError(t, err)
 	require.Equal(t, "conflict", st)
@@ -244,10 +244,10 @@ func TestContinuationMalformedCannotRefresh(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, b)
 	// noncanonical reordered variant with same logical values
-	canon := encodeWire(Binding{AccountID: 10, Fingerprint: f, Revision: 1, RedisAcked: true})
+	canon := encodeWire(Binding{AccountID: 10, Fingerprint: f, IdentityRevision: 1, RedisAcked: true})
 	var w redisWire
 	require.NoError(t, json.Unmarshal(canon, &w))
-	reordered := `{"revision":"` + w.Revision + `","account_id":"` + w.AccountID + `","fingerprint":"` + w.Fingerprint + `","redis_acked":true}`
+	reordered := `{"identity_revision":"` + w.IdentityRevision + `","account_id":"` + w.AccountID + `","fingerprint":"` + w.Fingerprint + `","redis_acked":true}`
 	require.NoError(t, s.client.Set(ctx, rkey, reordered, TTL).Err())
 	st, err = s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_mal", 10, f, 1)
 	require.NoError(t, err)
@@ -257,7 +257,7 @@ func TestContinuationMalformedCannotRefresh(t *testing.T) {
 	require.False(t, ok, "reordered wire must fail strict canonical check")
 	require.Nil(t, b)
 	// duplicate key variant
-	dup := `{"account_id":"10","account_id":"10","fingerprint":"` + w.Fingerprint + `","revision":"1","redis_acked":true}`
+	dup := `{"account_id":"10","account_id":"10","fingerprint":"` + w.Fingerprint + `","identity_revision":"1","redis_acked":true}`
 	require.NoError(t, s.client.Set(ctx, rkey, dup, TTL).Err())
 	_, okDup := parseBinding([]byte(dup))
 	require.False(t, okDup, "duplicate keys must be rejected")
@@ -282,7 +282,7 @@ func TestContinuationCanonicalExactRefresh(t *testing.T) {
 	rkey, _ := s.RedisKey(1, 1, rid, "responses", "resp_canon")
 	val, err := s.client.Get(ctx, rkey).Result()
 	require.NoError(t, err)
-	b := Binding{AccountID: 10, Fingerprint: f, Revision: 1, RedisAcked: true}
+	b := Binding{AccountID: 10, Fingerprint: f, IdentityRevision: 1, RedisAcked: true}
 	require.Equal(t, string(encodeWire(b)), val, "stored wire must be canonical exact")
 	// whitespace variant must be rejected
 	ws := string(encodeWire(b))

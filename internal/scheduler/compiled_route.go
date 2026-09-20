@@ -11,19 +11,19 @@ import (
 // captured immutable static leaf for stale fencing (pointer equality against
 // the current RoutingView); all other fields are detached values.
 type CompiledCandidate struct {
-	AccountID         int64
-	Lane              AttemptLane
-	TemplateID        int64
-	BaseURL           string
-	Fingerprint       string
-	RequestedModel    string
-	MappedModel       string
-	MappingMode       domain.ModelMappingMode
-	Quality           string
-	QualityRaw        string
-	LifecycleRevision int64
-	Leaf              *accountSnapshot
-	Static            *snapshotStatic
+	AccountID        int64
+	Lane             AttemptLane
+	TemplateID       int64
+	BaseURL          string
+	Fingerprint      string
+	RequestedModel   string
+	MappedModel      string
+	MappingMode      domain.ModelMappingMode
+	Quality          string
+	QualityRaw       string
+	IdentityRevision int64
+	Leaf             *accountSnapshot
+	Static           *snapshotStatic
 }
 
 // QualityFor selects the precompiled quality class for the request's mapping
@@ -42,19 +42,19 @@ func (c *CompiledCandidate) QualityFor(applyMapping bool) string {
 // candidate metadata. The compiler never re-reads the account leaf here.
 func compileCandidate(facts compilerCandidateFacts, lane AttemptLane) CompiledCandidate {
 	return CompiledCandidate{
-		AccountID:         facts.accountID,
-		Lane:              lane,
-		TemplateID:        facts.templateID,
-		BaseURL:           facts.baseURL,
-		Fingerprint:       facts.fingerprint,
-		RequestedModel:    facts.requestedModel,
-		MappedModel:       facts.mappedModel,
-		MappingMode:       facts.mappingMode,
-		Quality:           facts.quality,
-		QualityRaw:        facts.qualityRaw,
-		LifecycleRevision: facts.revision,
-		Leaf:              facts.account,
-		Static:            facts.static,
+		AccountID:        facts.accountID,
+		Lane:             lane,
+		TemplateID:       facts.templateID,
+		BaseURL:          facts.baseURL,
+		Fingerprint:      facts.fingerprint,
+		RequestedModel:   facts.requestedModel,
+		MappedModel:      facts.mappedModel,
+		MappingMode:      facts.mappingMode,
+		Quality:          facts.quality,
+		QualityRaw:       facts.qualityRaw,
+		IdentityRevision: facts.revision,
+		Leaf:             facts.account,
+		Static:           facts.static,
 	}
 }
 

@@ -1360,13 +1360,15 @@ type RoutingFrontierCandidate struct {
 	// CostPerSuccess 每次成功平均成本（微分，与 compiler 同式；cost_known=false 时无意义）
 	CostPerSuccess int64 `json:"cost_per_success"`
 
+	// IdentityRevision 候选内容代际 K（identity_revision）——非客户端 CAS 令牌 C（lifecycle_revision）；C 只围栏管理员写入
+	IdentityRevision int64 `json:"identity_revision"`
+
 	// Insufficient 样本 <30（与 explore 同门槛）
 	Insufficient bool `json:"insufficient"`
 
 	// Known 指纹在当前发布计划该路由候选目录内；false = 只呈现观测事实
-	Known             bool   `json:"known"`
-	LifecycleRevision int64  `json:"lifecycle_revision"`
-	MappedModel       string `json:"mapped_model"`
+	Known       bool   `json:"known"`
+	MappedModel string `json:"mapped_model"`
 
 	// OnFrontier Pareto 非支配（仅 known 且 cost_known 间扫描）
 	OnFrontier     bool   `json:"on_frontier"`
@@ -1404,10 +1406,12 @@ type RoutingPlanCandidate struct {
 
 	// IdentityFingerprint rollup join 身份指纹 hex（compiler 合成规则同源）
 	IdentityFingerprint string `json:"identity_fingerprint"`
-	LifecycleRevision   int64  `json:"lifecycle_revision"`
-	MappedModel         string `json:"mapped_model"`
-	QualityClassId      string `json:"quality_class_id"`
-	TemplateId          int64  `json:"template_id"`
+
+	// IdentityRevision 候选内容代际 K（identity_revision）——与编译器事实、wire 同源；非客户端 CAS 令牌 C
+	IdentityRevision int64  `json:"identity_revision"`
+	MappedModel      string `json:"mapped_model"`
+	QualityClassId   string `json:"quality_class_id"`
+	TemplateId       int64  `json:"template_id"`
 
 	// UpstreamCostMultiplierBp 采购倍率 basis points（10000 = ×1）
 	UpstreamCostMultiplierBp int `json:"upstream_cost_multiplier_bp"`
