@@ -53,8 +53,8 @@ func TestCompiledCandidateOwnershipDoesNotCrossRoutesOrStaticRoots(t *testing.T)
 
 	// The facts type carries exactly the planned immutable fields; no map or
 	// slice may alias mutable account/template backing data. Only the two
-	// immutable leaf/static pointers are shared, plus scalars and the
-	// fixed-size identity array.
+	// immutable leaf/static pointers are shared, plus scalars, the
+	// fixed-size identity array, and the value-semantic plan key.
 	ft := reflect.TypeOf(compilerAccountFacts{})
 	var names []string
 	for i := 0; i < ft.NumField(); i++ {
@@ -62,13 +62,15 @@ func TestCompiledCandidateOwnershipDoesNotCrossRoutesOrStaticRoots(t *testing.T)
 		names = append(names, fl.Name)
 		switch fl.Type.Kind() {
 		case reflect.Int, reflect.Int64, reflect.String, reflect.Array:
+		case reflect.Struct:
+			require.Equal(t, "scheduler.planKey", fl.Type.String(), fl.Name)
 		case reflect.Ptr:
 			require.Contains(t, []string{"*scheduler.accountSnapshot", "*scheduler.snapshotStatic"}, fl.Type.String(), fl.Name)
 		default:
 			t.Fatalf("mutable aliasing risk: field %s kind %s", fl.Name, fl.Type.Kind())
 		}
 	}
-	require.Equal(t, []string{"accountID", "templateID", "baseURL", "fingerprint", "identityFingerprint", "revision", "account", "static", "upstreamCostMultiplierBp"}, names)
+	require.Equal(t, []string{"accountID", "templateID", "baseURL", "fingerprint", "identityFingerprint", "revision", "account", "static", "planKey", "upstreamCostMultiplierBp"}, names)
 
 	byID := sv.ByID()
 	for _, id := range sortedFactIDs(facts) {
@@ -91,6 +93,7 @@ func TestCompiledCandidateOwnershipDoesNotCrossRoutesOrStaticRoots(t *testing.T)
 		require.NoError(t, err)
 		require.Equal(t, wantFP, f.fingerprint)
 		require.Equal(t, candidateIdentityFingerprint(wantFP, id), f.identityFingerprint)
+		require.Equal(t, planKeyOf(st), f.planKey)
 	}
 	// Base URL precedence: account override wins, otherwise template URL.
 	require.Equal(t, "https://override/v1", facts[2].baseURL)

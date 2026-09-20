@@ -375,7 +375,18 @@ func (p *selectSession) hasStaticChange(v *RoutingView) bool {
 		return false
 	}
 	check := func(c CompiledCandidate) bool {
-		return c.Leaf != nil && v.static.byID[c.AccountID] != c.Leaf
+		if c.Leaf == nil {
+			return false
+		}
+		if v.static.byID[c.AccountID] == nil {
+			return true
+		}
+		// 判据同预留路径：读视图发布时预计算的逐账号 planKey，不现算摘要。
+		fact, ok := v.static.facts[c.AccountID]
+		if !ok {
+			return true
+		}
+		return fact.planKey != c.PlanKey
 	}
 	for _, c := range p.route.Primary {
 		if check(c) {

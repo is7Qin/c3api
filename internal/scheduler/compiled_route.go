@@ -8,8 +8,10 @@ import (
 // CompiledCandidate is one immutable request-independent candidate. All
 // request-time identity (fingerprint, mapped model, quality) is resolved once
 // at compile; the request path only inspects and leases. Leaf/Static are the
-// captured immutable static leaf for stale fencing (pointer equality against
-// the current RoutingView); all other fields are detached values.
+// captured immutable static leaf for selection assembly (always refreshed to
+// the current leaf before use); PlanKey is the value-identity fence captured
+// at compile (compared against the current leaf's planKey); all other fields
+// are detached values.
 type CompiledCandidate struct {
 	AccountID        int64
 	Lane             AttemptLane
@@ -22,6 +24,7 @@ type CompiledCandidate struct {
 	Quality          string
 	QualityRaw       string
 	IdentityRevision int64
+	PlanKey          planKey
 	Leaf             *accountSnapshot
 	Static           *snapshotStatic
 }
@@ -53,6 +56,7 @@ func compileCandidate(facts compilerCandidateFacts, lane AttemptLane) CompiledCa
 		Quality:          facts.quality,
 		QualityRaw:       facts.qualityRaw,
 		IdentityRevision: facts.revision,
+		PlanKey:          facts.planKey,
 		Leaf:             facts.account,
 		Static:           facts.static,
 	}
