@@ -155,6 +155,20 @@ func (_c *AccountCreate) SetNillableLifecycleRevision(v *int64) *AccountCreate {
 	return _c
 }
 
+// SetIdentityRevision sets the "identity_revision" field.
+func (_c *AccountCreate) SetIdentityRevision(v int64) *AccountCreate {
+	_c.mutation.SetIdentityRevision(v)
+	return _c
+}
+
+// SetNillableIdentityRevision sets the "identity_revision" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableIdentityRevision(v *int64) *AccountCreate {
+	if v != nil {
+		_c.SetIdentityRevision(*v)
+	}
+	return _c
+}
+
 // SetUpstreamCostMultiplierBp sets the "upstream_cost_multiplier_bp" field.
 func (_c *AccountCreate) SetUpstreamCostMultiplierBp(v int) *AccountCreate {
 	_c.mutation.SetUpstreamCostMultiplierBp(v)
@@ -313,6 +327,10 @@ func (_c *AccountCreate) defaults() {
 		v := account.DefaultLifecycleRevision
 		_c.mutation.SetLifecycleRevision(v)
 	}
+	if _, ok := _c.mutation.IdentityRevision(); !ok {
+		v := account.DefaultIdentityRevision
+		_c.mutation.SetIdentityRevision(v)
+	}
 	if _, ok := _c.mutation.UpstreamCostMultiplierBp(); !ok {
 		v := account.DefaultUpstreamCostMultiplierBp
 		_c.mutation.SetUpstreamCostMultiplierBp(v)
@@ -346,6 +364,9 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.LifecycleRevision(); !ok {
 		return &ValidationError{Name: "lifecycle_revision", err: errors.New(`ent: missing required field "Account.lifecycle_revision"`)}
+	}
+	if _, ok := _c.mutation.IdentityRevision(); !ok {
+		return &ValidationError{Name: "identity_revision", err: errors.New(`ent: missing required field "Account.identity_revision"`)}
 	}
 	if _, ok := _c.mutation.UpstreamCostMultiplierBp(); !ok {
 		return &ValidationError{Name: "upstream_cost_multiplier_bp", err: errors.New(`ent: missing required field "Account.upstream_cost_multiplier_bp"`)}
@@ -431,6 +452,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.LifecycleRevision(); ok {
 		_spec.SetField(account.FieldLifecycleRevision, field.TypeInt64, value)
 		_node.LifecycleRevision = value
+	}
+	if value, ok := _c.mutation.IdentityRevision(); ok {
+		_spec.SetField(account.FieldIdentityRevision, field.TypeInt64, value)
+		_node.IdentityRevision = value
 	}
 	if value, ok := _c.mutation.UpstreamCostMultiplierBp(); ok {
 		_spec.SetField(account.FieldUpstreamCostMultiplierBp, field.TypeInt, value)
@@ -724,6 +749,24 @@ func (u *AccountUpsert) UpdateLifecycleRevision() *AccountUpsert {
 // AddLifecycleRevision adds v to the "lifecycle_revision" field.
 func (u *AccountUpsert) AddLifecycleRevision(v int64) *AccountUpsert {
 	u.Add(account.FieldLifecycleRevision, v)
+	return u
+}
+
+// SetIdentityRevision sets the "identity_revision" field.
+func (u *AccountUpsert) SetIdentityRevision(v int64) *AccountUpsert {
+	u.Set(account.FieldIdentityRevision, v)
+	return u
+}
+
+// UpdateIdentityRevision sets the "identity_revision" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateIdentityRevision() *AccountUpsert {
+	u.SetExcluded(account.FieldIdentityRevision)
+	return u
+}
+
+// AddIdentityRevision adds v to the "identity_revision" field.
+func (u *AccountUpsert) AddIdentityRevision(v int64) *AccountUpsert {
+	u.Add(account.FieldIdentityRevision, v)
 	return u
 }
 
@@ -1053,6 +1096,27 @@ func (u *AccountUpsertOne) AddLifecycleRevision(v int64) *AccountUpsertOne {
 func (u *AccountUpsertOne) UpdateLifecycleRevision() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateLifecycleRevision()
+	})
+}
+
+// SetIdentityRevision sets the "identity_revision" field.
+func (u *AccountUpsertOne) SetIdentityRevision(v int64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetIdentityRevision(v)
+	})
+}
+
+// AddIdentityRevision adds v to the "identity_revision" field.
+func (u *AccountUpsertOne) AddIdentityRevision(v int64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddIdentityRevision(v)
+	})
+}
+
+// UpdateIdentityRevision sets the "identity_revision" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateIdentityRevision() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateIdentityRevision()
 	})
 }
 
@@ -1561,6 +1625,27 @@ func (u *AccountUpsertBulk) AddLifecycleRevision(v int64) *AccountUpsertBulk {
 func (u *AccountUpsertBulk) UpdateLifecycleRevision() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateLifecycleRevision()
+	})
+}
+
+// SetIdentityRevision sets the "identity_revision" field.
+func (u *AccountUpsertBulk) SetIdentityRevision(v int64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetIdentityRevision(v)
+	})
+}
+
+// AddIdentityRevision adds v to the "identity_revision" field.
+func (u *AccountUpsertBulk) AddIdentityRevision(v int64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddIdentityRevision(v)
+	})
+}
+
+// UpdateIdentityRevision sets the "identity_revision" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateIdentityRevision() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateIdentityRevision()
 	})
 }
 

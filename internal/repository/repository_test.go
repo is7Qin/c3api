@@ -194,11 +194,11 @@ func accountRow() *pgxmock.Rows {
 	// （"unexpected type <nil>"）。
 	return pgxmock.NewRows([]string{"id", "name", "template_id", "base_url", "upstream_key",
 		"max_concurrency", "last_error", "last_used_at", "failed_at", "failure_source",
-		"enabled", "lifecycle_revision", "upstream_cost_multiplier_bp", "cache_domain",
+		"enabled", "lifecycle_revision", "identity_revision", "upstream_cost_multiplier_bp", "cache_domain",
 		"updated_at", "deleted_at", "created_at"}).
 		AddRow(int64(2), "acc1", int64(1), sql.NullString{}, "sk-x",
 			int64(4), sql.NullString{}, sql.NullTime{}, sql.NullTime{}, sql.NullString{},
-			true, int64(1), int64(10000), sql.NullString{},
+			true, int64(1), int64(1), int64(10000), sql.NullString{},
 			time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), sql.NullTime{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
@@ -289,7 +289,7 @@ func TestAccountAndGroup(t *testing.T) {
 	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
 	tr.pool.ExpectQuery(q(`INSERT INTO "accounts"`)).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(2)))
 	tr.pool.ExpectCommit()
 

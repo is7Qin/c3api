@@ -85,6 +85,8 @@ type AccountMutation struct {
 	enabled                        *bool
 	lifecycle_revision             *int64
 	addlifecycle_revision          *int64
+	identity_revision              *int64
+	addidentity_revision           *int64
 	upstream_cost_multiplier_bp    *int
 	addupstream_cost_multiplier_bp *int
 	cache_domain                   *string
@@ -710,6 +712,62 @@ func (m *AccountMutation) ResetLifecycleRevision() {
 	m.addlifecycle_revision = nil
 }
 
+// SetIdentityRevision sets the "identity_revision" field.
+func (m *AccountMutation) SetIdentityRevision(i int64) {
+	m.identity_revision = &i
+	m.addidentity_revision = nil
+}
+
+// IdentityRevision returns the value of the "identity_revision" field in the mutation.
+func (m *AccountMutation) IdentityRevision() (r int64, exists bool) {
+	v := m.identity_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIdentityRevision returns the old "identity_revision" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldIdentityRevision(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIdentityRevision is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIdentityRevision requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIdentityRevision: %w", err)
+	}
+	return oldValue.IdentityRevision, nil
+}
+
+// AddIdentityRevision adds i to the "identity_revision" field.
+func (m *AccountMutation) AddIdentityRevision(i int64) {
+	if m.addidentity_revision != nil {
+		*m.addidentity_revision += i
+	} else {
+		m.addidentity_revision = &i
+	}
+}
+
+// AddedIdentityRevision returns the value that was added to the "identity_revision" field in this mutation.
+func (m *AccountMutation) AddedIdentityRevision() (r int64, exists bool) {
+	v := m.addidentity_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetIdentityRevision resets all changes to the "identity_revision" field.
+func (m *AccountMutation) ResetIdentityRevision() {
+	m.identity_revision = nil
+	m.addidentity_revision = nil
+}
+
 // SetUpstreamCostMultiplierBp sets the "upstream_cost_multiplier_bp" field.
 func (m *AccountMutation) SetUpstreamCostMultiplierBp(i int) {
 	m.upstream_cost_multiplier_bp = &i
@@ -1105,7 +1163,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 16)
+	fields := make([]string, 0, 17)
 	if m.name != nil {
 		fields = append(fields, account.FieldName)
 	}
@@ -1138,6 +1196,9 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.lifecycle_revision != nil {
 		fields = append(fields, account.FieldLifecycleRevision)
+	}
+	if m.identity_revision != nil {
+		fields = append(fields, account.FieldIdentityRevision)
 	}
 	if m.upstream_cost_multiplier_bp != nil {
 		fields = append(fields, account.FieldUpstreamCostMultiplierBp)
@@ -1184,6 +1245,8 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.Enabled()
 	case account.FieldLifecycleRevision:
 		return m.LifecycleRevision()
+	case account.FieldIdentityRevision:
+		return m.IdentityRevision()
 	case account.FieldUpstreamCostMultiplierBp:
 		return m.UpstreamCostMultiplierBp()
 	case account.FieldCacheDomain:
@@ -1225,6 +1288,8 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldEnabled(ctx)
 	case account.FieldLifecycleRevision:
 		return m.OldLifecycleRevision(ctx)
+	case account.FieldIdentityRevision:
+		return m.OldIdentityRevision(ctx)
 	case account.FieldUpstreamCostMultiplierBp:
 		return m.OldUpstreamCostMultiplierBp(ctx)
 	case account.FieldCacheDomain:
@@ -1321,6 +1386,13 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetLifecycleRevision(v)
 		return nil
+	case account.FieldIdentityRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIdentityRevision(v)
+		return nil
 	case account.FieldUpstreamCostMultiplierBp:
 		v, ok := value.(int)
 		if !ok {
@@ -1370,6 +1442,9 @@ func (m *AccountMutation) AddedFields() []string {
 	if m.addlifecycle_revision != nil {
 		fields = append(fields, account.FieldLifecycleRevision)
 	}
+	if m.addidentity_revision != nil {
+		fields = append(fields, account.FieldIdentityRevision)
+	}
 	if m.addupstream_cost_multiplier_bp != nil {
 		fields = append(fields, account.FieldUpstreamCostMultiplierBp)
 	}
@@ -1385,6 +1460,8 @@ func (m *AccountMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedMaxConcurrency()
 	case account.FieldLifecycleRevision:
 		return m.AddedLifecycleRevision()
+	case account.FieldIdentityRevision:
+		return m.AddedIdentityRevision()
 	case account.FieldUpstreamCostMultiplierBp:
 		return m.AddedUpstreamCostMultiplierBp()
 	}
@@ -1409,6 +1486,13 @@ func (m *AccountMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddLifecycleRevision(v)
+		return nil
+	case account.FieldIdentityRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddIdentityRevision(v)
 		return nil
 	case account.FieldUpstreamCostMultiplierBp:
 		v, ok := value.(int)
@@ -1521,6 +1605,9 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldLifecycleRevision:
 		m.ResetLifecycleRevision()
+		return nil
+	case account.FieldIdentityRevision:
+		m.ResetIdentityRevision()
 		return nil
 	case account.FieldUpstreamCostMultiplierBp:
 		m.ResetUpstreamCostMultiplierBp()

@@ -389,6 +389,13 @@ type Account struct {
 	// LifecycleRevision 账号生命周期代际（CAS fencing：每次生命周期变化及管理员
 	// 凭据替换必须 CAS expectedRevision 并 +1；SDK 内部 OAuth 刷新不增）。
 	LifecycleRevision int64
+	// IdentityRevision 身份纪元（K）：仅管理面身份类字段写入（spec §2.1 身份类，
+	// 含可轮换凭据：上游 key / base_url / template_id / account_ext 凭据面）使
+	// 其 +1；SDK 自动 token 刷新（OAuth access token）**不**推进。与
+	// LifecycleRevision（C：每次成功写入无条件 +1）职责分离——在途工件
+	// （失效持久化/latch/健康门槛/continuation）以 (指纹, K) 判定，纯配置写入
+	// 只动 C，不得作废在途判断。
+	IdentityRevision int64
 	// UpstreamCostMultiplierBp 采购成本倍率（basis points：10000 = 1.0x；0 = 免费）。
 	UpstreamCostMultiplierBp int
 	CacheDomain              *string

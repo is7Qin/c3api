@@ -21,6 +21,7 @@ var (
 		{Name: "failure_source", Type: field.TypeString, Nullable: true},
 		{Name: "enabled", Type: field.TypeBool, Default: true},
 		{Name: "lifecycle_revision", Type: field.TypeInt64, Default: 1},
+		{Name: "identity_revision", Type: field.TypeInt64, Default: 1},
 		{Name: "upstream_cost_multiplier_bp", Type: field.TypeInt, Default: 10000},
 		{Name: "cache_domain", Type: field.TypeString, Nullable: true},
 		{Name: "updated_at", Type: field.TypeTime},
@@ -36,7 +37,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "accounts_templates_accounts",
-				Columns:    []*schema.Column{AccountsColumns[16]},
+				Columns:    []*schema.Column{AccountsColumns[17]},
 				RefColumns: []*schema.Column{TemplatesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
