@@ -431,10 +431,15 @@ func main() {
 	// MaxIdleConnsPerHost=2 有压测连接风暴史；Proxy=nil 直连防劫持 C2-1）；
 	// rotation Upsert 部分更新（codex_oauth_token/refresh/expires_at 保旧）+
 	// 回写后失效调度器 AccountExt 快照条目（下个会话重载新凭据）。
+	// Latch/Publisher 必须装配：SDK 失效链据此走**围栏路径**（先锁存 → 以身份
+	// 代际 K 为 guard 的 CAS 落库 → 组级 NOTIFY）；缺任一项即退化为只写 failed_at
+	// 的简化路径——判决不再与"身份是否被授权变更"对齐，且对端只能靠周期兜底收敛。
 	codexAdapter := sdkbridge.NewCodex(sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{
-		Store:  repos.Accounts,
-		Failer: sched,
-		Log:    log,
+		Store:     repos.Accounts,
+		Failer:    sched,
+		Log:       log,
+		Latch:     latchStore,
+		Publisher: schedGroupPub{pub},
 	}), httpx.NewTransport(httpx.TransportConfig{
 		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,

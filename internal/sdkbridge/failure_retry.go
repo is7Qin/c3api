@@ -192,6 +192,10 @@ func handleRetryOnce(ctx context.Context, task failureRetryTask) bool {
 	if err != nil {
 		return true
 	}
+	acct, err = ensureTemplate(ctx, cs, acct, task.accountID)
+	if err != nil {
+		return true
+	}
 	if acct.DeletedAt != nil {
 		if task.deps.Latch != nil {
 			task.deps.Latch.Clear(task.accountID)
