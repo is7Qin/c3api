@@ -220,10 +220,13 @@
 | `template_id` | int | ✅ | 所属模板 ID |
 | `base_url` | string | 否 | 账号级覆盖（裸根，不含 `/v1`，留空继承模板）；`codex-oauth`/`codex-pat` 关联模板须为空（SDK 默认，非空 → `400`），`api_key`/`responses-special` 为可选覆盖 |
 | `upstream_key` | string | ✅* | 上游 API key（`codex-oauth`/`codex-pat` 关联模板可为空，凭据走 `account_ext`；`api_key`/`responses-special` 必填） |
-| `cache_domain` | string / null | 否 | 共享缓存域（软亲和一致性哈希的域标识，请求侧显式亲和键语义见「路由观测 Routing」；合法域名形态 ≤253，非法 → `400`）；`null`/缺省 = 账号私有域。**仅创建可带**，更新走 `PUT /accounts/{id}/cache-domain`（fenced） |
-| `max_concurrency` | int | 否 | 账号并发上限；`0` 时使用调度器 `default_max_concurrency` |
+| `cache_domain` | string / null | 否 | 共享缓存域（软亲和一致性哈希的域标识，请求侧显式亲和键语义见「路由观测 Routing」；合法域名形态 ≤253，非法 → `400`）；创建缺省/`null` = 账号私有域；后续更新走 `PATCH /accounts/{id}`（fenced），`null` = 清空回私有域、缺席 = 不变、空串 → `400` |
+| `max_concurrency` | int | 否 | 账号并发上限；创建时缺省取服务端配置 `scheduler.default_max_concurrency`（显式提供则用之）。写入期**不做静默钳制**——`0` 会让该账号恒不可被选中，属误配置 |
+| `group_ids` | int[] / null | 否 | 所属分组；缺省/`null`/`[]` = 不归组（不归组的账号不进任何组路由，但账号本身可被直接管理） |
+| `enabled` | bool | 否 | 管理端启停；创建缺省 `true`，**显式 `false` 生效**（创建即为禁用态） |
+| `upstream_cost_multiplier` | number / null | 否 | 采购成本倍率；创建缺省 ×1（存储 `10000` bp）。正常值 `1` = ×1、`0` = 免费、上限 `10` = ×10；边界换算 basis points（存储 `25000` ↔ 显示 `2.5`），越界 → `400`。与租户/组计费倍率（`price_multiplier`）完全独立，永不互串 |
 
-采购倍率创建不可带（缺省 ×1 = 存储 10000bp），写面 `PUT /accounts/{id}/cost-multiplier`（fenced）。
+创建体是**同一个字段模型** `AccountConfigPatch` 加上必需性投影（`required[name, template_id]`），故上表与 `PATCH /accounts/{id}` 的字段逐一对应；三态规则（可空标量 `null` = 清空、缺席 = 不变、不可空标量 `null` 或可空标量 `""` → `400`）对创建与 `PATCH` 一致。
 
 响应 `200`：账号对象（含嵌套 `Template`）。
 
@@ -254,22 +257,20 @@
 
 | 轴 | 字段 | 语义 |
 |---|---|---|
-| 启用轴 | `enabled` | 管理端启停（`POST /accounts/{id}/enabled`，fenced）。禁用 = 不参与选号；**enable 不清失效字段** |
+| 启用轴 | `enabled` | 管理端启停（`PATCH /accounts/{id}`，fenced）。禁用 = 不参与选号；**enable 不清失效字段** |
 | 失效轴 | `failed_at` + `failure_source`（`rule`/`sdk`）+ `last_error` | 运行时终态判死（规则 `fail_account` 命中 / SDK 凭据 fatal）；恢复唯一入口 `POST /accounts/{id}/recover` |
 
 - 两轴独立：重新启用不清失效，清除失效不覆盖管理禁用。`failed_at != null` 或 `enabled = false` 的账号不进入任何路由计划热车道，也不被自动探索复活。
-- `lifecycle_revision`：每次生命周期变化与管理员凭据替换 CAS +1；所有 fenced 端点必须携带 `expected_revision`，过期 → `409`（重读账号后重试）。SDK 内部 OAuth 自动轮转**不**递增代际（不失效在途 continuation/fatal fence）。
+- 两个代际分开：`lifecycle_revision`（C，客户端 CAS 令牌）**每次写入** +1；`identity_revision`（K，身份代际）仅在管理面**身份类写入**真的改变取值时 +1。所有 fenced 端点必须携带 `expected_revision`（即 C），过期 → `409`（重读账号后重试）。在途判定（失效判决 / latch / 健康记录 / continuation 绑定）一律围栏在 (I, K) 上、**不**看 C；SDK 内部 OAuth 自动轮转两个代际都不动——既不失效在途计划，也不失效在途 continuation/fatal fence。
 - 瞬时健康（429 节流 / 短时摘除）**不落账号行**——RuntimeHealth（Redis/本地）态，随代际过期。
-- **失效恢复须知（SDK 接入账号——codex-oauth / codex-pat）**：凭据被判死后 `/recover` 只清失效字段并置 PROBING（探针环接管，READY 前不吃正常流量）——若凭据确已判死，请求面仍恒失败并再次判死。**恢复须先重新导入凭据**（`PUT /api/admin/accounts/{id}/ext`，凭据签名变化 → 适配层重建 + 代际 +1）才可真正服务——判死凭据不得在未重新导入的情况下复活。
+- **失效恢复须知（SDK 接入账号——codex-oauth / codex-pat）**：凭据被判死后 `/recover` 只清失效字段并置 PROBING（探针环接管，READY 前不吃正常流量）——若凭据确已判死，请求面仍恒失败并再次判死。**恢复须先重新导入凭据**（`PUT /api/admin/accounts/{id}/ext`，凭据值真变 → 适配层重建 + 身份代际 K +1）才可真正服务——判死凭据不得在未重新导入的情况下复活。
 
 ### fenced 写端点
 
 | 方法/路径 | 请求体 | 语义 |
 |---|---|---|
-| `POST /api/admin/accounts/{id}/recover` | `{expected_revision}` | 失效恢复唯一入口：清 `failed_at`/`failure_source`/`last_error` + 代际 +1 → 新代际 PROBING |
-| `POST /api/admin/accounts/{id}/enabled` | `{enabled, expected_revision}` | 启用/禁用（enable 不清失效字段） |
-| `PUT /api/admin/accounts/{id}/cost-multiplier` | `{multiplier, expected_revision}` | 采购成本倍率（正常值 `1` = ×1、`0` = 免费、上限 `10` = ×10；边界换算 basis points——存储 `25000` ↔ 显示 `2.5`；越界 → `400`）。与租户/组计费倍率（`price_multiplier`）完全独立，永不互串 |
-| `PUT /api/admin/accounts/{id}/cache-domain` | `{cache_domain, expected_revision}` | 共享缓存域；`null` = 清空回账号私有域（清空不走空串）；合法域名形态 ≤253，非法 → `400` |
+| `PATCH /api/admin/accounts/{id}` | `AccountConfigPatch`（+ 可选 `If-Match: <C>`） | 账号配置的**唯一**写面：一次调用原子更新 `name` / `template_id` / `base_url` / `upstream_key` / `max_concurrency` / `group_ids` / `enabled` / `cache_domain` / `upstream_cost_multiplier`。三态：可空标量 `null` = 清空、缺席 = 不变、不可空标量 `null` 或可空标量 `""` → `400`；`group_ids: []` = 清空、`group_ids: null` = 不变。`If-Match` 陈旧 → `412`、语法非法（`W/` / 多值 / `*` / 非整数）→ `400`、缺席 = 无条件生效 |
+| `POST /api/admin/accounts/{id}/recover` | `{expected_revision}` | 失效恢复唯一入口：清 `failed_at`/`failure_source`/`last_error` + C +1（K 不变）→ 显式释放 latch + 按账号清健康记录（含 Redis 墓碑）→ 新代际 PROBING。**不切 `enabled`** |
 
 成功均 `200` 回显新代际账号对象；`404` 账号不存在；`409` 代际过期。
 
@@ -326,22 +327,16 @@
 
 请求体：`{"ids": [1], "fields": {"max_concurrency": 16}}`。
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | string | 否 | 账号名（非空） |
-| `template_id` | int | 否 | 所属模板 ID（>0） |
-| `base_url` | string | 否 | 账号级覆盖（裸根，不含 `/v1`）；`codex-oauth`/`codex-pat` 关联模板须为空/清空（空串清空回继承，非空 → `400`），`api_key`/`responses-special` 为可选覆盖（空串清空，非空覆盖） |
-| `upstream_key` | string | 否 | 上游 API key（非空） |
-| `max_concurrency` | int | 否 | 并发上限（≥1） |
+`fields` 用的是**同一个字段模型** `AccountConfigPatch`（与 `PATCH /accounts/{id}` 逐字段同语义、含三态规则）——即批量面能改 `PATCH` 能改的全部字段：`name` / `template_id` / `base_url` / `upstream_key` / `max_concurrency` / `group_ids` / `enabled` / `cache_domain` / `upstream_cost_multiplier`。逐字段的类型与约束见上文「创建账号」的字段表（`base_url` 按**合并后**的模板凭据类型判定、`upstream_key` 按**合并后**的模板类型判定等）。
 
-`fields` 必须至少提供一字段；`ids` 中任一 id 不存在 → `404`（事务全败）。成功 `200`：`{"updated": 1}`。生命周期/倍率/缓存域**不经批量面**——fenced 端点逐账号 CAS，代际不可批量盲写。
+`fields` 必须至少提供一字段；`ids` 中任一 id 不存在 → `404`（事务全败）。成功 `200`：`{"updated": N, "items": [{"account_id": 1, "lifecycle_revision": 2}, ...]}`——**逐账号**回显新 C，供客户端下一次 CAS。批量面不携带逐账号前置条件（无 `If-Match`），但代际仍逐账号原子 +1；批量改 `group_ids` 时旧组与新组都会被刷新（旧∪新）。
 
 ### 账号其他端点
 
 | 方法/路径 | 说明 | 响应 |
 |---|---|---|
 | `GET /api/admin/accounts/{id}` | 单个账号 | `200`：账号对象；`404` 不存在 |
-| `PUT /api/admin/accounts/{id}` | 全量更新（字段同创建；凭据替换 CAS 代际 +1） | `200`：更新后账号对象 |
+| `PATCH /api/admin/accounts/{id}` | 部分更新（唯一字段模型 `AccountConfigPatch`，三态语义；可选 `If-Match` 前置条件） | `200`：更新后账号对象；陈旧 → `412` |
 | `DELETE /api/admin/accounts/{id}` | 删除 | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id） |
 
 ---
@@ -899,8 +894,8 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 - **条件投递**：仅当规则集中存在 `when.kind` 为 `nil`（任意）或 `ok` 的规则时，`ok` 事件才进入匹配；否则 ok 事件直接被跳过（性能优化）。ok 事件只服务于自定义观测/恢复类规则（种子规则不含 ok 规则——健康恢复由 RuntimeHealth 探针承担，见上节）。
 - **首中即停**：按 `priority` 升序逐规则匹配，首个命中即执行其 `then` 全部动作，不再继续。
 - **命中不清零窗口**：计数窗口为滑动窗口，命中不重置计数（自然衰减）；统计窗口固定粒度近似，误差 ≤ 一个粒度。
-- **throttle 语义**：命中且 `then.throttle` 提供 → RuntimeHealth 状态机迁移（`READY → RETRY_AFTER|OPEN → PROBING → READY`），键 `(account, QualityClassID|wildcard, lifecycle_revision)`；跨实例 ≤1s 收敛（Redis 全量快照 + 定向事件）。到期不自动 READY——进入 PROBING 由单 permit 探针接管。
-- **fail_account 语义**：命中即走统一 FailureHandler：进程本地 fail-closed latch 先生效（本实例立即禁选，同代际静态重载不清除），PG CAS 成功才落 `failed_at` + 代际 +1 + NOTIFY（其它实例收敛；PG 写失败不重试——latch 兜底本实例，远端由其它路径收敛）。
+- **throttle 语义**：命中且 `then.throttle` 提供 → RuntimeHealth 状态机迁移（`READY → RETRY_AFTER|OPEN → PROBING → READY`），键 `(account, QualityClassID|wildcard, identity_revision)`；跨实例 ≤1s 收敛（Redis 全量快照 + 定向事件）。到期不自动 READY——进入 PROBING 由单 permit 探针接管。
+- **fail_account 语义**：命中即走统一 FailureHandler：进程本地 fail-closed latch 先生效（本实例立即禁选，同代际静态重载不清除），PG CAS 成功才落 `failed_at` + C +1（K 不变——失效写入不是身份写入）+ 组级 NOTIFY（其它实例收敛；PG 写失败不重试——latch 兜底本实例，远端由其它路径收敛）。
 - **动作生效即时性**：规则增删改自动触发引擎重载（全实例同步，重载清窗口计数）；命中动作本地即时应用，持久化/跨实例同步走有界队列尽力投递（可丢，无 outbox——四类丢弃指标 ops 可见）。
 
 ### 创建规则
