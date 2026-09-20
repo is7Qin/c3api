@@ -40,6 +40,8 @@ type Account struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// LifecycleRevision holds the value of the "lifecycle_revision" field.
 	LifecycleRevision int64 `json:"lifecycle_revision,omitempty"`
+	// IdentityRevision holds the value of the "identity_revision" field.
+	IdentityRevision int64 `json:"identity_revision,omitempty"`
 	// UpstreamCostMultiplierBp holds the value of the "upstream_cost_multiplier_bp" field.
 	UpstreamCostMultiplierBp int `json:"upstream_cost_multiplier_bp,omitempty"`
 	// CacheDomain holds the value of the "cache_domain" field.
@@ -105,7 +107,7 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case account.FieldEnabled:
 			values[i] = new(sql.NullBool)
-		case account.FieldID, account.FieldTemplateID, account.FieldMaxConcurrency, account.FieldLifecycleRevision, account.FieldUpstreamCostMultiplierBp:
+		case account.FieldID, account.FieldTemplateID, account.FieldMaxConcurrency, account.FieldLifecycleRevision, account.FieldIdentityRevision, account.FieldUpstreamCostMultiplierBp:
 			values[i] = new(sql.NullInt64)
 		case account.FieldName, account.FieldBaseURL, account.FieldUpstreamKey, account.FieldLastError, account.FieldFailureSource, account.FieldCacheDomain:
 			values[i] = new(sql.NullString)
@@ -202,6 +204,12 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field lifecycle_revision", values[i])
 			} else if value.Valid {
 				_m.LifecycleRevision = value.Int64
+			}
+		case account.FieldIdentityRevision:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field identity_revision", values[i])
+			} else if value.Valid {
+				_m.IdentityRevision = value.Int64
 			}
 		case account.FieldUpstreamCostMultiplierBp:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -328,6 +336,9 @@ func (_m *Account) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("lifecycle_revision=")
 	builder.WriteString(fmt.Sprintf("%v", _m.LifecycleRevision))
+	builder.WriteString(", ")
+	builder.WriteString("identity_revision=")
+	builder.WriteString(fmt.Sprintf("%v", _m.IdentityRevision))
 	builder.WriteString(", ")
 	builder.WriteString("upstream_cost_multiplier_bp=")
 	builder.WriteString(fmt.Sprintf("%v", _m.UpstreamCostMultiplierBp))

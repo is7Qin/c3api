@@ -148,6 +148,7 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 		FailureSource:            a.FailureSource,
 		Enabled:                  a.Enabled,
 		LifecycleRevision:        a.LifecycleRevision,
+		IdentityRevision:         a.IdentityRevision,
 		UpstreamCostMultiplierBp: a.UpstreamCostMultiplierBp,
 		CacheDomain:              a.CacheDomain,
 		CreatedAt:                a.CreatedAt, UpdatedAt: a.UpdatedAt, DeletedAt: a.DeletedAt,

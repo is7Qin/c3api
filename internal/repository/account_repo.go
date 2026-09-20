@@ -51,6 +51,11 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 		if a.LifecycleRevision != 0 {
 			b = b.SetLifecycleRevision(a.LifecycleRevision)
 		}
+		// 身份纪元（K）按存在性写：缺省（0）= 不写 → 落 DB 默认 1（与
+		// LifecycleRevision 同款语义；§3.2 的创建默认由 service 收口显式给 1）。
+		if a.IdentityRevision != 0 {
+			b = b.SetIdentityRevision(a.IdentityRevision)
+		}
 		// 新建账号恒默认启用（enabled DB 默认 true）：创建面无 Enabled 字段
 		// （启停唯一入口是 fenced POST /accounts/{id}/enabled），零值 false
 		// 不能解读为显式禁用——此前按"带生命周期字段即显式落 false"会把所有
@@ -225,14 +230,30 @@ func (r *AccountRepo) SetAccountFailed(ctx context.Context, id int64, failedAt t
 // ErrStaleRevision CAS 失效：期望 revision 已过期。
 var ErrStaleRevision = fmt.Errorf("%w: stale lifecycle_revision", ErrConflict)
 
-// FailAccountCAS 生命周期 fenced 失效：CAS expectedRevision 并原子 +1，设置
-// failed_at/last_error/failure_source。0 行命中 → stale（ErrStaleRevision）。
-func (r *AccountRepo) FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error {
+// ErrStaleIdentityRevision 失效路径 CAS 失效：期望 identity_revision（K）
+// 已过期。失效事件携带它被计算时所见的 K；K 只由管理面身份写入推进，
+// 故 stale 在此意味着"身份已授权变更，旧判决作废"——与 C 前置条件的
+// ErrStaleRevision（"客户端令牌过期"）语义不同，不得混用（errors.Is
+// 分支靠它区分 K 陈旧与 C 陈旧）。
+var ErrStaleIdentityRevision = fmt.Errorf("%w: stale identity_revision", ErrConflict)
+
+// FailAccountCAS 生命周期 fenced 失效：guard K（expectedIdentityRevision）
+// 并原子 +1 C，设置 failed_at/last_error/failure_source。0 行命中 → K
+// stale（ErrStaleIdentityRevision）。
+//
+// 非对称更新（必须 pin 住）：guard 的是 K，被推进的是 C。C 必须用相对自增
+// AddLifecycleRevision(1)：guard 不再钉住 C，SetLifecycleRevision(
+// expectedRevision+1) 会把 expected（一个 K 值）写进 C——C 同时是客户端
+// CAS 令牌与重编译水位，回退/错写会同时破坏两者。
+//
+// K 本身在此不推进：失效是运行时观测写入，不是管理面身份写入（§2.1）；
+// 身份未变 ⇒ 在途工件的 (I,K) 身份延续，C+1 只提供"被改过"的水位信号。
+func (r *AccountRepo) FailAccountCAS(ctx context.Context, id int64, expectedIdentityRevision int64, source string, failedAt time.Time, reason string) error {
 	u := r.client.Account.Update().
-		Where(account.IDEQ(id), account.LifecycleRevisionEQ(expectedRevision)).
+		Where(account.IDEQ(id), account.IdentityRevisionEQ(expectedIdentityRevision)).
+		AddLifecycleRevision(1).
 		SetFailedAt(failedAt).
-		SetFailureSource(source).
-		SetLifecycleRevision(expectedRevision + 1)
+		SetFailureSource(source)
 	if reason != "" {
 		u = u.SetLastError(reason)
 	}
@@ -241,7 +262,7 @@ func (r *AccountRepo) FailAccountCAS(ctx context.Context, id int64, expectedRevi
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, id, expectedRevision)
+		return fmt.Errorf("%w: id=%d expected identity revision %d stale", ErrStaleIdentityRevision, id, expectedIdentityRevision)
 	}
 	return nil
 }

@@ -31,6 +31,11 @@ func (Account) Fields() []ent.Field {
 		field.String("failure_source").Optional().Nillable(),
 		field.Bool("enabled").Default(true),
 		field.Int64("lifecycle_revision").Default(1),
+		// identity_revision 身份纪元（K，spec §5.2）：仅管理面身份类字段写入
+		// （§2.1，含可轮换凭据）使其 +1；SDK 自动 token 刷新不推进。
+		// Default(1) 必需：非空列在 schema 创建/ADD COLUMN 时需要默认值，
+		// 且定义"新行初值 = 1"（§3.2 创建默认 identity_revision=1）。
+		field.Int64("identity_revision").Default(1),
 		field.Int("upstream_cost_multiplier_bp").Default(10000),
 		field.String("cache_domain").Optional().Nillable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),

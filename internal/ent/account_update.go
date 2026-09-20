@@ -229,6 +229,27 @@ func (_u *AccountUpdate) AddLifecycleRevision(v int64) *AccountUpdate {
 	return _u
 }
 
+// SetIdentityRevision sets the "identity_revision" field.
+func (_u *AccountUpdate) SetIdentityRevision(v int64) *AccountUpdate {
+	_u.mutation.ResetIdentityRevision()
+	_u.mutation.SetIdentityRevision(v)
+	return _u
+}
+
+// SetNillableIdentityRevision sets the "identity_revision" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableIdentityRevision(v *int64) *AccountUpdate {
+	if v != nil {
+		_u.SetIdentityRevision(*v)
+	}
+	return _u
+}
+
+// AddIdentityRevision adds value to the "identity_revision" field.
+func (_u *AccountUpdate) AddIdentityRevision(v int64) *AccountUpdate {
+	_u.mutation.AddIdentityRevision(v)
+	return _u
+}
+
 // SetUpstreamCostMultiplierBp sets the "upstream_cost_multiplier_bp" field.
 func (_u *AccountUpdate) SetUpstreamCostMultiplierBp(v int) *AccountUpdate {
 	_u.mutation.ResetUpstreamCostMultiplierBp()
@@ -504,6 +525,12 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedLifecycleRevision(); ok {
 		_spec.AddField(account.FieldLifecycleRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.IdentityRevision(); ok {
+		_spec.SetField(account.FieldIdentityRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedIdentityRevision(); ok {
+		_spec.AddField(account.FieldIdentityRevision, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.UpstreamCostMultiplierBp(); ok {
 		_spec.SetField(account.FieldUpstreamCostMultiplierBp, field.TypeInt, value)
@@ -866,6 +893,27 @@ func (_u *AccountUpdateOne) AddLifecycleRevision(v int64) *AccountUpdateOne {
 	return _u
 }
 
+// SetIdentityRevision sets the "identity_revision" field.
+func (_u *AccountUpdateOne) SetIdentityRevision(v int64) *AccountUpdateOne {
+	_u.mutation.ResetIdentityRevision()
+	_u.mutation.SetIdentityRevision(v)
+	return _u
+}
+
+// SetNillableIdentityRevision sets the "identity_revision" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableIdentityRevision(v *int64) *AccountUpdateOne {
+	if v != nil {
+		_u.SetIdentityRevision(*v)
+	}
+	return _u
+}
+
+// AddIdentityRevision adds value to the "identity_revision" field.
+func (_u *AccountUpdateOne) AddIdentityRevision(v int64) *AccountUpdateOne {
+	_u.mutation.AddIdentityRevision(v)
+	return _u
+}
+
 // SetUpstreamCostMultiplierBp sets the "upstream_cost_multiplier_bp" field.
 func (_u *AccountUpdateOne) SetUpstreamCostMultiplierBp(v int) *AccountUpdateOne {
 	_u.mutation.ResetUpstreamCostMultiplierBp()
@@ -1171,6 +1219,12 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.AddedLifecycleRevision(); ok {
 		_spec.AddField(account.FieldLifecycleRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.IdentityRevision(); ok {
+		_spec.SetField(account.FieldIdentityRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedIdentityRevision(); ok {
+		_spec.AddField(account.FieldIdentityRevision, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.UpstreamCostMultiplierBp(); ok {
 		_spec.SetField(account.FieldUpstreamCostMultiplierBp, field.TypeInt, value)
