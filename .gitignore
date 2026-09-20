@@ -23,3 +23,6 @@ docs/superpowers/
 docs/review/
 !deploy/config.toml
 
+# 本地演示环境（依赖 compose + 示例数据 + 验收脚本 + 本地配置备份）
+demo/
+
