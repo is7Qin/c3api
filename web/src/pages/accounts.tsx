@@ -35,7 +35,7 @@ import { CodexImportDialog } from '@/components/codex-import/import-dialog'
 
 type AccountView = components['schemas']['AccountView']
 type AccountCreate = components['schemas']['AccountCreate']
-type AccountPatch = components['schemas']['AccountPatch']
+type AccountConfigPatch = components['schemas']['AccountConfigPatch']
 type AccountExt = components['schemas']['AccountExt']
 type Group = components['schemas']['Group']
 
@@ -197,10 +197,10 @@ interface FormState {
   upstream_key: string
   max_concurrency: string
   group_ids: number[]
-  // 生命周期表单项（创建/编辑对话框直配；提交时链式 fenced 写）：
+  // 生命周期表单项（创建/编辑对话框直配；随创建/PATCH 请求体一次落库）：
   // cost_multiplier 字符串形态（默认 '1' = ×1），提交前经 parseMultiplier
-  // 校验（0–10，bp 4 位小数）；cache_domain 空串 = 账号私有域（创建随
-  // POST body 直带，编辑走 fenced /cache-domain）。
+  // 校验（0–10，bp 4 位小数）；cache_domain 空串 = 账号私有域（编辑态按变化
+  // 发送 null = 清空）。
   cost_multiplier: string
   cache_domain: string
   // codex 凭据（按模板类型分流：codex-oauth → codex_oauth_* 组；codex-pat →
@@ -257,21 +257,22 @@ function toForm(a: AccountView): FormState {
   }
 }
 
-// PUT 全量替换：重建 AccountCreate（只带契约字段，不带运行时字段）。
-// 编辑态总是发送 group_ids（含空数组 = 清空）；创建态仅已选时发送
-// （缺省 = 无分组，语义与 null 一致）。
-// 生命周期写面分离：倍率只走 fenced /cost-multiplier（创建/编辑皆链式补写）；
-// cache_domain 创建随 POST body 直带（非空才带，空 = 私有域缺省），编辑走
-// fenced /cache-domain——PUT 本体不带（后端以当前值保留）。
+// 三态字段模型（创建/PATCH/批量共用）的请求体：只带契约字段，不带运行时字段。
+// 缺席 = 不变（创建态 = 取后端缺省）；可空标量 null = 清空；group_ids 编辑态
+// 总是发送（含空数组 = 清空），创建态仅已选时发送。
+// 倍率/缓存域不是独立端点：随同一请求体一次落库（编辑态仅变化项才带）。
 function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): AccountCreate {
   const body: AccountCreate = {
     name: f.name.trim(),
     template_id: Number(f.template_id),
     // 空串归一 null；Codex 强制 null（SDK default, non-empty forbidden)
     base_url: isCodex ? null : (f.base_url.trim() || null),
-    upstream_key: f.upstream_key,
-    max_concurrency: f.max_concurrency === '' ? 8 : Number(f.max_concurrency),
   }
+  // upstream_key 缺席 = 不变；空值不发送（codex 模板本无静态 key；非 codex 模板
+  // 的空 key 由后端按模板类型条件必填拒绝为 400，不在此处伪造空串）。
+  if (f.upstream_key) body.upstream_key = f.upstream_key
+  // max_concurrency 缺席 = 不变 / 创建取后端配置缺省（不再硬编码 8）。
+  if (f.max_concurrency !== '') body.max_concurrency = Number(f.max_concurrency)
   if (current || f.group_ids.length > 0) body.group_ids = f.group_ids
   if (!current) {
     const d = f.cache_domain.trim()
@@ -337,11 +338,12 @@ export default function Accounts() {
   const [offset, setOffset] = useState(0)
   const [limit, setLimit] = useState(20)
   const [templateId, setTemplateId] = useState('all') // 'all' = 全部模板
+  const [enabledFilter, setEnabledFilter] = useState('all') // 'all' | 'true' | 'false'（管理面启停，与失效无关）
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: [
       'accounts',
-      { limit, offset, name, sort: activeSort ?? 'id', order, template_id: templateId === 'all' ? undefined : Number(templateId) },
+      { limit, offset, name, sort: activeSort ?? 'id', order, template_id: templateId === 'all' ? undefined : Number(templateId), enabled: enabledFilter === 'all' ? undefined : enabledFilter === 'true' },
     ],
     queryFn: () =>
       api.listAccounts({
@@ -351,6 +353,7 @@ export default function Accounts() {
         sort: activeSort ?? 'id',
         order,
         template_id: templateId === 'all' ? undefined : Number(templateId),
+        enabled: enabledFilter === 'all' ? undefined : enabledFilter === 'true',
       }),
     refetchInterval: 10_000,
   })
@@ -529,10 +532,12 @@ export default function Accounts() {
     }
   }
   const changeTemplate = (v: string) => { setTemplateId(v); resetPage() }
-  const hasFilters = name !== '' || templateId !== 'all'
+  const changeEnabled = (v: string) => { setEnabledFilter(v); resetPage() }
+  const hasFilters = name !== '' || templateId !== 'all' || enabledFilter !== 'all'
   const clearFilters = () => {
     setName('')
     setTemplateId('all')
+    setEnabledFilter('all')
     resetPage()
   }
 
@@ -548,7 +553,7 @@ export default function Accounts() {
     },
   })
   const batchUpdate = useMutation({
-    mutationFn: (p: { ids: number[]; fields: AccountPatch }) => api.updateAccountsBatch(p.ids, p.fields),
+    mutationFn: (p: { ids: number[]; fields: AccountConfigPatch }) => api.updateAccountsBatch(p.ids, p.fields),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
       setSelected([])
@@ -598,14 +603,14 @@ export default function Accounts() {
     }
   }, [isBatchCodex, batchForm.base_url, batchForm.clearBaseURL])
   const submitBatchUpdate = () => {
-    const fields: AccountPatch = {}
+    const fields: AccountConfigPatch = {}
     if (batchForm.name.trim()) fields.name = batchForm.name.trim()
     if (batchForm.upstream_key) fields.upstream_key = batchForm.upstream_key
-    // base_url 批量三态（C1）：勾选清空 → "" = 清空（回继承模板）；
+    // base_url 三态：勾选清空 → null = 清空（回继承模板）；
     // 未勾选且输入非空 → 落值；未勾选且空 → 不变（不发送）
     // 含 Codex 时禁止提交 base_url
     if (!isBatchCodex) {
-      if (batchForm.clearBaseURL) fields.base_url = ''
+      if (batchForm.clearBaseURL) fields.base_url = null
       else if (batchForm.base_url.trim()) fields.base_url = batchForm.base_url.trim()
     }
     if (batchForm.max_concurrency !== '') fields.max_concurrency = Number(batchForm.max_concurrency)
@@ -696,16 +701,11 @@ export default function Accounts() {
 
   // 表单直填凭据：codex 类型账号本体（upstream_key 可空）+ 链式 PUT account_ext
   // （codex_oauth_* 列组 / codex_pat_key 按模板类型分流；与「扩展配置」弹窗共用写路径）。
-  // 生命周期链式写（创建/编辑表单直配倍率与缓存域）：
-  // 创建：POST（cache_domain 非空随 body 直带）→ 仅倍率 ≠ ×1 时 fenced
-  //   PUT /cost-multiplier（revision 取 POST 响应；×0 免费只能走这条腿）；
-  // 编辑：PUT 本体 → 仅变化项 fenced（倍率先、缓存域后），每腿用上一响应
-  //   返回的 fresh revision 链式 CAS。
-  // 返回 null = 全成功；返回非空字符串 = 部分成功（已精确定位失败腿，前腿
-  // 已落盘）——onSuccess 关窗 + error toast，不伪装全成功；主干失败仍 throw
-  // 走内联错误展示（对话框保持打开可重试）。
+  // 创建与编辑各一次请求落全部字段（含倍率与缓存域）：创建走 POST /accounts，
+  // 编辑走 PATCH /accounts/{id}（If-Match = 读到的代际，陈旧 → 412）。
+  // 失败 throw → 内联错误展示（对话框保持打开可重试）。
   const save = useMutation({
-    mutationFn: async (f: FormState): Promise<string | null> => {
+    mutationFn: async (f: FormState): Promise<void> => {
       const mult = parseMultiplier(f.cost_multiplier)
       if (mult === null) throw new Error(t('accounts.multiplier.invalid'))
       const domTrim = f.cache_domain.trim()
@@ -720,9 +720,6 @@ export default function Accounts() {
       const unresolved = !!f.template_id && effCt == null
       const isCodexForBody = isCodexCt(effCt) || unresolved
       const ct = effCt
-      // fenced 腿失败明细：409 走 conflict 文案（列表已在 onSuccess 刷新），其余透后端原文
-      const legDetail = (e: unknown) =>
-        e instanceof ApiError && e.status === 409 ? t('accounts.conflict') : ((e as Error)?.message ?? String(e))
       const saveCodexExt = async (id: number) => {
         if (!(id && isCodexCt(ct))) return
         const cur = extEcho.data
@@ -751,80 +748,46 @@ export default function Accounts() {
         await api.putAccountExt(id, extBody)
       }
       if (!editing) {
-        // 创建：POST（cache_domain 非空已随 body）→ 倍率 ≠ ×1 才补 fenced 腿
+        // 创建：一次 POST 落全部字段（倍率非 ×1 时随体带，无补写腿）
         // structurally force base_url null for Codex/unresolved even if form still stale
-        const created = await api.createAccount(toBody(f, null, isCodexForBody))
-        let partial: string | null = null
-        if (mult !== 1) {
-          try {
-            await api.updateAccountCostMultiplier(created.ID!, {
-              multiplier: mult,
-              expected_revision: created.LifecycleRevision ?? 0,
-            })
-          } catch (e) {
-            partial = t('accounts.createMultFailed', { message: legDetail(e) })
-          }
-        }
+        const body = toBody(f, null, isCodexForBody)
+        if (mult !== 1) body.upstream_cost_multiplier = mult
+        const created = await api.createAccount(body)
         await saveCodexExt(created.ID!)
-        return partial
+        return
       }
-      // 编辑：PUT 本体（生命周期字段后端保留当前值）→ 仅变化项 fenced，
-      // 倍率先、缓存域后，每腿用上一响应的 fresh revision 链式 CAS
+      // 编辑：一次 PATCH 落全部变更（仅变化项才带倍率/缓存域；缺席 = 不变）
       const id = editing.ID!
-      const updated = await api.updateAccount(id, toBody(f, editing, isCodexForBody))
-      let revision = updated.LifecycleRevision
       const normMult = (v?: number | null) => Math.round((v ?? 1) * 10000) / 10000
-      let multDone = false
-      if (mult !== normMult(editing.UpstreamCostMultiplier)) {
-        try {
-          const after = await api.updateAccountCostMultiplier(id, {
-            multiplier: mult,
-            expected_revision: revision ?? 0,
-          })
-          revision = after.LifecycleRevision ?? revision
-          multDone = true
-        } catch (e) {
-          return t('accounts.editMultFailed', { message: legDetail(e) })
-        }
-      }
-      if (newDom !== (editing.CacheDomain ?? null)) {
-        try {
-          await api.updateAccountCacheDomain(id, {
-            cache_domain: newDom,
-            expected_revision: revision ?? 0,
-          })
-        } catch (e) {
-          return t('accounts.editDomainFailed', {
-            multDone: multDone ? t('accounts.editDomainMultDone') : '',
-            message: legDetail(e),
-          })
-        }
-      }
+      const patch: AccountConfigPatch = toBody(f, editing, isCodexForBody)
+      if (mult !== normMult(editing.UpstreamCostMultiplier)) patch.upstream_cost_multiplier = mult
+      if (newDom !== (editing.CacheDomain ?? null)) patch.cache_domain = newDom
+      await api.updateAccount(id, patch, editing.LifecycleRevision)
       await saveCodexExt(id)
-      return null
+      return
     },
-    onSuccess: (partial) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
       setDialogOpen(false)
-      if (partial) toast.add({ title: partial, type: 'error' })
-      else toast.add({ title: t('accounts.saveSuccess'), type: 'success' })
+      toast.add({ title: t('accounts.saveSuccess'), type: 'success' })
     },
   })
   // —— 生命周期 fenced 动作（CAS：expected_revision = 读到的 LifecycleRevision；
   // 409 = 他端已变更 → 提示 + 重读列表后重试；revision 缺失 → 按钮禁用 fail-closed）——
   const lifecycleErr = (e: unknown) => {
     if (e instanceof ApiUnauthorized) return // 401 全局拦截收敛，不叠加 toast
-    if (e instanceof ApiError && e.status === 409) {
+    if (e instanceof ApiError && (e.status === 409 || e.status === 412)) {
       toast.add({ title: t('accounts.conflict'), type: 'error' })
       qc.invalidateQueries({ queryKey: ['accounts'] })
       return
     }
     toast.add({ title: (e as Error)?.message ?? String(e), type: 'error' })
   }
-  // 管理面启停（/enabled）：与运行时失效恢复（/recover）语义分离——enable 不清失效。
+  // 管理面启停（PATCH 的 enabled 字段）：与运行时失效恢复（/recover）语义分离——
+  // enable 不清失效。
   const setEnabled = useMutation({
     mutationFn: (a: AccountView) =>
-      api.setAccountEnabled(a.ID!, { enabled: a.Enabled !== true, expected_revision: a.LifecycleRevision ?? 0 }),
+      api.updateAccount(a.ID!, { enabled: a.Enabled !== true }, a.LifecycleRevision),
     onSuccess: (_acc, a) => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
       toast.add({ title: t(a.Enabled !== true ? 'accounts.enableSuccess' : 'accounts.disableSuccess'), type: 'success' })
@@ -841,10 +804,10 @@ export default function Accounts() {
     },
     onError: lifecycleErr,
   })
-  // 采购成本倍率（/cost-multiplier，fenced；正常值 ×0–×10，UI 边界校验镜像后端）
+  // 采购成本倍率（PATCH 的 upstream_cost_multiplier；正常值 ×0–×10，UI 边界校验镜像后端）
   const multSave = useMutation({
     mutationFn: (p: { id: number; multiplier: number; expectedRevision: number }) =>
-      api.updateAccountCostMultiplier(p.id, { multiplier: p.multiplier, expected_revision: p.expectedRevision }),
+      api.updateAccount(p.id, { upstream_cost_multiplier: p.multiplier }, p.expectedRevision),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
       setMultTarget(null)
@@ -852,10 +815,10 @@ export default function Accounts() {
     },
     onError: lifecycleErr,
   })
-  // 缓存域（/cache-domain，fenced；空 → null = 清空回账号私有域）
+  // 缓存域（PATCH 的 cache_domain；null = 清空回账号私有域）
   const domainSave = useMutation({
     mutationFn: (p: { id: number; cacheDomain: string | null; expectedRevision: number }) =>
-      api.updateAccountCacheDomain(p.id, { cache_domain: p.cacheDomain, expected_revision: p.expectedRevision }),
+      api.updateAccount(p.id, { cache_domain: p.cacheDomain }, p.expectedRevision),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
       setDomainTarget(null)
@@ -1013,6 +976,21 @@ export default function Accounts() {
             {templates.map(tp => (
               <SelectItem key={tp.ID} value={String(tp.ID)} label={tp.Name ?? `#${tp.ID}`}>{tp.Name ?? `#${tp.ID}`}</SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+        {/* 启停三态筛选（管理面 enabled；与运行时失效 failed_at 无关） */}
+        <Select
+          items={{ all: t('accounts.state.all'), true: t('accounts.state.enabled'), false: t('accounts.state.disabled') }}
+          value={enabledFilter}
+          onValueChange={changeEnabled}
+        >
+          <SelectTrigger size="default" className="w-36 data-[size=default]:h-9" aria-label={t('accounts.filterState')}>
+            <SelectValue placeholder={t('accounts.filterState')} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" label={t('accounts.state.all')}>{t('accounts.state.all')}</SelectItem>
+            <SelectItem value="true" label={t('accounts.state.enabled')}>{t('accounts.state.enabled')}</SelectItem>
+            <SelectItem value="false" label={t('accounts.state.disabled')}>{t('accounts.state.disabled')}</SelectItem>
           </SelectContent>
         </Select>
       </ListToolbar>
@@ -1331,9 +1309,8 @@ export default function Accounts() {
               </div>
             )}
             {/* 生命周期直配（创建/编辑表单）：倍率默认 ×1，缓存域留空 =
-                账号私有域。提交时链式 fenced 写（创建：cache_domain 随 POST，
-                倍率 ≠ ×1 补一腿；编辑：仅变化项，倍率先、域后）；列表行内
-                fenced 弹窗保留（点击倍率/缓存域单元格）。 */}
+                账号私有域。随创建/PATCH 请求体一次落库（编辑态仅变化项才带）；
+                列表行内弹窗保留（点击倍率/缓存域单元格）。 */}
             <div className="space-y-1.5 max-w-40">
               <Label htmlFor="acc-max">{t('accounts.maxLabel')}</Label>
               <Input id="acc-max" type="number" min={1} value={form.max_concurrency} onChange={e => setForm(f => ({ ...f, max_concurrency: e.target.value }))} />
@@ -1431,7 +1408,7 @@ export default function Accounts() {
         </DialogContent>
       </Dialog>
 
-      {/* —— 批量更新对话框：AccountPatch 字段子集（空 = 保持原值） —— */}
+      {/* —— 批量更新对话框：AccountConfigPatch 字段子集（缺席 = 保持原值） —— */}
       <Dialog open={batchUpdateOpen} onOpenChange={o => { if (!o) closeBatchUpdate() }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

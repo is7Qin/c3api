@@ -24,7 +24,7 @@ import (
 // 基座见 pg_account_groups_test.go 的 newPGRepos（DROP SCHEMA 重建）。
 // ---------------------------------------------------------------------------
 
-func boolPtrPG(b bool) *bool { return &b }
+func boolPtr(b bool) *bool { return &b }
 
 func strPtrPG(s string) *string { return &s }
 
@@ -39,7 +39,7 @@ func TestTemplateExtPG(t *testing.T) {
 	t.Run("strip_image_tools roundtrip", func(t *testing.T) {
 		saved, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-			StripImageTools: boolPtrPG(true),
+			StripImageTools: boolPtr(true),
 		})
 		require.NoError(t, err)
 		require.Equal(t, tpl.ID, saved.TemplateID)
@@ -55,7 +55,7 @@ func TestTemplateExtPG(t *testing.T) {
 		// 幂等 upsert：再写（改值）→ 仍单行、值更新
 		saved, err = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-			StripImageTools: boolPtrPG(false),
+			StripImageTools: boolPtr(false),
 		})
 		require.NoError(t, err)
 		require.False(t, *saved.StripImageTools)
@@ -79,7 +79,7 @@ func TestTemplateExtPG(t *testing.T) {
 		// 类型一致性——service 层负责）
 		for _, ct := range []credential.Type{credential.TypeCodexOAuth, credential.TypeCodexPAT} {
 			saved, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
-				TemplateID: tpl.ID, CredentialType: ct, StripImageTools: boolPtrPG(true),
+				TemplateID: tpl.ID, CredentialType: ct, StripImageTools: boolPtr(true),
 			})
 			require.NoError(t, err)
 			require.Equal(t, ct, saved.CredentialType)

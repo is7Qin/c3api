@@ -90,7 +90,7 @@ func compilerHealthKeyFor(acc *domain.Account, format domain.RequestFormat, mode
 
 func compilerLatchKeyFor(acc *domain.Account) latch.LatchKey {
 	fp, _ := candidateFingerprint(acc)
-	return latch.LatchKey{AccountID: acc.ID, Fingerprint: fp, Revision: acc.LifecycleRevision}
+	return latch.LatchKey{AccountID: acc.ID, Fingerprint: fp, IdentityRevision: acc.IdentityRevision}
 }
 
 func TestRoutingCompilerDeterministicMapOrder(t *testing.T) {

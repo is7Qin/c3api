@@ -120,7 +120,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.NoError(t, err)
 	acc, err := repos.CreateAccount(ctx, &domain.Account{
 		Name: "acc-1", TemplateID: tpl.ID, UpstreamKey: "sk-upstream",
-		MaxConcurrency: 4,
+		MaxConcurrency: 4, Enabled: true,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.SetAccountGroups(ctx, acc.ID, []int64{g.ID})) // 成员关系独立写入（CreateAccount 不落 m2m）
@@ -140,7 +140,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	sched := scheduler.New(scheduler.Config{
 		// sync ticker 不依赖（SyncInterval 小时级兜底）；编译道必须 Start——
 		// Select 执行预编译计划，0 间隔误配防 ticker 空转 panic。
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
 	schedCtx, cancelSched := context.WithCancel(ctx)
 	t.Cleanup(cancelSched)
@@ -273,7 +273,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	// --- 构造链（与 main 装配序一致：模块构造零 reload——单一入口） ---
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
 	var seenCron atomic.Pointer[string]
 	obs := &observingKeyRepo{KeyRepo: repos.Keys, seen: &seenCron}

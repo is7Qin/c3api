@@ -250,36 +250,12 @@ func (r *Repository) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.A
 	return r.Accounts.ListAccounts(ctx, q)
 }
 
-func (r *Repository) UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
-	return r.Accounts.UpdateAccount(ctx, a)
-}
-
-func (r *Repository) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64) (*domain.Account, error) {
-	return r.Accounts.UpdateAccountCAS(ctx, a, expectedRevision)
-}
-
 func (r *Repository) FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error {
 	return r.Accounts.FailAccountCAS(ctx, id, expectedRevision, source, failedAt, reason)
 }
 
 func (r *Repository) RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error {
 	return r.Accounts.RecoverAccountCAS(ctx, id, expectedRevision)
-}
-
-func (r *Repository) SetAccountEnabledCAS(ctx context.Context, id int64, expectedRevision int64, enabled bool) error {
-	return r.Accounts.SetAccountEnabledCAS(ctx, id, expectedRevision, enabled)
-}
-
-func (r *Repository) ReplaceAccountCredentialCAS(ctx context.Context, id int64, expectedRevision int64, newKey string, newBaseURL *string) error {
-	return r.Accounts.ReplaceAccountCredentialCAS(ctx, id, expectedRevision, newKey, newBaseURL)
-}
-
-func (r *Repository) UpdateAccountCostMultiplierCAS(ctx context.Context, id int64, expectedRevision int64, multiplier int) error {
-	return r.Accounts.UpdateAccountCostMultiplierCAS(ctx, id, expectedRevision, multiplier)
-}
-
-func (r *Repository) UpdateAccountCacheDomainCAS(ctx context.Context, id int64, expectedRevision int64, domain *string) error {
-	return r.Accounts.UpdateAccountCacheDomainCAS(ctx, id, expectedRevision, domain)
 }
 
 func (r *Repository) DeleteAccount(ctx context.Context, id int64) error {
@@ -290,7 +266,7 @@ func (r *Repository) DeleteAccountsBatch(ctx context.Context, ids []int64) error
 	return r.Accounts.DeleteAccountsBatch(ctx, ids)
 }
 
-func (r *Repository) UpdateAccountsBatch(ctx context.Context, ids []int64, p AccountPatch) error {
+func (r *Repository) UpdateAccountsBatch(ctx context.Context, ids []int64, p AccountPatch) ([]AccountWriteResult, error) {
 	return r.Accounts.UpdateAccountsBatch(ctx, ids, p)
 }
 
@@ -364,12 +340,9 @@ func (r *Repository) WriteOAuthRotation(ctx context.Context, accountID int64, at
 	return r.AccountExts.WriteOAuthRotation(ctx, accountID, at, rt, expiresAt)
 }
 
-// WritePATKey pat 凭据列部分更新（批量导入 updated 路径；WriteOAuthRotation
-// 的 pat 对称形态）；行缺失 → ErrNotFound。
-func (r *Repository) WritePATKey(ctx context.Context, accountID int64, patKey string) error {
-	return r.AccountExts.WritePATKey(ctx, accountID, patKey)
-}
-
+// AdminWriteOAuthRotationCAS 管理员 OAuth 凭据轮转（fenced）：CAS
+// expectedRevision 并原子 +1，更新 ext 三列（at/rt/expires）；stale →
+// ErrStaleRevision。SDK 内部刷新走 WriteOAuthRotation（unfenced，不增代际）。
 func (r *Repository) AdminWriteOAuthRotationCAS(ctx context.Context, accountID int64, expectedRevision int64, at, rt string, expiresAt *time.Time) error {
 	return r.AccountExts.AdminWriteOAuthRotationCAS(ctx, accountID, expectedRevision, at, rt, expiresAt)
 }

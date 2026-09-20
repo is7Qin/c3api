@@ -102,8 +102,7 @@ func seedPGGroup(t *testing.T, repos *repository.Repository, name string) *domai
 func seedPGAccount(t *testing.T, repos *repository.Repository, tplID int64, name string) *domain.Account {
 	t.Helper()
 	a, err := repos.Accounts.CreateAccount(context.Background(), &domain.Account{
-		Name: name, TemplateID: tplID, UpstreamKey: "sk-" + name, MaxConcurrency: 8,
-	})
+		Name: name, TemplateID: tplID, UpstreamKey: "sk-" + name, MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	return a
 }
@@ -161,8 +160,9 @@ func TestAccountGroupsPG(t *testing.T) {
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, a1.ID, []int64{g1.ID}))
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, a2.ID, []int64{g2.ID}))
 		// 批量替换为同一组
-		require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
-			repository.AccountPatch{GroupIDs: &[]int64{g1.ID}}))
+		_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+			repository.AccountPatch{GroupIDs: &[]int64{g1.ID}})
+		require.NoError(t, err)
 		for _, id := range []int64{a1.ID, a2.ID} {
 			got, err := repos.Accounts.GetAccountGroups(ctx, id)
 			require.NoError(t, err)
@@ -170,14 +170,16 @@ func TestAccountGroupsPG(t *testing.T) {
 		}
 		// 不变（GroupIDs nil）：仅改 name，绑定不动
 		name := "renamed"
-		require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID},
-			repository.AccountPatch{Name: &name}))
+		_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID},
+			repository.AccountPatch{Name: &name})
+		require.NoError(t, err)
 		got, err := repos.Accounts.GetAccountGroups(ctx, a1.ID)
 		require.NoError(t, err)
 		require.Equal(t, []int64{g1.ID}, got, "nil = 不变")
 		// 批量清空（[]）
-		require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
-			repository.AccountPatch{GroupIDs: &[]int64{}}))
+		_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+			repository.AccountPatch{GroupIDs: &[]int64{}})
+		require.NoError(t, err)
 		for _, id := range []int64{a1.ID, a2.ID} {
 			got, err := repos.Accounts.GetAccountGroups(ctx, id)
 			require.NoError(t, err)
@@ -189,7 +191,7 @@ func TestAccountGroupsPG(t *testing.T) {
 		a1 := seedPGAccount(t, repos, tpl.ID, "c1")
 		a2 := seedPGAccount(t, repos, tpl.ID, "c2")
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, a1.ID, []int64{g1.ID}))
-		err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+		_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
 			repository.AccountPatch{GroupIDs: &[]int64{g1.ID, 999}})
 		require.ErrorIs(t, err, repository.ErrNotFound)
 		require.Contains(t, err.Error(), "999")

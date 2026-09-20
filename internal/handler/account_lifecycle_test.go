@@ -119,56 +119,61 @@ func TestAccountRecoverEndpoint(t *testing.T) {
 	require.Equal(t, 400, do(http.MethodPost, "/api/admin/accounts/1/recover", `{}`).Code, "expected_revision 必填")
 }
 
-// TestAccountEnabledEndpoint enabled 切换 fenced：翻转 +1、enable 不清失效；
-// stale → 409。
-func TestAccountEnabledEndpoint(t *testing.T) {
+// TestAccountPatchEnabled enabled 经唯一写面：落值 + 推进 C；enable 不清失效
+// 字段（恢复唯一入口 recover）。
+func TestAccountPatchEnabled(t *testing.T) {
 	_, store, _, do := newLifecycleTestHandler(t)
 
-	rec := do(http.MethodPost, "/api/admin/accounts/1/enabled", `{"enabled":false,"expected_revision":5}`)
+	rec := do(http.MethodPatch, "/api/admin/accounts/1", `{"enabled":false}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.False(t, store.accs[1].Enabled)
-	require.Equal(t, int64(6), store.accs[1].LifecycleRevision)
+	require.Equal(t, int64(6), store.accs[1].LifecycleRevision, "配置写入推进 C")
 
-	rec = do(http.MethodPost, "/api/admin/accounts/1/enabled", `{"enabled":true,"expected_revision":6}`)
+	rec = do(http.MethodPatch, "/api/admin/accounts/1", `{"enabled":true}`)
 	require.Equal(t, 200, rec.Code)
 	require.True(t, store.accs[1].Enabled)
 	require.NotNil(t, store.accs[1].FailedAt, "enable 不清失效字段（恢复唯一入口 recover）")
-
-	require.Equal(t, 409, do(http.MethodPost, "/api/admin/accounts/1/enabled", `{"enabled":true,"expected_revision":6}`).Code)
 }
 
-// TestAccountCostMultiplierEndpoint 倍率 PUT：正常值→bp 换算落库；越界 → 400；
-// stale → 409。
-func TestAccountCostMultiplierEndpoint(t *testing.T) {
+// TestAccountPatchCostMultiplier 倍率经唯一写面：正常值 → bp 换算落库；越界 → 400。
+func TestAccountPatchCostMultiplier(t *testing.T) {
 	_, store, _, do := newLifecycleTestHandler(t)
 
-	rec := do(http.MethodPut, "/api/admin/accounts/1/cost-multiplier", `{"multiplier":1.5,"expected_revision":5}`)
+	rec := do(http.MethodPatch, "/api/admin/accounts/1", `{"upstream_cost_multiplier":1.5}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Equal(t, 15000, store.accs[1].UpstreamCostMultiplierBp, "1.5 → 15000bp")
 	var acc Account
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
 	require.InDelta(t, 1.5, *acc.UpstreamCostMultiplier, 1e-9)
 
-	require.Equal(t, 400, do(http.MethodPut, "/api/admin/accounts/1/cost-multiplier", `{"multiplier":11,"expected_revision":6}`).Code)
-	require.Equal(t, 400, do(http.MethodPut, "/api/admin/accounts/1/cost-multiplier", `{"multiplier":-0.5,"expected_revision":6}`).Code)
-	require.Equal(t, 409, do(http.MethodPut, "/api/admin/accounts/1/cost-multiplier", `{"multiplier":2,"expected_revision":5}`).Code)
+	require.Equal(t, 400, do(http.MethodPatch, "/api/admin/accounts/1", `{"upstream_cost_multiplier":11}`).Code, "上界 ×10")
+	require.Equal(t, 400, do(http.MethodPatch, "/api/admin/accounts/1", `{"upstream_cost_multiplier":-0.5}`).Code, "下界 0")
 }
 
-// TestAccountCacheDomainEndpoint 缓存域 PUT：设置/清空（null）；非法域 → 400；
-// stale → 409。
-func TestAccountCacheDomainEndpoint(t *testing.T) {
+// TestAccountPatchCacheDomain 缓存域经唯一写面：设置；null = 清空（回私有域）；
+// "" → 400（哨兵已取消）；非法域 → 400。
+func TestAccountPatchCacheDomain(t *testing.T) {
 	_, store, _, do := newLifecycleTestHandler(t)
 
-	rec := do(http.MethodPut, "/api/admin/accounts/1/cache-domain", `{"cache_domain":"other.example.com","expected_revision":5}`)
+	rec := do(http.MethodPatch, "/api/admin/accounts/1", `{"cache_domain":"other.example.com"}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Equal(t, "other.example.com", *store.accs[1].CacheDomain)
 
-	rec = do(http.MethodPut, "/api/admin/accounts/1/cache-domain", `{"expected_revision":6}`)
-	require.Equal(t, 200, rec.Code)
-	require.Nil(t, store.accs[1].CacheDomain, "缺省/null = 清空回私有域")
+	rec = do(http.MethodPatch, "/api/admin/accounts/1", `{"cache_domain":""}`)
+	require.Equal(t, 400, rec.Code, "空串哨兵已取消 → 400: %s", rec.Body.String())
 
-	require.Equal(t, 400, do(http.MethodPut, "/api/admin/accounts/1/cache-domain", `{"cache_domain":"BAD domain!","expected_revision":7}`).Code)
-	require.Equal(t, 409, do(http.MethodPut, "/api/admin/accounts/1/cache-domain", `{"cache_domain":"x.example.com","expected_revision":6}`).Code)
+	rec = do(http.MethodPatch, "/api/admin/accounts/1", `{"cache_domain":null,"name":"acc1"}`)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Nil(t, store.accs[1].CacheDomain, "null = 清空回私有域")
+
+	require.Equal(t, 400, do(http.MethodPatch, "/api/admin/accounts/1", `{"cache_domain":"BAD domain!"}`).Code)
+}
+
+// TestAccountPatchRejectsEmptyBody 空补丁（无任何字段）→ 400：写面不接受无字段
+// 请求（否则等于一次纯 C 推进的空写）。
+func TestAccountPatchRejectsEmptyBody(t *testing.T) {
+	_, _, _, do := newLifecycleTestHandler(t)
+	require.Equal(t, 400, do(http.MethodPatch, "/api/admin/accounts/1", `{}`).Code)
 }
 
 // TestAccountCreateCacheDomain 创建带 cache_domain → 回显；非法域 → 400。
@@ -185,20 +190,19 @@ func TestAccountCreateCacheDomain(t *testing.T) {
 	require.Equal(t, 400, do(http.MethodPost, "/api/admin/accounts", `{"name":"acc3","template_id":1,"upstream_key":"sk-c","cache_domain":"BAD!"}`).Code)
 }
 
-// TestAccountPUTPreservesLifecycle PUT 全量更新不得 clobber 生命周期独占字段
-// （wire 面无 enabled/倍率/域/revision 入口——fenced 端点所有权）。
-func TestAccountPUTPreservesLifecycle(t *testing.T) {
+// TestAccountPatchLeavesUnmentionedFieldsUntouched 补丁**未提及**的字段必须保持
+// 原值（三态：缺省 = 不变）——enabled/倍率/缓存域不在补丁里就一个都不动。
+func TestAccountPatchLeavesUnmentionedFieldsUntouched(t *testing.T) {
 	_, store, _, do := newLifecycleTestHandler(t)
-	store.accs[1].FailedAt = nil // 健康账号 PUT 直写路径
+	store.accs[1].FailedAt = nil
 
-	rec := do(http.MethodPut, "/api/admin/accounts/1", `{"name":"renamed","template_id":1,"upstream_key":"sk-a"}`)
+	rec := do(http.MethodPatch, "/api/admin/accounts/1", `{"name":"renamed"}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Equal(t, "renamed", store.accs[1].Name)
-	require.True(t, store.accs[1].Enabled, "PUT 不得禁用账号")
-	require.Equal(t, 25000, store.accs[1].UpstreamCostMultiplierBp, "PUT 不得重置倍率")
+	require.True(t, store.accs[1].Enabled, "未提及 enabled → 保持")
+	require.Equal(t, 25000, store.accs[1].UpstreamCostMultiplierBp, "未提及倍率 → 保持")
 	require.NotNil(t, store.accs[1].CacheDomain)
-	require.Equal(t, "shared.example.com", *store.accs[1].CacheDomain)
-	require.Equal(t, int64(5), store.accs[1].LifecycleRevision, "非生命周期写不增 revision")
+	require.Equal(t, "shared.example.com", *store.accs[1].CacheDomain, "未提及缓存域 → 保持")
 }
 
 // TestRuleTypedActionContract typed Throttle/FailAccount wire 往返：open/retry_after

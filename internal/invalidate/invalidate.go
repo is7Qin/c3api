@@ -224,9 +224,9 @@ func (d *Debouncer) Rules() { d.mark(KindRules, nil) }
 func (d *Debouncer) Settings() { d.mark(KindSettings, nil) }
 
 // Accounts 账号变更（创建/更新/删除/批量）：sched 组级定向重载受影响组
-// （gids；与全量位同窗口时被包含跳过）；keyChanged（upstream_key 变更）→
-// clients 失效。gids 空且 keyChanged=false（无分组账号变更）→ 无任何快照
-// 受影响，直接 no-op（不入脏）。
+// （gids；与全量位同窗口时被包含跳过）；keyChanged（身份类字段变更：模板 /
+// 生效 origin / upstream_key）→ clients 失效（连接缓存键内含这些事实）。
+// gids 空且 keyChanged=false（纯配置类变更）→ 无任何快照受影响，直接 no-op（不入脏）。
 func (d *Debouncer) Accounts(gids []int64, keyChanged bool) {
 	if len(gids) == 0 && !keyChanged {
 		return

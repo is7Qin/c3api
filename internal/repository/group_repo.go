@@ -226,8 +226,9 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 // carrier. Freshness maxima ride
 // MAX(updated_at) on exactly the three tables whose ent schemas maintain it
 // (account.go:36, group.go:29, template.go:26 — UpdateDefault(time.Now), so
-// every ent write path bumps it, including the general UpdateAccount path that
-// sets keys/URLs/concurrency WITHOUT bumping lifecycle_revision). The other
+// every ent write path bumps it, including the writes that change account
+// content WITHOUT bumping lifecycle_revision (the runtime failure verb, and
+// out-of-band direct-DB edits). The other
 // two tables have no maintained timestamp — verified, not assumed: account_groups
 // is an ent m2m edge table (no schema file, no time columns; edge rows are
 // immutable (account_id, group_id) pairs — insert/delete only, so COUNT is

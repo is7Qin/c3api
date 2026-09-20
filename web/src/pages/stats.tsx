@@ -753,7 +753,7 @@ function PlanCard({ route, generation }: { route: PlanRoute; generation: number 
                 <TableRow key={`${c.account_id}-${c.identity_fingerprint}`}>
                   <TableCell className="text-right font-mono tabular-nums">{c.account_id}</TableCell>
                   <TableCell className="text-right font-mono tabular-nums">{c.template_id}</TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">{c.lifecycle_revision}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums">{c.identity_revision}</TableCell>
                   <TableCell className="text-xs">{c.mapped_model || '—'}</TableCell>
                   <TableCell className="font-mono text-xs" title={c.quality_class_id}>{truncate(c.quality_class_id, 12)}</TableCell>
                   <TableCell className="text-right font-mono tabular-nums">{`${(c.upstream_cost_multiplier_bp / 100).toFixed(2)}×`}</TableCell>

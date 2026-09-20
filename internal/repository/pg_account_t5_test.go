@@ -35,8 +35,7 @@ func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at,
 	})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: name, TemplateID: tpl.ID, UpstreamKey: "sk-" + name, MaxConcurrency: 8,
-	})
+		Name: name, TemplateID: tpl.ID, UpstreamKey: "sk-" + name, MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	ext := &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
@@ -114,8 +113,7 @@ func TestWriteOAuthRotationMissingRowPG(t *testing.T) {
 	})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "rot3", TemplateID: tpl.ID, UpstreamKey: "sk-rot3", MaxConcurrency: 8,
-	})
+		Name: "rot3", TemplateID: tpl.ID, UpstreamKey: "sk-rot3", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	// 无 ext 行
 	require.Error(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at", "rt", nil),

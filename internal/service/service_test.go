@@ -158,8 +158,8 @@ func seedTemplate(t *testing.T, svc *Service, name string) *domain.Template {
 
 func seedAccount(t *testing.T, svc *Service, tplID int64, name string) *domain.Account {
 	t.Helper()
-	created, err := svc.CreateAccount(context.Background(), &domain.Account{
-		Name: name, UpstreamKey: "k-" + name, TemplateID: tplID, MaxConcurrency: 4,
+	created, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
+		Name: &name, UpstreamKey: strPtr("k-" + name), TemplateID: &tplID, MaxConcurrency: intPtr(4),
 	})
 	require.NoError(t, err)
 	return created
@@ -224,8 +224,11 @@ func TestCreateAccountGroups(t *testing.T) {
 
 	// 创建带分组
 	before := rec.total()
-	acc, err := svc.CreateAccount(ctx, &domain.Account{
-		Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-a1", GroupIDs: &[]int64{g1.ID, g2.ID},
+	acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
+		Name:        strPtr("a1"),
+		TemplateID:  int64Ptr(tpl.ID),
+		UpstreamKey: strPtr("sk-a1"),
+		GroupIDs:    &[]int64{g1.ID, g2.ID},
 	})
 	require.NoError(t, err)
 	require.Greater(t, rec.total(), before, "创建带分组必须 invalidate")
@@ -235,9 +238,7 @@ func TestCreateAccountGroups(t *testing.T) {
 
 	// 更新替换：只剩 g2
 	before = rec.total()
-	_, err = svc.UpdateAccount(ctx, &domain.Account{
-		ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-a1", GroupIDs: &[]int64{g2.ID},
-	})
+	_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{GroupIDs: &[]int64{g2.ID}}, nil)
 	require.NoError(t, err)
 	require.Greater(t, rec.total(), before, "更新分组必须 invalidate")
 	got, err = svc.GetAccountGroups(ctx, acc.ID)
@@ -245,34 +246,31 @@ func TestCreateAccountGroups(t *testing.T) {
 	require.Equal(t, []int64{g2.ID}, got)
 
 	// 更新清空（空数组）
-	_, err = svc.UpdateAccount(ctx, &domain.Account{
-		ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-a1", GroupIDs: &[]int64{},
-	})
+	_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{GroupIDs: &[]int64{}}, nil)
 	require.NoError(t, err)
 	got, err = svc.GetAccountGroups(ctx, acc.ID)
 	require.NoError(t, err)
 	require.Empty(t, got, "[] = 清空")
 
-	// 更新不变（nil）
-	_, err = svc.UpdateAccount(ctx, &domain.Account{
-		ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-a1", GroupIDs: nil,
-	})
+	// 更新不提供 group_ids（缺省）= 分组不变
+	_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{Name: strPtr("a1")}, nil)
 	require.NoError(t, err)
 	got, err = svc.GetAccountGroups(ctx, acc.ID)
 	require.NoError(t, err)
 	require.Empty(t, got, "nil = 不变")
 
 	// 创建带缺失组 → 404 含 id
-	_, err = svc.CreateAccount(ctx, &domain.Account{
-		Name: "a2", TemplateID: tpl.ID, UpstreamKey: "sk-a2", GroupIDs: &[]int64{999},
+	_, err = svc.CreateAccount(ctx, repository.AccountPatch{
+		Name:        strPtr("a2"),
+		TemplateID:  int64Ptr(tpl.ID),
+		UpstreamKey: strPtr("sk-a2"),
+		GroupIDs:    &[]int64{999},
 	})
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Contains(t, err.Error(), "999")
 
 	// 更新带缺失组 → 404
-	_, err = svc.UpdateAccount(ctx, &domain.Account{
-		ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-a1", GroupIDs: &[]int64{999},
-	})
+	_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{GroupIDs: &[]int64{999}}, nil)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Contains(t, err.Error(), "999")
 
@@ -296,8 +294,9 @@ func TestBatchUpdateAccountsGroupIDs(t *testing.T) {
 
 	// 批量替换：两个账号都进 g1
 	before := rec.total()
-	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
-		repository.AccountPatch{GroupIDs: &[]int64{g1.ID}}))
+	_, err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+		repository.AccountPatch{GroupIDs: &[]int64{g1.ID}})
+	require.NoError(t, err)
 	require.Greater(t, rec.total(), before)
 	for _, id := range []int64{a1.ID, a2.ID} {
 		got, err := svc.GetAccountGroups(ctx, id)
@@ -308,8 +307,9 @@ func TestBatchUpdateAccountsGroupIDs(t *testing.T) {
 	require.Equal(t, []int64{g1.ID}, *fs.lastPatch.GroupIDs)
 
 	// 批量清空（[]）→ 提供 + 清空
-	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
-		repository.AccountPatch{GroupIDs: &[]int64{}}))
+	_, err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+		repository.AccountPatch{GroupIDs: &[]int64{}})
+	require.NoError(t, err)
 	require.NotNil(t, fs.lastPatch.GroupIDs)
 	require.Empty(t, *fs.lastPatch.GroupIDs, "[] 也算提供（清空）")
 	for _, id := range []int64{a1.ID, a2.ID} {
@@ -319,21 +319,25 @@ func TestBatchUpdateAccountsGroupIDs(t *testing.T) {
 	}
 
 	// 批量组缺失 → 404 含 id（校验在 store 调用前？否——存在性在 repo 层，service 映射）
-	err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{GroupIDs: &[]int64{999}})
+	_, err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{GroupIDs: &[]int64{999}})
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Contains(t, err.Error(), "999")
 
 	// 校验失败 → ErrInvalidInput（store 不被调用）
 	before = rec.total()
 	dup := []int64{g1.ID, g1.ID}
-	require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{GroupIDs: &dup}), ErrInvalidInput, "重复 group_ids")
+	_, err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{GroupIDs: &dup})
+	require.ErrorIs(t, err, ErrInvalidInput, "重复 group_ids")
 	neg := []int64{-1}
-	require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{GroupIDs: &neg}), ErrInvalidInput, "元素 <= 0")
+	_, err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{GroupIDs: &neg})
+	require.ErrorIs(t, err, ErrInvalidInput, "元素 <= 0")
 	over := make([]int64, 101)
-	require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{GroupIDs: &over}), ErrInvalidInput, "超长")
+	_, err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{GroupIDs: &over})
+	require.ErrorIs(t, err, ErrInvalidInput, "超长")
 	require.Equal(t, before, rec.total(), "校验失败不 invalidate")
 	// nil 合法（不变）
-	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{Name: ptr("renamed")}))
+	_, err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{Name: ptr("renamed")})
+	require.NoError(t, err)
 	require.Nil(t, fs.lastPatch.GroupIDs, "nil = 未提供")
 }
 
@@ -348,14 +352,15 @@ func TestBatchUpdateAccounts(t *testing.T) {
 	a := seedAccount(t, svc, tpl.ID, "a1")
 	en := false
 	before := rec.total()
-	require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{a.ID}, repository.AccountPatch{Enabled: &en}))
+	_, err := svc.UpdateAccountsBatch(ctx, []int64{a.ID}, repository.AccountPatch{Enabled: &en})
+	require.NoError(t, err)
 	require.Greater(t, rec.total(), before, "批量更新成功后必须 invalidate")
 	got, err := svc.GetAccount(ctx, a.ID)
 	require.NoError(t, err)
 	require.False(t, got.Enabled)
 
 	// 缺 id → repository.ErrNotFound 包装 → mapRepoErr → service.ErrNotFound（消息含缺失 id）
-	err = svc.UpdateAccountsBatch(ctx, []int64{999}, repository.AccountPatch{Enabled: &en})
+	_, err = svc.UpdateAccountsBatch(ctx, []int64{999}, repository.AccountPatch{Enabled: &en})
 	require.ErrorIs(t, err, ErrNotFound, "缺 id 必须映射 404")
 	require.Contains(t, err.Error(), "999", "404 消息含缺失 id")
 }
@@ -472,19 +477,26 @@ func TestBatchUpdatePatchValidation(t *testing.T) {
 		require.ErrorIs(t, svc.UpdateTemplatesBatch(ctx, []int64{1}, repository.TemplatePatch{FormatModels: &map[domain.RequestFormat][]string{domain.FormatOpenAIChat: {}}}), ErrInvalidInput, "空 FormatModels 列表")
 	})
 	t.Run("accounts", func(t *testing.T) {
-		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{Name: &empty}), ErrInvalidInput, "空 name")
-		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{UpstreamKey: &empty}), ErrInvalidInput, "空 UpstreamKey")
+		_, err := svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{Name: &empty})
+		require.ErrorIs(t, err, ErrInvalidInput, "空 name")
+		_, err = svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{UpstreamKey: &empty})
+		require.ErrorIs(t, err, ErrInvalidInput, "空 UpstreamKey")
 		badTID := int64(0)
-		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{TemplateID: &badTID}), ErrInvalidInput, "TemplateID <= 0")
+		_, err = svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{TemplateID: &badTID})
+		require.ErrorIs(t, err, ErrInvalidInput, "TemplateID <= 0")
 		badMC := 0
-		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{MaxConcurrency: &badMC}), ErrInvalidInput, "MaxConcurrency < 1")
+		_, err = svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{MaxConcurrency: &badMC})
+		require.ErrorIs(t, err, ErrInvalidInput, "MaxConcurrency < 1")
 		// group_ids：超长 / 重复 / 元素 <= 0 → ErrInvalidInput；nil 与空数组合法
 		over := make([]int64, 101)
-		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{GroupIDs: &over}), ErrInvalidInput, "GroupIDs 超长")
+		_, err = svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{GroupIDs: &over})
+		require.ErrorIs(t, err, ErrInvalidInput, "GroupIDs 超长")
 		dup := []int64{1, 1}
-		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{GroupIDs: &dup}), ErrInvalidInput, "GroupIDs 重复")
+		_, err = svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{GroupIDs: &dup})
+		require.ErrorIs(t, err, ErrInvalidInput, "GroupIDs 重复")
 		zero := []int64{0}
-		require.ErrorIs(t, svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{GroupIDs: &zero}), ErrInvalidInput, "GroupIDs 元素 <= 0")
+		_, err = svc.UpdateAccountsBatch(ctx, []int64{1}, repository.AccountPatch{GroupIDs: &zero})
+		require.ErrorIs(t, err, ErrInvalidInput, "GroupIDs 元素 <= 0")
 	})
 	t.Run("groups", func(t *testing.T) {
 		require.ErrorIs(t, svc.UpdateGroupsBatch(ctx, []int64{1}, repository.GroupPatch{Name: &empty}), ErrInvalidInput, "空 name")
@@ -549,8 +561,8 @@ func TestSingleDeleteNotFoundMapping(t *testing.T) {
 // service.ErrNotFound（消息含缺失 id；此前裸透传 repository 错误 → 生产 500）。
 func TestCreateAccountMissingTemplate(t *testing.T) {
 	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: nil}
-	_, err := svc.CreateAccount(context.Background(), &domain.Account{
-		Name: "a", UpstreamKey: "k", TemplateID: 999, MaxConcurrency: 4,
+	_, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
+		Name: strPtr("a"), UpstreamKey: strPtr("k"), TemplateID: int64Ptr(999), MaxConcurrency: intPtr(4),
 	})
 	require.ErrorIs(t, err, ErrNotFound, "模板缺 id → 404")
 	require.Contains(t, err.Error(), "999", "404 消息含缺失 id")

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/nullable"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
@@ -358,26 +359,29 @@ type Account struct {
 	// BaseURL credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template
 	BaseURL *string `json:"BaseURL"`
 
-	// CacheDomain 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PUT /accounts/{id}/cache-domain）
+	// CacheDomain 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PATCH /accounts/{id} 的 cache_domain 字段）
 	CacheDomain *string    `json:"CacheDomain"`
 	CreatedAt   *time.Time `json:"CreatedAt,omitempty"`
 
 	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
 	DeletedAt *time.Time `json:"DeletedAt"`
 
-	// Enabled 管理面启停（写面 POST /accounts/{id}/enabled，CAS fenced；与运行时失效语义分离）
+	// Enabled 管理面启停（写面 PATCH /accounts/{id} 的 enabled 字段；与运行时失效语义分离）
 	Enabled *bool `json:"Enabled,omitempty"`
 
 	// FailedAt 运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复唯一入口 POST /accounts/{id}/recover）
 	FailedAt *time.Time `json:"FailedAt"`
 
 	// FailureSource 失效来源（rule/sdk 等；随 recover 清除）
-	FailureSource *string    `json:"FailureSource"`
-	ID            *int64     `json:"ID,omitempty"`
-	LastError     *string    `json:"LastError"`
-	LastUsedAt    *time.Time `json:"LastUsedAt"`
+	FailureSource *string `json:"FailureSource"`
+	ID            *int64  `json:"ID,omitempty"`
 
-	// LifecycleRevision 生命周期代际（CAS fencing：每次生命周期变化/管理员凭据替换 +1；所有 fenced 端点必须携带 expected_revision）
+	// IdentityRevision 身份代际 K：仅身份类字段（template_id/base_url/upstream_key 及可轮换凭据）按值变更时 +1；SDK 自动 token 刷新不推进
+	IdentityRevision *int64     `json:"IdentityRevision,omitempty"`
+	LastError        *string    `json:"LastError"`
+	LastUsedAt       *time.Time `json:"LastUsedAt"`
+
+	// LifecycleRevision 配置代际 C（客户端 CAS 令牌 + DB 变更水位）：每次写面落库无条件 +1；PATCH 以 If-Match 作前置条件（陈旧 → 412），recover 以 body expected_revision（陈旧 → 409）
 	LifecycleRevision *int64     `json:"LifecycleRevision,omitempty"`
 	MaxConcurrency    *int       `json:"MaxConcurrency,omitempty"`
 	Name              *string    `json:"Name,omitempty"`
@@ -385,50 +389,32 @@ type Account struct {
 	TemplateID        *int64     `json:"TemplateID,omitempty"`
 	UpdatedAt         *time.Time `json:"UpdatedAt,omitempty"`
 
-	// UpstreamCostMultiplier 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PUT /accounts/{id}/cost-multiplier）
+	// UpstreamCostMultiplier 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PATCH /accounts/{id} 的 upstream_cost_multiplier 字段）
 	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
 	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
 }
 
-// AccountCacheDomainBody defines model for AccountCacheDomainBody.
-type AccountCacheDomainBody struct {
-	// CacheDomain null/缺省 = 清空（回账号私有域）；非空 = 共享域（合法域名形态 ≤253，非法 → 400；清空不走空串）
-	CacheDomain *string `json:"cache_domain"`
-
-	// ExpectedRevision CAS 期望代际；过期 → 409
-	ExpectedRevision int64 `json:"expected_revision"`
+// AccountBatchUpdateResponse 账号批量更新响应（独立 schema——不与 templates/groups 共用的 BatchUpdateResponse 合并）
+type AccountBatchUpdateResponse struct {
+	Items   []AccountRevision `json:"items"`
+	Updated int               `json:"updated"`
 }
 
-// AccountCostMultiplierBody defines model for AccountCostMultiplierBody.
-type AccountCostMultiplierBody struct {
-	// ExpectedRevision CAS 期望代际；过期 → 409
-	ExpectedRevision int64 `json:"expected_revision"`
-
-	// Multiplier 采购成本倍率正常值（1 = ×1，0 = 免费，上限 ×10；边界换算 bp——2.5 ↔ 25000）；越界 → 400
-	Multiplier float64 `json:"multiplier"`
+// AccountConfigPatch 账号写面唯一字段模型（创建 / PATCH / 批量共用）。三态：字段缺席 = 不变（永不清空）； 可空标量 null = 清空；集合 null = 不变、[] = 清空；不可空标量 null = 400； 可空标量 "" = 400（空串哨兵已取消——清空只有一个拼法 null）。
+type AccountConfigPatch struct {
+	BaseUrl                nullable.Nullable[string]  `json:"base_url,omitempty"`
+	CacheDomain            nullable.Nullable[string]  `json:"cache_domain,omitempty"`
+	Enabled                nullable.Nullable[bool]    `json:"enabled,omitempty"`
+	GroupIds               *[]int64                   `json:"group_ids,omitempty"`
+	MaxConcurrency         nullable.Nullable[int]     `json:"max_concurrency,omitempty"`
+	Name                   nullable.Nullable[string]  `json:"name,omitempty"`
+	TemplateId             nullable.Nullable[int64]   `json:"template_id,omitempty"`
+	UpstreamCostMultiplier nullable.Nullable[float64] `json:"upstream_cost_multiplier,omitempty"`
+	UpstreamKey            nullable.Nullable[string]  `json:"upstream_key,omitempty"`
 }
 
-// AccountCreate defines model for AccountCreate.
-type AccountCreate struct {
-	// BaseUrl credential-type conditional: if template is codex-oauth/codex-pat must be empty/null (non-empty forbidden, inherits SDK default); if api_key/responses-special non-empty overrides template base_url, null/empty inherits template
-	BaseUrl *string `json:"base_url"`
-
-	// CacheDomain 可选：共享缓存域（合法域名形态 ≤253；null/缺省 = 账号私有域）；仅创建可带，更新走 /accounts/{id}/cache-domain
-	CacheDomain    *string  `json:"cache_domain"`
-	GroupIds       *[]int64 `json:"group_ids,omitempty"`
-	MaxConcurrency *int     `json:"max_concurrency,omitempty"`
-	Name           string   `json:"name"`
-	TemplateId     int64    `json:"template_id"`
-	UpstreamKey    string   `json:"upstream_key"`
-}
-
-// AccountEnabledBody defines model for AccountEnabledBody.
-type AccountEnabledBody struct {
-	Enabled bool `json:"enabled"`
-
-	// ExpectedRevision CAS 期望代际；过期 → 409
-	ExpectedRevision int64 `json:"expected_revision"`
-}
+// AccountCreate 账号写面唯一字段模型（创建 / PATCH / 批量共用）。三态：字段缺席 = 不变（永不清空）； 可空标量 null = 清空；集合 null = 不变、[] = 清空；不可空标量 null = 400； 可空标量 "" = 400（空串哨兵已取消——清空只有一个拼法 null）。
+type AccountCreate = AccountConfigPatch
 
 // AccountExt defines model for AccountExt.
 type AccountExt struct {
@@ -473,21 +459,16 @@ type AccountListResponse struct {
 	Total int64         `json:"total"`
 }
 
-// AccountPatch defines model for AccountPatch.
-type AccountPatch struct {
-	// BaseUrl credential-type conditional batch: if any effective target is codex-oauth/codex-pat must be empty/null (non-empty forbidden); otherwise batch tristate: empty string=clear to inherit, null/omitted=unchanged, non-empty=override
-	BaseUrl        *string  `json:"base_url"`
-	GroupIds       *[]int64 `json:"group_ids,omitempty"`
-	MaxConcurrency *int     `json:"max_concurrency,omitempty"`
-	Name           *string  `json:"name,omitempty"`
-	TemplateId     *int64   `json:"template_id,omitempty"`
-	UpstreamKey    *string  `json:"upstream_key,omitempty"`
-}
-
 // AccountRecoverBody defines model for AccountRecoverBody.
 type AccountRecoverBody struct {
 	// ExpectedRevision CAS 期望代际（= 读到的 LifecycleRevision）；过期 → 409
 	ExpectedRevision int64 `json:"expected_revision"`
+}
+
+// AccountRevision 单账号更新后的配置代际（C = 客户端 CAS 令牌；与路由观测面的 identity_revision 不同）
+type AccountRevision struct {
+	AccountId         int64 `json:"account_id"`
+	LifecycleRevision int64 `json:"lifecycle_revision"`
 }
 
 // AccountUsageItem 账号 usage 视图 item（恒 = account_ids 去重后全量；upstream 为 codex 额度快照，api-key/无凭据账号恒 null）
@@ -510,26 +491,29 @@ type AccountView struct {
 	// BaseURL credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template
 	BaseURL *string `json:"BaseURL"`
 
-	// CacheDomain 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PUT /accounts/{id}/cache-domain）
+	// CacheDomain 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PATCH /accounts/{id} 的 cache_domain 字段）
 	CacheDomain *string    `json:"CacheDomain"`
 	CreatedAt   *time.Time `json:"CreatedAt,omitempty"`
 
 	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
 	DeletedAt *time.Time `json:"DeletedAt"`
 
-	// Enabled 管理面启停（写面 POST /accounts/{id}/enabled，CAS fenced；与运行时失效语义分离）
+	// Enabled 管理面启停（写面 PATCH /accounts/{id} 的 enabled 字段；与运行时失效语义分离）
 	Enabled *bool `json:"Enabled,omitempty"`
 
 	// FailedAt 运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复唯一入口 POST /accounts/{id}/recover）
 	FailedAt *time.Time `json:"FailedAt"`
 
 	// FailureSource 失效来源（rule/sdk 等；随 recover 清除）
-	FailureSource *string    `json:"FailureSource"`
-	ID            *int64     `json:"ID,omitempty"`
-	LastError     *string    `json:"LastError"`
-	LastUsedAt    *time.Time `json:"LastUsedAt"`
+	FailureSource *string `json:"FailureSource"`
+	ID            *int64  `json:"ID,omitempty"`
 
-	// LifecycleRevision 生命周期代际（CAS fencing：每次生命周期变化/管理员凭据替换 +1；所有 fenced 端点必须携带 expected_revision）
+	// IdentityRevision 身份代际 K：仅身份类字段（template_id/base_url/upstream_key 及可轮换凭据）按值变更时 +1；SDK 自动 token 刷新不推进
+	IdentityRevision *int64     `json:"IdentityRevision,omitempty"`
+	LastError        *string    `json:"LastError"`
+	LastUsedAt       *time.Time `json:"LastUsedAt"`
+
+	// LifecycleRevision 配置代际 C（客户端 CAS 令牌 + DB 变更水位）：每次写面落库无条件 +1；PATCH 以 If-Match 作前置条件（陈旧 → 412），recover 以 body expected_revision（陈旧 → 409）
 	LifecycleRevision *int64     `json:"LifecycleRevision,omitempty"`
 	MaxConcurrency    *int       `json:"MaxConcurrency,omitempty"`
 	Name              *string    `json:"Name,omitempty"`
@@ -537,7 +521,7 @@ type AccountView struct {
 	TemplateID        *int64     `json:"TemplateID,omitempty"`
 	UpdatedAt         *time.Time `json:"UpdatedAt,omitempty"`
 
-	// UpstreamCostMultiplier 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PUT /accounts/{id}/cost-multiplier）
+	// UpstreamCostMultiplier 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PATCH /accounts/{id} 的 upstream_cost_multiplier 字段）
 	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
 	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
 	Concurrency            *int64   `json:"concurrency,omitempty"`
@@ -617,8 +601,9 @@ type BatchDeleteResponse struct {
 
 // BatchUpdateAccountsBody defines model for BatchUpdateAccountsBody.
 type BatchUpdateAccountsBody struct {
-	Fields AccountPatch `json:"fields"`
-	Ids    []int64      `json:"ids"`
+	// Fields 账号写面唯一字段模型（创建 / PATCH / 批量共用）。三态：字段缺席 = 不变（永不清空）； 可空标量 null = 清空；集合 null = 不变、[] = 清空；不可空标量 null = 400； 可空标量 "" = 400（空串哨兵已取消——清空只有一个拼法 null）。
+	Fields AccountConfigPatch `json:"fields"`
+	Ids    []int64            `json:"ids"`
 }
 
 // BatchUpdateGroupsBody defines model for BatchUpdateGroupsBody.
@@ -1947,6 +1932,7 @@ type GetAccountsParams struct {
 	Sort       *string                 `form:"sort,omitempty" json:"sort,omitempty"`
 	Order      *GetAccountsParamsOrder `form:"order,omitempty" json:"order,omitempty"`
 	TemplateId *int64                  `form:"template_id,omitempty" json:"template_id,omitempty"`
+	Enabled    *bool                   `form:"enabled,omitempty" json:"enabled,omitempty"`
 }
 
 // GetAccountsParamsOrder defines parameters for GetAccounts.
@@ -1966,6 +1952,11 @@ type GetAccountsUsageParams struct {
 	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
 	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
 	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
+}
+
+// PatchAccountsIdParams defines parameters for PatchAccountsId.
+type PatchAccountsIdParams struct {
+	IfMatch *string `json:"If-Match,omitempty"`
 }
 
 // GetErrLogsParams defines parameters for GetErrLogs.
@@ -2283,17 +2274,8 @@ type PostAccountsBatchImportCodexPatJSONRequestBody = CodexPATImportBody
 // PostAccountsBatchUpdateJSONRequestBody defines body for PostAccountsBatchUpdate for application/json ContentType.
 type PostAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
 
-// PutAccountsIdJSONRequestBody defines body for PutAccountsId for application/json ContentType.
-type PutAccountsIdJSONRequestBody = AccountCreate
-
-// PutAccountsIdCacheDomainJSONRequestBody defines body for PutAccountsIdCacheDomain for application/json ContentType.
-type PutAccountsIdCacheDomainJSONRequestBody = AccountCacheDomainBody
-
-// PutAccountsIdCostMultiplierJSONRequestBody defines body for PutAccountsIdCostMultiplier for application/json ContentType.
-type PutAccountsIdCostMultiplierJSONRequestBody = AccountCostMultiplierBody
-
-// PostAccountsIdEnabledJSONRequestBody defines body for PostAccountsIdEnabled for application/json ContentType.
-type PostAccountsIdEnabledJSONRequestBody = AccountEnabledBody
+// PatchAccountsIdJSONRequestBody defines body for PatchAccountsId for application/json ContentType.
+type PatchAccountsIdJSONRequestBody = AccountConfigPatch
 
 // PutAccountsIdExtJSONRequestBody defines body for PutAccountsIdExt for application/json ContentType.
 type PutAccountsIdExtJSONRequestBody = AccountExt
@@ -2402,18 +2384,9 @@ type ServerInterface interface {
 
 	// (GET /accounts/{id})
 	GetAccountsId(w http.ResponseWriter, r *http.Request, id int64)
-
-	// (PUT /accounts/{id})
-	PutAccountsId(w http.ResponseWriter, r *http.Request, id int64)
-	// 更新缓存域（fenced；null = 清空回账号私有域；非空 = 共享域）
-	// (PUT /accounts/{id}/cache-domain)
-	PutAccountsIdCacheDomain(w http.ResponseWriter, r *http.Request, id int64)
-	// 更新采购成本倍率（fenced；正常值 ×0–×10，边界换算 basis points）
-	// (PUT /accounts/{id}/cost-multiplier)
-	PutAccountsIdCostMultiplier(w http.ResponseWriter, r *http.Request, id int64)
-	// 启用/禁用账号（fenced；enable 不清失效字段——恢复唯一入口 /recover）
-	// (POST /accounts/{id}/enabled)
-	PostAccountsIdEnabled(w http.ResponseWriter, r *http.Request, id int64)
+	// 部分更新账号（三态：缺省=不变；可空标量 null=清空、""=400；不可空标量 null=400；有值=落值）
+	// (PATCH /accounts/{id})
+	PatchAccountsId(w http.ResponseWriter, r *http.Request, id int64, params PatchAccountsIdParams)
 	// 读取账号类型化鉴权扩展（编辑回显；仅 codex-oauth/codex-pat 账号有 ext 行）
 	// (GET /accounts/{id}/ext)
 	GetAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64)
@@ -2667,26 +2640,9 @@ func (_ Unimplemented) GetAccountsId(w http.ResponseWriter, r *http.Request, id 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// (PUT /accounts/{id})
-func (_ Unimplemented) PutAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 更新缓存域（fenced；null = 清空回账号私有域；非空 = 共享域）
-// (PUT /accounts/{id}/cache-domain)
-func (_ Unimplemented) PutAccountsIdCacheDomain(w http.ResponseWriter, r *http.Request, id int64) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 更新采购成本倍率（fenced；正常值 ×0–×10，边界换算 basis points）
-// (PUT /accounts/{id}/cost-multiplier)
-func (_ Unimplemented) PutAccountsIdCostMultiplier(w http.ResponseWriter, r *http.Request, id int64) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// 启用/禁用账号（fenced；enable 不清失效字段——恢复唯一入口 /recover）
-// (POST /accounts/{id}/enabled)
-func (_ Unimplemented) PostAccountsIdEnabled(w http.ResponseWriter, r *http.Request, id int64) {
+// 部分更新账号（三态：缺省=不变；可空标量 null=清空、""=400；不可空标量 null=400；有值=落值）
+// (PATCH /accounts/{id})
+func (_ Unimplemented) PatchAccountsId(w http.ResponseWriter, r *http.Request, id int64, params PatchAccountsIdParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3138,6 +3094,14 @@ func (siw *ServerInterfaceWrapper) GetAccounts(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// ------------- Optional query parameter "enabled" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "enabled", r.URL.Query(), &params.Enabled)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "enabled", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAccounts(w, r, params)
 	}))
@@ -3327,8 +3291,8 @@ func (siw *ServerInterfaceWrapper) GetAccountsId(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
-// PutAccountsId operation middleware
-func (siw *ServerInterfaceWrapper) PutAccountsId(w http.ResponseWriter, r *http.Request) {
+// PatchAccountsId operation middleware
+func (siw *ServerInterfaceWrapper) PatchAccountsId(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
@@ -3341,83 +3305,32 @@ func (siw *ServerInterfaceWrapper) PutAccountsId(w http.ResponseWriter, r *http.
 		return
 	}
 
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutAccountsId(w, r, id)
-	}))
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PatchAccountsIdParams
 
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
+	headers := r.Header
 
-	handler.ServeHTTP(w, r)
-}
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
 
-// PutAccountsIdCacheDomain operation middleware
-func (siw *ServerInterfaceWrapper) PutAccountsIdCacheDomain(w http.ResponseWriter, r *http.Request) {
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
 
-	var err error
+		params.IfMatch = &IfMatch
 
-	// ------------- Path parameter "id" -------------
-	var id int64
-
-	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutAccountsIdCacheDomain(w, r, id)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutAccountsIdCostMultiplier operation middleware
-func (siw *ServerInterfaceWrapper) PutAccountsIdCostMultiplier(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "id" -------------
-	var id int64
-
-	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
-		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutAccountsIdCostMultiplier(w, r, id)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostAccountsIdEnabled operation middleware
-func (siw *ServerInterfaceWrapper) PostAccountsIdEnabled(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "id" -------------
-	var id int64
-
-	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostAccountsIdEnabled(w, r, id)
+		siw.Handler.PatchAccountsId(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5918,16 +5831,7 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/accounts/{id}", wrapper.GetAccountsId)
 	})
 	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/accounts/{id}", wrapper.PutAccountsId)
-	})
-	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/accounts/{id}/cache-domain", wrapper.PutAccountsIdCacheDomain)
-	})
-	r.Group(func(r chi.Router) {
-		r.Put(options.BaseURL+"/accounts/{id}/cost-multiplier", wrapper.PutAccountsIdCostMultiplier)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/accounts/{id}/enabled", wrapper.PostAccountsIdEnabled)
+		r.Patch(options.BaseURL+"/accounts/{id}", wrapper.PatchAccountsId)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/accounts/{id}/ext", wrapper.GetAccountsIdExt)

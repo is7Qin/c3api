@@ -79,11 +79,12 @@ func toAPIAccount(a *domain.Account) Account {
 		MaxConcurrency: &a.MaxConcurrency,
 		LastError:      a.LastError,
 		LastUsedAt:     a.LastUsedAt,
-		// intelligent-routing 生命周期契约（只读回显；写面 = fenced 端点）
+		// intelligent-routing 生命周期契约（只读回显；写面 = PATCH /accounts/{id}）
 		Enabled:                &a.Enabled,
 		FailedAt:               a.FailedAt,
 		FailureSource:          a.FailureSource,
 		LifecycleRevision:      &a.LifecycleRevision,
+		IdentityRevision:       &a.IdentityRevision,
 		UpstreamCostMultiplier: ptr(multToNormal(a.UpstreamCostMultiplierBp)), // bp → 正常值（组倍率边界换算同构）
 		CacheDomain:            a.CacheDomain,
 		CreatedAt:              &a.CreatedAt,
@@ -112,6 +113,7 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 		FailedAt:               base.FailedAt,
 		FailureSource:          base.FailureSource,
 		LifecycleRevision:      base.LifecycleRevision,
+		IdentityRevision:       base.IdentityRevision,
 		UpstreamCostMultiplier: base.UpstreamCostMultiplier,
 		CacheDomain:            base.CacheDomain,
 		CreatedAt:              base.CreatedAt,

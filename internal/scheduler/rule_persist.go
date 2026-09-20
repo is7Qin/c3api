@@ -55,13 +55,6 @@ func NewRulePersistFunc(store rulePersistStore, latchStore *latch.LatchStore, pu
 		if item.Event.CandidateFingerprint != fp {
 			return ErrCandidateFingerprintMismatch
 		}
-		// stale fingerprint fence: if latch fingerprint differs, clear old
-		if latchStore != nil {
-			// latch already acquired in LatchSink; verify still latched
-			if !latchStore.IsLatched(item.Event.AccountID, fp) {
-				return nil
-			}
-		}
 		reason := domain.TruncateErrMsg(item.Event.ErrorMessage)
 		if reason == "" {
 			reason = "rule fail_account"

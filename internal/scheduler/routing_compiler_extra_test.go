@@ -58,7 +58,7 @@ func TestRoutingCompilerHealthLatchExclusion(t *testing.T) {
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
 	s.health = h
 	lk := compilerLatchKeyFor(accs[2])
-	require.True(t, s.TryLatch(accs[2].ID, lk.Fingerprint, lk.Revision))
+	require.True(t, s.TryLatch(accs[2].ID, lk.Fingerprint, lk.IdentityRevision))
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]

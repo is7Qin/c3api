@@ -63,7 +63,7 @@ type dispatcher struct {
 //   - Users → Users()：auth + 余额快照全量
 //   - Templates → Templates()：sched 全量 + clients 失效
 //   - Groups（±Clients）→ Accounts(gids, keyChanged)：sched 组级定向；账号
-//     upstream_key 变更带 Clients → 同批 clients 失效
+//     身份类字段变更带 Clients → 同批 clients 失效
 //   - Clients（独立）→ Clients()：仅客户端工厂失效（服务端恒与 Templates/
 //     Groups 并排，防御性兜底）
 //   - Multipliers → Multipliers()：余额倍率快照定向刷新

@@ -27,6 +27,7 @@ require (
 
 require (
 	github.com/alicebob/miniredis/v2 v2.39.0
+	github.com/oapi-codegen/nullable v1.1.0
 	github.com/pashagolub/pgxmock/v5 v5.2.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/wneessen/go-mail v0.8.1

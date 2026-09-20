@@ -60,7 +60,7 @@ func TestPGStripSnapshotLoad(t *testing.T) {
 	t.Run("ext strip true merged into snapshot", func(t *testing.T) {
 		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-			StripImageTools: boolPtrPG(true),
+			StripImageTools: boolPtr(true),
 		})
 		require.NoError(t, err)
 		strip, ok := snapshotStripOf(t, repos, g.ID, acc.ID)
@@ -74,7 +74,7 @@ func TestPGStripSnapshotLoad(t *testing.T) {
 	t.Run("ext update false after reload", func(t *testing.T) {
 		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-			StripImageTools: boolPtrPG(false),
+			StripImageTools: boolPtr(false),
 		})
 		require.NoError(t, err)
 		strip, ok := snapshotStripOf(t, repos, g.ID, acc.ID)

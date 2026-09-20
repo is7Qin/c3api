@@ -213,7 +213,7 @@ func newTestSchedulerForPlan(t *testing.T) *scheduler.Scheduler {
 	accs := map[int64][]*domain.Account{10: {{ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "k", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}}}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: 1000000000000}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	s := scheduler.New(scheduler.Config{SyncInterval: 1000000000000}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, s.InvalidateAllSync())
 	return s
 }

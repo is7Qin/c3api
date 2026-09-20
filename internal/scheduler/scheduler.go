@@ -41,8 +41,7 @@ var (
 )
 
 type Config struct {
-	DefaultMaxConcurrency int
-	SyncInterval          time.Duration
+	SyncInterval time.Duration
 	// StalenessProbe 是 C1 backstop 探针的 tuple 供应商（repo 层实现，
 	// 如 GroupRepo.CompileStalenessSnapshot；接口在 compile_backstop.go
 	// 定义，赋值即满足，无需命名类型）。构造期传入，nil = 不接线
@@ -323,7 +322,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 	} else if cur != nil && cur.static != nil {
 		oldByID = cur.static.byID
 	}
-	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
+	groups, byID := buildSnapshots(m, oldByID)
 	sv := newStaticView(groups, byID)
 	if s.latch != nil {
 		for id, as := range byID {
@@ -331,12 +330,12 @@ func (s *Scheduler) reload(ctx context.Context) error {
 			if av == nil {
 				continue
 			}
-			curRev := av.acc.IdentityRevision
 			fp, err := candidateFingerprint(&av.acc)
 			if err != nil {
 				continue
 			}
-			s.latch.ClearIfRevisionGreater(id, curRev)
+			// 指纹变更 = 新候选人 ⇒ 清旧锁存。K 变更**无需**写侧动作：读侧
+			// IsLatched 比 (指纹, K)，旧代际条目天然不匹配。
 			s.latch.ClearIfFingerprintChanged(id, fp)
 		}
 		if oldByID != nil {
@@ -375,11 +374,11 @@ func (s *Scheduler) reload(ctx context.Context) error {
 	return nil
 }
 
-func (s *Scheduler) TryLatch(accountID int64, fingerprint string, revision int64) bool {
+func (s *Scheduler) TryLatch(accountID int64, fingerprint string, identityRevision int64) bool {
 	if s.latch == nil {
 		return false
 	}
-	return s.latch.TryAcquire(accountID, fingerprint, revision)
+	return s.latch.TryAcquire(accountID, fingerprint, identityRevision)
 }
 
 func (s *Scheduler) IsLatched(accountID int64) bool {
@@ -388,16 +387,20 @@ func (s *Scheduler) IsLatched(accountID int64) bool {
 	}
 	v := s.view.Load()
 	if v == nil {
-		return s.latch.IsLatched(accountID, "")
+		return s.latch.IsLatched(accountID, "", 0)
 	}
 	if as, ok := v.Account(accountID); ok {
-		fp, err := candidateFingerprint(&as.static.Load().acc)
+		av := as.static.Load()
+		if av == nil {
+			return false
+		}
+		fp, err := candidateFingerprint(&av.acc)
 		if err != nil {
 			return false
 		}
-		return s.latch.IsLatched(accountID, fp)
+		return s.latch.IsLatched(accountID, fp, av.acc.IdentityRevision)
 	}
-	return s.latch.IsLatched(accountID, "")
+	return s.latch.IsLatched(accountID, "", 0)
 }
 
 func (s *Scheduler) LatchStore() *latch.LatchStore { return s.latch }
@@ -431,7 +434,7 @@ func runtimeStatusFor(a *domain.Account) domain.AccountStatus {
 // 快照中引用同一实例（O2 评审实证修复）。发布后 leaves never mutate；
 // 变更账号分配全新 immutable leaf，共享 separate runtime/concurrency state，
 // old root stable。oldByID 来自旧 StaticView 的 byID（持 publisher.mu 读取安全）。
-func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[int64]*accountSnapshot) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
+func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSnapshot) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
 	// First pass: collect per-account group membership and latest Account object.
 	type accInfo struct {
 		acc      *domain.Account
@@ -455,10 +458,9 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[i
 		// map 迭代序首元素，同一份 DB 数据在不同进程/不同重载下可得不同
 		// gid —— 组归属是静态事实，不得有这种自由度。多组账号取最小
 		// 组 ID（min 与迭代序无关，且与组集合一一对应）。
+		// 入快照的账号 max_concurrency 由写面保证 ≥1（创建默认 + 校验拒绝），
+		// 此处不再静默钳制——落库异常值应显形而非被快照掩盖。
 		av := &snapshotStatic{acc: *a, tpl: a.Template, groupIDs: append([]int64(nil), inf.groupIDs...)}
-		if a.MaxConcurrency <= 0 {
-			av.acc.MaxConcurrency = defaultMax
-		}
 		if old, exists := oldByID[id]; exists {
 			oldAv := old.static.Load()
 			// 静态事实比较经 staticKeyOf（值类型，`==` 算子）——此前的
@@ -635,7 +637,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	}
 	// byID 兼作复用查询源（oldByID）：组级重载同样复用旧实例——errRate/errCount
 	// 跨组级 NOTIFY 重载保留（A-2 M-4），静态字段 DB 权威同步。持 publisher.mu 读取安全。
-	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, s.cfg.DefaultMaxConcurrency, byID)
+	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, byID)
 	newAccs := gs[groupID].accounts
 	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
 	// 避免组级重载后 routes 为 nil（编译车道枚举域断裂）。

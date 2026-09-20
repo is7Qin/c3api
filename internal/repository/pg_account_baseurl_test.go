@@ -25,8 +25,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 	})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "bu1", TemplateID: tpl.ID, UpstreamKey: "sk-bu1", MaxConcurrency: 8,
-	})
+		Name: "bu1", TemplateID: tpl.ID, UpstreamKey: "sk-bu1", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 
 	// 创建未设 → nil（NULL = 继承模板）
@@ -34,21 +33,17 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, got.BaseURL, "创建未设 base_url → NULL")
 
-	// 单条更新设值 → 读回
+	// 单条补丁设值 → 读回
 	b := "https://acc.example.com"
-	acc.BaseURL = &b
-	updated, err := repos.Accounts.UpdateAccount(ctx, acc)
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{BaseURL: &b})
 	require.NoError(t, err)
-	require.NotNil(t, updated.BaseURL)
-	require.Equal(t, b, *updated.BaseURL)
 	got, err = repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got.BaseURL)
 	require.Equal(t, b, *got.BaseURL)
 
-	// 清空：nil → NULL 往返（继承模板）
-	acc.BaseURL = nil
-	_, err = repos.Accounts.UpdateAccount(ctx, acc)
+	// 清空：空串 → NULL 往返（继承模板）
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{BaseURL: strPtr("")})
 	require.NoError(t, err)
 	got, err = repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
@@ -56,13 +51,13 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 
 	// --- 批量三态（C1） ---
 	acc2, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "bu2", TemplateID: tpl.ID, UpstreamKey: "sk-bu2", MaxConcurrency: 8,
-	})
+		Name: "bu2", TemplateID: tpl.ID, UpstreamKey: "sk-bu2", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 
 	// 非空 → 落值
 	b2 := "https://batch.example.com"
-	require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc2.ID}, repository.AccountPatch{BaseURL: &b2}))
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc2.ID}, repository.AccountPatch{BaseURL: &b2})
+	require.NoError(t, err)
 	got2, err := repos.Accounts.GetAccount(ctx, acc2.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got2.BaseURL)
@@ -70,15 +65,18 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 
 	// "" → NULL 清空
 	empty := ""
-	require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc2.ID}, repository.AccountPatch{BaseURL: &empty}))
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc2.ID}, repository.AccountPatch{BaseURL: &empty})
+	require.NoError(t, err)
 	got2, err = repos.Accounts.GetAccount(ctx, acc2.ID)
 	require.NoError(t, err)
 	require.Nil(t, got2.BaseURL, "批量空串 → 落 NULL（继承模板）")
 
 	// nil → 不变（先设值，再 nil patch）
 	b3 := "https://keep.example.com"
-	require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc2.ID}, repository.AccountPatch{BaseURL: &b3}))
-	require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc2.ID}, repository.AccountPatch{Name: &acc2.Name}))
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc2.ID}, repository.AccountPatch{BaseURL: &b3})
+	require.NoError(t, err)
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc2.ID}, repository.AccountPatch{Name: &acc2.Name})
+	require.NoError(t, err)
 	got2, err = repos.Accounts.GetAccount(ctx, acc2.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got2.BaseURL)

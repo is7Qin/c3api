@@ -58,6 +58,42 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 		"update it deliberately together with spec §5.5/§5.5b, not incidentally")
 }
 
+// TestStaticKeyCoversEveryDeclaredAccountField 是字段声明表与静态键之间的机械
+// 断言：声明表（domain.AccountFieldSpecs，唯一事实来源）的每一行都必须在静态键
+// 里有承载字段。声明表就是"账号侧静态快照消费 = 是"的清单；漏一行即意味着该字段
+// 改了而键仍判等 ⇒ 叶子被复用 ⇒ 叶子上的消费点读到陈旧值。
+//
+// 键侧另有 identity_revision（K）：它是生成只读字段、不在可写声明表内，故单独
+// 断言，不由下面的映射覆盖。
+func TestStaticKeyCoversEveryDeclaredAccountField(t *testing.T) {
+	// 声明字段 → 静态键里承载它的字段名（值语义载体；集合类以规范序摘要承载）。
+	carrier := map[domain.AccountField]string{
+		domain.FieldName:                   "name",
+		domain.FieldTemplateID:             "templateID",
+		domain.FieldBaseURL:                "baseURL",
+		domain.FieldUpstreamKey:            "upstreamKey",
+		domain.FieldMaxConcurrency:         "maxConcurrency",
+		domain.FieldGroupIDs:               "groupIDsDigest",
+		domain.FieldEnabled:                "enabled",
+		domain.FieldCacheDomain:            "cacheDomain",
+		domain.FieldUpstreamCostMultiplier: "upstreamCostMultiplierBp",
+	}
+	kt := reflect.TypeOf(staticKey{})
+	keyFields := make(map[string]bool, kt.NumField())
+	for i := 0; i < kt.NumField(); i++ {
+		keyFields[kt.Field(i).Name] = true
+	}
+
+	declared := domain.AccountFieldSpecs()
+	require.Len(t, carrier, len(declared), "every declared field needs a key carrier")
+	for _, spec := range declared {
+		name, ok := carrier[spec.Field]
+		require.True(t, ok, "declared field %q has no staticKey carrier", spec.Name)
+		require.True(t, keyFields[name], "declared field %q maps to missing staticKey.%s", spec.Name, name)
+	}
+	require.True(t, keyFields["identityRevision"], "K must be in the static key: a reused leaf carrying a stale K would make in-flight fences compare against an outdated generation")
+}
+
 // TestStaticKeyIsComparable 用一次真实 `==` 证明该类型确实可用作比较算子
 // （编译期即可比较；这里同时证明零值键的自反性）。
 func TestStaticKeyIsComparable(t *testing.T) {
@@ -258,7 +294,7 @@ func TestBuildSnapshotsGIDIsMinOfGroupIDs(t *testing.T) {
 		2: {a},
 		5: {a},
 	}
-	_, byID := buildSnapshots(m, 4, nil)
+	_, byID := buildSnapshots(m, nil)
 	leaf, ok := byID[1]
 	require.True(t, ok)
 	st := leaf.static.Load()

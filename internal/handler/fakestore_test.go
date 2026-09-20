@@ -247,44 +247,14 @@ func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([
 	defer f.mu.Unlock()
 	out := make([]*domain.Account, 0, len(f.accs))
 	for _, a := range f.accs {
+		// enabled 三态过滤（镜像真实 repo 谓词：nil = 不过滤）。
+		if q.Enabled != nil && a.Enabled != *q.Enabled {
+			continue
+		}
 		c := *a
 		out = append(out, &c)
 	}
 	return paginate(out, q), int64(len(out)), nil
-}
-
-func (f *fakeStore) UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.accs[a.ID]; !ok {
-		return nil, missingErr(a.ID)
-	}
-	tpl, ok := f.tpls[a.TemplateID]
-	if !ok {
-		return nil, missingErr(a.TemplateID)
-	}
-	if isFakeCodexType(tpl.CredentialType) && a.BaseURL != nil && *a.BaseURL != "" {
-		return nil, repository.ErrInvalidInput
-	}
-	c := *a
-	f.accs[a.ID] = &c
-	return &c, nil
-}
-
-func (f *fakeStore) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64) (*domain.Account, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cur, ok := f.accs[a.ID]
-	if !ok {
-		return nil, missingErr(a.ID)
-	}
-	if cur.LifecycleRevision != expectedRevision {
-		return nil, fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, a.ID, expectedRevision)
-	}
-	c := *a
-	c.LifecycleRevision = expectedRevision + 1
-	f.accs[a.ID] = &c
-	return &c, nil
 }
 
 func (f *fakeStore) FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error {
@@ -294,15 +264,17 @@ func (f *fakeStore) FailAccountCAS(ctx context.Context, id int64, expectedRevisi
 	if !ok {
 		return missingErr(id)
 	}
-	if cur.LifecycleRevision != expectedRevision {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
+	// 与生产同语义：guard 身份代际 K，被推进的是配置代际 C（相对自增）。
+	// 以 C 为 guard、把 expected 绝对写回 C 会让夹具在 C != K 时掩盖真实缺陷。
+	if cur.IdentityRevision != expectedRevision {
+		return fmt.Errorf("%w: id=%d expected identity revision %d stale", repository.ErrStaleIdentityRevision, id, expectedRevision)
 	}
 	cur.FailedAt = &failedAt
 	cur.FailureSource = &source
 	if reason != "" {
 		cur.LastError = &reason
 	}
-	cur.LifecycleRevision = expectedRevision + 1
+	cur.LifecycleRevision++
 	return nil
 }
 
@@ -319,67 +291,6 @@ func (f *fakeStore) RecoverAccountCAS(ctx context.Context, id int64, expectedRev
 	cur.FailedAt = nil
 	cur.LastError = nil
 	cur.FailureSource = nil
-	cur.LifecycleRevision = expectedRevision + 1
-	return nil
-}
-
-func (f *fakeStore) SetAccountEnabledCAS(ctx context.Context, id int64, expectedRevision int64, enabled bool) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cur, ok := f.accs[id]
-	if !ok {
-		return missingErr(id)
-	}
-	if cur.LifecycleRevision != expectedRevision {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
-	}
-	cur.Enabled = enabled
-	cur.LifecycleRevision = expectedRevision + 1
-	return nil
-}
-
-func (f *fakeStore) ReplaceAccountCredentialCAS(ctx context.Context, id int64, expectedRevision int64, newKey string, newBaseURL *string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cur, ok := f.accs[id]
-	if !ok {
-		return missingErr(id)
-	}
-	if cur.LifecycleRevision != expectedRevision {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
-	}
-	cur.UpstreamKey = newKey
-	cur.BaseURL = newBaseURL
-	cur.LifecycleRevision = expectedRevision + 1
-	return nil
-}
-
-func (f *fakeStore) UpdateAccountCostMultiplierCAS(ctx context.Context, id int64, expectedRevision int64, multiplier int) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cur, ok := f.accs[id]
-	if !ok {
-		return missingErr(id)
-	}
-	if cur.LifecycleRevision != expectedRevision {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
-	}
-	cur.UpstreamCostMultiplierBp = multiplier
-	cur.LifecycleRevision = expectedRevision + 1
-	return nil
-}
-
-func (f *fakeStore) UpdateAccountCacheDomainCAS(ctx context.Context, id int64, expectedRevision int64, domain *string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cur, ok := f.accs[id]
-	if !ok {
-		return missingErr(id)
-	}
-	if cur.LifecycleRevision != expectedRevision {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", repository.ErrConflict, id, expectedRevision)
-	}
-	cur.CacheDomain = domain
 	cur.LifecycleRevision = expectedRevision + 1
 	return nil
 }
@@ -577,19 +488,7 @@ func (f *fakeStore) WriteOAuthRotation(ctx context.Context, accountID int64, at,
 	return nil
 }
 
-// WritePATKey pat 凭据列部分更新（WriteOAuthRotation 的 pat 对称形态）；
-// 行缺失 → ErrNotFound。
-func (f *fakeStore) WritePATKey(ctx context.Context, accountID int64, patKey string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	e, ok := f.accExts[accountID]
-	if !ok {
-		return fmt.Errorf("%w: account_id=%d ext row missing", repository.ErrNotFound, accountID)
-	}
-	e.CodexPATKey = &patKey
-	return nil
-}
-
+// AdminWriteOAuthRotationCAS 管理员 OAuth 轮转镜像（fenced + ext 行缺失 → ErrNotFound）。
 func (f *fakeStore) AdminWriteOAuthRotationCAS(ctx context.Context, accountID int64, expectedRevision int64, at, rt string, expiresAt *time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -846,17 +745,17 @@ func (f *fakeStore) DeleteAccountsBatch(ctx context.Context, ids []int64) error 
 	return nil
 }
 
-func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repository.AccountPatch) error {
+func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repository.AccountPatch) ([]repository.AccountWriteResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if id, ok := f.missingID(ids, func(id int64) bool { _, ok := f.accs[id]; return ok }); ok {
-		return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
+		return nil, fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
 	}
 	// 组存在性（与真实 repo 的 checkGroupExist 同级语义：非空 group_ids 全查）
 	if p.GroupIDs != nil {
 		for _, gid := range *p.GroupIDs {
 			if _, ok := f.groups[gid]; !ok {
-				return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, gid)
+				return nil, fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, gid)
 			}
 		}
 	}
@@ -868,19 +767,22 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 		}
 		tpl, ok := f.tpls[templateID]
 		if !ok {
-			return missingErr(templateID)
+			return nil, missingErr(templateID)
 		}
 		baseURL := a.BaseURL
 		if p.BaseURL != nil {
 			baseURL = p.BaseURL
 		}
 		if isFakeCodexType(tpl.CredentialType) && baseURL != nil && *baseURL != "" {
-			return repository.ErrInvalidInput
+			return nil, repository.ErrInvalidInput
 		}
 	}
 	f.lastPatch = p
+	revs := make([]repository.AccountWriteResult, 0, len(ids))
 	for _, id := range ids {
 		a := f.accs[id]
+		// 变更集与真实 repo 同源：调用同一比较实现，字段类别由 domain 声明表决定。
+		changed := repository.ChangedFields(p, accountFieldValues(a))
 		if p.Name != nil {
 			a.Name = *p.Name
 		}
@@ -905,8 +807,48 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 		if p.GroupIDs != nil {
 			f.accGroups[id] = slices.Clone(*p.GroupIDs)
 		}
+		if p.Enabled != nil {
+			a.Enabled = *p.Enabled
+		}
+		if p.UpstreamCostMultiplierBp != nil {
+			a.UpstreamCostMultiplierBp = *p.UpstreamCostMultiplierBp
+		}
+		if p.CacheDomain != nil {
+			if *p.CacheDomain == "" {
+				a.CacheDomain = nil
+			} else {
+				v := *p.CacheDomain
+				a.CacheDomain = &v
+			}
+		}
+		// 配置写入**无条件**推进 C（镜像真实 repo）；身份类字段真的变了才推进 K。
+		a.LifecycleRevision++
+		if changed.IdentityChanged() {
+			a.IdentityRevision++
+		}
+		revs = append(revs, repository.AccountWriteResult{
+			AccountID:         id,
+			LifecycleRevision: a.LifecycleRevision,
+			ChangedFields:     changed,
+		})
 	}
-	return nil
+	return revs, nil
+}
+
+// accountFieldValues 把存量账号行投影成按值比较所需的旧值快照（与真实 repo 从
+// 锁定行构造的同形）。
+func accountFieldValues(a *domain.Account) repository.AccountFieldValues {
+	return repository.AccountFieldValues{
+		ID:                       a.ID,
+		Name:                     a.Name,
+		TemplateID:               a.TemplateID,
+		BaseURL:                  a.BaseURL,
+		UpstreamKey:              a.UpstreamKey,
+		MaxConcurrency:           a.MaxConcurrency,
+		Enabled:                  a.Enabled,
+		CacheDomain:              a.CacheDomain,
+		UpstreamCostMultiplierBp: a.UpstreamCostMultiplierBp,
+	}
 }
 
 func (f *fakeStore) DeleteGroupsBatch(ctx context.Context, ids []int64) error {

@@ -24,6 +24,128 @@ import (
 // 新类型 → 新增 ext_claude_repo.go 同构。
 type AccountExtRepo struct{ client *ent.Client }
 
+// extIdentityField 标识 ext 凭据面里参与"是否改身份"判定的字段。凭据面整体是
+// 身份类（spec §5.5 的 ext 行）：管理面换凭据即换账号身份 ⇒ 推进 K ⇒ 在途判定
+// （失效判决 / latch / 健康记录 / continuation）作废。
+//
+// 凭据值（token / refresh / expires）也在列，因为管理面写入是**凭据替换**：
+// 身份四元组与 digest 之外的凭据材料同样只由这次写入决定。SDK 自动刷新走
+// WriteOAuthRotation（不触 accounts 行）——它天然 K 中性，"刷新同一账号的令牌"
+// 不是身份写入。
+type extIdentityField uint8
+
+const (
+	extCredentialType extIdentityField = iota
+	extIdentityQuad
+	extOAuthToken
+	extOAuthRefresh
+	extOAuthExpires
+	extPATKey
+	extEmail
+	extCodexAccountID
+)
+
+// extIdentityChanged 报告 next 相对既有行 cur 在**指定字段**上是否按值变更。
+// 判定统一为"归一后按值"：指针 nil 与空值等价（该写面的 nil = 清空）。
+// cur == nil（无既有行 = 首次创建）视为变更。
+//
+// 这是 ext 侧唯一的身份变更判据：三个管理面凭据写点都调用它，不得各自重写
+// 一份字段清单。幂等重写（值未变）返回 false ⇒ 只推进 C、不推进 K（spec §3.5）。
+func extIdentityChanged(cur, next *domain.AccountExt, fields ...extIdentityField) bool {
+	if cur == nil {
+		return true
+	}
+	if next == nil {
+		return false
+	}
+	for _, f := range fields {
+		switch f {
+		case extCredentialType:
+			if next.CredentialType != cur.CredentialType {
+				return true
+			}
+		case extIdentityQuad:
+			if !sameCodexIdentity(next.CodexIdentity, cur.CodexIdentity) {
+				return true
+			}
+		case extOAuthToken:
+			if derefString(next.CodexOAuthToken) != derefString(cur.CodexOAuthToken) {
+				return true
+			}
+		case extOAuthRefresh:
+			if derefString(next.CodexOAuthRefreshToken) != derefString(cur.CodexOAuthRefreshToken) {
+				return true
+			}
+		case extOAuthExpires:
+			if !sameTimePtr(next.CodexOAuthExpiresAt, cur.CodexOAuthExpiresAt) {
+				return true
+			}
+		case extPATKey:
+			if derefString(next.CodexPATKey) != derefString(cur.CodexPATKey) {
+				return true
+			}
+		case extEmail:
+			if derefString(next.CodexEmail) != derefString(cur.CodexEmail) {
+				return true
+			}
+		case extCodexAccountID:
+			if derefString(next.CodexAccountID) != derefString(cur.CodexAccountID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sameCodexIdentity 身份四元组按值相等（nil 与 nil 相等）。
+func sameCodexIdentity(a, b *domain.CodexIdentity) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// derefString nil 安全的字符串取值：凭据面比较里 nil 与空串同值（该写面 nil = 清空）。
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// sameTimePtr 时刻指针按值相等（nil 与 nil 相等）。
+func sameTimePtr(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
+
+// loadAccountExtInTx 读事务内的 ext 行；无行 → (nil, nil)（首次创建是"变更"）。
+func loadAccountExtInTx(ctx context.Context, tx *ent.Client, accountID int64) (*domain.AccountExt, error) {
+	row, err := tx.AccountExt.Query().Where(accountext.AccountIDEQ(accountID)).Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return toDomainAccountExt(row), nil
+}
+
+// bumpAccountGeneration 在同一个 UPDATE 里推进 C（无条件）并按需推进 K：C 用
+// **相对自增**（与 guard 解耦——把 expected 写进 C 会同时破坏客户端 CAS 令牌与
+// 重编译水位），guard 仍是 C 前置条件。
+func bumpAccountGeneration(ctx context.Context, tx *ent.Client, accountID, expectedRevision int64, advanceIdentity bool) (int, error) {
+	u := tx.Account.Update().
+		Where(account.IDEQ(accountID), account.LifecycleRevisionEQ(expectedRevision)).
+		AddLifecycleRevision(1)
+	if advanceIdentity {
+		u = u.AddIdentityRevision(1)
+	}
+	return u.Save(ctx)
+}
+
 // UpsertAccountExt 幂等写入（同 TemplateExtRepo.UpsertTemplateExt 语义：
 // 冲突 UPDATE 显式 ClearX 清 NULL）。codex_identity 必存（nil 由 service
 // 生成/沿用——正常路径恒非 nil；jsonb NULL → ClearX 清空，身份无清空路径）；
@@ -166,25 +288,7 @@ func (r *AccountExtRepo) FindAccountExtByCodexKey(ctx context.Context, codexEmai
 	return toDomainAccountExt(row), nil
 }
 
-// WritePATKey pat 凭据部分更新（Task B 批量导入 updated 路径；WriteOAuthRotation
-// 的 pat 对称形态——只 SetCodexPatKey，identity/email/oauth 列零触碰；全量
-// UpsertAccountExt 的 ClearX 清 NULL 面在此禁用）。行缺失 → ErrNotFound（同
-// WriteOAuthRotation 语义——updated 路径行必存在，dedup 刚查到，不触发）。
-func (r *AccountExtRepo) WritePATKey(ctx context.Context, accountID int64, patKey string) error {
-	n, err := r.client.AccountExt.Update().
-		Where(accountext.AccountIDEQ(accountID)).
-		SetCodexPatKey(patKey).
-		Save(ctx)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return fmt.Errorf("%w: account_id=%d ext row missing (codex account must have account_ext)", ErrNotFound, accountID)
-	}
-	return nil
-}
-
-// GetAccountExt 按账号 id 取扩展行；无行 → ErrNotFound。
+// GetAccountExt 按账号取类型化鉴权扩展；缺行 → ErrNotFound。
 func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	row, err := r.client.AccountExt.Query().Where(accountext.AccountIDEQ(accountID)).Only(ctx)
 	if err != nil {
@@ -196,17 +300,25 @@ func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*d
 	return toDomainAccountExt(row), nil
 }
 
-// AdminWriteOAuthRotationCAS 管理员 OAuth 轮转（fenced）：CAS expectedRevision 并原子 +1，更新 ext 三列。
-// SDK 内部刷新继续使用 WriteOAuthRotation（unfenced，不增 revision）。
-// 使用事务保证 accounts revision 与 ext 更新原子：revision CAS 失败则 ext 不更新。
+// AdminWriteOAuthRotationCAS 管理员 OAuth 轮转（fenced）：CAS expectedRevision，
+// 无条件推进 C，并在凭据面**按值变更**时推进 K；ext 三列与计数器同事务。
+// SDK 内部刷新继续使用 WriteOAuthRotation（unfenced，不触 accounts 行、K 中性）。
 func (r *AccountExtRepo) AdminWriteOAuthRotationCAS(ctx context.Context, accountID int64, expectedRevision int64, at, rt string, expiresAt *time.Time) error {
 	tx, err := r.client.Tx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() // nolint:errcheck
-	// CAS accounts
-	n, err := tx.Account.Update().Where(account.IDEQ(accountID), account.LifecycleRevisionEQ(expectedRevision)).SetLifecycleRevision(expectedRevision + 1).Save(ctx)
+	cur, err := loadAccountExtInTx(ctx, tx.Client(), accountID)
+	if err != nil {
+		return err
+	}
+	advanceIdentity := extIdentityChanged(cur, &domain.AccountExt{
+		CodexOAuthToken:        &at,
+		CodexOAuthRefreshToken: &rt,
+		CodexOAuthExpiresAt:    expiresAt,
+	}, extOAuthToken, extOAuthRefresh, extOAuthExpires)
+	n, err := bumpAccountGeneration(ctx, tx.Client(), accountID, expectedRevision, advanceIdentity)
 	if err != nil {
 		return err
 	}
@@ -236,7 +348,12 @@ func (r *AccountExtRepo) AdminWritePATKeyCAS(ctx context.Context, accountID int6
 		return err
 	}
 	defer tx.Rollback()
-	n, err := tx.Account.Update().Where(account.IDEQ(accountID), account.LifecycleRevisionEQ(expectedRevision)).SetLifecycleRevision(expectedRevision + 1).Save(ctx)
+	cur, err := loadAccountExtInTx(ctx, tx.Client(), accountID)
+	if err != nil {
+		return err
+	}
+	advanceIdentity := extIdentityChanged(cur, &domain.AccountExt{CodexPATKey: &patKey}, extPATKey)
+	n, err := bumpAccountGeneration(ctx, tx.Client(), accountID, expectedRevision, advanceIdentity)
 	if err != nil {
 		return err
 	}
@@ -253,15 +370,23 @@ func (r *AccountExtRepo) AdminWritePATKeyCAS(ctx context.Context, accountID int6
 	return tx.Commit()
 }
 
-// AdminUpsertAccountExtCAS 管理员 PUT /ext（fenced）：CAS revision 并原子上插入/更新 ext。
-// 用于 /accounts/{id}/ext 全量 PUT，需保证 ext 写入与 revision 递增原子。
+// AdminUpsertAccountExtCAS 管理员 PUT /ext（fenced）：CAS revision，无条件推进 C，
+// 并在凭据面**按值变更**时推进 K；插入/更新 ext 与计数器同事务。幂等 PUT（值未变）
+// 只推进 C（spec §3.5：不做"端点调用即推进"）。
 func (r *AccountExtRepo) AdminUpsertAccountExtCAS(ctx context.Context, e *domain.AccountExt, expectedRevision int64) (*domain.AccountExt, error) {
 	tx, err := r.client.Tx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	n, err := tx.Account.Update().Where(account.IDEQ(e.AccountID), account.LifecycleRevisionEQ(expectedRevision)).SetLifecycleRevision(expectedRevision + 1).Save(ctx)
+	cur, err := loadAccountExtInTx(ctx, tx.Client(), e.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	advanceIdentity := extIdentityChanged(cur, e,
+		extCredentialType, extIdentityQuad, extOAuthToken, extOAuthRefresh,
+		extOAuthExpires, extPATKey, extEmail, extCodexAccountID)
+	n, err := bumpAccountGeneration(ctx, tx.Client(), e.AccountID, expectedRevision, advanceIdentity)
 	if err != nil {
 		return nil, err
 	}

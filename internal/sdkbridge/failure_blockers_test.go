@@ -13,6 +13,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 // RED tests with barriers/no sleeps, require-only.
@@ -41,7 +42,7 @@ func TestCredentialDiscriminatorMatchesScheduler_TemplateAuthority(t *testing.T)
 	// Scheduler uses Template.CredentialType only; Ext mismatched must be ignored.
 	// Case A: Template api_key but Ext codex_oauth => should NOT self-fail via SDK (non-Codex)
 	tplA := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeAPIKey}
-	acctA := &domain.Account{ID: 1, TemplateID: 10, Template: tplA, UpstreamKey: "k1", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "i", SessionID: "s"}}}
+	acctA := &domain.Account{ID: 1, TemplateID: 10, Template: tplA, UpstreamKey: "k1", LifecycleRevision: 1, IdentityRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "i", SessionID: "s"}}}
 	storeA := &fakeCASStore2{accounts: map[int64]*domain.Account{1: acctA}}
 	latchA := newFakeLatch2()
 	failerA := &fakeFailer2{}
@@ -52,7 +53,7 @@ func TestCredentialDiscriminatorMatchesScheduler_TemplateAuthority(t *testing.T)
 
 	// Case B: Template codex_oauth but Ext api_key => should self-fail (scheduler authority is Template)
 	tplB := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth}
-	acctB := &domain.Account{ID: 2, TemplateID: 10, Template: tplB, UpstreamKey: "", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeAPIKey}}
+	acctB := &domain.Account{ID: 2, TemplateID: 10, Template: tplB, UpstreamKey: "", LifecycleRevision: 1, IdentityRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeAPIKey}}
 	storeB := &fakeCASStore2{accounts: map[int64]*domain.Account{2: acctB}}
 	latchB := newFakeLatch2()
 	failerB := &fakeFailer2{}
@@ -128,10 +129,10 @@ func (f *holStore) FailAccountCAS(_ context.Context, id int64, expected int64, _
 	if !ok {
 		return fmt.Errorf("not found")
 	}
-	if a.LifecycleRevision != expected {
-		return fmt.Errorf("stale")
+	if a.IdentityRevision != expected {
+		return fmt.Errorf("%w: stale", repository.ErrStaleIdentityRevision)
 	}
-	a.LifecycleRevision = expected + 1
+	a.LifecycleRevision++
 	return nil
 }
 func (f *holStore) SetAccountFailed(_ context.Context, _ int64, _ time.Time, _ string) error {
@@ -171,8 +172,8 @@ func TestRetryHOLFairness_SecondTaskNotStarved(t *testing.T) {
 
 	tplA := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth}
 	tplB := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth}
-	acct7 := &domain.Account{ID: 7, TemplateID: 10, Template: tplA, UpstreamKey: "sk", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
-	acct8 := &domain.Account{ID: 8, TemplateID: 10, Template: tplB, UpstreamKey: "sk2", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
+	acct7 := &domain.Account{ID: 7, TemplateID: 10, Template: tplA, UpstreamKey: "sk", LifecycleRevision: 1, IdentityRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
+	acct8 := &domain.Account{ID: 8, TemplateID: 10, Template: tplB, UpstreamKey: "sk2", LifecycleRevision: 1, IdentityRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
 
 	store := &holStore{
 		accounts: map[int64]*domain.Account{7: acct7, 8: acct8},
@@ -248,7 +249,7 @@ func TestRetryHOLFairness_SecondTaskNotStarved(t *testing.T) {
 func TestRetryStaleFencedAfterReAdd_MustNotDisableReadded(t *testing.T) {
 	tpl := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth}
 	origURL := "https://api.openai.com"
-	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", BaseURL: &origURL, LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
+	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", BaseURL: &origURL, LifecycleRevision: 1, IdentityRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
 	store := &holStore{
 		accounts: map[int64]*domain.Account{7: acct},
 		groups:   map[int64][]int64{7: {10}},
@@ -260,15 +261,16 @@ func TestRetryStaleFencedAfterReAdd_MustNotDisableReadded(t *testing.T) {
 	pubCh := make(chan struct{}, 1)
 	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch, Publisher: &retryFakePublisher{ch: pubCh}}
 
-	// Simulate remove/re-add: bump revision and change identity before the retry fires.
+	// Simulate remove/re-add: bump both generations and change identity before the retry fires.
 	store.mu.Lock()
 	store.accounts[7].LifecycleRevision = 5
+	store.accounts[7].IdentityRevision = 5
 	newURL := "https://changed.example.com"
 	store.accounts[7].BaseURL = &newURL
 	store.mu.Unlock()
 
 	requeued := handleRetryOnce(context.Background(), failureRetryTask{
-		accountID: 7, fingerprint: staleFP, revision: 1, reason: "fatal", deps: deps,
+		accountID: 7, fingerprint: staleFP, identityRevision: 1, reason: "fatal", deps: deps,
 	})
 	require.False(t, requeued, "stale task must be fully fenced, never requeued")
 	store.mu.Lock()
@@ -280,7 +282,7 @@ func TestRetryStaleFencedAfterReAdd_MustNotDisableReadded(t *testing.T) {
 		require.FailNow(t, "fenced retry must not publish for stale re-added account")
 	default:
 	}
-	require.False(t, latch.IsLatched(7, staleFP), "stale retry must clear latch for fencing")
+	require.False(t, latch.IsLatched(7, staleFP, 0), "stale retry must clear latch for fencing")
 }
 
 // TestRetryStaleFencedWhenDeleted_MustNotDisableReaddedSameID pins the deletion
@@ -292,7 +294,7 @@ func TestRetryStaleFencedAfterReAdd_MustNotDisableReadded(t *testing.T) {
 func TestRetryStaleFencedWhenDeleted_MustNotDisableReaddedSameID(t *testing.T) {
 	tpl := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth}
 	origURL := "https://api.openai.com"
-	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", BaseURL: &origURL, LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
+	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", BaseURL: &origURL, LifecycleRevision: 1, IdentityRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth}}
 	store := &holStore{accounts: map[int64]*domain.Account{7: acct}, groups: map[int64][]int64{7: {10}}}
 	staleFP, err := canonicalFingerprint(acct)
 	require.NoError(t, err)
@@ -300,7 +302,7 @@ func TestRetryStaleFencedWhenDeleted_MustNotDisableReaddedSameID(t *testing.T) {
 	require.True(t, latch.TryAcquire(7, staleFP, 1), "HandleFailure's acquire step")
 	pubCh := make(chan struct{}, 1)
 	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch, Publisher: &retryFakePublisher{ch: pubCh}}
-	task := failureRetryTask{accountID: 7, fingerprint: staleFP, revision: 1, reason: "fatal", deps: deps}
+	task := failureRetryTask{accountID: 7, fingerprint: staleFP, identityRevision: 1, reason: "fatal", deps: deps}
 
 	// Mark deleted before the retry runs.
 	now := time.Now()
@@ -308,13 +310,14 @@ func TestRetryStaleFencedWhenDeleted_MustNotDisableReaddedSameID(t *testing.T) {
 	store.accounts[7].DeletedAt = &now
 	store.mu.Unlock()
 	require.False(t, handleRetryOnce(context.Background(), task), "deleted account task must be fenced")
-	require.False(t, latch.IsLatched(7, staleFP), "deleted account retry must be fenced and clear latch")
+	require.False(t, latch.IsLatched(7, staleFP, 0), "deleted account retry must be fenced and clear latch")
 
-	// Re-add same ID (deleted flag cleared, new revision): the old task must still
+	// Re-add same ID (deleted flag cleared, new generations): the old task must still
 	// not CAS it.
 	store.mu.Lock()
 	store.accounts[7].DeletedAt = nil
 	store.accounts[7].LifecycleRevision = 10
+	store.accounts[7].IdentityRevision = 10
 	store.mu.Unlock()
 	require.False(t, handleRetryOnce(context.Background(), task), "stale task must stay fenced after re-add")
 	store.mu.Lock()

@@ -85,7 +85,7 @@ func benchProxy(tb testing.TB, upstream string) *Proxy {
 	if err := re.Reload(context.Background()); err != nil {
 		panic(err)
 	}
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	if err := sched.InvalidateAllSync(); err != nil {
 		panic(err)
 	}

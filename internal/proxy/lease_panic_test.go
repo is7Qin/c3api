@@ -96,7 +96,7 @@ func newLeaseScheduler(t *testing.T, tpl *domain.Template) *scheduler.Scheduler 
 	store := &leaseFakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}
 	re := rule.New(rule.Config{}, store, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 2, SyncInterval: 100 * time.Hour}, loader, re, nil, nil, nil, nil)
+	s := scheduler.New(scheduler.Config{SyncInterval: 100 * time.Hour}, loader, re, nil, nil, nil, nil)
 	require.NoError(t, s.InvalidateAllSync())
 	publishTestRoutes(t, s)
 
