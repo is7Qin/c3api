@@ -419,16 +419,16 @@ func runtimeStatusFor(a *domain.Account) domain.AccountStatus {
 // 叶复用的判据 = staticKeyOf(old) == staticKeyOf(new)，即「叶上被消费的事实是否变了」。
 //
 // 这里曾有一个候选设计：让叶对象身份**永久稳定**、只原子换 static 指针。已证伪——
-// hasStaticChange（attempt_plan_exec.go:378）比较的正是**叶指针**：叶变了 ⇒ 在途
-// plan 跳过该账号、未变的账号继续预留（spec §5.7(b)「态 2」）。若叶指针永不改变，
-// hasStaticChange 恒假 ⇒ 任何 generation 变化都直接 ErrAttemptsExhausted
-// （attempt_plan_reservation.go:106）⇒ 在途 plan **永不能续跑**，比「不复用」更糟。
-// 故叶身份必须随「消费面是否变化」而动。
+// 在途计划的有效性检查（attempt_plan_exec.go:hasStaticChange 取当前叶计划摘要）
+// 必须能区分「决策输入变了」与「只是载荷变了」：前者跳过该账号，后者继续
+// 预留（spec §5.7(b)「态 2」）。若叶指针永不改变，任何 generation 变化都直接
+// ErrAttemptsExhausted（attempt_plan_reservation.go:106）⇒ 在途 plan **永不能续跑**，
+// 比「不复用」更糟。故叶身份必须随「消费面是否变化」而动。
 //
-// 由此 staticKey 的字段集判据是 A2 的「消费面 ⊆ 键字段集」：**凡从叶消费的事实
+// 由此 staticKey 的字段集判据是「消费面 ⊆ 键字段集」：**凡从叶消费的事实
 // 都必须入键**，凭据值（含 OAuth token）亦然——否则凭据轮转后键判等、复用旧叶、
-// 上游用旧令牌（实测 TestInvalidateAccountReloadsExt）。而「token 刷新不该改身份」
-// 由 (I,K) 围栏（P1/P2/P3）另行承担：**两件事不共用一个比较**。
+// 上游用旧令牌（实测 TestInvalidateAccountReloadsExt）。而「token 刷新不该作废
+// 在途计划」由 planKey 承担：**两件事不共用一个比较**。
 
 // buildSnapshots 构建全量快照：**每账号一个共享实例**——多组账号在多个组
 // 快照中引用同一实例（O2 评审实证修复）。发布后 leaves never mutate；

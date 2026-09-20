@@ -71,8 +71,14 @@ func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity
 // ReserveAttempt applies request-time health, latch, status and
 // cluster-concurrency gates to the compiled plan. Candidates carry immutable
 // metadata; the only per-candidate request work is O(1) gate checks and the
-// single lease CAS. Stale leaves (pointer mismatch after static replacement)
-// are rejected, never leased.
+// single lease CAS. Stale candidates (current planKey mismatch after static
+// replacement) are rejected, never leased.
+//
+// 门禁与 Selection 装配一律读**当前叶**：放行的前提已是"当前视图的逐账号
+// planKey == c.PlanKey"，而 planKey 按定义就是门禁与 Selection 所读的全部静态
+// 字段——于是对 planKey 覆盖的每个字段，"读当前叶"与"读计划冻结值"恒等；两者
+// 的唯一差异恰好落在 payloadKey 上，而那组字段正是要取新值的载荷。
+// runtime 在重载间共享同一个 *accountRuntime，故并发/状态读当前叶即读现值。
 //
 // Boundary preserved (v4-S2): the (Selection, Attempt) VALUE shape is
 // unchanged — only the session carriage moved from heap box to stack value.
@@ -109,15 +115,28 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 	instances := s.instancesN()
 	cluster := s.concView.Load()
 	applyMapping := plan.identity.ApplyModelMapping
+	byID := v.static.byID
+	facts := v.static.facts
 	attempt, candidate, err := plan.reserve(func(c CompiledCandidate) bool {
 		if c.Leaf == nil || c.Static == nil || c.Fingerprint == "" {
 			return false
 		}
-		if v == nil || v.static == nil || v.static.byID[c.AccountID] != c.Leaf {
+		a := byID[c.AccountID]
+		if a == nil {
 			return false
 		}
-		a := c.Leaf
-		av := c.Static
+		av := a.static.Load()
+		if av == nil {
+			return false
+		}
+		// 计划判据取视图**发布时**按账号预计算的 planKey（与 baseURL/fingerprint
+		// 同源的那份逐账号事实），不在每次预留尝试里现算：planKeyOf 要做规范序
+		// 摘要（排序拷贝 + 多次 sha256），现算会给热路径加十余次分配。缺席
+		// （账号不在视图/静态面缺失）⇒ 拒绝，与旧指针比较的缺席语义等价。
+		fact, ok := facts[c.AccountID]
+		if !ok || fact.planKey != c.PlanKey {
+			return false
+		}
 		if av.tpl == nil {
 			return false
 		}
@@ -169,14 +188,20 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		mapped = candidate.RequestedModel
 		mappingMode = domain.ModelMappingModeInvalid
 	}
-	av := candidate.Static
-	a := candidate.Leaf
+	cur, ok := v.static.byID[candidate.AccountID]
+	if !ok || cur == nil {
+		return nil, Attempt{}, ErrAttemptsExhausted
+	}
+	curAv := cur.static.Load()
+	if curAv == nil || curAv.tpl == nil {
+		return nil, Attempt{}, ErrAttemptsExhausted
+	}
 	selected := &Selection{
-		AccountID: av.acc.ID, TemplateID: av.tpl.ID, BaseURL: candidate.BaseURL,
-		Format: domain.RequestFormat(plan.route.Format), UpstreamKey: av.acc.UpstreamKey,
-		CredentialType: av.tpl.CredentialType, Model: mapped,
-		StripImageTools: av.tpl.StripImageTools, Ext: av.acc.Ext,
-		CandidateFingerprint: candidate.Fingerprint, lease: &leaseToken{acc: a},
+		AccountID: curAv.acc.ID, TemplateID: curAv.tpl.ID, BaseURL: candidate.BaseURL,
+		Format: domain.RequestFormat(plan.route.Format), UpstreamKey: curAv.acc.UpstreamKey,
+		CredentialType: curAv.tpl.CredentialType, Model: mapped,
+		StripImageTools: curAv.tpl.StripImageTools, Ext: curAv.acc.Ext,
+		CandidateFingerprint: candidate.Fingerprint, lease: &leaseToken{acc: cur},
 		ModelMappingMode: mappingMode,
 	}
 	return selected, attempt, nil

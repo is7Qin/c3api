@@ -13,37 +13,20 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// staticKey 是快照静态事实的**可比较值类型**（spec §5.5b「结构保证」/A2①）：
-// sameStatic := staticKeyOf(old) == staticKeyOf(new)，算子是 `==`。
+// planKey 是编译计划/决策的有效性判据（值语义）：已编译候选在预留与复用
+// 检查中比较的是它，不是叶子指针。字段集 = 计划的全部静态输入——门禁与
+// Selection 装配从当前叶读到的每个静态事实都落在这里；反之，落在 payloadKey
+// 的载荷变化只换新叶子内容，不作废在途计划。
 //
-// 字段集 = spec §5.5 表「静态快照消费 = 是」的账号侧行 ∪ §5.5b 的模板/凭据消费子集：
-//
-//	§5.5 账号侧：name / template_id / base_url（生效值）/ upstream_key /
-//	  max_concurrency / group_ids / enabled / cache_domain / upstream_cost_multiplier /
-//	  ext 凭据面消费子集 / identity_revision（K）
-//	§5.5b 模板侧：templateBaseURL / credentialType / stripImageTools /
-//	  models / formatModels / supportedFormats / modelMapping
-//	§5.5b 凭据侧：codexAccountID / codexIdentity
-//
-// 比较规则第 2 项（`CandidateFingerprint` 本身按值比较）在本批**未接线**：
+// 比较规则第 2 项（`CandidateFingerprint` 本身按值比较）在这里**未接线**：
 // 它按值覆盖 accountID/templateID/credential_type/生效 baseURL/stripImageTools/
-// upstreamKey/凭据摘要/凭据身份四元组/codexAccountID，这些事实**均已逐项**落在上列
-// 字段里（digest 是 upstreamKey|patKey 的纯函数：domain/routing.go:231-257），故键
-// 覆盖面无缺口；接线它属 spec §5.7(b)「sameStatic 可达性修复」项，与 (A) 合并
-// 两类型同批（本批显式排除）。
+// upstreamKey/凭据摘要/凭据身份四元组/codexAccountID，这些事实**均已逐项**落在
+// 下列字段里（digest 是 upstreamKey|patKey 的纯函数：domain/routing.go:231-257），
+// 故覆盖面无缺口。
 //
-// §5.5b 比较规则第 6 项（快照容器完备性）：snapshotStatic 的每个字段都落入键或由
-// 已比较项派生——acc → 上列账号侧行；tpl → 上列模板侧行；groupIDs → group_ids 行；
-// gid → min(groupIDs) 纯派生（见 buildSnapshots）。
-//
-// **本类型必须不含任何指针/切片/映射字段**：含指针的 struct 仍然「可比较」，
-// 但 `==` 对指针只比**地址**；键是每次重载重建的（buildSnapshots 每次 new
-// snapshotStatic），只要键里有一个指向「该次重载新建对象」的指针（state.go 的
-// tpl/Ext，routing_compiler_candidates.go:70-71 内嵌的 account/static），键就
-// **恒不等** ⇒ 规则重新变惰性——即本 spec 要消灭的那个缺陷。Slice/Map 类事实一律
-// 以**规范序 32 字节摘要**（[32]byte，kind = reflect.Array，保持 struct 可比较）入键。
-// 守卫见 static_key_test.go。
-type staticKey struct {
+// 两枚 struct 都只含值语义字段（标量 / `[32]byte` 摘要），`==` 仍是唯一算子
+// （沿用 static_key_test.go 的反射守卫）。
+type planKey struct {
 	// --- §5.5 账号侧（静态快照消费 = 是） ---
 	accountID                int64
 	name                     string
@@ -56,32 +39,26 @@ type staticKey struct {
 	upstreamCostMultiplierBp int
 	identityRevision         int64 // K（spec §5.5 注：K 会进编译事实/候选/wire）
 
-	// --- 凭据面消费子集 ---
+	// --- 凭据面消费子集（决策输入部分） ---
 	//
-	// 这里入键的是**叶上被消费的凭据值**，不是「身份」。区分是承重的：
-	// staticKey 的消费者是 hasStaticChange（attempt_plan_exec.go:378 比较
-	// **叶指针**）⇒ 键的语义是「叶上被消费的事实是否变了」：变了就换新叶，
-	// 在途 plan 跳过该账号（spec §5.7(b)「态 2 ⇒ 预留成功」）；未变的账号
-	// 复用旧叶、可继续预留。
+	// codexEmail 落在这里：AccountCandidateFingerprint 把 Ext.CodexEmail 读入并
+	// 传给 CandidateFingerprint——它位于决策路径，故 email 是决策输入。当前
+	// hashFields 的实参清单里还没有它（死参数），所以今天 email 只是保守多失效
+	// （email 仅管理面改写，SDK 自动刷新不碰它）；一旦有人把它真正接进指纹，
+	// 判据无需改动即仍然正确。
 	//
-	// 故判据是 A2 的「消费面 ⊆ 键字段集」，不是「身份」。上游鉴权要用的
-	// 凭据是从叶消费的（invalidate_account_test.go:40 断言回写后叶上 Ext 必须
-	// 换新），所以凭据值**必须入键**——否则凭据轮转后键判等 ⇒ 复用旧叶 ⇒
-	// 上游拿旧令牌 401（实测：TestInvalidateAccountReloadsExt 失败）。
-	//
-	// 「token 刷新不该改身份」由**另一套机制**承担：(I,K) 围栏（latch/health/
-	// continuation 直接比较 K）。两件事不得共用一个比较——
-	// 这正是本键与 (I,K) 必须分开的原因。
+	// codexPATKey 落在这里：stableCredentialDigest 对 codex-pat 就是
+	// sha256(patKey)，pat 轮转确实改变候选指纹 ⇒ 确实必须打断计划。而
+	// codex-oauth 分支返回常量（domain/routing.go:249-253），故 OAuth 令牌不是
+	// 决策输入——两个分支的差异正是"载荷 vs 决策输入"的分界线，键的拆分与
+	// 指纹函数的拆分同源。
 	codexAccountID    string
 	codexInstallation string
 	codexSession      string
 	codexThread       string
 	codexWindow       string
-	codexEmail        string // 叶上 Ext 经 Selection.Ext 可达，故入键保新鲜
-	codexPATKey       string // 凭据值：pat（api_key/pat 类型上游鉴权用）
-	codexOAuthToken   string // 凭据值：上游鉴权访问令牌
-	codexOAuthRefresh string // 凭据值：刷新令牌
-	codexOAuthExpires int64  // 凭据值：访问令牌过期时刻（UnixNano；0 = 未设置）
+	codexEmail        string
+	codexPATKey       string // 凭据值：pat（api_key/pat 类型上游鉴权用；同时进候选指纹）
 
 	// --- §5.5b(1) 模板侧源字段（I 不覆盖的那些） ---
 	credentialType   credential.Type
@@ -95,14 +72,48 @@ type staticKey struct {
 	groupIDsDigest [32]byte
 }
 
-// staticKeyOf 由快照静态视图派生比较键。av 为 nil（首轮无旧快照）时返回零值键；
-// 零值键只在两侧都为空时相等（首轮无复用分支，oldByID 为空 map）。
+// payloadKey 是只影响"叶子内容是否新鲜"的载荷：OAuth 访问令牌三元组只用于
+// 上游鉴权（stableCredentialDigest 对 codex-oauth 返回常量，token/refresh/
+// expiry 完全不进指纹），不是任何路由决策的输入。载荷变化必须换新叶子
+// （SDK 拿到新 token，staticKey 变）但不得作废在途计划（planKey 不变）。
+type payloadKey struct {
+	codexOAuthToken   string // 凭据值：上游鉴权访问令牌
+	codexOAuthRefresh string // 凭据值：刷新令牌
+	codexOAuthExpires int64  // 凭据值：访问令牌过期时刻（UnixNano；0 = 未设置）
+}
+
+// staticKey 是快照静态事实的**可比较值类型**（spec §5.5b「结构保证」）：
+// sameStatic := staticKeyOf(old) == staticKeyOf(new)，算子是 `==`。
+//
+// 叶子复用判据 = 决策输入 ∪ 载荷：凭据值（含 OAuth token）必须入键——否则
+// 凭据轮转后键判等 ⇒ 复用旧叶 ⇒ 上游拿旧令牌 401（实测：
+// TestInvalidateAccountReloadsExt 失败）。而「token 刷新不该改计划有效性」
+// 由 planKey 承担：两件事不共用一个比较。
+//
+// §5.5b 比较规则第 6 项（快照容器完备性）：snapshotStatic 的每个字段都落入键或由
+// 已比较项派生——acc → 账号侧行；tpl → 模板侧行；groupIDs → group_ids 行；
+// gid → min(groupIDs) 纯派生（见 buildSnapshots）。
+//
+// **本类型必须不含任何指针/切片/映射字段**：含指针的 struct 仍然「可比较」，
+// 但 `==` 对指针只比**地址**；键是每次重载重建的（buildSnapshots 每次 new
+// snapshotStatic），只要键里有一个指向「该次重载新建对象」的指针（state.go 的
+// tpl/Ext，routing_compiler_candidates.go:70-71 内嵌的 account/static），键就
+// **恒不等** ⇒ 规则重新变惰性——即本 spec 要消灭的那个缺陷。Slice/Map 类事实一律
+// 以**规范序 32 字节摘要**（[32]byte，kind = reflect.Array，保持 struct 可比较）入键。
+// 守卫见 static_key_test.go。
+type staticKey struct {
+	planKey
+	payloadKey
+}
+
+// planKeyOf 由快照静态视图派生计划有效性判据。av 为 nil（首轮无旧快照）时
+// 返回零值键；调用方不得依赖零值比较做缺席判定——fence 必须显式处理缺席。
 //
 // 生效 baseURL 与编译器同源（routing_compiler_candidates.go:98-103）：模板值为底，
-// 账号覆盖非空时优先。两者必须是同一套优先级，否则键会在编译器认为「变化了」的
+// 账号覆盖非空时优先。两者必须是同一套优先级，否则判据会在编译器认为「变化了」的
 // 场景下判等（或反之），复用分支与编译事实就此分叉。
-func staticKeyOf(av *snapshotStatic) staticKey {
-	var k staticKey
+func planKeyOf(av *snapshotStatic) planKey {
+	var k planKey
 	if av == nil {
 		return k
 	}
@@ -125,11 +136,6 @@ func staticKeyOf(av *snapshotStatic) staticKey {
 		k.codexAccountID = derefString(ext.CodexAccountID)
 		k.codexEmail = derefString(ext.CodexEmail)
 		k.codexPATKey = derefString(ext.CodexPATKey)
-		k.codexOAuthToken = derefString(ext.CodexOAuthToken)
-		k.codexOAuthRefresh = derefString(ext.CodexOAuthRefreshToken)
-		if ext.CodexOAuthExpiresAt != nil {
-			k.codexOAuthExpires = ext.CodexOAuthExpiresAt.UnixNano()
-		}
 		if id := ext.CodexIdentity; id != nil {
 			k.codexInstallation = id.InstallationID
 			k.codexSession = id.SessionID
@@ -147,6 +153,32 @@ func staticKeyOf(av *snapshotStatic) staticKey {
 	}
 	k.groupIDsDigest = digestInt64s(av.groupIDs)
 	return k
+}
+
+// payloadKeyOf 由快照静态视图派生载荷判据：只读 OAuth 令牌三元组。av 为 nil
+// 时返回零值。
+func payloadKeyOf(av *snapshotStatic) payloadKey {
+	var k payloadKey
+	if av == nil {
+		return k
+	}
+	if ext := av.acc.Ext; ext != nil {
+		k.codexOAuthToken = derefString(ext.CodexOAuthToken)
+		k.codexOAuthRefresh = derefString(ext.CodexOAuthRefreshToken)
+		if ext.CodexOAuthExpiresAt != nil {
+			k.codexOAuthExpires = ext.CodexOAuthExpiresAt.UnixNano()
+		}
+	}
+	return k
+}
+
+// staticKeyOf 由快照静态视图派生比较键。av 为 nil（首轮无旧快照）时返回零值键；
+// 零值键只在两侧都为空时相等（首轮无复用分支，oldByID 为空 map）。
+//
+// 两枚子键从**同一份**快照派生，字段归属只声明一次：planKeyOf 读决策输入，
+// payloadKeyOf 读载荷。
+func staticKeyOf(av *snapshotStatic) staticKey {
+	return staticKey{planKey: planKeyOf(av), payloadKey: payloadKeyOf(av)}
 }
 
 // normalizeCacheDomain 把 nil 与 "" 归并为同一个空串：cacheDomainForAccount

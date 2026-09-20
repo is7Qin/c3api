@@ -144,7 +144,7 @@ func routePlanCandidates(rd *RouteDecision, facts map[int64]compilerAccountFacts
 		rpc := RoutingPlanCandidate{
 			AccountID: id,
 		}
-		if fact, ok := facts[id]; ok && fact.account == c.Leaf && fact.static == c.Static {
+		if fact, ok := facts[id]; ok && fact.planKey == c.PlanKey {
 			rpc.TemplateID = c.TemplateID
 			rpc.IdentityRevision = c.IdentityRevision
 			rpc.Fingerprint = c.Fingerprint

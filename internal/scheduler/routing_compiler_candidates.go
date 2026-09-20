@@ -69,9 +69,13 @@ type compilerAccountFacts struct {
 	// revision is the candidate content generation = the account's
 	// identity_revision (K), NOT the client lifecycle token (C): C is
 	// unrelated to compiled content identity (spec §5.7(c)).
-	revision                 int64
-	account                  *accountSnapshot
-	static                   *snapshotStatic
+	revision int64
+	account  *accountSnapshot
+	static   *snapshotStatic
+	// planKey 是编译期从 static 一次派生的计划有效性判据（与 baseURL/
+	// fingerprint 同源，避免第二处字段清单）。routePlanCandidates 与预留
+	// fence 凭它判定在途计划是否仍有效。
+	planKey                  planKey
 	upstreamCostMultiplierBp int
 }
 
@@ -105,6 +109,7 @@ func deriveCompilerAccountFacts(account *accountSnapshot, st *snapshotStatic) co
 		f.fingerprint = fp
 	}
 	f.identityFingerprint = candidateIdentityFingerprint(f.fingerprint, f.accountID)
+	f.planKey = planKeyOf(st)
 	f.upstreamCostMultiplierBp = st.acc.UpstreamCostMultiplierBp
 	return f
 }
