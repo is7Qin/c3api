@@ -452,20 +452,20 @@ func rtCreateRule(t *testing.T, env *e2eEnv, name string, prio int, when, then m
 	return int64(jsonGet(t, rb, "id").(float64))
 }
 
-// rtSetCost fenced 改采购倍率（multiplier 0..10，1=×1）。
+// rtSetCost 改采购倍率（multiplier 0..10，1=×1）——走账号配置唯一写面。
 func rtSetCost(t *testing.T, env *e2eEnv, acc int64, mult float64) {
 	t.Helper()
-	c, rb := env.admin(http.MethodPut, fmt.Sprintf("/accounts/%d/cost-multiplier", acc), map[string]any{
-		"multiplier": mult, "expected_revision": rtRevision(t, env, acc),
+	c, rb := env.admin(http.MethodPatch, fmt.Sprintf("/accounts/%d", acc), map[string]any{
+		"upstream_cost_multiplier": mult,
 	})
 	require.Equal(t, 200, c, "set cost %d×%v: %s", acc, mult, rb)
 }
 
-// rtSetEnabled fenced 启停账号。
+// rtSetEnabled 启停账号——走账号配置唯一写面。
 func rtSetEnabled(t *testing.T, env *e2eEnv, acc int64, en bool) {
 	t.Helper()
-	c, rb := env.admin(http.MethodPost, fmt.Sprintf("/accounts/%d/enabled", acc), map[string]any{
-		"enabled": en, "expected_revision": rtRevision(t, env, acc),
+	c, rb := env.admin(http.MethodPatch, fmt.Sprintf("/accounts/%d", acc), map[string]any{
+		"enabled": en,
 	})
 	require.Equal(t, 200, c, "set enabled %d=%v: %s", acc, en, rb)
 }

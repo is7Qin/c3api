@@ -701,12 +701,12 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	t.Logf("成员一致：%v，probe owner=%s（恰一）", members, owner)
 	// PROBING→READY 进展：失能再恢复 accB（rev+1 → PROBING），owner 探针放行。
 	gen, _ := rtPlan(t, envA)
-	_, _ = envA.admin(http.MethodPost, fmt.Sprintf("/accounts/%d/enabled", accB), map[string]any{
-		"enabled": false, "expected_revision": rtRevision(t, envA, accB),
+	_, _ = envA.admin(http.MethodPatch, fmt.Sprintf("/accounts/%d", accB), map[string]any{
+		"enabled": false,
 	})
 	gen = rtWaitGenBump(t, envA, gen, "B 失能重编译")
-	_, _ = envA.admin(http.MethodPost, fmt.Sprintf("/accounts/%d/enabled", accB), map[string]any{
-		"enabled": true, "expected_revision": rtRevision(t, envA, accB),
+	_, _ = envA.admin(http.MethodPatch, fmt.Sprintf("/accounts/%d", accB), map[string]any{
+		"enabled": true,
 	})
 	rtWaitGenBump(t, envA, gen, "B 恢复重编译")
 	// 恢复后候选归位即探针链路活着（双实例下恰一 owner  probing，无双主冲突）。
