@@ -49,6 +49,27 @@ type casStore interface {
 	GetAccount(ctx context.Context, id int64) (*domain.Account, error)
 }
 
+// casStoreTemplate 可选能力：按 id 取账号并**预载模板**。失效判决的候选指纹与
+// 凭据判别符都读模板（凭据类型 + 生效 origin），而部分实现的 GetAccount 只取
+// 账号行（repository.AccountRepo 即如此）⇒ 缺本能力时判决无法成形。实现方若不
+// 预载模板，必须实现本接口，否则失效链在围栏路径上无法工作。
+type casStoreTemplate interface {
+	GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error)
+}
+
+// ensureTemplate 补齐判决所需的模板：已预载则原样返回；否则经可选能力重取。
+// 无法补齐时返回原值——后续按"缺凭据判别符"拒绝，不静默放过。
+func ensureTemplate(ctx context.Context, cs casStore, acct *domain.Account, accountID int64) (*domain.Account, error) {
+	if acct == nil || acct.Template != nil {
+		return acct, nil
+	}
+	withTpl, ok := cs.(casStoreTemplate)
+	if !ok {
+		return acct, nil
+	}
+	return withTpl.GetAccountWithTemplate(ctx, accountID)
+}
+
 type groupGetter interface {
 	GetAccountGroups(ctx context.Context, accountID int64) ([]int64, error)
 }
@@ -143,6 +164,10 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 	if deps.Latch != nil {
 		if cs, ok := deps.Store.(casStore); ok {
 			acct, err := cs.GetAccount(ctx, accountID)
+			if err != nil {
+				return err
+			}
+			acct, err = ensureTemplate(ctx, cs, acct, accountID)
 			if err != nil {
 				return err
 			}

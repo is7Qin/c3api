@@ -24,10 +24,19 @@ type configRevisionStore struct {
 	// raceIdentityAdvance 在 CAS 之前先推进身份（模拟"判决形成后、CAS 之前
 	// 管理面完成了一次身份写入"的竞态窗口），使 guard 必然陈旧。
 	raceIdentityAdvance bool
+	// templateOnDemand 非 nil 时实现 GetAccountWithTemplate（按需预载模板的
+	// 可选能力）；为 nil 则模拟"GetAccount 只取账号行"的实现。
+	templateOnDemand *domain.Template
 }
 
 func (s *configRevisionStore) GetAccount(context.Context, int64) (*domain.Account, error) {
 	cp := *s.acct
+	return &cp, nil
+}
+
+func (s *configRevisionStore) GetAccountWithTemplate(context.Context, int64) (*domain.Account, error) {
+	cp := *s.acct
+	cp.Template = s.templateOnDemand
 	return &cp, nil
 }
 
@@ -112,3 +121,32 @@ func TestSDKRefreshDoesNotVoidFailureVerdict(t *testing.T) {
 }
 
 func strPtrSDK(s string) *string { return &s }
+
+// TestHandleFailureNeedsTemplateCapableStore 钉住围栏路径的**存储前提**：判决的
+// 候选指纹与凭据判别符都读模板，而 GetAccount 不预载模板的实现（repository 的
+// AccountRepo 即如此）会让判决无法成形。此前该情形以"缺凭据判别符"被拒——一旦
+// 装配了 Latch，SDK 失效就会**静默地完全不再落库**（fail-open），故必须走
+// GetAccountWithTemplate 兜底。
+func TestHandleFailureNeedsTemplateCapableStore(t *testing.T) {
+	newAcct := func() *domain.Account {
+		a := newCodexAccountForRetry(7, 1)
+		a.Template = nil // 模拟 GetAccount 只取账号行（不预载模板）
+		return a
+	}
+
+	t.Run("store without template capability cannot form a verdict", func(t *testing.T) {
+		store := &configRevisionStore{acct: newAcct()}
+		deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: newRetryFakeLatch()}
+		err := HandleFailure(context.Background(), deps, 7, errors.New("fatal"))
+		require.ErrorIs(t, err, ErrMissingCredentialDiscriminator)
+		require.Empty(t, store.gotExpect, "判决不得成形，故不得尝试 CAS")
+	})
+
+	t.Run("template-capable store forms the verdict", func(t *testing.T) {
+		store := &configRevisionStore{acct: newAcct(), templateOnDemand: newCodexAccountForRetry(7, 1).Template}
+		deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: newRetryFakeLatch()}
+		require.NoError(t, HandleFailure(context.Background(), deps, 7, errors.New("fatal")))
+		require.Equal(t, []int64{1}, store.gotExpect, "补齐模板后判决以 K 成形并 CAS")
+		require.NotNil(t, store.acct.FailedAt)
+	})
+}
