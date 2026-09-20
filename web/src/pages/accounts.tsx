@@ -1697,8 +1697,8 @@ export default function Accounts() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* —— 采购成本倍率（fenced PUT /cost-multiplier；正常值 ×0–×10，UI 边界校验镜像
-          后端 bp 换算；409 → 提示重读重试） —— */}
+      {/* —— 采购成本倍率（账号配置唯一写面 PATCH /accounts/{id} 的 upstream_cost_multiplier；
+          正常值 ×0–×10，UI 边界校验镜像后端 bp 换算；陈旧前置条件 → 提示重读重试） —— */}
       <Dialog open={!!multTarget} onOpenChange={o => { if (!o && !multSave.isPending) setMultTarget(null) }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
@@ -1734,7 +1734,8 @@ export default function Accounts() {
         </DialogContent>
       </Dialog>
 
-      {/* —— 缓存域（fenced PUT /cache-domain；空 → null = 清空回账号私有域，不走空串） —— */}
+      {/* —— 缓存域（账号配置唯一写面 PATCH /accounts/{id} 的 cache_domain；
+          空 → null = 清空回账号私有域，不走空串） —— */}
       <Dialog open={!!domainTarget} onOpenChange={o => { if (!o && !domainSave.isPending) setDomainTarget(null) }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
