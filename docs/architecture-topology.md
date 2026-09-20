@@ -178,7 +178,7 @@ pkg 职责边界：
 
 | 表 | schema 文件 | 说明 |
 |---|---|---|
-| accounts | account.go | 上游账号（enabled/failed_at/failure_source/lifecycle_revision/upstream_cost_multiplier_bp/cache_domain/max_concurrency + template_id；生命周期两轴正交，见 admin-api「生命周期模型」） |
+| accounts | account.go | 上游账号（enabled/failed_at/failure_source/lifecycle_revision/identity_revision/upstream_cost_multiplier_bp/cache_domain/max_concurrency + template_id；生命周期两轴正交，两个代际 C/K 的分工见 admin-api「生命周期模型」） |
 | account_exts | account_ext.go | 账号类型化扩展（codex oauth/pat 凭据） |
 | groups | group.go | 组（倍率、protocol_convert、key 限制） |
 | group_assignments | group_assignment.go | 用户-组关联（专属倍率） |
