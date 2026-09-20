@@ -172,7 +172,9 @@ func (f *fakeHealth) SetProbing(_ context.Context, id int64, rev int64) error {
 func newCodexAccountForRetry(id int64, rev int64) *domain.Account {
 	tpl := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth, StripImageTools: false}
 	return &domain.Account{
-		ID: id, TemplateID: 10, Template: tpl, UpstreamKey: "sk-test", LifecycleRevision: rev,
+		// IdentityRevision 与 C 同置 rev（镜像生产不变量：两者都自 1 起、独立推进）。
+		// 测试意图是「账号处于代际 rev」，PROBING 现在以 K 落键。
+		ID: id, TemplateID: 10, Template: tpl, UpstreamKey: "sk-test", LifecycleRevision: rev, IdentityRevision: rev,
 		Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth},
 	}
 }
@@ -320,7 +322,9 @@ func TestRecover_CASAndProbing(t *testing.T) {
 	health.mu.Lock()
 	require.Len(t, health.calls, 1)
 	require.Equal(t, int64(7), health.calls[0].id)
-	require.Equal(t, int64(4), health.calls[0].rev, "PROBING revision must be new revision")
+	// PROBING 以**身份代际 K**落键（=3），不是 CAS 后的 C（=4）：健康记录按 K
+	// 隔离，EffectiveState 以 K 查询。取 3≠4 是刻意的——传 C 会让断言失败。
+	require.Equal(t, int64(3), health.calls[0].rev, "PROBING must be keyed by identity revision K, not C")
 	health.mu.Unlock()
 	require.Empty(t, latch.m, "latch cleared after recover")
 	select {

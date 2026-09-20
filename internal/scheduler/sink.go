@@ -65,7 +65,7 @@ func (s *LatchSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 	default:
 		return nil
 	}
-	key := HealthKey{AccountID: ev.AccountID, Revision: ev.ExpectedRevision}
+	key := HealthKey{AccountID: ev.AccountID, IdentityRevision: ev.ExpectedIdentityRevision}
 	if th.Scope == domain.ThrottleScopeAccount {
 		key.Quality = "*"
 	} else if th.Scope == domain.ThrottleScopeAccountRoute {
@@ -88,7 +88,7 @@ func (s *LatchSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 // 第一道门——引擎内 sink 调用先于 enqueuePersist）；锁存后经 Hub 同步扇出，
 // fence（revision/指纹双检查）与内存摘除在 Scheduler.onRuleFailure 内执行。
 func (s *LatchSink) FailAccount(ev rule.Event) error {
-	if ev.ExpectedRevision <= 0 {
+	if ev.ExpectedIdentityRevision <= 0 {
 		return ErrMissingExpectedRevision
 	}
 	fp := ev.CandidateFingerprint
@@ -96,7 +96,7 @@ func (s *LatchSink) FailAccount(ev rule.Event) error {
 		return ErrMissingCandidateFingerprint
 	}
 	if s.Latch != nil {
-		s.Latch.TryAcquire(ev.AccountID, fp, ev.ExpectedRevision)
+		s.Latch.TryAcquire(ev.AccountID, fp, ev.ExpectedIdentityRevision)
 	}
 	s.Hub.Dispatch(ev)
 	return nil
@@ -109,7 +109,7 @@ func (s *Scheduler) onRuleFailure(ev rule.Event) {
 	if v := s.View(); v != nil {
 		if as, ok := v.Account(ev.AccountID); ok {
 			av := as.static.Load()
-			if av.acc.LifecycleRevision != ev.ExpectedRevision {
+			if av.acc.IdentityRevision != ev.ExpectedIdentityRevision {
 				return
 			}
 			current, err := candidateFingerprint(&av.acc)

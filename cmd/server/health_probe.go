@@ -61,10 +61,11 @@ func (p *healthProber) probe(ctx context.Context, key scheduler.HealthKey) error
 	cctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 	acct, ok := p.lookup(key.AccountID)
-	if !ok || acct.LifecycleRevision != key.Revision {
-		// 视图缺失（已删/未同步）或 revision 错配——fail-closed：探测失败
+	if !ok || acct.IdentityRevision != key.IdentityRevision {
+		// 视图缺失（已删/未同步）或**身份代际 K 错配**——fail-closed：探测失败
 		// → probeTick 重开记录，stale PROBING 不可能经错配 probe 变 READY。
-		return fmt.Errorf("%w: account %d not healthy-routable at revision %d", scheduler.ErrProbeStaleRevision, key.AccountID, key.Revision)
+		// 比的是 K（identity_revision）而非客户端 CAS 令牌 C：健康记录按 K 隔离。
+		return fmt.Errorf("%w: account %d not healthy-routable at identity revision %d", scheduler.ErrProbeStaleRevision, key.AccountID, key.IdentityRevision)
 	}
 	tpl := acct.Template
 	if tpl == nil {

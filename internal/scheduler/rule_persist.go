@@ -30,7 +30,7 @@ func NewRulePersistFunc(store rulePersistStore, latchStore *latch.LatchStore, pu
 		if !item.Then.FailAccount {
 			return nil
 		}
-		if item.Event.ExpectedRevision <= 0 {
+		if item.Event.ExpectedIdentityRevision <= 0 {
 			return ErrMissingExpectedRevision
 		}
 		acct, err := store.GetAccount(ctx, item.Event.AccountID)
@@ -44,9 +44,6 @@ func NewRulePersistFunc(store rulePersistStore, latchStore *latch.LatchStore, pu
 					return err
 				}
 			}
-		}
-		if acct.LifecycleRevision != item.Event.ExpectedRevision {
-			return ErrStaleFailureRevision
 		}
 		fp, ferr := candidateFingerprint(acct)
 		if ferr != nil {
@@ -69,10 +66,10 @@ func NewRulePersistFunc(store rulePersistStore, latchStore *latch.LatchStore, pu
 		if reason == "" {
 			reason = "rule fail_account"
 		}
-		err = store.FailAccountCAS(ctx, item.Event.AccountID, item.Event.ExpectedRevision, "rule", time.Now(), reason)
+		err = store.FailAccountCAS(ctx, item.Event.AccountID, item.Event.ExpectedIdentityRevision, "rule", time.Now(), reason)
 		if err != nil {
-			if errors.Is(err, repository.ErrStaleRevision) {
-				if fresh, ferr := store.GetAccount(ctx, item.Event.AccountID); ferr == nil && fresh.LifecycleRevision > item.Event.ExpectedRevision && latchStore != nil {
+			if errors.Is(err, repository.ErrStaleIdentityRevision) {
+				if fresh, ferr := store.GetAccount(ctx, item.Event.AccountID); ferr == nil && fresh.IdentityRevision > item.Event.ExpectedIdentityRevision && latchStore != nil {
 					latchStore.Clear(item.Event.AccountID)
 				}
 			}

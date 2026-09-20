@@ -83,7 +83,12 @@ type Event struct {
 	RouteClassID         string    // canonical RouteClassID hex; account_route scope 必须非空
 	QualityClassID       string    // Candidate QualityClassID hex; account_route scope 必须非空
 	CandidateFingerprint string    // canonical candidate identity hex
-	ExpectedRevision     int64     // lifecycle_revision 期望值，FailAccount CAS 用
+	// ExpectedIdentityRevision 携带 K（identity_revision），不是 C。失败事件
+	// 在它被计算时所见的身份纪元；下游（scheduler/sink.go:68 把它喂进
+	// K 参数化的 HealthKey.Revision；rule_persist.go 把它喂进 K-guarded 的
+	// FailAccountCAS）一律按 K 解释。命名显式带 Identity，防止被误读为
+	// lifecycle_revision（客户端 CAS 令牌）。
+	ExpectedIdentityRevision int64
 }
 
 // HealthSink typed health action sink.

@@ -25,7 +25,7 @@ func newHealthTestRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 }
 
 func healthKeyFor(acc int64, quality string, rev int64) HealthKey {
-	return HealthKey{AccountID: acc, Quality: quality, Revision: rev}
+	return HealthKey{AccountID: acc, Quality: quality, IdentityRevision: rev}
 }
 
 // TestHealthViewImmutableAtomicPointer verifies one immutable atomic.Pointer view is used.
@@ -708,7 +708,7 @@ func TestHealthRunResetRepeatedEmptiesDeadlineProbe(t *testing.T) {
 	// One success keeps PROBING (needs two)
 	require.NoError(t, h.Sync(context.Background()))
 	for _, k := range keys {
-		require.Equal(t, StateProbing, h.EffectiveState(k.AccountID, k.Quality, k.Revision))
+		require.Equal(t, StateProbing, h.EffectiveState(k.AccountID, k.Quality, k.IdentityRevision))
 	}
 	h.probeTick(context.Background())
 	// After two successes, MarkReady tries but will fail because Redis empty (no record), so generation check fails and stays PROBING

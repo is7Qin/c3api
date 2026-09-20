@@ -484,7 +484,7 @@ func TestRoutingCompilerWireResolvedModelQualityIdentity(t *testing.T) {
 	op := operationTagForFormat(string(domain.FormatOpenAIChat))
 	qcResolved, _ := domain.QualityClassID(callerKindForFormat(domain.FormatOpenAIChat), domain.FormatOpenAIChat, "resolved", op)
 	h := NewRuntimeHealth(nil, "self", nil, nil)
-	hk := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcResolved), Revision: 1}
+	hk := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcResolved), IdentityRevision: 1}
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
 	s.health = h
 

@@ -62,14 +62,18 @@ func (s HealthState) severity() int {
 
 // HealthKey is the immutable composite key account+quality|*+revision.
 // quality is either a QualityClassID hex or "*" for wildcard (account scope).
+// IdentityRevision 是**身份代际 K**（identity_revision），不是客户端 CAS 令牌
+// C（lifecycle_revision）。健康记录按 K 隔离：K 推进 ⇒ 旧记录不再被查询。
+// 命名承重——泛化的 Revision 会让调用点把 C 静默传进来（SetProbing 曾如此，
+// 导致 recover 写的 PROBING 记录在 EffectiveState 的 K 查询下永不命中）。
 type HealthKey struct {
-	AccountID int64
-	Quality   string // hex or "*"
-	Revision  int64
+	AccountID        int64
+	Quality          string // hex or "*"
+	IdentityRevision int64
 }
 
 func (k HealthKey) String() string {
-	return fmt.Sprintf("%d:%s:%d", k.AccountID, k.Quality, k.Revision)
+	return fmt.Sprintf("%d:%s:%d", k.AccountID, k.Quality, k.IdentityRevision)
 }
 
 func parseHealthKey(s string) (HealthKey, bool) {
@@ -86,7 +90,7 @@ func parseHealthKey(s string) (HealthKey, bool) {
 	if err != nil {
 		return HealthKey{}, false
 	}
-	return HealthKey{AccountID: acc, Quality: parts[1], Revision: rev}, true
+	return HealthKey{AccountID: acc, Quality: parts[1], IdentityRevision: rev}, true
 }
 
 // healthEntry is the immutable per-key record stored in Redis HASH and view.
@@ -157,6 +161,39 @@ redis.call('ZADD', activeKey, gen, field)
 redis.call('HDEL', tombHash, field)
 redis.call('DEL', tombPrefix .. field)
 return gen
+`
+	// clearAccountLua 原子清掉**一个账号全部 quality 字段**的健康记录，与
+	// readyLua 同一 4 段纪律（逐字段：DEL 记录 + ZREM 活动 ZSET + HSET 墓碑
+	// 哈希 + SET 墓碑前缀）。逐字段墓碑是**强制**的而非可选：Sync 按活动 ZSET
+	// 重建（health.go Sync 的 ZRANGE），未过期的 OPEN 记录**只有被墓碑标注**才
+	// 会被丢弃——只清内存视图而不写 Redis 侧墓碑，Sync 会把记录原样装回来。
+	//
+	// 字段格式为 accountID:quality:revision，故按 accId .. ":" 前缀匹配，
+	// 结构上不可能清到别的账号（不做子串/数字前缀匹配）。
+	clearAccountLua = `
+local genKey = KEYS[1]
+local activeKey = KEYS[2]
+local tombHash = KEYS[3]
+local accId = ARGV[1]
+local recPrefix = ARGV[2]
+local tombPrefix = ARGV[3]
+local ttl = ARGV[4]
+local gen = redis.call('INCR', genKey)
+local prefix = accId .. ':'
+local plen = string.len(prefix)
+local cleared = 0
+local members = redis.call('ZRANGE', activeKey, 0, -1)
+for i = 1, #members do
+  local field = members[i]
+  if string.sub(field, 1, plen) == prefix then
+    redis.call('DEL', recPrefix .. field)
+    redis.call('ZREM', activeKey, field)
+    redis.call('HSET', tombHash, field, gen)
+    redis.call('SET', tombPrefix .. field, gen, 'PX', ttl)
+    cleared = cleared + 1
+  end
+end
+return cleared
 `
 	// readyLua atomically validates HASH record exists and matches expected account/revision/current generation before READY.
 	readyLua = `
@@ -429,7 +466,7 @@ func (h *RuntimeHealth) Throttle(ctx context.Context, key HealthKey, state Healt
 		ttlMs = 30000
 	}
 	stateStr := state.String()
-	res, err := h.client.Eval(ctx, throttleLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, field, stateStr, fmt.Sprintf("%d", key.Revision), fmt.Sprintf("%d", ttlMs), healthRecordPrefix, healthTombstonePrefix).Result()
+	res, err := h.client.Eval(ctx, throttleLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, field, stateStr, fmt.Sprintf("%d", key.IdentityRevision), fmt.Sprintf("%d", ttlMs), healthRecordPrefix, healthTombstonePrefix).Result()
 	if err != nil {
 		return 0, err
 	}
@@ -453,7 +490,7 @@ func (h *RuntimeHealth) MarkReady(ctx context.Context, key HealthKey, expectedGe
 	if ttlMs <= 0 {
 		ttlMs = 30000
 	}
-	res, err := h.client.Eval(ctx, readyLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, field, fmt.Sprintf("%d", expectedGen), fmt.Sprintf("%d", key.Revision), fmt.Sprintf("%d", ttlMs), healthRecordPrefix, healthTombstonePrefix).Result()
+	res, err := h.client.Eval(ctx, readyLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, field, fmt.Sprintf("%d", expectedGen), fmt.Sprintf("%d", key.IdentityRevision), fmt.Sprintf("%d", ttlMs), healthRecordPrefix, healthTombstonePrefix).Result()
 	if err != nil {
 		return 0, err
 	}
@@ -473,41 +510,57 @@ func (h *RuntimeHealth) MarkReady(ctx context.Context, key HealthKey, expectedGe
 	return gen, nil
 }
 
+// ClearAccount 原子清掉该账号**全部**健康记录（所有 quality / 所有代际），返回
+// 清掉的字段数。用于**身份代际 K 推进**之后：旧 K 下的记录对新 K 不可达，但
+// Sync 会按活动 ZSET 把它们重新装回视图（未过期 OPEN 仅在被墓碑标注时才丢弃），
+// 故必须连 Redis 侧一并清（见 clearAccountLua 的 4 段纪律）。
+//
+// client 未装配（测试/降级）时 no-op 返回 0：健康面本就不可用，无记录可清。
+func (h *RuntimeHealth) ClearAccount(ctx context.Context, accountID int64) (int64, error) {
+	if h.client == nil {
+		return 0, nil
+	}
+	res, err := h.client.Eval(ctx, clearAccountLua,
+		[]string{healthGenKey, healthActiveZSet, healthTombstoneHash},
+		strconv.FormatInt(accountID, 10), healthRecordPrefix, healthTombstonePrefix,
+		strconv.FormatInt((30*time.Second).Milliseconds(), 10)).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("health: clear account %d: %w", accountID, err)
+	}
+	return res, nil
+}
+
 // SetProbing writes the wildcard PROBING record for (account, newRevision)
 // after a successful recover CAS (satisfies the recover-side health prober
 // contract). Rides the standard Throttle Lua path so generation bump, record
 // HASH, active ZSET membership and tombstone clearing stay atomic. Non-positive
 // revision is rejected fail-closed; old-revision records stay isolated by key.
-func (h *RuntimeHealth) SetProbing(ctx context.Context, accountID int64, revision int64) error {
-	if revision <= 0 {
-		return fmt.Errorf("health: invalid probing revision %d for account %d", revision, accountID)
+func (h *RuntimeHealth) SetProbing(ctx context.Context, accountID int64, identityRevision int64) error {
+	if identityRevision <= 0 {
+		return fmt.Errorf("health: invalid probing identity revision %d for account %d", identityRevision, accountID)
 	}
-	_, err := h.Throttle(ctx, HealthKey{AccountID: accountID, Quality: "*", Revision: revision}, StateProbing, 30*time.Second)
+	_, err := h.Throttle(ctx, HealthKey{AccountID: accountID, Quality: "*", IdentityRevision: identityRevision}, StateProbing, 30*time.Second)
 	return err
 }
 
 // EffectiveState returns the severity-most health for account+quality+revision.
-func (h *RuntimeHealth) EffectiveState(accountID int64, quality string, revision int64) HealthState {
+func (h *RuntimeHealth) EffectiveState(accountID int64, quality string, identityRevision int64) HealthState {
 	view := h.view.Load()
 	if view == nil {
 		return StateReady
 	}
-	specific := view.entries[HealthKey{AccountID: accountID, Quality: quality, Revision: revision}]
-	wildcard := view.entries[HealthKey{AccountID: accountID, Quality: "*", Revision: revision}]
 	best := StateReady
 	bestSev := best.severity()
-	if s, ok := view.entries[HealthKey{AccountID: accountID, Quality: quality, Revision: revision}]; ok {
+	if s, ok := view.entries[HealthKey{AccountID: accountID, Quality: quality, IdentityRevision: identityRevision}]; ok {
 		if s.State.severity() > bestSev {
 			best = s.State
 			bestSev = s.State.severity()
 		}
-		_ = specific
 	}
-	if w, ok := view.entries[HealthKey{AccountID: accountID, Quality: "*", Revision: revision}]; ok {
+	if w, ok := view.entries[HealthKey{AccountID: accountID, Quality: "*", IdentityRevision: identityRevision}]; ok {
 		if w.State.severity() > bestSev {
 			best = w.State
 		}
-		_ = wildcard
 	}
 	return best
 }

@@ -244,9 +244,10 @@ func RecoverAccount(ctx context.Context, deps FailureDeps, accountID int64) erro
 	} else {
 		return ErrHealthUnsupported
 	}
-	newRev := expectedRev + 1
-	if err := deps.Health.SetProbing(ctx, accountID, newRev); err != nil {
-		return fmt.Errorf("%w: account %d at rev %d probing failed: %v", ErrRecoverProbingFailed, accountID, newRev, err)
+	// 健康记录按 K（identity_revision）隔离——EffectiveState 以 K 查询，故 PROBING
+	// 必须以 K 写入。恢复不是身份写入，K 不变，故 CAS 前取到的 K 仍然有效。
+	if err := deps.Health.SetProbing(ctx, accountID, acct.IdentityRevision); err != nil {
+		return fmt.Errorf("%w: account %d at identity rev %d probing failed: %v", ErrRecoverProbingFailed, accountID, acct.IdentityRevision, err)
 	}
 	if deps.Latch != nil {
 		deps.Latch.Clear(accountID)
