@@ -47,7 +47,7 @@ func TestThrottleAccountWildcard(t *testing.T) {
 	h, _, mr := newTestHealthWithLatch(t)
 	_ = mr
 	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
-	ev := rule.Event{AccountID: 1, ExpectedRevision: 5, RouteClassID: "r1", QualityClassID: "q1"}
+	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 5, RouteClassID: "r1", QualityClassID: "q1"}
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
 	require.NoError(t, sink.Throttle(ev, th))
 	require.NoError(t, h.Sync(context.Background()))
@@ -61,13 +61,13 @@ func TestThrottleAccountRouteRequiresIDsAndPropagation(t *testing.T) {
 	h, _, _ := newTestHealthWithLatch(t)
 	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
-	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "", QualityClassID: "q1"}, th))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, RouteClassID: "", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: ""}, th))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, RouteClassID: "r1", QualityClassID: ""}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: "q1"}, th))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, RouteClassID: "r1", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(2, "q1", 3))
 	require.Equal(t, StateReady, h.EffectiveState(2, "other", 3))
@@ -79,7 +79,7 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	s, ls, sink := newSchedWithLatch(t, m)
 	fp, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
-	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
+	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
 	require.NoError(t, sink.FailAccount(ev))
 	require.True(t, ls.IsLatched(1, fp))
 	s.compileOnce() // v5-§5.1A: 锁存账号保留在编译计划内 → reserve 门跳过 → ErrAttemptsExhausted（旧“路由空 → ErrNoAvailable”已废止）
@@ -91,10 +91,16 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	s.compileOnce()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrAttemptsExhausted)
-	// new revision clears latch
+	// C 是**客户端 CAS 令牌**，不是在途围栏：只推进 C 不得清锁存
+	// （四代模型：C 不围栏在途工件；这正是它与 K 职责分离的意义）。
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))
-	require.False(t, ls.IsLatched(1, fp))
+	require.True(t, ls.IsLatched(1, fp), "C must not fence in-flight artifacts")
+
+	// K（identity_revision）才是身份代际：推进 K 清锁存。
+	m.byGroup[10][0].IdentityRevision = 2
+	require.NoError(t, s.reload(context.Background()))
+	require.False(t, ls.IsLatched(1, fp), "K advance must clear the latch")
 	s.compileOnce()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
@@ -107,7 +113,7 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	s, ls, sink := newSchedWithLatch(t, m)
 	fp1, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
-	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp1, ErrorMessage: "boom"}
+	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp1, ErrorMessage: "boom"}
 	require.NoError(t, sink.FailAccount(ev))
 	require.True(t, ls.IsLatched(1, fp1))
 	// fingerprint change clears old latch
@@ -118,7 +124,7 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ls.IsLatched(1, fpNew))
 	// re-latch with new fingerprint
-	ev2 := rule.Event{AccountID: 1, ExpectedRevision: 2, ErrorMessage: "boom2"}
+	ev2 := rule.Event{AccountID: 1, ExpectedIdentityRevision: 2, ErrorMessage: "boom2"}
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))
 	// Atomic publication: the staged revision pairs on the next compile
@@ -166,7 +172,7 @@ func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_ = sink.Throttle(rule.Event{AccountID: 1, ExpectedRevision: 1}, th)
+		_ = sink.Throttle(rule.Event{AccountID: 1, ExpectedIdentityRevision: 1}, th)
 	}()
 	go func() {
 		defer wg.Done()

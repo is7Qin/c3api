@@ -139,7 +139,7 @@ func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
 	// alike) must NOT exclude — compile is health-free.
 	h := NewRuntimeHealth(nil, "self", nil, nil)
 	hkGood := compilerHealthKeyFor(accs[1], domain.FormatOpenAIChat, "m")
-	hkStale := HealthKey{AccountID: 1, Quality: compilerHealthKeyFor(accs[0], domain.FormatOpenAIChat, "m").Quality, Revision: 99}
+	hkStale := HealthKey{AccountID: 1, Quality: compilerHealthKeyFor(accs[0], domain.FormatOpenAIChat, "m").Quality, IdentityRevision: 99}
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{
 		hkGood:  {Key: hkGood, State: StateOPEN},
 		hkStale: {Key: hkStale, State: StateOPEN},

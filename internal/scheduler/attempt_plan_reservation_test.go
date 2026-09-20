@@ -75,7 +75,7 @@ func TestSchedulerReserveAttemptUsesDynamicCandidateGates(t *testing.T) {
 	s.latch.TryAcquire(2, fp2, 1)
 	s.health = &RuntimeHealth{}
 	s.health.view.Store(&healthView{entries: map[HealthKey]healthEntry{
-		{AccountID: 1, Quality: "*", Revision: 1}: {State: StateOPEN},
+		{AccountID: 1, Quality: "*", IdentityRevision: 1}: {State: StateOPEN},
 	}})
 	acc3, ok := s.View().Account(3)
 	require.True(t, ok)

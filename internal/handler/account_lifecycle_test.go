@@ -42,7 +42,7 @@ func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, *hProber, fun
 	store.accs[1] = &domain.Account{
 		ID: 1, Name: "acc1", TemplateID: 1, UpstreamKey: "sk-a",
 		MaxConcurrency: 4, Enabled: true, FailedAt: &failed, FailureSource: &src,
-		LastError: &reason, LifecycleRevision: 5, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
+		LastError: &reason, LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
 	}
 	prober := &hProber{}
 	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil,
@@ -111,7 +111,9 @@ func TestAccountRecoverEndpoint(t *testing.T) {
 	require.Nil(t, acc.FailureSource)
 	require.NotNil(t, acc.LifecycleRevision)
 	require.Equal(t, int64(6), *acc.LifecycleRevision)
-	require.Equal(t, [][2]int64{{1, 6}}, prober.calls, "PROBING 必须落在新 revision")
+	// PROBING 以**身份代际 K**（=3）落键，不是 CAS 后的 C（=6）：健康记录按 K
+	// 隔离，EffectiveState 以 K 查询。取 3≠5≠6 是刻意的——传 C 即失败。
+	require.Equal(t, [][2]int64{{1, 3}}, prober.calls, "PROBING 必须以 K 落键（不是 C）")
 
 	require.Equal(t, 404, do(http.MethodPost, "/api/admin/accounts/999/recover", `{"expected_revision":1}`).Code)
 	require.Equal(t, 400, do(http.MethodPost, "/api/admin/accounts/1/recover", `{}`).Code, "expected_revision 必填")
@@ -239,7 +241,7 @@ func TestAccountFreshSchemaColumns(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"id", "name", "template_id", "base_url", "upstream_key",
 		"max_concurrency", "last_error", "last_used_at", "failed_at",
-		"failure_source", "enabled", "lifecycle_revision",
+		"failure_source", "enabled", "lifecycle_revision", "identity_revision",
 		"upstream_cost_multiplier_bp", "cache_domain",
 		"updated_at", "deleted_at", "created_at",
 	}, got, "账号列集必须与 fresh 契约允许全集一致")

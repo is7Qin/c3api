@@ -27,14 +27,18 @@ func (s *Service) RecoverAccount(ctx context.Context, id, expectedRevision int64
 	if expectedRevision < 1 {
 		return nil, ErrInvalidInput
 	}
-	if _, err := s.store.GetAccount(ctx, id); err != nil {
+	acct, err := s.store.GetAccount(ctx, id)
+	if err != nil {
 		return nil, mapRepoErr(err)
 	}
 	if err := mapRepoErr(s.store.RecoverAccountCAS(ctx, id, expectedRevision)); err != nil {
 		return nil, err
 	}
 	if s.recoverProber != nil {
-		if err := s.recoverProber.SetProbing(ctx, id, expectedRevision+1); err != nil && s.log != nil {
+		// 健康记录按 K（identity_revision）隔离——EffectiveState 以 K 查询，
+		// 故 PROBING 必须以 K 写入，否则该记录永不被命中。恢复**不是身份写入**：
+		// K 不变，故 CAS 前取到的 K 仍然有效（无需重取）。
+		if err := s.recoverProber.SetProbing(ctx, id, acct.IdentityRevision); err != nil && s.log != nil {
 			s.log.Warn("recover probing health write failed", logx.Int64("account_id", id), logx.Error(err))
 		}
 	}

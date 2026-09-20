@@ -235,7 +235,7 @@ func TestReserveAttempt_fencesHealthByQualityClassAndRevision(t *testing.T) {
 	qc := qualityClassHexForWithOp(domain.FormatOpenAIChat, resolved, domain.OpChatCompletions)
 	s.health = &RuntimeHealth{}
 	s.health.view.Store(&healthView{entries: map[HealthKey]healthEntry{
-		{AccountID: 1, Quality: qc, Revision: 1}: {State: StateOPEN},
+		{AccountID: 1, Quality: qc, IdentityRevision: 1}: {State: StateOPEN},
 	}})
 
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-h"}, route)

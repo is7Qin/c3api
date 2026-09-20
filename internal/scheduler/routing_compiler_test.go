@@ -82,9 +82,9 @@ func compilerHealthKeyFor(acc *domain.Account, format domain.RequestFormat, mode
 		}
 	}
 	return HealthKey{
-		AccountID: acc.ID,
-		Quality:   qualityClassHexForWithOp(format, resolved, operationTagForFormat(string(format))),
-		Revision:  acc.LifecycleRevision,
+		AccountID:        acc.ID,
+		Quality:          qualityClassHexForWithOp(format, resolved, operationTagForFormat(string(format))),
+		IdentityRevision: acc.IdentityRevision,
 	}
 }
 

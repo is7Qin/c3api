@@ -30,7 +30,9 @@ func probeTpl(id int64, cred credential.Type, formats ...domain.RequestFormat) *
 // 账号覆盖优先于模板——与 aiclient 取 base 同契约）。
 func probeAcc(id int64, t *domain.Template, rev int64, baseURL string) *domain.Account {
 	return &domain.Account{ID: id, TemplateID: t.ID, Template: t, UpstreamKey: "sk-probe",
-		LifecycleRevision: rev, BaseURL: &baseURL}
+		// 两个代际都置 rev：探测按**身份代际 K** 校验（key.IdentityRevision），
+		// 而 C 是客户端 CAS 令牌。测试意图是「账号处于代际 rev」，故两者同置。
+		LifecycleRevision: rev, IdentityRevision: rev, BaseURL: &baseURL}
 }
 
 // probeLookup 闭合账号表的最小 lookup 源（装配点传 sched.ProbeAccount）。
@@ -67,10 +69,10 @@ func TestHealthProbeRevisionFenceFailClosed(t *testing.T) {
 		7: probeAcc(7, ant, 5, "http://unused.invalid"),
 	}), codex)
 
-	err := fn(context.Background(), scheduler.HealthKey{AccountID: 9, Quality: "*", Revision: 1})
+	err := fn(context.Background(), scheduler.HealthKey{AccountID: 9, Quality: "*", IdentityRevision: 1})
 	require.ErrorIs(t, err, scheduler.ErrProbeStaleRevision,
 		"missing account must fail closed")
-	err = fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 4})
+	err = fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", IdentityRevision: 4})
 	require.ErrorIs(t, err, scheduler.ErrProbeStaleRevision,
 		"stale revision must fail closed")
 	require.Zero(t, codex.calls)
@@ -101,7 +103,7 @@ func TestHealthProbeAPIKeyFamilyNoNetworkNoop(t *testing.T) {
 			fn := probeFn(t, probeLookup(map[int64]*domain.Account{
 				7: probeAcc(7, tpl, 3, upstream.URL),
 			}), nil)
-			require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 3}),
+			require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", IdentityRevision: 3}),
 				"api_key 族探测视为通过（无合成探测面）")
 		})
 	}
@@ -118,7 +120,7 @@ func TestHealthProbeCodexRoutesToAdapter(t *testing.T) {
 		11: probeAcc(11, pat, 2, "http://unused.invalid"),
 	}), codex)
 
-	require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", Revision: 2}))
+	require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", IdentityRevision: 2}))
 	require.Equal(t, 1, codex.calls, "codex credential probe must route to the SDK adapter")
 	require.Equal(t, int64(11), codex.got.AccountID, "probe credential must carry the account id")
 }
@@ -131,7 +133,7 @@ func TestHealthProbeNilCodexAdapterFailClosed(t *testing.T) {
 		11: probeAcc(11, pat, 2, "http://unused.invalid"),
 	}), nil)
 
-	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", Revision: 2}))
+	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", IdentityRevision: 2}))
 }
 
 // TestHealthProbeUnknownCredTypeExplicitError：未知凭据类型显式报错——
@@ -142,7 +144,7 @@ func TestHealthProbeUnknownCredTypeExplicitError(t *testing.T) {
 		7: probeAcc(7, weird, 1, "http://unused.invalid"),
 	}), nil)
 
-	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Revision: 1}))
+	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", IdentityRevision: 1}))
 }
 
 // controllableCodexProber 可切换失败态的 codex 探测替身（并发安全——探测在

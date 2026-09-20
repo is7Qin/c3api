@@ -31,8 +31,21 @@ type accState struct {
 type snapshotStatic struct {
 	acc      domain.Account
 	tpl      *domain.Template
-	gid      int64   // 所属组（事件投递归组用；多组账号 = 首个出现组）
 	groupIDs []int64 // 账号所属全部分组（多组账号共享实例的跨组引用集；组级重载时其它组引用替换依据）
+}
+
+// eventGID 是事件投递归组用的单组代表值：**由 groupIDs 现算**，不是存储字段。
+//
+// 为什么不存字段：此前 gid 是一个填在 struct 里的派生值，取「首个出现组」——
+// 即 map 迭代序首元素。同一份 DB 数据在不同进程/不同重载下可得不同 gid，而组
+// 归属是静态事实，不得有这种自由度。改成 min(groupIDs) 修掉了不确定性，但仍留下
+// 「派生值需与来源保持同步」的隐患：每个构造点都得记得算一次，漏一处就产生
+// gid ∉ groupIDs 的坏状态，且只有运行时才暴露。
+//
+// 方法化让不一致**在结构上不可表达**：没有可写字段，就不存在忘记同步这回事。
+// min 与迭代序无关，且与组集合一一对应。
+func (s *snapshotStatic) eventGID() int64 {
+	return minGID(s.groupIDs)
 }
 
 type sharedRuntime struct {

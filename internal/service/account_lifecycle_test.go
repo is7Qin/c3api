@@ -84,8 +84,8 @@ type probeCall struct {
 // fakeRecoverProber 实现 RecoverProber（scheduler.RuntimeHealth.SetProbing 同签名）。
 type fakeRecoverProber struct{ calls []probeCall }
 
-func (p *fakeRecoverProber) SetProbing(_ context.Context, accountID, revision int64) error {
-	p.calls = append(p.calls, probeCall{accountID, revision})
+func (p *fakeRecoverProber) SetProbing(_ context.Context, accountID, identityRevision int64) error {
+	p.calls = append(p.calls, probeCall{accountID, identityRevision})
 	return nil
 }
 
@@ -103,7 +103,7 @@ func seedLifecycleAccount(t *testing.T, fs *fakeStore) *domain.Account {
 	acc, err := fs.CreateAccount(ctx, &domain.Account{
 		Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
 		Enabled: true, FailedAt: &failed, FailureSource: &src, LastError: &reason,
-		LifecycleRevision: 5, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
+		LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
 	})
 	require.NoError(t, err)
 	return acc
@@ -126,7 +126,10 @@ func TestRecoverAccountFenced(t *testing.T) {
 	require.Nil(t, got.FailureSource)
 	require.Nil(t, got.LastError)
 	require.Equal(t, int64(6), got.LifecycleRevision)
-	require.Equal(t, []probeCall{{acc.ID, 6}}, prober.calls, "PROBING 必须落在新 revision")
+	// PROBING 必须落在**身份代际 K**（=3），不是 C（CAS 后 =6）：健康记录按 K
+	// 隔离，EffectiveState 以 K 查询；传 C 会让该记录永不被命中。取 3≠5 是刻意的
+	// ——若有人把 SetProbing 改回传 C，断言立即失败。
+	require.Equal(t, []probeCall{{acc.ID, 3}}, prober.calls, "PROBING 必须以 K 落键（不是 C）")
 	require.Len(t, inv.calls, 1, "recover 后必须触发组级失效")
 
 	// stale revision（重放同一 expected_revision）→ 409，不再写 PROBING

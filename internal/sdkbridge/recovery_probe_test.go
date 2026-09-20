@@ -32,7 +32,7 @@ func TestRecoverProbingFailedReturnsTypedErrorAndStateObservable(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrRecoverProbingFailed), "must return typed ErrRecoverProbingFailed, not generic")
 	require.Contains(t, err.Error(), "7", "error must expose account state observably")
-	require.Contains(t, err.Error(), "4", "error must expose new rev observably")
+	require.Contains(t, err.Error(), "identity rev 3", "error must expose the identity revision K observably")
 	// CAS already succeeded: revision incremented
 	require.Equal(t, int64(4), store.accounts[7].LifecycleRevision, "CAS must have succeeded before probing failure")
 	// fail-closed: latch not cleared, no publish after probing failure

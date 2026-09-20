@@ -51,7 +51,7 @@ func TestRulePersistFailClosedOnGetAccountError(t *testing.T) {
 	require.True(t, latchStore.IsLatched(7, "fp-ignored"))
 	fn := NewRulePersistFunc(store, latchStore, nil, nil)
 	item := rule.PersistItem{
-		Event: rule.Event{AccountID: 7, ExpectedRevision: 3, CandidateFingerprint: "fp", ErrorMessage: "boom"},
+		Event: rule.Event{AccountID: 7, ExpectedIdentityRevision: 3, CandidateFingerprint: "fp", ErrorMessage: "boom"},
 		Then:  domain.RuleThen{FailAccount: true},
 	}
 	// barrier: persist func must return error and preserve latch (fail-closed)
