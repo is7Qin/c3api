@@ -229,7 +229,9 @@ func fillIdentityDefaults(e *domain.AccountExt, cur *domain.AccountExt) {
 // 内容冲突：CAS 败者重读最新 revision 与持久身份（漂移则再采用，恒单一完整
 // 四元组）后重试 CAS，并发首写永不返回 conflict；revision 未推进的 conflict
 // 原样上抛（非竞态冲突不重试，兼作活锁守卫）。
-// W1 不接线失效/发布。
+// 提交后即失效：ext 行是调度快照经 Selection.Ext 消费的 codex 凭据原料，
+// 成功写入后按账号写面统一失效面做组级定向重载 + NOTIFY（快照重载幂等：值
+// 相等即复用叶子，不打断在途计划，故无条件重载恒正确，无需按值判定）。
 func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
 	acc, err := s.store.GetAccount(ctx, e.AccountID)
 	if err != nil {
@@ -315,6 +317,7 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	for {
 		saved, werr := s.store.AdminUpsertAccountExtCAS(ctx, e, rev)
 		if werr == nil {
+			s.invalidateAccountLifecycle(ctx, saved.AccountID)
 			return saved, nil
 		}
 		if !errors.Is(werr, repository.ErrConflict) {
