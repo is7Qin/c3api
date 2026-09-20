@@ -229,8 +229,8 @@ func (d *Discovery) Stats() any {
 }
 
 // tick 单条 pipeline 心跳+计数（命令按发送序执行：剪除→自刷→续期→计数→
- // 取成员，ZCARD 恒含自身且不含死者）。失败走冻结语义（成员快照亦冻结），
- // 成功刷新 N 与有序 members 快照并清错误态。
+// 取成员，ZCARD 恒含自身且不含死者）。失败走冻结语义（成员快照亦冻结），
+// 成功刷新 N 与有序 members 快照并清错误态。
 func (d *Discovery) tick(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, tickTimeout)
 	defer cancel()
