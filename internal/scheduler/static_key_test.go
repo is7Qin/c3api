@@ -256,6 +256,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 	}{
 		{"identityRevision (K)", func(s *snapshotStatic) { s.acc.IdentityRevision = 6 }},
 		{"name", func(s *snapshotStatic) { s.acc.Name = "other" }},
+		{"templateID", func(s *snapshotStatic) { s.acc.TemplateID = 4 }},
 		{"effective baseURL (account override)", func(s *snapshotStatic) { s.acc.BaseURL = strPtr("https://override/v1") }},
 		{"template baseURL", func(s *snapshotStatic) { s.tpl.BaseURL = "https://tpl2.example/v1" }},
 		{"upstreamKey", func(s *snapshotStatic) { s.acc.UpstreamKey = "sk2" }},
