@@ -78,7 +78,7 @@ type Change struct {
 // IsEmpty 空载荷判定：8 个变更位全 false 且 Groups 为空。V/Src 不参与判定——
 // V 恒存在（json 无 omitempty），Src 由 Publisher 发布时自动填充，调用方
 // 构造时均为空。service.publish 用此前置跳过无意义 NOTIFY（评审 I-1：
-// CreateAccount 无 GroupIDs / UpdateAccount 无变更的空载荷统一覆盖）。
+// 创建无分组 / 补丁无分组变更的空载荷在此统一覆盖）。
 func (c Change) IsEmpty() bool {
 	return !c.Users && !c.Templates && !c.Clients && !c.Multipliers &&
 		!c.Keys && !c.Settings && !c.Rules && !c.Pricing && len(c.Groups) == 0

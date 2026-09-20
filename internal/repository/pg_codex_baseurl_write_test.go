@@ -26,8 +26,7 @@ func TestPGCodexWritesRejectBaseURLAndRemainAtomic(t *testing.T) {
 	override := "https://override.example.com"
 
 	_, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "rejected", TemplateID: codexTemplate.ID, BaseURL: &override, MaxConcurrency: 8,
-	})
+		Name: "rejected", TemplateID: codexTemplate.ID, BaseURL: &override, MaxConcurrency: 8, Enabled: true})
 	require.ErrorIs(t, err, repository.ErrInvalidInput)
 	t.Logf("codex account create rejected: %v", err)
 
@@ -41,7 +40,7 @@ func TestPGCodexWritesRejectBaseURLAndRemainAtomic(t *testing.T) {
 	require.Equal(t, credential.TypeAPIKey, storedTemplate.CredentialType)
 	t.Logf("failed template switch left credential_type=%s base_url=%q", storedTemplate.CredentialType, storedTemplate.BaseURL)
 
-	err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{TemplateID: &codexTemplate.ID})
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{TemplateID: &codexTemplate.ID})
 	require.ErrorIs(t, err, repository.ErrInvalidInput)
 	storedAccount, err := repos.Accounts.GetAccount(ctx, account.ID)
 	require.NoError(t, err)
@@ -50,9 +49,10 @@ func TestPGCodexWritesRejectBaseURLAndRemainAtomic(t *testing.T) {
 	t.Logf("failed account batch left template_id=%d base_url=%q", storedAccount.TemplateID, *storedAccount.BaseURL)
 
 	empty := ""
-	require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{
 		TemplateID: &codexTemplate.ID, BaseURL: &empty,
-	}))
+	})
+	require.NoError(t, err)
 	storedAccount, err = repos.Accounts.GetAccount(ctx, account.ID)
 	require.NoError(t, err)
 	require.Equal(t, codexTemplate.ID, storedAccount.TemplateID)
@@ -100,7 +100,7 @@ func TestPGTemplateSwitchAndAccountURLWriteCannotViolateCodexInvariant(t *testin
 				return err
 			},
 			func() error {
-				_, err := repos.Accounts.UpdateAccount(ctx, &accountUpdate)
+				_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{accountUpdate.ID}, repository.AccountPatch{BaseURL: &override})
 				return err
 			},
 		)
@@ -124,10 +124,11 @@ func TestPGBatchAccountTemplateIDDriftCannotEscapeLockedTemplates(t *testing.T) 
 
 		runPGWriteWave(t,
 			func() error {
-				return repos.Accounts.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{BaseURL: &override})
+				_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{BaseURL: &override})
+				return err
 			},
 			func() error {
-				_, err := repos.Accounts.UpdateAccount(ctx, &fullUpdate)
+				_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{fullUpdate.ID}, repository.AccountPatch{TemplateID: &codexTemplate.ID, BaseURL: strPtr("")})
 				return err
 			},
 		)
@@ -149,8 +150,7 @@ func TestPGCancelledTemplateLockWaitRollsBackCleanly(t *testing.T) {
 	blockedCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
 	_, err = repos.Accounts.CreateAccount(blockedCtx, &domain.Account{
-		Name: "cancelled", TemplateID: tpl.ID, UpstreamKey: "sk-test", MaxConcurrency: 8,
-	})
+		Name: "cancelled", TemplateID: tpl.ID, UpstreamKey: "sk-test", MaxConcurrency: 8, Enabled: true})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.NoError(t, tx.Rollback(ctx))
 
@@ -213,8 +213,7 @@ func createPGWriteAccount(t *testing.T, repos *repository.Repository, templateID
 	t.Helper()
 	account, err := repos.Accounts.CreateAccount(context.Background(), &domain.Account{
 		Name: name, TemplateID: templateID, BaseURL: baseURL,
-		UpstreamKey: "sk-test", MaxConcurrency: 8,
-	})
+		UpstreamKey: "sk-test", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	return account
 }

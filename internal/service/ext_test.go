@@ -223,6 +223,39 @@ func TestTemplateExtValidation(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+// TestUpsertTemplateExtInvalidates 模板 ext 行是模板快照的静态原料，写入必须
+// 与模板其余写面同规失效（Templates()）。缺此失效则 strip_image_tools 变更后
+// 调度快照仍按旧值路由直至重启——与模板 base_url 更新后仍打旧上游同类。
+func TestUpsertTemplateExtInvalidates(t *testing.T) {
+	rec := &invRecorder{}
+	svc := &Service{store: newFakeStore(), inv: rec, log: nil}
+	ctx := context.Background()
+	tpl := seedExtTemplate(t, svc, "t-inv", credential.TypeResponsesSpecial, domain.FormatOpenAIResponses)
+
+	before := rec.countKind("templates")
+	_, err := svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
+		StripImageTools: boolPtr(true),
+	})
+	require.NoError(t, err)
+	require.Equal(t, before+1, rec.countKind("templates"), "写入 ext 行必须失效模板快照")
+
+	// 幂等重写同值：ext 行是全列更新，写入即变更 → 仍须失效（不按值比较）。
+	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
+		StripImageTools: boolPtr(true),
+	})
+	require.NoError(t, err)
+	require.Equal(t, before+2, rec.countKind("templates"))
+
+	// 校验失败（类型不一致）不得失效——写未发生。
+	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+	})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	require.Equal(t, before+2, rec.countKind("templates"), "校验失败不得失效")
+}
+
 // TestAccountExtValidation 账号 ext：类型白名单（只 codex-oauth/codex-pat；
 // special/api_key 拒绝）+ 类型一致性（ext 行类型必须 == 父模板类型；oauth 模板
 // 账号挂 pat 行 / api_key 模板账号挂 codex 行 → 400）+ 列组约束 + roundtrip
@@ -771,8 +804,8 @@ func strPtr(s string) *string { return &s }
 // seedAccount 建账号（ext 测试用；api_key 静态 key 语义）。
 func seedExtAccount(t *testing.T, svc *Service, tplID int64) *domain.Account {
 	t.Helper()
-	a, err := svc.CreateAccount(context.Background(), &domain.Account{
-		Name: "a", TemplateID: tplID, UpstreamKey: "sk-a", MaxConcurrency: 8,
+	a, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
+		Name: strPtr("a"), TemplateID: &tplID, UpstreamKey: strPtr("sk-a"), MaxConcurrency: intPtr(8),
 	})
 	require.NoError(t, err)
 	return a

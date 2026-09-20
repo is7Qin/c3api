@@ -84,7 +84,7 @@ func TestRulePersistPropagatesStaleIdentityFromCAS(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, repository.ErrStaleIdentityRevision), "persist must propagate the CAS staleness verdict")
 	require.Equal(t, 1, store.failCalls, "the CAS must have been attempted")
-	require.False(t, ls.IsLatched(1, fp), "stale K with an advanced fresh K must clear the stale latch")
+	require.False(t, ls.IsLatched(1, fp, 0), "stale K with an advanced fresh K must clear the stale latch")
 }
 
 type failurePersistStore struct {

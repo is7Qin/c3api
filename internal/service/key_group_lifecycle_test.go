@@ -114,8 +114,11 @@ func TestDeleteGroupWithAccountsConflict(t *testing.T) {
 	k, err := svc.CreateKey(ctx, u.ID, "k", g.ID, 0, 0)
 	require.NoError(t, err)
 	gids := []int64{g.ID}
-	_, err = svc.CreateAccount(ctx, &domain.Account{
-		Name: "f1-a", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &gids,
+	_, err = svc.CreateAccount(ctx, repository.AccountPatch{
+		Name:        strPtr("f1-a"),
+		TemplateID:  int64Ptr(tpl.ID),
+		UpstreamKey: strPtr("sk-1"),
+		GroupIDs:    &gids,
 	})
 	require.NoError(t, err)
 
@@ -156,8 +159,11 @@ func TestDeleteGroupsBatchPreScanConflict(t *testing.T) {
 	k, err := svc.CreateKey(ctx, u.ID, "k", g1.ID, 0, 0)
 	require.NoError(t, err)
 	gids := []int64{g2.ID}
-	_, err = svc.CreateAccount(ctx, &domain.Account{
-		Name: "f1b-a", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &gids,
+	_, err = svc.CreateAccount(ctx, repository.AccountPatch{
+		Name:        strPtr("f1b-a"),
+		TemplateID:  int64Ptr(tpl.ID),
+		UpstreamKey: strPtr("sk-1"),
+		GroupIDs:    &gids,
 	})
 	require.NoError(t, err)
 

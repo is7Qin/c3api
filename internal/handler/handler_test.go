@@ -122,7 +122,7 @@ func TestAdminFlow(t *testing.T) {
 	require.Equal(t, domain.GroupVisibilityPublic, groupResp.Visibility, "缺省 visibility = public")
 
 	// 账号侧绑定分组：PUT 账号 body 带 group_ids；回显经 GET /accounts/{id}/groups 核对。
-	rec = do(http.MethodPut, "/api/admin/accounts/"+itoa(acc.ID),
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+itoa(acc.ID),
 		`{"name":"acc1","template_id":`+itoa(tpl.ID)+`,"upstream_key":"sk-x","group_ids":[`+itoa(groupResp.ID)+`]}`)
 	require.Equal(t, 200, rec.Code, "account-side binding: %s", rec.Body.String())
 	rec = do(http.MethodGet, "/api/admin/accounts/"+itoa(acc.ID)+"/groups", "")

@@ -197,9 +197,8 @@ func main() {
 	// 规则引擎构造（不 Reload——New 只建结构；sink/persist 一次性注入）。
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, log, latchSink, persistFn)
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: cfg.Scheduler.DefaultMaxConcurrency,
-		SyncInterval:          cfg.Scheduler.SyncInterval,
-		StalenessProbe:        repos.Groups,
+		SyncInterval:   cfg.Scheduler.SyncInterval,
+		StalenessProbe: repos.Groups,
 	}, repos.Groups, ruleEngine, runtimeHealth, log, latchStore, hub)
 	// 额度回写器只在计费开启时注入（Todo 3）：BillingCapture=false 时 proxy finish
 	// 本就不产生 AddQuota 增量，此处等价停用 quota writer/flush 落库面；
@@ -339,6 +338,9 @@ func main() {
 		StatsRawRetentionDays:       rawDays,
 		ClearBalanceWarningCooldown: bwCooldown.Clear,
 		RecoverProber:               runtimeHealth,
+		RecoverLatch:                latchStore,
+		RecoverHealthClear:          runtimeHealth,
+		DefaultMaxConcurrency:       cfg.Scheduler.DefaultMaxConcurrency,
 		CompileNotify:               sched.RequestCompile,
 		MailEnqueue:                 mailW.Enqueue,
 		SettingsSnapshot:            settingsSnap,

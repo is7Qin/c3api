@@ -121,7 +121,7 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		if av.tpl == nil {
 			return false
 		}
-		if s.latch != nil && s.latch.IsLatched(av.acc.ID, c.Fingerprint) {
+		if s.latch != nil && s.latch.IsLatched(av.acc.ID, c.Fingerprint, av.acc.IdentityRevision) {
 			return false
 		}
 		q := c.Quality

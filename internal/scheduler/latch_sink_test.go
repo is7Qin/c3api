@@ -81,13 +81,13 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	require.NoError(t, err)
 	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
 	require.NoError(t, sink.FailAccount(ev))
-	require.True(t, ls.IsLatched(1, fp))
+	require.True(t, ls.IsLatched(1, fp, 1))
 	s.compileOnce() // v5-§5.1A: 锁存账号保留在编译计划内 → reserve 门跳过 → ErrAttemptsExhausted（旧“路由空 → ErrNoAvailable”已废止）
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrAttemptsExhausted)
 	// same revision reload must not clear latch
 	require.NoError(t, s.reload(context.Background()))
-	require.True(t, ls.IsLatched(1, fp))
+	require.True(t, ls.IsLatched(1, fp, 1))
 	s.compileOnce()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrAttemptsExhausted)
@@ -95,12 +95,12 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	// （四代模型：C 不围栏在途工件；这正是它与 K 职责分离的意义）。
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))
-	require.True(t, ls.IsLatched(1, fp), "C must not fence in-flight artifacts")
+	require.True(t, ls.IsLatched(1, fp, 1), "C must not fence in-flight artifacts")
 
 	// K（identity_revision）才是身份代际：推进 K 清锁存。
 	m.byGroup[10][0].IdentityRevision = 2
 	require.NoError(t, s.reload(context.Background()))
-	require.False(t, ls.IsLatched(1, fp), "K advance must clear the latch")
+	require.False(t, ls.IsLatched(1, fp, 2), "K advance leaves the stored latch stale")
 	s.compileOnce()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
@@ -115,17 +115,18 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	require.NoError(t, err)
 	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp1, ErrorMessage: "boom"}
 	require.NoError(t, sink.FailAccount(ev))
-	require.True(t, ls.IsLatched(1, fp1))
+	require.True(t, ls.IsLatched(1, fp1, 1))
 	// fingerprint change clears old latch
 	m.byGroup[10][0].UpstreamKey = "new-key"
 	require.NoError(t, s.reload(context.Background()))
-	require.False(t, ls.IsLatched(1, fp1))
+	require.False(t, ls.IsLatched(1, fp1, 1))
 	fpNew, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
-	require.False(t, ls.IsLatched(1, fpNew))
+	require.False(t, ls.IsLatched(1, fpNew, 1))
 	// re-latch with new fingerprint
 	ev2 := rule.Event{AccountID: 1, ExpectedIdentityRevision: 2, ErrorMessage: "boom2"}
 	m.byGroup[10][0].LifecycleRevision = 2
+	m.byGroup[10][0].IdentityRevision = 2
 	require.NoError(t, s.reload(context.Background()))
 	// Atomic publication: the staged revision pairs on the next compile
 	// before the revision-gated FailAccount below can observe it.
@@ -134,18 +135,18 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	require.NoError(t, err)
 	ev2.CandidateFingerprint = fp2
 	require.NoError(t, sink.FailAccount(ev2))
-	require.True(t, ls.IsLatched(1, fp2))
+	require.True(t, ls.IsLatched(1, fp2, 2))
 	// remove account clears latch
 	delete(m.byGroup, 10)
 	require.NoError(t, s.reload(context.Background()))
-	require.False(t, ls.IsLatched(1, fp2))
+	require.False(t, ls.IsLatched(1, fp2, 2))
 	// re-add same ID with new revision should not be latched
 	m.byGroup[10] = []*domain.Account{acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}
 	m.byGroup[10][0].LifecycleRevision = 5
 	require.NoError(t, s.reload(context.Background()))
 	fpReadd, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
-	require.False(t, ls.IsLatched(1, fpReadd))
+	require.False(t, ls.IsLatched(1, fpReadd, 1))
 	s.compileOnce()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)

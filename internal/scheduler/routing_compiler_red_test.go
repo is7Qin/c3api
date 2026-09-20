@@ -180,7 +180,7 @@ func TestRed_Blocker4_LatchedFalseNoExclude(t *testing.T) {
 	lk := compilerLatchKeyFor(acc)
 	// v5-§5.1A: latch maps are deleted from inputs — live latched state (false
 	// or true) never excludes from compilation.
-	require.True(t, s.TryLatch(acc.ID, lk.Fingerprint, lk.Revision))
+	require.True(t, s.TryLatch(acc.ID, lk.Fingerprint, lk.IdentityRevision))
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")

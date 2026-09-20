@@ -21,6 +21,11 @@ type AccountRepo struct {
 	driver dialect.Driver
 }
 
+// CreateAccount 按值逐字写入 enabled：domain.Account.Enabled 是普通 bool，
+// 仓库层无法区分"未提供"与"显式 false"，故零值即落库为禁用，不补默认。
+// 直接构造 domain.Account 的仓库层调用方必须显式给出 Enabled（可用账号
+// 写 true）；创建默认（enabled=true、倍率 ×1、默认并发、代际 C=1/K=1）
+// 由 service.CreateAccount 收口统一施加。
 func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
 	var row *ent.Account
 	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
@@ -38,7 +43,8 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 			SetName(a.Name).SetTemplateID(a.TemplateID).
 			SetNillableBaseURL(a.BaseURL).
 			SetUpstreamKey(a.UpstreamKey).
-			SetMaxConcurrency(a.MaxConcurrency)
+			SetMaxConcurrency(a.MaxConcurrency).
+			SetEnabled(a.Enabled)
 		if a.FailureSource != nil {
 			b = b.SetFailureSource(*a.FailureSource)
 		}
@@ -56,10 +62,8 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 		if a.IdentityRevision != 0 {
 			b = b.SetIdentityRevision(a.IdentityRevision)
 		}
-		// 新建账号恒默认启用（enabled DB 默认 true）：创建面无 Enabled 字段
-		// （启停唯一入口是 fenced POST /accounts/{id}/enabled），零值 false
-		// 不能解读为显式禁用——此前按"带生命周期字段即显式落 false"会把所有
-		// 创建即带域/带倍率的账号静默置 disabled，使其永不进入路由候选。
+		// Explicit enabled 落库：创建收口恒给出显式值（默认 true、显式 false
+		// 生效），零值不再静默转默认。
 		row, err = b.Save(ctx)
 		return err
 	})
@@ -94,6 +98,9 @@ func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.
 	if q.TemplateID > 0 {
 		pred = pred.Where(account.TemplateIDEQ(q.TemplateID))
 	}
+	if q.Enabled != nil {
+		pred = pred.Where(account.EnabledEQ(*q.Enabled))
+	}
 	total, err := pred.Count(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -119,55 +126,6 @@ func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.
 	return out, int64(total), nil
 }
 
-func (r *AccountRepo) UpdateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
-	var row *ent.Account
-	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
-		locked, err := lockAccountsForUpdate(ctx, driver, []int64{a.ID})
-		if err != nil {
-			return err
-		}
-		templateIDs := []int64{locked[0].templateID, a.TemplateID}
-		if err := lockTemplateWrites(ctx, driver, templateIDs); err != nil {
-			return err
-		}
-		templates, err := loadTemplates(ctx, client, templateIDs)
-		if err != nil {
-			return err
-		}
-		if err := validateCodexAccountBaseURL(templates[a.TemplateID], a.BaseURL); err != nil {
-			return err
-		}
-		u := client.Account.UpdateOneID(a.ID).
-			SetName(a.Name).SetTemplateID(a.TemplateID).
-			SetUpstreamKey(a.UpstreamKey).
-			SetMaxConcurrency(a.MaxConcurrency).
-			SetEnabled(a.Enabled).
-			SetUpstreamCostMultiplierBp(a.UpstreamCostMultiplierBp)
-			// 账号级 base_url 全量替换语义（对齐其余字段的「全字段 Set」现状——PUT 是
-			// 全量替换：nil = 继承模板 → ClearBaseURL 清空既有覆盖；非空 → SetBaseURL。
-			// SetNillableBaseURL(nil) 是 no-op，无法表达「清空」，故显式分写）。
-		if a.BaseURL != nil {
-			u = u.SetBaseURL(*a.BaseURL)
-		} else {
-			u = u.ClearBaseURL()
-		}
-		if a.CacheDomain != nil {
-			u = u.SetCacheDomain(*a.CacheDomain)
-		} else {
-			u = u.ClearCacheDomain()
-		}
-		row, err = u.Save(ctx)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return toDomainAccount(row), nil
-}
-
-// DeleteAccount 软删除：deleted_at 置值（行保留留审计；调度器快照按
-// deleted_at IS NULL 过滤，GET 单个仍可查已删项）。bulk Update（无 re-SELECT）
-// 单语句；0 行命中 = 缺 id → ErrNotFound（与 errMissingID 同格式）。
 func (r *AccountRepo) DeleteAccount(ctx context.Context, id int64) error {
 	n, err := r.client.Account.Update().Where(account.IDEQ(id)).SetDeletedAt(time.Now()).Save(ctx)
 	if err != nil {
@@ -282,110 +240,4 @@ func (r *AccountRepo) RecoverAccountCAS(ctx context.Context, id int64, expectedR
 		return fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, id, expectedRevision)
 	}
 	return nil
-}
-
-// SetAccountEnabledCAS 切换 enabled 且 CAS fencing +1。Enable 不清 failure。
-func (r *AccountRepo) SetAccountEnabledCAS(ctx context.Context, id int64, expectedRevision int64, enabled bool) error {
-	n, err := r.client.Account.Update().
-		Where(account.IDEQ(id), account.LifecycleRevisionEQ(expectedRevision)).
-		SetEnabled(enabled).
-		SetLifecycleRevision(expectedRevision + 1).
-		Save(ctx)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, id, expectedRevision)
-	}
-	return nil
-}
-
-// ReplaceAccountCredentialCAS 管理员替换凭据/密钥/base_url 且 CAS +1。SDK 内部刷新不调此方法。
-func (r *AccountRepo) ReplaceAccountCredentialCAS(ctx context.Context, id int64, expectedRevision int64, newKey string, newBaseURL *string) error {
-	u := r.client.Account.Update().
-		Where(account.IDEQ(id), account.LifecycleRevisionEQ(expectedRevision)).
-		SetUpstreamKey(newKey).
-		SetLifecycleRevision(expectedRevision + 1)
-	if newBaseURL != nil {
-		u = u.SetBaseURL(*newBaseURL)
-	} else {
-		u = u.ClearBaseURL()
-	}
-	n, err := u.Save(ctx)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, id, expectedRevision)
-	}
-	return nil
-}
-
-// UpdateAccountCostMultiplierCAS 管理员更新采购倍率且 CAS +1。
-func (r *AccountRepo) UpdateAccountCostMultiplierCAS(ctx context.Context, id int64, expectedRevision int64, multiplier int) error {
-	n, err := r.client.Account.Update().
-		Where(account.IDEQ(id), account.LifecycleRevisionEQ(expectedRevision)).
-		SetUpstreamCostMultiplierBp(multiplier).
-		SetLifecycleRevision(expectedRevision + 1).
-		Save(ctx)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, id, expectedRevision)
-	}
-	return nil
-}
-
-// UpdateAccountCacheDomainCAS 管理员更新缓存域且 CAS +1。
-func (r *AccountRepo) UpdateAccountCacheDomainCAS(ctx context.Context, id int64, expectedRevision int64, domain *string) error {
-	u := r.client.Account.Update().
-		Where(account.IDEQ(id), account.LifecycleRevisionEQ(expectedRevision)).
-		SetLifecycleRevision(expectedRevision + 1)
-	if domain != nil {
-		u = u.SetCacheDomain(*domain)
-	} else {
-		u = u.ClearCacheDomain()
-	}
-	n, err := u.Save(ctx)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, id, expectedRevision)
-	}
-	return nil
-}
-
-// UpdateAccountCAS 管理员全量更新（fenced）：CAS expectedRevision 并原子 +1，更新全部可变字段。
-// 用于 PUT credential/baseURL 替换，保证单条原子条件更新。失效字段
-// （failed_at/last_error/failure_source）不在 PUT 写面——恢复唯一入口
-// POST /accounts/{id}/recover（fenced）。
-func (r *AccountRepo) UpdateAccountCAS(ctx context.Context, a *domain.Account, expectedRevision int64) (*domain.Account, error) {
-	u := r.client.Account.Update().
-		Where(account.IDEQ(a.ID), account.LifecycleRevisionEQ(expectedRevision)).
-		SetName(a.Name).SetTemplateID(a.TemplateID).
-		SetUpstreamKey(a.UpstreamKey).
-		SetMaxConcurrency(a.MaxConcurrency).
-		SetEnabled(a.Enabled).
-		SetUpstreamCostMultiplierBp(a.UpstreamCostMultiplierBp).
-		SetLifecycleRevision(expectedRevision + 1)
-	if a.BaseURL != nil {
-		u = u.SetBaseURL(*a.BaseURL)
-	} else {
-		u = u.ClearBaseURL()
-	}
-	if a.CacheDomain != nil {
-		u = u.SetCacheDomain(*a.CacheDomain)
-	} else {
-		u = u.ClearCacheDomain()
-	}
-	n, err := u.Save(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if n == 0 {
-		return nil, fmt.Errorf("%w: id=%d expected revision %d stale", ErrStaleRevision, a.ID, expectedRevision)
-	}
-	return r.GetAccount(ctx, a.ID)
 }

@@ -207,12 +207,16 @@ export interface paths {
             cookie?: never;
         };
         get: operations["GetAccountsId"];
-        put: operations["PutAccountsId"];
+        put?: never;
         post?: never;
         delete: operations["DeleteAccountsId"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * 部分更新账号（三态：缺省=不变；可空标量 null=清空、""=400；不可空标量 null=400；有值=落值）
+         * @description 账号写面唯一更新入口（一个端点覆盖倍率 + 缓存域 + 启停 + 普通字段 + 身份字段全部组合，一次调用）。 前置条件 If-Match 可选：缺席 = 不做检查；命中 = 生效；陈旧 → 412；语法非法（W/、多值、*、非整数）→ 400。
+         */
+        patch: operations["PatchAccountsId"];
         trace?: never;
     };
     "/accounts/{id}/groups": {
@@ -250,67 +254,10 @@ export interface paths {
          * @description 运行时失效（rule 判死/SDK fatal）后管理员确认恢复的唯一入口：CAS
          *     expected_revision 命中才清失效三字段并 +1，随后对新 revision 写通配
          *     PROBING（探针环接管：READY 前不吃正常流量）。expected_revision 过期 →
-         *     409（前端须重读账号后重试）；本端点不启用被禁用的账号（enabled 独立
-         *     走 /accounts/{id}/enabled）。
+         *     409（前端须重读账号后重试）；本端点不启用被禁用的账号（enabled 独立，
+         *     经 PATCH /accounts/{id} 修改）。
          */
         post: operations["PostAccountsIdRecover"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/accounts/{id}/enabled": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 启用/禁用账号（fenced；enable 不清失效字段——恢复唯一入口 /recover） */
-        post: operations["PostAccountsIdEnabled"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/accounts/{id}/cost-multiplier": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        /** 更新采购成本倍率（fenced；正常值 ×0–×10，边界换算 basis points） */
-        put: operations["PutAccountsIdCostMultiplier"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/accounts/{id}/cache-domain": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        /** 更新缓存域（fenced；null = 清空回账号私有域；非空 = 共享域） */
-        put: operations["PutAccountsIdCacheDomain"];
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1429,18 +1376,8 @@ export interface components {
              */
             DeletedAt?: string | null;
         };
-        AccountCreate: {
-            name: string;
-            /** Format: int64 */
-            template_id: number;
-            /** @description credential-type conditional: if template is codex-oauth/codex-pat must be empty/null (non-empty forbidden, inherits SDK default); if api_key/responses-special non-empty overrides template base_url, null/empty inherits template */
-            base_url?: string | null;
-            upstream_key: string;
-            max_concurrency?: number;
-            /** @description 可选：共享缓存域（合法域名形态 ≤253；null/缺省 = 账号私有域）；仅创建可带，更新走 /accounts/{id}/cache-domain */
-            cache_domain?: string | null;
-            group_ids?: number[];
-        };
+        /** @description 创建体 = 唯一字段模型 + 创建必填（name/template_id）；upstream_key 依模板凭据类型条件必填（service 校验）。 */
+        AccountCreate: WithRequired<components["schemas"]["AccountConfigPatch"], "name" | "template_id">;
         Account: {
             /** Format: int64 */
             ID?: number;
@@ -1455,7 +1392,7 @@ export interface components {
             LastError?: string | null;
             /** Format: date-time */
             LastUsedAt?: string | null;
-            /** @description 管理面启停（写面 POST /accounts/{id}/enabled，CAS fenced；与运行时失效语义分离） */
+            /** @description 管理面启停（写面 PATCH /accounts/{id} 的 enabled 字段；与运行时失效语义分离） */
             Enabled?: boolean;
             /**
              * Format: date-time
@@ -1466,15 +1403,20 @@ export interface components {
             FailureSource?: string | null;
             /**
              * Format: int64
-             * @description 生命周期代际（CAS fencing：每次生命周期变化/管理员凭据替换 +1；所有 fenced 端点必须携带 expected_revision）
+             * @description 配置代际 C（客户端 CAS 令牌 + DB 变更水位）：每次写面落库无条件 +1；PATCH 以 If-Match 作前置条件（陈旧 → 412），recover 以 body expected_revision（陈旧 → 409）
              */
             LifecycleRevision?: number;
             /**
+             * Format: int64
+             * @description 身份代际 K：仅身份类字段（template_id/base_url/upstream_key 及可轮换凭据）按值变更时 +1；SDK 自动 token 刷新不推进
+             */
+            IdentityRevision?: number;
+            /**
              * Format: double
-             * @description 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PUT /accounts/{id}/cost-multiplier）
+             * @description 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PATCH /accounts/{id} 的 upstream_cost_multiplier 字段）
              */
             UpstreamCostMultiplier?: number;
-            /** @description 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PUT /accounts/{id}/cache-domain） */
+            /** @description 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PATCH /accounts/{id} 的 cache_domain 字段） */
             CacheDomain?: string | null;
             /** Format: date-time */
             CreatedAt?: string;
@@ -1497,35 +1439,6 @@ export interface components {
             /**
              * Format: int64
              * @description CAS 期望代际（= 读到的 LifecycleRevision）；过期 → 409
-             */
-            expected_revision: number;
-        };
-        AccountEnabledBody: {
-            enabled: boolean;
-            /**
-             * Format: int64
-             * @description CAS 期望代际；过期 → 409
-             */
-            expected_revision: number;
-        };
-        AccountCostMultiplierBody: {
-            /**
-             * Format: double
-             * @description 采购成本倍率正常值（1 = ×1，0 = 免费，上限 ×10；边界换算 bp——2.5 ↔ 25000）；越界 → 400
-             */
-            multiplier: number;
-            /**
-             * Format: int64
-             * @description CAS 期望代际；过期 → 409
-             */
-            expected_revision: number;
-        };
-        AccountCacheDomainBody: {
-            /** @description null/缺省 = 清空（回账号私有域）；非空 = 共享域（合法域名形态 ≤253，非法 → 400；清空不走空串） */
-            cache_domain?: string | null;
-            /**
-             * Format: int64
-             * @description CAS 期望代际；过期 → 409
              */
             expected_revision: number;
         };
@@ -2162,15 +2075,19 @@ export interface components {
                 [key: string]: components["schemas"]["ModelMappingEntry"];
             };
         };
-        AccountPatch: {
+        /** @description 账号写面唯一字段模型（创建 / PATCH / 批量共用）。三态：字段缺席 = 不变（永不清空）； 可空标量 null = 清空；集合 null = 不变、[] = 清空；不可空标量 null = 400； 可空标量 "" = 400（空串哨兵已取消——清空只有一个拼法 null）。 */
+        AccountConfigPatch: {
             name?: string;
             /** Format: int64 */
             template_id?: number;
-            /** @description credential-type conditional batch: if any effective target is codex-oauth/codex-pat must be empty/null (non-empty forbidden); otherwise batch tristate: empty string=clear to inherit, null/omitted=unchanged, non-empty=override */
             base_url?: string | null;
             upstream_key?: string;
             max_concurrency?: number;
             group_ids?: number[];
+            enabled?: boolean;
+            cache_domain?: string | null;
+            /** Format: double */
+            upstream_cost_multiplier?: number;
         };
         GroupPatch: {
             name?: string;
@@ -2178,7 +2095,19 @@ export interface components {
         };
         BatchUpdateAccountsBody: {
             ids: number[];
-            fields: components["schemas"]["AccountPatch"];
+            fields: components["schemas"]["AccountConfigPatch"];
+        };
+        /** @description 账号批量更新响应（独立 schema——不与 templates/groups 共用的 BatchUpdateResponse 合并） */
+        AccountBatchUpdateResponse: {
+            updated: number;
+            items: components["schemas"]["AccountRevision"][];
+        };
+        /** @description 单账号更新后的配置代际（C = 客户端 CAS 令牌；与路由观测面的 identity_revision 不同） */
+        AccountRevision: {
+            /** Format: int64 */
+            account_id: number;
+            /** Format: int64 */
+            lifecycle_revision: number;
         };
         BatchUpdateGroupsBody: {
             ids: number[];
@@ -2975,8 +2904,11 @@ export interface components {
             account_id: number;
             /** Format: int64 */
             template_id: number;
-            /** Format: int64 */
-            lifecycle_revision: number;
+            /**
+             * Format: int64
+             * @description 候选内容代际 K（identity_revision）——非客户端 CAS 令牌 C（lifecycle_revision）；C 只围栏管理员写入
+             */
+            identity_revision: number;
             quality_class_id: string;
             mapped_model: string;
             /** Format: int64 */
@@ -3047,8 +2979,11 @@ export interface components {
             account_id: number;
             /** Format: int64 */
             template_id: number;
-            /** Format: int64 */
-            lifecycle_revision: number;
+            /**
+             * Format: int64
+             * @description 候选内容代际 K（identity_revision）——与编译器事实、wire 同源；非客户端 CAS 令牌 C
+             */
+            identity_revision: number;
             /** @description 采购倍率 basis points（10000 = ×1） */
             upstream_cost_multiplier_bp: number;
             /** @description 真实候选指纹 hex（不可导出 = 空串） */
@@ -3555,6 +3490,7 @@ export interface operations {
                 sort?: string;
                 order?: "asc" | "desc";
                 template_id?: number;
+                enabled?: boolean;
             };
             header?: never;
             path?: never;
@@ -3678,7 +3614,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BatchUpdateResponse"];
+                    "application/json": components["schemas"]["AccountBatchUpdateResponse"];
                 };
             };
             default: components["responses"]["Error"];
@@ -3757,33 +3693,6 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    PutAccountsId: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AccountCreate"];
-            };
-        };
-        responses: {
-            /** @description 更新后账号 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Account"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     DeleteAccountsId: {
         parameters: {
             query?: never;
@@ -3802,6 +3711,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeletedResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PatchAccountsId: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string;
+            };
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountConfigPatch"];
+            };
+        };
+        responses: {
+            /** @description 更新后账号（含新 lifecycle_revision） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            /** @description If-Match 陈旧（当前 lifecycle_revision 与前置条件不符） */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             default: components["responses"]["Error"];
@@ -3846,87 +3793,6 @@ export interface operations {
         };
         responses: {
             /** @description 恢复后的账号（含新 LifecycleRevision） */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Account"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    PostAccountsIdEnabled: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AccountEnabledBody"];
-            };
-        };
-        responses: {
-            /** @description 切换后的账号（含新 LifecycleRevision） */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Account"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    PutAccountsIdCostMultiplier: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AccountCostMultiplierBody"];
-            };
-        };
-        responses: {
-            /** @description 更新后的账号（含新 LifecycleRevision） */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Account"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    PutAccountsIdCacheDomain: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AccountCacheDomainBody"];
-            };
-        };
-        responses: {
-            /** @description 更新后的账号（含新 LifecycleRevision） */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5946,3 +5812,6 @@ export interface operations {
         };
     };
 }
+type WithRequired<T, K extends keyof T> = T & {
+    [P in K]-?: T[P];
+};

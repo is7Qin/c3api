@@ -453,7 +453,7 @@ func TestRoutingCompilerWireHealthLatchExclusion(t *testing.T) {
 	hk := compilerHealthKeyFor(accs[1], domain.FormatOpenAIChat, "m")
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
 	s.health = h
-	require.True(t, s.TryLatch(accs[2].ID, compilerLatchKeyFor(accs[2]).Fingerprint, accs[2].LifecycleRevision))
+	require.True(t, s.TryLatch(accs[2].ID, compilerLatchKeyFor(accs[2]).Fingerprint, accs[2].IdentityRevision))
 
 	s.compileOnce()
 	rd, ok := s.View().DecisionView().Routes()[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]

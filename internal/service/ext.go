@@ -8,6 +8,7 @@ import (
 	"context"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/notify"
 )
 
 // —— 模板类型化扩展（template_ext 1:1；通用框架：表结构/CRUD 骨架/类型枚举
@@ -44,7 +45,9 @@ func (s *Service) GetTemplateExt(ctx context.Context, templateID int64) (*domain
 // 含 NULL 清空）。模板缺 id → 404（FK 由仓库保证）。
 // 类型一致性：ext 行 credential_type 必须与父模板的 credential_type 一致
 // （api_key 模板无 ext 行；special/oauth/pat 模板只能挂同类型行）——不一致 → 400。
-// W1 不接线失效/发布——消费（快照加载/调度）留给 W3/W4/W6。
+// ext 行是模板快照的静态原料之一（strip_image_tools 参与路由属性推导），
+// 故写入后必须与模板其余写面同规失效：Templates() 全量重载调度快照 + 失效
+// 客户端工厂，并广播 NOTIFY 使多实例收敛。
 func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) (*domain.TemplateExt, error) {
 	tpl, err := s.store.GetTemplate(ctx, e.TemplateID)
 	if err != nil {
@@ -56,5 +59,11 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) 
 	if err := validateTemplateExt(e); err != nil {
 		return nil, err
 	}
-	return s.store.UpsertTemplateExt(ctx, e)
+	saved, err := s.store.UpsertTemplateExt(ctx, e)
+	if err != nil {
+		return nil, mapRepoErr(err)
+	}
+	s.inv.Templates()
+	s.publish(ctx, notify.Change{Templates: true})
+	return saved, nil
 }

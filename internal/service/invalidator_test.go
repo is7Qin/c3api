@@ -139,8 +139,9 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.NoError(t, err)
 
 		// 创建带组：gids = 新建分组；keyChanged=false（新 key 无既有客户端）
-		acc, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &[]int64{g1.ID, g2.ID},
+		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name: strPtr("a1"), TemplateID: int64Ptr(tpl.ID), UpstreamKey: strPtr("sk-1"),
+			GroupIDs: &[]int64{g1.ID, g2.ID},
 		})
 		require.NoError(t, err)
 		got := rec.last()
@@ -149,9 +150,9 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.False(t, got.key)
 
 		// 更新移组 g1→g2：旧组 ∪ 新组都重载；upstream_key 变更 → keyChanged
-		_, err = svc.UpdateAccount(ctx, &domain.Account{
-			ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-2", GroupIDs: &[]int64{g2.ID},
-		})
+		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{
+			UpstreamKey: strPtr("sk-2"), GroupIDs: &[]int64{g2.ID},
+		}, nil)
 		require.NoError(t, err)
 		got = rec.last()
 		require.Equal(t, "accounts", got.kind)
@@ -183,19 +184,22 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.NoError(t, err)
 		g2, err := svc.CreateGroup(ctx, "g2", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
-		a1, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &[]int64{g1.ID},
+		a1, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name: strPtr("a1"), TemplateID: int64Ptr(tpl.ID), UpstreamKey: strPtr("sk-1"),
+			GroupIDs: &[]int64{g1.ID},
 		})
 		require.NoError(t, err)
-		a2, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a2", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &[]int64{g1.ID},
+		a2, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name: strPtr("a2"), TemplateID: int64Ptr(tpl.ID), UpstreamKey: strPtr("sk-1"),
+			GroupIDs: &[]int64{g1.ID},
 		})
 		require.NoError(t, err)
 
 		// 批量：两组旧组 g1 + 目标 g2 并集；upstream_key 提供 → keyChanged
 		key := "sk-batch"
-		require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
-			repository.AccountPatch{GroupIDs: &[]int64{g2.ID}, UpstreamKey: &key}))
+		_, err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+			repository.AccountPatch{GroupIDs: &[]int64{g2.ID}, UpstreamKey: &key})
+		require.NoError(t, err)
 		got := rec.last()
 		require.Equal(t, "accounts", got.kind)
 		// 旧组（两账号 × g1）+ 目标组 g2 并集（重复由去抖器 map 去重）

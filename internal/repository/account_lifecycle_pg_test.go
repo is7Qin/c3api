@@ -16,7 +16,7 @@ func TestPGAccountCostDefaults(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost-default", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost-default", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), a.LifecycleRevision, "revision starts at 1")
 	require.True(t, a.Enabled, "enabled defaults true")
@@ -29,7 +29,7 @@ func TestPGGetAccountLoadsTemplateForLifecycleFencing(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	account, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "fencing-template", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
+	account, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "fencing-template", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 
 	got, err := repos.Accounts.GetAccountWithTemplate(ctx, account.ID)
@@ -44,20 +44,26 @@ func TestPGAccountCostValidation(t *testing.T) {
 	tpl := seedPGTemplate(t, repos)
 	// Negative multiplier should be rejected via service validation, but repo also should allow? Test at repo level: direct repo create with negative should still write (service guards), but we test service path separately.
 	// Here test that cost 0, 10000, high succeed via CAS update.
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
-	require.NoError(t, repos.Accounts.UpdateAccountCostMultiplierCAS(ctx, a.ID, a.LifecycleRevision, 0))
+	zero := 0
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a.ID}, repository.AccountPatch{UpstreamCostMultiplierBp: &zero})
+	require.NoError(t, err)
 	got, err := repos.Accounts.GetAccount(ctx, a.ID)
 	require.NoError(t, err)
 	require.Equal(t, 0, got.UpstreamCostMultiplierBp)
 	require.Equal(t, int64(2), got.LifecycleRevision)
 
-	require.NoError(t, repos.Accounts.UpdateAccountCostMultiplierCAS(ctx, got.ID, got.LifecycleRevision, 10000))
+	tenK := 10000
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{got.ID}, repository.AccountPatch{UpstreamCostMultiplierBp: &tenK})
+	require.NoError(t, err)
 	got2, _ := repos.Accounts.GetAccount(ctx, got.ID)
 	require.Equal(t, 10000, got2.UpstreamCostMultiplierBp)
 	require.Equal(t, int64(3), got2.LifecycleRevision)
 
-	require.NoError(t, repos.Accounts.UpdateAccountCostMultiplierCAS(ctx, got2.ID, got2.LifecycleRevision, 50000))
+	fiftyK := 50000
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{got2.ID}, repository.AccountPatch{UpstreamCostMultiplierBp: &fiftyK})
+	require.NoError(t, err)
 	got3, _ := repos.Accounts.GetAccount(ctx, got2.ID)
 	require.Equal(t, 50000, got3.UpstreamCostMultiplierBp)
 }
@@ -66,16 +72,19 @@ func TestPGAccountCacheDomain(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cache", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "cache", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	shared := "cache.example.com"
-	require.NoError(t, repos.Accounts.UpdateAccountCacheDomainCAS(ctx, a.ID, a.LifecycleRevision, &shared))
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a.ID}, repository.AccountPatch{CacheDomain: &shared})
+	require.NoError(t, err)
 	got, _ := repos.Accounts.GetAccount(ctx, a.ID)
 	require.NotNil(t, got.CacheDomain)
 	require.Equal(t, shared, *got.CacheDomain)
 
-	// empty (nil) domain = private per-account
-	require.NoError(t, repos.Accounts.UpdateAccountCacheDomainCAS(ctx, got.ID, got.LifecycleRevision, nil))
+	// 空串 = 清空（回账号私有域）
+	cleared := ""
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{got.ID}, repository.AccountPatch{CacheDomain: &cleared})
+	require.NoError(t, err)
 	got2, _ := repos.Accounts.GetAccount(ctx, got.ID)
 	require.Nil(t, got2.CacheDomain)
 }
@@ -84,34 +93,39 @@ func TestPGAccountLifecycleRevision(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "lifecycle", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "lifecycle", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	rev1 := a.LifecycleRevision
 	require.Equal(t, int64(1), rev1)
 
-	// Fail CAS increments
+	// Fail CAS：围栏在 K（身份代际），推进 C（配置代际）。失效不是身份写入
+	// ⇒ K 不变；配置写入 ⇒ C 无条件 +1。
 	failedAt := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, a.ID, rev1, "rule", failedAt, "boom"))
+	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, a.ID, a.IdentityRevision, "rule", failedAt, "boom"))
 	got, _ := repos.Accounts.GetAccount(ctx, a.ID)
+	require.Equal(t, a.IdentityRevision, got.IdentityRevision, "失效路径不改 K")
 	require.Equal(t, int64(2), got.LifecycleRevision)
 	require.NotNil(t, got.FailedAt)
 	require.NotNil(t, got.FailureSource)
 	require.Equal(t, "rule", *got.FailureSource)
 
-	// Recover CAS increments
+	// Recover CAS：围栏在 C（客户端令牌），推进 C。恢复同样不是身份写入 ⇒ K 不变。
 	require.NoError(t, repos.Accounts.RecoverAccountCAS(ctx, a.ID, got.LifecycleRevision))
 	got2, _ := repos.Accounts.GetAccount(ctx, a.ID)
+	require.Equal(t, a.IdentityRevision, got2.IdentityRevision, "恢复路径不改 K")
 	require.Equal(t, int64(3), got2.LifecycleRevision)
 	require.Nil(t, got2.FailedAt)
 	require.Nil(t, got2.FailureSource)
 
 	// Enable CAS increments and does not clear failure (enable must not silently clear)
 	// first fail again
-	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, a.ID, got2.LifecycleRevision, "sdk", failedAt, "again"))
+	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, a.ID, got2.IdentityRevision, "sdk", failedAt, "again"))
 	got3, _ := repos.Accounts.GetAccount(ctx, a.ID)
 	require.NotNil(t, got3.FailedAt)
 	revBeforeEnable := got3.LifecycleRevision
-	require.NoError(t, repos.Accounts.SetAccountEnabledCAS(ctx, a.ID, revBeforeEnable, false))
+	off := false
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a.ID}, repository.AccountPatch{Enabled: &off})
+	require.NoError(t, err)
 	got4, _ := repos.Accounts.GetAccount(ctx, a.ID)
 	require.Equal(t, revBeforeEnable+1, got4.LifecycleRevision)
 	require.False(t, got4.Enabled)
@@ -122,48 +136,39 @@ func TestPGAccountRevisionStaleReject(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
-	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8})
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
-	rev1 := a.LifecycleRevision
+	k0 := a.IdentityRevision
+	c0 := a.LifecycleRevision
 	failedAt := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, a.ID, rev1, "rule", failedAt, "first"))
-	// stale Fail with old revision should fail
-	err = repos.Accounts.FailAccountCAS(ctx, a.ID, rev1, "rule", failedAt, "stale")
-	require.Error(t, err)
-	require.ErrorIs(t, err, repository.ErrConflict)
-
-	// stale Recover with old revision should fail
+	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, a.ID, k0, "rule", failedAt, "first"))
 	got, _ := repos.Accounts.GetAccount(ctx, a.ID)
-	require.Equal(t, int64(2), got.LifecycleRevision)
-	err = repos.Accounts.RecoverAccountCAS(ctx, a.ID, rev1)
+	require.Equal(t, k0, got.IdentityRevision, "失效路径不改 K")
+	require.Equal(t, c0+1, got.LifecycleRevision, "失效路径推进 C")
+
+	// 身份写入（upstream_key）推进 K ⇒ 携带旧 K 的失效判决作废：这正是 (I,K)
+	// 围栏的意义——身份已被授权变更，旧判决不得再落库。
+	newKey := "sk-rotated"
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a.ID}, repository.AccountPatch{UpstreamKey: &newKey})
+	require.NoError(t, err)
+	gotK, _ := repos.Accounts.GetAccount(ctx, a.ID)
+	require.Equal(t, k0+1, gotK.IdentityRevision, "身份写入推进 K")
+
+	err = repos.Accounts.FailAccountCAS(ctx, a.ID, k0, "rule", failedAt, "stale")
+	require.Error(t, err)
+	require.ErrorIs(t, err, repository.ErrConflict, "旧 K 的失效判决必须作废")
+
+	// 恢复的前置条件是 C（不是 K）：陈旧 C 拒绝
+	err = repos.Accounts.RecoverAccountCAS(ctx, a.ID, c0)
 	require.Error(t, err)
 	require.ErrorIs(t, err, repository.ErrConflict)
 
-	// correct Recover with current revision succeeds
-	require.NoError(t, repos.Accounts.RecoverAccountCAS(ctx, a.ID, got.LifecycleRevision))
+	// 当前 C 的恢复成功，且不改 K
+	cur, _ := repos.Accounts.GetAccount(ctx, a.ID)
+	require.NoError(t, repos.Accounts.RecoverAccountCAS(ctx, a.ID, cur.LifecycleRevision))
 	got2, _ := repos.Accounts.GetAccount(ctx, a.ID)
 	require.Nil(t, got2.FailedAt)
-
-	// stale enable with old revision
-	err = repos.Accounts.SetAccountEnabledCAS(ctx, a.ID, rev1, false)
-	require.Error(t, err)
-	require.ErrorIs(t, err, repository.ErrConflict)
-
-	// credential CAS stale
-	err = repos.Accounts.ReplaceAccountCredentialCAS(ctx, a.ID, rev1, "sk-new", nil)
-	require.Error(t, err)
-	require.ErrorIs(t, err, repository.ErrConflict)
-
-	// cost CAS stale
-	err = repos.Accounts.UpdateAccountCostMultiplierCAS(ctx, a.ID, rev1, 123)
-	require.Error(t, err)
-	require.ErrorIs(t, err, repository.ErrConflict)
-
-	// cache CAS stale
-	dom := "a.example.com"
-	err = repos.Accounts.UpdateAccountCacheDomainCAS(ctx, a.ID, rev1, &dom)
-	require.Error(t, err)
-	require.ErrorIs(t, err, repository.ErrConflict)
+	require.Equal(t, gotK.IdentityRevision, got2.IdentityRevision, "恢复不改 K")
 }
 
 func TestPGAccountBatchAndImport(t *testing.T) {
@@ -177,7 +182,8 @@ func TestPGAccountBatchAndImport(t *testing.T) {
 	enabled := false
 	cost := 25000
 	domainStr := "batch.example.com"
-	require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID}, repository.AccountPatch{Enabled: &enabled, UpstreamCostMultiplierBp: &cost, CacheDomain: &domainStr}))
+	_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID}, repository.AccountPatch{Enabled: &enabled, UpstreamCostMultiplierBp: &cost, CacheDomain: &domainStr})
+	require.NoError(t, err)
 	for _, id := range []int64{a1.ID, a2.ID} {
 		got, err := repos.Accounts.GetAccount(ctx, id)
 		require.NoError(t, err)
@@ -185,12 +191,23 @@ func TestPGAccountBatchAndImport(t *testing.T) {
 		require.Equal(t, 25000, got.UpstreamCostMultiplierBp)
 		require.NotNil(t, got.CacheDomain)
 		require.Equal(t, domainStr, *got.CacheDomain)
+		// 配置类字段（enabled / 倍率 / 缓存域）变更**不**推进 K：它们换的是配置
+		// 代际 C，不换路由目标身份，故不得白白作废在途判定。
+		require.Equal(t, int64(1), got.IdentityRevision, "config-only write must not advance K")
 	}
 	// clear cache domain via batch empty string
 	empty := ""
-	require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{CacheDomain: &empty}))
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{CacheDomain: &empty})
+	require.NoError(t, err)
 	got, _ := repos.Accounts.GetAccount(ctx, a1.ID)
 	require.Nil(t, got.CacheDomain)
+	require.Equal(t, int64(1), got.IdentityRevision, "clearing a config field must not advance K")
+	// 清空 base_url（可空身份字段）是身份变更：从 NULL 到 NULL 是幂等重写，K 不变。
+	blank := ""
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID}, repository.AccountPatch{BaseURL: &blank})
+	require.NoError(t, err)
+	gotBlank, _ := repos.Accounts.GetAccount(ctx, a1.ID)
+	require.Equal(t, int64(1), gotBlank.IdentityRevision, "clearing an already-NULL base_url must not advance K")
 }
 
 // TestPGCreateAccountWithDomainStaysEnabled 是缺陷 A 的回归：创建即带
@@ -202,7 +219,7 @@ func TestPGCreateAccountWithDomainStaysEnabled(t *testing.T) {
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	dom := "dx.example"
-	created, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-domain", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, CacheDomain: &dom})
+	created, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-domain", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, CacheDomain: &dom, Enabled: true})
 	require.NoError(t, err)
 	require.True(t, created.Enabled, "创建即带域必须默认启用（回显）")
 	got, err := repos.Accounts.GetAccount(ctx, created.ID)
@@ -211,7 +228,7 @@ func TestPGCreateAccountWithDomainStaysEnabled(t *testing.T) {
 	require.NotNil(t, got.CacheDomain)
 	require.Equal(t, dom, *got.CacheDomain)
 
-	costly, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, UpstreamCostMultiplierBp: 25000})
+	costly, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, UpstreamCostMultiplierBp: 25000, Enabled: true})
 	require.NoError(t, err)
 	require.True(t, costly.Enabled, "创建即带采购倍率必须默认启用（回显）")
 	gotCost, err := repos.Accounts.GetAccount(ctx, costly.ID)

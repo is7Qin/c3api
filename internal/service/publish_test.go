@@ -190,8 +190,11 @@ func TestPublishMatrix(t *testing.T) {
 		g2, err := svc.CreateGroup(ctx, "g2", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
 
-		acc, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &[]int64{g1.ID, g2.ID},
+		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name:        strPtr("a1"),
+			TemplateID:  int64Ptr(tpl.ID),
+			UpstreamKey: strPtr("sk-1"),
+			GroupIDs:    &[]int64{g1.ID, g2.ID},
 		})
 		require.NoError(t, err)
 		got := pr.last()
@@ -200,9 +203,9 @@ func TestPublishMatrix(t *testing.T) {
 
 		// 移组 g1→g2 + upstream_key 变更：Groups（旧+新）+ Clients 同一条
 		before := pr.total()
-		_, err = svc.UpdateAccount(ctx, &domain.Account{
-			ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-2", GroupIDs: &[]int64{g2.ID},
-		})
+		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{
+			UpstreamKey: strPtr("sk-2"), GroupIDs: &[]int64{g2.ID},
+		}, nil)
 		require.NoError(t, err)
 		got = pr.last()
 		require.ElementsMatch(t, []int64{g1.ID, g2.ID, g2.ID}, got.Groups, "移组 A→B：旧组+新组")
@@ -302,14 +305,16 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 		})
 		require.NoError(t, err)
 		before := pr.total() // 上一步创建模板已发布 1 条（Templates:true）
-		_, err = svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1", // 无 GroupIDs
+		_, err = svc.CreateAccount(ctx, repository.AccountPatch{
+			Name:        strPtr("a1"),
+			TemplateID:  int64Ptr(tpl.ID),
+			UpstreamKey: strPtr("sk-1"),
 		})
 		require.NoError(t, err)
 		require.Equal(t, before, pr.total(), "无分组账号 → 空 Change 跳过，不发布")
 	})
 
-	t.Run("UpdateAccount 无变更 → 空载荷不发布", func(t *testing.T) {
+	t.Run("补丁无变更 → 空载荷不发布", func(t *testing.T) {
 		svc, _, pr := newPubSvc()
 		tpl, err := svc.CreateTemplate(ctx, &domain.Template{
 			Name: "t", BaseURL: "https://t.example.com",
@@ -318,8 +323,10 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 		require.NoError(t, err)
 		// 无分组账号（创建时无 GroupIDs → 发布跳过，计数不变）
 		before := pr.total() // 上一步模板创建已发布 1 条（Templates:true）
-		acc, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1",
+		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name:        strPtr("a1"),
+			TemplateID:  int64Ptr(tpl.ID),
+			UpstreamKey: strPtr("sk-1"),
 		})
 		require.NoError(t, err)
 		require.Equal(t, before, pr.total(), "无分组账号创建 → 空 Change 跳过")
@@ -327,9 +334,7 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 		// GroupIDs nil = 不变（账号无组 → oldGroups 空），UpstreamKey 相同
 		// → keyChanged false → gids 空 → 空 Change 跳过
 		before = pr.total()
-		_, err = svc.UpdateAccount(ctx, &domain.Account{
-			ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1",
-		})
+		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: strPtr("sk-1")}, nil)
 		require.NoError(t, err)
 		require.Equal(t, before, pr.total(), "无变更更新 → 空 Change 跳过，不发布")
 	})

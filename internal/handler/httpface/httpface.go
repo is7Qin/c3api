@@ -52,6 +52,8 @@ func WriteServiceErr(w http.ResponseWriter, err error) {
 		WriteErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, serviceerr.ErrConflict):
 		WriteErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, serviceerr.ErrPreconditionFailed):
+		WriteErr(w, http.StatusPreconditionFailed, err.Error())
 	case errors.Is(err, serviceerr.ErrInvalidCredentials):
 		WriteErr(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, serviceerr.ErrSignupDisabled):

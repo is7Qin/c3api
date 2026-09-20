@@ -28,6 +28,7 @@ export interface ListParams {
 export type TemplateListParams = ListParams
 export interface AccountListParams extends ListParams {
   template_id?: number
+  enabled?: boolean
 }
 export type GroupListParams = ListParams
 
@@ -111,16 +112,20 @@ export class ApiClient {
   // —— 账号 ——
   listAccounts = (p?: AccountListParams) => this.request<components['schemas']['AccountListResponse']>('/accounts', { params: toQuery(p) })
   createAccount = (b: components['schemas']['AccountCreate']) => this.request<components['schemas']['Account']>('/accounts', { method: 'POST', body: JSON.stringify(b) })
-  updateAccount = (id: number, b: components['schemas']['AccountCreate']) => this.request<components['schemas']['Account']>(`/accounts/${id}`, { method: 'PUT', body: JSON.stringify(b) })
+  // 部分更新（三态：缺席 = 不变；可空标量 null = 清空、'' = 400；集合 null = 不变、[] = 清空；
+  // 不可空标量 null = 400）。ifMatch 缺席 = 不做前置条件检查；陈旧 → 412。
+  updateAccount = (id: number, b: components['schemas']['AccountConfigPatch'], ifMatch?: number) =>
+    this.request<components['schemas']['Account']>(`/accounts/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(b),
+      ...(ifMatch != null ? { headers: { 'If-Match': `"${ifMatch}"` } } : {}),
+    })
   deleteAccount = (id: number) => this.request<components['schemas']['DeletedResponse']>(`/accounts/${id}`, { method: 'DELETE' })
   deleteAccountsBatch = (ids: number[]) => this.request<components['schemas']['BatchDeleteResponse']>('/accounts/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
-  updateAccountsBatch = (ids: number[], fields: components['schemas']['AccountPatch']) => this.request<components['schemas']['BatchUpdateResponse']>('/accounts/batch-update', { method: 'POST', body: JSON.stringify({ ids, fields }) })
-  // —— 账号生命周期（intelligent-routing；全部 fenced CAS：expected_revision 过期 → 409，
-  // 前端须重读账号后重试；响应回显新代际 Account）——
+  updateAccountsBatch = (ids: number[], fields: components['schemas']['AccountConfigPatch']) => this.request<components['schemas']['AccountBatchUpdateResponse']>('/accounts/batch-update', { method: 'POST', body: JSON.stringify({ ids, fields }) })
+  // —— 失效恢复（/recover）：清 failed_at/last_error/failure_source；expected_revision 过期 → 409，
+  // 前端须重读账号后重试；响应回显新代际 Account ——
   recoverAccount = (id: number, b: components['schemas']['AccountRecoverBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/recover`, { method: 'POST', body: JSON.stringify(b) })
-  setAccountEnabled = (id: number, b: components['schemas']['AccountEnabledBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/enabled`, { method: 'POST', body: JSON.stringify(b) })
-  updateAccountCostMultiplier = (id: number, b: components['schemas']['AccountCostMultiplierBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/cost-multiplier`, { method: 'PUT', body: JSON.stringify(b) })
-  updateAccountCacheDomain = (id: number, b: components['schemas']['AccountCacheDomainBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/cache-domain`, { method: 'PUT', body: JSON.stringify(b) })
   // —— 分组 ——
   listGroups = (p?: GroupListParams) => this.request<components['schemas']['GroupListResponse']>('/groups', { params: toQuery(p) })
   createGroup = (b: components['schemas']['GroupCreate']) => this.request<components['schemas']['Group']>('/groups', { method: 'POST', body: JSON.stringify(b) })
