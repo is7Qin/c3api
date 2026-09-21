@@ -32,7 +32,7 @@ import (
 
 // 真实 PG e2e（T4 happy path——"真实凭据"= 凭据材料真实落库 account_ext，
 // 经 LoadGroupsAccounts 快照 → Selection.Ext → AccountCredential 派生直供适
-// 配层；上游为本地 mock WS 面——真实上游不可控，P3-5 分工）：
+// 配层；上游为本地 mock WS 面——真实上游不可控，分工）：
 //
 //	TEST_DATABASE_URL=postgres://postgres:c3api@127.0.0.1:15432/c3api_test_t4 \
 //	  go test ./internal/proxy/ -run TestCodexResponsesWSBillingPG -v

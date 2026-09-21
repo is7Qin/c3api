@@ -646,7 +646,7 @@ func TestReloadPreservesInFlightConcurrency(t *testing.T) {
 	s.Release(s3.AccountID)
 }
 
-// TestMultiGroupSharedInstance 回归（O2 实证修复）：多组账号必须共享同一
+// TestMultiGroupSharedInstance 回归（实证修复）：多组账号必须共享同一
 // accountSnapshot 实例——Select（经组路由）与 Release（经 byID）命中同一计数器。
 func TestMultiGroupSharedInstance(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})

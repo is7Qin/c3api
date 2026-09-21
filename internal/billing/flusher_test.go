@@ -499,7 +499,7 @@ func TestFlusherConsumesAndMarksBilled(t *testing.T) {
 }
 
 // TestFlusherOverdraftFlow 透支流：余额不足 → 无条件扣允许透支（负余额）+
-// overdraft 回写行内（B2）。
+// overdraft 回写行内。
 func TestFlusherOverdraftFlow(t *testing.T) {
 	store := newFakeLedgerStore()
 	row := store.seedRow(1, 1, 400, time.Now())
@@ -822,7 +822,7 @@ func TestFlusherCloseTruncatesOnBudget(t *testing.T) {
 }
 
 // ignoreCtxSettleStore SettleBalanceBatch 忽略 ctx 永久阻塞（模拟 DB 病态卡死
-// ——取消路径本身被拖住的极端形态；A-P2-8-2 第二 select 兜底目标）。测试结束
+// ——取消路径本身被拖住的极端形态；第二 select 兜底目标）。测试结束
 // 即弃置（在途 goroutine 无放行通道，属刻意泄漏）。
 type ignoreCtxSettleStore struct {
 	*fakeLedgerStore
@@ -855,7 +855,7 @@ func (s *endlessSettleStore) SettleBalanceBatch(ctx context.Context, limit, k, b
 	return s.fakeLedgerStore.SettleBalanceBatch(ctx, limit, k, bucket)
 }
 
-// TestFlusherCloseAbandonsInflightOnTimeout A-P2-8-2：驱动不尊重 ctx 时 Close
+// TestFlusherCloseAbandonsInflightOnTimeout：驱动不尊重 ctx 时 Close
 // 不再无界等待——预算到期 → Cancel baseCtx → 收尾宽限超时 → Warn 放弃排空、
 // 截断退出（在途事务由编排层强杀收尾，行保持 unbilled 不丢）。
 func TestFlusherCloseAbandonsInflightOnTimeout(t *testing.T) {

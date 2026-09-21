@@ -17,7 +17,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// SDK 接入 T5：轮转回写（WriteOAuthRotation 部分更新 upsert）真实 PG 测试 +
+// SDK 接入：轮转回写（WriteOAuthRotation 部分更新 upsert）真实 PG 测试 +
 // 失效恢复（status→active 隐含清 failed_at + last_error）。基座见
 // pg_account_groups_test.go 的 newPGRepos（DROP SCHEMA 重建）。
 // ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at,
 // codex_oauth_* 三列（codex_oauth_token/codex_oauth_refresh_token/
 // codex_oauth_expires_at 保旧），其余列（codex_identity/codex_pat_key/
 // codex_email）原样保留（防 UpsertAccountExt 全量 upsert 的 ClearX 清空
-// 回归——P3-4 expiry 保旧断言）；幂等（重复回调收敛）；行缺失 → 报错。
+// 回归——expiry 保旧断言）；幂等（重复回调收敛）；行缺失 → 报错。
 func TestWriteOAuthRotationPG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()

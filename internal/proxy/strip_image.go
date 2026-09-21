@@ -51,7 +51,7 @@ import "bytes"
 // 名称空间由 namespace 隔离），误判影响 = tool_choice 退回 auto（仍可调用
 // 全部保留工具），故接受。
 //
-// 已知边角（P3-1 标注）：键名 \u 转义（如 "type" 键）不匹配剥离判定——
+// 已知边角（标注）：键名 \u 转义（如 "type" 键）不匹配剥离判定——
 // 真实序列化器（serde_json 等）不产生转义 ASCII 键名，wire 不可达；如防
 // 绕过需求则补键名 unescape（当前不做）。
 func stripImageTools(body []byte) []byte {

@@ -227,7 +227,7 @@ func jsonGetStr(t *testing.T, b []byte, path string) string {
 	return gjson.GetBytes(b, path).String()
 }
 
-// TestMapStreamEventType 流式事件类型显式映射（A-P2-10 转换单测防漂移）：SDK
+// TestMapStreamEventType 流式事件类型显式映射（转换单测防漂移）：SDK
 // 事件名 → domain 类型化常量（case 用 SDK 常量）；未知（SDK 升级改事件名）→
 // ok=false——适配层 Warn + 跳过，不静默透传导致网关落账 0 张零告警。
 func TestMapStreamEventType(t *testing.T) {
@@ -376,7 +376,7 @@ func TestCodexCacheConcurrentReuse(t *testing.T) {
 	a.mu.Unlock()
 }
 
-// TestCodexCacheEvictionOnFatal fatal → 失效剔除（T1 联动）：上报后缓存条目
+// TestCodexCacheEvictionOnFatal fatal → 失效剔除（联动）：上报后缓存条目
 // 摘除；后续请求重建（新条目）。
 func TestCodexCacheEvictionOnFatal(t *testing.T) {
 	up, _ := newCodexUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"code":"token_invalidated"}}`})
@@ -432,7 +432,7 @@ func TestCodexEnvelopeHTTPError(t *testing.T) {
 }
 
 // TestEnvelopeErrorFatalChain 信封 Unwrap 链直接断言：包装 SDK fatal → errors.As
-// 穿透命中（网关 fatal 分类不因信封包装失效——T1 envelope_test 的 sdkHTTPError
+// 穿透命中（网关 fatal 分类不因信封包装失效——envelope_test 的 sdkHTTPError
 // 链覆盖协议面，此处补真实 SDK fatal 类型穿透）。
 func TestEnvelopeErrorFatalChain(t *testing.T) {
 	fatal := &codexsdk.RefreshOAuthError{Code: "invalid_grant", Raw: []byte(`{"error":"invalid_grant"}`)}
@@ -503,7 +503,7 @@ func TestCodexRefreshErrorNotReported(t *testing.T) {
 	require.Empty(t, handler.snapshot(), "RefreshError 可重试类不上报")
 }
 
-// TestCodexEmptyRefreshTokenNoPanic P2-3 空 rt 防护：oauth 凭据缺 refresh_token
+// TestCodexEmptyRefreshTokenNoPanic 空 rt 防护：oauth 凭据缺 refresh_token
 // → 按失效处理上报（账号凭据不完整）不 panic（OAuthWithRotation 空 rt 构造
 // panic 被构造前校验拦截）。
 func TestCodexEmptyRefreshTokenNoPanic(t *testing.T) {
@@ -619,7 +619,7 @@ func TestCodexIncompleteNotReportedTwice(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T6：Responses / StreamResponses 面（resp 接入——SSE mock 上游；fixture 对齐
+// Responses / StreamResponses 面（resp 接入——SSE mock 上游；fixture 对齐
 // codex-sdk responses_test.go 事件形态）
 // ---------------------------------------------------------------------------
 
@@ -712,8 +712,8 @@ func (c *codexRespUpstream) turnState(i int) string {
 	return c.turnStates[i]
 }
 
-// T6 事件 fixture（对齐 codex-sdk responses_test.go：created/item.done/completed
-// 形状；usage 顶层五计数含 cache 明细——P1-1 双路径断言共用）。SDK 聚合器从
+// 事件 fixture（对齐 codex-sdk responses_test.go：created/item.done/completed
+// 形状；usage 顶层五计数含 cache 明细——双路径断言共用）。SDK 聚合器从
 // output_item.done 事件提取 item 对象（合成体 output 只含 item——t6RespItem）。
 const (
 	t6RespCreated = `{"type":"response.created","response":{"id":"resp_t6","object":"response","status":"in_progress","model":"gpt-5.6"}}`
@@ -1143,7 +1143,7 @@ func TestCodexStreamResponsesFnError(t *testing.T) {
 // MaxConnsPerHost=2048 生产同源 main.go:347）后，第二波并发必须零新拨号
 // （池内复用）。走 GenerateImage（Do 排空路径——响应体完整读到 EOF，连接
 // 确定可复用）；resp HTTP / 流式 images 与 GenerateImage 共用同一 clientFor
-// 装配的 HTTPClient + transport（T2 机制——连接池断言同源）。计数
+// 装配的 HTTPClient + transport（机制——连接池断言同源）。计数
 // DialContext 包装判定拨号次数。
 //
 // 屏障式控制（spec 2026-08-15）：gated handler 每波读完请求体后阻塞在该波

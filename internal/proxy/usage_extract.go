@@ -91,7 +91,7 @@ func responsesCompletedUsage(data []byte) (usageTuple, bool) {
 	return usageFieldsFromInterval(raw, inputTokensKeyBytes, outputTokensKeyBytes, inputTokensDetailsKeyBytes), true
 }
 
-// --- codex resp 顶层 usage 解析（P1-1——T6：SDK 路径的 usage 形状为顶层） ---
+// --- codex resp 顶层 usage 解析（SDK 路径的 usage 形状为顶层） ---
 // codex SSE data 载荷 usage 在**顶层**（{"type":"response.completed","response":
 // {id,object,status},"usage":{...}}——codex-sdk responses.go:90-93 顶层读取实证）；
 // 合成体（codex-sdk responses.go:113-119 responsesComposite：id/object/status/
@@ -112,7 +112,7 @@ func responsesTopLevelUsage(data []byte) (usageTuple, bool) {
 	return usageFieldsFromInterval(raw, inputTokensKeyBytes, outputTokensKeyBytes, inputTokensDetailsKeyBytes), true
 }
 
-// sniffResponsesCompletedTop 流式 fn 热路径嗅探（P1-1）：字节扫描 **type 精确判
+// sniffResponsesCompletedTop 流式 fn 热路径嗅探：字节扫描 **type 精确判
 // 定** "type"=="response.completed"（SDK 交付载荷无 event: 行——正文含该子串
 // 的消息帧不冻结；WS 路径 bytes.Contains 预筛形状不适用）+ 顶层 usage 解析
 // 内联（不再经 responsesTopLevelUsage 二次定位——type 检查与 usage 提取共用
@@ -317,7 +317,7 @@ func respImageDetectOn(sel *scheduler.Selection) bool {
 //     type 过滤后不参与
 //   - 有 id 按 id 去重 / id 缺失按出现顺序全数计入（与 SDK 同一 wire 语义）
 //
-// 热路径零分配（评审 P2-1 修复，AllocsPerRun==0 测试钉住）：复用 strip_scan
+// 热路径零分配（评审修复，AllocsPerRun==0 测试钉住）：复用 strip_scan
 // 同族手写字节扫描（scanKeyValue 定位 + scanTools 元素迭代 + extractKeys 键
 // 提取）——gjson GetBytes 对数组值会物化 Raw 字符串（实测 1 alloc/帧；ForEach
 // 闭包实测 0 alloc，评审归因修正），字节扫描彻底消除。id 去重走栈数组

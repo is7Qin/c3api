@@ -20,17 +20,17 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// Codex 是 codex SDK 适配层（T2 §1——SDK 调用集中于此，codexsdk import 仅限
+// Codex 是 codex SDK 适配层（§1——SDK 调用集中于此，codexsdk import 仅限
 // 本文件族）：cred → Auth 账号级缓存 + GenerateImage 包装 + 信封包装 +
-// fatal → 统一回调（双源去重）+ 轮转回写（T5）。新增能力（T3 流式 / T4 Dial /
-// T6 resp）同形态扩展本文件。
+// fatal → 统一回调（双源去重）+ 轮转回写。新增能力（流式 / Dial /
+// resp）同形态扩展本文件。
 type Codex struct {
 	mu      sync.Mutex
 	entries map[int64]*codexEntry // accountID → 客户端缓存（同账号复用）
-	failure FailureHandler        // T1 统一失效回调；nil = no-op（测试/未装配）
-	rotate  RotationStore         // T5 轮转回写落库面；nil = 不落库（测试/未装配）
-	inval   func(accountID int64) // T5 P3-3 回写后失效账号快照条目（下个会话重载新凭据）；nil = 不失效
-	log     *logx.Logger          // T5 回写/失效错误日志；nil = 不记
+	failure FailureHandler        // 统一失效回调；nil = no-op（测试/未装配）
+	rotate  RotationStore         // 轮转回写落库面；nil = 不落库（测试/未装配）
+	inval   func(accountID int64) // 回写后失效账号快照条目（下个会话重载新凭据）；nil = 不失效
+	log     *logx.Logger          // 回写/失效错误日志；nil = 不记
 	// transport SDK HTTPClient 上游 transport（构造期传入；nil = SDK 默认——
 	// MaxIdleConnsPerHost=2，补压测连接风暴根因，生产传 httpx 网关同形态）。
 	transport http.RoundTripper
@@ -49,12 +49,12 @@ type RotationStore interface {
 	WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error
 }
 
-// RotationDeps 轮转回写依赖（T5 §1——main 装配：repository.AccountExts +
+// RotationDeps 轮转回写依赖（§1——main 装配：repository.AccountExts +
 // scheduler）。
 type RotationDeps struct {
 	Store RotationStore
 	// InvalidateSnapshot 回写成功后失效调度器 AccountExt 内存快照对应条目
-	// （P3-3——下个会话重载新凭据）；nil = 不失效（测试/未装配）。
+	// （下个会话重载新凭据）；nil = 不失效（测试/未装配）。
 	InvalidateSnapshot func(accountID int64)
 	// Log 回写/失效错误日志（旋转低频事件，错误恒 Warn 记一条）；nil = 不记。
 	Log *logx.Logger
@@ -65,7 +65,7 @@ type RotationDeps struct {
 // codexEntry 单账号缓存条目：Auth（HTTP/WS 双面共享——at 缓存/单飞/rt 轮换
 // 在 SDK Auth 内）+ HTTPClient（HTTP 面懒构造，nil = 未构造）+ 重建判定签名
 // + fatal 已上报标记（双源去重——回调路径与 errors.As 路径共享同一 CAS）。
-// expiresAt 为构造时凭据携带的旧过期时刻（T5——轮转回调无 expiry，回写保旧
+// expiresAt 为构造时凭据携带的旧过期时刻（轮转回调无 expiry，回写保旧
 // 用；外部凭据变更 → 重建刷新）。
 type codexEntry struct {
 	accountID int64
@@ -99,10 +99,10 @@ type codexEntry struct {
 	usageErr   error
 }
 
-// NewCodex 构造 codex 适配层。failure 为 T1 统一失效回调（适配层构造注册
+// NewCodex 构造 codex 适配层。failure 为统一失效回调（适配层构造注册
 // WithOnAuthFatal → 回调；nil = 上报 no-op——测试替身形态）；transport 为 SDK
 // HTTPClient 上游 transport（nil = SDK 默认；生产传 httpx 网关同形态）；
-// rotation 为 T5 轮转回写面（零值 = 不落库/不失效/不记，测试与未装配形态）。
+// rotation 为轮转回写面（零值 = 不落库/不失效/不记，测试与未装配形态）。
 // 三者皆为构造期依赖，一次给齐——构造后不存在“半装配”的 Codex。
 func NewCodex(failure FailureHandler, transport http.RoundTripper, rotation RotationDeps) *Codex {
 	return &Codex{
@@ -115,7 +115,7 @@ func NewCodex(failure FailureHandler, transport http.RoundTripper, rotation Rota
 	}
 }
 
-// GenerateImage 非流式生图包装（T2 §1）：cred → 缓存取 HTTPClient →
+// GenerateImage 非流式生图包装（§1）：cred → 缓存取 HTTPClient →
 // c.GenerateImage(ctx, toSDKParams(p))；domain↔codexsdk 双向转换集中本文件。
 // 错误翻译（translateError）：SDK *HTTPError → 网关侧信封错误（EnvelopeError——
 // StatusCode()/RawJSON()/Unwrap 链，网关 statusOf/upstreamErrMsg 零改动复用）；
@@ -146,7 +146,7 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 		return err
 	}
 	err = e.client.GenerateImageStream(ctx, toSDKParams(p), func(ev codexsdk.ImageStreamEvent) error {
-		// 事件类型显式映射（A-P2-10）：SDK 升级改事件名 → 未知 Warn + 跳过
+		// 事件类型显式映射：SDK 升级改事件名 → 未知 Warn + 跳过
 		// （不静默透传——未知类型落入网关 default 静默分支则落账 0 张零告警）。
 		t, ok := mapStreamEventType(ev.Type)
 		if !ok {
@@ -167,7 +167,7 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 		return fn(domain.ImageStreamEvent{Type: t, B64JSON: ev.B64JSON, Usage: usage})
 	})
 	if err != nil {
-		// 与 GenerateImage 同款（评审 P1-1 修复）：SDK *HTTPError（字段裸类型，无
+		// 与 GenerateImage 同款（评审修复）：SDK *HTTPError（字段裸类型，无
 		// StatusCode()/RawJSON() 方法）→ EnvelopeError 包装——网关 statusOf/
 		// upstreamBody/streamErrMessage 的协议才能消费（4xx 状态 + 原始 body
 		// 透传、SSE error 帧 message 取上游文案）；fatal 五类统一回调单次上报
@@ -178,8 +178,8 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 	return nil
 }
 
-// Responses 非流式 responses 合成调用（T6 §1）：cred → 缓存取 HTTPClient
-// （clientFor——T2 机制复用）→ c.Responses(ctx, payload)（SDK 合成非流式——
+// Responses 非流式 responses 合成调用（§1）：cred → 缓存取 HTTPClient
+// （clientFor——机制复用）→ c.Responses(ctx, payload)（SDK 合成非流式——
 // 内部无条件 stream:true + SSE 事件聚合重组完整响应体；网关以非流式语义消费，
 // 原样转发 + 顶层 usage 提取）。sess/meta 为 HTTP 面伪装身份（META-2——
 // client_metadata 注入键集对齐真实 codex；nil = 未配置——SDK 仍恒带 turn_id，
@@ -224,7 +224,7 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, payl
 	return resp, nil
 }
 
-// StreamResponses 流式 responses SSE 透传（T6 §1）：cred → 缓存取 HTTPClient →
+// StreamResponses 流式 responses SSE 透传（§1）：cred → 缓存取 HTTPClient →
 // c.Stream(ctx, payload, fn)（SSE data: 行逐帧交付零拷贝——SDK 回调 raw 指向
 // scanner 复用缓冲，**仅回调执行期间有效**：fn 必须立即消费，不得跨回调保留
 // 切片）。sess/meta 同 Responses（META-2 伪装身份；nil = 未配置——SDK 仍恒带
@@ -254,9 +254,9 @@ func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredent
 //   - 同账号复用（Auth 内 at 缓存/轮转状态保持；sig 相同直接返回）
 //   - 仅外部凭据变更（管理面导入/更新——token/rt/pat 任一变化 → sig
 //     不同）后重建；**轮转回调写回不重建**（回调写回的是本 Auth 内部已更新
-//     的状态，重建丢 at 缓存破坏轮转连续性——写回走 T5 管理面通道，不经缓存）
-//   - 失效剔除（T1 联动）：fatal 上报后 evict，恢复后重建
-//   - 空 rt 防护（P2-3）：codex-oauth 缺 refresh_token → 按失效上报（账号凭据
+//     的状态，重建丢 at 缓存破坏轮转连续性——写回走管理面通道，不经缓存）
+//   - 失效剔除（联动）：fatal 上报后 evict，恢复后重建
+//   - 空 rt 防护：codex-oauth 缺 refresh_token → 按失效上报（账号凭据
 //     不完整）不 panic（OAuthWithRotation 空 rt 构造 panic）；PAT 走 PAT(key)
 //     无此面
 //   - 重建 = 新条目构造——usage/usageAt/usageErrAt/usageErr 一并清除（对齐
@@ -279,7 +279,7 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 	}
 	a.mu.Unlock()
 	if err != nil {
-		// 构造失败（空 rt 等——P2-3）：锁外上报（reportFatal → evict 需取
+		// 构造失败（空 rt 等）：锁外上报（reportFatal → evict 需取
 		// a.mu——锁内调用即重入死锁；sync.Mutex 不可重入）。
 		a.reportFatal(e, err)
 		return nil, err
@@ -641,13 +641,13 @@ func (a *Codex) translateDialError(e *codexEntry, err error) error {
 	return a.translateError(e, err)
 }
 
-// buildAuth 按 cred 构造 SDK Auth（构造前校验——P2-3）：
+// buildAuth 按 cred 构造 SDK Auth（构造前校验）：
 //   - codex-oauth：OAuthWithRotation(rt, WithOnAuthFatal(统一回调) [,
 //     WithInitialAccessToken(at)])——过期判定在网关侧构造前：OAuthExpiresAt 已
 //     过期 → 不传 WithInitialAccessToken（SDK 走初始 at 缺省路径，首请求前用
 //     rt 换取——auth_oauth.go:106-109 只判非空不判过期，401 自愈）；未过期/
 //     未知（nil）→ 预置单参 at 避免首调用强制 refresh
-//   - WithOnTokenRotated（T5 §1）：每次 refresh 成功产出新 at+rt → account_ext
+//   - WithOnTokenRotated（§1）：每次 refresh 成功产出新 at+rt → account_ext
 //     部分更新回写（幂等；回调在 SDK 单飞内串行——同账号并发轮转不重复回写）
 //   - codex-pat：PAT(key, WithPATOnAuthFatal(统一回调))——PAT 致命 401 在 SDK
 //     内分类后同走 OnAuthFatal 禁用链路（毒化 + 单次上报，与 OAuth 双源去重共用）
@@ -669,9 +669,9 @@ func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexs
 	if cred.OAuthRefreshToken == "" {
 		return nil, errCredentialIncomplete // 上报在 clientFor 锁外执行（见 clientFor）
 	}
-	e.expiresAt = cred.OAuthExpiresAt // T5 回写保旧（SDK 回调无 expiry）
+	e.expiresAt = cred.OAuthExpiresAt // 回写保旧（SDK 回调无 expiry）
 	opts := []codexsdk.OAuthOption{
-		// 统一回调装配（T2 §3）：SDK 判死（RT 判死码 / token 端点 401 / 账号
+		// 统一回调装配（§3）：SDK 判死（RT 判死码 / token 端点 401 / 账号
 		// 禁用 / AT 401 判死 / 回调连续失败）→ 双源去重单次上报
 		codexsdk.WithOnAuthFatal(func(fatal error) { a.reportFatal(e, fatal) }),
 		codexsdk.WithOnTokenRotated(func(at, rt string) { a.rotateWriteback(e, at, rt) }),
@@ -684,7 +684,7 @@ func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexs
 	return codexsdk.OAuthWithRotation(cred.OAuthRefreshToken, opts...), nil
 }
 
-// errCredentialIncomplete 凭据不完整（P2-3 构造前校验——oauth 类型缺
+// errCredentialIncomplete 凭据不完整（构造前校验——oauth 类型缺
 // refresh_token；按失效处理上报——账号凭据不完整，不 panic）。
 var errCredentialIncomplete = errors.New("codexsdk: credentials incomplete (oauth missing refresh_token, account needs re-import)")
 
@@ -704,7 +704,7 @@ func atUsable(cred *domain.AccountCredential) bool {
 // account id 任一变化）→ 重建。过期时刻不参与签名（构造时的初始 at 预置决策已
 // 经生效；过期 at 由 SDK 401 自愈轮转，无需重建）。
 //
-// 分隔符用 \x00（评审 P3-3）："|" 在理论上可被 token 内容携带（碰撞误重建——
+// 分隔符用 \x00："|" 在理论上可被 token 内容携带（碰撞误重建——
 // 仅多构造一次，无害但脏）；\x00 为 Go 字符串中不可现字符（OAuth token/PAT
 // base64url 字符集）。
 func credSig(c *domain.AccountCredential) string {
@@ -729,17 +729,17 @@ func (a *Codex) report(e *codexEntry, fatal error, evict bool) {
 // reportFatal fatal 统一上报（双源去重核心）：rotationAuth 路径同一 fatal 既
 // 触发 WithOnAuthFatal 又随返回错误 errors.As 命中——**以回调为准去重、单次
 // 上报**（CAS 胜者上报；败者并发调用/errors.As 补报路径跳过）。上报后失效
-// 剔除（T1 联动——账号已判死，缓存条目随弃，管理面恢复后重建）。
+// 剔除（联动——账号已判死，缓存条目随弃，管理面恢复后重建）。
 func (a *Codex) reportFatal(e *codexEntry, fatal error) {
 	a.report(e, fatal, true)
 }
 
-// FatalAuth 显式终止 + 单次上报（T5 §3——WS 业务判死事件帧接线，relay 解析
+// FatalAuth 显式终止 + 单次上报（§3——WS 业务判死事件帧接线，relay 解析
 // 帧后调用；唯一跨边界点）：
 //   - e.auth.Fatal(fatal)：SDK 显式终止——**不触发 OnAuthFatal**（实证
 //     auth_oauth.go:187-195），仅毒化 Auth（后续 Authorization 恒返回该错误）
 //   - 上报走 report(e, fatal, false)：与 errors.As 路径共享 CAS 双源去重
-//     （帧判死后同一 fatal 再经 errors.As 二次命中 → 仍单次上报——P3-4）；
+//     （帧判死后同一 fatal 再经 errors.As 二次命中 → 仍单次上报）；
 //     **不剔除**——毒化 Auth 保留至外部凭据变更（管理面重新导入 → sig 变化
 //     重建；与"不重建缓存"裁决一致——剔除会丢毒化态，凭据未变重建后仍走
 //     旧 token）
@@ -760,19 +760,19 @@ func (a *Codex) FatalAuth(accountID int64, fatal error) {
 	a.report(e, fatal, false)
 }
 
-// rotateWriteback 轮转回写（T5 §1——SDK OnTokenRotated 回调；在 SDK 单飞内
+// rotateWriteback 轮转回写（§1——SDK OnTokenRotated 回调；在 SDK 单飞内
 // 串行执行——同账号并发轮转天然单飞，无需额外互斥）：
 //   - account_ext 部分更新 upsert（codex_oauth_token + codex_oauth_refresh_token +
 //     codex_oauth_expires_at 保旧——携带 e.expiresAt 构造时旧值）
 //   - 失败 → panic（SDK D4 契约：回调失败 = 令牌持久化中断信号——callRotate
 //     recover 后记 pending 下次 refresh 前重试，连续达阈值 →
 //     CallbackDeliveryError fatal → 统一回调摘除；fail-closed）
-//   - 成功后失效调度器 AccountExt 内存快照条目（P3-3——下个会话重载新凭据；
+//   - 成功后失效调度器 AccountExt 内存快照条目（下个会话重载新凭据；
 //     失效失败仅 Warn 不阻断——令牌已落库，适配层 Auth 内存新 at 自愈）
 //   - **不重建缓存**：回调写回的是本 Auth 内部已更新的状态（at 缓存/rt 轮换
 //     已在 SDK 内生效），重建丢 at 缓存破坏轮转连续性；仅外部凭据变更重建
-//     （T2 机制——sig 比对）
-//   - **D4 pending 竞态（P3-5，接受）**：适配层重建缓存后旧 Auth 在途 401 →
+//     （机制——sig 比对）
+//   - **pending 竞态（接受）**：适配层重建缓存后旧 Auth 在途 401 →
 //     deliverPendingRotate 可能写回旧轮转结果——旧 rt 已吊销则 refresh 判死
 //     正确摘除，基本自愈；低概率，不额外防护
 //
@@ -824,7 +824,7 @@ func (a *Codex) evict(accountID int64) {
 //   - 其余（网络/解析等）原样透传（code 0 连接级分类）
 func (a *Codex) translateError(e *codexEntry, err error) error {
 	if f := asFatal(err); f != nil {
-		// 双源去重（评审 P3-2——与 reportFatal 同语义，直接复用）：
+		// 双源去重（评审——与 reportFatal 同语义，直接复用）：
 		// CAS 在回调路径已胜出则此处跳过（单次上报）；PAT/无回调路径此处补报
 		a.reportFatal(e, f)
 		return err
@@ -858,7 +858,7 @@ func IsFatal(err error) bool { return asFatal(err) != nil }
 
 // --- domain ↔ codexsdk 双向转换（集中本文件 + 转换单测防漂移） ---
 
-// mapStreamEventType codexsdk 流式事件类型 → domain 类型化常量（A-P2-10 显式
+// mapStreamEventType codexsdk 流式事件类型 → domain 类型化常量（显式
 // 映射：SDK 升级改事件名 → ok=false——调用方 Warn + 跳过，不静默透传落账
 // 0 张；case 用 SDK 常量防漂移）。
 func mapStreamEventType(t string) (domain.ImageStreamEventType, bool) {

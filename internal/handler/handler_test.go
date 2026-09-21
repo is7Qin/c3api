@@ -683,7 +683,7 @@ func errMsg(t *testing.T, rec *httptest.ResponseRecorder) string {
 }
 
 // TestSingleResourceMissingID 单资源 GET/DELETE 缺 id → 404，且响应体消息
-// 含缺失 id（与批量 404 同语义；Minor T5-2 清账：handler fake 的 Get/Delete
+// 含缺失 id（与批量 404 同语义；Minor 清账：handler fake 的 Get/Delete
 // 需返回带 id 错误，此前仅状态码断言/缺失）。
 func TestSingleResourceMissingID(t *testing.T) {
 	_, _, do := newListTestRouter(t)

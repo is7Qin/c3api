@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 )
 
-// TestPGCreateTempBalance 临时额度落库（真实 PostgreSQL，评审 B1 基座）：
+// TestPGCreateTempBalance 临时额度落库（真实 PostgreSQL，评审基座）：
 // user_id/amount/expires_at/note 逐字段回读；nil 可选列不落值（永久语义）。
 func TestPGCreateTempBalance(t *testing.T) {
 	repos := newPGReposShared(t)

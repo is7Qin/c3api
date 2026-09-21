@@ -22,7 +22,7 @@ import (
 // 游标积压 lag 族注入面）。全冷面（聚合查询 + 快照遍历）；内部 TTL 30s 缓存，
 // 键含 days/group_id + 请求时区规范名 + 该时区日界（summary"今日"跨午夜滚转
 // 且不同浏览器时区结果各异——两分量都进键，无进程级时区）；无 singleflight
-// （dashboard 单消费者，P3 声明接受）。
+// （dashboard 单消费者，声明接受）。
 func (h *AdminAPI) GetAdminOverview(w http.ResponseWriter, r *http.Request, params GetAdminOverviewParams) {
 	zone, err := resolveStatsZone(params.Timezone)
 	if err != nil {

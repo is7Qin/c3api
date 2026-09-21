@@ -281,7 +281,7 @@ func TestProxyResponsesStreaming(t *testing.T) {
 	require.Equal(t, "", lg.MappedModel, "无映射 → MappedModel 空")
 }
 
-// TestProxyResponsesStreamingDataOnly P3：上游 resp 流缺 event: 名（只发
+// TestProxyResponsesStreamingDataOnly：上游 resp 流缺 event: 名（只发
 // data: 行，同仓库 fakeupstream /v1/responses）→ 直接 resp 路径不得丢帧、
 // 用量提取不得静默缺失——字节原样透传 + Observer 按 data.type 推断
 // response.completed 提取 usage。

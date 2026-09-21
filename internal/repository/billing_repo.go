@@ -20,7 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent"
 )
 
-// settleTimeout 结算事务 per-query 超时（F-P2-4 降级形态）：会话级
+// settleTimeout 结算事务 per-query 超时（降级形态）：会话级
 // statement_timeout=10s 与 admin 面 ScanStats 大窗口聚合实测冲突（720 万行/30
 // 天 → 57014，见 f1-impl-report.md 副作用核实）→ 按 spec 授权降级为计费路径
 // per-query 超时：结算事务整体 10s 上限（执行时长 + 锁等待双有界；锁等待另有

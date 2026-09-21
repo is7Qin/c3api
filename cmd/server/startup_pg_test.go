@@ -232,7 +232,7 @@ type nopClients struct{}
 
 func (nopClients) InvalidateAll() {}
 
-// TestSettingsTimingPG #36 即时重算时序（R2 M-1，真实 PG 全链路）：settings 旧值 →
+// TestSettingsTimingPG 即时重算时序（真实 PG 全链路）：settings 旧值 →
 // 变更 → auth.Reload（注册表 scope 分发）必须读到新快照——顺序保证 reload 消费新
 // 值，而非"重载了个寂寞"。观测键 price_sync_cron（registry 默认 "0 3 * * *"）。
 // 分两段：

@@ -26,7 +26,7 @@ import (
 // 离线聚合写入面（LoadAggRange/AggregateRange——cube 两源 + 实体六查询）、
 // 读取面（stat_query_repo.go StatsTrend 族）与 overview 聚合面（SummarizeStats/
 // ScanStatsDays）全部经 pgx 原生池直查直写——ent client 仅用于资源计数等非
-// 统计面（usage_stats 含 bigint[] 数组列，ent 无类型，ent carve-out 评审 P1-1）。
+// 统计面（usage_stats 含 bigint[] 数组列，ent 无类型，ent carve-out 评审）。
 // pool 由 NewWithPG 构造注入（生产 main.go 注入 OpenPG 池；与 ent driver 同
 // DSN 共享连接上限）。usage_stats / usage_entity_stats 均为分区表（用户裁决
 // 2026-08-11：PG DELETE 不释放空间，保留清理必须 DROP 分区 O(1)）——清理由
@@ -350,7 +350,7 @@ func statsAggRowArgs(b *domain.StatBucket, now time.Time) []any {
 // 游标不动 → 重算恢复不双计（双表原子：cube 失败则 entity 同回滚，反之亦然）；
 // 重复执行同范围结果一致（覆盖语义，issue #8 教训：修正/补账通过重算 bucket
 // 实现，非累加）。**wmTo = 读窗口 T（≠ 重算范围上界 delTo）**——watermark 推进
-// 到 delTo 会永久跳过 [T, delTo) 的行（P1-A 要防的错误形态）；两范围分离由
+// 到 delTo 会永久跳过 [T, delTo) 的行（要防的错误形态）；两范围分离由
 // 调用方 worker 执行（见 usage/stats_agg.go）。Upsert（COPY+ON CONFLICT 累加）
 // 语义不适用（覆盖语义，无双写者），已删除。
 func (r *StatRepo) AggregateRange(ctx context.Context, delFrom, delTo, wmTo time.Time, cube []*domain.StatBucket, entity []*domain.EntityStatBucket) error {
@@ -439,7 +439,7 @@ func insertStatBuckets(ctx context.Context, tx pgx.Tx, rows []*domain.StatBucket
 }
 
 // AcquireStatsAggLock 抢占聚合 worker 会话级 advisory lock（pg_try_advisory_
-// lock；**专用连接持有到 release**——池连接复用即丢锁，P3）。抢锁失败 →
+// lock；**专用连接持有到 release**——池连接复用即丢锁）。抢锁失败 →
 // ok=false（本周期跳过，其他实例在聚合）。release 必须恰好调用一次（解锁 +
 // 归还连接；解锁失败静默——连接归还后会话级锁随连接生命周期消失，无泄漏）。
 func (r *StatRepo) AcquireStatsAggLock(ctx context.Context) (release func(), ok bool, err error) {
@@ -490,7 +490,7 @@ func (r *StatRepo) InitStatsAggWatermark(ctx context.Context, t time.Time) error
 	return err
 }
 
-// —— /api/admin/overview 聚合面（spec 2026-08-14；SQL 侧 GROUP BY——F-P2-2 形态：
+// —— /api/admin/overview 聚合面（spec 2026-08-14；SQL 侧 GROUP BY——形态：
 // 服务端分组返回日桶，不拉全行客户端聚合——720 万行/30 天客户端解码不可行） ——
 
 // StatSummary 区间聚合单行（summary"今日"区间；SQL 侧单行 sum）。TTFT 指标：
@@ -555,7 +555,7 @@ FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
 // 直方图每行 array_agg 带回，Go 侧逐元素合并。请求时区名绑定 $3（UTC 时即
 // 'UTC'，与旧字面量逐位等值）；WHERE 后可追加组过滤（占位 $4），GROUP BY/
 // ORDER BY 尾段单独常量（statTrendTailSQL）——过滤条件必须插在 GROUP BY 之前。
-// 会话 TimeZone 无关（评审 P2-1）：先 AT TIME ZONE $3 取本地墙钟再截断、再转回
+// 会话 TimeZone 无关：先 AT TIME ZONE $3 取本地墙钟再截断、再转回
 // timestamptz。仅当 domain.ZoneCubeExact 判定（双界 UTC 整点对齐且该时区在窗口
 // 内恒整点无 DST）时走本路径（小时桶与本地日界严格对齐——重组精确）；否则走
 // stat_raw_read.go 原始行精确聚合。

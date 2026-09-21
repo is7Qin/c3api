@@ -179,7 +179,7 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // Unwrap 暴露内层 ResponseWriter（与 Hijack 同款的纯转发模式）：
 // http.ResponseController 的 SetWriteDeadline/EnableFullDuplex 等沿
 // Unwrap 链下探到真实 writer 才能生效——无此转发全链 ErrNotSupported
-// （C-P2-1 写侧 deadline 与 ctx 取消联动的前置修复：accessLog 包裹后
+// （写侧 deadline 与 ctx 取消联动的前置修复：accessLog 包裹后
 // sserelay 的取消联动 deadline 必须能穿透本层）。
 func (w *statusWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter

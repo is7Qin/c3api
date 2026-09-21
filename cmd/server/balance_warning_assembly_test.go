@@ -33,7 +33,7 @@ func (s *fakeBalanceWarningService) MailConfig() (string, int, string, string, s
 	return "smtp.example.com", 465, "user", "secret", "from@example.com", "implicit", true
 }
 
-// wireBalanceWarning 恒返回非 nil worker（W2-T1 构造序反转：worker 先建、
+// wireBalanceWarning 恒返回非 nil worker（构造序反转：worker 先建、
 // flusher 后建，sink 经 NewFlusher 构造参数注入）。"billing disabled → 无
 // worker/无 flusher" 改由 main 的 cfg.Billing.Enabled 分支持有（分支内才调
 // wire + NewFlusher，分支外两者均为 nil），wire 层不再表达该语义——旧

@@ -413,7 +413,7 @@ func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, c.callsN())
 
-	// 凭据失效（RefreshOAuth 类）→ FatalAuth 毒化 Auth（T5——evict=false，
+	// 凭据失效（RefreshOAuth 类）→ FatalAuth 毒化 Auth（evict=false，
 	// entry 保留）；GetUsageSnapshot 纯 IsFatal 判定 → ErrAuthExpired。
 	// 先拨旧 usageAt（首次成功缓存仍新鲜——TTL 优先语义：≤5min 快照不被
 	// 后续失败掩盖；冷却红绿断言须等 TTL 过期才可观察）。

@@ -109,7 +109,7 @@ type StreamMapper struct {
 }
 
 // Map 把一个模板协议 SSE 事件映射为客户端协议帧；drop=true 丢弃该帧。
-// 缺 event: 名（data-only）帧不丢（P3）：data 为 JSON 对象且含字符串 type
+// 缺 event: 名（data-only）帧不丢：data 为 JSON 对象且含字符串 type
 // 字段时按该值推断事件名（resp/messages 帧 type 与事件名同值约定，非规范
 // 上游如仓库 fakeupstream /v1/responses 缺 event: 行），推断出 → 与具名帧
 // 同分派；无法推断（非 JSON / 无 type 字段）→ 原样透传 data 帧保留字节。

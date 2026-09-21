@@ -12,7 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/rule"
 )
 
-// v5 C1–C3 proof suite (compile_event_* prefix): staleness bound, scope
+// v5 proof suite (compile_event_* prefix): staleness bound, scope
 // identity (pointer reuse + bit-for-bit oracle), O(1) probe behavior, fallback
 // recording. Falsification suites elsewhere stay UNMODIFIED.
 
@@ -102,7 +102,7 @@ func TestCompileEvent_ProbeHitSkipsAllWork(t *testing.T) {
 // TestCompileEvent_StalenessBoundRecoversWithinSLO severs the event path (a
 // loader-side change with NO invalidate — the missed-NOTIFY shape) and pins
 // that ONE backstop tick reloads, and the lane then publishes, the new view.
-// One tick ≤ SyncInterval < 2×SyncInterval SLO (v5-C3; probe/reload TOCTOU is
+// One tick ≤ SyncInterval < 2×SyncInterval SLO (probe/reload TOCTOU is
 // closed by the two-period bound, not by coupling).
 func TestCompileEvent_StalenessBoundRecoversWithinSLO(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})

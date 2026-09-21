@@ -318,7 +318,7 @@ func TestSettleBalanceConditionalSuccess(t *testing.T) {
 }
 
 // TestSettleBalanceOverdraft 余额不足 → 无条件扣允许透支（负余额），overdraft
-// 回写行内（B2）。
+// 回写行内。
 func TestSettleBalanceOverdraft(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()

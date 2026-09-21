@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package latch 是规则失效锁存的一等组件（B18/B19 根因重开）：单实例内存
+// Package latch 是规则失效锁存的一等组件（根因重开）：单实例内存
 // 锁存（account+fingerprint+revision）+ 规则失败事件的同步扇出中介。
 // 叶子包：只依赖 internal/rule 的事件类型（无环：rule 永不回指本包），
 // 不依赖 scheduler（scheduler 反向持有本包指针——反向持有即 import 环）。

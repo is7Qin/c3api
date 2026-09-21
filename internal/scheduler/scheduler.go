@@ -124,7 +124,7 @@ type Scheduler struct {
 	health    *RuntimeHealth
 	// Compile lane (Task11 wiring): serial background compiler feeding the
 	// single routingPublisher. Request path never touches these.
-	// sources 是 Start 期结构注入的编译双源（W3-T1；nil = 未装配，armed 门
+	// sources 是 Start 期结构注入的编译双源（nil = 未装配，armed 门
 	// no-op）：装配期一次性写入（Start 存入后起循环），此后只读。
 	compiler           routeCompiler
 	sources            *CompilerSources
@@ -237,7 +237,7 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealt
 // Name 满足 worker.Worker 契约（Global Constraints #5）。
 func (s *Scheduler) Name() string { return "scheduler" }
 
-// Start 启动定时同步；编译源是 Start 期依赖（W3-T1 结构注入，取代已删的
+// Start 启动定时同步；编译源是 Start 期依赖（结构注入，取代已删的
 // 双 setter）：src 非 nil 即武装编译道（reload/分钟边界/质量/价格触发经
 // armed 门放行），nil = 未装配 legacy 形态（触发 no-op，绝不发布编译视
 // 图）。重复 Start 幂等（返回错误）。
@@ -431,7 +431,7 @@ func runtimeStatusFor(a *domain.Account) domain.AccountStatus {
 // 在途计划」由 planKey 承担：**两件事不共用一个比较**。
 
 // buildSnapshots 构建全量快照：**每账号一个共享实例**——多组账号在多个组
-// 快照中引用同一实例（O2 评审实证修复）。发布后 leaves never mutate；
+// 快照中引用同一实例（评审实证修复）。发布后 leaves never mutate；
 // 变更账号分配全新 immutable leaf，共享 separate runtime/concurrency state，
 // old root stable。oldByID 来自旧 StaticView 的 byID（持 publisher.mu 读取安全）。
 func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSnapshot) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
@@ -600,10 +600,10 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 	return routes
 }
 
-// InvalidateGroup 组级定向重载（O2 接线矩阵：账号变更 → 受影响组）。与全量
+// InvalidateGroup 组级定向重载（接线矩阵：账号变更 → 受影响组）。与全量
 // reload 同一"每账号共享实例"纪律：重载组的新实例同时替换 byID 与其账号的
 // 其它组引用——Select（经组路由）与 Release（经 byID）必须命中同一计数器，
-// 否则多组账号并发计数分裂漂移 → 槽位假满（O2 实证修复）。账号从组移除且
+// 否则多组账号并发计数分裂漂移 → 槽位假满（实证修复）。账号从组移除且
 // 不再属于任何组 → 从 byID 移除；仍属其它组 → 保留实例并摘除本组引用。
 // 新静态根基于最新 staged-or-published 根合并后 stage 为 pending（原子发布：
 // 编译车道发布配对），已发布的完整 pair 在此期间保持可见。
@@ -775,7 +775,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.RequestCompile()
 }
 
-// InvalidateAccount 单账号快照失效（SDK 接入 T5 §1 P3-3——轮转回写后同步
+// InvalidateAccount 单账号快照失效（SDK 接入 §1 ——轮转回写后同步
 // AccountExt 内存快照：下个会话重载新凭据，避免旧令牌 401 额外往返）。复用
 // 既有组级定向重载（InvalidateGroup——账号所属各组并集去重；旋转低频事件，
 // 组级重载成本可接受）。快照外账号（已移除/未知）→ no-op。与失效上报不同
@@ -986,7 +986,7 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 	s.rule.Enqueue(ev)
 }
 
-// FailAccount 账号失效摘除（SDK 接入 T1——统一失效回调处理链第二步，
+// FailAccount 账号失效摘除（SDK 接入——统一失效回调处理链第二步，
 // sdkbridge.HandleFailure 调用；冷面低频）：快照置 StatusDisabled（运行时
 // 摘除）。持久化事实 = failed_at（同链第一步 FailAccountCAS/SetAccountFailed
 // 已落库；重启快照重载经 runtimeStatusFor 仍摘除——恢复唯一入口 /recover

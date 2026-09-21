@@ -8,8 +8,8 @@ package domain
 // DB 无行即默认（Get 读路径免初始化）。新增内置项 = 在此追加 + 管理面允许列表
 // 同步（service.ValidateSetting 用）。
 // 数值条目 Min/Max 域（nil = 无限制）：管理面 UpdateSetting 越界 → 400 拒绝
-// （A-P2-11 护栏前置，消费端零改动；仅注册表承载，不落库）。PolicyValues 枚举
-// 域：字符串条目合法值清单（service 校验从注册表派生，消双处同步，P3-7）。
+// （护栏前置，消费端零改动；仅注册表承载，不落库）。PolicyValues 枚举
+// 域：字符串条目合法值清单（service 校验从注册表派生，消双处同步）。
 var DefaultSettings = []Setting{
 	{Key: "signup_enabled", Type: SettingTypeSwitch, Value: "true"},
 	// 新用户初始资源：公开注册路径应用；管理面 CreateUser 不套默认（显式传值）。

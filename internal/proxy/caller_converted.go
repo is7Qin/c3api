@@ -93,7 +93,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				}
 				// 用量提取走原始帧（与模板 caller 逐字同构；映射只影响写出字节）。
 				// 原始 ev.Data 在 StreamMapper 转换前提取，转换后改写不影响用量。
-				// EventName：缺 event: 名帧按 data.type 推断（非规范上游，P3）。
+				// EventName：缺 event: 名帧按 data.type 推断（非规范上游）。
 				switch target {
 				case domain.FormatOpenAIResponses:
 					if bytes.Equal(ev.EventName(), []byte("response.completed")) {

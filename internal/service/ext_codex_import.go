@@ -19,7 +19,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// —— codex 凭据批量导入（Task B：batch-import-codex-oauth / batch-import-codex-pat
+// —— codex 凭据批量导入（batch-import-codex-oauth / batch-import-codex-pat
 // 共享 upsert 核心） ——
 //
 // 解耦的是 API/校验面（oauth/pat 各端点类型特定校验），底层单实现

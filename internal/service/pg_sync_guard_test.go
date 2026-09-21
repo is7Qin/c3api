@@ -43,7 +43,7 @@ func newPGServiceRepos(t *testing.T) (*repository.Repository, *Service) {
 	return repo, svc
 }
 
-// TestSyncPricingGuardsManualVariants_PG 手工变体守卫的 PG 真库回归（W3-T2 后经
+// TestSyncPricingGuardsManualVariants_PG 手工变体守卫的 PG 真库回归（后经
 // pricing.SyncWorker 驱动：worker 持 fetcher+repo+settings+reload+snapshot，
 // service 只出 settings 快照与快照 membership）：手工模型变体存活且 entry 保持
 // manual；新模型落库且快照可解析（reload/publish/notify 链真实跑过）。

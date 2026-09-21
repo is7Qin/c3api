@@ -91,7 +91,7 @@ func (r *recBal) multCalls() int {
 	return r.mult
 }
 
-// recRules 记录 ReloadRules 调用（#14 T1 新增分支的 fake 目标）。
+// recRules 记录 ReloadRules 调用（新增分支的 fake 目标）。
 type recRules struct {
 	mu sync.Mutex
 	n  int
@@ -404,7 +404,7 @@ func TestBillingDisabled(t *testing.T) {
 	}
 }
 
-// TestNewBranches #14 T1 新增 keys/rules 分支逐实体断言：
+// TestNewBranches 新增 keys/rules 分支逐实体断言：
 // 各自只走自己的重载目标。
 func TestNewBranches(t *testing.T) {
 	t.Run("keys→auth 全量，不动 balances/rules", func(t *testing.T) {

@@ -208,7 +208,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 // handleCodexDialError）与静态拨号（credentialFor + ResponsesWSDial）、relay
 // （relayWS 合一骨架 + 双传输适配 aiclientTransport/codexTransport——首帧模型
 // 改写 + 双向帧透传 + usage 嗅探 + codex 每帧判死钩子）。
-// 错误文本回传（B1 分通道）：4xx respBody 只放上游 body message（无则空——
+// 错误文本回传（分通道）：4xx respBody 只放上游 body message（无则空——
 // 帧侧 wsSink emOr 回退固定网关文案），dialErr 全文走 callErr 通道（循环 4xx
 // 分支以 callErr 回退落盘保全文）；0/5xx/429 保持 msg 归一兜底（上游 message
 // → dialErr 文本回退——纯落盘用途，不达用户帧）；code==0 恒 callErr=nil

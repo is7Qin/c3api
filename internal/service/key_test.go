@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// TestKeyMetaProtocolConvertsIncremental A-2 红绿：key 创建/更新/轮换后 Auth
+// TestKeyMetaProtocolConvertsIncremental 红绿：key 创建/更新/轮换后 Auth
 // 增量注册的 KeyMeta.ProtocolConverts 与组一致（修复前该字段恒空 → 转换方向
 // 至多 60s 不可见；CreateKey 后立即请求 404 的复现根因）。
 func TestKeyMetaProtocolConvertsIncremental(t *testing.T) {
@@ -34,7 +34,7 @@ func TestKeyMetaProtocolConvertsIncremental(t *testing.T) {
 	require.NotNil(t, last, "创建后必须增量注册")
 	require.Equal(t, g.ProtocolConverts, last.ProtocolConverts, "创建后快照转换方向与组一致")
 
-	// UpdateKey（改额度）：同样携带（组预取在写库前，B1-1）
+	// UpdateKey（改额度）：同样携带（组预取在写库前）
 	q := int64(1000)
 	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &q)
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestKeyMetaProtocolConvertsEmpty(t *testing.T) {
 	require.Empty(t, last.ProtocolConverts, "off 组 → 快照转换方向为空")
 }
 
-// TestKeyQuotaMaxSafeIntegerBoundary Todo 3：用户端 create/update 共享 service
+// TestKeyQuotaMaxSafeIntegerBoundary：用户端 create/update 共享 service
 // 校验边界拒绝超 Number.MAX_SAFE_INTEGER（2^53−1）毫分 quota（→ ErrInvalidInput
 // → 400）；上限值本身放行，0（不限）与负数维持既有语义。
 func TestKeyQuotaMaxSafeIntegerBoundary(t *testing.T) {

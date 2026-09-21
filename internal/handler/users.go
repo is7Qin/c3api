@@ -66,7 +66,7 @@ func (h *AdminAPI) PostUsers(w http.ResponseWriter, r *http.Request) {
 
 // PutUsersId 更新用户（role/status/max_concurrency/balance；变更即时生效——
 // Auth 快照刷新，ServerInterface）。
-// patch 形态（v02 核实 P1 修复）：只把请求显式提供的字段传给更新——请求不带
+// patch 形态（v02 核实修复）：只把请求显式提供的字段传给更新——请求不带
 // balance 时不再把 GET 快照陈旧值全量写回（与 flusher 扣费双向覆盖、余额凭空
 // 复活）；balance/max_concurrency 显式设置时带 GET 快照旧值条件（期间有扣费
 // → 0 行 → service 重读重试，new 保持管理员显式意图）。

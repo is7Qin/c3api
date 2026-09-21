@@ -19,7 +19,7 @@ import (
 	"github.com/is7qin/c3api/pkg/redisx"
 )
 
-// --- 并发门份额+借用测试（spec conc-share-borrow-gate §2 表格 T1-T6；T7=-race 门禁） ---
+// --- 并发门份额+借用测试（spec conc-share-borrow-gate §2 表格；-race 门禁） ---
 //
 // 测试基座：miniredis + redisx.Open（dogfood 全仓唯一构造点纪律）；等待一律
 // require.Eventually 轮询谓词或同步 tick 直调（同包私有方法），零 sleep。
@@ -49,7 +49,7 @@ func newConcAuth(t *testing.T, keys map[string]domain.KeyMeta) *Auth {
 	return a
 }
 
-// T1 结构短路：N=1 时 share=limit → 超份额分支数学上不可达，acquire/release/
+// 结构短路：N=1 时 share=limit → 超份额分支数学上不可达，acquire/release/
 // quotaExhausted/deductQuota 全路径零 Redis 命令（含视图在场时——判定是纯内存
 // 原子读）。worker 未启动（请求路径本就不含 worker；构造亦零副作用）。
 func TestConcN1StructuralShortCircuit(t *testing.T) {
@@ -262,7 +262,7 @@ func TestConcReconciliationConverges(t *testing.T) {
 	require.Zero(t, cnt, "全体消亡后键 EXPIRE 自灭")
 }
 
-// T5 fail-open 结构性质（spec §1.4/验收 §3）：miniredis 关闭 → tick 失败（errs
+// fail-open 结构性质（spec §1.4/验收 §3）：miniredis 关闭 → tick 失败（errs
 // 为确定性信号）、视图冻结不换入 → 陈旧后自动退化全额放行（真上限内无 429 风暴）；
 // 同端口恢复 → ≤ 数 tick 换入新视图回归共识。
 func TestConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
@@ -356,7 +356,7 @@ func TestConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
 	g.release(m, lvl3)
 }
 
-// T6 release 形状：release/两步回滚路径零 Redis 命令；I-3 回滚净零不变量在
+// release 形状：release/两步回滚路径零 Redis 命令；I-3 回滚净零不变量在
 // 份额配置下保持；位掩码契约不变。
 func TestConcReleaseShapeAndRollbackNetZero(t *testing.T) {
 	mr, c := newTestGateRedis(t)

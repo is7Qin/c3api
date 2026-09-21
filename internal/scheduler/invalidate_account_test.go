@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// TestInvalidateAccountReloadsExt 轮转回写后的快照同步（T5 §1 P3-3）：账号的
+// TestInvalidateAccountReloadsExt 轮转回写后的快照同步（§1）：账号的
 // AccountExt 内存快照条目失效 → 组级定向重载（复用 InvalidateGroup）→ 快照
 // 携带新凭据（下个会话重载新凭据——避免旧令牌 401 额外往返）。
 func TestInvalidateAccountReloadsExt(t *testing.T) {

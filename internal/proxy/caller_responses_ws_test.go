@@ -617,7 +617,7 @@ func TestResponsesWSDial4xxPassthrough(t *testing.T) {
 	require.Equal(t, "upstream rejected", *lg.ErrorMessage, "ErrorMessage = 归一错误文本（同错误帧）")
 }
 
-// TestResponsesWSDial4xxNoBodyDecoupled B1 分通道验证：静态拨号 4xx 且上游
+// TestResponsesWSDial4xxNoBodyDecoupled 分通道验证：静态拨号 4xx 且上游
 // 空 body（SDK DialError 无 body 的等价面）——respBody 只放上游 message（无
 // 则空，不再 dialErr 顶替），dialErr 全文走 callErr 通道：用户帧 = 固定网关
 // 文案（不含 SDK 拨号文本）、ErrorMessage 落盘 = dialErr 全文（帧与落盘文本

@@ -142,7 +142,7 @@ func (r *BillingRepo) probeCursorHead(ctx context.Context) (id int64, ok bool, e
 }
 
 // AcquireBillingLock 抢占计费游标会话级 advisory lock（pg_try_advisory_lock；
-// **专用连接持有到 release**——池连接复用即丢锁，P3，形态对齐
+// **专用连接持有到 release**——池连接复用即丢锁，形态对齐
 // AcquireStatsAggLock）。抢锁失败 → ok=false（本周期跳过，其他实例在消费）。
 // release 必须恰好调用一次（解锁 + 归还连接；解锁失败静默——连接归还后会话级
 // 锁随连接生命周期消失，无泄漏）。pool 未注入 → 显式错误（单写者互斥不可缺）。

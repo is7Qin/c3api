@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRoutingCompilerWiring pins the W3-T1 structural arming (setters
+// TestRoutingCompilerWiring pins the structural arming (setters
 // deleted): main.go must build schedSrc := &scheduler.CompilerSources with
 // the windowed provider (NewWindowedQualityProvider(qualityRecorder, ...))
 // and the real pricing snapshot source (svc.ResolvedPricesByModel), hand it

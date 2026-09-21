@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// pubRecorder 记录 Publish 收到的 Change 的测试假件（#14 T2 发布点断言：
+// pubRecorder 记录 Publish 收到的 Change 的测试假件（发布点断言：
 // 各变更路径发布对应 Change，一次操作一条 NOTIFY）。
 type pubRecorder struct {
 	mu        sync.Mutex
@@ -73,7 +73,7 @@ func newPubSvc() (*Service, *fakeStore, *pubRecorder) {
 	return svc, fs, pr
 }
 
-// TestPublishMatrix #14 T2 发布点矩阵：inv.* 调用点并排发布 + 三现状缺口。
+// TestPublishMatrix 发布点矩阵：inv.* 调用点并排发布 + 三现状缺口。
 func TestPublishMatrix(t *testing.T) {
 	ctx := context.Background()
 
@@ -225,7 +225,7 @@ func TestPublishMatrix(t *testing.T) {
 	})
 }
 
-// TestPublishNilPublisher pub 未装配（T2 过渡）→ no-op 不 panic。
+// TestPublishNilPublisher pub 未装配（过渡）→ no-op 不 panic。
 func TestPublishNilPublisher(t *testing.T) {
 	ctx := context.Background()
 	fs := newFakeStore()
@@ -271,7 +271,7 @@ func TestPublishMultipliersAndGroupDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "assignment 专属倍率 → Multipliers:true")
 
-	// 用户维度写（评审 M-1 补齐）：SetUserGroups → Multipliers:true 同组维度
+	// 用户维度写（补齐）：SetUserGroups → Multipliers:true 同组维度
 	_, _, err = svc.SetUserGroups(ctx, u.ID, []int64{g.ID}, nil)
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "用户维度分组写 → Multipliers:true")
@@ -285,9 +285,9 @@ func TestPublishMultipliersAndGroupDelete(t *testing.T) {
 	require.Equal(t, before+1, pr.total(), "一次操作一条 NOTIFY（合并单条）")
 }
 
-// TestPublishEmptyChangeSkipped 评审 I-1：空 Change（全字段 false + Groups 空）
+// TestPublishEmptyChangeSkipped：空 Change（全字段 false + Groups 空）
 // → publish 判空跳过，Publisher 收到 0 条。CreateAccount 无 GroupIDs 的空载荷
-// 即被覆盖（与 O2 inv.Accounts 空集 no-op 同语义）。
+// 即被覆盖（与 inv.Accounts 空集 no-op 同语义）。
 func TestPublishEmptyChangeSkipped(t *testing.T) {
 	ctx := context.Background()
 

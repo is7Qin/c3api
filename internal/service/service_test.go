@@ -59,7 +59,7 @@ func TestCreateTemplateValidates(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestTemplateCredentialTypeDefaultAndValid 评审 M-1：默认值兜底在 service 层
+// TestTemplateCredentialTypeDefaultAndValid：默认值兜底在 service 层
 // （repo 全字段 Set 写空串的防线）：缺省 → api_key；显式 api_key → 成功；
 // 未注册类型（号池生态未实现）→ 400；Update 同路径兜底。
 func TestTemplateCredentialTypeDefaultAndValid(t *testing.T) {
@@ -368,7 +368,7 @@ func TestBatchUpdateAccounts(t *testing.T) {
 type fakeKeyRegistrar struct {
 	mu       sync.Mutex
 	upserted []string
-	metas    []domain.KeyMeta // 快照断言（A-2：ProtocolConverts 增量注册）
+	metas    []domain.KeyMeta // 快照断言（ProtocolConverts 增量注册）
 	deleted  []string
 }
 
@@ -432,7 +432,7 @@ func TestBatchUpdateGroups(t *testing.T) {
 	name := "renamed"
 	before := rec.total()
 	require.NoError(t, svc.UpdateGroupsBatch(ctx, []int64{g.ID}, repository.GroupPatch{Name: &name}))
-	// O2 矩阵：GroupPatch 无 price_multiplier 字段 → 组名/可见性不触发任何快照重载。
+	// 矩阵：GroupPatch 无 price_multiplier 字段 → 组名/可见性不触发任何快照重载。
 	require.Equal(t, before, rec.total(), "批量组更新（仅 name）不 invalidate（倍率未变）")
 	got, err := svc.GetGroup(ctx, g.ID)
 	require.NoError(t, err)

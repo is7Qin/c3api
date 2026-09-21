@@ -129,7 +129,7 @@ func TestUsageLogPartitionBootstrapPG(t *testing.T) {
 	require.Equal(t, int64(6), n, "bootstrap 建齐 5 个查询索引 + 1 个幂等键唯一索引")
 
 	// 幂等键唯一索引行为锚定（方向 A 批次 1a）：同 (request_id, created_at)
-	// 重复插入 → DO NOTHING 幂等成功（P1：InsertBatch 固定冲突目标幂等）
+	// 重复插入 → DO NOTHING 幂等成功（InsertBatch 固定冲突目标幂等）
 	dupAt := now.Add(time.Second)
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{usageLogFor("dup-key", dupAt)}))
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{usageLogFor("dup-key", dupAt)}))

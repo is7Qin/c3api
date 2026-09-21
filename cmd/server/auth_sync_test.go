@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestInstanceSrcUniqueAcrossInstances B4-1（p2-05）：同 hostname+pid 的两实例
+// TestInstanceSrcUniqueAcrossInstances（p2-05）：同 hostname+pid 的两实例
 // Src 必须不同（容器化多实例 pid 各自为 1——纯 hostname-pid 碰撞会互把对方
 // NOTIFY 当自播跳过 → 失效静默全灭；随机 nonce 保证唯一）。
 func TestInstanceSrcUniqueAcrossInstances(t *testing.T) {
@@ -65,7 +65,7 @@ func TestAuthSyncNotStartedCloseSafe(t *testing.T) {
 	require.NoError(t, w.Close(context.Background()))
 }
 
-// recAuthErr 记录 Reload 调用次数并恒返回错误（B4-2 失败路径注入）。
+// recAuthErr 记录 Reload 调用次数并恒返回错误（失败路径注入）。
 type recAuthErr struct {
 	mu sync.Mutex
 	n  int
@@ -79,7 +79,7 @@ func (r *recAuthErr) Reload(ctx context.Context) error {
 }
 func (r *recAuthErr) calls() int { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
 
-// TestAuthSyncFailureObservable B4-2（p2-03）：Reload 失败注入——Warn（log 可空）
+// TestAuthSyncFailureObservable（p2-03）：Reload 失败注入——Warn（log 可空）
 // + 循环不中断 + last_success（最近成功时刻）不前移 + Stats 失败计数/失败时刻。
 // 此前 recAuthN 恒 nil、失败路径零覆盖。
 func TestAuthSyncFailureObservable(t *testing.T) {
@@ -112,7 +112,7 @@ func (r *hangAuthN) Reload(ctx context.Context) error {
 }
 func (r *hangAuthN) calls() int { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
 
-// TestAuthSyncReloadTimeoutUnblocksLoop B4-2（p2-03）：DB 挂起时 per-attempt
+// TestAuthSyncReloadTimeoutUnblocksLoop（p2-03）：DB 挂起时 per-attempt
 // 超时（生产 30s）后循环必须回 select 继续触发——60s 兜底不因单次挂起永久停摆
 // （此前用生命周期 ctx 无超时，循环卡死即永久失效）。
 func TestAuthSyncReloadTimeoutUnblocksLoop(t *testing.T) {
@@ -133,12 +133,12 @@ func TestAuthSyncReloadTimeoutUnblocksLoop(t *testing.T) {
 	require.Greater(t, st.LastFailureUnixMs, int64(0), "最近失败时刻应被记录")
 }
 
-// panicAuthN：Reload 恒 panic（B4-3 注入）。
+// panicAuthN：Reload 恒 panic（注入）。
 type panicAuthN struct{}
 
 func (panicAuthN) Reload(ctx context.Context) error { panic("reload boom") }
 
-// TestAuthSyncPanicRecovered B4-3（p2-03）：Reload panic → 托管 recover 捕获 →
+// TestAuthSyncPanicRecovered（p2-03）：Reload panic → 托管 recover 捕获 →
 // 进程不崩（无托管时本测试二进制直接崩溃即失败）；panic 后循环退出（running
 // 复位，观测面一致）。
 func TestAuthSyncPanicRecovered(t *testing.T) {

@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// TestPGUpdateUserPatchConditional A-P1-1 patch 条件写语义（真实 PG）：
+// TestPGUpdateUserPatchConditional patch 条件写语义（真实 PG）：
 // 显式字段才写（role 只改 role 不触碰 balance）；balance/max_concurrency
 // 带旧值条件——旧值不满足（期间有扣费/并发变更）→ ErrConflict 不覆盖；
 // 缺失用户 → ErrNotFound；旧值缺失 → 显式拒绝（防未来调用方退回无条件写）。
@@ -184,7 +184,7 @@ func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 	require.Equal(t, int64(nDeducts), countLogs(t, repos, u.ID))
 }
 
-// TestPGUpdateKeyVsAddQuotaUsedInterleave A-P2-5 无回归网：UpdateKey 不再写
+// TestPGUpdateKeyVsAddQuotaUsedInterleave 无回归网：UpdateKey 不再写
 // quota_used（剥离 SetQuotaUsed）——与 AddQuotaUsed 并发交错时 Recorder 增量
 // 零丢失；返回行 QuotaUsed 为 DB 新鲜值（ent Save re-SELECT）。
 func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {

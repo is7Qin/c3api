@@ -179,7 +179,7 @@ func (s *Service) GetUserMe(ctx context.Context, userID int64) (*domain.User, er
 
 // CreateUser 管理面创建用户（platform_admin 专属）：email 唯一/格式、密码
 // ≤72 字节 → bcrypt（sub2api 同参数）→ role/status/max_concurrency/balance
-// 落库 → invalidate（新用户入 Auth 状态快照）。价格倍率按组（T3.5 修正）经
+// 落库 → invalidate（新用户入 Auth 状态快照）。价格倍率按组经
 // group_assignment 设置（SetGroupAssignments），用户本体无倍率字段。
 func (s *Service) CreateUser(ctx context.Context, email, password string, role domain.Role, status domain.UserStatus, maxConcurrency int, balance int64) (*domain.User, error) {
 	if !validEmail(email) {
@@ -233,11 +233,11 @@ const maxUserUpdateRetries = 3
 
 // UpdateUser 用户管理面更新（role/status/max_concurrency/balance 按 patch 显式
 // 字段生效——未提供字段不触碰 DB 列，杜绝 GET 快照陈旧值写回覆盖计费扣费）。
-// 校验按 patch 字段生效（评审 P3-B：只改 balance 的 PUT 不被未提供字段的
+// 校验按 patch 字段生效（只改 balance 的 PUT 不被未提供字段的
 // 零值误拒）。balance/max_concurrency 显式设置 → 条件更新（旧值 = GET 快照）；
 // 0 行 → 重读当前值刷新旧值条件重试 ≤3 次 → 超限 ErrConflict（409）。用户
-// 状态/并发/额度变更 → invalidate → Auth.Reload 全量刷新（评审 I-2）。价格
-// 倍率按组（T3.5 修正）经 group_assignment 设置，用户本体无倍率字段。
+// 状态/并发/额度变更 → invalidate → Auth.Reload 全量刷新。价格
+// 倍率按组经 group_assignment 设置，用户本体无倍率字段。
 func (s *Service) UpdateUser(ctx context.Context, p *repository.UserPatch) (*domain.User, error) {
 	if p.Role != nil && !p.Role.Valid() {
 		return nil, ErrInvalidInput

@@ -144,7 +144,7 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 //     与旧 eager-load 语义一致，调度器 Select 区分"组不存在"与"组无账号"）。
 //  3. `SELECT account_id, group_id FROM account_groups`——成员关系全表扫描，
 //     零参数。
-//  4. `SELECT * FROM account_exts`——账号 ext 全表扫描 + 内存 join（T2 起
+//  4. `SELECT * FROM account_exts`——账号 ext 全表扫描 + 内存 join（此后
 //     codex 路由按 Account.Ext 派生 AccountCredential）。不 eager-load 的原因
 //     同成员关系：ext 的 FK 是 account_id，eager-load 生成 `WHERE account_id
 //     IN (全部账号 id)`——参数数 = 账号实体数，>65,535 触顶；全表扫描零参数，

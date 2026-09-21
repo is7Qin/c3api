@@ -88,7 +88,7 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 			return nil, err
 		}
 	}
-	// O2 组级定向：新账号进其分组快照（无分组账号不入任何快照 → 空集 no-op）。
+	// 组级定向：新账号进其分组快照（无分组账号不入任何快照 → 空集 no-op）。
 	s.inv.Accounts(groupsOfPatch(p), false)
 	s.publish(ctx, notify.Change{Groups: groupsOfPatch(p)})
 	return created, nil
@@ -206,7 +206,7 @@ func (s *Service) checkGroupsExist(ctx context.Context, ids []int64) error {
 }
 
 func (s *Service) DeleteAccount(ctx context.Context, id int64) error {
-	// O2：删除前查旧组（删除后快照须移除该账号）。
+	// 删除前查旧组（删除后快照须移除该账号）。
 	gids, err := s.store.GetAccountGroups(ctx, id)
 	if err != nil && s.log != nil {
 		s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(err))
@@ -223,7 +223,7 @@ func (s *Service) DeleteAccountsBatch(ctx context.Context, ids []int64) error {
 	if err := validateIDs(ids); err != nil {
 		return err
 	}
-	// O2：删除前逐个查旧组（组级定向并集）。
+	// 删除前逐个查旧组（组级定向并集）。
 	var gids []int64
 	for _, id := range ids {
 		gs, err := s.store.GetAccountGroups(ctx, id)
@@ -252,7 +252,7 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	if err := validateAccountPatch(p); err != nil {
 		return nil, err
 	}
-	// O2：变更前逐个查旧组 + 替换目标组并集（upstream_key 批量变更 →
+	// 变更前逐个查旧组 + 替换目标组并集（upstream_key 批量变更 →
 	// clients 失效）。
 	var gids []int64
 	for _, id := range ids {

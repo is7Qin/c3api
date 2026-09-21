@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUsageSnapshotCtorWiring pins the W2-T3 cleanup (inventory B6): the
+// TestUsageSnapshotCtorWiring pins the cleanup: the
 // SetUsageSnapshotter backfill is gone — main wires the codex adapter into
 // the handler via the constructor (OpsOptions.UsageSnap), never via a
 // service setter.

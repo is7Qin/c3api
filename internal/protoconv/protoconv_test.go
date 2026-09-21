@@ -534,7 +534,7 @@ func TestMapMessToChatStream(t *testing.T) {
 	require.NotContains(t, out, `"message_stop"`, "message_stop 丢弃（收尾已在 message_delta）")
 }
 
-// --- P3：缺 event: 名（data-only）帧不丢 ---
+// --- 缺 event: 名（data-only）帧不丢 ---
 
 // TestMapDataOnlyFramesInferred 缺名帧带 type 字段 → 按 data.type 推断事件名，
 // 与具名帧同分派（fakeupstream /v1/responses 形态：只发 data: 行，无 event: 行）。
@@ -577,7 +577,7 @@ func TestMapDataOnlyFramesInferredFallback(t *testing.T) {
 }
 
 // TestMapDataOnlyFramesPassthrough 缺名帧无法推断（非 JSON / 无 type 字段）
-// → 原样透传 data 帧保留字节（不静默丢弃，P3）。
+// → 原样透传 data 帧保留字节（不静默丢弃）。
 func TestMapDataOnlyFramesPassthrough(t *testing.T) {
 	m := NewStreamMapper(domain.ProtocolConvertChatToResp)
 

@@ -346,7 +346,7 @@ func TestAccountExtValidation(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "pat 行 oauth 列必须为空")
 
-	// B1-2 复查落库态：校验先于落库——被拒写入零残留（存量行不被改动）
+	// 复查落库态：校验先于落库——被拒写入零残留（存量行不被改动）
 	got2, err := svc.GetAccountExt(ctx, accO.ID)
 	require.NoError(t, err)
 	require.Equal(t, "at2", *got2.CodexOAuthToken, "被拒写入不得改动存量行")
@@ -360,7 +360,7 @@ func TestAccountExtValidation(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "oauth 行至少 codex_oauth_token")
 
-	// B1-2 首写零残留：新账号被拒（列组违规）→ 无行落库（修复前 TryInsert
+	// 首写零残留：新账号被拒（列组违规）→ 无行落库（修复前 TryInsert
 	// 先写、校验后置 → 被拒凭据残留进调度快照被真实使用）
 	accBad := seedExtAccount(t, svc, tplP.ID)
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
@@ -371,7 +371,7 @@ func TestAccountExtValidation(t *testing.T) {
 	_, err = svc.GetAccountExt(ctx, accBad.ID)
 	require.ErrorIs(t, err, ErrNotFound, "被拒凭据零残留——校验失败不得落库")
 
-	// B1-4 pat 最小完整性：pat 行必须 codex_pat_key（与 oauth 分支对称——空 key 写
+	// pat 最小完整性：pat 行必须 codex_pat_key（与 oauth 分支对称——空 key 写
 	// 成功即死账号 + 运行时误报失效）
 	accP2 := seedExtAccount(t, svc, tplP.ID)
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
@@ -394,7 +394,7 @@ func TestAccountExtValidation(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "api_key 模板账号不允许 codex ext 行")
 
-	// B1-5 email 清空往返：提供 → 写入；未提供 → NULL 清空（全列更新含
+	// email 清空往返：提供 → 写入；未提供 → NULL 清空（全列更新含
 	// NULL 清空契约；修复前 fillIdentityDefaults 恒回填存量 email → 不可清空）
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat3"),
@@ -488,7 +488,7 @@ func TestAccountExtIdentityInvariant(t *testing.T) {
 	require.Equal(t, "t2", saved.CodexIdentity.SessionID, "只给 thread → session 补齐恒等")
 	require.Equal(t, "t2:0", saved.CodexIdentity.WindowID, "window 跟随 thread 派生")
 
-	// B1-3 方向 2：存量行只给 window——反推 == 存量 thread → 幂等保留；
+	// 方向 2：存量行只给 window——反推 == 存量 thread → 幂等保留；
 	// 反推 ≠ 存量 → 400（派生值不得冒充显式值改身份）
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
@@ -582,7 +582,7 @@ func TestAccountExtConcurrentFirstWrite(t *testing.T) {
 // firstCallBarrierStore fakeStore 包装：对 GetAccountExt 的前 want 次调用设
 // 屏障——先完成读，再等全部到齐后放行（之后不再拦）。并发首写测试中所有
 // 参与者的首次取行都在任何 TryInsert 之前完成（读全部返回"无存量行"）→
-// 冲突确定性发生在 TryInsert 路径（B1-3 方向 3 直测，避免参与者误入存量行
+// 冲突确定性发生在 TryInsert 路径（方向 3 直测，避免参与者误入存量行
 // 编辑路径——若只同步读起点，先到的读可抢先 TryInsert 落行，后到的读会看到
 // 赢者行）。
 type firstCallBarrierStore struct {
@@ -615,7 +615,7 @@ func (f *firstCallBarrierStore) GetAccountExt(ctx context.Context, accountID int
 	return e, err
 }
 
-// TestAccountExtConflictLoserAdoptsWinnerIdentity B1-3 方向 3：并发首写冲突
+// TestAccountExtConflictLoserAdoptsWinnerIdentity 方向 3：并发首写冲突
 // 路径——败者完全采用赢者身份（显式身份只在首写成功路径生效）。败者带显式
 // 身份输入（window-only 派生 / session 恒等），若以派生值覆盖赢者 → 身份
 // 混搭（thread 来自 A、window 来自 B）→ 断言最终身份恒为单一完整四元组。
@@ -662,7 +662,7 @@ func TestAccountExtConflictLoserAdoptsWinnerIdentity(t *testing.T) {
 	}
 }
 
-// TestUpdateTemplatesBatchTypeFormatConstraint 批量更新类型-格式约束（W1；
+// TestUpdateTemplatesBatchTypeFormatConstraint 批量更新类型-格式约束（
 // 批量查询改造回归）：special/oauth/pat 模板批量改非 resp 格式 → 400；api_key
 // 模板任意格式合法；混合批任一违规即拒（先于任何更新）；缺 id → 404（批量
 // IN 查询数量对比拦截）。

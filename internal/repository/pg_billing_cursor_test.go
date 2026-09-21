@@ -556,7 +556,7 @@ func TestPGBillingCursorOverdraftWriteBack(t *testing.T) {
 		"10000 − 40000 = −30000 精确负值")
 	require.Equal(t, int64(999_999), tempBalanceAmount(t, repos, tp), "过期额度不动")
 
-	// overdraft 列回写 true（B2）
+	// overdraft 列回写 true
 	for _, r := range rows {
 		row := usageLogByID(t, repos, r.ID)
 		require.True(t, row.Billed)

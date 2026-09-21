@@ -22,7 +22,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// T5 §1：WithOnTokenRotated → account_ext 部分更新回写（RotationStore 落库面）
+// §1：WithOnTokenRotated → account_ext 部分更新回写（RotationStore 落库面）
 // ---------------------------------------------------------------------------
 
 // fakeRotationStore 轮转回写替身：记录 (accountID, at, rt, expiresAt) 调用序
@@ -315,7 +315,7 @@ func TestRotationCallExpiryNilPreserved(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T5 §3：FatalAuth（WS 业务判死帧——毒化 + 单次上报 + 双源去重）
+// §3：FatalAuth（WS 业务判死帧——毒化 + 单次上报 + 双源去重）
 // ---------------------------------------------------------------------------
 
 // TestCodexFatalAuthPoisonAndDedup 帧判死接线：FatalAuth → Auth 毒化（后续

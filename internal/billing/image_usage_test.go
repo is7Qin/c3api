@@ -108,7 +108,7 @@ func TestImageStreamEvent(t *testing.T) {
 	require.Zero(t, ot)
 }
 
-// —— 流终计费调用方语义（评审 P3-8）：completed 累加张数 + usage 仅末事件 ——
+// ——流终计费调用方语义：completed 累加张数 + usage 仅末事件——
 
 func TestImageStreamBillingAccumulation(t *testing.T) {
 	// 模拟路由面逐事件处理：3 个 completed + 2 个 partial_image 的事件流，

@@ -403,8 +403,8 @@ func TestAdminUsers(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code, "missing user: %s", rec.Body.String())
 }
 
-// TestAdminPutUsersPatchSemantics A-P1-1 patch 形态端到端：只改 balance 的 PUT
-// 不误拒（评审 P3-B 零值面）、不触碰 role/status/并发；只改 role 不触碰
+// TestAdminPutUsersPatchSemantics patch 形态端到端：只改 balance 的 PUT
+// 不误拒（评审零值面）、不触碰 role/status/并发；只改 role 不触碰
 // balance——GET 快照陈旧值不再全量写回（v02 核实双向覆盖修复）。
 func TestAdminPutUsersPatchSemantics(t *testing.T) {
 	doAdmin, doUser, store := newSharedRouters(t)

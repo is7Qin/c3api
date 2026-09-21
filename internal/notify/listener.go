@@ -29,7 +29,7 @@ type Dispatcher interface {
 	// 转现有 Mark（Templates 含 clients 失效）；keys/rules 转 Keys/Rules 分支
 	// （reloadAll 扩展）；settings 由装配侧同步 ReloadSettings + 注册表 scope
 	// 分发（#36 时序——scope 重载必须读到新 N，实现见 cmd/server dispatcher）。
-	// 无返回值：内部失败由实现独立 Warn 消化（G-P2-1——NOTIFY 是事件提示，
+	// 无返回值：内部失败由实现独立 Warn 消化（NOTIFY 是事件提示，
 	// 调用方无任何可执行动作，透传只会双 Warn；周期 ticker / 60s 兜底已存在）。
 	Apply(ctx context.Context, ch Change)
 	// FullRefresh 连接成功（启动首连 / 断线重连）时的本地刷新：Auth Reload +
@@ -265,9 +265,9 @@ func (l *Listener) consume(ctx context.Context, conn Conn) bool {
 			continue
 		}
 		if ch.Src != "" && ch.Src == l.cfg.Src {
-			continue // 自播跳过：省一次重复 reload（Src 含实例随机 nonce，判等只命中本实例，B4-1）
+			continue // 自播跳过：省一次重复 reload（Src 含实例随机 nonce，判等只命中本实例）
 		}
-		// 无返回值（G-P2-1）：Apply 失败由实现内部 Warn 消化——透传只会双
+		// 无返回值：Apply 失败由实现内部 Warn 消化——透传只会双
 		// Warn 且本侧无任何可执行动作（NOTIFY 是事件提示，模块周期 ticker /
 		// 60s 兜底已存在）。
 		l.cfg.Dispatcher.Apply(ctx, ch)

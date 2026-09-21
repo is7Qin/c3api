@@ -44,7 +44,7 @@ import (
 // 表列 → DROP TABLE 级联回收。
 //
 // Ensure/Drop 均按表参数化（表名 + 分区键 + 日期）——四表共用一套实现（单一
-// 实现防漂移，P1 教训同款）；幂等语义全表通用（IF NOT EXISTS / IF EXISTS、
+// 实现防漂移，教训同款）；幂等语义全表通用（IF NOT EXISTS / IF EXISTS、
 // 42P07/duplicate_object 容忍、并发实例安全）。升级策略（用户裁决
 // 2026-08-23）：beta 全新库自举，无迁移，bootstrap 对已分区表 no-op 预期。
 type PartitionRepo struct {
@@ -150,7 +150,7 @@ var usageLogCreateDDL = partitionedCreateDDL("usage_logs", "created_at", usageLo
 
 // usageLogIndexDDLs 对齐 ent schema Indexes（同名同列；分区表父表索引为
 // 分区索引，子分区自动继承）。唯一索引含分区键 created_at（分区表硬约束，
-// 见本文件头注释）：request_id 幂等键（方向 A 批次 1a，A-P2-3）——COMMIT
+// 见本文件头注释）：request_id 幂等键——COMMIT
 // 歧义窗口重试撞 23505 由 flusher 按成功处理（防双扣，见
 // internal/billing/flusher.go isUniqueLogConflict）。索引随 bootstrap 重建
 // 路径必建（全新安装恒齐，无手动补建面）。
@@ -215,7 +215,7 @@ var errLogIndexDDLs = []string{
 // call_count（按次调用）+ TTFT 四列（ttft_total_ms/ttft_count/ttft_max_ms/
 // ttft_hist bigint[10] 直方图）保留。列定义与 ent schema 一致**除 ttft_hist**
 // ——PG bigint[] 数组列 ent 无类型（field.Ints 等是 JSON 语义，无法扫描 PG
-// 数组），数组列 carve-out 不进 ent schema（评审 P1-1），统计读取面
+// 数组），数组列 carve-out 不进 ent schema，统计读取面
 // （ScanStatsDays/StatsTrend 族）走 pgx 直查扫描 []int64。分区键 bucket_time（小时桶聚合 24 桶/区）。id 走
 // usage_stats_id_seq（ent bigserial 同款语义——INSERT 不带 id 列走 DEFAULT
 // nextval；该表经 bootstrap 建表（表不存在则建，全新安装唯一路径），零迁移

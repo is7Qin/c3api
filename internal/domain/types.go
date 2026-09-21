@@ -25,7 +25,7 @@ const (
 	FormatAnthropic         RequestFormat = "anthropic"
 	// FormatOpenAIImages 图片生成（/v1/images/generations|edits，spec §4.3）：
 	// JSON + multipart 双协议；预检查统一价格快照 image 分量（跳过 chat
-	// 价预检——P1-1 预检按格式切换）。落库 format = openai-images——usage_logs.format
+	// 价预检——预检按格式切换）。落库 format = openai-images——usage_logs.format
 	// 无 DB enum（varchar），ent 生成 FormatValidator 客户端面校验（COPY 逐行
 	// 校验前置——不扩展则图片行 COPY 恒失败回灌）。
 	FormatOpenAIImages RequestFormat = "openai-images"
@@ -375,7 +375,7 @@ type Account struct {
 	MaxConcurrency int
 	LastError      *string
 	LastUsedAt     *time.Time
-	// FailedAt SDK 上报的运行时失效时刻（account.failed_at 列，SDK 接入 T1——
+	// FailedAt SDK 上报的运行时失效时刻（account.failed_at 列，SDK 接入——
 	// 用户裁决 2026-08-13：仅此一列；失效原因复用既有 LastError，两原因字段
 	// 并存会漂移）：nil = 未失效；非 nil = 账号级终止（凭据永久失效/上游封禁/
 	// 判死）的上报时刻。与 Enabled=false 语义分离：disabled = 管理面手动禁用；
@@ -408,7 +408,7 @@ type Account struct {
 	GroupIDs *[]int64
 	// Ext 账号类型化鉴权扩展（account_ext 1:1 边；调度器快照加载
 	// LoadGroupsAccounts/LoadGroupAccounts 合并——与 Template.StripImageTools
-	// 同款快照合并先例，sdk-wiring T4 P3-4 定死路线；T2 起 codex 路由按 Ext
+	// 同款快照合并先例，sdk-wiring 定死路线；此后 codex 路由按 Ext
 	// 派生 AccountCredential）。其余路径（管理面账号 CRUD 等）无 ext 边 → nil。
 	Ext *AccountExt
 }
@@ -671,7 +671,7 @@ type GroupAssignment struct {
 
 // Setting 类型化配置（key/type/value；signup_enabled 注册开关等）。
 // Min/Max 数值值域（含边界；nil = 无限制）、PolicyValues 字符串枚举值域
-// （空 = 不限）——仅注册表条目携带（管理面 UpdateSetting 校验用，A-P2-11 护栏
+// （空 = 不限）——仅注册表条目携带（管理面 UpdateSetting 校验用，护栏
 // 前置）；DB 行不落库（读路径由注册表默认兜底合并，见 SettingRepo.GetAll）。
 type Setting struct {
 	ID           int64
@@ -807,7 +807,7 @@ type SettlementSummary struct {
 // ttft_total_ms/ttft_count/ttft_max_ms/ttft_hist 四列承载（avg 在查询侧 Go 除；
 // ttft_hist 10 档直方图见 stat_repo.go ttftHistBounds）。ttft_hist 为 PG bigint[]
 // 数组列——ent 无数组类型（field.Ints 是 JSON 语义），不进 ent schema（carve-out，
-// 评审 P1-1；统计读取面走 pgx 直查扫描）。v2 瘦身（spec 2026-08-23）：维度
+// 评审；统计读取面走 pgx 直查扫描）。v2 瘦身（spec 2026-08-23）：维度
 // 7→3——account_id/template_id/user_id/is_error 四维删除（实体视角由
 // EntityStatBucket/usage_entity_stats 承载；is_error 降为 error_count 测量列
 // 语义），唯一键 = (bucket_time, group_id, model)。

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestQualitySyncWiring pins the quality-sync lane assembly (Task 9):
+// TestQualitySyncWiring pins the quality-sync lane assembly:
 // recorder → SyncWorker(qualityRecorder, rdb, repos.Partitions) → worker
 // lifecycle (managedWorkers) + ops visibility, with shutdown ordering
 // worker drain → recorder finalization → Redis client close.

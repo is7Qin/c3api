@@ -22,12 +22,12 @@ type invCall struct {
 	key  bool
 }
 
-// invRecorder 记录 Mark 调用的测试假件（O2 接线矩阵断言：各实体走各自的
+// invRecorder 记录 Mark 调用的测试假件（接线矩阵断言：各实体走各自的
 // 重载方式标记；兼作旧的 "invalidate: func() { invalidated++ }" 计数替代）。
 type invRecorder struct {
 	mu    sync.Mutex
 	calls []invCall
-	// onSettings Settings() mark 时同步回调（#36 顺序不变量断言：回调内读
+	// onSettings Settings() mark 时同步回调（顺序不变量断言：回调内读
 	// settings 快照必须已见新值——reloadSettings 先于 inv.Settings）。
 	onSettings func()
 }
@@ -83,7 +83,7 @@ func (r *invRecorder) countKind(kind string) int {
 	return n
 }
 
-// --- O2 接线矩阵逐实体断言（评审 M-1） ---
+// --- 接线矩阵逐实体断言 ---
 
 func TestInvalidatorMatrix(t *testing.T) {
 	ctx := context.Background()
