@@ -27,7 +27,7 @@ func TestRed_FlowStaleRequeueSequenceAware(t *testing.T) {
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 1, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
 	}))
 
-	// Acquire lease L1 for the minute.
+	// Acquire lease for the minute.
 	_, tok1, ok := owner.snapshotForPG(m)
 	require.True(t, ok, "dirty minute must offer a lease")
 
@@ -37,15 +37,15 @@ func TestRed_FlowStaleRequeueSequenceAware(t *testing.T) {
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 2, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 2, ChainCount: 99},
 	}))
 
-	// L1 released on the failure path without ack.
+	// released on the failure path without ack.
 	require.True(t, owner.releasePG(tok1), "release settles the live lease")
 
-	// The L1 token is now stale: ack and release are no-ops that change no
+	// The token is now stale: ack and release are no-ops that change no
 	// watermark, flag, lease, dirty state, or counter.
 	require.False(t, owner.ackPG(tok1), "stale lease token must not ack after release")
 	require.False(t, owner.releasePG(tok1), "stale lease token must not release twice")
 
-	// Retry acquires a fresh lease identity; the stale L1 ack stays a no-op
+	// Retry acquires a fresh lease identity; the stale ack stays a no-op
 	// even while the newer lease is active.
 	_, tok2, ok := owner.snapshotForPG(m)
 	require.True(t, ok, "dirty minute must offer a retry lease")
@@ -62,7 +62,7 @@ func TestRed_FlowStaleRequeueSequenceAware(t *testing.T) {
 	require.Equal(t, int64(1), rows[0].ChainCount)
 	require.Equal(t, int64(99), rows[1].ChainCount)
 
-	// L2 ack succeeds; the minute is clean with no next candidate.
+	// ack succeeds; the minute is clean with no next candidate.
 	require.True(t, owner.ackPG(tok2))
 	require.Empty(t, owner.pgCandidateMinutes(), "clean minute offers no next candidate")
 
@@ -197,8 +197,8 @@ func TestRed_FlowFailedRequeueNoDuplicate(t *testing.T) {
 }
 
 // TestRed_FlowRefillMergesConcurrentSameMinuteDelta locks the post-snapshot
-// merge race: when D1's upsert fails AND a fresh same-minute D2 lands while
-// that very call is in flight, D2 folds into the live leased accumulator
+// merge race: when's upsert fails AND a fresh same-minute lands while
+// that very call is in flight, folds into the live leased accumulator
 // (version bumps, stays dirty) instead of being lost. There is no refill:
 // the failed lease releases, the state stays dirty, and the next successful
 // cycle persists A+B exactly once.
@@ -218,7 +218,7 @@ func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	rowB := repository.RoutingFlowRow{IdentityVersion: 1, Ordinal: 1, Lane: "explore", AccountID: 22, TransitionReason: "init", Outcome: "error", IsTerminal: true, Generation: 2, ChainCount: 5}
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowA}))
 
-	// barrier: D2 merges into the live accumulator exactly while D1's upsert
+	// barrier: merges into the live accumulator exactly while's upsert
 	// is failing (lease active, snapshot already materialized).
 	pg.onFlow = func(time.Time, int64) {
 		_ = foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{rowB})
@@ -233,10 +233,10 @@ func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	for _, r := range merged.FlowRows() {
 		survived[r.AccountID] += r.ChainCount
 	}
-	require.Equal(t, int64(3), survived[11], "D1 must survive the failed flush")
-	require.Equal(t, int64(5), survived[22], "D2 must fold into the leased minute exactly once")
+	require.Equal(t, int64(3), survived[11], " must survive the failed flush")
+	require.Equal(t, int64(5), survived[22], " must fold into the leased minute exactly once")
 
-	// retry succeeds: must carry the merged D1+D2, each counted once
+	// retry succeeds: must carry the merged , each counted once
 	pg.failAll = false
 	clk = fixed.Add(time.Second)
 	w.doPG(context.Background())
@@ -248,9 +248,9 @@ func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	for _, r := range got {
 		counts[r.AccountID] += r.ChainCount
 	}
-	require.Len(t, got, 2, "retry must persist the merged D1+D2, each exactly once")
-	require.Equal(t, int64(3), counts[11], "D1 must survive the failed flush")
-	require.Equal(t, int64(5), counts[22], "D2 must be conserved exactly once")
+	require.Len(t, got, 2, "retry must persist the merged , each exactly once")
+	require.Equal(t, int64(3), counts[11], " must survive the failed flush")
+	require.Equal(t, int64(5), counts[22], " must be conserved exactly once")
 }
 
 func TestRed_BoundPruneLongLivedMaps(t *testing.T) {

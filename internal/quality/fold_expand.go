@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Tick-time expansion core (v3 F2, spec §5.2): the existing 2Hz/0.2Hz ticks
+// Tick-time expansion core (v3 , spec §5.2): the existing 2Hz/0.2Hz ticks
 // expand each counter cell into today's identical RoutingFlowRows. Only the
 // expansion SOURCE changed (cells, not chains); cadence, sinks, and the
 // Upsert shape are untouched.
@@ -106,7 +106,7 @@ func (o *FlowOwner) drainFoldLocked() {
 	seq := o.drainSeq
 	sealed := o.sealed.Load()
 	o.cells.drain(curMinute, seq, func(f attemptFact, count int64) {
-		// No absent-shell age guard here by design (v3-F1 review finding 3,
+		// No absent-shell age guard here by design (review finding 3,
 		// disputed with evidence): admission is replay-tolerant — buckets are
 		// minted at completion or carried from live cells, so production
 		// has no ancient-minute producer. A drain-time refusal would break

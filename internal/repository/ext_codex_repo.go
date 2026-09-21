@@ -248,7 +248,7 @@ func (r *AccountExtRepo) TryInsertAccountExt(ctx context.Context, e *domain.Acco
 // 存旧 rt 后回调——盲写不落空）。
 //
 // 行缺失（配置损坏——codex 账号必有 ext 行，选号前提）→ 0 行报错：错误 →
-// SDK D4 回调重试 → 连续达阈值 CallbackDeliveryError fatal（fail-closed：
+// SDK 回调重试 → 连续达阈值 CallbackDeliveryError fatal（fail-closed：
 // 令牌无法持久化 = 账号失效信号，管理员重新导入后恢复）。不做 INSERT 路径
 // ——回调无身份/类型材料（缺行场景 = 配置损坏，应报错而非以空身份静默建行）。
 func (r *AccountExtRepo) WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error {
@@ -271,7 +271,7 @@ func (r *AccountExtRepo) WriteOAuthRotation(ctx context.Context, accountID int64
 	return nil
 }
 
-// FindAccountExtByCodexKey 组合幂等键查重（Task B 批量导入专用——
+// FindAccountExtByCodexKey 组合幂等键查重（批量导入专用——
 // (codex_email, codex_account_id) 双条件 AND 定位，对齐唯一索引；GetAccountExt
 // 仅按 account_id，查重面不存在）。命中返回行（含 credential_type——跨类型
 // 判定用）；缺行 → ErrNotFound。

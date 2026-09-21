@@ -457,7 +457,7 @@ func TestDisabledRuleNotLoaded(t *testing.T) {
 	require.Equal(t, 0, sink.countThrottle())
 }
 
-// TestHitKeepsCountsThenDecays 命中不清零窗口计数（C2）：阈值 2 连续命中两次；
+// TestHitKeepsCountsThenDecays 命中不清零窗口计数：阈值 2 连续命中两次；
 // 滑动衰减后（[0,5) 桶整体滑出 30s 窗口）阈值重新可达。
 func TestHitKeepsCountsThenDecays(t *testing.T) {
 	sink := newFakeSink(10)

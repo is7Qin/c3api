@@ -37,10 +37,10 @@ type Repository struct {
 	Redemptions    *RedemptionRepo
 	PriceEntries   *PriceEntryRepo
 	PriceVariants  *PriceVariantRepo
-	Billing        *BillingRepo       // 扣费落库（Phase 5 T3）
-	Partitions     *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats，Phase 5 T4.5 + 用户裁决 2026-08-11）
-	TemplateExts   *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1；W1 数据层，消费接线 W3/W4）
-	AccountExts    *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1；W1 数据层，消费接线 W6）
+	Billing        *BillingRepo       // 扣费落库
+	Partitions     *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats 用户裁决 2026-08-11）
+	TemplateExts   *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1； 数据层，消费接线）
+	AccountExts    *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1； 数据层，消费接线）
 	EmailTemplates *EmailTemplateRepo // 邮件模板（email_template；邮件服务）
 	Client         *ent.Client
 	// driver 为原始 dialect.Driver：原子资源方法/条件递增等 raw SQL 走它
@@ -79,8 +79,8 @@ func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxp
 
 // newRepository 用给定 client/driver 构建全量仓库（New/NewWithPG/WithTx 复用
 // 同一构造函数；WithTx 注入 tx client + 事务驱动，fn 内所有方法调用都走 tx ——
-// 评审 I-1）。pool 进 Stats（离线聚合 SQL 直查直写自 Acquire 独立连接，不进
-// 事务；advisory lock 专用连接持锁整周期——池连接复用即丢锁）与 Billing（F2
+// pool 进 Stats（离线聚合 SQL 直查直写自 Acquire 独立连接，不进
+// 事务；advisory lock 专用连接持锁整周期——池连接复用即丢锁）与 Billing（
 // ledger-cursor：结算语句 pgx 直连事务 + 游标 advisory lock 专用连接；
 // WithTx 传 nil → 事务内回落 ent 载体，见 billing_settle.go）。
 func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *Repository {
@@ -110,7 +110,7 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 	}
 }
 
-// --- 事务（评审 I-1 核心） ---
+// --- 事务（核心） ---
 
 // txDriver 把 dialect.Tx 包装成 dialect.Driver（镜像 ent 内部 txDriver 语义）：
 // ent 构建器与 raw SQL（原子资源方法/IncrementUsed）经同一驱动 → 同一事务连接。
@@ -132,9 +132,9 @@ func (d *txDriver) Query(ctx context.Context, query string, args, v any) error {
 	return d.tx.Query(ctx, query, args, v)
 }
 
-// TxStore WithTx 事务回调面（评审 I-1）：兑换编排/测试在单事务内仅经此面访问
+// TxStore WithTx 事务回调面：兑换编排/测试在单事务内仅经此面访问
 // 资源更新与兑换数据。*Repository 实现（WithTx 注入 tx 版实例，全部走同一事务
-// 连接）；service 层 fake 实现同面做事务语义模拟（评审 I-1 回滚断言的前提——
+// 连接）；service 层 fake 实现同面做事务语义模拟（回滚断言的前提——
 // 回调参数因此用接口而非 *Repository，同时约束 applier 无法绕过 tx 面）。
 // 面内任一步失败 → 整体回滚。
 type TxStore interface {
@@ -146,7 +146,7 @@ type TxStore interface {
 	CreateTempBalance(ctx context.Context, userID int64, amount int64, expiresAt *time.Time, note *string) error
 	CreateUse(ctx context.Context, use *domain.RedemptionUse) error
 	IncrementUsed(ctx context.Context, codeID int64) (bool, error)
-	// 组授予（S3-F2：SetGroupAssignments/SetUserGroups 的替换循环包 WithTx——
+	// 组授予（SetGroupAssignments/SetUserGroups 的替换循环包 WithTx——
 	// 授予/专属倍率/撤销/组内读全部入同一事务，中途失败整体回滚）。
 	GrantGroup(ctx context.Context, groupID, userID int64) error
 	SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error
@@ -154,7 +154,7 @@ type TxStore interface {
 	ListAssignmentsByGroup(ctx context.Context, groupID int64) ([]*domain.GroupAssignment, error)
 	// ListAssignmentsByUser SetUserGroups 替换循环内读（撤销判定与写同一事务）。
 	ListAssignmentsByUser(ctx context.Context, userID int64) ([]*domain.GroupAssignment, error)
-	// 账号/扩展/归组（Task B codex 批量导入 imported 行单行事务——第三领域；
+	// 账号/扩展/归组（codex 批量导入 imported 行单行事务——第三领域；
 	// tx 版 Repository 天然实现（newRepository 完整构造），类型收窄延续：
 	// 闭包只能调清单内方法）。GetTemplate 不入事务面——模板存在性顶层已校验，
 	// credential_type 即端点类型（oauth 端点恒 codex-oauth）。
@@ -162,13 +162,13 @@ type TxStore interface {
 	CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
 	SetAccountGroups(ctx context.Context, accountID int64, groupIDs []int64) error
 	UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error)
-	// 价格条目删除级联（D-C1：同事务先删变体后删条目；条目删除携带 manual 源
+	// 价格条目删除级联（同事务先删变体后删条目；条目删除携带 manual 源
 	// 守卫，litellm 行 → ErrConflict，守卫触发整体回滚变体零损伤；冒烟发现 2026-08-24）。
 	DeletePriceEntryManual(ctx context.Context, model string) error
 	DeletePriceVariantsByModel(ctx context.Context, model string) error
 }
 
-// WithTx 在单事务内执行 fn（评审 I-1）：ent `Tx().Client()` 模式构造 tx 版 Repository
+// WithTx 在单事务内执行 fn：ent `Tx().Client()` 模式构造 tx 版 Repository
 // （复用 newRepository，注入 tx client + 事务驱动），fn 内所有方法调用（含原子资源
 // 方法）都走 tx；fn 返回错误 → 整体回滚，nil → Commit。兑换编排用：
 // applier 必须只经 tx 面调资源更新，任一步失败（含 use 冲突/计数用尽）全部回滚。
@@ -306,7 +306,7 @@ func (r *Repository) UpdateGroupsBatch(ctx context.Context, ids []int64, p Group
 	return r.Groups.UpdateGroupsBatch(ctx, ids, p)
 }
 
-// --- 模板/账号类型化扩展（W1 数据层；消费接线 W3/W4/W6） ---
+// --- 模板/账号类型化扩展（数据层；消费接线） ---
 
 func (r *Repository) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) (*domain.TemplateExt, error) {
 	return r.TemplateExts.UpsertTemplateExt(ctx, e)
@@ -328,7 +328,7 @@ func (r *Repository) GetAccountExt(ctx context.Context, accountID int64) (*domai
 	return r.AccountExts.GetAccountExt(ctx, accountID)
 }
 
-// FindAccountExtByCodexKey 组合幂等键查重（Task B 批量导入——(codex_email,
+// FindAccountExtByCodexKey 组合幂等键查重（批量导入——(codex_email,
 // codex_account_id) 双条件；缺行 → ErrNotFound）。
 func (r *Repository) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
 	return r.AccountExts.FindAccountExtByCodexKey(ctx, codexEmail, codexAccountID)
@@ -355,7 +355,7 @@ func (r *Repository) AdminUpsertAccountExtCAS(ctx context.Context, e *domain.Acc
 	return r.AccountExts.AdminUpsertAccountExtCAS(ctx, e, expectedRevision)
 }
 
-// --- 用户（Phase 3a） ---
+// --- 用户 ---
 
 func (r *Repository) CreateUser(ctx context.Context, u *domain.User) (*domain.User, error) {
 	return r.Users.CreateUser(ctx, u)
@@ -411,7 +411,7 @@ func (r *Repository) ListUserEmails(ctx context.Context, ids []int64) (map[int64
 	return r.Users.ListUserEmails(ctx, ids)
 }
 
-// --- 客户端 key（Phase 3a） ---
+// --- 客户端 key ---
 
 func (r *Repository) CreateKey(ctx context.Context, k *domain.Key) (*domain.Key, error) {
 	return r.Keys.CreateKey(ctx, k)
@@ -451,13 +451,13 @@ func (r *Repository) DeleteKeysByGroup(ctx context.Context, groupID int64) ([]st
 	return r.Keys.DeleteKeysByGroup(ctx, groupID)
 }
 
-// --- 组授予（Phase 3a） ---
+// --- 组授予 ---
 
 func (r *Repository) GrantGroup(ctx context.Context, groupID, userID int64) error {
 	return r.Assignments.Grant(ctx, groupID, userID)
 }
 
-// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（T3.5 修正：
+// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（修正：
 // 按组；m = nil → 清除为未设置 → 回退组倍率）。
 func (r *Repository) SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error {
 	return r.Assignments.SetMultiplier(ctx, groupID, userID, m)
@@ -485,7 +485,7 @@ func (r *Repository) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*d
 	return r.Groups.LoadGroupAccounts(ctx, groupID)
 }
 
-// --- settings（Phase 3a） ---
+// --- settings ---
 
 func (r *Repository) GetSetting(ctx context.Context, key string) (*domain.Setting, error) {
 	return r.Settings.Get(ctx, key)
@@ -595,7 +595,7 @@ func (r *Repository) StatsTTFTExact(ctx context.Context, from, to time.Time, ent
 	return r.Stats.StatsTTFTExact(ctx, from, to, entityType, entityID, model)
 }
 
-// --- 兑换码（Phase 5 计费前基础设施） ---
+// --- 兑换码（计费前基础设施） ---
 
 func (r *Repository) CreateCodes(ctx context.Context, codes []*domain.RedemptionCode) error {
 	return r.Redemptions.CreateCodes(ctx, codes)
@@ -675,7 +675,7 @@ func (r *Repository) ReplacePriceVariants(ctx context.Context, model string, var
 	return r.PriceVariants.ReplaceBatch(ctx, model, variants)
 }
 
-// --- 原子资源更新（评审 I-1：UserStore 扩展；普通 client 与 tx client 均可用） ---
+// --- 原子资源更新（UserStore 扩展；普通 client 与 tx client 均可用） ---
 
 func (r *Repository) UpdateUserBalance(ctx context.Context, userID, delta int64) error {
 	return r.Users.UpdateUserBalance(ctx, userID, delta)
@@ -683,7 +683,7 @@ func (r *Repository) UpdateUserBalance(ctx context.Context, userID, delta int64)
 
 // SettleBalanceBatch Balance 车道结算一个窗口（余额-only 用户；单语句单事务
 // 取批→条件扣→透支补刀→标记；桶谓词 COALESCE(user_id,0)%k=bucket——桶级并行
-// wave3 D-C），见 BillingRepo（billing_settle.go）。
+// ），见 BillingRepo（billing_settle.go）。
 func (r *Repository) SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
 	return r.Billing.SettleBalanceBatch(ctx, limit, k, bucket)
 }
@@ -694,7 +694,7 @@ func (r *Repository) SettleFefoBatch(ctx context.Context, limit, k, bucket int) 
 	return r.Billing.SettleFefoBatch(ctx, limit, k, bucket)
 }
 
-// FetchUnbilledBatch 取未扣账本批（F2 冻结 ABI-2；游标 = 部分索引 WHERE NOT billed）。
+// FetchUnbilledBatch 取未扣账本批（冻结；游标 = 部分索引 WHERE NOT billed）。
 func (r *Repository) FetchUnbilledBatch(ctx context.Context, limit int) ([]domain.LedgerRow, error) {
 	return r.Billing.FetchUnbilledBatch(ctx, limit)
 }
@@ -705,18 +705,18 @@ func (r *Repository) MarkBilledBulk(ctx context.Context, ids []int64) error {
 }
 
 // UnbilledLag 游标积压度量（队头两步法：最老可结算行 created_at；ok=false =
-// 游标空；lag 护栏数据源，wave3 D-B 签名收缩）。
+// 游标空；lag 护栏数据源 签名收缩）。
 func (r *Repository) UnbilledLag(ctx context.Context) (oldestCreated time.Time, ok bool, err error) {
 	return r.Billing.UnbilledLag(ctx)
 }
 
 // AcquireBillingLock 抢占计费游标会话级 advisory lock（专用连接持锁整周期——
-// Momus M1 双扣防线；抢锁失败 ok=false 本周期跳过）。
+// Momus 双扣防线；抢锁失败 ok=false 本周期跳过）。
 func (r *Repository) AcquireBillingLock(ctx context.Context) (release func(), ok bool, err error) {
 	return r.Billing.AcquireBillingLock(ctx)
 }
 
-// --- usagelog 按日分区（Phase 5 T4.5；main 装配 bootstrap + retention worker） ---
+// --- usagelog 按日分区（；main 装配 bootstrap + retention worker） ---
 
 // EnsureUsageLogPartitioned 分区 bootstrap（幂等）：未分区 → DROP 重建分区表
 // + 预建当日/明日分区 + 索引；已分区 → 仅补齐分区。
@@ -805,7 +805,7 @@ func (r *Repository) DropUsageEntityStatsPartitionsBefore(ctx context.Context, c
 	return r.Partitions.DropUsageEntityStatsPartitionsBefore(ctx, cutoff)
 }
 
-// DeleteRedemptionUsesBefore redemption_uses 有界批删（F3-2：普通表无分区可
+// DeleteRedemptionUsesBefore redemption_uses 有界批删（普通表无分区可
 // DROP，每轮至多删 5000 行；TTL 定死 90 天——retention worker 每轮按
 // redemptionUseRetentionDays 调）。
 func (r *Repository) DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error) {
@@ -831,17 +831,17 @@ func (r *Repository) DropRoutingFlowRollupBefore(ctx context.Context, cutoff tim
 	return r.Partitions.DropRoutingFlowRollupBefore(ctx, cutoff)
 }
 
-// LoadBalances 全量余额快照（Phase 5 计费余额预检数据源）。
+// LoadBalances 全量余额快照（计费余额预检数据源）。
 func (r *Repository) LoadBalances(ctx context.Context) (map[int64]int64, error) {
 	return r.Users.LoadBalances(ctx)
 }
 
-// LoadGroupMultipliers 全量组倍率快照（Phase 5 T3.5 价格倍率数据源）。
+// LoadGroupMultipliers 全量组倍率快照（价格倍率数据源）。
 func (r *Repository) LoadGroupMultipliers(ctx context.Context) (map[int64]int, error) {
 	return r.Groups.LoadGroupMultipliers(ctx)
 }
 
-// LoadAssignmentMultipliers 全量用户-组专属倍率快照（T3.5 修正：用户专属倍率
+// LoadAssignmentMultipliers 全量用户-组专属倍率快照（修正：用户专属倍率
 // 按组挂载——billing.Balances.Reload/ReloadMultipliers 数据源）。
 func (r *Repository) LoadAssignmentMultipliers(ctx context.Context) (map[billing.AssignmentKey]int, error) {
 	return r.Groups.LoadAssignmentMultipliers(ctx)

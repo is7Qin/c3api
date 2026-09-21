@@ -91,7 +91,7 @@ func (s *Scheduler) refreshProbeBaseline(ctx context.Context) {
 	s.lastProbe.Store(&c)
 }
 
-// backstopTick is the demoted 30s tick (v5-C1): FIRST the O(1) probe, full
+// backstopTick is the demoted 30s tick: FIRST the O(1) probe, full
 // work ONLY on mismatch — plus a forced full path while the published view is
 // partial (probe-hit skips apply to whole views only, v5 §5.2 wholeness bit).
 // Probe hit on a whole view = return with zero rebuild, zero compile,

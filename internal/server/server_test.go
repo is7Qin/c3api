@@ -139,7 +139,7 @@ func TestFaviconServedFromWebFS(t *testing.T) {
 	require.Equal(t, "text/html; charset=utf-8", rec.Header().Get("Content-Type"))
 }
 
-// O1 收尾（评审项）：/assets/* 不得渲染 HTML 目录列表——目录请求 404、文件
+// 收尾（评审项）：/assets/* 不得渲染 HTML 目录列表——目录请求 404、文件
 // 200（go:embed all:dist 裸 FileServerFS 会把目录枚举成 HTML 列表，静态资源
 // 被遍历暴露）。
 func TestAssetsNoDirectoryListing(t *testing.T) {
@@ -162,11 +162,11 @@ func TestAssetsNoDirectoryListing(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "console.log(1)")
 }
 
-// 回归 D3（SPA 深链 404）：AI 面曾用 Mount("/", …) 注册 /* 通配，吞掉所有
+// 回归（SPA 深链 404）：AI 面曾用 Mount("/", …) 注册 /* 通配，吞掉所有
 // 未匹配路径——/app、/user 深链绕行 AI 组后落到子路由默认 404（根 SPA
 // fallback 不可达），冷启动时更会被 planReadyGate 误判 503（控制台不可达）。
 // AI 面实际只占 /v1/*（proxy.AIRouter），必须以静态前缀挂载。本用例显式同时
-// 装配 AIHandler + WebFS——此前无此组合用例，是 D3 漏网的原因。
+// 装配 AIHandler + WebFS——此前无此组合用例，是 漏网的原因。
 func TestSPADeepLinksWithAIHandlerMounted(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte(`<html>app</html>`)},
@@ -251,7 +251,7 @@ func TestZeroMaxInflightDeniesAllNoFallback(t *testing.T) {
 	require.Zero(t, s.inflight.Load(), "拒绝路径不得泄漏计数")
 }
 
-// --- Phase 3a：/admin 鉴权扩展（静态 token OR platform_admin JWT）+ /user 挂载 ---
+// --- /admin 鉴权扩展（静态 token OR platform_admin JWT）+ /user 挂载 ---
 
 // fakeUserStatus 测试替身（快照 provider，status+role 单次查找；roles 缺省 =
 // RoleUser——与生产"快照角色"语义对齐：admin 测试必须显式授予）。
@@ -279,7 +279,7 @@ func (emptySnapshotProvider) UserSnapshot(int64) (domain.UserSnapshot, bool) {
 	return domain.UserSnapshot{}, false
 }
 
-// 规格 Phase 3a：/admin = 静态 token OR platform_admin JWT（两个都过才拒）。
+// 规格 /admin = 静态 token OR platform_admin JWT（两个都过才拒）。
 func TestAdminAuthTokenOrPlatformJWT(t *testing.T) {
 	iss := auth.NewIssuer("secret")
 	adminTok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)
@@ -292,7 +292,7 @@ func TestAdminAuthTokenOrPlatformJWT(t *testing.T) {
 		JWTIssuer:  iss,
 		// 快照 role 覆盖 claims.Role：user 1 = platform_admin（JWT 与快照一致
 		// 才放行）；user 2 快照角色 = user → 即使 claims 伪造 platform_admin
-		// 也 401（F1 降权即时生效语义）。
+		// 也 401（降权即时生效语义）。
 		UserStatus:   fakeUserStatus{roles: map[int64]domain.Role{1: domain.RolePlatformAdmin}},
 		AdminHandler: admin,
 	})
@@ -351,7 +351,7 @@ func TestAdminUserIDContextInjection(t *testing.T) {
 		})
 	}
 
-	// UserStatus=nil（未装配提供者）→ JWT 路径整体拒绝（F1 行为变化：旧实现
+	// UserStatus=nil（未装配提供者）→ JWT 路径整体拒绝（行为变化：旧实现
 	// nil 放行——无快照角色可校验，fail-closed 语义一致；生产恒装配）。
 	t.Run("UserStatus nil JWT 路径拒绝", func(t *testing.T) {
 		s := NewServer(Options{AdminToken: "tok", JWTIssuer: iss, AdminHandler: admin})
@@ -385,7 +385,7 @@ func TestAdminPlatformJWTPartialAdmin(t *testing.T) {
 	require.Equal(t, 401, rec.Code, "禁用 platform_admin JWT 必须拒绝")
 }
 
-// F1 降权即时生效：旧 JWT（claims 仍 platform_admin）在快照刷新（模拟
+// 降权即时生效：旧 JWT（claims 仍 platform_admin）在快照刷新（模拟
 // invalidate → Reload）后立即 401——快照 role 覆盖 claims.Role，无需等
 // 24h TTL 过期。快照刷新 = 原地改 fake 共享 map（引用不变，中间件可见）。
 func TestAdminRoleDowngradeImmediate(t *testing.T) {
@@ -413,7 +413,7 @@ func TestAdminRoleDowngradeImmediate(t *testing.T) {
 	require.Equal(t, 401, do().Code, "降权后旧 JWT 立即拒绝（无需等 TTL 过期）")
 }
 
-// F1 快照缺失 fail-closed：平台_admin JWT + 快照查无此人（启动首刷失败 /
+// 快照缺失 fail-closed：平台_admin JWT + 快照查无此人（启动首刷失败 /
 // Reload 失败保留旧快照 / NOTIFY 丢失）→ 401，绝不放行。
 func TestAdminSnapshotMissingFailClosed(t *testing.T) {
 	iss := auth.NewIssuer("secret")
@@ -551,7 +551,7 @@ func (w *deadlineRecorder) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
-// --- F4 recoverer：debug.Stack + 已写头静默关连接（受益面仅 SSE） ---
+// --- recoverer：debug.Stack + 已写头静默关连接（受益面仅 SSE） ---
 
 // 未写头 panic → 500 JSON 照旧（行为不变）。
 func TestRecovererUnwrittenHeaders(t *testing.T) {

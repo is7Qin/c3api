@@ -70,14 +70,14 @@ type ErrLogWorker struct {
 	log    *logx.Logger
 	// mu 保护 closed 标志与投递（Enqueue 短临界区：closed 检查 + 非阻塞 send——
 	// 恒纳秒级，错误路径调用非热路径）。Close 置位 closed 后再排空——与投递
-	// 互斥串行，无"排空尾窗口静默丢"（架构审查 S4）。
+	// 互斥串行，无"排空尾窗口静默丢"（架构审查）。
 	mu     sync.Mutex
 	closed bool
 	// exemptQ 豁免队列（双轨行，恒落盘）；rejectQ 普通队列（拒绝行，风暴采样）。
 	// 有界容量见 cfg；投递 select-default 非阻塞。
 	exemptQ chan *domain.UsageLog
 	rejectQ chan *domain.UsageLog
-	// 丢弃计数按类拆分（架构审查 S3：reject 丢弃 / 双轨丢弃，对账指标）：
+	// 丢弃计数按类拆分（架构审查 reject 丢弃 / 双轨丢弃，对账指标）：
 	// 双轨丢弃 >0 即异常态（豁免队列溢出 / 落库失败止损重试耗尽）。
 	droppedReject atomic.Int64
 	droppedExempt atomic.Int64
@@ -218,7 +218,7 @@ func (w *ErrLogWorker) flush() {
 // 拒绝行回流豁免队列会篡改采样语义，故只回灌豁免行）。复用 enqueue 非阻塞
 // 投递：队列满（DB 持续故障 + 豁免积压）→ 按豁免溢出既有语义丢弃计数——有界
 // 队列即反压面，回灌不产生无限增长（内存上界不破坏）；Close 已置位 closed →
-// 丢弃计数（S4：无尾窗口静默丢）。
+// 丢弃计数（无尾窗口静默丢）。
 func (w *ErrLogWorker) refillExempt(exempts []*domain.UsageLog) {
 	for _, l := range exempts {
 		w.enqueue(w.exemptQ, l, &w.droppedExempt, &w.warnExempt, 1)
@@ -226,7 +226,7 @@ func (w *ErrLogWorker) refillExempt(exempts []*domain.UsageLog) {
 }
 
 // dropBatch 落库失败止损：按来源拆类计数——豁免行计 droppedExempt、拒绝行计
-// droppedReject（S3 对账语义；与 Close 截断路径按类拆对对齐，拒绝风暴下不再
+// droppedReject（对账语义；与 Close 截断路径按类拆对对齐，拒绝风暴下不再
 // 错类混计）。
 func (w *ErrLogWorker) dropBatch(exempts, rejects []*domain.UsageLog) {
 	w.droppedExempt.Add(int64(len(exempts)))
@@ -272,13 +272,13 @@ func firstRequestID(exempts, rejects []*domain.UsageLog) string {
 }
 
 // Close 幂等排空（优雅停机核心）：置位 closed（此后 Enqueue 丢弃计数——无尾
-// 窗口静默丢，S4）→ 等 worker goroutine 退出（受预算约束；loop 退出前在途
+// 窗口静默丢）→ 等 worker goroutine 退出（受预算约束；loop 退出前在途
 // flush 已同步收尾）→ 两队列剩余条目分批落库（每批 ≤ BatchSize，预算内完整
 // 排空——正常停机双轨行 + 未丢弃拒绝行不丢）；排空失败同 flush 语义：豁免行
 // 回灌重试一次（排空循环为紧凑 while、无 ticker 节奏，回灌无限重试即紧循环打
 // 爆 DB——仅重试一次，保留"不无限重试"的既有预算语义）、拒绝行按采样语义
 // 丢弃；ctx 到期 → Warn（含已排空/剩余条数）+ 截断退出（剩余丢弃计数），不
-// 阻塞停机。Close 结束打印 inserted/dropped 终值（S3 对账观测）。未 Start 也
+// 阻塞停机。Close 结束打印 inserted/dropped 终值（对账观测）。未 Start 也
 // 安全（跳过 loop 等待直接排空）。
 func (w *ErrLogWorker) Close(ctx context.Context) error {
 	w.closeOnce.Do(func() {

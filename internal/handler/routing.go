@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// routing.go — intelligent-routing 观测面（Todo 17 admin API）：flow /
+// routing.go — intelligent-routing 观测面（admin API）：flow /
 // frontier / plan 三个只读端点。纯转换/委托层：参数直进 service（窗口 ≤90d、
 // route 目录校验、limit 钳制全在 service），错误走 httpface.WriteServiceErr
 // 唯一映射表；空集合恒为 []（service 侧已保证非 nil，转换层再兜投影 nil 切片）。

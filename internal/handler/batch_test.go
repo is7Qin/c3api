@@ -320,7 +320,7 @@ func TestPostGroupsBatchDelete(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		rec := do(http.MethodPost, "/api/admin/groups", `{"name":"g`+itoa(int64(i))+`"}`)
 		require.Equal(t, 200, rec.Code, "create group: %s", rec.Body.String())
-		// Phase 3a：创建响应为 Group 本体（无 key 字段）
+		// 创建响应为 Group 本体（无 key 字段）
 		var created domain.Group
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 		ids = append(ids, created.ID)

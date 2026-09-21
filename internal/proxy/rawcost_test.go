@@ -150,7 +150,7 @@ func TestProxyRawCostSearchMultiplier(t *testing.T) {
 
 // TestProxyRawCostNonBilledFilled 非 billed 行（UserID==0 但 bill 装配——
 // gate 修订："非 billed 恒 0" 不实）：applyBilling 照算 → raw 照填（倍率前
-// 原文），cost 乘后——helper 在 applyBilling 内天然覆盖，无额外条件。F2 单写
+// 原文），cost 乘后——helper 在 applyBilling 内天然覆盖，无额外条件。 单写
 // 点（spec §一）：UserID=0 + capture off 双吸收态叠加 → Billed=true 出生即结算。
 func TestProxyRawCostNonBilledFilled(t *testing.T) {
 	up := fakeOpenAI(t, "")

@@ -92,7 +92,7 @@ func TestRecorder_FlowSameMinuteMergeKeepsCapacityAccounting(t *testing.T) {
 	require.NoError(t, foldConsumerRows(r.FlowOwner(), minute.Unix(), []repository.RoutingFlowRow{
 		flowTestRow(minute, 1, 10, "success", true),
 	}))
-	// v3-F1: the live charge accrues at the tick-owned fold, not at ingestion —
+	// the live charge accrues at the tick-owned fold, not at ingestion —
 	// unfolded cells carry no minute/entry charge; the first read folds them.
 	require.Equal(t, int64(0), r.PendingBytes(), "unfolded cells carry no live charge")
 	fmLive, ok := r.FlowMinute(minute.Unix())

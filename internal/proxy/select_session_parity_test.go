@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-// §7 G-select-parity, proxy half (v4-S1): golden failover sequences through
+// §7 G-select-parity, proxy half: golden failover sequences through
 // the threaded settle API (selectWithPlan → selectNextWithPlan → contPin →
 // shouldRetryWithPlan). The walk itself is oracle-pinned by the scheduler
 // select_session parity corpus; this file pins the proxy threading on top:

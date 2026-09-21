@@ -5,7 +5,7 @@
 package billing
 
 // Package billing 计费核心：service_tier 归一化 + 价格矩阵纯函数 + 余额快照
-// + 计费游标消费者（F2 ledger-cursor，spec 2026-08-23；F2-opt 吞吐极致化，
+// + 计费游标消费者（ledger-cursor，spec 2026-08-23； 吞吐极致化，
 // spec-f2-cursor-throughput 2026-08-24）。扣费与请求路径分离。
 
 import (
@@ -25,22 +25,22 @@ import (
 type LedgerStore interface {
 	// AcquireBillingLock 会话级 advisory lock：专用池连接取批前获取、持有整
 	// 周期（含全部车道结算事务 COMMIT）后解锁释放——多实例取批互斥的唯一防线
-	//（Momus M1：每事务 xact 锁形态下两实例可各自提交前取到同批未标记行 =
+	//（每事务 xact 锁形态下两实例可各自提交前取到同批未标记行 =
 	// 双扣资金，明令禁止）。
 	AcquireBillingLock(ctx context.Context) (release func(), ok bool, err error)
 	// FetchUnbilledBatch 取未扣账本批（WHERE NOT billed AND error_type IN
-	// ('none','abort') ORDER BY id LIMIT $n）：零价扫尾取数面（D1 单取批）。
+	// ('none','abort') ORDER BY id LIMIT $n）：零价扫尾取数面（单取批）。
 	FetchUnbilledBatch(ctx context.Context, limit int) ([]domain.LedgerRow, error)
 	// SettleBalanceBatch Balance 车道结算一个窗口（余额-only 用户；单语句单
 	// 事务 取批→条件扣→透支补刀→标记；桶谓词 COALESCE(user_id,0)%k=bucket——
-	// 桶级并行 wave3 D-C，K 由编排层给定）；结算失败保持 unbilled，由下周期重放。
+	// 桶级并行 ，K 由编排层给定）；结算失败保持 unbilled，由下周期重放。
 	SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error)
 	// SettleFefoBatch Temp 车道结算一个窗口（temp-active 用户；集合化 FEFO +
-	// 差额透支补刀 + 标记一体，D7；桶谓词同上）。事务失败保持 unbilled。
+	// 差额透支补刀 + 标记一体；桶谓词同上）。事务失败保持 unbilled。
 	SettleFefoBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error)
 	// MarkBilledBulk 幂等纯标记（仅零价行快速路径）。
 	MarkBilledBulk(ctx context.Context, ids []int64) error
-	// UnbilledLag 游标积压度量（wave3 D-B 签名收缩：队头两步法取最老可结算行
+	// UnbilledLag 游标积压度量（签名收缩：队头两步法取最老可结算行
 	// created_at，ok=false = 游标空；精确 COUNT 已删）。
 	UnbilledLag(ctx context.Context) (oldestCreated time.Time, ok bool, err error)
 }
@@ -60,7 +60,7 @@ const (
 	// fetchBatchLimit 零价扫/FEFO 车道取数上限（FetchUnbilledBatch 单次规模）。
 	fetchBatchLimit = 2000
 	// settleBatchLimit 结算语句单窗口行数的种子/初始值（自适应批控
-	// batchController 的起点，非固定值——见 batch_controller.go）：F2-opt W2
+	// batchController 的起点，非固定值——见 batch_controller.go）
 	// 实测调参。语句固定成本（编排/行锁/WALK 摊派）按批摊薄——批越大每行成本
 	// 越趋近纯 WAL 写入。实测边界：本盒单语句 DML ~3-6k 行/s（IO/WAL 共享竞争
 	// 下更低），批规模必须满足 settleTimeout(10s) 预算——50000 行实测超时停摆
@@ -72,16 +72,16 @@ const (
 	lagWarnFraction = 0.8
 )
 
-// lagSlowEvery 精确 lag 探针低频系数（F2-opt W2 实测调参）：COUNT(*) 在大积压
+// lagSlowEvery 精确 lag 探针低频系数（实测调参）：COUNT(*) 在大积压
 // 下是 O(unbilled) 的 index-only 扫描——风暴后可见性地图未置位时退化为逐行堆
 // 取（6.5M 行实测 474ms+），每周期必跑吃掉 ~20% 周期预算。精确值每 lagSlowEvery
 // 个节流窗校准一次，周期间 UnbilledRows 保持上次快照、lag_ms 不更新（Close 排
 // 空 force 绕过节流保证退出判据新鲜）。var（非 const）：测试注入。
 var lagSlowEvery = 10
 
-// lagRefreshInterval lag/Stats 真值刷新节流（F2-opt D2）：距上次刷新 ≥1s 才
+// lagRefreshInterval lag/Stats 真值刷新节流：距上次刷新 ≥1s 才
 // 执行——排空循环内每批一刷会放大 UnbilledLag 探测压力，Stats().UnbilledRows
-// 允许 ≤1s 陈旧度（不变量 #7 字段与告警语义不变，刷新频率让渡于吞吐）。
+// 允许 ≤1s 陈旧度（不变量 字段与告警语义不变，刷新频率让渡于吞吐）。
 // var（非 const）：测试注入。
 var lagRefreshInterval = time.Second
 
@@ -92,13 +92,13 @@ var lagRefreshInterval = time.Second
 // var（非 const）：测试注入小阈值。
 var inflightAbandonGrace = 500 * time.Millisecond
 
-// Flusher 计费游标消费者（worker.Worker 契约，Name="billing"）。F2 重写裁决：
+// Flusher 计费游标消费者（worker.Worker 契约，Name="billing"）。 重写裁决：
 // 内存 pending 队列整体删除（双写元凶）——billable 行由 usage flusher 落库
 // （billed=false 出生），本 worker 只消费账本游标：
 //
 //	每周期（FlushInterval 默认 250ms）：会话级 advisory lock 取批前获取、持有
-//	整周期后释放（多实例取批互斥）→ 排空式循环（F2-opt D2）三车道顺序消费
-//	（spec-f2opt-settlement §〇-b；车道内 K 桶并行，wave3 D-C）：Balance 车道
+//	整周期后释放（多实例取批互斥）→ 排空式循环三车道顺序消费
+//	（spec-f2opt-settlement §〇-b；车道内 K 桶并行）：Balance 车道
 //	SettleBalanceBatch（余额-only 用户，单语句单事务 取批→条件扣→透支补刀→标记）
 //	→ Temp 车道 SettleFefoBatch（temp-active 用户，集合化 FEFO——at-least-once
 //	消费 + 单语句原子 = exactly-once）→ 零价批扫尾 MarkBilledBulk 纯标记 → 直至
@@ -133,15 +133,15 @@ type Flusher struct {
 	baseCtx    context.Context // ticker 路径周期的可取消父 ctx（Close 预算到期 Cancel）
 	baseCancel context.CancelFunc
 	// 观测原子：lastFlush 最近成功消费时刻（UnixMilli；0 = 尚未消费）；
-	// unbilledN Unbilled 行数**占位恒 0**（wave3 D-B 精确 COUNT 已删——无硬消费
-	// 者，Stats().UnbilledRows 可观测性降级显式化，spec §一 D-B「仪表盘允许估算
+	// unbilledN Unbilled 行数**占位恒 0**（精确 COUNT 已删——无硬消费
+	// 者，Stats().UnbilledRows 可观测性降级显式化，spec §一「仪表盘允许估算
 	// 降级」；字段保留 = ops JSON 契约 ABI 不变）；quarantined 累计隔离行数（幽灵
 	// 用户行）；lagMs 游标积压时滞（毫秒，= 探测时刻 now − 最老
-	// unbilled 行 created_at；0 = 游标空/未探测，ABI-4 lag 族真值）；
+	// unbilled 行 created_at；0 = 游标空/未探测 lag 族真值）；
 	// lastLag 最近 lag 探测时刻（UnixMilli；节流基准，flushMu 内读写）；
 	// lagWarned lag 护栏告警边沿（回落复位防刷屏）。
 	lastFlush   atomic.Int64
-	unbilledN   atomic.Int64 // 占位恒 0（D-B 降级显式化）——见上注释
+	unbilledN   atomic.Int64 // 占位恒 0（降级显式化）——见上注释
 	quarantined atomic.Int64
 	lagMs       atomic.Int64
 	lastLag     atomic.Int64
@@ -224,15 +224,15 @@ func (f *Flusher) consumeCycle(ctx context.Context, drain bool) int64 {
 	return marked
 }
 
-// drainLoop 排空式消费（F2-opt D2）：循环 取批→路由→消费 直至空批返回、零进展
+// drainLoop 排空式消费：循环 取批→路由→消费 直至空批返回、零进展
 // 或 ctx.Err()——一批一 tick 的节奏概念废除，FlushInterval 仅在游标空时作为
 // 空转间隔。实现见 drain.go（排空消费机制面）。
 
-// refreshLag lag 护栏真值刷新（wave3 D-B 无计数世界重构）：force=true = Close
+// refreshLag lag 护栏真值刷新（无计数世界重构）：force=true = Close
 // 排空语境**必刷**（绕过全部节流——Momus 维度5：退出判据新鲜度不可让渡）；非
 // force 双层节流——① lagRefreshInterval ≥1s 窗 ② 精确探针每 lagSlowEvery 个
 // 节流窗校准一次（队头两步法虽已 O(log n)，低频化保留为探针压力上限），校准窗
-// 之间 lagMs 保持上次值（陈旧度显式可接受，D-B 降级语义）。最老 unbilled 行距今
+// 之间 lagMs 保持上次值（陈旧度显式可接受 降级语义）。最老 unbilled 行距今
 // 超保留期 80% → 高声 Warn（边沿触发，回落复位防刷屏）——消费停摆逼近分区 DROP
 // 线提前可见。lag 真值探测成功后原子写（Stats() 零锁直读）。仅在 flushMu 内调用
 // （consumeCycle 收尾）——节流检查无竞态。
@@ -247,7 +247,7 @@ func (f *Flusher) refreshLag(ctx context.Context, force bool) {
 		f.lagSlowCnt++
 		f.lastLag.Store(now)
 		if (f.lagSlowCnt-1)%lagSlowEvery != 0 {
-			return // 精确探针低频化：非校准窗跳过——lagMs 保持上次值（D-B 显式降级）
+			return // 精确探针低频化：非校准窗跳过——lagMs 保持上次值（显式降级）
 		}
 	}
 	oldest, ok, err := f.store.UnbilledLag(ctx)

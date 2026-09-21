@@ -402,7 +402,7 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	shouldFail.Store(false)
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", testIdentity, 1), "OPEN 窗口内不得被探测（T1）")
+	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", testIdentity, 1), "OPEN 窗口内不得被探测")
 
 	// 窗口结束再入 PROBING：一次成功不足、两次才 READY。
 	_, err = h.Throttle(context.Background(), key, StateProbing, 5*time.Second)

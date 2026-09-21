@@ -4,8 +4,8 @@
 
 package billing
 
-// drain.go 排空消费机制面（F2-opt v2 三车道拓扑，spec-f2opt-settlement §〇-b；
-// wave3 D-C 桶级并行）：每轮顺序执行 Balance 结算 → Temp FEFO 结算 → 零价批纯
+// drain.go 排空消费机制面（v2 三车道拓扑，spec-f2opt-settlement §〇-b；
+// 桶级并行）：每轮顺序执行 Balance 结算 → Temp FEFO 结算 → 零价批纯
 // 标记。三车道 batch 谓词互斥（NOT-IN / IN temp-active）→ 同用户同周期不跨车道
 // （跨道并行即成环）；车道内 K 桶并行（settleLaneParallel——桶谓词
 // COALESCE(user_id,0)%K=i，桶间 uid 集合不相交 → 行锁集不相交，无死锁构造性
@@ -22,7 +22,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// drainCycleBudget 单消费周期内排空循环的时间预算（F2-opt G1 审计 D 面）：
+// drainCycleBudget 单消费周期内排空循环的时间预算（D 面）：
 // 持续到达下零价行持续供进度会使单周期无界持有会话级 advisory lock 与
 // flushMu——refreshT 停摆 → Balances.Reload 停摆 → 新用户预检快照缺失
 // 402（guardPipeline 预检 fail-closed）。预算到期收尾本周期，剩余积压保持
@@ -30,8 +30,8 @@ import (
 // 单批时长。var（非 const）：测试注入；<=0 = 禁用预算。
 var drainCycleBudget = 500 * time.Millisecond
 
-// drainLoop 排空式消费（D2 + F7 失败闭合）：循环 三车道消费 直至零进展、
-// 周期预算到期或 ctx.Err()——F7 失败闭合要求失败 lane/bucket 在本周期内不再重试
+// drainLoop 排空式消费（失败闭合）：循环 三车道消费 直至零进展、
+// 周期预算到期或 ctx.Err()—— 失败闭合要求失败 lane/bucket 在本周期内不再重试
 // （下周期 ticker 重试），健康桶继续独立提交。
 func (f *Flusher) drainLoop(ctx context.Context) int64 {
 	deadline := time.Now().Add(drainCycleBudget)
@@ -53,9 +53,9 @@ func (f *Flusher) drainLoop(ctx context.Context) int64 {
 	return drained
 }
 
-// settleParallelism 桶级并行度（wave3 D-C 架构裁决：K 由本编排层持有——仓库
+// settleParallelism 桶级并行度（架构裁决：K 由本编排层持有——仓库
 // 方法保持 policy-free）：每车道 K 个 goroutine 各自独立 tx/独立连接并发执行
-// 同一结算语句的不同桶。K=4 起步（W2 实测单语句串行是天花板——语句内 CTE 串行
+// 同一结算语句的不同桶。K=4 起步（实测单语句串行是天花板——语句内 CTE 串行
 // 执行，并行只能来自桶间）。
 const settleParallelism = 4
 
@@ -63,7 +63,7 @@ const settleParallelism = 4
 // 共形：ctx, limit, k, bucket）。
 type settleFn func(context.Context, int, int, int) (domain.SettlementSummary, error)
 
-// consumeBatchFiltered F7 失败闭合：同 consumeBatch 但传入周期内已失败桶集合——
+// consumeBatchFiltered 失败闭合：同 consumeBatch 但传入周期内已失败桶集合——
 // 失败桶在本周期内不再重试（下周期重试），健康桶继续。
 func (f *Flusher) consumeBatchFiltered(ctx context.Context, failedBalance, failedFefo *[settleParallelism]bool) int64 {
 	var drained int64
@@ -73,10 +73,10 @@ func (f *Flusher) consumeBatchFiltered(ctx context.Context, failedBalance, faile
 	return drained
 }
 
-// settleLaneParallel 单车道 K 桶并行结算（wave3 D-C + F7 失败闭合）：K
+// settleLaneParallel 单车道 K 桶并行结算（失败闭合）：K
 // goroutine 各自调用 settle(ctx, ctl.limit(), K, i)（i=0..K-1，独立 tx/连接），
 // 批规模取本车道专用控制器当前值，调用后 observe 反馈。failed 非 nil 时跳过本
-// 周期已失败桶（不重试，下周期重试）；失败桶按 lane/bucket 粒度 Warn（F7 可观测
+// 周期已失败桶（不重试，下周期重试）；失败桶按 lane/bucket 粒度 Warn（可观测
 // 性：lane, bucket, retry_scope=next_cycle, error）。WaitGroup 全量收敛后合并
 // summary；成功桶照常 applySettlement，失败桶零贡献且记录到 failed 集合。
 func (f *Flusher) settleLaneParallel(ctx context.Context, lane string, settle settleFn, ctl *batchController, failed *[settleParallelism]bool) int64 {
@@ -127,7 +127,7 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, lane string, settle se
 }
 
 // applySettlement 结算成功收尾：(uid,balance_after) 对定向刷新余额快照（O(1)
-// 原地 Store——oracle 必改 #3，10s Reload 间隙预检新鲜度）；幽灵/隔离行计数 +
+// 原地 Store——oracle 必改 ，10s Reload 间隙预检新鲜度）；幽灵/隔离行计数 +
 // Warn（毒用户不卡游标）。
 func (f *Flusher) applySettlement(s domain.SettlementSummary) {
 	for _, p := range s.Balances {

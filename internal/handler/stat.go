@@ -21,7 +21,7 @@ func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params 
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	// 非法 granularity 直透 service 哨兵→400（RG-BE M-1：handler 静默回落
+	// 非法 granularity 直透 service 哨兵→400（handler 静默回落
 	// 会掩盖 normalizeGranularity 的 ErrInvalidInput，契约不一致）。
 	granularity := ""
 	if params.Granularity != nil {

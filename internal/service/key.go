@@ -221,7 +221,7 @@ func (s *Service) DeleteKey(ctx context.Context, userID, keyID int64) error {
 
 // ownedKey 取 key 并校验归属：非本人 key 一律按不存在处理（404，防越权探测
 // 他人 key 存在性）。
-// 软删 key 不可复活（F2）：repo GetKey 不过滤 deleted_at（GET 详情可查已删），
+// 软删 key 不可复活：repo GetKey 不过滤 deleted_at（GET 详情可查已删），
 // 单点过滤覆盖 Get/Update/Rotate/Delete 全路——已删 key 一律 404（删除态不可
 // 变，修复前 UpdateKey/RotateKey 可把已删 key 明文重入鉴权快照复活）。
 func (s *Service) ownedKey(ctx context.Context, userID, keyID int64) (*domain.Key, error) {

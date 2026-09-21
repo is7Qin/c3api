@@ -66,7 +66,7 @@ type Store interface {
 	WithTx(ctx context.Context, fn func(repository.TxStore) error) error
 }
 
-// UserStore 用户持久化（Phase 3a）。
+// UserStore 用户持久化。
 type UserStore interface {
 	CreateUser(ctx context.Context, u *domain.User) (*domain.User, error)
 	GetUser(ctx context.Context, id int64) (*domain.User, error)
@@ -94,7 +94,7 @@ type UserStore interface {
 	ListUserEmails(ctx context.Context, ids []int64) (map[int64]string, error)
 }
 
-// SettingStore 类型化配置持久化（Phase 3a）。
+// SettingStore 类型化配置持久化。
 type SettingStore interface {
 	GetSetting(ctx context.Context, key string) (*domain.Setting, error)
 	GetAllSettings(ctx context.Context) ([]*domain.Setting, error)
@@ -217,7 +217,7 @@ type EmailCodeStore interface {
 	DeleteEmailCode(ctx context.Context, email, purpose string) error
 }
 
-// RedemptionStore 兑换码 + 兑换审计持久化（Phase 5 计费前基础设施）。
+// RedemptionStore 兑换码 + 兑换审计持久化（计费前基础设施）。
 // 兑换事务编排（Redeem）经 Store.WithTx 以 repository.TxStore 面访问。
 type RedemptionStore interface {
 	CreateCodes(ctx context.Context, codes []*domain.RedemptionCode) error
@@ -277,7 +277,7 @@ type StatStore interface {
 // 已轻量）。Mark 路径零锁零 DB，不阻塞任何调用方。
 type Invalidator interface {
 	// Users 用户 CRUD（含创建）与用户余额变更（含 Redeem）：auth + 余额快照
-	// 全量 Reload（去抖窗口内合并；新用户必须即刻进余额快照——评审 M-2，
+	// 全量 Reload（去抖窗口内合并；新用户必须即刻进余额快照——评审
 	// 防 ≤10s 402 窗口，回归测试 tools/e2e）。
 	Users()
 	// Templates 模板（base_url/models/映射）变更：sched 全量 + clients 失效

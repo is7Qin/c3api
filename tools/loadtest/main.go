@@ -172,7 +172,7 @@ func main() {
 
 	// 每 worker 自建局部随机源：math/rand/v2 全局源带锁，30k 并发下
 	// pickKey/退避抢同一把锁；按 worker 索引分种子，退避不会同频共振。
-	// transport 同样 per-worker（#19）：全局共享 transport 的连接池锁
+	// transport 同样 per-worker：全局共享 transport 的连接池锁
 	// （connsMu）在 50k 并发下是跨 worker 争抢点；每 worker 独立 transport
 	// 后池锁归零竞争，连接数不变（稳态每 worker 恰好一条 keep-alive）。
 	randSeed := uint64(time.Now().UnixNano())
@@ -183,7 +183,7 @@ func main() {
 		go func(idx int, rng *rand.Rand) {
 			defer wg.Done()
 			// 每 worker 独立 transport（池容量 1 即够——稳态恒 1 条连接）：
-			// 避免共享 transport 的连接池锁竞争（#19）；参数同全局版。
+			// 避免共享 transport 的连接池锁竞争；参数同全局版。
 			transport := newLoadTransport(m)
 			client := &http.Client{Timeout: 10 * time.Minute, Transport: transport}
 			if isAPI {
@@ -427,7 +427,7 @@ func affinityIdx(rng *rand.Rand) int {
 	return rng.IntN(*affinityKeys)
 }
 
-// newLoadTransport 每 worker 独立 transport（#19：连接池锁零竞争）+ 建连观测。
+// newLoadTransport 每 worker 独立 transport（连接池锁零竞争）+ 建连观测。
 // dial 统计由自持 DialContext 完成（语义与 http 默认 dialer 一致：30s 超时、
 // 30s keepalive）——httptrace 的 Connect* 回调由 transport 拨号 goroutine
 // 调用，实测高并发回环下偶发不触发（tcpConns=1 而回调零记录），统计不可信；
@@ -732,7 +732,7 @@ func doFillRequest(client *http.Client, m *metrics, rng *rand.Rand, count bool) 
 	if *fillKeysOut != "" && *fillType == "keys" {
 		fillKeyB, _ = io.ReadAll(resp.Body)
 	} else {
-		_, _ = io.Copy(io.Discard, resp.Body) // 响应体排空，连接回池复用（O3 复核：此路径与 keys 登录子请求均已排空，唯一缺口在 doRequest 非 200 分支，已修）
+		_, _ = io.Copy(io.Discard, resp.Body) // 响应体排空，连接回池复用（复核：此路径与 keys 登录子请求均已排空，唯一缺口在 doRequest 非 200 分支，已修）
 	}
 	resp.Body.Close()
 	if resp.StatusCode != 200 {

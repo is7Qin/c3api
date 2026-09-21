@@ -82,7 +82,7 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 	cl.Primary = newPrimary
 	cl.Degraded = newDegraded
 	sort.Slice(cl.Explore, func(i, j int) bool { return cl.Explore[i].AccountID < cl.Explore[j].AccountID })
-	// Steady-state exploration share (charter Task 6): computed from the
+	// Steady-state exploration share (charter): computed from the
 	// window inputs already read — eligible route candidates, unknown
 	// (low-sample, incl. cost-unknown demotees) and serving primaries.
 	// No Primary → 10000bp (all explore); unknown==0 → 100bp; cap 500bp.

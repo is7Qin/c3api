@@ -333,7 +333,7 @@ func TestAccountExtValidation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, iid, saved.CodexIdentity.InstallationID, "显式提供后缺省沿用")
-	require.Nil(t, saved.CodexEmail, "未提供 email → NULL 清空（B1-5：email 不在缺省沿用面）")
+	require.Nil(t, saved.CodexEmail, "未提供 email → NULL 清空（email 不在缺省沿用面）")
 	require.Equal(t, "s1", saved.CodexIdentity.SessionID, "session 持久复用")
 
 	// 列组约束

@@ -132,7 +132,7 @@ func TestStreamRawBaseURLWithTrailingSlash(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-// TestStreamRawBaseURLChangeConverges 评审 C1 回归：URL 缓存键含 base_url
+// TestStreamRawBaseURLChangeConverges 评审 回归：URL 缓存键含 base_url
 // 快照——同模板 ID 直接改 base_url（绕过管理 API 的 DB 直改 + 周期同步下发新
 // 快照）后，新流量必须立即打到新地址；旧实现键仅 templateID，缓存不失效 →
 // 流量打旧上游。模拟：同一 Factory、同模板 ID，先后传两个不同 base_url。
@@ -242,10 +242,10 @@ func TestRawRelayClientHeadersArrive(t *testing.T) {
 	_, ok = built["Cookie"]
 	require.False(t, ok, "Cookie（跨租户态）不得出现在出栈头")
 	require.Equal(t, "Bearer sk-test", built.Get("Authorization"),
-		"入站凭据被剔后网关写账号 key（不变量 #5：网关声明后写赢）")
+		"入站凭据被剔后网关写账号 key（不变量 网关声明后写赢）")
 }
 
-// TestRawRelayNoUserAgentWhenClientSendsNone 护栏 G1：入站无 UA ⇒ 网关自建的
+// TestRawRelayNoUserAgentWhenClientSendsNone 护栏 入站无 UA ⇒ 网关自建的
 // 出栈头**不含 User-Agent 键**。只断言键不存在、绝不断言字面值——服务端视角
 // 看到的 Go-http-client/1.1 还是 /2.0 取决于上游是 h1 还是 ALPN h2（实测两种
 // 都出现过），写死字面值的测试会随协议漂。

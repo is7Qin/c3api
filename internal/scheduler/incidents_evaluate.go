@@ -9,7 +9,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Incident evaluation (incident-wiring Phase 4): DETECT + SURFACE ONLY — no
+// Incident evaluation (incident-wiring): DETECT + SURFACE ONLY — no
 // lane reordering, no throttling, no probe triggering. The pure vote
 // (evaluateRouteIncident) resolves per-candidate evidence from the windowed
 // current + PG baseline; the lane tracker (incidentTracker, serial compile

@@ -73,7 +73,7 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 			ops := operationTagsForFormat(rk.format)
 			for _, op := range ops {
 				rr := canonicalRouteRefWithOp(gid, rk, op)
-				// v4-S2: the table key stays normalized (no hex); the
+				// the table key stays normalized (no hex); the
 				// decision value keeps rr.RouteClassID as the interned hex.
 				key := normRouteRef(rr)
 				dec, err := c.compileSingleRoute(in, gid, rk, op)
@@ -91,7 +91,7 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 }
 
 // compileSingleRoute compiles exactly one route (group × routeKey × op) — the
-// shared per-route body behind both the full Compile loop and the v5-C2
+// shared per-route body behind both the full Compile loop and the
 // scoped path, so scoped output equals the full-recompile oracle bit-for-bit
 // by construction. Incident stamping rides the same shared body (full and
 // scoped evaluate through the input's IncidentEval, frozen evaluations reuse

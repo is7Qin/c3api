@@ -192,7 +192,7 @@ func (s *Service) DeactivateCode(ctx context.Context, id int64) error {
 // DeactivateCodesBatch 批量失效（/api/admin/redemption-codes/batch-deactivate，
 // 决策 6）：validateIDs → 逐 id 先查（缺失 id → 404 含缺失详情，对齐批量删除
 // 范式）→ DeactivateCodes 单事务（已 disabled no-op）→ 返回新失效数。
-// 先查后失效窗口竞态可接受：失效不新增行，检查到的 id 不会消失（评审 M-2）。
+// 先查后失效窗口竞态可接受：失效不新增行，检查到的 id 不会消失。
 func (s *Service) DeactivateCodesBatch(ctx context.Context, ids []int64) (int64, error) {
 	if err := validateIDs(ids); err != nil {
 		return 0, err
@@ -244,7 +244,7 @@ func applyTempBalance(ctx context.Context, tx repository.TxStore, userID int64, 
 // ③ 码状态检查（disabled/过期 → 400 invalid code，统一不泄露具体原因）；
 // ④ applier 应用资源（只经 tx 面，失败整体回滚）；
 // ⑤ CreateUse 审计 + IncrementUsed 条件递增（false = 用尽 → 400 整体回滚，
-// 防并发超卖——评审 I-2）。提交成功后 invalidate() 刷新 auth 快照（决策 8）。
+// 防并发超卖——评审）。提交成功后 invalidate() 刷新 auth 快照（决策 8）。
 func (s *Service) Redeem(ctx context.Context, code string, userID int64) (*domain.RedemptionApply, error) {
 	var apply *domain.RedemptionApply
 	err := s.store.WithTx(ctx, func(tx repository.TxStore) error {
@@ -286,7 +286,7 @@ func (s *Service) Redeem(ctx context.Context, code string, userID int64) (*domai
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("%w: invalid code", ErrInvalidInput) // 用尽（评审 I-2）
+			return fmt.Errorf("%w: invalid code", ErrInvalidInput) // 用尽
 		}
 		apply = &domain.RedemptionApply{Type: c.Type, Value: c.Value, ResourceExpiresAt: c.ResourceExpiresAt}
 		return nil

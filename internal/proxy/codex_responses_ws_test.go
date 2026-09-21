@@ -280,7 +280,7 @@ func dialResponsesWSHeaders(t *testing.T, srv *httptest.Server, h http.Header) *
 	return c
 }
 
-// TestCodexWSBlackHoleDialTimeout codex 拨号同款超时（T3）：黑洞上游永不回
+// TestCodexWSBlackHoleDialTimeout codex 拨号同款超时：黑洞上游永不回
 // 101 → wrapped ctx 超时 → SDK dialStatus(nil)=0（resp=nil 安全返回）→
 // DialError{StatusCode:0} → handleCodexDialError 既有 default 分支连接级转移
 // （零新分支）→ 耗尽错误帧 + 连接级/5xx 分流 冷却 + 并发槽释放。
@@ -304,7 +304,7 @@ func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	ef := readResponsesWSFrame(t, c)
 	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "Upstream request failed", "WS 耗尽 CustomMessage（P22 honor msg）")
+	require.Contains(t, string(ef), "Upstream request failed", "WS 耗尽 CustomMessage（honor msg）")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空

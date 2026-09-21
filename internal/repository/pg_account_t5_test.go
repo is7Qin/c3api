@@ -78,7 +78,7 @@ func TestWriteOAuthRotationPG(t *testing.T) {
 	require.Equal(t, ext.CodexIdentity.WindowID, got.CodexIdentity.WindowID)
 	require.Equal(t, *ext.CodexEmail, *got.CodexEmail)
 
-	// 幂等：重复回调（D4 重试投递同一 (at, rt)）→ 收敛不报错
+	// 幂等：重复回调（重试投递同一 (at, rt)）→ 收敛不报错
 	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at-new", "rt-new", &expires))
 	got2, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
@@ -103,7 +103,7 @@ func TestWriteOAuthRotationNilExpiryPG(t *testing.T) {
 }
 
 // TestWriteOAuthRotationMissingRowPG 行缺失（配置损坏——codex 账号必有 ext
-// 行）→ 报错（INSERT 路径缺必填列）——D4 回调重试链接管（fail-closed）。
+// 行）→ 报错（INSERT 路径缺必填列）—— 回调重试链接管（fail-closed）。
 func TestWriteOAuthRotationMissingRowPG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
@@ -117,5 +117,5 @@ func TestWriteOAuthRotationMissingRowPG(t *testing.T) {
 	require.NoError(t, err)
 	// 无 ext 行
 	require.Error(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at", "rt", nil),
-		"行缺失必须报错——令牌无法持久化 = D4 失败信号")
+		"行缺失必须报错——令牌无法持久化 = 失败信号")
 }

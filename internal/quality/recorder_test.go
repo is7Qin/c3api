@@ -301,7 +301,7 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 	}
 	require.LessOrEqual(t, r.MinuteBucketCount(), 2)
 	require.Greater(t, r.QualityOverflow(), int64(0))
-	// v3-hygiene: the legacy edges-array vehicle is deleted — the flow lane
+	// the legacy edges-array vehicle is deleted — the flow lane
 	// carries live consumer rows instead. Five distinct minutes fold and
 	// drain into five retained shells.
 	for i := 0; i < 5; i++ {
@@ -309,7 +309,7 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 		_, ok := r.FlowMinute(int64(2000 + i))
 		require.True(t, ok)
 	}
-	// v3-F1: the flow lane has no minute cap and no pressure eviction — all
+	// the flow lane has no minute cap and no pressure eviction — all
 	// five legacy minutes stay retained with zero loss counters. Only the
 	// quality lane above stays bounded.
 	require.Equal(t, 5, r.FlowOwner().SnapshotStats().PendingMinutes)

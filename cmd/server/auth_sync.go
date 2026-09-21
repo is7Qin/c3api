@@ -15,12 +15,12 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// authSyncInterval 鉴权快照周期兜底（设计文档 §1.6/§5 #9）：NOTIFY 丢失/
+// authSyncInterval 鉴权快照周期兜底（设计文档 §1.6/§5）：NOTIFY 丢失/
 // 断连期间，key CRUD 与用户变更最长 60s 收敛。现状 auth 无周期 reload——这是
 // 60s 兜底缺口的半侧，本 worker 补位。
 const authSyncInterval = 60 * time.Second
 
-// authSyncTimeout 单次 Reload per-attempt 超时（p2-03）：DB 挂起时循环最长
+// authSyncTimeout 单次 Reload per-attempt 超时：DB 挂起时循环最长
 // 阻塞本时长后必回 select——60s 兜底不因单次挂起永久停摆（此前用生命周期 ctx
 // 无超时，DB 挂起 → 循环卡死 → 兜底永久失效）。
 const authSyncTimeout = 30 * time.Second
@@ -34,7 +34,7 @@ type authSync struct {
 	interval time.Duration
 	timeout  time.Duration // per-attempt Reload 超时（0 兜底 → authSyncTimeout 30s；测试可缩短）
 	log      *logx.Logger
-	// goFn 托管 goroutine 启动器（p2-03：裸 goroutine → worker.Manager.Go
+	// goFn 托管 goroutine 启动器（裸 goroutine → worker.Manager.Go
 	// 同契约——panic 捕获 + Warn，进程不崩，worker.go:6 承诺）。默认
 	// worker.New(log).Go；测试可注入记录/替代实现。
 	goFn      func(ctx context.Context, name string, fn func(context.Context))

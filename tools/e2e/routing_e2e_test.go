@@ -4,7 +4,7 @@
 
 //go:build e2e
 
-// Package e2e 单实例智能路由端到端测试（charter Task 24）：真实网关 +
+// Package e2e 单实例智能路由端到端测试（charter）：真实网关 +
 // fakeupstream + 真实 PostgreSQL + 真实 Redis。
 //
 // 运行（前置：PG localhost:15432，Redis localhost:16379；测试以 postgres
@@ -80,7 +80,7 @@ func rtBoot(t *testing.T) (*e2eEnv, *exec.Cmd, *exec.Cmd, string) {
 
 	// Redis 隔离（与 PG DROP+CREATE 对等）：FlushDB 清掉上轮残留的易失协
 	// 调态。实证根因（h2）：stage-5 限流写入的 OPEN(C,*,rev1)/120s 在共享
-	// Redis 存活；新鲜库账号 ID/revision 确定性重放（C恒ID5/rev1），下轮
+	// Redis 存活；新鲜库账号 ID/revision 确定性重放（C恒rev1），下轮
 	// health Sync 原样导入旧记录 → stage-5 全程误拒 C（上游零命中）。生产
 	// 多实例本就共享这些记录（收敛语义），清的是测试隔离债。
 	rc, err := redisx.Open(redisx.Options{Addr: redisAddr})
@@ -1332,9 +1332,9 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	require.Equal(t, mark, rtAuditMaxSeq(t), "限流冻结期上游必须零尝试")
 
 	// ============ 6. failover 聚合验证：429 尝试必被救援（全 200） ============
-	// 5xx 按 replay 规则 terminal（见 evidence），故 g4 只含 F429+G：F 命中
+	// 5xx 按 replay 规则 terminal（见 evidence），故 g4 只含 G：F 命中
 	// → failover → G 成功；G 命中 → 直接成功。H 隔离 g5。
-	t.Log("阶段 6：failover——429 尝试 + 全员 200（g4：F429/G健康）")
+	t.Log("阶段 6：failover——429 尝试 + 全员 200（g4：G健康）")
 	r4 := rtWaitRoute(t, env, g4, "openai-chat", rtModel)
 	candIDs := map[int64]bool{}
 	for _, cc := range r4["candidates"].([]any) {
@@ -1354,7 +1354,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	require.Equal(t, 15, rtAuditHits(t, mark, rtKeyG, 200), "G 必须成功 15 次")
 	bad := rtAuditHits(t, mark, rtKeyF429, 429)
 	require.GreaterOrEqual(t, bad, 1, "15 次内至少 1 次命中 F（否则 failover 未被演练）")
-	t.Logf("failover：F429 尝试=%d，客户端 200×15（全部被救援）", bad)
+	t.Logf("failover 尝试=%d，客户端 200×15（全部被救援）", bad)
 
 	// ============ 7. fail_account → 恢复 → PROBING ============
 	t.Log("阶段 7：fail_account（D）→ recover → PROBING 重 admission")

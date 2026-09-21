@@ -16,7 +16,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// W4 模板快照扩展真实 PG 测试：StripImageTools 从 template_ext 合并进调度器
+// 模板快照扩展真实 PG 测试：StripImageTools 从 template_ext 合并进调度器
 // 快照（LoadGroupsAccounts / LoadGroupAccounts）——热路径零 DB 的数据源。
 // 基座见 pg_account_groups_test.go 的 newPGRepos（DROP SCHEMA 重建）。
 // ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-//  真实 PostgreSQL 测试基座（评审延续：新表/新语义一律真实 PG）。
+// 真实 PostgreSQL 测试基座（评审延续：新表/新语义一律真实 PG）。
 // 启动方式：
 //   docker compose -f deploy/test-compose.yml up -d
 //   TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test \
@@ -138,7 +138,7 @@ func TestPGKeyLifecycle(t *testing.T) {
 	require.Equal(t, int64(1), total)
 	require.Equal(t, "k1", rows[0].Name)
 
-	// UpdateKey（patch：status/并发/额度；nil = 不改——S3-F1）
+	// UpdateKey（patch：status/并发/额度；nil = 不改——）
 	name := "k1-renamed"
 	st := domain.KeyStatusDisabled
 	mc := 2
@@ -233,7 +233,7 @@ func TestPGLoadKeysSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.UserStatusDisabled, m2["ck-a"].UserStatus, "用户禁用随快照下发")
 
-	// 组 protocol_convert 变更随快照下发（W5 热路径分支数据源；多值方向集合）
+	// 组 protocol_convert 变更随快照下发（热路径分支数据源；多值方向集合）
 	_, err = repos.Groups.UpdateGroup(ctx, &domain.Group{
 		ID: g.ID, Name: g.Name, Visibility: g.Visibility,
 		PriceMultiplier: 10000,
@@ -396,7 +396,7 @@ func TestPGUsageLogUserKeyRoundTrip(t *testing.T) {
 	}
 }
 
-// 编译期钉：ent 生成的枚举类型名（Phase 3a 字段）。
+// 编译期钉：ent 生成的枚举类型名（字段）。
 var _ = group.VisibilityPublic
 var _ = user.RoleUser
 var _ = key.StatusActive

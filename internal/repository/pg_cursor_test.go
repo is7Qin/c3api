@@ -227,7 +227,7 @@ func TestPGCursorProbeLimitPlusOne(t *testing.T) {
 
 // errPageWalk err_logs keyset 翻页走查（与 pageWalk 同构——cursor = 本页最后一
 // 条 id，rows 恰为 limit+1 说明还有下一页）；返回全部行（不含探测行）。
-// 评审 L3：QueryErrLogs cursor 分支真实 PG 专项——此前仅 usage 侧有专项走查。
+// 评审 QueryErrLogs cursor 分支真实 PG 专项——此前仅 usage 侧有专项走查。
 func errPageWalk(t *testing.T, repos *repository.Repository, q repository.ErrLogQuery) []*domain.UsageLog {
 	t.Helper()
 	var got []*domain.UsageLog
@@ -250,7 +250,7 @@ func errPageWalk(t *testing.T, repos *repository.Repository, q repository.ErrLog
 	return got
 }
 
-// TestPGCursorErrLogsCrossPartition err_logs 跨分区游标翻页专项（评审 L3）：
+// TestPGCursorErrLogsCrossPartition err_logs 跨分区游标翻页专项：
 // 与 usage 侧同语义——跨两个日分区翻页无重复、无遗漏、严格 id 降序、与全量
 // 集合一致；status_code 过滤与游标组合只翻出命中行。
 func TestPGCursorErrLogsCrossPartition(t *testing.T) {
@@ -338,7 +338,7 @@ func walkPlan(n *planNode, visit func(*planNode)) {
 // （Index Cond 或 Filter，随 planner 访问路径选择；主键 id 天然有序零排序）。
 // usage_logs/err_logs 双表。单分区命中时 planner 折叠 Append 为直接 Index
 // Scan——按"Relation Name = 命中日分区"断言裁剪，不绑定 Append 形态。
-// 种子（评审 M2）：1 行表无统计信息时 planner 可能选 Seq Scan——计划形态断言
+// 种子：1 行表无统计信息时 planner 可能选 Seq Scan——计划形态断言
 // 是 flake。每表 5000 行（当日分区内时间散布）+ ANALYZE 后计划锁定
 // （LIMIT 21 + ORDER BY id DESC → 索引提前终止路径恒优于 Seq Scan+Sort）。
 func TestPGCursorExplainBoundedCost(t *testing.T) {

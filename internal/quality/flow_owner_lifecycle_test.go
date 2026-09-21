@@ -29,7 +29,7 @@ func TestFlowAccumulator_InputIndependence(t *testing.T) {
 	require.True(t, ok)
 	merged := got.FlowRows()
 	require.Len(t, merged, 2)
-	// v3-F1: cells carry no insertion order — tick expansion sorts
+	// cells carry no insertion order — tick expansion sorts
 	// deterministically (ordinal, lane, account), replacing first-insertion
 	// order.
 	require.Equal(t, int64(10), merged[0].AccountID, "deterministic sort keeps the smaller account first")
@@ -45,7 +45,7 @@ func TestFlowAccumulator_InputIndependence(t *testing.T) {
 }
 
 func TestFlowAccumulator_NoRowCapFoldsExactly(t *testing.T) {
-	// v3-F1: the per-minute distinct-identity cap is deleted (no-eviction
+	// the per-minute distinct-identity cap is deleted (no-eviction
 	// exactness) — kept and incoming identities all fold; nothing drops.
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestFlowOwner_CloseIdempotentAndJoins(t *testing.T) {
 	owner := rec2.FlowOwner()
 	require.NoError(t, owner.Start(context.Background()))
 	require.NoError(t, owner.Close(context.Background()))
-	// v3-F1: no owner loop remains — Close is synchronous, so there is no
+	// no owner loop remains — Close is synchronous, so there is no
 	// goroutine to join; the lifecycle flips suffice.
 	require.False(t, owner.running.Load())
 	require.NoError(t, owner.Close(context.Background()))
@@ -86,7 +86,7 @@ func TestFlowOwner_CloseIdempotentAndJoins(t *testing.T) {
 }
 
 func TestRecorder_CloseFoldRaceConservesExactly(t *testing.T) {
-	// v3-F1: the submit-fence race moves to the walk closed-gate — concurrent
+	// the submit-fence race moves to the walk closed-gate — concurrent
 	// folds racing recorder Close land exactly once or count dropped, and the
 	// equation holds over all of them.
 	rec, err := NewRecorder(1000)
@@ -122,7 +122,7 @@ func TestRecorder_CloseFoldRaceConservesExactly(t *testing.T) {
 }
 
 func TestRecorder_FinalizationDropsLateFlowFold(t *testing.T) {
-	// v3-hygiene: the EnqueueFlowMinute rejection contract moves to the
+	// the EnqueueFlowMinute rejection contract moves to the
 	// live walk closed-gate — post-finalization folds land nowhere and count
 	// dropped (same precedent as TestFlowOwner_FoldRejectsAfterRecorderFinalization).
 	rec, err := NewRecorder(10)

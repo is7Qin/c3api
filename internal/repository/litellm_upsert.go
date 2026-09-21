@@ -21,7 +21,7 @@ import (
 // 各仓库只保留本表的 SQL 组装（列清单/值装箱/事务执行，见 upsertLitellmBatch
 // 与 upsertImageLitellmBatch），经 litellmBatchExec 契约接入。
 
-// litellmBatchSize litellm 官方表 ~2k 模型，单条 INSERT 过大（评审 M-2）：
+// litellmBatchSize litellm 官方表 ~2k 模型，单条 INSERT 过大：
 // 按 500/批分块执行（pricing 与 image_price 两表共用同一默认）。
 const litellmBatchSize = 500
 

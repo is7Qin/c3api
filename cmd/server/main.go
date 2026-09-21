@@ -75,7 +75,7 @@ func main() {
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		// 附 -config 路径与 CWD（p2-01）：相对路径文件缺失/校验失败可归因；
+		// 附 -config 路径与 CWD：相对路径文件缺失/校验失败可归因；
 		// env-only 部署（-config ""）报错时此处即线索。
 		wd, _ := os.Getwd()
 		fatalf("config: %v (path: %s, cwd: %s)", err, *cfgPath, wd)
@@ -84,7 +84,7 @@ func main() {
 	if err != nil {
 		fatalf("logger: %v", err)
 	}
-	// pprof 监听失败可观测（G2-1，spec 2026-08-13）：旧实现 `_ =` 全静默——监听
+	// pprof 监听失败可观测（spec 2026-08-13）：旧实现 `_ =` 全静默——监听
 	// 失败零日志零观测。goroutine 在 logx.New 之后启动：闭包捕获 log 恒非 nil
 	// （若保留原位置，端口占用等启动期失败时 log 尚 nil，Warn 判空即被丢弃，
 	// 观测仍缺失）；失败 Warn 不 fatal（pprof 非关键面，服务照常启动）。
@@ -131,7 +131,7 @@ func main() {
 	// ent v0.14.6 的 entsql.OpenDB 只接受 *sql.DB：pgxpool 经 pgx/stdlib 桥接（用户决策 2026-08-05）
 	db := stdlib.OpenDBFromPool(pool)
 	drv := entsql.OpenDB(dialect.Postgres, db)
-	repos, err := repository.NewWithPG(startupCtx, drv, true, pool) // pool 供 Stats.Upsert COPY 两阶段批量写（#17）与 Billing 结算语句直连事务 + 会话锁专用连接（ledger-cursor）
+	repos, err := repository.NewWithPG(startupCtx, drv, true, pool) // pool 供 Stats.Upsert COPY 两阶段批量写与 Billing 结算语句直连事务 + 会话锁专用连接（ledger-cursor）
 	if err != nil {
 		fatalDB("migrate", err)
 	}
@@ -278,7 +278,7 @@ func main() {
 	// 去抖窗口 200ms：管理面变更生效延迟 ≤ 窗口 + 一次重载时长；后沿语义
 	// （完成后又脏立即再执行，不按固定间隔 throttle——不与长 reload
 	// 重叠）。读端永不阻塞：Mark 路径零锁零 DB，重载单 goroutine 串行（消除
-	// Phase 6 压测实证的 33,705 goroutine reloadMu 串行雪崩）。
+	// 压测实证的 33,705 goroutine reloadMu 串行雪崩）。
 	//
 	// 计费装配提前到 svc 之前：去抖器装配需要余额快照引用；billHooks 仍需
 	// svc，在 svc 之后组装。
@@ -512,7 +512,7 @@ func main() {
 	accConcSync := scheduler.NewConcSyncWorker(sched, rdb, src, log)
 	// litellm 价格同步 worker：启动异步拉取一次（不阻塞启动）+ price_sync_cron
 	// 定期循环；source_url/cron 每轮从 svc 的 settings 快照现读（变更下次循环
-	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（Phase 5 计费读零 DB）。
+	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（计费读零 DB）。
 	// 手动 sync/preview 端点（/api/admin/pricing/sync）直调同一 worker：
 	// service 侧 SetPriceFetcher 回填已删——fetcher 唯一主人是本 worker，经
 	// SyncWorkerConfig 一次性构造注入）；预览 membership 读 svc 定价快照。
@@ -591,7 +591,7 @@ func main() {
 		inv, schedW, ruleEngine, retryWorker, healthW, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync, routingRollup)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
-	// G2-3（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
+	//（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
 	// worker 合法，但启动期明确提示其不会出现在运维端点。
 	opsWorkers := statsProviders(opsCandidates, log)
 	// discovery 实例发现观测（foundation spec §2.4）：alive N / last_tick_ok /
@@ -730,7 +730,7 @@ func main() {
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// 优雅停机链（Phase 5 计费不丢窗口）：
+	// 优雅停机链（计费不丢窗口）：
 	// 1) Shutdown(2s) 优雅窗口：快速请求收尾（长连接流式超时留给 Close 强断）
 	// 2) Close 强制断长连接 → 客户端断开 → recordStreamAbort → finish（断前
 	//    usage 帧照常计费）
@@ -746,7 +746,7 @@ func main() {
 	//    incomplete" 显式上报且不宣称 clean shutdown（review blocker
 	//    2026-08-30）。
 	srvCtx, cancelSrv := context.WithTimeout(shutdownCtx, 2*time.Second)
-	// G2-2（spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
+	//（spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
 	// `_ =` 全丢弃；wm.Shutdown 内部已对 worker Close 失败 Warn，此处补齐
 	// httpSrv 静默面）。
 	if err := httpSrv.Shutdown(srvCtx); err != nil {
@@ -762,7 +762,7 @@ func main() {
 	_ = log.Sync()
 }
 
-// instanceSrc 生成实例 ID（NOTIFY Src）：hostname-pid-nonce（p2-05）：
+// instanceSrc 生成实例 ID（NOTIFY Src）：hostname-pid-nonce：
 // 容器化多实例同 hostname、pid namespace 各自 pid 1 → 纯 hostname-pid 碰撞 →
 // 互把对方 NOTIFY 当自播跳过 → 失效静默全灭；crypto/rand 随机 nonce 保证跨
 // 实例唯一（6B 熵，同宿主两实例碰撞概率 ~2^-48，可忽略）。

@@ -23,7 +23,7 @@ import (
 // 侧结算语句——FetchUnbilledBatch 取批过滤 / SettleBalanceBatch（余额-only 用户，
 // 条件扣→透支补刀→标记一体）/ SettleFefoBatch（temp-active 用户，集合化 FEFO +
 // spill 补差）/ MarkBilledBulk 幂等纯标记 / UnbilledLag 度量。legacy 逐组扣减面
-// （pg_deduct_* 单组事务族）已随 D8 整体退役——FEFO/透支/条件扣语义改写为语句级
+// （pg_deduct_* 单组事务族）已随 整体退役——FEFO/透支/条件扣语义改写为语句级
 // 等价断言。
 
 // logFor 构造测试计费日志（usage flusher InsertBatch 种子行；多文件共用）。
@@ -161,7 +161,7 @@ func usageLogByID(t *testing.T, repos *repository.Repository, id int64) *ent.Usa
 	return row
 }
 
-// TestSettleFefoOrder FEFO 扣临时额度（D7 集合化语义）：最早到期先扣、永久最后、
+// TestSettleFefoOrder FEFO 扣临时额度（集合化语义）：最早到期先扣、永久最后、
 // 已过期不参与；临时额度充足时余额不被触碰（spill=0 → 无资金移动、无余额对）；
 // 同语句 billed 翻转。
 func TestSettleFefoOrder(t *testing.T) {
@@ -230,7 +230,7 @@ func TestSettleFefoPermanentLast(t *testing.T) {
 	require.Equal(t, int64(0), tempBalanceAmount(t, repos, tp), "永久额度最后扣 70000")
 }
 
-// TestSettleFefoPartialLastRowAndSpill 覆盖点边界两态（D7 部分覆盖语义）：
+// TestSettleFefoPartialLastRowAndSpill 覆盖点边界两态（部分覆盖语义）：
 // 场景 A——覆盖点落在末行中间（部分扣，剩余保留）；场景 B——临时额度不足，
 // spill 差额进余额条件扣（守恒精确：Σdrawn + Δbalance == cost）。
 func TestSettleFefoPartialLastRowAndSpill(t *testing.T) {
@@ -390,7 +390,7 @@ func TestSettleBalanceMixedOverdraft(t *testing.T) {
 }
 
 // TestSettleBalanceGhostQuarantined 用户不存在 → 跳过扣减仍标记全部行、
-// Quarantined 行数返回（不变量 #1 尾语义——毒用户不卡游标）。
+// Quarantined 行数返回（不变量 尾语义——毒用户不卡游标）。
 func TestSettleBalanceGhostQuarantined(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
@@ -500,7 +500,7 @@ func ledgerIDsOf(rows []domain.LedgerRow) []int64 {
 	return ids
 }
 
-// TestPGUnbilledLag 游标积压度量（wave3 D-B 签名收缩：count → ok）：空游标
+// TestPGUnbilledLag 游标积压度量（签名收缩：count → ok）：空游标
 // ok=false；种子后 ok=true + 队头 oldest 对齐；全部标记后归零（lag 护栏数据源
 // 契约）。
 func TestPGUnbilledLag(t *testing.T) {

@@ -25,7 +25,7 @@ import "bytes"
 // 边界（架构定稿）：只做 tools 数组 + tool_choice 悬挂；input 内嵌 v1 图像
 // 内容不做（Responses Lite 下 tools 嵌入 input 的 AdditionalTools item——
 // role developer 信封，图像工具以相同 namespace 形态嵌套其中——顶层 tools
-// 剥离不触达，与现状一致）；只服务 resp 协议（chat/messages 不做；W5 转换
+// 剥离不触达，与现状一致）；只服务 resp 协议（chat/messages 不做； 转换
 // 后为 resp 形态也覆盖）。剥离在客户端入站帧转发上游前执行（网关能力，不
 // 依赖 SDK）——未来 resp-ws 帧流（response.create 帧）复用本函数。
 //
@@ -41,11 +41,11 @@ import "bytes"
 // 删除 tool_choice 字段。Responses API 缺省 tool_choice = "auto"，移除 = 最简
 // 正确语义（保留 "none"/"required"/"auto" 字符串形恒非悬挂）。
 //
-// 全剥语义（评审 I-1 实证）：tools 全部被剥离 → 删除 tools 字段（缺省 =
+// 全剥语义（实证）：tools 全部被剥离 → 删除 tools 字段（缺省 =
 // 无工具），不保留空数组 "tools":[]——删字段与缺省语义一致，是最稳形态
 // （避免上游对空数组的兼容性不确定性；SDK 路径对 nil 切片同样省略该键）。
 //
-// 已知边角（评审 I-2 裁决：接受不修，仅标注）：悬挂判定按标识集合匹配——
+// 已知边角（裁决：接受不修，仅标注）：悬挂判定按标识集合匹配——
 // 若保留的非图像工具恰与已剥工具同名（如 function 工具名恰为 "image_gen"），
 // 指向它的 tool_choice 会被误判悬挂而移除。实测 codex 客户端无此形态（工具
 // 名称空间由 namespace 隔离），误判影响 = tool_choice 退回 auto（仍可调用

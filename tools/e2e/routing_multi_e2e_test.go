@@ -4,7 +4,7 @@
 
 //go:build e2e
 
-// Package e2e 多实例智能路由端到端测试（charter Task 25）：两网关进程共享
+// Package e2e 多实例智能路由端到端测试（charter）：两网关进程共享
 // PG + Redis（distinct 端口，same JWT secret + admin token）+ 双 fakeupstream
 //（双 failure domain）+ 真实 outage 演练（docker stop/start）。
 //
@@ -532,7 +532,7 @@ func rmIncident(route map[string]any) map[string]any {
 	return m
 }
 
-// TestIntelligentRoutingMultiInstanceE2E 双实例智能路由全场景（charter Task 25）：
+// TestIntelligentRoutingMultiInstanceE2E 双实例智能路由全场景（charter）：
 // 暖启动(PG 真相) → rendezvous 单 probe owner → 亲和跨实例确定 → 硬连续跨实例 →
 // 规则风暴不拖垮 → fail 快速摘除 + NOTIFY 跨实例 → Redis  outage 保 plan/连续 fail-closed →
 // PG outage 实时继续 → 实例死亡 TTL → 滚动/全重启 → MODEL/DOMAIN incident 标记只暴露。
@@ -1089,7 +1089,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	t.Logf("全重启 OK：双边 200，黑窗见码=%v（仅容 503）", seenCodes)
 
 	// ============ 10. MODEL/DOMAIN incident（mark-and-expose） ============
-	// 构造：gI 三候选取自双域（IA@up1 好域；IB1/IB2@up2 坏域恒 500）。
+	// 构造：gI 三候选取自双域（IA@up1 好域；@up2 坏域恒 500）。
 	// baseline = 回填 settled 历史（生产 24h 压缩为直接写同表同查询路径）；
 	// current = 实时 live + settled。比较器：Wilson 区间不重叠。
 	t.Log("阶段 10：DOMAIN incident（坏域双候选 vs 好域单候选）")

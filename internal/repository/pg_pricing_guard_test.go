@@ -32,7 +32,7 @@ func TestManualEntryModels_PG(t *testing.T) {
 	require.NotContains(t, models, liteModel)
 }
 
-// TestVariantGuard_ManualEntrySurvives_PG is the PG-mode sync guard test for F2:
+// TestVariantGuard_ManualEntrySurvives_PG is the PG-mode sync guard test for
 // create manual entry + custom variants for model X; simulate sync that would emit X's variants; assert admin variants survive via ManualEntryModels filtering.
 func TestVariantGuard_ManualEntrySurvives_PG(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -77,7 +77,7 @@ func TestVariantGuard_ManualEntrySurvives_PG(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestDeletePriceEntryCascadeManual_PG verifies D-C1: manual entry+variant →
+// TestDeletePriceEntryCascadeManual_PG verifies manual entry+variant →
 // WithTx{DeletePriceVariantsByModel; DeletePriceEntryManual} → both tables empty.
 // 冒烟发现 2026-08-24：删条目不清变体致孤儿挂新条目。
 func TestDeletePriceEntryCascadeManual_PG(t *testing.T) {
@@ -159,7 +159,7 @@ func TestCodexSearchSeed_Idempotent_PG(t *testing.T) {
 	require.Len(t, rows, 1)
 }
 
-// TestDeletePriceEntryCascadeLitellmConflict_PG verifies D-C1 guard: litellm
+// TestDeletePriceEntryCascadeLitellmConflict_PG verifies guard: litellm
 // entry+variant → same cascade → ErrConflict AND variants intact (whole tx rolled back).
 func TestDeletePriceEntryCascadeLitellmConflict_PG(t *testing.T) {
 	repos := newPGReposShared(t)

@@ -21,7 +21,7 @@ import (
 type pubRecorder struct {
 	mu        sync.Mutex
 	calls     []notify.Change
-	cancelled bool // 最近一次 Publish 收到的 ctx 已取消（评审 I-2 断言）
+	cancelled bool // 最近一次 Publish 收到的 ctx 已取消（断言）
 }
 
 func (r *pubRecorder) Publish(ctx context.Context, ch notify.Change) error {
@@ -259,12 +259,12 @@ func TestPublishMultipliersAndGroupDelete(t *testing.T) {
 	g, err := svc.CreateGroup(ctx, "g", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "创建组 → Multipliers:true")
-	require.False(t, pr.last().Keys, "组创建无 key → 不置 Keys（A-3：创建后建 key 的即时性由 A-2 增量注册保证）")
+	require.False(t, pr.last().Keys, "组创建无 key → 不置 Keys（创建后建 key 的即时性由 增量注册保证）")
 
 	_, err = svc.UpdateGroup(ctx, &domain.Group{ID: g.ID, Name: "g", PriceMultiplier: 20000, ProtocolConverts: nil})
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "更新组倍率 → Multipliers:true")
-	require.True(t, pr.last().Keys, "组更新（含 protocol_convert 变更）→ Keys:true——旧 key meta 即时收敛（A-3）")
+	require.True(t, pr.last().Keys, "组更新（含 protocol_convert 变更）→ Keys:true——旧 key meta 即时收敛")
 
 	u := seedUser(t, fs, "am@example.com", 0, 0)
 	_, _, err = svc.SetGroupAssignments(ctx, g.ID, []int64{u.ID}, map[int64]*int{u.ID: intPtr(5000)})
@@ -340,7 +340,7 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 	})
 }
 
-// TestPublishDetachedFromRequestCtx 评审 I-2：请求 ctx 已取消时发布仍发出——
+// TestPublishDetachedFromRequestCtx 评审 请求 ctx 已取消时发布仍发出——
 // publish 用 context.WithoutCancel 剥离取消信号（客户端断开不吞 NOTIFY），
 // Publisher 收到的 ctx 未取消（Err()==nil）。
 func TestPublishDetachedFromRequestCtx(t *testing.T) {

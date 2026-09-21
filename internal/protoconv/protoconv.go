@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package protoconv 提供网关级协议转换（W5，只补差语义）：客户端协议请求体
+// Package protoconv 提供网关级协议转换（只补差语义）：客户端协议请求体
 // → 模板协议请求体（ConvertRequest）、模板协议响应 → 客户端协议响应
 // （ConvertResponse 非流式 JSON / StreamMapper 流式 SSE 事件映射）。
 //
@@ -10,7 +10,7 @@
 // OpenAI/Anthropic SDK 零耦合（缺名帧事件名推断与 sserelay 共用
 // InferEventName——热路径零分配锚定 + 回退全量解码）；四方向分派按
 // groups.protocol_convert 快照值（off 不经过本包——热路径分支在
-// internal/proxy 判定）；WS 帧流转换不做（resp-ws 1:1 透传，W3 范围）。
+// internal/proxy 判定）；WS 帧流转换不做（resp-ws 1:1 透传 范围）。
 package protoconv
 
 import (
@@ -57,7 +57,7 @@ func ConvertResponse(body []byte, dir domain.ProtocolConvert) ([]byte, error) {
 
 // NewStreamMapper 构造有状态的流式响应事件映射器（每 SSE 流一个实例；
 // 跨事件状态：id/model、用量累积、mess→resp 的块级输出累积）。块级累积
-// map（blockStarted 等）懒初始化（ensureBlocks，评审 I-4）——chat→resp 等
+// map（blockStarted 等）懒初始化（ensureBlocks，评审）——chat→resp 等
 // 方向从不使用，免每流 6 个 map 分配。
 func NewStreamMapper(dir domain.ProtocolConvert) *StreamMapper {
 	return &StreamMapper{dir: dir}
@@ -272,7 +272,7 @@ func marshalAny(v any) string {
 	return string(b)
 }
 
-// toolCallID 工具调用匹配键（M-1 修复）：Responses 规范中 function_call 项含
+// toolCallID 工具调用匹配键（修复）：Responses 规范中 function_call 项含
 // 两个 ID——id（item id，fc_ 格式）与 call_id（工具调用匹配键，call_ 格式，
 // function_call_output 必须按它回匹配）。对外暴露/内部合成的工具调用 ID 一律
 // call_id 优先、item id 兜底（缺失防御），否则客户端回传的匹配键与上游不符，

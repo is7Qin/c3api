@@ -39,7 +39,7 @@ func TestPGCreateTempBalance(t *testing.T) {
 	require.NotNil(t, tb.Note)
 	require.Equal(t, "signup bonus", *tb.Note)
 
-	// 用户过滤查询（Phase 5 FEFO 扣费的数据源形态）
+	// 用户过滤查询（FEFO 扣费的数据源形态）
 	byUser, err := repos.Client.TempBalance.Query().
 		Where(tempbalance.UserIDEQ(u.ID)).
 		Order(tempbalance.ByExpiresAt()).

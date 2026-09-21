@@ -55,7 +55,7 @@ func Test_batchController_observe_policy(t *testing.T) {
 			steps: []ctrlStep{
 				{d: slow, subscribed: true}, {d: slow, subscribed: true},
 				{d: slow, subscribed: true}, {d: slow, subscribed: true},
-				{d: slow, subscribed: true}, {d: slow, subscribed: true}, // 慢成功=完成了真实工作，恒保持（SC7）
+				{d: slow, subscribed: true}, {d: slow, subscribed: true}, // 慢成功=完成了真实工作，恒保持
 			},
 			want: settleBatchLimit,
 		},
@@ -94,7 +94,7 @@ func Test_batchController_observe_policy(t *testing.T) {
 	}
 }
 
-// Test_batchController_fast_partial_never_ratchets v2 空批棘轮回归钉（SC2）：
+// Test_batchController_fast_partial_never_ratchets v2 空批棘轮回归钉：
 // 快但未满批 = 需求不足的伪健康信号，绝不倍增——64 轮 fast+partial 观测后 cur
 // 恒为种子值（v1 缺陷：排空尾段空批 ~ms 完成 → 判健康 → 棘轮到 64k 陈旧最大批）。
 func Test_batchController_fast_partial_never_ratchets(t *testing.T) {
@@ -105,7 +105,7 @@ func Test_batchController_fast_partial_never_ratchets(t *testing.T) {
 	}
 }
 
-// Test_batchController_slow_holds_timeout_shrinks_sawtooth v2.1 锯齿轨迹钉（SC8，
+// Test_batchController_slow_holds_timeout_shrinks_sawtooth v2.1 锯齿轨迹钉（
 // 替代 v2 震荡收敛钉——慢不再收缩，无 2-周期收敛语义）：快满批倍增至 cap →
 // 超时一次减半（唯一收缩触发器）→ 快满批复倍增回 cap（第二次撞钳制）。确定性
 // 轨迹断言，锁死「慢保持 + 超时收缩」的锯齿稳态。

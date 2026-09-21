@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/server"
 )
 
-// O1 收尾：真实 embed FS（webUI）上 /assets/ 必须 404——目录请求被 webFSNoDirs
+// 收尾：真实 embed FS（webUI）上 /assets/ 必须 404——目录请求被 webFSNoDirs
 // 包装拒绝，不渲染 HTML 目录列表（go:embed all:dist 内容不可枚举）。若未来
 // dist 下出现 assets/ 目录且包装被移除，此测试立即捕获目录列表暴露。
 func TestEmbedAssetsNoDirectoryListing(t *testing.T) {

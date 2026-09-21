@@ -69,7 +69,7 @@ func newProbedSched(t *testing.T, m *memLoader, q map[CandidateQualityKey]Candid
 	return s, cl
 }
 
-// TestCompileEvent_ProbeHitSkipsAllWork pins the C1 quiet-fire behavior: with
+// TestCompileEvent_ProbeHitSkipsAllWork pins the quiet-fire behavior: with
 // no change, the backstop probe hits and the tick does zero rebuild, zero
 // compile, zero serialization (no loader touch, no compiler call, same
 // generation and bytes).
@@ -255,7 +255,7 @@ func TestCompileEvent_FallbackRecorded(t *testing.T) {
 }
 
 // fakeStalenessSource feeds a canned repository tuple through the kept
-// stalenessQuerier seam (v5-C1: the lane maps the repo-owned tuple 1:1 and
+// stalenessQuerier seam (: the lane maps the repo-owned tuple 1:1 and
 // never queries for it).
 type fakeStalenessSource struct {
 	snap domain.CompileStaleness

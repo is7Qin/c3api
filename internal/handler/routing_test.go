@@ -4,7 +4,7 @@
 
 package handler
 
-// Todo 17 admin API lane：/routing/flow|frontier|plan 三端点的契约测试。
+// admin API lane：/routing/flow|frontier|plan 三端点的契约测试。
 // 走真实 chi 路由（参数绑定/日期解析/400 语义都是生成物行为）；rollup 行由
 // fakeStore 包装供给，计划目录由 fake provider 供给。断言以 snake_case 线格式
 // 为准（解码 map 校验键集合精确），值语义校验复用生成类型。

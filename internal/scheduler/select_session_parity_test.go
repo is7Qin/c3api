@@ -11,7 +11,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// §7 G-select-parity corpus (v4-S1/S2/S3): golden failover sequences recorded
+// §7 G-select-parity corpus : golden failover sequences recorded
 // against cca67f8 behavior. The session rewrite must reproduce every record
 // BYTE-IDENTICALLY: per-request [(accountID, lane, ordinal, attemptID, prev)]
 // plus terminal errors, linkage, mapping projection, fence verdicts and the
@@ -385,7 +385,7 @@ func TestSelectSessionParity_imagesOpTags(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), aE.AccountID)
 	selE.Release()
-	// The interned route classes must distinguish the two ops (S2 intern check
+	// The interned route classes must distinguish the two ops (intern check
 	// via the published decisions, not the normalized query keys).
 	rdG, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIImages), "gpt-image-1")
 	require.True(t, ok)

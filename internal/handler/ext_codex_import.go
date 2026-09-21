@@ -12,7 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
-// —— codex 凭据批量导入（Task B：batch-import-codex-oauth / batch-import-codex-pat；
+// —— codex 凭据批量导入（batch-import-codex-oauth / batch-import-codex-pat；
 // 契约层——结构校验（items ≤100 原始条数 / template_id 必填 → 400）+ 响应组装；
 // 行级校验/落库在 service 共享核心） ——
 

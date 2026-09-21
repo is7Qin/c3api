@@ -17,7 +17,7 @@ type EnvelopeError struct {
 	Status int
 	Body   string // 上游响应原始 body（RawJSON() 返回；空 = 无 body）
 	Err    error  // 被包装的 SDK 错误；nil = 无
-	// Refreshed Dial 信封专用（T4 §5）：SDK DialError.Refreshed 语义保留——
+	// Refreshed Dial 信封专用（§5）：SDK DialError.Refreshed 语义保留——
 	// WS 升级 401 已轮转刷新一次后仍失败（网关据此避免双份刷新：4xx 透传
 	// 不转移，同账号不再触发第二次 refresh 轮转）。HTTP 信封恒 false。
 	Refreshed bool

@@ -46,7 +46,7 @@ func shareDecision() *RouteDecision {
 	}
 }
 
-// The compiler stores the charter Task-6 share on the immutable decision:
+// The compiler stores the charter share on the immutable decision:
 // cold start (no Primary) → 10000bp.
 func TestExploreShare_compilerColdStartBP(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})

@@ -70,7 +70,7 @@ func (h *AdminAPI) GetAccountsUsage(w http.ResponseWriter, r *http.Request, para
 	httpface.WriteJSON(w, http.StatusOK, AccountsUsageResponse{Items: out})
 }
 
-// assembleUpstream upstream 栏装配（W2-T3：原 service.AccountsUsage 后半段
+// assembleUpstream upstream 栏装配（原 service.AccountsUsage 后半段
 // 整体搬迁——行为逐分支一致）：逐账号凭据组装（svc.AccountUsageCredential：
 // api-key/非 codex → nil cred → null 快照/null 标记；store 故障 → 已在
 // service 侧 Warn + null/null）→ codex 账号调 prober（nil prober = 未装配

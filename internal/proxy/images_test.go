@@ -319,7 +319,7 @@ func TestImagesPureImageModelNotKilledByChatPrecheck(t *testing.T) {
 }
 
 // TestImagesDirectUsageExtractionBilling 直连路径 usage 提取断言：api_key
-// 直连 /v1/images/generations（Task B 路径）计费含 image 分量——上游响应带
+// 直连 /v1/images/generations（路径）计费含 image 分量——上游响应带
 // 嵌套 usage image_tokens（与 codexTestImageResponse 同 wire 形态）→
 // CallCount = data 长 + ImageInput/OutputTokens = image_tokens（并入 in/out）+ ImageCost
 // 落账（与 codexImagesCaller 同口径——同一 ImageUsageFromResponse 纯函数，
@@ -533,7 +533,7 @@ func TestImagesCodexPATNotIntegrated501(t *testing.T) {
 }
 
 // TestImagesResponsesSpecialDirect responses-special 类型直连（用户裁决：两
-// 类型都支持两个端点）：凭据取用成功（P4 502 消灭同款——注册表必须含
+// 类型都支持两个端点）：凭据取用成功（502 消灭同款——注册表必须含
 // responses-special provider）+ 上游收到账号 key。
 func TestImagesResponsesSpecialDirect(t *testing.T) {
 	up, c := fakeImagesUpstream(t, "/v1/images/generations")
@@ -560,7 +560,7 @@ func TestImagesResponsesSpecialDirect(t *testing.T) {
 
 // TestImagesFormatValidatorOpenaiImages 枚举扩展（spec §4.3）：usage_logs /
 // err_logs 的 format 枚举必须接受 openai-images（否则 images 请求落账 COPY
-// 恒失败——评审 D4）。
+// 恒失败——评审）。
 func TestImagesFormatValidatorOpenaiImages(t *testing.T) {
 	require.NoError(t, entusagelog.FormatValidator(entusagelog.Format(domain.FormatOpenAIImages)))
 	require.NoError(t, enterrlog.FormatValidator(enterrlog.Format(domain.FormatOpenAIImages)))

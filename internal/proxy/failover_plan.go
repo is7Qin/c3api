@@ -22,7 +22,7 @@ func (p *Proxy) normalizedAttempts() int {
 // typed selection error path (handleSelectError/statusFor), never a second
 // selection lane.
 //
-// v4-S1: the plan is a stack selectSession value (never boxed); the settled
+// the plan is a stack selectSession value (never boxed); the settled
 // Attempt is threaded by value alongside it, so no path value-returns
 // CurrentAttempt on the hot path — identity is projected once at settle/arm
 // and read downstream.
@@ -87,7 +87,7 @@ func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, 
 }
 
 // shouldRetryWithPlan consults the typed retry matrix with the canonical
-// identity of the attempt that just ran (threaded settle value — v4-S1: no
+// identity of the attempt that just ran (threaded settle value — no
 // CurrentAttempt on the hot path). Without attempt identity there is no
 // failover. hard marks a hard-continuation dispatch: the bound account is the
 // only valid target, so the overlay sets HardContinuation (and the
@@ -112,7 +112,7 @@ func (p *Proxy) shouldRetryWithPlan(ctx context.Context, code int, callErr error
 // exhaustion path; reservation rejects consumed no attempt inside
 // ReserveAttempt). There is no plan-less fall-through — a nil plan has no
 // selection lane and fails closed. The settled Attempt threads alongside the
-// selection (v4-S1 session-local projection).
+// selection (session-local projection).
 func (p *Proxy) selectNextWithPlan(plan *scheduler.AttemptPlan) (*scheduler.Selection, scheduler.Attempt, error) {
 	return p.reservePlanAttempt(plan)
 }

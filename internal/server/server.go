@@ -52,7 +52,7 @@ func NewServer(opts Options) *Server {
 	s := &Server{opts: opts}
 
 	r := chi.NewRouter()
-	// 顺序：accessLog 最外层、recoverer 内层（F4）——recoverer 的 w 即
+	// 顺序：accessLog 最外层、recoverer 内层——recoverer 的 w 即
 	// statusWriter，已写头判定（headersWritten）与 500 状态回写都经同一包装；
 	// 旧序（recoverer 外层）recoverer 只见裸 writer，无法感知已写头。
 	r.Use(accessLog(opts.Logger))
@@ -91,7 +91,7 @@ func NewServer(opts Options) *Server {
 		if opts.AIHandler != nil {
 			// AI 面路由全部位于 /v1/*（proxy.AIRouter）。必须用 Handle 静态前缀
 			// 挂载而非 Mount("/", …)：Mount("/") 注册 /* 通配吞掉一切未匹配路径，
-			// SPA 深链（/app、/user）与任意非 API 路径会误入 AI 组——D3：冷启动
+			// SPA 深链（/app、/user）与任意非 API 路径会误入 AI 组——冷启动
 			// 未发布计划时经 planReadyGate 变 503（控制台不可达）、计划就绪后落
 			// AI 子路由默认 404；且 planReadyGate 包装后不再是 *chi.Mux，chi 的
 			// NotFound 子路由传播（updateSubRoutes 的 Routes 断言）失效，根 SPA

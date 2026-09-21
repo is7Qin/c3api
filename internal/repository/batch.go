@@ -44,7 +44,7 @@ type AccountPatch struct {
 	Name        *string
 	TemplateID  *int64
 	UpstreamKey *string
-	// BaseURL 批量三态（C1 定死）：nil = 不变；&"" = 清空（落 NULL = 继承
+	// BaseURL 批量三态（定死）：nil = 不变；&"" = 清空（落 NULL = 继承
 	// 模板）；&非空 = 落值。
 	BaseURL        *string
 	MaxConcurrency *int
@@ -358,7 +358,7 @@ func checkGroupExist(ctx context.Context, q func() *ent.GroupQuery, ids []int64)
 // checkIDsExist 通用存在性检查：按块逐块查询（每块新建查询——ent Where 原地
 // 追加谓词，复用同一查询会跨块累加 IN）后合并 existing，再 diffMissing。
 // 合并只做集合并集（diffMissing 不依赖顺序）；空 ids → 零块 → diffMissing
-// 空集直接返回 nil。错误带 (chunk i/n, N ids) 上下文（评审 I-2）。
+// 空集直接返回 nil。错误带 (chunk i/n, N ids) 上下文。
 func checkIDsExist(ids []int64, each func(chunk []int64) ([]int64, error)) error {
 	chunks := chunkIDs(ids, inChunkSize)
 	var existing []int64

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Fold-at-source sync handoff and seal (v3 F2): the versioned
+// Fold-at-source sync handoff and seal (v3): the versioned
 // snapshot/ack/lease handshake the sync flush settles through, plus the
 // shutdown seal. Sync never owns rows; it snapshots one dirty minute at a
 // time under the owner lock, writes the full cumulative snapshot with

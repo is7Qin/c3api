@@ -358,7 +358,7 @@ func TestImagesCodex403Passthrough(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 }
 
-// TestImagesCodexStreamEnvelope4xx 流式首事件前 4xx → 信封透传（T3 复审
+// TestImagesCodexStreamEnvelope4xx 流式首事件前 4xx → 信封透传（复审
 // 修复回归——适配层 GenerateImageStream 缺 translateError 时 *HTTPError
 // 裸抛：状态归 0 走连接级 → 客户端收占位文案、body 丢失；修复后 403 + 上游
 // 原始 body 透传，与非流式同口径）。4xx 确定性错误不 failover、信封不
@@ -462,7 +462,7 @@ func TestImagesCodex401Rotate(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 }
 
-// TestImagesCodexStreamSSE 流式（stream=true）生产接线全链路（T3——替换 501
+// TestImagesCodexStreamSSE 流式（stream=true）生产接线全链路（——替换 501
 // 骨架）：真实适配层 GenerateImageStream → 合成事件流（keepalive + 逐张
 // completed，usage 仅末事件）→ 网关 SSE 透传（completed 帧 wire 形态：
 // b64_json + usage 四字段 JSON tag 直透）→ 流终计费（张数 = data 长 2、
@@ -511,7 +511,7 @@ func TestImagesCodexStreamSSE(t *testing.T) {
 }
 
 // TestImagesCodexAdapterMissing501 适配层未装配（SetCodex 未调用）→ 501 显式
-// 拒绝（防 nil 误走凭据缺失 502）——原 Task B 骨架语义保留。
+// 拒绝（防 nil 误走凭据缺失 502）——原 骨架语义保留。
 func TestImagesCodexAdapterMissing501(t *testing.T) {
 	up, c := newCodexImageUpstream(t, codexUpStep{status: 200, body: codexTestImageResponse})
 	defer up.Close()

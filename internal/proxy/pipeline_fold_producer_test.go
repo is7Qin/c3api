@@ -22,7 +22,7 @@ import (
 )
 
 // --- fold producer harness: plan-backed proxy + recorder + tap ---
-// v3-F1: the FlowChain box is deleted; the producer stash folds the same
+// the FlowChain box is deleted; the producer stash folds the same
 // edges through the completion walk with identical counting.
 
 func collectFlowRows(rec *quality.Recorder) []repository.RoutingFlowRow {
@@ -201,7 +201,7 @@ func TestFoldProducer_clientCancelIsFlowOnly(t *testing.T) {
 
 	rows := collectFlowRows(rec)
 	require.Len(t, rows, 1, "client cancel must be included in flow")
-	// v3-F1 Amendment A1: the cancel edge keeps its census string verbatim
+	// Amendment A1: the cancel edge keeps its census string verbatim
 	// (old tree writes client_cancel; error-folding would corrupt PG rows).
 	require.Equal(t, "client_cancel", rows[0].Outcome)
 	require.True(t, rows[0].IsTerminal)
@@ -262,7 +262,7 @@ func TestFoldProducer_panicClosesChainAsIncomplete(t *testing.T) {
 	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-flow-panic", UserID: 1})
 	require.NoError(t, err)
-	// v4-S1: the session is a stack value — bound identity echoes the request.
+	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-flow-panic", plan.Identity().RequestID)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	require.Panics(t, func() {
@@ -305,7 +305,7 @@ func TestFoldProducer_duplicateCompletionAppendsExactlyOnce(t *testing.T) {
 	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-flow-dup", UserID: 1})
 	require.NoError(t, err)
-	// v4-S1: the session is a stack value — bound identity echoes the request.
+	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-flow-dup", plan.Identity().RequestID)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
@@ -401,7 +401,7 @@ func TestFoldProducer_concurrentRequestsConserveSameMinute(t *testing.T) {
 // contract end to end through the request pipeline: folding is a bounded
 // synchronous walk of stack facts (no queue, no consumer to stall), so
 // settlement completes with exactly-once conservation and zero loss.
-// v3-F1: the stalled-queue test is deleted with the Submit queue (§5.1
+// the stalled-queue test is deleted with the Submit queue (§5.1
 // DELETION LIST) — retargeted from survive-the-stall to never-blocks.
 func TestPipelineObserver_SettlementNeverBlocksOnFlowFold(t *testing.T) {
 	quality.ResetFlowChainCountersForTest()
@@ -442,7 +442,7 @@ func TestPipelineObserver_SettlementNeverBlocksOnFlowFold(t *testing.T) {
 }
 
 func TestFoldStash_usesRealAttemptMetadataOnly(t *testing.T) {
-	// v3-F1: flowDispatchFromAttempt/FlowDispatch are deleted with the box;
+	// flowDispatchFromAttempt/FlowDispatch are deleted with the box;
 	// the same real-attempt-metadata contract now holds on the stash→fact
 	// mapping — identity from the real scheduler.Attempt, terminal facts
 	// from the completed outcome, previous linkage from the real recorded

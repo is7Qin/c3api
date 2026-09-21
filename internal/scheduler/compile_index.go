@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package scheduler
 
-// Stage-built route index (v5 §4/C2): maps events to affected routes so scoped
+// Stage-built route index (v5 §4/): maps events to affected routes so scoped
 // fires name exactly the routes a full recompile would visit. Owner: compile
 // lane. Lifecycle: born at stage (attached to the staged root), dies with the
 // superseded root, read-only between.

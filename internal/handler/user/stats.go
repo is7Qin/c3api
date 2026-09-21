@@ -30,7 +30,7 @@ func (h *UserAPI) GetUserStats(w http.ResponseWriter, r *http.Request, params Ge
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	// 非法 granularity 直透 service 哨兵（同 GetStatsTrend，RG-BE M-1）。
+	// 非法 granularity 直透 service 哨兵（同 GetStatsTrend）。
 	granularity := ""
 	if params.Granularity != nil {
 		granularity = string(*params.Granularity)

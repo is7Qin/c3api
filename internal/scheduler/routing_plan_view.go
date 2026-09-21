@@ -73,7 +73,7 @@ func (s *Scheduler) CurrentRoutingPlan() *RoutingPlan {
 	plan.Routes = make([]RoutingPlanRoute, 0, len(refs))
 	for _, ref := range refs {
 		rd := cloneRouteDecision(v.decision.routes[ref])
-		// v4-S2: the table key stays normalized; the projected Ref carries
+		// the table key stays normalized; the projected Ref carries
 		// the interned per-route hex so the admin API bytes are unchanged.
 		ref.RouteClassID = rd.RouteClassID
 		route := RoutingPlanRoute{

@@ -51,9 +51,9 @@ func TestSelectWithPlan_FirstSelectionUsesPlanWhenIdentityAvailable(t *testing.T
 	require.NotNil(t, sel)
 	// Plan-only contract: a successful selection is plan-backed, never a
 	// plan-less selection.
-	// v4-S1: the session is a stack value — bound identity echoes the request.
+	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-123", plan.Identity().RequestID)
-	// v4-S2: RouteClassID is borrowed from the interned published decision.
+	// RouteClassID is borrowed from the interned published decision.
 	dec, ok := p.sched.View().DecisionView().Route(10, string(domain.FormatOpenAIChat), "gpt-4o")
 	require.True(t, ok)
 	require.NotEmpty(t, dec.RouteClassID)
@@ -79,9 +79,9 @@ func TestSelectWithPlan_ConvertedRouteUsesTargetIdentity(t *testing.T) {
 	sel2, plan2, _, err2 := p.selectWithPlan(10, domain.FormatOpenAIResponses, "gpt-4o", identity)
 	require.NoError(t, err2)
 	require.NotNil(t, sel2)
-	// v4-S1: the session is a stack value — bound identity echoes the request.
+	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-conv", plan2.Identity().RequestID, "plan-only contract: selection is plan-backed")
-	// v4-S2: RouteClassID is borrowed from the interned published decision.
+	// RouteClassID is borrowed from the interned published decision.
 	dec2, ok := p.sched.View().DecisionView().Route(10, string(domain.FormatOpenAIResponses), "gpt-4o")
 	require.True(t, ok)
 	require.Equal(t, dec2.RouteClassID, plan2.Identity().RouteClassID)
@@ -248,7 +248,7 @@ func TestSelectWithPlan_StampsNormalizedMaxAttempts(t *testing.T) {
 
 	sel, plan, _, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o", scheduler.AttemptPlanIdentity{RequestID: "req-stamp", UserID: 1})
 	require.NoError(t, err)
-	// v4-S1: the session is a stack value — bound identity echoes the request.
+	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-stamp", plan.Identity().RequestID, "compiled route must yield a plan, not a legacy fallback")
 	require.Equal(t, uint8(5), plan.Identity().MaxAttempts)
 	sel.Release()
@@ -269,7 +269,7 @@ func TestSelectWithPlan_LateEligibleOverflowAccount(t *testing.T) {
 
 	sel, plan, _, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o", scheduler.AttemptPlanIdentity{RequestID: "req-overflow", UserID: 1})
 	require.NoError(t, err)
-	// v4-S1: the session is a stack value — bound identity echoes the request.
+	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-overflow", plan.Identity().RequestID)
 	require.Equal(t, int64(3), sel.AccountID)
 	sel.Release()
@@ -329,7 +329,7 @@ func tplForPlan(id int64) *domain.Template {
 	return &domain.Template{ID: id, Name: "t", BaseURL: "http://127.0.0.1:9", CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
 }
 
-// v4-S1: the session is a stack value — probe a copy, never the live session.
+// the session is a stack value — probe a copy, never the live session.
 func planIdentityCandidateCount(p scheduler.AttemptPlan) int {
 	// helper to probe plan capacity via Reserve (no exported candidate count)
 	cnt := 0

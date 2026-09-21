@@ -25,7 +25,7 @@ import (
 type AdminAPI struct {
 	svc *service.Service
 	ops OpsOptions // 运维观测装配（GetOpsWorkers 用；变参注入，零值 = 端点返回空）
-	// usageSnap codex 额度快照数据源（W2-T3：service 侧回填删除后，调用方
+	// usageSnap codex 额度快照数据源（service 侧回填删除后，调用方
 	// （GetAccountsUsage fan-out）经构造直调适配器；nil = 未装配 → codex
 	// 账号返回 null 快照，不 panic，与旧 nil 回填语义一致）。
 	usageSnap CodexUsageProber

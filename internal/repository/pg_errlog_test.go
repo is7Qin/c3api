@@ -7,7 +7,7 @@ package repository_test
 // 错误明细落盘（err_logs 分表设计，用户裁决）真实 PG 测试：bootstrap 建表含
 // error_message 列；有值/空值（NULL）roundtrip（ErrLogRepo.InsertBatch +
 // QueryErrLogs 读回）；usage_logs 侧断言行**不含** error_message/status_code
-// 列（瘦身——C26）。
+// 列（瘦身——）。
 //
 // 基座约定同 pg_partition_test.go：newPGRepos 每测试 DROP SCHEMA 重建 +
 // migrate（钩子跳过分区表）+ 分区 bootstrap（两表：usage_logs + err_logs）。
@@ -94,7 +94,7 @@ func TestErrLogMessageRoundtripPG(t *testing.T) {
 	require.Equal(t, truncated, rawVal)
 }
 
-// TestUsageLogSlimColumnsPG usage_logs 瘦身（C26）：新库建表**不含**
+// TestUsageLogSlimColumnsPG usage_logs 瘦身：新库建表**不含**
 // status_code/error_message 列；插入忽略瞬态字段（不报 42703——ent 构建器
 // 不再写该列），查询结果恒零值/nil。
 func TestUsageLogSlimColumnsPG(t *testing.T) {

@@ -18,12 +18,12 @@ import (
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 )
 
-// 本文件覆盖 Phase 5 T4 契约扩展：pricing 矩阵 22 字段（PUT 解码 + 响应/列表
+// 本文件覆盖 契约扩展：pricing 矩阵 22 字段（PUT 解码 + 响应/列表
 // 回显）、用户余额 USD 换算与 price_multiplier（null = 清除）、组倍率、
 // service_tier_policy 设置校验、usagelog/stat 计费字段回显。
 
 // TestAdminUserBalance 管理面用户：balance USD 换算（创建/更新/列表/详情回显）。
-// 价格倍率按组（T3.5 修正）经 /api/admin/groups/{id}/assignments 设置，用户本体
+// 价格倍率按组（修正）经 /api/admin/groups/{id}/assignments 设置，用户本体
 // 无倍率字段（见 TestGroupAssignmentMultipliers）。
 func TestAdminUserBalance(t *testing.T) {
 	doAdmin, doUser, _ := newSharedRouters(t)
@@ -99,7 +99,7 @@ func TestGroupMultiplier(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
 	require.Equal(t, 2.0, *g.PriceMultiplier)
 
-	// POST 显式 0.0 = 免费组（T3.5 修正：API 可表达显式 0，不落 ×1）
+	// POST 显式 0.0 = 免费组（修正：API 可表达显式 0，不落 ×1）
 	rec = doAdmin(http.MethodPost, "/api/admin/groups", `{"name":"g-free","price_multiplier":0.0}`, "")
 	require.Equal(t, http.StatusOK, rec.Code, "create free: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
@@ -139,7 +139,7 @@ func TestGroupMultiplier(t *testing.T) {
 	}
 }
 
-// TestGroupAssignmentMultipliers 用户-组专属倍率（T3.5 修正核心：按组挂载，
+// TestGroupAssignmentMultipliers 用户-组专属倍率（修正核心：按组挂载，
 // 用户在不同组可有不同倍率）：PUT /groups/{id}/assignments 的 multipliers 设置/
 // 清除；response 回显 post-state；越界/未知用户 → 400。
 func TestGroupAssignmentMultipliers(t *testing.T) {

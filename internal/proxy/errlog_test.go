@@ -4,7 +4,7 @@
 
 package proxy
 
-// 错误文本落盘（部署故障修复 #20）：连接级失败 / 4xx / 5xx 的 usage log
+// 错误文本落盘（部署故障修复）：连接级失败 / 4xx / 5xx 的 usage log
 // ErrorMessage 语义 + 连接级 Warn（err 全文）。成功路径 ErrorMessage 恒空
 // （热路径零新增分配）。
 
@@ -294,7 +294,7 @@ func TestProxyFailureRowsNeverInUsageLogs(t *testing.T) {
 	}
 }
 
-// 分类正确性（#20 E 项，用户实证）：客户端在上游首字节前断开（模型思考期
+// 分类正确性（E 项，用户实证）：客户端在上游首字节前断开（模型思考期
 // 取消）→ r.Context() 已取消、SDK 返回 context.Canceled（statusOf=0）——
 // 不得按连接级网络错误处理：不 failover、不 MarkResult/冷却；记 499
 // （nginx client closed request 约定）+ ErrAbort + error_message，立即返回。
@@ -342,7 +342,7 @@ func TestProxyClientDisconnectBeforeFirstByte(t *testing.T) {
 	require.Equal(t, l.RequestID, store.logs[1].RequestID, "双轨行 request_id 关联")
 }
 
-// SDK 本地校验错误归 4xx（spec 2026-08-16-anthropic-stream-accept-design A-1）：
+// SDK 本地校验错误归 4xx（spec 2026-08-16-anthropic-stream-accept-design）：
 // anthropic 非流式 + max_tokens 大（80000：expectedTime = 1h×80000/128000
 // = 2250s > 10min）→ SDK CalculateNonStreamingTimeout（client.go:316 固定文本）
 // 本地拒绝——无网络请求、无状态码（code=0），此前误归 network（err_logs 记
@@ -416,5 +416,5 @@ func TestProxySDKValidationErrorClassified4xx(t *testing.T) {
 
 // sdkStreamingRequiredText 为 anthropic-sdk-go v1.62.0 client.go:316
 // （CalculateNonStreamingTimeout）硬编码错误文本——升级 SDK 若改文案须同步
-// 本测试与 caller.go 识别点（A-1 版本依赖标注）。
+// 本测试与 caller.go 识别点（版本依赖标注）。
 const sdkStreamingRequiredText = "streaming is required for operations that may take longer than 10 minutes"

@@ -28,13 +28,13 @@ type Dispatcher interface {
 	//（本地/远端合并同窗口，天然去重）——users/templates/multipliers/groups
 	// 转现有 Mark（Templates 含 clients 失效）；keys/rules 转 Keys/Rules 分支
 	// （reloadAll 扩展）；settings 由装配侧同步 ReloadSettings + 注册表 scope
-	// 分发（#36 时序——scope 重载必须读到新 N，实现见 cmd/server dispatcher）。
+	// 分发（时序——scope 重载必须读到新 N，实现见 cmd/server dispatcher）。
 	// 无返回值：内部失败由实现独立 Warn 消化（NOTIFY 是事件提示，
 	// 调用方无任何可执行动作，透传只会双 Warn；周期 ticker / 60s 兜底已存在）。
 	Apply(ctx context.Context, ch Change)
 	// FullRefresh 连接成功（启动首连 / 断线重连）时的本地刷新：Auth Reload +
 	// Balances Reload + sched InvalidateAll + settings + rules 重载（覆盖
-	// 断连期间 NOTIFY 丢失；设计文档 §2.3 / R1 / R8）。E2：首连且启动首刷全
+	// 断连期间 NOTIFY 丢失；设计文档 §2.3 / R1 / R8）。首连且启动首刷全
 	// 成功时实现可跳过全量仅补 settings（装配侧 dispatcher 注释）。
 	FullRefresh(ctx context.Context) error
 }
@@ -96,9 +96,9 @@ type ListenerConfig struct {
 //   - 独立单连接 LISTEN c3api_invalidate（重连理由见 pgxConnect 注释）；
 //   - 循环消费通知：解析 Change → 自播（Src == 本实例）跳过 → Dispatcher.Apply；
 //   - 连接断开 → 指数退避重连（1s→30s cap）；连接成功（启动首连或重连）立即
-//     执行一次 Dispatcher.FullRefresh（覆盖断连期间 NOTIFY 丢失，R8；E2：首连
+//     执行一次 Dispatcher.FullRefresh（覆盖断连期间 NOTIFY 丢失，R8；首连
 //     且启动首刷全成功 → dispatcher 跳过五路仅补 settings；60s 周期兜底是另
-//     一层，见设计文档 §5 #9）；
+//     一层，见设计文档 §5）；
 //   - Close：取消循环 + 等 goroutine 退出（幂等；未 Start 也安全）。
 type Listener struct {
 	cfg      ListenerConfig
@@ -223,7 +223,7 @@ func (l *Listener) run(ctx context.Context) {
 			continue
 		}
 		// 启动首连 / 断线重连成功 → 本地刷新（覆盖断连期间 NOTIFY 丢失）。跳过
-		// 与否由 dispatcher 裁决（E2：首连且 main 启动首刷全成功 → 跳过五路
+		// 与否由 dispatcher 裁决（首连且 main 启动首刷全成功 → 跳过五路
 		// ReloadAll 仅补 ReloadSettings；重连恒全量）。
 		// FullRefresh 是连接初始化闸门：非 nil = 基线不可用，禁止在本连接
 		// consume 增量——关闭换连接退避重试（设计 2026-08-29）。

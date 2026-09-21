@@ -26,7 +26,7 @@ import (
 // up front, serial suite so no cross-test interference).
 const compileProbeTestSchema = "compile_probe_test"
 
-// TestCompileEvent_ProductionProbeWired pins the v5-F1 production wiring: the
+// TestCompileEvent_ProductionProbeWired pins the production wiring: the
 // backstop tick consumes the repository-owned O(1) tuple (§9-A1) against real
 // PostgreSQL and, on a quiet fleet, does ZERO reload/compile/serialization
 // work (loader touches, compiler calls, generation, published bytes, fallback

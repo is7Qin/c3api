@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// TestSoftDeletedKeyNotResurrectable F2 红绿：软删 key 全路 404（fake 已建模
+// TestSoftDeletedKeyNotResurrectable 红绿：软删 key 全路 404（fake 已建模
 // 软删——GetKey 仍返回行且 DeletedAt 置值，删除前 ownedKey 放行则测试失败）；
 // 删除后 Auth 快照增量剔除（keys.deleted 含明文，不可鉴权）、列表过滤、不再
 // 注册（不复活）。

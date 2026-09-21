@@ -56,7 +56,7 @@ func TestRegistryRegisterAndFor(t *testing.T) {
 }
 
 // TestNewRegistersResponsesSpecial New 必须默认注册 responses-special provider
-// （P4：修复前未注册 → For 兜底 apiKeyProvider → Credential 类型不匹配报错 →
+// （修复前未注册 → For 兜底 apiKeyProvider → Credential 类型不匹配报错 →
 // 真实流量 502 unsupported credential type）。
 func TestNewRegistersResponsesSpecial(t *testing.T) {
 	r := New()

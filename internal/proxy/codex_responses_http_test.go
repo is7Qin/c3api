@@ -47,7 +47,7 @@ const (
 // codexHTTPUpstream codex 类型 resp HTTP 路径 mock 上游（/v1/responses 端点）：
 // 记录鉴权头/请求体/turn-state 请求头；步骤按序弹出（耗尽重复最后一步）——
 // 200 步 → 逐 events 发 SSE data: 行 + [DONE]；非 200 → JSON 错误体；步骤
-// turnState 非空 → 200 响应头签发 x-codex-turn-state（HOST-2 断言面）。
+// turnState 非空 → 200 响应头签发 x-codex-turn-state（断言面）。
 type codexHTTPUpstream struct {
 	mu         sync.Mutex
 	calls      int
@@ -63,7 +63,7 @@ type codexHTTPStep struct {
 	events []string // SSE data 载荷（status==200 时逐行下发 + [DONE]）
 	body   string   // 非 200 错误体
 	// turnState 响应头签发值（非空 → 200 响应携带 x-codex-turn-state——
-	// HOST-2 mock 上游签发面）。
+	// mock 上游签发面）。
 	turnState string
 }
 
@@ -135,7 +135,7 @@ func (c *codexHTTPUpstream) turnState(i int) string {
 }
 
 // uuidv7Re UUIDv7 格式（8-4-4-4-12 十六进制，version 位 = 7——SDK NewUUIDv7
-// 产物；client_metadata.turn_id 断言面，META-2）。
+// 产物；client_metadata.turn_id 断言面）。
 var uuidv7Re = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 func isUUIDv7(s string) bool { return uuidv7Re.MatchString(s) }
@@ -269,7 +269,7 @@ func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	}
 	require.Equal(t, "hi", gjson.GetBytes(upc.bodies[0], "input").String(), "注入不应动其余字段")
 
-	// META-2 伪装身份注入：installation_id（account_ext 持久化——codexOAuthExt
+	// 伪装身份注入：installation_id（account_ext 持久化——codexOAuthExt
 	// 带 installation 无 session/thread/window 列 → 缺列不注入）+ turn_id 自动
 	// UUIDv7（SDK 恒带面）。
 	cm := gjson.GetBytes(upc.bodies[0], "client_metadata")
@@ -357,7 +357,7 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 	body := string(b)
-	require.NotContains(t, body, "event:", "event: 行不出现（SDK 交付载荷重帧——P2-1 帧规格）")
+	require.NotContains(t, body, "event:", "event: 行不出现（SDK 交付载荷重帧—— 帧规格）")
 	require.Equal(t, []string{t6RespCreated, t6RespItemEv, t6RespDone, "[DONE]"},
 		splitSSEFrames(body), "逐载荷重帧 + 流末补发 [DONE]")
 
@@ -370,7 +370,7 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 		t.Fatalf("客户端已带 stream:true 应原样透传, body = %s", upc.bodies[0])
 	}
 	require.Equal(t, "gpt-4o", gjson.GetBytes(upc.bodies[0], "model").String(), "未映射 → 模型不改写")
-	// 未配置 identity（codexPATExt 无身份列）→ 仍恒带 turn_id（META-1 最小面）
+	// 未配置 identity（codexPATExt 无身份列）→ 仍恒带 turn_id（最小面）
 	cm := gjson.GetBytes(upc.bodies[0], "client_metadata")
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "未配置 identity 仍注入自动 turn_id")
 	require.False(t, cm.Get("x-codex-installation-id").Exists(), "未配置不注入静态键")
@@ -394,12 +394,12 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 	require.Zero(t, ri.Concurrency, "成功路径必须释放并发槽")
 }
 
-// t6RespCallEv 工具调用输出事件 fixture（HOST-2 轮边界判定面——item.type
+// t6RespCallEv 工具调用输出事件 fixture（轮边界判定面——item.type
 // function_call → 轮继续信号）。
 const t6RespCallEv = `{"type":"output_item.done","item":{"id":"call_1","status":"completed","type":"function_call","name":"shell","arguments":"{}","call_id":"call_1"}}`
 
 // postResponsesTS 向网关发 /v1/responses 请求并携带 x-codex-turn-state 头
-// （HOST-2 透传优先断言面；空 = 不带头）。
+// （透传优先断言面；空 = 不带头）。
 func postResponsesTS(t *testing.T, srv *httptest.Server, body, turnState string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/responses", strings.NewReader(body))
@@ -414,7 +414,7 @@ func postResponsesTS(t *testing.T, srv *httptest.Server, body, turnState string)
 	return resp
 }
 
-// TestCodexResponsesTurnStateCarryAndClear turn-state 头回传（HOST-2——非流式
+// TestCodexResponsesTurnStateCarryAndClear turn-state 头回传（——非流式
 // 路径）：轮首请求未带 → 上游签发 ts-1 → held；同轮后续（响应含工具调用——
 // 轮继续）自动注入 x-codex-turn-state；轮结束（completed 无工具调用）→ 清除
 // → 跨轮不回传。对齐真实 codex 轮级实例语义（client.rs:498 new_session +
@@ -460,7 +460,7 @@ func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
 	require.Equal(t, "", upc.turnStates[2], "轮结束清除——跨轮不回传")
 }
 
-// TestCodexResponsesTurnStateStreamCarryAndClear turn-state 头回传（HOST-2——
+// TestCodexResponsesTurnStateStreamCarryAndClear turn-state 头回传（——
 // 流式路径）：与 TestCodexResponsesTurnStateCarryAndClear 同语义序列（轮首无
 // 头 → 同轮续传 → 轮结束清除）。
 func TestCodexResponsesTurnStateStreamCarryAndClear(t *testing.T) {
@@ -493,7 +493,7 @@ func TestCodexResponsesTurnStateStreamCarryAndClear(t *testing.T) {
 	require.Equal(t, "", upc.turnStates[2], "轮结束清除——跨轮不回传")
 }
 
-// TestCodexResponsesTurnStatePassthrough 透传优先（HOST-2）：客户端自带
+// TestCodexResponsesTurnStatePassthrough 透传优先：客户端自带
 // x-codex-turn-state → 原值透传不覆盖（客户端自管）；响应签发值回写 held →
 // 后续未带请求注入新签发值。
 func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
@@ -824,7 +824,7 @@ func TestCodexResponsesStreamMidstreamWriteError(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.status, "200 已写出（流已开始）")
 	require.Equal(t, 4, w.writes, "首帧 3 段直写成功 + 帧2 首段写失败（失败调用计入）")
 	require.NotContains(t, w.body.String(), "[DONE]", "上游错误不补发 [DONE]")
-	require.GreaterOrEqual(t, w.flushes, 1, "每帧 flush（P2-1）")
+	require.GreaterOrEqual(t, w.flushes, 1, "每帧 flush")
 
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(10)
