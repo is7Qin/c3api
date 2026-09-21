@@ -74,6 +74,8 @@ func buildQuality(gid int64, format domain.RequestFormat, model string, m map[in
 	return out
 }
 
+// compilerHealthKeyFor 造"该候选在给定路由上的健康键"：身份分量取候选指纹，
+// 与预留路径读取时用的 c.Fingerprint 同源（否则注入的记录不会被查询到）。
 func compilerHealthKeyFor(acc *domain.Account, format domain.RequestFormat, model string) HealthKey {
 	resolved := model
 	if acc.Template != nil {
@@ -81,9 +83,11 @@ func compilerHealthKeyFor(acc *domain.Account, format domain.RequestFormat, mode
 			resolved = mapping.MappedModel
 		}
 	}
+	fp, _ := candidateFingerprint(acc)
 	return HealthKey{
 		AccountID:        acc.ID,
 		Quality:          qualityClassHexForWithOp(format, resolved, operationTagForFormat(string(format))),
+		Identity:         fp,
 		IdentityRevision: acc.IdentityRevision,
 	}
 }

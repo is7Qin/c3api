@@ -147,7 +147,10 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		if !applyMapping {
 			q = c.QualityRaw
 		}
-		if s.health != nil && s.health.EffectiveState(av.acc.ID, q, c.IdentityRevision) != StateReady {
+		// 健康判决按身份指纹 + K 双维围栏：指纹不匹配的记录不参与判决。
+		// c.Fingerprint 在放行后恒等于当前身份指纹——放行前提是
+		// planKeyOf(当前) == c.PlanKey，而指纹的每个入参都落在 planKey 内。
+		if s.health != nil && s.health.EffectiveState(av.acc.ID, q, c.Fingerprint, c.IdentityRevision) != StateReady {
 			return false
 		}
 		st := a.statePtr()

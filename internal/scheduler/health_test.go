@@ -24,8 +24,12 @@ func newHealthTestRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	return mr, c
 }
 
+// testIdentity 是健康测试用的候选身份指纹常量：健康键的身份分量在测试里只需
+// 写入与读取自洽，不必是真实指纹。测试要覆盖通配时显式用 identityAny。
+const testIdentity = "fp-test"
+
 func healthKeyFor(acc int64, quality string, rev int64) HealthKey {
-	return HealthKey{AccountID: acc, Quality: quality, IdentityRevision: rev}
+	return HealthKey{AccountID: acc, Quality: quality, Identity: testIdentity, IdentityRevision: rev}
 }
 
 // TestHealthViewImmutableAtomicPointer verifies one immutable atomic.Pointer view is used.
@@ -206,16 +210,16 @@ func TestHealthLockFreeReadUnderBlockedRedis(t *testing.T) {
 	_, err := h.Throttle(context.Background(), key, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", 7))
+	require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", testIdentity, 7))
 
 	baseCmd := mr.CommandCount()
 	for i := 0; i < 100; i++ {
-		require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", 7))
+		require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", testIdentity, 7))
 	}
 	require.Equal(t, baseCmd, mr.CommandCount(), "EffectiveState must not issue Redis commands (lock-free)")
 
 	mr.Close()
-	require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", 7), "view read must succeed even when Redis blocked/closed")
+	require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", testIdentity, 7), "view read must succeed even when Redis blocked/closed")
 
 	_, c2 := newHealthTestRedis(t)
 	h2 := NewRuntimeHealth(c2, "self-a", nil, nil)
@@ -230,7 +234,7 @@ func TestHealthLockFreeReadUnderBlockedRedis(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 1000; j++ {
-				if h2.EffectiveState(1, "q", 1) == StateOPEN {
+				if h2.EffectiveState(1, "q", testIdentity, 1) == StateOPEN {
 					successCount.Add(1)
 				}
 			}
@@ -311,16 +315,16 @@ func TestHealthProbeTwoSuccessReady(t *testing.T) {
 	_, err := h.Throttle(context.Background(), key, StateProbing, 5*time.Second) // T1：探针只服务 PROBING
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateProbing, h.EffectiveState(5, "q5", 1))
+	require.Equal(t, StateProbing, h.EffectiveState(5, "q5", testIdentity, 1))
 
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateProbing, h.EffectiveState(5, "q5", 1), "one success must not become READY（仍在 PROBING）")
+	require.Equal(t, StateProbing, h.EffectiveState(5, "q5", testIdentity, 1), "one success must not become READY（仍在 PROBING）")
 	require.Equal(t, int64(1), probeCount.Load())
 
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateReady, h.EffectiveState(5, "q5", 1), "two current-gen successes must become READY")
+	require.Equal(t, StateReady, h.EffectiveState(5, "q5", testIdentity, 1), "two current-gen successes must become READY")
 	require.Equal(t, int64(2), probeCount.Load())
 
 	field := key.String()
@@ -356,8 +360,8 @@ func TestHealthProbeWindowHonoredNoEarlyProbe(t *testing.T) {
 	}
 	require.Zero(t, probeCount.Load(), "窗口内 OPEN/RETRY_AFTER 绝不被探测（不得提前清除）")
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 1))
-	require.Equal(t, StateRetryAfter, h.EffectiveState(2, "q2", 1))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", testIdentity, 1))
+	require.Equal(t, StateRetryAfter, h.EffectiveState(2, "q2", testIdentity, 1))
 }
 
 // TestHealthProbeFailureReopen verifies failure reopen.
@@ -382,7 +386,7 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	h.probeTick(context.Background())
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateReady, h.EffectiveState(9, "q9", 1))
+	require.Equal(t, StateReady, h.EffectiveState(9, "q9", testIdentity, 1))
 
 	// 再入 PROBING；探测失败 → 重开为 OPEN（30s）。
 	_, err = h.Throttle(context.Background(), key, StateProbing, 5*time.Second)
@@ -392,13 +396,13 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	shouldFail.Store(true)
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", 1), "探测失败必须重开")
+	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", testIdentity, 1), "探测失败必须重开")
 
 	// 重开后的 OPEN 窗口内不探测（T1）：重复 probeTick 状态不变。
 	shouldFail.Store(false)
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", 1), "OPEN 窗口内不得被探测（T1）")
+	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", testIdentity, 1), "OPEN 窗口内不得被探测（T1）")
 
 	// 窗口结束再入 PROBING：一次成功不足、两次才 READY。
 	_, err = h.Throttle(context.Background(), key, StateProbing, 5*time.Second)
@@ -406,10 +410,10 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateProbing, h.EffectiveState(9, "q9", 1), "after failure, needs two fresh successes")
+	require.Equal(t, StateProbing, h.EffectiveState(9, "q9", testIdentity, 1), "after failure, needs two fresh successes")
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateReady, h.EffectiveState(9, "q9", 1))
+	require.Equal(t, StateReady, h.EffectiveState(9, "q9", testIdentity, 1))
 }
 
 func TestHealthProbeStaleRevisionDoesNotReopen(t *testing.T) {
@@ -519,16 +523,16 @@ func TestHealthEffectiveStateSeverity(t *testing.T) {
 	_, err = h.Throttle(context.Background(), specific, StateRetryAfter, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 1), "wildcard OPEN must be more severe than specific RETRY_AFTER")
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", testIdentity, 1), "wildcard OPEN must be more severe than specific RETRY_AFTER")
 
 	h2 := NewRuntimeHealth(c, "self-a", nil, nil)
 	require.NoError(t, c.FlushAll(context.Background()).Err())
 	_, err = h2.Throttle(context.Background(), specific, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h2.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h2.EffectiveState(1, "q1", 1))
+	require.Equal(t, StateOPEN, h2.EffectiveState(1, "q1", testIdentity, 1))
 
-	require.Equal(t, StateReady, h2.EffectiveState(99, "unknown", 1))
+	require.Equal(t, StateReady, h2.EffectiveState(99, "unknown", testIdentity, 1))
 }
 
 // TestHealthKeyRevisionIsolation verifies key includes revision.
@@ -540,13 +544,13 @@ func TestHealthKeyRevisionIsolation(t *testing.T) {
 	_, err := h.Throttle(context.Background(), k1, StateOPEN, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 1))
-	require.Equal(t, StateReady, h.EffectiveState(1, "q1", 2), "different revision must be isolated")
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", testIdentity, 1))
+	require.Equal(t, StateReady, h.EffectiveState(1, "q1", testIdentity, 2), "different revision must be isolated")
 	_, err = h.Throttle(context.Background(), k2, StateRetryAfter, 5*time.Second)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 1))
-	require.Equal(t, StateRetryAfter, h.EffectiveState(1, "q1", 2))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", testIdentity, 1))
+	require.Equal(t, StateRetryAfter, h.EffectiveState(1, "q1", testIdentity, 2))
 }
 
 // TestHealthCleanupRaceRetainsRecreated verifies Lua cleanup re-validates global gen and per-record before ZREM/HDEL; concurrent recreate never deleted.
@@ -708,7 +712,7 @@ func TestHealthRunResetRepeatedEmptiesDeadlineProbe(t *testing.T) {
 	// One success keeps PROBING (needs two)
 	require.NoError(t, h.Sync(context.Background()))
 	for _, k := range keys {
-		require.Equal(t, StateProbing, h.EffectiveState(k.AccountID, k.Quality, k.IdentityRevision))
+		require.Equal(t, StateProbing, h.EffectiveState(k.AccountID, k.Quality, testIdentity, k.IdentityRevision))
 	}
 	h.probeTick(context.Background())
 	// After two successes, MarkReady tries but will fail because Redis empty (no record), so generation check fails and stays PROBING

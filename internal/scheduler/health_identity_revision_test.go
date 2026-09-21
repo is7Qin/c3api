@@ -31,10 +31,10 @@ func TestHealthEffectiveStateIsolatedByIdentityRevision(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(ctx))
 
-	require.Equal(t, StateOPEN, h.EffectiveState(5, "q", 1),
+	require.Equal(t, StateOPEN, h.EffectiveState(5, "q", testIdentity, 1),
 		"同一 K 必须能观察到该记录（否则隔离断言是空洞的）")
 
-	require.Equal(t, StateReady, h.EffectiveState(5, "q", 2),
+	require.Equal(t, StateReady, h.EffectiveState(5, "q", testIdentity, 2),
 		"旧 K 下的记录不得泄漏到新 K：健康事实按身份代际隔离")
 }
 
@@ -58,13 +58,13 @@ func TestHealthClearAccountMustClearRedisNotJustMemory(t *testing.T) {
 	_, err = h.Throttle(ctx, healthKeyFor(8, "*", 1), StateOPEN, 10*time.Minute)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(ctx))
-	require.Equal(t, StateOPEN, h.EffectiveState(7, "q", 1))
-	require.Equal(t, StateOPEN, h.EffectiveState(8, "q", 1))
+	require.Equal(t, StateOPEN, h.EffectiveState(7, "q", testIdentity, 1))
+	require.Equal(t, StateOPEN, h.EffectiveState(8, "q", testIdentity, 1))
 
 	// —— 天真做法：只清内存视图。Redis 侧记录仍在活动 ZSET 中 ——
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{}})
 	require.NoError(t, h.Sync(ctx))
-	require.Equal(t, StateOPEN, h.EffectiveState(7, "q", 1),
+	require.Equal(t, StateOPEN, h.EffectiveState(7, "q", testIdentity, 1),
 		"只清内存视图不足以清理：Sync 会按活动 ZSET 把未过期的 OPEN 记录装回视图")
 
 	// —— 完整原语：4 段纪律（含墓碑）——
@@ -73,11 +73,11 @@ func TestHealthClearAccountMustClearRedisNotJustMemory(t *testing.T) {
 	require.EqualValues(t, 2, n, "必须恰好清掉账号 7 的两个字段（q 通配 + q2）")
 	require.NoError(t, h.Sync(ctx))
 
-	require.Equal(t, StateReady, h.EffectiveState(7, "q", 1),
+	require.Equal(t, StateReady, h.EffectiveState(7, "q", testIdentity, 1),
 		"完整清理后不得复活（墓碑阻止 Sync 保留）")
-	require.Equal(t, StateReady, h.EffectiveState(7, "q2", 1),
+	require.Equal(t, StateReady, h.EffectiveState(7, "q2", testIdentity, 1),
 		"该账号全部 quality 一并清掉")
-	require.Equal(t, StateOPEN, h.EffectiveState(8, "q", 1),
+	require.Equal(t, StateOPEN, h.EffectiveState(8, "q", testIdentity, 1),
 		"清理必须按账号边界生效：不得清到别的账号（前缀匹配 accId .. ':'）")
 }
 
@@ -100,7 +100,7 @@ func TestHealthClearAccountIsolatesByAccountBoundary(t *testing.T) {
 	require.EqualValues(t, 1, n, "只应清掉账号 7 自己")
 	require.NoError(t, h.Sync(ctx))
 
-	require.Equal(t, StateReady, h.EffectiveState(7, "q", 1))
-	require.Equal(t, StateOPEN, h.EffectiveState(70, "q", 1), "数字前缀相邻的账号不得被误清")
-	require.Equal(t, StateOPEN, h.EffectiveState(17, "q", 1), "数字后缀相邻的账号不得被误清")
+	require.Equal(t, StateReady, h.EffectiveState(7, "q", testIdentity, 1))
+	require.Equal(t, StateOPEN, h.EffectiveState(70, "q", testIdentity, 1), "数字前缀相邻的账号不得被误清")
+	require.Equal(t, StateOPEN, h.EffectiveState(17, "q", testIdentity, 1), "数字后缀相邻的账号不得被误清")
 }

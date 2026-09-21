@@ -234,8 +234,13 @@ func TestReserveAttempt_fencesHealthByQualityClassAndRevision(t *testing.T) {
 	resolved := "m"
 	qc := qualityClassHexForWithOp(domain.FormatOpenAIChat, resolved, domain.OpChatCompletions)
 	s.health = &RuntimeHealth{}
+	// 身份分量取账号 1 的候选指纹：预留路径按 c.Fingerprint 读取，注入的记录
+	// 必须带同一指纹才会被查询到（否则本用例会因"记录查不到"而假通过）。
+	fpAv := s.view.Load().static.byID[1].static.Load()
+	fp1, fpErr := candidateFingerprint(&fpAv.acc)
+	require.NoError(t, fpErr)
 	s.health.view.Store(&healthView{entries: map[HealthKey]healthEntry{
-		{AccountID: 1, Quality: qc, IdentityRevision: 1}: {State: StateOPEN},
+		{AccountID: 1, Quality: qc, Identity: fp1, IdentityRevision: 1}: {State: StateOPEN},
 	}})
 
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-h"}, route)

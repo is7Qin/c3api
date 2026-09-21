@@ -60,8 +60,21 @@ func (s HealthState) severity() int {
 	}
 }
 
-// HealthKey is the immutable composite key account+quality|*+revision.
+// identityAny 是身份指纹分量的通配值。只由 recover 链路的 SetProbing 写入：
+// recover 是显式的健康重置动作（先按账号清记录、再置 PROBING），且该链路拿不到
+// 账号编译期的候选指纹。其余写入点（规则引擎的 throttle 动作）一律写具体指纹。
+const identityAny = "*"
+
+// HealthKey is the immutable composite key account+quality|*+identity|*+revision.
 // quality is either a QualityClassID hex or "*" for wildcard (account scope).
+//
+// Identity 是**候选身份指纹 I**（CandidateFingerprint 的 hex），或通配 "*"。
+// 为什么 I 必须进键：模板侧改动（例如 strip_image_tools 翻转）会改变 I，却
+// **既不改变 K**（K 是账号的 identity_revision，模板写入不推进任何账号的 K），
+// **也不改变质量类**——只按 (account, quality, K) 落键的话，身份已经变了，旧
+// 判决却仍会被查询到并继续生效。把 I 放进键之后，旧记录对新 I 天然不可达，
+// 等价于"无记录"（即 READY），这正是"模板侧身份变化必须作废在途工件"的落点。
+//
 // IdentityRevision 是**身份代际 K**（identity_revision），不是客户端 CAS 令牌
 // C（lifecycle_revision）。健康记录按 K 隔离：K 推进 ⇒ 旧记录不再被查询。
 // 命名承重——泛化的 Revision 会让调用点把 C 静默传进来（SetProbing 曾如此，
@@ -69,28 +82,32 @@ func (s HealthState) severity() int {
 type HealthKey struct {
 	AccountID        int64
 	Quality          string // hex or "*"
+	Identity         string // 候选身份指纹 hex，或 "*"（仅 recover 的 PROBING 写）
 	IdentityRevision int64
 }
 
 func (k HealthKey) String() string {
-	return fmt.Sprintf("%d:%s:%d", k.AccountID, k.Quality, k.IdentityRevision)
+	return fmt.Sprintf("%d:%s:%s:%d", k.AccountID, k.Quality, k.Identity, k.IdentityRevision)
 }
 
 func parseHealthKey(s string) (HealthKey, bool) {
 	parts := strings.Split(s, ":")
-	if len(parts) != 3 {
+	if len(parts) != 4 {
 		return HealthKey{}, false
+	}
+	if parts[2] == "" {
+		return HealthKey{}, false // 身份分量必填（通配写作 "*"；空串是坏记录）
 	}
 	var acc, rev int64
 	_, err := fmt.Sscanf(parts[0], "%d", &acc)
 	if err != nil {
 		return HealthKey{}, false
 	}
-	_, err = fmt.Sscanf(parts[2], "%d", &rev)
+	_, err = fmt.Sscanf(parts[3], "%d", &rev)
 	if err != nil {
 		return HealthKey{}, false
 	}
-	return HealthKey{AccountID: acc, Quality: parts[1], IdentityRevision: rev}, true
+	return HealthKey{AccountID: acc, Quality: parts[1], Identity: parts[2], IdentityRevision: rev}, true
 }
 
 // healthEntry is the immutable per-key record stored in Redis HASH and view.
@@ -535,31 +552,41 @@ func (h *RuntimeHealth) ClearAccount(ctx context.Context, accountID int64) (int6
 // contract). Rides the standard Throttle Lua path so generation bump, record
 // HASH, active ZSET membership and tombstone clearing stay atomic. Non-positive
 // revision is rejected fail-closed; old-revision records stay isolated by key.
+//
+// 身份分量写作通配 identityAny：recover 先按账号清掉全部健康记录、再置
+// PROBING，是显式的健康重置；该链路拿不到账号编译期的候选指纹。PROBING 是
+// 30s 瞬时态（探针环接管），通配不会让"旧判决"复活——判决类记录（OPEN /
+// RETRY_AFTER）一律由规则引擎按具体指纹写入。
 func (h *RuntimeHealth) SetProbing(ctx context.Context, accountID int64, identityRevision int64) error {
 	if identityRevision <= 0 {
 		return fmt.Errorf("health: invalid probing identity revision %d for account %d", identityRevision, accountID)
 	}
-	_, err := h.Throttle(ctx, HealthKey{AccountID: accountID, Quality: "*", IdentityRevision: identityRevision}, StateProbing, 30*time.Second)
+	_, err := h.Throttle(ctx, HealthKey{AccountID: accountID, Quality: identityAny, Identity: identityAny, IdentityRevision: identityRevision}, StateProbing, 30*time.Second)
 	return err
 }
 
-// EffectiveState returns the severity-most health for account+quality+revision.
-func (h *RuntimeHealth) EffectiveState(accountID int64, quality string, identityRevision int64) HealthState {
+// EffectiveState returns the severity-most health for the account at the given
+// identity: (quality, identity) exact, account-scope quality wildcard, and the
+// recover-written identity wildcard. 身份指纹不匹配的记录**不参与**判决——
+// 这正是"模板侧身份变化必须作废在途工件"的落点：I 变了，旧记录即不可达，
+// 效果等同于无记录（READY）。
+func (h *RuntimeHealth) EffectiveState(accountID int64, quality, identity string, identityRevision int64) HealthState {
 	view := h.view.Load()
 	if view == nil {
 		return StateReady
 	}
 	best := StateReady
 	bestSev := best.severity()
-	if s, ok := view.entries[HealthKey{AccountID: accountID, Quality: quality, IdentityRevision: identityRevision}]; ok {
-		if s.State.severity() > bestSev {
-			best = s.State
-			bestSev = s.State.severity()
-		}
-	}
-	if w, ok := view.entries[HealthKey{AccountID: accountID, Quality: "*", IdentityRevision: identityRevision}]; ok {
-		if w.State.severity() > bestSev {
-			best = w.State
+	for _, q := range [2]string{quality, identityAny} {
+		for _, id := range [2]string{identity, identityAny} {
+			e, ok := view.entries[HealthKey{AccountID: accountID, Quality: q, Identity: id, IdentityRevision: identityRevision}]
+			if !ok {
+				continue
+			}
+			if e.State.severity() > bestSev {
+				best = e.State
+				bestSev = e.State.severity()
+			}
 		}
 	}
 	return best

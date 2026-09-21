@@ -18,6 +18,10 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
+// healthTestIdentity 是健康键身份分量在测试里的取值：写入与读取自洽即可，
+// 不必是真实候选指纹（PROBING 记录本身按通配身份写，任何取值都能命中）。
+const healthTestIdentity = "fp-test"
+
 // --- 探测适配器测试夹具（cmd/server 局部；lookup 注入 func 源，无需调度器
 // 完整夹具——ProbeAccount 权威面由 scheduler 包测试覆盖） ---
 
@@ -69,10 +73,10 @@ func TestHealthProbeRevisionFenceFailClosed(t *testing.T) {
 		7: probeAcc(7, ant, 5, "http://unused.invalid"),
 	}), codex)
 
-	err := fn(context.Background(), scheduler.HealthKey{AccountID: 9, Quality: "*", IdentityRevision: 1})
+	err := fn(context.Background(), scheduler.HealthKey{AccountID: 9, Quality: "*", Identity: healthTestIdentity, IdentityRevision: 1})
 	require.ErrorIs(t, err, scheduler.ErrProbeStaleRevision,
 		"missing account must fail closed")
-	err = fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", IdentityRevision: 4})
+	err = fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Identity: healthTestIdentity, IdentityRevision: 4})
 	require.ErrorIs(t, err, scheduler.ErrProbeStaleRevision,
 		"stale revision must fail closed")
 	require.Zero(t, codex.calls)
@@ -103,7 +107,7 @@ func TestHealthProbeAPIKeyFamilyNoNetworkNoop(t *testing.T) {
 			fn := probeFn(t, probeLookup(map[int64]*domain.Account{
 				7: probeAcc(7, tpl, 3, upstream.URL),
 			}), nil)
-			require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", IdentityRevision: 3}),
+			require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Identity: healthTestIdentity, IdentityRevision: 3}),
 				"api_key 族探测视为通过（无合成探测面）")
 		})
 	}
@@ -120,7 +124,7 @@ func TestHealthProbeCodexRoutesToAdapter(t *testing.T) {
 		11: probeAcc(11, pat, 2, "http://unused.invalid"),
 	}), codex)
 
-	require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", IdentityRevision: 2}))
+	require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", Identity: healthTestIdentity, IdentityRevision: 2}))
 	require.Equal(t, 1, codex.calls, "codex credential probe must route to the SDK adapter")
 	require.Equal(t, int64(11), codex.got.AccountID, "probe credential must carry the account id")
 }
@@ -133,7 +137,7 @@ func TestHealthProbeNilCodexAdapterFailClosed(t *testing.T) {
 		11: probeAcc(11, pat, 2, "http://unused.invalid"),
 	}), nil)
 
-	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", IdentityRevision: 2}))
+	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 11, Quality: "*", Identity: healthTestIdentity, IdentityRevision: 2}))
 }
 
 // TestHealthProbeUnknownCredTypeExplicitError：未知凭据类型显式报错——
@@ -144,7 +148,7 @@ func TestHealthProbeUnknownCredTypeExplicitError(t *testing.T) {
 		7: probeAcc(7, weird, 1, "http://unused.invalid"),
 	}), nil)
 
-	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", IdentityRevision: 1}))
+	require.Error(t, fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Identity: healthTestIdentity, IdentityRevision: 1}))
 }
 
 // controllableCodexProber 可切换失败态的 codex 探测替身（并发安全——探测在
@@ -203,13 +207,13 @@ func TestHealthProbeRecoverySurface(t *testing.T) {
 		return codex.callCount() >= 2
 	}, 8*time.Second, 200*time.Millisecond, "probe must be dispatched twice (two current-gen successes)")
 	require.Eventually(t, func() bool {
-		return scheduler.StateReady == h.EffectiveState(1, "*", 5)
+		return scheduler.StateReady == h.EffectiveState(1, "*", healthTestIdentity, 5)
 	}, 8*time.Second, 200*time.Millisecond, "two probe successes must reach READY via the real probe adapter")
 
 	// 再入 PROBING 后探测持续失败：重开，不得 READY。
 	codex.setFail(true)
 	require.NoError(t, h.SetProbing(context.Background(), 1, 5))
 	require.Eventually(t, func() bool {
-		return scheduler.StateOPEN == h.EffectiveState(1, "*", 5)
+		return scheduler.StateOPEN == h.EffectiveState(1, "*", healthTestIdentity, 5)
 	}, 8*time.Second, 200*time.Millisecond, "probe failure must reopen the record")
 }
