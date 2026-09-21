@@ -263,7 +263,7 @@ func TestHealthProbeOwner(t *testing.T) {
 
 	k1 := healthKeyFor(1, "q1", 1)
 	k2 := healthKeyFor(2, "q1", 1)
-	// 探针只服务 PROBING（T1 窗口 honored）——可探条目以 PROBING 构造。
+	// 探针只服务 PROBING（窗口 honored）——可探条目以 PROBING 构造。
 	_, _ = hA.Throttle(context.Background(), k1, StateProbing, 5*time.Second)
 	_, _ = hA.Throttle(context.Background(), k2, StateProbing, 5*time.Second)
 	require.NoError(t, hA.Sync(context.Background()))
@@ -312,7 +312,7 @@ func TestHealthProbeTwoSuccessReady(t *testing.T) {
 	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
 	h.probeFn = probeFn
 	key := healthKeyFor(5, "q5", 1)
-	_, err := h.Throttle(context.Background(), key, StateProbing, 5*time.Second) // T1：探针只服务 PROBING
+	_, err := h.Throttle(context.Background(), key, StateProbing, 5*time.Second) // 探针只服务 PROBING
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateProbing, h.EffectiveState(5, "q5", testIdentity, 1))
@@ -334,7 +334,7 @@ func TestHealthProbeTwoSuccessReady(t *testing.T) {
 	require.NoError(t, err, "tombstone must exist after READY")
 }
 
-// TestHealthProbeWindowHonoredNoEarlyProbe（owner 裁决 T1）：OPEN/RETRY_AFTER
+// TestHealthProbeWindowHonoredNoEarlyProbe（owner 裁决）：OPEN/RETRY_AFTER
 // 在其窗口内永不被探测——probeTick 只服务 PROBING 条目；窗口跑满 TTL，到期
 // 处理权归 Sync retention，本循环不碰。
 func TestHealthProbeWindowHonoredNoEarlyProbe(t *testing.T) {
@@ -377,7 +377,7 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	h := NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
 	h.probeFn = probeFn
 	key := healthKeyFor(9, "q9", 1)
-	// 探针只服务 PROBING（T1：OPEN/RETRY_AFTER 窗口内不探测）——可探条目以
+	// 探针只服务 PROBING（OPEN/RETRY_AFTER 窗口内不探测）——可探条目以
 	// PROBING 构造。
 	_, err := h.Throttle(context.Background(), key, StateProbing, 5*time.Second)
 	require.NoError(t, err)
@@ -398,7 +398,7 @@ func TestHealthProbeFailureReopen(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(9, "q9", testIdentity, 1), "探测失败必须重开")
 
-	// 重开后的 OPEN 窗口内不探测（T1）：重复 probeTick 状态不变。
+	// 重开后的 OPEN 窗口内不探测：重复 probeTick 状态不变。
 	shouldFail.Store(false)
 	h.probeTick(context.Background())
 	require.NoError(t, h.Sync(context.Background()))
@@ -423,7 +423,7 @@ func TestHealthProbeStaleRevisionDoesNotReopen(t *testing.T) {
 		return ErrProbeStaleRevision
 	}
 	key := healthKeyFor(10, "q10", 1)
-	_, err := h.Throttle(context.Background(), key, StateProbing, 100*time.Millisecond) // T1：探针只服务 PROBING
+	_, err := h.Throttle(context.Background(), key, StateProbing, 100*time.Millisecond) // 探针只服务 PROBING
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
 
@@ -437,7 +437,7 @@ func TestHealthProbeStaleRevisionDoesNotReopen(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 	_, err = c.ZScore(context.Background(), healthActiveZSet, field).Result()
 	require.Error(t, err, "stale health record must expire instead of being refreshed")
-	// T1 后 PROBING 条目按保留语义留在视图（等真实探测结果），不得过期即清除。
+	// 此后 PROBING 条目按保留语义留在视图（等真实探测结果），不得过期即清除。
 	require.Contains(t, h.View(), key)
 	require.Equal(t, StateProbing, h.View()[key].State)
 }
@@ -473,7 +473,7 @@ func TestHealthProbeOnePermit(t *testing.T) {
 	h.probeFn = probeFn
 	k1 := healthKeyFor(1, "q1", 1)
 	k2 := healthKeyFor(2, "q1", 1)
-	// 探针只服务 PROBING（T1 窗口 honored）。
+	// 探针只服务 PROBING（窗口 honored）。
 	_, _ = h.Throttle(context.Background(), k1, StateProbing, 5*time.Second)
 	_, _ = h.Throttle(context.Background(), k2, StateProbing, 5*time.Second)
 	require.NoError(t, h.Sync(context.Background()))
@@ -792,7 +792,7 @@ func TestHealthCurGenInterleaving(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 5; i++ {
-			_, _ = h2.Throttle(context.Background(), healthKeyFor(int64(100+i), "q", 1), StateProbing, 5*time.Second) // T1：探针只服务 PROBING（本段验证 probeTick 与 gen 递增并发）
+			_, _ = h2.Throttle(context.Background(), healthKeyFor(int64(100+i), "q", 1), StateProbing, 5*time.Second) // 探针只服务 PROBING（本段验证 probeTick 与 gen 递增并发）
 		}
 	}()
 	go func() {

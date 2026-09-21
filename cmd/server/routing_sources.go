@@ -117,7 +117,7 @@ func NewWindowedQualityProvider(rec *quality.Recorder, parts windowSettledBacken
 	)
 }
 
-// schedWorker 适配 Scheduler 启动（W3-T1，healthWorker R1 先例）：编译双源
+// schedWorker 适配 Scheduler 启动（healthWorker 先例）：编译双源
 // 是 Start 期依赖（qualityRecorder 与 svc 都在 sched 之后就绪），适配器让
 // worker.Manager 契约不变、Name 保持 "scheduler"（注册序=反序排空语义依
 // 赖）。Stats 原样透出——ops 运维面不因适配掉线。Start 期交接编译源并触发

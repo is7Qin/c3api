@@ -112,7 +112,7 @@ func (s *fakeStatsAggStore) snapshot() (calls, aggr []aggCall, wm time.Time) {
 	return append([]aggCall(nil), s.calls...), append([]aggCall(nil), s.aggrCalls...), s.wm
 }
 
-// TestStatsAggWorkerTwoRange spec 评审 P1-A 两范围分离：部分小时桶跨周期累积
+// TestStatsAggWorkerTwoRange spec 两范围分离：部分小时桶跨周期累积
 // 不截断——cycle 1 消费 [H, H+9m) 后 watermark 推进到 T（非 R1）；cycle 2 重算
 // 范围仍为小时对齐 [H, H+1h)（DELETE+SELECT 共同边界），bucket 由全量行重建。
 // 重放幂等：同范围两跑 LoadAggRange 参数一致。
@@ -160,7 +160,7 @@ func TestStatsAggWorkerTwoRange(t *testing.T) {
 	require.Equal(t, h.Add(time.Hour), calls[1].to)
 }
 
-// TestStatsAggWorkerCatchUpLimit 追赶上限（评审 P2-1）：停摆恢复后单周期窗口
+// TestStatsAggWorkerCatchUpLimit 追赶上限：停摆恢复后单周期窗口
 // ≤ 1h 分批收敛——读窗口被钳制到 W+1h（不一次扫全史），watermark 同步只推进
 // 到钳制后的 T。
 func TestStatsAggWorkerCatchUpLimit(t *testing.T) {

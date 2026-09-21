@@ -64,7 +64,7 @@ type gateSnapshot struct {
 	quotaRetiring atomic.Bool
 }
 
-// keyQuota 单 key 额度状态（多实例本地预算模型 #14 §3.2 + #37 P1 收敛修正）：
+// keyQuota 单 key 额度状态（多实例本地预算模型 §3.2 + 收敛修正）：
 //
 //	budget = consumed + ceil(剩余额/N)   —— 复核时刻分配（reload/upsert/耗尽复核）
 //	Allow  = consumed < budget          —— 热路径两原子读，零锁零 DB
@@ -73,7 +73,7 @@ type gateSnapshot struct {
 //	          （软门禁语义：放行不产生错计费，扣费恒为条件 UPDATE 精确，
 //	          见 billing flusher）
 //
-// 收敛（#37 P1，击穿 §3.2 误差上界的修复）：quota_used 由 usage.Recorder 每
+// 收敛（击穿 §3.2 误差上界的修复）：quota_used 由 usage.Recorder 每
 // quota_flush_interval 批写一次，两次回写间复核读到的 DB 值恒定——若每次复核
 // 都重新分配 ceil(remaining/N)，复核循环会无限续额（N=2 压测实证超跑 14 倍）。
 // 复核认领因此扣除本地已消耗但 DB 未反映的部分（unreported，见 reclaim）：
@@ -346,7 +346,7 @@ func (g *concurrencyGate) quotaExhausted(meta domain.KeyMeta) bool {
 	return !g.reclaim(meta, q)
 }
 
-// reclaim 预算耗尽后的 DB 复核认领（#14 §3.2 公式 + #37 P1 收敛修正）：
+// reclaim 预算耗尽后的 DB 复核认领（§3.2 公式 + 收敛修正）：
 //
 //	remaining = quota - quota_used(DB 复核读)
 //	unreported = max(0, consumed - quotaUsedAtReclaim)  —— 本地已消耗但 DB
@@ -362,7 +362,7 @@ func (g *concurrencyGate) quotaExhausted(meta domain.KeyMeta) bool {
 //	                 退避期内预算耗尽按 429，防复核风暴
 //	无复核能力    → 429（与单实例现状语义一致）
 //
-// 收敛论证（#37 P1）：两次回写间 used 恒定、quotaUsedAtReclaim = 上次复核读值，
+// 收敛论证：两次回写间 used 恒定、quotaUsedAtReclaim = 上次复核读值，
 // 复核循环的每次认领 = ceil((Q - used - max(0, consumed - 基线))/N)，随 consumed
 // 单调增长等比收缩 → 本实例总放行收敛 ≤ 初始份额 + 滞后差（滞后差 = 本实例在
 // 上次回写后消耗但 DB 未反映的量，≤1 个 flush 窗口）——不复核则不续额，不再是
@@ -407,7 +407,7 @@ func (g *concurrencyGate) reclaim(meta domain.KeyMeta, q *keyQuota) bool {
 		return true
 	}
 	if remaining := meta.Quota - used; remaining > 0 {
-		// 复核认领扣除本地未反映消耗（#37 P1 收敛修复）：DB quota_used 每
+		// 复核认领扣除本地未反映消耗（收敛修复）：DB quota_used 每
 		// quota_flush_interval 批写一次，两次回写间 used 恒定 → 若不加扣除，
 		// 每次复核重新分配 ceil(remaining/N) → 复核循环无限续额（超跑实证）。
 		// unreported = consumed - 上次复核基线（本地已消耗但 DB 未反映的量）；
@@ -435,7 +435,7 @@ func (g *concurrencyGate) reclaim(meta domain.KeyMeta, q *keyQuota) bool {
 // remaining = quota - quota_used（快照值；reload/upsert 携带）。remaining ≤ 0 →
 // exhausted（真尽，429 短路直到下次重建）。consumed 恒不动（在途纪律）。
 // 复核基准 quotaUsedAtReclaim 同步前移 = 快照 quota_used（DB 刷新后 unreported 复位，
-// 压测 P1：防止陈旧基准使剩余额被过度扣除）。
+// 压测：防止陈旧基准使剩余额被过度扣除）。
 func (g *concurrencyGate) allocBudget(q *keyQuota, meta domain.KeyMeta) {
 	remaining := meta.Quota - meta.QuotaUsed
 	if remaining <= 0 {

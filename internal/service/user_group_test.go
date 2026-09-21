@@ -139,7 +139,7 @@ func TestKeyUpdateFields(t *testing.T) {
 	require.Greater(t, len(keys.upserted), 1, "更新后必须增量注册")
 }
 
-// getUserFailStore fakeStore 包装：注入 GetUser 失败（B1-1 测试——写前预取
+// getUserFailStore fakeStore 包装：注入 GetUser 失败（写前预取测试——
 // 失败必须发生在写库前，零破坏）。
 type getUserFailStore struct {
 	*fakeStore
@@ -153,7 +153,7 @@ func (f *getUserFailStore) GetUser(ctx context.Context, id int64) (*domain.User,
 	return f.fakeStore.GetUser(ctx, id)
 }
 
-// TestCreateKeyGetUserFailureNoWrite B1-1：GetUser 失败注入 → CreateKey 在写库
+// TestCreateKeyGetUserFailureNoWrite：GetUser 失败注入 → CreateKey 在写库
 // 前终止——零落库、零注册（写后注册不可失败；失败绝不反转调用方）。
 func TestCreateKeyGetUserFailureNoWrite(t *testing.T) {
 	fs := &getUserFailStore{fakeStore: newFakeStore()}
@@ -175,7 +175,7 @@ func TestCreateKeyGetUserFailureNoWrite(t *testing.T) {
 	require.Empty(t, keys.upserted, "失败注入下不得注册任何 key")
 }
 
-// TestRotateKeyGetUserFailureNoDestruction B1-1：GetUser 失败注入 → RotateKey
+// TestRotateKeyGetUserFailureNoDestruction：GetUser 失败注入 → RotateKey
 // 在写库前终止——DB 行未轮换、旧明文未失效、注册面零变化（修复前：先
 // Delete 后 upsert 失败 → DB 已轮换只留新明文、新 raw 蒸发 → 永久死亡）。
 func TestRotateKeyGetUserFailureNoDestruction(t *testing.T) {

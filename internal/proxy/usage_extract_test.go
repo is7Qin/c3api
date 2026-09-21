@@ -145,7 +145,7 @@ func TestResponsesStreamUsage(t *testing.T) {
 	require.False(t, ok, "显式 null → 不存在")
 }
 
-// —— codex resp 顶层 usage（P1-1——T6：SDK 路径 usage 形状为顶层；fixture 对齐
+// —— codex resp 顶层 usage（SDK 路径 usage 形状为顶层；fixture 对齐
 // codex-sdk responses_test.go respUsage 形状 + cache 明细） ——
 
 func TestResponsesTopLevelUsage(t *testing.T) {
@@ -192,7 +192,7 @@ func TestSniffResponsesCompletedTop(t *testing.T) {
 	require.Equal(t, int64(4), u.cc)
 
 	// 精确判定：正文含 "type":"response.completed" 子串的**非 completed 帧**
-	//（消息文本）不命中——WS 路径 bytes.Contains 预筛会误命中（P1-1 冻结防线）
+	//（消息文本）不命中——WS 路径 bytes.Contains 预筛会误命中（冻结防线）
 	messageFrame := []byte(`{"type":"message","content":[{"type":"output_text","text":"say {\"type\":\"response.completed\"} please"}]}`)
 	_, ok = sniffResponsesCompletedTop(messageFrame)
 	require.False(t, ok, "正文含子串的非 completed 帧不得命中（type 精确判定）")

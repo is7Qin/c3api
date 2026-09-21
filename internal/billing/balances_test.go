@@ -136,7 +136,7 @@ func TestBalancesSetAfterReload(t *testing.T) {
 	require.Equal(t, int64(49900), bal, "Reload 后 Set 定向刷新生效")
 }
 
-// TestReloadMultipliers O2 组 + assignment 倍率定向刷新：两路都换（小表单查，
+// TestReloadMultipliers 组 + assignment 倍率定向刷新：两路都换（小表单查，
 // 非全量 Reload——assignment 倍率变更走此路，不依赖全量 Reload）；失败
 // fail-safe 保留旧倍率快照。
 func TestReloadMultipliers(t *testing.T) {

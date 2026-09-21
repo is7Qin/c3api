@@ -11,7 +11,7 @@ package usage
 // ——拒绝风暴不阻塞请求热路径、不爆内存、不淹没 DB（DB 写速率由 batch/interval
 // 配置有界 = BatchSize/FlushInterval，不随风暴放大；丢弃即采样式落盘的采样面）。
 //
-// 双队列按来源（provenance）分类（架构审查 B2，用户裁决）——不可按 error_type
+// 双队列按来源（provenance）分类（用户裁决）——不可按 error_type
 // 推断（Err429/ErrBilling/ErrAuth 在拒绝类与双轨类同时出现）：
 //   - 豁免队列（exemptQ）：**双轨行**（abort/failover 已计费错误：finish/
 //     recordLog 投递的 usage_logs 错误行）——**不参与拒绝风暴采样丢弃，恒落盘**
@@ -131,7 +131,7 @@ func (w *ErrLogWorker) loop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			// 最终排空由 Close 以 shutdown 预算 ctx 执行（O2 停机纪律）——本
+			// 最终排空由 Close 以 shutdown 预算 ctx 执行（停机纪律）——本
 			// loop ctx 在 SIGTERM 即已取消，此处 flush 传它会恒截断丢全部明细；
 			// 且在途 flush 为同步调用，loop 退出前必已收尾（无在途批次残留，
 			// Close 无需 flushMu 等待——独立 worker 的简单性来源）。
@@ -151,13 +151,13 @@ func (w *ErrLogWorker) EnqueueRejected(l *domain.UsageLog) {
 
 // EnqueueError 投递一条**双轨行**（finish/recordLog 的已计费错误：abort/failover/
 // 4xx/5xx/network——usage_logs 错误行）：豁免队列——**不参与拒绝风暴采样丢弃，
-// 恒落盘**（架构审查 B2；仅本队列自身溢出才丢——异常态，Warn 恰好一次）。
+// 恒落盘**（仅本队列自身溢出才丢——异常态，Warn 恰好一次）。
 func (w *ErrLogWorker) EnqueueError(l *domain.UsageLog) {
 	w.enqueue(w.exemptQ, l, &w.droppedExempt, &w.warnExempt, 1)
 }
 
 // enqueue 非阻塞有界投递（mu 短临界区：closed 检查 + select-default send——Close
-// 置位后无残留窗口，S4）。队列满 → 丢弃 + 按类计数；累计 ≥ threshold 且边沿
+// 置位后无残留窗口）。队列满 → 丢弃 + 按类计数；累计 ≥ threshold 且边沿
 // 未告警 → Warn 恰好一次（队列排空后回落，flush 内复位）。
 func (w *ErrLogWorker) enqueue(q chan *domain.UsageLog, l *domain.UsageLog, dropped *atomic.Int64, warned *atomic.Bool, threshold int64) {
 	w.mu.Lock()
@@ -187,7 +187,7 @@ func (w *ErrLogWorker) enqueue(q chan *domain.UsageLog, l *domain.UsageLog, drop
 // DB 持续故障时回灌不增长（恒 ≤ 容量），新到达行按既有采样面丢弃计数；不变式
 // A2 双轨行恒落盘承诺仅覆盖豁免行，此处由回灌重试兑现（区别于 Recorder 的
 // 毒丸止损：errlog 无 5 次阈值，重试预算由队列有界性隐含）。
-// 批次处理完成后两队列均空 → 丢弃告警边沿回落（S3——每风暴一次，不刷屏：
+// 批次处理完成后两队列均空 → 丢弃告警边沿回落（每风暴一次，不刷屏：
 // 连续风暴期队列恒满不回落，风暴平息排空后下次风暴再告警）。
 func (w *ErrLogWorker) flush() {
 	exempts, rejects := w.takeBatch()
@@ -300,7 +300,7 @@ func (w *ErrLogWorker) Close(ctx context.Context) error {
 			if len(exempts) == 0 && len(rejects) == 0 {
 				break
 			}
-			if ctx.Err() != nil { // 预算到期：截断退出（剩余丢弃计数——R2-C1：截断面
+			if ctx.Err() != nil { // 预算到期：截断退出（剩余丢弃计数——截断面
 				// = 本批 + 两队列剩余积压，全部并入 dropped 对账指标，不低估；与
 				// flusher 截断 Warn 同族——错误审计明细非计费，截断可接受）
 				remaining := len(exempts) + len(rejects) + len(w.exemptQ) + len(w.rejectQ)

@@ -19,7 +19,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Phase 3a 真实 PostgreSQL 测试基座（评审 B1 延续：新表/新语义一律真实 PG）。
+//  真实 PostgreSQL 测试基座（评审延续：新表/新语义一律真实 PG）。
 // 启动方式：
 //   docker compose -f deploy/test-compose.yml up -d
 //   TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test \

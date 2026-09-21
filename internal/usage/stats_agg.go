@@ -36,7 +36,7 @@ type StatsAggStore interface {
 	LoadAggRange(ctx context.Context, from, to time.Time) ([]*domain.StatBucket, []*domain.EntityStatBucket, int64, error)
 	// AggregateRange 单事务 DELETE cube [delFrom,delTo) + INSERT cube +
 	// DELETE entity [同范围] + INSERT entity + watermark 推进 wmTo（= 读窗口 T，
-	// ≠ 重算范围上界——P1-A 两范围分离；双表同一事务原子回滚）。
+	// ≠ 重算范围上界——两范围分离；双表同一事务原子回滚）。
 	AggregateRange(ctx context.Context, delFrom, delTo, wmTo time.Time, cube []*domain.StatBucket, entity []*domain.EntityStatBucket) error
 	LoadStatsAggWatermark(ctx context.Context) (time.Time, error)
 	InitStatsAggWatermark(ctx context.Context, t time.Time) error
@@ -48,11 +48,11 @@ type StatsAggConfig struct {
 	Lag      time.Duration // 读窗口滞后（读窗口 [W, T)，T = now − Lag；watermark 只推进到 T）
 }
 
-// statsAggCatchUpLimit 停摆恢复后单周期最大读窗口（spec 评审 P2-1 追赶上限：
+// statsAggCatchUpLimit 停摆恢复后单周期最大读窗口（追赶上限：
 // 单周期窗口 ≤ 1h 分批收敛，防单次超大窗口扫全史 + 大 DELETE 长事务）。
 const statsAggCatchUpLimit = time.Hour
 
-// defaultStatsAggLag 读窗口滞后（spec 评审 P2-4）：滞后 ≥ max(两表落库节奏)
+// defaultStatsAggLag 读窗口滞后：滞后 ≥ max(两表落库节奏)
 // ——usage_logs flush 默认间隔 500ms 与 errlog worker 默认 500ms flush
 // （errlog.go:101-102）+ 队内滞留；取固定安全值 5s = 2×max 节奏 + 滞留余量
 // （4s 余量），注释写明依据。var（非 const）：测试注入小值。
@@ -83,11 +83,11 @@ type StatsAggWorkerStats struct {
 //	              持久化面规范 UTC，浏览器时区只活在读取面 SQL 绑定参数里）
 //	LoadAggRange(R0, R1) → AggregateRange(R0, R1, T, cube, entity) 单事务落盘
 //
-// **两范围分离（评审 P1-A，核心正确性）**：小时桶是部分完成的桶（跨多周期
+// **两范围分离（核心正确性）**：小时桶是部分完成的桶（跨多周期
 // 累积），直接按读窗口 DELETE 会截断当前小时桶（[小时起点, W) 的行丢失）→
 // 每周期欠计。小时对齐扩展后：SELECT 覆盖已消费行无害（DELETE 先清、INSERT
 // 全量覆盖，幂等仍成立——重放同范围结果一致）。watermark 只推进到 T（原始读
-// 位置），**不推进到 R1**——推进到 R1 会永久跳过 [T, R1) 的行（正是 P1-A 要防
+// 位置），**不推进到 R1**——推进到 R1 会永久跳过 [T, R1) 的行（正是要防
 // 的错误形态；签名显式分离见 AggregateRange 的 wmTo 参数）。
 //
 // 幂等/重放（issue #8 教训）：DELETE+INSERT+watermark 推进同一事务——崩溃
@@ -95,16 +95,16 @@ type StatsAggWorkerStats struct {
 // （覆盖语义）。
 //
 // 并发防护：pg_try_advisory_lock（会话级，专用连接持有整个周期——池连接复用
-// 即丢锁，P3）；抢锁失败 → 本轮跳过（其他实例在聚合）。单写者语义由此钉死，
-// 事务内串行无 40P01 重试需求（P2-5 取舍：advisory lock 串行下单写者）。
+// 即丢锁）；抢锁失败 → 本轮跳过（其他实例在聚合）。单写者语义由此钉死，
+// 事务内串行无 40P01 重试需求（取舍：advisory lock 串行下单写者）。
 //
-// watermark 存储/初始化/追赶（评审 P2-1）：单行 watermark 表（stats_agg_
+// watermark 存储/初始化/追赶：单行 watermark 表（stats_agg_
 // watermark，bootstrap 建表见 partition.go）；**全新库初始化 = now − 滞后**
 // （防首跑扫全史 + DELETE 撞 retention 已 DROP 分区）；ON CONFLICT DO NOTHING
 // 容忍多实例并发初始化（败者重读既有值）；**追赶上限**：停摆恢复后单周期
 // 窗口 ≤ 1h 分批收敛（防单次超大窗口）。
 //
-// **手动重建运维口径（Momus B1 勘误）**：worker 对缺失 watermark 行的初始化
+// **手动重建运维口径（Momus 勘误）**：worker 对缺失 watermark 行的初始化
 // 硬编码 now−lag——"清空 watermark 行"不会触发历史回算。手动重建统计必须：
 // (1) 清空 usage_stats / usage_entity_stats 数据；(2) **手工种子单行 watermark**
 // 至最早保留小时边界（INSERT INTO stats_agg_watermark (id, watermark)
@@ -118,7 +118,7 @@ type StatsAggWorker struct {
 	lifeMu  sync.Mutex
 	cancel  context.CancelFunc
 	done    chan struct{}
-	// now 时钟注入（默认 time.Now；测试注入固定时钟——评审 I-2 惯例：边界由
+	// now 时钟注入（默认 time.Now；测试注入固定时钟——边界由
 	// 调用方 now 推导，不内部各取各的）。
 	now func() time.Time
 	// 观测面（runOnce 收尾原子写，零新增 DB）：watermark 位置 / 上轮桶数 /
@@ -190,7 +190,7 @@ func (w *StatsAggWorker) runOnce(ctx context.Context) {
 	if !ok {
 		return // 其他实例持有锁：本轮跳过（静默——多实例正常互斥形态）
 	}
-	defer release() // 专用连接持有整个周期（P3：池连接复用即丢锁）
+	defer release() // 专用连接持有整个周期（池连接复用即丢锁）
 
 	// watermark 读取/初始化（全新库 = now − 滞后；ON CONFLICT DO NOTHING 容忍
 	// 多实例并发初始化）。
@@ -216,7 +216,7 @@ func (w *StatsAggWorker) runOnce(ctx context.Context) {
 	}
 
 	// 读窗口 [W, T)：T = now − 滞后（只推进 watermark，不直接用于 DELETE）。
-	// 追赶上限：停摆恢复后单周期窗口 ≤ 1h 分批收敛（评审 P2-1）。
+	// 追赶上限：停摆恢复后单周期窗口 ≤ 1h 分批收敛。
 	t := start.Add(-w.cfg.Lag)
 	if t.Sub(wm) > statsAggCatchUpLimit {
 		t = wm.Add(statsAggCatchUpLimit)
@@ -227,7 +227,7 @@ func (w *StatsAggWorker) runOnce(ctx context.Context) {
 	}
 
 	// 重算范围 [R0, R1) = [trunc_hour(W), trunc_hour(T) + 1h)：小时对齐扩展——
-	// DELETE + SELECT 共同边界（P1-A 部分小时桶不截断，见类型注释）。
+	// DELETE + SELECT 共同边界（部分小时桶不截断，见类型注释）。
 	r0 := wm.UTC().Truncate(time.Hour)
 	r1 := t.UTC().Truncate(time.Hour).Add(time.Hour)
 

@@ -221,7 +221,7 @@ func TestGetCodeUses(t *testing.T) {
 
 	// 分页（spec 2026-08-17 补参数）：25 个不同用户各兑一次 → 25 条；limit/offset
 	// 翻页取全（此前 GetCodeUses 空 query 恒 20 行截断、Total 失真；同一用户
-	// 复兑同一码 → 409 已兑换，见评审 M-1）。
+	// 复兑同一码 → 409 已兑换）。
 	gen := genOne(t, svc, GenerateRequest{Type: domain.RedemptionTypeBalance, Value: 100, MaxUses: 100}, 0)
 	for i := 0; i < 25; i++ {
 		u2 := seedUser(t, fs, fmt.Sprintf("p%d@example.com", i), 0, 0)
@@ -426,7 +426,7 @@ func TestRedeem(t *testing.T) {
 	})
 }
 
-// TestRedeemRollback 回滚断言（评审 I-1）：WithTx 内任一步失败 → 暂存变更
+// TestRedeemRollback 回滚断言：WithTx 内任一步失败 → 暂存变更
 // 全部丢弃——use 唯一冲突（并发窗口：另一事务已提交同 use）/ IncrementUsed
 // 用尽 → 余额/并发不变。
 func TestRedeemRollback(t *testing.T) {

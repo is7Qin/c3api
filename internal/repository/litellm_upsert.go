@@ -25,7 +25,7 @@ import (
 // 按 500/批分块执行（pricing 与 image_price 两表共用同一默认）。
 const litellmBatchSize = 500
 
-// litellmUpsertRetries 死锁（40P01）重试次数（#37 P3' 同款兜底）：双实例
+// litellmUpsertRetries 死锁（40P01）重试次数（同款兜底）：双实例
 // litellm sync worker 并发批量 upsert 同批 model（锁顺序交错 → PG 判定
 // deadlock detected 并终止一方，压测启动期偶发）。死锁为瞬时错误（PG 惯例
 // 重试 1-2 次），重试成功即无影响；重试耗尽才返回错误 → 现有失败路径语义
@@ -58,7 +58,7 @@ type litellmBatchExec func(ctx context.Context, start, end int) (int, error)
 //     组装保证（litellmBatchExec 契约）
 //   - 分批 500/批、每批独立事务：部分成功可接受——返回成功行数，失败的批记
 //     Warn 日志（返回首个失败错误，worker 侧决定重试/告警）；不影响已成功批
-//   - 死锁收敛（#37 P3'）：批内排序（exec 内）+ 40P01 瞬时重试
+//   - 死锁收敛：批内排序（exec 内）+ 40P01 瞬时重试
 //     （litellmExecBatchWithRetry）——多实例并发同批 model 不再
 //     deadlock detected（排序消除主因，重试兜底残余交错）
 //   - 返回 n = 实际插入/更新的行数（DO UPDATE 被 WHERE 过滤掉的手动行不计入；
@@ -90,13 +90,13 @@ func litellmUpsertBatches(ctx context.Context, total int, logPrefix string, opts
 }
 
 // isDeadlock 判断死锁错误（SQLSTATE 40P01）：并发批量 upsert 同批目标行锁
-// 顺序交错（#37 P3/P3'）。pgx 原样透传 pgconn.PgError，errors.As 解包。
+// 顺序交错。pgx 原样透传 pgconn.PgError，errors.As 解包。
 func isDeadlock(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "40P01"
 }
 
-// litellmExecBatchWithRetry 单批 upsert + 40P01 死锁重试（#37 P3' 同款
+// litellmExecBatchWithRetry 单批 upsert + 40P01 死锁重试（同款
 // 兜底）：批内排序消除主因后，残余交错由此收敛。重试以整批独立事务为单位
 // 重做（死锁回滚后无残留状态）；ctx 取消优先（不吞停机预算）。重试耗尽 →
 // 原样返回错误（现有失败路径语义不变）。

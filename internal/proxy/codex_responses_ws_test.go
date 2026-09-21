@@ -33,7 +33,7 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
-// --- T4：codex 路径 resp-ws 本地 mock 上游测试（P3-5 可编程面） ---
+// --- codex 路径 resp-ws 本地 mock 上游测试（可编程面） ---
 // 真实上游不可控面（401 轮转 / 心跳节奏 / 伪装头断言）用本地可编程 mock 覆盖；
 // 真实凭据 e2e（happy path / usage 逐字节一致）在 pg_codex_responses_ws_test.go。
 
@@ -198,7 +198,7 @@ func codexWSExt(accountID int64, at, rt string) *domain.AccountExt {
 
 // newTestCodexWSProxy 构造 codex 类型 resp-ws 测试代理：模板（credType 类型 +
 // resp-ws 格式 + gpt-4o）+ 携带 Ext 的账号（同组 10，可多账号）+ 装配适配层
-// （统一失效回调走真实 T1 处理链——fakeFailureStore 落库替身 + 真实调度器
+// （统一失效回调走真实处理链——fakeFailureStore 落库替身 + 真实调度器
 // FailAccount 摘除）。Codex 官方默认端点 via transport 重写到 mock。bill 为计费钩子（nil = 计费全关）。
 func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
 	t.Helper()
@@ -341,7 +341,7 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 	defer srv.Close()
 	// 客户端带伪装冲突面头（session 头族 + OpenAI-Beta 旧版本）与自定义头——按
-	// spec §12 一律不递上游：前者不得覆盖账号伪装身份（P3-7/P3-8），后者
+	// spec §12 一律不递上游：前者不得覆盖账号伪装身份，后者
 	//（X-Client-Version）自该裁决起也不再透传（见下方断言）。
 	c := dialResponsesWSHeaders(t, srv, http.Header{
 		"Authorization":       {"Bearer ck-1"},
@@ -381,7 +381,7 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
-	// 握手面断言（P3-5 伪装头）：两次升级（401 首拨 + 轮转后重拨），账号鉴权
+	// 握手面断言（伪装头）：两次升级（401 首拨 + 轮转后重拨），账号鉴权
 	// 注入（首拨旧 at / 重拨新 at——轮转生效）；网关 key 不泄漏；伪装四元组头
 	// = ext 身份（客户端 rogue 头被剔除）；OpenAI-Beta = 网关默认（rogue 被剔
 	// 除）；客户端自定义头（如 X-Client-Version）自 spec §12 起一律不递。
@@ -537,7 +537,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 }
 
 // TestCodexWSFatalNoTransfer 裸 fatal（refresh 判死 invalid_grant）→ 统一回
-// 调上报（账号失效剔除）+ **该请求不转移**（P3-2）：双账号池中健康账号不被
+// 调上报（账号失效剔除）+ **该请求不转移**：双账号池中健康账号不被
 // 触达（升级恰 1 次）；客户端收错误帧；失效上报恰一次（account 10）。
 func TestCodexWSFatalNoTransfer(t *testing.T) {
 	up, hooks := newCodexWSUpstream(t, []int{401}, 0)
@@ -645,9 +645,9 @@ func TestCodexWSDial429Failover(t *testing.T) {
 	require.Equal(t, int64(20), store.logs[0].AccountID, "落账 = 成功尝试账号")
 }
 
-// TestCodexWSDeathFrameFatal WS 业务判死事件帧（T5 §3 唯一跨边界点）：
+// TestCodexWSDeathFrameFatal WS 业务判死事件帧（§3 唯一跨边界点）：
 // token_invalidated 错误帧 → 适配层 FatalAuth（Auth.Fatal 毒化 + 统一失效
-// 回调单次上报——写 failed_at + StatusDisabled，共用 T1 处理函数）；判死帧
+// 回调单次上报——写 failed_at + StatusDisabled，共用处理函数）；判死帧
 // 照常透传客户端；会话随后 1000 正常收尾。
 func TestCodexWSDeathFrameFatal(t *testing.T) {
 	// 定制上游：首客户端帧后下发判死事件帧 + created + completed + 回声，
@@ -729,7 +729,7 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 	require.Contains(t, got[0], `"token_invalidated"`, "判死帧透传客户端")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
-	// 失效上报恰一次（T5 §3 显式 FailureHandler——共用 T1 处理函数）
+	// 失效上报恰一次（§3 显式 FailureHandler——共用处理函数）
 	require.Equal(t, 1, recorderCalls(recorder), "帧判死 → 统一回调恰一次")
 	_, acc, reason := recorder.snapshot()
 	require.Equal(t, int64(10), acc)

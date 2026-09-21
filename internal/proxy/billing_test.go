@@ -77,7 +77,7 @@ func (f *fakePriceLookup) ResolvePrices(model string, promptTokens int64, tier s
 }
 
 // newTestProxyBillingLogs 构造注入计费钩子的测试代理（默认 gpt-4o 模板 + 捕获
-// 日志；policy nil = 恒透传）。Balances 空快照 → 倍率默认 ×1（T2 断言恒等，
+// 日志；policy nil = 恒透传）。Balances 空快照 → 倍率默认 ×1（断言恒等，
 // T3.5 无 nil 容忍：hooks 四字段齐备）。
 func newTestProxyBillingLogs(t *testing.T, upstream string, prices *fakePriceLookup, policy func(billing.Tier) billing.TierPolicyMode, logs usage.LogInserter) *Proxy {
 	t.Helper()

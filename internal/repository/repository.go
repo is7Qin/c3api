@@ -851,17 +851,17 @@ func (r *Repository) UpdateUserMaxConcurrency(ctx context.Context, userID int64,
 	return r.Users.UpdateUserMaxConcurrency(ctx, userID, value)
 }
 
-// poolTimeoutParams 计费路径防卡死参数（F-P2-4，P2，spec 2026-08-13）：
+// poolTimeoutParams 计费路径防卡死参数（spec 2026-08-13）：
 //   - lock_timeout=5s：锁等待上限——管理员 pg_dump/长事务持锁期间一条 FEFO
 //     UPDATE 曾无限卡锁等待（PG 默认 lock_timeout=0）→ 8 个 flush worker 全
 //     阻塞 → flushMu 永持 → 全局计费停摆 + pending 内存无界；5s 后该语句报错
 //     （SQLSTATE 55P03），失败 chunk 回灌下轮重试（不丢不重），flushMu 释放。
 //
-// 明确不含 statement_timeout（评审 P3-A 扩面实测降级，spec 授权"若冲突 → 降级
+// 明确不含 statement_timeout（评审扩面实测降级，spec 授权"若冲突 → 降级
 // 为计费路径 per-query 超时并注明"）：会话级 statement_timeout=10s 与 admin 面
 // ScanStats 大窗口聚合冲突——720 万行/30 天窗口实测 >10s 被 57014 杀死（从"慢
 // 返回"变"超时错误"，用户面失败语义更糟；DB 侧聚合实测仅 ~1-2s，超时主因是
-// 7.2M 行客户端 ent 解码，管理面 DB 端 GROUP BY 优化留 F-P2-2 单独评估）。降级
+// 7.2M 行客户端 ent 解码，管理面 DB 端 GROUP BY 优化留单独评估）。降级
 // 形态：计费路径 per-query 10s 超时由 BillingRepo 结算语句的 ctx 截止
 // 实现（settleTimeout），执行时长与锁等待双有界；其余路径维持现状语义（慢
 // 返回，无回归）。全部实测数字见 docs/superpowers/reports/f1-impl-report.md。
@@ -911,7 +911,7 @@ func appendPoolTimeouts(dsn string) string {
 // OpenPG 打开 pgx 连接池（生产入口；ent driver 由调用方用
 // entsql.OpenDB(dialect.Postgres, stdlib.OpenDBFromPool(pool)) 构建）。
 //
-// 计费路径防卡死（F-P2-4）：OpenPG 统一给 DSN 补 lock_timeout=5s（用户 DSN
+// 计费路径防卡死：OpenPG 统一给 DSN 补 lock_timeout=5s（用户 DSN
 // 未含时，appendPoolTimeouts）+ MaxConnLifetime=30m 滚动轮换。statement_timeout
 // 因全局副作用实测冲突不设会话级（见 poolTimeoutParams 注释）——计费路径执行
 // 时长由 BillingRepo 结算语句的 per-query 10s ctx 超时兜底。

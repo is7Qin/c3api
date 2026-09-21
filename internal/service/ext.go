@@ -12,7 +12,7 @@ import (
 )
 
 // —— 模板类型化扩展（template_ext 1:1；通用框架：表结构/CRUD 骨架/类型枚举
-// 校验。W1 数据层 CRUD + 契约，消费接线 W3/W4/W6；codex 专属类型/列组见
+// 校验。数据层 CRUD + 契约；codex 专属类型/列组见
 // ext_codex.go，未来 claude oauth 等新类型 → 新增 ext_claude.go 同构） ——
 
 // validateTemplateExt 校验模板 ext 行：credential_type ∈ {responses-special,

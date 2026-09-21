@@ -29,12 +29,12 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
-// --- T6：codex 类型 resp HTTP 路径本地 mock 上游测试 ---
+// --- codex 类型 resp HTTP 路径本地 mock 上游测试 ---
 // 真实上游不可控面（401 轮转 / 信封 / 帧规格）用本地可编程 mock 覆盖；真实凭据
 // e2e（happy path / 计费落库）在 pg_codex_responses_http_test.go。
 
-// T6 事件 fixture（对齐 codex-sdk responses_test.go：created/item.done/completed
-// 形状；usage 顶层五计数含 cache 明细——P1-1 双路径断言共用）。SDK 聚合器从
+// 事件 fixture（对齐 codex-sdk responses_test.go：created/item.done/completed
+// 形状；usage 顶层五计数含 cache 明细——双路径断言共用）。SDK 聚合器从
 // output_item.done 事件提取 item 对象（合成体 output 只含 item——t6RespItem）。
 const (
 	t6RespCreated = `{"type":"response.created","response":{"id":"resp_t6","object":"response","status":"in_progress","model":"gpt-5.6"}}`
@@ -150,7 +150,7 @@ func codexPATExt(accountID int64, pat string) *domain.AccountExt {
 // newTestCodexRespProxy 构造 codex 类型 resp HTTP 测试代理：模板（credType 类
 // 型 + openai-responses 格式 + gpt-4o；mapping = 模板 ModelMapping——nil = 无
 // 映射）+ 携带 Ext 的账号（同组 10，可多账号）+ 装配适配层（统一失效回调走
-// 真实 T1 处理链——fakeFailureStore 落库替身 + 真实调度器 FailAccount 摘除）。
+// 真实处理链——fakeFailureStore 落库替身 + 真实调度器 FailAccount 摘除）。
 // Codex 端点归 SDK 官方默认（transport seam 重写到 mock 上游）。
 // bill 为计费钩子（nil = 计费全关）。
 func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]domain.ModelMappingEntry, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
@@ -237,7 +237,7 @@ func splitSSEFrames(body string) []string {
 
 // TestCodexResponsesMockNonstreamComposite 非流式主流程（oauth + ModelMapping）：
 // SDK 合成体透传（网关侧断言）+ setModel 改写落位（wire model = 映射模型）+
-// stream:true 注入 + 顶层 usage 五计数（P1-1 非流式路径）+ cred 传递（Bearer
+// stream:true 注入 + 顶层 usage 五计数（非流式路径）+ cred 传递（Bearer
 // at-10）。
 func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
@@ -257,7 +257,7 @@ func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	want := `{"id":"resp_t6","object":"response","status":"completed","output":[` + t6RespItem + `],"usage":` + t6RespUsage + `}`
 	require.Equal(t, want, string(b), "合成体透传（id/output 流序/usage 原样）")
 
-	// wire 断言：setModel 改写（映射 gpt-4o → gpt-5.6 落位——P2-2）+ stream:true
+	// wire 断言：setModel 改写（映射 gpt-4o → gpt-5.6 落位）+ stream:true
 	// 注入（SDK 无条件覆盖）+ 其余字段保留 + 凭据传递
 	upc.mu.Lock()
 	defer upc.mu.Unlock()
@@ -277,7 +277,7 @@ func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id UUIDv7 格式（SDK 自动）")
 	require.False(t, cm.Get("session_id").Exists(), "缺列（session/thread/window）不注入")
 
-	// usage 断言（P1-1 非流式：合成体 Raw 顶层解析）
+	// usage 断言（非流式：合成体 Raw 顶层解析）
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -298,7 +298,7 @@ func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	require.Zero(t, ri.Concurrency, "成功路径必须释放并发槽")
 }
 
-// TestCodexResponsesNonstreamTimeout 非流式超时（B-P2-7）：黑洞上游（接受请求
+// TestCodexResponsesNonstreamTimeout 非流式超时：黑洞上游（接受请求
 // 永不回体）→ UpstreamTimeout 包 ctx 超时触发 → 连接级错误转移 → 耗尽 502；
 // 请求在超时窗口内完成（TCP 黑洞读停滞不无限挂起——并发槽/连接/goroutine 不
 // 被占用，failover 可转移）。
@@ -338,8 +338,8 @@ func TestCodexResponsesNonstreamTimeout(t *testing.T) {
 }
 
 // TestCodexResponsesMockStreamPassthrough 流式主流程（PAT 静态直连）：客户端
-// 帧规格（P2-1）——每载荷重帧 `data: <payload>\n\n`、event: 行不出现、流末补发
-// data: [DONE]；usage 顶层嗅探（P1-1 流式路径：completed 帧五计数）；stream:
+// 帧规格——每载荷重帧 `data: <payload>\n\n`、event: 行不出现、流末补发
+// data: [DONE]；usage 顶层嗅探（流式路径：completed 帧五计数）；stream:
 // true 原样透传（wire 保持客户端值）；PAT cred 传递。
 func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
@@ -375,7 +375,7 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "未配置 identity 仍注入自动 turn_id")
 	require.False(t, cm.Get("x-codex-installation-id").Exists(), "未配置不注入静态键")
 
-	// usage 断言（P1-1 流式：fn 嗅探 response.completed 帧顶层 usage）
+	// usage 断言（流式：fn 嗅探 response.completed 帧顶层 usage）
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -710,7 +710,7 @@ func TestCodexResponsesAdapterMissing(t *testing.T) {
 	require.Equal(t, http.StatusNotImplemented, store.logs[0].StatusCode)
 }
 
-// TestCodexResponsesStreamEnvelope403PreFrame 首帧前 4xx 信封（P1 修复回归：
+// TestCodexResponsesStreamEnvelope403PreFrame 首帧前 4xx 信封（修复回归：
 // 头延至首个 fn 调用）：流式上游 403 → 客户端 403 + 原文案（非 200 空流 + 裸
 // 错误体）；无 [DONE] 无 SSE 帧；Err4xx 记录；不转移。
 func TestCodexResponsesStreamEnvelope403PreFrame(t *testing.T) {
@@ -740,7 +740,7 @@ func TestCodexResponsesStreamEnvelope403PreFrame(t *testing.T) {
 	require.Equal(t, 1, upc.callsN(), "4xx 确定性拒绝不转移")
 }
 
-// TestCodexResponsesStreamFailoverExhausted 流式 failover 耗尽（P1 修复回归）：
+// TestCodexResponsesStreamFailoverExhausted 流式 failover 耗尽（修复回归）：
 // 上游恒 5xx → 客户端 502 JSON 信封（writeErr——非裸写进 SSE 体）；无 [DONE]
 // 无 SSE 帧；Err5xx 记录。
 func TestCodexResponsesStreamFailoverExhausted(t *testing.T) {
@@ -884,7 +884,7 @@ func TestCodexResponsesStreamDoneWriteAbort(t *testing.T) {
 // gateWriter 首个 Write 阻塞（模拟慢客户端）直到 release 关闭；放行后：
 // ctx 未取消 → 正常写；ctx 已取消 → 返回 ctx.Err()（真实断连的写失败语义——
 // 评审修法：断开路径确定走 abort 分支，消除"SDK 读循环赶在 ctx 生效前读完
-// 已缓冲小 body → 成功分支"的时序 flake——0c304d8 既有，非 T6 引入）。
+// 已缓冲小 body → 成功分支"的时序 flake——0c304d8 既有，非引入）。
 type gateWriter struct {
 	header  http.Header
 	status  int

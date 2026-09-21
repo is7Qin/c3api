@@ -54,7 +54,7 @@ type OpsOptions struct {
 	// upstream 栏经构造直调（*sdkbridge.Codex 满足）；nil = 未装配 → codex
 	// 账号 null 快照，与旧 service nil-setter 降级语义一致）。
 	UsageSnap CodexUsageProber
-	// PricingSync 价格手动同步/预览编排面（W3-T2：POST /pricing/sync 与
+	// PricingSync 价格手动同步/预览编排面（POST /pricing/sync 与
 	// /pricing/sync/preview 经构造直调（*pricing.SyncWorker 满足）；nil =
 	// 未装配 → 端点 500，与旧 service nil-fetcher 降级语义一致）。
 	PricingSync *pricing.SyncWorker

@@ -164,7 +164,7 @@ func (s *Service) ListRules(ctx context.Context, enabled *bool) ([]domain.Rule, 
 
 // reloadRules 规则引擎全量重载（规则 CRUD 后触发）。Reload 失败记日志——
 // 管理端操作已成功，重载失败由下一次 CRUD/启动重试兜底。
-// 脱离请求 ctx（B4-4/p2-12）：请求 ctx 取消（客户端断开）→ 重载中止 → 引擎按
+// 脱离请求 ctx：请求 ctx 取消（客户端断开）→ 重载中止 → 引擎按
 // 旧规则跑；context.WithoutCancel 剥离取消/超时信号仅继承值（与 publish 同纪律
 // service.go:320）。invalidate Rules 分支（reloadAll 已 Background）为双保险。
 func (s *Service) reloadRules(ctx context.Context) {
@@ -191,7 +191,7 @@ func (s *Service) getRule(ctx context.Context, id int64) (*domain.Rule, error) {
 }
 
 // ruleWhenFromRaw 契约 when 自由对象 → 领域 RuleWhen：未知键拒绝
-// （DisallowUnknownFields，400 语义；评审 A-2 记债：白名单拒绝而非 round-trip 保留）。
+// （DisallowUnknownFields，400 语义；记债：白名单拒绝而非 round-trip 保留）。
 func ruleWhenFromRaw(raw map[string]any) (domain.RuleWhen, error) {
 	if len(raw) == 0 {
 		return domain.RuleWhen{}, nil

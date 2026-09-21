@@ -859,7 +859,7 @@ func TestWindowErrBucket4xx5xxNetwork(t *testing.T) {
 	require.Equal(t, 1, sink.countThrottle(), "4xx/5xx/network 三类事件全部计入 failure 桶（防呆 a）")
 }
 
-// TestClassifyModelSemantics P2-1 最终模型三面一致：ModelMapping gpt-5->gpt-5-0611 时
+// TestClassifyModelSemantics 最终模型三面一致：ModelMapping gpt-5->gpt-5-0611 时
 // when.model=gpt-5-0611 命中、when.model=gpt-5 不命中，横跨 Classify/Match/sanitizeErrLog。
 // 三面中 sanitizeErrLog 复用 Classify 同一策略引擎（user/convert.go:sanitizeErrLog → rules.Classify），
 // 故覆盖 Classify 即覆盖 sanitizeErrLog；Match 为 worker 精确路径。此测试固化最终模型口径：

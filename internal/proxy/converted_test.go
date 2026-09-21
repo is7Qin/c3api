@@ -37,7 +37,7 @@ type capturedUpstream struct {
 	path     string
 	body     map[string]any
 	stream   bool
-	dataOnly bool // /v1/responses 流式不产 event: 行（P3：非规范上游形态，同 fakeupstream）
+	dataOnly bool // /v1/responses 流式不产 event: 行（非规范上游形态，同 fakeupstream）
 }
 
 func (c *capturedUpstream) last(t *testing.T) (string, map[string]any, bool) {
@@ -69,7 +69,7 @@ func (c *capturedUpstream) srv(t *testing.T) *httptest.Server {
 				only := c.dataOnly
 				c.mu.Unlock()
 				if only {
-					// P3 形态：只发 data: 行（缺 event: 名），帧自带 type 字段
+					// 形态：只发 data: 行（缺 event: 名），帧自带 type 字段
 					fmt.Fprint(w, `data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"hi"}`+"\n\n")
 					fmt.Fprint(w, `data: {"type":"response.completed","response":{"id":"rsp_1","object":"response","created_at":1750000000,"status":"completed","model":"gpt-4o","output":[],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8}}}`+"\n\n")
 					fmt.Fprint(w, "data: [DONE]\n\n")
@@ -337,7 +337,7 @@ func TestConvertedChatToMess(t *testing.T) {
 	require.Contains(t, got, "data: [DONE]")
 }
 
-// TestConvertedChatToRespStreamingDataOnly P3：上游 resp 流缺 event: 名（只发
+// TestConvertedChatToRespStreamingDataOnly：上游 resp 流缺 event: 名（只发
 // data: 行，同仓库 fakeupstream /v1/responses）→ 转换路径不得整帧丢弃——
 // 客户端仍收到 chat chunk 流（修复前 200 + 空流，Content-Length 0）。
 func TestConvertedChatToRespStreamingDataOnly(t *testing.T) {

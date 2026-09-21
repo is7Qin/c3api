@@ -30,12 +30,12 @@ func newRuleSvc() (*Service, *fakeStore, *fakeReloader) {
 	return &Service{store: fs, ruleReload: rl}, fs, rl
 }
 
-// fakeRuleReloader 函数式 RuleReloader（B4-4 断言注入）。
+// fakeRuleReloader 函数式 RuleReloader（断言注入）。
 type fakeRuleReloader func(ctx context.Context) error
 
 func (f fakeRuleReloader) Reload(ctx context.Context) error { return f(ctx) }
 
-// TestReloadRulesSurvivesRequestCancel B4-4（p2-12）：请求 ctx 已取消（客户端
+// TestReloadRulesSurvivesRequestCancel（p2-12）：请求 ctx 已取消（客户端
 // 断开）→ 规则重载仍必须执行完成——reloadRules 用 context.WithoutCancel 剥离
 // 取消信号（与 publish 同纪律 service.go:320）；且重载拿到的 ctx 不可取消。
 func TestReloadRulesSurvivesRequestCancel(t *testing.T) {

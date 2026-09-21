@@ -22,7 +22,7 @@ type CandidateQualityKey struct {
 	Fingerprint  domain.CandidateFingerprintVal
 }
 
-// LatchKey 已迁 internal/latch（B18/B19 根因重开：锁存一等组件；本包经
+// LatchKey 已迁 internal/latch（根因重开：锁存一等组件；本包经
 // Scheduler.latch 间接持有，不再自有类型）。
 
 // CompilerInputs is immutable deterministic inputs.

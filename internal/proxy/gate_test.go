@@ -385,7 +385,7 @@ func TestGateN1EquivalentToSingleInstance(t *testing.T) {
 	require.True(t, g.quotaExhausted(meta), "消耗 90 后与单实例同点 429（无复核能力）")
 }
 
-// #37 P1：N=1 + 真 reclaimer，DB quota_used 滞后于本地消耗（模拟 usage.Recorder
+// N=1 + 真 reclaimer，DB quota_used 滞后于本地消耗（模拟 usage.Recorder
 // flush 滞后）。复核认领扣除本地未反映消耗（unreported = consumed - 上次复核
 // 基线）→ 本地消耗满 quota 即复核确认真尽 429——不再凭滞后 DB 值续额超跑
 // （修复前：每次复核重新分配 full remaining → 滞后窗口超跑；压测实证复核循环
@@ -409,7 +409,7 @@ func TestGateN1ReclaimerLagNoOverrun(t *testing.T) {
 	require.True(t, q.exhausted.Load())
 }
 
-// 复核成功续额（#37 P1 收敛修正）：预算耗尽 → DB 复核（quota_used=30）→
+// 复核成功续额（收敛修正）：预算耗尽 → DB 复核（quota_used=30）→
 // 认领扣除本地未反映消耗——首次复核 unreported = consumed(34) - 基线(0) = 34
 // → remaining_eff = 100-30-34 = 36 → budget = 34 + ceil(36/3) = 46（修复前：
 // 34 + ceil(70/3) = 58，复核循环续额不收敛）；二次耗尽复核（基线前移至 30）
@@ -501,14 +501,14 @@ func TestGateReclaimSingleFlight(t *testing.T) {
 	close(block)
 	wg.Wait()
 	require.Equal(t, 1, reader.callCount(), "同 key 并发复核单飞去重（不双倍认领）")
-	// #37 P1：复核认领扣除本地未反映消耗——consumed(100) - 基线(0) = 100 →
+	// 复核认领扣除本地未反映消耗——consumed(100) - 基线(0) = 100 →
 	// remaining_eff = 100-50-100 ≤ 0 → 确认真尽（DB 滞后 50 ≠ 还有额度）
 	require.True(t, g.quotaExhausted(meta), "本地已消耗满 quota → 复核确认真尽 429")
 }
 
 // 复核失败（DB 错）策略：Warn + 本请求放行 + 预算补 1 + 退避 10s；退避期内
 // 预算耗尽按 429（不重复复核防风暴）；退避过期重试；DB 恢复后复核认领（#37
-// P1：本地已超 quota → 确认真尽，见尾部）。
+// 本地已超 quota → 确认真尽，见尾部）。
 func TestGateReclaimDBErrorAllowAndRetry(t *testing.T) {
 	g := newConcurrencyGate(nil, true)
 	reader := &fakeQuotaReader{err: errors.New("db down")}
@@ -536,7 +536,7 @@ func TestGateReclaimDBErrorAllowAndRetry(t *testing.T) {
 	require.False(t, g.quotaExhausted(meta))
 	require.Equal(t, 2, reader.callCount())
 
-	// #37 P1：DB 恢复（读 used=50，仍滞后于本地）→ 复核认领扣除本地未反映
+	// DB 恢复（读 used=50，仍滞后于本地）→ 复核认领扣除本地未反映
 	// 消耗——consumed(102) - 基线(0，复核从未成功过) = 102 → remaining_eff =
 	// 100-50-102 ≤ 0 → 确认真尽 429（本地已超 quota，不再凭滞后 DB 值续额）
 	g.deductQuota(1, 1)
@@ -547,7 +547,7 @@ func TestGateReclaimDBErrorAllowAndRetry(t *testing.T) {
 	require.True(t, g.store.Load().quotas[1].exhausted.Load())
 }
 
-// #37 P1 核心回归（镜像压测场景）：N=2 单 key quota=20000，fake 复核读固定
+// 核心回归（镜像压测场景）：N=2 单 key quota=20000，fake 复核读固定
 // quota_used=3000（DB 滞后——usage.Recorder 每 quota_flush_interval 批写一次，
 // 两次回写间复核读到的 DB 值恒定）。修复前：每次复核重新分配 ceil(remaining/N)
 // → 复核循环无限续额（压测实证超跑 14 倍 ≈283,740 token）。修复后：复核认领

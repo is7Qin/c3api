@@ -85,7 +85,7 @@ var lagSlowEvery = 10
 // var（非 const）：测试注入。
 var lagRefreshInterval = time.Second
 
-// inflightAbandonGrace 在途消费周期收尾宽限（A-P2-8-2，与 usage 包同值同语义
+// inflightAbandonGrace 在途消费周期收尾宽限（与 usage 包同值同语义
 // ——两包各自声明）：Close 预算到期 Cancel baseCtx 后给在途周期收尾的兜底等待
 // ——正常情形取消传播微秒级完成；DB 病态卡死时超时即放弃排空、Warn 截断退出
 // （在途事务由已取消 baseCtx 收尾回滚，行保持 unbilled 不丢），不无界阻塞停机。
@@ -284,7 +284,7 @@ func (f *Flusher) refreshLag(ctx context.Context, force bool) {
 // 占住 flushMu；Close 必须先等其结束）→ 受 shutdown ctx 预算约束的排空循环
 // （逐周期消费至游标清空；n==0 = 清空/锁被他实例持有/DB 故障——均退出，剩余
 // 行下次启动收敛）。ctx 到期 → Cancel baseCtx（在途事务快速失败回滚，行保持
-// unbilled 不丢）+ Warn 截断退出；在途收尾超时（A-P2-8-2）→ 放弃排空 Warn
+// unbilled 不丢）+ Warn 截断退出；在途收尾超时→ 放弃排空 Warn
 // 截断退出。未 Start 也安全（跳过 loop 等待；在途周期同样等待/排空）。
 func (f *Flusher) Close(ctx context.Context) error {
 	f.closeOnce.Do(func() {
@@ -305,7 +305,7 @@ func (f *Flusher) Close(ctx context.Context) error {
 			f.flushMu.Unlock()
 		case <-ctx.Done():
 			f.baseCancel()
-			// 第二 select 兜底（A-P2-8-2，对齐 usage.go）：DB 病态卡死时取消
+			// 第二 select 兜底（对齐 usage.go）：DB 病态卡死时取消
 			// 路径本身可能被拖住——超时 → 放弃排空、Warn 截断退出（在途事务
 			// 由已取消 baseCtx 回滚，行保持 unbilled 不丢）。
 			select {

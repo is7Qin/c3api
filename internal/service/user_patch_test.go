@@ -15,8 +15,8 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// TestServiceUpdateUserPatchValidation patch 形态校验只作用于显式字段（评审
-// P3-B）：只改 balance 的 PUT（Role/Status 零值）不误拒；显式非法值照旧
+// TestServiceUpdateUserPatchValidation patch 形态校验只作用于显式字段：
+// 只改 balance 的 PUT（Role/Status 零值）不误拒；显式非法值照旧
 // 400；未提供字段不触碰 DB。
 func TestServiceUpdateUserPatchValidation(t *testing.T) {
 	fs := newFakeStore()

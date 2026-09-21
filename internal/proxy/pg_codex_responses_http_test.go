@@ -31,7 +31,7 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
-// 真实 PG e2e（T6 happy path——"真实凭据"= 凭据材料真实落库 account_ext，经
+// 真实 PG e2e（happy path——"真实凭据"= 凭据材料真实落库 account_ext，经
 // LoadGroupsAccounts 快照 → Selection.Ext → AccountCredential 派生直供适配层；
 // 上游为本地 mock SSE 面——真实上游不可控）：
 //

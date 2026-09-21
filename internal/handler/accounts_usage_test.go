@@ -216,7 +216,7 @@ func TestGetAccountsUsageNilProber(t *testing.T) {
 	require.Nil(t, resp.Items[0].UpstreamError)
 }
 
-// TestAssembleUpstreamStoreErrorIsolated store 故障隔离（T2-2，原 service 侧
+// TestAssembleUpstreamStoreErrorIsolated store 故障隔离（原 service 侧
 // 用例搬迁）：GetAccountExt 非 ErrNotFound 错误 → 该账号 upstream null +
 // upstream_error null（不误标上游问题）+ 批内其余账号正常。
 func TestAssembleUpstreamStoreErrorIsolated(t *testing.T) {
@@ -272,7 +272,7 @@ func (g *gatedSnap) max() int {
 	return g.maxInFlight
 }
 
-// TestAssembleUpstreamParallel 批内并行装配（T2-1/N1，原 service 侧用例搬迁）：
+// TestAssembleUpstreamParallel 批内并行装配（原 service 侧用例搬迁）：
 // N 账号 errgroup 有界并发（8）——闸门证明 ≥2 账号快照并发在途（串行装配恒
 // 1）；结果正确 + 顺序 = ids 顺序稳定 + 单账号失败不整批失败。
 func TestAssembleUpstreamParallel(t *testing.T) {

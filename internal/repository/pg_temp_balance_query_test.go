@@ -16,7 +16,7 @@ import (
 )
 
 // 临时额度查询（spec 2026-08-15）：用户侧有效过滤 + FEFO 排序；管理侧全量
-// 视角 + user_id 筛选 + sort/order 白名单 + 分页。真实 PostgreSQL（评审 B1
+// 视角 + user_id 筛选 + sort/order 白名单 + 分页。真实 PostgreSQL（评审
 // 基座，同 pg_temp_balance_test.go）。
 
 // seedPGTempBalanceRows 建 N 笔临时额度行（指定到期/金额/备注）；落库后回查

@@ -83,7 +83,7 @@ type Provider interface {
 var ErrUnsupported = errors.New("credential: unsupported credential type")
 
 // staticKeyProvider 静态 Key 直读 provider（api_key / responses-special 两类型
-// 共用——B-P2-1 消两份逐字同构 provider：key 来源同为账号 upstream_key，差异
+// 共用——消两份逐字同构 provider：key 来源同为账号 upstream_key，差异
 // 仅类型标记，注册表按类型分发）。直接返回 CredentialInput.APIKey（空 Key 也
 // 原样返回——行为与现状一致，Key 非空校验在别处）。类型不匹配 → 错误（防御
 // 性：For 的兜底路径也会命中——未注册的 Valid 类型落回 unsupportedProvider，
@@ -113,7 +113,7 @@ func New() *Registry {
 // Register 注册/覆盖指定类型的 provider。
 func (r *Registry) Register(p Provider) { r.m[p.Type()] = p }
 
-// unsupportedProvider 未注册类型兜底 provider（B-P2-1：不再复用 apiKeyProvider
+// unsupportedProvider 未注册类型兜底 provider（不再复用 apiKeyProvider
 // ——旧兜底 Type() 恒返回 TypeAPIKey，对 TypeCodexOAuth 等撒谎，是未来 codex
 // HTTP 面注册时错配咬合点）。Type() 返回**真实请求类型**；Credential 恒
 // ErrUnsupported（错误文本与现状一致——含输入类型，显式报错不吐值，评审 M1）。

@@ -35,7 +35,7 @@ import (
 
 type Config struct {
 	MaxBodySize           int64
-	UpstreamTimeout       time.Duration // codex 非流式上游超时（resp/images 各自包 ctx——B-P2-7；HTTPClient.Timeout 不可用：流式/非流式四方法共享，覆盖整响应体读取会切断长流式 SSE）。同源同值 cfg.Proxy.UpstreamTimeout（aiclient.Config.UpstreamTimeout 管 typed 面）
+	UpstreamTimeout       time.Duration // codex 非流式上游超时（resp/images 各自包 ctx——HTTPClient.Timeout 不可用：流式/非流式四方法共享，覆盖整响应体读取会切断长流式 SSE）。同源同值 cfg.Proxy.UpstreamTimeout（aiclient.Config.UpstreamTimeout 管 typed 面）
 	UpstreamStreamTimeout time.Duration // 流式 backstop（非流式超时在 aiclient.Config/cfg.Proxy.UpstreamTimeout）
 	FailoverAttempts      int
 	UsageCapture          bool
@@ -74,7 +74,7 @@ type Proxy struct {
 	imageGenerations *imagesCaller
 	imageEdits       *imagesCaller
 	// codexImagesGenerations/codexImagesEdits codex 类型 images 端点调用器
-	//（T2 §2：SDK GenerateImage 非流式；同一格式两端点——按请求路径选，
+	//（§2：SDK GenerateImage 非流式；同一格式两端点——按请求路径选，
 	// New 一次性构造免 per-request 分配）。
 	codexImagesGenerations *codexImagesCaller
 	codexImagesEdits       *codexImagesCaller
@@ -82,7 +82,7 @@ type Proxy struct {
 	// 按方向转换，响应反向转换回客户端协议）。仅协议不匹配时才使用；off 组
 	// 恒不触达（handleFormat 分支）。
 	convCallers map[domain.ProtocolConvert]UpstreamCaller
-	// codex SDK 适配层（T2 §1——cred → Auth 缓存 / GenerateImage / 信封 /
+	// codex SDK 适配层（§1——cred → Auth 缓存 / GenerateImage / 信封 /
 	// fatal 统一回调全在适配层；main 经 Deps.Codex 注入，nil = 未装配 → codex
 	// 类型 501 显式拒绝——防 nil 误走凭据缺失 502）。
 	codex *sdkbridge.Codex
@@ -100,7 +100,7 @@ type Proxy struct {
 	wsSink        pipelineSink
 }
 
-// Deps New 的尾部一次性协作者（W1-T2：SetCodex / SetQualityRecorder /
+// Deps New 的尾部一次性协作者（SetCodex / SetQualityRecorder /
 // SetContinuationStore 三个事后回填折叠进构造，零语义变化——各字段 nil 语义
 // 与原 setter 完全一致：Codex nil → codex 类型请求 501 显式拒绝；Recorder
 // nil → 休眠依赖；Continuation nil → continuation 请求 fail-closed）。尾部
@@ -119,7 +119,7 @@ type Deps struct {
 // 不用 Config 字段——避免 nil 运行时才炸）。bill 为计费钩子（Phase 5；
 // nil = 计费全关——现有调用点/测试兼容）。errlog 为错误明细落盘 worker
 // （分表设计；nil = 未装配——拒绝/异常路径只聚统计不落 err_logs 明细）。
-// deps 为尾部一次性协作者（W1-T2；零值 = 三者皆未装配，各 nil 语义见 Deps）。
+// deps 为尾部一次性协作者（零值 = 三者皆未装配，各 nil 语义见 Deps）。
 func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec *usage.Recorder, clients *aiclient.Factory, auth *Auth, log *logx.Logger, bill *BillingHooks, errlog *usage.ErrLogWorker, deps Deps) *Proxy {
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
@@ -384,7 +384,7 @@ func (p *Proxy) recordRejected(ctx context.Context, reqID string, groupID, accou
 	p.enqueueRejectedErr(l) // 明细（err_logs 普通队列：风暴采样丢弃面）
 }
 
-// enqueueRejectedErr 拒绝行投递（架构审查 B2：拒绝类行走普通队列——风暴采样
+// enqueueRejectedErr 拒绝行投递（架构审查：拒绝类行走普通队列——风暴采样
 // 丢弃；与双轨行豁免通道分离）。nil worker（未装配）→ no-op。
 func (p *Proxy) enqueueRejectedErr(l *domain.UsageLog) {
 	if p.errlog != nil {
@@ -411,7 +411,7 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 //     账本游标消费（T3）。4xx/5xx/network（上游透传/耗尽失败行）不写
 //     usage_logs（失败明细归 err_logs，P2a 拒绝风暴教训同族）
 //   - err_logs = 全部错误明细（error_type != none）：4xx/5xx（上游透传/耗尽）
-//   - abort 双轨（豁免队列恒落盘——架构审查 B2）；拒绝行走 recordRejected
+//   - abort 双轨（豁免队列恒落盘——架构审查）；拒绝行走 recordRejected
 //     的采样队列，不经本路由
 //   - usage_stats = 离线聚合（spec 2026-08-14）：请求路径零统计计算/投递——
 //     放行行（none/abort）由离线 worker 从 usage_logs 重建（全字段含 TTFT/
@@ -430,7 +430,7 @@ func (p *Proxy) routeLog(l *domain.UsageLog) {
 	}
 }
 
-// enqueueErrLog 错误明细投递（架构审查 B2：上游错误/双轨行走豁免队列——不参与
+// enqueueErrLog 错误明细投递（架构审查：上游错误/双轨行走豁免队列——不参与
 // 拒绝风暴采样丢弃，恒落盘；与拒绝行采样通道分离）。nil worker（未装配）→
 // no-op。仅错误行调用（成功路径零开销）。
 func (p *Proxy) enqueueErrLog(l *domain.UsageLog) {
@@ -556,7 +556,7 @@ type usageTuple struct {
 	calls int64
 	// 图片生成分量（images 格式）：ii/io = image token 分量
 	// （input/output_tokens_details.image_tokens）；text token 分量恒 0——
-	// images 请求只计 image 分量。tt 含 image tokens 不含张数（评审 P3-6
+	// images 请求只计 image 分量。tt 含 image tokens 不含张数（评审
 	// quota 口径：张数不入 TotalTokens）。resp 检测路径 ii/io 恒 0（V1-V3
 	// 实证 responses 路径无 image_tokens）。ii/io 由 buildLog 并入 in/out。
 	ii, io int64
@@ -703,7 +703,7 @@ func isJSONObjectRoot(body []byte) bool {
 // （ModelMapping 已应用，见 scheduler.Select 的 Selection.Model）。原始转发
 // 必须沿用 SDK 路径 params.Model = sel.Model 的改写语义，否则映射配置在
 // 流式请求上失效（迁移发现）。
-// 短路守卫（GC 削减 P1）：model 已是目标值（gjson 字符串读取）→ 返回原切片
+// 短路守卫（GC 削减）：model 已是目标值（gjson 字符串读取）→ 返回原切片
 // 零分配。守卫只对字符串匹配生效；null/数字/缺失/需改写走 sjson 字节级改写
 // 路径（单字段 splice，非 map 全文档往返——>2^53 整数精度无损、键序不变、
 // 无 HTML 转义，与 WS 面 relayWS 首帧改写同库同风格；sjson 对缺失路径默认

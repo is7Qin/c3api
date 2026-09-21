@@ -22,7 +22,7 @@ type routeCompiler interface {
 	Compile(in CompilerInputs) (*DecisionView, error)
 }
 
-// CompilerSources 是编译道的双输入源（W3-T1：SetWindowedQualitySource /
+// CompilerSources 是编译道的双输入源（SetWindowedQualitySource /
 // SetPricesSource 双回填已删，改为 Start 期结构注入）。两源一次性给齐
 // （both-or-nothing）；nil 字段按缺席处理（compileOnce 跳过）；nil 整体 =
 // 未装配（RequestCompile armed 门 no-op，fireOnMinuteAdvance 同理）。

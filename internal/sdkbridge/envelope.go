@@ -6,8 +6,8 @@ package sdkbridge
 
 import "fmt"
 
-// EnvelopeError 网关侧信封错误（P2-1 信封包装）：SDK 内部 HTTP 错误（*HTTPError
-// 仅 StatusCode+Raw，无 RawJSON()）经适配层（T2 起）包装为网关侧信封错误——
+// EnvelopeError 网关侧信封错误（信封包装）：SDK 内部 HTTP 错误（*HTTPError
+// 仅 StatusCode+Raw，无 RawJSON()）经适配层（此后）包装为网关侧信封错误——
 // 实现 StatusCode() int + RawJSON() string 协议，网关 statusOf/upstreamBody/
 // upstreamErrMsg 零改动复用（4xx 透传 + error_message 匹配）；**Unwrap 保留
 // errors.As 链**（SDK 错误类别判断 / 双源去重 errors.As 命中穿透本信封）。
@@ -23,7 +23,7 @@ type EnvelopeError struct {
 	Refreshed bool
 }
 
-// NewEnvelopeError 构造信封错误（适配层包装入口；T2 起使用）。
+// NewEnvelopeError 构造信封错误（适配层包装入口；此后使用）。
 func NewEnvelopeError(status int, body string, err error) *EnvelopeError {
 	return &EnvelopeError{Status: status, Body: body, Err: err}
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/rule"
 )
 
-// LatchSink 是规则引擎的 typed health action 本地宿（B18/B19 根因重开）：
+// LatchSink 是规则引擎的 typed health action 本地宿（根因重开）：
 // Throttle 直写 RuntimeHealth；FailAccount 只做 TryAcquire + Hub.Dispatch，
 // 不碰 sched view、不调 sched.FailAccount——内存摘除经 Hub 同步扇出到
 // Scheduler.onRuleFailure（同协程，零异步窗口）。

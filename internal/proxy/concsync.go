@@ -318,7 +318,7 @@ func concShare(limit, n int) int {
 //
 // 无视图 / 条目缺失 / 视图陈旧 → fail-open 按「全额 limit」本地判定
 // （lnow ≤ limit）= 引入 Redis 前现状语义。并发是建议性协调态，Redis 故障在此
-// 降维成视图新鲜度布尔——#37 P1 的额度热路径复核特权（资金语义）在此无必要。
+// 降维成视图新鲜度布尔——额度热路径复核特权（资金语义）在此无必要。
 // 放行时 effective 含 L_now ⇒ 本地计数 < 真上限恒成立（借用不破真上限兜底；
 // key 层随后仍以真上限 CAS 兜底占用，竞态失败按保守多拒处理）。
 func (g *concurrencyGate) concAllows(isKey bool, id, limit, lnow int64) bool {

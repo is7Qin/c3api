@@ -132,9 +132,9 @@ type attemptState struct {
 //     已写出无记录）——骨架直接返回（不可转移）；false → respBody/callErr 供
 //     骨架分类
 //   - respBody：4xx 透传原文（chat/search 原始 body；WS 归一错误文本——上游
-//     body message，无则空——B1 分通道）；code==0 时亦携带错误文本（WS 纯文本
+//     body message，无则空——分通道）；code==0 时亦携带错误文本（WS 纯文本
 //     经骨架"直取原文"回退落盘，防 gjson 提取吃空）
-//   - callErr：连接级/凭据错（code==0）或 WS 拨号 4xx（dialErr 全文——B1 分
+//   - callErr：连接级/凭据错（code==0）或 WS 拨号 4xx（dialErr 全文——分
 //     通道：SDK 文本不进 respBody，帧面与落盘面解耦）时非 nil；Warn 由
 //     attempt 内部代发（Warn 文案两版本保留不统一——循环不代发；WS code==0
 //     恒 callErr=nil 不新增 Warn）
@@ -252,7 +252,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// Selection.LogMappedModel（implicit 留空）。终态日志只记录 explicit
 		// 非 identity 目标；价格模型由 Selection.PriceModel 独立派生。
 		mapped := usageIdentity(format, sel, reqModel)
-		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前
+		// 缺价预检（评审 I-1 + 预检按格式切换）：每轮 sel 更新后、Call 前
 		// 查价——计费启用时模型无价格 → 释放并发槽 + 402（不按 0 计价），零 DB
 		// （快照读）。Selection 保持模式语义：implicit 用客户端模型，explicit/
 		// 无映射用上游目标。images 格式查统一价格快照 image 分量（跳过 chat

@@ -35,7 +35,7 @@ type fakePartitionManager struct {
 	esdrops   []time.Time // usage_entity_stats cutoff 参数（与 usage_stats 同 StatsRetentionDays）
 	esnows    []time.Time // usage_entity_stats ensure 的 now 参数
 	esensures []time.Time // usage_entity_stats ensure 的 until 参数
-	rdeletes  []time.Time // redemption_uses 批删 cutoff 参数（F3-2）
+	rdeletes  []time.Time // redemption_uses 批删 cutoff 参数
 	rdrops    []time.Time // routing instance/rollup drops (merged)
 	rnows     []time.Time // routing ensures
 	dropErr   error       // usage_logs drop 失败注入
@@ -270,7 +270,7 @@ func TestRetentionWorkerZeroRetentionSkipsDrop(t *testing.T) {
 	require.NotEmpty(t, pm.esensures, "usage_entity_stats 仍预建分区（保留期仅管删除，与 usage_stats 同循环）")
 }
 
-// TestRetentionWorkerStatsFailureIsolated C32 扩展：usage_stats DROP 失败不影响
+// TestRetentionWorkerStatsFailureIsolated 扩展：usage_stats DROP 失败不影响
 // 明细两表（四表逐表错误隔离——180 天清理失败不连带 30 天/7 天清理）；
 // usage_entity_stats 与 usage_stats 共用 StatsRetentionDays 但各自独立错误隔离——
 // stats 失败不影响 entity，反之亦然（同一循环内逐表隔离）。
@@ -293,7 +293,7 @@ func TestRetentionWorkerStatsFailureIsolated(t *testing.T) {
 	require.NoError(t, w.Close(ctx))
 }
 
-// TestRetentionWorkerErrLogsFailureIsolated C32：一表 DROP 失败不影响另一表
+// TestRetentionWorkerErrLogsFailureIsolated：一表 DROP 失败不影响另一表
 // （err_logs drop 失败 → usage_logs 仍正常 drop/ensure，下轮重试各自独立）。
 func TestRetentionWorkerErrLogsFailureIsolated(t *testing.T) {
 	pm := &fakePartitionManager{edropErr: errBoom}
@@ -356,7 +356,7 @@ func TestRetentionWorkerStartTwiceFails(t *testing.T) {
 	require.Error(t, w.Start(ctx))
 }
 
-// TestRetentionWorkerDeletesRedemptionUses F3-2：redemption_uses 批删并入周期
+// TestRetentionWorkerDeletesRedemptionUses：redemption_uses 批删并入周期
 // 任务——每轮巡检都调 DeleteRedemptionUsesBefore，cutoff = now - 90 天（TTL
 // 定死，非配置项）。
 func TestRetentionWorkerDeletesRedemptionUses(t *testing.T) {
@@ -389,8 +389,8 @@ func TestRetentionWorkerDeletesRedemptionUses(t *testing.T) {
 		"redemption_uses cutoff = now-90d（TTL 定死），got=%v want≈%v", pm.rdeletes[0], cut)
 }
 
-// TestRetentionWorkerRedemptionDeleteFailureIsolated F3-2：批删失败不连带分区
-// 三表（逐表错误隔离同语义——C32 纪律），下轮重试。
+// TestRetentionWorkerRedemptionDeleteFailureIsolated：批删失败不连带分区
+// 三表（逐表错误隔离同语义），下轮重试。
 func TestRetentionWorkerRedemptionDeleteFailureIsolated(t *testing.T) {
 	pm := &fakePartitionManager{rdelErr: errBoom}
 	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, StatsRetentionDays: 180, TickerInterval: 20 * time.Millisecond}, pm, nil)

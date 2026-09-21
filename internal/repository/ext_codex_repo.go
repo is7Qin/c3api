@@ -235,7 +235,7 @@ func (r *AccountExtRepo) TryInsertAccountExt(ctx context.Context, e *domain.Acco
 	return false, err
 }
 
-// WriteOAuthRotation 轮转回写（SDK 接入 T5 §1——SDK OnTokenRotated 回调落库
+// WriteOAuthRotation 轮转回写（SDK 接入 §1——SDK OnTokenRotated 回调落库
 // 面）：account_ext **部分更新**（幂等收敛语义与 upsert 等价——重复回调重复
 // UPDATE 收敛）仅 codex_oauth_token / codex_oauth_refresh_token /
 // codex_oauth_expires_at 三列——其余列不动（避免 UpsertAccountExt 全量

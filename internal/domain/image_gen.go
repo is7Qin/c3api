@@ -4,7 +4,7 @@
 
 package domain
 
-// 生图领域类型（SDK 接入契约——T2 适配层 domain↔codexsdk 转换的网关侧同构面，
+// 生图领域类型（SDK 接入契约——适配层 domain↔codexsdk 转换的网关侧同构面，
 // 字段形态对齐 sdk-image-gen-spec：ImageGenParams/ImageRef/ImageResponse/Image/
 // ImageUsage/ImageStreamEvent）。网关从 HTTP 请求 JSON body / multipart form
 // 解析参数传入，SDK 不做 HTTP 协议解析；响应统一走本组类型口径 → 网关据此
@@ -47,7 +47,7 @@ type Image struct {
 
 // ImageUsage 生图 token 用量（上游 input/output_tokens_details.image_tokens
 // 提取为平铺四字段；JSON tag 对齐 codex-sdk ImageUsage——completed SSE 帧
-// usage 字段映射 = JSON tag 直透，T3 spec P2-1 wire 形态定死）。
+// usage 字段映射 = JSON tag 直透，wire 形态定死）。
 type ImageUsage struct {
 	InputTokens       int64 `json:"input_tokens"`
 	InputImageTokens  int64 `json:"input_image_tokens"` // input_tokens_details.image_tokens
@@ -56,7 +56,7 @@ type ImageUsage struct {
 }
 
 // ImageStreamEventType 流式事件类型（wire 事件名：上游 SSE 帧 type 字段值与
-// codex-sdk 合成流式事件 Type 值同值域）。类型化（A-P2-10）后 SDK 升级改事件
+// codex-sdk 合成流式事件 Type 值同值域）。类型化后 SDK 升级改事件
 // 名 → 适配层显式映射未知 Warn + 跳过（不静默透传落账 0 张）；switch 消费侧
 // 编译期暴露全部调用点。
 type ImageStreamEventType string

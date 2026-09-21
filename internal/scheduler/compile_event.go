@@ -9,7 +9,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// Event-driven incremental compilation (v5 C1–C3): the single clean mechanism
+// Event-driven incremental compilation (v5): the single clean mechanism
 // REPLACING the unconditional 30s full rebuild outright (no dual-track, no
 // flags). Invalidation/price/quality events enqueue SCOPED work; the 30s tick
 // is demoted to an O(1)-probe staleness backstop; scoped fires recompute only

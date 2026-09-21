@@ -25,7 +25,7 @@ var ErrGroupNotEligible = fmt.Errorf("%w: group is private and not granted to us
 const maxKeyQuotaMillis int64 = 9007199254740991
 
 // CreateKey 用户自建 key（/api/user/keys POST）：
-// 组可选性校验（public 或已授予 private）→ 用户门禁字段写库前预取（B1-1：
+// 组可选性校验（public 或已授予 private）→ 用户门禁字段写库前预取：
 // GetUser 前置——写后注册退化为纯内存 Upsert 不可失败）→ cryptox 生成明文
 // → 落库 → Auth 增量纯内存 Upsert。明文长期可查看/复制（列表/详情回显）。
 // quota（累计计费毫分）边界：0=不限；负数或超 maxKeyQuotaMillis → 400。
@@ -37,8 +37,8 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 	if err != nil {
 		return nil, err
 	}
-	// B1-1：用户门禁字段写库前预取（checkGroupEligible 本就在写前做 DB 读，
-	// 前置 GetUser 零成本；返回组顺带预取 ProtocolConverts——A-2 增量注册字段
+	// 用户门禁字段写库前预取（checkGroupEligible 本就在写前做 DB 读，
+	// 前置 GetUser 零成本；返回组顺带预取 ProtocolConverts——增量注册字段
 	// 同源）——写后 upsertKeyMetaInMemory 不可失败，失败窗口整体消失（新 raw
 	// 永不蒸发）
 	var user *domain.User
@@ -60,7 +60,7 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 		return nil, mapRepoErr(err) // key_raw 唯一冲突 → ErrConflict（409）
 	}
 	s.upsertKeyMetaInMemory(created, user, g.ProtocolConverts) // 写后注册纯内存（不可失败）
-	// key 创建是 #14 多实例缺口（不进 invalidate）：其余实例鉴权快照需全量
+	// key 创建是多实例缺口（不进 invalidate）：其余实例鉴权快照需全量
 	// Reload 覆盖（v1 不做增量定向）。
 	s.publish(ctx, notify.Change{Keys: true})
 	if s.log != nil {
@@ -69,10 +69,10 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 	return created, nil
 }
 
-// checkGroupEligible 组可选性：组必须存在且未软删（缺失/软删 → 404——F3 软删
+// checkGroupEligible 组可选性：组必须存在且未软删（缺失/软删 → 404——软删
 // 组不可建孤儿 key）；private 组须有授予记录（未授予 → 400，防越权使用专属
 // 容量池）。返回组本身（getGroupLive 已加载——ProtocolConverts 预取零额外
-// 查询，A-2）。
+// 查询）。
 func (s *Service) checkGroupEligible(ctx context.Context, userID, groupID int64) (*domain.Group, error) {
 	g, err := s.getGroupLive(ctx, groupID)
 	if err != nil {
@@ -118,10 +118,10 @@ func (s *Service) ListKeys(ctx context.Context, userID int64, q repository.ListQ
 }
 
 // UpdateKey 更新自己的 key（name/status/max_concurrency/quota；nil 字段不变）。
-// patch 化（S3-F1）：只把显式字段传给 repo（nil = 不改），不再全行快照写回——
+// patch 化：只把显式字段传给 repo（nil = 不改），不再全行快照写回——
 // 并发两个 PUT 改不同字段各自生效（不再静默覆盖先写者）。全 nil = 无变更，
 // 直接返回当前行（零写库零发布）。
-// 变更后 Auth 增量 Upsert（禁用/额度调整即时生效——评审 I-2 的 key 级路径）。
+// 变更后 Auth 增量 Upsert（禁用/额度调整即时生效的 key 级路径）。
 func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *string, status *domain.KeyStatus, maxConcurrency *int, quota *int64) (*domain.Key, error) {
 	cur, err := s.ownedKey(ctx, userID, keyID)
 	if err != nil {
@@ -142,7 +142,7 @@ func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *stri
 	if name == nil && status == nil && maxConcurrency == nil && quota == nil {
 		return cur, nil // 无变更：零写库（对齐"单字段 PUT 只改该字段"的惰性语义）
 	}
-	// A-2：组转换方向写库前预取（B1-1 同款纪律——失败 → 更新零发生，无"写库
+	// 组转换方向写库前预取（同款纪律——失败 → 更新零发生，无"写库
 	// 成功但内存未注册"窗口）；GetKey 不带组边（key_repo.go），组查询单点
 	// getGroupLive。低频路径，一次查询可接受。
 	g, err := s.getGroupLive(ctx, cur.GroupID)
@@ -163,7 +163,7 @@ func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *stri
 }
 
 // RotateKey 轮换自己的 key（/api/user/keys/{id}/rotate）：新明文落库；旧明文
-// 增量移除（立即失效）、新明文增量注册。用户门禁字段写库前预取（B1-1：
+// 增量移除（立即失效）、新明文增量注册。用户门禁字段写库前预取：
 // GetUser 前置——Delete 后只剩不可失败的内存 Upsert，失败窗口整体消失——
 // DB 已轮换只留新明文时新 raw 永不蒸发）。
 func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (*domain.Key, error) {
@@ -171,7 +171,7 @@ func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (*domain.K
 	if err != nil {
 		return nil, err
 	}
-	// B1-1：GetUser 写库前预取（失败 → 轮换零发生，旧 key 原样可用）
+	// GetUser 写库前预取（失败 → 轮换零发生，旧 key 原样可用）
 	var user *domain.User
 	if s.keys != nil {
 		u, err := s.store.GetUser(ctx, userID)
@@ -180,7 +180,7 @@ func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (*domain.K
 		}
 		user = u
 	}
-	// A-2：组转换方向写库前预取（B1-1 同款纪律——失败 → 轮换零发生；新明文
+	// 组转换方向写库前预取（同款纪律——失败 → 轮换零发生；新明文
 	// 注册带组转换方向，不等 60s authSync 兜底）
 	g, err := s.getGroupLive(ctx, cur.GroupID)
 	if err != nil {
@@ -238,9 +238,9 @@ func (s *Service) ownedKey(ctx context.Context, userID, keyID int64) (*domain.Ke
 	return k, nil
 }
 
-// upsertKeyMeta 构造 KeyMeta 并增量注册到 Auth 鉴权快照（UpdateKey 用——P3
+// upsertKeyMeta 构造 KeyMeta 并增量注册到 Auth 鉴权快照（UpdateKey 用：
 // 路径：GetUser 失败 → 错误返回，快照靠全量 Reload 兜底 ≤60s 自愈）。
-// converts 组级转换方向（A-2：写库前预取，调用方保证与组一致）。
+// converts 组级转换方向（写库前预取，调用方保证与组一致）。
 func (s *Service) upsertKeyMeta(ctx context.Context, k *domain.Key, converts []domain.ProtocolConvert) error {
 	if s.keys == nil {
 		return nil
@@ -254,8 +254,8 @@ func (s *Service) upsertKeyMeta(ctx context.Context, k *domain.Key, converts []d
 }
 
 // upsertKeyMetaInMemory 纯内存增量注册（不可失败）：CreateKey/RotateKey 的
-// 用户门禁字段已写库前预取（B1-1）——调用方保证 s.keys != nil 时 u 非 nil；
-// converts 同上（A-2——缺口字段补齐，全量路径 LoadKeys 经 WithGroup 同源）。
+// 用户门禁字段已写库前预取——调用方保证 s.keys != nil 时 u 非 nil；
+// converts 同上（缺口字段补齐，全量路径 LoadKeys 经 WithGroup 同源）。
 func (s *Service) upsertKeyMetaInMemory(k *domain.Key, u *domain.User, converts []domain.ProtocolConvert) {
 	if s.keys == nil {
 		return

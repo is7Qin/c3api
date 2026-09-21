@@ -43,7 +43,7 @@ const (
 	// ——service 不 import handler 包，此处同语义本地化：超限裁剪不报错）。
 	MaxStatsListLimit = 200
 
-	// ttftQueryBudget TTFT 冷查询预算上界（P3 实测最坏 ~7s；30s 为宽裕封顶
+	// ttftQueryBudget TTFT 冷查询预算上界（实测最坏 ~7s；30s 为宽裕封顶
 	// ——配合 WithoutCancel 脱钩 leader 取消，见 QueryStatsTTFT 注释）。
 	ttftQueryBudget = 30 * time.Second
 
@@ -172,7 +172,7 @@ func (s *Service) QueryEntityTrend(ctx context.Context, q EntityTrendQuery) ([]*
 //   - 非空：exact 分支（usage_logs percentile_cont），必须配 EntityID ≠ 0 且
 //     entityType 过白名单，跨度 ≤ MaxStatsTTFTExactSpan。
 //
-// 校验通过后经 statsTTFTC TTL 缓存（P3 验收遗留尾巴：exact 冷缓存 × 系统饱和
+// 校验通过后经 statsTTFTC TTL 缓存（验收遗留尾巴：exact 冷缓存 × 系统饱和
 // 排序致负载 p99 5-6s；仪表盘同参轮询命中率天然高，陈旧 ≤30s 为展示面可
 // 接受语义——overview 先例）。
 func (s *Service) QueryStatsTTFT(ctx context.Context, q TTFTQuery) (*domain.TTFTSummary, error) {
@@ -362,7 +362,7 @@ func (c *ttftCache) fetch(key string, fn func() (*domain.TTFTSummary, error)) (*
 
 // settle 执行 fn 并收尾发布。发布顺序铁律：**字段写入必须全部先于
 // close(done)** ——close 的 happens-before 边只覆盖此前写入，颠倒即等待方
-// 读到撕裂/空值的数据竞争（RG 审计 B1，-race 实测复现）。
+// 读到撕裂/空值的数据竞争（RG 审计，-race 实测复现）。
 // panic 兜底（M1）：store 层 panic 被 handler Recoverer 兜住时进程存活，
 // 等待方不得永久阻塞在未 close 的 done 上——以错误形态传播给等待方后原样
 // 重抛给 leader。

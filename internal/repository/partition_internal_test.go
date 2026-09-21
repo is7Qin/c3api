@@ -126,7 +126,7 @@ func TestErrLogColumnDefsMatchCreateDDL(t *testing.T) {
 
 // TestUsageStatsColumnDefsMatchCreateDDL usage_stats 列事实源锚 v2（用户裁决
 // 2026-08-11 三表统一分区机制——usageStatsColumnDefs 第三列事实源，建表 DDL
-// 与事实源列集合一致；防 P1 同型复发）→ spec 2026-08-23 v2 瘦身：删
+// 与事实源列集合一致；防同型复发）→ spec 2026-08-23 v2 瘦身：删
 // account_id/template_id/user_id/is_error 四列（维度 7→3），保留 ttft_hist
 // （v2.2 裁决——平台级分位数草图，overview 的 ScanStatsDays 消费）；spec
 // 2026-08-14 表重建遗留：删 total_latency_ms、加 call_count/ttft_* 四列 +

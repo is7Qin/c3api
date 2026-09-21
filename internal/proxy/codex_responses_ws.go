@@ -47,7 +47,7 @@ var errCodexWSNotIntegrated = errors.New("codex responses unavailable (adapter n
 
 // errCodexExtMissing codex 类型选号命中但账号快照缺 account_ext 行（配置损
 // 坏——codex 账号必有 ext 行）。本地配置错误按连接级错误转移（失败文本落盘，
-// 耗尽 502 语义）；不上报失效（避免 account 0 无谓上报——T2 P1-1 同款）。
+// 耗尽 502 语义）；不上报失效（避免 account 0 无谓上报——同款）。
 var errCodexExtMissing = errors.New("codex account missing account_ext snapshot (config error)")
 
 // codexAuthFailedMsg codex fatal 用户帧固定文案（M3 裁决：fatal 语义 = 授权

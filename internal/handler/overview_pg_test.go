@@ -485,7 +485,7 @@ func TestPGUsersTopCacheHitAndEmpty(t *testing.T) {
 	require.Equal(t, int64(0), resp.OtherConcurrency)
 }
 
-// TestPGOverviewTrendUTCDayBoundary 非 UTC 会话日界回归（评审 P2-1）：trend
+// TestPGOverviewTrendUTCDayBoundary 非 UTC 会话日界回归：trend
 // 日桶必须按统计时区日界分组（未配置 = UTC；与 summary 的 Go 侧统计时区区间
 // 一致）。bug 形态：date_trunc('day', timestamptz) 按会话 TimeZone 截断——
 // America/New_York（UTC-4/5）会话下 UTC 00:30 的桶会落入前一日桶（date 标签

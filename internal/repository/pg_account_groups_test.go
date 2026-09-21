@@ -20,7 +20,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 真实 PostgreSQL 测试基座（评审 B1：本任务 repository 新增测试一律真实 PG，
+// 真实 PostgreSQL 测试基座（评审：本任务 repository 新增测试一律真实 PG，
 // 既有 pgxmock 测试保留不动）。
 //
 // 启动方式：deploy/test-compose.yml 起 postgres:18，然后

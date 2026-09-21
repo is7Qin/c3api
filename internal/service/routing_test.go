@@ -4,7 +4,7 @@
 
 package service
 
-// Todo 17 service lane：routing flow / frontier / plan explanation 聚合查询的
+// service lane：routing flow / frontier / plan explanation 聚合查询的
 // 单元测试。rollup 行由 fakeStore 供给（不触 PG），计划目录由 fake provider
 // 供给（不触 compiler），丢失计数经 routingLoss 接缝注入确定值。
 

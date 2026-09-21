@@ -16,7 +16,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// mock 替身（T1 §6）：可编程回调（记录 accountID/fatal 序列）+ 可编程
+// mock 替身（§6）：可编程回调（记录 accountID/fatal 序列）+ 可编程
 // FailureStore / AccountFailer。
 // ---------------------------------------------------------------------------
 
@@ -26,7 +26,7 @@ type failureCall struct {
 	fatal     error
 }
 
-// recordingHandler mock 回调替身：记录 accountID/fatal 序列（T2 适配层回调的
+// recordingHandler mock 回调替身：记录 accountID/fatal 序列（适配层回调的
 // 测试替身形态；同时用于验证 NewFailureHandler 装配的调用面）。
 type recordingHandler struct {
 	mu    sync.Mutex

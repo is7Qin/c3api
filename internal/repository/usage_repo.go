@@ -361,7 +361,7 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 // ScanUsageAgg 批量账号 usage_logs 区间聚合（/api/admin/accounts/usage 查询面——
 // 统一 usage API spec 2026-08-18）：单连接单查询，`ANY($1)` 100 ids 参数数组
 // 规模内 + created_at 半开区间 [from, to)（分区键——RANGE 分区剪枝 + 既有
-// account_id/created_at 索引）。SQL 侧 GROUP BY 聚合（F-P2-2 形态：服务端
+// account_id/created_at 索引）。SQL 侧 GROUP BY 聚合（形态：服务端
 // 聚合，不拉全行客户端算）；SUM 毫分 int64 原样（USD 换算在 handler 展示
 // 边界）。返回 map[account_id]agg——无记录账号无键（补零由 service 层按 ids
 // 全量组装）。pool 未注入（New 构造）→ 显式错误（与 StatRepo 同纪律）。

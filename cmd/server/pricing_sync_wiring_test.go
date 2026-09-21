@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPricingSyncCtorWiring pins the W3-T2 cleanup (inventory B4): the
+// TestPricingSyncCtorWiring pins the cleanup: the
 // SetPriceFetcher backfill is gone — main wires the fetcher into the pricing
 // worker via the constructor (SyncWorkerConfig) and the worker into the handler
 // via the constructor (OpsOptions.PricingSync), never via a service setter.

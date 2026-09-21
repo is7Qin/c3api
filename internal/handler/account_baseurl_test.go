@@ -42,7 +42,7 @@ func TestAccountBaseURLContract(t *testing.T) {
 	require.NotNil(t, updated.BaseURL)
 	require.Equal(t, "https://acc2.example.com", *updated.BaseURL)
 
-	// 列表响应含 base_url（C3——toAPIAccountView 平铺拷贝）
+	// 列表响应含 base_url（toAPIAccountView 平铺拷贝）
 	rec = do(http.MethodGet, "/api/admin/accounts", "")
 	require.Equal(t, 200, rec.Code)
 	var list AccountListResponse

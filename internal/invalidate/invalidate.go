@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package invalidate 管理面变更的去抖定向失效（Phase 6 O2）：
+// Package invalidate 管理面变更的去抖定向失效：
 //
 // 脏标记（Mark 路径零锁零 DB——atomic CAS 合并 + 非阻塞唤醒，不阻塞任何
 // 调用方；消除 Phase 6 压测实证的 33,705 goroutine reloadMu 串行雪崩）+
@@ -106,7 +106,7 @@ type BalancesReloader interface {
 }
 
 // RulesReloader 规则表全量重载（rule.RuleEngine 实现——现有签名
-// Reload(ctx) error，T2 需加 ReloadRules 适配；重载清窗口计数，全实例同步
+// Reload(ctx) error，需加 ReloadRules 适配；重载清窗口计数，全实例同步
 // 执行语义）。未注入 nil → reloadAll 跳过。
 type RulesReloader interface {
 	ReloadRules(ctx context.Context) error
@@ -123,7 +123,7 @@ type Config struct {
 	Log      *logx.Logger     // 可空（nil = 不记日志）
 }
 
-// Debouncer 去抖器（O2 核心）：
+// Debouncer 去抖器（核心）：
 //   - Mark 路径（Users/Templates/Accounts/Multipliers）：零锁零 DB——原子 CAS
 //     合并脏状态 + 非阻塞 channel 唤醒；任何调用方（含 50k 并发 fill）不阻塞。
 //   - 执行路径：单 goroutine 串行（Start 启动），窗口到点消费脏状态执行合并
@@ -133,7 +133,7 @@ type Config struct {
 type Debouncer struct {
 	cfg      Config
 	newTimer func(time.Duration) <-chan time.Time // 测试注入 fake 时钟（默认 time.NewTimer）
-	// goFn 托管 goroutine 启动器（B4-3/p2-03：裸 goroutine → worker.Manager.Go
+	// goFn 托管 goroutine 启动器（裸 goroutine → worker.Manager.Go
 	// 同契约——panic 捕获 + Warn，进程不崩，worker.go:6 承诺）。默认
 	// worker.New(cfg.Log).Go；测试可注入记录/替代实现。
 	goFn      func(ctx context.Context, name string, fn func(context.Context))
@@ -149,7 +149,7 @@ func New(cfg Config) *Debouncer {
 	}
 	d := &Debouncer{cfg: cfg, wake: make(chan struct{}, 1)}
 	d.newTimer = func(dur time.Duration) <-chan time.Time { return time.NewTimer(dur).C }
-	d.goFn = worker.New(cfg.Log).Go // B4-3：托管 goroutine（recover 兜底）
+	d.goFn = worker.New(cfg.Log).Go // 托管 goroutine（recover 兜底）
 	return d
 }
 
@@ -245,7 +245,7 @@ func (d *Debouncer) Start(ctx context.Context) error {
 	if !d.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("invalidate: already started")
 	}
-	d.goFn(ctx, d.Name(), d.loop) // B4-3：裸 goroutine → 托管（Manager.Go 契约的 recover：loop panic 不崩进程）
+	d.goFn(ctx, d.Name(), d.loop) // 裸 goroutine → 托管（Manager.Go 契约的 recover：loop panic 不崩进程）
 	return nil
 }
 
@@ -328,7 +328,7 @@ func (d *Debouncer) reloadAll(st *State) {
 		_ = d.cfg.Balances.ReloadMultipliers(context.Background()) // fail-safe：内部 Warn + 保留旧快照
 	}
 	if st.Kinds&KindRules != 0 && d.cfg.Rules != nil {
-		// B4-4/p2-12：规则快照无周期兜底（对照 auth 60s / sched 30s / balances
+		// 规则快照无周期兜底（对照 auth 60s / sched 30s / balances
 		// 10s）——本分支 Background 双保险：事件驱动的全量重载不随任何请求 ctx
 		// 取消（周期 ticker 属行为新增，spec 标注可选裁决，本批次不实现）。
 		if err := d.cfg.Rules.ReloadRules(context.Background()); err != nil && d.cfg.Log != nil {

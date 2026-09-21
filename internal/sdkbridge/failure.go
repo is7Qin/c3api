@@ -2,9 +2,9 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package sdkbridge 是 SDK 适配层与网关之间的契约面（T1，零 SDK 依赖——SDK
-// 调用从 T2 起）：统一失效回调 + 失效处理链装配（写失效字段 / 调度摘除 /
-// 审计）、网关侧信封错误（P2-1）与凭据传递形态（AccountCredential 派生在
+// Package sdkbridge 是 SDK 适配层与网关之间的契约面（零 SDK 依赖——SDK
+// 调用从此后）：统一失效回调 + 失效处理链装配（写失效字段 / 调度摘除 /
+// 审计）、网关侧信封错误与凭据传递形态（AccountCredential 派生在
 // internal/domain）。
 package sdkbridge
 
@@ -20,7 +20,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// FailureHandler 账号失效上报的唯一入口：SDK 适配层（T2/T4 起）把 SDK 内部判死
+// FailureHandler 账号失效上报的唯一入口：SDK 适配层（此后）把 SDK 内部判死
 // （OnAuthFatal / errors.As fatal 四类——RefreshOAuthError / AuthPermanentlyRevokedError /
 // AccountDisabledError / CallbackDeliveryError；RefreshError 可重试，有意排除）翻译成一次统一回调；
 // 网关侧只处理这一个入口。
@@ -30,7 +30,7 @@ import (
 //     等）不上报**（网关按既有 failover 分类处理）
 //   - **信封类错误不上报**（透传协议——网关 statusOf/upstreamErrMsg 零改动复用）
 //   - 双源去重：rotationAuth 路径同一 fatal 既触发 OnAuthFatal 又随返回错误
-//     errors.As 命中——**以回调为准去重、单次上报**（结构或语义级去重，T2
+//     errors.As 命中——**以回调为准去重、单次上报**（结构或语义级去重，
 //     适配层实现；本契约只定义回调形态）
 type FailureHandler func(accountID int64, fatal error)
 
@@ -96,14 +96,14 @@ type AccountFailer interface {
 type FailureDeps struct {
 	Store  FailureStore
 	Failer AccountFailer
-	// Log 处理错误日志（P3-1 评审：同一失败只记一条——记在回调侧
+	// Log 处理错误日志（评审：同一失败只记一条——记在回调侧
 	// NewFailureHandler，HandleFailure 不重复记）；nil = no-op。
 	Log       *logx.Logger
 	Latch     Latcher
 	Publisher GroupPublisher
 }
 
-// HandleFailure 网关侧失效处理链（T1 §3——统一回调装配；T2/T4 适配层在
+// HandleFailure 网关侧失效处理链（§3——统一回调装配；适配层在
 // FailureHandler 回调中调用；冷面——失败上报低频）：
 //
 //  1. DB 写 failed_at + last_error（失效原因文本，复用既有 last_error——用户
@@ -113,11 +113,11 @@ type FailureDeps struct {
 //     （第 1 步/CAS 步落库；重启快照重载经 failed_at 仍摘除）；复用既有选号
 //     disabled 过滤器与 MarkResult 防复活守卫（置位后在途请求结果短路）
 //  3. 失败请求自身不在此链——由 proxy 既有分类路径处理（fatal → 连接级
-//     MarkResult 分流，failover 不重试同一账号；forward.go 语义，T1 不改动）
+//     MarkResult 分流，failover 不重试同一账号；forward.go 语义，不改动）
 //
 // DB 写失败不阻断摘除（fail-closed：账号已判死，摘除优先；错误返回供日志）。
 // 返回 DB 写错误（nil = 成功）；调度摘除为 void（快照外账号 no-op）。
-// 本函数不记日志——处理错误统一由回调侧（NewFailureHandler）记一条（P3-1
+// 本函数不记日志——处理错误统一由回调侧（NewFailureHandler）记一条（
 // 评审：同一失败不得双条 Warn）。
 var (
 	ErrMissingCredentialDiscriminator = errors.New("sdkbridge: missing credential discriminator")

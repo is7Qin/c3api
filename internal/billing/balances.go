@@ -3,7 +3,7 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // Package billing 计费核心：service_tier 归一化 + 价格矩阵纯函数 + 余额快照
-// + 批量扣费 flusher（T2/T3）。扣费落库与请求路径分离。
+// + 批量扣费 flusher。扣费落库与请求路径分离。
 package billing
 
 import (
@@ -102,7 +102,7 @@ func (b *Balances) Reload(ctx context.Context) error {
 	return nil
 }
 
-// ReloadMultipliers 定向刷新倍率快照（O2 接线矩阵：组倍率/assignment 专属倍率
+// ReloadMultipliers 定向刷新倍率快照（接线矩阵：组倍率/assignment 专属倍率
 // 变更 ≠ 余额变更，不走全量 Reload——避免 O(n) 用户余额重载）。组倍率小表 +
 // assignment 专属倍率小表两路都成功才整体换新（快照内自洽）；失败 fail-safe：
 // Warn + 保留旧倍率快照（错误 ≤ BalanceRefreshInterval ticker 兜底收敛）。
@@ -128,7 +128,7 @@ func (b *Balances) ReloadMultipliers(ctx context.Context) error {
 // Set 扣费后定向刷新单用户余额（结算语句成功后调用）：已存在条目原地
 // Store（O(1) 零拷贝——扣费频率 = flush 节奏）。缺失条目忽略：仅限已存在用户
 // 的余额变更（PUT/Redeem/flush 回写，预检时已在快照内恒命中）；新用户创建
-// 走全量 Reload 进快照（见 O2 接线矩阵）。
+// 走全量 Reload 进快照（见接线矩阵）。
 func (b *Balances) Set(uid, bal int64) {
 	if m := b.snap.Load(); m != nil {
 		if e := (*m)[uid]; e != nil {

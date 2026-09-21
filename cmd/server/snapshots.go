@@ -19,7 +19,7 @@ import (
 // 五路快照 → snapshot.Snapshot 适配器（装配侧，与 schedGroupPub 同模式——
 // 模块包不 import snapshot，粘合放最外层）：包装各模块既有 Reload（零重写），
 // 声明变更 scope。当前 scope 接线：仅 settings 变更经注册表分发（ScopeSettings
-// → auth：gate 预算 N 即时重算，#36 缺口）；其余变更类型仍走 invalidate 去抖
+// → auth：gate 预算 N 即时重算缺口）；其余变更类型仍走 invalidate 去抖
 // 器（合并语义），注册表不重复接管（避免同快照双 reload）。其余四路无 scope
 // 声明 = 纯启动就绪 + 状态追踪快照。
 

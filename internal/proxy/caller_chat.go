@@ -37,7 +37,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		// 否则上游按非流式响应，relay 收不到 SSE。注入后仍需发送原始 body。
 		// 模型改写：调度器选号已应用 ModelMapping（sel.Model 为上游模型名），
 		// 与 SDK 路径 params.Model = sel.Model 等价，映射配置在流式下不失效。
-		// GC 削减 P1/P1b：短路守卫（stream 已是 true 且 model 已匹配 → 原切片
+		// GC 削减：短路守卫（stream 已是 true 且 model 已匹配 → 原切片
 		// 零分配）或单次 map 往返同时改两字段（与旧两次往返字节逐位相同）。
 		streamBody, err := setStreamAndModel(body, true, sel.Model)
 		if err != nil {

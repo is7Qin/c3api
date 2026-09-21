@@ -144,7 +144,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		writeErr(w, errBody)
 		return
 	}
-	// images 端点专用 body 分支（评审 P1-2）：multipart 跳过 json.Valid 硬门
+	// images 端点专用 body 分支：multipart 跳过 json.Valid 硬门
 	// 与 gjson 顶层提取（下述 JSON 校验/stream 探测/body 重写对 multipart
 	// 全部失效——multipart 字节对 json.Valid 必然 false，撞门即误杀）；model
 	// 从 form 字段取；图片文件原样透传（不解析内容）；不做
@@ -159,7 +159,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		// SDK v1.x 参数里没有 Stream 字段（流式由 NewStreaming 在请求选项层注入
 		// "stream": true），故从原始请求体探测 stream 标志决定走流式还是非流式。
 		// model 一并在此提取（评审 I-2：不解析完整 params）；service_tier（Phase 5
-		// 计费）同次提取。GC 削减 P3：json.Valid 单遍校验（零分配）保留 400 语义 +
+		// 计费）同次提取。GC 削减：json.Valid 单遍校验（零分配）保留 400 语义 +
 		// scanKeys 单遍顶层提取三键（spec 2026-08-16-single-pass-parse-design：
 		// 每 JSON 请求 4 遍全文档扫描 → 2 遍——gjson.ParseBytes 方案经证伪弃用）。
 		// 值判定与现状 gjson Type 校验语义精确等价：stream 非 bool/null、model/
@@ -340,11 +340,11 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 	// TODO(P22-I1): 当前 hdr 恒 nil（UpstreamCaller.Call 未回收 resp.Header），
 	// 仅 fallback 1 生效；待扩展 Header 透传后替换为真实透传
 	// （Global Constraints 豁免 fallback 保留）
-	// codex 分流落位（T2 §2，B 的 501 骨架）：images 端点 codex-oauth/
+	// codex 分流落位（§2，B 的 501 骨架）：images 端点 codex-oauth/
 	// codex-pat 模板选号命中 → codexImagesCaller（GenerateImage 非流式 /
 	// GenerateImageStream 流式 T3 已接——caller 内 stream 分支同签名直赋）。
 	// 适配层未装配（SetCodex nil）→ 501 显式拒绝，不让凭据缺失路径误报
-	// 502/network。caller 每轮自 st.caller 起算 = 天然复位（评审 P1-1）：
+	// 502/network。caller 每轮自 st.caller 起算 = 天然复位：
 	// 混合类型组 failover 跨类型换账号（codex 失败 → api_key 尝试）时复用旧
 	// codexImagesCaller 会把健康 api_key 账号路由到 Ext=nil 空凭据路径
 	// （502 + 错误率污染 + 无谓失效上报 account 0）。

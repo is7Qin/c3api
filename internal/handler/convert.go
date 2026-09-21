@@ -102,13 +102,13 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 		Name:       base.Name,
 		TemplateID: base.TemplateID,
 		Template:   base.Template,
-		// BaseURL 平铺逐字段拷贝（C3——缺则列表/编辑回显恒缺，前端保存静默清空）
+		// BaseURL 平铺逐字段拷贝（缺则列表/编辑回显恒缺，前端保存静默清空）
 		BaseURL:        base.BaseURL,
 		UpstreamKey:    base.UpstreamKey,
 		MaxConcurrency: base.MaxConcurrency,
 		LastError:      base.LastError,
 		LastUsedAt:     base.LastUsedAt,
-		// 生命周期字段平铺拷贝（缺则列表编辑回显恒缺——base_url C3 同款教训）
+		// 生命周期字段平铺拷贝（缺则列表编辑回显恒缺——base_url 同款教训）
 		Enabled:                base.Enabled,
 		FailedAt:               base.FailedAt,
 		FailureSource:          base.FailureSource,

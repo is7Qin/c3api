@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// 本文件只留网关聚合 + 凭据组装两个纯 helper（W2-T3）：codex 额度快照的
+// 本文件只留网关聚合 + 凭据组装两个纯 helper：codex 额度快照的
 // fan-out 编排（含上游调用与错误分类）已整体搬到 handler 层（AdminAPI 经
 // 构造注入的 CodexUsageProber 直调适配器）——service 不再持有快照数据源，
 // 不再 import sdkbridge。
@@ -32,7 +32,7 @@ func (s *Service) AccountUsageCredential(ctx context.Context, accountID int64) (
 		}
 		mapped := mapRepoErr(err)
 		// 非 ErrNotFound store 故障 → Warn + 透错（handler 侧记 null/null，
-		// 不误标上游问题，T2-2；ctx 取消为请求已死信号，不记 Warn）。
+		// 不误标上游问题；ctx 取消为请求已死信号，不记 Warn）。
 		if ctx.Err() == nil && s.log != nil {
 			s.log.Warn("accounts usage: account upstream lookup failed", logx.Int64("account_id", accountID), logx.Error(mapped))
 		}
