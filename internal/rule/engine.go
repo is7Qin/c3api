@@ -84,8 +84,8 @@ type Event struct {
 	QualityClassID       string    // Candidate QualityClassID hex; account_route scope 必须非空
 	CandidateFingerprint string    // canonical candidate identity hex
 	// ExpectedIdentityRevision 携带 K（identity_revision），不是 C。失败事件
-	// 在它被计算时所见的身份纪元；下游（scheduler/sink.go:68 把它喂进
-	// K 参数化的 HealthKey.Revision；rule_persist.go 把它喂进 K-guarded 的
+	// 在它被计算时所见的身份纪元；下游（scheduler/sink.go:74 把它喂进
+	// K 参数化的 HealthKey.IdentityRevision；rule_persist.go 把它喂进 K-guarded 的
 	// FailAccountCAS）一律按 K 解释。命名显式带 Identity，防止被误读为
 	// lifecycle_revision（客户端 CAS 令牌）。
 	ExpectedIdentityRevision int64
@@ -93,7 +93,8 @@ type Event struct {
 
 // HealthSink typed health action sink.
 // Throttle: account 作用全 RouteClass wildcard；account_route 作用单 RouteClass.
-// FailAccount: source=rule, expectedRevision 参与 CAS.
+// FailAccount: source=rule, 以身份纪元 K 作 CAS guard（事件携带的
+// ExpectedIdentityRevision）。
 type HealthSink interface {
 	Throttle(ev Event, th domain.ThrottleAction) error
 	FailAccount(ev Event) error
