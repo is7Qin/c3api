@@ -65,7 +65,13 @@ func (s *LatchSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 	default:
 		return nil
 	}
-	key := HealthKey{AccountID: ev.AccountID, IdentityRevision: ev.ExpectedIdentityRevision}
+	// 指纹缺失 fail-closed（与 FailAccount 同纪律）：健康判决按 (账号, 质量类,
+	// 身份指纹, K) 落键，写不出具体指纹就等于写一条永远不会被查询到的记录——
+	// 静默失效比报错更危险。生产事件由 scheduler 的事件构造器恒带指纹。
+	if ev.CandidateFingerprint == "" {
+		return ErrMissingCandidateFingerprint
+	}
+	key := HealthKey{AccountID: ev.AccountID, Identity: ev.CandidateFingerprint, IdentityRevision: ev.ExpectedIdentityRevision}
 	if th.Scope == domain.ThrottleScopeAccount {
 		key.Quality = "*"
 	} else if th.Scope == domain.ThrottleScopeAccountRoute {

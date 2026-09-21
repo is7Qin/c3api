@@ -47,31 +47,31 @@ func TestThrottleAccountWildcard(t *testing.T) {
 	h, _, mr := newTestHealthWithLatch(t)
 	_ = mr
 	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
-	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 5, RouteClassID: "r1", QualityClassID: "q1"}
+	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 5, CandidateFingerprint: testIdentity, RouteClassID: "r1", QualityClassID: "q1"}
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
 	require.NoError(t, sink.Throttle(ev, th))
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "any", 5))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 5))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "other", 5))
-	require.Equal(t, StateReady, h.EffectiveState(1, "any", 6))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "any", testIdentity, 5))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", testIdentity, 5))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "other", testIdentity, 5))
+	require.Equal(t, StateReady, h.EffectiveState(1, "any", testIdentity, 6))
 }
 
 func TestThrottleAccountRouteRequiresIDsAndPropagation(t *testing.T) {
 	h, _, _ := newTestHealthWithLatch(t)
 	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
-	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, RouteClassID: "", QualityClassID: "q1"}, th))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, CandidateFingerprint: testIdentity, RouteClassID: "", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, RouteClassID: "r1", QualityClassID: ""}, th))
+	require.Equal(t, StateReady, h.EffectiveState(2, "q1", testIdentity, 3))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, CandidateFingerprint: testIdentity, RouteClassID: "r1", QualityClassID: ""}, th))
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, RouteClassID: "r1", QualityClassID: "q1"}, th))
+	require.Equal(t, StateReady, h.EffectiveState(2, "q1", testIdentity, 3))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, CandidateFingerprint: testIdentity, RouteClassID: "r1", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(2, "q1", 3))
-	require.Equal(t, StateReady, h.EffectiveState(2, "other", 3))
-	require.Equal(t, StateReady, h.EffectiveState(2, "*", 3))
+	require.Equal(t, StateOPEN, h.EffectiveState(2, "q1", testIdentity, 3))
+	require.Equal(t, StateReady, h.EffectiveState(2, "other", testIdentity, 3))
+	require.Equal(t, StateReady, h.EffectiveState(2, "*", testIdentity, 3))
 }
 
 func TestLatchFailClosedAndRevisionFence(t *testing.T) {
@@ -173,7 +173,7 @@ func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_ = sink.Throttle(rule.Event{AccountID: 1, ExpectedIdentityRevision: 1}, th)
+		_ = sink.Throttle(rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: testIdentity}, th)
 	}()
 	go func() {
 		defer wg.Done()
@@ -187,7 +187,7 @@ func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {
 		require.FailNow(t, "barrier timeout")
 	}
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "*", 1))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "*", testIdentity, 1))
 }
 
 func int64Ptr(v int64) *int64 { return &v }

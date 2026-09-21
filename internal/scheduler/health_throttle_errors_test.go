@@ -40,7 +40,7 @@ func TestHealthControllerThrottleSuccessWithBarrier(t *testing.T) {
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(3000)}
 	done := make(chan error, 1)
 	go func() {
-		done <- sink.Throttle(rule.Event{AccountID: 9, ExpectedIdentityRevision: 1}, th)
+		done <- sink.Throttle(rule.Event{AccountID: 9, ExpectedIdentityRevision: 1, CandidateFingerprint: testIdentity}, th)
 	}()
 	select {
 	case err := <-done:
@@ -49,5 +49,5 @@ func TestHealthControllerThrottleSuccessWithBarrier(t *testing.T) {
 		require.FailNow(t, "barrier timeout: Throttle did not return")
 	}
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(9, "*", 1))
+	require.Equal(t, StateOPEN, h.EffectiveState(9, "*", testIdentity, 1))
 }
