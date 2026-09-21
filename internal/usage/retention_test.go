@@ -227,7 +227,7 @@ func TestRetentionWorkerTicks(t *testing.T) {
 	// until 语义：now + 1 天（预建当日/明日分区）
 	until := pm.ensures[0]
 	require.WithinDuration(t, time.Now().AddDate(0, 0, 1), until, 2*time.Second)
-	// now 语义（评审 I-2）：ensure 的 now = 巡检时刻（与 until 同源，边界
+	// now 语义：ensure 的 now = 巡检时刻（与 until 同源，边界
 	// 由同一 now 推导）
 	require.WithinDuration(t, time.Now(), pm.nows[0], 2*time.Second)
 	require.Len(t, pm.eensures, len(pm.ensures), "四表各自预建分区（usage_logs/err_logs/stats/entity）")

@@ -104,7 +104,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// 计费钩子：价格快照 + 按单元价快照 + 余额快照；单写点：billable 行经
-	// rec → repos.Usages 直落 usage_logs（F2：无 flusher 分流）。
+	// rec → repos.Usages 直落 usage_logs（无 flusher 分流）。
 	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
 	require.NoError(t, bal.Reload(ctx), "余额快照加载")
 	rec := usage.New(usage.UsageConfig{

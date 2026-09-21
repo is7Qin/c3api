@@ -13,7 +13,7 @@ import (
 )
 
 // 图片用量提取纯函数（spec §4.1 官方文档实证）：images 端点响应（非流式
-// data 数组 + 流式 completed 事件）→ image 分量计数，供路由面（Task B 直连 /
+// data 数组 + 流式 completed 事件）→ image 分量计数，供路由面（直连 /
 //  codex 路径）接入后走 ImageCost 计费 + UsageLog 图片列落账。
 // 零分配（热路径）：gjson.GetBytes 输入字节直读（unsafe 无拷贝）、`data.#`
 // 数组长度不物化数组、type 判定为输入字节子串比较（见 eventTypeIs——gjson

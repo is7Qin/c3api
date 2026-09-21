@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package worker 提供统一后台任务抽象（Global Constraints #5）：顺序启动、
+// Package worker 提供统一后台任务抽象（Global Constraints）：顺序启动、
 // 反向排空、panic 捕获（进程不崩）。
 package worker
 

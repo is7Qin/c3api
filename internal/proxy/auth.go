@@ -28,7 +28,7 @@ type UserStatusLoader interface {
 // Auth 鉴权快照：key_raw（明文）→ KeyMeta（含归属用户门禁字段）+ 用户快照表
 // （status+role）+ 两级并发/额度内存计数（gate）。热路径零 DB、零 per-request
 // 锁（RWMutex 读多写少，规格 §10.3）。用户变更（禁用/降权/并发/额度调整）
-// 走 invalidate 回调 → Reload 全量刷新（评审 I-2），JWT 24h 长时效仅作快照
+// 走 invalidate 回调 → Reload 全量刷新，JWT 24h 长时效仅作快照
 // 失效后的最终兜底。
 type Auth struct {
 	loader KeyLoader
@@ -165,7 +165,7 @@ func (a *Auth) Authenticate(r *http.Request) (domain.KeyMeta, bool) {
 	return meta, true
 }
 
-// SetInstancesProvider 注入集群实例数 N 提供者（#14 多实例预算分摊；discovery
+// SetInstancesProvider 注入集群实例数 N 提供者（多实例预算分摊；discovery
 // 装配——main 装配点，spec 2026-08-25-redis-instance-discovery-design §2.2）。
 // 注入即触发预算重算（幂等 reload，在途值继承）；此后 N 在每次预算分配现读，
 // 心跳计数变化 ≤1 tick 天然生效。
@@ -179,7 +179,7 @@ func (a *Auth) SetInstancesProvider(p InstancesProvider) {
 // --- 门禁（内存原子；热路径零 DB 零锁） ---
 
 // Acquire 两级并发门禁：user → key 依次 CAS 抢占；key 失败回滚 user 计数
-// （评审 I-3：防泄漏）。返回已 acquire 层级位掩码（release 仅释放已 acquire
+// （防泄漏）。返回已 acquire 层级位掩码（release 仅释放已 acquire
 // 层级）。未设置上限（max=0）或计数器缺失（跨 reload 竞态窗口）→ 该层跳过。
 func (a *Auth) Acquire(meta domain.KeyMeta) (int, bool) {
 	return a.gate.acquire(meta)
@@ -192,7 +192,7 @@ func (a *Auth) Release(meta domain.KeyMeta, level int) {
 }
 
 // QuotaExhausted 额度检查：本地预算快读（零锁零 DB）；预算耗尽触发 DB 复核
-// 认领（#14 §3.2——复核成功续预算继续放行，复核确认真尽才 429）。检查在并发
+// 认领（§3.2——复核成功续预算继续放行，复核确认真尽才 429）。检查在并发
 // acquire 之前（评审提醒①：失败无并发槽副作用）；未设置额度 key 短路零成本。
 func (a *Auth) QuotaExhausted(meta domain.KeyMeta) bool {
 	return a.gate.quotaExhausted(meta)

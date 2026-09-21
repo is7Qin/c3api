@@ -9,7 +9,7 @@
 // 请求路径**零统计计算**（用户裁决 2026-08-14）：统计内存桶机制整体删除，
 // Record 锁内仅明细 append + quota 原子累加；usage_stats 由离线聚合 worker
 // 每周期从 DB 重建（DELETE+INSERT 覆盖语义，见 stats_agg.go）。明细经无界
-// pending 批量落库（O1 管道化：Record 永不阻塞——此前有界 channel cap 16384
+// pending 批量落库（管道化：Record 永不阻塞——此前有界 channel cap 16384
 // 饱和阻塞发送是压测 off 路径 16.4k goroutine 卡 chan send、healthz inflight
 // 31-33k @10k 幽灵根因，复测定位 2026-08-09；崩溃丢 ≤1 flush 窗口的崩溃
 // 等价语义不变，pending 内存即唯一积压面，由水线 Warn 观测）。
@@ -32,7 +32,7 @@ type UsageConfig struct {
 	BatchSize          int
 	FlushInterval      time.Duration
 	QuotaFlushInterval time.Duration // quota 增量批量回写 cadence
-	Workers            int           // flush 并行 worker 数（0 = 单 worker；O1 模式分片并行）
+	Workers            int           // flush 并行 worker 数（0 = 单 worker； 模式分片并行）
 	// StatsAggInterval 离线聚合周期（spec 2026-08-14；config usage.stats_agg_
 	// interval，默认 5m；0 = 禁用聚合——不装配聚合 worker 的等价语义）。
 	StatsAggInterval time.Duration
@@ -45,7 +45,7 @@ type LogInserter interface {
 }
 
 // QuotaWriter 批量回写 key 额度消耗（增量；内存权威，DB 滞后 ≤ flush 间隔）。
-// 由 proxy 的 gate 计数 + 本 Recorder 的 flush 节奏落库（Phase 3a：额度后扣）。
+// 由 proxy 的 gate 计数 + 本 Recorder 的 flush 节奏落库（额度后扣）。
 type QuotaWriter interface {
 	AddQuotaUsed(ctx context.Context, deltas map[int64]int64) error
 }
@@ -93,7 +93,7 @@ type Recorder struct {
 	startOnce   atomic.Bool
 	loopDone    chan struct{} // Start 的两个 loop 全部退出后关闭
 	closeOnce   sync.Once
-	closed      atomic.Bool // Close 完成后置位（I-4）：后续 Record 走 Warn 一次路径
+	closed      atomic.Bool // Close 完成后置位：后续 Record 走 Warn 一次路径
 	closeWarned atomic.Bool // closed 后首次 Record 的 Warn 边沿（只告警一次，防刷屏）
 	// 停机：ticker 路径批次的可取消父 ctx（常时 = Background 语义；Close
 	// 预算到期 Cancel → 在途落库快速失败回灌，不丢）。baseCtx 仅经 baseCancel
@@ -128,7 +128,7 @@ func New(cfg UsageConfig, logs LogInserter, log *logx.Logger) *Recorder {
 // dependency — see Config.QuotaWriter. A post-construction setter leaves the
 // recorder observably incomplete between New and Set.)
 
-// Name 满足 worker.Worker 契约（Global Constraints #5）；重复 Start 幂等。
+// Name 满足 worker.Worker 契约（Global Constraints）；重复 Start 幂等。
 func (r *Recorder) Name() string { return "usage" }
 
 func (r *Recorder) Start(ctx context.Context) error {
@@ -151,11 +151,11 @@ func (r *Recorder) Start(ctx context.Context) error {
 // 饱和阻塞发送是 off 路径 16.4k goroutine 卡 chan send 幽灵
 // 根因；HTTP 层过载保护由 max_inflight 兜底，pending 内存由水线 Warn 观测，
 // 崩溃丢 ≤1 flush 窗口语义不变）。热路径零额外开销：closed 检查为 1 次
-// atomic.Load（I-4）。**零统计计算**（spec 2026-08-14）：统计桶机制整体删除。
+// atomic.Load。**零统计计算**（spec 2026-08-14）：统计桶机制整体删除。
 // **零 quota 推导**：Key 额度只经 AddQuota 显式正 delta 进入，
 // Record 仅落普通 usage 明细（TotalTokens 不再参与额度累计）。
 func (r *Recorder) Record(l *domain.UsageLog) {
-	if r.closed.Load() { // Close 完成后无消费者——防御性缺口（评审 I-4）：
+	if r.closed.Load() { // Close 完成后无消费者——防御性缺口：
 		// Warn 恰好一次（不刷屏）；明细仍聚合入 pending **不丢**（驻留内存由
 		// 本 Warn 观测，worker 管理器顺序保证正常停机不触发）。
 		if r.closeWarned.CompareAndSwap(false, true) && r.log != nil {
@@ -206,7 +206,7 @@ func (r *Recorder) logWriterLoop(ctx context.Context) {
 	}
 }
 
-// flushLogs 换批 + 并行落库（O1 管道化消费侧）：锁内 swap 整个 pending（换新
+// flushLogs 换批 + 并行落库（管道化消费侧）：锁内 swap 整个 pending（换新
 // slice，flush 期间新日志进新 pending 零阻塞）→ 按 userID 分片（同 user 恒同
 // worker）→ N worker 并发逐 chunk InsertBatch（chunk = cfg.BatchSize；ent
 // CreateBulk 参数上限 PG 65535，500 × ~20 列安全）→ 失败 chunk 二分隔离归因
@@ -450,13 +450,13 @@ func (r *Recorder) quotaFlushLoop(ctx context.Context) {
 }
 
 // flushQuota quota 增量批量回写（换批 + 落库，受 ctx 预算约束——停机修复：
-// O1 复测 Close 用 Background 逐 key AddQuotaUsed 独占 3.8 分钟吃掉停机预算
+// 复测 Close 用 Background 逐 key AddQuotaUsed 独占 3.8 分钟吃掉停机预算
 // 尾部，main 卡死）：
 //   - 锁内只换 map 引用（O(1)）：换批 = 交换引用 + 建新 map，锁外
 //     遍历 old 分组（换出后无写者——写者只碰新 map，无数据竞争）；失败整组
 //     回灌合并到下一批（下次 flush 重试，不丢）；
 //   - 按 quotaBatchSize 分组批量回写（单组一条 raw SQL CASE 更新——10k 逐 key
-//     轮询是 #15 验收统计面慢 flush 3-5min 周期根因之一）；逐组前查 ctx.Err()，
+//     轮询是 验收统计面慢 flush 3-5min 周期根因之一）；逐组前查 ctx.Err()，
 //     到期 → 截断（丢弃，崩溃等价语义）+ Warn（已刷/剩余组键数）。
 //
 // 截断丢的是额度刷新（内存权威、DB 滞后 ≤ flush 间隔的崩溃等价语义），**非
@@ -514,7 +514,7 @@ func (r *Recorder) flushQuota(ctx context.Context) {
 // Close 幂等排空（优雅停机核心）：等聚合 goroutine 退出（受预算约束）→ 以
 // flushMu 获取等待在途批次（SIGTERM 时 ticker 批次可能已在途占住 flushMu 且
 // pending 已 swap；Close 必须先等其结束，否则 drain 循环见 pendingN==0 会
-// 静默提前返回，在途批次无界运行——O1 复测根因 1）→ 受 shutdown ctx 预算
+// 静默提前返回，在途批次无界运行—— 复测根因 1）→ 受 shutdown ctx 预算
 // 约束的排空循环（此时无在途批次、flushMu 无竞争）。正常情形完整排空语义
 // 不变（无 deadline ctx = 全部落库）；ctx 到期 → Cancel baseCtx（在途落库
 // 快速失败回灌，不丢）+ Warn（flushed/remaining 条数单位一致）+ 截断退出，
@@ -585,7 +585,7 @@ func (r *Recorder) Close(ctx context.Context) error {
 		// 额度面收尾：flushQuota 内部受 ctx 预算约束（到期 → 截断 Warn，崩溃
 		// 等价语义；正常完整刷）。预算已到期时此处即"额度截断"告警面。
 		r.flushQuota(ctx)
-		// Close 完成后置位 closed（评审 I-4）：后续 Record 走 Warn 一次路径
+		// Close 完成后置位 closed：后续 Record 走 Warn 一次路径
 		//（明细仍聚合入 pending 不丢，驻留内存由 Warn 观测）。
 		r.closed.Store(true)
 	})

@@ -44,7 +44,7 @@ type fakeTransport struct {
 	readQueue []fakeRead
 	readBlock chan struct{}
 	pingErr   error
-	// panicWritesFrom 第 N 次 Write 起 panic（F2 注入：relayWS 首帧转发 = 第 1
+	// panicWritesFrom 第 N 次 Write 起 panic（注入：relayWS 首帧转发 = 第 1
 	// 次写——必须在 goroutine 内才被 relayRecover 接住，故从第 2 次起注入）。
 	// pingPanic = Ping 恒 panic（心跳 goroutine 注入）。
 	panicWritesFrom int
@@ -152,7 +152,7 @@ func newRelayWSTest(t *testing.T, ft *fakeTransport, frameHook func([]byte), fir
 }
 
 // newRelayWSTestHBI 同 newRelayWSTest，但允许缩短心跳间隔（hbi > 0 生效；
-// F2 心跳 panic 注入用例：relay 启动前改写 Proxy.wsHeartbeatInterval seam——
+// 心跳 panic 注入用例：relay 启动前改写 Proxy.wsHeartbeatInterval seam——
 // 先例 TestCodexWSHeartbeatCadence）与硬续接 store 装配（store 非 nil =
 // contTag 生效——必须在 dial 前接线，relayWS 启动即读 p.cont）。
 func newRelayWSTestHBI(t *testing.T, ft *fakeTransport, frameHook func([]byte), first []byte, hbi time.Duration, store *continuation.Store) (*relayWSTestEnv, *websocket.Conn, *httptest.Server) {
@@ -402,7 +402,7 @@ func TestRelayWSFrameHookBeforeClientWrite(t *testing.T) {
 	require.NoError(t, env.p.rec.Close(context.Background()))
 }
 
-// --- F2 崩溃面：三 goroutine panic 注入 → recover 收尾不崩进程 ---
+// --- 崩溃面：三 goroutine panic 注入 → recover 收尾不崩进程 ---
 // 注入点在帧循环内（panicWritesFrom=2 的 Write / frameHook / Ping）——任何
 // 路径 panic 都被 relayRecover 接住：连接按对应分类收尾、进程存活（测试能
 // 走到断言即进程未崩）、defer close(upLoopDone)/wg.Done 照常执行。

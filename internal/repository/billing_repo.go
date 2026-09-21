@@ -4,9 +4,9 @@
 
 package repository
 
-// billing_repo.go 计费仓库载体（F2-opt v2 三车道拓扑，spec-f2opt-settlement）：
+// billing_repo.go 计费仓库载体（v2 三车道拓扑，spec-f2opt-settlement）：
 // legacy 逐组扣减面（DeductOnlyAndMark/deductOnlyCore/deductTx 接口族/chunk 合并
-// 事务）已整体退役（D8）——扣减与标记由结算语句一体完成（每窗口一次往返），见
+// 事务）已整体退役——扣减与标记由结算语句一体完成（每窗口一次往返），见
 // billing_settle.go（SettleBalanceBatch/SettleFefoBatch）。游标取批/纯标记/lag/
 // 会话锁面见 billing_cursor.go。usage_logs 明细的唯一写者是 usage flusher
 // （InsertBatch）；本包只做标记/消费，不插日志。
@@ -40,7 +40,7 @@ const settleTimeout = 10 * time.Second
 type BillingRepo struct {
 	client *ent.Client
 	// driver 为 raw SQL（结算语句）用：与 txDriver 组合保证 raw SQL 与 ent
-	// 构建器同事务连接（WithTx 同构，评审 I-1）。
+	// 构建器同事务连接（WithTx 同构，评审）。
 	driver dialect.Driver
 	// pool 为 pgx 连接池（NewWithPG 注入；New 构造的仓库为 nil）：非 nil →
 	// 结算走 pgx 直连事务；nil → ent 事务路径回落。WithTx 的 tx 版仓库恒传

@@ -18,7 +18,7 @@
 // scope 语义（脏标记）：Snapshot 注册时声明关心的变更 scope；NOTIFY 变更按
 // 类型映射 scope 后 Reload(ctx, scopes...) 只重载命中 scope 的快照（未命中
 // 不动——变更标记对应快照集合，触发时只重载这些）。当前接线：settings 变更
-// → ScopeSettings（auth gate N 预算即时重算，#36 缺口）。
+// → ScopeSettings（auth gate N 预算即时重算 缺口）。
 package snapshot
 
 import (
@@ -37,7 +37,7 @@ import (
 type Scope = string
 
 // ScopeSettings settings 快照变更 scope：NOTIFY Change.Settings → 声明本 scope
-// 的快照精确重载（当前接线 = auth：gate 预算按新 N 即时重算，补 #36 "NOTIFY
+// 的快照精确重载（当前接线 = auth：gate 预算按新 N 即时重算，补 "NOTIFY
 // 不触发 Auth.Reload" 缺口）。settings 自身快照（svc.ReloadSettings）不走注册
 // 表，保持既有 ReloadSettings 行为。
 const ScopeSettings Scope = "settings"

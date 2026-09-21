@@ -26,7 +26,7 @@ import (
 
 // --- resp/resp-ws 响应检测旁路（spec §6）：计数提取 + 开关矩阵 + 计费落账 ---
 
-// respImagesOutput 假上游 resp 响应 output（V1-V3 wire 形态）：2 个
+// respImagesOutput 假上游 resp 响应 output（wire 形态）：2 个
 // image_generation_call item（终态 status="generating" 非 "completed"——
 // status 不参与判定；result 为 base64 字符串）+ 1 个带 result 字段的
 // function_call item（type 过滤后不误计断言载体）。
@@ -260,7 +260,7 @@ func TestProxyResponsesImageDetectNonStream(t *testing.T) {
 	}{
 		{"有价：ImageCost 聚合（2 张 × 5400 + chat 130）", credential.TypeResponsesSpecial, false, withPerImage, 2, 10930, i64p(5400), ""},
 		{"缺图价：no_price 整单不计费", credential.TypeResponsesSpecial, false, nil, 2, 0, nil, "no_price"},
-		{"P3-9：per-image nil → 图分量 0（chat 照常）", credential.TypeResponsesSpecial, false, tokenOnly, 2, 130, nil, ""},
+		{"per-image nil → 图分量 0（chat 照常）", credential.TypeResponsesSpecial, false, tokenOnly, 2, 130, nil, ""},
 		{"api_key 永不检测", credential.TypeAPIKey, false, withPerImage, 0, 130, nil, ""},
 		{"strip 开 → 不检测", credential.TypeResponsesSpecial, true, withPerImage, 0, 130, nil, ""},
 	}
@@ -490,15 +490,15 @@ func TestResponsesWSImageDetect(t *testing.T) {
 	}
 }
 
-// codex 类型恒 0 计数分层标注（V1-V3 实证：chatgpt.com 上游图片生成 = 客户端
-// 本地执行——响应无图片 item → 检测计数 0；旁路无效但无害）。T4 起 codex 类
+// codex 类型恒 0 计数分层标注（实证：chatgpt.com 上游图片生成 = 客户端
+// 本地执行——响应无图片 item → 检测计数 0；旁路无效但无害）。 起 codex 类
 // 型走 SDK Dial 路径（credentialFor + 静态 provider 方法已随
 // codexKeyProvider 移除——快照派生 cred 直供适配层）。
 func TestResponsesWSCodexTypeZeroCount(t *testing.T) {
 	// SDK 路径 mock 上游（Accept-only）：fakeResponsesWSImages 校验
 	// "Bearer sk-upstream"（aiclient 形态）——SDK Dial 注入的是账号 PAT，需
 	// 独立上游；completed 帧 output 含 function_call 工具 item（无图片 item——
-	// V1-V3 实证 chatgpt.com 上游图片生成 = 客户端本地执行）。
+	// 实证 chatgpt.com 上游图片生成 = 客户端本地执行）。
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)

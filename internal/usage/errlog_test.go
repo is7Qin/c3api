@@ -223,7 +223,7 @@ func TestErrLogWorkerCloseTruncationCountsQueueBacklog(t *testing.T) {
 	require.NoError(t, w.Close(ctx))
 	require.Zero(t, w.Inserted(), "预算已到期：无任何落库")
 	require.Equal(t, int64(50), w.DroppedExempt(), "本批豁免行 50 按类计入双轨丢弃（对齐 Close 截断按类拆对）")
-	require.Equal(t, int64(250), w.DroppedReject(), "本批拒绝行 50 + 拒绝队列剩余 200 按类计入（R2-C1：对账不低估）")
+	require.Equal(t, int64(250), w.DroppedReject(), "本批拒绝行 50 + 拒绝队列剩余 200 按类计入（对账不低估）")
 }
 
 // TestErrLogWorkerInsertFailureDrops Close 排空失败止损（改写——旧行为"失败即
@@ -265,7 +265,7 @@ func TestErrLogWorkerInsertFailureRequuesForRetry(t *testing.T) {
 }
 
 // TestErrLogWorkerMixedBatchFailure 混合批次失败（豁免行稀疏 + 拒绝行补位——
-// p2-11 实证为风暴期常态）：exempt 全部回灌重试、reject 全部按采样语义丢弃、
+// 实证为风暴期常态）：exempt 全部回灌重试、reject 全部按采样语义丢弃、
 // 双计数各自归位（droppedExempt 只计豁免行、droppedReject 只计拒绝
 // 行——对账口径，拒绝风暴不再错类混计）。
 func TestErrLogWorkerMixedBatchFailure(t *testing.T) {
@@ -352,7 +352,7 @@ func TestErrLogWorkerCloseTailWindowNoSilentLoss(t *testing.T) {
 
 	accounted := w.Inserted() + w.DroppedReject() + w.DroppedExempt()
 	require.Equal(t, enqueued.Load(), accounted,
-		"无尾窗口静默丢：inserted+dropped == 全部投递（S4）")
+		"无尾窗口静默丢：inserted+dropped == 全部投递")
 	require.Zero(t, w.Queued(), "排空后队列空")
 }
 

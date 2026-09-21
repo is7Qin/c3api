@@ -32,7 +32,7 @@ var (
 	// errNoPrice 402：模型缺价（计费启用后未设价/未同步；空价格表 = 全模型 402）。
 	errNoPrice = &formatError{status: http.StatusPaymentRequired, msg: "no price configured for this model"}
 	// errInsufficientBalance 402：余额预检拒绝（快照缺失或 <0；免费放行路径
-	// T3.5 价格倍率扩展）。
+	// 价格倍率扩展）。
 	errInsufficientBalance = &formatError{status: http.StatusPaymentRequired, msg: "insufficient balance"}
 	// errServiceTierRejected 400：service_tier 策略 reject（不转发，记 ErrBilling）。
 	errServiceTierRejected = &formatError{status: http.StatusBadRequest, msg: "service_tier rejected by gateway policy"}
@@ -51,7 +51,7 @@ func stripServiceTier(body []byte) ([]byte, error) {
 	return sjson.DeleteBytes(body, "service_tier")
 }
 
-// applyMultiplier 价格倍率应用（T3.5 用户拍板：整单 round-half-up）：
+// applyMultiplier 价格倍率应用（用户拍板：整单 round-half-up）：
 // (cost×m + 5000)/10000。m==10000（×1 未设置/组默认）恒等短路——默认路径
 // 逐指令等价零 round 偏差（函数可内联）。m==0 → cost 0（免费，不扣费）。
 // 溢出安全：cost 毫分正常 ≤1e7 量级（恶意 token 经 cost.go 溢出钳制后仍

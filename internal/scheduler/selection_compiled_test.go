@@ -75,7 +75,7 @@ func TestNewAttemptPlan_defaultBucketFallback(t *testing.T) {
 
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-def"}, RouteRefFor(10, string(domain.FormatOpenAIChat), "no-such-model"))
 	require.NoError(t, err)
-	// v4-S2: the query key stays normalized; RouteClassID is borrowed from
+	// the query key stays normalized; RouteClassID is borrowed from
 	// the interned default-bucket decision.
 	defDec, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIChat), "")
 	require.True(t, ok)

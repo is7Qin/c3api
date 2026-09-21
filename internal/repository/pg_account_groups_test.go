@@ -46,7 +46,7 @@ func newPGReposFresh(tb testing.TB) *repository.Repository {
 	require.NoError(tb, err)
 	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool) // pool 注入 Stats（Upsert COPY 两阶段真实路径）
 	require.NoError(tb, err)
-	// T4.5 + 分表设计 + 用户裁决 2026-08-11：四张分区表（usage_logs/err_logs/
+	// 分表设计 + 用户裁决 2026-08-11：四张分区表（usage_logs/err_logs/
 	// usage_stats/usage_entity_stats）已从 ent migrate 列表排除
 	// （migrateHookExcludesPartitioned），分区表由 bootstrap 独占建表——所有 PG
 	// 测试共用同一分区表基座（含 usage_stats 分区上的 Upsert 真实路径）。
@@ -64,7 +64,7 @@ func newPGRepos(tb testing.TB) *repository.Repository {
 	return newPGReposFresh(tb)
 }
 
-// newPGReposNoPool 同一 schema 上的无池仓库（F2：结算语句双载体
+// newPGReposNoPool 同一 schema 上的无池仓库（结算语句双载体
 // A/B 与等价性测试用）——pool == nil → ent txDriver 载体；与 newPGRepos
 // （pool → pgx 直连载体）共享同一测试 schema（必须先于本函数调用
 // newPGRepos 完成建表）。

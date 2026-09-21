@@ -17,7 +17,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Task B codex 批量导入 repo 面真实 PG：FindAccountExtByCodexKey 组合键查重
+// codex 批量导入 repo 面真实 PG：FindAccountExtByCodexKey 组合键查重
 // roundtrip + 缺行 ErrNotFound。
 // ---------------------------------------------------------------------------
 

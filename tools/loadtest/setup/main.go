@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// setup 构造多租户压测数据（Phase 3a 数据模型 + Phase 5 计费字段 + intelligent
+// setup 构造多租户压测数据（数据模型 + 计费字段 + intelligent
 // routing 新契约）：模板（四格式 × 随机模型池 + loadtest 固定请求模型必含）→
 // 公开组 → 账号（分散模板/组/上游，可选采购成本倍率 + 共享缓存域）→ 用户（可选
 // 余额/并发区间）→ 逐个登录建 key（可选多 key/并发/额度区间），key 明文写文件

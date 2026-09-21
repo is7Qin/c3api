@@ -12,7 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Phase 3 RED: windowed quality provider core — settled PG (Q1+Q2) merged
+// RED: windowed quality provider core — settled PG (Q1+Q2) merged
 // with live rows, M-keyed PG cache, hot gating, fail-closed conversions.
 
 var providerFixed = time.Date(2026, time.August, 29, 12, 0, 30, 0, time.UTC)

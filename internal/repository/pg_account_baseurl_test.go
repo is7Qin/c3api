@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// TestAccountBaseURLRoundTripPG 账号级 base_url 往返（C1）：设值落库/读回/
+// TestAccountBaseURLRoundTripPG 账号级 base_url 往返：设值落库/读回/
 // 清空（nil 往返）；批量 patch 三态："" → NULL 清空、非空 → 落值、nil → 不变。
 // 真实 PostgreSQL 基座（TEST_DATABASE_URL 未设 → t.Skip）。
 func TestAccountBaseURLRoundTripPG(t *testing.T) {
@@ -49,7 +49,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, got.BaseURL, "nil → 落 NULL（继承模板）")
 
-	// --- 批量三态（C1） ---
+	// --- 批量三态 ---
 	acc2, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
 		Name: "bu2", TemplateID: tpl.ID, UpstreamKey: "sk-bu2", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)

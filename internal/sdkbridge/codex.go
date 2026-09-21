@@ -72,11 +72,11 @@ type codexEntry struct {
 	auth      codexsdk.Auth
 	client    *codexsdk.HTTPClient
 	sig       string // 凭据签名（外部凭据变更 → 重建）
-	// idSig 伪装身份签名（META-2：identity 变化 → 重建 HTTPClient——与 cred
+	// idSig 伪装身份签名（identity 变化 → 重建 HTTPClient——与 cred
 	// sig 同语义：账号配置变更 → 重建；WS 面每请求新鲜 identity，HTTP 面缓存
 	// 客户端以 sig 比对等价对齐——同 identity 复用连接池，变化才重建）。
 	idSig string
-	// turnState HTTP 面 turn-state 持有（HOST-2——spec 2026-08-15 评审 PASS）：
+	// turnState HTTP 面 turn-state 持有（——spec 2026-08-15 评审 PASS）：
 	// 上游响应签发值（HTTPResponse.TurnState / SDK 池级捕获值回读），后续请求
 	// 注入 x-codex-turn-state 头（同轮回传对齐真实 codex client.rs:1202——
 	// 轮级实例实证：ModelClientSession.new_session 每轮新建 OnceLock，
@@ -133,7 +133,7 @@ func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredentia
 	return fromSDKResponse(resp), nil
 }
 
-// GenerateImageStream 流式生图包装（T3 生产接线——合成流式：SDK 内部非流式
+// GenerateImageStream 流式生图包装（生产接线——合成流式：SDK 内部非流式
 // 调 + 等待期 keepalive 合成 + completed 逐张合成，网关零合成逻辑）：cred →
 // 缓存取 HTTPClient → c.GenerateImageStream(ctx, toSDKParams(p), fn)；事件翻
 // 译 codexsdk.ImageStreamEvent → domain.ImageStreamEvent（Type/B64JSON/Usage
@@ -181,9 +181,9 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 // Responses 非流式 responses 合成调用（§1）：cred → 缓存取 HTTPClient
 // （clientFor——机制复用）→ c.Responses(ctx, payload)（SDK 合成非流式——
 // 内部无条件 stream:true + SSE 事件聚合重组完整响应体；网关以非流式语义消费，
-// 原样转发 + 顶层 usage 提取）。sess/meta 为 HTTP 面伪装身份（META-2——
-// client_metadata 注入键集对齐真实 codex；nil = 未配置——SDK 仍恒带 turn_id，
-// spec META-1）。clientTurnState 为客户端请求自带 x-codex-turn-state（HOST-2
+// 原样转发 + 顶层 usage 提取）。sess/meta 为 HTTP 面伪装身份
+// client_metadata 注入键集对齐真实 codex；nil = 未配置——SDK 仍恒带 turn_id
+// clientTurnState 为客户端请求自带 x-codex-turn-state（
 // 透传优先——客户端自管，非空覆盖 held 注入）；未带 → 注入 held（上游签发值
 // ——同轮回传）。成功响应签发值 → held 回写（非空才覆盖）。错误翻译同
 // GenerateImage（translateError——SDK *HTTPError → 信封；fatal 五类统一回调
@@ -227,8 +227,8 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, payl
 // StreamResponses 流式 responses SSE 透传（§1）：cred → 缓存取 HTTPClient →
 // c.Stream(ctx, payload, fn)（SSE data: 行逐帧交付零拷贝——SDK 回调 raw 指向
 // scanner 复用缓冲，**仅回调执行期间有效**：fn 必须立即消费，不得跨回调保留
-// 切片）。sess/meta 同 Responses（META-2 伪装身份；nil = 未配置——SDK 仍恒带
-// turn_id）。clientTurnState 同 Responses（HOST-2 透传优先）。流式无
+// 切片）。sess/meta 同 Responses（伪装身份；nil = 未配置——SDK 仍恒带
+// turn_id）。clientTurnState 同 Responses（透传优先）。流式无
 // HTTPResponse 返回面——签发值回读 SDK 池级捕获（Stream 内部已
 // captureTurnState，http.go:144——2xx 响应头非空才覆盖）→ held 回写。错误翻译
 // 同 Responses。fn 返回错误 → SDK 终止读取并原样透传（网关写出失败/客户端断
@@ -289,9 +289,9 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 
 // clientFor entryFor + HTTPClient 懒构造（GenerateImage/Stream 面——非 nil
 // 后同账号复用连接池；sig 变更 → entryFor 重建条目）。sess/meta 为 HTTP 面伪
-// 装身份（META-2——SDK 注入点读构造期 opts（http.go injectResponsesClient-
+// 装身份（——SDK 注入点读构造期 opts（http.go injectResponsesClient-
 // Metadata），须随构造下发；nil = 未配置）。turnState 为本次请求生效的
-// turn-state（HOST-2——客户端自带透传优先值或 held 签发值；非空 → 构造期
+// turn-state（——客户端自带透传优先值或 held 签发值；非空 → 构造期
 // WithHeader 注入 x-codex-turn-state——SDK HTTPClient 无 per-request 头面，
 // 与 idSig 同语义：值变化 → 重建客户端；生产路径共享 transport 承载连接池，
 // 重建不重置连接池（补压测 4e08fbd 连接风暴防护保持））。NewHTTPClient 为纯
@@ -324,7 +324,7 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 	return e, nil
 }
 
-// turnStateOf 读账号 held turn-state（HOST-2 生效值判定——客户端未自带时注入
+// turnStateOf 读账号 held turn-state（生效值判定——客户端未自带时注入
 // 面；a.mu 保护与 entryFor 同锁，热路径每请求一次，锁开销可忽略）。
 func (a *Codex) turnStateOf(accountID int64) string {
 	a.mu.Lock()
@@ -347,7 +347,7 @@ func (a *Codex) captureTurnState(e *codexEntry, ts string) {
 	a.mu.Unlock()
 }
 
-// ClearTurnState 轮结束清除（HOST-2——网关在响应含轮结束信号时调用：跨轮不得
+// ClearTurnState 轮结束清除（——网关在响应含轮结束信号时调用：跨轮不得
 // 回传）。条目不存在 = no-op（未构造/失效剔除）。清除后下次请求生效值 ""
 // → 客户端重建（无头）——SDK 池级旧值随重建丢弃，不残留。
 func (a *Codex) ClearTurnState(accountID int64) {
@@ -400,7 +400,7 @@ var usageCooldown = 60 * time.Second
 // 其余（*HTTPError/网络/RefreshError，含非致命 401——无判死标记的拒绝属上游
 // 面，不从状态码反推鉴权结论）保守归 ErrUpstream。usage 是查询面不是会话面——凭据失效
 // 由会话路径上报（防循环），entry 恒保留（fatal 后后续调用仍命中冷却）。
-// 命中路径零分配（T3-4）：先按 accountID 查 entry.usage（map 查 + 锁 + 时间
+// 命中路径零分配：先按 accountID 查 entry.usage（map 查 + 锁 + 时间
 // 比较——不计算 credSig 字符串拼接/不重建条目），命中直接返回；未命中才走
 // clientFor（entryFor 签名比对/重建）。
 func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
@@ -409,7 +409,7 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 	}
 	e, err := a.clientFor(cred, nil, nil, "")
 	if err != nil {
-		// 入口错误分类（N2）：oauth 缺 rt 凭据不完整（errCredentialIncomplete）
+		// 入口错误分类：oauth 缺 rt 凭据不完整（errCredentialIncomplete）
 		// → 凭据失效语义 ErrAuthExpired（不落 default 归 ErrUpstream）。
 		if errors.Is(err, errCredentialIncomplete) {
 			return nil, ErrAuthExpired
@@ -451,7 +451,7 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 	a.mu.Lock()
 	e.usage = s
 	e.usageAt = time.Now()
-	// 成功清冷却态（T3-2——死状态不留：哨兵仅在 usageErrAt 新鲜时被读取，但
+	// 成功清冷却态（——死状态不留：哨兵仅在 usageErrAt 新鲜时被读取，但
 	// 状态机卫生——检查顺序调整不误服旧哨兵）。
 	e.usageErrAt = time.Time{}
 	e.usageErr = nil
@@ -459,7 +459,7 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 	return s, nil
 }
 
-// snapshotCachedFor 命中路径零分配快查（T3-4）：按 accountID 查 entry + TTL
+// snapshotCachedFor 命中路径零分配快查：按 accountID 查 entry + TTL
 // 判定——命中直接返回缓存实例，不经过 clientFor/credSig（字符串拼接）/
 // entryFor（重建判定）。未命中/无 entry → nil（走完整路径）。
 func (a *Codex) snapshotCachedFor(accountID int64) (*domain.CodexUsageSnapshot, bool) {
@@ -508,7 +508,7 @@ func (a *Codex) recordUsageFailure(e *codexEntry, err error) {
 // CallbackDeliveryError）→ ErrAuthExpired；其余一律 ErrUpstream。非致命 401
 // （无判死标记的拒绝——上游未宣告凭证死亡）不在此反推鉴权结论：真死亡必带
 // 致命标记走 fatal 路径并经 OnAuthFatal 禁用，无标记则按上游抖动冷却重试自愈
-// （T3-5 的 401 特判已随 SDK PAT 判死上线退役——补丁理由消失即删）。
+// （的 401 特判已随 SDK PAT 判死上线退役——补丁理由消失即删）。
 func classifyUsageErr(err error) error {
 	if IsFatal(err) {
 		return ErrAuthExpired
@@ -546,9 +546,9 @@ func fromSDKUsage(u *codexsdk.UsageStatus) *domain.CodexUsageSnapshot {
 	return s
 }
 
-// identityOpts 伪装身份 → SDK Option（META-2：WithSession/WithCodexMeta——
+// identityOpts 伪装身份 → SDK Option（WithSession/WithCodexMeta——
 // SDK HTTP 面注入键集对齐真实 codex client_metadata()；nil = 未配置 = 现状
-// 零注入面，SDK 仍恒带 turn_id——spec META-1）。
+// 零注入面，SDK 仍恒带 turn_id——spec）。
 func identityOpts(sess *codexsdk.Session, meta *codexsdk.CodexMeta) []codexsdk.Option {
 	var opts []codexsdk.Option
 	if sess != nil {
@@ -601,7 +601,7 @@ func identitySig(sess *codexsdk.Session, meta *codexsdk.CodexMeta) string {
 	return b.String()
 }
 
-// Dial 建立到上游的 Responses WebSocket 连接（T4 §2 接线）：cred → Auth 缓存
+// Dial 建立到上游的 Responses WebSocket 连接（§2 接线）：cred → Auth 缓存
 // 取（entryFor——账号级长存：at 缓存/单飞/rt 轮换在 Auth 内，与 HTTP 面共享；
 // WS 连接本身 per-请求不缓存）→ codexsdk.Dial(ctx, auth, opts...)。opts 由
 // 网关侧组装（codex_responses_ws.go——伪装四元组 / WithPingInterval(0) /
@@ -628,7 +628,7 @@ func (a *Codex) Dial(ctx context.Context, cred *domain.AccountCredential, opts .
 	return c, nil
 }
 
-// translateDialError Dial 错误翻译（T4 §5 错误契约）：*DialError → 信封
+// translateDialError Dial 错误翻译（§5 错误契约）：*DialError → 信封
 // （Refreshed 保留）；其余（refresh 失败裸错误）复用 translateError 双分支
 // （fatal → 统一回调 + 原样；RefreshError/网络 → 原样 → 网关 failover 分类）。
 func (a *Codex) translateDialError(e *codexEntry, err error) error {
@@ -764,7 +764,7 @@ func (a *Codex) FatalAuth(accountID int64, fatal error) {
 // 串行执行——同账号并发轮转天然单飞，无需额外互斥）：
 //   - account_ext 部分更新 upsert（codex_oauth_token + codex_oauth_refresh_token +
 //     codex_oauth_expires_at 保旧——携带 e.expiresAt 构造时旧值）
-//   - 失败 → panic（SDK D4 契约：回调失败 = 令牌持久化中断信号——callRotate
+//   - 失败 → panic（SDK 契约：回调失败 = 令牌持久化中断信号——callRotate
 //     recover 后记 pending 下次 refresh 前重试，连续达阈值 →
 //     CallbackDeliveryError fatal → 统一回调摘除；fail-closed）
 //   - 成功后失效调度器 AccountExt 内存快照条目（下个会话重载新凭据；
@@ -777,7 +777,7 @@ func (a *Codex) FatalAuth(accountID int64, fatal error) {
 //     正确摘除，基本自愈；低概率，不额外防护
 //
 // 回调在 SDK 单飞内阻塞并发等待者——必须快速返回（本地 upsert 毫秒级）；
-// 用固定短超时兜底 PG 故障（超时 → D4 重试链接管）。
+// 用固定短超时兜底 PG 故障（超时 → 重试链接管）。
 func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 	if a.rotate == nil {
 		return // 未装配（测试形态）：no-op
@@ -789,11 +789,11 @@ func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 	defer cancel()
 	if err := a.rotate.WriteOAuthRotation(ctx, e.accountID, at, rt, e.expiresAt); err != nil {
 		if a.log != nil {
-			// 运维信号即时留痕（D4 重试至多 3 次各记一条——DB 故障持续期的
+			// 运维信号即时留痕（重试至多 3 次各记一条——DB 故障持续期的
 			// 真实告警；fatal 上报后账号摘除，告警自停）
 			a.log.Warn("codex rotation writeback failed", logx.Int64("account_id", e.accountID), logx.Error(err))
 		}
-		// D4 契约：回调失败 → panic → SDK recover → pending 重试 → 达阈值
+		// 契约：回调失败 → panic → SDK recover → pending 重试 → 达阈值
 		// CallbackDeliveryError fatal（令牌无法持久化 = 账号失效信号）
 		panic(err)
 	}
@@ -803,7 +803,7 @@ func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 }
 
 // rotateWritebackTimeout 轮转回写固定超时（回调在 SDK 单飞内阻塞并发等待
-// 者——本地 upsert 毫秒级，3s 兜底 PG 故障；超时 → D4 重试链接管）。
+// 者——本地 upsert 毫秒级，3s 兜底 PG 故障；超时 → 重试链接管）。
 const rotateWritebackTimeout = 3 * time.Second
 
 // evict 失效剔除（缓存条目摘除；不存在 = no-op——并发/重复上报安全）。
@@ -852,7 +852,7 @@ func asFatal(err error) error {
 	return nil
 }
 
-// IsFatal 网关侧 fatal 判定（T4 §5：Dial 裸错误 fatal 类 → 该请求不转移，由
+// IsFatal 网关侧 fatal 判定（§5：Dial 裸错误 fatal 类 → 该请求不转移，由
 // handleCodexDialError 调用）：与 asFatal 同构导出（errors.As 穿透信封链）。
 func IsFatal(err error) bool { return asFatal(err) != nil }
 

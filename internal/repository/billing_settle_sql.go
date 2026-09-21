@@ -4,11 +4,11 @@
 
 package repository
 
-// billing_settle_sql.go 结算语句事实源（F2-opt v2 三车道拓扑，spec-f2opt-settlement
-// §〇-b/§一/D7；wave3 D-C 桶级并行 + F7 失败闭合）：两车道自包含 CTE（SQL 不变）。
+// billing_settle_sql.go 结算语句事实源（v2 三车道拓扑，spec-f2opt-settlement
+// §〇-b/§一/； 桶级并行 + 失败闭合）：两车道自包含 CTE（SQL 不变）。
 // 编排/事务/守卫逻辑见 billing_settle.go；本文件只承载 SQL 文本（纯数据表）。
 //
-// 桶谓词（wave3 D-C）：batch/temp_pool/spill 各 CTE 追加
+// 桶谓词：batch/temp_pool/spill 各 CTE 追加
 // COALESCE(user_id, 0) % $2 = $3（args = [limit, K, bucket]）——桶间 uid 集合
 // 不相交 → users/temp_balances 行锁集不相交（无死锁构造性保证）。**Momus 必改
 // 落实：裸 user_id 对 NULL 匿名行取模为 NULL → 永不命中任何桶 = 游标永久搁浅，
@@ -16,7 +16,7 @@ package repository
 
 // settleBalanceSQL Balance 车道结算语句（§一原设计）：终 SELECT 首行为聚合哨兵
 // （uid=-1 恒一行，ORDER BY 置首），其余为 debited/forced 的 (uid,balance_after)
-// 定向余额对（oracle 必改 #3——Balances.Set 预检新鲜度）。
+// 定向余额对（oracle 必改——Balances.Set 预检新鲜度）。
 const settleBalanceSQL = `WITH batch AS (
 	SELECT id, COALESCE(user_id, 0) AS uid, cost
 	FROM usage_logs
@@ -75,7 +75,7 @@ SELECT uid, balance_after, 0, 0, 0, 0, 0,
 FROM changed
 ORDER BY 1`
 
-// settleFefoSQL Temp 车道集合化 FEFO 结算语句（D7）：FEFO 序（expires ASC NULLS
+// settleFefoSQL Temp 车道集合化 FEFO 结算语句：FEFO 序（expires ASC NULLS
 // LAST）、行级条件扣（amount>=take）、部分覆盖三语义经 rn/cum 窗口函数集合化
 // 保持；cum 显式 ROWS 帧——默认 RANGE 帧在 expires_at 并列时会给并列行相同
 // cum，边界部分扣公式失真（少扣差额误入余额），ROWS 帧逐行累加消除并列歧义。

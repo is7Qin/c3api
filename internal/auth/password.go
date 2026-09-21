@@ -13,7 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// ErrPasswordTooLong bcrypt 截断限制（≤72 字节；注册/改密拒绝超长——评审 M-2）。
+// ErrPasswordTooLong bcrypt 截断限制（≤72 字节；注册/改密拒绝超长——评审）。
 var ErrPasswordTooLong = errors.New("auth: password exceeds 72 bytes (bcrypt limit)")
 
 // HashPassword bcrypt DefaultCost(10)，与 sub2api 完全一致——sub2api 迁移
@@ -32,7 +32,7 @@ func VerifyPassword(hash, plain string) bool {
 }
 
 // ValidatePasswordLen 密码 ≤72 字节校验（bcrypt 截断限制；超长拒绝而非
-// 静默截断——评审 M-2）。
+// 静默截断——评审）。
 func ValidatePasswordLen(plain string) error {
 	if len([]byte(plain)) > 72 {
 		return ErrPasswordTooLong

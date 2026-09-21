@@ -30,7 +30,7 @@ var (
 // 快照读 settings.signup_enabled 开关（UpdateSetting 即时生效）→ email
 // 唯一/格式 → 密码 ≤72 字节 → bcrypt DefaultCost(10)（sub2api 同参数）→
 // 快照读 4 个新用户初始资源默认值 → CreateUser → temp_balance > 0 送临时
-// 额度（插行失败不阻断注册，评审 M-2）。
+// 额度（插行失败不阻断注册，评审）。
 func (s *Service) RegisterUser(ctx context.Context, email, password string) (*domain.User, error) {
 	if s.settingValue("signup_enabled") != "true" {
 		return nil, ErrSignupDisabled
@@ -83,7 +83,7 @@ func (s *Service) RegisterUser(ctx context.Context, email, password string) (*do
 		expiresAt := time.Now().AddDate(0, 0, int(s.settingInt("default_user_temp_balance_ttl_days")))
 		note := "signup bonus"
 		if err := s.store.CreateTempBalance(ctx, created.ID, temp, &expiresAt, &note); err != nil {
-			// 评审 M-2：赠品插行失败不阻断注册（否则注册报错 → 客户端重试
+			// 评审 赠品插行失败不阻断注册（否则注册报错 → 客户端重试
 			// → 409 email 死锁）；仅告警，用户已创建成功。
 			if s.log != nil {
 				s.log.Warn("signup temp balance insert failed", logx.Int64("user_id", created.ID), logx.Error(err))

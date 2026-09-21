@@ -35,7 +35,7 @@ func UserIDFromContext(ctx context.Context) (int64, bool) {
 
 // adminAuth 管理面鉴权（/admin 组，含 /api/admin/ops/workers 运维观测）= 静态
 // admin token OR platform_admin JWT（两个都过才拒）。JWT 路径校验快照
-// status+role（F1）：**快照 role 覆盖 claims.Role**——降权（platform_admin →
+// status+role：**快照 role 覆盖 claims.Role**——降权（platform_admin →
 // user）后旧 JWT 立即失效（快照刷新 ≤Reload 周期），claims 24h 长时效不作
 // 角色信任源；快照缺失 → fail-closed 拒绝（启动首刷失败/Reload 失败保留旧
 // 快照/NOTIFY 丢失同纪律）；**opts.UserStatus == nil → JWT 路径整体拒绝**
@@ -192,7 +192,7 @@ func recoverer(log *logx.Logger) func(http.Handler) http.Handler {
 				if rec := recover(); rec != nil {
 					if log != nil {
 						// debug.Stack()：panic 定位靠栈——无栈日志只有 message 无法
-						// 溯源（F4；栈在错误路径才物化，热路径零成本）。
+						// 溯源（；栈在错误路径才物化，热路径零成本）。
 						log.Error("panic recovered",
 							logx.Any("panic", rec),
 							logx.String("stack", string(debug.Stack())),

@@ -27,7 +27,7 @@ type StaticView struct {
 	groups     map[int64]*groupSnapshot
 	byID       map[int64]*accountSnapshot
 	facts      map[int64]compilerAccountFacts
-	// routeIndex maps events to affected routes (v5-C2). Born at stage with
+	// routeIndex maps events to affected routes. Born at stage with
 	// the root, dies with it, read-only between (compile-lane-owned).
 	routeIndex *compileRouteIndex
 }
@@ -188,7 +188,7 @@ func cloneExploreDecision(in ExploreDecision) ExploreDecision {
 	return out
 }
 
-// v4-S2: key-normalized route lookup — the key carries NO RouteClassID hex.
+// key-normalized route lookup — the key carries NO RouteClassID hex.
 // The hex lived here as a per-request recompute (sha256 + hex encode on every
 // select); the steady-state path only borrows the interned per-route hex from
 // the found RouteDecision. Publish sites birth the intern once per route via
@@ -210,7 +210,7 @@ func normRouteRef(r RouteRef) RouteRef {
 }
 
 // routeClassHex births the interned per-route hex ONCE per published route
-// (v4-S2): steady-state selection borrows RouteDecision.RouteClassID and
+// : steady-state selection borrows RouteDecision.RouteClassID and
 // never computes.
 func routeClassHex(groupID int64, format string, model string, op domain.OperationTag) string {
 	rf, ok := parseRequestFormat(format)
@@ -392,7 +392,7 @@ func (p *routingPublisher) publishWithBase(baseGen uint64, baseStatic *StaticVie
 }
 
 func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecision) {
-	// v4-S2: the publish key stays normalized; the intern is born per route below.
+	// the publish key stays normalized; the intern is born per route below.
 	route = normRouteRef(route)
 	// Flush any staged static root through the compile lane first so the
 	// test decision pairs with the freshest static root.
@@ -432,7 +432,7 @@ func (s *Scheduler) PublishDecisionForTest(route RouteRef, decision *RouteDecisi
 			}
 			prepared.Format = route.Format
 			prepared.RequestedModel = route.Model
-			// v4-S2: birth the interned hex once per published route; the query
+			// birth the interned hex once per published route; the query
 			// key stays normalized (RouteClassID "").
 			prepared.RouteClassID = routeClassHex(route.GroupID, route.Format, route.Model, domain.OperationTag(route.OperationTag))
 			prepared.CallerCategory = string(callerKindForFormat(domain.RequestFormat(route.Format)))

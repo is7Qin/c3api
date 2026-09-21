@@ -135,7 +135,7 @@ func newShutdownFixture(t *testing.T, fail error) (wm *worker.Manager, rec *qual
 	qm.SetAttempts(3)
 	qm.SetSuccesses(1)
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
-	// v3-hygiene: edges-array ingestion is deleted — stage the pending flow
+	// edges-array ingestion is deleted — stage the pending flow
 	// minute through the live FoldChain path (single terminal success edge),
 	// exactly as production's proxy fold owner emits it.
 	route, err := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
@@ -231,7 +231,7 @@ func TestShutdownTail_CleanDrainClaimsShutdownComplete(t *testing.T) {
 	require.Len(t, snap.Flow, 1, "final snapshot retains the clean flow minute for diagnostics")
 	fm, ok := snap.Flow[minute]
 	require.True(t, ok, "retained clean minute must be addressable by its minute")
-	// v3-hygiene: rows are the live representation (edges-array input deleted) —
+	// rows are the live representation (edges-array input deleted) —
 	// the retained minute carries the single folded success edge.
 	rows := fm.FlowRows()
 	require.Len(t, rows, 1, "retained minute preserves the folded edge")

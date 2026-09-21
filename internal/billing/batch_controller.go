@@ -43,7 +43,7 @@ type batchController struct {
 	cur int
 }
 
-// newBatchController 构造：种子取 settleBatchLimit（F2-opt W2 实测安全值）。
+// newBatchController 构造：种子取 settleBatchLimit（实测安全值）。
 // 指针返回——内含互斥量不可拷贝。
 func newBatchController() *batchController {
 	return &batchController{cur: settleBatchLimit}

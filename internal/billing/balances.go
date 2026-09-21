@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// AssignmentKey 用户-组关联键（T3.5 修正：用户专属倍率按组挂载——用户在不同
+// AssignmentKey 用户-组关联键（修正：用户专属倍率按组挂载——用户在不同
 // 组可有不同倍率；EffectiveMultiplier 按 (userID, groupID) 查专属倍率）。
 type AssignmentKey struct {
 	UserID  int64
@@ -33,7 +33,7 @@ type BalanceLoader interface {
 	LoadAssignmentMultipliers(ctx context.Context) (map[AssignmentKey]int, error)
 }
 
-// multipliers 倍率快照（T3.5 价格倍率，万分数；并行快照与余额分离——Set 定向
+// multipliers 倍率快照（价格倍率，万分数；并行快照与余额分离——Set 定向
 // 刷新只动余额条目，不牵动倍率）。
 type multipliers struct {
 	assignments map[AssignmentKey]int // 仅设置了专属倍率的用户-组（存在 = 已设置）
@@ -41,7 +41,7 @@ type multipliers struct {
 }
 
 // Balances 余额只读快照（毫分；对齐 pricing 快照模式）：atomic.Pointer 换整表，
-// 热路径零锁零分配。O1 优化：条目为 *atomic.Int64——Set 命中已存在条目原地
+// 热路径零锁零分配。 优化：条目为 *atomic.Int64——Set 命中已存在条目原地
 // Store（O(1) 零拷贝，不再整表拷贝换指针）。预检读滞后 ≤ BalanceRefreshInterval
 // （多实例条件扣 DB 兜底）。
 type Balances struct {
@@ -65,7 +65,7 @@ func NewBalances(loader BalanceLoader, log *logx.Logger) *Balances {
 // 预检继续用旧值，条件扣 DB 兜底）。余额/组倍率/assignment 倍率三路都成功才
 // 整体换新——任一路失败三路都保留旧值（快照内自洽）。
 //
-// O1：全新条目整体原子换（O(n) 只在 Reload——管理面变更频率，非热路径）。
+// 全新条目整体原子换（O(n) 只在 Reload——管理面变更频率，非热路径）。
 // Set×Reload 换指针竞态 = 良性丢更新：Set 持旧快照条目 Store 而 Reload 已换新
 // 指针 → 该次更新不进新快照（DB 值权威，下次 Reload 收敛；快照读本就滞后 ≤
 // BalanceRefreshInterval，不为此时序加锁误导）。
@@ -148,7 +148,7 @@ func (b *Balances) BalanceOf(uid int64) (int64, bool) {
 	return 0, false
 }
 
-// EffectiveMultiplier 有效价格倍率（万分数，T3.5 修正：按组查序）：该用户在该
+// EffectiveMultiplier 有效价格倍率（万分数 修正：按组查序）：该用户在该
 // 组的专属倍率（assignment 已设置，非 nil）→ 用户值；否则组倍率；均缺 →
 // 10000（×1）。热路径零分配无锁：一次 atomic.Load + ≤2 次 map 查找，与
 // BalanceOf 同级。m==10000 的恒等短路由调用方 applyMultiplier 承担（默认路径

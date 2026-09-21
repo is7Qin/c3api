@@ -90,7 +90,7 @@ type StatsAggWorkerStats struct {
 // 位置），**不推进到 R1**——推进到 R1 会永久跳过 [T, R1) 的行（正是要防
 // 的错误形态；签名显式分离见 AggregateRange 的 wmTo 参数）。
 //
-// 幂等/重放（issue #8 教训）：DELETE+INSERT+watermark 推进同一事务——崩溃
+// 幂等/重放（issue 教训）：DELETE+INSERT+watermark 推进同一事务——崩溃
 // 回滚 → 游标不动 → 重算恢复不双计；重复执行同范围（手动重算修正）结果一致
 // （覆盖语义）。
 //

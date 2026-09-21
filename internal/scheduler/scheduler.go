@@ -42,7 +42,7 @@ var (
 
 type Config struct {
 	SyncInterval time.Duration
-	// StalenessProbe 是 C1 backstop 探针的 tuple 供应商（repo 层实现，
+	// StalenessProbe 是 backstop 探针的 tuple 供应商（repo 层实现，
 	// 如 GroupRepo.CompileStalenessSnapshot；接口在 compile_backstop.go
 	// 定义，赋值即满足，无需命名类型）。构造期传入，nil = 不接线
 	// （backstop 保持 fail-safe 全量 reload）。装配后不可变—— probes
@@ -122,7 +122,7 @@ type Scheduler struct {
 	startOnce atomic.Bool
 	latch     *latch.LatchStore
 	health    *RuntimeHealth
-	// Compile lane (Task11 wiring): serial background compiler feeding the
+	// Compile lane (wiring): serial background compiler feeding the
 	// single routingPublisher. Request path never touches these.
 	// sources 是 Start 期结构注入的编译双源（nil = 未装配，armed 门
 	// no-op）：装配期一次性写入（Start 存入后起循环），此后只读。
@@ -234,7 +234,7 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealt
 	return s
 }
 
-// Name 满足 worker.Worker 契约（Global Constraints #5）。
+// Name 满足 worker.Worker 契约（Global Constraints）。
 func (s *Scheduler) Name() string { return "scheduler" }
 
 // Start 启动定时同步；编译源是 Start 期依赖（结构注入，取代已删的
@@ -276,7 +276,7 @@ func (s *Scheduler) syncLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			// v5-C1: the tick is a staleness backstop (O(1) probe, full work
+			// the tick is a staleness backstop (O(1) probe, full work
 			// only on mismatch). The unconditional reload-on-every-tick
 			// default path is DELETED outright.
 			s.backstopTick(ctx)
@@ -309,7 +309,7 @@ func (s *Scheduler) fireOnMinuteAdvance() {
 func (s *Scheduler) reload(ctx context.Context) error {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
-	// v5-C1: refresh-first baseline (never after — see refreshProbeBaseline).
+	// refresh-first baseline (never after — see refreshProbeBaseline).
 	s.refreshProbeBaseline(ctx)
 	m, err := s.loader.LoadGroupsAccounts(ctx)
 	if err != nil {
@@ -367,7 +367,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 		}
 	}
 	s.publisher.stageLocked(sv)
-	// v5-C1/C2: a full staging covers every route — the lane takes the
+	// a full staging covers every route — the lane takes the
 	// full-fidelity fallback. Scope-first, then wake.
 	s.enqueueCompileScope(nil, nil, scopeCauseFullStage)
 	s.RequestCompile()
@@ -473,7 +473,7 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 			sameStatic := oldAv != nil && staticKeyOf(oldAv) == staticKeyOf(av)
 			if sameStatic {
 				// 静态未变：runtime 整体保留（errRate/errCount/并发跨重载连续，
-				// A-2 M-4；status 唯一例外——failed_at 是持久事实，重载按
+				//；status 唯一例外——failed_at 是持久事实，重载按
 				// failed_at 收敛，未失效账号的内存 disabled 不复活）。
 				rt := old.runtime
 				if curSt := rt.state.Load(); curSt != nil {
@@ -609,11 +609,11 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 // 编译车道发布配对），已发布的完整 pair 在此期间保持可见。
 // 静态字段（含 groupIDs）在 snapshotStatic 不可变视图中：写经 publisher.mu +
 // 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
-// （发布收集仍持 publisher.mu——评审 M-1 纪律，无锁外裸读）。
+// （发布收集仍持 publisher.mu——评审 纪律，无锁外裸读）。
 func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
-	// v5-C1: refresh-first baseline (never after — see refreshProbeBaseline).
+	// refresh-first baseline (never after — see refreshProbeBaseline).
 	s.refreshProbeBaseline(context.Background())
 	accs, err := s.loader.LoadGroupAccounts(context.Background(), groupID)
 	if err != nil {
@@ -636,7 +636,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		byID = map[int64]*accountSnapshot{}
 	}
 	// byID 兼作复用查询源（oldByID）：组级重载同样复用旧实例——errRate/errCount
-	// 跨组级 NOTIFY 重载保留（A-2 M-4），静态字段 DB 权威同步。持 publisher.mu 读取安全。
+	// 跨组级 NOTIFY 重载保留，静态字段 DB 权威同步。持 publisher.mu 读取安全。
 	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, byID)
 	newAccs := gs[groupID].accounts
 	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
@@ -652,10 +652,10 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	}
 	// 从组移除的账号（旧组有、新组无）：仍属其它组 → 保留实例并摘本组引用；
 	// 已不属于任何组 → 从 byID 删除（其它组引用随实例保留/删除，路由无需重建）。
-	// 评审 M-2：先建 新组账号ID 索引再单遍扫描——嵌套循环对 50k 大组批量删
+	// 评审 先建 新组账号ID 索引再单遍扫描——嵌套循环对 50k 大组批量删
 	// 25k 是 ≈1.25e9 次比较 ≈1s 停顿（去抖单 goroutine 内拉大所有失效延迟/
 	// 新用户 402 窗口），索引后 O(旧组大小)。
-	// v5-C2: staged groups bound the scoped fire — the reloaded group plus
+	// staged groups bound the scoped fire — the reloaded group plus
 	// every other group sharing its accounts (their snapshots are rebuilt
 	// with the new leaves, so their routes must recompute too).
 	scopeGroups := []int64{groupID}
@@ -713,7 +713,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	}
 	// 新实例替换 byID + 其它组引用（多组账号：旧实例在其它组路由中的位置换成
 	// 新实例并重建该组路由——共享实例纪律；单组账号 otherGids 为空，零开销）。
-	// 评审 M-2：其它组引用替换同禁嵌套扫描——每其它组先建 账号ID→位置 索引
+	// 评审 其它组引用替换同禁嵌套扫描——每其它组先建 账号ID→位置 索引
 	// （O(该组大小)），替换 O(1)，总量 O(受影响组账号和)。
 	type ogRef struct {
 		gs  *groupSnapshot
@@ -769,7 +769,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	}
 	sv := newStaticView(newM, newByID)
 	s.publisher.stageLocked(sv)
-	// v5-C1/C2: this staging touches exactly scopeGroups — the lane recomputes
+	// this staging touches exactly scopeGroups — the lane recomputes
 	// only their routes. Scope-first, then wake.
 	s.enqueueCompileScope(scopeGroups, nil, scopeCauseGroup)
 	s.RequestCompile()
@@ -857,7 +857,7 @@ func (s *Scheduler) Loader() Loader { return s.loader }
 // InvalidateAllSync 同步全量重载（测试与启动用）。
 func (s *Scheduler) InvalidateAllSync() error { return s.reload(context.Background()) }
 
-// InvalidateAllSyncCtx 同步全量重载（响应 ctx 取消；#14 T3a 评审 M-2：notify
+// InvalidateAllSyncCtx 同步全量重载（响应 ctx 取消； 评审 notify
 // Dispatcher.FullRefresh 用——断线重连的全量刷新不得耗尽停机预算）。
 func (s *Scheduler) InvalidateAllSyncCtx(ctx context.Context) error { return s.reload(ctx) }
 
@@ -940,7 +940,7 @@ func (s *Scheduler) ReleaseSelection(sel *Selection) {
 	}
 }
 
-// MarkResult 请求结果回流：禁用守卫（同步短路）+ 条件投递（C1）→ 规则引擎异步处理。
+// MarkResult 请求结果回流：禁用守卫（同步短路）+ 条件投递→ 规则引擎异步处理。
 // 动作应用全部由规则命中后的 typed sink 完成（本方法不触碰状态）。
 // kind 直接收 rule.Kind（单一 kind 概念——scheduler 不再有第二套枚举；连接级/
 // 5xx 分流由调用点 RuleKindOf 完成）。
@@ -959,7 +959,7 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 	if a.statePtr().status == domain.StatusDisabled {
 		return
 	}
-	// 条件投递（C1）：规则表无 kind=nil/ok 规则时 ok 事件不投递
+	// 条件投递：规则表无 kind=nil/ok 规则时 ok 事件不投递
 	// （无恢复规则时成功结果不影响任何状态，省队列与处理开销）。
 	if kind == rule.KindOK && !s.rule.NeedsOKEvents() {
 		return

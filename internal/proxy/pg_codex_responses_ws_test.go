@@ -30,7 +30,7 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
-// 真实 PG e2e（T4 happy path——"真实凭据"= 凭据材料真实落库 account_ext，
+// 真实 PG e2e（happy path——"真实凭据"= 凭据材料真实落库 account_ext，
 // 经 LoadGroupsAccounts 快照 → Selection.Ext → AccountCredential 派生直供适
 // 配层；上游为本地 mock WS 面——真实上游不可控，分工）：
 //
@@ -112,7 +112,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// 计费钩子：价格快照 + 余额快照；单写点：billable 行经 rec → repos.Usages
-	// 直落 usage_logs（F2：无 flusher 分流）。
+	// 直落 usage_logs（无 flusher 分流）。
 	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
 	require.NoError(t, bal.Reload(ctx), "余额快照加载")
 	rec := usage.New(usage.UsageConfig{

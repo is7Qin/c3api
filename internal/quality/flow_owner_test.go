@@ -33,7 +33,7 @@ func TestFlowOwner_SubmissionOwnsRows(t *testing.T) {
 	require.NoError(t, err)
 	owner := rec.FlowOwner()
 	rows := []repository.RoutingFlowRow{ownerTestRow(11)}
-	// v3-F1: Submit successor — same row through the request walk.
+	// Submit successor — same row through the request walk.
 	foldOneRow(t, owner, 100, rows[0])
 	rows[0].AccountID = 99
 	fm, ok := rec.FlowMinute(100)
@@ -43,7 +43,7 @@ func TestFlowOwner_SubmissionOwnsRows(t *testing.T) {
 
 func TestFlowOwner_WalkGuardsBeyondCapEight(t *testing.T) {
 	// Given: a walk offering more than the cap-8 bound.
-	// v3-F1: the oversized-Submit rejection contract is deleted with the
+	// the oversized-Submit rejection contract is deleted with the
 	// queue; the walk emits the first 8 facts and counts the rest
 	// cap-overflow with zero cell adds.
 	rec, err := NewRecorder(10)
@@ -74,7 +74,7 @@ func TestFlowOwner_MergesSameMinuteIdentity(t *testing.T) {
 	require.NoError(t, err)
 	owner := rec.FlowOwner()
 	row := ownerTestRow(11)
-	// v3-F1: Submit successor — same rows through the request walk.
+	// Submit successor — same rows through the request walk.
 	foldOneRow(t, owner, 100, row)
 	foldOneRow(t, owner, 100, row)
 	fm, ok := rec.FlowMinute(100)
@@ -84,7 +84,7 @@ func TestFlowOwner_MergesSameMinuteIdentity(t *testing.T) {
 }
 
 func TestFlowOwner_CloseCancelledContextIsSafe(t *testing.T) {
-	// v3-F1: the close-drain contract is deleted with the queue — Close is
+	// the close-drain contract is deleted with the queue — Close is
 	// synchronous and safe on any context, recording nothing by itself.
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
@@ -102,13 +102,13 @@ func TestFlowOwner_CloseCancelledContextIsSafe(t *testing.T) {
 }
 
 func TestFlowOwner_StartCloseLifecycle(t *testing.T) {
-	// v3-F1: no owner loop remains — Start/Close flip the lifecycle and the
+	// no owner loop remains — Start/Close flip the lifecycle and the
 	// folded state stays retained past Close.
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
 	owner := rec.FlowOwner()
 	require.NoError(t, owner.Start(context.Background()))
-	// v3-F1: Submit successor — same row through the request walk.
+	// Submit successor — same row through the request walk.
 	foldOneRow(t, owner, 100, ownerTestRow(11))
 	require.NoError(t, owner.Close(context.Background()))
 	require.False(t, owner.running.Load())
@@ -117,7 +117,7 @@ func TestFlowOwner_StartCloseLifecycle(t *testing.T) {
 }
 
 func TestFlowOwner_FoldRejectsAfterRecorderFinalization(t *testing.T) {
-	// v3-F1: the SubmitClosed contract moves to the walk closed-gate —
+	// the SubmitClosed contract moves to the walk closed-gate —
 	// post-finalization facts land nowhere and count dropped.
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestFlowOwner_PreservesPreviousAccountPointerOwnership(t *testing.T) {
 	previous := int64(7)
 	row := ownerTestRow(11)
 	row.PreviousAccountID = &previous
-	// v3-F1: Submit successor — the fact carries the value; the later caller
+	// Submit successor — the fact carries the value; the later caller
 	// mutation stays invisible.
 	foldOneRow(t, rec.FlowOwner(), 100, row)
 	previous = 99
@@ -168,7 +168,7 @@ func TestFlowMinute_SetFlowRowsCopiesPreviousAccountPointer(t *testing.T) {
 }
 
 func TestFlowOwner_NoRowCapFoldsExactly(t *testing.T) {
-	// v3-F1: the per-minute distinct-identity cap is deleted (no-eviction
+	// the per-minute distinct-identity cap is deleted (no-eviction
 	// exactness) — every offered identity folds; nothing drops.
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestFlowOwner_SnapshotAckRetainsCumulativeOwner(t *testing.T) {
 	rec, err := NewRecorder(10)
 	require.NoError(t, err)
 	owner := rec.FlowOwner()
-	// v3-F1: Submit successor — same rows through the request walk.
+	// Submit successor — same rows through the request walk.
 	foldRows(t, owner, 100, ownerTestRow(1), ownerTestRow(2))
 	require.Equal(t, int64(0), owner.SnapshotStats().PendingBytes,
 		"unfolded cells carry no live charge")
@@ -218,8 +218,8 @@ func TestFlowOwner_SnapshotAckRetainsCumulativeOwner(t *testing.T) {
 // TestFlowOwner_FoldDoesNotAliasInputRows locks the invariant that keeps
 // the fold exact: folding reverse-maps the caller's rows into value facts
 // immediately, retaining no slice or PreviousAccountID pointer, on either
-// the new-bucket or the same-minute path. (v3-F1: mergeLocked is deleted;
-// the cell fold replaces it. v3-hygiene: the EnqueueFlowMinute vehicle is
+// the new-bucket or the same-minute path. (: mergeLocked is deleted;
+// the cell fold replaces it. the EnqueueFlowMinute vehicle is
 // deleted; the live cell fold carries the same rows.)
 func TestFlowOwner_FoldDoesNotAliasInputRows(t *testing.T) {
 	rec, err := NewRecorder(10)

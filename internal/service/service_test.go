@@ -95,7 +95,7 @@ func TestTemplateCredentialTypeDefaultAndValid(t *testing.T) {
 	require.Equal(t, credential.TypeAPIKey, updated.CredentialType, "update 缺省同样兜底 api_key")
 }
 
-// Phase 3a：分组 = 平台容量池（无内嵌 key）。创建返回分组本身（visibility
+// 分组 = 平台容量池（无内嵌 key）。创建返回分组本身（visibility
 // 缺省 public）；key 为独立表（用户面 /api/user/keys 创建）。
 func TestCreateGroupFlow(t *testing.T) {
 	fs := newFakeStore()
@@ -280,7 +280,7 @@ func TestCreateAccountGroups(t *testing.T) {
 }
 
 // TestBatchUpdateAccountsGroupIDs 批量 group_ids：替换生效 + lastPatch 记录
-// （M3）+ 校验（长度/去重/元素 <= 0 → ErrInvalidInput，nil/空数组合法）。
+// + 校验（长度/去重/元素 <= 0 → ErrInvalidInput，nil/空数组合法）。
 func TestBatchUpdateAccountsGroupIDs(t *testing.T) {
 	fs := newFakeStore()
 	rec := &invRecorder{}
@@ -409,7 +409,7 @@ func TestBatchDeleteGroupsKeyCleanup(t *testing.T) {
 	before := rec.total()
 	require.NoError(t, svc.DeleteGroupsBatch(ctx, []int64{g1.ID, g2.ID}))
 	require.Greater(t, rec.total(), before, "批量删除成功后必须 invalidate")
-	// Phase 3a：组删除前置清理组内 key（无 key 时无 hash 可清理）
+	// 组删除前置清理组内 key（无 key 时无 hash 可清理）
 	require.Empty(t, keys.deleted, "无 key 的组删除不触发 Auth 增量清理")
 	// 软删语义（对齐真实 repo）：GET 单个仍可查已删项（deleted_at 置值）；
 	// 列表过滤软删组

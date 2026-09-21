@@ -91,7 +91,7 @@ func (r *recSettings2) ReloadSettings(ctx context.Context) error {
 }
 func (r *recSettings2) calls() int { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
 
-// ReloadPricingCtx D1：定价变更走 dispatcher 直连（settings 同款同步路径，
+// ReloadPricingCtx 定价变更走 dispatcher 直连（settings 同款同步路径，
 // 不入去抖器），复用同一 fake 目标记录调用。
 func (r *recSettings2) ReloadPricingCtx(ctx context.Context) error {
 	r.mu.Lock()
@@ -361,7 +361,7 @@ func (e *errSnap2) Reload(ctx context.Context) error {
 	return errors.New("snapshot boom")
 }
 
-// TestDispatcherApplyFailureTolerated（p2-02）：Apply 无返回值——
+// TestDispatcherApplyFailureTolerated：Apply 无返回值——
 // 内部失败（settings 同步重载失败 + 注册表 scope 快照重载失败）独立 Warn 消
 // 化，不透传：无 panic，同批其他变更位仍被吞入去抖（事件提示语义不破坏）。
 func TestDispatcherApplyFailureTolerated(t *testing.T) {

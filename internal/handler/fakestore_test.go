@@ -46,14 +46,14 @@ type fakeStore struct {
 	lastSummaryZone     *time.Location
 	lastDaysZone        *time.Location
 	assign              map[int64][]int64 // groupID → 授予 user_id 列表（group_assignments 模拟）
-	assignMult          map[[2]int64]*int // (groupID, userID) → 专属价格倍率（nil = 未设置；T3.5 按组）
+	assignMult          map[[2]int64]*int // (groupID, userID) → 专属价格倍率（nil = 未设置； 按组）
 	codes               map[int64]*domain.RedemptionCode
 	uses                map[int64]*domain.RedemptionUse
 	temps               []*fakeTempRow // 临时额度行（domain 无 TempBalance 类型，标量参数即全字段）
 	// pricings 模型价格（key = model，一行 = 最终生效价；manual > litellm 优先级
 	// 语义与真实仓库一致）。
 	pricings map[string]*domain.PriceEntry
-	// imagePrices 图片生成价格（Task A 双线；同 pricings 优先级语义）。
+	// imagePrices 图片生成价格（双线；同 pricings 优先级语义）。
 	imagePrices map[string]*domain.PriceEntry
 	// functionPrices 按单元计费功能类价格（价格表三件套；同 pricings 优先级语义）。
 	functionPrices map[string]*domain.PriceEntry
@@ -65,7 +65,7 @@ type fakeStore struct {
 	emailTemplates map[string]*domain.EmailTemplate
 	emailCodes     map[string]*domain.EmailCode
 	nextID         int64
-	// lastPatch 记录最近一次 UpdateAccountsBatch 收到的 patch（评审 M3：
+	// lastPatch 记录最近一次 UpdateAccountsBatch 收到的 patch（
 	// 断言 handler 的 group_ids nil/[] 映射是否真正传到了 repo 层）。
 	lastPatch repository.AccountPatch
 	// aggIDs/aggFrom/aggTo 记录最近一次 ScanUsageAgg 收参（缺省时间注入断言用）。
@@ -381,7 +381,7 @@ func (f *fakeStore) GetAccountGroups(ctx context.Context, accountID int64) ([]in
 	return slices.Clone(f.accGroups[accountID]), nil
 }
 
-// LoadGroupAccounts 单组账号（F1 删组校验用；镜像真实 repo：已删账号过滤）。
+// LoadGroupAccounts 单组账号（删组校验用；镜像真实 repo：已删账号过滤）。
 func (f *fakeStore) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*domain.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -458,7 +458,7 @@ func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain
 	return &c, nil
 }
 
-// FindAccountExtByCodexKey 组合幂等键查重（Task B 批量导入；镜像真实 repo
+// FindAccountExtByCodexKey 组合幂等键查重（批量导入；镜像真实 repo
 // 双条件 AND——缺行 → ErrNotFound）。
 func (f *fakeStore) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
 	f.mu.Lock()
@@ -546,7 +546,7 @@ func (f *fakeStore) AdminUpsertAccountExtCAS(ctx context.Context, e *domain.Acco
 	return &cc, nil
 }
 
-// QueryUsages 模拟 repo 过滤（R4-M2 防假绿：完整过滤面与真实 repo
+// QueryUsages 模拟 repo 过滤（防假绿：完整过滤面与真实 repo
 // QueryUsages 逐项一致——归属四元组/model/error_type/时间范围 + cursor 游标
 // （id < cursor）+ ID 降序 + limit+1 探测；user_id > 0 强制过滤——
 // /api/user/usage_logs 防越权测试依赖此语义）。去 Total（契约已移除）。
@@ -793,7 +793,7 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 			a.UpstreamKey = *p.UpstreamKey
 		}
 		if p.BaseURL != nil {
-			// 批量三态（C1，对齐真实 repo）："" = 清空（NULL = 继承模板）；非空 = 落值
+			// 批量三态（对齐真实 repo）："" = 清空（NULL = 继承模板）；非空 = 落值
 			if *p.BaseURL == "" {
 				a.BaseURL = nil
 			} else {
@@ -1278,7 +1278,7 @@ func (f *fakeStore) groupNameConflictLocked(excludeID int64, name string) error 
 	return nil
 }
 
-// --- Phase 3a：UserStore / SettingStore 假实现 ---
+// --- UserStore / SettingStore 假实现 ---
 
 func (f *fakeStore) CreateUser(ctx context.Context, u *domain.User) (*domain.User, error) {
 	f.mu.Lock()
@@ -1547,7 +1547,7 @@ func (f *fakeStore) ListKeys(ctx context.Context, q repository.ListQuery) ([]*do
 	return out, int64(total), nil
 }
 
-// UpdateKey patch 语义（S3-F1，镜像真实 repo）：仅应用非 nil 字段，nil = 不动。
+// UpdateKey patch 语义（镜像真实 repo）：仅应用非 nil 字段，nil = 不动。
 func (f *fakeStore) UpdateKey(ctx context.Context, p *repository.KeyPatch) (*domain.Key, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1616,7 +1616,7 @@ func (f *fakeStore) RevokeGroup(ctx context.Context, groupID, userID int64) erro
 	return nil
 }
 
-// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（T3.5 修正：
+// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（修正：
 // 按组；nil = 清除为未设置 → 回退组倍率）。
 func (f *fakeStore) SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error {
 	f.mu.Lock()
@@ -1684,7 +1684,7 @@ func (f *fakeStore) ListGroupsForUser(ctx context.Context, userID int64) ([]*dom
 
 // --- 兑换码（RedemptionStore，service.Store 扩展；语义与 service 包 fake 对齐） ---
 
-// WithTx 事务语义模拟（评审 I-1）：fn 内变更先入暂存（fakeTx 持有深拷贝），
+// WithTx 事务语义模拟：fn 内变更先入暂存（fakeTx 持有深拷贝），
 // fn 返回 nil → 提交（整体替换主视图），返回错误 → 丢弃。持锁贯穿整个事务。
 func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) error) error {
 	f.mu.Lock()
@@ -1695,10 +1695,10 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		users:  cloneUserMap(f.users),
 		temps:  slices.Clone(f.temps),
 		nextID: f.nextID,
-		// 授予面（S3-F2：assignment 替换循环入事务）
+		// 授予面（assignment 替换循环入事务）
 		assign:     cloneAssignMap(f.assign),
 		assignMult: maps.Clone(f.assignMult),
-		// 账号/扩展/归组面（Task B codex 导入 imported 行单行事务）
+		// 账号/扩展/归组面（codex 导入 imported 行单行事务）
 		accs:          cloneAccMap(f.accs),
 		accExts:       cloneAccExtMap(f.accExts),
 		accGroups:     cloneAccGroupsMap(f.accGroups),
@@ -1755,16 +1755,16 @@ type fakeTx struct {
 	users  map[int64]*domain.User
 	temps  []*fakeTempRow
 	nextID int64
-	// 授予面（S3-F2）：assign/assignMult 同 fakeStore 语义。
+	// 授予面：assign/assignMult 同 fakeStore 语义。
 	assign     map[int64][]int64
 	assignMult map[[2]int64]*int
-	// 账号/扩展/归组面（Task B codex 导入 imported 行单行事务）：同 fakeStore
+	// 账号/扩展/归组面（codex 导入 imported 行单行事务）：同 fakeStore
 	// 语义。
 	accs      map[int64]*domain.Account
 	accExts   map[int64]*domain.AccountExt
 	accGroups map[int64][]int64
 	groups    map[int64]*domain.Group
-	// 价格条目/变体（D-C4：级联删除事务面；语义镜像真实 repo + fakeStore
+	// 价格条目/变体（级联删除事务面；语义镜像真实 repo + fakeStore
 	// DeletePriceEntryManual 已有级联行为）。
 	priceEntries  map[string]*domain.PriceEntry
 	priceVariants map[string][]*domain.PriceVariant
@@ -1834,7 +1834,7 @@ func cloneGroupMap(m map[int64]*domain.Group) map[int64]*domain.Group {
 	return out
 }
 
-// --- 账号/扩展/归组（Task B codex 导入 imported 行单行事务面；语义镜像
+// --- 账号/扩展/归组（codex 导入 imported 行单行事务面；语义镜像
 // fakeStore 对应方法——变更只落暂存） ---
 
 func (t *fakeTx) CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
@@ -1981,7 +1981,7 @@ func (t *fakeTx) IncrementUsed(ctx context.Context, codeID int64) (bool, error) 
 	return true, nil
 }
 
-// --- 组授予（S3-F2：tx 面扩展，语义镜像 fakeStore 对应方法） ---
+// --- 组授予（tx 面扩展，语义镜像 fakeStore 对应方法） ---
 
 func (t *fakeTx) GrantGroup(ctx context.Context, groupID, userID int64) error {
 	if !slices.Contains(t.assign[groupID], userID) {
@@ -1996,7 +1996,7 @@ func (t *fakeTx) RevokeGroup(ctx context.Context, groupID, userID int64) error {
 	return nil
 }
 
-// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（T3.5 修正：
+// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（修正：
 // 按组；nil = 清除为未设置 → 回退组倍率）。
 func (t *fakeTx) SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error {
 	if !slices.Contains(t.assign[groupID], userID) {
@@ -2205,7 +2205,7 @@ func (f *fakeStore) DeactivateCodes(ctx context.Context, ids []int64) (int64, er
 	return n, nil
 }
 
-// --- 原子资源更新（UserStore 扩展，评审 I-1） ---
+// --- 原子资源更新（UserStore 扩展，评审） ---
 
 func (f *fakeStore) UpdateUserBalance(ctx context.Context, userID, delta int64) error {
 	f.mu.Lock()
@@ -2233,7 +2233,7 @@ func (f *fakeStore) UpdateUserMaxConcurrency(ctx context.Context, userID int64, 
 	return nil
 }
 
-// --- 模型价格（service.PricingStore，Phase 5 计费价格来源） ---
+// --- 模型价格（service.PricingStore 计费价格来源） ---
 
 // UpsertFromLiteLLM 模拟批量 upsert + manual 行级互斥（已存在 manual 行不覆盖、
 // 不计入更新数；source 恒 litellm）。
@@ -2248,7 +2248,7 @@ func (f *fakeStore) UpdateUserMaxConcurrency(ctx context.Context, userID int64, 
 
 // GetPricing 模拟按 model 取行（缺失 → repository.ErrNotFound）。
 
-// --- 图片生成价格（service.PricingStore Task A 双线；与文本价同款模拟语义） ---
+// --- 图片生成价格（service.PricingStore 双线；与文本价同款模拟语义） ---
 
 // UpsertImageFromLiteLLM 模拟批量 upsert + manual 行级互斥（已存在 manual 行
 // 不覆盖、不计入更新数；source 恒 litellm）。

@@ -13,7 +13,7 @@ import (
 )
 
 // AIRouter 挂载 AI 端点（规格 §6.1/§9）：路径决定请求格式，全部走通用转发
-// 骨架 handleFormat（Phase 2：UpstreamCaller 注册表分发）；resp-ws 与 HTTP
+// 骨架 handleFormat（UpstreamCaller 注册表分发）；resp-ws 与 HTTP
 // responses 同路径（真实客户端无 /ws 后缀）——/v1/responses 带 upgrade 头
 // → 按 resp-ws 处理，走专用编排 HandleResponsesWS（caller_responses_ws.go）。
 func AIRouter(p *Proxy) http.Handler {
@@ -40,7 +40,7 @@ func AIRouter(p *Proxy) http.Handler {
 	r.Post("/v1/messages", func(w http.ResponseWriter, req *http.Request) {
 		p.handleFormat(domain.FormatAnthropic, w, req)
 	})
-	// 图片生成双端点（Task B §5.1）：同一格式 openai-images，上游子路径由
+	// 图片生成双端点（§5.1）：同一格式 openai-images，上游子路径由
 	// handleFormat 内 imagesCallerFor 按路径区分（generations/edits）。
 	r.Post("/v1/images/generations", func(w http.ResponseWriter, req *http.Request) {
 		p.handleFormat(domain.FormatOpenAIImages, w, req)

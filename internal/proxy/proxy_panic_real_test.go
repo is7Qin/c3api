@@ -24,7 +24,7 @@ func TestProxyRealPanicReleasesLease(t *testing.T) {
 	px := newTestProxy(t, "http://127.0.0.1:9", 1)
 	sel, plan, attempt, err := px.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o", scheduler.AttemptPlanIdentity{RequestID: "req", UserID: 1})
 	require.NoError(t, err)
-	// v4-S1: the session is a stack value — bound identity echoes the request.
+	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req", plan.Identity().RequestID)
 	ri, _ := px.sched.Runtime(1)
 	require.Equal(t, int64(1), ri.Concurrency)

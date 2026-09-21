@@ -24,7 +24,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/usagestat"
 )
 
-// PartitionRepo 管理按日分区表（Phase 5 T4.5，用户决策 2026-08-09；err_logs/
+// PartitionRepo 管理按日分区表（用户决策 2026-08-09；err_logs/
 // usage_stats 分区复用同路线，用户决策 2026-08-11）：50k 并发量级 usage_logs
 // 增长 ~4.3 亿行/天——逐行 DELETE 清理不可行，按月分区单分区 26 亿行仍不可行
 // → PostgreSQL 原生分区表 PARTITION BY RANGE (分区键)，每日一区（usage_logs
@@ -89,7 +89,7 @@ func partitionedCreateDDL(table, partitionCol string, columnDefs []string) strin
 		") PARTITION BY RANGE (" + partitionCol + ")"
 }
 
-// usageLogColumnDefs usage_logs 分区表列定义（单一事实源，评审 I-1 锚）：
+// usageLogColumnDefs usage_logs 分区表列定义（单一事实源，评审 锚）：
 // 建表 DDL 由本列表生成（partitionedCreateDDL）——列集合一致性由
 // TestUsageLogColumnDefsMatchCreateDDL 锚定（防"向静态 DDL 加列忘加事实源"
 // 漂移，含类型漂移——列定义字符串整体生成）。列定义与 ent schema 完全一致，
@@ -139,7 +139,7 @@ var usageLogColumnDefs = []string{
 	`billing_tier varchar NULL`,
 	`above_hit boolean NOT NULL DEFAULT false`,
 	`overdraft boolean NOT NULL DEFAULT false`,
-	// billed（F2 ledger-cursor，spec 2026-08-23 §一/§三）：扣费收敛标记——
+	// billed（ledger-cursor，spec 2026-08-23 §一/§三）：扣费收敛标记——
 	// false=待对账消费（出生未扣，计费游标子集）；true=已结算（billing worker
 	// 扣费事务内原子标记，或关闭计费/匿名行的出生吸收态）。
 	`billed boolean NOT NULL DEFAULT false`,
@@ -161,21 +161,21 @@ var usageLogIndexDDLs = []string{
 	`CREATE INDEX usagelog_user_id_created_at ON usage_logs (user_id, created_at)`,
 	`CREATE INDEX usagelog_key_id_created_at ON usage_logs (key_id, created_at)`,
 	`CREATE UNIQUE INDEX usagelog_request_id_created_at ON usage_logs (request_id, created_at)`,
-	// F2 ledger-cursor 计费游标（spec 2026-08-23 §一）：部分索引 (id) WHERE NOT
+	// ledger-cursor 计费游标（spec 2026-08-23 §一）：部分索引 (id) WHERE NOT
 	// billed 即计费游标本体——取批只扫未扣子集，行标记 billed=true 后自动退出
 	// 索引（重启天然续传，无 watermark 表）；分区表父表索引为分区索引，子分区
 	// 自动继承。ent 无部分索引表达力，仅存于本事实源。
-	// wave3 D-A（spec-f2opt-wave3 §一）：usagelog_unbilled_created (created_at)
+	//（spec-f2opt-wave3 §一）：usagelog_unbilled_created (created_at)
 	// WHERE NOT billed 已删除——唯一消费者 UnbilledLag 的 MIN(created_at) 改队头
 	// 两步法（部分 id 索引定位 + pkey 回表），marked 步索引维护 -33%。不建
-	// (id) WHERE NOT billed AND cost=0——D1 已消灭该查询类，索引是写放大负债。
+	// (id) WHERE NOT billed AND cost=0—— 已消灭该查询类，索引是写放大负债。
 	`CREATE INDEX usagelog_unbilled_id ON usage_logs (id) WHERE NOT billed`,
 }
 
 // errLogColumnDefs err_logs 分区表列定义（单一事实源，与 ent schema 完全一致，
 // 锚测试 TestErrLogColumnDefsMatchCreateDDL 断言列集合一致）：错误审计瘦表——
 // 无 token/价格列；status_code/error_message（usage_logs 瘦身去掉的排障列）+
-// 审计归属（group/account/template/api/user/key）+ billing_tier（评审 I-3：tier
+// 审计归属（group/account/template/api/user/key）+ billing_tier（tier
 // reject 的 tier 维度审计保留）。
 var errLogColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('err_logs_id_seq'::regclass)`,
@@ -202,7 +202,7 @@ var errLogCreateDDL = partitionedCreateDDL("err_logs", "created_at", errLogColum
 
 // errLogIndexDDLs 对齐 ent schema Indexes（同名同列；分区表父表索引为分区
 // 索引，子分区自动继承）：created_at 时间窗口查询/清理 + (group_id/user_id,
-// created_at) 查询面（架构审查 S1——/err_logs 按用户/组过滤）。
+// created_at) 查询面（架构审查——/err_logs 按用户/组过滤）。
 var errLogIndexDDLs = []string{
 	`CREATE INDEX errlog_created_at ON err_logs (created_at)`,
 	`CREATE INDEX errlog_group_id_created_at ON err_logs (group_id, created_at)`,
@@ -385,7 +385,7 @@ func isDuplicateObject(err error) bool {
 }
 
 // isMissingObject 判断"目标对象不存在"竞态错误（42P01 undefined_table）：
-// 并发 bootstrap 的 **stale-DROP 窗口**专用（评审 I-1 已接受的窗口，见
+// 并发 bootstrap 的 **stale-DROP 窗口**专用（已接受的窗口，见
 // ensureTablePartitioned 注释）——实例基于过期的"未分区"判定执行 DROP TABLE
 // IF EXISTS，可能误删对方刚建的表（含 OWNED BY 级联的序列）；被删侧后续步骤
 // 短暂撞 42P01：OWNED BY/索引/分区引用缺失的表、CREATE TABLE 引用被级联
@@ -427,7 +427,7 @@ func (r *PartitionRepo) execDDLTolerateRace(ctx context.Context, query string) e
 // TABLE（IF EXISTS 恒 no-op）+ 重建分区表/序列/索引 + 预建分区（表结构终态由
 // 列事实源定义）；已是分区表 → 仅确保 当日→明日 分区存在后返回。
 //
-// 多实例语义（评审 I-1）：两实例同时启动时，"是否已分区"判定与 CREATE 之间
+// 多实例语义：两实例同时启动时，"是否已分区"判定与 CREATE 之间
 // 另一实例可能已建对象——所有 CREATE 步骤（分区表/索引/日分区）对撞名类错误
 // （42P07/42710/23505）容忍后继续，双方幂等收敛。DROP 为 IF EXISTS 不报错；
 // 理论窗口下并发实例的 DROP 误删对方刚建的分区表时（stale-DROP 窗口），被删
@@ -507,7 +507,7 @@ func (r *PartitionRepo) EnsureUsageStatsPartitioned(ctx context.Context, now tim
 // （幂等：已存在跳过；until 早于 now → 仅 now 当日）。bootstrap 与 retention
 // worker 共用——防日界竞态：分区未建时插入跨日 row 会整体失败（PG 对分区表
 // 无自动建分区），必须预留未来分区。start/end 边界统一由调用方传入的 now
-// 推导（评审 I-2：不内部取 time.Now()，测试可注入任意时钟；worker 每轮
+// 推导（不内部取 time.Now()，测试可注入任意时钟；worker 每轮
 // 现取 now 传入）。
 func (r *PartitionRepo) EnsureTablePartitions(ctx context.Context, table string, now, until time.Time) error {
 	start := now.UTC().Truncate(24 * time.Hour)
@@ -632,12 +632,12 @@ func (r *PartitionRepo) DropUsageEntityStatsPartitionsBefore(ctx context.Context
 	return r.DropTablePartitionsBefore(ctx, "usage_entity_stats", cutoff)
 }
 
-// redemptionUsesDeleteBatchLimit redemption_uses 每轮批删上限（F3-2 批删有界：
+// redemptionUsesDeleteBatchLimit redemption_uses 每轮批删上限（批删有界：
 // 普通表无分区可 DROP，不能对齐分区表 O(1) DROP 形态——有界 DELETE 防长事务
 // 持锁；低频表单轮即清，超大批多轮收敛）。
 const redemptionUsesDeleteBatchLimit = 5000
 
-// DeleteRedemptionUsesBefore redemption_uses 有界批删（F3-2，retention worker
+// DeleteRedemptionUsesBefore redemption_uses 有界批删（retention worker
 // 周期任务调用；TTL 定死 90 天，cutoff = now - 90 天由调用方推导）：
 //   - 普通表无分区可 DROP → 走 DELETE 批删路径（与三张分区表 O(1) DROP 并存，
 //     均为 retention worker 周期面内的清理手段）；

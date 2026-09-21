@@ -4,7 +4,7 @@
 
 package repository_test
 
-// 两车道并集 vs 总账守恒 harness（spec-f2opt-settlement D8 改写，替代 legacy
+// 两车道并集 vs 总账守恒 harness（spec-f2opt-settlement 改写，替代 legacy
 // DeductOnlyAndMark 双载体等价族）：混合种群（temp-active FEFO 多行 + 余额-only
 // 条件扣 + 透支补刀 + 幽灵用户 + 匿名行 + 零价吸收）经三车道排空后——
 // Σdrawn(temp) + Σ|Δbalance| + Σ隔离行 cost == Σbilled cost 精确容差 0；每行恰

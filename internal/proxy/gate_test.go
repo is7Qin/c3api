@@ -20,7 +20,7 @@ import (
 
 // --- concurrencyGate 单元测试（内存原子语义） ---
 
-// 两级 acquire（user → key）与两步回滚（评审 I-3）：user 成功 key 失败 →
+// 两级 acquire（user → key）与两步回滚：user 成功 key 失败 →
 // user 计数复原，防泄漏。
 func TestGateAcquireReleaseAndRollback(t *testing.T) {
 	g := newConcurrencyGate(nil, true)
@@ -183,7 +183,7 @@ func TestGateUpsertDelete(t *testing.T) {
 	require.False(t, ok, "额度条目移除")
 }
 
-// UserMaxConc=0（不限并发）路径覆盖（spec 2026-08-15 A-2；修复前 0 路径无
+// UserMaxConc=0（不限并发）路径覆盖（spec 2026-08-15；修复前 0 路径无
 // 测试）：计数与限流解耦——acquire 无条件计数 +1、level user 位恒置、release
 // 归零、快照遍历（InFlightUsers 同型读法）能读到在途值。
 func TestGateUnlimitedUserCounts(t *testing.T) {
@@ -217,7 +217,7 @@ func TestGateUnlimitedUserCounts(t *testing.T) {
 	require.Equal(t, int64(0), inflight()[1], "全部 release 归零")
 }
 
-// 混合并发（spec 2026-08-15 A-2）：不限用户（UserMaxConc=0）与限 8 用户真实
+// 混合并发（spec 2026-08-15）：不限用户（UserMaxConc=0）与限 8 用户真实
 // goroutine 并发 acquire/release——两用户计数都在且恒非负；超限者 429 且回滚
 // 后计数正确（回滚竞态闭合验证：占满后 N 并发全回滚 → 计数净 0，不误减持锁者）。
 func TestGateMixedUnlimitedLimitedConcurrent(t *testing.T) {
@@ -306,7 +306,7 @@ func TestGateMissingCounterFailOpen(t *testing.T) {
 	g.release(meta, lvl)
 }
 
-// --- 多实例本地预算（#14 T3b §3.2） ---
+// --- 多实例本地预算（§3.2） ---
 
 // fakeInstances 固定 N 的 InstancesProvider 测试桩。
 type fakeInstances int
@@ -370,7 +370,7 @@ func TestGateBudgetSplitByN(t *testing.T) {
 }
 
 // N=1 单实例等价回归：无复核能力时 budget = 剩余额（精确），消耗到快照剩余即
-// 429，与现状单实例语义同点拒绝。注意（评审 I-1）：此"同点"仅在无复核能力或
+// 429，与现状单实例语义同点拒绝。注意：此"同点"仅在无复核能力或
 // 快照值恰好等于 DB 时成立；生产 N=1（真 reclaimer）见
 // TestGateN1ReclaimerLagNoOverrun——429 点由 DB quota_used 决定。
 func TestGateN1EquivalentToSingleInstance(t *testing.T) {
@@ -507,7 +507,7 @@ func TestGateReclaimSingleFlight(t *testing.T) {
 }
 
 // 复核失败（DB 错）策略：Warn + 本请求放行 + 预算补 1 + 退避 10s；退避期内
-// 预算耗尽按 429（不重复复核防风暴）；退避过期重试；DB 恢复后复核认领（#37
+// 预算耗尽按 429（不重复复核防风暴）；退避过期重试；DB 恢复后复核认领（
 // 本地已超 quota → 确认真尽，见尾部）。
 func TestGateReclaimDBErrorAllowAndRetry(t *testing.T) {
 	g := newConcurrencyGate(nil, true)
@@ -625,7 +625,7 @@ func TestGateUpsertReallocBudget(t *testing.T) {
 	require.False(t, g.quotaExhausted(domain.KeyMeta{KeyID: 1, HasQuota: false}))
 }
 
-// 正数→0→正数（Todo 4 命名回归）：quota>0 阶段按最终 Cost 扣减；quota→0 阶段
+// 正数→0→正数（命名回归）：quota>0 阶段按最终 Cost 扣减；quota→0 阶段
 // 门禁条目移除、扣减恒 no-op（不新增 delta，DB quota_used 基线保留）；恢复
 // 正数后 reload 以 DB 快照 quota_used 为新基线继续累计（不清零、不双计）。
 func TestGateQuotaPositiveZeroPositiveKeepsBaseline(t *testing.T) {

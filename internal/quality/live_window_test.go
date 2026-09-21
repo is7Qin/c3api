@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Phase 2 RED: Recorder.UnflushedMinutes returns absolute per-minute rows not
+// RED: Recorder.UnflushedMinutes returns absolute per-minute rows not
 // yet in PG — pending (converged/external) rows with their labels plus the
 // current partial minute (active cell totals minus already-emitted absolute
 // rows, gen-gated, clamped ≥0, fail-closed skip on inconsistency).

@@ -81,12 +81,12 @@ type fakeStore struct {
 	functionListErr  error
 	pricingUpsertErr error
 	nextID           int64
-	// lastPatch 记录最近一次 UpdateAccountsBatch 收到的 patch（评审 M3：
+	// lastPatch 记录最近一次 UpdateAccountsBatch 收到的 patch（
 	// 断言 handler 的 group_ids nil/[] 映射是否真正传到了 repo 层）。
 	lastPatch repository.AccountPatch
 	// tempBalances 临时额度行（注册赠品断言用）。
 	tempBalances []fakeTempBalance
-	// tempBalanceErr 注入 CreateTempBalance 失败（评审 M-2：注册不阻断）。
+	// tempBalanceErr 注入 CreateTempBalance 失败（注册不阻断）。
 	tempBalanceErr error
 	// codesConflictAlways 模拟 code 唯一冲突恒失败（GenerateCodes 重试 N=5
 	// 终止路径的测试注入）。
@@ -98,7 +98,7 @@ type fakeStore struct {
 	// txUpsertExtErr 注入事务内 UpsertAccountExt 失败（导入单行事务
 	// 回滚测试——ext 写入失败 → 无 account 行无 ext 行）。
 	txUpsertExtErr error
-	// emailTemplateDeleteErr 注入 DeleteEmailTemplate 非 NotFound 故障（评审 FIX-3a）。
+	// emailTemplateDeleteErr 注入 DeleteEmailTemplate 非 NotFound 故障。
 	emailTemplateDeleteErr error
 	// routing rollup fake：固定返回行 + 记录最近一次调用参数。
 	routingQualityRows []repository.RoutingQualityStat
@@ -1106,7 +1106,7 @@ func (f *fakeStore) groupNameConflictLocked(excludeID int64, name string) error 
 	return nil
 }
 
-// --- Phase 3a：UserStore / SettingStore 假实现 ---
+// --- UserStore / SettingStore 假实现 ---
 
 func (f *fakeStore) CreateUser(ctx context.Context, u *domain.User) (*domain.User, error) {
 	f.mu.Lock()
@@ -1211,7 +1211,7 @@ func (f *fakeStore) UpdateUserPassword(ctx context.Context, id int64, passwordHa
 }
 
 // CreateTempBalance 临时额度行（注册赠品）；tempBalanceErr 非 nil 时注入失败
-// （评审 M-2 测试）。
+// （测试）。
 func (f *fakeStore) CreateTempBalance(ctx context.Context, userID int64, amount int64, expiresAt *time.Time, note *string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1549,7 +1549,7 @@ func (f *fakeStore) UpdateUserBalanceWarningThreshold(ctx context.Context, userI
 	return &c, previousThreshold, nil
 }
 
-// --- 兑换码（RedemptionStore，Phase 5 计费前基础设施） ---
+// --- 兑换码（RedemptionStore 计费前基础设施） ---
 
 // WithTx 事务语义模拟：fn 内变更先入暂存（fakeTx 持有主视图的
 // 深拷贝），fn 返回 nil → 提交（整体替换主视图），返回错误 → 丢弃（主视图
@@ -1695,7 +1695,7 @@ type fakeTx struct {
 	accGroups map[int64][]int64
 	groups    map[int64]*domain.Group
 	upsertErr error
-	// 价格条目/变体（D-C4：级联删除事务面；语义镜像真实 repo + fakeStore
+	// 价格条目/变体（级联删除事务面；语义镜像真实 repo + fakeStore
 	// DeletePriceEntryManual 已有级联行为）。
 	priceEntries  map[string]*domain.PriceEntry
 	priceVariants map[string][]*domain.PriceVariant
@@ -1784,7 +1784,7 @@ func (t *fakeTx) IncrementUsed(ctx context.Context, codeID int64) (bool, error) 
 		return false, nil // 0 行受影响（真实：WHERE id 不命中）
 	}
 	if c.UsedCount >= c.MaxUses {
-		return false, nil // 已用尽（评审 I-2）
+		return false, nil // 已用尽
 	}
 	c.UsedCount++
 	return true, nil
@@ -2212,7 +2212,7 @@ func (f *fakeStore) IncrementUsed(ctx context.Context, codeID int64) (bool, erro
 }
 
 // DeactivateCodes 批量失效（单事务模拟）：已 disabled no-op；缺失 id 由
-// service 层先查（fake 同真实 repo：不报错，评审 M-2）。返回新失效数。
+// service 层先查（fake 同真实 repo：不报错，评审）。返回新失效数。
 func (f *fakeStore) DeactivateCodes(ctx context.Context, ids []int64) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

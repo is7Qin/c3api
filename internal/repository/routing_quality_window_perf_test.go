@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// Phase 6 budget lock: Q1+Q2 at the 5000-candidate/24h scale (200ms).
+// budget lock: Q1+Q2 at the 5000-candidate/24h scale (200ms).
 // Seeds 5000 candidates × 12 rows across ~20h once, then runs 2 untimed
 // warmup rounds (plan cache/cold pages — CI cold start) and times 30
 // sequential Q1+Q2 rounds (400 hot keys). The assertion targets p90: with 30

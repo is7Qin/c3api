@@ -8,7 +8,7 @@
 // §2）：管理面变更落库成功后经 Publisher 发一条 NOTIFY（单 channel
 // c3api_invalidate，紧凑 JSON 载荷与 invalidate.State 同构）；每实例一个
 // Listener worker（Name="notify"）LISTEN 该 channel，解析后调注入的
-// Dispatcher（main 装配，T3）转发现有 invalidate.Debouncer 的 Mark 方法——
+// Dispatcher（main 装配）转发现有 invalidate.Debouncer 的 Mark 方法——
 // 本地/远端变更共享同一去抖窗口，天然合并去重，Debouncer 本体零改动。
 //
 // 设计要点：
@@ -77,7 +77,7 @@ type Change struct {
 
 // IsEmpty 空载荷判定：8 个变更位全 false 且 Groups 为空。V/Src 不参与判定——
 // V 恒存在（json 无 omitempty），Src 由 Publisher 发布时自动填充，调用方
-// 构造时均为空。service.publish 用此前置跳过无意义 NOTIFY（评审 I-1：
+// 构造时均为空。service.publish 用此前置跳过无意义 NOTIFY（
 // 创建无分组 / 补丁无分组变更的空载荷在此统一覆盖）。
 func (c Change) IsEmpty() bool {
 	return !c.Users && !c.Templates && !c.Clients && !c.Multipliers &&

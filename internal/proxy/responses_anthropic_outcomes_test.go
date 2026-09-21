@@ -274,7 +274,7 @@ func TestResponsesAnthropic_Outcomes_StatusPreservation(t *testing.T) {
 		upA.Close()
 		require.NoError(t, pA.rec.Close(context.Background()))
 		require.NoError(t, pA.errlog.Close(context.Background()))
-		// v3-F1: the FlowChain compile pin is deleted with the box; the
+		// the FlowChain compile pin is deleted with the box; the
 		// quality import below still pins the lane for the counters above.
 		_ = quality.FlowChainIncompleteObserved
 	}

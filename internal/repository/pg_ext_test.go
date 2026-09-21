@@ -19,7 +19,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// W1 数据模型真实 PG 测试：template_ext / account_ext 2 张子表 CRUD roundtrip
+// 数据模型真实 PG 测试：template_ext / account_ext 2 张子表 CRUD roundtrip
 // （幂等 upsert + NULL 清空 + FK 约束）+ groups.protocol_convert roundtrip。
 // 基座见 pg_account_groups_test.go 的 newPGRepos（DROP SCHEMA 重建）。
 // ---------------------------------------------------------------------------
@@ -336,7 +336,7 @@ func TestGroupProtocolConvertPG(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T4 §3：账号 ext → 调度器快照 eager-load（Selection 扩展路线——热路径零 DB
+// §3：账号 ext → 调度器快照 eager-load（Selection 扩展路线——热路径零 DB
 // 的数据源；与 pg_strip_test.go 的 template_ext 快照合并同构）
 // ---------------------------------------------------------------------------
 

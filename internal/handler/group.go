@@ -16,7 +16,7 @@ import (
 
 // PostGroups 创建分组（平台容量池；key 为独立表，用户面 /api/user/keys 创建，
 // ServerInterface）。price_multiplier（正常值 0~10，API 边界换算万分数）：
-// 缺省/null = 不设置（×1）；显式 0 = 免费组（恒写入——T3.5 修正：API 可表达
+// 缺省/null = 不设置（×1）；显式 0 = 免费组（恒写入—— 修正：API 可表达
 // 显式 0，repo 不再把 0 当未指定）。
 func (h *AdminAPI) PostGroups(w http.ResponseWriter, r *http.Request) {
 	var in GroupCreate
@@ -124,7 +124,7 @@ func (h *AdminAPI) PutGroupsId(w http.ResponseWriter, r *http.Request, id int64)
 // PutGroupsIdAssignments 设置组的授予用户（platform_admin 专属；替换语义：
 // 未列出即撤销，空数组 = 清空；ServerInterface）。multipliers 可选：user_id →
 // 该用户在该组的专属价格倍率（正常值 0~10；null = 清除为未设置 → 回退组
-// 倍率；T3.5 修正：用户专属倍率按组挂载）。
+// 倍率； 修正：用户专属倍率按组挂载）。
 func (h *AdminAPI) PutGroupsIdAssignments(w http.ResponseWriter, r *http.Request, id int64) {
 	var in GroupAssignmentsBody
 	if err := decode(r, &in); err != nil {

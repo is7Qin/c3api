@@ -4,9 +4,9 @@
 
 package repository_test
 
-// #18 ent IN 列表 >65,535 参数崩溃修复——真实 PG 集成测试。
+// ent IN 列表 >65,535 参数崩溃修复——真实 PG 集成测试。
 //
-// 事故（O3 压测实证）：fill 数据累计 847k 组 → ent eager-load（WithAccounts/
+// 事故（压测实证）：fill 数据累计 847k 组 → ent eager-load（WithAccounts/
 // QueryAccounts/WithUser）生成 `WHERE id IN (…847k 参数…)` 超 PostgreSQL 参数
 // 上限 65535（错误 54001 "too many parameters"）——启动 fatal、运行中静默失败
 // 返回空/部分结果。本文件验证修复后：

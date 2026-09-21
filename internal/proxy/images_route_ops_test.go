@@ -13,7 +13,7 @@ import (
 func TestImagesRouteRefEditsVsGenerationsDistinct(t *testing.T) {
 	gr := scheduler.RouteRefForOp(10, string(domain.FormatOpenAIImages), "gpt-image-1", domain.OpImagesGenerations)
 	er := scheduler.RouteRefForOp(10, string(domain.FormatOpenAIImages), "gpt-image-1", domain.OpImagesEdits)
-	// v4-S2: op-distinctness lives in the interned per-route hex (borrowed
+	// op-distinctness lives in the interned per-route hex (borrowed
 	// from the published RouteDecision), not the normalized query key — the
 	// key carries group/format/model/op only. Key-level distinction of the two
 	// ops is covered by the select_session parity corpus (images op-tags case).

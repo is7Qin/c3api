@@ -35,7 +35,7 @@ type GroupRepo struct {
 const accountGroupsMembershipSQL = `SELECT account_id, group_id FROM account_groups`
 
 func (r *GroupRepo) CreateGroup(ctx context.Context, g *domain.Group) (*domain.Group, error) {
-	// price_multiplier 恒写入（service 层把缺省归一为 10000 = ×1——T3.5 修正：
+	// price_multiplier 恒写入（service 层把缺省归一为 10000 = ×1—— 修正：
 	// API 边界 nullable float64 可表达显式 0 = 免费组，repo 不再把 0 当"未指定"
 	// 跳过落列）。DB 默认 10000 为兜底。
 	q := r.client.Group.Create().
@@ -128,7 +128,7 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 
 // LoadGroupsAccounts 全量组→账号快照（调度器启动/定时/全量失效的数据源）。
 //
-// 崩溃修复（O3 实证：847k 组 → 启动 fatal / 运行中静默空结果）：ent
+// 崩溃修复（实证：847k 组 → 启动 fatal / 运行中静默空结果）：ent
 // WithAccounts eager-load 对 m2m 边生成两跳参数化 IN——
 //  1. `SELECT account_id, group_id FROM account_groups WHERE group_id IN (全部组 id)`
 //  2. `SELECT * FROM accounts WHERE id IN (跳1的账号 id)`
@@ -137,8 +137,8 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 // 即崩溃；且 ent 邻接跳恒为参数化 IN（无法经分片控制），故本方法弃用 eager-load，
 // 改为**全表扫描 + 内存 join**（任务决策：语义允许时改 JOIN）：
 //  1. `Account.Query().WithTemplate().All`——账号全表扫描；模板 IN 参数数受
-//     模板表实体数约束（管理面小表，O3 压测仅 6 个），非账号规模驱动。
-//     模板侧嵌套 WithExt（template_ext 1:1 边缘表）——W4 快照合并
+//     模板表实体数约束（管理面小表 压测仅 6 个），非账号规模驱动。
+//     模板侧嵌套 WithExt（template_ext 1:1 边缘表）—— 快照合并
 //     StripImageTools 用；ext 的 IN 参数数同为模板实体数约束（同一小表界）。
 //  2. `Group.Query().IDs`——组 id 全表扫描（零参数；为无账号组保留空条目——
 //     与旧 eager-load 语义一致，调度器 Select 区分"组不存在"与"组无账号"）。
@@ -156,7 +156,7 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 // 组不会出现在结果中——见下方白名单守卫；旧 eager-load 同窗口行为。）
 func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain.Account, error) {
 	// 软删除：已删 account/group 不进调度器快照（成员关系白名单守卫同语义）。
-	// 模板侧嵌套 WithExt：快照合并 StripImageTools（W4；ext IN 参数数受模板
+	// 模板侧嵌套 WithExt：快照合并 StripImageTools（；ext IN 参数数受模板
 	// 表实体数约束——同一小表界，见上方注释）；账号侧 ext 不 eager-load
 	// （FK=account_id 的 IN 参数数受账号规模驱动——触顶约束，见步骤 4）。
 	accs, err := r.client.Account.Query().Where(account.DeletedAtIsNil()).
@@ -251,7 +251,7 @@ const compileStalenessSQL = `SELECT` +
 
 // CompileStalenessSnapshot runs the §9-A1 probe tuple (counts + freshness
 // maxima) for the scheduler backstop. Colocated with LoadGroupsAccounts: same
-// tables, same driver-seam convention (zero IN parameters — the O3 65,535
+// tables, same driver-seam convention (zero IN parameters — the 65,535
 // discipline), same soft-delete predicates. The scheduler consumes the tuple
 // only — no SQL, no pool ever enters the lane.
 func (r *GroupRepo) CompileStalenessSnapshot(ctx context.Context) (domain.CompileStaleness, error) {
@@ -296,7 +296,7 @@ func (r *GroupRepo) LoadGroupMultipliers(ctx context.Context) (map[int64]int, er
 
 // LoadAssignmentMultipliers 全量用户-组专属倍率快照（(user_id, group_id) →
 // 万分数；仅 group_assignments.price_multiplier 非 NULL 行——缺失 = 未设置 →
-// 用组倍率；billing.Balances.Reload/ReloadMultipliers 调用，T3.5 修正：用户
+// 用组倍率；billing.Balances.Reload/ReloadMultipliers 调用 修正：用户
 // 专属倍率按组挂载）。
 func (r *GroupRepo) LoadAssignmentMultipliers(ctx context.Context) (map[billing.AssignmentKey]int, error) {
 	rows, err := r.client.GroupAssignment.Query().
@@ -332,7 +332,7 @@ func (r *GroupRepo) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*do
 	// 同界）；account_ext 表按组定向取，不做全表扫描（组级定向重载语义）。
 	accs, err := r.client.Account.Query().
 		Where(account.DeletedAtIsNil(), account.HasGroupsWith(group.IDEQ(groupID))).
-		WithTemplate(func(q *ent.TemplateQuery) { q.WithExt() }). // W4：ext 边快照合并 StripImageTools
+		WithTemplate(func(q *ent.TemplateQuery) { q.WithExt() }). // ext 边快照合并 StripImageTools
 		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load group accounts (group %d): %w", groupID, err)

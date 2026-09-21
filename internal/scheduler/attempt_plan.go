@@ -150,7 +150,7 @@ func exploreHashForPlan(identity AttemptPlanIdentity, ordinal uint8) uint64 {
 	return ExploreHash("explore", identity.RequestID, identity.UserID, identity.RouteClassID, identity.RoutingGeneration, ordinal)
 }
 
-// laneHashForPlan draws the per-request lane decision (charter Task 12:
+// laneHashForPlan draws the per-request lane decision (charter
 // hash(lane)%10000 selects the lane). The "lane" label keeps it an
 // independent draw from the "explore" sample ticket: lane pick and sample
 // pick never couple. Zero-alloc FNV-1a64 over the canonical identity tuple,

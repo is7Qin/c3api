@@ -11,7 +11,7 @@ var reserveHook func() // ponytail: test hook for race barrier between concurren
 // routing root. An exact route miss falls back to the compiled default bucket
 // (model ""). The session is a stack value — never boxed.
 //
-// v4-S2: key-normalized lookup — the query key zeroes RouteClassID before map
+// key-normalized lookup — the query key zeroes RouteClassID before map
 // access (the old direct exact-match on the full key including hex is deleted,
 // not kept as a fast path). RouteClassID is borrowed from the found
 // RouteDecision (the stored per-route field IS the intern); the session never
@@ -80,7 +80,7 @@ func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity
 // 的唯一差异恰好落在 payloadKey 上，而那组字段正是要取新值的载荷。
 // runtime 在重载间共享同一个 *accountRuntime，故并发/状态读当前叶即读现值。
 //
-// Boundary preserved (v4-S2): the (Selection, Attempt) VALUE shape is
+// Boundary preserved: the (Selection, Attempt) VALUE shape is
 // unchanged — only the session carriage moved from heap box to stack value.
 // The session pointer here is a stack pointer that never escapes: ReserveAttempt
 // retains nothing across calls.
@@ -100,7 +100,7 @@ func (s *Scheduler) ReserveAttempt(plan *AttemptPlan) (*Selection, Attempt, erro
 // in-flight plans can move to the current leaf instead of losing their
 // fallback tail.
 //
-// v4-S3: the generation fence consults the session-cached static verdict
+// the generation fence consults the session-cached static verdict
 // (single fence-site entry) instead of scanning per attempt.
 func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection, Attempt, error) {
 	if plan == nil || plan.route == nil {

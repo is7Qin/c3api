@@ -20,7 +20,7 @@ import (
 
 // 真实 PG 基座（newPGRepos；TEST_DATABASE_URL 未设置 → Skip）：
 // 兑换码全部测试 —— code 唯一冲突、批量生成、use 唯一约束、批量失效幂等、
-// 条件递增并发防超卖（评审 I-2）、原子资源方法（评审 I-1）、WithTx 回滚（评审 I-1）。
+// 条件递增并发防超卖、原子资源方法、WithTx 回滚。
 
 func codeFor(tag string, typ domain.RedemptionType, maxUses int) *domain.RedemptionCode {
 	return &domain.RedemptionCode{
@@ -149,7 +149,7 @@ func TestRedemptionUsePG(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrInvalidSort)
 }
 
-// TestRedemptionUseRetentionPG F3-2 redemption_uses 90 天 TTL 有界批删（真实
+// TestRedemptionUseRetentionPG redemption_uses 90 天 TTL 有界批删（真实
 // PG）：超窗行清理、窗口内行保留、批删有界（超大批注入 → 多轮收敛，断言每轮
 // 上限 5000）。普通表无分区可 DROP——DELETE 批删路径（retention worker 周期
 // 任务内调用）。
@@ -239,7 +239,7 @@ func TestDeactivateCodesPG(t *testing.T) {
 	require.Equal(t, int64(0), n, "全 no-op")
 }
 
-// TestIncrementUsedConcurrentPG 条件递增防超卖（评审 I-2）：max_uses=2 的码，
+// TestIncrementUsedConcurrentPG 条件递增防超卖：max_uses=2 的码，
 // 3 并发 IncrementUsed → 恰 2 个 true 1 个 false（DB 行锁 + WHERE 原子，不超卖）。
 func TestIncrementUsedConcurrentPG(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -289,7 +289,7 @@ func TestIncrementUsedConcurrentPG(t *testing.T) {
 	require.False(t, ok, "已用尽 → false")
 }
 
-// TestUserResourceUpdatePG 原子资源方法（评审 I-1）：UpdateUserBalance 并发增量不丢；
+// TestUserResourceUpdatePG 原子资源方法：UpdateUserBalance 并发增量不丢；
 // UpdateUserMaxConcurrency 0 特判（0 → value；非 0 → 累加）。
 func TestUserResourceUpdatePG(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -336,7 +336,7 @@ func TestUserResourceUpdatePG(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrNotFound)
 }
 
-// TestWithTxPG 事务形态（评审 I-1）：
+// TestWithTxPG 事务形态：
 // 1) 提交路径：tx 内 建码 + 原子更新 + use + 条件递增，全落库；
 // 2) 回滚路径：fn 返回错误 → 全部无残留（含 raw SQL 原子更新，走 tx 连接）。
 func TestWithTxPG(t *testing.T) {

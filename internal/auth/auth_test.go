@@ -27,7 +27,7 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 	require.False(t, VerifyPassword(hash, ""))
 }
 
-// 迁移兼容（评审 M-2）：sub2api 同参数（bcrypt DefaultCost=10）生成的 hash
+// 迁移兼容：sub2api 同参数（bcrypt DefaultCost=10）生成的 hash
 // 直接可验证——用 bcrypt 库以 DefaultCost 独立生成，走本包 VerifyPassword。
 func TestPasswordSub2apiHashCompatible(t *testing.T) {
 	b, err := bcrypt.GenerateFromPassword([]byte("migrated-pass"), bcrypt.DefaultCost)
@@ -35,7 +35,7 @@ func TestPasswordSub2apiHashCompatible(t *testing.T) {
 	require.True(t, VerifyPassword(string(b), "migrated-pass"), "sub2api 同参数 hash 可直接验证")
 }
 
-// 密码 ≤72 字节校验（bcrypt 截断限制）：超长拒绝而非静默截断（评审 M-2）。
+// 密码 ≤72 字节校验（bcrypt 截断限制）：超长拒绝而非静默截断。
 func TestPasswordLenLimit(t *testing.T) {
 	short := make([]byte, 72)
 	for i := range short {

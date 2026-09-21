@@ -60,7 +60,7 @@ func TestPGBillingDeductLockTimeout(t *testing.T) {
 	u := seedPGUser(t, repos, "lock-contention@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
 
-	// 种子 unbilled 行先行（F2 单写点：usage flusher 落库 → 游标消费）
+	// 种子 unbilled 行先行（单写点：usage flusher 落库 → 游标消费）
 	seedUnbilled(t, repos, fullLogFor(u.ID, "lock-contention-req"))
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)

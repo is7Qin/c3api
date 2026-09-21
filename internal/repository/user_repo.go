@@ -23,12 +23,12 @@ import (
 type UserRepo struct {
 	client *ent.Client
 	// driver 为 raw SQL（原子资源方法）用：普通 client 与 tx client（WithTx 内）
-	// 均可用——评审 I-1。ent v0.14 生成代码无 ExecContext/QueryContext，
+	// 均可用——评审。ent v0.14 生成代码无 ExecContext/QueryContext，
 	// raw SQL 经 dialect.Driver 统一执行。
 	driver dialect.Driver
 }
 
-// UpdateUserBalance 原子增减余额（评审 I-1）：SET balance = balance + delta——
+// UpdateUserBalance 原子增减余额：SET balance = balance + delta——
 // 服务端原子，不读改写（并发增量不丢）；普通 client 与 tx client 均可用。
 // 用户不存在 → ErrNotFound（0 行受影响 = 用户已删除，兑换编排整体回滚）。
 func (r *UserRepo) UpdateUserBalance(ctx context.Context, userID, delta int64) error {
@@ -47,7 +47,7 @@ func (r *UserRepo) UpdateUserBalance(ctx context.Context, userID, delta int64) e
 	return nil
 }
 
-// UpdateUserMaxConcurrency 原子更新并发上限（评审 I-1）：0 = 不限语义特判入 SQL
+// UpdateUserMaxConcurrency 原子更新并发上限：0 = 不限语义特判入 SQL
 // 单语句（CASE WHEN max_concurrency = 0 THEN value ELSE max_concurrency + value
 // END）——当前不限直接设为 value，非 0 累加，无读改写竞态。
 // 用户不存在 → ErrNotFound。
@@ -94,7 +94,7 @@ func (r *UserRepo) ListUserEmails(ctx context.Context, ids []int64) (map[int64]s
 }
 
 // CreateTempBalance 创建临时额度行（注册赠品、兑换码兑换等）：每笔独立行、
-// 独立到期（多笔不同到期共存，Phase 5 FEFO 扣费）。user_id 外键必存在
+// 独立到期（多笔不同到期共存 FEFO 扣费）。user_id 外键必存在
 // （服务层先 CreateUser 拿到 id）。expiresAt/note 为 nil 时不落该列（nil = 永久）；
 // 兑换码路径必非零（temp_balance 码 resource_expires_at 生成时必填，决策 4）。
 // WithTx 事务内经 tx client 插入，随整体提交/回滚；普通 client 亦可用。
@@ -272,9 +272,9 @@ type UserPatch struct {
 }
 
 // UpdateUser 按 patch 更新（email 不可变、密码走 UpdateUserPassword）。价格
-// 倍率按组（T3.5 修正）挂在 group_assignments 上，用户本体无倍率字段——见
+// 倍率按组（修正）挂在 group_assignments 上，用户本体无倍率字段——见
 // GroupAssignmentRepo.SetMultiplier。
-// 条件更新形态 `Update().Where(id, balance=old)`（评审 I-1 原子原语同族：不用
+// 条件更新形态 `Update().Where(id, balance=old)`（原子原语同族：不用
 // FOR UPDATE 行锁——跨请求持锁与多实例不兼容）；0 行命中：用户缺失 →
 // ErrNotFound，条件不满足（期间有扣费）→ ErrConflict（service 层重读重试
 // ≤3 次，new 保持管理员显式意图）。成功路径 UPDATE + Get 返回行（与旧
@@ -381,7 +381,7 @@ func (r *UserRepo) UpdateUserBalanceWarningThreshold(ctx context.Context, userID
 }
 
 // LoadUsers 全量用户快照（Auth 内存表：RequireJWT 用户状态校验 + token_version
-// 撤销比对 + adminAuth 快照 role 覆盖 claims（F1 降权即时生效）；用户变更走
+// 撤销比对 + adminAuth 快照 role 覆盖 claims（降权即时生效）；用户变更走
 // invalidate → Reload 全量刷新，不用 DB 直查）。一次查询带 status+role+
 // token_version 三列（快照条目单次查找零分配；spec 2026-08-25-jwt-password-
 // revocation）。
@@ -397,9 +397,9 @@ func (r *UserRepo) LoadUsers(ctx context.Context) (map[int64]domain.UserSnapshot
 	return out, nil
 }
 
-// LoadBalances 全量余额快照（id → balance 毫分；Phase 5 计费余额预检数据源，
+// LoadBalances 全量余额快照（id → balance 毫分； 计费余额预检数据源，
 // billing.Balances.Reload 调用）。失败返回错误——调用方 fail-safe 保留旧快照。
-// 用户专属倍率按组（T3.5 修正）挂在 group_assignments 上，不在此查询
+// 用户专属倍率按组（修正）挂在 group_assignments 上，不在此查询
 // （见 GroupRepo.LoadAssignmentMultipliers）。
 func (r *UserRepo) LoadBalances(ctx context.Context) (map[int64]int64, error) {
 	rows, err := r.client.User.Query().Select(user.FieldID, user.FieldBalance).All(ctx)

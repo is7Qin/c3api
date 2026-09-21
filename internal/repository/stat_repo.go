@@ -31,7 +31,7 @@ import (
 // DSN 共享连接上限）。usage_stats / usage_entity_stats 均为分区表（用户裁决
 // 2026-08-11：PG DELETE 不释放空间，保留清理必须 DROP 分区 O(1)）——清理由
 // retention worker 经 PartitionRepo 执行；两表只由离线聚合 worker 写入
-// （DELETE+INSERT 覆盖语义，无双写者、无 merge 累加——issue #8 教训）。
+// （DELETE+INSERT 覆盖语义，无双写者、无 merge 累加——issue 教训）。
 type StatRepo struct {
 	client *ent.Client
 	pool   *pgxpool.Pool
@@ -187,7 +187,7 @@ GROUP BY 1, 2, 3`
 // aggErrLogSQL err_logs → 纯错误桶补充（count 语义；WHERE error_type <> 'abort'
 // 防双计——abort 行已由 aggUsageSQL 全字段计；spec §3.2）。**rc = count(\*)**
 // ——err_logs 含豁免非错误行（error_type='none'），request_count 必须计入
-// （Momus M1 勘误：勿按"rc=0"理解）；ec = FILTER (WHERE error_type <> 'none')。
+// （勘误：勿按"rc=0"理解）；ec = FILTER (WHERE error_type <> 'none')。
 // 瘦表无 tokens/cost/call_count/TTFT 列 → 恒 0 补位（11 测量列 + 全零直方图；
 // 列序对齐扫描：raw 恒在 cost 后）。
 var aggErrLogSQL = `SELECT ` + aggDimCols + `,
@@ -348,7 +348,7 @@ func statsAggRowArgs(b *domain.StatBucket, now time.Time) []any {
 // 双表扩展）：DELETE cube [range] → INSERT cube → DELETE entity [range] →
 // INSERT entity → watermark 推进 wmTo。**同一事务**——任一步失败整体回滚 →
 // 游标不动 → 重算恢复不双计（双表原子：cube 失败则 entity 同回滚，反之亦然）；
-// 重复执行同范围结果一致（覆盖语义，issue #8 教训：修正/补账通过重算 bucket
+// 重复执行同范围结果一致（覆盖语义，issue 教训：修正/补账通过重算 bucket
 // 实现，非累加）。**wmTo = 读窗口 T（≠ 重算范围上界 delTo）**——watermark 推进
 // 到 delTo 会永久跳过 [T, delTo) 的行（要防的错误形态）；两范围分离由
 // 调用方 worker 执行（见 usage/stats_agg.go）。Upsert（COPY+ON CONFLICT 累加）

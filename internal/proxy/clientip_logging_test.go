@@ -8,7 +8,7 @@ package proxy
 //   - on：伪造头命中 → usage/err 行带 client_ip
 //   - off：伪造头被忽略（恒 RemoteAddr 剥端口——零伪造面）
 //   - on 无头 → RemoteAddr 值
-//   - 不变量（gate M1）：401 鉴权失败（rm 创建在鉴权前）+ 429 并发超限 +
+//   - 不变量：401 鉴权失败（rm 创建在鉴权前）+ 429 并发超限 +
 //     402 余额预检——全部拒绝路径 err_logs 行恒带 client_ip
 //
 // 开关经测试 seam 构造后翻转（p.cfg.BehindCDN，同 p.auth.Upsert 先例
@@ -110,7 +110,7 @@ func TestProxyClientIPBehindCDNNoHeaderFallback(t *testing.T) {
 	require.Equal(t, "192.0.2.1", store.logs[0].ClientIP, "on 无头 → RemoteAddr 剥端口")
 }
 
-// 不变量（gate M1）：401 鉴权失败（rm 创建在鉴权前）+ 429 并发超限
+// 不变量：401 鉴权失败（rm 创建在鉴权前）+ 429 并发超限
 // ——全部拒绝路径 err_logs 行恒带 client_ip（提取在鉴权前，recordRejected 的
 // ctx 统一带 rm）。成功路径行（无伪造头）同时断言 RemoteAddr 兜底。
 func TestProxyClientIPRejectedRowsAlwaysCarryIP(t *testing.T) {
@@ -120,7 +120,7 @@ func TestProxyClientIPRejectedRowsAlwaysCarryIP(t *testing.T) {
 	p := newTestProxyTimeoutLogs(t, up.URL, 1, store)
 	p.cfg.BehindCDN = true
 
-	// 401 鉴权失败：错误 key → 拒绝行带 client_ip（M1 关键路径：此前 401 分支
+	// 401 鉴权失败：错误 key → 拒绝行带 client_ip（关键路径：此前 401 分支
 	// 在 rm 创建之前失败返回，ctx 无 rm → recordRejected 行恒无 client_ip）
 	req := chatReq("wrong-key")
 	req.Header.Set("CF-Connecting-IP", "9.9.9.9")

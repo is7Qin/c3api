@@ -361,7 +361,7 @@ func TestRedeem(t *testing.T) {
 		require.Zero(t, got.MaxConcurrency)
 	})
 
-	t.Run("重复兑换 409（先查 use，评审 M-1）", func(t *testing.T) {
+	t.Run("重复兑换 409（先查 use，评审）", func(t *testing.T) {
 		u := seedUser(t, fs, "dup@example.com", 0, 0)
 		c := genOne(t, svc, GenerateRequest{Type: domain.RedemptionTypeBalance, Value: 100}, 0)
 		_, err := svc.Redeem(ctx, c.Code, u.ID)
@@ -376,7 +376,7 @@ func TestRedeem(t *testing.T) {
 		require.Equal(t, int64(100), got.Balance, "重复兑换余额不变")
 	})
 
-	t.Run("已失效码的重复兑换仍 409（评审 M-1）", func(t *testing.T) {
+	t.Run("已失效码的重复兑换仍 409", func(t *testing.T) {
 		u := seedUser(t, fs, "dupdis@example.com", 0, 0)
 		c := genOne(t, svc, GenerateRequest{Type: domain.RedemptionTypeBalance, Value: 100}, 0)
 		_, err := svc.Redeem(ctx, c.Code, u.ID)
@@ -386,7 +386,7 @@ func TestRedeem(t *testing.T) {
 		require.ErrorIs(t, err, ErrConflict, "先查 use：已兑换事实优先于码状态")
 	})
 
-	t.Run("用尽 400 + 回滚（评审 I-1/I-2）", func(t *testing.T) {
+	t.Run("用尽 400 + 回滚", func(t *testing.T) {
 		c := genOne(t, svc, GenerateRequest{Type: domain.RedemptionTypeBalance, Value: 100}, 0) // max_uses 1
 		u1 := seedUser(t, fs, "exhaust1@example.com", 0, 0)
 		u2 := seedUser(t, fs, "exhaust2@example.com", 0, 0)

@@ -54,7 +54,7 @@ func TestRed_Blocker1_ImagesDistinct(t *testing.T) {
 	require.NoError(t, err)
 	rcGenHex := domain.RouteClassIDHex(genRC)
 	rcEditHex := domain.RouteClassIDHex(editRC)
-	// v4-S2: lookups ride normalized keys; op-distinctness lives in the interned hex.
+	// lookups ride normalized keys; op-distinctness lives in the interned hex.
 	require.NotEqual(t, rcGenHex, rcEditHex)
 	rrGen := RouteRefForOp(10, string(domain.FormatOpenAIImages), "m", domain.OpImagesGenerations)
 	rrEdit := RouteRefForOp(10, string(domain.FormatOpenAIImages), "m", domain.OpImagesEdits)

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// v3-F1: the submit fence and its barrier tests are deleted with the Submit
+// the submit fence and its barrier tests are deleted with the Submit
 // queue (§5.1 DELETION LIST). The remaining contract — concurrent folds
 // racing recorder Close conserve exactly with the equation holding — is
 // retargeted onto the walk closed-gate below.

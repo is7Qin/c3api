@@ -28,7 +28,7 @@ import (
 	"github.com/is7qin/c3api/pkg/redisx"
 )
 
-// --- 协议转换路径（W5）接线测试 ---
+// --- 协议转换路径接线测试 ---
 
 // capturedUpstream 记录最近一次请求的路径与体（上游协议断言），并按路径/stream
 // 返回对应协议的非流式 JSON 或 SSE 流。
@@ -354,7 +354,7 @@ func TestConvertedChatToRespStreamingDataOnly(t *testing.T) {
 
 	require.Equal(t, 200, rec.Code)
 	got := rec.Body.String()
-	require.NotEmpty(t, got, "缺名帧不得静默全丢（P3）")
+	require.NotEmpty(t, got, "缺名帧不得静默全丢")
 	require.Contains(t, got, `"delta":{"content":"hi"}`, "缺名 delta 帧按 data.type 推断 → content chunk")
 	require.Contains(t, got, `"usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "缺名 completed 帧推断 → 收尾 chunk 内联用量")
 	require.Contains(t, got, "data: [DONE]", "completed 推断 → [DONE] 收尾")
@@ -574,7 +574,7 @@ func TestConvertedChatToMessNonStreamingLogTotalTokens(t *testing.T) {
 	require.Equal(t, int64(8), lg.TotalTokens, "非流式 tt 由 anthropicUsageFromResponse 自带（it + ot）")
 }
 
-// --- 429 回退扩展（A-1：ErrNoAvailable 也触发转换）测试 ---
+// --- 429 回退扩展（ErrNoAvailable 也触发转换）测试 ---
 
 // userScenarioAccs 用户场景组账号（2026-08-18 用户报告）：模板 A 全协议
 // full-model（无模型空间）+ 模板 B 仅 openai-responses（models 白名单
@@ -683,7 +683,7 @@ func TestConvertedChatBusyFallback(t *testing.T) {
 
 // TestConvertedTargetAlsoBusy429 目标也全忙：客户端 429（ErrNoAvailable）→
 // 转换目标 Select ErrNoAvailable → 响应 429 "no available account" +
-// Retry-After: 1 原样（错误分流与 P-1 目标 404 成对覆盖）。
+// Retry-After: 1 原样（错误分流与 目标 404 成对覆盖）。
 func TestConvertedTargetAlsoBusy429(t *testing.T) {
 	up := &capturedUpstream{}
 	srv := up.srv(t)
@@ -715,7 +715,7 @@ func TestConvertedTargetAlsoBusy429(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "no available account")
 }
 
-// TestConvertedTargetFormatUnavailable404 P-1 分流钉死（行为漂移声明）：客户端
+// TestConvertedTargetFormatUnavailable404 分流钉死（行为漂移声明）：客户端
 // 429（ErrNoAvailable）进入转换分支后目标 Select ErrFormatUnavailable（组配了
 // chat_to_resp 但组内无 resp 模板——配置错误）→ 404 "no account supports this
 // request format" 且无 Retry-After（修复前该场景是 429 + Retry-After——404 是

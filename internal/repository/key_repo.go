@@ -31,7 +31,7 @@ var keyAdminSortFields = map[string]string{
 type KeyRepo struct {
 	client *ent.Client
 	// driver 为 raw SQL（AddQuotaUsed 单语句 CASE 批量更新）用：与 txDriver
-	// 组合保证 raw SQL 与 ent 构建器同事务连接（WithTx 同构，评审 I-1）。
+	// 组合保证 raw SQL 与 ent 构建器同事务连接（WithTx 同构，评审）。
 	driver dialect.Driver
 }
 
@@ -63,7 +63,7 @@ func (r *KeyRepo) GetKey(ctx context.Context, id int64) (*domain.Key, error) {
 	return toDomainKey(row), nil
 }
 
-// QuotaUsed 读单 key 当前已用额度（#14 预算复核点读：本地预算耗尽时
+// QuotaUsed 读单 key 当前已用额度（预算复核点读：本地预算耗尽时
 // SELECT quota_used——DB 权威值，usage.Recorder 批量增量回写后滞后 ≤ flush
 // 间隔；复核成功才重新分配本地预算）。热路径不调（仅复核慢路径）。
 func (r *KeyRepo) QuotaUsed(ctx context.Context, id int64) (int64, error) {
@@ -162,7 +162,7 @@ func (r *KeyRepo) ListKeysByUser(ctx context.Context, userID int64, q ListQuery)
 // KeyPatch key 更新补丁（对齐 UserPatch 范式）：显式字段 = 请求显式提供的字段；
 // nil = 不改（仅 Set 非 nil 列——并发两个 PUT 改不同字段各自生效，不再全列
 // 无条件写回覆盖先写者）。
-// quota_used 不写——Recorder 派生计数器（p2-12 核实：service 层无任何路径
+// quota_used 不写——Recorder 派生计数器（核实：service 层无任何路径
 // 意图写该列，全字段写回会覆盖 AddQuotaUsed 增量 → 永久少记、gate 超用
 // 不 429）；ent Save re-SELECT 返回行 → 调用方拿到的 QuotaUsed 反为 DB 新鲜
 // 值，upsertKeyMeta 顺带同步最新。
@@ -226,7 +226,7 @@ func (r *KeyRepo) DeleteKey(ctx context.Context, id int64) error {
 // DeleteKeysByGroup 软删除组的全部 key（组删除级联——deleted_at 置值，行保留
 // 不破坏 key.group_id 外键），返回本次被软删的明文列表（Auth 增量清理用；
 // 已软删 key 过滤——其明文此前已从 Auth 移除，重复返回无意义）。
-// 原子化（F5）：单条原生 SQL UPDATE + RETURNING 合一——SELECT 与 UPDATE 之间
+// 原子化：单条原生 SQL UPDATE + RETURNING 合一——SELECT 与 UPDATE 之间
 // 无窗口（并发新建 key 不会落在读-写间隙里被静默软删且明文不在返回列表）；
 // 先例 AddQuotaUsed（r.driver 为 raw SQL 入口，与 ent 构建器同事务连接）。
 func (r *KeyRepo) DeleteKeysByGroup(ctx context.Context, groupID int64) ([]string, error) {
@@ -291,7 +291,7 @@ func (r *KeyRepo) LoadKeys(ctx context.Context) (map[string]domain.KeyMeta, erro
 				meta.UserStatus = domain.UserStatus(row.Edges.User.Status)
 				meta.UserMaxConc = row.Edges.User.MaxConcurrency
 			}
-			// 组级 protocol_convert 快照（W5 热路径分支数据源；组软删窗口内
+			// 组级 protocol_convert 快照（热路径分支数据源；组软删窗口内
 			// 行仍在 → 值照旧，快照一致性由 Reload 收敛）。
 			if row.Edges.Group != nil {
 				meta.ProtocolConverts = toDomainProtocolConverts(row.Edges.Group.ProtocolConvert)
@@ -304,7 +304,7 @@ func (r *KeyRepo) LoadKeys(ctx context.Context) (map[string]domain.KeyMeta, erro
 
 // AddQuotaUsed 批量回写 key 额度消耗（增量；Recorder 节奏，内存权威，
 // DB 滞后 ≤ flush 间隔）。单条 SQL CASE 批量更新替代逐 key UpdateOneID 轮询
-// （#15 验收：10k 逐 key 额度写回是统计面慢 flush 3-5min 周期根因之一）。
+// （验收：10k 逐 key 额度写回是统计面慢 flush 3-5min 周期根因之一）。
 // key 已删（不在 IN 列表）静默跳过——回写无意义（与旧逐 key
 // ent.IsNotFound 跳过语义一致）。调用方（usage.Recorder.flushStats）按
 // quotaBatchSize 分块并以块为失败回灌原子单位——本方法单语句全成或全败。

@@ -91,7 +91,7 @@ func TestBalancesReloadAssignmentFailSafe(t *testing.T) {
 	require.Equal(t, int64(100), bal, "assignment 倍率失败 → 余额也保留旧值")
 }
 
-// TestBalancesSet O1 O(1) 语义：Set 命中已存在条目原地 Store（零拷贝）；目标
+// TestBalancesSet O(1) 语义：Set 命中已存在条目原地 Store（零拷贝）；目标
 // 用户即时可见，其余用户不受影响。
 func TestBalancesSet(t *testing.T) {
 	b := NewBalances(fakeBalLoader{m: map[int64]int64{1: 100, 2: 200}}, nil)
@@ -105,7 +105,7 @@ func TestBalancesSet(t *testing.T) {
 	require.Equal(t, int64(200), bal, "其余用户不受影响")
 }
 
-// TestBalancesSetMissingIgnored O1 语义：Set 缺失条目忽略（仅限已存在用户的
+// TestBalancesSetMissingIgnored 语义：Set 缺失条目忽略（仅限已存在用户的
 // 余额变更——PUT/Redeem/flush 回写的用户预检时已在快照内恒命中）；新用户
 // 经全量 Reload 进快照，不走 Set。
 func TestBalancesSetMissingIgnored(t *testing.T) {
@@ -116,7 +116,7 @@ func TestBalancesSetMissingIgnored(t *testing.T) {
 	require.False(t, ok, "Set 缺失条目忽略（用户创建走 Reload）")
 }
 
-// TestBalancesSetAfterReload 用户创建路径（评审 M-2）：fake store 插入新用户
+// TestBalancesSetAfterReload 用户创建路径：fake store 插入新用户
 // → 全量 Reload → 新用户即刻可读（预检 402 窗口关闭）；Set 其扣费回写命中。
 func TestBalancesSetAfterReload(t *testing.T) {
 	b := NewBalances(fakeBalLoader{m: map[int64]int64{1: 100}}, nil)
@@ -177,7 +177,7 @@ func TestBalancesBalanceOfMissing(t *testing.T) {
 	require.Zero(t, bal)
 }
 
-// TestEffectiveMultiplier 有效倍率表驱动（T3.5 修正：按组查序 assignment 专属
+// TestEffectiveMultiplier 有效倍率表驱动（修正：按组查序 assignment 专属
 // → 组倍率 → 10000）：assignment 覆盖组（含 0 免费/×10 上限）；仅组；均缺。
 func TestEffectiveMultiplier(t *testing.T) {
 	cases := []struct {

@@ -444,10 +444,10 @@ func TestContinuationExpiredFailClosed(t *testing.T) {
 	require.Equal(t, 200, w.Code)
 	mr.FastForward(continuation.TTL + time.Hour)
 
-	// Fresh binding authority (second instance / cold L1): the Redis key is
-	// gone → 410, never dispatch. The producing store's L1 mirrors the real
+	// Fresh binding authority (second instance / cold): the Redis key is
+	// gone → 410, never dispatch. The producing store's mirrors the real
 	// 24h deadline (putAt start+TTL) — miniredis FastForward cannot expire an
-	// in-process deadline, and production L1 never outlives the Redis TTL.
+	// in-process deadline, and production never outlives the Redis TTL.
 	c2, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c2) })

@@ -59,11 +59,11 @@ func TestDefaults(t *testing.T) {
 	require.Equal(t, "warn", c.Log.Level)
 	require.Equal(t, int64(50000), c.Proxy.MaxInflight)
 	require.Equal(t, 500, c.Usage.BatchSize)
-	require.Equal(t, 8, c.Usage.FlushWorkers, "usage flush 并行 worker 默认 8（O1 管道化）")
+	require.Equal(t, 8, c.Usage.FlushWorkers, "usage flush 并行 worker 默认 8（管道化）")
 	require.Equal(t, "test-admin-token", c.Admin.Token)
 	require.Equal(t, 30*time.Second, c.Scheduler.SyncInterval)
 	require.True(t, c.Billing.Enabled, "计费默认开（全链默认开启）")
-	require.Equal(t, 250*time.Millisecond, c.Billing.FlushInterval, "F2 游标轮询默认 250ms（spec-f2-ledger-cursor）")
+	require.Equal(t, 250*time.Millisecond, c.Billing.FlushInterval, " 游标轮询默认 250ms（spec-f2-ledger-cursor）")
 	require.Equal(t, 10*time.Second, c.Billing.BalanceRefreshInterval)
 }
 
@@ -315,7 +315,7 @@ func TestLoadRejectsLegacyKeys(t *testing.T) {
 	}
 }
 
-// D-TZ1 时区：非法 IANA 名 fail-fast，空串通过（进程本地缺省）。
+// 时区：非法 IANA 名 fail-fast，空串通过（进程本地缺省）。
 func TestServerTimeZoneValidation(t *testing.T) {
 	setenvRequired(t)
 	_, err := Load(writeConfig(t, `server = { time_zone = "Not/A_Zone" }`))

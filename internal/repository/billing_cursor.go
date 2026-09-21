@@ -4,7 +4,7 @@
 
 package repository
 
-// billing_cursor.go 计费游标消费面（F2 ledger-cursor，spec 2026-08-23）：取批 /
+// billing_cursor.go 计费游标消费面（ledger-cursor，spec 2026-08-23）：取批 /
 // 纯标记 / lag 观测 / 会话级 advisory lock。游标 = 部分索引 usagelog_unbilled_id
 // (id) WHERE NOT billed——行标记 billed=true 后自动退出索引，重启天然续传，无
 // watermark 表。结算事务本体见 billing_settle.go（三车道 SettleBalanceBatch /
@@ -41,14 +41,14 @@ type billingRows struct {
 func (b *billingRows) Close() { b.closeFunc() }
 
 // billingCursorLockKey 计费游标消费者会话级 advisory lock 键（固定魔数，形态
-// 对齐 statsAggLockKey；键值任意恒定即可）。**会话级持锁整周期是 Momus M1 的
+// 对齐 statsAggLockKey；键值任意恒定即可）。**会话级持锁整周期是 Momus 的
 // 双扣防线**：两实例若各自在提交前取到同批未标记行 = 双扣资金——故明令禁止
 // 每事务 pg_advisory_xact_lock 形态（事务结束即放锁，取批与标记间无互斥）。
 const billingCursorLockKey int64 = 0x62696c63 // "bilc"
 
 // fetchUnbilledSQL 取未扣账本批（游标消费主查询）：部分索引谓词同构（NOT
 // billed）+ error_type 收敛值域（usage_logs 仅 none/abort，IN 为防御性显式）。
-// F2-opt D1 单取批面：cost > 0 谓词删除——零价行同批取出由消费侧内存路由
+// 单取批面：cost > 0 谓词删除——零价行同批取出由消费侧内存路由
 // （MarkBilledBulk 纯标记），消灭 FetchZeroCostIDs 第二遍全扫查询类。ORDER BY
 // id 单调推进游标。
 const fetchUnbilledSQL = `SELECT id, COALESCE(user_id, 0), cost, model,
@@ -62,12 +62,12 @@ const fetchUnbilledSQL = `SELECT id, COALESCE(user_id, 0), cost, model,
 const markBilledBulkSQL = `UPDATE usage_logs SET billed = TRUE
 	WHERE id = ANY($1) AND NOT billed`
 
-// unbilledHeadIDSQL / unbilledHeadCreatedSQL 队头两步法探针（wave3 D-A/D-B，
+// unbilledHeadIDSQL / unbilledHeadCreatedSQL 队头两步法探针（
 // spec-f2opt-wave3 §一）：步① 走部分索引 usagelog_unbilled_id 瞬时定位最老可
 // 结算行 id（谓词同结算批：cost>0 可结算子集）；步② pkey 回表取 created_at。
 // 两次 O(log n)，替代已删除的 usagelog_unbilled_created 索引（marked 步索引
 // 维护 -33%）。
-// 语义注记（D-B）：队头行 created_at 是 MIN(created_unbilled) 的**有界近似**——
+// 语义注记：队头行 created_at 是 MIN(created_unbilled) 的**有界近似**——
 // 游标按 id 升序消费、id 与 created_at 同序（序列分配），偏差上界 = flush 缓冲
 // 延迟 + 时钟偏移（秒级），远小于保留期护栏阈值（天级）；随游标推进收敛。
 const unbilledHeadIDSQL = `SELECT id FROM usage_logs
@@ -76,8 +76,8 @@ const unbilledHeadIDSQL = `SELECT id FROM usage_logs
 
 const unbilledHeadCreatedSQL = `SELECT created_at FROM usage_logs WHERE id = $1`
 
-// FetchUnbilledBatch 取未扣账本批（F2 冻结 ABI-2，签名不得偏移）：LedgerRow
-// 瘦身投影（ABI-1），按 id 升序返回至多 limit 行。limit <= 0 → 空批（防御，
+// FetchUnbilledBatch 取未扣账本批（冻结 ，签名不得偏移）：LedgerRow
+// 瘦身投影，按 id 升序返回至多 limit 行。limit <= 0 → 空批（防御，
 // 不报错——调用方节奏参数由 config fail-fast 保证为正）。
 func (r *BillingRepo) FetchUnbilledBatch(ctx context.Context, limit int) ([]domain.LedgerRow, error) {
 	if limit <= 0 {
@@ -90,7 +90,7 @@ func (r *BillingRepo) FetchUnbilledBatch(ctx context.Context, limit int) ([]doma
 	return scanLedgerRows(rows)
 }
 
-// MarkBilledBulk 纯标记（F2 冻结 ABI-2，签名不得偏移）：仅零价行快速路径——
+// MarkBilledBulk 纯标记（冻结 ，签名不得偏移）：仅零价行快速路径——
 // 幂等（AND NOT billed），单语句原子。行不存在/已标记 →
 // 静默跳过（幂等语义，不报错）。
 func (r *BillingRepo) MarkBilledBulk(ctx context.Context, ids []int64) error {
@@ -101,9 +101,9 @@ func (r *BillingRepo) MarkBilledBulk(ctx context.Context, ids []int64) error {
 	return err
 }
 
-// UnbilledLag 游标积压度量（wave3 D-B 签名收缩）：最老可结算行 created_at，
+// UnbilledLag 游标积压度量（签名收缩）：最老可结算行 created_at，
 // ok=false = 游标空。精确 COUNT 已删（无硬消费者——护栏本质是时间判据；
-// Stats().UnbilledRows 降级为占位 0，spec §一 D-B 显式化）。队头两步法见
+// Stats().UnbilledRows 降级为占位 0，spec §一 显式化）。队头两步法见
 // unbilledHeadIDSQL 注释。
 func (r *BillingRepo) UnbilledLag(ctx context.Context) (oldestCreated time.Time, ok bool, err error) {
 	id, ok, err := r.probeCursorHead(ctx)
@@ -199,7 +199,7 @@ func (r *BillingRepo) execAffected(ctx context.Context, query string, args []any
 	return exe.ExecAffected(ctx, query, args)
 }
 
-// scanLedgerRows LedgerRow 扫描（fetchUnbilledSQL 列序 = ABI-1 字段序）。
+// scanLedgerRows LedgerRow 扫描（fetchUnbilledSQL 列序 = 字段序）。
 func scanLedgerRows(rows *billingRows) ([]domain.LedgerRow, error) {
 	defer rows.Close()
 	out := make([]domain.LedgerRow, 0, 64)

@@ -182,7 +182,7 @@ func TestUserKeysLifecycle(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.Equal(t, int64(1), list.Total)
 
-	// 软删 key 不可复活（F2 契约）：删除后 PUT/Rotate → 404
+	// 软删 key 不可复活（契约）：删除后 PUT/Rotate → 404
 	rec = doUser(http.MethodPut, "/api/user/keys/"+itoa(*created.ID), `{"name":"revived"}`, token)
 	require.Equal(t, http.StatusNotFound, rec.Code, "已删 key PUT → 404: %s", rec.Body.String())
 	rec = doUser(http.MethodPost, "/api/user/keys/"+itoa(*created.ID)+"/rotate", "", token)
@@ -260,7 +260,7 @@ func TestUserUsageLogsOwnOnly(t *testing.T) {
 	require.Equal(t, userapi.RequestFormat("openai-responses"), *body.Rows[0].Format)
 	require.Equal(t, userA, *body.Rows[0].UserID, "越权 format 探测仍被 user_id 钳制（他人行 2 同 format 不混入）")
 
-	// 跨页 id 注入尝试（评审 L4）：cursor=3 的谓词窗 id<3 含他人行 2——若
+	// 跨页 id 注入尝试：cursor=3 的谓词窗 id<3 含他人行 2——若
 	// user_id 过滤缺失本页会出现 B 行（行 2 先于行 1），越权钳制在 user_id
 	// 过滤不在 cursor 值（cursor=2 会把 B 行自身排除，断言无法区分）。
 	rec = doUser(http.MethodGet, "/api/user/usage_logs?limit=1&cursor=3&"+win, "", tokenA)
@@ -294,7 +294,7 @@ func TestUserErrLogsOwnOnly(t *testing.T) {
 	store.mu.Unlock()
 	win := "from=" + base.Add(-time.Hour).Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339)
 
-	// 无 from/to → 生成层 400（user 侧 err_logs 契约同 usage_logs；评审 L2：
+	// 无 from/to → 生成层 400（user 侧 err_logs 契约同 usage_logs；评审
 	// 此前 err_logs 双侧缺该断言，usage 侧见本文件 TestUserUsageLogsOwnOnly）
 	rec := doUser(http.MethodGet, "/api/user/err_logs", "", tokenA)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "missing from/to: %s", rec.Body.String())
@@ -333,7 +333,7 @@ func TestUserErrLogsOwnOnly(t *testing.T) {
 	require.Equal(t, userapi.RequestFormat("openai-chat"), *body.Rows[0].Format)
 	require.Equal(t, userA, *body.Rows[0].UserID)
 
-	// 跨页 id 注入尝试（评审 L4）：cursor=3 的谓词窗 id<3 含他人行 2——若
+	// 跨页 id 注入尝试：cursor=3 的谓词窗 id<3 含他人行 2——若
 	// user_id 过滤缺失本页会出现 B 行（行 2 先于行 1）。
 	rec = doUser(http.MethodGet, "/api/user/err_logs?limit=1&cursor=3&"+win, "", tokenA)
 	require.Equal(t, http.StatusOK, rec.Code, "cursor injection: %s", rec.Body.String())

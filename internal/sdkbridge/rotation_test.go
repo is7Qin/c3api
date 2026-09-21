@@ -26,7 +26,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // fakeRotationStore 轮转回写替身：记录 (accountID, at, rt, expiresAt) 调用序
-// 列；err 注入失败（D4 链接管测试）。
+// 列；err 注入失败（链接管测试）。
 type fakeRotationStore struct {
 	mu    sync.Mutex
 	calls []rotationCall
@@ -155,7 +155,7 @@ func TestCodexRotationWritebackMissingRefreshKeepsOldRT(t *testing.T) {
 }
 
 // rotationUpstream401Always 恒 401 mock（新旧 at 一律 401 非判死码）——每次
-// 请求都触发 refresh（D4 重试投递测试用）。
+// 请求都触发 refresh（重试投递测试用）。
 type rotationUpstream401Always struct {
 	mu    sync.Mutex
 	calls int
@@ -244,7 +244,7 @@ func TestCodexRotationWritebackSingleFlight(t *testing.T) {
 	require.Len(t, store.snapshot(), 1, "并发单飞不重复回写——同账号轮转回调串行")
 }
 
-// TestCodexRotationWritebackFailureD4Fatal 回写失败 → D4 链接管：回调 panic
+// TestCodexRotationWritebackFailureD4Fatal 回写失败 → 链接管：回调 panic
 // → SDK recover → pending 重试投递（同一 (at, rt) 幂等重试）→ 连续失败达阈
 // 值（默认 3）→ CallbackDeliveryError fatal → 统一回调单次上报（fail-closed：
 // 令牌无法持久化 = 账号失效信号）。
@@ -260,8 +260,8 @@ func TestCodexRotationWritebackFailureD4Fatal(t *testing.T) {
 
 	cred := oauthCred(7, "at-old", "rt-1")
 
-	// R1：refresh run1 回调失败（fail#1，pending，本次 at 放行）→ 401 重试
-	// 防重试风暴不再 refresh → HTTPError 401（回写失败不阻塞请求——D4 语义）
+	// R1：refresh run1 回调失败（fail，pending，本次 at 放行）→ 401 重试
+	// 防重试风暴不再 refresh → HTTPError 401（回写失败不阻塞请求—— 语义）
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
 	var he *codexsdk.HTTPError
@@ -269,7 +269,7 @@ func TestCodexRotationWritebackFailureD4Fatal(t *testing.T) {
 	require.Len(t, store.snapshot(), 1, "R1 回调失败一次（pending 未交付）")
 	require.Empty(t, handler.snapshot(), "R1 不触发 fatal 上报")
 
-	// R2：refresh run2 先 deliverPendingRotate（fail#2）→ 新回调失败（fail#3
+	// R2：refresh run2 先 deliverPendingRotate（fail）→ 新回调失败（fail
 	// ≥ 阈值）→ CallbackDeliveryError fatal → 统一回调单次上报
 	_, err = a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
@@ -278,7 +278,7 @@ func TestCodexRotationWritebackFailureD4Fatal(t *testing.T) {
 	require.Equal(t, 3, cd.Attempts)
 
 	calls := handler.snapshot()
-	require.Len(t, calls, 1, "D4 fatal 统一上报恰一次（双源去重——OnAuthFatal 与 errors.As 同 fatal）")
+	require.Len(t, calls, 1, " fatal 统一上报恰一次（双源去重——OnAuthFatal 与 errors.As 同 fatal）")
 	var cd2 *codexsdk.CallbackDeliveryError
 	require.True(t, errors.As(calls[0].fatal, &cd2))
 	require.Equal(t, int64(7), calls[0].accountID)

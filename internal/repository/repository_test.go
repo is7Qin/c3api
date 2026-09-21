@@ -303,8 +303,8 @@ func TestAccountAndGroup(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(2)))
 	tr.pool.ExpectCommit()
 
-	// Group create（Phase 3a：无 key 字段，visibility 默认 public；
-	// price_multiplier 恒写入——T3.5 修正：service 归一缺省为 10000，显式 0 = 免费组；
+	// Group create（无 key 字段，visibility 默认 public；
+	// price_multiplier 恒写入—— 修正：service 归一缺省为 10000，显式 0 = 免费组；
 	// protocol_convert 恒写入——JSON 数组列：空数组 = off（service 归一缺省）
 	tr.pool.ExpectQuery(q(`INSERT INTO "groups"`)).
 		WithArgs("g1", group.VisibilityPublic, pgxmock.AnyArg(), json.RawMessage(`[]`), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -337,7 +337,7 @@ func TestAccountAndGroup(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(3)))
 
 	// LoadGroupsAccounts -> accounts 全表 + templates(eager) + groups id 全表
-	// + account_groups 全表成员关系（#18：零 IN 参数全扫描，替代 ent
+	// + account_groups 全表成员关系（零 IN 参数全扫描，替代 ent
 	// eager-load 的 `WHERE group_id IN (全部组 id)`——组数 >65,535 超 PG
 	// 参数上限）
 	tr.pool.ExpectQuery(q(`FROM "accounts"`)).
@@ -345,7 +345,7 @@ func TestAccountAndGroup(t *testing.T) {
 	tr.pool.ExpectQuery(q(`FROM "templates"`)).
 		WithArgs(int64(1)).
 		WillReturnRows(templateRow())
-	// W4：模板侧嵌套 WithExt（template_ext 1:1）——快照合并 StripImageTools；
+	// 模板侧嵌套 WithExt（template_ext 1:1）——快照合并 StripImageTools；
 	// 空结果 → Ext 边 nil → 快照 false（未配置 = 关闭）
 	tr.pool.ExpectQuery(q(`FROM "template_exts"`)).
 		WithArgs(int64(1)).
@@ -558,7 +558,7 @@ func TestLogsAndStats(t *testing.T) {
 	// status_code 已从 usage_logs 移除（分表设计瘦身，错误审计列归 err_logs）
 	// ——InsertBatch 不再携带该列）
 	// 参数面钉死（45 参 = r1 段 25 + r2 段 20）：ent CreateBulk 按字段名字母序
-	// 装配各元组占位符；billed（F2 ledger-cursor）字母序落在 account_id 之后、
+	// 装配各元组占位符；billed（ledger-cursor）字母序落在 account_id 之后、
 	// cache_creation_tokens 之前——注意与 COPY/DDL 列序（overdraft 之后）不同，
 	// 两套列序勿混。两行可选字段集合不同（r1 富：ttft/价格四族/raw_cost；
 	// r2 疏：仅 raw_cost=0 恒落），逐段核对；billing_tier/mapped_model/

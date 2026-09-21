@@ -72,7 +72,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	defer up.Close()
 
 	// 落库数据：codex-pat 模板 + 组 + 账号 + account_ext（PAT 凭据 + 伪装身份
-	// 四元组持久化——META-2 断言面：HTTP 面注入 client_metadata）
+	// 四元组持久化—— 断言面：HTTP 面注入 client_metadata）
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 		Name: "codex-tpl", BaseURL: "",
 		CredentialType:   credential.TypeCodexPAT,
@@ -111,7 +111,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// 计费钩子：价格快照 + 余额快照；单写点：billable 行经 rec → repos.Usages
-	// 直落 usage_logs（F2：无 flusher 分流）。
+	// 直落 usage_logs（无 flusher 分流）。
 	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
 	require.NoError(t, bal.Reload(ctx), "余额快照加载")
 	rec := usage.New(usage.UsageConfig{
@@ -151,7 +151,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 		t.Fatalf("非流式 wire 必须 stream:true（SDK 注入）, body = %s", upc.body(0))
 	}
 
-	// META-2：伪装身份注入——上游收到 client_metadata（account_ext 持久化值 →
+	// 伪装身份注入——上游收到 client_metadata（account_ext 持久化值 →
 	// 快照 → codexIdentityFromExt → SDK 注入）：恒 4 key + turn_id UUIDv7
 	//（spec 2026-08-15 验收面）
 	cm := gjson.GetBytes(upc.body(0), "client_metadata")

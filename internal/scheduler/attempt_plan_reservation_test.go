@@ -30,7 +30,7 @@ func TestSchedulerNewAttemptPlanReservesExactCompiledRoute(t *testing.T) {
 
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-1", UserID: 7}, route)
 	require.NoError(t, err)
-	// v4-S2: the query key stays normalized; RouteClassID is borrowed from
+	// the query key stays normalized; RouteClassID is borrowed from
 	// the interned published decision.
 	dec, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIChat), "m")
 	require.True(t, ok)

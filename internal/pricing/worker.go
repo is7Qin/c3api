@@ -55,7 +55,7 @@ type SyncWorkerConfig struct {
 }
 
 // SyncWorker 模型价格同步 worker（worker.Worker 契约）：启动异步拉取一次 +
-// gronx cron 定期循环。并发安全注记（评审 M-3）：手动 sync 与 cron 并发拉取
+// gronx cron 定期循环。并发安全注记：手动 sync 与 cron 并发拉取
 // 无锁——幂等安全（upsert 语义），最坏浪费一次 fetch，无需额外处理。
 type SyncWorker struct {
 	fetch    Fetcher
@@ -93,7 +93,7 @@ func (w *SyncWorker) Name() string { return "pricing-sync" }
 
 // Start 启动：异步拉取一次（独立 goroutine，不阻塞 Start/main——启动流程不被
 // 外网延迟阻塞）+ cron 循环。重复 Start 幂等（返回错误）。启动拉取与 cron 首
-// 触发可能并发（如 cron 为每分钟）——幂等安全，最坏浪费一次 fetch（M-3 同款）。
+// 触发可能并发（如 cron 为每分钟）——幂等安全，最坏浪费一次 fetch（同款）。
 func (w *SyncWorker) Start(ctx context.Context) error {
 	if !w.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("pricing: sync worker already started")

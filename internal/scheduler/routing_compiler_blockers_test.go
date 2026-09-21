@@ -60,7 +60,7 @@ func TestRoutingCompilerModelOperationSeparation(t *testing.T) {
 	require.True(t, ok)
 	respDec, ok := view.routes[rrResp]
 	require.True(t, ok)
-	// v4-S2: op separation lives in the interned per-route hex, not the normalized key.
+	// op separation lives in the interned per-route hex, not the normalized key.
 	require.NotEmpty(t, chatDec.RouteClassID)
 	require.NotEmpty(t, respDec.RouteClassID)
 	require.NotEqual(t, chatDec.RouteClassID, respDec.RouteClassID)
@@ -260,7 +260,7 @@ func TestRoutingCompilerRouteRefCollisions(t *testing.T) {
 	wsDec, ok2 := view.routes[rrWS]
 	require.True(t, ok1)
 	require.True(t, ok2)
-	// v4-S2: op-distinctness lives in the interned per-route hex, not the normalized key.
+	// op-distinctness lives in the interned per-route hex, not the normalized key.
 	require.NotEmpty(t, respDec.RouteClassID)
 	require.NotEmpty(t, wsDec.RouteClassID)
 	require.NotEqual(t, respDec.RouteClassID, wsDec.RouteClassID)

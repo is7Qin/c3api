@@ -6,7 +6,7 @@ package domain
 
 import "time"
 
-// RedemptionType 兑换码类型：资源发放的通用载体（Phase 5 计费前基础设施）。
+// RedemptionType 兑换码类型：资源发放的通用载体（计费前基础设施）。
 // balance = users.balance += value；concurrency = users.max_concurrency（0 = 不限特判）；
 // temp_balance = 插入 temp_balances 行（resource_expires_at 必填）。
 // 类型 → applier 注册表：新类型 = 新增 applier，兑换流程零改动。

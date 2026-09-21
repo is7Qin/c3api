@@ -141,7 +141,7 @@ func TestStatsAggWorkerTwoRange(t *testing.T) {
 	require.Len(t, aggr, 1)
 	require.Equal(t, h, aggr[0].from, "DELETE 下界 = 重算范围下界")
 	require.Equal(t, h.Add(time.Hour), aggr[0].to, "DELETE 上界 = 重算范围上界")
-	require.Equal(t, h.Add(19*time.Minute), wm, "watermark 只推进到 T（≠ R1——推进到 R1 会永久跳过 [T,R1) 的行，P1-A）")
+	require.Equal(t, h.Add(19*time.Minute), wm, "watermark 只推进到 T（≠ R1——推进到 R1 会永久跳过 [T,R1) 的行）")
 
 	// 观测面：watermark/上轮桶数/上轮行数已推进（cycle 2 后取值）
 	st := w.Stats().(StatsAggWorkerStats)

@@ -12,7 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Windowed quality reads (incident-wiring Phase 1): the settled-PG half of
+// Windowed quality reads (incident-wiring): the settled-PG half of
 // the compiler's windowed data path. Both queries read routing_quality_rollup
 // ONLY (never instance tables, never raw logs) and return one row per
 // (route_class_id, candidate_fingerprint), summed across quality classes —

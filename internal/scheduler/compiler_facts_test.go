@@ -21,7 +21,7 @@ func ownershipFixture(t *testing.T) *Scheduler {
 	a2.BaseURL = strPtr("https://override/v1")
 	// 候选内容代际是 K（identity_revision），不是客户端 CAS 令牌 C
 	// （routing_compiler_candidates.go：f.revision = st.acc.IdentityRevision）。
-	// 本行原本设 LifecycleRevision，在 P5 改名后已与 f.revision 脱钩——留着
+	// 本行原本设 LifecycleRevision，在 改名后已与 f.revision 脱钩——留着
 	// 只会让「代际流动」这条断言退化为对 0 的比较。
 	a2.IdentityRevision = 2
 	a2.UpstreamCostMultiplierBp = 8000

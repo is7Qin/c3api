@@ -229,7 +229,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.Zero(t, rec.countKind("accounts"))
 	})
 
-	t.Run("组授予 + 用户-组专属倍率 → Multipliers()（T3.5 按组）", func(t *testing.T) {
+	t.Run("组授予 + 用户-组专属倍率 → Multipliers()（按组）", func(t *testing.T) {
 		fs := newFakeStore()
 		rec := &invRecorder{}
 		svc := &Service{store: fs, inv: rec, log: nil}
@@ -263,7 +263,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.Equal(t, before, rec.total(), "GroupPatch 无倍率字段 → 不触发失效（矩阵：仅倍率变更走 Multipliers）")
 	})
 
-	t.Run("UpdateSetting → Settings() 且快照先刷新（#36 顺序不变量）", func(t *testing.T) {
+	t.Run("UpdateSetting → Settings() 且快照先刷新（顺序不变量）", func(t *testing.T) {
 		fs := newFakeStore()
 		rec := &invRecorder{}
 		svc := &Service{store: fs, inv: rec, log: nil}

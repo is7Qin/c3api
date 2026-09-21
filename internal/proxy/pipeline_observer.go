@@ -388,7 +388,7 @@ func clockMinute() int64 { return time.Now().UTC().Truncate(time.Minute).Unix() 
 
 // beginDispatch creates the one owner observation for one real upstream
 // dispatch, before attempt.call. The observation exists only on the plan's
-// canonical attempt identity (threaded settle value — v4-S1): a dispatch
+// canonical attempt identity (threaded settle value —): a dispatch
 // without a valid recorded attempt gets no observation and no flow binding —
 // nothing is ever recorded under a fabricated identity.
 func (p *Proxy) beginDispatch(ctx context.Context, sel *scheduler.Selection, attempt scheduler.Attempt, flow *foldOwner) (context.Context, *dispatchObservation) {

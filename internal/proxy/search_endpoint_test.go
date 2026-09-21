@@ -133,7 +133,7 @@ type searchTestAcct struct {
 	credType credential.Type
 	key      string
 	ext      *domain.AccountExt
-	// mapping 模板映射（Todo 3 identity 不变量测试；nil = 无映射——既有
+	// mapping 模板映射（identity 不变量测试；nil = 无映射——既有
 	// 用例零影响）。
 	mapping map[string]domain.ModelMappingEntry
 }
@@ -329,7 +329,7 @@ func TestSearchFunctionPriceDefaultFallback(t *testing.T) {
 	require.Equal(t, int64(1000), store.logs[0].Cost, "默认兜底 1000 毫分（$0.01/次）——非 0 计费")
 }
 
-// TestProxyQuotaDeductedBySearchDefaultPrice 跨路径回归（Todo 4）：search 端点
+// TestProxyQuotaDeductedBySearchDefaultPrice 跨路径回归：search 端点
 // quota 按最终 Cost（默认按次价 1000 毫分）经 finish 后扣——search 无 token
 // 分量（TotalTokens=0），若扣减源回退 token 口径 consumed 恒 0，断言立即失败。
 func TestProxyQuotaDeductedBySearchDefaultPrice(t *testing.T) {

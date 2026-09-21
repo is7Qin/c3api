@@ -106,7 +106,7 @@ func (l *LatchStore) ClearIfFingerprintChanged(accountID int64, currentFingerpri
 	}
 }
 
-// Hub 是规则失败事件的同步扇出中介（C1 选中）：scheduler 在 New 内
+// Hub 是规则失败事件的同步扇出中介（选中）：scheduler 在 New 内
 // Subscribe(s.onRuleFailure)；rule 工作协程经 LatchSink.FailAccount 内
 // Dispatch——同协程执行内存摘除（零异步窗口；若未来改异步，需先给
 // Select 加 latch 门）。仅构造期 Subscribe，运行时只读订阅表。

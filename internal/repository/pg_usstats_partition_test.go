@@ -181,7 +181,7 @@ func TestUsageStatsPartitionRetentionPG(t *testing.T) {
 	require.Equal(t, int64(5), req, "当日桶数据完整")
 }
 
-// TestUsageStatsPartitionConcurrentBootstrapPG 并发 bootstrap 幂等（评审 I-1
+// TestUsageStatsPartitionConcurrentBootstrapPG 并发 bootstrap 幂等（评审
 // 多实例语义）：四实例同时 EnsureUsageStatsPartitioned——42P07/23505 容忍收敛，
 // 无错误；数据保留。
 func TestUsageStatsPartitionConcurrentBootstrapPG(t *testing.T) {

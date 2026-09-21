@@ -192,7 +192,7 @@ func TestRecorderWithoutQuotaWriterSkipsQuotaAccounting(t *testing.T) {
 	require.Len(t, ls.logs, 1, "普通 usage 明细不被 quota 停用破坏")
 }
 
-// TestRecordNeverBlocks O1 管道化核心：Record 无 channel、永不阻塞——旧实现
+// TestRecordNeverBlocks 管道化核心：Record 无 channel、永不阻塞——旧实现
 // 有界 channel cap 16384 饱和后 Record 阻塞发送（off 路径幽灵根因，复测
 // 定位：16.4k goroutine 卡 chan send、healthz inflight 31-33k @10k）。无消费
 // 者（不 Start）时 pending 无界累积，30k 条（> 旧 cap）必须全部立即返回。
@@ -247,7 +247,7 @@ func TestRecordConcurrentNeverBlocks(t *testing.T) {
 	require.Equal(t, g*per, r.Pending())
 }
 
-// TestRecordAfterCloseWarnsOnce Close 后 Record（防御性缺口，评审 I-4）：
+// TestRecordAfterCloseWarnsOnce Close 后 Record（防御性缺口，评审）：
 // closed 标记生效——Warn 恰好一次（不刷屏）、明细不丢（仍聚合入 pending）、
 // 保持非阻塞。worker 管理器顺序（先停 HTTP 再 Close）下正常停机不触发。
 func TestRecordAfterCloseWarnsOnce(t *testing.T) {

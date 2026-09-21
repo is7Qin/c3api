@@ -3,7 +3,7 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // Package billing 计费核心：service_tier 归一化 + 价格矩阵纯函数计算。
-// 纯函数零分配零锁；扣费落库（T3）与请求路径分离。
+// 纯函数零分配零锁；扣费落库与请求路径分离。
 package billing
 
 import (
@@ -15,7 +15,7 @@ import (
 
 // Tier service_tier 归一化档位。与 sub2api 的 fast→priority 归一不同：fast
 // 为独立档位（Anthropic Fast Mode 整单倍率，Anthropic 官方语义；用户裁决，
-// 见 Phase 5 计划）。
+// 见 计划）。
 type Tier int
 
 const (
@@ -65,7 +65,7 @@ const (
 	TierPolicyReject      TierPolicyMode = "reject"      // 直接 400 拒绝（不转发）
 )
 
-// 溢出预算（评审 I-2）：合法域单段 t×p ≤ 1e13（毫分×1e6 原始单位），四分量
+// 溢出预算：合法域单段 t×p ≤ 1e13（毫分×1e6 原始单位），四分量
 // 合计 ≤ 4e13；fast 万分数 ≤ 1e5（实测 ×6.0 = 60000，留余量）→ 4e13×1e5
 // = 4e18 < MaxInt64。fast 万分数上界由钳制强制（双保险：本函数 fast
 // 分支 + pricing fetch assign 同钳 > 1e5 → 1e5——快照可经任何途径进入超界
@@ -76,13 +76,13 @@ const (
 	milliPerMillion = 1_000_000 // 毫分/1M tokens → 毫分的除数
 )
 
-// segBudget 单乘积上界（评审 I-1 溢出钳制）：每分量至多 2 个乘法（阈值内/
+// segBudget 单乘积上界（溢出钳制）：每分量至多 2 个乘法（阈值内/
 // 超额），四分量共 ≤ 8 个；各乘积钳制后总和 ≤ 8×segBudget ≤ MaxInt64 -
 // milliPerMillion/2，末次 (raw + 5e5) 四舍五入不回绕。
 const segBudget = (math.MaxInt64 - milliPerMillion/2) / 8
 
 // clampToken 恶意防护：恶意/异常上游可报超大 token 数（如 9e15），t×p 会
-// 回绕成负 cost（T3 扣费变反向入账）。乘法前把 token 钳到 segBudget/p，乘积
+// 回绕成负 cost（扣费变反向入账）。乘法前把 token 钳到 segBudget/p，乘积
 // 恒 ≤ segBudget；合法输入（t ≤ 1e6、p ≤ 1e7 → 乘积 ≤ 1e13）远低于上界，
 // 正常路径仅一次除法一次比较，零分配。负数 token 已在 Cost 入口钳 0。
 func clampToken(t, p int64) int64 {

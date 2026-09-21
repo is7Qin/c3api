@@ -64,7 +64,7 @@ func (e *fakeEnvelope) RawJSON() string { return e.body }
 
 // imageTestPrices 生图测试价格（litellm gpt-image-2 官方形态换算：
 // input 8e-06 → 800,000 毫分/1M、output 3e-05 → 3,000,000；per-image
-// 0.054 → 5,400 毫分/张——Task A ImageCost 实参断言同款）。
+// 0.054 → 5,400 毫分/张—— ImageCost 实参断言同款）。
 func imageTestPrices() map[string]*domain.PriceEntry {
 	i64 := func(v int64) *int64 { return &v }
 	return map[string]*domain.PriceEntry{"gpt-image-2": {

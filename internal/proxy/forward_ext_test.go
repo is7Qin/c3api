@@ -308,7 +308,7 @@ func TestProxyResponsesStreamingDataOnly(t *testing.T) {
 
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
 	body := rec.Body.String()
-	require.NotEmpty(t, body, "缺名帧不得静默全丢（P3）")
+	require.NotEmpty(t, body, "缺名帧不得静默全丢")
 	require.Contains(t, body, `"type":"response.output_text.delta"`, "字节原样透传")
 	require.Contains(t, body, `"type":"response.completed"`)
 	require.Contains(t, body, "data: [DONE]")

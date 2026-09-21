@@ -121,7 +121,7 @@ func fakeOpenAI(t *testing.T, failMode string) *httptest.Server {
 	return srv
 }
 
-// noopKeyLoader 测试 helper（Phase 3a：LoadGroupKeys → LoadKeys 形态升级）。
+// noopKeyLoader 测试 helper（LoadGroupKeys → LoadKeys 形态升级）。
 type noopKeyLoader struct{ keys map[string]domain.KeyMeta }
 
 func (n noopKeyLoader) LoadKeys(ctx context.Context) (map[string]domain.KeyMeta, error) {
@@ -336,7 +336,7 @@ func newTestProxyTplTimeoutLogs(t *testing.T, tpl *domain.Template, accountID in
 }
 
 // newTestProxyTplTimeoutRec 同 newTestProxyTplTimeoutLogs，但注入完整 Recorder
-// （P2a 拒绝路径统计聚合断言用：调用方构造 rec——含捕获 stat store——后同一
+// （拒绝路径统计聚合断言用：调用方构造 rec——含捕获 stat store——后同一
 // 实例挂 Flusher 与 proxy.rec，聚合单面可观测）。errWriter 为 errlog worker
 // 写者（captureLogStore 时与 logs 同一 store；nil = no-op——错误明细不捕获）。
 func newTestProxyTplTimeoutRec(t *testing.T, tpl *domain.Template, accountID int64, usageCapture bool, streamTimeout time.Duration, rec *usage.Recorder, bill *BillingHooks, errWriter usage.ErrLogInserter) *Proxy {
@@ -399,7 +399,7 @@ func TestProxyStreamingChat(t *testing.T) {
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "成功路径必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "成功路径必须记录一条用量")
-	// 评审 I-1：日志 Model=客户端请求模型（无映射 → MappedModel 空）
+	// 评审 日志 Model=客户端请求模型（无映射 → MappedModel 空）
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -475,7 +475,7 @@ func TestProxyStreamingChatAppliesModelMapping(t *testing.T) {
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency)
 	require.Equal(t, 1, p.rec.Pending())
-	// 评审 I-1：映射请求的日志必须保留请求模型与映射后模型
+	// 评审 映射请求的日志必须保留请求模型与映射后模型
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -516,7 +516,7 @@ func TestProxyAuthRejected(t *testing.T) {
 	p.HandleChat(rec, req)
 	require.Equal(t, 401, rec.Code)
 	// 401 鉴权失败（无请求模型可记，Model/MappedModel 均空）：recordRejected →
-	// err_logs 拒绝行（不入 usage_logs 明细——P2a 拒绝风暴不产生 pending）
+	// err_logs 拒绝行（不入 usage_logs 明细—— 拒绝风暴不产生 pending）
 	require.NoError(t, p.rec.Close(context.Background()))
 	require.NoError(t, p.errlog.Close(context.Background()))
 	store.mu.Lock()
@@ -593,7 +593,7 @@ func TestProxyFailoverOn429(t *testing.T) {
 	// 耗尽路径（请求已完成）：429 失败行（Err429）不入 usage_logs——err_logs
 	// 承载（分表：失败明细归 err_logs；pending 恒 0）
 	require.Zero(t, p.rec.Pending(), "failover 耗尽失败行不产生明细 pending")
-	// 评审 I-1：耗尽路径 Model=请求模型、MappedModel=最后一次实际尝试的映射模型
+	// 评审 耗尽路径 Model=请求模型、MappedModel=最后一次实际尝试的映射模型
 	require.NoError(t, p.rec.Close(context.Background()))
 	require.NoError(t, p.errlog.Close(context.Background()))
 	store.mu.Lock()
@@ -731,7 +731,7 @@ func TestProxyPassthrough4xx(t *testing.T) {
 	// 请求已完成（上游消费了请求）：4xx 失败行不入 usage_logs——err_logs 承载
 	//（分表：失败明细归 err_logs；pending 恒 0）
 	require.Zero(t, p.rec.Pending(), "4xx 透传不产生明细 pending")
-	// 评审 I-1：4xx 透传 Model=客户端请求模型（无映射 → MappedModel 空）
+	// 评审 4xx 透传 Model=客户端请求模型（无映射 → MappedModel 空）
 	require.NoError(t, p.rec.Close(context.Background()))
 	require.NoError(t, p.errlog.Close(context.Background()))
 	store.mu.Lock()
@@ -858,7 +858,7 @@ func TestProxyClientDisconnectFreesSlot(t *testing.T) {
 	require.Len(t, testHealthSink.throttlesFor(1), 1, "客户端断开写出失败按上游读失败惩罚")
 	require.Zero(t, ri.Concurrency, "客户端断开必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "写出失败按上游读失败处理，记 ErrAbort 用量")
-	// 评审 I-1：客户端断开（recordStreamAbort）Model=客户端请求模型
+	// 评审 客户端断开（recordStreamAbort）Model=客户端请求模型
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -904,7 +904,7 @@ func TestProxyChatFailoverSingleAccountNoPanic(t *testing.T) {
 	require.Zero(t, p.rec.Pending(), "耗尽路径失败行不产生明细 pending（err_logs 承载）")
 }
 
-// 评审 I-1：成功非流式路径日志 Model=客户端请求模型（无映射 → MappedModel 空）。
+// 评审 成功非流式路径日志 Model=客户端请求模型（无映射 → MappedModel 空）。
 func TestProxyChatNonStreamingLogsModel(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -928,8 +928,8 @@ func TestProxyChatNonStreamingLogsModel(t *testing.T) {
 	require.Equal(t, int64(5), store.logs[0].OutputTokens)
 }
 
-// 评审 I-1 + P2a：Select 失败（组内无账号支持请求格式）→ 404；本地预用量
-// 拒绝不产生 usage_logs 明细（无 tokens 无 cost，P2a 源头修复——拒绝风暴
+// 评审 Select 失败（组内无账号支持请求格式）→ 404；本地预用量
+// 拒绝不产生 usage_logs 明细（无 tokens 无 cost 源头修复——拒绝风暴
 // 不进入 pending）。
 func TestProxySelectFailLogsModel(t *testing.T) {
 	up := fakeAnthropic(t, "")
@@ -945,14 +945,14 @@ func TestProxySelectFailLogsModel(t *testing.T) {
 	p.HandleAnthropic(rec, req)
 
 	require.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
-	require.Zero(t, p.rec.Pending(), "Select 失败不产生明细 pending（P2a）")
+	require.Zero(t, p.rec.Pending(), "Select 失败不产生明细 pending")
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Empty(t, store.logs, "Select 失败不产生 usage_logs 明细（P2a）")
+	require.Empty(t, store.logs, "Select 失败不产生 usage_logs 明细")
 }
 
-// 分发实证（评审 M2）：注册自定义 provider（覆盖 api_key 类型的默认实现）→
+// 分发实证：注册自定义 provider（覆盖 api_key 类型的默认实现）→
 // 上游收到的鉴权值必须来自 provider 返回的凭据值，而非 Selection.UpstreamKey
 // 直读——证明注册表分发路径真实生效，接线非空转。
 func TestProxyCredentialDispatchUsesRegistry(t *testing.T) {
@@ -985,7 +985,7 @@ func (c customAPIKeyProvider) Credential(_ context.Context, _ credential.Credent
 	return c.val, nil
 }
 
-// 评审 M1：未知凭据类型（号池生态类型未注册）在候选指纹门即被拒（credType
+// 评审 未知凭据类型（号池生态类型未注册）在候选指纹门即被拒（credType
 // 非法 → 候选不可解析 → 选号 ErrNoAvailable）——429 无可用账号，上游不得收到
 // 任何请求，不得静默 fallback 到 api_key（fallback 是号池类型安全隐患）。
 func TestProxyCredentialUnknownTypeRejectsNoUpstreamCall(t *testing.T) {

@@ -314,7 +314,7 @@ type Template struct {
 	FormatModels     map[RequestFormat][]string // 格式 → 该格式支持的模型列表；未配置 = 全部 Models
 	ModelMapping     ModelMapping
 	// StripImageTools 模板级图像 tool 剥离开关（template_ext.strip_image_tools
-	// 快照合并，W4 消费；三类型 responses-special/codex-oauth/codex-pat 公共
+	// 快照合并 消费；三类型 responses-special/codex-oauth/codex-pat 公共
 	// 能力）：true = response.create 帧出口剥离图像工具（tools 数组 +
 	// tool_choice 悬挂；input 内嵌 v1 图像内容不做）。热路径快照布尔读 + 分支
 	// 零开销；false = 未配置/关闭（nil 与 false 同语义，快照收敛为 bool）。
@@ -421,7 +421,7 @@ type Account struct {
 type TemplateExt struct {
 	TemplateID      int64
 	CredentialType  credential.Type
-	StripImageTools *bool // 三类型公共能力开关：模板级图像 tool 剥离（W4 消费）
+	StripImageTools *bool // 三类型公共能力开关：模板级图像 tool 剥离（消费）
 }
 
 // CodexIdentity codex 账号身份四元组（对齐真实客户端语义：installation_id
@@ -459,7 +459,7 @@ type AccountExt struct {
 	CodexAccountID         *string        // 上游账号/空间标识（可留空——导入/保存时自动识别；识别失败：导入行拒绝、保存留空）
 }
 
-// CodexOAuthImportItem 批量导入 codex-oauth 单行（Task B——组合幂等键
+// CodexOAuthImportItem 批量导入 codex-oauth 单行（——组合幂等键
 // codex_email + codex_account_id；token+refresh 成对必填；expires_at 可选
 // 原始 RFC3339 字符串（service 逐行解析——格式错误 → 行级 failed 非整批
 // 400；nil = 过期未知 → 401 自愈）；max_concurrency 配置面——nil =
@@ -572,12 +572,12 @@ type Group struct {
 	ID         int64
 	Name       string
 	Visibility GroupVisibility
-	// PriceMultiplier 万分数（T3.5 价格倍率）：组默认 10000 = ×1；0 = 免费。
+	// PriceMultiplier 万分数（价格倍率）：组默认 10000 = ×1；0 = 免费。
 	// 写路径语义：Create 缺省（nil，service 归一为 10000）恒写入；Update 恒写入
 	// （PUT 全量替换）。API 边界（handler/convert.go）与正常值 float64 换算
 	// （1.5 ↔ 15000）。
 	PriceMultiplier int
-	// ProtocolConverts 分组级协议转换方向集合（只补差，W5 消费；多方向并存按
+	// ProtocolConverts 分组级协议转换方向集合（只补差 消费；多方向并存按
 	// 客户端格式命中——chat 请求走 chat_to_*、anthropic 请求走 mess_to_resp、
 	// resp 请求走 resp_to_mess）：空集合 = off = 不转换（off 不进数组）。
 	// 写路径语义：Create 缺省（handler 归一为空数组）恒写入；Update 恒写入
@@ -619,9 +619,9 @@ func (p ProtocolConvert) Valid() bool {
 
 // User 用户（顶层实体，无租户）。标识 = 邮箱；PasswordHash 为 bcrypt
 // DefaultCost(10)（与 sub2api 同参数，存量 hash 可迁移验证）。
-// Balance 最小单位（毫分；1 USD = 100,000 毫分，Phase 5 计费统一单位，
+// Balance 最小单位（毫分；1 USD = 100,000 毫分 计费统一单位，
 // 管理面 API 展示/输入换算 USD）。
-// 价格倍率按组（T3.5 修正）：挂在 group_assignment 上（GroupAssignment.
+// 价格倍率按组（修正）：挂在 group_assignment 上（GroupAssignment.
 // PriceMultiplier），用户不同组可有不同倍率——User 无倍率字段。
 type User struct {
 	ID           int64
@@ -659,7 +659,7 @@ type Key struct {
 func (k *Key) HasQuota() bool { return k.Quota > 0 }
 
 // GroupAssignment private 组的授予记录（用户 ↔ 组多对多）。
-// PriceMultiplier 该用户在该组的专属价格倍率（万分数，T3.5 修正：按组——
+// PriceMultiplier 该用户在该组的专属价格倍率（万分数 修正：按组——
 // 用户在不同组可有不同倍率）；nil = 未设置 → 用组倍率；0 = 免费。
 type GroupAssignment struct {
 	ID              int64
@@ -697,7 +697,7 @@ type KeyMeta struct {
 	HasQuota    bool
 	Quota       int64 // 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
 	QuotaUsed   int64 // 快照值（已消耗计费金额毫分，reload 时从 DB 读）；在途扣减走内存计数
-	// ProtocolConverts 组级协议转换方向集合快照值（W5）：空 = 不转换（热路径
+	// ProtocolConverts 组级协议转换方向集合快照值：空 = 不转换（热路径
 	// 分支零开销）；元素 = 客户端协议 → 模板协议（补差语义，转换器
 	// internal/protoconv；多方向按客户端格式命中，同客户端格式多方向已被
 	// 创建/更新校验拒绝）。
@@ -705,7 +705,7 @@ type KeyMeta struct {
 }
 
 // UsageLog 用量日志：user_id/key_id 为鉴权归属（context 传递，0 = 无）。
-// 计费列（Phase 5）：Cost 毫分（1 USD = 100,000 毫分）；BillingTier 请求
+// 计费列：Cost 毫分（1 USD = 100,000 毫分）；BillingTier 请求
 // service_tier 归一化值（priority/flex/fast/auto，空 = 未计费路径）；AboveHit
 // 任一分量超 above 阈值命中分段；Overdraft 本次扣费透支（负余额）。
 // ErrorMessage 错误文本（部署故障修复）：连接级 err.Error() / 4xx+ 上游 body，
@@ -759,7 +759,7 @@ type UsageLog struct {
 	BillingTier string // priority/flex/fast/auto；空 = 未计费路径
 	AboveHit    bool
 	Overdraft   bool
-	// Billed 扣费收敛标记（F2 ledger-cursor，spec 2026-08-23）：false=待对账
+	// Billed 扣费收敛标记（ledger-cursor，spec 2026-08-23）：false=待对账
 	// 消费者扣减；true=扣费事务已完成（或出生吸收态——计费关闭/匿名行）。
 	// 出生标记由 proxy.routeLog 按 NOT BillingCapture OR UserID<=0 盖章；
 	// 翻转为 true 只发生在对账事务内（与 FEFO 扣减同事务原子）。
@@ -768,7 +768,7 @@ type UsageLog struct {
 }
 
 // LedgerRow 计费游标消费行（usage_logs 未扣子集的瘦身投影；spec-f2-ledger-cursor
-// ABI-1 冻结契约）：FetchUnbilledBatch 返回、结算语句按 UserID 聚合消费。
+// 冻结契约）：FetchUnbilledBatch 返回、结算语句按 UserID 聚合消费。
 type LedgerRow struct {
 	ID          int64
 	UserID      int64
@@ -780,7 +780,7 @@ type LedgerRow struct {
 }
 
 // UserBalance 定向余额对（结算语句 debited/forced RETURNING (uid, balance_after)；
-// spec-f2opt-settlement §一 oracle 必改 #3）：保住 Balances 定向 Set 的预检
+// spec-f2opt-settlement §一 oracle 必改）：保住 Balances 定向 Set 的预检
 // 新鲜度（10s Reload 间隙 fail-closed 预检依赖它）。
 type UserBalance struct {
 	UserID  int64
@@ -790,7 +790,7 @@ type UserBalance struct {
 // SettlementSummary 单车道结算语句结果（spec-f2opt-settlement 三车道拓扑；计数
 // 守卫 + 定向余额对）。BatchRows/Marked 由仓库侧做 marked==batch 计数比对守卫
 // （不齐 = 并发标记 → 整事务回滚重放）；Quarantined 为幽灵用户行数（跳扣仍标记
-// ——不变量 #1 尾语义）；Balances 为真实用户的 (uid, balance_after) 对。
+// ——不变量 尾语义）；Balances 为真实用户的 (uid, balance_after) 对。
 type SettlementSummary struct {
 	BatchRows       int64 // 批行数（usage_logs 取出）
 	DebitedUsers    int64 // 条件扣命中用户数

@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Routing rollup read face (Todo 17 repository lane): aggregate reads over
+// Routing rollup read face (repository lane): aggregate reads over
 // routing_quality_rollup / routing_flow_rollup ONLY — never instance tables,
 // never raw usage/err logs. Half-open window [from, to) on the bucket column,
 // direct route_class_id + identity_version filters, SUM aggregation grouped by

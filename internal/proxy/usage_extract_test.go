@@ -20,11 +20,11 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// 提取单测用真实上游 JSON 构造（评审 I-1：不得用结构体 marshal 自证——
+// 提取单测用真实上游 JSON 构造（不得用结构体 marshal 自证——
 // RawJSON 路径必须经过 SDK UnmarshalJSON 才能得到原始字节）。
 
 // —— chat 流式 usage 帧（顶层 usage.*；cached_tokens 嵌套于
-// prompt_tokens_details，与 SDK CompletionUsage 结构体一致——评审 I-1） ——
+// prompt_tokens_details，与 SDK CompletionUsage 结构体一致——评审） ——
 
 func TestChatStreamUsage(t *testing.T) {
 	frame := []byte(`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5},"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":2}}}`)
@@ -134,7 +134,7 @@ func TestResponsesStreamUsage(t *testing.T) {
 	require.Equal(t, int64(20), u.ot)
 	require.Equal(t, int64(30), u.tt, "tt 线上原值——归一不改 total")
 	require.Equal(t, int64(5), u.cr, "response.usage.input_tokens_details.cached_tokens")
-	require.Zero(t, u.cc, "Responses 无 cache_creation 对象，恒 0 预期（M4）")
+	require.Zero(t, u.cc, "Responses 无 cache_creation 对象，恒 0 预期")
 
 	// 无 response / 无 usage / 显式 null → ok=false
 	_, ok = responsesCompletedUsage([]byte(`{"type":"response.completed"}`))
@@ -210,7 +210,7 @@ func TestSniffResponsesCompletedTop(t *testing.T) {
 	require.Zero(t, u.cc)
 }
 
-// —— A-1 双实现对照（改造前 gjson 版本保留为测试内对照——评审 I-1 语义等价
+// —— 双实现对照（改造前 gjson 版本保留为测试内对照——评审 语义等价
 // 验证） ——
 
 // 对照实现 = 改造前生产代码原样（gjson 多遍扫描）+ deductCacheRead 归一镜像
@@ -279,10 +279,10 @@ func sniffResponsesCompletedTopRef(data []byte) (usageTuple, bool) {
 	return t, true
 }
 
-// TestUsageExtractEquivalence A-1 语义等价双实现对照：真实上游形态用例 + 病态
+// TestUsageExtractEquivalence 语义等价双实现对照：真实上游形态用例 + 病态
 // 用例（显式 null / 缺失字段 / 字符串数字 / 嵌套同名键 / 键名前缀干扰 /
 // cache_creation 单桶缺失）全跑新实现与 gjson 对照（真实 JSON 构造，非结构体
-// marshal 自证——评审 I-1），输出元组与 ok 全等。已知差异方向（float / 指数 /
+// marshal 自证——评审），输出元组与 ok 全等。已知差异方向（float / 指数 /
 // 超 int64 / 字符串 \uXXXX 数字 / bool 字面——"保守 0"）不入本表，单独断言
 // （TestScanIntValuePathologicalDivergence）。
 func TestUsageExtractEquivalence(t *testing.T) {
@@ -306,7 +306,7 @@ func TestUsageExtractEquivalence(t *testing.T) {
 		want, wantOK := chatStreamUsageRef([]byte(f))
 		require.Equalf(t, want, got, "chat 帧: %s", f)
 		require.Equalf(t, wantOK, ok, "chat ok 帧: %s", f)
-		// 预筛超集属性（E3 核心论证钉住）：ok=true 帧必含 "usage" 子串——
+		// 预筛超集属性（核心论证钉住）：ok=true 帧必含 "usage" 子串——
 		// bytes.Contains 预筛永不漏真命中帧（scanKeyValue 先剥引号取键再
 		// 比较裸键，故键存在时原始字节必含引号形态 needle）
 		if wantOK {
@@ -376,7 +376,7 @@ func TestUsageExtractEquivalence(t *testing.T) {
 	}
 }
 
-// TestScanIntValuePathologicalDivergence A-1 病态输入差异（差异方向已注释标注
+// TestScanIntValuePathologicalDivergence 病态输入差异（差异方向已注释标注
 // 于 scanIntValue——本实现一律"保守 0"，不做双实现相等断言）：
 //   - float 字面：gjson safeInt 截断取整（12.5 → 12）
 //   - 指数 1e3：gjson parseInt 取前导数字（1）
@@ -400,7 +400,7 @@ func TestScanIntValuePathologicalDivergence(t *testing.T) {
 	require.Equal(t, int64(-5), scanIntValue([]byte(`-5`)), "负数")
 }
 
-// TestUsageExtractZeroAlloc A-1 零分配断言（对齐 respImageCount 先例——gjson
+// TestUsageExtractZeroAlloc 零分配断言（对齐 respImageCount 先例——gjson
 // GetBytes 物化 Raw 字符串分配；scanKeyValue 族纯切片零分配）：A 项全部函数
 // 命中/未命中路径均钉 AllocsPerRun == 0。
 func TestUsageExtractZeroAlloc(t *testing.T) {
@@ -413,7 +413,7 @@ func TestUsageExtractZeroAlloc(t *testing.T) {
 
 	require.Zero(t, testing.AllocsPerRun(100, func() { chatStreamUsage(chat) }))
 	require.Zero(t, testing.AllocsPerRun(100, func() { chatStreamUsage(miss) }), "usage 缺失路径同样零分配")
-	require.Zero(t, testing.AllocsPerRun(100, func() { bytes.Contains(miss, []byte(`"usage"`)) }), "E3 预筛 needle 零分配（inline 字面量编译器静态化）")
+	require.Zero(t, testing.AllocsPerRun(100, func() { bytes.Contains(miss, []byte(`"usage"`)) }), " 预筛 needle 零分配（inline 字面量编译器静态化）")
 	require.Zero(t, testing.AllocsPerRun(100, func() { anthropicStartUsage(anthropic) }))
 	require.Zero(t, testing.AllocsPerRun(100, func() { anthropicDeltaOutput(delta) }))
 	require.Zero(t, testing.AllocsPerRun(100, func() { responsesCompletedUsage(completed) }))
@@ -438,10 +438,10 @@ func TestResponsesUsageFromResponse(t *testing.T) {
 	require.Equal(t, int64(20), ct)
 	require.Equal(t, int64(30), tt, "tt 先按原始 in+out 定值再归一——数值不变量")
 	require.Equal(t, int64(5), cr, "SDK InputTokensDetails.CachedTokens 直读")
-	require.Zero(t, cc, "恒 0 预期（M4）")
+	require.Zero(t, cc, "恒 0 预期")
 }
 
-// —— deductCacheRead 归一边界（spec 2026-08-25 验收 #2） ——
+// —— deductCacheRead 归一边界（spec 2026-08-25 验收） ——
 
 func TestDeductCacheReadBoundaries(t *testing.T) {
 	require.Equal(t, int64(0), deductCacheRead(700, 700), "cr == it → 可计费输入 0（全量缓存命中）")
@@ -450,7 +450,7 @@ func TestDeductCacheReadBoundaries(t *testing.T) {
 	require.Equal(t, int64(1000), deductCacheRead(1000, -5), "负 cr 视同缺失 → 恒等（钳底由 clamp 兜底）")
 	require.Equal(t, int64(300), deductCacheRead(1000, 700), "常规路径 it − cr")
 
-	// 流式出口级数值不变量：归一前后 TotalTokens 相等（验收 #3）
+	// 流式出口级数值不变量：归一前后 TotalTokens 相等
 	// fixture 为顶层 usage 形态 → 走 responsesTopLevelUsage 出口
 	frame := []byte(`{"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5}}}`)
 	u, ok := responsesTopLevelUsage(frame)
@@ -461,7 +461,7 @@ func TestDeductCacheReadBoundaries(t *testing.T) {
 	require.Equal(t, int64(10), u.it+u.cr, "it' + cr == 线上 input_tokens")
 }
 
-// —— buildLog 接线（评审 I-2）：cr/cc → UsageLog.CacheRead/CreationTokens ——
+// —— buildLog 接线：cr/cc → UsageLog.CacheRead/CreationTokens ——
 
 func TestBuildLogWiresCacheTokens(t *testing.T) {
 	l := (&Proxy{}).buildLog("req1", 1, 2, "m", "", domain.FormatOpenAIChat, 200, domain.ErrNone,
@@ -474,7 +474,7 @@ func TestBuildLogWiresCacheTokens(t *testing.T) {
 	require.Zero(t, nilU.CacheCreationTokens)
 }
 
-// —— mappedFor 判定（评审 I-1）：映射/无映射/used 空 ——
+// —— mappedFor 判定：映射/无映射/used 空 ——
 
 func TestMappedFor(t *testing.T) {
 	require.Equal(t, "gpt-4o-upstream", mappedFor("gpt-4o", "gpt-4o-upstream"), "有映射 → 映射后模型")
@@ -483,7 +483,7 @@ func TestMappedFor(t *testing.T) {
 	require.Equal(t, "", mappedFor("", ""), "请求模型缺失（401）→ 空")
 }
 
-// —— buildLog 模型语义（Todo 3 mapping-mode）：Model=客户端请求模型、
+// —— buildLog 模型语义（mapping-mode）：Model=客户端请求模型、
 // MappedModel=调用方直填用量身份（不再 mappedFor 推断）—— ——
 
 func TestBuildLogModelSemantics(t *testing.T) {

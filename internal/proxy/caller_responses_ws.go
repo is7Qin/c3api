@@ -41,10 +41,10 @@ var wsDialTimeout = 15 * time.Second
 //
 // 热路径纪律（架构定稿 §5）：流式中间帧零解析直转——账目分层：网关层零解析
 // 零分配（bytes.Contains 子串预筛，命中才字节扫描取 usage——usage_extract.go
-// A-1 scanKeyValue 单遍扫描）；库层（coder/websocket）每帧 io.ReadAll 物化 +
+// scanKeyValue 单遍扫描）；库层（coder/websocket）每帧 io.ReadAll 物化 +
 // permessage-deflate 往返属库内账目，非网关责任。只嗅探 response.completed
 // 帧（预筛命中才最小字节扫描）；首帧（response.create = 请求帧）才做模型改写
-// （ModelMapping 语义，与 setModel 同构）——也是 W4 图像剥离的帧级预处理点。
+// （ModelMapping 语义，与 setModel 同构）——也是 图像剥离的帧级预处理点。
 
 const (
 	// responsesWSFirstFrameTimeout 升级后首个请求帧（response.create）等待上限：

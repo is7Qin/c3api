@@ -33,7 +33,7 @@ func newFileLogger(t *testing.T, level string) (*logx.Logger, string) {
 }
 
 // TestAccessLogDebugFields accessLog 的 Debug 字段构造 level 守卫（spec
-// 2026-08-18，评审 M-1 强制条款）：level=debug 时输出 JSON 行含
+// 2026-08-18，评审 强制条款）：level=debug 时输出 JSON 行含
 // "msg":"http request" 且 5 字段键齐全（request_id/method/path/status/
 // duration）；level=info 时整段跳过（无输出）。可捕获面：发射级别误抬高
 // （如守卫写死放行 debug）→ info 子用例出现输出即失败；字段漏写 → debug
@@ -97,7 +97,7 @@ func TestAdminAuthEmptyTokenContract(t *testing.T) {
 		// 守卫会等于 "Bearer "+"" ——守卫即此回归点（h2 下真实存在，见 middleware.go 注释）
 		{"empty token: Bearer empty value", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer ", 401},
 		{"empty token: non-bearer scheme", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Basic xyz", 401},
-		// F1：快照 role 覆盖 claims.Role——user 1 快照角色 platform_admin 才放行
+		// 快照 role 覆盖 claims.Role——user 1 快照角色 platform_admin 才放行
 		{"empty token: platform_admin JWT", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{roles: map[int64]domain.Role{1: domain.RolePlatformAdmin}}}, "Bearer " + adminTok, 200},
 		{"empty token: user JWT", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer " + userTok, 401},
 		// 非空 token：旧行为不变

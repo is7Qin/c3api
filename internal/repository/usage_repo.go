@@ -46,7 +46,7 @@ type UsageRepo struct {
 }
 
 // usageAggMaxAccountIDs ScanUsageAgg 批量 ids 上限（= handler account_ids
-// ≤100 契约——repo 层防御 handler 之外调用方，N5）。
+// ≤100 契约——repo 层防御 handler 之外调用方）。
 const usageAggMaxAccountIDs = 100
 
 func (r *UsageRepo) InsertBatch(ctx context.Context, logs []*domain.UsageLog) error {
@@ -88,10 +88,10 @@ func mapPartitionError(err error) error {
 	return err
 }
 
-// buildUsageLogCreate 构建单条 usagelog 插入构建器（F2 单写点：usage flusher
+// buildUsageLogCreate 构建单条 usagelog 插入构建器（单写点：usage flusher
 // InsertBatch 是 usage_logs 唯一写者——计费游标消费面只翻 billed/overdraft，
 // 不再插日志）。
-// 计费列（Phase 5）：Cost 毫分（0 = 未计费/错误路径）；BillingTier 空 = 未计费
+// 计费列：Cost 毫分（0 = 未计费/错误路径）；BillingTier 空 = 未计费
 // 路径（落库 NULL）；AboveHit/Overdraft 布尔直接落。RawCost（spec 2026-08-18）
 // 乘倍率前原始成本——恒落（对齐 SetCost，ent 缺省 0 无妨），COPY 路径
 // usageLogRowValues 同序（两路径列集合锚定）。
@@ -105,7 +105,7 @@ func mapPartitionError(err error) error {
 // InputTokens/OutputTokens（TotalTokens 口径不变）。
 // 用户裁决（err_logs 分表）：StatusCode/ErrorMessage 为域内瞬态审计字段
 // （err_logs 承载），不再写 usage_logs（该两列已从表移除——瘦身）。
-// billed（F2 ledger-cursor，spec 2026-08-23）：出生标记直接透传（false=待对账
+// billed（ledger-cursor，spec 2026-08-23）：出生标记直接透传（false=待对账
 // 消费；true=关闭计费/匿名行出生吸收态），翻转只发生在对账事务内。
 func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCreate {
 	c := client.UsageLog.Create().
@@ -180,9 +180,9 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 // （image tokens/count + 3 价格快照）已删，加 call_count/price_per_call_millis。
 // S-E（2026-08-17）：加 client_ip（紧随 request_id，与分区表列定义一致）。
 // spec 2026-08-18：加 raw_cost（紧随 cost——恒落可 0，对齐 cost 恒落语义）。
-// F2 ledger-cursor（spec 2026-08-23）：加 billed（紧随 overdraft——与分区表
+// ledger-cursor（spec 2026-08-23）：加 billed（紧随 overdraft——与分区表
 // 列定义同位；恒落布尔，出生标记由调用方盖章）。（自 billing_repo.go 整体
-// 搬迁：COPY 事实源归 usage 写入面所有，billing_repo.go 归 F2 T3 独占。）
+// 搬迁：COPY 事实源归 usage 写入面所有，billing_repo.go 归 独占。）
 var usageLogCopyColumns = []string{
 	usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldGroupID,
 	usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID,
@@ -365,7 +365,7 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 // 聚合，不拉全行客户端算）；SUM 毫分 int64 原样（USD 换算在 handler 展示
 // 边界）。返回 map[account_id]agg——无记录账号无键（补零由 service 层按 ids
 // 全量组装）。pool 未注入（New 构造）→ 显式错误（与 StatRepo 同纪律）。
-// 数量防御（N5）：>usageAggMaxAccountIDs → 显式错误（防御 handler 之外调用
+// 数量防御：>usageAggMaxAccountIDs → 显式错误（防御 handler 之外调用
 // 方——ANY 参数数组规模上限）。
 func (r *UsageRepo) ScanUsageAgg(ctx context.Context, accountIDs []int64, from, to time.Time) (map[int64]*domain.UsageAgg, error) {
 	if len(accountIDs) > usageAggMaxAccountIDs {

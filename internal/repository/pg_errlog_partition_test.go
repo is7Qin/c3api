@@ -46,7 +46,7 @@ func pgErrPartitionNames(t *testing.T, pool *pgxpool.Pool) []string {
 }
 
 // TestErrLogPartitionBootstrapPG err_logs bootstrap 幂等 + 分区表结构：二次
-// bootstrap 不重建（数据保留），预建当日/明日分区 + 3 个查询索引（S1：
+// bootstrap 不重建（数据保留），预建当日/明日分区 + 3 个查询索引（
 // created_at + (group_id, created_at) + (user_id, created_at)）。
 func TestErrLogPartitionBootstrapPG(t *testing.T) {
 	repos := newPGRepos(t)
@@ -77,7 +77,7 @@ func TestErrLogPartitionBootstrapPG(t *testing.T) {
 	var n int64
 	err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'err_logs' AND indexname IN ('errlog_created_at','errlog_group_id_created_at','errlog_user_id_created_at')`).Scan(&n)
 	require.NoError(t, err)
-	require.Equal(t, int64(3), n, "bootstrap 建齐 3 个查询索引（S1）")
+	require.Equal(t, int64(3), n, "bootstrap 建齐 3 个查询索引")
 }
 
 // TestErrLogPartitionRoutingPG 跨日边界插入路由：InsertErrLogBatch 不指定 id →
@@ -119,7 +119,7 @@ func TestErrLogPartitionRoutingPG(t *testing.T) {
 
 // TestErrLogPartitionRetentionPG 独立保留期 DROP 边界：err_logs cutoff 与
 // usage_logs 独立——同一日期分区，err_logs 早 7 天可删而 usage_logs 30 天保留
-// 期未到（C27 核心断言：两表各自 cutoff 不互相影响）。
+// 期未到（核心断言：两表各自 cutoff 不互相影响）。
 func TestErrLogPartitionRetentionPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
@@ -156,7 +156,7 @@ func TestErrLogPartitionRetentionPG(t *testing.T) {
 	require.Equal(t, "u-old", rows[0].RequestID)
 }
 
-// TestErrLogPartitionConcurrentBootstrapPG 并发 bootstrap 幂等（评审 I-1 多实例
+// TestErrLogPartitionConcurrentBootstrapPG 并发 bootstrap 幂等（多实例
 // 语义）：两实例同时 EnsureErrLogPartitioned——42P07/23505 容忍收敛，无错误。
 func TestErrLogPartitionConcurrentBootstrapPG(t *testing.T) {
 	repos := newPGRepos(t)

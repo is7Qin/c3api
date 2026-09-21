@@ -114,7 +114,7 @@ func TestRoutingCompilerWireGoldenSHA(t *testing.T) {
 	v, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	sum := sha256.Sum256(decisionViewBytes(v))
-	// v4-S2: table keys are normalized (hex lives in the interned decision
+	// table keys are normalized (hex lives in the interned decision
 	// values) — golden regenerated for the normalized key form.
 	// Explore-share wiring: the serialized form now carries ExploreBP per
 	// route (1 primary + 1 unknown of 2 eligible → 100+ceil(400*1/2)=300bp)
@@ -578,7 +578,7 @@ func TestRoutingCompilerWireRequestCompileNonBlocking(t *testing.T) {
 	}
 }
 
-// --- Task18 observability: compile-lane stats + failure retention ---
+// --- observability: compile-lane stats + failure retention ---
 
 func TestRoutingCompilerWireStatsCompileLane(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})

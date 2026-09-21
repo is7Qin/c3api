@@ -28,7 +28,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 	p := c.p
 
 	if stream {
-		// 客户端请求模型：流式无完整 params 解析（评审 I-2），gjson 顶层
+		// 客户端请求模型：流式无完整 params 解析，gjson 顶层
 		// 提取（1 次分配，远低于旧的完整参数解析）。ChatModel 即 string 别名。
 		reqModel := gjson.GetBytes(body, "model").String()
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
@@ -120,7 +120,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 	// 客户端请求模型快照：下一行覆盖前取值（零额外分配，与 gjson 值等价）。
 	reqModel := params.Model
 	params.Model = sel.Model
-	tpl := tplOf(sel) // 非流式 SDK 路径（GC 削减 P6：流式原始请求路径已免模板对象分配）
+	tpl := tplOf(sel) // 非流式 SDK 路径（GC 削减 流式原始请求路径已免模板对象分配）
 	resp, err := p.clients.ChatCompletion(ctx, tpl, cred, params, r.Header)
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err

@@ -4,7 +4,7 @@
 
 package billing
 
-// 计费游标消费者单测（F2 ledger-cursor，spec 2026-08-23 §四）：fake LedgerStore
+// 计费游标消费者单测（ledger-cursor，spec 2026-08-23 §四）：fake LedgerStore
 // 覆盖正常消费链（billed 翻转 + 余额断言）、结算失败闭合、cost=0 批量快速标记、
 // lag 护栏、Close 排空清空、会话锁互斥。PG 全链路归 repository 直调测试。
 
@@ -135,7 +135,7 @@ func (s *fakeLedgerStore) FetchUnbilledBatch(ctx context.Context, limit int) ([]
 	s.fetches++
 	ids := make([]int64, 0, len(s.rows))
 	for id, r := range s.rows {
-		if !r.billed { // D1 读取面：含 cost<=0 行，已在路由分叉
+		if !r.billed { // 读取面：含 cost<=0 行，已在路由分叉
 			ids = append(ids, id)
 		}
 	}
@@ -150,7 +150,7 @@ func (s *fakeLedgerStore) FetchUnbilledBatch(ctx context.Context, limit int) ([]
 	return out, nil
 }
 
-// SettleBalanceBatch/SettleFefoBatch 语句化结算面模拟（三车道拓扑；wave3 D-C
+// SettleBalanceBatch/SettleFefoBatch 语句化结算面模拟（三车道拓扑；
 // 桶谓词同构——候选批按 COALESCE(uid,0)%k=bucket 过滤，k<=0 视为全量单桶）：
 // 车道谓词互斥（temp-active 路由）→ 候选批（id 升序 LIMIT）→ 结构错误预检（整
 // 语句失败形态）→ 按用户聚合 FEFO 消耗/spill → 条件扣/透支/幽灵隔离 → 标记。
@@ -185,7 +185,7 @@ func (s *fakeLedgerStore) settleLocked(limit, k, bucket int, fefo bool) (domain.
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	var cands []domain.LedgerRow
-	for _, id := range ids { // 车道谓词互斥：balance NOT-IN / fefo IN temp-active；桶谓词 uid%k=bucket（D-C）
+	for _, id := range ids { // 车道谓词互斥：balance NOT-IN / fefo IN temp-active；桶谓词 uid%k=bucket
 		r := s.rows[id]
 		if r.row.Cost <= 0 || tempActive(r.row.UserID) != fefo {
 			continue
@@ -233,7 +233,7 @@ func (s *fakeLedgerStore) settleLocked(limit, k, bucket int, fefo bool) (domain.
 		}
 		bal, exists := s.balances[uid]
 		switch {
-		case !exists: // 幽灵用户：跳扣仍标记全部行（不变量 #1 尾语义）
+		case !exists: // 幽灵用户：跳扣仍标记全部行（不变量 尾语义）
 			res.Quarantined += int64(len(a.rows))
 			s.markRowsLocked(a.rows, false)
 		case spill <= 0: // temp 全覆盖：零资金移动，纯标记
@@ -327,7 +327,7 @@ func (s *fakeLedgerStore) UnbilledLag(ctx context.Context) (time.Time, bool, err
 			oldest = r.createdAt
 		}
 	}
-	return oldest, count > 0, nil // D-B：ok = 游标非空（行数不再外泄）
+	return oldest, count > 0, nil // ok = 游标非空（行数不再外泄）
 }
 
 // seedTemp 种子临时额度行（返回行 id；expiresAt 零值 = 永久 NULLS LAST）。
@@ -436,7 +436,7 @@ func newTestLogger(t *testing.T) (*logx.Logger, string) {
 	return logger, out
 }
 
-// restoreLagThrottle 注入 lag 刷新节流阈值并在测试结束还原（D2 节流可测化，
+// restoreLagThrottle 注入 lag 刷新节流阈值并在测试结束还原（节流可测化，
 // 形态对齐 inflightAbandonGrace 注入惯例）。
 func restoreLagThrottle(t *testing.T, d time.Duration) {
 	t.Helper()
@@ -475,7 +475,7 @@ func TestFlusherConsumesAndMarksBilled(t *testing.T) {
 	require.NotEmpty(t, calls)
 	require.False(t, calls[0].fefo, "balance 车道先行（§〇-b 周期序）")
 	var balMarked int64
-	for _, c := range calls { // wave3 D-C：车道内 K 桶并行——断言聚合到车道粒度
+	for _, c := range calls { // 车道内 K 桶并行——断言聚合到车道粒度
 		if !c.fefo {
 			balMarked += c.marked
 		}
@@ -560,7 +560,7 @@ func TestFlusherTransientFailureRetried(t *testing.T) {
 	require.Zero(t, f.quarantined.Load(), "瞬态失败不计隔离")
 }
 
-// TestFlusherQuarantineMissingUser 用户缺失（不变量 #1 尾语义）：跳过扣减仍
+// TestFlusherQuarantineMissingUser 用户缺失（不变量 尾语义）：跳过扣减仍
 // 标记全部行、Quarantined 行数随 summary 返回 → QuarantinedRows 计数 + Warn
 // ——毒用户不卡游标。
 func TestFlusherQuarantineMissingUser(t *testing.T) {
@@ -689,7 +689,7 @@ func TestFlusherLagDisabled(t *testing.T) {
 	require.NotContains(t, string(b), "retention guardrail")
 }
 
-// TestFlusherLagRefreshThrottle lag 刷新节流边沿三态（F2-opt D2）：首调必刷 /
+// TestFlusherLagRefreshThrottle lag 刷新节流边沿三态：首调必刷 /
 // 节流窗内跳过 / Close 排空语境（drain=true）绕过节流强制刷新——防「陈旧
 // unbilledN==0 × n>0」提前退出排空。
 func TestFlusherLagRefreshThrottle(t *testing.T) {
@@ -710,7 +710,7 @@ func TestFlusherLagRefreshThrottle(t *testing.T) {
 
 // TestFlusherLockMutualExclusion 会话锁互斥：他实例持锁（ok=false）→ 本周期
 // 跳过取批（零 fetch 零消费）；抢锁报错 → Warn + 跳过——双实例绝不重复消费
-// 同批（Momus M1 防线）。
+// 同批（防线）。
 func TestFlusherLockMutualExclusion(t *testing.T) {
 	t.Run("held by another instance", func(t *testing.T) {
 		store := newFakeLedgerStore()
@@ -743,7 +743,7 @@ func TestFlusherLockMutualExclusion(t *testing.T) {
 	})
 }
 
-// TestFlusherCloseDrainsCursor Close 排空至游标清空（D2 排空节奏）：单批
+// TestFlusherCloseDrainsCursor Close 排空至游标清空（排空节奏）：单批
 // LIMIT 2000 内积压一个取批往返全量消费 + 一次空批确认即退出，预算内完整排空、
 // 无截断 Warn；幂等二次 Close 不再消费。
 func TestFlusherCloseDrainsCursor(t *testing.T) {
@@ -763,9 +763,9 @@ func TestFlusherCloseDrainsCursor(t *testing.T) {
 	require.NoError(t, f.Close(ctx))
 
 	require.Equal(t, 0, store.unbilledCount(), "排空至游标清空")
-	// wave3 D-B：unbilledN==0 提前退出臂已删（n==0 单一判据）——排空需一次额外
+	// unbilledN==0 提前退出臂已删（n==0 单一判据）——排空需一次额外
 	// 空批确认轮：数据批轮 + 确认轮 + 收尾空轮 = 3 次取批。
-	require.Equal(t, 3, store.fetchCount(), "排空节奏：一批一 tick 废除（D-B 多一轮空批确认）")
+	require.Equal(t, 3, store.fetchCount(), "排空节奏：一批一 tick 废除（多一轮空批确认）")
 	require.NoError(t, logger.Sync())
 	b, err := os.ReadFile(out)
 	require.NoError(t, err)
@@ -792,7 +792,7 @@ func (s *blockingSettleStore) SettleBalanceBatch(ctx context.Context, limit, k, 
 
 // TestFlusherCloseTruncatesOnBudget 停机排空受 ctx 预算约束：到期 → Cancel
 // baseCtx（在途事务快速失败回滚，行保持 unbilled 不丢）+ 截断 Warn（含已消费
-// 行数；wave3 D-B 起 remaining_rows 字段随精确 COUNT 一并删除），不无界阻塞停机。
+// 行数； 起 remaining_rows 字段随精确 COUNT 一并删除），不无界阻塞停机。
 func TestFlusherCloseTruncatesOnBudget(t *testing.T) {
 	inner := newFakeLedgerStore()
 	store := &blockingSettleStore{fakeLedgerStore: inner, started: make(chan struct{})}
@@ -818,7 +818,7 @@ func TestFlusherCloseTruncatesOnBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(b), "shutdown budget exceeded, truncated drain")
 	require.Contains(t, string(b), `"consumed_rows":0`)
-	// wave3 D-B：精确 COUNT 已删，截断 Warn 不再携带 remaining_rows 字段。
+	// 精确 COUNT 已删，截断 Warn 不再携带 remaining_rows 字段。
 }
 
 // ignoreCtxSettleStore SettleBalanceBatch 忽略 ctx 永久阻塞（模拟 DB 病态卡死
@@ -905,7 +905,7 @@ func TestFlusherStartTwiceFails(t *testing.T) {
 	require.NoError(t, f.Close(context.Background()))
 }
 
-// —— 排空周期预算（F2-opt G1 审计 D 面回归） ——
+// —— 排空周期预算（D 面回归） ——
 
 // TestFlusherDrainCycleBudget 周期预算到期收尾：持续到达形态（每次 Balance 车道
 // 结算前合成全新未标记行——endlessSettleStore 包装注入）下，无预算的 drainLoop

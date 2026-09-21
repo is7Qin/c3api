@@ -31,7 +31,7 @@ func TestServiceUpdateUserPatchValidation(t *testing.T) {
 	updated, err := svc.UpdateUser(t.Context(), &repository.UserPatch{
 		ID: u.ID, Balance: &bal, OldBalance: &oldBal,
 	})
-	require.NoError(t, err, "只改 balance 的 PUT 不误拒（P3-B）")
+	require.NoError(t, err, "只改 balance 的 PUT 不误拒")
 	require.Equal(t, int64(700), updated.Balance)
 	require.Equal(t, domain.RoleUser, updated.Role, "role 未被触碰")
 	require.Equal(t, domain.UserStatusActive, updated.Status, "status 未被触碰")

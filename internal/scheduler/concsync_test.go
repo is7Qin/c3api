@@ -100,7 +100,7 @@ func TestAccConcN1StructuralShortCircuit(t *testing.T) {
 	require.Zero(t, mr.CommandCount()-base, "Select/Release 全路径零 Redis 命令（公理 2 钉死）")
 }
 
-// A2a share 公式矩阵：floor / max(1) / N=1 恒等。
+// share 公式矩阵：floor / max(1) / N=1 恒等。
 func TestConcShareFormulaMatrix(t *testing.T) {
 	cases := []struct {
 		limit, n, want int
@@ -117,7 +117,7 @@ func TestConcShareFormulaMatrix(t *testing.T) {
 	}
 }
 
-// A2b N 从 3→1→3 变化即时生效且在途继承：N 只是现读除数，无模式无转换。
+// N 从 3→1→3 变化即时生效且在途继承：N 只是现读除数，无模式无转换。
 // 超份额无视图时 fail-open 按「全额 limit」本地判定放行至真上限；有新鲜视图
 // 时才按对账聚合判定。
 func TestConcShareDynamicNInflightInheritance(t *testing.T) {
@@ -456,7 +456,7 @@ func TestAccConcReleaseShapeAndBorrowCapRace(t *testing.T) {
 	require.Zero(t, concCur(s, 1), "计数器净零（Select 成功数 == Release 数）")
 }
 
-// A7 继承回归：reload/rebuild 计数继承（O-2 修正）不影响上报与判定——继承后
+// A7 继承回归：reload/rebuild 计数继承（修正）不影响上报与判定——继承后
 // 上报读当前 byID 快照天然安全，借位判定按继承值正确工作。
 func TestAccConcInheritedCounterReporting(t *testing.T) {
 	_, c := newConcTestRedis(t)
@@ -471,11 +471,11 @@ func TestAccConcInheritedCounterReporting(t *testing.T) {
 	require.NotNil(t, cv)
 	require.Equal(t, int64(3), cv.accounts[1].selfLast, "上报值 = 当前在途")
 
-	// reload 重建：O-2 继承——实例指针不变计数连续，Runtime 可见
+	// reload 重建 继承——实例指针不变计数连续，Runtime 可见
 	require.NoError(t, s.InvalidateAllSync())
 	rt, ok := s.Runtime(1)
 	require.True(t, ok)
-	require.Equal(t, int64(3), rt.Concurrency, "reload 后计数继承（O-2 不回退）")
+	require.Equal(t, int64(3), rt.Concurrency, "reload 后计数继承（不回退）")
 
 	// 继承后上报判定正确：tick 读重建后的 byID，仍报 3；借位判定按其工作
 	w.tick(ctx)

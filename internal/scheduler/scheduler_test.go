@@ -462,7 +462,7 @@ func TestSelectWhitelistHitMiss(t *testing.T) {
 	require.ErrorIs(t, err, ErrFormatUnavailable, "白名单外模型 → 404")
 }
 
-// TestSelectFormatModelsOnlyBoundary 评审 M-1：Models=[] + FormatModels={chat:[gpt-4o]}
+// TestSelectFormatModelsOnlyBoundary 评审 Models=[] + FormatModels={chat:[gpt-4o]}
 // + supported_formats 含 anthropic 的账号——anthropic 格式任意模型 → 404。
 func TestSelectFormatModelsOnlyBoundary(t *testing.T) {
 	tplFm := &domain.Template{
@@ -497,7 +497,7 @@ func TestSelectFormatModelsEmptyList(t *testing.T) {
 	}
 }
 
-// TestSelectMappingKeyWhitelist 评审 O-5：mapping key 命中 → 选中；映射目标不复查。
+// TestSelectMappingKeyWhitelist 评审 mapping key 命中 → 选中；映射目标不复查。
 func TestSelectMappingKeyWhitelist(t *testing.T) {
 	tplMap := &domain.Template{
 		BaseURL: "https://u/v1", CredentialType: credential.TypeAPIKey,
@@ -974,7 +974,7 @@ func TestReusePassesThroughStoredConcurrency(t *testing.T) {
 	require.Equal(t, 0, reuseByID(s, 1).static.Load().acc.MaxConcurrency, "复用分支同样透传")
 }
 
-// TestReuseGroupIDsResetOnRemoval groupIDs 首次出现重置（评审 M-1）。
+// TestReuseGroupIDsResetOnRemoval groupIDs 首次出现重置。
 func TestReuseGroupIDsResetOnRemoval(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	a := acc(1, tplx, 4)
