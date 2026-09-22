@@ -96,7 +96,7 @@ type AccountFailer interface {
 type FailureDeps struct {
 	Store  FailureStore
 	Failer AccountFailer
-	// Log 处理错误日志（评审：同一失败只记一条——记在回调侧
+	// Log 处理错误日志（同一失败只记一条——记在回调侧
 	// NewFailureHandler，HandleFailure 不重复记）；nil = no-op。
 	Log       *logx.Logger
 	Latch     Latcher

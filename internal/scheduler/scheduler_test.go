@@ -462,7 +462,7 @@ func TestSelectWhitelistHitMiss(t *testing.T) {
 	require.ErrorIs(t, err, ErrFormatUnavailable, "白名单外模型 → 404")
 }
 
-// TestSelectFormatModelsOnlyBoundary 评审 Models=[] + FormatModels={chat:[gpt-4o]}
+// TestSelectFormatModelsOnlyBoundary Models=[] + FormatModels={chat:[gpt-4o]}
 // + supported_formats 含 anthropic 的账号——anthropic 格式任意模型 → 404。
 func TestSelectFormatModelsOnlyBoundary(t *testing.T) {
 	tplFm := &domain.Template{
@@ -497,7 +497,7 @@ func TestSelectFormatModelsEmptyList(t *testing.T) {
 	}
 }
 
-// TestSelectMappingKeyWhitelist 评审 mapping key 命中 → 选中；映射目标不复查。
+// TestSelectMappingKeyWhitelist mapping key 命中 → 选中；映射目标不复查。
 func TestSelectMappingKeyWhitelist(t *testing.T) {
 	tplMap := &domain.Template{
 		BaseURL: "https://u/v1", CredentialType: credential.TypeAPIKey,

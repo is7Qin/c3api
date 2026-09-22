@@ -236,7 +236,7 @@ func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	require.Equal(t, int64(3), survived[11], " must survive the failed flush")
 	require.Equal(t, int64(5), survived[22], " must fold into the leased minute exactly once")
 
-	// retry succeeds: must carry the merged , each counted once
+	// retry succeeds: must carry the merged, each counted once
 	pg.failAll = false
 	clk = fixed.Add(time.Second)
 	w.doPG(context.Background())
@@ -248,7 +248,7 @@ func TestRed_FlowRefillMergesConcurrentSameMinuteDelta(t *testing.T) {
 	for _, r := range got {
 		counts[r.AccountID] += r.ChainCount
 	}
-	require.Len(t, got, 2, "retry must persist the merged , each exactly once")
+	require.Len(t, got, 2, "retry must persist the merged, each exactly once")
 	require.Equal(t, int64(3), counts[11], " must survive the failed flush")
 	require.Equal(t, int64(5), counts[22], " must be conserved exactly once")
 }

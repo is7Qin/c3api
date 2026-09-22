@@ -40,7 +40,7 @@ const settleTimeout = 10 * time.Second
 type BillingRepo struct {
 	client *ent.Client
 	// driver 为 raw SQL（结算语句）用：与 txDriver 组合保证 raw SQL 与 ent
-	// 构建器同事务连接（WithTx 同构，评审）。
+	// 构建器同事务连接（WithTx 同构）。
 	driver dialect.Driver
 	// pool 为 pgx 连接池（NewWithPG 注入；New 构造的仓库为 nil）：非 nil →
 	// 结算走 pgx 直连事务；nil → ent 事务路径回落。WithTx 的 tx 版仓库恒传

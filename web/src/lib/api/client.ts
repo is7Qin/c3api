@@ -143,7 +143,7 @@ export class ApiClient {
     this.request<components['schemas']['AccountsUsageResponse']>('/accounts/usage', {
       params: toQuery({ account_ids: accountIds.join(','), ...p }),
     })
-  // —— codex 凭据批量导入（；行级失败归 failed——HTTP 恒 200）——
+  // —— codex 凭据批量导入（行级失败归 failed——HTTP 恒 200）——
   importCodexOauthAccounts = (b: components['schemas']['CodexOAuthImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-oauth', { method: 'POST', body: JSON.stringify(b) })
   importCodexPatAccounts = (b: components['schemas']['CodexPATImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-pat', { method: 'POST', body: JSON.stringify(b) })
   // —— 规则 ——

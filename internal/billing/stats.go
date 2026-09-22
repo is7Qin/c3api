@@ -8,7 +8,7 @@ package billing
 // 接口——装配侧类型断言聚合（main.go），响应 typed struct 非 map。
 // 采集纪律：原子读既有计数器（零锁零分配，O(1)）；不新增热路径埋点。
 //
-//   终态（spec-f2-ledger-cursor）：ops 观测为 lag 族——lag/unbilled/
+// 终态（spec-f2-ledger-cursor）：ops 观测为 lag 族——lag/unbilled/
 // quarantine 三真值由 worker 每周期收尾 refreshLag 原子写（spec §一 lag 度量源
 // 点名：部分索引最小 unbilled 行 created_at vs now）。
 

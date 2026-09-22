@@ -261,7 +261,7 @@ func chatUsageFromResponse(u openai.CompletionUsage) (it, ot, tt, cr, cc int64) 
 }
 
 // responsesUsageFromResponse 非流式 Responses 响应用量：同 chat 的
-// 直读 + RawJSON 方案（cc 恒 0 预期——）。出口施加 deductCacheRead 归一
+// 直读 + RawJSON 方案（cc 恒 0 预期）。出口施加 deductCacheRead 归一
 // （spec 2026-08-25）——tt 先按原始 in+out 定值再归一 it（数值不变量：归一
 // 不改 total）。
 func responsesUsageFromResponse(u responses.ResponseUsage) (it, ot, tt, cr, cc int64) {

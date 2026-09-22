@@ -55,7 +55,7 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 	if !ok {
 		p.inflight.Add(-1)
 		writeErr(w, errInvalidKey)
-		// 评审 401 鉴权失败转 recordRejected（无效 key 洪水残留向量——
+		// 401 鉴权失败转 recordRejected（无效 key 洪水残留向量——
 		// 401 也进 err_logs 错误审计，不再走 usage_logs 明细路径）。
 		p.recordRejected(r.Context(), reqID, 0, 0, "", "", format, http.StatusUnauthorized, domain.ErrAuth, 0, usageTuple{}, start, errInvalidKey.msg)
 		return nil, nil, 0, false
@@ -75,7 +75,7 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errQuotaExhausted.msg)
 		return nil, nil, 0, false
 	}
-	// 余额预检（计费；评审 无槽位问题）：快照读零 DB（滞后 ≤
+	// 余额预检（计费；无槽位问题）：快照读零 DB（滞后 ≤
 	// BalanceRefreshInterval，多实例条件扣 DB 兜底）。快照缺失或 <0 → 402
 	// errInsufficientBalance（不按 0 记账），但免费放行（修复）：
 	// 有效倍率 0 = 免费用户/组 → 缺失/0 余额不 402（与 applyBilling 同一快照

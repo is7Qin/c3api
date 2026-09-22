@@ -26,7 +26,7 @@ const maxKeyQuotaMillis int64 = 9007199254740991
 
 // CreateKey 用户自建 key（/api/user/keys POST）：
 // 组可选性校验（public 或已授予 private）→ 用户门禁字段写库前预取：
-// GetUser 前置——写后注册退化为纯内存 Upsert 不可失败）→ cryptox 生成明文
+// GetUser 前置——写后注册退化为纯内存 Upsert 不可失败 → cryptox 生成明文
 // → 落库 → Auth 增量纯内存 Upsert。明文长期可查看/复制（列表/详情回显）。
 // quota（累计计费毫分）边界：0=不限；负数或超 maxKeyQuotaMillis → 400。
 func (s *Service) CreateKey(ctx context.Context, userID int64, name string, groupID int64, maxConcurrency int, quota int64) (*domain.Key, error) {
@@ -165,7 +165,7 @@ func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *stri
 // RotateKey 轮换自己的 key（/api/user/keys/{id}/rotate）：新明文落库；旧明文
 // 增量移除（立即失效）、新明文增量注册。用户门禁字段写库前预取：
 // GetUser 前置——Delete 后只剩不可失败的内存 Upsert，失败窗口整体消失——
-// DB 已轮换只留新明文时新 raw 永不蒸发）。
+// DB 已轮换只留新明文时新 raw 永不蒸发。
 func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (*domain.Key, error) {
 	cur, err := s.ownedKey(ctx, userID, keyID)
 	if err != nil {

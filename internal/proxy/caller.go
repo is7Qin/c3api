@@ -79,9 +79,9 @@ func newReqID() string {
 
 // UpstreamCaller 一格式一实现：完成单次上游调用（含流式写出、客户端断开判定
 // 与 usage 记录）。记录职责全在 caller（finish/buildLog/recordStreamAbort/
-// MarkResult 直接可用——评审）；骨架只做 code 分支（429/5xx 转移、4xx
+// MarkResult 直接可用）；骨架只做 code 分支（429/5xx 转移、4xx
 // 透传记录）、handled 短路与耗尽 record。凭据值经 aiclient 格式方法传入
-// （头名 aiclient 内组装 正交延续——评审）。
+// （头名 aiclient 内组装，正交延续）。
 //
 // 语义：
 //   - handled == true → 请求已处理完毕（成功/客户端断开/流中止已记录；本地拒绝
@@ -388,7 +388,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 				logx.String("model", sel.Model),
 				logx.Error(callErr))
 		}
-		// SDK 校验错误识别（spec ，检测前置）：anthropic-sdk-go
+		// SDK 校验错误识别（spec，检测前置）：anthropic-sdk-go
 		// v1.62.0 client.go:316（CalculateNonStreamingTimeout）对
 		// max_tokens 大 + 非流式请求本地拒绝——无网络请求、无状态码
 		// （code=0），此前误归 network（err_logs 记 network + 502 无

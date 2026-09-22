@@ -82,7 +82,7 @@ type gateSnapshot struct {
 // 不足）。保守窗口：本实例上次复核后 flush 而基线未前移时，
 // unreported 会重复计入 DB 已回写量 → remainingEff 先于真尽触 0 → 提前 429，
 // 欠分配非超分配，下次 reload（R1 兜底 ≤60s）前移基线自愈。旧"允许 ≈1 flush
-// 窗口超跑"语义（N=1 评审 注记）随本修正收紧；扣费恒条件 UPDATE 精确的
+// 窗口超跑"语义（N=1 注记）随本修正收紧；扣费恒条件 UPDATE 精确的
 // 软门禁兜底不变（放行不产生错计费）。
 //
 // 单飞：同 key 并发复核只允许一个进 DB，其余按旧预算判定（复核窗口 ≈ 1 次 DB
@@ -372,12 +372,12 @@ func (g *concurrencyGate) quotaExhausted(meta domain.KeyMeta) bool {
 // DB 往返，额度边缘瞬时 429 可接受）。复核用独立超时 ctx（不用请求 ctx——
 // 请求中途断开不能悬挂 reclaiming 标志，否则该 key 永久 429 直到 reload）。
 //
-// 缺失 key（ErrNotFound）与瞬时 DB 错同等对待（同上"Warn+放行"策略，
-// 评审）：删除传播存在快照残留期（≤60s，R1 兜底），其间该 key 退避涓流
+// 缺失 key（ErrNotFound）与瞬时 DB 错同等对待：同上"Warn+放行"策略，
+// 删除传播存在快照残留期（≤60s，R1 兜底），其间该 key 退避涓流
 // 放行 ≤6 笔/60s，可接受；残留条目本身由 Reload 移除收敛。
 //
 // budget 更新为读-改-写（consumed.Load + Store），并发扣减可能落在两次原子
-// 操作之间 → 丢失（lost-update，评审）。方向保守：budget 偏低 → 更早触发
+// 操作之间 → 丢失（lost-update）。方向保守：budget 偏低 → 更早触发
 // 下次复核 → 更早再认领，无超限风险。
 //
 // 返回 true = 本请求放行。

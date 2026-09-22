@@ -127,7 +127,7 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, lane string, settle se
 }
 
 // applySettlement 结算成功收尾：(uid,balance_after) 对定向刷新余额快照（O(1)
-// 原地 Store——oracle 必改 ，10s Reload 间隙预检新鲜度）；幽灵/隔离行计数 +
+// 原地 Store——oracle 必改，10s Reload 间隙预检新鲜度）；幽灵/隔离行计数 +
 // Warn（毒用户不卡游标）。
 func (f *Flusher) applySettlement(s domain.SettlementSummary) {
 	for _, p := range s.Balances {

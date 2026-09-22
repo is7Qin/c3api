@@ -11,7 +11,7 @@
 //
 // 接线矩阵（定稿，reloadAll 实现）：
 //   - 用户 CRUD（含创建）/余额变更 → auth + 余额快照全量（新用户必须即刻在
-//     快照——评审 ，防 ≤10s 402 窗口，回归测试 tools/e2e）
+//     快照——防 ≤10s 402 窗口，回归测试 tools/e2e）
 //   - 模板（base_url/models/映射）→ sched 全量 + clients 失效（base_url
 //     变更需按新地址重建 SDK 客户端）
 //   - 账号 → sched 组级定向 InvalidateGroup（包含关系：full ⊇ 组级 ⊇ 无）
@@ -78,7 +78,7 @@ type State struct {
 }
 
 // DefaultWindow 去抖窗口。生效延迟语义：管理面变更在 ≤200ms 窗口到点后执行
-// 一次合并重载（总延迟 = 窗口 + 一次重载时长；评审 定稿 ≤200ms 可
+// 一次合并重载（总延迟 = 窗口 + 一次重载时长；定稿 ≤200ms 可
 // 接受——新用户 402 窗口回归测试对"建用户 → <0.5s 请求 → 200"做硬断言）。
 const DefaultWindow = 200 * time.Millisecond
 
@@ -127,7 +127,7 @@ type Config struct {
 //   - Mark 路径（Users/Templates/Accounts/Multipliers）：零锁零 DB——原子 CAS
 //     合并脏状态 + 非阻塞 channel 唤醒；任何调用方（含 50k 并发 fill）不阻塞。
 //   - 执行路径：单 goroutine 串行（Start 启动），窗口到点消费脏状态执行合并
-//     重载；执行期间新变更 → 完成后立即再执行（后沿语义，评审）。
+//     重载；执行期间新变更 → 完成后立即再执行（后沿语义）。
 //
 // 同时满足 service.Invalidator 接口（main 装配传给 service.New）。
 type Debouncer struct {
@@ -277,7 +277,7 @@ func (d *Debouncer) loop(ctx context.Context) {
 }
 
 // flush 消费脏状态执行一次合并重载；完成后若仍脏（执行期间新变更）→ 立即
-// 再执行（后沿语义，评审 完成后又脏立即再执行，禁止按固定间隔
+// 再执行（后沿语义，完成后又脏立即再执行，禁止按固定间隔
 // throttle——固定间隔会与长 reload 重叠放大）。窗口内新变更只并入当前窗口。
 func (d *Debouncer) flush() {
 	st := d.state.Swap(nil)

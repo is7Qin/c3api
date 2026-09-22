@@ -459,7 +459,7 @@ func TestImagesStreamDirectBilling(t *testing.T) {
 
 // TestImagesCodexNotIntegrated501 codex 分流骨架：codex-oauth 模板在 images
 // 端点选号命中 → 501 明确"未接入"（SDK 调用后续接；未接入前不得误报
-// 502/network），上游不收请求；评审：post-Select 拒绝必须 recordRejected
+// 502/network），上游不收请求；post-Select 拒绝必须 recordRejected
 // 留 err_logs 审计（error_type=billing、StatusCode=501、文案落 ErrorMessage）。
 func TestImagesCodexNotIntegrated501(t *testing.T) {
 	var hits atomic.Int64
@@ -560,7 +560,7 @@ func TestImagesResponsesSpecialDirect(t *testing.T) {
 
 // TestImagesFormatValidatorOpenaiImages 枚举扩展（spec §4.3）：usage_logs /
 // err_logs 的 format 枚举必须接受 openai-images（否则 images 请求落账 COPY
-// 恒失败——评审）。
+// 恒失败）。
 func TestImagesFormatValidatorOpenaiImages(t *testing.T) {
 	require.NoError(t, entusagelog.FormatValidator(entusagelog.Format(domain.FormatOpenAIImages)))
 	require.NoError(t, enterrlog.FormatValidator(enterrlog.Format(domain.FormatOpenAIImages)))

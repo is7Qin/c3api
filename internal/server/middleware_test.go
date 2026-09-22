@@ -33,7 +33,7 @@ func newFileLogger(t *testing.T, level string) (*logx.Logger, string) {
 }
 
 // TestAccessLogDebugFields accessLog 的 Debug 字段构造 level 守卫（spec
-// 2026-08-18，评审 强制条款）：level=debug 时输出 JSON 行含
+// 2026-08-18，强制条款）：level=debug 时输出 JSON 行含
 // "msg":"http request" 且 5 字段键齐全（request_id/method/path/status/
 // duration）；level=info 时整段跳过（无输出）。可捕获面：发射级别误抬高
 // （如守卫写死放行 debug）→ info 子用例出现输出即失败；字段漏写 → debug

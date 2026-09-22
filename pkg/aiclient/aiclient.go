@@ -41,7 +41,7 @@ type Factory struct {
 	hc  *http.Client
 	cfg Config
 	// 客户端与 URL 缓存：单原子快照 copy-modify-Store（同 scheduler 惯例），
-	// 读路径零锁零共享计数——评审 原全局互斥锁每请求一次，万级并发下
+	// 读路径零锁零共享计数——原全局互斥锁每请求一次，万级并发下
 	// 单字缓存行弹跳。写路径（懒构建/失效）CAS 重试。
 	cc atomic.Pointer[clientCache]
 }

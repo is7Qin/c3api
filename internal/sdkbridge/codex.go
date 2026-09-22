@@ -76,7 +76,7 @@ type codexEntry struct {
 	// sig 同语义：账号配置变更 → 重建；WS 面每请求新鲜 identity，HTTP 面缓存
 	// 客户端以 sig 比对等价对齐——同 identity 复用连接池，变化才重建）。
 	idSig string
-	// turnState HTTP 面 turn-state 持有（——spec 2026-08-15 评审 PASS）：
+	// turnState HTTP 面 turn-state 持有（spec 2026-08-15 评审 PASS）：
 	// 上游响应签发值（HTTPResponse.TurnState / SDK 池级捕获值回读），后续请求
 	// 注入 x-codex-turn-state 头（同轮回传对齐真实 codex client.rs:1202——
 	// 轮级实例实证：ModelClientSession.new_session 每轮新建 OnceLock，
@@ -289,9 +289,9 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 
 // clientFor entryFor + HTTPClient 懒构造（GenerateImage/Stream 面——非 nil
 // 后同账号复用连接池；sig 变更 → entryFor 重建条目）。sess/meta 为 HTTP 面伪
-// 装身份（——SDK 注入点读构造期 opts（http.go injectResponsesClient-
+// 装身份（SDK 注入点读构造期 opts（http.go injectResponsesClient-
 // Metadata），须随构造下发；nil = 未配置）。turnState 为本次请求生效的
-// turn-state（——客户端自带透传优先值或 held 签发值；非空 → 构造期
+// turn-state（客户端自带透传优先值或 held 签发值；非空 → 构造期
 // WithHeader 注入 x-codex-turn-state——SDK HTTPClient 无 per-request 头面，
 // 与 idSig 同语义：值变化 → 重建客户端；生产路径共享 transport 承载连接池，
 // 重建不重置连接池（补压测 4e08fbd 连接风暴防护保持））。NewHTTPClient 为纯
@@ -347,7 +347,7 @@ func (a *Codex) captureTurnState(e *codexEntry, ts string) {
 	a.mu.Unlock()
 }
 
-// ClearTurnState 轮结束清除（——网关在响应含轮结束信号时调用：跨轮不得
+// ClearTurnState 轮结束清除（网关在响应含轮结束信号时调用：跨轮不得
 // 回传）。条目不存在 = no-op（未构造/失效剔除）。清除后下次请求生效值 ""
 // → 客户端重建（无头）——SDK 池级旧值随重建丢弃，不残留。
 func (a *Codex) ClearTurnState(accountID int64) {
@@ -451,7 +451,7 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 	a.mu.Lock()
 	e.usage = s
 	e.usageAt = time.Now()
-	// 成功清冷却态（——死状态不留：哨兵仅在 usageErrAt 新鲜时被读取，但
+	// 成功清冷却态（死状态不留：哨兵仅在 usageErrAt 新鲜时被读取，但
 	// 状态机卫生——检查顺序调整不误服旧哨兵）。
 	e.usageErrAt = time.Time{}
 	e.usageErr = nil
@@ -824,7 +824,7 @@ func (a *Codex) evict(accountID int64) {
 //   - 其余（网络/解析等）原样透传（code 0 连接级分类）
 func (a *Codex) translateError(e *codexEntry, err error) error {
 	if f := asFatal(err); f != nil {
-		// 双源去重（评审——与 reportFatal 同语义，直接复用）：
+		// 双源去重（与 reportFatal 同语义，直接复用）：
 		// CAS 在回调路径已胜出则此处跳过（单次上报）；PAT/无回调路径此处补报
 		a.reportFatal(e, f)
 		return err

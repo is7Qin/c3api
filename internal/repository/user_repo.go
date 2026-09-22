@@ -23,7 +23,7 @@ import (
 type UserRepo struct {
 	client *ent.Client
 	// driver 为 raw SQL（原子资源方法）用：普通 client 与 tx client（WithTx 内）
-	// 均可用——评审。ent v0.14 生成代码无 ExecContext/QueryContext，
+	// 均可用。ent v0.14 生成代码无 ExecContext/QueryContext，
 	// raw SQL 经 dialect.Driver 统一执行。
 	driver dialect.Driver
 }

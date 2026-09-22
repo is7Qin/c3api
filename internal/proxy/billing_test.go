@@ -938,7 +938,7 @@ func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
 	require.Equal(t, int64(190), store.logs[0].Cost, "5×1e7+7×2e7 → 190 毫分（计费不丢）")
 }
 
-// TestProxyBillingStreamAbortGroupMultiplier 评审 recordStreamAbort 传
+// TestProxyBillingStreamAbortGroupMultiplier recordStreamAbort 传
 // groupID → 中止路径组倍率生效（此前硬编码 0 → 组查找恒 miss → 按 ×1 计费，
 // 上浮倍率少收/折扣倍率多收）。组倍率 15000（ck-1 → groupID 10）：
 // 190×15000/10000 = 285 毫分，与正常路径一致。
@@ -1102,7 +1102,7 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 		{"余额 0 放行", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 0}}, nil), true, http.StatusOK},
 		{"余额负", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: -1}}, nil), false, http.StatusInternalServerError},
 		{"快照缺失", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil), false, http.StatusInternalServerError},
-		// 评审 快照缺失 + 组倍率显式 ×1（非免费）→ 仍 402（免费放行只对
+		// 快照缺失 + 组倍率显式 ×1（非免费）→ 仍 402（免费放行只对
 		// 有效倍率 0 生效；缺失且非免费 = 无余额记录，语义不变）。
 		{"快照缺失 + 组倍率 10000", billing.NewBalances(fakeBalanceLoader{gm: map[int64]int{10: 10000}}, nil), false, http.StatusInternalServerError},
 	}
@@ -1154,7 +1154,7 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 // TestProxyBillingSingleWritePointRecCapture 单写点路由（spec §一）：capture
 // 开 + 有用户归属的 billable 行一律经 rec.Record 入队（每日志恰好一个写者由
 // "唯一写点就是 rec 本身"构造性保证），入队前盖出生 Billed 标记（billable 行
-// 置 false 待对账，billing worker 游标消费——）；cost 按聚合毫分落行。
+// 置 false 待对账，billing worker 游标消费）；cost 按聚合毫分落行。
 func TestProxyBillingSingleWritePointRecCapture(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -1413,7 +1413,7 @@ func TestProxyBillingMultiplierGroup(t *testing.T) {
 
 // TestProxyBillingFreeUserPasses 免费用户放行：有效倍率 0 → 余额 0
 // 不 402——正常转发，cost 0（单写点语义：none 行照进 rec 落 usage_logs
-// cost=0 行；Billed=false 待对账，游标侧 cost=0 快速标记消化——）。
+// cost=0 行；Billed=false 待对账，游标侧 cost=0 快速标记消化）。
 func TestProxyBillingFreeUserPasses(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -1475,7 +1475,7 @@ func TestProxyBillingFreeGroupPasses(t *testing.T) {
 	require.Zero(t, store.logs[0].Cost, "免费组：cost 0")
 }
 
-// TestProxyBillingFreeGroupSnapshotMissing 评审 快照缺失（Reload 滞后
+// TestProxyBillingFreeGroupSnapshotMissing 快照缺失（Reload 滞后
 // 窗口内用户无余额记录）但组免费（倍率 0）→ 放行不 402（此前只在 BalanceOf
 // 命中时查倍率 → 免费组误 402）。缺失且非免费仍 402（见
 // TestProxyBillingInsufficientBalance402）。
@@ -1507,7 +1507,7 @@ func TestProxyBillingFreeGroupSnapshotMissing(t *testing.T) {
 	require.Zero(t, store.logs[0].Cost, "免费组：cost 0")
 }
 
-// TestProxyBillingNewUserImmediatelyUsable 评审 回归：新建用户（store 插入）
+// TestProxyBillingNewUserImmediatelyUsable 回归：新建用户（store 插入）
 // → 全量 Reload → 立即请求 → 200（不得 402）。 前 Set 兜底补入新用户掩盖了
 // 该窗口； 后 Set 仅限已存在条目（缺失忽略）——新用户必须经 Reload 进快照
 // （创建路径不走 Set）。窗口显式暴露：创建前快照缺失 → 402（不用 sleep 掩盖）。

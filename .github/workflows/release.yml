@@ -2,14 +2,14 @@ name: Release
 
 # tag 触发（v* = semver tag，如 v0.0.1-beta.1）——tag 即发布源，不打 tag 不发布。
 # CI 质量门禁由 ci.yml 对 tag 自动覆盖（同 tag 的 ci.yml 并行跑、互不 gate，
-# REL spec 2026-08-15 P3-F 取舍：发布者打 tag 前本地全绿，beta 期单维护者流程
+# REL spec 2026-08-15 取舍：发布者打 tag 前本地全绿，beta 期单维护者流程
 # 成立）——本 workflow 不重复 test。
 on:
   push:
     tags:
       - 'v*'
 
-# workflow 级权限（评审 P3-B）：gh release create 需 contents: write（建 Release
+# workflow 级权限：gh release create 需 contents: write（建 Release
 # 页 + 附附件）；GHCR 推送需 packages: write。默认 read 权限下二者都会 403。
 permissions:
   contents: write
@@ -21,7 +21,7 @@ jobs:
     name: image (GHCR multi-platform)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7 # build-push 的 context 需要代码（评审 P3-A 补漏）
+      - uses: actions/checkout@v7 # build-push 的 context 需要代码（补漏）
       - uses: docker/setup-qemu-action@v4 # 交叉构建 arm64 需 QEMU 模拟
       - uses: docker/setup-buildx-action@v4
       - name: Login to GHCR
@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod # 显式装齐（评审 P3-A：runner 预装 Go 不保证与 go.mod 匹配）
+          go-version-file: go.mod # 显式装齐（runner 预装 Go 不保证与 go.mod 匹配）
       - name: Build and pack
         env:
           GOOS: ${{ matrix.goos }}
@@ -91,7 +91,7 @@ jobs:
           if-no-files-found: error
 
   # Job 3: Release 页——附件 = 五平台 tar.gz + sha256sums.txt；body = CHANGELOG
-  # 对应条目节选（评审 P3-C：找不到条目头显式失败，防空 body）。
+  # 对应条目节选（找不到条目头显式失败，防空 body）。
   release:
     name: release
     runs-on: ubuntu-latest

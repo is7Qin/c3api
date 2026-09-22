@@ -821,7 +821,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	uNew := createUser(t, env, "fresh-e2e@example.com", 10.0) // 1,000,000 毫分
 	waitSnapshot()                                            // 去抖窗口（200ms）+ 重载；随后请求须落在重载之后
 	_, uNewKey := userKey(t, env, uNew, g1)
-	// 评审 t0 从 userKey 返回后起算（用户已就绪、密钥已取）——createUser/
+	// t0 从 userKey 返回后起算（用户已就绪、密钥已取）——createUser/
 	// login 的 API 往返不计入 <0.5s 预算，只测"用户就绪后首次请求"的去抖收敛链。
 	t0 := time.Now()
 	c, rbNew := env.aiReq(http.MethodPost, "/v1/chat/completions", uNewKey, map[string]any{

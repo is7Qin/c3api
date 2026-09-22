@@ -4,7 +4,7 @@
 
 package repository
 
-// 列事实源锚（align 补列机制删除后保留的防漂移职责，评审）：建表 DDL 与
+// 列事实源锚（align 补列机制删除后保留的防漂移职责）：建表 DDL 与
 // 列定义事实源（usageLogColumnDefs/errLogColumnDefs/usageStatsColumnDefs/
 // usageEntityStatsColumnDefs）的列集合必须一致——任一同步点被绕过/手改立即被本
 // 文件锚测试捕获（防"向静态 DDL 加列忘加事实源"漂移，含类型漂移——列定义字符

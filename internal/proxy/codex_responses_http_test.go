@@ -414,7 +414,7 @@ func postResponsesTS(t *testing.T, srv *httptest.Server, body, turnState string)
 	return resp
 }
 
-// TestCodexResponsesTurnStateCarryAndClear turn-state 头回传（——非流式
+// TestCodexResponsesTurnStateCarryAndClear turn-state 头回传（非流式
 // 路径）：轮首请求未带 → 上游签发 ts-1 → held；同轮后续（响应含工具调用——
 // 轮继续）自动注入 x-codex-turn-state；轮结束（completed 无工具调用）→ 清除
 // → 跨轮不回传。对齐真实 codex 轮级实例语义（client.rs:498 new_session +
@@ -460,7 +460,7 @@ func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
 	require.Equal(t, "", upc.turnStates[2], "轮结束清除——跨轮不回传")
 }
 
-// TestCodexResponsesTurnStateStreamCarryAndClear turn-state 头回传（——
+// TestCodexResponsesTurnStateStreamCarryAndClear turn-state 头回传（
 // 流式路径）：与 TestCodexResponsesTurnStateCarryAndClear 同语义序列（轮首无
 // 头 → 同轮续传 → 轮结束清除）。
 func TestCodexResponsesTurnStateStreamCarryAndClear(t *testing.T) {

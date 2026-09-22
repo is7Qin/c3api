@@ -4,7 +4,7 @@
 
 package proxy
 
-//（model-mapping-mode）：用量身份（UsageLog.MappedModel）与缺价预检模型
+// （model-mapping-mode）：用量身份（UsageLog.MappedModel）与缺价预检模型
 // 的逐行接线测试。规格 §3 identity matrix：
 //   - 非 Search 选中尝试：日志 MappedModel = Selection.LogMappedModel（implicit、
 //     explicit identity、无映射均为空；explicit 非 identity = 目标）；

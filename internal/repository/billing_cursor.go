@@ -41,7 +41,7 @@ type billingRows struct {
 func (b *billingRows) Close() { b.closeFunc() }
 
 // billingCursorLockKey 计费游标消费者会话级 advisory lock 键（固定魔数，形态
-// 对齐 statsAggLockKey；键值任意恒定即可）。**会话级持锁整周期是 Momus 的
+// 对齐 statsAggLockKey；键值任意恒定即可）。**会话级持锁整周期是
 // 双扣防线**：两实例若各自在提交前取到同批未标记行 = 双扣资金——故明令禁止
 // 每事务 pg_advisory_xact_lock 形态（事务结束即放锁，取批与标记间无互斥）。
 const billingCursorLockKey int64 = 0x62696c63 // "bilc"
@@ -76,7 +76,7 @@ const unbilledHeadIDSQL = `SELECT id FROM usage_logs
 
 const unbilledHeadCreatedSQL = `SELECT created_at FROM usage_logs WHERE id = $1`
 
-// FetchUnbilledBatch 取未扣账本批（冻结 ，签名不得偏移）：LedgerRow
+// FetchUnbilledBatch 取未扣账本批（冻结，签名不得偏移）：LedgerRow
 // 瘦身投影，按 id 升序返回至多 limit 行。limit <= 0 → 空批（防御，
 // 不报错——调用方节奏参数由 config fail-fast 保证为正）。
 func (r *BillingRepo) FetchUnbilledBatch(ctx context.Context, limit int) ([]domain.LedgerRow, error) {
@@ -90,7 +90,7 @@ func (r *BillingRepo) FetchUnbilledBatch(ctx context.Context, limit int) ([]doma
 	return scanLedgerRows(rows)
 }
 
-// MarkBilledBulk 纯标记（冻结 ，签名不得偏移）：仅零价行快速路径——
+// MarkBilledBulk 纯标记（冻结，签名不得偏移）：仅零价行快速路径
 // 幂等（AND NOT billed），单语句原子。行不存在/已标记 →
 // 静默跳过（幂等语义，不报错）。
 func (r *BillingRepo) MarkBilledBulk(ctx context.Context, ids []int64) error {

@@ -132,7 +132,7 @@ func TestStreamRawBaseURLWithTrailingSlash(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-// TestStreamRawBaseURLChangeConverges 评审 回归：URL 缓存键含 base_url
+// TestStreamRawBaseURLChangeConverges 回归：URL 缓存键含 base_url
 // 快照——同模板 ID 直接改 base_url（绕过管理 API 的 DB 直改 + 周期同步下发新
 // 快照）后，新流量必须立即打到新地址；旧实现键仅 templateID，缓存不失效 →
 // 流量打旧上游。模拟：同一 Factory、同模板 ID，先后传两个不同 base_url。

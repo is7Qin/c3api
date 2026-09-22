@@ -247,7 +247,7 @@ func TestRecordConcurrentNeverBlocks(t *testing.T) {
 	require.Equal(t, g*per, r.Pending())
 }
 
-// TestRecordAfterCloseWarnsOnce Close 后 Record（防御性缺口，评审）：
+// TestRecordAfterCloseWarnsOnce Close 后 Record（防御性缺口）：
 // closed 标记生效——Warn 恰好一次（不刷屏）、明细不丢（仍聚合入 pending）、
 // 保持非阻塞。worker 管理器顺序（先停 HTTP 再 Close）下正常停机不触发。
 func TestRecordAfterCloseWarnsOnce(t *testing.T) {

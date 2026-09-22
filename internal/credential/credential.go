@@ -116,7 +116,7 @@ func (r *Registry) Register(p Provider) { r.m[p.Type()] = p }
 // unsupportedProvider 未注册类型兜底 provider（不再复用 apiKeyProvider
 // ——旧兜底 Type() 恒返回 TypeAPIKey，对 TypeCodexOAuth 等撒谎，是未来 codex
 // HTTP 面注册时错配咬合点）。Type() 返回**真实请求类型**；Credential 恒
-// ErrUnsupported（错误文本与现状一致——含输入类型，显式报错不吐值，评审）。
+// ErrUnsupported（错误文本与现状一致——含输入类型，显式报错不吐值）。
 type unsupportedProvider struct{ typ Type }
 
 func (p unsupportedProvider) Type() Type { return p.typ }

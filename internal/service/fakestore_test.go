@@ -1443,7 +1443,7 @@ func (f *fakeStore) RevokeGroup(ctx context.Context, groupID, userID int64) erro
 }
 
 // SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率：
-// 按组——用户在不同组可有不同倍率；nil = 清除为未设置 → 回退组倍率）。
+// 按组——用户在不同组可有不同倍率；nil = 清除为未设置 → 回退组倍率。
 func (f *fakeStore) SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1809,7 +1809,7 @@ func (t *fakeTx) RevokeGroup(ctx context.Context, groupID, userID int64) error {
 }
 
 // SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率：
-// 按组——用户在不同组可有不同倍率；nil = 清除为未设置 → 回退组倍率）。
+// 按组——用户在不同组可有不同倍率；nil = 清除为未设置 → 回退组倍率。
 func (t *fakeTx) SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error {
 	if !slices.Contains(t.assign[groupID], userID) {
 		return missingErr(userID) // 授予行必须已存在（service 先 Grant 再 Set）
@@ -2212,7 +2212,7 @@ func (f *fakeStore) IncrementUsed(ctx context.Context, codeID int64) (bool, erro
 }
 
 // DeactivateCodes 批量失效（单事务模拟）：已 disabled no-op；缺失 id 由
-// service 层先查（fake 同真实 repo：不报错，评审）。返回新失效数。
+// service 层先查（fake 同真实 repo：不报错）。返回新失效数。
 func (f *fakeStore) DeactivateCodes(ctx context.Context, ids []int64) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

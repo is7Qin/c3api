@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Tick-time expansion core (v3 , spec §5.2): the existing 2Hz/0.2Hz ticks
+// Tick-time expansion core (v3, spec §5.2): the existing 2Hz/0.2Hz ticks
 // expand each counter cell into today's identical RoutingFlowRows. Only the
 // expansion SOURCE changed (cells, not chains); cadence, sinks, and the
 // Upsert shape are untouched.

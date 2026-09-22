@@ -758,14 +758,14 @@ func TestCodexResponsesAggregateNonstream(t *testing.T) {
 	if gjson.GetBytes(c.body(0), "model").String() != "gpt-5.6" || gjson.GetBytes(c.body(0), "input").String() != "hi" {
 		t.Fatalf("注入不应动其余字段: %s", c.body(0))
 	}
-	// 未配置 identity（nil）：SDK 仍恒带 turn_id（——真实 client_metadata()
+	// 未配置 identity（nil）：SDK 仍恒带 turn_id（真实 client_metadata()
 	// 无条件 turn_id）。
 	cm := gjson.GetBytes(c.body(0), "client_metadata")
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "未配置 identity 仍注入自动 turn_id: %s", cm.Raw)
 	require.False(t, cm.Get("x-codex-installation-id").Exists(), "未配置不注入静态键")
 }
 
-// TestCodexResponsesIdentityMetadata 伪装身份注入（——spec 2026-08-15）：
+// TestCodexResponsesIdentityMetadata 伪装身份注入（spec 2026-08-15）：
 // Responses 传 session/meta → 上游请求体 client_metadata 恒 4 key
 // （x-codex-installation-id/session_id/thread_id/x-codex-window-id——CodexMeta
 // 与 WithSession 同值双设不冲突）+ turn_id 自动 UUIDv7（payload 未带）+ 条件

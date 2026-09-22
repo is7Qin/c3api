@@ -16,7 +16,7 @@ import (
 )
 
 // setenvRequired 注入必填密钥（auth.jwt_secret/db.dsn/redis.addr 校验已内聚到
-// Load——测试调用 Load 前必须先补环境，评审；admin.token 已可空，仍注入保持
+// Load——测试调用 Load 前必须先补环境，admin.token 已可空，仍注入保持
 // 既有用例语义）。
 func setenvRequired(t *testing.T) {
 	t.Helper()

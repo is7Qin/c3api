@@ -35,7 +35,7 @@ type RequestFormat = components['schemas']['RequestFormat']
 type UsageLog = components['schemas']['UsageLog']
 type ErrLog = components['schemas']['ErrLog']
 
-// 表头样式（sub2api 配方）：uppercase 小字 + sticky（评审 Minor-1：必须位于
+// 表头样式（sub2api 配方）：uppercase 小字 + sticky（必须位于
 // 纵向滚动容器内——纯 overflow-x 容器中 sticky top 不生效）。
 function Th({ className, ...props }: React.ComponentProps<typeof TableHead>) {
   return (

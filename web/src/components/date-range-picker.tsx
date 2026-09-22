@@ -55,7 +55,7 @@ export function DateRangePicker({
   const selected: DateRange | undefined =
     draft ??
     (value.from && value.to
-      ? { from: new Date(`${value.from.slice(0, 10)}00:00`), to: new Date(`${value.to.slice(0, 10)}00:00`) }
+      ? { from: new Date(`${value.from.slice(0, 10)}T00:00:00`), to: new Date(`${value.to.slice(0, 10)}T00:00:00`) }
       : undefined)
 
   // 日历选范围：日期替换 + 保留两端原时间（无则 00:00）；range 未完成（无 to）

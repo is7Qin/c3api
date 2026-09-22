@@ -515,7 +515,7 @@ export default function Users() {
           <DialogHeader>
             <DialogTitle>{t('users.tempBalances.title', { name: tempUser?.Email })}</DialogTitle>
             <DialogDescription>{t('users.tempBalances.desc')}</DialogDescription>
-            {/* 空态不渲染合计（——对齐 profile 参考形态） */}
+            {/* 空态不渲染合计（对齐 profile 参考形态） */}
             {tempRows.length > 0 && (
               <p className="text-sm font-medium">{t('users.tempBalances.total', { amount: formatUSD(tempActiveTotal) })}</p>
             )}

@@ -67,7 +67,7 @@ export function toRFC3339(v: string): string | undefined {
 // datetime-local 本地时间补零（YYYY-MM-DDTHH:mm）。
 const pad2 = (n: number) => String(n).padStart(2, '0')
 
-// UTC 数值偏移后缀（RFC3339 形态 " UTC+08:00"/" 00"，取行绝对时刻的
+// UTC 数值偏移后缀（RFC3339 形态 " UTC+08:00"/" UTC-04:00"，取行绝对时刻的
 // 浏览器偏移）。DST fall-back 日同一墙钟小时出现两次（EDT 01:00 与 EST 01:00
 // 是两个不同绝对桶），图表 label 必须跨桶唯一（recharts category 轴按 label
 // 去重）——统计页仅对重复 label 追加本后缀，唯一 label 保持原样。

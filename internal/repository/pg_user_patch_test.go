@@ -200,7 +200,7 @@ func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {
 	require.NoError(t, err)
 
 	// 交错：AddQuotaUsed 增量流（Recorder 节奏）+ UpdateKey patch 并发写
-	//（patch 化：patch 无 quota_used 字段——增量不可能被覆盖，比旧
+	// （patch 化：patch 无 quota_used 字段——增量不可能被覆盖，比旧
 	// "剥离 SetQuotaUsed" 更强）
 	var wg sync.WaitGroup
 	wg.Add(1)

@@ -4,7 +4,7 @@
 
 package repository_test
 
-// 评审 补锚：AddQuotaUsed（单条 CASE 批量更新）真实 PG 单测——多 key
+// 补锚：AddQuotaUsed（单条 CASE 批量更新）真实 PG 单测——多 key
 // 批量增量、已删 key 静默跳过、零增量跳过、断言累加值与 updated_at 更新。
 // 此前该语句仅靠 e2e 间接覆盖（TestBillingE2E 冲突路径依赖 flush 周期巧合）；
 // 既有 TestPGKeyLifecycle 只锚单 key 增量 + 缺失 key 跳过，未断言 updated_at。
