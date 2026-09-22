@@ -787,7 +787,7 @@ func (r *Repository) EnsurePriceVariantsEffectCheck(ctx context.Context) error {
 	return r.Partitions.EnsurePriceVariantsEffectCheck(ctx)
 }
 
-// EnsureCodexSearchSeed 幂等种子 codex-search 按次价（F-A）。
+// EnsureCodexSearchSeed 幂等种子 codex-search 按次价。
 func (r *Repository) EnsureCodexSearchSeed(ctx context.Context) error {
 	return r.Partitions.EnsureCodexSearchSeed(ctx)
 }
