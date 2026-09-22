@@ -1,4 +1,4 @@
-# repository 测试用独立 PostgreSQL + Redis（评审 B1：真实 PG 测试基座，测试代码在
+# repository 测试用独立 PostgreSQL + Redis（真实 PG 测试基座，测试代码在
 # internal/repository/pg_account_groups_test.go，TEST_DATABASE_URL 驱动；网关
 # 双必需依赖中的 Redis 由本栈一并供给——e2e 网关启动即需 Redis）。
 #

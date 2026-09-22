@@ -356,7 +356,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | string | ✅ | 分组名（唯一） |
-| `price_multiplier` | number / null | 否 | **价格倍率**（正常值：`1` = ×1、`0` = 免费、上限 `10` = ×10；API 边界与万分数换算——内部存储恒万分数）。缺省/`null` = 不设置（×1）；**显式 `0` = 免费组（创建路径即可设置，T3.5 修正）**。超界 → `400` |
+| `price_multiplier` | number / null | 否 | **价格倍率**（正常值：`1` = ×1、`0` = 免费、上限 `10` = ×10；API 边界与万分数换算——内部存储恒万分数）。缺省/`null` = 不设置（×1）；**显式 `0` = 免费组（创建路径即可设置）**。超界 → `400` |
 
 响应 `200`：创建后的分组对象：
 
@@ -469,7 +469,7 @@
 | `max_concurrency` | int | 否 | 用户级在途上限；0 = 不限 |
 | `balance` | number（USD） | 否 | 余额 USD float64（≥ 0；`10` = $10 = 1,000,000 毫分） |
 
-> **价格倍率按组（T3.5 修正）**：用户本体无倍率字段——专属倍率挂在该用户与组的授予关系上（`PUT /api/admin/groups/{id}/assignments` 的 `multipliers`），用户在不同组可有不同倍率。
+> **价格倍率按组**：用户本体无倍率字段——专属倍率挂在该用户与组的授予关系上（`PUT /api/admin/groups/{id}/assignments` 的 `multipliers`），用户在不同组可有不同倍率。
 
 ### 用户列表
 
@@ -563,7 +563,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 ### 价格倍率语义（计费生效）
 
-计费倍率作用在**整单计费成本**上（含 fast 倍率之后）：`cost = round(cost × mult / 10000)`（round-half-up），取数顺序为**用户-组专属覆盖组**（T3.5 修正：专属倍率按组挂载）：
+计费倍率作用在**整单计费成本**上（含 fast 倍率之后）：`cost = round(cost × mult / 10000)`（round-half-up），取数顺序为**用户-组专属覆盖组**（专属倍率按组挂载）：
 
 1. `group_assignments.price_multiplier` 已设置（非 null，该用户在该组）→ 用户-组专属倍率；
 2. 否则 `groups.price_multiplier`（组默认 `10000` = ×1）；
@@ -688,7 +688,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 > **游标分页语义**：行按 id 严格降序（id 全局单调，跨分区天然有序）；`next_cursor` = 本页最后一条 id，非 null 表示还有下一页（服务端 limit+1 探测多取 1 行）；下一页请求把 `next_cursor` 原样作为 `cursor` 参数（`WHERE id < cursor`），翻至 `next_cursor` 为 null（末页）。`total` 已从契约移除（游标语义下无全量计数）。
 
-**计费字段**（Phase 5）：
+**计费字段**：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -972,7 +972,7 @@ flow 守恒与丢失口径（三者独立，不得混为上游失败）：`incom
 
 ## 兑换码 Redemption Codes
 
-兑换码是资源发放的通用载体（Phase 5 计费前基础设施）：生成一批码 → 分发给用户 → 用户在 `/user/redemptions` 兑换 → 资源按码类型即时生效。管理面 5 个端点 + 用户面 2 个端点。
+兑换码是资源发放的通用载体（计费前基础设施）：生成一批码 → 分发给用户 → 用户在 `/user/redemptions` 兑换 → 资源按码类型即时生效。管理面 5 个端点 + 用户面 2 个端点。
 
 ### 生成兑换码
 
@@ -1199,7 +1199,7 @@ flow 守恒与丢失口径（三者独立，不得混为上游失败）：`incom
 
 ## 计费 Billing
 
-Phase 5 计费链路：请求前**预检**（价格快照缺价 / 余额快照 <0 → `402`；余额 0 放行——临时额度由 FEFO 扣费消化）→ 请求完成聚合计费（`internal/billing` 纯函数：tier 选价 + above 分段 + fast 倍率 + 价格倍率）→ 内存聚合、周期批量**条件扣费**（毫分直接扣减，零换算）→ 明细落 `usage_logs`（cost/tier/above_hit/overdraft 列）。
+计费链路：请求前**预检**（价格快照缺价 / 余额快照 <0 → `402`；余额 0 放行——临时额度由 FEFO 扣费消化）→ 请求完成聚合计费（`internal/billing` 纯函数：tier 选价 + above 分段 + fast 倍率 + 价格倍率）→ 内存聚合、周期批量**条件扣费**（毫分直接扣减，零换算）→ 明细落 `usage_logs`（cost/tier/above_hit/overdraft 列）。
 
 ### 启用顺序（config.toml）
 

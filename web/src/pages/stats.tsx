@@ -351,7 +351,7 @@ export default function Stats() {
   )
 }
 
-// —— Routing Flow tab（Todo 22）：渲染服务端 rollup 聚合与当前计划投影。
+// —— Routing Flow tab：渲染服务端 rollup 聚合与当前计划投影。
 // 铁律：不在浏览器侧重算 Wilson 区间 / frontier 支配 / 计划编译——所有数值
 // 直出 API；守恒失败（first≠terminal）时降级为表格并显式告警，不画无效图。
 

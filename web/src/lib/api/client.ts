@@ -143,7 +143,7 @@ export class ApiClient {
     this.request<components['schemas']['AccountsUsageResponse']>('/accounts/usage', {
       params: toQuery({ account_ids: accountIds.join(','), ...p }),
     })
-  // —— codex 凭据批量导入（Task B；行级失败归 failed——HTTP 恒 200）——
+  // —— codex 凭据批量导入（；行级失败归 failed——HTTP 恒 200）——
   importCodexOauthAccounts = (b: components['schemas']['CodexOAuthImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-oauth', { method: 'POST', body: JSON.stringify(b) })
   importCodexPatAccounts = (b: components['schemas']['CodexPATImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-pat', { method: 'POST', body: JSON.stringify(b) })
   // —— 规则 ——
@@ -202,7 +202,7 @@ export class ApiClient {
   getUsersTop = (p?: { top?: number }) => this.request<components['schemas']['UsersTopResponse']>('/users-top', { params: toQuery(p) })
   // —— 运维观测（/api/admin/ops/workers；管理端专属，契约 ops tag 生成类型）——
   getOpsWorkers = () => this.request<components['schemas']['WorkersResponse']>('/ops/workers')
-  // —— 智能路由观测面（Todo 17：rollup 聚合 + 当前计划投影，只读）——
+  // —— 智能路由观测面（rollup 聚合 + 当前计划投影，只读）——
   getRoutingFlow = (p: { route: string; from: string; to: string }) =>
     this.request<components['schemas']['RoutingFlowResponse']>('/routing/flow', { params: toQuery(p) })
   getRoutingFrontier = (p: { route: string; from: string; to: string; limit?: number }) =>
