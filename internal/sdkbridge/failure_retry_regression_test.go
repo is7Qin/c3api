@@ -63,7 +63,7 @@ func TestRequeueDoesNotPanicAfterReset(t *testing.T) {
 	store2 := &retryFakeStore{
 		accounts: map[int64]*domain.Account{100: {
 			ID: 100, TemplateID: 10, Template: &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth},
-			UpstreamKey: "sk", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth},
+			UpstreamKey: "sk", LifecycleRevision: 1, IdentityRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth},
 		}},
 		failSeq: []error{errors.New("transient")},
 		groups:  map[int64][]int64{100: {10}},

@@ -4,7 +4,7 @@
 
 package repository_test
 
-// #17 评审 I-2 补锚：AddQuotaUsed（单条 CASE 批量更新）真实 PG 单测——多 key
+// 补锚：AddQuotaUsed（单条 CASE 批量更新）真实 PG 单测——多 key
 // 批量增量、已删 key 静默跳过、零增量跳过、断言累加值与 updated_at 更新。
 // 此前该语句仅靠 e2e 间接覆盖（TestBillingE2E 冲突路径依赖 flush 周期巧合）；
 // 既有 TestPGKeyLifecycle 只锚单 key 增量 + 缺失 key 跳过，未断言 updated_at。
@@ -70,7 +70,7 @@ func TestPGAddQuotaUsedBatch(t *testing.T) {
 	require.NotNil(t, gotDel.DeletedAt, "软删 key 带 deleted_at")
 }
 
-// TestPGKeyQuotaUsed #14 T3b 预算复核点读锚：QuotaUsed 单列读返回 DB 权威值
+// TestPGKeyQuotaUsed 预算复核点读锚：QuotaUsed 单列读返回 DB 权威值
 // （与 GetKey 全行读同源）；AddQuotaUsed 增量后复核读到新值（复核协议依赖：
 // 复核时刻 SELECT quota_used 是"剩余额"判定依据）；缺失 key → ErrNotFound。
 func TestPGKeyQuotaUsed(t *testing.T) {

@@ -7,7 +7,7 @@
 //
 // 扩展：
 //   - -fail429/-fail500：按上游 key（Authorization: Bearer <key>）注入 429/5xx，
-//     用于验证调度器失败转移不产生雪崩（规格 §5.3，brief Step 4）。
+//     用于验证调度器失败转移不产生雪崩（规格 §5.3，brief）。
 //   - /v1/messages：anthropic 官方格式的 SSE 流（event: 行 + message_start/
 //     content_block_delta/message_delta/message_stop），SDK 按 event 类型分发，
 //     纯 data 事件会被静默跳过（修复后的网关同样按官方格式写出）。

@@ -248,7 +248,7 @@ func respOutputToMessBlocks(r map[string]any) []any {
 					}
 				}
 			case "function_call":
-				id := toolCallID(im) // call_id 优先（tool_result.tool_use_id 匹配键，M-1）
+				id := toolCallID(im) // call_id 优先（tool_result.tool_use_id 匹配键）
 				name, _ := str(im, "name")
 				blocks = append(blocks, map[string]any{
 					"type": "tool_use", "id": id, "name": name, "input": parseJSON(im["arguments"]),
@@ -314,7 +314,7 @@ func respUsageToMess(r map[string]any) map[string]any {
 //	response.failed                  → error 事件（anthropic 错误帧形态）
 //	其余 → 丢弃
 func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
-	m.ensureBlocks() // 块级累积 map 懒初始化（评审 I-4）
+	m.ensureBlocks() // 块级累积 map 懒初始化
 	ev, err := decodeObj(data)
 	if err != nil {
 		return nil, true
@@ -365,7 +365,7 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 			return nil, true
 		}
 		index := intOr0(ev, "output_index")
-		id := toolCallID(item) // call_id 优先（tool_result.tool_use_id 匹配键，M-1）
+		id := toolCallID(item) // call_id 优先（tool_result.tool_use_id 匹配键）
 		name, _ := str(item, "name")
 		if !m.blockStarted[index] {
 			m.blockStarted[index] = true

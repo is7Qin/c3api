@@ -24,7 +24,7 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
-// 真实 PG 集成：fatal 标记全链路（T5 §2——OnAuthFatal → 统一回调 →
+// 真实 PG 集成：fatal 标记全链路（§2——OnAuthFatal → 统一回调 →
 // failed_at + last_error + StatusDisabled 持久化 → 重启快照重载仍摘除 →
 // 管理面恢复 status→active 双清 + 恢复调度）。
 //
@@ -73,6 +73,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
 		Name: "codex-acc", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 4,
+		Enabled: true,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
@@ -91,11 +92,11 @@ func TestCodexFatalChainPG(t *testing.T) {
 	up, _ := newCodexImageUpstream(t, codexUpStep{status: 401, body: `{"error":{"code":"token_expired"}}`})
 	codexRefreshMock(t, 401, `{"error":"invalid_grant"}`)
 
-	// 真实失效链：适配层（统一回调）→ T1 HandleFailure（SetAccountFailed 直写
+	// 真实失效链：适配层（统一回调）→ HandleFailure（SetAccountFailed 直写
 	// PG + FailAccount 快照摘除 + 经 writebackLoop 落库 status=disabled）
 	re := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	require.NoError(t, re.Reload(ctx))
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, repos.Groups, re, nil, nil, nil, nil)
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -138,7 +139,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 	require.ErrorIs(t, err, scheduler.ErrNoAvailable, "失效账号不可调度")
 
 	// ④ 失效恢复（管理面 fenced 唯一入口）：RecoverAccountCAS 清 failed_at +
-	// last_error 双清（P3-4 恢复断言）+ 调度恢复 active 重服务
+	// last_error 双清（恢复断言）+ 调度恢复 active 重服务
 	cur, err := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.RecoverAccountCAS(ctx, acc.ID, cur.LifecycleRevision))

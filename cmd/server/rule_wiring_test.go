@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRuleHealthWiringOnce 生产接线唯一性证据（AST，B18/B19 根因重开后）：
+// TestRuleHealthWiringOnce 生产接线唯一性证据（AST，根因重开后）：
 // 回填 setter（SetHealthSink/SetPersistFunc）与旧 HealthController 装配必须
 // 缺席（各 0 次）；latch→hub→sink→persistFn→ruleEngine→sched 构造序钉死；
 // rule.New 恰 5 参、scheduler.New 恰 7 参；recover→PROBING 写入面

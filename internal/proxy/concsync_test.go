@@ -19,7 +19,7 @@ import (
 	"github.com/is7qin/c3api/pkg/redisx"
 )
 
-// --- 并发门份额+借用测试（spec conc-share-borrow-gate §2 表格 T1-T6；T7=-race 门禁） ---
+// --- 并发门份额+借用测试（spec conc-share-borrow-gate §2 表格；-race 门禁） ---
 //
 // 测试基座：miniredis + redisx.Open（dogfood 全仓唯一构造点纪律）；等待一律
 // require.Eventually 轮询谓词或同步 tick 直调（同包私有方法），零 sleep。
@@ -49,7 +49,7 @@ func newConcAuth(t *testing.T, keys map[string]domain.KeyMeta) *Auth {
 	return a
 }
 
-// T1 结构短路：N=1 时 share=limit → 超份额分支数学上不可达，acquire/release/
+// 结构短路：N=1 时 share=limit → 超份额分支数学上不可达，acquire/release/
 // quotaExhausted/deductQuota 全路径零 Redis 命令（含视图在场时——判定是纯内存
 // 原子读）。worker 未启动（请求路径本就不含 worker；构造亦零副作用）。
 func TestConcN1StructuralShortCircuit(t *testing.T) {
@@ -88,7 +88,7 @@ func TestConcN1StructuralShortCircuit(t *testing.T) {
 	require.Zero(t, mr.CommandCount()-base, "全路径零 Redis 命令（公理 2 钉死）")
 }
 
-// T2a share 公式矩阵：floor / max(1) / N=1 恒等。
+// share 公式矩阵：floor / max(1) / N=1 恒等。
 func TestShareFormulaMatrix(t *testing.T) {
 	cases := []struct {
 		limit, n, want int
@@ -105,7 +105,7 @@ func TestShareFormulaMatrix(t *testing.T) {
 	}
 }
 
-// T2b N 从 3→1→3 变化即时生效且在途继承：N 只是现读除数，无模式无转换。
+// N 从 3→1→3 变化即时生效且在途继承：N 只是现读除数，无模式无转换。
 // 超份额无视图时 fail-open 按「全额 limit」本地判定放行至真上限；有新鲜视图
 // 时才按对账聚合判定。
 func TestShareDynamicNInflightInheritance(t *testing.T) {
@@ -151,7 +151,7 @@ func TestShareDynamicNInflightInheritance(t *testing.T) {
 	g.release(m, lvl)
 }
 
-// T3 视图判定边界：total−selfLast+L_now 公式两侧、无视图/条目缺失/视图陈旧
+// 视图判定边界：total−selfLast+L_now 公式两侧、无视图/条目缺失/视图陈旧
 // fail-open 全额本地。
 func TestClusterViewJudgmentBoundaries(t *testing.T) {
 	g := newConcurrencyGate(nil, true)
@@ -181,7 +181,7 @@ func TestClusterViewJudgmentBoundaries(t *testing.T) {
 	require.False(t, g.concAllows(true, 1, 4, 5))
 }
 
-// T3b 对账聚合：陈旧字段剔除（ts 早于 now−4s 不计入）+ selfLast 取本次上报值。
+// 对账聚合：陈旧字段剔除（ts 早于 now−4s 不计入）+ selfLast 取本次上报值。
 // 同步直调 tick（确定性，无时钟推进依赖）；ghost 字段用回填 ts 直写 HASH。
 func TestConcAggregationFreshnessAndSelfLast(t *testing.T) {
 	_, c := newTestGateRedis(t)
@@ -221,7 +221,7 @@ func TestConcAggregationFreshnessAndSelfLast(t *testing.T) {
 	require.Equal(t, int64(9), g.store.Load().keys[7].Load(), "拒绝笔回滚净零")
 }
 
-// T4 对账收敛：fast-path 占用 ≤1 tick 出现在视图；绝对值覆盖写杀漂移；EXPIRE 续期。
+// 对账收敛：fast-path 占用 ≤1 tick 出现在视图；绝对值覆盖写杀漂移；EXPIRE 续期。
 func TestConcReconciliationConverges(t *testing.T) {
 	mr, c := newTestGateRedis(t)
 	meta := domain.KeyMeta{KeyID: 1, UserID: 1, UserMaxConc: 8}
@@ -262,7 +262,7 @@ func TestConcReconciliationConverges(t *testing.T) {
 	require.Zero(t, cnt, "全体消亡后键 EXPIRE 自灭")
 }
 
-// T5 fail-open 结构性质（spec §1.4/验收 §3）：miniredis 关闭 → tick 失败（errs
+// fail-open 结构性质（spec §1.4/验收 §3）：miniredis 关闭 → tick 失败（errs
 // 为确定性信号）、视图冻结不换入 → 陈旧后自动退化全额放行（真上限内无 429 风暴）；
 // 同端口恢复 → ≤ 数 tick 换入新视图回归共识。
 func TestConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
@@ -356,7 +356,7 @@ func TestConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
 	g.release(m, lvl3)
 }
 
-// T6 release 形状：release/两步回滚路径零 Redis 命令；I-3 回滚净零不变量在
+// release 形状：release/两步回滚路径零 Redis 命令； 回滚净零不变量在
 // 份额配置下保持；位掩码契约不变。
 func TestConcReleaseShapeAndRollbackNetZero(t *testing.T) {
 	mr, c := newTestGateRedis(t)
@@ -377,7 +377,7 @@ func TestConcReleaseShapeAndRollbackNetZero(t *testing.T) {
 	require.False(t, ok)
 	require.Zero(t, lvl2)
 	snap := g.store.Load()
-	require.Equal(t, int64(1), snap.users[1].Load(), "I-3：user 计数复原（2→1）")
+	require.Equal(t, int64(1), snap.users[1].Load(), "user 计数复原（2→1）")
 	require.Equal(t, int64(1), snap.keys[1].Load(), "key 计数不动")
 
 	g.release(meta, lvl1)

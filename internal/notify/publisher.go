@@ -2,13 +2,13 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package notify 多实例变更广播（#14 T1 基础层）：PG LISTEN/NOTIFY 定向刷新。
+// Package notify 多实例变更广播（基础层）：PG LISTEN/NOTIFY 定向刷新。
 //
 // 架构（设计文档 docs/superpowers/plans/2026-08-10-multi-instance-design.md
 // §2）：管理面变更落库成功后经 Publisher 发一条 NOTIFY（单 channel
 // c3api_invalidate，紧凑 JSON 载荷与 invalidate.State 同构）；每实例一个
 // Listener worker（Name="notify"）LISTEN 该 channel，解析后调注入的
-// Dispatcher（main 装配，T3）转发现有 invalidate.Debouncer 的 Mark 方法——
+// Dispatcher（main 装配）转发现有 invalidate.Debouncer 的 Mark 方法——
 // 本地/远端变更共享同一去抖窗口，天然合并去重，Debouncer 本体零改动。
 //
 // 设计要点：
@@ -77,8 +77,8 @@ type Change struct {
 
 // IsEmpty 空载荷判定：8 个变更位全 false 且 Groups 为空。V/Src 不参与判定——
 // V 恒存在（json 无 omitempty），Src 由 Publisher 发布时自动填充，调用方
-// 构造时均为空。service.publish 用此前置跳过无意义 NOTIFY（评审 I-1：
-// CreateAccount 无 GroupIDs / UpdateAccount 无变更的空载荷统一覆盖）。
+// 构造时均为空。service.publish 用此前置跳过无意义 NOTIFY（
+// 创建无分组 / 补丁无分组变更的空载荷在此统一覆盖）。
 func (c Change) IsEmpty() bool {
 	return !c.Users && !c.Templates && !c.Clients && !c.Multipliers &&
 		!c.Keys && !c.Settings && !c.Rules && !c.Pricing && len(c.Groups) == 0
@@ -134,7 +134,7 @@ func (p *Publisher) Publish(ctx context.Context, ch Change) error {
 	if p.pool == nil {
 		return fmt.Errorf("notify: publisher pool not configured")
 	}
-	ch.Src = p.src // 接收端跳过自播（Src 含实例随机 nonce，B4-1 跨实例唯一；空 src = 不跳过，单实例部署无碍）
+	ch.Src = p.src // 接收端跳过自播（Src 含实例随机 nonce，跨实例唯一；空 src = 不跳过，单实例部署无碍）
 	payload := Marshal(ch)
 	_, err := p.pool.Exec(ctx, notifySQL, string(payload))
 	if err != nil && p.log != nil {

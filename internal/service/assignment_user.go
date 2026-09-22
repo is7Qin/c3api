@@ -70,8 +70,8 @@ func (s *Service) GetUserGroups(ctx context.Context, userID int64) ([]int64, map
 // group_ids = 完整授予组列表（未列出即撤销，空数组 = 清空）。multipliers 仅对
 // group_ids 中的组生效（key 必须 ∈ group_ids，否则 400；null = 清除为未设置 →
 // 回退组倍率；未列出的组 = 撤销，谈不上倍率）。校验：用户存在（404）、组存在
-// 且未软删（404，F3 逐组同校验）、非法/重复 id 与越界倍率（400）；组数上限与
-// SetGroupAssignments 对齐 ≤100。整个替换循环（含逐组读）包 WithTx（S3-F2）：
+// 且未软删（404，逐组同校验）、非法/重复 id 与越界倍率（400）；组数上限与
+// SetGroupAssignments 对齐 ≤100。整个替换循环（含逐组读）包 WithTx：
 // 逐组读与写同一事务，中途失败整体回滚——不再出现混合授予态。实现按组复用组
 // 维度替换核心：对每个目标组读现成员 → 现成员 ∪ {userID} 作为新授予集合
 // （SetAssignmentMultiplier 只传该用户，其他成员不传 = 沿用现倍率，互不影响）；
@@ -157,7 +157,7 @@ func (s *Service) SetUserGroups(ctx context.Context, userID int64, groupIDs []in
 		return nil, nil, err
 	}
 	s.inv.Multipliers()
-	s.publish(ctx, notify.Change{Multipliers: true}) // 倍率/授予变更跨实例传播（评审 M-1：组维度写路径已有，用户维度写补齐）
+	s.publish(ctx, notify.Change{Multipliers: true}) // 倍率/授予变更跨实例传播（组维度写路径已有，用户维度写补齐）
 	if s.log != nil {
 		s.log.Info("user groups set", logx.Int64("user_id", userID), logx.Int64("count", int64(len(groupIDs))))
 	}

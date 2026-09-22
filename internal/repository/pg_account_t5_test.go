@@ -17,7 +17,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// SDK 接入 T5：轮转回写（WriteOAuthRotation 部分更新 upsert）真实 PG 测试 +
+// SDK 接入：轮转回写（WriteOAuthRotation 部分更新 upsert）真实 PG 测试 +
 // 失效恢复（status→active 隐含清 failed_at + last_error）。基座见
 // pg_account_groups_test.go 的 newPGRepos（DROP SCHEMA 重建）。
 // ---------------------------------------------------------------------------
@@ -35,8 +35,7 @@ func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at,
 	})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: name, TemplateID: tpl.ID, UpstreamKey: "sk-" + name, MaxConcurrency: 8,
-	})
+		Name: name, TemplateID: tpl.ID, UpstreamKey: "sk-" + name, MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	ext := &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
@@ -56,7 +55,7 @@ func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at,
 // codex_oauth_* 三列（codex_oauth_token/codex_oauth_refresh_token/
 // codex_oauth_expires_at 保旧），其余列（codex_identity/codex_pat_key/
 // codex_email）原样保留（防 UpsertAccountExt 全量 upsert 的 ClearX 清空
-// 回归——P3-4 expiry 保旧断言）；幂等（重复回调收敛）；行缺失 → 报错。
+// 回归——expiry 保旧断言）；幂等（重复回调收敛）；行缺失 → 报错。
 func TestWriteOAuthRotationPG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
@@ -79,7 +78,7 @@ func TestWriteOAuthRotationPG(t *testing.T) {
 	require.Equal(t, ext.CodexIdentity.WindowID, got.CodexIdentity.WindowID)
 	require.Equal(t, *ext.CodexEmail, *got.CodexEmail)
 
-	// 幂等：重复回调（D4 重试投递同一 (at, rt)）→ 收敛不报错
+	// 幂等：重复回调（重试投递同一 (at, rt)）→ 收敛不报错
 	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at-new", "rt-new", &expires))
 	got2, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
@@ -104,7 +103,7 @@ func TestWriteOAuthRotationNilExpiryPG(t *testing.T) {
 }
 
 // TestWriteOAuthRotationMissingRowPG 行缺失（配置损坏——codex 账号必有 ext
-// 行）→ 报错（INSERT 路径缺必填列）——D4 回调重试链接管（fail-closed）。
+// 行）→ 报错（INSERT 路径缺必填列）——回调重试链接管（fail-closed）。
 func TestWriteOAuthRotationMissingRowPG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
@@ -114,10 +113,9 @@ func TestWriteOAuthRotationMissingRowPG(t *testing.T) {
 	})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "rot3", TemplateID: tpl.ID, UpstreamKey: "sk-rot3", MaxConcurrency: 8,
-	})
+		Name: "rot3", TemplateID: tpl.ID, UpstreamKey: "sk-rot3", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	// 无 ext 行
 	require.Error(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at", "rt", nil),
-		"行缺失必须报错——令牌无法持久化 = D4 失败信号")
+		"行缺失必须报错——令牌无法持久化 = 失败信号")
 }

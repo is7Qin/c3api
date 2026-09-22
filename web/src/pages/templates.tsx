@@ -40,7 +40,7 @@ type Template = components['schemas']['Template']
 type TemplateCreate = components['schemas']['TemplateCreate']
 type TemplatePatch = components['schemas']['TemplatePatch']
 type TemplateExt = components['schemas']['TemplateExt']
-// 模板格式联合 = API SupportedFormats 元素类型（W1 扩展后为 4 值含 openai-responses-ws；
+// 模板格式联合 = API SupportedFormats 元素类型（扩展后为 4 值含 openai-responses-ws；
 // 不用 RequestFormat 别名——usage 侧枚举保持 3 值，模板格式与其已分化）。
 type TemplateFormat = components['schemas']['Template']['SupportedFormats'][number]
 type TemplateCredentialType = NonNullable<Template['CredentialType']>
@@ -232,7 +232,7 @@ function FormFields({
   form: FormState
   setForm: (updater: (f: FormState) => FormState) => void
   error?: string | null
-  batch?: boolean // 批量更新隐藏凭据类型（TemplatePatch 不支持类型变更，评审 M-2）
+  batch?: boolean // 批量更新隐藏凭据类型（TemplatePatch 不支持类型变更）
   batchCodex?: boolean
   batchMappingMode?: BatchMappingMode
   setBatchMappingMode?: (v: BatchMappingMode) => void

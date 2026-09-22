@@ -8,7 +8,7 @@ package repository_test
 // 端到端行为级——usage flusher 单写点（InsertBatch，billed=false 出生）落种子行，
 // 三车道消费面（SettleBalanceBatch 余额车道 / SettleFefoBatch 临时车道 /
 // MarkBilledBulk 零价扫尾 / UnbilledLag 度量 / AcquireBillingLock 会话锁）逐族
-// 验收。legacy chunk 族（DeductGroupsAndMark/DeductOnlyAndMark）随 D8 退役——
+// 验收。legacy chunk 族（DeductGroupsAndMark/DeductOnlyAndMark）随 退役——
 // 语义等价断言迁移至结算语句族；EPQ 并发标记族为最高优先新族（协调者行锁屏障）。
 //
 // 基座约定同 pg_account_groups_test.go：TEST_DATABASE_URL 未设置 → t.Skip；
@@ -387,7 +387,7 @@ func TestPGBillingCursorAbortIncluded(t *testing.T) {
 
 // TestPGBillingCursorMultiInstanceLock 多实例互斥（行为级 + 源码级守卫）：
 // 会话级 advisory lock 下持锁者消费、另一方 ok=false 跳过本周期；释放后可再抢。
-// 源码守卫：billing 消费面可执行代码不得出现 pg_advisory_xact_lock（Momus M1
+// 源码守卫：billing 消费面可执行代码不得出现 pg_advisory_xact_lock（
 // 双扣防线——每事务锁取批与标记间无互斥）。
 func TestPGBillingCursorMultiInstanceLock(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -462,7 +462,7 @@ func guardNoXactAdvisoryLock(t *testing.T) {
 				continue
 			}
 			require.NotContains(t, trimmed, "pg_advisory_xact_lock",
-				"%s:%d: 禁止每事务 advisory lock（会话级持锁整周期是双扣防线，Momus M1）", path, i+1)
+				"%s:%d: 禁止每事务 advisory lock（会话级持锁整周期是双扣防线）", path, i+1)
 		}
 	}
 	data, err := os.ReadFile("billing_cursor.go")
@@ -556,7 +556,7 @@ func TestPGBillingCursorOverdraftWriteBack(t *testing.T) {
 		"10000 − 40000 = −30000 精确负值")
 	require.Equal(t, int64(999_999), tempBalanceAmount(t, repos, tp), "过期额度不动")
 
-	// overdraft 列回写 true（B2）
+	// overdraft 列回写 true
 	for _, r := range rows {
 		row := usageLogByID(t, repos, r.ID)
 		require.True(t, row.Billed)
@@ -697,7 +697,7 @@ func TestPGBillingCursorCostZeroFastMarkBulk(t *testing.T) {
 	require.False(t, lagOK)
 }
 
-// —— 族 12：EPQ 并发标记（最高优先新族，spec §三/oracle 必改 #1） ——
+// —— 族 12：EPQ 并发标记（最高优先新族，spec §三/oracle 必改） ——
 
 // TestPGSettleEPQConcurrentMark EPQ 并发标记族：协调者连接持用户行锁阻塞 A 结算
 // 语句的 debited 步 → 中途抢标批内一行并提交 → 放锁后 A 的 marked CTE 经
@@ -971,9 +971,9 @@ func TestPGSettlementFailureStates(t *testing.T) {
 
 // ledgerHeadID 已删除（K 失败族队头定位走 fetchAllUnbilled 差集，无需独立查询面）。
 
-// —— 族 14：SyncCommitOffSmoke（F2-opt D4 形态保持） ——
+// —— 族 14：SyncCommitOffSmoke（形态保持） ——
 
-// TestPGBillingChunkSyncCommitOffSmoke sync_commit 会话级让渡冒烟（D4）：SET
+// TestPGBillingChunkSyncCommitOffSmoke sync_commit 会话级让渡冒烟：SET
 // LOCAL synchronous_commit TO off 事务作用域生效（tx 内 current_setting=off）、
 // 连接归还即失效（tx 外回落库默认 on——零泄漏面）；结算事务含 SET LOCAL 首
 // 语句正常提交（SET 失败 = 回滚重放的安全缺省由既有回滚族覆盖）。
@@ -1009,7 +1009,7 @@ func TestPGBillingChunkSyncCommitOffSmoke(t *testing.T) {
 	require.Equal(t, int64(90_000), cursorBalance(t, repos, u.ID))
 }
 
-// —— 族 15：桶不相交（wave3 D-C 桶级并行仓库侧契约） ——
+// —— 族 15：桶不相交（桶级并行仓库侧契约） ——
 
 // TestPGSettleBucketDisjointness 桶谓词不相交性：K=4 逐桶各跑一次
 // SettleBalanceBatch，断言每桶只消费自己 uid 集（COALESCE(user_id,0)%4=bucket）

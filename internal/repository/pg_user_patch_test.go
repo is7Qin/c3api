@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// TestPGUpdateUserPatchConditional A-P1-1 patch 条件写语义（真实 PG）：
+// TestPGUpdateUserPatchConditional patch 条件写语义（真实 PG）：
 // 显式字段才写（role 只改 role 不触碰 balance）；balance/max_concurrency
 // 带旧值条件——旧值不满足（期间有扣费/并发变更）→ ErrConflict 不覆盖；
 // 缺失用户 → ErrNotFound；旧值缺失 → 显式拒绝（防未来调用方退回无条件写）。
@@ -94,7 +94,7 @@ func TestPGUpdateUserPatchConditional(t *testing.T) {
 	})
 }
 
-// TestPGUpdateUserVsDeductOnlyInterleave v02 点名无回归网（F2 游标语义适配）：
+// TestPGUpdateUserVsDeductOnlyInterleave v02 点名无回归网（游标语义适配）：
 // GET 快照(100000) → 游标消费扣费(40000) → 陈旧快照条件写必须 ErrConflict
 // （余额不复活、usage_logs 消费与余额一致）；新鲜快照条件写成功（管理员显式
 // 意图建立在当前值上）。
@@ -133,7 +133,7 @@ func TestPGUpdateUserVsDeductOnlyInterleave(t *testing.T) {
 	require.Equal(t, int64(1), countLogs(t, repos, u.ID), "消费日志在（账实一致）")
 }
 
-// TestPGUpdateUserPatchConcurrentDeduct 条件写与并发扣费交错（F2 游标语义）：
+// TestPGUpdateUserPatchConcurrentDeduct 条件写与并发扣费交错（游标语义）：
 // 排空消费 goroutine（Balance 车道结算循环）与条件写重试并发交错——条件写要么
 // 成功（New = 重读 + 5000，建立在当前值上）要么 ErrConflict 重读重试——任何
 // 交错下最终余额 = 100000 + 5000 - 20×1000（成功）或 100000 - 20×1000（全冲突），
@@ -184,7 +184,7 @@ func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 	require.Equal(t, int64(nDeducts), countLogs(t, repos, u.ID))
 }
 
-// TestPGUpdateKeyVsAddQuotaUsedInterleave A-P2-5 无回归网：UpdateKey 不再写
+// TestPGUpdateKeyVsAddQuotaUsedInterleave 无回归网：UpdateKey 不再写
 // quota_used（剥离 SetQuotaUsed）——与 AddQuotaUsed 并发交错时 Recorder 增量
 // 零丢失；返回行 QuotaUsed 为 DB 新鲜值（ent Save re-SELECT）。
 func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {
@@ -200,7 +200,7 @@ func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {
 	require.NoError(t, err)
 
 	// 交错：AddQuotaUsed 增量流（Recorder 节奏）+ UpdateKey patch 并发写
-	//（S3-F1 patch 化：patch 无 quota_used 字段——增量不可能被覆盖，比旧
+	// （patch 化：patch 无 quota_used 字段——增量不可能被覆盖，比旧
 	// "剥离 SetQuotaUsed" 更强）
 	var wg sync.WaitGroup
 	wg.Add(1)

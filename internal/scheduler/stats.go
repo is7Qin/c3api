@@ -12,7 +12,7 @@ package scheduler
 // 状态经注册表 Status 直出，此处不重复采集。legacy 状态回写队列已随
 // cutover 删除——持久状态列不存在，无回写可言）。
 type SchedulerStats struct {
-	// 编译道（Task18 wiring）：pending=待触发编译信号（cap 1，trailing-edge
+	// 编译道（wiring）：pending=待触发编译信号（cap 1，trailing-edge
 	// 合并是设计语义非丢弃）；last_compile_*_unix_ms=最近一次成功/失败编译
 	// 时刻（0=从未，失败保留旧视图是契约）；decision_generation/decision_routes
 	// = 当前发布 DecisionView 的世代与路由数（0/0 = 编译道未发布过）。
@@ -51,7 +51,7 @@ func (s *Scheduler) Stats() any {
 	return st
 }
 
-// RuntimeHealthStats 健康投影道观测（Task18 ops 可见性）：records=当前视图
+// RuntimeHealthStats 健康投影道观测（ops 可见性）：records=当前视图
 // 条目数（按态分桶）；generation=已同步的全局健康世代；last_sync_ok_unix_ms=
 // 最近一次成功 Sync 时刻（0=从未，freshness 锚）；sync_errors=Sync 失败累计
 // （视图冻结的可见痕迹）；last_tick_ok=最近 tick 成败。

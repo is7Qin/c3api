@@ -47,31 +47,31 @@ func TestThrottleAccountWildcard(t *testing.T) {
 	h, _, mr := newTestHealthWithLatch(t)
 	_ = mr
 	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
-	ev := rule.Event{AccountID: 1, ExpectedRevision: 5, RouteClassID: "r1", QualityClassID: "q1"}
+	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 5, CandidateFingerprint: testIdentity, RouteClassID: "r1", QualityClassID: "q1"}
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
 	require.NoError(t, sink.Throttle(ev, th))
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "any", 5))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", 5))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "other", 5))
-	require.Equal(t, StateReady, h.EffectiveState(1, "any", 6))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "any", testIdentity, 5))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "q1", testIdentity, 5))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "other", testIdentity, 5))
+	require.Equal(t, StateReady, h.EffectiveState(1, "any", testIdentity, 6))
 }
 
 func TestThrottleAccountRouteRequiresIDsAndPropagation(t *testing.T) {
 	h, _, _ := newTestHealthWithLatch(t)
 	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
-	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "", QualityClassID: "q1"}, th))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, CandidateFingerprint: testIdentity, RouteClassID: "", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: ""}, th))
+	require.Equal(t, StateReady, h.EffectiveState(2, "q1", testIdentity, 3))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, CandidateFingerprint: testIdentity, RouteClassID: "r1", QualityClassID: ""}, th))
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateReady, h.EffectiveState(2, "q1", 3))
-	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedRevision: 3, RouteClassID: "r1", QualityClassID: "q1"}, th))
+	require.Equal(t, StateReady, h.EffectiveState(2, "q1", testIdentity, 3))
+	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, CandidateFingerprint: testIdentity, RouteClassID: "r1", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(2, "q1", 3))
-	require.Equal(t, StateReady, h.EffectiveState(2, "other", 3))
-	require.Equal(t, StateReady, h.EffectiveState(2, "*", 3))
+	require.Equal(t, StateOPEN, h.EffectiveState(2, "q1", testIdentity, 3))
+	require.Equal(t, StateReady, h.EffectiveState(2, "other", testIdentity, 3))
+	require.Equal(t, StateReady, h.EffectiveState(2, "*", testIdentity, 3))
 }
 
 func TestLatchFailClosedAndRevisionFence(t *testing.T) {
@@ -79,22 +79,28 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	s, ls, sink := newSchedWithLatch(t, m)
 	fp, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
-	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
+	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp, RouteClassID: "r1", QualityClassID: "q1", ErrorMessage: "boom"}
 	require.NoError(t, sink.FailAccount(ev))
-	require.True(t, ls.IsLatched(1, fp))
+	require.True(t, ls.IsLatched(1, fp, 1))
 	s.compileOnce() // v5-§5.1A: 锁存账号保留在编译计划内 → reserve 门跳过 → ErrAttemptsExhausted（旧“路由空 → ErrNoAvailable”已废止）
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrAttemptsExhausted)
 	// same revision reload must not clear latch
 	require.NoError(t, s.reload(context.Background()))
-	require.True(t, ls.IsLatched(1, fp))
+	require.True(t, ls.IsLatched(1, fp, 1))
 	s.compileOnce()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrAttemptsExhausted)
-	// new revision clears latch
+	// C 是**客户端 CAS 令牌**，不是在途围栏：只推进 C 不得清锁存
+	// （四代模型：C 不围栏在途工件；这正是它与 K 职责分离的意义）。
 	m.byGroup[10][0].LifecycleRevision = 2
 	require.NoError(t, s.reload(context.Background()))
-	require.False(t, ls.IsLatched(1, fp))
+	require.True(t, ls.IsLatched(1, fp, 1), "C must not fence in-flight artifacts")
+
+	// K（identity_revision）才是身份代际：推进 K 清锁存。
+	m.byGroup[10][0].IdentityRevision = 2
+	require.NoError(t, s.reload(context.Background()))
+	require.False(t, ls.IsLatched(1, fp, 2), "K advance leaves the stored latch stale")
 	s.compileOnce()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
@@ -107,19 +113,20 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	s, ls, sink := newSchedWithLatch(t, m)
 	fp1, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
-	ev := rule.Event{AccountID: 1, ExpectedRevision: 1, CandidateFingerprint: fp1, ErrorMessage: "boom"}
+	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: fp1, ErrorMessage: "boom"}
 	require.NoError(t, sink.FailAccount(ev))
-	require.True(t, ls.IsLatched(1, fp1))
+	require.True(t, ls.IsLatched(1, fp1, 1))
 	// fingerprint change clears old latch
 	m.byGroup[10][0].UpstreamKey = "new-key"
 	require.NoError(t, s.reload(context.Background()))
-	require.False(t, ls.IsLatched(1, fp1))
+	require.False(t, ls.IsLatched(1, fp1, 1))
 	fpNew, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
-	require.False(t, ls.IsLatched(1, fpNew))
+	require.False(t, ls.IsLatched(1, fpNew, 1))
 	// re-latch with new fingerprint
-	ev2 := rule.Event{AccountID: 1, ExpectedRevision: 2, ErrorMessage: "boom2"}
+	ev2 := rule.Event{AccountID: 1, ExpectedIdentityRevision: 2, ErrorMessage: "boom2"}
 	m.byGroup[10][0].LifecycleRevision = 2
+	m.byGroup[10][0].IdentityRevision = 2
 	require.NoError(t, s.reload(context.Background()))
 	// Atomic publication: the staged revision pairs on the next compile
 	// before the revision-gated FailAccount below can observe it.
@@ -128,18 +135,18 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	require.NoError(t, err)
 	ev2.CandidateFingerprint = fp2
 	require.NoError(t, sink.FailAccount(ev2))
-	require.True(t, ls.IsLatched(1, fp2))
+	require.True(t, ls.IsLatched(1, fp2, 2))
 	// remove account clears latch
 	delete(m.byGroup, 10)
 	require.NoError(t, s.reload(context.Background()))
-	require.False(t, ls.IsLatched(1, fp2))
+	require.False(t, ls.IsLatched(1, fp2, 2))
 	// re-add same ID with new revision should not be latched
 	m.byGroup[10] = []*domain.Account{acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}
 	m.byGroup[10][0].LifecycleRevision = 5
 	require.NoError(t, s.reload(context.Background()))
 	fpReadd, err := candidateFingerprint(m.byGroup[10][0])
 	require.NoError(t, err)
-	require.False(t, ls.IsLatched(1, fpReadd))
+	require.False(t, ls.IsLatched(1, fpReadd, 1))
 	s.compileOnce()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
@@ -166,7 +173,7 @@ func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_ = sink.Throttle(rule.Event{AccountID: 1, ExpectedRevision: 1}, th)
+		_ = sink.Throttle(rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, CandidateFingerprint: testIdentity}, th)
 	}()
 	go func() {
 		defer wg.Done()
@@ -180,7 +187,7 @@ func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {
 		require.FailNow(t, "barrier timeout")
 	}
 	require.NoError(t, h.Sync(context.Background()))
-	require.Equal(t, StateOPEN, h.EffectiveState(1, "*", 1))
+	require.Equal(t, StateOPEN, h.EffectiveState(1, "*", testIdentity, 1))
 }
 
 func int64Ptr(v int64) *int64 { return &v }

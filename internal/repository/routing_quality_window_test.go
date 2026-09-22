@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// Phase 1 RED: windowed quality reads over routing_quality_rollup.
+// RED: windowed quality reads over routing_quality_rollup.
 // Q1 = current window [M-5m, M) grouped by (route, fingerprint), summed
 // across quality classes. Q2 = per-(route, fp) baseline [M-24h, M-5m)
 // truncated newest→oldest at attempts ≥ 30 in SQL, restricted to hotKeys.

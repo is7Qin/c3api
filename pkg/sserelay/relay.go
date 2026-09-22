@@ -67,7 +67,7 @@ func InferEventName(data []byte) []byte {
 
 // EventName 返回帧的有效事件名：event: 字段值优先；缺名（data-only）帧从
 // data 的 JSON "type" 字段推断（InferEventName——resp/messages 流帧的 type
-// 与事件名同值，非规范上游缺 event: 行时可用，P3）。仍无 → 空。仅缺名帧
+// 与事件名同值，非规范上游缺 event: 行时可用）。仍无 → 空。仅缺名帧
 // 触发推断，具名帧零开销（Observer 每帧调用）。返回切片生命周期同 Event
 // （具名帧与锚定命中推断值均指向复用缓冲，仅回调内有效；锚定未命中回退
 // 全量解码的推断值为本次分配）。
@@ -86,7 +86,7 @@ type Observer func(Event)
 type Config struct {
 	FlushBytes int // 缓冲达到该值立即 flush；0 时默认 4096
 	Observer   Observer
-	// Mapper 可选的逐帧转换器（协议转换 W5）：nil = 原样转发（热路径零开销，
+	// Mapper 可选的逐帧转换器（协议转换）：nil = 原样转发（热路径零开销，
 	// 单帧一次 nil 判定）。非 nil 时每帧先经 Mapper 变换再写出；Observer 仍见
 	// 原始帧（用量提取不因转换失真）。drop=true → 帧丢弃不写出。映射帧字节
 	// 生命周期仅限本帧：Mapper 返回后 relay 立即写出，调用方可复用缓冲。
@@ -95,7 +95,7 @@ type Config struct {
 
 type relay struct {
 	ctx   context.Context
-	w     http.ResponseWriter // 原始 dst：取消联动设写侧 deadline（C-P2-1 方案 1）
+	w     http.ResponseWriter // 原始 dst：取消联动设写侧 deadline（方案 1）
 	bw    *bufio.Writer
 	br    *bufio.Reader
 	frame *bytes.Buffer // 当前帧原始字节（池化复用；归属 relayBufio）
@@ -107,7 +107,7 @@ type relay struct {
 	firstFlushed bool       // 首帧已即时 flush（替代 timer 时代的 lastTick IsZero 判定）
 
 	stopWatch chan struct{}  // 关闭后 deadline watcher 退出
-	wg        sync.WaitGroup // deadline watcher 汇合（替代 deadlineDone chan；spec 2026-08-15-gc-opt-ab B-1）
+	wg        sync.WaitGroup // deadline watcher 汇合（替代 deadlineDone chan；spec 2026-08-15-gc-opt-ab）
 }
 
 // relayBufio 池化的逐流缓冲组：读/写 bufio + 帧组装缓冲。尺寸按语义水位取，
@@ -325,7 +325,7 @@ func splitField(line []byte) ([]byte, []byte) {
 	return name, val
 }
 
-// normalize 错误分类（C-P2-2）：父 ctx 取消 → context.Canceled；子 ctx 超时
+// normalize 错误分类：父 ctx 取消 → context.Canceled；子 ctx 超时
 // （UpstreamStreamTimeout）→ context.DeadlineExceeded（r.ctx.Err() 原样返回，
 // 不再折叠成 Canceled）；上游读错误原样透传。三类可区分——调用方无需再
 // "查 r.Context().Err()" 补丁，标准 errors.Is(err, context.Canceled) 即可
@@ -380,7 +380,7 @@ func (r *relay) stopWatcher() {
 	r.wg.Wait()        // 汇合后才允许释放 writer（close 保证 select 必然唤醒退出；退出路径唯一——select 任一分支 return 即 Done 恰好一次）
 }
 
-// startDeadlineWatcher 写侧 deadline 与 ctx.Done 联动（C-P2-1 方案 1）：
+// startDeadlineWatcher 写侧 deadline 与 ctx.Done 联动（方案 1）：
 // "取消 = 写失败 = 正常退出"——半开客户端上阻塞的写（bw.Flush 持 r.mu、
 // 无 ctx 感知，全库无 SetWriteDeadline）在 deadline 处失败返回，flushFrame
 // 传播 → run 正常退出；无此联动则 run + watcher 永久泄漏（每流 1 goroutine
@@ -395,7 +395,7 @@ func (r *relay) startDeadlineWatcher() {
 		case <-r.ctx.Done():
 			// dst 可能被中间件包装（accessLog 的 statusWriter）——
 			// ResponseController 沿 Unwrap 链下探到真实 writer 才能生效
-			// （无 Unwrap 的包装层 = ErrNotSupported，C-P2-1 前置修复：
+			// （无 Unwrap 的包装层 = ErrNotSupported 前置修复：
 			// middleware.statusWriter.Unwrap）。
 			_ = http.NewResponseController(r.w).SetWriteDeadline(time.Now())
 		case <-r.stopWatch:

@@ -4,7 +4,7 @@
 
 package service
 
-// 路由观测查询面（Todo 17 service lane）：routing flow / quality-cost frontier /
+// 路由观测查询面（service lane）：routing flow / quality-cost frontier /
 // plan explanation 三个只读聚合入口。数据源钉死为 rollup 表（repository 聚合读）
 // 与 scheduler 当前发布计划的防御性投影——绝不查 usage_logs/err_logs，绝不在
 // 查询路径重编译/重过滤。丢失计数（incomplete/overflow/crash-unobservable）

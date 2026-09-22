@@ -18,7 +18,7 @@
 // scope 语义（脏标记）：Snapshot 注册时声明关心的变更 scope；NOTIFY 变更按
 // 类型映射 scope 后 Reload(ctx, scopes...) 只重载命中 scope 的快照（未命中
 // 不动——变更标记对应快照集合，触发时只重载这些）。当前接线：settings 变更
-// → ScopeSettings（auth gate N 预算即时重算，#36 缺口）。
+// → ScopeSettings（auth gate N 预算即时重算 缺口）。
 package snapshot
 
 import (
@@ -37,7 +37,7 @@ import (
 type Scope = string
 
 // ScopeSettings settings 快照变更 scope：NOTIFY Change.Settings → 声明本 scope
-// 的快照精确重载（当前接线 = auth：gate 预算按新 N 即时重算，补 #36 "NOTIFY
+// 的快照精确重载（当前接线 = auth：gate 预算按新 N 即时重算，补 "NOTIFY
 // 不触发 Auth.Reload" 缺口）。settings 自身快照（svc.ReloadSettings）不走注册
 // 表，保持既有 ReloadSettings 行为。
 const ScopeSettings Scope = "settings"
@@ -225,10 +225,10 @@ func (r *Registry) ReloadAll(ctx context.Context) map[string]error {
 // Reload 按 scope 精确重载（NOTIFY 分发）：只 reload 声明了任一给定 scope 的
 // 快照（同快照多 scope 命中只执行一次）；空 scopes / 未命中 → no-op 返回空。
 // 错误独立收集返回（同 ReloadAll）。O(命中 scope 的快照数) 查找。空 scopes
-// 前置 return（不取 execMu——零状态读取，与触发执行互斥解耦，评审 P3-C）。
+// 前置 return（不取 execMu——零状态读取，与触发执行互斥解耦）。
 func (r *Registry) Reload(ctx context.Context, scopes ...string) map[string]error {
 	if len(scopes) == 0 {
-		return nil // 空 scopes 前置 return：零状态读取，不取 execMu（评审 P3-C）
+		return nil // 空 scopes 前置 return：零状态读取，不取 execMu
 	}
 	r.execMu.Lock()
 	defer r.execMu.Unlock()

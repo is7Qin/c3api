@@ -19,12 +19,12 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// W1 数据模型真实 PG 测试：template_ext / account_ext 2 张子表 CRUD roundtrip
+// 数据模型真实 PG 测试：template_ext / account_ext 2 张子表 CRUD roundtrip
 // （幂等 upsert + NULL 清空 + FK 约束）+ groups.protocol_convert roundtrip。
 // 基座见 pg_account_groups_test.go 的 newPGRepos（DROP SCHEMA 重建）。
 // ---------------------------------------------------------------------------
 
-func boolPtrPG(b bool) *bool { return &b }
+func boolPtr(b bool) *bool { return &b }
 
 func strPtrPG(s string) *string { return &s }
 
@@ -39,7 +39,7 @@ func TestTemplateExtPG(t *testing.T) {
 	t.Run("strip_image_tools roundtrip", func(t *testing.T) {
 		saved, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-			StripImageTools: boolPtrPG(true),
+			StripImageTools: boolPtr(true),
 		})
 		require.NoError(t, err)
 		require.Equal(t, tpl.ID, saved.TemplateID)
@@ -55,7 +55,7 @@ func TestTemplateExtPG(t *testing.T) {
 		// 幂等 upsert：再写（改值）→ 仍单行、值更新
 		saved, err = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-			StripImageTools: boolPtrPG(false),
+			StripImageTools: boolPtr(false),
 		})
 		require.NoError(t, err)
 		require.False(t, *saved.StripImageTools)
@@ -79,7 +79,7 @@ func TestTemplateExtPG(t *testing.T) {
 		// 类型一致性——service 层负责）
 		for _, ct := range []credential.Type{credential.TypeCodexOAuth, credential.TypeCodexPAT} {
 			saved, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
-				TemplateID: tpl.ID, CredentialType: ct, StripImageTools: boolPtrPG(true),
+				TemplateID: tpl.ID, CredentialType: ct, StripImageTools: boolPtr(true),
 			})
 			require.NoError(t, err)
 			require.Equal(t, ct, saved.CredentialType)
@@ -336,7 +336,7 @@ func TestGroupProtocolConvertPG(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T4 §3：账号 ext → 调度器快照 eager-load（Selection 扩展路线——热路径零 DB
+// §3：账号 ext → 调度器快照 eager-load（Selection 扩展路线——热路径零 DB
 // 的数据源；与 pg_strip_test.go 的 template_ext 快照合并同构）
 // ---------------------------------------------------------------------------
 

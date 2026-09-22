@@ -22,7 +22,7 @@ import (
 type RedemptionRepo struct {
 	client *ent.Client
 	// driver 为 raw SQL（IncrementUsed 条件递增）用：普通 client 与 tx client
-	// （WithTx 内）均可用——评审 I-1。
+	// （WithTx 内）均可用。
 	driver dialect.Driver
 }
 
@@ -185,7 +185,7 @@ func (r *RedemptionRepo) ListUsesByUser(ctx context.Context, userID int64, q Lis
 	return out, int64(total), nil
 }
 
-// GetUse 取用户对某码的兑换记录；无记录 → ErrNotFound（兑换判定先查 use —— 评审 M-1）。
+// GetUse 取用户对某码的兑换记录；无记录 → ErrNotFound（兑换判定先查 use）。
 func (r *RedemptionRepo) GetUse(ctx context.Context, codeID, userID int64) (*domain.RedemptionUse, error) {
 	row, err := r.client.RedemptionUse.Query().
 		Where(redemptionuse.CodeID(codeID), redemptionuse.UserID(userID)).
@@ -218,7 +218,7 @@ func (r *RedemptionRepo) CreateUse(ctx context.Context, use *domain.RedemptionUs
 	return nil
 }
 
-// IncrementUsed 条件递增 used_count（防并发超卖——评审 I-2）：
+// IncrementUsed 条件递增 used_count（防并发超卖）：
 // UPDATE redemption_codes SET used_count = used_count + 1
 // WHERE id = ? AND used_count < max_uses —— 单语句条件原子，DB 行锁 + WHERE 保证
 // 并发兑换最后一张不超卖。0 行受影响 → (false, nil) = 已用尽（service → 400 并回滚）。
@@ -240,7 +240,7 @@ func (r *RedemptionRepo) IncrementUsed(ctx context.Context, codeID int64) (bool,
 
 // DeactivateCodes 批量失效（单事务）：status → disabled。已 disabled 行 no-op
 // （WHERE status <> 'disabled'，不重复计受影响数）；返回受影响行数（新失效数）。
-// 缺失 id 由 service 层先查（404 含缺失 id），repo 不报错（评审 M-2：先查后失效
+// 缺失 id 由 service 层先查（404 含缺失 id），repo 不报错（先查后失效
 // 窗口竞态可接受——失效不新增行，检查到的 id 不会消失）。空 ids → (0, nil)。
 // IN 按 inChunkSize 分片：ids 超 65,535 时单条 UPDATE 超 PG 参数上限（service
 // 层已限 ≤100，repo 层自保护）。每块独立 UPDATE，受影响行数累加（块间 id
@@ -265,7 +265,7 @@ func (r *RedemptionRepo) DeactivateCodes(ctx context.Context, ids []int64) (int6
 			SetStatus(redemptioncode.StatusDisabled).
 			Save(ctx)
 		if err != nil {
-			// 块上下文：任一块失败整体回滚（评审 I-2）
+			// 块上下文：任一块失败整体回滚
 			return 0, fmt.Errorf("deactivate codes (chunk %d/%d, %d ids): %w", i+1, len(chunks), len(chunk), err)
 		}
 		total += int64(n)

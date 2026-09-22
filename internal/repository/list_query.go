@@ -32,8 +32,11 @@ type ListQuery struct {
 	Sort       string // 空 → id
 	Order      string // asc/desc；空 → desc
 	TemplateID int64  // 账号专属：0 = 不过滤
-	UserID     int64  // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
-	GroupID    int64  // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
+	// Enabled 账号专属三态过滤：nil = 不过滤；&true = 仅启用；&false = 仅禁用。
+	// 与运行时失效（failed_at）无关——管理面启停是独立维度。
+	Enabled *bool
+	UserID  int64 // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
+	GroupID int64 // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
 }
 
 var ErrInvalidSort = errors.New("invalid sort field")

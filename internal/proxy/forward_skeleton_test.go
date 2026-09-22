@@ -51,7 +51,7 @@ func TestSkeletonChatBodyNotJSONStreamAndNonStream(t *testing.T) {
 	}
 }
 
-// 计划 I-2/等价性清单：model 非字符串（number/object）→ 400，在 Select 前、
+// 计划 等价性清单：model 非字符串（number/object）→ 400，在 Select 前、
 // 无记录。（注意：现状完整 params 解析对这类输入静默宽松——openai-go 解码
 // 不报错、model 落空走默认桶；本 400 是计划明确指定的语义收紧，既有测试
 // 无覆盖，行为偏差已在实施报告说明。）
@@ -244,7 +244,7 @@ func TestSkeletonModelNullLikeMissing(t *testing.T) {
 	require.Zero(t, ri.Concurrency, "failed reservation releases its lease")
 }
 
-// 非流式 params 解析失败 → 本地 400、handled=true、无记录（评审 I-1 附加
+// 非流式 params 解析失败 → 本地 400、handled=true、无记录（附加
 // 缺口），Select 已占的并发槽必须释放（caller 内 Release-only）。
 // 注：openai-go/anthropic SDK 解码极宽松（探测：messages 类型错、数值溢出
 // 等均不报错），端到端（骨架 peek 后）该分支实际不可达；本测试直接驱动

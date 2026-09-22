@@ -12,7 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Phase 4 RED: incident evaluation (pure vote + lane cycle-gating), decision
+// RED: incident evaluation (pure vote + lane cycle-gating), decision
 // bytes, validation, scoped-vs-full equality, prune, stats.
 
 var incidentTestRC domain.RouteClassIDVal = domain.RouteClassIDVal{0xAA}
@@ -211,7 +211,7 @@ func TestRouteIncidentTrackerCycles(t *testing.T) {
 	tr := newIncidentTracker()
 	q, b := incidentMaps(facts, bad, good)
 
-	// Fire 1 (M1, degraded): active with detection evidence.
+	// Fire 1 (degraded): active with detection evidence.
 	first := tr.evaluate(route, evaluateRouteIncident(facts, incidentTestRC, q, b), m1)
 	require.True(t, first.Active)
 	require.Equal(t, IncidentKindDomain, first.Kind)
@@ -220,18 +220,18 @@ func TestRouteIncidentTrackerCycles(t *testing.T) {
 	require.Equal(t, 1, first.Domains)
 	require.Equal(t, m1, first.EvaluatedMinute)
 
-	// Identical refire (M1, same counts): frozen — same incident, no streak burn.
+	// Identical refire (same counts): frozen — same incident, no streak burn.
 	frozen := tr.evaluate(route, evaluateRouteIncident(facts, incidentTestRC, q, b), m1)
 	require.Equal(t, first, frozen)
 	require.Equal(t, 0, tr.states[route].HealthyStreak)
 
-	// Same counts at M2: fresh evaluation (M advanced), still degraded.
+	// Same counts at fresh evaluation (M advanced), still degraded.
 	moved := tr.evaluate(route, evaluateRouteIncident(facts, incidentTestRC, q, b), m2)
 	require.True(t, moved.Active)
 	require.Equal(t, m2, moved.EvaluatedMinute)
 	require.Equal(t, 0, tr.states[route].HealthyStreak, "degraded re-fire resets the streak")
 
-	// Fresh healthy at M3 (changed counts): streak 1, detection evidence stands.
+	// Fresh healthy at (changed counts): streak 1, detection evidence stands.
 	q2, _ := incidentMaps(facts, okCur, good)
 	recovering := tr.evaluate(route, evaluateRouteIncident(facts, incidentTestRC, q2, b), m3)
 	require.True(t, recovering.Active, "one healthy vote does not clear")

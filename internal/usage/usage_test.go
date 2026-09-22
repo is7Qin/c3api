@@ -70,7 +70,7 @@ func TestRecorderFlushesLogs(t *testing.T) {
 }
 
 // TestQuotaAccumulatesViaAddQuota 请求路径零统计（spec 2026-08-14）+ 零 quota
-// 推导（Todo 3）：Record 锁内仅明细 append；quota 增量只经 AddQuota 显式正
+// 推导：Record 锁内仅明细 append；quota 增量只经 AddQuota 显式正
 // delta 并入同一 map、同一回写闭环（quota 在线保留，独立于统计——usage_stats
 // 由离线聚合 worker 重建，本 Recorder 不再有任何统计桶机制）。
 func TestQuotaAccumulatesViaAddQuota(t *testing.T) {
@@ -137,7 +137,7 @@ func TestQuotaFailureRefills(t *testing.T) {
 	require.Len(t, r.quotaUsed, 0, "成功回写无残留")
 }
 
-// TestRecorderRecordDoesNotInferQuota Todo 3：Record 不得从 TotalTokens 推导 Key
+// TestRecorderRecordDoesNotInferQuota：Record 不得从 TotalTokens 推导 Key
 // quota——quota 增量唯一生产入口是显式 AddQuota（proxy finish 传入最终 Cost delta）。
 // 旧实现（Record 锁内 quotaUsed += TotalTokens）下本测试必须失败。
 func TestRecorderRecordDoesNotInferQuota(t *testing.T) {
@@ -192,8 +192,8 @@ func TestRecorderWithoutQuotaWriterSkipsQuotaAccounting(t *testing.T) {
 	require.Len(t, ls.logs, 1, "普通 usage 明细不被 quota 停用破坏")
 }
 
-// TestRecordNeverBlocks O1 管道化核心：Record 无 channel、永不阻塞——旧实现
-// 有界 channel cap 16384 饱和后 Record 阻塞发送（off 路径幽灵根因，O3 复测
+// TestRecordNeverBlocks 管道化核心：Record 无 channel、永不阻塞——旧实现
+// 有界 channel cap 16384 饱和后 Record 阻塞发送（off 路径幽灵根因，复测
 // 定位：16.4k goroutine 卡 chan send、healthz inflight 31-33k @10k）。无消费
 // 者（不 Start）时 pending 无界累积，30k 条（> 旧 cap）必须全部立即返回。
 func TestRecordNeverBlocks(t *testing.T) {
@@ -247,7 +247,7 @@ func TestRecordConcurrentNeverBlocks(t *testing.T) {
 	require.Equal(t, g*per, r.Pending())
 }
 
-// TestRecordAfterCloseWarnsOnce Close 后 Record（防御性缺口，评审 I-4）：
+// TestRecordAfterCloseWarnsOnce Close 后 Record（防御性缺口）：
 // closed 标记生效——Warn 恰好一次（不刷屏）、明细不丢（仍聚合入 pending）、
 // 保持非阻塞。worker 管理器顺序（先停 HTTP 再 Close）下正常停机不触发。
 func TestRecordAfterCloseWarnsOnce(t *testing.T) {
@@ -333,7 +333,7 @@ func (m *failOnceLogStore) InsertBatch(ctx context.Context, logs []*domain.Usage
 	return nil
 }
 
-// TestLogRefillOnFailure 失败回灌：InsertBatch 失败 → 二分隔离（A-P2-8-4）后
+// TestLogRefillOnFailure 失败回灌：InsertBatch 失败 → 二分隔离后
 // 未落库行回灌 pending 不丢；下次 flush 重试成功。瞬态失败（failOnce：仅首调
 // 失败）时二分探测把失败 chunk 全部重试成功落库（部分成功语义：成功半照常
 // 入库，不丢不重；失败半的残余回灌），其后剩余回灌——旧实现失败 chunk + 剩余
@@ -358,7 +358,7 @@ func TestLogRefillOnFailure(t *testing.T) {
 	require.Zero(t, r.Pending())
 }
 
-// poisonRowLogStore 注入指定 request_id 的毒丸行（A-P2-8-4 二分定位对象）：含
+// poisonRowLogStore 注入指定 request_id 的毒丸行（二分定位对象）：含
 // 毒丸行的批恒失败（模拟单行永久失败——约束冲突/畸形数据形态），其余批正常
 // 入库。并发安全（flushLogs 多 worker 并行调用）。
 type poisonRowLogStore struct {
@@ -379,7 +379,7 @@ func (m *poisonRowLogStore) InsertBatch(ctx context.Context, logs []*domain.Usag
 	return nil
 }
 
-// TestLogPoisonRowIsolatedByBisect 毒丸止损二分隔离（A-P2-8-4）：单行毒丸（旧
+// TestLogPoisonRowIsolatedByBisect 毒丸止损二分隔离：单行毒丸（旧
 // 实现整 chunk 丢弃，单行毒丸连带 499 行有效明细）——失败路径二分重试定位
 // 毒丸行 → 仅丢弃该行（Error + request_id + dropped_logs=1）、其余行全部成功
 // 落库（"其余入库"）、计数复位、无回灌残留。
@@ -413,7 +413,7 @@ func TestLogPoisonRowIsolatedByBisect(t *testing.T) {
 	require.Contains(t, string(b), `"dropped_logs":1`, "仅丢弃单行")
 }
 
-// dbDownLogStore 可切换整库故障的 InsertBatch（A-P2-8-4 整库故障形态）：fail=
+// dbDownLogStore 可切换整库故障的 InsertBatch（整库故障形态）：fail=
 // true 恒失败（含二分探测——两半都失败），fail=false 正常入库——模拟 DB 恢复
 // 后重试成功。并发安全。
 type dbDownLogStore struct {
@@ -432,7 +432,7 @@ func (m *dbDownLogStore) InsertBatch(ctx context.Context, logs []*domain.UsageLo
 	return nil
 }
 
-// TestLogDBFailureRefillsNoProgressiveDrop 整库故障二分归因（A-P2-8-4）：两半都
+// TestLogDBFailureRefillsNoProgressiveDrop 整库故障二分归因：两半都
 // 失败 → 未落库行全部回灌（不丢）+ 不累计失败计数——故障期无进行式丢弃（旧
 // 实现每 5 周期丢 1 chunk/分片 ≈ 24 万行蒸发）；DB 恢复即重试成功（成功路径
 // 计数复位）。
@@ -501,7 +501,7 @@ func (m *blockingLogStore) count() int {
 	return len(m.logs)
 }
 
-// TestCloseWaitsInflight O2 停机修复核心（对齐 billing Flusher 测试）：ticker
+// TestCloseWaitsInflight 停机修复核心（对齐 billing Flusher 测试）：ticker
 // 批次已在途（baseCtx、pending 已 swap、flushMu 被占）时 Close 必须先等其
 // 结束——否则 drain 循环见 pendingN==0 静默提前返回，在途批次无界运行：
 //   - 预算内完成：Close 实际等待（不提前返回），完整排空，无截断 Warn；
@@ -586,7 +586,7 @@ func TestCloseWaitsInflight(t *testing.T) {
 }
 
 // ignoreCtxLogStore InsertBatch 忽略 ctx 永久阻塞（模拟 DB 病态卡死——
-// database/sql 取消路径本身被拖住的极端形态；A-P2-8-2 第二 select 兜底目标）。
+// database/sql 取消路径本身被拖住的极端形态；第二 select 兜底目标）。
 // 测试结束即弃置（在途 goroutine 无放行通道，属刻意泄漏）。
 type ignoreCtxLogStore struct {
 	started chan struct{} // 首调已进入（测试等待在途批次）
@@ -601,7 +601,7 @@ func (m *ignoreCtxLogStore) InsertBatch(ctx context.Context, logs []*domain.Usag
 	return nil
 }
 
-// TestCloseAbandonsInflightOnTimeout A-P2-8-2：`<-acquired` 第二 select 预算超时
+// TestCloseAbandonsInflightOnTimeout：`<-acquired` 第二 select 预算超时
 // ——驱动不尊重 ctx（DB 病态卡死形态）时 Close 不再无界等待：预算到期 → Cancel
 // baseCtx → 收尾宽限超时 → Warn 放弃排空、截断退出（在途批次由已取消 baseCtx
 // 收尾回灌不丢——数据不因本超时而丢失；后续排空/统计收尾都被 flushMu 挡住，
@@ -696,7 +696,7 @@ func usageTestLogger(t *testing.T) (*logx.Logger, string) {
 	return logger, out
 }
 
-// TestFlushQuotaTruncatesOnBudget O2 停机修复：flushQuota 受 ctx 预算约束。
+// TestFlushQuotaTruncatesOnBudget 停机修复：flushQuota 受 ctx 预算约束。
 // 额度回写已批量化（quotaBatchSize 组 = 一条批量 SQL）——截断粒度从逐 key
 // 变为逐组（组内单语句全成或全败，无部分状态；10k key 组数 ~20，预算检查点
 // 不变）：首组写完后到期 → 额度全量已刷（单组）；预算先期到期 → 额度整批截断

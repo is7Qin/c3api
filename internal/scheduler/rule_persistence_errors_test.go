@@ -41,17 +41,17 @@ func (s *errGetAccountStore) GetAccountGroups(_ context.Context, _ int64) ([]int
 func TestRulePersistFailClosedOnGetAccountError(t *testing.T) {
 	store := &errGetAccountStore{
 		accounts: map[int64]*domain.Account{
-			7: {ID: 7, LifecycleRevision: 3, Template: &domain.Template{ID: 1, BaseURL: "https://api.openai.com", CredentialType: "api_key"}},
+			7: {ID: 7, LifecycleRevision: 3, IdentityRevision: 3, Template: &domain.Template{ID: 1, BaseURL: "https://api.openai.com", CredentialType: "api_key"}},
 		},
 		err: errors.New("transient db down"),
 	}
 	latchStore := latch.NewLatchStore()
 	// acquire latch first to simulate LatchSink acquired
 	latchStore.TryAcquire(7, "fp-ignored", 3)
-	require.True(t, latchStore.IsLatched(7, "fp-ignored"))
+	require.True(t, latchStore.IsLatched(7, "fp-ignored", 3))
 	fn := NewRulePersistFunc(store, latchStore, nil, nil)
 	item := rule.PersistItem{
-		Event: rule.Event{AccountID: 7, ExpectedRevision: 3, CandidateFingerprint: "fp", ErrorMessage: "boom"},
+		Event: rule.Event{AccountID: 7, ExpectedIdentityRevision: 3, CandidateFingerprint: "fp", ErrorMessage: "boom"},
 		Then:  domain.RuleThen{FailAccount: true},
 	}
 	// barrier: persist func must return error and preserve latch (fail-closed)
@@ -64,6 +64,6 @@ func TestRulePersistFailClosedOnGetAccountError(t *testing.T) {
 		require.FailNow(t, "barrier timeout")
 	}
 	require.Error(t, err, "GetAccount read error must propagate, not silent success")
-	require.True(t, latchStore.IsLatched(7, "fp-ignored"), "latch must not be cleared on GetAccount error (fail-closed)")
+	require.True(t, latchStore.IsLatched(7, "fp-ignored", 3), "latch must not be cleared on GetAccount error (fail-closed)")
 	require.Equal(t, 0, store.casCalls, "must not CAS after GetAccount error")
 }

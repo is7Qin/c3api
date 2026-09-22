@@ -112,7 +112,7 @@ func (s *fakeStatsAggStore) snapshot() (calls, aggr []aggCall, wm time.Time) {
 	return append([]aggCall(nil), s.calls...), append([]aggCall(nil), s.aggrCalls...), s.wm
 }
 
-// TestStatsAggWorkerTwoRange spec 评审 P1-A 两范围分离：部分小时桶跨周期累积
+// TestStatsAggWorkerTwoRange spec 两范围分离：部分小时桶跨周期累积
 // 不截断——cycle 1 消费 [H, H+9m) 后 watermark 推进到 T（非 R1）；cycle 2 重算
 // 范围仍为小时对齐 [H, H+1h)（DELETE+SELECT 共同边界），bucket 由全量行重建。
 // 重放幂等：同范围两跑 LoadAggRange 参数一致。
@@ -141,7 +141,7 @@ func TestStatsAggWorkerTwoRange(t *testing.T) {
 	require.Len(t, aggr, 1)
 	require.Equal(t, h, aggr[0].from, "DELETE 下界 = 重算范围下界")
 	require.Equal(t, h.Add(time.Hour), aggr[0].to, "DELETE 上界 = 重算范围上界")
-	require.Equal(t, h.Add(19*time.Minute), wm, "watermark 只推进到 T（≠ R1——推进到 R1 会永久跳过 [T,R1) 的行，P1-A）")
+	require.Equal(t, h.Add(19*time.Minute), wm, "watermark 只推进到 T（≠ R1——推进到 R1 会永久跳过 [T,R1) 的行）")
 
 	// 观测面：watermark/上轮桶数/上轮行数已推进（cycle 2 后取值）
 	st := w.Stats().(StatsAggWorkerStats)
@@ -160,7 +160,7 @@ func TestStatsAggWorkerTwoRange(t *testing.T) {
 	require.Equal(t, h.Add(time.Hour), calls[1].to)
 }
 
-// TestStatsAggWorkerCatchUpLimit 追赶上限（评审 P2-1）：停摆恢复后单周期窗口
+// TestStatsAggWorkerCatchUpLimit 追赶上限：停摆恢复后单周期窗口
 // ≤ 1h 分批收敛——读窗口被钳制到 W+1h（不一次扫全史），watermark 同步只推进
 // 到钳制后的 T。
 func TestStatsAggWorkerCatchUpLimit(t *testing.T) {

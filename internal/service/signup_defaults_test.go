@@ -54,7 +54,7 @@ func TestSettingsSnapshotInitAndReload(t *testing.T) {
 // TestRegisterUserAppliesDefaults 注册应用默认值：
 // 默认 0/0 → 用户 0/0 且不插临时额度行；设置 100/500/1000/30 → 用户
 // 100/500 + temp 行（amount=1000, expires≈now+30d, note="signup bonus"）；
-// temp_balance=0 → 不插行；temp 插行失败 → 注册仍成功（评审 M-2）。
+// temp_balance=0 → 不插行；temp 插行失败 → 注册仍成功。
 func TestRegisterUserAppliesDefaults(t *testing.T) {
 	ctx := context.Background()
 
@@ -103,7 +103,7 @@ func TestRegisterUserAppliesDefaults(t *testing.T) {
 	require.Equal(t, 8, u.MaxConcurrency)
 	require.Empty(t, fs.tempBalances, "temp_balance=0 不插行")
 
-	// 评审 M-2：temp 插行失败 → 注册仍成功（防客户端重试 → 409 email 死锁）
+	// temp 插行失败 → 注册仍成功（防客户端重试 → 409 email 死锁）
 	fs = newFakeStore()
 	fs.tempBalanceErr = errTempBalanceInjected
 	svc = newSnapshotSvc(fs)
@@ -114,7 +114,7 @@ func TestRegisterUserAppliesDefaults(t *testing.T) {
 	require.True(t, u.ID > 0)
 }
 
-// errTempBalanceInjected 评审 M-2 注入错误（模拟赠品插行失败）。
+// errTempBalanceInjected 注入错误（模拟赠品插行失败）。
 var errTempBalanceInjected = errors.New("injected: temp balance insert failed")
 
 // TestRegisterUserBootstrapFirstAdmin 首个注册用户 bootstrap（方案 A，spec

@@ -19,7 +19,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// —— codex 凭据批量导入（Task B：batch-import-codex-oauth / batch-import-codex-pat
+// —— codex 凭据批量导入（batch-import-codex-oauth / batch-import-codex-pat
 // 共享 upsert 核心） ——
 //
 // 解耦的是 API/校验面（oauth/pat 各端点类型特定校验），底层单实现
@@ -27,9 +27,9 @@ import (
 //   - 不存在 → imported：**单行事务**（txRepo.CreateAccount + txRepo.
 //     UpsertAccountExt（NewCodexIdentity 身份）+ txRepo.SetAccountGroups 可选——
 //     任一步失败整体回滚，无孤儿）；
-//   - 存在且类型匹配 → updated：**只更新凭据列**（oauth → WriteOAuthRotation
-//     三列 / pat → WritePATKey——identity/并发/权重/归属零触碰；全量
-//     UpsertAccountExt 的 ClearX 清 NULL 面禁用）；
+//   - 存在且类型匹配 → updated：**只更新凭据列**（oauth 三列 / pat 单列——
+//     identity/并发/权重/归属零触碰；全量 UpsertAccountExt 的 ClearX 清 NULL
+//     面禁用）；
 //   - 存在但类型不匹配 → 行级 failed（不跨类型混写）。
 //
 // 不调 service.CreateAccount（带 invalidate/publish 副作用面——事务回滚时副作用
@@ -162,7 +162,7 @@ func codexPATRow(index int, it domain.CodexPATImportItem) (codexImportRow, error
 	return row, nil
 }
 
-// applyCodexImportConfig 配置面缺省/范围归一（对齐 validateAccount 既有边界：
+// applyCodexImportConfig 配置面缺省/范围归一（对齐 validateAccountPatch 既有边界：
 // max_concurrency < 1 → 归一缺省——导入面 25 覆盖账号表默认 8）。nil = 未提供 → 缺省。
 func applyCodexImportConfig(row *codexImportRow, maxConc *int) {
 	if maxConc != nil && *maxConc >= 1 {
@@ -241,7 +241,7 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 	identity := NewCodexIdentity()
 	err = s.store.WithTx(ctx, func(tx repository.TxStore) error {
 		acc, err := tx.CreateAccount(ctx, &domain.Account{
-			Name: row.email, TemplateID: tplID,
+			Name: row.email, TemplateID: tplID, Enabled: true,
 			MaxConcurrency: row.maxConc, // 显式写缺省（25）——不依赖表默认 8
 		})
 		if err != nil {

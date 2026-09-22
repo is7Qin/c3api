@@ -83,7 +83,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "g", Visibility: domain.GroupVisibilityPublic})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "codex-acc", TemplateID: tpl.ID, MaxConcurrency: 4,
+		Name: "codex-acc", TemplateID: tpl.ID, MaxConcurrency: 4, Enabled: true,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
@@ -94,7 +94,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 
 	// 调度器接真实 loader（快照含 Ext eager-load；请求期零 DB）
 	re := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, repos.Groups, re, nil, nil, nil, nil)
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -104,7 +104,7 @@ func TestSearchEndpointBillingPG(t *testing.T) {
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// 计费钩子：价格快照 + 按单元价快照 + 余额快照；单写点：billable 行经
-	// rec → repos.Usages 直落 usage_logs（F2：无 flusher 分流）。
+	// rec → repos.Usages 直落 usage_logs（无 flusher 分流）。
 	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
 	require.NoError(t, bal.Reload(ctx), "余额快照加载")
 	rec := usage.New(usage.UsageConfig{

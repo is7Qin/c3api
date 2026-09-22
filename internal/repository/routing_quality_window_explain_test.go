@@ -19,7 +19,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Phase 1 RED (TestRoutingQualityWindowPlanPG): Q2 must use the candidate
+// RED (TestRoutingQualityWindowPlanPG): Q2 must use the candidate
 // index with no Seq Scan on a seeded multi-candidate fixture, and the Q2 row
 // count stays bounded by the hot-key count. References the production SQL
 // consts directly so plan assertions can never drift from shipped SQL.

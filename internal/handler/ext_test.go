@@ -206,7 +206,7 @@ func TestHandlerFakeCodexWriteParity(t *testing.T) {
 	override := "https://override.example.com"
 	account, err := store.CreateAccount(ctx, &domain.Account{
 		Name: "account", TemplateID: apiTemplate.ID, BaseURL: &override,
-		UpstreamKey: "sk-test", MaxConcurrency: 8,
+		UpstreamKey: "sk-test", MaxConcurrency: 8, Enabled: true,
 	})
 	require.NoError(t, err)
 
@@ -224,7 +224,7 @@ func TestHandlerFakeCodexWriteParity(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
 	})
 	require.NoError(t, err)
-	err = store.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{TemplateID: &codexTemplate.ID})
+	_, err = store.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{TemplateID: &codexTemplate.ID})
 	require.ErrorIs(t, err, repository.ErrInvalidInput)
 	storedAccount, err := store.GetAccount(ctx, account.ID)
 	require.NoError(t, err)

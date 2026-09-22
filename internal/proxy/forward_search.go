@@ -40,23 +40,23 @@ func searchDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start 
 	}
 	lat := max(time.Since(start).Milliseconds(), 0)
 	return AttemptOutcome{
-		ID:                AttemptID(reqID),
-		RouteClassID:      RouteClassID("rc1"),
-		QualityClassID:    QualityClassID("qc1"),
-		Fingerprint:       CandidateFingerprint(fp),
-		TemplateID:        tplID,
-		AccountID:         accID,
-		RequestedModel:    reqModel,
-		MappedModel:       mapped,
-		CallerCategory:    CallerSearch,
-		OperationTag:      OperationTag(domain.OpSearch),
-		Ordinal:           1,
-		LifecycleRevision: LifecycleRevision(1),
-		Lane:              LanePrimary,
-		Generation:        Generation(1),
-		Timing:            AttemptTiming{LatencyMS: lat},
-		Usage:             AttemptUsage{CallCount: 0},
-		HardContinuation:  false,
+		ID:               AttemptID(reqID),
+		RouteClassID:     RouteClassID("rc1"),
+		QualityClassID:   QualityClassID("qc1"),
+		Fingerprint:      CandidateFingerprint(fp),
+		TemplateID:       tplID,
+		AccountID:        accID,
+		RequestedModel:   reqModel,
+		MappedModel:      mapped,
+		CallerCategory:   CallerSearch,
+		OperationTag:     OperationTag(domain.OpSearch),
+		Ordinal:          1,
+		IdentityRevision: IdentityRevision(1), // synthetic placeholder K; not part of the continuation (I,K) comparison (see AttemptOutcome.IdentityRevision)
+		Lane:             LanePrimary,
+		Generation:       Generation(1),
+		Timing:           AttemptTiming{LatencyMS: lat},
+		Usage:            AttemptUsage{CallCount: 0},
+		HardContinuation: false,
 	}
 }
 

@@ -110,6 +110,11 @@ func LifecycleRevision(v int64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldLifecycleRevision, v))
 }
 
+// IdentityRevision applies equality check predicate on the "identity_revision" field. It's identical to IdentityRevisionEQ.
+func IdentityRevision(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldIdentityRevision, v))
+}
+
 // UpstreamCostMultiplierBp applies equality check predicate on the "upstream_cost_multiplier_bp" field. It's identical to UpstreamCostMultiplierBpEQ.
 func UpstreamCostMultiplierBp(v int) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldUpstreamCostMultiplierBp, v))
@@ -698,6 +703,46 @@ func LifecycleRevisionLT(v int64) predicate.Account {
 // LifecycleRevisionLTE applies the LTE predicate on the "lifecycle_revision" field.
 func LifecycleRevisionLTE(v int64) predicate.Account {
 	return predicate.Account(sql.FieldLTE(FieldLifecycleRevision, v))
+}
+
+// IdentityRevisionEQ applies the EQ predicate on the "identity_revision" field.
+func IdentityRevisionEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldIdentityRevision, v))
+}
+
+// IdentityRevisionNEQ applies the NEQ predicate on the "identity_revision" field.
+func IdentityRevisionNEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldIdentityRevision, v))
+}
+
+// IdentityRevisionIn applies the In predicate on the "identity_revision" field.
+func IdentityRevisionIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldIdentityRevision, vs...))
+}
+
+// IdentityRevisionNotIn applies the NotIn predicate on the "identity_revision" field.
+func IdentityRevisionNotIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldIdentityRevision, vs...))
+}
+
+// IdentityRevisionGT applies the GT predicate on the "identity_revision" field.
+func IdentityRevisionGT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldIdentityRevision, v))
+}
+
+// IdentityRevisionGTE applies the GTE predicate on the "identity_revision" field.
+func IdentityRevisionGTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldIdentityRevision, v))
+}
+
+// IdentityRevisionLT applies the LT predicate on the "identity_revision" field.
+func IdentityRevisionLT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldIdentityRevision, v))
+}
+
+// IdentityRevisionLTE applies the LTE predicate on the "identity_revision" field.
+func IdentityRevisionLTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldIdentityRevision, v))
 }
 
 // UpstreamCostMultiplierBpEQ applies the EQ predicate on the "upstream_cost_multiplier_bp" field.

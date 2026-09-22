@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ import (
 // up front, serial suite so no cross-test interference).
 const compileProbeTestSchema = "compile_probe_test"
 
-// TestCompileEvent_ProductionProbeWired pins the v5-F1 production wiring: the
+// TestCompileEvent_ProductionProbeWired pins the production wiring: the
 // backstop tick consumes the repository-owned O(1) tuple (§9-A1) against real
 // PostgreSQL and, on a quiet fleet, does ZERO reload/compile/serialization
 // work (loader touches, compiler calls, generation, published bytes, fallback
@@ -73,7 +74,7 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	for _, name := range []string{"acc-probe-1", "acc-probe-2"} {
 		acc, err := repos.CreateAccount(ctx, &domain.Account{
 			Name: name, TemplateID: tpl.ID, UpstreamKey: "sk-upstream",
-			MaxConcurrency: 4,
+			MaxConcurrency: 4, Enabled: true,
 		})
 		require.NoError(t, err)
 		accIDs = append(accIDs, acc.ID)
@@ -126,9 +127,9 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	require.Equal(t, bytesBefore, decisionViewBytes(s.View().DecisionView()))
 	require.Equal(t, fallbacks, s.fallbackCount.Load(), "probe hit records no fallback")
 
-	// --- out-of-band content edit: a direct-DB key rotation in the general
-	// UpdateAccount shape (content WITHOUT a lifecycle_revision bump) must
-	// move the extended tuple where the old counts+rev tuple could not ---
+	// --- out-of-band content edit: a direct-DB key rotation (content WITHOUT a
+	// lifecycle_revision bump) must move the extended tuple where the old
+	// counts+rev tuple could not ---
 	before, err := repos.Groups.CompileStalenessSnapshot(ctx)
 	require.NoError(t, err)
 	tag, err := pool.Exec(ctx, `UPDATE accounts SET upstream_key='sk-rotated-out-of-band', updated_at=(NOW() + INTERVAL '1 hour') WHERE id=$1`, accIDs[0])
@@ -159,6 +160,14 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	require.True(t, ok)
 	mainSrc, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "cmd", "server", "main.go"))
 	require.NoError(t, err)
-	require.Contains(t, string(mainSrc), "StalenessProbe:        repos.Groups,",
-		"production must wire the repo-backed probe in the scheduler Config literal (§9-A2 sole call-site)")
+	// 该字面量在 gofmt 下会随字段增删重新对齐，故按"折叠空白"匹配：本守卫要证明的
+	// 是"生产唯一调用点接了 repo 版探针"，不是某一次的对齐宽度。
+	require.Contains(t, foldSpaces(string(mainSrc)), "StalenessProbe: repos.Groups,",
+		"production must wire the repo-backed probe in the scheduler Config literal (sole production call-site)")
+}
+
+// foldSpaces 把连续空白折叠为单个空格（跨行字面量断言用：gofmt 会随字段增删
+// 重新对齐，守卫不该因此假失败）。
+func foldSpaces(s string) string {
+	return regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
 }

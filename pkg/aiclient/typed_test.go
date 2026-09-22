@@ -51,11 +51,11 @@ func typedIn() http.Header {
 
 // TestTypedRelayClientHeadersArrive R6（typed 面）：非空客户端 UA 经 WithHeader
 // 压过 SDK 默认（openai `OpenAI/Go …` / anthropic `Anthropic/Go …`），自定义头
-// 如实达上游，deny 头不出栈，账号鉴权头在 relay 之后写（不变量 #5 后写覆盖赢）。
+// 如实达上游，deny 头不出栈，账号鉴权头在 relay 之后写（不变量 后写覆盖赢）。
 //
 // 断言打在网关自建的出栈头（headerCapture RoundTripper）上：SDK 的 New 最终走的
 // 是注入的 http.Client，但 net/http 的 Request.write 会在 RoundTripper 之后再补
-// User-Agent/Accept-Encoding，httptest 服务端视图永远看得到它们（C2 实测教训）。
+// User-Agent/Accept-Encoding，httptest 服务端视图永远看得到它们（实测教训）。
 func TestTypedRelayClientHeadersArrive(t *testing.T) {
 	srv := typedUpstream(t)
 	defer srv.Close()
@@ -111,7 +111,7 @@ func requireTypedRelay(t *testing.T, built http.Header, wantAuth string) {
 	require.False(t, ok, "Accept-Encoding 不得出栈（deny＝计费回归门）")
 	_, ok = built["Cookie"]
 	require.False(t, ok, "Cookie（跨租户态）不得出栈")
-	require.Equal(t, wantAuth, built.Get("Authorization"), "入站凭据被剔后网关写账号 key（不变量 #5）")
+	require.Equal(t, wantAuth, built.Get("Authorization"), "入站凭据被剔后网关写账号 key（不变量）")
 }
 
 // TestTypedRelayMultiValueFidelity 多值保真：`WithHeader` 内部是 `Header.Set`
@@ -152,9 +152,9 @@ func TestTypedRelayMultiValueFidelity(t *testing.T) {
 // TestTypedRelayNilInKeepsSDKDefaults typed 面 in=nil 时不得凭空造出客户端头：
 // 断言只覆盖「网关这一层没造东西」——自定义头键不存在 + 鉴权声明仍是账号 key。
 //
-// 注意它**不是** raw 面护栏 G1 的对应项：G1 断言出栈不含 User-Agent 键，typed 面
+// 注意它**不是** raw 面护栏 的对应项 断言出栈不含 User-Agent 键，typed 面
 // 结构上做不到（SDK 在 cfg.Apply 之前就写了自己的默认 UA，RoundTripper 视图必然
-// 看到 `OpenAI/Go …`，其字面值随 SDK 版本漂）。"网关不凭空造 UA" 由 raw 面 G1
+// 看到 `OpenAI/Go …`，其字面值随 SDK 版本漂）。"网关不凭空造 UA" 由 raw 面
 // 守住；typed 面若将来出现网关自造 UA，这条测试拦不住，是已知覆盖边界。
 func TestTypedRelayNilInKeepsSDKDefaults(t *testing.T) {
 	srv := typedUpstream(t)
@@ -177,7 +177,7 @@ func TestTypedRelayNilInKeepsSDKDefaults(t *testing.T) {
 // TestTypedRelayStripsInboundFootprint R7 typed 面（spec §10）：客户端 IP / 转发
 // 路径类头不得达上游。断言打在网关自建出栈头（headerCapture）——SDK 走的是同一个
 // 注入的 http.Client，但 net/http 的 Request.write 会在 RoundTripper 之后补
-// User-Agent/Accept-Encoding，服务端视图不足以证明「网关没发」（见 C2 实测教训）。
+// User-Agent/Accept-Encoding，服务端视图不足以证明「网关没发」（见 实测教训）。
 func TestTypedRelayStripsInboundFootprint(t *testing.T) {
 	srv := typedUpstream(t)
 	defer srv.Close()
@@ -208,5 +208,5 @@ func TestTypedRelayStripsInboundFootprint(t *testing.T) {
 		require.False(t, ok, "%s 不得进入 typed 面出栈头（spec §11 map 槽位级断言）", k)
 	}
 	require.Equal(t, []string{"oc-1"}, built["X-Opencode-Session"], "哨兵键仍须透传")
-	require.Equal(t, "Bearer sk-foot", built.Get("Authorization"), "账号凭据仍在 relay 之后写（不变量 #5）")
+	require.Equal(t, "Bearer sk-foot", built.Get("Authorization"), "账号凭据仍在 relay 之后写（不变量）")
 }

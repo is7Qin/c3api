@@ -134,7 +134,7 @@ func TestTTFTCache_DistinctKeysIsolated(t *testing.T) {
 }
 
 func TestTTFTCache_WaitersGetFnError(t *testing.T) {
-	// RG-B1 探测场景：并发等待方经 close(done) 的 happens-before 读取结果——
+	// 探测场景：并发等待方经 close(done) 的 happens-before 读取结果——
 	// 若发布顺序颠倒（先 close 后写字段）此用例在 -race 下必炸。
 	c := newTestCache(30 * time.Second)
 	const n = 6

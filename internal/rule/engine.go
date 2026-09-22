@@ -83,12 +83,18 @@ type Event struct {
 	RouteClassID         string    // canonical RouteClassID hex; account_route scope 必须非空
 	QualityClassID       string    // Candidate QualityClassID hex; account_route scope 必须非空
 	CandidateFingerprint string    // canonical candidate identity hex
-	ExpectedRevision     int64     // lifecycle_revision 期望值，FailAccount CAS 用
+	// ExpectedIdentityRevision 携带 K（identity_revision），不是 C。失败事件
+	// 在它被计算时所见的身份纪元；下游（scheduler/sink.go:74 把它喂进
+	// K 参数化的 HealthKey.IdentityRevision；rule_persist.go 把它喂进 K-guarded 的
+	// FailAccountCAS）一律按 K 解释。命名显式带 Identity，防止被误读为
+	// lifecycle_revision（客户端 CAS 令牌）。
+	ExpectedIdentityRevision int64
 }
 
 // HealthSink typed health action sink.
 // Throttle: account 作用全 RouteClass wildcard；account_route 作用单 RouteClass.
-// FailAccount: source=rule, expectedRevision 参与 CAS.
+// FailAccount: source=rule, 以身份纪元 K 作 CAS guard（事件携带的
+// ExpectedIdentityRevision）。
 type HealthSink interface {
 	Throttle(ev Event, th domain.ThrottleAction) error
 	FailAccount(ev Event) error
@@ -239,7 +245,7 @@ func (e *RuleEngine) PersistQueuedChannelLen() int { return len(e.persistCh) }
 func (e *RuleEngine) PersistCap() int { return cap(e.persistCh) }
 
 // NeedsOKEvents 规则表中是否存在需要 ok 事件投递的规则（when.kind 为 nil 或 "ok"）——
-// scheduler 据此条件投递（C1：种子恢复规则 kind=ok 必须投递，否则成功恢复永不触发）。
+// scheduler 据此条件投递（种子恢复规则 kind=ok 必须投递，否则成功恢复永不触发）。
 func (e *RuleEngine) NeedsOKEvents() bool { return e.needsOK.Load() }
 
 // Reload 全量加载 enabled 规则（priority 升序）；空表先写种子（seedRules）。
@@ -356,7 +362,7 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 	return nil
 }
 
-// ReloadRules 规则表全量重载（invalidate.RulesReloader 适配，#14 T3a 装配
+// ReloadRules 规则表全量重载（invalidate.RulesReloader 适配 装配
 // invalidate.Config.Rules）：与 Reload 同一实现——重载清窗口计数，全实例同步
 // 执行语义（设计文档 §1.5，NOTIFY Rules:true 远端变更触发）。
 func (e *RuleEngine) ReloadRules(ctx context.Context) error { return e.Reload(ctx) }
@@ -421,7 +427,7 @@ func matchWindow(w domain.RuleWhen, wc windowSnapshot) bool {
 
 // HandleEvent 同步处理单个事件：窗口计数 → 逐规则 Match（首中）→ typed 动作
 // （Throttle/FailAccount→HealthSink）+ 持久化入队。
-// worker 消费循环与测试共用。命中不清零窗口计数（C2）——滑动自然衰减，
+// worker 消费循环与测试共用。命中不清零窗口计数——滑动自然衰减，
 // 升级阶梯（如 60s 内 ≥5 error → 更重惩罚）不被低阈值规则清零阻断。
 // 未命中仅更新计数。
 // whole action path remains best-effort. After match, local sink immediately,
@@ -548,7 +554,7 @@ func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 }
 
 // UnifiedMessage 统一公式 msg=CustomMessage!=nil?*CustomMessage:upstream
-// 响应与 sanitize 同源（I-3），代理日志保留原文边界另述
+// 响应与 sanitize 同源，代理日志保留原文边界另述
 // TODO: upstream param unused — kept for formula parity (honest return would be upstream when CustomMessage==nil; callers currently handle passthrough separately)
 func UnifiedMessage(then domain.RuleThen, upstream string) (string, bool) {
 	if then.CustomMessage != nil {

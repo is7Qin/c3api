@@ -15,7 +15,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// TestPGGroupMultiplierDefault 组倍率默认 10000（T3.5）：Create 缺省（service
+// TestPGGroupMultiplierDefault 组倍率默认 10000：Create 缺省（service
 // 归一 10000 恒写入）→ ×1；LoadGroupMultipliers 全量读出。
 func TestPGGroupMultiplierDefault(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -33,7 +33,7 @@ func TestPGGroupMultiplierDefault(t *testing.T) {
 	require.Equal(t, 10000, mults[g.ID], "快照含该组默认倍率")
 }
 
-// TestPGGroupMultiplierSetUpdate 组倍率显式设置 + 更新（T3.5）：Create 设
+// TestPGGroupMultiplierSetUpdate 组倍率显式设置 + 更新：Create 设
 // 15000 → 读回；Update 显式 0 = 免费组 → 读回 0；再改 20000 → 读回。
 func TestPGGroupMultiplierSetUpdate(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -60,7 +60,7 @@ func TestPGGroupMultiplierSetUpdate(t *testing.T) {
 	require.Equal(t, 20000, updated.PriceMultiplier, "Update 改倍率")
 }
 
-// TestPGAssignmentMultiplierRoundtrip 用户-组专属倍率 roundtrip（T3.5 修正：
+// TestPGAssignmentMultiplierRoundtrip 用户-组专属倍率 roundtrip（
 // 按组挂载）：设置/读回/清除（nil）/再设置；同用户不同组倍率互不干扰。
 func TestPGAssignmentMultiplierRoundtrip(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -141,7 +141,7 @@ func TestPGLoadAssignmentMultipliers(t *testing.T) {
 	require.Equal(t, 20000, mults[billing.AssignmentKey{UserID: u1.ID, GroupID: g2.ID}], "其他组不受影响")
 }
 
-// TestPGLoadBalances LoadBalances（T3.5 修正后仅余额——用户倍率按组挂载，
+// TestPGLoadBalances LoadBalances（修正后仅余额——用户倍率按组挂载，
 // 由 LoadAssignmentMultipliers 单独加载）。
 func TestPGLoadBalances(t *testing.T) {
 	repos := newPGReposShared(t)

@@ -8,8 +8,8 @@ package domain
 // DB 无行即默认（Get 读路径免初始化）。新增内置项 = 在此追加 + 管理面允许列表
 // 同步（service.ValidateSetting 用）。
 // 数值条目 Min/Max 域（nil = 无限制）：管理面 UpdateSetting 越界 → 400 拒绝
-// （A-P2-11 护栏前置，消费端零改动；仅注册表承载，不落库）。PolicyValues 枚举
-// 域：字符串条目合法值清单（service 校验从注册表派生，消双处同步，P3-7）。
+// （护栏前置，消费端零改动；仅注册表承载，不落库）。PolicyValues 枚举
+// 域：字符串条目合法值清单（service 校验从注册表派生，消双处同步）。
 var DefaultSettings = []Setting{
 	{Key: "signup_enabled", Type: SettingTypeSwitch, Value: "true"},
 	// 新用户初始资源：公开注册路径应用；管理面 CreateUser 不套默认（显式传值）。
@@ -17,11 +17,11 @@ var DefaultSettings = []Setting{
 	{Key: "default_user_balance", Type: SettingTypeNumber, Value: "0", Min: i64p(0)},         // 最小单位
 	{Key: "default_user_temp_balance", Type: SettingTypeNumber, Value: "0", Min: i64p(0)},    // 0 = 不送
 	{Key: "default_user_temp_balance_ttl_days", Type: SettingTypeNumber, Value: "30", Min: i64p(0)},
-	// litellm 模型价格同步（Phase 5 计费价格来源）：worker 定期拉取 + 管理端手动设价。
+	// litellm 模型价格同步（计费价格来源）：worker 定期拉取 + 管理端手动设价。
 	{Key: "price_source_url", Type: SettingTypeString,
 		Value: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"},
 	{Key: "price_sync_cron", Type: SettingTypeString, Value: "0 3 * * *"}, // cron 表达式（gronx 解析）
-	// service_tier 转发策略（Phase 5 计费）：priority/flex/fast 请求分别按对应 key
+	// service_tier 转发策略（计费）：priority/flex/fast 请求分别按对应 key
 	// 处理转发体——passthrough（默认，原样转发）/ strip（删除该字段）/ reject
 	// （400 拒绝，不转发）；auto/空恒透传。PolicyValues 枚举域是值域单一事实源
 	// （service.UpdateSetting 校验从注册表派生，见 setting.go）。

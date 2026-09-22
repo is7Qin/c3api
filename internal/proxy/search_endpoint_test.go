@@ -133,7 +133,7 @@ type searchTestAcct struct {
 	credType credential.Type
 	key      string
 	ext      *domain.AccountExt
-	// mapping 模板映射（Todo 3 identity 不变量测试；nil = 无映射——既有
+	// mapping 模板映射（identity 不变量测试；nil = 无映射——既有
 	// 用例零影响）。
 	mapping map[string]domain.ModelMappingEntry
 }
@@ -163,7 +163,7 @@ func (f *fakeFunctionPriceLookup) ResolvePrices(model string, promptTokens int64
 
 // newTestSearchProxy 构造 search 测试代理：每账号独立模板（同组 10——
 // openai-responses 格式 + gpt-4o；混合类型组 = 多模板多账号）+ 装配适配层
-// （统一失效回调走真实 T1 处理链——fakeFailureStore 落库替身 + 真实调度器
+// （统一失效回调走真实处理链——fakeFailureStore 落库替身 + 真实调度器
 // FailAccount 摘除）。Codex 端点固定 SDK 官方 https://chatgpt.com/backend-api/codex/alpha/search（test transport 仅 host 重写保留官方 path）。
 // bill 为计费钩子（nil = 计费全关）。
 func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
@@ -183,7 +183,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 		}
 		accs[10] = append(accs[10], &domain.Account{
 			ID: a.id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: a.key,
-			Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4, Ext: a.ext,
+			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: a.ext,
 		})
 	}
 	rec := usage.New(usage.UsageConfig{
@@ -198,7 +198,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -329,7 +329,7 @@ func TestSearchFunctionPriceDefaultFallback(t *testing.T) {
 	require.Equal(t, int64(1000), store.logs[0].Cost, "默认兜底 1000 毫分（$0.01/次）——非 0 计费")
 }
 
-// TestProxyQuotaDeductedBySearchDefaultPrice 跨路径回归（Todo 4）：search 端点
+// TestProxyQuotaDeductedBySearchDefaultPrice 跨路径回归：search 端点
 // quota 按最终 Cost（默认按次价 1000 毫分）经 finish 后扣——search 无 token
 // 分量（TotalTokens=0），若扣减源回退 token 口径 consumed 恒 0，断言立即失败。
 func TestProxyQuotaDeductedBySearchDefaultPrice(t *testing.T) {
@@ -454,7 +454,7 @@ func TestSearch4xxPassthroughNoBilling(t *testing.T) {
 	require.Zero(t, lg.Cost, "4xx 不计费（cost=0）")
 }
 
-// TestSearchCodexEnvelope4xxPassthrough SDK 路径 4xx 信封（translateError T2）：
+// TestSearchCodexEnvelope4xxPassthrough SDK 路径 4xx 信封（translateError）：
 // 同样透传不转移不计费（与静态路径同语义——错误信封分路径表述）。
 func TestSearchCodexEnvelope4xxPassthrough(t *testing.T) {
 	up, _ := newCodexSearchUpstream(t, codexSearchStep{status: 429, body: `{"error":{"message":"rate limited"}}`})
@@ -506,7 +506,7 @@ func TestSearchFatalMarksFailed(t *testing.T) {
 	require.Zero(t, store.logs[0].Cost, "fatal 不计费")
 }
 
-// TestSearchFailoverCrossTypeDispatch failover 跨类型分派（P1-1 教训回归）：
+// TestSearchFailoverCrossTypeDispatch failover 跨类型分派（教训回归）：
 // 组内 codex-pat 账号 429（可重试类）故障 → 换 api_key 账号 → **按新类型重新
 // 分派**（第二轮走静态透传路径——Bearer upstream key，而非复用旧 SDK 调用器把
 // 健康 api_key 账号路由到 Ext 空凭据路径）。
@@ -530,7 +530,7 @@ func TestSearchFailoverCrossTypeDispatch(t *testing.T) {
 	require.Equal(t, searchRespRaw, string(b))
 	require.Equal(t, 2, upc.callsN(), "429 → 转移其它账号（恰两次上游接触）")
 
-	// 跨类型重新分派断言（P1-1 教训回归）：两轮尝试分别走两种凭据路径——SDK
+	// 跨类型重新分派断言（教训回归）：两轮尝试分别走两种凭据路径——SDK
 	// Search（Bearer pat-10）与静态透传（Bearer sk-upstream），且**第二轮按当轮
 	// sel.CredentialType 重新分派**（复用旧调用器会把健康账号路由到 Ext 空凭据
 	// 路径——此处第二轮用新类型凭据成功，恰证明按新类型走了新路径）。轮次顺序
@@ -559,7 +559,7 @@ func TestSearchFailoverCrossTypeDispatch(t *testing.T) {
 	require.Equal(t, wantAcc, store.logs[0].AccountID, "落账 = 最后一次实际尝试账号")
 }
 
-// TestSearchIndependentSelection 独立选号断言（P2——无会话绑定）：同组两账号，
+// TestSearchIndependentSelection 独立选号断言（无会话绑定）：同组两账号，
 // 两次顺序请求各独立 Select。cutover 后选号确定性（Primary 序，无加权轮转），
 // 故以指纹 latch 隔离首轮命中账号——第二轮必须独立重选到另一账号，证明请求
 // 自包含、无会话亲和（若绑会话则第二轮仍复用首轮账号）。
@@ -586,7 +586,7 @@ func TestSearchIndependentSelection(t *testing.T) {
 				if a.ID == 10 {
 					fp, ferr := scheduler.CandidateFingerprint(a)
 					require.NoError(t, ferr)
-					require.True(t, p.sched.TryLatch(10, fp, a.LifecycleRevision))
+					require.True(t, p.sched.TryLatch(10, fp, a.IdentityRevision))
 				}
 			}
 		}
@@ -629,7 +629,7 @@ func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
 	require.Zero(t, p.rec.Pending(), "耗尽路径失败行不产生明细 pending（err_logs 承载）")
 }
 
-// TestSearchSelectFormatUnavailable404 选号失败映射（P3-4）：组内模板不支持
+// TestSearchSelectFormatUnavailable404 选号失败映射：组内模板不支持
 // openai-responses → ErrFormatUnavailable → 404（handleSelectError 既有语义）；
 // 上游零接触。
 func TestSearchSelectFormatUnavailable404(t *testing.T) {

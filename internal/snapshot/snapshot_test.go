@@ -160,7 +160,7 @@ func TestReloadByScope(t *testing.T) {
 	require.Equal(t, 2, a.calls(), "未命中不触发")
 }
 
-// TestReloadEmptyScopesNoLock 空 scopes 前置 return（评审 P3-C）：不取
+// TestReloadEmptyScopesNoLock 空 scopes 前置 return：不取
 // execMu——并发触发 ReloadAll 阻塞中（execMu 被持有）时 Reload() 立即返回
 // （修复前排队等触发完成，零状态读取无此必要）。
 func TestReloadEmptyScopesNoLock(t *testing.T) {

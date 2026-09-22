@@ -36,6 +36,8 @@ const (
 	FieldEnabled = "enabled"
 	// FieldLifecycleRevision holds the string denoting the lifecycle_revision field in the database.
 	FieldLifecycleRevision = "lifecycle_revision"
+	// FieldIdentityRevision holds the string denoting the identity_revision field in the database.
+	FieldIdentityRevision = "identity_revision"
 	// FieldUpstreamCostMultiplierBp holds the string denoting the upstream_cost_multiplier_bp field in the database.
 	FieldUpstreamCostMultiplierBp = "upstream_cost_multiplier_bp"
 	// FieldCacheDomain holds the string denoting the cache_domain field in the database.
@@ -89,6 +91,7 @@ var Columns = []string{
 	FieldFailureSource,
 	FieldEnabled,
 	FieldLifecycleRevision,
+	FieldIdentityRevision,
 	FieldUpstreamCostMultiplierBp,
 	FieldCacheDomain,
 	FieldUpdatedAt,
@@ -119,6 +122,8 @@ var (
 	DefaultEnabled bool
 	// DefaultLifecycleRevision holds the default value on creation for the "lifecycle_revision" field.
 	DefaultLifecycleRevision int64
+	// DefaultIdentityRevision holds the default value on creation for the "identity_revision" field.
+	DefaultIdentityRevision int64
 	// DefaultUpstreamCostMultiplierBp holds the default value on creation for the "upstream_cost_multiplier_bp" field.
 	DefaultUpstreamCostMultiplierBp int
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
@@ -190,6 +195,11 @@ func ByEnabled(opts ...sql.OrderTermOption) OrderOption {
 // ByLifecycleRevision orders the results by the lifecycle_revision field.
 func ByLifecycleRevision(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldLifecycleRevision, opts...).ToFunc()
+}
+
+// ByIdentityRevision orders the results by the identity_revision field.
+func ByIdentityRevision(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldIdentityRevision, opts...).ToFunc()
 }
 
 // ByUpstreamCostMultiplierBp orders the results by the upstream_cost_multiplier_bp field.

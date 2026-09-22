@@ -16,12 +16,12 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// pubRecorder 记录 Publish 收到的 Change 的测试假件（#14 T2 发布点断言：
+// pubRecorder 记录 Publish 收到的 Change 的测试假件（发布点断言：
 // 各变更路径发布对应 Change，一次操作一条 NOTIFY）。
 type pubRecorder struct {
 	mu        sync.Mutex
 	calls     []notify.Change
-	cancelled bool // 最近一次 Publish 收到的 ctx 已取消（评审 I-2 断言）
+	cancelled bool // 最近一次 Publish 收到的 ctx 已取消（断言）
 }
 
 func (r *pubRecorder) Publish(ctx context.Context, ch notify.Change) error {
@@ -73,7 +73,7 @@ func newPubSvc() (*Service, *fakeStore, *pubRecorder) {
 	return svc, fs, pr
 }
 
-// TestPublishMatrix #14 T2 发布点矩阵：inv.* 调用点并排发布 + 三现状缺口。
+// TestPublishMatrix 发布点矩阵：inv.* 调用点并排发布 + 三现状缺口。
 func TestPublishMatrix(t *testing.T) {
 	ctx := context.Background()
 
@@ -190,8 +190,11 @@ func TestPublishMatrix(t *testing.T) {
 		g2, err := svc.CreateGroup(ctx, "g2", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
 
-		acc, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &[]int64{g1.ID, g2.ID},
+		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name:        strPtr("a1"),
+			TemplateID:  int64Ptr(tpl.ID),
+			UpstreamKey: strPtr("sk-1"),
+			GroupIDs:    &[]int64{g1.ID, g2.ID},
 		})
 		require.NoError(t, err)
 		got := pr.last()
@@ -200,9 +203,9 @@ func TestPublishMatrix(t *testing.T) {
 
 		// 移组 g1→g2 + upstream_key 变更：Groups（旧+新）+ Clients 同一条
 		before := pr.total()
-		_, err = svc.UpdateAccount(ctx, &domain.Account{
-			ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-2", GroupIDs: &[]int64{g2.ID},
-		})
+		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{
+			UpstreamKey: strPtr("sk-2"), GroupIDs: &[]int64{g2.ID},
+		}, nil)
 		require.NoError(t, err)
 		got = pr.last()
 		require.ElementsMatch(t, []int64{g1.ID, g2.ID, g2.ID}, got.Groups, "移组 A→B：旧组+新组")
@@ -222,7 +225,7 @@ func TestPublishMatrix(t *testing.T) {
 	})
 }
 
-// TestPublishNilPublisher pub 未装配（T2 过渡）→ no-op 不 panic。
+// TestPublishNilPublisher pub 未装配（过渡）→ no-op 不 panic。
 func TestPublishNilPublisher(t *testing.T) {
 	ctx := context.Background()
 	fs := newFakeStore()
@@ -256,19 +259,19 @@ func TestPublishMultipliersAndGroupDelete(t *testing.T) {
 	g, err := svc.CreateGroup(ctx, "g", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "创建组 → Multipliers:true")
-	require.False(t, pr.last().Keys, "组创建无 key → 不置 Keys（A-3：创建后建 key 的即时性由 A-2 增量注册保证）")
+	require.False(t, pr.last().Keys, "组创建无 key → 不置 Keys（创建后建 key 的即时性由 增量注册保证）")
 
 	_, err = svc.UpdateGroup(ctx, &domain.Group{ID: g.ID, Name: "g", PriceMultiplier: 20000, ProtocolConverts: nil})
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "更新组倍率 → Multipliers:true")
-	require.True(t, pr.last().Keys, "组更新（含 protocol_convert 变更）→ Keys:true——旧 key meta 即时收敛（A-3）")
+	require.True(t, pr.last().Keys, "组更新（含 protocol_convert 变更）→ Keys:true——旧 key meta 即时收敛")
 
 	u := seedUser(t, fs, "am@example.com", 0, 0)
 	_, _, err = svc.SetGroupAssignments(ctx, g.ID, []int64{u.ID}, map[int64]*int{u.ID: intPtr(5000)})
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "assignment 专属倍率 → Multipliers:true")
 
-	// 用户维度写（评审 M-1 补齐）：SetUserGroups → Multipliers:true 同组维度
+	// 用户维度写（补齐）：SetUserGroups → Multipliers:true 同组维度
 	_, _, err = svc.SetUserGroups(ctx, u.ID, []int64{g.ID}, nil)
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "用户维度分组写 → Multipliers:true")
@@ -282,9 +285,9 @@ func TestPublishMultipliersAndGroupDelete(t *testing.T) {
 	require.Equal(t, before+1, pr.total(), "一次操作一条 NOTIFY（合并单条）")
 }
 
-// TestPublishEmptyChangeSkipped 评审 I-1：空 Change（全字段 false + Groups 空）
+// TestPublishEmptyChangeSkipped：空 Change（全字段 false + Groups 空）
 // → publish 判空跳过，Publisher 收到 0 条。CreateAccount 无 GroupIDs 的空载荷
-// 即被覆盖（与 O2 inv.Accounts 空集 no-op 同语义）。
+// 即被覆盖（与 inv.Accounts 空集 no-op 同语义）。
 func TestPublishEmptyChangeSkipped(t *testing.T) {
 	ctx := context.Background()
 
@@ -302,14 +305,16 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 		})
 		require.NoError(t, err)
 		before := pr.total() // 上一步创建模板已发布 1 条（Templates:true）
-		_, err = svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1", // 无 GroupIDs
+		_, err = svc.CreateAccount(ctx, repository.AccountPatch{
+			Name:        strPtr("a1"),
+			TemplateID:  int64Ptr(tpl.ID),
+			UpstreamKey: strPtr("sk-1"),
 		})
 		require.NoError(t, err)
 		require.Equal(t, before, pr.total(), "无分组账号 → 空 Change 跳过，不发布")
 	})
 
-	t.Run("UpdateAccount 无变更 → 空载荷不发布", func(t *testing.T) {
+	t.Run("补丁无变更 → 空载荷不发布", func(t *testing.T) {
 		svc, _, pr := newPubSvc()
 		tpl, err := svc.CreateTemplate(ctx, &domain.Template{
 			Name: "t", BaseURL: "https://t.example.com",
@@ -318,8 +323,10 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 		require.NoError(t, err)
 		// 无分组账号（创建时无 GroupIDs → 发布跳过，计数不变）
 		before := pr.total() // 上一步模板创建已发布 1 条（Templates:true）
-		acc, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1",
+		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name:        strPtr("a1"),
+			TemplateID:  int64Ptr(tpl.ID),
+			UpstreamKey: strPtr("sk-1"),
 		})
 		require.NoError(t, err)
 		require.Equal(t, before, pr.total(), "无分组账号创建 → 空 Change 跳过")
@@ -327,15 +334,13 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 		// GroupIDs nil = 不变（账号无组 → oldGroups 空），UpstreamKey 相同
 		// → keyChanged false → gids 空 → 空 Change 跳过
 		before = pr.total()
-		_, err = svc.UpdateAccount(ctx, &domain.Account{
-			ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1",
-		})
+		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: strPtr("sk-1")}, nil)
 		require.NoError(t, err)
 		require.Equal(t, before, pr.total(), "无变更更新 → 空 Change 跳过，不发布")
 	})
 }
 
-// TestPublishDetachedFromRequestCtx 评审 I-2：请求 ctx 已取消时发布仍发出——
+// TestPublishDetachedFromRequestCtx 请求 ctx 已取消时发布仍发出——
 // publish 用 context.WithoutCancel 剥离取消信号（客户端断开不吞 NOTIFY），
 // Publisher 收到的 ctx 未取消（Err()==nil）。
 func TestPublishDetachedFromRequestCtx(t *testing.T) {

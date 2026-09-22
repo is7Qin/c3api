@@ -77,8 +77,8 @@ func (f *fakePriceLookup) ResolvePrices(model string, promptTokens int64, tier s
 }
 
 // newTestProxyBillingLogs 构造注入计费钩子的测试代理（默认 gpt-4o 模板 + 捕获
-// 日志；policy nil = 恒透传）。Balances 空快照 → 倍率默认 ×1（T2 断言恒等，
-// T3.5 无 nil 容忍：hooks 四字段齐备）。
+// 日志；policy nil = 恒透传）。Balances 空快照 → 倍率默认 ×1（断言恒等，
+// 无 nil 容忍：hooks 四字段齐备）。
 func newTestProxyBillingLogs(t *testing.T, upstream string, prices *fakePriceLookup, policy func(billing.Tier) billing.TierPolicyMode, logs usage.LogInserter) *Proxy {
 	t.Helper()
 	tpl := &domain.Template{
@@ -94,9 +94,9 @@ func newTestProxyBillingLogs(t *testing.T, upstream string, prices *fakePriceLoo
 }
 
 // TestProxyBillingNoPrice402 缺价预检：计费启用且模型无价格 → 402 + 释放并发槽
-// + 无明细（P2a 源头修复：本地预用量拒绝不产生 usage_logs/pending——无 tokens
+// + 无明细（源头修复：本地预用量拒绝不产生 usage_logs/pending——无 tokens
 // 无 cost 的拒绝每请求一条明细即拒绝风暴无界积压源），上游一个请求都不许收到
-// （评审 I-1：先 Release 再记录）。
+// （先 Release 再记录）。
 func TestProxyBillingNoPrice402(t *testing.T) {
 	var hits atomic.Int64
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +122,7 @@ func TestProxyBillingNoPrice402(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Empty(t, store.logs, "预用量拒绝不产生 usage_logs 明细（P2a）")
+	require.Empty(t, store.logs, "预用量拒绝不产生 usage_logs 明细")
 }
 
 // TestProxyBillingAppliesCost finish applyBilling：成功请求按 tokens 计算毫分
@@ -174,7 +174,7 @@ func TestProxyBilledQuotaUsesFinalCost(t *testing.T) {
 			ID: 1, Name: "t", BaseURL: up.URL,
 			CredentialType:   credential.TypeAPIKey,
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 	}}}, bal, store)
 
 	// When
@@ -280,7 +280,7 @@ func (q *captureQuotaWriter) AddQuotaUsed(ctx context.Context, deltas map[int64]
 	return nil
 }
 
-// TestProxyFinishQuotaWritesBackWithoutUsageCapture Todo 3 解耦：UsageCapture=false +
+// TestProxyFinishQuotaWritesBackWithoutUsageCapture 解耦：UsageCapture=false +
 // BillingCapture=true——普通 usage 明细跳过落库，Key quota 仍经 finish 显式
 // AddQuota 独立回写；两次 Cost=130 合计 260（Record 不再推导，无双计费）。
 func TestProxyFinishQuotaWritesBackWithoutUsageCapture(t *testing.T) {
@@ -303,7 +303,7 @@ func TestProxyFinishQuotaWritesBackWithoutUsageCapture(t *testing.T) {
 			ID: 1, Name: "t", BaseURL: up.URL,
 			CredentialType:   credential.TypeAPIKey,
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 	}}}, bal, store, q)
 	p.cfg.UsageCapture = false
 
@@ -344,7 +344,7 @@ func TestProxyFinishBillingDisabledSkipsQuotaDeduction(t *testing.T) {
 			ID: 1, Name: "t", BaseURL: up.URL,
 			CredentialType:   credential.TypeAPIKey,
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+		}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 	}}}, bal, &captureLogStore{})
 	q := p.auth.gate.store.Load().quotas[1]
 	p.cfg.BillingCapture = false
@@ -386,7 +386,7 @@ func (q *proxyQuotaProbe) consumed() int64 {
 	return entry.consumed.Load()
 }
 
-// TestProxyQuotaDeductedByImageCost 跨路径回归（Todo 4）：images 端点 quota
+// TestProxyQuotaDeductedByImageCost 跨路径回归：images 端点 quota
 // 按最终 Cost 后扣（per-image 5400 毫分 × 2 张 = 10800），非 TotalTokens=3——
 // 若扣减源回退 TotalTokens，consumed 恒 3，断言立即失败。
 func TestProxyQuotaDeductedByImageCost(t *testing.T) {
@@ -418,7 +418,7 @@ func TestProxyQuotaDeductedByImageCost(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 }
 
-// TestProxyQuotaNoDeltaOn4xxAndExhausted 跨路径回归（Todo 4）：4xx 透传（finish
+// TestProxyQuotaNoDeltaOn4xxAndExhausted 跨路径回归：4xx 透传（finish
 // 带零用量行 → Cost=0 → 零 delta）与上游耗尽（recordLog 路径，不经 finish）
 // 均不产生 quota 扣减。
 func TestProxyQuotaNoDeltaOn4xxAndExhausted(t *testing.T) {
@@ -437,7 +437,7 @@ func TestProxyQuotaNoDeltaOn4xxAndExhausted(t *testing.T) {
 					ID: 1, Name: "t", BaseURL: up.URL,
 					CredentialType:   credential.TypeAPIKey,
 					SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-				}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+				}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 			}}}, bal, &captureLogStore{})
 		probe := &proxyQuotaProbe{p: p}
 
@@ -461,7 +461,7 @@ func TestProxyQuotaNoDeltaOn4xxAndExhausted(t *testing.T) {
 					ID: 1, Name: "t", BaseURL: up.URL,
 					CredentialType:   credential.TypeAPIKey,
 					SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-				}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+				}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 			}}}, bal, &captureLogStore{})
 		probe := &proxyQuotaProbe{p: p}
 
@@ -473,7 +473,7 @@ func TestProxyQuotaNoDeltaOn4xxAndExhausted(t *testing.T) {
 	})
 }
 
-// TestProxyQuotaDeductedByStreamAbortCost 跨路径回归（Todo 4）：上游流中止
+// TestProxyQuotaDeductedByStreamAbortCost 跨路径回归：上游流中止
 // （recordStreamAbort → finish）按已收 usage 帧的最终 Cost 扣额度（190 毫分），
 // 非 TotalTokens=12——abort 计费与 quota 同源同值。
 func TestProxyQuotaDeductedByStreamAbortCost(t *testing.T) {
@@ -517,7 +517,7 @@ func TestProxyQuotaDeductedByStreamAbortCost(t *testing.T) {
 	require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType)
 }
 
-// TestProxyQuotaNoDeltaOnRecordPath 跨路径回归（Todo 4）：record 入口（WS 首
+// TestProxyQuotaNoDeltaOnRecordPath 跨路径回归：record 入口（WS 首
 // 字节前 499 等无并发槽失败路径）即使携带 token 用量，也不产生任何 quota
 // delta——gate 不动、Recorder quota map 不新增、writer 零调用。额度 delta 唯一
 // 生产入口是 finish 的 DeductQuota→AddQuota。
@@ -534,7 +534,7 @@ func TestProxyQuotaNoDeltaOnRecordPath(t *testing.T) {
 				ID: 1, Name: "t", BaseURL: up.URL,
 				CredentialType:   credential.TypeAPIKey,
 				SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-			}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+			}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 		}}}, bal, &captureLogStore{}, q)
 	probe := &proxyQuotaProbe{p: p}
 
@@ -550,7 +550,7 @@ func TestProxyQuotaNoDeltaOnRecordPath(t *testing.T) {
 	require.Empty(t, q.total, "record 不产生 quota 回写 delta（Recorder 零推导）")
 }
 
-// TestProxyQuotaDeductsFinalCostAfterMultiplier 跨路径回归（Todo 4）：quota
+// TestProxyQuotaDeductsFinalCostAfterMultiplier 跨路径回归：quota
 // 扣减源 = 倍率后最终 Cost（用户-组专属 ×2 → 每请求 260，非 raw 130）——
 // quota=520 时两笔放行第三笔 429；若误扣 raw Cost 则 consumed=260 第三笔仍放行。
 func TestProxyQuotaDeductsFinalCostAfterMultiplier(t *testing.T) {
@@ -568,7 +568,7 @@ func TestProxyQuotaDeductsFinalCostAfterMultiplier(t *testing.T) {
 				ID: 1, Name: "t", BaseURL: up.URL,
 				CredentialType:   credential.TypeAPIKey,
 				SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-			}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+			}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 		}}}, bal, &captureLogStore{})
 	probe := &proxyQuotaProbe{p: p}
 
@@ -675,7 +675,7 @@ func TestProxyBillingTierPolicyStrip(t *testing.T) {
 }
 
 // TestProxyBillingTierPolicyReject reject 策略：直接 400，不转发上游；无明细
-// （P2a 源头修复：本地预用量拒绝不产生 usage_logs/pending）。
+// （源头修复：本地预用量拒绝不产生 usage_logs/pending）。
 func TestProxyBillingTierPolicyReject(t *testing.T) {
 	var hits atomic.Int64
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -702,10 +702,10 @@ func TestProxyBillingTierPolicyReject(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Empty(t, store.logs, "预用量拒绝不产生 usage_logs 明细（P2a）")
+	require.Empty(t, store.logs, "预用量拒绝不产生 usage_logs 明细")
 }
 
-// TestProxyBillingTierFastPolicyStrip fast 档 strip 策略（M-1 回归：此前 caller
+// TestProxyBillingTierFastPolicyStrip fast 档 strip 策略（回归：此前 caller
 // 门控不含 TierFast → fast 恒透传，策略零效果）：转发体删 service_tier；剥离
 // 路径计费照常（tier 已提取 → fast 档 ×2.0 → 260）。
 func TestProxyBillingTierFastPolicyStrip(t *testing.T) {
@@ -748,7 +748,7 @@ func TestProxyBillingTierFastPolicyStrip(t *testing.T) {
 }
 
 // TestProxyBillingTierFastPolicyReject fast 档 reject 策略：直接 400，不转发
-// 上游；无明细（P2a 源头修复）。
+// 上游；无明细（源头修复）。
 func TestProxyBillingTierFastPolicyReject(t *testing.T) {
 	var hits atomic.Int64
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -775,7 +775,7 @@ func TestProxyBillingTierFastPolicyReject(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Empty(t, store.logs, "预用量拒绝不产生 usage_logs 明细（P2a）")
+	require.Empty(t, store.logs, "预用量拒绝不产生 usage_logs 明细")
 }
 
 // TestProxyBillingTierFastPolicyPassthrough fast 档 passthrough（默认）：原样
@@ -893,7 +893,7 @@ func TestProxyBillingPriceSnapshotCache(t *testing.T) {
 	require.NotNil(t, store.logs[0].TTFTMS, "流式 → TTFT 采集")
 }
 
-// TestProxyBillingStreamAbortCostsTokens recordStreamAbort 修复（评审 M-2）：
+// TestProxyBillingStreamAbortCostsTokens recordStreamAbort 修复：
 // 上游停滞前已收到的 usage 帧必须参与计费（此前传 nil → tokens 全 0 → 消费不扣费）。
 func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
 	testHealthSink.reset()
@@ -938,7 +938,7 @@ func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
 	require.Equal(t, int64(190), store.logs[0].Cost, "5×1e7+7×2e7 → 190 毫分（计费不丢）")
 }
 
-// TestProxyBillingStreamAbortGroupMultiplier 评审 M-1：recordStreamAbort 传
+// TestProxyBillingStreamAbortGroupMultiplier recordStreamAbort 传
 // groupID → 中止路径组倍率生效（此前硬编码 0 → 组查找恒 miss → 按 ×1 计费，
 // 上浮倍率少收/折扣倍率多收）。组倍率 15000（ck-1 → groupID 10）：
 // 190×15000/10000 = 285 毫分，与正常路径一致。
@@ -1046,7 +1046,7 @@ func TestExtractTier(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T3/F2：余额预检 402 + 单写点路由（Billed 出生标记，spec §一）
+// 余额预检 402 + 单写点路由（Billed 出生标记，spec §一）
 // ---------------------------------------------------------------------------
 
 // fakeBalanceLoader 余额 + 倍率快照测试 loader（am/gm 缺省 = 空倍率表）。
@@ -1069,7 +1069,7 @@ func (f fakeBalanceLoader) LoadAssignmentMultipliers(ctx context.Context) (map[b
 }
 
 // newTestProxyBillingT3Logs 构造注入计费钩子（Prices+Balances）的测试代理：
-// BillingCapture 开（余额预检生效）。F2 单写点：billable 行一律经 rec 落库
+// BillingCapture 开（余额预检生效）。 单写点：billable 行一律经 rec 落库
 // （无 flusher 分流），rec 为调用方构造的 Recorder（落库单面可观测）。
 func newTestProxyBillingT3Logs(t *testing.T, upstream string, prices *fakePriceLookup, bal *billing.Balances, rec *usage.Recorder) *Proxy {
 	t.Helper()
@@ -1085,10 +1085,10 @@ func newTestProxyBillingT3Logs(t *testing.T, upstream string, prices *fakePriceL
 	return p
 }
 
-// TestProxyBillingInsufficientBalance402 余额预检（评审 I-1 无槽位问题）：
+// TestProxyBillingInsufficientBalance402 余额预检（无槽位问题）：
 // 快照 <0 或缺失 → 402 + 上游零命中，预检在 Acquire 前不占用并发槽；余额 0
 // 放行（spec 2026-08-15 语义边界表：临时额度由 FEFO 扣费消化，预检不读临时
-// 额度）。P2a 源头修复：本地预用量拒绝不产生 usage_logs 明细/pending
+// 额度）。 源头修复：本地预用量拒绝不产生 usage_logs 明细/pending
 // （balance 烧穿后的 402 风暴与 429 同路径，明细即无界积压源）；billed
 // flusher 零调用（spec 2026-08-14：请求路径零统计——拒绝路径统计计数交由
 // 离线聚合 worker 兜底，不再请求路径即时聚合）。
@@ -1102,7 +1102,7 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 		{"余额 0 放行", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 0}}, nil), true, http.StatusOK},
 		{"余额负", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: -1}}, nil), false, http.StatusInternalServerError},
 		{"快照缺失", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil), false, http.StatusInternalServerError},
-		// 评审 I-1：快照缺失 + 组倍率显式 ×1（非免费）→ 仍 402（免费放行只对
+		// 快照缺失 + 组倍率显式 ×1（非免费）→ 仍 402（免费放行只对
 		// 有效倍率 0 生效；缺失且非免费 = 无余额记录，语义不变）。
 		{"快照缺失 + 组倍率 10000", billing.NewBalances(fakeBalanceLoader{gm: map[int64]int{10: 10000}}, nil), false, http.StatusInternalServerError},
 	}
@@ -1151,10 +1151,10 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 	}
 }
 
-// TestProxyBillingSingleWritePointRecCapture F2 单写点路由（spec §一）：capture
+// TestProxyBillingSingleWritePointRecCapture 单写点路由（spec §一）：capture
 // 开 + 有用户归属的 billable 行一律经 rec.Record 入队（每日志恰好一个写者由
 // "唯一写点就是 rec 本身"构造性保证），入队前盖出生 Billed 标记（billable 行
-// 置 false 待对账，billing worker 游标消费——T3）；cost 按聚合毫分落行。
+// 置 false 待对账，billing worker 游标消费）；cost 按聚合毫分落行。
 func TestProxyBillingSingleWritePointRecCapture(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -1225,7 +1225,7 @@ func TestProxyBillingBirthAbsorbedStamp(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T3.5：价格倍率（applyMultiplier 纯函数 + 按组倍率应用 + 免费放行）
+// 价格倍率（applyMultiplier 纯函数 + 按组倍率应用 + 免费放行）
 // ---------------------------------------------------------------------------
 
 // TestApplyMultiplier 倍率纯函数表驱动：×2 上浮 / ×0.5 折扣 round（奇数 cost
@@ -1253,7 +1253,7 @@ func TestApplyMultiplier(t *testing.T) {
 	}
 }
 
-// TestProxyBillingMultiplierAssignment 用户-组专属倍率（T3.5 修正：按组挂载，
+// TestProxyBillingMultiplierAssignment 用户-组专属倍率（按组挂载，
 // 用户覆盖组）：(1,10) ×2 → cost 翻倍（130×2 = 260），单写点落 rec + Billed
 // 出生标记照常。
 func TestProxyBillingMultiplierAssignment(t *testing.T) {
@@ -1298,7 +1298,7 @@ func newTestProxyBillingKeys(t *testing.T, keys map[string]domain.KeyMeta, accs 
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
@@ -1327,7 +1327,7 @@ func newTestProxyBillingKeys(t *testing.T, keys map[string]domain.KeyMeta, accs 
 	return p
 }
 
-// TestProxyBillingMultiplierPerGroup 同用户不同组不同倍率（T3.5 修正核心：
+// TestProxyBillingMultiplierPerGroup 同用户不同组不同倍率（修正核心：
 // 专属倍率按组挂载——assignment (1,10)=×2 与 (1,11)=×0.5 互不覆盖）。每组
 // 独立 proxy+rec（各自单写点落同一 capture store，按 GroupID 区分断言；
 // 倍率快照同一份，含两组 assignment）。
@@ -1347,7 +1347,7 @@ func TestProxyBillingMultiplierPerGroup(t *testing.T) {
 		ID: 1, Name: "t", BaseURL: up.URL,
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-	}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+	}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}
 
 	// 组 10：ck-1 → assignment ×2 → 130×2 = 260
 	p1 := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
@@ -1411,9 +1411,9 @@ func TestProxyBillingMultiplierGroup(t *testing.T) {
 	require.Equal(t, int64(195), store.logs[0].Cost, "组倍率 ×1.5：130×15000/10000 = 195 毫分")
 }
 
-// TestProxyBillingFreeUserPasses 免费用户放行（T3.5）：有效倍率 0 → 余额 0
+// TestProxyBillingFreeUserPasses 免费用户放行：有效倍率 0 → 余额 0
 // 不 402——正常转发，cost 0（单写点语义：none 行照进 rec 落 usage_logs
-// cost=0 行；Billed=false 待对账，游标侧 cost=0 快速标记消化——T3）。
+// cost=0 行；Billed=false 待对账，游标侧 cost=0 快速标记消化）。
 func TestProxyBillingFreeUserPasses(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
@@ -1445,7 +1445,7 @@ func TestProxyBillingFreeUserPasses(t *testing.T) {
 	require.False(t, store.logs[0].Billed, "capture on + 有用户 → 出生待对账（与 cost 无关）")
 }
 
-// TestProxyBillingFreeGroupPasses 免费组放行（T3.5）：组倍率 0（用户未设置）
+// TestProxyBillingFreeGroupPasses 免费组放行：组倍率 0（用户未设置）
 // → 余额 0 放行；与用户免费同判定（EffectiveMultiplier 共用）。单写点语义：
 // none（cost=0）行照进 rec 落明细。
 func TestProxyBillingFreeGroupPasses(t *testing.T) {
@@ -1475,7 +1475,7 @@ func TestProxyBillingFreeGroupPasses(t *testing.T) {
 	require.Zero(t, store.logs[0].Cost, "免费组：cost 0")
 }
 
-// TestProxyBillingFreeGroupSnapshotMissing 评审 I-1：快照缺失（Reload 滞后
+// TestProxyBillingFreeGroupSnapshotMissing 快照缺失（Reload 滞后
 // 窗口内用户无余额记录）但组免费（倍率 0）→ 放行不 402（此前只在 BalanceOf
 // 命中时查倍率 → 免费组误 402）。缺失且非免费仍 402（见
 // TestProxyBillingInsufficientBalance402）。
@@ -1507,9 +1507,9 @@ func TestProxyBillingFreeGroupSnapshotMissing(t *testing.T) {
 	require.Zero(t, store.logs[0].Cost, "免费组：cost 0")
 }
 
-// TestProxyBillingNewUserImmediatelyUsable 评审 M-2 回归：新建用户（store 插入）
-// → 全量 Reload → 立即请求 → 200（不得 402）。O1 前 Set 兜底补入新用户掩盖了
-// 该窗口；O1 后 Set 仅限已存在条目（缺失忽略）——新用户必须经 Reload 进快照
+// TestProxyBillingNewUserImmediatelyUsable 回归：新建用户（store 插入）
+// → 全量 Reload → 立即请求 → 200（不得 402）。 前 Set 兜底补入新用户掩盖了
+// 该窗口； 后 Set 仅限已存在条目（缺失忽略）——新用户必须经 Reload 进快照
 // （创建路径不走 Set）。窗口显式暴露：创建前快照缺失 → 402（不用 sleep 掩盖）。
 func TestProxyBillingNewUserImmediatelyUsable(t *testing.T) {
 	up := fakeOpenAI(t, "")
@@ -1538,6 +1538,6 @@ func TestProxyBillingNewUserImmediatelyUsable(t *testing.T) {
 	loader.m[1] = 50000
 	require.NoError(t, bal.Reload(context.Background()))
 
-	require.Equal(t, 200, req(), "新建用户 Reload 后立即请求不得 402（评审 M-2）")
+	require.Equal(t, 200, req(), "新建用户 Reload 后立即请求不得 402")
 	require.NoError(t, rec.Close(context.Background()))
 }

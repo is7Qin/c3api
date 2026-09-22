@@ -91,7 +91,7 @@ func (r *recSettings2) ReloadSettings(ctx context.Context) error {
 }
 func (r *recSettings2) calls() int { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
 
-// ReloadPricingCtx D1：定价变更走 dispatcher 直连（settings 同款同步路径，
+// ReloadPricingCtx 定价变更走 dispatcher 直连（settings 同款同步路径，
 // 不入去抖器），复用同一 fake 目标记录调用。
 func (r *recSettings2) ReloadPricingCtx(ctx context.Context) error {
 	r.mu.Lock()
@@ -260,7 +260,7 @@ func TestDispatcherApplyMapping(t *testing.T) {
 	t.Run("Settings", func(t *testing.T) {
 		rg := newTestDispatcher(t)
 		rg.d.Apply(context.Background(), notify.Change{Settings: true})
-		// #36 时序（R2 M-1）：settings 快照同步刷新（Apply 内，非去抖 flush——
+		// 时序：settings 快照同步刷新（Apply 内，非去抖 flush——
 		// scope 重载必须读到新 N）。
 		require.Equal(t, 1, rg.settings.calls(), "settings → settings 快照同步重载")
 		// 注册表按 ScopeSettings 精确重载（auth 即时生效，不等待去抖窗口）。
@@ -344,14 +344,14 @@ func TestDispatcherApplyMergesSingleFlush(t *testing.T) {
 	require.Equal(t, 1, rg.auth.calls(), "远端 + 本地同窗口合并为一次 reload")
 }
 
-// errSettings2 ReloadSettings 恒失败（G1-1 Apply 失败注入）。
+// errSettings2 ReloadSettings 恒失败（Apply 失败注入）。
 type errSettings2 struct{ recSettings2 }
 
 func (e *errSettings2) ReloadSettings(ctx context.Context) error {
 	return errors.New("settings boom")
 }
 
-// errSnap2 快照 Reload 恒失败但记录调用（G1-1 Apply 失败注入）。
+// errSnap2 快照 Reload 恒失败但记录调用（Apply 失败注入）。
 type errSnap2 struct {
 	recSnap
 }
@@ -361,7 +361,7 @@ func (e *errSnap2) Reload(ctx context.Context) error {
 	return errors.New("snapshot boom")
 }
 
-// TestDispatcherApplyFailureTolerated G1-1（p2-02/G-P2-1）：Apply 无返回值——
+// TestDispatcherApplyFailureTolerated：Apply 无返回值——
 // 内部失败（settings 同步重载失败 + 注册表 scope 快照重载失败）独立 Warn 消
 // 化，不透传：无 panic，同批其他变更位仍被吞入去抖（事件提示语义不破坏）。
 func TestDispatcherApplyFailureTolerated(t *testing.T) {
@@ -429,7 +429,7 @@ func (r *recSnapN) Reload(ctx context.Context) error {
 }
 func (r *recSnapN) observedN() int { r.mu.Lock(); defer r.mu.Unlock(); return r.lastN }
 
-// TestDispatcherSettingsTiming settings 变更时序（R2 M-1 #36 即时重算）：
+// TestDispatcherSettingsTiming settings 变更时序（即时重算）：
 // settings 旧 N → 远端变更落库（dbN 新 N）→ Apply(Change{Settings:true}) →
 // auth.Reload 必须读到新 N。顺序保证：settings 快照先同步刷新、scope 精确重载
 // 后执行——修复前仅 Mark（去抖 200ms 后才 flush
@@ -507,7 +507,7 @@ func TestDispatcherFullRefresh(t *testing.T) {
 	})
 }
 
-// TestDispatcherFullRefreshFirstConnectSkip E2 启动双刷（E-P2-4）：main 启动
+// TestDispatcherFullRefreshFirstConnectSkip 启动双刷：main 启动
 // 首刷全成功（ReloadAll 返回空 map）置位 bootLoaded → 首连 FullRefresh 跳过
 // 五路 ReloadAll（健康启动下第二遍纯冗余消除，ReloadAll 至多一次）、仅补
 // ReloadSettings；断线重连（第二次调用）恒全量刷新不变。

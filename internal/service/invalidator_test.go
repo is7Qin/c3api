@@ -22,12 +22,12 @@ type invCall struct {
 	key  bool
 }
 
-// invRecorder 记录 Mark 调用的测试假件（O2 接线矩阵断言：各实体走各自的
+// invRecorder 记录 Mark 调用的测试假件（接线矩阵断言：各实体走各自的
 // 重载方式标记；兼作旧的 "invalidate: func() { invalidated++ }" 计数替代）。
 type invRecorder struct {
 	mu    sync.Mutex
 	calls []invCall
-	// onSettings Settings() mark 时同步回调（#36 顺序不变量断言：回调内读
+	// onSettings Settings() mark 时同步回调（顺序不变量断言：回调内读
 	// settings 快照必须已见新值——reloadSettings 先于 inv.Settings）。
 	onSettings func()
 }
@@ -83,7 +83,7 @@ func (r *invRecorder) countKind(kind string) int {
 	return n
 }
 
-// --- O2 接线矩阵逐实体断言（评审 M-1） ---
+// --- 接线矩阵逐实体断言 ---
 
 func TestInvalidatorMatrix(t *testing.T) {
 	ctx := context.Background()
@@ -139,8 +139,9 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.NoError(t, err)
 
 		// 创建带组：gids = 新建分组；keyChanged=false（新 key 无既有客户端）
-		acc, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &[]int64{g1.ID, g2.ID},
+		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name: strPtr("a1"), TemplateID: int64Ptr(tpl.ID), UpstreamKey: strPtr("sk-1"),
+			GroupIDs: &[]int64{g1.ID, g2.ID},
 		})
 		require.NoError(t, err)
 		got := rec.last()
@@ -149,9 +150,9 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.False(t, got.key)
 
 		// 更新移组 g1→g2：旧组 ∪ 新组都重载；upstream_key 变更 → keyChanged
-		_, err = svc.UpdateAccount(ctx, &domain.Account{
-			ID: acc.ID, Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-2", GroupIDs: &[]int64{g2.ID},
-		})
+		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{
+			UpstreamKey: strPtr("sk-2"), GroupIDs: &[]int64{g2.ID},
+		}, nil)
 		require.NoError(t, err)
 		got = rec.last()
 		require.Equal(t, "accounts", got.kind)
@@ -183,19 +184,22 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.NoError(t, err)
 		g2, err := svc.CreateGroup(ctx, "g2", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
-		a1, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a1", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &[]int64{g1.ID},
+		a1, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name: strPtr("a1"), TemplateID: int64Ptr(tpl.ID), UpstreamKey: strPtr("sk-1"),
+			GroupIDs: &[]int64{g1.ID},
 		})
 		require.NoError(t, err)
-		a2, err := svc.CreateAccount(ctx, &domain.Account{
-			Name: "a2", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &[]int64{g1.ID},
+		a2, err := svc.CreateAccount(ctx, repository.AccountPatch{
+			Name: strPtr("a2"), TemplateID: int64Ptr(tpl.ID), UpstreamKey: strPtr("sk-1"),
+			GroupIDs: &[]int64{g1.ID},
 		})
 		require.NoError(t, err)
 
 		// 批量：两组旧组 g1 + 目标 g2 并集；upstream_key 提供 → keyChanged
 		key := "sk-batch"
-		require.NoError(t, svc.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
-			repository.AccountPatch{GroupIDs: &[]int64{g2.ID}, UpstreamKey: &key}))
+		_, err = svc.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+			repository.AccountPatch{GroupIDs: &[]int64{g2.ID}, UpstreamKey: &key})
+		require.NoError(t, err)
 		got := rec.last()
 		require.Equal(t, "accounts", got.kind)
 		// 旧组（两账号 × g1）+ 目标组 g2 并集（重复由去抖器 map 去重）
@@ -225,7 +229,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.Zero(t, rec.countKind("accounts"))
 	})
 
-	t.Run("组授予 + 用户-组专属倍率 → Multipliers()（T3.5 按组）", func(t *testing.T) {
+	t.Run("组授予 + 用户-组专属倍率 → Multipliers()（按组）", func(t *testing.T) {
 		fs := newFakeStore()
 		rec := &invRecorder{}
 		svc := &Service{store: fs, inv: rec, log: nil}
@@ -259,7 +263,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.Equal(t, before, rec.total(), "GroupPatch 无倍率字段 → 不触发失效（矩阵：仅倍率变更走 Multipliers）")
 	})
 
-	t.Run("UpdateSetting → Settings() 且快照先刷新（#36 顺序不变量）", func(t *testing.T) {
+	t.Run("UpdateSetting → Settings() 且快照先刷新（顺序不变量）", func(t *testing.T) {
 		fs := newFakeStore()
 		rec := &invRecorder{}
 		svc := &Service{store: fs, inv: rec, log: nil}

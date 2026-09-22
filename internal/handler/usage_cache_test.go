@@ -20,7 +20,7 @@ import (
 )
 
 // TestGetUsageLogsCacheTokens /api/admin/usage_logs 响应含 cache read/creation 字段
-// （toAPIUsageLog 手写映射接线，评审 I-3）。
+// （toAPIUsageLog 手写映射接线）。
 func TestGetUsageLogsCacheTokens(t *testing.T) {
 	store := newFakeStore()
 	store.logs = []*domain.UsageLog{{

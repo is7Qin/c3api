@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 )
 
-// TestPGCreateTempBalance 临时额度落库（真实 PostgreSQL，评审 B1 基座）：
+// TestPGCreateTempBalance 临时额度落库（真实 PostgreSQL，评审基座）：
 // user_id/amount/expires_at/note 逐字段回读；nil 可选列不落值（永久语义）。
 func TestPGCreateTempBalance(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -39,7 +39,7 @@ func TestPGCreateTempBalance(t *testing.T) {
 	require.NotNil(t, tb.Note)
 	require.Equal(t, "signup bonus", *tb.Note)
 
-	// 用户过滤查询（Phase 5 FEFO 扣费的数据源形态）
+	// 用户过滤查询（FEFO 扣费的数据源形态）
 	byUser, err := repos.Client.TempBalance.Query().
 		Where(tempbalance.UserIDEQ(u.ID)).
 		Order(tempbalance.ByExpiresAt()).

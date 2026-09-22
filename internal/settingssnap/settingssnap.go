@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package settingssnap 是 settings 全量内存快照的唯一事实源（B3 根因重开）：
+// Package settingssnap 是 settings 全量内存快照的唯一事实源（根因重开）：
 // Service 与 MailWorker 同源共享单个 *Snapshot（单指针，无双快照分叉）。
 // 叶子包：仅依赖 domain + logx + 标准库，不 import internal/repository（防环——
 // SettingsLoader 窄接口由 repos/fakeStore 结构性满足）。

@@ -114,7 +114,7 @@ func TestRoutingCompilerWireGoldenSHA(t *testing.T) {
 	v, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	sum := sha256.Sum256(decisionViewBytes(v))
-	// v4-S2: table keys are normalized (hex lives in the interned decision
+	// table keys are normalized (hex lives in the interned decision
 	// values) — golden regenerated for the normalized key form.
 	// Explore-share wiring: the serialized form now carries ExploreBP per
 	// route (1 primary + 1 unknown of 2 eligible → 100+ceil(400*1/2)=300bp)
@@ -453,7 +453,7 @@ func TestRoutingCompilerWireHealthLatchExclusion(t *testing.T) {
 	hk := compilerHealthKeyFor(accs[1], domain.FormatOpenAIChat, "m")
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
 	s.health = h
-	require.True(t, s.TryLatch(accs[2].ID, compilerLatchKeyFor(accs[2]).Fingerprint, accs[2].LifecycleRevision))
+	require.True(t, s.TryLatch(accs[2].ID, compilerLatchKeyFor(accs[2]).Fingerprint, accs[2].IdentityRevision))
 
 	s.compileOnce()
 	rd, ok := s.View().DecisionView().Routes()[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
@@ -484,7 +484,7 @@ func TestRoutingCompilerWireResolvedModelQualityIdentity(t *testing.T) {
 	op := operationTagForFormat(string(domain.FormatOpenAIChat))
 	qcResolved, _ := domain.QualityClassID(callerKindForFormat(domain.FormatOpenAIChat), domain.FormatOpenAIChat, "resolved", op)
 	h := NewRuntimeHealth(nil, "self", nil, nil)
-	hk := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcResolved), Revision: 1}
+	hk := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcResolved), IdentityRevision: 1}
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateOPEN}}})
 	s.health = h
 
@@ -578,7 +578,7 @@ func TestRoutingCompilerWireRequestCompileNonBlocking(t *testing.T) {
 	}
 }
 
-// --- Task18 observability: compile-lane stats + failure retention ---
+// --- observability: compile-lane stats + failure retention ---
 
 func TestRoutingCompilerWireStatsCompileLane(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})

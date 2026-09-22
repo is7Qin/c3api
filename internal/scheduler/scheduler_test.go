@@ -48,8 +48,7 @@ func (m *memLoader) LoadGroupAccounts(ctx context.Context, id int64) ([]*domain.
 
 func testCfg() Config {
 	return Config{
-		DefaultMaxConcurrency: 2,
-		SyncInterval:          100 * time.Hour, // 测试中不触发定时同步
+		SyncInterval: 100 * time.Hour, // 测试中不触发定时同步
 	}
 }
 
@@ -122,7 +121,12 @@ func tpl(id int64, format domain.RequestFormat, models []string) *domain.Templat
 }
 
 func acc(id int64, t *domain.Template, maxConc int) *domain.Account {
-	return &domain.Account{ID: id, TemplateID: t.ID, Template: t, UpstreamKey: "k", Enabled: true, MaxConcurrency: maxConc, LifecycleRevision: 1}
+	// IdentityRevision 必须与生产不变量一致：schema 的 identity_revision 是
+	// Default(1)（internal/ent/schema/account.go），真实账号 K 恒 >= 1。
+	// 测试若构造 K=0，验证的就是一个**生产不可能存在**的状态——而 K=0 恰是
+	// Attempt.Validate() 明确拒绝的值（identity_revision <= 0 报错），fixture
+	// 于是与不变量打架，谁先断言决定成败。镜像 DB 默认值。
+	return &domain.Account{ID: id, TemplateID: t.ID, Template: t, UpstreamKey: "k", Enabled: true, MaxConcurrency: maxConc, LifecycleRevision: 1, IdentityRevision: 1}
 }
 
 // newSched 构造已加载快照且已武装编译道的调度器：reload 产出静态视图，
@@ -458,7 +462,7 @@ func TestSelectWhitelistHitMiss(t *testing.T) {
 	require.ErrorIs(t, err, ErrFormatUnavailable, "白名单外模型 → 404")
 }
 
-// TestSelectFormatModelsOnlyBoundary 评审 M-1：Models=[] + FormatModels={chat:[gpt-4o]}
+// TestSelectFormatModelsOnlyBoundary Models=[] + FormatModels={chat:[gpt-4o]}
 // + supported_formats 含 anthropic 的账号——anthropic 格式任意模型 → 404。
 func TestSelectFormatModelsOnlyBoundary(t *testing.T) {
 	tplFm := &domain.Template{
@@ -493,7 +497,7 @@ func TestSelectFormatModelsEmptyList(t *testing.T) {
 	}
 }
 
-// TestSelectMappingKeyWhitelist 评审 O-5：mapping key 命中 → 选中；映射目标不复查。
+// TestSelectMappingKeyWhitelist mapping key 命中 → 选中；映射目标不复查。
 func TestSelectMappingKeyWhitelist(t *testing.T) {
 	tplMap := &domain.Template{
 		BaseURL: "https://u/v1", CredentialType: credential.TypeAPIKey,
@@ -642,7 +646,7 @@ func TestReloadPreservesInFlightConcurrency(t *testing.T) {
 	s.Release(s3.AccountID)
 }
 
-// TestMultiGroupSharedInstance 回归（O2 实证修复）：多组账号必须共享同一
+// TestMultiGroupSharedInstance 回归（实证修复）：多组账号必须共享同一
 // accountSnapshot 实例——Select（经组路由）与 Release（经 byID）命中同一计数器。
 func TestMultiGroupSharedInstance(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
@@ -958,24 +962,19 @@ func TestReuseSyncsStaticFieldsFromDB(t *testing.T) {
 	s.Release(sel.AccountID)
 }
 
-// TestReuseClampsMaxConcurrency 复用分支的 MaxConcurrency 钳制（评审 M-2）。
-func TestReuseClampsMaxConcurrency(t *testing.T) {
+// TestReusePassesThroughStoredConcurrency 快照忠实透传存储值：写面保证
+// max_concurrency ≥ 1（创建默认 + 校验拒绝），快照层不再静默钳制。
+func TestReusePassesThroughStoredConcurrency(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplx, 0)}})
-	s := newSched(t, m) // 首次加载：新建分支钳制
-	require.Equal(t, 2, reuseByID(s, 1).static.Load().acc.MaxConcurrency, "新建分支钳制 defaultMax=2")
-	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
-	require.NoError(t, err, "钳制后门禁不恒满")
-	s.Release(sel.AccountID)
+	s := newSched(t, m) // 首次加载：存储值原样入快照
+	require.Equal(t, 0, reuseByID(s, 1).static.Load().acc.MaxConcurrency, "存储 0 原样透传（写面保证生产无 0，异常值应显形）")
 
 	require.NoError(t, s.reload(context.Background()))
-	require.Equal(t, 2, reuseByID(s, 1).static.Load().acc.MaxConcurrency, "复用分支钳制 defaultMax=2")
-	sel, err = s.Select(10, domain.FormatOpenAIChat, "m")
-	require.NoError(t, err, "复用后门禁不恒满")
-	s.Release(sel.AccountID)
+	require.Equal(t, 0, reuseByID(s, 1).static.Load().acc.MaxConcurrency, "复用分支同样透传")
 }
 
-// TestReuseGroupIDsResetOnRemoval groupIDs 首次出现重置（评审 M-1）。
+// TestReuseGroupIDsResetOnRemoval groupIDs 首次出现重置。
 func TestReuseGroupIDsResetOnRemoval(t *testing.T) {
 	tplx := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	a := acc(1, tplx, 4)
@@ -1015,7 +1014,7 @@ func TestReuseNewAccountCreatesFresh(t *testing.T) {
 	require.Same(t, old1, reuseByID(s, 1), "已存在账号仍复用")
 	as2 := reuseByID(s, 2)
 	require.NotNil(t, as2, "新账号进入 byID")
-	require.Equal(t, 2, as2.static.Load().acc.MaxConcurrency, "新账号新建分支钳制 defaultMax=2")
+	require.Equal(t, 0, as2.static.Load().acc.MaxConcurrency, "新账号存储值原样透传")
 	require.Equal(t, []int64{10}, as2.static.Load().groupIDs, "新账号组引用集登记")
 	require.Zero(t, as2.runtime.concurrency.Load(), "新账号计数自 0 起")
 	require.Zero(t, as2.statePtr().errCount, "新账号状态全新")

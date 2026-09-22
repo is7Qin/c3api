@@ -12,7 +12,7 @@ package repository_test
 //   - ent CreateBulk 路径（InsertBatch）roundtrip：2 列有值 + image token 并入
 //     in/out + format=openai-images 落库、QueryUsages 读回、SQL 层直查
 //   - 价格列 NULL 语义（未设置 → NULL 落库、nil 读回；call_count DEFAULT 0）
-//   - F2 单写点 + 游标消费：openai-images/openai-search 行经 InsertBatch 落库
+//   - 单写点 + 游标消费：openai-images/openai-search 行经 InsertBatch 落库
 //     （ent FormatValidator 校验通过）→ SettleFefoBatch 扣费标记 → SQL 层
 //     直查 billed 翻转（旧 COPY 路径断言随双写删除——usage flusher 是唯一写者）
 //
@@ -199,7 +199,7 @@ func TestUsageLogCallColumnsRoundtripPG(t *testing.T) {
 	require.Nil(t, raw, "DB 层 price_per_call_millis 为 NULL")
 }
 
-// TestUsageLogCallColumnsBillingCursorPG F2 单写点 + 游标消费：format=
+// TestUsageLogCallColumnsBillingCursorPG 单写点 + 游标消费：format=
 // openai-images 行经 InsertBatch 落库（ent CreateBulk FormatValidator 校验通过）
 // → SettleBalanceBatch 扣费标记——SQL 层直查 2 列 + billed 翻转（旧 COPY 路径
 // 断言随双写删除）。

@@ -585,7 +585,7 @@ var (
 	resultKeyBytes     = []byte("result")
 	responseKeyBytes   = []byte("response")
 	outputKeyBytes     = []byte("output")
-	// usage 提取键（spec 2026-08-15-gc-opt-ab A-1：scanKeyValue 键名精确匹配
+	// usage 提取键（spec 2026-08-15-gc-opt-ab scanKeyValue 键名精确匹配
 	// 用——chat/responses/anthropic 三协议字段名；对齐 imageGenCallBytes 惯例）
 	usageKeyBytes                    = []byte("usage")
 	promptTokensKeyBytes             = []byte("prompt_tokens")

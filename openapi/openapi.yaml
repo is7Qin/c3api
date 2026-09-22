@@ -193,6 +193,7 @@ paths:
         - { name: sort, in: query, schema: { type: string } }
         - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
         - { name: template_id, in: query, schema: { type: integer, format: int64 } }
+        - { name: enabled, in: query, schema: { type: boolean, description: "管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关）" } }
       responses:
         '200':
           description: 账号视图列表
@@ -252,7 +253,7 @@ paths:
           description: 更新成功
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/BatchUpdateResponse' }
+              schema: { $ref: '#/components/schemas/AccountBatchUpdateResponse' }
         default:
           $ref: '#/components/responses/Error'
   /accounts/batch-import-codex-oauth:
@@ -305,20 +306,31 @@ paths:
               schema: { $ref: '#/components/schemas/Account' }
         default:
           $ref: '#/components/responses/Error'
-    put:
-      operationId: PutAccountsId
+    patch:
+      operationId: PatchAccountsId
       tags: [accounts]
+      summary: 部分更新账号（三态：缺省=不变；可空标量 null=清空、""=400；不可空标量 null=400；有值=落值）
+      description: >-
+        账号写面唯一更新入口（一个端点覆盖倍率 + 缓存域 + 启停 + 普通字段 + 身份字段全部组合，一次调用）。
+        前置条件 If-Match 可选：缺席 = 不做检查；命中 = 生效；陈旧 → 412；语法非法（W/、多值、*、非整数）→ 400。
+      parameters:
+        - { name: If-Match, in: header, required: false, schema: { type: string, description: "可选乐观锁前置条件：\"<lifecycle_revision>\"（可带引号）。不支持 W/、多值与 *（→ 400）；陈旧 → 412" } }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/AccountCreate' }
+            schema: { $ref: '#/components/schemas/AccountConfigPatch' }
       responses:
         '200':
-          description: 更新后账号
+          description: 更新后账号（含新 lifecycle_revision）
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Account' }
+        '412':
+          description: If-Match 陈旧（当前 lifecycle_revision 与前置条件不符）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         default:
           $ref: '#/components/responses/Error'
     delete:
@@ -360,8 +372,8 @@ paths:
         运行时失效（rule 判死/SDK fatal）后管理员确认恢复的唯一入口：CAS
         expected_revision 命中才清失效三字段并 +1，随后对新 revision 写通配
         PROBING（探针环接管：READY 前不吃正常流量）。expected_revision 过期 →
-        409（前端须重读账号后重试）；本端点不启用被禁用的账号（enabled 独立
-        走 /accounts/{id}/enabled）。
+        409（前端须重读账号后重试）；本端点不启用被禁用的账号（enabled 独立，
+        经 PATCH /accounts/{id} 修改）。
       requestBody:
         required: true
         content:
@@ -370,66 +382,6 @@ paths:
       responses:
         '200':
           description: 恢复后的账号（含新 LifecycleRevision）
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Account' }
-        default:
-          $ref: '#/components/responses/Error'
-  /accounts/{id}/enabled:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
-    post:
-      operationId: PostAccountsIdEnabled
-      tags: [accounts]
-      summary: 启用/禁用账号（fenced；enable 不清失效字段——恢复唯一入口 /recover）
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/AccountEnabledBody' }
-      responses:
-        '200':
-          description: 切换后的账号（含新 LifecycleRevision）
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Account' }
-        default:
-          $ref: '#/components/responses/Error'
-  /accounts/{id}/cost-multiplier:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
-    put:
-      operationId: PutAccountsIdCostMultiplier
-      tags: [accounts]
-      summary: 更新采购成本倍率（fenced；正常值 ×0–×10，边界换算 basis points）
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/AccountCostMultiplierBody' }
-      responses:
-        '200':
-          description: 更新后的账号（含新 LifecycleRevision）
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Account' }
-        default:
-          $ref: '#/components/responses/Error'
-  /accounts/{id}/cache-domain:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
-    put:
-      operationId: PutAccountsIdCacheDomain
-      tags: [accounts]
-      summary: 更新缓存域（fenced；null = 清空回账号私有域；非空 = 共享域）
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/AccountCacheDomainBody' }
-      responses:
-        '200':
-          description: 更新后的账号（含新 LifecycleRevision）
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Account' }
@@ -827,7 +779,7 @@ paths:
               schema: { $ref: '#/components/schemas/MailTemplate' }
         default:
           $ref: '#/components/responses/Error'
-  # --- 兑换码（tag: redemptions；Phase 5 计费前基础设施——资源发放的通用载体） ---
+  # --- 兑换码（tag: redemptions；计费前基础设施——资源发放的通用载体） ---
   # 注意 chi 路径顺序：/redemption-codes/batch-deactivate 必须先于
   # /redemption-codes/{id}/... 注册（生成器按 spec 顺序注册，防 "batch-deactivate"
   # 被 {id} 捕获，对齐 /templates/batch-delete 先例）。
@@ -1684,7 +1636,7 @@ paths:
               schema: { $ref: '#/components/schemas/StatTTFTSummary' }
         default:
           $ref: '#/components/responses/Error'
-  # ---- intelligent-routing 观测面（Todo 17）：rollup 聚合 + 当前发布计划投影，
+  # ---- intelligent-routing 观测面：rollup 聚合 + 当前发布计划投影，
   # 数据源钉死 routing_*_rollup 表与 scheduler 当前视图——绝不查 raw logs、
   # 绝不按历史 generation 查询（plan/flow/frontier 一律对齐当前发布计划目录）。
   /routing/flow:
@@ -1864,7 +1816,7 @@ components:
       required: [name, supported_formats]
       properties:
         name: { type: string }
-        # base_url 凭据类型条件（Phase 4）：codex-oauth/codex-pat 非空禁用（须空，SDK 默认端点）；
+        # base_url 凭据类型条件：codex-oauth/codex-pat 非空禁用（须空，SDK 默认端点）；
         # api_key/responses-special 为裸根覆盖（不含 /v1，service 校验），空 = 默认/路由失败（管理面不拦截）。
         # Shared shape retained; only description is conditional.
         base_url: { type: string, description: "credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden, SDK default endpoint); api_key/responses-special optional bare root without /v1 (non-empty overrides, empty uses default or fails to route)" }
@@ -1920,28 +1872,10 @@ components:
         UpdatedAt: { type: string, format: date-time }
         DeletedAt: { type: string, format: date-time, nullable: true, description: 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项） }
     AccountCreate:
-      type: object
-      required: [name, template_id, upstream_key]
-      properties:
-        name: { type: string }
-        template_id: { type: integer, format: int64 }
-        # 账号级 base_url 覆盖（路由属性，位于 upstream_key 前——用户裁决
-        # 2026-08-14；Phase 4 条件：归属模板为 codex-oauth/codex-pat 时非空禁用，须空/null/缺省 = 继承模板/SDK 默认；
-        # api_key/responses-special 时非空优先于模板 base_url）。
-        base_url: { type: string, nullable: true, description: "credential-type conditional: if template is codex-oauth/codex-pat must be empty/null (non-empty forbidden, inherits SDK default); if api_key/responses-special non-empty overrides template base_url, null/empty inherits template" }
-        # upstream_key：api_key/responses-special 模板必填（静态透传上游 key）；
-        # codex-oauth/codex-pat 模板可选（凭据走 account_ext——创建后经
-        # /accounts/{id}/ext 配置；service 按模板类型校验）。
-        upstream_key: { type: string }
-        max_concurrency: { type: integer }
-        # 缓存域（intelligent-routing 契约）：创建可带；后续变更唯一入口 =
-        # PUT /accounts/{id}/cache-domain（CAS fenced）。PUT 全量更新不携带 =
-        # 保持原值（生命周期字段由 fenced 端点独占）。
-        cache_domain: { type: string, nullable: true, description: "可选：共享缓存域（合法域名形态 ≤253；null/缺省 = 账号私有域）；仅创建可带，更新走 /accounts/{id}/cache-domain" }
-        # 创建时可选：null/缺省 = 无分组；提供 = 替换语义（空数组 = 无分组）
-        group_ids:
-          type: array
-          items: { type: integer, format: int64 }
+      description: 创建体 = 唯一字段模型 + 创建必填（name/template_id）；upstream_key 依模板凭据类型条件必填（service 校验）。
+      allOf:
+        - $ref: '#/components/schemas/AccountConfigPatch'
+      required: [name, template_id]
     Account:
       type: object
       properties:
@@ -1949,19 +1883,20 @@ components:
         Name: { type: string }
         TemplateID: { type: integer, format: int64 }
         Template: { $ref: '#/components/schemas/Template' }
-        # 账号级 baseURL 覆盖（Phase 4 条件：codex 模板非空禁用，须 null = 继承/SDK 默认；非 Codex 非空优先于模板）
+        # 账号级 baseURL 覆盖（条件：codex 模板非空禁用，须 null = 继承/SDK 默认；非 Codex 非空优先于模板）
         BaseURL: { type: string, nullable: true, description: "credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template" }
         UpstreamKey: { type: string }
         MaxConcurrency: { type: integer }
         LastError: { type: string, nullable: true }
         LastUsedAt: { type: string, format: date-time, nullable: true }
-        # ---- intelligent-routing 生命周期契约（只读回显；写面 = fenced 端点）----
-        Enabled: { type: boolean, description: "管理面启停（写面 POST /accounts/{id}/enabled，CAS fenced；与运行时失效语义分离）" }
+        # ---- intelligent-routing 生命周期契约（只读回显；写面 = PATCH /accounts/{id}）----
+        Enabled: { type: boolean, description: "管理面启停（写面 PATCH /accounts/{id} 的 enabled 字段；与运行时失效语义分离）" }
         FailedAt: { type: string, format: date-time, nullable: true, description: "运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复唯一入口 POST /accounts/{id}/recover）" }
         FailureSource: { type: string, nullable: true, description: "失效来源（rule/sdk 等；随 recover 清除）" }
-        LifecycleRevision: { type: integer, format: int64, description: "生命周期代际（CAS fencing：每次生命周期变化/管理员凭据替换 +1；所有 fenced 端点必须携带 expected_revision）" }
-        UpstreamCostMultiplier: { type: number, format: double, description: "采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PUT /accounts/{id}/cost-multiplier）" }
-        CacheDomain: { type: string, nullable: true, description: "共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PUT /accounts/{id}/cache-domain）" }
+        LifecycleRevision: { type: integer, format: int64, description: "配置代际 C（客户端 CAS 令牌 + DB 变更水位）：每次写面落库无条件 +1；PATCH 以 If-Match 作前置条件（陈旧 → 412），recover 以 body expected_revision（陈旧 → 409）" }
+        IdentityRevision: { type: integer, format: int64, description: "身份代际 K：仅身份类字段（template_id/base_url/upstream_key 及可轮换凭据）按值变更时 +1；SDK 自动 token 刷新不推进" }
+        UpstreamCostMultiplier: { type: number, format: double, description: "采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PATCH /accounts/{id} 的 upstream_cost_multiplier 字段）" }
+        CacheDomain: { type: string, nullable: true, description: "共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PATCH /accounts/{id} 的 cache_domain 字段）" }
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
         DeletedAt: { type: string, format: date-time, nullable: true, description: 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项） }
@@ -1978,24 +1913,6 @@ components:
       required: [expected_revision]
       properties:
         expected_revision: { type: integer, format: int64, description: "CAS 期望代际（= 读到的 LifecycleRevision）；过期 → 409" }
-    AccountEnabledBody:
-      type: object
-      required: [enabled, expected_revision]
-      properties:
-        enabled: { type: boolean }
-        expected_revision: { type: integer, format: int64, description: "CAS 期望代际；过期 → 409" }
-    AccountCostMultiplierBody:
-      type: object
-      required: [multiplier, expected_revision]
-      properties:
-        multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "采购成本倍率正常值（1 = ×1，0 = 免费，上限 ×10；边界换算 bp——2.5 ↔ 25000）；越界 → 400" }
-        expected_revision: { type: integer, format: int64, description: "CAS 期望代际；过期 → 409" }
-    AccountCacheDomainBody:
-      type: object
-      required: [expected_revision]
-      properties:
-        cache_domain: { type: string, nullable: true, description: "null/缺省 = 清空（回账号私有域）；非空 = 共享域（合法域名形态 ≤253，非法 → 400；清空不走空串）" }
-        expected_revision: { type: integer, format: int64, description: "CAS 期望代际；过期 → 409" }
     CodexUsageSnapshot:
       type: object
       description: 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度）
@@ -2194,7 +2111,7 @@ components:
     GroupProtocolConvert:
       type: string
       enum: [chat_to_resp, mess_to_resp, resp_to_mess, chat_to_mess]
-      description: 分组级协议转换方向（只补差，W5 网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
+      description: 分组级协议转换方向（只补差，网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
     GroupAssignmentsBody:
       type: object
       required: [user_ids]
@@ -2651,19 +2568,86 @@ components:
         model_mapping:
           type: object
           additionalProperties: { $ref: '#/components/schemas/ModelMappingEntry' }
-    AccountPatch:
+    AccountConfigPatch:
       type: object
+      minProperties: 1
+      description: >-
+        账号写面唯一字段模型（创建 / PATCH / 批量共用）。三态：字段缺席 = 不变（永不清空）；
+        可空标量 null = 清空；集合 null = 不变、[] = 清空；不可空标量 null = 400；
+        可空标量 "" = 400（空串哨兵已取消——清空只有一个拼法 null）。
       properties:
-        name: { type: string }
-        template_id: { type: integer, format: int64 }
-        # 批量三态定死（评审 C1）+ Phase 4 条件：codex 模板目标非空禁用（须空/null/不变，SDK 默认）；非 Codex 三态：空串=清空/null/缺省=不变/非空=落值
-        base_url: { type: string, nullable: true, description: "credential-type conditional batch: if any effective target is codex-oauth/codex-pat must be empty/null (non-empty forbidden); otherwise batch tristate: empty string=clear to inherit, null/omitted=unchanged, non-empty=override" }
-        upstream_key: { type: string }
-        max_concurrency: { type: integer }
-        # 替换语义：null/缺省 = 不变；[] = 清空；提供列表 = 替换账号全部分组
+        # x-go-type 三态载体：*T 无法区分 null 与缺席（二者同为 nil），故所有标量统一用
+        # nullable.Nullable[T]（一种包装类型，一处实现；语义按字段类分派）。
+        # x-go-type-skip-optional-pointer 必需——否则生成 *nullable.Nullable[T]。
+        # x-omitempty: true 令两种投影的 json tag 一致（缺席即省略），
+        # 使两种必需性投影在 Go 中同构可转换（编译期断言在 handler 侧）。
+        name:
+          type: string
+          x-omitempty: true
+          x-go-type: nullable.Nullable[string]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        template_id:
+          type: integer
+          format: int64
+          x-omitempty: true
+          x-go-type: nullable.Nullable[int64]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        # 身份（可空标量）：缺席 = 不变；null = 清空；非空 = 落值；"" = 400。base_url
+        # 语义随模板凭据类型（codex-oauth/codex-pat 非空禁用，须 null = 继承 SDK 默认；
+        # api_key/responses-special 非空优先于模板 base_url）。
+        base_url:
+          x-omitempty: true
+          type: string
+          nullable: true
+          x-go-type: nullable.Nullable[string]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        # upstream_key：api_key/responses-special 模板必填（静态透传上游 key）；
+        # codex-oauth/codex-pat 模板可选（凭据走 account_ext）。
+        upstream_key:
+          x-omitempty: true
+          type: string
+          x-go-type: nullable.Nullable[string]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        max_concurrency:
+          x-omitempty: true
+          type: integer
+          x-go-type: nullable.Nullable[int]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        # 集合：缺席 = 不变、null = 不变、[] = 清空、非空 = 替换。*[]int64 已能表达
+        # （null 与缺席同义 = 不变），无需三态载体。
         group_ids:
           type: array
           items: { type: integer, format: int64 }
+        # 不可空标量：缺省 = 不变；null = 400；true/false = 落值。
+        enabled:
+          x-omitempty: true
+          type: boolean
+          x-go-type: nullable.Nullable[bool]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        # 可空标量：缺省 = 不变；null = 清空（回账号私有域）；非空 = 共享域（≤253）；"" = 400。
+        cache_domain:
+          x-omitempty: true
+          type: string
+          nullable: true
+          x-go-type: nullable.Nullable[string]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        # 不可空标量（×0–×10，API 边界与 basis points 换算）：缺省 = 不变；null = 400。
+        upstream_cost_multiplier:
+          x-omitempty: true
+          type: number
+          format: double
+          minimum: 0
+          maximum: 10
+          x-go-type: nullable.Nullable[float64]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
     GroupPatch:
       type: object
       properties:
@@ -2678,7 +2662,23 @@ components:
           items: { type: integer, format: int64 }
           minItems: 1
           maxItems: 100
-        fields: { $ref: '#/components/schemas/AccountPatch' }
+        fields: { $ref: '#/components/schemas/AccountConfigPatch' }
+    AccountBatchUpdateResponse:
+      type: object
+      required: [updated, items]
+      description: 账号批量更新响应（独立 schema——不与 templates/groups 共用的 BatchUpdateResponse 合并）
+      properties:
+        updated: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AccountRevision' }
+    AccountRevision:
+      type: object
+      required: [account_id, lifecycle_revision]
+      description: 单账号更新后的配置代际（C = 客户端 CAS 令牌；与路由观测面的 identity_revision 不同）
+      properties:
+        account_id: { type: integer, format: int64 }
+        lifecycle_revision: { type: integer, format: int64 }
     BatchUpdateGroupsBody:
       type: object
       required: [ids, fields]
@@ -2699,7 +2699,7 @@ components:
       required: [updated]
       properties:
         updated: { type: integer }
-    # --- 兑换码（Phase 5 计费前基础设施：资源发放的通用载体） ---
+    # --- 兑换码（计费前基础设施：资源发放的通用载体） ---
     RedemptionType:
       type: string
       enum: [balance, concurrency, temp_balance]
@@ -2846,7 +2846,7 @@ components:
       required: [deactivated]
       properties:
         deactivated: { type: integer, description: 新失效数（已 disabled no-op 不计） }
-    # --- litellm 模型价格（Phase 5 计费价格来源） ---
+    # --- litellm 模型价格（计费价格来源） ---
     Provider:
       type: string
       description: 主流厂商枚举（litellm_provider 实际字符串，服务前端下拉框）。**litellm_provider 动态**——litellm 更新会加新厂商，此 enum 为主流集合；新厂商出现时扩 enum（DB 筛选不受限——自由字符串等值）
@@ -3169,7 +3169,7 @@ components:
         P99MS: { type: integer, format: int64 }
         MaxMS: { type: integer, format: int64 }
         Source: { type: string, enum: [exact, sketch] }
-    # ---- intelligent-routing 观测契约（Todo 17）：lower snake_case，全字段
+    # ---- intelligent-routing 观测契约：lower snake_case，全字段
     # required（值恒在，仅 previous_account_id 可 null）；空集合恒为 []。
     RoutingFlowEdge:
       type: object
@@ -3213,13 +3213,13 @@ components:
         process_crash_loss_unobservable: { type: boolean, description: 硬崩丢失不可量化标记，恒 true }
     RoutingFrontierCandidate:
       type: object
-      required: [candidate_fingerprint, known, account_id, template_id, lifecycle_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, cost_per_success, cost_known, insufficient, on_frontier]
+      required: [candidate_fingerprint, known, account_id, template_id, identity_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, cost_per_success, cost_known, insufficient, on_frontier]
       properties:
         candidate_fingerprint: { type: string }
         known: { type: boolean, description: 指纹在当前发布计划该路由候选目录内；false = 只呈现观测事实 }
         account_id: { type: integer, format: int64, description: unknown 候选为 0 }
         template_id: { type: integer, format: int64 }
-        lifecycle_revision: { type: integer, format: int64 }
+        identity_revision: { type: integer, format: int64, description: "候选内容代际 K（identity_revision）——非客户端 CAS 令牌 C（lifecycle_revision）；C 只围栏管理员写入" }
         quality_class_id: { type: string }
         mapped_model: { type: string }
         attempts: { type: integer, format: int64 }
@@ -3274,11 +3274,11 @@ components:
     RoutingPlanCandidate:
       type: object
       description: 候选静态身份（缺叶子引用时 identity-only，其余字段零值）
-      required: [account_id, template_id, lifecycle_revision, upstream_cost_multiplier_bp, fingerprint, identity_fingerprint, mapped_model, quality_class_id]
+      required: [account_id, template_id, identity_revision, upstream_cost_multiplier_bp, fingerprint, identity_fingerprint, mapped_model, quality_class_id]
       properties:
         account_id: { type: integer, format: int64 }
         template_id: { type: integer, format: int64 }
-        lifecycle_revision: { type: integer, format: int64 }
+        identity_revision: { type: integer, format: int64, description: "候选内容代际 K（identity_revision）——与编译器事实、wire 同源；非客户端 CAS 令牌 C" }
         upstream_cost_multiplier_bp: { type: integer, description: 采购倍率 basis points（10000 = ×1） }
         fingerprint: { type: string, description: 真实候选指纹 hex（不可导出 = 空串） }
         identity_fingerprint: { type: string, description: rollup join 身份指纹 hex（compiler 合成规则同源） }
@@ -3358,7 +3358,7 @@ components:
          #     residual_submissions int64, residual_rows int64, close_unix_ms int64
          #   usage: pending_logs int64（未落库明细条数）, pending_waterline int64
         #     （水线）, warned bool（水线告警边沿）
-        #   billing（游标消费者，F2 ledger-cursor）: lag_ms int64（游标积压时滞
+        #   billing（游标消费者，ledger-cursor）: lag_ms int64（游标积压时滞
         #     毫秒 = 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/
         #     未探测）, unbilled_rows int64（当前未扣费账本行数）, quarantined_rows
         #     int64（累计隔离行数——用户缺失组）, last_cycle_unix_ms
@@ -3506,7 +3506,7 @@ components:
     OverviewAlerts:
       type: object
       required: [billing_lag_ms, billing_unbilled_rows, billing_quarantined_rows]
-      description: 告警面（billing 游标消费者 lag 族观测，F2 ledger-cursor；注入面读取，未装配 = 全零）
+      description: 告警面（billing 游标消费者 lag 族观测，ledger-cursor；注入面读取，未装配 = 全零）
       properties:
         billing_lag_ms: { type: integer, format: int64, description: 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/未探测 }
         billing_unbilled_rows: { type: integer, format: int64, description: 当前未扣费账本行数（部分索引 WHERE NOT billed） }

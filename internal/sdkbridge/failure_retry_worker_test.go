@@ -87,7 +87,7 @@ func TestFailureRetryWorkerCloseJoinsBackoffGoroutine(t *testing.T) {
 	retryMaxBackoff = 5 * time.Second
 	t.Cleanup(func() { retryBackoff, retryMaxBackoff = oldBackoff, oldMax })
 
-	requeueWithBackoff(failureRetryTask{accountID: 1, fingerprint: "fp", revision: 1})
+	requeueWithBackoff(failureRetryTask{accountID: 1, fingerprint: "fp", identityRevision: 1})
 	waited := make(chan struct{})
 	go func() { retryWG.Wait(); close(waited) }()
 	select {

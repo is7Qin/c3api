@@ -35,7 +35,7 @@ func imageBillLogFor(userID int64, requestID string) *domain.UsageLog {
 }
 
 // TestPGUsageLogImageColumnsRoundTrip 图片计费落账迁移全链往返（spec 2026-08-13
-// 同步点 2/3/4/5，F2 单写点形态）：usage flusher InsertBatch 写入 format=
+// 同步点 2/3/4/5 单写点形态）：usage flusher InsertBatch 写入 format=
 // openai-images 行（billed=false 出生）→ 分区表落库（usageLogColumnDefs 单一
 // 事实源含新列）→ 游标消费按 cost 扣减 → QueryUsages 完整读回。口径不变断言：
 // cost/张数/每张价与迁移前一致——仅落账列迁移（call_count=张数、

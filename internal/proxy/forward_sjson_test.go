@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// setModel/setStreamAndModel/stripServiceTier sjson 字节级改写（E1）测试：
+// setModel/setStreamAndModel/stripServiceTier sjson 字节级改写测试：
 // 精度钉住（>2^53 整数无损）+ 字节保真（改写区外逐字节相同）+ 守卫短路
 // 零分配 + 缺失路径补字段/删除不存在键语义 + 非法 JSON 错误面。
 package proxy

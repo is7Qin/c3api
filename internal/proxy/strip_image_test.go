@@ -21,7 +21,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// W4 图像 tool 剥离单元测试：纯函数 stripImageTools（response.create 帧 →
+// 图像 tool 剥离单元测试：纯函数 stripImageTools（response.create 帧 →
 // 剥离后帧）。
 // 热路径纪律：关闭 = 调用方开关分支（不调用，见集成测试）；开启 = 预筛无
 // 命中零解析零分配直转（切片恒等断言 + AllocsPerRun 零分配断言）。
@@ -112,7 +112,7 @@ func TestStripImageToolsToolChoiceDangling(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// 图像工具形态矩阵（评审 I-3 补 image_edits）：悬挂判定按被剥工具
+			// 图像工具形态矩阵（补 image_edits）：悬挂判定按被剥工具
 			// 形态匹配——hosted image_generation_tool / namespace image_gen /
 			// image_edits 三形态各验证移除或保留。
 			tool := `{"type":"image_generation_tool","namespace":"image_gen"}`
@@ -136,7 +136,7 @@ func TestStripImageToolsToolChoiceDangling(t *testing.T) {
 	}
 }
 
-// TestStripImageToolsAllStripped 全剥语义（评审 I-1 实证钉住）：tools 全部
+// TestStripImageToolsAllStripped 全剥语义（实证钉住）：tools 全部
 // 被剥离 → 删除 tools 字段（缺省 = 无工具，最稳语义——不保留空数组
 // "tools":[]），悬挂 tool_choice 同步移除，非图像字段原样保留。
 func TestStripImageToolsAllStripped(t *testing.T) {
@@ -244,7 +244,7 @@ func stripTpl(up string, strip bool) *domain.Template {
 }
 
 // specialKeyProvider responses-special 类型的静态 Key provider（生产接线 =
-// W6 codex 凭据族；测试模拟：special 模板凭据经注册表分发返回 UpstreamKey）。
+// codex 凭据族；测试模拟：special 模板凭据经注册表分发返回 UpstreamKey）。
 type specialKeyProvider struct{}
 
 func (specialKeyProvider) Type() credential.Type { return credential.TypeResponsesSpecial }
@@ -259,7 +259,7 @@ func TestProxyResponsesStripImageToolsOnStream(t *testing.T) {
 	up, got := fakeResponsesCaptured(t)
 	defer up.Close()
 	p := newTestProxyStripTpl(t, stripTpl(up.URL, true))
-	p.creds.Register(specialKeyProvider{}) // responses-special 凭据分发（W6 接线模拟）
+	p.creds.Register(specialKeyProvider{}) // responses-special 凭据分发（接线模拟）
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"m","input":"hi","stream":true,"tools":[{"type":"function","name":"shell","parameters":{"type":"object"}},{"type":"image_generation_tool","namespace":"image_gen"}],"tool_choice":{"type":"image_generation_tool"}}`))
@@ -279,14 +279,14 @@ func TestProxyResponsesStripImageToolsOnStream(t *testing.T) {
 	require.Equal(t, true, upBody["stream"], "stream 标志必须保留")
 }
 
-// TestProxyResponsesStripImageToolsAllStrippedStream 全剥集成（评审 I-1）：
+// TestProxyResponsesStripImageToolsAllStrippedStream 全剥集成：
 // 流式原始请求路径——上游收到的帧不得含 tools 字段（删除而非空数组），
 // 悬挂 tool_choice 同步移除，其余字段原样。
 func TestProxyResponsesStripImageToolsAllStrippedStream(t *testing.T) {
 	up, got := fakeResponsesCaptured(t)
 	defer up.Close()
 	p := newTestProxyStripTpl(t, stripTpl(up.URL, true))
-	p.creds.Register(specialKeyProvider{}) // responses-special 凭据分发（W6 接线模拟）
+	p.creds.Register(specialKeyProvider{}) // responses-special 凭据分发（接线模拟）
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"m","input":"hi","stream":true,"tools":[{"type":"image_generation_tool","namespace":"image_gen"}],"tool_choice":{"type":"image_generation_tool"}}`))
@@ -330,7 +330,7 @@ func TestProxyResponsesStripImageToolsOnNonStream(t *testing.T) {
 	up, got := fakeResponsesCaptured(t)
 	defer up.Close()
 	p := newTestProxyStripTpl(t, stripTpl(up.URL, true))
-	p.creds.Register(specialKeyProvider{}) // responses-special 凭据分发（W6 接线模拟）
+	p.creds.Register(specialKeyProvider{}) // responses-special 凭据分发（接线模拟）
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
 		`{"model":"m","input":"hi","tools":[{"type":"function","name":"shell","parameters":{"type":"object"}},{"type":"image_generation_tool","namespace":"image_gen"}],"tool_choice":{"type":"image_generation_tool"}}`))

@@ -4,7 +4,7 @@
 
 package repository_test
 
-// usagelog 按日分区（Phase 5 T4.5，用户决策 2026-08-09）真实 PG 测试：
+// usagelog 按日分区（用户决策 2026-08-09）真实 PG 测试：
 // bootstrap 幂等 / 普通表升级重建（该删删）/ 跨日边界插入路由 / ent 查询跨
 // 分区 / DROP 保留边界 / ent migrate 二次启动兼容（主键 diff 实测结论）。
 //
@@ -129,13 +129,13 @@ func TestUsageLogPartitionBootstrapPG(t *testing.T) {
 	require.Equal(t, int64(6), n, "bootstrap 建齐 5 个查询索引 + 1 个幂等键唯一索引")
 
 	// 幂等键唯一索引行为锚定（方向 A 批次 1a）：同 (request_id, created_at)
-	// 重复插入 → DO NOTHING 幂等成功（P1：InsertBatch 固定冲突目标幂等）
+	// 重复插入 → DO NOTHING 幂等成功（InsertBatch 固定冲突目标幂等）
 	dupAt := now.Add(time.Second)
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{usageLogFor("dup-key", dupAt)}))
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{usageLogFor("dup-key", dupAt)}))
 	require.Equal(t, int64(1), pgCount(t, pool, `SELECT COUNT(*) FROM usage_logs WHERE request_id = 'dup-key'`))
 
-	// start 边界由传入 now 推导（评审 I-2）：now=+3 天 → 预建 +3/+4 天分区，
+	// start 边界由传入 now 推导：now=+3 天 → 预建 +3/+4 天分区，
 	// 而非仅当日/明日（内部 time.Now() 语义下该调用不可能建出未来分区）
 	injected := time.Now().UTC().AddDate(0, 0, 3)
 	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, injected, injected.AddDate(0, 0, 1)))
@@ -187,7 +187,7 @@ func TestUsageLogPartitionRoutingPG(t *testing.T) {
 	}
 	require.True(t, got["today-1"] && got["today-2"] && got["tomorrow-1"])
 
-	// 精确日界路由（评审 I-4）：PG RANGE 分区下界含（INCLUSIVE）上界不含
+	// 精确日界路由：PG RANGE 分区下界含（INCLUSIVE）上界不含
 	// （EXCLUSIVE）——
 	//   today 00:00:00.000000（= 分区 FROM）      → 今日分区
 	//   today 23:59:59.999999（= 明日 FROM 前 1µs）→ 今日分区
@@ -284,7 +284,7 @@ func TestEntMigrateSecondRunPG(t *testing.T) {
 		"失败模式 = atlas 规划期拒绝分区键 diff（实测文案，稳定断言）")
 }
 
-// TestUsageLogPartitionConcurrentBootstrapPG 多实例并发 bootstrap（评审 I-1）：
+// TestUsageLogPartitionConcurrentBootstrapPG 多实例并发 bootstrap：
 // 两实例同时启动（barrier 对齐，双方都通过 is-partitioned=false 判定）→
 // CREATE TABLE/索引/日分区撞名 42P07 → 容忍后幂等收敛，双方都不 fatal；收敛
 // 后插入路由正常。每轮重建 schema 保证双方从同一初始状态出发（3 轮跑

@@ -89,8 +89,8 @@ func TestAccountDomainContractFieldSet(t *testing.T) {
 	// 不进本结构。
 	require.Equal(t, []string{
 		"BaseURL", "CacheDomain", "CreatedAt", "DeletedAt", "Enabled", "Ext",
-		"FailedAt", "FailureSource", "GroupIDs", "ID", "LastError", "LastUsedAt",
-		"LifecycleRevision", "MaxConcurrency", "Name", "Template", "TemplateID",
+		"FailedAt", "FailureSource", "GroupIDs", "ID", "IdentityRevision", "LastError",
+		"LastUsedAt", "LifecycleRevision", "MaxConcurrency", "Name", "Template", "TemplateID",
 		"UpdatedAt", "UpstreamCostMultiplierBp", "UpstreamKey",
 	}, exportedFieldNames(reflect.TypeOf(Account{})))
 }

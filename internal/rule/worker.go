@@ -16,7 +16,7 @@ import (
 // cleanupInterval 过期账号清理周期（窗口计数防 map 泄漏）。
 const cleanupInterval = time.Minute
 
-// Name 满足 worker.Worker 契约（Global Constraints #5）。
+// Name 满足 worker.Worker 契约（Global Constraints）。
 func (e *RuleEngine) Name() string { return "rule-engine" }
 
 // Start 启动事件消费循环（含周期性窗口清理）；重复 Start 返回错误（幂等）。

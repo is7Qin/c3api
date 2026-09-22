@@ -36,7 +36,7 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 	pass(out, req, "model", "temperature", "top_p", "stream", "metadata")
 	// max_completion_tokens / max_tokens → max_tokens（anthropic 必填，客户端
 	// 缺失则不补——补差值属策略决定，不由转换器发明）。两者都给时以
-	// max_completion_tokens 为准（与 chatToResp 同语义，M-2）。
+	// max_completion_tokens 为准（与 chatToResp 同语义）。
 	if v, ok := req["max_completion_tokens"]; ok {
 		out["max_tokens"] = v
 	} else if v, ok := req["max_tokens"]; ok {
@@ -82,7 +82,7 @@ func chatSystem(req map[string]any) (string, bool) {
 // system，此处跳过）：user 文本 → 消息（单文本块 → string content）；
 // assistant 文本 → 消息 + tool_calls → tool_use 块（arguments JSON 字符串 →
 // input 对象）；tool 消息 → user 消息 tool_result 块；image_url 等部件按
-// 规范丢弃（图像透传属 W4 范围）。
+// 规范丢弃（图像透传属 范围）。
 func chatMessagesToMess(req map[string]any) ([]any, bool) {
 	msgs, ok := arr(req, "messages")
 	if !ok {

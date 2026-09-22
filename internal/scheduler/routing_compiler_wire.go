@@ -13,7 +13,7 @@ import (
 )
 
 // compileDebounce is the trailing-edge coalescing window for compile triggers
-// (plan Task11: 200ms debounce, publish only when bytes change).
+// (plan: 200ms debounce, publish only when bytes change).
 const compileDebounce = 200 * time.Millisecond
 
 // routeCompiler is the compile-lane seam (production: RoutingCompiler;
@@ -22,7 +22,7 @@ type routeCompiler interface {
 	Compile(in CompilerInputs) (*DecisionView, error)
 }
 
-// CompilerSources 是编译道的双输入源（W3-T1：SetWindowedQualitySource /
+// CompilerSources 是编译道的双输入源（SetWindowedQualitySource /
 // SetPricesSource 双回填已删，改为 Start 期结构注入）。两源一次性给齐
 // （both-or-nothing）；nil 字段按缺席处理（compileOnce 跳过）；nil 整体 =
 // 未装配（RequestCompile armed 门 no-op，fireOnMinuteAdvance 同理）。
@@ -85,7 +85,7 @@ func debounceWait(ctx context.Context, window time.Duration, ch <-chan struct{})
 // Called from the serial compile lane (or synchronously in tests);
 // lastDecisionBytes/lastCompiledStatic are owned by that single lane.
 //
-// v5-C1/C2: the lane drains fire-owned scope, unites it with lane-local
+// the lane drains fire-owned scope, unites it with lane-local
 // quality/price diffs, and recompiles ONLY affected routes (pointer reuse,
 // whole-snapshot atomic publish); unknown/unscoped causes take the
 // full-fidelity fallback with recorded reason; a fire whose inputs are
@@ -392,5 +392,5 @@ func writeCompiledCandidate(buf *bytes.Buffer, c CompiledCandidate) {
 	writeStr(buf, string(c.MappingMode))
 	writeStr(buf, c.Quality)
 	writeStr(buf, c.QualityRaw)
-	writeVarint(buf, c.LifecycleRevision)
+	writeVarint(buf, c.IdentityRevision)
 }

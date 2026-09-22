@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Fold-at-source tick-owned reads (v3 F1–F2): production data enters ONLY
+// Fold-at-source tick-owned reads (v3): production data enters ONLY
 // through the request walk (FoldChain/addFact → cells). Every read below
 // folds pending cells first, so reads observe every folded fact; growth stays
 // tick-expansion-only. (The synchronous edges/empty-marker consumer seam is

@@ -60,7 +60,7 @@ func outcomeForKind(kind string, cat CallerCategory, hard bool) AttemptOutcome {
 		CallerCategory:    cat,
 		OperationTag:      "chat_completions",
 		Ordinal:           1,
-		LifecycleRevision: 1,
+		IdentityRevision:  1, // synthetic placeholder K; not part of the continuation (I,K) comparison (see AttemptOutcome.IdentityRevision)
 		Lane:              LanePrimary,
 		Generation:        1,
 		HardContinuation:  hard,

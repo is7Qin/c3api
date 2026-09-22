@@ -15,7 +15,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/usagestat"
 )
 
-// TestVariantAggregateRangeOverwrite spec 2026-08-14 覆盖语义（issue #8 教训：
+// TestVariantAggregateRangeOverwrite spec 2026-08-14 覆盖语义（issue 教训：
 // 修正/补账通过重算 bucket 实现，非累加）：同范围两跑结果一致（幂等重放）；
 // 重跑改值 → 覆盖为新值（非累加）。单写者由会话级 advisory lock 保证
 // （usage/stats_agg.go），本测试验证 AggregateRange 覆盖行为。

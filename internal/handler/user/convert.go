@@ -168,7 +168,7 @@ func errTypeKind(et domain.ErrorType) (rule.Kind, bool) {
 	return 0, false
 }
 
-// sanitizeErrLog 用户面 err_logs 行级脱敏：行 {kind ← error_type 全函数映射、http_status ← status_code、message ← error_message} 调同一策略（Classify）→ 统一公式 msg=CustomMessage!=nil?*CustomMessage:orig（via rule.UnifiedMessage，与 pipeline 响应同源 I-3）；代理日志保留原文边界另述。Model 口径 = 最终请求模型（映射后 sel.Model，与 failoverLoop 一致）。返回 (替换后文本, 是否替换)。
+// sanitizeErrLog 用户面 err_logs 行级脱敏：行 {kind ← error_type 全函数映射、http_status ← status_code、message ← error_message} 调同一策略（Classify）→ 统一公式 msg=CustomMessage!=nil?*CustomMessage:orig（via rule.UnifiedMessage，与 pipeline 响应同源）；代理日志保留原文边界另述。Model 口径 = 最终请求模型（映射后 sel.Model，与 failoverLoop 一致）。返回 (替换后文本, 是否替换)。
 func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	k, ok := errTypeKind(l.ErrorType)
 	if !ok {
@@ -192,7 +192,7 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 		ev.ErrorMessage = *l.ErrorMessage
 	}
 	then, _ := h.rules.Classify(ev)
-	// 与 pipeline 同源（I-3 helper 单点）
+	// 与 pipeline 同源（helper 单点）
 	upstream := ""
 	if l.ErrorMessage != nil {
 		upstream = *l.ErrorMessage

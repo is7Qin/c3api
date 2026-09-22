@@ -15,13 +15,32 @@ import (
 )
 
 type fakeLatch2 struct {
-	m map[int64]string
+	m  map[int64]string
+	kv map[int64]int64
 }
 
-func newFakeLatch2() *fakeLatch2                                     { return &fakeLatch2{m: make(map[int64]string)} }
-func (f *fakeLatch2) TryAcquire(id int64, fp string, rev int64) bool { f.m[id] = fp; return true }
-func (f *fakeLatch2) Clear(id int64)                                 { delete(f.m, id) }
-func (f *fakeLatch2) IsLatched(id int64, fp string) bool             { v, ok := f.m[id]; return ok && v == fp }
+func newFakeLatch2() *fakeLatch2 {
+	return &fakeLatch2{m: make(map[int64]string), kv: make(map[int64]int64)}
+}
+func (f *fakeLatch2) TryAcquire(id int64, fp string, rev int64) bool {
+	f.m[id] = fp
+	f.kv[id] = rev
+	return true
+}
+func (f *fakeLatch2) Clear(id int64) { delete(f.m, id); delete(f.kv, id) }
+func (f *fakeLatch2) IsLatched(id int64, fp string, rev int64) bool {
+	v, ok := f.m[id]
+	if !ok {
+		return false
+	}
+	if fp != "" && v != fp {
+		return false
+	}
+	if rev != 0 && f.kv[id] != rev {
+		return false
+	}
+	return true
+}
 
 type fakeCASStore2 struct {
 	accounts map[int64]*domain.Account
@@ -47,10 +66,10 @@ func (f *fakeCASStore2) FailAccountCAS(_ context.Context, id int64, expected int
 	if !ok {
 		return fmt.Errorf("not found")
 	}
-	if a.LifecycleRevision != expected {
-		return fmt.Errorf("%w: stale", repository.ErrStaleRevision)
+	if a.IdentityRevision != expected {
+		return fmt.Errorf("%w: stale", repository.ErrStaleIdentityRevision)
 	}
-	a.LifecycleRevision = expected + 1
+	a.LifecycleRevision++
 	return nil
 }
 func (f *fakeCASStore2) GetAccountGroups(_ context.Context, id int64) ([]int64, error) {
@@ -64,8 +83,8 @@ func (f *fakeFailer2) FailAccount(id int64) { f.failed = append(f.failed, id) }
 func TestSDKFailSharesLatchNonCodexCannotSelfFail(t *testing.T) {
 	store := &fakeCASStore2{
 		accounts: map[int64]*domain.Account{
-			1: {ID: 1, UpstreamKey: "k1", LifecycleRevision: 1, Template: &domain.Template{CredentialType: credential.TypeAPIKey, BaseURL: "https://api.openai.com"}},
-			2: {ID: 2, UpstreamKey: "k2", LifecycleRevision: 1, Template: &domain.Template{CredentialType: credential.TypeCodexOAuth, BaseURL: "https://api.openai.com"}},
+			1: {ID: 1, UpstreamKey: "k1", LifecycleRevision: 1, IdentityRevision: 1, Template: &domain.Template{CredentialType: credential.TypeAPIKey, BaseURL: "https://api.openai.com"}},
+			2: {ID: 2, UpstreamKey: "k2", LifecycleRevision: 1, IdentityRevision: 1, Template: &domain.Template{CredentialType: credential.TypeCodexOAuth, BaseURL: "https://api.openai.com"}},
 		},
 	}
 	latch := newFakeLatch2()
@@ -81,9 +100,9 @@ func TestSDKFailSharesLatchNonCodexCannotSelfFail(t *testing.T) {
 
 func TestSDKFailStaleRevisionFence(t *testing.T) {
 	store := &fakeCASStore2{
-		accounts: map[int64]*domain.Account{1: {ID: 1, UpstreamKey: "k1", LifecycleRevision: 5, Template: &domain.Template{CredentialType: credential.TypeCodexOAuth, BaseURL: "https://api.openai.com"}}},
+		accounts: map[int64]*domain.Account{1: {ID: 1, UpstreamKey: "k1", LifecycleRevision: 5, IdentityRevision: 5, Template: &domain.Template{CredentialType: credential.TypeCodexOAuth, BaseURL: "https://api.openai.com"}}},
 	}
-	store.casErr = repository.ErrStaleRevision
+	store.casErr = repository.ErrStaleIdentityRevision
 	latch := newFakeLatch2()
 	latch.m[1] = "k1"
 	failer := &fakeFailer2{}

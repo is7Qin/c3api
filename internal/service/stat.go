@@ -20,7 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// 校验上限常量（spec §5 校验规则；TTFT 双分支各自独立上限——Momus M5 钉死）。
+// 校验上限常量（spec §5 校验规则；TTFT 双分支各自独立上限——钉死）。
 const (
 	// MaxStatsTrendSpan trend/top/entity-trend 共用窗口跨度上限（90 天）：
 	// cube 查询按小时桶扫描，90d × 维度基数是交互式端点的合理上界。
@@ -43,7 +43,7 @@ const (
 	// ——service 不 import handler 包，此处同语义本地化：超限裁剪不报错）。
 	MaxStatsListLimit = 200
 
-	// ttftQueryBudget TTFT 冷查询预算上界（P3 实测最坏 ~7s；30s 为宽裕封顶
+	// ttftQueryBudget TTFT 冷查询预算上界（实测最坏 ~7s；30s 为宽裕封顶
 	// ——配合 WithoutCancel 脱钩 leader 取消，见 QueryStatsTTFT 注释）。
 	ttftQueryBudget = 30 * time.Second
 
@@ -166,13 +166,13 @@ func (s *Service) QueryEntityTrend(ctx context.Context, q EntityTrendQuery) ([]*
 	return s.store.StatsEntityTrend(ctx, q.From, q.To, unit, q.EntityType, q.EntityID, q.Model, q.Zone)
 }
 
-// QueryStatsTTFT TTFT 分位数卡片，双分支独立上限（Momus M5）：
+// QueryStatsTTFT TTFT 分位数卡片，双分支独立上限：
 //   - EntityType == ""：sketch 分支（cube hist 服务端合并），桶数 ≤
 //     MaxStatsSketchBuckets；
 //   - 非空：exact 分支（usage_logs percentile_cont），必须配 EntityID ≠ 0 且
 //     entityType 过白名单，跨度 ≤ MaxStatsTTFTExactSpan。
 //
-// 校验通过后经 statsTTFTC TTL 缓存（P3 验收遗留尾巴：exact 冷缓存 × 系统饱和
+// 校验通过后经 statsTTFTC TTL 缓存（验收遗留尾巴：exact 冷缓存 × 系统饱和
 // 排序致负载 p99 5-6s；仪表盘同参轮询命中率天然高，陈旧 ≤30s 为展示面可
 // 接受语义——overview 先例）。
 func (s *Service) QueryStatsTTFT(ctx context.Context, q TTFTQuery) (*domain.TTFTSummary, error) {
@@ -191,9 +191,9 @@ func (s *Service) QueryStatsTTFT(ctx context.Context, q TTFTQuery) (*domain.TTFT
 	key := q.EntityType + "|" + strconv.FormatInt(q.EntityID, 10) + "|" + q.Model + "|" +
 		strconv.FormatInt(q.From.Unix(), 10) + "|" + strconv.FormatInt(q.To.Unix(), 10)
 	return statsTTFTC.fetch(key, func() (*domain.TTFTSummary, error) {
-		// M2：fn 由首个请求的 ctx 触发，但结果服务同键全部等待者——leader 取消
+		// fn 由首个请求的 ctx 触发，但结果服务同键全部等待者——leader 取消
 		// 不得连坐。脱钩后以 30s 预算封顶（冷查询最坏实测 ~7s；裸 WithoutCancel
-		// 无界是 AGENTS.md 反模式 #5 明令禁止形态）。
+		// 无界是 AGENTS.md 反模式 明令禁止形态）。
 		qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ttftQueryBudget)
 		defer cancel()
 		if q.EntityType == "" {
@@ -362,8 +362,8 @@ func (c *ttftCache) fetch(key string, fn func() (*domain.TTFTSummary, error)) (*
 
 // settle 执行 fn 并收尾发布。发布顺序铁律：**字段写入必须全部先于
 // close(done)** ——close 的 happens-before 边只覆盖此前写入，颠倒即等待方
-// 读到撕裂/空值的数据竞争（RG 审计 B1，-race 实测复现）。
-// panic 兜底（M1）：store 层 panic 被 handler Recoverer 兜住时进程存活，
+// 读到撕裂/空值的数据竞争（RG 审计，-race 实测复现）。
+// panic 兜底：store 层 panic 被 handler Recoverer 兜住时进程存活，
 // 等待方不得永久阻塞在未 close 的 done 上——以错误形态传播给等待方后原样
 // 重抛给 leader。
 func (c *ttftCache) settle(key string, call *ttftCacheCall, fn func() (*domain.TTFTSummary, error)) {

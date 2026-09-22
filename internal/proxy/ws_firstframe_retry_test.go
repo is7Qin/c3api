@@ -23,7 +23,7 @@ func wsRetryAttempt() scheduler.Attempt {
 		AttemptID: "req-ws:2", RouteClassID: strings.Repeat("a", 64), QualityClassID: strings.Repeat("b", 64),
 		CandidateFingerprint: strings.Repeat("c", 64), TemplateID: 3, AccountID: 9,
 		RequestedModel: "gpt-4o", MappedModel: "gpt-4o", Lane: scheduler.AttemptLanePrimary,
-		Ordinal: 2, RoutingGeneration: 5, LifecycleRevision: 4, PreviousAttemptID: &prev,
+		Ordinal: 2, RoutingGeneration: 5, IdentityRevision: 4, PreviousAttemptID: &prev,
 		CallerCategory: "responses_ws", OperationTag: "responses_ws",
 	}
 }
@@ -50,7 +50,7 @@ func TestWSFirstFrameFailureRetriesSecondCandidateBarrier(t *testing.T) {
 	s := newTestSchedulerForPlan(t)
 	tpl2 := tplForPlan(2)
 	loader := s.Loader().(noopLoader)
-	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "k2", Enabled: true, MaxConcurrency: 10, LifecycleRevision: 1})
+	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "k2", Enabled: true, MaxConcurrency: 10, LifecycleRevision: 1, IdentityRevision: 1})
 	require.NoError(t, s.InvalidateAllSync())
 	publishTestRoutes(t, s)
 

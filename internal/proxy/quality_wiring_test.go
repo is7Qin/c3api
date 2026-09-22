@@ -26,7 +26,7 @@ func dispatchBase(id string) AttemptOutcome {
 	return AttemptOutcome{
 		ID: AttemptID(id), RouteClassID: "rc1", QualityClassID: "qc1", Fingerprint: "fp1", TemplateID: 1, AccountID: 1,
 		RequestedModel: "gpt-4o", MappedModel: "gpt-4o", CallerCategory: CallerChat, OperationTag: "chat_completions", Ordinal: 1,
-		LifecycleRevision: 1, Lane: LanePrimary, Generation: 1,
+		IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
 	}
 }
 

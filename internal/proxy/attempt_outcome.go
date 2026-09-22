@@ -4,7 +4,7 @@ package proxy
 import "fmt"
 
 // AttemptID is a per-attempt identifier. Dispatched metadata
-// (RouteClassID/QualityClassID/Fingerprint/Lane/Generation/LifecycleRevision)
+// (RouteClassID/QualityClassID/Fingerprint/Lane/Generation/IdentityRevision)
 // is plan-canonical: it comes from the scheduler.Attempt recorded by
 // ReserveAttempt (pipelineBase), never from placeholder values.
 type AttemptID string
@@ -24,7 +24,10 @@ type QualityClassID string
 
 type OperationTag string
 
-type LifecycleRevision int64
+// IdentityRevision is the account identity generation (K) carried by an
+// attempt: the same K the plan attempt was compiled with. It is NOT the
+// lifecycle token (C), which only fences client writes.
+type IdentityRevision int64
 
 type LaneID string
 
@@ -169,18 +172,24 @@ func (c CallerCategory) Valid() bool {
 }
 
 type AttemptOutcome struct {
-	ID                AttemptID
-	RouteClassID      RouteClassID
-	QualityClassID    QualityClassID
-	Fingerprint       CandidateFingerprint
-	TemplateID        int64
-	AccountID         int64
-	RequestedModel    string
-	MappedModel       string
-	CallerCategory    CallerCategory
-	OperationTag      OperationTag
-	Ordinal           uint8
-	LifecycleRevision LifecycleRevision
+	ID             AttemptID
+	RouteClassID   RouteClassID
+	QualityClassID QualityClassID
+	Fingerprint    CandidateFingerprint
+	TemplateID     int64
+	AccountID      int64
+	RequestedModel string
+	MappedModel    string
+	CallerCategory CallerCategory
+	OperationTag   OperationTag
+	Ordinal        uint8
+	// IdentityRevision carries K on dispatched outcomes (plan-canonical, copied
+	// from scheduler.Attempt). Values built by the synthetic caller/WS/retry
+	// constructors are a placeholder (1): those outcomes never dispatched through
+	// a plan attempt, feed only the observation/wire surface, and do not take part
+	// in the continuation (I,K) comparison (contPin compares the plan-canonical
+	// Attempt), so the placeholder cannot become a wrong judgement.
+	IdentityRevision  IdentityRevision
 	Lane              LaneID
 	Generation        Generation
 	Commit            CommitState
@@ -261,7 +270,7 @@ func (o AttemptOutcome) Validate() error {
 	if o.Commit == CommitSentAmbiguous && !o.BusinessFrameSent {
 		return fmt.Errorf("sent_ambiguous requires BusinessFrameSent")
 	}
-	// Generation / LifecycleRevision >0 for dispatched (placeholder zero rejected; canonical values from routing dispatch)
+	// Generation / IdentityRevision >0 for dispatched (placeholder zero rejected; canonical values from routing dispatch)
 	if o.IsDispatched() {
 		if o.RouteClassID == "" {
 			return fmt.Errorf("RouteClassID required for dispatched attempt")
@@ -299,8 +308,8 @@ func (o AttemptOutcome) Validate() error {
 		if o.Generation <= 0 {
 			return fmt.Errorf("Generation must be >0")
 		}
-		if o.LifecycleRevision <= 0 {
-			return fmt.Errorf("LifecycleRevision must be >0")
+		if o.IdentityRevision <= 0 {
+			return fmt.Errorf("IdentityRevision must be >0")
 		}
 		if o.Ordinal == 1 && o.PreviousAttemptID != nil {
 			return fmt.Errorf("PreviousAttemptID must be nil for ordinal 1")
@@ -310,7 +319,7 @@ func (o AttemptOutcome) Validate() error {
 		}
 	} else {
 		// non-dispatched must have no dispatch metadata and status0 not_sent
-		if o.RouteClassID != "" || o.QualityClassID != "" || o.Fingerprint != "" || o.TemplateID != 0 || o.AccountID != 0 || o.RequestedModel != "" || o.MappedModel != "" || o.CallerCategory != "" || o.OperationTag != "" || o.Lane != "" || o.Generation != 0 || o.LifecycleRevision != 0 || o.Ordinal != 0 || o.PreviousAttemptID != nil {
+		if o.RouteClassID != "" || o.QualityClassID != "" || o.Fingerprint != "" || o.TemplateID != 0 || o.AccountID != 0 || o.RequestedModel != "" || o.MappedModel != "" || o.CallerCategory != "" || o.OperationTag != "" || o.Lane != "" || o.Generation != 0 || o.IdentityRevision != 0 || o.Ordinal != 0 || o.PreviousAttemptID != nil {
 			return fmt.Errorf("non-dispatched must have no dispatch metadata")
 		}
 		if o.Commit != CommitNotSent {

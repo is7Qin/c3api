@@ -13,12 +13,12 @@ import (
 )
 
 type failureRetryTask struct {
-	accountID   int64
-	fingerprint string
-	revision    int64
-	reason      string
-	deps        FailureDeps
-	attempts    int
+	accountID        int64
+	fingerprint      string
+	identityRevision int64
+	reason           string
+	deps             FailureDeps
+	attempts         int
 }
 
 var (
@@ -51,7 +51,7 @@ func ensureFailureRetryWorker() {
 	})
 }
 
-func enqueueFailureRetry(deps FailureDeps, accountID int64, fp string, rev int64, reason string) {
+func enqueueFailureRetry(deps FailureDeps, accountID int64, fp string, identityRev int64, reason string) {
 	retryMu.Lock()
 	if retryShutdown {
 		retryMu.Unlock()
@@ -77,7 +77,7 @@ func enqueueFailureRetry(deps FailureDeps, accountID int64, fp string, rev int64
 	if q == nil {
 		return
 	}
-	task := failureRetryTask{accountID: accountID, fingerprint: fp, revision: rev, reason: reason, deps: deps, attempts: 0}
+	task := failureRetryTask{accountID: accountID, fingerprint: fp, identityRevision: identityRev, reason: reason, deps: deps, attempts: 0}
 	select {
 	case q <- task:
 	default:
@@ -192,6 +192,10 @@ func handleRetryOnce(ctx context.Context, task failureRetryTask) bool {
 	if err != nil {
 		return true
 	}
+	acct, err = ensureTemplate(ctx, cs, acct, task.accountID)
+	if err != nil {
+		return true
+	}
 	if acct.DeletedAt != nil {
 		if task.deps.Latch != nil {
 			task.deps.Latch.Clear(task.accountID)
@@ -211,13 +215,14 @@ func handleRetryOnce(ctx context.Context, task failureRetryTask) bool {
 		}
 		return false
 	}
-	if acct.LifecycleRevision != task.revision {
-		if acct.LifecycleRevision > task.revision && task.deps.Latch != nil {
+	// 围栏维度是 K（身份代际）：失效判决只在"身份未被授权变更"时仍有效。
+	if acct.IdentityRevision != task.identityRevision {
+		if acct.IdentityRevision > task.identityRevision && task.deps.Latch != nil {
 			task.deps.Latch.Clear(task.accountID)
 		}
 		return false
 	}
-	err = cs.FailAccountCAS(ctx, task.accountID, task.revision, "sdk", time.Now(), task.reason)
+	err = cs.FailAccountCAS(ctx, task.accountID, task.identityRevision, "sdk", time.Now(), task.reason)
 	if err == nil {
 		if task.deps.Latch != nil {
 			task.deps.Latch.Clear(task.accountID)
@@ -232,8 +237,8 @@ func handleRetryOnce(ctx context.Context, task failureRetryTask) bool {
 		}
 		return false
 	}
-	if errors.Is(err, repository.ErrStaleRevision) {
-		if fresh, ferr := cs.GetAccount(ctx, task.accountID); ferr == nil && fresh.LifecycleRevision > task.revision && task.deps.Latch != nil {
+	if errors.Is(err, repository.ErrStaleIdentityRevision) {
+		if fresh, ferr := cs.GetAccount(ctx, task.accountID); ferr == nil && fresh.IdentityRevision > task.identityRevision && task.deps.Latch != nil {
 			task.deps.Latch.Clear(task.accountID)
 		}
 		return false

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Fold-at-source owner (v3 F1–F2): the FlowOwner is the SOLE owner of the
+// Fold-at-source owner (v3): the FlowOwner is the SOLE owner of the
 // folded flow state — the counter-cell table (request-Add / tick-drain,
 // fold_cells.go) plus the per-minute cumulative shells (tick-only,
 // fold_expand.go). The old Submit queue, per-request FlowChain box, and
@@ -175,7 +175,7 @@ func (o *FlowOwner) FoldChain(bucket int64, n int, next func(i int) (
 			o.overflowed.Add(1)
 			continue
 		}
-		// No request-side seal fixup here by design (v3-F1 review): the
+		// No request-side seal fixup here by design (review): the
 		// pre-seal/post-seal race is reconciled exactly once at fold time by
 		// drainFoldLocked (pre-seal origin folded under seal) and the seal
 		// sweep. A request-side move-one fixup would double-reconcile the

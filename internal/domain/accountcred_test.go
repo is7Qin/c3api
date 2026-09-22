@@ -15,7 +15,7 @@ import (
 
 func strP(s string) *string { return &s }
 
-// CredentialFromExt 派生单测（T1 §4：AccountExt → AccountCredential 两形态投影）。
+// CredentialFromExt 派生单测（§4：AccountExt → AccountCredential 两形态投影）。
 func TestCredentialFromExt(t *testing.T) {
 	exp := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 

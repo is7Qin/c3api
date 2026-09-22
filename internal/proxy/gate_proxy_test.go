@@ -97,7 +97,7 @@ func TestProxyConcurrencyLimit429(t *testing.T) {
 	waitGateKey(t, p, 1, 0)
 }
 
-// TestProxyRejectionStormNoPending P2a 源头修复（压测 2026-08-11 复测）：本地
+// TestProxyRejectionStormNoPending 源头修复（压测 2026-08-11 复测）：本地
 // 预用量拒绝（并发超限 429 等）不产生 usage_logs 明细/pending——单 key 限流
 // 161k req/s 的拒绝风暴（实证 60s → 9.8M pending 行 / RSS 7.5GB，全部漏斗到
 // 单用户 billed flusher）不再无界积压；拒绝统计计数由离线聚合 worker 兜底

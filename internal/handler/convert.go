@@ -79,11 +79,12 @@ func toAPIAccount(a *domain.Account) Account {
 		MaxConcurrency: &a.MaxConcurrency,
 		LastError:      a.LastError,
 		LastUsedAt:     a.LastUsedAt,
-		// intelligent-routing 生命周期契约（只读回显；写面 = fenced 端点）
+		// intelligent-routing 生命周期契约（只读回显；写面 = PATCH /accounts/{id}）
 		Enabled:                &a.Enabled,
 		FailedAt:               a.FailedAt,
 		FailureSource:          a.FailureSource,
 		LifecycleRevision:      &a.LifecycleRevision,
+		IdentityRevision:       &a.IdentityRevision,
 		UpstreamCostMultiplier: ptr(multToNormal(a.UpstreamCostMultiplierBp)), // bp → 正常值（组倍率边界换算同构）
 		CacheDomain:            a.CacheDomain,
 		CreatedAt:              &a.CreatedAt,
@@ -101,17 +102,18 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 		Name:       base.Name,
 		TemplateID: base.TemplateID,
 		Template:   base.Template,
-		// BaseURL 平铺逐字段拷贝（C3——缺则列表/编辑回显恒缺，前端保存静默清空）
+		// BaseURL 平铺逐字段拷贝（缺则列表/编辑回显恒缺，前端保存静默清空）
 		BaseURL:        base.BaseURL,
 		UpstreamKey:    base.UpstreamKey,
 		MaxConcurrency: base.MaxConcurrency,
 		LastError:      base.LastError,
 		LastUsedAt:     base.LastUsedAt,
-		// 生命周期字段平铺拷贝（缺则列表编辑回显恒缺——base_url C3 同款教训）
+		// 生命周期字段平铺拷贝（缺则列表编辑回显恒缺——base_url 同款教训）
 		Enabled:                base.Enabled,
 		FailedAt:               base.FailedAt,
 		FailureSource:          base.FailureSource,
 		LifecycleRevision:      base.LifecycleRevision,
+		IdentityRevision:       base.IdentityRevision,
 		UpstreamCostMultiplier: base.UpstreamCostMultiplier,
 		CacheDomain:            base.CacheDomain,
 		CreatedAt:              base.CreatedAt,
@@ -244,7 +246,7 @@ func multI64ToNormalPtr(v *int64) *float64 {
 	return &f
 }
 
-// --- 图片价格 API 边界换算（Task A；单位规则与 pricings 相同，独立函数自文档化） ---
+// --- 图片价格 API 边界换算（；单位规则与 pricings 相同，独立函数自文档化） ---
 //
 // 1 USD = 100,000 毫分。token 价：USD/1M image tokens ×1e5 → 毫分/1M——与
 // pricings 的 usdToMillis ×1e5 同系数同口径，直接复用不另设函数；per-image 价：
@@ -318,7 +320,7 @@ func normalToMultI64Ptr(v *float64) *int64 {
 }
 
 // toAPIUser 用户领域对象 → 契约类型（PasswordHash 永不下发；Balance 毫分 →
-// USD 展示换算；价格倍率按组（T3.5 修正）挂在 group_assignment 上，User 无
+// USD 展示换算；价格倍率按组挂在 group_assignment 上，User 无
 // 倍率字段）。
 func toAPIUser(u *domain.User) User {
 	r := UserRole(u.Role)

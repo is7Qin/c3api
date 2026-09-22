@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE — c3api
 
-**Generated:** 2026-08-24 · **Commit:** b8a6477(F2 合入) · **Branch:** main
+**Generated:** 2026-08-24 · **Commit:** b8a6477（合入） · **Branch:** main
 **Deep-dive memory:** `.omo/memory/MEMORY.md`（主题蒸馏 + 历史裁决，本地不入 git）
 
 ## OVERVIEW
@@ -19,7 +19,7 @@ internal/
   ent/            # GENERATED——禁止手改
   scheduler/      # 选号快照；copy-modify-Store 不可变视图
   rule/           # 规则引擎；Kind 五值 ok/429/4xx/5xx/network
-  billing/        # 计费游标消费者(F2 ledger-cursor)：Cost 纯函数、Balances 快照、FlusherStats(lag 族)
+  billing/        # 计费游标消费者(ledger-cursor)：Cost 纯函数、Balances 快照、FlusherStats(lag 族)
   usage/          # usage_logs 唯一写点(InsertBatch)+在线配额累加+watermark 离线聚合
   pricing/ notify/ invalidate/ credential/ sdkbridge/ protoconv/ domain/ config/ worker/ snapshot/ auth/ server/
 pkg/              # 可复用层：aiclient(SDK 工厂)、sserelay(SSE 中继)、httpx、logx、cryptox
@@ -115,12 +115,12 @@ go run ./tools/loadtest -mode stream -addr http://127.0.0.1:8080 -key ck-xxx -co
 ## NOTES（踩坑即事实）
 
 - **端口分裂**：单测 PG=:5432(CI)/15432(本地 compose)，e2e 默认 :15432 的 postgres 库自建 c3api_e2e
-- **worker 注册序=反序排空语义**：billFlusher 在 listener/authSync 之前注册（main.go:485-491，F2：首位注册→停机最后扫游标），动顺序前读注释
+- **worker 注册序=反序排空语义**：billFlusher 在 listener/authSync 之前注册（main.go:485-491：首位注册→停机最后扫游标），动顺序前读注释
 - **typed-nil 陷阱**：invBalances 声明为接口类型非具体指针（main.go:233，2026-08-10 真实 panic 事故）
 - **禁止新增事后回填（owner 2026-09-14 纪律）**：构造环必须结构性消除——把能力抽成独立组件按序构造，或走既有直连路径（dispatcher 直连 svc.ReloadSettings/ReloadPricingCtx；settings 本地生效走 invalidate KindSettings）。`svc.SetLocalDispatcher` 已按此拆除；存量 Set* 回填在清理队列
 - **ent 迁移跳过 3 张分区表**（atlas 无法 diff），分区由幂等 bootstrap 负责、失败即 fatal
 - **chi v5.3.1 双 Mount panic**：/api/admin 用 Handle 不用 Mount；SPA NotFound 会传播进子路由需自行 404 API 前缀
-- **http.Server 无 WriteTimeout**（SSE 保护）；上游传输 Proxy:nil 显式直连（HTTP_PROXY 防劫持 C2-1）
+- **http.Server 无 WriteTimeout**（SSE 保护）；上游传输 Proxy:nil 显式直连（HTTP_PROXY 防劫持）
 - **env 覆盖只替换第一个下划线**：C3API_DB_DSN→db.dsn；前缀必须大写
 - **billing 默认开启**：空价格表=所有模型 402，需先 POST /api/admin/pricing/sync
 - CI 无 `-race`、无 GOMAXPROCS、e2e 不进 CI——这三条是已知取舍不是遗漏

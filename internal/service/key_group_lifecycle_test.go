@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// TestSoftDeletedKeyNotResurrectable F2 红绿：软删 key 全路 404（fake 已建模
+// TestSoftDeletedKeyNotResurrectable 红绿：软删 key 全路 404（fake 已建模
 // 软删——GetKey 仍返回行且 DeletedAt 置值，删除前 ownedKey 放行则测试失败）；
 // 删除后 Auth 快照增量剔除（keys.deleted 含明文，不可鉴权）、列表过滤、不再
 // 注册（不复活）。
@@ -53,9 +53,9 @@ func TestSoftDeletedKeyNotResurrectable(t *testing.T) {
 	require.Len(t, keys.upserted, 1, "删除后无任何增量注册（不复活）")
 }
 
-// TestSoftDeletedGroupUnusable F3 红绿：软删组三调用点 404（建 key/授
+// TestSoftDeletedGroupUnusable 红绿：软删组三调用点 404（建 key/授
 // assignment/SetUserGroups 逐组）；管理面 GET 详情与 GetGroupAssignments 仍
-// 200（R2 收窄——repo GET 单个不过滤的既有语义不动）。
+// 200（收窄——repo GET 单个不过滤的既有语义不动）。
 func TestSoftDeletedGroupUnusable(t *testing.T) {
 	svc, fs, _ := newUserGroupService()
 	ctx := context.Background()
@@ -81,7 +81,7 @@ func TestSoftDeletedGroupUnusable(t *testing.T) {
 	got, err := svc.GetGroup(ctx, g.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got.DeletedAt, "软删后 deleted_at 置值")
-	// GetGroupAssignments 仍 200（R2：读面不动——授予行照常可读）
+	// GetGroupAssignments 仍 200（读面不动——授予行照常可读）
 	ids, _, err := svc.GetGroupAssignments(ctx, g.ID)
 	require.NoError(t, err)
 	require.Equal(t, []int64{u.ID}, ids, "软删组授予行照常可读（读面语义不变）")
@@ -93,7 +93,7 @@ func TestSoftDeletedGroupUnusable(t *testing.T) {
 	require.Empty(t, rows)
 }
 
-// TestDeleteGroupWithAccountsConflict F1 单删红绿：含账号组删除 → 409 +
+// TestDeleteGroupWithAccountsConflict 单删红绿：含账号组删除 → 409 +
 // "group has accounts"；组未被删（deleted_at 仍 nil）、组内 key 未被删（校验
 // 在删 key 前）。
 func TestDeleteGroupWithAccountsConflict(t *testing.T) {
@@ -114,8 +114,11 @@ func TestDeleteGroupWithAccountsConflict(t *testing.T) {
 	k, err := svc.CreateKey(ctx, u.ID, "k", g.ID, 0, 0)
 	require.NoError(t, err)
 	gids := []int64{g.ID}
-	_, err = svc.CreateAccount(ctx, &domain.Account{
-		Name: "f1-a", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &gids,
+	_, err = svc.CreateAccount(ctx, repository.AccountPatch{
+		Name:        strPtr("f1-a"),
+		TemplateID:  int64Ptr(tpl.ID),
+		UpstreamKey: strPtr("sk-1"),
+		GroupIDs:    &gids,
 	})
 	require.NoError(t, err)
 
@@ -135,7 +138,7 @@ func TestDeleteGroupWithAccountsConflict(t *testing.T) {
 	require.Empty(t, keys.deleted, "409 拒绝时 Auth 快照零清理")
 }
 
-// TestDeleteGroupsBatchPreScanConflict F1 批删 R1 红绿：多组中含账号组 →
+// TestDeleteGroupsBatchPreScanConflict 批删红绿：多组中含账号组 →
 // 整批拒绝（预扫描先全量校验后删 key——组存 key 亡的中间态不发生）：无 key
 // 被删、组全部未被删、Auth 快照零清理。
 func TestDeleteGroupsBatchPreScanConflict(t *testing.T) {
@@ -156,8 +159,11 @@ func TestDeleteGroupsBatchPreScanConflict(t *testing.T) {
 	k, err := svc.CreateKey(ctx, u.ID, "k", g1.ID, 0, 0)
 	require.NoError(t, err)
 	gids := []int64{g2.ID}
-	_, err = svc.CreateAccount(ctx, &domain.Account{
-		Name: "f1b-a", TemplateID: tpl.ID, UpstreamKey: "sk-1", GroupIDs: &gids,
+	_, err = svc.CreateAccount(ctx, repository.AccountPatch{
+		Name:        strPtr("f1b-a"),
+		TemplateID:  int64Ptr(tpl.ID),
+		UpstreamKey: strPtr("sk-1"),
+		GroupIDs:    &gids,
 	})
 	require.NoError(t, err)
 
@@ -177,7 +183,7 @@ func TestDeleteGroupsBatchPreScanConflict(t *testing.T) {
 	require.Empty(t, keys.deleted, "整批拒绝：Auth 快照零清理")
 }
 
-// TestUpdateKeyPatchSingleField S3-F1：单字段 PUT 只改该字段（patch 化——其余
+// TestUpdateKeyPatchSingleField：单字段 PUT 只改该字段（patch 化——其余
 // 字段保持原值，不再全列写回）。
 func TestUpdateKeyPatchSingleField(t *testing.T) {
 	svc, fs, _ := newUserGroupService()
@@ -204,7 +210,7 @@ func TestUpdateKeyPatchSingleField(t *testing.T) {
 	require.Equal(t, int64(2000), noop.Quota)
 }
 
-// TestUpdateKeyPatchConcurrent S3-F1 -race：并发两个 PUT 改不同字段 → 各自
+// TestUpdateKeyPatchConcurrent -race：并发两个 PUT 改不同字段 → 各自
 // 生效（patch 化消除 lost-update——修复前全行快照写回，后写者覆盖先写者）。
 func TestUpdateKeyPatchConcurrent(t *testing.T) {
 	svc, fs, _ := newUserGroupService()
@@ -241,7 +247,7 @@ func TestUpdateKeyPatchConcurrent(t *testing.T) {
 	require.Equal(t, int64(0), got.Quota, "未改字段保持原值")
 }
 
-// TestSetGroupAssignmentsRollback S3-F2：替换中途注入失败（RevokeGroup）→
+// TestSetGroupAssignmentsRollback：替换中途注入失败（RevokeGroup）→
 // 整体回滚——已完成的 Grant 一并撤销，主视图回到替换前（fake 事务暂存语义）。
 func TestSetGroupAssignmentsRollback(t *testing.T) {
 	fs := newFakeStore()

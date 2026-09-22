@@ -4,7 +4,7 @@
 
 package repository
 
-// 列事实源锚（align 补列机制删除后保留的防漂移职责，评审 I-1）：建表 DDL 与
+// 列事实源锚（align 补列机制删除后保留的防漂移职责）：建表 DDL 与
 // 列定义事实源（usageLogColumnDefs/errLogColumnDefs/usageStatsColumnDefs/
 // usageEntityStatsColumnDefs）的列集合必须一致——任一同步点被绕过/手改立即被本
 // 文件锚测试捕获（防"向静态 DDL 加列忘加事实源"漂移，含类型漂移——列定义字符
@@ -53,14 +53,14 @@ func TestUsageLogColumnDefsMatchCreateDDL(t *testing.T) {
 	create := ddlColumnNames(usageLogCreateDDL)
 	require.NotEmpty(t, source, "事实源列集合非空")
 	require.Equal(t, source, create, "建表 DDL 与事实源列集合一致")
-	require.Contains(t, source, "price_input_millis", "锚必须覆盖 P1 缺列（快照列）")
+	require.Contains(t, source, "price_input_millis", "锚必须覆盖 缺列（快照列）")
 	// 统一计费模型（spec 2026-08-13）：删 6 加 2——新列锚 + 旧列取反断言
 	//（任何同步点残留图片 6 列即红）。
 	require.Contains(t, source, "call_count", "锚必须覆盖 call_count 新列")
 	require.Contains(t, source, "price_per_call_millis", "锚必须覆盖 price_per_call_millis 新列")
 	// raw_cost（spec 2026-08-18）：倍率前原始成本列锚（建表 DDL 事实源）。
 	require.Contains(t, source, "raw_cost", "锚必须覆盖 raw_cost 新列")
-	// billed（F2 ledger-cursor，spec 2026-08-23）：扣费收敛标记列锚。
+	// billed（ledger-cursor，spec 2026-08-23）：扣费收敛标记列锚。
 	require.Contains(t, source, "billed", "锚必须覆盖 billed 新列")
 	for _, old := range []string{"image_input_tokens", "image_output_tokens", "image_count",
 		"price_image_input_millis", "price_image_output_millis", "price_per_image_millis"} {
@@ -72,7 +72,7 @@ func TestUsageLogColumnDefsMatchCreateDDL(t *testing.T) {
 // 修订）：COPY 列清单（usageLogCopyColumns——COPY 事实源）与建表 DDL 数据列
 // 集合一致（除 id 自增列——COPY 不写 id，序列默认生成）；列数 30→31 锚定。
 // raw_cost 紧随 cost、billed 紧随 overdraft（两事实源列序同向防漂移；
-// billed 为 F2 ledger-cursor spec 2026-08-23 追加）。
+// billed 为 ledger-cursor spec 2026-08-23 追加）。
 func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
 	source := ddlColumnNames(strings.Join(usageLogColumnDefs, "\n"))
 	require.Len(t, usageLogCopyColumns, 31, "COPY 列数 30→31")
@@ -96,8 +96,8 @@ func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
 	}
 }
 
-// TestUsageLogUnbilledPartialIndex 计费游标部分索引锚（F2 ledger-cursor，
-// spec 2026-08-23 §一；wave3 D-A 删除 usagelog_unbilled_created——UnbilledLag
+// TestUsageLogUnbilledPartialIndex 计费游标部分索引锚（ledger-cursor，
+// spec 2026-08-23 §一； 删除 usagelog_unbilled_created——UnbilledLag
 // 改队头两步法，不再消费 created 部分索引）：usagelog_unbilled_id = (id) WHERE
 // NOT billed 即计费游标本体——标记后自动退出索引，重启天然续传；谓词列序/
 // 索引名漂移即红。
@@ -107,10 +107,10 @@ func TestUsageLogUnbilledPartialIndex(t *testing.T) {
 	require.Contains(t, idx, "CREATE INDEX usagelog_unbilled_id ON usage_logs (id)", "游标索引名与键列")
 	require.Contains(t, idx, "WHERE NOT billed", "部分索引谓词 = 未扣子集")
 	require.NotContains(t, strings.Join(usageLogIndexDDLs, "\n"),
-		"usagelog_unbilled_created", "D-A 已删除的 lag 度量索引不得残留")
+		"usagelog_unbilled_created", " 已删除的 lag 度量索引不得残留")
 }
 
-// TestErrLogColumnDefsMatchCreateDDL err_logs 列事实源锚（架构审查 S2——
+// TestErrLogColumnDefsMatchCreateDDL err_logs 列事实源锚（架构审查——
 // errLogColumnDefs 是第二列事实源，建表 DDL 与事实源列集合一致；防"向静态
 // DDL 加列忘加事实源"）。
 func TestErrLogColumnDefsMatchCreateDDL(t *testing.T) {
@@ -119,14 +119,14 @@ func TestErrLogColumnDefsMatchCreateDDL(t *testing.T) {
 	require.NotEmpty(t, source, "事实源列集合非空")
 	require.Equal(t, source, create, "建表 DDL 与事实源列集合一致")
 	require.Contains(t, source, "error_message", "锚必须覆盖 err_logs 错误审计列")
-	require.Contains(t, source, "billing_tier", "锚必须覆盖 I-3 tier 审计列")
+	require.Contains(t, source, "billing_tier", "锚必须覆盖 tier 审计列")
 	require.NotContains(t, source, "cost", "err_logs 瘦表无计费列")
 	require.NotContains(t, source, "input_tokens", "err_logs 瘦表无 token 列")
 }
 
 // TestUsageStatsColumnDefsMatchCreateDDL usage_stats 列事实源锚 v2（用户裁决
 // 2026-08-11 三表统一分区机制——usageStatsColumnDefs 第三列事实源，建表 DDL
-// 与事实源列集合一致；防 P1 同型复发）→ spec 2026-08-23 v2 瘦身：删
+// 与事实源列集合一致；防同型复发）→ spec 2026-08-23 v2 瘦身：删
 // account_id/template_id/user_id/is_error 四列（维度 7→3），保留 ttft_hist
 // （v2.2 裁决——平台级分位数草图，overview 的 ScanStatsDays 消费）；spec
 // 2026-08-14 表重建遗留：删 total_latency_ms、加 call_count/ttft_* 四列 +

@@ -4,8 +4,8 @@
 
 package repository
 
-// billing_settle.go 结算语句面（F2-opt v2 三车道拓扑，spec-f2opt-settlement §〇-b/
-// §一/D7）：单条自包含 CTE 结算一个窗口——取批/扣减/标记一体，每窗口一次往返。
+// billing_settle.go 结算语句面（v2 三车道拓扑，spec-f2opt-settlement §〇-b/
+// §一/）：单条自包含 CTE 结算一个窗口——取批/扣减/标记一体，每窗口一次往返。
 //
 //   - Balance 车道 SettleBalanceBatch：batch 排除 temp-active 用户（NOT-IN），
 //     totals→条件扣（balance>=delta RETURNING）→透支补刀（未命中者无条件扣）→
@@ -15,7 +15,7 @@ package repository
 //     行级条件扣（amount>=take）→ spill 差额进余额条件扣→透支补刀→标记。
 //
 // 两车道 batch 谓词互斥（NOT-IN / IN temp-active）→ 同用户同周期不跨车道；
-// 车道间会话锁内顺序执行（跨道并行即成环），车道内 K 桶并行（wave3 D-C——桶间
+// 车道间会话锁内顺序执行（跨道并行即成环），车道内 K 桶并行（桶间
 // uid 不相交，行锁集不相交，无死锁构造性保证）。事务纪律：BEGIN → SET LOCAL
 // sync_commit=off → 执行 → marked==batch 计数比对（不齐 = 并发标记，整事务回滚）
 // → COMMIT。结算失败保持 unbilled，由下周期重放；usage_logs
@@ -36,7 +36,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// billingSyncCommitOffSQL 结算事务首语句（F2-opt D4 会话级让渡）：SET LOCAL 事务
+// billingSyncCommitOffSQL 结算事务首语句（会话级让渡）：SET LOCAL 事务
 // 作用域——连接归还即失效，零泄漏面。安全性论证（钉入注释）：扣减与标记同一
 // 语句同一事务——提交尾部 fsync 丢失的唯一后果是整个事务不存在 → 该批行保持
 // unbilled 下周期重放；**不存在「标了没扣」「扣了没标」中间态**，资金一致性由
@@ -53,8 +53,8 @@ var errConcurrentMark = errors.New("billing: concurrent mark detected")
 
 // SettleBalanceBatch Balance 车道结算一个窗口（≤limit 行，余额-only 用户）：
 // 单语句单事务原子完成 取批→条件扣→透支补刀→标记。桶谓词 COALESCE(user_id,0)
-// % k = bucket（wave3 D-C 桶级并行——K 由调用方编排层给定，本包保持 policy-free；
-// k=1,bucket=0 = 全量单桶回归路径）。limit<=0 → 零结果 no-op。F7 失败闭合：
+// % k = bucket（桶级并行——K 由调用方编排层给定，本包保持 policy-free；
+// k=1,bucket=0 = 全量单桶回归路径）。limit<=0 → 零结果 no-op。 失败闭合：
 // 确定性 22xxx/23xxx 单次尝试后直接返回错误不写销；errConcurrentMark 至多重放
 // 一次，二次仍败则返回错误；瞬态/取消立即返回错误。行保持 unbilled 下周期重放。
 func (r *BillingRepo) SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
@@ -62,8 +62,8 @@ func (r *BillingRepo) SettleBalanceBatch(ctx context.Context, limit, k, bucket i
 }
 
 // SettleFefoBatch Temp 车道结算一个窗口（≤limit 行，temp-active 用户）：集合化
-// FEFO 消耗 + 差额透支补刀 + 标记一体（D7）。事务纪律与 SettleBalanceBatch 同
-// F7 失败闭合语义。
+// FEFO 消耗 + 差额透支补刀 + 标记一体。事务纪律与 SettleBalanceBatch 同
+// 失败闭合语义。
 func (r *BillingRepo) SettleFefoBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error) {
 	return r.settleBatch(ctx, limit, k, bucket, settleFefoPlan)
 }
@@ -77,7 +77,7 @@ type settlePlan struct {
 var settleBalancePlan = settlePlan{sqlText: settleBalanceSQL, name: "balance"}
 var settleFefoPlan = settlePlan{sqlText: settleFefoSQL, name: "fefo"}
 
-// settleBatch 车道入口（F7 失败闭合）：① 成功 → 原子扣减+标记不变；②
+// settleBatch 车道入口（失败闭合）：① 成功 → 原子扣减+标记不变；②
 // errConcurrentMark → 至多一次重放，重放成功则收敛，二次仍败返回错误不写销；
 // ③ 确定性语句错误（22xxx/23xxx）→ 单次尝试后直接返回错误不写销；④ 瞬态类
 // （锁等待 55P03/死锁/序列化/取消/非 PG 错误）→ 立即返回错误不写销。所有失败
@@ -169,7 +169,7 @@ func settleEnt(ctx context.Context, drv dialect.Driver, limit, k, bucket int, sq
 }
 
 // runSettleStmt 结算语句编排（两载体单一实现）：sync_commit 让渡 → 执行（args =
-// [limit, k, bucket]——桶谓词占位 $2/$3，wave3 D-C）→ 扫描 → marked==batch 计数
+// [limit, k, bucket]——桶谓词占位 $2/$3）→ 扫描 → marked==batch 计数
 // 比对守卫（不齐 = 他方消费者已抢标同批行 → errConcurrentMark 使整事务回滚——
 // markBilledExec Σ守卫的语句化迁移）。
 func runSettleStmt(ctx context.Context, exe settleTx, sqlText string, limit, k, bucket int) (domain.SettlementSummary, error) {

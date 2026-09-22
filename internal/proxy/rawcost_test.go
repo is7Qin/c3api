@@ -150,7 +150,7 @@ func TestProxyRawCostSearchMultiplier(t *testing.T) {
 
 // TestProxyRawCostNonBilledFilled 非 billed 行（UserID==0 但 bill 装配——
 // gate 修订："非 billed 恒 0" 不实）：applyBilling 照算 → raw 照填（倍率前
-// 原文），cost 乘后——helper 在 applyBilling 内天然覆盖，无额外条件。F2 单写
+// 原文），cost 乘后——helper 在 applyBilling 内天然覆盖，无额外条件。 单写
 // 点（spec §一）：UserID=0 + capture off 双吸收态叠加 → Billed=true 出生即结算。
 func TestProxyRawCostNonBilledFilled(t *testing.T) {
 	up := fakeOpenAI(t, "")
@@ -164,7 +164,7 @@ func TestProxyRawCostNonBilledFilled(t *testing.T) {
 		ID: 1, Name: "t", BaseURL: up.URL,
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
-	}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+	}, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}
 	p := newTestProxyBillingKeys(t, map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 0, 10), // UserID 0 → 出生吸收态（Billed=true）
 	}, map[int64][]*domain.Account{10: {acc}}, bal, store)

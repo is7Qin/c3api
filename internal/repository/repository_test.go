@@ -173,6 +173,16 @@ func q(sqlFragment string) string {
 	return "(?i)" + regexp.QuoteMeta(sqlFragment)
 }
 
+// anyArgs 生成 n 个占位实参。pgxmock 的 WithArgs 按**个数**精确匹配，故
+// 参数个数本身就是一条断言：多一个绑定（例如意外推进 K）即失败。
+func anyArgs(n int) []any {
+	out := make([]any, n)
+	for i := range out {
+		out[i] = pgxmock.AnyArg()
+	}
+	return out
+}
+
 func (tr *testRepos) expectDone(t *testing.T) {
 	t.Helper()
 	require.NoError(t, tr.pool.ExpectationsWereMet())
@@ -194,11 +204,11 @@ func accountRow() *pgxmock.Rows {
 	// （"unexpected type <nil>"）。
 	return pgxmock.NewRows([]string{"id", "name", "template_id", "base_url", "upstream_key",
 		"max_concurrency", "last_error", "last_used_at", "failed_at", "failure_source",
-		"enabled", "lifecycle_revision", "upstream_cost_multiplier_bp", "cache_domain",
+		"enabled", "lifecycle_revision", "identity_revision", "upstream_cost_multiplier_bp", "cache_domain",
 		"updated_at", "deleted_at", "created_at"}).
 		AddRow(int64(2), "acc1", int64(1), sql.NullString{}, "sk-x",
 			int64(4), sql.NullString{}, sql.NullTime{}, sql.NullTime{}, sql.NullString{},
-			true, int64(1), int64(10000), sql.NullString{},
+			true, int64(1), int64(1), int64(10000), sql.NullString{},
 			time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), sql.NullTime{}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
@@ -289,12 +299,12 @@ func TestAccountAndGroup(t *testing.T) {
 	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
 	tr.pool.ExpectQuery(q(`INSERT INTO "accounts"`)).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+			pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(2)))
 	tr.pool.ExpectCommit()
 
-	// Group create（Phase 3a：无 key 字段，visibility 默认 public；
-	// price_multiplier 恒写入——T3.5 修正：service 归一缺省为 10000，显式 0 = 免费组；
+	// Group create（无 key 字段，visibility 默认 public；
+	// price_multiplier 恒写入：service 归一缺省为 10000，显式 0 = 免费组；
 	// protocol_convert 恒写入——JSON 数组列：空数组 = off（service 归一缺省）
 	tr.pool.ExpectQuery(q(`INSERT INTO "groups"`)).
 		WithArgs("g1", group.VisibilityPublic, pgxmock.AnyArg(), json.RawMessage(`[]`), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -327,7 +337,7 @@ func TestAccountAndGroup(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(3)))
 
 	// LoadGroupsAccounts -> accounts 全表 + templates(eager) + groups id 全表
-	// + account_groups 全表成员关系（#18：零 IN 参数全扫描，替代 ent
+	// + account_groups 全表成员关系（零 IN 参数全扫描，替代 ent
 	// eager-load 的 `WHERE group_id IN (全部组 id)`——组数 >65,535 超 PG
 	// 参数上限）
 	tr.pool.ExpectQuery(q(`FROM "accounts"`)).
@@ -335,7 +345,7 @@ func TestAccountAndGroup(t *testing.T) {
 	tr.pool.ExpectQuery(q(`FROM "templates"`)).
 		WithArgs(int64(1)).
 		WillReturnRows(templateRow())
-	// W4：模板侧嵌套 WithExt（template_ext 1:1）——快照合并 StripImageTools；
+	// 模板侧嵌套 WithExt（template_ext 1:1）——快照合并 StripImageTools；
 	// 空结果 → Ext 边 nil → 快照 false（未配置 = 关闭）
 	tr.pool.ExpectQuery(q(`FROM "template_exts"`)).
 		WithArgs(int64(1)).
@@ -363,7 +373,7 @@ func TestAccountAndGroup(t *testing.T) {
 	})
 	require.NoError(t, err)
 	acc, err := tr.repos.Accounts.CreateAccount(ctx(), &domain.Account{
-		Name: "acc1", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 4,
+		Name: "acc1", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 4, Enabled: true,
 	})
 	require.NoError(t, err)
 	g, err := tr.repos.Groups.CreateGroup(ctx(), &domain.Group{Name: "g1", Visibility: domain.GroupVisibilityPublic})
@@ -548,7 +558,7 @@ func TestLogsAndStats(t *testing.T) {
 	// status_code 已从 usage_logs 移除（分表设计瘦身，错误审计列归 err_logs）
 	// ——InsertBatch 不再携带该列）
 	// 参数面钉死（45 参 = r1 段 25 + r2 段 20）：ent CreateBulk 按字段名字母序
-	// 装配各元组占位符；billed（F2 ledger-cursor）字母序落在 account_id 之后、
+	// 装配各元组占位符；billed（ledger-cursor）字母序落在 account_id 之后、
 	// cache_creation_tokens 之前——注意与 COPY/DDL 列序（overdraft 之后）不同，
 	// 两套列序勿混。两行可选字段集合不同（r1 富：ttft/价格四族/raw_cost；
 	// r2 疏：仅 raw_cost=0 恒落），逐段核对；billing_tier/mapped_model/
@@ -697,27 +707,106 @@ func TestUpdateAccountsBatch(t *testing.T) {
 	enabled := true
 
 	tr.pool.ExpectBegin()
-	tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url FROM accounts WHERE`)).
+	// 行锁 SELECT 取回按值比较所需的**全部**旧值（字段集见 domain 声明表）：
+	// 身份类字段与配置类字段都从这一行读出，写入侧不再另行读旧值。
+	tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp FROM accounts WHERE`)).
 		WithArgs(int64(2), int64(5)).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "base_url"}).
-			AddRow(int64(2), int64(1), nil).
-			AddRow(int64(5), int64(1), nil))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "base_url", "upstream_key", "name", "max_concurrency", "enabled", "cache_domain", "upstream_cost_multiplier_bp"}).
+			AddRow(int64(2), int64(1), nil, "sk-a", "acc-a", 4, true, nil, 10000).
+			AddRow(int64(5), int64(1), nil, "sk-b", "acc-b", 4, true, nil, 10000))
 	tr.pool.ExpectExec(q(`SELECT pg_advisory_xact_lock`)).WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
 	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
-	// 非 fenced 批量（仅 name/max_concurrency/enabled）：每 id 一条 UPDATE，无 re-SELECT。
+	// 批量配置写入：每 id 一条 UPDATE_ONE（UpdateOneID + Save 回显新 C，共 6
+	// 参：3 字段 + lifecycle 相对递增 + updated_at + 条件守卫），Save 后按主键
+	// SELECT 回读新行（行已 FOR UPDATE 锁定，无需 re-SELECT 语义外的额外查询）。
+	// pgxmock 对 Query/Exec 分开期望：UPDATE_ONE 的 Save = 1 Exec + 1 Query。
 	tr.pool.ExpectExec(q(`UPDATE "accounts" SET`)).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	tr.pool.ExpectQuery(q(`FROM "accounts" WHERE`)).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(2)))
 	tr.pool.ExpectExec(q(`UPDATE "accounts" SET`)).
-		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	tr.pool.ExpectQuery(q(`FROM "accounts" WHERE`)).
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(5)))
 	tr.pool.ExpectCommit()
 
-	err := tr.repos.Accounts.UpdateAccountsBatch(ctx(), []int64{2, 5}, repository.AccountPatch{
+	results, err := tr.repos.Accounts.UpdateAccountsBatch(ctx(), []int64{2, 5}, repository.AccountPatch{
 		Name: &name, MaxConcurrency: &mc, Enabled: &enabled,
 	})
 	require.NoError(t, err)
+	require.Len(t, results, 2)
+	for _, res := range results {
+		// 真实变更集只含真的变了的字段：name 与 max_concurrency 变了，enabled
+		// 传了同值（幂等重写）故不算变更。
+		require.Equal(t, []domain.AccountField{domain.FieldName, domain.FieldMaxConcurrency}, res.ChangedFields.Fields())
+		require.False(t, res.ChangedFields.IdentityChanged(), "config-only write must not change route identity")
+	}
 	tr.expectDone(t)
+}
+
+// TestUpdateAccountsBatchAdvancesIdentityRevisionOnlyOnValueChange 钉住 I1 的
+// 非对称推进：身份类字段**按值**变更才推进 K，幂等重写只推进 C。UPDATE 的绑定
+// 参数个数由 pgxmock 的 WithArgs 精确匹配——多一个 identity_revision 绑定即失败。
+func TestUpdateAccountsBatchAdvancesIdentityRevisionOnlyOnValueChange(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		patch         func() repository.AccountPatch
+		wantIdentityK bool
+		wantFields    []domain.AccountField
+	}{
+		{
+			name:          "identity value changed",
+			patch:         func() repository.AccountPatch { k := "sk-rewritten"; return repository.AccountPatch{UpstreamKey: &k} },
+			wantIdentityK: true,
+			wantFields:    []domain.AccountField{domain.FieldUpstreamKey},
+		},
+		{
+			name:          "identity rewritten with same value",
+			patch:         func() repository.AccountPatch { k := "sk-a"; return repository.AccountPatch{UpstreamKey: &k} },
+			wantIdentityK: false,
+			wantFields:    []domain.AccountField{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := newRepos(t)
+			tr.pool.ExpectBegin()
+			tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp FROM accounts WHERE`)).
+				WithArgs(int64(2)).
+				WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "base_url", "upstream_key", "name", "max_concurrency", "enabled", "cache_domain", "upstream_cost_multiplier_bp"}).
+					AddRow(int64(2), int64(1), nil, "sk-a", "acc-a", 4, true, nil, 10000))
+			tr.pool.ExpectExec(q(`SELECT pg_advisory_xact_lock`)).WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
+			tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
+			update := q(`UPDATE "accounts" SET`)
+			if tc.wantIdentityK {
+				// q() 会转义元字符，这里需要真正的正则分支。
+				update = `(?i)UPDATE "accounts" SET .*identity_revision`
+			}
+			exec := tr.pool.ExpectExec(update)
+			// 绑定个数 = SetX 字段数 + AddX 参数数 + 3（C 相对递增 / updated_at /
+			// 守卫）。本补丁只 Set upstream_key：不推进 K 时 4 个绑定，推进 K 时
+			// 5 个（多出的就是 identity_revision）——个数不符即失败。
+			wantArgs := 4
+			if tc.wantIdentityK {
+				wantArgs = 5
+			}
+			exec.WithArgs(anyArgs(wantArgs)...).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+			tr.pool.ExpectQuery(q(`FROM "accounts" WHERE`)).
+				WithArgs(pgxmock.AnyArg()).
+				WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(2)))
+			tr.pool.ExpectCommit()
+
+			results, err := tr.repos.Accounts.UpdateAccountsBatch(ctx(), []int64{2}, tc.patch())
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tc.wantFields, results[0].ChangedFields.Fields())
+			require.Equal(t, tc.wantIdentityK, results[0].ChangedFields.IdentityChanged())
+			tr.expectDone(t)
+		})
+	}
 }
 
 func int64Ptr(v int64) *int64 { return &v }
