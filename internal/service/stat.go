@@ -20,7 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// 校验上限常量（spec §5 校验规则；TTFT 双分支各自独立上限——Momus 钉死）。
+// 校验上限常量（spec §5 校验规则；TTFT 双分支各自独立上限——钉死）。
 const (
 	// MaxStatsTrendSpan trend/top/entity-trend 共用窗口跨度上限（90 天）：
 	// cube 查询按小时桶扫描，90d × 维度基数是交互式端点的合理上界。

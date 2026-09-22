@@ -15,7 +15,7 @@ import (
 )
 
 // TestAccountBaseURLInvalidation 账号级 base_url 变更 → clients 失效：
-// PatchAccount 按值判定（——nil↔"" 同值不误报）并入既有 keyChanged（复用
+// PatchAccount 按值判定（nil↔"" 同值不误报）并入既有 keyChanged（复用
 // Accounts(gids, keyChanged) 参数面，零新增失效类型）；UpdateAccountsBatch
 // 保守失效（提供 BaseURL 即失效，含 "" 清空态）。
 func TestAccountBaseURLInvalidation(t *testing.T) {

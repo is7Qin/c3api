@@ -340,7 +340,7 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 	})
 }
 
-// TestPublishDetachedFromRequestCtx 评审 请求 ctx 已取消时发布仍发出——
+// TestPublishDetachedFromRequestCtx 请求 ctx 已取消时发布仍发出——
 // publish 用 context.WithoutCancel 剥离取消信号（客户端断开不吞 NOTIFY），
 // Publisher 收到的 ctx 未取消（Err()==nil）。
 func TestPublishDetachedFromRequestCtx(t *testing.T) {

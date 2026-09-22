@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Fold-at-source facts (v3 , spec docs/superpowers/specs/flow-fold-at-source-v3.md
+// Fold-at-source facts (v3, spec docs/superpowers/specs/flow-fold-at-source-v3.md
 // §4–§5.1): the per-attempt fact replaces the per-request FlowChain heap box.
 // An attemptFact is fixed-size, stack-passed BY VALUE, and doubles as the
 // counter-cell table key (comparable struct — no strings, no hex/sha256, no

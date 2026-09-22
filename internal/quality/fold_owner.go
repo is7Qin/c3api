@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Fold-at-source owner (v3–): the FlowOwner is the SOLE owner of the
+// Fold-at-source owner (v3): the FlowOwner is the SOLE owner of the
 // folded flow state — the counter-cell table (request-Add / tick-drain,
 // fold_cells.go) plus the per-minute cumulative shells (tick-only,
 // fold_expand.go). The old Submit queue, per-request FlowChain box, and

@@ -31,7 +31,7 @@ var keyAdminSortFields = map[string]string{
 type KeyRepo struct {
 	client *ent.Client
 	// driver 为 raw SQL（AddQuotaUsed 单语句 CASE 批量更新）用：与 txDriver
-	// 组合保证 raw SQL 与 ent 构建器同事务连接（WithTx 同构，评审）。
+	// 组合保证 raw SQL 与 ent 构建器同事务连接（WithTx 同构）。
 	driver dialect.Driver
 }
 

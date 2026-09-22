@@ -124,7 +124,7 @@ type GroupAssignmentStore interface {
 	GrantGroup(ctx context.Context, groupID, userID int64) error
 	RevokeGroup(ctx context.Context, groupID, userID int64) error
 	// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率：
-	// 按组；m = nil → 清除为未设置 → 回退组倍率；0 = 免费）。
+	// 按组；m = nil → 清除为未设置 → 回退组倍率；0 = 免费。
 	SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error
 	ListAssignmentsByUser(ctx context.Context, userID int64) ([]*domain.GroupAssignment, error)
 	ListAssignmentsByGroup(ctx context.Context, groupID int64) ([]*domain.GroupAssignment, error)
@@ -257,7 +257,7 @@ type LogStore interface {
 
 type StatStore interface {
 	// /api/admin/overview 聚合面（spec 2026-08-14）：SQL 侧聚合——
-	// 服务端 GROUP BY 返回日桶，不拉全行客户端聚合）。zone = 请求浏览器时区
+	// 服务端 GROUP BY 返回日桶，不拉全行客户端聚合。zone = 请求浏览器时区
 	// （handler 边界校验；nil/UTC = 现状 cube 路径）；repo 内按
 	// domain.ZoneCubeExact 路由 cube 重组 vs 原始行精确聚合。
 	SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error)
@@ -277,7 +277,7 @@ type StatStore interface {
 // 已轻量）。Mark 路径零锁零 DB，不阻塞任何调用方。
 type Invalidator interface {
 	// Users 用户 CRUD（含创建）与用户余额变更（含 Redeem）：auth + 余额快照
-	// 全量 Reload（去抖窗口内合并；新用户必须即刻进余额快照——评审
+	// 全量 Reload（去抖窗口内合并；新用户必须即刻进余额快照
 	// 防 ≤10s 402 窗口，回归测试 tools/e2e）。
 	Users()
 	// Templates 模板（base_url/models/映射）变更：sched 全量 + clients 失效

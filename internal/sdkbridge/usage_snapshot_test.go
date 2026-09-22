@@ -252,7 +252,7 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "chatgpt-plus", snap.PlanType, "冷却后重试 1 次成功")
 	require.Equal(t, 2, c.callsN())
-	// 成功清冷却态（——死状态不留）：冷却哨兵随成功归零
+	// 成功清冷却态（死状态不留）：冷却哨兵随成功归零
 	e, err = a.entryFor(cred)
 	require.NoError(t, err)
 	a.mu.Lock()
@@ -316,7 +316,7 @@ func TestCodexUsageSnapshotCancelNoCooldown(t *testing.T) {
 	mu.Unlock()
 }
 
-// TestCodexUsageSnapshotSameAccountDoubleCheck 同账号并发首拉双检（——
+// TestCodexUsageSnapshotSameAccountDoubleCheck 同账号并发首拉双检（
 // 红绿用例）：N 并发同账号 → in-flight 恰 ≤8（semaphore 有界）→ 其余请求在
 // 槽释放后经**二次双检**命中已完成的首拉（槽释放 ⟹ 同账号 usage 已写——写
 // 先于 defer 释放槽，窗口闭合）→ 上游恰 8 次（无双检则 20 次级联全拉）+ 全
@@ -504,7 +504,7 @@ func TestCodexUsageSnapshotConvergence(t *testing.T) {
 }
 
 // TestCodexUsageSnapshotEntryRebuildClears 凭据 sig 变化 + TTL 状态机：TTL
-// 新鲜（命中路径零分配——）→ 快照为账号级视图，直接命中缓存（零重建零
+// 新鲜（命中路径零分配）→ 快照为账号级视图，直接命中缓存（零重建零
 // 重拉）；TTL 过期 + sig 变化 → entry 重建 → 快照缓存随新条目清除 → 重拉。
 func TestCodexUsageSnapshotEntryRebuildClears(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})

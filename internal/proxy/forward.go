@@ -556,7 +556,7 @@ type usageTuple struct {
 	calls int64
 	// 图片生成分量（images 格式）：ii/io = image token 分量
 	// （input/output_tokens_details.image_tokens）；text token 分量恒 0——
-	// images 请求只计 image 分量。tt 含 image tokens 不含张数（评审
+	// images 请求只计 image 分量。tt 含 image tokens 不含张数（
 	// quota 口径：张数不入 TotalTokens）。resp 检测路径 ii/io 恒 0（
 	// 实证 responses 路径无 image_tokens）。ii/io 由 buildLog 并入 in/out。
 	ii, io int64

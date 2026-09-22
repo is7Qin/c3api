@@ -473,7 +473,7 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 			sameStatic := oldAv != nil && staticKeyOf(oldAv) == staticKeyOf(av)
 			if sameStatic {
 				// 静态未变：runtime 整体保留（errRate/errCount/并发跨重载连续，
-				//；status 唯一例外——failed_at 是持久事实，重载按
+				// ；status 唯一例外——failed_at 是持久事实，重载按
 				// failed_at 收敛，未失效账号的内存 disabled 不复活）。
 				rt := old.runtime
 				if curSt := rt.state.Load(); curSt != nil {
@@ -609,7 +609,7 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 // 编译车道发布配对），已发布的完整 pair 在此期间保持可见。
 // 静态字段（含 groupIDs）在 snapshotStatic 不可变视图中：写经 publisher.mu +
 // 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
-// （发布收集仍持 publisher.mu——评审 纪律，无锁外裸读）。
+// （发布收集仍持 publisher.mu——纪律，无锁外裸读）。
 func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
@@ -652,7 +652,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	}
 	// 从组移除的账号（旧组有、新组无）：仍属其它组 → 保留实例并摘本组引用；
 	// 已不属于任何组 → 从 byID 删除（其它组引用随实例保留/删除，路由无需重建）。
-	// 评审 先建 新组账号ID 索引再单遍扫描——嵌套循环对 50k 大组批量删
+	// 先建 新组账号ID 索引再单遍扫描——嵌套循环对 50k 大组批量删
 	// 25k 是 ≈1.25e9 次比较 ≈1s 停顿（去抖单 goroutine 内拉大所有失效延迟/
 	// 新用户 402 窗口），索引后 O(旧组大小)。
 	// staged groups bound the scoped fire — the reloaded group plus
@@ -713,7 +713,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	}
 	// 新实例替换 byID + 其它组引用（多组账号：旧实例在其它组路由中的位置换成
 	// 新实例并重建该组路由——共享实例纪律；单组账号 otherGids 为空，零开销）。
-	// 评审 其它组引用替换同禁嵌套扫描——每其它组先建 账号ID→位置 索引
+	// 其它组引用替换同禁嵌套扫描——每其它组先建 账号ID→位置 索引
 	// （O(该组大小)），替换 O(1)，总量 O(受影响组账号和)。
 	type ogRef struct {
 		gs  *groupSnapshot
@@ -775,7 +775,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.RequestCompile()
 }
 
-// InvalidateAccount 单账号快照失效（SDK 接入 §1 ——轮转回写后同步
+// InvalidateAccount 单账号快照失效（SDK 接入 §1——轮转回写后同步
 // AccountExt 内存快照：下个会话重载新凭据，避免旧令牌 401 额外往返）。复用
 // 既有组级定向重载（InvalidateGroup——账号所属各组并集去重；旋转低频事件，
 // 组级重载成本可接受）。快照外账号（已移除/未知）→ no-op。与失效上报不同
@@ -857,7 +857,7 @@ func (s *Scheduler) Loader() Loader { return s.loader }
 // InvalidateAllSync 同步全量重载（测试与启动用）。
 func (s *Scheduler) InvalidateAllSync() error { return s.reload(context.Background()) }
 
-// InvalidateAllSyncCtx 同步全量重载（响应 ctx 取消； 评审 notify
+// InvalidateAllSyncCtx 同步全量重载（响应 ctx 取消；notify
 // Dispatcher.FullRefresh 用——断线重连的全量刷新不得耗尽停机预算）。
 func (s *Scheduler) InvalidateAllSyncCtx(ctx context.Context) error { return s.reload(ctx) }
 

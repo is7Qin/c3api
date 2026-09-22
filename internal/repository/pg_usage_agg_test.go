@@ -115,7 +115,7 @@ func TestPGScanUsageAggPartitionPruning(t *testing.T) {
 	require.Error(t, err, "未注入 pgx 池（New）→ 显式错误")
 }
 
-// TestPGScanUsageAggIDLimit 数量防御（——repo 层兜底 handler 之外调用方）：
+// TestPGScanUsageAggIDLimit 数量防御（repo 层兜底 handler 之外调用方）：
 // >100 ids → 显式错误（ANY 参数数组规模上限），不落 SQL。
 func TestPGScanUsageAggIDLimit(t *testing.T) {
 	repos := newPGReposShared(t)

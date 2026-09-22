@@ -24,7 +24,7 @@ import (
 // RawJSON 路径必须经过 SDK UnmarshalJSON 才能得到原始字节）。
 
 // —— chat 流式 usage 帧（顶层 usage.*；cached_tokens 嵌套于
-// prompt_tokens_details，与 SDK CompletionUsage 结构体一致——评审） ——
+// prompt_tokens_details，与 SDK CompletionUsage 结构体一致） ——
 
 func TestChatStreamUsage(t *testing.T) {
 	frame := []byte(`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5},"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":2}}}`)
@@ -210,7 +210,7 @@ func TestSniffResponsesCompletedTop(t *testing.T) {
 	require.Zero(t, u.cc)
 }
 
-// —— 双实现对照（改造前 gjson 版本保留为测试内对照——评审 语义等价
+// —— 双实现对照（改造前 gjson 版本保留为测试内对照——语义等价
 // 验证） ——
 
 // 对照实现 = 改造前生产代码原样（gjson 多遍扫描）+ deductCacheRead 归一镜像
@@ -282,7 +282,7 @@ func sniffResponsesCompletedTopRef(data []byte) (usageTuple, bool) {
 // TestUsageExtractEquivalence 语义等价双实现对照：真实上游形态用例 + 病态
 // 用例（显式 null / 缺失字段 / 字符串数字 / 嵌套同名键 / 键名前缀干扰 /
 // cache_creation 单桶缺失）全跑新实现与 gjson 对照（真实 JSON 构造，非结构体
-// marshal 自证——评审），输出元组与 ok 全等。已知差异方向（float / 指数 /
+// marshal 自证），输出元组与 ok 全等。已知差异方向（float / 指数 /
 // 超 int64 / 字符串 \uXXXX 数字 / bool 字面——"保守 0"）不入本表，单独断言
 // （TestScanIntValuePathologicalDivergence）。
 func TestUsageExtractEquivalence(t *testing.T) {

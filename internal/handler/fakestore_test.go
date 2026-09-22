@@ -2205,7 +2205,7 @@ func (f *fakeStore) DeactivateCodes(ctx context.Context, ids []int64) (int64, er
 	return n, nil
 }
 
-// --- 原子资源更新（UserStore 扩展，评审） ---
+// --- 原子资源更新（UserStore 扩展） ---
 
 func (f *fakeStore) UpdateUserBalance(ctx context.Context, userID, delta int64) error {
 	f.mu.Lock()

@@ -387,7 +387,7 @@ func TestPGBillingCursorAbortIncluded(t *testing.T) {
 
 // TestPGBillingCursorMultiInstanceLock 多实例互斥（行为级 + 源码级守卫）：
 // 会话级 advisory lock 下持锁者消费、另一方 ok=false 跳过本周期；释放后可再抢。
-// 源码守卫：billing 消费面可执行代码不得出现 pg_advisory_xact_lock（Momus
+// 源码守卫：billing 消费面可执行代码不得出现 pg_advisory_xact_lock（
 // 双扣防线——每事务锁取批与标记间无互斥）。
 func TestPGBillingCursorMultiInstanceLock(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -462,7 +462,7 @@ func guardNoXactAdvisoryLock(t *testing.T) {
 				continue
 			}
 			require.NotContains(t, trimmed, "pg_advisory_xact_lock",
-				"%s:%d: 禁止每事务 advisory lock（会话级持锁整周期是双扣防线，Momus）", path, i+1)
+				"%s:%d: 禁止每事务 advisory lock（会话级持锁整周期是双扣防线）", path, i+1)
 		}
 	}
 	data, err := os.ReadFile("billing_cursor.go")

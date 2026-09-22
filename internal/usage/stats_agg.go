@@ -104,7 +104,7 @@ type StatsAggWorkerStats struct {
 // 容忍多实例并发初始化（败者重读既有值）；**追赶上限**：停摆恢复后单周期
 // 窗口 ≤ 1h 分批收敛（防单次超大窗口）。
 //
-// **手动重建运维口径（Momus 勘误）**：worker 对缺失 watermark 行的初始化
+// **手动重建运维口径（勘误）**：worker 对缺失 watermark 行的初始化
 // 硬编码 now−lag——"清空 watermark 行"不会触发历史回算。手动重建统计必须：
 // (1) 清空 usage_stats / usage_entity_stats 数据；(2) **手工种子单行 watermark**
 // 至最早保留小时边界（INSERT INTO stats_agg_watermark (id, watermark)

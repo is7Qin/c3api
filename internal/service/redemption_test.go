@@ -361,7 +361,7 @@ func TestRedeem(t *testing.T) {
 		require.Zero(t, got.MaxConcurrency)
 	})
 
-	t.Run("重复兑换 409（先查 use，评审）", func(t *testing.T) {
+	t.Run("重复兑换 409（先查 use）", func(t *testing.T) {
 		u := seedUser(t, fs, "dup@example.com", 0, 0)
 		c := genOne(t, svc, GenerateRequest{Type: domain.RedemptionTypeBalance, Value: 100}, 0)
 		_, err := svc.Redeem(ctx, c.Code, u.ID)

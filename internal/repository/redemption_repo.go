@@ -22,7 +22,7 @@ import (
 type RedemptionRepo struct {
 	client *ent.Client
 	// driver 为 raw SQL（IncrementUsed 条件递增）用：普通 client 与 tx client
-	// （WithTx 内）均可用——评审。
+	// （WithTx 内）均可用。
 	driver dialect.Driver
 }
 
@@ -185,7 +185,7 @@ func (r *RedemptionRepo) ListUsesByUser(ctx context.Context, userID int64, q Lis
 	return out, int64(total), nil
 }
 
-// GetUse 取用户对某码的兑换记录；无记录 → ErrNotFound（兑换判定先查 use —— 评审）。
+// GetUse 取用户对某码的兑换记录；无记录 → ErrNotFound（兑换判定先查 use）。
 func (r *RedemptionRepo) GetUse(ctx context.Context, codeID, userID int64) (*domain.RedemptionUse, error) {
 	row, err := r.client.RedemptionUse.Query().
 		Where(redemptionuse.CodeID(codeID), redemptionuse.UserID(userID)).
@@ -218,7 +218,7 @@ func (r *RedemptionRepo) CreateUse(ctx context.Context, use *domain.RedemptionUs
 	return nil
 }
 
-// IncrementUsed 条件递增 used_count（防并发超卖——评审）：
+// IncrementUsed 条件递增 used_count（防并发超卖）：
 // UPDATE redemption_codes SET used_count = used_count + 1
 // WHERE id = ? AND used_count < max_uses —— 单语句条件原子，DB 行锁 + WHERE 保证
 // 并发兑换最后一张不超卖。0 行受影响 → (false, nil) = 已用尽（service → 400 并回滚）。

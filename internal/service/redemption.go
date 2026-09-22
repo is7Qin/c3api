@@ -244,7 +244,7 @@ func applyTempBalance(ctx context.Context, tx repository.TxStore, userID int64, 
 // ③ 码状态检查（disabled/过期 → 400 invalid code，统一不泄露具体原因）；
 // ④ applier 应用资源（只经 tx 面，失败整体回滚）；
 // ⑤ CreateUse 审计 + IncrementUsed 条件递增（false = 用尽 → 400 整体回滚，
-// 防并发超卖——评审）。提交成功后 invalidate() 刷新 auth 快照（决策 8）。
+// 防并发超卖）。提交成功后 invalidate() 刷新 auth 快照（决策 8）。
 func (s *Service) Redeem(ctx context.Context, code string, userID int64) (*domain.RedemptionApply, error) {
 	var apply *domain.RedemptionApply
 	err := s.store.WithTx(ctx, func(tx repository.TxStore) error {

@@ -40,8 +40,8 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 	}
 	root := gjson.ParseBytes(body)
 	if !root.IsObject() {
-		// null 体与 map 版对齐（decodeObj 解码 null → nil map → 空输出 {}；
-		// 评审）；其余非对象顶层拒绝。
+		// null 体与 map 版对齐：decodeObj 解码 null → nil map → 空输出 {}；
+		// 其余非对象顶层拒绝。
 		if root.Type != gjson.Null {
 			return nil, errors.New("invalid JSON: top-level must be an object")
 		}
@@ -197,7 +197,7 @@ func appendChatInputItems(out []byte, msgs gjson.Result) []byte {
 						}
 						n++
 						// 请求方向取 id（与 map 版一致：chat tool_calls 仅 id；
-						// fcIDRaw 的 call_id 优先仅响应方向——评审）
+						// fcIDRaw 的 call_id 优先仅响应方向）
 						idRaw := strOrEmpty(tc.Get("id"))
 						out = append(out, `{"arguments":`...)
 						out = append(out, strOrEmpty(fn.Get("arguments"))...)
@@ -239,7 +239,7 @@ func appendChatInputItems(out []byte, msgs gjson.Result) []byte {
 
 // contentTextRaw 返回 content 的文本 JSON 字符串字面量：字符串 → 原字节透传
 // （零拷贝）；text 块数组 → 各块 text 剥离首尾引号后以 \n 拼接再整体包裹
-// （joinStrings("\n") 语义，转义逐字符保持、concat 即等价转义——评审 修复：
+// （joinStrings("\n") 语义，转义逐字符保持、concat 即等价转义——修复：
 // raw 自带引号直接拼接会产出 ""a"" 非法 JSON；重建仅发生在多部件场景）。
 // 返回 (字面量, 是否有文本, 文本是否非空)。字符串形态零分配。
 func contentTextRaw(content gjson.Result) (string, bool, bool) {
@@ -475,7 +475,7 @@ func respToChatResponse(body []byte) ([]byte, error) {
 }
 
 // appendChatMessageBody resp output → chat assistant message 的 content 文本
-// 拼接（message 项 text 部件 join ""，恒为合法 JSON 字符串——评审 修复：
+// 拼接（message 项 text 部件 join ""，恒为合法 JSON 字符串——修复：
 // 部件 raw 剥离首尾引号拼接，转义逐字符保持，concat 即等价转义）与 tool_calls
 // 数组字节。无文本部件 → ""。返回 (out, tcs)。
 func appendChatMessageBody(out, tcs []byte, output gjson.Result) ([]byte, []byte) {
@@ -665,7 +665,7 @@ func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
 			}
 			// resp 无 usage（或非对象）→ 收尾 chunk 省略 "usage" 字段而非
 			// 写 "usage":null——与 map 版一致（usage 提取失败 → nil → 省略；
-			// 评审 接受并注释）
+			// 接受并注释）
 			if u := resp.Get("usage"); u.IsObject() {
 				usage = m.appendUsageToBuf(u)
 			}

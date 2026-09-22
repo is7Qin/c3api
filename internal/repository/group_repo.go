@@ -35,7 +35,7 @@ type GroupRepo struct {
 const accountGroupsMembershipSQL = `SELECT account_id, group_id FROM account_groups`
 
 func (r *GroupRepo) CreateGroup(ctx context.Context, g *domain.Group) (*domain.Group, error) {
-	// price_multiplier 恒写入（service 层把缺省归一为 10000 = ×1——：
+	// price_multiplier 恒写入（service 层把缺省归一为 10000 = ×1：
 	// API 边界 nullable float64 可表达显式 0 = 免费组，repo 不再把 0 当"未指定"
 	// 跳过落列）。DB 默认 10000 为兜底。
 	q := r.client.Group.Create().

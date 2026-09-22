@@ -258,7 +258,7 @@ func main() {
 	})
 	// 管理端变更统一经 invalidate 去抖器生效（接线矩阵）：
 	// - 用户 CRUD（含创建）/余额变更 → auth + 余额快照全量 Reload（去抖窗口
-	//   内合并；新用户必须即刻进余额快照（防 ≤10s 402 窗口）
+	//   内合并；新用户必须即刻进余额快照——防 ≤10s 402 窗口）
 	// - 模板（base_url/models/映射）→ sched 全量 + clients 失效（base_url
 	//   变更需按新地址重建 SDK 客户端；评审发现：此前 Factory.InvalidateAll
 	//   无人调用，模板 base_url 更新后流量仍打旧上游直至重启）
@@ -292,7 +292,7 @@ func main() {
 	var invBalances invalidate.BalancesReloader
 	if cfg.Billing.Enabled {
 		// loader = Repository 门面（BalanceLoader：余额 → Users，组倍率 +
-		// assignment 专属倍率 → Groups（修正按组）。
+		// assignment 专属倍率 → Groups，修正按组）。
 		billBalances = billing.NewBalances(repos, log)
 		invBalances = billBalances
 		// 首载不在此（fail-safe 语义由注册表 ReloadAll 承担：错误独立 Warn 保留
@@ -515,7 +515,7 @@ func main() {
 	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（计费读零 DB）。
 	// 手动 sync/preview 端点（/api/admin/pricing/sync）直调同一 worker：
 	// service 侧 SetPriceFetcher 回填已删——fetcher 唯一主人是本 worker，经
-	// SyncWorkerConfig 一次性构造注入）；预览 membership 读 svc 定价快照。
+	// SyncWorkerConfig 一次性构造注入；预览 membership 读 svc 定价快照。
 	// log：方案 A 多档位 Warn 目标（nil 则静默——不传即退化为无告警）。
 	priceFetcher := pricing.NewFetcher(hc, log)
 	pricingSync := pricing.NewSyncWorker(pricing.SyncWorkerConfig{
@@ -591,7 +591,7 @@ func main() {
 		inv, schedW, ruleEngine, retryWorker, healthW, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync, routingRollup)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
-	//（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
+	// （spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
 	// worker 合法，但启动期明确提示其不会出现在运维端点。
 	opsWorkers := statsProviders(opsCandidates, log)
 	// discovery 实例发现观测（foundation spec §2.4）：alive N / last_tick_ok /
@@ -746,7 +746,7 @@ func main() {
 	//    incomplete" 显式上报且不宣称 clean shutdown（review blocker
 	//    2026-08-30）。
 	srvCtx, cancelSrv := context.WithTimeout(shutdownCtx, 2*time.Second)
-	//（spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
+	// （spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
 	// `_ =` 全丢弃；wm.Shutdown 内部已对 worker Close 失败 Warn，此处补齐
 	// httpSrv 静默面）。
 	if err := httpSrv.Shutdown(srvCtx); err != nil {

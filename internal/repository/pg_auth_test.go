@@ -138,7 +138,7 @@ func TestPGKeyLifecycle(t *testing.T) {
 	require.Equal(t, int64(1), total)
 	require.Equal(t, "k1", rows[0].Name)
 
-	// UpdateKey（patch：status/并发/额度；nil = 不改——）
+	// UpdateKey（patch：status/并发/额度；nil = 不改）
 	name := "k1-renamed"
 	st := domain.KeyStatusDisabled
 	mc := 2

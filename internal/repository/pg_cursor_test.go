@@ -227,7 +227,7 @@ func TestPGCursorProbeLimitPlusOne(t *testing.T) {
 
 // errPageWalk err_logs keyset 翻页走查（与 pageWalk 同构——cursor = 本页最后一
 // 条 id，rows 恰为 limit+1 说明还有下一页）；返回全部行（不含探测行）。
-// 评审 QueryErrLogs cursor 分支真实 PG 专项——此前仅 usage 侧有专项走查。
+// QueryErrLogs cursor 分支真实 PG 专项——此前仅 usage 侧有专项走查。
 func errPageWalk(t *testing.T, repos *repository.Repository, q repository.ErrLogQuery) []*domain.UsageLog {
 	t.Helper()
 	var got []*domain.UsageLog

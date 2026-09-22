@@ -169,7 +169,7 @@ func (r *AccountRepo) GetAccountGroups(ctx context.Context, accountID int64) ([]
 // 2026-08-13：两原因字段并存会漂移；失效后账号摘除不再被调度 → caller.go
 // 的普通失败写点不会覆盖失效原因，复用安全）首写生效——failed_at 已置（首次
 // 上报）→ 0 行不覆盖（保持首次失效时刻与原因；重复上报不重复写；恢复由
-// 管理面清 failed_at + last_error）。**空 reason 不清旧值**（评审：
+// 管理面清 failed_at + last_error）。**空 reason 不清旧值**（
 // 空原因上报不触碰既有 last_error——保持"最近错误"审计语义）。failed_at
 // 即摘除的持久化事实：调度器快照装载经 runtimeStatusFor 置运行时 disabled；
 // 管理面手动禁用 = enabled=false（语义分离，两者可并存）。

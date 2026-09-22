@@ -302,7 +302,7 @@ func TestGetUsageLogsRequiresFromTo(t *testing.T) {
 }
 
 // TestGetErrLogsRequiresFromTo 无 from/to → 生成层 400（/err_logs 与
-// /usage_logs 同契约；评审 err_logs 侧缺该断言——usage 侧见
+// /usage_logs 同契约；err_logs 侧缺该断言——usage 侧见
 // TestGetUsageLogsRequiresFromTo）。
 func TestGetErrLogsRequiresFromTo(t *testing.T) {
 	h := newTestHandler(t)

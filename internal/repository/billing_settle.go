@@ -15,7 +15,7 @@ package repository
 //     行级条件扣（amount>=take）→ spill 差额进余额条件扣→透支补刀→标记。
 //
 // 两车道 batch 谓词互斥（NOT-IN / IN temp-active）→ 同用户同周期不跨车道；
-// 车道间会话锁内顺序执行（跨道并行即成环），车道内 K 桶并行（——桶间
+// 车道间会话锁内顺序执行（跨道并行即成环），车道内 K 桶并行（桶间
 // uid 不相交，行锁集不相交，无死锁构造性保证）。事务纪律：BEGIN → SET LOCAL
 // sync_commit=off → 执行 → marked==batch 计数比对（不齐 = 并发标记，整事务回滚）
 // → COMMIT。结算失败保持 unbilled，由下周期重放；usage_logs

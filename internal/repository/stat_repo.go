@@ -26,7 +26,7 @@ import (
 // 离线聚合写入面（LoadAggRange/AggregateRange——cube 两源 + 实体六查询）、
 // 读取面（stat_query_repo.go StatsTrend 族）与 overview 聚合面（SummarizeStats/
 // ScanStatsDays）全部经 pgx 原生池直查直写——ent client 仅用于资源计数等非
-// 统计面（usage_stats 含 bigint[] 数组列，ent 无类型，ent carve-out 评审）。
+// 统计面（usage_stats 含 bigint[] 数组列，ent 无类型，ent carve-out）。
 // pool 由 NewWithPG 构造注入（生产 main.go 注入 OpenPG 池；与 ent driver 同
 // DSN 共享连接上限）。usage_stats / usage_entity_stats 均为分区表（用户裁决
 // 2026-08-11：PG DELETE 不释放空间，保留清理必须 DROP 分区 O(1)）——清理由

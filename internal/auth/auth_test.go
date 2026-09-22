@@ -163,7 +163,7 @@ func TestRequireJWTRejects(t *testing.T) {
 		rec := doReq(t, mw, token)
 		require.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
-	//  fail-closed：快照缺失（启动首刷失败/Reload 失败/NOTIFY 丢失）→
+	// fail-closed：快照缺失（启动首刷失败/Reload 失败/NOTIFY 丢失）→
 	// 401 拒绝，不放行（对照 /admin 面已 fail-closed）
 	t.Run("snapshot missing", func(t *testing.T) {
 		rec := doReq(t, RequireJWT(iss, fakeUserStatus{}), token)

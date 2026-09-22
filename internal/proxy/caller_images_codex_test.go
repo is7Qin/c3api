@@ -462,7 +462,7 @@ func TestImagesCodex401Rotate(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 }
 
-// TestImagesCodexStreamSSE 流式（stream=true）生产接线全链路（——替换 501
+// TestImagesCodexStreamSSE 流式（stream=true）生产接线全链路（替换 501
 // 骨架）：真实适配层 GenerateImageStream → 合成事件流（keepalive + 逐张
 // completed，usage 仅末事件）→ 网关 SSE 透传（completed 帧 wire 形态：
 // b64_json + usage 四字段 JSON tag 直透）→ 流终计费（张数 = data 长 2、

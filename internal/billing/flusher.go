@@ -25,7 +25,7 @@ import (
 type LedgerStore interface {
 	// AcquireBillingLock 会话级 advisory lock：专用池连接取批前获取、持有整
 	// 周期（含全部车道结算事务 COMMIT）后解锁释放——多实例取批互斥的唯一防线
-	//（每事务 xact 锁形态下两实例可各自提交前取到同批未标记行 =
+	// （每事务 xact 锁形态下两实例可各自提交前取到同批未标记行 =
 	// 双扣资金，明令禁止）。
 	AcquireBillingLock(ctx context.Context) (release func(), ok bool, err error)
 	// FetchUnbilledBatch 取未扣账本批（WHERE NOT billed AND error_type IN
@@ -33,7 +33,7 @@ type LedgerStore interface {
 	FetchUnbilledBatch(ctx context.Context, limit int) ([]domain.LedgerRow, error)
 	// SettleBalanceBatch Balance 车道结算一个窗口（余额-only 用户；单语句单
 	// 事务 取批→条件扣→透支补刀→标记；桶谓词 COALESCE(user_id,0)%k=bucket——
-	// 桶级并行 ，K 由编排层给定）；结算失败保持 unbilled，由下周期重放。
+	// 桶级并行，K 由编排层给定）；结算失败保持 unbilled，由下周期重放。
 	SettleBalanceBatch(ctx context.Context, limit, k, bucket int) (domain.SettlementSummary, error)
 	// SettleFefoBatch Temp 车道结算一个窗口（temp-active 用户；集合化 FEFO +
 	// 差额透支补刀 + 标记一体；桶谓词同上）。事务失败保持 unbilled。

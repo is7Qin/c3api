@@ -459,7 +459,7 @@ type AccountExt struct {
 	CodexAccountID         *string        // 上游账号/空间标识（可留空——导入/保存时自动识别；识别失败：导入行拒绝、保存留空）
 }
 
-// CodexOAuthImportItem 批量导入 codex-oauth 单行（——组合幂等键
+// CodexOAuthImportItem 批量导入 codex-oauth 单行（组合幂等键
 // codex_email + codex_account_id；token+refresh 成对必填；expires_at 可选
 // 原始 RFC3339 字符串（service 逐行解析——格式错误 → 行级 failed 非整批
 // 400；nil = 过期未知 → 401 自愈）；max_concurrency 配置面——nil =
@@ -807,7 +807,7 @@ type SettlementSummary struct {
 // ttft_total_ms/ttft_count/ttft_max_ms/ttft_hist 四列承载（avg 在查询侧 Go 除；
 // ttft_hist 10 档直方图见 stat_repo.go ttftHistBounds）。ttft_hist 为 PG bigint[]
 // 数组列——ent 无数组类型（field.Ints 是 JSON 语义），不进 ent schema（carve-out，
-// 评审；统计读取面走 pgx 直查扫描）。v2 瘦身（spec 2026-08-23）：维度
+// 统计读取面走 pgx 直查扫描）。v2 瘦身（spec 2026-08-23）：维度
 // 7→3——account_id/template_id/user_id/is_error 四维删除（实体视角由
 // EntityStatBucket/usage_entity_stats 承载；is_error 降为 error_count 测量列
 // 语义），唯一键 = (bucket_time, group_id, model)。

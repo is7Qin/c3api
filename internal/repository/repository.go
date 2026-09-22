@@ -77,7 +77,7 @@ func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxp
 	return newRepository(client, drv, pool), nil
 }
 
-// newRepository 用给定 client/driver 构建全量仓库（New/NewWithPG/WithTx 复用
+// newRepository 用给定 client/driver 构建全量仓库：New/NewWithPG/WithTx 复用
 // 同一构造函数；WithTx 注入 tx client + 事务驱动，fn 内所有方法调用都走 tx ——
 // pool 进 Stats（离线聚合 SQL 直查直写自 Acquire 独立连接，不进
 // 事务；advisory lock 专用连接持锁整周期——池连接复用即丢锁）与 Billing（
@@ -711,7 +711,7 @@ func (r *Repository) UnbilledLag(ctx context.Context) (oldestCreated time.Time, 
 }
 
 // AcquireBillingLock 抢占计费游标会话级 advisory lock（专用连接持锁整周期——
-// Momus 双扣防线；抢锁失败 ok=false 本周期跳过）。
+// 双扣防线；抢锁失败 ok=false 本周期跳过）。
 func (r *Repository) AcquireBillingLock(ctx context.Context) (release func(), ok bool, err error) {
 	return r.Billing.AcquireBillingLock(ctx)
 }

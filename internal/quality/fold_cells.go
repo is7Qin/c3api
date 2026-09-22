@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Fold-at-source counter cells (v3 , spec §4 FlowCell table): the single
+// Fold-at-source counter cells (v3, spec §4 FlowCell table): the single
 // request-path fold point. Each attempt contributes ONE atomic add per edge;
 // ticks expand cells into today's identical rows (fold_expand.go).
 //

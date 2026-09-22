@@ -219,7 +219,7 @@ func requireNoErr(t *testing.T, err error) {
 // TestDebounceMerge 同窗口多次变更（含同类型重复）= 1 次合并重载。
 func TestDebounceMerge(t *testing.T) {
 	r := newRig(t, &recAuth{})
-	gen := r.clock.genNow() // 评审 代数读取必须放在首次 mark 前——执行 goroutine
+	gen := r.clock.genNow() // 代数读取必须放在首次 mark 前——执行 goroutine
 	// 可能已在 mark 后建好定时器（代数已推进），后读会等到永不出现的新定时器。
 	r.d.Users()
 	r.d.Users() // 重复并入
@@ -304,7 +304,7 @@ func TestMatrixPerEntity(t *testing.T) {
 func TestGroupMergeAndSubsume(t *testing.T) {
 	t.Run("多组并集", func(t *testing.T) {
 		r := newRig(t, &recAuth{})
-		gen := r.clock.genNow() // 评审 代数读取在首次 mark 前（见 TestDebounceMerge）
+		gen := r.clock.genNow() // 代数读取在首次 mark 前（见 TestDebounceMerge）
 		r.d.Accounts([]int64{5}, false)
 		r.d.Accounts([]int64{6}, false) // 窗口内并入
 		r.d.mark(0, nil)
@@ -317,7 +317,7 @@ func TestGroupMergeAndSubsume(t *testing.T) {
 	})
 	t.Run("模板全量包含组级", func(t *testing.T) {
 		r := newRig(t, &recAuth{})
-		gen := r.clock.genNow() // 评审 代数读取在首次 mark 前
+		gen := r.clock.genNow() // 代数读取在首次 mark 前
 		r.d.Accounts([]int64{5}, false)
 		r.d.Templates() // 同窗口：full ⊇ 组级
 		r.d.mark(0, nil)
@@ -430,7 +430,7 @@ func TestNewBranches(t *testing.T) {
 // （与用户/模板等既有位的并集语义一致）。
 func TestNewBranchesMerge(t *testing.T) {
 	r := newRig(t, &recAuth{})
-	gen := r.clock.genNow() // 评审 代数读取在首次 mark 前
+	gen := r.clock.genNow() // 代数读取在首次 mark 前
 	r.d.Keys()
 	r.d.Rules()
 	r.d.Keys() // 重复并入

@@ -294,7 +294,7 @@ func TestUserErrLogsOwnOnly(t *testing.T) {
 	store.mu.Unlock()
 	win := "from=" + base.Add(-time.Hour).Format(time.RFC3339) + "&to=" + base.Add(time.Hour).Format(time.RFC3339)
 
-	// 无 from/to → 生成层 400（user 侧 err_logs 契约同 usage_logs；评审
+	// 无 from/to → 生成层 400（user 侧 err_logs 契约同 usage_logs；
 	// 此前 err_logs 双侧缺该断言，usage 侧见本文件 TestUserUsageLogsOwnOnly）
 	rec := doUser(http.MethodGet, "/api/user/err_logs", "", tokenA)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "missing from/to: %s", rec.Body.String())
@@ -404,7 +404,7 @@ func TestAdminUsers(t *testing.T) {
 }
 
 // TestAdminPutUsersPatchSemantics patch 形态端到端：只改 balance 的 PUT
-// 不误拒（评审零值面）、不触碰 role/status/并发；只改 role 不触碰
+// 不误拒（零值面）、不触碰 role/status/并发；只改 role 不触碰
 // balance——GET 快照陈旧值不再全量写回（v02 核实双向覆盖修复）。
 func TestAdminPutUsersPatchSemantics(t *testing.T) {
 	doAdmin, doUser, store := newSharedRouters(t)

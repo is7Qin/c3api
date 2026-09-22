@@ -139,7 +139,7 @@ func TestKeyUpdateFields(t *testing.T) {
 	require.Greater(t, len(keys.upserted), 1, "更新后必须增量注册")
 }
 
-// getUserFailStore fakeStore 包装：注入 GetUser 失败（写前预取测试——
+// getUserFailStore fakeStore 包装：注入 GetUser 失败（写前预取测试
 // 失败必须发生在写库前，零破坏）。
 type getUserFailStore struct {
 	*fakeStore
