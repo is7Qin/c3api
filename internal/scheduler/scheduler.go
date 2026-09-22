@@ -38,13 +38,11 @@ var (
 	ErrMissingCandidateFingerprint  = errors.New("scheduler: candidate fingerprint required")
 	ErrCandidateFingerprintMismatch = errors.New("scheduler: candidate fingerprint mismatch")
 	ErrMissingExpectedRevision      = errors.New("scheduler: expected revision required")
-	ErrStaleFailureRevision         = errors.New("scheduler: stale failure revision")
 )
 
 type Config struct {
-	DefaultMaxConcurrency int
-	SyncInterval          time.Duration
-	// StalenessProbe 是 C1 backstop 探针的 tuple 供应商（repo 层实现，
+	SyncInterval time.Duration
+	// StalenessProbe 是 backstop 探针的 tuple 供应商（repo 层实现，
 	// 如 GroupRepo.CompileStalenessSnapshot；接口在 compile_backstop.go
 	// 定义，赋值即满足，无需命名类型）。构造期传入，nil = 不接线
 	// （backstop 保持 fail-safe 全量 reload）。装配后不可变—— probes
@@ -124,9 +122,9 @@ type Scheduler struct {
 	startOnce atomic.Bool
 	latch     *latch.LatchStore
 	health    *RuntimeHealth
-	// Compile lane (Task11 wiring): serial background compiler feeding the
+	// Compile lane (wiring): serial background compiler feeding the
 	// single routingPublisher. Request path never touches these.
-	// sources 是 Start 期结构注入的编译双源（W3-T1；nil = 未装配，armed 门
+	// sources 是 Start 期结构注入的编译双源（nil = 未装配，armed 门
 	// no-op）：装配期一次性写入（Start 存入后起循环），此后只读。
 	compiler           routeCompiler
 	sources            *CompilerSources
@@ -236,10 +234,10 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealt
 	return s
 }
 
-// Name 满足 worker.Worker 契约（Global Constraints #5）。
+// Name 满足 worker.Worker 契约（Global Constraints）。
 func (s *Scheduler) Name() string { return "scheduler" }
 
-// Start 启动定时同步；编译源是 Start 期依赖（W3-T1 结构注入，取代已删的
+// Start 启动定时同步；编译源是 Start 期依赖（结构注入，取代已删的
 // 双 setter）：src 非 nil 即武装编译道（reload/分钟边界/质量/价格触发经
 // armed 门放行），nil = 未装配 legacy 形态（触发 no-op，绝不发布编译视
 // 图）。重复 Start 幂等（返回错误）。
@@ -278,7 +276,7 @@ func (s *Scheduler) syncLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			// v5-C1: the tick is a staleness backstop (O(1) probe, full work
+			// the tick is a staleness backstop (O(1) probe, full work
 			// only on mismatch). The unconditional reload-on-every-tick
 			// default path is DELETED outright.
 			s.backstopTick(ctx)
@@ -311,7 +309,7 @@ func (s *Scheduler) fireOnMinuteAdvance() {
 func (s *Scheduler) reload(ctx context.Context) error {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
-	// v5-C1: refresh-first baseline (never after — see refreshProbeBaseline).
+	// refresh-first baseline (never after — see refreshProbeBaseline).
 	s.refreshProbeBaseline(ctx)
 	m, err := s.loader.LoadGroupsAccounts(ctx)
 	if err != nil {
@@ -324,7 +322,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 	} else if cur != nil && cur.static != nil {
 		oldByID = cur.static.byID
 	}
-	groups, byID := buildSnapshots(m, s.cfg.DefaultMaxConcurrency, oldByID)
+	groups, byID := buildSnapshots(m, oldByID)
 	sv := newStaticView(groups, byID)
 	if s.latch != nil {
 		for id, as := range byID {
@@ -332,12 +330,12 @@ func (s *Scheduler) reload(ctx context.Context) error {
 			if av == nil {
 				continue
 			}
-			curRev := av.acc.LifecycleRevision
 			fp, err := candidateFingerprint(&av.acc)
 			if err != nil {
 				continue
 			}
-			s.latch.ClearIfRevisionGreater(id, curRev)
+			// 指纹变更 = 新候选人 ⇒ 清旧锁存。K 变更**无需**写侧动作：读侧
+			// IsLatched 比 (指纹, K)，旧代际条目天然不匹配。
 			s.latch.ClearIfFingerprintChanged(id, fp)
 		}
 		if oldByID != nil {
@@ -348,19 +346,39 @@ func (s *Scheduler) reload(ctx context.Context) error {
 			}
 		}
 	}
+	// 身份代际 K 推进 ⇒ 清该账号的健康记录（含 Redis 侧墓碑）。K 变了意味着
+	// 身份写入发生，旧 K 下的健康事实不再适用。**只清内存视图不够**：Sync 按
+	// 活动 ZSET 重建，未过期 OPEN 记录仅在被墓碑标注时才丢弃（故原语内写墓碑）。
+	// 与 latch 同一收敛点：快照重建后、发布前，且同样以 oldByID 为对照——
+	// 这样"K 推进"只在一个地方判定，不散落成多个可能分歧的判断。
+	if s.health != nil && oldByID != nil {
+		for id, as := range byID {
+			old, ok := oldByID[id]
+			if !ok {
+				continue
+			}
+			av, oldAv := as.static.Load(), old.static.Load()
+			if av == nil || oldAv == nil || av.acc.IdentityRevision == oldAv.acc.IdentityRevision {
+				continue
+			}
+			if _, err := s.health.ClearAccount(ctx, id); err != nil && s.log != nil {
+				s.log.Warn("health clear on identity revision advance failed", logx.Int64("account_id", id), logx.Error(err))
+			}
+		}
+	}
 	s.publisher.stageLocked(sv)
-	// v5-C1/C2: a full staging covers every route — the lane takes the
+	// a full staging covers every route — the lane takes the
 	// full-fidelity fallback. Scope-first, then wake.
 	s.enqueueCompileScope(nil, nil, scopeCauseFullStage)
 	s.RequestCompile()
 	return nil
 }
 
-func (s *Scheduler) TryLatch(accountID int64, fingerprint string, revision int64) bool {
+func (s *Scheduler) TryLatch(accountID int64, fingerprint string, identityRevision int64) bool {
 	if s.latch == nil {
 		return false
 	}
-	return s.latch.TryAcquire(accountID, fingerprint, revision)
+	return s.latch.TryAcquire(accountID, fingerprint, identityRevision)
 }
 
 func (s *Scheduler) IsLatched(accountID int64) bool {
@@ -369,16 +387,20 @@ func (s *Scheduler) IsLatched(accountID int64) bool {
 	}
 	v := s.view.Load()
 	if v == nil {
-		return s.latch.IsLatched(accountID, "")
+		return s.latch.IsLatched(accountID, "", 0)
 	}
 	if as, ok := v.Account(accountID); ok {
-		fp, err := candidateFingerprint(&as.static.Load().acc)
+		av := as.static.Load()
+		if av == nil {
+			return false
+		}
+		fp, err := candidateFingerprint(&av.acc)
 		if err != nil {
 			return false
 		}
-		return s.latch.IsLatched(accountID, fp)
+		return s.latch.IsLatched(accountID, fp, av.acc.IdentityRevision)
 	}
-	return s.latch.IsLatched(accountID, "")
+	return s.latch.IsLatched(accountID, "", 0)
 }
 
 func (s *Scheduler) LatchStore() *latch.LatchStore { return s.latch }
@@ -394,16 +416,29 @@ func runtimeStatusFor(a *domain.Account) domain.AccountStatus {
 	return domain.StatusActive
 }
 
+// 叶复用的判据 = staticKeyOf(old) == staticKeyOf(new)，即「叶上被消费的事实是否变了」。
+//
+// 这里曾有一个候选设计：让叶对象身份**永久稳定**、只原子换 static 指针。已证伪——
+// 在途计划的有效性检查（attempt_plan_exec.go:hasStaticChange 取当前叶计划摘要）
+// 必须能区分「决策输入变了」与「只是载荷变了」：前者跳过该账号，后者继续
+// 预留（spec §5.7(b)「态 2」）。若叶指针永不改变，任何 generation 变化都直接
+// ErrAttemptsExhausted（attempt_plan_reservation.go:106）⇒ 在途 plan **永不能续跑**，
+// 比「不复用」更糟。故叶身份必须随「消费面是否变化」而动。
+//
+// 由此 staticKey 的字段集判据是「消费面 ⊆ 键字段集」：**凡从叶消费的事实
+// 都必须入键**，凭据值（含 OAuth token）亦然——否则凭据轮转后键判等、复用旧叶、
+// 上游用旧令牌（实测 TestInvalidateAccountReloadsExt）。而「token 刷新不该作废
+// 在途计划」由 planKey 承担：**两件事不共用一个比较**。
+
 // buildSnapshots 构建全量快照：**每账号一个共享实例**——多组账号在多个组
-// 快照中引用同一实例（O2 评审实证修复）。发布后 leaves never mutate；
+// 快照中引用同一实例（评审实证修复）。发布后 leaves never mutate；
 // 变更账号分配全新 immutable leaf，共享 separate runtime/concurrency state，
 // old root stable。oldByID 来自旧 StaticView 的 byID（持 publisher.mu 读取安全）。
-func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[int64]*accountSnapshot) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
+func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSnapshot) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
 	// First pass: collect per-account group membership and latest Account object.
 	type accInfo struct {
 		acc      *domain.Account
 		groupIDs []int64
-		firstGID int64
 	}
 	infoMap := make(map[int64]*accInfo)
 	for gid, accs := range m {
@@ -411,27 +446,34 @@ func buildSnapshots(m map[int64][]*domain.Account, defaultMax int, oldByID map[i
 			if inf, ok := infoMap[a.ID]; ok {
 				inf.groupIDs = append(inf.groupIDs, gid)
 			} else {
-				infoMap[a.ID] = &accInfo{acc: a, groupIDs: []int64{gid}, firstGID: gid}
+				infoMap[a.ID] = &accInfo{acc: a, groupIDs: []int64{gid}}
 			}
 		}
 	}
 	byID := make(map[int64]*accountSnapshot, len(infoMap))
 	for id, inf := range infoMap {
 		a := inf.acc
-		av := &snapshotStatic{acc: *a, tpl: a.Template, gid: inf.firstGID, groupIDs: append([]int64(nil), inf.groupIDs...)}
-		if a.MaxConcurrency <= 0 {
-			av.acc.MaxConcurrency = defaultMax
-		}
+		// gid 必须是**确定性**派生：它随快照进入事件投递归组与规则事件
+		// （scheduler.go:975 groupIDPtr(av.eventGID())）。此前取「首个出现组」=
+		// map 迭代序首元素，同一份 DB 数据在不同进程/不同重载下可得不同
+		// gid —— 组归属是静态事实，不得有这种自由度。多组账号取最小
+		// 组 ID（min 与迭代序无关，且与组集合一一对应）。
+		// 入快照的账号 max_concurrency 由写面保证 ≥1（创建默认 + 校验拒绝），
+		// 此处不再静默钳制——落库异常值应显形而非被快照掩盖。
+		av := &snapshotStatic{acc: *a, tpl: a.Template, groupIDs: append([]int64(nil), inf.groupIDs...)}
 		if old, exists := oldByID[id]; exists {
 			oldAv := old.static.Load()
-			sameBase := false
-			if oldAv != nil {
-				sameBase = (oldAv.acc.BaseURL == nil && av.acc.BaseURL == nil) || (oldAv.acc.BaseURL != nil && av.acc.BaseURL != nil && *oldAv.acc.BaseURL == *av.acc.BaseURL)
-			}
-			sameStatic := oldAv != nil && oldAv.acc.MaxConcurrency == av.acc.MaxConcurrency && oldAv.tpl == av.tpl && groupsEqual(oldAv.groupIDs, av.groupIDs) && sameBase && oldAv.acc.UpstreamKey == av.acc.UpstreamKey && oldAv.acc.Ext == av.acc.Ext && oldAv.acc.LifecycleRevision == av.acc.LifecycleRevision
+			// 静态事实比较经 staticKeyOf（值类型，`==` 算子）——此前的
+			// 手写布尔链含 `oldAv.tpl == av.tpl` 与 `oldAv.acc.Ext == av.Ext`
+			// 两处**指针比较**：tpl/Ext 每次重载都新建对象，地址恒不等，
+			// 故整条链恒假 ⇒ 复用分支从不命中，静态字段列表整体成为惰性
+			// 装饰。staticKeyOf 把切片/映射/指针事实一律折叠为规范序摘要，
+			// 结构上杜绝该缺陷（守卫见 static_key_test.go）。
+			//
+			sameStatic := oldAv != nil && staticKeyOf(oldAv) == staticKeyOf(av)
 			if sameStatic {
 				// 静态未变：runtime 整体保留（errRate/errCount/并发跨重载连续，
-				// A-2 M-4；status 唯一例外——failed_at 是持久事实，重载按
+				// ；status 唯一例外——failed_at 是持久事实，重载按
 				// failed_at 收敛，未失效账号的内存 disabled 不复活）。
 				rt := old.runtime
 				if curSt := rt.state.Load(); curSt != nil {
@@ -558,20 +600,20 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 	return routes
 }
 
-// InvalidateGroup 组级定向重载（O2 接线矩阵：账号变更 → 受影响组）。与全量
+// InvalidateGroup 组级定向重载（接线矩阵：账号变更 → 受影响组）。与全量
 // reload 同一"每账号共享实例"纪律：重载组的新实例同时替换 byID 与其账号的
 // 其它组引用——Select（经组路由）与 Release（经 byID）必须命中同一计数器，
-// 否则多组账号并发计数分裂漂移 → 槽位假满（O2 实证修复）。账号从组移除且
+// 否则多组账号并发计数分裂漂移 → 槽位假满（实证修复）。账号从组移除且
 // 不再属于任何组 → 从 byID 移除；仍属其它组 → 保留实例并摘除本组引用。
 // 新静态根基于最新 staged-or-published 根合并后 stage 为 pending（原子发布：
 // 编译车道发布配对），已发布的完整 pair 在此期间保持可见。
 // 静态字段（含 groupIDs）在 snapshotStatic 不可变视图中：写经 publisher.mu +
 // 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
-// （发布收集仍持 publisher.mu——评审 M-1 纪律，无锁外裸读）。
+// （发布收集仍持 publisher.mu——纪律，无锁外裸读）。
 func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
-	// v5-C1: refresh-first baseline (never after — see refreshProbeBaseline).
+	// refresh-first baseline (never after — see refreshProbeBaseline).
 	s.refreshProbeBaseline(context.Background())
 	accs, err := s.loader.LoadGroupAccounts(context.Background(), groupID)
 	if err != nil {
@@ -594,8 +636,8 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		byID = map[int64]*accountSnapshot{}
 	}
 	// byID 兼作复用查询源（oldByID）：组级重载同样复用旧实例——errRate/errCount
-	// 跨组级 NOTIFY 重载保留（A-2 M-4），静态字段 DB 权威同步。持 publisher.mu 读取安全。
-	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, s.cfg.DefaultMaxConcurrency, byID)
+	// 跨组级 NOTIFY 重载保留，静态字段 DB 权威同步。持 publisher.mu 读取安全。
+	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, byID)
 	newAccs := gs[groupID].accounts
 	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
 	// 避免组级重载后 routes 为 nil（编译车道枚举域断裂）。
@@ -610,10 +652,10 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	}
 	// 从组移除的账号（旧组有、新组无）：仍属其它组 → 保留实例并摘本组引用；
 	// 已不属于任何组 → 从 byID 删除（其它组引用随实例保留/删除，路由无需重建）。
-	// 评审 M-2：先建 新组账号ID 索引再单遍扫描——嵌套循环对 50k 大组批量删
+	// 先建 新组账号ID 索引再单遍扫描——嵌套循环对 50k 大组批量删
 	// 25k 是 ≈1.25e9 次比较 ≈1s 停顿（去抖单 goroutine 内拉大所有失效延迟/
 	// 新用户 402 窗口），索引后 O(旧组大小)。
-	// v5-C2: staged groups bound the scoped fire — the reloaded group plus
+	// staged groups bound the scoped fire — the reloaded group plus
 	// every other group sharing its accounts (their snapshots are rebuilt
 	// with the new leaves, so their routes must recompute too).
 	scopeGroups := []int64{groupID}
@@ -635,7 +677,11 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 				continue
 			}
 			// Changed account gets new immutable static leaf sharing separate runtime, old root stable.
-			newStatic := &snapshotStatic{acc: ost.acc, tpl: ost.tpl, gid: ost.gid, groupIDs: newGids}
+			// gid 必须随 groupIDs 一起重派生：组被移除后，旧 gid 可能已不在
+			// newGids 中（原 gid 恰为被移除组，且是当时的最小值）——
+			// 沿用 ost.gid 会让 gid ∉ groupIDs，破坏「gid = min(groupIDs)」
+			// 不变量，事件投递归组会指向一个该账号已不属于的组。
+			newStatic := &snapshotStatic{acc: ost.acc, tpl: ost.tpl, groupIDs: newGids}
 			newLeaf := &accountSnapshot{accountID: ost.acc.ID, runtime: os.runtime}
 			newLeaf.static.Store(newStatic)
 			newByID[ost.acc.ID] = newLeaf
@@ -667,7 +713,7 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	}
 	// 新实例替换 byID + 其它组引用（多组账号：旧实例在其它组路由中的位置换成
 	// 新实例并重建该组路由——共享实例纪律；单组账号 otherGids 为空，零开销）。
-	// 评审 M-2：其它组引用替换同禁嵌套扫描——每其它组先建 账号ID→位置 索引
+	// 其它组引用替换同禁嵌套扫描——每其它组先建 账号ID→位置 索引
 	// （O(该组大小)），替换 O(1)，总量 O(受影响组账号和)。
 	type ogRef struct {
 		gs  *groupSnapshot
@@ -723,13 +769,13 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 	}
 	sv := newStaticView(newM, newByID)
 	s.publisher.stageLocked(sv)
-	// v5-C1/C2: this staging touches exactly scopeGroups — the lane recomputes
+	// this staging touches exactly scopeGroups — the lane recomputes
 	// only their routes. Scope-first, then wake.
 	s.enqueueCompileScope(scopeGroups, nil, scopeCauseGroup)
 	s.RequestCompile()
 }
 
-// InvalidateAccount 单账号快照失效（SDK 接入 T5 §1 P3-3——轮转回写后同步
+// InvalidateAccount 单账号快照失效（SDK 接入 §1——轮转回写后同步
 // AccountExt 内存快照：下个会话重载新凭据，避免旧令牌 401 额外往返）。复用
 // 既有组级定向重载（InvalidateGroup——账号所属各组并集去重；旋转低频事件，
 // 组级重载成本可接受）。快照外账号（已移除/未知）→ no-op。与失效上报不同
@@ -753,6 +799,22 @@ func (s *Scheduler) InvalidateAccount(accountID int64) {
 		seen[g] = struct{}{}
 		s.InvalidateGroup(g)
 	}
+}
+
+// minGID 返回组 ID 集合的最小值——snapshotStatic.gid 的确定性派生。
+// 空集合返回 0（不变量：账号至少属于一个组，调用点已保证非空；
+// 0 作为哨兵，不会与真实组 ID 混淆——组 ID 为数据库自增正数）。
+func minGID(ids []int64) int64 {
+	if len(ids) == 0 {
+		return 0
+	}
+	m := ids[0]
+	for _, v := range ids[1:] {
+		if v < m {
+			m = v
+		}
+	}
+	return m
 }
 
 func groupsEqual(a, b []int64) bool {
@@ -795,7 +857,7 @@ func (s *Scheduler) Loader() Loader { return s.loader }
 // InvalidateAllSync 同步全量重载（测试与启动用）。
 func (s *Scheduler) InvalidateAllSync() error { return s.reload(context.Background()) }
 
-// InvalidateAllSyncCtx 同步全量重载（响应 ctx 取消；#14 T3a 评审 M-2：notify
+// InvalidateAllSyncCtx 同步全量重载（响应 ctx 取消；notify
 // Dispatcher.FullRefresh 用——断线重连的全量刷新不得耗尽停机预算）。
 func (s *Scheduler) InvalidateAllSyncCtx(ctx context.Context) error { return s.reload(ctx) }
 
@@ -878,7 +940,7 @@ func (s *Scheduler) ReleaseSelection(sel *Selection) {
 	}
 }
 
-// MarkResult 请求结果回流：禁用守卫（同步短路）+ 条件投递（C1）→ 规则引擎异步处理。
+// MarkResult 请求结果回流：禁用守卫（同步短路）+ 条件投递→ 规则引擎异步处理。
 // 动作应用全部由规则命中后的 typed sink 完成（本方法不触碰状态）。
 // kind 直接收 rule.Kind（单一 kind 概念——scheduler 不再有第二套枚举；连接级/
 // 5xx 分流由调用点 RuleKindOf 完成）。
@@ -897,7 +959,7 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 	if a.statePtr().status == domain.StatusDisabled {
 		return
 	}
-	// 条件投递（C1）：规则表无 kind=nil/ok 规则时 ok 事件不投递
+	// 条件投递：规则表无 kind=nil/ok 规则时 ok 事件不投递
 	// （无恢复规则时成功结果不影响任何状态，省队列与处理开销）。
 	if kind == rule.KindOK && !s.rule.NeedsOKEvents() {
 		return
@@ -909,22 +971,22 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 	av := a.static.Load() // 静态字段视图一次取用（评审 Critical 修复）
 	fp, _ := candidateFingerprint(&av.acc)
 	ev := rule.Event{
-		AccountID:            accountID,
-		TemplateID:           av.acc.TemplateID,
-		GroupID:              groupIDPtr(av.gid),
-		ExpectedRevision:     av.acc.LifecycleRevision,
-		Kind:                 kind,
-		HTTPStatus:           hp,
-		Model:                model,
-		ErrorMessage:         errMsg,
-		ResetAt:              resetAt,
-		OccurredAt:           s.timeNow(),
-		CandidateFingerprint: fp,
+		AccountID:                accountID,
+		TemplateID:               av.acc.TemplateID,
+		GroupID:                  groupIDPtr(av.eventGID()),
+		ExpectedIdentityRevision: av.acc.IdentityRevision,
+		Kind:                     kind,
+		HTTPStatus:               hp,
+		Model:                    model,
+		ErrorMessage:             errMsg,
+		ResetAt:                  resetAt,
+		OccurredAt:               s.timeNow(),
+		CandidateFingerprint:     fp,
 	}
 	s.rule.Enqueue(ev)
 }
 
-// FailAccount 账号失效摘除（SDK 接入 T1——统一失效回调处理链第二步，
+// FailAccount 账号失效摘除（SDK 接入——统一失效回调处理链第二步，
 // sdkbridge.HandleFailure 调用；冷面低频）：快照置 StatusDisabled（运行时
 // 摘除）。持久化事实 = failed_at（同链第一步 FailAccountCAS/SetAccountFailed
 // 已落库；重启快照重载经 runtimeStatusFor 仍摘除——恢复唯一入口 /recover
@@ -972,7 +1034,7 @@ func (s *Scheduler) failureEvent(accountID int64, kind rule.Kind, errMsg string)
 	}
 	av := a.static.Load()
 	fp, _ := candidateFingerprint(&av.acc)
-	return rule.Event{AccountID: accountID, TemplateID: av.acc.TemplateID, GroupID: groupIDPtr(av.gid), Kind: kind, ErrorMessage: errMsg, CandidateFingerprint: fp, ExpectedRevision: av.acc.LifecycleRevision}
+	return rule.Event{AccountID: accountID, TemplateID: av.acc.TemplateID, GroupID: groupIDPtr(av.eventGID()), Kind: kind, ErrorMessage: errMsg, CandidateFingerprint: fp, ExpectedIdentityRevision: av.acc.IdentityRevision}
 }
 
 // RuleKindOf 连接级/5xx 事件分流（单点 helper，分流外移到调用点——9 处
@@ -1006,7 +1068,7 @@ func (s *Scheduler) Classify(ev rule.Event) (then domain.RuleThen, punish bool) 
 	}
 	av := a.static.Load() // 静态字段视图一次取用（评审 Critical 修复）
 	ev.TemplateID = av.acc.TemplateID
-	ev.GroupID = groupIDPtr(av.gid)
+	ev.GroupID = groupIDPtr(av.eventGID())
 	return s.rule.Classify(ev)
 }
 

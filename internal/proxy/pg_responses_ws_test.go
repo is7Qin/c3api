@@ -37,7 +37,7 @@ import (
 const wsPGTestSchema = "proxy_ws_test"
 
 // TestResponsesWSBillingPG resp-ws 全链路计费落库：WS 请求 → usage 嗅探 →
-// finish → applyBilling（价格快照 + 倍率）→ routeLog 单写点（F2，spec §一）→
+// finish → applyBilling（价格快照 + 倍率）→ routeLog 单写点（spec §一）→
 // rec → InsertBatch 落库 → 断言 usage_logs 5 计数 + cost + 格式 + Billed 出生标记。
 // 5 计数：input 3 / output 5 / total 8 / cache_read 1 / cache_creation 3；
 // cost = 3×1e7 + 5×2e7 每 M 毫分 = 130 毫分（缓存分量无价不参与计费）。
@@ -67,7 +67,7 @@ func TestResponsesWSBillingPG(t *testing.T) {
 	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
 
 	// 计费钩子：价格快照 + 余额快照（用户 1 余额充足）；单写点：billable 行经
-	// rec → repos.Usages 直落 usage_logs（F2：无 flusher 分流）。
+	// rec → repos.Usages 直落 usage_logs（无 flusher 分流）。
 	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
 	require.NoError(t, bal.Reload(ctx), "余额快照加载")
 	rec := usage.New(usage.UsageConfig{
@@ -104,7 +104,7 @@ func TestResponsesWSBillingPG(t *testing.T) {
 	// rec 排空（InsertBatch 落库）后断言 usage_logs 行。
 	// usage_logs 瘦身（分表设计）：status_code 已移除（错误审计归 err_logs）——
 	// 成功计费行 status 语义由 error_type=none 承载。
-	require.NoError(t, p.rec.Close(ctx)) // F2 单写点：排空 proxy 内部 rec（pending 直插真实 PG）
+	require.NoError(t, p.rec.Close(ctx)) // 单写点：排空 proxy 内部 rec（pending 直插真实 PG）
 	var (
 		it, ot, tt, cr, cc, cost int64
 		format, et, model        string
@@ -184,7 +184,7 @@ func TestResponsesWSBillingTierPG(t *testing.T) {
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
-	require.NoError(t, p.rec.Close(ctx)) // F2 单写点：排空 proxy 内部 rec（pending 直插真实 PG）
+	require.NoError(t, p.rec.Close(ctx)) // 单写点：排空 proxy 内部 rec（pending 直插真实 PG）
 	var cost int64
 	var billingTier string
 	err = db.QueryRowContext(ctx, `SELECT cost, billing_tier

@@ -19,7 +19,7 @@ import (
 // 0~100000 显式写入；超界 → 400。protocolConverts：转换方向集合（缺省 nil =
 // 不转换）——off 元素归一剔除（空/仅 off → 空数组）；非法方向/重复方向/
 // 同客户端格式多方向 → 400。创建后 Multipliers()：新组倍率须即刻进余额倍率
-// 快照（缺失 = ×1 计费窗口，评审 M-1 组倍率矩阵——组创建即倍率设定）。
+// 快照（缺失 = ×1 计费窗口，组倍率矩阵——组创建即倍率设定）。
 func (s *Service) CreateGroup(ctx context.Context, name string, visibility domain.GroupVisibility, priceMultiplier *int, protocolConverts []domain.ProtocolConvert) (*domain.Group, error) {
 	if name == "" {
 		return nil, ErrInvalidInput
@@ -59,7 +59,7 @@ func (s *Service) GetGroup(ctx context.Context, id int64) (*domain.Group, error)
 	return g, nil
 }
 
-// getGroupLive 取未软删的组（F3 单点：建 key/授 assignment 三调用点共用——
+// getGroupLive 取未软删的组（建 key/授 assignment 三调用点共用——
 // repo GetGroup 不过滤 deleted_at，软删组不可用的过滤在 service 层做，管理面
 // GET 详情/GetGroupAssignments 仍可查已删项）。
 func (s *Service) getGroupLive(ctx context.Context, id int64) (*domain.Group, error) {
@@ -98,18 +98,18 @@ func (s *Service) UpdateGroup(ctx context.Context, g *domain.Group) (*domain.Gro
 	if err != nil {
 		return nil, mapRepoErr(err) // 改名撞已有 name → ErrConflict（409）
 	}
-	// O2 组倍率矩阵：倍率变更 → 余额倍率快照定向刷新（名字/可见性变更不触发
+	// 组倍率矩阵：倍率变更 → 余额倍率快照定向刷新（名字/可见性变更不触发
 	// 任何快照，此处保守一并标记——去抖窗口内一次小表单查，可忽略）。
 	// Keys：组更新（含 protocol_convert 变更）→ 旧 key 的 auth 快照全量 Reload
-	// 即时收敛（A-2 姊妹路径；CreateGroup 不加——组创建时无 key，Keys reload
-	// 空转，组创建后建 key 的即时性由 A-2 增量注册保证）。
+	// 即时收敛（姊妹路径；CreateGroup 不加——组创建时无 key，Keys reload
+	// 空转，组创建后建 key 的即时性由增量注册保证）。
 	s.inv.Multipliers()
 	s.publish(ctx, notify.Change{Multipliers: true, Keys: true})
 	return updated, nil
 }
 
 // DeleteGroup 删除组：删组前校验组内账号（含账号 → 409 "group has accounts"，
-// F1 契约修正——软删 UPDATE 无 FK 约束，不再依赖仓库错误兜底）、前置清理组内
+// 契约修正——软删 UPDATE 无 FK 约束，不再依赖仓库错误兜底）、前置清理组内
 // 全部 key（key.group_id 外键约束；Auth 增量清理），再删组。key 清理与组删除
 // 非同一事务——组删除失败时 key 已删，重试删除即可（key 被删组未删的中间态
 // 不提供服务——Auth 快照已移除）。
@@ -132,7 +132,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id int64) error {
 	if err := s.store.DeleteGroup(ctx, id); err != nil {
 		return mapRepoErr(err) // 竞态窗口缺 id → 404（前置 Get 已拦截常见路径）
 	}
-	// O2：组删除后倍率快照清理（陈旧条目无害；保守标记——组变更统一走倍率
+	// 组删除后倍率快照清理（陈旧条目无害；保守标记——组变更统一走倍率
 	// 定向刷新）。组内账号删除前已显式校验（含账号 → 409，整批/单删同语义）
 	// → 调度器快照不受组删除影响。
 	// Keys：组删除经 Auth.Delete 移除组内全部 key——其余实例快照需全量覆盖
@@ -142,7 +142,7 @@ func (s *Service) DeleteGroup(ctx context.Context, id int64) error {
 	return nil
 }
 
-// checkGroupEmpty 组内账号校验（F1）：LoadGroupAccounts 非空 → 409（含账号组
+// checkGroupEmpty 组内账号校验：LoadGroupAccounts 非空 → 409（含账号组
 // 删除会让账号静默脱离路由——显式拒绝；已删账号不过滤进结果，不阻断）。
 func (s *Service) checkGroupEmpty(ctx context.Context, groupID int64) error {
 	accs, err := s.store.LoadGroupAccounts(ctx, groupID)
@@ -159,7 +159,7 @@ func (s *Service) DeleteGroupsBatch(ctx context.Context, ids []int64) error {
 	if err := validateIDs(ids); err != nil {
 		return err
 	}
-	// R1 预扫描：先全量校验（所有组先验完存在性 + 组内账号，任一含账号 →
+	// 预扫描：先全量校验（所有组先验完存在性 + 组内账号，任一含账号 →
 	// 整批拒绝 409），后开始删 key——间插校验会在中途拒绝时制造"组存 key 亡"
 	// 的不可恢复中间态。
 	for _, id := range ids {

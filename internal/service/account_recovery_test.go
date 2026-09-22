@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -57,16 +58,15 @@ func TestRecoverAccountAuditLog(t *testing.T) {
 	logger, read := recoveryTestLogger(t)
 	svc := &Service{store: fs, inv: &invRecorder{}, log: logger}
 
-	// PUT 改名 → 失效字段保持、无恢复留痕（恢复唯一入口 = fenced recover）
-	cur, err := svc.GetAccount(ctx, created.ID)
+	// 改名经唯一写点 → 失效字段保持、无恢复留痕（恢复唯一入口 = fenced recover）
+	_, err = svc.PatchAccount(ctx, created.ID, repository.AccountPatch{Name: strPtr("renamed")}, nil)
 	require.NoError(t, err)
-	cur.Name = "renamed"
-	_, err = svc.UpdateAccount(ctx, cur)
-	require.NoError(t, err)
-	require.NotContains(t, read(), "account recovered", "PUT 不是恢复入口，不留痕")
+	require.NotContains(t, read(), "account recovered", "改名不是恢复入口，不留痕")
 
-	// fenced recover → 清失效 + 审计留痕
-	got, err := svc.RecoverAccount(ctx, created.ID, cur.LifecycleRevision)
+	// fenced recover → 清失效 + 审计留痕（配置写入已推进 C，故按新 C 恢复）
+	afterRename, err := svc.GetAccount(ctx, created.ID)
+	require.NoError(t, err)
+	got, err := svc.RecoverAccount(ctx, created.ID, afterRename.LifecycleRevision)
 	require.NoError(t, err)
 	require.Nil(t, got.FailedAt, "recover 清 failed_at")
 	logs := read()

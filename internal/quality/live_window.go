@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Live window seam (incident-wiring Phase 2): absolute per-minute rows not
+// Live window seam (incident-wiring): absolute per-minute rows not
 // yet in PG. Two disjoint parts:
 //
 //  1. pendingQuality rows (converged-cell exports + external/hand rows):

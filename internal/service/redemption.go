@@ -192,7 +192,7 @@ func (s *Service) DeactivateCode(ctx context.Context, id int64) error {
 // DeactivateCodesBatch 批量失效（/api/admin/redemption-codes/batch-deactivate，
 // 决策 6）：validateIDs → 逐 id 先查（缺失 id → 404 含缺失详情，对齐批量删除
 // 范式）→ DeactivateCodes 单事务（已 disabled no-op）→ 返回新失效数。
-// 先查后失效窗口竞态可接受：失效不新增行，检查到的 id 不会消失（评审 M-2）。
+// 先查后失效窗口竞态可接受：失效不新增行，检查到的 id 不会消失。
 func (s *Service) DeactivateCodesBatch(ctx context.Context, ids []int64) (int64, error) {
 	if err := validateIDs(ids); err != nil {
 		return 0, err
@@ -205,7 +205,7 @@ func (s *Service) DeactivateCodesBatch(ctx context.Context, ids []int64) (int64,
 	return s.store.DeactivateCodes(ctx, ids)
 }
 
-// applyFunc 兑换资源应用函数：只经 tx 面（repository.TxStore）操作——评审 I-1：
+// applyFunc 兑换资源应用函数：只经 tx 面（repository.TxStore）操作：
 // 任一步失败（含 use 冲突/计数用尽）整体回滚（余额/并发不变）。
 type applyFunc func(ctx context.Context, tx repository.TxStore, userID int64, c *domain.RedemptionCode) error
 
@@ -216,13 +216,13 @@ var appliers = map[domain.RedemptionType]applyFunc{
 	domain.RedemptionTypeTempBalance: applyTempBalance,
 }
 
-// applyBalance 余额累加：users.balance += value（原子 SQL，无读改写——评审 I-1）。
+// applyBalance 余额累加：users.balance += value（原子 SQL，无读改写）。
 func applyBalance(ctx context.Context, tx repository.TxStore, userID int64, c *domain.RedemptionCode) error {
 	return tx.UpdateUserBalance(ctx, userID, c.Value)
 }
 
 // applyConcurrency 并发上限（决策 2）：0 = 不限特判——当前 0 直接设为 value，
-// 非 0 累加（0 语义在 SQL CASE 内，单语句无读改写——评审 I-1）。
+// 非 0 累加（0 语义在 SQL CASE 内，单语句无读改写）。
 func applyConcurrency(ctx context.Context, tx repository.TxStore, userID int64, c *domain.RedemptionCode) error {
 	return tx.UpdateUserMaxConcurrency(ctx, userID, int(c.Value))
 }
@@ -240,11 +240,11 @@ func applyTempBalance(ctx context.Context, tx repository.TxStore, userID int64, 
 
 // Redeem 兑换（/api/user/redemptions POST，决策 7/10-12 编排）：
 // 单事务内按序——① GetByCode 定位码（不存在 → 400 invalid code）；
-// ② GetUse 先查本用户已兑换（评审 M-1：重复请求稳定 409，不因码状态漂移）；
+// ② GetUse 先查本用户已兑换（重复请求稳定 409，不因码状态漂移）；
 // ③ 码状态检查（disabled/过期 → 400 invalid code，统一不泄露具体原因）；
-// ④ applier 应用资源（只经 tx 面，失败整体回滚——评审 I-1）；
+// ④ applier 应用资源（只经 tx 面，失败整体回滚）；
 // ⑤ CreateUse 审计 + IncrementUsed 条件递增（false = 用尽 → 400 整体回滚，
-// 防并发超卖——评审 I-2）。提交成功后 invalidate() 刷新 auth 快照（决策 8）。
+// 防并发超卖）。提交成功后 invalidate() 刷新 auth 快照（决策 8）。
 func (s *Service) Redeem(ctx context.Context, code string, userID int64) (*domain.RedemptionApply, error) {
 	var apply *domain.RedemptionApply
 	err := s.store.WithTx(ctx, func(tx repository.TxStore) error {
@@ -255,7 +255,7 @@ func (s *Service) Redeem(ctx context.Context, code string, userID int64) (*domai
 			}
 			return err
 		}
-		// 先查 use（评审 M-1）：本用户已兑换 → 409（码随后失效也仍回 409，
+		// 先查 use：本用户已兑换 → 409（码随后失效也仍回 409，
 		// 不与"已兑换"事实矛盾）
 		if _, err := tx.GetUse(ctx, c.ID, userID); err == nil {
 			return fmt.Errorf("%w: already redeemed", ErrConflict)
@@ -286,7 +286,7 @@ func (s *Service) Redeem(ctx context.Context, code string, userID int64) (*domai
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("%w: invalid code", ErrInvalidInput) // 用尽（评审 I-2）
+			return fmt.Errorf("%w: invalid code", ErrInvalidInput) // 用尽
 		}
 		apply = &domain.RedemptionApply{Type: c.Type, Value: c.Value, ResourceExpiresAt: c.ResourceExpiresAt}
 		return nil
@@ -294,7 +294,7 @@ func (s *Service) Redeem(ctx context.Context, code string, userID int64) (*domai
 	if err != nil {
 		return nil, err
 	}
-	s.inv.Users() // 余额/并发已变更 → Auth + 余额快照刷新（O2 矩阵：用户面变更，去抖窗口内全量）
+	s.inv.Users() // 余额/并发已变更 → Auth + 余额快照刷新（矩阵：用户面变更，去抖窗口内全量）
 	s.publish(ctx, notify.Change{Users: true})
 	return apply, nil
 }

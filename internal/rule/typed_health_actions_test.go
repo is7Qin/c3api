@@ -270,7 +270,7 @@ func TestRuleFailAccount_QueueFullWriteFailure(t *testing.T) {
 	e.rulesMu.Lock()
 	e.rules = []compiledRule{{Rule: domain.Rule{Name: "fail-acc", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{FailAccount: true}}}}
 	e.rulesMu.Unlock()
-	e.HandleEvent(context.Background(), Event{AccountID: 42, Kind: Kind5xx, OccurredAt: at(0), ExpectedRevision: 7})
+	e.HandleEvent(context.Background(), Event{AccountID: 42, Kind: Kind5xx, OccurredAt: at(0), ExpectedIdentityRevision: 7})
 	require.Equal(t, 1, sink.countFail(), "local FailAccount must be applied immediately")
 	require.Equal(t, 1, e.PersistQueued())
 	// Flush processes persist queue and counts failure
@@ -278,7 +278,7 @@ func TestRuleFailAccount_QueueFullWriteFailure(t *testing.T) {
 	require.Equal(t, int64(1), e.PersistFailures())
 	require.Equal(t, 0, e.PersistQueued(), "flushed")
 	// Second failure increments again
-	e.HandleEvent(context.Background(), Event{AccountID: 42, Kind: Kind5xx, OccurredAt: at(1), ExpectedRevision: 8})
+	e.HandleEvent(context.Background(), Event{AccountID: 42, Kind: Kind5xx, OccurredAt: at(1), ExpectedIdentityRevision: 8})
 	e.Flush(context.Background())
 	require.Equal(t, int64(2), e.PersistFailures())
 }
@@ -392,12 +392,12 @@ func TestRuleFailAccount_BasicAndExpectedRevision(t *testing.T) {
 	e.rulesMu.Lock()
 	e.rules = []compiledRule{{Rule: domain.Rule{Name: "fail", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{FailAccount: true}}}}
 	e.rulesMu.Unlock()
-	ev := Event{AccountID: 99, Kind: Kind5xx, OccurredAt: at(0), ExpectedRevision: 42}
+	ev := Event{AccountID: 99, Kind: Kind5xx, OccurredAt: at(0), ExpectedIdentityRevision: 42}
 	e.HandleEvent(context.Background(), ev)
 	require.Equal(t, 1, sink.countFail())
 	require.Equal(t, int64(1), e.MatchedActions())
 	// verify sink received expected revision via event copy
 	sink.mu.Lock()
-	require.Equal(t, int64(42), sink.fails[0].Event.ExpectedRevision)
+	require.Equal(t, int64(42), sink.fails[0].Event.ExpectedIdentityRevision)
 	sink.mu.Unlock()
 }

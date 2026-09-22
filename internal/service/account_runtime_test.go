@@ -15,7 +15,7 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-// fakeRuntimeProvider 小 fake（评审 O-2——service 包既有测试全部 sched=nil
+// fakeRuntimeProvider 小 fake（service 包既有测试全部 sched=nil
 // 构造，本测试首建注入先例；接口仅 Runtime 用，Runtimes 零值实现）。
 type fakeRuntimeProvider struct {
 	ri scheduler.RuntimeInfo

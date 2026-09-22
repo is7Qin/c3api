@@ -4,7 +4,7 @@
 
 package proxy
 
-// Todo 3（model-mapping-mode）：用量身份（UsageLog.MappedModel）与缺价预检模型
+// （model-mapping-mode）：用量身份（UsageLog.MappedModel）与缺价预检模型
 // 的逐行接线测试。规格 §3 identity matrix：
 //   - 非 Search 选中尝试：日志 MappedModel = Selection.LogMappedModel（implicit、
 //     explicit identity、无映射均为空；explicit 非 identity = 目标）；
@@ -268,7 +268,7 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 		p.sched.Loader().(noopLoader).accs[10][0].UpstreamKey = "sk-a1"
 		tpl2 := mappingTpl(up.URL, explicitC)
 		tpl2.ID = 2
-		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}
 		p.sched.Loader().(noopLoader).accs[10] = append(p.sched.Loader().(noopLoader).accs[10], acc2)
 		require.NoError(t, p.sched.InvalidateAllSync())
 		publishTestRoutes(t, p.sched)
@@ -322,7 +322,7 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 		p.sched.Loader().(noopLoader).accs[10][0].UpstreamKey = "sk-a1"
 		tpl2 := mappingTpl(up.URL, implicitB)
 		tpl2.ID = 2
-		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}
 		p.sched.Loader().(noopLoader).accs[10] = append(p.sched.Loader().(noopLoader).accs[10], acc2)
 		require.NoError(t, p.sched.InvalidateAllSync())
 		publishTestRoutes(t, p.sched)
@@ -360,7 +360,7 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 		p := newTestProxyTplTimeoutLogs(t, mappingTpl(up.URL, implicitB), 1, true, 30*time.Second, store, nil)
 		tpl2 := mappingTpl(up.URL, implicitD)
 		tpl2.ID = 2
-		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}
 		p.sched.Loader().(noopLoader).accs[10] = append(p.sched.Loader().(noopLoader).accs[10], acc2)
 		require.NoError(t, p.sched.InvalidateAllSync())
 		publishTestRoutes(t, p.sched)
@@ -401,7 +401,7 @@ func TestFailoverMappingIdentityFresh(t *testing.T) {
 		p.sched.Loader().(noopLoader).accs[10][0].UpstreamKey = "sk-a1"
 		tpl2 := mappingTpl(up.URL, explicitC)
 		tpl2.ID = 2
-		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4}
+		acc2 := &domain.Account{ID: 2, TemplateID: 2, Template: tpl2, UpstreamKey: "sk-a2", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4}
 		p.sched.Loader().(noopLoader).accs[10] = append(p.sched.Loader().(noopLoader).accs[10], acc2)
 		require.NoError(t, p.sched.InvalidateAllSync())
 		publishTestRoutes(t, p.sched)

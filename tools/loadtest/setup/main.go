@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// setup 构造多租户压测数据（Phase 3a 数据模型 + Phase 5 计费字段 + intelligent
+// setup 构造多租户压测数据（数据模型 + 计费字段 + intelligent
 // routing 新契约）：模板（四格式 × 随机模型池 + loadtest 固定请求模型必含）→
 // 公开组 → 账号（分散模板/组/上游，可选采购成本倍率 + 共享缓存域）→ 用户（可选
 // 余额/并发区间）→ 逐个登录建 key（可选多 key/并发/额度区间），key 明文写文件
@@ -67,7 +67,7 @@ var (
 	billingOn   = flag.Bool("billing-enabled", false, "fill user balances (default 10-100 USD) + price the whole model pool (billing loadtest)")
 	// intelligent-routing 新契约（无旧 weight/status）：账号采购成本倍率 + 共享
 	// 缓存域 + typed 路由规则播种。
-	costMult     = flag.String("cost-multiplier", "0", "account upstream procurement cost multiplier random interval like 0.5-4 (1 = x1, cap 10; 0 = leave all at x1); applied via PUT /accounts/{id}/cost-multiplier")
+	costMult     = flag.String("cost-multiplier", "0", "account upstream procurement cost multiplier random interval like 0.5-4 (1 = x1, cap 10; 0 = leave all at x1); applied via PATCH /accounts/{id}")
 	cacheDomains = flag.Int("cache-domains", 0, "spread accounts over N shared cache domains (cache-<i>.loadtest round-robin; every 4th account stays private); 0 = all account-private")
 	routingRules = flag.Bool("routing-rules", false, "seed typed routing rules: window-429 account throttle (retry_after) + window-5xx fail_account (fatal drill)")
 )
@@ -250,9 +250,9 @@ func main() {
 	// 3) 账号 ×N：模板/组随机分配（必须解耦——若模板与组同用 i%N，组 g 只会
 	// 绑到单个模板，三格式请求在非对应组 404 "no account supports this
 	// request format"；随机化后每组含全格式模板账号，且每模板都分布到多组）。
-	// intelligent-routing 新契约：无 weight/status 旧字段；-cache-domains 在创建
-	// active 账号后经 fenced PUT 写共享域（每第 4 个留私有域对照），避免创建体
-	// 的显式生命周期字段触发 disabled 分支；-cost-multiplier 同样 fenced 更新。
+	// intelligent-routing 新契约：无 weight/status 旧字段；-cache-domains 与
+	// -cost-multiplier 都在创建后经账号配置唯一写面（PATCH /accounts/{id}）
+	// 一次原子落地（每第 4 个账号留私有域作对照）。
 	aStart := time.Now()
 	costMin, costMax := parseFloatRange(*costMult)
 	if *cacheDomains < 0 {
@@ -272,22 +272,23 @@ func main() {
 		}
 		var out acc
 		admin(http.MethodPost, "/api/admin/accounts", body, &out)
+		// 缓存域与采购倍率都并入账号配置唯一写面：一次 PATCH 原子落地
+		// （新写面没有独立的 cache-domain / cost-multiplier 端点）。
+		patch := map[string]any{}
 		if cacheDomain, ok := cacheDomainForAccount(i, *cacheDomains); ok {
-			var updated acc
-			admin(http.MethodPut, fmt.Sprintf("/api/admin/accounts/%d/cache-domain", out.ID), map[string]any{
-				"cache_domain": cacheDomain, "expected_revision": out.LifecycleRevision,
-			}, &updated)
-			out.LifecycleRevision = updated.LifecycleRevision
+			patch["cache_domain"] = cacheDomain
 		}
 		if costMax > 0 {
 			m := costMin
 			if costMax > costMin {
 				m = costMin + rng.Float64()*(costMax-costMin)
 			}
+			patch["upstream_cost_multiplier"] = m
+		}
+		if len(patch) > 0 {
 			var updated acc
-			admin(http.MethodPut, fmt.Sprintf("/api/admin/accounts/%d/cost-multiplier", out.ID), map[string]any{
-				"multiplier": m, "expected_revision": out.LifecycleRevision,
-			}, &updated)
+			admin(http.MethodPatch, fmt.Sprintf("/api/admin/accounts/%d", out.ID), patch, &updated)
+			out.LifecycleRevision = updated.LifecycleRevision
 		}
 	}
 	fmt.Printf("accounts: %d cost=%s cache-domains=%d (%s)\n", *accounts, *costMult, *cacheDomains, time.Since(aStart).Round(time.Millisecond))

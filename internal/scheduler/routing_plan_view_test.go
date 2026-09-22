@@ -33,7 +33,7 @@ func TestRoutingPlan_GenerationMatchesPublishedRoot(t *testing.T) {
 	plan = s.CurrentRoutingPlan()
 	require.Equal(t, s.View().Generation(), plan.Generation)
 	require.Len(t, plan.Routes, 1)
-	// v4-S2: the query key stays normalized; the projected Ref carries the
+	// the query key stays normalized; the projected Ref carries the
 	// interned per-route hex so the admin API bytes are unchanged.
 	rd, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIChat), "m")
 	require.True(t, ok)
@@ -71,7 +71,7 @@ func TestRoutingPlan_RouteOrderDeterministicAndLaneOrderPreserved(t *testing.T) 
 
 	plan := s.CurrentRoutingPlan()
 	require.Len(t, plan.Routes, 3)
-	// v4-S2: order compares on the normalized key; the interned hex rides the
+	// order compares on the normalized key; the interned hex rides the
 	// projected Refs (asserted non-empty below).
 	gotRefs := []RouteRef{plan.Routes[0].Ref, plan.Routes[1].Ref, plan.Routes[2].Ref}
 	for i := range gotRefs {
@@ -137,7 +137,7 @@ func TestRoutingPlan_CandidateMetadataMappingFingerprintQualityClass(t *testing.
 	cand := plan.Routes[0].Candidates[0]
 	require.Equal(t, int64(1), cand.AccountID)
 	require.Equal(t, int64(7), cand.TemplateID)
-	require.Equal(t, int64(1), cand.LifecycleRevision)
+	require.Equal(t, int64(1), cand.IdentityRevision)
 	require.Equal(t, 12345, cand.UpstreamCostMultiplierBp)
 	require.Equal(t, "resolved", cand.MappedModel)
 

@@ -618,7 +618,7 @@ export default function Rules() {
               {form.when.rows.map((r, i) => {
                 const meta = WHEN_FIELDS.find(f => f.key === r.field)
                 // 行内下拉按 kind 过滤（用户反馈：选事件类型后不该出现无关条件）；
-                // 越界行（kind 切换后字段不在过滤集）附加为额外选项保留——不丢行（评审 I-1）。
+                // 越界行（kind 切换后字段不在过滤集）附加为额外选项保留——不丢行。
                 const rowOptions = kindFilter(form.when.kind)
                 if (!rowOptions.some(f => f.key === r.field)) {
                   const cur = WHEN_FIELDS.find(f => f.key === r.field)

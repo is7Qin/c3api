@@ -20,7 +20,7 @@ func (s *Service) GetSettings(ctx context.Context) ([]*domain.Setting, error) {
 	return s.store.GetAllSettings(ctx)
 }
 
-// serviceTierPolicyKeys service_tier 转发策略 key → 值域（P3-7：从注册表
+// serviceTierPolicyKeys service_tier 转发策略 key → 值域（从注册表
 // PolicyValues 枚举域派生，消双处同步——注册表是唯一事实源，新增策略 key 只改
 // 注册表一处，此处随派生自动跟随；非法值 → 400，见 UpdateSetting）。
 var serviceTierPolicyKeys = func() map[string][]string {
@@ -54,7 +54,7 @@ func (s *Service) UpdateSetting(ctx context.Context, key, value string) (*domain
 		if err != nil {
 			return nil, ErrInvalidInput
 		}
-		// 值域护栏（A-P2-11）：注册表 Min/Max 是单一事实源——越界 → 400，
+		// 值域护栏：注册表 Min/Max 是单一事实源——越界 → 400，
 		// 与管理面 CreateUser/UpdateUser 负值拒绝语义一致；消费端零改动。
 		if def.Min != nil && n < *def.Min {
 			return nil, ErrInvalidInput
@@ -87,11 +87,11 @@ func (s *Service) UpdateSetting(ctx context.Context, key, value string) (*domain
 	s.reloadSettings(ctx)
 	// 本地即时重算走统一去抖通道：settings 快照已由上方 reloadSettings 同步
 	// 刷新（新 N 先入快照），KindSettings 触发 auth 快照全量 Reload（gate
-	// 预算按新 N 重算；≤200ms 去抖窗口与其余 Kind 一致）。#36 顺序不变量：
+	// 预算按新 N 重算；≤200ms 去抖窗口与其余 Kind 一致）。顺序不变量：
 	// settings 快照刷新必须先于 auth.Reload。远端实例由 NOTIFY → dispatcher.Apply
 	// 同步 ReloadSettings + scope 重载（保持）。
 	s.inv.Settings()
-	s.publish(ctx, notify.Change{Settings: true}) // 其余实例 settings 快照重载（#14 多实例）
+	s.publish(ctx, notify.Change{Settings: true}) // 其余实例 settings 快照重载（多实例）
 	return set, nil
 }
 
@@ -111,7 +111,7 @@ func (s *Service) ReloadSettings(ctx context.Context) error {
 }
 
 // reloadSettings 全量重载设置快照（New 初始化 + UpdateSetting 后调用）。
-// 失败 fail-safe（评审 M-1）：仅告警，保留旧快照/空快照继续——读快照缺失
+// 失败 fail-safe：仅告警，保留旧快照/空快照继续——读快照缺失
 // 按零值处理（与无配置现状行为一致），不阻断服务启动。
 func (s *Service) reloadSettings(ctx context.Context) {
 	if err := s.ReloadSettings(ctx); err != nil && s.log != nil {

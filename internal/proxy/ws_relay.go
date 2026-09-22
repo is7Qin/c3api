@@ -148,7 +148,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		}
 		relayCancel()
 	}
-	// relayRecover 三 goroutine 的 panic 收尾（F2 崩溃面：任一 goroutine panic
+	// relayRecover 三 goroutine 的 panic 收尾（崩溃面：任一 goroutine panic
 	// 未 recover → 杀整个进程）。记录**先于 exit()**（与 setErr→exit 正常路径
 	// 同序，spec 变更 2"错误槽 setErr + 取消对侧"）：编排在 <-upLoopDone 后读
 	// 槽——up-loop 的退出由本 goroutine exit 的取消触发（relayCtx 取消链：
@@ -235,7 +235,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				frameHook(f) // codex 路径：判死帧 → FatalAuth（唯一跨边界点，判死帧照常透传客户端）
 			}
 			// 热路径纪律：bytes.Contains 零分配预筛，命中才最小字节扫描取 usage
-			// （usage_extract.go A-1 scanKeyValue 单遍扫描零分配）；流式中间帧
+			// （usage_extract.go scanKeyValue 单遍扫描零分配）；流式中间帧
 			// 零解析直转——网关层零分配，库层每帧 io.ReadAll 物化 + flate 属库
 			// 内账目。
 			if u, ok := sniffResponsesCompleted(f); ok {

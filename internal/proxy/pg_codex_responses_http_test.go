@@ -31,7 +31,7 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
-// 真实 PG e2e（T6 happy path——"真实凭据"= 凭据材料真实落库 account_ext，经
+// 真实 PG e2e（happy path——"真实凭据"= 凭据材料真实落库 account_ext，经
 // LoadGroupsAccounts 快照 → Selection.Ext → AccountCredential 派生直供适配层；
 // 上游为本地 mock SSE 面——真实上游不可控）：
 //
@@ -72,7 +72,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	defer up.Close()
 
 	// 落库数据：codex-pat 模板 + 组 + 账号 + account_ext（PAT 凭据 + 伪装身份
-	// 四元组持久化——META-2 断言面：HTTP 面注入 client_metadata）
+	// 四元组持久化——断言面：HTTP 面注入 client_metadata）
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 		Name: "codex-tpl", BaseURL: "",
 		CredentialType:   credential.TypeCodexPAT,
@@ -84,7 +84,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "g", Visibility: domain.GroupVisibilityPublic})
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
-		Name: "codex-acc", TemplateID: tpl.ID, MaxConcurrency: 4,
+		Name: "codex-acc", TemplateID: tpl.ID, MaxConcurrency: 4, Enabled: true,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
@@ -101,7 +101,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 
 	// 调度器接真实 loader（快照含 Ext eager-load；请求期零 DB）
 	re := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
-	sched := scheduler.New(scheduler.Config{DefaultMaxConcurrency: 4, SyncInterval: time.Hour}, repos.Groups, re, nil, nil, nil, nil)
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -111,7 +111,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// 计费钩子：价格快照 + 余额快照；单写点：billable 行经 rec → repos.Usages
-	// 直落 usage_logs（F2：无 flusher 分流）。
+	// 直落 usage_logs（无 flusher 分流）。
 	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 1_000_000}}, nil)
 	require.NoError(t, bal.Reload(ctx), "余额快照加载")
 	rec := usage.New(usage.UsageConfig{
@@ -151,7 +151,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 		t.Fatalf("非流式 wire 必须 stream:true（SDK 注入）, body = %s", upc.body(0))
 	}
 
-	// META-2：伪装身份注入——上游收到 client_metadata（account_ext 持久化值 →
+	// 伪装身份注入——上游收到 client_metadata（account_ext 持久化值 →
 	// 快照 → codexIdentityFromExt → SDK 注入）：恒 4 key + turn_id UUIDv7
 	//（spec 2026-08-15 验收面）
 	cm := gjson.GetBytes(upc.body(0), "client_metadata")

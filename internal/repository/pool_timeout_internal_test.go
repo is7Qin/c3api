@@ -4,7 +4,7 @@
 
 package repository
 
-// appendPoolTimeouts DSN 补丁形态单元测试（F-P2-4）：分隔符按 DSN 形态裁定
+// appendPoolTimeouts DSN 补丁形态单元测试：分隔符按 DSN 形态裁定
 // （URL ?/&、keyword/value 空格），用户已显式配置同名参数时尊重不覆盖。
 // 真实生效断言（会话级 GUC SHOW）见 pg_pool_timeout_test.go。
 

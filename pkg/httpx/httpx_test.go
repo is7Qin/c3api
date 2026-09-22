@@ -38,7 +38,7 @@ func TestClientReusesTransport(t *testing.T) {
 	require.Equal(t, 3, hits)
 }
 
-// TestTransportProxyDefaultsToDirect C2-1 默认直连：TransportConfig.Proxy 零值
+// TestTransportProxyDefaultsToDirect 默认直连：TransportConfig.Proxy 零值
 // （nil）→ 产物 transport 的 Proxy 为 nil——不再隐式装配
 // http.ProxyFromEnvironment（HTTP_PROXY 设置即静默改道上游请求，含凭据）。
 func TestTransportProxyDefaultsToDirect(t *testing.T) {
@@ -46,7 +46,7 @@ func TestTransportProxyDefaultsToDirect(t *testing.T) {
 	require.Nil(t, tr.Proxy, "默认直连：不得隐式装配 http.ProxyFromEnvironment")
 }
 
-// TestTransportNilProxyIgnoresEnv C2-1 Proxy=nil 直连：即便 HTTP_PROXY 环境变量
+// TestTransportNilProxyIgnoresEnv Proxy=nil 直连：即便 HTTP_PROXY 环境变量
 // 指向代理，上游请求仍直连目标（代理零命中），行为不随部署环境漂移。
 func TestTransportNilProxyIgnoresEnv(t *testing.T) {
 	var proxyHits int
@@ -85,7 +85,7 @@ func TestTransportNilProxyIgnoresEnv(t *testing.T) {
 	require.Zero(t, proxyHits, "Proxy=nil 时 HTTP_PROXY 环境变量不得改道上游请求")
 }
 
-// TestTransportExplicitProxy C2-1 Proxy 显式设置生效：请求经配置的代理转发
+// TestTransportExplicitProxy Proxy 显式设置生效：请求经配置的代理转发
 // （绝对 URI 形式），目标不被直连。
 func TestTransportExplicitProxy(t *testing.T) {
 	var proxyHits int

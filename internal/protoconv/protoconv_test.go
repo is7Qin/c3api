@@ -385,7 +385,7 @@ func TestConvertResponseMessToChat(t *testing.T) {
 // --- 流式事件映射 ---
 
 // mapAll 依次映射一组事件（name/data 交替对），逐帧做完整 SSE 帧校验
-// （评审 M-1 后升级：帧尾空行、行 field: 前缀、data 载荷 JSON 合法或
+// （后升级：帧尾空行、行 field: 前缀、data 载荷 JSON 合法或
 // [DONE]——钉住帧格式，防子串断言漏网），返回全部产出帧的文本拼接。
 func mapAll(t *testing.T, dir domain.ProtocolConvert, events ...string) string {
 	t.Helper()
@@ -453,7 +453,7 @@ func TestMapRespToChatStream(t *testing.T) {
 	require.Contains(t, out, `"delta":{"content":"","role":"assistant"}`, "角色前导 chunk")
 	require.Contains(t, out, `"delta":{"content":"hel"}`, "文本 delta chunk")
 	require.Contains(t, out, `"delta":{"content":"lo"}`)
-	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"","name":"get_weather"},"id":"call_1","index":1,"type":"function"}]`, "tool_calls 前导 id = call_id（M-1）")
+	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"","name":"get_weather"},"id":"call_1","index":1,"type":"function"}]`, "tool_calls 前导 id = call_id")
 	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"{\"city\": \"x\"}"},"index":1}]`, "arguments delta")
 	require.Contains(t, out, `"finish_reason":"tool_calls"`, "含 function_call → tool_calls")
 	require.Contains(t, out, `"usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "收尾 chunk 内联 usage")
@@ -482,7 +482,7 @@ func TestMapRespToMessStream(t *testing.T) {
 	require.Contains(t, out, `"input_tokens":0`, "usage.input_tokens 完成前不可知 → 0")
 	require.Contains(t, out, `"content_block":{"text":"","type":"text"}`, "文本块惰性 start")
 	require.Contains(t, out, `"delta":{"text":"hi","type":"text_delta"}`, "文本 delta")
-	require.Contains(t, out, `"content_block":{"id":"call_1","input":{},"name":"get_weather","type":"tool_use"}`, "tool_use 块 id = call_id（M-1）")
+	require.Contains(t, out, `"content_block":{"id":"call_1","input":{},"name":"get_weather","type":"tool_use"}`, "tool_use 块 id = call_id")
 	require.Contains(t, out, `"delta":{"partial_json":"{\"city\": \"x\"}","type":"input_json_delta"}`, "json delta")
 	require.Contains(t, out, `event: content_block_stop`+"\n"+`data: {"index":1,"type":"content_block_stop"}`, "tool_use 块 stop")
 	require.Contains(t, out, `"stop_reason":"tool_use"`, "stop_reason 映射")
@@ -534,7 +534,7 @@ func TestMapMessToChatStream(t *testing.T) {
 	require.NotContains(t, out, `"message_stop"`, "message_stop 丢弃（收尾已在 message_delta）")
 }
 
-// --- P3：缺 event: 名（data-only）帧不丢 ---
+// --- 缺 event: 名（data-only）帧不丢 ---
 
 // TestMapDataOnlyFramesInferred 缺名帧带 type 字段 → 按 data.type 推断事件名，
 // 与具名帧同分派（fakeupstream /v1/responses 形态：只发 data: 行，无 event: 行）。
@@ -577,7 +577,7 @@ func TestMapDataOnlyFramesInferredFallback(t *testing.T) {
 }
 
 // TestMapDataOnlyFramesPassthrough 缺名帧无法推断（非 JSON / 无 type 字段）
-// → 原样透传 data 帧保留字节（不静默丢弃，P3）。
+// → 原样透传 data 帧保留字节（不静默丢弃）。
 func TestMapDataOnlyFramesPassthrough(t *testing.T) {
 	m := NewStreamMapper(domain.ProtocolConvertChatToResp)
 
@@ -612,7 +612,7 @@ func TestMapNamedFramesBehaviorUnchanged(t *testing.T) {
 	require.Contains(t, string(frame), `"delta":{"content":"x"}`, "具名事件映射不变")
 }
 
-// --- M-1：工具调用匹配键（call_id 优先）多轮链路 ---
+// --- 工具调用匹配键（call_id 优先）多轮链路 ---
 
 // respWithFC 构造含 function_call{id, call_id} 的 resp 响应 JSON（id 与 call_id
 // 不同值——真实上游即如此，匹配键必须是 call_id）。
@@ -628,7 +628,7 @@ func respWithFC(id, callID string) []byte {
 	}`)
 }
 
-// TestToolCallChainRespToChatRoundTrip（M-1）：上游 function_call{id 与 call_id
+// TestToolCallChainRespToChatRoundTrip：上游 function_call{id 与 call_id
 // 不同} → 客户端侧工具 ID = call_id → 客户端回传 tool 消息 → function_call_
 // output.call_id 与上游一致。两轮工具调用断言链路不随轮次断裂。
 func TestToolCallChainRespToChatRoundTrip(t *testing.T) {
@@ -664,7 +664,7 @@ func TestToolCallChainRespToChatRoundTrip(t *testing.T) {
 	}
 }
 
-// TestToolCallChainStreamingCallID（M-1 流式）：resp output_item.added（流式）
+// TestToolCallChainStreamingCallID（流式）：resp output_item.added（流式）
 // → chat tool_calls 前导 id = call_id；→ anthropic tool_use 块 id = call_id。
 func TestToolCallChainStreamingCallID(t *testing.T) {
 	item := `{"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"get_weather","arguments":"","status":"in_progress"}}`
@@ -685,7 +685,7 @@ func TestToolCallChainStreamingCallID(t *testing.T) {
 	require.Contains(t, out2, `"content_block":{"id":"call_1","input":{},"name":"get_weather","type":"tool_use"}`, "tool_use 块 id = call_id")
 }
 
-// TestToolCallChainRespToMessRoundTrip（M-1 resp→mess）：上游 function_call →
+// TestToolCallChainRespToMessRoundTrip（resp→mess）：上游 function_call →
 // anthropic tool_use.id = call_id（非流式 + 请求输入方向），客户端 tool_result
 // 回传 → function_call_output.call_id 与上游一致。
 func TestToolCallChainRespToMessRoundTrip(t *testing.T) {
@@ -723,13 +723,13 @@ func TestToolCallChainRespToMessRoundTrip(t *testing.T) {
 	require.Equal(t, "toolu_1", fc["call_id"], "mess→resp function_call.call_id = tool_use id（匹配键保真）")
 }
 
-// TestConvertRequestChatToMessBothMaxTokens（M-2）：max_completion_tokens 与
+// TestConvertRequestChatToMessBothMaxTokens：max_completion_tokens 与
 // max_tokens 同时提供时 max_completion_tokens 优先（与 chatToResp 同语义）。
 func TestConvertRequestChatToMessBothMaxTokens(t *testing.T) {
 	out, err := ConvertRequest([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":200,"max_completion_tokens":300}`),
 		domain.ProtocolConvertChatToMess)
 	require.NoError(t, err)
-	require.Equal(t, float64(300), obj(t, out)["max_tokens"], "max_completion_tokens 优先于 max_tokens（M-2）")
+	require.Equal(t, float64(300), obj(t, out)["max_tokens"], "max_completion_tokens 优先于 max_tokens")
 }
 
 func TestConvertRequestUnsupportedDirection(t *testing.T) {
@@ -746,7 +746,7 @@ func TestEncodeFrame(t *testing.T) {
 
 // --- 评审回归（2026-08-11 protoconv-opt-review）：完整帧/纯工具/多部件/数组 content ---
 
-// TestMapRespToChatCompleteFrames（评审 M-1 回归）：完整帧字节断言——每帧带
+// TestMapRespToChatCompleteFrames（回归）：完整帧字节断言——每帧带
 // `data: ` 前缀与空行终止；completed 的 [DONE] 独立成帧（不粘连）。
 func TestMapRespToChatCompleteFrames(t *testing.T) {
 	m := NewStreamMapper(domain.ProtocolConvertChatToResp)
@@ -770,7 +770,7 @@ func TestMapRespToChatCompleteFrames(t *testing.T) {
 	require.Equal(t, "data: {\"error\":{\"message\":\"boom\"}}\n\n", string(frame))
 }
 
-// TestConvertResponseRespToChatPureTool（评审 M-2 回归）：纯工具响应（无文本
+// TestConvertResponseRespToChatPureTool（回归）：纯工具响应（无文本
 // 部件）→ content 恒为合法空字符串。
 func TestConvertResponseRespToChatPureTool(t *testing.T) {
 	out, err := ConvertResponse([]byte(`{"id":"rsp_1","object":"response","status":"completed","model":"m","output":[{"id":"fc_1","type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{}","status":"completed"}]}`), domain.ProtocolConvertChatToResp)
@@ -780,10 +780,10 @@ func TestConvertResponseRespToChatPureTool(t *testing.T) {
 	require.Equal(t, "", msg["content"], "无文本部件 → content 空字符串")
 	tcs := arrOf(t, msg, "tool_calls")
 	require.Len(t, tcs, 1)
-	require.Equal(t, "call_1", tcs[0].(map[string]any)["id"], "tool_call id = call_id（M-1）")
+	require.Equal(t, "call_1", tcs[0].(map[string]any)["id"], "tool_call id = call_id")
 }
 
-// TestConvertResponseRespToChatMultiPartText（评审 M-2 回归）：多部件文本 →
+// TestConvertResponseRespToChatMultiPartText（回归）：多部件文本 →
 // 拼接单字符串（含转义引号与 \uXXXX 多字节部件边界）。
 func TestConvertResponseRespToChatMultiPartText(t *testing.T) {
 	out, err := ConvertResponse([]byte(`{"id":"rsp_1","object":"response","status":"completed","model":"m","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"hel"},{"type":"output_text","text":"lo \"world\" 世界"}]}],"usage":{"input_tokens":1,"output_tokens":2}}`), domain.ProtocolConvertChatToResp)
@@ -793,7 +793,7 @@ func TestConvertResponseRespToChatMultiPartText(t *testing.T) {
 	require.Equal(t, "hello \"world\" 世界", msg["content"], "多部件文本拼接")
 }
 
-// TestConvertRequestChatToRespArrayContent（评审 M-3 回归）：system/tool 数组
+// TestConvertRequestChatToRespArrayContent（回归）：system/tool 数组
 // content → 文本 \n 拼接且整体合法 JSON（含转义部件）。
 func TestConvertRequestChatToRespArrayContent(t *testing.T) {
 	body := []byte(`{
@@ -817,7 +817,7 @@ func TestConvertRequestChatToRespArrayContent(t *testing.T) {
 	require.Equal(t, "{\"temp\": 20}", fco["output"], "tool 数组 content 文本")
 }
 
-// TestConvertRequestChatToRespArrayContentEmptyFirst（评审 I-2 回归）：text 块
+// TestConvertRequestChatToRespArrayContentEmptyFirst（回归）：text 块
 // 数组首部件为空字符串 → 前导 \n 分隔符仍保留（joinStrings("\n") 语义；
 // 旧实现按 joined 长度判空丢分隔符）。
 func TestConvertRequestChatToRespArrayContentEmptyFirst(t *testing.T) {
@@ -830,7 +830,7 @@ func TestConvertRequestChatToRespArrayContentEmptyFirst(t *testing.T) {
 	require.Equal(t, "\nrule", dc["text"], "空首部件后仍保留 \n 分隔符")
 }
 
-// TestConvertRequestChatToRespNullBody（评审 I-2 对齐）：null 体 → 空对象输出
+// TestConvertRequestChatToRespNullBody（对齐）：null 体 → 空对象输出
 // （与 map 版 decodeObj(null) → nil map → {} 一致）。
 func TestConvertRequestChatToRespNullBody(t *testing.T) {
 	out, err := ConvertRequest([]byte("null"), domain.ProtocolConvertChatToResp)
@@ -838,7 +838,7 @@ func TestConvertRequestChatToRespNullBody(t *testing.T) {
 	require.Equal(t, "{}", string(out), "null 体 → 空对象")
 }
 
-// TestConvertResponseNullBody（评审 I-2 对齐）：null 体 → 零值字段合法输出。
+// TestConvertResponseNullBody（对齐）：null 体 → 零值字段合法输出。
 func TestConvertResponseNullBody(t *testing.T) {
 	out, err := ConvertResponse([]byte("null"), domain.ProtocolConvertChatToResp)
 	require.NoError(t, err)
@@ -847,7 +847,7 @@ func TestConvertResponseNullBody(t *testing.T) {
 	require.Equal(t, float64(0), m["created"])
 }
 
-// TestConvertRequestChatToRespToolCallDoubleID（评审 I-3 对齐）：请求方向
+// TestConvertRequestChatToRespToolCallDoubleID（对齐）：请求方向
 // tool_call 同时含 id+call_id → 取 id（与 map 版一致；call_id 优先仅响应方向）。
 func TestConvertRequestChatToRespToolCallDoubleID(t *testing.T) {
 	body := []byte(`{"model":"m","messages":[{"role":"assistant","content":"ok","tool_calls":[{"id":"call_id_1","call_id":"call_9","type":"function","function":{"name":"f","arguments":"{}"}}]}]}`)
@@ -860,7 +860,7 @@ func TestConvertRequestChatToRespToolCallDoubleID(t *testing.T) {
 	require.Equal(t, "call_id_1", fc["call_id"])
 }
 
-// TestConvertRequestChatToRespEscapedKey（评审 I-1 重做回归）：真实 \uXXXX
+// TestConvertRequestChatToRespEscapedKey（重做回归）：真实 \uXXXX
 // 转义键（raw 恒比字面量长，长度前置检查会短路转义分支——此处用真实转义
 // 字符构造，非明文假用例）。
 func TestConvertRequestChatToRespEscapedKey(t *testing.T) {
@@ -872,7 +872,7 @@ func TestConvertRequestChatToRespEscapedKey(t *testing.T) {
 	require.Equal(t, "user", input[0].(map[string]any)["role"])
 }
 
-// TestConvertRequestChatToRespEscapedValue（评审 I-1 重做回归）：role 值含真实
+// TestConvertRequestChatToRespEscapedValue（重做回归）：role 值含真实
 // \uXXXX 转义 → 仍按 system 处理（产生 developer 消息项）。
 func TestConvertRequestChatToRespEscapedValue(t *testing.T) {
 	out, err := ConvertRequest([]byte(`{"model":"m","messages":[{"role":"syst\u0065m","content":"rules"}]}`), domain.ProtocolConvertChatToResp)
@@ -883,7 +883,7 @@ func TestConvertRequestChatToRespEscapedValue(t *testing.T) {
 	require.Equal(t, "developer", input[0].(map[string]any)["role"])
 }
 
-// TestMapRespToChatEscapedType（评审 I-1 重做回归，流式方向）：item.type 值含
+// TestMapRespToChatEscapedType（重做回归，流式方向）：item.type 值含
 // 真实转义 → output_item.added 仍按 function_call 产生 tool_calls 前导 chunk。
 func TestMapRespToChatEscapedType(t *testing.T) {
 	out := mapAll(t, domain.ProtocolConvertChatToResp,

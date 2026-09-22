@@ -97,7 +97,7 @@ func inputItemText(im map[string]any) (string, bool) {
 // respInputToMessMessages resp input → anthropic messages：message 项 → 消息
 // （文本块）；function_call 项 → 最近 assistant 消息追加 tool_use 块；
 // function_call_output 项 → user 消息 tool_result 块。input_image 等图像
-// 透传属 W4 范围，按规范丢弃。
+// 透传属 范围，按规范丢弃。
 func respInputToMessMessages(req map[string]any) ([]any, bool) {
 	input, ok := arr(req, "input")
 	if !ok {
@@ -145,7 +145,7 @@ func respInputToMessMessages(req map[string]any) ([]any, bool) {
 			}
 			am, _ := msgs[lastAssistant].(map[string]any)
 			content, _ := arr(am, "content")
-			// call_id 优先（M-1 同缺陷：后续 function_call_output.call_id →
+			// call_id 优先（同缺陷：后续 function_call_output.call_id →
 			// tool_result.tool_use_id 必须命中 tool_use.id，否则多轮链断裂）
 			id := toolCallID(im)
 			name, _ := str(im, "name")
@@ -307,7 +307,7 @@ func messUsageToResp(msg map[string]any, it, ot int64) map[string]any {
 //	error                   → resp 错误帧形态
 //	其余 → 丢弃
 func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
-	m.ensureBlocks() // 块级累积 map 懒初始化（评审 I-4）
+	m.ensureBlocks() // 块级累积 map 懒初始化
 	ev, err := decodeObj(data)
 	if err != nil {
 		return nil, true

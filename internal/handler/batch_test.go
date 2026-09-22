@@ -232,7 +232,7 @@ func TestAccountGroupsCreateUpdate(t *testing.T) {
 	require.Empty(t, ag.GroupIds, "创建不带 group_ids = 无分组")
 
 	// PUT 替换：只留 g1（g2 被移除）
-	rec = do(http.MethodPut, "/api/admin/accounts/"+itoa(acc.ID),
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+itoa(acc.ID),
 		`{"name":"a1","template_id":1,"upstream_key":"sk-x","group_ids":[`+itoa(g.ID)+`]}`)
 	require.Equal(t, 200, rec.Code, "put replace: %s", rec.Body.String())
 	rec = do(http.MethodGet, "/api/admin/accounts/"+itoa(acc.ID)+"/groups", "")
@@ -241,7 +241,7 @@ func TestAccountGroupsCreateUpdate(t *testing.T) {
 	require.Equal(t, []int64{g.ID}, ag.GroupIds, "PUT 替换 = 只留所选")
 
 	// PUT 清空（[]）
-	rec = do(http.MethodPut, "/api/admin/accounts/"+itoa(acc.ID), `{"name":"a1","template_id":1,"upstream_key":"sk-x","group_ids":[]}`)
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+itoa(acc.ID), `{"name":"a1","template_id":1,"upstream_key":"sk-x","group_ids":[]}`)
 	require.Equal(t, 200, rec.Code, "put clear: %s", rec.Body.String())
 	rec = do(http.MethodGet, "/api/admin/accounts/"+itoa(acc.ID)+"/groups", "")
 	require.Equal(t, 200, rec.Code)
@@ -249,7 +249,7 @@ func TestAccountGroupsCreateUpdate(t *testing.T) {
 	require.Empty(t, ag.GroupIds, "PUT [] = 清空")
 
 	// PUT 缺省 group_ids = 不变（仍为空）
-	rec = do(http.MethodPut, "/api/admin/accounts/"+itoa(acc.ID), `{"name":"a1","template_id":1,"upstream_key":"sk-x"}`)
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+itoa(acc.ID), `{"name":"a1","template_id":1,"upstream_key":"sk-x"}`)
 	require.Equal(t, 200, rec.Code, "put without group_ids: %s", rec.Body.String())
 	rec = do(http.MethodGet, "/api/admin/accounts/"+itoa(acc.ID)+"/groups", "")
 	require.Equal(t, 200, rec.Code)
@@ -320,7 +320,7 @@ func TestPostGroupsBatchDelete(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		rec := do(http.MethodPost, "/api/admin/groups", `{"name":"g`+itoa(int64(i))+`"}`)
 		require.Equal(t, 200, rec.Code, "create group: %s", rec.Body.String())
-		// Phase 3a：创建响应为 Group 本体（无 key 字段）
+		// 创建响应为 Group 本体（无 key 字段）
 		var created domain.Group
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 		ids = append(ids, created.ID)

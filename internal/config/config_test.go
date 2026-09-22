@@ -16,7 +16,7 @@ import (
 )
 
 // setenvRequired 注入必填密钥（auth.jwt_secret/db.dsn/redis.addr 校验已内聚到
-// Load——测试调用 Load 前必须先补环境，评审 P2-1；admin.token 已可空，仍注入保持
+// Load——测试调用 Load 前必须先补环境，admin.token 已可空，仍注入保持
 // 既有用例语义）。
 func setenvRequired(t *testing.T) {
 	t.Helper()
@@ -59,11 +59,11 @@ func TestDefaults(t *testing.T) {
 	require.Equal(t, "warn", c.Log.Level)
 	require.Equal(t, int64(50000), c.Proxy.MaxInflight)
 	require.Equal(t, 500, c.Usage.BatchSize)
-	require.Equal(t, 8, c.Usage.FlushWorkers, "usage flush 并行 worker 默认 8（O1 管道化）")
+	require.Equal(t, 8, c.Usage.FlushWorkers, "usage flush 并行 worker 默认 8（管道化）")
 	require.Equal(t, "test-admin-token", c.Admin.Token)
 	require.Equal(t, 30*time.Second, c.Scheduler.SyncInterval)
 	require.True(t, c.Billing.Enabled, "计费默认开（全链默认开启）")
-	require.Equal(t, 250*time.Millisecond, c.Billing.FlushInterval, "F2 游标轮询默认 250ms（spec-f2-ledger-cursor）")
+	require.Equal(t, 250*time.Millisecond, c.Billing.FlushInterval, " 游标轮询默认 250ms（spec-f2-ledger-cursor）")
 	require.Equal(t, 10*time.Second, c.Billing.BalanceRefreshInterval)
 }
 
@@ -138,7 +138,7 @@ func TestLoadRejectsNonPositiveDurations(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsSubMillisecondDuration：TOML 裸数字（D-P2-2 烧穿回归）——500 →
+// TestLoadRejectsSubMillisecondDuration：TOML 裸数字（烧穿回归）——500 →
 // 500ns（<1ms）被 ≥1ms 校验拦截（errlog_flush_interval 无 0=禁用 语义，
 // 钳位仅覆盖 <=0，500ns > 0 不被钳）。
 func TestLoadRejectsSubMillisecondDuration(t *testing.T) {
@@ -159,7 +159,7 @@ func TestLoadRejectsSubMillisecondDuration(t *testing.T) {
 }
 
 // TestLoadEnvBareNumberFailFast：env 路径裸数字天然 fail-fast（StringToTimeDuration
-// Hook 对 "500" 调 ParseDuration 报错——"missing unit in duration"，D-P2-2 附带；
+// Hook 对 "500" 调 ParseDuration 报错——"missing unit in duration"，附带；
 // 文件路径同值由 ≥1ms 校验拦截）——锁行为防 ErrorUnused/WeaklyTyped 改造误破坏。
 func TestLoadEnvBareNumberFailFast(t *testing.T) {
 	setenvRequired(t)
@@ -286,7 +286,7 @@ func TestLoadRequiresSecrets(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestLoadRejectsUnknownKeys：ErrorUnused 开启（D-P2-1）——拼写错误键
+// TestLoadRejectsUnknownKeys：ErrorUnused 开启——拼写错误键
 // （max_infligh）启动报错，不再静默吞掉。
 func TestLoadRejectsUnknownKeys(t *testing.T) {
 	setenvRequired(t)
@@ -315,7 +315,7 @@ func TestLoadRejectsLegacyKeys(t *testing.T) {
 	}
 }
 
-// D-TZ1 时区：非法 IANA 名 fail-fast，空串通过（进程本地缺省）。
+// 时区：非法 IANA 名 fail-fast，空串通过（进程本地缺省）。
 func TestServerTimeZoneValidation(t *testing.T) {
 	setenvRequired(t)
 	_, err := Load(writeConfig(t, `server = { time_zone = "Not/A_Zone" }`))

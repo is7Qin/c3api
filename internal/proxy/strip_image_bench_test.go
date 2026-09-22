@@ -26,7 +26,7 @@ func build50ToolBody() []byte {
 	return []byte(b.String())
 }
 
-// BenchmarkStripImageTools50Tools 50-tool 边界体剥除基准（压测 B50 档 A/B 对照：
+// BenchmarkStripImageTools50Tools 50-tool 边界体剥除基准（压测 档 A/B 对照：
 // 现状 +166µs / 23 allocs → 目标 ~+20-40µs / ≤4 allocs，实测记录）。
 func BenchmarkStripImageTools50Tools(b *testing.B) {
 	body := build50ToolBody()

@@ -22,7 +22,7 @@ BEGIN
 END $$;`
 
 // EnsurePriceVariantsEffectCheck 幂等补齐 price_variants 效果字段至少一非空
-// 约束（spec P-2：变体必须携带至少一种效果——mult_bp 或 set_input/set_output）。
+// 约束（spec 变体必须携带至少一种效果——mult_bp 或 set_input/set_output）。
 // 服务层 ReplacePriceVariants 已做同语义校验；此约束兜底 litellm 直写路径与
 // 手工 DDL。启动即执行，失败 fatal（与分区引导同级）。
 func (r *PartitionRepo) EnsurePriceVariantsEffectCheck(ctx context.Context) error {

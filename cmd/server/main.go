@@ -75,7 +75,7 @@ func main() {
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		// 附 -config 路径与 CWD（p2-01 P3-8）：相对路径文件缺失/校验失败可归因；
+		// 附 -config 路径与 CWD：相对路径文件缺失/校验失败可归因；
 		// env-only 部署（-config ""）报错时此处即线索。
 		wd, _ := os.Getwd()
 		fatalf("config: %v (path: %s, cwd: %s)", err, *cfgPath, wd)
@@ -84,7 +84,7 @@ func main() {
 	if err != nil {
 		fatalf("logger: %v", err)
 	}
-	// pprof 监听失败可观测（G2-1，spec 2026-08-13）：旧实现 `_ =` 全静默——监听
+	// pprof 监听失败可观测（spec 2026-08-13）：旧实现 `_ =` 全静默——监听
 	// 失败零日志零观测。goroutine 在 logx.New 之后启动：闭包捕获 log 恒非 nil
 	// （若保留原位置，端口占用等启动期失败时 log 尚 nil，Warn 判空即被丢弃，
 	// 观测仍缺失）；失败 Warn 不 fatal（pprof 非关键面，服务照常启动）。
@@ -131,13 +131,13 @@ func main() {
 	// ent v0.14.6 的 entsql.OpenDB 只接受 *sql.DB：pgxpool 经 pgx/stdlib 桥接（用户决策 2026-08-05）
 	db := stdlib.OpenDBFromPool(pool)
 	drv := entsql.OpenDB(dialect.Postgres, db)
-	repos, err := repository.NewWithPG(startupCtx, drv, true, pool) // pool 供 Stats.Upsert COPY 两阶段批量写（#17）与 Billing 结算语句直连事务 + 会话锁专用连接（F2 ledger-cursor）
+	repos, err := repository.NewWithPG(startupCtx, drv, true, pool) // pool 供 Stats.Upsert COPY 两阶段批量写与 Billing 结算语句直连事务 + 会话锁专用连接（ledger-cursor）
 	if err != nil {
 		fatalDB("migrate", err)
 	}
 	// 统计桶界时区不在装配面：持久化恒规范 UTC，浏览器时区逐请求解析注入
 	// （handler → service → repository 方法参数），无进程级可变状态。
-	// usage_logs/err_logs/usage_stats 分区 bootstrap（Phase 5 T4.5 + 分表设计 +
+	// usage_logs/err_logs/usage_stats 分区 bootstrap（分表设计 +
 	// 用户裁决 2026-08-11 三表统一分区机制）：ent migrate 已跳过三表
 	// （migrateHookExcludesPartitioned——atlas 对分区表 diff 规划期必失败，实测
 	// 结论见 internal/repository/partition.go），此处独占建分区表 + 预建当日/明日
@@ -164,8 +164,8 @@ func main() {
 	if err := repos.EnsureCodexSearchSeed(startupCtx); err != nil {
 		fatalDB("codex-search price seed bootstrap", err)
 	}
-	// #14 T3a：NOTIFY 发布器（多实例广播，设计文档 §2）。实例 ID = hostname-pid-
-	// nonce（config 无实例字段，最小方案；B4-1/p2-05：容器化多实例同 hostname、
+	// NOTIFY 发布器（多实例广播，设计文档 §2）。实例 ID = hostname-pid-
+	// nonce（config 无实例字段，最小方案；容器化多实例同 hostname、
 	// pid namespace 各自 pid 1 → 纯 hostname-pid 互相碰撞 → 互把对方 NOTIFY 当
 	// 自播跳过 → users/templates/groups/keys/rules 失效静默全灭；随机 nonce 保证
 	// 跨实例唯一）。发布在 DB 写成功后（与 inv.* 调用点并排）；计费路径永不发布。
@@ -188,7 +188,7 @@ func main() {
 	// 就绪后构造真 probe，经 healthWorker 在 Start 期一次性交接，无回填）。
 	// sched 构造即持 health（构造注入，无 Set* 回填）。
 	runtimeHealth := scheduler.NewRuntimeHealth(rdb, src, disco.LiveMembers, log)
-	// 锁存一等组件（B18/B19 根因重开）：main 拥有 LatchStore + Hub 各恰好一次，
+	// 锁存一等组件（根因重开）：main 拥有 LatchStore + Hub 各恰好一次，
 	// 经构造参出借——latch→hub→sink→persistFn→ruleEngine→sched 序，无 Set* 回填。
 	latchStore := latch.NewLatchStore()
 	hub := latch.NewHub()
@@ -197,11 +197,10 @@ func main() {
 	// 规则引擎构造（不 Reload——New 只建结构；sink/persist 一次性注入）。
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, log, latchSink, persistFn)
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: cfg.Scheduler.DefaultMaxConcurrency,
-		SyncInterval:          cfg.Scheduler.SyncInterval,
-		StalenessProbe:        repos.Groups,
+		SyncInterval:   cfg.Scheduler.SyncInterval,
+		StalenessProbe: repos.Groups,
 	}, repos.Groups, ruleEngine, runtimeHealth, log, latchStore, hub)
-	// 额度回写器只在计费开启时注入（Todo 3）：BillingCapture=false 时 proxy finish
+	// 额度回写器只在计费开启时注入：BillingCapture=false 时 proxy finish
 	// 本就不产生 AddQuota 增量，此处等价停用 quota writer/flush 落库面；
 	// UsageCapture 与 quota 回写解耦（quota 走 Recorder 独立 flush 节奏）。
 	var quotaWriter usage.QuotaWriter
@@ -230,7 +229,7 @@ func main() {
 		BatchSize:     cfg.Usage.ErrLogBatchSize,
 		FlushInterval: cfg.Usage.ErrLogFlushInterval,
 	}, repos.ErrLogs, log)
-	// retention worker：三表按日分区保留（T4.5 + 分表设计 + usage_stats 分区化，
+	// retention worker：三表按日分区保留（分表设计 + usage_stats 分区化，
 	// 清理统一 DROP PARTITION O(1)——PG DELETE 不释放空间，用户裁决）；保留天数
 	// 同源 config（usage_logs = usage.log_retention_days；err_logs =
 	// usage.errlog_retention_days 默认 7 天短保留——错误审计；usage_stats =
@@ -248,7 +247,7 @@ func main() {
 		IdleConnTimeout:     cfg.Upstream.IdleConnTimeout,
 		DialTimeout:         cfg.Upstream.DialTimeout,
 		ForceHTTP2:          cfg.Upstream.ForceHTTP2,
-		// Proxy 显式直连（C2-1 防劫持）：HTTP_PROXY 环境变量不再静默改道
+		// Proxy 显式直连（防劫持）：HTTP_PROXY 环境变量不再静默改道
 		// 上游请求（含 x-api-key/Authorization 凭据，WS 升级大概率失败）；
 		// 压测行为不随部署环境漂移。
 		Proxy: nil,
@@ -257,17 +256,17 @@ func main() {
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
 		UpstreamStreamTimeout: cfg.Proxy.UpstreamStreamTimeout,
 	})
-	// 管理端变更统一经 invalidate 去抖器生效（O2 接线矩阵，评审 M-1）：
+	// 管理端变更统一经 invalidate 去抖器生效（接线矩阵）：
 	// - 用户 CRUD（含创建）/余额变更 → auth + 余额快照全量 Reload（去抖窗口
-	//   内合并；新用户必须即刻进余额快照——评审 M-2，防 ≤10s 402 窗口）
+	//   内合并；新用户必须即刻进余额快照——防 ≤10s 402 窗口）
 	// - 模板（base_url/models/映射）→ sched 全量 + clients 失效（base_url
 	//   变更需按新地址重建 SDK 客户端；评审发现：此前 Factory.InvalidateAll
 	//   无人调用，模板 base_url 更新后流量仍打旧上游直至重启）
 	// - 账号 → sched 组级定向 InvalidateGroup（full ⊇ 组级 ⊇ 无）；upstream_key
 	//   变更 → clients 失效
-	// - 组倍率 / 用户-组专属倍率（group_assignment，T3.5 按组）→ 余额倍率
+	// - 组倍率 / 用户-组专属倍率（group_assignment，按组）→ 余额倍率
 	//   快照定向刷新（EffectiveMultiplier 陈旧 ≤10s 不可接受）
-	// - key CRUD（#14 T2 扩展）→ auth 快照全量 Reload（本地仍走 auth 增量
+	// - key CRUD（扩展）→ auth 快照全量 Reload（本地仍走 auth 增量
 	//   Upsert/Delete——单实例快路径；Keys() 分支覆盖远端实例的陈旧快照）
 	// - settings 变更（UpdateSetting）→ 发布端 inv.Settings()（本地 auth
 	//   快照全量 Reload，gate 预算按新 N 重算；≤200ms 去抖窗口与其余 Kind
@@ -277,9 +276,9 @@ func main() {
 	// - 定价快照变更 → 对端同步 ReloadPricingCtx（dispatcher 直连，settings
 	//   同款；缺价 402 窗口跨实例收敛）
 	// 去抖窗口 200ms：管理面变更生效延迟 ≤ 窗口 + 一次重载时长；后沿语义
-	// （评审 C-6：完成后又脏立即再执行，不按固定间隔 throttle——不与长 reload
+	// （完成后又脏立即再执行，不按固定间隔 throttle——不与长 reload
 	// 重叠）。读端永不阻塞：Mark 路径零锁零 DB，重载单 goroutine 串行（消除
-	// Phase 6 压测实证的 33,705 goroutine reloadMu 串行雪崩）。
+	// 压测实证的 33,705 goroutine reloadMu 串行雪崩）。
 	//
 	// 计费装配提前到 svc 之前：去抖器装配需要余额快照引用；billHooks 仍需
 	// svc，在 svc 之后组装。
@@ -293,7 +292,7 @@ func main() {
 	var invBalances invalidate.BalancesReloader
 	if cfg.Billing.Enabled {
 		// loader = Repository 门面（BalanceLoader：余额 → Users，组倍率 +
-		// assignment 专属倍率 → Groups，T3.5 修正按组）。
+		// assignment 专属倍率 → Groups，修正按组）。
 		billBalances = billing.NewBalances(repos, log)
 		invBalances = billBalances
 		// 首载不在此（fail-safe 语义由注册表 ReloadAll 承担：错误独立 Warn 保留
@@ -305,7 +304,7 @@ func main() {
 		Clients:  clients,
 		Auth:     auth,
 		Balances: invBalances, // billing.enabled=false → nil 接口（flush 跳过余额路径）
-		Rules:    ruleEngine,  // 规则 CRUD → 全实例规则表重载（#14 T3a；ruleEngine 先于 invalidate 构造）
+		Rules:    ruleEngine,  // 规则 CRUD → 全实例规则表重载（ruleEngine 先于 invalidate 构造）
 		Log:      log,
 	})
 	// ruleReload 独立于 invalidate：规则 CRUD 后全量重载（重载会重置窗口计数，
@@ -320,11 +319,11 @@ func main() {
 	// 余额预警已知键清理（Redis）：构造期一次建好，ServiceDeps 与
 	// wireBalanceWarning 共用同一实例。
 	bwCooldown := notification.NewCooldown(rdb)
-	// svc 一次性装配（W1-T1：定价时区/原始行 horizon/验证码存储/预警清理/
-	// recover→PROBING 全部构造参数；W2-T2：路由编译触发 CompileNotify 同步
+	// svc 一次性装配（定价时区/原始行 horizon/验证码存储/预警清理/
+	// recover→PROBING 全部构造参数；路由编译触发 CompileNotify 同步
 	// 构造注入（sched 先于 svc 存在，func 值无 import 环）——空时区配置 = nil
 	// → 进程本地，语义不变；验证码 Redis 必选 ⇒ 无 nil 分支，误接线 New 内 panic）。
-	// B3 根因重开：settings 快照提升为一等组件——main 先构造单个共享
+	// 根因重开：settings 快照提升为一等组件——main 先构造单个共享
 	// *settingssnap.Snapshot（首载失败仅 Warn，由 Snapshot.Load 调用方保持
 	// fail-safe），mailW 与 svc 同源共享该指针（NOTIFY 只刷一处，无分叉）；
 	// mailW.Enqueue 经 ServiceDeps.MailEnqueue 一次注入，零 Set* 回填。
@@ -339,6 +338,9 @@ func main() {
 		StatsRawRetentionDays:       rawDays,
 		ClearBalanceWarningCooldown: bwCooldown.Clear,
 		RecoverProber:               runtimeHealth,
+		RecoverLatch:                latchStore,
+		RecoverHealthClear:          runtimeHealth,
+		DefaultMaxConcurrency:       cfg.Scheduler.DefaultMaxConcurrency,
 		CompileNotify:               sched.RequestCompile,
 		MailEnqueue:                 mailW.Enqueue,
 		SettingsSnapshot:            settingsSnap,
@@ -347,7 +349,7 @@ func main() {
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据
 	// （零 DB），首刷统一在构造链完成后执行（见下 ReloadAll——单一启动入口，
 	// 各模块构造内不自行 reload）。scope 分发 = settings 变更 → ScopeSettings
-	// 声明方（auth gate N 预算，#36）；其余变更类型仍走去抖器，注册表不重复
+	// 声明方（auth gate N 预算）；其余变更类型仍走去抖器，注册表不重复
 	// 接管（周期 ticker 亦各模块自管，边界见 internal/snapshot 包注释）。
 	snapReg := snapshot.New()
 	for _, s := range []snapshot.Snapshot{
@@ -365,8 +367,8 @@ func main() {
 			fatalf("snapshot register: %v", err)
 		}
 	}
-	// #14 T3a：NOTIFY 监听装配。变更分发器放装配侧——notify 不 import
-	// invalidate（T1 依赖环约束）。
+	// NOTIFY 监听装配。变更分发器放装配侧——notify 不 import
+	// invalidate（依赖环约束）。
 	disp := &dispatcher{
 		inv:       inv,
 		svc:       svc,
@@ -381,17 +383,17 @@ func main() {
 		Dispatcher: disp,
 		Log:        log,
 	})
-	// 60s 周期鉴权快照兜底（R1：NOTIFY 丢失/断连期间 key 与用户变更最长 60s
+	// 60s 周期鉴权快照兜底（NOTIFY 丢失/断连期间 key 与用户变更最长 60s
 	// 收敛；现状 auth 无周期 reload，是兜底缺口——auth-sync worker 补位。
-	// T3b 在其 Reload 内接入 N 与预算重分配，本 worker 侧无需再改）。
+	// 在其 Reload 内接入 N 与预算重分配，本 worker 侧无需再改）。
 	authSync := newAuthSync(auth, 0, log)
 	var warningW *notification.Worker
 	if cfg.Billing.Enabled {
-		// F2 ledger-cursor（spec 2026-08-23）：游标消费者——不再注入 rec（内存
+		// ledger-cursor（spec 2026-08-23）：游标消费者——不再注入 rec（内存
 		// pending 队列已删，billable 行由 usage flusher 单写落库 billed=false，
 		// 本 worker 只消费账本游标）；LogRetentionDays 接线 lag 护栏（最老
 		// unbilled 行超保留期 80% 高声 Warn）。
-		// 构造序反转（W2-T1）：warning worker 先建、flusher 后建——sink 经
+		// 构造序反转：warning worker 先建、flusher 后建——sink 经
 		// NewFlusher 构造参数一次注入，禁止事后回填。warningW 为具体非 nil
 		// *notification.Worker（notification.New 恒非 nil，nil cooldown 即
 		// panic），无 typed-nil 风险；旧 "real nil interface" 守卫保护的是
@@ -410,7 +412,7 @@ func main() {
 			TierPolicy: svc.ServiceTierPolicy,
 		}
 	}
-	// W1-T2：三协作者一律 px 之前构造、经 proxy.Deps 一次注入（构造重排，
+	// 三协作者一律 px 之前构造、经 proxy.Deps 一次注入（构造重排，
 	// 零语义变化——各构造失败仍 fail-fast，nil 语义由 proxy 内部保持）。
 	// 硬续接绑定存储（Responses REST/WS create-ACK + previous_response_id
 	// 钉选）：HMAC 密钥由 auth.jwt_secret 经 HKDF 派生（同源密钥，零新增
@@ -422,17 +424,22 @@ func main() {
 	if err != nil {
 		fatalf("continuation: %v", err)
 	}
-	// codex SDK 适配层装配（T2 §3——统一失效回调先落生图路径；T5 全量）：
+	// codex SDK 适配层装配（§3——统一失效回调先落生图路径；全量）：
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
-	// 调度摘除 + 审计，T1 契约）。transport/rotation 同构造期一次给齐（构造后
+	// 调度摘除 + 审计契约）。transport/rotation 同构造期一次给齐（构造后
 	// 不存在半装配形态）：transport 用 httpx 网关同形态（SDK 默认
-	// MaxIdleConnsPerHost=2 有压测连接风暴史；Proxy=nil 直连防劫持 C2-1）；
+	// MaxIdleConnsPerHost=2 有压测连接风暴史；Proxy=nil 直连防劫持）；
 	// rotation Upsert 部分更新（codex_oauth_token/refresh/expires_at 保旧）+
 	// 回写后失效调度器 AccountExt 快照条目（下个会话重载新凭据）。
+	// Latch/Publisher 必须装配：SDK 失效链据此走**围栏路径**（先锁存 → 以身份
+	// 代际 K 为 guard 的 CAS 落库 → 组级 NOTIFY）；缺任一项即退化为只写 failed_at
+	// 的简化路径——判决不再与"身份是否被授权变更"对齐，且对端只能靠周期兜底收敛。
 	codexAdapter := sdkbridge.NewCodex(sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{
-		Store:  repos.Accounts,
-		Failer: sched,
-		Log:    log,
+		Store:     repos.Accounts,
+		Failer:    sched,
+		Log:       log,
+		Latch:     latchStore,
+		Publisher: schedGroupPub{pub},
 	}), httpx.NewTransport(httpx.TransportConfig{
 		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
@@ -446,7 +453,7 @@ func main() {
 		InvalidateSnapshot: sched.InvalidateAccount,
 		Log:                log,
 	})
-	// quality-sync lane（intelligent-routing Task 9）：500ms Redis 当前分钟绝对
+	// quality-sync lane（intelligent-routing）：500ms Redis 当前分钟绝对
 	// 快照发布 + 5s PG quality/flow UPSERT。单实例一个串行 loop（worker.GoLoop
 	// 监督），PG 写面直用 repos.Partitions（routing 分区表 absolute UPSERT+
 	// dirty 同事务）。装配在 handler 之前：opsWorkers 聚合需要该引用已存在。
@@ -486,7 +493,7 @@ func main() {
 	// 流量判定）。超时同上游请求预算。probe 经 healthWorker 在 Start 期一次性
 	// 交给 runtimeHealth（Start 前记录 fail-closed 停在 OPEN/PROBING，绝不 READY）。
 	probe := newHealthProber(sched.ProbeAccount, codexAdapter, cfg.Proxy.UpstreamTimeout)
-	// 多实例集群 N 注入（#14 T3b → discovery 接管，consumer spec §2.2）：gate 预算
+	// 多实例集群 N 注入（discovery 接管，consumer spec §2.2）：gate 预算
 	// ceil(剩余/N) + limit RPM ceil(rpm/N)。N = Redis 心跳活体数（disco 实时读
 	// atomic），gate/limit 在每次预算分配时现读 provider（gate.go:106-121），
 	// 心跳计数变化 ≤1 tick 天然生效，无需任何 reload 触发。
@@ -505,11 +512,11 @@ func main() {
 	accConcSync := scheduler.NewConcSyncWorker(sched, rdb, src, log)
 	// litellm 价格同步 worker：启动异步拉取一次（不阻塞启动）+ price_sync_cron
 	// 定期循环；source_url/cron 每轮从 svc 的 settings 快照现读（变更下次循环
-	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（Phase 5 计费读零 DB）。
-	// 手动 sync/preview 端点（/api/admin/pricing/sync）直调同一 worker（W3-T2：
+	// 生效，无热加载通道）；同步成功后刷新 svc 价格快照（计费读零 DB）。
+	// 手动 sync/preview 端点（/api/admin/pricing/sync）直调同一 worker：
 	// service 侧 SetPriceFetcher 回填已删——fetcher 唯一主人是本 worker，经
-	// SyncWorkerConfig 一次性构造注入）；预览 membership 读 svc 定价快照。
-	// log：A-P2-12 方案 A 多档位 Warn 目标（nil 则静默——不传即退化为无告警）。
+	// SyncWorkerConfig 一次性构造注入；预览 membership 读 svc 定价快照。
+	// log：方案 A 多档位 Warn 目标（nil 则静默——不传即退化为无告警）。
 	priceFetcher := pricing.NewFetcher(hc, log)
 	pricingSync := pricing.NewSyncWorker(pricing.SyncWorkerConfig{
 		Fetcher:  priceFetcher,
@@ -543,11 +550,11 @@ func main() {
 	// 观测读面（flow/frontier）钉死 rollup 表——缺本 lane 生产聚合永远为空。
 	// 请求路径零参与；无内存队列，停机零排空义务（DB 即队列）。
 	routingRollup := quality.NewRollupWorker(repos.Partitions, quality.RollupConfig{}, log)
-	// 路由编译源装配（W3-T1：双 setter 已删，编译双源 Start 期结构注入）：
+	// 路由编译源装配（双 setter 已删，编译双源 Start 期结构注入）：
 	// quality 源 = M 缓存窗口 provider（settled PG 分钟 + recorder 未落库活体
 	// 行合并，基线仅 PG；见 routing_sources.go），价格源 = svc 定价快照基底
 	// 解析（缺价模型缺席 → compiler costKnown=false 落 Explore）。两源一次性
-	// 给齐 both-or-nothing，经 schedWorker 在 Start 期交接（healthWorker R1
+	// 给齐 both-or-nothing，经 schedWorker 在 Start 期交接（healthWorker
 	// 先例）；编译失败保留旧视图是编译道契约（routing_compiler_wire.go），
 	// 失败/成功新鲜度经 scheduler Stats 上运维面。
 	schedSrc := &scheduler.CompilerSources{
@@ -577,14 +584,14 @@ func main() {
 	// health 启动适配：真 probe 在 Start 期一次性交接（位置与 Name 不变——
 	// 注册序=反序排空语义与 worker_order_test 的 ident 断言依赖）。
 	healthW := healthWorker{h: runtimeHealth, probe: probe}
-	// 编译源启动适配（W3-T1：双 setter 已删）：同一位置同一顺序注册 schedW
+	// 编译源启动适配（双 setter 已删）：同一位置同一顺序注册 schedW
 	// （Name="scheduler" 不变）——反序排空语义与 worker_order_test 断言依赖。
 	schedW := schedWorker{s: sched, src: schedSrc}
 	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker,
 		inv, schedW, ruleEngine, retryWorker, healthW, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync, routingRollup)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
-	// G2-3（spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
+	// （spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
 	// worker 合法，但启动期明确提示其不会出现在运维端点。
 	opsWorkers := statsProviders(opsCandidates, log)
 	// discovery 实例发现观测（foundation spec §2.4）：alive N / last_tick_ok /
@@ -601,7 +608,7 @@ func main() {
 	h := handler.New(svc, handler.OpsOptions{
 		Workers:       opsWorkers,
 		UsageSnap:     codexAdapter, // codex 额度快照：handler fan-out 经构造直调（TTL 缓存/有界并发/失败冷却全在适配层）
-		PricingSync:   pricingSync,  // 价格手动同步/预览：sync 端点经构造直调 worker（W3-T2，零 service 中介）
+		PricingSync:   pricingSync,  // 价格手动同步/预览：sync 端点经构造直调 worker（零 service 中介）
 		Log:           log,          // fan-out 未知上游错误 Warn
 		Snapshots:     func() []handler.SnapshotState { return snapshotStates(snapReg.Status()) },
 		InFlightUsers: auth.InFlightUsers,
@@ -645,7 +652,7 @@ func main() {
 	for name, err := range errs {
 		logSnapshotReloadErr(log, "snapshot initial reload failed", name, err)
 	}
-	// E2（E-P2-4 启动双刷）：ReloadAll 返回空 map = 全部成功（snapshot.go 契约
+	// 启动双刷：ReloadAll 返回空 map = 全部成功（snapshot.go 契约
 	// ——成功者不出现）→ 置位首连跳过标志（dispatcher.bootLoaded，wm.StartAll
 	// 之前——程序序保证监听器首连必见标志）：首连的 FullRefresh CAS 消费后跳过
 	// 五路 ReloadAll（单实例健康启动下第二遍纯冗余，大表启动 DB 负载/就绪延迟
@@ -681,13 +688,13 @@ func main() {
 	// 调度器初始加载已由上方注册表 ReloadAll 完成（先于 StartAll 与流量）——
 	// 此处不再单独 InvalidateAllSync（单一启动入口）。
 
-	// http.Server 超时（D-P2-4，现存最重 P2）：IdleTimeout 防 keep-alive 空闲连接
+	// http.Server 超时：IdleTimeout 防 keep-alive 空闲连接
 	// 与 goroutine 无限驻留（有效 key 吃满 50000 并发面数小时即修复面）；ReadTimeout
 	// = proxy.upstream_timeout 同源单一事实源（120s）——只限请求头+体读取时长，不
 	// 限制响应写出（net/http 语义），SSE 长流不受影响。slowloris 场景：1KB/s ×
 	// 4MB ≈ 4096s → 120s 截断。
-	// 不设 WriteTimeout：会切断 SSE 长流（03-streaming.md C-P2-1 依赖节）；写侧
-	// 防线是 C 方向 C-P2-1 的 SetWriteDeadline。
+	// 不设 WriteTimeout：会切断 SSE 长流（03-streaming.md 依赖节）；写侧
+	// 防线是 C 方向的 SetWriteDeadline。
 	httpSrv := &http.Server{
 		Addr:              cfg.Server.Addr,
 		Handler:           srv.Handler(),
@@ -723,7 +730,7 @@ func main() {
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// 优雅停机链（Phase 5 计费不丢窗口）：
+	// 优雅停机链（计费不丢窗口）：
 	// 1) Shutdown(2s) 优雅窗口：快速请求收尾（长连接流式超时留给 Close 强断）
 	// 2) Close 强制断长连接 → 客户端断开 → recordStreamAbort → finish（断前
 	//    usage 帧照常计费）
@@ -739,7 +746,7 @@ func main() {
 	//    incomplete" 显式上报且不宣称 clean shutdown（review blocker
 	//    2026-08-30）。
 	srvCtx, cancelSrv := context.WithTimeout(shutdownCtx, 2*time.Second)
-	// G2-2（spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
+	// （spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
 	// `_ =` 全丢弃；wm.Shutdown 内部已对 worker Close 失败 Warn，此处补齐
 	// httpSrv 静默面）。
 	if err := httpSrv.Shutdown(srvCtx); err != nil {
@@ -755,7 +762,7 @@ func main() {
 	_ = log.Sync()
 }
 
-// instanceSrc 生成实例 ID（NOTIFY Src）：hostname-pid-nonce。B4-1（p2-05）：
+// instanceSrc 生成实例 ID（NOTIFY Src）：hostname-pid-nonce：
 // 容器化多实例同 hostname、pid namespace 各自 pid 1 → 纯 hostname-pid 碰撞 →
 // 互把对方 NOTIFY 当自播跳过 → 失效静默全灭；crypto/rand 随机 nonce 保证跨
 // 实例唯一（6B 熵，同宿主两实例碰撞概率 ~2^-48，可忽略）。
@@ -781,7 +788,7 @@ func waitForInflight(px *proxy.Proxy, ctx context.Context, log *logx.Logger) {
 	}
 }
 
-// fatalDB 启动期 DB 操作失败 fatal（D-P2-3）：30s 预算超时 → 明确可归因文案。
+// fatalDB 启动期 DB 操作失败 fatal：30s 预算超时 → 明确可归因文案。
 func fatalDB(step string, err error) {
 	if errors.Is(err, context.DeadlineExceeded) {
 		fatalf("db bootstrap timed out after 30s (%s): %v", step, err)

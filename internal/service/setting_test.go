@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// TestUpdateSettingNumberRange A-P2-11 值域护栏：注册表 Min/Max 是单一事实源——
+// TestUpdateSettingNumberRange 值域护栏：注册表 Min/Max 是单一事实源——
 // 低于 Min → 400（含负值直达新注册用户的攻击形态 default_user_balance=-500）；
 // Min 恰好命中（边界值）→ 接受；合法正数 → 接受。消费端零改动（护栏前置）。
 func TestUpdateSettingNumberRange(t *testing.T) {
@@ -53,7 +53,7 @@ func TestUpdateSettingNumberNoMax(t *testing.T) {
 	require.NoError(t, err, "Max nil（无上界）→ 不越界")
 }
 
-// TestServiceTierPolicyKeysDerived P3-7：serviceTierPolicyKeys 从注册表
+// TestServiceTierPolicyKeysDerived：serviceTierPolicyKeys 从注册表
 // PolicyValues 枚举域派生（消双处同步）——注册表是唯一事实源，派生表与注册表
 // 一一对应（无残留手写 key）。
 func TestServiceTierPolicyKeysDerived(t *testing.T) {

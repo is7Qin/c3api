@@ -56,7 +56,7 @@ func TestRegistryRegisterAndFor(t *testing.T) {
 }
 
 // TestNewRegistersResponsesSpecial New 必须默认注册 responses-special provider
-// （P4：修复前未注册 → For 兜底 apiKeyProvider → Credential 类型不匹配报错 →
+// （修复前未注册 → For 兜底 apiKeyProvider → Credential 类型不匹配报错 →
 // 真实流量 502 unsupported credential type）。
 func TestNewRegistersResponsesSpecial(t *testing.T) {
 	r := New()
@@ -93,7 +93,7 @@ func TestResponsesSpecialProviderTypeMismatchErrors(t *testing.T) {
 }
 
 // For 未知类型 → unsupportedProvider 兜底（Valid 通过但未注册的类型也走此路
-// 径）：Type() 必须返回**真实请求类型**（B-P2-1——旧兜底复用 apiKeyProvider
+// 径）：Type() 必须返回**真实请求类型**（旧兜底复用 apiKeyProvider
 // 恒返回 TypeAPIKey 是撒谎语义，未来 codex HTTP 面注册时错配咬合点）；其
 // Credential 恒 ErrUnsupported（错误文本含输入类型，与现状一致）——兜底语义
 // 不回归。

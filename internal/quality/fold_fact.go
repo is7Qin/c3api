@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Fold-at-source facts (v3 F1, spec docs/superpowers/specs/flow-fold-at-source-v3.md
+// Fold-at-source facts (v3, spec docs/superpowers/specs/flow-fold-at-source-v3.md
 // §4–§5.1): the per-attempt fact replaces the per-request FlowChain heap box.
 // An attemptFact is fixed-size, stack-passed BY VALUE, and doubles as the
 // counter-cell table key (comparable struct — no strings, no hex/sha256, no
@@ -25,7 +25,7 @@ import (
 // exact row strings; any value outside these tables is a programming error).
 // lane: 0=primary, 1=explore, 2=degraded.
 // outcome/prevOutcome (shared): 0=success (incl. rule-ok), 1=error, 2=4xx,
-// 3=429, 4=5xx, 5=network, 6=client_cancel (verbatim census string, v3-F1
+// 3=429, 4=5xx, 5=network, 6=client_cancel (verbatim census string,
 // amendment: proxy emits it live via ResultClientCancel, old rows carry it).
 // transition: 0=initial-or-init, 1=failover, 2=retry, 3=flow, 4=plan.
 // ordinal 1–8 direct; isTerminal/hasPrev single bits.

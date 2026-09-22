@@ -25,7 +25,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// fakeStreamGen 模拟 T2 适配层 GenerateImageStream（同签名——mock 替身不落
+// fakeStreamGen 模拟适配层 GenerateImageStream（同签名——mock 替身不落
 // 生产代码）：按 events 依次回调 fn；fn 返回错误立即终止并透传（SDK 语义）；
 // 全部回调完返回 genErr（nil = 成功）。afterEvent 在每个事件回调完成后触发
 // （时序断言用）。
@@ -51,7 +51,7 @@ type failWriter struct {
 
 func (w *failWriter) Write([]byte) (int, error) { return 0, errors.New("client closed") }
 
-// fakeEnvelope 信封错误替身（T2 信封协议：StatusCode() + RawJSON()）。
+// fakeEnvelope 信封错误替身（信封协议：StatusCode() + RawJSON()）。
 type fakeEnvelope struct {
 	status int
 	body   string
@@ -64,7 +64,7 @@ func (e *fakeEnvelope) RawJSON() string { return e.body }
 
 // imageTestPrices 生图测试价格（litellm gpt-image-2 官方形态换算：
 // input 8e-06 → 800,000 毫分/1M、output 3e-05 → 3,000,000；per-image
-// 0.054 → 5,400 毫分/张——Task A ImageCost 实参断言同款）。
+// 0.054 → 5,400 毫分/张——ImageCost 实参断言同款）。
 func imageTestPrices() map[string]*domain.PriceEntry {
 	i64 := func(v int64) *int64 { return &v }
 	return map[string]*domain.PriceEntry{"gpt-image-2": {
@@ -162,14 +162,14 @@ func TestStreamImagePassthrough(t *testing.T) {
 	require.True(t, handled)
 	require.Empty(t, body)
 	require.True(t, headOK, "首事件即发响应头 + Flush（CF 524 免疫时序）")
-	// wire 形态（P2-1）：注释行 + 两帧（usage 仅末帧，JSON tag 直透）。
+	// wire 形态：注释行 + 两帧（usage 仅末帧，JSON tag 直透）。
 	require.Equal(t, ": ping\n\n"+
 		"event: image_generation.completed\ndata: {\"b64_json\":\"aGVsbG8=\"}\n\n"+
 		"event: image_generation.completed\ndata: {\"b64_json\":\"d29ybGQ=\",\"usage\":{\"input_tokens\":10,\"input_image_tokens\":100,\"output_tokens\":5,\"output_image_tokens\":50}}\n\n",
 		rec.Body.String())
 	require.True(t, rec.Flushed, "每事件后 Flush")
 
-	// 流终计费（与 T2 同口径）：call_count=2、image token 取末事件、价格快照、
+	// 流终计费（同口径）：call_count=2、image token 取末事件、价格快照、
 	// ImageCost（100×800000/1e6 + 50×3000000/1e6 + 2×5400 = 11030）；text 分量
 	// 恒 0；TotalTokens 含 image tokens 不含张数。统一计费模型（spec 2026-08-13）：
 	// image token 并入 in/out、张数入 call_count、每张价入 price_per_call_millis。
@@ -215,7 +215,7 @@ func TestStreamImageUsageOnlyLastCompleted(t *testing.T) {
 	require.Equal(t, int64(2), l.OutputTokens)
 }
 
-// TestStreamImageZeroImagesSuccess 0 图成功边界（P3-3）：SDK Data 空 → 无任何
+// TestStreamImageZeroImagesSuccess 0 图成功边界：SDK Data 空 → 无任何
 // 事件 → 网关自行收尾 200 + 记 0 张落账。
 func TestStreamImageZeroImagesSuccess(t *testing.T) {
 	p, store := newImageStreamTestProxy(t, nil)
@@ -247,7 +247,7 @@ func TestStreamImagePreHeaderError(t *testing.T) {
 	require.Zero(t, rec.Body.Len(), "首事件前失败不写任何帧")
 }
 
-// TestStreamImagePostHeaderError 响应头已发后失败（P2-2）：HTTP 状态不可用 →
+// TestStreamImagePostHeaderError 响应头已发后失败：HTTP 状态不可用 →
 // SSE error 帧（data 含 message——信封文案）+ EOF；计费走 recordStreamAbort
 // （已收集张数落账）+ MarkResult(连接级/5xx 分流)。
 func TestStreamImagePostHeaderError(t *testing.T) {
@@ -361,7 +361,7 @@ func TestStreamImageUnknownEventSkipped(t *testing.T) {
 	require.Equal(t, int64(1), l.CallCount, "partial_image 不计费不计数")
 }
 
-// TestStreamImageUnknownEventWarns 未知事件类型 → Warn（A-P2-10 静默面收敛）：
+// TestStreamImageUnknownEventWarns 未知事件类型 → Warn（静默面收敛）：
 // 不写帧不计费，且 p.log 装配时日志留痕（修复前零日志零告警——SDK 升级改事
 // 件名则落账 0 张无从发现；适配层已显式映射过滤，此处分层防御）。
 func TestStreamImageUnknownEventWarns(t *testing.T) {

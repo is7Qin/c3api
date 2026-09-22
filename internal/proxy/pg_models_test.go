@@ -117,8 +117,8 @@ func modelsPGFixture(t *testing.T) modelsFixture {
 	})
 	require.NoError(t, err)
 	for _, a := range []*domain.Account{
-		{Name: "a-models-a", TemplateID: tplA.ID, UpstreamKey: "sk-1", MaxConcurrency: 4},
-		{Name: "a-models-b", TemplateID: tplB.ID, UpstreamKey: "sk-2", MaxConcurrency: 4},
+		{Name: "a-models-a", TemplateID: tplA.ID, UpstreamKey: "sk-1", MaxConcurrency: 4, Enabled: true},
+		{Name: "a-models-b", TemplateID: tplB.ID, UpstreamKey: "sk-2", MaxConcurrency: 4, Enabled: true},
 	} {
 		acc, err := repos.Accounts.CreateAccount(ctx, a)
 		require.NoError(t, err)
@@ -139,7 +139,7 @@ func modelsPGFixture(t *testing.T) modelsFixture {
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(ctx)) // 空表写种子（同 newTestProxyTplTimeoutRec）
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
@@ -313,7 +313,7 @@ func TestPGModelsReloadReflectsChanges(t *testing.T) {
 	require.NoError(t, err)
 	accC, err := fx.repos.Accounts.CreateAccount(ctx, &domain.Account{
 		Name: "a-models-c", TemplateID: tplC.ID, UpstreamKey: "sk-3",
-		MaxConcurrency: 4,
+		MaxConcurrency: 4, Enabled: true,
 	})
 	require.NoError(t, err)
 	require.NoError(t, fx.repos.Accounts.SetAccountGroups(ctx, accC.ID, []int64{fx.gid}))

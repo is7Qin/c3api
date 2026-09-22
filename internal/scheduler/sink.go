@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/rule"
 )
 
-// LatchSink 是规则引擎的 typed health action 本地宿（B18/B19 根因重开）：
+// LatchSink 是规则引擎的 typed health action 本地宿（根因重开）：
 // Throttle 直写 RuntimeHealth；FailAccount 只做 TryAcquire + Hub.Dispatch，
 // 不碰 sched view、不调 sched.FailAccount——内存摘除经 Hub 同步扇出到
 // Scheduler.onRuleFailure（同协程，零异步窗口）。
@@ -65,7 +65,13 @@ func (s *LatchSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 	default:
 		return nil
 	}
-	key := HealthKey{AccountID: ev.AccountID, Revision: ev.ExpectedRevision}
+	// 指纹缺失 fail-closed（与 FailAccount 同纪律）：健康判决按 (账号, 质量类,
+	// 身份指纹, K) 落键，写不出具体指纹就等于写一条永远不会被查询到的记录——
+	// 静默失效比报错更危险。生产事件由 scheduler 的事件构造器恒带指纹。
+	if ev.CandidateFingerprint == "" {
+		return ErrMissingCandidateFingerprint
+	}
+	key := HealthKey{AccountID: ev.AccountID, Identity: ev.CandidateFingerprint, IdentityRevision: ev.ExpectedIdentityRevision}
 	if th.Scope == domain.ThrottleScopeAccount {
 		key.Quality = "*"
 	} else if th.Scope == domain.ThrottleScopeAccountRoute {
@@ -88,7 +94,7 @@ func (s *LatchSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 // 第一道门——引擎内 sink 调用先于 enqueuePersist）；锁存后经 Hub 同步扇出，
 // fence（revision/指纹双检查）与内存摘除在 Scheduler.onRuleFailure 内执行。
 func (s *LatchSink) FailAccount(ev rule.Event) error {
-	if ev.ExpectedRevision <= 0 {
+	if ev.ExpectedIdentityRevision <= 0 {
 		return ErrMissingExpectedRevision
 	}
 	fp := ev.CandidateFingerprint
@@ -96,7 +102,7 @@ func (s *LatchSink) FailAccount(ev rule.Event) error {
 		return ErrMissingCandidateFingerprint
 	}
 	if s.Latch != nil {
-		s.Latch.TryAcquire(ev.AccountID, fp, ev.ExpectedRevision)
+		s.Latch.TryAcquire(ev.AccountID, fp, ev.ExpectedIdentityRevision)
 	}
 	s.Hub.Dispatch(ev)
 	return nil
@@ -109,7 +115,7 @@ func (s *Scheduler) onRuleFailure(ev rule.Event) {
 	if v := s.View(); v != nil {
 		if as, ok := v.Account(ev.AccountID); ok {
 			av := as.static.Load()
-			if av.acc.LifecycleRevision != ev.ExpectedRevision {
+			if av.acc.IdentityRevision != ev.ExpectedIdentityRevision {
 				return
 			}
 			current, err := candidateFingerprint(&av.acc)

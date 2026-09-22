@@ -351,7 +351,7 @@ export default function Stats() {
   )
 }
 
-// —— Routing Flow tab（Todo 22）：渲染服务端 rollup 聚合与当前计划投影。
+// —— Routing Flow tab：渲染服务端 rollup 聚合与当前计划投影。
 // 铁律：不在浏览器侧重算 Wilson 区间 / frontier 支配 / 计划编译——所有数值
 // 直出 API；守恒失败（first≠terminal）时降级为表格并显式告警，不画无效图。
 
@@ -753,7 +753,7 @@ function PlanCard({ route, generation }: { route: PlanRoute; generation: number 
                 <TableRow key={`${c.account_id}-${c.identity_fingerprint}`}>
                   <TableCell className="text-right font-mono tabular-nums">{c.account_id}</TableCell>
                   <TableCell className="text-right font-mono tabular-nums">{c.template_id}</TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">{c.lifecycle_revision}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums">{c.identity_revision}</TableCell>
                   <TableCell className="text-xs">{c.mapped_model || '—'}</TableCell>
                   <TableCell className="font-mono text-xs" title={c.quality_class_id}>{truncate(c.quality_class_id, 12)}</TableCell>
                   <TableCell className="text-right font-mono tabular-nums">{`${(c.upstream_cost_multiplier_bp / 100).toFixed(2)}×`}</TableCell>

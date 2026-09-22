@@ -10,9 +10,9 @@ package main
 // authSyncStats auth-sync 周期刷新 worker 状态（存活/状态最小集）。
 type authSyncStats struct {
 	Running           bool  `json:"running"`              // 周期循环存活（Start 置位、退出复位）
-	LastReloadUnixMs  int64 `json:"last_reload_unix_ms"`  // 最近一次 Reload 成功完成时刻（0 = 尚未成功；B4-2 语义修正——失败不前移）
-	Failures          int64 `json:"failures"`             // Reload 失败累计次数（B4-2 新增：快照陈旧可观测）
-	LastFailureUnixMs int64 `json:"last_failure_unix_ms"` // 最近一次失败时刻（0 = 从未失败；B4-2 新增）
+	LastReloadUnixMs  int64 `json:"last_reload_unix_ms"`  // 最近一次 Reload 成功完成时刻（0 = 尚未成功；语义修正——失败不前移）
+	Failures          int64 `json:"failures"`             // Reload 失败累计次数（新增：快照陈旧可观测）
+	LastFailureUnixMs int64 `json:"last_failure_unix_ms"` // 最近一次失败时刻（0 = 从未失败；新增）
 }
 
 // Stats 满足 handler.StatsProvider（独立于 worker.Worker 契约；

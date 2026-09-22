@@ -20,7 +20,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 真实 PostgreSQL 测试基座（评审 B1：本任务 repository 新增测试一律真实 PG，
+// 真实 PostgreSQL 测试基座（本任务 repository 新增测试一律真实 PG，
 // 既有 pgxmock 测试保留不动）。
 //
 // 启动方式：deploy/test-compose.yml 起 postgres:18，然后
@@ -46,7 +46,7 @@ func newPGReposFresh(tb testing.TB) *repository.Repository {
 	require.NoError(tb, err)
 	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool) // pool 注入 Stats（Upsert COPY 两阶段真实路径）
 	require.NoError(tb, err)
-	// T4.5 + 分表设计 + 用户裁决 2026-08-11：四张分区表（usage_logs/err_logs/
+	// 分表设计 + 用户裁决 2026-08-11：四张分区表（usage_logs/err_logs/
 	// usage_stats/usage_entity_stats）已从 ent migrate 列表排除
 	// （migrateHookExcludesPartitioned），分区表由 bootstrap 独占建表——所有 PG
 	// 测试共用同一分区表基座（含 usage_stats 分区上的 Upsert 真实路径）。
@@ -64,7 +64,7 @@ func newPGRepos(tb testing.TB) *repository.Repository {
 	return newPGReposFresh(tb)
 }
 
-// newPGReposNoPool 同一 schema 上的无池仓库（F2：结算语句双载体
+// newPGReposNoPool 同一 schema 上的无池仓库（结算语句双载体
 // A/B 与等价性测试用）——pool == nil → ent txDriver 载体；与 newPGRepos
 // （pool → pgx 直连载体）共享同一测试 schema（必须先于本函数调用
 // newPGRepos 完成建表）。
@@ -102,8 +102,7 @@ func seedPGGroup(t *testing.T, repos *repository.Repository, name string) *domai
 func seedPGAccount(t *testing.T, repos *repository.Repository, tplID int64, name string) *domain.Account {
 	t.Helper()
 	a, err := repos.Accounts.CreateAccount(context.Background(), &domain.Account{
-		Name: name, TemplateID: tplID, UpstreamKey: "sk-" + name, MaxConcurrency: 8,
-	})
+		Name: name, TemplateID: tplID, UpstreamKey: "sk-" + name, MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	return a
 }
@@ -161,8 +160,9 @@ func TestAccountGroupsPG(t *testing.T) {
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, a1.ID, []int64{g1.ID}))
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, a2.ID, []int64{g2.ID}))
 		// 批量替换为同一组
-		require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
-			repository.AccountPatch{GroupIDs: &[]int64{g1.ID}}))
+		_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+			repository.AccountPatch{GroupIDs: &[]int64{g1.ID}})
+		require.NoError(t, err)
 		for _, id := range []int64{a1.ID, a2.ID} {
 			got, err := repos.Accounts.GetAccountGroups(ctx, id)
 			require.NoError(t, err)
@@ -170,14 +170,16 @@ func TestAccountGroupsPG(t *testing.T) {
 		}
 		// 不变（GroupIDs nil）：仅改 name，绑定不动
 		name := "renamed"
-		require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID},
-			repository.AccountPatch{Name: &name}))
+		_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID},
+			repository.AccountPatch{Name: &name})
+		require.NoError(t, err)
 		got, err := repos.Accounts.GetAccountGroups(ctx, a1.ID)
 		require.NoError(t, err)
 		require.Equal(t, []int64{g1.ID}, got, "nil = 不变")
 		// 批量清空（[]）
-		require.NoError(t, repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
-			repository.AccountPatch{GroupIDs: &[]int64{}}))
+		_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+			repository.AccountPatch{GroupIDs: &[]int64{}})
+		require.NoError(t, err)
 		for _, id := range []int64{a1.ID, a2.ID} {
 			got, err := repos.Accounts.GetAccountGroups(ctx, id)
 			require.NoError(t, err)
@@ -189,7 +191,7 @@ func TestAccountGroupsPG(t *testing.T) {
 		a1 := seedPGAccount(t, repos, tpl.ID, "c1")
 		a2 := seedPGAccount(t, repos, tpl.ID, "c2")
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, a1.ID, []int64{g1.ID}))
-		err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
+		_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{a1.ID, a2.ID},
 			repository.AccountPatch{GroupIDs: &[]int64{g1.ID, 999}})
 		require.ErrorIs(t, err, repository.ErrNotFound)
 		require.Contains(t, err.Error(), "999")

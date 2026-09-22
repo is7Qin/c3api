@@ -56,7 +56,7 @@ func TestAccountUsageCredentialDispatch(t *testing.T) {
 	require.Nil(t, cred, "凭据全空 → 无上游能力")
 }
 
-// TestAccountUsageCredentialStoreError store 故障透传（T2-2）：GetAccountExt
+// TestAccountUsageCredentialStoreError store 故障透传：GetAccountExt
 // 非 ErrNotFound 错误 → 非 nil 错误 + nil 凭据（handler 侧记 null/null，
 // 不误标上游问题）。
 func TestAccountUsageCredentialStoreError(t *testing.T) {

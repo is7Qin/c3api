@@ -10,10 +10,10 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 )
 
-// AccountCredential 网关侧凭据传递形态（SDK 接入契约，T1 §4）：每次调用必传
+// AccountCredential 网关侧凭据传递形态（SDK 接入契约，§4）：每次调用必传
 // （调度器按请求选账号）。从 AccountExt 派生（CredentialFromExt）——codex-oauth
 // → OAuthToken/OAuthRefreshToken/OAuthExpiresAt；codex-pat → PATKey。适配层
-// （T2 起）把 cred 转成 SDK Auth 账号级缓存键：同账号复用、失效剔除。Codex
+// （此后）把 cred 转成 SDK Auth 账号级缓存键：同账号复用、失效剔除。Codex
 // 数据面 URL 归 SDK 官方默认所有，网关不再派生或传递 BaseURL。
 type AccountCredential struct {
 	AccountID         int64

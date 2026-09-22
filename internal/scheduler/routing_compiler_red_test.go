@@ -54,7 +54,7 @@ func TestRed_Blocker1_ImagesDistinct(t *testing.T) {
 	require.NoError(t, err)
 	rcGenHex := domain.RouteClassIDHex(genRC)
 	rcEditHex := domain.RouteClassIDHex(editRC)
-	// v4-S2: lookups ride normalized keys; op-distinctness lives in the interned hex.
+	// lookups ride normalized keys; op-distinctness lives in the interned hex.
 	require.NotEqual(t, rcGenHex, rcEditHex)
 	rrGen := RouteRefForOp(10, string(domain.FormatOpenAIImages), "m", domain.OpImagesGenerations)
 	rrEdit := RouteRefForOp(10, string(domain.FormatOpenAIImages), "m", domain.OpImagesEdits)
@@ -94,7 +94,7 @@ func TestRed_Blocker2_HealthResolvedMappedModel(t *testing.T) {
 	qcResolved, _ := domain.QualityClassID(callerKind, domain.FormatOpenAIChat, "resolved", op)
 	qcRequested, _ := domain.QualityClassID(callerKind, domain.FormatOpenAIChat, "req", op)
 	require.NotEqual(t, domain.QualityClassIDHex(qcResolved), domain.QualityClassIDHex(qcRequested))
-	hkResolved := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcResolved), Revision: 1}
+	hkResolved := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcResolved), IdentityRevision: 1}
 	h := NewRuntimeHealth(nil, "self", nil, nil)
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hkResolved: {Key: hkResolved, State: StateOPEN}}})
 	s.health = h
@@ -107,7 +107,7 @@ func TestRed_Blocker2_HealthResolvedMappedModel(t *testing.T) {
 	all = append(all, compiledAccountIDs(rd.Degraded)...)
 	require.Contains(t, all, int64(1), "resolved-model OPEN health must not exclude post-v5")
 	// Requested-quality OPEN likewise inert.
-	hkRequested := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcRequested), Revision: 1}
+	hkRequested := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcRequested), IdentityRevision: 1}
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hkRequested: {Key: hkRequested, State: StateOPEN}}})
 	view2, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
@@ -144,7 +144,7 @@ func TestRed_Blocker3_UnrelatedQualityNotExclude(t *testing.T) {
 	require.NotEqual(t, domain.QualityClassIDHex(qcM1), domain.QualityClassIDHex(qcM2))
 	// v5-§5.1A: unrelated-quality OPEN is inert (health deleted from inputs);
 	// inclusion holds with or without the live entry.
-	hkOther := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcM2), Revision: 1}
+	hkOther := HealthKey{AccountID: 1, Quality: domain.QualityClassIDHex(qcM2), IdentityRevision: 1}
 	h := NewRuntimeHealth(nil, "self", nil, nil)
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hkOther: {Key: hkOther, State: StateOPEN}}})
 	s.health = h
@@ -180,7 +180,7 @@ func TestRed_Blocker4_LatchedFalseNoExclude(t *testing.T) {
 	lk := compilerLatchKeyFor(acc)
 	// v5-§5.1A: latch maps are deleted from inputs — live latched state (false
 	// or true) never excludes from compilation.
-	require.True(t, s.TryLatch(acc.ID, lk.Fingerprint, lk.Revision))
+	require.True(t, s.TryLatch(acc.ID, lk.Fingerprint, lk.IdentityRevision))
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")

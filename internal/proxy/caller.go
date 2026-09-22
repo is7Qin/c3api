@@ -30,7 +30,7 @@ import (
 var convertRequest = protoconv.ConvertRequest
 
 // forwardRoute 一次转发的路由信息（格式 + 调用器 + 请求体）：默认 = 客户端
-// 格式直连（零转换）；协议转换（W5）命中时替换为模板协议路由（格式/调用器/
+// 格式直连（零转换）；协议转换命中时替换为模板协议路由（格式/调用器/
 // 已转换请求体）。failover 循环按 route 重选号（模板协议），日志仍按客户端
 // 协议记录（buildLog format 参数不变）。
 type forwardRoute struct {
@@ -69,7 +69,7 @@ func convertedRoute(converts []domain.ProtocolConvert, client domain.RequestForm
 }
 
 // newReqID 生成 32 位 hex 请求 ID（仅日志关联键，DB 无格式约束；math/rand/v2
-// 免 crypto/rand syscall——非安全用途，GC 削减 P6）。
+// 免 crypto/rand syscall——非安全用途，GC 削减）。
 func newReqID() string {
 	var b [16]byte
 	binary.LittleEndian.PutUint64(b[0:8], rand.Uint64())
@@ -79,9 +79,9 @@ func newReqID() string {
 
 // UpstreamCaller 一格式一实现：完成单次上游调用（含流式写出、客户端断开判定
 // 与 usage 记录）。记录职责全在 caller（finish/buildLog/recordStreamAbort/
-// MarkResult 直接可用——评审 I-1）；骨架只做 code 分支（429/5xx 转移、4xx
+// MarkResult 直接可用）；骨架只做 code 分支（429/5xx 转移、4xx
 // 透传记录）、handled 短路与耗尽 record。凭据值经 aiclient 格式方法传入
-// （头名 aiclient 内组装，Phase 1 正交延续——评审 M-2）。
+// （头名 aiclient 内组装，正交延续）。
 //
 // 语义：
 //   - handled == true → 请求已处理完毕（成功/客户端断开/流中止已记录；本地拒绝
@@ -144,7 +144,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		writeErr(w, errBody)
 		return
 	}
-	// images 端点专用 body 分支（评审 P1-2）：multipart 跳过 json.Valid 硬门
+	// images 端点专用 body 分支：multipart 跳过 json.Valid 硬门
 	// 与 gjson 顶层提取（下述 JSON 校验/stream 探测/body 重写对 multipart
 	// 全部失效——multipart 字节对 json.Valid 必然 false，撞门即误杀）；model
 	// 从 form 字段取；图片文件原样透传（不解析内容）；不做
@@ -158,8 +158,8 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	} else {
 		// SDK v1.x 参数里没有 Stream 字段（流式由 NewStreaming 在请求选项层注入
 		// "stream": true），故从原始请求体探测 stream 标志决定走流式还是非流式。
-		// model 一并在此提取（评审 I-2：不解析完整 params）；service_tier（Phase 5
-		// 计费）同次提取。GC 削减 P3：json.Valid 单遍校验（零分配）保留 400 语义 +
+		// model 一并在此提取（不解析完整 params）；service_tier（
+		// 计费）同次提取。GC 削减：json.Valid 单遍校验（零分配）保留 400 语义 +
 		// scanKeys 单遍顶层提取三键（spec 2026-08-16-single-pass-parse-design：
 		// 每 JSON 请求 4 遍全文档扫描 → 2 遍——gjson.ParseBytes 方案经证伪弃用）。
 		// 值判定与现状 gjson Type 校验语义精确等价：stream 非 bool/null、model/
@@ -200,7 +200,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		tier := billing.NormalizeTier(string(tierVal))
 		// service_tier 归一化 + 转发策略（计费启用才处理；auto/空/未知恒透传）：
 		// strip → 转发体删该字段；reject → 直接 400（记 ErrBilling，不转发）。
-		// 归一化 tier 补入已入 ctx 的 reqMeta（GC 削减 P6：免第二次 WithValue+
+		// 归一化 tier 补入已入 ctx 的 reqMeta（GC 削减 免第二次 WithValue+
 		// WithContext；非计费路径 hasTier=false → BillingTier 恒空）。
 		if p.bill != nil {
 			rm.tier = tier
@@ -232,7 +232,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 
 	// 路由信息：格式 + 调用器 + 请求体。默认 = 客户端格式直连（零转换）；
 	// images 端点按请求路径选调用器（generations/edits 上游子路径不同）；
-	// 协议转换（W5，只补差）命中时整体替换为模板协议路由。
+	// 协议转换（只补差）命中时整体替换为模板协议路由。
 	route := forwardRoute{format: format, caller: p.callers[format], body: body}
 	if format == domain.FormatOpenAIImages {
 		route.caller = p.imagesCallerFor(r)
@@ -332,7 +332,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 // images 四格式——共用同一循环骨架；无状态单例，per-request 差异经
 // attemptState 流入）。差异段：codex images 分流（按当轮 sel.CredentialType）、
 // credentialFor、caller.Call、Warn 文案（"upstream connection failure"——两版
-// 本保留不统一，循环不代发）与 SDK 校验错误识别（A-1 "streaming is required"
+// 本保留不统一，循环不代发）与 SDK 校验错误识别（"streaming is required"
 // 本地拒绝——chat 专属）。
 type chatAttempt struct{ p *Proxy }
 
@@ -340,11 +340,11 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 	// TODO(P22-I1): 当前 hdr 恒 nil（UpstreamCaller.Call 未回收 resp.Header），
 	// 仅 fallback 1 生效；待扩展 Header 透传后替换为真实透传
 	// （Global Constraints 豁免 fallback 保留）
-	// codex 分流落位（T2 §2，B 的 501 骨架）：images 端点 codex-oauth/
+	// codex 分流落位（§2，B 的 501 骨架）：images 端点 codex-oauth/
 	// codex-pat 模板选号命中 → codexImagesCaller（GenerateImage 非流式 /
-	// GenerateImageStream 流式 T3 已接——caller 内 stream 分支同签名直赋）。
+	// GenerateImageStream 流式 已接——caller 内 stream 分支同签名直赋）。
 	// 适配层未装配（SetCodex nil）→ 501 显式拒绝，不让凭据缺失路径误报
-	// 502/network。caller 每轮自 st.caller 起算 = 天然复位（评审 P1-1）：
+	// 502/network。caller 每轮自 st.caller 起算 = 天然复位：
 	// 混合类型组 failover 跨类型换账号（codex 失败 → api_key 尝试）时复用旧
 	// codexImagesCaller 会把健康 api_key 账号路由到 Ext=nil 空凭据路径
 	// （502 + 错误率污染 + 无谓失效上报 account 0）。
@@ -352,7 +352,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 	if st.routeFormat == domain.FormatOpenAIImages && isCodexCredentialType(sel.CredentialType) {
 		caller = a.p.codexImagesFor(r)
 	}
-	// 凭据每轮取（评审 I-3）：尾部 Select 后 Selection 变化，凭据随账号；
+	// 凭据每轮取：尾部 Select 后 Selection 变化，凭据随账号；
 	// 循环外取一次会把旧账号 key 发给新账号上游。codex 类型跳过单字符串
 	// credentialFor（注册表无 codex provider——单字符串契约表达不了复合
 	// 凭据；codexImagesCaller 按 sel.Ext 派生 AccountCredential 直供适配层）。
@@ -375,7 +375,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 		code, respBody, handled, callErr = caller.Call(ctx, w, r, reqID, groupID, start, sel, cred, body, st.stream)
 	}
 	// code==0 && callErr != nil 的网络错误分类（Warn + 文本提取）在循环内完成；
-	// 本 attempt 只代发 Warn（文案 chat 版）与 SDK 校验错误识别（A-1 提前收尾）。
+	// 本 attempt 只代发 Warn（文案 chat 版）与 SDK 校验错误识别（提前收尾）。
 	// ctx.Err()==nil 判定与循环 499 分支同序（客户端断连不 Warn、不识别）。
 	if code == 0 && callErr != nil && ctx.Err() == nil {
 		sdkErr := callErr.Error()
@@ -388,7 +388,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 				logx.String("model", sel.Model),
 				logx.Error(callErr))
 		}
-		// SDK 校验错误识别（spec A-1，检测前置）：anthropic-sdk-go
+		// SDK 校验错误识别（spec，检测前置）：anthropic-sdk-go
 		// v1.62.0 client.go:316（CalculateNonStreamingTimeout）对
 		// max_tokens 大 + 非流式请求本地拒绝——无网络请求、无状态码
 		// （code=0），此前误归 network（err_logs 记 network + 502 无

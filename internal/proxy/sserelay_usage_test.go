@@ -4,7 +4,7 @@
 
 package proxy
 
-// 真实消费链回归（spec 2026-08-16 sserelay-lines #7）：>8KB 单行
+// 真实消费链回归（spec 2026-08-16 sserelay-lines）：>8KB 单行
 // response.completed 帧经 sserelay.Relay 全量到达 Observer → caller_responses.go
 // 的 EventName 判定 + responsesCompletedUsage 提取成功。落 proxy 侧：
 // responsesCompletedUsage 未导出，且 sserelay 内部测试包 import proxy 成环。

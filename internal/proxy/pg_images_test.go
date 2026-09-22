@@ -121,7 +121,7 @@ func setupImagesPG(t *testing.T) (*scheduler.Scheduler, int64, int64, *pgImagesU
 		Models:           []string{"gpt-image-1"},
 		ModelMapping:     domain.ModelMapping{},
 	})
-	require.NoError(t, err, "responses-special 模板声明 openai-images 格式必须可落库（Task B 类型-格式约束扩展）")
+	require.NoError(t, err, "responses-special 模板声明 openai-images 格式必须可落库（类型-格式约束扩展）")
 
 	gAPI, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "g-images-api", Visibility: domain.GroupVisibilityPublic})
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func setupImagesPG(t *testing.T) (*scheduler.Scheduler, int64, int64, *pgImagesU
 	} {
 		acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
 			Name: g.name, TemplateID: g.tplID, UpstreamKey: "sk-upstream",
-			MaxConcurrency: 8,
+			MaxConcurrency: 8, Enabled: true,
 		})
 		require.NoError(t, err)
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.groupID}))
@@ -146,7 +146,7 @@ func setupImagesPG(t *testing.T) (*scheduler.Scheduler, int64, int64, *pgImagesU
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)

@@ -195,7 +195,7 @@ func TestQualitySync_PGBisectPreservesDBWideAndDropsOnlyPoison(t *testing.T) {
 }
 
 func TestQualitySync_FlowPreservesRowsAndRequeuesWholeMinute(t *testing.T) {
-	// v3-hygiene: the legacy edges-array vehicle is deleted — the same sync
+	// the legacy edges-array vehicle is deleted — the same sync
 	// contract (full-minute persist, dirty-retained retry) rides live rows.
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
@@ -236,7 +236,7 @@ func TestQualitySync_FlowPreservesRowsAndRequeuesWholeMinute(t *testing.T) {
 
 func TestQualitySync_FlowRowsAreLookedUpAndPersisted(t *testing.T) {
 	// Given: a non-empty contribution for the minute.
-	// (v3-hygiene: the empty-marker half is deleted with the consumer seam —
+	// (: the empty-marker half is deleted with the consumer seam —
 	// no live writer exists for it.)
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
@@ -279,7 +279,7 @@ func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
 	qm := NewQualityMinute(fixed.Unix(), k)
 	qm.SetAttempts(10)
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
-	// v3-hygiene: the legacy edges-array vehicle is deleted — a live row
+	// the legacy edges-array vehicle is deleted — a live row
 	// carries the flow publish instead.
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 7, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
@@ -541,7 +541,7 @@ func TestQualitySync_PGActiveOnly(t *testing.T) {
 }
 
 func TestQualitySync_FullIdentityFlowRowsPreserved(t *testing.T) {
-	// v3-hygiene: the empty-snapshot half is deleted with the consumer seam
+	// the empty-snapshot half is deleted with the consumer seam
 	// (no live writer exists for it) — the full-identity rows half remains.
 	_, rdb := newMiniRedis(t)
 	fixed := time.Date(2026, 8, 29, 12, 5, 0, 0, time.UTC)
@@ -573,7 +573,7 @@ func TestQualitySync_FullIdentityFlowRowsPreserved(t *testing.T) {
 				v, _ := domain.CandidateFingerprint(2, 1, "api_key", "https://api.openai.com", "sk2", "", "", "", false, "", "", "", "")
 				return v
 			}(),
-			// v3-F1: test-only lane-a/lane-b strings are not codes — tests
+			// test-only lane-a/lane-b strings are not codes — tests
 			// use real lanes; "init"/"retry" still round-trip exactly.
 			TerminalMinute: fixed, Ordinal: 2, Lane: "explore", AccountID: 20, PreviousAccountID: func() *int64 { v := int64(10); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 5,
 		},

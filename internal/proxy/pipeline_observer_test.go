@@ -36,7 +36,7 @@ func TestPipelineObserver_observedPreResponseLeavesCleanupToFailover(t *testing.
 	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-1", UserID: 1})
 	require.NoError(t, err)
-	// v4-S1: the threaded settle value and the session derivation coincide.
+	// the threaded settle value and the session derivation coincide.
 	current, ok := plan.CurrentAttempt()
 	require.True(t, ok)
 	require.Equal(t, attempt, current)
@@ -76,7 +76,7 @@ func TestFailoverPipeline_observed4xxPreservesFinishAndMarkResult(t *testing.T) 
 	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-4xx", UserID: 1})
 	require.NoError(t, err)
-	// v4-S1: the threaded settle value and the session derivation coincide.
+	// the threaded settle value and the session derivation coincide.
 	current, ok := plan.CurrentAttempt()
 	require.True(t, ok)
 	require.Equal(t, attempt, current)
@@ -107,7 +107,7 @@ func TestFailoverPipeline_handledTruePerformsNoSharedCleanup(t *testing.T) {
 	p := &Proxy{}
 	p.pipelineFlowAppend = func(AttemptOutcome) { t.Fatal("handled attempt must not append flow") }
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	// v4-S1: the session and attempt thread by value — zero values here prove
+	// the session and attempt thread by value — zero values here prove
 	// a handled terminal performs no shared cleanup without any identity.
 	p.failoverLoopWithPlan(httptest.NewRecorder(), req, "chat", "req-handled", 1, time.Now(), "gpt-4o", nil, &scheduler.Selection{}, scheduler.AttemptPlan{}, scheduler.Attempt{}, attemptState{}, handledPipelineAttempt{}, &httpSink{}, false)
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 图片用量提取纯函数单测（spec §4.1）：真实上游 JSON 形态构造（评审 I-1：
+// 图片用量提取纯函数单测（spec §4.1）：真实上游 JSON 形态构造（
 // 用真实上游 JSON 构造单测，不用结构体 marshal 自证）。用例覆盖——
 // 非流式：data 数组长度计数 + usage 缺失 → 0（per-image 按张数照算）；
 // 流式：completed 事件计数 + partial_image 不计数 + usage 仅末事件。
@@ -108,7 +108,7 @@ func TestImageStreamEvent(t *testing.T) {
 	require.Zero(t, ot)
 }
 
-// —— 流终计费调用方语义（评审 P3-8）：completed 累加张数 + usage 仅末事件 ——
+// ——流终计费调用方语义：completed 累加张数 + usage 仅末事件——
 
 func TestImageStreamBillingAccumulation(t *testing.T) {
 	// 模拟路由面逐事件处理：3 个 completed + 2 个 partial_image 的事件流，

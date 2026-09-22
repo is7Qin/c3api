@@ -97,7 +97,7 @@ func TestRedemptionUsesPagination(t *testing.T) {
 
 	gen := genCodes(t, doAdmin, `{"type":"balance","value":1,"max_uses":100}`)
 	c := gen.Codes[0]
-	// 同一用户复兑同一码 → 409（评审 M-1）；25 个不同用户各兑一次 → 25 条。
+	// 同一用户复兑同一码 → 409；25 个不同用户各兑一次 → 25 条。
 	for i := 0; i < 25; i++ {
 		uToken, _ := registerAndGet(t, doUser, fmt.Sprintf("uses-p%d@example.com", i))
 		rec := doUser(http.MethodPost, "/api/user/redemptions", `{"code":"`+c.Code+`"}`, uToken)

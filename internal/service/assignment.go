@@ -16,9 +16,9 @@ import (
 // SetGroupAssignments 替换语义设置组的授予用户（PUT /api/admin/groups/{id}/
 // assignments）：完整列表 = 授予结果（未列出即撤销，空数组 = 清空）。
 // 幂等（Grant/Revoke 本身幂等）；用户/组必须存在且组未软删（缺失/软删 → 404，
-// F3）。整个替换循环包 WithTx（S3-F2）：Grant/SetMultiplier/Revoke/组内读同一
+// ）。整个替换循环包 WithTx：Grant/SetMultiplier/Revoke/组内读同一
 // 事务，中途失败整体回滚——不再出现混合授予态。
-// mults 可选：user_id → 该用户在该组的专属价格倍率（万分数，T3.5 修正：按
+// mults 可选：user_id → 该用户在该组的专属价格倍率（万分数，按组
 // 组——用户在不同组可有不同倍率；nil 值 = 清除为未设置 → 回退组倍率；0 =
 // 免费）。mults 的 key 必须 ⊆ userIDs（未列出的用户不改动既有倍率；未知用户
 // → 400）。返回生效的 user_ids 列表 + 该组各授予用户的 post-state 倍率
@@ -72,7 +72,7 @@ func (s *Service) SetGroupAssignments(ctx context.Context, groupID int64, userID
 
 // applyGroupAssignments 组维度替换核心（SetGroupAssignments / SetUserGroups
 // 共用；调用方负责存在性/合法性校验与 Multipliers() 刷新；变更经 tx 面——
-// S3-F2 整体回滚的前提）：cur = 组当前授予行，want = 目标授予集合（已校验
+// 整体回滚的前提）：cur = 组当前授予行，want = 目标授予集合（已校验
 // 去重/存在/≤100），mults = 组内专属倍率更新（key ⊆ want，万分数已校验；
 // nil = 清除为未设置）。幂等 Grant 新增 / SetAssignmentMultiplier 更新 /
 // Revoke 撤销；返回 post-state 倍率（want 全量，未在 mults 的用户沿用旧值，

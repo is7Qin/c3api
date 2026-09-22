@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Todo 1 behavioral red set for the identity-indexed flow accumulator
+// behavioral red set for the identity-indexed flow accumulator
 // (docs/superpowers/specs/identity-indexed-flow-accumulator.md section 11).
 // Every test compiles against current symbols only: the live cell ingestion
 // (foldConsumerRows/FoldChain), existing doPGLocked/owner paths, the
@@ -142,7 +142,7 @@ func TestRed_FlowInFlightPGStateCannotBeDisplaced(t *testing.T) {
 	redFlowWait(t, pg.entered, "in-flight PG upsert")
 	_, ok := rec.FlowOwner().lookup(m)
 	require.True(t, ok, "in-flight PG minute must remain owner-visible")
-	// v3-F1: pressure eviction is deleted (no-eviction exactness) — the new
+	// pressure eviction is deleted (no-eviction exactness) — the new
 	// minute is admitted beside the leased one, displacing nothing.
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m+60, []repository.RoutingFlowRow{ownerTestRow(22)}),
 		"a new minute is admitted without displacing the in-flight minute")
@@ -169,7 +169,7 @@ func TestRed_FlowSyncCloseSealsLaterSubmissionResidual(t *testing.T) {
 
 	before := rec.FlowOwner().SnapshotStats()
 	m := fixed.Truncate(time.Minute).Unix()
-	// v3-F1: the Submit queue is gone; the post-seal request walk folds the
+	// the Submit queue is gone; the post-seal request walk folds the
 	// same row residual through FoldChain.
 	foldOneRow(t, rec.FlowOwner(), m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
@@ -259,7 +259,7 @@ func TestRed_FlowSyncCloseLoopDoneTimeoutSealsLaterSubmissionResidual(t *testing
 	require.Error(t, w.Close(ctx), "expired Close against a never-finishing loop must take the ctx.Done branch")
 
 	before := rec.FlowOwner().SnapshotStats()
-	// v3-F1: Submit successor — same row through the request walk.
+	// Submit successor — same row through the request walk.
 	foldOneRow(t, rec.FlowOwner(), m, ownerTestRow(12))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -296,7 +296,7 @@ func TestRed_FlowSyncCloseFlushDoneTimeoutSealsLaterSubmissionResidual(t *testin
 
 	before := rec.FlowOwner().SnapshotStats()
 	m := fixed.Truncate(time.Minute).Unix()
-	// v3-F1: Submit successor — same row through the request walk.
+	// Submit successor — same row through the request walk.
 	foldOneRow(t, rec.FlowOwner(), m, ownerTestRow(12))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -429,7 +429,7 @@ func TestRed_FlowCandidatesOldestFirst(t *testing.T) {
 
 // TestRed_FlowLeaseEvictionPressure: a leased minute is never displaced by a
 // newcomer; after release both minutes coexist with exact accounting.
-// v3-F1: pressure eviction is deleted (no-eviction exactness) — retargeted
+// pressure eviction is deleted (no-eviction exactness) — retargeted
 // from evict-the-victim to retain-both.
 func TestRed_FlowLeaseEvictionPressure(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
@@ -478,7 +478,7 @@ func TestRed_FlowStaleLeaseIDNoop(t *testing.T) {
 	require.NotEqual(t, tok1.leaseID, tok2.leaseID, "independent leaseID never repeats")
 	require.True(t, owner.releasePG(tok2))
 
-	// v3-F1: no eviction exists — the minute is retained and merges; the
+	// no eviction exists — the minute is retained and merges; the
 	// stale token stays dead by lease identity alone (no incarnation needed).
 	m2 := m + 60
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m2, []repository.RoutingFlowRow{ownerTestRow(22)}))
@@ -548,7 +548,7 @@ func TestRed_FlowCleanRetainedNotBlockingClose(t *testing.T) {
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	rec, owner, m := redFlowSealOwner(t)
-	// v3-F1: Submit successor — same row through the request walk.
+	// Submit successor — same row through the request walk.
 	foldOneRow(t, owner, m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -569,7 +569,7 @@ func TestRed_FlowCleanRetainedNotBlockingClose(t *testing.T) {
 // seal.
 func TestRed_FlowSealRevokesLeaseLateAckReleaseNoop(t *testing.T) {
 	rec, owner, m := redFlowSealOwner(t)
-	// v3-F1: Submit successor — same row through the request walk.
+	// Submit successor — same row through the request walk.
 	foldOneRow(t, owner, m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -605,7 +605,7 @@ func TestRed_FlowCloseResidualEquation(t *testing.T) {
 	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-flow-equation", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
 
-	// v3-F1: Submit successor — one walk call carries the three rows; event
+	// Submit successor — one walk call carries the three rows; event
 	// units count three accepted facts (not one submission).
 	foldRows(t, owner, m, ownerTestRow(11), ownerTestRow(12), ownerTestRow(13))
 	_, ok := rec.FlowMinute(m)
@@ -618,7 +618,7 @@ func TestRed_FlowCloseResidualEquation(t *testing.T) {
 	require.Equal(t, int64(3), mid.EdgeRowsAccepted+mid.EdgeRowsDropped+mid.ResidualRows)
 
 	require.NoError(t, w.Close(context.Background()))
-	// v3-F1: post-seal walk folds residual with identical counting.
+	// post-seal walk folds residual with identical counting.
 	foldRows(t, owner, m, ownerTestRow(21), ownerTestRow(22))
 	_, ok = rec.FlowMinute(m)
 	require.True(t, ok)
@@ -635,7 +635,7 @@ func TestRed_FlowCloseResidualEquation(t *testing.T) {
 // TestRed_FlowQueuedPGReconcilesAroundSeal: pre-seal folds are Close-drain
 // work at minute granularity; seal drains and sweeps to zero; post-seal
 // residual folds never become work.
-// v3-F1: the Submit queue (and queuedPG) is deleted by the §5.1 DELETION
+// the Submit queue (and queuedPG) is deleted by the §5.1 DELETION
 // LIST — retargeted from per-submission queue units to fold/equation units.
 func TestRed_FlowQueuedPGReconcilesAroundSeal(t *testing.T) {
 	rec, owner, m := redFlowSealOwner(t)
@@ -669,7 +669,7 @@ func TestRed_FlowQueuedPGReconcilesAroundSeal(t *testing.T) {
 // submissions changes only row classes, never submission counters.
 func TestRed_FlowSubmissionCountersAroundSeal(t *testing.T) {
 	rec, owner, m := redFlowSealOwner(t)
-	// v3-F1: Submit successor — same row through the request walk.
+	// Submit successor — same row through the request walk.
 	foldOneRow(t, owner, m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -699,7 +699,7 @@ func redFlowPersistedMinute(t *testing.T, now time.Time, rows []repository.Routi
 	owner := rec.FlowOwner()
 	m := now.Truncate(time.Minute).Unix()
 	for _, row := range rows {
-		// v3-F1: Submit successor — same rows through the request walk.
+		// Submit successor — same rows through the request walk.
 		foldOneRow(t, owner, m, row)
 	}
 	_, ok := rec.FlowMinute(m)
@@ -715,12 +715,12 @@ func redFlowPersistedMinute(t *testing.T, now time.Time, rows []repository.Routi
 // persisted minute and every newcomer stay retained past the cutoff with
 // counters untouched — the tick drain is the sole reclamation, never
 // pressure.
-// v3-F1: pressure eviction is deleted (no-eviction exactness) — retargeted
+// pressure eviction is deleted (no-eviction exactness) — retargeted
 // from reclassify-the-victim to retain-everything.
 func TestRed_FlowEvictionReclassifiesOnlyUnpersisted(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12), ownerTestRow(13)})
-	// v3-F1: Submit successor — same rows through the request walk.
+	// Submit successor — same rows through the request walk.
 	foldRows(t, owner, m, ownerTestRow(14), ownerTestRow(15))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -757,7 +757,7 @@ func TestRed_FlowEvictionReclassifiesOnlyUnpersisted(t *testing.T) {
 
 // TestRed_FlowPersistedSurvivesEviction: a clean persisted minute is
 // retained; the newcomer is admitted beside it with exact counters.
-// v3-F1: pressure eviction is deleted — retargeted from reject-the-newcomer
+// pressure eviction is deleted — retargeted from reject-the-newcomer
 // to admit-beside-retained.
 func TestRed_FlowPersistedSurvivesEviction(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
@@ -778,12 +778,12 @@ func TestRed_FlowPersistedSurvivesEviction(t *testing.T) {
 
 // TestRed_FlowDirtyPersistedProtectedBeforeCutoff: a dirty everPersisted
 // minute accumulates exactly with newcomers admitted beside it.
-// v3-F1: pressure eviction is deleted — retargeted from reject-the-newcomer
+// pressure eviction is deleted — retargeted from reject-the-newcomer
 // to admit-and-conserve.
 func TestRed_FlowDirtyPersistedProtectedBeforeCutoff(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	rec, owner, _, _, m := redFlowPersistedMinute(t, fixed, []repository.RoutingFlowRow{ownerTestRow(11), ownerTestRow(12)})
-	// v3-F1: Submit successor — same row through the request walk.
+	// Submit successor — same row through the request walk.
 	foldOneRow(t, owner, m, ownerTestRow(13))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -800,7 +800,7 @@ func TestRed_FlowDirtyPersistedProtectedBeforeCutoff(t *testing.T) {
 
 // TestRed_FlowPersistedHistoryProtected: a clean persisted minute stays
 // retained across newcomers with history intact and exact counts.
-// v3-F1: pressure eviction is deleted — retargeted from reject-newcomers to
+// pressure eviction is deleted — retargeted from reject-newcomers to
 // admit-all-and-conserve.
 func TestRed_FlowPersistedHistoryProtected(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
@@ -957,7 +957,7 @@ func TestRed_FlowPreviousAccountOwnershipBoundaries(t *testing.T) {
 	previous := int64(7)
 	row := ownerTestRow(11)
 	row.PreviousAccountID = &previous
-	// v3-F1: Submit successor — the fact carries the value; no pointee is
+	// Submit successor — the fact carries the value; no pointee is
 	// retained anywhere on the path.
 	foldOneRow(t, owner, m, row)
 	previous = 99
@@ -1033,7 +1033,7 @@ func TestWorkerManager_ReverseShutdownInflightFlowPGSealedNoop(t *testing.T) {
 	m := fixed.Truncate(time.Minute).Unix()
 
 	// One accepted fact folded before the in-flight flush.
-	// v3-F1: Submit successor — same row through the request walk.
+	// Submit successor — same row through the request walk.
 	foldOneRow(t, owner, m, ownerTestRow(11))
 	_, ok := rec.FlowMinute(m)
 	require.True(t, ok)
@@ -1061,7 +1061,7 @@ func TestWorkerManager_ReverseShutdownInflightFlowPGSealedNoop(t *testing.T) {
 		t.Fatal("manager shutdown did not return past the sealed worker")
 	}
 	require.Error(t, shutdownErr, "drain-incomplete Close surfaces through the manager")
-	// v3-F1: no owner loop remains (nothing is queued), so there is no loop
+	// no owner loop remains (nothing is queued), so there is no loop
 	// to join — owner.Close is synchronous; the seal above already ran.
 	sealedStats := owner.SnapshotStats()
 	sealedRows := mustFlowRows(t, rec, m)
@@ -1090,7 +1090,7 @@ func mustFlowRows(t *testing.T, rec *Recorder, minute int64) []repository.Routin
 // TestRed_FlowPostSealRowFoldStaysResidual: after SyncWorker.Close seals, a
 // post-seal consumer-row fold is residual-classified consistently with the
 // request walk — it can never create PG-open dirty accepted state, and the
-// residual row equations hold. (v3-hygiene: the empty-marker and legacy-edges
+// residual row equations hold. (: the empty-marker and legacy-edges
 // halves of this test are deleted with the consumer seam — no live writer
 // exists for either.)
 func TestRed_FlowPostSealRowFoldStaysResidual(t *testing.T) {
@@ -1109,7 +1109,7 @@ func TestRed_FlowPostSealRowFoldStaysResidual(t *testing.T) {
 	fm, ok := rec.FlowMinute(m)
 	require.True(t, ok)
 	require.Len(t, fm.FlowRows(), 2, "post-seal rows retained cumulatively for diagnostics")
-	// v3-F1: seal sweeps the unconfirmed pre-seal credit (accepted 1 -> 0,
+	// seal sweeps the unconfirmed pre-seal credit (accepted 1 -> 0,
 	// residual +1) and the post-seal fold lands residual (+1) — no
 	// accepted-class state survives seal either way.
 	require.Equal(t, int64(0), after.EdgeRowsAccepted, "seal leaves no accepted-class state")

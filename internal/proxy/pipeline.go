@@ -16,7 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-// --- 转发管线骨架（D3：三份内联管线合一） ---
+// --- 转发管线骨架（三份内联管线合一） ---
 // handleFormat / HandleSearch / HandleResponsesWS 三份内联管线（鉴权 → reqMeta
 // ctx 注入 → quota → 余额预检 → 两级门禁 → 限流 → 选号 → failover 循环 → 耗尽
 // 记录）同构复制，骨架收敛**逐字一致段**（guard 六段 + 循环分类 + 耗尽记录）；
@@ -42,7 +42,7 @@ import (
 //     会话结束——门禁覆盖整个长会话（同现状语义）。
 func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, start time.Time, precheckBalance bool) (*http.Request, *reqMeta, int, bool) {
 	p.inflight.Add(1) // 优雅停机等在途归零（main waitForInflight 轮询 Inflight()）
-	// reqMeta 创建 + ctx 注入整体提前到鉴权前（gate M1 方案）：401 及全部拒绝
+	// reqMeta 创建 + ctx 注入整体提前到鉴权前（方案）：401 及全部拒绝
 	// 路径（401/429/402/限流）ctx 统一带 rm → recordRejected 行自动带 client_ip
 	// （不变量：拒绝行恒有 client_ip）。rm 初始化只填 clientIP（clientIP 提取
 	// 只读 RemoteAddr/请求头，鉴权前安全执行）；鉴权成功后原地补 meta。
@@ -55,14 +55,14 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 	if !ok {
 		p.inflight.Add(-1)
 		writeErr(w, errInvalidKey)
-		// 评审 I-1：401 鉴权失败转 recordRejected（无效 key 洪水残留向量——
+		// 401 鉴权失败转 recordRejected（无效 key 洪水残留向量——
 		// 401 也进 err_logs 错误审计，不再走 usage_logs 明细路径）。
 		p.recordRejected(r.Context(), reqID, 0, 0, "", "", format, http.StatusUnauthorized, domain.ErrAuth, 0, usageTuple{}, start, errInvalidKey.msg)
 		return nil, nil, 0, false
 	}
 	groupID := meta.GroupID
 	// 请求元数据入 context（user_id/key_id 日志归属；不改变 Call/buildLog 签名）。
-	// 单键单值 + 指针原地补 tier（GC 削减 P6：计费路径免第二次 WithValue+
+	// 单键单值 + 指针原地补 tier（GC 削减 计费路径免第二次 WithValue+
 	// WithContext；rm 指针只在请求 goroutine 内被读取/改写，logWithCtx 全程同
 	// goroutine 同步访问——无跨 goroutine 竞态）。
 	rm.meta = meta
@@ -75,9 +75,9 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errQuotaExhausted.msg)
 		return nil, nil, 0, false
 	}
-	// 余额预检（Phase 5 计费；评审 I-1 无槽位问题）：快照读零 DB（滞后 ≤
+	// 余额预检（计费；无槽位问题）：快照读零 DB（滞后 ≤
 	// BalanceRefreshInterval，多实例条件扣 DB 兜底）。快照缺失或 <0 → 402
-	// errInsufficientBalance（不按 0 记账），但免费放行（T3.5，评审 I-1 修复）：
+	// errInsufficientBalance（不按 0 记账），但免费放行（修复）：
 	// 有效倍率 0 = 免费用户/组 → 缺失/0 余额不 402（与 applyBilling 同一快照
 	// 同一判定；cost 0 只记日志不扣费）。余额 0 放行——临时额度由 FEFO 扣费
 	// 消化（billing_repo.go:71-76 先扣 temp）；负余额持续负债拒绝。快照缺失
@@ -132,9 +132,9 @@ type attemptState struct {
 //     已写出无记录）——骨架直接返回（不可转移）；false → respBody/callErr 供
 //     骨架分类
 //   - respBody：4xx 透传原文（chat/search 原始 body；WS 归一错误文本——上游
-//     body message，无则空——B1 分通道）；code==0 时亦携带错误文本（WS 纯文本
+//     body message，无则空——分通道）；code==0 时亦携带错误文本（WS 纯文本
 //     经骨架"直取原文"回退落盘，防 gjson 提取吃空）
-//   - callErr：连接级/凭据错（code==0）或 WS 拨号 4xx（dialErr 全文——B1 分
+//   - callErr：连接级/凭据错（code==0）或 WS 拨号 4xx（dialErr 全文——分
 //     通道：SDK 文本不进 respBody，帧面与落盘面解耦）时非 nil；Warn 由
 //     attempt 内部代发（Warn 文案两版本保留不统一——循环不代发；WS code==0
 //     恒 callErr=nil 不新增 Warn）
@@ -150,7 +150,7 @@ type pipelineSink interface {
 }
 
 // passthroughStatus 统一公式 status=ResponseCode!=nil?*ResponseCode:upstream
-// 单点共用，消除 4xx/耗尽分支重复（I-2）。
+// 单点共用，消除 4xx/耗尽分支重复。
 func passthroughStatus(then domain.RuleThen, upstream int) int {
 	if then.ResponseCode != nil {
 		return *then.ResponseCode
@@ -247,12 +247,12 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 	for dispatched <= maxAttempts && dispatched > 0 {
 		lastSel = sel
 		attempted = true
-		// 用量身份（Todo 3 规格 §3）：每轮当次选中解析——Search 走既有
+		// 用量身份（规格 §3）：每轮当次选中解析——Search 走既有
 		// mappedFor 推断（不触达 Selection 身份方法），其余格式直取
 		// Selection.LogMappedModel（implicit 留空）。终态日志只记录 explicit
 		// 非 identity 目标；价格模型由 Selection.PriceModel 独立派生。
 		mapped := usageIdentity(format, sel, reqModel)
-		// 缺价预检（评审 I-1 + P1-1 预检按格式切换）：每轮 sel 更新后、Call 前
+		// 缺价预检（预检按格式切换）：每轮 sel 更新后、Call 前
 		// 查价——计费启用时模型无价格 → 释放并发槽 + 402（不按 0 计价），零 DB
 		// （快照读）。Selection 保持模式语义：implicit 用客户端模型，explicit/
 		// 无映射用上游目标。images 格式查统一价格快照 image 分量（跳过 chat
@@ -368,7 +368,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 			})
 			status := passthroughStatus(then, code)
 			applyPassthroughHeader(w, then, hdr, status)
-			// I-3: 代理日志保留原文 em，响应与 sanitize 同源 via rule.UnifiedMessage
+			// 代理日志保留原文 em，响应与 sanitize 同源 via rule.UnifiedMessage
 			if msg, isCustom := rule.UnifiedMessage(then, string(respBody)); isCustom {
 				if _, isWS := sink.(*wsSink); isWS {
 					sink.writeUpstreamRejection(w, st, status, []byte(msg))
@@ -436,7 +436,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 	}
 	p.recordLog(l)
 	// 统一写出：via rule.UnifiedMessage，同 sanitize 同源；WS/HTTP 分流
-	// 代理日志保留原文 lastErrMsg（I-3 边界）
+	// 代理日志保留原文 lastErrMsg（边界）
 	if msg, isCustom := rule.UnifiedMessage(then, string(lastBody)); isCustom {
 		if _, isWS := sink.(*wsSink); isWS {
 			sink.writeExhausted(w, st, status, msg)

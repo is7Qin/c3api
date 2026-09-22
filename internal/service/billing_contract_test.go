@@ -14,8 +14,8 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// 本文件覆盖 Phase 5 T4 service 层契约校验：组倍率范围（万分数）、
-// service_tier policy 设置值域、用户余额负值。用户倍率按组（T3.5 修正）经
+// 本文件覆盖 service 层契约校验：组倍率范围（万分数）、
+// service_tier policy 设置值域、用户余额负值。用户倍率按组经
 // SetGroupAssignments 校验（见 assignment 测试）。
 
 // intPtr *int 构造（service 包既有 ptr 为 string 专用）。
@@ -27,7 +27,7 @@ func TestGroupMultiplierValidation(t *testing.T) {
 	ctx := context.Background()
 
 	// 创建：nil = 未指定 → ×1（service 归一 10000 恒写入）；20000 显式；
-	// 显式 0 = 免费组（T3.5 修正：API 边界 nullable 可表达，service 不再把 0
+	// 显式 0 = 免费组（API 边界 nullable 可表达，service 不再把 0
 	// 当未指定）
 	g, err := svc.CreateGroup(ctx, "g0", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)

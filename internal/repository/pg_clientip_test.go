@@ -6,7 +6,7 @@ package repository_test
 
 // client_ip（S-E 2026-08-17）真实 PG roundtrip：两表（usage_logs + err_logs）
 // bootstrap 建表含 client_ip 列（text，紧随 request_id）；NULL + 有值两态
-// 插/查（QueryUsages/QueryErrLogs 回填映射红绿——gate M3）；F2 后计费游标消费
+// 插/查（QueryUsages/QueryErrLogs 回填映射红绿——gate）； 后计费游标消费
 // 不触碰 client_ip（写面唯一归 usage flusher InsertBatch，全列对比见
 // TestPGDeductOnlyCarrierEquivalent 的 fullLogFor.ClientIP，本文件 SQL 层直查断言）。
 //
@@ -99,7 +99,7 @@ func TestErrLogClientIPRoundtripPG(t *testing.T) {
 	require.Empty(t, got["cip-e-2"].ClientIP, "未设置 → NULL → 回填空")
 }
 
-// TestBillingCursorPreservesClientIPPG F2 游标消费不触碰 client_ip：usage
+// TestBillingCursorPreservesClientIPPG 游标消费不触碰 client_ip：usage
 // flusher 单写落库行带 client_ip（fullLogFor），SettleBalanceBatch 只翻 billed/
 // overdraft 两列（SQL 层直查；全列双载体等价对比见 TestPGSettleLanesConservation）。
 func TestBillingCursorPreservesClientIPPG(t *testing.T) {

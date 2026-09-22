@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package quality
 
-// Fold-at-source seeds (v3 F1): the unexported per-edge input shared by the
+// Fold-at-source seeds (v3): the unexported per-edge input shared by the
 // request walk (FoldChain closure values) and the synchronous consumer seam
 // (rows). One mapping function serves both paths — the string tables in
 // fold_fact.go are the single source, never duplicated.

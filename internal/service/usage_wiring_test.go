@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNoSDKBridgeImport pins the W2-T3 cleanup (inventory B6): service must
+// TestNoSDKBridgeImport pins the cleanup: service must
 // not import internal/sdkbridge — the codex usage snapshot is called by the
 // handler (ctor-injected prober), never by service.
 func TestNoSDKBridgeImport(t *testing.T) {

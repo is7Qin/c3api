@@ -178,7 +178,7 @@ func adminScenarios() []apiScenario {
 		w("err_logs.list", 6, "GET", func(*rand.Rand) string {
 			return "/api/admin/err_logs?" + apiDayRange() + "&limit=50"
 		}, nil),
-		// stats 重构 T6：旧 /stats 删除，新增 trend/top/entity-trend/ttft 四加权场景（后端 W3 落地前 404 属预期）
+		// stats 重构 旧 /stats 删除，新增 trend/top/entity-trend/ttft 四加权场景（后端 落地前 404 属预期）
 		w("stats.trend", 10, "GET", func(r *rand.Rand) string {
 			return "/api/admin/stats/trend?" + apiStatsRangeMixed(r) + "&granularity=" + apiGranularity(r)
 		}, nil),

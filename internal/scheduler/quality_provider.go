@@ -8,7 +8,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Windowed quality provider (incident-wiring Phase 3): the single data path
+// Windowed quality provider (incident-wiring): the single data path
 // replacing the live-cell shortcut, serving lanes AND incidents. Settled PG
 // minutes merged with live minute buckets; baseline from PG only.
 //

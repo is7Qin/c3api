@@ -10,7 +10,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// 基准载荷：与功能测试同构的典型 chat→resp 主路径形态（压测 W5 方向）。
+// 基准载荷：与功能测试同构的典型 chat→resp 主路径形态（压测 方向）。
 const benchChatReqBody = `{
 	"model": "gpt-4o",
 	"messages": [

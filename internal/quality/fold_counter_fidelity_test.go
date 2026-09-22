@@ -33,14 +33,14 @@ func foldFP(seed byte) domain.CandidateFingerprintVal {
 }
 
 // foldOneRow folds one consumer row through the request walk.
-// v3-F1: the Submit queue is gone; a single-fact FoldChain call carries the
+// the Submit queue is gone; a single-fact FoldChain call carries the
 // same row with identical counting.
 func foldOneRow(t *testing.T, o *FlowOwner, minute int64, row repository.RoutingFlowRow) {
 	t.Helper()
 	foldRows(t, o, minute, row)
 }
 
-// foldRows folds rows through one request-walk call (v3-F1 Submit successor
+// foldRows folds rows through one request-walk call (Submit successor
 // for tests: same rows, same minute, identical counting).
 func foldRows(t *testing.T, o *FlowOwner, minute int64, rows ...repository.RoutingFlowRow) {
 	t.Helper()
@@ -60,7 +60,7 @@ func foldRows(t *testing.T, o *FlowOwner, minute int64, rows ...repository.Routi
 }
 
 // foldConsumerRows folds consumer rows through the live cell path
-// (v3-hygiene: the synchronous EnqueueFlowMinute seam is deleted — zero
+// (: the synchronous EnqueueFlowMinute seam is deleted — zero
 // production callers — so tests drive the same rowToSeed/makeFact/addFact
 // primitive the request walk lands on, with identical facts, deltas, and
 // class counters. Post-seal folds land residual exactly like the sealed
@@ -416,7 +416,7 @@ func TestFoldCounterFidelity_ConcurrentAddsAreExact(t *testing.T) {
 
 // TestFoldCounterFidelity_ZeroOverflowAtGate is the provisioning proof: mixed
 // request-walk and consumer-seam traffic leaves every overflow counter at
-// zero. (v3-hygiene: the legacy-edges and empty-marker halves are deleted
+// zero. (: the legacy-edges and empty-marker halves are deleted
 // with the consumer seam — no live writer exists for either.)
 func TestFoldCounterFidelity_ZeroOverflowAtGate(t *testing.T) {
 	ResetFlowChainCountersForTest()

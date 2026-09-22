@@ -25,7 +25,7 @@ func pipelineBase(attempt scheduler.Attempt) AttemptOutcome {
 		TemplateID: attempt.TemplateID, AccountID: attempt.AccountID, RequestedModel: attempt.RequestedModel,
 		MappedModel: attempt.MappedModel, CallerCategory: CallerCategory(attempt.CallerCategory),
 		OperationTag: OperationTag(attempt.OperationTag), Ordinal: attempt.Ordinal,
-		LifecycleRevision: LifecycleRevision(attempt.LifecycleRevision), Lane: LaneID(attempt.Lane),
+		IdentityRevision: IdentityRevision(attempt.IdentityRevision), Lane: LaneID(attempt.Lane),
 		Generation: Generation(attempt.RoutingGeneration), PreviousAttemptID: attemptPreviousID(attempt.PreviousAttemptID),
 	}
 }

@@ -122,7 +122,7 @@ func TestAdminFlow(t *testing.T) {
 	require.Equal(t, domain.GroupVisibilityPublic, groupResp.Visibility, "缺省 visibility = public")
 
 	// 账号侧绑定分组：PUT 账号 body 带 group_ids；回显经 GET /accounts/{id}/groups 核对。
-	rec = do(http.MethodPut, "/api/admin/accounts/"+itoa(acc.ID),
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+itoa(acc.ID),
 		`{"name":"acc1","template_id":`+itoa(tpl.ID)+`,"upstream_key":"sk-x","group_ids":[`+itoa(groupResp.ID)+`]}`)
 	require.Equal(t, 200, rec.Code, "account-side binding: %s", rec.Body.String())
 	rec = do(http.MethodGet, "/api/admin/accounts/"+itoa(acc.ID)+"/groups", "")
@@ -131,7 +131,7 @@ func TestAdminFlow(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &accGroups))
 	require.Equal(t, []int64{groupResp.ID}, accGroups.GroupIds, "账号分组回显")
 
-	// Phase 3a：rotate-key 端点已删除（key 轮换在用户面 /api/user/keys/{id}/rotate）→ 404
+	// rotate-key 端点已删除（key 轮换在用户面 /api/user/keys/{id}/rotate）→ 404
 	rec = do(http.MethodPost, "/api/admin/groups/"+itoa(groupResp.ID)+"/rotate-key", "")
 	require.Equal(t, 404, rec.Code, "rotate-key 端点已删除: %s", rec.Body.String())
 
@@ -302,7 +302,7 @@ func TestGetUsageLogsRequiresFromTo(t *testing.T) {
 }
 
 // TestGetErrLogsRequiresFromTo 无 from/to → 生成层 400（/err_logs 与
-// /usage_logs 同契约；评审 L2：err_logs 侧缺该断言——usage 侧见
+// /usage_logs 同契约；err_logs 侧缺该断言——usage 侧见
 // TestGetUsageLogsRequiresFromTo）。
 func TestGetErrLogsRequiresFromTo(t *testing.T) {
 	h := newTestHandler(t)
@@ -381,7 +381,7 @@ func TestGetErrLogs(t *testing.T) {
 	require.Equal(t, "auto", *e.BillingTier)
 }
 
-// TestGetLogsFilters（R4-M2/I1 评审项）日志查询过滤面真实断言——防假绿：
+// TestGetLogsFilters（I1 评审项）日志查询过滤面真实断言——防假绿：
 // 此前 fake store 仅按 user_id 过滤，model/error_type/status_code/时间/分页
 // 参数恒不生效（零断言）。本测试逐参数断言 + ID 降序 + keyset 游标分页
 // （cursor = 上页最后一条 id，next_cursor 由 limit+1 探测组装——与真实 repo
@@ -543,7 +543,7 @@ func TestGetLogsFilters(t *testing.T) {
 	require.Equal(t, int64(74), *ebody.Rows[0].KeyID)
 }
 
-// TestGetUsageLogsLimitClip limit>200 裁剪真实断言（评审 L1）：上节 4 行种子
+// TestGetUsageLogsLimitClip limit>200 裁剪真实断言：上节 4 行种子
 // 无法区分"裁剪到 200"与"忽略 limit"——201 行种子断言恰 200 行 + next_cursor
 // 非空（裁剪后仍有下一页）。
 func TestGetUsageLogsLimitClip(t *testing.T) {
@@ -683,7 +683,7 @@ func errMsg(t *testing.T, rec *httptest.ResponseRecorder) string {
 }
 
 // TestSingleResourceMissingID 单资源 GET/DELETE 缺 id → 404，且响应体消息
-// 含缺失 id（与批量 404 同语义；Minor T5-2 清账：handler fake 的 Get/Delete
+// 含缺失 id（与批量 404 同语义；Minor 清账：handler fake 的 Get/Delete
 // 需返回带 id 错误，此前仅状态码断言/缺失）。
 func TestSingleResourceMissingID(t *testing.T) {
 	_, _, do := newListTestRouter(t)

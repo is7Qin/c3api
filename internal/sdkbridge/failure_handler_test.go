@@ -59,15 +59,15 @@ func (f *retryFakeStore) FailAccountCAS(_ context.Context, id int64, expected in
 			return err
 		}
 	}
-	// success path: check revision
+	// success path: fence on the identity generation
 	a, ok := f.accounts[id]
 	if !ok {
 		return fmt.Errorf("not found")
 	}
-	if a.LifecycleRevision != expected {
-		return fmt.Errorf("%w: stale", repository.ErrStaleRevision)
+	if a.IdentityRevision != expected {
+		return fmt.Errorf("%w: stale", repository.ErrStaleIdentityRevision)
 	}
-	a.LifecycleRevision = expected + 1
+	a.LifecycleRevision++
 	f.callCount++
 	return nil
 }
@@ -79,45 +79,45 @@ func (f *retryFakeStore) GetAccountGroups(_ context.Context, id int64) ([]int64,
 	defer f.mu.Unlock()
 	return f.groups[id], nil
 }
-func (f *retryFakeStore) RecoverAccountCAS(_ context.Context, id int64, expected int64) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	a, ok := f.accounts[id]
-	if !ok {
-		return fmt.Errorf("not found")
-	}
-	if a.LifecycleRevision != expected {
-		return fmt.Errorf("%w: stale", repository.ErrStaleRevision)
-	}
-	a.LifecycleRevision = expected + 1
-	return nil
-}
 
 type retryFakeLatch struct {
 	mu     sync.Mutex
 	m      map[int64]string
+	kv     map[int64]int64
 	clears int
 }
 
-func newRetryFakeLatch() *retryFakeLatch { return &retryFakeLatch{m: make(map[int64]string)} }
+func newRetryFakeLatch() *retryFakeLatch {
+	return &retryFakeLatch{m: make(map[int64]string), kv: make(map[int64]int64)}
+}
 func (f *retryFakeLatch) TryAcquire(id int64, fp string, rev int64) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.m[id] = fp
-	_ = rev
+	f.kv[id] = rev
 	return true
 }
 func (f *retryFakeLatch) Clear(id int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.m, id)
+	delete(f.kv, id)
 	f.clears++
 }
-func (f *retryFakeLatch) IsLatched(id int64, fp string) bool {
+func (f *retryFakeLatch) IsLatched(id int64, fp string, rev int64) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	v, ok := f.m[id]
-	return ok && v == fp
+	if !ok {
+		return false
+	}
+	if fp != "" && v != fp {
+		return false
+	}
+	if rev != 0 && f.kv[id] != rev {
+		return false
+	}
+	return true
 }
 
 type retryFakeFailer struct {
@@ -149,30 +149,12 @@ func (f *retryFakePublisher) PublishGroups(_ context.Context, gids []int64) {
 	}
 }
 
-type fakeHealth struct {
-	mu    sync.Mutex
-	calls []struct{ id, rev int64 }
-	err   error
-	ch    chan struct{}
-}
-
-func (f *fakeHealth) SetProbing(_ context.Context, id int64, rev int64) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, struct{ id, rev int64 }{id, rev})
-	if f.ch != nil {
-		select {
-		case f.ch <- struct{}{}:
-		default:
-		}
-	}
-	return f.err
-}
-
 func newCodexAccountForRetry(id int64, rev int64) *domain.Account {
 	tpl := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth, StripImageTools: false}
 	return &domain.Account{
-		ID: id, TemplateID: 10, Template: tpl, UpstreamKey: "sk-test", LifecycleRevision: rev,
+		// IdentityRevision 与 C 同置 rev（镜像生产不变量：两者都自 1 起、独立推进）。
+		// 测试意图是「账号处于代际 rev」，PROBING 现在以 K 落键。
+		ID: id, TemplateID: 10, Template: tpl, UpstreamKey: "sk-test", LifecycleRevision: rev, IdentityRevision: rev,
 		Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth},
 	}
 }
@@ -268,7 +250,7 @@ func TestFailure_StaleFencedByCanonicalFingerprint(t *testing.T) {
 	store.mu.Unlock()
 
 	requeued := handleRetryOnce(context.Background(), failureRetryTask{
-		accountID: 7, fingerprint: fpBefore, revision: 5, reason: "fatal", deps: deps,
+		accountID: 7, fingerprint: fpBefore, identityRevision: 5, reason: "fatal", deps: deps,
 	})
 	require.False(t, requeued, "fingerprint mismatch must fully fence, never requeue")
 	store.mu.Lock()
@@ -280,7 +262,7 @@ func TestFailure_StaleFencedByCanonicalFingerprint(t *testing.T) {
 		require.FailNow(t, "fenced retry must not publish")
 	default:
 	}
-	require.False(t, latch.IsLatched(7, fpBefore), "stale fingerprint must clear latch and fence")
+	require.False(t, latch.IsLatched(7, fpBefore, 0), "stale fingerprint must clear latch and fence")
 }
 
 func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
@@ -289,7 +271,7 @@ func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
 	acct := newCodexAccountForRetry(7, 5)
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: acct},
-		failSeq:  []error{repository.ErrStaleRevision},
+		failSeq:  []error{repository.ErrStaleIdentityRevision},
 	}
 	latch := newRetryFakeLatch()
 	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch}
@@ -302,50 +284,4 @@ func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
 	retryMu.Unlock()
 	require.Equal(t, 0, qlen, "stale must not enqueue retry")
 	ResetFailureRetryForTest()
-}
-
-func TestRecover_CASAndProbing(t *testing.T) {
-	ResetFailureRetryForTest()
-	acct := newCodexAccountForRetry(7, 3)
-	store := &retryFakeStore{accounts: map[int64]*domain.Account{7: acct}, groups: map[int64][]int64{7: {10}}}
-	latch := newRetryFakeLatch()
-	latch.m[7] = "old"
-	pubCh := make(chan struct{}, 1)
-	pub := &retryFakePublisher{ch: pubCh}
-	healthCh := make(chan struct{}, 1)
-	health := &fakeHealth{ch: healthCh}
-	deps := FailureDeps{Store: store, Latch: latch, Publisher: pub, Health: health}
-	require.NoError(t, RecoverAccount(context.Background(), deps, 7))
-	require.Equal(t, int64(4), store.accounts[7].LifecycleRevision, "CAS current revision+1")
-	health.mu.Lock()
-	require.Len(t, health.calls, 1)
-	require.Equal(t, int64(7), health.calls[0].id)
-	require.Equal(t, int64(4), health.calls[0].rev, "PROBING revision must be new revision")
-	health.mu.Unlock()
-	require.Empty(t, latch.m, "latch cleared after recover")
-	select {
-	case <-pubCh:
-	case <-time.After(100 * time.Millisecond):
-		require.FailNow(t, "publish not called")
-	}
-}
-
-func TestRecover_HealthUnsupportedTyped(t *testing.T) {
-	acct := newCodexAccountForRetry(7, 3)
-	store := &retryFakeStore{accounts: map[int64]*domain.Account{7: acct}}
-	deps := FailureDeps{Store: store, Health: nil}
-	err := RecoverAccount(context.Background(), deps, 7)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrHealthUnsupported), "must return typed unsupported when health absent, never silent")
-	require.Equal(t, int64(3), store.accounts[7].LifecycleRevision, "must not CAS when health unsupported")
-}
-
-func TestRecover_MissingExpectedRevision(t *testing.T) {
-	acct := newCodexAccountForRetry(7, 0)
-	store := &retryFakeStore{accounts: map[int64]*domain.Account{7: acct}}
-	health := &fakeHealth{}
-	deps := FailureDeps{Store: store, Health: health}
-	err := RecoverAccount(context.Background(), deps, 7)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrMissingExpectedRevision))
 }

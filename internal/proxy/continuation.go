@@ -83,7 +83,7 @@ func (p *Proxy) contBind(ctx context.Context, protocolTag, respID string, groupI
 	defer cancel()
 	st, err := p.cont.CreateOrRefresh(opCtx, rm.meta.UserID, groupID,
 		domain.RouteClassIDVal(pipelineID(string(d.base.RouteClassID))), protocolTag, respID,
-		d.base.AccountID, fp, int64(d.base.LifecycleRevision))
+		d.base.AccountID, fp, int64(d.base.IdentityRevision))
 	if err != nil {
 		return errContUnavailable
 	}
@@ -103,7 +103,7 @@ func (p *Proxy) contBind(ctx context.Context, protocolTag, respID string, groupI
 // actually resolved). An unwired store fails closed: without the binding
 // authority the continuation cannot be pinned to its owning account.
 //
-// v4-S1: the settled attempt threads in (no CurrentAttempt on the hot path).
+// the settled attempt threads in (no CurrentAttempt on the hot path).
 func (p *Proxy) contResolve(ctx context.Context, userID, groupID int64, protocolTag, prevID string, attempt scheduler.Attempt) (*continuation.Binding, *formatError) {
 	if p.cont == nil {
 		return nil, errContUnavailable
@@ -129,14 +129,14 @@ func (p *Proxy) contResolve(ctx context.Context, userID, groupID int64, protocol
 // (fingerprint/revision drift) or being undispatchable fails closed — a hard
 // continuation never migrates.
 //
-// v4-S1: session-local projection — the loop threads the settled Attempt
+// session-local projection — the loop threads the settled Attempt
 // values (entry attempt in, next attempt per advance) and never value-returns
 // CurrentAttempt on the hot path.
 func (p *Proxy) contPin(plan *scheduler.AttemptPlan, sel *scheduler.Selection, attempt scheduler.Attempt, b *continuation.Binding) (*scheduler.Selection, scheduler.Attempt, *formatError) {
 	for {
 		if attempt.AccountID == b.AccountID {
 			if attempt.CandidateFingerprint == hex.EncodeToString(b.Fingerprint[:]) &&
-				attempt.LifecycleRevision == b.Revision {
+				attempt.IdentityRevision == b.IdentityRevision {
 				return sel, attempt, nil
 			}
 			sel.Release()

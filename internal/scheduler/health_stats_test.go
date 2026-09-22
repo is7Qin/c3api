@@ -24,8 +24,8 @@ func TestRuntimeHealthStats(t *testing.T) {
 	require.False(t, st.LastTickOK, "no tick yet")
 	require.Zero(t, st.LastSyncOKUnixMs)
 
-	hkOpen := HealthKey{AccountID: 1, Quality: "*", Revision: 1}
-	hkProbe := HealthKey{AccountID: 2, Quality: "*", Revision: 1}
+	hkOpen := HealthKey{AccountID: 1, Quality: "*", IdentityRevision: 1}
+	hkProbe := HealthKey{AccountID: 2, Quality: "*", IdentityRevision: 1}
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{
 		hkOpen:  {Key: hkOpen, State: StateOPEN},
 		hkProbe: {Key: hkProbe, State: StateProbing},
@@ -60,8 +60,8 @@ func TestRuntimeHealthCloseJoinsProbeLoop(t *testing.T) {
 		<-release
 		return errors.New("probe released")
 	}
-	hk := HealthKey{AccountID: 1, Quality: "*", Revision: 1}
-	// 探针只服务 PROBING（T1 窗口 honored）——以 PROBING 构造在飞探测夹具。
+	hk := HealthKey{AccountID: 1, Quality: "*", IdentityRevision: 1}
+	// 探针只服务 PROBING（窗口 honored）——以 PROBING 构造在飞探测夹具。
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateProbing}}})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -112,8 +112,8 @@ func blockingProbeHealth(t *testing.T) (*RuntimeHealth, chan struct{}, chan stru
 		<-release
 		return errors.New("probe released")
 	}
-	hk := HealthKey{AccountID: 1, Quality: "*", Revision: 1}
-	// 探针只服务 PROBING（T1 窗口 honored）——以 PROBING 构造在飞探测夹具。
+	hk := HealthKey{AccountID: 1, Quality: "*", IdentityRevision: 1}
+	// 探针只服务 PROBING（窗口 honored）——以 PROBING 构造在飞探测夹具。
 	h.view.Store(&healthView{entries: map[HealthKey]healthEntry{hk: {Key: hk, State: StateProbing}}})
 	require.NoError(t, h.Start(context.Background(), probe))
 	<-entered

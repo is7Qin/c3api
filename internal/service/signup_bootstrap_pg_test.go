@@ -20,7 +20,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 真实 PostgreSQL 测试基座（评审 B1 + 测试基座真实 PG 纪律：repository/service
+// 真实 PostgreSQL 测试基座（测试基座真实 PG 纪律：repository/service
 // 测试一律真实 PG，不 pgxmock）。启动方式同 repository 包：
 //   TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test \
 //     go test ./internal/service/ -run TestRegisterUserBootstrapFirstAdminPG -v

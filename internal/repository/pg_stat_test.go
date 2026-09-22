@@ -569,7 +569,7 @@ func TestPGStatsAggV2EntityEquivalence(t *testing.T) {
 	}
 }
 
-// TestPGStatsAbortSplitNoDoubleCount abort 防双计（P1-B 回归）：abort 行只经
+// TestPGStatsAbortSplitNoDoubleCount abort 防双计（回归）：abort 行只经
 // usage_logs 全字段计一次；err_logs 的 abort 行（豁免通道实际不写，防御性）
 // 被 WHERE error_type <> 'abort' 排除；v2 同维度 none+abort+errlog 合并单桶时
 // ec 只计错误行。
@@ -610,7 +610,7 @@ func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
 // TestPGStatsAsyncAggregation 异步语义断言 + 两范围属性端到端（spec 测试节）：
 // 真实时钟短周期 worker 驱动——插入明细后 usage_stats/usage_entity_stats 立即
 // 无变化（异步）→ 周期后落库；同小时追加行 → 下周期整小时桶重建（部分小时桶
-// 跨周期不截断，P1-A）；再周期重放 → 桶值不变（幂等）。
+// 跨周期不截断）；再周期重放 → 桶值不变（幂等）。
 func TestPGStatsAsyncAggregation(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()

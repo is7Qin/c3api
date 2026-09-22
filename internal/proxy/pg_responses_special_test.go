@@ -41,7 +41,7 @@ const rspSpecialPGTestSchema = "proxy_rsp_special_test"
 
 // TestPGResponsesSpecialCredential responses-special 模板（主列
 // credential_type）+ 账号 upstream_key → 真实 PG 快照 → Selection →
-// credentialFor 取 key 成功（P4 502 消灭断言：修复前 TypeResponsesSpecial 未
+// credentialFor 取 key 成功（502 消灭断言：修复前 TypeResponsesSpecial 未
 // 注册 → For 兜底（现 unsupportedProvider，旧 apiKeyProvider）→ Credential
 // 类型不匹配 ErrUnsupported → 真实流量 502 unsupported credential type；本断
 // 言确定性红）。HTTP 补充：完整 resp-ws 会话正常闭环（上游校验 Authorization:
@@ -81,7 +81,7 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 	require.NoError(t, err)
 	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
 		Name: "a-rsp", TemplateID: tpl.ID, UpstreamKey: "sk-upstream",
-		MaxConcurrency: 8,
+		MaxConcurrency: 8, Enabled: true,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
@@ -89,7 +89,7 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background())) // 空表写种子（同 newTestProxyTplTimeoutRec）
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
@@ -102,7 +102,7 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 
 	p := newPGTestProxy(t, sched, g.ID)
 
-	// P4 502 消灭断言（确定性）：credentialFor 必须取到账号 key。
+	// 502 消灭断言（确定性）：credentialFor 必须取到账号 key。
 	cred, err := p.credentialFor(ctx, sel)
 	require.NoError(t, err, "responses-special 凭据取用必须成功（修复前：未注册 → 502 unsupported credential type）")
 	require.Equal(t, "sk-upstream", cred)

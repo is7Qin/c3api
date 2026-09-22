@@ -8,7 +8,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// v4-S1: selectSession is the stack selection session replacing the heap
+// selectSession is the stack selection session replacing the heap
 // AttemptPlan box outright (single clean mechanism — no dual-track, no flags,
 // no fallback path). Each request walks the shared published route through a
 // stack value (~160B scalars, zero heap) and projects attempt identity on
@@ -33,17 +33,17 @@ type selectSession struct {
 	maxAttempts uint8
 	sampleIdx   int
 	sampleValid bool
-	// exploreFirst is the per-request lane decision (charter Task 6/12):
+	// exploreFirst is the per-request lane decision (charter):
 	// true serves the explore sample before Primary, false Primary first.
 	// primaryServed tracks the primary lane inside the walk so the
 	// explore-first chain runs sample → primary → fallback → degraded
 	// exactly once per affinity phase. Stack scalars, zero heap.
 	exploreFirst  bool
 	primaryServed bool
-	walkSeg     uint8
-	walkPos     int
-	affinitySet bool
-	// v4-S1: hashed affinity key only — the affinityDom heap string is deleted.
+	walkSeg       uint8
+	walkPos       int
+	affinitySet   bool
+	// hashed affinity key only — the affinityDom heap string is deleted.
 	// The domain string is borrowed per next() call from the route-owned ring.
 	affinityHash uint64
 	affinPhase   uint8
@@ -61,7 +61,7 @@ type selectSession struct {
 	lastSeg   uint8
 	lastPos   int
 	lastValid bool
-	// v4-S3: hasStaticChange verdict cache — the full-lane scan runs at most
+	// hasStaticChange verdict cache — the full-lane scan runs at most
 	// once per view generation per session (single fence-site entry via
 	// cachedStaticVerdict; steady state never scans).
 	staticChecked bool
@@ -140,7 +140,7 @@ func newSelectSession(identity AttemptPlanIdentity, decision *RouteDecision) (se
 
 // NewAttemptPlan is the retained test-harness spelling of the session
 // constructor: it returns the stack newSelectSession VALUE (never boxed —
-// the pre-v4 `return &sess` heap box is deleted; v3-F1 review finding 2).
+// the pre-v4 `return &sess` heap box is deleted; review finding 2).
 // Production binds sessions via Scheduler.NewAttemptPlan (same value path).
 func NewAttemptPlan(identity AttemptPlanIdentity, decision *RouteDecision) (AttemptPlan, error) {
 	return newSelectSession(identity, decision)
@@ -150,7 +150,7 @@ func NewAttemptPlan(identity AttemptPlanIdentity, decision *RouteDecision) (Atte
 // the walker serves preferred-domain candidates first, then spill, preserving
 // lane order within each phase and consulting every candidate at most once.
 // Only the hashed key is kept; the domain string is borrowed from the
-// route-owned ring per next() call (v4-S1: no affinityDom heap field).
+// route-owned ring per next() call (: no affinityDom heap field).
 func (p *selectSession) ApplyCacheAffinity(hash uint64) bool {
 	if p == nil || p.route == nil {
 		return false
@@ -226,7 +226,7 @@ func (p *selectSession) next() (CompiledCandidate, bool) {
 	if p == nil || p.route == nil {
 		return CompiledCandidate{}, false
 	}
-	// v4-S1: borrow the preferred domain per next() call from the route-owned
+	// borrow the preferred domain per next() call from the route-owned
 	// ring (string header only, zero heap) instead of a stored heap string.
 	preferredDom := ""
 	if p.affinitySet {
@@ -375,7 +375,18 @@ func (p *selectSession) hasStaticChange(v *RoutingView) bool {
 		return false
 	}
 	check := func(c CompiledCandidate) bool {
-		return c.Leaf != nil && v.static.byID[c.AccountID] != c.Leaf
+		if c.Leaf == nil {
+			return false
+		}
+		if v.static.byID[c.AccountID] == nil {
+			return true
+		}
+		// 判据同预留路径：读视图发布时预计算的逐账号 planKey，不现算摘要。
+		fact, ok := v.static.facts[c.AccountID]
+		if !ok {
+			return true
+		}
+		return fact.planKey != c.PlanKey
 	}
 	for _, c := range p.route.Primary {
 		if check(c) {
@@ -396,9 +407,9 @@ func (p *selectSession) hasStaticChange(v *RoutingView) bool {
 }
 
 // cachedStaticVerdict is the SINGLE fence-site entry for the static-change
-// scan (v4-S3): the full-lane scan body is unchanged, but it runs at most
+// scan: the full-lane scan body is unchanged, but it runs at most
 // once per view generation per session and its verdict is cached. Steady
-// state (generation match) never scans — S3 contributes zero bytes.
+// state (generation match) never scans — contributes zero bytes.
 func (p *selectSession) cachedStaticVerdict(v *RoutingView) bool {
 	if v != nil && p.staticChecked && p.staticGen == v.generation {
 		return p.staticVerdict
@@ -462,7 +473,7 @@ func (p *selectSession) Reserve(reserve AttemptReservation) (Attempt, error) {
 }
 
 // deriveAttemptID projects attempt identity formulaically at settle/arm time
-// (v4-S2, relocated with zero elimination credit): reqID:ordinal, or
+// (relocated with zero elimination credit): reqID:ordinal, or
 // attempt-N when the request carries no ID. No fmt — plain concat reproduces
 // the old Sprintf branches byte-for-byte.
 func deriveAttemptID(requestID string, ordinal uint8) string {
@@ -473,7 +484,7 @@ func deriveAttemptID(requestID string, ordinal uint8) string {
 	return "attempt-" + n
 }
 
-// buildAttempt is the single settle/arm construction site (v4-S2): the
+// buildAttempt is the single settle/arm construction site: the
 // returned Attempt/Selection VALUE shape at the boundary is preserved, only
 // its construction moved from per-attempt store to settle-derive. Prev
 // linkage gets FRESH backing per derived pointer (copied out of the session
@@ -504,7 +515,7 @@ func (p *selectSession) buildAttempt(c CompiledCandidate, ordinal uint8, attempt
 		TemplateID: c.TemplateID, AccountID: c.AccountID,
 		RequestedModel: c.RequestedModel, MappedModel: mapped, Lane: c.Lane,
 		Ordinal: ordinal, RoutingGeneration: p.generation,
-		LifecycleRevision: c.LifecycleRevision,
+		IdentityRevision:  c.IdentityRevision,
 		PreviousAttemptID: prev, PreviousAccountID: prevAccount,
 		CallerCategory: p.route.CallerCategory, OperationTag: p.route.OperationTag,
 	}

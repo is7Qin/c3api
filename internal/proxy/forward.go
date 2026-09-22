@@ -35,11 +35,11 @@ import (
 
 type Config struct {
 	MaxBodySize           int64
-	UpstreamTimeout       time.Duration // codex 非流式上游超时（resp/images 各自包 ctx——B-P2-7；HTTPClient.Timeout 不可用：流式/非流式四方法共享，覆盖整响应体读取会切断长流式 SSE）。同源同值 cfg.Proxy.UpstreamTimeout（aiclient.Config.UpstreamTimeout 管 typed 面）
+	UpstreamTimeout       time.Duration // codex 非流式上游超时（resp/images 各自包 ctx——HTTPClient.Timeout 不可用：流式/非流式四方法共享，覆盖整响应体读取会切断长流式 SSE）。同源同值 cfg.Proxy.UpstreamTimeout（aiclient.Config.UpstreamTimeout 管 typed 面）
 	UpstreamStreamTimeout time.Duration // 流式 backstop（非流式超时在 aiclient.Config/cfg.Proxy.UpstreamTimeout）
 	FailoverAttempts      int
 	UsageCapture          bool
-	BillingCapture        bool // 计费开关（config.Billing.Enabled 映射；余额预检门控 + billable 行 Billed 出生标记取反——F2 单写点后不再路由分流）
+	BillingCapture        bool // 计费开关（config.Billing.Enabled 映射；余额预检门控 + billable 行 Billed 出生标记取反——单写点后不再路由分流）
 	// BehindCDN 客户端 IP 识别开关（config.proxy.behind_cdn 映射；clientIP
 	// 提取门控——false 完全不读供应商头直取 RemoteAddr，true 按序采信三头）。
 	// 部署前提见 config.go 注释与 clientip.go：源站只对 CDN 暴露。
@@ -68,29 +68,29 @@ type Proxy struct {
 	cont     *continuation.Store
 	inflight atomic.Int64
 	callers  map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
-	// imageGenerations/imageEdits images 端点调用器（Task B：同一格式
+	// imageGenerations/imageEdits images 端点调用器（同一格式
 	// openai-images 两个端点，上游子路径不同——handleFormat 按请求路径选
 	// 调用器，New 一次性构造免 per-request 分配）。
 	imageGenerations *imagesCaller
 	imageEdits       *imagesCaller
 	// codexImagesGenerations/codexImagesEdits codex 类型 images 端点调用器
-	//（T2 §2：SDK GenerateImage 非流式；同一格式两端点——按请求路径选，
+	//（§2：SDK GenerateImage 非流式；同一格式两端点——按请求路径选，
 	// New 一次性构造免 per-request 分配）。
 	codexImagesGenerations *codexImagesCaller
 	codexImagesEdits       *codexImagesCaller
-	// convCallers 协议转换路径调用器（W5）：方向 → convertedCaller（请求体已
+	// convCallers 协议转换路径调用器：方向 → convertedCaller（请求体已
 	// 按方向转换，响应反向转换回客户端协议）。仅协议不匹配时才使用；off 组
 	// 恒不触达（handleFormat 分支）。
 	convCallers map[domain.ProtocolConvert]UpstreamCaller
-	// codex SDK 适配层（T2 §1——cred → Auth 缓存 / GenerateImage / 信封 /
+	// codex SDK 适配层（§1——cred → Auth 缓存 / GenerateImage / 信封 /
 	// fatal 统一回调全在适配层；main 经 Deps.Codex 注入，nil = 未装配 → codex
 	// 类型 501 显式拒绝——防 nil 误走凭据缺失 502）。
 	codex *sdkbridge.Codex
-	// wsHeartbeatInterval resp-ws 心跳间隔 seam（T4：测试缩短 200ms 验证心跳节
+	// wsHeartbeatInterval resp-ws 心跳间隔 seam（测试缩短 200ms 验证心跳节
 	// 奏；默认 responsesWSHeartbeatInterval——New 构造，生产路径不变）。
 	wsHeartbeatInterval time.Duration
 	wsConns             *wsRegistry
-	// failover 骨架的单例 attempt/sink（D3 管线骨架化）：无状态（per-request
+	// failover 骨架的单例 attempt/sink（管线骨架化）：无状态（per-request
 	// 差异经 attemptState 按值流入——热路径零新增分配，同 callers map 惯例），
 	// New 一次性构造。
 	chatAttempt   upstreamAttempt
@@ -100,7 +100,7 @@ type Proxy struct {
 	wsSink        pipelineSink
 }
 
-// Deps New 的尾部一次性协作者（W1-T2：SetCodex / SetQualityRecorder /
+// Deps New 的尾部一次性协作者（SetCodex / SetQualityRecorder /
 // SetContinuationStore 三个事后回填折叠进构造，零语义变化——各字段 nil 语义
 // 与原 setter 完全一致：Codex nil → codex 类型请求 501 显式拒绝；Recorder
 // nil → 休眠依赖；Continuation nil → continuation 请求 fail-closed）。尾部
@@ -115,11 +115,11 @@ type Deps struct {
 	Continuation *continuation.Store
 }
 
-// New 构造代理。creds 为凭据注册表（评审 M2：直接参数注入，编译期强制；
-// 不用 Config 字段——避免 nil 运行时才炸）。bill 为计费钩子（Phase 5；
+// New 构造代理。creds 为凭据注册表（直接参数注入，编译期强制；
+// 不用 Config 字段——避免 nil 运行时才炸）。bill 为计费钩子（；
 // nil = 计费全关——现有调用点/测试兼容）。errlog 为错误明细落盘 worker
 // （分表设计；nil = 未装配——拒绝/异常路径只聚统计不落 err_logs 明细）。
-// deps 为尾部一次性协作者（W1-T2；零值 = 三者皆未装配，各 nil 语义见 Deps）。
+// deps 为尾部一次性协作者（零值 = 三者皆未装配，各 nil 语义见 Deps）。
 func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec *usage.Recorder, clients *aiclient.Factory, auth *Auth, log *logx.Logger, bill *BillingHooks, errlog *usage.ErrLogWorker, deps Deps) *Proxy {
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
@@ -140,7 +140,7 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 	p.imageGenerations = &imagesCaller{p: p, path: "images/generations", op: domain.OpImagesGenerations}
 	p.imageEdits = &imagesCaller{p: p, path: "images/edits", op: domain.OpImagesEdits}
 	p.callers[domain.FormatOpenAIImages] = p.imageGenerations
-	// 协议转换路径（W5）：每方向一 convertedCaller（构造期一次性建好；
+	// 协议转换路径：每方向一 convertedCaller（构造期一次性建好；
 	// 热路径分支只读 map，off 组不触达）。
 	p.convCallers = map[domain.ProtocolConvert]UpstreamCaller{
 		domain.ProtocolConvertChatToResp: &convertedCaller{p: p, dir: domain.ProtocolConvertChatToResp},
@@ -150,7 +150,7 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 	}
 	p.codexImagesGenerations = &codexImagesCaller{p: p}
 	p.codexImagesEdits = &codexImagesCaller{p: p}
-	// failover 骨架单例（D3）：attempt/sink 无状态（差异状态按值经 attemptState
+	// failover 骨架单例：attempt/sink 无状态（差异状态按值经 attemptState
 	// 流入）——init 期一次性分配，per-request 零新增分配。
 	p.chatAttempt = &chatAttempt{p: p}
 	p.searchAttempt = &searchAttempt{p: p}
@@ -165,7 +165,7 @@ func (p *Proxy) QualityRecorder() *quality.Recorder { return p.qualityRecorder }
 
 func (p *Proxy) Inflight() int64 { return p.inflight.Load() }
 
-// CloseAllWS closes all hijacked WS client connections (F3). Uses CloseNow
+// CloseAllWS closes all hijacked WS client connections. Uses CloseNow
 // for immediate TCP close — shutdown path, no handshake. Closed sessions
 // unwind through existing classify→finish→rec.Record and inflight drops
 // naturally. Idempotent.
@@ -175,7 +175,7 @@ func (p *Proxy) CloseAllWS() {
 	}
 }
 
-// SetInstancesProvider 注入集群实例数 N 提供者（#14 多实例预算分摊；discovery
+// SetInstancesProvider 注入集群实例数 N 提供者（多实例预算分摊；discovery
 // 构造后调用——main 装配点：px.SetInstancesProvider(disco)，spec
 // 2026-08-25-redis-instance-discovery-design §2.2）。转发给 auth（gate 预算
 // ceil(剩余/N)）；N 在每次预算分配现读，心跳计数变化 ≤1 tick 天然生效。
@@ -307,16 +307,16 @@ func (p *Proxy) applyFunctionBilling(l *domain.UsageLog) {
 	p.applyMultiplierLog(l, billing.CallCostFromResolved(rp, l.CallCount))
 }
 
-// buildLog 组装 UsageLog（record 与 finish 共用）。语义（Todo 3 mapping-mode
+// buildLog 组装 UsageLog（record 与 finish 共用）。语义（mapping-mode
 // 修订）：Model = 客户端请求模型（reqModel），MappedModel = 调用方直填的用量
 // 映射身份（规格 §3 五行矩阵）——非 Search 选中尝试传 Selection.LogMappedModel
 // 派生值（implicit/explicit identity/无映射为空；explicit 非 identity 记目标），
 // Search 路径
 // 传 mappedFor(reqModel, sel.Model)（既有语义不变），本地预选中拒绝传空。
-// buildLog 不再自行推断。u 传值（GC 削减 P6：指针逃逸 1 alloc；零值 = 无用量）。
+// buildLog 不再自行推断。u 传值（GC 削减 指针逃逸 1 alloc；零值 = 无用量）。
 // 统一计费模型（spec 2026-08-13）：image token 分量（ii/io，images 格式专用，
 // resp 路径恒 0）并入 Input/OutputTokens（TotalTokens 口径不变）；功能调用
-// 计数（calls = 图片张数：resp 检测旁路计数 Task D 先行 / images 格式直连与
+// 计数（calls = 图片张数：resp 检测旁路计数 先行 / images 格式直连与
 // codex 路径 data 数组长 / 流式 completed 事件数）落 CallCount（不入 TotalTokens）。
 func (p *Proxy) buildLog(reqID string, groupID, accountID int64, reqModel, mappedModel string, format domain.RequestFormat, status int, et domain.ErrorType, u usageTuple, start time.Time) *domain.UsageLog {
 	return &domain.UsageLog{
@@ -332,7 +332,7 @@ func (p *Proxy) buildLog(reqID string, groupID, accountID int64, reqModel, mappe
 
 // mappedFor 判定映射关系：实际使用的模型（used）非空且与请求模型（req）不同
 // → 返回映射后模型；无映射/失败路径（used 为空或与请求相同）→ 空。精确比较
-// 足够——ModelMapping 匹配语义即大小写敏感等值（selection.go）。Todo 3 后仅
+// 足够——ModelMapping 匹配语义即大小写敏感等值（selection.go）。 后仅
 // Search 终态日志消费（规格 §3：Search 不改日志/计费语义）。
 func mappedFor(req, used string) string {
 	if used != "" && used != req {
@@ -344,7 +344,7 @@ func mappedFor(req, used string) string {
 // usageIdentity 单次选中尝试的用量映射身份（UsageLog.MappedModel 直填值）：
 // Search 保持既有 mappedFor 推断（固定 codex-search 计费/日志语义，规格 §3）
 // 且不触达 Selection 身份方法；其余格式直接取 Selection.LogMappedModel
-// （Todo 2 单查找派生，implicit 留空）。failoverLoop 共享骨架
+// （单查找派生，implicit 留空）。failoverLoop 共享骨架
 // （chat+search 终态）按 format 分流。
 func usageIdentity(format domain.RequestFormat, sel *scheduler.Selection, reqModel string) string {
 	if format == domain.FormatOpenAISearch {
@@ -366,7 +366,7 @@ func (p *Proxy) record(ctx context.Context, reqID string, groupID, accountID int
 // 余额 402/tier reject/缺价/无账号：请求未接触上游、未消费任何 token、cost 恒
 // 0）。双轨（用户裁决分表设计）：①统计聚合（usagestat 请求/错误计数语义不变）
 // ②错误明细投递 errlog worker 落 err_logs——**不产生 usage_logs 明细**、不进
-// billed/非 billed pending。拒绝风暴（P2a 压测 2026-08-11：单 key 限流
+// billed/非 billed pending。拒绝风暴（压测 2026-08-11：单 key 限流
 // 161k req/s → 60s 冲至 9.8M pending 行 / RSS 7.5GB，usage_logs 表 120.7M→
 // 144.5M 行膨胀）每请求一条 usage_logs 明细即无界积压与写放大源头；err_logs
 // 为独立瘦表 + 有界队列背压（队列满丢弃采样），风暴不淹没 DB 不爆内存——
@@ -384,7 +384,7 @@ func (p *Proxy) recordRejected(ctx context.Context, reqID string, groupID, accou
 	p.enqueueRejectedErr(l) // 明细（err_logs 普通队列：风暴采样丢弃面）
 }
 
-// enqueueRejectedErr 拒绝行投递（架构审查 B2：拒绝类行走普通队列——风暴采样
+// enqueueRejectedErr 拒绝行投递（架构审查：拒绝类行走普通队列——风暴采样
 // 丢弃；与双轨行豁免通道分离）。nil worker（未装配）→ no-op。
 func (p *Proxy) enqueueRejectedErr(l *domain.UsageLog) {
 	if p.errlog != nil {
@@ -406,12 +406,12 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 // 路径语义（error_type）**判定，与 cost 无关——cost>0 判定会漏掉免费分组
 // （倍率 0 的成功行）与 0 token 成功行（空响应））：
 //   - usage_logs = 放行路径明细：error_type ∈ {none（成功，含 cost=0 免费组/
-//     空响应）, abort（半异常计费）}——F2 单写点（spec §一）：billable 行一律
+//     空响应）, abort（半异常计费）}——单写点（spec §一）：billable 行一律
 //     经 rec.Record 入队，入队前盖 Billed 出生标记；扣费由 billing worker 从
-//     账本游标消费（T3）。4xx/5xx/network（上游透传/耗尽失败行）不写
-//     usage_logs（失败明细归 err_logs，P2a 拒绝风暴教训同族）
+//     账本游标消费。4xx/5xx/network（上游透传/耗尽失败行）不写
+//     usage_logs（失败明细归 err_logs 拒绝风暴教训同族）
 //   - err_logs = 全部错误明细（error_type != none）：4xx/5xx（上游透传/耗尽）
-//   - abort 双轨（豁免队列恒落盘——架构审查 B2）；拒绝行走 recordRejected
+//   - abort 双轨（豁免队列恒落盘——架构审查）；拒绝行走 recordRejected
 //     的采样队列，不经本路由
 //   - usage_stats = 离线聚合（spec 2026-08-14）：请求路径零统计计算/投递——
 //     放行行（none/abort）由离线 worker 从 usage_logs 重建（全字段含 TTFT/
@@ -419,9 +419,9 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 //     拒绝行随 err_logs 采样丢样（口径注释见 recordRejected）
 func (p *Proxy) routeLog(l *domain.UsageLog) {
 	if l.ErrorType == domain.ErrNone || l.ErrorType == domain.ErrAbort { // 放行路径
-		// F2 出生标记盖章（spec §一）：Billed = !(计费捕获开 && 有用户归属)。
+		// 出生标记盖章（spec §一）：Billed = !(计费捕获开 && 有用户归属)。
 		// true = 出生即结算吸收态（计费关闭/匿名行本就不扣，游标零消费顺带
-		// 省一次循环）；false = 待对账，billing worker 游标消费（T3）。
+		// 省一次循环）；false = 待对账，billing worker 游标消费。
 		l.Billed = !(p.cfg.BillingCapture && l.UserID > 0)
 		p.rec.Record(l) // 唯一持久化入口（usage_logs 落库；quota 只走 finish 的 AddQuota）
 	}
@@ -430,7 +430,7 @@ func (p *Proxy) routeLog(l *domain.UsageLog) {
 	}
 }
 
-// enqueueErrLog 错误明细投递（架构审查 B2：上游错误/双轨行走豁免队列——不参与
+// enqueueErrLog 错误明细投递（架构审查：上游错误/双轨行走豁免队列——不参与
 // 拒绝风暴采样丢弃，恒落盘；与拒绝行采样通道分离）。nil worker（未装配）→
 // no-op。仅错误行调用（成功路径零开销）。
 func (p *Proxy) enqueueErrLog(l *domain.UsageLog) {
@@ -440,7 +440,7 @@ func (p *Proxy) enqueueErrLog(l *domain.UsageLog) {
 }
 
 // ctxKeyReqMeta 是请求元数据的 context 键（handleFormat 写入；日志归属读取）。
-// 单键单值（GC 削减 P6：原 meta/tier 两次 WithValue+WithContext 合并为一次）：
+// 单键单值（GC 削减 原 meta/tier 两次 WithValue+WithContext 合并为一次）：
 // 携带鉴权 KeyMeta 与归一化 service_tier；hasTier 保持非计费路径 BillingTier
 // 空语义（计费全关不写入 hasTier → 日志 BillingTier 恒空）。
 type ctxKeyReqMeta struct{}
@@ -556,18 +556,18 @@ type usageTuple struct {
 	calls int64
 	// 图片生成分量（images 格式）：ii/io = image token 分量
 	// （input/output_tokens_details.image_tokens）；text token 分量恒 0——
-	// images 请求只计 image 分量。tt 含 image tokens 不含张数（评审 P3-6
-	// quota 口径：张数不入 TotalTokens）。resp 检测路径 ii/io 恒 0（V1-V3
+	// images 请求只计 image 分量。tt 含 image tokens 不含张数（
+	// quota 口径：张数不入 TotalTokens）。resp 检测路径 ii/io 恒 0（
 	// 实证 responses 路径无 image_tokens）。ii/io 由 buildLog 并入 in/out。
 	ii, io int64
 }
 
 // recordStreamAbort 上游流中止记录（客户端断开/上游停滞统一入口）：先已收
-// 到的 usage 帧照常计费。u 为 Observer 已累积的用量元组（评审 M-2：此前传
+// 到的 usage 帧照常计费。u 为 Observer 已累积的用量元组（此前传
 // nil → tokens 全 0 → 中止路径消费不扣费；buildLog 填 l.Cost 由 finish 的
-// applyBilling 承担）。groupID 由各 caller 作用域传入（评审 M-1：此前硬编码
+// applyBilling 承担）。groupID 由各 caller 作用域传入（此前硬编码
 // 0 → 中止路径组倍率查找恒 miss → 组倍率 ≠10000 时计费与正常路径不一致）。
-// MappedModel = 当轮选中尝试的用量身份（Todo 3：非 Search 全走本入口）。
+// MappedModel = 当轮选中尝试的用量身份（非 Search 全走本入口）。
 func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, u usageTuple, err error) {
 	if p.log != nil {
 		p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
@@ -607,7 +607,7 @@ func selectErrorMessage(err error) string {
 // statusClientClosedRequest 客户端在首字节前断开（nginx "client closed request"
 // 约定；499 非标准码）：SDK 请求阶段（上游响应前）断连的 usage 记录状态码。
 // 客户端已断——不写 HTTP 响应，只进日志（error_type=abort；tokens 必然 0 →
-// cost=0 不计费）。分类正确性修复（#20 E 项）：不得按连接级网络错误处理
+// cost=0 不计费）。分类正确性修复（E 项）：不得按连接级网络错误处理
 // （不 failover、不 MarkResult、不冷却）。
 const statusClientClosedRequest = 499
 
@@ -703,7 +703,7 @@ func isJSONObjectRoot(body []byte) bool {
 // （ModelMapping 已应用，见 scheduler.Select 的 Selection.Model）。原始转发
 // 必须沿用 SDK 路径 params.Model = sel.Model 的改写语义，否则映射配置在
 // 流式请求上失效（迁移发现）。
-// 短路守卫（GC 削减 P1）：model 已是目标值（gjson 字符串读取）→ 返回原切片
+// 短路守卫（GC 削减）：model 已是目标值（gjson 字符串读取）→ 返回原切片
 // 零分配。守卫只对字符串匹配生效；null/数字/缺失/需改写走 sjson 字节级改写
 // 路径（单字段 splice，非 map 全文档往返——>2^53 整数精度无损、键序不变、
 // 无 HTML 转义，与 WS 面 relayWS 首帧改写同库同风格；sjson 对缺失路径默认
@@ -719,7 +719,7 @@ func setModel(body []byte, model string) ([]byte, error) {
 	return sjson.SetBytes(body, "model", model)
 }
 
-// setStreamAndModel 字节级改写 stream 与 model（GC 削减 P1b）：两字段各自
+// setStreamAndModel 字节级改写 stream 与 model（GC 削减）：两字段各自
 // 短路守卫，无需改写的字段保持原字节；任一篇需改写才做 sjson 改写（单字段
 // splice，精度/键序/转义保真同 setModel）。sjson 单次调用仅支持单路径，故为
 // 两次 SetBytes 调用（stream、model 顶层路径不相交，次序无关，最终字节一致）；
@@ -743,7 +743,7 @@ func setStreamAndModel(body []byte, stream bool, model string) ([]byte, error) {
 }
 
 // credentialFor 从 Selection 取当前凭据值（注册表分发；api_key 类型直读静态 Key）。
-// 未知类型（未来号池类型未注册）→ 显式错误，不静默 fallback（评审 M1：
+// 未知类型（未来号池类型未注册）→ 显式错误，不静默 fallback（
 // fallback 到 api_key 是号池类型安全隐患）。
 func (p *Proxy) credentialFor(ctx context.Context, sel *scheduler.Selection) (string, error) {
 	if !sel.CredentialType.Valid() {

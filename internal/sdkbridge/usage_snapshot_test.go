@@ -140,7 +140,7 @@ const usageOKBody = `{
 
 // TestCodexUsageSnapshotTTL TTL 命中语义：首拉 1 次上游 → 滚动 N 次 0 次 →
 // 过期重拉（时间注入——直接拨旧 e.usageAt，禁 sleep）。命中路径零分配
-// （T3-4）：篡改 entry.sig 后滚动仍零上游——命中路径不计算 credSig/不重建
+// ：篡改 entry.sig 后滚动仍零上游——命中路径不计算 credSig/不重建
 // （若计算签名必触发重建 → 重拉）。
 func TestCodexUsageSnapshotTTL(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
@@ -154,7 +154,7 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 	require.Equal(t, 1, c.callsN(), "首拉恰 1 次上游")
 	require.Equal(t, "/backend-api/wham/usage", c.path(0), "固定 SDK 官方端点 https://chatgpt.com/backend-api/wham/usage（ChatGPT 面）")
 
-	// 命中路径零分配（T3-4）：篡改 entry.sig——命中路径若计算 credSig 比对必
+	// 命中路径零分配：篡改 entry.sig——命中路径若计算 credSig 比对必
 	// 触发重建重拉（calls → 2）；仍恒 1 = 命中路径不做 sig 拼接/建条目。
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
@@ -252,7 +252,7 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "chatgpt-plus", snap.PlanType, "冷却后重试 1 次成功")
 	require.Equal(t, 2, c.callsN())
-	// 成功清冷却态（T3-2——死状态不留）：冷却哨兵随成功归零
+	// 成功清冷却态（死状态不留）：冷却哨兵随成功归零
 	e, err = a.entryFor(cred)
 	require.NoError(t, err)
 	a.mu.Lock()
@@ -316,7 +316,7 @@ func TestCodexUsageSnapshotCancelNoCooldown(t *testing.T) {
 	mu.Unlock()
 }
 
-// TestCodexUsageSnapshotSameAccountDoubleCheck 同账号并发首拉双检（T3-3——
+// TestCodexUsageSnapshotSameAccountDoubleCheck 同账号并发首拉双检（
 // 红绿用例）：N 并发同账号 → in-flight 恰 ≤8（semaphore 有界）→ 其余请求在
 // 槽释放后经**二次双检**命中已完成的首拉（槽释放 ⟹ 同账号 usage 已写——写
 // 先于 defer 释放槽，窗口闭合）→ 上游恰 8 次（无双检则 20 次级联全拉）+ 全
@@ -369,7 +369,7 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 
 // TestCodexUsageSnapshotHTTP401Classification usage 面 401 分类边界（SDK PAT
 // 判死上线后）：非致命 401（无判死标记——上游未宣告凭证死亡）→ ErrUpstream，
-// 不从状态码反推鉴权结论（T3-5 网关侧 401 特判已随 SDK classifyAT401 接管
+// 不从状态码反推鉴权结论（网关侧 401 特判已随 SDK classifyAT401 接管
 // PAT 而退役）；致命 401（token_revoked 判死标记）→ SDK 内分类产出
 // AuthPermanentlyRevokedError → IsFatal 统一判定 → ErrAuthExpired。
 func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
@@ -390,7 +390,7 @@ func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
 	})
 }
 
-// TestCodexUsageSnapshotEntryErrAuthExpired 入口错误分类（N2）：oauth 缺 rt
+// TestCodexUsageSnapshotEntryErrAuthExpired 入口错误分类：oauth 缺 rt
 // （errCredentialIncomplete——凭据不完整）→ ErrAuthExpired（不落 default 归
 // ErrUpstream）。
 func TestCodexUsageSnapshotEntryErrAuthExpired(t *testing.T) {
@@ -413,7 +413,7 @@ func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, c.callsN())
 
-	// 凭据失效（RefreshOAuth 类）→ FatalAuth 毒化 Auth（T5——evict=false，
+	// 凭据失效（RefreshOAuth 类）→ FatalAuth 毒化 Auth（evict=false，
 	// entry 保留）；GetUsageSnapshot 纯 IsFatal 判定 → ErrAuthExpired。
 	// 先拨旧 usageAt（首次成功缓存仍新鲜——TTL 优先语义：≤5min 快照不被
 	// 后续失败掩盖；冷却红绿断言须等 TTL 过期才可观察）。
@@ -439,7 +439,7 @@ func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
 
 // TestCodexUsageSnapshotConvergence 收敛映射（白名单）：approx_*/瞬时布尔/
 // 派生状态不进契约；每块 nil → omitempty；ResetAt Unix 秒 → RFC3339；零值
-// 守卫（T3-1/T3-10）：ResetAt 0 → nil 不出字段、Balance 空串 → nil 不出字段。
+// 守卫：ResetAt 0 → nil 不出字段、Balance 空串 → nil 不出字段。
 func TestCodexUsageSnapshotConvergence(t *testing.T) {
 	srv, _ := newUsageUpstream(t,
 		codexUpstreamStep{status: 200, body: usageOKBody},
@@ -504,7 +504,7 @@ func TestCodexUsageSnapshotConvergence(t *testing.T) {
 }
 
 // TestCodexUsageSnapshotEntryRebuildClears 凭据 sig 变化 + TTL 状态机：TTL
-// 新鲜（命中路径零分配——T3-4）→ 快照为账号级视图，直接命中缓存（零重建零
+// 新鲜（命中路径零分配）→ 快照为账号级视图，直接命中缓存（零重建零
 // 重拉）；TTL 过期 + sig 变化 → entry 重建 → 快照缓存随新条目清除 → 重拉。
 func TestCodexUsageSnapshotEntryRebuildClears(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
@@ -548,7 +548,7 @@ func TestClassifyUsageErr(t *testing.T) {
 
 	require.ErrorIs(t, classifyUsageErr(&codexsdk.RefreshError{Attempts: 3, Err: errors.New("net")}), ErrUpstream, "RefreshError 不在 fatal 集")
 	require.ErrorIs(t, classifyUsageErr(&codexsdk.HTTPError{StatusCode: 500, Raw: []byte(`{}`)}), ErrUpstream)
-	require.ErrorIs(t, classifyUsageErr(&codexsdk.HTTPError{StatusCode: 401, Raw: []byte(`{}`)}), ErrUpstream, "非致命 401 归上游面（T3-5 特判已退役）")
+	require.ErrorIs(t, classifyUsageErr(&codexsdk.HTTPError{StatusCode: 401, Raw: []byte(`{}`)}), ErrUpstream, "非致命 401 归上游面（特判已退役）")
 	require.ErrorIs(t, classifyUsageErr(&codexsdk.HTTPError{StatusCode: 403, Raw: []byte(`{}`)}), ErrUpstream, "非 401 HTTPError 仍归 ErrUpstream")
 	require.ErrorIs(t, classifyUsageErr(errors.New("network error")), ErrUpstream)
 }

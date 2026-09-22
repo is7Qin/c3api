@@ -108,7 +108,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.NoError(t, err)
 	acc, err := repos.CreateAccount(ctx, &domain.Account{
 		Name: "ops-acc", TemplateID: tpl.ID, UpstreamKey: "sk-upstream",
-		MaxConcurrency: 4,
+		MaxConcurrency: 4, Enabled: true,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
@@ -126,7 +126,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	// --- 构造链（与 main 装配序一致：模块构造零 reload——单一入口） ---
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
 	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
 	balances := billing.NewBalances(repos, nil)

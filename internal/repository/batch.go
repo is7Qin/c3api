@@ -44,7 +44,7 @@ type AccountPatch struct {
 	Name        *string
 	TemplateID  *int64
 	UpstreamKey *string
-	// BaseURL 批量三态（C1 定死）：nil = 不变；&"" = 清空（落 NULL = 继承
+	// BaseURL 批量三态（定死）：nil = 不变；&"" = 清空（落 NULL = 继承
 	// 模板）；&非空 = 落值。
 	BaseURL        *string
 	MaxConcurrency *int
@@ -58,6 +58,15 @@ type AccountPatch struct {
 type GroupPatch struct {
 	Name       *string
 	Visibility *domain.GroupVisibility
+}
+
+// AccountWriteResult 单账号一次写入的结果：新配置代际 C（客户端 CAS 令牌）与本次
+// **真实变更**的字段集。ChangedFields 是调用方推导失效计划的唯一输入
+// （IdentityChanged 由 domain 的声明表派生），调用方不得再自行比较补丁字段。
+type AccountWriteResult struct {
+	AccountID         int64
+	LifecycleRevision int64
+	ChangedFields     domain.FieldSet
 }
 
 // --- 批量删除（软删：deleted_at 置值；事务，全成或全败） ---
@@ -178,15 +187,16 @@ func (r *TemplateRepo) UpdateTemplatesBatch(ctx context.Context, ids []int64, p 
 	})
 }
 
-func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p AccountPatch) error {
-	return withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p AccountPatch) ([]AccountWriteResult, error) {
+	var results []AccountWriteResult
+	if err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
 		locked, err := lockAccountsForUpdate(ctx, driver, ids)
 		if err != nil {
 			return err
 		}
 		templateIDs := make([]int64, 0, len(locked)+1)
 		for _, row := range locked {
-			templateIDs = append(templateIDs, row.templateID)
+			templateIDs = append(templateIDs, row.TemplateID)
 		}
 		if p.TemplateID != nil {
 			templateIDs = append(templateIDs, *p.TemplateID)
@@ -199,11 +209,11 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			return err
 		}
 		for _, row := range locked {
-			templateID := row.templateID
+			templateID := row.TemplateID
 			if p.TemplateID != nil {
 				templateID = *p.TemplateID
 			}
-			baseURL := row.baseURL
+			baseURL := row.BaseURL
 			if p.BaseURL != nil {
 				baseURL = p.BaseURL
 			}
@@ -216,15 +226,23 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 				return err
 			}
 		}
-		fenced := p.UpstreamKey != nil || p.BaseURL != nil
+		pre := make(map[int64]AccountFieldValues, len(locked))
+		for _, row := range locked {
+			pre[row.ID] = row
+		}
 		for _, id := range sortedUniqueIDs(ids) {
-			u := client.Account.Update().Where(account.IDEQ(id))
-			if fenced {
-				row, err := client.Account.Query().Where(account.IDEQ(id)).Only(ctx)
-				if err != nil {
-					return errMissingID(err, id)
-				}
-				u = u.Where(account.LifecycleRevisionEQ(row.LifecycleRevision)).SetLifecycleRevision(row.LifecycleRevision + 1)
+			// C（配置代际）**无条件**推进：一次配置变更就是一个新代际，读-改-写的
+			// 客户端据此必然重读。K（身份代际）**按值**推进：仅当身份类字段真的变了
+			// 才推进——幂等重写不推进。二者分开是因为在途判定（失效判决 / latch /
+			// 健康记录 / continuation）围栏在 (I,K) 上：身份变了旧判定必须作废，而
+			// 普通配置变更不得白白作废它们。用**相对递增**而非先读后写：行已在本
+			// 事务内 lockAccountsForUpdate 锁定，故 pre 里的旧值即为判据且无
+			// lost-update 窗口。Save 回显新行 → 新 C/K 直接作为响应回显。
+			row := pre[id]
+			result := AccountWriteResult{AccountID: id, ChangedFields: ChangedFields(p, row)}
+			u := client.Account.UpdateOneID(id).AddLifecycleRevision(1)
+			if result.ChangedFields.IdentityChanged() {
+				u = u.AddIdentityRevision(1)
 			}
 			if p.Name != nil {
 				u = u.SetName(*p.Name)
@@ -261,12 +279,18 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 					u = u.SetCacheDomain(*p.CacheDomain)
 				}
 			}
-			if _, err := u.Save(ctx); err != nil {
+			updated, err := u.Save(ctx)
+			if err != nil {
 				return errMissingID(err, id)
 			}
+			result.LifecycleRevision = updated.LifecycleRevision
+			results = append(results, result)
 		}
 		return nil
-	})
+	}); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func (r *GroupRepo) UpdateGroupsBatch(ctx context.Context, ids []int64, p GroupPatch) error {
@@ -334,7 +358,7 @@ func checkGroupExist(ctx context.Context, q func() *ent.GroupQuery, ids []int64)
 // checkIDsExist 通用存在性检查：按块逐块查询（每块新建查询——ent Where 原地
 // 追加谓词，复用同一查询会跨块累加 IN）后合并 existing，再 diffMissing。
 // 合并只做集合并集（diffMissing 不依赖顺序）；空 ids → 零块 → diffMissing
-// 空集直接返回 nil。错误带 (chunk i/n, N ids) 上下文（评审 I-2）。
+// 空集直接返回 nil。错误带 (chunk i/n, N ids) 上下文。
 func checkIDsExist(ids []int64, each func(chunk []int64) ([]int64, error)) error {
 	chunks := chunkIDs(ids, inChunkSize)
 	var existing []int64

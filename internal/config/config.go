@@ -56,7 +56,7 @@ type AuthConfig struct {
 }
 
 // DBConfig 数据库连接。DSN 无需手工写 lock_timeout——OpenPG 统一补丁
-// （F-P2-4：计费路径防卡死 lock_timeout=5s 会话级 + 计费结算事务 per-tx
+// （计费路径防卡死 lock_timeout=5s 会话级 + 计费结算事务 per-tx
 // 10s 超时 + MaxConnLifetime=30m 滚动轮换，详见 repository.OpenPG /
 // BillingRepo.SettleBalanceBatch/SettleFefoBatch；statement_timeout 不设
 // 会话级——与 admin 面 ScanStats 大窗口聚合实测冲突降级，见
@@ -117,7 +117,7 @@ type UsageConfig struct {
 	FlushInterval      time.Duration `koanf:"flush_interval"`
 	LogRetentionDays   int           `koanf:"log_retention_days"`
 	QuotaFlushInterval time.Duration `koanf:"quota_flush_interval"` // quota 增量批量回写 cadence
-	FlushWorkers       int           `koanf:"flush_workers"`        // flush 并行 worker 数（O1 管道化分片并行；明细/额度共用）
+	FlushWorkers       int           `koanf:"flush_workers"`        // flush 并行 worker 数（管道化分片并行；明细/额度共用）
 	// StatsAggInterval 离线聚合周期（spec 2026-08-14：使用量统计离线聚合化——
 	// 独立 worker 每周期从 DB 重建 usage_stats；默认 5m；0 = 禁用聚合）。
 	StatsAggInterval time.Duration `koanf:"stats_agg_interval"`
@@ -133,13 +133,13 @@ type UsageConfig struct {
 	StatsRetentionDays int `koanf:"stats_retention_days"`
 }
 
-// BillingConfig 计费（Phase 5 T3）：Enabled 默认开（全链默认开启：代码默认 +
+// BillingConfig 计费：Enabled 默认开（全链默认开启：代码默认 +
 // 模板默认一致；空价格表 = 全模型 402——首次启动需先同步价格（POST
 // /api/admin/pricing/sync）；余额预检 + FEFO 条件扣费 + 优雅停机排空全链随之生效。
 // 本地开发可用 enabled=false 显式退回纯代理模式）。
 type BillingConfig struct {
 	Enabled                bool          `koanf:"enabled"`
-	FlushInterval          time.Duration `koanf:"flush_interval"`           // 计费游标轮询周期（F2 ledger-cursor：每周期取批消费 unbilled 账本）
+	FlushInterval          time.Duration `koanf:"flush_interval"`           // 计费游标轮询周期（ledger-cursor：每周期取批消费 unbilled 账本）
 	BalanceRefreshInterval time.Duration `koanf:"balance_refresh_interval"` // 余额快照全量刷新周期
 }
 
@@ -147,9 +147,9 @@ func defaults() *Config {
 	return &Config{
 		Server: ServerConfig{Addr: ":8080", ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 1 << 20},
 		Log:    LogConfig{Level: "warn", Output: "stdout"},
-		// #17：10→20（billing 8 worker + stats 8 worker + 余量；统计 COPY 批量写已改毫秒级短事务）。
+		// 10→20（billing 8 worker + stats 8 worker + 余量；统计 COPY 批量写已改毫秒级短事务）。
 		// 连接参数（lock_timeout=5s 会话级 + 计费结算 per-tx 10s 超时 + MaxConnLifetime=30m，
-		// F-P2-4 计费路径防卡死）由 OpenPG/SettleBalance·SettleFefo 统一补，DSN 无需手工写（用户
+		// 计费路径防卡死）由 OpenPG/SettleBalance·SettleFefo 统一补，DSN 无需手工写（用户
 		// 显式配置同名参数时尊重不覆盖；statement_timeout 不设会话级——副作用核实见 f1-impl-report.md）。
 		DB:        DBConfig{MaxConns: 20},
 		Proxy:     ProxyConfig{MaxBodySize: 4 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true},
@@ -183,10 +183,10 @@ func Load(path string) (*Config, error) {
 	}), nil); err != nil {
 		return nil, err
 	}
-	// ErrorUnused：配置显式写未知键（拼写错误/已删旧键）→ 启动报错（D-P2-1）。
+	// ErrorUnused：配置显式写未知键（拼写错误/已删旧键）→ 启动报错。
 	// ⚠ DecoderConfig 必须完整复制 koanf 默认（StringToTimeDurationHookFunc +
 	// textUnmarshalerHookFunc + WeaklyTypedInput: true）——漏任一：duration 字符串
-	// 解析（"500ms"）全失效，且 env 路径裸数字 fail-fast 保护丢失（p2-14 P2-A 交叉风险）。
+	// 解析（"500ms"）全失效，且 env 路径裸数字 fail-fast 保护丢失（交叉风险）。
 	if err := k.UnmarshalWithConf("", c, koanf.UnmarshalConf{
 		DecoderConfig: &mapstructure.DecoderConfig{
 			DecodeHook: mapstructure.ComposeDecodeHookFunc(
@@ -204,10 +204,10 @@ func Load(path string) (*Config, error) {
 // validate Load 末尾统一校验（fail-fast，错误含 koanf 字段路径，形如
 // "scheduler.sync_interval must be > 0"）：
 //   - duration 字段 ≥1ms 硬校验：拦截 5 处 time.NewTicker panic 面（scheduler/
-//     usage×2/flusher×2）与 errlog.go:123 第 6 个 ticker 的 500ns 烧穿面（D-P2-2：
+//     usage×2/flusher×2）与 errlog.go:123 第 6 个 ticker 的 500ns 烧穿面（
 //     裸数字 `flush_interval = 500` → 500ns ticker → 队列非空 DB 写风暴 / 队列空
 //     CPU 忙轮询）。errlog_flush_interval=0 由"钳位到默认"变为"启动报错"——有意
-//     选择（errlog 无文档化"0=禁用"语义，取 p2-14"全部 duration 字段"立场）；
+//     选择（errlog 无文档化"0=禁用"语义，取"全部 duration 字段"立场）；
 //   - 数值字段 ≥1：DefaultMaxConcurrency（silent 全坏面——从"健康地拒绝全流量"
 //     转启动即报错）、DB.MaxConns（puddle 层报 MaxSize 无法归因到 db.max_conns）；
 //   - 必填：auth.jwt_secret / db.dsn（自 main.go:64-66 移入内聚；admin.token

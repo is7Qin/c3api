@@ -39,7 +39,7 @@ func TestRuntimeHealthStartInjectsProbe(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h := NewRuntimeHealth(c, "self-a", nil, nil)
 
-	err := h.doProbe(context.Background(), HealthKey{AccountID: 1, Quality: "*", Revision: 2})
+	err := h.doProbe(context.Background(), HealthKey{AccountID: 1, Quality: "*", IdentityRevision: 2})
 	require.Error(t, err, "nil probe must fail-closed")
 
 	called := false
@@ -55,6 +55,6 @@ func TestRuntimeHealthStartInjectsProbe(t *testing.T) {
 		defer closeCancel()
 		require.NoError(t, h.Close(closeCtx))
 	})
-	require.NoError(t, h.doProbe(context.Background(), HealthKey{AccountID: 1, Quality: "*", Revision: 2}))
+	require.NoError(t, h.doProbe(context.Background(), HealthKey{AccountID: 1, Quality: "*", IdentityRevision: 2}))
 	require.True(t, called, "Start-injected probe fn must be dispatched by doProbe")
 }

@@ -148,13 +148,14 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 		FailureSource:            a.FailureSource,
 		Enabled:                  a.Enabled,
 		LifecycleRevision:        a.LifecycleRevision,
+		IdentityRevision:         a.IdentityRevision,
 		UpstreamCostMultiplierBp: a.UpstreamCostMultiplierBp,
 		CacheDomain:              a.CacheDomain,
 		CreatedAt:                a.CreatedAt, UpdatedAt: a.UpdatedAt, DeletedAt: a.DeletedAt,
 	}
 	// Ext 快照合并：仅调度器快照加载（LoadGroupsAccounts / LoadGroupAccounts
 	// ——全表/子查询扫描后内存装配 Edges.Ext）会带 account_ext 边；其余路径
-	// 无 ext 边 → nil（与 Template.StripImageTools 同款合并先例，T4 P3-4 定死
+	// 无 ext 边 → nil（与 Template.StripImageTools 同款合并先例，定死
 	// 路线）。
 	if len(a.Edges.Ext) > 0 {
 		d.Ext = toDomainAccountExt(a.Edges.Ext[0])

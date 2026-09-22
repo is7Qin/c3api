@@ -66,7 +66,7 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 			WindowID:       deref(in.CodexIdentity.WindowId),
 		}
 	}
-	// account id 后置补全（P1 可留空语义——保存后自动识别）：入参空才补；派生
+	// account id 后置补全（可留空语义——保存后自动识别）：入参空才补；派生
 	// 失败不阻塞保存（留空落库 → 下次保存重试）。
 	if e.CodexAccountID == nil || *e.CodexAccountID == "" {
 		if id := h.deriveCodexAccountID(r.Context(), e); id != "" {

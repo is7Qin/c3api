@@ -47,10 +47,10 @@ var errCodexWSNotIntegrated = errors.New("codex responses unavailable (adapter n
 
 // errCodexExtMissing codex 类型选号命中但账号快照缺 account_ext 行（配置损
 // 坏——codex 账号必有 ext 行）。本地配置错误按连接级错误转移（失败文本落盘，
-// 耗尽 502 语义）；不上报失效（避免 account 0 无谓上报——T2 P1-1 同款）。
+// 耗尽 502 语义）；不上报失效（避免 account 0 无谓上报——同款）。
 var errCodexExtMissing = errors.New("codex account missing account_ext snapshot (config error)")
 
-// codexAuthFailedMsg codex fatal 用户帧固定文案（M3 裁决：fatal 语义 = 授权
+// codexAuthFailedMsg codex fatal 用户帧固定文案（裁决：fatal 语义 = 授权
 // 失败——复用 "upstream rejected request" 语义不准；不泄 SDK 内部机制串如
 // "refresh 被拒绝"/重试次数）。落盘侧 ErrorMessage 仍写 dialErr 原文
 // （:125-127），此路径无 Warn——落盘是唯一留痕。
@@ -59,7 +59,7 @@ const codexAuthFailedMsg = "codex authorization failed"
 // dialCodexWS 组装一次 codex WS Dial（凭当前请求选中账号 cred）：
 //   - 凭据线：sel.Ext 快照 → AccountCredential 派生（relay 线；热路径零 DB）
 //   - 端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses）
-//   - 伪装四元组（W1 持久化）：WithSession（握手头 + 帧内 metadata session/
+//   - 伪装四元组（持久化）：WithSession（握手头 + 帧内 metadata session/
 //     thread/window）+ WithCodexMeta（帧内 x-codex-installation-id——真实客户
 //     端该头不进握手头，仅帧 metadata）
 //   - WithPingInterval(0)：禁 SDK 内部心跳（心跳单源——编排层 30s+10s）
@@ -182,7 +182,7 @@ func sniffCodexWSDeath(f []byte) *codexsdk.AuthPermanentlyRevokedError {
 	return codexsdk.ClassifyAuthFatalFrame(f)
 }
 
-// codexIdentityFromExt 从账号 ext 快照组装伪装四元组（W1 数据层持久化——账号
+// codexIdentityFromExt 从账号 ext 快照组装伪装四元组（数据层持久化——账号
 // 存在期间稳定：InstallationID 账号级永久 / SessionID==ThreadID 会话级 /
 // WindowID={thread}:0）。返回 SDK Session（握手头 + 帧内 metadata 双注入）与
 // CodexMeta（帧内 x-codex-installation-id 等；优先级 CodexMeta > WithSession，

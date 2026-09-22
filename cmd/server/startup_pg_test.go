@@ -120,7 +120,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.NoError(t, err)
 	acc, err := repos.CreateAccount(ctx, &domain.Account{
 		Name: "acc-1", TemplateID: tpl.ID, UpstreamKey: "sk-upstream",
-		MaxConcurrency: 4,
+		MaxConcurrency: 4, Enabled: true,
 	})
 	require.NoError(t, err)
 	require.NoError(t, repos.SetAccountGroups(ctx, acc.ID, []int64{g.ID})) // 成员关系独立写入（CreateAccount 不落 m2m）
@@ -140,7 +140,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	sched := scheduler.New(scheduler.Config{
 		// sync ticker 不依赖（SyncInterval 小时级兜底）；编译道必须 Start——
 		// Select 执行预编译计划，0 间隔误配防 ticker 空转 panic。
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
 	schedCtx, cancelSched := context.WithCancel(ctx)
 	t.Cleanup(cancelSched)
@@ -232,7 +232,7 @@ type nopClients struct{}
 
 func (nopClients) InvalidateAll() {}
 
-// TestSettingsTimingPG #36 即时重算时序（R2 M-1，真实 PG 全链路）：settings 旧值 →
+// TestSettingsTimingPG 即时重算时序（真实 PG 全链路）：settings 旧值 →
 // 变更 → auth.Reload（注册表 scope 分发）必须读到新快照——顺序保证 reload 消费新
 // 值，而非"重载了个寂寞"。观测键 price_sync_cron（registry 默认 "0 3 * * *"）。
 // 分两段：
@@ -273,7 +273,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	// --- 构造链（与 main 装配序一致：模块构造零 reload——单一入口） ---
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
 	var seenCron atomic.Pointer[string]
 	obs := &observingKeyRepo{KeyRepo: repos.Keys, seen: &seenCron}

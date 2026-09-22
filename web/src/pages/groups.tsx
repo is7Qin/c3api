@@ -35,7 +35,7 @@ type GroupVisibility = components['schemas']['GroupVisibility']
 type GroupProtocolConvert = components['schemas']['GroupProtocolConvert']
 type GroupAssignmentsBody = components['schemas']['GroupAssignmentsBody']
 
-// 协议转换方向（W5 网关 internal/protoconv 消费）：4 方向可多选，全不勾 = off =
+// 协议转换方向（网关 internal/protoconv 消费）：4 方向可多选，全不勾 = off =
 // 不转换（off 不进数组，空勾选表达）
 const PROTOCOL_CONVERTS: GroupProtocolConvert[] = ['chat_to_resp', 'mess_to_resp', 'resp_to_mess', 'chat_to_mess']
 

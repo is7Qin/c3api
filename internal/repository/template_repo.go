@@ -28,7 +28,7 @@ func (r *TemplateRepo) CreateTemplate(ctx context.Context, t *domain.Template) (
 	}
 	row, err := r.client.Template.Create().
 		SetName(t.Name).SetBaseURL(t.BaseURL).
-		// 全字段 Set（含 credential_type）：空串兜底在 service 层（M-1，防默认值被绕过）
+		// 全字段 Set（含 credential_type）：空串兜底在 service 层（防默认值被绕过）
 		SetCredentialType(string(t.CredentialType)).
 		SetSupportedFormats(formatsToStrings(t.SupportedFormats)).
 		SetModels(t.Models).

@@ -9,14 +9,14 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// Event-driven incremental compilation (v5 C1–C3): the single clean mechanism
+// Event-driven incremental compilation (v5): the single clean mechanism
 // REPLACING the unconditional 30s full rebuild outright (no dual-track, no
 // flags). Invalidation/price/quality events enqueue SCOPED work; the 30s tick
 // is demoted to an O(1)-probe staleness backstop; scoped fires recompute only
 // affected routes with pointer reuse while publish stays whole-snapshot
 // atomic. Every new structure below declares ONE owner + lifecycle.
 
-// ---- v5-C1: scoped enqueue seam (freeze-safe naming) ----
+// ---- scoped enqueue seam (freeze-safe naming) ----
 
 // scopedCompileReq is one affected-scope work item: the groups/accounts an
 // event names plus its cause. Owner: compile lane. Lifecycle: fire-owned (one
@@ -111,7 +111,7 @@ func (s *Scheduler) drainCompileScopes() ([]scopedCompileReq, bool) {
 	}
 }
 
-// ---- v5-C2: lane-local dynamic-input diffs (closed lanes stay read-only) ----
+// ---- lane-local dynamic-input diffs (closed lanes stay read-only) ----
 
 // diffRouteInputs unites added/deleted/changed input keys into affected
 // routes via the target index; callers vary only in equality and the
@@ -216,7 +216,7 @@ func EqualResolvedPrices(a, b domain.ResolvedPrices) bool {
 	return true
 }
 
-// ---- v5-C2: scope resolution + affected-only recompute ----
+// ---- scope resolution + affected-only recompute ----
 
 // compileFire is one lane fire's scope-resolution state: the target static
 // root, the published carry-forward, drained channel scopes, lane-local

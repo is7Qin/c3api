@@ -11,7 +11,7 @@ func validBase() AttemptOutcome {
 	return AttemptOutcome{
 		ID: "a1", RouteClassID: "rc", QualityClassID: "qc1", Fingerprint: "fp", TemplateID: 1, AccountID: 1,
 		RequestedModel: "gpt-4o", MappedModel: "gpt-4o", CallerCategory: CallerChat, OperationTag: "chat_completions", Ordinal: 1,
-		LifecycleRevision: 1, Lane: LanePrimary, Generation: 1, Commit: CommitResponseStarted, Result: ResultSuccess, HTTPStatus: 200,
+		IdentityRevision: 1, Lane: LanePrimary, Generation: 1, Commit: CommitResponseStarted, Result: ResultSuccess, HTTPStatus: 200,
 		BusinessFrameSent: true, HardContinuation: false, Terminal: true,
 		Timing: AttemptTiming{LatencyMS: 10}, Usage: AttemptUsage{InputTokens: 1},
 	}
@@ -136,7 +136,7 @@ func TestAttemptOutcomeContract(t *testing.T) {
 		o.BusinessFrameSent = false
 		require.Error(t, o.Validate())
 		o = validBase()
-		o.LifecycleRevision = 0
+		o.IdentityRevision = 0
 		o.Result = ResultFailed
 		o.Commit = CommitNotSent
 		o.HTTPStatus = 0
@@ -171,7 +171,7 @@ func TestAttemptOutcomeContract(t *testing.T) {
 	t.Run("zero generation revision for network not_sent invalid", func(t *testing.T) {
 		o := validBase()
 		o.Generation = 0
-		o.LifecycleRevision = 0
+		o.IdentityRevision = 0
 		o.Result = ResultFailed
 		o.Commit = CommitNotSent
 		o.HTTPStatus = 0

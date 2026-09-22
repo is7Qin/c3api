@@ -190,7 +190,7 @@ func newTestProxyFormatLogs(t *testing.T, upstream string, format domain.Request
 	}
 	accs := map[int64][]*domain.Account{10: {{
 		ID: 1, TemplateID: 1, Template: tpl, UpstreamKey: "sk-upstream",
-		Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4,
+		Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 	}}}
 	cfg := Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
@@ -201,7 +201,7 @@ func newTestProxyFormatLogs(t *testing.T, upstream string, format domain.Request
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background())) // 空表写种子
 	sched := scheduler.New(scheduler.Config{
-		DefaultMaxConcurrency: 4, SyncInterval: time.Hour,
+		SyncInterval: time.Hour,
 	}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
@@ -281,7 +281,7 @@ func TestProxyResponsesStreaming(t *testing.T) {
 	require.Equal(t, "", lg.MappedModel, "无映射 → MappedModel 空")
 }
 
-// TestProxyResponsesStreamingDataOnly P3：上游 resp 流缺 event: 名（只发
+// TestProxyResponsesStreamingDataOnly：上游 resp 流缺 event: 名（只发
 // data: 行，同仓库 fakeupstream /v1/responses）→ 直接 resp 路径不得丢帧、
 // 用量提取不得静默缺失——字节原样透传 + Observer 按 data.type 推断
 // response.completed 提取 usage。
@@ -308,7 +308,7 @@ func TestProxyResponsesStreamingDataOnly(t *testing.T) {
 
 	require.Equal(t, 200, rec.Code, "body=%s", rec.Body.String())
 	body := rec.Body.String()
-	require.NotEmpty(t, body, "缺名帧不得静默全丢（P3）")
+	require.NotEmpty(t, body, "缺名帧不得静默全丢")
 	require.Contains(t, body, `"type":"response.output_text.delta"`, "字节原样透传")
 	require.Contains(t, body, `"type":"response.completed"`)
 	require.Contains(t, body, "data: [DONE]")

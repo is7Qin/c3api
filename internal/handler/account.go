@@ -6,44 +6,30 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
-	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// accountFromBody 生成类型 body → 领域对象（create/update 共用；GroupIDs
-// nil = 不设置/不变，非 nil = 替换语义含空数组清空）。
-func accountFromBody(in AccountCreate) *domain.Account {
-	a := &domain.Account{
-		Name:           in.Name,
-		TemplateID:     in.TemplateId,
-		UpstreamKey:    in.UpstreamKey,
-		MaxConcurrency: deref(in.MaxConcurrency),
-		GroupIDs:       in.GroupIds,
-	}
-	// base_url 空串归一 nil（create/update 路径 "" 与 null 合并为「继承
-	// 模板」——防 "" 落库产生存储漂移，DB 恒 nil|非空两种形态）。
-	if in.BaseUrl != nil && *in.BaseUrl != "" {
-		a.BaseURL = in.BaseUrl
-	}
-	// cache_domain 空串归一 nil（同 base_url 防漂移）；仅 create 生效——PUT 的
-	// 生命周期字段由 service 以当前值覆盖（fenced 端点独占写面）。
-	if in.CacheDomain != nil && *in.CacheDomain != "" {
-		a.CacheDomain = in.CacheDomain
-	}
-	return a
-}
-
-// PostAccounts 创建账号（ServerInterface）。
+// PostAccounts 创建账号（ServerInterface）。创建体是唯一字段模型的别名
+// （AccountCreate = AccountConfigPatch + required[name,template_id]），直接复用
+// 同一个三态转换；Name/TemplateID 必填由 service 收口判定。
 func (h *AdminAPI) PostAccounts(w http.ResponseWriter, r *http.Request) {
-	var in AccountCreate
+	var in AccountConfigPatch
 	if err := decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	created, err := h.svc.CreateAccount(r.Context(), accountFromBody(in))
+	p, err := accountPatchFromBody(&in)
+	if err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	created, err := h.svc.CreateAccount(r.Context(), p)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -60,6 +46,7 @@ func (h *AdminAPI) GetAccounts(w http.ResponseWriter, r *http.Request, params Ge
 		Sort:       deref(params.Sort),
 		Order:      string(deref(params.Order)),
 		TemplateID: deref(params.TemplateId),
+		Enabled:    params.Enabled,
 	}
 	rows, total, err := h.svc.ListAccountViews(r.Context(), q)
 	if err != nil {
@@ -94,22 +81,51 @@ func (h *AdminAPI) GetAccountsIdGroups(w http.ResponseWriter, r *http.Request, i
 	httpface.WriteJSON(w, http.StatusOK, AccountGroupsResponse{GroupIds: ids})
 }
 
-// PutAccountsId 全量更新账号（ServerInterface；group_ids 缺省 = 分组不变，
-// 空数组 = 清空）。
-func (h *AdminAPI) PutAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
-	var in AccountCreate
+// PatchAccountsId 账号配置的部分更新（ServerInterface）。三态见
+// accountPatchFromBody；If-Match 可选（缺席 = 不做前置条件检查），陈旧 → 412，
+// 语法非法 → 400。
+func (h *AdminAPI) PatchAccountsId(w http.ResponseWriter, r *http.Request, id int64, params PatchAccountsIdParams) {
+	var in AccountConfigPatch
 	if err := decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	acc := accountFromBody(in)
-	acc.ID = id
-	updated, err := h.svc.UpdateAccount(r.Context(), acc)
+	p, err := accountPatchFromBody(&in)
+	if err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	expected, err := parseIfMatch(params.IfMatch)
+	if err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	acc, err := h.svc.PatchAccount(r.Context(), id, p, expected)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(updated))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
+}
+
+// parseIfMatch 解析 If-Match 前置条件：nil = 缺席（不做前置条件检查）。接受裸
+// 整数或一对双引号包裹（`"12"`）；拒绝 W/ 弱校验、多值（逗号）、`*` 与非整数。
+func parseIfMatch(raw *string) (*int64, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	v := strings.TrimSpace(*raw)
+	if strings.HasPrefix(v, `"`) && strings.HasSuffix(v, `"`) && len(v) >= 2 {
+		v = v[1 : len(v)-1]
+	}
+	if v == "" || v == "*" || strings.HasPrefix(v, "W/") || strings.Contains(v, ",") {
+		return nil, fmt.Errorf("invalid If-Match %q", *raw)
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid If-Match %q", *raw)
+	}
+	return &n, nil
 }
 
 // DeleteAccountsId 删除账号（ServerInterface）。
@@ -142,7 +158,8 @@ func (h *AdminAPI) PostAccountsBatchDelete(w http.ResponseWriter, r *http.Reques
 }
 
 // PostAccountsBatchUpdate 批量更新账号（fields 任意子集；更新后调度快照
-// 失效由 service invalidate 完成，ServerInterface）。
+// 失效由 service invalidate 完成，ServerInterface）。响应携带每账号的新配置
+// 代际。
 func (h *AdminAPI) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
 	var in BatchUpdateAccountsBody
 	if err := decode(r, &in); err != nil {
@@ -159,11 +176,16 @@ func (h *AdminAPI) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Reques
 		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.svc.UpdateAccountsBatch(r.Context(), ids, p); err != nil {
+	revs, err := h.svc.UpdateAccountsBatch(r.Context(), ids, p)
+	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	httpface.WriteJSON(w, http.StatusOK, BatchUpdateResponse{Updated: len(ids)})
+	items := make([]AccountRevision, 0, len(revs))
+	for _, rev := range revs {
+		items = append(items, AccountRevision{AccountId: rev.AccountID, LifecycleRevision: rev.LifecycleRevision})
+	}
+	httpface.WriteJSON(w, http.StatusOK, AccountBatchUpdateResponse{Updated: len(revs), Items: items})
 }
 
 // PostAccountsIdRecover 失效恢复（fenced CAS）：清失效三字段 + revision +1 →
@@ -182,68 +204,98 @@ func (h *AdminAPI) PostAccountsIdRecover(w http.ResponseWriter, r *http.Request,
 	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
 }
 
-// PostAccountsIdEnabled 启用/禁用账号（fenced CAS +1；enable 不清失效）（ServerInterface）。
-func (h *AdminAPI) PostAccountsIdEnabled(w http.ResponseWriter, r *http.Request, id int64) {
-	var in AccountEnabledBody
-	if err := decode(r, &in); err != nil {
-		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
-		return
+// accountPatchFromBody 生成类型补丁 → repo 补丁：唯一的**线格式投影**
+// （tri-state → 内部编码），只做类型转换不做语义判定（字段 bounds/域名语法/
+// group 元素规则的唯一权威是 service.validateAccountPatch）。
+//
+// 按字段类分派（nullable.Nullable[T] 的 IsSpecified/IsNull/MustGet）：
+//   - 不可空标量（name/template_id/upstream_key/max_concurrency/enabled/
+//     upstream_cost_multiplier）：缺席 → nil（不变）；显式 null → 400（具名字段
+//     错误）；有值 → &v（倍率走 normalToMult 换算为 basis points）。
+//   - 可空标量（base_url/cache_domain）：缺席 → nil（不变）；显式 null → &""
+//     （repo 层"清空"编码：落 NULL）；"" → 400；非空 → &v。
+//   - group_ids：原样透传（nil = 不变，[] = 清空，列表 = 替换）。
+func accountPatchFromBody(f *AccountConfigPatch) (repository.AccountPatch, error) {
+	var p repository.AccountPatch
+	if v, err := requiredScalar(f.Name, "name"); err != nil {
+		return p, err
+	} else {
+		p.Name = v
 	}
-	acc, err := h.svc.SetAccountEnabled(r.Context(), id, in.ExpectedRevision, in.Enabled)
-	if err != nil {
-		httpface.WriteServiceErr(w, err)
-		return
+	if v, err := requiredScalar(f.TemplateId, "template_id"); err != nil {
+		return p, err
+	} else {
+		p.TemplateID = v
 	}
-	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
-}
-
-// PutAccountsIdCostMultiplier 更新采购成本倍率（fenced CAS +1；正常值 ↔ bp
-// 边界换算，与组倍率同构）（ServerInterface）。
-func (h *AdminAPI) PutAccountsIdCostMultiplier(w http.ResponseWriter, r *http.Request, id int64) {
-	var in AccountCostMultiplierBody
-	if err := decode(r, &in); err != nil {
-		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
-		return
+	if v, err := requiredScalar(f.UpstreamKey, "upstream_key"); err != nil {
+		return p, err
+	} else {
+		p.UpstreamKey = v
 	}
-	acc, err := h.svc.UpdateAccountCostMultiplier(r.Context(), id, in.ExpectedRevision, normalToMult(in.Multiplier))
-	if err != nil {
-		httpface.WriteServiceErr(w, err)
-		return
+	if v, err := requiredScalar(f.MaxConcurrency, "max_concurrency"); err != nil {
+		return p, err
+	} else {
+		p.MaxConcurrency = v
 	}
-	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
-}
-
-// PutAccountsIdCacheDomain 更新缓存域（fenced CAS +1；null = 清空回私有域）（ServerInterface）。
-func (h *AdminAPI) PutAccountsIdCacheDomain(w http.ResponseWriter, r *http.Request, id int64) {
-	var in AccountCacheDomainBody
-	if err := decode(r, &in); err != nil {
-		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
-		return
+	if v, err := requiredScalar(f.Enabled, "enabled"); err != nil {
+		return p, err
+	} else {
+		p.Enabled = v
 	}
-	acc, err := h.svc.UpdateAccountCacheDomain(r.Context(), id, in.ExpectedRevision, in.CacheDomain)
-	if err != nil {
-		httpface.WriteServiceErr(w, err)
-		return
+	if f.UpstreamCostMultiplier.IsSpecified() {
+		if f.UpstreamCostMultiplier.IsNull() {
+			return p, errors.New("upstream_cost_multiplier must not be null")
+		}
+		bp := normalToMult(f.UpstreamCostMultiplier.MustGet())
+		p.UpstreamCostMultiplierBp = &bp
 	}
-	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
-}
-
-// accountPatchFromBody 生成类型 fields → repo patch（nil 字段 = 不更新；
-// GroupIDs nil = 不变，非 nil（含空数组） = 替换/清空）。
-// 空 fields（无任何字段）视为非法输入——判定用 == nil（而非 len），
-// group_ids: [] 算「提供」。
-func accountPatchFromBody(f *AccountPatch) (repository.AccountPatch, error) {
-	p := repository.AccountPatch{
-		Name:           f.Name,
-		TemplateID:     f.TemplateId,
-		UpstreamKey:    f.UpstreamKey,
-		BaseURL:        f.BaseUrl, // 透传不归一：批量 "" = 清空语义（与 create 路径归一语义分写）
-		MaxConcurrency: f.MaxConcurrency,
-		GroupIDs:       f.GroupIds,
+	if v, err := nullableScalar(f.BaseUrl, "base_url"); err != nil {
+		return p, err
+	} else {
+		p.BaseURL = v
 	}
-	if p.Name == nil && p.TemplateID == nil && p.UpstreamKey == nil &&
-		p.BaseURL == nil && p.MaxConcurrency == nil && p.GroupIDs == nil {
-		return repository.AccountPatch{}, errors.New("fields must contain at least one field")
+	if v, err := nullableScalar(f.CacheDomain, "cache_domain"); err != nil {
+		return p, err
+	} else {
+		p.CacheDomain = v
 	}
+	p.GroupIDs = f.GroupIds
 	return p, nil
+}
+
+// requiredScalar 不可空标量的三态投影：缺席 → nil；显式 null → 400；有值 → &v。
+func requiredScalar[T any](f interface {
+	IsSpecified() bool
+	IsNull() bool
+	MustGet() T
+}, field string) (*T, error) {
+	if !f.IsSpecified() {
+		return nil, nil
+	}
+	if f.IsNull() {
+		return nil, fmt.Errorf("%s must not be null", field)
+	}
+	v := f.MustGet()
+	return &v, nil
+}
+
+// nullableScalar 可空标量的三态投影：缺席 → nil；显式 null → &""（repo 清空
+// 编码）；"" → 400；非空 → &v。
+func nullableScalar(f interface {
+	IsSpecified() bool
+	IsNull() bool
+	MustGet() string
+}, field string) (*string, error) {
+	if !f.IsSpecified() {
+		return nil, nil
+	}
+	if f.IsNull() {
+		empty := ""
+		return &empty, nil
+	}
+	v := f.MustGet()
+	if v == "" {
+		return nil, fmt.Errorf("%s must not be empty", field)
+	}
+	return &v, nil
 }

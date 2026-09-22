@@ -11,7 +11,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// §7 G-select-parity corpus (v4-S1/S2/S3): golden failover sequences recorded
+// §7 G-select-parity corpus : golden failover sequences recorded
 // against cca67f8 behavior. The session rewrite must reproduce every record
 // BYTE-IDENTICALLY: per-request [(accountID, lane, ordinal, attemptID, prev)]
 // plus terminal errors, linkage, mapping projection, fence verdicts and the
@@ -82,8 +82,8 @@ func TestSelectSessionParity_responsesExploreDegraded(t *testing.T) {
 	s := parityScheduler(t, []*domain.Account{acc(1, tplx, 8), acc(2, tplx, 8), acc(3, tplx, 8), acc(4, tplx, 8)})
 	route := RouteRefFor(10, string(domain.FormatOpenAIResponses), "m")
 	publishAttemptDecision(s, route, &RouteDecision{
-		Primary: ccPrimary(1),
-		Explore: ExploreDecision{Ordered: ccExplore(2, 3), Weights: map[int64]int{2: 1, 3: 1}, Cumulative: []uint64{1, 2}, Total: 2, Fallback: fallbackIndexes(0, 1)},
+		Primary:  ccPrimary(1),
+		Explore:  ExploreDecision{Ordered: ccExplore(2, 3), Weights: map[int64]int{2: 1, 3: 1}, Cumulative: []uint64{1, 2}, Total: 2, Fallback: fallbackIndexes(0, 1)},
 		Degraded: ccDegraded(4),
 	})
 	var got []string
@@ -385,7 +385,7 @@ func TestSelectSessionParity_imagesOpTags(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), aE.AccountID)
 	selE.Release()
-	// The interned route classes must distinguish the two ops (S2 intern check
+	// The interned route classes must distinguish the two ops (intern check
 	// via the published decisions, not the normalized query keys).
 	rdG, ok := s.View().DecisionView().Route(10, string(domain.FormatOpenAIImages), "gpt-image-1")
 	require.True(t, ok)

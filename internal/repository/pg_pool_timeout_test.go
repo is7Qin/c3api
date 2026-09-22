@@ -4,7 +4,7 @@
 
 package repository_test
 
-// OpenPG 连接池防卡死参数生效断言（F-P2-4，P2）：lock_timeout=5s 为会话级
+// OpenPG 连接池防卡死参数生效断言：lock_timeout=5s 为会话级
 // GUC——pgx DSN query 参数 → 连接启动包 → 会话生效，必须真实连接 SHOW 才可
 // 证伪（非解析层自证）；MaxConnLifetime=30m 为 pgxpool 配置断言（用户裁决
 // 2026-08-13 实施，滚动轮换）。statement_timeout 断言保持 PG 默认 0 = 降级
@@ -47,7 +47,7 @@ func TestPGOpenPGTimeoutParams(t *testing.T) {
 	require.Equal(t, 30*time.Minute, pool.Config().MaxConnLifetime, "MaxConnLifetime 滚动轮换配置")
 }
 
-// TestPGBillingDeductLockTimeout 计费结算在锁竞争下有限失败（F-P2-4 核心验收）：
+// TestPGBillingDeductLockTimeout 计费结算在锁竞争下有限失败（核心验收）：
 // 管理员 pg_dump/长事务持锁期间 FEFO/余额 UPDATE 曾无限卡锁等待（PG 默认
 // lock_timeout=0）→ flush worker 全阻塞 → 全局计费停摆。修复后双兜底：池级
 // lock_timeout=5s 会话 GUC（锁等待 5s 即 55P03 报错回滚）+ 结算语句 per-query
@@ -60,7 +60,7 @@ func TestPGBillingDeductLockTimeout(t *testing.T) {
 	u := seedPGUser(t, repos, "lock-contention@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000))
 
-	// 种子 unbilled 行先行（F2 单写点：usage flusher 落库 → 游标消费）
+	// 种子 unbilled 行先行（单写点：usage flusher 落库 → 游标消费）
 	seedUnbilled(t, repos, fullLogFor(u.ID, "lock-contention-req"))
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)

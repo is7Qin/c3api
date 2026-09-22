@@ -4,7 +4,7 @@
 
 package protoconv
 
-// 字节级转换的原始字节助手（chat→resp 主路径，W5 优化）：不解析值、不构造
+// 字节级转换的原始字节助手（chat→resp 主路径 优化）：不解析值、不构造
 // 中间对象，直接取源 JSON 值/键的原始字节做透传拼接（SDK FilterCodexPayload
 // 字节级模式：预筛 + 提取 + 拼接三步）。gjson Result.Raw 是值文本的零拷贝
 // 切片，值本身无需改写时直接拼入输出（转义原样保留，语义等价——客户端/上游
@@ -20,7 +20,7 @@ import (
 // gjsonKeyEq 判定 gjson ForEach 键原始字节是否为指定名字（调用点传字符串
 // 字面量）。无转义 → 长度校验 + 逐字节比较（零分配）。含 \uXXXX 等转义
 // （合法 JSON，解码键 = 名字；转义形式恒比字面量长，长度前置检查会短路
-// 转义场景——转义检测必须在长度判定之前，评审 I-1 重做）→ 解码后比较
+// 转义场景——转义检测必须在长度判定之前，重做）→ 解码后比较
 // （极低概率路径，一次分配可接受）。
 func gjsonKeyEq(k gjson.Result, name string) bool {
 	r := k.Raw
@@ -47,7 +47,7 @@ func gjsonKeyEq(k gjson.Result, name string) bool {
 
 // rawStrEq 判定字符串值原始文本是否等于字面量（"system" 等）。无转义 →
 // 长度校验 + 逐字节比较（零分配）；含转义（恒更长，检测先于长度判定）→
-// 解码后比较（评审 I-1 重做）。非字符串值 → false。
+// 解码后比较（重做）。非字符串值 → false。
 func rawStrEq(v string, lit string) bool {
 	if len(v) < 2 || v[0] != '"' || v[len(v)-1] != '"' {
 		return false
@@ -71,7 +71,7 @@ func rawStrEq(v string, lit string) bool {
 // gjsonNumInt gjson 数字 → int64（截断，与 map 版 intOr0 的 float64→int64 同
 // 语义）。非 Number 类型 → 0——需类型守卫：gjson 的 Int() 会解析字符串数字，
 // 与 str() 的类型拒绝语义不符。超出 float64/int64 范围（如 1e400）→ 0
-// （评审 I-2：map 版对越界数字解码报错、字节级无错误通道，钳 0 避免
+// （map 版对越界数字解码报错、字节级无错误通道，钳 0 避免
 // int64(+Inf) 垃圾值；不可达真实流量）。
 func gjsonNumInt(v gjson.Result) int64 {
 	if v.Type != gjson.Number {
@@ -96,7 +96,7 @@ func strOrEmpty(v gjson.Result) string {
 }
 
 // fcIDRaw function_call 项的匹配键原始文本：call_id 非空优先、id 兜底，均
-// 缺失 → ""（M-1 同语义：toolCallID——客户端回传匹配键必须是 call_id）。
+// 缺失 → ""（同语义：toolCallID——客户端回传匹配键必须是 call_id）。
 // 空字符串判定用原始长度（`""` 恰 2 字节）。
 func fcIDRaw(item gjson.Result) string {
 	if c := item.Get("call_id"); c.Type == gjson.String && len(c.Raw) > 2 {

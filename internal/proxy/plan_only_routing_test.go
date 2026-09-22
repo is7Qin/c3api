@@ -30,7 +30,7 @@ func addAnthropicStaticNoDecision(t *testing.T, p *Proxy, upstream string) {
 	t.Helper()
 	loader := p.sched.Loader().(noopLoader)
 	tplA := &domain.Template{ID: 5, Name: "ta", BaseURL: upstream, CredentialType: "api_key", SupportedFormats: []domain.RequestFormat{domain.FormatAnthropic}, Models: []string{"claude-x"}}
-	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 5, TemplateID: 5, Template: tplA, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, MaxConcurrency: 4})
+	loader.accs[10] = append(loader.accs[10], &domain.Account{ID: 5, TemplateID: 5, Template: tplA, UpstreamKey: "sk-upstream", Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4})
 	require.NoError(t, p.sched.InvalidateAllSync())
 }
 
@@ -44,7 +44,7 @@ func TestSelectWithPlan_NoCompiledDecision_FailsClosedWithTypedError(t *testing.
 		scheduler.AttemptPlanIdentity{RequestID: "req-noplan", UserID: 1})
 	require.ErrorIs(t, err, scheduler.ErrFormatUnavailable)
 	require.Nil(t, sel, "no selection may be produced without a compiled plan")
-	// v4-S1: the session is a stack value — the error path yields its zero value.
+	// the session is a stack value — the error path yields its zero value.
 	require.Equal(t, scheduler.AttemptPlan{}, plan)
 }
 
@@ -122,7 +122,7 @@ func TestShouldRetryWithPlan_PlanlessNeverRetries(t *testing.T) {
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 
-	// v4-S1: attempt identity threads by value — the zero attempt has no failover lane.
+	// attempt identity threads by value — the zero attempt has no failover lane.
 	require.False(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("network"), scheduler.Attempt{}, false))
 	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, scheduler.Attempt{}, false))
 }
@@ -135,7 +135,7 @@ func TestShouldRetryWithPlan_UsesCanonicalAttemptVerdicts(t *testing.T) {
 	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-retry", UserID: 1})
 	require.NoError(t, err)
-	// v4-S1: the session is a stack value — bound identity echoes the request.
+	// the session is a stack value — bound identity echoes the request.
 	require.Equal(t, "req-retry", plan.Identity().RequestID)
 	defer sel.Release()
 
@@ -162,7 +162,7 @@ func TestRetryOutcomeForAttempt_CarriesCanonicalIdentity(t *testing.T) {
 		scheduler.AttemptPlanIdentity{RequestID: "req-ident", UserID: 1})
 	require.NoError(t, err)
 	defer sel.Release()
-	// v4-S1: the threaded settle value and the session derivation coincide.
+	// the threaded settle value and the session derivation coincide.
 	current, ok := plan.CurrentAttempt()
 	require.True(t, ok)
 	require.Equal(t, attempt, current)
@@ -177,7 +177,7 @@ func TestRetryOutcomeForAttempt_CarriesCanonicalIdentity(t *testing.T) {
 	require.Equal(t, attempt.TemplateID, o.TemplateID)
 	require.Equal(t, attempt.AccountID, o.AccountID)
 	require.Equal(t, Generation(attempt.RoutingGeneration), o.Generation)
-	require.Equal(t, LifecycleRevision(attempt.LifecycleRevision), o.LifecycleRevision)
+	require.Equal(t, IdentityRevision(attempt.IdentityRevision), o.IdentityRevision)
 	require.Equal(t, LaneID(attempt.Lane), o.Lane)
 	require.EqualValues(t, attempt.Ordinal, o.Ordinal)
 }
@@ -231,8 +231,8 @@ func TestFailoverLoopWithPlan_PlanlessAdvancesNoFurtherDispatch(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-	// v4-S1: zero session + zero attempt — a retryable 429 carries no identity
-	// to advance on, so the loop still stops after exactly one dispatch.
+		// zero session + zero attempt — a retryable 429 carries no identity
+		// to advance on, so the loop still stops after exactly one dispatch.
 		p.failoverLoopWithPlan(httptest.NewRecorder(), req, domain.FormatOpenAIChat,
 			"req-noplan-loop", 10, time.Now(), "gpt-4o", nil, sel, scheduler.AttemptPlan{}, scheduler.Attempt{}, attemptState{},
 			reject429Attempt{calls: &calls}, &httpSink{}, false)

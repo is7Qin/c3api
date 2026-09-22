@@ -174,7 +174,7 @@ func TestReplacePriceVariants_CallSetPricePerCall(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidInput)
 }
 
-// TestPricingWritePublishesPricingChange D1 定价跨实例失效：定价写面经统一
+// TestPricingWritePublishesPricingChange 定价跨实例失效：定价写面经统一
 // 出口 reloadPricingAndNotifyCompiler 发布 Change{Pricing:true}（编译通知装配
 // 与否均发布——跨实例传播不依赖变化检测）；ReloadPricingCtx（启动/FullRefresh
 // 路径）保持 publish-free。

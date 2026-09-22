@@ -227,7 +227,7 @@ func TestGoCatchesPanic(t *testing.T) {
 	}
 }
 
-// panic 注入 → 日志含 stack（E1-1）：Warn 行带 "stack" 字段与真实栈。
+// panic 注入 → 日志含 stack：Warn 行带 "stack" 字段与真实栈。
 func TestGoPanicLogsStack(t *testing.T) {
 	logger, out := newFileLogger(t, "warn")
 	m := New(logger)
@@ -268,7 +268,7 @@ func TestGoNormalExitNoLog(t *testing.T) {
 	require.NotContains(t, string(b), "worker goroutine panicked")
 }
 
-// Shutdown 等待 Go 托管的慢 goroutine 退出（E1-2）：release 前 Shutdown
+// Shutdown 等待 Go 托管的慢 goroutine 退出：release 前 Shutdown
 // 不返回，release 后随 goroutine 退出而返回。
 func TestShutdownWaitsForGo(t *testing.T) {
 	m := New(nil)
@@ -302,7 +302,7 @@ func TestShutdownWaitsForGo(t *testing.T) {
 	}
 }
 
-// ctx 预算耗尽 → Warn + 不阻塞返回（E1-2）。
+// ctx 预算耗尽 → Warn + 不阻塞返回。
 func TestShutdownWaitTimeoutWarnsNotBlock(t *testing.T) {
 	logger, out := newFileLogger(t, "warn")
 	m := New(logger)

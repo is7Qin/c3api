@@ -118,7 +118,7 @@ func TestOpsWorkersQualityFlowOwner(t *testing.T) {
 		_, exists := st[k]
 		require.True(t, exists, "missing field %s", k)
 	}
-	// v3-F1: no queue remains — queue_cap publishes the total counter-cell
+	// no queue remains — queue_cap publishes the total counter-cell
 	// capacity (64 shards x per-shard slots) and queued counts accepted-
 	// not-yet-folded facts (zero when idle).
 	require.Greater(t, st["queue_cap"], float64(0), "cell capacity published")

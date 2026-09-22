@@ -48,13 +48,13 @@ type OpsOptions struct {
 	// 端点返回空列表）。
 	InFlightUsers func() map[int64]int64
 	// BillingAlerts 计费告警面（/api/admin/overview alerts 段；实现 = billing
-	// 游标消费者 lag 族观测直读（F2 ledger-cursor）。nil = 未装配 → alerts 全零）。
+	// 游标消费者 lag 族观测直读（ledger-cursor）。nil = 未装配 → alerts 全零）。
 	BillingAlerts func() BillingAlerts
-	// UsageSnap codex 额度快照数据源（W2-T3：/api/admin/accounts/usage 的
+	// UsageSnap codex 额度快照数据源（/api/admin/accounts/usage 的
 	// upstream 栏经构造直调（*sdkbridge.Codex 满足）；nil = 未装配 → codex
 	// 账号 null 快照，与旧 service nil-setter 降级语义一致）。
 	UsageSnap CodexUsageProber
-	// PricingSync 价格手动同步/预览编排面（W3-T2：POST /pricing/sync 与
+	// PricingSync 价格手动同步/预览编排面（POST /pricing/sync 与
 	// /pricing/sync/preview 经构造直调（*pricing.SyncWorker 满足）；nil =
 	// 未装配 → 端点 500，与旧 service nil-fetcher 降级语义一致）。
 	PricingSync *pricing.SyncWorker

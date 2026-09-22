@@ -44,7 +44,7 @@ type ExploreIDs struct {
 type RoutingPlanCandidate struct {
 	AccountID                int64
 	TemplateID               int64
-	LifecycleRevision        int64
+	IdentityRevision         int64
 	UpstreamCostMultiplierBp int
 	Fingerprint              string
 	IdentityFingerprint      string
@@ -73,7 +73,7 @@ func (s *Scheduler) CurrentRoutingPlan() *RoutingPlan {
 	plan.Routes = make([]RoutingPlanRoute, 0, len(refs))
 	for _, ref := range refs {
 		rd := cloneRouteDecision(v.decision.routes[ref])
-		// v4-S2: the table key stays normalized; the projected Ref carries
+		// the table key stays normalized; the projected Ref carries
 		// the interned per-route hex so the admin API bytes are unchanged.
 		ref.RouteClassID = rd.RouteClassID
 		route := RoutingPlanRoute{
@@ -144,9 +144,9 @@ func routePlanCandidates(rd *RouteDecision, facts map[int64]compilerAccountFacts
 		rpc := RoutingPlanCandidate{
 			AccountID: id,
 		}
-		if fact, ok := facts[id]; ok && fact.account == c.Leaf && fact.static == c.Static {
+		if fact, ok := facts[id]; ok && fact.planKey == c.PlanKey {
 			rpc.TemplateID = c.TemplateID
-			rpc.LifecycleRevision = c.LifecycleRevision
+			rpc.IdentityRevision = c.IdentityRevision
 			rpc.Fingerprint = c.Fingerprint
 			rpc.MappedModel = c.MappedModel
 			rpc.QualityClassID = c.Quality

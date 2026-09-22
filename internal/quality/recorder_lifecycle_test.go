@@ -119,7 +119,7 @@ func TestQualityRecorder_SnapshotImmutability(t *testing.T) {
 	r, err := NewRecorder(50000)
 	require.NoError(t, err)
 	require.NoError(t, r.AddQualityRow(1000, keyOf(fp(1), qc(1))))
-	// v3-hygiene: the legacy edges-array vehicle is deleted — a live
+	// the legacy edges-array vehicle is deleted — a live
 	// consumer row populates the flow minute instead.
 	require.NoError(t, foldConsumerRows(r.FlowOwner(), 1000, []repository.RoutingFlowRow{ownerTestRow(11)}))
 	snap := r.Snapshot()

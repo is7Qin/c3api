@@ -15,8 +15,8 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// TestServiceUpdateUserPatchValidation patch 形态校验只作用于显式字段（评审
-// P3-B）：只改 balance 的 PUT（Role/Status 零值）不误拒；显式非法值照旧
+// TestServiceUpdateUserPatchValidation patch 形态校验只作用于显式字段：
+// 只改 balance 的 PUT（Role/Status 零值）不误拒；显式非法值照旧
 // 400；未提供字段不触碰 DB。
 func TestServiceUpdateUserPatchValidation(t *testing.T) {
 	fs := newFakeStore()
@@ -31,7 +31,7 @@ func TestServiceUpdateUserPatchValidation(t *testing.T) {
 	updated, err := svc.UpdateUser(t.Context(), &repository.UserPatch{
 		ID: u.ID, Balance: &bal, OldBalance: &oldBal,
 	})
-	require.NoError(t, err, "只改 balance 的 PUT 不误拒（P3-B）")
+	require.NoError(t, err, "只改 balance 的 PUT 不误拒")
 	require.Equal(t, int64(700), updated.Balance)
 	require.Equal(t, domain.RoleUser, updated.Role, "role 未被触碰")
 	require.Equal(t, domain.UserStatusActive, updated.Status, "status 未被触碰")

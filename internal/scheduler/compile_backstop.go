@@ -8,7 +8,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// Staleness backstop probe (v5 C1-backstop/C3): the demoted 30s tick FIRST
+// Staleness backstop probe (v5): the demoted 30s tick FIRST
 // runs this O(1) aggregate compare and does full work ONLY on mismatch. Owner:
 // compile lane (baseline) / fire (result). Lifecycle: baseline persists
 // across ticks (atomic); each probe result dies at return.
@@ -71,7 +71,7 @@ func (s *Scheduler) publishedViewWhole() bool {
 
 // refreshProbeBaseline advances the tick baseline BEFORE the stage load
 // (refresh-first ordering). Rationale: probe and reload are separate
-// transactions sharing no snapshot (v5-C3) — a baseline read that precedes the
+// transactions sharing no snapshot — a baseline read that precedes the
 // load can only ever be stale-or-equal to what the load sees, so a commit
 // landing between the two causes at most one redundant reload, never a miss.
 // Refreshing after the load would open a miss window (baseline ahead of the
@@ -91,12 +91,12 @@ func (s *Scheduler) refreshProbeBaseline(ctx context.Context) {
 	s.lastProbe.Store(&c)
 }
 
-// backstopTick is the demoted 30s tick (v5-C1): FIRST the O(1) probe, full
+// backstopTick is the demoted 30s tick: FIRST the O(1) probe, full
 // work ONLY on mismatch — plus a forced full path while the published view is
 // partial (probe-hit skips apply to whole views only, v5 §5.2 wholeness bit).
 // Probe hit on a whole view = return with zero rebuild, zero compile,
 // zero serialization. The unconditional reload-on-every-tick default path is
-// DELETED outright (no flag, no dual-track). Staleness SLO (v5-C3): the
+// DELETED outright (no flag, no dual-track). Staleness SLO: the
 // published view is never older than 2×SyncInterval + NOTIFY latency even if
 // all events are lost — probe and reload share no snapshot, so a commit
 // landing between them delays detection a full period: worst case two periods,

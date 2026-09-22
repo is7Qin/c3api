@@ -4,9 +4,9 @@
 
 package billing
 
-// /ops/workers billing flusher Stats 与真实状态一致性单测（F2 ABI-4 终态：
+// /ops/workers billing flusher Stats 与真实状态一致性单测（终态：
 // lag 族四字段——lag/unbilled/quarantine 每周期收尾 refreshLag 原子写，
-// last_cycle = 最近成功消费时刻；typed struct 断言）。F2-opt D2 排空节奏：
+// last_cycle = 最近成功消费时刻；typed struct 断言）。 排空节奏：
 // 单周期全量消费（一批一 tick 断言废除）。
 
 import (
@@ -32,7 +32,7 @@ func TestFlusherStats(t *testing.T) {
 	require.Zero(t, st.LagMs, "游标空 = lag 0")
 	require.Zero(t, st.QuarantinedRows)
 
-	// 600 行积压：锁外观测周期——Stats/lag 真值照常刷新（wave3 D-B：UnbilledRows
+	// 600 行积压：锁外观测周期——Stats/lag 真值照常刷新（UnbilledRows
 	// 降级占位恒 0；行回填 1 分钟 → lag 稳健为正）。
 	for i := 1; i <= 600; i++ {
 		store.seedRow(int64(i), 1, 10, time.Now().Add(-time.Minute))
@@ -41,12 +41,12 @@ func TestFlusherStats(t *testing.T) {
 	store.holdLock()
 	f.consumeCycle(context.Background(), false)
 	st = f.Stats().(FlusherStats)
-	require.Zero(t, st.UnbilledRows, "D-B 降级：UnbilledRows 占位恒 0（精确 COUNT 已删）")
+	require.Zero(t, st.UnbilledRows, " 降级：UnbilledRows 占位恒 0（精确 COUNT 已删）")
 	require.Positive(t, st.LagMs, "lag = 探测时刻 now − 最老 unbilled 行 created_at")
 	require.Zero(t, st.LastCycleUnixMs, "锁外周期不消费")
 	store.releaseLock()
 
-	// 排空式消费（D2）：单周期全量清空 600 行——一批一 tick 节奏废除。
+	// 排空式消费：单周期全量清空 600 行——一批一 tick 节奏废除。
 	f.consumeCycle(context.Background(), false)
 	st = f.Stats().(FlusherStats)
 	require.Zero(t, st.UnbilledRows, "排空式循环单周期全量消费")

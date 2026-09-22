@@ -41,7 +41,7 @@ type Factory struct {
 	hc  *http.Client
 	cfg Config
 	// 客户端与 URL 缓存：单原子快照 copy-modify-Store（同 scheduler 惯例），
-	// 读路径零锁零共享计数——评审 F6：原全局互斥锁每请求一次，万级并发下
+	// 读路径零锁零共享计数——原全局互斥锁每请求一次，万级并发下
 	// 单字缓存行弹跳。写路径（懒构建/失效）CAS 重试。
 	cc atomic.Pointer[clientCache]
 }
@@ -64,8 +64,8 @@ type urlKey struct {
 	path       string
 }
 
-// 流式原始请求的预解析完整 URL 懒缓存（GC 削减 P2：rawPost 每请求免
-// url.Parse+JoinPath）。键含 baseURL（评审 C1）：绕过管理 API 的直接 DB
+// 流式原始请求的预解析完整 URL 懒缓存（GC 削减 rawPost 每请求免
+// url.Parse+JoinPath）。键含 baseURL：绕过管理 API 的直接 DB
 // 改 base_url 后，周期同步刷新 Selection.BaseURL 即命中新键收敛到新上游——
 // 旧键残留由 InvalidateAll（管理 API 变更）整体清空，直接 DB 变更的旧键
 // 至多每格式一条、体积可忽略。管理 API 变更链路（invalidate 成对失效）
@@ -106,7 +106,7 @@ func (f *Factory) InvalidateAll() {
 
 // ChatCompletion 非流式调用（内部注入鉴权头 + 超时）。客户端头经 relayOptions
 // 如实上行（同 raw 面：只过全仓唯一清单 relayDeny，不做任何映射），账号鉴权头
-// 在末位写 ⇒ 网关声明后写覆盖赢（不变量 #5）。
+// 在末位写 ⇒ 网关声明后写覆盖赢（不变量）。
 func (f *Factory) ChatCompletion(ctx context.Context, tpl *domain.Template, key string, params openai.ChatCompletionNewParams, in http.Header) (*openai.ChatCompletion, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.cfg.UpstreamTimeout)
 	defer cancel()
@@ -182,7 +182,7 @@ func relayAnthropicOptions(in http.Header) []anthropicoption.RequestOption {
 // SDK 的请求层在 internal/requestconfig（不可 import），故基于共享 http.Client
 // 构造原始请求：注入鉴权头、使用 SDK 客户端同款连接池与超时。
 // 返回完整 *http.Response，status 检查与 body 关闭由调用方负责。
-// 签名收 (templateID, baseURL) 而非 *domain.Template（GC 削减 P6：调用方免
+// 签名收 (templateID, baseURL) 而非 *domain.Template（GC 削减 调用方免
 // tplOf 每请求模板对象分配；URL 在 Factory.urls 懒缓存，键含 base_url 快照）。
 
 func (f *Factory) ChatCompletionStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
@@ -205,7 +205,7 @@ func (f *Factory) AnthMessageStreamRaw(ctx context.Context, templateID int64, ba
 	return f.rawPost(ctx, templateID, baseURL, "v1/messages", key, body, in)
 }
 
-// --- openai images（Task B 直连面） ---
+// --- openai images（直连面） ---
 // images 端点直连透传（JSON + multipart 双协议）：multipart 的 Content-Type
 // 含 boundary（图片文件原样透传），JSON 传空串由 rawPostCT 补
 // application/json。无 SDK 参数路径——直连语义 = 原始请求原样转发（响应
@@ -278,7 +278,7 @@ func parseFullURL(base, path string) (*url.URL, error) {
 	return full, nil
 }
 
-// rawPost 构造并发出原始 POST（GC 削减 P2：URL 预解析缓存 + 手工构造
+// rawPost 构造并发出原始 POST（GC 削减 URL 预解析缓存 + 手工构造
 // *http.Request，免 NewRequestWithContext 的内部分配；GetBody 保留重定向
 // 语义，WithContext 保留 ctx 取消语义）。auth 为 Authorization 值
 // （anthropic 用 x-api-key，传 key 本身）。
@@ -286,7 +286,7 @@ func (f *Factory) rawPost(ctx context.Context, templateID int64, baseURL, path, 
 	return f.rawPostCT(ctx, templateID, baseURL, path, auth, "", body, in)
 }
 
-// rawPostCT rawPost 的 Content-Type 定制变体（Task B images multipart 需要
+// rawPostCT rawPost 的 Content-Type 定制变体（images multipart 需要
 // 完整 multipart/form-data Content-Type——含 boundary；contentType 空 →
 // application/json，与 rawPost 逐字节等价）。
 // 零**映射**为契约：出栈头 = RelayHeaders(in) − relayDeny + 网关自身声明

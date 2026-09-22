@@ -28,7 +28,7 @@ func TestAccountCreatePutStrictBoundary(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
 
 	putID := strconv.FormatInt(acc.ID, 10)
-	rec = do(http.MethodPut, "/api/admin/accounts/"+putID, `{"name":"acc1","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x"}`)
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+putID, `{"name":"acc1","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x"}`)
 	require.Equal(t, 200, rec.Code, "minimal PUT must not 500: %s", rec.Body.String())
 
 	rec = do(http.MethodGet, "/api/admin/accounts/"+putID, "")
@@ -37,7 +37,7 @@ func TestAccountCreatePutStrictBoundary(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
 	require.Equal(t, "acc1", updated.Name)
 
-	rec = do(http.MethodPut, "/api/admin/accounts/"+putID, `{"name":"acc1","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","not_an_account_field":1}`)
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+putID, `{"name":"acc1","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","not_an_account_field":1}`)
 	require.Equal(t, 400, rec.Code, "unknown property must 400 not 500: %s", rec.Body.String())
 
 	rec = do(http.MethodPost, "/api/admin/accounts", `{"name":"acc2","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","not_an_account_field":1}`)
@@ -105,28 +105,34 @@ func TestCodexAccountBaseURLMatrix(t *testing.T) {
 			// whitespace nonempty -> 400 (via URL validation)
 			rec = do(http.MethodPost, "/api/admin/accounts", `{"name":"a-ws","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":"   "}`)
 			require.Equal(t, 400, rec.Code, "codex account create whitespace must 400: %s", rec.Body.String())
-			// empty -> 200 (inherits)
+			// empty -> 400（哨兵已取消；codex 账号清空 base_url 唯一拼法是 null）
 			rec = do(http.MethodPost, "/api/admin/accounts", `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":""}`)
-			require.Equal(t, 200, rec.Code, "codex account create empty must 200: %s", rec.Body.String())
+			require.Equal(t, 400, rec.Code, "codex account create empty must 400: %s", rec.Body.String())
+			// null omitted -> 200
+			rec = do(http.MethodPost, "/api/admin/accounts", `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x"}`)
+			require.Equal(t, 200, rec.Code, "codex account create omitted must 200: %s", rec.Body.String())
 			var acc domain.Account
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
-			require.Nil(t, acc.BaseURL, "empty base_url must be nil (inherit)")
+			require.Nil(t, acc.BaseURL, "缺席 base_url = 继承（nil）")
 			// null omitted -> 200
 			rec = do(http.MethodPost, "/api/admin/accounts", `{"name":"a-null","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x"}`)
 			require.Equal(t, 200, rec.Code, "codex account create null must 200: %s", rec.Body.String())
 			var acc2 domain.Account
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc2))
 			// PUT nonempty -> 400
-			rec = do(http.MethodPut, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":"https://example.com"}`)
+			rec = do(http.MethodPatch, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":"https://example.com"}`)
 			require.Equal(t, 400, rec.Code, "codex account PUT nonempty must 400: %s", rec.Body.String())
 			// PUT whitespace -> 400
-			rec = do(http.MethodPut, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":"   "}`)
+			rec = do(http.MethodPatch, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":"   "}`)
 			require.Equal(t, 400, rec.Code, "codex account PUT whitespace must 400: %s", rec.Body.String())
-			// PUT empty -> 200
-			rec = do(http.MethodPut, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":""}`)
-			require.Equal(t, 200, rec.Code, "codex account PUT empty must 200: %s", rec.Body.String())
+			// PUT empty -> 400（哨兵已取消）
+			rec = do(http.MethodPatch, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":""}`)
+			require.Equal(t, 400, rec.Code, "codex account PUT empty must 400: %s", rec.Body.String())
+			// PUT null -> 200（清空）
+			rec = do(http.MethodPatch, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-ok","base_url":null}`)
+			require.Equal(t, 200, rec.Code, "codex account PUT null must 200: %s", rec.Body.String())
 			// PUT null -> 200
-			rec = do(http.MethodPut, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x"}`)
+			rec = do(http.MethodPatch, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-ok","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x"}`)
 			require.Equal(t, 200, rec.Code, "codex account PUT null must 200: %s", rec.Body.String())
 			// batch nonempty -> 400 atomic
 			rec = do(http.MethodPost, "/api/admin/accounts/batch-update", `{"ids":[`+strconv.FormatInt(acc.ID, 10)+`],"fields":{"base_url":"https://example.com"}}`)
@@ -134,9 +140,12 @@ func TestCodexAccountBaseURLMatrix(t *testing.T) {
 			// batch whitespace -> 400
 			rec = do(http.MethodPost, "/api/admin/accounts/batch-update", `{"ids":[`+strconv.FormatInt(acc.ID, 10)+`],"fields":{"base_url":"   "}}`)
 			require.Equal(t, 400, rec.Code, "codex account batch whitespace must 400: %s", rec.Body.String())
-			// batch empty clear -> 200 (clears to inherit)
+			// batch empty -> 400（哨兵已取消）
 			rec = do(http.MethodPost, "/api/admin/accounts/batch-update", `{"ids":[`+strconv.FormatInt(acc.ID, 10)+`],"fields":{"base_url":""}}`)
-			require.Equal(t, 200, rec.Code, "codex account batch empty must 200: %s", rec.Body.String())
+			require.Equal(t, 400, rec.Code, "codex account batch empty must 400: %s", rec.Body.String())
+			// batch null (+name 保证非空 fields) -> 200（清空）
+			rec = do(http.MethodPost, "/api/admin/accounts/batch-update", `{"ids":[`+strconv.FormatInt(acc.ID, 10)+`],"fields":{"base_url":null,"name":"a-ok"}}`)
+			require.Equal(t, 200, rec.Code, "codex account batch null must 200: %s", rec.Body.String())
 			// batch null (other field) -> 200
 			rec = do(http.MethodPost, "/api/admin/accounts/batch-update", `{"ids":[`+strconv.FormatInt(acc.ID, 10)+`],"fields":{"name":"a-ok2"}}`)
 			require.Equal(t, 200, rec.Code, "codex account batch null base_url must 200: %s", rec.Body.String())
@@ -162,7 +171,7 @@ func TestNonCodexBaseURLAccepted(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
 	require.NotNil(t, acc.BaseURL)
 	require.Equal(t, "https://override.example.com", *acc.BaseURL)
-	rec = do(http.MethodPut, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-api","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":"https://override2.example.com"}`)
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+strconv.FormatInt(acc.ID, 10), `{"name":"a-api","template_id":`+strconv.FormatInt(tpl.ID, 10)+`,"upstream_key":"sk-x","base_url":"https://override2.example.com"}`)
 	require.Equal(t, 200, rec.Code, "api_key account PUT nonempty must 200: %s", rec.Body.String())
 	rec = do(http.MethodPost, "/api/admin/accounts/batch-update", `{"ids":[`+strconv.FormatInt(acc.ID, 10)+`],"fields":{"base_url":"https://override3.example.com"}}`)
 	require.Equal(t, 200, rec.Code, "api_key account batch nonempty must 200: %s", rec.Body.String())
@@ -198,7 +207,7 @@ func TestCodexTransitionsAndMixedBatchAtomic(t *testing.T) {
 	var a2 domain.Account
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &a2))
 	// transition: PUT a1 to codex template while keeping base_url -> must 400
-	rec = do(http.MethodPut, "/api/admin/accounts/"+strconv.FormatInt(a1.ID, 10), `{"name":"a1","template_id":`+strconv.FormatInt(tCodex.ID, 10)+`,"upstream_key":"sk-x","base_url":"https://override.example.com"}`)
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+strconv.FormatInt(a1.ID, 10), `{"name":"a1","template_id":`+strconv.FormatInt(tCodex.ID, 10)+`,"upstream_key":"sk-x","base_url":"https://override.example.com"}`)
 	require.Equal(t, 400, rec.Code, "account transition to codex with base_url must 400: %s", rec.Body.String())
 	// verify unchanged
 	rec = do(http.MethodGet, "/api/admin/accounts/"+strconv.FormatInt(a1.ID, 10), "")
@@ -208,7 +217,7 @@ func TestCodexTransitionsAndMixedBatchAtomic(t *testing.T) {
 	require.Equal(t, tAPI.ID, gotA1.TemplateID, "failed transition must not mutate")
 	require.NotNil(t, gotA1.BaseURL)
 	// transition: PUT a2 to api template with base_url -> 200 (non-codex accepts)
-	rec = do(http.MethodPut, "/api/admin/accounts/"+strconv.FormatInt(a2.ID, 10), `{"name":"a2","template_id":`+strconv.FormatInt(tAPI.ID, 10)+`,"upstream_key":"sk-x","base_url":"https://override.example.com"}`)
+	rec = do(http.MethodPatch, "/api/admin/accounts/"+strconv.FormatInt(a2.ID, 10), `{"name":"a2","template_id":`+strconv.FormatInt(tAPI.ID, 10)+`,"upstream_key":"sk-x","base_url":"https://override.example.com"}`)
 	require.Equal(t, 200, rec.Code, "account transition from codex to api with base_url must 200: %s", rec.Body.String())
 	// transition template: api template to codex with nonempty base_url -> 400
 	rec = do(http.MethodPut, "/api/admin/templates/"+strconv.FormatInt(tAPI.ID, 10), `{"name":"t-api","base_url":"https://api.example.com","credential_type":"codex-oauth","supported_formats":["openai-responses"]}`)

@@ -235,7 +235,7 @@ func schedulerWithAccounts(tb testing.TB, n int, mapping domain.ModelMapping) *S
 			Enabled: true, MaxConcurrency: 100000,
 		})
 	}
-	s := New(Config{DefaultMaxConcurrency: 100000, SyncInterval: time.Hour}, newMemLoader(accs), newTestRuleEngine(tb), nil, nil, nil, nil)
+	s := New(Config{SyncInterval: time.Hour}, newMemLoader(accs), newTestRuleEngine(tb), nil, nil, nil, nil)
 	if err := s.InvalidateAllSync(); err != nil {
 		tb.Fatal(err)
 	}
