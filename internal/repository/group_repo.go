@@ -35,7 +35,7 @@ type GroupRepo struct {
 const accountGroupsMembershipSQL = `SELECT account_id, group_id FROM account_groups`
 
 func (r *GroupRepo) CreateGroup(ctx context.Context, g *domain.Group) (*domain.Group, error) {
-	// price_multiplier 恒写入（service 层把缺省归一为 10000 = ×1—— 修正：
+	// price_multiplier 恒写入（service 层把缺省归一为 10000 = ×1——：
 	// API 边界 nullable float64 可表达显式 0 = 免费组，repo 不再把 0 当"未指定"
 	// 跳过落列）。DB 默认 10000 为兜底。
 	q := r.client.Group.Create().
@@ -138,7 +138,7 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 // 改为**全表扫描 + 内存 join**（任务决策：语义允许时改 JOIN）：
 //  1. `Account.Query().WithTemplate().All`——账号全表扫描；模板 IN 参数数受
 //     模板表实体数约束（管理面小表 压测仅 6 个），非账号规模驱动。
-//     模板侧嵌套 WithExt（template_ext 1:1 边缘表）—— 快照合并
+//     模板侧嵌套 WithExt（template_ext 1:1 边缘表）——快照合并
 //     StripImageTools 用；ext 的 IN 参数数同为模板实体数约束（同一小表界）。
 //  2. `Group.Query().IDs`——组 id 全表扫描（零参数；为无账号组保留空条目——
 //     与旧 eager-load 语义一致，调度器 Select 区分"组不存在"与"组无账号"）。

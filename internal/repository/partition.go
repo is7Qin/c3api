@@ -168,7 +168,7 @@ var usageLogIndexDDLs = []string{
 	//（spec-f2opt-wave3 §一）：usagelog_unbilled_created (created_at)
 	// WHERE NOT billed 已删除——唯一消费者 UnbilledLag 的 MIN(created_at) 改队头
 	// 两步法（部分 id 索引定位 + pkey 回表），marked 步索引维护 -33%。不建
-	// (id) WHERE NOT billed AND cost=0—— 已消灭该查询类，索引是写放大负债。
+	// (id) WHERE NOT billed AND cost=0——已消灭该查询类，索引是写放大负债。
 	`CREATE INDEX usagelog_unbilled_id ON usage_logs (id) WHERE NOT billed`,
 }
 

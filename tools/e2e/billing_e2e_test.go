@@ -676,7 +676,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	r = env.lastLogFor("e2e-mult-model")
 	require.Equal(t, int64(1000), r.Cost, "组倍率 ×2")
 
-	// 用户-组专属倍率覆盖组（修正：按组挂载，经 assignments 的 multipliers）：
+	// 用户-组专属倍率覆盖组（按组挂载，经 assignments 的 multipliers）：
 	// 0.5 → 500×0.5 = 250
 	c, rb10 := env.admin(http.MethodPut, "/groups/"+strconv.FormatInt(g2, 10)+"/assignments",
 		map[string]any{"user_ids": []int64{u4}, "multipliers": map[string]any{strconv.FormatInt(u4, 10): 0.5}})

@@ -4,7 +4,7 @@
 
 package handler
 
-// client_ip 回显透传（m4，spec 2026-08-17 S-E）：四转换器（管理面
+// client_ip 回显透传（gate M3/m4，spec 2026-08-17 S-E）：四转换器（管理面
 // toAPIUsageLog/toAPIErrLog + 用户面 toAPIUsageLog/toAPIErrLog）经 logs 端点
 // 端到端回显——store 灌入带 ClientIP 的域行 → HTTP 响应 ClientIP 非空。
 // repo 查询映射红绿由 PG roundtrip 承载（pg_clientip_test.go）。

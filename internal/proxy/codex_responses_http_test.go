@@ -357,7 +357,7 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 	body := string(b)
-	require.NotContains(t, body, "event:", "event: 行不出现（SDK 交付载荷重帧—— 帧规格）")
+	require.NotContains(t, body, "event:", "event: 行不出现（SDK 交付载荷重帧——帧规格）")
 	require.Equal(t, []string{t6RespCreated, t6RespItemEv, t6RespDone, "[DONE]"},
 		splitSSEFrames(body), "逐载荷重帧 + 流末补发 [DONE]")
 

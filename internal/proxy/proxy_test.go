@@ -516,7 +516,7 @@ func TestProxyAuthRejected(t *testing.T) {
 	p.HandleChat(rec, req)
 	require.Equal(t, 401, rec.Code)
 	// 401 鉴权失败（无请求模型可记，Model/MappedModel 均空）：recordRejected →
-	// err_logs 拒绝行（不入 usage_logs 明细—— 拒绝风暴不产生 pending）
+	// err_logs 拒绝行（不入 usage_logs 明细——拒绝风暴不产生 pending）
 	require.NoError(t, p.rec.Close(context.Background()))
 	require.NoError(t, p.errlog.Close(context.Background()))
 	store.mu.Lock()

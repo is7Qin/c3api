@@ -304,7 +304,7 @@ func TestAccountAndGroup(t *testing.T) {
 	tr.pool.ExpectCommit()
 
 	// Group create（无 key 字段，visibility 默认 public；
-	// price_multiplier 恒写入—— 修正：service 归一缺省为 10000，显式 0 = 免费组；
+	// price_multiplier 恒写入——：service 归一缺省为 10000，显式 0 = 免费组；
 	// protocol_convert 恒写入——JSON 数组列：空数组 = off（service 归一缺省）
 	tr.pool.ExpectQuery(q(`INSERT INTO "groups"`)).
 		WithArgs("g1", group.VisibilityPublic, pgxmock.AnyArg(), json.RawMessage(`[]`), pgxmock.AnyArg(), pgxmock.AnyArg()).

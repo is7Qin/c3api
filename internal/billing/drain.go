@@ -31,7 +31,7 @@ import (
 var drainCycleBudget = 500 * time.Millisecond
 
 // drainLoop 排空式消费（失败闭合）：循环 三车道消费 直至零进展、
-// 周期预算到期或 ctx.Err()—— 失败闭合要求失败 lane/bucket 在本周期内不再重试
+// 周期预算到期或 ctx.Err()——失败闭合要求失败 lane/bucket 在本周期内不再重试
 // （下周期 ticker 重试），健康桶继续独立提交。
 func (f *Flusher) drainLoop(ctx context.Context) int64 {
 	deadline := time.Now().Add(drainCycleBudget)

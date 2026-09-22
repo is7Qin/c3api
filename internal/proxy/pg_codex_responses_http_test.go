@@ -72,7 +72,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	defer up.Close()
 
 	// 落库数据：codex-pat 模板 + 组 + 账号 + account_ext（PAT 凭据 + 伪装身份
-	// 四元组持久化—— 断言面：HTTP 面注入 client_metadata）
+	// 四元组持久化——断言面：HTTP 面注入 client_metadata）
 	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
 		Name: "codex-tpl", BaseURL: "",
 		CredentialType:   credential.TypeCodexPAT,

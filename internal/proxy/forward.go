@@ -39,7 +39,7 @@ type Config struct {
 	UpstreamStreamTimeout time.Duration // 流式 backstop（非流式超时在 aiclient.Config/cfg.Proxy.UpstreamTimeout）
 	FailoverAttempts      int
 	UsageCapture          bool
-	BillingCapture        bool // 计费开关（config.Billing.Enabled 映射；余额预检门控 + billable 行 Billed 出生标记取反—— 单写点后不再路由分流）
+	BillingCapture        bool // 计费开关（config.Billing.Enabled 映射；余额预检门控 + billable 行 Billed 出生标记取反——单写点后不再路由分流）
 	// BehindCDN 客户端 IP 识别开关（config.proxy.behind_cdn 映射；clientIP
 	// 提取门控——false 完全不读供应商头直取 RemoteAddr，true 按序采信三头）。
 	// 部署前提见 config.go 注释与 clientip.go：源站只对 CDN 暴露。
@@ -406,7 +406,7 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 // 路径语义（error_type）**判定，与 cost 无关——cost>0 判定会漏掉免费分组
 // （倍率 0 的成功行）与 0 token 成功行（空响应））：
 //   - usage_logs = 放行路径明细：error_type ∈ {none（成功，含 cost=0 免费组/
-//     空响应）, abort（半异常计费）}—— 单写点（spec §一）：billable 行一律
+//     空响应）, abort（半异常计费）}——单写点（spec §一）：billable 行一律
 //     经 rec.Record 入队，入队前盖 Billed 出生标记；扣费由 billing worker 从
 //     账本游标消费。4xx/5xx/network（上游透传/耗尽失败行）不写
 //     usage_logs（失败明细归 err_logs 拒绝风暴教训同族）

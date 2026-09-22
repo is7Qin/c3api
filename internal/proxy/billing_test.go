@@ -1253,7 +1253,7 @@ func TestApplyMultiplier(t *testing.T) {
 	}
 }
 
-// TestProxyBillingMultiplierAssignment 用户-组专属倍率（修正：按组挂载，
+// TestProxyBillingMultiplierAssignment 用户-组专属倍率（按组挂载，
 // 用户覆盖组）：(1,10) ×2 → cost 翻倍（130×2 = 260），单写点落 rec + Billed
 // 出生标记照常。
 func TestProxyBillingMultiplierAssignment(t *testing.T) {

@@ -272,7 +272,7 @@ type UserPatch struct {
 }
 
 // UpdateUser 按 patch 更新（email 不可变、密码走 UpdateUserPassword）。价格
-// 倍率按组（修正）挂在 group_assignments 上，用户本体无倍率字段——见
+// 倍率按组挂在 group_assignments 上，用户本体无倍率字段——见
 // GroupAssignmentRepo.SetMultiplier。
 // 条件更新形态 `Update().Where(id, balance=old)`（原子原语同族：不用
 // FOR UPDATE 行锁——跨请求持锁与多实例不兼容）；0 行命中：用户缺失 →
@@ -399,7 +399,7 @@ func (r *UserRepo) LoadUsers(ctx context.Context) (map[int64]domain.UserSnapshot
 
 // LoadBalances 全量余额快照（id → balance 毫分； 计费余额预检数据源，
 // billing.Balances.Reload 调用）。失败返回错误——调用方 fail-safe 保留旧快照。
-// 用户专属倍率按组（修正）挂在 group_assignments 上，不在此查询
+// 用户专属倍率按组挂在 group_assignments 上，不在此查询
 // （见 GroupRepo.LoadAssignmentMultipliers）。
 func (r *UserRepo) LoadBalances(ctx context.Context) (map[int64]int64, error) {
 	rows, err := r.client.User.Query().Select(user.FieldID, user.FieldBalance).All(ctx)

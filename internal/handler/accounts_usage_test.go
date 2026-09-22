@@ -184,7 +184,7 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 	require.NotNil(t, resp.Items[1].Upstream.Credits.Balance)
 	require.Equal(t, "12.50", *resp.Items[1].Upstream.Credits.Balance)
 	require.Nil(t, resp.Items[1].UpstreamError)
-	// ResetAt nil → 契约层显式 null（非虚假 0001-01-01—— 零值泄漏端到端修复）
+	// ResetAt nil → 契约层显式 null（非虚假 0001-01-01——零值泄漏端到端修复）
 	require.Contains(t, rec.Body.String(), `"reset_at":null`, "nil ResetAt → reset_at null")
 	require.NotContains(t, rec.Body.String(), "0001-01-01", "零值时间戳不外泄")
 

@@ -456,7 +456,7 @@ func TestAccConcReleaseShapeAndBorrowCapRace(t *testing.T) {
 	require.Zero(t, concCur(s, 1), "计数器净零（Select 成功数 == Release 数）")
 }
 
-// A7 继承回归：reload/rebuild 计数继承（修正）不影响上报与判定——继承后
+// A7 继承回归：reload/rebuild 计数继承不影响上报与判定——继承后
 // 上报读当前 byID 快照天然安全，借位判定按继承值正确工作。
 func TestAccConcInheritedCounterReporting(t *testing.T) {
 	_, c := newConcTestRedis(t)

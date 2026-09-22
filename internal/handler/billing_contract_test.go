@@ -23,7 +23,7 @@ import (
 // service_tier_policy 设置校验、usagelog/stat 计费字段回显。
 
 // TestAdminUserBalance 管理面用户：balance USD 换算（创建/更新/列表/详情回显）。
-// 价格倍率按组（修正）经 /api/admin/groups/{id}/assignments 设置，用户本体
+// 价格倍率按组经 /api/admin/groups/{id}/assignments 设置，用户本体
 // 无倍率字段（见 TestGroupAssignmentMultipliers）。
 func TestAdminUserBalance(t *testing.T) {
 	doAdmin, doUser, _ := newSharedRouters(t)
@@ -99,7 +99,7 @@ func TestGroupMultiplier(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
 	require.Equal(t, 2.0, *g.PriceMultiplier)
 
-	// POST 显式 0.0 = 免费组（修正：API 可表达显式 0，不落 ×1）
+	// POST 显式 0.0 = 免费组（API 可表达显式 0，不落 ×1）
 	rec = doAdmin(http.MethodPost, "/api/admin/groups", `{"name":"g-free","price_multiplier":0.0}`, "")
 	require.Equal(t, http.StatusOK, rec.Code, "create free: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))

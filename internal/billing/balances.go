@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// AssignmentKey 用户-组关联键（修正：用户专属倍率按组挂载——用户在不同
+// AssignmentKey 用户-组关联键（用户专属倍率按组挂载——用户在不同
 // 组可有不同倍率；EffectiveMultiplier 按 (userID, groupID) 查专属倍率）。
 type AssignmentKey struct {
 	UserID  int64
