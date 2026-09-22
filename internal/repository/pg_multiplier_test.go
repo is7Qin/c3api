@@ -60,7 +60,7 @@ func TestPGGroupMultiplierSetUpdate(t *testing.T) {
 	require.Equal(t, 20000, updated.PriceMultiplier, "Update 改倍率")
 }
 
-// TestPGAssignmentMultiplierRoundtrip 用户-组专属倍率 roundtrip（修正：
+// TestPGAssignmentMultiplierRoundtrip 用户-组专属倍率 roundtrip（
 // 按组挂载）：设置/读回/清除（nil）/再设置；同用户不同组倍率互不干扰。
 func TestPGAssignmentMultiplierRoundtrip(t *testing.T) {
 	repos := newPGReposShared(t)

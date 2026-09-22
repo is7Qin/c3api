@@ -15,7 +15,7 @@ import (
 
 // Tier service_tier 归一化档位。与 sub2api 的 fast→priority 归一不同：fast
 // 为独立档位（Anthropic Fast Mode 整单倍率，Anthropic 官方语义；用户裁决，
-// 见 计划）。
+// 见计划）。
 type Tier int
 
 const (

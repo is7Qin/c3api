@@ -621,7 +621,7 @@ func (p ProtocolConvert) Valid() bool {
 // DefaultCost(10)（与 sub2api 同参数，存量 hash 可迁移验证）。
 // Balance 最小单位（毫分；1 USD = 100,000 毫分 计费统一单位，
 // 管理面 API 展示/输入换算 USD）。
-// 价格倍率按组（修正）：挂在 group_assignment 上（GroupAssignment.
+// 价格倍率按组：挂在 group_assignment 上（GroupAssignment.
 // PriceMultiplier），用户不同组可有不同倍率——User 无倍率字段。
 type User struct {
 	ID           int64

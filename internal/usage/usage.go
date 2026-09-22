@@ -514,7 +514,7 @@ func (r *Recorder) flushQuota(ctx context.Context) {
 // Close 幂等排空（优雅停机核心）：等聚合 goroutine 退出（受预算约束）→ 以
 // flushMu 获取等待在途批次（SIGTERM 时 ticker 批次可能已在途占住 flushMu 且
 // pending 已 swap；Close 必须先等其结束，否则 drain 循环见 pendingN==0 会
-// 静默提前返回，在途批次无界运行—— 复测根因 1）→ 受 shutdown ctx 预算
+// 静默提前返回，在途批次无界运行——复测根因 1）→ 受 shutdown ctx 预算
 // 约束的排空循环（此时无在途批次、flushMu 无竞争）。正常情形完整排空语义
 // 不变（无 deadline ctx = 全部落库）；ctx 到期 → Cancel baseCtx（在途落库
 // 快速失败回灌，不丢）+ Warn（flushed/remaining 条数单位一致）+ 截断退出，

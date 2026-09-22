@@ -457,7 +457,7 @@ func (r *Repository) GrantGroup(ctx context.Context, groupID, userID int64) erro
 	return r.Assignments.Grant(ctx, groupID, userID)
 }
 
-// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（修正：
+// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（
 // 按组；m = nil → 清除为未设置 → 回退组倍率）。
 func (r *Repository) SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error {
 	return r.Assignments.SetMultiplier(ctx, groupID, userID, m)
@@ -841,7 +841,7 @@ func (r *Repository) LoadGroupMultipliers(ctx context.Context) (map[int64]int, e
 	return r.Groups.LoadGroupMultipliers(ctx)
 }
 
-// LoadAssignmentMultipliers 全量用户-组专属倍率快照（修正：用户专属倍率
+// LoadAssignmentMultipliers 全量用户-组专属倍率快照（用户专属倍率
 // 按组挂载——billing.Balances.Reload/ReloadMultipliers 数据源）。
 func (r *Repository) LoadAssignmentMultipliers(ctx context.Context) (map[billing.AssignmentKey]int, error) {
 	return r.Groups.LoadAssignmentMultipliers(ctx)

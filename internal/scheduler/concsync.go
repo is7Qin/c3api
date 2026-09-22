@@ -199,7 +199,7 @@ type concTarget struct {
 }
 
 // collect 收集上报范围（spec §2 上行）：遍历 byID 中 concurrency.Load() > 0 的账号。
-// byID 是整体原子换入的不可变快照 map（重建路径复用实例指针—— 继承纪律），
+// byID 是整体原子换入的不可变快照 map（重建路径复用实例指针——继承纪律），
 // 遍历零锁安全；孤儿对象在途值由 Release 自然衰减后自动退出上报集。
 func (w *AccConcSyncWorker) collect() []concTarget {
 	v := w.sched.view.Load()

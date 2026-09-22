@@ -177,7 +177,7 @@ func TestBalancesBalanceOfMissing(t *testing.T) {
 	require.Zero(t, bal)
 }
 
-// TestEffectiveMultiplier 有效倍率表驱动（修正：按组查序 assignment 专属
+// TestEffectiveMultiplier 有效倍率表驱动（按组查序 assignment 专属
 // → 组倍率 → 10000）：assignment 覆盖组（含 0 免费/×10 上限）；仅组；均缺。
 func TestEffectiveMultiplier(t *testing.T) {
 	cases := []struct {

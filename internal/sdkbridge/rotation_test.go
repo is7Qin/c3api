@@ -261,7 +261,7 @@ func TestCodexRotationWritebackFailureD4Fatal(t *testing.T) {
 	cred := oauthCred(7, "at-old", "rt-1")
 
 	// R1：refresh run1 回调失败（fail，pending，本次 at 放行）→ 401 重试
-	// 防重试风暴不再 refresh → HTTPError 401（回写失败不阻塞请求—— 语义）
+	// 防重试风暴不再 refresh → HTTPError 401（回写失败不阻塞请求——语义）
 	_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
 	var he *codexsdk.HTTPError

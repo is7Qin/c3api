@@ -196,7 +196,7 @@ func TestUpdateRuleMerge(t *testing.T) {
 }
 
 // TestMapRuleRepoErrConflict mapRuleRepoErr 的 ErrConflict 分支：repository.ErrConflict →
-// service.ErrConflict（保留冲突详情，handler 409 响应带详情—— 对齐 mapRepoErr）；
+// service.ErrConflict（保留冲突详情，handler 409 响应带详情——对齐 mapRepoErr）；
 // 非冲突错误原样透传。
 func TestMapRuleRepoErrConflict(t *testing.T) {
 	err := fmt.Errorf("%w: priority=%d or name=%q", repository.ErrConflict, 10, "r2")

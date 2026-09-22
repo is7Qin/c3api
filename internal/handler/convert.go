@@ -320,7 +320,7 @@ func normalToMultI64Ptr(v *float64) *int64 {
 }
 
 // toAPIUser 用户领域对象 → 契约类型（PasswordHash 永不下发；Balance 毫分 →
-// USD 展示换算；价格倍率按组（修正）挂在 group_assignment 上，User 无
+// USD 展示换算；价格倍率按组挂在 group_assignment 上，User 无
 // 倍率字段）。
 func toAPIUser(u *domain.User) User {
 	r := UserRole(u.Role)

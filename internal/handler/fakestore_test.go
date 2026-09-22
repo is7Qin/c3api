@@ -1616,7 +1616,7 @@ func (f *fakeStore) RevokeGroup(ctx context.Context, groupID, userID int64) erro
 	return nil
 }
 
-// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（修正：
+// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（
 // 按组；nil = 清除为未设置 → 回退组倍率）。
 func (f *fakeStore) SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error {
 	f.mu.Lock()
@@ -1996,7 +1996,7 @@ func (t *fakeTx) RevokeGroup(ctx context.Context, groupID, userID int64) error {
 	return nil
 }
 
-// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（修正：
+// SetAssignmentMultiplier 设置/清除该用户在该组的专属价格倍率（
 // 按组；nil = 清除为未设置 → 回退组倍率）。
 func (t *fakeTx) SetAssignmentMultiplier(ctx context.Context, groupID, userID int64, m *int) error {
 	if !slices.Contains(t.assign[groupID], userID) {
