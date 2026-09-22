@@ -645,12 +645,21 @@ type CodexIdentity struct {
 
 // CodexOAuthImportBody 批量导入 codex-oauth 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-oauth——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）
 type CodexOAuthImportBody struct {
+	// CacheDomain 可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）
+	CacheDomain *string `json:"cache_domain,omitempty"`
+
+	// Enabled 可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）
+	Enabled *bool `json:"enabled,omitempty"`
+
 	// GroupId 可选：新建账号归组（缺省不归组；不存在 → 行级 failed——FK 违反归行级不整批 400）
 	GroupId *int64                 `json:"group_id"`
 	Items   []CodexOAuthImportItem `json:"items"`
 
 	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-oauth）
 	TemplateId int64 `json:"template_id"`
+
+	// UpstreamCostMultiplier 可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）
+	UpstreamCostMultiplier *float64 `json:"upstream_cost_multiplier,omitempty"`
 }
 
 // CodexOAuthImportItem 批量导入 codex-oauth 单行（组合幂等键 codex_email + codex_account_id；token+refresh 成对必填）
@@ -676,12 +685,21 @@ type CodexOAuthImportItem struct {
 
 // CodexPATImportBody 批量导入 codex-pat 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-pat——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）
 type CodexPATImportBody struct {
+	// CacheDomain 可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）
+	CacheDomain *string `json:"cache_domain,omitempty"`
+
+	// Enabled 可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）
+	Enabled *bool `json:"enabled,omitempty"`
+
 	// GroupId 可选：新建账号归组（不存在 → 行级 failed）
 	GroupId *int64               `json:"group_id"`
 	Items   []CodexPATImportItem `json:"items"`
 
 	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-pat）
 	TemplateId int64 `json:"template_id"`
+
+	// UpstreamCostMultiplier 可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）
+	UpstreamCostMultiplier *float64 `json:"upstream_cost_multiplier,omitempty"`
 }
 
 // CodexPATImportItem 批量导入 codex-pat 单行（组合幂等键同上）

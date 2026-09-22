@@ -20,7 +20,7 @@ func TestServiceImportFencing(t *testing.T) {
 	// first import
 	res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "fence@example.com", CodexAccountID: "fence-1", CodexOAuthToken: "tok1", CodexOAuthRefreshToken: "rt1"},
-	}, &oauthTpl, &gid)
+	}, &oauthTpl, &gid, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
 	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "fence@example.com", "fence-1")
@@ -31,7 +31,7 @@ func TestServiceImportFencing(t *testing.T) {
 	// re-import same key with new token -> should increment revision to 2
 	res, err = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "fence@example.com", CodexAccountID: "fence-1", CodexOAuthToken: "tok2", CodexOAuthRefreshToken: "rt2"},
-	}, &oauthTpl, nil)
+	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Updated)
 	ext2, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "fence@example.com", "fence-1")
@@ -47,7 +47,7 @@ func TestServiceSDKRefreshNotFenced(t *testing.T) {
 	oauthTpl, _, gid := seedCodexImportTemplates(t, repos)
 	res, _ := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "sdk@example.com", CodexAccountID: "sdk-1", CodexOAuthToken: "tok1", CodexOAuthRefreshToken: "rt1"},
-	}, &oauthTpl, &gid)
+	}, &oauthTpl, &gid, domain.CodexImportConfig{})
 	require.Equal(t, 1, res.Imported)
 	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sdk@example.com", "sdk-1")
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
@@ -67,7 +67,7 @@ func TestServiceExtPutFencing(t *testing.T) {
 	oauthTpl, _, _ := seedCodexImportTemplates(t, repos)
 	res, _ := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "ext@example.com", CodexAccountID: "ext-1", CodexOAuthToken: "tok1", CodexOAuthRefreshToken: "rt1"},
-	}, &oauthTpl, nil)
+	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	require.Equal(t, 1, res.Imported)
 	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "ext@example.com", "ext-1")
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
@@ -167,14 +167,14 @@ func TestServiceStaleImportNotUpdate(t *testing.T) {
 	oauthTpl, _, gid := seedCodexImportTemplates(t, repos)
 	_, _ = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "stale@example.com", CodexAccountID: "stale-1", CodexOAuthToken: "tok1", CodexOAuthRefreshToken: "rt1"},
-	}, &oauthTpl, &gid)
+	}, &oauthTpl, &gid, domain.CodexImportConfig{})
 	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1")
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// admin re-import to 2
 	_, _ = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "stale@example.com", CodexAccountID: "stale-1", CodexOAuthToken: "tok2", CodexOAuthRefreshToken: "rt2"},
-	}, &oauthTpl, nil)
+	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	acc2, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(2), acc2.LifecycleRevision)
 	ext2, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1")
@@ -201,7 +201,7 @@ func TestServiceStaleExtPutNotUpdate(t *testing.T) {
 	oauthTpl, _, _ := seedCodexImportTemplates(t, repos)
 	_, _ = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "stale-ext2@example.com", CodexAccountID: "stale-ext2-1", CodexOAuthToken: "tok1", CodexOAuthRefreshToken: "rt1"},
-	}, &oauthTpl, nil)
+	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale-ext2@example.com", "stale-ext2-1")
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)

@@ -1592,6 +1592,15 @@ export interface components {
              * @description 可选：新建账号归组（缺省不归组；不存在 → 行级 failed——FK 违反归行级不整批 400）
              */
             group_id?: number | null;
+            /** @description 可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效） */
+            enabled?: boolean;
+            /** @description 可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝） */
+            cache_domain?: string;
+            /**
+             * Format: double
+             * @description 可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）
+             */
+            upstream_cost_multiplier?: number;
         };
         /** @description 批量导入 codex-pat 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-pat——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed） */
         CodexPATImportBody: {
@@ -1606,6 +1615,15 @@ export interface components {
              * @description 可选：新建账号归组（不存在 → 行级 failed）
              */
             group_id?: number | null;
+            /** @description 可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效） */
+            enabled?: boolean;
+            /** @description 可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝） */
+            cache_domain?: string;
+            /**
+             * Format: double
+             * @description 可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）
+             */
+            upstream_cost_multiplier?: number;
         };
         /** @description 行级失败条目（index = items 原始下标——行级定位契约） */
         ImportFailedItem: {

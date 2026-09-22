@@ -5,6 +5,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -109,6 +110,43 @@ func TestPostAccountsBatchImportCodexOauthHandler(t *testing.T) {
 		require.Equal(t, 0, out.Imported)
 		require.Equal(t, 1, out.Updated)
 		require.Empty(t, out.Failed)
+	})
+}
+
+// TestPostAccountsBatchImportCodexConfig 导入面 body 级账号配置（handler 映射面：
+// upstream_cost_multiplier 正常值 → basis points 换算 + 落库；非法配置 → 400）。
+func TestPostAccountsBatchImportCodexConfig(t *testing.T) {
+	ctx := context.Background()
+	t.Run("config mapped and persisted", func(t *testing.T) {
+		h, store, tplID, _ := codexImportTestAPI(t)
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
+			"items": [{"codex_email":"cfg@example.com","codex_account_id":"cfg-1",
+				"codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}],
+			"template_id": `+itoa(tplID)+`,
+			"enabled": false,
+			"cache_domain": "shared.example.com",
+			"upstream_cost_multiplier": 2.5}`)
+		require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
+
+		ext, err := store.FindAccountExtByCodexKey(ctx, "cfg@example.com", "cfg-1")
+		require.NoError(t, err)
+		acc, err := store.GetAccount(ctx, ext.AccountID)
+		require.NoError(t, err)
+		require.False(t, acc.Enabled, "enabled=false 落库")
+		require.Equal(t, 25000, acc.UpstreamCostMultiplierBp, "2.5 → 25000 bp")
+		require.NotNil(t, acc.CacheDomain)
+		require.Equal(t, "shared.example.com", *acc.CacheDomain)
+	})
+
+	t.Run("invalid config rejected 400", func(t *testing.T) {
+		h, store, tplID, _ := codexImportTestAPI(t)
+		rec := doImport(t, h, http.MethodPost, "/api/admin/accounts/batch-import-codex-oauth", `{
+			"items": [{"codex_email":"bad@example.com","codex_account_id":"bad-1",
+				"codex_oauth_token":"at","codex_oauth_refresh_token":"rt"}],
+			"template_id": `+itoa(tplID)+`,
+			"cache_domain": "Bad_Domain"}`)
+		require.Equal(t, 400, rec.Code, "body: %s", rec.Body.String())
+		require.Empty(t, store.accs, "整批拒绝：零落库")
 	})
 }
 

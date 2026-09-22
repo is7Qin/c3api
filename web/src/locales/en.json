@@ -262,6 +262,9 @@
       "templateEmpty": "No matching templates. Create a {{type}} template first",
       "groupLabel": "Destination group (optional)",
       "groupNone": "No group",
+      "configTitle": "Account config (optional)",
+      "configHint": "Applies to accounts created by this import only; existing accounts get credentials updated and keep their config.",
+      "configDefault": "Default (enabled)",
       "preview": {
         "title": "Preview",
         "valid": "Valid {{n}} / Invalid {{m}} / Total {{t}}",
@@ -417,6 +420,8 @@
     "batchGroupLabel": "Groups",
     "batchGroupHint": "Replaces the selected accounts' current groups — groups you don't select are removed.",
     "clearGroups": "Clear all groups",
+    "enabledLabel": "State",
+    "clearCacheDomain": "Clear cache domain",
     "ext": {
       "button": "Extensions",
       "title": "Extensions · account #{{id}}",

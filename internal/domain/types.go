@@ -459,6 +459,15 @@ type AccountExt struct {
 	CodexAccountID         *string        // 上游账号/空间标识（可留空——导入/保存时自动识别；识别失败：导入行拒绝、保存留空）
 }
 
+// CodexImportConfig 导入面 body 级账号配置（作用于本次**新建**账号——已存在
+// 行的凭据更新不改配置，与 max_concurrency 同款"仅创建生效"语义）。
+// 三字段皆可选：nil = 取创建默认（enabled=true / 账号私有域 / ×1）。
+type CodexImportConfig struct {
+	Enabled                  *bool
+	CacheDomain              *string
+	UpstreamCostMultiplierBp *int // 万分数（10000 = ×1）
+}
+
 // CodexOAuthImportItem 批量导入 codex-oauth 单行（组合幂等键
 // codex_email + codex_account_id；token+refresh 成对必填；expires_at 可选
 // 原始 RFC3339 字符串（service 逐行解析——格式错误 → 行级 failed 非整批

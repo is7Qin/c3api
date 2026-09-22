@@ -48,7 +48,7 @@ func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *h
 			MaxConcurrency:         it.MaxConcurrency,
 		}
 	}
-	res, err := h.svc.ImportCodexOAuthAccounts(r.Context(), items, &in.TemplateId, in.GroupId)
+	res, err := h.svc.ImportCodexOAuthAccounts(r.Context(), items, &in.TemplateId, in.GroupId, codexImportConfigFromBody(in.Enabled, in.CacheDomain, in.UpstreamCostMultiplier))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -85,12 +85,24 @@ func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *htt
 			MaxConcurrency: it.MaxConcurrency,
 		}
 	}
-	res, err := h.svc.ImportCodexPATAccounts(r.Context(), items, &in.TemplateId, in.GroupId)
+	res, err := h.svc.ImportCodexPATAccounts(r.Context(), items, &in.TemplateId, in.GroupId, codexImportConfigFromBody(in.Enabled, in.CacheDomain, in.UpstreamCostMultiplier))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
 	httpface.WriteJSON(w, http.StatusOK, toAPIImportResult(res))
+}
+
+// codexImportConfigFromBody body 级账号配置 → 领域配置（倍率走 normalToMult
+// 换算为 basis points；nil 透传 = 取创建默认）。语义判定（边界/域名语法）不在此处
+// ——唯一权威是 service.validateCodexImportConfig。
+func codexImportConfigFromBody(enabled *bool, cacheDomain *string, mult *float64) domain.CodexImportConfig {
+	cfg := domain.CodexImportConfig{Enabled: enabled, CacheDomain: cacheDomain}
+	if mult != nil {
+		bp := normalToMult(*mult)
+		cfg.UpstreamCostMultiplierBp = &bp
+	}
+	return cfg
 }
 
 // toAPIImportResult 领域结果 → 契约类型（行级 failed 直透 index/error）。
