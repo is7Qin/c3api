@@ -999,7 +999,7 @@ export default function Accounts() {
       <div className="flex justify-end">
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="outline" size="sm"><SlidersHorizontal className="size-4" />{t('accounts.columnSettings')}</Button>} />
-          <DropdownMenuContent align="end" className="max-h-80 w-48">
+          <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuGroup>
               <DropdownMenuLabel>{t('accounts.columnSettings')}</DropdownMenuLabel>
               {ACCOUNTS_HIDDENABLE_COLS.map(key => (
