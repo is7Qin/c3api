@@ -51,13 +51,18 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 			return nil, err // 组缺 id → 404
 		}
 	}
+	// 倍率：补丁未提供 → 显式落创建默认 ×1（10000）；提供 → 精确落值（含 0 = 免费）。
+	multBp := 10000
+	if p.UpstreamCostMultiplierBp != nil {
+		multBp = *p.UpstreamCostMultiplierBp
+	}
 	a := &domain.Account{
 		Name:                     *p.Name,
 		TemplateID:               *p.TemplateID,
 		UpstreamKey:              key,
 		MaxConcurrency:           s.defaultMaxConcurrency,
 		Enabled:                  true,
-		UpstreamCostMultiplierBp: 10000,
+		UpstreamCostMultiplierBp: &multBp,
 		LifecycleRevision:        1,
 		IdentityRevision:         1,
 	}
@@ -74,9 +79,6 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 	}
 	if p.Enabled != nil {
 		a.Enabled = *p.Enabled
-	}
-	if p.UpstreamCostMultiplierBp != nil {
-		a.UpstreamCostMultiplierBp = *p.UpstreamCostMultiplierBp
 	}
 	created, err := s.store.CreateAccount(ctx, a)
 	if err != nil {

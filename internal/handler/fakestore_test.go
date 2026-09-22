@@ -214,6 +214,9 @@ func (f *fakeStore) DeleteTemplate(ctx context.Context, id int64) error {
 	return nil
 }
 
+// intPtr 整数指针（存在性字段的写入意图：nil 与 0 必须可区分）。
+func intPtr(v int) *int { return &v }
+
 func (f *fakeStore) CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -811,7 +814,8 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 			a.Enabled = *p.Enabled
 		}
 		if p.UpstreamCostMultiplierBp != nil {
-			a.UpstreamCostMultiplierBp = *p.UpstreamCostMultiplierBp
+			v := *p.UpstreamCostMultiplierBp
+			a.UpstreamCostMultiplierBp = &v
 		}
 		if p.CacheDomain != nil {
 			if *p.CacheDomain == "" {
@@ -847,7 +851,7 @@ func accountFieldValues(a *domain.Account) repository.AccountFieldValues {
 		MaxConcurrency:           a.MaxConcurrency,
 		Enabled:                  a.Enabled,
 		CacheDomain:              a.CacheDomain,
-		UpstreamCostMultiplierBp: a.UpstreamCostMultiplierBp,
+		UpstreamCostMultiplierBp: domain.MultBp(a.UpstreamCostMultiplierBp),
 	}
 }
 

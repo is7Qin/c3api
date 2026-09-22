@@ -220,7 +220,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		a := domain.Account{
 			ID: 7, Name: "acct-7", TemplateID: 3,
 			UpstreamKey: "sk", MaxConcurrency: 4, Enabled: true,
-			CacheDomain: strPtr("cache.example"), UpstreamCostMultiplierBp: 12000,
+			CacheDomain: strPtr("cache.example"), UpstreamCostMultiplierBp: intPtr(12000),
 			IdentityRevision: 5,
 			Template:         tp,
 			Ext: &domain.AccountExt{
@@ -263,7 +263,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		{"maxConcurrency", func(s *snapshotStatic) { s.acc.MaxConcurrency = 8 }},
 		{"enabled", func(s *snapshotStatic) { s.acc.Enabled = false }},
 		{"cacheDomain", func(s *snapshotStatic) { s.acc.CacheDomain = nil }},
-		{"upstreamCostMultiplierBp", func(s *snapshotStatic) { s.acc.UpstreamCostMultiplierBp = 9000 }},
+		{"upstreamCostMultiplierBp", func(s *snapshotStatic) { s.acc.UpstreamCostMultiplierBp = intPtr(9000) }},
 		{"groupIDs set", func(s *snapshotStatic) { s.groupIDs = []int64{3} }},
 		{"codexAccountID", func(s *snapshotStatic) { s.acc.Ext.CodexAccountID = strPtr("other") }},
 		{"codex identity quartet", func(s *snapshotStatic) { s.acc.Ext.CodexIdentity.SessionID = "sess2" }},

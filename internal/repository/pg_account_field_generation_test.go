@@ -78,7 +78,7 @@ func idempotentPatchForSpec(spec domain.AccountFieldSpec, got *domain.Account, g
 	case domain.FieldCacheDomain:
 		return repository.AccountPatch{CacheDomain: got.CacheDomain}
 	case domain.FieldUpstreamCostMultiplier:
-		return repository.AccountPatch{UpstreamCostMultiplierBp: &got.UpstreamCostMultiplierBp}
+		return repository.AccountPatch{UpstreamCostMultiplierBp: got.UpstreamCostMultiplierBp}
 	default:
 		return repository.AccountPatch{}
 	}

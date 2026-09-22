@@ -490,7 +490,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
 		require.False(t, acc.Enabled, "enabled=false 落库")
-		require.Equal(t, 25000, acc.UpstreamCostMultiplierBp, "×2.5 → 25000 bp")
+		require.Equal(t, 25000, domain.MultBp(acc.UpstreamCostMultiplierBp), "×2.5 → 25000 bp")
 		require.NotNil(t, acc.CacheDomain)
 		require.Equal(t, "shared.example.com", *acc.CacheDomain)
 	})
@@ -507,7 +507,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
 		require.True(t, acc.Enabled, "缺省启用")
-		require.Equal(t, 10000, acc.UpstreamCostMultiplierBp, "缺省 ×1")
+		require.Equal(t, 10000, domain.MultBp(acc.UpstreamCostMultiplierBp), "缺省 ×1")
 		require.Nil(t, acc.CacheDomain, "缺省账号私有域")
 	})
 
@@ -553,9 +553,23 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
 		require.False(t, acc.Enabled, "updated 不动 enabled")
-		require.Equal(t, 25000, acc.UpstreamCostMultiplierBp, "updated 不动倍率")
+		require.Equal(t, 25000, domain.MultBp(acc.UpstreamCostMultiplierBp), "updated 不动倍率")
 		require.NotNil(t, acc.CacheDomain)
 		require.Equal(t, "first.example.com", *acc.CacheDomain, "updated 不动缓存域")
+	})
+
+	t.Run("explicit zero multiplier is honoured", func(t *testing.T) {
+		svc, store, _ := importFixture(t)
+		_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
+			{CodexEmail: "free@example.com", CodexAccountID: "free-1",
+				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
+		}, &tplID, nil, domain.CodexImportConfig{UpstreamCostMultiplierBp: intPtr(0)})
+		require.NoError(t, err)
+		ext, err := store.FindAccountExtByCodexKey(ctx, "free@example.com", "free-1")
+		require.NoError(t, err)
+		acc, err := store.GetAccount(ctx, ext.AccountID)
+		require.NoError(t, err)
+		require.Equal(t, 0, domain.MultBp(acc.UpstreamCostMultiplierBp), "×0（免费）不得被缺省吞掉")
 	})
 
 	t.Run("invalid config rejected whole batch", func(t *testing.T) {

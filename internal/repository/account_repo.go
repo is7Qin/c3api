@@ -51,8 +51,9 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 		if a.CacheDomain != nil {
 			b = b.SetCacheDomain(*a.CacheDomain)
 		}
-		if a.UpstreamCostMultiplierBp != 0 {
-			b = b.SetUpstreamCostMultiplierBp(a.UpstreamCostMultiplierBp)
+		// nil = 未显式提供 → 不写该列（落存储默认 ×1）；非 nil 精确落值——含 0（免费）。
+		if a.UpstreamCostMultiplierBp != nil {
+			b = b.SetUpstreamCostMultiplierBp(*a.UpstreamCostMultiplierBp)
 		}
 		if a.LifecycleRevision != 0 {
 			b = b.SetLifecycleRevision(a.LifecycleRevision)

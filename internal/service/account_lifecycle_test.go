@@ -32,7 +32,7 @@ func TestAccountValidationCostCache(t *testing.T) {
 	good := "shared.example.com"
 	acc, err := svc.CreateAccount(context.Background(), repository.AccountPatch{Name: strPtr("a3"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-x"), CacheDomain: &good, UpstreamCostMultiplierBp: intPtr(25000)})
 	require.NoError(t, err)
-	require.Equal(t, 25000, acc.UpstreamCostMultiplierBp)
+	require.Equal(t, 25000, domain.MultBp(acc.UpstreamCostMultiplierBp))
 
 	// empty domain (nil) allowed - private
 	acc2, err := svc.CreateAccount(context.Background(), repository.AccountPatch{Name: strPtr("a4"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-x")})
@@ -48,6 +48,27 @@ func TestAccountValidationCostCache(t *testing.T) {
 	badDom := "bad_domain!"
 	_, err = svc.UpdateAccountsBatch(context.Background(), []int64{acc.ID}, repository.AccountPatch{CacheDomain: &badDom})
 	require.ErrorIs(t, err, ErrInvalidInput)
+}
+
+// TestCreateAccountExplicitZeroMultiplier 创建即落 ×0（免费）：0 与"未提供"必须
+// 可区分——补丁指针非 nil → 精确落值；未提供 → 创建默认 ×1。
+func TestCreateAccountExplicitZeroMultiplier(t *testing.T) {
+	svc := &Service{store: newFakeStore(), inv: &invRecorder{}}
+	_, err := svc.CreateTemplate(context.Background(), &domain.Template{Name: "t", BaseURL: "https://u", SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}})
+	require.NoError(t, err)
+
+	free, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
+		Name: strPtr("free"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-x"),
+		UpstreamCostMultiplierBp: intPtr(0),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, domain.MultBp(free.UpstreamCostMultiplierBp), "显式 ×0（免费）不得被创建默认吞掉")
+
+	def, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
+		Name: strPtr("unset"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-y"),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 10000, domain.MultBp(def.UpstreamCostMultiplierBp), "未提供 → 创建默认 ×1")
 }
 
 func TestCodexImport(t *testing.T) {
@@ -114,7 +135,7 @@ func seedLifecycleAccount(t *testing.T, fs *fakeStore) *domain.Account {
 	acc, err := fs.CreateAccount(ctx, &domain.Account{
 		Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
 		Enabled: true, FailedAt: &failed, FailureSource: &src, LastError: &reason,
-		LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
+		LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: intPtr(25000), CacheDomain: &dom,
 	})
 	require.NoError(t, err)
 	return acc
@@ -228,7 +249,7 @@ func TestPatchAccountCostMultiplier(t *testing.T) {
 	bp := 15000
 	got, err := svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamCostMultiplierBp: &bp}, nil)
 	require.NoError(t, err)
-	require.Equal(t, 15000, got.UpstreamCostMultiplierBp)
+	require.Equal(t, 15000, domain.MultBp(got.UpstreamCostMultiplierBp))
 	require.Equal(t, int64(6), got.LifecycleRevision)
 
 	neg := -1

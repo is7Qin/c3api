@@ -85,7 +85,7 @@ func toAPIAccount(a *domain.Account) Account {
 		FailureSource:          a.FailureSource,
 		LifecycleRevision:      &a.LifecycleRevision,
 		IdentityRevision:       &a.IdentityRevision,
-		UpstreamCostMultiplier: ptr(multToNormal(a.UpstreamCostMultiplierBp)), // bp → 正常值（组倍率边界换算同构）
+		UpstreamCostMultiplier: ptr(multToNormal(domain.MultBp(a.UpstreamCostMultiplierBp))), // bp → 正常值（组倍率边界换算同构）
 		CacheDomain:            a.CacheDomain,
 		CreatedAt:              &a.CreatedAt,
 		UpdatedAt:              &a.UpdatedAt,

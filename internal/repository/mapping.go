@@ -138,6 +138,7 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 	if a.Edges.Template != nil {
 		tpl = toDomainTemplate(a.Edges.Template)
 	}
+	multBp := a.UpstreamCostMultiplierBp
 	d := &domain.Account{
 		ID: a.ID, Name: a.Name, TemplateID: a.TemplateID, Template: tpl,
 		BaseURL:        a.BaseURL, // 账号级覆盖（nil = 继承模板；快照装配指针拷贝零分配）
@@ -149,7 +150,7 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 		Enabled:                  a.Enabled,
 		LifecycleRevision:        a.LifecycleRevision,
 		IdentityRevision:         a.IdentityRevision,
-		UpstreamCostMultiplierBp: a.UpstreamCostMultiplierBp,
+		UpstreamCostMultiplierBp: &multBp, // 读路径恒有值（列 NOT NULL + 默认）——取址拷贝，不别名 ent 行
 		CacheDomain:              a.CacheDomain,
 		CreatedAt:                a.CreatedAt, UpdatedAt: a.UpdatedAt, DeletedAt: a.DeletedAt,
 	}
