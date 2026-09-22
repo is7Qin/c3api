@@ -38,7 +38,7 @@ const MINUTE_ITEMS = Object.fromEntries(MINUTES.map((m) => [m, m]))
 function parseValue(v: string): { date: Date | undefined; time: string } {
   const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(v)
   if (!m) return { date: undefined, time: "" }
-  const date = new Date(`${m[1]}T00:00:00`)
+  const date = new Date(`${m[1]}00:00`)
   if (Number.isNaN(date.getTime())) return { date: undefined, time: "" }
   return { date, time: m[2] }
 }

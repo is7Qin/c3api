@@ -194,7 +194,7 @@ export default function Users() {
   const [tempUser, setTempUser] = useState<User | null>(null)
   const tempBalancesQ = useQuery({
     queryKey: ['admin', 'temp-balances', tempUser?.ID],
-    // page_size 取后端上限 1000 拉全量（额度行通常个位数——避免截断致合计少算，评审 I-1）
+    // page_size 取后端上限 1000 拉全量（额度行通常个位数——避免截断致合计少算）
     queryFn: () => api.getAdminTempBalances({ user_id: tempUser!.ID!, page_size: 1000 }),
     enabled: tempUser != null,
   })
@@ -515,7 +515,7 @@ export default function Users() {
           <DialogHeader>
             <DialogTitle>{t('users.tempBalances.title', { name: tempUser?.Email })}</DialogTitle>
             <DialogDescription>{t('users.tempBalances.desc')}</DialogDescription>
-            {/* 空态不渲染合计（评审 M-1——对齐 profile 参考形态） */}
+            {/* 空态不渲染合计（——对齐 profile 参考形态） */}
             {tempRows.length > 0 && (
               <p className="text-sm font-medium">{t('users.tempBalances.total', { amount: formatUSD(tempActiveTotal) })}</p>
             )}

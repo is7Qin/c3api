@@ -79,7 +79,7 @@ const fmtReset = (ms: number): string => {
   return `${m}m`
 }
 
-// —— 用量明细弹窗（B-2）：预置时间范围（hours ≤72 → 分桶 hour 粒度，否则 day）——
+// —— 用量明细弹窗：预置时间范围（hours ≤72 → 分桶 hour 粒度，否则 day）——
 const USAGE_RANGES = [
   { key: '24h', hours: 24 },
   { key: '7d', hours: 168 },
@@ -242,7 +242,7 @@ function toForm(a: AccountView): FormState {
     base_url: codex ? '' : (a.BaseURL ?? ''), // Codex: must clear stale BaseURL on load
     upstream_key: a.UpstreamKey ?? '',
     max_concurrency: String(a.MaxConcurrency ?? 8),
-    // 编辑回显不走账号列表（I-1 方案 B）：对话框挂载时经 getAccountGroups
+    // 编辑回显不走账号列表（方案 B）：对话框挂载时经 getAccountGroups
     // 拉取，加载完成前禁用保存（防误发 [] 清空）。codex 凭据经 ext 拉取回显。
     // 生命周期回显：倍率缺失按 ×1，缓存域缺失（null）按空串（= 私有域）。
     group_ids: [],
@@ -312,8 +312,8 @@ interface BatchForm {
   max_concurrency: string
   template_id: string
   group_ids: string[]
-  clearGroups: boolean // 评审 I-2：勾选发送 group_ids: [] 并禁用分组多选
-  clearBaseURL: boolean // C1 三态哨兵（对齐 clearGroups 先例）：勾选发送 base_url: "" = 清空；未勾选且输入非空 → 该值；未勾选且空 → 不变
+  clearGroups: boolean // 勾选发送 group_ids: [] 并禁用分组多选
+  clearBaseURL: boolean // 三态哨兵（对齐 clearGroups 先例）：勾选发送 base_url: "" = 清空；未勾选且输入非空 → 该值；未勾选且空 → 不变
 }
 
 const emptyBatchForm = (): BatchForm => ({
@@ -453,7 +453,7 @@ export default function Accounts() {
     return m
   }, [visibleBlocks, usageQs])
 
-  // —— 用量明细弹窗（B-2）：三查询并行——汇总 = usage_logs 实时全窗（无聚合延迟，
+  // —— 用量明细弹窗：三查询并行——汇总 = usage_logs 实时全窗（无聚合延迟，
   // A/U 准确、含尾窗）；分桶 = stats-agg 离线聚合（watermark 滞后 Lag，末桶为进行中的
   // 部分桶）→ 末桶被尾窗补行 [末桶起点, now) 原位替代（无双计无缺口）。
   // from/to 每次渲染重算但查询 key 不含时间戳——渲染期不重取；弹窗打开（enabled
@@ -498,7 +498,7 @@ export default function Accounts() {
   const tailFailed = tailQ.isError && statsBuckets.length > 0
   const shownBuckets = tailItem ? statsBuckets.slice(0, -1) : statsBuckets
 
-  // rows 变化清理已不存在的勾选（M2，templates 同款思路）：refetchInterval/操作
+  // rows 变化清理已不存在的勾选（templates 同款思路）：refetchInterval/操作
   // 刷新后把已删除的行移出 selected。账号页跨页勾选是既有语义（翻页不清空），
   // 故仅同视图（offset 未变）时清理到当前页可见 ID，翻页时跳过。
   const pageOffsetRef = useRef(offset)
@@ -645,7 +645,7 @@ export default function Accounts() {
     setDomainValue(a.CacheDomain ?? '')
   }
 
-  // 编辑回显（评审 I-1 方案 B）：对话框挂载时拉取当前分组；数据未到前禁用
+  // 编辑回显（方案 B）：对话框挂载时拉取当前分组；数据未到前禁用
   // 保存与分组多选（防未加载完提交误发 [] 清空）。
   const groupsEcho = useQuery({
     queryKey: ['account-groups', editing?.ID],
@@ -1588,7 +1588,7 @@ export default function Accounts() {
         </DialogContent>
       </Dialog>
 
-      {/* —— 用量明细弹窗（B-2）：汇总 = usage_logs 实时全窗；分桶 = stats-agg 离线
+      {/* —— 用量明细弹窗：汇总 = usage_logs 实时全窗；分桶 = stats-agg 离线
           聚合（watermark 滞后）——末桶（进行中部分桶）被「当前」尾窗补行原位替代；
           弹窗内数据不轮询（打开时点快照，切换范围手动刷新） —— */}
       <Dialog open={!!usageDetail} onOpenChange={o => { if (!o) setUsageDetail(null) }}>

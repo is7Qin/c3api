@@ -1640,7 +1640,7 @@ export interface components {
         /** @enum {string} */
         GroupVisibility: "public" | "private";
         /**
-         * @description 分组级协议转换方向（只补差，W5 网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
+         * @description 分组级协议转换方向（只补差，网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
          * @enum {string}
          */
         GroupProtocolConvert: "chat_to_resp" | "mess_to_resp" | "resp_to_mess" | "chat_to_mess";
@@ -3179,7 +3179,7 @@ export interface components {
             err_rate: number;
             err_count: number;
         };
-        /** @description 告警面（billing 游标消费者 lag 族观测，F2 ledger-cursor；注入面读取，未装配 = 全零） */
+        /** @description 告警面（billing 游标消费者 lag 族观测，ledger-cursor；注入面读取，未装配 = 全零） */
         OverviewAlerts: {
             /**
              * Format: int64

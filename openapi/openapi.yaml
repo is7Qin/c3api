@@ -779,7 +779,7 @@ paths:
               schema: { $ref: '#/components/schemas/MailTemplate' }
         default:
           $ref: '#/components/responses/Error'
-  # --- 兑换码（tag: redemptions；Phase 5 计费前基础设施——资源发放的通用载体） ---
+  # --- 兑换码（tag: redemptions；计费前基础设施——资源发放的通用载体） ---
   # 注意 chi 路径顺序：/redemption-codes/batch-deactivate 必须先于
   # /redemption-codes/{id}/... 注册（生成器按 spec 顺序注册，防 "batch-deactivate"
   # 被 {id} 捕获，对齐 /templates/batch-delete 先例）。
@@ -1636,7 +1636,7 @@ paths:
               schema: { $ref: '#/components/schemas/StatTTFTSummary' }
         default:
           $ref: '#/components/responses/Error'
-  # ---- intelligent-routing 观测面（Todo 17）：rollup 聚合 + 当前发布计划投影，
+  # ---- intelligent-routing 观测面：rollup 聚合 + 当前发布计划投影，
   # 数据源钉死 routing_*_rollup 表与 scheduler 当前视图——绝不查 raw logs、
   # 绝不按历史 generation 查询（plan/flow/frontier 一律对齐当前发布计划目录）。
   /routing/flow:
@@ -1816,7 +1816,7 @@ components:
       required: [name, supported_formats]
       properties:
         name: { type: string }
-        # base_url 凭据类型条件（Phase 4）：codex-oauth/codex-pat 非空禁用（须空，SDK 默认端点）；
+        # base_url 凭据类型条件：codex-oauth/codex-pat 非空禁用（须空，SDK 默认端点）；
         # api_key/responses-special 为裸根覆盖（不含 /v1，service 校验），空 = 默认/路由失败（管理面不拦截）。
         # Shared shape retained; only description is conditional.
         base_url: { type: string, description: "credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden, SDK default endpoint); api_key/responses-special optional bare root without /v1 (non-empty overrides, empty uses default or fails to route)" }
@@ -1883,7 +1883,7 @@ components:
         Name: { type: string }
         TemplateID: { type: integer, format: int64 }
         Template: { $ref: '#/components/schemas/Template' }
-        # 账号级 baseURL 覆盖（Phase 4 条件：codex 模板非空禁用，须 null = 继承/SDK 默认；非 Codex 非空优先于模板）
+        # 账号级 baseURL 覆盖（条件：codex 模板非空禁用，须 null = 继承/SDK 默认；非 Codex 非空优先于模板）
         BaseURL: { type: string, nullable: true, description: "credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template" }
         UpstreamKey: { type: string }
         MaxConcurrency: { type: integer }
@@ -2111,7 +2111,7 @@ components:
     GroupProtocolConvert:
       type: string
       enum: [chat_to_resp, mess_to_resp, resp_to_mess, chat_to_mess]
-      description: 分组级协议转换方向（只补差，W5 网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
+      description: 分组级协议转换方向（只补差，网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
     GroupAssignmentsBody:
       type: object
       required: [user_ids]
@@ -2699,7 +2699,7 @@ components:
       required: [updated]
       properties:
         updated: { type: integer }
-    # --- 兑换码（Phase 5 计费前基础设施：资源发放的通用载体） ---
+    # --- 兑换码（计费前基础设施：资源发放的通用载体） ---
     RedemptionType:
       type: string
       enum: [balance, concurrency, temp_balance]
@@ -2846,7 +2846,7 @@ components:
       required: [deactivated]
       properties:
         deactivated: { type: integer, description: 新失效数（已 disabled no-op 不计） }
-    # --- litellm 模型价格（Phase 5 计费价格来源） ---
+    # --- litellm 模型价格（计费价格来源） ---
     Provider:
       type: string
       description: 主流厂商枚举（litellm_provider 实际字符串，服务前端下拉框）。**litellm_provider 动态**——litellm 更新会加新厂商，此 enum 为主流集合；新厂商出现时扩 enum（DB 筛选不受限——自由字符串等值）
@@ -3169,7 +3169,7 @@ components:
         P99MS: { type: integer, format: int64 }
         MaxMS: { type: integer, format: int64 }
         Source: { type: string, enum: [exact, sketch] }
-    # ---- intelligent-routing 观测契约（Todo 17）：lower snake_case，全字段
+    # ---- intelligent-routing 观测契约：lower snake_case，全字段
     # required（值恒在，仅 previous_account_id 可 null）；空集合恒为 []。
     RoutingFlowEdge:
       type: object
@@ -3358,7 +3358,7 @@ components:
          #     residual_submissions int64, residual_rows int64, close_unix_ms int64
          #   usage: pending_logs int64（未落库明细条数）, pending_waterline int64
         #     （水线）, warned bool（水线告警边沿）
-        #   billing（游标消费者，F2 ledger-cursor）: lag_ms int64（游标积压时滞
+        #   billing（游标消费者，ledger-cursor）: lag_ms int64（游标积压时滞
         #     毫秒 = 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/
         #     未探测）, unbilled_rows int64（当前未扣费账本行数）, quarantined_rows
         #     int64（累计隔离行数——用户缺失组）, last_cycle_unix_ms
@@ -3506,7 +3506,7 @@ components:
     OverviewAlerts:
       type: object
       required: [billing_lag_ms, billing_unbilled_rows, billing_quarantined_rows]
-      description: 告警面（billing 游标消费者 lag 族观测，F2 ledger-cursor；注入面读取，未装配 = 全零）
+      description: 告警面（billing 游标消费者 lag 族观测，ledger-cursor；注入面读取，未装配 = 全零）
       properties:
         billing_lag_ms: { type: integer, format: int64, description: 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/未探测 }
         billing_unbilled_rows: { type: integer, format: int64, description: 当前未扣费账本行数（部分索引 WHERE NOT billed） }
