@@ -870,7 +870,7 @@ type GroupPatch struct {
 	Visibility *GroupVisibility `json:"visibility,omitempty"`
 }
 
-// GroupProtocolConvert 分组级协议转换方向（只补差 网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
+// GroupProtocolConvert 分组级协议转换方向（只补差，网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
 type GroupProtocolConvert string
 
 // GroupVisibility defines model for GroupVisibility.
@@ -957,7 +957,7 @@ type OverviewAccounts struct {
 	Unhealthy      int `json:"unhealthy"`
 }
 
-// OverviewAlerts 告警面（billing 游标消费者 lag 族观测 ledger-cursor；注入面读取，未装配 = 全零）
+// OverviewAlerts 告警面（billing 游标消费者 lag 族观测，ledger-cursor；注入面读取，未装配 = 全零）
 type OverviewAlerts struct {
 	// BillingLagMs 游标积压时滞（毫秒）= 最近周期探测的 now − 最老 unbilled 行 created_at；0 = 游标空/未探测
 	BillingLagMs int64 `json:"billing_lag_ms"`
@@ -990,7 +990,7 @@ type OverviewResponse struct {
 	// Accounts 账号健康分布 + 并发水位（调度器快照同源——与账号列表运行时视图一致）
 	Accounts OverviewAccounts `json:"accounts"`
 
-	// Alerts 告警面（billing 游标消费者 lag 族观测 ledger-cursor；注入面读取，未装配 = 全零）
+	// Alerts 告警面（billing 游标消费者 lag 族观测，ledger-cursor；注入面读取，未装配 = 全零）
 	Alerts OverviewAlerts   `json:"alerts"`
 	ErrTop []OverviewErrTop `json:"err_top"`
 
