@@ -9,6 +9,7 @@ import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, Slide
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
+import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
 import { BatchBar } from '@/components/batch-bar'
 import { ListToolbar } from '@/components/list-toolbar'
 import { Pagination } from '@/components/pagination'
@@ -140,20 +141,8 @@ function UsageCell({ item }: { item?: components['schemas']['AccountUsageItem'] 
   )
 }
 
-// —— 生命周期展示/校验（fenced 端点为唯一写面；UI 边界校验镜像后端，后端仍是权威）——
-// 成本倍率正常值（1 = ×1，0 = 免费，上限 ×10；bp 精度 = 4 位小数，normalToMult ×10000）。
-// 非法/越界 → null（按钮禁用，fail-closed）。
+// —— 生命周期展示（fenced 端点为唯一写面；倍率/缓存域校验见 lib/account-config）——
 const fmtMult = (v?: number | null): string => (v == null ? '—' : `×${Number(v.toFixed(4))}`)
-const parseMultiplier = (s: string): number | null => {
-  if (!s.trim()) return null
-  const v = Number(s)
-  if (!Number.isFinite(v) || v < 0 || v > 10) return null
-  return Math.round(v * 10000) / 10000
-}
-// 缓存域校验镜像 service.validateCacheDomain：labels 1–63（a–z/0–9/-，首尾非连字符）、
-// 点分、总长 ≤253；空 = 私有域（null，清空不走空串）。
-const CACHE_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/
-const validCacheDomain = (s: string): boolean => s.length > 0 && s.length <= 253 && CACHE_DOMAIN_RE.test(s)
 
 // 生命周期状态徽章对：管理面 enabled（契约恒回显；缺失按禁用展示——fail-closed）
 // + 运行时失效（failed_at 置位即标红，tooltip 携带来源/时刻；恢复唯一入口 recover）。
@@ -314,6 +303,10 @@ interface BatchForm {
   group_ids: string[]
   clearGroups: boolean // 勾选发送 group_ids: [] 并禁用分组多选
   clearBaseURL: boolean // 三态哨兵（对齐 clearGroups 先例）：勾选发送 base_url: "" = 清空；未勾选且输入非空 → 该值；未勾选且空 → 不变
+  enabled: 'all' | 'true' | 'false' // 三态：'all' = 不变（不发送）；true/false = 统一落值
+  cache_domain: string
+  clearCacheDomain: boolean // 三态哨兵（对齐 clearBaseURL）：勾选发送 cache_domain: null = 清空回账号私有域
+  multiplier: string // 空 = 不变（不发送）
 }
 
 const emptyBatchForm = (): BatchForm => ({
@@ -325,6 +318,10 @@ const emptyBatchForm = (): BatchForm => ({
   group_ids: [],
   clearGroups: false,
   clearBaseURL: false,
+  enabled: 'all',
+  cache_domain: '',
+  clearCacheDomain: false,
+  multiplier: '',
 })
 
 export default function Accounts() {
@@ -617,6 +614,25 @@ export default function Accounts() {
     if (batchForm.template_id !== 'all') fields.template_id = Number(batchForm.template_id)
     if (batchForm.clearGroups) fields.group_ids = []
     else if (batchForm.group_ids.length > 0) fields.group_ids = batchForm.group_ids.map(Number)
+    // 启停/缓存域/倍率：AccountConfigPatch 的批量契约字段（API 侧全字段可批量，
+    // 无需改契约）。倍率/缓存域先做 UI 边界校验（镜像后端），非法则整单拒绝。
+    const dom = batchForm.cache_domain.trim()
+    if (dom && !validCacheDomain(dom)) {
+      setBatchFormErr(t('accounts.cacheDomain.invalid'))
+      return
+    }
+    let mult: number | null = null
+    if (batchForm.multiplier.trim()) {
+      mult = parseMultiplier(batchForm.multiplier)
+      if (mult === null) {
+        setBatchFormErr(t('accounts.multiplier.invalid'))
+        return
+      }
+    }
+    if (batchForm.enabled !== 'all') fields.enabled = batchForm.enabled === 'true'
+    if (batchForm.clearCacheDomain) fields.cache_domain = null
+    else if (dom) fields.cache_domain = dom
+    if (mult !== null) fields.upstream_cost_multiplier = mult
     if (Object.keys(fields).length === 0) {
       setBatchFormErr(t('accounts.batchUpdateEmpty'))
       return
@@ -1439,7 +1455,8 @@ export default function Accounts() {
                 <span className="text-sm">{t('accounts.clearBaseUrl')}</span>
               </label>
             </div>
-            {/* 批量面只带可批量契约字段（启停/恢复/倍率/缓存域为逐账号 fenced 写，不批量） */}
+            {/* 批量面携带 AccountConfigPatch 全字段（模板/并发/启停/倍率/缓存域）；
+                失效恢复是逐账号 fenced 端点，不在批量面 */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>{t('accounts.templateLabel')}</Label>
@@ -1472,6 +1489,36 @@ export default function Accounts() {
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
                 <Checkbox checked={batchForm.clearGroups} onCheckedChange={c => setBatchForm(f => ({ ...f, clearGroups: c === true }))} />
                 <span className="text-sm">{t('accounts.clearGroups')}</span>
+              </label>
+            </div>
+            {/* 生命周期配置（启停/倍率/缓存域）——同为批量契约字段，留空/不变 = 不修改 */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>{t('accounts.enabledLabel')}</Label>
+                <Select
+                  items={{ all: t('list.unchanged'), true: t('accounts.state.enabled'), false: t('accounts.state.disabled') }}
+                  value={batchForm.enabled}
+                  onValueChange={v => setBatchForm(f => ({ ...f, enabled: v as BatchForm['enabled'] }))}
+                >
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all" label={t('list.unchanged')}>{t('list.unchanged')}</SelectItem>
+                    <SelectItem value="true" label={t('accounts.state.enabled')}>{t('accounts.state.enabled')}</SelectItem>
+                    <SelectItem value="false" label={t('accounts.state.disabled')}>{t('accounts.state.disabled')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ba-mult">{t('accounts.multiplier.label')}</Label>
+                <Input id="ba-mult" type="number" min={0} max={10} step="0.0001" value={batchForm.multiplier} placeholder={t('list.unchanged')} onChange={e => setBatchForm(f => ({ ...f, multiplier: e.target.value }))} />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ba-domain">{t('accounts.cacheDomain.label')}</Label>
+              <Input id="ba-domain" value={batchForm.cache_domain} disabled={batchForm.clearCacheDomain} placeholder={t('accounts.cacheDomain.placeholder')} onChange={e => setBatchForm(f => ({ ...f, cache_domain: e.target.value }))} />
+              <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
+                <Checkbox checked={batchForm.clearCacheDomain} onCheckedChange={c => setBatchForm(f => ({ ...f, clearCacheDomain: c === true }))} />
+                <span className="text-sm">{t('accounts.clearCacheDomain')}</span>
               </label>
             </div>
             {batchFormErr && <p className="text-sm text-destructive">{batchFormErr}</p>}

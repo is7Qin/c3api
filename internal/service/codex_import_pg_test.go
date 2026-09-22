@@ -87,7 +87,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 			{CodexEmail: "pg1@example.com", CodexAccountID: "pg-1",
 				CodexOAuthToken: "at-1", CodexOAuthRefreshToken: "rt-1",
 				CodexOAuthExpiresAt: pgStrPtr(t, "2026-12-31T23:59:59Z")},
-		}, &oauthTpl, &gid)
+		}, &oauthTpl, &gid, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
 		require.Empty(t, res.Failed)
@@ -113,7 +113,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 		res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "pg1@example.com", CodexAccountID: "pg-1",
 				CodexOAuthToken: "at-2", CodexOAuthRefreshToken: "rt-2"},
-		}, &oauthTpl, nil)
+		}, &oauthTpl, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Updated)
 		require.Empty(t, res.Failed)
@@ -138,7 +138,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
 			{CodexEmail: "pg2@example.com", CodexAccountID: "pg-1",
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-		}, &oauthTpl, nil)
+		}, &oauthTpl, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 2, res.Imported)
 		require.Empty(t, res.Failed)
@@ -154,7 +154,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 				CodexOAuthToken: "at-first", CodexOAuthRefreshToken: "rt-first"},
 			{CodexEmail: "pg3@example.com", CodexAccountID: "pg-3",
 				CodexOAuthToken: "at-last", CodexOAuthRefreshToken: "rt-last"},
-		}, &oauthTpl, nil)
+		}, &oauthTpl, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
 		require.Equal(t, 1, res.Updated)
@@ -168,7 +168,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 		// pat 端点先导 pg-4
 		res, err := svc.ImportCodexPATAccounts(ctx, []domain.CodexPATImportItem{
 			{CodexEmail: "pg4@example.com", CodexAccountID: "pg-4", CodexPATKey: "pat-1"},
-		}, &patTpl, nil)
+		}, &patTpl, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
 
@@ -176,7 +176,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 		res, err = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "pg4@example.com", CodexAccountID: "pg-4",
 				CodexOAuthToken: "at-x", CodexOAuthRefreshToken: "rt-x"},
-		}, &oauthTpl, nil)
+		}, &oauthTpl, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 0, res.Imported)
 		require.Equal(t, 0, res.Updated)
@@ -202,13 +202,13 @@ func TestImportCodexTemplateTypeMismatchPG(t *testing.T) {
 	_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "tm@example.com", CodexAccountID: "tm",
 			CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-	}, &patTpl, nil)
+	}, &patTpl, nil, domain.CodexImportConfig{})
 	require.ErrorIs(t, err, ErrInvalidInput)
 	require.Contains(t, err.Error(), "模板类型不匹配")
 
 	_, err = svc.ImportCodexPATAccounts(ctx, []domain.CodexPATImportItem{
 		{CodexEmail: "tm@example.com", CodexAccountID: "tm", CodexPATKey: "pat"},
-	}, &oauthTpl, nil)
+	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	require.ErrorIs(t, err, ErrInvalidInput)
 
 	// 整批拒绝零写入
@@ -226,7 +226,7 @@ func TestImportCodexSoftDeletedPG(t *testing.T) {
 	res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "sd@example.com", CodexAccountID: "sd",
 			CodexOAuthToken: "at-1", CodexOAuthRefreshToken: "rt-1"},
-	}, &oauthTpl, nil)
+	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
 	ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sd@example.com", "sd")
@@ -238,7 +238,7 @@ func TestImportCodexSoftDeletedPG(t *testing.T) {
 	res, err = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "sd@example.com", CodexAccountID: "sd",
 			CodexOAuthToken: "at-2", CodexOAuthRefreshToken: "rt-2"},
-	}, &oauthTpl, nil)
+	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Imported)
 	require.Equal(t, 0, res.Updated)
@@ -265,7 +265,7 @@ func TestImportCodexTxRollbackPG(t *testing.T) {
 	res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "rbpg@example.com", CodexAccountID: "rbpg",
 			CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-	}, &oauthTpl, &missingGid)
+	}, &oauthTpl, &missingGid, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Imported)
 	require.Len(t, res.Failed, 1)
@@ -289,7 +289,7 @@ func TestImportCodexSnapshotPG(t *testing.T) {
 	res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "snap@example.com", CodexAccountID: "snap",
 			CodexOAuthToken: "at-1", CodexOAuthRefreshToken: "rt-1"},
-	}, &oauthTpl, &gid)
+	}, &oauthTpl, &gid, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
 
@@ -303,7 +303,7 @@ func TestImportCodexSnapshotPG(t *testing.T) {
 	_, err = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "snap@example.com", CodexAccountID: "snap",
 			CodexOAuthToken: "at-2", CodexOAuthRefreshToken: "rt-2"},
-	}, &oauthTpl, nil)
+	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	members, err = repos.Groups.LoadGroupAccounts(ctx, gid)
 	require.NoError(t, err)

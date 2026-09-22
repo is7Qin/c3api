@@ -262,6 +262,9 @@
       "templateEmpty": "无可用模板，请先创建 {{type}} 模板",
       "groupLabel": "归属分组（可选）",
       "groupNone": "不分组",
+      "configTitle": "账号配置（可选）",
+      "configHint": "仅作用于本次新建账号；已存在的账号只更新凭据，配置保持原值。",
+      "configDefault": "默认（启用）",
       "preview": {
         "title": "预览",
         "valid": "可导入 {{n}} / 无效 {{m}} / 总计 {{t}}",
@@ -417,6 +420,8 @@
     "batchGroupLabel": "分组",
     "batchGroupHint": "替换所选账号的原有分组——未选中的分组将被移除。",
     "clearGroups": "清空分组",
+    "enabledLabel": "启停",
+    "clearCacheDomain": "清空缓存域",
     "ext": {
       "button": "扩展配置",
       "title": "扩展配置 · 账号 #{{id}}",

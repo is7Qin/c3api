@@ -50,7 +50,7 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "a@example.com", CodexAccountID: "acc-1",
 				CodexOAuthToken: "at-1", CodexOAuthRefreshToken: "rt-1"},
-		}, &tplID, &gid)
+		}, &tplID, &gid, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
 		require.Equal(t, 0, res.Updated)
@@ -80,7 +80,7 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "a@example.com", CodexAccountID: "acc-1",
 				CodexOAuthToken: "at-2", CodexOAuthRefreshToken: "rt-2"},
-		}, &tplID, nil)
+		}, &tplID, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 0, res.Imported)
 		require.Equal(t, 1, res.Updated)
@@ -105,7 +105,7 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 				CodexOAuthToken: "at-3", CodexOAuthRefreshToken: "rt-3"},
 			{CodexEmail: "b@example.com", CodexAccountID: "acc-1",
 				CodexOAuthToken: "at-4", CodexOAuthRefreshToken: "rt-4"},
-		}, &tplID, nil)
+		}, &tplID, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 2, res.Imported)
 		require.Equal(t, 0, res.Updated)
@@ -122,7 +122,7 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 				CodexOAuthToken: "at-first", CodexOAuthRefreshToken: "rt-first"},
 			{CodexEmail: "c@example.com", CodexAccountID: "acc-9",
 				CodexOAuthToken: "at-last", CodexOAuthRefreshToken: "rt-last"},
-		}, &tplID, nil)
+		}, &tplID, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
 		require.Equal(t, 1, res.Updated)
@@ -145,7 +145,7 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 
 	res, err := svc.ImportCodexPATAccounts(ctx, []domain.CodexPATImportItem{
 		{CodexEmail: "p@example.com", CodexAccountID: "p-1", CodexPATKey: "pat-1"},
-	}, &tplID, &gid)
+	}, &tplID, &gid, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
 	require.Empty(t, res.Failed)
@@ -159,7 +159,7 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 	res, err = svc.ImportCodexPATAccounts(ctx, []domain.CodexPATImportItem{
 		{CodexEmail: "p@example.com", CodexAccountID: "p-1", CodexPATKey: "pat-2",
 			MaxConcurrency: mcPtr(3)},
-	}, &tplID, nil)
+	}, &tplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Imported)
 	require.Equal(t, 1, res.Updated)
@@ -178,7 +178,7 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 	res, err = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "p@example.com", CodexAccountID: "p-1",
 			CodexOAuthToken: "at-x", CodexOAuthRefreshToken: "rt-x"},
-	}, &oauthTplID, nil)
+	}, &oauthTplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Imported)
 	require.Equal(t, 0, res.Updated)
@@ -209,7 +209,7 @@ func TestImportCodexRowLevelFailures(t *testing.T) {
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
 			{CodexEmail: "ok3@example.com", CodexAccountID: "a4", // index 3：成对破坏
 				CodexOAuthToken: "at"},
-		}, &tplID, nil)
+		}, &tplID, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 2, res.Imported)
 		require.Equal(t, 0, res.Updated)
@@ -234,7 +234,7 @@ func TestImportCodexRowLevelFailures(t *testing.T) {
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
 			{CodexEmail: "", CodexAccountID: "v3", // email 必填
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-		}, &tplID, nil)
+		}, &tplID, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 0, res.Imported)
 		require.Len(t, res.Failed, 3)
@@ -248,7 +248,7 @@ func TestImportCodexRowLevelFailures(t *testing.T) {
 		res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "v5@example.com", CodexAccountID: "v5",
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt", CodexOAuthExpiresAt: &exp},
-		}, &tplID, nil)
+		}, &tplID, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
 		require.Empty(t, res.Failed)
@@ -263,7 +263,7 @@ func TestImportCodexRowLevelFailures(t *testing.T) {
 		res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "g1@example.com", CodexAccountID: "g1",
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-		}, &tplID, &missingGid)
+		}, &tplID, &missingGid, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 0, res.Imported)
 		require.Len(t, res.Failed, 1)
@@ -288,7 +288,7 @@ func TestImportCodexTxRollback(t *testing.T) {
 	res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "rb@example.com", CodexAccountID: "rb",
 			CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-	}, &tplID, nil)
+	}, &tplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Imported)
 	require.Len(t, res.Failed, 1)
@@ -313,7 +313,7 @@ func TestImportCodexTemplateTypeMismatch(t *testing.T) {
 		_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "m@example.com", CodexAccountID: "m",
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-		}, &patTpl, nil)
+		}, &patTpl, nil, domain.CodexImportConfig{})
 		require.ErrorIs(t, err, ErrInvalidInput)
 		require.Contains(t, err.Error(), "模板类型不匹配")
 	})
@@ -322,7 +322,7 @@ func TestImportCodexTemplateTypeMismatch(t *testing.T) {
 		oauthTpl := int64(1)
 		_, err := svc.ImportCodexPATAccounts(ctx, []domain.CodexPATImportItem{
 			{CodexEmail: "m@example.com", CodexAccountID: "m", CodexPATKey: "pat"},
-		}, &oauthTpl, nil)
+		}, &oauthTpl, nil, domain.CodexImportConfig{})
 		require.ErrorIs(t, err, ErrInvalidInput)
 		require.Contains(t, err.Error(), "模板类型不匹配")
 	})
@@ -332,7 +332,7 @@ func TestImportCodexTemplateTypeMismatch(t *testing.T) {
 		res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "m@example.com", CodexAccountID: "m",
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-		}, &oauthTpl, nil)
+		}, &oauthTpl, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
 	})
@@ -349,7 +349,7 @@ func TestImportCodexSoftDeletedAccount(t *testing.T) {
 	res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "del@example.com", CodexAccountID: "del",
 			CodexOAuthToken: "at-1", CodexOAuthRefreshToken: "rt-1"},
-	}, &tplID, nil)
+	}, &tplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
 	ext, err := store.FindAccountExtByCodexKey(ctx, "del@example.com", "del")
@@ -365,7 +365,7 @@ func TestImportCodexSoftDeletedAccount(t *testing.T) {
 	res, err = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "del@example.com", CodexAccountID: "del",
 			CodexOAuthToken: "at-2", CodexOAuthRefreshToken: "rt-2"},
-	}, &tplID, nil)
+	}, &tplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Imported)
 	require.Equal(t, 0, res.Updated)
@@ -386,9 +386,9 @@ func TestImportCodexTopLevelValidation(t *testing.T) {
 	svc, _, _ := importFixture(t)
 
 	t.Run("template id missing 400", func(t *testing.T) {
-		_, err := svc.ImportCodexOAuthAccounts(ctx, nil, nil, nil)
+		_, err := svc.ImportCodexOAuthAccounts(ctx, nil, nil, nil, domain.CodexImportConfig{})
 		require.ErrorIs(t, err, ErrInvalidInput)
-		_, err = svc.ImportCodexPATAccounts(ctx, nil, nil, nil)
+		_, err = svc.ImportCodexPATAccounts(ctx, nil, nil, nil, domain.CodexImportConfig{})
 		require.ErrorIs(t, err, ErrInvalidInput)
 	})
 
@@ -396,7 +396,7 @@ func TestImportCodexTopLevelValidation(t *testing.T) {
 		id := int64(999)
 		_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "x@example.com", CodexAccountID: "x", CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-		}, &id, nil)
+		}, &id, nil, domain.CodexImportConfig{})
 		require.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -411,13 +411,13 @@ func TestImportCodexInvalidateOnce(t *testing.T) {
 	// 成功批：imported（归组 7）+ updated（已有分组 7——updated 行取既有分组）
 	res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "i1@example.com", CodexAccountID: "i1", CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-	}, &tplID, &gid)
+	}, &tplID, &gid, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
 
 	res, err = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "i1@example.com", CodexAccountID: "i1", CodexOAuthToken: "at2", CodexOAuthRefreshToken: "rt2"},
-	}, &tplID, nil)
+	}, &tplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Updated)
 
@@ -435,7 +435,7 @@ func TestImportCodexInvalidateOnce(t *testing.T) {
 	bad := "bad"
 	_, err = svc2.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "z@example.com", CodexAccountID: "z", CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt", CodexOAuthExpiresAt: &bad},
-	}, &tplID, nil)
+	}, &tplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 0, rec2.total(), "全失败批 invalidate 零次")
 }
@@ -450,7 +450,7 @@ func TestImportCodexPublishOnce(t *testing.T) {
 
 	_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "pub@example.com", CodexAccountID: "pub", CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-	}, &tplID, &gid)
+	}, &tplID, &gid, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, len(pub.changes))
 	require.Equal(t, []int64{gid}, pub.changes[0].Groups)
@@ -460,9 +460,125 @@ func TestImportCodexPublishOnce(t *testing.T) {
 	bad := "bad"
 	_, err = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "pub2@example.com", CodexAccountID: "pub2", CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt", CodexOAuthExpiresAt: &bad},
-	}, &tplID, nil)
+	}, &tplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Empty(t, pub.changes)
+}
+
+// TestImportCodexConfigOnCreate 导入面 body 级账号配置（enabled / cache_domain /
+// upstream_cost_multiplier）：只作用于**新建**行（updated 路径零触碰——与
+// max_concurrency 同款"仅创建生效"）；缺省取创建默认；非法配置整批 400。
+func TestImportCodexConfigOnCreate(t *testing.T) {
+	ctx := context.Background()
+	tplID := int64(1)
+
+	t.Run("config applied to newly created account", func(t *testing.T) {
+		svc, store, _ := importFixture(t)
+		res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
+			{CodexEmail: "cfg@example.com", CodexAccountID: "cfg-1",
+				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
+		}, &tplID, nil, domain.CodexImportConfig{
+			Enabled:                  boolPtr(false),
+			CacheDomain:              strPtr("shared.example.com"),
+			UpstreamCostMultiplierBp: intPtr(25000),
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, res.Imported)
+
+		ext, err := store.FindAccountExtByCodexKey(ctx, "cfg@example.com", "cfg-1")
+		require.NoError(t, err)
+		acc, err := store.GetAccount(ctx, ext.AccountID)
+		require.NoError(t, err)
+		require.False(t, acc.Enabled, "enabled=false 落库")
+		require.Equal(t, 25000, acc.UpstreamCostMultiplierBp, "×2.5 → 25000 bp")
+		require.NotNil(t, acc.CacheDomain)
+		require.Equal(t, "shared.example.com", *acc.CacheDomain)
+	})
+
+	t.Run("absent config keeps create defaults", func(t *testing.T) {
+		svc, store, _ := importFixture(t)
+		_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
+			{CodexEmail: "def@example.com", CodexAccountID: "def-1",
+				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
+		}, &tplID, nil, domain.CodexImportConfig{})
+		require.NoError(t, err)
+		ext, err := store.FindAccountExtByCodexKey(ctx, "def@example.com", "def-1")
+		require.NoError(t, err)
+		acc, err := store.GetAccount(ctx, ext.AccountID)
+		require.NoError(t, err)
+		require.True(t, acc.Enabled, "缺省启用")
+		require.Equal(t, 10000, acc.UpstreamCostMultiplierBp, "缺省 ×1")
+		require.Nil(t, acc.CacheDomain, "缺省账号私有域")
+	})
+
+	t.Run("empty cache domain means private domain", func(t *testing.T) {
+		svc, store, _ := importFixture(t)
+		_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
+			{CodexEmail: "empty@example.com", CodexAccountID: "empty-1",
+				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
+		}, &tplID, nil, domain.CodexImportConfig{CacheDomain: strPtr("")})
+		require.NoError(t, err)
+		ext, err := store.FindAccountExtByCodexKey(ctx, "empty@example.com", "empty-1")
+		require.NoError(t, err)
+		acc, err := store.GetAccount(ctx, ext.AccountID)
+		require.NoError(t, err)
+		require.Nil(t, acc.CacheDomain, "空串 = 账号私有域")
+	})
+
+	t.Run("config does not touch an updated row", func(t *testing.T) {
+		svc, store, _ := importFixture(t)
+		item := []domain.CodexOAuthImportItem{{
+			CodexEmail: "upd@example.com", CodexAccountID: "upd-1",
+			CodexOAuthToken: "at-1", CodexOAuthRefreshToken: "rt-1",
+		}}
+		_, err := svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, domain.CodexImportConfig{
+			Enabled:                  boolPtr(false),
+			CacheDomain:              strPtr("first.example.com"),
+			UpstreamCostMultiplierBp: intPtr(25000),
+		})
+		require.NoError(t, err)
+
+		item[0].CodexOAuthToken = "at-2"
+		res, err := svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, domain.CodexImportConfig{
+			Enabled:                  boolPtr(true),
+			CacheDomain:              strPtr("second.example.com"),
+			UpstreamCostMultiplierBp: intPtr(10000),
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, res.Updated)
+
+		ext, err := store.FindAccountExtByCodexKey(ctx, "upd@example.com", "upd-1")
+		require.NoError(t, err)
+		require.Equal(t, "at-2", *ext.CodexOAuthToken, "凭据更新")
+		acc, err := store.GetAccount(ctx, ext.AccountID)
+		require.NoError(t, err)
+		require.False(t, acc.Enabled, "updated 不动 enabled")
+		require.Equal(t, 25000, acc.UpstreamCostMultiplierBp, "updated 不动倍率")
+		require.NotNil(t, acc.CacheDomain)
+		require.Equal(t, "first.example.com", *acc.CacheDomain, "updated 不动缓存域")
+	})
+
+	t.Run("invalid config rejected whole batch", func(t *testing.T) {
+		svc, store, _ := importFixture(t)
+		item := []domain.CodexOAuthImportItem{{
+			CodexEmail: "bad@example.com", CodexAccountID: "bad-1",
+			CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt",
+		}}
+		for _, cfg := range []domain.CodexImportConfig{
+			{CacheDomain: strPtr("Bad_Domain")},
+			{CacheDomain: strPtr("UPPER.example.com")},
+			{UpstreamCostMultiplierBp: intPtr(-1)},
+			{UpstreamCostMultiplierBp: intPtr(100001)},
+		} {
+			_, err := svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, cfg)
+			require.ErrorIs(t, err, ErrInvalidInput)
+		}
+		_, err := svc.ImportCodexPATAccounts(ctx, []domain.CodexPATImportItem{
+			{CodexEmail: "bad@example.com", CodexAccountID: "bad-1", CodexPATKey: "pk"},
+		}, &tplID, nil, domain.CodexImportConfig{CacheDomain: strPtr("Bad_Domain")})
+		require.ErrorIs(t, err, ErrInvalidInput)
+		require.Empty(t, store.accs, "整批拒绝：零落库")
+	})
 }
 
 // notifyRecorder 记录 publish 调用的测试假件。

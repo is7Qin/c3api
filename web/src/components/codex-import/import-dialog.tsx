@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Upload, FileText, FolderOpen, Files, CheckCircle2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -14,6 +15,7 @@ import { SourceSelect } from './source-select'
 import { PreviewTable } from './preview-table'
 import { ResultView } from './result-view'
 import { getAdapter, type SourceId } from '@/lib/codex-import/adapters'
+import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
 import { importSequential } from '@/lib/codex-import/chunk'
 import type { CredentialKind, NormalizedRow } from '@/lib/codex-import/normalize'
 import type { components } from '@/lib/api/schema'
@@ -38,6 +40,10 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
   const [fileName, setFileName] = useState('')
   const [templateId, setTemplateId] = useState('')
   const [groupId, setGroupId] = useState('')
+  // 账号配置（可选，body 级——只作用于本次**新建**账号；已存在账号只更新凭据）
+  const [cfgEnabled, setCfgEnabled] = useState<'default' | 'true' | 'false'>('default')
+  const [cfgDomain, setCfgDomain] = useState('')
+  const [cfgMultiplier, setCfgMultiplier] = useState('')
   const [parseState, setParseState] = useState<{ rows: NormalizedRow[]; parseError?: string }>({ rows: [] })
   const [isPending, setIsPending] = useState(false)
   const [progress, setProgress] = useState<[number, number] | null>(null)
@@ -52,7 +58,7 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
 
   useEffect(() => {
     if (!open) return
-    setStep(1); setKind('codex-oauth'); setSource('cpa'); setTab('text'); setRawText(''); setFileName(''); setTemplateId(''); setGroupId(''); setParseState({ rows: [] }); setResult(null); setProgress(null)
+    setStep(1); setKind('codex-oauth'); setSource('cpa'); setTab('text'); setRawText(''); setFileName(''); setTemplateId(''); setGroupId(''); setParseState({ rows: [] }); setResult(null); setProgress(null); setCfgEnabled('default'); setCfgDomain(''); setCfgMultiplier('')
   }, [open])
   useEffect(() => { setTemplateId(''); setSource('cpa'); setParseState({ rows: [] }) }, [kind])
   useEffect(() => {
@@ -132,15 +138,34 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
     }
     if (e.dataTransfer.files?.length) await handleFiles(e.dataTransfer.files)
   }
-  const canNext = step === 1 ? true : step === 2 ? !!source : step === 3 ? validRows.length > 0 && !!templateId : false
+  // 账号配置（可选，body 级）：缺省 = 不发送（取后端创建默认）；非法 → 就地拒绝
+  // （不发起请求——批量面非法配置会被后端整批 400）。
+  const configError = (): string | null => {
+    const d = cfgDomain.trim()
+    if (d && !validCacheDomain(d)) return t('accounts.cacheDomain.invalid')
+    if (cfgMultiplier.trim() && parseMultiplier(cfgMultiplier) === null) return t('accounts.multiplier.invalid')
+    return null
+  }
+  const importConfig = () => {
+    const d = cfgDomain.trim()
+    const cfg: { enabled?: boolean; cache_domain?: string; upstream_cost_multiplier?: number } = {}
+    if (cfgEnabled !== 'default') cfg.enabled = cfgEnabled === 'true'
+    if (d) cfg.cache_domain = d
+    if (cfgMultiplier.trim()) cfg.upstream_cost_multiplier = parseMultiplier(cfgMultiplier)!
+    return cfg
+  }
+  const canNext = step === 1 ? true : step === 2 ? !!source : step === 3 ? validRows.length > 0 && !!templateId && configError() === null : false
   const doImport = async () => {
     if (!templateId || validRows.length === 0) return
+    const cfgErr = configError()
+    if (cfgErr) { setParseState(prev => ({ ...prev, parseError: cfgErr })); return }
+    const cfg = importConfig()
     setIsPending(true); setProgress([0, Math.ceil(validRows.length / 100)])
     try {
       const items = validRows.map((row: any) => row.item)
       const result = kind === 'codex-oauth'
-        ? await importSequential(items, Number(templateId), groupId ? Number(groupId) : undefined, body => api.importCodexOauthAccounts(body as components['schemas']['CodexOAuthImportBody']), (d, total) => setProgress([d, total]))
-        : await importSequential(items, Number(templateId), groupId ? Number(groupId) : undefined, body => api.importCodexPatAccounts(body as components['schemas']['CodexPATImportBody']), (d, total) => setProgress([d, total]))
+        ? await importSequential(items, Number(templateId), groupId ? Number(groupId) : undefined, body => api.importCodexOauthAccounts({ ...body, ...cfg } as components['schemas']['CodexOAuthImportBody']), (d, total) => setProgress([d, total]))
+        : await importSequential(items, Number(templateId), groupId ? Number(groupId) : undefined, body => api.importCodexPatAccounts({ ...body, ...cfg } as components['schemas']['CodexPATImportBody']), (d, total) => setProgress([d, total]))
       setResult({ ...result, failed: result.failed.map(f => ({ ...f, index: validRows[f.index]?.index ?? f.index })) }); setStep(4)
     } catch (e) { setParseState(prev => ({ ...prev, parseError: e instanceof Error ? e.message : t('common.loadFailed', { message: '' }) })) }
     finally { setIsPending(false) }
@@ -243,6 +268,40 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2"><Label className="text-sm">{t('accounts.import.templateLabel')}</Label><Select items={Object.fromEntries(availableTemplates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`]))} value={templateId || null} onValueChange={v => setTemplateId(String(v ?? ''))}><SelectTrigger className="h-10 w-full"><SelectValue placeholder={t('accounts.import.templatePlaceholder')} /></SelectTrigger><SelectContent>{availableTemplates.map(tp => <SelectItem key={tp.ID} value={String(tp.ID)} label={tp.Name ?? `#${tp.ID}`}>{tp.Name ?? `#${tp.ID}`}</SelectItem>)}</SelectContent></Select>{availableTemplates.length === 0 && <p className="text-xs text-destructive">{t('accounts.import.templateEmpty', { type: kind })}</p>}</div>
                 <div className="space-y-2"><Label className="text-sm">{t('accounts.import.groupLabel')}</Label><Select items={Object.fromEntries([['__none', t('accounts.import.groupNone')], ...groups.map(g => [String(g.ID), g.Name ?? `#${g.ID}`])])} value={groupId ? groupId : '__none'} onValueChange={v => setGroupId(v === '__none' ? '' : String(v ?? ''))}><SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__none" label={t('accounts.import.groupNone')}>{t('accounts.import.groupNone')}</SelectItem>{groups.map(g => <SelectItem key={g.ID} value={String(g.ID)} label={g.Name ?? `#${g.ID}`}>{g.Name ?? `#${g.ID}`}</SelectItem>)}</SelectContent></Select></div>
+              </div>
+              {/* 账号配置（可选，body 级）——只作用于本次新建账号；留默认 = 取后端创建默认 */}
+              <div className="space-y-3 rounded-lg border bg-card px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">{t('accounts.import.configTitle')}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{t('accounts.import.configHint')}</p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label className="text-sm">{t('accounts.enabledLabel')}</Label>
+                    <Select
+                      items={{ default: t('accounts.import.configDefault'), true: t('accounts.state.enabled'), false: t('accounts.state.disabled') }}
+                      value={cfgEnabled}
+                      onValueChange={v => setCfgEnabled(v as 'default' | 'true' | 'false')}
+                    >
+                      <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default" label={t('accounts.import.configDefault')}>{t('accounts.import.configDefault')}</SelectItem>
+                        <SelectItem value="true" label={t('accounts.state.enabled')}>{t('accounts.state.enabled')}</SelectItem>
+                        <SelectItem value="false" label={t('accounts.state.disabled')}>{t('accounts.state.disabled')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm" htmlFor="import-mult">{t('accounts.multiplier.label')}</Label>
+                    <Input id="import-mult" type="number" min={0} max={10} step="0.0001" className="h-10" value={cfgMultiplier} placeholder="1" onChange={e => setCfgMultiplier(e.target.value)} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm" htmlFor="import-domain">{t('accounts.cacheDomain.label')}</Label>
+                  <Input id="import-domain" className="h-10" value={cfgDomain} placeholder={t('accounts.cacheDomain.placeholder')} onChange={e => setCfgDomain(e.target.value)} />
+                  <p className="text-xs text-muted-foreground">{cfgDomain.trim() === '' ? t('accounts.cacheDomain.currentPrivate') : t('accounts.cacheDomain.currentShared')}</p>
+                </div>
+                {configError() && <p className="text-xs text-destructive">{configError()}</p>}
               </div>
               {parseState.parseError && <Alert variant="destructive"><AlertDescription className="text-sm">{parseState.parseError === 'adapterComingSoon' ? t('accounts.import.source.comingSoon') : parseState.parseError}</AlertDescription></Alert>}
               <div className="flex items-center gap-2 rounded-lg border bg-card px-4 py-3 text-sm"><span className="font-medium">{t('accounts.import.stats.valid')} {validRows.length}</span><span className="text-muted-foreground">/</span><span className={invalidCount ? 'font-medium text-destructive' : 'text-muted-foreground'}>{t('accounts.import.stats.invalid')} {invalidCount}</span><span className="text-muted-foreground">/ {t('accounts.import.stats.total')} {parseState.rows.length}</span></div>

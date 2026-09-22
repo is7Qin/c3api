@@ -2052,6 +2052,11 @@ components:
           items: { $ref: '#/components/schemas/CodexOAuthImportItem' }
         template_id: { type: integer, format: int64, description: "必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-oauth）" }
         group_id: { type: integer, format: int64, nullable: true, description: "可选：新建账号归组（缺省不归组；不存在 → 行级 failed——FK 违反归行级不整批 400）" }
+        # 账号配置面（body 级——作用于本次**新建**账号；已存在行的凭据更新不改配置，
+        # 与 max_concurrency 同款"仅创建生效"语义）。缺省 = 创建默认。
+        enabled: { type: boolean, description: "可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）" }
+        cache_domain: { type: string, description: "可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）" }
+        upstream_cost_multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）" }
     CodexPATImportBody:
       type: object
       required: [items, template_id]
@@ -2064,6 +2069,11 @@ components:
           items: { $ref: '#/components/schemas/CodexPATImportItem' }
         template_id: { type: integer, format: int64, description: "必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-pat）" }
         group_id: { type: integer, format: int64, nullable: true, description: "可选：新建账号归组（不存在 → 行级 failed）" }
+        # 账号配置面（body 级——作用于本次**新建**账号；已存在行的凭据更新不改配置，
+        # 与 max_concurrency 同款"仅创建生效"语义）。缺省 = 创建默认。
+        enabled: { type: boolean, description: "可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）" }
+        cache_domain: { type: string, description: "可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）" }
+        upstream_cost_multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）" }
     ImportFailedItem:
       type: object
       required: [index, error]

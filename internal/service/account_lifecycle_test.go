@@ -59,7 +59,7 @@ func TestCodexImport(t *testing.T) {
 	require.NoError(t, err)
 	// import oauth
 	items := []domain.CodexOAuthImportItem{{CodexEmail: "a@example.com", CodexAccountID: "acc1", CodexOAuthToken: "tok", CodexOAuthRefreshToken: "rt"}}
-	res, err := svc.ImportCodexOAuthAccounts(context.Background(), items, &tplOauth.ID, nil)
+	res, err := svc.ImportCodexOAuthAccounts(context.Background(), items, &tplOauth.ID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
 }
