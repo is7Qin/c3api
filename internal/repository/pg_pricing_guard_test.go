@@ -103,7 +103,7 @@ func TestDeletePriceEntryCascadeManual_PG(t *testing.T) {
 	require.Empty(t, vars, "variants must be cascade-deleted with manual entry")
 }
 
-// TestVariantImageOverridesRoundTrip_PG verifies F-B: image-mode entry +
+// TestVariantImageOverridesRoundTrip_PG verifies image-mode entry +
 // img overrides round-trip via ReplaceBatch + ListByModel.
 func TestVariantImageOverridesRoundTrip_PG(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -132,7 +132,7 @@ func TestVariantImageOverridesRoundTrip_PG(t *testing.T) {
 	require.Equal(t, perImg, *rp.PricePerImage)
 }
 
-// TestCodexSearchSeed_Idempotent_PG verifies F-A: seed is idempotent and source=manual.
+// TestCodexSearchSeed_Idempotent_PG verifies seed is idempotent and source=manual.
 func TestCodexSearchSeed_Idempotent_PG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
