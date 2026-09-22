@@ -397,7 +397,10 @@ type Account struct {
 	// 只动 C，不得作废在途判断。
 	IdentityRevision int64
 	// UpstreamCostMultiplierBp 采购成本倍率（basis points：10000 = 1.0x；0 = 免费）。
-	UpstreamCostMultiplierBp int
+	// 指针即**写入意图**（与 AccountPatch 同款存在性语义）：nil = 未显式提供 →
+	// 落存储默认 ×1（10000）；非 nil = 精确落值——含 0（免费），0 与"未提供"必须
+	// 可区分。从存储读回的账号恒非 nil（列为 NOT NULL + 默认），读取走 MultBp。
+	UpstreamCostMultiplierBp *int
 	CacheDomain              *string
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
@@ -411,6 +414,19 @@ type Account struct {
 	// 同款快照合并先例，sdk-wiring 定死路线；此后 codex 路由按 Ext
 	// 派生 AccountCredential）。其余路径（管理面账号 CRUD 等）无 ext 边 → nil。
 	Ext *AccountExt
+}
+
+// MultBp 账号采购成本倍率的**读**形态（basis points）：nil（未显式提供）→ 存储
+// 默认 ×1；从存储读回的账号恒非 nil，nil 只出现在尚未落库的构造值上。
+//
+// 刻意做成入参形态而非 *Account 方法：调度器的静态读闭包门按 AST 选择子枚举读路径
+// （$S.acc.UpstreamCostMultiplierBp 必须落在 planKey 的字段上），方法调用会把该读
+// 路径从门里抹掉，等于让键漏掉一个真实决策输入。
+func MultBp(v *int) int {
+	if v == nil {
+		return 10000
+	}
+	return *v
 }
 
 // TemplateExt 模板类型化扩展配置（template_ext 子表，1:1）：credential_type

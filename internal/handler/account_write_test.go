@@ -235,7 +235,7 @@ func TestAccountCreateDefaults(t *testing.T) {
 	acc, err := createDefaultAccount(svc)
 	require.NoError(t, err)
 	require.True(t, acc.Enabled, "enabled=true")
-	require.Equal(t, 10000, acc.UpstreamCostMultiplierBp, "upstream_cost_multiplier=1 → 10000bp")
+	require.Equal(t, 10000, domain.MultBp(acc.UpstreamCostMultiplierBp), "upstream_cost_multiplier=1 → 10000bp")
 	require.Nil(t, acc.CacheDomain, "cache_domain=NULL")
 	require.Nil(t, acc.BaseURL, "base_url=NULL")
 	require.Equal(t, 7, acc.MaxConcurrency, "max_concurrency = 注入默认")

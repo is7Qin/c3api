@@ -15,7 +15,7 @@ func ownershipFixture(t *testing.T) *Scheduler {
 	t.Helper()
 	t1 := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o", "other-model"})
 	a1 := acc(1, t1, 100000)
-	a1.UpstreamCostMultiplierBp = 12000
+	a1.UpstreamCostMultiplierBp = intPtr(12000)
 	t2 := tpl(2, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	a2 := acc(2, t2, 100000)
 	a2.BaseURL = strPtr("https://override/v1")
@@ -24,13 +24,13 @@ func ownershipFixture(t *testing.T) *Scheduler {
 	// 本行原本设 LifecycleRevision，在 改名后已与 f.revision 脱钩——留着
 	// 只会让「代际流动」这条断言退化为对 0 的比较。
 	a2.IdentityRevision = 2
-	a2.UpstreamCostMultiplierBp = 8000
+	a2.UpstreamCostMultiplierBp = intPtr(8000)
 	t3 := tpl(3, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	t3.ModelMapping = domain.ModelMapping{
 		"gpt-4o": {MappedModel: "upstream-gpt-4o", Mode: domain.ModelMappingModeExplicit},
 	}
 	a3 := acc(3, t3, 100000)
-	a3.UpstreamCostMultiplierBp = 15000
+	a3.UpstreamCostMultiplierBp = intPtr(15000)
 	return newTestScheduler(t, []*domain.Account{a1, a2, a3})
 }
 
@@ -83,7 +83,7 @@ func TestCompiledCandidateOwnershipDoesNotCrossRoutesOrStaticRoots(t *testing.T)
 		require.Equal(t, id, f.accountID)
 		require.Equal(t, st.acc.TemplateID, f.templateID)
 		require.Equal(t, st.acc.IdentityRevision, f.revision)
-		require.Equal(t, st.acc.UpstreamCostMultiplierBp, f.upstreamCostMultiplierBp)
+		require.Equal(t, domain.MultBp(st.acc.UpstreamCostMultiplierBp), f.upstreamCostMultiplierBp)
 		wantBase := st.tpl.BaseURL
 		if st.acc.BaseURL != nil && *st.acc.BaseURL != "" {
 			wantBase = *st.acc.BaseURL

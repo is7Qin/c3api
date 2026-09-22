@@ -130,7 +130,7 @@ func planKeyOf(av *snapshotStatic) planKey {
 	k.maxConcurrency = av.acc.MaxConcurrency
 	k.enabled = av.acc.Enabled
 	k.cacheDomain = normalizeCacheDomain(av.acc.CacheDomain)
-	k.upstreamCostMultiplierBp = av.acc.UpstreamCostMultiplierBp
+	k.upstreamCostMultiplierBp = domain.MultBp(av.acc.UpstreamCostMultiplierBp)
 	k.identityRevision = av.acc.IdentityRevision
 	if ext := av.acc.Ext; ext != nil {
 		k.codexAccountID = derefString(ext.CodexAccountID)

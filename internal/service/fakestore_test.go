@@ -583,7 +583,8 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 			a.Enabled = *p.Enabled
 		}
 		if p.UpstreamCostMultiplierBp != nil {
-			a.UpstreamCostMultiplierBp = *p.UpstreamCostMultiplierBp
+			v := *p.UpstreamCostMultiplierBp
+			a.UpstreamCostMultiplierBp = &v
 		}
 		if p.CacheDomain != nil {
 			if *p.CacheDomain == "" {
@@ -620,7 +621,7 @@ func accountFieldValues(a *domain.Account) repository.AccountFieldValues {
 		MaxConcurrency:           a.MaxConcurrency,
 		Enabled:                  a.Enabled,
 		CacheDomain:              a.CacheDomain,
-		UpstreamCostMultiplierBp: a.UpstreamCostMultiplierBp,
+		UpstreamCostMultiplierBp: domain.MultBp(a.UpstreamCostMultiplierBp),
 	}
 }
 

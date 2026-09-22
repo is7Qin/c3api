@@ -20,9 +20,35 @@ func TestPGAccountCostDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), a.LifecycleRevision, "revision starts at 1")
 	require.True(t, a.Enabled, "enabled defaults true")
-	require.Equal(t, 10000, a.UpstreamCostMultiplierBp, "multiplier defaults 10000")
+	require.Equal(t, 10000, domain.MultBp(a.UpstreamCostMultiplierBp), "multiplier defaults 10000")
 	require.Nil(t, a.CacheDomain, "cache_domain defaults nil")
 	require.Nil(t, a.FailureSource)
+}
+
+// TestPGAccountCostCreateExplicitZero 创建即落 ×0（免费）：0 是**合法值**，必须与
+// "未提供"可区分——写入意图走指针存在性（nil 才落存储默认 ×1），非 nil 精确落值。
+func TestPGAccountCostCreateExplicitZero(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+
+	free, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
+		Name: "cost-free", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8,
+		Enabled: true, UpstreamCostMultiplierBp: intPtr(0),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, domain.MultBp(free.UpstreamCostMultiplierBp), "显式 ×0（免费）不得被存储默认吞掉")
+
+	got, err := repos.Accounts.GetAccount(ctx, free.ID)
+	require.NoError(t, err)
+	require.Equal(t, 0, domain.MultBp(got.UpstreamCostMultiplierBp), "回读仍为 0")
+
+	// 未提供 → 存储默认 ×1（与显式 ×0 结果可区分）。
+	def, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
+		Name: "cost-unset", TemplateID: tpl.ID, UpstreamKey: "sk-y", MaxConcurrency: 8, Enabled: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 10000, domain.MultBp(def.UpstreamCostMultiplierBp), "未提供 → 存储默认 ×1")
 }
 
 func TestPGGetAccountLoadsTemplateForLifecycleFencing(t *testing.T) {
@@ -51,21 +77,21 @@ func TestPGAccountCostValidation(t *testing.T) {
 	require.NoError(t, err)
 	got, err := repos.Accounts.GetAccount(ctx, a.ID)
 	require.NoError(t, err)
-	require.Equal(t, 0, got.UpstreamCostMultiplierBp)
+	require.Equal(t, 0, domain.MultBp(got.UpstreamCostMultiplierBp))
 	require.Equal(t, int64(2), got.LifecycleRevision)
 
 	tenK := 10000
 	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{got.ID}, repository.AccountPatch{UpstreamCostMultiplierBp: &tenK})
 	require.NoError(t, err)
 	got2, _ := repos.Accounts.GetAccount(ctx, got.ID)
-	require.Equal(t, 10000, got2.UpstreamCostMultiplierBp)
+	require.Equal(t, 10000, domain.MultBp(got2.UpstreamCostMultiplierBp))
 	require.Equal(t, int64(3), got2.LifecycleRevision)
 
 	fiftyK := 50000
 	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{got2.ID}, repository.AccountPatch{UpstreamCostMultiplierBp: &fiftyK})
 	require.NoError(t, err)
 	got3, _ := repos.Accounts.GetAccount(ctx, got2.ID)
-	require.Equal(t, 50000, got3.UpstreamCostMultiplierBp)
+	require.Equal(t, 50000, domain.MultBp(got3.UpstreamCostMultiplierBp))
 }
 
 func TestPGAccountCacheDomain(t *testing.T) {
@@ -188,7 +214,7 @@ func TestPGAccountBatchAndImport(t *testing.T) {
 		got, err := repos.Accounts.GetAccount(ctx, id)
 		require.NoError(t, err)
 		require.False(t, got.Enabled)
-		require.Equal(t, 25000, got.UpstreamCostMultiplierBp)
+		require.Equal(t, 25000, domain.MultBp(got.UpstreamCostMultiplierBp))
 		require.NotNil(t, got.CacheDomain)
 		require.Equal(t, domainStr, *got.CacheDomain)
 		// 配置类字段（enabled / 倍率 / 缓存域）变更**不**推进 K：它们换的是配置
@@ -228,11 +254,11 @@ func TestPGCreateAccountWithDomainStaysEnabled(t *testing.T) {
 	require.NotNil(t, got.CacheDomain)
 	require.Equal(t, dom, *got.CacheDomain)
 
-	costly, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, UpstreamCostMultiplierBp: 25000, Enabled: true})
+	costly, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, UpstreamCostMultiplierBp: intPtr(25000), Enabled: true})
 	require.NoError(t, err)
 	require.True(t, costly.Enabled, "创建即带采购倍率必须默认启用（回显）")
 	gotCost, err := repos.Accounts.GetAccount(ctx, costly.ID)
 	require.NoError(t, err)
 	require.True(t, gotCost.Enabled, "创建即带采购倍率必须默认启用（落库）")
-	require.Equal(t, 25000, gotCost.UpstreamCostMultiplierBp)
+	require.Equal(t, 25000, domain.MultBp(gotCost.UpstreamCostMultiplierBp))
 }

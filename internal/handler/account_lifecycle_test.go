@@ -42,7 +42,7 @@ func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, *hProber, fun
 	store.accs[1] = &domain.Account{
 		ID: 1, Name: "acc1", TemplateID: 1, UpstreamKey: "sk-a",
 		MaxConcurrency: 4, Enabled: true, FailedAt: &failed, FailureSource: &src,
-		LastError: &reason, LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: 25000, CacheDomain: &dom,
+		LastError: &reason, LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: intPtr(25000), CacheDomain: &dom,
 	}
 	prober := &hProber{}
 	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil,
@@ -141,7 +141,7 @@ func TestAccountPatchCostMultiplier(t *testing.T) {
 
 	rec := do(http.MethodPatch, "/api/admin/accounts/1", `{"upstream_cost_multiplier":1.5}`)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	require.Equal(t, 15000, store.accs[1].UpstreamCostMultiplierBp, "1.5 → 15000bp")
+	require.Equal(t, 15000, domain.MultBp(store.accs[1].UpstreamCostMultiplierBp), "1.5 → 15000bp")
 	var acc Account
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
 	require.InDelta(t, 1.5, *acc.UpstreamCostMultiplier, 1e-9)
@@ -200,7 +200,7 @@ func TestAccountPatchLeavesUnmentionedFieldsUntouched(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Equal(t, "renamed", store.accs[1].Name)
 	require.True(t, store.accs[1].Enabled, "未提及 enabled → 保持")
-	require.Equal(t, 25000, store.accs[1].UpstreamCostMultiplierBp, "未提及倍率 → 保持")
+	require.Equal(t, 25000, domain.MultBp(store.accs[1].UpstreamCostMultiplierBp), "未提及倍率 → 保持")
 	require.NotNil(t, store.accs[1].CacheDomain)
 	require.Equal(t, "shared.example.com", *store.accs[1].CacheDomain, "未提及缓存域 → 保持")
 }

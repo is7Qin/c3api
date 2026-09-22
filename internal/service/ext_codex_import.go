@@ -199,12 +199,14 @@ func codexImportEnabled(cfg domain.CodexImportConfig) bool {
 	return true
 }
 
-// codexImportMultiplierBp 新建账号采购成本倍率（万分数）：缺省 ×1（10000）。
-func codexImportMultiplierBp(cfg domain.CodexImportConfig) int {
+// codexImportMultiplierBp 新建账号采购成本倍率（万分数）：缺省 ×1（10000）；
+// 提供则精确落值——含 0（免费，与"未提供"可区分）。
+func codexImportMultiplierBp(cfg domain.CodexImportConfig) *int {
 	if cfg.UpstreamCostMultiplierBp != nil {
-		return *cfg.UpstreamCostMultiplierBp
+		return cfg.UpstreamCostMultiplierBp
 	}
-	return 10000
+	v := 10000
+	return &v
 }
 
 // codexImportCacheDomain 新建账号共享缓存域：缺省/空串 = 账号私有域（nil）。

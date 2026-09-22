@@ -110,7 +110,7 @@ func deriveCompilerAccountFacts(account *accountSnapshot, st *snapshotStatic) co
 	}
 	f.identityFingerprint = candidateIdentityFingerprint(f.fingerprint, f.accountID)
 	f.planKey = planKeyOf(st)
-	f.upstreamCostMultiplierBp = st.acc.UpstreamCostMultiplierBp
+	f.upstreamCostMultiplierBp = domain.MultBp(st.acc.UpstreamCostMultiplierBp)
 	return f
 }
 

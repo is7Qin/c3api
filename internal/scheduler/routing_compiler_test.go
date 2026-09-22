@@ -15,7 +15,7 @@ import (
 func accWithEnabled(id int64, tpl *domain.Template, enabled bool, mult int) *domain.Account {
 	a := acc(id, tpl, 10)
 	a.Enabled = enabled
-	a.UpstreamCostMultiplierBp = mult
+	a.UpstreamCostMultiplierBp = intPtr(mult)
 	a.LifecycleRevision = 1
 	return a
 }

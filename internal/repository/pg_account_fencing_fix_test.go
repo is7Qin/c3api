@@ -55,7 +55,7 @@ func TestAdminFencingCostRevision(t *testing.T) {
 	require.NoError(t, err)
 	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(2), after.LifecycleRevision)
-	require.Equal(t, 0, after.UpstreamCostMultiplierBp)
+	require.Equal(t, 0, domain.MultBp(after.UpstreamCostMultiplierBp))
 }
 
 // TestAdminFencingCacheRevision similar

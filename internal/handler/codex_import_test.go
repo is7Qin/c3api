@@ -133,7 +133,7 @@ func TestPostAccountsBatchImportCodexConfig(t *testing.T) {
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
 		require.False(t, acc.Enabled, "enabled=false 落库")
-		require.Equal(t, 25000, acc.UpstreamCostMultiplierBp, "2.5 → 25000 bp")
+		require.Equal(t, 25000, domain.MultBp(acc.UpstreamCostMultiplierBp), "2.5 → 25000 bp")
 		require.NotNil(t, acc.CacheDomain)
 		require.Equal(t, "shared.example.com", *acc.CacheDomain)
 	})
