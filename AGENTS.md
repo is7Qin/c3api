@@ -54,7 +54,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 | `Factory` / `rawPostCT` | struct/method | pkg/aiclient/aiclient.go | 模板级客户端缓存+URL 缓存；HTTP 面走 `RelayHeaders`（default-allow + `relayDeny`） |
 | `Relay`/`InferEventName` | func | pkg/sserelay/relay.go | 池化 SSE 中继；inLine 续片状态机 |
 | `Codex` | struct | internal/sdkbridge/codex.go:27 | codex SDK 适配：账号级缓存+fatal 回调+轮换 |
-| `DeductOnlyAndMark` / `markBilledExec` | method/func | internal/repository/billing_repo.go:80 / billing_cursor.go:178 | FEFO 扣减+billed 标记同事务原子；标记行数守卫堵锁丢失双扣 |
+| `SettleBalanceBatch` / `SettleFefoBatch` | method | internal/repository/billing_settle.go:60/:67 | 双车道语句化结算：扣减+billed 标记同事务原子（每窗口一次往返）；`runSettleStmt` 的 marked==batch 比对守卫 → `errConcurrentMark` 堵锁丢失双扣 |
 
 ## CONVENTIONS
 
@@ -78,7 +78,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 8. 复用缓冲切片跨帧/跨回调保留——scanner/relay 缓冲仅回调期内有效（relay.go:23、codex.go:232）
 9. 测试 time.Sleep 掩盖竞态——用屏障/watchdog；CI 无 -race，别赌
 10. 手改生成物：`internal/ent/**`、`handler/*/api.gen.go`、`web/src/lib/api/schema.d.ts`
-11. 破坏 usage_logs 单写点——INSERT 仅 usage flusher InsertBatch（billing worker 只 UPDATE 标记）；billed 出生定态仅 routeLog 一处判定（forward.go:420-423）；扣费标记必经 markBilledExec 守卫，绕开=丢并发双扣防御（billing_cursor.go:178）
+11. 破坏 usage_logs 单写点——INSERT 仅 usage flusher InsertBatch（billing worker 只 UPDATE 标记）；billed 出生定态仅 routeLog 一处判定（forward.go:420-425）；扣费标记必经结算语句的 marked==batch 比对守卫（`errConcurrentMark`，billing_settle.go:174-188），绕开=丢并发双扣防御
 
 ## COMMANDS
 

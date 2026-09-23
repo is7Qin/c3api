@@ -4,11 +4,10 @@
 
 package repository_test
 
-// 两车道并集 vs 总账守恒 harness（spec-f2opt-settlement 改写，替代 legacy
-// DeductOnlyAndMark 双载体等价族）：混合种群（temp-active FEFO 多行 + 余额-only
-// 条件扣 + 透支补刀 + 幽灵用户 + 匿名行 + 零价吸收）经三车道排空后——
-// Σdrawn(temp) + Σ|Δbalance| + Σ隔离行 cost == Σbilled cost 精确容差 0；每行恰
-// 标记一次；od 列按用户整组对齐。双载体（pool → pgx 直连 / nil pool → ent
+// 两车道并集 vs 总账守恒 harness（spec-f2opt-settlement）：混合种群（temp-active
+// FEFO 多行 + 余额-only 条件扣 + 透支补刀 + 幽灵用户 + 匿名行 + 零价吸收）经三车道
+// 排空后——Σdrawn(temp) + Σ|Δbalance| + Σ隔离行 cost == Σbilled cost 精确容差 0；
+// 每行恰标记一次；od 列按用户整组对齐。双载体（pool → pgx 直连 / nil pool → ent
 // txDriver）各跑一遍终态逐字段一致，防载体行为漂移。
 
 import (

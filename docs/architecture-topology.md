@@ -205,12 +205,12 @@ pkg 职责边界：
 | **usage_stats** | usagestat.go | 分组×模型小时桶聚合（**分区表**） |
 | **usage_entity_stats** | usageentitystat.go | 实体（account/user/key）×模型小时桶卷积（**分区表**；服务 `/stats/entity-trend` 与 `/stats/top`） |
 
-另：`accounts`↔`groups` 多对多隐式 join 表 `account_groups`（`internal/ent/account/account.go:67`）。**价格表三件套（pricings + image_prices + function_prices）已被 `price_entries` + `price_variants` 双表取代**。
+另：`accounts`↔`groups` 多对多隐式 join 表 `account_groups`（`internal/ent/account/account.go:67`）。价格面为 `price_entries`（每模型一行，`mode` 声明主计费方式）+ `price_variants`（条件变体，seq 升序首中即停）双表。
 
 **四表分区**（`internal/repository/partition.go`，单一实现四表共用）：
 - 分区键：usage_logs/err_logs = `created_at`；usage_stats/usage_entity_stats = `bucket_time`（小时桶 24 桶/日分区）。主键 `(id, 分区键)`（分区表硬约束），id 走专用序列 `{table}_id_seq`，DROP TABLE 级联回收（`internal/repository/partition.go:83-91` `partitionCol`）。
 - 保留期：usage_logs **30 天**、err_logs **7 天**（错误审计短保留）、usage_stats / usage_entity_stats **180 天**（聚合长保留，两表共用 `StatsRetentionDays`）——**全部 DROP 分区 O(1)**（PG DELETE 不释放空间，用户裁决），retention worker 每小时巡检按名 DROP + 预建当日/明日分区。
-- ent migrate 跳过分区表（`migrateHookExcludesPartitioned` `internal/repository/partition.go:660-676`——atlas 对分区表 diff 规划期必失败，真实 PG 实测结论）；表 DDL/索引由 bootstrap 独占管理（`ensureTablePartitioned` 族 `partition.go:469-503,566-571`：未分区 → DROP 重建表/序列/OWNED BY/索引，已分区 → 仅补当日/明日分区；幂等 + 42P07/42710/23505/42P01 容忍多实例并发）；**align 补列机制已删（2026-08-15）**——无补列路径，存量库兼容面整体消灭（全表从零创建，多实例并发 bootstrap 竞态由 `isBootstrapRaceError` `partition.go:404-416` 容忍）。
+- ent migrate 跳过分区表（`migrateHookExcludesPartitioned` `internal/repository/partition.go:660-676`——atlas 对分区表 diff 规划期必失败，真实 PG 实测结论）；表 DDL/索引由 bootstrap 独占管理（`ensureTablePartitioned` 族 `partition.go:469-503,566-571`：未分区 → DROP 重建表/序列/OWNED BY/索引，已分区 → 仅补当日/明日分区；幂等 + 42P07/42710/23505/42P01 容忍多实例并发）；**无补列路径**——表恒从零创建，schema 变更即全新建库（多实例并发 bootstrap 竞态由 `isBootstrapRaceError` `partition.go:404-416` 容忍）。
 - 关键索引（`internal/repository/partition.go:158-173`）：usage_logs `(created_at)` + `(group_id/account_id/user_id/key_id, created_at)` + **`usagelog_request_id_created_at` 唯一索引**（幂等键）+ **`usagelog_unbilled_id` 部分索引**（`WHERE NOT billed`——结算游标取批）；err_logs `(created_at)` + `(group_id/user_id, created_at)`；usage_stats 唯一索引 `(bucket_time, group_id, model)`（Upsert 冲突目标）；usage_entity_stats 唯一索引 `(bucket_time, entity_type, entity_id, model)` + 覆盖索引 `(entity_type, entity_id, bucket_time)`。
 - **stats_agg_watermark 辅助表**（`partition.go:481-491` DDL + `EnsureUsageStatsPartitioned` 内建）：单行 watermark（`CHECK (id = 1)`）——stats-agg worker 每周期读聚合位置、推进与 DELETE+INSERT 同事务。
 
@@ -257,7 +257,7 @@ pkg 职责边界：
 | worker | Name | 类型 | 节奏/背压 | 排空/停机语义 |
 |---|---|---|---|---|
 | billing.Flusher | "billing"（`internal/billing/flusher.go`） | ticker 账本游标消费 | `flush_interval`（250ms）+ `balance_refresh_interval`（10s）；会话级 advisory lock 互斥取批，Balance/FEFO 双车道语句化结算 + 零价标记，无内存 pending 队列 | Close：等在途周期（flushMu）→ 预算内持续消费至游标清空；超时 Cancel baseCtx，未结算行留在 DB 供下次启动续传 |
-| usage.Recorder | "usage"（`internal/usage/usage.go`） | 双 loop（`logWriterLoop` :193 + `quotaFlushLoop` :435） | `flush_interval` 500ms / `quota_flush_interval` 10s（**统计桶机制整体删除**，离线聚合化）；swap 换批 + 按 userID 取模分片 N worker；毒丸行止损 **poisonBisect 二分隔离**（隔离行回灌不丢）；flushLogs 与 flushQuota 共用 flushMu | 同 Flusher 模式：等在途 → 预算排空 → 截断 Warn（`Close` :525） |
+| usage.Recorder | "usage"（`internal/usage/usage.go`） | 双 loop（`logWriterLoop` :193 + `quotaFlushLoop` :435） | `flush_interval` 500ms / `quota_flush_interval` 10s（统计面为**离线聚合**：stats-agg worker 每周期从明细重算落盘）；swap 换批 + 按 userID 取模分片 N worker；毒丸行止损 **poisonBisect 二分隔离**（隔离行回灌不丢）；flushLogs 与 flushQuota 共用 flushMu | 同 Flusher 模式：等在途 → 预算排空 → 截断 Warn（`Close` :525） |
 | usage.StatsAggWorker | "stats-agg"（`internal/usage/stats_agg.go:141`，`Start` :145） | ticker | 每周期单事务 DELETE+INSERT+watermark 重建 usage_stats（:47,152）；advisory lock 防多实例并发；`stats_agg_interval` 默认 5m、0=禁用 | 无资源需排空，Close nil（禁用/正常均安全） |
 | usage.ErrLogWorker | "errlog"（`internal/usage/errlog.go:105`） | 双队列 + ticker | 有界队列（reject 4096 / exempt 1024）+ select-default 非阻塞投递（满→丢弃计数，`internal/usage/errlog.go:147,161`）；豁免队列恒落盘；单批 500 行 / 500ms，单批超时 5s 失败即丢弃（`errlog.go:47-49,58,184-190`） | Close：置位 closed（无尾窗口静默丢）→ 等 loop → 预算内排空，超时截断并入丢弃计数（`internal/usage/errlog.go:236-287`） |
 | usage.RetentionWorker | "retention"（`internal/usage/retention.go:65`） | ticker 1h | 三表独立 cutoff 各自 DROP + 预建当日/明日；逐表错误隔离（`internal/usage/retention.go:97-148`）；**另含 redemption_uses 90 天 TTL 有界批删**（≤5000 行/轮，普通表无分区可 DROP，`retention.go:32,38,56-58,172` + `partition.go:547`）；启动即巡检 runOnce（:105）；观测面 lastPatrol/lastDrop*（:73-80） | 无排空需求（DROP/预建/批删均幂等），Close 直接 nil（`internal/usage/retention.go:199`） |
@@ -273,7 +273,7 @@ pkg 职责边界：
 | cmd/server.authSync | "auth-sync"（`cmd/server/auth_sync.go:38`） | ticker 60s | 周期全量 Reload auth 快照（NOTIFY 丢失兜底，`auth_sync.go:13-16`）；**per-attempt 30s 超时**（:26,80-84，DB 挂起不卡死循环）+ **托管 goroutine**（:57,70，panic 不崩进程）+ 观测面 running/lastReload/failures/lastFailure（:44-48，失败不前移 lastReload :93） | Close nil（循环随 ctx 退出，`auth_sync.go:64`） |
 | rule.RuleEngine | "rule-engine"（`internal/rule/worker.go:15`） | 事件队列 | 有界 channel 满则丢弃（dropped 计数 + **阈值告警边沿回落**——每风暴恰好一次，`worker.go:103-122`；resetDropWarnIfDrained :71-75） | Flush 同步排空（测试/优雅关闭用，`worker.go:52-64`） |
 
-**usage.flush_workers 分片语义**（`config.example.toml` + `cmd/server/main.go`）：`flush_workers=8`——usage 批内按 userID 取模分片，**同 key 恒同桶**（分片确定性）；分片并行非常驻 goroutine（每批新建，wg.Wait 收尾），**不是**常驻 worker。billing 已改为三车道语句化结算，不再有 worker 数配置。
+**usage.flush_workers 分片语义**（`config.example.toml` + `cmd/server/main.go`）：`flush_workers=8`——usage 批内按 userID 取模分片，**同 key 恒同桶**（分片确定性）；分片并行非常驻 goroutine（每批新建，wg.Wait 收尾），**不是**常驻 worker。billing 走三车道语句化结算，无 worker 数配置。
 
 ## 9. 事件流（main 现状链）
 
@@ -302,10 +302,10 @@ flowchart LR
 
 ## 10. 多实例一致性
 
-- **并发扣费（v2 三车道结算）**（`internal/repository/billing_settle.go` + `billing_cursor.go`）：扣减与标记由**结算语句一体完成**（每窗口一次往返）——`SettleBalanceBatch`（Balance 车道：余额-only 用户，batch 谓词 NOT-IN temp-active）与 `SettleFefoBatch`（Temp 车道：temp-active 用户，集合化 FEFO + 差额透支补刀 + 标记一体，谓词 IN temp-active）。两车道 batch 谓词**互斥** → 同用户同周期不跨车道；车道间在会话锁内**顺序**执行（跨道并行即成环），车道内 **K 桶并行**。结算失败按 lane/bucket 独立闭合：失败桶本周期跳过、下周期重放（at-least-once，行保持 unbilled）。全毫分直接扣减（1 USD = 100,000 毫分，零换算零取整）。游标取批/纯标记/lag/会话锁见 `billing_cursor.go`（`FetchUnbilledBatch` / `MarkBilledBulk` / `UnbilledLag` / `AcquireBillingLock`）。**legacy 逐组扣减面（`DeductAndLog` / `deductOnlyCore` / chunk 合并事务）已整体退役**；`usage_logs` 明细的唯一写者仍是 usage flusher（`InsertBatch`），billing 只标记/消费、不插日志。
+- **并发扣费（v2 三车道结算）**（`internal/repository/billing_settle.go` + `billing_cursor.go`）：扣减与标记由**结算语句一体完成**（每窗口一次往返）——`SettleBalanceBatch`（Balance 车道：余额-only 用户，batch 谓词 NOT-IN temp-active）与 `SettleFefoBatch`（Temp 车道：temp-active 用户，集合化 FEFO + 差额透支补刀 + 标记一体，谓词 IN temp-active）。两车道 batch 谓词**互斥** → 同用户同周期不跨车道；车道间在会话锁内**顺序**执行（跨道并行即成环），车道内 **K 桶并行**。结算失败按 lane/bucket 独立闭合：失败桶本周期跳过、下周期重放（at-least-once，行保持 unbilled）。全毫分直接扣减（1 USD = 100,000 毫分，零换算零取整）。游标取批/纯标记/lag/会话锁见 `billing_cursor.go`（`FetchUnbilledBatch` / `MarkBilledBulk` / `UnbilledLag` / `AcquireBillingLock`）。`usage_logs` 明细的唯一写者仍是 usage flusher（`InsertBatch`），billing 只标记/消费、不插日志。
 - **多实例取批互斥**：`AcquireBillingLock` 会话级 advisory lock 是**唯一防线**——整周期（含全部车道结算事务 COMMIT）后解锁释放。行锁仲裁跨实例天然串行（`docs/superpowers/plans/2026-08-10-multi-instance-design.md` §1 表）。
 - **NOTIFY 跨实例**（§9 全链）：实例 ID = **hostname-pid-nonce**（crypto/rand 6B 随机，`cmd/server/main.go` 装配 + `instanceSrc`）——修复：容器化多实例同 hostname、pid namespace 各自 pid 1 → 纯 hostname-pid 互相碰撞 → 互把对方 NOTIFY 当自播跳过 → 失效静默全灭；自播判等 = 全串相等 `ch.Src == l.cfg.Src`（`internal/notify/listener.go` 注释）。**同一 `instanceSrc` 也是 discovery 心跳与 concSync 的 self 标识**（不自造第二套 ID）。
-- **额度预算分摊**（`internal/proxy/gate.go:434-447` `allocBudget`）：`budget = consumed + ceil(remaining_eff/N)`，**N = Redis 心跳活体实例数**——`internal/discovery` 实现 `InstancesProvider.ClusterInstances()`，gate 与 scheduler 在**每次预算分配时现读** provider，心跳计数变化 ≤1 tick 天然生效，**无需任何 reload 触发**。**`cluster.instances` DB 设置已删**——config 文件可漂移，心跳才是唯一共识源。并发份额（`concShare`）同源同 N（gate.go:282,291）。
+- **额度预算分摊**（`internal/proxy/gate.go:434-447` `allocBudget`）：`budget = consumed + ceil(remaining_eff/N)`，**N = Redis 心跳活体实例数**——`internal/discovery` 实现 `InstancesProvider.ClusterInstances()`，gate 与 scheduler 在**每次预算分配时现读** provider，心跳计数变化 ≤1 tick 天然生效，**无需任何 reload 触发**。N **不是配置项**（config 文件可漂移，Redis 心跳是唯一共识源）。并发份额（`concShare`）同源同 N（gate.go:282,291）。
 - **分区 DROP 幂等**（`internal/repository/partition.go:404-416`）：IF NOT EXISTS / IF EXISTS + 撞名 42P07/42710/23505（`isDuplicateObject`）+ **42P01 stale-DROP 窗口**（`isMissingObject`、`isBootstrapRaceError`——并发实例基于过期"未分区"判定 DROP 误删对方刚建表，由最后执行 DROP 的实例补建收敛，已接受）；retention DROP 需 ACCESS EXCLUSIVE 锁与在途插入串行（`internal/usage/retention.go` 注记）。
 - **失效分发兜底面**：auth-sync 60s 兜底 + per-attempt 30s 超时 + 托管 goroutine（`cmd/server/auth_sync.go`）；规则重载 Background ctx 不随请求取消（`internal/invalidate/invalidate.go`）。
 - **已知接受的竞态**（`docs/superpowers/plans/2026-08-10-multi-instance-design.md` §R2）：NOTIFY 重复投递 → mark 幂等合并；`UpdateAccountStatus` 并发 → last-writer-wins；stats Upsert 同桶累加精确；规则种子双写 → 唯一约束幂等；pricing sync 每实例独立 cron 重复 fetch（v1 接受）。
@@ -346,7 +346,7 @@ flowchart LR
 
 - **智能路由无独立配置段**（`config.example.toml:56-59` 注释）：Primary/Explore/Degraded 分层、探索比例、成本序、事故判定全部由后台 RoutingCompiler 从持久质量统计 + 采购倍率 + 运行时健康派生，**无固定全局 SLO 阈值可配**；可调项在账号与规则面。
 - 必填校验（`internal/config/config.go:222-305` validate）：**必填字符串** = `auth.jwt_secret` / `db.dsn` / `redis.addr`（空 → fatal）；**占位值精确匹配拒绝** = `admin.token` / `auth.jwt_secret` / `redis.password`（change-me / change-me-too / dev-admin-token / dev-jwt-secret-for-local）——**`admin.token` 本身可空**（空 = 只走 JWT）。duration 除 `stats_agg_interval`（0 = 禁用）外均须 ≥ 1ms；int 下限 1（scheduler.default_max_concurrency / db.max_conns / proxy.failover_attempts / proxy.max_body_size）；failover_attempts 上限 8。
-- 分区/保留/倍率等策略参数在 **DB settings 表**而非 config（`internal/domain/settings.go:13-45`）：signup 默认资源、price_source_url/price_sync_cron、service_tier_policy_*、mail.* 族、balance_warning.enabled。**`cluster.instances` 已删**——实例数 N 改由 Redis 心跳活体数提供（§10）。
+- 分区/保留/倍率等策略参数在 **DB settings 表**而非 config（`internal/domain/settings.go:13-45`）：signup 默认资源、price_source_url/price_sync_cron、service_tier_policy_*、mail.* 族、balance_warning.enabled。实例数 N **不在** settings——由 Redis 心跳活体数提供（§10）。
 
 ## 13. 架构决策记录（ADR）
 
@@ -359,11 +359,11 @@ flowchart LR
 5. **双队列豁免采样**——err_logs 按来源（provenance）分队列：豁免队列（abort/failover 已计费错误）恒落盘，普通队列（401/429/402/400/404 拒绝）风暴采样丢弃。为什么：不可按 error_type 推断来源（Err429/ErrBilling/ErrAuth 在拒绝类与双轨类同时出现）；已计费错误审计价值最高。来源：`internal/usage/errlog.go:10-16` + `docs/superpowers/plans/2026-08-11-errlog-task.md:10,14`。
 6. **快照注册表边界（已合并）**——注册表不接管模块周期 ticker、不做数据缓存、不进入请求热路径。为什么：避免双 reload 竞争与热路径锁；快照数据形态与周期刷新保持各模块自管。来源：`internal/snapshot/snapshot.go:9-19` 包注释（用户拍板 2026-08-11）。
 7. **单 worker 批量落盘（err_logs）**——无多 worker 并行必要。为什么：DB 写是瓶颈，写速率由 BatchSize/FlushInterval 钉死有界，采样兜底防积压。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:23`。
-8. **usage_logs 瘦身**——去 error_message + status_code（保留 error_type，值域收敛 none/abort）。为什么：错误排障列由 err_logs 承载（status_code integer + error_message），明细表瘦身降写放大。**2026-08-15 align 补列机制删除后无"存量库"概念**（全新建库），原"bootstrap 只加不减幂等"兼容面随之失效。来源：`internal/ent/schema/usagelog.go:33-39` + `internal/ent/schema/errlog.go:12,35`。
+8. **usage_logs 瘦身**——去 error_message + status_code（保留 error_type，值域收敛 none/abort）。为什么：错误排障列由 err_logs 承载（status_code integer + error_message），明细表瘦身降写放大。**无"存量库"概念**——schema 变更即全新建库，bootstrap 不做增量补列。来源：`internal/ent/schema/usagelog.go:33-39` + `internal/ent/schema/errlog.go:12,35`。
 9. **锁顺序一致化防死锁**——批量 upsert 批内按 model 排序 + 40P01 重试。为什么：多实例并发同批 model 取锁顺序交错 → deadlock detected（压测启动期偶发）；排序消除主因，重试兜底残余。来源：`internal/repository/price_entry_repo.go:38`（sort.SliceStable）+ `internal/repository/litellm_upsert.go:94,103`（isDeadlock / litellmExecBatchWithRetry）。
 10. **ent migrate 跳过分区表**——分区 DDL 由 bootstrap 独占管理。为什么：atlas 对分区表 diff 规划期必失败（真实 PG 实测，ent v0.14.6 + atlas v0.36.2 + PG18）。来源：`internal/repository/partition.go:660-676`。
-11. **基准后新增裁决（2026-08-14/15 批次）**——① billing 默认开启反转（2026-08-15 用户裁决）；② 使用量统计离线聚合化（2026-08-14 spec，新 worker stats-agg + stats_agg_watermark 表）；③ image_price per-million 口径破坏性变更（2026-08-14）；④ stats_flush_interval→quota_flush_interval 改名（2026-08-15，不向后兼容）；⑤ /stats + /user/stats USD 口径 + TTFT 重写（2026-08-14）；⑥ 账号级 base_url（2026-08-14）；⑦ align 补列全家删除（2026-08-15，存量库兼容面消灭，全表从零创建）。
-12. **后续批次裁决（2026-08-23 ~ 09-23）**——① **Redis 成为必需依赖**（2026-08-25 foundation spec）：实例发现心跳 + 短时验证码，**非缓存层**；实例数 N 由心跳活体数提供，`cluster.instances` DB 设置删除；② `usage_entity_stats` 分区表（2026-08-23）服务实体维度 trend/top；③ 价格表由**三件套收敛为 `price_entries` + `price_variants` 双表**；④ 计费结算改 **v2 三车道拓扑**（Balance/Temp 双车道语句化结算，legacy `DeductAndLog` 逐组扣减整体退役）；⑤ `/api/admin/stats` 拆为 `/stats/trend|top|entity-trend|ttft` 四端点；⑥ `upstream_cost_multiplier_bp` 改 `*int` 以区分**显式 ×0** 与未提供；⑦ codex 批量导入新增 body 级账号配置（`enabled`/`cache_domain`/`upstream_cost_multiplier`，仅新建行生效）；⑧ key 额度设为 `0` 同步清零 `quota_used`（`AddQuotaUsed` 加 `WHERE "quota" > 0` 守卫）。
+11. **2026-08-14/15 批次裁决**——① billing 默认开启（用户裁决）；② 使用量统计走离线聚合（stats-agg worker + stats_agg_watermark 表）；③ 价格内部统一按 per-million 毫分口径；④ 额度回写周期键为 `quota_flush_interval`；⑤ `/stats` + `/user/stats` 计费字段以 USD 下发、TTFT 指标重写；⑥ 账号级 `base_url`。
+12. **2026-08-23 ~ 09-23 批次裁决**——① **Redis 是必需依赖**：实例发现心跳 + 短时验证码，**非缓存层**；实例数 N 由心跳活体数提供；② `usage_entity_stats` 分区表承载实体维度 trend/top；③ 价格面为 `price_entries` + `price_variants` 双表；④ 计费结算为 **v2 三车道拓扑**（Balance/Temp 双车道语句化结算，扣减与标记一体）；⑤ 统计查询按形状分四个端点：`/stats/trend|top|entity-trend|ttft`；⑥ `upstream_cost_multiplier_bp` 用 `*int` 承载，以区分**显式 ×0** 与未提供；⑦ codex 批量导入支持 body 级账号配置（`enabled`/`cache_domain`/`upstream_cost_multiplier`，仅新建行生效）；⑧ key 额度设为 `0` 同步清零 `quota_used`（`AddQuotaUsed` 带 `WHERE "quota" > 0` 守卫）。
 
 ## 14. 性能基准
 
@@ -373,7 +373,7 @@ flowchart LR
   - **时效注记**：上述数字为 w3 轮历史事实，基准后另有新轮次未收录（2026-08-13）：resp HTTP 10k 并发 33.5k→35.9k QPS、每请求 CPU -15~-17%；resp-ws 2000 连接 86k rounds/s、每轮 CPU 114µs、0 错误（`2026-08-13-resp-loadtest-retest.md`）；sdk-wiring chat 基线 51.5k QPS（落带 46.6-53.9k）、images 直连 70.0k/169µs、SDK 非流式 45-47k、流式 41k/344µs（`2026-08-13-sdk-wiring-loadtest.md`）。与 w3 数字不冲突（51.5k 落带含 w3 值），引用时勿当作最新。
 - **转换成本数据**：见 §5（off 基线 52.3k / 232.8µs；on 差距收敛 -10.9% QPS / +17.8% CPU；pprof 转换路径 22.6%→8.5%）。strip 预筛 ≈1.5% QPS / ~1% CPU 差异（`docs/superpowers/plans/2026-08-11-w3-loadtest.md:65`）。
 - **风暴教训**（压测 2026-08-11 修复链，`internal/billing/flusher.go` / `internal/repository/partition.go` 注释 + `docs/superpowers/plans/2026-08-11-errlog-task.md`）：
-  - **分区漂移**：price 快照列/ttft_ms 合入后旧分区表缺列 → 新二进制连旧库 INSERT 42703 全停；当时修复 = bootstrap 幂等补列 ALTER——**该机制已删（2026-08-15）**，现以**全新建库**消除存量漂移面（无补列路径）。
+  - **分区漂移**：price 快照列/ttft_ms 合入后旧分区表缺列 → 新二进制连旧库 INSERT 42703 全停；根治 = **全新建库**（无补列路径，schema 变更即重建）——存量漂移面由此不存在。
   - **巨批**：单用户积压 1M+ 行 → 单事务 2000+ 分片串行 8 分钟（xact_age 08:02 实证）+ 堆涨 4.6GB；修复 = 单用户拆事务 ≤10k 行/事务（`internal/billing/flusher.go`）。
   - **缺名帧**：非规范上游缺 `event:` 行 → 流式转换断流；修复 = data `type` 字段推断事件名（现为共享实现 `pkg/sserelay/relay.go:46` `InferEventName`）。
   - **拒绝风暴**：单 key 限流 161k req/s → 60s 冲至 9.8M pending 行 / RSS 7.5GB；修复 = 拒绝行不入 usage_logs 明细 + err_logs 有界队列采样（`internal/proxy/forward.go:375` recordRejected）+ 计费改**账本游标消费**（无内存 pending 队列，积压即 DB 行——后续 v2 三车道结算把此面彻底消掉）。

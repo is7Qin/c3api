@@ -4,12 +4,11 @@
 
 package repository
 
-// billing_repo.go 计费仓库载体（v2 三车道拓扑，spec-f2opt-settlement）：
-// legacy 逐组扣减面（DeductOnlyAndMark/deductOnlyCore/deductTx 接口族/chunk 合并
-// 事务）已整体退役——扣减与标记由结算语句一体完成（每窗口一次往返），见
-// billing_settle.go（SettleBalanceBatch/SettleFefoBatch）。游标取批/纯标记/lag/
-// 会话锁面见 billing_cursor.go。usage_logs 明细的唯一写者是 usage flusher
-// （InsertBatch）；本包只做标记/消费，不插日志。
+// billing_repo.go 计费仓库载体（v2 三车道拓扑，spec-f2opt-settlement）：扣减与
+// 标记由结算语句一体完成（每窗口一次往返），见 billing_settle.go
+// （SettleBalanceBatch/SettleFefoBatch）。游标取批/纯标记/lag/会话锁面见
+// billing_cursor.go。usage_logs 明细的唯一写者是 usage flusher（InsertBatch）；
+// 本包只做标记/消费，不插日志。
 
 import (
 	"time"

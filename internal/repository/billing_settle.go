@@ -170,8 +170,7 @@ func settleEnt(ctx context.Context, drv dialect.Driver, limit, k, bucket int, sq
 
 // runSettleStmt 结算语句编排（两载体单一实现）：sync_commit 让渡 → 执行（args =
 // [limit, k, bucket]——桶谓词占位 $2/$3）→ 扫描 → marked==batch 计数
-// 比对守卫（不齐 = 他方消费者已抢标同批行 → errConcurrentMark 使整事务回滚——
-// markBilledExec Σ守卫的语句化迁移）。
+// 比对守卫（不齐 = 他方消费者已抢标同批行 → errConcurrentMark 使整事务回滚）。
 func runSettleStmt(ctx context.Context, exe settleTx, sqlText string, limit, k, bucket int) (domain.SettlementSummary, error) {
 	if _, err := exe.ExecAffected(ctx, billingSyncCommitOffSQL, nil); err != nil {
 		return domain.SettlementSummary{}, fmt.Errorf("set synchronous_commit off: %w", err)

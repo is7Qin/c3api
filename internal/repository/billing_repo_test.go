@@ -18,13 +18,12 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// 计费游标消费面直调测试（三车道拓扑，spec-f2opt-settlement §三改写）：usage_logs
+// 计费游标消费面直调测试（三车道拓扑，spec-f2opt-settlement §三）：usage_logs
 // 明细由 usage flusher 单写落库（InsertBatch，billed=false 出生），本文件只测消费
 // 侧结算语句——FetchUnbilledBatch 取批过滤 / SettleBalanceBatch（余额-only 用户，
 // 条件扣→透支补刀→标记一体）/ SettleFefoBatch（temp-active 用户，集合化 FEFO +
-// spill 补差）/ MarkBilledBulk 幂等纯标记 / UnbilledLag 度量。legacy 逐组扣减面
-// （pg_deduct_* 单组事务族）已随 整体退役——FEFO/透支/条件扣语义改写为语句级
-// 等价断言。
+// spill 补差）/ MarkBilledBulk 幂等纯标记 / UnbilledLag 度量。FEFO/透支/条件扣
+// 语义为语句级等价断言。
 
 // logFor 构造测试计费日志（usage flusher InsertBatch 种子行；多文件共用）。
 func logFor(userID int64, requestID string) *domain.UsageLog {
@@ -58,7 +57,7 @@ func fullLogFor(userID int64, requestID string) *domain.UsageLog {
 }
 
 // costLogFor 指定 cost 的计费种子行（结算语句按行 cost 扣减——显式成本对齐
-// 断言口径；legacy 逐组扣减面的显式 cost 实参语义由此承接）。
+// 断言口径）。
 func costLogFor(userID int64, requestID string, cost int64) *domain.UsageLog {
 	l := logFor(userID, requestID)
 	l.Cost = cost
