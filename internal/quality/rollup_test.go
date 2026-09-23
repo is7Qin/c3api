@@ -106,17 +106,10 @@ func (s *fakeRollupStore) RollupQuality(_ context.Context, b time.Time, _ int16)
 	return s.rollup(rollupKindQuality, b)
 }
 
-func (s *fakeRollupStore) RollupFlow(_ context.Context, b time.Time, _ int16) error {
+func (s *fakeRollupStore) snapshot() (rolledQ []time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.rollup(rollupKindFlow, b)
-}
-
-func (s *fakeRollupStore) snapshot() (rolledQ, rolledF []time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]time.Time(nil), s.rolled[rollupKindQuality]...),
-		append([]time.Time(nil), s.rolled[rollupKindFlow]...)
+	return append([]time.Time(nil), s.rolled[rollupKindQuality]...)
 }
 
 func newTestRollupWorker(store *fakeRollupStore) *RollupWorker {
@@ -130,37 +123,31 @@ func TestRollupWorkerNoop(t *testing.T) {
 	store := newFakeRollupStore()
 	w := newTestRollupWorker(store)
 	w.runOnce(context.Background())
-	q, f := store.snapshot()
+	q := store.snapshot()
 	require.Empty(t, q)
-	require.Empty(t, f)
 	st := w.Stats().(RollupStats)
 	require.Zero(t, st.QualityRolled)
-	require.Zero(t, st.FlowRolled)
 	require.Zero(t, st.Failed)
 	require.Empty(t, st.LastError)
 }
 
-// TestRollupWorkerSuccessBothKinds 最老优先 + 状态成功后推进：quality 两桶、
-// flow 一桶全部滚成；fake 中 dirty 清空、watermark 到最老…最新位置；选择缝
+// TestRollupWorkerSuccessQualityLane 最老优先 + 状态成功后推进：quality 两桶
+// 全部滚成；fake 中 dirty 清空、watermark 到最老…最新位置；选择缝
 // 下界 = 读到的 watermark（fresh 库 ErrNoRows → zero）。
-func TestRollupWorkerSuccessBothKinds(t *testing.T) {
+func TestRollupWorkerSuccessQualityLane(t *testing.T) {
 	m1 := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
 	m2 := m1.Add(time.Minute)
 	store := newFakeRollupStore()
 	store.dirty[rollupKindQuality] = []time.Time{m1, m2}
-	store.dirty[rollupKindFlow] = []time.Time{m1}
 	w := newTestRollupWorker(store)
 
 	w.runOnce(context.Background())
 
-	q, f := store.snapshot()
+	q := store.snapshot()
 	require.Equal(t, []time.Time{m1, m2}, q, "quality 最老优先逐桶")
-	require.Equal(t, []time.Time{m1}, f, "flow 独立处理")
 	st := w.Stats().(RollupStats)
 	require.Equal(t, int64(2), st.QualityRolled)
-	require.Equal(t, int64(1), st.FlowRolled)
 	require.Equal(t, m2.UnixMilli(), st.WatermarkQualityUnixMs)
-	require.Equal(t, m1.UnixMilli(), st.WatermarkFlowUnixMs)
 
 	store.mu.Lock()
 	require.Empty(t, store.dirty[rollupKindQuality], "成功桶 dirty 已清")
@@ -168,7 +155,7 @@ func TestRollupWorkerSuccessBothKinds(t *testing.T) {
 
 	// 第二轮：无脏 → no-op（不重复滚）
 	w.runOnce(context.Background())
-	q2, _ := store.snapshot()
+	q2 := store.snapshot()
 	require.Equal(t, q, q2, "已滚成桶不重复")
 }
 
@@ -186,7 +173,7 @@ func TestRollupWorkerSelectionLowerBound(t *testing.T) {
 
 	w.runOnce(context.Background())
 
-	q, _ := store.snapshot()
+	q := store.snapshot()
 	require.Equal(t, []time.Time{m0, m1, m2}, q, "迟到桶也按时间顺序消费")
 	store.mu.Lock()
 	require.Equal(t, m1, store.listFrom[rollupKindQuality])
@@ -205,29 +192,26 @@ func TestRollupWorkerConsumesDirtyMinuteBelowWatermark(t *testing.T) {
 	w.runOnce(context.Background())
 
 	// Then the older dirty minute is still rolled instead of being skipped.
-	q, _ := store.snapshot()
+	q := store.snapshot()
 	require.Equal(t, []time.Time{late}, q)
 }
 
 // TestRollupWorkerFailureRetryOrder 失败中断保序 + 下 tick 重试：m2 失败 →
 // m3 本轮不碰（否则 watermark 跳过 m2 永久丢分钟）；m2 恢复后下一轮从 m2
-// 重试并继续 m3。quality 道失败不影响 flow 道（损失分离）。
+// 重试并继续 m3。
 func TestRollupWorkerFailureRetryOrder(t *testing.T) {
 	m1 := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
 	m2 := m1.Add(time.Minute)
 	m3 := m2.Add(time.Minute)
-	fm := m1
 	store := newFakeRollupStore()
 	store.dirty[rollupKindQuality] = []time.Time{m1, m2, m3}
-	store.dirty[rollupKindFlow] = []time.Time{fm}
 	store.fail[bucketKey(rollupKindQuality, m2)] = errors.New("db down")
 	w := newTestRollupWorker(store)
 
 	w.runOnce(context.Background())
 
-	q, f := store.snapshot()
+	q := store.snapshot()
 	require.Equal(t, []time.Time{m1}, q, "m2 失败即中断，m3 不越序")
-	require.Equal(t, []time.Time{fm}, f, "flow 道不受 quality 失败影响")
 	st := w.Stats().(RollupStats)
 	require.Equal(t, int64(1), st.Failed)
 	require.Contains(t, st.LastError, "db down")
@@ -239,7 +223,7 @@ func TestRollupWorkerFailureRetryOrder(t *testing.T) {
 	store.mu.Unlock()
 	w.runOnce(context.Background())
 
-	q, _ = store.snapshot()
+	q = store.snapshot()
 	require.Equal(t, []time.Time{m1, m2, m3}, q, "失败桶下轮重试后全部滚成")
 	st = w.Stats().(RollupStats)
 	require.Equal(t, int64(3), st.QualityRolled)
@@ -253,11 +237,10 @@ func TestRollupWorkerStoreErrors(t *testing.T) {
 	store.listErr = errors.New("select boom")
 	w := newTestRollupWorker(store)
 	w.runOnce(context.Background())
-	q, f := store.snapshot()
+	q := store.snapshot()
 	require.Empty(t, q)
-	require.Empty(t, f)
 	st := w.Stats().(RollupStats)
-	require.Equal(t, int64(2), st.Failed, "两道的 list 各失败一次")
+	require.Equal(t, int64(1), st.Failed, "单道的 list 失败一次")
 	require.Contains(t, st.LastError, "select boom")
 }
 
@@ -300,7 +283,7 @@ func TestRollupWorkerCloseWaitsInFlight(t *testing.T) {
 	}
 	close(store.block)
 	require.NoError(t, <-closed)
-	q, _ := store.snapshot()
+	q := store.snapshot()
 	require.Equal(t, []time.Time{m1}, q, "在途桶完成后才退出")
 }
 

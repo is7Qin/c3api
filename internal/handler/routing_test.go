@@ -119,11 +119,10 @@ func i64p(v int64) *int64 { return &v }
 func Test_RoutingFlow_ValidMappingAndLossFields(t *testing.T) {
 	plan, idHex := routingFixturePlan(t)
 	store := &routingStore{fakeStore: newFakeStore()}
-	fpA, fpB := routingFPHex(t, 0xaa), routingFPHex(t, 0xbb)
 	store.flowRows = []repository.RoutingFlowStat{
-		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, Generation: 7, CandidateFingerprint: routingMustFP(t, fpA), ChainCount: 5},
-		{Ordinal: 1, Lane: "primary", AccountID: 2, Outcome: "5xx", Generation: 7, CandidateFingerprint: routingMustFP(t, fpB), ChainCount: 3},
-		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: i64p(2), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, Generation: 7, CandidateFingerprint: routingMustFP(t, fpB), ChainCount: 3},
+		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
+		{Ordinal: 1, Lane: "primary", AccountID: 2, Outcome: "5xx", MinGeneration: 7, ChainCount: 3},
+		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: i64p(2), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
 	}
 	h := routingRouter(store, plan)
 
@@ -158,7 +157,7 @@ func Test_RoutingFlow_ValidMappingAndLossFields(t *testing.T) {
 	require.Equal(t, "5xx", retry.PreviousOutcome)
 	require.Equal(t, "failover", retry.TransitionReason)
 	require.True(t, retry.IsTerminal)
-	require.Equal(t, fpB, retry.CandidateFingerprint)
+	require.Equal(t, int64(7), retry.MinGeneration)
 	require.Equal(t, int64(3), retry.ChainCount)
 }
 
@@ -417,9 +416,8 @@ func Test_RoutingFlowAndPlan_PaginationBoundsAtHTTPLevel(t *testing.T) {
 	for i := range store.flowRows {
 		store.flowRows[i] = repository.RoutingFlowStat{
 			Ordinal: 1, Lane: "primary", AccountID: int64(i + 1),
-			Outcome: "success", IsTerminal: true, Generation: 7,
-			CandidateFingerprint: routingMustFP(t, fmt.Sprintf("%064x", i)),
-			ChainCount:           1,
+			Outcome: "success", IsTerminal: true, MinGeneration: 7,
+			ChainCount: 1,
 		}
 	}
 	h := routingRouter(store, plan)

@@ -24,14 +24,6 @@ func foldVal(seed byte) domain.RouteClassIDVal {
 	return v
 }
 
-func foldFP(seed byte) domain.CandidateFingerprintVal {
-	var v domain.CandidateFingerprintVal
-	for i := range v {
-		v[i] = seed + byte(i)
-	}
-	return v
-}
-
 // foldOneRow folds one consumer row through the request walk.
 // the Submit queue is gone; a single-fact FoldChain call carries the
 // same row with identical counting.
@@ -45,7 +37,7 @@ func foldOneRow(t *testing.T, o *FlowOwner, minute int64, row repository.Routing
 func foldRows(t *testing.T, o *FlowOwner, minute int64, rows ...repository.RoutingFlowRow) {
 	t.Helper()
 	o.FoldChain(minute, len(rows), func(i int) (
-		domain.RouteClassIDVal, domain.CandidateFingerprintVal, int64, int64, int64, uint8, string, string, string, bool, bool,
+		domain.RouteClassIDVal, int64, int64, int64, uint8, string, string, string, bool, bool,
 	) {
 		row := rows[i]
 		var prev int64
@@ -53,7 +45,7 @@ func foldRows(t *testing.T, o *FlowOwner, minute int64, rows ...repository.Routi
 		if hasPrev {
 			prev = *row.PreviousAccountID
 		}
-		return row.RouteClassID, row.CandidateFingerprint, row.AccountID, prev,
+		return row.RouteClassID, row.AccountID, prev,
 			row.Generation, uint8(row.Ordinal), row.Lane, row.Outcome, row.PreviousOutcome,
 			row.IsTerminal, hasPrev
 	})
@@ -91,7 +83,6 @@ func foldConsumerRows(o *FlowOwner, minute int64, rows []repository.RoutingFlowR
 
 type foldScriptEdge struct {
 	route      domain.RouteClassIDVal
-	fp         domain.CandidateFingerprintVal
 	account    int64
 	prev       int64
 	hasPrev    bool
@@ -123,19 +114,18 @@ func foldScript(t *testing.T, o *FlowOwner, bucket int64, chains [][]foldScriptE
 		}
 		o.FoldChain(bucket, len(flat), func(i int) (
 			route domain.RouteClassIDVal,
-			fp domain.CandidateFingerprintVal,
 			accountID, prevAccount, generation int64,
 			ordinal uint8,
 			lane, outcome, prevOutcome string,
 			terminal, hasPrev bool,
 		) {
 			e := flat[i]
-			return e.route, e.fp, e.account, e.prev, e.generation, e.ordinal,
+			return e.route, e.account, e.prev, e.generation, e.ordinal,
 				e.lane, e.outcome, e.prevToken, e.terminal, e.hasPrev
 		})
 		for _, e := range flat {
 			f, err := makeFact(foldSeed{
-				route: e.route, fp: e.fp, accountID: e.account, prevAccount: e.prev,
+				route: e.route, accountID: e.account, prevAccount: e.prev,
 				generation: e.generation, ordinal: e.ordinal, lane: e.lane,
 				outcome: e.outcome, prevOutcome: e.prevToken, transition: e.transition,
 				terminal: e.terminal, hasPrev: e.hasPrev,
@@ -166,7 +156,6 @@ func foldRowsByFact(t *testing.T, rows []repository.RoutingFlowRow) map[attemptF
 		}
 		f := canonicalFact(attemptFact{
 			route:           r.RouteClassID,
-			fingerprint:     r.CandidateFingerprint,
 			accountID:       r.AccountID,
 			prevAccount:     prevAcct,
 			generation:      r.Generation,
@@ -212,9 +201,9 @@ func TestFoldCounterFidelity_DeterministicIncrementsEqualChainCounts(t *testing.
 			// transition codes ride the consumer-row fold below.
 			times := 1 + seq%2
 			chain := []foldScriptEdge{
-				{route: foldVal(1), fp: foldFP(byte(seq)), account: int64(1000 + seq), generation: 7, ordinal: 1, lane: lane, outcome: outcome, terminal: false, times: times},
-				{route: foldVal(1), fp: foldFP(byte(seq)), account: int64(2000 + seq), prev: int64(1000 + seq), hasPrev: true, prevToken: outcome, generation: 7, ordinal: 2, lane: lane, outcome: "success", terminal: false, times: times},
-				{route: foldVal(1), fp: foldFP(byte(seq)), account: int64(3000 + seq), prev: int64(2000 + seq), hasPrev: true, prevToken: "success", generation: 7, ordinal: 3, lane: lane, outcome: outcome, terminal: true, times: times},
+				{route: foldVal(1), account: int64(1000 + seq), generation: 7, ordinal: 1, lane: lane, outcome: outcome, terminal: false, times: times},
+				{route: foldVal(1), account: int64(2000 + seq), prev: int64(1000 + seq), hasPrev: true, prevToken: outcome, generation: 7, ordinal: 2, lane: lane, outcome: "success", terminal: false, times: times},
+				{route: foldVal(1), account: int64(3000 + seq), prev: int64(2000 + seq), hasPrev: true, prevToken: "success", generation: 7, ordinal: 3, lane: lane, outcome: outcome, terminal: true, times: times},
 			}
 			chains = append(chains, chain)
 			total += int64(3 * times)
@@ -223,26 +212,26 @@ func TestFoldCounterFidelity_DeterministicIncrementsEqualChainCounts(t *testing.
 	// Consumer rows ride the same facts with explicit transitions:
 	// the old-alias "init", "retry", "flow", "plan", plus a rule-ok outcome.
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), bucket, []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 1, Lane: "primary", AccountID: 91, TransitionReason: "init", Outcome: "ok", IsTerminal: true, Generation: 1, CandidateFingerprint: foldFP(9), ChainCount: 4},
-		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 2, Lane: "explore", AccountID: 92, PreviousAccountID: func() *int64 { v := int64(91); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "error", IsTerminal: true, Generation: 1, CandidateFingerprint: foldFP(9), ChainCount: 2},
-		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 2, Lane: "degraded", AccountID: 93, PreviousAccountID: func() *int64 { v := int64(91); return &v }(), PreviousOutcome: "429", TransitionReason: "flow", Outcome: "4xx", IsTerminal: false, Generation: 1, CandidateFingerprint: foldFP(9), ChainCount: 3},
-		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 3, Lane: "primary", AccountID: 94, PreviousAccountID: func() *int64 { v := int64(93); return &v }(), PreviousOutcome: "4xx", TransitionReason: "plan", Outcome: "5xx", IsTerminal: true, Generation: 1, CandidateFingerprint: foldFP(9), ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 1, Lane: "primary", AccountID: 91, TransitionReason: "init", Outcome: "ok", IsTerminal: true, Generation: 1, ChainCount: 4},
+		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 2, Lane: "explore", AccountID: 92, PreviousAccountID: func() *int64 { v := int64(91); return &v }(), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "error", IsTerminal: true, Generation: 1, ChainCount: 2},
+		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 2, Lane: "degraded", AccountID: 93, PreviousAccountID: func() *int64 { v := int64(91); return &v }(), PreviousOutcome: "429", TransitionReason: "flow", Outcome: "4xx", IsTerminal: false, Generation: 1, ChainCount: 3},
+		{IdentityVersion: 1, RouteClassID: foldVal(9), Ordinal: 3, Lane: "primary", AccountID: 94, PreviousAccountID: func() *int64 { v := int64(93); return &v }(), PreviousOutcome: "4xx", TransitionReason: "plan", Outcome: "5xx", IsTerminal: true, Generation: 1, ChainCount: 1},
 	}))
 	total += 10
 
 	want := foldScript(t, owner, bucket, chains)
 	// The consumer rows above fold 4 + 2 + 3 + 1 events into four more cells.
 	{
-		f1, err := makeFact(foldSeed{route: foldVal(9), fp: foldFP(9), accountID: 91, generation: 1, ordinal: 1, lane: "primary", outcome: "ok", transition: "init", terminal: true}, bucket)
+		f1, err := makeFact(foldSeed{route: foldVal(9), accountID: 91, generation: 1, ordinal: 1, lane: "primary", outcome: "ok", transition: "init", terminal: true}, bucket)
 		require.NoError(t, err)
 		want[f1] += 4
-		f2, err := makeFact(foldSeed{route: foldVal(9), fp: foldFP(9), accountID: 92, prevAccount: 91, generation: 1, ordinal: 2, lane: "explore", outcome: "error", prevOutcome: "success", transition: "retry", terminal: true, hasPrev: true}, bucket)
+		f2, err := makeFact(foldSeed{route: foldVal(9), accountID: 92, prevAccount: 91, generation: 1, ordinal: 2, lane: "explore", outcome: "error", prevOutcome: "success", transition: "retry", terminal: true, hasPrev: true}, bucket)
 		require.NoError(t, err)
 		want[f2] += 2
-		f3, err := makeFact(foldSeed{route: foldVal(9), fp: foldFP(9), accountID: 93, prevAccount: 91, generation: 1, ordinal: 2, lane: "degraded", outcome: "4xx", prevOutcome: "429", transition: "flow", terminal: false, hasPrev: true}, bucket)
+		f3, err := makeFact(foldSeed{route: foldVal(9), accountID: 93, prevAccount: 91, generation: 1, ordinal: 2, lane: "degraded", outcome: "4xx", prevOutcome: "429", transition: "flow", terminal: false, hasPrev: true}, bucket)
 		require.NoError(t, err)
 		want[f3] += 3
-		f4, err := makeFact(foldSeed{route: foldVal(9), fp: foldFP(9), accountID: 94, prevAccount: 93, generation: 1, ordinal: 3, lane: "primary", outcome: "5xx", prevOutcome: "4xx", transition: "plan", terminal: true, hasPrev: true}, bucket)
+		f4, err := makeFact(foldSeed{route: foldVal(9), accountID: 94, prevAccount: 93, generation: 1, ordinal: 3, lane: "primary", outcome: "5xx", prevOutcome: "4xx", transition: "plan", terminal: true, hasPrev: true}, bucket)
 		require.NoError(t, err)
 		want[f4] += 1
 	}
@@ -283,13 +272,13 @@ func TestFoldCounterFidelity_CapOverflowCountsWithoutCellAdds(t *testing.T) {
 	beforeStats := owner.SnapshotStats()
 	seeds := make([]foldScriptEdge, 10)
 	for i := range seeds {
-		seeds[i] = foldScriptEdge{route: foldVal(2), fp: foldFP(2), account: 50, generation: 1, ordinal: uint8(i + 1), lane: "primary", outcome: "success", terminal: i == 7}
+		seeds[i] = foldScriptEdge{route: foldVal(2), account: 50, generation: 1, ordinal: uint8(i + 1), lane: "primary", outcome: "success", terminal: i == 7}
 	}
 	owner.FoldChain(bucket, len(seeds), func(i int) (
-		domain.RouteClassIDVal, domain.CandidateFingerprintVal, int64, int64, int64, uint8, string, string, string, bool, bool,
+		domain.RouteClassIDVal, int64, int64, int64, uint8, string, string, string, bool, bool,
 	) {
 		e := seeds[i]
-		return e.route, e.fp, e.account, 0, e.generation, e.ordinal, e.lane, e.outcome, "", e.terminal, false
+		return e.route, e.account, 0, e.generation, e.ordinal, e.lane, e.outcome, "", e.terminal, false
 	})
 	require.Equal(t, beforeCap+2, FlowChainCapacityOverflow(), "attempts 9-10 count cap-overflow")
 	st := owner.SnapshotStats()
@@ -315,15 +304,15 @@ func TestFoldCounterFidelity_TableFullCountsOverflowWithZeroAdds(t *testing.T) {
 
 	// Same shard (low 6 bits equal), three distinct keys.
 	seeds := []foldScriptEdge{
-		{route: foldVal(3), fp: foldFP(3), account: 7, generation: 1, ordinal: 1, lane: "primary", outcome: "success", terminal: false},
-		{route: foldVal(3), fp: foldFP(3), account: 7, generation: 1, ordinal: 2, lane: "primary", outcome: "success", terminal: false},
-		{route: foldVal(3), fp: foldFP(3), account: 7, generation: 1, ordinal: 3, lane: "primary", outcome: "success", terminal: true},
+		{route: foldVal(3), account: 7, generation: 1, ordinal: 1, lane: "primary", outcome: "success", terminal: false},
+		{route: foldVal(3), account: 7, generation: 1, ordinal: 2, lane: "primary", outcome: "success", terminal: false},
+		{route: foldVal(3), account: 7, generation: 1, ordinal: 3, lane: "primary", outcome: "success", terminal: true},
 	}
 	owner.FoldChain(bucket, len(seeds), func(i int) (
-		domain.RouteClassIDVal, domain.CandidateFingerprintVal, int64, int64, int64, uint8, string, string, string, bool, bool,
+		domain.RouteClassIDVal, int64, int64, int64, uint8, string, string, string, bool, bool,
 	) {
 		e := seeds[i]
-		return e.route, e.fp, e.account, 0, e.generation, e.ordinal, e.lane, e.outcome, "", e.terminal, false
+		return e.route, e.account, 0, e.generation, e.ordinal, e.lane, e.outcome, "", e.terminal, false
 	})
 	require.Equal(t, int64(1), owner.cells.overflowTotal(), "unlanded fact lands in the per-shard counter")
 	require.Equal(t, int64(1), FlowChainEnqueueOverflow())
@@ -348,14 +337,14 @@ func TestFoldCounterFidelity_TerminalClassIsCellIdentity(t *testing.T) {
 	bucket := time.Date(2026, 8, 29, 12, 30, 0, 0, time.UTC).Unix()
 
 	mk := func(terminal bool) foldScriptEdge {
-		return foldScriptEdge{route: foldVal(4), fp: foldFP(4), account: 60, generation: 1, ordinal: 1, lane: "primary", outcome: "success", terminal: terminal}
+		return foldScriptEdge{route: foldVal(4), account: 60, generation: 1, ordinal: 1, lane: "primary", outcome: "success", terminal: terminal}
 	}
 	for _, term := range []bool{false, true, true} {
 		e := mk(term)
 		owner.FoldChain(bucket, 1, func(i int) (
-			domain.RouteClassIDVal, domain.CandidateFingerprintVal, int64, int64, int64, uint8, string, string, string, bool, bool,
+			domain.RouteClassIDVal, int64, int64, int64, uint8, string, string, string, bool, bool,
 		) {
-			return e.route, e.fp, e.account, 0, e.generation, e.ordinal, e.lane, e.outcome, "", e.terminal, false
+			return e.route, e.account, 0, e.generation, e.ordinal, e.lane, e.outcome, "", e.terminal, false
 		})
 	}
 	fm, ok := rec.FlowMinute(bucket)
@@ -383,7 +372,7 @@ func TestFoldCounterFidelity_ConcurrentAddsAreExact(t *testing.T) {
 
 	const m = 8
 	const k = 200
-	route, fp := foldVal(5), foldFP(5)
+	route := foldVal(5)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(m)
@@ -393,9 +382,9 @@ func TestFoldCounterFidelity_ConcurrentAddsAreExact(t *testing.T) {
 			<-start
 			for i := 0; i < k; i++ {
 				owner.FoldChain(bucket, 1, func(_ int) (
-					domain.RouteClassIDVal, domain.CandidateFingerprintVal, int64, int64, int64, uint8, string, string, string, bool, bool,
+					domain.RouteClassIDVal, int64, int64, int64, uint8, string, string, string, bool, bool,
 				) {
-					return route, fp, 70, 0, 1, 1, "primary", "success", "", true, false
+					return route, 70, 0, 1, 1, "primary", "success", "", true, false
 				})
 			}
 		}()
@@ -425,15 +414,15 @@ func TestFoldCounterFidelity_ZeroOverflowAtGate(t *testing.T) {
 	bucket := time.Date(2026, 8, 29, 12, 50, 0, 0, time.UTC).Unix()
 
 	owner.FoldChain(bucket, 2, func(i int) (
-		domain.RouteClassIDVal, domain.CandidateFingerprintVal, int64, int64, int64, uint8, string, string, string, bool, bool,
+		domain.RouteClassIDVal, int64, int64, int64, uint8, string, string, string, bool, bool,
 	) {
 		if i == 0 {
-			return foldVal(6), foldFP(6), 80, 0, 1, 1, "primary", "success", "", false, false
+			return foldVal(6), 80, 0, 1, 1, "primary", "success", "", false, false
 		}
-		return foldVal(6), foldFP(6), 81, 80, 1, 2, "explore", "429", "success", true, true
+		return foldVal(6), 81, 80, 1, 2, "explore", "429", "success", true, true
 	})
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), bucket, []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: foldVal(6), Ordinal: 1, Lane: "degraded", AccountID: 82, TransitionReason: "plan", Outcome: "5xx", IsTerminal: true, Generation: 3, CandidateFingerprint: foldFP(6), ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: foldVal(6), Ordinal: 1, Lane: "degraded", AccountID: 82, TransitionReason: "plan", Outcome: "5xx", IsTerminal: true, Generation: 3, ChainCount: 1},
 	}))
 
 	st := owner.SnapshotStats()

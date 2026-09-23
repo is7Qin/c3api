@@ -140,10 +140,8 @@ func newShutdownFixture(t *testing.T, fail error) (wm *worker.Manager, rec *qual
 	// exactly as production's proxy fold owner emits it.
 	route, err := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
 	require.NoError(t, err)
-	fp, err := domain.CandidateFingerprint(1, 1, "api_key", "https://api.openai.com", "sk-upstream", "", "", "", false, "", "", "", "")
-	require.NoError(t, err)
-	rec.FlowOwner().FoldChain(minute, 1, func(i int) (domain.RouteClassIDVal, domain.CandidateFingerprintVal, int64, int64, int64, uint8, string, string, string, bool, bool) {
-		return route, fp, 10, 0, 5, 1, "primary", "success", "", true, false
+	rec.FlowOwner().FoldChain(minute, 1, func(i int) (domain.RouteClassIDVal, int64, int64, int64, uint8, string, string, string, bool, bool) {
+		return route, 10, 0, 5, 1, "primary", "success", "", true, false
 	})
 
 	log, logPath = newShutdownTestLogger(t)
