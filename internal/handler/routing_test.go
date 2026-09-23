@@ -251,18 +251,25 @@ func Test_RoutingFrontier_LimitClamp(t *testing.T) {
 	h := routingRouter(store, plan)
 	base := "/api/admin/routing/frontier?route=" + idHex + "&" + routingWindow()
 
-	count := func(t *testing.T, url string) int {
+	got := func(t *testing.T, url string) (int, int64) {
 		t.Helper()
 		rec := doGET(t, h, url)
 		require.Equal(t, 200, rec.Code, rec.Body.String())
 		var res RoutingFrontierResponse
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
-		return len(res.Candidates)
+		return len(res.Candidates), res.TotalCandidates
 	}
-	require.Equal(t, 200, count(t, base), "缺省 limit → 200")
-	require.Equal(t, 200, count(t, base+"&limit=500"), "limit>200 钳到 200（200 非 400）")
-	require.Equal(t, 2, count(t, base+"&limit=2"))
-	require.Equal(t, 200, count(t, base+"&limit=0"), "limit≤0 → 缺省 200")
+	n, total := got(t, base)
+	require.Equal(t, 20, n, "缺省 limit → 20")
+	require.Equal(t, int64(250), total, "total_candidates 不受分页影响")
+	n, _ = got(t, base+"&limit=500")
+	require.Equal(t, 200, n, "limit>200 钳到 200（200 非 400）")
+	n, _ = got(t, base+"&limit=2")
+	require.Equal(t, 2, n)
+	n, _ = got(t, base+"&limit=0")
+	require.Equal(t, 20, n, "limit≤0 → 缺省 20")
+	n, _ = got(t, base+"&limit=10&offset=1000")
+	require.Equal(t, 0, n, "offset 越界 → 空页（200 非 400）")
 
 	rec := doGET(t, h, "/api/admin/routing/frontier?route="+routingFPHex(t, 0x02)+"&"+routingWindow())
 	require.Equal(t, 404, rec.Code, "unknown route → 404: %s", rec.Body.String())
@@ -327,6 +334,51 @@ func Test_RoutingPlan_EmptyViewIsNotError(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.True(t, strings.Contains(rec.Body.String(), `"generation":0`))
 	require.Contains(t, rec.Body.String(), `"routes":[]`, "空计划 routes 必须是 [] 而非 null")
+}
+
+// A10（handler 层契约）：candidates_limit 缺省 → 契约默认；显式 0 = 不返回候选；
+// 负数 → 契约默认；>200 → 钳到 200。服务层 0 即"不返回"，缺席→默认是 handler 职责。
+func Test_RoutingPlan_CandidatesLimitStates(t *testing.T) {
+	rc, err := domain.RouteClassID(10, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
+	require.NoError(t, err)
+	cands := make([]scheduler.RoutingPlanCandidate, 250)
+	for i := range cands {
+		cands[i] = scheduler.RoutingPlanCandidate{AccountID: int64(i + 1), IdentityFingerprint: routingFPHex(t, byte(i))}
+	}
+	plan := &scheduler.RoutingPlan{Generation: 1, Routes: []scheduler.RoutingPlanRoute{{
+		Ref:        scheduler.RouteRef{GroupID: 10, Format: "openai-chat", Model: "m", OperationTag: "chat_completions", RouteClassID: domain.RouteClassIDHex(rc)},
+		Candidates: cands,
+	}}}
+	h := routingRouter(&routingStore{fakeStore: newFakeStore()}, plan)
+
+	get := func(q string) RoutingPlanResponse {
+		t.Helper()
+		rec := doGET(t, h, "/api/admin/routing/plan"+q)
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var res RoutingPlanResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+		require.Len(t, res.Routes, 1)
+		return res
+	}
+
+	// 缺席 → 契约默认 20（不是"不返回"）；total 仍为完整 250。
+	absent := get("")
+	require.Len(t, absent.Routes[0].Candidates, 20, "candidates_limit 缺席 → 20")
+	require.Equal(t, int64(250), absent.Routes[0].CandidatesTotal)
+
+	// 显式 0 → 空数组，但 candidates_total 仍完整。
+	zero := get("?candidates_limit=0")
+	require.Empty(t, zero.Routes[0].Candidates)
+	require.Equal(t, int64(250), zero.Routes[0].CandidatesTotal)
+
+	// 负数 → 契约默认 20。
+	neg := get("?candidates_limit=-1")
+	require.Len(t, neg.Routes[0].Candidates, 20)
+
+	// >200 → 钳到 200。
+	big := get("?candidates_limit=500")
+	require.Len(t, big.Routes[0].Candidates, 200, ">200 钳到 200")
+	require.Equal(t, int64(250), big.Routes[0].CandidatesTotal)
 }
 
 func Test_RoutingPlan_Incident(t *testing.T) {

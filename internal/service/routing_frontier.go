@@ -24,13 +24,14 @@ import (
 // q32Scale TTFT 对数和定点缩放（与 quality recorder 写侧同量）。
 const q32Scale = float64(int64(1) << 32)
 
-// RoutingFrontierQuery frontier 入参。Limit ≤0 → 200；>200 钳到 200
-// （MaxStatsListLimit 同值同语义）。
+// RoutingFrontierQuery frontier 入参。Limit ≤0 → 20；>200 钳到 200
+// （routingFrontierPageDefault/Max）。Offset 在**排序后**的列表上切片。
 type RoutingFrontierQuery struct {
 	RouteID string
 	From    time.Time
 	To      time.Time
 	Limit   int
+	Offset  int
 }
 
 // RoutingFrontierCandidate 一个候选指纹的窗口聚合。Known = 指纹在当前发布
@@ -62,11 +63,13 @@ type RoutingFrontierCandidate struct {
 	OnFrontier       bool
 }
 
-// RoutingFrontierResult frontier 查询结果（候选已排序 + 钳制）。
+// RoutingFrontierResult frontier 查询结果（候选已排序 + 分页切片）。
+// TotalCandidates 为排序后总条数，不受 Offset/Limit 影响。
 type RoutingFrontierResult struct {
-	RouteClassID   string
-	PlanGeneration uint64
-	Candidates     []RoutingFrontierCandidate
+	RouteClassID    string
+	PlanGeneration  uint64
+	Candidates      []RoutingFrontierCandidate
+	TotalCandidates int64
 }
 
 // QueryRoutingFrontier 一条路由类的质量-成本前沿。支配只在 known &&
@@ -85,11 +88,6 @@ func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQue
 	if !ok {
 		return nil, errRoutingNotWired
 	}
-	limit := q.Limit
-	if limit <= 0 {
-		limit = MaxStatsListLimit
-	}
-	limit = min(limit, MaxStatsListLimit)
 	rows, err := reader.QueryQualityRollupStats(ctx, rc, int16(domain.RoutingIdentityVersion), q.From, q.To)
 	if err != nil {
 		return nil, err
@@ -138,13 +136,15 @@ func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQue
 		}
 		return a.CandidateFingerprint < b.CandidateFingerprint
 	})
-	if len(cands) > limit {
-		cands = cands[:limit]
-	}
+	// 支配标记与排序都在**完整候选集**上做，再切片——分页不改变前沿判定。
+	total := int64(len(cands))
+	lo, hi := normalizePage(q.Offset, q.Limit, routingFrontierPageDefault, routingFrontierPageMax, len(cands))
+	cands = cands[lo:hi]
 	return &RoutingFrontierResult{
-		RouteClassID:   q.RouteID,
-		PlanGeneration: plan.Generation,
-		Candidates:     cands,
+		RouteClassID:    q.RouteID,
+		PlanGeneration:  plan.Generation,
+		Candidates:      cands,
+		TotalCandidates: total,
 	}, nil
 }
 

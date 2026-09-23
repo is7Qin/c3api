@@ -24,5 +24,9 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /* 测试文件由 Node 内置运行器执行（`node --test`），不经 Vite 打包；本项目的
+     `types` 仅含 vite/client，故 node:* 模块在此工程不可解析。专门的测试 tsconfig
+     属 frontend-test-modernization 工作流范围。 */
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

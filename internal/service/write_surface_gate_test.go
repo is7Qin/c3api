@@ -101,6 +101,7 @@ var allowedServiceMethods = []string{
 	"QueryErrLogs",
 	"QueryRoutingFlow",
 	"QueryRoutingFrontier",
+	"QueryRoutingPlan",
 	"QueryStatsTTFT",
 	"QueryStatsTop",
 	"QueryStatsTrend",
