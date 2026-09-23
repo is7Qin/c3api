@@ -882,7 +882,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	// ============ 场景 10：Key quota（billing on 按最终 Cost 后扣并耗尽；quota=0 零回写） ============
 	t.Log("场景 10：Key quota 按最终 Cost 后扣至耗尽 429；quota=0 不产生 quota 回写")
 	uQ := createUser(t, env, "quota-on@example.com", 10.0) // 1,000,000 毫分（余额远大于 quota，拦截点必在 quota）
-	_, qKey := userKeyQuota(t, env, uQ, g1, 1000)          // e2e-model 每请求 Cost=500 → 两笔耗尽
+	qToken, qKey := userKeyQuota(t, env, uQ, g1, 1000)     // e2e-model 每请求 Cost=500 → 两笔耗尽
 	waitSnapshot()                                         // 去抖：key 入鉴权快照
 	chat(qKey, "e2e-model")
 	chat(qKey, "e2e-model")
@@ -906,6 +906,25 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	chat(kProbe, "e2e-model")
 	pollQuotaUsed(t, env, kProbe, 500) // 屏障：flush 已把 kProbe 的 500 落库
 	require.Equal(t, int64(0), env.quotaUsed(kZero), "quota=0 不产生 quota 回写（同窗口 kProbe 已回写）")
+
+	// 额度**设为 0**（= 不限）→ 同步清零 quota_used（不是"只停累积"）：已用 1000 归零，
+	// 且 key 立刻恢复放行（此前 429）。清零是同步写（同一 UPDATE），无异步窗口。
+	qID := env.keyID(qKey)
+	keyURL := env.aiURL(fmt.Sprintf("/api/user/keys/%d", qID))
+	c, rbR := env.req(http.MethodPut, keyURL, "Bearer "+qToken, map[string]any{"quota": 0})
+	require.Equal(t, 200, c, "quota→0: %s", rbR)
+	require.Equal(t, int64(0), env.quotaUsed(qKey), "额度设为 0 → quota_used 清零")
+	waitSnapshot()
+	chat(qKey, "e2e-model") // 清零 + 不限 → 恢复放行（此前同 key 429）
+	// 无额度 key 恒 0：迟到的增量回写被 "quota" > 0 守卫跳过（不等 flush 窗口）。
+	require.Equal(t, int64(0), env.quotaUsed(qKey), "不限额度下不再累积")
+
+	// 重新设额 → 从零起算（不被历史消耗挡住）：quota=500 恰好再放行一笔
+	c, rbR = env.req(http.MethodPut, keyURL, "Bearer "+qToken, map[string]any{"quota": 500})
+	require.Equal(t, 200, c, "quota→500: %s", rbR)
+	waitSnapshot()
+	chat(qKey, "e2e-model")
+	pollQuotaUsed(t, env, qKey, 500) // 回写恢复生效（守卫只对 quota=0 生效）
 
 	// ============ 场景 9：SIGTERM 优雅停机（流式中断 → 日志 cost 不丢） ============
 	t.Log("场景 9：优雅停机——流式中断计费完整 flush")
@@ -1118,6 +1137,14 @@ func chatOn(t *testing.T, env *e2eEnv, key, model string) {
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
 	require.Equal(t, 200, c, "chat %s: %s", model, rb)
+}
+
+// keyID key 明文的 DB 主键（更新端点路径用）。
+func (e *e2eEnv) keyID(keyRaw string) int64 {
+	e.t.Helper()
+	v, err := e.dbInt(`SELECT id FROM keys WHERE key_raw=$1`, keyRaw)
+	require.NoError(e.t, err)
+	return v
 }
 
 // quotaUsed key 的 DB quota_used（毫分）。

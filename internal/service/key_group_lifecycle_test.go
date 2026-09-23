@@ -210,6 +210,42 @@ func TestUpdateKeyPatchSingleField(t *testing.T) {
 	require.Equal(t, int64(2000), noop.Quota)
 }
 
+// TestUpdateKeyQuotaZeroResetsUsed：额度显式设为 0（= 不限）→ 同步清零累计消耗。
+// 两条理由：① 不限额度下"已用"无意义；② 它是**累计**上限，不清零会把旧消耗
+// 带进下一次设额（刚设好额度就被历史消耗挡住）。设成非 0 不清零（累计语义保持）。
+func TestUpdateKeyQuotaZeroResetsUsed(t *testing.T) {
+	svc, fs, _ := newUserGroupService()
+	ctx := context.Background()
+
+	u, err := fs.CreateUser(ctx, &domain.User{Email: "qz@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
+	require.NoError(t, err)
+	g, err := fs.CreateGroup(ctx, &domain.Group{Name: "qz-g", Visibility: domain.GroupVisibilityPublic})
+	require.NoError(t, err)
+	k, err := svc.CreateKey(ctx, u.ID, "qz", g.ID, 3, 1000)
+	require.NoError(t, err)
+	fs.keys[k.ID].QuotaUsed = 400 // 模拟已消耗
+
+	// 设成非 0：累计消耗保持
+	up := int64(2000)
+	kept, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &up)
+	require.NoError(t, err)
+	require.Equal(t, int64(400), kept.QuotaUsed, "设非 0 不清零")
+
+	// 设成 0（不限）：清零
+	zero := int64(0)
+	reset, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &zero)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), reset.Quota, "quota=0 = 不限")
+	require.Equal(t, int64(0), reset.QuotaUsed, "额度设为 0 → 累计消耗清零")
+
+	// 之后重新设额：从零起算（不被历史消耗挡住）
+	q2 := int64(500)
+	fresh, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &q2)
+	require.NoError(t, err)
+	require.Equal(t, int64(500), fresh.Quota)
+	require.Equal(t, int64(0), fresh.QuotaUsed, "重新设额从零起算")
+}
+
 // TestUpdateKeyPatchConcurrent -race：并发两个 PUT 改不同字段 → 各自
 // 生效（patch 化消除 lost-update——修复前全行快照写回，后写者覆盖先写者）。
 func TestUpdateKeyPatchConcurrent(t *testing.T) {
