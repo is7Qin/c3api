@@ -131,7 +131,6 @@ func foldHash(f attemptFact) uint64 {
 		}
 	}
 	mixBytes(f.route[:])
-	mixBytes(f.fingerprint[:])
 	mixU64(uint64(f.accountID))
 	mixU64(uint64(f.prevAccount))
 	mixU64(uint64(f.generation))

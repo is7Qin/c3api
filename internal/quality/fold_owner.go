@@ -127,7 +127,6 @@ func (o *FlowOwner) Name() string { return "quality-flow-owner" }
 // no request-side fixup exists by design (see the sealedGen field comment).
 func (o *FlowOwner) FoldChain(bucket int64, n int, next func(i int) (
 	route domain.RouteClassIDVal,
-	fp domain.CandidateFingerprintVal,
 	accountID, prevAccount, generation int64,
 	ordinal uint8,
 	lane, outcome, prevOutcome string,
@@ -150,9 +149,9 @@ func (o *FlowOwner) FoldChain(bucket int64, n int, next func(i int) (
 		emit = foldMaxOrdinal
 	}
 	for i := 0; i < emit; i++ {
-		route, fp, accountID, prevAccount, generation, ordinal, lane, outcome, prevOutcome, terminal, hasPrev := next(i)
+		route, accountID, prevAccount, generation, ordinal, lane, outcome, prevOutcome, terminal, hasPrev := next(i)
 		f, err := makeFact(foldSeed{
-			route: route, fp: fp, accountID: accountID, prevAccount: prevAccount,
+			route: route, accountID: accountID, prevAccount: prevAccount,
 			generation: generation, ordinal: ordinal, lane: lane, outcome: outcome,
 			prevOutcome: prevOutcome, terminal: terminal, hasPrev: hasPrev,
 		}, bucket)

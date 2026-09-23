@@ -252,22 +252,23 @@ type RoutingQualityRow struct {
 }
 
 type RoutingFlowRow struct {
-	IdentityVersion      int16
-	RouteClassID         domain.RouteClassIDVal
-	TerminalMinute       time.Time
-	Ordinal              int16
-	Lane                 string
-	AccountID            int64
-	PreviousAccountID    *int64
-	PreviousOutcome      string
-	TransitionReason     string
-	Outcome              string
-	IsTerminal           bool
-	Generation           int64
-	CandidateFingerprint domain.CandidateFingerprintVal
-	InstanceSrc          string
-	AbsoluteSequence     int64
-	ChainCount           int64
+	IdentityVersion   int16
+	RouteClassID      domain.RouteClassIDVal
+	TerminalMinute    time.Time
+	Ordinal           int16
+	Lane              string
+	AccountID         int64
+	PreviousAccountID *int64
+	PreviousOutcome   string
+	TransitionReason  string
+	Outcome           string
+	IsTerminal        bool
+	// Generation 是单事件代际（写面输入口径）：同边多代际输入由
+	// UpsertFlowSnapshot 按新键折叠为 min_generation 后落库。
+	Generation       int64
+	InstanceSrc      string
+	AbsoluteSequence int64
+	ChainCount       int64
 }
 
 func advisoryLockKey(parts ...string) int64 {
@@ -372,9 +373,73 @@ func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row Routi
 	return tx.Commit()
 }
 
+// flowEdgeKey 是合并层分片内边键（唯一索引口径：previous_account_id
+// 可空，NULLS NOT DISTINCT 由 DDL 承担，此处仅做 Go 侧分组）。
+type flowEdgeKey struct {
+	routeClassID      domain.RouteClassIDVal
+	ordinal           int16
+	lane              string
+	accountID         int64
+	previousAccountID int64
+	hasPrev           bool
+	previousOutcome   string
+	transitionReason  string
+	outcome           string
+	isTerminal        bool
+}
+
+// foldFlowRows 把同分片多代际输入按新键折叠：chain_count 求和，
+// min_generation 取最小。candidate_fingerprint 换值不增行（非身份）。
+func foldFlowRows(rows []RoutingFlowRow) []RoutingFlowRow {
+	type acc struct {
+		row RoutingFlowRow
+		min int64
+	}
+	m := make(map[flowEdgeKey]*acc, len(rows))
+	order := make([]flowEdgeKey, 0, len(rows))
+	for _, row := range rows {
+		k := flowEdgeKey{
+			routeClassID:      row.RouteClassID,
+			ordinal:           row.Ordinal,
+			lane:              row.Lane,
+			accountID:         row.AccountID,
+			previousOutcome:   row.PreviousOutcome,
+			transitionReason:  row.TransitionReason,
+			outcome:           row.Outcome,
+			isTerminal:        row.IsTerminal,
+		}
+		if row.PreviousAccountID != nil {
+			k.previousAccountID = *row.PreviousAccountID
+			k.hasPrev = true
+		}
+		a, ok := m[k]
+		if !ok {
+			cp := row
+			a = &acc{row: cp, min: row.Generation}
+			m[k] = a
+			order = append(order, k)
+			continue
+		}
+		a.row.ChainCount += row.ChainCount
+		if row.Generation < a.min {
+			a.min = row.Generation
+		}
+	}
+	out := make([]RoutingFlowRow, 0, len(order))
+	for _, k := range order {
+		a := m[k]
+		a.row.Generation = a.min
+		out = append(out, a.row)
+	}
+	return out
+}
+
 // UpsertFlowSnapshot replaces the complete edge set for (terminal_minute, instance_src, identity_version) atomically.
 // Only greater absolute_sequence replaces; equal or lower does not mutate. Uses durable authority table routing_flow_snapshot_state
 // so even empty snapshots advance sequence and remain authoritative independent of edge rows.
+// 写合并表 routing_flow_rollup（S2′）：只删己分片（minute+instance+version），
+// 同分片多代际输入写面折叠（chain_count 求和、min_generation 取最小）。
+// 无下游重算，不再 markDirty("flow")；dirty 仅剩 kind='quality'。
 func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []RoutingFlowRow) error {
 	terminalMinute = terminalMinute.UTC().Truncate(time.Minute)
 	tx, err := r.driver.Tx(ctx)
@@ -400,13 +465,13 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 	if hasState && curSeq.Valid && absoluteSequence <= curSeq.Int64 {
 		return tx.Commit()
 	}
-	if err := drv.Exec(ctx, `DELETE FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3`, []any{terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
+	if err := drv.Exec(ctx, `DELETE FROM routing_flow_rollup WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3`, []any{terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
 		return err
 	}
-	for _, row := range rows {
-		q := `INSERT INTO routing_flow_instance_minute (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, instance_src, absolute_sequence, chain_count, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now())`
-		if err := drv.Exec(ctx, q, []any{identityVersion, row.RouteClassID[:], terminalMinute, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, row.Generation, row.CandidateFingerprint[:], instanceSrc, absoluteSequence, row.ChainCount}, &res); err != nil {
+	for _, row := range foldFlowRows(rows) {
+		q := `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, instance_src, min_generation, absolute_sequence, chain_count, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now())`
+		if err := drv.Exec(ctx, q, []any{identityVersion, row.RouteClassID[:], terminalMinute, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, instanceSrc, row.Generation, absoluteSequence, row.ChainCount}, &res); err != nil {
 			return err
 		}
 	}
@@ -418,9 +483,6 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 		if err := drv.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, identity_version, highest_sequence, updated_at) VALUES ($1,$2,$3,$4, now())`, []any{terminalMinute, instanceSrc, identityVersion, absoluteSequence}, &res); err != nil {
 			return err
 		}
-	}
-	if err := markDirtyMinuteTx(ctx, drv, "flow", identityVersion, terminalMinute); err != nil {
-		return err
 	}
 	return tx.Commit()
 }
