@@ -212,15 +212,38 @@ func rtWaitReady(t *testing.T, env *e2eEnv, tmp string) {
 	}
 }
 
+// rtPageMax 路由读面契约的 limit 上限（openapi `maximum: 200`）。三面缺省 limit
+// 均为 20（服务端分页），而本文件多处断言要的是**完整集合**，故显式请求上限，
+// 不把语义寄托在"集合恰好 ≤ 缺省一页"这类隐式假设上。
+const rtPageMax = 200
+
 // rtPlan GET /routing/plan 原始体 + 解析后 generation。
+//
+// 计划的 `routes` 已分页（缺省 20 条），而本 helper 的契约是「**整个**当前计划」：
+// 全部 `rtFindRoute` 调用方都假定 `plan["routes"]` 是全量。故按 `total_routes`
+// 逐页取全——否则目标路由落在第二页之后即被静默漏判（实测：60 条路由的计划下，
+// 裸调用只返回前 20 条，`TestIntelligentRoutingE2E` 的就绪门因此在 g3 上超时）。
 func rtPlan(t *testing.T, env *e2eEnv) (int64, map[string]any) {
 	t.Helper()
-	c, rb := env.admin(http.MethodGet, "/routing/plan", nil)
+	c, rb := env.admin(http.MethodGet, fmt.Sprintf("/routing/plan?limit=%d", rtPageMax), nil)
 	require.Equal(t, 200, c, "get routing plan: %s", rb)
-	v := jsonGet(t, rb, "").(map[string]any)
-	gen, ok := v["generation"].(float64)
+	plan := jsonGet(t, rb, "").(map[string]any)
+	gen, ok := plan["generation"].(float64)
 	require.True(t, ok, "plan 缺 generation: %s", rb)
-	return int64(gen), v
+	routes, _ := plan["routes"].([]any)
+	total, _ := plan["total_routes"].(float64)
+	for int64(len(routes)) < int64(total) {
+		c, rb = env.admin(http.MethodGet,
+			fmt.Sprintf("/routing/plan?limit=%d&offset=%d", rtPageMax, len(routes)), nil)
+		require.Equal(t, 200, c, "get routing plan offset=%d: %s", len(routes), rb)
+		next, _ := jsonGet(t, rb, "").(map[string]any)
+		page, _ := next["routes"].([]any)
+		require.NotEmpty(t, page, "plan 分页空洞：total_routes=%v 已取 %d 条但下一页为空", total, len(routes))
+		routes = append(routes, page...)
+	}
+	require.Equal(t, int64(total), int64(len(routes)), "plan 路由取全后条数须等于 total_routes")
+	plan["routes"] = routes
+	return int64(gen), plan
 }
 
 // rtWaitPlanGen 有界轮询直到 plan generation >= want（后台编译异步，禁裸 sleep）。
@@ -601,20 +624,22 @@ func rtRollupBest(t *testing.T, env *e2eEnv) (int, map[string]int64) {
 	return best, per
 }
 
-// rtFlow GET /routing/flow 原始 map。
+// rtFlow GET /routing/flow 原始 map。显式请求契约上限：`lanes` 是一页，本 helper
+// 的调用方要的是完整边集（守恒标量虽与页无关，但意图必须显式）。
 func rtFlow(t *testing.T, env *e2eEnv, routeHex, from, to string) map[string]any {
 	t.Helper()
 	c, rb := env.admin(http.MethodGet,
-		fmt.Sprintf("/routing/flow?route=%s&from=%s&to=%s", routeHex, from, to), nil)
+		fmt.Sprintf("/routing/flow?route=%s&from=%s&to=%s&limit=%d", routeHex, from, to, rtPageMax), nil)
 	require.Equal(t, 200, c, "get routing flow: %s", rb)
 	return jsonGet(t, rb, "").(map[string]any)
 }
 
-// rtFrontier GET /routing/frontier 原始 map。
+// rtFrontier GET /routing/frontier 原始 map。显式请求契约上限：缺省 limit 为 20，
+// 而调用方断言"指定候选全员出现"，靠缺省一页装得下是隐式假设。
 func rtFrontier(t *testing.T, env *e2eEnv, routeHex, from, to string) map[string]any {
 	t.Helper()
 	c, rb := env.admin(http.MethodGet,
-		fmt.Sprintf("/routing/frontier?route=%s&from=%s&to=%s", routeHex, from, to), nil)
+		fmt.Sprintf("/routing/frontier?route=%s&from=%s&to=%s&limit=%d", routeHex, from, to, rtPageMax), nil)
 	require.Equal(t, 200, c, "get routing frontier: %s", rb)
 	return jsonGet(t, rb, "").(map[string]any)
 }
