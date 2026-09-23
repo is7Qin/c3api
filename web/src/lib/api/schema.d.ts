@@ -2954,7 +2954,7 @@ export interface components {
             ttft_known: boolean;
             /**
              * Format: int64
-             * @description 每次成功平均成本（微分，与 compiler 同式；cost_known=false 时无意义）
+             * @description 每次成功平均成本（毫分，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）
              */
             cost_per_success: number;
             /** @description known + 有成功样本 + 价格可解析 */

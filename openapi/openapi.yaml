@@ -3239,7 +3239,7 @@ components:
         ttft_lcb: { type: number, format: double, description: TTFT 对数区间下界（ttft_known=false 时无意义） }
         ttft_ucb: { type: number, format: double }
         ttft_known: { type: boolean, description: 样本量足以给出区间 }
-        cost_per_success: { type: integer, format: int64, description: 每次成功平均成本（微分，与 compiler 同式；cost_known=false 时无意义） }
+        cost_per_success: { type: integer, format: int64, description: "每次成功平均成本（毫分，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）" }
         cost_known: { type: boolean, description: known + 有成功样本 + 价格可解析 }
         insufficient: { type: boolean, description: 样本 <30（与 explore 同门槛） }
         on_frontier: { type: boolean, description: Pareto 非支配（仅 known 且 cost_known 间扫描） }
