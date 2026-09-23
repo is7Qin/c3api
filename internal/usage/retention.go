@@ -36,7 +36,6 @@ type PartitionManager interface {
 	EnsureRoutingInstancePartitions(ctx context.Context, now, until time.Time) error
 	EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error
 	DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error)
-	DropRoutingFlowInstanceBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error)
@@ -191,11 +190,6 @@ func (w *RetentionWorker) runOnce() {
 		if _, err := w.parts.DropRoutingQualityInstanceBefore(ctx, cutoff); err != nil {
 			if w.log != nil {
 				w.log.Warn("retention drop routing_quality_instance partitions failed", logx.Error(err))
-			}
-		}
-		if _, err := w.parts.DropRoutingFlowInstanceBefore(ctx, cutoff); err != nil {
-			if w.log != nil {
-				w.log.Warn("retention drop routing_flow_instance partitions failed", logx.Error(err))
 			}
 		}
 		if _, err := w.parts.DropRoutingQualityRollupBefore(ctx, cutoff); err != nil {
