@@ -3486,11 +3486,11 @@ components:
          #     residual_quality int64 / residual_flow int64（关闭截止时仍在途、
          #     已转为可观测残余的质量/流量批次数）
         #   routing-rollup（消费 quality-sync 落库的脏分钟；单桶事务 + watermark 推进）:
-        #     quality_rolled int64 / flow_rolled int64（上轮聚合质量行/流量桶数）,
+        #     quality_rolled int64（上轮聚合质量行数）,
         #     failed int64（聚合失败累计）, last_duration_ms int64（上轮耗时毫秒）,
         #     last_error string（最近一次失败文本 step: err；空 = 无）,
-        #     watermark_quality_unix_ms int64 / watermark_flow_unix_ms int64
-        #     （质量/流量道 watermark 位置毫秒；0 = 尚未推进）
+        #     watermark_quality_unix_ms int64
+        #     （质量道 watermark 位置毫秒；0 = 尚未推进）
         #   runtime-health（健康投影 lane，intelligent-routing）: records int
         #     （当前视图条目数）, open/retry_after/probing/ready int（按态分桶）,
         #     generation int64（已同步全局健康世代）, last_sync_ok_unix_ms int64

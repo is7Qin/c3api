@@ -3,11 +3,11 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7qin.
 
 // routing rollup worker：消费 quality-sync 落在 instance 分钟表的脏分钟，调用
-// repository 既有 RollupQuality/RollupFlow 缝（单桶事务 + advisory lock +
+// repository 既有 RollupQuality 缝（单桶事务 + advisory lock +
 // dirty 清除 + watermark 推进原子完成——状态只在成功后推进，失败分钟保持
-// dirty 下轮重试）。请求路径零参与；quality/flow 两道独立处理（一道失败不
-// 影响另一道）。watermark 之下的迟到脏分钟不在本车道（watermark-ordering
-// follow-up）。
+// dirty 下轮重试）。请求路径零参与；S3 起仅剩 quality 单道（flow 写入直达
+// 合并层，无下游重算）。watermark 之下的迟到脏分钟不在本车道
+// （watermark-ordering follow-up）。
 package quality
 
 import (
@@ -25,11 +25,8 @@ import (
 )
 
 // rollup 面的 kind 字面量与 routing_dirty_minute 写入侧（repository/routing.go
-// UpsertQualityAndMarkDirty/UpsertFlowSnapshot）同源。
-const (
-	rollupKindQuality = "quality"
-	rollupKindFlow    = "flow"
-)
+// UpsertQualityAndMarkDirty）同源。flow 无下游重算，dirty 仅剩 quality 单道。
+const rollupKindQuality = "quality"
 
 // defaultRollupInterval rollup tick（var 供测试注入小值；对齐 quality-sync
 // PG 面 5s 节奏——脏分钟由该 lane 产生，消费节奏无需更快）。
@@ -45,7 +42,6 @@ type RollupStore interface {
 	ListDirtyMinutes(ctx context.Context, kind string, version int16, from time.Time, limit int) ([]time.Time, error)
 	GetWatermark(ctx context.Context, kind string, version int16) (time.Time, error)
 	RollupQuality(ctx context.Context, bucket time.Time, version int16) error
-	RollupFlow(ctx context.Context, terminalMinute time.Time, version int16) error
 }
 
 // RollupConfig rollup worker 配置。
@@ -54,19 +50,18 @@ type RollupConfig struct {
 }
 
 // RollupStats rollup worker 观测（/ops/workers；Stats 直出 JSON）。
+// S3 起仅剩 quality 单道：flow 写入直达合并层，无下游重算。
 type RollupStats struct {
 	QualityRolled          int64  `json:"quality_rolled"`
-	FlowRolled             int64  `json:"flow_rolled"`
 	Failed                 int64  `json:"failed"`
 	LastDurationMs         int64  `json:"last_duration_ms"`
 	LastError              string `json:"last_error"`
 	WatermarkQualityUnixMs int64  `json:"watermark_quality_unix_ms"`
-	WatermarkFlowUnixMs    int64  `json:"watermark_flow_unix_ms"`
 }
 
 // RollupWorker 常驻 rollup worker（worker.Worker 契约，Name="routing-rollup"）：
-// 每 tick 对 quality/flow 两道各：读 watermark → 选 ≥watermark 的最老脏分钟
-// （升序、有界）→ 逐桶调 Rollup*；任一桶失败即中断该道（保序：继续跑更新
+// 每 tick 对 quality 单道：读 watermark → 选 ≥watermark 的最老脏分钟
+// （升序、有界）→ 逐桶调 RollupQuality；任一桶失败即中断（保序：继续跑更新
 // 桶会让 watermark 跳过失败桶，永久丢该分钟）——失败桶保持 dirty，下 tick
 // 从它重试。Close 取消循环并等在途 tick 退出；无内存队列可排空（DB dirty
 // 表就是队列，停机期间脏分钟自然累积，重启启动 tick 追赶）。
@@ -124,21 +119,17 @@ func (w *RollupWorker) loop(ctx context.Context) {
 	}
 }
 
-// runOnce 单轮：quality 道 → flow 道（相互独立）。空脏集 = 纯 no-op（不写
+// runOnce 单轮：quality 单道。空脏集 = 纯 no-op（不写
 // 观测的 rolled 计数，仅记录本轮耗时与 watermark 位置）。
 func (w *RollupWorker) runOnce(ctx context.Context) {
 	start := w.now()
 	qwm := w.runKind(ctx, rollupKindQuality)
-	fwm := w.runKind(ctx, rollupKindFlow)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.stats.LastDurationMs = w.now().Sub(start).Milliseconds()
 	// watermark 观测随本轮读值刷新（失败轮也可见当前位置；nil/zero = 未初始化保留旧值）。
 	if qwm != nil && !qwm.IsZero() {
 		w.stats.WatermarkQualityUnixMs = qwm.UnixMilli()
-	}
-	if fwm != nil && !fwm.IsZero() {
-		w.stats.WatermarkFlowUnixMs = fwm.UnixMilli()
 	}
 }
 
@@ -165,21 +156,13 @@ func (w *RollupWorker) runKind(ctx context.Context, kind string) *time.Time {
 			return &cur // 停机取消：剩余脏分钟保持 dirty，下轮/重启追赶
 		}
 		var rerr error
-		if kind == rollupKindQuality {
-			rerr = w.store.RollupQuality(ctx, b, version)
-		} else {
-			rerr = w.store.RollupFlow(ctx, b, version)
-		}
+		rerr = w.store.RollupQuality(ctx, b, version)
 		if rerr != nil {
 			w.fail("rollup "+kind, b.UTC().Format(time.RFC3339), rerr)
 			return &cur
 		}
 		w.mu.Lock()
-		if kind == rollupKindQuality {
-			w.stats.QualityRolled++
-		} else {
-			w.stats.FlowRolled++
-		}
+		w.stats.QualityRolled++
 		w.mu.Unlock()
 		cur = b // repo 成功事务把 watermark 推到该桶
 	}
