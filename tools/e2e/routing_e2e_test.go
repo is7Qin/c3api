@@ -223,27 +223,43 @@ const rtPageMax = 200
 // 全部 `rtFindRoute` 调用方都假定 `plan["routes"]` 是全量。故按 `total_routes`
 // 逐页取全——否则目标路由落在第二页之后即被静默漏判（实测：60 条路由的计划下，
 // 裸调用只返回前 20 条，`TestIntelligentRoutingE2E` 的就绪门因此在 g3 上超时）。
+//
+// 计划是不可变快照且带 `generation`：页间代际不一致说明取页期间重编译，两页不属于
+// 同一版本，拼接会得到现实中不存在的路由组合——此时整轮重取（有界），不把跨代际的
+// 并集当成一个计划。单页计划（本测试实际形态）永不触发重取。
 func rtPlan(t *testing.T, env *e2eEnv) (int64, map[string]any) {
 	t.Helper()
-	c, rb := env.admin(http.MethodGet, fmt.Sprintf("/routing/plan?limit=%d", rtPageMax), nil)
-	require.Equal(t, 200, c, "get routing plan: %s", rb)
-	plan := jsonGet(t, rb, "").(map[string]any)
-	gen, ok := plan["generation"].(float64)
-	require.True(t, ok, "plan 缺 generation: %s", rb)
-	routes, _ := plan["routes"].([]any)
-	total, _ := plan["total_routes"].(float64)
-	for int64(len(routes)) < int64(total) {
-		c, rb = env.admin(http.MethodGet,
-			fmt.Sprintf("/routing/plan?limit=%d&offset=%d", rtPageMax, len(routes)), nil)
-		require.Equal(t, 200, c, "get routing plan offset=%d: %s", len(routes), rb)
-		next, _ := jsonGet(t, rb, "").(map[string]any)
-		page, _ := next["routes"].([]any)
-		require.NotEmpty(t, page, "plan 分页空洞：total_routes=%v 已取 %d 条但下一页为空", total, len(routes))
-		routes = append(routes, page...)
+	for attempt := 0; attempt < 5; attempt++ {
+		c, rb := env.admin(http.MethodGet, fmt.Sprintf("/routing/plan?limit=%d", rtPageMax), nil)
+		require.Equal(t, 200, c, "get routing plan: %s", rb)
+		plan := jsonGet(t, rb, "").(map[string]any)
+		gen, ok := plan["generation"].(float64)
+		require.True(t, ok, "plan 缺 generation: %s", rb)
+		routes, _ := plan["routes"].([]any)
+		total, _ := plan["total_routes"].(float64)
+		consistent := true
+		for int64(len(routes)) < int64(total) {
+			c, rb = env.admin(http.MethodGet,
+				fmt.Sprintf("/routing/plan?limit=%d&offset=%d", rtPageMax, len(routes)), nil)
+			require.Equal(t, 200, c, "get routing plan offset=%d: %s", len(routes), rb)
+			next, _ := jsonGet(t, rb, "").(map[string]any)
+			if ng, _ := next["generation"].(float64); int64(ng) != int64(gen) {
+				consistent = false
+				break
+			}
+			page, _ := next["routes"].([]any)
+			require.NotEmpty(t, page, "plan 分页空洞：total_routes=%v 已取 %d 条但下一页为空", total, len(routes))
+			routes = append(routes, page...)
+		}
+		if !consistent {
+			continue
+		}
+		require.Equal(t, int64(total), int64(len(routes)), "plan 路由取全后条数须等于 total_routes")
+		plan["routes"] = routes
+		return int64(gen), plan
 	}
-	require.Equal(t, int64(total), int64(len(routes)), "plan 路由取全后条数须等于 total_routes")
-	plan["routes"] = routes
-	return int64(gen), plan
+	t.Fatalf("plan 取全连续 5 轮跨代际（重编译过频），无法得到自洽快照")
+	return 0, nil
 }
 
 // rtWaitPlanGen 有界轮询直到 plan generation >= want（后台编译异步，禁裸 sleep）。
@@ -624,8 +640,9 @@ func rtRollupBest(t *testing.T, env *e2eEnv) (int, map[string]int64) {
 	return best, per
 }
 
-// rtFlow GET /routing/flow 原始 map。显式请求契约上限：`lanes` 是一页，本 helper
-// 的调用方要的是完整边集（守恒标量虽与页无关，但意图必须显式）。
+// rtFlow GET /routing/flow 原始 map。显式请求契约上限：调用方读的是**完整集合**标量
+// （`first_dispatch_chains`/`terminal_chains`，与当前页无关），边表本身只是一页——
+// 显式化是为了不让缺省一页隐式承载语义。
 func rtFlow(t *testing.T, env *e2eEnv, routeHex, from, to string) map[string]any {
 	t.Helper()
 	c, rb := env.admin(http.MethodGet,
@@ -634,14 +651,20 @@ func rtFlow(t *testing.T, env *e2eEnv, routeHex, from, to string) map[string]any
 	return jsonGet(t, rb, "").(map[string]any)
 }
 
-// rtFrontier GET /routing/frontier 原始 map。显式请求契约上限：缺省 limit 为 20，
-// 而调用方断言"指定候选全员出现"，靠缺省一页装得下是隐式假设。
+// rtFrontier GET /routing/frontier 原始 map。调用方断言"指定候选全员出现"，故显式
+// 请求契约上限，并**断言未被截断**：候选数一旦超过上限，子集检查会静默通过——
+// 让它响亮失败，而不是把"恰好装得下"当成不变量。
 func rtFrontier(t *testing.T, env *e2eEnv, routeHex, from, to string) map[string]any {
 	t.Helper()
 	c, rb := env.admin(http.MethodGet,
 		fmt.Sprintf("/routing/frontier?route=%s&from=%s&to=%s&limit=%d", routeHex, from, to, rtPageMax), nil)
 	require.Equal(t, 200, c, "get routing frontier: %s", rb)
-	return jsonGet(t, rb, "").(map[string]any)
+	m := jsonGet(t, rb, "").(map[string]any)
+	cands, _ := m["candidates"].([]any)
+	total, _ := m["total_candidates"].(float64)
+	require.Equal(t, int64(total), int64(len(cands)),
+		"frontier 候选被截断（limit=%d，上限 200）：total_candidates=%v 只取到 %d", rtPageMax, total, len(cands))
+	return m
 }
 
 // TestIntelligentRoutingE2E 单实例智能路由全场景（与 TestRoutingSmoke 同 harness）：
