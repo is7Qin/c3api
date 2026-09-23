@@ -62,13 +62,13 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	for _, tbl := range []string{"routing_quality_instance_minute", "routing_flow_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
+	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
 		parted, err := repos.Partitions.IsTablePartitioned(ctx, tbl)
 		require.NoError(t, err)
 		require.True(t, parted, "%s partitioned", tbl)
 	}
 	today := now.UTC().Truncate(24 * time.Hour)
-	for _, tbl := range []string{"routing_quality_instance_minute", "routing_flow_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
+	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
 		rows, err := pool.Query(ctx, `SELECT c.relname FROM pg_class c JOIN pg_inherits i ON i.inhrelid=c.oid JOIN pg_class p ON p.oid=i.inhparent JOIN pg_namespace n ON n.oid=c.relnamespace WHERE p.relname=$1 AND n.nspname=current_schema()`, tbl)
 		require.NoError(t, err)
 		var names []string
@@ -93,8 +93,8 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_quality_instance_minute' AND column_name=$1`, col).Scan(&n))
 		require.Equal(t, int64(1), n, "missing col %s", col)
 	}
-	for _, col := range []string{"previous_outcome", "transition_reason", "absolute_sequence"} {
-		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_flow_instance_minute' AND column_name=$1`, col).Scan(&n))
+	for _, col := range []string{"previous_outcome", "transition_reason", "absolute_sequence", "instance_src", "min_generation"} {
+		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_flow_rollup' AND column_name=$1`, col).Scan(&n))
 		require.Equal(t, int64(1), n, "missing flow col %s", col)
 	}
 }
@@ -182,37 +182,36 @@ func TestRoutingFlowSnapshotPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFPVal(t, 3, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-y", "", "", "", false, "", "", "", "")
 	rows := []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 3, PreviousOutcome: "", TransitionReason: "initial", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-B", ChainCount: 1},
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 4, PreviousAccountID: ptrInt64(3), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: mustFPVal(t, 4, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-z", "", "", "", false, "", "", "", ""), InstanceSrc: "src-B", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 3, PreviousOutcome: "", TransitionReason: "initial", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-B", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 4, PreviousAccountID: ptrInt64(3), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-B", ChainCount: 1},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 10, rows))
 	var cnt int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt)
 	// equal sequence divergent must not mutate
 	rowsDiv := []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "degraded", AccountID: 99, PreviousOutcome: "", TransitionReason: "initial", Outcome: "fail", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-B", ChainCount: 99},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "degraded", AccountID: 99, PreviousOutcome: "", TransitionReason: "initial", Outcome: "fail", IsTerminal: true, Generation: 1, InstanceSrc: "src-B", ChainCount: 99},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 10, rowsDiv))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt, "equal sequence must not replace")
 	var lane string
-	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2 AND ordinal=1`, "src-B", now).Scan(&lane))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2 AND ordinal=1`, "src-B", now).Scan(&lane))
 	require.Equal(t, "primary", lane)
 	// greater sequence replaces complete set (deletes omitted stale edges)
 	rows2 := []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "explore", AccountID: 5, PreviousOutcome: "", TransitionReason: "initial", Outcome: "success", IsTerminal: true, Generation: 2, CandidateFingerprint: fp, InstanceSrc: "src-B", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "explore", AccountID: 5, PreviousOutcome: "", TransitionReason: "initial", Outcome: "success", IsTerminal: true, Generation: 2, InstanceSrc: "src-B", ChainCount: 1},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 11, rows2))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
 	require.Equal(t, int64(1), cnt, "greater sequence must replace with new edge set")
-	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&lane))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&lane))
 	require.Equal(t, "explore", lane)
 	// lower sequence must not mutate
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 9, rows))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
 	require.Equal(t, int64(1), cnt, "lower sequence must not mutate")
 }
 
@@ -222,15 +221,14 @@ func TestRoutingFlowDimensionUniquenessPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-a", "", "", "", false, "i", "s", "t", "w")
 	rows := []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-C", ChainCount: 1},
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-C", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-C", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-C", ChainCount: 1},
 	}
 	// these two edges differ only in previous_outcome/transition_reason, must both persist (no collapse)
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-C", now, 1, 5, rows))
 	var cnt int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-C' AND terminal_minute=$1`, now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-C' AND terminal_minute=$1`, now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt, "distinct edges must not collapse")
 }
 
@@ -317,14 +315,11 @@ func TestRoutingPartitionRetentionPG(t *testing.T) {
 	now := time.Now().UTC()
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	for _, d := range []string{"20260728", "20260729"} {
-		for _, tbl := range []string{"routing_quality_instance_minute", "routing_flow_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
+		for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
 			pgExec(t, pool, `CREATE TABLE `+tbl+`_`+d+` PARTITION OF `+tbl+` FOR VALUES FROM ('`+mustISODate(d)+` 00:00:00+00') TO ('`+mustNextISODate(d)+` 00:00:00+00')`)
 		}
 	}
 	n, err := repos.Partitions.DropRoutingQualityInstanceBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
-	n, err = repos.Partitions.DropRoutingFlowInstanceBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 	n, err = repos.Partitions.DropRoutingQualityRollupBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
@@ -395,25 +390,24 @@ func TestRoutingFlowEmptySnapshotPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-e", "", "", "", false, "", "", "", "")
 	rows10 := []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-E", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-E", ChainCount: 1},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 10, rows10))
 	var cnt int64
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(1), cnt)
 	// empty snapshot with higher sequence should delete all
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 11, nil))
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(0), cnt, "empty higher seq must delete")
 	// stale seq10 must not repopulate
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 10, rows10))
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(0), cnt, "stale seq10 must remain empty")
 	// seq12 repopulates
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 12, rows10))
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_instance_minute WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(1), cnt, "seq12 must repopulate")
 }
 
@@ -457,40 +451,26 @@ func TestRoutingQualityRollbackPG(t *testing.T) {
 	require.Equal(t, int64(5), attempts)
 }
 
-func TestRoutingFlowRollbackPG(t *testing.T) {
+func TestRoutingFlowSnapshotDirectWritePG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-fp", "", "", "", false, "", "", "", "")
 	rows := []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-PF", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-PF", ChainCount: 1},
 	}
+	// S3 起 flow 写入直达合并层：快照即聚合行，无 dirty、无 watermark、无
+	// RollupFlow 中间道。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-PF", now, 1, 1, rows))
-	_, err := pool.Exec(ctx, `CREATE OR REPLACE FUNCTION fail_dirty_f() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'poison dirty %', NEW.bucket_minute; END; $$ LANGUAGE plpgsql;`)
-	require.NoError(t, err)
-	_, err = pool.Exec(ctx, `CREATE TRIGGER poison_dirty_f_trg BEFORE UPDATE ON routing_dirty_minute FOR EACH ROW WHEN (NEW.dirty = false AND NEW.kind = 'flow') EXECUTE FUNCTION fail_dirty_f();`)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		pool.Exec(ctx, `DROP TRIGGER IF EXISTS poison_dirty_f_trg ON routing_dirty_minute;`)
-		pool.Exec(ctx, `DROP FUNCTION IF EXISTS fail_dirty_f();`)
-	})
-	err = repos.Partitions.RollupFlow(ctx, now, 1)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "poison dirty")
-	dirty, _ := repos.Partitions.IsDirty(ctx, "flow", 1, now)
-	require.True(t, dirty, "dirty must stay true after flow poison rollback")
 	var rollCnt int64
 	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&rollCnt)
-	require.Equal(t, int64(0), rollCnt)
-	_, _ = pool.Exec(ctx, `DROP TRIGGER IF EXISTS poison_dirty_f_trg ON routing_dirty_minute;`)
-	_, _ = pool.Exec(ctx, `DROP FUNCTION IF EXISTS fail_dirty_f();`)
-	require.NoError(t, repos.Partitions.RollupFlow(ctx, now, 1))
-	dirty, _ = repos.Partitions.IsDirty(ctx, "flow", 1, now)
-	require.False(t, dirty)
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&rollCnt)
-	require.Equal(t, int64(1), rollCnt)
+	require.Equal(t, int64(1), rollCnt, "snapshot writes the merged row directly")
+	var minGen int64
+	pool.QueryRow(ctx, `SELECT min_generation FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&minGen)
+	require.Equal(t, int64(1), minGen)
+	dirty, _ := repos.Partitions.IsDirty(ctx, "flow", 1, now)
+	require.False(t, dirty, "flow writes no dirty bit anymore")
 }
 
 func TestRoutingQualityRollupSuccessPG(t *testing.T) {
@@ -532,20 +512,18 @@ func TestRoutingQualityRollupSuccessPG(t *testing.T) {
 	require.Equal(t, "{2,2,2,2,2,2,2,2,2,2}", histText)
 }
 
-func TestRoutingFlowRollupSuccessPG(t *testing.T) {
+func TestRoutingFlowSnapshotSuccessPG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp1 := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-a", "", "", "", false, "", "", "", "")
-	fp2 := mustFPVal(t, 2, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-b", "", "", "", false, "", "", "", "")
 	rows := []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 10, PreviousAccountID: nil, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: false, Generation: 1, CandidateFingerprint: fp1, InstanceSrc: "src-RF", AbsoluteSequence: 1, ChainCount: 1},
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 20, PreviousAccountID: ptrInt64(10), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp2, InstanceSrc: "src-RF", AbsoluteSequence: 1, ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 10, PreviousAccountID: nil, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: false, Generation: 1, InstanceSrc: "src-RF", AbsoluteSequence: 1, ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 20, PreviousAccountID: ptrInt64(10), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-RF", AbsoluteSequence: 1, ChainCount: 1},
 	}
+	// S3 起快照直写合并层，无 RollupFlow 中间道。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-RF", now, 1, 1, rows))
-	require.NoError(t, repos.Partitions.RollupFlow(ctx, now, 1))
 	var cnt int64
 	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(2), cnt, "no collapse")
@@ -553,7 +531,7 @@ func TestRoutingFlowRollupSuccessPG(t *testing.T) {
 	var prevOut, trans, out string
 	var isTerm bool
 	var gen int64
-	pool.QueryRow(ctx, `SELECT previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation FROM routing_flow_rollup WHERE terminal_minute=$1 AND ordinal=2`, now).Scan(&prevAcc, &prevOut, &trans, &out, &isTerm, &gen)
+	pool.QueryRow(ctx, `SELECT previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, min_generation FROM routing_flow_rollup WHERE terminal_minute=$1 AND ordinal=2`, now).Scan(&prevAcc, &prevOut, &trans, &out, &isTerm, &gen)
 	require.True(t, prevAcc.Valid)
 	require.Equal(t, int64(10), prevAcc.Int64)
 	require.Equal(t, "success", prevOut)
@@ -684,14 +662,13 @@ func TestRoutingQualityGateBarrierPG(t *testing.T) {
 	require.True(t, dirty, "writer-after-read must leave dirty true")
 }
 
-func TestRoutingFlowGateBarrierPG(t *testing.T) {
+func TestRoutingFlowSnapshotGateBarrierPG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-gate-f", "", "", "", false, "", "", "", "")
-	rows := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-GF", ChainCount: 1}}
+	rows := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-GF", ChainCount: 1}}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-GF", now, 1, 1, rows))
 	gateKey := int64(91002)
 	dsnGate2 := os.Getenv("TEST_DATABASE_URL")
@@ -723,10 +700,6 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 			gateConn2.Release()
 		})
 	}
-	rollupDone := make(chan error, 1)
-	go func() { rollupDone <- repos.Partitions.RollupFlow(context.Background(), now, 1) }()
-	rollupPid2 := waitForAdvisoryWaiterForKey(t, pool, holderPid2, gateKey)
-	require.NotEqual(t, holderPid2, rollupPid2)
 	dsn2 := os.Getenv("TEST_DATABASE_URL")
 	require.NotEmpty(t, dsn2)
 	writerPoolCfg2, err := pgxpool.ParseConfig(dsn2)
@@ -747,10 +720,6 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 			case <-time.After(2 * time.Second):
 			}
 		}
-		select {
-		case <-rollupDone:
-		case <-time.After(2 * time.Second):
-		}
 		pool.Exec(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS gate_f_trg ON routing_flow_rollup_%s;", partSuffix2))
 		pool.Exec(context.Background(), "DROP FUNCTION IF EXISTS gate_f_fn();")
 		writerPool2.Close()
@@ -758,6 +727,15 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 	writerDB2 := stdlib.OpenDBFromPool(writerPool2)
 	writerRepos2, err := repository.NewWithPG(context.Background(), entsql.OpenDB(dialect.Postgres, writerDB2), true, writerPool2)
 	require.NoError(t, err)
+	// S3 起快照直写合并层：第二个 UpsertFlowSnapshot（同分片分钟 + 实例，
+	// 同 advisory 锁）在门后排队，门开后串行完成，己分片被 seq2 完整替换。
+	writerDoneChan2 = make(chan error, 1)
+	go func() {
+		rows2 := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 2, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-GF", AbsoluteSequence: 2, ChainCount: 1}}
+		writerDoneChan2 <- writerRepos2.Partitions.UpsertFlowSnapshot(context.Background(), "src-GF", now, 1, 2, rows2)
+	}()
+	rollupPid2 := waitForAdvisoryWaiterForKey(t, pool, holderPid2, gateKey)
+	require.NotEqual(t, holderPid2, rollupPid2)
 	writerConn2, err := writerPool2.Acquire(context.Background())
 	require.NoError(t, err)
 	var writerPid2 int
@@ -766,28 +744,19 @@ func TestRoutingFlowGateBarrierPG(t *testing.T) {
 	require.NotEqual(t, holderPid2, writerPid2)
 	require.NotEqual(t, rollupPid2, writerPid2)
 	t.Logf("holder %d rollup %d writer %d distinct", holderPid2, rollupPid2, writerPid2)
-	writerDone := make(chan error, 1)
-	writerDoneChan2 = writerDone
-	go func() {
-		rows2 := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 2, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, CandidateFingerprint: fp, InstanceSrc: "src-GF", AbsoluteSequence: 2, ChainCount: 1}}
-		writerDone <- writerRepos2.Partitions.UpsertFlowSnapshot(context.Background(), "src-GF", now, 1, 2, rows2)
-	}()
 	waitForWriterLock(t, pool, holderPid2, rollupPid2, writerPid2)
 	releaseGate2()
 	select {
-	case err := <-rollupDone:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("flow rollup did not complete after gate release")
-	}
-	select {
-	case err := <-writerDone:
+	case err := <-writerDoneChan2:
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("flow writer did not complete")
 	}
+	var acct int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT account_id FROM routing_flow_rollup WHERE terminal_minute=$1 AND instance_src='src-GF'`, now).Scan(&acct))
+	require.Equal(t, int64(2), acct, "second snapshot replaced own shard after gate release")
 	dirty, _ := repos.Partitions.IsDirty(ctx, "flow", 1, now)
-	require.True(t, dirty)
+	require.False(t, dirty)
 }
 
 func waitForAdvisoryWaiterForKey(t *testing.T, pool *pgxpool.Pool, holderPid int, gateKey int64) int {
