@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"time"
 
@@ -114,6 +115,13 @@ var routingFlowRollupIndexDDLs = []string{
 	`CREATE UNIQUE INDEX routing_flow_rollup_uniq ON routing_flow_rollup (terminal_minute, instance_src, identity_version, route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal) NULLS NOT DISTINCT`,
 	`CREATE INDEX routing_flow_merged_read ON routing_flow_rollup (route_class_id, identity_version, terminal_minute)`,
 }
+
+// ErrRoutingSnapshotBeyondRetention 快照分钟早于观测保留截止（§5.4 写面守卫）。
+// 与"旧序号被拒"的幂等 no-op 语义**不同**：那条路径的 payload 已经落库过
+// （tx.Commit 返回 nil 正确），而超期拒绝意味着该分钟的链已被保留策略丢弃，
+// 是数据丢失。故必须显式返回本哨兵，调用方不得照抄静默形状——否则合法迟到
+// 实例的链会无痕消失（判据 B5）。
+var ErrRoutingSnapshotBeyondRetention = errors.New("routing flow snapshot beyond observation retention")
 
 var routingDirtyDDL = `CREATE TABLE IF NOT EXISTS routing_dirty_minute (
 	kind text NOT NULL,
@@ -434,6 +442,28 @@ func foldFlowRows(rows []RoutingFlowRow) []RoutingFlowRow {
 	return out
 }
 
+// SetRoutingObservationRetentionDays 装配观测保留天数（main 传
+// cfg.Routing.ObservationRetentionDays）：写面据此拒超期快照。0/负 = 未装配，
+// 守卫关闭（测试/工具路径）；生产装配缺失由 config 地板校验 + main 接线覆盖。
+func (r *PartitionRepo) SetRoutingObservationRetentionDays(days int) {
+	r.routingObservationDays = days
+}
+
+// DeleteRoutingFlowSnapshotStateBefore 删除早于 cutoff 的分片序号状态（保留巡检
+// 日粒度调用）。snapshot_state 是交接状态，不承担历史职责：它是"本分钟本分片
+// 已发布的最高序号"，一旦该分钟分区被 DROP 就再无意义（§5.4）。
+func (r *PartitionRepo) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	var res sql.Result
+	if err := r.driver.Exec(ctx, `DELETE FROM routing_flow_snapshot_state WHERE terminal_minute < $1`, []any{cutoff.UTC()}, &res); err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // UpsertFlowSnapshot replaces the complete edge set for (terminal_minute, instance_src, identity_version) atomically.
 // Only greater absolute_sequence replaces; equal or lower does not mutate. Uses durable authority table routing_flow_snapshot_state
 // so even empty snapshots advance sequence and remain authoritative independent of edge rows.
@@ -442,6 +472,14 @@ func foldFlowRows(rows []RoutingFlowRow) []RoutingFlowRow {
 // 无下游重算，不再 markDirty("flow")；dirty 仅剩 kind='quality'。
 func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []RoutingFlowRow) error {
 	terminalMinute = terminalMinute.UTC().Truncate(time.Minute)
+	// 写面守卫（§5.4）：retention 已 DROP 早于观测截止的分钟分区并清理
+	// snapshot_state；迟到的旧实例若在此之后重建该分钟，就是"删后重建"的
+	// 幽灵分钟（read 面已不可见，却永久占位）。故早于截止一律拒绝。
+	// 观测天数未装配（0/负，仅测试/工具路径）→ 守卫关闭。
+	if r.routingObservationDays > 0 &&
+		terminalMinute.Before(domain.RoutingObservationCutoff(time.Now(), r.routingObservationDays)) {
+		return ErrRoutingSnapshotBeyondRetention
+	}
 	tx, err := r.driver.Tx(ctx)
 	if err != nil {
 		return err
@@ -655,6 +693,13 @@ func (r *PartitionRepo) RollupQuality(ctx context.Context, bucket time.Time, ver
 		return err
 	}
 	if err := r.advanceWatermarkTx(ctx, drv, "quality", version, bucket); err != nil {
+		return err
+	}
+	// 有界清理（§5.4）：清掉已滚且**严格早于**水位的历史脏分钟。水位只进不退
+	// （advanceWatermarkTx），故这是唯一的收敛判据；dirty=true 的旧分钟（晚到
+	// 重算待办）与恰好 == 水位的行必须存活（判据 B4 双向负例）。子查询读同一
+	// 事务内刚推进的水位；无水位行 → 子查询 NULL → 不删（冷启动安全）。
+	if err := drv.Exec(ctx, `DELETE FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND dirty=false AND bucket_minute < (SELECT watermark FROM routing_rollup_watermark WHERE kind=$1 AND identity_version=$2)`, []any{"quality", version}, &res); err != nil {
 		return err
 	}
 	return tx.Commit()

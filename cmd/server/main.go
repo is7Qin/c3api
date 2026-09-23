@@ -235,10 +235,14 @@ func main() {
 	// usage.errlog_retention_days 默认 7 天短保留——错误审计；usage_stats =
 	// usage.stats_retention_days 默认 180 天——聚合统计长保留）。
 	retention := usage.NewRetention(usage.RetentionConfig{
-		LogRetentionDays:    cfg.Usage.LogRetentionDays,
-		ErrLogRetentionDays: cfg.Usage.ErrLogRetentionDays,
-		StatsRetentionDays:  cfg.Usage.StatsRetentionDays,
+		LogRetentionDays:                cfg.Usage.LogRetentionDays,
+		ErrLogRetentionDays:             cfg.Usage.ErrLogRetentionDays,
+		StatsRetentionDays:              cfg.Usage.StatsRetentionDays,
+		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
 	}, repos, log)
+	// 路由观测写面守卫同源：同一份 observation_retention_days 交给分区仓，
+	// UpsertFlowSnapshot 据此拒早于截止的快照（防 retention 删后重建）。
+	repos.Partitions.SetRoutingObservationRetentionDays(cfg.Routing.ObservationRetentionDays)
 
 	auth := proxy.NewAuth(repos.Keys, repos.Users, log, cfg.Billing.Enabled)
 	hc := httpx.NewClient(httpx.TransportConfig{
@@ -333,17 +337,18 @@ func main() {
 	}
 	mailW := service.NewMailWorker(service.MailDeps{Log: log, Settings: settingsSnap, Templates: repos})
 	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log, service.ServiceDeps{
-		EmailCodeStore:              verification.New(rdb),
-		TimeLocation:                svcLoc,
-		StatsRawRetentionDays:       rawDays,
-		ClearBalanceWarningCooldown: bwCooldown.Clear,
-		RecoverProber:               runtimeHealth,
-		RecoverLatch:                latchStore,
-		RecoverHealthClear:          runtimeHealth,
-		DefaultMaxConcurrency:       cfg.Scheduler.DefaultMaxConcurrency,
-		CompileNotify:               sched.RequestCompile,
-		MailEnqueue:                 mailW.Enqueue,
-		SettingsSnapshot:            settingsSnap,
+		EmailCodeStore:                  verification.New(rdb),
+		TimeLocation:                    svcLoc,
+		StatsRawRetentionDays:           rawDays,
+		ClearBalanceWarningCooldown:     bwCooldown.Clear,
+		RecoverProber:                   runtimeHealth,
+		RecoverLatch:                    latchStore,
+		RecoverHealthClear:              runtimeHealth,
+		DefaultMaxConcurrency:           cfg.Scheduler.DefaultMaxConcurrency,
+		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
+		CompileNotify:                   sched.RequestCompile,
+		MailEnqueue:                     mailW.Enqueue,
+		SettingsSnapshot:                settingsSnap,
 	})
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据

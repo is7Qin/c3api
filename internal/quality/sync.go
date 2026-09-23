@@ -23,6 +23,16 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
+// routingLateSnapshotDropped 进程级"超期快照被拒并丢弃"计数（判据 B5 的三处
+// 可观测面之一；与 routingLoss 同风格：包级原子计数器 + 只读访问器）。
+// 语义：快照分钟早于观测保留截止（repository.ErrRoutingSnapshotBeyondRetention），
+// 该分钟的链已被保留策略丢弃 → 结清租约不再重试，此处记账。
+var routingLateSnapshotDropped atomic.Int64
+
+// RoutingLateSnapshotDropped 返回本进程因超出观测保留期而被拒并丢弃的快照数。
+// 只增不减；调用方按前后差值判定（进程级计数器，不做测试重置）。
+func RoutingLateSnapshotDropped() int64 { return routingLateSnapshotDropped.Load() }
+
 const (
 	redisQualityPrefix = "c3api:routing:quality:"
 	redisFlowPrefix    = "c3api:routing:flow:"
@@ -844,6 +854,22 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 			rows := flowRowsFromMinute(snap, w.instanceSrc, seq)
 			if err := w.pg.UpsertFlowSnapshot(ctx, w.instanceSrc, time.Unix(minute, 0).UTC(), 1, seq, rows); err != nil {
 				rows = nil
+				if errors.Is(err, repository.ErrRoutingSnapshotBeyondRetention) {
+					// 超期快照是**数据丢失**，不是"旧序号"的幂等 no-op：
+					// 该分钟分区已被 retention DROP，重试永不成功。故可观测地
+					// 丢弃——Warn（带 minute/instance_src）+ 进程计数 + 结清
+					// 租约（ackPG：标记 everPersisted 且置 clean，停止每轮重试
+					// 刷屏）。三处缺一即"无痕消失"（判据 B5）。
+					routingLateSnapshotDropped.Add(1)
+					if w.log != nil {
+						w.log.Warn("routing flow snapshot dropped beyond observation retention",
+							logx.String("minute", time.Unix(minute, 0).UTC().Format(time.RFC3339)),
+							logx.String("instance_src", w.instanceSrc))
+					}
+					w.rec.flow.ackPG(tok)
+					settled = true
+					return
+				}
 				w.rec.flow.releasePG(tok)
 				settled = true
 				return

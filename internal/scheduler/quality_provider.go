@@ -153,7 +153,7 @@ func (c *windowedQualityCache) get(now time.Time) WindowedQuality {
 			CacheCreateTokens: s.CacheCreateTokens,
 		}
 	}
-	cutoff := m.Add(-5 * time.Minute).Unix()
+	cutoff := m.Add(-CurrentWindowLen).Unix()
 	for _, row := range liveRows {
 		if row.IdentityVersion != version {
 			continue // identity-version mismatch ignored
@@ -244,7 +244,7 @@ func hotKeysFrom(m time.Time, version int16, pgCur []WindowSettledCurrent, liveR
 	for _, s := range pgCur {
 		attempts[s.Key] += s.Attempts
 	}
-	cutoff := m.Add(-5 * time.Minute).Unix()
+	cutoff := m.Add(-CurrentWindowLen).Unix()
 	for _, row := range liveRows {
 		if row.IdentityVersion != version || row.Minute < cutoff {
 			continue

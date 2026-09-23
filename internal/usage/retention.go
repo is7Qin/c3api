@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -38,6 +39,7 @@ type PartitionManager interface {
 	DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error)
+	DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error)
 }
 
@@ -48,10 +50,17 @@ const redemptionUseRetentionDays = 90
 
 // RetentionConfig retention worker 配置。
 type RetentionConfig struct {
-	LogRetentionDays    int           // usage_logs 分区保留天数（config usage.log_retention_days；<= 0 = 不删除）
-	ErrLogRetentionDays int           // err_logs 分区保留天数（config usage.errlog_retention_days，默认 7 天短保留——错误审计；<= 0 = 不删除）
-	StatsRetentionDays  int           // usage_stats 分区保留天数（config usage.stats_retention_days，默认 180 天——聚合统计长保留；<= 0 = 不删除）
-	TickerInterval      time.Duration // 巡检周期（生产 1h；测试注入短周期；<= 0 兜底 1h）
+	LogRetentionDays    int // usage_logs 分区保留天数（config usage.log_retention_days；<= 0 = 不删除）
+	ErrLogRetentionDays int // err_logs 分区保留天数（config usage.errlog_retention_days，默认 7 天短保留——错误审计；<= 0 = 不删除）
+	StatsRetentionDays  int // usage_stats 分区保留天数（config usage.stats_retention_days，默认 180 天——聚合统计长保留；<= 0 = 不删除）
+	// RoutingObservationRetentionDays 路由观测面（routing_quality_instance_minute /
+	// routing_quality_rollup / routing_flow_rollup 三分区 + snapshot_state 交接状态）
+	// 保留天数（config routing.observation_retention_days，默认 7；config 地板 2）。
+	// 与 usage_stats **解耦**：观测深度是运维参数，不再搭 180 天长保留的车
+	// （判据 A4/B1/B2/B3）；读面窗口守卫用同一份天数 + 同一换算
+	// （domain.RoutingObservationCutoff）。<= 0 = 不删除。
+	RoutingObservationRetentionDays int
+	TickerInterval                  time.Duration // 巡检周期（生产 1h；测试注入短周期；<= 0 兜底 1h）
 }
 
 // RetentionWorker 按日分区保留 worker（worker.Worker 契约，Name="retention"）：
@@ -187,6 +196,14 @@ func (w *RetentionWorker) runOnce() {
 				w.log.Info("retention dropped usage_entity_stats partitions", logx.Int("count", m))
 			}
 		}
+	}
+	// 路由观测面保留：**独立 cutoff**（routing.observation_retention_days，默认
+	// 7 天），不再搭 usage_stats 的 180 天车——观测深度是可配运维参数，而
+	// 180 天分区保留与 7 天默认观测期错配会让超界窗口静默返回部分聚合
+	// （§3 R4，判据 A4）。三张分区表各自 DROP；snapshot_state 是普通表，
+	// 走有界 DELETE（与分区 DROP 同一 cutoff，防"删后重建"由写面守卫兜底）。
+	if w.cfg.RoutingObservationRetentionDays > 0 {
+		cutoff := domain.RoutingObservationCutoff(now, w.cfg.RoutingObservationRetentionDays)
 		if _, err := w.parts.DropRoutingQualityInstanceBefore(ctx, cutoff); err != nil {
 			if w.log != nil {
 				w.log.Warn("retention drop routing_quality_instance partitions failed", logx.Error(err))
@@ -201,6 +218,14 @@ func (w *RetentionWorker) runOnce() {
 			if w.log != nil {
 				w.log.Warn("retention drop routing_flow_rollup partitions failed", logx.Error(err))
 			}
+		}
+		n, err := w.parts.DeleteRoutingFlowSnapshotStateBefore(ctx, cutoff)
+		if err != nil {
+			if w.log != nil {
+				w.log.Warn("retention delete routing snapshot state failed", logx.Error(err))
+			}
+		} else if n > 0 && w.log != nil {
+			w.log.Info("retention deleted routing snapshot state", logx.Int("count", n))
 		}
 	}
 	// redemption_uses 有界批删：TTL 定死 90 天（非配置项）——90 天窗口
